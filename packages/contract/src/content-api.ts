@@ -338,8 +338,12 @@ export const studentLectureDetailSchema = z.object({
 });
 
 /** 携带学生讲义列表/详情的成功响应壳 */
-export const studentLectureListOkSchema = apiOkExtend(studentLectureListDataSchema);
-export const studentLectureDetailOkSchema = apiOkExtend(studentLectureDetailSchema);
+export const studentLectureListOkSchema = apiOkExtend(
+  studentLectureListDataSchema,
+);
+export const studentLectureDetailOkSchema = apiOkExtend(
+  studentLectureDetailSchema,
+);
 
 export type ImportPreviewRequest = z.infer<typeof importPreviewRequestSchema>;
 export type ImportCommitRequest = z.infer<typeof importCommitRequestSchema>;
@@ -366,5 +370,7 @@ export type CourseCreateRequest = z.infer<typeof courseCreateRequestSchema>;
 export type CourseUpdateRequest = z.infer<typeof courseUpdateRequestSchema>;
 export type CourseData = z.infer<typeof courseDataSchema>;
 export type StudentLectureSummary = z.infer<typeof studentLectureSummarySchema>;
-export type StudentLectureListData = z.infer<typeof studentLectureListDataSchema>;
+export type StudentLectureListData = z.infer<
+  typeof studentLectureListDataSchema
+>;
 export type StudentLectureDetail = z.infer<typeof studentLectureDetailSchema>;

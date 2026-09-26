@@ -12,7 +12,10 @@ import {
 import type { Db } from "../db/client";
 import { parseJsonBody } from "../lib/http-error";
 import { listStudentAssignments } from "../services/assignment-service";
-import { getStudentLecture, listStudentLectures } from "../services/content-service";
+import {
+  getStudentLecture,
+  listStudentLectures,
+} from "../services/content-service";
 import { changeStudentPassword } from "../services/student-service";
 
 /**

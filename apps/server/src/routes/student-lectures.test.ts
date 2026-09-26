@@ -1,10 +1,10 @@
+import { readFileSync } from "node:fs";
 import type { ApiErr } from "@tutor/contract";
 import {
   apiErrSchema,
   studentLectureDetailOkSchema,
   studentLectureListOkSchema,
 } from "@tutor/contract";
-import { readFileSync } from "node:fs";
 import type { Logger } from "pino";
 import pino from "pino";
 import { describe, expect, it } from "vitest";
@@ -83,7 +83,11 @@ async function makeApp(): Promise<{
     body: JSON.stringify({ loginName: "张三", password: STUDENT_PASSWORD }),
   });
   expect(login.status).toBe(200);
-  return { app, db, studentCookie: `tutor_session=${extractSessionToken(login)}` };
+  return {
+    app,
+    db,
+    studentCookie: `tutor_session=${extractSessionToken(login)}`,
+  };
 }
 
 /** 从 set-cookie 里取出 tutor_session 的值 */
@@ -209,9 +213,9 @@ describe("GET /api/student/lectures（讲义摘要列表）", () => {
     const detailBody = (await detail.json()) as {
       data: { markdown: string; title: string };
     };
-    expect(
-      studentLectureDetailOkSchema.safeParse(detailBody).success,
-    ).toBe(true);
+    expect(studentLectureDetailOkSchema.safeParse(detailBody).success).toBe(
+      true,
+    );
     expect(detailBody.data.title).toBe("第1讲 有理数");
     expect(detailBody.data.markdown).toContain("# 第1讲 有理数");
     expect(detailBody.data.markdown).toContain(":::solution");
@@ -300,7 +304,11 @@ describe("POST /api/student/logout（学生退出登录，T2.3）", () => {
     // 会话行已删除（库内无残留）；旧 Cookie 再访问 → 401
     const token = studentCookie.slice("tutor_session=".length);
     expect(
-      db.select().from(sessions).all().find((row) => row.id === token),
+      db
+        .select()
+        .from(sessions)
+        .all()
+        .find((row) => row.id === token),
     ).toBeUndefined();
     const after = await app.request("/api/student/me", {
       headers: { cookie: studentCookie },

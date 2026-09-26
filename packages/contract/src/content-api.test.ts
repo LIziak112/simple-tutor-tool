@@ -323,7 +323,8 @@ describe("学生端讲义契约（T2.3）", () => {
 
   it("讲义摘要：topic 可为 null（无关联单元/未标注主题）", () => {
     expect(
-      studentLectureSummarySchema.safeParse({ ...summary, topic: null }).success,
+      studentLectureSummarySchema.safeParse({ ...summary, topic: null })
+        .success,
     ).toBe(true);
   });
 
