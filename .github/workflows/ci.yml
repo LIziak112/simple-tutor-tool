@@ -1,0 +1,49 @@
+# CI：install → lint → typecheck → test → build（开发任务清单 T0.6）
+name: CI
+
+# 触发：push 到所有分支 + 所有 pull_request
+on:
+  push:
+  pull_request:
+
+# 同一分支/PR 有新推送时，取消仍在跑的旧运行，节省 CI 时长
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    name: lint / typecheck / test / build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v5
+
+      # 不传 version，pnpm/action-setup 自动读取根 package.json 的 packageManager 字段（pnpm@12.6.0）
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@v4
+
+      # Node 版本与仓库约定一致（根 engines: >=24、.nvmrc: 24）；启用 pnpm store 缓存加速安装
+      - name: 安装 Node 24
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+
+      # --frozen-lockfile：lockfile 与 package.json 不一致时直接失败，保证可复现
+      # pnpm 12 会自动遵守 pnpm-workspace.yaml 的 allowBuilds（better-sqlite3 不构建、esbuild 允许）
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint（biome check）
+        run: pnpm lint
+
+      - name: 类型检查
+        run: pnpm typecheck
+
+      - name: 单元测试
+        run: pnpm test
+
+      - name: 构建
+        run: pnpm build
