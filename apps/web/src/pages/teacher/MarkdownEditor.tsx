@@ -1,5 +1,5 @@
 import { markdown } from "@codemirror/lang-markdown";
-import { type Diagnostic, setDiagnosticsEffect } from "@codemirror/lint";
+import { type Diagnostic, lintGutter, setDiagnostics } from "@codemirror/lint";
 import { EditorView } from "@codemirror/view";
 import CodeMirror from "@uiw/react-codemirror";
 import { useEffect, useMemo, useRef } from "react";
@@ -26,16 +26,18 @@ export function MarkdownEditor({
 }: MarkdownEditorProps) {
   const viewRef = useRef<EditorView | null>(null);
 
-  const extensions = useMemo(() => [markdown(), EditorView.lineWrapping], []);
+  const extensions = useMemo(
+    () => [markdown(), EditorView.lineWrapping, lintGutter()],
+    [],
+  );
 
-  // 诊断推送进编辑器。父组件在文本变化时重算 diagnostics（新数组引用），
-  // 因此文档变更后也会重新 dispatch，setDiagnosticsEffect 是事务效应、幂等安全
+  // 诊断推送进编辑器。setDiagnostics(state, diags) 会在 lint 扩展未注册时一并启用
+  // （下划线标注 + hover 中文消息 + lint 面板逻辑）；lintGutter 渲染行号旁的图标。
+  // 父组件在文本变化时重算 diagnostics（新数组引用），文档变更后也会重新 dispatch。
   useEffect(() => {
     const view = viewRef.current;
     if (view === null) return;
-    view.dispatch({
-      effects: setDiagnosticsEffect.of([...diagnostics]),
-    });
+    view.dispatch(setDiagnostics(view.state, [...diagnostics]));
   }, [diagnostics]);
 
   return (
