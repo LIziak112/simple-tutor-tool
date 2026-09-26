@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { questionTypeSchema } from "./content";
 
 /**
  * 指令注册表（DSL v2 可扩展性的核心）。
@@ -232,3 +233,283 @@ export function getDirective(name: string): RegisteredDirective | undefined {
 export function listDirectives(): RegisteredDirective[] {
   return [...registeredOrder];
 }
+
+/**
+ * 指令属性对象的公共底座：`{#id .样式类}` 简写对任何指令都合法（§5.1.1(1) 属性写法统一），
+ * remark-directive 分别解析为 attributes.id / attributes.class（多个样式类以空格相连）。
+ * strict 模式拒绝未知属性名——老师/AI 写错属性名（如 difculty）在 lint 阶段即被发现，
+ * 而不是被静默忽略后悄悄按缺省值入库。
+ */
+const directiveAttrs = <TShape extends z.ZodRawShape>(shape: TShape) =>
+  z.strictObject({
+    /** 锚点 id（`{#x}` 或 `{id=x}` 简写与显式写法等价） */
+    id: z.string().min(1).optional(),
+    /** 样式类（`.x` 简写；多个以空格相连，如 class="a b"） */
+    class: z.string().min(1).optional(),
+    ...shape,
+  });
+
+/*
+ * V2 首发指令（§5.1.1(5)，共 17 个，按表中类别顺序登记）。
+ * 兼容提醒（AGENTS.md 第 11 条）：以下名字与含义已发布后只增不改；
+ * 新增属性必须可选且带缺省值；改名走 aliases；未知指令由 linter warning 处理。
+ */
+
+// ---------- 题目结构 ----------
+
+/** 一道题（练习/混合文档的顶层容器） */
+export const questionDirective = defineDirective({
+  name: "question",
+  kind: "container",
+  since: "2.0",
+  allowedIn: ["document"],
+  attrs: directiveAttrs({
+    /** 题型（必填，七种；与 content.ts 的 questionTypeSchema 同源，未知值 lint 报错） */
+    type: questionTypeSchema,
+    /** 难度 1–5 的整数，缺省 2；remark-directive 属性值是字符串，故用 coerce */
+    difficulty: z.coerce.number().int().min(1).max(5).default(2),
+    /** 考点（单个；解析时归一为数组入库，见 content.ts questionSchema.knowledge） */
+    knowledge: z.string().min(1).optional(),
+  }),
+  description:
+    "一道题，练习/混合文档的顶层容器。内部依次为：题干正文（填空标记 [[…]]、判断 [[正确]]/[[错误]]、选择题任务列表 - [x] 都直接写在题干里）、可选的 :::hint（可多个）、手写题可选 :::answer、可选 :::solution。id 可用 {#p4-q7} 指定，缺省为「单元slug-序号」；编辑内容时保持 id 不变，学情统计才能跨版本延续。type 必填，difficulty 缺省 2。",
+  example:
+    '::::question{type=fill difficulty=2 knowledge="有理数加法"}\n计算：$(-3)+7=$ [[4]]。\n\n:::hint\n同号相加取相同符号；异号相加取绝对值较大的符号。\n:::\n\n:::solution\n$(-3)+7=4$。\n:::\n::::',
+});
+
+/** 提示（题目内可多个 / 讲义正文） */
+export const hintDirective = defineDirective({
+  name: "hint",
+  kind: "container",
+  since: "2.0",
+  allowedIn: ["question", "lecture"],
+  attrs: directiveAttrs({}),
+  description:
+    "提示。题目内可有多个，学生端逐个点开、每次点开都记录事件（教师可见提示使用情况）；也用于讲义正文补充说明。提示内容不下发到题面，学生主动获取。",
+  example: ":::hint\n同号相加取相同符号；异号相加取绝对值较大的符号。\n:::",
+});
+
+/** 手写题的最终答案（教师侧机密，用于自动判分） */
+export const answerDirective = defineDirective({
+  name: "answer",
+  kind: "container",
+  since: "2.0",
+  allowedIn: ["question"],
+  attrs: directiveAttrs({}),
+  description:
+    "手写题（solve/apply/find-error）的「最终答案」，写在对应 question 内，服务端用它自动判分。属于教师侧机密，学生端交卷前不下发；过程与评分说明另用 :::solution。",
+  example: ":::answer\n-3\n:::",
+});
+
+/** 详解/讲解（题目内交卷后下发；讲义内常与 example 搭配） */
+export const solutionDirective = defineDirective({
+  name: "solution",
+  kind: "container",
+  since: "2.0",
+  allowedIn: ["question", "lecture"],
+  attrs: directiveAttrs({}),
+  description:
+    "详解/讲解。题目内：交卷后才下发给学生；讲义内：常与 :::example 搭配写例题解析，默认折叠、展开即上报事件。",
+  example: ":::solution\n$(-3)+7=4$；$(-2)+(-5)=-7$。\n:::",
+});
+
+/** 填空/判断作答空位（[[…]] 行内语法糖，非指令写法） */
+export const blankDirective = defineDirective({
+  name: "blank",
+  kind: "text",
+  since: "2.0",
+  allowedIn: ["question"],
+  attrs: directiveAttrs({}),
+  syntax: "[[答案]]",
+  description:
+    "填空/判断的作答空位（语法糖，不是指令，不要写成 :blank[…]）：题干里写 [[4]] 即一个空；等价答案用 | 分隔，如 [[0.5|1/2]]；判断题固定写 [[正确]] 或 [[错误]]。空数由标记自动统计，答案与空按出现顺序对齐。标记内含参考答案，属教师侧内容，学生端下发前会被替换为输入框。",
+  example: "计算：$(-3)+7=$ [[4]]；$(-2)+(-5)=$ [[-7]]。",
+});
+
+// ---------- 讲义互动 ----------
+
+/** 讲义例题块（题面 + 折叠解析） */
+export const exampleDirective = defineDirective({
+  name: "example",
+  kind: "container",
+  since: "2.0",
+  allowedIn: ["lecture"],
+  attrs: directiveAttrs({
+    /** 例题标题，缺省前端显示「例题」 */
+    title: z.string().min(1).optional(),
+  }),
+  description:
+    "讲义例题块：题面 + 解析，解析常以 :::solution 写在本块内（默认折叠，展开即上报事件）。嵌套时外层要多一个冒号（::::example）。仅用于讲义/混合文档的讲义段落。",
+  example:
+    '::::example{title="例 1"}\n计算 $(-3)+7$。\n\n:::solution\n$(-3)+7=4$。\n:::\n::::',
+});
+
+/** 逐步揭晓容器 */
+export const stepsDirective = defineDirective({
+  name: "steps",
+  kind: "container",
+  since: "2.0",
+  allowedIn: ["lecture"],
+  attrs: directiveAttrs({}),
+  description:
+    "逐步揭晓：把推导/解题过程拆成若干 :::step，学生逐步展开，每展开一步上报一次事件，教师能看到推进到哪里。仅讲义正文可用。",
+  example:
+    '::::steps\n:::step{title="第 1 步：去括号"}\n先处理乘方，再算乘除。\n:::\n:::step{title="第 2 步：合并"}\n$-4+1=-3$。\n:::\n::::',
+});
+
+/** steps 中的一个步骤 */
+export const stepDirective = defineDirective({
+  name: "step",
+  kind: "container",
+  since: "2.0",
+  allowedIn: ["steps"],
+  attrs: directiveAttrs({
+    /** 该步标题；缺省为空串，前端按顺序显示「第 N 步」 */
+    title: z.string().default(""),
+  }),
+  description:
+    "steps 中的一个步骤，必须写在 :::steps 内部。title 缺省时前端按顺序显示「第 N 步」。",
+  example: ':::step{title="第 1 步：去括号"}\n先处理乘方，再算乘除。\n:::',
+});
+
+/** 通用折叠块 */
+export const foldDirective = defineDirective({
+  name: "fold",
+  kind: "container",
+  since: "2.0",
+  allowedIn: ["lecture"],
+  attrs: directiveAttrs({
+    /** 折叠标题，缺省「详情」 */
+    title: z.string().min(1).default("详情"),
+  }),
+  description:
+    "通用折叠块：默认收起、点击展开（展开事件上报）。适合放拓展阅读、次级说明等不挡主线的内容。仅讲义正文可用。",
+  example: ':::fold{title="拓展：为什么 0 不能作除数"}\n…\n:::',
+});
+
+// ---------- 版式与强调 ----------
+
+/** 提示框 */
+export const tipDirective = defineDirective({
+  name: "tip",
+  kind: "container",
+  since: "2.0",
+  allowedIn: ["lecture", "question"],
+  attrs: directiveAttrs({
+    /** 标题，缺省前端显示「提示」 */
+    title: z.string().min(1).optional(),
+  }),
+  description:
+    "提示框：补充说明、小技巧等旁支信息，视觉弱于 warning。讲义与题目内都可用，title 缺省显示「提示」。",
+  example: ':::tip{title="小技巧"}\n先通分再计算。\n:::',
+});
+
+/** 警告框 */
+export const warningDirective = defineDirective({
+  name: "warning",
+  kind: "container",
+  since: "2.0",
+  allowedIn: ["lecture", "question"],
+  attrs: directiveAttrs({
+    /** 标题，缺省前端显示「注意」 */
+    title: z.string().min(1).optional(),
+  }),
+  description:
+    "警告框：易错点、常见误区，视觉上比 tip 更醒目。讲义与题目内都可用，title 缺省显示「注意」。",
+  example:
+    ':::warning{title="易错点"}\n$-2^2 \\neq (-2)^2$：底数带不带括号，意义完全不同。\n:::',
+});
+
+/** 通用版式盒（.样式类 可选） */
+export const boxDirective = defineDirective({
+  name: "box",
+  kind: "container",
+  since: "2.0",
+  allowedIn: ["lecture", "question"],
+  attrs: directiveAttrs({
+    /** 盒标题，可选 */
+    title: z.string().min(1).optional(),
+  }),
+  description:
+    "通用版式盒（自定义强调容器）。样式类用 .样式类 简写：如 :::box{.warning title=「易错点」} 中 .warning 会被解析进 class 属性（常用值 warning/info/success），不写样式类时为中性样式。需要 tip/warning 之外的固定外观时用它。",
+  example: ':::box{.warning title="易错点"}\n除法不满足结合律。\n:::',
+});
+
+/** 分栏容器 */
+export const columnsDirective = defineDirective({
+  name: "columns",
+  kind: "container",
+  since: "2.0",
+  allowedIn: ["lecture", "question"],
+  attrs: directiveAttrs({}),
+  description:
+    "分栏容器：内部由若干 :::col 组成并排显示（iPad 横屏友好），栏内可放任意内容与指令。",
+  example:
+    '::::columns\n:::col\n文字说明。\n:::\n:::col\n::graph{fn="x^2"}\n:::\n::::',
+});
+
+/** columns 中的一栏 */
+export const colDirective = defineDirective({
+  name: "col",
+  kind: "container",
+  since: "2.0",
+  allowedIn: ["columns"],
+  attrs: directiveAttrs({
+    /** 栏宽（如 "40%"、"2fr"），缺省各栏均分 */
+    width: z.string().min(1).optional(),
+  }),
+  description:
+    "columns 中的一栏，必须写在 :::columns 内部。width 缺省时各栏均分。",
+  example: ':::col{width="40%"}\n左栏内容：文字或指令。\n:::',
+});
+
+/** 行内重点标记（荧光笔） */
+export const markDirective = defineDirective({
+  name: "mark",
+  kind: "text",
+  since: "2.0",
+  allowedIn: ["lecture", "question"],
+  attrs: directiveAttrs({
+    /** 高亮颜色，缺省 yellow */
+    color: z.enum(["yellow", "red", "blue", "green"]).default("yellow"),
+  }),
+  description:
+    "行内重点标记（荧光笔效果）：在句子中间圈出关键词。讲义与题目文本中均可使用。",
+  example: "注意 :mark[系数的符号]{color=red} 不能丢。",
+});
+
+// ---------- 媒体 ----------
+
+/** 块级图片 */
+export const imageDirective = defineDirective({
+  name: "image",
+  kind: "leaf",
+  since: "2.0",
+  allowedIn: ["lecture", "question"],
+  attrs: directiveAttrs({
+    /** 图片路径（必填）：导入时上传到服务端 blobs 的文件，非外链 URL */
+    src: z.string().min(1),
+    /** 显示宽度（如 "60%"、"320px"），缺省自适应 */
+    width: z.string().min(1).optional(),
+  }),
+  description:
+    "块级图片。图片以文件形式存放在服务端 data/blobs/（导入时上传），src 写 blobs 内路径，不支持外链 URL；width 缺省自适应。",
+  example: '::image{src="blobs/fig-1.png" width="60%"}',
+});
+
+/** 函数图像 */
+export const graphDirective = defineDirective({
+  name: "graph",
+  kind: "leaf",
+  since: "2.0",
+  allowedIn: ["lecture", "question"],
+  attrs: directiveAttrs({
+    /** 函数表达式（必填），如 "x^2"、"sin(x)" */
+    fn: z.string().min(1),
+    /** x 轴范围（如 "-3,3"），缺省自动选取 */
+    range: z.string().min(1).optional(),
+  }),
+  description:
+    "函数图像，前端用 function-plot 按需加载渲染。fn 为函数表达式（如 x^2、sin(x)），range 为 x 轴范围（如 -3,3），缺省自动选取。",
+  example: '::graph{fn="x^2" range="-3,3"}',
+});
