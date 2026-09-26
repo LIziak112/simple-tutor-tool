@@ -2,14 +2,17 @@ import { describe, expect, it } from "vitest";
 import {
   assignmentCreateRequestSchema,
   assignmentDueAtSchema,
+  assignmentErrorCodeSchema,
   assignmentListQuerySchema,
   assignmentUpdateRequestSchema,
   studentAssignmentSchema,
+  studentPaperDataSchema,
 } from "./assignment.ts";
 
 /**
- * 作业契约自测（T2.2）：锁定创建/更新请求的关键校验（studentIds 至少一名、
- * dueAt 必须 UTC ISO）与学生端条目的无泄露字段集合，防止后续调整契约时无声放宽。
+ * 作业契约自测（T2.2，T2.4 追加试卷）：锁定创建/更新请求的关键校验
+ * （studentIds 至少一名、dueAt 必须 UTC ISO）、学生端条目与试卷的无泄露字段
+ * 集合，防止后续调整契约时无声放宽。
  */
 
 const UNIT_ID = "unit-一元一次方程";
@@ -153,5 +156,70 @@ describe("studentAssignmentSchema（学生端无泄露约束）", () => {
     expect(
       studentAssignmentSchema.safeParse({ ...base, status: "done" }).success,
     ).toBe(false);
+  });
+});
+
+describe("studentPaperDataSchema（T2.4 学生试卷：元素必须是 QuestionPublic 输出形态）", () => {
+  /** 合法公开题目（模拟服务端 parse 后的输出） */
+  const publicQuestion = {
+    id: "练习四-2",
+    type: "choice" as const,
+    difficulty: 1,
+    knowledge: ["相反数"],
+    stemMd: "$-5$ 的相反数是（　）",
+    options: ["$-5$", "$5$", "$\\frac{1}{5}$", "$-\\frac{1}{5}$"],
+    hintCount: 1,
+  };
+
+  it("接受 QuestionPublic 数组；空试卷（0 题）同样合法", () => {
+    expect(
+      studentPaperDataSchema.safeParse({ questions: [publicQuestion] })
+        .success,
+    ).toBe(true);
+    expect(studentPaperDataSchema.safeParse({ questions: [] }).success).toBe(
+      true,
+    );
+  });
+
+  it("元素携带教师侧字段时整体剥离（strip 语义），机密不外泄", () => {
+    const parsed = studentPaperDataSchema.parse({
+      questions: [
+        {
+          ...publicQuestion,
+          answers: { kind: "choice", index: 1 },
+          solutionMd: "$-5$ 的相反数是 $5$，故选 B。",
+          hints: ["只有符号不同的两个数互为相反数"],
+          sourceMd: "::::question{type=choice}…::::",
+          version: 1,
+        },
+      ],
+    });
+    expect(parsed.questions[0]).toEqual(publicQuestion);
+  });
+
+  it("元素形态非法（携带 correct 标记的选项对象 / 缺 hintCount）整体拒绝（fail closed）", () => {
+    expect(
+      studentPaperDataSchema.safeParse({
+        questions: [
+          { ...publicQuestion, options: [{ text: "$5$", correct: true }] },
+        ],
+      }).success,
+    ).toBe(false);
+    const { hintCount: omitted, ...rest } = publicQuestion;
+    expect(omitted).toBe(1);
+    expect(
+      studentPaperDataSchema.safeParse({ questions: [rest] }).success,
+    ).toBe(false);
+  });
+});
+
+describe("assignmentErrorCodeSchema（T2.4 追加 FORBIDDEN）", () => {
+  it("包含未被指派学生的 403 错误码 FORBIDDEN", () => {
+    expect(assignmentErrorCodeSchema.safeParse("FORBIDDEN").success).toBe(
+      true,
+    );
+    expect(assignmentErrorCodeSchema.safeParse("NOT_ASSIGNED").success).toBe(
+      false,
+    );
   });
 });
