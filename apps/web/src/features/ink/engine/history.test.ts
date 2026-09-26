@@ -134,6 +134,18 @@ describe("InkStore 撤销/重做", () => {
     expect(store.getStrokes()).toEqual([stroke([[9, 9]])]);
   });
 
+  it("load 相同内容（load(getData()) 往返）不产生历史噪音", () => {
+    const store = new InkStore();
+    store.commitAdd([stroke([[1, 1]])]);
+    store.replace(store.getStrokes(), 999); // 内容一致
+    expect(store.getUpdatedAt()).toBe(999);
+    // 撤销栈只有最初的 add 一条
+    store.undo();
+    expect(store.getStrokes()).toHaveLength(0);
+    expect(store.canUndo()).toBe(false);
+    expect(store.canRedo()).toBe(true); // 只能重做 add
+  });
+
   it("对空画布 commitClear 是 no-op 且不产生历史", () => {
     const store = new InkStore();
     const cb = vi.fn();

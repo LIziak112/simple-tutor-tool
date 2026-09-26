@@ -52,8 +52,10 @@ interface Snapshot {
 export function createExcalidrawSurface(
   options: ExcalidrawSurfaceOptions = {},
 ): ToolAwareSurface {
-  let container: HTMLElement | null = null;
+  let host: HTMLElement | null = null;
   let root: Root | null = null;
+  /** root.render 是否已调用（未渲染的 root 不能 unmount，否则 React 报错） */
+  let rendered = false;
   let api: ExcalidrawImperativeAPI | null = null;
   let destroyed = false;
 
@@ -96,7 +98,6 @@ export function createExcalidrawSurface(
 
   const surface: ToolAwareSurface = {
     mount(el: HTMLElement, initial?: InkDoc): void {
-      container = el;
       el.style.position = "relative";
       el.style.overflow = "hidden";
 
@@ -105,7 +106,6 @@ export function createExcalidrawSurface(
       host.style.inset = "0";
       el.appendChild(host);
       root = createRoot(host);
-
       // 禁 CDN：在任何加载发生之前指向本站静态目录
       window.EXCALIDRAW_ASSET_PATH = ASSET_PATH;
 
@@ -157,6 +157,7 @@ export function createExcalidrawSurface(
               },
             }),
           );
+          rendered = true;
         } catch (err) {
           if (destroyed) return;
           options.onError?.(
@@ -290,13 +291,21 @@ export function createExcalidrawSurface(
       destroyed = true;
       listeners.clear();
       queue.length = 0;
-      root?.unmount();
+      // 只卸载/移除本适配器创建的节点：容器里可能还有宿主 React 树的
+      // 子元素（加载/错误覆盖层），绝不能整容器清空，否则宿主树 removeChild 崩溃。
+      // 嵌套 root 的 unmount 不能在宿主树的 commit 阶段同步调用（React 会告警
+      // "unmount a root while React was already rendering"），挪到微任务执行；
+      // host.remove() 已同步摘除 DOM，视觉无延迟
+      const nestedRoot = root;
       root = null;
-      api = null;
-      if (container) {
-        container.textContent = "";
-        container = null;
+      if (nestedRoot && rendered) {
+        queueMicrotask(() => {
+          nestedRoot.unmount();
+        });
       }
+      host?.remove();
+      host = null;
+      api = null;
     },
   };
 

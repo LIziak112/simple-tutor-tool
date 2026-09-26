@@ -52,6 +52,7 @@ export default function InkDevPage() {
           </h2>
           <p className="mb-3 text-xs text-muted-foreground">
             大题/画图用。库按需加载（首次进入需几秒）；题干固定在顶部，下方整屏书写。
+            进入全屏后同样有工具栏与数据面板（往返验证 / PNG 预览在面板里）。
           </p>
           <div className="mb-3">
             <Button
@@ -63,7 +64,6 @@ export default function InkDevPage() {
               进入全屏作答
             </Button>
           </div>
-          <InkSection engine="excalidraw" />
         </section>
 
         <section aria-labelledby="ink-sec-checklist">
@@ -92,7 +92,7 @@ export default function InkDevPage() {
   );
 }
 
-/** 全屏作答覆盖层：题干固定顶部 + 整屏 Excalidraw（退出即销毁引擎） */
+/** 全屏作答覆盖层：题干固定顶部 + 整屏 Excalidraw（退出即销毁引擎与懒加载状态） */
 function FullscreenInk({ onClose }: { onClose: () => void }) {
   // 覆盖层挂载时才渲染 InkPad → Excalidraw 只在此时动态加载
   const initialHeight =
@@ -121,11 +121,11 @@ function FullscreenInk({ onClose }: { onClose: () => void }) {
           退出全屏
         </Button>
       </header>
-      <div className="min-h-0 flex-1 p-3">
-        <InkPad
+      <div className="min-h-0 flex-1 overflow-y-auto p-3">
+        <InkSection
           engine="excalidraw"
-          label="全屏手写作答区"
           initialHeight={initialHeight}
+          padLabel="全屏手写作答区"
         />
       </div>
     </div>
@@ -136,9 +136,11 @@ function FullscreenInk({ onClose }: { onClose: () => void }) {
 function InkSection({
   engine,
   initialHeight,
+  padLabel,
 }: {
   engine: InkEngineKind;
   initialHeight?: number;
+  padLabel?: string;
 }) {
   const engineRef = useRef<InkEngine | null>(null);
   const [doc, setDoc] = useState<InkDoc | null>(null);
@@ -185,7 +187,10 @@ function InkSection({
         engineRef={engineRef}
         onDocChange={setDoc}
         {...(initialHeight !== undefined ? { initialHeight } : {})}
-        label={engine === "atrament" ? "页内手写答题区" : "全屏手写作答区"}
+        label={
+          padLabel ??
+          (engine === "atrament" ? "页内手写答题区" : "全屏手写作答区")
+        }
       />
 
       {/* 数据面板 */}

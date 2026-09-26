@@ -27,6 +27,19 @@ function clone<T>(v: T): T {
   return structuredClone(v);
 }
 
+/** 两组笔画是否内容完全一致（load 相同内容时不产生历史噪音） */
+function equalStrokes(
+  a: readonly InkStroke[],
+  b: readonly InkStroke[],
+): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (JSON.stringify(a[i]) !== JSON.stringify(b[i])) return false;
+  }
+  return true;
+}
+
 /**
  * 手写数据仓库。 strokes 只增不改（immutable 快照），对外返回副本，
  * 保证 getData() 的结果与后续操作互不影响（草稿保存/往返比较的前提）。
@@ -104,10 +117,11 @@ export class InkStore {
   /**
    * 整体替换为外部文档内容（load 用）。默认时间戳取当前时刻；
    * load 外部文档时传入文档自带的 updatedAt，保证 load(getData()) 往返一致。
+   * 内容与当前完全一致时（如 load(getData()) 往返验证）不产生历史条目，
+   * 避免撤销栈里出现"什么都没变"的一步。
    */
   replace(strokes: InkStroke[], updatedAt = Date.now()): void {
-    if (this.#strokes.length === 0 && strokes.length === 0) {
-      // 空文档加载到空画布：不产生历史噪音，只对齐时间戳
+    if (equalStrokes(this.#strokes, strokes)) {
       this.#changed(updatedAt);
       return;
     }
