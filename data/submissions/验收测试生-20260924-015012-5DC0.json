@@ -1,0 +1,107 @@
+{
+  "version": 1,
+  "student": "验收测试生",
+  "unitId": "练习四",
+  "unitName": "有理数加减混合",
+  "submittedAt": "2026-09-23T17:50:12.636Z",
+  "durationSec": 89,
+  "device": "pc",
+  "questions": [
+    {
+      "id": "练习四-1",
+      "number": 1,
+      "type": "判断",
+      "textAnswer": "正确",
+      "correct": true,
+      "autoGraded": true,
+      "strokesPng": null,
+      "timeSec": 89,
+      "teacherMark": null,
+      "teacherComment": null
+    },
+    {
+      "id": "练习四-2",
+      "number": 2,
+      "type": "填空",
+      "textAnswer": "4;;-7",
+      "correct": true,
+      "autoGraded": true,
+      "strokesPng": null,
+      "timeSec": 89,
+      "teacherMark": null,
+      "teacherComment": null
+    },
+    {
+      "id": "练习四-3",
+      "number": 3,
+      "type": "选择",
+      "textAnswer": "C",
+      "correct": false,
+      "autoGraded": true,
+      "strokesPng": null,
+      "timeSec": 89,
+      "teacherMark": null,
+      "teacherComment": null
+    },
+    {
+      "id": "练习四-4",
+      "number": 4,
+      "type": "计算",
+      "textAnswer": "0",
+      "correct": true,
+      "autoGraded": true,
+      "strokesPng": null,
+      "timeSec": 49,
+      "teacherMark": null,
+      "teacherComment": null
+    },
+    {
+      "id": "练习四-5",
+      "number": 5,
+      "type": "计算",
+      "textAnswer": "",
+      "correct": null,
+      "autoGraded": false,
+      "strokesPng": null,
+      "timeSec": 49,
+      "teacherMark": "错误",
+      "teacherComment": "手写区空白，请补做"
+    },
+    {
+      "id": "练习四-6",
+      "number": 6,
+      "type": "填空",
+      "textAnswer": "6",
+      "correct": true,
+      "autoGraded": true,
+      "strokesPng": null,
+      "timeSec": 49,
+      "teacherMark": null,
+      "teacherComment": null
+    },
+    {
+      "id": "练习四-7",
+      "number": 7,
+      "type": "找错",
+      "textAnswer": "",
+      "correct": null,
+      "autoGraded": false,
+      "strokesPng": null,
+      "timeSec": 49,
+      "teacherMark": null,
+      "teacherComment": null
+    },
+    {
+      "id": "练习四-8",
+      "number": 8,
+      "type": "应用",
+      "textAnswer": "-1",
+      "correct": true,
+      "autoGraded": true,
+      "strokesPng": null,
+      "timeSec": 49,
+      "teacherMark": null,
+      "teacherComment": null
+    }
+  ]
+}
