@@ -1,0 +1,12 @@
+# pnpm workspace：前端/后端应用与共享包
+packages:
+  - "apps/*"
+  - "packages/*"
+
+# 供应链冷却期豁免：@types/node 跟随 Node 补丁版随时发布，需豁免 pnpm 的最小发布龄限制（由 pnpm install 自动写入）
+minimumReleaseAgeExclude:
+  - '@types/node@24.19.0'
+
+# 允许执行安装期构建脚本的依赖（pnpm 默认阻止所有依赖的生命周期脚本）
+onlyBuiltDependencies:
+  - esbuild

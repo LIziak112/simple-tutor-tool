@@ -1,0 +1,17 @@
+# 依赖
+node_modules/
+
+# 构建产物与测试覆盖率
+dist/
+coverage/
+
+# 运行时数据与部署产物（SQLite、blobs、备份等都在 data/）
+data/
+deploy/
+
+# 环境变量与本机覆盖配置
+.env
+*.local
+
+# 本机 agent 配置目录，不入库
+.zcode/
