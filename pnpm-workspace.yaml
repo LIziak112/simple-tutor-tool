@@ -10,3 +10,5 @@ allowBuilds:
 # 供应链冷却期豁免：@types/node 跟随 Node 补丁版随时发布，需豁免 pnpm 的最小发布龄限制（由 pnpm install 自动写入）
 minimumReleaseAgeExclude:
   - '@types/node@24.19.0'
+  - '@tanstack/query-core@5.104.0'
+  - '@tanstack/react-query@5.104.0'
