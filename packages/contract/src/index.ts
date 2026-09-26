@@ -3,6 +3,9 @@ import { z } from "zod";
 /** 内容契约（DSL v2）：题目、讲义、单元、解析结果、lint issue，T1.1 起为权威定义 */
 export * from "./content";
 
+/** 指令注册表（DSL v2 可扩展性核心，T1.2 起为权威定义）：defineDirective、按名/别名查询、首发指令 */
+export * from "./directives";
+
 /**
  * API 响应壳（占位示例）。
  * 约定见 docs/开发任务清单.md §0.3：
