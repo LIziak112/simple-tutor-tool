@@ -45,7 +45,7 @@ const DialogContent = ({
       {children}
       <DialogPrimitive.Close
         data-slot="dialog-close"
-        aria-label="关闭"
+        aria-label="关闭弹层"
         className="absolute top-4 right-4 flex size-8 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
       >
         <X aria-hidden className="size-4" />
