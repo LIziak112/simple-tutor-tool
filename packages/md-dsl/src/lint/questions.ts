@@ -7,9 +7,14 @@ import type { Root, Text } from "mdast";
 import type { ContainerDirective } from "mdast-util-directive";
 import type { Node } from "unist";
 import { SKIP, visit } from "unist-util-visit";
-import type { ParseOptions } from "../v2/parse";
-import { isQuestionContainer } from "../v2/question";
-import { canonicalName, lineRange, makeIssue, sliceLines } from "../v2/shared";
+import type { ParseOptions } from "../v2/parse.ts";
+import { isQuestionContainer } from "../v2/question.ts";
+import {
+  canonicalName,
+  lineRange,
+  makeIssue,
+  sliceLines,
+} from "../v2/shared.ts";
 
 /**
  * 题目层 lint 规则（T1.5）：解析层「尽量产出、不重复报错」，把题型语义问题留给本层：

@@ -9,9 +9,9 @@ import {
 } from "@tutor/contract";
 import type { Root } from "mdast";
 import type { ContainerDirective } from "mdast-util-directive";
-import { extractFrontmatter } from "./frontmatter";
-import { headingText, isH1, splitLectures } from "./lecture";
-import { extractQuestions, isQuestionContainer } from "./question";
+import { extractFrontmatter } from "./frontmatter.ts";
+import { headingText, isH1, splitLectures } from "./lecture.ts";
+import { extractQuestions, isQuestionContainer } from "./question.ts";
 import {
   errorMessage,
   FALLBACK_UNIT_ID,
@@ -22,7 +22,7 @@ import {
   makeIssue,
   processor,
   zodErrorsText,
-} from "./shared";
+} from "./shared.ts";
 
 /**
  * DSL v2 文档解析入口（T1.3 练习题；T1.4 起按 frontmatter kind 分派）：

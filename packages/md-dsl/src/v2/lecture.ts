@@ -2,8 +2,8 @@ import type { Lecture, LectureHeading, LintIssue } from "@tutor/contract";
 import type { Heading, RootContent } from "mdast";
 import type { Node } from "unist";
 import { visit } from "unist-util-visit";
-import { isQuestionContainer } from "./question";
-import { lineRange, makeIssue, sliceRangeExcluding } from "./shared";
+import { isQuestionContainer } from "./question.ts";
+import { lineRange, makeIssue, sliceRangeExcluding } from "./shared.ts";
 
 /**
  * 讲义切分（T1.4）：kind: lecture 与 kind: mixed 共用。

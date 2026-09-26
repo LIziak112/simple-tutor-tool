@@ -19,7 +19,7 @@ import {
   sliceLines,
   sliceRangeExcluding,
   zodErrorsText,
-} from "./shared";
+} from "./shared.ts";
 
 /**
  * question 容器解析（T1.3 建立，T1.4 抽成公共模块）：

@@ -1,11 +1,11 @@
 import type { Question } from "@tutor/contract";
-import { trimBlankEdges } from "../v2/shared";
+import { trimBlankEdges } from "../v2/shared.ts";
 import {
   mapQuestion,
   parseV1Detailed,
   type V1ParsedUnit,
   type V1RawQuestion,
-} from "./parse";
+} from "./parse.ts";
 
 /**
  * v1 → v2 文本转换（T1.6）：把 v1 旧格式练习册转成合法 v2 DSL 文本，

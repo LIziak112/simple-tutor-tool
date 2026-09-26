@@ -12,8 +12,8 @@ import type {
   TextDirective,
 } from "mdast-util-directive";
 import type { Node } from "unist";
-import { canonicalName, makeIssue } from "../v2/shared";
-import { suggestAttrKey, suggestDirectiveName } from "./similarity";
+import { canonicalName, makeIssue } from "../v2/shared.ts";
+import { suggestAttrKey, suggestDirectiveName } from "./similarity.ts";
 
 /**
  * 指令层 lint 规则（T1.5）：在解析产出的 AST 上遍历全部指令节点（容器/块/行内），
@@ -33,8 +33,8 @@ import { suggestAttrKey, suggestDirectiveName } from "./similarity";
  *   由专属的 *_OUTSIDE_QUESTION 规则报（语义更具体，避免同一问题双报）。
  */
 
-/** 指令位置语境的中文标签（message 用） */
-const LOCATION_LABELS: Record<DirectiveLocation, string> = {
+/** 指令位置语境的中文标签（lint message 与 gen:spec 规范文档共用，导出避免两处漂移） */
+export const LOCATION_LABELS: Record<DirectiveLocation, string> = {
   document: "文档顶层",
   lecture: "讲义正文",
   question: "题目内",

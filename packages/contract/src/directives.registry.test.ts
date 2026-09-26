@@ -183,4 +183,33 @@ describe("指令定义校验（注册期 fail fast）", () => {
       }),
     ).not.toThrow();
   });
+
+  it("attrDocs 键必须在 attrs 属性中，未知键拒绝（gen:spec 数据源防漂移）", () => {
+    // 合法：键与 attrs 的业务属性一一对应（id/class 底座说明统一写在规范总则，不经 attrDocs）
+    expect(() =>
+      defineDirective({
+        name: "t-test-attrdocs-ok",
+        kind: "container",
+        since: "2.0",
+        allowedIn: ["lecture"],
+        attrs: z.strictObject({ title: z.string().optional() }),
+        attrDocs: { title: "标题，可选" },
+        description: "测试",
+        example: ":::t-test-attrdocs-ok\n内容\n:::",
+      }),
+    ).not.toThrow();
+    // 非法：说明指向不存在的属性
+    expect(() =>
+      defineDirective({
+        name: "t-test-attrdocs-bad",
+        kind: "container",
+        since: "2.0",
+        allowedIn: ["lecture"],
+        attrs: z.strictObject({ title: z.string().optional() }),
+        attrDocs: { titel: "拼错的键" },
+        description: "测试",
+        example: ":::t-test-attrdocs-bad\n内容\n:::",
+      }),
+    ).toThrow(/attrDocs.*titel|titel.*attrDocs/);
+  });
 });
