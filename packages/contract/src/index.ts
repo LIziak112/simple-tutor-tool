@@ -9,6 +9,9 @@ export * from "./content.ts";
 /** 内容导入 API 契约（T1.10 起为权威定义）：导入预览/提交请求体与响应、LINT_ERROR 错误壳 */
 export * from "./content-api.ts";
 
+/** DSL 规范文件契约（T1.13 起为权威定义）：/api/public/spec 文件名枚举与 Content-Type */
+export * from "./spec.ts";
+
 /** 指令注册表（DSL v2 可扩展性核心，T1.2 起为权威定义）：defineDirective、按名/别名查询、首发指令 */
 export * from "./directives.ts";
 
