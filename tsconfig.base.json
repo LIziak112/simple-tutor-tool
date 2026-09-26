@@ -1,0 +1,31 @@
+{
+  "compilerOptions": {
+    // 语言与模块：面向打包器/Node 24 的现代 ESM
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+
+    // 模块语法强制：类型导入必须写 import type，利于打包器做副作用分析与按需加载
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "useDefineForClassFields": true,
+
+    // strict 全家桶
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+
+    // 每个包自己决定产物方式；类型检查统一不落盘
+    "skipLibCheck": true,
+    "noEmit": true
+  }
+}
