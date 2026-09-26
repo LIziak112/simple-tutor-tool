@@ -1,5 +1,8 @@
 import { z } from "zod";
 
+/** 内容契约（DSL v2）：题目、讲义、单元、解析结果、lint issue，T1.1 起为权威定义 */
+export * from "./content";
+
 /**
  * API 响应壳（占位示例）。
  * 约定见 docs/开发任务清单.md §0.3：
