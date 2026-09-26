@@ -8,7 +8,7 @@ import type { ZodType } from "zod";
  */
 
 /** 业务错误允许的状态码（Hono 的 c.json 需要字面量状态类型，收窄在这里集中管理） */
-export type HttpErrorStatus = 400 | 401 | 403 | 404 | 409 | 429;
+export type HttpErrorStatus = 400 | 401 | 403 | 404 | 409 | 422 | 429;
 
 export class HttpError extends Error {
   constructor(
@@ -17,6 +17,11 @@ export class HttpError extends Error {
     /** UPPER_SNAKE 错误码（TEACHER_EXISTS / INVALID_CREDENTIALS / …，见 packages/contract auth.ts） */
     readonly code: string,
     message: string,
+    /**
+     * 附加进错误响应壳的额外字段（如导入 commit 的 LINT_ERROR 携带 _issues 供前端标红）。
+     * 键名建议下划线开头，避免与统一壳的 ok/error/message 混淆；无附加信息时省略。
+     */
+    readonly extra?: Record<string, unknown>,
   ) {
     super(message);
     this.name = "HttpError";
