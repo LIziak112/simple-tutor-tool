@@ -1,7 +1,7 @@
 /**
  * DSL 解析器与 linter 包。
- * v2 解析器：parseDocument（T1.3 起支持练习题；T1.4 将扩展讲义与混合文档）；
- * linter 在 T1.5 落地；v1 兼容解析在 T1.6 落地。
+ * v2 解析器：parseDocument 按 frontmatter kind 分派（practice 练习题 / lecture 讲义 H1 切分 /
+ * mixed 讲义与题目拆分关联，T1.3/T1.4）；linter 在 T1.5 落地；v1 兼容解析在 T1.6 落地。
  */
 
 /** 内容 DSL 规范版本 */
