@@ -30,3 +30,18 @@ export function formatRelativeTime(
     .locale("zh-cn")
     .from(dayjs(now), false);
 }
+
+/** 截止时间展示格式（Asia/Shanghai，不含年份与秒：如「10月1日 20:00」） */
+export function formatDueTime(utcIso: string): string {
+  return dayjs.utc(utcIso).tz(DISPLAY_TZ).format("M月D日 HH:mm");
+}
+
+/** datetime-local 输入值（本地时间 YYYY-MM-DDTHH:mm）→ UTC ISO（带 Z，契约要求） */
+export function localInputToUtcIso(value: string): string {
+  return dayjs(value).utc().toISOString();
+}
+
+/** UTC ISO → datetime-local 输入值（转浏览器本地时间，往返与 localInputToUtcIso 对应） */
+export function utcIsoToLocalInput(utcIso: string): string {
+  return dayjs.utc(utcIso).local().format("YYYY-MM-DDTHH:mm");
+}

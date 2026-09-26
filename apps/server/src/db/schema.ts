@@ -10,7 +10,8 @@ import {
  * 数据库表定义（Drizzle / SQLite）。表结构以架构文档 §5.2 数据模型为准，
  * T0.5 建 teachers、sessions；T1.9 追加 login_failures（登录限流，§5.7）；
  * T1.10 追加内容七表：courses、lectures、units、questions、knowledge_points、
- * question_knowledge、imports（内容存储与导入）；T2.1 追加 students（学生账号与两种登录）。
+ * question_knowledge、imports（内容存储与导入）；T2.1 追加 students（学生账号与两种登录）；
+ * T2.2 追加 assignments、assignment_students（作业与指派名单，软删语义）。
  *
  * 全库约定（见 docs/开发任务清单.md §0.3 与 db-change 技能）：
  * - 主键 id 一律为应用层生成的 crypto.randomUUID() 字符串；
@@ -264,6 +265,51 @@ export const imports = sqliteTable("imports", {
   createdAt: text("created_at").notNull(),
 });
 
+/**
+ * 作业表（T2.2，§5.2）——"布置作业"，才能回答"谁做了/没做"。
+ * - 一条作业 = 某单元发给若干学生的一次练习（名单在 assignment_students）；
+ * - title 缺省用布置时的单元标题（快照语义，不随单元后续改名联动）；
+ * - deletedAt：软删（db-change 红线：删除作业不删除已有作答记录——attempts 通过
+ *   assignmentId 关联历史，物理删除会破坏"谁做了/没做"统计；T2.6 起作答经
+ *   快照照常回看）。软删后学生端立即不可见、教师列表默认不显示。
+ */
+export const assignments = sqliteTable("assignments", {
+  /** 主键：crypto.randomUUID()（§0.3 主键约定） */
+  id: text("id").primaryKey(),
+  /** 目标练习单元（units.id，来自 DSL） */
+  unitId: text("unit_id")
+    .notNull()
+    .references(() => units.id),
+  /** 作业标题；缺省为布置时的单元标题 */
+  title: text("title").notNull(),
+  /** 截止时间：UTC ISO 字符串；未设置为 NULL（PATCH 显式置 null = 取消截止） */
+  dueAt: text("due_at"),
+  /** 删除时间：UTC ISO 字符串；未删除为 NULL（软删，作答保留） */
+  deletedAt: text("deleted_at"),
+  /** 创建时间：UTC ISO 字符串 */
+  createdAt: text("created_at").notNull(),
+});
+
+/**
+ * 作业 ↔ 学生关联表（多对多，§5.2）：复合主键 (assignmentId, studentId)。
+ * 名单以「全量替换」方式维护（PATCH studentIds 时删旧插新）；
+ * 不做级联删除——作业走软删（deletedAt），关联行保留即可判定历史指派关系。
+ */
+export const assignmentStudents = sqliteTable(
+  "assignment_students",
+  {
+    /** 所属作业（assignments.id） */
+    assignmentId: text("assignment_id")
+      .notNull()
+      .references(() => assignments.id),
+    /** 被指派学生（students.id） */
+    studentId: text("student_id")
+      .notNull()
+      .references(() => students.id),
+  },
+  (table) => [primaryKey({ columns: [table.assignmentId, table.studentId] })],
+);
+
 /** courses 表行类型（SELECT 结果） */
 export type Course = typeof courses.$inferSelect;
 /** courses 表插入类型 */
@@ -292,3 +338,11 @@ export type NewQuestionKnowledge = typeof questionKnowledge.$inferInsert;
 export type Import = typeof imports.$inferSelect;
 /** imports 表插入类型 */
 export type NewImport = typeof imports.$inferInsert;
+/** assignments 表行类型（SELECT 结果） */
+export type Assignment = typeof assignments.$inferSelect;
+/** assignments 表插入类型 */
+export type NewAssignment = typeof assignments.$inferInsert;
+/** assignment_students 表行类型（SELECT 结果） */
+export type AssignmentStudent = typeof assignmentStudents.$inferSelect;
+/** assignment_students 表插入类型 */
+export type NewAssignmentStudent = typeof assignmentStudents.$inferInsert;
