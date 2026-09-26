@@ -14,6 +14,8 @@ export * from "./directives.ts";
 export * from "./spec.ts";
 /** 学生账号契约（T2.1 起为权威定义）：学生 CRUD、两种登录、自助信息与改密码、错误码 */
 export * from "./student.ts";
+/** 作业契约（T2.2 起为权威定义）：教师布置作业 CRUD、学生作业列表与完成状态、错误码 */
+export * from "./assignment.ts";
 
 /**
  * API 响应壳（占位示例）。
