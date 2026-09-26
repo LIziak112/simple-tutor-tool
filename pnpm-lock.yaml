@@ -179,6 +179,16 @@ importers:
         specifier: ^5.0.2
         version: 5.0.2(@types/node@24.19.0)(vite@8.3.1(@types/node@24.19.0))
 
+  packages/contract:
+    dependencies:
+      zod:
+        specifier: ^4.6.5
+        version: 4.6.5
+
+  packages/grading: {}
+
+  packages/md-dsl: {}
+
 packages:
 
   '@biomejs/biome@2.5.14':
@@ -750,6 +760,9 @@ packages:
     engines: {node: '>=20.11'}
     hasBin: true
 
+  zod@4.6.5:
+    resolution: {integrity: sha512-v5l/aFXZQeai4awLbOpSoHecE9UiMrnfx75tEXLjNonXVARxQ5mOeipTjROUchszUNCqnE+hqAMujRsRHsut2Q==}
+
 snapshots:
 
   '@biomejs/biome@2.5.14':
@@ -1109,3 +1122,5 @@ snapshots:
       - msw
 
   why-is-node-running@3.2.2: {}
+
+  zod@4.6.5: {}
