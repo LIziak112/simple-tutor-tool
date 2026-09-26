@@ -1,12 +1,12 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { ImportPreviewData, LintIssue } from "@tutor/contract";
-import { lintIssueSchema } from "@tutor/contract";
 import { v1ToV2 } from "@tutor/md-dsl";
 import { ArrowLeft, CircleAlert, FileUp, Loader2, Upload } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { parseApiIssues } from "@/features/content/api-issues";
 import { contentTreeKey } from "@/features/content/content-queries";
 import { ErrorPanel } from "@/features/content/ErrorPanel";
 import { lintIssuesToDiagnostics } from "@/features/content/lint-diagnostics";
@@ -31,17 +31,6 @@ const REPREVIEW_DEBOUNCE_MS = 400;
 
 /** 文件名缺省值（契约要求非空；用户可改） */
 const DEFAULT_FILENAME = "未命名.md";
-
-/** commit 422 LINT_ERROR 响应体附加的 _issues 解析（逐条过契约，坏条目丢弃不炸面板） */
-function parseCommitIssues(raw: unknown): LintIssue[] {
-  if (!Array.isArray(raw)) return [];
-  const list: LintIssue[] = [];
-  for (const item of raw) {
-    const parsed = lintIssueSchema.safeParse(item);
-    if (parsed.success) list.push(parsed.data);
-  }
-  return list;
-}
 
 export function ImportPage() {
   const [stage, setStage] = useState<"input" | "preview">("input");
@@ -126,7 +115,7 @@ export function ImportPage() {
     onError: (err) => {
       if (err instanceof ApiError && err.code === "LINT_ERROR") {
         // 422 的 _issues 并入错误面板（与 preview issues 同一展示）
-        setCommitIssues(parseCommitIssues(err.extra?._issues));
+        setCommitIssues(parseApiIssues(err.extra));
         setCommitError(err.message);
         return;
       }
