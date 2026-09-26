@@ -7,9 +7,11 @@
     // vite/client 提供 import.meta.env；node 供 vite.config.ts 使用
     "types": ["vite/client", "node"],
     // shadcn/ui 约定的 @ 别名（与 vite.config.ts 的 resolve.alias 保持一致）。
-    // TS 7 已移除 baseUrl：paths 相对 tsconfig 所在目录解析
+    // TS 7 已移除 baseUrl：paths 相对 tsconfig 所在目录解析。
+    // @samples 指向仓库根 samples/（/dev/render 预置样例的 ?raw 导入）
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@samples/*": ["../../../samples/*"]
     }
   },
   "include": ["src", "vite.config.ts"]

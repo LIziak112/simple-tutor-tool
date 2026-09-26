@@ -1,0 +1,33 @@
+import { defineConfig } from "vitest/config";
+
+// 根测试配置（T1.8 起）：用 projects 区分两种环境，互不影响——
+// - node：apps/server 与 packages/* 的原有测试，保持默认 node 环境；
+// - web：apps/web 的组件测试（Vitest + Testing Library），jsdom 环境 + 全局 setup
+//   （globals 仅为让 @testing-library/react 注册自动 cleanup，测试内仍显式从
+//   "vitest" 导入 describe/it/expect）。
+export default defineConfig({
+  test: {
+    projects: [
+      {
+        test: {
+          name: "node",
+          environment: "node",
+          include: [
+            "apps/server/src/**/*.test.ts",
+            "packages/*/src/**/*.test.ts",
+          ],
+        },
+      },
+      {
+        test: {
+          name: "web",
+          root: "apps/web",
+          environment: "jsdom",
+          include: ["src/**/*.test.{ts,tsx}"],
+          setupFiles: ["src/test/setup.ts"],
+          globals: true,
+        },
+      },
+    ],
+  },
+});

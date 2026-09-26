@@ -128,3 +128,74 @@
     @apply font-sans;
   }
 }
+
+/* ---- RichMarkdown 正文排版（T1.8）：Markdown 基础元素 ----
+   指令组件（题卡/折叠/分栏等）自带 Tailwind 类，不在此处重复 */
+.rich-markdown {
+  @apply text-[15px] leading-7 break-words;
+}
+.rich-markdown > :first-child {
+  @apply mt-0;
+}
+.rich-markdown h1 {
+  @apply mt-8 mb-3 text-2xl font-bold;
+}
+.rich-markdown h2 {
+  @apply mt-6 mb-2 text-xl font-bold;
+}
+.rich-markdown h3 {
+  @apply mt-5 mb-2 text-lg font-semibold;
+}
+.rich-markdown h4,
+.rich-markdown h5,
+.rich-markdown h6 {
+  @apply mt-4 mb-1 text-base font-semibold;
+}
+.rich-markdown p {
+  @apply my-2;
+}
+.rich-markdown ul {
+  @apply my-2 list-disc pl-6;
+}
+.rich-markdown ol {
+  @apply my-2 list-decimal pl-6;
+}
+.rich-markdown li {
+  @apply my-1;
+}
+.rich-markdown li > input[type="checkbox"] {
+  @apply mr-1.5 size-4 align-middle accent-primary;
+}
+.rich-markdown blockquote {
+  @apply my-3 border-l-4 border-border pl-4 text-muted-foreground;
+}
+.rich-markdown code {
+  @apply rounded bg-muted px-1.5 py-0.5 font-mono text-[0.9em];
+}
+.rich-markdown pre {
+  @apply my-3 overflow-x-auto rounded-xl bg-muted p-3 text-sm;
+}
+.rich-markdown pre code {
+  @apply bg-transparent p-0;
+}
+.rich-markdown table {
+  @apply my-3 w-full border-collapse text-sm;
+}
+.rich-markdown th {
+  @apply border border-border bg-muted px-2 py-1 text-left font-semibold;
+}
+.rich-markdown td {
+  @apply border border-border px-2 py-1;
+}
+.rich-markdown a {
+  @apply text-primary underline underline-offset-2;
+}
+.rich-markdown img {
+  @apply my-2 h-auto max-w-full rounded-xl;
+}
+.rich-markdown hr {
+  @apply my-6 border-border;
+}
+.rich-markdown .katex-display {
+  @apply my-3 overflow-x-auto py-1;
+}

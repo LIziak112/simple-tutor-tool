@@ -9,6 +9,8 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),
+      // 样例文档别名：/dev/render 开发页用 ?raw 引入 samples/ 原文做预置样例
+      "@samples": fileURLToPath(new URL("../../samples", import.meta.url)),
     },
   },
   server: {
