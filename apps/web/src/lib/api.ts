@@ -16,6 +16,15 @@ import {
   type QuestionUpdateRequest,
   type ReorderRequest,
   type SpecFileName,
+  type StudentCreateData,
+  type StudentCreateRequest,
+  type StudentListData,
+  type StudentLoginRequest,
+  type StudentMeData,
+  type StudentResetLinkData,
+  type StudentResetPasswordData,
+  type StudentSummary,
+  type StudentUpdateRequest,
   type TeacherInfo,
   type TeacherStatusData,
 } from "@tutor/contract";
@@ -273,4 +282,68 @@ export function deleteCourseApi(id: string): Promise<null> {
   return callApi(() =>
     api.api.teacher.courses[":id"].$delete({ param: { id } }),
   );
+}
+
+// ---------- T2.1：学生管理（教师端） ----------
+
+/** 学生列表（默认只列未归档；includeArchived=true 含归档学生） */
+export function fetchStudentsApi(
+  includeArchived: boolean,
+): Promise<StudentListData> {
+  return callApi(() =>
+    api.api.teacher.students.$get(
+      includeArchived ? { query: { includeArchived: "true" } } : undefined,
+    ),
+  );
+}
+
+/**
+ * 新增学生。响应 initialPassword 为服务端生成的一次性初始密码明文
+ * （教师自备密码时为 null）——只在此响应出现一次，需立即展示/转达。
+ */
+export function createStudentApi(
+  request: StudentCreateRequest,
+): Promise<StudentCreateData> {
+  return callApi(() => api.api.teacher.students.$post({ json: request }));
+}
+
+/**
+ * 更新学生（改名/登录名/开关两种登录方式/归档/备注；字段缺省 = 不改）。
+ * 409 LOGIN_NAME_TAKEN / 404 STUDENT_NOT_FOUND 由调用方 catch ApiError 分支处理。
+ * json 以独立变量传入的原因同 updateQuestion（parseJsonBody 服务端校验）。
+ */
+export function updateStudentApi(
+  id: string,
+  request: StudentUpdateRequest,
+): Promise<StudentSummary> {
+  const args = { param: { id }, json: request };
+  return callApi(() => api.api.teacher.students[":id"].$patch(args));
+}
+
+/** 重置学生密码：响应返回一次性新密码明文（旧密码立即失效） */
+export function resetStudentPasswordApi(
+  id: string,
+): Promise<StudentResetPasswordData> {
+  return callApi(() =>
+    // 路径段按实际路由名取（reset-password，连字符），hc 不做驼峰转换
+    api.api.teacher.students[":id"]["reset-password"].$post({
+      param: { id },
+    }),
+  );
+}
+
+/** 重置专属链接：旧链接立即失效，响应返回新 linkToken（前端拼 `${origin}/s/${token}`） */
+export function resetStudentLinkApi(id: string): Promise<StudentResetLinkData> {
+  return callApi(() =>
+    api.api.teacher.students[":id"]["reset-link"].$post({ param: { id } }),
+  );
+}
+
+// ---------- T2.1：学生登录（公开，学生端页面 T2.3 使用；本任务供联调验证） ----------
+
+/** 学生登录名+密码登录（成功写 90 天学生会话 Cookie，返回学生基本信息） */
+export function loginStudentApi(
+  request: StudentLoginRequest,
+): Promise<StudentMeData> {
+  return callApi(() => api.api.public.student.login.$post({ json: request }));
 }

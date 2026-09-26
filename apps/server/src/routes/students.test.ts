@@ -86,11 +86,16 @@ async function createStudent(
   teacherCookie: string,
   overrides: Record<string, unknown> = {},
 ): Promise<{ body: Record<string, unknown>; initialPassword: string | null }> {
-  const res = await jsonRequest(app, "/api/teacher/students", {
-    displayName: "张三",
-    loginName: "张三",
-    ...overrides,
-  }, teacherCookie);
+  const res = await jsonRequest(
+    app,
+    "/api/teacher/students",
+    {
+      displayName: "张三",
+      loginName: "张三",
+      ...overrides,
+    },
+    teacherCookie,
+  );
   expect(res.status).toBe(201);
   const body = (await res.json()) as Record<string, unknown>;
   return {
@@ -153,7 +158,9 @@ describe("教师端学生 CRUD", () => {
     expect(studentCreateOkSchema.safeParse(body).success).toBe(true);
     const data = (body as { data: Record<string, unknown> }).data;
     expect((data.student as Record<string, unknown>).linkEnabled).toBe(true);
-    expect((data.student as Record<string, unknown>).passwordEnabled).toBe(true);
+    expect((data.student as Record<string, unknown>).passwordEnabled).toBe(
+      true,
+    );
     expect(typeof data.initialPassword).toBe("string");
     // 响应不含密码哈希
     expect(JSON.stringify(body)).not.toContain("scrypt$");
@@ -197,8 +204,12 @@ describe("教师端学生 CRUD", () => {
       loginName: "李四",
     });
     const zhang = await createStudent(app, teacherCookie);
-    const zhangId = ((zhang.body.data as Record<string, unknown>)
-      .student as Record<string, unknown>).id as string;
+    const zhangId = (
+      (zhang.body.data as Record<string, unknown>).student as Record<
+        string,
+        unknown
+      >
+    ).id as string;
 
     const conflict = await jsonRequest(
       app,
@@ -243,8 +254,12 @@ describe("教师端学生 CRUD", () => {
   it("默认列表只列未归档；includeArchived=true 含归档并带标记", async () => {
     const { app, teacherCookie } = await makeApp();
     const zhang = await createStudent(app, teacherCookie);
-    const zhangId = ((zhang.body.data as Record<string, unknown>)
-      .student as Record<string, unknown>).id as string;
+    const zhangId = (
+      (zhang.body.data as Record<string, unknown>).student as Record<
+        string,
+        unknown
+      >
+    ).id as string;
     await createStudent(app, teacherCookie, {
       displayName: "王五",
       loginName: "王五",
@@ -273,10 +288,9 @@ describe("教师端学生 CRUD", () => {
 
   it("查询参数非法（includeArchived=abc）返回 400", async () => {
     const { app, teacherCookie } = await makeApp();
-    const res = await app.request(
-      "/api/teacher/students?includeArchived=abc",
-      { headers: { cookie: teacherCookie } },
-    );
+    const res = await app.request("/api/teacher/students?includeArchived=abc", {
+      headers: { cookie: teacherCookie },
+    });
     expect(res.status).toBe(400);
     expect(((await res.json()) as ApiErr).error).toBe("VALIDATION_ERROR");
   });
@@ -416,8 +430,12 @@ describe("密码登录（POST /api/public/student/login）", () => {
     const zhang = await createStudent(app, teacherCookie, {
       password: STUDENT_PASSWORD,
     });
-    const studentId = ((zhang.body.data as Record<string, unknown>)
-      .student as Record<string, unknown>).id as string;
+    const studentId = (
+      (zhang.body.data as Record<string, unknown>).student as Record<
+        string,
+        unknown
+      >
+    ).id as string;
 
     const res = await jsonRequest(app, "/api/public/student/login", {
       loginName: "张三",
@@ -429,11 +447,7 @@ describe("密码登录（POST /api/public/student/login）", () => {
 
     // 会话：subjectType=student，有效期 90 天（> 89 天）
     const token = extractSessionToken(res);
-    const row = db
-      .select()
-      .from(sessions)
-      .where(eq(sessions.id, token))
-      .get();
+    const row = db.select().from(sessions).where(eq(sessions.id, token)).get();
     expect(row?.subjectType).toBe("student");
     expect(row?.subjectId).toBe(studentId);
     const ttl =
@@ -469,8 +483,12 @@ describe("密码登录（POST /api/public/student/login）", () => {
     const zhang = await createStudent(app, teacherCookie, {
       password: STUDENT_PASSWORD,
     });
-    const studentId = ((zhang.body.data as Record<string, unknown>)
-      .student as Record<string, unknown>).id as string;
+    const studentId = (
+      (zhang.body.data as Record<string, unknown>).student as Record<
+        string,
+        unknown
+      >
+    ).id as string;
     await jsonRequest(
       app,
       `/api/teacher/students/${studentId}`,
@@ -492,8 +510,12 @@ describe("密码登录（POST /api/public/student/login）", () => {
     const zhang = await createStudent(app, teacherCookie, {
       password: STUDENT_PASSWORD,
     });
-    const studentId = ((zhang.body.data as Record<string, unknown>)
-      .student as Record<string, unknown>).id as string;
+    const studentId = (
+      (zhang.body.data as Record<string, unknown>).student as Record<
+        string,
+        unknown
+      >
+    ).id as string;
     await jsonRequest(
       app,
       `/api/teacher/students/${studentId}`,
@@ -593,15 +615,21 @@ describe("会话隔离（验收项：学生会话无法访问教师接口）", (
     const zhang = await createStudent(app, teacherCookie, {
       password: STUDENT_PASSWORD,
     });
-    const studentId = ((zhang.body.data as Record<string, unknown>)
-      .student as Record<string, unknown>).id as string;
+    const studentId = (
+      (zhang.body.data as Record<string, unknown>).student as Record<
+        string,
+        unknown
+      >
+    ).id as string;
     const login = await jsonRequest(app, "/api/public/student/login", {
       loginName: "张三",
       password: STUDENT_PASSWORD,
     });
     const cookie = `tutor_session=${extractSessionToken(login)}`;
 
-    const before = await app.request("/api/student/me", { headers: { cookie } });
+    const before = await app.request("/api/student/me", {
+      headers: { cookie },
+    });
     expect(before.status).toBe(200);
 
     await jsonRequest(
@@ -622,8 +650,12 @@ describe("重置密码（POST /api/teacher/students/:id/reset-password）", () =
     const zhang = await createStudent(app, teacherCookie, {
       password: STUDENT_PASSWORD,
     });
-    const studentId = ((zhang.body.data as Record<string, unknown>)
-      .student as Record<string, unknown>).id as string;
+    const studentId = (
+      (zhang.body.data as Record<string, unknown>).student as Record<
+        string,
+        unknown
+      >
+    ).id as string;
 
     const reset = await jsonRequest(
       app,
@@ -651,7 +683,9 @@ describe("重置密码（POST /api/teacher/students/:id/reset-password）", () =
     expect(fresh.status).toBe(200);
 
     // 明文只出现一次：列表接口不含该明文（也不含哈希）
-    const listBody = JSON.stringify(await listStudents(app, teacherCookie, true));
+    const listBody = JSON.stringify(
+      await listStudents(app, teacherCookie, true),
+    );
     expect(listBody).not.toContain(newPassword);
     expect(listBody).not.toContain("scrypt$");
   });
@@ -661,8 +695,12 @@ describe("重置密码（POST /api/teacher/students/:id/reset-password）", () =
     const zhang = await createStudent(app, teacherCookie, {
       password: STUDENT_PASSWORD,
     });
-    const studentId = ((zhang.body.data as Record<string, unknown>)
-      .student as Record<string, unknown>).id as string;
+    const studentId = (
+      (zhang.body.data as Record<string, unknown>).student as Record<
+        string,
+        unknown
+      >
+    ).id as string;
     await jsonRequest(
       app,
       `/api/teacher/students/${studentId}`,
@@ -701,9 +739,9 @@ describe("重置密码（POST /api/teacher/students/:id/reset-password）", () =
 });
 
 describe("学生自助改密码（POST /api/student/password）", () => {
-  async function loginStudent(app: ReturnType<typeof createApp>): Promise<
-    string
-  > {
+  async function loginStudent(
+    app: ReturnType<typeof createApp>,
+  ): Promise<string> {
     const res = await jsonRequest(app, "/api/public/student/login", {
       loginName: "张三",
       password: STUDENT_PASSWORD,

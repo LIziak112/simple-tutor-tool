@@ -96,9 +96,9 @@ describe("students 表（T2.1 学生账号）", () => {
 
     const row = studentRow();
     db.insert(students).values(row).run();
-    expect(db.select().from(students).where(eq(students.id, row.id)).get()).toEqual(
-      row,
-    );
+    expect(
+      db.select().from(students).where(eq(students.id, row.id)).get(),
+    ).toEqual(row);
     db.$client.close();
   });
 
@@ -108,7 +108,10 @@ describe("students 表（T2.1 学生账号）", () => {
     db.insert(students).values(first).run();
     // 同 loginName 不同 id → 违反唯一约束
     expect(() =>
-      db.insert(students).values(studentRow({ loginName: first.loginName })).run(),
+      db
+        .insert(students)
+        .values(studentRow({ loginName: first.loginName }))
+        .run(),
     ).toThrow();
     // 同 linkToken 不同 loginName → 同样违反
     expect(() =>

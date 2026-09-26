@@ -19,12 +19,9 @@ import {
   recordLoginFailure,
   studentLoginFailureKeys,
 } from "../auth/rate-limit";
-import {
-  createStudentSession,
-  pruneExpiredSessions,
-} from "../auth/session";
+import { createStudentSession, pruneExpiredSessions } from "../auth/session";
 import type { Db } from "../db/client";
-import { students, type Student } from "../db/schema";
+import { type Student, students } from "../db/schema";
 import { HttpError } from "../lib/http-error";
 
 /**
@@ -54,8 +51,9 @@ function generateInitialPassword(): string {
   const bytes = randomBytes(INITIAL_PASSWORD_LENGTH);
   let password = "";
   for (let i = 0; i < INITIAL_PASSWORD_LENGTH; i++) {
+    const byte = bytes[i] ?? 0;
     password +=
-      INITIAL_PASSWORD_ALPHABET[bytes[i]! % INITIAL_PASSWORD_ALPHABET.length];
+      INITIAL_PASSWORD_ALPHABET[byte % INITIAL_PASSWORD_ALPHABET.length];
   }
   return password;
 }
@@ -103,11 +101,7 @@ function findByLoginName(db: Db, loginName: string): Student | undefined {
 
 /** 按 linkToken 精确查找 */
 function findByLinkToken(db: Db, token: string): Student | undefined {
-  return db
-    .select()
-    .from(students)
-    .where(eq(students.linkToken, token))
-    .get();
+  return db.select().from(students).where(eq(students.linkToken, token)).get();
 }
 
 function findById(db: Db, id: string): Student | undefined {
@@ -150,7 +144,11 @@ export function listStudents(
   db: Db,
   includeArchived: boolean,
 ): StudentListData {
-  const rows = db.select().from(students).orderBy(asc(students.createdAt)).all();
+  const rows = db
+    .select()
+    .from(students)
+    .orderBy(asc(students.createdAt))
+    .all();
   const filtered = includeArchived
     ? rows
     : rows.filter((row) => row.archivedAt == null);
@@ -201,17 +199,16 @@ export function updateStudent(
   request: StudentUpdateRequest,
 ): StudentSummary {
   const row = requireStudentRow(db, id);
-  if (
-    request.loginName !== undefined &&
-    request.loginName !== row.loginName
-  ) {
+  if (request.loginName !== undefined && request.loginName !== row.loginName) {
     assertLoginNameFree(db, request.loginName, id);
   }
 
   const patch: Partial<typeof students.$inferInsert> = {};
-  if (request.displayName !== undefined) patch.displayName = request.displayName;
+  if (request.displayName !== undefined)
+    patch.displayName = request.displayName;
   if (request.loginName !== undefined) patch.loginName = request.loginName;
-  if (request.linkEnabled !== undefined) patch.linkEnabled = request.linkEnabled;
+  if (request.linkEnabled !== undefined)
+    patch.linkEnabled = request.linkEnabled;
   if (request.passwordEnabled !== undefined) {
     patch.passwordEnabled = request.passwordEnabled;
   }
@@ -255,10 +252,7 @@ export async function resetStudentPassword(
  * （按 token 精确匹配，旧值已被覆盖不再命中）；顺带开启 linkEnabled。
  * 已登录学生会话不受影响（会话 token 与 linkToken 独立，90 天有效期内继续可用）。
  */
-export function resetStudentLink(
-  db: Db,
-  id: string,
-): StudentResetLinkData {
+export function resetStudentLink(db: Db, id: string): StudentResetLinkData {
   const row = requireStudentRow(db, id);
   const linkToken = generateLinkToken();
   db.update(students)
@@ -321,10 +315,7 @@ export async function loginStudentByPassword(
  * 成功条件：token 等于当前 linkToken + linkEnabled 开启 + 未归档；
  * 失败统一 401 LINK_INVALID（token 为 192 位随机值，暴力不可行，不做限流）。
  */
-export function loginStudentByLink(
-  db: Db,
-  token: string,
-): StudentAuthResult {
+export function loginStudentByLink(db: Db, token: string): StudentAuthResult {
   const row = findByLinkToken(db, token);
   if (!row || row.archivedAt != null || !row.linkEnabled) {
     throw new HttpError(

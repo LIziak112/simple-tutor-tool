@@ -61,12 +61,12 @@ describe("studentUpdateRequestSchema", () => {
 describe("studentListQuerySchema", () => {
   it("includeArchived 接受 undefined / true / false，拒绝其他字符串", () => {
     expect(studentListQuerySchema.parse({})).toEqual({});
-    expect(
-      studentListQuerySchema.parse({ includeArchived: "true" }),
-    ).toEqual({ includeArchived: true });
-    expect(
-      studentListQuerySchema.parse({ includeArchived: "false" }),
-    ).toEqual({ includeArchived: false });
+    expect(studentListQuerySchema.parse({ includeArchived: "true" })).toEqual({
+      includeArchived: true,
+    });
+    expect(studentListQuerySchema.parse({ includeArchived: "false" })).toEqual({
+      includeArchived: false,
+    });
     expect(
       studentListQuerySchema.safeParse({ includeArchived: "yes!" }).success,
     ).toBe(false);
