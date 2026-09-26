@@ -22,9 +22,12 @@ data
 **/data
 
 # 文档、样例与 E2E（不影响构建）。
-# 注意：T1.13 的 /spec 若需要在镜像内读取 docs/dsl 构建产物，届时要调整这里
-# 并在 Dockerfile 补充相应 COPY
-docs
+# 例外：docs/dsl 必须进构建上下文（T1.13 的 /spec 数据源）——server 构建脚本
+# scripts/copy-spec.mjs 在镜像内把它拷进 dist/spec，runner 阶段随 dist 整目录带进
+# 最终镜像，因此 Dockerfile 无需为它单加 COPY 行。写法上须用 docs/* + !docs/dsl：
+# 直接排除 docs 目录本身会让 Docker 不再深入遍历，! 例外无法生效。
+docs/*
+!docs/dsl
 e2e
 samples
 
