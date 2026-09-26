@@ -1,5 +1,5 @@
 import { lazy, Suspense } from "react";
-import { Route, Routes } from "react-router";
+import { Navigate, Route, Routes } from "react-router";
 import { HomePage } from "./pages/HomePage";
 import { NotFoundPage } from "./pages/NotFoundPage";
 
@@ -31,12 +31,116 @@ const devOnlyRoutes = import.meta.env.DEV
     })()
   : null;
 
-/** 顶层路由。后续任务按学生端（/s/:token）与教师端（/t）分区扩展 */
+/** 教师端路由（T1.9）：路由级代码分割，登录/设置页与主布局分块加载 */
+const teacherRoutes = (() => {
+  const SetupPage = lazy(() => import("./pages/teacher/SetupPage"));
+  const LoginPage = lazy(() => import("./pages/teacher/LoginPage"));
+  const TeacherLayout = lazy(() => import("./pages/teacher/TeacherLayout"));
+  const SettingsPage = lazy(() => import("./pages/teacher/SettingsPage"));
+  const PlaceholderPage = lazy(() => import("./pages/teacher/PlaceholderPage"));
+
+  /** 布局内的懒加载兜底（骨架级提示即可，布局本身很快） */
+  const pageFallback = (
+    <p className="p-8 text-sm text-muted-foreground">页面加载中…</p>
+  );
+
+  /** 四个「建设中」占位分区（后续任务逐个替换） */
+  const placeholders = [
+    {
+      path: "content",
+      title: "内容",
+      description: "讲义与练习的管理、导入与编辑将在这里提供（T1.11 起）。",
+    },
+    {
+      path: "students",
+      title: "学生与作业",
+      description: "学生名单与作业布置将在这里提供（T2.x 起）。",
+    },
+    {
+      path: "data",
+      title: "数据",
+      description: "作答数据导出与备份将在这里提供（T4.x 起）。",
+    },
+    {
+      path: "insights",
+      title: "学情",
+      description: "学情分析与报告将在这里提供（T3.x 起）。",
+    },
+  ] as const;
+
+  return (
+    <>
+      <Route
+        path="/t/setup"
+        element={
+          <Suspense fallback={<TeacherRouteFallback />}>
+            <SetupPage />
+          </Suspense>
+        }
+      />
+      <Route
+        path="/t/login"
+        element={
+          <Suspense fallback={<TeacherRouteFallback />}>
+            <LoginPage />
+          </Suspense>
+        }
+      />
+      <Route
+        path="/t"
+        element={
+          <Suspense fallback={<TeacherRouteFallback />}>
+            <TeacherLayout />
+          </Suspense>
+        }
+      >
+        <Route index element={<Navigate to="/t/content" replace />} />
+        <Route
+          path="settings"
+          element={
+            <Suspense fallback={pageFallback}>
+              <SettingsPage />
+            </Suspense>
+          }
+        />
+        {placeholders.map((item) => (
+          <Route
+            key={item.path}
+            path={item.path}
+            element={
+              <Suspense fallback={pageFallback}>
+                <PlaceholderPage
+                  title={item.title}
+                  description={item.description}
+                />
+              </Suspense>
+            }
+          />
+        ))}
+      </Route>
+    </>
+  );
+})();
+
+/** 教师端整页加载兜底（懒加载期间） */
+function TeacherRouteFallback() {
+  return (
+    <main
+      aria-live="polite"
+      className="flex min-h-dvh items-center justify-center bg-background"
+    >
+      <p className="text-sm text-muted-foreground">页面加载中…</p>
+    </main>
+  );
+}
+
+/** 顶层路由。学生端（/s/:token，T2.x）与教师端（/t）分区扩展 */
 export function App() {
   return (
     <Routes>
       <Route path="/" element={<HomePage />} />
       {devOnlyRoutes}
+      {teacherRoutes}
       <Route path="*" element={<NotFoundPage />} />
     </Routes>
   );

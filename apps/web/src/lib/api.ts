@@ -1,3 +1,8 @@
+import {
+  apiResponseSchema,
+  type TeacherInfo,
+  type TeacherStatusData,
+} from "@tutor/contract";
 import { hc } from "hono/client";
 import type { AppType } from "server";
 
@@ -31,4 +36,80 @@ export async function fetchHealth(): Promise<HealthData> {
   }
   const body = await res.json();
   return body.data;
+}
+
+/**
+ * 后端返回的业务错误（{ ok:false } 壳）：带 UPPER_SNAKE 错误码，
+ * 页面按 code 分支展示（如 INVALID_CREDENTIALS / LOCKED / UNAUTHORIZED）。
+ */
+export class ApiError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
+/**
+ * 调用 hc 接口并解包响应壳（T1.9 起）：
+ * - 成功 → 返回 data 部分；
+ * - { ok:false } → 抛 ApiError（code + 服务端中文 message）；
+ * - 网络失败 / 响应不符合契约壳 → 抛带中文提示的 Error。
+ * 响应壳用共享契约 apiResponseSchema 校验，避免前端手写同一结构。
+ */
+async function callApi<TData>(fn: () => Promise<Response>): Promise<TData> {
+  let res: Response;
+  try {
+    res = await fn();
+  } catch {
+    throw new Error(
+      "连不上服务器，请确认后端已启动（pnpm --filter server dev）后重试",
+    );
+  }
+  let body: unknown;
+  try {
+    body = await res.json();
+  } catch {
+    throw new Error(`服务器响应异常（HTTP ${res.status}），请稍后重试`);
+  }
+  const parsed = apiResponseSchema.safeParse(body);
+  if (!parsed.success) {
+    throw new Error(`服务器响应异常（HTTP ${res.status}），请稍后重试`);
+  }
+  if (!parsed.data.ok) {
+    throw new ApiError(parsed.data.error, parsed.data.message, res.status);
+  }
+  return parsed.data.data as TData;
+}
+
+/** 查询是否已设置教师（首启判断，无登录要求） */
+export function fetchTeacherStatus(): Promise<TeacherStatusData> {
+  return callApi(() => api.api.public.teacher.status.$get());
+}
+
+/** 首次设置教师密码（仅无教师时可用；成功即自动登录并返回教师信息） */
+export function setupTeacher(password: string): Promise<TeacherInfo> {
+  return callApi(() =>
+    api.api.public.teacher.setup.$post({ json: { password } }),
+  );
+}
+
+/** 教师密码登录（连续失败 5 次会被临时锁定，见后端 §5.7 限流） */
+export function loginTeacher(password: string): Promise<TeacherInfo> {
+  return callApi(() =>
+    api.api.public.teacher.login.$post({ json: { password } }),
+  );
+}
+
+/** 退出登录（删除会话并清除 Cookie） */
+export function logoutTeacher(): Promise<null> {
+  return callApi(() => api.api.teacher.logout.$post());
+}
+
+/** 当前登录教师信息（未登录 / 会话过期时后端返回 401 UNAUTHORIZED） */
+export function fetchTeacherMe(): Promise<TeacherInfo> {
+  return callApi(() => api.api.teacher.me.$get());
 }
