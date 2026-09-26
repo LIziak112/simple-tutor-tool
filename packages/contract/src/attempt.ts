@@ -194,7 +194,9 @@ export const attemptDraftOkSchema = apiOkExtend(attemptDraftDataSchema);
 /** 携带结果视图的成功响应壳 */
 export const attemptResultOkSchema = apiOkExtend(attemptResultDataSchema);
 /** 携带草稿保存回执的成功响应壳 */
-export const attemptAnswerSaveOkSchema = apiOkExtend(attemptAnswerSaveDataSchema);
+export const attemptAnswerSaveOkSchema = apiOkExtend(
+  attemptAnswerSaveDataSchema,
+);
 
 // ---------- 推断类型导出 ----------
 
@@ -202,9 +204,7 @@ export type AttemptStatus = z.infer<typeof attemptStatusSchema>;
 export type AttemptSummary = z.infer<typeof attemptSummarySchema>;
 export type AttemptStartData = z.infer<typeof attemptStartDataSchema>;
 export type AttemptDraftData = z.infer<typeof attemptDraftDataSchema>;
-export type AttemptResultQuestion = z.infer<
-  typeof attemptResultQuestionSchema
->;
+export type AttemptResultQuestion = z.infer<typeof attemptResultQuestionSchema>;
 export type AttemptScoreSummary = z.infer<typeof attemptScoreSummarySchema>;
 export type AttemptResultData = z.infer<typeof attemptResultDataSchema>;
 export type AttemptAnswerSaveRequest = z.infer<

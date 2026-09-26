@@ -6,27 +6,27 @@ import {
   type AttemptResultQuestion,
   type AttemptScoreSummary,
   type AttemptStartData,
+  optionSchema,
   type Question,
   type QuestionAnswers,
   type QuestionOption,
   type QuestionPublic,
-  type StudentAnswer,
-  optionSchema,
   questionAnswersSchema,
   questionSchema,
+  type StudentAnswer,
   studentAnswerSchema,
 } from "@tutor/contract";
 import { grade } from "@tutor/grading";
 import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
-  type Attempt,
-  attempts,
   type Assignment,
+  type Attempt,
   assignmentStudents,
   assignments,
-  questions,
+  attempts,
   type Question as QuestionRow,
+  questions,
   type ResponseRow,
   responses,
 } from "../db/schema";
@@ -82,8 +82,16 @@ function requireAssignmentRow(db: Db, id: string): Assignment {
 }
 
 /** 取本人 attempt：不存在 → 404 ATTEMPT_NOT_FOUND；非本人 → 403 FORBIDDEN（验收项） */
-function requireOwnAttempt(db: Db, studentId: string, attemptId: string): Attempt {
-  const row = db.select().from(attempts).where(eq(attempts.id, attemptId)).get();
+function requireOwnAttempt(
+  db: Db,
+  studentId: string,
+  attemptId: string,
+): Attempt {
+  const row = db
+    .select()
+    .from(attempts)
+    .where(eq(attempts.id, attemptId))
+    .get();
   if (!row) {
     throw new HttpError(404, "ATTEMPT_NOT_FOUND", "作答记录不存在");
   }
@@ -127,11 +135,13 @@ function requireAssignmentVisible(
 function questionOfRow(row: QuestionRow, knowledge: string[]): Question {
   const answers: QuestionAnswers | undefined =
     row.answersJson !== null
-      ? (questionAnswersSchema.safeParse(jsonOf(row.answersJson)).data ?? undefined)
+      ? (questionAnswersSchema.safeParse(jsonOf(row.answersJson)).data ??
+        undefined)
       : undefined;
   const options: QuestionOption[] | undefined =
     row.optionsJson !== null
-      ? (optionSchema.array().safeParse(jsonOf(row.optionsJson)).data ?? undefined)
+      ? (optionSchema.array().safeParse(jsonOf(row.optionsJson)).data ??
+        undefined)
       : undefined;
   return questionSchema.parse({
     id: row.id,
@@ -191,7 +201,10 @@ export function startAttempt(
     .select()
     .from(attempts)
     .where(
-      and(eq(attempts.studentId, studentId), eq(attempts.assignmentId, assignmentId)),
+      and(
+        eq(attempts.studentId, studentId),
+        eq(attempts.assignmentId, assignmentId),
+      ),
     )
     .orderBy(desc(attempts.startedAt), desc(attempts.id))
     .all();
@@ -253,7 +266,11 @@ export function saveDraftAnswer(
     );
   }
   const question = db
-    .select({ id: questions.id, unitId: questions.unitId, deletedAt: questions.deletedAt })
+    .select({
+      id: questions.id,
+      unitId: questions.unitId,
+      deletedAt: questions.deletedAt,
+    })
     .from(questions)
     .where(eq(questions.id, questionId))
     .get();
@@ -274,7 +291,10 @@ export function saveDraftAnswer(
     .select({ id: responses.id, changeCount: responses.changeCount })
     .from(responses)
     .where(
-      and(eq(responses.attemptId, attemptId), eq(responses.questionId, questionId)),
+      and(
+        eq(responses.attemptId, attemptId),
+        eq(responses.questionId, questionId),
+      ),
     )
     .get();
   if (existing === undefined) {
@@ -356,7 +376,9 @@ export function submitAttempt(
   const liveRows = db
     .select()
     .from(questions)
-    .where(and(eq(questions.unitId, attempt.unitId), isNull(questions.deletedAt)))
+    .where(
+      and(eq(questions.unitId, attempt.unitId), isNull(questions.deletedAt)),
+    )
     .orderBy(asc(questions.order), asc(questions.id))
     .all();
   const knowledge = knowledgeNamesByQuestion(db);
@@ -365,7 +387,9 @@ export function submitAttempt(
     .from(responses)
     .where(eq(responses.attemptId, attemptId))
     .all();
-  const draftByQuestion = new Map(draftRows.map((row) => [row.questionId, row]));
+  const draftByQuestion = new Map(
+    draftRows.map((row) => [row.questionId, row]),
+  );
 
   const graded: GradedResponse[] = liveRows.map((row) => {
     const question = questionOfRow(row, knowledge.get(row.id) ?? []);
@@ -418,7 +442,10 @@ export function submitAttempt(
     if (staleIds.length > 0) {
       tx.delete(responses)
         .where(
-          and(eq(responses.attemptId, attemptId), inArray(responses.questionId, staleIds)),
+          and(
+            eq(responses.attemptId, attemptId),
+            inArray(responses.questionId, staleIds),
+          ),
         )
         .run();
     }
@@ -455,9 +482,15 @@ export function getAttemptDetail(
 /** 草稿视图组装（题目与 T2.4 试卷同一投影：unitPublicQuestions） */
 function buildDraftData(db: Db, attempt: Attempt): AttemptDetailData {
   const assignment = requireAssignmentRow(db, attempt.assignmentId);
-  const publicQuestions: QuestionPublic[] = unitPublicQuestions(db, attempt.unitId);
+  const publicQuestions: QuestionPublic[] = unitPublicQuestions(
+    db,
+    attempt.unitId,
+  );
   const draftRows = db
-    .select({ questionId: responses.questionId, answerJson: responses.answerJson })
+    .select({
+      questionId: responses.questionId,
+      answerJson: responses.answerJson,
+    })
     .from(responses)
     .where(eq(responses.attemptId, attempt.id))
     .all();
@@ -555,7 +588,11 @@ function buildResultData(db: Db, attemptId: string): AttemptResultData {
 
 /** 结果视图取 attempt 行（不经学生鉴权——调用方 submitAttempt/getAttemptDetail 已校验归属） */
 function requireAttemptRow(db: Db, attemptId: string): Attempt {
-  const row = db.select().from(attempts).where(eq(attempts.id, attemptId)).get();
+  const row = db
+    .select()
+    .from(attempts)
+    .where(eq(attempts.id, attemptId))
+    .get();
   if (!row) {
     throw new HttpError(404, "ATTEMPT_NOT_FOUND", "作答记录不存在");
   }

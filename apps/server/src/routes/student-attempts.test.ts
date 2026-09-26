@@ -261,9 +261,9 @@ describe("POST /api/student/assignments/:id/attempt：创建与幂等", () => {
   it("创建进行中 attempt；两次 POST 返回同一 id（一人一份进行中，库里一行）", async () => {
     const { app, db, aCookie, assignmentId } = await makeAttemptApp();
     const first = await startAttemptOk(app, aCookie, assignmentId);
-    expect(attemptStartOkSchema.safeParse({ ok: true, data: first }).success).toBe(
-      true,
-    );
+    expect(
+      attemptStartOkSchema.safeParse({ ok: true, data: first }).success,
+    ).toBe(true);
     expect(first.status).toBe("draft");
     expect(first.unitId).toBe("练习四");
 
@@ -360,7 +360,8 @@ describe("PUT /api/student/attempts/:id/answers/:questionId：草稿保存", () 
   });
 
   it("跨单元题 404 QUESTION_NOT_FOUND；已软删题 404", async () => {
-    const { app, teacherCookie, aCookie, assignmentId } = await makeAttemptApp();
+    const { app, teacherCookie, aCookie, assignmentId } =
+      await makeAttemptApp();
     const attemptId = (await startAttemptOk(app, aCookie, assignmentId))
       .id as string;
 
@@ -529,7 +530,13 @@ describe("POST /api/student/attempts/:id/submit：判分与快照", () => {
       await makeAttemptApp();
     const attemptId = (await startAttemptOk(app, aCookie, assignmentId))
       .id as string;
-    await putAnswer(app, aCookie, attemptId, Q.fill, ALL_CORRECT_ANSWERS[Q.fill]);
+    await putAnswer(
+      app,
+      aCookie,
+      attemptId,
+      Q.fill,
+      ALL_CORRECT_ANSWERS[Q.fill],
+    );
     expect((await postSubmit(app, aCookie, attemptId)).status).toBe(200);
 
     // 教师编辑该题：改题干与答案（id 不变、version+1）
@@ -547,9 +554,9 @@ describe("POST /api/student/attempts/:id/submit：判分与快照", () => {
       body: JSON.stringify({ sourceMd: editedSource }),
     });
     expect(edit.status).toBe(200);
-    expect(((await edit.json()) as { data: { version: number } }).data.version).toBe(
-      2,
-    );
+    expect(
+      ((await edit.json()) as { data: { version: number } }).data.version,
+    ).toBe(2);
 
     // 结果视图：仍是旧题干（含 [[4]]）与旧参考答案
     const { res, body } = await getAttempt(app, aCookie, attemptId);

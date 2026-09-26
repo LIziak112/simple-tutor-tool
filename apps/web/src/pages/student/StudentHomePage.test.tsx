@@ -98,10 +98,39 @@ describe("StudentHomePage", () => {
     // 第二份作业：不限截止
     expect(screen.getByText("课前预习")).toBeInTheDocument();
     expect(screen.getByText("不限截止")).toBeInTheDocument();
-    // 答题入口 T2.6 开放：按钮置灰提示
-    expect(
-      screen.getAllByRole("button", { name: /开始练习（即将开放）/ }).length,
-    ).toBe(2);
+  });
+
+  it("作业卡片入口是答题页链接（T2.6 起可进入；文案随状态变化）", async () => {
+    const first = ASSIGNMENTS.assignments[0];
+    const second = ASSIGNMENTS.assignments[1];
+    if (first === undefined || second === undefined) {
+      throw new Error("测试夹具缺少作业数据");
+    }
+    mockedAssignments.mockResolvedValue({
+      assignments: [
+        first,
+        { ...second, status: "in_progress" as const },
+        {
+          ...second,
+          id: "88888888-8888-4888-8888-888888888888",
+          title: "已交的作业",
+          status: "submitted" as const,
+        },
+      ],
+    });
+    mockedLectures.mockResolvedValue(LECTURES);
+    renderPage();
+
+    const start = await screen.findByRole("link", { name: "开始练习" });
+    expect(start).toHaveAttribute("href", `/s/assignments/${first.id}`);
+    expect(screen.getByRole("link", { name: "继续作答" })).toHaveAttribute(
+      "href",
+      `/s/assignments/${second.id}`,
+    );
+    expect(screen.getByRole("link", { name: "查看结果" })).toHaveAttribute(
+      "href",
+      "/s/assignments/88888888-8888-4888-8888-888888888888",
+    );
   });
 
   it("渲染讲义摘要与「我的记录」入口", async () => {

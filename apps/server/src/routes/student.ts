@@ -1,6 +1,4 @@
-import type {
-  StudentPasswordChangeRequest,
-} from "@tutor/contract";
+import type { StudentPasswordChangeRequest } from "@tutor/contract";
 import {
   attemptAnswerSaveRequestSchema,
   studentPasswordChangeRequestSchema,

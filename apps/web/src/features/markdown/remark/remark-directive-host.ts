@@ -34,6 +34,13 @@ interface DirectiveCounters {
   hint: number;
   /** 当前 steps 内的步骤计数（step 用；进入 steps 清零） */
   step: number;
+  /**
+   * 当前题目内的填空计数（blank 用；进入新题清零）。编号不依赖 question 上下文
+   * （答题页渲染的是独立题干，无 ::::question 包裹）——展示组件忽略该编号，
+   * 渲染结果不变（samples 回归不受影响，AGENTS 第 12 条）；T2.6 起答题页按此
+   * 编号把空框渲染为可输入控件（BlankAnswersContext）。
+   */
+  blank: number;
 }
 
 function annotate(
@@ -46,12 +53,16 @@ function annotate(
   if (node.name === "question") {
     next.question += 1;
     next.hint = 0;
+    next.blank = 0;
     props.index = next.question;
   } else if (node.name === "hint") {
     if (counters.question > 0) {
       next.hint += 1;
       props.index = next.hint;
     }
+  } else if (node.name === "blank") {
+    next.blank += 1;
+    props.index = next.blank;
   } else if (node.name === "steps") {
     next.step = 0;
   } else if (node.name === "step") {
@@ -92,6 +103,6 @@ function walk(node: MdNode, initialCounters: DirectiveCounters): void {
 /** remark 插件入口：无选项，遍历一次完成映射与编号 */
 export function remarkDirectiveHost() {
   return (tree: MdNode) => {
-    walk(tree, { question: 0, hint: 0, step: 0 });
+    walk(tree, { question: 0, hint: 0, step: 0, blank: 0 });
   };
 }

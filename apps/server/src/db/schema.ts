@@ -1,4 +1,8 @@
-import type { AttemptStatus, DocumentKind, QuestionType } from "@tutor/contract";
+import type {
+  AttemptStatus,
+  DocumentKind,
+  QuestionType,
+} from "@tutor/contract";
 import {
   index,
   integer,

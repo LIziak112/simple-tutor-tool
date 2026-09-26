@@ -1,5 +1,6 @@
 import type { AssignmentStatus, StudentAssignment } from "@tutor/contract";
 import { cn } from "cn";
+import { Link } from "react-router";
 import { Button } from "@/components/ui/button";
 import { formatDueTime } from "@/lib/time";
 
@@ -58,10 +59,18 @@ export function AssignmentDueLabel({ dueAt }: { dueAt: string | null }) {
   );
 }
 
+/** 作业状态 → 答题入口文案（T2.6 起可进入答题页） */
+const ENTRY_LABEL: Record<AssignmentStatus, string> = {
+  not_started: "开始练习",
+  in_progress: "继续作答",
+  submitted: "查看结果",
+  graded: "查看结果",
+};
+
 /**
- * 「我的作业」卡片（T2.3 展示态）：标题/单元/主题/题数/截止/状态徽章。
- * 答题页在 T2.6 落地，本任务卡片不可进入——以按钮形式呈现但置灰提示「即将开放」，
- * 保证后续接答题路由时只需替换 onClick。
+ * 「我的作业」卡片：标题/单元/主题/题数/截止/状态徽章 + 答题入口。
+ * T2.6 起入口打通：点击进入 /s/assignments/:id（自动创建/取回 attempt，
+ * 未开始与进行中都进答题视图，已交/已批进结果视图）。
  */
 export function StudentAssignmentCard({
   assignment,
@@ -80,8 +89,10 @@ export function StudentAssignmentCard({
         {assignment.topic && <span>主题：{assignment.topic}</span>}
         <span>共 {assignment.questionCount} 题</span>
       </p>
-      <Button variant="outline" className="min-h-11" disabled>
-        开始练习（即将开放）
+      <Button asChild variant="outline" className="min-h-11">
+        <Link to={`/s/assignments/${assignment.id}`}>
+          {ENTRY_LABEL[assignment.status]}
+        </Link>
       </Button>
     </li>
   );

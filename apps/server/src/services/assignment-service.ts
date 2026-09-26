@@ -14,11 +14,11 @@ import { publicStemMd } from "@tutor/md-dsl";
 import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
-  type Attempt,
-  attempts,
   type Assignment,
+  type Attempt,
   assignmentStudents,
   assignments,
+  attempts,
   knowledgePoints,
   questionKnowledge,
   questions,

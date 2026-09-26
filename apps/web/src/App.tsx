@@ -174,6 +174,9 @@ const studentRoutes = (() => {
   );
   const StudentLayout = lazy(() => import("./pages/student/StudentLayout"));
   const StudentHomePage = lazy(() => import("./pages/student/StudentHomePage"));
+  const StudentAssignmentAttemptPage = lazy(
+    () => import("./pages/student/StudentAssignmentAttemptPage"),
+  );
   const StudentLecturesPage = lazy(
     () => import("./pages/student/StudentLecturesPage"),
   );
@@ -220,6 +223,14 @@ const studentRoutes = (() => {
           element={
             <Suspense fallback={pageFallback}>
               <StudentHomePage />
+            </Suspense>
+          }
+        />
+        <Route
+          path="assignments/:id"
+          element={
+            <Suspense fallback={pageFallback}>
+              <StudentAssignmentAttemptPage />
             </Suspense>
           }
         />

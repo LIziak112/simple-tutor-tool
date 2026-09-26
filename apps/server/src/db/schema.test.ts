@@ -176,7 +176,9 @@ describe("attempts / responses 表（T2.6 作答生命周期）", () => {
     const studentId = randomUUID();
     const assignmentId = randomUUID();
     const now = new Date().toISOString();
-    db.insert(courses).values({ id: courseId, title: "默认课程", order: 0, createdAt: now }).run();
+    db.insert(courses)
+      .values({ id: courseId, title: "默认课程", order: 0, createdAt: now })
+      .run();
     db.insert(units)
       .values({
         id: unitId,

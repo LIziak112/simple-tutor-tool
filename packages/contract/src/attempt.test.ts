@@ -259,11 +259,16 @@ describe("attemptAnswerSaveRequestSchema / attemptAnswerSaveDataSchema", () => {
 
   it("保存回执：questionId + changeCount（≥1）", () => {
     expect(
-      attemptAnswerSaveDataSchema.parse({ questionId: "练习四-1", changeCount: 2 }),
+      attemptAnswerSaveDataSchema.parse({
+        questionId: "练习四-1",
+        changeCount: 2,
+      }),
     ).toEqual({ questionId: "练习四-1", changeCount: 2 });
     expect(
-      attemptAnswerSaveDataSchema.safeParse({ questionId: "练习四-1", changeCount: 0 })
-        .success,
+      attemptAnswerSaveDataSchema.safeParse({
+        questionId: "练习四-1",
+        changeCount: 0,
+      }).success,
     ).toBe(false);
   });
 });
@@ -308,6 +313,8 @@ describe("attemptDetailDataSchema / attemptErrorCodeSchema", () => {
     expect(attemptErrorCodeSchema.parse("QUESTION_NOT_FOUND")).toBe(
       "QUESTION_NOT_FOUND",
     );
-    expect(attemptErrorCodeSchema.safeParse("SUBMIT_TWICE").success).toBe(false);
+    expect(attemptErrorCodeSchema.safeParse("SUBMIT_TWICE").success).toBe(
+      false,
+    );
   });
 });
