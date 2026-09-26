@@ -17,6 +17,7 @@ import {
   listDirectives,
   markDirective,
   questionDirective,
+  type RegisteredDirective,
   solutionDirective,
   stepDirective,
   stepsDirective,
@@ -261,5 +262,48 @@ describe("allowedIn：与 §5.1 规则要点表一致", () => {
   it("blank 仅在 question 语境（题干中的 [[…]]）", () => {
     expect(blankDirective.allowedIn).toEqual(["question"]);
     expect(blankDirective.kind).toBe("text");
+  });
+});
+
+describe("attrDocs：gen:spec 属性表数据源（T1.7）", () => {
+  /** attrs 业务属性键（不含 id/class 通用底座，二者的说明统一写在规范总则） */
+  function businessAttrKeys(d: RegisteredDirective): string[] {
+    const shape = (
+      d.attrs as unknown as {
+        readonly shape?: Readonly<Record<string, unknown>>;
+      }
+    ).shape;
+    return Object.keys(shape ?? {}).filter(
+      (key) => key !== "id" && key !== "class",
+    );
+  }
+
+  it("每个首发指令的全部业务属性都有 attrDocs 说明（缺说明即测试失败）", () => {
+    for (const d of listDirectives()) {
+      const docs = d.attrDocs ?? {};
+      for (const key of businessAttrKeys(d)) {
+        expect(
+          (docs as Record<string, string | undefined>)[key]?.length ?? 0,
+          `${d.name} 的属性 ${key} 缺少 attrDocs 说明`,
+        ).toBeGreaterThan(3);
+      }
+    }
+  });
+
+  it("attrDocs 不含多余键（每个说明都对应真实属性）", () => {
+    for (const d of listDirectives()) {
+      const shape = (
+        d.attrs as unknown as {
+          readonly shape?: Readonly<Record<string, unknown>>;
+        }
+      ).shape;
+      const keys = new Set(Object.keys(shape ?? {}));
+      for (const key of Object.keys(d.attrDocs ?? {})) {
+        expect(
+          keys.has(key),
+          `${d.name} 的 attrDocs 键 ${key} 不是真实属性`,
+        ).toBe(true);
+      }
+    }
   });
 });

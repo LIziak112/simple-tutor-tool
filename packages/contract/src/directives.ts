@@ -68,6 +68,11 @@ export interface DirectiveDefinition<TAttrs extends z.ZodType = z.ZodType> {
   readonly allowedIn: readonly DirectiveLocation[];
   /** 属性 schema：底座含 id/class，业务属性全部可选或带缺省值（见文件头注释第 3 条） */
   readonly attrs: TAttrs;
+  /**
+   * 属性说明（T1.7 起 gen:spec 的数据源）：键必须能在 attrs（含 id/class 底座）中
+   * 找到，注册期校验；渲染进 docs/dsl/规范.md 指令属性表的「说明」列，写给老师与 AI 看。
+   */
+  readonly attrDocs?: Readonly<Record<string, string>>;
   /** 用途说明（gen:spec 自动写进给 AI 的规范文档，必须能自解释） */
   readonly description: string;
   /** 最小可用样例（gen:spec 自动写进规范文档，注册期校验与 kind 自洽） */
@@ -102,11 +107,31 @@ const directiveDefinitionMetaSchema = z.object({
     .array(directiveLocationSchema)
     .min(1, "allowedIn 不能为空，至少声明一个允许位置"),
   attrs: z.instanceof(z.ZodType),
+  attrDocs: z.record(z.string(), z.string().min(1)).optional(),
   description: z.string().min(1),
   example: z.string().min(1),
   aliases: z.array(z.string().regex(DIRECTIVE_NAME_PATTERN)).optional(),
   syntax: z.string().min(1).optional(),
 });
+
+/**
+ * attrDocs 键必须 ⊆ attrs 属性键（T1.7）：说明列与真实属性防漂移——
+ * attrs 改名/删属性后忘了同步 attrDocs 时，注册期即失败。
+ */
+function assertAttrDocsConsistent(definition: DirectiveDefinition): void {
+  if (definition.attrDocs === undefined) return;
+  const attrKeys =
+    definition.attrs instanceof z.ZodObject
+      ? Object.keys(definition.attrs.shape)
+      : [];
+  for (const key of Object.keys(definition.attrDocs)) {
+    if (!attrKeys.includes(key)) {
+      throw new Error(
+        `指令定义不合法（${definition.name}）：attrDocs 的键「${key}」不在其 attrs 属性中`,
+      );
+    }
+  }
+}
 
 /**
  * 校验 example 与 kind/syntax 自洽（gen:spec 文档质量的第一道闸）：
@@ -204,6 +229,7 @@ export function defineDirective<TAttrs extends z.ZodType>(
     );
   }
   assertExampleConsistent(definition);
+  assertAttrDocsConsistent(definition);
 
   const keys = [definition.name, ...(definition.aliases ?? [])];
   for (const key of keys) {
@@ -271,6 +297,12 @@ export const questionDirective = defineDirective({
     /** 考点（单个；解析时归一为数组入库，见 content.ts questionSchema.knowledge） */
     knowledge: z.string().min(1).optional(),
   }),
+  attrDocs: {
+    type: "题型，必填。七种取值：judge 判断 / choice 单选 / multi 多选 / fill 填空 / solve 计算 / apply 应用 / find-error 找错；写其他值会在 lint 报错",
+    difficulty:
+      "难度 1–5 的整数，缺省 2；可写字符串数字（如 difficulty=3），解析时自动转换",
+    knowledge: "考点（单个字符串），用于学情统计；解析时归一为数组入库",
+  },
   description:
     "一道题，练习/混合文档的顶层容器。内部依次为：题干正文（填空标记 [[…]]、判断 [[正确]]/[[错误]]、选择题任务列表 - [x] 都直接写在题干里）、可选的 :::hint（可多个）、手写题可选 :::answer、可选 :::solution。id 可用 {#p4-q7} 指定，缺省为「单元slug-序号」；编辑内容时保持 id 不变，学情统计才能跨版本延续。type 必填，difficulty 缺省 2。",
   example:
@@ -341,6 +373,7 @@ export const exampleDirective = defineDirective({
     /** 例题标题，缺省前端显示「例题」 */
     title: z.string().min(1).optional(),
   }),
+  attrDocs: { title: "例题标题，可选；缺省前端显示「例题」" },
   description:
     "讲义例题块：题面 + 解析，解析常以 :::solution 写在本块内（默认折叠，展开即上报事件）。嵌套时外层要多一个冒号（::::example）。仅用于讲义/混合文档的讲义段落。",
   example:
@@ -370,6 +403,7 @@ export const stepDirective = defineDirective({
     /** 该步标题；缺省为空串，前端按顺序显示「第 N 步」 */
     title: z.string().default(""),
   }),
+  attrDocs: { title: "该步标题，缺省为空串；缺省时前端按顺序显示「第 N 步」" },
   description:
     "steps 中的一个步骤，必须写在 :::steps 内部。title 缺省时前端按顺序显示「第 N 步」。",
   example: ':::step{title="第 1 步：去括号"}\n先处理乘方，再算乘除。\n:::',
@@ -385,6 +419,7 @@ export const foldDirective = defineDirective({
     /** 折叠标题，缺省「详情」 */
     title: z.string().min(1).default("详情"),
   }),
+  attrDocs: { title: "折叠标题，缺省「详情」" },
   description:
     "通用折叠块：默认收起、点击展开（展开事件上报）。适合放拓展阅读、次级说明等不挡主线的内容。仅讲义正文可用。",
   example: ':::fold{title="拓展：为什么 0 不能作除数"}\n…\n:::',
@@ -402,6 +437,7 @@ export const tipDirective = defineDirective({
     /** 标题，缺省前端显示「提示」 */
     title: z.string().min(1).optional(),
   }),
+  attrDocs: { title: "标题，可选；缺省前端显示「提示」" },
   description:
     "提示框：补充说明、小技巧等旁支信息，视觉弱于 warning。讲义与题目内都可用，title 缺省显示「提示」。",
   example: ':::tip{title="小技巧"}\n先通分再计算。\n:::',
@@ -417,6 +453,7 @@ export const warningDirective = defineDirective({
     /** 标题，缺省前端显示「注意」 */
     title: z.string().min(1).optional(),
   }),
+  attrDocs: { title: "标题，可选；缺省前端显示「注意」" },
   description:
     "警告框：易错点、常见误区，视觉上比 tip 更醒目。讲义与题目内都可用，title 缺省显示「注意」。",
   example:
@@ -433,6 +470,10 @@ export const boxDirective = defineDirective({
     /** 盒标题，可选 */
     title: z.string().min(1).optional(),
   }),
+  attrDocs: {
+    title:
+      '盒标题，可选；常与 .样式类 简写搭配（如 :::box{.warning title="易错点"}）',
+  },
   description:
     "通用版式盒（自定义强调容器）。样式类用 .样式类 简写：如 :::box{.warning title=「易错点」} 中 .warning 会被解析进 class 属性（常用值 warning/info/success），不写样式类时为中性样式。需要 tip/warning 之外的固定外观时用它。",
   example: ':::box{.warning title="易错点"}\n除法不满足结合律。\n:::',
@@ -461,6 +502,7 @@ export const colDirective = defineDirective({
     /** 栏宽（如 "40%"、"2fr"），缺省各栏均分 */
     width: z.string().min(1).optional(),
   }),
+  attrDocs: { width: '栏宽（如 "40%"、"2fr"），缺省各栏均分' },
   description:
     "columns 中的一栏，必须写在 :::columns 内部。width 缺省时各栏均分。",
   example: ':::col{width="40%"}\n左栏内容：文字或指令。\n:::',
@@ -476,6 +518,7 @@ export const markDirective = defineDirective({
     /** 高亮颜色，缺省 yellow */
     color: z.enum(["yellow", "red", "blue", "green"]).default("yellow"),
   }),
+  attrDocs: { color: "高亮颜色：yellow / red / blue / green，缺省 yellow" },
   description:
     "行内重点标记（荧光笔效果）：在句子中间圈出关键词。讲义与题目文本中均可使用。",
   example: "注意 :mark[系数的符号]{color=red} 不能丢。",
@@ -495,6 +538,10 @@ export const imageDirective = defineDirective({
     /** 显示宽度（如 "60%"、"320px"），缺省自适应 */
     width: z.string().min(1).optional(),
   }),
+  attrDocs: {
+    src: '图片路径，必填：写导入时上传到服务端 blobs 的文件路径（如 "blobs/fig-1.png"），不支持外链 URL',
+    width: '显示宽度（如 "60%"、"320px"），缺省自适应',
+  },
   description:
     "块级图片。图片以文件形式存放在服务端 data/blobs/（导入时上传），src 写 blobs 内路径，不支持外链 URL；width 缺省自适应。",
   example: '::image{src="blobs/fig-1.png" width="60%"}',
@@ -512,6 +559,10 @@ export const graphDirective = defineDirective({
     /** x 轴范围（如 "-3,3"），缺省自动选取 */
     range: z.string().min(1).optional(),
   }),
+  attrDocs: {
+    fn: '函数表达式，必填，如 "x^2"、"sin(x)"',
+    range: 'x 轴范围（如 "-3,3"），缺省自动选取',
+  },
   description:
     "函数图像，前端用 function-plot 按需加载渲染。fn 为函数表达式（如 x^2、sin(x)），range 为 x 轴范围（如 -3,3），缺省自动选取。",
   example: '::graph{fn="x^2" range="-3,3"}',
