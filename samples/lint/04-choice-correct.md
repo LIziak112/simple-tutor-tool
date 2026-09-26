@@ -1,6 +1,5 @@
-<!-- 本文件覆盖的规则：CHOICE_NO_CORRECT（选择题无正确项，error）、CHOICE_MULTIPLE_CORRECT（单选题多个正确项，error） -->
-
 ---
+# 本文件覆盖的规则：CHOICE_NO_CORRECT（选择题无正确项，error）、CHOICE_MULTIPLE_CORRECT（单选题多个正确项，error）
 kind: practice
 unit: 练习
 ---

@@ -21,7 +21,8 @@ import { makeIssue } from "../v2/shared";
  */
 
 /** 开栏行：冒号 ×3+ 指令名（名称不含冒号/空白/花括号/方括号；micromark 允许非 ASCII 名），后接可选 [标签] 与 {属性} */
-const OPEN_FENCE_RE = /^ {0,3}(:{3,})([^ \t{:\[]+)(?:\[[^\]]*\])?(?:\{.*\})?[ \t]*$/;
+const OPEN_FENCE_RE =
+  /^ {0,3}(:{3,})([^ \t{:[]+)(?:\[[^\]]*\])?(?:\{.*\})?[ \t]*$/;
 /** 裸闭合围栏：冒号 ×3+ 到行尾（只允许尾随空白） */
 const CLOSE_FENCE_RE = /^ {0,3}(:{3,})[ \t]*$/;
 /** 代码块开栏（与 CommonMark 一致：` 或 ~ ×3+，行首缩进 ≤3） */
@@ -41,7 +42,9 @@ export function scanUnclosedContainers(
   lines: readonly string[],
 ): UnclosedContainer[] {
   const stack: UnclosedContainer[] = [];
-  let codeFence: { readonly marker: string; readonly length: number } | undefined;
+  let codeFence:
+    | { readonly marker: string; readonly length: number }
+    | undefined;
   let inMathBlock = false;
 
   for (let index = skipFrontmatter(lines); index < lines.length; index += 1) {
@@ -50,13 +53,16 @@ export function scanUnclosedContainers(
     if (codeFence !== undefined) {
       // 代码块内：等长及以上同字符围栏才结束代码块，其余行一律跳过
       const fence = CODE_FENCE_RE.exec(line);
-      const fenceText = fence?.[1] ?? "";
-      if (
-        fenceText.startsWith(codeFence.marker) &&
-        fenceText.length >= codeFence.length &&
-        line.slice(fence[0]?.length ?? 0).trim().length === 0
-      ) {
-        codeFence = undefined;
+      if (fence !== null) {
+        const fenceText = fence[1] ?? "";
+        const trailing = line.slice((fence[0] ?? "").length).trim().length;
+        if (
+          fenceText.startsWith(codeFence.marker) &&
+          fenceText.length >= codeFence.length &&
+          trailing === 0
+        ) {
+          codeFence = undefined;
+        }
       }
       continue;
     }
@@ -77,7 +83,9 @@ export function scanUnclosedContainers(
       // 单行 $$…$$ 是自闭合数学块；只有「以 $$ 开头但不同行收尾」才进入多行数学块
       const trimmed = line.trim();
       const selfContained =
-        trimmed.length >= 4 && trimmed.startsWith("$$") && trimmed.endsWith("$$");
+        trimmed.length >= 4 &&
+        trimmed.startsWith("$$") &&
+        trimmed.endsWith("$$");
       if (!selfContained) inMathBlock = true;
       continue;
     }
@@ -86,7 +94,9 @@ export function scanUnclosedContainers(
     if (close !== null) {
       const colons = close[1]?.length ?? 3;
       // 自栈底起第一个开栏冒号数 ≤ N 的容器被闭合，其内部嵌套容器随之隐式闭合
-      const matched = stack.findIndex((container) => container.colons <= colons);
+      const matched = stack.findIndex(
+        (container) => container.colons <= colons,
+      );
       if (matched >= 0) stack.length = matched;
       continue;
     }
@@ -103,9 +113,7 @@ export function scanUnclosedContainers(
 }
 
 /** 把扫描结果转成 LintIssue（error：未闭合会静默吞内容，必须阻断导入） */
-export function lintUnclosedContainers(
-  lines: readonly string[],
-): LintIssue[] {
+export function lintUnclosedContainers(lines: readonly string[]): LintIssue[] {
   return scanUnclosedContainers(lines).map((container) => {
     const fence = ":".repeat(container.colons);
     return {

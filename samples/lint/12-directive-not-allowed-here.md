@@ -1,6 +1,5 @@
-<!-- 本文件覆盖的规则：DIRECTIVE_NOT_ALLOWED_HERE（指令出现在 allowedIn 之外的位置，warning） -->
-
 ---
+# 本文件覆盖的规则：DIRECTIVE_NOT_ALLOWED_HERE（指令出现在 allowedIn 之外的位置，warning）
 kind: practice
 unit: 练习
 ---

@@ -1,6 +1,5 @@
-<!-- 本文件覆盖的规则：FILL_NO_BLANK（填空题题干没有任何 [[…]] 空，error） -->
-
 ---
+# 本文件覆盖的规则：FILL_NO_BLANK（填空题题干没有任何 [[…]] 空，error）
 kind: practice
 unit: 练习
 ---

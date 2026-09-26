@@ -1,6 +1,5 @@
-<!-- 本文件覆盖的规则：JUDGE_INVALID_ANSWER（判断题标记非法，error）、JUDGE_MULTIPLE_MARKERS（判断题多个标记，warning） -->
-
 ---
+# 本文件覆盖的规则：JUDGE_INVALID_ANSWER（判断题标记非法，error）、JUDGE_MULTIPLE_MARKERS（判断题多个标记，warning）
 kind: practice
 unit: 练习
 ---

@@ -1,6 +1,5 @@
-<!-- 本文件覆盖的规则：DUPLICATE_QUESTION_ID（题目 id 重复，error，行号取后出现的题） -->
-
 ---
+# 本文件覆盖的规则：DUPLICATE_QUESTION_ID（题目 id 重复，error，行号取后出现的题）
 kind: practice
 unit: 练习
 ---

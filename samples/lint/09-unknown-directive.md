@@ -1,6 +1,5 @@
-<!-- 本文件覆盖的规则：UNKNOWN_DIRECTIVE（未注册指令，warning + 近似名建议） -->
-
 ---
+# 本文件覆盖的规则：UNKNOWN_DIRECTIVE（未注册指令，warning + 近似名建议）
 kind: practice
 unit: 练习
 ---

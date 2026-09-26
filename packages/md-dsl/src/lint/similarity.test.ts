@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { levenshtein, suggestAttrKey, suggestDirectiveName } from "./similarity";
+import {
+  levenshtein,
+  suggestAttrKey,
+  suggestDirectiveName,
+} from "./similarity";
 
 /** 近似名建议（UNKNOWN_DIRECTIVE 消息质量的基础） */
 
@@ -14,7 +18,9 @@ describe("levenshtein", () => {
   });
 
   it("对称性：levenshtein(a,b) === levenshtein(b,a)", () => {
-    expect(levenshtein("exampl", "example")).toBe(levenshtein("example", "exampl"));
+    expect(levenshtein("exampl", "example")).toBe(
+      levenshtein("example", "exampl"),
+    );
     expect(levenshtein("warnin", "warning")).toBe(1);
   });
 });
@@ -47,7 +53,9 @@ describe("suggestDirectiveName：从注册表主名+别名中找最近候选", (
 describe("suggestAttrKey：属性名近似建议", () => {
   it("常见属性手误", () => {
     expect(suggestAttrKey("titel", ["id", "class", "title"])).toBe("title");
-    expect(suggestAttrKey("widht", ["id", "class", "src", "width"])).toBe("width");
+    expect(suggestAttrKey("widht", ["id", "class", "src", "width"])).toBe(
+      "width",
+    );
     expect(suggestAttrKey("colr", ["id", "class", "color"])).toBe("color");
   });
 
