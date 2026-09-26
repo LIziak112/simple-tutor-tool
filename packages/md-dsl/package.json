@@ -7,7 +7,8 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "tutor-lint": "node scripts/tutor-lint.ts"
   },
   "dependencies": {
     "@tutor/contract": "workspace:*",
