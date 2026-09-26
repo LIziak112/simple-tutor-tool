@@ -18,7 +18,7 @@ simple-tutor-tool v2：一对一辅导老师的自部署、AI 原生讲练工具
 12. 所有 samples/ 下的历史样例文档是兼容性回归测试，任何改动后都必须仍能解析、渲染一致。
 
 ## 常用命令
-pnpm dev / pnpm test / pnpm e2e（当前为占位脚本，T2.13 起提供）/ pnpm lint / pnpm typecheck / pnpm format / pnpm build / pnpm db:generate / pnpm schema:export（导出内容契约 JSON Schema，改 contract 后须重跑并提交）/ pnpm tutor-lint <文件或目录>（lint DSL 文档，有 error 退出码 1）/ pnpm gen:spec（从注册表生成 docs/dsl/规范.md、提示词模板.md 并刷新 JSON Schema；改注册表/lint 规则/契约后必须重跑并提交，CI 会校验 gen:spec 后 git diff 为空）
+pnpm dev / pnpm test / pnpm e2e（当前为占位脚本，T2.13 起提供）/ pnpm lint / pnpm typecheck / pnpm format / pnpm build / pnpm db:generate / pnpm schema:export（导出内容契约 JSON Schema，改 contract 后须重跑并提交）/ pnpm tutor-lint <文件或目录>（lint DSL 文档，有 error 退出码 1）/ pnpm reparse [--dry-run]（解析器升级后从 questions.sourceMd / lectures.markdown 重抽取结构化字段，题目 id 不变；--dry-run 只输出不写库；库定位复用 DATA_DIR）/ pnpm gen:spec（从注册表生成 docs/dsl/规范.md、提示词模板.md 并刷新 JSON Schema；改注册表/lint 规则/契约后必须重跑并提交，CI 会校验 gen:spec 后 git diff 为空）
 
 ## 完成一个任务的定义
 代码 + 测试 + 类型检查通过 + 相关文档（docs/dsl 或本文件）已同步更新 + 在 PR 描述中列出如何手动验证。

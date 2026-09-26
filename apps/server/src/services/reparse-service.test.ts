@@ -7,8 +7,8 @@ import { createTestDb } from "../db/test-utils.ts";
 import { commitImport } from "./content-service.ts";
 import {
   type ReparseReport,
-  reparseAll,
   renderReparseReport,
+  reparseAll,
 } from "./reparse-service.ts";
 
 /**
@@ -109,7 +109,7 @@ describe("reparseAll：模拟解析器升级（验收核心）", () => {
     // 字段恢复为当前解析器输出
     expect(after.difficulty).toBe(before.difficulty); // 1（choice 题原难度）
     expect(JSON.parse(after.hintsJson)).toEqual(JSON.parse(before.hintsJson));
-    expect(JSON.parse(after.optionsJson)).toEqual(
+    expect(JSON.parse(after.optionsJson ?? "[]")).toEqual(
       JSON.parse(before.optionsJson ?? "[]"),
     );
     expect(after.type).toBe(before.type);
@@ -154,9 +154,9 @@ describe("reparseAll：模拟解析器升级（验收核心）", () => {
     expect(difficultyChange?.from).toContain("5");
     expect(difficultyChange?.to).toContain("1");
     // 其余题为 unchanged
-    expect(report.questions.filter((r) => r.status === "unchanged")).toHaveLength(
-      7,
-    );
+    expect(
+      report.questions.filter((r) => r.status === "unchanged"),
+    ).toHaveLength(7);
     expect(report.questions).toHaveLength(8);
     expect(report.dryRun).toBe(false);
   });
@@ -235,7 +235,11 @@ describe("reparseAll：--dry-run", () => {
 
     reparseAll(db, { dryRun: true });
 
-    const row = db.select().from(lectures).where(eq(lectures.id, first.id)).get();
+    const row = db
+      .select()
+      .from(lectures)
+      .where(eq(lectures.id, first.id))
+      .get();
     expect(row?.title).toBe("被篡改的标题");
   });
 });
@@ -268,9 +272,9 @@ describe("reparseAll：坏数据防御", () => {
     expect(db.select().from(questions).all()).toHaveLength(8);
 
     // 其余题目照常检查（全部无变化）
-    expect(report.questions.filter((r) => r.status === "unchanged")).toHaveLength(
-      7,
-    );
+    expect(
+      report.questions.filter((r) => r.status === "unchanged"),
+    ).toHaveLength(7);
   });
 
   it("软删题目不参与 reparse：不检查、不更新", () => {
@@ -284,9 +288,7 @@ describe("reparseAll：坏数据防御", () => {
     const report = reparseAll(db, { dryRun: false });
 
     expect(report.questions).toHaveLength(7);
-    expect(
-      report.questions.some((r) => r.id === "练习四-2"),
-    ).toBe(false);
+    expect(report.questions.some((r) => r.id === "练习四-2")).toBe(false);
     const row = getQuestion(db, "练习四-2");
     expect(row?.difficulty).toBe(5); // 软删行不被触碰
   });
@@ -317,9 +319,11 @@ describe("reparseAll：讲义 title 重取", () => {
       .from(lectures)
       .where(eq(lectures.id, first.id))
       .get();
-    expect(afterFirst?.title).toBe(first.title);
-    expect(afterFirst?.markdown).toBe(first.markdown);
-    expect(afterFirst?.updatedAt > first.updatedAt).toBe(true);
+    expect(afterFirst).toBeDefined();
+    if (afterFirst === undefined) return;
+    expect(afterFirst.title).toBe(first.title);
+    expect(afterFirst.markdown).toBe(first.markdown);
+    expect(afterFirst.updatedAt > first.updatedAt).toBe(true);
 
     // 未篡改的讲义：unchanged、updatedAt 不动
     const afterSecond = db

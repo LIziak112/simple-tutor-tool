@@ -8,8 +8,8 @@ import {
   wrapSingleQuestionMd,
 } from "@tutor/md-dsl";
 import { asc, eq, isNull } from "drizzle-orm";
-import type { Lecture, Question as QuestionRow } from "../db/schema.ts";
 import type { Db } from "../db/client.ts";
+import type { Lecture, Question as QuestionRow } from "../db/schema.ts";
 import {
   knowledgePoints,
   lectures,
@@ -354,7 +354,11 @@ function planLecture(row: Lecture): LecturePlan {
     title: nextTitle,
     status: "updated",
     changes: [
-      { field: "title", from: displayValue(row.title), to: displayValue(nextTitle) },
+      {
+        field: "title",
+        from: displayValue(row.title),
+        to: displayValue(nextTitle),
+      },
     ],
   };
 }
@@ -423,7 +427,7 @@ export function reparseAll(db: Db, options: ReparseOptions): ReparseReport {
           .run();
         syncQuestionKnowledge(tx, plan.parsedQuestion, knowledgeIdByName);
       }
-      for (const [index, plan] of lecturePlans.entries()) {
+      for (const plan of lecturePlans) {
         if (plan.status !== "updated") continue;
         tx.update(lectures)
           .set({ title: plan.title, updatedAt: now })
