@@ -50,7 +50,11 @@ function excalidrawAssets(): Plugin {
         }
         const file = resolvePath(pkgDevDir, rel);
         const root = resolvePath(pkgDevDir);
-        if (!file.startsWith(root) || !existsSync(file) || !statSync(file).isFile()) {
+        if (
+          !file.startsWith(root) ||
+          !existsSync(file) ||
+          !statSync(file).isFile()
+        ) {
           next();
           return;
         }

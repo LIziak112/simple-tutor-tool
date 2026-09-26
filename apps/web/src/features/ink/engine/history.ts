@@ -141,7 +141,10 @@ export class InkStore {
   }
 
   /** 仅用于测试/调试：栈条目只读视图 */
-  debugHistory(): { undo: readonly InkHistoryEntry[]; redo: readonly InkHistoryEntry[] } {
+  debugHistory(): {
+    undo: readonly InkHistoryEntry[];
+    redo: readonly InkHistoryEntry[];
+  } {
     return { undo: [...this.#undoStack], redo: [...this.#redoStack] };
   }
 

@@ -113,7 +113,9 @@ export const INK_HIGHLIGHTER: InkBrushSpec = {
 export const INK_ERASE_RADIUS = 14;
 
 /** 默认笔配置 */
-export const DEFAULT_INK_TOOL: Required<Extract<InkToolConfig, { type: "pen" }>> = {
+export const DEFAULT_INK_TOOL: Required<
+  Extract<InkToolConfig, { type: "pen" }>
+> = {
   type: "pen",
   color: "black",
   size: "medium",
@@ -126,7 +128,10 @@ export const DEFAULT_INK_TOOL: Required<Extract<InkToolConfig, { type: "pen" }>>
 export function resolveToolSpec(
   tool: InkToolConfig,
   base: { color: InkPenColor; size: InkPenSize },
-): { brush: InkBrushSpec | null; base: { color: InkPenColor; size: InkPenSize } } {
+): {
+  brush: InkBrushSpec | null;
+  base: { color: InkPenColor; size: InkPenSize };
+} {
   switch (tool.type) {
     case "pen": {
       const next = {

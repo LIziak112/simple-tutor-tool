@@ -18,12 +18,13 @@
  * 适配器内部用 react-dom/client 挂一个独立 React 子树（引擎保持纯 TS，
  * 用 createElement 而非 JSX）。
  */
-import { createElement } from "react";
-import { createRoot, type Root } from "react-dom/client";
+
+import type { ExcalidrawElement } from "@excalidraw/excalidraw/element/types";
 // 类型走包的深层 types 导出（入口 index 未 re-export 这些类型名）；
 // 仅 import type，不产生任何运行时代码
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
-import type { ExcalidrawElement } from "@excalidraw/excalidraw/element/types";
+import { createElement } from "react";
+import { createRoot, type Root } from "react-dom/client";
 import type { ToolAwareSurface } from "./surface.ts";
 import type { InkDoc, InkToolConfig } from "./types.ts";
 
@@ -253,11 +254,17 @@ export function createExcalidrawSurface(
       runWhenReady(() => {
         if (!api) return;
         if (data.engine !== "excalidraw") {
-          throw new Error(`笔迹数据引擎不匹配：期望 excalidraw，实际 ${data.engine}`);
+          throw new Error(
+            `笔迹数据引擎不匹配：期望 excalidraw，实际 ${data.engine}`,
+          );
         }
         void (async () => {
           const mod = await import("@excalidraw/excalidraw");
-          const restored = mod.restore({ elements: sceneElements(data) }, null, null);
+          const restored = mod.restore(
+            { elements: sceneElements(data) },
+            null,
+            null,
+          );
           const elements = restored.elements ?? [];
           undoStack.push({ elements: lastElements });
           redoStack.length = 0;

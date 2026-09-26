@@ -29,17 +29,22 @@ import Atrament from "atrament";
 import { buildAtramentDoc, parseAtramentDoc } from "./doc.ts";
 import { eraseHit } from "./erase.ts";
 import { InkStore } from "./history.ts";
-import { fromLogical, fromLogicalPoint, toLogical, toLogicalPoint } from "./normalize.ts";
+import {
+  fromLogical,
+  fromLogicalPoint,
+  toLogical,
+  toLogicalPoint,
+} from "./normalize.ts";
 import type { ToolAwareSurface } from "./surface.ts";
 import {
   INK_ERASE_RADIUS,
-  resolveToolSpec,
   type InkDoc,
+  type InkPenColor,
+  type InkPenSize,
   type InkStroke,
   type InkStrokePoint,
   type InkToolConfig,
-  type InkPenColor,
-  type InkPenSize,
+  resolveToolSpec,
 } from "./types.ts";
 
 /** devicePixelRatio 上限 2：控制内存（长答题区 + 高分屏，§5.4.1 绘制层第 2 条） */
@@ -71,7 +76,10 @@ export function createAtramentSurface(
 
   /** 当前工具配置（pen 的可选属性以 base 补全） */
   let tool: InkToolConfig = { type: "pen" };
-  let base: { color: InkPenColor; size: InkPenSize } = { color: "black", size: "medium" };
+  let base: { color: InkPenColor; size: InkPenSize } = {
+    color: "black",
+    size: "medium",
+  };
 
   /** 见过笔之后为 true：手指不再落墨（Apple Pencil 防手掌误触） */
   let penOnly = false;
@@ -93,7 +101,10 @@ export function createAtramentSurface(
 
   /** 指针事件 → 相对 canvas 的 CSS 像素坐标（用 clientX 而非 offsetX：
    *  coalesced 事件的 offsetX 在部分浏览器不可靠） */
-  function eventToCss(ev: { clientX: number; clientY: number }): { x: number; y: number } {
+  function eventToCss(ev: { clientX: number; clientY: number }): {
+    x: number;
+    y: number;
+  } {
     const rect = canvas?.getBoundingClientRect();
     if (!rect) return { x: 0, y: 0 };
     return { x: ev.clientX - rect.left, y: ev.clientY - rect.top };
@@ -107,7 +118,9 @@ export function createAtramentSurface(
   /** 按当前模式刷新 touch-action（笔/滚动模式放行纵向滚动） */
   function applyTouchAction(): void {
     const mode =
-      tool.type === "scroll" || penOnly ? TOUCH_ACTION_PAN_Y : TOUCH_ACTION_NONE;
+      tool.type === "scroll" || penOnly
+        ? TOUCH_ACTION_PAN_Y
+        : TOUCH_ACTION_NONE;
     if (canvas) canvas.style.touchAction = mode;
     if (container) container.style.touchAction = mode;
   }
@@ -211,7 +224,14 @@ export function createAtramentSurface(
     liveStartStamp = e.timeStamp;
 
     if (tool.type === "eraser") {
-      pendingErase = new Set(eraseHit(store.getStrokes(), toLogical(cssWidth, x), toLogical(cssWidth, y), INK_ERASE_RADIUS));
+      pendingErase = new Set(
+        eraseHit(
+          store.getStrokes(),
+          toLogical(cssWidth, x),
+          toLogical(cssWidth, y),
+          INK_ERASE_RADIUS,
+        ),
+      );
       redraw();
       return;
     }
@@ -227,9 +247,7 @@ export function createAtramentSurface(
     // 起点先画一个墨点（轻点可见），并记录归一化点
     const p = pressureOf(e);
     livePrev = atrament.draw(x, y, x, y, p);
-    livePoints = [
-      { ...toLogicalPoint(cssWidth, x, y), p, t: 0 },
-    ];
+    livePoints = [{ ...toLogicalPoint(cssWidth, x, y), p, t: 0 }];
   }
 
   function onPointerMove(e: PointerEvent): void {
@@ -384,7 +402,8 @@ export function createAtramentSurface(
 
       sizeCanvas();
       ctx2d = canvas.getContext("2d");
-      if (!ctx2d) throw new Error("无法创建 canvas 2d 上下文（当前环境不支持）");
+      if (!ctx2d)
+        throw new Error("无法创建 canvas 2d 上下文（当前环境不支持）");
       // 构造 atrament（配置好 2d context 画笔状态）后立刻解绑其内部指针监听：
       // 输入层完全由本文件接管（见文件头注释）
       atrament = new Atrament(canvas);
@@ -435,13 +454,10 @@ export function createAtramentSurface(
       c.fillRect(0, 0, out.width, out.height);
       c.drawImage(canvas, 0, 0);
       return new Promise<Blob>((resolve, reject) => {
-        out.toBlob(
-          (blob) => {
-            if (blob) resolve(blob);
-            else reject(new Error("导出 PNG 失败：toBlob 返回空"));
-          },
-          "image/png",
-        );
+        out.toBlob((blob) => {
+          if (blob) resolve(blob);
+          else reject(new Error("导出 PNG 失败：toBlob 返回空"));
+        }, "image/png");
       });
     },
 

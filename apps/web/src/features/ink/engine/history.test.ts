@@ -17,7 +17,12 @@ function stroke(points: Array<[number, number]>): InkStroke {
 describe("InkStore 撤销/重做", () => {
   it("新增笔画：undo 移除、redo 恢复", () => {
     const store = new InkStore();
-    store.commitAdd([stroke([[10, 10], [20, 20]])]);
+    store.commitAdd([
+      stroke([
+        [10, 10],
+        [20, 20],
+      ]),
+    ]);
     store.commitAdd([stroke([[30, 30]])]);
     expect(store.getStrokes()).toHaveLength(2);
 
@@ -32,7 +37,10 @@ describe("InkStore 撤销/重做", () => {
     expect(store.getStrokes()).toHaveLength(2);
     // 内容完整（深比较）
     expect(store.getStrokes()).toEqual([
-      stroke([[10, 10], [20, 20]]),
+      stroke([
+        [10, 10],
+        [20, 20],
+      ]),
       stroke([[30, 30]]),
     ]);
   });
@@ -64,9 +72,18 @@ describe("InkStore 撤销/重做", () => {
 
   it("擦除后撤销恢复被擦笔画（原位置原顺序），重做再擦除", () => {
     const store = new InkStore();
-    const a = stroke([[10, 10], [11, 11]]);
-    const b = stroke([[50, 50], [51, 51]]);
-    const c = stroke([[90, 90], [91, 91]]);
+    const a = stroke([
+      [10, 10],
+      [11, 11],
+    ]);
+    const b = stroke([
+      [50, 50],
+      [51, 51],
+    ]);
+    const c = stroke([
+      [90, 90],
+      [91, 91],
+    ]);
     store.commitAdd([a]);
     store.commitAdd([b]);
     store.commitAdd([c]);
@@ -172,7 +189,11 @@ describe("InkDoc 往返一致", () => {
   it("store → getData → load → getData 深比较一致（含 updatedAt）", () => {
     const store = new InkStore();
     store.commitAdd([
-      stroke([[10.5, 20.25], [100, 200.5], [500, 500]]),
+      stroke([
+        [10.5, 20.25],
+        [100, 200.5],
+        [500, 500],
+      ]),
       {
         tool: "highlighter",
         color: "rgba(250, 204, 21, 0.45)",

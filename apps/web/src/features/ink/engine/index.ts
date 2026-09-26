@@ -15,10 +15,10 @@ import { createExcalidrawSurface } from "./excalidraw-adapter.ts";
 import type { ToolAwareSurface } from "./surface.ts";
 import type { InkDoc, InkEngineKind, InkToolConfig } from "./types.ts";
 
-export * from "./types.ts";
-export { InkStore } from "./history.ts";
 export type { InkHistoryEntry } from "./history.ts";
+export { InkStore } from "./history.ts";
 export type { InkSurface, ToolAwareSurface } from "./surface.ts";
+export * from "./types.ts";
 
 export interface InkEngineOptions {
   /** 底层引擎：atrament（页内答题区，默认）/ excalidraw（全屏作答） */
@@ -54,7 +54,10 @@ export interface InkEngine {
  * 创建手写引擎并挂载到容器。excalidraw 的资源加载是异步的：mount 内部动态
  * import，期间 getData() 返回初始/空文档，其余操作在就绪后生效。
  */
-export function create(container: HTMLElement, opts: InkEngineOptions = {}): InkEngine {
+export function create(
+  container: HTMLElement,
+  opts: InkEngineOptions = {},
+): InkEngine {
   // exactOptionalPropertyTypes：不把 undefined 显式传给可选属性
   const surface: ToolAwareSurface =
     opts.engine === "excalidraw"
@@ -78,7 +81,12 @@ export function create(container: HTMLElement, opts: InkEngineOptions = {}): Ink
     clear: () => surface.clear(),
     setTool: (tool) => surface.setTool(tool),
     on: (event, cb) =>
-      event === "change" ? surface.onChange(cb) : (() => () => undefined)(),
+      event === "change"
+        ? surface.onChange(cb)
+        : (
+            () => () =>
+              undefined
+          )(),
     canUndo: () => surface.canUndo(),
     canRedo: () => surface.canRedo(),
     destroy: () => surface.destroy(),

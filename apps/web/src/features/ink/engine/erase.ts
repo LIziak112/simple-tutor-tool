@@ -66,7 +66,12 @@ export function strokeHit(
   // 粗筛：包围盒外扩 radius 后不含检测点则必不命中
   const b = strokeBounds(stroke);
   const pad = radius + stroke.weight / 2;
-  if (x < b.minX - pad || x > b.maxX + pad || y < b.minY - pad || y > b.maxY + pad) {
+  if (
+    x < b.minX - pad ||
+    x > b.maxX + pad ||
+    y < b.minY - pad ||
+    y > b.maxY + pad
+  ) {
     return false;
   }
   const rSq = radius * radius;
