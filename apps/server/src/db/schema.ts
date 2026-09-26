@@ -1,8 +1,8 @@
-import { sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 /**
  * 数据库表定义（Drizzle / SQLite）。表结构以架构文档 §5.2 数据模型为准，
- * 本任务（T0.5）只建 teachers、sessions 两张表，其余表在各自任务中追加。
+ * T0.5 建 teachers、sessions；T1.9 追加 login_failures（登录限流，§5.7）。
  *
  * 全库约定（见 docs/开发任务清单.md §0.3 与 db-change 技能）：
  * - 主键 id 一律为应用层生成的 crypto.randomUUID() 字符串；
@@ -38,7 +38,7 @@ export const sessions = sqliteTable("sessions", {
    * 且先删主体后会话由过期清理任务负责，靠外键级联反而会把清理顺序耦死。
    */
   subjectId: text("subject_id").notNull(),
-  /** 过期时间：UTC ISO 字符串（登录时按 90 天有效期写入） */
+  /** 过期时间：UTC ISO 字符串（教师会话 7 天、学生会话 90 天，写入方决定） */
   expiresAt: text("expires_at").notNull(),
   /** 创建时间：UTC ISO 字符串 */
   createdAt: text("created_at").notNull(),
@@ -52,3 +52,22 @@ export type NewTeacher = typeof teachers.$inferInsert;
 export type Session = typeof sessions.$inferSelect;
 /** sessions 表插入类型 */
 export type NewSession = typeof sessions.$inferInsert;
+
+/**
+ * 登录失败限流表（§5.7：同一 IP / 同一登录名连续失败 5 次锁定 10 分钟）。
+ * key 形如 "name:登录名" 或 "ip:IP"，按 key 分别计数；T2.1 学生登录复用本表。
+ * count 与 lockedUntil 由服务层维护（锁过期后计数清零重来）。
+ */
+export const loginFailures = sqliteTable("login_failures", {
+  /** 限流键（主键）：`name:<登录名>` 或 `ip:<IP>` */
+  key: text("key").primaryKey(),
+  /** 连续失败次数；成功登录后整行删除 */
+  count: integer("count").notNull(),
+  /** 锁定截止时间：UTC ISO 字符串；未锁定时为 NULL */
+  lockedUntil: text("locked_until"),
+});
+
+/** login_failures 表行类型（SELECT 结果） */
+export type LoginFailure = typeof loginFailures.$inferSelect;
+/** login_failures 表插入类型 */
+export type NewLoginFailure = typeof loginFailures.$inferInsert;

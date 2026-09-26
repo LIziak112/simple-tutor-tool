@@ -1,5 +1,8 @@
 import { z } from "zod";
 
+/** 身份认证契约（T1.9 起为权威定义）：密码策略、setup/login 请求体、教师信息、auth 错误码 */
+export * from "./auth.ts";
+
 /** 内容契约（DSL v2）：题目、讲义、单元、解析结果、lint issue，T1.1 起为权威定义 */
 export * from "./content.ts";
 

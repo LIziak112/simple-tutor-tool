@@ -3,6 +3,10 @@ import type { ApiErr } from "@tutor/contract";
 import { Hono } from "hono";
 import type { Logger } from "pino";
 import pino from "pino";
+import type { Db } from "./db/client";
+import { HttpError } from "./lib/http-error";
+import { createPublicRoutes } from "./routes/public";
+import { createTeacherRoutes } from "./routes/teacher";
 import { createSpaStatic, defaultWebDistDir } from "./static";
 
 /**
@@ -19,6 +23,10 @@ import { createSpaStatic, defaultWebDistDir } from "./static";
 export interface CreateAppOptions {
   /** 生产模式：托管 apps/web/dist 并对未命中的非 /api 路径回退 index.html */
   isProduction: boolean;
+  /** 数据库实例（教师鉴权等业务路由使用；测试注入 createTestDb() 内存库） */
+  db: Db;
+  /** 对外基础 URL（会话 Cookie 在 https 下加 Secure，见 auth/session.ts） */
+  publicUrl: string;
   /** 日志器；缺省用 pino 默认实例（info 级别、stdout）。测试可注入捕获实例 */
   logger?: Logger | undefined;
   /** 静态资源目录覆盖；缺省解析到仓库内 apps/web/dist（见 static.ts）。测试注入临时目录用 */
@@ -31,8 +39,26 @@ export function createApp(options: CreateAppOptions) {
   // —— 统一错误处理（响应格式见 §0.3：{ ok:false, error:"UPPER_SNAKE_CODE", message:"中文说明" }）——
 
   let app = new Hono()
-    // 应用内抛出的异常：pino 记录完整异常，对外只返回统一 500 壳，不泄漏堆栈
+    // 业务错误（HttpError）：按自带状态码返回统一壳；info 级记录（不含请求体，密码绝不进日志）
     .onError((err, c) => {
+      if (err instanceof HttpError) {
+        logger.info(
+          {
+            code: err.code,
+            status: err.status,
+            method: c.req.method,
+            path: c.req.path,
+          },
+          "业务错误",
+        );
+        const body: ApiErr = {
+          ok: false,
+          error: err.code,
+          message: err.message,
+        };
+        return c.json(body, err.status);
+      }
+      // 应用内抛出的异常：pino 记录完整异常，对外只返回统一 500 壳，不泄漏堆栈
       logger.error(
         { err, method: c.req.method, path: c.req.path },
         "未处理的服务器异常",
@@ -60,7 +86,10 @@ export function createApp(options: CreateAppOptions) {
     .get("/api/public/health", (c) => {
       // time 为 UTC ISO 字符串（§0.3 时间约定）
       return c.json({ ok: true, data: { time: new Date().toISOString() } });
-    });
+    })
+    // —— 业务路由：/api/public（教师 status/setup/login 等）与 /api/teacher（守卫后的教师接口）——
+    .route("/api/public", createPublicRoutes(options.db, options.publicUrl))
+    .route("/api/teacher", createTeacherRoutes(options.db, options.publicUrl));
 
   // —— 生产模式：托管 apps/web/dist ——
   // 注册在 API 路由之后：API 请求命中路由后不再经过静态；未命中的 /api 请求被静态中间件放行到统一 404

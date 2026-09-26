@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
-import { sessions, teachers } from "./schema";
+import { loginFailures, sessions, teachers } from "./schema";
 import { createTestDb } from "./test-utils";
 
 /** sqlite_master 行的最小形状（建表元数据查询用） */
@@ -63,6 +63,33 @@ describe("teachers / sessions 表读写", () => {
     };
     db.insert(teachers).values(row).run();
     expect(db.select().from(teachers).get()).toEqual(row);
+    db.$client.close();
+  });
+});
+
+describe("login_failures 表（T1.9 登录限流）", () => {
+  it("迁移后 login_failures 表存在，可按 key 读写计数行", () => {
+    const db = createTestDb();
+    const tables = db.$client
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'login_failures'",
+      )
+      .all() as TableNameRow[];
+    expect(tables.map((r) => r.name)).toEqual(["login_failures"]);
+
+    const row = {
+      key: "name:teacher",
+      count: 3,
+      lockedUntil: new Date(Date.now() + 600_000).toISOString(),
+    };
+    db.insert(loginFailures).values(row).run();
+    expect(
+      db
+        .select()
+        .from(loginFailures)
+        .where(eq(loginFailures.key, row.key))
+        .get(),
+    ).toEqual(row);
     db.$client.close();
   });
 });

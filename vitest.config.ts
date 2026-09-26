@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
 // 根测试配置（T1.8 起）：用 projects 区分两种环境，互不影响——
@@ -5,7 +6,15 @@ import { defineConfig } from "vitest/config";
 // - web：apps/web 的组件测试（Vitest + Testing Library），jsdom 环境 + 全局 setup
 //   （globals 仅为让 @testing-library/react 注册自动 cleanup，测试内仍显式从
 //   "vitest" 导入 describe/it/expect）。
+//
+// resolve.alias：与 apps/web/vite.config.ts 的 @ 别名保持一致，
+// 组件测试才能解析组件内部的 "@/components/…" 导入（T1.9 起组件用到别名）。
 export default defineConfig({
+  resolve: {
+    alias: {
+      "@": fileURLToPath(new URL("./apps/web/src", import.meta.url)),
+    },
+  },
   test: {
     projects: [
       {

@@ -31,7 +31,12 @@ const db = createDb(dbPath);
 runMigrations(db);
 logger.info({ dbPath }, "数据库已就绪（迁移已执行）");
 
-const app = createApp({ isProduction: config.isProduction, logger });
+const app = createApp({
+  isProduction: config.isProduction,
+  logger,
+  db,
+  publicUrl: config.publicUrl,
+});
 
 serve({ fetch: app.fetch, port: config.port }, (info) => {
   logger.info(

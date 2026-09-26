@@ -7,9 +7,26 @@ import type { Logger } from "pino";
 import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { createApp } from "./app";
+import { createTestDb } from "./db/test-utils";
 
 /** 静音日志器：默认测试不向 stdout 刷日志 */
 const silentLogger: Logger = pino({ enabled: false });
+
+/**
+ * 测试用组装：注入内存库与固定 http PUBLIC_URL（会话 Cookie 不加 Secure 的默认形态）。
+ * 本文件只测壳与静态托管，auth 路由的完整行为在 routes/auth.test.ts。
+ */
+function makeApp(options: {
+  isProduction: boolean;
+  logger: Logger;
+  webDistDir?: string;
+}) {
+  return createApp({
+    db: createTestDb(),
+    publicUrl: "http://localhost:8787",
+    ...options,
+  });
+}
 
 /** 捕获输出的日志器：断言「同时用 pino 记录」时使用 */
 function captureLogger(): { logger: Logger; lines: string[] } {
@@ -27,7 +44,7 @@ function captureLogger(): { logger: Logger; lines: string[] } {
 
 describe("GET /api/public/health", () => {
   it("返回 200 与 { ok:true, data:{ time } }，time 是可解析的 ISO 字符串，壳结构符合共享契约", async () => {
-    const app = createApp({ isProduction: false, logger: silentLogger });
+    const app = makeApp({ isProduction: false, logger: silentLogger });
     const res = await app.request("/api/public/health");
 
     expect(res.status).toBe(200);
@@ -47,7 +64,7 @@ describe("GET /api/public/health", () => {
 
 describe("统一错误格式（§0.3）", () => {
   it("未知 /api 路径返回 404 { ok:false, error:'NOT_FOUND', message:'接口不存在' }", async () => {
-    const app = createApp({ isProduction: false, logger: silentLogger });
+    const app = makeApp({ isProduction: false, logger: silentLogger });
     const res = await app.request("/api/does-not-exist");
 
     expect(res.status).toBe(404);
@@ -62,7 +79,7 @@ describe("统一错误格式（§0.3）", () => {
 
   it("应用内抛错返回 500 { ok:false, error:'INTERNAL', ... }，同时用 pino 记录异常", async () => {
     const { logger, lines } = captureLogger();
-    const app = createApp({ isProduction: false, logger });
+    const app = makeApp({ isProduction: false, logger });
     // 模拟业务代码抛错（正式路由不会这样写），验证统一错误中间件
     app.get("/api/public/__boom", () => {
       throw new Error("boom-测试异常");
@@ -93,7 +110,7 @@ describe("统一错误格式（§0.3）", () => {
   });
 
   it("开发模式下未知非 /api 路径返回纯文本 404（不托管静态资源）", async () => {
-    const app = createApp({ isProduction: false, logger: silentLogger });
+    const app = makeApp({ isProduction: false, logger: silentLogger });
     const res = await app.request("/some/page");
     expect(res.status).toBe(404);
     expect(await res.text()).toBe("Not Found");
@@ -121,7 +138,7 @@ describe("生产模式静态托管与 SPA 回退", () => {
   it("未命中的非 /api GET 回退 index.html（SPA fallback），index 协商缓存", async () => {
     const dist = await makeFakeDist();
     try {
-      const app = createApp({
+      const app = makeApp({
         isProduction: true,
         logger: silentLogger,
         webDistDir: dist,
@@ -139,7 +156,7 @@ describe("生产模式静态托管与 SPA 回退", () => {
   it("命中的静态文件按扩展名返回 Content-Type，assets/ 哈希资源长缓存", async () => {
     const dist = await makeFakeDist();
     try {
-      const app = createApp({
+      const app = makeApp({
         isProduction: true,
         logger: silentLogger,
         webDistDir: dist,
@@ -159,7 +176,7 @@ describe("生产模式静态托管与 SPA 回退", () => {
   it("根路径返回 index.html；/api 不受静态托管影响（health 正常、未知 /api 仍是统一 404）", async () => {
     const dist = await makeFakeDist();
     try {
-      const app = createApp({
+      const app = makeApp({
         isProduction: true,
         logger: silentLogger,
         webDistDir: dist,
@@ -189,7 +206,7 @@ describe("生产模式静态托管与 SPA 回退", () => {
   it("非 GET/HEAD 不回退：POST 未匹配路径仍是 404", async () => {
     const dist = await makeFakeDist();
     try {
-      const app = createApp({
+      const app = makeApp({
         isProduction: true,
         logger: silentLogger,
         webDistDir: dist,
@@ -205,7 +222,7 @@ describe("生产模式静态托管与 SPA 回退", () => {
     const { logger, lines } = captureLogger();
     // 不存在的目录（用时间戳避免与并行测试撞名）
     const missing = join(tmpdir(), `tutor-missing-dist-${Date.now()}`);
-    const app = createApp({ isProduction: true, logger, webDistDir: missing });
+    const app = makeApp({ isProduction: true, logger, webDistDir: missing });
 
     const res = await app.request("/");
     expect(res.status).toBe(404);
