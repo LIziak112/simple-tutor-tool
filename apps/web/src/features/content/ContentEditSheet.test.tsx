@@ -94,7 +94,11 @@ describe("QuestionEditSheet", () => {
     await openSheet();
     expect(mockedFetchDetail).toHaveBeenCalledWith("练习四-1");
     expect(screen.getByText("练习四-1")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /保存/ })).toBeEnabled();
+    // 初始化 effect（text + debouncedText 同批设置）在高并发 worker 下可能
+    // 晚一拍完成渲染：等待而非立即断言（语义不变：就绪后即可保存）
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /保存/ })).toBeEnabled(),
+    );
   });
 
   it("本地 lint 命中 error（type=essay）：保存禁用，错误面板标注题目容器行", async () => {
