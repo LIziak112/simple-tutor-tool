@@ -3,10 +3,21 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "exports": {
+    ".": "./src/app.ts"
+  },
   "scripts": {
+    "dev": "tsx watch src/index.ts",
     "typecheck": "tsc --noEmit"
   },
+  "dependencies": {
+    "@hono/node-server": "^2.1.1",
+    "@tutor/contract": "workspace:*",
+    "hono": "^4.13.9",
+    "pino": "^10.3.1"
+  },
   "devDependencies": {
-    "@types/node": "^24.19.0"
+    "@types/node": "^24.19.0",
+    "tsx": "^4.23.15"
   }
 }
