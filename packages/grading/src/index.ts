@@ -1,13 +1,13 @@
 /**
- * 纯函数判分包（骨架占位）。
- * 硬性规则：判分只在服务端执行，客户端结果不可信。正式判分逻辑在后续任务实现。
+ * 纯函数判分包（§5.6）：服务端交卷时权威执行，客户端结果不可信（AGENTS.md 硬性规则 4）。
+ * 无 IO、无服务端依赖：只依赖 @tutor/contract 的类型（Question / StudentAnswer）。
+ *
+ * 组成：
+ * - normalize/judgeOf：归一化（严格沿用旧版规则）与判断题写法归一；
+ * - parseRational/equivalent：数值等价（0.5 = 1/2 = \frac{1}{2}）与答案等价比较；
+ * - grade：各题型判分主入口 grade(question, answer) → true | false | null。
  */
-
-/**
- * 占位判分函数：当前恒等返回，用于打通包结构与测试链路。
- * @param answer 标准答案占位入参
- * @returns 与入参相同的占位结果
- */
-export function gradeIdentity(answer: string): string {
-  return answer;
-}
+export { grade } from "./grade.ts";
+export { judgeOf, normalize } from "./normalize.ts";
+export type { Rational } from "./rational.ts";
+export { equivalent, parseRational } from "./rational.ts";

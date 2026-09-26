@@ -25,6 +25,20 @@ export default defineConfig({
             "apps/server/src/**/*.test.ts",
             "packages/*/src/**/*.test.ts",
           ],
+          // 覆盖率（§7.2：md-dsl 与 grading 单测覆盖率 ≥90% 硬门槛）：
+          // 开关由 CLI --coverage 传入（如 packages/grading 的 test:coverage 脚本），
+          // 此处只声明 provider 与门槛。include 暂限 grading（T2.5 首个启用门槛的包），
+          // md-dsl 启用时再扩为两包数组。
+          coverage: {
+            provider: "v8",
+            include: ["packages/grading/src/**"],
+            thresholds: {
+              lines: 90,
+              branches: 90,
+              functions: 90,
+              statements: 90,
+            },
+          },
         },
       },
       {

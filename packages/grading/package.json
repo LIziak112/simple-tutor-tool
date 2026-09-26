@@ -7,6 +7,10 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:coverage": "vitest run --root ../.. --coverage packages/grading"
+  },
+  "dependencies": {
+    "@tutor/contract": "workspace:*"
   }
 }
