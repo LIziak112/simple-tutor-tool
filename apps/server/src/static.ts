@@ -43,7 +43,8 @@ const CONTENT_TYPES: Record<string, string> = {
 
 /** 命中的静态文件 */
 interface StaticFile {
-  body: Uint8Array;
+  /** 明确以 ArrayBuffer 为背衬：同时满足 DOM 与 undici 两套 Response/BodyInit 类型 */
+  body: Uint8Array<ArrayBuffer>;
   contentType: string;
   cacheControl: string;
 }
@@ -115,8 +116,12 @@ async function lookupFile(
     return null;
   }
 
-  // 拷贝为普通 Uint8Array：Buffer 是 Node 类型，直接给 Response 会引入类型/运行时耦合
-  const body = new Uint8Array(await readFile(absolute));
+  // 拷贝为独立缓冲的 Uint8Array：Buffer 是 Node 类型，直接给 Response 会引入类型/运行时耦合。
+  // 显式 new + set 保证背衬是全新 ArrayBuffer（而非 Buffer 池化内存的视图），
+  // 类型为 Uint8Array<ArrayBuffer>，DOM 与 undici 两套 BodyInit 都接受
+  const src = await readFile(absolute);
+  const body = new Uint8Array(src.byteLength);
+  body.set(src);
   return {
     body,
     contentType,
