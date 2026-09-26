@@ -782,6 +782,10 @@ describe("学生自助改密码（POST /api/student/password）", () => {
       cookie,
     );
     expect(ok.status).toBe(200);
+    // 无泄露：改密响应不含新密码明文、不含密码哈希（AGENTS.md 学生端接口口径）
+    const okBody = JSON.stringify(await ok.json());
+    expect(okBody).not.toContain("new-pass-8");
+    expect(okBody).not.toContain("scrypt$");
 
     const oldLogin = await jsonRequest(app, "/api/public/student/login", {
       loginName: "张三",
