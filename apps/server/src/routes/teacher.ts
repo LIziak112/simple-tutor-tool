@@ -18,6 +18,9 @@ import { createImportRoutes } from "./import";
  * - POST /logout：删除会话行并清除 Cookie
  * - POST /import/preview、POST /import/commit：内容导入（T1.10，业务在 ContentService）
  * - GET  /content：内容树（T1.11，业务在 ContentService）
+ * - T1.12（业务在 ContentService）：GET/PUT/DELETE /questions/:id（单题编辑/软删）、
+ *   GET/PUT/DELETE /lectures/:id（讲义编辑/删除）、POST /reorder（排序）、
+ *   POST /courses、PATCH/DELETE /courses/:id（课程 CRUD）
  *
  * 返回类型不显式标注：链式注册把路由签名累积进推断类型，
  * 挂载后 AppType 才能带上这些路由（前端 hc 端到端类型的前提）。
