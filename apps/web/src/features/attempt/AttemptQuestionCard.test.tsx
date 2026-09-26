@@ -161,6 +161,34 @@ describe("填空题：题干空位内联输入", () => {
     expect(screen.getByLabelText("第1空")).toHaveValue("4");
     expect(screen.getByLabelText("第2空")).toHaveValue("-7");
   });
+
+  it("跨段落的多空题干空序连续编号（第 3 空不因换段重置）", () => {
+    const { onAnswer } = renderStatefulCard(
+      baseQuestion({
+        type: "fill",
+        stemMd:
+          "计算：$(-3)+7=$ [[]]；$(-2)+(-5)=$ [[]]。\n\n写等价形式：$0.5=$ [[]]。",
+      }),
+    );
+    // 三空齐全（回归：此前非指令子树的计数不回传，第二段的空会重置为第 1 空）
+    expect(screen.getByLabelText("第1空")).toBeInTheDocument();
+    expect(screen.getByLabelText("第2空")).toBeInTheDocument();
+    expect(screen.getByLabelText("第3空")).toBeInTheDocument();
+    // 第 3 空的输入累计前两空的值
+    fireEvent.change(screen.getByLabelText("第1空"), {
+      target: { value: "4" },
+    });
+    fireEvent.change(screen.getByLabelText("第2空"), {
+      target: { value: "-7" },
+    });
+    fireEvent.change(screen.getByLabelText("第3空"), {
+      target: { value: "1/2" },
+    });
+    expect(onAnswer).toHaveBeenLastCalledWith(
+      { kind: "fill", values: ["4", "-7", "1/2"] },
+      true,
+    );
+  });
 });
 
 describe("手写题（solve/apply/find-error）控件", () => {

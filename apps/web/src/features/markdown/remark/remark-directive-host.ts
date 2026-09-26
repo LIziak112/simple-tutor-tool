@@ -85,19 +85,26 @@ function annotate(
   return next;
 }
 
-function walk(node: MdNode, initialCounters: DirectiveCounters): void {
+/**
+ * 深度优先遍历并返回更新后的计数器。
+ * 计数器必须「上传」：指令可能嵌在非指令中间节点下（如段落里的 blank），
+ * 子树内的计数只改本地副本会丢——跨段落/跨容器的同名指令要接着计数
+ * （T2.6 修复：此前非指令子树的计数变化不回传，多段落填空的空序会重置）。
+ */
+function walk(
+  node: MdNode,
+  initialCounters: DirectiveCounters,
+): DirectiveCounters {
   const children = node.children;
-  if (!children) return;
-  // 计数器要跨兄弟节点传递：第 1 个 step 计数后，第 2 个 step 要在 1 的基础上继续
+  if (!children) return initialCounters;
   let counters = initialCounters;
   for (const child of children) {
     if (isDirectiveNode(child)) {
       counters = annotate(child, counters);
-      walk(child, counters);
-    } else {
-      walk(child, counters);
     }
+    counters = walk(child, counters);
   }
+  return counters;
 }
 
 /** remark 插件入口：无选项，遍历一次完成映射与编号 */
