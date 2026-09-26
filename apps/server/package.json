@@ -8,9 +8,10 @@
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "esbuild src/index.ts --bundle --platform=node --format=esm --sourcemap --outfile=dist/index.js --external:hono --external:@hono/node-server --external:pino",
+    "build": "esbuild src/index.ts --bundle --platform=node --format=esm --sourcemap --outfile=dist/index.js --external:hono --external:@hono/node-server --external:pino --external:better-sqlite3 && node scripts/copy-migrations.mjs",
     "start": "node dist/index.js",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "db:generate": "drizzle-kit generate"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.1",

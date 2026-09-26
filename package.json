@@ -13,7 +13,8 @@
     "e2e": "node -e \"console.log('E2E 将于 T2.13 配置')\"",
     "lint": "biome check .",
     "typecheck": "pnpm -r run typecheck",
-    "format": "biome format --write ."
+    "format": "biome format --write .",
+    "db:generate": "pnpm --filter server db:generate"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.14",
