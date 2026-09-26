@@ -1,0 +1,53 @@
+# ============================================================================
+# Docker Compose（T0.7 部署文件）
+#
+# 拓扑：caddy（80/443 反向代理）→ app（Node 单进程：API + 静态页面 + SQLite）
+# 用法：在仓库检出根目录执行 `docker compose up -d --build`，详见 docs/部署.md。
+# 运行数据全部落在宿主机 ./data（挂载为容器内 /app/data），重建容器不丢。
+# ============================================================================
+
+name: simple-tutor-tool
+
+services:
+  app:
+    # 构建上下文 = 仓库根（需要整个 workspace），这也是 compose.yaml 放在检出根的原因
+    build: .
+    image: simple-tutor-tool:latest
+    restart: unless-stopped
+    environment:
+      # 对外访问地址，HTTP + 公网 IP 模式保持默认即可；
+      # 切换域名 + HTTPS 时改成 https://你的域名 —— 服务端据此开启 Secure Cookie、
+      # Service Worker（PWA）等（决策与备案流程见 docs/技术架构与实施方案.md §5.10）
+      PUBLIC_URL: http://localhost:8787
+      # 其余环境变量（NODE_ENV / PORT=8787 / DATA_DIR=/app/data）已固化在 Dockerfile
+    volumes:
+      # 数据目录：tutor.db / blobs/ / backups/ / secret.key 都在这里，备份 = 备份 ./data
+      - ./data:/app/data
+    # 健康检查定义在 Dockerfile 的 HEALTHCHECK（node fetch 打 /api/public/health），
+    # caddy 服务的 depends_on 依赖它；如需调试想直连 8787，放开下面注释
+    # ports:
+    #   - "8787:8787"
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    # HTTP-only（公网 IP）模式只用到 80；443 在域名 + HTTPS 模式下由 Caddy
+    # 自动申请证书（ACME）时使用，两种模式都保留映射即可，无需改动
+    ports:
+      - "80:80"
+      - "443:443"
+      # HTTP/3（可选，仅在域名 + HTTPS 模式生效）：
+      # - "443:443/udp"
+    volumes:
+      # 反向代理配置：两种写法（IP+HTTP / 域名+HTTPS）见文件内中文注释
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      # 证书与 Caddy 自身状态存命名卷：重建容器不丢证书，避免重复申请
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      app:
+        condition: service_healthy
+
+volumes:
+  caddy_data:
+  caddy_config:

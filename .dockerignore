@@ -1,0 +1,40 @@
+# ============================================================================
+# .dockerignore（T0.7）：压缩 build 上下文。依赖在镜像内重新安装（保证拿到
+# linux 平台的二进制与依赖树）、产物在镜像内重新构建，本机这些目录都不需要进上下文。
+# ============================================================================
+
+# 版本库与本地工具目录
+.git
+.github
+.zcode
+.vscode
+.idea
+
+# 依赖与构建产物：镜像内重新安装 / 构建（pnpm-lock.yaml 保证可复现）
+**/node_modules
+**/dist
+**/coverage
+**/*.tsbuildinfo
+
+# 运行时数据（tutor.db、blobs、backups、secret.key）：经 compose 卷挂载
+# （./data:/app/data），不进镜像也不进上下文
+data
+**/data
+
+# 文档、样例与 E2E（不影响构建）。
+# 注意：T1.13 的 /spec 若需要在镜像内读取 docs/dsl 构建产物，届时要调整这里
+# 并在 Dockerfile 补充相应 COPY
+docs
+e2e
+samples
+
+# 本机杂项与部署文件自身（镜像内容用不到）
+学习
+deploy
+.env
+.env.*
+*.local
+*.log
+Dockerfile
+compose.yaml
+.dockerignore
