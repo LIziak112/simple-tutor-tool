@@ -1,5 +1,6 @@
 import {
   apiResponseSchema,
+  type ContentTree,
   type TeacherInfo,
   type TeacherStatusData,
 } from "@tutor/contract";
@@ -112,4 +113,9 @@ export function logoutTeacher(): Promise<null> {
 /** 当前登录教师信息（未登录 / 会话过期时后端返回 401 UNAUTHORIZED） */
 export function fetchTeacherMe(): Promise<TeacherInfo> {
   return callApi(() => api.api.teacher.me.$get());
+}
+
+/** 教师端内容树（课程 → 讲义/单元 → 题目摘要；未导入任何内容时 courses 为空数组） */
+export function fetchContentTree(): Promise<ContentTree> {
+  return callApi(() => api.api.teacher.content.$get());
 }

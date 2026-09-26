@@ -37,6 +37,7 @@ const teacherRoutes = (() => {
   const LoginPage = lazy(() => import("./pages/teacher/LoginPage"));
   const TeacherLayout = lazy(() => import("./pages/teacher/TeacherLayout"));
   const SettingsPage = lazy(() => import("./pages/teacher/SettingsPage"));
+  const ContentPage = lazy(() => import("./pages/teacher/ContentPage"));
   const PlaceholderPage = lazy(() => import("./pages/teacher/PlaceholderPage"));
 
   /** 布局内的懒加载兜底（骨架级提示即可，布局本身很快） */
@@ -44,13 +45,8 @@ const teacherRoutes = (() => {
     <p className="p-8 text-sm text-muted-foreground">页面加载中…</p>
   );
 
-  /** 四个「建设中」占位分区（后续任务逐个替换） */
+  /** 三个「建设中」占位分区（后续任务逐个替换；内容由 T1.11 实现并移出占位） */
   const placeholders = [
-    {
-      path: "content",
-      title: "内容",
-      description: "讲义与练习的管理、导入与编辑将在这里提供（T1.11 起）。",
-    },
     {
       path: "students",
       title: "学生与作业",
@@ -95,6 +91,14 @@ const teacherRoutes = (() => {
         }
       >
         <Route index element={<Navigate to="/t/content" replace />} />
+        <Route
+          path="content"
+          element={
+            <Suspense fallback={pageFallback}>
+              <ContentPage />
+            </Suspense>
+          }
+        />
         <Route
           path="settings"
           element={
