@@ -296,6 +296,51 @@ export const courseDataSchema = z.object({
   order: z.number().int().min(0),
 });
 
+// ---------- 学生端：讲义（T2.3） ----------
+
+/**
+ * GET /api/student/lectures 响应 data 中的讲义摘要。
+ * 只含公开元信息（标题/主题/更新时间），按课程顺序（course.order → lecture.order）。
+ * topic 取关联单元（units.lectureId 指向本讲义）中排序最靠前单元的主题，
+ * 无关联单元或该单元未标注主题时为 null。
+ */
+export const studentLectureSummarySchema = z.object({
+  /** 讲义 id（导入时生成的 UUID） */
+  id: z.uuid(),
+  /** 讲义标题（H1 标题文本） */
+  title: z.string().min(1),
+  /** 关联单元主题；无关联或未标注为 null */
+  topic: z.string().nullable(),
+  /** 最近更新时间：UTC ISO 字符串 */
+  updatedAt: z.string().min(1),
+});
+
+/** GET /api/student/lectures 响应 data（按课程顺序排列） */
+export const studentLectureListDataSchema = z.object({
+  lectures: z.array(studentLectureSummarySchema),
+});
+
+/**
+ * GET /api/student/lectures/:id 响应 data：讲义全文 markdown（含 H1 标题行）。
+ *
+ * 讲义全量下发是设计如此（§5.3）：讲义中的 :::solution 是讲解内容而非题目答案，
+ * 学生端应见（默认折叠、点开查看）。但本响应**不得**附带任何 questions 表字段
+ * （answers/solutionMd/hintsJson/stemMd/optionsJson 等，AGENTS.md 第 3 条）——
+ * 讲义 markdown 本身允许含指令语法文本。
+ */
+export const studentLectureDetailSchema = z.object({
+  id: z.uuid(),
+  title: z.string().min(1),
+  /** 讲义原始 Markdown（含 H1 标题行；前端用 <RichMarkdown> 渲染） */
+  markdown: z.string().min(1),
+  /** 最近更新时间：UTC ISO 字符串 */
+  updatedAt: z.string().min(1),
+});
+
+/** 携带学生讲义列表/详情的成功响应壳 */
+export const studentLectureListOkSchema = apiOkExtend(studentLectureListDataSchema);
+export const studentLectureDetailOkSchema = apiOkExtend(studentLectureDetailSchema);
+
 export type ImportPreviewRequest = z.infer<typeof importPreviewRequestSchema>;
 export type ImportCommitRequest = z.infer<typeof importCommitRequestSchema>;
 export type ImportSummary = z.infer<typeof importSummarySchema>;
@@ -320,3 +365,6 @@ export type ReorderRequest = z.infer<typeof reorderRequestSchema>;
 export type CourseCreateRequest = z.infer<typeof courseCreateRequestSchema>;
 export type CourseUpdateRequest = z.infer<typeof courseUpdateRequestSchema>;
 export type CourseData = z.infer<typeof courseDataSchema>;
+export type StudentLectureSummary = z.infer<typeof studentLectureSummarySchema>;
+export type StudentLectureListData = z.infer<typeof studentLectureListDataSchema>;
+export type StudentLectureDetail = z.infer<typeof studentLectureDetailSchema>;
