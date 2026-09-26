@@ -51,10 +51,12 @@ export function createApp(options: CreateAppOptions) {
           },
           "业务错误",
         );
-        const body: ApiErr = {
+        // 统一壳 + 可选附加字段（如 LINT_ERROR 的 _issues，见 lib/http-error.ts）
+        const body: ApiErr & Record<string, unknown> = {
           ok: false,
           error: err.code,
           message: err.message,
+          ...(err.extra ?? {}),
         };
         return c.json(body, err.status);
       }
