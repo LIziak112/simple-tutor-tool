@@ -1,18 +1,21 @@
 import { z } from "zod";
+import { questionPublicSchema } from "./content.ts";
 
 /**
  * 作业契约（T2.2 起为权威定义）：教师端布置作业 CRUD 请求/响应、学生端作业列表
- * （仅本人被指派 + 完成状态）、作业模块错误码。
+ * （仅本人被指派 + 完成状态）、学生端试卷（T2.4）、作业模块错误码。
  * 依据：docs/技术架构与实施方案.md §5.2（assignments / assignment_students 表、
- * attempts 状态字段）、§5.8（完成矩阵状态 = 未开始/进行中/已交/已批）、
- * docs/开发任务清单.md T2.2、§0.3（响应壳/主键/时间约定）。
+ * attempts 状态字段）、§5.3（练习：学生端只拿到「公开题目」）、§5.8（完成矩阵
+ * 状态 = 未开始/进行中/已交/已批）、docs/开发任务清单.md T2.2、T2.4、§0.3
+ * （响应壳/主键/时间约定）。
  *
  * 约定（与 student.ts / content-api.ts 一致）：
  * - 本文件只定义请求体/查询参数与 data 部分；响应壳统一由 index.ts 描述，
  *   此处仅用局部 helper 具体化成功壳（避免循环依赖）；
  * - 时间一律 UTC ISO 字符串（dueAt 前端用 datetime-local 输入，提交前转 UTC）；
- * - 学生端响应只含单元公开元信息（标题/topic/题数），绝不包含题目答案、
- *   详解、提示等教师侧内容（AGENTS.md 第 3 条；题目内容 T2.4 起单独下发）。
+ * - 学生端列表响应只含单元公开元信息（标题/topic/题数）；题目本体只经 T2.4 的
+ *   paper 接口、以 QuestionPublic 形态下发（绝不包含答案/详解/提示内容，
+ *   AGENTS.md 第 3 条）。
  */
 
 /** 在本文件内把成功响应壳的 data 具体化（不从 index.ts 导入，避免循环依赖） */
@@ -173,6 +176,28 @@ export const studentAssignmentListDataSchema = z.object({
   assignments: z.array(studentAssignmentSchema),
 });
 
+// ---------- 学生端：试卷（T2.4） ----------
+
+/**
+ * GET /api/student/assignments/:id/paper 响应 data：该作业单元的公开题目
+ * （QuestionPublic[]，见 content.ts questionPublicSchema——显式白名单、fail closed）。
+ *
+ * 安全口径（AGENTS.md 第 3 条 / 架构文档 §5.3）：
+ * - 元素必须是 questionPublicSchema 解析（strip 语义）后的输出：服务端从 questions
+ *   行构造时携带的 answersJson / solutionMd / hintsJson / sourceMd 等教师侧列
+ *   一律被剥离，将来加列也不会经由本响应泄露；
+ * - 顺序 = 单元题序（questions.order 升序），软删题目（deletedAt 非空）不出现在内；
+ * - stemMd 为脱敏后的题干（填空/判断标记 [[答案]] 已替换为空标记 [[]]），
+ *   学生端渲染为下划线空框（与教师预览口径一致）；
+ * - options 仅 choice/multi 携带，且是纯文本数组（无 correct 正确项标记）。
+ */
+export const studentPaperDataSchema = z.object({
+  questions: z.array(questionPublicSchema),
+});
+
+/** 携带学生试卷的成功响应壳 */
+export const studentPaperOkSchema = apiOkExtend(studentPaperDataSchema);
+
 // ---------- 错误码 ----------
 
 /**
@@ -180,12 +205,14 @@ export const studentAssignmentListDataSchema = z.object({
  * - ASSIGNMENT_NOT_FOUND：目标作业不存在（含已删除的按需接口）（404）；
  * - UNIT_NOT_FOUND：布置作业的 unitId 不存在（404）；
  * - STUDENT_NOT_FOUND：studentIds 中存在未知学生 id（404）；
+ * - FORBIDDEN：学生请求未被指派给自己的作业（403，T2.4 paper 接口起）；
  * - UNAUTHORIZED / VALIDATION_ERROR：与 auth 模块同义（401 / 400）。
  */
 export const assignmentErrorCodeSchema = z.enum([
   "ASSIGNMENT_NOT_FOUND",
   "UNIT_NOT_FOUND",
   "STUDENT_NOT_FOUND",
+  "FORBIDDEN",
   "UNAUTHORIZED",
   "VALIDATION_ERROR",
 ]);
@@ -206,7 +233,6 @@ export const studentAssignmentListOkSchema = apiOkExtend(
 );
 
 // ---------- 推断类型导出 ----------
-
 export type AssignmentStatus = z.infer<typeof assignmentStatusSchema>;
 export type AssignmentCreateRequest = z.infer<
   typeof assignmentCreateRequestSchema
@@ -224,4 +250,5 @@ export type StudentAssignment = z.infer<typeof studentAssignmentSchema>;
 export type StudentAssignmentListData = z.infer<
   typeof studentAssignmentListDataSchema
 >;
+export type StudentPaperData = z.infer<typeof studentPaperDataSchema>;
 export type AssignmentErrorCode = z.infer<typeof assignmentErrorCodeSchema>;
