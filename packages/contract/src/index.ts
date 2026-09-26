@@ -1,11 +1,11 @@
 import { z } from "zod";
 
+/** 作业契约（T2.2 起为权威定义）：教师布置作业 CRUD、学生作业列表与完成状态、错误码 */
+export * from "./assignment.ts";
 /** 身份认证契约（T1.9 起为权威定义）：密码策略、setup/login 请求体、教师信息、auth 错误码 */
 export * from "./auth.ts";
-
 /** 内容契约（DSL v2）：题目、讲义、单元、解析结果、lint issue，T1.1 起为权威定义 */
 export * from "./content.ts";
-
 /** 内容导入 API 契约（T1.10 起为权威定义）：导入预览/提交请求体与响应、LINT_ERROR 错误壳 */
 export * from "./content-api.ts";
 /** 指令注册表（DSL v2 可扩展性核心，T1.2 起为权威定义）：defineDirective、按名/别名查询、首发指令 */
@@ -14,8 +14,6 @@ export * from "./directives.ts";
 export * from "./spec.ts";
 /** 学生账号契约（T2.1 起为权威定义）：学生 CRUD、两种登录、自助信息与改密码、错误码 */
 export * from "./student.ts";
-/** 作业契约（T2.2 起为权威定义）：教师布置作业 CRUD、学生作业列表与完成状态、错误码 */
-export * from "./assignment.ts";
 
 /**
  * API 响应壳（占位示例）。

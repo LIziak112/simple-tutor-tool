@@ -72,9 +72,7 @@ const studentIdSchema = z.uuid("studentId 必须是 UUID 格式");
 export const assignmentCreateRequestSchema = z.object({
   unitId: z.string().min(1, "unitId 不能为空"),
   title: assignmentTitleSchema.optional(),
-  studentIds: z
-    .array(studentIdSchema)
-    .min(1, "作业必须至少指派一名学生"),
+  studentIds: z.array(studentIdSchema).min(1, "作业必须至少指派一名学生"),
   dueAt: assignmentDueAtSchema.optional(),
 });
 

@@ -34,9 +34,7 @@ describe("assignmentCreateRequestSchema", () => {
     });
     expect(result.success).toBe(false);
     if (!result.success) {
-      expect(result.error.issues[0]?.message).toBe(
-        "作业必须至少指派一名学生",
-      );
+      expect(result.error.issues[0]?.message).toBe("作业必须至少指派一名学生");
     }
   });
 
@@ -64,9 +62,9 @@ describe("assignmentDueAtSchema（UTC ISO 策略）", () => {
       assignmentDueAtSchema.safeParse("2026-10-01T12:00:00Z").success,
     ).toBe(true);
     // datetime-local 原始值（无时区）拒绝：前端必须先转 UTC
-    expect(
-      assignmentDueAtSchema.safeParse("2026-10-01T20:00").success,
-    ).toBe(false);
+    expect(assignmentDueAtSchema.safeParse("2026-10-01T20:00").success).toBe(
+      false,
+    );
     expect(
       assignmentDueAtSchema.safeParse("2026-10-01T20:00:00+08:00").success,
     ).toBe(false);
@@ -90,10 +88,14 @@ describe("assignmentUpdateRequestSchema", () => {
 describe("assignmentListQuerySchema", () => {
   it("includeDeleted 接受 undefined / true / false，拒绝非布尔写法", () => {
     expect(assignmentListQuerySchema.parse({})).toEqual({});
-    expect(assignmentListQuerySchema.parse({ includeDeleted: "true" })).toEqual({
-      includeDeleted: true,
-    });
-    expect(assignmentListQuerySchema.parse({ includeDeleted: "false" })).toEqual({
+    expect(assignmentListQuerySchema.parse({ includeDeleted: "true" })).toEqual(
+      {
+        includeDeleted: true,
+      },
+    );
+    expect(
+      assignmentListQuerySchema.parse({ includeDeleted: "false" }),
+    ).toEqual({
       includeDeleted: false,
     });
     expect(

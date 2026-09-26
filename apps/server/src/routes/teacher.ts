@@ -11,6 +11,7 @@ import {
 import type { Db } from "../db/client";
 import { createContentRoutes } from "./content";
 import { createImportRoutes } from "./import";
+import { createAssignmentTeacherRoutes } from "./teacher-assignments";
 import { createStudentTeacherRoutes } from "./teacher-students";
 
 /**
@@ -24,6 +25,8 @@ import { createStudentTeacherRoutes } from "./teacher-students";
  *   POST /courses、PATCH/DELETE /courses/:id（课程 CRUD）
  * - T2.1（业务在 StudentService）：GET/POST /students、PATCH /students/:id、
  *   POST /students/:id/reset-password、POST /students/:id/reset-link
+ * - T2.2（业务在 AssignmentService）：GET/POST /assignments、
+ *   PATCH/DELETE /assignments/:id（删除为软删，作答保留）
  *
  * 返回类型不显式标注：链式注册把路由签名累积进推断类型，
  * 挂载后 AppType 才能带上这些路由（前端 hc 端到端类型的前提）。
@@ -50,5 +53,6 @@ export function createTeacherRoutes(db: Db, publicUrl: string) {
     })
     .route("/", createImportRoutes(db))
     .route("/", createContentRoutes(db))
-    .route("/", createStudentTeacherRoutes(db));
+    .route("/", createStudentTeacherRoutes(db))
+    .route("/", createAssignmentTeacherRoutes(db));
 }
