@@ -25,5 +25,12 @@ export {
   type V1RawUnit,
 } from "./v1/parse.ts";
 export { v1ToV2, v1ToV2Units } from "./v1/toV2.ts";
+export {
+  LECTURE_PREFIX_LINES,
+  SINGLE_QUESTION_PREFIX_LINES,
+  shiftLintIssuesToFragment,
+  wrapLectureMd,
+  wrapSingleQuestionMd,
+} from "./v2/edit-context.ts";
 export type { ParseOptions } from "./v2/parse.ts";
 export { parseDocument } from "./v2/parse.ts";

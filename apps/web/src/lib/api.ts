@@ -1,10 +1,20 @@
 import {
   apiResponseSchema,
   type ContentTree,
+  type CourseCreateRequest,
+  type CourseData,
+  type CourseUpdateRequest,
   type ImportCommitData,
   type ImportCommitRequest,
   type ImportPreviewData,
   type ImportPreviewRequest,
+  type LectureDetail,
+  type LectureUpdateData,
+  type LectureUpdateRequest,
+  type QuestionDetail,
+  type QuestionUpdateData,
+  type QuestionUpdateRequest,
+  type ReorderRequest,
   type TeacherInfo,
   type TeacherStatusData,
 } from "@tutor/contract";
@@ -159,4 +169,85 @@ export function commitImport(
   request: ImportCommitRequest,
 ): Promise<ImportCommitData> {
   return callApi(() => api.api.teacher.import.commit.$post({ json: request }));
+}
+
+// ---------- T1.12：单条编辑 / 删除 / 排序 / 课程 CRUD ----------
+
+/** 题目完整内容（编辑抽屉取 sourceMd 原文；unitId/order 供本地 lint 复现缺省 id） */
+export function fetchQuestionDetail(id: string): Promise<QuestionDetail> {
+  return callApi(() =>
+    api.api.teacher.questions[":id"].$get({ param: { id } }),
+  );
+}
+
+/**
+ * 单题编辑（提交 sourceMd 重新解析）。422 分支：
+ * LINT_ERROR（extra._issues）/ ID_IMMUTABLE / VALIDATION_ERROR（0 题或多题）。
+ *
+ * 说明：本仓库路由不用 zod-validator（parseJsonBody 校验，见 http-error.ts），
+ * hc 对带 param 的路由只推断出 param 入参，json 以独立变量传入（对象字面量
+ * 会触发多余属性检查；运行时 hc 原样携带 json，校验由服务端契约把关）。
+ */
+export function updateQuestion(
+  id: string,
+  request: QuestionUpdateRequest,
+): Promise<QuestionUpdateData> {
+  const args = { param: { id }, json: request };
+  return callApi(() => api.api.teacher.questions[":id"].$put(args));
+}
+
+/** 题目软删（重新导入同 id 题目即可恢复） */
+export function deleteQuestionApi(id: string): Promise<null> {
+  return callApi(() =>
+    api.api.teacher.questions[":id"].$delete({ param: { id } }),
+  );
+}
+
+/** 讲义完整内容（编辑抽屉取 markdown 原文，含 H1 标题行） */
+export function fetchLectureDetail(id: string): Promise<LectureDetail> {
+  return callApi(() => api.api.teacher.lectures[":id"].$get({ param: { id } }));
+}
+
+/** 讲义整篇编辑（title 从 H1 重取；无 H1 / 多 H1 时 422；json 传参说明同 updateQuestion） */
+export function updateLecture(
+  id: string,
+  request: LectureUpdateRequest,
+): Promise<LectureUpdateData> {
+  const args = { param: { id }, json: request };
+  return callApi(() => api.api.teacher.lectures[":id"].$put(args));
+}
+
+/** 讲义物理删除（可整篇重新导入恢复；关联单元自动解除关联） */
+export function deleteLectureApi(id: string): Promise<null> {
+  return callApi(() =>
+    api.api.teacher.lectures[":id"].$delete({ param: { id } }),
+  );
+}
+
+/** 拖拽排序：ids 为该 kind 下排序作用域内实体的完整新顺序 */
+export function reorderContentApi(request: ReorderRequest): Promise<null> {
+  return callApi(() => api.api.teacher.reorder.$post({ json: request }));
+}
+
+/** 新建课程 */
+export function createCourseApi(
+  request: CourseCreateRequest,
+): Promise<CourseData> {
+  return callApi(() => api.api.teacher.courses.$post({ json: request }));
+}
+
+/** 课程重命名（title 缺省 = 不改；json 传参说明同 updateQuestion） */
+export function updateCourseApi(
+  id: string,
+  request: CourseUpdateRequest,
+): Promise<CourseData> {
+  const args = { param: { id }, json: request };
+  return callApi(() => api.api.teacher.courses[":id"].$patch(args));
+}
+
+/** 删除课程（课程下有讲义/单元时后端 409 COURSE_NOT_EMPTY） */
+export function deleteCourseApi(id: string): Promise<null> {
+  return callApi(() =>
+    api.api.teacher.courses[":id"].$delete({ param: { id } }),
+  );
 }

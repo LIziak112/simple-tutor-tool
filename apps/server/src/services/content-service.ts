@@ -2,6 +2,8 @@ import type {
   ContentTree,
   ContentTreeCourse,
   ContentTreeQuestion,
+  CourseData,
+  CourseUpdateRequest,
   ImportCommitData,
   ImportCommitRequest,
   ImportLectureReport,
@@ -9,11 +11,25 @@ import type {
   ImportPreviewRequest,
   ImportSummary,
   ImportUnitReport,
+  LectureDetail,
+  LectureUpdateData,
   LintIssue,
   ParsedDocument,
   Question,
+  QuestionDetail,
+  QuestionUpdateData,
+  ReorderRequest,
 } from "@tutor/contract";
-import { detectVersion, lintDocument, v1ToV2 } from "@tutor/md-dsl";
+import {
+  detectVersion,
+  LECTURE_PREFIX_LINES,
+  lintDocument,
+  SINGLE_QUESTION_PREFIX_LINES,
+  shiftLintIssuesToFragment,
+  v1ToV2,
+  wrapLectureMd,
+  wrapSingleQuestionMd,
+} from "@tutor/md-dsl";
 import { asc, eq, isNull } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
@@ -28,14 +44,18 @@ import {
 import { HttpError } from "../lib/http-error";
 
 /**
- * ContentService（T1.10）：内容导入的业务层。路由只做鉴权/校验/包装，本模块承载：
+ * ContentService（T1.10 导入、T1.11 内容树、T1.12 单条编辑/删除/排序/课程 CRUD）
+ * 的业务层。路由只做鉴权/校验/包装，本模块承载：
  * - 版本识别与统一 lint：detectVersion → v1 则 v1ToV2 转换（原文照旧留档）→ 一律走
  *   v2 lintDocument（§5.1 末段「v1 兼容」：导入时自动识别）；
  * - preview：纯读，不写库（dry-run 预览，§5.1）；
  * - commit：有 error 级 issue 拒绝（422 LINT_ERROR）；否则事务内落库——
  *   imports 留档原文 → 讲义按 (courseId, title) 替换 markdown → 单元按 id 合并 →
  *   题目 id 已存在则更新 + version+1（跨单元同 id 也按更新，unitId 随之更新）→
- *   知识考点同名归一（knowledge_points 复用 + 关联全量替换）。
+ *   知识考点同名归一（knowledge_points 复用 + 关联全量替换）；
+ * - getContentTree：课程 → 讲义/单元 → 题目摘要（软删题目过滤）；
+ * - T1.12：单题编辑（id/unitId 不变、version+1）、题目软删、讲义整篇编辑与物理删除
+ *   （关联单元解除关联）、reorder（order 按新顺序下标重写）、课程 CRUD（非空拒删）。
  *
  * 「原文是真相」（§5.1.1(4)）：questions.sourceMd / lectures.markdown / imports.rawMd
  * 保存原文；结构化字段（type/answers/…）只是判分与统计必需的抽取结果。
@@ -490,4 +510,399 @@ export function getContentTree(db: Db): ContentTree {
   });
 
   return { courses: treeCourses };
+}
+
+// ---------- T1.12：单条编辑 / 删除 / 排序 / 课程 CRUD ----------
+
+/** 读取题目完整内容（编辑抽屉用）。不存在或已软删 → 404（软删题不在列表，按不存在处理） */
+export function getQuestionDetail(db: Db, id: string): QuestionDetail {
+  const row = db.select().from(questions).where(eq(questions.id, id)).get();
+  if (row === undefined || row.deletedAt !== null) {
+    throw new HttpError(
+      404,
+      "QUESTION_NOT_FOUND",
+      "题目不存在（可能已被删除）",
+    );
+  }
+  return {
+    id: row.id,
+    unitId: row.unitId,
+    order: row.order,
+    type: row.type,
+    difficulty: row.difficulty,
+    knowledge: knowledgeNamesOf(db, row.id),
+    sourceMd: row.sourceMd,
+    version: row.version,
+  };
+}
+
+/** 某题关联的考点名列表（按名称排序，与内容树口径一致） */
+function knowledgeNamesOf(db: Db, questionId: string): string[] {
+  return db
+    .select({ name: knowledgePoints.name })
+    .from(questionKnowledge)
+    .innerJoin(
+      knowledgePoints,
+      eq(questionKnowledge.knowledgePointId, knowledgePoints.id),
+    )
+    .where(eq(questionKnowledge.questionId, questionId))
+    .orderBy(asc(knowledgePoints.name))
+    .all()
+    .map((row) => row.name);
+}
+
+/**
+ * 单题编辑（PUT /api/teacher/questions/:id）：提交该题 sourceMd，服务端重新解析单题。
+ * - 解析语境：wrapSingleQuestionMd(unitId, sourceMd) + ParseOptions{unitId,
+ *   questionStartNumber: order+1}，缺省 id 按「单元id-序号」复现原 id；
+ * - 0 题 / 多题 → 422 VALIDATION_ERROR；解析出 id ≠ 原 id → 422 ID_IMMUTABLE
+ *   （id 不可变，学情统计跨版本延续，§5.1）；
+ * - error 级 lint issue → 422 LINT_ERROR（_issues 行号已平移回 sourceMd 坐标）；
+ * - 通过 → 结构化字段 + sourceMd 全量更新、version+1，id/unitId/order 不变。
+ */
+export function updateQuestion(
+  db: Db,
+  id: string,
+  input: { sourceMd: string },
+): QuestionUpdateData {
+  const row = db.select().from(questions).where(eq(questions.id, id)).get();
+  if (row === undefined || row.deletedAt !== null) {
+    throw new HttpError(
+      404,
+      "QUESTION_NOT_FOUND",
+      "题目不存在（可能已被删除）",
+    );
+  }
+
+  const parseOptions = {
+    unitId: row.unitId,
+    questionStartNumber: row.order + 1,
+  };
+  const wrapped = wrapSingleQuestionMd(row.unitId, input.sourceMd);
+  const { parsed, issues } = lintDocument(wrapped, parseOptions);
+
+  // error 级 issue 最先拦（含"题目被解析器丢弃"的场景，如未知题型：
+  // 此时题数检查给不出行号，LINT_ERROR 的 _issues 才能标红到具体行）
+  const errors = issues.filter((issue) => issue.level === "error");
+  const firstError = errors[0];
+  if (firstError !== undefined) {
+    throw new HttpError(
+      422,
+      "LINT_ERROR",
+      `题目存在 ${errors.length} 个 error 级问题，请先修复后重试（第 ${Math.max(
+        1,
+        firstError.line - SINGLE_QUESTION_PREFIX_LINES,
+      )} 行：${firstError.message}）`,
+      {
+        _issues: shiftLintIssuesToFragment(
+          errors,
+          SINGLE_QUESTION_PREFIX_LINES,
+        ),
+      },
+    );
+  }
+
+  const parsedQuestions = parsed.units.flatMap((unit) => unit.questions);
+  if (parsedQuestions.length === 0) {
+    throw new HttpError(
+      422,
+      "VALIDATION_ERROR",
+      "未解析出任何题目：请保留完整的 ::::question 容器（含题干与结束围栏 ::::）",
+    );
+  }
+  if (parsedQuestions.length > 1) {
+    throw new HttpError(
+      422,
+      "VALIDATION_ERROR",
+      `一次只能编辑一道题（当前解析出 ${parsedQuestions.length} 道）；如需新增题目请走导入`,
+    );
+  }
+  const next = parsedQuestions[0];
+  if (next === undefined || next.id !== id) {
+    throw new HttpError(
+      422,
+      "ID_IMMUTABLE",
+      next === undefined
+        ? "题目 id 不可变；如需新增题目请走导入"
+        : `题目 id 不可变（原 id「${id}」，解析出「${next.id}」）；如需新增题目请走导入`,
+    );
+  }
+
+  const now = new Date().toISOString();
+  const version = row.version + 1;
+  db.transaction((tx) => {
+    tx.update(questions)
+      .set({
+        ...questionFields(next, row.unitId, row.order, now),
+        version,
+      })
+      .where(eq(questions.id, id))
+      .run();
+    const knowledgeIdByName = new Map(
+      tx
+        .select({ id: knowledgePoints.id, name: knowledgePoints.name })
+        .from(knowledgePoints)
+        .all()
+        .map((kp) => [kp.name, kp.id] as const),
+    );
+    syncQuestionKnowledge(tx, next, knowledgeIdByName);
+  });
+
+  return {
+    id,
+    version,
+    type: next.type,
+    difficulty: next.difficulty,
+    knowledge: next.knowledge,
+    issues: shiftLintIssuesToFragment(issues, SINGLE_QUESTION_PREFIX_LINES),
+  };
+}
+
+/**
+ * 题目软删（DELETE /api/teacher/questions/:id）：只写 deletedAt（§5.2 题目不物理删除，
+ * 历史作答/统计保留；重新导入同 id 题目即恢复）。已软删时幂等成功。
+ */
+export function deleteQuestion(db: Db, id: string): void {
+  const row = db
+    .select({ id: questions.id, deletedAt: questions.deletedAt })
+    .from(questions)
+    .where(eq(questions.id, id))
+    .get();
+  if (row === undefined) {
+    throw new HttpError(404, "QUESTION_NOT_FOUND", "题目不存在");
+  }
+  if (row.deletedAt !== null) return; // 幂等：重复删除同样成功
+  db.update(questions)
+    .set({ deletedAt: new Date().toISOString() })
+    .where(eq(questions.id, id))
+    .run();
+}
+
+/** 读取讲义完整内容（编辑抽屉用）。markdown 含 H1 标题行（原文是真相） */
+export function getLectureDetail(db: Db, id: string): LectureDetail {
+  const row = db.select().from(lectures).where(eq(lectures.id, id)).get();
+  if (row === undefined) {
+    throw new HttpError(404, "LECTURE_NOT_FOUND", "讲义不存在");
+  }
+  return {
+    id: row.id,
+    title: row.title,
+    markdown: row.markdown,
+    updatedAt: row.updatedAt,
+  };
+}
+
+/**
+ * 讲义编辑（PUT /api/teacher/lectures/:id）：整篇 markdown 提交，title 从 H1 重取，
+ * 讲义 id（数据库 uuid）保持不变。解析语境 wrapLectureMd；
+ * 多个 H1 → 422（一篇讲义只能有一个 H1）；error 级 lint issue → 422 LINT_ERROR。
+ */
+export function updateLecture(
+  db: Db,
+  id: string,
+  input: { markdown: string },
+): LectureUpdateData {
+  const row = db.select().from(lectures).where(eq(lectures.id, id)).get();
+  if (row === undefined) {
+    throw new HttpError(404, "LECTURE_NOT_FOUND", "讲义不存在");
+  }
+
+  const wrapped = wrapLectureMd(input.markdown);
+  const { parsed, issues } = lintDocument(wrapped);
+
+  if (parsed.lectures.length > 1) {
+    throw new HttpError(
+      422,
+      "VALIDATION_ERROR",
+      `讲义只能包含一个 H1 标题（当前解析出 ${parsed.lectures.length} 篇）；如需多篇讲义请走导入`,
+    );
+  }
+
+  const errors = issues.filter((issue) => issue.level === "error");
+  const firstError = errors[0];
+  if (firstError !== undefined) {
+    throw new HttpError(
+      422,
+      "LINT_ERROR",
+      `讲义存在 ${errors.length} 个 error 级问题，请先修复后重试（第 ${Math.max(
+        1,
+        firstError.line - LECTURE_PREFIX_LINES,
+      )} 行：${firstError.message}）`,
+      { _issues: shiftLintIssuesToFragment(errors, LECTURE_PREFIX_LINES) },
+    );
+  }
+
+  // 0 篇（无 H1）已被 MISSING_HEADING error 拦截，此处必有一篇；仍做类型收窄防御
+  const title = parsed.lectures[0]?.title;
+  if (title === undefined || title.trim().length === 0) {
+    throw new HttpError(
+      422,
+      "VALIDATION_ERROR",
+      "讲义必须以「# 标题」开头（title 从 H1 重取）",
+    );
+  }
+
+  const updatedAt = new Date().toISOString();
+  db.update(lectures)
+    .set({ markdown: input.markdown, title, updatedAt })
+    .where(eq(lectures.id, id))
+    .run();
+  return { id, title, updatedAt };
+}
+
+/**
+ * 讲义删除（DELETE /api/teacher/lectures/:id）：物理删除（§5.2 讲义表无 deletedAt，
+ * 题目软删是硬性规则、讲义不在其列；整篇重新导入即可恢复）。
+ * 关联该讲的单元先解除关联（units.lectureId 置 NULL，单元本身保留）。
+ */
+export function deleteLecture(db: Db, id: string): void {
+  const row = db
+    .select({ id: lectures.id })
+    .from(lectures)
+    .where(eq(lectures.id, id))
+    .get();
+  if (row === undefined) {
+    throw new HttpError(404, "LECTURE_NOT_FOUND", "讲义不存在");
+  }
+  db.transaction((tx) => {
+    tx.update(units)
+      .set({ lectureId: null })
+      .where(eq(units.lectureId, id))
+      .run();
+    tx.delete(lectures).where(eq(lectures.id, id)).run();
+  });
+}
+
+/** reorder 各 kind 的元信息：错误码 + 中文名 + 存活 id 集合（题目软删视同不存在） */
+function reorderLiveIds(
+  db: Db,
+  kind: ReorderRequest["kind"],
+): { code: string; entityName: string; ids: Set<string> } {
+  const meta = {
+    question: { code: "QUESTION_NOT_FOUND", entityName: "题目" },
+    lecture: { code: "LECTURE_NOT_FOUND", entityName: "讲义" },
+    unit: { code: "UNIT_NOT_FOUND", entityName: "单元" },
+    course: { code: "COURSE_NOT_FOUND", entityName: "课程" },
+  }[kind];
+  const ids =
+    kind === "question"
+      ? db
+          .select({ id: questions.id })
+          .from(questions)
+          .where(isNull(questions.deletedAt))
+          .all()
+      : kind === "lecture"
+        ? db.select({ id: lectures.id }).from(lectures).all()
+        : kind === "unit"
+          ? db.select({ id: units.id }).from(units).all()
+          : db.select({ id: courses.id }).from(courses).all();
+  return { ...meta, ids: new Set(ids.map((row) => row.id)) };
+}
+
+/**
+ * 排序（POST /api/teacher/reorder）：order 按 ids 数组下标（0 起）重写。
+ * ids 为该 kind 下排序作用域内实体的完整新顺序（题目 = 所属单元内的题目）；
+ * 任一 id 不存在（题目软删视同不存在）→ 404，事务回滚保持原顺序。
+ */
+export function reorderContent(db: Db, input: ReorderRequest): void {
+  const { code, entityName, ids: liveIds } = reorderLiveIds(db, input.kind);
+  const missing = input.ids.find((id) => !liveIds.has(id));
+  if (missing !== undefined) {
+    throw new HttpError(
+      404,
+      code,
+      `排序失败：${entityName}「${missing}」不存在`,
+    );
+  }
+
+  db.transaction((tx) => {
+    for (const [index, id] of input.ids.entries()) {
+      if (input.kind === "question") {
+        tx.update(questions)
+          .set({ order: index })
+          .where(eq(questions.id, id))
+          .run();
+      } else if (input.kind === "lecture") {
+        tx.update(lectures)
+          .set({ order: index })
+          .where(eq(lectures.id, id))
+          .run();
+      } else if (input.kind === "unit") {
+        tx.update(units).set({ order: index }).where(eq(units.id, id)).run();
+      } else {
+        tx.update(courses)
+          .set({ order: index })
+          .where(eq(courses.id, id))
+          .run();
+      }
+    }
+  });
+}
+
+/** 新建课程（POST /api/teacher/courses）：order 追加到末尾 */
+export function createCourse(db: Db, input: { title: string }): CourseData {
+  const count = db.select({ id: courses.id }).from(courses).all().length;
+  const id = crypto.randomUUID();
+  const order = count;
+  db.insert(courses)
+    .values({
+      id,
+      title: input.title,
+      order,
+      createdAt: new Date().toISOString(),
+    })
+    .run();
+  return { id, title: input.title, order };
+}
+
+/** 课程重命名（PATCH /api/teacher/courses/:id）：title 缺省 = 不改 */
+export function updateCourse(
+  db: Db,
+  id: string,
+  input: CourseUpdateRequest,
+): CourseData {
+  const row = db.select().from(courses).where(eq(courses.id, id)).get();
+  if (row === undefined) {
+    throw new HttpError(404, "COURSE_NOT_FOUND", "课程不存在");
+  }
+  const title = input.title ?? row.title;
+  if (title !== row.title) {
+    db.update(courses).set({ title }).where(eq(courses.id, id)).run();
+  }
+  return { id, title, order: row.order };
+}
+
+/**
+ * 课程删除（DELETE /api/teacher/courses/:id）：课程下仍有讲义或单元时拒绝
+ * （409 COURSE_NOT_EMPTY，避免孤儿数据）；空课程直接物理删除。
+ */
+export function deleteCourse(db: Db, id: string): void {
+  const row = db
+    .select({ id: courses.id })
+    .from(courses)
+    .where(eq(courses.id, id))
+    .get();
+  if (row === undefined) {
+    throw new HttpError(404, "COURSE_NOT_FOUND", "课程不存在");
+  }
+  const hasLecture =
+    db
+      .select({ id: lectures.id })
+      .from(lectures)
+      .where(eq(lectures.courseId, id))
+      .get() !== undefined;
+  const hasUnit =
+    db
+      .select({ id: units.id })
+      .from(units)
+      .where(eq(units.courseId, id))
+      .get() !== undefined;
+  if (hasLecture || hasUnit) {
+    throw new HttpError(
+      409,
+      "COURSE_NOT_EMPTY",
+      "课程下还有讲义或练习单元，请先删除或移出它们，再删除课程",
+    );
+  }
+  db.delete(courses).where(eq(courses.id, id)).run();
 }

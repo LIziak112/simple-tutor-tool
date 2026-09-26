@@ -95,13 +95,23 @@ export const importCommitDataSchema = z.object({
 });
 
 /**
- * 内容导入相关错误码（UPPER_SNAKE_CODE 固定子集）：
- * - LINT_ERROR：commit 遇 error 级 issue，拒绝写入（422）；
- * - COURSE_NOT_FOUND：请求携带的 courseId 不存在（404）。
+ * 内容相关错误码（UPPER_SNAKE_CODE 固定子集）：
+ * - LINT_ERROR：commit / 单条编辑遇 error 级 issue，拒绝写入（422）；
+ * - COURSE_NOT_FOUND：请求携带的 courseId 不存在（404）；
+ * - QUESTION_NOT_FOUND：题目不存在（含软删后按不存在处理）（404）；
+ * - LECTURE_NOT_FOUND：讲义不存在（404）；
+ * - UNIT_NOT_FOUND：单元不存在（404）；
+ * - ID_IMMUTABLE：单题编辑解析出的 id 与原 id 不一致（422，id 不可变）；
+ * - COURSE_NOT_EMPTY：课程下仍有讲义/单元时拒绝删除（409）。
  */
 export const contentErrorCodeSchema = z.enum([
   "LINT_ERROR",
   "COURSE_NOT_FOUND",
+  "QUESTION_NOT_FOUND",
+  "LECTURE_NOT_FOUND",
+  "UNIT_NOT_FOUND",
+  "ID_IMMUTABLE",
+  "COURSE_NOT_EMPTY",
 ]);
 
 /**
@@ -180,6 +190,112 @@ export const contentTreeSchema = z.object({
 /** 携带内容树的成功响应壳 */
 export const contentTreeOkSchema = apiOkExtend(contentTreeSchema);
 
+// ---------- T1.12：单条编辑 / 删除 / 排序 / 课程 CRUD ----------
+
+/**
+ * GET /api/teacher/questions/:id 响应 data：编辑抽屉按 id 取题目完整内容。
+ * sourceMd 为该题原始 Markdown 片段（::::question 容器），编辑提交即此格式；
+ * order/unitId 供前端本地 lint 复现缺省 id（questionStartNumber = order + 1）。
+ */
+export const questionDetailSchema = z.object({
+  /** 题目 id（来自 DSL，编辑保持不变） */
+  id: z.string().min(1),
+  /** 所属单元 id（编辑不改变归属） */
+  unitId: z.string().min(1),
+  /** 单元内题序（0 起；单题重新解析的 questionStartNumber = order + 1） */
+  order: z.number().int().min(0),
+  type: questionTypeSchema,
+  /** 难度 1–5 */
+  difficulty: z.number().int().min(1).max(5),
+  /** 考点名列表（knowledge_points 归一后的关联结果） */
+  knowledge: z.array(z.string().min(1)),
+  /** 原始 Markdown 片段（::::question 容器，含题干/选项/提示/详解） */
+  sourceMd: z.string().min(1),
+  /** 内容版本 */
+  version: z.number().int().min(1),
+});
+
+/** PUT /api/teacher/questions/:id 请求体：提交该题 sourceMd 重新解析（原文是真相，§5.1.1(4)） */
+export const questionUpdateRequestSchema = z.object({
+  sourceMd: z.string().min(1, "sourceMd 不能为空"),
+});
+
+/**
+ * PUT /api/teacher/questions/:id 响应 data：编辑结果。
+ * id/version 供前端断言「id 不变、version+1」；issues 为该题重新解析 + lint 的全部
+ * issue（能到达本响应时 error 级必为 0，warning 可携带成功），行号为 sourceMd 片段坐标。
+ */
+export const questionUpdateDataSchema = z.object({
+  id: z.string().min(1),
+  version: z.number().int().min(2),
+  type: questionTypeSchema,
+  difficulty: z.number().int().min(1).max(5),
+  knowledge: z.array(z.string().min(1)),
+  issues: z.array(lintIssueSchema),
+});
+
+/** GET /api/teacher/lectures/:id 响应 data：编辑抽屉取讲义原文（markdown 含 H1 标题行） */
+export const lectureDetailSchema = z.object({
+  /** 讲义 id（数据库 uuid，编辑保持不变） */
+  id: z.uuid(),
+  title: z.string().min(1),
+  /** 讲义原始 Markdown（含 H1 标题行，整篇编辑提交） */
+  markdown: z.string().min(1),
+  /** 最近更新时间：UTC ISO 字符串 */
+  updatedAt: z.string().min(1),
+});
+
+/** PUT /api/teacher/lectures/:id 请求体：整篇讲义 markdown，title 从 H1 重取 */
+export const lectureUpdateRequestSchema = z.object({
+  markdown: z.string().min(1, "markdown 不能为空"),
+});
+
+/** PUT /api/teacher/lectures/:id 响应 data */
+export const lectureUpdateDataSchema = z.object({
+  id: z.uuid(),
+  title: z.string().min(1),
+  /** 最近更新时间：UTC ISO 字符串 */
+  updatedAt: z.string().min(1),
+});
+
+/** POST /api/teacher/reorder 请求体：ids 为该 kind 下本次排序作用域内实体的完整新顺序 */
+export const reorderKindSchema = z.enum([
+  "question",
+  "lecture",
+  "unit",
+  "course",
+]);
+
+export const reorderRequestSchema = z.object({
+  kind: reorderKindSchema,
+  /** 完整新顺序（order 按数组下标 0 起重写）；题目传其所属单元内的题目 id */
+  ids: z
+    .array(z.string().min(1, "id 不能为空"))
+    .min(1, "ids 不能为空")
+    .refine((ids) => new Set(ids).size === ids.length, "ids 不能有重复"),
+});
+
+/** 可排序实体的 kind（题目/讲义/单元/课程） */
+export type ReorderKind = z.infer<typeof reorderKindSchema>;
+
+/** POST /api/teacher/courses 请求体 */
+export const courseCreateRequestSchema = z.object({
+  title: z.string().trim().min(1, "课程名不能为空"),
+});
+
+/** PATCH /api/teacher/courses/:id 请求体（title 可缺省 = 不改） */
+export const courseUpdateRequestSchema = z.object({
+  title: z.string().trim().min(1, "课程名不能为空").optional(),
+});
+
+/** 课程 CRUD（创建/更新）响应 data */
+export const courseDataSchema = z.object({
+  id: z.uuid(),
+  title: z.string().min(1),
+  /** 同级排序（小在前） */
+  order: z.number().int().min(0),
+});
+
 export type ImportPreviewRequest = z.infer<typeof importPreviewRequestSchema>;
 export type ImportCommitRequest = z.infer<typeof importCommitRequestSchema>;
 export type ImportSummary = z.infer<typeof importSummarySchema>;
@@ -194,3 +310,13 @@ export type ContentTreeLecture = z.infer<typeof contentTreeLectureSchema>;
 export type ContentTreeUnit = z.infer<typeof contentTreeUnitSchema>;
 export type ContentTreeCourse = z.infer<typeof contentTreeCourseSchema>;
 export type ContentTree = z.infer<typeof contentTreeSchema>;
+export type QuestionDetail = z.infer<typeof questionDetailSchema>;
+export type QuestionUpdateRequest = z.infer<typeof questionUpdateRequestSchema>;
+export type QuestionUpdateData = z.infer<typeof questionUpdateDataSchema>;
+export type LectureDetail = z.infer<typeof lectureDetailSchema>;
+export type LectureUpdateRequest = z.infer<typeof lectureUpdateRequestSchema>;
+export type LectureUpdateData = z.infer<typeof lectureUpdateDataSchema>;
+export type ReorderRequest = z.infer<typeof reorderRequestSchema>;
+export type CourseCreateRequest = z.infer<typeof courseCreateRequestSchema>;
+export type CourseUpdateRequest = z.infer<typeof courseUpdateRequestSchema>;
+export type CourseData = z.infer<typeof courseDataSchema>;
