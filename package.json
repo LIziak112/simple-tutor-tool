@@ -14,7 +14,8 @@
     "lint": "biome check .",
     "typecheck": "pnpm -r run typecheck",
     "format": "biome format --write .",
-    "db:generate": "pnpm --filter server db:generate"
+    "db:generate": "pnpm --filter server db:generate",
+    "schema:export": "pnpm --filter @tutor/contract run export-schema"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.14",

@@ -6,7 +6,7 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["**", "!apps/server/src/db/migrations"]
+    "includes": ["**", "!apps/server/src/db/migrations", "!docs/dsl/schema"]
   },
   "formatter": {
     "enabled": true,
