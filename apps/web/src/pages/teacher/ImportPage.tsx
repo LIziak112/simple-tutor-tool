@@ -2,19 +2,13 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { ImportPreviewData, LintIssue } from "@tutor/contract";
 import { lintIssueSchema } from "@tutor/contract";
 import { v1ToV2 } from "@tutor/md-dsl";
-import {
-  ArrowLeft,
-  CircleAlert,
-  FileUp,
-  Info,
-  Loader2,
-  Upload,
-} from "lucide-react";
+import { ArrowLeft, CircleAlert, FileUp, Loader2, Upload } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { contentTreeKey } from "@/features/content/content-queries";
+import { ErrorPanel } from "@/features/content/ErrorPanel";
 import { lintIssuesToDiagnostics } from "@/features/content/lint-diagnostics";
 import { QUESTION_TYPE_LABELS } from "@/features/content/question-meta";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
@@ -28,8 +22,8 @@ import { MarkdownEditor } from "./MarkdownEditor";
  *    hover 显示中文消息与修正建议），右 RichMarkdown 渲染（v1 文档先 v1ToV2 转换）；
  *    顶部统计条：版本徽章、单元数/讲义数/题数/题型分布；
  * ③ 编辑即校验：预览态下改动 400ms debounce 重新调 preview，标注随 issues 更新；
- * ④ 有 error 时"确认导入"禁用并显示错误面板；commit 422 的 _issues 也进同一面板；
- *    成功跳 /t/content（带成功提示）。
+ * ④ 有 error 时"确认导入"禁用并显示错误面板（含"复制错误给 AI"）；
+ *    commit 422 的 _issues 也进同一面板；成功跳 /t/content（带成功提示）。
  */
 
 /** 编辑后自动重新预览的防抖时长 */
@@ -143,9 +137,7 @@ export function ImportPage() {
   });
 
   const issues = preview?.issues ?? [];
-  const errorCount = issues.filter((i) => i.level === "error").length;
-  const warningCount = issues.length - errorCount;
-  const hasError = errorCount > 0;
+  const hasError = issues.some((i) => i.level === "error");
   const displayedIssues = commitIssues ?? issues;
   const diagnostics = useMemo(
     () => lintIssuesToDiagnostics(displayedIssues, text),
@@ -306,56 +298,14 @@ export function ImportPage() {
             </div>
           </div>
 
-          {/* lint 问题面板 */}
+          {/* lint 问题面板 + 复制错误给 AI（§5.1 制作端闭环） */}
           {displayedIssues.length > 0 ? (
-            <section
-              aria-labelledby="lint-issues-heading"
-              className="mt-3 rounded-xl border border-destructive/30 bg-destructive/5 p-4"
-            >
-              <h2
-                id="lint-issues-heading"
-                className="flex items-center gap-2 text-sm font-semibold text-destructive"
-              >
-                <CircleAlert aria-hidden className="size-4 shrink-0" />
-                发现 {displayedIssues.length} 个问题（{errorCount} 错误 /{" "}
-                {warningCount} 警告）
-                {hasError ? "：修正后才能导入" : "：不影响导入，建议顺手修复"}
-              </h2>
-              {preview?.version === 1 && (
-                <p className="mt-1.5 flex items-start gap-1.5 text-xs text-muted-foreground">
-                  <Info aria-hidden className="mt-0.5 size-3.5 shrink-0" />
-                  v1 文档：问题行号对应自动转换后的 v2
-                  文本，与左侧原文行号可能不一致。
-                </p>
-              )}
-              <ul className="mt-2 space-y-1.5">
-                {displayedIssues.map((issue) => (
-                  <li
-                    key={`${issue.code}-${issue.line}-${issue.column}`}
-                    className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-sm"
-                  >
-                    <span
-                      className={
-                        issue.level === "error"
-                          ? "font-medium text-destructive"
-                          : "font-medium text-amber-600 dark:text-amber-400"
-                      }
-                    >
-                      第 {issue.line} 行
-                    </span>
-                    <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground">
-                      {issue.code}
-                    </span>
-                    <span>{issue.message}</span>
-                    {issue.fix !== undefined && (
-                      <span className="text-xs text-muted-foreground">
-                        建议：{issue.fix}
-                      </span>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </section>
+            <ErrorPanel
+              filename={filename}
+              markdown={text}
+              issues={displayedIssues}
+              version={preview?.version ?? 2}
+            />
           ) : null}
 
           {/* 提交区 */}
