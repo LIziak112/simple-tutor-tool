@@ -45,5 +45,12 @@ jobs:
       - name: 单元测试
         run: pnpm test
 
+      # T1.7：规范文档由注册表生成（docs/dsl/规范.md、提示词模板.md、schema/content.json）。
+      # 改了注册表/lint 规则/契约后忘记跑 pnpm gen:spec 时，此步失败（产物与代码不允许漂移）
+      - name: 规范文档与代码同步（gen:spec 后 diff 须为空）
+        run: |
+          pnpm gen:spec
+          git diff --exit-code
+
       - name: 构建
         run: pnpm build
