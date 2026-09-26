@@ -15,6 +15,7 @@ import {
   type QuestionUpdateData,
   type QuestionUpdateRequest,
   type ReorderRequest,
+  type SpecFileName,
   type TeacherInfo,
   type TeacherStatusData,
 } from "@tutor/contract";
@@ -122,6 +123,28 @@ function pickExtraFields(body: unknown): Record<string, unknown> | undefined {
 /** 查询是否已设置教师（首启判断，无登录要求） */
 export function fetchTeacherStatus(): Promise<TeacherStatusData> {
   return callApi(() => api.api.public.teacher.status.$get());
+}
+
+/**
+ * 拉取一份 DSL 规范文档（T1.13）：公开接口 /api/public/spec/:file，
+ * md/json 原文直出（不走 { ok, data } 统一壳），返回文件文本。
+ */
+export async function fetchSpecFile(file: SpecFileName): Promise<string> {
+  let res: Response;
+  try {
+    res = await api.api.public.spec[":file"].$get({ param: { file } });
+  } catch {
+    throw new Error(
+      "连不上服务器，请确认后端已启动（pnpm --filter server dev）后重试",
+    );
+  }
+  if (res.status === 404) {
+    throw new Error("规范文档不存在（spec 文件缺失，请检查服务端部署）");
+  }
+  if (!res.ok) {
+    throw new Error(`服务器响应异常（HTTP ${res.status}），请稍后重试`);
+  }
+  return res.text();
 }
 
 /** 首次设置教师密码（仅无教师时可用；成功即自动登录并返回教师信息） */

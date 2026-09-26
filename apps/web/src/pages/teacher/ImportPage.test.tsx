@@ -3,7 +3,12 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ImportPreviewData, LintIssue } from "@tutor/contract";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiError, commitImport, previewImport } from "@/lib/api";
+import {
+  ApiError,
+  commitImport,
+  fetchSpecFile,
+  previewImport,
+} from "@/lib/api";
 import ImportPage from "./ImportPage";
 
 /**
@@ -23,6 +28,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
     ...actual,
     previewImport: vi.fn(),
     commitImport: vi.fn(),
+    fetchSpecFile: vi.fn(),
   };
 });
 
@@ -118,6 +124,17 @@ describe("ImportPage 输入区", () => {
       screen.getByRole("button", { name: "选择 .md 文件" }),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /预览/ })).toBeDisabled();
+  });
+
+  it("输入区顶部带「AI 出题助手」入口，默认收起且不发请求（T1.13）", () => {
+    renderImportPage();
+    const toggle = screen.getByRole("button", { name: /AI 出题助手/ });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    // 收起时不渲染内部内容，也不应触发规范文档请求
+    expect(
+      screen.queryByLabelText("主题 / 考点（可选）"),
+    ).not.toBeInTheDocument();
+    expect(fetchSpecFile).not.toHaveBeenCalled();
   });
 
   it("输入内容后点击预览：带正确 payload 调 previewImport，进入预览态显示统计条", async () => {

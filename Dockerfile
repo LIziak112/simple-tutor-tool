@@ -42,10 +42,12 @@ COPY packages/md-dsl/package.json packages/md-dsl/package.json
 COPY packages/grading/package.json packages/grading/package.json
 RUN pnpm install --frozen-lockfile
 
-# 再拷全部源码并构建两个产物（.dockerignore 已剔除 node_modules/dist/data/docs 等）：
-# - apps/server/dist/：esbuild bundle（dist/index.js）+ dist/migrations/
+# 再拷全部源码并构建两个产物（.dockerignore 已剔除 node_modules/dist/data 等，
+# 但放行 docs/dsl：server 构建脚本把它拷进 dist/spec 供 /api/public/spec 使用）：
+# - apps/server/dist/：esbuild bundle（dist/index.js）+ dist/migrations/ + dist/spec/
 #   （server 的 build 脚本末尾由 scripts/copy-migrations.mjs 把迁移拷到 dist/migrations，
-#     运行时按 dist/index.js 同级目录定位，见 src/db/migrate.ts）
+#     scripts/copy-spec.mjs 把仓库根 docs/dsl 拷到 dist/spec，运行时均按
+#     dist/index.js 同级目录定位，见 src/db/migrate.ts 与 src/spec-files.ts）
 # - apps/web/dist/：Vite 前端静态产物
 COPY . .
 RUN pnpm --filter server build && pnpm --filter web build
@@ -91,7 +93,8 @@ WORKDIR /app/apps/server
 COPY --from=prod-deps /repo/node_modules /app/node_modules
 COPY --from=prod-deps /repo/apps/server/node_modules /app/apps/server/node_modules
 
-# server 产物（dist/index.js + dist/migrations/；启动时自动建库并执行迁移）
+# server 产物（dist/index.js + dist/migrations/ + dist/spec/；启动时自动建库并执行迁移；
+# dist/spec 为 DSL 规范文档，/api/public/spec 的数据源，见 src/spec-files.ts）
 COPY --from=build /repo/apps/server/dist /app/apps/server/dist
 # web 产物：src/static.ts 按 import.meta.url 上溯两级解析 ../../web/dist，
 # 因此 apps/server 与 apps/web 的平级结构必须保持

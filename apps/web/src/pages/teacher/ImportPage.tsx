@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { AiPromptPanel } from "@/features/content/AiPromptPanel";
 import { parseApiIssues } from "@/features/content/api-issues";
 import { contentTreeKey } from "@/features/content/content-queries";
 import { ErrorPanel } from "@/features/content/ErrorPanel";
@@ -168,6 +169,11 @@ export function ImportPage() {
             粘贴或选择 Markdown 文档（支持 v2 DSL 与旧版 v1
             格式），预览无误后确认导入。
           </p>
+
+          {/* AI 出题助手（T1.13）：复制「规范+样例+模板」提示词给 AI，产出可导入文档 */}
+          <div className="mt-4">
+            <AiPromptPanel />
+          </div>
 
           <div className="mt-4 flex flex-col gap-3 rounded-xl border border-border bg-card p-4">
             <div className="flex flex-wrap items-end gap-3">
