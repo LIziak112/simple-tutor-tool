@@ -137,6 +137,15 @@
 .rich-markdown > :first-child {
   @apply mt-0;
 }
+/* 目录锚点滚动落点预留 sticky 顶栏高度（学生端讲义阅读页 scrollIntoView 用） */
+.rich-markdown h1,
+.rich-markdown h2,
+.rich-markdown h3,
+.rich-markdown h4,
+.rich-markdown h5,
+.rich-markdown h6 {
+  scroll-margin-top: 4.5rem;
+}
 .rich-markdown h1 {
   @apply mt-8 mb-3 text-2xl font-bold;
 }

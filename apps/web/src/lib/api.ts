@@ -18,8 +18,11 @@ import {
   type QuestionUpdateRequest,
   type ReorderRequest,
   type SpecFileName,
+  type StudentAssignmentListData,
   type StudentCreateData,
   type StudentCreateRequest,
+  type StudentLectureDetail,
+  type StudentLectureListData,
   type StudentListData,
   type StudentLoginRequest,
   type StudentMeData,
@@ -393,4 +396,38 @@ export function deleteAssignmentApi(id: string): Promise<null> {
   return callApi(() =>
     api.api.teacher.assignments[":id"].$delete({ param: { id } }),
   );
+}
+
+// ---------- T2.3：学生端外壳 ----------
+
+/** 专属链接登录（GET /api/public/s/:token：成功写 90 天学生会话 Cookie） */
+export function loginStudentByLinkApi(token: string): Promise<StudentMeData> {
+  return callApi(() => api.api.public.s[":token"].$get({ param: { token } }));
+}
+
+/** 当前登录学生（未登录 / 会话过期 / 被归档时 401 UNAUTHORIZED，由守卫跳登录） */
+export function fetchStudentMe(): Promise<StudentMeData> {
+  return callApi(() => api.api.student.me.$get());
+}
+
+/** 学生退出登录（删除会话行并清除 Cookie） */
+export function logoutStudentApi(): Promise<null> {
+  return callApi(() => api.api.student.logout.$post());
+}
+
+/** 我的作业（仅本人被指派且未删除，附完成状态；不含题目内容） */
+export function fetchStudentAssignmentsApi(): Promise<StudentAssignmentListData> {
+  return callApi(() => api.api.student.assignments.$get());
+}
+
+/** 讲义摘要列表（按课程顺序：标题 + 关联主题 + 更新时间） */
+export function fetchStudentLecturesApi(): Promise<StudentLectureListData> {
+  return callApi(() => api.api.student.lectures.$get());
+}
+
+/** 讲义全文 markdown（讲义全量下发是设计如此，:::solution 为讲解内容非题目答案） */
+export function fetchStudentLectureApi(
+  id: string,
+): Promise<StudentLectureDetail> {
+  return callApi(() => api.api.student.lectures[":id"].$get({ param: { id } }));
 }

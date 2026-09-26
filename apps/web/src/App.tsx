@@ -160,13 +160,118 @@ function TeacherRouteFallback() {
   );
 }
 
-/** 顶层路由。学生端（/s/:token，T2.x）与教师端（/t）分区扩展 */
+/**
+ * 学生端路由（T2.3）：路由级代码分割，登录相关页与学生主布局分块加载。
+ * 路由匹配：/s/login、/s/home 等静态段优先于 /s/:token（专属链接令牌为
+ * base64url 随机串，不会与保留路径冲突）。
+ */
+const studentRoutes = (() => {
+  const StudentLinkLoginPage = lazy(
+    () => import("./pages/student/StudentLinkLoginPage"),
+  );
+  const StudentLoginPage = lazy(
+    () => import("./pages/student/StudentLoginPage"),
+  );
+  const StudentLayout = lazy(() => import("./pages/student/StudentLayout"));
+  const StudentHomePage = lazy(() => import("./pages/student/StudentHomePage"));
+  const StudentLecturesPage = lazy(
+    () => import("./pages/student/StudentLecturesPage"),
+  );
+  const StudentLectureViewPage = lazy(
+    () => import("./pages/student/StudentLectureViewPage"),
+  );
+  const StudentRecordsPage = lazy(
+    () => import("./pages/student/StudentRecordsPage"),
+  );
+
+  const pageFallback = (
+    <p className="p-8 text-sm text-muted-foreground">页面加载中…</p>
+  );
+
+  return (
+    <>
+      <Route
+        path="/s/:token"
+        element={
+          <Suspense fallback={<StudentRouteFallback />}>
+            <StudentLinkLoginPage />
+          </Suspense>
+        }
+      />
+      <Route
+        path="/s/login"
+        element={
+          <Suspense fallback={<StudentRouteFallback />}>
+            <StudentLoginPage />
+          </Suspense>
+        }
+      />
+      <Route
+        path="/s"
+        element={
+          <Suspense fallback={<StudentRouteFallback />}>
+            <StudentLayout />
+          </Suspense>
+        }
+      >
+        <Route index element={<Navigate to="/s/home" replace />} />
+        <Route
+          path="home"
+          element={
+            <Suspense fallback={pageFallback}>
+              <StudentHomePage />
+            </Suspense>
+          }
+        />
+        <Route
+          path="lectures"
+          element={
+            <Suspense fallback={pageFallback}>
+              <StudentLecturesPage />
+            </Suspense>
+          }
+        />
+        <Route
+          path="lectures/:id"
+          element={
+            <Suspense fallback={pageFallback}>
+              <StudentLectureViewPage />
+            </Suspense>
+          }
+        />
+        <Route
+          path="records"
+          element={
+            <Suspense fallback={pageFallback}>
+              <StudentRecordsPage />
+            </Suspense>
+          }
+        />
+      </Route>
+    </>
+  );
+})();
+
+/** 学生端整页加载兜底（懒加载期间） */
+function StudentRouteFallback() {
+  return (
+    <main
+      aria-live="polite"
+      className="flex min-h-dvh items-center justify-center bg-background"
+    >
+      <p className="text-sm text-muted-foreground">页面加载中…</p>
+    </main>
+  );
+}
+
+/** 顶层路由。学生端（/s/*，T2.3）与教师端（/t）分区扩展 */
 export function App() {
   return (
     <Routes>
       <Route path="/" element={<HomePage />} />
       {devOnlyRoutes}
       {teacherRoutes}
+      {studentRoutes}
       <Route path="*" element={<NotFoundPage />} />
     </Routes>
   );

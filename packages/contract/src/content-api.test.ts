@@ -9,12 +9,17 @@ import {
   importPreviewDataSchema,
   importPreviewOkSchema,
   importPreviewRequestSchema,
+  studentLectureDetailOkSchema,
+  studentLectureDetailSchema,
+  studentLectureListOkSchema,
+  studentLectureSummarySchema,
 } from "./content-api.ts";
 
 /**
  * 内容导入 API 契约测试（T1.10）：请求体校验（markdown/filename 非空、courseId 可选 UUID）、
  * preview/commit 响应 data 形态、LINT_ERROR 错误壳（统一壳 + _issues 附加字段）。
  * T1.11 追加：GET /api/teacher/content 内容树契约（树状结构、讲义无题目摘要、单元展开题目）。
+ * T2.3 追加：学生端讲义摘要/列表/详情契约（topic 可空、markdown 非空）。
  */
 
 const lintIssue = {
@@ -305,5 +310,73 @@ describe("contentTreeSchema / contentTreeOkSchema（T1.11 内容树）", () => {
         (parsedLecture as Record<string, unknown> | undefined)?.questions,
       ).toBeUndefined();
     }
+  });
+});
+
+describe("学生端讲义契约（T2.3）", () => {
+  const summary = {
+    id: "0b6f18ae-6b9a-4d0e-8b7c-9b1b1b1b1b1b",
+    title: "第1讲 有理数",
+    topic: "有理数",
+    updatedAt: "2026-09-20T10:00:00.000Z",
+  } as const;
+
+  it("讲义摘要：topic 可为 null（无关联单元/未标注主题）", () => {
+    expect(
+      studentLectureSummarySchema.safeParse({ ...summary, topic: null })
+        .success,
+    ).toBe(true);
+  });
+
+  it("讲义摘要：id 非 UUID、缺 updatedAt 被拒", () => {
+    expect(
+      studentLectureSummarySchema.safeParse({ ...summary, id: "not-uuid" })
+        .success,
+    ).toBe(false);
+    expect(
+      studentLectureSummarySchema.safeParse({
+        id: summary.id,
+        title: summary.title,
+        topic: null,
+      }).success,
+    ).toBe(false);
+  });
+
+  it("讲义列表与详情成功壳：ok=true + data 形态", () => {
+    expect(
+      studentLectureListOkSchema.safeParse({
+        ok: true,
+        data: { lectures: [summary] },
+      }).success,
+    ).toBe(true);
+    expect(
+      studentLectureDetailOkSchema.safeParse({
+        ok: true,
+        data: {
+          id: summary.id,
+          title: summary.title,
+          markdown: "# 第1讲 有理数\n\n## 一、正数与负数\n",
+          updatedAt: summary.updatedAt,
+        },
+      }).success,
+    ).toBe(true);
+    // 空列表合法（未导入任何讲义）
+    expect(
+      studentLectureListOkSchema.safeParse({
+        ok: true,
+        data: { lectures: [] },
+      }).success,
+    ).toBe(true);
+  });
+
+  it("讲义详情：markdown 为空串被拒（讲义必有 H1 标题行）", () => {
+    expect(
+      studentLectureDetailSchema.safeParse({
+        id: summary.id,
+        title: summary.title,
+        markdown: "",
+        updatedAt: summary.updatedAt,
+      }).success,
+    ).toBe(false);
   });
 });

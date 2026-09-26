@@ -18,6 +18,8 @@ import type {
   QuestionDetail,
   QuestionUpdateData,
   ReorderRequest,
+  StudentLectureDetail,
+  StudentLectureSummary,
 } from "@tutor/contract";
 import {
   detectVersion,
@@ -29,7 +31,7 @@ import {
   wrapLectureMd,
   wrapSingleQuestionMd,
 } from "@tutor/md-dsl";
-import { asc, eq, isNull } from "drizzle-orm";
+import { asc, eq, isNotNull, isNull } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
   courses,
@@ -833,4 +835,82 @@ export function deleteCourse(db: Db, id: string): void {
     );
   }
   db.delete(courses).where(eq(courses.id, id)).run();
+}
+
+// ---------- 学生端：讲义（T2.3） ----------
+
+/**
+ * 讲义 id → 关联单元主题（units.lectureId 指向本讲义）。
+ * 一篇讲义可能被多个单元关联：取单元 order 最靠前且标注了 topic 的那个；
+ * 无关联单元 / 关联单元都未标注主题时映射缺席（调用方兜底 null）。
+ */
+function lectureTopics(db: Db): Map<string, string> {
+  const map = new Map<string, string>();
+  const rows = db
+    .select({ lectureId: units.lectureId, topic: units.topic })
+    .from(units)
+    .where(isNotNull(units.lectureId))
+    .orderBy(asc(units.order))
+    .all();
+  for (const row of rows) {
+    if (row.lectureId === null || row.topic === null) continue;
+    if (!map.has(row.lectureId)) map.set(row.lectureId, row.topic);
+  }
+  return map;
+}
+
+/**
+ * GET /api/student/lectures：全部讲义摘要，按课程顺序
+ * （course.order → lecture.order，与教师端内容树同口径）。
+ *
+ * 安全口径（AGENTS.md 第 3 条）：只 SELECT id/title/updatedAt 三列——列表接口
+ * 不读 markdown 内容列，更不触碰 questions 表任何字段；泄露测试见
+ * routes/student-lectures.test.ts。
+ */
+export function listStudentLectures(db: Db): {
+  lectures: StudentLectureSummary[];
+} {
+  const rows = db
+    .select({
+      id: lectures.id,
+      title: lectures.title,
+      updatedAt: lectures.updatedAt,
+    })
+    .from(lectures)
+    .innerJoin(courses, eq(lectures.courseId, courses.id))
+    .orderBy(asc(courses.order), asc(lectures.order), asc(lectures.title))
+    .all();
+  const topics = lectureTopics(db);
+  return {
+    lectures: rows.map((row) => ({
+      id: row.id,
+      title: row.title,
+      topic: topics.get(row.id) ?? null,
+      updatedAt: row.updatedAt,
+    })),
+  };
+}
+
+/**
+ * GET /api/student/lectures/:id：讲义全文 markdown（含 H1 标题行）。
+ *
+ * 讲义全量下发是设计如此（§5.3）：讲义里的 :::solution 是讲解内容而非题目答案，
+ * 学生端应见（前端默认折叠、点开查看）；但本函数只读 lectures 表行，
+ * 不附带任何 questions 表字段（stemMd/answers/solutionMd/hintsJson/optionsJson）。
+ */
+export function getStudentLecture(db: Db, id: string): StudentLectureDetail {
+  const row = db
+    .select({
+      id: lectures.id,
+      title: lectures.title,
+      markdown: lectures.markdown,
+      updatedAt: lectures.updatedAt,
+    })
+    .from(lectures)
+    .where(eq(lectures.id, id))
+    .get();
+  if (row === undefined) {
+    throw new HttpError(404, "LECTURE_NOT_FOUND", "讲义不存在");
+  }
+  return row;
 }
