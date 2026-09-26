@@ -225,7 +225,7 @@ export function renderSpecMarkdown(input: SpecInput): string {
       "",
       "- `practice`：正文由若干 `::::question` 顶层题目容器组成，解析为一个练习单元；",
       "- `lecture`：正文按 `# 第X讲 …`（一级标题）切分为多篇讲义，讲名作标题，H2/H3 进目录；",
-      "  第一个 H1 之前不要写正文（会被丢弃）；讲义内不出现 question；",
+      "  第一个 H1 之前不要写正文（若写了会并入第一篇讲义并给出 CONTENT_BEFORE_FIRST_HEADING 警告，内容不丢失）；讲义内不出现 question；",
       "- `mixed`：讲义段落与题目交替出现，导入时拆成讲义 + 练习单元并建立关联。",
       "",
     ].join("\n"),

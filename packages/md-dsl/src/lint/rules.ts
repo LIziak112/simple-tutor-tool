@@ -92,7 +92,7 @@ export const LINT_RULES: readonly LintRuleDoc[] = [
     code: "CONTENT_BEFORE_FIRST_HEADING",
     level: "warning",
     description:
-      "第一个一级标题之前有正文内容：该部分不属于任何讲，导入时会被丢弃，请移到标题之后",
+      "第一个一级标题之前有正文内容：该部分会并入第一篇讲义（原文保留、内容不丢失），建议移到讲义标题之后",
   },
   {
     code: "QUESTION_BEFORE_FIRST_HEADING",

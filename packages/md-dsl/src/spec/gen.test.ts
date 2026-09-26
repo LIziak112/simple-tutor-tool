@@ -69,6 +69,13 @@ describe("renderSpecMarkdown：稳定性与完整性", () => {
     expect(spec).toContain("pnpm tutor-lint");
     expect(spec).toContain("schema/content.json");
   });
+
+  it("讲义行为描述与实现一致：H1 前正文并入第一篇讲义（内容不丢失），不得出现「会被丢弃」", () => {
+    // 回归：v2/lecture.ts 的实际行为是并入第一篇 + CONTENT_BEFORE_FIRST_HEADING 警告，
+    // 规范文案曾误写为「会被丢弃」——权威文档不允许与实现相悖
+    expect(spec).toContain("并入第一篇讲义");
+    expect(spec).not.toContain("会被丢弃");
+  });
 });
 
 describe("renderSpecMarkdown：临时指令（验收 2）", () => {
