@@ -1,0 +1,24 @@
+{
+  "name": "simple-tutor-tool",
+  "version": "2.0.0",
+  "private": true,
+  "packageManager": "pnpm@12.6.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "pnpm -r --parallel run dev",
+    "build": "pnpm -r run build",
+    "test": "vitest run --passWithNoTests",
+    "e2e": "node -e \"console.log('E2E 将于 T2.13 配置')\"",
+    "lint": "biome check .",
+    "typecheck": "pnpm -r run typecheck",
+    "format": "biome format --write ."
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.14",
+    "@types/node": "^24.19.0",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.2"
+  }
+}
