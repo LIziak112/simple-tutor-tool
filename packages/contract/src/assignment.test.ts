@@ -173,8 +173,7 @@ describe("studentPaperDataSchema（T2.4 学生试卷：元素必须是 QuestionP
 
   it("接受 QuestionPublic 数组；空试卷（0 题）同样合法", () => {
     expect(
-      studentPaperDataSchema.safeParse({ questions: [publicQuestion] })
-        .success,
+      studentPaperDataSchema.safeParse({ questions: [publicQuestion] }).success,
     ).toBe(true);
     expect(studentPaperDataSchema.safeParse({ questions: [] }).success).toBe(
       true,
@@ -215,9 +214,7 @@ describe("studentPaperDataSchema（T2.4 学生试卷：元素必须是 QuestionP
 
 describe("assignmentErrorCodeSchema（T2.4 追加 FORBIDDEN）", () => {
   it("包含未被指派学生的 403 错误码 FORBIDDEN", () => {
-    expect(assignmentErrorCodeSchema.safeParse("FORBIDDEN").success).toBe(
-      true,
-    );
+    expect(assignmentErrorCodeSchema.safeParse("FORBIDDEN").success).toBe(true);
     expect(assignmentErrorCodeSchema.safeParse("NOT_ASSIGNED").success).toBe(
       false,
     );

@@ -34,7 +34,8 @@ export function publicStemMd(stemMd: string): string {
   const tree = processor.parse(stemMd);
   // 待替换的原文区间 [start, end)，按出现顺序收集
   const segments: Array<[number, number]> = [];
-  visit(tree, (node) => {
+  // 所有路径显式 return（noImplicitReturns，与 require-student 同理）
+  visit(tree, (node): "skip" | undefined => {
     if (
       node.type === "math" ||
       node.type === "inlineMath" ||
@@ -43,12 +44,13 @@ export function publicStemMd(stemMd: string): string {
     ) {
       return SKIP; // 公式/代码子树整体跳过（与解析器 scanStem 同一语义）
     }
-    if (node.type !== "text") return;
+    if (node.type !== "text") return undefined;
     const start = node.position?.start.offset;
     const end = node.position?.end.offset;
-    if (start === undefined || end === undefined) return;
-    if (!stemMd.slice(start, end).includes("[[")) return;
+    if (start === undefined || end === undefined) return undefined;
+    if (!stemMd.slice(start, end).includes("[[")) return undefined;
     segments.push([start, end]);
+    return undefined;
   });
   if (segments.length === 0) return stemMd;
 

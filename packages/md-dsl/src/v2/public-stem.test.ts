@@ -10,7 +10,8 @@ import { publicStemMd } from "./public-stem.ts";
  */
 describe("publicStemMd（学生端公开题干）", () => {
   it("填空标记（含等价答案 | 分隔）替换为 [[]]，答案文本不再出现", () => {
-    const stem = "计算：$(-3)+7=$ [[4]]；$(-2)+(-5)=$ [[-7]]。\n\n写等价形式：$0.5=$ [[0.5|1/2]]（填小数或分数均可）。";
+    const stem =
+      "计算：$(-3)+7=$ [[4]]；$(-2)+(-5)=$ [[-7]]。\n\n写等价形式：$0.5=$ [[0.5|1/2]]（填小数或分数均可）。";
     const pub = publicStemMd(stem);
     expect(pub).toBe(
       "计算：$(-3)+7=$ [[]]；$(-2)+(-5)=$ [[]]。\n\n写等价形式：$0.5=$ [[]]（填小数或分数均可）。",
@@ -36,7 +37,8 @@ describe("publicStemMd（学生端公开题干）", () => {
   });
 
   it("代码（行内/围栏）内的 [[…]] 不脱敏（解析器不把它记为空位）", () => {
-    const stem = "伪代码 `arr[[i]]` 与：\n\n```\nmatrix[[0, 0]] = 1\n```\n如上。";
+    const stem =
+      "伪代码 `arr[[i]]` 与：\n\n```\nmatrix[[0, 0]] = 1\n```\n如上。";
     expect(publicStemMd(stem)).toBe(stem);
   });
 
