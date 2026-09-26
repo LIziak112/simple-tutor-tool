@@ -1,6 +1,6 @@
-import type { ContentTree } from "@tutor/contract";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
+import type { ContentTree } from "@tutor/contract";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchContentTree } from "@/lib/api";

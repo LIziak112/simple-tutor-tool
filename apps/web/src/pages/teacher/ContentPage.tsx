@@ -1,14 +1,14 @@
 import type { ContentTreeCourse, ContentTreeUnit } from "@tutor/contract";
+import { cn } from "cn";
 import {
   BookOpen,
   ChevronRight,
   CircleAlert,
   FileStack,
-  ListChecks,
   Upload,
+  X,
 } from "lucide-react";
-import { X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 import { Button } from "@/components/ui/button";
 import { useContentTree } from "@/features/content/content-queries";
@@ -18,7 +18,6 @@ import {
   QUESTION_TYPE_LABELS,
 } from "@/features/content/question-meta";
 import { formatRelativeTime } from "@/lib/time";
-import { cn } from "cn";
 
 /**
  * /t/content 教师端内容页（T1.11）：
@@ -47,17 +46,17 @@ export function ContentPage() {
   );
 
   /** 收起提示条并清掉 history state */
-  function dismissBanner(): void {
+  const dismissBanner = useCallback((): void => {
     setBannerVisible(false);
     navigate(location.pathname, { replace: true, state: null });
-  }
+  }, [location.pathname, navigate]);
 
   // 6 秒后自动收起（手动点 × 走同一入口）
   useEffect(() => {
     if (importSuccess === undefined) return;
     const timer = setTimeout(dismissBanner, BANNER_AUTO_DISMISS_MS);
     return () => clearTimeout(timer);
-  }, [importSuccess]);
+  }, [importSuccess, dismissBanner]);
 
   return (
     <section className="mx-auto w-full max-w-4xl px-4 py-6 md:px-6">
@@ -127,15 +126,19 @@ function TreeSkeleton() {
           <div className="h-11 rounded-lg bg-muted" />
         </div>
       ))}
-      <p className="text-center text-sm text-muted-foreground">
-        正在加载内容…
-      </p>
+      <p className="text-center text-sm text-muted-foreground">正在加载内容…</p>
     </div>
   );
 }
 
 /** 错误态：原因 + 重试 */
-function TreeError({ message, onRetry }: { message: string; onRetry: () => void }) {
+function TreeError({
+  message,
+  onRetry,
+}: {
+  message: string;
+  onRetry: () => void;
+}) {
   return (
     <div
       role="alert"
@@ -143,7 +146,9 @@ function TreeError({ message, onRetry }: { message: string; onRetry: () => void 
     >
       <CircleAlert aria-hidden className="size-8 text-destructive" />
       <p className="text-sm font-medium text-destructive">内容加载失败</p>
-      <p className="max-w-sm text-xs break-all text-muted-foreground">{message}</p>
+      <p className="max-w-sm text-xs break-all text-muted-foreground">
+        {message}
+      </p>
       <Button variant="outline" className="min-h-11 px-6" onClick={onRetry}>
         重试
       </Button>
@@ -272,19 +277,34 @@ function QuestionSummaryTable({
 }) {
   return (
     <table className="w-full border-collapse text-sm">
-      <caption className="sr-only">单元内题目摘要（题号、题型、难度、考点、版本）</caption>
+      <caption className="sr-only">
+        单元内题目摘要（题号、题型、难度、考点、版本）
+      </caption>
       <thead>
         <tr className="text-left text-xs text-muted-foreground">
-          <th scope="col" className="py-1.5 pr-2 font-medium">题号</th>
-          <th scope="col" className="py-1.5 pr-2 font-medium">题型</th>
-          <th scope="col" className="py-1.5 pr-2 font-medium">难度</th>
-          <th scope="col" className="py-1.5 pr-2 font-medium">考点</th>
-          <th scope="col" className="py-1.5 font-medium">版本</th>
+          <th scope="col" className="py-1.5 pr-2 font-medium">
+            题号
+          </th>
+          <th scope="col" className="py-1.5 pr-2 font-medium">
+            题型
+          </th>
+          <th scope="col" className="py-1.5 pr-2 font-medium">
+            难度
+          </th>
+          <th scope="col" className="py-1.5 pr-2 font-medium">
+            考点
+          </th>
+          <th scope="col" className="py-1.5 font-medium">
+            版本
+          </th>
         </tr>
       </thead>
       <tbody>
         {questions.map((question, index) => (
-          <tr key={question.id} className="border-t border-border/60 align-middle">
+          <tr
+            key={question.id}
+            className="border-t border-border/60 align-middle"
+          >
             <th scope="row" className="py-2 pr-2 text-left font-normal">
               <span className="font-medium">{index + 1}</span>
               <span className="ml-1.5 text-xs break-all text-muted-foreground">

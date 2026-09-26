@@ -20,7 +20,10 @@ export function formatCnTime(utcIso: string): string {
  * UTC ISO 字符串 → 中文相对时间（"3 分钟前"，UI 约定：相对时间优先）。
  * now 可注入以便测试；缺省当前时间。
  */
-export function formatRelativeTime(utcIso: string, now: Date = new Date()): string {
+export function formatRelativeTime(
+  utcIso: string,
+  now: Date = new Date(),
+): string {
   return dayjs
     .utc(utcIso)
     .tz(DISPLAY_TZ)
