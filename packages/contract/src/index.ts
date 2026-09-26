@@ -12,6 +12,8 @@ export * from "./content-api.ts";
 export * from "./directives.ts";
 /** DSL 规范文件契约（T1.13 起为权威定义）：/api/public/spec 文件名枚举与 Content-Type */
 export * from "./spec.ts";
+/** 学生账号契约（T2.1 起为权威定义）：学生 CRUD、两种登录、自助信息与改密码、错误码 */
+export * from "./student.ts";
 
 /**
  * API 响应壳（占位示例）。

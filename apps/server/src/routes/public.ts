@@ -1,6 +1,11 @@
-import type { TeacherLoginRequest, TeacherSetupRequest } from "@tutor/contract";
+import type {
+  StudentLoginRequest,
+  TeacherLoginRequest,
+  TeacherSetupRequest,
+} from "@tutor/contract";
 import {
   specFileNameSchema,
+  studentLoginRequestSchema,
   teacherLoginRequestSchema,
   teacherSetupRequestSchema,
 } from "@tutor/contract";
@@ -18,13 +23,19 @@ import {
 } from "../auth/teacher-auth-service";
 import type { Db } from "../db/client";
 import { HttpError, parseJsonBody } from "../lib/http-error";
+import {
+  loginStudentByLink,
+  loginStudentByPassword,
+} from "../services/student-service";
 import { readSpecFile } from "../spec-files";
 
 /**
  * 公开路由（无需登录），挂载在 /api/public。
  * - GET  /teacher/status：是否已设置教师（前端首启判断，只回布尔值）
  * - POST /teacher/setup：首次设置密码（仅无教师时可用），成功自动登录
- * - POST /teacher/login：密码登录（§5.7 限流）
+ * - POST /teacher/login：教师密码登录（§5.7 限流）
+ * - POST /student/login：学生登录名+密码登录（T2.1，§5.7 限流，key 与教师隔离）
+ * - GET  /s/:token：学生专属链接登录（写学生 Cookie；前端 /s/:token 页面为 T2.3）
  * - GET  /spec/:file：DSL 规范文档直出（T1.13，§3 公开区；md/json 原文作为
  *    body，不走统一壳，便于 AI 客户端/MCP 原样拉取）
  *
@@ -72,6 +83,26 @@ export function createPublicRoutes(
         );
         setCookie(c, SESSION_COOKIE, token, sessionCookieOptions(secure));
         return c.json({ ok: true, data: teacher });
+      })
+      // —— 学生两种登录（T2.1，§5.7）：成功都写同一种会话 Cookie（90 天） ——
+      .post("/student/login", async (c) => {
+        const body: StudentLoginRequest = await parseJsonBody(
+          c,
+          studentLoginRequestSchema,
+        );
+        const { student, token } = await loginStudentByPassword(
+          db,
+          body,
+          getClientIp(c),
+        );
+        setCookie(c, SESSION_COOKIE, token, sessionCookieOptions(secure));
+        return c.json({ ok: true, data: student });
+      })
+      // 专属链接：GET 带 token 即登录（写 Cookie + 返回学生信息，页面跳转由前端 T2.3 处理）
+      .get("/s/:token", (c) => {
+        const { student, token } = loginStudentByLink(db, c.req.param("token"));
+        setCookie(c, SESSION_COOKIE, token, sessionCookieOptions(secure));
+        return c.json({ ok: true, data: student });
       })
       // DSL 规范文档直出（T1.13）：契约枚举校验，未知文件名 404 统一错误壳；
       // md/json 原文作为 body（Content-Type 见契约 specFileContentTypes）

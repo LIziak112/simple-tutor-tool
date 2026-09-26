@@ -39,6 +39,7 @@ const teacherRoutes = (() => {
   const SettingsPage = lazy(() => import("./pages/teacher/SettingsPage"));
   const ContentPage = lazy(() => import("./pages/teacher/ContentPage"));
   const ImportPage = lazy(() => import("./pages/teacher/ImportPage"));
+  const StudentsPage = lazy(() => import("./pages/teacher/StudentsPage"));
   const PlaceholderPage = lazy(() => import("./pages/teacher/PlaceholderPage"));
 
   /** 布局内的懒加载兜底（骨架级提示即可，布局本身很快） */
@@ -46,13 +47,8 @@ const teacherRoutes = (() => {
     <p className="p-8 text-sm text-muted-foreground">页面加载中…</p>
   );
 
-  /** 三个「建设中」占位分区（后续任务逐个替换；内容由 T1.11 实现并移出占位） */
+  /** 两个「建设中」占位分区（后续任务逐个替换；内容由 T1.11/T2.1 实现并移出占位） */
   const placeholders = [
-    {
-      path: "students",
-      title: "学生与作业",
-      description: "学生名单与作业布置将在这里提供（T2.x 起）。",
-    },
     {
       path: "data",
       title: "数据",
@@ -105,6 +101,14 @@ const teacherRoutes = (() => {
           element={
             <Suspense fallback={pageFallback}>
               <ImportPage />
+            </Suspense>
+          }
+        />
+        <Route
+          path="students"
+          element={
+            <Suspense fallback={pageFallback}>
+              <StudentsPage />
             </Suspense>
           }
         />

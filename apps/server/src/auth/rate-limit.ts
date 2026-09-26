@@ -15,9 +15,20 @@ export const MAX_LOGIN_FAILURES = 5;
 /** 锁定时长（毫秒） */
 export const LOGIN_LOCK_MS = 10 * 60 * 1000;
 
-/** 限流 key：按登录名与按 IP 各一条 */
+/** 限流 key：按登录名与按 IP 各一条（教师登录用） */
 export function loginFailureKeys(loginName: string, ip: string): string[] {
   return [`name:${loginName}`, `ip:${ip}`];
+}
+
+/**
+ * 学生登录限流 key（T2.1）：与教师 key 命名空间隔离（教师固定登录名 teacher，
+ * 学生登录名是各自姓名，不隔离会互相污染计数）。同样按登录名与按 IP 双 key。
+ */
+export function studentLoginFailureKeys(
+  loginName: string,
+  ip: string,
+): string[] {
+  return [`student:name:${loginName}`, `student:ip:${ip}`];
 }
 
 /** 任一 key 处于锁定期 → true */

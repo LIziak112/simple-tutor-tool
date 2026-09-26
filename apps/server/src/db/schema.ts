@@ -10,7 +10,7 @@ import {
  * 数据库表定义（Drizzle / SQLite）。表结构以架构文档 §5.2 数据模型为准，
  * T0.5 建 teachers、sessions；T1.9 追加 login_failures（登录限流，§5.7）；
  * T1.10 追加内容七表：courses、lectures、units、questions、knowledge_points、
- * question_knowledge、imports（内容存储与导入）。
+ * question_knowledge、imports（内容存储与导入）；T2.1 追加 students（学生账号与两种登录）。
  *
  * 全库约定（见 docs/开发任务清单.md §0.3 与 db-change 技能）：
  * - 主键 id 一律为应用层生成的 crypto.randomUUID() 字符串；
@@ -80,6 +80,46 @@ export const loginFailures = sqliteTable("login_failures", {
 export type LoginFailure = typeof loginFailures.$inferSelect;
 /** login_failures 表插入类型 */
 export type NewLoginFailure = typeof loginFailures.$inferInsert;
+
+/**
+ * 学生表（T2.1，§5.2）。一位老师多名学生；两种登录方式并存（§5.7）：
+ * - loginName 全局唯一（默认等于姓名，重名时教师改「张三2」之类）；
+ * - passwordHash 可空：只开专属链接、未设密码的学生为 NULL；
+ * - linkToken 全局唯一：专属链接 /s/<token> 的随机令牌，重置后旧链接立即失效；
+ * - linkEnabled / passwordEnabled：教师可对单个学生分别开关两种方式；
+ * - archivedAt：归档（软删除语义）——不出现在默认列表、两种登录都拒绝。
+ */
+export const students = sqliteTable("students", {
+  /** 主键：crypto.randomUUID()（§0.3 主键约定） */
+  id: text("id").primaryKey(),
+  /** 显示姓名 */
+  displayName: text("display_name").notNull(),
+  /** 登录名（密码登录用；全局唯一，大小写敏感精确匹配） */
+  loginName: text("login_name").notNull().unique(),
+  /** 密码 scrypt 哈希；未设密码为 NULL */
+  passwordHash: text("password_hash"),
+  /** 专属链接令牌（base64url 随机串；全局唯一，重置即更换） */
+  linkToken: text("link_token").notNull().unique(),
+  /** 专属链接登录是否开启 */
+  linkEnabled: integer("link_enabled", { mode: "boolean" })
+    .notNull()
+    .default(true),
+  /** 密码登录是否开启 */
+  passwordEnabled: integer("password_enabled", { mode: "boolean" })
+    .notNull()
+    .default(false),
+  /** 教师备注；未填为 NULL */
+  note: text("note"),
+  /** 归档时间：UTC ISO 字符串；未归档为 NULL（归档 = 软删除，不物理 DELETE） */
+  archivedAt: text("archived_at"),
+  /** 创建时间：UTC ISO 字符串 */
+  createdAt: text("created_at").notNull(),
+});
+
+/** students 表行类型（SELECT 结果） */
+export type Student = typeof students.$inferSelect;
+/** students 表插入类型 */
+export type NewStudent = typeof students.$inferInsert;
 
 /**
  * 课程表——可选的组织层（如「初一上」，§5.2）。导入未指定 courseId 时落到系统默认课程

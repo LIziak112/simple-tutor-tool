@@ -14,8 +14,11 @@ import { sessions } from "../db/schema";
 /** 会话 Cookie 名（老师与学生同一种 Cookie） */
 export const SESSION_COOKIE = "tutor_session";
 
-/** 教师会话有效期：7 天（学生 90 天是 T2.1 的事；调整改这里） */
+/** 教师会话有效期：7 天（学生 90 天见 STUDENT_SESSION_TTL_MS；调整改这里） */
 export const TEACHER_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** 学生会话有效期：90 天（§5.7，T2.1；学生登录低频，长会话减少重新登录摩擦） */
+export const STUDENT_SESSION_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 
 /** PUBLIC_URL 是否为 https（决定 Cookie 加不加 Secure） */
 export function isSecurePublicUrl(publicUrl: string): boolean {
@@ -37,14 +40,32 @@ export function createTeacherSession(
   db: Db,
   teacherId: string,
 ): { token: string; expiresAt: string } {
+  return insertSession(db, "teacher", teacherId, TEACHER_SESSION_TTL_MS);
+}
+
+/** 创建学生会话（T2.1，有效期 90 天），返回 token 与过期时间 */
+export function createStudentSession(
+  db: Db,
+  studentId: string,
+): { token: string; expiresAt: string } {
+  return insertSession(db, "student", studentId, STUDENT_SESSION_TTL_MS);
+}
+
+/** 写入一条会话行（教师/学生共用，token 即主键） */
+function insertSession(
+  db: Db,
+  subjectType: "teacher" | "student",
+  subjectId: string,
+  ttlMs: number,
+): { token: string; expiresAt: string } {
   const token = randomBytes(32).toString("base64url");
   const now = Date.now();
-  const expiresAt = new Date(now + TEACHER_SESSION_TTL_MS).toISOString();
+  const expiresAt = new Date(now + ttlMs).toISOString();
   db.insert(sessions)
     .values({
       id: token,
-      subjectType: "teacher",
-      subjectId: teacherId,
+      subjectType,
+      subjectId,
       expiresAt,
       createdAt: new Date(now).toISOString(),
     })
@@ -73,6 +94,29 @@ export function getTeacherSession(
     )
     .get();
   return row ? { teacherId: row.subjectId } : null;
+}
+
+/**
+ * 按会话 token 查询学生 id（T2.1）。
+ * token 不存在 / 不是学生会话（教师会话同 Cookie 也过不了）/ 已过期 → null。
+ * 注意「学生是否仍存在且未归档」由 requireStudent 守卫另行校验（归档学生会话立即失效）。
+ */
+export function getStudentSession(
+  db: Db,
+  token: string,
+): { studentId: string } | null {
+  const row = db
+    .select()
+    .from(sessions)
+    .where(
+      and(
+        eq(sessions.id, token),
+        eq(sessions.subjectType, "student"),
+        gt(sessions.expiresAt, new Date().toISOString()),
+      ),
+    )
+    .get();
+  return row ? { studentId: row.subjectId } : null;
 }
 
 /** 删除会话（登出） */
