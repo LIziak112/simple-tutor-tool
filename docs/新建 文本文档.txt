@@ -1,0 +1,6 @@
+"C:\Users\HUAYU\Documents\github\simple-tutor-tool\docs\开发任务清单.md"
+"C:\Users\HUAYU\Documents\github\simple-tutor-tool\docs\技术架构与实施方案.md"
+
+按照开发任务清单，来逐步实施，你分派子agent来执行，验收。你负责把控最终节奏
+
+复杂开发任务 交给 子智能体 GLM-5.3 high 来实施，简单任务交给 GLM-5.3-flash max （子智能体flash ）来实施
