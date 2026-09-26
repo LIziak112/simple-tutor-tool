@@ -4,5 +4,6 @@
     // 显式声明 Node 类型：TS7（tsgo）不会自动向上收集 @types 目录，服务端用到 node:fs 等内置模块
     "types": ["node"]
   },
-  "include": ["src"]
+  // scripts/（reparse）由 Node 24 原生类型剥离直接运行，纳入类型检查
+  "include": ["src", "scripts"]
 }

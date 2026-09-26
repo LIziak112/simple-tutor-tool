@@ -15,7 +15,6 @@ import type {
   LectureUpdateData,
   LintIssue,
   ParsedDocument,
-  Question,
   QuestionDetail,
   QuestionUpdateData,
   ReorderRequest,
@@ -42,6 +41,11 @@ import {
   units,
 } from "../db/schema";
 import { HttpError } from "../lib/http-error";
+import {
+  loadKnowledgeIdByName,
+  questionFields,
+  syncQuestionKnowledge,
+} from "./question-sync";
 
 /**
  * ContentService（T1.10 导入、T1.11 内容树、T1.12 单条编辑/删除/排序/课程 CRUD）
@@ -63,9 +67,6 @@ import { HttpError } from "../lib/http-error";
 
 /** 系统默认课程名（courseId 缺省时使用；不存在则自动创建） */
 export const DEFAULT_COURSE_TITLE = "默认课程";
-
-/** 事务回调拿到的数据库句柄类型（better-sqlite3 同步事务） */
-type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 
 // ---------- 版本识别与统一 lint ----------
 
@@ -257,13 +258,7 @@ export function commitImport(
         .all()
         .map((row) => [row.id, row.version] as const),
     );
-    const knowledgeIdByName = new Map(
-      tx
-        .select({ id: knowledgePoints.id, name: knowledgePoints.name })
-        .from(knowledgePoints)
-        .all()
-        .map((row) => [row.name, row.id] as const),
-    );
+    const knowledgeIdByName = loadKnowledgeIdByName(tx);
 
     for (const unit of parsed.units) {
       for (const [index, question] of unit.questions.entries()) {
@@ -312,67 +307,6 @@ export function commitImport(
       .run();
     return report;
   });
-}
-
-/** 题目结构化字段（不含 id/version；update 与 insert 共用） */
-function questionFields(
-  question: Question,
-  unitId: string,
-  order: number,
-  now: string,
-): {
-  unitId: string;
-  order: number;
-  type: Question["type"];
-  difficulty: number;
-  stemMd: string;
-  optionsJson: string | null;
-  answersJson: string | null;
-  hintsJson: string;
-  solutionMd: string | null;
-  sourceMd: string;
-  updatedAt: string;
-} {
-  return {
-    unitId,
-    order,
-    type: question.type,
-    difficulty: question.difficulty,
-    stemMd: question.stemMd,
-    optionsJson:
-      question.options !== undefined ? JSON.stringify(question.options) : null,
-    answersJson:
-      question.answers !== undefined ? JSON.stringify(question.answers) : null,
-    hintsJson: JSON.stringify(question.hints),
-    solutionMd: question.solutionMd ?? null,
-    sourceMd: question.sourceMd,
-    updatedAt: now,
-  };
-}
-
-/** 同步题目的考点关联：同名 knowledge_point 复用（无则建），关联全量替换 */
-function syncQuestionKnowledge(
-  tx: Tx,
-  question: Question,
-  knowledgeIdByName: Map<string, string>,
-): void {
-  tx.delete(questionKnowledge)
-    .where(eq(questionKnowledge.questionId, question.id))
-    .run();
-  const seen = new Set<string>();
-  for (const name of question.knowledge) {
-    if (seen.has(name)) continue; // 同名去重（关联表复合主键）
-    seen.add(name);
-    let pointId = knowledgeIdByName.get(name);
-    if (pointId === undefined) {
-      pointId = crypto.randomUUID();
-      tx.insert(knowledgePoints).values({ id: pointId, name }).run();
-      knowledgeIdByName.set(name, pointId);
-    }
-    tx.insert(questionKnowledge)
-      .values({ questionId: question.id, knowledgePointId: pointId })
-      .run();
-  }
 }
 
 /** 解析实际导入的课程：显式 courseId 必须存在；缺省用默认课程（无则创建） */
@@ -638,13 +572,7 @@ export function updateQuestion(
       })
       .where(eq(questions.id, id))
       .run();
-    const knowledgeIdByName = new Map(
-      tx
-        .select({ id: knowledgePoints.id, name: knowledgePoints.name })
-        .from(knowledgePoints)
-        .all()
-        .map((kp) => [kp.name, kp.id] as const),
-    );
+    const knowledgeIdByName = loadKnowledgeIdByName(tx);
     syncQuestionKnowledge(tx, next, knowledgeIdByName);
   });
 

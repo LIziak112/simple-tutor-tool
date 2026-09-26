@@ -17,6 +17,7 @@
     "db:generate": "pnpm --filter server db:generate",
     "schema:export": "pnpm --filter @tutor/contract run export-schema",
     "tutor-lint": "node packages/md-dsl/scripts/tutor-lint.ts",
+    "reparse": "node apps/server/scripts/reparse.ts",
     "gen:spec": "pnpm --filter @tutor/contract run export-schema && pnpm --filter @tutor/md-dsl run gen-spec"
   },
   "devDependencies": {
