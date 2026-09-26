@@ -368,7 +368,11 @@ importers:
         specifier: ^24.19.0
         version: 24.19.0
 
-  packages/grading: {}
+  packages/grading:
+    dependencies:
+      '@tutor/contract':
+        specifier: workspace:*
+        version: link:../contract
 
   packages/md-dsl:
     dependencies:
