@@ -1,3 +1,6 @@
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { ApiErr, ApiOk } from "@tutor/contract";
 import { apiErrSchema, apiOkSchema } from "@tutor/contract";
 import type { Logger } from "pino";
@@ -94,5 +97,118 @@ describe("统一错误格式（§0.3）", () => {
     const res = await app.request("/some/page");
     expect(res.status).toBe(404);
     expect(await res.text()).toBe("Not Found");
+  });
+});
+
+describe("生产模式静态托管与 SPA 回退", () => {
+  /** 构造一个临时「前端构建产物」目录：index.html + assets/ 带哈希 JS */
+  async function makeFakeDist(): Promise<string> {
+    const dist = await mkdtemp(join(tmpdir(), "tutor-web-dist-"));
+    await writeFile(
+      join(dist, "index.html"),
+      "<!doctype html><html><body>web-dist-index</body></html>",
+      "utf8",
+    );
+    await mkdir(join(dist, "assets"), { recursive: true });
+    await writeFile(
+      join(dist, "assets", "app-abc123.js"),
+      "console.log('app')",
+      "utf8",
+    );
+    return dist;
+  }
+
+  it("未命中的非 /api GET 回退 index.html（SPA fallback），index 协商缓存", async () => {
+    const dist = await makeFakeDist();
+    try {
+      const app = createApp({
+        isProduction: true,
+        logger: silentLogger,
+        webDistDir: dist,
+      });
+      const res = await app.request("/s/student/home");
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toContain("text/html");
+      expect(res.headers.get("cache-control")).toBe("no-cache");
+      expect(await res.text()).toContain("web-dist-index");
+    } finally {
+      await rm(dist, { recursive: true, force: true });
+    }
+  });
+
+  it("命中的静态文件按扩展名返回 Content-Type，assets/ 哈希资源长缓存", async () => {
+    const dist = await makeFakeDist();
+    try {
+      const app = createApp({
+        isProduction: true,
+        logger: silentLogger,
+        webDistDir: dist,
+      });
+      const res = await app.request("/assets/app-abc123.js");
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toContain("text/javascript");
+      expect(res.headers.get("cache-control")).toBe(
+        "public, max-age=31536000, immutable",
+      );
+      expect(await res.text()).toBe("console.log('app')");
+    } finally {
+      await rm(dist, { recursive: true, force: true });
+    }
+  });
+
+  it("根路径返回 index.html；/api 不受静态托管影响（health 正常、未知 /api 仍是统一 404）", async () => {
+    const dist = await makeFakeDist();
+    try {
+      const app = createApp({
+        isProduction: true,
+        logger: silentLogger,
+        webDistDir: dist,
+      });
+
+      const root = await app.request("/");
+      expect(root.status).toBe(200);
+      expect(await root.text()).toContain("web-dist-index");
+
+      const health = await app.request("/api/public/health");
+      expect(health.status).toBe(200);
+      expect(((await health.json()) as ApiOk).ok).toBe(true);
+
+      // SPA 回退不能吞掉未知 /api 请求的统一错误格式
+      const unknown = await app.request("/api/unknown");
+      expect(unknown.status).toBe(404);
+      expect(await unknown.json()).toEqual({
+        ok: false,
+        error: "NOT_FOUND",
+        message: "接口不存在",
+      });
+    } finally {
+      await rm(dist, { recursive: true, force: true });
+    }
+  });
+
+  it("非 GET/HEAD 不回退：POST 未匹配路径仍是 404", async () => {
+    const dist = await makeFakeDist();
+    try {
+      const app = createApp({
+        isProduction: true,
+        logger: silentLogger,
+        webDistDir: dist,
+      });
+      const res = await app.request("/some/page", { method: "POST" });
+      expect(res.status).toBe(404);
+    } finally {
+      await rm(dist, { recursive: true, force: true });
+    }
+  });
+
+  it("dist 目录不存在时优雅跳过（请求 404），并用 warn 日志提示", async () => {
+    const { logger, lines } = captureLogger();
+    // 不存在的目录（用时间戳避免与并行测试撞名）
+    const missing = join(tmpdir(), `tutor-missing-dist-${Date.now()}`);
+    const app = createApp({ isProduction: true, logger, webDistDir: missing });
+
+    const res = await app.request("/");
+    expect(res.status).toBe(404);
+    expect(lines.some((line) => line.includes("跳过静态托管"))).toBe(true);
   });
 });

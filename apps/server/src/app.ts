@@ -1,7 +1,9 @@
+import { existsSync } from "node:fs";
 import type { ApiErr } from "@tutor/contract";
 import { Hono } from "hono";
 import type { Logger } from "pino";
 import pino from "pino";
+import { createSpaStatic, defaultWebDistDir } from "./static";
 
 /**
  * 组装 Hono 应用。纯定义、无副作用（不监听端口、不读环境变量、不落盘）：
@@ -57,6 +59,21 @@ export function createApp(options: CreateAppOptions) {
     // time 为 UTC ISO 字符串（§0.3 时间约定）
     return c.json({ ok: true, data: { time: new Date().toISOString() } });
   });
+
+  // —— 生产模式：托管 apps/web/dist ——
+  // 注册在 API 路由之后：API 请求命中路由后不再经过静态；未命中的 /api 请求被静态中间件放行到统一 404
+  if (options.isProduction) {
+    const distDir = options.webDistDir ?? defaultWebDistDir;
+    if (existsSync(distDir)) {
+      app.use("*", createSpaStatic({ distDir }));
+    } else {
+      // 当前阶段 apps/web 尚未创建：优雅跳过并提示，不报错退出
+      logger.warn(
+        { distDir },
+        "生产模式但前端构建产物目录不存在，跳过静态托管",
+      );
+    }
+  }
 
   return app;
 }
