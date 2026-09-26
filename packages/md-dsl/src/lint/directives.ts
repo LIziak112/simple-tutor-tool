@@ -33,8 +33,8 @@ import { suggestAttrKey, suggestDirectiveName } from "./similarity.ts";
  *   由专属的 *_OUTSIDE_QUESTION 规则报（语义更具体，避免同一问题双报）。
  */
 
-/** 指令位置语境的中文标签（message 用） */
-const LOCATION_LABELS: Record<DirectiveLocation, string> = {
+/** 指令位置语境的中文标签（lint message 与 gen:spec 规范文档共用，导出避免两处漂移） */
+export const LOCATION_LABELS: Record<DirectiveLocation, string> = {
   document: "文档顶层",
   lecture: "讲义正文",
   question: "题目内",
