@@ -41,6 +41,11 @@ const BLANK_MARKER_RE = /\[\[([^[\]]+?)\]\]/g;
 /** GFM 任务列表项首行标记：`- [ ]` / `- [x]`（含有序列表写法） */
 const TASK_MARKER_RE = /^\s*(?:[-*+]|\d+[.)])\s+\[[ xX]\]\s*/;
 
+/** 顶层 question 容器判定（经注册表别名归一）：practice/lecture/mixed 三条路径的同一谓词 */
+export function isQuestionContainer(node: Node): node is ContainerDirective {
+  return isContainer(node) && canonicalName(node) === "question";
+}
+
 /** 从文档顶层子级中解析全部 question 容器（按出现顺序），供三条 kind 路径共用 */
 export function extractQuestions(
   children: readonly RootContent[],
