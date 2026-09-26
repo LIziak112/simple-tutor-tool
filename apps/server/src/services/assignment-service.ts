@@ -5,14 +5,19 @@ import type {
   AssignmentStudent,
   AssignmentUpdateRequest,
   StudentAssignment,
+  StudentPaperData,
   TeacherAssignment,
 } from "@tutor/contract";
+import { questionPublicSchema } from "@tutor/contract";
+import { publicStemMd } from "@tutor/md-dsl";
 import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
   type Assignment,
   assignmentStudents,
   assignments,
+  knowledgePoints,
+  questionKnowledge,
   questions,
   students,
   units,
@@ -27,10 +32,12 @@ import { HttpError } from "../lib/http-error";
  * - 删除：软删（deletedAt），不物理删除——已有作答经 assignmentId 关联历史，
  *   「作答保留、作业标记删除」（T2.6 建 attempts 表后回归验证）；
  * - 教师列表：默认不显示已删，includeDeleted=true 含删；每条带单元标题、题数、学生名单；
- * - 学生列表：仅本人被指派且未删除的作业，只含单元公开元信息（无答案/详解/提示）。
+ * - 学生列表：仅本人被指派且未删除的作业，只含单元公开元信息（无答案/详解/提示）；
+ * - 学生试卷（T2.4）：该作业单元的公开题目（QuestionPublic[]，经契约 schema 输出过滤）。
  *
  * 安全口径（AGENTS.md 第 3 条）：学生端条目只有 id/标题/单元元信息/题数/截止/状态，
- * 不触碰 questions 表的内容列（题数只做 COUNT，见 liveQuestionCounts）。
+ * 不触碰 questions 表的内容列（题数只做 COUNT，见 liveQuestionCounts）；题目本体仅经
+ * getStudentAssignmentPaper 以 QuestionPublic 形态下发（无答案/详解/提示内容）。
  */
 
 /** 单个学生在一道作业下的作答摘要（T2.6 接入 attempts 表后由查询填充） */
@@ -374,5 +381,127 @@ export function listStudentAssignments(
         [],
       ),
     })),
+  };
+}
+
+// ---------- 学生端：试卷（T2.4） ----------
+
+/** 解析 hintsJson（string[]）为提示数量；只取长度，内容（教师侧）不随本函数外流 */
+function hintCountOf(hintsJson: string): number {
+  const parsed: unknown = JSON.parse(hintsJson);
+  return Array.isArray(parsed) ? parsed.length : 0;
+}
+
+/** 解析 optionsJson（QuestionOption[]）为公开选项文本数组——丢弃 correct 正确项标记 */
+function optionTexts(optionsJson: string): string[] {
+  const parsed: unknown = JSON.parse(optionsJson);
+  if (!Array.isArray(parsed)) return [];
+  const texts: string[] = [];
+  for (const item of parsed) {
+    if (
+      typeof item === "object" &&
+      item !== null &&
+      "text" in item &&
+      typeof item.text === "string"
+    ) {
+      texts.push(item.text);
+    }
+  }
+  return texts;
+}
+
+/** 题目 id → 考点名列表（同名归一后按考点名排序，与教师端内容树同口径） */
+function knowledgeNamesByQuestion(db: Db): Map<string, string[]> {
+  const map = new Map<string, string[]>();
+  const rows = db
+    .select({
+      questionId: questionKnowledge.questionId,
+      name: knowledgePoints.name,
+    })
+    .from(questionKnowledge)
+    .innerJoin(
+      knowledgePoints,
+      eq(questionKnowledge.knowledgePointId, knowledgePoints.id),
+    )
+    .orderBy(asc(knowledgePoints.name))
+    .all();
+  for (const row of rows) {
+    const list = map.get(row.questionId);
+    if (list === undefined) map.set(row.questionId, [row.name]);
+    else list.push(row.name);
+  }
+  return map;
+}
+
+/**
+ * GET /api/student/assignments/:id/paper：该作业单元的公开题目（QuestionPublic[]）。
+ * 权限（T2.4 验收项）：作业不存在 → 404；已删除 → 404（与学生列表过滤口径一致）；
+ * 未被指派（assignment_students 未命中）→ 403 FORBIDDEN（注意不是 401——
+ * 学生已通过学生会话鉴权，只是无权访问这份作业）。
+ *
+ * 题目与防泄露（AGENTS.md 第 3 条 / §5.3）：
+ * - 该单元未软删的题目按 order 升序（同 order 按 id 兜底稳定）；
+ * - 从 questions 整行构造候选对象后经 questionPublicSchema.parse 输出过滤（strip
+ *   未知键）：answersJson / solutionMd / hintsJson / sourceMd 等教师侧列一律被剥离，
+ *   将来加列也不会经由本接口外泄（fail closed）；
+ * - stemMd 先经 publicStemMd 公开化：填空/判断标记 [[答案]] 替换为空标记 [[]]，
+ *   数学/代码环境内的 [[…]] 记号原样保留；
+ * - options 仅 choice/multi 携带，映射为纯文本数组（无 correct 标记）；
+ * - hints 只暴露数量 hintCount（内容由 T2.11 分步提示接口按需下发）。
+ */
+export function getStudentAssignmentPaper(
+  db: Db,
+  studentId: string,
+  assignmentId: string,
+): StudentPaperData {
+  const row = db
+    .select()
+    .from(assignments)
+    .where(eq(assignments.id, assignmentId))
+    .get();
+  if (row === undefined) {
+    throw new HttpError(404, "ASSIGNMENT_NOT_FOUND", "作业不存在");
+  }
+  if (row.deletedAt !== null) {
+    throw new HttpError(
+      404,
+      "ASSIGNMENT_NOT_FOUND",
+      "作业不存在（可能已被删除）",
+    );
+  }
+  const assigned = db
+    .select({ studentId: assignmentStudents.studentId })
+    .from(assignmentStudents)
+    .where(
+      and(
+        eq(assignmentStudents.assignmentId, assignmentId),
+        eq(assignmentStudents.studentId, studentId),
+      ),
+    )
+    .get();
+  if (assigned === undefined) {
+    throw new HttpError(403, "FORBIDDEN", "未被指派此作业，无权查看");
+  }
+
+  const liveQuestions = db
+    .select()
+    .from(questions)
+    .where(and(eq(questions.unitId, row.unitId), isNull(questions.deletedAt)))
+    .orderBy(asc(questions.order), asc(questions.id))
+    .all();
+  const knowledge = knowledgeNamesByQuestion(db);
+
+  return {
+    questions: liveQuestions.map((question) =>
+      questionPublicSchema.parse({
+        ...question,
+        stemMd: publicStemMd(question.stemMd),
+        knowledge: knowledge.get(question.id) ?? [],
+        hintCount: hintCountOf(question.hintsJson),
+        ...(question.optionsJson !== null
+          ? { options: optionTexts(question.optionsJson) }
+          : {}),
+      }),
+    ),
   };
 }
