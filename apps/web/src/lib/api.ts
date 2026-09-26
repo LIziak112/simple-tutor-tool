@@ -1,6 +1,10 @@
 import {
   apiResponseSchema,
   type ContentTree,
+  type ImportCommitData,
+  type ImportCommitRequest,
+  type ImportPreviewData,
+  type ImportPreviewRequest,
   type TeacherInfo,
   type TeacherStatusData,
 } from "@tutor/contract";
@@ -42,12 +46,14 @@ export async function fetchHealth(): Promise<HealthData> {
 /**
  * 后端返回的业务错误（{ ok:false } 壳）：带 UPPER_SNAKE 错误码，
  * 页面按 code 分支展示（如 INVALID_CREDENTIALS / LOCKED / UNAUTHORIZED）。
+ * extra 为统一壳之外的附加字段（如导入 commit 422 LINT_ERROR 携带的 _issues）。
  */
 export class ApiError extends Error {
   constructor(
     readonly code: string,
     message: string,
     readonly status: number,
+    readonly extra?: Record<string, unknown>,
   ) {
     super(message);
     this.name = "ApiError";
@@ -57,7 +63,7 @@ export class ApiError extends Error {
 /**
  * 调用 hc 接口并解包响应壳（T1.9 起）：
  * - 成功 → 返回 data 部分；
- * - { ok:false } → 抛 ApiError（code + 服务端中文 message）；
+ * - { ok:false } → 抛 ApiError（code + 服务端中文 message + 壳外附加字段）；
  * - 网络失败 / 响应不符合契约壳 → 抛带中文提示的 Error。
  * 响应壳用共享契约 apiResponseSchema 校验，避免前端手写同一结构。
  */
@@ -81,9 +87,26 @@ async function callApi<TData>(fn: () => Promise<Response>): Promise<TData> {
     throw new Error(`服务器响应异常（HTTP ${res.status}），请稍后重试`);
   }
   if (!parsed.data.ok) {
-    throw new ApiError(parsed.data.error, parsed.data.message, res.status);
+    throw new ApiError(
+      parsed.data.error,
+      parsed.data.message,
+      res.status,
+      pickExtraFields(body),
+    );
   }
   return parsed.data.data as TData;
+}
+
+/** 取统一壳（ok/error/message）之外的附加字段（如 LINT_ERROR 的 _issues） */
+function pickExtraFields(body: unknown): Record<string, unknown> | undefined {
+  if (typeof body !== "object" || body === null) return undefined;
+  const extra: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(body)) {
+    if (key !== "ok" && key !== "error" && key !== "message") {
+      extra[key] = value;
+    }
+  }
+  return Object.keys(extra).length > 0 ? extra : undefined;
 }
 
 /** 查询是否已设置教师（首启判断，无登录要求） */
@@ -118,4 +141,22 @@ export function fetchTeacherMe(): Promise<TeacherInfo> {
 /** 教师端内容树（课程 → 讲义/单元 → 题目摘要；未导入任何内容时 courses 为空数组） */
 export function fetchContentTree(): Promise<ContentTree> {
   return callApi(() => api.api.teacher.content.$get());
+}
+
+/** 导入预览（dry-run，不写库）：识别版本 + 摘要 + 全部 lint issues */
+export function previewImport(
+  request: ImportPreviewRequest,
+): Promise<ImportPreviewData> {
+  return callApi(() => api.api.teacher.import.preview.$post({ json: request }));
+}
+
+/**
+ * 导入提交（落库）。有 error 级 issue 时后端返回 422，
+ * callApi 会抛 code=LINT_ERROR 的 ApiError（extra._issues 为错误列表），
+ * 由调用方 catch 后并入错误面板。
+ */
+export function commitImport(
+  request: ImportCommitRequest,
+): Promise<ImportCommitData> {
+  return callApi(() => api.api.teacher.import.commit.$post({ json: request }));
 }
