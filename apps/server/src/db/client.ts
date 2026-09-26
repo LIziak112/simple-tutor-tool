@@ -4,7 +4,9 @@ import {
   type BetterSQLite3Database,
   drizzle,
 } from "drizzle-orm/better-sqlite3";
-import * as schema from "./schema";
+// 带 .ts 扩展名：本文件被 reparse CLI（Node 24 原生类型剥离运行）导入，
+// 无扩展名的相对导入在原生 ESM 解析下会失败（见 tsconfig.base.json 注释）
+import * as schema from "./schema.ts";
 
 /**
  * 数据库实例类型：绑定全部表定义。

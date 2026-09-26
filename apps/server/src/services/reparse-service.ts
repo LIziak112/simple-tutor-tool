@@ -207,7 +207,8 @@ function planQuestion(
     };
   }
 
-  // 结构化字段逐项比较（展示值 = 库中原始列文本 / 新值 JSON；比较用键序无关深比较）
+  // 结构化字段逐项比较（fromText/toText 为展示值：number 不带引号、字符串按
+  // JSON 形态带引号；fromValue/toValue 为比较值，键序无关深比较）
   const nextOptions = next.options ?? null;
   const nextAnswers = next.answers ?? null;
   const nextSolution = next.solutionMd ?? null;
@@ -215,8 +216,8 @@ function planQuestion(
     readonly field: string;
     readonly fromValue: unknown;
     readonly toValue: unknown;
-    readonly fromText: string;
-    readonly toText: string;
+    readonly fromText: unknown;
+    readonly toText: unknown;
   }> = [
     {
       field: "type",
@@ -229,8 +230,8 @@ function planQuestion(
       field: "difficulty",
       fromValue: row.difficulty,
       toValue: next.difficulty,
-      fromText: String(row.difficulty),
-      toText: String(next.difficulty),
+      fromText: row.difficulty,
+      toText: next.difficulty,
     },
     {
       field: "stemMd",
