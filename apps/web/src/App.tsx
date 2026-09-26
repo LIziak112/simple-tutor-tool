@@ -40,6 +40,7 @@ const teacherRoutes = (() => {
   const ContentPage = lazy(() => import("./pages/teacher/ContentPage"));
   const ImportPage = lazy(() => import("./pages/teacher/ImportPage"));
   const StudentsPage = lazy(() => import("./pages/teacher/StudentsPage"));
+  const AssignmentsPage = lazy(() => import("./pages/teacher/AssignmentsPage"));
   const PlaceholderPage = lazy(() => import("./pages/teacher/PlaceholderPage"));
 
   /** 布局内的懒加载兜底（骨架级提示即可，布局本身很快） */
@@ -109,6 +110,14 @@ const teacherRoutes = (() => {
           element={
             <Suspense fallback={pageFallback}>
               <StudentsPage />
+            </Suspense>
+          }
+        />
+        <Route
+          path="assignments"
+          element={
+            <Suspense fallback={pageFallback}>
+              <AssignmentsPage />
             </Suspense>
           }
         />

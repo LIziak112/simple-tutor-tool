@@ -1,4 +1,6 @@
 import {
+  type AssignmentCreateRequest,
+  type AssignmentUpdateRequest,
   apiResponseSchema,
   type ContentTree,
   type CourseCreateRequest,
@@ -25,6 +27,8 @@ import {
   type StudentResetPasswordData,
   type StudentSummary,
   type StudentUpdateRequest,
+  type TeacherAssignment,
+  type TeacherAssignmentListData,
   type TeacherInfo,
   type TeacherStatusData,
 } from "@tutor/contract";
@@ -346,4 +350,47 @@ export function loginStudentApi(
   request: StudentLoginRequest,
 ): Promise<StudentMeData> {
   return callApi(() => api.api.public.student.login.$post({ json: request }));
+}
+
+// ---------- T2.2：作业管理（教师端） ----------
+
+/** 作业列表（默认只列未删除；includeDeleted=true 含已删除作业） */
+export function fetchAssignmentsApi(
+  includeDeleted: boolean,
+): Promise<TeacherAssignmentListData> {
+  return callApi(() =>
+    api.api.teacher.assignments.$get(
+      includeDeleted ? { query: { includeDeleted: "true" } } : undefined,
+    ),
+  );
+}
+
+/**
+ * 布置作业 {unitId, title?, studentIds[], dueAt?}。
+ * dueAt 必须是带 Z 后缀的 UTC ISO（datetime-local 值先经页面转 UTC，见 lib/time.ts）；
+ * unitId 不存在 404 UNIT_NOT_FOUND / studentIds 空或含未知 id 由后端契约拦截。
+ */
+export function createAssignmentApi(
+  request: AssignmentCreateRequest,
+): Promise<TeacherAssignment> {
+  return callApi(() => api.api.teacher.assignments.$post({ json: request }));
+}
+
+/**
+ * 更新作业（改标题/截止/全量替换名单；dueAt 显式 null = 取消截止）。
+ * json 以独立变量传入的原因同 updateQuestion（parseJsonBody 服务端校验）。
+ */
+export function updateAssignmentApi(
+  id: string,
+  request: AssignmentUpdateRequest,
+): Promise<TeacherAssignment> {
+  const args = { param: { id }, json: request };
+  return callApi(() => api.api.teacher.assignments[":id"].$patch(args));
+}
+
+/** 删除作业（软删：作答保留、学生端立即不可见；教师列表默认不再显示） */
+export function deleteAssignmentApi(id: string): Promise<null> {
+  return callApi(() =>
+    api.api.teacher.assignments[":id"].$delete({ param: { id } }),
+  );
 }
