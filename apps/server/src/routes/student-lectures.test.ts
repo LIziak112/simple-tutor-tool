@@ -12,12 +12,14 @@ import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
 import { sessions } from "../db/schema.ts";
 import { createTestDb } from "../db/test-utils.ts";
+import { assertNoLeak } from "../test/assert-no-leak.ts";
 
 /**
  * 学生端讲义两接口 + 学生 logout 集成测试（T2.3，app.request() 直调路由 + 内存库）：
  * 未登录 401；空列表；导入 samples/v2/讲义样例.md 后按课程顺序返回两讲；
  * 关联单元后 topic 聚合；详情返回全文 markdown；404；泄露断言
  * （响应不携带 questions 表任何字段，讲义 markdown 本身允许含指令语法文本）。
+ * T2.4 起泄露断言复用通用工具 assertNoLeak（src/test/assert-no-leak.ts）。
  */
 
 const silentLogger: Logger = pino({ enabled: false });
@@ -124,40 +126,14 @@ async function importDoc(
 }
 
 /**
- * 泄露断言（AGENTS.md 第 3 条；T2.4 的通用 assertNoLeak 落地前的本地版本）：
- * 递归收集响应 JSON 的全部 key，与「教师侧/题目侧字段」禁用集合不相交。
+ * 讲义接口的泄露断言（AGENTS.md 第 3 条）：
+ * 通用禁用集合（answers、solution 前缀、hints 内容、sourceMd、passwordHash、
+ * linkToken、optionsJson）之外，讲义响应额外不得出现任何题目侧字段
+ * （stemMd/optionsJson/questions——题目本体只经 T2.4 的 paper 接口下发）。
  * 注意只断言 JSON 字段名——讲义 markdown 文本本身允许含 :::solution 等指令语法。
  */
 function assertNoQuestionFields(body: unknown): void {
-  const FORBIDDEN_KEYS = new Set([
-    "stemMd",
-    "optionsJson",
-    "answersJson",
-    "answers",
-    "solutionMd",
-    "hints",
-    "hintsJson",
-    "sourceMd",
-    "questions",
-    "passwordHash",
-    "linkToken",
-  ]);
-  const keys: string[] = [];
-  const walk = (value: unknown): void => {
-    if (Array.isArray(value)) {
-      value.forEach(walk);
-      return;
-    }
-    if (typeof value === "object" && value !== null) {
-      for (const [key, child] of Object.entries(value)) {
-        keys.push(key);
-        walk(child);
-      }
-    }
-  };
-  walk(body);
-  const leaked = keys.filter((key) => FORBIDDEN_KEYS.has(key));
-  expect(leaked, `响应中出现教师侧字段：${leaked.join(", ")}`).toEqual([]);
+  assertNoLeak(body, { forbid: ["stemMd", "optionsJson", "questions"] });
 }
 
 describe("GET /api/student/lectures（讲义摘要列表）", () => {

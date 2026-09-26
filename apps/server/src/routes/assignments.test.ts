@@ -16,6 +16,7 @@ import {
   type AssignmentAttemptSummary,
   computeAssignmentStatus,
 } from "../services/assignment-service.ts";
+import { assertNoLeak } from "../test/assert-no-leak.ts";
 
 /**
  * 作业接口集成测试（T2.2 验收项，app.request() 直调路由 + 内存库）：
@@ -212,26 +213,12 @@ async function studentList(
 }
 
 /**
- * 递归断言响应体不含教师侧字段（AGENTS.md 第 3 条泄露测试的 T2.2 本地实现；
- * T2.4 提供通用 assertNoLeak 后统一切换）。
+ * 作业列表接口的泄露断言（AGENTS.md 第 3 条；T2.4 起复用通用 assertNoLeak）：
+ * 通用禁用集合之外，列表条目只含公开元信息——额外禁用题干与选项字段
+ * （stemMd/options/optionsJson；题目本体只经 T2.4 的 paper 接口下发）。
  */
 function assertNoTeacherSideFields(value: unknown): void {
-  const forbidden = /^answers?$|^solution|^hint|^stem|^options|^sourceMd$/i;
-  const walk = (node: unknown): void => {
-    if (Array.isArray(node)) {
-      for (const item of node) walk(item);
-      return;
-    }
-    if (typeof node === "object" && node !== null) {
-      for (const [key, child] of Object.entries(node)) {
-        expect(forbidden.test(key), `学生端响应出现教师侧字段：${key}`).toBe(
-          false,
-        );
-        walk(child);
-      }
-    }
-  };
-  walk(value);
+  assertNoLeak(value, { forbid: ["stemMd", "options", "optionsJson"] });
 }
 
 describe("教师布置作业：POST /api/teacher/assignments", () => {
@@ -486,6 +473,9 @@ describe("教师列表与 PATCH", () => {
       studentIds: [aId],
       title: "第一份",
     });
+    // createdAt 为毫秒精度 ISO 字符串：同一毫秒内创建的两份作业排序键相同、
+    // 顺序不定（本用例曾在同毫秒创建时偶发翻转），隔 3ms 保证「第二份」更晚
+    await new Promise((resolve) => setTimeout(resolve, 3));
     await createAssignment(app, teacherCookie, {
       unitId,
       studentIds: [aId],
