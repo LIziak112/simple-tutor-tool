@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { questionTypeSchema } from "./content";
+import { questionTypeSchema } from "./content.ts";
 
 /**
  * 指令注册表（DSL v2 可扩展性的核心）。

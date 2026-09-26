@@ -12,8 +12,8 @@ import type {
   TextDirective,
 } from "mdast-util-directive";
 import type { Node } from "unist";
-import { canonicalName, makeIssue } from "../v2/shared";
-import { suggestAttrKey, suggestDirectiveName } from "./similarity";
+import { canonicalName, makeIssue } from "../v2/shared.ts";
+import { suggestAttrKey, suggestDirectiveName } from "./similarity.ts";
 
 /**
  * 指令层 lint 规则（T1.5）：在解析产出的 AST 上遍历全部指令节点（容器/块/行内），

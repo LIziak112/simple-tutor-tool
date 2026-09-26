@@ -9,6 +9,9 @@
 
     // 模块语法强制：类型导入必须写 import type，利于打包器做副作用分析与按需加载
     "isolatedModules": true,
+    // Node 24 原生类型剥离运行的代码（脚本与包源码）相对导入必须带 .ts 扩展名（T1.7 起，
+    // CLI/生成器直接 node 运行包内源码；vite/vitest/tsgo 均兼容显式扩展名）
+    "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,

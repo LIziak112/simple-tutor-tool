@@ -12,7 +12,7 @@ import {
   makeIssue,
   trimBlankEdges,
   zodErrorsText,
-} from "../v2/shared";
+} from "../v2/shared.ts";
 
 /**
  * v1 兼容解析器（T1.6）：把 v1 旧格式练习册 Markdown 解析为 v2 内容契约的

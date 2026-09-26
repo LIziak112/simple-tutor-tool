@@ -5,7 +5,7 @@ import {
 } from "@tutor/contract";
 import type { Yaml } from "mdast";
 import { parse as parseYaml, YAMLParseError } from "yaml";
-import { errorMessage, makeIssue } from "./shared";
+import { errorMessage, makeIssue } from "./shared.ts";
 
 /**
  * frontmatter 解析（T1.3 建立，T1.4 抽成公共模块）：

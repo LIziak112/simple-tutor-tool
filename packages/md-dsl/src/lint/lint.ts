@@ -1,10 +1,10 @@
 import type { DocumentKind, LintIssue, ParsedDocument } from "@tutor/contract";
-import type { ParseOptions } from "../v2/parse";
-import { parseDocument } from "../v2/parse";
-import { errorMessage, makeIssue, processor } from "../v2/shared";
-import { lintDirectives } from "./directives";
-import { lintUnclosedContainers } from "./fences";
-import { lintQuestions } from "./questions";
+import type { ParseOptions } from "../v2/parse.ts";
+import { parseDocument } from "../v2/parse.ts";
+import { errorMessage, makeIssue, processor } from "../v2/shared.ts";
+import { lintDirectives } from "./directives.ts";
+import { lintUnclosedContainers } from "./fences.ts";
+import { lintQuestions } from "./questions.ts";
 
 /**
  * DSL v2 lint 入口（T1.5）：lintDocument = 解析（透传其 issues，不重复报）+ 规则层新增

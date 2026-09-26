@@ -1,5 +1,5 @@
 import type { LintIssue } from "@tutor/contract";
-import { makeIssue } from "../v2/shared";
+import { makeIssue } from "../v2/shared.ts";
 
 /**
  * 未闭合容器扫描（T1.5：UNCLOSED_CONTAINER）。

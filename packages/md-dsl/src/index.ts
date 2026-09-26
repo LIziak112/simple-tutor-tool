@@ -9,10 +9,10 @@
 /** 内容 DSL 规范版本 */
 export const MD_DSL_VERSION = "2";
 
-export type { VersionDetection } from "./detect";
-export { detectVersion, detectVersionDetailed } from "./detect";
-export type { LintResult } from "./lint/lint";
-export { lintDocument } from "./lint/lint";
+export type { VersionDetection } from "./detect.ts";
+export { detectVersion, detectVersionDetailed } from "./detect.ts";
+export type { LintResult } from "./lint/lint.ts";
+export { lintDocument } from "./lint/lint.ts";
 export {
   parseV1,
   parseV1Detailed,
@@ -23,7 +23,7 @@ export {
   type V1RawOption,
   type V1RawQuestion,
   type V1RawUnit,
-} from "./v1/parse";
-export { v1ToV2, v1ToV2Units } from "./v1/toV2";
-export type { ParseOptions } from "./v2/parse";
-export { parseDocument } from "./v2/parse";
+} from "./v1/parse.ts";
+export { v1ToV2, v1ToV2Units } from "./v1/toV2.ts";
+export type { ParseOptions } from "./v2/parse.ts";
+export { parseDocument } from "./v2/parse.ts";
