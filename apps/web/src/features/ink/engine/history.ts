@@ -82,6 +82,7 @@ export class InkStore {
     // 从大到小删，保证前面的下标不受影响
     for (let i = sorted.length - 1; i >= 0; i--) {
       const index = sorted[i];
+      if (index === undefined) continue;
       const stroke = this.#strokes[index];
       if (stroke === undefined) continue;
       removed.unshift({ index, stroke: clone(stroke) });
@@ -190,8 +191,10 @@ export class InkStore {
       case "remove": {
         // 重做擦除：按下标从大到小再次删除
         for (let i = entry.removed.length - 1; i >= 0; i--) {
-          const { index } = entry.removed[i];
-          if (index < this.#strokes.length) this.#strokes.splice(index, 1);
+          const item = entry.removed[i];
+          if (item && item.index < this.#strokes.length) {
+            this.#strokes.splice(item.index, 1);
+          }
         }
         break;
       }

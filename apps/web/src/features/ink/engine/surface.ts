@@ -13,6 +13,8 @@ export interface InkSurface {
   mount(el: HTMLElement, initial?: InkDoc): void;
   /** 当前笔迹文档快照（数据层唯一数据源的投影） */
   getDoc(): InkDoc;
+  /** 载入外部文档（load(getData()) 往返一致的实现基础） */
+  load(data: InkDoc): void;
   /** 导出白底 PNG（供老师和 AI 查看） */
   exportPng(): Promise<Blob>;
   undo(): void;

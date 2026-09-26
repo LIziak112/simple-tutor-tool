@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { buildAtramentDoc, emptyAtramentDoc, parseAtramentDoc } from "./doc.ts";
 import { InkStore } from "./history.ts";
-import type { InkDoc, InkStroke } from "./types.ts";
+import type { InkStroke } from "./types.ts";
 
 /** 构造一笔测试笔画（坐标已是逻辑单位） */
 function stroke(points: Array<[number, number]>): InkStroke {

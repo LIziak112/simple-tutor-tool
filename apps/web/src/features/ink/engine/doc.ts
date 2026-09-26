@@ -31,7 +31,8 @@ export function parseAtramentDoc(doc: InkDoc): InkStroke[] {
   if (doc.version !== 1) {
     throw new Error(`笔迹数据版本不支持：${String(doc.version)}`);
   }
-  const { strokes } = doc.data;
+  // 泛型联合上 TS 无法随 engine 收窄 data，校验后显式特化
+  const { strokes } = (doc as InkDoc<"atrament">).data;
   if (!Array.isArray(strokes)) {
     throw new Error("笔迹数据格式错误：缺少 strokes 数组");
   }
