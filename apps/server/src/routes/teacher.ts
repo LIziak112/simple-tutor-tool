@@ -9,6 +9,7 @@ import {
   sessionCookieOptions,
 } from "../auth/session";
 import type { Db } from "../db/client";
+import { createContentRoutes } from "./content";
 import { createImportRoutes } from "./import";
 
 /**
@@ -16,6 +17,7 @@ import { createImportRoutes } from "./import";
  * - GET  /me：当前登录教师信息
  * - POST /logout：删除会话行并清除 Cookie
  * - POST /import/preview、POST /import/commit：内容导入（T1.10，业务在 ContentService）
+ * - GET  /content：内容树（T1.11，业务在 ContentService）
  *
  * 返回类型不显式标注：链式注册把路由签名累积进推断类型，
  * 挂载后 AppType 才能带上这些路由（前端 hc 端到端类型的前提）。
@@ -40,5 +42,6 @@ export function createTeacherRoutes(db: Db, publicUrl: string) {
       );
       return c.json({ ok: true, data: null });
     })
-    .route("/", createImportRoutes(db));
+    .route("/", createImportRoutes(db))
+    .route("/", createContentRoutes(db));
 }

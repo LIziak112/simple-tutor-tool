@@ -1,11 +1,11 @@
 import { z } from "zod";
-import { lintIssueSchema } from "./content.ts";
+import { lintIssueSchema, questionTypeSchema } from "./content.ts";
 
 /**
- * 内容导入 API 契约（T1.10 起为权威定义）：教师端导入预览与提交的请求体/响应 data、
- * 导入相关错误码。
+ * 内容 API 契约（T1.10 起为权威定义）：教师端导入预览与提交的请求体/响应 data、
+ * 导入相关错误码；T1.11 追加 GET /api/teacher/content 的内容树响应。
  * 依据：docs/技术架构与实施方案.md §5.1（linter 输出、导入 dry-run 预览）、§5.2（数据模型，
- * 导入落库的七张内容表）、docs/开发任务清单.md T1.10、§0.3（响应壳/主键/时间约定）。
+ * 导入落库的七张内容表）、docs/开发任务清单.md T1.10、T1.11、§0.3（响应壳/主键/时间约定）。
  *
  * 约定（与 auth.ts 一致）：
  * - 本文件只定义请求体与 data 部分；响应壳 { ok, data } / { ok, error, message } 由
@@ -122,6 +122,64 @@ export const importPreviewOkSchema = apiOkExtend(importPreviewDataSchema);
 /** 携带导入报告的成功响应壳 */
 export const importCommitOkSchema = apiOkExtend(importCommitDataSchema);
 
+// ---------- GET /api/teacher/content：内容树（T1.11） ----------
+
+/**
+ * 内容树中的题目摘要（单元展开行）：只含列表展示必需的字段，不含题干/答案/详解。
+ * 教师端接口无泄露约束，但摘要保持最小化（完整内容 T1.12 编辑抽屉按 id 取）。
+ */
+export const contentTreeQuestionSchema = z.object({
+  /** 题目 id（来自 DSL；缺省为 `单元slug-序号`） */
+  id: z.string().min(1),
+  type: questionTypeSchema,
+  /** 难度 1–5 */
+  difficulty: z.number().int().min(1).max(5),
+  /** 考点名列表（导入时经 knowledge_points 归一） */
+  knowledge: z.array(z.string().min(1)),
+  /** 内容版本：新插入 1，同 id 再导入 +1 */
+  version: z.number().int().min(1),
+});
+
+/** 内容树中的讲义节点：标题 + 更新时间（讲义无题目，不挂题目摘要） */
+export const contentTreeLectureSchema = z.object({
+  /** 讲义 id（导入时生成的 UUID） */
+  id: z.uuid(),
+  title: z.string().min(1),
+  /** 最近更新时间：UTC ISO 字符串 */
+  updatedAt: z.string().min(1),
+});
+
+/** 内容树中的练习单元节点：展开显示题目摘要表 */
+export const contentTreeUnitSchema = z.object({
+  /** 单元 id（来自 DSL） */
+  id: z.string().min(1),
+  title: z.string().min(1),
+  /** 主题；未标注为 null（数据库列可空，与 v1 UNIT 第三段语义一致） */
+  topic: z.string().nullable(),
+  /** 最近更新时间：UTC ISO 字符串 */
+  updatedAt: z.string().min(1),
+  /** 单元内题目摘要（软删题目不出现，T1.12 起删除即从列表消失） */
+  questions: z.array(contentTreeQuestionSchema),
+});
+
+/** 内容树中的课程节点：教师端内容页的顶层分组 */
+export const contentTreeCourseSchema = z.object({
+  id: z.uuid(),
+  title: z.string().min(1),
+  /** 课程下的讲义列表（order 升序） */
+  lectures: z.array(contentTreeLectureSchema),
+  /** 课程下的练习单元列表（order 升序，题目按单元内题序） */
+  units: z.array(contentTreeUnitSchema),
+});
+
+/** GET /api/teacher/content 响应 data：课程 → 讲义/单元 → 题目摘要的树状结构 */
+export const contentTreeSchema = z.object({
+  courses: z.array(contentTreeCourseSchema),
+});
+
+/** 携带内容树的成功响应壳 */
+export const contentTreeOkSchema = apiOkExtend(contentTreeSchema);
+
 export type ImportPreviewRequest = z.infer<typeof importPreviewRequestSchema>;
 export type ImportCommitRequest = z.infer<typeof importCommitRequestSchema>;
 export type ImportSummary = z.infer<typeof importSummarySchema>;
@@ -131,3 +189,8 @@ export type ImportLectureReport = z.infer<typeof importLectureReportSchema>;
 export type ImportQuestionsReport = z.infer<typeof importQuestionsReportSchema>;
 export type ImportCommitData = z.infer<typeof importCommitDataSchema>;
 export type ContentErrorCode = z.infer<typeof contentErrorCodeSchema>;
+export type ContentTreeQuestion = z.infer<typeof contentTreeQuestionSchema>;
+export type ContentTreeLecture = z.infer<typeof contentTreeLectureSchema>;
+export type ContentTreeUnit = z.infer<typeof contentTreeUnitSchema>;
+export type ContentTreeCourse = z.infer<typeof contentTreeCourseSchema>;
+export type ContentTree = z.infer<typeof contentTreeSchema>;
