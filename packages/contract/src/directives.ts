@@ -277,6 +277,9 @@ export const questionDirective = defineDirective({
     '::::question{type=fill difficulty=2 knowledge="有理数加法"}\n计算：$(-3)+7=$ [[4]]。\n\n:::hint\n同号相加取相同符号；异号相加取绝对值较大的符号。\n:::\n\n:::solution\n$(-3)+7=4$。\n:::\n::::',
 });
 
+/** question 指令属性经注册表 schema 校验后的输出形态（T1.3 起解析器消费，勿手抄同形类型） */
+export type QuestionDirectiveAttrs = z.output<typeof questionDirective.attrs>;
+
 /** 提示（题目内可多个 / 讲义正文） */
 export const hintDirective = defineDirective({
   name: "hint",
