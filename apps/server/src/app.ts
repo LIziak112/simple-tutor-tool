@@ -6,6 +6,7 @@ import pino from "pino";
 import type { Db } from "./db/client";
 import { HttpError } from "./lib/http-error";
 import { createPublicRoutes } from "./routes/public";
+import { createStudentRoutes } from "./routes/student";
 import { createTeacherRoutes } from "./routes/teacher";
 import { createSpaStatic, defaultWebDistDir } from "./static";
 
@@ -91,12 +92,14 @@ export function createApp(options: CreateAppOptions) {
       // time 为 UTC ISO 字符串（§0.3 时间约定）
       return c.json({ ok: true, data: { time: new Date().toISOString() } });
     })
-    // —— 业务路由：/api/public（教师 status/setup/login 等）与 /api/teacher（守卫后的教师接口）——
+    // —— 业务路由：/api/public（教师 status/setup/login、学生两种登录）与
+    //    /api/teacher（守卫后的教师接口）、/api/student（守卫后的学生接口，T2.1）——
     .route(
       "/api/public",
       createPublicRoutes(options.db, options.publicUrl, options.specDir),
     )
-    .route("/api/teacher", createTeacherRoutes(options.db, options.publicUrl));
+    .route("/api/teacher", createTeacherRoutes(options.db, options.publicUrl))
+    .route("/api/student", createStudentRoutes(options.db));
 
   // —— 生产模式：托管 apps/web/dist ——
   // 注册在 API 路由之后：API 请求命中路由后不再经过静态；未命中的 /api 请求被静态中间件放行到统一 404
