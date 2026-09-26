@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  contentTreeOkSchema,
+  contentTreeSchema,
   importCommitDataSchema,
   importCommitOkSchema,
   importCommitRequestSchema,
@@ -12,6 +14,7 @@ import {
 /**
  * 内容导入 API 契约测试（T1.10）：请求体校验（markdown/filename 非空、courseId 可选 UUID）、
  * preview/commit 响应 data 形态、LINT_ERROR 错误壳（统一壳 + _issues 附加字段）。
+ * T1.11 追加：GET /api/teacher/content 内容树契约（树状结构、讲义无题目摘要、单元展开题目）。
  */
 
 const lintIssue = {
@@ -194,5 +197,113 @@ describe("importLintErrorBodySchema（commit 遇 error 级 issue 的响应体）
         _issues: [lintIssue],
       }).success,
     ).toBe(false);
+  });
+});
+
+describe("contentTreeSchema / contentTreeOkSchema（T1.11 内容树）", () => {
+  const tree = {
+    courses: [
+      {
+        id: "0b6f18ae-6b9a-4d0e-8b7c-9b1b1b1b1b1b",
+        title: "默认课程",
+        lectures: [
+          {
+            id: "e70cb1f8-98a4-4f6a-8a5e-2b64e64b28b4",
+            title: "第1讲 有理数",
+            updatedAt: "2026-09-26T00:00:00.000Z",
+          },
+        ],
+        units: [
+          {
+            id: "练习四",
+            title: "练习四",
+            topic: "有理数加减混合",
+            updatedAt: "2026-09-26T00:00:00.000Z",
+            questions: [
+              {
+                id: "练习四-1",
+                type: "fill",
+                difficulty: 2,
+                knowledge: ["有理数加法"],
+                version: 1,
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+
+  // 夹具各节点（noUncheckedIndexedAccess：取下标后收窄再使用）
+  const course = tree.courses[0];
+  if (course === undefined) throw new Error("测试夹具缺失课程节点");
+  const lecture = course.lectures[0];
+  if (lecture === undefined) throw new Error("测试夹具缺失讲义节点");
+  const unit = course.units[0];
+  if (unit === undefined) throw new Error("测试夹具缺失单元节点");
+  const question = unit.questions[0];
+  if (question === undefined) throw new Error("测试夹具缺失题目节点");
+
+  it("课程 → 讲义/单元 → 题目摘要的树状结构通过", () => {
+    expect(contentTreeSchema.safeParse(tree).success).toBe(true);
+    expect(
+      contentTreeOkSchema.safeParse({ ok: true, data: tree }).success,
+    ).toBe(true);
+  });
+
+  it("空树（未导入任何内容）通过", () => {
+    expect(contentTreeSchema.safeParse({ courses: [] }).success).toBe(true);
+  });
+
+  it("单元 topic 可为 null（未标注主题）", () => {
+    const r = contentTreeSchema.safeParse({
+      courses: [{ ...course, units: [{ ...unit, topic: null }] }],
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it("题目摘要缺字段 / 题型非法 / version 非正整数被拒", () => {
+    // 缺 id/type/difficulty/knowledge/version
+    expect(
+      contentTreeSchema.safeParse({
+        courses: [{ ...course, units: [{ ...unit, questions: [{}] }] }],
+      }).success,
+    ).toBe(false);
+    expect(
+      contentTreeSchema.safeParse({
+        courses: [
+          {
+            ...course,
+            units: [{ ...unit, questions: [{ ...question, type: "essay" }] }],
+          },
+        ],
+      }).success,
+    ).toBe(false);
+    expect(
+      contentTreeSchema.safeParse({
+        courses: [
+          {
+            ...course,
+            units: [{ ...unit, questions: [{ ...question, version: 0 }] }],
+          },
+        ],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("讲义节点不接受题目数组（讲义无题目摘要，多余字段被剥除）", () => {
+    const r = contentTreeSchema.safeParse({
+      courses: [
+        { ...course, lectures: [{ ...lecture, questions: [{ id: "q1" }] }] },
+      ],
+    });
+    // 未知字段按 Zod 默认剥除：讲义下的 questions 不进入解析结果
+    expect(r.success).toBe(true);
+    if (r.success) {
+      const parsedLecture = r.data.courses[0]?.lectures[0];
+      expect(
+        (parsedLecture as Record<string, unknown> | undefined)?.questions,
+      ).toBeUndefined();
+    }
   });
 });

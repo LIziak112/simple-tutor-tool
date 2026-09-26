@@ -1,4 +1,7 @@
 import type {
+  ContentTree,
+  ContentTreeCourse,
+  ContentTreeQuestion,
   ImportCommitData,
   ImportCommitRequest,
   ImportLectureReport,
@@ -11,7 +14,7 @@ import type {
   Question,
 } from "@tutor/contract";
 import { detectVersion, lintDocument, v1ToV2 } from "@tutor/md-dsl";
-import { eq } from "drizzle-orm";
+import { asc, eq, isNull } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
   courses,
@@ -381,4 +384,110 @@ function resolveCourseId(db: Db, courseId: string | undefined): string {
     })
     .run();
   return id;
+}
+
+// ---------- 内容树：GET /api/teacher/content（T1.11） ----------
+
+/**
+ * 读取教师端内容页的树状结构：课程 → 讲义（标题+更新时间）/ 练习单元（展开题目摘要）。
+ * - 软删题目（deletedAt 非空）不出现在摘要里（T1.12 起删除的题目从列表消失）；
+ * - 讲义无题目数组；单元题目按单元内 order 排序，考点经关联表按考点名排序保证稳定输出；
+ * - 未导入任何内容时 courses 为空数组（前端据此显示空态引导）。
+ */
+export function getContentTree(db: Db): ContentTree {
+  const allCourses = db
+    .select()
+    .from(courses)
+    .orderBy(asc(courses.order), asc(courses.title))
+    .all();
+
+  // 题目摘要（软删过滤）与考点关联，一次读全后在内存分组（教师端数据量：一对一辅导，量级很小）
+  const liveQuestions = db
+    .select({
+      id: questions.id,
+      unitId: questions.unitId,
+      order: questions.order,
+      type: questions.type,
+      difficulty: questions.difficulty,
+      version: questions.version,
+    })
+    .from(questions)
+    .where(isNull(questions.deletedAt))
+    // order 相同时按 id 兜底（不同来源导入可产生同 order，保证树输出稳定）
+    .orderBy(asc(questions.unitId), asc(questions.order), asc(questions.id))
+    .all();
+  const knowledgeRows = db
+    .select({
+      questionId: questionKnowledge.questionId,
+      name: knowledgePoints.name,
+    })
+    .from(questionKnowledge)
+    .innerJoin(
+      knowledgePoints,
+      eq(questionKnowledge.knowledgePointId, knowledgePoints.id),
+    )
+    .orderBy(asc(knowledgePoints.name))
+    .all();
+  const knowledgeByQuestion = new Map<string, string[]>();
+  for (const row of knowledgeRows) {
+    const list = knowledgeByQuestion.get(row.questionId);
+    if (list === undefined) {
+      knowledgeByQuestion.set(row.questionId, [row.name]);
+    } else {
+      list.push(row.name);
+    }
+  }
+  const questionsByUnit = new Map<string, ContentTreeQuestion[]>();
+  for (const q of liveQuestions) {
+    const summary: ContentTreeQuestion = {
+      id: q.id,
+      type: q.type,
+      difficulty: q.difficulty,
+      knowledge: knowledgeByQuestion.get(q.id) ?? [],
+      version: q.version,
+    };
+    const list = questionsByUnit.get(q.unitId);
+    if (list === undefined) {
+      questionsByUnit.set(q.unitId, [summary]);
+    } else {
+      list.push(summary);
+    }
+  }
+
+  const treeCourses: ContentTreeCourse[] = allCourses.map((course) => {
+    // 局部变量命名避开表名（同名 const 会在初始化前引用自身，TDZ ReferenceError）
+    const lectureRows = db
+      .select({
+        id: lectures.id,
+        title: lectures.title,
+        updatedAt: lectures.updatedAt,
+      })
+      .from(lectures)
+      .where(eq(lectures.courseId, course.id))
+      .orderBy(asc(lectures.order), asc(lectures.title))
+      .all();
+    const unitRows = db
+      .select({
+        id: units.id,
+        title: units.title,
+        topic: units.topic,
+        updatedAt: units.updatedAt,
+      })
+      .from(units)
+      .where(eq(units.courseId, course.id))
+      .orderBy(asc(units.order), asc(units.title))
+      .all()
+      .map((unit) => ({
+        ...unit,
+        questions: questionsByUnit.get(unit.id) ?? [],
+      }));
+    return {
+      id: course.id,
+      title: course.title,
+      lectures: lectureRows,
+      units: unitRows,
+    };
+  });
+
+  return { courses: treeCourses };
 }
