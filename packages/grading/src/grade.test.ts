@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
 import type { Question } from "@tutor/contract";
+import { describe, expect, it } from "vitest";
 import { grade } from "./grade";
 
 /**
@@ -30,7 +30,8 @@ function makeQuestion(partial: {
 }
 
 describe("grade：判断题", () => {
-  const q = (value: boolean) => makeQuestion({ type: "judge", answers: { kind: "judge", value } });
+  const q = (value: boolean) =>
+    makeQuestion({ type: "judge", answers: { kind: "judge", value } });
 
   it("布尔形态：标准答案 true，学生答 true → true；答 false → false", () => {
     expect(grade(q(true), { kind: "judge", value: true })).toBe(true);
@@ -39,10 +40,30 @@ describe("grade：判断题", () => {
   });
 
   it("验收：判断题各种写法（旧版 §5 全集，两侧任一写法都归一化后比较）", () => {
-    for (const text of ["正确", "对", "√", "✔", "T", "TRUE", "是", "true", "Ｔ"]) {
+    for (const text of [
+      "正确",
+      "对",
+      "√",
+      "✔",
+      "T",
+      "TRUE",
+      "是",
+      "true",
+      "Ｔ",
+    ]) {
       expect(grade(q(true), { kind: "judge", value: text })).toBe(true);
     }
-    for (const text of ["错误", "错", "×", "✘", "F", "FALSE", "否", "false", "ｆ"]) {
+    for (const text of [
+      "错误",
+      "错",
+      "×",
+      "✘",
+      "F",
+      "FALSE",
+      "否",
+      "false",
+      "ｆ",
+    ]) {
       expect(grade(q(false), { kind: "judge", value: text })).toBe(true);
     }
     // 写法与标准答案相反 → false
@@ -57,7 +78,9 @@ describe("grade：判断题", () => {
 
   it("未作答（answer 缺省）→ null；题目无 answers → null", () => {
     expect(grade(q(true), undefined)).toBeNull();
-    expect(grade(makeQuestion({ type: "judge" }), { kind: "judge", value: true })).toBeNull();
+    expect(
+      grade(makeQuestion({ type: "judge" }), { kind: "judge", value: true }),
+    ).toBeNull();
   });
 });
 
@@ -67,7 +90,11 @@ describe("grade：单选题", () => {
     { text: "$5$", correct: true },
     { text: "$\\frac{1}{5}$", correct: false },
   ];
-  const q = makeQuestion({ type: "choice", options, answers: { kind: "choice", index: 1 } });
+  const q = makeQuestion({
+    type: "choice",
+    options,
+    answers: { kind: "choice", index: 1 },
+  });
 
   it("下标相等 → true，不等 → false", () => {
     expect(grade(q, { kind: "choice", index: 1 })).toBe(true);
@@ -83,7 +110,10 @@ describe("grade：单选题", () => {
   it("未作答 → null；题目无 answers → null", () => {
     expect(grade(q, undefined)).toBeNull();
     expect(
-      grade(makeQuestion({ type: "choice", options }), { kind: "choice", index: 1 }),
+      grade(makeQuestion({ type: "choice", options }), {
+        kind: "choice",
+        index: 1,
+      }),
     ).toBeNull();
   });
 });
@@ -95,7 +125,11 @@ describe("grade：多选题", () => {
     { text: "$0+4.8$", correct: true },
     { text: "$|-9|+(-10)$", correct: false },
   ];
-  const q = makeQuestion({ type: "multi", options, answers: { kind: "multi", indexes: [0, 2] } });
+  const q = makeQuestion({
+    type: "multi",
+    options,
+    answers: { kind: "multi", indexes: [0, 2] },
+  });
 
   it("全对才 true（§5.6；顺序无关）", () => {
     expect(grade(q, { kind: "multi", indexes: [0, 2] })).toBe(true);
@@ -117,14 +151,20 @@ describe("grade：多选题", () => {
   it("未作答 → null；题目无 answers → null", () => {
     expect(grade(q, undefined)).toBeNull();
     expect(
-      grade(makeQuestion({ type: "multi", options }), { kind: "multi", indexes: [0] }),
+      grade(makeQuestion({ type: "multi", options }), {
+        kind: "multi",
+        indexes: [0],
+      }),
     ).toBeNull();
   });
 });
 
 describe("grade：填空题", () => {
   it("单空：normalize 全等即对", () => {
-    const q = makeQuestion({ type: "fill", answers: { kind: "fill", blanks: [["-7"]] } });
+    const q = makeQuestion({
+      type: "fill",
+      answers: { kind: "fill", blanks: [["-7"]] },
+    });
     expect(grade(q, { kind: "fill", values: ["-7"] })).toBe(true);
     expect(grade(q, { kind: "fill", values: ["－7"] })).toBe(true); // 全角负号
     expect(grade(q, { kind: "fill", values: ["$-7$"] })).toBe(true);
@@ -132,7 +172,10 @@ describe("grade：填空题", () => {
   });
 
   it("验收：数值等价 \\frac{1}{2} = 0.5 = 1/2", () => {
-    const q = makeQuestion({ type: "fill", answers: { kind: "fill", blanks: [["0.5"]] } });
+    const q = makeQuestion({
+      type: "fill",
+      answers: { kind: "fill", blanks: [["0.5"]] },
+    });
     expect(grade(q, { kind: "fill", values: ["\\frac{1}{2}"] })).toBe(true);
     expect(grade(q, { kind: "fill", values: ["1/2"] })).toBe(true);
     expect(grade(q, { kind: "fill", values: ["0.25"] })).toBe(false);
@@ -161,7 +204,10 @@ describe("grade：填空题", () => {
   });
 
   it("某空空串或缺失（比 blanks 短）按旧版口径判错 → false", () => {
-    const q = makeQuestion({ type: "fill", answers: { kind: "fill", blanks: [["8"]] } });
+    const q = makeQuestion({
+      type: "fill",
+      answers: { kind: "fill", blanks: [["8"]] },
+    });
     expect(grade(q, { kind: "fill", values: [""] })).toBe(false);
     expect(grade(q, { kind: "fill", values: [] })).toBe(false);
     const q2 = makeQuestion({
@@ -172,9 +218,14 @@ describe("grade：填空题", () => {
   });
 
   it("未作答 → null；题目无 answers（无填空标记）→ null", () => {
-    const q = makeQuestion({ type: "fill", answers: { kind: "fill", blanks: [["8"]] } });
+    const q = makeQuestion({
+      type: "fill",
+      answers: { kind: "fill", blanks: [["8"]] },
+    });
     expect(grade(q, undefined)).toBeNull();
-    expect(grade(makeQuestion({ type: "fill" }), { kind: "fill", values: ["8"] })).toBeNull();
+    expect(
+      grade(makeQuestion({ type: "fill" }), { kind: "fill", values: ["8"] }),
+    ).toBeNull();
   });
 });
 
@@ -208,7 +259,9 @@ describe("grade：手写题（solve/apply/find-error）", () => {
     // 数值等价：7/5 = 1.4（apply 题，水位样例）
     expect(grade(applyQ, { kind: "final", finalAnswer: "1.4" })).toBe(true);
     expect(grade(applyQ, { kind: "final", finalAnswer: "7/5" })).toBe(true);
-    expect(grade(applyQ, { kind: "final", finalAnswer: "\\frac{14}{10}" })).toBe(true);
+    expect(
+      grade(applyQ, { kind: "final", finalAnswer: "\\frac{14}{10}" }),
+    ).toBe(true);
     expect(grade(applyQ, { kind: "final", finalAnswer: "1.5" })).toBe(false);
   });
 
@@ -239,7 +292,10 @@ describe("grade：手写题（solve/apply/find-error）", () => {
 
 describe("grade：形态错位与防御", () => {
   it("学生答案 kind 与题型不符（客户端形态错误）→ null，不抛异常", () => {
-    const fillQ = makeQuestion({ type: "fill", answers: { kind: "fill", blanks: [["8"]] } });
+    const fillQ = makeQuestion({
+      type: "fill",
+      answers: { kind: "fill", blanks: [["8"]] },
+    });
     expect(grade(fillQ, { kind: "choice", index: 0 })).toBeNull();
     const choiceQ = makeQuestion({
       type: "choice",
@@ -269,7 +325,9 @@ describe("grade：形态错位与防御", () => {
       type: "multi",
       answers: { kind: "multi", indexes: [0, 1] },
     });
-    expect(grade(multiNoOptions, { kind: "multi", indexes: [1, 0] })).toBe(true);
+    expect(grade(multiNoOptions, { kind: "multi", indexes: [1, 0] })).toBe(
+      true,
+    );
     expect(grade(multiNoOptions, { kind: "multi", indexes: [0] })).toBe(false);
   });
 });

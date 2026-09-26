@@ -58,6 +58,12 @@ function signOf(sign: string | undefined): bigint {
   return sign === "-" ? -1n : 1n;
 }
 
+/** 省略花括号形式的 token（如 \frac12 的 "1"/"2"）必须是单个数字字符，否则非法 */
+function singleDigit(token: string | undefined): string | null {
+  if (token !== undefined && /^\d$/.test(token)) return token;
+  return null;
+}
+
 /**
  * 解析已 normalize 的简单有理数字符串：
  * 整数（8、-3、08）、有限小数（0.5、.5、-2.25）、分数（1/2、4/-8）、
@@ -68,8 +74,11 @@ export function parseRational(input: string): Rational | null {
   // 分支一：整数或整数分数
   const plain = PLAIN_RE.exec(input);
   if (plain) {
-    const num = signOf(plain[1]) * BigInt(plain[2]);
-    const denom = plain[4] === undefined ? 1n : signOf(plain[3]) * BigInt(plain[4]);
+    const [, numSign, numText, denomSign, denomText] = plain;
+    if (numText === undefined) return null; // 正则保证必填组，防御不可达
+    const num = signOf(numSign) * BigInt(numText);
+    const denom =
+      denomText === undefined ? 1n : signOf(denomSign) * BigInt(denomText);
     return makeRational(num, denom);
   }
 
@@ -91,11 +100,11 @@ export function parseRational(input: string): Rational | null {
   // 分支三：LaTeX 分数（\frac/\dfrac，分子/分母为 {整数} 或单数字字符）
   const latex = LATEX_FRAC_RE.exec(input);
   if (latex) {
-    const numToken = latex[3] ?? latex[2]; // {…} 捕获组优先，省略形式取 token 本身
-    const denomToken = latex[5] ?? latex[4];
-    const num = signOf(latex[1]) * BigInt(numToken);
-    const denom = BigInt(denomToken);
-    return makeRational(num, denom);
+    const [, sign, numTokenRaw, numDigits, denomTokenRaw, denomDigits] = latex;
+    const numText = numDigits ?? singleDigit(numTokenRaw);
+    const denomText = denomDigits ?? singleDigit(denomTokenRaw);
+    if (numText === null || denomText === null) return null; // 防御不可达
+    return makeRational(signOf(sign) * BigInt(numText), BigInt(denomText));
   }
 
   return null;
@@ -106,11 +115,16 @@ export function parseRational(input: string): Rational | null {
  * 1. 快路径：normalize 后文本全等（非数值答案的唯一判等途径）；
  * 2. 数值等价：双方都可解析为简单有理数时，比较约分结果（0.5 = 1/2 = \frac{1}{2}）。
  */
-export function equivalent(studentAnswer: string, expectedAnswer: string): boolean {
+export function equivalent(
+  studentAnswer: string,
+  expectedAnswer: string,
+): boolean {
   const s = normalize(studentAnswer);
   const e = normalize(expectedAnswer);
   if (s === e) return true;
   const rs = parseRational(s);
   const re = parseRational(e);
-  return rs !== null && re !== null && rs.num === re.num && rs.denom === re.denom;
+  return (
+    rs !== null && re !== null && rs.num === re.num && rs.denom === re.denom
+  );
 }

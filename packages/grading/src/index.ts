@@ -9,5 +9,5 @@
  */
 export { grade } from "./grade.ts";
 export { judgeOf, normalize } from "./normalize.ts";
-export { equivalent, parseRational } from "./rational.ts";
 export type { Rational } from "./rational.ts";
+export { equivalent, parseRational } from "./rational.ts";

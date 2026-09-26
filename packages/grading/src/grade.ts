@@ -34,7 +34,10 @@ function gradeJudge(question: Question, answer: StudentAnswer): boolean | null {
 }
 
 /** 单选题判分：下标比较；越界（相对 options 数量）判 false 而非异常 */
-function gradeChoice(question: Question, answer: StudentAnswer): boolean | null {
+function gradeChoice(
+  question: Question,
+  answer: StudentAnswer,
+): boolean | null {
   const answers = question.answers;
   if (answers?.kind !== "choice" || answer.kind !== "choice") return null;
   const optionCount = question.options?.length;
@@ -52,7 +55,10 @@ function gradeMulti(question: Question, answer: StudentAnswer): boolean | null {
   if (answers?.kind !== "multi" || answer.kind !== "multi") return null;
   if (answer.indexes.length === 0) return null; // 未选任何项 → 未作答
   const optionCount = question.options?.length;
-  if (optionCount !== undefined && answer.indexes.some((i) => i >= optionCount)) {
+  if (
+    optionCount !== undefined &&
+    answer.indexes.some((i) => i >= optionCount)
+  ) {
     return false; // 任一越界 → false
   }
   const expected = new Set(answers.indexes);
@@ -72,14 +78,19 @@ function gradeFill(question: Question, answer: StudentAnswer): boolean | null {
   for (const [i, candidates] of answers.blanks.entries()) {
     // 学生答案比 blanks 短时缺失的空按空串（旧版 parts.length > i ? parts[i] : '' 口径）
     const value = answer.values[i] ?? "";
-    const blankCorrect = candidates.some((candidate) => equivalent(value, candidate));
+    const blankCorrect = candidates.some((candidate) =>
+      equivalent(value, candidate),
+    );
     if (!blankCorrect) return false; // 任一空错即整题 false（部分错误判错）
   }
   return true;
 }
 
 /** 手写题（solve/apply/find-error）判分：有最终答案且题目给了 :::answer 才自动判，否则 null 待批 */
-function gradeHandwritten(question: Question, answer: StudentAnswer): boolean | null {
+function gradeHandwritten(
+  question: Question,
+  answer: StudentAnswer,
+): boolean | null {
   const answers = question.answers;
   if (answers?.kind !== "final" || answer.kind !== "final") return null;
   const finalAnswer = answer.finalAnswer.trim();
@@ -93,7 +104,10 @@ function gradeHandwritten(question: Question, answer: StudentAnswer): boolean | 
  * @param answer   学生答案（缺省=未作答 → null）
  * @returns true 判对 / false 判错 / null 不能自动判定（进教师待批队列）
  */
-export function grade(question: Question, answer?: StudentAnswer): boolean | null {
+export function grade(
+  question: Question,
+  answer?: StudentAnswer,
+): boolean | null {
   if (question.answers === undefined) return null; // 题目无标准答案 → 不自动判分
   if (answer === undefined) return null; // 未作答 → null（与答错区分）
 
