@@ -4,6 +4,7 @@ import type {
   AssignmentStatus,
   AssignmentStudent,
   AssignmentUpdateRequest,
+  QuestionPublic,
   StudentAssignment,
   StudentPaperData,
   TeacherAssignment,
@@ -13,6 +14,8 @@ import { publicStemMd } from "@tutor/md-dsl";
 import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
+  type Attempt,
+  attempts,
   type Assignment,
   assignmentStudents,
   assignments,
@@ -49,8 +52,7 @@ export interface AssignmentAttemptSummary {
 /**
  * 计算学生在某作业下的完成状态（§5.8 完成矩阵）。
  * 纯函数：输入作业 + 该学生相关的作答记录，按优先级 graded > submitted > draft > 无记录。
- * T2.2 阶段 attempts 表尚未创建，调用方恒传空数组（全部 not_started）；
- * T2.6 接入后由查询层取该学生该作业的全部 attempt 传入，本函数无需改动。
+ * T2.6 起由 listStudentAssignments 查询 attempts 表填充真实状态。
  */
 export function computeAssignmentStatus(
   _assignment: Pick<Assignment, "id" | "dueAt">,
@@ -331,8 +333,8 @@ export function listTeacherAssignments(
 /**
  * GET /api/student/assignments：仅本人被指派（assignment_students 命中）且未删除的作业。
  * 每条只含单元公开元信息 + 完成状态；按布置时间倒序。
- * 状态经 computeAssignmentStatus 计算——T2.2 阶段作答表（attempts）尚未创建，
- * 恒为 not_started；T2.6 接入后在此处查询该学生的 attempts 传入纯函数即可。
+ * 状态经 computeAssignmentStatus 计算（T2.6 起接入）：查询该学生的 attempts，
+ * 按优先级 graded > submitted > draft > 无记录推导四态。
  */
 export function listStudentAssignments(
   db: Db,
@@ -364,6 +366,23 @@ export function listStudentAssignments(
     .all();
   if (rows.length === 0) return { assignments: [] };
 
+  // T2.6 状态联动：该学生的全部 attempt 摘要按 assignmentId 归组
+  const attemptsByAssignment = new Map<string, Pick<Attempt, "status">[]>();
+  for (const attempt of db
+    .select({ assignmentId: attempts.assignmentId, status: attempts.status })
+    .from(attempts)
+    .where(eq(attempts.studentId, studentId))
+    .all()) {
+    const list = attemptsByAssignment.get(attempt.assignmentId);
+    if (list === undefined) {
+      attemptsByAssignment.set(attempt.assignmentId, [
+        { status: attempt.status },
+      ]);
+    } else {
+      list.push({ status: attempt.status });
+    }
+  }
+
   const counts = liveQuestionCounts(db);
   return {
     assignments: rows.map((row) => ({
@@ -377,8 +396,7 @@ export function listStudentAssignments(
       createdAt: row.createdAt,
       status: computeAssignmentStatus(
         { id: row.id, dueAt: row.dueAt },
-        // T2.6 起：查询该学生该作业的 attempts 摘要传入（见函数注释）
-        [],
+        attemptsByAssignment.get(row.id) ?? [],
       ),
     })),
   };
@@ -411,7 +429,7 @@ function optionTexts(optionsJson: string): string[] {
 }
 
 /** 题目 id → 考点名列表（同名归一后按考点名排序，与教师端内容树同口径） */
-function knowledgeNamesByQuestion(db: Db): Map<string, string[]> {
+export function knowledgeNamesByQuestion(db: Db): Map<string, string[]> {
   const map = new Map<string, string[]>();
   const rows = db
     .select({
@@ -434,20 +452,44 @@ function knowledgeNamesByQuestion(db: Db): Map<string, string[]> {
 }
 
 /**
- * GET /api/student/assignments/:id/paper：该作业单元的公开题目（QuestionPublic[]）。
- * 权限（T2.4 验收项）：作业不存在 → 404；已删除 → 404（与学生列表过滤口径一致）；
- * 未被指派（assignment_students 未命中）→ 403 FORBIDDEN（注意不是 401——
- * 学生已通过学生会话鉴权，只是无权访问这份作业）。
- *
- * 题目与防泄露（AGENTS.md 第 3 条 / §5.3）：
+ * 单元公开题目（T2.4 试卷与 T2.6 草稿视图共用投影）：
  * - 该单元未软删的题目按 order 升序（同 order 按 id 兜底稳定）；
  * - 从 questions 整行构造候选对象后经 questionPublicSchema.parse 输出过滤（strip
  *   未知键）：answersJson / solutionMd / hintsJson / sourceMd 等教师侧列一律被剥离，
- *   将来加列也不会经由本接口外泄（fail closed）；
+ *   将来加列也不会经由本投影外泄（fail closed）；
  * - stemMd 先经 publicStemMd 公开化：填空/判断标记 [[答案]] 替换为空标记 [[]]，
  *   数学/代码环境内的 [[…]] 记号原样保留；
  * - options 仅 choice/multi 携带，映射为纯文本数组（无 correct 标记）；
  * - hints 只暴露数量 hintCount（内容由 T2.11 分步提示接口按需下发）。
+ */
+export function unitPublicQuestions(db: Db, unitId: string): QuestionPublic[] {
+  const liveQuestions = db
+    .select()
+    .from(questions)
+    .where(and(eq(questions.unitId, unitId), isNull(questions.deletedAt)))
+    .orderBy(asc(questions.order), asc(questions.id))
+    .all();
+  const knowledge = knowledgeNamesByQuestion(db);
+
+  return liveQuestions.map((question) =>
+    questionPublicSchema.parse({
+      ...question,
+      stemMd: publicStemMd(question.stemMd),
+      knowledge: knowledge.get(question.id) ?? [],
+      hintCount: hintCountOf(question.hintsJson),
+      ...(question.optionsJson !== null
+        ? { options: optionTexts(question.optionsJson) }
+        : {}),
+    }),
+  );
+}
+
+/**
+ * GET /api/student/assignments/:id/paper：该作业单元的公开题目（QuestionPublic[]）。
+ * 权限（T2.4 验收项）：作业不存在 → 404；已删除 → 404（与学生列表过滤口径一致）；
+ * 未被指派（assignment_students 未命中）→ 403 FORBIDDEN（注意不是 401——
+ * 学生已通过学生会话鉴权，只是无权访问这份作业）。
+ * 题目本体由 unitPublicQuestions 投影（见上方注释）。
  */
 export function getStudentAssignmentPaper(
   db: Db,
@@ -483,25 +525,5 @@ export function getStudentAssignmentPaper(
     throw new HttpError(403, "FORBIDDEN", "未被指派此作业，无权查看");
   }
 
-  const liveQuestions = db
-    .select()
-    .from(questions)
-    .where(and(eq(questions.unitId, row.unitId), isNull(questions.deletedAt)))
-    .orderBy(asc(questions.order), asc(questions.id))
-    .all();
-  const knowledge = knowledgeNamesByQuestion(db);
-
-  return {
-    questions: liveQuestions.map((question) =>
-      questionPublicSchema.parse({
-        ...question,
-        stemMd: publicStemMd(question.stemMd),
-        knowledge: knowledge.get(question.id) ?? [],
-        hintCount: hintCountOf(question.hintsJson),
-        ...(question.optionsJson !== null
-          ? { options: optionTexts(question.optionsJson) }
-          : {}),
-      }),
-    ),
-  };
+  return { questions: unitPublicQuestions(db, row.unitId) };
 }

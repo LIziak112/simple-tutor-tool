@@ -1,9 +1,11 @@
-import type { DocumentKind, QuestionType } from "@tutor/contract";
+import type { AttemptStatus, DocumentKind, QuestionType } from "@tutor/contract";
 import {
+  index,
   integer,
   primaryKey,
   sqliteTable,
   text,
+  uniqueIndex,
 } from "drizzle-orm/sqlite-core";
 
 /**
@@ -11,7 +13,8 @@ import {
  * T0.5 建 teachers、sessions；T1.9 追加 login_failures（登录限流，§5.7）；
  * T1.10 追加内容七表：courses、lectures、units、questions、knowledge_points、
  * question_knowledge、imports（内容存储与导入）；T2.1 追加 students（学生账号与两种登录）；
- * T2.2 追加 assignments、assignment_students（作业与指派名单，软删语义）。
+ * T2.2 追加 assignments、assignment_students（作业与指派名单，软删语义）；
+ * T2.6 追加 attempts、responses（作答生命周期：一次作答 + 逐题响应快照）。
  *
  * 全库约定（见 docs/开发任务清单.md §0.3 与 db-change 技能）：
  * - 主键 id 一律为应用层生成的 crypto.randomUUID() 字符串；
@@ -310,6 +313,112 @@ export const assignmentStudents = sqliteTable(
   (table) => [primaryKey({ columns: [table.assignmentId, table.studentId] })],
 );
 
+/**
+ * 作答表（T2.6，§5.2）——一次完整作答（一个作业一人至多一份进行中）。
+ * - status：draft=进行中（草稿）、submitted=已交卷（自动判分已写入）、
+ *   graded=已批改（T3.2 教师批注后置位）；
+ * - unitId 是作答期间的题目来源（快照自 questions 当前行，交卷时冻结）；
+ * - activeSec / device / scoreFinal 为 T2.10 / T2.10 / T3.2 预留列（建列不启用）。
+ */
+export const attempts = sqliteTable(
+  "attempts",
+  {
+    /** 主键：crypto.randomUUID()（§0.3 主键约定） */
+    id: text("id").primaryKey(),
+    /** 作答学生（students.id） */
+    studentId: text("student_id")
+      .notNull()
+      .references(() => students.id),
+    /** 所属作业（assignments.id；作答记录不随作业软删消失，§5.2 删除作业不删作答） */
+    assignmentId: text("assignment_id")
+      .notNull()
+      .references(() => assignments.id),
+    /** 目标练习单元（units.id，来自 DSL） */
+    unitId: text("unit_id")
+      .notNull()
+      .references(() => units.id),
+    /** 作答状态：draft | submitted | graded */
+    status: text("status").$type<AttemptStatus>().notNull(),
+    /** 开始作答时间：UTC ISO 字符串 */
+    startedAt: text("started_at").notNull(),
+    /** 交卷时间：UTC ISO 字符串；未交为 NULL */
+    submittedAt: text("submitted_at"),
+    /** 有效作答用时（秒；T2.10 由服务端按事件计算回写）；未计算为 NULL */
+    activeSec: integer("active_sec"),
+    /** 作答设备标识（T2.10 事件采集预留）；未记录为 NULL */
+    device: text("device"),
+    /** 自动判分得分（0–100 整数百分比 = 答对数/可自动判分数）；无可判分为 NULL */
+    scoreAuto: integer("score_auto"),
+    /** 最终得分（T3.2 教师批改后回写；未批为 NULL，统计以 finalCorrect 为准） */
+    scoreFinal: integer("score_final"),
+  },
+  (table) => [
+    // 「一个作业一人一份进行中」的查询索引；唯一性由服务层保证（先查后插，
+    // better-sqlite3 同步单进程无并发竞态），不建 partial unique index 以保迁移简单
+    index("attempts_student_assignment_idx").on(
+      table.studentId,
+      table.assignmentId,
+    ),
+  ],
+);
+
+/**
+ * 逐题响应表（T2.6，§5.2）——一行 = 一道题的作答与判定。
+ * - (attemptId, questionId) 唯一：草稿阶段 upsert（answerJson/changeCount 累加），
+ *   交卷时整行重写（写入快照与判分结果）；
+ * - questionSnapshotJson：交卷时冻结的完整 Question 序列化（contract questionSchema）。
+ *   老师此后编辑/软删题目（version+1）不影响历史作答回看（T2.6 验收项）；
+ *   草稿阶段为 NULL（判分与快照都在交卷时一次性写入）；
+ * - autoCorrect：服务端判分 true/false；NULL = 不能自动判定（未作答/手写题未填
+ *   最终答案/题目无标准答案，进教师待批队列 T3.2）；
+ * - finalCorrect / teacherMark / teacherComment / activeSec / hintsUsed /
+ *   changeCount / inkId 为 T2.10/T2.11/T2.8/T3.2 预留（建列不启用或默认 0）。
+ */
+export const responses = sqliteTable(
+  "responses",
+  {
+    /** 主键：crypto.randomUUID()（§0.3 主键约定） */
+    id: text("id").primaryKey(),
+    /** 所属作答（attempts.id） */
+    attemptId: text("attempt_id")
+      .notNull()
+      .references(() => attempts.id),
+    /** 题目（questions.id，来自 DSL） */
+    questionId: text("question_id")
+      .notNull()
+      .references(() => questions.id),
+    /** 作答/判分时的题目内容版本（questions.version）；草稿阶段为 0（快照未写入） */
+    questionVersion: integer("question_version").notNull().default(0),
+    /** 交卷时冻结的完整题目快照（questionSchema 序列化）；草稿阶段为 NULL */
+    questionSnapshotJson: text("question_snapshot_json"),
+    /** 学生答案（StudentAnswer 序列化）；未作为 NULL（交卷时未答题行也为 NULL） */
+    answerJson: text("answer_json"),
+    /** 自动判分结果：true/false；NULL = 不能自动判定 */
+    autoCorrect: integer("auto_correct", { mode: "boolean" }),
+    /** 最终判定（教师批注优先，否则取自动判分；T3.2 启用）；未批为 NULL */
+    finalCorrect: integer("final_correct", { mode: "boolean" }),
+    /** 教师批注标记（T3.2：正确 | 错误 | null）；未批为 NULL */
+    teacherMark: text("teacher_mark"),
+    /** 教师评语（T3.2）；未评为 NULL */
+    teacherComment: text("teacher_comment"),
+    /** 每题有效用时（秒；T2.10 按事件计算回写）；未计算为 NULL */
+    activeSec: integer("active_sec"),
+    /** 已查看提示数（T2.11 分步提示计数） */
+    hintsUsed: integer("hints_used").notNull().default(0),
+    /** 答案保存（改答案）次数：草稿保存一次 +1，T2.10 起与事件交叉校验 */
+    changeCount: integer("change_count").notNull().default(0),
+    /** 手写笔迹记录 id（ink 表，T2.8 启用）；无笔迹为 NULL */
+    inkId: text("ink_id"),
+  },
+  (table) => [
+    // 草稿 upsert 与交卷整行重写的定位键
+    uniqueIndex("responses_attempt_question_uk").on(
+      table.attemptId,
+      table.questionId,
+    ),
+  ],
+);
+
 /** courses 表行类型（SELECT 结果） */
 export type Course = typeof courses.$inferSelect;
 /** courses 表插入类型 */
@@ -346,3 +455,11 @@ export type NewAssignment = typeof assignments.$inferInsert;
 export type AssignmentStudent = typeof assignmentStudents.$inferSelect;
 /** assignment_students 表插入类型 */
 export type NewAssignmentStudent = typeof assignmentStudents.$inferInsert;
+/** attempts 表行类型（SELECT 结果） */
+export type Attempt = typeof attempts.$inferSelect;
+/** attempts 表插入类型 */
+export type NewAttempt = typeof attempts.$inferInsert;
+/** responses 表行类型（SELECT 结果） */
+export type ResponseRow = typeof responses.$inferSelect;
+/** responses 表插入类型 */
+export type NewResponseRow = typeof responses.$inferInsert;

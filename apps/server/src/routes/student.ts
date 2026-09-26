@@ -1,5 +1,10 @@
-import type { StudentPasswordChangeRequest } from "@tutor/contract";
-import { studentPasswordChangeRequestSchema } from "@tutor/contract";
+import type {
+  StudentPasswordChangeRequest,
+} from "@tutor/contract";
+import {
+  attemptAnswerSaveRequestSchema,
+  studentPasswordChangeRequestSchema,
+} from "@tutor/contract";
 import { Hono } from "hono";
 import { deleteCookie, getCookie } from "hono/cookie";
 import { createRequireStudent, type StudentEnv } from "../auth/require-student";
@@ -16,6 +21,12 @@ import {
   listStudentAssignments,
 } from "../services/assignment-service";
 import {
+  getAttemptDetail,
+  saveDraftAnswer,
+  startAttempt,
+  submitAttempt,
+} from "../services/attempt-service";
+import {
   getStudentLecture,
   listStudentLectures,
 } from "../services/content-service";
@@ -25,18 +36,28 @@ import { changeStudentPassword } from "../services/student-service";
  * 学生路由（需学生会话），挂载在 /api/student，整组套 requireStudent 守卫：
  * - GET  /me：当前登录学生信息（displayName 等，守卫已校验存在且未归档）；
  * - POST /password：自助修改密码（验证原密码）；
- * - GET  /assignments：我的作业（仅本人被指派且未删除，附完成状态，T2.2）；
+ * - GET  /assignments：我的作业（仅本人被指派且未删除，附完成状态，T2.2；
+ *   T2.6 起状态由 attempts 推导：未开始/进行中/已交/已批）；
  * - GET  /assignments/:id/paper：作业试卷——公开题目 QuestionPublic[]（T2.4；
  *   未被指派 403，作业不存在/已删除 404）；
+ * - POST /assignments/:id/attempt：创建或取回进行中的 attempt（T2.6，幂等：
+ *   一人一份进行中；已交卷返回已交的那份让前端直接进结果视图）；
+ * - PUT  /attempts/:id/answers/:questionId：保存草稿答案（T2.6；已交 409）；
+ * - POST /attempts/:id/submit：服务端判分 + 快照冻结 + 返回结果（T2.6；
+ *   重复交卷 409 ALREADY_SUBMITTED）；
+ * - GET  /attempts/:id：attempt 详情（T2.6；未交=草稿视图（无答案/详解/提示），
+ *   已交=结果视图（含答案与详解、剥离提示内容））；
  * - GET  /lectures、GET /lectures/:id：讲义摘要列表与全文 markdown（T2.3）；
  * - POST /logout：删除会话行并清除 Cookie（T2.3，与教师 logout 同实现口径）。
  *
  * 学生端接口永不返回答案/详解等教师侧内容（AGENTS.md 第 3 条）：/assignments
- * 只含单元公开元信息（标题/topic/题数）；/assignments/:id/paper 的每道题经
- * questionPublicSchema 输出过滤且题干已公开化（[[答案]] → [[]]）；/lectures* 只读
- * lectures 表（讲义里的 :::solution 是讲解内容非题目答案，属学生应见），泄露测试见
- * routes/assignments.test.ts、routes/student-lectures.test.ts 与
- * routes/student-paper.test.ts（通用工具 src/test/assert-no-leak.ts）。
+ * 只含单元公开元信息（标题/topic/题数）；/assignments/:id/paper 与草稿视图的
+ * 每道题经 questionPublicSchema 输出过滤且题干已公开化（[[答案]] → [[]]）；
+ * /attempts/:id 的结果视图在交卷后允许携带参考答案与详解（规则 3 限制的是
+ * 「未交卷题目」），但提示内容仍不下发（T2.11 按需）。泄露测试见
+ * routes/assignments.test.ts、routes/student-lectures.test.ts、
+ * routes/student-paper.test.ts 与 routes/student-attempts.test.ts
+ * （通用工具 src/test/assert-no-leak.ts）。
  * 返回类型不显式标注 Hono：链式注册把路由签名累积进推断类型（AppType / hc 前提）。
  */
 export function createStudentRoutes(db: Db, publicUrl: string) {
@@ -70,6 +91,37 @@ export function createStudentRoutes(db: Db, publicUrl: string) {
           c.var.student.id,
           c.req.param("id"),
         ),
+      });
+    })
+    .post("/assignments/:id/attempt", (c) => {
+      return c.json({
+        ok: true,
+        data: startAttempt(db, c.var.student.id, c.req.param("id")),
+      });
+    })
+    .put("/attempts/:id/answers/:questionId", async (c) => {
+      const body = await parseJsonBody(c, attemptAnswerSaveRequestSchema);
+      return c.json({
+        ok: true,
+        data: saveDraftAnswer(
+          db,
+          c.var.student.id,
+          c.req.param("id"),
+          c.req.param("questionId"),
+          body.answer,
+        ),
+      });
+    })
+    .post("/attempts/:id/submit", (c) => {
+      return c.json({
+        ok: true,
+        data: submitAttempt(db, c.var.student.id, c.req.param("id")),
+      });
+    })
+    .get("/attempts/:id", (c) => {
+      return c.json({
+        ok: true,
+        data: getAttemptDetail(db, c.var.student.id, c.req.param("id")),
       });
     })
     .get("/lectures", (c) => {

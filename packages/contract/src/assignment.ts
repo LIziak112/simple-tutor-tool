@@ -167,7 +167,7 @@ export const studentAssignmentSchema = z.object({
   dueAt: assignmentDueAtSchema.nullable(),
   /** 布置时间：UTC ISO 字符串 */
   createdAt: z.string().min(1),
-  /** 完成状态（本任务内恒为 not_started，T2.6 接入 attempts 后补全） */
+  /** 完成状态（服务端由该学生的 attempts 推导：graded > submitted > in_progress > not_started） */
   status: assignmentStatusSchema,
 });
 
