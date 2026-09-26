@@ -1,7 +1,18 @@
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
-import { loginFailures, sessions, students, teachers } from "./schema";
+import {
+  assignments,
+  attempts,
+  courses,
+  loginFailures,
+  questions,
+  responses,
+  sessions,
+  students,
+  teachers,
+  units,
+} from "./schema";
 import { createTestDb } from "./test-utils";
 
 /** sqlite_master 行的最小形状（建表元数据查询用） */
@@ -147,6 +158,180 @@ describe("login_failures 表（T1.9 登录限流）", () => {
         .where(eq(loginFailures.key, row.key))
         .get(),
     ).toEqual(row);
+    db.$client.close();
+  });
+});
+
+describe("attempts / responses 表（T2.6 作答生命周期）", () => {
+  /** 造最小外键链：课程 → 单元 → 题目、学生、作业，返回各 id */
+  function seedAttemptRefs(db: ReturnType<typeof createTestDb>): {
+    studentId: string;
+    assignmentId: string;
+    unitId: string;
+    questionId: string;
+  } {
+    const courseId = randomUUID();
+    const unitId = "unit-练习四";
+    const questionId = "练习四-1";
+    const studentId = randomUUID();
+    const assignmentId = randomUUID();
+    const now = new Date().toISOString();
+    db.insert(courses).values({ id: courseId, title: "默认课程", order: 0, createdAt: now }).run();
+    db.insert(units)
+      .values({
+        id: unitId,
+        courseId,
+        lectureId: null,
+        title: "练习四",
+        topic: null,
+        order: 0,
+        updatedAt: now,
+      })
+      .run();
+    db.insert(questions)
+      .values({
+        id: questionId,
+        unitId,
+        order: 0,
+        type: "judge",
+        difficulty: 1,
+        stemMd: "题干 [[正确]]",
+        optionsJson: null,
+        answersJson: '{"kind":"judge","value":true}',
+        hintsJson: "[]",
+        solutionMd: null,
+        sourceMd: "::::question{type=judge difficulty=1}\n题干 [[正确]]\n::::",
+        version: 1,
+        updatedAt: now,
+        deletedAt: null,
+      })
+      .run();
+    db.insert(students)
+      .values({
+        id: studentId,
+        displayName: "张三",
+        loginName: "张三",
+        passwordHash: null,
+        linkToken: `link-${randomUUID()}`,
+        linkEnabled: true,
+        passwordEnabled: false,
+        note: null,
+        archivedAt: null,
+        createdAt: now,
+      })
+      .run();
+    db.insert(assignments)
+      .values({
+        id: assignmentId,
+        unitId,
+        title: "练习四",
+        dueAt: null,
+        deletedAt: null,
+        createdAt: now,
+      })
+      .run();
+    return { studentId, assignmentId, unitId, questionId };
+  }
+
+  it("迁移后两表存在；attempts 行可读写（三态 status、scoreAuto 百分比）", () => {
+    const db = createTestDb();
+    const tables = db.$client
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('attempts','responses') ORDER BY name",
+      )
+      .all() as TableNameRow[];
+    expect(tables.map((r) => r.name)).toEqual(["attempts", "responses"]);
+
+    const { studentId, assignmentId, unitId } = seedAttemptRefs(db);
+    const now = new Date().toISOString();
+    const attempt = {
+      id: randomUUID(),
+      studentId,
+      assignmentId,
+      unitId,
+      status: "draft" as const,
+      startedAt: now,
+      submittedAt: null,
+      activeSec: null,
+      device: null,
+      scoreAuto: null,
+      scoreFinal: null,
+    };
+    db.insert(attempts).values(attempt).run();
+    expect(
+      db.select().from(attempts).where(eq(attempts.id, attempt.id)).get(),
+    ).toEqual(attempt);
+    db.$client.close();
+  });
+
+  it("responses 默认值（questionVersion/hintsUsed/changeCount=0）与 (attemptId,questionId) 唯一约束", () => {
+    const db = createTestDb();
+    const { studentId, assignmentId, unitId, questionId } = seedAttemptRefs(db);
+    const now = new Date().toISOString();
+    const attemptId = randomUUID();
+    db.insert(attempts)
+      .values({
+        id: attemptId,
+        studentId,
+        assignmentId,
+        unitId,
+        status: "draft",
+        startedAt: now,
+        submittedAt: null,
+        activeSec: null,
+        device: null,
+        scoreAuto: null,
+        scoreFinal: null,
+      })
+      .run();
+    const responseId = randomUUID();
+    // 只给必填列：默认列应自动补 0
+    db.insert(responses)
+      .values({
+        id: responseId,
+        attemptId,
+        questionId,
+        questionSnapshotJson: null,
+        answerJson: '{"kind":"judge","value":true}',
+        autoCorrect: true,
+        finalCorrect: null,
+        teacherMark: null,
+        teacherComment: null,
+        activeSec: null,
+        inkId: null,
+      })
+      .run();
+    const row = db
+      .select()
+      .from(responses)
+      .where(eq(responses.id, responseId))
+      .get();
+    expect(row?.questionVersion).toBe(0);
+    expect(row?.hintsUsed).toBe(0);
+    expect(row?.changeCount).toBe(0);
+    expect(row?.autoCorrect).toBe(true); // 布尔模式按 0/1 映射
+
+    // 同 (attemptId, questionId) 第二行 → 违反唯一索引
+    expect(() =>
+      db
+        .insert(responses)
+        .values({
+          id: randomUUID(),
+          attemptId,
+          questionId,
+          questionSnapshotJson: null,
+          answerJson: null,
+          autoCorrect: null,
+          finalCorrect: null,
+          teacherMark: null,
+          teacherComment: null,
+          activeSec: null,
+          hintsUsed: 0,
+          changeCount: 0,
+          inkId: null,
+        })
+        .run(),
+    ).toThrow();
     db.$client.close();
   });
 });
