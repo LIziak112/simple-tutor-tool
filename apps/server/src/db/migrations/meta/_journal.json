@@ -36,6 +36,13 @@
       "when": 1790452794750,
       "tag": "0004_nice_vivisector",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1790460717248,
+      "tag": "0005_rainy_oracle",
+      "breakpoints": true
     }
   ]
 }

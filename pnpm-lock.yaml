@@ -190,6 +190,9 @@ importers:
       '@tutor/contract':
         specifier: workspace:*
         version: link:../../packages/contract
+      '@tutor/grading':
+        specifier: workspace:*
+        version: link:../../packages/grading
       '@tutor/md-dsl':
         specifier: workspace:*
         version: link:../../packages/md-dsl

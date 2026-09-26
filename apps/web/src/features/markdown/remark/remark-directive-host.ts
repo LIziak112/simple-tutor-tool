@@ -34,6 +34,13 @@ interface DirectiveCounters {
   hint: number;
   /** 当前 steps 内的步骤计数（step 用；进入 steps 清零） */
   step: number;
+  /**
+   * 当前题目内的填空计数（blank 用；进入新题清零）。编号不依赖 question 上下文
+   * （答题页渲染的是独立题干，无 ::::question 包裹）——展示组件忽略该编号，
+   * 渲染结果不变（samples 回归不受影响，AGENTS 第 12 条）；T2.6 起答题页按此
+   * 编号把空框渲染为可输入控件（BlankAnswersContext）。
+   */
+  blank: number;
 }
 
 function annotate(
@@ -46,12 +53,16 @@ function annotate(
   if (node.name === "question") {
     next.question += 1;
     next.hint = 0;
+    next.blank = 0;
     props.index = next.question;
   } else if (node.name === "hint") {
     if (counters.question > 0) {
       next.hint += 1;
       props.index = next.hint;
     }
+  } else if (node.name === "blank") {
+    next.blank += 1;
+    props.index = next.blank;
   } else if (node.name === "steps") {
     next.step = 0;
   } else if (node.name === "step") {
@@ -74,24 +85,31 @@ function annotate(
   return next;
 }
 
-function walk(node: MdNode, initialCounters: DirectiveCounters): void {
+/**
+ * 深度优先遍历并返回更新后的计数器。
+ * 计数器必须「上传」：指令可能嵌在非指令中间节点下（如段落里的 blank），
+ * 子树内的计数只改本地副本会丢——跨段落/跨容器的同名指令要接着计数
+ * （T2.6 修复：此前非指令子树的计数变化不回传，多段落填空的空序会重置）。
+ */
+function walk(
+  node: MdNode,
+  initialCounters: DirectiveCounters,
+): DirectiveCounters {
   const children = node.children;
-  if (!children) return;
-  // 计数器要跨兄弟节点传递：第 1 个 step 计数后，第 2 个 step 要在 1 的基础上继续
+  if (!children) return initialCounters;
   let counters = initialCounters;
   for (const child of children) {
     if (isDirectiveNode(child)) {
       counters = annotate(child, counters);
-      walk(child, counters);
-    } else {
-      walk(child, counters);
     }
+    counters = walk(child, counters);
   }
+  return counters;
 }
 
 /** remark 插件入口：无选项，遍历一次完成映射与编号 */
 export function remarkDirectiveHost() {
   return (tree: MdNode) => {
-    walk(tree, { question: 0, hint: 0, step: 0 });
+    walk(tree, { question: 0, hint: 0, step: 0, blank: 0 });
   };
 }

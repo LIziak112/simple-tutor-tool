@@ -1,6 +1,10 @@
 import {
   type AssignmentCreateRequest,
   type AssignmentUpdateRequest,
+  type AttemptAnswerSaveData,
+  type AttemptAnswerSaveRequest,
+  type AttemptDetailData,
+  type AttemptStartData,
   apiResponseSchema,
   type ContentTree,
   type CourseCreateRequest,
@@ -430,4 +434,59 @@ export function fetchStudentLectureApi(
   id: string,
 ): Promise<StudentLectureDetail> {
   return callApi(() => api.api.student.lectures[":id"].$get({ param: { id } }));
+}
+
+// ---------- T2.6：作答生命周期（学生端答题页） ----------
+
+/**
+ * 创建或取回进行中的 attempt（幂等：一个作业一人一份进行中）。
+ * 已交卷时返回已交的那份（status=submitted/graded，前端直接进结果视图）。
+ */
+export function startAttemptApi(
+  assignmentId: string,
+): Promise<AttemptStartData> {
+  return callApi(() =>
+    api.api.student.assignments[":id"].attempt.$post({
+      param: { id: assignmentId },
+    }),
+  );
+}
+
+/**
+ * 保存草稿答案（draft 阶段）。409 ALREADY_SUBMITTED = 已交卷；
+ * 404 QUESTION_NOT_FOUND = 题目不属于这份作业或已被老师删除。
+ * json 以独立变量传入的原因同 updateQuestion（parseJsonBody 服务端校验）。
+ */
+export function saveAttemptAnswerApi(
+  attemptId: string,
+  questionId: string,
+  answer: AttemptAnswerSaveRequest["answer"],
+): Promise<AttemptAnswerSaveData> {
+  const args = { param: { id: attemptId, questionId }, json: { answer } };
+  return callApi(() =>
+    api.api.student.attempts[":id"].answers[":questionId"].$put(args),
+  );
+}
+
+/**
+ * 交卷：服务端判分、冻结题目快照，返回结果视图（含参考答案与详解）。
+ * 重复交卷抛 409 ALREADY_SUBMITTED。
+ */
+export function submitAttemptApi(
+  attemptId: string,
+): Promise<AttemptDetailData> {
+  return callApi(() =>
+    api.api.student.attempts[":id"].submit.$post({ param: { id: attemptId } }),
+  );
+}
+
+/**
+ * attempt 详情：未交 = 草稿视图（公开题目 + 本人草稿，无答案/详解/提示）；
+ * 已交 = 结果视图（快照 + 参考答案 + 详解 + 判分，无提示内容）。
+ * 前端按 data.attempt.status 分支渲染。
+ */
+export function fetchAttemptApi(attemptId: string): Promise<AttemptDetailData> {
+  return callApi(() =>
+    api.api.student.attempts[":id"].$get({ param: { id: attemptId } }),
+  );
 }

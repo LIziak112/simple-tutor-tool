@@ -1,4 +1,6 @@
 import { cn } from "cn";
+import { useContext } from "react";
+import { blankAnswersContext } from "../BlankAnswersContext";
 import type { DirectiveProps } from "./types";
 
 /**
@@ -23,10 +25,30 @@ export function MarkDirective({ attrs, children }: DirectiveProps) {
 }
 
 /**
- * 填空空位（教师预览视角）：`[[答案]]` 只渲染为下划线空框，
- * 标记内的参考答案是教师侧内容，一律不显示（T1.8 设计决策 2）。
+ * 填空空位。两种形态（T2.6 起双轨）：
+ * - 纯展示（教师预览/讲义/结果视图）：下划线空框。标记内的参考答案是教师侧
+ *   内容，一律不显示（T1.8 设计决策 2）；
+ * - 作答形态（答题页提供了 BlankAnswersContext）：按空序编号渲染为内联输入框
+ *   （触控目标 ≥44px，iPad 随手写可直接在框内转文字）。
  */
-export function BlankDirective() {
+export function BlankDirective({ index }: DirectiveProps) {
+  const answers = useContext(blankAnswersContext);
+  if (answers !== null) {
+    const blankIndex = Math.max(0, index - 1); // 编号 1 起 → 下标 0 起；未编号兜底第 1 空
+    const value = answers.values[blankIndex] ?? "";
+    return (
+      <input
+        type="text"
+        inputMode="text"
+        data-testid={`blank-${blankIndex + 1}`}
+        aria-label={`第${blankIndex + 1}空`}
+        value={value}
+        disabled={answers.disabled}
+        onChange={(event) => answers.onChange(blankIndex, event.target.value)}
+        className="mx-1 inline-block h-11 w-28 max-w-full translate-y-[0.1em] rounded-md border-b-2 border-current bg-transparent px-2 align-middle text-inherit outline-none transition-colors focus-visible:border-primary focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-70"
+      />
+    );
+  }
   return (
     <span
       data-testid="blank"
