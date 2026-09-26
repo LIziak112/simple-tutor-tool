@@ -31,6 +31,8 @@ export interface CreateAppOptions {
   logger?: Logger | undefined;
   /** 静态资源目录覆盖；缺省解析到仓库内 apps/web/dist（见 static.ts）。测试注入临时目录用 */
   webDistDir?: string | undefined;
+  /** DSL 规范文档目录覆盖（T1.13 /spec 接口数据源）；缺省按候选顺序解析（见 spec-files.ts）。测试注入临时目录用 */
+  specDir?: string | undefined;
 }
 
 export function createApp(options: CreateAppOptions) {
@@ -90,7 +92,10 @@ export function createApp(options: CreateAppOptions) {
       return c.json({ ok: true, data: { time: new Date().toISOString() } });
     })
     // —— 业务路由：/api/public（教师 status/setup/login 等）与 /api/teacher（守卫后的教师接口）——
-    .route("/api/public", createPublicRoutes(options.db, options.publicUrl))
+    .route(
+      "/api/public",
+      createPublicRoutes(options.db, options.publicUrl, options.specDir),
+    )
     .route("/api/teacher", createTeacherRoutes(options.db, options.publicUrl));
 
   // —— 生产模式：托管 apps/web/dist ——
