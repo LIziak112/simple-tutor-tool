@@ -1,7 +1,7 @@
 import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { specFileContentTypes, type SpecFileName } from "@tutor/contract";
+import { type SpecFileName, specFileContentTypes } from "@tutor/contract";
 import { HttpError } from "./lib/http-error";
 
 /**
@@ -83,7 +83,10 @@ export async function readSpecFile(
 
     const cached = cache.get(filePath);
     if (cached !== undefined && cached.mtimeMs === info.mtimeMs) {
-      return { content: cached.content, contentType: specFileContentTypes[name] };
+      return {
+        content: cached.content,
+        contentType: specFileContentTypes[name],
+      };
     }
     const content = await readFile(filePath, "utf8");
     cache.set(filePath, { content, mtimeMs: info.mtimeMs });

@@ -46,48 +46,50 @@ export function createPublicRoutes(
   specDir?: string | undefined,
 ) {
   const secure = isSecurePublicUrl(publicUrl);
-  return new Hono()
-    .get("/teacher/status", (c) => {
-      return c.json({ ok: true, data: teacherStatus(db) });
-    })
-    .post("/teacher/setup", async (c) => {
-      const body: TeacherSetupRequest = await parseJsonBody(
-        c,
-        teacherSetupRequestSchema,
-      );
-      const { teacher, token } = await setupTeacher(db, body.password);
-      setCookie(c, SESSION_COOKIE, token, sessionCookieOptions(secure));
-      return c.json({ ok: true, data: teacher });
-    })
-    .post("/teacher/login", async (c) => {
-      const body: TeacherLoginRequest = await parseJsonBody(
-        c,
-        teacherLoginRequestSchema,
-      );
-      const { teacher, token } = await loginTeacher(
-        db,
-        body.password,
-        getClientIp(c),
-      );
-      setCookie(c, SESSION_COOKIE, token, sessionCookieOptions(secure));
-      return c.json({ ok: true, data: teacher });
-    })
-    // DSL 规范文档直出（T1.13）：契约枚举校验，未知文件名 404 统一错误壳；
-    // md/json 原文作为 body（Content-Type 见契约 specFileContentTypes）
-    .get("/spec/:file", async (c) => {
-      const parsed = specFileNameSchema.safeParse(c.req.param("file"));
-      if (!parsed.success) {
-        throw new HttpError(
-          404,
-          "NOT_FOUND",
-          "spec 文件不存在（可用：rules.md、example.md、prompt.md、schema.json）",
+  return (
+    new Hono()
+      .get("/teacher/status", (c) => {
+        return c.json({ ok: true, data: teacherStatus(db) });
+      })
+      .post("/teacher/setup", async (c) => {
+        const body: TeacherSetupRequest = await parseJsonBody(
+          c,
+          teacherSetupRequestSchema,
         );
-      }
-      const spec = await readSpecFile(parsed.data, specDir);
-      // 短缓存：规范随版本发布更新，5 分钟内允许复用（AI 客户端拉取友好）
-      return c.body(spec.content, 200, {
-        "Content-Type": spec.contentType,
-        "Cache-Control": "public, max-age=300",
-      });
-    });
+        const { teacher, token } = await setupTeacher(db, body.password);
+        setCookie(c, SESSION_COOKIE, token, sessionCookieOptions(secure));
+        return c.json({ ok: true, data: teacher });
+      })
+      .post("/teacher/login", async (c) => {
+        const body: TeacherLoginRequest = await parseJsonBody(
+          c,
+          teacherLoginRequestSchema,
+        );
+        const { teacher, token } = await loginTeacher(
+          db,
+          body.password,
+          getClientIp(c),
+        );
+        setCookie(c, SESSION_COOKIE, token, sessionCookieOptions(secure));
+        return c.json({ ok: true, data: teacher });
+      })
+      // DSL 规范文档直出（T1.13）：契约枚举校验，未知文件名 404 统一错误壳；
+      // md/json 原文作为 body（Content-Type 见契约 specFileContentTypes）
+      .get("/spec/:file", async (c) => {
+        const parsed = specFileNameSchema.safeParse(c.req.param("file"));
+        if (!parsed.success) {
+          throw new HttpError(
+            404,
+            "NOT_FOUND",
+            "spec 文件不存在（可用：rules.md、example.md、prompt.md、schema.json）",
+          );
+        }
+        const spec = await readSpecFile(parsed.data, specDir);
+        // 短缓存：规范随版本发布更新，5 分钟内允许复用（AI 客户端拉取友好）
+        return c.body(spec.content, 200, {
+          "Content-Type": spec.contentType,
+          "Cache-Control": "public, max-age=300",
+        });
+      })
+  );
 }

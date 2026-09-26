@@ -11,8 +11,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   AI_PROMPT_KIND_OPTIONS,
-  buildAiPrompt,
   type AiPromptKind,
+  buildAiPrompt,
 } from "./ai-prompt";
 import { useSpecDocs } from "./spec-queries";
 
@@ -112,20 +112,14 @@ export function AiPromptPanel() {
         <div id="ai-prompt-body" className="border-t border-sky-500/30 p-4">
           <p className="text-sm text-muted-foreground">
             选择内容类型、填写主题，一键复制完整提示词（含 DSL
-            规范、完整样例与出题模板），粘贴给任意 AI；把 AI
-            输出的 markdown 粘贴到下方导入即可。
+            规范、完整样例与出题模板），粘贴给任意 AI；把 AI 输出的 markdown
+            粘贴到下方导入即可。
           </p>
 
           <div className="mt-3 flex flex-wrap items-end gap-3">
-            <div className="flex flex-col gap-1.5">
-              <span className="text-sm font-medium" id="ai-prompt-kind-label">
-                内容类型
-              </span>
-              <div
-                role="group"
-                aria-labelledby="ai-prompt-kind-label"
-                className="flex flex-wrap gap-2"
-              >
+            <fieldset className="flex flex-col gap-1.5">
+              <legend className="text-sm font-medium">内容类型</legend>
+              <div className="flex flex-wrap gap-2">
                 {AI_PROMPT_KIND_OPTIONS.map((option) => {
                   const active = kind === option.value;
                   return (
@@ -145,12 +139,9 @@ export function AiPromptPanel() {
                   );
                 })}
               </div>
-            </div>
+            </fieldset>
             <div className="flex min-w-56 flex-1 flex-col gap-1.5">
-              <label
-                htmlFor="ai-prompt-topic"
-                className="text-sm font-medium"
-              >
+              <label htmlFor="ai-prompt-topic" className="text-sm font-medium">
                 主题 / 考点（可选）
               </label>
               <Input

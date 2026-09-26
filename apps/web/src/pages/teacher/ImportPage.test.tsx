@@ -3,7 +3,12 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ImportPreviewData, LintIssue } from "@tutor/contract";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiError, commitImport, fetchSpecFile, previewImport } from "@/lib/api";
+import {
+  ApiError,
+  commitImport,
+  fetchSpecFile,
+  previewImport,
+} from "@/lib/api";
 import ImportPage from "./ImportPage";
 
 /**
@@ -126,7 +131,9 @@ describe("ImportPage 输入区", () => {
     const toggle = screen.getByRole("button", { name: /AI 出题助手/ });
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     // 收起时不渲染内部内容，也不应触发规范文档请求
-    expect(screen.queryByLabelText("主题 / 考点（可选）")).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("主题 / 考点（可选）"),
+    ).not.toBeInTheDocument();
     expect(fetchSpecFile).not.toHaveBeenCalled();
   });
 

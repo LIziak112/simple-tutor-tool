@@ -13,7 +13,13 @@ const EXAMPLE =
 const TEMPLATE = "# 出题提示词模板\n\n{{学科/年级}}\n";
 
 function build(kind: "practice" | "lecture" | "mixed", topic: string): string {
-  return buildAiPrompt({ kind, topic, rules: RULES, example: EXAMPLE, promptTemplate: TEMPLATE });
+  return buildAiPrompt({
+    kind,
+    topic,
+    rules: RULES,
+    example: EXAMPLE,
+    promptTemplate: TEMPLATE,
+  });
 }
 
 describe("buildAiPrompt（T1.13 一键复制给 AI）", () => {
@@ -27,9 +33,7 @@ describe("buildAiPrompt（T1.13 一键复制给 AI）", () => {
   });
 
   it("主题注入：填写的主题出现在开头；空/空白主题回退为「教师自定」", () => {
-    expect(build("practice", "一元一次方程")).toContain(
-      "主题：一元一次方程",
-    );
+    expect(build("practice", "一元一次方程")).toContain("主题：一元一次方程");
     expect(build("practice", "")).toContain("主题：教师自定");
     expect(build("practice", "   ")).toContain("主题：教师自定");
   });

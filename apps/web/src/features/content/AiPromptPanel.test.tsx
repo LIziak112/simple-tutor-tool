@@ -123,7 +123,9 @@ describe("AiPromptPanel（T1.13 AI 出题助手）", () => {
     expect(prompt).toContain(TEMPLATE.trim());
     expect(prompt).toContain("## 出题提示词模板");
     expect(prompt.slice(-120)).toContain("输出一个 markdown 代码块");
-    expect(screen.getByText("已复制，粘贴给你的 AI 即可。")).toBeInTheDocument();
+    expect(
+      screen.getByText("已复制，粘贴给你的 AI 即可。"),
+    ).toBeInTheDocument();
   });
 
   it("切换 kind 到「混合」并留空主题：开头随之变化、主题回退「教师自定」", async () => {
@@ -153,9 +155,7 @@ describe("AiPromptPanel（T1.13 AI 出题助手）", () => {
     const value = (textarea as HTMLTextAreaElement).value;
     expect(value).toContain("你是一对一辅导老师的内容助手");
     expect(value).toContain(RULES.trim());
-    expect(
-      screen.getByText(/当前环境不允许直接写剪贴板/),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/当前环境不允许直接写剪贴板/)).toBeInTheDocument();
   });
 
   it("加载失败显示中文原因与重试；重试成功后恢复可用", async () => {
@@ -173,7 +173,9 @@ describe("AiPromptPanel（T1.13 AI 出题助手）", () => {
     shouldFail = false;
     fireEvent.click(screen.getByRole("button", { name: "重试" }));
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /一键复制给 AI/ })).toBeEnabled();
+      expect(
+        screen.getByRole("button", { name: /一键复制给 AI/ }),
+      ).toBeEnabled();
     });
   });
 });

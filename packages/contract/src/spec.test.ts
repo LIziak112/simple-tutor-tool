@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   specFileContentTypes,
-  specFileNames,
   specFileNameSchema,
+  specFileNames,
 } from "./spec.ts";
 
 /**
@@ -41,7 +41,9 @@ describe("spec 文件名枚举与 Content-Type（T1.13）", () => {
       expect(typeof specFileContentTypes[name]).toBe("string");
       expect(specFileContentTypes[name].length).toBeGreaterThan(0);
     }
-    expect(specFileContentTypes["rules.md"]).toBe("text/markdown; charset=utf-8");
+    expect(specFileContentTypes["rules.md"]).toBe(
+      "text/markdown; charset=utf-8",
+    );
     expect(specFileContentTypes["example.md"]).toBe(
       "text/markdown; charset=utf-8",
     );
