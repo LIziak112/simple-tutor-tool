@@ -34,3 +34,4 @@ export {
 } from "./v2/edit-context.ts";
 export type { ParseOptions } from "./v2/parse.ts";
 export { parseDocument } from "./v2/parse.ts";
+export { publicStemMd } from "./v2/public-stem.ts";
