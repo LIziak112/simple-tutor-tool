@@ -1,4 +1,10 @@
 {
   "extends": "../../tsconfig.base.json",
-  "include": ["src"]
+  "compilerOptions": {
+    // scripts/export-schema.ts 由 Node 原生类型剥离直接运行，相对导入必须带 .ts 扩展名
+    "allowImportingTsExtensions": true,
+    // 显式声明 Node 类型（与 apps/server 同）：导出脚本用到 node:fs 等内置模块
+    "types": ["node"]
+  },
+  "include": ["src", "scripts"]
 }

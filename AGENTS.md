@@ -18,7 +18,7 @@ simple-tutor-tool v2：一对一辅导老师的自部署、AI 原生讲练工具
 12. 所有 samples/ 下的历史样例文档是兼容性回归测试，任何改动后都必须仍能解析、渲染一致。
 
 ## 常用命令
-pnpm dev / pnpm test / pnpm e2e（当前为占位脚本，T2.13 起提供）/ pnpm lint / pnpm typecheck / pnpm format / pnpm build / pnpm db:generate / pnpm tutor-lint <file.md>（T1.7 起提供）
+pnpm dev / pnpm test / pnpm e2e（当前为占位脚本，T2.13 起提供）/ pnpm lint / pnpm typecheck / pnpm format / pnpm build / pnpm db:generate / pnpm schema:export（导出内容契约 JSON Schema，改 contract 后须重跑并提交）/ pnpm tutor-lint <file.md>（T1.7 起提供）
 
 ## 完成一个任务的定义
 代码 + 测试 + 类型检查通过 + 相关文档（docs/dsl 或本文件）已同步更新 + 在 PR 描述中列出如何手动验证。
