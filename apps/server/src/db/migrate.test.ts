@@ -1,9 +1,10 @@
+import { readFileSync } from "node:fs";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createDb } from "./client";
-import { runMigrations } from "./migrate";
+import { resolveMigrationsFolder, runMigrations } from "./migrate";
 
 let dir: string;
 
@@ -15,6 +16,17 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+/** 期望的迁移条数：直接读迁移目录的 journal，后续任务追加迁移不需要回来改这里 */
+function countJournalEntries(): number {
+  const journal = JSON.parse(
+    readFileSync(
+      join(resolveMigrationsFolder(), "meta", "_journal.json"),
+      "utf8",
+    ),
+  ) as { entries: unknown[] };
+  return journal.entries.length;
+}
+
 describe("runMigrations（幂等）", () => {
   it("对同一文件库连续执行两次迁移不报错，且迁移记录不重复", () => {
     const db = createDb(join(dir, "tutor.db"));
@@ -25,7 +37,7 @@ describe("runMigrations（幂等）", () => {
     const rows = db.$client
       .prepare("SELECT count(*) AS n FROM __drizzle_migrations")
       .get() as { n: number };
-    expect(rows.n).toBe(1);
+    expect(rows.n).toBe(countJournalEntries());
 
     const tables = db.$client
       .prepare(
