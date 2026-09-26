@@ -5,6 +5,10 @@ packages:
 
 # 允许执行安装期构建脚本的依赖（pnpm 12 默认阻止所有依赖的生命周期脚本；esbuild 是 tsx/vite 的构建器）
 allowBuilds:
+  # better-sqlite3@13 的预编译二进制（prebuilds/*.node，含 win32-x64）直接随 npm 包分发，
+  # 无 install 脚本；这里显式设为 false（忽略构建），若设 true 会触发 pnpm 对 binding.gyp
+  # 的隐式 node-gyp 编译，本机无 MSVC 工具链必失败。
+  better-sqlite3: false
   esbuild: true
 
 # 供应链冷却期豁免：@types/node 跟随 Node 补丁版随时发布，需豁免 pnpm 的最小发布龄限制（由 pnpm install 自动写入）
