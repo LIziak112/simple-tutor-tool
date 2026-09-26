@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // 前端跑在浏览器：在根 base（无 DOM）之上补充 DOM 类型
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    // vite/client 提供 import.meta.env；node 供 vite.config.ts 使用
+    "types": ["vite/client", "node"],
+    // shadcn/ui 约定的 @ 别名（与 vite.config.ts 的 resolve.alias 保持一致）。
+    // TS 7 已移除 baseUrl：paths 相对 tsconfig 所在目录解析
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  },
+  "include": ["src", "vite.config.ts"]
+}
