@@ -13,7 +13,7 @@ import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
-import { lectures, questions, units } from "../db/schema.ts";
+import { lectures, courseItems, questions, units } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { restoreLecture } from "../services/library-service.ts";
 
@@ -24,7 +24,8 @@ import { restoreLecture } from "../services/library-service.ts";
  * - 单题编辑 422 分支：0 题 / 多题 / id 改动（ID_IMMUTABLE）/ error 级 lint（LINT_ERROR）；
  * - 讲义编辑（title 从 H1 重取、id 不变）与删除——T2A.1 起改软删（行保留、
  *   内容树消失、恢复经 LibraryService；关联单元 lectureId 保留）；
- * - 课程 CRUD（含非空拒删 409 COURSE_NOT_EMPTY）；全部接口未登录 401。
+ * - 课程 CRUD（T2A.4 起 DELETE 按 D4：无作答即删，目录/成员随删、资源库保留）；
+ *   全部接口未登录 401。
  */
 
 const silentLogger: Logger = pino({ enabled: false });
@@ -828,8 +829,8 @@ describe("课程 CRUD", () => {
     expect(tree.courses.map((c) => c.title)).not.toContain("初一上学期");
   });
 
-  it("课程下有内容时删除 → 409 COURSE_NOT_EMPTY", async () => {
-    const { app, cookie } = await makeTeacherApp();
+  it("课程下有内容但无作答 → D4 删除成功；目录条目清理、资源库保留", async () => {
+    const { app, db, cookie } = await makeTeacherApp();
     const tree = await getTree(app, cookie);
     const defaultCourse = tree.courses.find((c) => c.title === "默认课程");
     if (defaultCourse === undefined) throw new Error("默认课程缺失");
@@ -839,13 +840,19 @@ describe("课程 CRUD", () => {
       `/api/teacher/courses/${defaultCourse.id}`,
       cookie,
     );
-    expect(res.status).toBe(409);
-    const body = (await res.json()) as ApiErr;
-    expect(body.error).toBe("COURSE_NOT_EMPTY");
-    expect(body.message).toContain("课程下还有讲义或练习单元");
-    // 课程仍在
+    expect(res.status).toBe(200);
+    // 课程与目录条目消失
     const after = await getTree(app, cookie);
-    expect(after.courses.map((c) => c.title)).toContain("默认课程");
+    expect(after.courses.map((c) => c.title)).not.toContain("默认课程");
+    expect(
+      db.select().from(courseItems).where(eq(courseItems.courseId, defaultCourse.id))
+        .all().length,
+    ).toBe(0);
+    // D4：删除课程不影响资源库内容（讲义/单元仍在库中）
+    expect(db.select({ id: lectures.id }).from(lectures).all().length).toBeGreaterThan(0);
+    expect(db.select({ id: units.id }).from(units).all().length).toBeGreaterThan(
+      0,
+    );
   });
 
   it("空标题 → 400；不存在的课程 → 404 COURSE_NOT_FOUND；课程排序生效", async () => {
