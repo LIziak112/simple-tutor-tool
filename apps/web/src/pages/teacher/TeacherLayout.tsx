@@ -1,7 +1,7 @@
 import {
-  BookOpen,
   ClipboardList,
   Database,
+  Library,
   LineChart,
   Settings,
   Users,
@@ -14,13 +14,13 @@ import { AuthScreenError, AuthScreenLoading } from "./SetupPage";
 /**
  * /t 教师端布局 + 路由守卫（T1.9）。
  * 守卫：me 查询 pending → 全屏加载；401 → 跳 /t/login；其他错误 → 错误态 + 重试。
- * 布局：左侧导航（md+）/顶部横向导航（小屏），五个分区：
- * 内容 / 学生、作业（T2.1 学生页 + T2.2 作业页）/ 数据 / 学情 / 设置。触控目标一律 ≥44px。
+ * 布局：左侧导航（md+）/顶部横向导航（小屏），分区：资源库（T2A.2 起替代「内容」）、
+ * 学生、作业、数据、学情、设置。触控目标一律 ≥44px。
  */
 
 /** 导航分区（后续任务逐个替换占位页） */
 const NAV_ITEMS = [
-  { to: "/t/content", label: "内容", icon: BookOpen },
+  { to: "/t/library", label: "资源库", icon: Library },
   { to: "/t/students", label: "学生", icon: Users },
   { to: "/t/assignments", label: "作业", icon: ClipboardList },
   { to: "/t/data", label: "数据", icon: Database },

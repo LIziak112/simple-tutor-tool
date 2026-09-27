@@ -21,8 +21,19 @@ import {
   type LearningEventBatchData,
   type LectureDetail,
   type LectureEvent,
+  type LectureMetaData,
+  type LectureMetaUpdate,
   type LectureUpdateData,
   type LectureUpdateRequest,
+  type LibraryBatchData,
+  type LibraryBatchRequest,
+  type LibraryFolder,
+  type LibraryFolderCreate,
+  type LibraryFolderReorder,
+  type LibraryFolderUpdate,
+  type LibraryLectureList,
+  type LibraryUnitList,
+  type LibraryUsage,
   type PublicConfigData,
   type QuestionDetail,
   type QuestionUpdateData,
@@ -45,6 +56,8 @@ import {
   type TeacherAssignmentListData,
   type TeacherInfo,
   type TeacherStatusData,
+  type UnitMetaData,
+  type UnitMetaUpdate,
 } from "@tutor/contract";
 import { hc } from "hono/client";
 import type { AppType } from "server";
@@ -607,4 +620,228 @@ export function studentInkPngUrl(
   questionId: string,
 ): string {
   return `/api/student/attempts/${encodeURIComponent(attemptId)}/ink/${encodeURIComponent(questionId)}.png`;
+}
+
+// ---------- T2A.2：资源库（讲义库 / 题库 / 回收站 + 单元管理） ----------
+
+export type {
+  LectureMetaUpdate,
+  LibraryBatchRequest,
+  LibraryFolderCreate,
+  LibraryFolderReorder,
+  LibraryFolderUpdate,
+  UnitMetaUpdate,
+} from "@tutor/contract";
+
+/** 列表查询参数（folderId：null = 未归类；deleted = 回收站） */
+export interface LibraryListParams {
+  folderId?: string | null | undefined;
+  q?: string | undefined;
+  deleted?: boolean | undefined;
+}
+
+/** 列表查询参数 → querystring（undefined 字段不发送） */
+function libraryListQuery(params: LibraryListParams): Record<string, string> {
+  const query: Record<string, string> = {};
+  if (params.folderId !== undefined) {
+    query.folderId = params.folderId === null ? "none" : params.folderId;
+  }
+  if (params.q !== undefined && params.q.trim().length > 0) {
+    query.q = params.q.trim();
+  }
+  if (params.deleted) {
+    query.deleted = "1";
+  }
+  return query;
+}
+
+/** 文件夹列表（order 升序，含未删除资源计数；「未归类」由前端固定渲染） */
+export function fetchLibraryFolders(): Promise<{
+  folders: LibraryFolder[];
+}> {
+  return callApi(() => api.api.teacher.library.folders.$get());
+}
+
+/** 新建文件夹（同名已存在 409 FOLDER_NAME_EXISTS） */
+export function createLibraryFolderApi(
+  request: LibraryFolderCreate,
+): Promise<LibraryFolder> {
+  return callApi(() =>
+    api.api.teacher.library.folders.$post({ json: request }),
+  );
+}
+
+/** 文件夹改名（json 以独立变量传入的原因同 updateQuestion） */
+export function renameLibraryFolderApi(
+  id: string,
+  request: LibraryFolderUpdate,
+): Promise<LibraryFolder> {
+  const args = { param: { id }, json: request };
+  return callApi(() => api.api.teacher.library.folders[":id"].$patch(args));
+}
+
+/** 删除文件夹：内容移入未归类，响应返回移动数量 {movedLectures, movedUnits} */
+export function deleteLibraryFolderApi(
+  id: string,
+): Promise<{ movedLectures: number; movedUnits: number }> {
+  return callApi(() =>
+    api.api.teacher.library.folders[":id"].$delete({ param: { id } }),
+  );
+}
+
+/** 文件夹拖拽排序（ids 为全部文件夹完整新顺序） */
+export function reorderLibraryFoldersApi(
+  request: LibraryFolderReorder,
+): Promise<null> {
+  return callApi(() =>
+    api.api.teacher.library.folders.reorder.$post({ json: request }),
+  );
+}
+
+/** 讲义库列表（folderId/q/deleted 筛选） */
+export function fetchLibraryLectures(
+  params: LibraryListParams = {},
+): Promise<LibraryLectureList> {
+  return callApi(() =>
+    api.api.teacher.library.lectures.$get({ query: libraryListQuery(params) }),
+  );
+}
+
+/** 题库列表（单元含题数、题型分布、考点、引用数、使用作业数、题目摘要） */
+export function fetchLibraryUnits(
+  params: LibraryListParams = {},
+): Promise<LibraryUnitList> {
+  return callApi(() =>
+    api.api.teacher.library.units.$get({ query: libraryListQuery(params) }),
+  );
+}
+
+/** 单元元数据编辑（标题/主题/文件夹/配套讲义；显式 null = 清空） */
+export function updateUnitMetaApi(
+  id: string,
+  request: UnitMetaUpdate,
+): Promise<UnitMetaData> {
+  const args = { param: { id }, json: request };
+  return callApi(() => api.api.teacher.units[":id"].$patch(args));
+}
+
+/** 单元软删（进回收站，可恢复） */
+export function deleteUnitApi(id: string): Promise<null> {
+  return callApi(() => api.api.teacher.units[":id"].$delete({ param: { id } }));
+}
+
+/** 单元从回收站恢复 */
+export function restoreUnitApi(id: string): Promise<null> {
+  return callApi(() =>
+    api.api.teacher.units[":id"].restore.$post({ param: { id } }),
+  );
+}
+
+/** 单元彻底删除（有作答记录或作业引用时 409 RESOURCE_IN_USE） */
+export function purgeUnitApi(id: string): Promise<null> {
+  return callApi(() =>
+    api.api.teacher.units[":id"].purge.$delete({ param: { id } }),
+  );
+}
+
+/** 讲义移动文件夹（内容编辑走现有 updateLecture） */
+export function updateLectureFolderApi(
+  id: string,
+  request: LectureMetaUpdate,
+): Promise<LectureMetaData> {
+  const args = { param: { id }, json: request };
+  return callApi(() => api.api.teacher.lectures[":id"].$patch(args));
+}
+
+/** 讲义从回收站恢复 */
+export function restoreLectureApi(id: string): Promise<null> {
+  return callApi(() =>
+    api.api.teacher.lectures[":id"].restore.$post({ param: { id } }),
+  );
+}
+
+/** 讲义彻底删除（配套单元有作答记录时 409 RESOURCE_IN_USE） */
+export function purgeLectureApi(id: string): Promise<null> {
+  return callApi(() =>
+    api.api.teacher.lectures[":id"].purge.$delete({ param: { id } }),
+  );
+}
+
+/** 单元使用情况（删除确认弹层 / purge 条件判断数据源） */
+export function fetchUnitUsageApi(id: string): Promise<LibraryUsage> {
+  return callApi(() =>
+    api.api.teacher.units[":id"].usage.$get({ param: { id } }),
+  );
+}
+
+/** 讲义使用情况（assignments 恒空，作答数经配套单元保守合计） */
+export function fetchLectureUsageApi(id: string): Promise<LibraryUsage> {
+  return callApi(() =>
+    api.api.teacher.lectures[":id"].usage.$get({ param: { id } }),
+  );
+}
+
+/** 批量操作（move/delete/restore/addToCourse；部分失败逐条返回） */
+export function batchLibraryApi(
+  request: LibraryBatchRequest,
+): Promise<LibraryBatchData> {
+  return callApi(() => api.api.teacher.library.batch.$post({ json: request }));
+}
+
+/**
+ * 下载导出的 Markdown（GET …/export.md 为文件直出，非 JSON 统一壳）：
+ * 同构 fetch（同源自动带会话 Cookie）拿 blob 触发浏览器下载；
+ * 失败时按统一错误壳解析成 ApiError（如 404 UNIT_NOT_FOUND）。
+ */
+export async function downloadExportMd(
+  kind: "unit" | "lecture",
+  id: string,
+): Promise<void> {
+  const path =
+    kind === "unit"
+      ? `/api/teacher/units/${encodeURIComponent(id)}/export.md`
+      : `/api/teacher/lectures/${encodeURIComponent(id)}/export.md`;
+  let res: Response;
+  try {
+    res = await fetch(path);
+  } catch {
+    throw new Error(
+      "连不上服务器，请确认后端已启动（pnpm --filter server dev）后重试",
+    );
+  }
+  if (!res.ok) {
+    // 文件接口的错误仍是统一 JSON 壳
+    let body: unknown = null;
+    try {
+      body = await res.json();
+    } catch {
+      body = null;
+    }
+    const parsed = apiResponseSchema.safeParse(body);
+    if (parsed.success && !parsed.data.ok) {
+      throw new ApiError(
+        parsed.data.error,
+        parsed.data.message,
+        res.status,
+        pickExtraFields(body),
+      );
+    }
+    throw new Error(`导出失败（HTTP ${res.status}），请稍后重试`);
+  }
+  const disposition = res.headers.get("content-disposition") ?? "";
+  // 优先 filename*=UTF-8''（中文标题），回退整个头文本
+  const star = /filename\*=UTF-8''([^;]+)/i.exec(disposition)?.[1];
+  const filename = star !== undefined ? decodeURIComponent(star) : `${id}.md`;
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  try {
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = filename;
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+  } finally {
+    URL.revokeObjectURL(url);
+  }
 }

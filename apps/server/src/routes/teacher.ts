@@ -13,6 +13,7 @@ import { pngResponse } from "../lib/binary-response";
 import { getTeacherInkMeta, getTeacherInkPng } from "../services/ink-service";
 import { createContentRoutes } from "./content";
 import { createImportRoutes } from "./import";
+import { createLibraryRoutes } from "./library";
 import { createAssignmentTeacherRoutes } from "./teacher-assignments";
 import { createStudentTeacherRoutes } from "./teacher-students";
 
@@ -76,6 +77,7 @@ export function createTeacherRoutes(
       })
       .route("/", createImportRoutes(db))
       .route("/", createContentRoutes(db))
+      .route("/", createLibraryRoutes(db))
       .route("/", createStudentTeacherRoutes(db))
       .route("/", createAssignmentTeacherRoutes(db))
   );

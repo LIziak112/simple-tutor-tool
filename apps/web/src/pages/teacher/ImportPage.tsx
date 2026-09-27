@@ -107,7 +107,8 @@ export function ImportPage() {
     mutationFn: commitImport,
     onSuccess: (report) => {
       void queryClient.invalidateQueries({ queryKey: contentTreeKey });
-      navigate("/t/content", {
+      // T2A.2：导入内容归属资源库，成功后跳资源库页（带成功提示 state）
+      navigate("/t/library", {
         state: {
           importSuccess: `导入完成：单元 ${report.units.length} 个（新增 ${report.units.filter((u) => u.inserted).length} / 更新 ${report.units.filter((u) => u.updated).length}），讲义 ${report.lectures.length} 篇，题目新增 ${report.questions.inserted} / 更新 ${report.questions.updated}。`,
         },
@@ -149,10 +150,10 @@ export function ImportPage() {
       {/* 面包屑 + 标题 */}
       <nav aria-label="面包屑" className="flex items-center gap-1.5 text-sm">
         <Link
-          to="/t/content"
+          to="/t/library"
           className="rounded px-1 py-0.5 text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
         >
-          内容
+          资源库
         </Link>
         <span aria-hidden className="text-muted-foreground">
           /

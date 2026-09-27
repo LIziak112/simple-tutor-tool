@@ -32,7 +32,7 @@ test.describe("主流程：布置作业 → 学生作答与交卷 → 结果与�
     await page.goto("/t/login");
     await page.fill("#login-password", TEACHER_PASSWORD);
     await page.getByRole("button", { name: "登录", exact: true }).click();
-    await page.waitForURL("**/t/content");
+    await page.waitForURL("**/t/library");
 
     // —— 教师端 UI：建学生（拿到专属链接；初始密码留空由服务端生成）——
     const studentName = `e2e学生${uniqueSuffix()}`;
