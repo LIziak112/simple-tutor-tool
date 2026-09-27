@@ -11,10 +11,15 @@ import { defineConfig, devices } from "@playwright/test";
  * iPad（第 7 代）竖屏设备模拟（820×1180、触摸、移动端 UA）。
  *
  * 被测环境（webServer 数组，先 server 后 web）：
- * - server：tsx 直接跑 apps/server/src/index.ts（不用 watch，避免孤儿进程），
- *   端口 8899、DATA_DIR 指向本 run 唯一临时目录（不污染本地 data/，run 间数据隔离）；
- * - web：vite dev（--port 5199 --strictPort），/api 代理目标经
- *   DEV_API_PROXY_TARGET 环境变量指向 8899（vite.config.ts 支持）。
+ * - server：node 直接跑 tsx 的 cli 入口（不用 pnpm --filter 壳——pnpm 在 POSIX 上
+ *   不向子进程转发信号，Playwright teardown 杀不到 server，CI 曾等满 900s；
+ *   tsx cli 会向真正的 server 进程转发 SIGTERM/SIGINT），cwd 指到 apps/server，
+ *   端口 8899、DATA_DIR 指向本 run 唯一临时目录（不污染本地 data/）；
+ * - web：node 直接跑 vite 的 bin（同样去 pnpm 壳），cwd 指到 apps/web，
+ *   /api 代理目标经 DEV_API_PROXY_TARGET 指向 8899（vite.config.ts 支持）。
+ * gracefulShutdown：POSIX 上 teardown 先向进程组发 SIGTERM（server 的优雅退出
+ * 处理生效，见 apps/server/src/index.ts），10 秒未退再走默认 SIGKILL 组杀兜底；
+ * Windows 不支持优雅关闭，自动回退 taskkill /T 树杀（本机路径不变）。
  * 两个端口都避开日常 pnpm dev 的 8787/5173（vite 端口被占时会自动 +1 顺延，
  * 如 5174），本机开发与 E2E 可同时进行；
  * reuseExistingServer 一律 false——E2E 数据目录每 run 不同，复用旧 server 会写错库。
@@ -85,10 +90,14 @@ export default defineConfig({
   ],
   webServer: [
     {
-      command: "pnpm --filter server exec tsx src/index.ts",
+      // 去掉 pnpm 壳（POSIX 信号转发断链的根因）：node 直接跑 tsx 的 cli 入口。
+      // 进程链 = Playwright → node(tsx cli) → node(server)，tsx cli 会转发
+      // SIGTERM/SIGINT，server 自身也有优雅退出处理（src/index.ts），双层保证。
+      command: "node node_modules/tsx/dist/cli.mjs src/index.ts",
+      cwd: "apps/server",
       url: `http://127.0.0.1:${E2E_SERVER_PORT}/api/public/health`,
       reuseExistingServer: false,
-      // 180s：CI 2 核 runner 冷启动（pnpm→tsx→依赖加载→迁移）留足余量；本机秒级
+      // 180s：CI 2 核 runner 冷启动（tsx 加载依赖→迁移）留足余量；本机秒级
       timeout: 180_000,
       // env 与 process.env 合并（Playwright spawn 语义），CI/本机行为一致
       env: {
@@ -100,9 +109,14 @@ export default defineConfig({
       // 本机忽略 stdout 减噪（stderr 始终透出）
       stdout: IS_CI ? "pipe" : "ignore",
       stderr: "pipe",
+      // POSIX teardown：先向进程组发 SIGTERM（server 优雅退出，见 src/index.ts），
+      // 10 秒未退由 Playwright 走默认 SIGKILL 进程组杀兜底；Windows 忽略此选项
+      gracefulShutdown: { signal: "SIGTERM", timeout: 10_000 },
     },
     {
-      command: `pnpm --filter web exec vite --port ${E2E_WEB_PORT} --strictPort`,
+      // 同样去 pnpm 壳：node 直接跑 vite bin，cwd 到 apps/web（vite 以 cwd 为 root）
+      command: `node node_modules/vite/bin/vite.js --port ${E2E_WEB_PORT} --strictPort`,
+      cwd: "apps/web",
       url: `http://127.0.0.1:${E2E_WEB_PORT}`,
       reuseExistingServer: false,
       // 180s：vite 冷启动（依赖预构建）在 CI 上明显慢于本机
@@ -112,6 +126,7 @@ export default defineConfig({
       },
       stdout: IS_CI ? "pipe" : "ignore",
       stderr: "pipe",
+      gracefulShutdown: { signal: "SIGTERM", timeout: 10_000 },
     },
   ],
 });
