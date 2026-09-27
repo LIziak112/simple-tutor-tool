@@ -54,3 +54,48 @@ jobs:
 
       - name: 构建
         run: pnpm build
+
+  # T2.13 E2E（架构 §7.2：E2E 全过才可合并；webkit 项目必须在 CI 中运行）。
+  # 独立 job：浏览器安装与单测互不拖慢；失败时上传 html 报告 artifact。
+  e2e:
+    name: e2e (chromium + webkit, iPad 模拟)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v5
+
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: 安装 Node 24
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      # 浏览器版本随 pnpm-lock.yaml 里的 @playwright/test 版本走：lockfile 不变即命中缓存。
+      # chromium 用 playwright 自带 build（config 中 CI 不走 msedge channel），
+      # 与 webkit 一起落在 ~/.cache/ms-playwright，可整体缓存；系统库由 --with-deps 装。
+      - name: 缓存 Playwright 浏览器
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+
+      - name: 安装 Playwright 浏览器（chromium + webkit）
+        run: npx playwright install --with-deps chromium webkit
+
+      - name: E2E 测试
+        run: pnpm e2e
+
+      - name: 上传测试报告
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
