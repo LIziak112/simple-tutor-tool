@@ -9,6 +9,8 @@ import {
   sessionCookieOptions,
 } from "../auth/session";
 import type { Db } from "../db/client";
+import { pngResponse } from "../lib/binary-response";
+import { getTeacherInkMeta, getTeacherInkPng } from "../services/ink-service";
 import { createContentRoutes } from "./content";
 import { createImportRoutes } from "./import";
 import { createAssignmentTeacherRoutes } from "./teacher-assignments";
@@ -27,11 +29,14 @@ import { createStudentTeacherRoutes } from "./teacher-students";
  *   POST /students/:id/reset-password、POST /students/:id/reset-link
  * - T2.2（业务在 AssignmentService）：GET/POST /assignments、
  *   PATCH/DELETE /assignments/:id（删除为软删，作答保留）
+ * - T2.8（业务在 InkService）：GET /ink/:inkId.png（笔迹 PNG 直出）、
+ *   GET /ink/:inkId（元数据，T3.1 批改页用）。Hono path 参数吞掉整个 segment
+ *   （含 .png 后缀），故注册一个 /ink/:file、handler 内按后缀分流。
  *
  * 返回类型不显式标注：链式注册把路由签名累积进推断类型，
  * 挂载后 AppType 才能带上这些路由（前端 hc 端到端类型的前提）。
  */
-export function createTeacherRoutes(db: Db, publicUrl: string) {
+export function createTeacherRoutes(db: Db, publicUrl: string, dataDir: string) {
   const requireTeacher = createRequireTeacher(db);
   return new Hono<TeacherEnv>()
     .use("*", requireTeacher)
@@ -50,6 +55,15 @@ export function createTeacherRoutes(db: Db, publicUrl: string) {
         sessionCookieOptions(isSecurePublicUrl(publicUrl)),
       );
       return c.json({ ok: true, data: null });
+    })
+    // T2.8：教师读笔迹——<inkId>.png 直出 PNG；<inkId> 返回元数据
+    .get("/ink/:file", (c) => {
+      const file = c.req.param("file");
+      if (file.endsWith(".png")) {
+        const png = getTeacherInkPng(db, dataDir, file.slice(0, -".png".length));
+        return pngResponse(png.bytes, png.etag);
+      }
+      return c.json({ ok: true, data: getTeacherInkMeta(db, file) });
     })
     .route("/", createImportRoutes(db))
     .route("/", createContentRoutes(db))

@@ -14,7 +14,7 @@ import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
 import { attempts, questions, responses } from "../db/schema.ts";
-import { createTestDb } from "../db/test-utils.ts";
+import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 
 /**
@@ -88,6 +88,7 @@ async function makeAttemptApp(): Promise<{
     logger: silentLogger,
     db,
     publicUrl: "http://localhost:8787",
+    dataDir: createTestDir(),
   });
   const setup = await app.request("/api/public/teacher/setup", {
     method: "POST",

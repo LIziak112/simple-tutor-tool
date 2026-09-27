@@ -14,7 +14,7 @@ import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
 import { questions, units } from "../db/schema.ts";
-import { createTestDb } from "../db/test-utils.ts";
+import { createTestDb, createTestDir } from "../db/test-utils.ts";
 
 /**
  * T1.12 单条编辑/删除/排序/课程 CRUD 集成测试（app.request() 直调路由 + 内存库）：
@@ -67,6 +67,7 @@ async function makeTeacherApp(): Promise<TeacherApp> {
     logger: silentLogger,
     db,
     publicUrl: "http://localhost:8787",
+    dataDir: createTestDir(),
   });
   const res = await app.request("/api/public/teacher/setup", {
     method: "POST",
@@ -190,6 +191,7 @@ describe("T1.12 未登录 401", () => {
       logger: silentLogger,
       db,
       publicUrl: "http://localhost:8787",
+      dataDir: createTestDir(),
     });
     for (const testCase of CASES) {
       const res = await request(

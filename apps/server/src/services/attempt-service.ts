@@ -81,8 +81,12 @@ function requireAssignmentRow(db: Db, id: string): Assignment {
   return row;
 }
 
-/** 取本人 attempt：不存在 → 404 ATTEMPT_NOT_FOUND；非本人 → 403 FORBIDDEN（验收项） */
-function requireOwnAttempt(
+/**
+ * 取本人 attempt：不存在 → 404 ATTEMPT_NOT_FOUND；非本人 → 403 FORBIDDEN（验收项）。
+ * attempt 归属是详情/草稿/交卷/笔迹（T2.8 ink-service 复用）接口的唯一权限依据，
+ * 抽为导出函数保证各接口口径永不漂移。
+ */
+export function requireOwnAttempt(
   db: Db,
   studentId: string,
   attemptId: string,
@@ -99,6 +103,37 @@ function requireOwnAttempt(
     throw new HttpError(403, "FORBIDDEN", "只能查看自己的作答");
   }
   return row;
+}
+
+/**
+ * 校验题目属于 attempt 的单元且未软删，否则 404 QUESTION_NOT_FOUND
+ * （T2.8 ink-service 复用：笔迹上传与草稿答案同一口径）。
+ */
+export function requireUnitQuestion(
+  db: Db,
+  attempt: Attempt,
+  questionId: string,
+): void {
+  const question = db
+    .select({
+      id: questions.id,
+      unitId: questions.unitId,
+      deletedAt: questions.deletedAt,
+    })
+    .from(questions)
+    .where(eq(questions.id, questionId))
+    .get();
+  if (
+    question === undefined ||
+    question.deletedAt !== null ||
+    question.unitId !== attempt.unitId
+  ) {
+    throw new HttpError(
+      404,
+      "QUESTION_NOT_FOUND",
+      "题目不存在或不属于这份作业",
+    );
+  }
 }
 
 /** 校验学生被指派该作业且作业未删除，否则 403/404（与 T2.4 paper 接口同口径） */
@@ -265,26 +300,7 @@ export function saveDraftAnswer(
       "这份作业已交卷，不能再修改答案",
     );
   }
-  const question = db
-    .select({
-      id: questions.id,
-      unitId: questions.unitId,
-      deletedAt: questions.deletedAt,
-    })
-    .from(questions)
-    .where(eq(questions.id, questionId))
-    .get();
-  if (
-    question === undefined ||
-    question.deletedAt !== null ||
-    question.unitId !== attempt.unitId
-  ) {
-    throw new HttpError(
-      404,
-      "QUESTION_NOT_FOUND",
-      "题目不存在或不属于这份作业",
-    );
-  }
+  requireUnitQuestion(db, attempt, questionId);
 
   const answerJson = JSON.stringify(answer);
   const existing = db

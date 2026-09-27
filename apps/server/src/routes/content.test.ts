@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
 import { questions } from "../db/schema.ts";
-import { createTestDb } from "../db/test-utils.ts";
+import { createTestDb, createTestDir } from "../db/test-utils.ts";
 
 /**
  * 内容树接口集成测试（T1.11，app.request() 直调路由 + 内存库）：
@@ -45,6 +45,7 @@ async function makeTeacherApp(): Promise<{
     logger: silentLogger,
     db,
     publicUrl: "http://localhost:8787",
+    dataDir: createTestDir(),
   });
   const res = await app.request("/api/public/teacher/setup", {
     method: "POST",
@@ -102,6 +103,7 @@ describe("GET /api/teacher/content", () => {
       logger: silentLogger,
       db,
       publicUrl: "http://localhost:8787",
+      dataDir: createTestDir(),
     });
     const res = await fetchTree(app);
     expect(res.status).toBe(401);

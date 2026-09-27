@@ -6,7 +6,7 @@ import type { Logger } from "pino";
 import pino from "pino";
 import { afterEach, describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
-import { createTestDb } from "../db/test-utils.ts";
+import { createTestDb, createTestDir } from "../db/test-utils.ts";
 
 /**
  * /api/public/spec/:file 接口测试（T1.13，app.request() 直调路由）：
@@ -26,6 +26,7 @@ function makeApp(specDir?: string | undefined): ReturnType<typeof createApp> {
     logger: silentLogger,
     db: createTestDb(),
     publicUrl: "http://localhost:8787",
+    dataDir: createTestDir(),
     specDir,
   });
 }

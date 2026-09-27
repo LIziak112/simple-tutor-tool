@@ -7,7 +7,7 @@ import type { Logger } from "pino";
 import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { createApp } from "./app";
-import { createTestDb } from "./db/test-utils";
+import { createTestDb, createTestDir } from "./db/test-utils";
 
 /** 静音日志器：默认测试不向 stdout 刷日志 */
 const silentLogger: Logger = pino({ enabled: false });
@@ -24,6 +24,7 @@ function makeApp(options: {
   return createApp({
     db: createTestDb(),
     publicUrl: "http://localhost:8787",
+    dataDir: createTestDir(),
     ...options,
   });
 }

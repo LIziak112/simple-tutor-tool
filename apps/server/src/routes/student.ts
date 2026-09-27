@@ -13,7 +13,8 @@ import {
   sessionCookieOptions,
 } from "../auth/session";
 import type { Db } from "../db/client";
-import { parseJsonBody } from "../lib/http-error";
+import { pngResponse } from "../lib/binary-response";
+import { HttpError, parseJsonBody } from "../lib/http-error";
 import {
   getStudentAssignmentPaper,
   listStudentAssignments,
@@ -28,6 +29,7 @@ import {
   getStudentLecture,
   listStudentLectures,
 } from "../services/content-service";
+import { getInkDoc, getStudentInkPng, saveInk } from "../services/ink-service";
 import { changeStudentPassword } from "../services/student-service";
 
 /**
@@ -45,8 +47,17 @@ import { changeStudentPassword } from "../services/student-service";
  *   重复交卷 409 ALREADY_SUBMITTED）；
  * - GET  /attempts/:id：attempt 详情（T2.6；未交=草稿视图（无答案/详解/提示），
  *   已交=结果视图（含答案与详解、剥离提示内容））；
+ * - PUT  /attempts/:id/ink/:questionId：上传/覆盖手写笔迹（T2.8，multipart：
+ *   strokes（gzip 后 InkDoc JSON）+ snapshot（PNG），合计 ≤2MB 超 413）；
+ * - GET  /attempts/:id/ink/:questionId：取回该题矢量 InkDoc（无笔迹 404）；
+ * - GET  /attempts/:id/ink/:questionId.png：本人笔迹 PNG 直出（结果页缩略图）；
  * - GET  /lectures、GET /lectures/:id：讲义摘要列表与全文 markdown（T2.3）；
  * - POST /logout：删除会话行并清除 Cookie（T2.3，与教师 logout 同实现口径）。
+ *
+ * 路径段带后缀说明：Hono 的 path 参数会吞掉整个 segment（含 .png 后缀），
+ * 因此 ink 的取回路由注册一个 /attempts/:id/ink/:questionId，handler 内按
+ * .png 后缀分流 JSON（矢量文档）与 PNG（快照直出）——对外 URL 形态与任务
+ * 约定一致（GET …/ink/:questionId 与 GET …/ink/:questionId.png）。
  *
  * 学生端接口永不返回答案/详解等教师侧内容（AGENTS.md 第 3 条）：/assignments
  * 只含单元公开元信息（标题/topic/题数）；/assignments/:id/paper 与草稿视图的
@@ -55,10 +66,10 @@ import { changeStudentPassword } from "../services/student-service";
  * 「未交卷题目」），但提示内容仍不下发（T2.11 按需）。泄露测试见
  * routes/assignments.test.ts、routes/student-lectures.test.ts、
  * routes/student-paper.test.ts 与 routes/student-attempts.test.ts
- * （通用工具 src/test/assert-no-leak.ts）。
+ * （通用工具 src/test/assert-no-leak.ts；T2.8 ink 接口见 routes/student-ink.test.ts）。
  * 返回类型不显式标注 Hono：链式注册把路由签名累积进推断类型（AppType / hc 前提）。
  */
-export function createStudentRoutes(db: Db, publicUrl: string) {
+export function createStudentRoutes(db: Db, publicUrl: string, dataDir: string) {
   const requireStudent = createRequireStudent(db);
   return new Hono<StudentEnv>()
     .use("*", requireStudent)
@@ -120,6 +131,57 @@ export function createStudentRoutes(db: Db, publicUrl: string) {
       return c.json({
         ok: true,
         data: getAttemptDetail(db, c.var.student.id, c.req.param("id")),
+      });
+    })
+    // T2.8：上传/覆盖一道手写题的笔迹（multipart：strokes + snapshot）
+    .put("/attempts/:id/ink/:questionId", async (c) => {
+      const body = await c.req.parseBody();
+      const strokes = body["strokes"];
+      const snapshot = body["snapshot"];
+      // 两段都必须是文件（multipart 文件字段；字符串字段说明客户端组装错误）
+      if (!(strokes instanceof File) || !(snapshot instanceof File)) {
+        throw new HttpError(
+          400,
+          "VALIDATION_ERROR",
+          "请求需为 multipart/form-data，且包含 strokes 与 snapshot 两个文件",
+        );
+      }
+      return c.json({
+        ok: true,
+        data: saveInk(
+          db,
+          dataDir,
+          c.var.student.id,
+          c.req.param("id"),
+          c.req.param("questionId"),
+          new Uint8Array(await strokes.arrayBuffer()),
+          new Uint8Array(await snapshot.arrayBuffer()),
+        ),
+      });
+    })
+    // T2.8：取回矢量文档（JSON）或本人 PNG（.png 后缀分流，见文件头说明）
+    .get("/attempts/:id/ink/:questionId", (c) => {
+      const raw = c.req.param("questionId");
+      if (raw.endsWith(".png")) {
+        const png = getStudentInkPng(
+          db,
+          dataDir,
+          c.var.student.id,
+          c.req.param("id"),
+          // questionId 本身可能含点（来自 DSL），只剥离末尾 .png
+          raw.slice(0, -".png".length),
+        );
+        return pngResponse(png.bytes, png.etag);
+      }
+      return c.json({
+        ok: true,
+        data: getInkDoc(
+          db,
+          dataDir,
+          c.var.student.id,
+          c.req.param("id"),
+          raw,
+        ),
       });
     })
     .get("/lectures", (c) => {

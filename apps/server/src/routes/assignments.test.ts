@@ -11,7 +11,7 @@ import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
 import { assignments, questions } from "../db/schema.ts";
-import { createTestDb } from "../db/test-utils.ts";
+import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import {
   type AssignmentAttemptSummary,
   computeAssignmentStatus,
@@ -60,6 +60,7 @@ async function makeApp(): Promise<{
     logger: silentLogger,
     db,
     publicUrl: "http://localhost:8787",
+    dataDir: createTestDir(),
   });
   const setup = await request(app, "/api/public/teacher/setup", {
     password: TEACHER_PASSWORD,

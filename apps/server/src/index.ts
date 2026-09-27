@@ -35,6 +35,7 @@ const app = createApp({
   isProduction: config.isProduction,
   logger,
   db,
+  dataDir: config.dataDir,
   publicUrl: config.publicUrl,
 });
 
