@@ -32,11 +32,11 @@ import {
 
 /**
  * 内容管理路由（需教师会话），由 teacher.ts 挂在 /api/teacher 之下：
- * - GET    /content：内容树（T1.11）；
+ * - GET    /content：内容树（T1.11；T2A.1 起从 course_items 组装，形状不变）；
  * - GET    /questions/:id、PUT /questions/:id、DELETE /questions/:id：
  *   单题完整内容 / 单题编辑（重新解析，version+1）/ 软删（T1.12）；
  * - GET    /lectures/:id、PUT /lectures/:id、DELETE /lectures/:id：
- *   讲义完整内容 / 整篇编辑（title 从 H1 重取）/ 物理删除（T1.12）；
+ *   讲义完整内容 / 整篇编辑（title 从 H1 重取）/ 软删（T2A.1 起改软删，D3）；
  * - POST   /reorder：拖拽排序，order 按 ids 下标重写（T1.12）；
  * - POST   /courses、PATCH /courses/:id、DELETE /courses/:id：课程 CRUD（T1.12）。
  *

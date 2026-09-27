@@ -174,10 +174,15 @@ describe("CourseService：目录条目 CRUD（D6）", () => {
   it("updateCourseItem：visible/publishAt/title；非分节改 title 422；不存在 404", () => {
     const db = createTestDb();
     const { courseId, lectureId } = seed(db);
-    const [section] = addCourseItems(db, courseId, [{ kind: "section", title: "旧标题" }]);
-    const [lectureItem] = addCourseItems(db, courseId, [
+    const [sectionRow] = addCourseItems(db, courseId, [{ kind: "section", title: "旧标题" }]);
+    const [lectureItemRow] = addCourseItems(db, courseId, [
       { kind: "lecture", refId: lectureId },
     ]);
+    if (sectionRow === undefined || lectureItemRow === undefined) {
+      throw new Error("条目插入失败");
+    }
+    const section = sectionRow;
+    const lectureItem = lectureItemRow;
 
     expect(updateCourseItem(db, section.id, { title: "新标题" }).title).toBe("新标题");
     const updated = updateCourseItem(db, lectureItem.id, {
@@ -200,7 +205,9 @@ describe("CourseService：目录条目 CRUD（D6）", () => {
   it("deleteCourseItem 移除条目（资源不动）；不存在 404", () => {
     const db = createTestDb();
     const { courseId, unitId } = seed(db);
-    const [item] = addCourseItems(db, courseId, [{ kind: "unit", refId: unitId }]);
+    const [itemRow] = addCourseItems(db, courseId, [{ kind: "unit", refId: unitId }]);
+    if (itemRow === undefined) throw new Error("条目插入失败");
+    const item = itemRow;
     deleteCourseItem(db, item.id);
     expect(db.select().from(courseItems).all()).toEqual([]);
     expect(db.select().from(units).where(eq(units.id, unitId)).get()).toBeDefined();
@@ -212,11 +219,17 @@ describe("CourseService：目录条目 CRUD（D6）", () => {
   it("reorderCourseItems：完整顺序重写持久化；缺/多 id 404", () => {
     const db = createTestDb();
     const { courseId, lectureId, unitId } = seed(db);
-    const [l, u, s] = addCourseItems(db, courseId, [
+    const rows = addCourseItems(db, courseId, [
       { kind: "lecture", refId: lectureId },
       { kind: "unit", refId: unitId },
       { kind: "section", title: "分节" },
     ]);
+    const l = rows[0];
+    const u = rows[1];
+    const s = rows[2];
+    if (l === undefined || u === undefined || s === undefined) {
+      throw new Error("条目插入失败");
+    }
     reorderCourseItems(db, courseId, [s.id, u.id, l.id]);
     const after = db
       .select()

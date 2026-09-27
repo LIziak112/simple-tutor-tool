@@ -13,15 +13,17 @@ import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
-import { questions, units } from "../db/schema.ts";
+import { lectures, questions, units } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
+import { restoreLecture } from "../services/library-service.ts";
 
 /**
  * T1.12 单条编辑/删除/排序/课程 CRUD 集成测试（app.request() 直调路由 + 内存库）：
  * - 验收三条：编辑后题目 version+1 且 id 不变；软删题目不出现在内容树；
  *   reorder 后顺序保持（重新查询一致）；
  * - 单题编辑 422 分支：0 题 / 多题 / id 改动（ID_IMMUTABLE）/ error 级 lint（LINT_ERROR）；
- * - 讲义编辑（title 从 H1 重取、id 不变）与物理删除（关联单元解除关联）；
+ * - 讲义编辑（title 从 H1 重取、id 不变）与删除——T2A.1 起改软删（行保留、
+ *   内容树消失、恢复经 LibraryService；关联单元 lectureId 保留）；
  * - 课程 CRUD（含非空拒删 409 COURSE_NOT_EMPTY）；全部接口未登录 401。
  */
 
@@ -684,7 +686,7 @@ describe("讲义编辑与删除", () => {
     expect(body.message).toContain("一个 H1");
   });
 
-  it("删除讲义：物理删除，关联单元解除关联（lectureId 置空、单元保留）", async () => {
+  it("删除讲义：软删（行保留、deletedAt 写入、内容树消失），关联单元 lectureId 保留；重复删除幂等", async () => {
     const { app, db, cookie } = await makeTeacherApp();
     const tree = await getTree(app, cookie);
     const lectureId = tree.courses[0]?.lectures.find(
@@ -707,28 +709,61 @@ describe("讲义编辑与删除", () => {
     );
     expect(res.status).toBe(200);
 
+    // 内容树：已删讲义立即消失（窗口期过滤）
     const after = await getTree(app, cookie);
     expect(after.courses[0]?.lectures.map((l) => l.title)).toEqual([
       "第1讲 有理数",
     ]);
-    // 单元保留、关联解除
+    // 行保留（软删不物理删除），deletedAt 已写
+    const row = db
+      .select()
+      .from(lectures)
+      .where(eq(lectures.id, lectureId))
+      .get();
+    expect(row).toBeDefined();
+    expect(row?.deletedAt).not.toBeNull();
+    // 关联保留（恢复讲义即回到原状；「从课程移除」由目录条目承担，属 T2A.4）
     const unitAfter = db
       .select()
       .from(units)
       .where(eq(units.id, "随堂练习"))
       .get();
-    expect(unitAfter).toBeDefined();
-    expect(unitAfter?.lectureId).toBeNull();
+    expect(unitAfter?.lectureId).toBe(lectureId);
 
-    // 再删一次 → 404
+    // 重复删除幂等成功（软删口径，与题目一致；不再是 404）
     const again = await request(
       app,
       "DELETE",
       `/api/teacher/lectures/${lectureId}`,
       cookie,
     );
-    expect(again.status).toBe(404);
-    expect(((await again.json()) as ApiErr).error).toBe("LECTURE_NOT_FOUND");
+    expect(again.status).toBe(200);
+
+    // 未知 id → 404
+    const notFound = await request(
+      app,
+      "DELETE",
+      `/api/teacher/lectures/0b6f18ae-6b9a-4d0e-8b7c-9b1b1b1b1b1b`,
+      cookie,
+    );
+    expect(notFound.status).toBe(404);
+    expect(((await notFound.json()) as ApiErr).error).toBe("LECTURE_NOT_FOUND");
+  });
+
+  it("软删讲义经 LibraryService 恢复后回到内容树", async () => {
+    const { app, db, cookie } = await makeTeacherApp();
+    const tree = await getTree(app, cookie);
+    const lectureId = tree.courses[0]?.lectures.find(
+      (l) => l.title === "第2讲 数轴",
+    )?.id;
+    if (lectureId === undefined) throw new Error("第2讲缺失");
+    await request(app, "DELETE", `/api/teacher/lectures/${lectureId}`, cookie);
+    restoreLecture(db, lectureId);
+    const after = await getTree(app, cookie);
+    expect(after.courses[0]?.lectures.map((l) => l.title)).toEqual([
+      "第1讲 有理数",
+      "第2讲 数轴",
+    ]);
   });
 });
 

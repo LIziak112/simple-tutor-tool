@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { canStudentSeeItem } from "./visibility.ts";
+import {
+  canStudentSeeItem,
+  type StudentItemVisibilityInput,
+} from "./visibility.ts";
 
 /**
  * canStudentSeeItem 纯函数单测（T2A.1，D5 学生可见规则的唯一判定函数）。
@@ -141,7 +144,7 @@ describe("canStudentSeeItem：D5 条件 4（资源未软删 + 单元有未删题
 
 describe("canStudentSeeItem：多条件组合", () => {
   it("任一条件不满足即不可见（逐条件翻转的完整矩阵）", () => {
-    const failures: (Partial<typeof BASE>)[] = [
+    const failures: Partial<StudentItemVisibilityInput>[] = [
       { studentArchived: true },
       { isMember: false },
       { courseArchived: true },

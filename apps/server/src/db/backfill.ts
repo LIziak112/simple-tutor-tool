@@ -11,6 +11,9 @@ import {
   units,
 } from "./schema";
 
+/** 事务参数类型（与 services/question-sync.ts 的 Tx 同一定义方式） */
+type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
+
 /**
  * D23 现有数据搬迁（T2A.1 一次完成，幂等）。
  *
@@ -54,7 +57,7 @@ export function runBackfills(db: Db, now: Date = new Date()): void {
 }
 
 /** D23 步骤 1–4：资源库文件夹 + 课程目录 + 全员入课（见文件头注释） */
-function backfillT2a1(tx: Db, now: Date): void {
+function backfillT2a1(tx: Tx, now: Date): void {
   const nowIso = now.toISOString();
 
   const courseRows = tx

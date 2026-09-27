@@ -63,7 +63,11 @@ function validateItemInput(item: CourseItemInput): void {
         "分节标题不引用资源，不能携带 refId",
       );
     }
-    if (item.title === undefined || item.title.trim().length === 0) {
+    if (
+      item.title === undefined ||
+      item.title === null ||
+      item.title.trim().length === 0
+    ) {
       throw new HttpError(422, "VALIDATION_ERROR", "分节标题不能为空");
     }
     return;
