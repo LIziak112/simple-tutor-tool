@@ -12,3 +12,4 @@ deploy/
 # 环境变量与本机覆盖配置
 .env
 *.local
+.zcode/tmp/
