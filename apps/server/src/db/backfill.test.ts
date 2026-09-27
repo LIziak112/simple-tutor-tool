@@ -18,6 +18,7 @@ import {
   attempts,
   courseItems,
   courseStudents,
+  courses,
   dataMigrations,
   lectures,
   libraryFolders,
@@ -273,6 +274,230 @@ describe("D23 数据搬迁（T2A 前结构 fixture → 迁移 → 回填）", ()
     expect(db.select().from(dataMigrations).all()).toHaveLength(1);
     // 全新库再跑一次同样幂等
     runBackfills(db);
+    expect(db.select().from(dataMigrations).all()).toHaveLength(1);
+  });
+});
+
+describe("孤儿资源兜底（T2A.1 事故修复：与主标记无关、每次启动执行、幂等）", () => {
+  /**
+   * 复现事故形态：正常搬迁完成后（标记已存在），「新迁移+回填已执行、导入仍旧版
+   * 写法」的中间态服务写入了只带 courseId、不带 folderId、无 course_items 条目的
+   * 讲义/单元（旧版导入不建条目）。另造齐各边界对照行。
+   */
+  function seedOrphans(db: Db): void {
+    const t = "2026-09-27T03:00:00.000Z";
+    // 事故孤儿：courseId 指向现有课程、folderId NULL、未软删、无条目
+    db.insert(lectures)
+      .values({
+        id: "l-x1",
+        courseId: "c-a",
+        title: "事故讲义一",
+        markdown: "# 一",
+        order: 5,
+        updatedAt: t,
+      })
+      .run();
+    db.insert(units)
+      .values({
+        id: "u-x1",
+        courseId: "c-a",
+        lectureId: null,
+        title: "事故单元",
+        order: 3,
+        updatedAt: t,
+      })
+      .run();
+    // 对照：courseId 指向不存在的课程 → 不兜底
+    db.insert(lectures)
+      .values({
+        id: "l-x2",
+        courseId: "c-zombie",
+        title: "僵尸课程讲义",
+        markdown: "# 二",
+        order: 6,
+        updatedAt: t,
+      })
+      .run();
+    // 对照：已软删 → 不兜底
+    db.insert(lectures)
+      .values({
+        id: "l-x3",
+        courseId: "c-a",
+        title: "已删孤儿",
+        markdown: "# 三",
+        order: 7,
+        updatedAt: t,
+        deletedAt: t,
+      })
+      .run();
+    // 对照：folderId NULL 但该课程已有条目（如教师后来主动移入未归类）→ 整体跳过
+    db.insert(lectures)
+      .values({
+        id: "l-x4",
+        courseId: "c-a",
+        title: "有条目孤儿",
+        markdown: "# 四",
+        order: 8,
+        updatedAt: t,
+      })
+      .run();
+    db.insert(courseItems)
+      .values({
+        id: crypto.randomUUID(),
+        courseId: "c-a",
+        kind: "lecture",
+        refId: "l-x4",
+        title: null,
+        order: 99, // 放末尾，避免与既有条目 order 冲突影响断言排序
+        visible: true,
+        publishAt: null,
+        createdAt: t,
+      })
+      .run();
+    // 对照：文件夹不存在的新课程（兜底需现场建同名文件夹）
+    db.insert(courses)
+      .values({ id: "c-new", title: "新课程", order: 5, createdAt: t })
+      .run();
+    db.insert(lectures)
+      .values({
+        id: "l-x5",
+        courseId: "c-new",
+        title: "新课程讲义",
+        markdown: "# 五",
+        order: 9,
+        updatedAt: t,
+      })
+      .run();
+  }
+
+  /** 讲义/单元行按 id 快照（folderId 映射），用于断言「原有数据不动」 */
+  function folderIdByLecture(db: Db): Map<string, string | null> {
+    return new Map(
+      db
+        .select({ id: lectures.id, folderId: lectures.folderId })
+        .from(lectures)
+        .all()
+        .map((row) => [row.id, row.folderId] as const),
+    );
+  }
+
+  it("标记已存在 + 孤儿讲义/单元 → 补 folderId 与条目（讲义可见/单元隐藏），原有数据不动", () => {
+    const db = createPreT2aDb();
+    insertPreT2aFixture(db);
+    migrateAndBackfill(db);
+    seedOrphans(db);
+    const before = folderIdByLecture(db);
+
+    // 主标记已存在：这次 runBackfills 只会走孤儿兜底（模拟下一次启动）
+    runBackfills(db, new Date("2026-09-28T00:00:00.000Z"));
+
+    const folderA = db
+      .select()
+      .from(libraryFolders)
+      .where(eq(libraryFolders.name, "初一上"))
+      .get();
+    // 事故孤儿被补齐：folderId + 条目（讲义 visible=true、单元 visible=false，接末尾）
+    expect(folderIdByLecture(db).get("l-x1")).toBe(folderA?.id);
+    expect(itemTuples(db, "c-a")).toEqual([
+      ["l-a1", "lecture", true],
+      ["u-a1", "unit", false],
+      ["u-a2", "unit", false],
+      ["l-a2", "lecture", true],
+      ["u-a3", "unit", false],
+      ["l-x4", "lecture", true], // 对照条目原样（兜底未动它，也未补 folderId）
+      ["l-x1", "lecture", true], // 事故孤儿补齐：接末尾
+      ["u-x1", "unit", false],
+    ]);
+    // 新课程的孤儿：现场建同名文件夹并补齐
+    const folderNew = db
+      .select()
+      .from(libraryFolders)
+      .where(eq(libraryFolders.name, "新课程"))
+      .get();
+    expect(folderNew).toBeDefined();
+    expect(folderIdByLecture(db).get("l-x5")).toBe(folderNew?.id);
+    expect(itemTuples(db, "c-new")).toEqual([["l-x5", "lecture", true]]);
+
+    // 对照行全部不动：僵尸课程、已软删、条目已存在（连 folderId 也不改）
+    expect(folderIdByLecture(db).get("l-x2")).toBeNull();
+    expect(folderIdByLecture(db).get("l-x3")).toBeNull();
+    expect(folderIdByLecture(db).get("l-x4")).toBeNull();
+    // 原有讲义 folderId 原样
+    for (const [id, folderId] of before) {
+      if (id !== "l-x1" && id !== "l-x5") {
+        expect(folderIdByLecture(db).get(id)).toBe(folderId);
+      }
+    }
+    // 原有目录、成员、标记不动（joinedAt/appliedAt 仍是首次时间戳）
+    expect(itemTuples(db, "c-b")).toEqual([
+      ["l-b1", "lecture", true],
+      ["u-b1", "unit", false],
+    ]);
+    expect(
+      db
+        .select()
+        .from(courseStudents)
+        .all()
+        .every((m) => m.joinedAt === "2026-09-27T00:00:00.000Z"),
+    ).toBe(true);
+    expect(db.select().from(dataMigrations).all()).toEqual([
+      {
+        key: "t2a1_library_courses_backfill",
+        appliedAt: "2026-09-27T00:00:00.000Z",
+      },
+    ]);
+  });
+
+  it("兜底幂等：重复执行结果一致（无重复文件夹/条目/改写）", () => {
+    const db = createPreT2aDb();
+    insertPreT2aFixture(db);
+    migrateAndBackfill(db);
+    seedOrphans(db);
+    runBackfills(db, new Date("2026-09-28T00:00:00.000Z"));
+
+    const foldersAfterFirst = db.select().from(libraryFolders).all();
+    const itemsAfterFirst = db.select().from(courseItems).all();
+    const lecturesAfterFirst = folderIdByLecture(db);
+
+    runBackfills(db, new Date("2026-09-29T00:00:00.000Z"));
+
+    expect(db.select().from(libraryFolders).all()).toEqual(foldersAfterFirst);
+    expect(db.select().from(courseItems).all()).toEqual(itemsAfterFirst);
+    expect(folderIdByLecture(db)).toEqual(lecturesAfterFirst);
+  });
+
+  it("对已正常搬迁的库跑兜底：零改动", () => {
+    const db = createPreT2aDb();
+    insertPreT2aFixture(db);
+    migrateAndBackfill(db);
+
+    const folders = db.select().from(libraryFolders).all();
+    const items = db.select().from(courseItems).all();
+    const members = db.select().from(courseStudents).all();
+    const lectureFolderIds = folderIdByLecture(db);
+    const unitFolderIds = new Map(
+      db
+        .select({ id: units.id, folderId: units.folderId })
+        .from(units)
+        .all()
+        .map((row) => [row.id, row.folderId] as const),
+    );
+
+    runBackfills(db, new Date("2026-09-29T00:00:00.000Z"));
+
+    expect(db.select().from(libraryFolders).all()).toEqual(folders);
+    expect(db.select().from(courseItems).all()).toEqual(items);
+    expect(db.select().from(courseStudents).all()).toEqual(members);
+    expect(folderIdByLecture(db)).toEqual(lectureFolderIds);
+    expect(
+      new Map(
+        db
+          .select({ id: units.id, folderId: units.folderId })
+          .from(units)
+          .all()
+          .map((row) => [row.id, row.folderId] as const),
+      ),
+    ).toEqual(unitFolderIds);
     expect(db.select().from(dataMigrations).all()).toHaveLength(1);
   });
 });

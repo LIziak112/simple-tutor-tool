@@ -32,6 +32,7 @@ import {
   wrapSingleQuestionMd,
 } from "@tutor/md-dsl";
 import { and, asc, eq, isNotNull, isNull } from "drizzle-orm";
+import { ensureCourseFolder } from "../db/backfill";
 import type { Db } from "../db/client";
 import {
   courseItems,
@@ -40,7 +41,6 @@ import {
   imports,
   knowledgePoints,
   lectures,
-  libraryFolders,
   questionKnowledge,
   questions,
   units,
@@ -51,7 +51,6 @@ import {
   loadKnowledgeIdByName,
   questionFields,
   syncQuestionKnowledge,
-  type Tx,
 } from "./question-sync";
 
 /**
@@ -399,31 +398,6 @@ export function commitImport(
       .run();
     return report;
   });
-}
-
-/** 课程同名文件夹（存在即复用——D23-1 同款规则；无则追加到末尾）。事务内调用 */
-function ensureCourseFolder(
-  tx: Tx,
-  courseTitle: string,
-  nowIso: string,
-): { id: string } {
-  const existing = tx
-    .select({ id: libraryFolders.id })
-    .from(libraryFolders)
-    .where(eq(libraryFolders.name, courseTitle))
-    .orderBy(asc(libraryFolders.order))
-    .get();
-  if (existing !== undefined) return existing;
-  const id = crypto.randomUUID();
-  const maxOrder = tx
-    .select({ order: libraryFolders.order })
-    .from(libraryFolders)
-    .all()
-    .reduce((max, row) => Math.max(max, row.order), -1);
-  tx.insert(libraryFolders)
-    .values({ id, name: courseTitle, order: maxOrder + 1, createdAt: nowIso })
-    .run();
-  return { id };
 }
 
 /** 解析实际导入的课程：显式 courseId 必须存在；缺省用默认课程（无则创建） */

@@ -1,4 +1,4 @@
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq, isNotNull, isNull } from "drizzle-orm";
 import type { Db } from "./client";
 import {
   courseItems,
@@ -30,6 +30,9 @@ type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
  * 3. 讲义条目 visible=true；单元条目 visible=false（默认隐藏，教师按教学节奏开放）；
  * 4. 所有现有未归档学生加入所有现有课程（保持「学生能看到全部讲义」现状）；
  * 7. 「默认课程」按普通课程处理（无需特判，D23-7）。
+ *
+ * 另有孤儿资源兜底（backfillOrphans，与主标记无关、每次启动都执行、幂等），
+ * 见该函数注释。
  */
 
 /** 本组回填的完成标记 key */
@@ -39,6 +42,8 @@ const T2A1_BACKFILL_KEY = "t2a1_library_courses_backfill";
  * 执行全部未完成的数据搬迁（启动流程在 runMigrations 之后调用；
  * createTestDb 同样调用，保证测试库形态与生产一致）。
  * now 可注入（测试固定时间戳用）。
+ *
+ * 结构：主搬迁（一次性，标记防重跑）→ 孤儿兜底（每次启动执行，幂等）。
  */
 export function runBackfills(db: Db, now: Date = new Date()): void {
   const applied = db
@@ -46,14 +51,43 @@ export function runBackfills(db: Db, now: Date = new Date()): void {
     .from(dataMigrations)
     .where(eq(dataMigrations.key, T2A1_BACKFILL_KEY))
     .get();
-  if (applied !== undefined) return;
+  if (applied === undefined) {
+    db.transaction((tx) => {
+      backfillT2a1(tx, now);
+      tx.insert(dataMigrations)
+        .values({ key: T2A1_BACKFILL_KEY, appliedAt: now.toISOString() })
+        .run();
+    });
+  }
+  backfillOrphans(db, now);
+}
 
-  db.transaction((tx) => {
-    backfillT2a1(tx, now);
-    tx.insert(dataMigrations)
-      .values({ key: T2A1_BACKFILL_KEY, appliedAt: now.toISOString() })
-      .run();
-  });
+/**
+ * 课程同名文件夹（存在即复用——D23-1 同款规则；无则追加到末尾）。
+ * 事务内调用。content-service 的导入兼容路径复用本函数（同一套 find-or-create 口径）。
+ */
+export function ensureCourseFolder(
+  tx: Tx,
+  courseTitle: string,
+  nowIso: string,
+): { id: string } {
+  const existing = tx
+    .select({ id: libraryFolders.id })
+    .from(libraryFolders)
+    .where(eq(libraryFolders.name, courseTitle))
+    .orderBy(asc(libraryFolders.order))
+    .get();
+  if (existing !== undefined) return existing;
+  const id = crypto.randomUUID();
+  const maxOrder = tx
+    .select({ order: libraryFolders.order })
+    .from(libraryFolders)
+    .all()
+    .reduce((max, row) => Math.max(max, row.order), -1);
+  tx.insert(libraryFolders)
+    .values({ id, name: courseTitle, order: maxOrder + 1, createdAt: nowIso })
+    .run();
+  return { id };
 }
 
 /** D23 步骤 1–4：资源库文件夹 + 课程目录 + 全员入课（见文件头注释） */
@@ -66,41 +100,9 @@ function backfillT2a1(tx: Tx, now: Date): void {
     .orderBy(asc(courses.order), asc(courses.title))
     .all();
 
-  // 已有文件夹的最大 order 之后继续编号（理论上首跑时表为空，防御性取 max+1）
-  const existingFolders = tx
-    .select({ order: libraryFolders.order })
-    .from(libraryFolders)
-    .all();
-  let nextFolderOrder =
-    existingFolders.reduce((max, row) => Math.max(max, row.order), -1) + 1;
-
   for (const course of courseRows) {
     // ---- 步骤 1：同名文件夹（存在即复用；同名不唯一，取 order 最靠前的一个） ----
-    let folder = tx
-      .select()
-      .from(libraryFolders)
-      .where(eq(libraryFolders.name, course.title))
-      .orderBy(asc(libraryFolders.order))
-      .get();
-    if (folder === undefined) {
-      const folderId = crypto.randomUUID();
-      const folderOrder = nextFolderOrder;
-      nextFolderOrder += 1;
-      tx.insert(libraryFolders)
-        .values({
-          id: folderId,
-          name: course.title,
-          order: folderOrder,
-          createdAt: nowIso,
-        })
-        .run();
-      folder = {
-        id: folderId,
-        name: course.title,
-        order: folderOrder,
-        createdAt: nowIso,
-      };
-    }
+    const folderId = ensureCourseFolder(tx, course.title, nowIso).id;
 
     // 课程下的讲义/单元（旧结构口径：courseId 归属；排序与原内容树一致）
     const courseLectures = tx
@@ -117,11 +119,11 @@ function backfillT2a1(tx: Tx, now: Date): void {
       .all();
 
     tx.update(lectures)
-      .set({ folderId: folder.id })
+      .set({ folderId })
       .where(eq(lectures.courseId, course.id))
       .run();
     tx.update(units)
-      .set({ folderId: folder.id })
+      .set({ folderId })
       .where(eq(units.courseId, course.id))
       .run();
 
@@ -203,4 +205,158 @@ function backfillT2a1(tx: Tx, now: Date): void {
         .run();
     }
   }
+}
+
+// ---------- 孤儿资源兜底（T2A.1 事故修复） ----------
+
+/**
+ * 孤儿资源兜底：与主标记无关，**每次启动都执行**，纯幂等（处理完成后不再命中
+ * 兜底条件；对已正常搬迁的库零改动）。
+ *
+ * 背景：主搬迁带一次性完成标记；若服务曾在「新迁移+回填已执行、但导入仍是
+ * 旧版写法」的中间态运行（如 tsx watch 热重启窗口），旧版导入只写 lectures/
+ * units 行（folderId=NULL、courseId 指向课程），不建 course_items 条目——
+ * 这些资源成为孤儿（教师内容页按 course_items 组装，看不到它们）。
+ *
+ * 兜底条件（全部满足才处理）：
+ * - folderId IS NULL 且 deletedAt IS NULL（未软删）；
+ * - courseId 非空且指向现有课程；
+ * - **该课程没有该资源的目录条目**。
+ *
+ * 处理：补 folderId（该课程同名文件夹，无则建）+ 追加 course_items 条目
+ * （讲义 visible=true、单元 visible=false——D23-3 口径；order 接在该课程
+ * 现有条目末尾）。
+ *
+ * 「条目已存在则整体跳过（连 folderId 也不动）」的理由：新代码不再写 courseId
+ * （@deprecated T2A），条目已存在的 legacy 行只可能是教师后来主动把资源
+ * 「移入未归类」（T2A.2 起删除文件夹会把 folderId 置回 NULL）——不能在每次
+ * 启动时被兜底改回去。folderId 已有值的行不满足兜底条件，不受影响
+ * （资源库中未加入任何课程是合法状态）。
+ */
+function backfillOrphans(db: Db, now: Date): void {
+  const nowIso = now.toISOString();
+  const courseById = new Map(
+    db
+      .select({ id: courses.id, title: courses.title })
+      .from(courses)
+      .all()
+      .map((row) => [row.id, row] as const),
+  );
+
+  const orphanLectures = db
+    .select({ id: lectures.id, courseId: lectures.courseId })
+    .from(lectures)
+    .where(
+      and(
+        isNull(lectures.folderId),
+        isNull(lectures.deletedAt),
+        isNotNull(lectures.courseId),
+      ),
+    )
+    .orderBy(asc(lectures.order), asc(lectures.title))
+    .all();
+  for (const row of orphanLectures) {
+    const course =
+      row.courseId !== null ? courseById.get(row.courseId) : undefined;
+    if (course === undefined) continue; // courseId 指向不存在的课程：不兜底
+    rescueOrphan(db, {
+      kind: "lecture",
+      refId: row.id,
+      courseId: course.id,
+      courseTitle: course.title,
+      visible: true,
+      nowIso,
+    });
+  }
+
+  const orphanUnits = db
+    .select({ id: units.id, courseId: units.courseId })
+    .from(units)
+    .where(
+      and(
+        isNull(units.folderId),
+        isNull(units.deletedAt),
+        isNotNull(units.courseId),
+      ),
+    )
+    .orderBy(asc(units.order), asc(units.title))
+    .all();
+  for (const row of orphanUnits) {
+    const course =
+      row.courseId !== null ? courseById.get(row.courseId) : undefined;
+    if (course === undefined) continue;
+    rescueOrphan(db, {
+      kind: "unit",
+      refId: row.id,
+      courseId: course.id,
+      courseTitle: course.title,
+      visible: false,
+      nowIso,
+    });
+  }
+}
+
+/** 单个孤儿资源的补齐（单事务：文件夹 + folderId + 目录条目，可安全重入） */
+function rescueOrphan(
+  db: Db,
+  input: {
+    kind: "lecture" | "unit";
+    refId: string;
+    courseId: string;
+    courseTitle: string;
+    visible: boolean;
+    nowIso: string;
+  },
+): void {
+  const hasItem =
+    db
+      .select({ id: courseItems.id })
+      .from(courseItems)
+      .where(
+        and(
+          eq(courseItems.courseId, input.courseId),
+          eq(courseItems.kind, input.kind),
+          eq(courseItems.refId, input.refId),
+        ),
+      )
+      .get() !== undefined;
+  if (hasItem) return; // 见 backfillOrphans 注释：整体跳过
+
+  db.transaction((tx) => {
+    const folder = ensureCourseFolder(tx, input.courseTitle, input.nowIso);
+    if (input.kind === "lecture") {
+      tx.update(lectures)
+        .set({ folderId: folder.id })
+        .where(eq(lectures.id, input.refId))
+        .run();
+    } else {
+      tx.update(units)
+        .set({ folderId: folder.id })
+        .where(eq(units.id, input.refId))
+        .run();
+    }
+    const nextOrder =
+      tx
+        .select({ order: courseItems.order })
+        .from(courseItems)
+        .where(eq(courseItems.courseId, input.courseId))
+        .all()
+        .reduce((max, row) => Math.max(max, row.order), -1) + 1;
+    tx.insert(courseItems)
+      .values({
+        id: crypto.randomUUID(),
+        courseId: input.courseId,
+        kind: input.kind,
+        refId: input.refId,
+        title: null,
+        order: nextOrder,
+        visible: input.visible,
+        publishAt: null,
+        createdAt: input.nowIso,
+      })
+      .onConflictDoNothing({
+        target: [courseItems.courseId, courseItems.kind, courseItems.refId],
+      })
+      .run();
+  });
 }
