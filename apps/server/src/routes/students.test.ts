@@ -81,6 +81,14 @@ function extractSessionToken(res: Response): string {
   return line.slice("tutor_session=".length).split(";")[0] ?? "";
 }
 
+/** 从 set-cookie 拼小写串（Cookie 属性断言用） */
+function setCookieHeader(res: Response): string {
+  return res.headers
+    .getSetCookie()
+    .map((line) => line.toLowerCase())
+    .join("\n");
+}
+
 /** 教师创建一个学生（缺省姓名/登录名「张三」），返回响应体与初始密码 */
 async function createStudent(
   app: ReturnType<typeof createApp>,
@@ -455,6 +463,37 @@ describe("密码登录（POST /api/public/student/login）", () => {
       new Date(row?.expiresAt ?? 0).getTime() -
       new Date(row?.createdAt ?? 0).getTime();
     expect(ttl).toBeGreaterThan(89 * 24 * 60 * 60 * 1000);
+
+    // Cookie 持久化：Max-Age=90 天（7776000 秒）——会话级 Cookie 会在
+    // 浏览器关闭（iPad 上 Safari 被系统回收等）时丢登录态
+    expect(setCookieHeader(res)).toContain("max-age=7776000");
+  });
+
+  it("学生守卫通过即滑动续期：DB expiresAt 重置为 ~90 天，Cookie Max-Age 同步重置", async () => {
+    const { app, teacherCookie, db } = await makeApp();
+    await createStudent(app, teacherCookie, { password: STUDENT_PASSWORD });
+    const login = await jsonRequest(app, "/api/public/student/login", {
+      loginName: "张三",
+      password: STUDENT_PASSWORD,
+    });
+    const token = extractSessionToken(login);
+
+    // 拨到「1 分钟后过期」，模拟临近过期仍在线使用
+    db.update(sessions)
+      .set({ expiresAt: new Date(Date.now() + 60_000).toISOString() })
+      .where(eq(sessions.id, token))
+      .run();
+
+    const me = await app.request("/api/student/me", {
+      headers: { cookie: `tutor_session=${token}` },
+    });
+    expect(me.status).toBe(200);
+
+    const row = db.select().from(sessions).where(eq(sessions.id, token)).get();
+    const remainMs = new Date(row?.expiresAt ?? 0).getTime() - Date.now();
+    expect(remainMs).toBeGreaterThan(89 * 24 * 60 * 60 * 1000);
+    expect(remainMs).toBeLessThanOrEqual(90 * 24 * 60 * 60 * 1000);
+    expect(setCookieHeader(me)).toContain("max-age=7776000");
   });
 
   it("密码错误 / 登录名不存在统一 401 INVALID_CREDENTIALS（防枚举）", async () => {

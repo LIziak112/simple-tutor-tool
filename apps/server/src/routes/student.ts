@@ -92,7 +92,7 @@ export function createStudentRoutes(
   publicUrl: string,
   dataDir: string,
 ) {
-  const requireStudent = createRequireStudent(db);
+  const requireStudent = createRequireStudent(db, publicUrl);
   return (
     new Hono<StudentEnv>()
       .use("*", requireStudent)

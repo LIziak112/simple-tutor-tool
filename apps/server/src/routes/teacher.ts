@@ -41,7 +41,7 @@ export function createTeacherRoutes(
   publicUrl: string,
   dataDir: string,
 ) {
-  const requireTeacher = createRequireTeacher(db);
+  const requireTeacher = createRequireTeacher(db, publicUrl);
   return (
     new Hono<TeacherEnv>()
       .use("*", requireTeacher)

@@ -8,7 +8,10 @@ import { sessions } from "../db/schema";
  * Cookie 名 tutor_session，值即 sessions.id：
  * - token = randomBytes(32).toString("base64url")（256 位随机，熵高于 UUID）；
  * - 不给 sessions 表加列（T0.5 建好的结构不动），token 直接作主键；
- * - Cookie 属性 httpOnly + SameSite=Lax + Path=/，PUBLIC_URL 为 https 时加 Secure。
+ * - Cookie 属性 httpOnly + SameSite=Lax + Path=/ + Max-Age（与会话 TTL 对齐），
+ *   PUBLIC_URL 为 https 时加 Secure；
+ * - 滑动续期：守卫校验通过时 touchSession + 重设 Cookie（见 require-teacher /
+ *   require-student），活跃用户「最后一次活动 + TTL」内不掉线。
  */
 
 /** 会话 Cookie 名（老师与学生同一种 Cookie） */
@@ -25,13 +28,18 @@ export function isSecurePublicUrl(publicUrl: string): boolean {
   return publicUrl.startsWith("https://");
 }
 
-/** 会话 Cookie 属性（写入与清除共用，Path 必须一致才能删得掉） */
-export function sessionCookieOptions(isSecure: boolean) {
+/**
+ * 会话 Cookie 属性（写入与续期共用，Path 必须一致才能删得掉）。
+ * ttlMs 给定时同时设置 Max-Age（秒）——持久化 Cookie，浏览器关闭后登录态仍在
+ * （缺省不设 Max-Age，登出清除用：deleteCookie 自带 Max-Age=0）。
+ */
+export function sessionCookieOptions(isSecure: boolean, ttlMs?: number) {
   return {
     httpOnly: true,
     sameSite: "Lax" as const,
     path: "/",
     secure: isSecure,
+    ...(ttlMs === undefined ? {} : { maxAge: Math.floor(ttlMs / 1000) }),
   };
 }
 
@@ -117,6 +125,18 @@ export function getStudentSession(
     )
     .get();
   return row ? { studentId: row.subjectId } : null;
+}
+
+/**
+ * 滑动续期：守卫校验通过时调用，把会话寿命重置为「now + ttl」。
+ * 必须与重设 Cookie 的 Max-Age 成对出现（见 require-teacher / require-student），
+ * 否则浏览器侧 Cookie 到期即停发，DB 续了也白续。
+ */
+export function touchSession(db: Db, token: string, ttlMs: number): void {
+  db.update(sessions)
+    .set({ expiresAt: new Date(Date.now() + ttlMs).toISOString() })
+    .where(eq(sessions.id, token))
+    .run();
 }
 
 /** 删除会话（登出） */

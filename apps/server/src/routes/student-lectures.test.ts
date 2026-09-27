@@ -270,12 +270,14 @@ describe("POST /api/student/logout（学生退出登录，T2.3）", () => {
     const logoutBody = (await logout.json()) as { ok: boolean; data: null };
     expect(logoutBody.ok).toBe(true);
     expect(logoutBody.data).toBeNull();
-    // Cookie 清除指令（hono deleteCookie 用 max-age=0 立即过期，属性与写入时一致）
+    // Cookie 清除指令（hono deleteCookie 用 max-age=0 立即过期，属性与写入时一致）。
+    // 登出请求先经过守卫：滑动续期会先续发一条会话 Cookie，同名 Cookie
+    // 按序应用、后写的清除生效（RFC 6265），故断言「存在清除指令」而非首条。
     const cleared = logout.headers
       .getSetCookie()
-      .find((c) => c.toLowerCase().startsWith("tutor_session="));
+      .find((c) => c.toLowerCase().includes("max-age=0"));
     expect(cleared).toBeDefined();
-    expect(cleared?.toLowerCase()).toContain("max-age=0");
+    expect(cleared?.toLowerCase()).toContain("tutor_session=");
     expect(cleared?.toLowerCase()).toContain("path=/");
 
     // 会话行已删除（库内无残留）；旧 Cookie 再访问 → 401

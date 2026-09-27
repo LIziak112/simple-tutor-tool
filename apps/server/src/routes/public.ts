@@ -14,7 +14,9 @@ import { setCookie } from "hono/cookie";
 import {
   isSecurePublicUrl,
   SESSION_COOKIE,
+  STUDENT_SESSION_TTL_MS,
   sessionCookieOptions,
+  TEACHER_SESSION_TTL_MS,
 } from "../auth/session";
 import {
   loginTeacher,
@@ -78,7 +80,12 @@ export function createPublicRoutes(
           teacherSetupRequestSchema,
         );
         const { teacher, token } = await setupTeacher(db, body.password);
-        setCookie(c, SESSION_COOKIE, token, sessionCookieOptions(secure));
+        setCookie(
+          c,
+          SESSION_COOKIE,
+          token,
+          sessionCookieOptions(secure, TEACHER_SESSION_TTL_MS),
+        );
         return c.json({ ok: true, data: teacher });
       })
       .post("/teacher/login", async (c) => {
@@ -91,7 +98,12 @@ export function createPublicRoutes(
           body.password,
           getClientIp(c),
         );
-        setCookie(c, SESSION_COOKIE, token, sessionCookieOptions(secure));
+        setCookie(
+          c,
+          SESSION_COOKIE,
+          token,
+          sessionCookieOptions(secure, TEACHER_SESSION_TTL_MS),
+        );
         return c.json({ ok: true, data: teacher });
       })
       // —— 学生两种登录（T2.1，§5.7）：成功都写同一种会话 Cookie（90 天） ——
@@ -105,13 +117,23 @@ export function createPublicRoutes(
           body,
           getClientIp(c),
         );
-        setCookie(c, SESSION_COOKIE, token, sessionCookieOptions(secure));
+        setCookie(
+          c,
+          SESSION_COOKIE,
+          token,
+          sessionCookieOptions(secure, STUDENT_SESSION_TTL_MS),
+        );
         return c.json({ ok: true, data: student });
       })
       // 专属链接：GET 带 token 即登录（写 Cookie + 返回学生信息，页面跳转由前端 T2.3 处理）
       .get("/s/:token", (c) => {
         const { student, token } = loginStudentByLink(db, c.req.param("token"));
-        setCookie(c, SESSION_COOKIE, token, sessionCookieOptions(secure));
+        setCookie(
+          c,
+          SESSION_COOKIE,
+          token,
+          sessionCookieOptions(secure, STUDENT_SESSION_TTL_MS),
+        );
         return c.json({ ok: true, data: student });
       })
       // DSL 规范文档直出（T1.13）：契约枚举校验，未知文件名 404 统一错误壳；

@@ -113,12 +113,14 @@ describe("POST /api/public/teacher/setup", () => {
     expect(JSON.stringify(body)).not.toContain("scrypt$");
     expect(JSON.stringify(body)).not.toContain(PASSWORD);
 
-    // Cookie：httpOnly + SameSite=Lax + Path=/；http 环境不加 Secure
+    // Cookie：httpOnly + SameSite=Lax + Path=/；http 环境不加 Secure；
+    // Max-Age=7 天（604800 秒）——必须是持久化 Cookie，否则浏览器一关登录态就丢
     const cookie = setCookieHeader(res);
     expect(cookie).toContain("tutor_session=");
     expect(cookie).toContain("httponly");
     expect(cookie).toContain("samesite=lax");
     expect(cookie).toContain("path=/");
+    expect(cookie).toContain("max-age=604800");
     expect(cookie).not.toContain("secure");
   });
 
@@ -353,6 +355,54 @@ describe("GET /api/teacher/me 守卫（验收项：未登录 401）", () => {
     });
     expect(after.status).toBe(401);
     expect(((await after.json()) as ApiErr).error).toBe("UNAUTHORIZED");
+  });
+});
+
+describe("会话持久化与滑动续期（7 天内使用不掉线）", () => {
+  it("教师守卫通过即续期：DB expiresAt 重置为 ~7 天后，Cookie Max-Age 同步重置", async () => {
+    const { app, db } = makeApp();
+    const setup = await jsonRequestOn(app, "/api/public/teacher/setup", {
+      password: PASSWORD,
+    });
+    const token = extractSessionToken(setup);
+
+    // 把会话拨到「1 分钟后过期」，模拟临近过期仍在线使用的场景
+    db.update(sessions)
+      .set({ expiresAt: new Date(Date.now() + 60_000).toISOString() })
+      .where(eq(sessions.id, token))
+      .run();
+
+    const me = await app.request("/api/teacher/me", {
+      headers: { cookie: `tutor_session=${token}` },
+    });
+    expect(me.status).toBe(200);
+
+    // DB 侧：expiresAt 被推回 ~7 天（最后一次活动 + 7 天的滑动语义）
+    const row = db.select().from(sessions).where(eq(sessions.id, token)).get();
+    const remainMs = new Date(row?.expiresAt ?? 0).getTime() - Date.now();
+    expect(remainMs).toBeGreaterThan(6 * 24 * 60 * 60 * 1000);
+    expect(remainMs).toBeLessThanOrEqual(7 * 24 * 60 * 60 * 1000);
+
+    // 浏览器侧：Cookie Max-Age 同步重置——只续 DB 不续 Cookie 的话，
+    // 浏览器到期即停发 Cookie，续期等于白做
+    expect(setCookieHeader(me)).toContain("max-age=604800");
+  });
+
+  it("续期不改变 token：前后仍是同一会话行（不换发新会话）", async () => {
+    const { app, db } = makeApp();
+    const setup = await jsonRequestOn(app, "/api/public/teacher/setup", {
+      password: PASSWORD,
+    });
+    const token = extractSessionToken(setup);
+
+    await app.request("/api/teacher/me", {
+      headers: { cookie: `tutor_session=${token}` },
+    });
+
+    // 只有一条会话行且 id 未变（续期是 UPDATE，不是删旧建新）
+    const rows = db.select().from(sessions).all();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.id).toBe(token);
   });
 });
 
