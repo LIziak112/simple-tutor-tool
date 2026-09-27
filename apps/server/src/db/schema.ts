@@ -379,6 +379,9 @@ export const questionKnowledge = sqliteTable(
  * 导入留档表——原始 Markdown 留档，可追溯可重导（§5.2）。
  * rawMd 存老师提交的原文（v1 文档存 v1 原文，不存转换后的 v2 文本）；
  * reportJson 为本次导入统计报告（importCommitDataSchema 序列化）。
+ * T2A.3 扩展（D17/D20）：sourcePath = 批量导入的相对路径；batchId = 批次 id
+ * （前端生成、逐文件 commit 携带，GET /import/batches/:batchId 回看）；
+ * folderId = 实际落库的目标文件夹（NULL = 未归类）。
  */
 export const imports = sqliteTable("imports", {
   /** 主键：crypto.randomUUID()（§0.3 主键约定；即响应中的 importId） */
@@ -391,6 +394,12 @@ export const imports = sqliteTable("imports", {
   rawMd: text("raw_md").notNull(),
   /** 导入统计报告 JSON */
   reportJson: text("report_json").notNull(),
+  /** 批量导入的文件相对路径（如 "chapter1/练习.md"）；单文件导入为 NULL */
+  sourcePath: text("source_path"),
+  /** 批量导入批次 id（crypto.randomUUID，前端生成）；单文件导入为 NULL */
+  batchId: text("batch_id"),
+  /** 实际落库的目标文件夹（library_folders.id）；NULL = 未归类 */
+  folderId: text("folder_id").references(() => libraryFolders.id),
   /** 导入时间：UTC ISO 字符串 */
   createdAt: text("created_at").notNull(),
 });
