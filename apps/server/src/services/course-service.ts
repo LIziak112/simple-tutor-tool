@@ -41,9 +41,9 @@ import { canStudentSeeItem } from "./visibility.ts";
 export interface CourseItemInput {
   readonly kind: CourseItemKind;
   /** lecture/unit 必填（资源 id）；section 必须为空 */
-  readonly refId?: string | null;
+  readonly refId?: string | null | undefined;
   /** section 必填（分节标题）；lecture/unit 必须为空（标题取资源当前值） */
-  readonly title?: string | null;
+  readonly title?: string | null | undefined;
 }
 
 /** 学生可见的目录条目（listVisibleItems 返回形状） */
@@ -249,7 +249,10 @@ export function appendCourseItems(
   db: Db,
   courseId: string,
   items: readonly CourseItemInput[],
-  options: { visible?: boolean; withCompanionUnits?: boolean } = {},
+  options: {
+    visible?: boolean | undefined;
+    withCompanionUnits?: boolean | undefined;
+  } = {},
 ): { added: CourseItemAdded[]; skipped: CourseItemSkipped[] } {
   requireCourse(db, courseId);
   for (const item of items) validateItemInput(item);
@@ -453,7 +456,11 @@ export function appendCourseItems(
 export function updateCourseItem(
   db: Db,
   id: string,
-  input: { visible?: boolean; publishAt?: string | null; title?: string },
+  input: {
+    visible?: boolean | undefined;
+    publishAt?: string | null | undefined;
+    title?: string | undefined;
+  },
 ): CourseItem {
   const row = db.select().from(courseItems).where(eq(courseItems.id, id)).get();
   if (row === undefined) {
