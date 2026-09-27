@@ -18,6 +18,8 @@ export * from "./grading.ts";
 export * from "./ink.ts";
 /** 学习痕迹事件契约（T2.10 起为权威定义）：11 种事件类型、批量上报请求/响应、上限常量 */
 export * from "./learning-event.ts";
+/** 资源库 API 契约（T2A.2 起为权威定义）：资源库页面与单元管理的请求/响应、错误码 */
+export * from "./library-api.ts";
 /** 运行时公开配置契约（T2.12 起为权威定义）：GET /api/public/config 的 pwaEnabled/publicUrl */
 export * from "./public-config.ts";
 /** DSL 规范文件契约（T1.13 起为权威定义）：/api/public/spec 文件名枚举与 Content-Type */
