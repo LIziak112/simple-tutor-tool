@@ -43,6 +43,13 @@
       "when": 1790460717248,
       "tag": "0005_rainy_oracle",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1790468007570,
+      "tag": "0006_workable_turbo",
+      "breakpoints": true
     }
   ]
 }

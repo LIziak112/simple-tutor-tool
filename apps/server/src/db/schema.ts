@@ -18,7 +18,8 @@ import {
  * T1.10 追加内容七表：courses、lectures、units、questions、knowledge_points、
  * question_knowledge、imports（内容存储与导入）；T2.1 追加 students（学生账号与两种登录）；
  * T2.2 追加 assignments、assignment_students（作业与指派名单，软删语义）；
- * T2.6 追加 attempts、responses（作答生命周期：一次作答 + 逐题响应快照）。
+ * T2.6 追加 attempts、responses（作答生命周期：一次作答 + 逐题响应快照）；
+ * T2.8 追加 ink（手写笔迹元数据；笔迹本体是 DATA_DIR/blobs 下的文件，不进库）。
  *
  * 全库约定（见 docs/开发任务清单.md §0.3 与 db-change 技能）：
  * - 主键 id 一律为应用层生成的 crypto.randomUUID() 字符串；
@@ -423,6 +424,49 @@ export const responses = sqliteTable(
   ],
 );
 
+/**
+ * 手写笔迹表（T2.8，§5.2）——一行 = 一份作答里一道题的笔迹元数据。
+ * - **笔迹不进数据库、不用 base64**（架构 §5.2 关键设计）：矢量文档与 PNG 快照
+ *   以文件形式存 DATA_DIR/blobs/ink/<attemptId>/<安全文件名>.json.gz 与 .png，
+ *   库里只存相对路径（strokesPath/pngPath 相对 DATA_DIR，DATA_DIR 迁移不破坏）；
+ * - (attemptId, questionId) 唯一：同题再上传走幂等覆盖（文件重写 + 行 upsert，
+ *   id 保持不变——教师端 inkId 引用稳定）；
+ * - width/height：快照 PNG 的像素尺寸（教师端缩略图布局用）；解析失败为 0；
+ * - strokeCount：atrament=data.strokes.length；excalidraw=data.scene.elements.length；
+ * - updatedAt：最近一次上传时间（UTC ISO）。responses.inkId 的回填在 T3.1 批改页接入。
+ */
+export const ink = sqliteTable(
+  "ink",
+  {
+    /** 主键：crypto.randomUUID()（§0.3 主键约定；教师端 GET /api/teacher/ink/:inkId.png 用） */
+    id: text("id").primaryKey(),
+    /** 所属作答（attempts.id） */
+    attemptId: text("attempt_id")
+      .notNull()
+      .references(() => attempts.id),
+    /** 题目（questions.id，来自 DSL；可能含中文/点/连字符） */
+    questionId: text("question_id")
+      .notNull()
+      .references(() => questions.id),
+    /** 矢量文档相对路径（DATA_DIR 内，blobs/ink/<attemptId>/<安全名>.json.gz） */
+    strokesPath: text("strokes_path").notNull(),
+    /** 快照 PNG 相对路径（DATA_DIR 内，blobs/ink/<attemptId>/<安全名>.png） */
+    pngPath: text("png_path").notNull(),
+    /** 快照 PNG 像素宽；解析失败为 0 */
+    width: integer("width").notNull(),
+    /** 快照 PNG 像素高；解析失败为 0 */
+    height: integer("height").notNull(),
+    /** 笔画数（引擎相关口径，见表注释） */
+    strokeCount: integer("stroke_count").notNull(),
+    /** 最近上传时间：UTC ISO 字符串 */
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    // 同题幂等覆盖的定位键（一个 attempt 一道题一行）
+    uniqueIndex("ink_attempt_question_uk").on(table.attemptId, table.questionId),
+  ],
+);
+
 /** courses 表行类型（SELECT 结果） */
 export type Course = typeof courses.$inferSelect;
 /** courses 表插入类型 */
@@ -467,3 +511,7 @@ export type NewAttempt = typeof attempts.$inferInsert;
 export type ResponseRow = typeof responses.$inferSelect;
 /** responses 表插入类型 */
 export type NewResponseRow = typeof responses.$inferInsert;
+/** ink 表行类型（SELECT 结果） */
+export type InkRow = typeof ink.$inferSelect;
+/** ink 表插入类型 */
+export type NewInkRow = typeof ink.$inferInsert;
