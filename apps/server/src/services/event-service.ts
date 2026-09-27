@@ -70,10 +70,11 @@ export function appendAttemptEvents(
  * 批量追加无 attempt 上下文事件（POST /api/student/events，目前只有 lecture_expand）：
  * 讲义不存在 → 404 LECTURE_NOT_FOUND（与 GET 讲义同口径）。
  * events 表该类行 attemptId/questionId 均为 NULL，归属在 payloadJson。
+ * 注意：events 表按 §5.2 无学生列，讲义事件暂无学生归属（见任务报告待决问题）。
  */
 export function appendLectureEvents(
   db: Db,
-  studentId: string,
+  _studentId: string,
   batch: readonly LectureEvent[],
 ): LearningEventBatchData {
   // 讲义可见性校验（一对一场景学生可见全部讲义，T2.3 口径；这里只验存在）
