@@ -37,6 +37,11 @@ import {
   unitPublicQuestions,
 } from "./assignment-service";
 import { attemptTimeline } from "./event-service";
+import {
+  draftHintsOpenedView,
+  hintsOfJson,
+  resultHintsOpenedOf,
+} from "./hint-service";
 
 /**
  * AttemptService（T2.6）——作答生命周期的业务层（架构文档 §5.2/§5.3/§5.6）。
@@ -49,8 +54,9 @@ import { attemptTimeline } from "./event-service";
  * - submitAttempt：服务端权威判分（@tutor/grading，AGENTS 第 4 条）、逐题写
  *   questionSnapshotJson（题目编辑/软删不影响历史回看，验收项）、scoreAuto 汇总、
  *   status=submitted；重复交卷 409 ALREADY_SUBMITTED（验收项）；
- * - getAttemptDetail：draft → 草稿视图（公开题目 + 本人草稿，绝无答案/详解/提示）；
- *   submitted/graded → 结果视图（快照 + 参考答案 + 详解 + 判分，剥离提示内容）。
+ * - getAttemptDetail：draft → 草稿视图（公开题目 + 本人草稿 + 已解锁提示回显，
+ *   绝无答案/详解/未请求提示）；submitted/graded → 结果视图（快照 + 参考答案 +
+ *   详解 + 判分 + 做题时已解锁提示的回看）。
  *
  * 权限口径：attempt 归属（studentId 匹配）是详情/草稿/交卷接口的唯一权限依据
  * （被指派校验只在创建时做一次）——学生被移出名单或作业被软删后，已创建的作答
@@ -58,7 +64,8 @@ import { attemptTimeline } from "./event-service";
  *
  * 安全口径（AGENTS 第 3 条）：草稿视图题目一律经 unitPublicQuestions 输出过滤
  * （QuestionPublic 形态）；结果视图的 answers/solutionMd/stemMd（原文含答案标记）
- * 只在交卷后下发，提示内容（hints）仍不下发（按需提示是 T2.11）。
+ * 只在交卷后下发；提示内容只经 T2.11 按需接口（hint-service.openHint）逐条下发，
+ * 两个视图仅回显「已解锁」条目（hintsOpened）。
  */
 
 /** attempt 行 → 摘要（接口形态） */
@@ -188,7 +195,7 @@ function questionOfRow(row: QuestionRow, knowledge: string[]): Question {
     stemMd: row.stemMd,
     ...(options !== undefined ? { options } : {}),
     ...(answers !== undefined ? { answers } : {}),
-    hints: hintsOf(row.hintsJson),
+    hints: hintsOfJson(row.hintsJson),
     ...(row.solutionMd !== null ? { solutionMd: row.solutionMd } : {}),
     sourceMd: row.sourceMd,
   });
@@ -201,14 +208,6 @@ function jsonOf(text: string): unknown {
   } catch {
     return undefined;
   }
-}
-
-/** hintsJson → string[]（坏数据按无提示处理） */
-function hintsOf(hintsJson: string): string[] {
-  const parsed = jsonOf(hintsJson);
-  return Array.isArray(parsed)
-    ? parsed.filter((item): item is string => typeof item === "string")
-    : [];
 }
 
 /** answerJson → StudentAnswer（坏数据按未作答处理，不让单行脏数据打挂接口） */
@@ -381,7 +380,8 @@ function scoreAutoOf(graded: readonly GradedResponse[]): number | null {
  *     事件计数为权威（每次有效修改一条），草稿计数兜底（无前端事件的 attempt，
  *     如脚本直接调 API 交卷）；
  * - 草稿期被软删的题目不进入本次作答（其草稿行清除）；
- * - hintsUsed 保留草稿期累计值（T2.11 语义）；
+ * - hintsUsed 与已解锁序号集合（hintsOpenedJson）保留草稿期累计值
+ *   （T2.11 语义：交卷后仍可回看自己解锁过的提示）；
  * - attempt.status=submitted、submittedAt、scoreAuto 汇总、activeSec 总用时
  *   （各题之和；无任何事件时保持 NULL）；
  * - 返回结果视图（含答案与详解，AGENTS 第 3 条的「未交卷」限制就此解除）。
@@ -454,6 +454,7 @@ export function submitAttempt(
             eventChangeCountByQuestion[g.row.id] ?? 0,
           ),
           inkId: null,
+          hintsOpenedJson: draftRow?.hintsOpenedJson ?? null,
         })
         // 同题已有草稿行 → 交卷语义是整行冻结重写（保留 hintsUsed，其余以本次计算为准）
         .onConflictDoUpdate({
@@ -512,9 +513,10 @@ export function submitAttempt(
 /**
  * attempt 详情：按 status 二选一。
  * - draft → 草稿视图：公开题目（QuestionPublic 形态，题干脱敏）+ 本人草稿答案
- *   （drafts 键）。绝不含答案/详解/提示（泄露测试用 assertNoLeak 默认集合锁定）；
- * - submitted/graded → 结果视图：逐题快照 + 参考答案 + 详解 + 本人答案 + autoCorrect，
- *   得分汇总 + scoreAuto。提示内容不下发（T2.11 起按需获取）。
+ *   （drafts 键）+ 已解锁提示（hintsOpened 键）。绝不含答案/详解/未请求提示
+ *   （泄露测试用 assertNoLeak 默认集合锁定）；
+ * - submitted/graded → 结果视图：逐题快照 + 参考答案 + 详解 + 本人答案 +
+ *   autoCorrect + 做题时已解锁提示（回看），得分汇总 + scoreAuto。
  */
 export function getAttemptDetail(
   db: Db,
@@ -554,10 +556,12 @@ function buildDraftData(db: Db, attempt: Attempt): AttemptDetailData {
     dueAt: assignment.dueAt,
     questions: publicQuestions,
     drafts,
+    // T2.11：已解锁提示回显（刷新页面后提示面板不丢；只含学生请求过的条目）
+    hintsOpened: draftHintsOpenedView(db, attempt),
   };
 }
 
-/** 结果视图的单题行（快照投影：无 hints 内容，options 转纯文本） */
+/** 结果视图的单题行（快照投影：除已解锁条目外无 hints 内容，options 转纯文本） */
 function resultQuestionOf(row: ResponseRow): AttemptResultQuestion | null {
   const snapshotJson = row.questionSnapshotJson;
   if (snapshotJson === null) return null; // 理论不可达：交卷必写快照（防御性跳过）
@@ -581,6 +585,8 @@ function resultQuestionOf(row: ResponseRow): AttemptResultQuestion | null {
     solutionMd: snapshot.solutionMd ?? null,
     answer: answerOf(row.answerJson) ?? null,
     autoCorrect: row.autoCorrect,
+    // T2.11：只回显做题时已解锁的提示（文本取自快照；未解锁条目绝不在此）
+    hintsOpened: resultHintsOpenedOf(row, snapshot.hints),
   };
 }
 
