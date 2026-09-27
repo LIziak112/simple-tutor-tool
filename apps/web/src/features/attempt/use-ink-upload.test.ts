@@ -5,6 +5,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { InkEngine } from "@/features/ink/engine/index.ts";
 import {
   INK_UPLOAD_DEBOUNCE_MS,
+  type InkSyncResult,
+  type InkUploadHooks,
   isInkDocEmpty,
   useInkUpload,
 } from "./use-ink-upload";
@@ -84,11 +86,15 @@ function docWith(strokes: number, updatedAt = 2): InkDoc {
   };
 }
 
-/** 包一层 hook（engine 引用可替换） */
-function setup(engine: InkEngine | null) {
+/** 包一层 hook（engine 引用可替换）；hooks 透传给 useInkUpload */
+function setup(
+  engine: InkEngine | null,
+  hooks?: InkUploadHooks,
+) {
   const ref = { current: engine };
-  return renderHook(() => useInkUpload("att-1", "q1", () => ref.current))
-    .result;
+  return renderHook(() =>
+    useInkUpload("att-1", "q1", () => ref.current, hooks),
+  ).result;
 }
 
 beforeEach(() => {
@@ -195,5 +201,81 @@ describe("防抖上传", () => {
     expect(ok).toBe(false);
     // 待传文档保留：重开对应作答区（引擎恢复）后重试可成功
     expect(result.current.controller.isDirty()).toBe(true);
+  });
+});
+
+// ---------- T2.9：增量同步 sync / resync / hooks ----------
+
+describe("sync()（草稿同步循环入口）", () => {
+  it("无待传文档 → synced（不发包）", async () => {
+    const result = setup(makeEngine());
+    let outcome: InkSyncResult = "deferred";
+    await act(async () => {
+      outcome = await result.current.controller.sync();
+    });
+    expect(outcome).toBe("synced");
+    expect(putMock).not.toHaveBeenCalled();
+  });
+
+  it("有待传 + 引擎可用 + 上传成功 → synced，onSynced 带本次上传的 doc", async () => {
+    const onSynced = vi.fn();
+    const result = setup(makeEngine(), { onSynced });
+    act(() => {
+      result.current.onDocChange(docWith(2));
+    });
+    let outcome: InkSyncResult = "deferred";
+    await act(async () => {
+      outcome = await result.current.controller.sync();
+    });
+    expect(outcome).toBe("synced");
+    expect(putMock).toHaveBeenCalledTimes(1);
+    expect(onSynced).toHaveBeenCalledWith(docWith(2));
+    expect(result.current.controller.isDirty()).toBe(false);
+  });
+
+  it("有待传但引擎不可用（题卡收起）→ deferred：不发 PUT、保留待传", async () => {
+    const result = setup(null);
+    act(() => {
+      result.current.onDocChange(docWith(1));
+    });
+    let outcome: InkSyncResult = "synced";
+    await act(async () => {
+      outcome = await result.current.controller.sync();
+    });
+    expect(outcome).toBe("deferred");
+    expect(putMock).not.toHaveBeenCalled();
+    expect(result.current.controller.isDirty()).toBe(true);
+  });
+
+  it("上传失败 → failed，onFailed 回调（顶栏转离线）", async () => {
+    putMock.mockRejectedValueOnce(new Error("network"));
+    const onFailed = vi.fn();
+    const result = setup(makeEngine(), { onFailed });
+    act(() => {
+      result.current.onDocChange(docWith(1));
+    });
+    let outcome: InkSyncResult = "synced";
+    await act(async () => {
+      outcome = await result.current.controller.sync();
+    });
+    expect(outcome).toBe("failed");
+    expect(onFailed).toHaveBeenCalledTimes(1);
+    expect(result.current.controller.isDirty()).toBe(true);
+  });
+});
+
+describe("resync()（本地较新恢复的补传入口）", () => {
+  it("把文档放入待传并进 2 秒防抖；到期上传成功触发 onSynced", async () => {
+    const onSynced = vi.fn();
+    const result = setup(makeEngine(), { onSynced });
+    act(() => {
+      result.current.controller.resync(docWith(3));
+    });
+    expect(putMock).not.toHaveBeenCalled();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(INK_UPLOAD_DEBOUNCE_MS);
+    });
+    expect(putMock).toHaveBeenCalledTimes(1);
+    expect(onSynced).toHaveBeenCalledWith(docWith(3));
   });
 });
