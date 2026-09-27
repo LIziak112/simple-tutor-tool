@@ -128,8 +128,14 @@ export function createApp(options: CreateAppOptions) {
       }
       return next();
     })
-    .route("/api/teacher", createTeacherRoutes(options.db, options.publicUrl, options.dataDir))
-    .route("/api/student", createStudentRoutes(options.db, options.publicUrl, options.dataDir));
+    .route(
+      "/api/teacher",
+      createTeacherRoutes(options.db, options.publicUrl, options.dataDir),
+    )
+    .route(
+      "/api/student",
+      createStudentRoutes(options.db, options.publicUrl, options.dataDir),
+    );
 
   // —— 生产模式：托管 apps/web/dist ——
   // 注册在 API 路由之后：API 请求命中路由后不再经过静态；未命中的 /api 请求被静态中间件放行到统一 404

@@ -16,7 +16,10 @@ import { z } from "zod";
  */
 
 /** 归一化逻辑宽度：atrament 引擎所有 x/y/weight 以「画布宽度 = 1000」为基准存储 */
-export const INK_LOGICAL_WIDTH = 1000;
+export const INK_LOGICAL_WIDTH = 1000 as const;
+
+/** 底层绘制引擎标识（web 侧 InkSurface 适配层后面的实现） */
+export const inkEngineKindSchema = z.enum(["atrament", "excalidraw"]);
 
 /**
  * 单题笔迹上传限额（413 INK_TOO_LARGE 的口径）：
@@ -147,6 +150,7 @@ export const inkMetaOkSchema = apiOkExtend(inkMetaSchema);
 
 export type InkStrokePoint = z.infer<typeof inkStrokePointSchema>;
 export type InkStroke = z.infer<typeof inkStrokeSchema>;
+export type InkEngineKind = z.infer<typeof inkEngineKindSchema>;
 export type InkAtramentData = z.infer<typeof inkAtramentDataSchema>;
 export type InkExcalidrawData = z.infer<typeof inkExcalidrawDataSchema>;
 export type InkDoc = z.infer<typeof inkDocSchema>;

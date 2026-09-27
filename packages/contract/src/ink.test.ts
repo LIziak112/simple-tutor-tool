@@ -54,7 +54,14 @@ const EXCALIDRAW_DOC = {
   data: {
     scene: {
       elements: [
-        { id: "el1", type: "freedraw", points: [[0, 0], [10, 10]] },
+        {
+          id: "el1",
+          type: "freedraw",
+          points: [
+            [0, 0],
+            [10, 10],
+          ],
+        },
         { id: "el2", type: "rectangle", x: 1, y: 2 },
       ],
     },
@@ -158,9 +165,9 @@ describe("上传/取回/元数据响应", () => {
       updatedAt: "2026-09-27T02:00:00.000Z",
     };
     expect(inkUploadDataSchema.parse(upload).strokeCount).toBe(3);
-    expect(inkUploadOkSchema.safeParse({ ok: true, data: upload }).success).toBe(
-      true,
-    );
+    expect(
+      inkUploadOkSchema.safeParse({ ok: true, data: upload }).success,
+    ).toBe(true);
     expect(
       inkUploadDataSchema.safeParse({ ...upload, strokeCount: -1 }).success,
     ).toBe(false);

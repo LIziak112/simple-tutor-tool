@@ -7,14 +7,14 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
+import { gunzipSync } from "node:zlib";
 import {
+  INK_MAX_UPLOAD_BYTES,
   type InkDoc,
   type InkMeta,
-  INK_MAX_UPLOAD_BYTES,
   type InkUploadData,
   inkDocSchema,
 } from "@tutor/contract";
-import { gunzipSync } from "node:zlib";
 import { and, eq } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { type InkRow, ink } from "../db/schema";
@@ -70,7 +70,9 @@ function inkFileAbs(dataDir: string, relPath: string, suffix: string): string {
 }
 
 /** 解析 PNG 尺寸（IHDR 固定偏移：大端 u32 宽/高）；非法 PNG 返回 null */
-export function pngSize(bytes: Uint8Array): { width: number; height: number } | null {
+export function pngSize(
+  bytes: Uint8Array,
+): { width: number; height: number } | null {
   if (bytes.length < 24) return null;
   const buf = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   if (!buf.subarray(0, 8).equals(PNG_MAGIC)) return null;
@@ -88,12 +90,17 @@ function parseStrokesDoc(bytes: Uint8Array): InkDoc {
   let jsonText: string;
   try {
     const raw =
-      bytes.length >= 2 && (bytes[0] ?? 0) * 256 + (bytes[1] ?? 0) === GZIP_MAGIC
+      bytes.length >= 2 &&
+      (bytes[0] ?? 0) * 256 + (bytes[1] ?? 0) === GZIP_MAGIC
         ? gunzipSync(bytes)
         : Buffer.from(bytes);
     jsonText = raw.toString("utf8");
   } catch {
-    throw new HttpError(400, "INK_INVALID", "笔迹数据解压失败（不是合法的 gzip/JSON）");
+    throw new HttpError(
+      400,
+      "INK_INVALID",
+      "笔迹数据解压失败（不是合法的 gzip/JSON）",
+    );
   }
   let parsedJson: unknown;
   try {
@@ -165,12 +172,19 @@ export function saveInk(
 ): InkUploadData {
   const attempt = requireOwnAttempt(db, studentId, attemptId);
   if (attempt.status !== "draft") {
-    throw new HttpError(409, "ALREADY_SUBMITTED", "这份作业已交卷，不能再修改笔迹");
+    throw new HttpError(
+      409,
+      "ALREADY_SUBMITTED",
+      "这份作业已交卷，不能再修改笔迹",
+    );
   }
   requireUnitQuestion(db, attempt, questionId);
 
   // 限额（契约口径：gzip 后 strokes + png 合计）
-  if (strokesBytes.byteLength + snapshotBytes.byteLength > INK_MAX_UPLOAD_BYTES) {
+  if (
+    strokesBytes.byteLength + snapshotBytes.byteLength >
+    INK_MAX_UPLOAD_BYTES
+  ) {
     throw new HttpError(
       413,
       "INK_TOO_LARGE",
@@ -229,7 +243,14 @@ export function saveInk(
     })
     .run();
 
-  return { questionId, inkId, strokeCount, width: size.width, height: size.height, updatedAt: now };
+  return {
+    questionId,
+    inkId,
+    strokeCount,
+    width: size.width,
+    height: size.height,
+    updatedAt: now,
+  };
 }
 
 // ---------- GET /api/student/attempts/:id/ink/:questionId ----------
@@ -254,7 +275,11 @@ export function getInkDoc(
       readFileSync(inkFileAbs(dataDir, row.strokesPath, ".json.gz")),
     );
   } catch {
-    throw new HttpError(500, "INK_UNREADABLE", "笔迹文件读取失败，请联系老师处理");
+    throw new HttpError(
+      500,
+      "INK_UNREADABLE",
+      "笔迹文件读取失败，请联系老师处理",
+    );
   }
   let jsonText: string;
   try {
@@ -264,7 +289,11 @@ export function getInkDoc(
     try {
       jsonText = Buffer.from(raw).toString("utf8");
     } catch {
-      throw new HttpError(500, "INK_UNREADABLE", "笔迹文件损坏，请联系老师处理");
+      throw new HttpError(
+        500,
+        "INK_UNREADABLE",
+        "笔迹文件损坏，请联系老师处理",
+      );
     }
   }
   const parsed = inkDocSchema.safeParse(JSON.parse(jsonText) as unknown);
@@ -276,8 +305,9 @@ export function getInkDoc(
 
 /** PNG 文件读取结果（路由直出用） */
 export interface InkPng {
-  bytes: Uint8Array;
-  /** 行 updatedAt（响应 ETag 用） */
+  /** PNG 字节（独立 ArrayBuffer 拷贝，脱离 Node Buffer 视图——Response BodyInit 类型友好） */
+  bytes: ArrayBuffer;
+  /** 响应 ETag（行 id + updatedAt） */
   etag: string;
 }
 
@@ -293,6 +323,15 @@ export function getStudentInkPng(
   return readInkPng(db, dataDir, attemptId, questionId);
 }
 
+/** 读取 PNG 文件为独立 ArrayBuffer（Buffer 视图 → 拷贝；运行时类型即 ArrayBuffer） */
+function readPngBytes(filePath: string): ArrayBuffer {
+  const buf = readFileSync(filePath);
+  return buf.buffer.slice(
+    buf.byteOffset,
+    buf.byteOffset + buf.byteLength,
+  ) as ArrayBuffer;
+}
+
 /** ink 行 + 文件 → PNG 字节（权限已由调用方校验） */
 function readInkPng(
   db: Db,
@@ -303,9 +342,7 @@ function readInkPng(
   const row = requireInkRow(db, attemptId, questionId);
   try {
     return {
-      bytes: new Uint8Array(
-        readFileSync(inkFileAbs(dataDir, row.pngPath, ".png")),
-      ),
+      bytes: readPngBytes(inkFileAbs(dataDir, row.pngPath, ".png")),
       etag: `"${row.id}-${row.updatedAt}"`,
     };
   } catch {
@@ -327,9 +364,7 @@ export function getTeacherInkPng(
   }
   try {
     return {
-      bytes: new Uint8Array(
-        readFileSync(inkFileAbs(dataDir, row.pngPath, ".png")),
-      ),
+      bytes: readPngBytes(inkFileAbs(dataDir, row.pngPath, ".png")),
       etag: `"${row.id}-${row.updatedAt}"`,
     };
   } catch {

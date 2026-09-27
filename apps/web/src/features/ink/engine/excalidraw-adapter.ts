@@ -171,7 +171,14 @@ export function createExcalidrawSurface(
       return {
         engine: "excalidraw",
         version: 1,
-        data: { scene: { elements: lastElements } },
+        // 契约（@tutor/contract inkExcalidrawDataSchema）把 elements 锁为对象数组；
+        // ExcalidrawElement 是库的具体接口（无 index signature），结构上就是
+        // JSON 对象数组，此转换零运行时开销
+        data: {
+          scene: {
+            elements: [...lastElements] as unknown as Record<string, unknown>[],
+          },
+        },
         updatedAt,
       };
     },

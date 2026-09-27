@@ -13,7 +13,16 @@ import type { ZodType } from "zod";
  * 规范文档目录缺失），其余未处理异常仍走 app.ts 的通用 500 INTERNAL 壳。
  * 413 为 T2.8 笔迹超限（INK_TOO_LARGE）启用。
  */
-export type HttpErrorStatus = 400 | 401 | 403 | 404 | 409 | 413 | 422 | 429 | 500;
+export type HttpErrorStatus =
+  | 400
+  | 401
+  | 403
+  | 404
+  | 409
+  | 413
+  | 422
+  | 429
+  | 500;
 
 export class HttpError extends Error {
   constructor(

@@ -1,9 +1,16 @@
 import type { AttemptResultData, AttemptResultQuestion } from "@tutor/contract";
 import { cn } from "cn";
-import { CheckCircle2, ChevronDown, Clock, XCircle } from "lucide-react";
+import {
+  CheckCircle2,
+  ChevronDown,
+  Clock,
+  PenLine,
+  XCircle,
+} from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
+import { studentInkPngUrl } from "@/lib/api";
 import { formatCnTime } from "@/lib/time";
 import {
   formatReferenceAnswers,
@@ -16,6 +23,9 @@ import {
 /**
  * 交卷后的结果视图（T2.6）：顶部得分汇总（scoreAuto/对错待批数/提交时间）+
  * 逐题结果卡（✓/✗/待批图标、题干快照、本人答案 vs 参考答案、详解默认折叠）。
+ * T2.8：手写题（solve/apply/find-error）追加「我的手写笔迹」缩略图——学生本人
+ * 笔迹 PNG 经 GET /api/student/attempts/:id/ink/:questionId.png 文件直出
+ * （不进 base64/不进库）；无笔迹时该区块整体隐藏（img onerror 兜底）。
  * 详解只在交卷后由服务端下发（AGENTS 第 3 条对「未交卷题目」的限制已解除）。
  */
 
@@ -129,14 +139,47 @@ function SolutionFold({ solutionMd }: { solutionMd: string | null }) {
   );
 }
 
+/** 手写题的笔迹缩略图（学生本人 PNG 直出；无笔迹整块隐藏） */
+function InkThumbnail({
+  attemptId,
+  questionId,
+}: {
+  attemptId: string;
+  questionId: string;
+}) {
+  const [available, setAvailable] = useState(true);
+  if (!available) return null;
+  return (
+    <div className="flex flex-col gap-1.5">
+      <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
+        <PenLine aria-hidden className="size-4" />
+        我的手写笔迹
+      </p>
+      <img
+        src={studentInkPngUrl(attemptId, questionId)}
+        alt={`第 ${questionId} 题的手写笔迹`}
+        loading="lazy"
+        className="w-full rounded-lg border border-border bg-white"
+        onError={() => setAvailable(false)}
+      />
+    </div>
+  );
+}
+
 /** 单题结果卡 */
 function ResultQuestionCard({
   index,
   question,
+  attemptId,
 }: {
   index: number;
   question: AttemptResultQuestion;
+  attemptId: string;
 }) {
+  const isHandwritten =
+    question.snapshot.type === "solve" ||
+    question.snapshot.type === "apply" ||
+    question.snapshot.type === "find-error";
   return (
     <article
       className="flex flex-col gap-4 rounded-xl border border-border bg-card p-4 text-card-foreground sm:p-5"
@@ -176,6 +219,11 @@ function ResultQuestionCard({
       {/* 题干快照（交卷时冻结的原文，[[答案]] 渲染为空框定位） */}
       <RichMarkdown source={question.snapshot.stemMd} className="text-base" />
       <ResultOptions question={question} />
+
+      {/* 手写题：我的手写笔迹缩略图（T2.8；无笔迹时隐藏） */}
+      {isHandwritten && (
+        <InkThumbnail attemptId={attemptId} questionId={question.questionId} />
+      )}
 
       <div className="flex flex-col gap-1.5 rounded-lg bg-muted/40 px-4 py-3 text-sm sm:flex-row sm:gap-6">
         <p className="flex flex-wrap gap-1.5">
@@ -270,7 +318,11 @@ export function AttemptResultView({
       <ol className="flex flex-col gap-4">
         {data.questions.map((question, index) => (
           <li key={question.questionId}>
-            <ResultQuestionCard index={index} question={question} />
+            <ResultQuestionCard
+              index={index}
+              question={question}
+              attemptId={attempt.id}
+            />
           </li>
         ))}
       </ol>

@@ -69,141 +69,147 @@ import { changeStudentPassword } from "../services/student-service";
  * （通用工具 src/test/assert-no-leak.ts；T2.8 ink 接口见 routes/student-ink.test.ts）。
  * 返回类型不显式标注 Hono：链式注册把路由签名累积进推断类型（AppType / hc 前提）。
  */
-export function createStudentRoutes(db: Db, publicUrl: string, dataDir: string) {
+export function createStudentRoutes(
+  db: Db,
+  publicUrl: string,
+  dataDir: string,
+) {
   const requireStudent = createRequireStudent(db);
-  return new Hono<StudentEnv>()
-    .use("*", requireStudent)
-    .get("/me", (c) => {
-      return c.json({ ok: true, data: c.var.student });
-    })
-    .post("/password", async (c) => {
-      const body: StudentPasswordChangeRequest = await parseJsonBody(
-        c,
-        studentPasswordChangeRequestSchema,
-      );
-      return c.json({
-        ok: true,
-        data: await changeStudentPassword(db, c.var.student.id, body),
-      });
-    })
-    .get("/assignments", (c) => {
-      return c.json({
-        ok: true,
-        data: listStudentAssignments(db, c.var.student.id),
-      });
-    })
-    .get("/assignments/:id/paper", (c) => {
-      return c.json({
-        ok: true,
-        data: getStudentAssignmentPaper(
-          db,
-          c.var.student.id,
-          c.req.param("id"),
-        ),
-      });
-    })
-    .post("/assignments/:id/attempt", (c) => {
-      return c.json({
-        ok: true,
-        data: startAttempt(db, c.var.student.id, c.req.param("id")),
-      });
-    })
-    .put("/attempts/:id/answers/:questionId", async (c) => {
-      const body = await parseJsonBody(c, attemptAnswerSaveRequestSchema);
-      return c.json({
-        ok: true,
-        data: saveDraftAnswer(
-          db,
-          c.var.student.id,
-          c.req.param("id"),
-          c.req.param("questionId"),
-          body.answer,
-        ),
-      });
-    })
-    .post("/attempts/:id/submit", (c) => {
-      return c.json({
-        ok: true,
-        data: submitAttempt(db, c.var.student.id, c.req.param("id")),
-      });
-    })
-    .get("/attempts/:id", (c) => {
-      return c.json({
-        ok: true,
-        data: getAttemptDetail(db, c.var.student.id, c.req.param("id")),
-      });
-    })
-    // T2.8：上传/覆盖一道手写题的笔迹（multipart：strokes + snapshot）
-    .put("/attempts/:id/ink/:questionId", async (c) => {
-      const body = await c.req.parseBody();
-      const strokes = body["strokes"];
-      const snapshot = body["snapshot"];
-      // 两段都必须是文件（multipart 文件字段；字符串字段说明客户端组装错误）
-      if (!(strokes instanceof File) || !(snapshot instanceof File)) {
-        throw new HttpError(
-          400,
-          "VALIDATION_ERROR",
-          "请求需为 multipart/form-data，且包含 strokes 与 snapshot 两个文件",
+  return (
+    new Hono<StudentEnv>()
+      .use("*", requireStudent)
+      .get("/me", (c) => {
+        return c.json({ ok: true, data: c.var.student });
+      })
+      .post("/password", async (c) => {
+        const body: StudentPasswordChangeRequest = await parseJsonBody(
+          c,
+          studentPasswordChangeRequestSchema,
         );
-      }
-      return c.json({
-        ok: true,
-        data: saveInk(
-          db,
-          dataDir,
-          c.var.student.id,
-          c.req.param("id"),
-          c.req.param("questionId"),
-          new Uint8Array(await strokes.arrayBuffer()),
-          new Uint8Array(await snapshot.arrayBuffer()),
-        ),
-      });
-    })
-    // T2.8：取回矢量文档（JSON）或本人 PNG（.png 后缀分流，见文件头说明）
-    .get("/attempts/:id/ink/:questionId", (c) => {
-      const raw = c.req.param("questionId");
-      if (raw.endsWith(".png")) {
-        const png = getStudentInkPng(
-          db,
-          dataDir,
-          c.var.student.id,
-          c.req.param("id"),
-          // questionId 本身可能含点（来自 DSL），只剥离末尾 .png
-          raw.slice(0, -".png".length),
+        return c.json({
+          ok: true,
+          data: await changeStudentPassword(db, c.var.student.id, body),
+        });
+      })
+      .get("/assignments", (c) => {
+        return c.json({
+          ok: true,
+          data: listStudentAssignments(db, c.var.student.id),
+        });
+      })
+      .get("/assignments/:id/paper", (c) => {
+        return c.json({
+          ok: true,
+          data: getStudentAssignmentPaper(
+            db,
+            c.var.student.id,
+            c.req.param("id"),
+          ),
+        });
+      })
+      .post("/assignments/:id/attempt", (c) => {
+        return c.json({
+          ok: true,
+          data: startAttempt(db, c.var.student.id, c.req.param("id")),
+        });
+      })
+      .put("/attempts/:id/answers/:questionId", async (c) => {
+        const body = await parseJsonBody(c, attemptAnswerSaveRequestSchema);
+        return c.json({
+          ok: true,
+          data: saveDraftAnswer(
+            db,
+            c.var.student.id,
+            c.req.param("id"),
+            c.req.param("questionId"),
+            body.answer,
+          ),
+        });
+      })
+      .post("/attempts/:id/submit", (c) => {
+        return c.json({
+          ok: true,
+          data: submitAttempt(db, c.var.student.id, c.req.param("id")),
+        });
+      })
+      .get("/attempts/:id", (c) => {
+        return c.json({
+          ok: true,
+          data: getAttemptDetail(db, c.var.student.id, c.req.param("id")),
+        });
+      })
+      // T2.8：上传/覆盖一道手写题的笔迹（multipart：strokes + snapshot）
+      .put("/attempts/:id/ink/:questionId", async (c) => {
+        const body = await c.req.parseBody();
+        const strokes = body.strokes;
+        const snapshot = body.snapshot;
+        // 两段都必须是文件（multipart 文件字段；字符串字段说明客户端组装错误）
+        if (!(strokes instanceof File) || !(snapshot instanceof File)) {
+          throw new HttpError(
+            400,
+            "VALIDATION_ERROR",
+            "请求需为 multipart/form-data，且包含 strokes 与 snapshot 两个文件",
+          );
+        }
+        return c.json({
+          ok: true,
+          data: saveInk(
+            db,
+            dataDir,
+            c.var.student.id,
+            c.req.param("id"),
+            c.req.param("questionId"),
+            new Uint8Array(await strokes.arrayBuffer()),
+            new Uint8Array(await snapshot.arrayBuffer()),
+          ),
+        });
+      })
+      // T2.8：取回矢量文档（JSON）或本人 PNG（.png 后缀分流，见文件头说明）
+      .get("/attempts/:id/ink/:questionId", (c) => {
+        const raw = c.req.param("questionId");
+        if (raw.endsWith(".png")) {
+          const png = getStudentInkPng(
+            db,
+            dataDir,
+            c.var.student.id,
+            c.req.param("id"),
+            // questionId 本身可能含点（来自 DSL），只剥离末尾 .png
+            raw.slice(0, -".png".length),
+          );
+          return pngResponse(png.bytes, png.etag);
+        }
+        return c.json({
+          ok: true,
+          data: getInkDoc(
+            db,
+            dataDir,
+            c.var.student.id,
+            c.req.param("id"),
+            raw,
+          ),
+        });
+      })
+      .get("/lectures", (c) => {
+        return c.json({ ok: true, data: listStudentLectures(db) });
+      })
+      .get("/lectures/:id", (c) => {
+        return c.json({
+          ok: true,
+          data: getStudentLecture(db, c.req.param("id")),
+        });
+      })
+      .post("/logout", (c) => {
+        const token = getCookie(c, SESSION_COOKIE);
+        if (token) {
+          deleteSession(db, token);
+        }
+        // Cookie 属性与写入时保持一致（尤其 Path），否则浏览器删不掉
+        deleteCookie(
+          c,
+          SESSION_COOKIE,
+          sessionCookieOptions(isSecurePublicUrl(publicUrl)),
         );
-        return pngResponse(png.bytes, png.etag);
-      }
-      return c.json({
-        ok: true,
-        data: getInkDoc(
-          db,
-          dataDir,
-          c.var.student.id,
-          c.req.param("id"),
-          raw,
-        ),
-      });
-    })
-    .get("/lectures", (c) => {
-      return c.json({ ok: true, data: listStudentLectures(db) });
-    })
-    .get("/lectures/:id", (c) => {
-      return c.json({
-        ok: true,
-        data: getStudentLecture(db, c.req.param("id")),
-      });
-    })
-    .post("/logout", (c) => {
-      const token = getCookie(c, SESSION_COOKIE);
-      if (token) {
-        deleteSession(db, token);
-      }
-      // Cookie 属性与写入时保持一致（尤其 Path），否则浏览器删不掉
-      deleteCookie(
-        c,
-        SESSION_COOKIE,
-        sessionCookieOptions(isSecurePublicUrl(publicUrl)),
-      );
-      return c.json({ ok: true, data: null });
-    });
+        return c.json({ ok: true, data: null });
+      })
+  );
 }

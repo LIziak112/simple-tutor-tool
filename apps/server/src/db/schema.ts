@@ -463,7 +463,10 @@ export const ink = sqliteTable(
   },
   (table) => [
     // 同题幂等覆盖的定位键（一个 attempt 一道题一行）
-    uniqueIndex("ink_attempt_question_uk").on(table.attemptId, table.questionId),
+    uniqueIndex("ink_attempt_question_uk").on(
+      table.attemptId,
+      table.questionId,
+    ),
   ],
 );
 

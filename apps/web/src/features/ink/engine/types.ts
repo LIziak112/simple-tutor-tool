@@ -1,5 +1,6 @@
 /**
- * 手写引擎数据结构（T2.7，架构 §5.4 数据层）。
+ * 手写引擎数据结构（T2.7 建立；T2.8 起 InkDoc 形状沉到 @tutor/contract，
+ * 本文件 re-export 契约推断类型——前后端单一事实来源，禁止两边手写）。
  *
  * 核心约定：
  * - 矢量坐标一律**归一化到逻辑宽度 1000**（INK_LOGICAL_WIDTH）——横竖屏旋转、
@@ -8,13 +9,47 @@
  *   可完整单测；适配器层保持薄；
  * - 数据库与文件只存 InkDoc（库自己的 JSON 格式 + engine 字段），消费方只依赖
  *   InkSurface 接口（surface.ts），不直接 import 绘制库。
+ *
+ * 泛型 InkDoc<E> 是契约联合的 Extract 别名：`InkDoc<"atrament">` 收窄到
+ * atrament 分支（data.strokes 可安全访问），`InkDoc`（缺省）是完整联合。
  */
+import type {
+  InkAtramentData as ContractInkAtramentData,
+  InkDoc as ContractInkDoc,
+  InkEngineKind as ContractInkEngineKind,
+  InkExcalidrawData as ContractInkExcalidrawData,
+  InkStroke as ContractInkStroke,
+  InkStrokePoint as ContractInkStrokePoint,
+} from "@tutor/contract";
 
-/** 归一化逻辑宽度：所有 x/y/weight 以"画布宽度 = 1000"为基准存储 */
-export const INK_LOGICAL_WIDTH = 1000;
+export { INK_LOGICAL_WIDTH } from "@tutor/contract";
 
 /** 底层绘制引擎（InkSurface 适配层后面的实现） */
-export type InkEngineKind = "atrament" | "excalidraw";
+export type InkEngineKind = ContractInkEngineKind;
+
+/** 手写文档：所有落库/上传/草稿的统一外层格式（契约 inkDocSchema 的推断类型） */
+export type InkDoc<E extends InkEngineKind = InkEngineKind> = Extract<
+  ContractInkDoc,
+  { engine: E }
+>;
+
+/** 一个笔迹点（契约形状：x/y 归一化坐标、p 压力 0–1、t 相对本笔毫秒） */
+export type InkStrokePoint = ContractInkStrokePoint;
+
+/** 一笔完整笔画。橡皮不产生笔画，而是删除已有笔画（整笔橡皮，见 erase.ts） */
+export type InkStroke = ContractInkStroke;
+
+/** Atrament 引擎（页内答题区）的矢量数据 */
+export type InkAtramentData = ContractInkAtramentData;
+
+/** Excalidraw 引擎（全屏作答）的数据：库原生场景 JSON（§5.4.0） */
+export type InkExcalidrawData = ContractInkExcalidrawData;
+
+/** 各引擎对应的 data 载荷类型 */
+export interface InkDocDataByEngine {
+  atrament: InkAtramentData;
+  excalidraw: InkExcalidrawData;
+}
 
 /** 工具类型：笔 / 荧光笔 / 整笔橡皮 / 滚动模式（无笔设备的回退开关，§5.4.1 输入层第 3 条） */
 export type InkToolType = "pen" | "highlighter" | "eraser" | "scroll";
@@ -31,57 +66,6 @@ export type InkToolConfig =
   | { type: "highlighter" }
   | { type: "eraser" }
   | { type: "scroll" };
-
-/**
- * 一个笔迹点。x/y 为归一化坐标（逻辑宽 1000 基准），p 为压力（0–1，无压感设备
- * 恒为 0.5），t 为相对本笔起点经过的毫秒数（供老师端笔迹回放按真实节奏重演）。
- */
-export interface InkStrokePoint {
-  x: number;
-  y: number;
-  p: number;
-  t: number;
-}
-
-/** 一笔完整笔画。橡皮不产生笔画，而是删除已有笔画（整笔橡皮，见 erase.ts） */
-export interface InkStroke {
-  tool: "pen" | "highlighter";
-  /** CSS 颜色字符串（荧光笔带 alpha，如 rgba(250,204,21,0.45)） */
-  color: string;
-  /** 归一化线宽（逻辑宽 1000 下的数值，重绘按容器宽度反算） */
-  weight: number;
-  points: InkStrokePoint[];
-}
-
-/** Atrament 引擎（页内答题区）的矢量数据 */
-export interface InkAtramentData {
-  /** 恒为 1000：标注坐标归一化基准，读写双方据此换算 */
-  width: typeof INK_LOGICAL_WIDTH;
-  strokes: InkStroke[];
-}
-
-/**
- * Excalidraw 引擎（全屏作答）的数据：直接存库原生场景 JSON（serializeAsJSON
- * 的解析结果），本引擎不解释其内部结构（§5.4.0：用库时存库自己的 JSON）。
- */
-export interface InkExcalidrawData {
-  scene: Record<string, unknown>;
-}
-
-/** 各引擎对应的 data 载荷类型 */
-export interface InkDocDataByEngine {
-  atrament: InkAtramentData;
-  excalidraw: InkExcalidrawData;
-}
-
-/** 手写文档：所有落库/上传/草稿的统一外层格式 */
-export interface InkDoc<E extends InkEngineKind = InkEngineKind> {
-  engine: E;
-  version: 1;
-  data: InkDocDataByEngine[E];
-  /** 最后变更时间（epoch 毫秒）。load 外部文档时原样保留，保证往返一致 */
-  updatedAt: number;
-}
 
 /** 笔/荧光笔的绘制参数（逻辑单位）；适配器负责换算到容器实际宽度 */
 export interface InkBrushSpec {

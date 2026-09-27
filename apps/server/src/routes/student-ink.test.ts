@@ -1,13 +1,12 @@
 import { randomBytes } from "node:crypto";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { readFileSync } from "node:fs";
+import { gunzipSync, gzipSync } from "node:zlib";
 import type { ApiErr, InkDoc } from "@tutor/contract";
 import { inkUploadOkSchema } from "@tutor/contract";
 import type { Logger } from "pino";
 import pino from "pino";
 import { describe, expect, it } from "vitest";
-import { gunzipSync, gzipSync } from "node:zlib";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client.ts";
 import { ink as inkTable } from "../db/schema.ts";
@@ -277,9 +276,7 @@ describe("PUT + GET 笔迹：上传取回往返", () => {
     // ink 表一行，路径入库（相对 DATA_DIR）
     const rows = db.select().from(inkTable).all();
     expect(rows).toHaveLength(1);
-    expect(rows[0]?.strokesPath).toContain(
-      join("blobs", "ink", attemptId),
-    );
+    expect(rows[0]?.strokesPath).toContain(join("blobs", "ink", attemptId));
     expect(rows[0]?.strokesPath.endsWith(".json.gz")).toBe(true);
     expect(rows[0]?.pngPath.endsWith(".png")).toBe(true);
     // 文件真实存在且是 gzip 后的原文
@@ -302,7 +299,9 @@ describe("PUT + GET 笔迹：上传取回往返", () => {
     );
     expect(pngRes.status).toBe(200);
     expect(pngRes.headers.get("content-type")).toBe("image/png");
-    expect(new Uint8Array(await pngRes.arrayBuffer())).toEqual(makePng(320, 200));
+    expect(new Uint8Array(await pngRes.arrayBuffer())).toEqual(
+      makePng(320, 200),
+    );
   });
 
   it("excalidraw 文档：strokeCount = 元素数；中文 questionId 文件名安全", async () => {
@@ -348,9 +347,11 @@ describe("PUT + GET 笔迹：上传取回往返", () => {
       gzipDoc(atramentDoc(2)),
       makePng(),
     );
-    const firstData = ((await first.json()) as {
-      data: { inkId: string };
-    }).data;
+    const firstData = (
+      (await first.json()) as {
+        data: { inkId: string };
+      }
+    ).data;
     const second = await putInk(
       app,
       aCookie,
@@ -360,16 +361,19 @@ describe("PUT + GET 笔迹：上传取回往返", () => {
       makePng(640, 480),
     );
     expect(second.status).toBe(200);
-    const secondData = ((await second.json()) as {
-      data: { inkId: string; strokeCount: number; width: number };
-    }).data;
+    const secondData = (
+      (await second.json()) as {
+        data: { inkId: string; strokeCount: number; width: number };
+      }
+    ).data;
     expect(secondData.inkId).toBe(firstData.inkId);
     expect(secondData.strokeCount).toBe(5);
     expect(secondData.width).toBe(640);
     expect(db.select().from(inkTable).all()).toHaveLength(1);
 
-    const getBody = (await (await getInk(app, aCookie, attemptId, Q.solve))
-      .json()) as { data: InkDoc };
+    const getBody = (await (
+      await getInk(app, aCookie, attemptId, Q.solve)
+    ).json()) as { data: InkDoc };
     if (getBody.data.engine === "atrament") {
       expect(getBody.data.data.strokes).toHaveLength(5);
     }
@@ -425,7 +429,14 @@ describe("验收项：超限 413", () => {
 describe("验收项：非本人 attempt 403", () => {
   it("别人的 attempt 上传/取回/PNG 都 403 FORBIDDEN", async () => {
     const { app, aCookie, bCookie, attemptId } = await makeInkApp();
-    await putInk(app, aCookie, attemptId, Q.solve, gzipDoc(atramentDoc(1)), makePng());
+    await putInk(
+      app,
+      aCookie,
+      attemptId,
+      Q.solve,
+      gzipDoc(atramentDoc(1)),
+      makePng(),
+    );
     // 李四（未被指派、无自己 attempt 的会话）冒用张三的 attemptId
     const putRes = await putInk(
       app,
@@ -465,10 +476,15 @@ describe("验收项：非本人 attempt 403", () => {
 describe("状态与校验错误", () => {
   it("已交卷后 PUT → 409 ALREADY_SUBMITTED；GET 自己的笔迹仍可（回看）", async () => {
     const { app, aCookie, attemptId } = await makeInkApp();
-    await putInk(app, aCookie, attemptId, Q.solve, gzipDoc(atramentDoc(1)), makePng());
-    expect(
-      (await submitAttempt(app, aCookie, attemptId)).status,
-    ).toBe(200);
+    await putInk(
+      app,
+      aCookie,
+      attemptId,
+      Q.solve,
+      gzipDoc(atramentDoc(1)),
+      makePng(),
+    );
+    expect((await submitAttempt(app, aCookie, attemptId)).status).toBe(200);
     const putRes = await putInk(
       app,
       aCookie,
@@ -616,9 +632,11 @@ describe("教师侧 ink 接口", () => {
       headers: { cookie: teacherCookie },
     });
     expect(metaRes.status).toBe(200);
-    const meta = ((await metaRes.json()) as {
-      data: Record<string, unknown>;
-    }).data;
+    const meta = (
+      (await metaRes.json()) as {
+        data: Record<string, unknown>;
+      }
+    ).data;
     expect(meta.attemptId).toBe(attemptId);
     expect(meta.questionId).toBe(Q.apply);
     expect(meta.strokeCount).toBe(4);
@@ -674,9 +692,7 @@ describe("路径安全", () => {
     // 分隔符与 .. 被编码，join 后不可能越出 attemptId 目录
     expect(safeInkFileName("../evil")).not.toContain("/");
     expect(safeInkFileName("../evil")).not.toContain("\\");
-    expect(safeInkFileName("练习四-7")).toBe(
-      "q-%E7%BB%83%E4%B9%A0%E5%9B%9B-7",
-    );
+    expect(safeInkFileName("练习四-7")).toBe("q-%E7%BB%83%E4%B9%A0%E5%9B%9B-7");
     expect(safeInkFileName("a.b")).toBe("q-a.b");
     // 超长中文 id（编码后 >120）回退 hash，长度可控
     const long = "题".repeat(100);
@@ -690,7 +706,14 @@ describe("路径安全", () => {
 describe("泄露（AGENTS.md 第 3 条）", () => {
   it("GET ink 响应 assertNoLeak：只有学生自己的笔迹，无题目侧字段", async () => {
     const { app, aCookie, attemptId } = await makeInkApp();
-    await putInk(app, aCookie, attemptId, Q.solve, gzipDoc(atramentDoc(1)), makePng());
+    await putInk(
+      app,
+      aCookie,
+      attemptId,
+      Q.solve,
+      gzipDoc(atramentDoc(1)),
+      makePng(),
+    );
     await putInk(
       app,
       aCookie,
