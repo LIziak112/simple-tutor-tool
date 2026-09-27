@@ -1,5 +1,5 @@
-import { and, asc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import type { LibraryBatchRequest } from "@tutor/contract";
+import { and, asc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
   assignments,
@@ -189,18 +189,16 @@ export function renameFolder(
 
 /** 文件夹内未删除讲义/单元计数（rename 返回值用；「未归类」不在调用范围） */
 function countFolderResources(db: Db, id: string): [number, number] {
-  const lectureCount =
-    db
-      .select({ id: lectures.id })
-      .from(lectures)
-      .where(and(eq(lectures.folderId, id), isNull(lectures.deletedAt)))
-      .all().length;
-  const unitCount =
-    db
-      .select({ id: units.id })
-      .from(units)
-      .where(and(eq(units.folderId, id), isNull(units.deletedAt)))
-      .all().length;
+  const lectureCount = db
+    .select({ id: lectures.id })
+    .from(lectures)
+    .where(and(eq(lectures.folderId, id), isNull(lectures.deletedAt)))
+    .all().length;
+  const unitCount = db
+    .select({ id: units.id })
+    .from(units)
+    .where(and(eq(units.folderId, id), isNull(units.deletedAt)))
+    .all().length;
   return [lectureCount, unitCount];
 }
 
@@ -537,7 +535,11 @@ export function listLibraryLectures(
   if (filter.deleted) {
     // 回收站：最近删除的排前面，方便找回
     rows.sort((a, b) =>
-      a.deletedAt === b.deletedAt ? 0 : (a.deletedAt ?? "") < (b.deletedAt ?? "") ? 1 : -1,
+      a.deletedAt === b.deletedAt
+        ? 0
+        : (a.deletedAt ?? "") < (b.deletedAt ?? "")
+          ? 1
+          : -1,
     );
   }
   return rows;
@@ -564,7 +566,10 @@ export function listLibraryUnits(
     .from(assignments)
     .where(isNull(assignments.deletedAt))
     .all()) {
-    assignmentCounts.set(row.unitId, (assignmentCounts.get(row.unitId) ?? 0) + 1);
+    assignmentCounts.set(
+      row.unitId,
+      (assignmentCounts.get(row.unitId) ?? 0) + 1,
+    );
   }
   // 未删除题目摘要（type/difficulty/version + 考点），按单元分组、按题序
   const questionRows = db
@@ -582,9 +587,15 @@ export function listLibraryUnits(
     .all();
   const knowledgeByQuestion = new Map<string, string[]>();
   for (const row of db
-    .select({ questionId: questionKnowledge.questionId, name: knowledgePoints.name })
+    .select({
+      questionId: questionKnowledge.questionId,
+      name: knowledgePoints.name,
+    })
     .from(questionKnowledge)
-    .innerJoin(knowledgePoints, eq(questionKnowledge.knowledgePointId, knowledgePoints.id))
+    .innerJoin(
+      knowledgePoints,
+      eq(questionKnowledge.knowledgePointId, knowledgePoints.id),
+    )
     .orderBy(asc(knowledgePoints.name))
     .all()) {
     const list = knowledgeByQuestion.get(row.questionId);
@@ -596,7 +607,13 @@ export function listLibraryUnits(
   }
   const questionsByUnit = new Map<
     string,
-    { id: string; type: string; difficulty: number; knowledge: string[]; version: number }[]
+    {
+      id: string;
+      type: string;
+      difficulty: number;
+      knowledge: string[];
+      version: number;
+    }[]
   >();
   for (const qRow of questionRows) {
     const summary = {
@@ -662,7 +679,11 @@ export function listLibraryUnits(
     );
   if (filter.deleted) {
     rows.sort((a, b) =>
-      a.deletedAt === b.deletedAt ? 0 : (a.deletedAt ?? "") < (b.deletedAt ?? "") ? 1 : -1,
+      a.deletedAt === b.deletedAt
+        ? 0
+        : (a.deletedAt ?? "") < (b.deletedAt ?? "")
+          ? 1
+          : -1,
     );
   }
   return rows;
@@ -764,7 +785,11 @@ export function updateLectureFolder(
   input: { folderId?: string | null | undefined },
 ): { id: string; title: string; folderId: string | null } {
   const row = db
-    .select({ id: lectures.id, title: lectures.title, folderId: lectures.folderId })
+    .select({
+      id: lectures.id,
+      title: lectures.title,
+      folderId: lectures.folderId,
+    })
     .from(lectures)
     .where(eq(lectures.id, id))
     .get();
@@ -803,7 +828,11 @@ function describeUsage(usage: LibraryResourceUsage): string {
  * 删除范围：课程目录引用条目 + 题目考点关联 + 题目行 + 单元行（knowledge_points 全局共享保留）。
  */
 export function purgeUnit(db: Db, id: string): void {
-  const row = db.select({ id: units.id }).from(units).where(eq(units.id, id)).get();
+  const row = db
+    .select({ id: units.id })
+    .from(units)
+    .where(eq(units.id, id))
+    .get();
   if (row === undefined) {
     throw new HttpError(404, "UNIT_NOT_FOUND", "练习单元不存在");
   }
@@ -842,13 +871,11 @@ export function purgeUnit(db: Db, id: string): void {
     throw new HttpError(409, "RESOURCE_IN_USE", reason);
   }
   db.transaction((tx) => {
-    tx
-      .delete(courseItems)
+    tx.delete(courseItems)
       .where(and(eq(courseItems.kind, "unit"), eq(courseItems.refId, id)))
       .run();
     if (unitQuestionIds.length > 0) {
-      tx
-        .delete(questionKnowledge)
+      tx.delete(questionKnowledge)
         .where(inArray(questionKnowledge.questionId, unitQuestionIds))
         .run();
     }
@@ -863,7 +890,11 @@ export function purgeUnit(db: Db, id: string): void {
  * 课程目录引用条目 + 讲义行。
  */
 export function purgeLecture(db: Db, id: string): void {
-  const row = db.select({ id: lectures.id }).from(lectures).where(eq(lectures.id, id)).get();
+  const row = db
+    .select({ id: lectures.id })
+    .from(lectures)
+    .where(eq(lectures.id, id))
+    .get();
   if (row === undefined) {
     throw new HttpError(404, "LECTURE_NOT_FOUND", "讲义不存在");
   }
@@ -872,9 +903,11 @@ export function purgeLecture(db: Db, id: string): void {
     throw new HttpError(409, "RESOURCE_IN_USE", describeUsage(usage));
   }
   db.transaction((tx) => {
-    tx.update(units).set({ lectureId: null }).where(eq(units.lectureId, id)).run();
-    tx
-      .delete(courseItems)
+    tx.update(units)
+      .set({ lectureId: null })
+      .where(eq(units.lectureId, id))
+      .run();
+    tx.delete(courseItems)
       .where(and(eq(courseItems.kind, "lecture"), eq(courseItems.refId, id)))
       .run();
     tx.delete(lectures).where(eq(lectures.id, id)).run();
@@ -901,7 +934,12 @@ function tryItem(id: string, fn: () => void): BatchItemResult {
     if (err instanceof HttpError) {
       return { id, ok: false, error: err.code, message: err.message };
     }
-    return { id, ok: false, error: "INTERNAL", message: "操作失败，请稍后重试" };
+    return {
+      id,
+      ok: false,
+      error: "INTERNAL",
+      message: "操作失败，请稍后重试",
+    };
   }
 }
 
@@ -916,7 +954,11 @@ export function batchLibrary(
 ): { results: BatchItemResult[] } {
   if (input.action === "move") {
     if (input.folderId === undefined) {
-      throw new HttpError(422, "VALIDATION_ERROR", "移动到文件夹需要 folderId（移入未归类传 null）");
+      throw new HttpError(
+        422,
+        "VALIDATION_ERROR",
+        "移动到文件夹需要 folderId（移入未归类传 null）",
+      );
     }
     if (input.folderId !== null) assertFolderExists(db, input.folderId);
     const folderId = input.folderId;
@@ -990,9 +1032,9 @@ export function batchLibrary(
 
 // ---------- T2A.2：导出为可重新导入的 v2 Markdown ----------
 
-/** 文件名安全化（替换 Windows 保留字符与控制符） */
+/** 文件名安全化（替换 Windows 保留字符与控制符，\p{Cc} = Unicode 控制字符类） */
 function safeFilename(name: string): string {
-  const cleaned = name.replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_").trim();
+  const cleaned = name.replace(/[\\/:*?"<>|\p{Cc}]/gu, "_").trim();
   return cleaned.length > 0 ? cleaned : "export";
 }
 
@@ -1047,7 +1089,11 @@ export function exportUnitMd(
   if (unit === undefined) {
     throw new HttpError(404, "UNIT_NOT_FOUND", "练习单元不存在");
   }
-  const lines: string[] = ["---", "kind: practice", `unit: ${yamlString(unit.id)}`];
+  const lines: string[] = [
+    "---",
+    "kind: practice",
+    `unit: ${yamlString(unit.id)}`,
+  ];
   let lectureTitle: string | null = null;
   if (unit.lectureId !== null) {
     const lecture = db
@@ -1083,7 +1129,10 @@ export function exportUnitMd(
     .all()
     .map((row) => ensureQuestionId(row.sourceMd, row.id));
   lines.push(liveQuestions.join("\n\n"), "");
-  return { markdown: lines.join("\n"), filename: `${safeFilename(unit.id)}.md` };
+  return {
+    markdown: lines.join("\n"),
+    filename: `${safeFilename(unit.id)}.md`,
+  };
 }
 
 /**
@@ -1106,4 +1155,3 @@ export function exportLectureMd(
   const markdown = `---\nkind: lecture\n---\n\n${row.markdown}`;
   return { markdown, filename: `${safeFilename(row.title)}.md` };
 }
-

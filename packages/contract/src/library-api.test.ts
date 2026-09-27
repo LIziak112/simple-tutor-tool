@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  lectureMetaUpdateSchema,
   libraryBatchRequestSchema,
   libraryFolderReorderSchema,
   libraryListQuerySchema,
   libraryUnitSummarySchema,
   libraryUsageSchema,
-  lectureMetaUpdateSchema,
   unitMetaUpdateSchema,
 } from "./library-api.ts";
 
@@ -28,9 +28,9 @@ describe("libraryListQuerySchema", () => {
         deleted: "1",
       }).success,
     ).toBe(true);
-    expect(
-      libraryListQuerySchema.safeParse({ folderId: UUID }).success,
-    ).toBe(true);
+    expect(libraryListQuerySchema.safeParse({ folderId: UUID }).success).toBe(
+      true,
+    );
     expect(libraryListQuerySchema.safeParse({ deleted: "2" }).success).toBe(
       false,
     );
@@ -60,9 +60,9 @@ describe("unitMetaUpdateSchema", () => {
 
   it("空标题被拒（中文 message）；folderId 非 UUID 被拒", () => {
     expect(unitMetaUpdateSchema.safeParse({ title: "  " }).success).toBe(false);
-    expect(
-      unitMetaUpdateSchema.safeParse({ folderId: "练习四" }).success,
-    ).toBe(false);
+    expect(unitMetaUpdateSchema.safeParse({ folderId: "练习四" }).success).toBe(
+      false,
+    );
   });
 });
 
@@ -72,9 +72,9 @@ describe("lectureMetaUpdateSchema", () => {
     expect(lectureMetaUpdateSchema.safeParse({ folderId: null }).success).toBe(
       true,
     );
-    expect(
-      lectureMetaUpdateSchema.safeParse({ folderId: UUID }).success,
-    ).toBe(true);
+    expect(lectureMetaUpdateSchema.safeParse({ folderId: UUID }).success).toBe(
+      true,
+    );
   });
 });
 
@@ -93,7 +93,12 @@ describe("libraryUsageSchema", () => {
 
 describe("libraryBatchRequestSchema", () => {
   it("move/delete/restore/addToCourse 均要求非空 ids", () => {
-    for (const action of ["move", "delete", "restore", "addToCourse"] as const) {
+    for (const action of [
+      "move",
+      "delete",
+      "restore",
+      "addToCourse",
+    ] as const) {
       expect(
         libraryBatchRequestSchema.safeParse({ action, kind: "unit", ids: [] })
           .success,

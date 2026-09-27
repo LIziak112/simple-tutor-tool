@@ -1,6 +1,6 @@
 import { z } from "zod";
-import { contentTreeQuestionSchema } from "./content-api.ts";
 import { questionTypeSchema } from "./content.ts";
+import { contentTreeQuestionSchema } from "./content-api.ts";
 
 /**
  * 资源库 API 契约（T2A.2 起为权威定义）：教师端资源库页面（讲义库 / 题库 / 回收站）
@@ -141,7 +141,12 @@ export const libraryUnitListSchema = z.object({
  */
 export const unitMetaUpdateSchema = z.object({
   title: z.string().trim().min(1, "单元标题不能为空").optional(),
-  topic: z.string().trim().min(1, "主题不能为空（清空请传 null）").nullable().optional(),
+  topic: z
+    .string()
+    .trim()
+    .min(1, "主题不能为空（清空请传 null）")
+    .nullable()
+    .optional(),
   folderId: z.uuid("folderId 必须是 UUID 格式").nullable().optional(),
   lectureId: z.uuid("lectureId 必须是 UUID 格式").nullable().optional(),
 });
@@ -220,9 +225,7 @@ export const libraryBatchKindSchema = z.enum(["lecture", "unit"]);
 export const libraryBatchRequestSchema = z.object({
   action: libraryBatchActionSchema,
   kind: libraryBatchKindSchema,
-  ids: z
-    .array(z.string().min(1, "id 不能为空"))
-    .min(1, "ids 不能为空"),
+  ids: z.array(z.string().min(1, "id 不能为空")).min(1, "ids 不能为空"),
   /** move 目标文件夹；null = 未归类 */
   folderId: z.uuid("folderId 必须是 UUID 格式").nullable().optional(),
   /** addToCourse 目标课程 */
@@ -299,9 +302,7 @@ export type LibraryFolderList = z.infer<typeof libraryFolderListSchema>;
 export type LibraryFolderCreate = z.infer<typeof libraryFolderCreateSchema>;
 export type LibraryFolderUpdate = z.infer<typeof libraryFolderUpdateSchema>;
 export type LibraryFolderReorder = z.infer<typeof libraryFolderReorderSchema>;
-export type LibraryLectureSummary = z.infer<
-  typeof libraryLectureSummarySchema
->;
+export type LibraryLectureSummary = z.infer<typeof libraryLectureSummarySchema>;
 export type LibraryLectureList = z.infer<typeof libraryLectureListSchema>;
 export type LibraryUnitQuestion = z.infer<typeof libraryUnitQuestionSchema>;
 export type LibraryUnitSummary = z.infer<typeof libraryUnitSummarySchema>;

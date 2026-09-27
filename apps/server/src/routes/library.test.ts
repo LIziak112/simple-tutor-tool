@@ -3,10 +3,10 @@ import type { ApiErr, QuestionAnswers } from "@tutor/contract";
 import {
   apiErrSchema,
   type LibraryBatchData,
-  libraryFolderListOkSchema,
   type LibraryUnitList,
-  libraryUnitListOkSchema,
   type LibraryUsage,
+  libraryFolderListOkSchema,
+  libraryUnitListOkSchema,
   libraryUsageOkSchema,
 } from "@tutor/contract";
 import { lintDocument } from "@tutor/md-dsl";
@@ -145,11 +145,17 @@ async function makeStudent(
   teacherCookie: string,
   name: string,
 ): Promise<{ id: string; cookie: string }> {
-  const res = await request(app, "POST", "/api/teacher/students", teacherCookie, {
-    displayName: name,
-    loginName: name,
-    password: STUDENT_PASSWORD,
-  });
+  const res = await request(
+    app,
+    "POST",
+    "/api/teacher/students",
+    teacherCookie,
+    {
+      displayName: name,
+      loginName: name,
+      password: STUDENT_PASSWORD,
+    },
+  );
   expect(res.status).toBe(201);
   const body = (await res.json()) as { data: { student: { id: string } } };
   const login = await request(
@@ -173,10 +179,16 @@ async function makeAssignment(
   unitId: string,
   studentIds: string[],
 ): Promise<string> {
-  const res = await request(app, "POST", "/api/teacher/assignments", teacherCookie, {
-    unitId,
-    studentIds,
-  });
+  const res = await request(
+    app,
+    "POST",
+    "/api/teacher/assignments",
+    teacherCookie,
+    {
+      unitId,
+      studentIds,
+    },
+  );
   expect(res.status).toBe(201);
   const body = (await res.json()) as { data: { id: string } };
   return body.data.id;
@@ -222,11 +234,17 @@ describe("资源库路由：鉴权", () => {
       const asStudent = await request(app, "GET", path, student.cookie);
       expect(asStudent.status, path).toBe(401);
     }
-    const noAuthBatch = await request(app, "POST", "/api/teacher/library/batch", undefined, {
-      action: "delete",
-      kind: "unit",
-      ids: [UNIT_ID],
-    });
+    const noAuthBatch = await request(
+      app,
+      "POST",
+      "/api/teacher/library/batch",
+      undefined,
+      {
+        action: "delete",
+        kind: "unit",
+        ids: [UNIT_ID],
+      },
+    );
     expect(noAuthBatch.status).toBe(401);
   });
 });
@@ -304,9 +322,10 @@ describe("资源库路由：文件夹", () => {
       teacherCookie,
     );
     expect(deleted.status).toBe(200);
-    expect(
-      await deleted.json(),
-    ).toEqual({ ok: true, data: { movedLectures: 0, movedUnits: 1 } });
+    expect(await deleted.json()).toEqual({
+      ok: true,
+      data: { movedLectures: 0, movedUnits: 1 },
+    });
     expect(
       db.select().from(units).where(eq(units.id, UNIT_ID)).get()?.folderId,
     ).toBeNull();
@@ -333,10 +352,16 @@ describe("资源库路由：列表", () => {
       "/api/teacher/library/folders",
       teacherCookie,
     );
-    const folders = libraryFolderListOkSchema.parse(await foldersRes.json()).data.folders;
+    const folders = libraryFolderListOkSchema.parse(await foldersRes.json())
+      .data.folders;
     const folderId = folders.find((f) => f.name === "默认课程")?.id as string;
 
-    const allRes = await request(app, "GET", "/api/teacher/library/units", teacherCookie);
+    const allRes = await request(
+      app,
+      "GET",
+      "/api/teacher/library/units",
+      teacherCookie,
+    );
     const all = libraryUnitListOkSchema.parse(await allRes.json()).data;
     expect(all.units).toHaveLength(1);
     const unit = all.units[0] as LibraryUnitList["units"][number];
@@ -375,7 +400,9 @@ describe("资源库路由：列表", () => {
         teacherCookie,
       );
       expect(
-        libraryUnitListOkSchema.parse(await hit.json()).data.units.map((u) => u.id),
+        libraryUnitListOkSchema
+          .parse(await hit.json())
+          .data.units.map((u) => u.id),
       ).toEqual([UNIT_ID]);
     }
     const missRes = await request(
@@ -398,7 +425,12 @@ describe("资源库路由：列表", () => {
     expect(afterDelete.units).toHaveLength(0);
     const recycle = libraryUnitListOkSchema.parse(
       await (
-        await request(app, "GET", "/api/teacher/library/units?deleted=1", teacherCookie)
+        await request(
+          app,
+          "GET",
+          "/api/teacher/library/units?deleted=1",
+          teacherCookie,
+        )
       ).json(),
     ).data;
     expect(recycle.units).toHaveLength(1);
@@ -432,9 +464,19 @@ describe("资源库路由：列表", () => {
     expect(lecture.folderId).not.toBeNull();
     expect(lecture.courseCount).toBe(1); // 导入时追加了课程目录条目
 
-    await request(app, "DELETE", `/api/teacher/lectures/${lecture.id}`, teacherCookie);
+    await request(
+      app,
+      "DELETE",
+      `/api/teacher/lectures/${lecture.id}`,
+      teacherCookie,
+    );
     const recycle = (await (
-      await request(app, "GET", "/api/teacher/library/lectures?deleted=1", teacherCookie)
+      await request(
+        app,
+        "GET",
+        "/api/teacher/library/lectures?deleted=1",
+        teacherCookie,
+      )
     ).json()) as { data: { lectures: { id: string }[] } };
     expect(recycle.data.lectures.map((l) => l.id)).toEqual([lecture.id]);
   });
@@ -447,12 +489,18 @@ describe("资源库路由：PATCH 单元与讲义元数据", () => {
     const { app, db, teacherCookie } = await makeApp();
     const lectureId = firstLectureId(db);
 
-    const res = await request(app, "PATCH", "/api/teacher/units/练习四", teacherCookie, {
-      title: "有理数练习（改）",
-      topic: "新主题",
-      folderId: null,
-      lectureId,
-    });
+    const res = await request(
+      app,
+      "PATCH",
+      "/api/teacher/units/练习四",
+      teacherCookie,
+      {
+        title: "有理数练习（改）",
+        topic: "新主题",
+        folderId: null,
+        lectureId,
+      },
+    );
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({
       ok: true,
@@ -466,9 +514,15 @@ describe("资源库路由：PATCH 单元与讲义元数据", () => {
     });
 
     // topic 显式 null 清空
-    const clear = await request(app, "PATCH", "/api/teacher/units/练习四", teacherCookie, {
-      topic: null,
-    });
+    const clear = await request(
+      app,
+      "PATCH",
+      "/api/teacher/units/练习四",
+      teacherCookie,
+      {
+        topic: null,
+      },
+    );
     expect(
       ((await clear.json()) as { data: { topic: string | null } }).data.topic,
     ).toBeNull();
@@ -482,9 +536,15 @@ describe("资源库路由：PATCH 单元与讲义元数据", () => {
     );
     // 契约 schema 先拦（trim 后非空）→ 400 VALIDATION_ERROR
     expect(emptyTitle.status).toBe(400);
-    const missing = await request(app, "PATCH", "/api/teacher/units/ghost", teacherCookie, {
-      title: "x",
-    });
+    const missing = await request(
+      app,
+      "PATCH",
+      "/api/teacher/units/ghost",
+      teacherCookie,
+      {
+        title: "x",
+      },
+    );
     expect(missing.status).toBe(404);
     const badFolder = await request(
       app,
@@ -509,7 +569,8 @@ describe("资源库路由：PATCH 单元与讲义元数据", () => {
     );
     expect(res.status).toBe(200);
     expect(
-      ((await res.json()) as { data: { folderId: string | null } }).data.folderId,
+      ((await res.json()) as { data: { folderId: string | null } }).data
+        .folderId,
     ).toBeNull();
     const missing = await request(
       app,
@@ -553,7 +614,12 @@ describe("资源库路由：软删、学生可见性与作业取卷（D3/D16）"
     ).toContain(UNIT_ID);
 
     // 软删单元
-    const del = await request(app, "DELETE", "/api/teacher/units/练习四", teacherCookie);
+    const del = await request(
+      app,
+      "DELETE",
+      "/api/teacher/units/练习四",
+      teacherCookie,
+    );
     expect(del.status).toBe(200);
     expect(await del.json()).toEqual({ ok: true, data: null });
 
@@ -579,9 +645,11 @@ describe("资源库路由：软删、学生可见性与作业取卷（D3/D16）"
     expect(paper.status).toBe(200);
     const paperBody = (await paper.json()) as unknown;
     assertNoLeak(paperBody);
-    const paperQuestions = (paperBody as {
-      data: { questions: { id: string }[] };
-    }).data.questions;
+    const paperQuestions = (
+      paperBody as {
+        data: { questions: { id: string }[] };
+      }
+    ).data.questions;
     expect(paperQuestions).toHaveLength(8);
     expect(paperQuestions.map((q) => q.id)).toEqual(
       EXPECTED_QUESTIONS.map((q) => q.id),
@@ -634,7 +702,12 @@ describe("资源库路由：purge（D3 条件）", () => {
       `/api/teacher/assignments/${assignmentId}`,
       teacherCookie,
     );
-    res = await request(app, "DELETE", "/api/teacher/units/练习四/purge", teacherCookie);
+    res = await request(
+      app,
+      "DELETE",
+      "/api/teacher/units/练习四/purge",
+      teacherCookie,
+    );
     expect(res.status).toBe(409);
     expect((await readErr(res)).error).toBe("RESOURCE_IN_USE");
 
@@ -651,8 +724,15 @@ describe("资源库路由：purge（D3 条件）", () => {
       )
       .run(UNIT_ID);
     db.$client.prepare("DELETE FROM attempts WHERE unit_id = ?").run(UNIT_ID);
-    db.$client.prepare("DELETE FROM assignments WHERE unit_id = ?").run(UNIT_ID);
-    res = await request(app, "DELETE", "/api/teacher/units/练习四/purge", teacherCookie);
+    db.$client
+      .prepare("DELETE FROM assignments WHERE unit_id = ?")
+      .run(UNIT_ID);
+    res = await request(
+      app,
+      "DELETE",
+      "/api/teacher/units/练习四/purge",
+      teacherCookie,
+    );
     expect(res.status).toBe(200);
     expect(
       db.select().from(units).where(eq(units.id, UNIT_ID)).get(),
@@ -665,7 +745,12 @@ describe("资源库路由：purge（D3 条件）", () => {
     ).toHaveLength(0);
 
     // 再删 → 404
-    res = await request(app, "DELETE", "/api/teacher/units/练习四/purge", teacherCookie);
+    res = await request(
+      app,
+      "DELETE",
+      "/api/teacher/units/练习四/purge",
+      teacherCookie,
+    );
     expect(res.status).toBe(404);
   });
 
@@ -719,7 +804,11 @@ describe("资源库路由：purge（D3 条件）", () => {
       db.select().from(units).where(eq(units.id, UNIT_ID)).get()?.lectureId,
     ).toBeNull();
     expect(
-      db.select().from(courseItems).where(eq(courseItems.refId, lectureId)).all(),
+      db
+        .select()
+        .from(courseItems)
+        .where(eq(courseItems.refId, lectureId))
+        .all(),
     ).toHaveLength(0);
   });
 });
@@ -741,14 +830,25 @@ describe("资源库路由：usage", () => {
       student.cookie,
     );
 
-    const res = await request(app, "GET", "/api/teacher/units/练习四/usage", teacherCookie);
+    const res = await request(
+      app,
+      "GET",
+      "/api/teacher/units/练习四/usage",
+      teacherCookie,
+    );
     expect(res.status).toBe(200);
-    const usage = libraryUsageOkSchema.parse(await res.json()).data as LibraryUsage;
+    const usage = libraryUsageOkSchema.parse(await res.json())
+      .data as LibraryUsage;
     expect(usage.courses.map((c) => c.id)).toEqual([courseId]);
     expect(usage.assignments.map((a) => a.id)).toEqual([assignmentId]);
     expect(usage.attemptCount).toBe(1);
 
-    const missing = await request(app, "GET", "/api/teacher/units/ghost/usage", teacherCookie);
+    const missing = await request(
+      app,
+      "GET",
+      "/api/teacher/units/ghost/usage",
+      teacherCookie,
+    );
     expect(missing.status).toBe(404);
   });
 
@@ -775,7 +875,8 @@ describe("资源库路由：usage", () => {
       teacherCookie,
     );
     expect(res.status).toBe(200);
-    const usage = libraryUsageOkSchema.parse(await res.json()).data as LibraryUsage;
+    const usage = libraryUsageOkSchema.parse(await res.json())
+      .data as LibraryUsage;
     expect(usage.assignments).toEqual([]);
     expect(usage.attemptCount).toBe(1);
   });
@@ -793,43 +894,63 @@ describe("资源库路由：batch", () => {
       teacherCookie,
       { name: "批量目标" },
     );
-    const folderId = ((await created.json()) as { data: { id: string } }).data.id;
+    const folderId = ((await created.json()) as { data: { id: string } }).data
+      .id;
 
     // move
-    let res = await request(app, "POST", "/api/teacher/library/batch", teacherCookie, {
-      action: "move",
-      kind: "unit",
-      ids: [UNIT_ID],
-      folderId,
-    });
+    let res = await request(
+      app,
+      "POST",
+      "/api/teacher/library/batch",
+      teacherCookie,
+      {
+        action: "move",
+        kind: "unit",
+        ids: [UNIT_ID],
+        folderId,
+      },
+    );
     expect(res.status).toBe(200);
-    expect(((await res.json()) as { data: LibraryBatchData }).data.results).toEqual([
-      { id: UNIT_ID, ok: true },
-    ]);
+    expect(
+      ((await res.json()) as { data: LibraryBatchData }).data.results,
+    ).toEqual([{ id: UNIT_ID, ok: true }]);
     expect(
       db.select().from(units).where(eq(units.id, UNIT_ID)).get()?.folderId,
     ).toBe(folderId);
 
     // move 到未归类（folderId: null）
-    res = await request(app, "POST", "/api/teacher/library/batch", teacherCookie, {
-      action: "move",
-      kind: "unit",
-      ids: [UNIT_ID],
-      folderId: null,
-    });
+    res = await request(
+      app,
+      "POST",
+      "/api/teacher/library/batch",
+      teacherCookie,
+      {
+        action: "move",
+        kind: "unit",
+        ids: [UNIT_ID],
+        folderId: null,
+      },
+    );
     expect(res.status).toBe(200);
     expect(
       db.select().from(units).where(eq(units.id, UNIT_ID)).get()?.folderId,
     ).toBeNull();
 
     // delete（软删）→ 回收站；未知 id 逐条失败不中断
-    res = await request(app, "POST", "/api/teacher/library/batch", teacherCookie, {
-      action: "delete",
-      kind: "unit",
-      ids: [UNIT_ID, "ghost"],
-    });
+    res = await request(
+      app,
+      "POST",
+      "/api/teacher/library/batch",
+      teacherCookie,
+      {
+        action: "delete",
+        kind: "unit",
+        ids: [UNIT_ID, "ghost"],
+      },
+    );
     expect(res.status).toBe(200);
-    const delResults = ((await res.json()) as { data: LibraryBatchData }).data.results;
+    const delResults = ((await res.json()) as { data: LibraryBatchData }).data
+      .results;
     expect(delResults).toHaveLength(2);
     expect(delResults[0]).toEqual({ id: UNIT_ID, ok: true });
     expect(delResults[1]).toMatchObject({
@@ -842,53 +963,95 @@ describe("资源库路由：batch", () => {
     ).not.toBeNull();
 
     // restore
-    res = await request(app, "POST", "/api/teacher/library/batch", teacherCookie, {
-      action: "restore",
-      kind: "unit",
-      ids: [UNIT_ID],
-    });
+    res = await request(
+      app,
+      "POST",
+      "/api/teacher/library/batch",
+      teacherCookie,
+      {
+        action: "restore",
+        kind: "unit",
+        ids: [UNIT_ID],
+      },
+    );
     expect(res.status).toBe(200);
     expect(
       db.select().from(units).where(eq(units.id, UNIT_ID)).get()?.deletedAt,
     ).toBeNull();
 
     // addToCourse：加入成功；重复 → skipped
-    const courseRes = await request(app, "POST", "/api/teacher/courses", teacherCookie, {
-      title: "批量课程",
-    });
-    const courseId = ((await courseRes.json()) as { data: { id: string } }).data.id;
-    res = await request(app, "POST", "/api/teacher/library/batch", teacherCookie, {
-      action: "addToCourse",
-      kind: "unit",
-      ids: [UNIT_ID],
-      courseId,
-    });
+    const courseRes = await request(
+      app,
+      "POST",
+      "/api/teacher/courses",
+      teacherCookie,
+      {
+        title: "批量课程",
+      },
+    );
+    const courseId = ((await courseRes.json()) as { data: { id: string } }).data
+      .id;
+    res = await request(
+      app,
+      "POST",
+      "/api/teacher/library/batch",
+      teacherCookie,
+      {
+        action: "addToCourse",
+        kind: "unit",
+        ids: [UNIT_ID],
+        courseId,
+      },
+    );
     expect(res.status).toBe(200);
-    expect(((await res.json()) as { data: LibraryBatchData }).data.results).toEqual([
-      { id: UNIT_ID, ok: true },
-    ]);
-    res = await request(app, "POST", "/api/teacher/library/batch", teacherCookie, {
-      action: "addToCourse",
-      kind: "unit",
-      ids: [UNIT_ID],
-      courseId,
+    expect(
+      ((await res.json()) as { data: LibraryBatchData }).data.results,
+    ).toEqual([{ id: UNIT_ID, ok: true }]);
+    res = await request(
+      app,
+      "POST",
+      "/api/teacher/library/batch",
+      teacherCookie,
+      {
+        action: "addToCourse",
+        kind: "unit",
+        ids: [UNIT_ID],
+        courseId,
+      },
+    );
+    const dupResults = ((await res.json()) as { data: LibraryBatchData }).data
+      .results;
+    expect(dupResults[0]).toMatchObject({
+      id: UNIT_ID,
+      ok: true,
+      skipped: true,
     });
-    const dupResults = ((await res.json()) as { data: LibraryBatchData }).data.results;
-    expect(dupResults[0]).toMatchObject({ id: UNIT_ID, ok: true, skipped: true });
 
     // 参数级错误：move 缺 folderId → 422；addToCourse 未知课程 → 404
-    res = await request(app, "POST", "/api/teacher/library/batch", teacherCookie, {
-      action: "move",
-      kind: "unit",
-      ids: [UNIT_ID],
-    });
+    res = await request(
+      app,
+      "POST",
+      "/api/teacher/library/batch",
+      teacherCookie,
+      {
+        action: "move",
+        kind: "unit",
+        ids: [UNIT_ID],
+      },
+    );
     expect(res.status).toBe(422);
-    res = await request(app, "POST", "/api/teacher/library/batch", teacherCookie, {
-      action: "addToCourse",
-      kind: "unit",
-      ids: [UNIT_ID],
-      courseId: "0b6f18ae-6b9a-4d0e-8b7c-9b1b1b1b1b1b",
-    });
+    res = await request(
+      app,
+      "POST",
+      "/api/teacher/library/batch",
+      teacherCookie,
+      {
+        action: "addToCourse",
+        kind: "unit",
+        ids: [UNIT_ID],
+        courseId: "0b6f18ae-6b9a-4d0e-8b7c-9b1b1b1b1b1b",
+      },
+    );
     expect(res.status).toBe(404);
   });
 });
@@ -909,14 +1072,24 @@ describe("资源库路由：export.md 往返", () => {
   it("导出单元：frontmatter 正确、已删题不导出并注明、preview 0 error、题数/题型/答案/顺序一致", async () => {
     const { app, db, teacherCookie } = await makeApp();
     // 软删第一题（练习四-1）——验证已删题不导出
-    await request(app, "DELETE", "/api/teacher/questions/练习四-1", teacherCookie);
+    await request(
+      app,
+      "DELETE",
+      "/api/teacher/questions/练习四-1",
+      teacherCookie,
+    );
     // 关联配套讲义（导出 frontmatter 带 lecture 标题）
     const lectureId = firstLectureId(db);
     await request(app, "PATCH", "/api/teacher/units/练习四", teacherCookie, {
       lectureId,
     });
 
-    const res = await request(app, "GET", "/api/teacher/units/练习四/export.md", teacherCookie);
+    const res = await request(
+      app,
+      "GET",
+      "/api/teacher/units/练习四/export.md",
+      teacherCookie,
+    );
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("text/markdown");
     expect(res.headers.get("content-disposition")).toContain("attachment");
@@ -930,10 +1103,16 @@ describe("资源库路由：export.md 往返", () => {
     expect(markdown).toContain("另有 1 道已删除的题目未导出");
 
     // preview 0 error / 0 warning（往返第一步）
-    const preview = await request(app, "POST", "/api/teacher/import/preview", teacherCookie, {
-      markdown,
-      filename: "练习四.md",
-    });
+    const preview = await request(
+      app,
+      "POST",
+      "/api/teacher/import/preview",
+      teacherCookie,
+      {
+        markdown,
+        filename: "练习四.md",
+      },
+    );
     expect(preview.status).toBe(200);
     const previewBody = (await preview.json()) as {
       data: {
@@ -969,7 +1148,12 @@ describe("资源库路由：export.md 往返", () => {
     }
 
     // 未知单元 404
-    const missing = await request(app, "GET", "/api/teacher/units/ghost/export.md", teacherCookie);
+    const missing = await request(
+      app,
+      "GET",
+      "/api/teacher/units/ghost/export.md",
+      teacherCookie,
+    );
     expect(missing.status).toBe(404);
   });
 
@@ -993,10 +1177,16 @@ describe("资源库路由：export.md 往返", () => {
       .get()?.markdown as string;
     expect(markdown.endsWith(storedMarkdown)).toBe(true);
 
-    const preview = await request(app, "POST", "/api/teacher/import/preview", teacherCookie, {
-      markdown,
-      filename: "讲义导出.md",
-    });
+    const preview = await request(
+      app,
+      "POST",
+      "/api/teacher/import/preview",
+      teacherCookie,
+      {
+        markdown,
+        filename: "讲义导出.md",
+      },
+    );
     const previewBody = (await preview.json()) as {
       data: {
         summary: { lectureCount: number };

@@ -28,6 +28,7 @@ import {
   exportUnitMd,
   getLectureUsage,
   getUnitUsage,
+  type LibraryListFilter,
   listFolders,
   listLibraryLectures,
   listLibraryUnits,
@@ -40,7 +41,6 @@ import {
   softDeleteUnit,
   updateLectureFolder,
   updateUnitMeta,
-  type LibraryListFilter,
 } from "../services/library-service";
 
 /**
@@ -61,116 +61,129 @@ import {
  * 业务逻辑在 LibraryService（api-endpoint 技能约定：路由只做鉴权→校验→调 service→包装）。
  */
 export function createLibraryRoutes(db: Db) {
-  return new Hono<TeacherEnv>()
-    // ---------- 文件夹 ----------
-    .get("/library/folders", (c) => {
-      return c.json({ ok: true, data: { folders: listFolders(db) } });
-    })
-    .post("/library/folders", async (c) => {
-      const body: LibraryFolderCreate = await parseJsonBody(
-        c,
-        libraryFolderCreateSchema,
-      );
-      return c.json({ ok: true, data: createFolder(db, body) }, 201);
-    })
-    .post("/library/folders/reorder", async (c) => {
-      const body: LibraryFolderReorder = await parseJsonBody(
-        c,
-        libraryFolderReorderSchema,
-      );
-      reorderFolders(db, body.ids);
-      return c.json({ ok: true, data: null });
-    })
-    .patch("/library/folders/:id", async (c) => {
-      const body: LibraryFolderUpdate = await parseJsonBody(
-        c,
-        libraryFolderUpdateSchema,
-      );
-      return c.json({
-        ok: true,
-        data: renameFolder(db, c.req.param("id"), body),
-      });
-    })
-    .delete("/library/folders/:id", (c) => {
-      return c.json({ ok: true, data: deleteFolder(db, c.req.param("id")) });
-    })
-    // ---------- 列表（讲义库 / 题库 / 回收站） ----------
-    .get("/library/lectures", (c) => {
-      const filter = parseListQuery(c.req.query());
-      return c.json({
-        ok: true,
-        data: { lectures: listLibraryLectures(db, filter) },
-      });
-    })
-    .get("/library/units", (c) => {
-      const filter = parseListQuery(c.req.query());
-      return c.json({ ok: true, data: { units: listLibraryUnits(db, filter) } });
-    })
-    // ---------- 批量操作 ----------
-    .post("/library/batch", async (c) => {
-      const body: LibraryBatchRequest = await parseJsonBody(
-        c,
-        libraryBatchRequestSchema,
-      );
-      return c.json({ ok: true, data: batchLibrary(db, body) });
-    })
-    // ---------- 单元管理 ----------
-    .patch("/units/:id", async (c) => {
-      const body: UnitMetaUpdate = await parseJsonBody(c, unitMetaUpdateSchema);
-      return c.json({
-        ok: true,
-        data: updateUnitMeta(db, c.req.param("id"), body),
-      });
-    })
-    .delete("/units/:id", (c) => {
-      softDeleteUnit(db, c.req.param("id"));
-      return c.json({ ok: true, data: null });
-    })
-    .post("/units/:id/restore", (c) => {
-      restoreUnit(db, c.req.param("id"));
-      return c.json({ ok: true, data: null });
-    })
-    .delete("/units/:id/purge", (c) => {
-      purgeUnit(db, c.req.param("id"));
-      return c.json({ ok: true, data: null });
-    })
-    .get("/units/:id/usage", (c) => {
-      return c.json({ ok: true, data: getUnitUsage(db, c.req.param("id")) });
-    })
-    .get("/units/:id/export.md", (c) => {
-      const { markdown, filename } = exportUnitMd(db, c.req.param("id"));
-      return markdownResponse(markdown, filename);
-    })
-    // ---------- 讲义管理 ----------
-    .patch("/lectures/:id", async (c) => {
-      const body: LectureMetaUpdate = await parseJsonBody(
-        c,
-        lectureMetaUpdateSchema,
-      );
-      return c.json({
-        ok: true,
-        data: updateLectureFolder(db, c.req.param("id"), body),
-      });
-    })
-    .post("/lectures/:id/restore", (c) => {
-      restoreLecture(db, c.req.param("id"));
-      return c.json({ ok: true, data: null });
-    })
-    .delete("/lectures/:id/purge", (c) => {
-      purgeLecture(db, c.req.param("id"));
-      return c.json({ ok: true, data: null });
-    })
-    .get("/lectures/:id/usage", (c) => {
-      return c.json({ ok: true, data: getLectureUsage(db, c.req.param("id")) });
-    })
-    .get("/lectures/:id/export.md", (c) => {
-      const { markdown, filename } = exportLectureMd(db, c.req.param("id"));
-      return markdownResponse(markdown, filename);
-    });
+  return (
+    new Hono<TeacherEnv>()
+      // ---------- 文件夹 ----------
+      .get("/library/folders", (c) => {
+        return c.json({ ok: true, data: { folders: listFolders(db) } });
+      })
+      .post("/library/folders", async (c) => {
+        const body: LibraryFolderCreate = await parseJsonBody(
+          c,
+          libraryFolderCreateSchema,
+        );
+        return c.json({ ok: true, data: createFolder(db, body) }, 201);
+      })
+      .post("/library/folders/reorder", async (c) => {
+        const body: LibraryFolderReorder = await parseJsonBody(
+          c,
+          libraryFolderReorderSchema,
+        );
+        reorderFolders(db, body.ids);
+        return c.json({ ok: true, data: null });
+      })
+      .patch("/library/folders/:id", async (c) => {
+        const body: LibraryFolderUpdate = await parseJsonBody(
+          c,
+          libraryFolderUpdateSchema,
+        );
+        return c.json({
+          ok: true,
+          data: renameFolder(db, c.req.param("id"), body),
+        });
+      })
+      .delete("/library/folders/:id", (c) => {
+        return c.json({ ok: true, data: deleteFolder(db, c.req.param("id")) });
+      })
+      // ---------- 列表（讲义库 / 题库 / 回收站） ----------
+      .get("/library/lectures", (c) => {
+        const filter = parseListQuery(c.req.query());
+        return c.json({
+          ok: true,
+          data: { lectures: listLibraryLectures(db, filter) },
+        });
+      })
+      .get("/library/units", (c) => {
+        const filter = parseListQuery(c.req.query());
+        return c.json({
+          ok: true,
+          data: { units: listLibraryUnits(db, filter) },
+        });
+      })
+      // ---------- 批量操作 ----------
+      .post("/library/batch", async (c) => {
+        const body: LibraryBatchRequest = await parseJsonBody(
+          c,
+          libraryBatchRequestSchema,
+        );
+        return c.json({ ok: true, data: batchLibrary(db, body) });
+      })
+      // ---------- 单元管理 ----------
+      .patch("/units/:id", async (c) => {
+        const body: UnitMetaUpdate = await parseJsonBody(
+          c,
+          unitMetaUpdateSchema,
+        );
+        return c.json({
+          ok: true,
+          data: updateUnitMeta(db, c.req.param("id"), body),
+        });
+      })
+      .delete("/units/:id", (c) => {
+        softDeleteUnit(db, c.req.param("id"));
+        return c.json({ ok: true, data: null });
+      })
+      .post("/units/:id/restore", (c) => {
+        restoreUnit(db, c.req.param("id"));
+        return c.json({ ok: true, data: null });
+      })
+      .delete("/units/:id/purge", (c) => {
+        purgeUnit(db, c.req.param("id"));
+        return c.json({ ok: true, data: null });
+      })
+      .get("/units/:id/usage", (c) => {
+        return c.json({ ok: true, data: getUnitUsage(db, c.req.param("id")) });
+      })
+      .get("/units/:id/export.md", (c) => {
+        const { markdown, filename } = exportUnitMd(db, c.req.param("id"));
+        return markdownResponse(markdown, filename);
+      })
+      // ---------- 讲义管理 ----------
+      .patch("/lectures/:id", async (c) => {
+        const body: LectureMetaUpdate = await parseJsonBody(
+          c,
+          lectureMetaUpdateSchema,
+        );
+        return c.json({
+          ok: true,
+          data: updateLectureFolder(db, c.req.param("id"), body),
+        });
+      })
+      .post("/lectures/:id/restore", (c) => {
+        restoreLecture(db, c.req.param("id"));
+        return c.json({ ok: true, data: null });
+      })
+      .delete("/lectures/:id/purge", (c) => {
+        purgeLecture(db, c.req.param("id"));
+        return c.json({ ok: true, data: null });
+      })
+      .get("/lectures/:id/usage", (c) => {
+        return c.json({
+          ok: true,
+          data: getLectureUsage(db, c.req.param("id")),
+        });
+      })
+      .get("/lectures/:id/export.md", (c) => {
+        const { markdown, filename } = exportLectureMd(db, c.req.param("id"));
+        return markdownResponse(markdown, filename);
+      })
+  );
 }
 
 /** 查询参数 → 列表筛选条件（folderId="none" = 未归类；q 原样透传） */
-function parseListQuery(query: Record<string, string | undefined>): LibraryListFilter {
+function parseListQuery(
+  query: Record<string, string | undefined>,
+): LibraryListFilter {
   const parsed: LibraryListQuery = libraryListQuerySchema.parse(
     Object.fromEntries(
       Object.entries(query).filter(([, value]) => value !== undefined),
