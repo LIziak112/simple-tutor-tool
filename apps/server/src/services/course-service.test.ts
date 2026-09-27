@@ -59,8 +59,26 @@ function seed(db: Db): {
   const deletedLectureId = crypto.randomUUID();
   db.insert(lectures)
     .values([
-      { id: lectureId, courseId: null, folderId: null, title: "第一讲", markdown: "# 一", order: 0, updatedAt: T0, deletedAt: null },
-      { id: deletedLectureId, courseId: null, folderId: null, title: "已删讲", markdown: "# 二", order: 1, updatedAt: T0, deletedAt: T0 },
+      {
+        id: lectureId,
+        courseId: null,
+        folderId: null,
+        title: "第一讲",
+        markdown: "# 一",
+        order: 0,
+        updatedAt: T0,
+        deletedAt: null,
+      },
+      {
+        id: deletedLectureId,
+        courseId: null,
+        folderId: null,
+        title: "已删讲",
+        markdown: "# 二",
+        order: 1,
+        updatedAt: T0,
+        deletedAt: T0,
+      },
     ])
     .run();
   const unitId = "u-live";
@@ -68,25 +86,106 @@ function seed(db: Db): {
   const emptyUnitId = "u-empty";
   db.insert(units)
     .values([
-      { id: unitId, courseId: null, folderId: null, lectureId: lectureId, title: "有题单元", order: 0, updatedAt: T0, deletedAt: null },
-      { id: deletedUnitId, courseId: null, folderId: null, lectureId: null, title: "已删单元", order: 1, updatedAt: T0, deletedAt: T0 },
-      { id: emptyUnitId, courseId: null, folderId: null, lectureId: null, title: "空单元", order: 2, updatedAt: T0, deletedAt: null },
+      {
+        id: unitId,
+        courseId: null,
+        folderId: null,
+        lectureId: lectureId,
+        title: "有题单元",
+        order: 0,
+        updatedAt: T0,
+        deletedAt: null,
+      },
+      {
+        id: deletedUnitId,
+        courseId: null,
+        folderId: null,
+        lectureId: null,
+        title: "已删单元",
+        order: 1,
+        updatedAt: T0,
+        deletedAt: T0,
+      },
+      {
+        id: emptyUnitId,
+        courseId: null,
+        folderId: null,
+        lectureId: null,
+        title: "空单元",
+        order: 2,
+        updatedAt: T0,
+        deletedAt: null,
+      },
     ])
     .run();
   // u-live 一道未删题 + 一道已删题（净存活 1）；u-empty 只有已删题（净存活 0）
   db.insert(questions)
     .values([
-      { id: "q1", unitId, order: 0, type: "judge", difficulty: 1, stemMd: "s", hintsJson: "[]", sourceMd: "x", version: 1, updatedAt: T0, deletedAt: null },
-      { id: "q2", unitId, order: 1, type: "judge", difficulty: 1, stemMd: "s", hintsJson: "[]", sourceMd: "x", version: 1, updatedAt: T0, deletedAt: T0 },
-      { id: "q3", unitId: emptyUnitId, order: 0, type: "judge", difficulty: 1, stemMd: "s", hintsJson: "[]", sourceMd: "x", version: 1, updatedAt: T0, deletedAt: T0 },
+      {
+        id: "q1",
+        unitId,
+        order: 0,
+        type: "judge",
+        difficulty: 1,
+        stemMd: "s",
+        hintsJson: "[]",
+        sourceMd: "x",
+        version: 1,
+        updatedAt: T0,
+        deletedAt: null,
+      },
+      {
+        id: "q2",
+        unitId,
+        order: 1,
+        type: "judge",
+        difficulty: 1,
+        stemMd: "s",
+        hintsJson: "[]",
+        sourceMd: "x",
+        version: 1,
+        updatedAt: T0,
+        deletedAt: T0,
+      },
+      {
+        id: "q3",
+        unitId: emptyUnitId,
+        order: 0,
+        type: "judge",
+        difficulty: 1,
+        stemMd: "s",
+        hintsJson: "[]",
+        sourceMd: "x",
+        version: 1,
+        updatedAt: T0,
+        deletedAt: T0,
+      },
     ])
     .run();
   const studentId = crypto.randomUUID();
   const archivedStudentId = crypto.randomUUID();
   db.insert(students)
     .values([
-      { id: studentId, displayName: "张三", loginName: "张三", linkToken: "tok-a", linkEnabled: true, passwordEnabled: false, archivedAt: null, createdAt: T0 },
-      { id: archivedStudentId, displayName: "李四", loginName: "李四", linkToken: "tok-b", linkEnabled: true, passwordEnabled: false, archivedAt: T0, createdAt: T0 },
+      {
+        id: studentId,
+        displayName: "张三",
+        loginName: "张三",
+        linkToken: "tok-a",
+        linkEnabled: true,
+        passwordEnabled: false,
+        archivedAt: null,
+        createdAt: T0,
+      },
+      {
+        id: archivedStudentId,
+        displayName: "李四",
+        loginName: "李四",
+        linkToken: "tok-b",
+        linkEnabled: true,
+        passwordEnabled: false,
+        archivedAt: T0,
+        createdAt: T0,
+      },
     ])
     .run();
   return {
@@ -110,7 +209,9 @@ describe("CourseService：目录条目 CRUD（D6）", () => {
       { kind: "unit", refId: unitId },
       { kind: "section", title: "  第一章  " },
     ]);
-    expect(inserted.map((row) => [row.kind, row.refId, row.order, row.visible])).toEqual([
+    expect(
+      inserted.map((row) => [row.kind, row.refId, row.order, row.visible]),
+    ).toEqual([
       ["lecture", lectureId, 0, true],
       ["unit", unitId, 1, true],
       ["section", null, 2, true],
@@ -145,36 +246,80 @@ describe("CourseService：目录条目 CRUD（D6）", () => {
     const { courseId, deletedLectureId, deletedUnitId } = seed(db);
 
     expect(
-      ((captureError(() => addCourseItems(db, courseId, [{ kind: "unit", refId: "ghost-u" }]))) as HttpError).code,
+      (
+        captureError(() =>
+          addCourseItems(db, courseId, [{ kind: "unit", refId: "ghost-u" }]),
+        ) as HttpError
+      ).code,
     ).toBe("UNIT_NOT_FOUND");
     expect(
-      ((captureError(() => addCourseItems(db, courseId, [{ kind: "lecture", refId: deletedLectureId }]))) as HttpError).code,
+      (
+        captureError(() =>
+          addCourseItems(db, courseId, [
+            { kind: "lecture", refId: deletedLectureId },
+          ]),
+        ) as HttpError
+      ).code,
     ).toBe("LECTURE_NOT_FOUND");
     expect(
-      ((captureError(() => addCourseItems(db, courseId, [{ kind: "unit", refId: deletedUnitId }]))) as HttpError).code,
+      (
+        captureError(() =>
+          addCourseItems(db, courseId, [
+            { kind: "unit", refId: deletedUnitId },
+          ]),
+        ) as HttpError
+      ).code,
     ).toBe("UNIT_NOT_FOUND");
 
     expect(
-      ((captureError(() => addCourseItems(db, courseId, [{ kind: "section", title: "分节", refId: "x" }]))) as HttpError).status,
+      (
+        captureError(() =>
+          addCourseItems(db, courseId, [
+            { kind: "section", title: "分节", refId: "x" },
+          ]),
+        ) as HttpError
+      ).status,
     ).toBe(422);
     expect(
-      ((captureError(() => addCourseItems(db, courseId, [{ kind: "section" }]))) as HttpError).status,
+      (
+        captureError(() =>
+          addCourseItems(db, courseId, [{ kind: "section" }]),
+        ) as HttpError
+      ).status,
     ).toBe(422);
     expect(
-      ((captureError(() => addCourseItems(db, courseId, [{ kind: "lecture" }]))) as HttpError).status,
+      (
+        captureError(() =>
+          addCourseItems(db, courseId, [{ kind: "lecture" }]),
+        ) as HttpError
+      ).status,
     ).toBe(422);
     expect(
-      ((captureError(() => addCourseItems(db, courseId, [{ kind: "lecture", refId: "l", title: "t" }]))) as HttpError).status,
+      (
+        captureError(() =>
+          addCourseItems(db, courseId, [
+            { kind: "lecture", refId: "l", title: "t" },
+          ]),
+        ) as HttpError
+      ).status,
     ).toBe(422);
     expect(
-      ((captureError(() => addCourseItems(db, "no-such-course", [{ kind: "section", title: "s" }]))) as HttpError).code,
+      (
+        captureError(() =>
+          addCourseItems(db, "no-such-course", [
+            { kind: "section", title: "s" },
+          ]),
+        ) as HttpError
+      ).code,
     ).toBe("COURSE_NOT_FOUND");
   });
 
   it("updateCourseItem：visible/publishAt/title；非分节改 title 422；不存在 404", () => {
     const db = createTestDb();
     const { courseId, lectureId } = seed(db);
-    const [sectionRow] = addCourseItems(db, courseId, [{ kind: "section", title: "旧标题" }]);
+    const [sectionRow] = addCourseItems(db, courseId, [
+      { kind: "section", title: "旧标题" },
+    ]);
     const [lectureItemRow] = addCourseItems(db, courseId, [
       { kind: "lecture", refId: lectureId },
     ]);
@@ -184,7 +329,9 @@ describe("CourseService：目录条目 CRUD（D6）", () => {
     const section = sectionRow;
     const lectureItem = lectureItemRow;
 
-    expect(updateCourseItem(db, section.id, { title: "新标题" }).title).toBe("新标题");
+    expect(updateCourseItem(db, section.id, { title: "新标题" }).title).toBe(
+      "新标题",
+    );
     const updated = updateCourseItem(db, lectureItem.id, {
       visible: false,
       publishAt: "2026-10-01T00:00:00.000Z",
@@ -192,27 +339,41 @@ describe("CourseService：目录条目 CRUD（D6）", () => {
     expect(updated.visible).toBe(false);
     expect(updated.publishAt).toBe("2026-10-01T00:00:00.000Z");
     // 显式 null 取消定时
-    expect(updateCourseItem(db, lectureItem.id, { publishAt: null }).publishAt).toBeNull();
+    expect(
+      updateCourseItem(db, lectureItem.id, { publishAt: null }).publishAt,
+    ).toBeNull();
 
     expect(
-      ((captureError(() => updateCourseItem(db, lectureItem.id, { title: "x" }))) as HttpError).status,
+      (
+        captureError(() =>
+          updateCourseItem(db, lectureItem.id, { title: "x" }),
+        ) as HttpError
+      ).status,
     ).toBe(422);
     expect(
-      ((captureError(() => updateCourseItem(db, "ghost", { visible: true }))) as HttpError).code,
+      (
+        captureError(() =>
+          updateCourseItem(db, "ghost", { visible: true }),
+        ) as HttpError
+      ).code,
     ).toBe("COURSE_ITEM_NOT_FOUND");
   });
 
   it("deleteCourseItem 移除条目（资源不动）；不存在 404", () => {
     const db = createTestDb();
     const { courseId, unitId } = seed(db);
-    const [itemRow] = addCourseItems(db, courseId, [{ kind: "unit", refId: unitId }]);
+    const [itemRow] = addCourseItems(db, courseId, [
+      { kind: "unit", refId: unitId },
+    ]);
     if (itemRow === undefined) throw new Error("条目插入失败");
     const item = itemRow;
     deleteCourseItem(db, item.id);
     expect(db.select().from(courseItems).all()).toEqual([]);
-    expect(db.select().from(units).where(eq(units.id, unitId)).get()).toBeDefined();
     expect(
-      ((captureError(() => deleteCourseItem(db, item.id))) as HttpError).code,
+      db.select().from(units).where(eq(units.id, unitId)).get(),
+    ).toBeDefined();
+    expect(
+      (captureError(() => deleteCourseItem(db, item.id)) as HttpError).code,
     ).toBe("COURSE_ITEM_NOT_FOUND");
   });
 
@@ -236,16 +397,32 @@ describe("CourseService：目录条目 CRUD（D6）", () => {
       .from(courseItems)
       .orderBy(asc(courseItems.order))
       .all();
-    expect(after.map((row) => row.kind)).toEqual(["section", "unit", "lecture"]);
+    expect(after.map((row) => row.kind)).toEqual([
+      "section",
+      "unit",
+      "lecture",
+    ]);
 
     expect(
-      ((captureError(() => reorderCourseItems(db, courseId, [s.id, u.id]))) as HttpError).code,
+      (
+        captureError(() =>
+          reorderCourseItems(db, courseId, [s.id, u.id]),
+        ) as HttpError
+      ).code,
     ).toBe("COURSE_ITEM_NOT_FOUND");
     expect(
-      ((captureError(() => reorderCourseItems(db, courseId, [s.id, u.id, l.id, "ghost"]))) as HttpError).code,
+      (
+        captureError(() =>
+          reorderCourseItems(db, courseId, [s.id, u.id, l.id, "ghost"]),
+        ) as HttpError
+      ).code,
     ).toBe("COURSE_ITEM_NOT_FOUND");
     expect(
-      ((captureError(() => reorderCourseItems(db, "ghost-course", []))) as HttpError).code,
+      (
+        captureError(() =>
+          reorderCourseItems(db, "ghost-course", []),
+        ) as HttpError
+      ).code,
     ).toBe("COURSE_NOT_FOUND");
   });
 });
@@ -277,13 +454,25 @@ describe("CourseService：课程成员（D7）", () => {
     ).toEqual([archivedStudentId]);
 
     expect(
-      ((captureError(() => addCourseMembers(db, courseId, ["ghost-s"]))) as HttpError).code,
+      (
+        captureError(() =>
+          addCourseMembers(db, courseId, ["ghost-s"]),
+        ) as HttpError
+      ).code,
     ).toBe("STUDENT_NOT_FOUND");
     expect(
-      ((captureError(() => addCourseMembers(db, "ghost-course", []))) as HttpError).code,
+      (
+        captureError(() =>
+          addCourseMembers(db, "ghost-course", []),
+        ) as HttpError
+      ).code,
     ).toBe("COURSE_NOT_FOUND");
     expect(
-      ((captureError(() => removeCourseMembers(db, "ghost-course", []))) as HttpError).code,
+      (
+        captureError(() =>
+          removeCourseMembers(db, "ghost-course", []),
+        ) as HttpError
+      ).code,
     ).toBe("COURSE_NOT_FOUND");
   });
 });
@@ -308,13 +497,83 @@ describe("CourseService：listVisibleItems（D5 过滤）", () => {
       .run();
     db.insert(courseItems)
       .values([
-        { id: crypto.randomUUID(), courseId, kind: "lecture", refId: ctx.lectureId, title: null, order: 0, visible: true, publishAt: null, createdAt: T0 },
-        { id: crypto.randomUUID(), courseId, kind: "unit", refId: ctx.unitId, title: null, order: 1, visible: true, publishAt: null, createdAt: T0 },
-        { id: crypto.randomUUID(), courseId, kind: "unit", refId: ctx.emptyUnitId, title: null, order: 2, visible: true, publishAt: null, createdAt: T0 },
-        { id: crypto.randomUUID(), courseId, kind: "unit", refId: ctx.deletedUnitId, title: null, order: 3, visible: true, publishAt: null, createdAt: T0 },
-        { id: crypto.randomUUID(), courseId, kind: "lecture", refId: ctx.deletedLectureId, title: null, order: 4, visible: true, publishAt: null, createdAt: T0 },
-        { id: crypto.randomUUID(), courseId, kind: "section", refId: null, title: "第一章", order: 5, visible: true, publishAt: null, createdAt: T0 },
-        { id: crypto.randomUUID(), courseId, kind: "lecture", refId: timedLectureId, title: null, order: 6, visible: true, publishAt: "2099-01-01T00:00:00.000Z", createdAt: T0 },
+        {
+          id: crypto.randomUUID(),
+          courseId,
+          kind: "lecture",
+          refId: ctx.lectureId,
+          title: null,
+          order: 0,
+          visible: true,
+          publishAt: null,
+          createdAt: T0,
+        },
+        {
+          id: crypto.randomUUID(),
+          courseId,
+          kind: "unit",
+          refId: ctx.unitId,
+          title: null,
+          order: 1,
+          visible: true,
+          publishAt: null,
+          createdAt: T0,
+        },
+        {
+          id: crypto.randomUUID(),
+          courseId,
+          kind: "unit",
+          refId: ctx.emptyUnitId,
+          title: null,
+          order: 2,
+          visible: true,
+          publishAt: null,
+          createdAt: T0,
+        },
+        {
+          id: crypto.randomUUID(),
+          courseId,
+          kind: "unit",
+          refId: ctx.deletedUnitId,
+          title: null,
+          order: 3,
+          visible: true,
+          publishAt: null,
+          createdAt: T0,
+        },
+        {
+          id: crypto.randomUUID(),
+          courseId,
+          kind: "lecture",
+          refId: ctx.deletedLectureId,
+          title: null,
+          order: 4,
+          visible: true,
+          publishAt: null,
+          createdAt: T0,
+        },
+        {
+          id: crypto.randomUUID(),
+          courseId,
+          kind: "section",
+          refId: null,
+          title: "第一章",
+          order: 5,
+          visible: true,
+          publishAt: null,
+          createdAt: T0,
+        },
+        {
+          id: crypto.randomUUID(),
+          courseId,
+          kind: "lecture",
+          refId: timedLectureId,
+          title: null,
+          order: 6,
+          visible: true,
+          publishAt: "2099-01-01T00:00:00.000Z",
+          createdAt: T0,
+        },
       ])
       .run();
     // 隐藏单元条目（与上面 order 1 同 refId 冲突——单独课程再放一个隐藏单元来覆盖该条件）
@@ -324,7 +583,17 @@ describe("CourseService：listVisibleItems（D5 过滤）", () => {
       .run();
     db.insert(courseItems)
       .values([
-        { id: crypto.randomUUID(), courseId: course2, kind: "unit", refId: ctx.unitId, title: null, order: 0, visible: false, publishAt: null, createdAt: T0 },
+        {
+          id: crypto.randomUUID(),
+          courseId: course2,
+          kind: "unit",
+          refId: ctx.unitId,
+          title: null,
+          order: 0,
+          visible: false,
+          publishAt: null,
+          createdAt: T0,
+        },
       ])
       .run();
 
@@ -333,7 +602,10 @@ describe("CourseService：listVisibleItems（D5 过滤）", () => {
 
     // 课程 1：可见 = 第一讲(0)、有题单元(1)、分节(5)；空题/软删/未到点被滤
     expect(
-      listVisibleItems(db, ctx.studentId, courseId, NOW).map((item) => [item.title, item.order]),
+      listVisibleItems(db, ctx.studentId, courseId, NOW).map((item) => [
+        item.title,
+        item.order,
+      ]),
     ).toEqual([
       ["第一讲", 0],
       ["有题单元", 1],
@@ -365,15 +637,23 @@ describe("CourseService：listVisibleItems（D5 过滤）", () => {
     // 未到点 → 不可见；到点（注入未来时钟）→ 可见
     expect(listVisibleItems(db, ctx.studentId, ctx.courseId, NOW)).toEqual([]);
     expect(
-      listVisibleItems(db, ctx.studentId, ctx.courseId, "2026-12-01T00:00:00.000Z").map(
-        (item) => item.title,
-      ),
+      listVisibleItems(
+        db,
+        ctx.studentId,
+        ctx.courseId,
+        "2026-12-01T00:00:00.000Z",
+      ).map((item) => item.title),
     ).toEqual(["第一讲"]);
 
     // 移出成员 → 空
     removeCourseMembers(db, ctx.courseId, [ctx.studentId]);
     expect(
-      listVisibleItems(db, ctx.studentId, ctx.courseId, "2026-12-01T00:00:00.000Z"),
+      listVisibleItems(
+        db,
+        ctx.studentId,
+        ctx.courseId,
+        "2026-12-01T00:00:00.000Z",
+      ),
     ).toEqual([]);
 
     // 归档学生 → 空（即便重新入课）
@@ -383,7 +663,12 @@ describe("CourseService：listVisibleItems（D5 过滤）", () => {
       .run();
     addCourseMembers(db, ctx.courseId, [ctx.studentId]);
     expect(
-      listVisibleItems(db, ctx.studentId, ctx.courseId, "2026-12-01T00:00:00.000Z"),
+      listVisibleItems(
+        db,
+        ctx.studentId,
+        ctx.courseId,
+        "2026-12-01T00:00:00.000Z",
+      ),
     ).toEqual([]);
 
     // 课程归档 → 空
@@ -396,7 +681,12 @@ describe("CourseService：listVisibleItems（D5 过滤）", () => {
       .where(eq(courses.id, ctx.courseId))
       .run();
     expect(
-      listVisibleItems(db, ctx.studentId, ctx.courseId, "2026-12-01T00:00:00.000Z"),
+      listVisibleItems(
+        db,
+        ctx.studentId,
+        ctx.courseId,
+        "2026-12-01T00:00:00.000Z",
+      ),
     ).toEqual([]);
   });
 });

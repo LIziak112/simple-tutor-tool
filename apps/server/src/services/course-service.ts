@@ -47,7 +47,11 @@ export interface VisibleCourseItem {
 
 /** 课程不存在 → 404（与 content-service 同码） */
 function requireCourse(db: Db, id: string): void {
-  const row = db.select({ id: courses.id }).from(courses).where(eq(courses.id, id)).get();
+  const row = db
+    .select({ id: courses.id })
+    .from(courses)
+    .where(eq(courses.id, id))
+    .get();
   if (row === undefined) {
     throw new HttpError(404, "COURSE_NOT_FOUND", "课程不存在");
   }
@@ -72,11 +76,17 @@ function validateItemInput(item: CourseItemInput): void {
     }
     return;
   }
-  if (item.refId === undefined || item.refId === null || item.refId.length === 0) {
+  if (
+    item.refId === undefined ||
+    item.refId === null ||
+    item.refId.length === 0
+  ) {
     throw new HttpError(
       422,
       "VALIDATION_ERROR",
-      item.kind === "lecture" ? "讲义条目必须携带 refId" : "单元条目必须携带 refId",
+      item.kind === "lecture"
+        ? "讲义条目必须携带 refId"
+        : "单元条目必须携带 refId",
     );
   }
   if (item.title !== undefined && item.title !== null) {
@@ -182,12 +192,13 @@ export function addCourseItems(
 
   const visible = options.visible ?? true; // D6：新添加默认可见
   const now = new Date().toISOString();
-  let nextOrder = db
-    .select({ order: courseItems.order })
-    .from(courseItems)
-    .where(eq(courseItems.courseId, courseId))
-    .all()
-    .reduce((max, row) => Math.max(max, row.order), -1) + 1;
+  let nextOrder =
+    db
+      .select({ order: courseItems.order })
+      .from(courseItems)
+      .where(eq(courseItems.courseId, courseId))
+      .all()
+      .reduce((max, row) => Math.max(max, row.order), -1) + 1;
 
   const inserted: CourseItem[] = [];
   db.transaction((tx) => {
@@ -197,10 +208,7 @@ export function addCourseItems(
         courseId,
         kind: item.kind,
         refId: item.kind === "section" ? null : (item.refId as string),
-        title:
-          item.kind === "section"
-            ? ((item.title as string).trim())
-            : null,
+        title: item.kind === "section" ? (item.title as string).trim() : null,
         order: nextOrder,
         visible,
         publishAt: null,
@@ -220,11 +228,7 @@ export function updateCourseItem(
   id: string,
   input: { visible?: boolean; publishAt?: string | null; title?: string },
 ): CourseItem {
-  const row = db
-    .select()
-    .from(courseItems)
-    .where(eq(courseItems.id, id))
-    .get();
+  const row = db.select().from(courseItems).where(eq(courseItems.id, id)).get();
   if (row === undefined) {
     throw new HttpError(404, "COURSE_ITEM_NOT_FOUND", "目录条目不存在");
   }
@@ -374,7 +378,11 @@ export function listCourseMembers(
 }
 
 /** 某学生是否为某课程成员 */
-export function isCourseMember(db: Db, courseId: string, studentId: string): boolean {
+export function isCourseMember(
+  db: Db,
+  courseId: string,
+  studentId: string,
+): boolean {
   return (
     db
       .select({ studentId: courseStudents.studentId })
@@ -421,7 +429,11 @@ export function listVisibleItems(
 
   // 资源侧数据一次读全（教师端量级：一对一辅导，内存分组足够）
   const lectureRows = db
-    .select({ id: lectures.id, title: lectures.title, deletedAt: lectures.deletedAt })
+    .select({
+      id: lectures.id,
+      title: lectures.title,
+      deletedAt: lectures.deletedAt,
+    })
     .from(lectures)
     .all();
   const lectureById = new Map(lectureRows.map((row) => [row.id, row]));

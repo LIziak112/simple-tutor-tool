@@ -2,8 +2,8 @@ import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import type { Db } from "../db/client.ts";
 import {
-  attempts,
   assignments,
+  attempts,
   courseItems,
   courses,
   lectures,
@@ -12,7 +12,7 @@ import {
   units,
 } from "../db/schema.ts";
 import { createTestDb } from "../db/test-utils.ts";
-import { HttpError } from "../lib/http-error.ts";
+import type { HttpError } from "../lib/http-error.ts";
 import {
   createFolder,
   deleteFolder,
@@ -141,11 +141,23 @@ describe("LibraryService：文件夹 CRUD", () => {
 
     const result = deleteFolder(db, folderId);
     expect(result).toEqual({ movedLectures: 1, movedUnits: 1 });
-    expect(db.select().from(lectures).where(eq(lectures.id, lectureId)).get()?.folderId).toBeNull();
-    expect(db.select().from(units).where(eq(units.id, unitId)).get()?.folderId).toBeNull();
-    expect(db.select().from(lectures).where(eq(lectures.id, otherLectureId)).get()?.folderId).toBe(otherFolder.id);
     expect(
-      db.select().from(libraryFolders).where(eq(libraryFolders.id, folderId)).get(),
+      db.select().from(lectures).where(eq(lectures.id, lectureId)).get()
+        ?.folderId,
+    ).toBeNull();
+    expect(
+      db.select().from(units).where(eq(units.id, unitId)).get()?.folderId,
+    ).toBeNull();
+    expect(
+      db.select().from(lectures).where(eq(lectures.id, otherLectureId)).get()
+        ?.folderId,
+    ).toBe(otherFolder.id);
+    expect(
+      db
+        .select()
+        .from(libraryFolders)
+        .where(eq(libraryFolders.id, folderId))
+        .get(),
     ).toBeUndefined();
 
     const again = captureError(() => deleteFolder(db, folderId));
@@ -178,12 +190,20 @@ describe("LibraryService：资源软删与恢复（D3）", () => {
 
     softDeleteLecture(db, lectureId); // 幂等，不抛
     expect(
-      db.select({ deletedAt: lectures.deletedAt }).from(lectures).where(eq(lectures.id, lectureId)).get()?.deletedAt,
+      db
+        .select({ deletedAt: lectures.deletedAt })
+        .from(lectures)
+        .where(eq(lectures.id, lectureId))
+        .get()?.deletedAt,
     ).toBe(deletedAt);
 
     restoreLecture(db, lectureId);
     expect(
-      db.select({ deletedAt: lectures.deletedAt }).from(lectures).where(eq(lectures.id, lectureId)).get()?.deletedAt,
+      db
+        .select({ deletedAt: lectures.deletedAt })
+        .from(lectures)
+        .where(eq(lectures.id, lectureId))
+        .get()?.deletedAt,
     ).toBeNull();
     restoreLecture(db, lectureId); // 幂等
 
@@ -197,12 +217,20 @@ describe("LibraryService：资源软删与恢复（D3）", () => {
     const { unitId } = seedBase(db);
     softDeleteUnit(db, unitId);
     expect(
-      db.select({ deletedAt: units.deletedAt }).from(units).where(eq(units.id, unitId)).get()?.deletedAt,
+      db
+        .select({ deletedAt: units.deletedAt })
+        .from(units)
+        .where(eq(units.id, unitId))
+        .get()?.deletedAt,
     ).not.toBeNull();
     softDeleteUnit(db, unitId); // 幂等
     restoreUnit(db, unitId);
     expect(
-      db.select({ deletedAt: units.deletedAt }).from(units).where(eq(units.id, unitId)).get()?.deletedAt,
+      db
+        .select({ deletedAt: units.deletedAt })
+        .from(units)
+        .where(eq(units.id, unitId))
+        .get()?.deletedAt,
     ).toBeNull();
     const missing = captureError(() => restoreUnit(db, "no-such"));
     expect((missing as HttpError).code).toBe("UNIT_NOT_FOUND");
@@ -263,8 +291,22 @@ describe("LibraryService：使用情况查询（D3 删除确认弹层数据源�
     const deletedAssignmentId = crypto.randomUUID();
     db.insert(assignments)
       .values([
-        { id: liveAssignmentId, unitId, title: "进行中的作业", dueAt: "2026-10-01T00:00:00.000Z", deletedAt: null, createdAt: T0 },
-        { id: deletedAssignmentId, unitId, title: "已删作业", dueAt: null, deletedAt: T0, createdAt: T0 },
+        {
+          id: liveAssignmentId,
+          unitId,
+          title: "进行中的作业",
+          dueAt: "2026-10-01T00:00:00.000Z",
+          deletedAt: null,
+          createdAt: T0,
+        },
+        {
+          id: deletedAssignmentId,
+          unitId,
+          title: "已删作业",
+          dueAt: null,
+          deletedAt: T0,
+          createdAt: T0,
+        },
       ])
       .run();
     db.insert(attempts)
@@ -278,7 +320,13 @@ describe("LibraryService：使用情况查询（D3 删除确认弹层数据源�
         submittedAt: T0,
       })
       .run();
-    return { courseId, unitId, lectureId, liveAssignmentId, deletedAssignmentId };
+    return {
+      courseId,
+      unitId,
+      lectureId,
+      liveAssignmentId,
+      deletedAssignmentId,
+    };
   }
 
   it("getUnitUsage：课程引用（条目级可见性）+ 未删除作业 + 作答数；now 可注入", () => {
@@ -289,7 +337,11 @@ describe("LibraryService：使用情况查询（D3 删除确认弹层数据源�
       { courseId, courseTitle: "初一上", visible: false }, // 单元条目默认隐藏
     ]);
     expect(usage.assignments).toEqual([
-      { id: liveAssignmentId, title: "进行中的作业", dueAt: "2026-10-01T00:00:00.000Z" },
+      {
+        id: liveAssignmentId,
+        title: "进行中的作业",
+        dueAt: "2026-10-01T00:00:00.000Z",
+      },
     ]);
     expect(usage.attemptCount).toBe(1);
 

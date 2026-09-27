@@ -182,11 +182,7 @@ function backfillT2a1(tx: Tx, now: Date): void {
         })
         // 幂等兜底：唯一约束 (courseId, kind, refId) 命中即跳过
         .onConflictDoNothing({
-          target: [
-            courseItems.courseId,
-            courseItems.kind,
-            courseItems.refId,
-          ],
+          target: [courseItems.courseId, courseItems.kind, courseItems.refId],
         })
         .run();
     }

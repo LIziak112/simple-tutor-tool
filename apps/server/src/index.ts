@@ -2,8 +2,8 @@ import { join } from "node:path";
 import { serve } from "@hono/node-server";
 import pino from "pino";
 import { createApp } from "./app";
-import { runBackfills } from "./db/backfill";
 import { loadOrCreateSecretKey, readConfig } from "./config";
+import { runBackfills } from "./db/backfill";
 import { createDb } from "./db/client";
 import { runMigrations } from "./db/migrate";
 

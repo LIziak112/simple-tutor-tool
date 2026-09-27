@@ -46,13 +46,13 @@ import {
   units,
 } from "../db/schema";
 import { HttpError } from "../lib/http-error";
+import { softDeleteLecture } from "./library-service";
 import {
   loadKnowledgeIdByName,
   questionFields,
   syncQuestionKnowledge,
   type Tx,
 } from "./question-sync";
-import { softDeleteLecture } from "./library-service";
 
 /**
  * ContentService（T1.10 导入、T1.11 内容树、T1.12 单条编辑/删除/排序/课程 CRUD）
@@ -333,12 +333,13 @@ export function commitImport(
 
     // ---- 追加课程目录条目（T2A.1）：讲义 visible=true、单元 visible=false；
     //      已在该课程的资源跳过（唯一约束 + onConflictDoNothing，幂等不报错） ----
-    let nextItemOrder = tx
-      .select({ order: courseItems.order })
-      .from(courseItems)
-      .where(eq(courseItems.courseId, courseId))
-      .all()
-      .reduce((max, row) => Math.max(max, row.order), -1) + 1;
+    let nextItemOrder =
+      tx
+        .select({ order: courseItems.order })
+        .from(courseItems)
+        .where(eq(courseItems.courseId, courseId))
+        .all()
+        .reduce((max, row) => Math.max(max, row.order), -1) + 1;
     for (const report of lectureReports) {
       tx.insert(courseItems)
         .values({
@@ -567,15 +568,24 @@ export function getContentTree(db: Db): ContentTree {
       .map((item) =>
         item.refId === null ? undefined : lectureById.get(item.refId),
       )
-      .filter((row): row is { id: string; title: string; updatedAt: string } => row !== undefined);
+      .filter(
+        (row): row is { id: string; title: string; updatedAt: string } =>
+          row !== undefined,
+      );
     const unitNodes = items
       .filter((item) => item.kind === "unit")
       .map((item) =>
         item.refId === null ? undefined : unitById.get(item.refId),
       )
       .filter(
-        (row): row is { id: string; title: string; topic: string | null; updatedAt: string } =>
-          row !== undefined,
+        (
+          row,
+        ): row is {
+          id: string;
+          title: string;
+          topic: string | null;
+          updatedAt: string;
+        } => row !== undefined,
       )
       .map((unit) => ({
         ...unit,
@@ -874,10 +884,7 @@ function reorderLiveIds(
  * 条目的交错关系不变（course_items.order 是全 kind 共用一个序列）。
  * 已删资源不在全局顺序中（排最末，保持其原相对顺序——sort 稳定）。
  */
-function reorderCourseItemSlots(
-  db: Db,
-  kind: "lecture" | "unit",
-): void {
+function reorderCourseItemSlots(db: Db, kind: "lecture" | "unit"): void {
   const resourceIds =
     kind === "lecture"
       ? db
@@ -894,7 +901,9 @@ function reorderCourseItemSlots(
           .orderBy(asc(units.order), asc(units.title))
           .all()
           .map((row) => row.id);
-  const position = new Map(resourceIds.map((id, index) => [id, index] as const));
+  const position = new Map(
+    resourceIds.map((id, index) => [id, index] as const),
+  );
 
   const courseIds = [
     ...new Set(
@@ -908,9 +917,15 @@ function reorderCourseItemSlots(
   ];
   for (const courseId of courseIds) {
     const rows = db
-      .select({ id: courseItems.id, refId: courseItems.refId, order: courseItems.order })
+      .select({
+        id: courseItems.id,
+        refId: courseItems.refId,
+        order: courseItems.order,
+      })
       .from(courseItems)
-      .where(and(eq(courseItems.courseId, courseId), eq(courseItems.kind, kind)))
+      .where(
+        and(eq(courseItems.courseId, courseId), eq(courseItems.kind, kind)),
+      )
       .orderBy(asc(courseItems.order), asc(courseItems.id))
       .all();
     if (rows.length < 2) continue;
@@ -1137,7 +1152,11 @@ export function listStudentLectures(db: Db): {
     if (row.refId === null) continue;
     const key: readonly [number, number] = [row.courseOrder, row.itemOrder];
     const existing = bestKeyByLecture.get(row.refId);
-    if (existing === undefined || key[0] < existing[0] || (key[0] === existing[0] && key[1] < existing[1])) {
+    if (
+      existing === undefined ||
+      key[0] < existing[0] ||
+      (key[0] === existing[0] && key[1] < existing[1])
+    ) {
       bestKeyByLecture.set(row.refId, key);
     }
   }
@@ -1147,7 +1166,9 @@ export function listStudentLectures(db: Db): {
     const kb = bestKeyByLecture.get(b.id) ?? [Number.MAX_SAFE_INTEGER, b.order];
     if (ka[0] !== kb[0]) return ka[0] - kb[0];
     if (ka[1] !== kb[1]) return ka[1] - kb[1];
-    return a.order === b.order ? a.title.localeCompare(b.title) : a.order - b.order;
+    return a.order === b.order
+      ? a.title.localeCompare(b.title)
+      : a.order - b.order;
   });
 
   const topics = lectureTopics(db);

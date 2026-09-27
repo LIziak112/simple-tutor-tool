@@ -1,8 +1,8 @@
 import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
-  attempts,
   assignments,
+  attempts,
   courseItems,
   courses,
   lectures,
@@ -129,7 +129,10 @@ export function renameFolder(
     throw new HttpError(409, "FOLDER_NAME_EXISTS", "已存在同名文件夹");
   }
   if (name !== row.name) {
-    db.update(libraryFolders).set({ name }).where(eq(libraryFolders.id, id)).run();
+    db.update(libraryFolders)
+      .set({ name })
+      .where(eq(libraryFolders.id, id))
+      .run();
   }
   return { ...row, name };
 }
@@ -235,7 +238,11 @@ export function softDeleteUnit(db: Db, id: string): void {
 
 /** 单元从回收站恢复（幂等）。行不存在 → 404 */
 export function restoreUnit(db: Db, id: string): void {
-  const row = db.select({ id: units.id }).from(units).where(eq(units.id, id)).get();
+  const row = db
+    .select({ id: units.id })
+    .from(units)
+    .where(eq(units.id, id))
+    .get();
   if (row === undefined) {
     throw new HttpError(404, "UNIT_NOT_FOUND", "练习单元不存在");
   }
@@ -305,17 +312,20 @@ export function getUnitUsage(
   id: string,
   now: Date | string = new Date(),
 ): LibraryResourceUsage {
-  const unit = db.select({ id: units.id }).from(units).where(eq(units.id, id)).get();
+  const unit = db
+    .select({ id: units.id })
+    .from(units)
+    .where(eq(units.id, id))
+    .get();
   if (unit === undefined) {
     throw new HttpError(404, "UNIT_NOT_FOUND", "练习单元不存在");
   }
   const nowIso = typeof now === "string" ? now : now.toISOString();
-  const attemptCount =
-    db
-      .select({ id: attempts.id })
-      .from(attempts)
-      .where(eq(attempts.unitId, id))
-      .all().length;
+  const attemptCount = db
+    .select({ id: attempts.id })
+    .from(attempts)
+    .where(eq(attempts.unitId, id))
+    .all().length;
   return {
     courses: usageCourseRefs(db, "unit", id, nowIso),
     assignments: usageAssignmentRefs(db, id),

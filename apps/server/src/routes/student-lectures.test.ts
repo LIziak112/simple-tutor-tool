@@ -300,9 +300,7 @@ describe("讲义软删的窗口期过滤（T2A.1，D3）", () => {
       data: { lectures: { id: string; title: string }[] };
     };
     expect(studentLectureListOkSchema.safeParse(afterBody).success).toBe(true);
-    expect(afterBody.data.lectures.map((l) => l.title)).toEqual([
-      "第2讲 数轴",
-    ]);
+    expect(afterBody.data.lectures.map((l) => l.title)).toEqual(["第2讲 数轴"]);
     assertNoQuestionFields(afterBody);
 
     // 详情：已删讲义按不存在处理（404，现状口径）

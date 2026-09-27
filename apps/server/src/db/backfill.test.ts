@@ -1,4 +1,10 @@
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { asc, eq } from "drizzle-orm";
@@ -8,8 +14,8 @@ import { runBackfills } from "./backfill.ts";
 import { createDb, type Db } from "./client.ts";
 import { resolveMigrationsFolder, runMigrations } from "./migrate.ts";
 import {
-  attempts,
   assignments,
+  attempts,
   courseItems,
   courseStudents,
   dataMigrations,
@@ -108,7 +114,12 @@ function migrateAndBackfill(db: Db): void {
 /** 某课程目录条目按 order 展开（refId + kind + visible），便于断言顺序与可见性 */
 function itemTuples(db: Db, courseId: string): [string, string, boolean][] {
   return db
-    .select({ refId: courseItems.refId, kind: courseItems.kind, visible: courseItems.visible, order: courseItems.order })
+    .select({
+      refId: courseItems.refId,
+      kind: courseItems.kind,
+      visible: courseItems.visible,
+      order: courseItems.order,
+    })
     .from(courseItems)
     .where(eq(courseItems.courseId, courseId))
     .orderBy(asc(courseItems.order))
@@ -132,15 +143,25 @@ describe("D23 数据搬迁（T2A 前结构 fixture → 迁移 → 回填）", ()
 
     const lectureRows = db.select().from(lectures).all();
     for (const row of lectureRows) {
-      expect(row.folderId).toBe(row.id.startsWith("l-a") ? folderA?.id : folderB?.id);
+      expect(row.folderId).toBe(
+        row.id.startsWith("l-a") ? folderA?.id : folderB?.id,
+      );
     }
     const unitRows = db.select().from(units).all();
     for (const row of unitRows) {
-      expect(row.folderId).toBe(row.id.startsWith("u-a") ? folderA?.id : folderB?.id);
+      expect(row.folderId).toBe(
+        row.id.startsWith("u-a") ? folderA?.id : folderB?.id,
+      );
     }
     // 旧列保留：courseId 值原样（@deprecated T2A，不删不写）
-    expect(lectureRows.every((row) => row.courseId === "c-a" || row.courseId === "c-b")).toBe(true);
-    expect(unitRows.every((row) => row.courseId === "c-a" || row.courseId === "c-b")).toBe(true);
+    expect(
+      lectureRows.every(
+        (row) => row.courseId === "c-a" || row.courseId === "c-b",
+      ),
+    ).toBe(true);
+    expect(
+      unitRows.every((row) => row.courseId === "c-a" || row.courseId === "c-b"),
+    ).toBe(true);
     // 新列默认值
     expect(lectureRows.every((row) => row.deletedAt === null)).toBe(true);
     expect(unitRows.every((row) => row.deletedAt === null)).toBe(true);
@@ -165,7 +186,9 @@ describe("D23 数据搬迁（T2A 前结构 fixture → 迁移 → 回填）", ()
       ["u-b1", "unit", false],
     ]);
     // 唯一约束落位：(courseId, kind, refId) 无重复
-    expect(itemTuples(db, "c-a").length).toBe(new Set(itemTuples(db, "c-a")).size);
+    expect(itemTuples(db, "c-a").length).toBe(
+      new Set(itemTuples(db, "c-a")).size,
+    );
   });
 
   it("步骤 4：所有未归档学生加入所有课程；已归档学生不入课", () => {
@@ -182,7 +205,9 @@ describe("D23 数据搬迁（T2A 前结构 fixture → 迁移 → 回填）", ()
       ["c-a", "s-1"],
       ["c-b", "s-1"],
     ]);
-    expect(members.every((m) => m.joinedAt === "2026-09-27T00:00:00.000Z")).toBe(true);
+    expect(
+      members.every((m) => m.joinedAt === "2026-09-27T00:00:00.000Z"),
+    ).toBe(true);
     expect(members.some((m) => m.studentId === "s-2")).toBe(false);
   });
 
@@ -200,8 +225,14 @@ describe("D23 数据搬迁（T2A 前结构 fixture → 迁移 → 回填）", ()
       status: "submitted",
     });
     const assignment = db.select().from(assignments).get();
-    expect(assignment).toMatchObject({ id: "as-1", unitId: "u-a1", title: "有理数作业一" });
-    expect(db.select({ id: courseItems.id }).from(courseItems).all().length).toBe(7);
+    expect(assignment).toMatchObject({
+      id: "as-1",
+      unitId: "u-a1",
+      title: "有理数作业一",
+    });
+    expect(
+      db.select({ id: courseItems.id }).from(courseItems).all().length,
+    ).toBe(7);
     expect(db.$client.pragma("foreign_key_check")).toHaveLength(0);
   });
 
@@ -219,11 +250,18 @@ describe("D23 数据搬迁（T2A 前结构 fixture → 迁移 → 回填）", ()
     expect(db.select().from(courseStudents).all()).toHaveLength(2);
     // joinedAt 不被第二次执行改写（标记命中，整个回填被跳过）
     expect(
-      db.select().from(courseStudents).all().every((m) => m.joinedAt === "2026-09-27T00:00:00.000Z"),
+      db
+        .select()
+        .from(courseStudents)
+        .all()
+        .every((m) => m.joinedAt === "2026-09-27T00:00:00.000Z"),
     ).toBe(true);
     // 标记表只有一行
     expect(db.select().from(dataMigrations).all()).toEqual([
-      { key: "t2a1_library_courses_backfill", appliedAt: "2026-09-27T00:00:00.000Z" },
+      {
+        key: "t2a1_library_courses_backfill",
+        appliedAt: "2026-09-27T00:00:00.000Z",
+      },
     ]);
   });
 

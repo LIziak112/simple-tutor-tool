@@ -69,13 +69,19 @@ describe("canStudentSeeItem：D5 条件 3（visible + publishAt 到点）", () =
 
   it("publishAt 恰好等于现在（到点）→ 可见（≤ 现在含等于）", () => {
     expect(
-      canStudentSeeItem({ ...BASE, publishAt: "2026-09-27T08:00:00.000Z" }, NOW),
+      canStudentSeeItem(
+        { ...BASE, publishAt: "2026-09-27T08:00:00.000Z" },
+        NOW,
+      ),
     ).toBe(true);
   });
 
   it("publishAt 已过 → 可见", () => {
     expect(
-      canStudentSeeItem({ ...BASE, publishAt: "2026-09-26T00:00:00.000Z" }, NOW),
+      canStudentSeeItem(
+        { ...BASE, publishAt: "2026-09-26T00:00:00.000Z" },
+        NOW,
+      ),
     ).toBe(true);
   });
 
@@ -115,15 +121,15 @@ describe("canStudentSeeItem：D5 条件 4（资源未软删 + 单元有未删题
   });
 
   it("单元条目无未删除题目（0 道）→ 不可见", () => {
-    expect(
-      canStudentSeeItem({ ...BASE, unitLiveQuestionCount: 0 }, NOW),
-    ).toBe(false);
+    expect(canStudentSeeItem({ ...BASE, unitLiveQuestionCount: 0 }, NOW)).toBe(
+      false,
+    );
   });
 
   it("单元条目恰好 1 道未删除题目 → 可见", () => {
-    expect(
-      canStudentSeeItem({ ...BASE, unitLiveQuestionCount: 1 }, NOW),
-    ).toBe(true);
+    expect(canStudentSeeItem({ ...BASE, unitLiveQuestionCount: 1 }, NOW)).toBe(
+      true,
+    );
   });
 
   it("讲义条目（unitLiveQuestionCount=null）不检查题目数 → 资源未删即可见", () => {

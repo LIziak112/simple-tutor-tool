@@ -643,8 +643,18 @@ $1>0$。[[正确]]
 
   it("同一单元导入到另一课程：保留原文件夹，两课程目录各自有条目", () => {
     const db = createTestDb();
-    const courseA = { id: crypto.randomUUID(), title: "课程A", order: 0, createdAt: new Date().toISOString() };
-    const courseB = { id: crypto.randomUUID(), title: "课程B", order: 1, createdAt: new Date().toISOString() };
+    const courseA = {
+      id: crypto.randomUUID(),
+      title: "课程A",
+      order: 0,
+      createdAt: new Date().toISOString(),
+    };
+    const courseB = {
+      id: crypto.randomUUID(),
+      title: "课程B",
+      order: 1,
+      createdAt: new Date().toISOString(),
+    };
     db.insert(courses).values([courseA, courseB]).run();
 
     commitImport(db, { markdown: DOC, filename: "a.md", courseId: courseA.id });
