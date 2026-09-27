@@ -1,0 +1,11 @@
+{
+  // E2E 的类型检查（TS strict）：playwright.config.ts 与 e2e/**/*.ts。
+  // 根 package.json 的 typecheck 脚本会先跑本配置（tsc -p e2e）再递归各包。
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"],
+    // page.evaluate 回调里用到 document/PointerEvent 等 DOM 类型
+    "lib": ["ES2023", "DOM", "DOM.Iterable"]
+  },
+  "include": ["**/*.ts", "../playwright.config.ts"]
+}

@@ -13,3 +13,7 @@ deploy/
 .env
 *.local
 .zcode/tmp/
+
+# Playwright E2E 产物（T2.13）：诊断输出与 html 报告
+e2e/.artifacts/
+playwright-report/
