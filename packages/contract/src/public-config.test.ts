@@ -21,9 +21,9 @@ describe("publicConfigDataSchema", () => {
   });
 
   it("缺少字段 / 类型不符时拒绝（不静默降级）", () => {
-    expect(
-      publicConfigDataSchema.safeParse({ pwaEnabled: true }).success,
-    ).toBe(false);
+    expect(publicConfigDataSchema.safeParse({ pwaEnabled: true }).success).toBe(
+      false,
+    );
     expect(
       publicConfigDataSchema.safeParse({
         pwaEnabled: "yes",

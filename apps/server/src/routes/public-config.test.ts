@@ -1,7 +1,7 @@
 import {
   apiResponseSchema,
-  publicConfigDataSchema,
   type PublicConfigData,
+  publicConfigDataSchema,
 } from "@tutor/contract";
 import type { Logger } from "pino";
 import pino from "pino";

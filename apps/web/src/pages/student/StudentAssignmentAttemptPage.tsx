@@ -4,10 +4,10 @@ import type {
   AttemptResultData,
   HintOpenedEntry,
 } from "@tutor/contract";
-import { AlertTriangle } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import { Button } from "@/components/ui/button";
+import { AttemptBottomBar } from "@/features/attempt/AttemptBottomBar";
 import { AttemptQuestionCard } from "@/features/attempt/AttemptQuestionCard";
 import { AttemptResultView } from "@/features/attempt/AttemptResultView";
 import {
@@ -30,6 +30,7 @@ import {
   StudentListSkeleton,
 } from "@/features/student/student-ui";
 import { formatDueTime } from "@/lib/time";
+import { useOnlineStatus } from "@/lib/use-online-status";
 
 /** 详情 data 的嵌套判别（Zod union 判别键在 attempt.status，TS 无法自动收窄） */
 export function isDraftDetail(
@@ -54,7 +55,9 @@ export function isResultDetail(
  * 3. 交卷确认弹层显示未答数量 → POST submit（服务端判分）→ 切结果视图；
  * 4. 三态齐全（加载骨架/错误重试/空试卷提示），适配 iPad 横竖屏；
  * 5. 草稿防丢（T2.9）：作答同步写 IndexedDB，每 10 秒/切后台/断网恢复增量
- *    同步服务端，顶栏三态显示保存进度（draftSync + DraftStatusBar）。
+ *    同步服务端，顶栏三态显示保存进度（draftSync + DraftStatusBar）；
+ * 6. 离线交卷保护（T2.12）：离线时交卷按钮禁用并提示「已作答内容保存在本机，
+ *    恢复网络后可交卷」（AttemptBottomBar + useOnlineStatus）。
  */
 
 export default function StudentAssignmentAttemptPage() {
@@ -258,6 +261,9 @@ function AnswerView({
       : "交卷失败，请稍后重试"
     : null;
 
+  // 离线状态（T2.12）：离线时禁用交卷并提示（作答照常，草稿本地保存）
+  const online = useOnlineStatus();
+
   return (
     <DraftSyncContext.Provider value={draftSync}>
       <div className="flex flex-col gap-5 pb-24">
@@ -318,41 +324,16 @@ function AnswerView({
           ))}
         </ol>
 
-        {/* 吸底操作条：已答进度 + 保存状态 + 交卷 */}
-        <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/95 backdrop-blur">
-          <div className="mx-auto flex w-full max-w-3xl items-center justify-between gap-3 px-4 py-3">
-            <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-              <span>
-                已答 <b className="text-primary">{answered}</b> / {total} 题
-              </span>
-              {saveFailed && (
-                <span className="flex items-center gap-1 text-xs text-destructive">
-                  <AlertTriangle aria-hidden className="size-4" />
-                  有答案保存失败，请检查网络后重试（重新作答该题即可）
-                </span>
-              )}
-              {inkFlushError && (
-                <span className="flex items-center gap-1 text-xs text-destructive">
-                  <AlertTriangle aria-hidden className="size-4" />
-                  有题目的笔迹还没上传成功，交卷被暂时阻止——请检查网络后重新点「交卷」
-                </span>
-              )}
-              {submitError !== null && (
-                <span className="flex items-center gap-1 text-xs text-destructive">
-                  <AlertTriangle aria-hidden className="size-4" />
-                  {submitError}
-                </span>
-              )}
-            </p>
-            <Button
-              className="min-h-11 shrink-0 px-6"
-              disabled={total === 0}
-              onClick={() => setConfirmOpen(true)}
-            >
-              交卷
-            </Button>
-          </div>
-        </div>
+        {/* 吸底操作条：已答进度 + 保存状态 + 离线/错误提示 + 交卷（T2.12 离线禁用） */}
+        <AttemptBottomBar
+          answered={answered}
+          total={total}
+          offline={!online}
+          saveFailed={saveFailed}
+          inkFlushError={inkFlushError}
+          submitError={submitError}
+          onOpenSubmit={() => setConfirmOpen(true)}
+        />
 
         <SubmitConfirmDialog
           open={confirmOpen}
