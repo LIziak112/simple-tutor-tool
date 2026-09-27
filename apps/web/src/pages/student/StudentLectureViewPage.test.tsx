@@ -1,7 +1,12 @@
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import type { StudentLectureDetail } from "@tutor/contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiError, fetchStudentLectureApi } from "@/lib/api";
+import {
+  ApiError,
+  fetchStudentLectureApi,
+  postLectureEventsApi,
+} from "@/lib/api";
+import { installEventStore, memoryEventStore } from "@/lib/event-queue";
 import { renderWithStudentRoutes } from "@/test/student-routes";
 import StudentLectureViewPage from "./StudentLectureViewPage";
 
@@ -9,6 +14,7 @@ import StudentLectureViewPage from "./StudentLectureViewPage";
  * 讲义阅读页组件测试（T2.3）：RichMarkdown 全文渲染、自动目录（H2/H3）
  * 条目与正文标题一一配对、目录点击滚动到对应标题、目录可折叠、
  * :::solution 讲解块以折叠件呈现、错误态。API 层 mock。
+ * T2.10 追加：折叠/逐步揭晓展开上报 lecture_expand（unmount 时队列 flush 出网）。
  */
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -16,10 +22,12 @@ vi.mock("@/lib/api", async (importOriginal) => {
   return {
     ...actual,
     fetchStudentLectureApi: vi.fn(),
+    postLectureEventsApi: vi.fn(async () => ({ accepted: 1 })),
   };
 });
 
 const mockedLecture = vi.mocked(fetchStudentLectureApi);
+const mockedPostEvents = vi.mocked(postLectureEventsApi);
 
 const LECTURE_ID = "33333333-3333-4333-8333-333333333333";
 
@@ -56,6 +64,8 @@ const scrollIntoViewMock = vi.fn();
 beforeEach(() => {
   scrollIntoViewMock.mockReset();
   Element.prototype.scrollIntoView = scrollIntoViewMock;
+  installEventStore(memoryEventStore());
+  mockedPostEvents.mockClear();
 });
 
 afterEach(() => {
@@ -162,5 +172,76 @@ describe("StudentLectureViewPage", () => {
     expect(await screen.findByText("讲义加载失败")).toBeInTheDocument();
     expect(screen.getByText("讲义不存在")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "重试" })).toBeInTheDocument();
+  });
+});
+
+// ---------- T2.10：lecture_expand 埋点 ----------
+
+/** 含 :::steps 逐步揭晓的讲义 */
+const STEPS_LECTURE: StudentLectureDetail = {
+  ...LECTURE,
+  markdown: [
+    "# 第1讲 有理数",
+    "",
+    "## 一、正数与负数",
+    "",
+    "::::steps",
+    "",
+    ":::step",
+    "第一步内容。",
+    ":::",
+    "",
+    ':::step{title="变形"}',
+    "第二步内容。",
+    ":::",
+    "",
+    "::::",
+  ].join("\n"),
+};
+
+describe("StudentLectureViewPage：lecture_expand 埋点（T2.10）", () => {
+  it("点开详解折叠 → unmount flush 上报 lecture_expand（含讲义 id/指令名/序号）", async () => {
+    mockedLecture.mockResolvedValue(LECTURE);
+    const { unmount } = renderPage();
+    await screen.findByRole("button", { name: /详解/ });
+
+    fireEvent.click(screen.getByRole("button", { name: /详解/ }));
+    // 再收起再展开：第二次展开也上报（§5.3「每次展开都上报」）
+    fireEvent.click(screen.getByRole("button", { name: /详解/ }));
+    fireEvent.click(screen.getByRole("button", { name: /详解/ }));
+
+    unmount();
+    await waitFor(() => expect(mockedPostEvents).toHaveBeenCalled());
+    const events = mockedPostEvents.mock.calls.flatMap(
+      (call) => call[0] as unknown as Array<Record<string, unknown>>,
+    );
+    const expandEvents = events.filter((e) => e.type === "lecture_expand");
+    expect(expandEvents.length).toBe(2);
+    expect(expandEvents[0]).toMatchObject({
+      lectureId: LECTURE_ID,
+      directive: "solution",
+    });
+    expect(typeof expandEvents[0]?.clientTs).toBe("number");
+  });
+
+  it("逐步揭晓「显示下一步」上报 step 指令与步序", async () => {
+    mockedLecture.mockResolvedValue(STEPS_LECTURE);
+    const { unmount } = renderPage();
+    const next = await screen.findByRole("button", { name: /显示下一步/ });
+    fireEvent.click(next);
+
+    unmount();
+    await waitFor(() => expect(mockedPostEvents).toHaveBeenCalled());
+    const events = mockedPostEvents.mock.calls.flatMap(
+      (call) => call[0] as unknown as Array<Record<string, unknown>>,
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "lecture_expand",
+        lectureId: LECTURE_ID,
+        directive: "step",
+        index: 2,
+      }),
+    );
   });
 });

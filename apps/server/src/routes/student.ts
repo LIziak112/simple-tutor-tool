@@ -1,6 +1,8 @@
 import type { StudentPasswordChangeRequest } from "@tutor/contract";
 import {
   attemptAnswerSaveRequestSchema,
+  attemptEventBatchRequestSchema,
+  lectureEventBatchRequestSchema,
   studentPasswordChangeRequestSchema,
 } from "@tutor/contract";
 import { Hono } from "hono";
@@ -29,6 +31,10 @@ import {
   getStudentLecture,
   listStudentLectures,
 } from "../services/content-service";
+import {
+  appendAttemptEvents,
+  appendLectureEvents,
+} from "../services/event-service";
 import { getInkDoc, getStudentInkPng, saveInk } from "../services/ink-service";
 import { changeStudentPassword } from "../services/student-service";
 
@@ -47,6 +53,11 @@ import { changeStudentPassword } from "../services/student-service";
  *   重复交卷 409 ALREADY_SUBMITTED）；
  * - GET  /attempts/:id：attempt 详情（T2.6；未交=草稿视图（无答案/详解/提示），
  *   已交=结果视图（含答案与详解、剥离提示内容））；
+ * - POST /attempts/:id/events：学习痕迹事件批量上报（T2.10，≤200 条/次：
+ *   超限/非法 type 400，非本人 403，未登录 401；已交后仍收——交卷瞬间的前台
+ *   flush 可能晚到，宽松口径见 event-service）；响应只回 accepted 计数；
+ * - POST /events：无 attempt 上下文的事件批量（T2.10；目前只有 lecture_expand
+ *   讲义展开，attemptId/questionId 落 NULL、归属在 payload）；
  * - PUT  /attempts/:id/ink/:questionId：上传/覆盖手写笔迹（T2.8，multipart：
  *   strokes（gzip 后 InkDoc JSON）+ snapshot（PNG），合计 ≤2MB 超 413）；
  * - GET  /attempts/:id/ink/:questionId：取回该题矢量 InkDoc（无笔迹 404）；
@@ -136,6 +147,27 @@ export function createStudentRoutes(
         return c.json({
           ok: true,
           data: getAttemptDetail(db, c.var.student.id, c.req.param("id")),
+        });
+      })
+      // T2.10：学习痕迹事件批量上报（attempt 上下文，≤200 条/次由契约拦截）
+      .post("/attempts/:id/events", async (c) => {
+        const body = await parseJsonBody(c, attemptEventBatchRequestSchema);
+        return c.json({
+          ok: true,
+          data: appendAttemptEvents(
+            db,
+            c.var.student.id,
+            c.req.param("id"),
+            body.events,
+          ),
+        });
+      })
+      // T2.10：无 attempt 上下文的事件批量（讲义 lecture_expand 等）
+      .post("/events", async (c) => {
+        const body = await parseJsonBody(c, lectureEventBatchRequestSchema);
+        return c.json({
+          ok: true,
+          data: appendLectureEvents(db, c.var.student.id, body.events),
         });
       })
       // T2.8：上传/覆盖一道手写题的笔迹（multipart：strokes + snapshot）

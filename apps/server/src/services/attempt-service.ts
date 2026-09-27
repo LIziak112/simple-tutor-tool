@@ -31,10 +31,12 @@ import {
   responses,
 } from "../db/schema";
 import { HttpError } from "../lib/http-error";
+import { computePerQuestionActiveSec, countAnswerChanges } from "./active-time";
 import {
   knowledgeNamesByQuestion,
   unitPublicQuestions,
 } from "./assignment-service";
+import { attemptTimeline } from "./event-service";
 
 /**
  * AttemptService（T2.6）——作答生命周期的业务层（架构文档 §5.2/§5.3/§5.6）。
@@ -373,9 +375,15 @@ function scoreAutoOf(graded: readonly GradedResponse[]): number | null {
  *   - 判分：grade(question, answer)（@tutor/grading，未作答 answer=undefined → null）；
  *   - 未作答也写 responses 行（answerJson=null、autoCorrect=null）——保证
  *     「逐题结果视图」与题目视角统计（T4.1）有完整行覆盖；
+ *   - activeSec：T2.10 起按 events 表事件序列计算（computePerQuestionActiveSec，
+ *     不信任客户端汇总值，§5.5）；无事件的题保持 NULL；
+ *   - changeCount：T2.10 口径 = max(草稿期 PUT 计数, answer_change 事件数)——
+ *     事件计数为权威（每次有效修改一条），草稿计数兜底（无前端事件的 attempt，
+ *     如脚本直接调 API 交卷）；
  * - 草稿期被软删的题目不进入本次作答（其草稿行清除）；
- * - changeCount/hintsUsed 保留草稿期累计值（T2.10/T2.11 语义）；
- * - attempt.status=submitted、submittedAt、scoreAuto 汇总；
+ * - hintsUsed 保留草稿期累计值（T2.11 语义）；
+ * - attempt.status=submitted、submittedAt、scoreAuto 汇总、activeSec 总用时
+ *   （各题之和；无任何事件时保持 NULL）；
  * - 返回结果视图（含答案与详解，AGENTS 第 3 条的「未交卷」限制就此解除）。
  */
 export function submitAttempt(
@@ -407,6 +415,11 @@ export function submitAttempt(
     draftRows.map((row) => [row.questionId, row]),
   );
 
+  // T2.10：每题有效用时与改答案次数（服务端按事件序列计算，§5.5）
+  const timeline = attemptTimeline(db, attemptId);
+  const activeSecByQuestion = computePerQuestionActiveSec(timeline);
+  const eventChangeCountByQuestion = countAnswerChanges(timeline);
+
   const graded: GradedResponse[] = liveRows.map((row) => {
     const question = questionOfRow(row, knowledge.get(row.id) ?? []);
     const draftRow = draftByQuestion.get(row.id);
@@ -434,12 +447,15 @@ export function submitAttempt(
           finalCorrect: null,
           teacherMark: null,
           teacherComment: null,
-          activeSec: null,
+          activeSec: activeSecByQuestion[g.row.id] ?? null,
           hintsUsed: draftRow?.hintsUsed ?? 0,
-          changeCount: draftRow?.changeCount ?? 0,
+          changeCount: Math.max(
+            draftRow?.changeCount ?? 0,
+            eventChangeCountByQuestion[g.row.id] ?? 0,
+          ),
           inkId: null,
         })
-        // 同题已有草稿行 → 交卷语义是整行冻结重写（保留 changeCount/hintsUsed）
+        // 同题已有草稿行 → 交卷语义是整行冻结重写（保留 hintsUsed，其余以本次计算为准）
         .onConflictDoUpdate({
           target: [responses.attemptId, responses.questionId],
           set: {
@@ -447,6 +463,11 @@ export function submitAttempt(
             questionSnapshotJson: JSON.stringify(g.question),
             answerJson,
             autoCorrect: g.autoCorrect,
+            activeSec: activeSecByQuestion[g.row.id] ?? null,
+            changeCount: Math.max(
+              draftRow?.changeCount ?? 0,
+              eventChangeCountByQuestion[g.row.id] ?? 0,
+            ),
           },
         })
         .run();
@@ -466,7 +487,19 @@ export function submitAttempt(
         .run();
     }
     tx.update(attempts)
-      .set({ status: "submitted", submittedAt: now, scoreAuto })
+      .set({
+        status: "submitted",
+        submittedAt: now,
+        scoreAuto,
+        // 总有效用时 = 各题之和；无任何 focus 序列（未计算）保持 NULL
+        activeSec:
+          Object.keys(activeSecByQuestion).length > 0
+            ? Object.values(activeSecByQuestion).reduce(
+                (sum, sec) => sum + sec,
+                0,
+              )
+            : null,
+      })
       .where(eq(attempts.id, attemptId))
       .run();
   });

@@ -4,6 +4,7 @@ import {
   type AttemptAnswerSaveData,
   type AttemptAnswerSaveRequest,
   type AttemptDetailData,
+  type AttemptEvent,
   type AttemptStartData,
   apiResponseSchema,
   type ContentTree,
@@ -16,7 +17,9 @@ import {
   type ImportPreviewRequest,
   type InkDoc,
   type InkUploadData,
+  type LearningEventBatchData,
   type LectureDetail,
+  type LectureEvent,
   type LectureUpdateData,
   type LectureUpdateRequest,
   type QuestionDetail,
@@ -490,6 +493,34 @@ export function submitAttemptApi(
 export function fetchAttemptApi(attemptId: string): Promise<AttemptDetailData> {
   return callApi(() =>
     api.api.student.attempts[":id"].$get({ param: { id: attemptId } }),
+  );
+}
+
+// ---------- T2.10：学习痕迹事件（学生端） ----------
+
+/**
+ * 批量上报 attempt 上下文的学习痕迹事件（≤200 条/次，契约拦截）。
+ * 事件队列（lib/event-queue.ts）的正常发送路径；sendBeacon 兜底路径
+ * 在队列内部用原生 fetch/Beacon 直发（见 putAttemptInkApi 的同类说明）。
+ * json 以独立变量传入的原因同 updateQuestion（parseJsonBody 服务端校验）。
+ */
+export function postAttemptEventsApi(
+  attemptId: string,
+  events: readonly AttemptEvent[],
+): Promise<LearningEventBatchData> {
+  const args = { param: { id: attemptId }, json: { events: [...events] } };
+  return callApi(() => api.api.student.attempts[":id"].events.$post(args));
+}
+
+/**
+ * 批量上报无 attempt 上下文的事件（讲义 lecture_expand）。
+ * 与 postAttemptEventsApi 同壳；讲义阅读页的事件队列使用。
+ */
+export function postLectureEventsApi(
+  events: readonly LectureEvent[],
+): Promise<LearningEventBatchData> {
+  return callApi(() =>
+    api.api.student.events.$post({ json: { events: [...events] } }),
   );
 }
 

@@ -18,6 +18,7 @@ import { DraftStatusBar } from "@/features/attempt/DraftStatusBar";
 import { draftStore } from "@/features/attempt/draft-store";
 import { SubmitConfirmDialog } from "@/features/attempt/SubmitConfirmDialog";
 import { useAttemptAnswers } from "@/features/attempt/use-attempt-answers";
+import { useAttemptEvents } from "@/features/attempt/use-attempt-events";
 import {
   DraftSyncContext,
   useDraftSync,
@@ -169,10 +170,19 @@ function AnswerView({
   );
   // 草稿防丢（T2.9）：合并本地与服务端草稿 + 10 秒/切后台/断网恢复增量同步
   const draftSync = useDraftSync(attemptId, data.drafts, inkControllers);
+  // 学习痕迹埋点（T2.10）：attempt_start/聚焦/answer_change/ink/page_*/submit
+  const attemptEvents = useAttemptEvents(attemptId);
   const { answers, setAnswer, answeredCount, saveFailed } = useAttemptAnswers(
     attemptId,
     draftSync.recoveredDrafts,
     draftSync,
+    {
+      // 保存生效点：聚焦切到该题 + answer_change 事件（from=上次上报值）
+      onAnswerCommitted: (questionId, answer) => {
+        attemptEvents.noteInteraction(questionId);
+        attemptEvents.trackAnswerChange(questionId, answer);
+      },
+    },
   );
   const [confirmOpen, setConfirmOpen] = useState(false);
   /** 笔迹上传失败提示（交卷 flush 失败时展示，重试交卷消除） */
@@ -189,8 +199,10 @@ function AnswerView({
   /**
    * 交卷（T2.8 口径）：先把每道手写题的最新笔迹 flush 上传（Promise.all），
    * 任一失败 → 阻止交卷并提示重试（「交卷时确保每道手写题最新笔迹已上传」）；
-   * 全部成功才调 submit（服务端判分），成功后清本地草稿（T2.9）。
-   * 失败时关闭确认弹层让底栏提示可见（重新点「交卷」即可重试 flush）。
+   * 全部成功后先收尾学习痕迹（T2.10：blur 当前聚焦 + submit 事件 + 事件队列
+   * flush——保证服务端交卷计算时事件序列已入库），再调 submit（服务端判分），
+   * 成功后清本地草稿（T2.9）。失败时关闭确认弹层让底栏提示可见（重新点
+   * 「交卷」即可重试 flush）。
    */
   const confirmSubmit = async () => {
     setInkFlushing(true);
@@ -206,6 +218,8 @@ function AnswerView({
       setConfirmOpen(false);
       return;
     }
+    // T2.10：submit 前收尾事件（尽力 flush；失败不阻塞交卷，宽松口径兜底迟到事件）
+    await attemptEvents.finalizeSubmit();
     submit.mutate(undefined, {
       onSuccess: () => {
         void draftStore.clearDraft(attemptId);
@@ -254,10 +268,13 @@ function AnswerView({
           </div>
         )}
 
-        {/* 题卡列表 */}
+        {/* 题卡列表（ref 注册进视口观察：question_view + 聚焦兜底，T2.10） */}
         <ol className="flex flex-col gap-4">
           {data.questions.map((question, index) => (
-            <li key={question.id}>
+            <li
+              key={question.id}
+              ref={(el) => attemptEvents.registerCard(question.id, el)}
+            >
               <AttemptQuestionCard
                 index={index}
                 question={question}
@@ -267,6 +284,10 @@ function AnswerView({
                 }
                 attemptId={attemptId}
                 registerInkController={registerInkController}
+                onInkStroke={(strokes) => {
+                  attemptEvents.noteInteraction(question.id);
+                  attemptEvents.trackInkStrokes(question.id, strokes);
+                }}
               />
             </li>
           ))}

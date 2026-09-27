@@ -15,6 +15,7 @@ import {
   DirectiveLeafHost,
   DirectiveTextHost,
 } from "./directives";
+import { DirectiveExpandContext } from "./directives/expand-context";
 import { remarkBlank } from "./remark/remark-blank";
 import { remarkDirectiveHost } from "./remark/remark-directive-host";
 import { richMarkdownSanitizeSchema } from "./sanitize";
@@ -66,18 +67,32 @@ export interface RichMarkdownProps {
   source: string;
   /** 追加到根容器的样式类 */
   className?: string;
+  /**
+   * 指令折叠/逐步揭晓的展开回调（T2.10 lecture_expand 埋点）。
+   * 缺省不收集（教师端预览等场景）；经 DirectiveExpandContext 下发到
+   * 各指令组件，不改变组件树结构。
+   */
+  onDirectiveExpand?:
+    | ((info: { name: string; index: number }) => void)
+    | undefined;
 }
 
-export function RichMarkdown({ source, className }: RichMarkdownProps) {
+export function RichMarkdown({
+  source,
+  className,
+  onDirectiveExpand,
+}: RichMarkdownProps) {
   return (
     <div className={cn("rich-markdown", className)}>
-      <ReactMarkdown
-        remarkPlugins={remarkPlugins}
-        rehypePlugins={rehypePlugins}
-        components={directiveHostComponents}
-      >
-        {source}
-      </ReactMarkdown>
+      <DirectiveExpandContext.Provider value={onDirectiveExpand ?? null}>
+        <ReactMarkdown
+          remarkPlugins={remarkPlugins}
+          rehypePlugins={rehypePlugins}
+          components={directiveHostComponents}
+        >
+          {source}
+        </ReactMarkdown>
+      </DirectiveExpandContext.Provider>
     </div>
   );
 }

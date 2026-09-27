@@ -21,6 +21,8 @@ interface LabeledFoldProps {
   icon?: ReactNode;
   /** secret：教师侧机密内容（answer）用琥珀色标识 */
   tone?: FoldTone;
+  /** 展开回调（仅收起 → 展开方向触发一次；T2.10 lecture_expand 埋点用，缺省 no-op） */
+  onExpand?: (() => void) | undefined;
   children?: ReactNode;
 }
 
@@ -28,6 +30,7 @@ export function LabeledFold({
   label,
   icon,
   tone = "neutral",
+  onExpand,
   children,
 }: LabeledFoldProps) {
   const [open, setOpen] = useState(false);
@@ -37,7 +40,12 @@ export function LabeledFold({
       <button
         type="button"
         aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
+        onClick={() =>
+          setOpen((v) => {
+            if (!v) onExpand?.();
+            return !v;
+          })
+        }
         className="flex min-h-11 w-full items-center gap-2 rounded-xl px-3 text-left text-sm font-medium text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         <ChevronRight
