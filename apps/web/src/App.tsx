@@ -62,7 +62,7 @@ const teacherRoutes = (() => {
   const LoginPage = lazy(() => import("./pages/teacher/LoginPage"));
   const TeacherLayout = lazy(() => import("./pages/teacher/TeacherLayout"));
   const SettingsPage = lazy(() => import("./pages/teacher/SettingsPage"));
-  const ContentPage = lazy(() => import("./pages/teacher/ContentPage"));
+  const LibraryPage = lazy(() => import("./pages/teacher/LibraryPage"));
   const ImportPage = lazy(() => import("./pages/teacher/ImportPage"));
   const StudentsPage = lazy(() => import("./pages/teacher/StudentsPage"));
   const AssignmentsPage = lazy(() => import("./pages/teacher/AssignmentsPage"));
@@ -113,12 +113,17 @@ const teacherRoutes = (() => {
           </Suspense>
         }
       >
-        <Route index element={<Navigate to="/t/content" replace />} />
+        <Route index element={<Navigate to="/t/library" replace />} />
         <Route
+          // T2A.2：内容页由资源库页替代，旧路径重定向（外部书签/旧链接兼容）
           path="content"
+          element={<Navigate to="/t/library" replace />}
+        />
+        <Route
+          path="library"
           element={
             <Suspense fallback={pageFallback}>
-              <ContentPage />
+              <LibraryPage />
             </Suspense>
           }
         />

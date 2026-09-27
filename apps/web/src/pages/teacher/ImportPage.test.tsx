@@ -17,7 +17,7 @@ import ImportPage from "./ImportPage";
  * - 预览态统计条（版本徽章/题数）与错误面板渲染（error 时确认导入禁用）；
  * - 编辑后 debounce 重新调 preview；
  * - commit 422 LINT_ERROR 的 _issues 并入同一面板；
- * - 无 error 确认导入成功后跳 /t/content（带成功提示 state）。
+ * - 无 error 确认导入成功后跳 /t/library（带成功提示 state，T2A.2 起）。
  * CodeMirror 编辑器 mock 为普通 textarea（jsdom 不跑真实 CM；真实集成走 Playwright 自验），
  * lint 标注的纯映射逻辑在 lint-diagnostics.test.ts 单独覆盖。
  */
@@ -51,12 +51,12 @@ vi.mock("./MarkdownEditor", () => ({
 const mockedPreview = vi.mocked(previewImport);
 const mockedCommit = vi.mocked(commitImport);
 
-/** /t/content 的替身：显示成功提示 state，便于断言跳转参数 */
-function ContentStub() {
+/** /t/library 的替身：显示成功提示 state，便于断言跳转参数（T2A.2 起导入跳资源库） */
+function LibraryStub() {
   const location = useLocation();
   const state = location.state as { importSuccess?: string } | null;
   return (
-    <div data-testid="content-stub">{state?.importSuccess ?? "内容页"}</div>
+    <div data-testid="content-stub">{state?.importSuccess ?? "资源库页"}</div>
   );
 }
 
@@ -69,7 +69,7 @@ function renderImportPage() {
       <MemoryRouter initialEntries={["/t/import"]}>
         <Routes>
           <Route path="/t/import" element={<ImportPage />} />
-          <Route path="/t/content" element={<ContentStub />} />
+          <Route path="/t/library" element={<LibraryStub />} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -208,7 +208,7 @@ describe("ImportPage 预览态", () => {
     });
   });
 
-  it("无 error 确认导入：调 commitImport，成功跳 /t/content 并携带成功提示", async () => {
+  it("无 error 确认导入：调 commitImport，成功跳 /t/library 并携带成功提示", async () => {
     mockedPreview.mockResolvedValue(previewData({}));
     mockedCommit.mockResolvedValue({
       importId: "5b0b7ba4-6c07-4a5e-9df7-3b1e0d0b5c66",
