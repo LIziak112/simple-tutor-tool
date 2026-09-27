@@ -135,6 +135,9 @@ export default defineConfig({
   server: {
     // 暴露局域网地址，iPad 同一 Wi-Fi 可直接访问开发服务器
     host: true,
+    // 启动即预热入口（触发依赖预构建）：dev 首屏与 E2E 首个导航不再等
+    // 预构建（CI 全新环境上冷预构建曾把首个用例拖超时）
+    warmup: { clientFiles: ["./index.html", "./src/main.tsx"] },
     proxy: {
       // 开发环境把 /api 转发给本地 server（端口见 §0.3，默认 8787）。
       // 用 127.0.0.1 而不是 localhost，避免 Windows 上解析到 IPv6 导致代理失败。
