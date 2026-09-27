@@ -57,6 +57,7 @@ import {
   units,
 } from "../db/schema";
 import { HttpError } from "../lib/http-error";
+import { courseHasAttempts } from "./course-service";
 import { buildImportPlan, loadLibrarySnapshot } from "./import-actions";
 import { softDeleteLecture } from "./library-service";
 import {
@@ -1284,23 +1285,42 @@ export function reorderContent(db: Db, input: ReorderRequest): void {
   }
 }
 
-/** 新建课程（POST /api/teacher/courses）：order 追加到末尾 */
-export function createCourse(db: Db, input: { title: string }): CourseData {
+/** 新建课程（POST /api/teacher/courses）：order 追加到末尾；description 可选（T2A.4） */
+export function createCourse(
+  db: Db,
+  input: { title: string; description?: string | null | undefined },
+): CourseData {
   const count = db.select({ id: courses.id }).from(courses).all().length;
   const id = crypto.randomUUID();
   const order = count;
+  const description =
+    input.description !== undefined && input.description !== null
+      ? input.description
+      : null;
   db.insert(courses)
     .values({
       id,
       title: input.title,
       order,
+      description,
       createdAt: new Date().toISOString(),
     })
     .run();
-  return { id, title: input.title, order };
+  return {
+    id,
+    title: input.title,
+    order,
+    description,
+    archived: false,
+    archivedAt: null,
+  };
 }
 
-/** 课程重命名（PATCH /api/teacher/courses/:id）：title 缺省 = 不改 */
+/**
+ * 课程更新（PATCH /api/teacher/courses/:id，T2A.4 扩展）：
+ * - name / title 同义（name 为 Phase 2A 术语口径，title 兼容旧调用方），缺省 = 不改；
+ * - description 显式 null = 清空；archived：true 归档（D4，学生端不可见）、false 恢复。
+ */
 export function updateCourse(
   db: Db,
   id: string,
@@ -1310,21 +1330,46 @@ export function updateCourse(
   if (row === undefined) {
     throw new HttpError(404, "COURSE_NOT_FOUND", "课程不存在");
   }
-  const title = input.title ?? row.title;
-  if (title !== row.title) {
-    db.update(courses).set({ title }).where(eq(courses.id, id)).run();
+  const patch: Partial<typeof courses.$inferInsert> = {};
+  const title = input.name ?? input.title;
+  if (title !== undefined && title !== row.title) {
+    patch.title = title;
   }
-  return { id, title, order: row.order };
+  if (input.description !== undefined) {
+    patch.description =
+      input.description === null || input.description.length === 0
+        ? null
+        : input.description;
+  }
+  if (input.archived !== undefined) {
+    // true 归档（已归档保持原时间，幂等）；false 恢复（置 null）
+    patch.archivedAt = input.archived
+      ? (row.archivedAt ?? new Date().toISOString())
+      : null;
+  }
+  if (Object.keys(patch).length > 0) {
+    db.update(courses).set(patch).where(eq(courses.id, id)).run();
+  }
+  return {
+    id,
+    title: patch.title ?? row.title,
+    order: row.order,
+    description:
+      patch.description !== undefined ? patch.description : row.description,
+    archived:
+      patch.archivedAt !== undefined
+        ? patch.archivedAt !== null
+        : row.archivedAt !== null,
+    archivedAt: patch.archivedAt !== undefined ? patch.archivedAt : row.archivedAt,
+  };
 }
 
 /**
- * 课程删除（DELETE /api/teacher/courses/:id）：课程下仍有讲义或单元时拒绝
- * （409 COURSE_NOT_EMPTY，避免孤儿数据）；空课程直接物理删除。
- *
- * T2A.1 兼容口径：内容判定以 course_items 为准（资源库改引用制），旧列
- * lectures.courseId / units.courseId 仅对迁移前数据兜底；有成员同样拒绝
- * （course_students 外键保护——T2A.4 改为 D4 语义：按作答记录判定 + 清理
- * 目录条目与成员后删除）。
+ * 课程删除（DELETE /api/teacher/courses/:id，D4，T2A.4 起语义升级）：
+ * 仅在该课程**没有任何作答记录**时允许（判定见 CourseService.courseHasAttempts——
+ * 目录条目引用单元的全部 attempts + 旧列兜底，保守口径），否则 409
+ * COURSE_HAS_ATTEMPTS（提示改用归档）。删除不触碰资源库内容（D1 引用制），
+ * 目录条目与成员随课程一并清理，成功后资源库原样保留。
  */
 export function deleteCourse(db: Db, id: string): void {
   const row = db
@@ -1335,46 +1380,18 @@ export function deleteCourse(db: Db, id: string): void {
   if (row === undefined) {
     throw new HttpError(404, "COURSE_NOT_FOUND", "课程不存在");
   }
-  const hasItems =
-    db
-      .select({ id: courseItems.id })
-      .from(courseItems)
-      .where(eq(courseItems.courseId, id))
-      .get() !== undefined;
-  // @deprecated T2A：旧列兜底（迁移前数据 folderId 回填前的归属痕迹）
-  const hasLegacyLecture =
-    db
-      .select({ id: lectures.id })
-      .from(lectures)
-      .where(eq(lectures.courseId, id))
-      .get() !== undefined;
-  const hasLegacyUnit =
-    db
-      .select({ id: units.id })
-      .from(units)
-      .where(eq(units.courseId, id))
-      .get() !== undefined;
-  if (hasItems || hasLegacyLecture || hasLegacyUnit) {
+  if (courseHasAttempts(db, id)) {
     throw new HttpError(
       409,
-      "COURSE_NOT_EMPTY",
-      "课程下还有讲义或练习单元，请先删除或移出它们，再删除课程",
+      "COURSE_HAS_ATTEMPTS",
+      "该课程下的练习已有作答记录，不能删除；请改用归档（归档后学生看不到，数据保留）",
     );
   }
-  const hasMembers =
-    db
-      .select({ courseId: courseStudents.courseId })
-      .from(courseStudents)
-      .where(eq(courseStudents.courseId, id))
-      .get() !== undefined;
-  if (hasMembers) {
-    throw new HttpError(
-      409,
-      "COURSE_NOT_EMPTY",
-      "课程下还有成员，请先移出全部成员，再删除课程",
-    );
-  }
-  db.delete(courses).where(eq(courses.id, id)).run();
+  db.transaction((tx) => {
+    tx.delete(courseItems).where(eq(courseItems.courseId, id)).run();
+    tx.delete(courseStudents).where(eq(courseStudents.courseId, id)).run();
+    tx.delete(courses).where(eq(courses.id, id)).run();
+  });
 }
 
 // ---------- 学生端：讲义（T2.3；T2A.1 加软删过滤） ----------

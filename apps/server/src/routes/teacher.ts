@@ -12,6 +12,7 @@ import type { Db } from "../db/client";
 import { pngResponse } from "../lib/binary-response";
 import { getTeacherInkMeta, getTeacherInkPng } from "../services/ink-service";
 import { createContentRoutes } from "./content";
+import { createCourseRoutes } from "./courses";
 import { createImportRoutes } from "./import";
 import { createLibraryRoutes } from "./library";
 import { createAssignmentTeacherRoutes } from "./teacher-assignments";
@@ -25,7 +26,12 @@ import { createStudentTeacherRoutes } from "./teacher-students";
  * - GET  /content：内容树（T1.11，业务在 ContentService）
  * - T1.12（业务在 ContentService）：GET/PUT/DELETE /questions/:id（单题编辑/软删）、
  *   GET/PUT/DELETE /lectures/:id（讲义编辑/删除）、POST /reorder（排序）、
- *   POST /courses、PATCH/DELETE /courses/:id（课程 CRUD）
+ *   POST /courses、PATCH/DELETE /courses/:id（课程 CRUD；T2A.4 起 PATCH 扩展
+ *   name/description/archived、DELETE 按 D4 升级）
+ * - T2A.4（业务在 CourseService）：GET /courses、GET /courses/:id、
+ *   POST /courses/:id/items、PUT /courses/:id/items/order、PATCH/DELETE
+ *   /course-items/:id、POST/DELETE /courses/:id/members、
+ *   GET /courses/:id/student-view（课程编辑页：目录编排 + 可见性 + 成员）
  * - T2.1（业务在 StudentService）：GET/POST /students、PATCH /students/:id、
  *   POST /students/:id/reset-password、POST /students/:id/reset-link
  * - T2.2（业务在 AssignmentService）：GET/POST /assignments、
@@ -77,6 +83,7 @@ export function createTeacherRoutes(
       })
       .route("/", createImportRoutes(db))
       .route("/", createContentRoutes(db))
+      .route("/", createCourseRoutes(db))
       .route("/", createLibraryRoutes(db))
       .route("/", createStudentTeacherRoutes(db))
       .route("/", createAssignmentTeacherRoutes(db))
