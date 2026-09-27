@@ -64,6 +64,20 @@
       "when": 1790479936809,
       "tag": "0008_curved_hex",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1790508367157,
+      "tag": "0009_clumsy_mimic",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1790508387310,
+      "tag": "0010_serious_tag",
+      "breakpoints": true
     }
   ]
 }
