@@ -23,6 +23,7 @@ import {
   type LectureEvent,
   type LectureUpdateData,
   type LectureUpdateRequest,
+  type PublicConfigData,
   type QuestionDetail,
   type QuestionUpdateData,
   type QuestionUpdateRequest,
@@ -149,6 +150,14 @@ function pickExtraFields(body: unknown): Record<string, unknown> | undefined {
 /** 查询是否已设置教师（首启判断，无登录要求） */
 export function fetchTeacherStatus(): Promise<TeacherStatusData> {
   return callApi(() => api.api.public.teacher.status.$get());
+}
+
+/**
+ * 运行时公开配置（T2.12）：pwaEnabled 随服务端 PUBLIC_URL 协议，
+ * 前端入口据此决定是否注册 Service Worker（lib/pwa.ts）。
+ */
+export function fetchPublicConfig(): Promise<PublicConfigData> {
+  return callApi(() => api.api.public.config.$get());
 }
 
 /**

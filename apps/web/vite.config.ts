@@ -4,6 +4,8 @@ import { fileURLToPath } from "node:url";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig, type Plugin, type ViteDevServer } from "vite";
+import { VitePWA } from "vite-plugin-pwa";
+import { pwaManifest } from "./src/lib/pwa-manifest";
 
 // Vite 配置：React + Tailwind v4（无 tailwind.config，样式全在 src/index.css）
 
@@ -79,8 +81,50 @@ function excalidrawAssets(): Plugin {
   };
 }
 
+/**
+ * PWA 配置（T2.12，架构 §2.2 / §5.10）：
+ * - injectRegister: false——不在 index.html 自动注入注册脚本；由 main.tsx 调
+ *   lib/pwa.ts 先取 /api/public/config，pwaEnabled（= PUBLIC_URL 为 https）才
+ *   注册 SW。纯 HTTP（公网 IP 部署、备案前）不注册，功能完整；
+ * - 只缓存静态资源，绝不缓存 API：navigateFallback 的回退排除 /api 路径，
+ *   runtimeCaching 不配置任何 /api 规则（未列出的请求 workbox 一律放行网络）；
+ * - 预缓存取舍：排除 excalidraw-assets（约 14MB 字体，首装过重），改为
+ *   CacheFirst 运行时缓存——用过手写题后离线可用，首次安装不背这笔流量；
+ *   其余产物（JS/CSS/KaTeX woff2/图标，约 12MB）全量预缓存，离线可完整答题；
+ * - dev 模式禁用（devOptions.enable=false）：开发环境不生成 sw.js、不注入
+ *   manifest link，localhost 调试行为与 HTTP 部署一致。
+ */
+function pwa() {
+  return VitePWA({
+    injectRegister: false,
+    registerType: "autoUpdate",
+    manifest: { ...pwaManifest },
+    workbox: {
+      globPatterns: ["**/*.{js,css,html,svg,png,webmanifest,woff2}"],
+      globIgnores: ["**/excalidraw-assets/**"],
+      navigateFallback: "index.html",
+      // 注意：denylist 正则匹配的是完整 URL（http://host/api/...），不能锚定行首
+      navigateFallbackDenylist: [/\/api\//],
+      cleanupOutdatedCaches: true,
+      runtimeCaching: [
+        {
+          // Excalidraw 本站字体（禁 CDN，见 excalidrawAssets 插件）：按需缓存
+          urlPattern: /\/excalidraw-assets\//,
+          handler: "CacheFirst",
+          options: {
+            cacheName: "excalidraw-assets",
+            cacheableResponse: { statuses: [0, 200] },
+            expiration: { maxEntries: 64, maxAgeSeconds: 60 * 60 * 24 * 30 },
+          },
+        },
+      ],
+    },
+    devOptions: { enabled: false },
+  });
+}
+
 export default defineConfig({
-  plugins: [react(), tailwindcss(), excalidrawAssets()],
+  plugins: [react(), tailwindcss(), excalidrawAssets(), pwa()],
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),

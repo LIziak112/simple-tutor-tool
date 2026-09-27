@@ -814,3 +814,32 @@ describe("StudentAssignmentAttemptPage：分步提示", () => {
     expect(mockedOpenHint).not.toHaveBeenCalled();
   });
 });
+
+describe("StudentAssignmentAttemptPage：离线交卷保护（T2.12）", () => {
+  it("offline 事件后交卷按钮禁用并提示；online 恢复后可交卷", async () => {
+    mockedStart.mockResolvedValue(START_DRAFT);
+    mockedFetch.mockResolvedValue(DRAFT_DATA);
+    renderPage();
+
+    // 在线：按钮可用、无离线提示
+    const submitButton = await screen.findByRole("button", { name: "交卷" });
+    expect(submitButton).toBeEnabled();
+    expect(
+      screen.queryByText(/离线中，已作答内容保存在本机/),
+    ).not.toBeInTheDocument();
+
+    // 断网（T2.9 同口径的 window offline 事件）：禁用 + 提示
+    fireEvent(window, new Event("offline"));
+    expect(submitButton).toBeDisabled();
+    expect(
+      screen.getByText("离线中，已作答内容保存在本机，恢复网络后可交卷"),
+    ).toBeInTheDocument();
+
+    // 恢复网络：提示消失、按钮恢复
+    fireEvent(window, new Event("online"));
+    expect(submitButton).toBeEnabled();
+    expect(
+      screen.queryByText(/离线中，已作答内容保存在本机/),
+    ).not.toBeInTheDocument();
+  });
+});
