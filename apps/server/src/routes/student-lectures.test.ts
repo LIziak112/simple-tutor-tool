@@ -15,11 +15,14 @@ import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 
 /**
- * 学生端讲义两接口 + 学生 logout 集成测试（T2.3，app.request() 直调路由 + 内存库）：
- * 未登录 401；空列表；导入 samples/v2/讲义样例.md 后按课程顺序返回两讲；
- * 关联单元后 topic 聚合；详情返回全文 markdown；404；泄露断言
- * （响应不携带 questions 表任何字段，讲义 markdown 本身允许含指令语法文本）。
- * T2.4 起泄露断言复用通用工具 assertNoLeak（src/test/assert-no-leak.ts）。
+ * 学生端讲义两接口 + 学生 logout 集成测试（T2.3 起；T2A.5 切换 D5 后重写）：
+ * 讲义只经课程可见（成员 + 目录条目可见）——导入进课程（courseId 兼容路径：
+ * 讲义条目可见）、学生加入成员后按 D5 返回两讲；关联单元（默认隐藏）不贡献
+ * topic，教师放开可见后 topic 出现；详情返回全文 markdown + 课程上下文 +
+ * 本课配套练习；404；泄露断言（响应不携带 questions 表任何字段，讲义 markdown
+ * 本身允许含指令语法文本）。T2A.4 起泄露断言复用通用工具 assertNoLeak
+ * （src/test/assert-no-leak.ts）。D22 越权矩阵与配套练习的完整覆盖见
+ * routes/student-courses.test.ts；此处聚焦讲义读路径的行为切换。
  */
 
 const silentLogger: Logger = pino({ enabled: false });
@@ -49,11 +52,27 @@ $1$ 大于 $0$，是正数。
 ::::
 `;
 
-/** 组装被测应用 + 教师 setup + 学生创建与登录，返回两侧 Cookie */
-async function makeApp(): Promise<{
+/** 从 set-cookie 里取出 tutor_session 的值 */
+function extractSessionToken(res: Response): string {
+  const line = res.headers
+    .getSetCookie()
+    .find((c) => c.toLowerCase().startsWith("tutor_session="));
+  if (!line) {
+    throw new Error("响应中没有 tutor_session cookie");
+  }
+  return line.slice("tutor_session=".length).split(";")[0] ?? "";
+}
+
+/**
+ * 组装被测环境 + 教师 setup + 课程 + 学生创建登录并加入成员，返回两侧 Cookie。
+ * importLecture = 同时导入讲义样例（courseId 兼容路径：讲义条目可见）。
+ */
+async function makeApp(options?: { importLecture?: boolean }): Promise<{
   app: ReturnType<typeof createApp>;
   db: Db;
   studentCookie: string;
+  teacherCookie: string;
+  courseId: string;
 }> {
   const db = createTestDb();
   const app = createApp({
@@ -70,8 +89,16 @@ async function makeApp(): Promise<{
   });
   const teacherCookie = `tutor_session=${extractSessionToken(setup)}`;
 
+  const created = await app.request("/api/teacher/courses", {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie: teacherCookie },
+    body: JSON.stringify({ title: "初一上" }),
+  });
+  expect(created.status).toBe(201);
+  const courseId = ((await created.json()) as { data: { id: string } }).data.id;
+
   // 学生创建 + 密码登录（登录页与链接登录同写一种会话 Cookie，此处用密码登录即可）
-  await app.request("/api/teacher/students", {
+  const studentCreate = await app.request("/api/teacher/students", {
     method: "POST",
     headers: { "content-type": "application/json", cookie: teacherCookie },
     body: JSON.stringify({
@@ -80,48 +107,46 @@ async function makeApp(): Promise<{
       password: STUDENT_PASSWORD,
     }),
   });
+  expect(studentCreate.status).toBe(201);
+  const studentId = (
+    (await studentCreate.json()) as { data: { student: { id: string } } }
+  ).data.student.id;
   const login = await app.request("/api/public/student/login", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ loginName: "张三", password: STUDENT_PASSWORD }),
   });
   expect(login.status).toBe(200);
-  return {
-    app,
-    db,
-    studentCookie: `tutor_session=${extractSessionToken(login)}`,
-  };
-}
+  const studentCookie = `tutor_session=${extractSessionToken(login)}`;
 
-/** 从 set-cookie 里取出 tutor_session 的值 */
-function extractSessionToken(res: Response): string {
-  const line = res.headers
-    .getSetCookie()
-    .find((c) => c.toLowerCase().startsWith("tutor_session="));
-  if (!line) {
-    throw new Error("响应中没有 tutor_session cookie");
+  // T2A.5：学生能看到讲义的前提是课程成员 + 目录条目可见（D5）
+  const member = await app.request(`/api/teacher/courses/${courseId}/members`, {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie: teacherCookie },
+    body: JSON.stringify({ studentIds: [studentId] }),
+  });
+  expect(member.status).toBe(200);
+
+  if (options?.importLecture !== false) {
+    await importDoc(app, teacherCookie, LECTURE_MD, "讲义样例.md", courseId);
   }
-  return line.slice("tutor_session=".length).split(";")[0] ?? "";
+  return { app, db, studentCookie, teacherCookie, courseId };
 }
 
-/** 教师导入一份文档（commit；有 error 级 issue 时 422 直接让测试失败） */
+/** 教师导入一份文档进课程（commit；有 error 级 issue 时 422 直接让测试失败） */
 async function importDoc(
   app: ReturnType<typeof createApp>,
+  teacherCookie: string,
   markdown: string,
   filename: string,
+  courseId?: string,
 ): Promise<void> {
-  const setup = await app.request("/api/public/teacher/login", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ password: TEACHER_PASSWORD }),
-  });
   const res = await app.request("/api/teacher/import/commit", {
     method: "POST",
-    headers: {
-      "content-type": "application/json",
-      cookie: `tutor_session=${extractSessionToken(setup)}`,
-    },
-    body: JSON.stringify({ markdown, filename }),
+    headers: { "content-type": "application/json", cookie: teacherCookie },
+    body: JSON.stringify(
+      courseId === undefined ? { markdown, filename } : { markdown, filename, courseId },
+    ),
   });
   expect(res.status).toBe(200);
 }
@@ -137,7 +162,7 @@ function assertNoQuestionFields(body: unknown): void {
   assertNoLeak(body, { forbid: ["stemMd", "optionsJson", "questions"] });
 }
 
-describe("GET /api/student/lectures（讲义摘要列表）", () => {
+describe("GET /api/student/lectures（讲义摘要列表，T2A.5 D5 切换）", () => {
   it("未登录返回 401", async () => {
     const { app } = await makeApp();
     const res = await app.request("/api/student/lectures");
@@ -147,38 +172,48 @@ describe("GET /api/student/lectures（讲义摘要列表）", () => {
     expect(apiErrSchema.safeParse(body).success).toBe(true);
   });
 
-  it("未导入内容时空列表（结构符合契约）", async () => {
-    const { app, studentCookie } = await makeApp();
+  it("没有课程内容时空双视图（结构符合契约）", async () => {
+    const { app, studentCookie } = await makeApp({ importLecture: false });
     const res = await app.request("/api/student/lectures", {
       headers: { cookie: studentCookie },
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as unknown;
     expect(studentLectureListOkSchema.safeParse(body).success).toBe(true);
-    expect((body as { data: { lectures: unknown[] } }).data.lectures).toEqual(
-      [],
-    );
+    expect((body as { data: { lectures: unknown[]; courses: unknown[] } }).data)
+      .toEqual({ lectures: [], courses: [] });
     assertNoQuestionFields(body);
   });
 
-  it("导入讲义样例后按课程顺序返回两讲；详情含全文 markdown 与 :::solution 讲解（设计如此）", async () => {
-    const { app, studentCookie } = await makeApp();
-    await importDoc(app, LECTURE_MD, "讲义样例.md");
+  it("课程成员看到讲义样例两讲（条目顺序）；详情含全文 markdown 与 :::solution 讲解（设计如此）", async () => {
+    const { app, studentCookie, courseId } = await makeApp();
 
     const list = await app.request("/api/student/lectures", {
       headers: { cookie: studentCookie },
     });
     expect(list.status).toBe(200);
     const listBody = (await list.json()) as {
-      data: { lectures: { id: string; title: string; topic: string | null }[] };
+      data: {
+        lectures: { id: string; title: string; topic: string | null }[];
+        courses: {
+          courseId: string;
+          courseName: string;
+          lectures: unknown[];
+        }[];
+      };
     };
     expect(studentLectureListOkSchema.safeParse(listBody).success).toBe(true);
-    // 顺序 = 文档内 H1 顺序（第1讲 → 第2讲）；无关联单元 → topic null
+    // 顺序 = 文档内 H1 顺序（第1讲 → 第2讲）；无可见关联单元 → topic null
     expect(listBody.data.lectures.map((l) => l.title)).toEqual([
       "第1讲 有理数",
       "第2讲 数轴",
     ]);
     expect(listBody.data.lectures.every((l) => l.topic === null)).toBe(true);
+    // 分组视图：唯一课程组「初一上」含两讲
+    expect(listBody.data.courses).toHaveLength(1);
+    expect(listBody.data.courses[0]?.courseId).toBe(courseId);
+    expect(listBody.data.courses[0]?.courseName).toBe("初一上");
+    expect(listBody.data.courses[0]?.lectures).toHaveLength(2);
     assertNoQuestionFields(listBody);
 
     // 详情：全文 markdown（含 H1 行与 :::solution 讲解内容——学生端应见，前端折叠展示）
@@ -199,24 +234,64 @@ describe("GET /api/student/lectures（讲义摘要列表）", () => {
     assertNoQuestionFields(detailBody);
   });
 
-  it("练习单元关联讲义后，列表聚合该单元 topic", async () => {
-    const { app, studentCookie } = await makeApp();
-    await importDoc(app, LECTURE_MD, "讲义样例.md");
-    await importDoc(app, LINKED_PRACTICE_MD, "有理数小练.md");
+  it("关联单元默认隐藏不贡献 topic；教师放开可见后列表聚合该单元 topic", async () => {
+    const { app, studentCookie, teacherCookie, courseId } = await makeApp();
+    await importDoc(
+      app,
+      teacherCookie,
+      LINKED_PRACTICE_MD,
+      "有理数小练.md",
+      courseId,
+    );
 
-    const res = await app.request("/api/student/lectures", {
-      headers: { cookie: studentCookie },
-    });
-    const body = (await res.json()) as {
+    const before = (await (
+      await app.request("/api/student/lectures", {
+        headers: { cookie: studentCookie },
+      })
+    ).json()) as {
       data: { lectures: { title: string; topic: string | null }[] };
     };
-    // 第1讲被「有理数小练」单元关联 → topic = 正数与负数；第2讲仍 null
-    expect(body.data.lectures).toEqual([
+    // 「有理数小练」条目默认隐藏（导入兼容口径）→ topic 保持 null（隐藏条目零信息）
+    expect(before.data.lectures).toEqual([
+      expect.objectContaining({ title: "第1讲 有理数", topic: null }),
+      expect.objectContaining({ title: "第2讲 数轴", topic: null }),
+    ]);
+
+    // 教师放开配套单元 → 第1讲 topic = 正数与负数（可见配套单元贡献）
+    const detail = (await (
+      await app.request(`/api/teacher/courses/${courseId}`, {
+        headers: { cookie: teacherCookie },
+      })
+    ).json()) as {
+      data: { items: { id: string; title: string }[] };
+    };
+    const unitItem = detail.data.items.find(
+      (item) => item.title === "有理数小练",
+    );
+    expect(unitItem).toBeDefined();
+    const patched = await app.request(
+      `/api/teacher/course-items/${unitItem?.id}`,
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json", cookie: teacherCookie },
+        body: JSON.stringify({ visible: true }),
+      },
+    );
+    expect(patched.status).toBe(200);
+
+    const after = (await (
+      await app.request("/api/student/lectures", {
+        headers: { cookie: studentCookie },
+      })
+    ).json()) as {
+      data: { lectures: { title: string; topic: string | null }[] };
+    };
+    expect(after.data.lectures).toEqual([
       expect.objectContaining({ title: "第1讲 有理数", topic: "正数与负数" }),
       expect.objectContaining({ title: "第2讲 数轴", topic: null }),
     ]);
     // 关联练习已在 questions 表落了行（含答案/详解字段），列表响应不得出现任何题目侧字段
-    assertNoQuestionFields(body);
+    assertNoQuestionFields(after);
   });
 });
 
@@ -227,20 +302,19 @@ describe("GET /api/student/lectures/:id（讲义详情）", () => {
     expect(res.status).toBe(401);
   });
 
-  it("讲义不存在返回 404 LECTURE_NOT_FOUND（统一错误壳）", async () => {
+  it("讲义不存在返回 404 NOT_FOUND（统一错误壳，不暴露存在性）", async () => {
     const { app, studentCookie } = await makeApp();
     const res = await app.request("/api/student/lectures/not-exist", {
       headers: { cookie: studentCookie },
     });
     expect(res.status).toBe(404);
     const body = (await res.json()) as ApiErr;
-    expect(body.error).toBe("LECTURE_NOT_FOUND");
+    expect(body.error).toBe("NOT_FOUND");
     expect(apiErrSchema.safeParse(body).success).toBe(true);
   });
 
   it("教师会话访问学生讲义接口返回 401（会话类型隔离）", async () => {
     const { app } = await makeApp();
-    await importDoc(app, LECTURE_MD, "讲义样例.md");
     const login = await app.request("/api/public/teacher/login", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -253,23 +327,9 @@ describe("GET /api/student/lectures/:id（讲义详情）", () => {
   });
 });
 
-describe("讲义软删的窗口期过滤（T2A.1，D3）", () => {
-  /** 教师登录拿 Cookie */
-  async function teacherCookie(
-    app: ReturnType<typeof createApp>,
-  ): Promise<string> {
-    const login = await app.request("/api/public/teacher/login", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ password: TEACHER_PASSWORD }),
-    });
-    return `tutor_session=${extractSessionToken(login)}`;
-  }
-
+describe("讲义软删的可见性（T2A.5，D5 条件 4）", () => {
   it("教师删除讲义后：学生端列表立即不可见、详情 404；响应仍无题目侧字段（泄露断言）", async () => {
-    const { app, studentCookie } = await makeApp();
-    await importDoc(app, LECTURE_MD, "讲义样例.md");
-    const cookie = await teacherCookie(app);
+    const { app, studentCookie, teacherCookie } = await makeApp();
 
     // 删除前：两讲都在
     const before = await app.request("/api/student/lectures", {
@@ -284,10 +344,10 @@ describe("讲义软删的窗口期过滤（T2A.1，D3）", () => {
     ]);
     const firstId = beforeBody.data.lectures[0]?.id as string;
 
-    // 教师走真实删除接口（T2A.1 起软删；接口路径与语义确认弹层不变）
+    // 教师走真实删除接口（软删；接口路径与语义确认弹层不变）
     const del = await app.request(`/api/teacher/lectures/${firstId}`, {
       method: "DELETE",
-      headers: { cookie },
+      headers: { cookie: teacherCookie },
     });
     expect(del.status).toBe(200);
 
@@ -303,12 +363,12 @@ describe("讲义软删的窗口期过滤（T2A.1，D3）", () => {
     expect(afterBody.data.lectures.map((l) => l.title)).toEqual(["第2讲 数轴"]);
     assertNoQuestionFields(afterBody);
 
-    // 详情：已删讲义按不存在处理（404，现状口径）
+    // 详情：已删讲义按不可见处理（404 NOT_FOUND，D22）
     const detail = await app.request(`/api/student/lectures/${firstId}`, {
       headers: { cookie: studentCookie },
     });
     expect(detail.status).toBe(404);
-    expect(((await detail.json()) as ApiErr).error).toBe("LECTURE_NOT_FOUND");
+    expect(((await detail.json()) as ApiErr).error).toBe("NOT_FOUND");
   });
 });
 

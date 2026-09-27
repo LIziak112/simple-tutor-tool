@@ -13,6 +13,7 @@ import {
   importPreviewOkSchema,
   importPreviewRequestSchema,
   studentLectureDetailOkSchema,
+  studentLectureDetailQuerySchema,
   studentLectureDetailSchema,
   studentLectureListOkSchema,
   studentLectureSummarySchema,
@@ -318,15 +319,23 @@ describe("contentTreeSchema / contentTreeOkSchema（T1.11 内容树）", () => {
   });
 });
 
-describe("学生端讲义契约（T2.3）", () => {
+describe("学生端讲义契约（T2.3；T2A.5 扩展分组与配套练习）", () => {
   const summary = {
     id: "0b6f18ae-6b9a-4d0e-8b7c-9b1b1b1b1b1b",
     title: "第1讲 有理数",
     topic: "有理数",
     updatedAt: "2026-09-20T10:00:00.000Z",
   } as const;
+  const otherSummary = {
+    id: "1c7f29bf-7cab-4f1f-9c8d-8c2c2c2c2c2c",
+    title: "第2讲 数轴",
+    topic: null,
+    updatedAt: "2026-09-21T10:00:00.000Z",
+  } as const;
+  const courseId = "2d8e39ca-8dbc-4a2e-ad9e-9d3d3d3d3d3d";
+  const otherCourseId = "3e9f4ade-9ecd-4b3f-beaf-be5f5f5f5f5f";
 
-  it("讲义摘要：topic 可为 null（无关联单元/未标注主题）", () => {
+  it("讲义摘要：topic 可为 null（无可见配套单元/未标注主题）", () => {
     expect(
       studentLectureSummarySchema.safeParse({ ...summary, topic: null })
         .success,
@@ -347,13 +356,47 @@ describe("学生端讲义契约（T2.3）", () => {
     ).toBe(false);
   });
 
-  it("讲义列表与详情成功壳：ok=true + data 形态", () => {
+  it("讲义列表成功壳：去重并集 + 课程分组双视图（同一讲义可出现在多个分组）", () => {
+    expect(
+      studentLectureListOkSchema.safeParse({
+        ok: true,
+        data: {
+          lectures: [summary, otherSummary],
+          courses: [
+            { courseId, courseName: "初一上", lectures: [summary] },
+            { courseId: otherCourseId, courseName: "初一下", lectures: [summary] },
+          ],
+        },
+      }).success,
+    ).toBe(true);
+    // 空双视图合法（未加入任何课程 / 所在课程暂无可见讲义）
+    expect(
+      studentLectureListOkSchema.safeParse({
+        ok: true,
+        data: { lectures: [], courses: [] },
+      }).success,
+    ).toBe(true);
+    // 缺 courses 字段被拒（双视图是必填结构）
     expect(
       studentLectureListOkSchema.safeParse({
         ok: true,
         data: { lectures: [summary] },
       }).success,
+    ).toBe(false);
+  });
+
+  it("讲义详情查询参数：courseId 可选、非 UUID 被拒", () => {
+    expect(studentLectureDetailQuerySchema.safeParse({}).success).toBe(true);
+    expect(
+      studentLectureDetailQuerySchema.safeParse({ courseId }).success,
     ).toBe(true);
+    expect(
+      studentLectureDetailQuerySchema.safeParse({ courseId: "not-uuid" })
+        .success,
+    ).toBe(false);
+  });
+
+  it("讲义详情成功壳：课程上下文 + 本课配套练习（D8）", () => {
     expect(
       studentLectureDetailOkSchema.safeParse({
         ok: true,
@@ -362,25 +405,48 @@ describe("学生端讲义契约（T2.3）", () => {
           title: summary.title,
           markdown: "# 第1讲 有理数\n\n## 一、正数与负数\n",
           updatedAt: summary.updatedAt,
+          courseId,
+          courseName: "初一上",
+          companionUnits: [
+            { id: "有理数小练", title: "有理数小练", questionCount: 4 },
+          ],
         },
       }).success,
     ).toBe(true);
-    // 空列表合法（未导入任何讲义）
+    // companionUnits 可为空数组（无可见配套）；courseId/courseName 必填（D5 只经课程可见）
     expect(
-      studentLectureListOkSchema.safeParse({
+      studentLectureDetailOkSchema.safeParse({
         ok: true,
-        data: { lectures: [] },
+        data: {
+          id: summary.id,
+          title: summary.title,
+          markdown: "# 第1讲 有理数\n",
+          updatedAt: summary.updatedAt,
+          courseId,
+          courseName: "初一上",
+          companionUnits: [],
+        },
       }).success,
     ).toBe(true);
   });
 
-  it("讲义详情：markdown 为空串被拒（讲义必有 H1 标题行）", () => {
+  it("讲义详情：markdown 为空串、缺课程上下文被拒", () => {
+    const base = {
+      id: summary.id,
+      title: summary.title,
+      updatedAt: summary.updatedAt,
+      courseId,
+      courseName: "初一上",
+      companionUnits: [],
+    } as const;
+    expect(
+      studentLectureDetailSchema.safeParse({ ...base, markdown: "" }).success,
+    ).toBe(false);
     expect(
       studentLectureDetailSchema.safeParse({
-        id: summary.id,
-        title: summary.title,
-        markdown: "",
-        updatedAt: summary.updatedAt,
+        ...base,
+        markdown: "# 第1讲 有理数\n",
+        courseId: undefined,
       }).success,
     ).toBe(false);
   });
