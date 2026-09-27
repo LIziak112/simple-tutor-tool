@@ -31,6 +31,31 @@ const devOnlyRoutes = import.meta.env.DEV
     })()
   : null;
 
+/**
+ * 手写开发页 /dev/ink（T2.7）：两区块（Atrament 页内 + Excalidraw 全屏）+
+ * 数据面板，是 iPad 真机调手感的实验场（§5.4 真机试验页）。
+ * 不做 DEV 门控：真机验收需要在生产构建上测性能，且页面不进入任何导航。
+ * 路由级懒加载 + 引擎内部懒加载，Excalidraw 不进主包（构建产物有独立 chunk）。
+ */
+const inkDevRoute = (() => {
+  const InkDevPage = lazy(() => import("./pages/dev/InkDevPage"));
+  return (
+    <Route
+      key="dev-ink"
+      path="/dev/ink"
+      element={
+        <Suspense
+          fallback={
+            <p className="p-8 text-sm text-muted-foreground">开发页加载中…</p>
+          }
+        >
+          <InkDevPage />
+        </Suspense>
+      }
+    />
+  );
+})();
+
 /** 教师端路由（T1.9）：路由级代码分割，登录/设置页与主布局分块加载 */
 const teacherRoutes = (() => {
   const SetupPage = lazy(() => import("./pages/teacher/SetupPage"));
@@ -281,6 +306,7 @@ export function App() {
     <Routes>
       <Route path="/" element={<HomePage />} />
       {devOnlyRoutes}
+      {inkDevRoute}
       {teacherRoutes}
       {studentRoutes}
       <Route path="*" element={<NotFoundPage />} />
