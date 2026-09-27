@@ -47,8 +47,12 @@ const iPadPortrait = {
 export default defineConfig({
   testDir: "./e2e",
   outputDir: "./e2e/.artifacts",
-  // 主流程用例串起教师端+学生端全链路（含 2 秒防抖的笔迹上传），整体放宽
-  timeout: 180_000,
+  // 单用例超时：本机主流程 ~15s，CI 2 核 runner + vite 冷编译约 40-60s，120s 已足余量。
+  // 收紧（原 180s）：失败时更快暴露（4 用例 × 重试 1 次吃满 180s 会把 job 拖到 12 分钟+）。
+  timeout: 120_000,
+  // 整个 run 的硬上限（含所有 worker）：防止 worker/浏览器卡死时无限等待
+  // （CI job 层面还有 workflow 的 timeout-minutes 双保险）。
+  globalTimeout: 15 * 60_000,
   expect: { timeout: 15_000 },
   fullyParallel: true,
   forbidOnly: IS_CI,
@@ -84,24 +88,29 @@ export default defineConfig({
       command: "pnpm --filter server exec tsx src/index.ts",
       url: `http://127.0.0.1:${E2E_SERVER_PORT}/api/public/health`,
       reuseExistingServer: false,
+      // 180s：CI 2 核 runner 冷启动（pnpm→tsx→依赖加载→迁移）留足余量；本机秒级
       timeout: 180_000,
+      // env 与 process.env 合并（Playwright spawn 语义），CI/本机行为一致
       env: {
         PORT: String(E2E_SERVER_PORT),
         DATA_DIR: dataDir,
         PUBLIC_URL: `http://127.0.0.1:${E2E_WEB_PORT}`,
       },
-      stdout: "ignore",
+      // CI 打印被测进程输出（[WebServer] 前缀）：启动失败/卡住时日志能定位；
+      // 本机忽略 stdout 减噪（stderr 始终透出）
+      stdout: IS_CI ? "pipe" : "ignore",
       stderr: "pipe",
     },
     {
       command: `pnpm --filter web exec vite --port ${E2E_WEB_PORT} --strictPort`,
       url: `http://127.0.0.1:${E2E_WEB_PORT}`,
       reuseExistingServer: false,
+      // 180s：vite 冷启动（依赖预构建）在 CI 上明显慢于本机
       timeout: 180_000,
       env: {
         DEV_API_PROXY_TARGET: `http://127.0.0.1:${E2E_SERVER_PORT}`,
       },
-      stdout: "ignore",
+      stdout: IS_CI ? "pipe" : "ignore",
       stderr: "pipe",
     },
   ],

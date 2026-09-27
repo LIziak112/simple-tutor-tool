@@ -20,7 +20,9 @@ test.describe("主流程：布置作业 → 学生作答与交卷 → 结果与�
     request,
     browser,
   }) => {
-    test.setTimeout(240_000);
+    // 本机 ~15s；CI 2 核 runner + vite 冷编译 40-60s。与全局一致并显式声明：
+    // 卡死时 120s 快速失败（重试由 config 的 CI retries 吸收抖动），不拖满 job
+    test.setTimeout(120_000);
 
     // —— 准备：教师 API 会话（首个用例负责 setup 教师）+ 导入练习样例 ——
     await teacherApiLogin(request);

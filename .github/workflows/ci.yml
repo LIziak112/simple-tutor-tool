@@ -57,10 +57,12 @@ jobs:
 
   # T2.13 E2E（架构 §7.2：E2E 全过才可合并；webkit 项目必须在 CI 中运行）。
   # 独立 job：浏览器安装与单测互不拖慢；失败时上传 html 报告 artifact。
+  # timeout 40 分钟：首跑浏览器缓存未命中时下载安装 + apt 系统库 + 测试本身，
+  # 25 分钟实测不够（首跑被 GitHub 超时取消表现为 completed cancelled）。
   e2e:
     name: e2e (chromium + webkit, iPad 模拟)
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 40
     steps:
       - name: 检出代码
         uses: actions/checkout@v5
@@ -80,14 +82,37 @@ jobs:
       # 浏览器版本随 pnpm-lock.yaml 里的 @playwright/test 版本走：lockfile 不变即命中缓存。
       # chromium 用 playwright 自带 build（config 中 CI 不走 msedge channel），
       # 与 webkit 一起落在 ~/.cache/ms-playwright，可整体缓存；系统库由 --with-deps 装。
+      # restore-keys：版本升级后锁文件哈希变化时，降级命中旧目录（install 会补齐缺失部分）。
       - name: 缓存 Playwright 浏览器
+        id: playwright-cache
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: playwright-${{ runner.os }}-
 
-      - name: 安装 Playwright 浏览器（chromium + webkit）
-        run: npx playwright install --with-deps chromium webkit
+      - name: 浏览器缓存状态与耗时
+        run: |
+          echo "cache-hit=${{ steps.playwright-cache.outputs.cache-hit }}"
+          du -sh ~/.cache/ms-playwright 2>/dev/null || echo "缓存目录尚不存在（首跑）"
+
+      # 安装拆成两步并各自限时：卡在哪一步（chromium / webkit / apt 依赖）日志可直接定位。
+      # chromium 用 --only-shell 只装 headless shell：E2E 全程 headless，完整 chromium
+      # （带 headed 支持的 ~170MB build）用不上，headless shell 体积约为其一半。
+      - name: 安装 chromium headless shell（含系统库）
+        timeout-minutes: 10
+        run: |
+          start=$(date +%s)
+          npx playwright install --with-deps --only-shell chromium
+          echo "chromium 安装耗时 $(( $(date +%s) - start ))s"
+
+      - name: 安装 webkit（含系统库）
+        timeout-minutes: 10
+        run: |
+          start=$(date +%s)
+          npx playwright install --with-deps webkit
+          echo "webkit 安装耗时 $(( $(date +%s) - start ))s"
+          du -sh ~/.cache/ms-playwright
 
       - name: E2E 测试
         run: pnpm e2e
