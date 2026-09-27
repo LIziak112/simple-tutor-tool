@@ -19,7 +19,8 @@ import {
  * question_knowledge、imports（内容存储与导入）；T2.1 追加 students（学生账号与两种登录）；
  * T2.2 追加 assignments、assignment_students（作业与指派名单，软删语义）；
  * T2.6 追加 attempts、responses（作答生命周期：一次作答 + 逐题响应快照）；
- * T2.8 追加 ink（手写笔迹元数据；笔迹本体是 DATA_DIR/blobs 下的文件，不进库）。
+ * T2.8 追加 ink（手写笔迹元数据；笔迹本体是 DATA_DIR/blobs 下的文件，不进库）；
+ * T2.10 追加 events（学习痕迹事件，追加写；每题有效用时由服务端按事件计算）。
  *
  * 全库约定（见 docs/开发任务清单.md §0.3 与 db-change 技能）：
  * - 主键 id 一律为应用层生成的 crypto.randomUUID() 字符串；
@@ -470,6 +471,60 @@ export const ink = sqliteTable(
   ],
 );
 
+/**
+ * 学习痕迹事件表（T2.10，§5.2）——纯追加写（append-only），永不 UPDATE/DELETE。
+ * - 事件形状的权威定义在 packages/contract/src/learning-event.ts（契约优先），
+ *   本表只存元信息：type + payloadJson（answer_change 存学生自己输入的前后值、
+ *   hint_open 只存序号、ink_stroke_batch 只存笔画数、lecture_expand 只存讲义 id
+ *   与指令名/序号——任何题目侧内容不落本表）；
+ * - attemptId 可空（§5.2 记作 attemptId；lecture_expand 读讲义时无 attempt 上下文，
+ *   该类行 attemptId 与 questionId 均为 NULL，归属在 payloadJson.lectureId）；
+ * - clientTs 为客户端毫秒时间戳（epoch ms 整数，与契约传输格式一致，focus/blur
+ *   区间运算需要毫秒精度）；serverTs 为服务端接收时间（UTC ISO，§0.3 时间约定）；
+ * - 每题有效用时由服务端在交卷时按本表事件序列计算（不信任客户端汇总值，§5.5），
+ *   写回 responses.activeSec——本表是原始数据，计算只读。
+ */
+export const events = sqliteTable(
+  "events",
+  {
+    /** 主键：crypto.randomUUID()（§0.3 主键约定） */
+    id: text("id").primaryKey(),
+    /** 所属作答（attempts.id）；讲义等无 attempt 上下文的事件为 NULL */
+    attemptId: text("attempt_id").references(() => attempts.id),
+    /** 题目（questions.id）；无题目语义的事件（page_hidden/page_visible/submit/lecture_expand）为 NULL */
+    questionId: text("question_id"),
+    /** 事件类型（learningEventTypeSchema 11 种之一） */
+    type: text("type")
+      .$type<
+        | "attempt_start"
+        | "question_view"
+        | "question_focus"
+        | "question_blur"
+        | "answer_change"
+        | "hint_open"
+        | "ink_stroke_batch"
+        | "page_hidden"
+        | "page_visible"
+        | "submit"
+        | "lecture_expand"
+      >()
+      .notNull(),
+    /** 事件载荷 JSON（契约各事件 schema 的序列化，不含题目侧内容） */
+    payloadJson: text("payload_json").notNull(),
+    /** 客户端事件时间（epoch 毫秒整数） */
+    clientTs: integer("client_ts").notNull(),
+    /** 服务端接收时间：UTC ISO 字符串 */
+    serverTs: text("server_ts").notNull(),
+  },
+  (table) => [
+    // 交卷时按 attempt 取全量事件序列计算的定位索引（clientTs 升序处理）
+    index("events_attempt_client_ts_idx").on(
+      table.attemptId,
+      table.clientTs,
+    ),
+  ],
+);
+
 /** courses 表行类型（SELECT 结果） */
 export type Course = typeof courses.$inferSelect;
 /** courses 表插入类型 */
@@ -518,3 +573,7 @@ export type NewResponseRow = typeof responses.$inferInsert;
 export type InkRow = typeof ink.$inferSelect;
 /** ink 表插入类型 */
 export type NewInkRow = typeof ink.$inferInsert;
+/** events 表行类型（SELECT 结果） */
+export type EventRow = typeof events.$inferSelect;
+/** events 表插入类型 */
+export type NewEventRow = typeof events.$inferInsert;

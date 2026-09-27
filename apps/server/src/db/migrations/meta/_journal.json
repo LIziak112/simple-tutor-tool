@@ -50,6 +50,13 @@
       "when": 1790468007570,
       "tag": "0006_workable_turbo",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1790476843586,
+      "tag": "0007_curly_cyclops",
+      "breakpoints": true
     }
   ]
 }
