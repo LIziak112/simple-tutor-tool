@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import type { ApiErr } from "@tutor/contract";
+import { INK_MAX_UPLOAD_BYTES } from "@tutor/contract";
 import { Hono } from "hono";
 import type { Logger } from "pino";
 import pino from "pino";
@@ -26,6 +27,11 @@ export interface CreateAppOptions {
   isProduction: boolean;
   /** 数据库实例（教师鉴权等业务路由使用；测试注入 createTestDb() 内存库） */
   db: Db;
+  /**
+   * 运行数据目录（§0.3）：T2.8 起笔迹文件落 DATA_DIR/blobs/ink/…，
+   * 与数据库同源（生产传 config.dataDir；测试注入临时目录）。
+   */
+  dataDir: string;
   /** 对外基础 URL（会话 Cookie 在 https 下加 Secure，见 auth/session.ts） */
   publicUrl: string;
   /** 日志器；缺省用 pino 默认实例（info 级别、stdout）。测试可注入捕获实例 */
@@ -35,6 +41,13 @@ export interface CreateAppOptions {
   /** DSL 规范文档目录覆盖（T1.13 /spec 接口数据源）；缺省按候选顺序解析（见 spec-files.ts）。测试注入临时目录用 */
   specDir?: string | undefined;
 }
+
+/**
+ * 笔迹上传路由的 body 预检上限：两文件合计 ≤2MB（契约）+ multipart
+ * boundary/头部开销余量。超限在 parseBody（整包进内存）之前就拒绝，
+ * 不落盘不缓冲（任务要点：超限尽早拒绝）。
+ */
+export const INK_UPLOAD_BODY_LIMIT = INK_MAX_UPLOAD_BYTES + 64 * 1024;
 
 export function createApp(options: CreateAppOptions) {
   const logger = options.logger ?? pino({ level: "info" });
@@ -98,8 +111,31 @@ export function createApp(options: CreateAppOptions) {
       "/api/public",
       createPublicRoutes(options.db, options.publicUrl, options.specDir),
     )
-    .route("/api/teacher", createTeacherRoutes(options.db, options.publicUrl))
-    .route("/api/student", createStudentRoutes(options.db, options.publicUrl));
+    // T2.8：笔迹上传（PUT multipart）的 body 大小防御——content-length 超限直接
+    // 413，不进入 parseBody（整包进内存）更不落盘；精确限额（两文件合计）在
+    // ink-service 里校验（chunked 传输无 content-length 时由它兜底）。
+    .use("/api/student/attempts/:id/ink/:questionId", async (c, next) => {
+      if (c.req.method === "PUT") {
+        const length = Number(c.req.header("content-length") ?? "0");
+        if (Number.isFinite(length) && length > INK_UPLOAD_BODY_LIMIT) {
+          const body: ApiErr = {
+            ok: false,
+            error: "INK_TOO_LARGE",
+            message: "上传数据过大（超过笔迹上传上限），请精简后重试",
+          };
+          return c.json(body, 413);
+        }
+      }
+      return next();
+    })
+    .route(
+      "/api/teacher",
+      createTeacherRoutes(options.db, options.publicUrl, options.dataDir),
+    )
+    .route(
+      "/api/student",
+      createStudentRoutes(options.db, options.publicUrl, options.dataDir),
+    );
 
   // —— 生产模式：托管 apps/web/dist ——
   // 注册在 API 路由之后：API 请求命中路由后不再经过静态；未命中的 /api 请求被静态中间件放行到统一 404

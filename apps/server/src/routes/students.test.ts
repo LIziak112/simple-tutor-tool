@@ -12,7 +12,7 @@ import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client.ts";
 import { loginFailures, sessions } from "../db/schema.ts";
-import { createTestDb } from "../db/test-utils.ts";
+import { createTestDb, createTestDir } from "../db/test-utils.ts";
 
 /**
  * 学生账号与两种登录集成测试（T2.1 验收项，app.request() 直调路由 + 内存库）：
@@ -37,6 +37,7 @@ async function makeApp(): Promise<{
     logger: silentLogger,
     db,
     publicUrl: "http://localhost:8787",
+    dataDir: createTestDir(),
   });
   const setup = await jsonRequest(app, "/api/public/teacher/setup", {
     password: TEACHER_PASSWORD,

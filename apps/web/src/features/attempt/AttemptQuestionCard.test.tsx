@@ -8,9 +8,26 @@ import { AttemptQuestionCard } from "./AttemptQuestionCard";
  * 答题页题卡组件测试（T2.6）：题头元信息（题号/题型徽章/难度/考点）与
  * 各题型作答控件交互——判断对/错、单选、多选（可取消）、填空内联输入、
  * 手写题最终答案输入；onAnswer 的形态与防抖标记。
+ * T2.8：手写题控件接入手写区/上传状态机——题卡测试 mock 笔迹 API
+ * （fetchAttemptInkApi → null 即无历史笔迹），手写区展开/上传/flush 的
+ * 行为在 HandwrittenControls.test.tsx 与 use-ink-upload.test.ts 单独覆盖。
  *
  * 交互用有状态 Harness（answer 随 onAnswer 回写），还原真实页面的受控数据流。
  */
+
+vi.mock("@/lib/api", () => ({
+  fetchAttemptInkApi: vi.fn(async () => null),
+  putAttemptInkApi: vi.fn(async () => ({
+    questionId: "",
+    inkId: "",
+    strokeCount: 0,
+    width: 0,
+    height: 0,
+    updatedAt: "",
+  })),
+  studentInkPngUrl: (attemptId: string, questionId: string) =>
+    `/api/student/attempts/${attemptId}/ink/${questionId}.png`,
+}));
 
 function baseQuestion(overrides: Partial<QuestionPublic>): QuestionPublic {
   return {
@@ -24,8 +41,11 @@ function baseQuestion(overrides: Partial<QuestionPublic>): QuestionPublic {
   };
 }
 
-/** 记录 onAnswer 调用并把答案回写给卡片（受控组件的真实行为） */
-function renderStatefulCard(question: QuestionPublic) {
+/** 记录 onAnswer 调用并把答案回写给卡片（受控组件的真实行为）。手写题传 attemptId */
+function renderStatefulCard(
+  question: QuestionPublic,
+  options: { attemptId?: string } = {},
+) {
   const onAnswer = vi.fn();
   function Harness() {
     const [answer, setAnswer] = useState<StudentAnswer | undefined>(undefined);
@@ -39,6 +59,9 @@ function renderStatefulCard(question: QuestionPublic) {
           onAnswer(next, defer ?? false);
           setAnswer(next);
         }}
+        {...(options.attemptId !== undefined
+          ? { attemptId: options.attemptId }
+          : {})}
       />
     );
   }
@@ -197,9 +220,16 @@ describe("手写题（solve/apply/find-error）控件", () => {
     stemMd: "计算 $-2^2+(-3)\\times(-\\frac{1}{3})$，写出过程。",
   });
 
-  it("显示手写区占位与最终答案输入；输入触发防抖保存并回显", () => {
-    const { onAnswer } = renderStatefulCard(solve);
-    expect(screen.getByText(/手写作答区即将开放/)).toBeInTheDocument();
+  it("显示「展开手写区」（默认收起）与最终答案输入；输入触发防抖保存并回显", () => {
+    const { onAnswer } = renderStatefulCard(solve, { attemptId: "att-1" });
+    // T2.8：手写区默认收起（节省首屏），不再显示占位文案
+    expect(screen.queryByText(/手写作答区即将开放/)).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /展开手写区/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /全屏作答/ }),
+    ).toBeInTheDocument();
     const input = screen.getByLabelText("最终答案");
     fireEvent.change(input, { target: { value: "-3" } });
     expect(onAnswer).toHaveBeenLastCalledWith(

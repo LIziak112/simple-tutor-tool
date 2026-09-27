@@ -1,3 +1,6 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createDb, type Db } from "./client";
 import { runMigrations } from "./migrate";
 
@@ -10,4 +13,9 @@ export function createTestDb(): Db {
   const db = createDb(":memory:");
   runMigrations(db);
   return db;
+}
+
+/** 测试用临时数据目录（T2.8 起笔迹文件落 DATA_DIR/blobs/ink/…；mkdtemp 每次全新） */
+export function createTestDir(): string {
+  return mkdtempSync(join(tmpdir(), "tutor-ink-test-"));
 }

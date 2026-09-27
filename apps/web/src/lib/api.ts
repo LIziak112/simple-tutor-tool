@@ -14,6 +14,8 @@ import {
   type ImportCommitRequest,
   type ImportPreviewData,
   type ImportPreviewRequest,
+  type InkDoc,
+  type InkUploadData,
   type LectureDetail,
   type LectureUpdateData,
   type LectureUpdateRequest,
@@ -489,4 +491,64 @@ export function fetchAttemptApi(attemptId: string): Promise<AttemptDetailData> {
   return callApi(() =>
     api.api.student.attempts[":id"].$get({ param: { id: attemptId } }),
   );
+}
+
+// ---------- T2.8：手写笔迹（学生端） ----------
+
+/**
+ * 取回一道手写题的矢量文档（刷新后继续书写 / 已交卷回看自己的笔迹）。
+ * 该题尚无笔迹时服务端 404 → 返回 null（前端据此跳过 load，从空白开始）。
+ */
+export async function fetchAttemptInkApi(
+  attemptId: string,
+  questionId: string,
+): Promise<InkDoc | null> {
+  try {
+    return await callApi<InkDoc>(() =>
+      api.api.student.attempts[":id"].ink[":questionId"].$get({
+        param: { id: attemptId, questionId },
+      }),
+    );
+  } catch (err) {
+    if (err instanceof ApiError && err.code === "INK_NOT_FOUND") return null;
+    throw err;
+  }
+}
+
+/**
+ * 上传/覆盖一道手写题的笔迹（multipart：strokes（gzip 后 InkDoc JSON）+
+ * snapshot（白底 PNG），服务端校验合计 ≤2MB，超限抛 413 INK_TOO_LARGE）。
+ * 同题再传幂等覆盖（inkId 不变）。
+ *
+ * 说明：服务端 handler 用 c.req.parseBody() 解析 multipart，hc RPC 对这类路由
+ * 推断不出 form 入参类型——这里用同构 fetch（同源相对路径、自动带会话 Cookie）
+ * 替代 hc，响应仍走 callApi 的统一壳校验（apiResponseSchema），不手抄类型。
+ */
+export function putAttemptInkApi(
+  attemptId: string,
+  questionId: string,
+  strokesGzip: Blob,
+  snapshotPng: Blob,
+): Promise<InkUploadData> {
+  const form = new FormData();
+  form.append("strokes", strokesGzip, "strokes.json.gz");
+  form.append("snapshot", snapshotPng, "snapshot.png");
+  return callApi(() =>
+    fetch(
+      `/api/student/attempts/${encodeURIComponent(attemptId)}/ink/${encodeURIComponent(questionId)}`,
+      { method: "PUT", body: form },
+    ),
+  );
+}
+
+/**
+ * 本人笔迹 PNG 的 URL（结果页/题卡 <img src> 直出；同源请求自动带会话 Cookie，
+ * 404 时由 <img> 的 onerror 兜底隐藏）。「文件直出而非 base64 进库」口径下的
+ * 学生端取回途径（见任务报告）。
+ */
+export function studentInkPngUrl(
+  attemptId: string,
+  questionId: string,
+): string {
+  return `/api/student/attempts/${encodeURIComponent(attemptId)}/ink/${encodeURIComponent(questionId)}.png`;
 }

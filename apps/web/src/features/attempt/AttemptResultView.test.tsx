@@ -127,6 +127,20 @@ describe("逐题结果卡", () => {
     expect(screen.getByText("由老师批改后公布")).toBeInTheDocument();
   });
 
+  it("手写题显示「我的手写笔迹」缩略图（学生本人 PNG 直出）；客观题不显示", () => {
+    renderView();
+    const img = screen.getByAltText("第 p4-q7 题的手写笔迹");
+    expect(img).toHaveAttribute(
+      "src",
+      "/api/student/attempts/55555555-5555-4555-8555-555555555555/ink/p4-q7.png",
+    );
+    // 判断题（第 1 题）无笔迹区块
+    expect(document.querySelectorAll('img[alt$="题的手写笔迹"]').length).toBe(
+      1,
+    );
+    expect(screen.getByText("我的手写笔迹")).toBeInTheDocument();
+  });
+
   it("选项正确项/你的选择有标记", () => {
     renderView();
     expect(screen.getByText("正确项")).toBeInTheDocument();

@@ -1,6 +1,6 @@
 import type { QuestionPublic, StudentAnswer } from "@tutor/contract";
 import { cn } from "cn";
-import { Check, PenLine, X } from "lucide-react";
+import { Check, X } from "lucide-react";
 import { BlankAnswersProvider } from "@/features/markdown/BlankAnswersContext";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import {
@@ -9,10 +9,16 @@ import {
   QUESTION_TYPE_LABELS,
   withBlankValue,
 } from "./answer-format";
+import {
+  HandwrittenControls,
+  type HandwrittenControlsProps,
+} from "./HandwrittenControls";
 
 /**
  * 答题页题卡（T2.6）：题号、题型徽章（中文）、难度星、考点 tag、题干
  * （RichMarkdown 渲染；填空题 [[…]] 空位变内联输入框）与各题型作答控件。
+ * 手写题（solve/apply/find-error）的作答控件在 HandwrittenControls（T2.8：
+ * 展开手写区 + 全屏作答 + 最终答案/MathLive，含笔迹上传状态机）。
  * 触控目标全部 ≥44px（ui-conventions）；judge 题干尾部 [[]] 脱敏框剥掉
  * （对错由按钮作答，空框反而误导）。
  */
@@ -208,46 +214,14 @@ function MultiControls({
   );
 }
 
-/** 手写题（solve/apply/find-error）：手写区占位 + 最终答案输入（T2.8 接入手写） */
-function HandwrittenControls({
-  answer,
-  onAnswer,
-}: {
-  answer: StudentAnswer | undefined;
-  onAnswer: (answer: StudentAnswer, defer: boolean) => void;
-}) {
-  const finalAnswer = answer?.kind === "final" ? answer.finalAnswer : "";
-  return (
-    <div className="flex flex-col gap-3">
-      <div className="flex min-h-24 flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-border bg-muted/30 px-4 py-4 text-center">
-        <PenLine aria-hidden className="size-5 text-muted-foreground" />
-        <p className="text-sm text-muted-foreground">
-          手写作答区即将开放（先用下方「最终答案」作答）
-        </p>
-      </div>
-      <label className="flex flex-col gap-1.5 text-sm font-medium">
-        最终答案
-        <input
-          type="text"
-          value={finalAnswer}
-          onChange={(event) =>
-            onAnswer({ kind: "final", finalAnswer: event.target.value }, true)
-          }
-          placeholder="填写最终答案（如计算结果）"
-          aria-label="最终答案"
-          className="h-11 rounded-md border border-border bg-background px-3 text-sm outline-none transition-colors focus-visible:border-primary focus-visible:ring-3 focus-visible:ring-ring/50"
-        />
-      </label>
-    </div>
-  );
-}
-
 /** 答题页题卡本体 */
 export function AttemptQuestionCard({
   index,
   question,
   answer,
   onAnswer,
+  attemptId,
+  registerInkController,
 }: {
   /** 题号（0 起，展示 +1） */
   index: number;
@@ -256,6 +230,10 @@ export function AttemptQuestionCard({
   answer: StudentAnswer | undefined;
   /** 作答回调（defer 交给控件语义：文本类防抖、离散类立即） */
   onAnswer: (answer: StudentAnswer, defer?: boolean) => void;
+  /** attempt id（手写题笔迹上传用；客观题忽略） */
+  attemptId?: string;
+  /** 交卷 flush 用：手写题上传 controller 注册（透传 HandwrittenControls） */
+  registerInkController?: HandwrittenControlsProps["registerController"];
 }) {
   const plainAnswer = (next: StudentAnswer) => onAnswer(next);
 
@@ -321,9 +299,17 @@ export function AttemptQuestionCard({
       )}
       {(question.type === "solve" ||
         question.type === "apply" ||
-        question.type === "find-error") && (
-        <HandwrittenControls answer={answer} onAnswer={onAnswer} />
-      )}
+        question.type === "find-error") &&
+        attemptId !== undefined && (
+          <HandwrittenControls
+            attemptId={attemptId}
+            questionId={question.id}
+            stemMd={question.stemMd}
+            answer={answer}
+            onAnswer={onAnswer}
+            registerController={registerInkController}
+          />
+        )}
     </article>
   );
 }

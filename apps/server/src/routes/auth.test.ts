@@ -11,7 +11,7 @@ import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client.ts";
 import { loginFailures, sessions } from "../db/schema.ts";
-import { createTestDb } from "../db/test-utils.ts";
+import { createTestDb, createTestDir } from "../db/test-utils.ts";
 
 /**
  * 教师鉴权接口集成测试（T1.9 验收项，app.request() 直调路由 + 内存库）：
@@ -34,6 +34,7 @@ function makeApp(publicUrl = "http://localhost:8787"): {
     isProduction: false,
     logger: silentLogger,
     db,
+    dataDir: createTestDir(),
     publicUrl,
   });
   return { app, db };

@@ -41,16 +41,18 @@ import {
 export interface InkPadProps {
   /** 底层引擎：atrament（页内答题区，默认）/ excalidraw（全屏作答） */
   engine?: InkEngineKind;
-  /** 恢复的笔迹（草稿） */
-  initial?: InkDoc;
+  /** 恢复的笔迹（草稿）；exactOptionalPropertyTypes 下显式接受 undefined */
+  initial?: InkDoc | undefined;
   /** atrament 初始高度（CSS 像素），写到底部自动加高 */
   initialHeight?: number;
+  /** 填满父容器高度（全屏作答形态）：画布占满余下空间，禁用自动加高 */
+  fill?: boolean;
   /** 无障碍标签 */
   label?: string;
   /** 每次笔迹变化回调 */
-  onDocChange?: (doc: InkDoc) => void;
+  onDocChange?: ((doc: InkDoc) => void) | undefined;
   /** 引擎实例透出（开发页/草稿保存等需要命令式访问 getData/load/exportPng） */
-  engineRef?: React.RefObject<InkEngine | null>;
+  engineRef?: React.RefObject<InkEngine | null> | undefined;
 }
 
 /** 自动加高：最后一笔距底部不足该值时加高一步 */
@@ -85,6 +87,7 @@ export function InkPad({
   engine = "atrament",
   initial,
   initialHeight = 280,
+  fill = false,
   label = "手写答题区",
   onDocChange,
   engineRef,
@@ -208,7 +211,7 @@ export function InkPad({
   return (
     <div
       data-slot="ink-pad"
-      className="flex flex-col gap-2 [touch-action:manipulation]"
+      className={`flex flex-col gap-2 [touch-action:manipulation] ${fill ? "h-full min-h-0" : ""}`}
     >
       {/* 工具栏：笔/荧光笔/橡皮/滚动（或套索）+ 颜色三选 + 粗细三档 + 撤销/重做/清空 */}
       <div
@@ -363,14 +366,14 @@ export function InkPad({
         </div>
       </div>
 
-      {/* 画布容器：高度由本组件控制（自动加高）；引擎在其中自建 canvas */}
+      {/* 画布容器：页内形态高度固定（自动加高）；全屏形态（fill）占满余下空间 */}
       <div
         ref={containerRef}
         data-slot="ink-pad-canvas"
         role="img"
         aria-label={label}
-        style={{ height: `${height}px` }}
-        className="relative w-full overflow-hidden rounded-xl border border-border bg-white"
+        style={fill ? undefined : { height: `${height}px` }}
+        className={`relative w-full overflow-hidden rounded-xl border border-border bg-white ${fill ? "min-h-0 flex-1" : ""}`}
       >
         {/* Excalidraw 懒加载中 / 失败的覆盖层（三种状态，ui-conventions） */}
         {engine === "excalidraw" && !ready && !loadError && (

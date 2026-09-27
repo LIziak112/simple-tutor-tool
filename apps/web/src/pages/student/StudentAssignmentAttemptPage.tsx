@@ -4,7 +4,7 @@ import type {
   AttemptResultData,
 } from "@tutor/contract";
 import { AlertTriangle } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import { Button } from "@/components/ui/button";
 import { AttemptQuestionCard } from "@/features/attempt/AttemptQuestionCard";
@@ -16,6 +16,7 @@ import {
 } from "@/features/attempt/attempt-queries";
 import { SubmitConfirmDialog } from "@/features/attempt/SubmitConfirmDialog";
 import { useAttemptAnswers } from "@/features/attempt/use-attempt-answers";
+import type { InkUploadController } from "@/features/attempt/use-ink-upload";
 import {
   StudentErrorPanel,
   StudentListSkeleton,
@@ -136,14 +137,47 @@ function AnswerView({
     data.drafts,
   );
   const [confirmOpen, setConfirmOpen] = useState(false);
+  /** 笔迹上传失败提示（交卷 flush 失败时展示，重试交卷消除） */
+  const [inkFlushError, setInkFlushError] = useState(false);
+  /** 笔迹 flush 进行中（交卷按钮/确认弹层的等待态） */
+  const [inkFlushing, setInkFlushing] = useState(false);
   const submit = useSubmitAttempt(attemptId);
+
+  /** 手写题的笔迹上传 controller（mount 注册、unmount 注销；交卷前逐题 flush） */
+  const inkControllers = useRef(new Map<string, InkUploadController>());
+  const registerInkController = useCallback(
+    (questionId: string, controller: InkUploadController | null) => {
+      if (controller === null) inkControllers.current.delete(questionId);
+      else inkControllers.current.set(questionId, controller);
+    },
+    [],
+  );
 
   const questionIds = data.questions.map((question) => question.id);
   const total = data.questions.length;
   const answered = answers === null ? 0 : answeredCount(questionIds);
   const unanswered = total - answered;
 
-  const confirmSubmit = () => {
+  /**
+   * 交卷（T2.8 口径）：先把每道手写题的最新笔迹 flush 上传（Promise.all），
+   * 任一失败 → 阻止交卷并提示重试（「交卷时确保每道手写题最新笔迹已上传」）；
+   * 全部成功才调 submit（服务端判分）。失败时关闭确认弹层让底栏提示可见
+   * （重新点「交卷」即可重试 flush）。
+   */
+  const confirmSubmit = async () => {
+    setInkFlushing(true);
+    setInkFlushError(false);
+    const results = await Promise.all(
+      [...inkControllers.current.values()].map((controller) =>
+        controller.flush(),
+      ),
+    );
+    setInkFlushing(false);
+    if (!results.every(Boolean)) {
+      setInkFlushError(true);
+      setConfirmOpen(false);
+      return;
+    }
     submit.mutate(undefined, {
       onSettled: () => setConfirmOpen(false),
     });
@@ -196,6 +230,8 @@ function AnswerView({
               onAnswer={(answer, defer) =>
                 setAnswer(question.id, answer, defer ?? false)
               }
+              attemptId={attemptId}
+              registerInkController={registerInkController}
             />
           </li>
         ))}
@@ -212,6 +248,12 @@ function AnswerView({
               <span className="flex items-center gap-1 text-xs text-destructive">
                 <AlertTriangle aria-hidden className="size-4" />
                 有答案保存失败，请检查网络后重试（重新作答该题即可）
+              </span>
+            )}
+            {inkFlushError && (
+              <span className="flex items-center gap-1 text-xs text-destructive">
+                <AlertTriangle aria-hidden className="size-4" />
+                有题目的笔迹还没上传成功，交卷被暂时阻止——请检查网络后重新点「交卷」
               </span>
             )}
             {submitError !== null && (
@@ -234,8 +276,8 @@ function AnswerView({
       <SubmitConfirmDialog
         open={confirmOpen}
         unansweredCount={unanswered}
-        submitting={submit.isPending}
-        onConfirm={confirmSubmit}
+        submitting={submit.isPending || inkFlushing}
+        onConfirm={() => void confirmSubmit()}
         onCancel={() => setConfirmOpen(false)}
       />
     </div>
