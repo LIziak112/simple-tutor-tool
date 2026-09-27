@@ -8,6 +8,11 @@ import type {
 } from "@tutor/contract";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  draftStore,
+  installDraftBackend,
+  memoryBackend,
+} from "@/features/attempt/draft-store";
+import {
   fetchAttemptApi,
   putAttemptInkApi,
   saveAttemptAnswerApi,
@@ -26,6 +31,8 @@ import StudentAssignmentAttemptPage from "./StudentAssignmentAttemptPage";
  * T2.8 追加：交卷 flush——确认交卷先把每道手写题最新笔迹 PUT 上传（调用顺序
  * 先于 submit）；任一失败阻止交卷并给出可指导提示，恢复后重试成功。
  * 引擎（InkPad）mock 为「模拟书写一笔」按钮，控制笔迹变化时机。
+ * T2.9 追加：刷新恢复（本地草稿仓合并）、断网三态、交卷清草稿——
+ * 每个用例注入干净内存后端（jsdom 无 indexedDB，不引入 fake-indexeddb）。
  */
 
 // InkPad mock：暴露触发 onDocChange 的按钮 + 填充可 exportPng 的引擎 stub
@@ -222,6 +229,7 @@ beforeEach(() => {
     height: 50,
     updatedAt: "2026-09-27T00:00:00.000Z",
   });
+  installDraftBackend(memoryBackend());
 });
 
 describe("StudentAssignmentAttemptPage：草稿作答流程", () => {
@@ -419,5 +427,146 @@ describe("StudentAssignmentAttemptPage：交卷 flush", () => {
     await clickSubmitAndConfirm();
     await waitFor(() => expect(mockedSubmit).toHaveBeenCalledTimes(1));
     expect(mockedPutInk).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ---------- T2.9：草稿防丢（刷新恢复 / 交卷清草稿 / 顶栏三态） ----------
+
+/** 本地预置一笔笔迹（刷新前已写、尚未同步到服务端的场景） */
+function localInkDoc(strokes: number): InkDoc {
+  return {
+    engine: "atrament",
+    version: 1,
+    data: {
+      width: 1000,
+      strokes: Array.from({ length: strokes }, () => ({
+        tool: "pen" as const,
+        color: "#000",
+        weight: 4,
+        points: [{ x: 1, y: 1, p: 0.5, t: 0 }],
+      })),
+    },
+    updatedAt: 2,
+  };
+}
+
+describe("StudentAssignmentAttemptPage：草稿防丢", () => {
+  it("刷新恢复（答案）：本地较新的答案在进入页面后还原到控件，并自动补传服务端", async () => {
+    // 模拟「上次会话写了答案、刷新前最后一次同步没到服务端」：
+    // 本地草稿仓有答案，服务端 drafts 为空
+    draftStore.saveAnswer(ATTEMPT_ID, "练习四-1", {
+      kind: "judge",
+      value: true,
+    });
+    draftStore.saveAnswer(ATTEMPT_ID, "练习四-4", {
+      kind: "fill",
+      values: ["4"],
+    });
+    mockedStart.mockResolvedValue(START_DRAFT);
+    mockedFetch.mockResolvedValue(DRAFT_DATA);
+    mockedSave.mockResolvedValue({ questionId: "练习四-1", changeCount: 1 });
+    renderPage();
+
+    // 控件状态还原（判断选中「对」、填空带值）
+    const yes = await screen.findByRole("radio", { name: /对/ });
+    await waitFor(() => expect(yes).toBeChecked());
+    expect(screen.getByDisplayValue("4")).toBeInTheDocument();
+    expect(document.body.textContent).toContain("已答 2 / 2 题");
+    // 合并后本地较新 → 触发一次增量同步（逐题 PUT）
+    await waitFor(() =>
+      expect(mockedSave).toHaveBeenCalledWith(ATTEMPT_ID, "练习四-1", {
+        kind: "judge",
+        value: true,
+      } satisfies StudentAnswer),
+    );
+    expect(mockedSave).toHaveBeenCalledWith(ATTEMPT_ID, "练习四-4", {
+      kind: "fill",
+      values: ["4"],
+    } satisfies StudentAnswer);
+  });
+
+  it("刷新恢复（笔迹）：本地有笔迹且服务端为空 → 自动展开并补传（resync 防抖后 PUT）", async () => {
+    draftStore.saveInk(ATTEMPT_ID, "q-ink-1", localInkDoc(2));
+    mockedStart.mockResolvedValue(START_DRAFT);
+    mockedFetch
+      .mockResolvedValueOnce(HANDWRITTEN_DRAFT)
+      .mockResolvedValue(RESULT_DATA);
+    renderPage();
+
+    // 非空本地笔迹 → 自动展开（按钮翻转为「收起手写区」）
+    await screen.findByRole("button", { name: /收起手写区/ });
+    // resync 进 2 秒防抖后上传（InkPad mock 提供可导 PNG 的引擎）
+    await waitFor(() => expect(mockedPutInk).toHaveBeenCalledTimes(1), {
+      timeout: 4000,
+    });
+    expect(mockedPutInk.mock.calls[0]?.[1]).toBe("q-ink-1");
+  });
+
+  it("交卷成功后清除本地草稿", async () => {
+    mockedStart.mockResolvedValue(START_DRAFT);
+    mockedFetch
+      .mockResolvedValueOnce(DRAFT_DATA)
+      .mockResolvedValue(RESULT_DATA);
+    mockedSave.mockResolvedValue({ questionId: "练习四-1", changeCount: 1 });
+    mockedSubmit.mockResolvedValue(RESULT_DATA);
+    renderPage();
+
+    await screen.findByText("第 1 题");
+    fireEvent.click(screen.getByRole("radio", { name: /对/ }));
+    await waitFor(() => expect(mockedSave).toHaveBeenCalled());
+    // 本地草稿已存在（作答写入）
+    expect(await draftStore.loadDraft(ATTEMPT_ID)).not.toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "交卷" }));
+    fireEvent.click(await screen.findByRole("button", { name: "确认交卷" }));
+    await waitFor(() => expect(mockedSubmit).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText(/批改结果/)).toBeInTheDocument();
+    await waitFor(async () => {
+      expect(await draftStore.loadDraft(ATTEMPT_ID)).toBeNull();
+    });
+  });
+
+  it("顶栏三态：作答后已保存；断网事件转「离线，已存本机」；恢复后自动同步回已保存", async () => {
+    mockedStart.mockResolvedValue(START_DRAFT);
+    mockedFetch.mockResolvedValue(DRAFT_DATA);
+    mockedSave.mockResolvedValue({ questionId: "练习四-1", changeCount: 1 });
+    renderPage();
+
+    await screen.findByText("第 1 题");
+    fireEvent.click(screen.getByRole("radio", { name: /对/ }));
+    // 保存中 → 已保存（带时间）
+    await waitFor(() =>
+      expect(screen.getByTestId("draft-status")).toHaveTextContent(/已保存/),
+    );
+
+    // 断网：作答继续写本地，顶栏转离线
+    fireEvent(window, new Event("offline"));
+    expect(await screen.findByText("离线，已存本机")).toBeVisible();
+    // 即时 PUT 失败（mock reject）也不会阻塞本地写入
+    mockedSave.mockRejectedValue(new Error("network"));
+    fireEvent.click(screen.getByRole("radio", { name: /错/ }));
+    await waitFor(() =>
+      expect(screen.getByTestId("draft-status")).toHaveTextContent(
+        "离线，已存本机",
+      ),
+    );
+    const record = await draftStore.loadDraft(ATTEMPT_ID);
+    expect(record?.answers["练习四-1"]).toEqual({
+      kind: "judge",
+      value: false,
+    });
+
+    // 网络恢复：online 事件 → 自动补发 → 回到已保存
+    mockedSave.mockResolvedValue({ questionId: "练习四-1", changeCount: 2 });
+    fireEvent(window, new Event("online"));
+    await waitFor(() =>
+      expect(screen.getByTestId("draft-status")).toHaveTextContent(/已保存/),
+    );
+    await waitFor(() =>
+      expect(mockedSave).toHaveBeenCalledWith(ATTEMPT_ID, "练习四-1", {
+        kind: "judge",
+        value: false,
+      } satisfies StudentAnswer),
+    );
   });
 });

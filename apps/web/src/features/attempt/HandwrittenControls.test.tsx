@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { InkDoc } from "@tutor/contract";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { installDraftBackend, memoryBackend } from "./draft-store";
 import { HandwrittenControls } from "./HandwrittenControls";
 
 /**
@@ -8,6 +9,7 @@ import { HandwrittenControls } from "./HandwrittenControls";
  * （excalidraw 权威 → 页内占位卡 + 清空回页内）、MathLive 数学键盘切换渲染。
  * 引擎（InkPad）、mathlive、笔迹 API 全部 mock——真实引擎交互须 iPad 真机验证
  * （ink-ipad 技能），上传状态机在 use-ink-upload.test.ts 单独覆盖。
+ * T2.9 起挂载会读写本地草稿仓：每个用例注入干净内存后端（jsdom 无 indexedDB）。
  */
 
 vi.mock("@/lib/api", () => ({
@@ -132,6 +134,7 @@ function renderControls() {
 beforeEach(() => {
   fetchInkMock.mockReset();
   fetchInkMock.mockResolvedValue(null);
+  installDraftBackend(memoryBackend());
 });
 
 describe("展开/收起手写区", () => {

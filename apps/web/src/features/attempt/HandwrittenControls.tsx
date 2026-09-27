@@ -19,8 +19,11 @@ import {
 import type { InkDoc, InkEngine } from "@/features/ink/engine/index.ts";
 import { InkPad } from "@/features/ink/InkPad";
 import { fetchAttemptInkApi, studentInkPngUrl } from "@/lib/api";
+import { mergeInkDocs } from "./draft-merge";
+import { draftStore } from "./draft-store";
 import { FinalAnswerInput } from "./FinalAnswerInput";
 import { InkFullscreenLayer } from "./InkFullscreenLayer";
+import { useDraftSyncContext } from "./use-draft-sync";
 import {
   type InkUploadController,
   isInkDocEmpty,
@@ -31,7 +34,8 @@ import {
  * 手写题作答控件（T2.8，架构 §5.4「两种作答区 + 最终答案输入」）：
  *
  * - **展开手写区**（默认收起，节省首屏）：展开后内嵌 InkPad（Atrament 页内形态）；
- *   进入答题页已有笔迹（服务端 GET 命中且非空）时自动展开并 load 服务端 InkDoc；
+ *   进入答题页已有笔迹（服务端 GET 命中且非空，或 T2.9 本地草稿较新）时自动展开
+ *   并 load 对应 InkDoc；
  * - **全屏作答**：Excalidraw 全屏层（题干固定顶部）；
  * - **引擎切换策略**（任务报告「待决问题」第 2 条的实现答案）：
  *   每题同一时刻只有一份「权威笔迹」（masterDoc），权威引擎 = 最后书写的引擎。
@@ -41,6 +45,9 @@ import {
  *   · 两种引擎的数据不合并（矢量格式互不相容），同题切换 = 覆盖，均有确认弹层；
  * - **上传时机**：每笔结束本地暂存 + 2 秒防抖 PUT；退出全屏即刻上传（引擎还热）；
  *   交卷前由页面统一 flush（见 StudentAssignmentAttemptPage）。
+ * - **草稿防丢（T2.9）**：每笔结束同步写 IndexedDB（draftStore.saveInk，网络无关）；
+ *   挂载时「服务端笔迹 × 本地笔迹」合并（updatedAt 新者胜），本地较新或服务端
+ *   拉取失败且有本地笔迹 → resync 补传；同步回调联动顶栏三态（DraftSyncContext）。
  */
 
 /** 空的 atrament 文档（「清空并改用页内手写」与无笔迹初始态共用） */
@@ -88,6 +95,12 @@ export function HandwrittenControls({
   /** 页内引擎与全屏引擎的 ref（上传导 PNG 时取当前激活的那个） */
   const pageEngineRef = useRef<InkEngine | null>(null);
   const fullscreenEngineRef = useRef<InkEngine | null>(null);
+  /** 草稿同步联动（T2.9；题卡单测无 Provider 时为 null，各回调空值保护） */
+  const draftSync = useDraftSyncContext();
+  /** 联动对象存 ref：状态对象每次渲染都是新引用，挂载合并 effect 与
+   *  handleDocChange 不因引用变化重建/重跑 */
+  const draftSyncRef = useRef(draftSync);
+  draftSyncRef.current = draftSync;
 
   // 上传状态机：engineGetter 取「当前激活引擎」（全屏开着用全屏引擎）
   const engineGetter = useCallback(
@@ -96,46 +109,89 @@ export function HandwrittenControls({
   );
   const {
     onDocChange: onDocChangeUpload,
-    controller,
+    controller: uploadController,
     saveFailed,
     clearFailure,
-  } = useInkUpload(attemptId, questionId, engineGetter);
+  } = useInkUpload(attemptId, questionId, engineGetter, {
+    onSynced: (doc) => {
+      void draftStore.markInkSynced(attemptId, questionId, doc);
+      draftSyncRef.current?.noteInkSynced();
+    },
+    onFailed: () => draftSyncRef.current?.noteSyncFailed(),
+  });
+  /** 上传 controller 存 ref（controller 对象每次渲染都是新引用） */
+  const controllerRef = useRef(uploadController);
+  controllerRef.current = uploadController;
 
   // controller 注册（页面交卷 flush 收集）
   useEffect(() => {
-    registerController?.(questionId, controller);
+    registerController?.(questionId, uploadController);
     return () => registerController?.(questionId, null);
-  }, [questionId, controller, registerController]);
+  }, [questionId, uploadController, registerController]);
 
-  // 笔迹变化：更新权威文档 + 进上传防抖
+  // 笔迹变化：更新权威文档 + 写本地草稿仓（T2.9，网络无关）+ 进上传防抖
   const handleDocChange = useCallback(
     (doc: InkDoc) => {
       setMasterDoc(doc);
+      draftStore.saveInk(attemptId, questionId, doc);
+      draftSyncRef.current?.noteLocalWrite();
       onDocChangeUpload(doc);
     },
-    [onDocChangeUpload],
+    [attemptId, questionId, onDocChangeUpload],
   );
 
-  // 挂载时拉服务端笔迹：有笔迹（非空）自动展开
+  // 挂载时合并「服务端笔迹 × 本地草稿笔迹」（T2.9）：updatedAt 新者胜；
+  // 本地较新（或服务端拉取失败但有本地）→ resync 补传；服务端胜 → 落本地并记指纹
   useEffect(() => {
     let alive = true;
     setMasterDoc(undefined);
     setExpanded(false);
     void (async () => {
-      try {
-        const doc = await fetchAttemptInkApi(attemptId, questionId);
-        if (!alive) return;
-        setMasterDoc(doc);
-        if (doc !== null && !isInkDocEmpty(doc)) setExpanded(true);
-      } catch {
-        // 加载失败不阻塞答题：按无笔迹处理（题卡内仍可展开手写），
-        // 写下的新笔迹照常走防抖上传
-        if (alive) setMasterDoc(null);
+      // 本地草稿与（可能失败的）服务端拉取并行；失败不阻塞答题
+      const [localInk, fetched] = await Promise.all([
+        draftStore
+          .loadDraft(attemptId)
+          .then((record) => record?.inks[questionId] ?? null)
+          .catch(() => null),
+        fetchAttemptInkApi(attemptId, questionId).then(
+          (doc: InkDoc | null) => doc,
+          (): undefined => undefined,
+        ),
+      ]);
+      if (!alive) return;
+      if (fetched === undefined) {
+        // 服务端拉取失败（多为断网）：有本地笔迹则用本地并补传；无则按无笔迹处理
+        if (localInk !== null) {
+          setMasterDoc(localInk);
+          if (!isInkDocEmpty(localInk)) setExpanded(true);
+          draftSyncRef.current?.noteLocalWrite();
+          controllerRef.current.resync(localInk);
+        } else {
+          setMasterDoc(null);
+        }
+        return;
+      }
+      const merged = mergeInkDocs(localInk, fetched);
+      if (merged.doc === null) {
+        setMasterDoc(null);
+        return;
+      }
+      setMasterDoc(merged.doc);
+      if (!isInkDocEmpty(merged.doc)) setExpanded(true);
+      if (merged.source === "server") {
+        // 服务端较新：内容落本地仓并记指纹（视为已同步）
+        draftStore.saveInk(attemptId, questionId, merged.doc);
+        void draftStore.markInkSynced(attemptId, questionId, merged.doc);
+      } else if (merged.differs) {
+        // 本地较新且内容不同：补传服务端
+        draftSyncRef.current?.noteLocalWrite();
+        controllerRef.current.resync(merged.doc);
       }
     })();
     return () => {
       alive = false;
     };
+    // controller/draftSync 经 ref 取最新；只随题目标识重跑
   }, [attemptId, questionId]);
 
   const finalAnswer = answer?.kind === "final" ? answer.finalAnswer : "";
@@ -156,7 +212,7 @@ export function HandwrittenControls({
 
   /** 退出全屏：即刻触发一次上传（引擎实例还热），再卸载全屏层 */
   const closeFullscreen = () => {
-    void controller.flush();
+    void uploadController.flush();
     setFullscreen(false);
   };
 
