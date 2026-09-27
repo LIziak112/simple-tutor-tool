@@ -7,9 +7,9 @@ import {
   attemptResultOkSchema,
   hintOpenOkSchema,
 } from "@tutor/contract";
+import { eq } from "drizzle-orm";
 import type { Logger } from "pino";
 import pino from "pino";
-import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
@@ -266,18 +266,22 @@ describe("POST /api/student/attempts/:id/hints：解锁与记录", () => {
     await postHint(app, aCookie, attemptId, Q.findError, 0);
     const again = await postHint(app, aCookie, attemptId, Q.findError, 0);
     expect(again.status).toBe(200);
-    expect(((await again.json()) as { data: { hintsUsed: number } }).data.hintsUsed).toBe(1);
+    expect(
+      ((await again.json()) as { data: { hintsUsed: number } }).data.hintsUsed,
+    ).toBe(1);
 
     // 解锁第 1 条 → 集合 {0,1}，计数到顶
     const second = await postHint(app, aCookie, attemptId, Q.findError, 1);
     expect(second.status).toBe(200);
-    const secondData = ((await second.json()) as {
-      data: {
-        hint: string;
-        hintsUsed: number;
-        hintsRemaining: number;
-      };
-    }).data;
+    const secondData = (
+      (await second.json()) as {
+        data: {
+          hint: string;
+          hintsUsed: number;
+          hintsRemaining: number;
+        };
+      }
+    ).data;
     expect(secondData.hint).toBe(hints[1]);
     expect(secondData.hintsUsed).toBe(2);
     expect(secondData.hintsRemaining).toBe(0);
@@ -306,9 +310,9 @@ describe("POST /api/student/attempts/:id/hints：解锁与记录", () => {
     );
     expect(put.status).toBe(200);
 
-    expect(
-      (await postHint(app, aCookie, attemptId, Q.choice, 0)).status,
-    ).toBe(200);
+    expect((await postHint(app, aCookie, attemptId, Q.choice, 0)).status).toBe(
+      200,
+    );
     const row = db
       .select()
       .from(responses)
@@ -392,10 +396,9 @@ describe("验收项 2：交卷后仍可查看", () => {
     expect(unlock.status).toBe(200);
 
     // 结果视图：回显两条已解锁提示
-    const detailRes = await app.request(
-      `/api/student/attempts/${attemptId}`,
-      { headers: { cookie: aCookie } },
-    );
+    const detailRes = await app.request(`/api/student/attempts/${attemptId}`, {
+      headers: { cookie: aCookie },
+    });
     expect(detailRes.status).toBe(200);
     const detail = (await detailRes.json()) as unknown;
     expect(attemptResultOkSchema.safeParse(detail).success).toBe(true);
@@ -429,13 +432,7 @@ describe("验收项 3：泄露矩阵——未请求的提示不出现在任何�
    */
   it("draft 状态：全部学生端接口响应均不含未请求提示的原文", async () => {
     const { app, db, aCookie, assignmentId, attemptId } = await makeHintsApp();
-    const unlockRes = await postHint(
-      app,
-      aCookie,
-      attemptId,
-      Q.findError,
-      0,
-    );
+    const unlockRes = await postHint(app, aCookie, attemptId, Q.findError, 0);
     expect(unlockRes.status).toBe(200);
     const unlockedText = hintsInDb(db, Q.findError)[0] ?? "";
 
@@ -451,7 +448,6 @@ describe("验收项 3：泄露矩阵——未请求的提示不出现在任何�
     /** 每个学生端响应统一过两道检查 */
     const check = (
       label: string,
-      res: Response,
       body: unknown,
       opts?: Parameters<typeof assertNoLeak>[1],
     ): void => {
@@ -466,16 +462,18 @@ describe("验收项 3：泄露矩阵——未请求的提示不出现在任何�
     };
 
     // 1. GET /me
-    const me = await app.request("/api/student/me", { headers: { cookie: aCookie } });
+    const me = await app.request("/api/student/me", {
+      headers: { cookie: aCookie },
+    });
     expect(me.status).toBe(200);
-    check("GET /me", me, await me.json());
+    check("GET /me", await me.json());
 
     // 2. GET /assignments（作业列表）
     const list = await app.request("/api/student/assignments", {
       headers: { cookie: aCookie },
     });
     expect(list.status).toBe(200);
-    check("GET /assignments", list, await list.json());
+    check("GET /assignments", await list.json());
 
     // 3. GET /assignments/:id/paper（试卷）
     const paper = await app.request(
@@ -483,7 +481,7 @@ describe("验收项 3：泄露矩阵——未请求的提示不出现在任何�
       { headers: { cookie: aCookie } },
     );
     expect(paper.status).toBe(200);
-    check("GET paper", paper, await paper.json());
+    check("GET paper", await paper.json());
 
     // 4. GET /attempts/:id（草稿视图；已解锁的第 0 条允许出现在 hintsOpened 回显）
     const draft = await app.request(`/api/student/attempts/${attemptId}`, {
@@ -491,7 +489,7 @@ describe("验收项 3：泄露矩阵——未请求的提示不出现在任何�
     });
     expect(draft.status).toBe(200);
     const draftBody = await draft.json();
-    check("GET attempt draft", draft, draftBody);
+    check("GET attempt draft", draftBody);
     const draftData = (draftBody as { data: AttemptDraftData }).data;
     expect(draftData.hintsOpened[Q.findError]?.[0]?.text).toBe(unlockedText);
 
@@ -501,14 +499,14 @@ describe("验收项 3：泄露矩阵——未请求的提示不出现在任何�
       { headers: { cookie: aCookie } },
     );
     expect(ink.status).toBe(404);
-    check("GET ink", ink, await ink.json());
+    check("GET ink", await ink.json());
 
     // 6. GET /lectures（讲义列表）
     const lectures = await app.request("/api/student/lectures", {
       headers: { cookie: aCookie },
     });
     expect(lectures.status).toBe(200);
-    check("GET lectures", lectures, await lectures.json());
+    check("GET lectures", await lectures.json());
 
     // 7. POST /attempts/:id/events（事件上报；响应只回 accepted）
     const eventRes = await app.request(
@@ -528,19 +526,13 @@ describe("验收项 3：泄露矩阵——未请求的提示不出现在任何�
       },
     );
     expect(eventRes.status).toBe(200);
-    check("POST events", eventRes, await eventRes.json());
+    check("POST events", await eventRes.json());
 
     // 8. POST /attempts/:id/hints（重复请求第 0 条：hint 键显式放行，内容只此一条）
-    const hintAgain = await postHint(
-      app,
-      aCookie,
-      attemptId,
-      Q.findError,
-      0,
-    );
+    const hintAgain = await postHint(app, aCookie, attemptId, Q.findError, 0);
     expect(hintAgain.status).toBe(200);
     const hintAgainBody = await hintAgain.json();
-    check("POST hints(0)", hintAgain, hintAgainBody, { allow: ["hint"] });
+    check("POST hints(0)", hintAgainBody, { allow: ["hint"] });
     expect(JSON.stringify(hintAgainBody)).toContain(unlockedText);
   });
 

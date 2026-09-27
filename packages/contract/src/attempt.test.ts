@@ -106,7 +106,9 @@ describe("attemptDraftDataSchema（草稿视图）", () => {
       },
       // T2.11：刷新后回显已解锁提示（只含学生请求过的条目）
       hintsOpened: {
-        "练习四-4": [{ index: 0, text: "同号相加，取相同的符号，并把绝对值相加。" }],
+        "练习四-4": [
+          { index: 0, text: "同号相加，取相同的符号，并把绝对值相加。" },
+        ],
       },
     });
     expect(parsed.drafts["练习四-1"]).toEqual({ kind: "judge", value: true });

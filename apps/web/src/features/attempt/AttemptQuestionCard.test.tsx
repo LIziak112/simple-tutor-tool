@@ -1,7 +1,12 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import type { QuestionPublic, StudentAnswer } from "@tutor/contract";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type {
+  HintOpenedEntry,
+  QuestionPublic,
+  StudentAnswer,
+} from "@tutor/contract";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
+import { openAttemptHintApi } from "@/lib/api";
 import { AttemptQuestionCard } from "./AttemptQuestionCard";
 
 /**
@@ -27,6 +32,15 @@ vi.mock("@/lib/api", () => ({
   })),
   studentInkPngUrl: (attemptId: string, questionId: string) =>
     `/api/student/attempts/${attemptId}/ink/${questionId}.png`,
+  // T2.11：提示解锁（HintPanel 使用；点击流用例里断言调用参数）
+  openAttemptHintApi: vi.fn(async () => ({
+    questionId: "",
+    index: 0,
+    hint: "",
+    hintCount: 0,
+    hintsUsed: 0,
+    hintsRemaining: 0,
+  })),
 }));
 
 function baseQuestion(overrides: Partial<QuestionPublic>): QuestionPublic {
@@ -44,11 +58,19 @@ function baseQuestion(overrides: Partial<QuestionPublic>): QuestionPublic {
 /** 记录 onAnswer 调用并把答案回写给卡片（受控组件的真实行为）。手写题传 attemptId */
 function renderStatefulCard(
   question: QuestionPublic,
-  options: { attemptId?: string } = {},
+  options: {
+    attemptId?: string;
+    /** T2.11：已解锁提示（缺省不渲染提示面板） */
+    hints?: readonly HintOpenedEntry[];
+    onHintUnlocked?: (entry: HintOpenedEntry) => void;
+  } = {},
 ) {
   const onAnswer = vi.fn();
   function Harness() {
     const [answer, setAnswer] = useState<StudentAnswer | undefined>(undefined);
+    const [hints, setHints] = useState<readonly HintOpenedEntry[]>(
+      options.hints ?? [],
+    );
     return (
       <AttemptQuestionCard
         index={2}
@@ -61,6 +83,15 @@ function renderStatefulCard(
         }}
         {...(options.attemptId !== undefined
           ? { attemptId: options.attemptId }
+          : {})}
+        {...(options.onHintUnlocked !== undefined
+          ? {
+              hints,
+              onHintUnlocked: (entry: HintOpenedEntry) => {
+                options.onHintUnlocked?.(entry);
+                setHints((prev) => [...prev, entry]);
+              },
+            }
           : {})}
       />
     );
@@ -237,5 +268,55 @@ describe("手写题（solve/apply/find-error）控件", () => {
       true,
     );
     expect(screen.getByLabelText("最终答案")).toHaveValue("-3");
+  });
+});
+
+describe("分步提示面板（T2.11）", () => {
+  const mockedOpen = vi.mocked(openAttemptHintApi);
+
+  it("hintCount=0 的题不显示提示按钮（即使提供了 attemptId 与回调）", () => {
+    renderStatefulCard(baseQuestion({ type: "judge", hintCount: 0 }), {
+      attemptId: "att-1",
+      onHintUnlocked: () => {},
+    });
+    expect(screen.queryByRole("button", { name: /给我一点提示/ })).toBeNull();
+  });
+
+  it("hintCount>0：点「给我一点提示」请求下一条（index=已解锁数）并展示；初值回显已解锁条目", async () => {
+    renderStatefulCard(baseQuestion({ type: "choice", hintCount: 2 }), {
+      attemptId: "att-1",
+      hints: [{ index: 0, text: "只有符号不同的两个数互为相反数。" }],
+      onHintUnlocked: () => {},
+    });
+    // 初值回显：第 1 条已在列表，剩余 1 条
+    expect(screen.getByText("提示 1")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "给我一点提示（剩余 1 条）" }),
+    ).toBeInTheDocument();
+
+    mockedOpen.mockResolvedValueOnce({
+      questionId: "练习四-1",
+      index: 1,
+      hint: "注意符号的确定方法。",
+      hintCount: 2,
+      hintsUsed: 2,
+      hintsRemaining: 0,
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "给我一点提示（剩余 1 条）" }),
+    );
+    await waitFor(() => {
+      expect(mockedOpen).toHaveBeenCalledWith("att-1", "练习四-1", 1);
+    });
+    // 解锁完：按钮消失、两条都在列表
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: /给我一点提示/ })).toBeNull();
+    });
+    expect(screen.getByText("提示 2")).toBeInTheDocument();
+  });
+
+  it("未提供 onHintUnlocked（如结果视图外的纯展示场景）不渲染提示面板", () => {
+    renderStatefulCard(baseQuestion({ type: "choice", hintCount: 2 }));
+    expect(screen.queryByRole("button", { name: /给我一点提示/ })).toBeNull();
   });
 });

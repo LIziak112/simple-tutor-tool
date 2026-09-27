@@ -11,6 +11,7 @@ import {
   type CourseCreateRequest,
   type CourseData,
   type CourseUpdateRequest,
+  type HintOpenData,
   type ImportCommitData,
   type ImportCommitRequest,
   type ImportPreviewData,
@@ -486,14 +487,29 @@ export function submitAttemptApi(
 }
 
 /**
- * attempt 详情：未交 = 草稿视图（公开题目 + 本人草稿，无答案/详解/提示）；
- * 已交 = 结果视图（快照 + 参考答案 + 详解 + 判分，无提示内容）。
+ * attempt 详情：未交 = 草稿视图（公开题目 + 本人草稿 + 已解锁提示回显）；
+ * 已交 = 结果视图（快照 + 参考答案 + 详解 + 判分 + 已解锁提示回看）。
  * 前端按 data.attempt.status 分支渲染。
  */
 export function fetchAttemptApi(attemptId: string): Promise<AttemptDetailData> {
   return callApi(() =>
     api.api.student.attempts[":id"].$get({ param: { id: attemptId } }),
   );
+}
+
+/**
+ * 解锁（查看）一道题的第 index 条提示（T2.11 分步提示）：
+ * 服务端按需下发被请求的那一条并记录 hint_open 事件与已解锁集合
+ * （draft 与已交均可用——交卷后回看自己请求过的提示）。
+ * 400 HINT_INDEX_OUT_OF_RANGE = 序号越界（正常 UI 流程不会触发，属防御口径）。
+ */
+export function openAttemptHintApi(
+  attemptId: string,
+  questionId: string,
+  index: number,
+): Promise<HintOpenData> {
+  const args = { param: { id: attemptId }, json: { questionId, index } };
+  return callApi(() => api.api.student.attempts[":id"].hints.$post(args));
 }
 
 // ---------- T2.10：学习痕迹事件（学生端） ----------

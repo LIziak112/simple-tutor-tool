@@ -1,13 +1,13 @@
 import { randomUUID } from "node:crypto";
-import type { HintOpenedEntry, HintOpenData } from "@tutor/contract";
+import type { HintOpenData, HintOpenedEntry } from "@tutor/contract";
 import { questionSchema } from "@tutor/contract";
 import { and, eq } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
   type Attempt,
   questions,
-  responses,
   type ResponseRow,
+  responses,
 } from "../db/schema";
 import { HttpError } from "../lib/http-error";
 import { requireOwnAttempt, requireUnitQuestion } from "./attempt-service";

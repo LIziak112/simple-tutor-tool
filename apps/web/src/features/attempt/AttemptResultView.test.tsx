@@ -44,6 +44,7 @@ const DATA: AttemptResultData = {
       solutionMd: "$0$ 是正数与负数的分界点。",
       answer: { kind: "judge", value: true },
       autoCorrect: true,
+      hintsOpened: [],
     },
     {
       questionId: "练习四-2",
@@ -60,6 +61,8 @@ const DATA: AttemptResultData = {
       solutionMd: "故选 B。",
       answer: { kind: "choice", index: 0 },
       autoCorrect: false,
+      // T2.11：做题时解锁过第 0 条提示 → 结果视图回看
+      hintsOpened: [{ index: 0, text: "只有符号不同的两个数互为相反数。" }],
     },
     {
       questionId: "p4-q7",
@@ -75,6 +78,7 @@ const DATA: AttemptResultData = {
       solutionMd: null,
       answer: null,
       autoCorrect: null,
+      hintsOpened: [],
     },
   ],
 };
@@ -156,5 +160,16 @@ describe("逐题结果卡", () => {
     fireEvent.click(folds[0] as HTMLElement);
     expect(screen.getByText(/是正数与负数的分界点/)).toBeInTheDocument();
     expect(screen.getByText("这道题没有详解。")).toBeInTheDocument();
+  });
+
+  it("T2.11 回看：解锁过的题显示「做题时看过的提示」与条目内容；没解锁过的题不显示该区块", () => {
+    renderView();
+    expect(screen.getByText("做题时看过的提示（1 条）")).toBeInTheDocument();
+    expect(screen.getByText("提示 1")).toBeInTheDocument();
+    expect(
+      screen.getByText(/只有符号不同的两个数互为相反数/),
+    ).toBeInTheDocument();
+    // 只有一道题解锁过提示 → 区块标题只出现一次
+    expect(screen.getAllByText(/做题时看过的提示/).length).toBe(1);
   });
 });

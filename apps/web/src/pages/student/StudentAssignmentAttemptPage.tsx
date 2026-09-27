@@ -2,6 +2,7 @@ import type {
   AttemptDetailData,
   AttemptDraftData,
   AttemptResultData,
+  HintOpenedEntry,
 } from "@tutor/contract";
 import { AlertTriangle } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -185,6 +186,28 @@ function AnswerView({
     },
   );
   const [confirmOpen, setConfirmOpen] = useState(false);
+  /**
+   * 已解锁提示（T2.11）：初值取草稿视图回显（刷新不丢），解锁成功后本地追加；
+   * 详情数据变化时以服务端值为准重置（服务端在解锁接口内已同步记录，
+   * 正常流不含丢失窗口）。hint_open 事件服务端在接口内直记（不经前端队列）。
+   */
+  const [hintsOpened, setHintsOpened] = useState<
+    Record<string, HintOpenedEntry[]>
+  >(() => data.hintsOpened);
+  useEffect(() => {
+    setHintsOpened(data.hintsOpened);
+  }, [data]);
+  const unlockHint = useCallback(
+    (questionId: string, entry: HintOpenedEntry) => {
+      setHintsOpened((prev) => ({
+        ...prev,
+        [questionId]: [...(prev[questionId] ?? []), entry].sort(
+          (a, b) => a.index - b.index,
+        ),
+      }));
+    },
+    [],
+  );
   /** 笔迹上传失败提示（交卷 flush 失败时展示，重试交卷消除） */
   const [inkFlushError, setInkFlushError] = useState(false);
   /** 笔迹 flush 进行中（交卷按钮/确认弹层的等待态） */
@@ -288,6 +311,8 @@ function AnswerView({
                   attemptEvents.noteInteraction(question.id);
                   attemptEvents.trackInkStrokes(question.id, strokes);
                 }}
+                hints={hintsOpened[question.id] ?? []}
+                onHintUnlocked={(entry) => unlockHint(question.id, entry)}
               />
             </li>
           ))}
