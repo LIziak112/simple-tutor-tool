@@ -239,10 +239,7 @@ export const courseMembersRequestSchema = z.object({
   studentIds: z
     .array(z.uuid("studentId 必须是 UUID 格式"))
     .min(1, "studentIds 不能为空")
-    .refine(
-      (ids) => new Set(ids).size === ids.length,
-      "studentIds 不能有重复",
-    ),
+    .refine((ids) => new Set(ids).size === ids.length, "studentIds 不能有重复"),
 });
 
 // ---------- 学生可见预览（GET /api/teacher/courses/:id/student-view） ----------
@@ -303,7 +300,9 @@ export const courseListOkSchema = apiOkExtend(courseListDataSchema);
 export const courseDetailOkSchema = apiOkExtend(courseDetailDataSchema);
 export const courseItemsAddOkSchema = apiOkExtend(courseItemsAddDataSchema);
 export const courseItemOkSchema = apiOkExtend(courseItemDataSchema);
-export const courseStudentViewOkSchema = apiOkExtend(courseStudentViewDataSchema);
+export const courseStudentViewOkSchema = apiOkExtend(
+  courseStudentViewDataSchema,
+);
 
 // ---------- 推断类型导出 ----------
 
@@ -327,7 +326,9 @@ export type CourseItemsReorderRequest = z.infer<
   typeof courseItemsReorderRequestSchema
 >;
 export type CourseMembersRequest = z.infer<typeof courseMembersRequestSchema>;
-export type CourseStudentViewQuery = z.infer<typeof courseStudentViewQuerySchema>;
+export type CourseStudentViewQuery = z.infer<
+  typeof courseStudentViewQuerySchema
+>;
 export type CourseStudentViewItem = z.infer<typeof courseStudentViewItemSchema>;
 export type CourseStudentViewData = z.infer<typeof courseStudentViewDataSchema>;
 export type CourseErrorCode = z.infer<typeof courseErrorCodeSchema>;

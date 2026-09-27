@@ -13,7 +13,7 @@ import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
-import { lectures, courseItems, questions, units } from "../db/schema.ts";
+import { courseItems, lectures, questions, units } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { restoreLecture } from "../services/library-service.ts";
 
@@ -845,14 +845,19 @@ describe("课程 CRUD", () => {
     const after = await getTree(app, cookie);
     expect(after.courses.map((c) => c.title)).not.toContain("默认课程");
     expect(
-      db.select().from(courseItems).where(eq(courseItems.courseId, defaultCourse.id))
+      db
+        .select()
+        .from(courseItems)
+        .where(eq(courseItems.courseId, defaultCourse.id))
         .all().length,
     ).toBe(0);
     // D4：删除课程不影响资源库内容（讲义/单元仍在库中）
-    expect(db.select({ id: lectures.id }).from(lectures).all().length).toBeGreaterThan(0);
-    expect(db.select({ id: units.id }).from(units).all().length).toBeGreaterThan(
-      0,
-    );
+    expect(
+      db.select({ id: lectures.id }).from(lectures).all().length,
+    ).toBeGreaterThan(0);
+    expect(
+      db.select({ id: units.id }).from(units).all().length,
+    ).toBeGreaterThan(0);
   });
 
   it("空标题 → 400；不存在的课程 → 404 COURSE_NOT_FOUND；课程排序生效", async () => {

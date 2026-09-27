@@ -2,10 +2,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   CourseCreateRequest,
   CourseDetailData,
-  CourseItemUpdateRequest,
   CourseItemsAddData,
   CourseItemsAddRequest,
   CourseItemsReorderRequest,
+  CourseItemUpdateRequest,
   CourseUpdateRequest,
 } from "@tutor/contract";
 import {
@@ -58,7 +58,10 @@ export function useCourseDetail(id: string) {
 }
 
 /** 学生可见预览（成员视角的 D5 过滤目录；studentId 为空不查） */
-export function useCourseStudentView(courseId: string, studentId: string | null) {
+export function useCourseStudentView(
+  courseId: string,
+  studentId: string | null,
+) {
   return useQuery({
     queryKey: ["teacher", "courses", "student-view", courseId, studentId],
     queryFn: () => fetchCourseStudentView(courseId, studentId as string),

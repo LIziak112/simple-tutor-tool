@@ -360,7 +360,9 @@ export function deleteCourseApi(id: string): Promise<null> {
 // ---------- T2A.4：课程编辑页（目录编排 + 可见性 + 成员） ----------
 
 /** 课程列表（archived=false 未归档 / true 已归档；含成员数、条目数、可见条目数、memberIds） */
-export function fetchTeacherCourses(archived: boolean): Promise<CourseListData> {
+export function fetchTeacherCourses(
+  archived: boolean,
+): Promise<CourseListData> {
   return callApi(() =>
     api.api.teacher.courses.$get(
       archived ? { query: { archived: "true" } } : undefined,
@@ -370,9 +372,7 @@ export function fetchTeacherCourses(archived: boolean): Promise<CourseListData> 
 
 /** 课程详情（目录条目含资源摘要与状态标签数据 + 成员列表 + hasAttempts） */
 export function fetchCourseDetail(id: string): Promise<CourseDetailData> {
-  return callApi(() =>
-    api.api.teacher.courses[":id"].$get({ param: { id } }),
-  );
+  return callApi(() => api.api.teacher.courses[":id"].$get({ param: { id } }));
 }
 
 /** 学生可见预览（按 D5 过滤的成员可见目录；studentId 为成员 id） */
@@ -393,9 +393,7 @@ export function addCourseItemsApi(
   request: CourseItemsAddRequest,
 ): Promise<CourseItemsAddData> {
   const args = { param: { id: courseId }, json: request };
-  return callApi(() =>
-    api.api.teacher.courses[":id"].items.$post(args),
-  );
+  return callApi(() => api.api.teacher.courses[":id"].items.$post(args));
 }
 
 /** 目录排序（ids 为该课程全部条目的完整新顺序） */
@@ -404,9 +402,7 @@ export function reorderCourseItemsApi(
   request: CourseItemsReorderRequest,
 ): Promise<null> {
   const args = { param: { id: courseId }, json: request };
-  return callApi(() =>
-    api.api.teacher.courses[":id"].items.order.$put(args),
-  );
+  return callApi(() => api.api.teacher.courses[":id"].items.order.$put(args));
 }
 
 /** 目录条目更新（可见开关 / 定时发布 / 分节改名；json 传参说明同 updateQuestion） */
@@ -431,9 +427,7 @@ export function addCourseMembersApi(
   request: CourseMembersRequest,
 ): Promise<null> {
   const args = { param: { id: courseId }, json: request };
-  return callApi(() =>
-    api.api.teacher.courses[":id"].members.$post(args),
-  );
+  return callApi(() => api.api.teacher.courses[":id"].members.$post(args));
 }
 
 /** 移出成员（D7：立即看不到课程；已交卷记录保留，数据不删） */
@@ -442,9 +436,7 @@ export function removeCourseMembersApi(
   request: CourseMembersRequest,
 ): Promise<null> {
   const args = { param: { id: courseId }, json: request };
-  return callApi(() =>
-    api.api.teacher.courses[":id"].members.$delete(args),
-  );
+  return callApi(() => api.api.teacher.courses[":id"].members.$delete(args));
 }
 
 // ---------- T2.1：学生管理（教师端） ----------

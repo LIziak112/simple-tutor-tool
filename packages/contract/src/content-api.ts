@@ -401,11 +401,7 @@ export type ReorderKind = z.infer<typeof reorderKindSchema>;
  */
 export const courseCreateRequestSchema = z.object({
   title: z.string().trim().min(1, "课程名不能为空"),
-  description: z
-    .string()
-    .trim()
-    .max(500, "课程简介最多 500 个字符")
-    .optional(),
+  description: z.string().trim().max(500, "课程简介最多 500 个字符").optional(),
 });
 
 /**

@@ -17,8 +17,12 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { useLibraryFolders, useLibraryLectures, useLibraryUnits } from "@/features/library/library-queries";
 import { useAddCourseItems } from "@/features/courses/course-queries";
+import {
+  useLibraryFolders,
+  useLibraryLectures,
+  useLibraryUnits,
+} from "@/features/library/library-queries";
 import { ApiError } from "@/lib/api";
 
 /**
@@ -79,14 +83,18 @@ export function AddFromLibrarySheet({
     .filter(
       (row) =>
         folderId === "all" ||
-        (folderId === "none" ? row.folderId === null : row.folderId === folderId),
+        (folderId === "none"
+          ? row.folderId === null
+          : row.folderId === folderId),
     )
     .filter((row) => q.length === 0 || row.title.toLowerCase().includes(q));
   const filteredUnits = units
     .filter(
       (row) =>
         folderId === "all" ||
-        (folderId === "none" ? row.folderId === null : row.folderId === folderId),
+        (folderId === "none"
+          ? row.folderId === null
+          : row.folderId === folderId),
     )
     .filter(
       (row) =>
@@ -136,7 +144,10 @@ export function AddFromLibrarySheet({
         kind: "lecture" as const,
         refId,
       })),
-      ...[...selectedUnitIds].map((refId) => ({ kind: "unit" as const, refId })),
+      ...[...selectedUnitIds].map((refId) => ({
+        kind: "unit" as const,
+        refId,
+      })),
     ];
     if (items.length === 0) return;
     addMutation.mutate(
@@ -242,7 +253,9 @@ export function AddFromLibrarySheet({
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder={
-                  tab === "lectures" ? "搜索讲义标题" : "搜索单元标题 / id / 主题"
+                  tab === "lectures"
+                    ? "搜索讲义标题"
+                    : "搜索单元标题 / id / 主题"
                 }
               />
             </div>
@@ -321,8 +334,7 @@ export function AddFromLibrarySheet({
                 .slice(0, 3)
                 .map((unit) => unit.title)
                 .join("、")}
-              {companionUnits.length > 3 ? " 等" : ""}
-              ）
+              {companionUnits.length > 3 ? " 等" : ""}）
             </label>
           )}
 
@@ -334,11 +346,14 @@ export function AddFromLibrarySheet({
               checked={visible}
               onChange={(e) => setVisible(e.target.checked)}
             />
-              添加后对学生可见（{visible ? "立即可见" : "先隐藏，稍后手动开放"}）
+            添加后对学生可见（{visible ? "立即可见" : "先隐藏，稍后手动开放"}）
           </label>
 
           {result && (
-            <p aria-live="polite" className="rounded-lg bg-primary/10 px-3 py-2 text-sm text-primary">
+            <p
+              aria-live="polite"
+              className="rounded-lg bg-primary/10 px-3 py-2 text-sm text-primary"
+            >
               {result}
             </p>
           )}
@@ -351,7 +366,9 @@ export function AddFromLibrarySheet({
 
         <div className="mt-auto flex items-center justify-between gap-3 border-t border-border p-4">
           <p className="text-sm text-muted-foreground">
-            {totalToAdd > 0 ? `将添加 ${totalToAdd} 项到目录末尾` : "在上方选择资源"}
+            {totalToAdd > 0
+              ? `将添加 ${totalToAdd} 项到目录末尾`
+              : "在上方选择资源"}
           </p>
           <div className="flex gap-2">
             <Button variant="outline" className="min-h-11" onClick={onClose}>
@@ -398,7 +415,11 @@ function ResourceList({
 }) {
   if (pending) {
     return (
-      <div role="status" aria-label="正在加载资源" className="flex flex-col gap-2">
+      <div
+        role="status"
+        aria-label="正在加载资源"
+        className="flex flex-col gap-2"
+      >
         {[0, 1, 2].map((i) => (
           <div key={i} className="h-14 animate-pulse rounded-lg bg-muted/50" />
         ))}
@@ -407,7 +428,10 @@ function ResourceList({
   }
   if (error !== null) {
     return (
-      <div role="alert" className="rounded-lg border border-border p-3 text-sm text-destructive">
+      <div
+        role="alert"
+        className="rounded-lg border border-border p-3 text-sm text-destructive"
+      >
         {error}
       </div>
     );
@@ -458,7 +482,10 @@ function ResourceRow({
         {checked ? (
           <CheckSquare aria-hidden className="size-4 shrink-0 text-primary" />
         ) : (
-          <Square aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+          <Square
+            aria-hidden
+            className="size-4 shrink-0 text-muted-foreground"
+          />
         )}
         <span className="min-w-0 flex-1">
           <span className="block truncate font-medium">{title}</span>

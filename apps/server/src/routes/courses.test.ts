@@ -128,9 +128,8 @@ async function request(
     headers: {
       "content-type": "application/json",
       cookie,
-      ...(body === undefined ? {} : {}),
     },
-    body: body === undefined ? undefined : JSON.stringify(body),
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
 }
 
@@ -169,7 +168,12 @@ describe("GET /api/teacher/courses（列表）", () => {
     });
     expect(login.status).toBe(200);
     const studentCookie = `tutor_session=${extractSessionToken(login)}`;
-    const res = await request(app, "GET", "/api/teacher/courses", studentCookie);
+    const res = await request(
+      app,
+      "GET",
+      "/api/teacher/courses",
+      studentCookie,
+    );
     expect(res.status).toBe(401);
     expect(((await res.json()) as ApiErr).error).toBe("UNAUTHORIZED");
   });
@@ -177,19 +181,43 @@ describe("GET /api/teacher/courses（列表）", () => {
   it("返回成员数/条目数/可见条目数/memberIds；archived 筛选", async () => {
     const { app, db, teacherCookie, courseId } = await makeApp();
     const studentId = await addStudent(app, teacherCookie, "张三");
-    await request(app, "POST", `/api/teacher/courses/${courseId}/members`, teacherCookie, {
-      studentIds: [studentId],
-    });
+    await request(
+      app,
+      "POST",
+      `/api/teacher/courses/${courseId}/members`,
+      teacherCookie,
+      {
+        studentIds: [studentId],
+      },
+    );
     // 2 个条目：讲义可见 + 分节
-    await request(app, "POST", `/api/teacher/courses/${courseId}/items`, teacherCookie, {
-      items: [
-        { kind: "lecture", refId: db.select().from(lectures).where(eq(lectures.title, LECTURE_TITLE)).get()?.id },
-        { kind: "section", title: "第一周" },
-      ],
-      visible: true,
-    });
+    await request(
+      app,
+      "POST",
+      `/api/teacher/courses/${courseId}/items`,
+      teacherCookie,
+      {
+        items: [
+          {
+            kind: "lecture",
+            refId: db
+              .select()
+              .from(lectures)
+              .where(eq(lectures.title, LECTURE_TITLE))
+              .get()?.id,
+          },
+          { kind: "section", title: "第一周" },
+        ],
+        visible: true,
+      },
+    );
 
-    const res = await request(app, "GET", "/api/teacher/courses", teacherCookie);
+    const res = await request(
+      app,
+      "GET",
+      "/api/teacher/courses",
+      teacherCookie,
+    );
     expect(res.status).toBe(200);
     const parsed = courseListOkSchema.parse(await res.json());
     const course = parsed.data.courses.find((c) => c.name === "初一上");
@@ -201,10 +229,21 @@ describe("GET /api/teacher/courses（列表）", () => {
     expect(course?.hasAttempts).toBe(false);
 
     // 归档后默认列表消失、archived=true 出现
-    await request(app, "PATCH", `/api/teacher/courses/${courseId}`, teacherCookie, {
-      archived: true,
-    });
-    const activeRes = await request(app, "GET", "/api/teacher/courses", teacherCookie);
+    await request(
+      app,
+      "PATCH",
+      `/api/teacher/courses/${courseId}`,
+      teacherCookie,
+      {
+        archived: true,
+      },
+    );
+    const activeRes = await request(
+      app,
+      "GET",
+      "/api/teacher/courses",
+      teacherCookie,
+    );
     const active = courseListOkSchema.parse(await activeRes.json());
     expect(active.data.courses.map((c) => c.id)).not.toContain(courseId);
     const archivedRes = await request(
@@ -232,9 +271,15 @@ describe("GET /api/teacher/courses/:id（详情）", () => {
   it("目录条目含资源摘要与状态标签；成员列表含归档标记", async () => {
     const { app, db, teacherCookie, courseId, lectureId } = await makeApp();
     const studentId = await addStudent(app, teacherCookie, "张三");
-    await request(app, "POST", `/api/teacher/courses/${courseId}/members`, teacherCookie, {
-      studentIds: [studentId],
-    });
+    await request(
+      app,
+      "POST",
+      `/api/teacher/courses/${courseId}/members`,
+      teacherCookie,
+      {
+        studentIds: [studentId],
+      },
+    );
     const addRes = await request(
       app,
       "POST",
@@ -251,24 +296,43 @@ describe("GET /api/teacher/courses/:id（详情）", () => {
     );
     expect(addRes.status).toBe(201);
     // 隐藏单元 + 定时讲义
-    const added = ((await addRes.json()) as {
-      data: { added: { id: string; kind: string }[] };
-    }).data.added;
+    const added = (
+      (await addRes.json()) as {
+        data: { added: { id: string; kind: string }[] };
+      }
+    ).data.added;
     const unitItemId = added.find((item) => item.kind === "unit")?.id;
     const lectureItemId = added.find((item) => item.kind === "lecture")?.id;
-    await request(app, "PATCH", `/api/teacher/course-items/${unitItemId}`, teacherCookie, {
-      visible: false,
-    });
-    await request(app, "PATCH", `/api/teacher/course-items/${lectureItemId}`, teacherCookie, {
-      publishAt: "2099-09-30T00:00:00.000Z",
-    });
+    await request(
+      app,
+      "PATCH",
+      `/api/teacher/course-items/${unitItemId}`,
+      teacherCookie,
+      {
+        visible: false,
+      },
+    );
+    await request(
+      app,
+      "PATCH",
+      `/api/teacher/course-items/${lectureItemId}`,
+      teacherCookie,
+      {
+        publishAt: "2099-09-30T00:00:00.000Z",
+      },
+    );
     // 软删一个单元（无题目单元更简单：直接软删练习四？改用新建空单元）
     db.update(units)
       .set({ deletedAt: "2026-09-01T00:00:00.000Z" })
       .where(eq(units.id, UNIT_ID))
       .run();
 
-    const res = await request(app, "GET", `/api/teacher/courses/${courseId}`, teacherCookie);
+    const res = await request(
+      app,
+      "GET",
+      `/api/teacher/courses/${courseId}`,
+      teacherCookie,
+    );
     expect(res.status).toBe(200);
     const parsed = courseDetailOkSchema.parse(await res.json());
     const detail = parsed.data;
@@ -287,7 +351,12 @@ describe("GET /api/teacher/courses/:id（详情）", () => {
   it("课程不存在 404 COURSE_NOT_FOUND", async () => {
     const { app, teacherCookie } = await makeApp();
     const UUID = "0b6f18ae-6b9a-4d0e-8b7c-9b1b1b1b1b1b";
-    const res = await request(app, "GET", `/api/teacher/courses/${UUID}`, teacherCookie);
+    const res = await request(
+      app,
+      "GET",
+      `/api/teacher/courses/${UUID}`,
+      teacherCookie,
+    );
     expect(res.status).toBe(404);
     expect(((await res.json()) as ApiErr).error).toBe("COURSE_NOT_FOUND");
   });
@@ -298,10 +367,7 @@ describe("POST /api/teacher/courses/:id/items（批量添加）", () => {
     const { app, db, teacherCookie, courseId, lectureId } = await makeApp();
     // 讲义样例导入时按 (folderId, title) 匹配不到单元——练习样例的单元 lectureId=null，
     // 手动把 练习四 配套讲义指向样例讲义，构造 D8 场景
-    db.update(units)
-      .set({ lectureId })
-      .where(eq(units.id, UNIT_ID))
-      .run();
+    db.update(units).set({ lectureId }).where(eq(units.id, UNIT_ID)).run();
     const res = await request(
       app,
       "POST",
@@ -315,7 +381,10 @@ describe("POST /api/teacher/courses/:id/items（批量添加）", () => {
     );
     expect(res.status).toBe(201);
     const body = (await res.json()) as {
-      data: { added: { kind: string; refId: string | null; companion: boolean }[]; skipped: unknown[] };
+      data: {
+        added: { kind: string; refId: string | null; companion: boolean }[];
+        skipped: unknown[];
+      };
     };
     expect(body.data.added.map((item) => [item.kind, item.refId])).toEqual([
       ["lecture", lectureId],
@@ -327,10 +396,16 @@ describe("POST /api/teacher/courses/:id/items（批量添加）", () => {
 
   it("重复添加跳过且返回清单（D6 批量口径）；批内重复同样跳过", async () => {
     const { app, teacherCookie, courseId, lectureId } = await makeApp();
-    await request(app, "POST", `/api/teacher/courses/${courseId}/items`, teacherCookie, {
-      items: [{ kind: "lecture", refId: lectureId }],
-      visible: true,
-    });
+    await request(
+      app,
+      "POST",
+      `/api/teacher/courses/${courseId}/items`,
+      teacherCookie,
+      {
+        items: [{ kind: "lecture", refId: lectureId }],
+        visible: true,
+      },
+    );
     // 第二批：已在课程的讲义 + 批内重复的单元 + 新分节
     const res = await request(
       app,
@@ -368,9 +443,15 @@ describe("POST /api/teacher/courses/:id/items（批量添加）", () => {
 
   it("非法 body 400；资源不存在 404；visible=false 生效", async () => {
     const { app, teacherCookie, courseId, lectureId } = await makeApp();
-    const bad = await request(app, "POST", `/api/teacher/courses/${courseId}/items`, teacherCookie, {
-      items: [],
-    });
+    const bad = await request(
+      app,
+      "POST",
+      `/api/teacher/courses/${courseId}/items`,
+      teacherCookie,
+      {
+        items: [],
+      },
+    );
     expect(bad.status).toBe(400);
 
     const notFound = await request(
@@ -378,7 +459,11 @@ describe("POST /api/teacher/courses/:id/items（批量添加）", () => {
       "POST",
       `/api/teacher/courses/${courseId}/items`,
       teacherCookie,
-      { items: [{ kind: "lecture", refId: "0b6f18ae-6b9a-4d0e-8b7c-9b1b1b1b1b1b" }] },
+      {
+        items: [
+          { kind: "lecture", refId: "0b6f18ae-6b9a-4d0e-8b7c-9b1b1b1b1b1b" },
+        ],
+      },
     );
     expect(notFound.status).toBe(404);
     expect(((await notFound.json()) as ApiErr).error).toBe("LECTURE_NOT_FOUND");
@@ -391,7 +476,9 @@ describe("POST /api/teacher/courses/:id/items（批量添加）", () => {
       { items: [{ kind: "lecture", refId: lectureId }], visible: false },
     );
     expect(hidden.status).toBe(201);
-    const body = (await hidden.json()) as { data: { added: { visible: boolean }[] } };
+    const body = (await hidden.json()) as {
+      data: { added: { visible: boolean }[] };
+    };
     expect(body.data.added[0]?.visible).toBe(false);
   });
 });
@@ -413,22 +500,44 @@ describe("PUT /api/teacher/courses/:id/items/order（排序）", () => {
         visible: true,
       },
     );
-    const added = ((await addRes.json()) as {
-      data: { added: { id: string; title: string }[] };
-    }).data.added;
-    const [a, b, l] = added as [{ id: string }, { id: string }, { id: string }];
+    const added = (
+      (await addRes.json()) as {
+        data: { added: { id: string; title: string }[] };
+      }
+    ).data.added;
+    const aId = added[0]?.id;
+    const bId = added[1]?.id;
+    const lId = added[2]?.id;
+    if (aId === undefined || bId === undefined || lId === undefined) {
+      throw new Error("排序测试前置条件不满足：目录条目不足 3 条");
+    }
 
     // B、讲义、A 的新顺序
-    const ok = await request(app, "PUT", `/api/teacher/courses/${courseId}/items/order`, teacherCookie, {
-      ids: [b.id, l.id, a.id],
-    });
+    const ok = await request(
+      app,
+      "PUT",
+      `/api/teacher/courses/${courseId}/items/order`,
+      teacherCookie,
+      {
+        ids: [bId, lId, aId],
+      },
+    );
     expect(ok.status).toBe(200);
     const detail = courseDetailOkSchema.parse(
       await (
-        await request(app, "GET", `/api/teacher/courses/${courseId}`, teacherCookie)
+        await request(
+          app,
+          "GET",
+          `/api/teacher/courses/${courseId}`,
+          teacherCookie,
+        )
       ).json(),
     );
-    expect(detail.data.items.map((item) => item.title)).toEqual(["B", LECTURE_TITLE, "A"]);
+    expect(detail.data.items.map((item) => item.title)).toEqual([
+      "B",
+      LECTURE_TITLE,
+      "A",
+    ]);
 
     // 缺一项 → 404，顺序不变（事务回滚语义）
     const missing = await request(
@@ -436,15 +545,24 @@ describe("PUT /api/teacher/courses/:id/items/order（排序）", () => {
       "PUT",
       `/api/teacher/courses/${courseId}/items/order`,
       teacherCookie,
-      { ids: [a.id, b.id] },
+      { ids: [aId, bId] },
     );
     expect(missing.status).toBe(404);
     const detail2 = courseDetailOkSchema.parse(
       await (
-        await request(app, "GET", `/api/teacher/courses/${courseId}`, teacherCookie)
+        await request(
+          app,
+          "GET",
+          `/api/teacher/courses/${courseId}`,
+          teacherCookie,
+        )
       ).json(),
     );
-    expect(detail2.data.items.map((item) => item.title)).toEqual(["B", LECTURE_TITLE, "A"]);
+    expect(detail2.data.items.map((item) => item.title)).toEqual([
+      "B",
+      LECTURE_TITLE,
+      "A",
+    ]);
     void db;
   });
 });
@@ -465,40 +583,82 @@ describe("PATCH/DELETE /api/teacher/course-items/:id", () => {
         visible: true,
       },
     );
-    const added = ((await addRes.json()) as {
-      data: { added: { id: string; kind: string }[] };
-    }).data.added;
+    const added = (
+      (await addRes.json()) as {
+        data: { added: { id: string; kind: string }[] };
+      }
+    ).data.added;
     const sectionId = added.find((item) => item.kind === "section")?.id;
     const lectureItemId = added.find((item) => item.kind === "lecture")?.id;
+    if (sectionId === undefined || lectureItemId === undefined) {
+      throw new Error("测试前置条件不满足：分节/讲义条目缺失");
+    }
 
-    const rename = await request(app, "PATCH", `/api/teacher/course-items/${sectionId}`, teacherCookie, {
-      title: "新标题",
-    });
+    const rename = await request(
+      app,
+      "PATCH",
+      `/api/teacher/course-items/${sectionId}`,
+      teacherCookie,
+      {
+        title: "新标题",
+      },
+    );
     expect(rename.status).toBe(200);
-    expect(((await rename.json()) as { data: { title: string } }).data.title).toBe("新标题");
+    expect(
+      ((await rename.json()) as { data: { title: string } }).data.title,
+    ).toBe("新标题");
 
     // 定时后取消（显式 null）
-    await request(app, "PATCH", `/api/teacher/course-items/${lectureItemId}`, teacherCookie, {
-      publishAt: "2099-01-01T00:00:00.000Z",
-    });
-    const cancel = await request(app, "PATCH", `/api/teacher/course-items/${lectureItemId}`, teacherCookie, {
-      publishAt: null,
-    });
+    await request(
+      app,
+      "PATCH",
+      `/api/teacher/course-items/${lectureItemId}`,
+      teacherCookie,
+      {
+        publishAt: "2099-01-01T00:00:00.000Z",
+      },
+    );
+    const cancel = await request(
+      app,
+      "PATCH",
+      `/api/teacher/course-items/${lectureItemId}`,
+      teacherCookie,
+      {
+        publishAt: null,
+      },
+    );
     expect(cancel.status).toBe(200);
-    expect(((await cancel.json()) as { data: { publishAt: string | null } }).data.publishAt).toBeNull();
+    expect(
+      ((await cancel.json()) as { data: { publishAt: string | null } }).data
+        .publishAt,
+    ).toBeNull();
 
     // 非分节改名 422
-    const badTitle = await request(app, "PATCH", `/api/teacher/course-items/${lectureItemId}`, teacherCookie, {
-      title: "x",
-    });
+    const badTitle = await request(
+      app,
+      "PATCH",
+      `/api/teacher/course-items/${lectureItemId}`,
+      teacherCookie,
+      {
+        title: "x",
+      },
+    );
     expect(badTitle.status).toBe(422);
 
     // 删除讲义条目：条目消失、资源保留
-    const del = await request(app, "DELETE", `/api/teacher/course-items/${lectureItemId}`, teacherCookie);
+    const del = await request(
+      app,
+      "DELETE",
+      `/api/teacher/course-items/${lectureItemId}`,
+      teacherCookie,
+    );
     expect(del.status).toBe(200);
     expect(
-      db.select().from(courseItems).where(eq(courseItems.id, lectureItemId)).all()
-        .length,
+      db
+        .select()
+        .from(courseItems)
+        .where(eq(courseItems.id, lectureItemId))
+        .all().length,
     ).toBe(0);
     expect(
       db.select().from(lectures).where(eq(lectures.id, lectureId)).all().length,
@@ -519,23 +679,46 @@ describe("成员（POST/DELETE /courses/:id/members）", () => {
   it("添加幂等；移出后 student-view 为空且 isMember=false", async () => {
     const { app, teacherCookie, courseId } = await makeApp();
     const studentId = await addStudent(app, teacherCookie, "张三");
-    await request(app, "POST", `/api/teacher/courses/${courseId}/members`, teacherCookie, {
-      studentIds: [studentId],
-    });
+    await request(
+      app,
+      "POST",
+      `/api/teacher/courses/${courseId}/members`,
+      teacherCookie,
+      {
+        studentIds: [studentId],
+      },
+    );
     // 幂等重复添加
-    await request(app, "POST", `/api/teacher/courses/${courseId}/members`, teacherCookie, {
-      studentIds: [studentId],
-    });
+    await request(
+      app,
+      "POST",
+      `/api/teacher/courses/${courseId}/members`,
+      teacherCookie,
+      {
+        studentIds: [studentId],
+      },
+    );
     const detail = courseDetailOkSchema.parse(
       await (
-        await request(app, "GET", `/api/teacher/courses/${courseId}`, teacherCookie)
+        await request(
+          app,
+          "GET",
+          `/api/teacher/courses/${courseId}`,
+          teacherCookie,
+        )
       ).json(),
     );
     expect(detail.data.members).toHaveLength(1);
 
-    await request(app, "DELETE", `/api/teacher/courses/${courseId}/members`, teacherCookie, {
-      studentIds: [studentId],
-    });
+    await request(
+      app,
+      "DELETE",
+      `/api/teacher/courses/${courseId}/members`,
+      teacherCookie,
+      {
+        studentIds: [studentId],
+      },
+    );
     const view = courseStudentViewOkSchema.parse(
       await (
         await request(
@@ -566,9 +749,15 @@ describe("GET /api/teacher/courses/:id/student-view（D5 学生可见预览）",
   it("隐藏条目与未到 publishAt 的条目消失；可见条目保留", async () => {
     const { app, db, teacherCookie, courseId, lectureId } = await makeApp();
     const studentId = await addStudent(app, teacherCookie, "张三");
-    await request(app, "POST", `/api/teacher/courses/${courseId}/members`, teacherCookie, {
-      studentIds: [studentId],
-    });
+    await request(
+      app,
+      "POST",
+      `/api/teacher/courses/${courseId}/members`,
+      teacherCookie,
+      {
+        studentIds: [studentId],
+      },
+    );
     const addRes = await request(
       app,
       "POST",
@@ -583,18 +772,32 @@ describe("GET /api/teacher/courses/:id/student-view（D5 学生可见预览）",
         visible: true,
       },
     );
-    const added = ((await addRes.json()) as {
-      data: { added: { id: string; kind: string }[] };
-    }).data.added;
+    const added = (
+      (await addRes.json()) as {
+        data: { added: { id: string; kind: string }[] };
+      }
+    ).data.added;
     // 隐藏单元；讲义定时到 2099（未到点）
     const unitItemId = added.find((item) => item.kind === "unit")?.id;
     const lectureItemId = added.find((item) => item.kind === "lecture")?.id;
-    await request(app, "PATCH", `/api/teacher/course-items/${unitItemId}`, teacherCookie, {
-      visible: false,
-    });
-    await request(app, "PATCH", `/api/teacher/course-items/${lectureItemId}`, teacherCookie, {
-      publishAt: "2099-09-30T00:00:00.000Z",
-    });
+    await request(
+      app,
+      "PATCH",
+      `/api/teacher/course-items/${unitItemId}`,
+      teacherCookie,
+      {
+        visible: false,
+      },
+    );
+    await request(
+      app,
+      "PATCH",
+      `/api/teacher/course-items/${lectureItemId}`,
+      teacherCookie,
+      {
+        publishAt: "2099-09-30T00:00:00.000Z",
+      },
+    );
 
     const view = courseStudentViewOkSchema.parse(
       await (
@@ -613,9 +816,15 @@ describe("GET /api/teacher/courses/:id/student-view（D5 学生可见预览）",
     expect(view.data.items[0]?.title).toBe("第一周");
 
     // 到点后讲义出现（publishAt 设为过去）
-    await request(app, "PATCH", `/api/teacher/course-items/${lectureItemId}`, teacherCookie, {
-      publishAt: "2000-01-01T00:00:00.000Z",
-    });
+    await request(
+      app,
+      "PATCH",
+      `/api/teacher/course-items/${lectureItemId}`,
+      teacherCookie,
+      {
+        publishAt: "2000-01-01T00:00:00.000Z",
+      },
+    );
     const view2 = courseStudentViewOkSchema.parse(
       await (
         await request(
@@ -636,12 +845,24 @@ describe("GET /api/teacher/courses/:id/student-view（D5 学生可见预览）",
   it("归档课程后成员可见目录为空（D4/D5 条件 2）", async () => {
     const { app, teacherCookie, courseId } = await makeApp();
     const studentId = await addStudent(app, teacherCookie, "张三");
-    await request(app, "POST", `/api/teacher/courses/${courseId}/members`, teacherCookie, {
-      studentIds: [studentId],
-    });
-    await request(app, "PATCH", `/api/teacher/courses/${courseId}`, teacherCookie, {
-      archived: true,
-    });
+    await request(
+      app,
+      "POST",
+      `/api/teacher/courses/${courseId}/members`,
+      teacherCookie,
+      {
+        studentIds: [studentId],
+      },
+    );
+    await request(
+      app,
+      "PATCH",
+      `/api/teacher/courses/${courseId}`,
+      teacherCookie,
+      {
+        archived: true,
+      },
+    );
     const view = courseStudentViewOkSchema.parse(
       await (
         await request(
@@ -679,18 +900,35 @@ describe("D4：课程删除", () => {
   it("有作答的课程删除 409 COURSE_HAS_ATTEMPTS；无作答删除成功且成员/条目清理", async () => {
     const { app, db, teacherCookie, courseId } = await makeApp();
     const studentId = await addStudent(app, teacherCookie, "张三");
-    await request(app, "POST", `/api/teacher/courses/${courseId}/members`, teacherCookie, {
-      studentIds: [studentId],
-    });
-    await request(app, "POST", `/api/teacher/courses/${courseId}/items`, teacherCookie, {
-      items: [{ kind: "unit", refId: UNIT_ID }],
-      visible: true,
-    });
+    await request(
+      app,
+      "POST",
+      `/api/teacher/courses/${courseId}/members`,
+      teacherCookie,
+      {
+        studentIds: [studentId],
+      },
+    );
+    await request(
+      app,
+      "POST",
+      `/api/teacher/courses/${courseId}/items`,
+      teacherCookie,
+      {
+        items: [{ kind: "unit", refId: UNIT_ID }],
+        visible: true,
+      },
+    );
 
     // 未有作答前：详情 hasAttempts=false
     let detail = courseDetailOkSchema.parse(
       await (
-        await request(app, "GET", `/api/teacher/courses/${courseId}`, teacherCookie)
+        await request(
+          app,
+          "GET",
+          `/api/teacher/courses/${courseId}`,
+          teacherCookie,
+        )
       ).json(),
     );
     expect(detail.data.hasAttempts).toBe(false);
@@ -719,7 +957,12 @@ describe("D4：课程删除", () => {
 
     detail = courseDetailOkSchema.parse(
       await (
-        await request(app, "GET", `/api/teacher/courses/${courseId}`, teacherCookie)
+        await request(
+          app,
+          "GET",
+          `/api/teacher/courses/${courseId}`,
+          teacherCookie,
+        )
       ).json(),
     );
     expect(detail.data.hasAttempts).toBe(true);
@@ -736,18 +979,40 @@ describe("D4：课程删除", () => {
     expect(body.message).toContain("归档");
 
     // 无作答的课程（新建空课）删除成功
-    const createRes = await request(app, "POST", "/api/teacher/courses", teacherCookie, {
-      title: "临时课",
-    });
-    const tempId = ((await createRes.json()) as { data: { id: string } }).data.id;
-    const del = await request(app, "DELETE", `/api/teacher/courses/${tempId}`, teacherCookie);
+    const createRes = await request(
+      app,
+      "POST",
+      "/api/teacher/courses",
+      teacherCookie,
+      {
+        title: "临时课",
+      },
+    );
+    const tempId = ((await createRes.json()) as { data: { id: string } }).data
+      .id;
+    const del = await request(
+      app,
+      "DELETE",
+      `/api/teacher/courses/${tempId}`,
+      teacherCookie,
+    );
     expect(del.status).toBe(200);
-    expect(db.select().from(courses).where(eq(courses.id, tempId)).all().length).toBe(0);
     expect(
-      db.select().from(courseStudents).where(eq(courseStudents.courseId, tempId)).all().length,
+      db.select().from(courses).where(eq(courses.id, tempId)).all().length,
     ).toBe(0);
     expect(
-      db.select().from(courseItems).where(eq(courseItems.courseId, tempId)).all().length,
+      db
+        .select()
+        .from(courseStudents)
+        .where(eq(courseStudents.courseId, tempId))
+        .all().length,
+    ).toBe(0);
+    expect(
+      db
+        .select()
+        .from(courseItems)
+        .where(eq(courseItems.courseId, tempId))
+        .all().length,
     ).toBe(0);
   });
 });

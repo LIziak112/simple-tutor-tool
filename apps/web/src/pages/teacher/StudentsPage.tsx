@@ -657,7 +657,10 @@ function CreateStudentDialog({
           )}
           {addToCoursesMutation.isError && (
             <p role="alert" className="text-sm text-destructive">
-              学生已创建，但加入课程失败：{addToCoursesMutation.error instanceof Error ? addToCoursesMutation.error.message : "请稍后在「管理课程」中重试"}
+              学生已创建，但加入课程失败：
+              {addToCoursesMutation.error instanceof Error
+                ? addToCoursesMutation.error.message
+                : "请稍后在「管理课程」中重试"}
             </p>
           )}
           {errorMessage && (

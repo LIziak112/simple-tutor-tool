@@ -47,7 +47,8 @@ export function CoursesPage() {
         <div>
           <h1 className="text-xl font-semibold">课程</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            课程 = 一份有序目录（讲义与练习单元）+ 成员。学生只能看到所在课程中可见的内容。
+            课程 = 一份有序目录（讲义与练习单元）+
+            成员。学生只能看到所在课程中可见的内容。
           </p>
         </div>
         <Button className="min-h-11 px-4" onClick={() => setCreateOpen(true)}>
@@ -112,7 +113,9 @@ export function CoursesPage() {
           </ul>
         ))}
 
-      {createOpen && <CreateCourseDialog onClose={() => setCreateOpen(false)} />}
+      {createOpen && (
+        <CreateCourseDialog onClose={() => setCreateOpen(false)} />
+      )}
     </section>
   );
 }
@@ -121,7 +124,11 @@ export function CoursesPage() {
 
 function CoursesSkeleton() {
   return (
-    <div role="status" aria-label="正在加载课程" className="grid gap-3 sm:grid-cols-2">
+    <div
+      role="status"
+      aria-label="正在加载课程"
+      className="grid gap-3 sm:grid-cols-2"
+    >
       {[0, 1, 2, 3].map((i) => (
         <div
           key={i}
@@ -209,7 +216,9 @@ function CourseCard({ course }: { course: CourseSummary }) {
           <BookOpen aria-hidden className="size-4" />
           条目 {course.itemCount}（可见 {course.visibleItemCount}）
         </span>
-        <span className="ml-auto text-xs">{formatRelativeTime(course.createdAt)}创建</span>
+        <span className="ml-auto text-xs">
+          {formatRelativeTime(course.createdAt)}创建
+        </span>
       </div>
 
       <div className="flex flex-wrap gap-2">
@@ -223,7 +232,9 @@ function CourseCard({ course }: { course: CourseSummary }) {
               {
                 onSuccess: () => setActionError(null),
                 onError: (err) =>
-                  setActionError(err instanceof Error ? err.message : "操作失败"),
+                  setActionError(
+                    err instanceof Error ? err.message : "操作失败",
+                  ),
               },
             )
           }
@@ -303,13 +314,16 @@ function DeleteCourseDialog({
         <DialogHeader>
           <DialogTitle>删除课程「{course.name}」？</DialogTitle>
           <DialogDescription>
-            删除后该课程的目录编排（{course.itemCount} 个条目）与成员关系
-            （{course.memberCount} 名学生）会一并移除；资源库中的讲义与练习单元
+            删除后该课程的目录编排（{course.itemCount} 个条目）与成员关系 （
+            {course.memberCount} 名学生）会一并移除；资源库中的讲义与练习单元
             <strong>不受影响</strong>，已交卷的作答记录也会保留。
           </DialogDescription>
         </DialogHeader>
         {course.hasAttempts && (
-          <p role="alert" className="rounded-lg bg-muted px-3 py-2 text-sm text-destructive">
+          <p
+            role="alert"
+            className="rounded-lg bg-muted px-3 py-2 text-sm text-destructive"
+          >
             该课程下的练习已有作答记录，删除会被拒绝——请改用「归档」（学生看不到，数据保留）。
           </p>
         )}

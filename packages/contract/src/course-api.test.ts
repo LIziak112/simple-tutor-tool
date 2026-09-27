@@ -3,9 +3,9 @@ import { courseUpdateRequestSchema } from "./content-api.ts";
 import {
   courseDetailDataSchema,
   courseDetailItemSchema,
-  courseItemUpdateRequestSchema,
   courseItemsAddRequestSchema,
   courseItemsReorderRequestSchema,
+  courseItemUpdateRequestSchema,
   courseListDataSchema,
   courseListOkSchema,
   courseMembersRequestSchema,
@@ -55,11 +55,12 @@ const detailItem = {
 describe("courseSummarySchema / courseListDataSchema", () => {
   it("接受完整摘要（name 口径、memberIds 与计数同源）", () => {
     expect(courseSummarySchema.safeParse(summary).success).toBe(true);
+    expect(courseListDataSchema.safeParse({ courses: [summary] }).success).toBe(
+      true,
+    );
     expect(
-      courseListDataSchema.safeParse({ courses: [summary] }).success,
+      courseListOkSchema.safeParse({ ok: true, data: { courses: [] } }).success,
     ).toBe(true);
-    expect(courseListOkSchema.safeParse({ ok: true, data: { courses: [] } })
-      .success).toBe(true);
   });
 
   it("memberIds 非数组或 hasAttempts 缺失被拒", () => {
@@ -211,9 +212,9 @@ describe("courseStudentViewDataSchema", () => {
 
 describe("courseUpdateRequestSchema（content-api，name/title 兼容）", () => {
   it("name 与 title 同义，同时提供被拒", () => {
-    expect(courseUpdateRequestSchema.safeParse({ name: "初一上" }).success).toBe(
-      true,
-    );
+    expect(
+      courseUpdateRequestSchema.safeParse({ name: "初一上" }).success,
+    ).toBe(true);
     expect(
       courseUpdateRequestSchema.safeParse({ title: "初一上" }).success,
     ).toBe(true);

@@ -25,7 +25,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { DragHandle, SortableItem, SortableZone } from "@/features/content/sortable";
+import {
+  DragHandle,
+  SortableItem,
+  SortableZone,
+} from "@/features/content/sortable";
 import {
   AddFromLibrarySheet,
   refIdKeysOf,
@@ -37,7 +41,11 @@ import {
   useReorderCourseItems,
   useUpdateCourseItem,
 } from "@/features/courses/course-queries";
-import { formatDueTime, localInputToUtcIso, utcIsoToLocalInput } from "@/lib/time";
+import {
+  formatDueTime,
+  localInputToUtcIso,
+  utcIsoToLocalInput,
+} from "@/lib/time";
 
 /**
  * 课程目录页签（T2A.4）：拖拽排序 + 上移/下移兜底（§4-9）、条目状态标签（§4-4）、
@@ -176,7 +184,8 @@ function CourseItemsList({
     commitOrder(arrayMove(items, index, target));
   }
 
-  const deleteTarget = items.find((item) => item.id === confirmDeleteId) ?? null;
+  const deleteTarget =
+    items.find((item) => item.id === confirmDeleteId) ?? null;
 
   if (items.length === 0) {
     return (
@@ -257,7 +266,8 @@ function CourseItemsList({
                         className="size-11"
                         aria-label={`下移 ${item.title}`}
                         disabled={
-                          index === items.length - 1 || reorderMutation.isPending
+                          index === items.length - 1 ||
+                          reorderMutation.isPending
                         }
                         onClick={() => move(item.id, 1)}
                       >
@@ -545,7 +555,9 @@ function RenameSectionDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>修改分节标题</DialogTitle>
-          <DialogDescription>分节标题是目录里的纯文字小标题。</DialogDescription>
+          <DialogDescription>
+            分节标题是目录里的纯文字小标题。
+          </DialogDescription>
         </DialogHeader>
         <form
           className="flex flex-col gap-3"
@@ -740,13 +752,19 @@ function StudentViewPanel({
           {viewQuery.isPending && (
             <div role="status" className="flex flex-col gap-2">
               {[0, 1, 2].map((i) => (
-                <div key={i} className="h-12 animate-pulse rounded-lg bg-muted/50" />
+                <div
+                  key={i}
+                  className="h-12 animate-pulse rounded-lg bg-muted/50"
+                />
               ))}
               <p className="sr-only">正在计算学生可见目录…</p>
             </div>
           )}
           {viewQuery.isError && (
-            <div role="alert" className="flex flex-col items-start gap-2 rounded-lg bg-background p-3 text-sm text-destructive">
+            <div
+              role="alert"
+              className="flex flex-col items-start gap-2 rounded-lg bg-background p-3 text-sm text-destructive"
+            >
               <p>
                 {viewQuery.error instanceof Error
                   ? viewQuery.error.message
@@ -773,14 +791,17 @@ function StudentViewPanel({
                   该学生已归档，看不到任何课程内容。
                 </p>
               )}
-              {!view.courseArchived && !view.studentArchived && !view.isMember && (
-                <p className="rounded-lg bg-background px-3 py-2 text-sm text-muted-foreground">
-                  该学生不是课程成员，看不到课程内容。
-                </p>
-              )}
+              {!view.courseArchived &&
+                !view.studentArchived &&
+                !view.isMember && (
+                  <p className="rounded-lg bg-background px-3 py-2 text-sm text-muted-foreground">
+                    该学生不是课程成员，看不到课程内容。
+                  </p>
+                )}
               {view.items.length === 0 ? (
                 <p className="rounded-lg bg-background px-3 py-6 text-center text-sm text-muted-foreground">
-                  该成员此刻看不到任何条目（隐藏 / 未到发布时间 / 无题目都会被过滤）。
+                  该成员此刻看不到任何条目（隐藏 / 未到发布时间 /
+                  无题目都会被过滤）。
                 </p>
               ) : (
                 <ol className="flex flex-col gap-1">
@@ -790,9 +811,15 @@ function StudentViewPanel({
                       className="flex min-h-11 items-center gap-2 rounded-lg bg-background px-3 py-2 text-sm"
                     >
                       <ItemKindIcon kind={item.kind} />
-                      <span className="min-w-0 flex-1 truncate">{item.title}</span>
+                      <span className="min-w-0 flex-1 truncate">
+                        {item.title}
+                      </span>
                       <span className="shrink-0 text-xs text-muted-foreground">
-                        {item.kind === "unit" ? "练习" : item.kind === "lecture" ? "讲义" : "分节"}
+                        {item.kind === "unit"
+                          ? "练习"
+                          : item.kind === "lecture"
+                            ? "讲义"
+                            : "分节"}
                       </span>
                     </li>
                   ))}

@@ -148,14 +148,17 @@ export function CourseMembersTab({
         <Dialog open onOpenChange={(open) => !open && setConfirmRemove(false)}>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>
-                移出 {removeTargets.length} 名成员？
-              </DialogTitle>
+              <DialogTitle>移出 {removeTargets.length} 名成员？</DialogTitle>
               <DialogDescription asChild>
                 <div className="flex flex-col gap-2">
-                  <p>将移出：{removeTargets.map((m) => m.displayName).join("、")}</p>
+                  <p>
+                    将移出：{removeTargets.map((m) => m.displayName).join("、")}
+                  </p>
                   <p className="flex items-start gap-1.5 text-amber-700 dark:text-amber-400">
-                    <TriangleAlert aria-hidden className="mt-0.5 size-4 shrink-0" />
+                    <TriangleAlert
+                      aria-hidden
+                      className="mt-0.5 size-4 shrink-0"
+                    />
                     移出后学生立即看不到这门课程；已交卷的练习记录会保留，
                     未交卷的草稿作答将无法继续（数据不删除，重新加入可恢复访问）。
                   </p>
@@ -240,13 +243,19 @@ function AddMembersDialog({
         {studentsQuery.isPending && (
           <div role="status" className="flex flex-col gap-2">
             {[0, 1, 2].map((i) => (
-              <div key={i} className="h-12 animate-pulse rounded-lg bg-muted/50" />
+              <div
+                key={i}
+                className="h-12 animate-pulse rounded-lg bg-muted/50"
+              />
             ))}
             <p className="sr-only">正在加载学生…</p>
           </div>
         )}
         {studentsQuery.isError && (
-          <div role="alert" className="flex flex-col items-start gap-2 text-sm text-destructive">
+          <div
+            role="alert"
+            className="flex flex-col items-start gap-2 text-sm text-destructive"
+          >
             <p>
               {studentsQuery.error instanceof Error
                 ? studentsQuery.error.message

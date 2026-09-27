@@ -422,7 +422,9 @@ function EditCourseDialog({
             <Button
               type="submit"
               className="min-h-11 px-4"
-              disabled={updateMutation.isPending || nextName.trim().length === 0}
+              disabled={
+                updateMutation.isPending || nextName.trim().length === 0
+              }
             >
               {updateMutation.isPending ? (
                 <>

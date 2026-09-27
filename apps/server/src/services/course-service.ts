@@ -1,4 +1,3 @@
-import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import type {
   CourseDetailData,
   CourseDetailItem,
@@ -7,6 +6,7 @@ import type {
   CourseStudentViewData,
   CourseSummary,
 } from "@tutor/contract";
+import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
   attempts,
@@ -312,7 +312,12 @@ export function appendCourseItems(
       const companionUnits = db
         .select({ id: units.id, lectureId: units.lectureId })
         .from(units)
-        .where(and(inArray(units.lectureId, addedLectureIds), isNull(units.deletedAt)))
+        .where(
+          and(
+            inArray(units.lectureId, addedLectureIds),
+            isNull(units.deletedAt),
+          ),
+        )
         .orderBy(asc(units.order), asc(units.title))
         .all();
       const companionsByLecture = new Map<string, string[]>();
@@ -370,7 +375,9 @@ export function appendCourseItems(
         throw new HttpError(
           404,
           "UNIT_NOT_FOUND",
-          row === undefined ? "练习单元不存在" : "练习单元不存在（可能已被删除）",
+          row === undefined
+            ? "练习单元不存在"
+            : "练习单元不存在（可能已被删除）",
         );
       }
     }
@@ -408,7 +415,7 @@ export function appendCourseItems(
       const id = crypto.randomUUID();
       const title =
         item.kind === "section"
-          ? ((item.title as string).trim())
+          ? (item.title as string).trim()
           : item.kind === "lecture"
             ? (lectureTitles.get(item.refId as string) ?? "")
             : (unitTitles.get(item.refId as string) ?? "");
@@ -418,7 +425,7 @@ export function appendCourseItems(
           courseId,
           kind: item.kind,
           refId: item.kind === "section" ? null : (item.refId as string),
-          title: item.kind === "section" ? ((item.title as string).trim()) : null,
+          title: item.kind === "section" ? (item.title as string).trim() : null,
           order: nextOrder,
           visible,
           publishAt: null,
@@ -692,7 +699,8 @@ export function listVisibleItems(
       if (unit === undefined) continue;
       title = unit.title;
       resourceDeleted = unit.deletedAt !== null;
-      unitLiveQuestionCount = liveQuestionCountByUnit.get(item.refId ?? "") ?? 0;
+      unitLiveQuestionCount =
+        liveQuestionCountByUnit.get(item.refId ?? "") ?? 0;
     }
     const visible = canStudentSeeItem(
       {
@@ -917,7 +925,8 @@ function itemStatus(
   now: Date,
 ): CourseDetailItem["status"] {
   if (resourceDeleted) return "deleted";
-  if (liveQuestionCount !== null && liveQuestionCount < 1) return "no-questions";
+  if (liveQuestionCount !== null && liveQuestionCount < 1)
+    return "no-questions";
   if (!item.visible) return "hidden";
   if (item.publishAt !== null && Date.parse(item.publishAt) > now.getTime()) {
     return "scheduled";
@@ -1071,4 +1080,3 @@ export function getStudentView(
     items,
   };
 }
-

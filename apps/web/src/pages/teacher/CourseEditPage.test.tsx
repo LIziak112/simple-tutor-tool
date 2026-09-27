@@ -1,6 +1,16 @@
-import type { CourseDetailData, CourseListData, CourseStudentViewData } from "@tutor/contract";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import type {
+  CourseDetailData,
+  CourseListData,
+  CourseStudentViewData,
+} from "@tutor/contract";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -128,9 +138,7 @@ beforeEach(() => {
 describe("CourseEditPage（T2A.4）", () => {
   it("定时发布条目显示「定时」标签与北京时间（9月30日 08:00 发布）", async () => {
     renderPage();
-    expect(
-      await screen.findByText("定时（9月30日 08:00 发布）"),
-    ).toBeVisible();
+    expect(await screen.findByText("定时（9月30日 08:00 发布）")).toBeVisible();
     // 目录标签同时给出讲义类型说明
     expect(await screen.findByText("第1讲 有理数")).toBeVisible();
   });
@@ -195,8 +203,6 @@ describe("CoursesPage（T2A.4）", () => {
     expect(await screen.findByText("初一上")).toBeVisible();
     expect(screen.getByText("成员 2")).toBeVisible();
     expect(screen.getByText("条目 5（可见 3）")).toBeVisible();
-    await waitFor(() =>
-      expect(mockedCourses).toHaveBeenCalledWith(false),
-    );
+    await waitFor(() => expect(mockedCourses).toHaveBeenCalledWith(false));
   });
 });

@@ -1360,7 +1360,8 @@ export function updateCourse(
       patch.archivedAt !== undefined
         ? patch.archivedAt !== null
         : row.archivedAt !== null,
-    archivedAt: patch.archivedAt !== undefined ? patch.archivedAt : row.archivedAt,
+    archivedAt:
+      patch.archivedAt !== undefined ? patch.archivedAt : row.archivedAt,
   };
 }
 
