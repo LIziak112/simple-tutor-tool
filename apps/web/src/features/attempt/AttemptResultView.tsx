@@ -4,11 +4,13 @@ import {
   CheckCircle2,
   ChevronDown,
   Clock,
+  Lightbulb,
   PenLine,
   XCircle,
 } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { HintEntryList } from "@/features/attempt/HintPanel";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { studentInkPngUrl } from "@/lib/api";
 import { formatCnTime } from "@/lib/time";
@@ -26,7 +28,9 @@ import {
  * T2.8：手写题（solve/apply/find-error）追加「我的手写笔迹」缩略图——学生本人
  * 笔迹 PNG 经 GET /api/student/attempts/:id/ink/:questionId.png 文件直出
  * （不进 base64/不进库）；无笔迹时该区块整体隐藏（img onerror 兜底）。
- * 详解只在交卷后由服务端下发（AGENTS 第 3 条对「未交卷题目」的限制已解除）。
+ * T2.11：做题时解锁过的提示在此回看（hintsOpened，只含学生自己请求过的条目；
+ * 未解锁提示内容服务端从不下发）。详解只在交卷后由服务端下发
+ * （AGENTS 第 3 条对「未交卷题目」的限制已解除）。
  */
 
 /** 判定图标：true=绿勾、false=红叉、null=待批（含未作答，琥珀时钟） */
@@ -223,6 +227,17 @@ function ResultQuestionCard({
       {/* 手写题：我的手写笔迹缩略图（T2.8；无笔迹时隐藏） */}
       {isHandwritten && (
         <InkThumbnail attemptId={attemptId} questionId={question.questionId} />
+      )}
+
+      {/* 做题时看过的提示（T2.11 回看；没解锁过则整块隐藏） */}
+      {question.hintsOpened.length > 0 && (
+        <div className="flex flex-col gap-1.5">
+          <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
+            <Lightbulb aria-hidden className="size-4" />
+            做题时看过的提示（{question.hintsOpened.length} 条）
+          </p>
+          <HintEntryList entries={question.hintsOpened} />
+        </div>
       )}
 
       <div className="flex flex-col gap-1.5 rounded-lg bg-muted/40 px-4 py-3 text-sm sm:flex-row sm:gap-6">

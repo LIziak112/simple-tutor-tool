@@ -1,4 +1,8 @@
-import type { QuestionPublic, StudentAnswer } from "@tutor/contract";
+import type {
+  HintOpenedEntry,
+  QuestionPublic,
+  StudentAnswer,
+} from "@tutor/contract";
 import { cn } from "cn";
 import { Check, X } from "lucide-react";
 import { BlankAnswersProvider } from "@/features/markdown/BlankAnswersContext";
@@ -13,12 +17,14 @@ import {
   HandwrittenControls,
   type HandwrittenControlsProps,
 } from "./HandwrittenControls";
+import { HintPanel } from "./HintPanel";
 
 /**
  * 答题页题卡（T2.6）：题号、题型徽章（中文）、难度星、考点 tag、题干
  * （RichMarkdown 渲染；填空题 [[…]] 空位变内联输入框）与各题型作答控件。
  * 手写题（solve/apply/find-error）的作答控件在 HandwrittenControls（T2.8：
  * 展开手写区 + 全屏作答 + 最终答案/MathLive，含笔迹上传状态机）。
+ * T2.11：hintCount>0 且提供解锁回调时渲染分步提示面板（HintPanel）。
  * 触控目标全部 ≥44px（ui-conventions）；judge 题干尾部 [[]] 脱敏框剥掉
  * （对错由按钮作答，空框反而误导）。
  */
@@ -223,6 +229,8 @@ export function AttemptQuestionCard({
   attemptId,
   registerInkController,
   onInkStroke,
+  hints,
+  onHintUnlocked,
 }: {
   /** 题号（0 起，展示 +1） */
   index: number;
@@ -231,12 +239,16 @@ export function AttemptQuestionCard({
   answer: StudentAnswer | undefined;
   /** 作答回调（defer 交给控件语义：文本类防抖、离散类立即） */
   onAnswer: (answer: StudentAnswer, defer?: boolean) => void;
-  /** attempt id（手写题笔迹上传用；客观题忽略） */
+  /** attempt id（手写题笔迹上传与分步提示用；客观题忽略） */
   attemptId?: string;
   /** 交卷 flush 用：手写题上传 controller 注册（透传 HandwrittenControls） */
   registerInkController?: HandwrittenControlsProps["registerController"];
   /** 手写笔画批次回调（T2.10 ink_stroke_batch 埋点，透传 HandwrittenControls） */
   onInkStroke?: HandwrittenControlsProps["onInkStroke"];
+  /** 已解锁提示（T2.11；缺省按未解锁处理） */
+  hints?: readonly HintOpenedEntry[];
+  /** 提示解锁成功回调（T2.11；与 attemptId 同时提供才渲染提示面板） */
+  onHintUnlocked?: (entry: HintOpenedEntry) => void;
 }) {
   const plainAnswer = (next: StudentAnswer) => onAnswer(next);
 
@@ -312,6 +324,19 @@ export function AttemptQuestionCard({
             onAnswer={onAnswer}
             registerController={registerInkController}
             onInkStroke={onInkStroke}
+          />
+        )}
+
+      {/* 分步提示（T2.11）：hintCount>0 且提供解锁回调（页面持有已解锁状态） */}
+      {question.hintCount > 0 &&
+        attemptId !== undefined &&
+        onHintUnlocked !== undefined && (
+          <HintPanel
+            attemptId={attemptId}
+            questionId={question.id}
+            hintCount={question.hintCount}
+            hints={hints ?? []}
+            onUnlocked={onHintUnlocked}
           />
         )}
     </article>

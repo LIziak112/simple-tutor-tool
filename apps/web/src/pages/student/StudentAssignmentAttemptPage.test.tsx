@@ -14,6 +14,7 @@ import {
 } from "@/features/attempt/draft-store";
 import {
   fetchAttemptApi,
+  openAttemptHintApi,
   postAttemptEventsApi,
   putAttemptInkApi,
   saveAttemptAnswerApi,
@@ -113,6 +114,8 @@ vi.mock("@/lib/api", async (importOriginal) => {
     // T2.10：学习痕迹事件上报（埋点用例断言调用参数）
     postAttemptEventsApi: vi.fn(async () => ({ accepted: 1 })),
     postLectureEventsApi: vi.fn(async () => ({ accepted: 1 })),
+    // T2.11：分步提示解锁（提示用例断言调用参数）
+    openAttemptHintApi: vi.fn(),
   };
 });
 
@@ -122,6 +125,7 @@ const mockedSave = vi.mocked(saveAttemptAnswerApi);
 const mockedSubmit = vi.mocked(submitAttemptApi);
 const mockedPutInk = vi.mocked(putAttemptInkApi);
 const mockedPostEvents = vi.mocked(postAttemptEventsApi);
+const mockedOpenHint = vi.mocked(openAttemptHintApi);
 
 const ASSIGNMENT_ID = "44444444-4444-4444-8444-444444444444";
 const ATTEMPT_ID = "55555555-5555-4555-8555-555555555555";
@@ -159,6 +163,7 @@ const DRAFT_DATA: AttemptDraftData = {
     },
   ],
   drafts: {},
+  hintsOpened: {},
 };
 
 const RESULT_DATA: AttemptResultData = {
@@ -194,6 +199,7 @@ const RESULT_DATA: AttemptResultData = {
       solutionMd: null,
       answer: { kind: "judge", value: true },
       autoCorrect: true,
+      hintsOpened: [],
     },
     {
       questionId: "练习四-4",
@@ -209,6 +215,7 @@ const RESULT_DATA: AttemptResultData = {
       solutionMd: null,
       answer: { kind: "fill", values: ["4"] },
       autoCorrect: true,
+      hintsOpened: [],
     },
   ],
 };
@@ -356,6 +363,7 @@ const HANDWRITTEN_DRAFT: AttemptDraftData = {
     },
   ],
   drafts: {},
+  hintsOpened: {},
 };
 
 /** 展开下一道未展开的手写题并「书写一笔」（展开后按钮变「收起」，故每次取第一个） */
@@ -704,5 +712,105 @@ describe("StudentAssignmentAttemptPage：学习痕迹埋点", () => {
     expect(types).toContain("page_hidden");
     expect(types).toContain("page_visible");
     expect(types).toContain("attempt_start");
+  });
+});
+
+// ---------- T2.11：分步提示（题卡解锁流 + 结果视图回看） ----------
+
+/** 带已解锁提示的草稿视图（练习四-4 共 2 条、解锁过第 0 条；练习四-8 共 2 条未解锁） */
+const DRAFT_WITH_HINTS: AttemptDraftData = {
+  ...DRAFT_DATA,
+  questions: [
+    // 练习四-1（判断题，无提示）原样保留（slice 避免下标访问的 undefined 窄化）
+    ...DRAFT_DATA.questions.slice(0, 1),
+    // 练习四-4 在 DRAFT_DATA 中 hintCount=1，这里覆盖为 2 以构造「已解锁 1 条、剩余 1 条」状态
+    {
+      id: "练习四-4",
+      type: "fill",
+      difficulty: 2,
+      knowledge: ["有理数加法"],
+      stemMd: "计算：$(-3)+7=$ [[]]。",
+      hintCount: 2,
+    },
+    {
+      id: "练习四-8",
+      type: "find-error",
+      difficulty: 2,
+      knowledge: ["有理数加法"],
+      stemMd: "下面是小明的解答，其中有一处错误：",
+      hintCount: 2,
+    },
+  ],
+  hintsOpened: {
+    "练习四-4": [
+      { index: 0, text: "同号相加，取相同的符号，并把绝对值相加。" },
+    ],
+  },
+};
+
+describe("StudentAssignmentAttemptPage：分步提示", () => {
+  it("草稿视图回显已解锁提示；点按钮解锁下一条（index=已解锁数）、剩余数递减", async () => {
+    mockedStart.mockResolvedValue(START_DRAFT);
+    mockedFetch.mockResolvedValue(DRAFT_WITH_HINTS);
+    renderPage();
+
+    await screen.findByText("第 3 题");
+    // 练习四-4 已解锁第 0 条 → 回显 + 剩余 1 条按钮
+    expect(screen.getByText("提示 1")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "给我一点提示（剩余 1 条）" }),
+    ).toBeInTheDocument();
+    // 练习四-8 未解锁过 → 剩余 2 条按钮
+    expect(
+      screen.getByRole("button", { name: "给我一点提示（剩余 2 条）" }),
+    ).toBeInTheDocument();
+
+    // 解锁练习四-4 的第 1 条（index=已解锁数 1）
+    mockedOpenHint.mockResolvedValueOnce({
+      questionId: "练习四-4",
+      index: 1,
+      hint: "异号相加，取绝对值较大的加数的符号。",
+      hintCount: 2,
+      hintsUsed: 2,
+      hintsRemaining: 0,
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "给我一点提示（剩余 1 条）" }),
+    );
+    await waitFor(() => {
+      expect(mockedOpenHint).toHaveBeenCalledWith(ATTEMPT_ID, "练习四-4", 1);
+    });
+    // 解锁完该题：按钮消失（整页 role 扫描会触发 jsdom 样式解析崩溃，用文本口径），两条提示都在列表
+    await waitFor(() => {
+      expect(document.body.textContent).not.toContain("剩余 1 条");
+    });
+    expect(screen.getByText("提示 2")).toBeInTheDocument();
+    // 另一题的按钮不受影响
+    expect(document.body.textContent).toContain("给我一点提示（剩余 2 条）");
+  });
+
+  it("结果视图回看做题时看过的提示（不做新的解锁请求）", async () => {
+    mockedStart.mockResolvedValue(RESULT_DATA.attempt);
+    mockedFetch.mockResolvedValue({
+      ...RESULT_DATA,
+      questions: RESULT_DATA.questions.map((question) =>
+        question.questionId === "练习四-4"
+          ? {
+              ...question,
+              hintsOpened: [
+                { index: 0, text: "同号相加，取相同的符号，并把绝对值相加。" },
+              ],
+            }
+          : question,
+      ),
+    });
+    renderPage();
+
+    expect(await screen.findByText(/批改结果/)).toBeInTheDocument();
+    expect(screen.getByText("做题时看过的提示（1 条）")).toBeInTheDocument();
+    expect(screen.getByText("提示 1")).toBeInTheDocument();
+    // 结果视图没有解锁按钮（回看语义，不做新解锁）
+    expect(screen.queryByRole("button", { name: /给我一点提示/ })).toBeNull();
+    expect(mockedOpenHint).not.toHaveBeenCalled();
   });
 });

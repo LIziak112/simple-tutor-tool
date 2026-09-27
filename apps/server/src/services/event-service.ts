@@ -16,6 +16,7 @@ import { requireOwnAttempt } from "./attempt-service";
  *
  * - appendAttemptEvents：本人 attempt 的批量事件追加（≤200 由契约拦截）；
  * - appendLectureEvents：讲义展开事件（lecture_expand，无 attempt 上下文）追加；
+ * - recordHintOpenEvent：hint_open 事件服务端直记（T2.11 分步提示接口内部调用）；
  * - attemptTimeline：交卷计算用——按 clientTs 升序取该 attempt 的全部事件
  *   投影（type/clientTs/questionId），供 active-time 纯函数消费。
  *
@@ -89,6 +90,37 @@ export function appendLectureEvents(
     }
   }
   return insertEvents(db, batch.map(lectureEventRow));
+}
+
+/**
+ * 服务端直接记录 hint_open 事件（T2.11 分步提示接口按需写入，不经前端队列——
+ * 避免与解锁响应竞态、防绕过：只要提示被下发就必有事件）。
+ * payload 只含元信息（type/clientTs/questionId/index），不含提示内容（泄露红线）；
+ * 每次打开都记一条（含同条重复请求——回看也是一次 hint_open 行为痕迹）。
+ */
+export function recordHintOpenEvent(
+  db: Db,
+  attemptId: string,
+  questionId: string,
+  index: number,
+): void {
+  const now = Date.now();
+  insertEvents(db, [
+    {
+      id: "",
+      attemptId,
+      questionId,
+      type: "hint_open",
+      payloadJson: JSON.stringify({
+        type: "hint_open",
+        clientTs: now,
+        questionId,
+        index,
+      }),
+      clientTs: now,
+      serverTs: "",
+    },
+  ]);
 }
 
 /** 契约事件 → events 行（attempt 上下文：questionId 按事件语义提取） */

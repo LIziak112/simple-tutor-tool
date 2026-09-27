@@ -1,0 +1,1 @@
+ALTER TABLE `responses` ADD `hints_opened_json` text;

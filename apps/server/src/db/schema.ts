@@ -409,8 +409,14 @@ export const responses = sqliteTable(
     teacherComment: text("teacher_comment"),
     /** 每题有效用时（秒；T2.10 按事件计算回写）；未计算为 NULL */
     activeSec: integer("active_sec"),
-    /** 已查看提示数（T2.11 分步提示计数） */
+    /** 已查看提示数（T2.11：去重后的已解锁序号集合大小；交卷时冻结保留） */
     hintsUsed: integer("hints_used").notNull().default(0),
+    /**
+     * 已解锁提示序号集合（T2.11，JSON 数组如 "[0,2]"；0 起对齐题目 hintsJson 下标）。
+     * 交卷后回看已解锁提示与刷新回显都以此为准；从未解锁为 NULL。
+     * 与 hintsUsed 冗余（集合大小）但读路径免解析，写路径同事务维护。
+     */
+    hintsOpenedJson: text("hints_opened_json"),
     /** 答案保存（改答案）次数：草稿保存一次 +1，T2.10 起与事件交叉校验 */
     changeCount: integer("change_count").notNull().default(0),
     /** 手写笔迹记录 id（ink 表，T2.8 启用）；无笔迹为 NULL */

@@ -2,6 +2,7 @@ import type { StudentPasswordChangeRequest } from "@tutor/contract";
 import {
   attemptAnswerSaveRequestSchema,
   attemptEventBatchRequestSchema,
+  hintOpenRequestSchema,
   lectureEventBatchRequestSchema,
   studentPasswordChangeRequestSchema,
 } from "@tutor/contract";
@@ -35,6 +36,7 @@ import {
   appendAttemptEvents,
   appendLectureEvents,
 } from "../services/event-service";
+import { openHint } from "../services/hint-service";
 import { getInkDoc, getStudentInkPng, saveInk } from "../services/ink-service";
 import { changeStudentPassword } from "../services/student-service";
 
@@ -51,8 +53,11 @@ import { changeStudentPassword } from "../services/student-service";
  * - PUT  /attempts/:id/answers/:questionId：保存草稿答案（T2.6；已交 409）；
  * - POST /attempts/:id/submit：服务端判分 + 快照冻结 + 返回结果（T2.6；
  *   重复交卷 409 ALREADY_SUBMITTED）；
- * - GET  /attempts/:id：attempt 详情（T2.6；未交=草稿视图（无答案/详解/提示），
- *   已交=结果视图（含答案与详解、剥离提示内容））；
+ * - POST /attempts/:id/hints：分步提示（T2.11，{questionId, index} → 被请求的
+ *   那一条提示 + 计数；index 越界 400 HINT_INDEX_OUT_OF_RANGE；draft 与已交均
+ *   可用；服务端记录 hint_open 事件与 responses 已解锁集合）；
+ * - GET  /attempts/:id：attempt 详情（T2.6；未交=草稿视图（无答案/详解/未请求
+ *   提示），已交=结果视图（含答案与详解、回显已解锁提示））；
  * - POST /attempts/:id/events：学习痕迹事件批量上报（T2.10，≤200 条/次：
  *   超限/非法 type 400，非本人 403，未登录 401；已交后仍收——交卷瞬间的前台
  *   flush 可能晚到，宽松口径见 event-service）；响应只回 accepted 计数；
@@ -74,10 +79,12 @@ import { changeStudentPassword } from "../services/student-service";
  * 只含单元公开元信息（标题/topic/题数）；/assignments/:id/paper 与草稿视图的
  * 每道题经 questionPublicSchema 输出过滤且题干已公开化（[[答案]] → [[]]）；
  * /attempts/:id 的结果视图在交卷后允许携带参考答案与详解（规则 3 限制的是
- * 「未交卷题目」），但提示内容仍不下发（T2.11 按需）。泄露测试见
+ * 「未交卷题目」）；提示内容只经 /attempts/:id/hints 按需逐条下发（T2.11），
+ * 两个视图仅回显已解锁条目。泄露测试见
  * routes/assignments.test.ts、routes/student-lectures.test.ts、
  * routes/student-paper.test.ts 与 routes/student-attempts.test.ts
- * （通用工具 src/test/assert-no-leak.ts；T2.8 ink 接口见 routes/student-ink.test.ts）。
+ * （通用工具 src/test/assert-no-leak.ts；T2.8 ink 接口见 routes/student-ink.test.ts；
+ * T2.11 提示接口与全学生端泄露矩阵见 routes/student-hints.test.ts）。
  * 返回类型不显式标注 Hono：链式注册把路由签名累积进推断类型（AppType / hc 前提）。
  */
 export function createStudentRoutes(
@@ -141,6 +148,20 @@ export function createStudentRoutes(
         return c.json({
           ok: true,
           data: submitAttempt(db, c.var.student.id, c.req.param("id")),
+        });
+      })
+      // T2.11：分步提示——按需下发被请求的那一条并记录（hint_open 事件 + 已解锁集合）
+      .post("/attempts/:id/hints", async (c) => {
+        const body = await parseJsonBody(c, hintOpenRequestSchema);
+        return c.json({
+          ok: true,
+          data: openHint(
+            db,
+            c.var.student.id,
+            c.req.param("id"),
+            body.questionId,
+            body.index,
+          ),
         });
       })
       .get("/attempts/:id", (c) => {
