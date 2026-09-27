@@ -23,21 +23,67 @@ function apiOkExtend<T extends z.ZodType>(dataSchema: T) {
 }
 
 /**
+ * 导入规模上限（D20，前后端共用）：
+ * - 单批文件数 / 单文件 markdown 字节数（UTF-8）/ 单批 markdown 原文合计字节数；
+ * - 超限服务端返回 413 IMPORT_TOO_LARGE；前端在调用前用同一组常量预检直接提示。
+ */
+export const IMPORT_MAX_FILES_PER_BATCH = 50;
+export const IMPORT_MAX_FILE_BYTES = 1024 * 1024;
+export const IMPORT_MAX_BATCH_BYTES = 10 * 1024 * 1024;
+/**
+ * preview-batch 路由的 content-length 粗防线：JSON 转义后 body 约为 markdown 原文
+ * 1.5–2 倍，在进入 parseBody（整包进内存）之前按 content-length 拦截（约 30MB），
+ * 超出直接 413，不读 body。精确限额（按原文字节合计）仍由服务层校验。
+ */
+export const IMPORT_BATCH_BODY_LIMIT = 30 * 1024 * 1024;
+
+/**
  * POST /api/teacher/import/preview 请求体。
  * markdown 为文档原文（v1/v2 均可，服务端 detectVersion 自动识别）；filename 仅用于
  * imports 留档与前端展示，不参与解析。
+ * T2A.3 扩展（D17/D18）：folderId = 目标文件夹（null / 缺省 = 未归类，不再自动创建
+ * 「默认课程」）；sourcePath = 批量导入时的相对路径（单文件粘贴无路径，可缺省）。
  */
 export const importPreviewRequestSchema = z.object({
   markdown: z.string().min(1, "markdown 不能为空"),
   filename: z.string().min(1, "filename 不能为空"),
+  /** 目标文件夹（library_folders.id）；null / 缺省 = 未归类 */
+  folderId: z.uuid("folderId 必须是 UUID 格式").nullable().optional(),
+  /** 批量导入的文件相对路径（如 "chapter1/练习.md"）；粘贴内容无路径 */
+  sourcePath: z.string().max(512, "sourcePath 过长").optional(),
 });
 
 /**
  * POST /api/teacher/import/commit 请求体。
- * courseId 可选：缺省导入系统默认课程（不存在则自动创建，服务端返回实际 courseId）。
+ * T2A.3 扩展（D17）：
+ * - folderId：目标文件夹（优先级最高；null = 未归类）；
+ * - folderName：无 folderId 时按名称查找/新建文件夹（「按子目录自动建文件夹」与
+ *   「就地新建」场景；同名已存在则复用）；
+ * - courseId：兼容旧参数（T2A.1 语义：内容进课程同名文件夹 + 追加课程目录条目，
+ *   讲义可见、单元隐藏）；不再自动创建「默认课程」（D23-7）；
+ * - batchId：批量导入的批次 id（前端 crypto.randomUUID 生成，逐文件 commit 携带）；
+ * - addToCourse：「同时加入课程」快捷项（追加目录条目，归属仍在资源库）；
+ * - 三者均缺省时导入落「未归类」，不创建任何课程。
  */
 export const importCommitRequestSchema = importPreviewRequestSchema.extend({
   courseId: z.uuid("courseId 必须是 UUID 格式").optional(),
+  folderId: z.uuid("folderId 必须是 UUID 格式").nullable().optional(),
+  /** 无 folderId 时按名称查找/新建的目标文件夹名 */
+  folderName: z
+    .string()
+    .trim()
+    .min(1, "folderName 不能为空")
+    .max(100)
+    .optional(),
+  /** 批量导入批次 id（GET /api/teacher/import/batches/:batchId 回看） */
+  batchId: z.uuid("batchId 必须是 UUID 格式").optional(),
+  /** 同时加入课程（D17 快捷项）：追加目录条目到末尾，visible 对讲义与单元统一生效 */
+  addToCourse: z
+    .object({
+      courseId: z.uuid("courseId 必须是 UUID 格式"),
+      visible: z.boolean(),
+    })
+    .optional(),
 });
 
 /** 预览摘要（commit 响应不含摘要，报告见 importCommitDataSchema） */
@@ -52,6 +98,58 @@ export const importSummarySchema = z.object({
   typeDistribution: z.record(z.string(), z.number().int().min(0)),
 });
 
+// ---------- T2A.3：动作清单（D19）与预览 warning（D18/D19） ----------
+
+/** 导入动作类型（D19 动作清单） */
+export const importActionKindSchema = z.enum([
+  /** 新增单元 */
+  "createUnit",
+  /** 更新单元（同 unit id 命中，保留其原文件夹，D18） */
+  "updateUnit",
+  /** 新增讲义 */
+  "createLecture",
+  /** 更新讲义（同 (目标文件夹, 标题) 命中，替换 markdown，D18） */
+  "updateLecture",
+]);
+
+/** 更新单元的题目细分（D19）：新增题 / 更新题（version+1）/ 保留题（文件中未出现） */
+export const importUnitQuestionPlanSchema = z.object({
+  /** 文件中出现、库中不存在的题目数（version=1 插入） */
+  inserted: z.number().int().min(0),
+  /** 文件中出现、库中已存在（含回收站软删，将恢复）的题目数（version+1） */
+  updated: z.number().int().min(0),
+  /** 库中已有未删除题目中未出现在文件里的数量（保留不删，D18） */
+  kept: z.number().int().min(0),
+});
+
+/** 预览动作清单条目（D19：预览必须展示「将发生什么」） */
+export const importActionSchema = z.object({
+  kind: importActionKindSchema,
+  /** 资源标题（单元 title / 讲义 H1 标题） */
+  title: z.string().min(1),
+  /** 单元 id（来自 DSL）；讲义动作为 null */
+  unitId: z.string().nullable(),
+  /** 动作对象所在（更新）/ 将进入（新增）的文件夹名；null = 未归类 */
+  folderName: z.string().nullable(),
+  /** 命中回收站中的资源：将自动恢复并更新（D18） */
+  restore: z.boolean(),
+  /** 更新单元的题目细分（仅 updateUnit 提供；createUnit 全部为新增题，不细分） */
+  questions: importUnitQuestionPlanSchema.optional(),
+});
+
+/** 预览 warning 的结构化编码（D18/D19；message 为可直接展示的中文） */
+export const importPreviewWarningSchema = z.object({
+  code: z.enum([
+    /** 其他文件夹已有同名讲义，确认不是重复导入（D18 讲义） */
+    "DUPLICATE_LECTURE_TITLE_IN_OTHER_FOLDER",
+    /** 文件中未出现的 N 道已有题目将保留（D18 题目） */
+    "KEPT_QUESTIONS",
+    /** 被更新的单元正被 N 个未截止作业使用（D19） */
+    "UNIT_USED_BY_OPEN_ASSIGNMENTS",
+  ]),
+  message: z.string().min(1),
+});
+
 /** POST /api/teacher/import/preview 响应 data：识别版本 + 摘要 + 全部 lint issues（不写库） */
 export const importPreviewDataSchema = z.object({
   /** detectVersion 识别结果；v1 文档服务端内部转 v2 处理，但版本号如实返回 */
@@ -59,6 +157,10 @@ export const importPreviewDataSchema = z.object({
   summary: importSummarySchema,
   /** lintDocument 的全部 issue（error + warning）；issue 行号对 v1 指向转换后的 v2 文本 */
   issues: z.array(lintIssueSchema),
+  /** 动作清单（D19；T2A.3 起提供，兼容旧消费者解析时缺省为空数组） */
+  actions: z.array(importActionSchema).default([]),
+  /** 导入 warning（D18/D19；不含 lint warning——那些在 issues 里） */
+  warnings: z.array(importPreviewWarningSchema).default([]),
 });
 
 /** 单元导入结果：id 来自 DSL；inserted/updated 互斥（按 unit.id 全局匹配） */
@@ -83,12 +185,19 @@ export const importQuestionsReportSchema = z.object({
   updated: z.number().int().min(0),
 });
 
-/** POST /api/teacher/import/commit 响应 data：导入统计报告 */
+/**
+ * POST /api/teacher/import/commit 响应 data：导入统计报告。
+ * T2A.3：courseId 语义变更（D17 导入只进资源库）——兼容路径（显式 courseId）返回该课程，
+ * addToCourse 返回目标课程，其余为 null（不再自动创建「默认课程」）；新增 folderId
+ * （实际落库的目标文件夹，null = 未归类）。
+ */
 export const importCommitDataSchema = z.object({
   /** imports 留档行 id（crypto.randomUUID，§0.3） */
   importId: z.uuid(),
-  /** 实际导入的课程 id（请求缺省时为系统默认课程，自动创建） */
-  courseId: z.uuid(),
+  /** 关联课程 id：兼容路径 = courseId；addToCourse = 目标课程；其余 null */
+  courseId: z.uuid().nullable(),
+  /** 实际落库的目标文件夹 id；null = 未归类 */
+  folderId: z.uuid().nullable(),
   units: z.array(importUnitReportSchema),
   lectures: z.array(importLectureReportSchema),
   questions: importQuestionsReportSchema,
@@ -102,7 +211,10 @@ export const importCommitDataSchema = z.object({
  * - LECTURE_NOT_FOUND：讲义不存在（404）；
  * - UNIT_NOT_FOUND：单元不存在（404）；
  * - ID_IMMUTABLE：单题编辑解析出的 id 与原 id 不一致（422，id 不可变）；
- * - COURSE_NOT_EMPTY：课程下仍有讲义/单元时拒绝删除（409）。
+ * - COURSE_NOT_EMPTY：课程下仍有讲义/单元时拒绝删除（409）；
+ * - FOLDER_NOT_FOUND：导入目标文件夹不存在（404，T2A.3；与 library-api 同码同义）；
+ * - IMPORT_TOO_LARGE：批量导入超规模上限（413，D20；也用于 preview-batch 的
+ *   content-length 粗防线）。
  */
 export const contentErrorCodeSchema = z.enum([
   "LINT_ERROR",
@@ -112,6 +224,8 @@ export const contentErrorCodeSchema = z.enum([
   "UNIT_NOT_FOUND",
   "ID_IMMUTABLE",
   "COURSE_NOT_EMPTY",
+  "FOLDER_NOT_FOUND",
+  "IMPORT_TOO_LARGE",
 ]);
 
 /**
@@ -345,14 +459,130 @@ export const studentLectureDetailOkSchema = apiOkExtend(
   studentLectureDetailSchema,
 );
 
+// ---------- T2A.3：批量导入（D20） ----------
+
+/** preview-batch 的单文件输入：path 为相对路径（文件夹选择时含子目录） */
+export const importBatchFileInputSchema = z.object({
+  /** 文件相对路径（如 "chapter1/练习.md"）；同一批次内不应重复 */
+  path: z.string().min(1, "path 不能为空").max(512, "path 过长"),
+  markdown: z.string().min(1, "markdown 不能为空"),
+});
+
+/**
+ * POST /api/teacher/import/preview-batch 请求体（D20）：
+ * - folderId：全批默认目标文件夹（null / 缺省 = 未归类）；
+ * - autoFolderBySubdir：按文件直接父目录名自动建/复用文件夹（根目录文件仍用 folderId）；
+ * - files：≤50 个、单文件 ≤1MB、合计 ≤10MB（超限 413 IMPORT_TOO_LARGE，按原始
+ *   markdown UTF-8 字节判定，不以 JSON body 体积为准；文件数上限由服务层校验，
+ *   避免 zod max 报 400 掩盖 413 语义）。
+ */
+export const importPreviewBatchRequestSchema = z.object({
+  folderId: z.uuid("folderId 必须是 UUID 格式").nullable().optional(),
+  autoFolderBySubdir: z.boolean(),
+  files: z.array(importBatchFileInputSchema).min(1, "files 不能为空"),
+});
+
+/** 批内跨文件冲突（D20：视为 error，涉及文件都标红） */
+export const importBatchConflictSchema = z.object({
+  code: z.enum([
+    /** 两个文件定义了同一 unit id */
+    "DUPLICATE_UNIT_ID",
+    /** 两个文件在同一目标文件夹下定义了同名讲义 */
+    "DUPLICATE_LECTURE_TITLE",
+  ]),
+  /** 中文说明（含冲突对象，可直接展示） */
+  message: z.string().min(1),
+  /** 与本文件冲突的另一个文件的相对路径 */
+  otherPath: z.string().min(1),
+});
+
+/** preview-batch 的单文件条目：目标文件夹 + 单文件预览 + 跨文件冲突 */
+export const importBatchFilePreviewSchema = z.object({
+  /** 文件相对路径（与请求一一对应） */
+  path: z.string().min(1),
+  /** 该文件的目标文件夹 id；null = 未归类 */
+  folderId: z.uuid().nullable(),
+  /** 该文件的目标文件夹名；null = 未归类（autoFolderBySubdir 命中子目录名） */
+  folderName: z.string().nullable(),
+  /** 目标文件夹尚不存在、commit 时将按 folderName 新建（D20 复用同名） */
+  folderToCreate: z.boolean(),
+  /** 单文件预览（version/摘要/issues/动作清单/警告——与单文件 preview 同构） */
+  preview: importPreviewDataSchema,
+  /** 本文件涉及的跨文件冲突（空 = 无） */
+  conflicts: z.array(importBatchConflictSchema),
+  /** lint error 或跨文件冲突非空 → 前端禁选/标红、提交时自动跳过 */
+  hasError: z.boolean(),
+});
+
+/** POST /api/teacher/import/preview-batch 响应 data（文件顺序与请求一致） */
+export const importPreviewBatchDataSchema = z.object({
+  files: z.array(importBatchFilePreviewSchema),
+});
+
+// ---------- T2A.3：批次回看（GET /api/teacher/import/batches/:batchId） ----------
+
+/** 批次内单个文件的导入留档（imports 行 + 解析后的报告） */
+export const importBatchFileRecordSchema = z.object({
+  /** imports 留档行 id（即单文件 commit 响应的 importId） */
+  importId: z.uuid(),
+  /** 导入时的文件名 */
+  filename: z.string().min(1),
+  /** 批量导入的相对路径；单文件导入为 null */
+  sourcePath: z.string().nullable(),
+  /** 实际落库的目标文件夹；null = 未归类 */
+  folderId: z.uuid().nullable(),
+  /** 导入时间：UTC ISO 字符串 */
+  createdAt: z.string().min(1),
+  /** 该文件 commit 的统计报告（reportJson 反序列化） */
+  report: importCommitDataSchema,
+});
+
+/**
+ * GET /api/teacher/import/batches/:batchId 响应 data：批量提交逐文件 commit 后的
+ * 服务端记录回看。batchId 无任何成功记录时返回空 files（200，不报 404——全部
+ * 文件被跳过是合法批次）。
+ */
+export const importBatchDataSchema = z.object({
+  batchId: z.uuid(),
+  /** 按 createdAt 升序 */
+  files: z.array(importBatchFileRecordSchema),
+});
+
+/** 携带批量预览数据的成功响应壳 */
+export const importPreviewBatchOkSchema = apiOkExtend(
+  importPreviewBatchDataSchema,
+);
+
+/** 携带批次回看数据的成功响应壳 */
+export const importBatchOkSchema = apiOkExtend(importBatchDataSchema);
+
 export type ImportPreviewRequest = z.infer<typeof importPreviewRequestSchema>;
 export type ImportCommitRequest = z.infer<typeof importCommitRequestSchema>;
 export type ImportSummary = z.infer<typeof importSummarySchema>;
 export type ImportPreviewData = z.infer<typeof importPreviewDataSchema>;
+export type ImportActionKind = z.infer<typeof importActionKindSchema>;
+export type ImportAction = z.infer<typeof importActionSchema>;
+export type ImportUnitQuestionPlan = z.infer<
+  typeof importUnitQuestionPlanSchema
+>;
+export type ImportPreviewWarning = z.infer<typeof importPreviewWarningSchema>;
 export type ImportUnitReport = z.infer<typeof importUnitReportSchema>;
 export type ImportLectureReport = z.infer<typeof importLectureReportSchema>;
 export type ImportQuestionsReport = z.infer<typeof importQuestionsReportSchema>;
 export type ImportCommitData = z.infer<typeof importCommitDataSchema>;
+export type ImportBatchFileInput = z.infer<typeof importBatchFileInputSchema>;
+export type ImportPreviewBatchRequest = z.infer<
+  typeof importPreviewBatchRequestSchema
+>;
+export type ImportBatchConflict = z.infer<typeof importBatchConflictSchema>;
+export type ImportBatchFilePreview = z.infer<
+  typeof importBatchFilePreviewSchema
+>;
+export type ImportPreviewBatchData = z.infer<
+  typeof importPreviewBatchDataSchema
+>;
+export type ImportBatchFileRecord = z.infer<typeof importBatchFileRecordSchema>;
+export type ImportBatchData = z.infer<typeof importBatchDataSchema>;
 export type ContentErrorCode = z.infer<typeof contentErrorCodeSchema>;
 export type ContentTreeQuestion = z.infer<typeof contentTreeQuestionSchema>;
 export type ContentTreeLecture = z.infer<typeof contentTreeLectureSchema>;

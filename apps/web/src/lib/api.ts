@@ -12,8 +12,11 @@ import {
   type CourseData,
   type CourseUpdateRequest,
   type HintOpenData,
+  type ImportBatchData,
   type ImportCommitData,
   type ImportCommitRequest,
+  type ImportPreviewBatchData,
+  type ImportPreviewBatchRequest,
   type ImportPreviewData,
   type ImportPreviewRequest,
   type InkDoc,
@@ -235,11 +238,31 @@ export function previewImport(
  * 导入提交（落库）。有 error 级 issue 时后端返回 422，
  * callApi 会抛 code=LINT_ERROR 的 ApiError（extra._issues 为错误列表），
  * 由调用方 catch 后并入错误面板。
+ * T2A.3：批量提交由前端逐文件携带 batchId 顺序调用（每文件独立事务）。
  */
 export function commitImport(
   request: ImportCommitRequest,
 ): Promise<ImportCommitData> {
   return callApi(() => api.api.teacher.import.commit.$post({ json: request }));
+}
+
+/**
+ * 批量导入预览（D20，不写库）：每文件预览 + 跨文件冲突 + autoFolderBySubdir
+ * 目标文件夹解析。超规模上限后端 413 IMPORT_TOO_LARGE（前端已按同一组常量预检）。
+ */
+export function previewImportBatch(
+  request: ImportPreviewBatchRequest,
+): Promise<ImportPreviewBatchData> {
+  return callApi(() =>
+    api.api.teacher.import["preview-batch"].$post({ json: request }),
+  );
+}
+
+/** 批次记录回看（逐文件 commit 携带同一 batchId 后可查；无成功记录返回空 files） */
+export function fetchImportBatch(batchId: string): Promise<ImportBatchData> {
+  return callApi(() =>
+    api.api.teacher.import.batches[":batchId"].$get({ param: { batchId } }),
+  );
 }
 
 // ---------- T1.12：单条编辑 / 删除 / 排序 / 课程 CRUD ----------

@@ -2,10 +2,13 @@ import { describe, expect, it } from "vitest";
 import {
   contentTreeOkSchema,
   contentTreeSchema,
+  importBatchDataSchema,
   importCommitDataSchema,
   importCommitOkSchema,
   importCommitRequestSchema,
   importLintErrorBodySchema,
+  importPreviewBatchDataSchema,
+  importPreviewBatchRequestSchema,
   importPreviewDataSchema,
   importPreviewOkSchema,
   importPreviewRequestSchema,
@@ -126,6 +129,8 @@ describe("importCommitDataSchema / importCommitOkSchema", () => {
   const data = {
     importId: "5b0b7ba4-6c07-4a5e-9df7-3b1e0d0b5c66",
     courseId: "0b6f18ae-6b9a-4d0e-8b7c-9b1b1b1b1b1b",
+    // T2A.3：新增 folderId（实际落库的目标文件夹；null = 未归类）
+    folderId: null,
     units: [{ id: "练习四", title: "练习四", inserted: true, updated: false }],
     lectures: [
       {
@@ -378,5 +383,242 @@ describe("学生端讲义契约（T2.3）", () => {
         updatedAt: summary.updatedAt,
       }).success,
     ).toBe(false);
+  });
+});
+
+// ---------- T2A.3：导入只进资源库 + 批量导入 + 动作清单 ----------
+
+describe("T2A.3 导入请求扩展（folderId/folderName/batchId/addToCourse）", () => {
+  const base = { markdown: "# 内容", filename: "练习.md" };
+
+  it("preview/commit 接受 folderId（null = 未归类）与 sourcePath", () => {
+    expect(
+      importPreviewRequestSchema.safeParse({
+        ...base,
+        folderId: null,
+        sourcePath: "chapter1/练习.md",
+      }).success,
+    ).toBe(true);
+    expect(
+      importCommitRequestSchema.safeParse({
+        ...base,
+        folderId: "0b6f18ae-6b9a-4d0e-8b7c-9b1b1b1b1b1b",
+        sourcePath: "练习.md",
+      }).success,
+    ).toBe(true);
+  });
+
+  it("folderId 非 UUID / 非 null 被拒", () => {
+    expect(
+      importPreviewRequestSchema.safeParse({ ...base, folderId: "练习" })
+        .success,
+    ).toBe(false);
+  });
+
+  it("folderName 非空、batchId UUID、addToCourse 形态校验", () => {
+    expect(
+      importCommitRequestSchema.safeParse({
+        ...base,
+        folderName: "第一章",
+        batchId: "5b0b7ba4-6c07-4a5e-9df7-3b1e0d0b5c66",
+        addToCourse: {
+          courseId: "0b6f18ae-6b9a-4d0e-8b7c-9b1b1b1b1b1b",
+          visible: false,
+        },
+      }).success,
+    ).toBe(true);
+    expect(
+      importCommitRequestSchema.safeParse({ ...base, folderName: "  " })
+        .success,
+    ).toBe(false);
+    expect(
+      importCommitRequestSchema.safeParse({
+        ...base,
+        addToCourse: { courseId: "abc", visible: true },
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe("T2A.3 preview 响应扩展（动作清单 + warning）", () => {
+  const data = {
+    version: 2,
+    summary: {
+      unitCount: 1,
+      lectureCount: 0,
+      questionCount: 1,
+      typeDistribution: { judge: 1 },
+    },
+    issues: [],
+    actions: [
+      {
+        kind: "updateUnit",
+        title: "练习四",
+        unitId: "练习四",
+        folderName: "第一章",
+        restore: false,
+        questions: { inserted: 1, updated: 2, kept: 3 },
+      },
+      {
+        kind: "createLecture",
+        title: "第1讲",
+        unitId: null,
+        folderName: null,
+        restore: true,
+      },
+    ],
+    warnings: [
+      {
+        code: "UNIT_USED_BY_OPEN_ASSIGNMENTS",
+        message: "该单元被 2 个未截止作业使用",
+      },
+    ],
+  };
+
+  it("动作清单与 warning 结构通过；动作 kind 非法被拒", () => {
+    expect(importPreviewDataSchema.safeParse(data).success).toBe(true);
+    expect(
+      importPreviewDataSchema.safeParse({
+        ...data,
+        actions: [{ ...data.actions[0], kind: "deleteUnit" }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("actions/warnings 缺省时解析为空数组（兼容旧响应消费方）", () => {
+    const r = importPreviewDataSchema.safeParse({
+      version: 2,
+      summary: data.summary,
+      issues: [],
+    });
+    expect(r.success).toBe(true);
+    if (r.success) {
+      expect(r.data.actions).toEqual([]);
+      expect(r.data.warnings).toEqual([]);
+    }
+  });
+
+  it("warning code 非法被拒", () => {
+    expect(
+      importPreviewDataSchema.safeParse({
+        ...data,
+        warnings: [{ code: "SOMETHING", message: "x" }],
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe("T2A.3 commit 响应：courseId 可空（不再自动建默认课程）", () => {
+  const data = {
+    importId: "5b0b7ba4-6c07-4a5e-9df7-3b1e0d0b5c66",
+    courseId: null,
+    folderId: null,
+    units: [],
+    lectures: [],
+    questions: { inserted: 0, updated: 0 },
+  };
+
+  it("courseId/folderId 均可为 null（导入只进资源库，未归类）", () => {
+    expect(importCommitDataSchema.safeParse(data).success).toBe(true);
+    expect(importCommitOkSchema.safeParse({ ok: true, data }).success).toBe(
+      true,
+    );
+    expect(
+      importCommitDataSchema.safeParse({
+        ...data,
+        folderId: "0b6f18ae-6b9a-4d0e-8b7c-9b1b1b1b1b1b",
+      }).success,
+    ).toBe(true);
+  });
+});
+
+describe("T2A.3 preview-batch 与批次回看契约", () => {
+  const request = {
+    folderId: null,
+    autoFolderBySubdir: true,
+    files: [
+      { path: "chapter1/练习.md", markdown: "# 内容" },
+      { path: "chapter1/讲义.md", markdown: "# 讲义" },
+    ],
+  };
+
+  it("请求体：files 非空数组、autoFolderBySubdir 必填", () => {
+    expect(importPreviewBatchRequestSchema.safeParse(request).success).toBe(
+      true,
+    );
+    expect(
+      importPreviewBatchRequestSchema.safeParse({ ...request, files: [] })
+        .success,
+    ).toBe(false);
+    expect(
+      importPreviewBatchRequestSchema.safeParse({
+        folderId: null,
+        files: request.files,
+      }).success,
+    ).toBe(false);
+  });
+
+  it("响应：每文件目标文件夹 + 单文件预览 + 跨文件冲突 + hasError", () => {
+    const data = {
+      files: [
+        {
+          path: "chapter1/练习.md",
+          folderId: null,
+          folderName: "chapter1",
+          folderToCreate: true,
+          preview: {
+            version: 2,
+            summary: {
+              unitCount: 1,
+              lectureCount: 0,
+              questionCount: 1,
+              typeDistribution: { judge: 1 },
+            },
+            issues: [lintIssue],
+            actions: [],
+            warnings: [],
+          },
+          conflicts: [
+            {
+              code: "DUPLICATE_UNIT_ID",
+              message: "与「b.md」都定义了单元「练习四」",
+              otherPath: "b.md",
+            },
+          ],
+          hasError: true,
+        },
+      ],
+    };
+    expect(importPreviewBatchDataSchema.safeParse(data).success).toBe(true);
+  });
+
+  it("批次回看：imports 留档行 + 反序列化报告；空批次合法", () => {
+    const data = {
+      batchId: "5b0b7ba4-6c07-4a5e-9df7-3b1e0d0b5c66",
+      files: [
+        {
+          importId: "5b0b7ba4-6c07-4a5e-9df7-3b1e0d0b5c67",
+          filename: "练习.md",
+          sourcePath: "chapter1/练习.md",
+          folderId: null,
+          createdAt: "2026-09-27T00:00:00.000Z",
+          report: {
+            importId: "5b0b7ba4-6c07-4a5e-9df7-3b1e0d0b5c67",
+            courseId: null,
+            folderId: null,
+            units: [],
+            lectures: [],
+            questions: { inserted: 1, updated: 0 },
+          },
+        },
+      ],
+    };
+    expect(importBatchDataSchema.safeParse(data).success).toBe(true);
+    expect(
+      importBatchDataSchema.safeParse({
+        batchId: data.batchId,
+        files: [],
+      }).success,
+    ).toBe(true);
   });
 });

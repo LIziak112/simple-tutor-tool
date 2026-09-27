@@ -2,12 +2,13 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { LintIssue } from "@tutor/contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ErrorPanel } from "./ErrorPanel";
-import { buildLintErrorPrompt } from "./error-prompt";
+import { buildFixPrompt } from "./error-prompt";
 
 /**
- * "复制错误给 AI"面板组件测试（T1.11 验收项）：
+ * "复制错误给 AI"面板组件测试（T1.11 验收项；T2A.3 按 D21 更新接线）：
  * - 面板渲染错误列表（行号/code/消息/建议）；
- * - 点击复制：navigator.clipboard.writeText 收到的提示词含原文与错误行；
+ * - 点击复制：navigator.clipboard.writeText 收到的提示词 = buildFixPrompt 输出
+ *   （路径 + 错误列表 + ±3 行片段，不附全文）；
  * - 剪贴板不可用时降级为弹层（textarea 内容即完整提示词，可全选）；
  * - 复制成功显示轻提示。
  */
@@ -69,12 +70,7 @@ describe("ErrorPanel", () => {
   it("渲染问题列表：计数、行号、code、消息与建议；v1 显示行号说明", () => {
     mountClipboard();
     render(
-      <ErrorPanel
-        filename="练习四.md"
-        markdown={MD}
-        issues={ISSUES}
-        version={2}
-      />,
+      <ErrorPanel path="练习四.md" markdown={MD} issues={ISSUES} version={2} />,
     );
     expect(
       screen.getByRole("region", { name: /发现 2 个问题（1 错误 \/ 1 警告）/ }),
@@ -89,7 +85,7 @@ describe("ErrorPanel", () => {
 
     render(
       <ErrorPanel
-        filename="示例练习.md"
+        path="示例练习.md"
         markdown={MD}
         issues={ISSUES}
         version={1}
@@ -100,45 +96,33 @@ describe("ErrorPanel", () => {
     ).toBeInTheDocument();
   });
 
-  it("点击复制：剪贴板收到完整提示词（含原文全文与错误行），并显示轻提示", async () => {
+  it("点击复制：剪贴板收到 buildFixPrompt 输出（路径 + 错误行 + 片段，不含无关全文），并显示轻提示", async () => {
     const mock = mountClipboard();
     render(
-      <ErrorPanel
-        filename="练习四.md"
-        markdown={MD}
-        issues={ISSUES}
-        version={2}
-      />,
+      <ErrorPanel path="练习四.md" markdown={MD} issues={ISSUES} version={2} />,
     );
     fireEvent.click(screen.getByRole("button", { name: "复制错误给 AI" }));
 
     await waitFor(() => expect(mock.writeText).toHaveBeenCalledTimes(1));
     const prompt = mock.writeText.mock.calls[0]?.[0] as string;
-    // 提示词 = buildLintErrorPrompt 的输出（该函数另有专项测试，这里验证接线正确）
+    // 提示词 = buildFixPrompt 的输出（该函数另有专项测试，这里验证接线正确）
     expect(prompt).toBe(
-      buildLintErrorPrompt({
-        filename: "练习四.md",
-        markdown: MD,
-        issues: ISSUES,
-        version: 2,
-      }),
+      buildFixPrompt([
+        { path: "练习四.md", markdown: MD, issues: ISSUES, version: 2 },
+      ]),
     );
-    // 关键内容抽查：原文与错误行都在
-    expect(prompt).toContain(MD);
+    // 关键内容抽查：路径、错误行与片段在；不附全文（远离错误行的结尾行不出现）
+    expect(prompt).toContain("练习四.md");
     expect(prompt).toContain("第6行");
     expect(prompt).toContain("[FILL_NO_BLANK]");
+    expect(prompt).not.toContain(MD);
     expect(await screen.findByText(/已复制提示词/)).toBeInTheDocument();
   });
 
   it("剪贴板不可用：降级弹层展示完整提示词，可全选、可关闭", async () => {
     removeClipboard();
     render(
-      <ErrorPanel
-        filename="练习四.md"
-        markdown={MD}
-        issues={ISSUES}
-        version={2}
-      />,
+      <ErrorPanel path="练习四.md" markdown={MD} issues={ISSUES} version={2} />,
     );
     fireEvent.click(screen.getByRole("button", { name: "复制错误给 AI" }));
 
@@ -146,12 +130,9 @@ describe("ErrorPanel", () => {
     expect(dialog).toBeInTheDocument();
     const textarea = screen.getByLabelText("提示词全文") as HTMLTextAreaElement;
     expect(textarea.value).toBe(
-      buildLintErrorPrompt({
-        filename: "练习四.md",
-        markdown: MD,
-        issues: ISSUES,
-        version: 2,
-      }),
+      buildFixPrompt([
+        { path: "练习四.md", markdown: MD, issues: ISSUES, version: 2 },
+      ]),
     );
 
     // 全选按钮聚焦并选中全文
@@ -169,15 +150,9 @@ describe("ErrorPanel", () => {
     Object.defineProperty(navigator, "clipboard", {
       value: { writeText: vi.fn().mockRejectedValue(new Error("denied")) },
       configurable: true,
-      writable: true,
     });
     render(
-      <ErrorPanel
-        filename="练习四.md"
-        markdown={MD}
-        issues={ISSUES}
-        version={2}
-      />,
+      <ErrorPanel path="练习四.md" markdown={MD} issues={ISSUES} version={2} />,
     );
     fireEvent.click(screen.getByRole("button", { name: "复制错误给 AI" }));
     expect(await screen.findByRole("dialog")).toBeInTheDocument();

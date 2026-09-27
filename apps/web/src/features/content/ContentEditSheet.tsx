@@ -256,7 +256,7 @@ export function QuestionEditSheet({
             {displayedIssues.length > 0 ? (
               <div className="max-h-56 shrink-0 overflow-y-auto border-t border-border">
                 <ErrorPanel
-                  filename={filenameOf("题目", questionId)}
+                  path={filenameOf("题目", questionId)}
                   markdown={text}
                   issues={displayedIssues}
                   version={2}
@@ -495,7 +495,7 @@ export function LectureEditSheet({
             {displayedIssues.length > 0 ? (
               <div className="max-h-56 shrink-0 overflow-y-auto border-t border-border">
                 <ErrorPanel
-                  filename={filenameOf("讲义", lectureId)}
+                  path={filenameOf("讲义", lectureId)}
                   markdown={text}
                   issues={displayedIssues}
                   version={2}

@@ -16,11 +16,7 @@ import {
 } from "../db/schema.ts";
 import { createTestDb } from "../db/test-utils.ts";
 import { HttpError } from "../lib/http-error.ts";
-import {
-  commitImport,
-  DEFAULT_COURSE_TITLE,
-  previewImport,
-} from "./content-service.ts";
+import { commitImport, previewImport } from "./content-service.ts";
 
 /**
  * ContentService 服务层测试（T1.10 验收项，createTestDb 内存库）：
@@ -29,7 +25,8 @@ import {
  * - 有 error 时 commit 抛 LINT_ERROR（422，验收 2）；
  * - v1 文档可导入：经 toV2 落库、题数正确、再导入 version+1（验收 3）；
  * - mixed 文档：讲义 + 单元都入、lectureTitle 关联；讲义按标题替换；
- * - 默认课程创建与复用；courseId 不存在报错；跨单元同 id 更新；软删同 id 恢复。
+ * - T2A.3：无 folderId/courseId 的导入落「未归类」、不再自动创建「默认课程」；
+ *   courseId 不存在报错；跨单元同 id 更新；软删同 id 恢复。
  */
 
 /** 读取仓库根 samples/ 下的样例文档 */
@@ -183,18 +180,17 @@ describe("previewImport（不写库）", () => {
 });
 
 describe("commitImport 基本路径（v2 练习样例）", () => {
-  it("首次导入：默认课程自动创建、单元与 8 题落库、知识点归一、imports 留档原文", () => {
+  it("首次导入（无 folderId/courseId，T2A.3）：落未归类、不创建任何课程，单元与 8 题落库、知识点归一、imports 留档原文", () => {
     const db = createTestDb();
     const report = commitImport(db, {
       markdown: PRACTICE_MD,
       filename: "练习样例.md",
     });
 
-    // 默认课程创建（派单裁决 4）
-    const courseRows = db.select().from(courses).all();
-    expect(courseRows).toHaveLength(1);
-    expect(courseRows[0]?.title).toBe(DEFAULT_COURSE_TITLE);
-    expect(report.courseId).toBe(courseRows[0]?.id);
+    // T2A.3（D17/D23-7）：「默认课程」自动创建分支已删除——不再新建任何课程
+    expect(db.select().from(courses).all()).toHaveLength(0);
+    expect(report.courseId).toBeNull();
+    expect(report.folderId).toBeNull();
 
     // 报告：单元插入、题目 8 插入 0 更新
     expect(report.units).toEqual([
@@ -204,34 +200,21 @@ describe("commitImport 基本路径（v2 练习样例）", () => {
     expect(report.lectures).toEqual([]);
 
     // 单元行：topic 来自 frontmatter；lectureTitle「第4讲」在库中无同名讲义 → 不关联。
-    // T2A.1：归属资源库——courseId 不再写入（@deprecated），folderId 指向课程同名文件夹
+    // folderId = null（未归类，D17）；courseId 不写入（@deprecated T2A）
     const unitRows = db.select().from(units).all();
     expect(unitRows).toHaveLength(1);
-    const folderRow = db
-      .select()
-      .from(libraryFolders)
-      .where(eq(libraryFolders.name, DEFAULT_COURSE_TITLE))
-      .get();
-    expect(folderRow).toBeDefined();
     expect(unitRows[0]).toMatchObject({
       id: "练习四",
       title: "练习四",
       topic: "有理数加减混合",
       lectureId: null,
       courseId: null,
-      folderId: folderRow?.id,
+      folderId: null,
     });
-
-    // 课程目录条目：单元追加（visible=false；讲义可见、单元隐藏的兼容口径，T2A.1）
-    const itemRows = db.select().from(courseItems).all();
-    expect(itemRows).toHaveLength(1);
-    expect(itemRows[0]).toMatchObject({
-      courseId: report.courseId,
-      kind: "unit",
-      refId: "练习四",
-      visible: false,
-      publishAt: null,
-    });
+    // 未归类不是文件夹行（D2）
+    expect(db.select().from(libraryFolders).all()).toHaveLength(0);
+    // 无课程目录条目（未指定 addToCourse/courseId）
+    expect(db.select().from(courseItems).all()).toHaveLength(0);
 
     // 题目行：8 题、version=1、id 与解析一致（含显式 id p4-q7）
     const questionRows = db.select().from(questions).all();
@@ -261,16 +244,19 @@ describe("commitImport 基本路径（v2 练习样例）", () => {
     expect(db.select().from(knowledgePoints).all()).toHaveLength(6);
     expect(db.select().from(questionKnowledge).all()).toHaveLength(8);
 
-    // imports 留档：原文（非空）、kind、报告 JSON
+    // imports 留档：原文（非空）、kind、报告 JSON；T2A.3 起含 folderId/sourcePath/batchId
     const importRows = db.select().from(imports).all();
     expect(importRows).toHaveLength(1);
     expect(importRows[0]?.id).toBe(report.importId);
     expect(importRows[0]?.filename).toBe("练习样例.md");
     expect(importRows[0]?.kind).toBe("practice");
     expect(importRows[0]?.rawMd).toBe(PRACTICE_MD);
+    expect(importRows[0]?.folderId).toBeNull();
+    expect(importRows[0]?.sourcePath).toBeNull();
+    expect(importRows[0]?.batchId).toBeNull();
     expect(JSON.parse(importRows[0]?.reportJson ?? "{}")).toMatchObject({
       importId: report.importId,
-      courseId: report.courseId,
+      courseId: null,
     });
   });
 
@@ -286,7 +272,7 @@ describe("commitImport 基本路径（v2 练习样例）", () => {
     expect(second.units).toEqual([
       { id: "练习四", title: "练习四", inserted: false, updated: true },
     ]);
-    expect(second.courseId).toBe(db.select().from(courses).all()[0]?.id);
+    expect(second.courseId).toBeNull();
 
     // id 集合不变，version 全部 +1
     expect(allQuestionIds(db)).toEqual(PRACTICE_IDS);
@@ -294,9 +280,10 @@ describe("commitImport 基本路径（v2 练习样例）", () => {
     expect(rows).toHaveLength(8);
     for (const row of rows) expect(row.version).toBe(2);
 
-    // 单元不重复、知识点不重复创建（同名复用）
+    // 单元不重复、知识点不重复创建（同名复用）；仍未创建任何课程
     expect(db.select().from(units).all()).toHaveLength(1);
     expect(db.select().from(knowledgePoints).all()).toHaveLength(6);
+    expect(db.select().from(courses).all()).toHaveLength(0);
 
     // 每次导入都留档
     expect(db.select().from(imports).all()).toHaveLength(2);
@@ -335,12 +322,14 @@ describe("commitImport 基本路径（v2 练习样例）", () => {
     expect((err as HttpError).code).toBe("COURSE_NOT_FOUND");
   });
 
-  it("两次导入未指定 courseId：默认课程复用（courses 仅一行）", () => {
+  it("两次导入均未指定 courseId/folderId：都落未归类，courses 始终为 0（不再自动建默认课程）", () => {
     const db = createTestDb();
     const first = commitImport(db, { markdown: PRACTICE_MD, filename: "a.md" });
     const second = commitImport(db, { markdown: V1_MD, filename: "b.md" });
-    expect(db.select().from(courses).all()).toHaveLength(1);
-    expect(second.courseId).toBe(first.courseId);
+    expect(db.select().from(courses).all()).toHaveLength(0);
+    expect(first.courseId).toBeNull();
+    expect(second.courseId).toBeNull();
+    expect(db.select().from(libraryFolders).all()).toHaveLength(0);
   });
 });
 
@@ -624,8 +613,23 @@ $1>0$。[[正确]]
 
   it("重复导入同文件：资源更新、目录条目不重复（跳过不报错）", () => {
     const db = createTestDb();
-    const first = commitImport(db, { markdown: DOC, filename: "a.md" });
-    const second = commitImport(db, { markdown: DOC, filename: "a.md" });
+    const course = {
+      id: crypto.randomUUID(),
+      title: "条目复用课程",
+      order: 0,
+      createdAt: new Date().toISOString(),
+    };
+    db.insert(courses).values(course).run();
+    const first = commitImport(db, {
+      markdown: DOC,
+      filename: "a.md",
+      courseId: course.id,
+    });
+    const second = commitImport(db, {
+      markdown: DOC,
+      filename: "a.md",
+      courseId: course.id,
+    });
 
     expect(second.lectures[0]).toMatchObject({
       id: first.lectures[0]?.id,

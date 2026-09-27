@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import type { ApiErr } from "@tutor/contract";
-import { INK_MAX_UPLOAD_BYTES } from "@tutor/contract";
+import { IMPORT_BATCH_BODY_LIMIT, INK_MAX_UPLOAD_BYTES } from "@tutor/contract";
 import { Hono } from "hono";
 import type { Logger } from "pino";
 import pino from "pino";
@@ -122,6 +122,25 @@ export function createApp(options: CreateAppOptions) {
             ok: false,
             error: "INK_TOO_LARGE",
             message: "上传数据过大（超过笔迹上传上限），请精简后重试",
+          };
+          return c.json(body, 413);
+        }
+      }
+      return next();
+    })
+    // T2A.3：批量导入预览（POST JSON）的 body 大小防御——content-length 超限直接
+    // 413 IMPORT_TOO_LARGE，不进入 parseBody（整包进内存）。preview-batch 以单个
+    // JSON 传全部文件内容，转义后 body 约为 markdown 原文 1.5–2 倍，故粗防线取
+    // 30MB（D20）；精确限额（≤50 文件 / 单文件 ≤1MB / 合计 ≤10MB，按原文 UTF-8
+    // 字节）由 content-service 在解析后校验（chunked 传输无 content-length 时兜底）。
+    .use("/api/teacher/import/preview-batch", async (c, next) => {
+      if (c.req.method === "POST") {
+        const length = Number(c.req.header("content-length") ?? "0");
+        if (Number.isFinite(length) && length > IMPORT_BATCH_BODY_LIMIT) {
+          const body: ApiErr = {
+            ok: false,
+            error: "IMPORT_TOO_LARGE",
+            message: "批量导入请求过大，请减少文件数量或分批导入",
           };
           return c.json(body, 413);
         }

@@ -82,11 +82,23 @@ async function makeTeacherApp(): Promise<TeacherApp> {
   if (!line) throw new Error("setup 未下发会话 Cookie");
   const token = line.slice("tutor_session=".length).split(";")[0] ?? "";
   const cookie = `tutor_session=${token}`;
+  // T2A.3：导入不再自动创建「默认课程」——显式建课并按兼容路径（courseId）导入，
+  // 保持内容树（course_items 组装）有课程可显示的测试口径
+  const courseRes = await app.request("/api/teacher/courses", {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie },
+    body: JSON.stringify({ title: "默认课程" }),
+  });
+  if (courseRes.status !== 201) {
+    throw new Error("测试课程创建失败");
+  }
+  const courseId = ((await courseRes.json()) as { data: { id: string } }).data
+    .id;
   for (const sample of SAMPLES) {
     const commitRes = await app.request("/api/teacher/import/commit", {
       method: "POST",
       headers: { "content-type": "application/json", cookie },
-      body: JSON.stringify(sample),
+      body: JSON.stringify({ ...sample, courseId }),
     });
     if (commitRes.status !== 200) {
       throw new Error(`样例导入失败：${sample.filename}`);

@@ -50,6 +50,9 @@ export async function teacherApiLogin(
 /**
  * 导入 samples/v2/练习样例.md（教师 API，任务口径：内容准备走 API，不重复覆盖
  * 教师端导入 UI 的测试）。导入按 unitId 幂等（inserted/updated 均可）。
+ * T2A.3：导入不再自动创建「默认课程」——先显式建课（已存在则复用），commit 走
+ * courseId 兼容路径（内容进课程同名文件夹 + 追加课程目录条目），保证内容树
+ * （教师布置作业下拉的数据源）可见。
  */
 export async function importPracticeSample(
   request: APIRequestContext,
@@ -65,13 +68,37 @@ export async function importPracticeSample(
     "utf8",
   );
   const res = await request.post("/api/teacher/import/commit", {
-    data: { markdown, filename: "练习样例.md" },
+    data: {
+      markdown,
+      filename: "练习样例.md",
+      courseId: await ensureCourse(request),
+    },
   });
   if (!res.ok()) {
     throw new Error(
       `导入练习样例失败：HTTP ${res.status()} ${await res.text()}`,
     );
   }
+}
+
+/** 取「默认课程」id（无则创建；course 名重复时取首个——测试库内只有一个） */
+async function ensureCourse(request: APIRequestContext): Promise<string> {
+  const tree = await request.get("/api/teacher/content");
+  if (tree.ok()) {
+    const body = (await tree.json()) as {
+      data: { courses: { id: string; title: string }[] };
+    };
+    const existing = body.data.courses.find((c) => c.title === "默认课程");
+    if (existing !== undefined) return existing.id;
+  }
+  const created = await request.post("/api/teacher/courses", {
+    data: { title: "默认课程" },
+  });
+  if (!created.ok()) {
+    throw new Error(`创建默认课程失败：HTTP ${created.status()}`);
+  }
+  const body = (await created.json()) as { data: { id: string } };
+  return body.data.id;
 }
 
 /** 教师列表里按登录名查学生的专属链接 token（教师端可见字段） */

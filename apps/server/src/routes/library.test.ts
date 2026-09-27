@@ -92,6 +92,18 @@ async function makeApp(): Promise<TestApp> {
     body: JSON.stringify({ password: TEACHER_PASSWORD }),
   });
   const teacherCookie = `tutor_session=${extractSessionToken(setup)}`;
+  // T2A.3：导入不再自动创建「默认课程」——显式建课 + 兼容路径（courseId）导入，
+  // 后续按「默认课程」文件夹/条目断言的口径保持不变
+  const courseRes = await app.request("/api/teacher/courses", {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie: teacherCookie },
+    body: JSON.stringify({ title: "默认课程" }),
+  });
+  if (courseRes.status !== 201) {
+    throw new Error("测试课程创建失败");
+  }
+  const courseId = ((await courseRes.json()) as { data: { id: string } }).data
+    .id;
   for (const [markdown, filename] of [
     [PRACTICE_MD, "练习样例.md"],
     [LECTURE_MD, "讲义样例.md"],
@@ -99,7 +111,7 @@ async function makeApp(): Promise<TestApp> {
     const res = await app.request("/api/teacher/import/commit", {
       method: "POST",
       headers: { "content-type": "application/json", cookie: teacherCookie },
-      body: JSON.stringify({ markdown, filename }),
+      body: JSON.stringify({ markdown, filename, courseId }),
     });
     expect(res.status).toBe(200);
   }
