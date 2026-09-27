@@ -95,6 +95,14 @@ describe("LibraryService：文件夹 CRUD", () => {
     expect(first.order).toBe(0);
     expect(second.name).toBe("文件夹二");
     expect(second.order).toBe(1);
+    // T2A.2：新建文件夹计数为 0
+    expect(first).toMatchObject({
+      id: first.id,
+      name: "文件夹一",
+      order: 0,
+      lectureCount: 0,
+      unitCount: 0,
+    });
 
     const empty = captureError(() => createFolder(db, { name: "  " }));
     expect((empty as HttpError).status).toBe(422);
@@ -119,6 +127,27 @@ describe("LibraryService：文件夹 CRUD", () => {
     );
     expect((missing as HttpError).status).toBe(404);
     expect((missing as HttpError).code).toBe("FOLDER_NOT_FOUND");
+  });
+
+  it("listFolders 返回未删除资源计数（T2A.2）", () => {
+    const db = createTestDb();
+    const { folderId, lectureId, unitId } = seedBase(db);
+    // 软删讲义后不计入计数
+    softDeleteLecture(db, lectureId);
+    expect(listFolders(db)).toEqual([
+      {
+        id: folderId,
+        name: "有理数",
+        order: 0,
+        lectureCount: 0,
+        unitCount: 1,
+        createdAt: T0,
+      },
+    ]);
+    // 恢复后计数回来
+    restoreLecture(db, lectureId);
+    expect(listFolders(db)[0]).toMatchObject({ lectureCount: 1, unitCount: 1 });
+    void unitId;
   });
 
   it("deleteFolder：内容移入未归类（folderId 置 NULL）并返回移动数量；行删除", () => {
@@ -334,7 +363,7 @@ describe("LibraryService：使用情况查询（D3 删除确认弹层数据源�
     const { courseId, unitId, liveAssignmentId } = seedUsage(db);
     const usage = getUnitUsage(db, unitId, NOW);
     expect(usage.courses).toEqual([
-      { courseId, courseTitle: "初一上", visible: false }, // 单元条目默认隐藏
+      { id: courseId, name: "初一上", visible: false }, // 单元条目默认隐藏
     ]);
     expect(usage.assignments).toEqual([
       {
@@ -369,7 +398,7 @@ describe("LibraryService：使用情况查询（D3 删除确认弹层数据源�
     const { courseId, lectureId } = seedUsage(db);
     const usage = getLectureUsage(db, lectureId, NOW);
     expect(usage.courses).toEqual([
-      { courseId, courseTitle: "初一上", visible: true },
+      { id: courseId, name: "初一上", visible: true },
     ]);
     expect(usage.assignments).toEqual([]);
     expect(usage.attemptCount).toBe(1); // 配套单元 unit-a 上有一条作答
