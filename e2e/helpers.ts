@@ -68,7 +68,11 @@ export async function importPracticeSample(
     "utf8",
   );
   const res = await request.post("/api/teacher/import/commit", {
-    data: { markdown, filename: "练习样例.md", courseId: await ensureCourse(request) },
+    data: {
+      markdown,
+      filename: "练习样例.md",
+      courseId: await ensureCourse(request),
+    },
   });
   if (!res.ok()) {
     throw new Error(
