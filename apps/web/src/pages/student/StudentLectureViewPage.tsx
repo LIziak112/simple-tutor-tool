@@ -83,17 +83,15 @@ export default function StudentLectureViewPage() {
       queueRef.current = null;
     };
   }, [id]);
-  const onDirectiveExpand = useRef(
-    (info: { name: string; index: number }) => {
-      queueRef.current?.track({
-        type: "lecture_expand",
-        clientTs: Date.now(),
-        lectureId: id,
-        directive: info.name,
-        index: info.index,
-      });
-    },
-  ).current;
+  const onDirectiveExpand = useRef((info: { name: string; index: number }) => {
+    queueRef.current?.track({
+      type: "lecture_expand",
+      clientTs: Date.now(),
+      lectureId: id,
+      directive: info.name,
+      index: info.index,
+    });
+  }).current;
 
   const outline = useMemo(
     () => (lectureQuery.data ? extractOutline(lectureQuery.data.markdown) : []),

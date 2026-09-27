@@ -44,9 +44,9 @@ describe("learningEventTypeSchema", () => {
 
 describe("learningEventSchema（单条）", () => {
   it("非法 type 拒绝", () => {
-    expect(
-      learningEventSchema.safeParse(eventOf("hacked_type")).success,
-    ).toBe(false);
+    expect(learningEventSchema.safeParse(eventOf("hacked_type")).success).toBe(
+      false,
+    );
   });
 
   it("clientTs 非正整数拒绝（毫秒约定）", () => {
@@ -141,17 +141,17 @@ describe("批量请求 schema", () => {
     const events = Array.from({ length: LEARNING_EVENTS_BATCH_MAX }, () =>
       eventOf("attempt_start"),
     );
-    expect(
-      attemptEventBatchRequestSchema.safeParse({ events }).success,
-    ).toBe(true);
+    expect(attemptEventBatchRequestSchema.safeParse({ events }).success).toBe(
+      true,
+    );
     expect(
       attemptEventBatchRequestSchema.safeParse({
         events: [...events, eventOf("submit")],
       }).success,
     ).toBe(false);
-    expect(attemptEventBatchRequestSchema.safeParse({ events: [] }).success).toBe(
-      false,
-    );
+    expect(
+      attemptEventBatchRequestSchema.safeParse({ events: [] }).success,
+    ).toBe(false);
   });
 
   it("attempt 联合不含 lecture_expand；lecture 联合只含 lecture_expand", () => {

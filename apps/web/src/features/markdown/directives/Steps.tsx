@@ -71,7 +71,9 @@ export function FoldDirective({ attrs, index, children }: DirectiveProps) {
   return (
     <LabeledFold
       label={attrs.title?.trim() || "详情"}
-      onExpand={reportExpand ? () => reportExpand({ name: "fold", index }) : undefined}
+      onExpand={
+        reportExpand ? () => reportExpand({ name: "fold", index }) : undefined
+      }
     >
       {children}
     </LabeledFold>
@@ -85,7 +87,9 @@ export function HintDirective({ index, children }: DirectiveProps) {
     <LabeledFold
       label={index > 0 ? `提示 ${index}` : "提示"}
       icon={<Lightbulb aria-hidden className="size-4 shrink-0 text-sky-500" />}
-      onExpand={reportExpand ? () => reportExpand({ name: "hint", index }) : undefined}
+      onExpand={
+        reportExpand ? () => reportExpand({ name: "hint", index }) : undefined
+      }
     >
       {children}
     </LabeledFold>
@@ -118,7 +122,9 @@ export function SolutionDirective({ index, children }: DirectiveProps) {
         />
       }
       onExpand={
-        reportExpand ? () => reportExpand({ name: "solution", index }) : undefined
+        reportExpand
+          ? () => reportExpand({ name: "solution", index })
+          : undefined
       }
     >
       {children}

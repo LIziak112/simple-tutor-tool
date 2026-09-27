@@ -105,7 +105,10 @@ export function useAttemptEvents(attemptId: string): AttemptEventsApi {
           if (questionId === null) continue;
           ratiosRef.current.set(questionId, entry.intersectionRatio);
           // 首次进入视口 → question_view（每题一次）
-          if (entry.intersectionRatio > 0 && !viewedRef.current.has(questionId)) {
+          if (
+            entry.intersectionRatio > 0 &&
+            !viewedRef.current.has(questionId)
+          ) {
             viewedRef.current.add(questionId);
             track({ type: "question_view", clientTs: Date.now(), questionId });
           }
@@ -135,7 +138,7 @@ export function useAttemptEvents(attemptId: string): AttemptEventsApi {
       observer.disconnect();
       observerRef.current = null;
     };
-  }, [attemptId, focusTo, track]);
+  }, [focusTo, track]);
 
   const noteInteraction = useCallback(
     (questionId: string) => {

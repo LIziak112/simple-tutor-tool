@@ -24,9 +24,7 @@ const T0 = 1_769_000_000_000; // 任意基准毫秒时刻
 /** 便捷构造（毫秒偏移量；questionId 缺省时整字段不带，兼容 exactOptionalPropertyTypes） */
 function ev(type: string, atSec: number, questionId?: string): TimelineEvent {
   const base: TimelineEvent = { type, clientTs: T0 + atSec * S };
-  return questionId === undefined
-    ? base
-    : { ...base, questionId };
+  return questionId === undefined ? base : { ...base, questionId };
 }
 
 describe("computePerQuestionActiveSec：基础与取整", () => {

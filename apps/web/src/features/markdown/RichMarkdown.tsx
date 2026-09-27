@@ -72,10 +72,9 @@ export interface RichMarkdownProps {
    * 缺省不收集（教师端预览等场景）；经 DirectiveExpandContext 下发到
    * 各指令组件，不改变组件树结构。
    */
-  onDirectiveExpand?: ((info: {
-    name: string;
-    index: number;
-  }) => void) | undefined;
+  onDirectiveExpand?:
+    | ((info: { name: string; index: number }) => void)
+    | undefined;
 }
 
 export function RichMarkdown({

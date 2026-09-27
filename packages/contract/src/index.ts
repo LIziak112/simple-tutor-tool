@@ -14,10 +14,10 @@ export * from "./content-api.ts";
 export * from "./directives.ts";
 /** 判分输入契约（T2.5 起为权威定义）：学生答案按题型判别联合，与 content.ts 的 QuestionAnswers 对应 */
 export * from "./grading.ts";
-/** 学习痕迹事件契约（T2.10 起为权威定义）：11 种事件类型、批量上报请求/响应、上限常量 */
-export * from "./learning-event.ts";
 /** 手写笔迹契约（T2.8 起为权威定义）：InkDoc 矢量文档 + 上传/取回/元数据响应、限额与错误码 */
 export * from "./ink.ts";
+/** 学习痕迹事件契约（T2.10 起为权威定义）：11 种事件类型、批量上报请求/响应、上限常量 */
+export * from "./learning-event.ts";
 /** DSL 规范文件契约（T1.13 起为权威定义）：/api/public/spec 文件名枚举与 Content-Type */
 export * from "./spec.ts";
 /** 学生账号契约（T2.1 起为权威定义）：学生 CRUD、两种登录、自助信息与改密码、错误码 */

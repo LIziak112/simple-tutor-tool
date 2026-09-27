@@ -518,10 +518,7 @@ export const events = sqliteTable(
   },
   (table) => [
     // 交卷时按 attempt 取全量事件序列计算的定位索引（clientTs 升序处理）
-    index("events_attempt_client_ts_idx").on(
-      table.attemptId,
-      table.clientTs,
-    ),
+    index("events_attempt_client_ts_idx").on(table.attemptId, table.clientTs),
   ],
 );
 

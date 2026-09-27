@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
-import {
-  type AttemptEvent,
-  type LectureEvent,
-  type LearningEventBatchData,
+import type {
+  AttemptEvent,
+  LearningEventBatchData,
+  LectureEvent,
 } from "@tutor/contract";
 import { asc, eq } from "drizzle-orm";
 import type { Db } from "../db/client";

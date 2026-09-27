@@ -174,7 +174,9 @@ export function createEventQueue(options: EventQueueOptions): EventQueueApi {
         | { events?: unknown }
         | null
         | undefined;
-      return Array.isArray(value?.events) ? (value.events as LearningEvent[]) : [];
+      return Array.isArray(value?.events)
+        ? (value.events as LearningEvent[])
+        : [];
     } catch (err) {
       console.warn("事件离线仓读取失败（继续用内存队列）", err);
       return [];

@@ -246,14 +246,12 @@ describe("POST /api/student/attempts/:id/events：批量上报", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { ok: boolean; data: unknown };
     expect(body.ok).toBe(true);
-    expect(learningEventBatchDataSchema.safeParse(body.data).success).toBe(true);
+    expect(learningEventBatchDataSchema.safeParse(body.data).success).toBe(
+      true,
+    );
     expect(body.data).toEqual({ accepted: 8 });
 
-    const rows = db
-      .select()
-      .from(events)
-      .orderBy(events.clientTs)
-      .all();
+    const rows = db.select().from(events).orderBy(events.clientTs).all();
     expect(rows.length).toBe(8);
     expect(rows.every((row) => row.attemptId === attemptId)).toBe(true);
     expect(rows.every((row) => row.serverTs.length > 0)).toBe(true);
@@ -352,9 +350,9 @@ describe("POST /api/student/attempts/:id/events：批量上报", () => {
       ev("question_blur", 99, { questionId: Q.judge }),
     ]);
     expect(late.status).toBe(200);
-    expect(((await late.json()) as { data: { accepted: number } }).data).toEqual(
-      { accepted: 1 },
-    );
+    expect(
+      ((await late.json()) as { data: { accepted: number } }).data,
+    ).toEqual({ accepted: 1 });
   });
 
   it("泄露（AGENTS 第 3 条）：成功响应只回 accepted，无题目侧内容", async () => {
@@ -412,9 +410,7 @@ describe("POST /api/student/events：讲义展开事件", () => {
     ]);
     expect(notFound.status).toBe(404);
 
-    const wrongType = await postLectureEvents(app, aCookie, [
-      ev("submit", 0),
-    ]);
+    const wrongType = await postLectureEvents(app, aCookie, [ev("submit", 0)]);
     expect(wrongType.status).toBe(400);
   });
 

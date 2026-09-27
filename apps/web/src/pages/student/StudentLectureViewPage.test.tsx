@@ -1,8 +1,12 @@
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import type { StudentLectureDetail } from "@tutor/contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  ApiError,
+  fetchStudentLectureApi,
+  postLectureEventsApi,
+} from "@/lib/api";
 import { installEventStore, memoryEventStore } from "@/lib/event-queue";
-import { ApiError, fetchStudentLectureApi, postLectureEventsApi } from "@/lib/api";
 import { renderWithStudentRoutes } from "@/test/student-routes";
 import StudentLectureViewPage from "./StudentLectureViewPage";
 
@@ -187,7 +191,7 @@ const STEPS_LECTURE: StudentLectureDetail = {
     "第一步内容。",
     ":::",
     "",
-    ":::step{title=\"变形\"}",
+    ':::step{title="变形"}',
     "第二步内容。",
     ":::",
     "",

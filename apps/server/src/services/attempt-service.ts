@@ -31,10 +31,7 @@ import {
   responses,
 } from "../db/schema";
 import { HttpError } from "../lib/http-error";
-import {
-  computePerQuestionActiveSec,
-  countAnswerChanges,
-} from "./active-time";
+import { computePerQuestionActiveSec, countAnswerChanges } from "./active-time";
 import {
   knowledgeNamesByQuestion,
   unitPublicQuestions,

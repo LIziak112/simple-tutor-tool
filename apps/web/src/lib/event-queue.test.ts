@@ -42,9 +42,10 @@ function memoryStore(): EventStoreBackend & {
     del: async (key) => {
       map.delete(key);
     },
-    dump: () => map.get("events:attempt:att-1") as
-      | { events: LearningEvent[] }
-      | undefined,
+    dump: () =>
+      map.get("events:attempt:att-1") as
+        | { events: LearningEvent[] }
+        | undefined,
   };
 }
 
@@ -141,9 +142,8 @@ describe("sendBeacon 兜底（页面隐藏）", () => {
     document.dispatchEvent(new Event("visibilitychange"));
     await vi.advanceTimersByTimeAsync(5000);
     expect(send).toHaveBeenCalledTimes(1);
-    expect(
-      (send.mock.calls[0]?.[0] as LearningEvent[]).map((e) => e.type),
-    ).toEqual(["page_visible"]);
+    const sentBatch = send.mock.calls[0]?.[0] as LearningEvent[] | undefined;
+    expect((sentBatch ?? []).map((e) => e.type)).toEqual(["page_visible"]);
   });
 
   it("beacon 返回 false（浏览器队列满）→ 事件写入 IndexedDB", async () => {
@@ -215,10 +215,9 @@ describe("离线存 IndexedDB / 恢复补发", () => {
     await vi.runOnlyPendingTimersAsync();
     expect(send).toHaveBeenCalledTimes(1);
     const batch = send.mock.calls[0]?.[0] as LearningEvent[];
-    expect(batch.map((e) => (e as { questionId?: string }).questionId)).toEqual([
-      "q1",
-      "q2",
-    ]);
+    expect(batch.map((e) => (e as { questionId?: string }).questionId)).toEqual(
+      ["q1", "q2"],
+    );
     expect(store.dump()).toBeUndefined();
   });
 

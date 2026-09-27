@@ -13,10 +13,6 @@ import {
   memoryBackend,
 } from "@/features/attempt/draft-store";
 import {
-  installEventStore,
-  memoryEventStore,
-} from "@/lib/event-queue";
-import {
   fetchAttemptApi,
   postAttemptEventsApi,
   putAttemptInkApi,
@@ -24,6 +20,7 @@ import {
   startAttemptApi,
   submitAttemptApi,
 } from "@/lib/api";
+import { installEventStore, memoryEventStore } from "@/lib/event-queue";
 import { renderWithStudentRoutes } from "@/test/student-routes";
 import StudentAssignmentAttemptPage from "./StudentAssignmentAttemptPage";
 
@@ -586,9 +583,7 @@ describe("StudentAssignmentAttemptPage：草稿防丢", () => {
 // ---------- T2.10：学习痕迹埋点（事件经交卷 finalizeSubmit flush 出网） ----------
 
 /** 汇总所有已上报事件（postAttemptEventsApi 的调用参数展平） */
-async function allReportedEvents(): Promise<
-  Array<Record<string, unknown>>
-> {
+async function allReportedEvents(): Promise<Array<Record<string, unknown>>> {
   await waitFor(
     () => {
       if (mockedPostEvents.mock.calls.length === 0) {

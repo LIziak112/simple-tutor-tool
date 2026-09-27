@@ -28,13 +28,13 @@ import {
   submitAttempt,
 } from "../services/attempt-service";
 import {
-  appendAttemptEvents,
-  appendLectureEvents,
-} from "../services/event-service";
-import {
   getStudentLecture,
   listStudentLectures,
 } from "../services/content-service";
+import {
+  appendAttemptEvents,
+  appendLectureEvents,
+} from "../services/event-service";
 import { getInkDoc, getStudentInkPng, saveInk } from "../services/ink-service";
 import { changeStudentPassword } from "../services/student-service";
 
