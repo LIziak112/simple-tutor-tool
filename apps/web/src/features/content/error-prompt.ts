@@ -1,4 +1,4 @@
-import type { LintIssue } from "@tutor/contract";
+import type { ImportBatchConflict, LintIssue } from "@tutor/contract";
 
 /**
  * "复制错误给 AI"提示词格式化（T2A.3 按 D21 重写，替换 T1.11 的全文拼接）：
@@ -6,6 +6,8 @@ import type { LintIssue } from "@tutor/contract";
  * 带行号原文片段，相邻片段合并），**不附全文**。
  * 纯函数：不触碰剪贴板（复制与降级交互在 ErrorPanel / 批量预览组件处理）。
  * 单文件与「复制全部错误」共用：files 传单元素或多元素即可。
+ * 批量场景下仅因跨文件冲突（D20：视为 error）被标红、但 lint issues 为空的文件，
+ * 错误列表位置输出冲突说明（无原文行号 → 不生成片段）。
  */
 
 /** buildFixPrompt 的单文件输入 */
@@ -18,6 +20,8 @@ export interface FixPromptFile {
   readonly issues: readonly LintIssue[];
   /** 文档版本：v1 时附加"行号对应转换后 v2 文本"的说明 */
   readonly version: 1 | 2;
+  /** 同批次跨文件冲突（preview-batch 返回；无原文行号，不参与片段生成） */
+  readonly conflicts?: readonly ImportBatchConflict[];
 }
 
 /** 每个错误前后各取的行数（D21：±3 行） */
@@ -101,12 +105,18 @@ export function buildFixPrompt(files: readonly FixPromptFile[]): string {
   for (const file of files) {
     parts.push("", `## ${file.path.length > 0 ? file.path : NO_PATH_LABEL}`);
 
-    // 错误列表（行号:列、CODE、中文说明、可选修复建议）
+    // 错误列表（行号:列、CODE、中文说明、可选修复建议；跨文件冲突无行号，
+    // 以冲突说明条目列出——避免「引用了文件却说无错误」的困惑）
     parts.push("", "### 错误列表");
-    if (file.issues.length === 0) {
+    const conflictEntries = (file.conflicts ?? []).map(
+      (conflict) =>
+        `- [${conflict.code}] ${conflict.message}（同批次跨文件冲突，请修改本文件或对应文件中的重复内容）`,
+    );
+    if (file.issues.length === 0 && conflictEntries.length === 0) {
       parts.push("（无）");
     } else {
       for (const issue of file.issues) parts.push(issueLine(issue));
+      parts.push(...conflictEntries);
     }
     if (file.version === 1) {
       parts.push(

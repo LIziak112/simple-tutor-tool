@@ -185,4 +185,69 @@ describe("buildFixPrompt（D21 新格式）", () => {
     expect(prompt).toContain("（无）");
     expect(prompt).not.toContain("### 相关片段");
   });
+
+  it("仅跨文件同名讲义冲突（lint 无 issue）：错误列表输出冲突说明，不含「（无）」与片段段（D20/D21）", () => {
+    const prompt = buildFixPrompt([
+      file({
+        path: "c-讲义.md",
+        issues: [],
+        conflicts: [
+          {
+            code: "DUPLICATE_LECTURE_TITLE",
+            message:
+              "与「b-混合.md」在文件夹「未归类」下都定义了同名讲义「第1讲 有理数」",
+            otherPath: "b-混合.md",
+          },
+        ],
+      }),
+      file({
+        path: "b-混合.md",
+        issues: [],
+        conflicts: [
+          {
+            code: "DUPLICATE_LECTURE_TITLE",
+            message:
+              "与「c-讲义.md」在文件夹「未归类」下都定义了同名讲义「第1讲 有理数」",
+            otherPath: "c-讲义.md",
+          },
+        ],
+      }),
+    ]);
+    // 两个文件的错误列表都含冲突说明（CODE + 对方路径 + 中文消息 + 冲突语义标注）
+    expect(prompt).toContain("[DUPLICATE_LECTURE_TITLE]");
+    expect(prompt).toContain(
+      "与「b-混合.md」在文件夹「未归类」下都定义了同名讲义「第1讲 有理数」",
+    );
+    expect(prompt).toContain(
+      "与「c-讲义.md」在文件夹「未归类」下都定义了同名讲义「第1讲 有理数」",
+    );
+    expect(prompt).toContain("同批次跨文件冲突");
+    // 不出现「（无）」空段与片段段（冲突无原文行号，不生成片段）
+    expect(prompt).not.toContain("（无）");
+    expect(prompt).not.toContain("### 相关片段");
+  });
+
+  it("同 unit id 冲突与 lint 错误并存：两类条目同列于错误列表，lint 错误仍有片段", () => {
+    const prompt = buildFixPrompt([
+      file({
+        path: "a-练习.md",
+        issues: [ERROR_AT_6],
+        conflicts: [
+          {
+            code: "DUPLICATE_UNIT_ID",
+            message: "与「b.md」都定义了单元「练习四」",
+            otherPath: "b.md",
+          },
+        ],
+      }),
+    ]);
+    expect(prompt).toContain("第6行 第1列 [FILL_NO_BLANK]");
+    expect(prompt).toContain("[DUPLICATE_UNIT_ID]");
+    expect(prompt).toContain("与「b.md」都定义了单元「练习四」");
+    expect(prompt).toContain("（同批次跨文件冲突");
+    expect(prompt).not.toContain("（无）");
+    // lint 错误的片段段照常生成（冲突不参与片段）
+    expect(prompt).toContain("### 相关片段");
+    expect(prompt).toContain("   6 | ");
+  });
 });

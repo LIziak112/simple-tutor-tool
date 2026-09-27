@@ -197,6 +197,9 @@ export function BatchImportPreview({
             markdown: markdownByPath.get(file.path) ?? "",
             issues: file.preview.issues,
             version: file.preview.version,
+            // 仅因跨文件冲突被标 error 的文件（lint issues 为空）也要在
+            // 提示词中说明冲突原因（D21 语境下冲突就是该文件的 error）
+            conflicts: file.conflicts,
           })),
         )
       : "";
