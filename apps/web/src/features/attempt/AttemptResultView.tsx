@@ -252,14 +252,20 @@ function ResultQuestionCard({
             {formatStudentAnswer(question.answer)}
           </span>
         </p>
-        <p className="flex flex-wrap gap-1.5">
+        {/* 参考答案走 RichMarkdown（T2.13 规范约定：填空答案需公式展示时写 $…$，
+            判分归一化自动剥 $；此处按同一管线渲染，无 $ 的普通答案原样显示）。
+            外层 p→div：RichMarkdown 是块级 div，不能嵌在 <p> 内 */}
+        <div className="flex min-w-0 flex-wrap gap-1.5">
           <span className="shrink-0 text-muted-foreground">参考答案：</span>
-          <span className="font-medium">
-            {question.answers === null
-              ? "由老师批改后公布"
-              : formatReferenceAnswers(question.answers)}
-          </span>
-        </p>
+          {question.answers === null ? (
+            <span className="font-medium">由老师批改后公布</span>
+          ) : (
+            <RichMarkdown
+              source={formatReferenceAnswers(question.answers)}
+              className="min-w-0 font-medium [&_p]:my-0"
+            />
+          )}
+        </div>
       </div>
 
       <SolutionFold solutionMd={question.solutionMd} />
