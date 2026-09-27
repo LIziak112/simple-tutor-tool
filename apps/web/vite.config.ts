@@ -137,8 +137,10 @@ export default defineConfig({
     host: true,
     proxy: {
       // 开发环境把 /api 转发给本地 server（端口见 §0.3，默认 8787）。
-      // 用 127.0.0.1 而不是 localhost，避免 Windows 上解析到 IPv6 导致代理失败
-      "/api": "http://127.0.0.1:8787",
+      // 用 127.0.0.1 而不是 localhost，避免 Windows 上解析到 IPv6 导致代理失败。
+      // DEV_API_PROXY_TARGET 覆盖目标：E2E（T2.13）起独立 server 在 8899，
+      // 与日常 pnpm dev（8787）互不干扰；不设置时行为不变。
+      "/api": process.env.DEV_API_PROXY_TARGET ?? "http://127.0.0.1:8787",
     },
   },
   // build.outDir 保持默认 dist：生产模式由 apps/server 托管 apps/web/dist
