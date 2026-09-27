@@ -32,6 +32,8 @@ import { readSpecFile } from "../spec-files";
 /**
  * 公开路由（无需登录），挂载在 /api/public。
  * - GET  /teacher/status：是否已设置教师（前端首启判断，只回布尔值）
+ * - GET  /config：运行时公开配置（T2.12——pwaEnabled 随 PUBLIC_URL 协议，
+ *    前端入口据此决定是否注册 Service Worker；不缓存、无敏感信息）
  * - POST /teacher/setup：首次设置密码（仅无教师时可用），成功自动登录
  * - POST /teacher/login：教师密码登录（§5.7 限流）
  * - POST /student/login：学生登录名+密码登录（T2.1，§5.7 限流，key 与教师隔离）
@@ -61,6 +63,14 @@ export function createPublicRoutes(
     new Hono()
       .get("/teacher/status", (c) => {
         return c.json({ ok: true, data: teacherStatus(db) });
+      })
+      // 运行时公开配置（T2.12）：pwaEnabled 与 Cookie Secure 同口径（PUBLIC_URL
+      // 以 https:// 开头才为 true）。前端不自行猜测协议，只信服务端这一份判断。
+      .get("/config", (c) => {
+        return c.json({
+          ok: true,
+          data: { pwaEnabled: secure, publicUrl },
+        });
       })
       .post("/teacher/setup", async (c) => {
         const body: TeacherSetupRequest = await parseJsonBody(
