@@ -125,7 +125,7 @@ describe("定时批量", () => {
 describe("sendBeacon 兜底（页面隐藏）", () => {
   it("visibilitychange → hidden：自动注入 page_hidden 并改走 sendBeacon", async () => {
     const send = vi.fn().mockResolvedValue(undefined);
-    const beacon = vi.fn(() => true);
+    const beacon = vi.fn((_events: readonly LearningEvent[]) => true);
     const q = makeQueue({ send, beacon });
     q.track(ev("question_focus", { questionId: "q1" }));
     setVisibility("hidden");

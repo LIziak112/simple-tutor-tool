@@ -1,5 +1,5 @@
 import { ArrowLeft, ListTree } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router";
 import type { OutlineItem } from "@/features/markdown/outline";
 import { extractOutline } from "@/features/markdown/outline";
@@ -9,12 +9,15 @@ import {
   StudentErrorPanel,
   StudentListSkeleton,
 } from "@/features/student/student-ui";
+import { createEventQueue } from "@/lib/event-queue";
 import { formatCnTime } from "@/lib/time";
 
 /**
  * /s/lectures/:id 讲义阅读页（T2.3，§5.3 讲义渲染）。
  * - 全文用 T1.8 的 <RichMarkdown> 渲染（KaTeX/指令组件随其管线按需工作，
- *   :::solution 等讲解块以折叠件呈现、点开查看——事件上报是 T2.10，本任务不做）；
+ *   :::solution 等讲解块以折叠件呈现、点开查看）；
+ * - T2.10：折叠/逐步揭晓的每次展开上报 lecture_expand 事件（无 attempt 上下文，
+ *   走 POST /api/student/events；队列 dispose 时尽力 flush）；
  * - 自动目录（H2/H3）：目录条目顺序 = 正文 h2/h3 顺序，点击滚动到对应标题；
  * - 目录可折叠（长讲义收起目录专注正文）；
  * - iPad 适配：竖屏目录在正文上方；横屏（lg:）目录固定在左侧 sticky 双栏，
@@ -67,6 +70,30 @@ export default function StudentLectureViewPage() {
   const lectureQuery = useStudentLecture(id);
   /** 目录折叠状态（长讲义可收起；默认展开方便跳转） */
   const [outlineOpen, setOutlineOpen] = useState(true);
+
+  // 学习痕迹（T2.10）：lecture_expand 事件队列（无 attempt 上下文）。
+  // 回调经 ref 转发——RichMarkdown 不因队列创建而重渲染/重挂载。
+  const queueRef = useRef<ReturnType<typeof createEventQueue> | null>(null);
+  useEffect(() => {
+    if (id === "") return;
+    const queue = createEventQueue({ scope: { kind: "lecture" } });
+    queueRef.current = queue;
+    return () => {
+      queue.dispose();
+      queueRef.current = null;
+    };
+  }, [id]);
+  const onDirectiveExpand = useRef(
+    (info: { name: string; index: number }) => {
+      queueRef.current?.track({
+        type: "lecture_expand",
+        clientTs: Date.now(),
+        lectureId: id,
+        directive: info.name,
+        index: info.index,
+      });
+    },
+  ).current;
 
   const outline = useMemo(
     () => (lectureQuery.data ? extractOutline(lectureQuery.data.markdown) : []),
@@ -136,10 +163,12 @@ export default function StudentLectureViewPage() {
             </div>
           )}
 
-          {/* 正文（讲义全文；rich-markdown 内部处理公式块横向滚动） */}
+          {/* 正文（讲义全文；rich-markdown 内部处理公式块横向滚动；
+              折叠/步骤展开经 onDirectiveExpand 上报 lecture_expand，T2.10） */}
           <RichMarkdown
             source={lectureQuery.data.markdown}
             className="min-w-0 flex-1 rounded-xl border border-border bg-card px-4 py-4 sm:px-6 lg:px-8"
+            onDirectiveExpand={onDirectiveExpand}
           />
         </div>
       )}

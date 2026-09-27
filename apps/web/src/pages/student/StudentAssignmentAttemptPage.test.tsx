@@ -13,7 +13,12 @@ import {
   memoryBackend,
 } from "@/features/attempt/draft-store";
 import {
+  installEventStore,
+  memoryEventStore,
+} from "@/lib/event-queue";
+import {
   fetchAttemptApi,
+  postAttemptEventsApi,
   putAttemptInkApi,
   saveAttemptAnswerApi,
   startAttemptApi,
@@ -108,6 +113,9 @@ vi.mock("@/lib/api", async (importOriginal) => {
       height: 50,
       updatedAt: "2026-09-27T00:00:00.000Z",
     })),
+    // T2.10：学习痕迹事件上报（埋点用例断言调用参数）
+    postAttemptEventsApi: vi.fn(async () => ({ accepted: 1 })),
+    postLectureEventsApi: vi.fn(async () => ({ accepted: 1 })),
   };
 });
 
@@ -116,6 +124,7 @@ const mockedFetch = vi.mocked(fetchAttemptApi);
 const mockedSave = vi.mocked(saveAttemptAnswerApi);
 const mockedSubmit = vi.mocked(submitAttemptApi);
 const mockedPutInk = vi.mocked(putAttemptInkApi);
+const mockedPostEvents = vi.mocked(postAttemptEventsApi);
 
 const ASSIGNMENT_ID = "44444444-4444-4444-8444-444444444444";
 const ATTEMPT_ID = "55555555-5555-4555-8555-555555555555";
@@ -221,6 +230,8 @@ beforeEach(() => {
   mockedSave.mockReset();
   mockedSubmit.mockReset();
   mockedPutInk.mockReset();
+  mockedPostEvents.mockReset();
+  mockedPostEvents.mockResolvedValue({ accepted: 1 });
   mockedPutInk.mockResolvedValue({
     questionId: "q-ink",
     inkId: "77777777-7777-4777-8777-777777777777",
@@ -230,6 +241,7 @@ beforeEach(() => {
     updatedAt: "2026-09-27T00:00:00.000Z",
   });
   installDraftBackend(memoryBackend());
+  installEventStore(memoryEventStore());
 });
 
 describe("StudentAssignmentAttemptPage：草稿作答流程", () => {
@@ -568,5 +580,134 @@ describe("StudentAssignmentAttemptPage：草稿防丢", () => {
         value: false,
       } satisfies StudentAnswer),
     );
+  });
+});
+
+// ---------- T2.10：学习痕迹埋点（事件经交卷 finalizeSubmit flush 出网） ----------
+
+/** 汇总所有已上报事件（postAttemptEventsApi 的调用参数展平） */
+async function allReportedEvents(): Promise<
+  Array<Record<string, unknown>>
+> {
+  await waitFor(
+    () => {
+      if (mockedPostEvents.mock.calls.length === 0) {
+        throw new Error("事件尚未上报");
+      }
+    },
+    { timeout: 3000 },
+  );
+  return mockedPostEvents.mock.calls.flatMap((call) =>
+    (call[1] as unknown as Array<Record<string, unknown>>).map((e) => e),
+  );
+}
+
+describe("StudentAssignmentAttemptPage：学习痕迹埋点", () => {
+  it("作答两题再交卷：attempt_start/focus 切换/answer_change(from)/blur/submit 全链路", async () => {
+    mockedStart.mockResolvedValue(START_DRAFT);
+    mockedFetch
+      .mockResolvedValueOnce(DRAFT_DATA)
+      .mockResolvedValue(RESULT_DATA);
+    mockedSave.mockResolvedValue({ questionId: "练习四-1", changeCount: 1 });
+    mockedSubmit.mockResolvedValue(RESULT_DATA);
+    renderPage();
+
+    await screen.findByText("第 1 题");
+    // 题 1：先选「对」再改「错」（answer_change 的 from 语义）
+    fireEvent.click(screen.getByRole("radio", { name: /对/ }));
+    await waitFor(() => expect(mockedSave).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("radio", { name: /错/ }));
+    await waitFor(() => expect(mockedSave).toHaveBeenCalledTimes(2));
+    // 题 2：填空作答（聚焦切到题 2 → blur 题 1 + focus 题 2）
+    const blank = screen.getByRole("textbox");
+    fireEvent.change(blank, { target: { value: "4" } });
+    await waitFor(() => expect(mockedSave).toHaveBeenCalledTimes(3));
+
+    await clickSubmitAndConfirm();
+    await waitFor(() => expect(mockedSubmit).toHaveBeenCalledTimes(1));
+    // 事件 flush 先于 submit（finalizeSubmit 在 mutate 前 await flush）
+    const eventsOrder = mockedPostEvents.mock.invocationCallOrder[0] ?? 0;
+    const submitOrder = mockedSubmit.mock.invocationCallOrder[0] ?? 0;
+    expect(eventsOrder).toBeLessThan(submitOrder);
+
+    const events = await allReportedEvents();
+    const types = events.map((e) => e.type);
+    expect(types).toContain("attempt_start");
+    expect(types).toContain("question_focus");
+    expect(types).toContain("question_blur");
+    expect(types).toContain("answer_change");
+    expect(types).toContain("submit");
+    // focus 归属：题 1 → 题 2（切换顺序）
+    const focusQuestionIds = events
+      .filter((e) => e.type === "question_focus")
+      .map((e) => e.questionId);
+    expect(focusQuestionIds).toEqual(["练习四-1", "练习四-4"]);
+    const blurQuestionIds = events
+      .filter((e) => e.type === "question_blur")
+      .map((e) => e.questionId);
+    expect(blurQuestionIds).toEqual(["练习四-1", "练习四-4"]);
+    // answer_change：题 1 两条（第二条带 from=对）、题 2 一条
+    const changes = events.filter((e) => e.type === "answer_change");
+    const judgeChanges = changes.filter((e) => e.questionId === "练习四-1");
+    expect(judgeChanges.length).toBe(2);
+    expect(judgeChanges[0]?.from).toBeUndefined();
+    expect(judgeChanges[1]?.from).toEqual({ kind: "judge", value: true });
+    expect(judgeChanges[1]?.to).toEqual({ kind: "judge", value: false });
+    // submit 是最后一条
+    expect(types[types.length - 1]).toBe("submit");
+  });
+
+  it("手写题写一笔：ink_stroke_batch 事件带笔画数与题号", async () => {
+    mockedStart.mockResolvedValue(START_DRAFT);
+    mockedFetch
+      .mockResolvedValueOnce(HANDWRITTEN_DRAFT)
+      .mockResolvedValue(RESULT_DATA);
+    mockedSubmit.mockResolvedValue(RESULT_DATA);
+    renderPage();
+
+    await screen.findByText("第一道手写题");
+    await writeOnNextHandwritten();
+
+    await clickSubmitAndConfirm();
+    // 交卷 flush 打断 2 秒防抖立即 PUT 笔迹
+    await waitFor(() => expect(mockedPutInk).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(mockedSubmit).toHaveBeenCalledTimes(1));
+    const events = await allReportedEvents();
+    const inkEvents = events.filter((e) => e.type === "ink_stroke_batch");
+    expect(inkEvents.length).toBeGreaterThanOrEqual(1);
+    expect(inkEvents[0]?.questionId).toBe("q-ink-1");
+    expect(inkEvents[0]?.strokes).toBe(1);
+    // 写笔迹也把聚焦切到手写题
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "question_focus",
+        questionId: "q-ink-1",
+      }),
+    );
+  });
+
+  it("页面隐藏再恢复：page_hidden / page_visible 注入队列（unmount flush 出网）", async () => {
+    mockedStart.mockResolvedValue(START_DRAFT);
+    mockedFetch.mockResolvedValue(DRAFT_DATA);
+    const { unmount } = renderPage();
+    await screen.findByText("第 1 题");
+
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => "hidden",
+    });
+    document.dispatchEvent(new Event("visibilitychange"));
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => "visible",
+    });
+    document.dispatchEvent(new Event("visibilitychange"));
+
+    unmount();
+    const events = await allReportedEvents();
+    const types = events.map((e) => e.type);
+    expect(types).toContain("page_hidden");
+    expect(types).toContain("page_visible");
+    expect(types).toContain("attempt_start");
   });
 });

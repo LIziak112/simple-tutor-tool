@@ -36,17 +36,29 @@ export interface AttemptAnswersState {
   saveFailed: boolean;
 }
 
+/** useAttemptAnswers 的可选回调集 */
+export interface AttemptAnswersOptions {
+  /**
+   * 一次答案保存生效（立即或防抖到期，即 PUT 发起点）时回调。
+   * T2.10：答题页用它上报 answer_change 事件——与保存同节奏，文本键击
+   * 天然聚合，changeCount 不虚高（见 use-attempt-events.ts）。
+   */
+  onAnswerCommitted?: (questionId: string, answer: StudentAnswer) => void;
+}
+
 /**
  * @param attemptId attempt id（变化时重置全部本地状态）
  * @param drafts 草稿（T2.9 起传 draftSync.recoveredDrafts：本地与服务端合并结果；
  *   undefined=合并未完成，到位后播种一次）
  * @param sync 草稿同步 API（T2.9：本地写/同步成功/失败通知；缺省不联动——
  *   兼容旧调用与单测）
+ * @param options 可选回调（T2.10 onAnswerCommitted）
  */
 export function useAttemptAnswers(
   attemptId: string,
   drafts: Record<string, StudentAnswer> | undefined,
   sync?: DraftSyncApi | null,
+  options?: AttemptAnswersOptions,
 ): AttemptAnswersState {
   const [answers, setAnswers] = useState<Record<string, StudentAnswer> | null>(
     null,
@@ -81,8 +93,13 @@ export function useAttemptAnswers(
   // sync 存 ref：内联回调不重建保存链
   const syncRef = useRef(sync);
   syncRef.current = sync;
+  // T2.10：保存生效回调同样走 ref（事件上报不重建保存链）
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
 
   const save = useCallback((questionId: string, answer: StudentAnswer) => {
+    // T2.10：与保存同节奏上报 answer_change（防抖/立即提交点各一次）
+    optionsRef.current?.onAnswerCommitted?.(questionId, answer);
     saveDraftAnswer(attemptIdRef.current, questionId, answer)
       .then(() => {
         setSaveFailed(false);

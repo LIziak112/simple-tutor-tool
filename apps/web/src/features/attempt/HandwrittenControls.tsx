@@ -60,6 +60,13 @@ function emptyAtramentDoc(): InkDoc {
   };
 }
 
+/** 笔迹文档的当前笔画数（atrament=strokes；excalidraw=scene.elements，口径同 ink 表） */
+function inkStrokeCount(doc: InkDoc): number {
+  return doc.engine === "atrament"
+    ? doc.data.strokes.length
+    : doc.data.scene.elements.length;
+}
+
 export interface HandwrittenControlsProps {
   attemptId: string;
   questionId: string;
@@ -71,6 +78,11 @@ export interface HandwrittenControlsProps {
   registerController?:
     | ((questionId: string, controller: InkUploadController | null) => void)
     | undefined;
+  /**
+   * 一批手写笔画结束时回调（当前总笔画数，T2.10 ink_stroke_batch 埋点）。
+   * 缺省不触发——不影响 T2.8 既有行为与组件测试。
+   */
+  onInkStroke?: ((strokes: number) => void) | undefined;
 }
 
 export function HandwrittenControls({
@@ -80,6 +92,7 @@ export function HandwrittenControls({
   answer,
   onAnswer,
   registerController,
+  onInkStroke,
 }: HandwrittenControlsProps) {
   /** 权威笔迹：undefined=服务端加载中；null=无笔迹；有值=当前文档 */
   const [masterDoc, setMasterDoc] = useState<InkDoc | null | undefined>(
@@ -130,12 +143,16 @@ export function HandwrittenControls({
   }, [questionId, uploadController, registerController]);
 
   // 笔迹变化：更新权威文档 + 写本地草稿仓（T2.9，网络无关）+ 进上传防抖
+  // + T2.10 埋点（每笔/每批结束报 ink_stroke_batch，经 ref 取最新回调）
+  const onInkStrokeRef = useRef(onInkStroke);
+  onInkStrokeRef.current = onInkStroke;
   const handleDocChange = useCallback(
     (doc: InkDoc) => {
       setMasterDoc(doc);
       draftStore.saveInk(attemptId, questionId, doc);
       draftSyncRef.current?.noteLocalWrite();
       onDocChangeUpload(doc);
+      onInkStrokeRef.current?.(inkStrokeCount(doc));
     },
     [attemptId, questionId, onDocChangeUpload],
   );

@@ -222,6 +222,7 @@ export function AttemptQuestionCard({
   onAnswer,
   attemptId,
   registerInkController,
+  onInkStroke,
 }: {
   /** 题号（0 起，展示 +1） */
   index: number;
@@ -234,6 +235,8 @@ export function AttemptQuestionCard({
   attemptId?: string;
   /** 交卷 flush 用：手写题上传 controller 注册（透传 HandwrittenControls） */
   registerInkController?: HandwrittenControlsProps["registerController"];
+  /** 手写笔画批次回调（T2.10 ink_stroke_batch 埋点，透传 HandwrittenControls） */
+  onInkStroke?: HandwrittenControlsProps["onInkStroke"];
 }) {
   const plainAnswer = (next: StudentAnswer) => onAnswer(next);
 
@@ -308,6 +311,7 @@ export function AttemptQuestionCard({
             answer={answer}
             onAnswer={onAnswer}
             registerController={registerInkController}
+            onInkStroke={onInkStroke}
           />
         )}
     </article>
