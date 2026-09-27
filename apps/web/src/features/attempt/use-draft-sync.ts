@@ -1,17 +1,17 @@
 import type { StudentAnswer } from "@tutor/contract";
 import {
   createContext,
+  type RefObject,
   useCallback,
   useContext,
   useEffect,
   useMemo,
   useRef,
   useState,
-  type RefObject,
 } from "react";
+import { saveDraftAnswer } from "./attempt-queries";
 import { unsyncedAnswerIds } from "./draft-merge";
 import { draftStore } from "./draft-store";
-import { saveDraftAnswer } from "./attempt-queries";
 import type { InkUploadController } from "./use-ink-upload";
 
 /**
@@ -76,8 +76,11 @@ export function useDraftSync(
   const attemptIdRef = useRef(attemptId);
   attemptIdRef.current = attemptId;
 
-  const inksClean = () =>
-    [...inkControllers.current.values()].every((c) => !c.isDirty());
+  /** 全部笔迹 controller 是否都无待传（ref 取当前注册表，引用稳定） */
+  const inksClean = useCallback(
+    () => [...inkControllers.current.values()].every((c) => !c.isDirty()),
+    [inkControllers],
+  );
 
   /** 全部内容（答案指纹 + 笔迹待传）都干净时才回到「已保存」 */
   const recomputeIfClean = useCallback(async () => {
@@ -87,7 +90,7 @@ export function useDraftSync(
     if (answersClean && inksClean()) {
       setStatus({ state: "saved", savedAt: Date.now() });
     }
-  }, []);
+  }, [inksClean]);
 
   const syncNow = useCallback(async (): Promise<void> => {
     if (syncingRef.current) return;
@@ -98,14 +101,16 @@ export function useDraftSync(
     syncingRef.current = true;
     try {
       const record = await draftStore.loadDraft(attemptIdRef.current);
-      /** 待补传答案（指纹不同）：[questionId, answer] */
+      /** 待补传答案（指纹不同）：[questionId, answer]（跳过值缺失的防御分支） */
       const pendingAnswers: ReadonlyArray<readonly [string, StudentAnswer]> =
         record === null
           ? []
-          : unsyncedAnswerIds(record).map((questionId) => [
-              questionId,
-              record.answers[questionId],
-            ]);
+          : unsyncedAnswerIds(record).flatMap((questionId) => {
+              const answer = record.answers[questionId];
+              return answer === undefined
+                ? []
+                : [[questionId, answer] as const];
+            });
       if (pendingAnswers.length === 0 && inksClean()) {
         // 无增量：不发包（相同内容不重复 PUT）；若网络已恢复则解除误报的离线态
         setStatus((prev) =>
@@ -132,7 +137,7 @@ export function useDraftSync(
       const inksOk = !inkResults.includes("failed");
       if (answersOk && inksOk) {
         for (const [index, [questionId, answer]] of pendingAnswers.entries()) {
-          if (answerSettled[index].status === "fulfilled") {
+          if (answerSettled[index]?.status === "fulfilled") {
             await draftStore.markAnswerSynced(
               attemptIdRef.current,
               questionId,
@@ -149,7 +154,7 @@ export function useDraftSync(
     } finally {
       syncingRef.current = false;
     }
-  }, [recomputeIfClean]);
+  }, [inkControllers, inksClean, recomputeIfClean]);
 
   // 进入答题页：合并本地与服务端草稿，仍有差异则触发一次同步
   useEffect(() => {
@@ -157,7 +162,10 @@ export function useDraftSync(
     setRecoveredDrafts(undefined);
     setStatus({ state: "saved", savedAt: 0 });
     void (async () => {
-      const merged = await draftStore.applyServerDrafts(attemptId, serverDrafts);
+      const merged = await draftStore.applyServerDrafts(
+        attemptId,
+        serverDrafts,
+      );
       if (!alive) return;
       setRecoveredDrafts(merged);
       const record = await draftStore.loadDraft(attemptId);
@@ -204,15 +212,17 @@ export function useDraftSync(
     };
   }, [syncNow]);
 
-  // 卸载（跳页）前把防抖中的本地写入落盘
+  // 卸载（跳页）前把防抖中的本地写入落盘（只随卸载执行一次；ref 取最后 attempt）
   useEffect(() => {
     return () => {
       void draftStore.flush(attemptIdRef.current);
     };
-  }, [attemptId]);
+  }, []);
 
   const noteLocalWrite = useCallback(() => {
-    setStatus((prev) => (prev.state === "offline" ? prev : { state: "saving" }));
+    setStatus((prev) =>
+      prev.state === "offline" ? prev : { state: "saving" },
+    );
   }, []);
 
   const noteAnswerSynced = useCallback(

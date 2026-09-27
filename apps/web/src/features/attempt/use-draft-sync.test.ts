@@ -1,13 +1,10 @@
-import { renderHook, act } from "@testing-library/react";
+import { act, renderHook } from "@testing-library/react";
 import type { StudentAnswer } from "@tutor/contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { saveAttemptAnswerApi } from "@/lib/api";
 import { draftStore, installDraftBackend, memoryBackend } from "./draft-store";
-import {
-  DRAFT_SYNC_INTERVAL_MS,
-  useDraftSync,
-} from "./use-draft-sync";
-import type { InkUploadController, InkSyncResult } from "./use-ink-upload";
+import { DRAFT_SYNC_INTERVAL_MS, useDraftSync } from "./use-draft-sync";
+import type { InkSyncResult, InkUploadController } from "./use-ink-upload";
 
 /**
  * 草稿同步引擎测试（T2.9）：10 秒定时 / visibilitychange / 断网不 PUT /
@@ -119,7 +116,7 @@ describe("增量同步时机", () => {
   });
 
   it("visibilitychange 切后台：立即同步（不等 10 秒）并落盘", async () => {
-    const { result } = setupHook({});
+    setupHook({});
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0);
     });
@@ -136,7 +133,7 @@ describe("增量同步时机", () => {
   });
 
   it("相同内容不重复 PUT：同步成功后再过 10 秒不再发包", async () => {
-    const { result } = setupHook({});
+    setupHook({});
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0);
     });
@@ -290,10 +287,7 @@ describe("笔迹上传通道联动", () => {
       await vi.advanceTimersByTimeAsync(DRAFT_SYNC_INTERVAL_MS);
     });
     expect(result.current.status.state).toBe("offline");
-    controllers.set(
-      "q-ink",
-      fakeInkController(false, "synced"),
-    );
+    controllers.set("q-ink", fakeInkController(false, "synced"));
     await act(async () => {
       await vi.advanceTimersByTimeAsync(DRAFT_SYNC_INTERVAL_MS);
     });

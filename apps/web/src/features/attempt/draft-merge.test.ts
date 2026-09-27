@@ -1,7 +1,12 @@
 import type { InkDoc, StudentAnswer } from "@tutor/contract";
 import { describe, expect, it } from "vitest";
+import {
+  digestOf,
+  mergeAnswers,
+  mergeInkDocs,
+  unsyncedAnswerIds,
+} from "./draft-merge";
 import type { AttemptDraftRecord } from "./draft-store";
-import { digestOf, mergeAnswers, mergeInkDocs, unsyncedAnswerIds } from "./draft-merge";
 
 /** 草稿合并纯函数测试（T2.9）：答案并集/冲突本地胜出、笔迹 updatedAt 新者胜、摘要稳定性 */
 
@@ -52,10 +57,7 @@ describe("mergeAnswers", () => {
   });
 
   it("服务端独有 + 本地独有的题都保留；本地独有的进待同步", () => {
-    const { merged, needsSync } = mergeAnswers(
-      { q2: fill },
-      { q1: judge },
-    );
+    const { merged, needsSync } = mergeAnswers({ q2: fill }, { q1: judge });
     expect(merged).toEqual({ q1: judge, q2: fill });
     expect(needsSync).toEqual(["q2"]);
   });

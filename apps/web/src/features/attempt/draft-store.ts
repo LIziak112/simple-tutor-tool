@@ -1,5 +1,5 @@
 import type { InkDoc, StudentAnswer } from "@tutor/contract";
-import { del, get, set, createStore } from "idb-keyval";
+import { createStore, del, get, set } from "idb-keyval";
 import {
   digestOf,
   mergeAnswers,
@@ -194,7 +194,11 @@ export const draftStore = {
   loadDraft,
 
   /** 每次改答案写本地（内存同步可见，落盘防抖；不受网络状态影响） */
-  saveAnswer(attemptId: string, questionId: string, answer: StudentAnswer): void {
+  saveAnswer(
+    attemptId: string,
+    questionId: string,
+    answer: StudentAnswer,
+  ): void {
     mutate(attemptId, (record) => {
       record.answers[questionId] = answer;
       record.savedAt = Date.now();

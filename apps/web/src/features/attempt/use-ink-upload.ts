@@ -178,7 +178,12 @@ export function useInkUpload(
 
   return {
     onDocChange,
-    controller: { flush, isDirty: () => pendingRef.current !== null, sync, resync },
+    controller: {
+      flush,
+      isDirty: () => pendingRef.current !== null,
+      sync,
+      resync,
+    },
     saveFailed,
     clearFailure,
   };

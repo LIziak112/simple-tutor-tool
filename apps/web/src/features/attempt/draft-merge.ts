@@ -36,15 +36,15 @@ export function digestOf(value: unknown): string {
 export function unsyncedAnswerIds(record: AttemptDraftRecord): string[] {
   return Object.keys(record.answers).filter(
     (questionId) =>
-      record.answerDigests[questionId] !==
-      digestOf(record.answers[questionId]),
+      record.answerDigests[questionId] !== digestOf(record.answers[questionId]),
   );
 }
 
 /** 本地有、但尚未成功同步到服务端的笔迹题号列表（供测试与诊断） */
 export function unsyncedInkIds(record: AttemptDraftRecord): string[] {
   return Object.keys(record.inks).filter(
-    (questionId) => record.inkDigests[questionId] !== digestOf(record.inks[questionId]),
+    (questionId) =>
+      record.inkDigests[questionId] !== digestOf(record.inks[questionId]),
   );
 }
 
@@ -64,7 +64,8 @@ export function mergeAnswers(
   if (local === null) return { merged: { ...server }, needsSync: [] };
   const merged: Record<string, StudentAnswer> = { ...server, ...local };
   const needsSync = Object.keys(local).filter(
-    (questionId) => digestOf(local[questionId]) !== digestOf(server[questionId]),
+    (questionId) =>
+      digestOf(local[questionId]) !== digestOf(server[questionId]),
   );
   return { merged, needsSync };
 }

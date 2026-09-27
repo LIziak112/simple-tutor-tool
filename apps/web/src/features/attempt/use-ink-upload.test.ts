@@ -87,14 +87,10 @@ function docWith(strokes: number, updatedAt = 2): InkDoc {
 }
 
 /** 包一层 hook（engine 引用可替换）；hooks 透传给 useInkUpload */
-function setup(
-  engine: InkEngine | null,
-  hooks?: InkUploadHooks,
-) {
+function setup(engine: InkEngine | null, hooks?: InkUploadHooks) {
   const ref = { current: engine };
-  return renderHook(() =>
-    useInkUpload("att-1", "q1", () => ref.current, hooks),
-  ).result;
+  return renderHook(() => useInkUpload("att-1", "q1", () => ref.current, hooks))
+    .result;
 }
 
 beforeEach(() => {

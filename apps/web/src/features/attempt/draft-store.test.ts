@@ -5,8 +5,8 @@ import {
   DRAFT_WRITE_DEBOUNCE_MS,
   draftStore,
   installDraftBackend,
-  memoryBackend,
   type KVBackend,
+  memoryBackend,
 } from "./draft-store";
 
 /**
@@ -64,7 +64,10 @@ describe("写盘防抖", () => {
     expect(backend.setCalls()).toHaveLength(0);
     await vi.advanceTimersByTimeAsync(DRAFT_WRITE_DEBOUNCE_MS);
     expect(backend.setCalls()).toHaveLength(1);
-    const [, value] = backend.setCalls()[0] as [string, { answers: Record<string, StudentAnswer> }];
+    const [, value] = backend.setCalls()[0] as [
+      string,
+      { answers: Record<string, StudentAnswer> },
+    ];
     expect(value.answers.q1).toEqual(fill);
   });
 
