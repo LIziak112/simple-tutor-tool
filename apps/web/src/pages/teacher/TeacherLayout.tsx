@@ -1,6 +1,7 @@
 import {
   ClipboardList,
   Database,
+  GraduationCap,
   Library,
   LineChart,
   Settings,
@@ -18,9 +19,10 @@ import { AuthScreenError, AuthScreenLoading } from "./SetupPage";
  * 学生、作业、数据、学情、设置。触控目标一律 ≥44px。
  */
 
-/** 导航分区（后续任务逐个替换占位页） */
+/** 导航分区（后续任务逐个替换占位页）；课程入口位于资源库之后（T2A.4 插入，T2A.9 定稿） */
 const NAV_ITEMS = [
   { to: "/t/library", label: "资源库", icon: Library },
+  { to: "/t/courses", label: "课程", icon: GraduationCap },
   { to: "/t/students", label: "学生", icon: Users },
   { to: "/t/assignments", label: "作业", icon: ClipboardList },
   { to: "/t/data", label: "数据", icon: Database },
