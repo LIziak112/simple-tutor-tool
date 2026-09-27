@@ -78,11 +78,22 @@ async function importAllAndGetTree(): Promise<{
   tree: ContentTree;
 }> {
   const { app, db, cookie } = await makeTeacherApp();
+  // T2A.3：导入不再自动创建「默认课程」——显式建课 + 兼容路径（courseId）导入
+  const courseRes = await app.request("/api/teacher/courses", {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie },
+    body: JSON.stringify({ title: "默认课程" }),
+  });
+  if (courseRes.status !== 201) {
+    throw new Error("测试课程创建失败");
+  }
+  const courseId = ((await courseRes.json()) as { data: { id: string } }).data
+    .id;
   for (const sample of SAMPLES) {
     const res = await app.request("/api/teacher/import/commit", {
       method: "POST",
       headers: { "content-type": "application/json", cookie },
-      body: JSON.stringify(sample),
+      body: JSON.stringify({ ...sample, courseId }),
     });
     if (res.status !== 200) {
       throw new Error(`样例导入失败：${sample.filename}（HTTP ${res.status}）`);
@@ -121,7 +132,8 @@ describe("GET /api/teacher/content", () => {
   it("导入三份 v2 样例 + v1 样例后：默认课程下 2 讲义、2 单元，题目摘要结构正确", async () => {
     const { tree } = await importAllAndGetTree();
 
-    // 四份文档都未指定 courseId → 全部落到自动创建的默认课程
+    // 四份文档均按 courseId 兼容路径导入 → 全部落到显式创建的「默认课程」
+    // （T2A.3 起导入不再自动创建默认课程）
     expect(tree.courses).toHaveLength(1);
     const course = tree.courses[0];
     if (course === undefined) throw new Error("课程节点缺失");
