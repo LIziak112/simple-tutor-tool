@@ -4,10 +4,12 @@ import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import type { Db } from "../db/client.ts";
 import {
+  courseItems,
   courses,
   imports,
   knowledgePoints,
   lectures,
+  libraryFolders,
   questionKnowledge,
   questions,
   units,
@@ -201,15 +203,34 @@ describe("commitImport 基本路径（v2 练习样例）", () => {
     expect(report.questions).toEqual({ inserted: 8, updated: 0 });
     expect(report.lectures).toEqual([]);
 
-    // 单元行：topic 来自 frontmatter；lectureTitle「第4讲」在库中无同名讲义 → 不关联
+    // 单元行：topic 来自 frontmatter；lectureTitle「第4讲」在库中无同名讲义 → 不关联。
+    // T2A.1：归属资源库——courseId 不再写入（@deprecated），folderId 指向课程同名文件夹
     const unitRows = db.select().from(units).all();
     expect(unitRows).toHaveLength(1);
+    const folderRow = db
+      .select()
+      .from(libraryFolders)
+      .where(eq(libraryFolders.name, DEFAULT_COURSE_TITLE))
+      .get();
+    expect(folderRow).toBeDefined();
     expect(unitRows[0]).toMatchObject({
       id: "练习四",
       title: "练习四",
       topic: "有理数加减混合",
       lectureId: null,
+      courseId: null,
+      folderId: folderRow?.id,
+    });
+
+    // 课程目录条目：单元追加（visible=false；讲义可见、单元隐藏的兼容口径，T2A.1）
+    const itemRows = db.select().from(courseItems).all();
+    expect(itemRows).toHaveLength(1);
+    expect(itemRows[0]).toMatchObject({
       courseId: report.courseId,
+      kind: "unit",
+      refId: "练习四",
+      visible: false,
+      publishAt: null,
     });
 
     // 题目行：8 题、version=1、id 与解析一致（含显式 id p4-q7）
@@ -541,3 +562,148 @@ function captureError(fn: () => unknown): unknown {
   }
   throw new Error("期望抛出异常但没有");
 }
+
+describe("commitImport 的 T2A.1 兼容口径（courseId → 文件夹 + 课程目录条目）", () => {
+  /** 一份单讲义 + 单单元的混合文档（judge 题；unit 由 frontmatter 声明，id=兼容练习） */
+  const DOC = `---
+kind: mixed
+unit: 兼容练习
+---
+
+# 第9讲 测试
+
+正文。
+
+::::question{type=judge difficulty=1}
+$1>0$。[[正确]]
+::::
+`;
+
+  it("显式 courseId：内容进课程同名文件夹（无则建）+ 追加条目（讲义可见、单元隐藏）", () => {
+    const db = createTestDb();
+    const course = {
+      id: crypto.randomUUID(),
+      title: "目标课程",
+      order: 0,
+      createdAt: new Date().toISOString(),
+    };
+    db.insert(courses).values(course).run();
+
+    const report = commitImport(db, {
+      markdown: DOC,
+      filename: "compat.md",
+      courseId: course.id,
+    });
+    expect(report.courseId).toBe(course.id);
+
+    // 同名文件夹自动创建，讲义/单元 folderId 指向它
+    const folder = db
+      .select()
+      .from(libraryFolders)
+      .where(eq(libraryFolders.name, "目标课程"))
+      .get();
+    expect(folder).toBeDefined();
+    const lectureRow = db.select().from(lectures).all()[0];
+    expect(lectureRow?.folderId).toBe(folder?.id);
+    expect(lectureRow?.courseId).toBeNull();
+    const unitRow = db.select().from(units).all()[0];
+    expect(unitRow?.folderId).toBe(folder?.id);
+
+    // 课程目录条目：讲义 visible=true、单元 visible=false，按导入顺序
+    const items = db
+      .select()
+      .from(courseItems)
+      .where(eq(courseItems.courseId, course.id))
+      .all()
+      .sort((a, b) => a.order - b.order);
+    expect(items.map((row) => [row.kind, row.refId, row.visible])).toEqual([
+      ["lecture", report.lectures[0]?.id, true],
+      ["unit", "兼容练习", false],
+    ]);
+  });
+
+  it("重复导入同文件：资源更新、目录条目不重复（跳过不报错）", () => {
+    const db = createTestDb();
+    const first = commitImport(db, { markdown: DOC, filename: "a.md" });
+    const second = commitImport(db, { markdown: DOC, filename: "a.md" });
+
+    expect(second.lectures[0]).toMatchObject({
+      id: first.lectures[0]?.id,
+      inserted: false,
+      updated: true,
+    });
+    expect(second.units[0]).toMatchObject({
+      id: "兼容练习",
+      inserted: false,
+      updated: true,
+    });
+    // 条目仍只有两条（唯一约束 + onConflictDoNothing）
+    expect(db.select().from(courseItems).all()).toHaveLength(2);
+  });
+
+  it("同一单元导入到另一课程：保留原文件夹，两课程目录各自有条目", () => {
+    const db = createTestDb();
+    const courseA = {
+      id: crypto.randomUUID(),
+      title: "课程A",
+      order: 0,
+      createdAt: new Date().toISOString(),
+    };
+    const courseB = {
+      id: crypto.randomUUID(),
+      title: "课程B",
+      order: 1,
+      createdAt: new Date().toISOString(),
+    };
+    db.insert(courses).values([courseA, courseB]).run();
+
+    commitImport(db, { markdown: DOC, filename: "a.md", courseId: courseA.id });
+    commitImport(db, { markdown: DOC, filename: "b.md", courseId: courseB.id });
+
+    // 单元只有一行，folderId 保持在课程A的文件夹（D18：命中保留原文件夹）；
+    // 讲义按 (folder, title) 匹配——B 文件夹无同名 → 新建讲义行（两个独立资源）
+    const unitRows = db.select().from(units).all();
+    expect(unitRows).toHaveLength(1);
+    const folderA = db
+      .select()
+      .from(libraryFolders)
+      .where(eq(libraryFolders.name, "课程A"))
+      .get();
+    expect(unitRows[0]?.folderId).toBe(folderA?.id);
+    expect(db.select().from(lectures).all()).toHaveLength(2);
+
+    // 两个课程各有自己的条目（B 的讲义是新资源）
+    const itemA = db
+      .select()
+      .from(courseItems)
+      .where(eq(courseItems.courseId, courseA.id))
+      .all();
+    const itemB = db
+      .select()
+      .from(courseItems)
+      .where(eq(courseItems.courseId, courseB.id))
+      .all();
+    expect(itemA.map((row) => row.kind)).toEqual(["lecture", "unit"]);
+    expect(itemB.map((row) => row.kind)).toEqual(["lecture", "unit"]);
+  });
+
+  it("软删的讲义再导入同名：自动恢复（deletedAt 清空）并计入 updated", () => {
+    const db = createTestDb();
+    const first = commitImport(db, { markdown: DOC, filename: "a.md" });
+    db.update(lectures)
+      .set({ deletedAt: new Date().toISOString() })
+      .where(eq(lectures.id, first.lectures[0]?.id ?? ""))
+      .run();
+    const second = commitImport(db, { markdown: DOC, filename: "a.md" });
+    expect(second.lectures[0]).toMatchObject({
+      id: first.lectures[0]?.id,
+      updated: true,
+    });
+    const row = db
+      .select()
+      .from(lectures)
+      .where(eq(lectures.id, first.lectures[0]?.id ?? ""))
+      .get();
+    expect(row?.deletedAt).toBeNull();
+  });
+});

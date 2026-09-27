@@ -253,6 +253,65 @@ describe("GET /api/student/lectures/:id（讲义详情）", () => {
   });
 });
 
+describe("讲义软删的窗口期过滤（T2A.1，D3）", () => {
+  /** 教师登录拿 Cookie */
+  async function teacherCookie(
+    app: ReturnType<typeof createApp>,
+  ): Promise<string> {
+    const login = await app.request("/api/public/teacher/login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ password: TEACHER_PASSWORD }),
+    });
+    return `tutor_session=${extractSessionToken(login)}`;
+  }
+
+  it("教师删除讲义后：学生端列表立即不可见、详情 404；响应仍无题目侧字段（泄露断言）", async () => {
+    const { app, studentCookie } = await makeApp();
+    await importDoc(app, LECTURE_MD, "讲义样例.md");
+    const cookie = await teacherCookie(app);
+
+    // 删除前：两讲都在
+    const before = await app.request("/api/student/lectures", {
+      headers: { cookie: studentCookie },
+    });
+    const beforeBody = (await before.json()) as {
+      data: { lectures: { id: string; title: string }[] };
+    };
+    expect(beforeBody.data.lectures.map((l) => l.title)).toEqual([
+      "第1讲 有理数",
+      "第2讲 数轴",
+    ]);
+    const firstId = beforeBody.data.lectures[0]?.id as string;
+
+    // 教师走真实删除接口（T2A.1 起软删；接口路径与语义确认弹层不变）
+    const del = await app.request(`/api/teacher/lectures/${firstId}`, {
+      method: "DELETE",
+      headers: { cookie },
+    });
+    expect(del.status).toBe(200);
+
+    // 学生端列表立即不含已删讲义（不需要刷新缓存以外的任何操作）
+    const after = await app.request("/api/student/lectures", {
+      headers: { cookie: studentCookie },
+    });
+    expect(after.status).toBe(200);
+    const afterBody = (await after.json()) as {
+      data: { lectures: { id: string; title: string }[] };
+    };
+    expect(studentLectureListOkSchema.safeParse(afterBody).success).toBe(true);
+    expect(afterBody.data.lectures.map((l) => l.title)).toEqual(["第2讲 数轴"]);
+    assertNoQuestionFields(afterBody);
+
+    // 详情：已删讲义按不存在处理（404，现状口径）
+    const detail = await app.request(`/api/student/lectures/${firstId}`, {
+      headers: { cookie: studentCookie },
+    });
+    expect(detail.status).toBe(404);
+    expect(((await detail.json()) as ApiErr).error).toBe("LECTURE_NOT_FOUND");
+  });
+});
+
 describe("POST /api/student/logout（学生退出登录，T2.3）", () => {
   it("删除会话行 + 清除 Cookie，之后 me 401", async () => {
     const { app, db, studentCookie } = await makeApp();

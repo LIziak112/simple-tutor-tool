@@ -21,6 +21,10 @@ import {
  * T2.6 追加 attempts、responses（作答生命周期：一次作答 + 逐题响应快照）；
  * T2.8 追加 ink（手写笔迹元数据；笔迹本体是 DATA_DIR/blobs 下的文件，不进库）；
  * T2.10 追加 events（学习痕迹事件，追加写；每题有效用时由服务端按事件计算）。
+ * Phase 2A（T2A.1）资源库 + 课程目录重构：追加 library_folders（资源库一级文件夹，D2）、
+ * course_items（课程目录条目，D6）、course_students（课程成员，D7）、data_migrations
+ * （D23 数据搬迁幂等标记）；lectures/units 加 folderId 与 deletedAt（D3 软删），
+ * courseId 废弃（保留列不再读写，@deprecated T2A）；courses 加 archivedAt/description（D4）。
  *
  * 全库约定（见 docs/开发任务清单.md §0.3 与 db-change 技能）：
  * - 主键 id 一律为应用层生成的 crypto.randomUUID() 字符串；
@@ -132,8 +136,39 @@ export type Student = typeof students.$inferSelect;
 export type NewStudent = typeof students.$inferInsert;
 
 /**
+ * 资源库文件夹表（T2A.1，D2）——讲义库与题库的一级分组，不可嵌套。
+ * 「未归类」不是行，而是 folderId = NULL 的语义（不可删、不可改名）；
+ * 删除文件夹时其内容移入未归类（服务层先把 lecture/unit 的 folderId 置 NULL）。
+ * name 不设唯一约束（清单 §3 未要求）；同名复用场景按 (name, order) 取首个。
+ */
+export const libraryFolders = sqliteTable("library_folders", {
+  /** 主键：crypto.randomUUID()（§0.3 主键约定） */
+  id: text("id").primaryKey(),
+  /** 文件夹名（同名校验由应用层处理，见 D2/清单 §3） */
+  name: text("name").notNull(),
+  /** 同级排序（小在前） */
+  order: integer("order").notNull(),
+  /** 创建时间：UTC ISO 字符串 */
+  createdAt: text("created_at").notNull(),
+});
+
+/**
+ * 数据搬迁标记表（T2A.1，D23）——应用启动时数据回填的幂等完成标记。
+ * drizzle 迁移只做 DDL；DML 回填以代码执行（src/db/backfill.ts），
+ * 每个回填步骤组对应一个 key，执行成功后在同一事务写入本表防重跑。
+ */
+export const dataMigrations = sqliteTable("data_migrations", {
+  /** 回填标识（如 t2a1_library_courses_backfill） */
+  key: text("key").primaryKey(),
+  /** 完成时间：UTC ISO 字符串 */
+  appliedAt: text("applied_at").notNull(),
+});
+
+/**
  * 课程表——可选的组织层（如「初一上」，§5.2）。导入未指定 courseId 时落到系统默认课程
  * （title='默认课程'，不存在则由 ContentService 自动创建）。
+ * Phase 2A 起课程 = 一份有序目录（course_items）+ 成员（course_students）；
+ * 「默认课程」按普通课程处理（D23-7，教师可改名/归档）。
  */
 export const courses = sqliteTable("courses", {
   /** 主键：crypto.randomUUID()（§0.3 主键约定） */
@@ -142,53 +177,139 @@ export const courses = sqliteTable("courses", {
   title: text("title").notNull(),
   /** 同级排序（小在前）；首个课程为 0 */
   order: integer("order").notNull(),
+  /** 归档时间：UTC ISO 字符串；未归档为 NULL（D4：归档后学生端不可见，可恢复） */
+  archivedAt: text("archived_at"),
+  /** 课程简介；未填为 NULL */
+  description: text("description"),
   /** 创建时间：UTC ISO 字符串 */
   createdAt: text("created_at").notNull(),
 });
 
 /**
- * 讲义表。markdown 保存讲义原文（§5.1.1(4) 原文是真相），目录等结构化数据渲染时再解析；
- * 导入按 (courseId, title) 匹配替换 markdown。
+ * 讲义表。markdown 保存讲义原文（§5.1.1(4) 原文是真相），目录等结构化数据渲染时再解析。
+ * Phase 2A 起归属资源库：folderId 组织（NULL = 未归类）、deletedAt 软删进回收站（D3）；
+ * 课程引用改走 course_items（kind='lecture'）。
  */
 export const lectures = sqliteTable("lectures", {
   /** 主键：crypto.randomUUID()（讲义 id 在导入时生成，DSL 不声明） */
   id: text("id").primaryKey(),
-  /** 所属课程 */
-  courseId: text("course_id")
-    .notNull()
-    .references(() => courses.id),
+  /**
+   * @deprecated T2A 归属改 folderId（资源库）；列保留不删（Phase 3 后统一清理），
+   * 新代码不再读写。已改可空并去掉外键（D4：删除/归档课程不影响资源库内容）。
+   */
+  courseId: text("course_id"),
+  /** 资源库文件夹（library_folders.id）；NULL = 未归类 */
+  folderId: text("folder_id").references(() => libraryFolders.id),
   /** 讲义标题（H1 标题文本，导入匹配键） */
   title: text("title").notNull(),
   /** 讲义原始 Markdown（含 H1 标题行） */
   markdown: text("markdown").notNull(),
-  /** 课程内排序（小在前） */
+  /** 课程内排序（小在前）；@deprecated T2A 展示顺序改 course_items.order */
   order: integer("order").notNull(),
   /** 最近更新时间：UTC ISO 字符串 */
   updatedAt: text("updated_at").notNull(),
+  /** 软删时间：UTC ISO 字符串；未删除为 NULL（D3：软删进回收站，可恢复） */
+  deletedAt: text("deleted_at"),
 });
 
 /**
  * 练习单元表。id 来自 DSL（frontmatter unit / v1 UNIT 注释），全局唯一（主键），
- * 编辑内容时 id 不变；导入按 unit.id 匹配合并（更新 title/topic/lectureId/courseId）。
+ * 编辑内容时 id 不变；导入按 unit.id 匹配合并（更新 title/topic/lectureId）。
+ * Phase 2A 起归属资源库：folderId 组织、deletedAt 软删（D3）；课程引用改走
+ * course_items（kind='unit'）；lectureId 语义改为「配套讲义」（D8，列不变）。
  */
 export const units = sqliteTable("units", {
   /** 主键：来自 DSL 的单元 id（§0.3 主键约定例外） */
   id: text("id").primaryKey(),
-  /** 所属课程 */
-  courseId: text("course_id")
-    .notNull()
-    .references(() => courses.id),
-  /** 关联讲义（unit.lectureTitle 按 courseId+标题匹配解析；匹配不到为 NULL，不关联） */
+  /**
+   * @deprecated T2A 归属改 folderId（资源库）；列保留不删（Phase 3 后统一清理），
+   * 新代码不再读写。已改可空并去掉外键（D4：删除/归档课程不影响资源库内容）。
+   */
+  courseId: text("course_id"),
+  /** 资源库文件夹（library_folders.id）；NULL = 未归类 */
+  folderId: text("folder_id").references(() => libraryFolders.id),
+  /**
+   * 配套讲义（lectures.id，D8）：在课程中添加讲义时可一并添加配套练习；
+   * 学生阅读讲义页底部显示「本课配套练习」。无配套为 NULL。
+   */
   lectureId: text("lecture_id").references(() => lectures.id),
   /** 单元标题 */
   title: text("title").notNull(),
   /** 主题（frontmatter topic / v1 UNIT 第三段；未标注为 NULL） */
   topic: text("topic"),
-  /** 课程内排序（小在前） */
+  /** 课程内排序（小在前）；@deprecated T2A 展示顺序改 course_items.order */
   order: integer("order").notNull(),
   /** 最近更新时间：UTC ISO 字符串 */
   updatedAt: text("updated_at").notNull(),
+  /** 软删时间：UTC ISO 字符串；未删除为 NULL（D3：软删进回收站，可恢复） */
+  deletedAt: text("deleted_at"),
 });
+
+/**
+ * 课程目录条目表（T2A.1，D6）——课程的有序目录：分节标题 / 讲义引用 / 练习单元引用。
+ * - 引用而非复制（D1）：只存 refId，资源库改动全课程即时生效；
+ * - kind='section' 时 refId 为 NULL、title 必填；lecture/unit 时 refId 必填、
+ *   title 为 NULL（标题取资源当前值）；
+ * - 唯一约束 (courseId, kind, refId)：同一资源在同一课程只能出现一次。
+ *   SQLite 对含 NULL 的唯一键不判重 → section（refId=NULL）多条合法（期望行为，
+ *   同名分节如需限制在应用层校验）；重复添加 lecture/unit 由服务层返回
+ *   409 DUPLICATE_COURSE_ITEM；
+ * - visible/publishAt（D5）：条目级可见性；新添加默认 visible=true。
+ */
+export const courseItems = sqliteTable(
+  "course_items",
+  {
+    /** 主键：crypto.randomUUID()（§0.3 主键约定） */
+    id: text("id").primaryKey(),
+    /** 所属课程（courses.id） */
+    courseId: text("course_id")
+      .notNull()
+      .references(() => courses.id),
+    /** 条目类型：section=分节标题 / lecture=讲义 / unit=练习单元 */
+    kind: text("kind").$type<"section" | "lecture" | "unit">().notNull(),
+    /** 引用资源 id（lectures.id / units.id）；section 为 NULL */
+    refId: text("ref_id"),
+    /** 分节标题（仅 kind='section' 使用）；其余为 NULL */
+    title: text("title"),
+    /** 课程内排序（小在前；同课程内全 kind 共用一个序列） */
+    order: integer("order").notNull(),
+    /** 是否对学生可见（D5 条件之一；新添加默认 true，D6） */
+    visible: integer("visible", { mode: "boolean" }).notNull().default(true),
+    /** 定时发布时间：UTC ISO 字符串；NULL = 不定时（D5：publishAt ≤ 现在才可见） */
+    publishAt: text("publish_at"),
+    /** 创建时间：UTC ISO 字符串 */
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    // 同一资源在同一课程唯一（section refId=NULL 不受约束，多条合法，见表注释）
+    uniqueIndex("course_items_course_kind_ref_uk").on(
+      table.courseId,
+      table.kind,
+      table.refId,
+    ),
+  ],
+);
+
+/**
+ * 课程成员表（T2A.1，D7）——只由教师添加/移出；复合主键 (courseId, studentId)。
+ * 移出成员 = 删除本表行（已交卷的课程练习记录保留在 attempts，属 T2A.6 语义）。
+ */
+export const courseStudents = sqliteTable(
+  "course_students",
+  {
+    /** 所属课程（courses.id） */
+    courseId: text("course_id")
+      .notNull()
+      .references(() => courses.id),
+    /** 成员学生（students.id） */
+    studentId: text("student_id")
+      .notNull()
+      .references(() => students.id),
+    /** 加入时间：UTC ISO 字符串 */
+    joinedAt: text("joined_at").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.courseId, table.studentId] })],
+);
 
 /**
  * 题目表（结构化字段 = 判分与统计必需的抽取结果，§5.1.1(4)）。
@@ -532,6 +653,24 @@ export const events = sqliteTable(
 export type Course = typeof courses.$inferSelect;
 /** courses 表插入类型 */
 export type NewCourse = typeof courses.$inferInsert;
+/** library_folders 表行类型（SELECT 结果） */
+export type LibraryFolder = typeof libraryFolders.$inferSelect;
+/** library_folders 表插入类型 */
+export type NewLibraryFolder = typeof libraryFolders.$inferInsert;
+/** data_migrations 表行类型（SELECT 结果） */
+export type DataMigration = typeof dataMigrations.$inferSelect;
+/** data_migrations 表插入类型 */
+export type NewDataMigration = typeof dataMigrations.$inferInsert;
+/** course_items 表行类型（SELECT 结果） */
+export type CourseItem = typeof courseItems.$inferSelect;
+/** course_items 表插入类型 */
+export type NewCourseItem = typeof courseItems.$inferInsert;
+/** course_items 条目类型（section/lecture/unit） */
+export type CourseItemKind = NonNullable<CourseItem["kind"]>;
+/** course_students 表行类型（SELECT 结果） */
+export type CourseStudent = typeof courseStudents.$inferSelect;
+/** course_students 表插入类型 */
+export type NewCourseStudent = typeof courseStudents.$inferInsert;
 /** lectures 表行类型（SELECT 结果） */
 export type Lecture = typeof lectures.$inferSelect;
 /** lectures 表插入类型 */

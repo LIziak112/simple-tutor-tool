@@ -4,7 +4,7 @@ import type {
   LearningEventBatchData,
   LectureEvent,
 } from "@tutor/contract";
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq, isNull } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { events, lectures, type NewEventRow } from "../db/schema";
 import { HttpError } from "../lib/http-error";
@@ -78,12 +78,13 @@ export function appendLectureEvents(
   _studentId: string,
   batch: readonly LectureEvent[],
 ): LearningEventBatchData {
-  // 讲义可见性校验（一对一场景学生可见全部讲义，T2.3 口径；这里只验存在）
+  // 讲义可见性校验（一对一场景学生可见全部讲义，T2.3 口径；这里只验存在——
+  // T2A.1 起讲义软删，已删讲义按不存在处理，D3 窗口期过滤）
   for (const event of batch) {
     const row = db
       .select({ id: lectures.id })
       .from(lectures)
-      .where(eq(lectures.id, event.lectureId))
+      .where(and(eq(lectures.id, event.lectureId), isNull(lectures.deletedAt)))
       .get();
     if (row === undefined) {
       throw new HttpError(404, "LECTURE_NOT_FOUND", "讲义不存在");

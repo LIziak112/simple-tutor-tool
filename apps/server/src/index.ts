@@ -3,6 +3,7 @@ import { serve } from "@hono/node-server";
 import pino from "pino";
 import { createApp } from "./app";
 import { loadOrCreateSecretKey, readConfig } from "./config";
+import { runBackfills } from "./db/backfill";
 import { createDb } from "./db/client";
 import { runMigrations } from "./db/migrate";
 
@@ -26,10 +27,12 @@ logger.info(
 
 // 数据库：打开（或创建）DATA_DIR/tutor.db 并执行未应用的迁移。
 // runMigrations 幂等（已应用过的迁移记录在 __drizzle_migrations 表），每次启动都可安全调用。
+// 迁移之后执行 D23 数据搬迁（runBackfills，幂等：data_migrations 完成标记防重跑）。
 const dbPath = join(config.dataDir, "tutor.db");
 const db = createDb(dbPath);
 runMigrations(db);
-logger.info({ dbPath }, "数据库已就绪（迁移已执行）");
+runBackfills(db);
+logger.info({ dbPath }, "数据库已就绪（迁移与数据搬迁已执行）");
 
 const app = createApp({
   isProduction: config.isProduction,

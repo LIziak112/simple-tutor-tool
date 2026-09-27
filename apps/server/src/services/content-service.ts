@@ -31,9 +31,12 @@ import {
   wrapLectureMd,
   wrapSingleQuestionMd,
 } from "@tutor/md-dsl";
-import { asc, eq, isNotNull, isNull } from "drizzle-orm";
+import { and, asc, eq, isNotNull, isNull } from "drizzle-orm";
+import { ensureCourseFolder } from "../db/backfill";
 import type { Db } from "../db/client";
 import {
+  courseItems,
+  courseStudents,
   courses,
   imports,
   knowledgePoints,
@@ -43,6 +46,7 @@ import {
   units,
 } from "../db/schema";
 import { HttpError } from "../lib/http-error";
+import { softDeleteLecture } from "./library-service";
 import {
   loadKnowledgeIdByName,
   questionFields,
@@ -56,12 +60,21 @@ import {
  *   v2 lintDocument（§5.1 末段「v1 兼容」：导入时自动识别）；
  * - preview：纯读，不写库（dry-run 预览，§5.1）；
  * - commit：有 error 级 issue 拒绝（422 LINT_ERROR）；否则事务内落库——
- *   imports 留档原文 → 讲义按 (courseId, title) 替换 markdown → 单元按 id 合并 →
+ *   imports 留档原文 → 讲义按 (folderId, title) 替换 markdown → 单元按 id 合并 →
  *   题目 id 已存在则更新 + version+1（跨单元同 id 也按更新，unitId 随之更新）→
  *   知识考点同名归一（knowledge_points 复用 + 关联全量替换）；
  * - getContentTree：课程 → 讲义/单元 → 题目摘要（软删题目过滤）；
- * - T1.12：单题编辑（id/unitId 不变、version+1）、题目软删、讲义整篇编辑与物理删除
- *   （关联单元解除关联）、reorder（order 按新顺序下标重写）、课程 CRUD（非空拒删）。
+ * - T1.12：单题编辑（id/unitId 不变、version+1）、题目软删、讲义整篇编辑与
+ *   软删（T2A.1 起取消物理删除，D3）、reorder（order 按新顺序下标重写）、
+ *   课程 CRUD（非空拒删）。
+ *
+ * T2A.1 兼容适配（Phase 2A 改进任务清单）：
+ * - 导入 courseId 参数语义：内容进该课程同名文件夹（无则建）+ 追加 course_items
+ *   （讲义 visible=true、单元 visible=false；重复资源跳过不报错——导入是幂等
+ *   更新场景，不走 409）。资源归属资源库（folderId），课程只是引用；
+ * - getContentTree 改为从 course_items 组装（响应结构保持原样，含单元 questions）；
+ * - 讲义删除改软删（deleteLecture 委托 LibraryService）；
+ * - 学生端讲义读路径全部过滤 deletedAt（D3 窗口期；可见性模型切换属 T2A.5）。
  *
  * 「原文是真相」（§5.1.1(4)）：questions.sourceMd / lectures.markdown / imports.rawMd
  * 保存原文；结构化字段（type/answers/…）只是判分与统计必需的抽取结果。
@@ -127,6 +140,10 @@ export function previewImport(
  * 导入提交。有 error 级 issue 时抛 422 LINT_ERROR（extra._issues 附错误列表，
  * 响应体为统一错误壳的超集）；courseId 缺省时使用系统默认课程（不存在则创建）。
  * 成功返回导入统计报告（报告同时序列化进 imports.reportJson 留档）。
+ *
+ * T2A.1：内容归属资源库——courseId 用于定位「课程同名文件夹」（无则建）与追加
+ * 课程目录条目（讲义 visible=true、单元 visible=false；已在该课程的资源跳过，
+ * 导入是幂等更新场景，不走 409）。响应形状不变（courseId 仍为实际课程 id）。
  */
 export function commitImport(
   db: Db,
@@ -152,22 +169,34 @@ export function commitImport(
     const now = new Date().toISOString();
     const importId = crypto.randomUUID();
 
-    // ---- 讲义：按 (courseId, title) 匹配替换 markdown，无则插入 ----
+    const course = tx
+      .select({ id: courses.id, title: courses.title })
+      .from(courses)
+      .where(eq(courses.id, courseId))
+      .get();
+    if (course === undefined) {
+      throw new HttpError(404, "COURSE_NOT_FOUND", "指定的课程不存在");
+    }
+    // 课程同名文件夹（D23-1 同款规则：存在即复用，无则建）
+    const folder = ensureCourseFolder(tx, course.title, now);
+
+    // ---- 讲义：按 (folderId, title) 匹配替换 markdown，无则插入 ----
     const lectureReports: ImportLectureReport[] = [];
     const lectureIdByTitle = new Map<string, string>();
-    const courseLectures = tx
+    const folderLectures = tx
       .select({ id: lectures.id, title: lectures.title })
       .from(lectures)
-      .where(eq(lectures.courseId, courseId))
+      .where(eq(lectures.folderId, folder.id))
       .all();
-    for (const row of courseLectures) lectureIdByTitle.set(row.title, row.id);
-    let nextLectureOrder = courseLectures.length;
+    for (const row of folderLectures) lectureIdByTitle.set(row.title, row.id);
+    let nextLectureOrder = folderLectures.length;
 
     for (const lecture of parsed.lectures) {
       const existingId = lectureIdByTitle.get(lecture.title);
       if (existingId !== undefined) {
+        // 命中即替换 markdown；软删行同时恢复（与题目「同 id 再导入即恢复」同口径）
         tx.update(lectures)
-          .set({ markdown: lecture.markdown, updatedAt: now })
+          .set({ markdown: lecture.markdown, updatedAt: now, deletedAt: null })
           .where(eq(lectures.id, existingId))
           .run();
         lectureReports.push({
@@ -178,10 +207,11 @@ export function commitImport(
         });
       } else {
         const id = crypto.randomUUID();
+        // 注意：不写 courseId（@deprecated T2A，归属改 folderId）
         tx.insert(lectures)
           .values({
             id,
-            courseId,
+            folderId: folder.id,
             title: lecture.title,
             markdown: lecture.markdown,
             order: nextLectureOrder,
@@ -211,24 +241,27 @@ export function commitImport(
     let nextUnitOrder = tx
       .select({ id: units.id })
       .from(units)
-      .where(eq(units.courseId, courseId))
+      .where(eq(units.folderId, folder.id))
       .all().length;
 
     for (const unit of parsed.units) {
-      // lectureTitle 按 (courseId, title) 匹配讲义；匹配不到不关联（lectureId=null，不报错）
+      // lectureTitle 按文件夹内标题匹配讲义；匹配不到不关联（lectureId=null，不报错）
       const lectureId =
         unit.lectureTitle !== undefined
           ? (lectureIdByTitle.get(unit.lectureTitle) ?? null)
           : null;
-      const patch = {
-        courseId,
-        lectureId,
-        title: unit.title,
-        topic: unit.topic ?? null,
-        updatedAt: now,
-      };
       if (existingUnitIds.has(unit.id)) {
-        tx.update(units).set(patch).where(eq(units.id, unit.id)).run();
+        // 命中已有单元：保留其原文件夹（D18），软删行恢复；不写 courseId/folderId
+        tx.update(units)
+          .set({
+            lectureId,
+            title: unit.title,
+            topic: unit.topic ?? null,
+            updatedAt: now,
+            deletedAt: null,
+          })
+          .where(eq(units.id, unit.id))
+          .run();
         unitReports.push({
           id: unit.id,
           title: unit.title,
@@ -237,7 +270,15 @@ export function commitImport(
         });
       } else {
         tx.insert(units)
-          .values({ id: unit.id, ...patch, order: nextUnitOrder })
+          .values({
+            id: unit.id,
+            folderId: folder.id,
+            lectureId,
+            title: unit.title,
+            topic: unit.topic ?? null,
+            order: nextUnitOrder,
+            updatedAt: now,
+          })
           .run();
         nextUnitOrder += 1;
         existingUnitIds.add(unit.id);
@@ -287,6 +328,54 @@ export function commitImport(
         }
         syncQuestionKnowledge(tx, question, knowledgeIdByName);
       }
+    }
+
+    // ---- 追加课程目录条目（T2A.1）：讲义 visible=true、单元 visible=false；
+    //      已在该课程的资源跳过（唯一约束 + onConflictDoNothing，幂等不报错） ----
+    let nextItemOrder =
+      tx
+        .select({ order: courseItems.order })
+        .from(courseItems)
+        .where(eq(courseItems.courseId, courseId))
+        .all()
+        .reduce((max, row) => Math.max(max, row.order), -1) + 1;
+    for (const report of lectureReports) {
+      tx.insert(courseItems)
+        .values({
+          id: crypto.randomUUID(),
+          courseId,
+          kind: "lecture",
+          refId: report.id,
+          title: null,
+          order: nextItemOrder,
+          visible: true,
+          publishAt: null,
+          createdAt: now,
+        })
+        .onConflictDoNothing({
+          target: [courseItems.courseId, courseItems.kind, courseItems.refId],
+        })
+        .run();
+      nextItemOrder += 1;
+    }
+    for (const report of unitReports) {
+      tx.insert(courseItems)
+        .values({
+          id: crypto.randomUUID(),
+          courseId,
+          kind: "unit",
+          refId: report.id,
+          title: null,
+          order: nextItemOrder,
+          visible: false,
+          publishAt: null,
+          createdAt: now,
+        })
+        .onConflictDoNothing({
+          target: [courseItems.courseId, courseItems.kind, courseItems.refId],
+        })
+        .run();
+      nextItemOrder += 1;
     }
 
     // ---- imports 留档（原文 = 老师提交的原文，v1 不存转换文本）----
@@ -342,11 +431,15 @@ function resolveCourseId(db: Db, courseId: string | undefined): string {
   return id;
 }
 
-// ---------- 内容树：GET /api/teacher/content（T1.11） ----------
+// ---------- 内容树：GET /api/teacher/content（T1.11；T2A.1 改 course_items 组装） ----------
 
 /**
  * 读取教师端内容页的树状结构：课程 → 讲义（标题+更新时间）/ 练习单元（展开题目摘要）。
- * - 软删题目（deletedAt 非空）不出现在摘要里（T1.12 起删除的题目从列表消失）；
+ * **响应结构保持原样**（教师布置作业下拉与 E2E 依赖它）：
+ * - T2A.1 起课程内容从 course_items 组装（讲义列表 = lecture 条目按 item 顺序；
+ *   单元列表 = unit 条目按 item 顺序——两份列表各自保序，交错关系不体现）；
+ * - 软删题目（deletedAt 非空）不出现在摘要里；软删讲义/单元同样不出现在树里
+ *   （D3：教师课程页「已删除」标记属 T2A.2/T2A.4 的课程编辑页，本接口纯过滤）；
  * - 讲义无题目数组；单元题目按单元内 order 排序，考点经关联表按考点名排序保证稳定输出；
  * - 未导入任何内容时 courses 为空数组（前端据此显示空态引导）。
  */
@@ -410,19 +503,21 @@ export function getContentTree(db: Db): ContentTree {
     }
   }
 
-  const treeCourses: ContentTreeCourse[] = allCourses.map((course) => {
-    // 局部变量命名避开表名（同名 const 会在初始化前引用自身，TDZ ReferenceError）
-    const lectureRows = db
+  // 存活资源（软删过滤）一次读全；目录条目引用已删资源时直接跳过该条目
+  const lectureById = new Map(
+    db
       .select({
         id: lectures.id,
         title: lectures.title,
         updatedAt: lectures.updatedAt,
       })
       .from(lectures)
-      .where(eq(lectures.courseId, course.id))
-      .orderBy(asc(lectures.order), asc(lectures.title))
-      .all();
-    const unitRows = db
+      .where(isNull(lectures.deletedAt))
+      .all()
+      .map((row) => [row.id, row] as const),
+  );
+  const unitById = new Map(
+    db
       .select({
         id: units.id,
         title: units.title,
@@ -430,9 +525,42 @@ export function getContentTree(db: Db): ContentTree {
         updatedAt: units.updatedAt,
       })
       .from(units)
-      .where(eq(units.courseId, course.id))
-      .orderBy(asc(units.order), asc(units.title))
+      .where(isNull(units.deletedAt))
       .all()
+      .map((row) => [row.id, row] as const),
+  );
+
+  const treeCourses: ContentTreeCourse[] = allCourses.map((course) => {
+    const items = db
+      .select({ kind: courseItems.kind, refId: courseItems.refId })
+      .from(courseItems)
+      .where(eq(courseItems.courseId, course.id))
+      .orderBy(asc(courseItems.order), asc(courseItems.id))
+      .all();
+    const lectureNodes = items
+      .filter((item) => item.kind === "lecture")
+      .map((item) =>
+        item.refId === null ? undefined : lectureById.get(item.refId),
+      )
+      .filter(
+        (row): row is { id: string; title: string; updatedAt: string } =>
+          row !== undefined,
+      );
+    const unitNodes = items
+      .filter((item) => item.kind === "unit")
+      .map((item) =>
+        item.refId === null ? undefined : unitById.get(item.refId),
+      )
+      .filter(
+        (
+          row,
+        ): row is {
+          id: string;
+          title: string;
+          topic: string | null;
+          updatedAt: string;
+        } => row !== undefined,
+      )
       .map((unit) => ({
         ...unit,
         questions: questionsByUnit.get(unit.id) ?? [],
@@ -440,8 +568,8 @@ export function getContentTree(db: Db): ContentTree {
     return {
       id: course.id,
       title: course.title,
-      lectures: lectureRows,
-      units: unitRows,
+      lectures: lectureNodes,
+      units: unitNodes,
     };
   });
 
@@ -681,29 +809,16 @@ export function updateLecture(
 }
 
 /**
- * 讲义删除（DELETE /api/teacher/lectures/:id）：物理删除（§5.2 讲义表无 deletedAt，
- * 题目软删是硬性规则、讲义不在其列；整篇重新导入即可恢复）。
- * 关联该讲的单元先解除关联（units.lectureId 置 NULL，单元本身保留）。
+ * 讲义删除（DELETE /api/teacher/lectures/:id）：软删（T2A.1 起取消 T1.12 的物理删除，
+ * D3——进回收站可恢复）。委托 LibraryService.softDeleteLecture（幂等；行不存在 404）。
+ * 关联单元的 lectureId 保留：恢复讲义即回到原状（「从课程移除」由目录条目删除承担，
+ * 属 T2A.4）。
  */
 export function deleteLecture(db: Db, id: string): void {
-  const row = db
-    .select({ id: lectures.id })
-    .from(lectures)
-    .where(eq(lectures.id, id))
-    .get();
-  if (row === undefined) {
-    throw new HttpError(404, "LECTURE_NOT_FOUND", "讲义不存在");
-  }
-  db.transaction((tx) => {
-    tx.update(units)
-      .set({ lectureId: null })
-      .where(eq(units.lectureId, id))
-      .run();
-    tx.delete(lectures).where(eq(lectures.id, id)).run();
-  });
+  softDeleteLecture(db, id);
 }
 
-/** reorder 各 kind 的元信息：错误码 + 中文名 + 存活 id 集合（题目软删视同不存在） */
+/** reorder 各 kind 的元信息：错误码 + 中文名 + 存活 id 集合（软删实体视同不存在） */
 function reorderLiveIds(
   db: Db,
   kind: ReorderRequest["kind"],
@@ -722,17 +837,97 @@ function reorderLiveIds(
           .where(isNull(questions.deletedAt))
           .all()
       : kind === "lecture"
-        ? db.select({ id: lectures.id }).from(lectures).all()
+        ? db
+            .select({ id: lectures.id })
+            .from(lectures)
+            .where(isNull(lectures.deletedAt))
+            .all()
         : kind === "unit"
-          ? db.select({ id: units.id }).from(units).all()
+          ? db
+              .select({ id: units.id })
+              .from(units)
+              .where(isNull(units.deletedAt))
+              .all()
           : db.select({ id: courses.id }).from(courses).all();
   return { ...meta, ids: new Set(ids.map((row) => row.id)) };
 }
 
 /**
+ * 讲义/单元全局排序后，把各课程内同类目录条目的顺序同步为新相对顺序。
+ * 槽位保持：条目只在本课程同类条目已占据的 order 槽位内重排——与分节/其他类型
+ * 条目的交错关系不变（course_items.order 是全 kind 共用一个序列）。
+ * 已删资源不在全局顺序中（排最末，保持其原相对顺序——sort 稳定）。
+ */
+function reorderCourseItemSlots(db: Db, kind: "lecture" | "unit"): void {
+  const resourceIds =
+    kind === "lecture"
+      ? db
+          .select({ id: lectures.id })
+          .from(lectures)
+          .where(isNull(lectures.deletedAt))
+          .orderBy(asc(lectures.order), asc(lectures.title))
+          .all()
+          .map((row) => row.id)
+      : db
+          .select({ id: units.id })
+          .from(units)
+          .where(isNull(units.deletedAt))
+          .orderBy(asc(units.order), asc(units.title))
+          .all()
+          .map((row) => row.id);
+  const position = new Map(
+    resourceIds.map((id, index) => [id, index] as const),
+  );
+
+  const courseIds = [
+    ...new Set(
+      db
+        .select({ courseId: courseItems.courseId })
+        .from(courseItems)
+        .where(eq(courseItems.kind, kind))
+        .all()
+        .map((row) => row.courseId),
+    ),
+  ];
+  for (const courseId of courseIds) {
+    const rows = db
+      .select({
+        id: courseItems.id,
+        refId: courseItems.refId,
+        order: courseItems.order,
+      })
+      .from(courseItems)
+      .where(
+        and(eq(courseItems.courseId, courseId), eq(courseItems.kind, kind)),
+      )
+      .orderBy(asc(courseItems.order), asc(courseItems.id))
+      .all();
+    if (rows.length < 2) continue;
+    const slots = rows.map((row) => row.order); // 升序槽位（保持交错关系）
+    const sorted = [...rows].sort(
+      (a, b) =>
+        (position.get(a.refId ?? "") ?? Number.MAX_SAFE_INTEGER) -
+        (position.get(b.refId ?? "") ?? Number.MAX_SAFE_INTEGER),
+    );
+    db.transaction((tx) => {
+      for (const [index, row] of sorted.entries()) {
+        if (row.order !== slots[index]) {
+          tx.update(courseItems)
+            .set({ order: slots[index] })
+            .where(eq(courseItems.id, row.id))
+            .run();
+        }
+      }
+    });
+  }
+}
+
+/**
  * 排序（POST /api/teacher/reorder）：order 按 ids 数组下标（0 起）重写。
  * ids 为该 kind 下排序作用域内实体的完整新顺序（题目 = 所属单元内的题目）；
- * 任一 id 不存在（题目软删视同不存在）→ 404，事务回滚保持原顺序。
+ * 任一 id 不存在（题目/讲义/单元软删视同不存在）→ 404，事务回滚保持原顺序。
+ * 讲义/单元排序同时同步各课程目录条目的相对顺序（T2A.1 起内容页顺序取自
+ * course_items，见 reorderCourseItemSlots）。
  */
 export function reorderContent(db: Db, input: ReorderRequest): void {
   const { code, entityName, ids: liveIds } = reorderLiveIds(db, input.kind);
@@ -767,6 +962,9 @@ export function reorderContent(db: Db, input: ReorderRequest): void {
       }
     }
   });
+  if (input.kind === "lecture" || input.kind === "unit") {
+    reorderCourseItemSlots(db, input.kind);
+  }
 }
 
 /** 新建课程（POST /api/teacher/courses）：order 追加到末尾 */
@@ -805,6 +1003,11 @@ export function updateCourse(
 /**
  * 课程删除（DELETE /api/teacher/courses/:id）：课程下仍有讲义或单元时拒绝
  * （409 COURSE_NOT_EMPTY，避免孤儿数据）；空课程直接物理删除。
+ *
+ * T2A.1 兼容口径：内容判定以 course_items 为准（资源库改引用制），旧列
+ * lectures.courseId / units.courseId 仅对迁移前数据兜底；有成员同样拒绝
+ * （course_students 外键保护——T2A.4 改为 D4 语义：按作答记录判定 + 清理
+ * 目录条目与成员后删除）。
  */
 export function deleteCourse(db: Db, id: string): void {
   const row = db
@@ -815,41 +1018,62 @@ export function deleteCourse(db: Db, id: string): void {
   if (row === undefined) {
     throw new HttpError(404, "COURSE_NOT_FOUND", "课程不存在");
   }
-  const hasLecture =
+  const hasItems =
+    db
+      .select({ id: courseItems.id })
+      .from(courseItems)
+      .where(eq(courseItems.courseId, id))
+      .get() !== undefined;
+  // @deprecated T2A：旧列兜底（迁移前数据 folderId 回填前的归属痕迹）
+  const hasLegacyLecture =
     db
       .select({ id: lectures.id })
       .from(lectures)
       .where(eq(lectures.courseId, id))
       .get() !== undefined;
-  const hasUnit =
+  const hasLegacyUnit =
     db
       .select({ id: units.id })
       .from(units)
       .where(eq(units.courseId, id))
       .get() !== undefined;
-  if (hasLecture || hasUnit) {
+  if (hasItems || hasLegacyLecture || hasLegacyUnit) {
     throw new HttpError(
       409,
       "COURSE_NOT_EMPTY",
       "课程下还有讲义或练习单元，请先删除或移出它们，再删除课程",
     );
   }
+  const hasMembers =
+    db
+      .select({ courseId: courseStudents.courseId })
+      .from(courseStudents)
+      .where(eq(courseStudents.courseId, id))
+      .get() !== undefined;
+  if (hasMembers) {
+    throw new HttpError(
+      409,
+      "COURSE_NOT_EMPTY",
+      "课程下还有成员，请先移出全部成员，再删除课程",
+    );
+  }
   db.delete(courses).where(eq(courses.id, id)).run();
 }
 
-// ---------- 学生端：讲义（T2.3） ----------
+// ---------- 学生端：讲义（T2.3；T2A.1 加软删过滤） ----------
 
 /**
  * 讲义 id → 关联单元主题（units.lectureId 指向本讲义）。
  * 一篇讲义可能被多个单元关联：取单元 order 最靠前且标注了 topic 的那个；
  * 无关联单元 / 关联单元都未标注主题时映射缺席（调用方兜底 null）。
+ * T2A.1：已软删单元不再贡献 topic（D3 窗口期过滤）。
  */
 function lectureTopics(db: Db): Map<string, string> {
   const map = new Map<string, string>();
   const rows = db
     .select({ lectureId: units.lectureId, topic: units.topic })
     .from(units)
-    .where(isNotNull(units.lectureId))
+    .where(and(isNotNull(units.lectureId), isNull(units.deletedAt)))
     .orderBy(asc(units.order))
     .all();
   for (const row of rows) {
@@ -860,8 +1084,13 @@ function lectureTopics(db: Db): Map<string, string> {
 }
 
 /**
- * GET /api/student/lectures：全部讲义摘要，按课程顺序
- * （course.order → lecture.order，与教师端内容树同口径）。
+ * GET /api/student/lectures：全部讲义摘要。
+ *
+ * T2A.1 窗口期口径（可见性模型切换到 D5 属 T2A.5，此处不引入）：
+ * - 软删讲义（deletedAt 非空）立即不出现在列表（D3 窗口期过滤）；
+ * - 排序改按课程目录条目顺序（course.order → course_items.order）；
+ *   未被任何课程引用的讲义按 lectures.order 排在末尾；同一讲义被多个课程
+ *   引用时只出现一次（D5 并集方向的过渡行为）。
  *
  * 安全口径（AGENTS.md 第 3 条）：只 SELECT id/title/updatedAt 三列——列表接口
  * 不读 markdown 内容列，更不触碰 questions 表任何字段；泄露测试见
@@ -875,14 +1104,50 @@ export function listStudentLectures(db: Db): {
       id: lectures.id,
       title: lectures.title,
       updatedAt: lectures.updatedAt,
+      order: lectures.order,
     })
     .from(lectures)
-    .innerJoin(courses, eq(lectures.courseId, courses.id))
-    .orderBy(asc(courses.order), asc(lectures.order), asc(lectures.title))
+    .where(isNull(lectures.deletedAt))
     .all();
+
+  // 每篇讲义在课程目录中的最优（最靠前）位置
+  const itemRows = db
+    .select({
+      refId: courseItems.refId,
+      courseOrder: courses.order,
+      itemOrder: courseItems.order,
+    })
+    .from(courseItems)
+    .innerJoin(courses, eq(courseItems.courseId, courses.id))
+    .where(eq(courseItems.kind, "lecture"))
+    .all();
+  const bestKeyByLecture = new Map<string, readonly [number, number]>();
+  for (const row of itemRows) {
+    if (row.refId === null) continue;
+    const key: readonly [number, number] = [row.courseOrder, row.itemOrder];
+    const existing = bestKeyByLecture.get(row.refId);
+    if (
+      existing === undefined ||
+      key[0] < existing[0] ||
+      (key[0] === existing[0] && key[1] < existing[1])
+    ) {
+      bestKeyByLecture.set(row.refId, key);
+    }
+  }
+
+  const sorted = [...rows].sort((a, b) => {
+    const ka = bestKeyByLecture.get(a.id) ?? [Number.MAX_SAFE_INTEGER, a.order];
+    const kb = bestKeyByLecture.get(b.id) ?? [Number.MAX_SAFE_INTEGER, b.order];
+    if (ka[0] !== kb[0]) return ka[0] - kb[0];
+    if (ka[1] !== kb[1]) return ka[1] - kb[1];
+    return a.order === b.order
+      ? a.title.localeCompare(b.title)
+      : a.order - b.order;
+  });
+
   const topics = lectureTopics(db);
   return {
-    lectures: rows.map((row) => ({
+    lectures: sorted.map((row) => ({
       id: row.id,
       title: row.title,
       topic: topics.get(row.id) ?? null,
@@ -897,6 +1162,7 @@ export function listStudentLectures(db: Db): {
  * 讲义全量下发是设计如此（§5.3）：讲义里的 :::solution 是讲解内容而非题目答案，
  * 学生端应见（前端默认折叠、点开查看）；但本函数只读 lectures 表行，
  * 不附带任何 questions 表字段（stemMd/answers/solutionMd/hintsJson/optionsJson）。
+ * T2A.1：已软删讲义按不存在处理（404，D3 窗口期过滤）。
  */
 export function getStudentLecture(db: Db, id: string): StudentLectureDetail {
   const row = db
@@ -907,7 +1173,7 @@ export function getStudentLecture(db: Db, id: string): StudentLectureDetail {
       updatedAt: lectures.updatedAt,
     })
     .from(lectures)
-    .where(eq(lectures.id, id))
+    .where(and(eq(lectures.id, id), isNull(lectures.deletedAt)))
     .get();
   if (row === undefined) {
     throw new HttpError(404, "LECTURE_NOT_FOUND", "讲义不存在");
