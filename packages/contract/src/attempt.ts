@@ -18,6 +18,10 @@ import { studentAnswerSchema } from "./grading.ts";
  *   允许携带参考答案（answers）、详解（solutionMd）与含答案标记的原始题干——
  *   但仍剥离提示内容（只给 hintCount，提示按需下发是 T2.11），泄露测试用
  *   assertNoLeak({ allow: ["answers", "answer", "solutionMd"] }) 放行后断言无 hints。
+ * - 分步提示（T2.11）：提示内容只经 POST /attempts/:id/hints 按需逐条下发；
+ *   两个视图只回显「已解锁」的提示条目（hintsOpened，学生自己看过的不算泄露），
+ *   未解锁条目的内容文本绝不出现在任何学生端响应（泄露矩阵专项断言，见
+ *   routes/student-hints.test.ts）。
  *
  * 学生答案复用 grading.ts 的 StudentAnswer（T2.5），不在本文件重定义。
  */
@@ -66,6 +70,17 @@ export const attemptSummarySchema = z.object({
 /** POST /api/student/assignments/:id/attempt 响应 data（创建或取回进行中/已交的 attempt） */
 export const attemptStartDataSchema = attemptSummarySchema;
 
+/**
+ * 已解锁的提示条目（T2.11）：草稿视图/结果视图回显、解锁响应共用的最小形态。
+ * - index：提示序号（0 起，对齐 hint_open 事件的 index 语义与题目 hintsJson 数组下标）；
+ * - text：提示内容（RichMarkdown 渲染）。**只有已解锁（学生自己请求过）的条目携带
+ *   text**；未解锁条目的内容绝不进任何学生端响应（AGENTS 第 3 条）。
+ */
+export const hintOpenedEntrySchema = z.object({
+  index: z.number().int().min(0),
+  text: z.string(),
+});
+
 /** GET /api/student/attempts/:id 的草稿视图（status=draft）响应 data */
 export const attemptDraftDataSchema = z.object({
   attempt: attemptSummarySchema,
@@ -80,6 +95,11 @@ export const attemptDraftDataSchema = z.object({
    * 键名用 drafts（学生自己的答案），与结果视图的 answers（参考答案）区分。
    */
   drafts: z.record(z.string(), studentAnswerSchema),
+  /**
+   * 已解锁提示（T2.11）：questionId → 已解锁条目（含内容，刷新页面后回显）。
+   * 未解锁提示的内容不在此（也不在任何学生端响应）。
+   */
+  hintsOpened: z.record(z.string(), hintOpenedEntrySchema.array()),
 });
 
 /**
@@ -89,8 +109,9 @@ export const attemptDraftDataSchema = z.object({
  * - solutionMd：详解（快照；未提供为 null）；
  * - answer：本人答案（未作为 null）；
  * - autoCorrect：服务端判分结果 true/false；null = 不能自动判定
- *   （未作答、手写题未填最终答案、题目无标准答案——交教师批改，T3.2）。
- * 注意：快照里的提示内容不随本视图下发（hintCount 之外无 hints 字段，T2.11 按需）。
+ *   （未作答、手写题未填最终答案、题目无标准答案——交教师批改，T3.2）；
+ * - hintsOpened：做题时已解锁的提示条目（含内容；交卷后回看自己用过的提示，
+ *   T2.11）。快照里的其余提示内容仍不随本视图下发（hintCount 是唯一计数形态）。
  */
 export const attemptResultQuestionSchema = z.object({
   questionId: z.string().min(1),
@@ -103,13 +124,15 @@ export const attemptResultQuestionSchema = z.object({
     stemMd: z.string(),
     /** 选项纯文本（仅 choice/multi 携带） */
     options: z.array(z.string()).optional(),
-    /** 提示数量（内容不在此下发） */
+    /** 提示数量（未解锁的提示内容不在此下发） */
     hintCount: z.number().int().min(0),
   }),
   answers: questionAnswersSchema.nullable(),
   solutionMd: z.string().nullable(),
   answer: studentAnswerSchema.nullable(),
   autoCorrect: z.boolean().nullable(),
+  /** 做题时已解锁的提示（按序号升序；未解锁过为空数组） */
+  hintsOpened: hintOpenedEntrySchema.array(),
 });
 
 /** 结果视图的得分汇总（口径见各字段注释；scoreAuto = correct/autoGradable 的百分比） */
@@ -157,6 +180,39 @@ export const attemptAnswerSaveDataSchema = z.object({
 });
 
 /**
+ * POST /api/student/attempts/:id/hints 请求体（T2.11 分步提示）：
+ * 获取该题第 index 条提示（0 起）并解锁（服务端记录 hint_open 事件与已解锁集合）。
+ * index 只拦非整数；越界（<0 或 ≥该题提示总数）统一由服务端判
+ * HINT_INDEX_OUT_OF_RANGE（400，T2.11 验收项），保证两个越界方向同一错误码。
+ */
+export const hintOpenRequestSchema = z.object({
+  questionId: z.string().min(1, "questionId 不能为空"),
+  index: z.number().int({ message: "index 必须是整数" }),
+});
+
+/**
+ * POST /api/student/attempts/:id/hints 响应 data：
+ * 只含**被请求的那一条**提示内容 + 计数（总数/已解锁数/剩余数）。
+ * hint 是全部学生端接口中唯一允许携带提示内容的键（泄露测试用
+ * assertNoLeak({ allow: ["hint"] }) 放行后，专项比对未解锁条目绝不出现）。
+ * draft 与 submitted/graded 均可用（交卷后回看自己请求过的提示，验收项）。
+ */
+export const hintOpenDataSchema = z.object({
+  /** 本次请求的题目 id（回显） */
+  questionId: z.string().min(1),
+  /** 本次请求的提示序号（回显） */
+  index: z.number().int().min(0),
+  /** 第 index 条提示的内容（唯一提示内容字段） */
+  hint: z.string(),
+  /** 该题提示总数 */
+  hintCount: z.number().int().min(0),
+  /** 已解锁提示数（去重后的集合大小；responses.hintsUsed 同口径） */
+  hintsUsed: z.number().int().min(0),
+  /** 尚未解锁的提示数（= hintCount - hintsUsed） */
+  hintsRemaining: z.number().int().min(0),
+});
+
+/**
  * GET /api/student/attempts/:id 响应 data：按 attempt.status 二选一
  * （draft → 草稿视图，submitted/graded → 结果视图；判别键在嵌套的 attempt.status
  * 上，Zod 不支持嵌套判别，用普通 union，具体形态由 attempt.ts 契约测试锁定）。
@@ -172,6 +228,8 @@ export const attemptDetailDataSchema = z.union([
  * - ATTEMPT_NOT_FOUND：attempt 不存在（404）；
  * - ALREADY_SUBMITTED：attempt 已交卷，不能再保存草稿 / 重复交卷（409，验收项）；
  * - QUESTION_NOT_FOUND：题目不存在、已软删或不在该作业单元内（404）；
+ * - HINT_INDEX_OUT_OF_RANGE：提示序号越界（<0 或 ≥该题提示总数，含无提示题；
+ *   400，T2.11 验收项）；
  * - FORBIDDEN：非本人 attempt / 未被指派的作业（403）；
  * - UNAUTHORIZED / VALIDATION_ERROR：与 auth 模块同义（401 / 400）。
  */
@@ -180,6 +238,7 @@ export const attemptErrorCodeSchema = z.enum([
   "ATTEMPT_NOT_FOUND",
   "ALREADY_SUBMITTED",
   "QUESTION_NOT_FOUND",
+  "HINT_INDEX_OUT_OF_RANGE",
   "FORBIDDEN",
   "UNAUTHORIZED",
   "VALIDATION_ERROR",
@@ -197,6 +256,8 @@ export const attemptResultOkSchema = apiOkExtend(attemptResultDataSchema);
 export const attemptAnswerSaveOkSchema = apiOkExtend(
   attemptAnswerSaveDataSchema,
 );
+/** 携带提示解锁结果的成功响应壳（hint 是唯一放行的提示内容键） */
+export const hintOpenOkSchema = apiOkExtend(hintOpenDataSchema);
 
 // ---------- 推断类型导出 ----------
 
@@ -211,6 +272,9 @@ export type AttemptAnswerSaveRequest = z.infer<
   typeof attemptAnswerSaveRequestSchema
 >;
 export type AttemptAnswerSaveData = z.infer<typeof attemptAnswerSaveDataSchema>;
+export type HintOpenedEntry = z.infer<typeof hintOpenedEntrySchema>;
+export type HintOpenRequest = z.infer<typeof hintOpenRequestSchema>;
+export type HintOpenData = z.infer<typeof hintOpenDataSchema>;
 export type AttemptErrorCode = z.infer<typeof attemptErrorCodeSchema>;
 /** 详情响应 data：草稿视图或结果视图（服务端按 attempt.status 返回其一） */
 export type AttemptDetailData = z.infer<typeof attemptDetailDataSchema>;

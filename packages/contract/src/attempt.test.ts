@@ -9,6 +9,8 @@ import {
   attemptStartDataSchema,
   attemptStatusSchema,
   attemptSummarySchema,
+  hintOpenDataSchema,
+  hintOpenRequestSchema,
 } from "./attempt.ts";
 
 /**
@@ -18,7 +20,9 @@ import {
  *   本人答案收在 drafts 键（键名与结果视图的参考答案 answers 区分）；
  * - 结果视图：快照 + 参考答案 + 详解 + 本人答案 + autoCorrect，但无提示内容键；
  * - 草稿保存请求体：answer 必须是 StudentAnswer 判别联合成员；
- * - 错误码集合（ALREADY_SUBMITTED 为 T2.6 验收项）。
+ * - 分步提示（T2.11）：请求体 {questionId, index}、响应只含被请求的那一条
+ *   提示 + 计数；两个视图的 hintsOpened 只回显已解锁条目；
+ * - 错误码集合（ALREADY_SUBMITTED / HINT_INDEX_OUT_OF_RANGE 为验收项）。
  */
 
 const ASSIGNMENT_ID = "44444444-4444-4444-8444-444444444444";
@@ -73,7 +77,7 @@ describe("attemptStatusSchema / attemptSummarySchema", () => {
 });
 
 describe("attemptDraftDataSchema（草稿视图）", () => {
-  it("接受合法草稿视图：QuestionPublic 形态题目 + drafts 答案表", () => {
+  it("接受合法草稿视图：QuestionPublic 形态题目 + drafts 答案表 + hintsOpened 已解锁提示", () => {
     const parsed = attemptDraftDataSchema.parse({
       attempt: SUMMARY_DRAFT,
       title: "周末加练",
@@ -100,8 +104,13 @@ describe("attemptDraftDataSchema（草稿视图）", () => {
         "练习四-1": { kind: "judge", value: true },
         "练习四-4": { kind: "fill", values: ["4", ""] },
       },
+      // T2.11：刷新后回显已解锁提示（只含学生请求过的条目）
+      hintsOpened: {
+        "练习四-4": [{ index: 0, text: "同号相加，取相同的符号，并把绝对值相加。" }],
+      },
     });
     expect(parsed.drafts["练习四-1"]).toEqual({ kind: "judge", value: true });
+    expect(parsed.hintsOpened["练习四-4"]?.[0]?.index).toBe(0);
   });
 
   it("草稿视图里的题目携带教师侧字段会被剥离（strip 语义，与 QuestionPublic 一致）", () => {
@@ -123,6 +132,7 @@ describe("attemptDraftDataSchema（草稿视图）", () => {
         },
       ],
       drafts: {},
+      hintsOpened: {},
     });
     const question = parsed.questions[0];
     expect(question && "answers" in question).toBe(false);
@@ -159,6 +169,7 @@ describe("attemptResultDataSchema（结果视图）", () => {
         solutionMd: "$0$ 是整数，但既不是正数也不是负数。",
         answer: { kind: "judge", value: true },
         autoCorrect: true,
+        hintsOpened: [],
       },
       {
         questionId: "练习四-4",
@@ -174,6 +185,8 @@ describe("attemptResultDataSchema（结果视图）", () => {
         solutionMd: null,
         answer: { kind: "fill", values: ["4", "-6", ""] },
         autoCorrect: false,
+        // 做题时看过第 0 条提示 → 结果视图回显该条（其余不下发）
+        hintsOpened: [{ index: 0, text: "同号相加，取相同的符号。" }],
       },
     ],
   } as const;
@@ -224,6 +237,7 @@ describe("attemptResultDataSchema（结果视图）", () => {
             solutionMd: null,
             answer: null,
             autoCorrect: null,
+            hintsOpened: [],
           },
         ],
         summary: {
@@ -237,6 +251,77 @@ describe("attemptResultDataSchema（结果视图）", () => {
         },
       }).success,
     ).toBe(true);
+  });
+
+  it("结果视图缺 hintsOpened 字段整体拒绝（必填；回显已解锁提示是 T2.11 契约形态）", () => {
+    const { hintsOpened: _omit, ...questionWithoutHints } = {
+      ...RESULT.questions[0],
+      questionId: "练习四-9",
+    };
+    expect(
+      attemptResultDataSchema.safeParse({
+        ...RESULT,
+        questions: [questionWithoutHints],
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe("hintOpenRequestSchema / hintOpenDataSchema（T2.11 分步提示）", () => {
+  it("请求体：questionId 非空 + index 整数（负数/超界留给服务端统一错误码）", () => {
+    expect(
+      hintOpenRequestSchema.parse({ questionId: "练习四-8", index: 0 }),
+    ).toEqual({ questionId: "练习四-8", index: 0 });
+    // 负数与超大值在契约层合法（服务端按 HINT_INDEX_OUT_OF_RANGE 拒绝）
+    expect(
+      hintOpenRequestSchema.safeParse({ questionId: "练习四-8", index: -1 })
+        .success,
+    ).toBe(true);
+    expect(
+      hintOpenRequestSchema.safeParse({ questionId: "练习四-8", index: 99 })
+        .success,
+    ).toBe(true);
+    // 非整数 / 缺 questionId → 契约层 400 VALIDATION_ERROR
+    expect(
+      hintOpenRequestSchema.safeParse({ questionId: "练习四-8", index: 1.5 })
+        .success,
+    ).toBe(false);
+    expect(
+      hintOpenRequestSchema.safeParse({ questionId: "", index: 0 }).success,
+    ).toBe(false);
+  });
+
+  it("响应 data：只含被请求的那一条提示 + 总数/已解锁/剩余计数", () => {
+    const parsed = hintOpenDataSchema.parse({
+      questionId: "练习四-8",
+      index: 0,
+      hint: "先回顾异号两数相加的法则。",
+      hintCount: 2,
+      hintsUsed: 1,
+      hintsRemaining: 1,
+    });
+    expect(parsed.hint).toContain("异号");
+    // 计数字段为负 → 拒绝
+    expect(
+      hintOpenDataSchema.safeParse({
+        questionId: "练习四-8",
+        index: 0,
+        hint: "…",
+        hintCount: 2,
+        hintsUsed: -1,
+        hintsRemaining: 3,
+      }).success,
+    ).toBe(false);
+    expect(
+      hintOpenDataSchema.safeParse({
+        questionId: "练习四-8",
+        index: -1,
+        hint: "…",
+        hintCount: 2,
+        hintsUsed: 0,
+        hintsRemaining: 2,
+      }).success,
+    ).toBe(false);
   });
 });
 
@@ -282,6 +367,7 @@ describe("attemptDetailDataSchema / attemptErrorCodeSchema", () => {
         dueAt: null,
         questions: [],
         drafts: {},
+        hintsOpened: {},
       }).success,
     ).toBe(true);
     expect(
@@ -303,7 +389,7 @@ describe("attemptDetailDataSchema / attemptErrorCodeSchema", () => {
     ).toBe(true);
   });
 
-  it("错误码集合含 ALREADY_SUBMITTED（T2.6 验收项）与越权/不存在码", () => {
+  it("错误码集合含 ALREADY_SUBMITTED（T2.6 验收项）、HINT_INDEX_OUT_OF_RANGE（T2.11 验收项）与越权/不存在码", () => {
     expect(attemptErrorCodeSchema.parse("ALREADY_SUBMITTED")).toBe(
       "ALREADY_SUBMITTED",
     );
@@ -312,6 +398,9 @@ describe("attemptDetailDataSchema / attemptErrorCodeSchema", () => {
     );
     expect(attemptErrorCodeSchema.parse("QUESTION_NOT_FOUND")).toBe(
       "QUESTION_NOT_FOUND",
+    );
+    expect(attemptErrorCodeSchema.parse("HINT_INDEX_OUT_OF_RANGE")).toBe(
+      "HINT_INDEX_OUT_OF_RANGE",
     );
     expect(attemptErrorCodeSchema.safeParse("SUBMIT_TWICE").success).toBe(
       false,
