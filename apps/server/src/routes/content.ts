@@ -38,7 +38,10 @@ import {
  * - GET    /lectures/:id、PUT /lectures/:id、DELETE /lectures/:id：
  *   讲义完整内容 / 整篇编辑（title 从 H1 重取）/ 软删（T2A.1 起改软删，D3）；
  * - POST   /reorder：拖拽排序，order 按 ids 下标重写（T1.12）；
- * - POST   /courses、PATCH /courses/:id、DELETE /courses/:id：课程 CRUD（T1.12）。
+ * - POST   /courses、PATCH /courses/:id、DELETE /courses/:id：课程 CRUD（T1.12；
+ *   T2A.4 起 PATCH 接受 name（同 title）/description/archived，DELETE 改按 D4——
+ *   有作答记录 409 COURSE_HAS_ATTEMPTS，无作答连目录条目与成员一并清理）。
+ *   GET /courses、GET /courses/:id 及课程目录/成员路由在 courses.ts（T2A.4）。
  *
  * 业务逻辑在 ContentService（api-endpoint 技能约定：路由只做鉴权→校验→调 service→包装）。
  * 返回类型不显式标注 Hono：链式注册把路由签名累积进推断类型（AppType / hc 前提）。

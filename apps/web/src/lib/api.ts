@@ -10,6 +10,14 @@ import {
   type ContentTree,
   type CourseCreateRequest,
   type CourseData,
+  type CourseDetailData,
+  type CourseItemsAddData,
+  type CourseItemsAddRequest,
+  type CourseItemsReorderRequest,
+  type CourseItemUpdateRequest,
+  type CourseListData,
+  type CourseMembersRequest,
+  type CourseStudentViewData,
   type CourseUpdateRequest,
   type HintOpenData,
   type ImportBatchData,
@@ -323,14 +331,17 @@ export function reorderContentApi(request: ReorderRequest): Promise<null> {
   return callApi(() => api.api.teacher.reorder.$post({ json: request }));
 }
 
-/** 新建课程 */
+/** 新建课程（title 即课程名；description 可选，T2A.4） */
 export function createCourseApi(
   request: CourseCreateRequest,
 ): Promise<CourseData> {
   return callApi(() => api.api.teacher.courses.$post({ json: request }));
 }
 
-/** 课程重命名（title 缺省 = 不改；json 传参说明同 updateQuestion） */
+/**
+ * 更新课程（name/title 同义、description 显式 null 清空、archived 归档开关；
+ * json 传参说明同 updateQuestion）。
+ */
 export function updateCourseApi(
   id: string,
   request: CourseUpdateRequest,
@@ -339,11 +350,93 @@ export function updateCourseApi(
   return callApi(() => api.api.teacher.courses[":id"].$patch(args));
 }
 
-/** 删除课程（课程下有讲义/单元时后端 409 COURSE_NOT_EMPTY） */
+/** 删除课程（有作答记录时后端 409 COURSE_HAS_ATTEMPTS，D4：提示改用归档） */
 export function deleteCourseApi(id: string): Promise<null> {
   return callApi(() =>
     api.api.teacher.courses[":id"].$delete({ param: { id } }),
   );
+}
+
+// ---------- T2A.4：课程编辑页（目录编排 + 可见性 + 成员） ----------
+
+/** 课程列表（archived=false 未归档 / true 已归档；含成员数、条目数、可见条目数、memberIds） */
+export function fetchTeacherCourses(
+  archived: boolean,
+): Promise<CourseListData> {
+  return callApi(() =>
+    api.api.teacher.courses.$get(
+      archived ? { query: { archived: "true" } } : undefined,
+    ),
+  );
+}
+
+/** 课程详情（目录条目含资源摘要与状态标签数据 + 成员列表 + hasAttempts） */
+export function fetchCourseDetail(id: string): Promise<CourseDetailData> {
+  return callApi(() => api.api.teacher.courses[":id"].$get({ param: { id } }));
+}
+
+/** 学生可见预览（按 D5 过滤的成员可见目录；studentId 为成员 id） */
+export function fetchCourseStudentView(
+  courseId: string,
+  studentId: string,
+): Promise<CourseStudentViewData> {
+  // hc 对带 param 的路由只推断出 param 入参，query/json 以独立变量传入（同 updateQuestion）
+  const args = { param: { id: courseId }, query: { studentId } };
+  return callApi(() =>
+    api.api.teacher.courses[":id"]["student-view"].$get(args),
+  );
+}
+
+/** 批量追加目录条目（重复跳过并返回清单，D6；withCompanionUnits 一并加配套练习，D8） */
+export function addCourseItemsApi(
+  courseId: string,
+  request: CourseItemsAddRequest,
+): Promise<CourseItemsAddData> {
+  const args = { param: { id: courseId }, json: request };
+  return callApi(() => api.api.teacher.courses[":id"].items.$post(args));
+}
+
+/** 目录排序（ids 为该课程全部条目的完整新顺序） */
+export function reorderCourseItemsApi(
+  courseId: string,
+  request: CourseItemsReorderRequest,
+): Promise<null> {
+  const args = { param: { id: courseId }, json: request };
+  return callApi(() => api.api.teacher.courses[":id"].items.order.$put(args));
+}
+
+/** 目录条目更新（可见开关 / 定时发布 / 分节改名；json 传参说明同 updateQuestion） */
+export function updateCourseItemApi(
+  id: string,
+  request: CourseItemUpdateRequest,
+): Promise<CourseDetailData["items"][number]> {
+  const args = { param: { id }, json: request };
+  return callApi(() => api.api.teacher["course-items"][":id"].$patch(args));
+}
+
+/** 从课程目录移除条目（不动资源库） */
+export function deleteCourseItemApi(id: string): Promise<null> {
+  return callApi(() =>
+    api.api.teacher["course-items"][":id"].$delete({ param: { id } }),
+  );
+}
+
+/** 添加成员（已在课幂等） */
+export function addCourseMembersApi(
+  courseId: string,
+  request: CourseMembersRequest,
+): Promise<null> {
+  const args = { param: { id: courseId }, json: request };
+  return callApi(() => api.api.teacher.courses[":id"].members.$post(args));
+}
+
+/** 移出成员（D7：立即看不到课程；已交卷记录保留，数据不删） */
+export function removeCourseMembersApi(
+  courseId: string,
+  request: CourseMembersRequest,
+): Promise<null> {
+  const args = { param: { id: courseId }, json: request };
+  return callApi(() => api.api.teacher.courses[":id"].members.$delete(args));
 }
 
 // ---------- T2.1：学生管理（教师端） ----------

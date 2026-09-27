@@ -64,6 +64,8 @@ const teacherRoutes = (() => {
   const SettingsPage = lazy(() => import("./pages/teacher/SettingsPage"));
   const LibraryPage = lazy(() => import("./pages/teacher/LibraryPage"));
   const ImportPage = lazy(() => import("./pages/teacher/ImportPage"));
+  const CoursesPage = lazy(() => import("./pages/teacher/CoursesPage"));
+  const CourseEditPage = lazy(() => import("./pages/teacher/CourseEditPage"));
   const StudentsPage = lazy(() => import("./pages/teacher/StudentsPage"));
   const AssignmentsPage = lazy(() => import("./pages/teacher/AssignmentsPage"));
   const PlaceholderPage = lazy(() => import("./pages/teacher/PlaceholderPage"));
@@ -132,6 +134,22 @@ const teacherRoutes = (() => {
           element={
             <Suspense fallback={pageFallback}>
               <ImportPage />
+            </Suspense>
+          }
+        />
+        <Route
+          path="courses"
+          element={
+            <Suspense fallback={pageFallback}>
+              <CoursesPage />
+            </Suspense>
+          }
+        />
+        <Route
+          path="courses/:id"
+          element={
+            <Suspense fallback={pageFallback}>
+              <CourseEditPage />
             </Suspense>
           }
         />

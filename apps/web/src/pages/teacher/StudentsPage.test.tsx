@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type {
+  CourseListData,
   StudentCreateData,
   StudentListData,
   StudentSummary,
@@ -9,6 +10,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createStudentApi,
   fetchStudentsApi,
+  fetchTeacherCourses,
   resetStudentLinkApi,
   resetStudentPasswordApi,
   updateStudentApi,
@@ -20,6 +22,7 @@ import StudentsPage from "./StudentsPage";
  * 学生页组件测试（T2.1 三态 + 列表操作 + 新增流程）。
  * API 层 mock（真实接口行为由后端 students.test.ts 集成覆盖）；
  * 复制降级链路在 lib/copy.test.ts 单测。
+ * T2A.4：mock 课程列表（所在课程列 / 新增可选课程 / 管理课程的数据源）。
  */
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -31,6 +34,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
     updateStudentApi: vi.fn(),
     resetStudentPasswordApi: vi.fn(),
     resetStudentLinkApi: vi.fn(),
+    fetchTeacherCourses: vi.fn(),
   };
 });
 
@@ -48,6 +52,13 @@ const mockedUpdate = vi.mocked(updateStudentApi);
 const mockedResetPassword = vi.mocked(resetStudentPasswordApi);
 const mockedResetLink = vi.mocked(resetStudentLinkApi);
 const mockedCopy = vi.mocked(copyText);
+const mockedCourses = vi.mocked(fetchTeacherCourses);
+
+/** T2A.4：课程列表默认返回空（所在课程列显示「未加入任何课程」） */
+const emptyCourseList = (archived: boolean): CourseListData => ({
+  courses: [],
+  ...(archived ? {} : {}),
+});
 
 /** 取非空值（替代非空断言，biome noNonNullAssertion） */
 function must<T>(value: T | undefined | null, what: string): T {
@@ -103,6 +114,9 @@ const LIST: StudentListData = { students: [STUDENT_A, STUDENT_B] };
 describe("StudentsPage 三态", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockedCourses.mockImplementation((archived: boolean) =>
+      Promise.resolve(emptyCourseList(archived)),
+    );
   });
 
   it("加载中显示骨架与提示，不白屏", () => {
@@ -136,6 +150,9 @@ describe("StudentsPage 列表与操作", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockedFetch.mockResolvedValue(LIST);
+    mockedCourses.mockImplementation((archived: boolean) =>
+      Promise.resolve(emptyCourseList(archived)),
+    );
   });
 
   it("渲染姓名、登录名、备注、归档标记与两种登录方式状态", async () => {
@@ -150,6 +167,39 @@ describe("StudentsPage 列表与操作", () => {
     expect(screen.getAllByText("专属链接：已开启").length).toBe(1);
     expect(screen.getAllByText("专属链接：已关闭").length).toBe(1);
     expect(screen.getByText("共 2 名学生")).toBeInTheDocument();
+  });
+
+  it("T2A.4：所在课程列显示课程徽标，未加入显示提示", async () => {
+    mockedCourses.mockImplementation((archived: boolean) =>
+      Promise.resolve(
+        archived
+          ? { courses: [] }
+          : {
+              courses: [
+                {
+                  id: "0b6f18ae-6b9a-4d0e-8b7c-9b1b1b1b1b1b",
+                  name: "初一上",
+                  description: null,
+                  archived: false,
+                  archivedAt: null,
+                  order: 0,
+                  memberCount: 1,
+                  itemCount: 3,
+                  visibleItemCount: 2,
+                  memberIds: [STUDENT_A.id],
+                  hasAttempts: false,
+                  createdAt: "2026-09-01T00:00:00.000Z",
+                },
+              ],
+            },
+      ),
+    );
+    renderPage();
+    // 张三在「初一上」，李四未加入任何课程
+    expect(await screen.findByText("初一上")).toBeInTheDocument();
+    expect(screen.getByText("未加入任何课程")).toBeInTheDocument();
+    // 行操作「管理课程」按钮存在
+    expect(screen.getAllByRole("button", { name: "管理课程" }).length).toBe(2);
   });
 
   it("点按开关调用 PATCH（linkEnabled 取反）", async () => {
@@ -223,6 +273,9 @@ describe("StudentsPage 新增学生", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockedFetch.mockResolvedValue({ students: [] });
+    mockedCourses.mockImplementation((archived: boolean) =>
+      Promise.resolve(emptyCourseList(archived)),
+    );
   });
 
   it("登录名默认跟随姓名；提交正确 payload；生成密码时弹一次性明文", async () => {

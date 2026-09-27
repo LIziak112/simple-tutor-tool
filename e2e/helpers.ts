@@ -53,6 +53,9 @@ export async function teacherApiLogin(
  * T2A.3：导入不再自动创建「默认课程」——先显式建课（已存在则复用），commit 走
  * courseId 兼容路径（内容进课程同名文件夹 + 追加课程目录条目），保证内容树
  * （教师布置作业下拉的数据源）可见。
+ * T2A.4：两个 worker（chromium/webkit 的主流程）同时冷启动会竞态出重名
+ * 「默认课程」（ensureCourse 去重删除也可能恰好落在本次 import 之前）——
+ * commit 404 时重新定位课程重试（单元按 id 幂等合并，最多 3 次）。
  */
 export async function importPracticeSample(
   request: APIRequestContext,
@@ -67,35 +70,70 @@ export async function importPracticeSample(
     ),
     "utf8",
   );
-  const res = await request.post("/api/teacher/import/commit", {
-    data: {
-      markdown,
-      filename: "练习样例.md",
-      courseId: await ensureCourse(request),
-    },
-  });
-  if (!res.ok()) {
+  for (let attempt = 0; ; attempt += 1) {
+    const res = await request.post("/api/teacher/import/commit", {
+      data: {
+        markdown,
+        filename: "练习样例.md",
+        courseId: await ensureCourse(request),
+      },
+    });
+    if (res.ok()) return;
+    if (res.status() === 404 && attempt < 3) continue;
     throw new Error(
       `导入练习样例失败：HTTP ${res.status()} ${await res.text()}`,
     );
   }
 }
 
-/** 取「默认课程」id（无则创建；course 名重复时取首个——测试库内只有一个） */
-async function ensureCourse(request: APIRequestContext): Promise<string> {
+/** 按 title 查现有课程（GET /content；order 升序、title 升序，重名时顺序稳定） */
+async function findCoursesByTitle(
+  request: APIRequestContext,
+  title: string,
+): Promise<{ id: string }[]> {
   const tree = await request.get("/api/teacher/content");
-  if (tree.ok()) {
-    const body = (await tree.json()) as {
-      data: { courses: { id: string; title: string }[] };
-    };
-    const existing = body.data.courses.find((c) => c.title === "默认课程");
-    if (existing !== undefined) return existing.id;
+  if (!tree.ok()) {
+    throw new Error(`查询内容树失败：HTTP ${tree.status()}`);
+  }
+  const body = (await tree.json()) as {
+    data: { courses: { id: string; title: string }[] };
+  };
+  return body.data.courses.filter((course) => course.title === title);
+}
+
+/** 删除重名课程中除首个外的其余课程（best-effort，失败交由调用方重试吸收） */
+async function pruneDuplicateCourses(
+  request: APIRequestContext,
+  courses: { id: string }[],
+): Promise<void> {
+  for (const extra of courses.slice(1)) {
+    // D4（T2A.4）：无作答的课程可删，目录条目随之清理、资源库不动
+    await request.delete(`/api/teacher/courses/${extra.id}`);
+  }
+}
+
+/**
+ * 取「默认课程」id（无则创建）。并发兜底：两个 worker 同时冷启动可能各自创建出
+ * 重名课程——保留首个（同一 GET /content 的稳定顺序，两个 worker 结论一致）、
+ * 删除其余；若 import 恰好进了被删课程，由 importPracticeSample 的重试吸收。
+ */
+async function ensureCourse(request: APIRequestContext): Promise<string> {
+  const existing = await findCoursesByTitle(request, "默认课程");
+  if (existing.length > 0) {
+    await pruneDuplicateCourses(request, existing);
+    return existing[0]?.id as string;
   }
   const created = await request.post("/api/teacher/courses", {
     data: { title: "默认课程" },
   });
   if (!created.ok()) {
     throw new Error(`创建默认课程失败：HTTP ${created.status()}`);
+  }
+  // 并发下可能两个 worker 同时创建：再查一次去重，返回保留下来的首个
+  const after = await findCoursesByTitle(request, "默认课程");
+  if (after.length > 0) {
+    await pruneDuplicateCourses(request, after);
+    return after[0]?.id as string;
   }
   const body = (await created.json()) as { data: { id: string } };
   return body.data.id;

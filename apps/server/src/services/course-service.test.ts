@@ -2,6 +2,8 @@ import { asc, eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import type { Db } from "../db/client.ts";
 import {
+  assignments,
+  attempts,
   courseItems,
   courseStudents,
   courses,
@@ -15,7 +17,11 @@ import { HttpError } from "../lib/http-error.ts";
 import {
   addCourseItems,
   addCourseMembers,
+  appendCourseItems,
+  courseHasAttempts,
   deleteCourseItem,
+  getCourseDetail,
+  listCoursesForTeacher,
   listVisibleItems,
   removeCourseMembers,
   reorderCourseItems,
@@ -25,6 +31,8 @@ import {
 /**
  * CourseService 服务层测试（T2A.1）：目录条目 CRUD/排序（含 409
  * DUPLICATE_COURSE_ITEM）、成员增删、listVisibleItems 的 D5 过滤。
+ * T2A.4 追加：appendCourseItems（批量跳过 + D8 配套练习）、教师端列表/详情
+ * （状态标签、可见条目数、hasAttempts）。
  */
 
 const T0 = "2026-09-01T00:00:00.000Z";
@@ -688,5 +696,198 @@ describe("CourseService：listVisibleItems（D5 过滤）", () => {
         "2026-12-01T00:00:00.000Z",
       ),
     ).toEqual([]);
+  });
+});
+
+describe("CourseService：appendCourseItems（T2A.4 批量口径 + D8）", () => {
+  it("withCompanionUnits：配套单元紧跟讲义之后、companion 标记 true（验收项）", () => {
+    const db = createTestDb();
+    const { courseId, lectureId, unitId } = seed(db);
+    // seed 中 u-live 的配套讲义就是 lectureId（units.lectureId）
+    const result = appendCourseItems(
+      db,
+      courseId,
+      [{ kind: "lecture", refId: lectureId }],
+      { withCompanionUnits: true },
+    );
+    expect(result.skipped).toEqual([]);
+    expect(
+      result.added.map((item) => [item.kind, item.refId, item.companion]),
+    ).toEqual([
+      ["lecture", lectureId, false],
+      ["unit", unitId, true],
+    ]);
+    // 顺序：讲义在前、配套单元紧随（order 连续递增）
+    expect(result.added.map((item) => item.order)).toEqual([0, 1]);
+  });
+
+  it("已在课程的资源跳过并返回清单；被跳过的讲义不展开配套", () => {
+    const db = createTestDb();
+    const { courseId, lectureId, unitId } = seed(db);
+    // 先单独加入讲义（不带配套）
+    appendCourseItems(db, courseId, [{ kind: "lecture", refId: lectureId }]);
+    const result = appendCourseItems(
+      db,
+      courseId,
+      [{ kind: "lecture", refId: lectureId }],
+      { withCompanionUnits: true },
+    );
+    expect(result.added).toEqual([]);
+    expect(result.skipped).toHaveLength(1);
+    expect(result.skipped[0]?.reason).toBe("已在本课程");
+    // 配套单元未因讲义被跳过而自动加入
+    expect(
+      db
+        .select({ id: courseItems.id })
+        .from(courseItems)
+        .where(eq(courseItems.refId, unitId))
+        .all(),
+    ).toEqual([]);
+
+    // 配套单元已在课程：再讲一遍（先删讲义条目重加）→ 配套跳过、清单有据
+    db.delete(courseItems).where(eq(courseItems.courseId, courseId)).run();
+    addCourseItems(db, courseId, [{ kind: "unit", refId: unitId }]);
+    const second = appendCourseItems(
+      db,
+      courseId,
+      [{ kind: "lecture", refId: lectureId }],
+      { withCompanionUnits: true },
+    );
+    expect(second.added.map((item) => item.kind)).toEqual(["lecture"]);
+    expect(second.skipped).toHaveLength(1);
+    expect(second.skipped[0]?.kind).toBe("unit");
+    expect(second.skipped[0]?.reason).toBe("已在本课程");
+  });
+
+  it("visible=false 对整批生效；已软删的配套单元不进入（D8 只带未删单元）", () => {
+    const db = createTestDb();
+    const { courseId, lectureId, deletedUnitId } = seed(db);
+    // 把已删单元也指向该讲义，验证软删配套不自动带入
+    db.update(units)
+      .set({ lectureId })
+      .where(eq(units.id, deletedUnitId))
+      .run();
+    const result = appendCourseItems(
+      db,
+      courseId,
+      [{ kind: "lecture", refId: lectureId }],
+      { visible: false, withCompanionUnits: true },
+    );
+    expect(result.added.every((item) => item.visible === false)).toBe(true);
+    expect(result.added.map((item) => item.refId)).not.toContain(deletedUnitId);
+  });
+});
+
+describe("CourseService：教师端列表 / 详情 / hasAttempts（T2A.4）", () => {
+  it("courseHasAttempts：条目引用单元有作答 → true（D4 现状口径）", () => {
+    const db = createTestDb();
+    const { courseId, lectureId, unitId, studentId } = seed(db);
+    addCourseItems(db, courseId, [
+      { kind: "lecture", refId: lectureId },
+      { kind: "unit", refId: unitId },
+    ]);
+    expect(courseHasAttempts(db, courseId)).toBe(false);
+
+    const assignmentId = crypto.randomUUID();
+    db.insert(assignments)
+      .values({
+        id: assignmentId,
+        unitId,
+        title: "作业",
+        createdAt: T0,
+      })
+      .run();
+    db.insert(attempts)
+      .values({
+        id: crypto.randomUUID(),
+        studentId,
+        assignmentId,
+        unitId,
+        status: "draft",
+        startedAt: T0,
+      })
+      .run();
+    expect(courseHasAttempts(db, courseId)).toBe(true);
+  });
+
+  it("getCourseDetail：状态标签优先级（删除 > 无题目 > 隐藏 > 定时 > 可见）", () => {
+    const db = createTestDb();
+    const { courseId, lectureId, unitId, emptyUnitId, studentId } = seed(db);
+    // 追加一个「加入后才被软删」的单元（D3：课程页该条目显示「已删除」标记）
+    const laterDeletedUnitId = "u-later-deleted";
+    db.insert(units)
+      .values({
+        id: laterDeletedUnitId,
+        courseId: null,
+        folderId: null,
+        lectureId: null,
+        title: "后删单元",
+        order: 3,
+        updatedAt: T0,
+        deletedAt: null,
+      })
+      .run();
+    addCourseMembers(db, courseId, [studentId]);
+    const inserted = addCourseItems(db, courseId, [
+      { kind: "section", title: "第一周" },
+      { kind: "lecture", refId: lectureId },
+      { kind: "unit", refId: unitId },
+      { kind: "unit", refId: emptyUnitId },
+      { kind: "unit", refId: laterDeletedUnitId },
+    ]);
+    updateCourseItem(db, inserted[1]?.id as string, {
+      publishAt: "2027-01-01T00:00:00.000Z",
+    });
+    updateCourseItem(db, inserted[2]?.id as string, { visible: false });
+    db.update(units)
+      .set({ deletedAt: T0 })
+      .where(eq(units.id, laterDeletedUnitId))
+      .run();
+    const detail = getCourseDetail(db, courseId, new Date(NOW));
+    expect(detail.items.map((item) => [item.kind, item.status])).toEqual([
+      ["section", "visible"],
+      ["lecture", "scheduled"],
+      ["unit", "hidden"],
+      ["unit", "no-questions"],
+      ["unit", "deleted"],
+    ]);
+    expect(detail.items[2]?.questionCount).toBe(1);
+    expect(detail.members[0]?.displayName).toBe("张三");
+  });
+
+  it("listCoursesForTeacher：计数与归档筛选；visibleItemCount 不计隐藏与已删资源", () => {
+    const db = createTestDb();
+    const { courseId, lectureId, unitId, studentId } = seed(db);
+    addCourseMembers(db, courseId, [studentId]);
+    const inserted = addCourseItems(db, courseId, [
+      { kind: "lecture", refId: lectureId },
+      { kind: "unit", refId: unitId },
+      { kind: "section", title: "第一周" },
+    ]);
+    updateCourseItem(db, inserted[1]?.id as string, { visible: false });
+    const summary = listCoursesForTeacher(db, { archived: false }).find(
+      (row) => row.id === courseId,
+    );
+    expect(summary?.memberCount).toBe(1);
+    expect(summary?.memberIds).toEqual([studentId]);
+    expect(summary?.itemCount).toBe(3);
+    // 讲义 + 分节可见；单元隐藏不计
+    expect(summary?.visibleItemCount).toBe(2);
+    expect(summary?.hasAttempts).toBe(false);
+
+    db.update(courses)
+      .set({ archivedAt: T0 })
+      .where(eq(courses.id, courseId))
+      .run();
+    expect(
+      listCoursesForTeacher(db, { archived: false }).find(
+        (row) => row.id === courseId,
+      ),
+    ).toBeUndefined();
+    expect(
+      listCoursesForTeacher(db, { archived: true }).find(
+        (row) => row.id === courseId,
+      )?.archived,
+    ).toBe(true);
   });
 });

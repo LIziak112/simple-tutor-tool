@@ -1,9 +1,10 @@
-import type { StudentSummary } from "@tutor/contract";
+import type { CourseSummary, StudentSummary } from "@tutor/contract";
 import {
   Archive,
   ArchiveRestore,
   CircleCheck,
   Copy,
+  GraduationCap,
   KeyRound,
   Loader2,
   Plus,
@@ -12,7 +13,7 @@ import {
   UserRound,
   UserRoundPlus,
 } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -23,6 +24,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import {
+  useAddStudentToCourses,
+  useSyncStudentCourses,
+  useTeacherCourses,
+} from "@/features/courses/course-queries";
 import {
   useCreateStudent,
   useResetStudentLink,
@@ -36,8 +42,11 @@ import { formatRelativeTime } from "@/lib/time";
 
 /**
  * /t/students 学生页（T2.1）：名单 + 两种登录方式管理。
- * - 列表：姓名、登录名、专属链接/密码开关（可直接点按切换）、归档标记、备注；
- * - 新增：姓名 + 登录名（缺省同姓名）+ 可选初始密码（留空自动生成，一次性展示）；
+ * T2A.4 追加：「所在课程」列（经课程列表 memberIds 聚合）、新增学生时可选加入课程、
+ * 行操作「管理课程」（多选课程，调成员接口增删）。
+ * - 列表：姓名、登录名、专属链接/密码开关（可直接点按切换）、所在课程、归档标记、备注；
+ * - 新增：姓名 + 登录名（缺省同姓名）+ 可选初始密码（留空自动生成，一次性展示）
+ *   + 可选加入课程；
  * - 复制专属链接（`${origin}/s/${token}`，HTTP 环境降级复制）；
  * - 重置密码（一次性明文弹窗）/ 重置链接（旧链接立即失效）/ 归档与取消归档。
  * 三态齐全（加载骨架 / 空态指引 / 错误重试），触控目标 ≥44px。
@@ -53,7 +62,30 @@ export function StudentsPage() {
   const [createOpen, setCreateOpen] = useState(false);
   /** 一次性明文弹窗（初始密码 / 重置密码 / 新专属链接） */
   const [oneTime, setOneTime] = useState<OneTimeValue | null>(null);
+  /** 「管理课程」弹窗的目标学生 */
+  const [manageCoursesOf, setManageCoursesOf] = useState<StudentSummary | null>(
+    null,
+  );
   const studentsQuery = useStudents(includeArchived);
+  const activeCoursesQuery = useTeacherCourses(false);
+  const archivedCoursesQuery = useTeacherCourses(true);
+
+  /** 学生 id → 所在课程（未归档 + 已归档都展示，带归档标记） */
+  const coursesByStudent = useMemo(() => {
+    const map = new Map<string, CourseSummary[]>();
+    const all = [
+      ...(activeCoursesQuery.data?.courses ?? []),
+      ...(archivedCoursesQuery.data?.courses ?? []),
+    ];
+    for (const course of all) {
+      for (const studentId of course.memberIds) {
+        const list = map.get(studentId) ?? [];
+        list.push(course);
+        map.set(studentId, list);
+      }
+    }
+    return map;
+  }, [activeCoursesQuery.data, archivedCoursesQuery.data]);
 
   return (
     <section className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-4 py-6 md:px-6 md:py-8">
@@ -121,6 +153,8 @@ export function StudentsPage() {
               <StudentCard
                 key={student.id}
                 student={student}
+                courses={coursesByStudent.get(student.id) ?? []}
+                onManageCourses={() => setManageCoursesOf(student)}
                 onOneTime={setOneTime}
               />
             ))}
@@ -129,6 +163,7 @@ export function StudentsPage() {
 
       {createOpen && (
         <CreateStudentDialog
+          activeCourses={activeCoursesQuery.data?.courses ?? []}
           onClose={() => setCreateOpen(false)}
           onOneTime={setOneTime}
         />
@@ -136,6 +171,14 @@ export function StudentsPage() {
 
       {oneTime && (
         <OneTimeValueDialog value={oneTime} onClose={() => setOneTime(null)} />
+      )}
+
+      {manageCoursesOf !== null && (
+        <ManageCoursesDialog
+          student={manageCoursesOf}
+          activeCourses={activeCoursesQuery.data?.courses ?? []}
+          onClose={() => setManageCoursesOf(null)}
+        />
       )}
     </section>
   );
@@ -183,9 +226,14 @@ function StudentsEmpty({ onCreate }: { onCreate: () => void }) {
 
 function StudentCard({
   student,
+  courses,
+  onManageCourses,
   onOneTime,
 }: {
   student: StudentSummary;
+  /** 该学生所在的课程（未归档 + 已归档） */
+  courses: CourseSummary[];
+  onManageCourses: () => void;
   onOneTime: (value: OneTimeValue) => void;
 }) {
   const updateMutation = useUpdateStudent();
@@ -225,6 +273,31 @@ function StudentCard({
         <p className="ml-auto text-xs text-muted-foreground">
           {formatRelativeTime(student.createdAt)}创建
         </p>
+      </div>
+
+      {/* 所在课程（T2A.4）：经课程列表 memberIds 聚合 */}
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="flex items-center gap-1 text-xs text-muted-foreground">
+          <GraduationCap aria-hidden className="size-3.5" />
+          所在课程：
+        </span>
+        {courses.length === 0 ? (
+          <span className="text-xs text-muted-foreground">未加入任何课程</span>
+        ) : (
+          courses.map((course) => (
+            <span
+              key={course.id}
+              className={`rounded-md px-2 py-0.5 text-xs ${
+                course.archived
+                  ? "bg-muted text-muted-foreground"
+                  : "bg-primary/10 text-primary"
+              }`}
+            >
+              {course.name}
+              {course.archived ? "（已归档）" : ""}
+            </span>
+          ))
+        )}
       </div>
 
       {/* 两种登录方式：点按即切换（≥44px 触控目标） */}
@@ -319,6 +392,14 @@ function StudentCard({
         <Button
           variant="outline"
           className="min-h-11"
+          onClick={onManageCourses}
+        >
+          <GraduationCap aria-hidden />
+          管理课程
+        </Button>
+        <Button
+          variant="outline"
+          className="min-h-11"
           disabled={busy}
           onClick={() =>
             updateMutation.mutate({
@@ -406,9 +487,11 @@ interface OneTimeValue {
 }
 
 function CreateStudentDialog({
+  activeCourses,
   onClose,
   onOneTime,
 }: {
+  activeCourses: CourseSummary[];
   onClose: () => void;
   onOneTime: (value: OneTimeValue) => void;
 }) {
@@ -418,9 +501,21 @@ function CreateStudentDialog({
   const [loginNameTouched, setLoginNameTouched] = useState(false);
   const [password, setPassword] = useState("");
   const [note, setNote] = useState("");
+  /** 创建后要加入的课程（T2A.4） */
+  const [courseIds, setCourseIds] = useState<Set<string>>(new Set());
   const createMutation = useCreateStudent();
+  const addToCoursesMutation = useAddStudentToCourses();
 
   const effectiveLoginName = loginNameTouched ? loginName : displayName;
+
+  function toggleCourse(id: string) {
+    setCourseIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
 
   function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -441,6 +536,13 @@ function CreateStudentDialog({
                 "初始密码只显示这一次，请复制后发给学生（也可让学生用专属链接直接登录）。",
               value: data.initialPassword,
               copyLabel: "复制初始密码",
+            });
+          }
+          if (courseIds.size > 0) {
+            // 加入课程失败不打断创建结果（行内可再「管理课程」补救）
+            addToCoursesMutation.mutate({
+              studentId: data.student.id,
+              courseIds: [...courseIds],
             });
           }
           onClose();
@@ -525,6 +627,42 @@ function CreateStudentDialog({
               maxLength={200}
             />
           </div>
+          {activeCourses.length > 0 && (
+            <fieldset className="flex flex-col gap-1.5">
+              <legend className="text-sm">加入课程（可选，多选）</legend>
+              <div className="flex flex-wrap gap-2">
+                {activeCourses.map((course) => (
+                  <label
+                    key={course.id}
+                    className={`flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border px-3 text-sm transition-colors ${
+                      courseIds.has(course.id)
+                        ? "border-primary/50 bg-primary/5"
+                        : "border-border hover:bg-muted/50"
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      className="size-5 accent-[var(--color-primary)]"
+                      checked={courseIds.has(course.id)}
+                      onChange={() => toggleCourse(course.id)}
+                    />
+                    {course.name}
+                    <span className="text-xs text-muted-foreground">
+                      {course.memberCount} 人
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+          )}
+          {addToCoursesMutation.isError && (
+            <p role="alert" className="text-sm text-destructive">
+              学生已创建，但加入课程失败：
+              {addToCoursesMutation.error instanceof Error
+                ? addToCoursesMutation.error.message
+                : "请稍后在「管理课程」中重试"}
+            </p>
+          )}
           {errorMessage && (
             <p role="alert" className="text-sm text-destructive">
               {errorMessage}
@@ -606,6 +744,143 @@ function OneTimeValueDialog({
           >
             <Copy aria-hidden />
             {value.copyLabel}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ---------- 管理课程（T2A.4 行操作） ----------
+
+/**
+ * 多选课程调成员接口增删（与课程页成员页签同一组底层接口，D7）。
+ * 只列出未归档课程；已归档课程中的成员关系不受本次操作影响。
+ */
+function ManageCoursesDialog({
+  student,
+  activeCourses,
+  onClose,
+}: {
+  student: StudentSummary;
+  activeCourses: CourseSummary[];
+  onClose: () => void;
+}) {
+  const [checked, setChecked] = useState<Set<string>>(
+    new Set(
+      activeCourses
+        .filter((course) => course.memberIds.includes(student.id))
+        .map((course) => course.id),
+    ),
+  );
+  const syncMutation = useSyncStudentCourses();
+
+  function toggle(id: string) {
+    setChecked((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function handleSave() {
+    const addCourseIds: string[] = [];
+    const removeCourseIds: string[] = [];
+    for (const course of activeCourses) {
+      const isMember = course.memberIds.includes(student.id);
+      const shouldBe = checked.has(course.id);
+      if (!isMember && shouldBe) addCourseIds.push(course.id);
+      if (isMember && !shouldBe) removeCourseIds.push(course.id);
+    }
+    if (addCourseIds.length === 0 && removeCourseIds.length === 0) {
+      onClose();
+      return;
+    }
+    syncMutation.mutate(
+      { studentId: student.id, addCourseIds, removeCourseIds },
+      { onSuccess: onClose },
+    );
+  }
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>管理「{student.displayName}」的课程</DialogTitle>
+          <DialogDescription>
+            勾选 = 加入课程（学生立即看到课程内可见内容）；取消勾选 = 移出
+            （立即看不到，已交卷记录保留、数据不删）。已归档课程不在此列。
+          </DialogDescription>
+        </DialogHeader>
+
+        {activeCourses.length === 0 ? (
+          <p className="rounded-lg border border-dashed border-border px-3 py-8 text-center text-sm text-muted-foreground">
+            还没有未归档的课程。先到「课程」页新建。
+          </p>
+        ) : (
+          <ul className="flex max-h-72 flex-col gap-2 overflow-y-auto">
+            {activeCourses.map((course) => (
+              <li key={course.id}>
+                <label
+                  className={`flex min-h-14 cursor-pointer items-center gap-3 rounded-lg border px-3 py-2 text-sm transition-colors ${
+                    checked.has(course.id)
+                      ? "border-primary/50 bg-primary/5"
+                      : "border-border hover:bg-muted/50"
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    className="size-5 shrink-0 accent-[var(--color-primary)]"
+                    checked={checked.has(course.id)}
+                    onChange={() => toggle(course.id)}
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-medium">
+                      {course.name}
+                    </span>
+                    <span className="block text-xs text-muted-foreground">
+                      {course.memberCount} 名成员 · 目录 {course.itemCount} 条
+                    </span>
+                  </span>
+                </label>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {syncMutation.isError && (
+          <p role="alert" className="text-sm text-destructive">
+            {syncMutation.error instanceof Error
+              ? syncMutation.error.message
+              : "保存失败，请稍后重试"}
+          </p>
+        )}
+
+        <DialogFooter>
+          <Button
+            type="button"
+            variant="outline"
+            className="min-h-11"
+            onClick={onClose}
+            disabled={syncMutation.isPending}
+          >
+            取消
+          </Button>
+          <Button
+            type="button"
+            className="min-h-11 px-4"
+            disabled={syncMutation.isPending}
+            onClick={handleSave}
+          >
+            {syncMutation.isPending ? (
+              <>
+                <Loader2 aria-hidden className="animate-spin" />
+                正在保存…
+              </>
+            ) : (
+              "保存"
+            )}
           </Button>
         </DialogFooter>
       </DialogContent>
