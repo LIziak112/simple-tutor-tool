@@ -1,59 +1,156 @@
 import type { LintIssue } from "@tutor/contract";
 
 /**
- * "复制错误给 AI"提示词格式化（T1.11，§5.1 制作端闭环）：
- * 把 lint 错误列表 + 待修正原文 + 修正要求拼成一段可直接粘贴给 AI 的提示词。
- * 纯函数：不触碰剪贴板（复制与降级交互在 ErrorPanel 组件处理）。
+ * "复制错误给 AI"提示词格式化（T2A.3 按 D21 重写，替换 T1.11 的全文拼接）：
+ * 内容 = 固定修正要求说明 + 逐文件（相对路径 + 错误列表 + 每个错误前后各 3 行的
+ * 带行号原文片段，相邻片段合并），**不附全文**。
+ * 纯函数：不触碰剪贴板（复制与降级交互在 ErrorPanel / 批量预览组件处理）。
+ * 单文件与「复制全部错误」共用：files 传单元素或多元素即可。
  */
 
-export interface LintErrorPromptInput {
-  /** 导入时填写的文件名（提示词中标注待修正文档） */
-  filename: string;
-  /** 编辑器当前原文（v1 文档为原始 v1 文本） */
-  markdown: string;
+/** buildFixPrompt 的单文件输入 */
+export interface FixPromptFile {
+  /** 文件相对路径（如 "chapter1/练习.md"）；空字符串 = 粘贴内容（无文件路径） */
+  readonly path: string;
+  /** 文件原文（片段截取的来源；v1 文档为原始 v1 文本） */
+  readonly markdown: string;
   /** lint 问题列表（error + warning 全部带上，warning 也值得让 AI 顺手修） */
-  issues: readonly LintIssue[];
+  readonly issues: readonly LintIssue[];
   /** 文档版本：v1 时附加"行号对应转换后 v2 文本"的说明 */
-  version: 1 | 2;
+  readonly version: 1 | 2;
 }
 
-/** 单条 issue → "- 第X行 第Y列 [CODE] 中文消息（修正建议：…）" */
+/** 每个错误前后各取的行数（D21：±3 行） */
+const CONTEXT_LINES = 3;
+
+/** 单文件片段总行数上限（D21：超过 200 行截断并注明） */
+const MAX_SNIPPET_LINES = 200;
+
+/** 粘贴内容（无文件路径）时的展示名 */
+const NO_PATH_LABEL = "粘贴内容（无文件路径）";
+
+/** 单条 issue → "- 第X行 第Y列 [CODE] 中文消息（修复建议：…）" */
 function issueLine(issue: LintIssue): string {
-  const fix = issue.fix !== undefined ? `（修正建议：${issue.fix}）` : "";
+  const fix = issue.fix !== undefined ? `（修复建议：${issue.fix}）` : "";
   return `- 第${issue.line}行 第${issue.column}列 [${issue.code}] ${issue.message}${fix}`;
 }
 
+/** 合并后的原文片段（闭区间 [start, end]，1 起行号） */
+interface Snippet {
+  readonly start: number;
+  readonly end: number;
+  /** 该片段覆盖的错误行（用于截断时统计"其余 N 处错误略"） */
+  readonly issueLines: readonly number[];
+}
+
 /**
- * 组装提示词。文档代码块用四反引号围栏：原文里允许出现三反引号代码块而不破坏结构。
+ * 由错误行列表生成片段：每行 ±CONTEXT_LINES，相邻（重叠或紧邻）合并。
+ * 输入错误行需已去重升序。
  */
-export function buildLintErrorPrompt(input: LintErrorPromptInput): string {
-  const lines: string[] = [
-    "我在用一套基于 Markdown 的题目 DSL，以下是 lint 检查出的问题。",
-    "",
-    "## 待修正的文档",
-    input.filename,
-    "````markdown",
-    input.markdown,
-    "````",
-    "",
-    "## 错误列表",
+function buildSnippets(issueLines: readonly number[]): Snippet[] {
+  const snippets: Snippet[] = [];
+  let current: { start: number; end: number; issueLines: number[] } | null =
+    null;
+  for (const line of issueLines) {
+    const start = line - CONTEXT_LINES;
+    const end = line + CONTEXT_LINES;
+    if (current !== null && start <= current.end + 1) {
+      // 相邻/重叠 → 合并
+      current.end = Math.max(current.end, end);
+      current.issueLines.push(line);
+    } else {
+      if (current !== null) {
+        snippets.push({ ...current, issueLines: [...current.issueLines] });
+      }
+      current = { start, end, issueLines: [line] };
+    }
+  }
+  if (current !== null) {
+    snippets.push({ ...current, issueLines: [...current.issueLines] });
+  }
+  return snippets;
+}
+
+/** 带行号的片段文本行（如 "    7 | 题干"；行号右对齐 4 位） */
+function snippetLines(markdown: string, snippet: Snippet): string[] {
+  const all = markdown.split("\n");
+  const start = Math.max(1, snippet.start);
+  const end = Math.min(all.length, snippet.end);
+  const lines: string[] = [];
+  for (let n = start; n <= end; n++) {
+    const text = all[n - 1] ?? "";
+    lines.push(`${String(n).padStart(4)} | ${text}`);
+  }
+  return lines;
+}
+
+/**
+ * 组装提示词（D21 新格式）：
+ * - 固定修正要求说明（含"若你无法访问文件，请让我提供完整文件"）；
+ * - 逐文件：路径（粘贴内容写「粘贴内容（无文件路径）」）+ 错误列表 + 片段
+ *   （四反引号围栏：原文里允许出现三反引号代码块而不破坏结构）；
+ * - 单文件片段总行数超 200 行时截断并注明「其余 N 处错误略」；
+ * - 不附全文：片段之外的正文不出现在提示词里。
+ */
+export function buildFixPrompt(files: readonly FixPromptFile[]): string {
+  const parts: string[] = [
+    "我在用一套基于 Markdown 的题目 DSL，以下文件存在 lint 检查出的问题。",
+    "请按路径打开这些文件，只修正列出的问题，不要改动其他内容；若你无法访问文件，请让我提供完整文件。",
   ];
-  if (input.issues.length === 0) {
-    lines.push("（无）");
-  } else {
-    for (const issue of input.issues) lines.push(issueLine(issue));
+
+  for (const file of files) {
+    parts.push("", `## ${file.path.length > 0 ? file.path : NO_PATH_LABEL}`);
+
+    // 错误列表（行号:列、CODE、中文说明、可选修复建议）
+    parts.push("", "### 错误列表");
+    if (file.issues.length === 0) {
+      parts.push("（无）");
+    } else {
+      for (const issue of file.issues) parts.push(issueLine(issue));
+    }
+    if (file.version === 1) {
+      parts.push(
+        "",
+        "注意：这是旧版 v1 文档，上行号对应自动转换后的 v2 文本，与原始 v1 行号可能不同。",
+      );
+    }
+
+    // 片段（±3 行、相邻合并、单文件累计 ≤200 行）
+    const issueLines = [
+      ...new Set(file.issues.map((issue) => issue.line)),
+    ].sort((a, b) => a - b);
+    if (issueLines.length === 0) continue;
+    parts.push("", "### 相关片段（行号为原文行号，相邻片段已合并）");
+    const snippets = buildSnippets(issueLines);
+    const totalLines = file.markdown.split("\n").length;
+    let usedLines = 0;
+    let omittedIssues = 0;
+    let truncated = false;
+    for (const snippet of snippets) {
+      const count =
+        Math.min(snippet.end, totalLines) - Math.max(1, snippet.start) + 1;
+      if (count <= 0) continue;
+      if (usedLines + count > MAX_SNIPPET_LINES) {
+        // 截断（D21）：该片段起（含其后全部）不再展示，只计数
+        truncated = true;
+      }
+      if (truncated) {
+        omittedIssues += snippet.issueLines.length;
+        continue;
+      }
+      // 每个片段独立围栏（多个片段并列，各自四反引号包裹）
+      parts.push("````markdown");
+      parts.push(...snippetLines(file.markdown, snippet));
+      parts.push("````");
+      usedLines += count;
+    }
+    if (omittedIssues > 0) {
+      parts.push(
+        "",
+        `（其余 ${omittedIssues} 处错误略：片段总行数已超过 ${MAX_SNIPPET_LINES} 行上限）`,
+      );
+    }
   }
-  if (input.version === 1) {
-    lines.push(
-      "",
-      "注意：这是旧版 v1 文档，上行号对应自动转换后的 v2 文本，与原始 v1 行号可能不同。",
-    );
-  }
-  lines.push(
-    "",
-    "## 要求",
-    "1. 逐条修正上述错误，不要改动无关内容与题目 id；",
-    "2. 输出修正后的完整 markdown（仅代码块，不要解释）。",
-  );
-  return lines.join("\n");
+
+  return parts.join("\n");
 }

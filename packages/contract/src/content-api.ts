@@ -69,7 +69,12 @@ export const importCommitRequestSchema = importPreviewRequestSchema.extend({
   courseId: z.uuid("courseId 必须是 UUID 格式").optional(),
   folderId: z.uuid("folderId 必须是 UUID 格式").nullable().optional(),
   /** 无 folderId 时按名称查找/新建的目标文件夹名 */
-  folderName: z.string().trim().min(1, "folderName 不能为空").max(100).optional(),
+  folderName: z
+    .string()
+    .trim()
+    .min(1, "folderName 不能为空")
+    .max(100)
+    .optional(),
   /** 批量导入批次 id（GET /api/teacher/import/batches/:batchId 回看） */
   batchId: z.uuid("batchId 必须是 UUID 格式").optional(),
   /** 同时加入课程（D17 快捷项）：追加目录条目到末尾，visible 对讲义与单元统一生效 */
@@ -544,7 +549,9 @@ export const importBatchDataSchema = z.object({
 });
 
 /** 携带批量预览数据的成功响应壳 */
-export const importPreviewBatchOkSchema = apiOkExtend(importPreviewBatchDataSchema);
+export const importPreviewBatchOkSchema = apiOkExtend(
+  importPreviewBatchDataSchema,
+);
 
 /** 携带批次回看数据的成功响应壳 */
 export const importBatchOkSchema = apiOkExtend(importBatchDataSchema);
@@ -568,8 +575,12 @@ export type ImportPreviewBatchRequest = z.infer<
   typeof importPreviewBatchRequestSchema
 >;
 export type ImportBatchConflict = z.infer<typeof importBatchConflictSchema>;
-export type ImportBatchFilePreview = z.infer<typeof importBatchFilePreviewSchema>;
-export type ImportPreviewBatchData = z.infer<typeof importPreviewBatchDataSchema>;
+export type ImportBatchFilePreview = z.infer<
+  typeof importBatchFilePreviewSchema
+>;
+export type ImportPreviewBatchData = z.infer<
+  typeof importPreviewBatchDataSchema
+>;
 export type ImportBatchFileRecord = z.infer<typeof importBatchFileRecordSchema>;
 export type ImportBatchData = z.infer<typeof importBatchDataSchema>;
 export type ContentErrorCode = z.infer<typeof contentErrorCodeSchema>;

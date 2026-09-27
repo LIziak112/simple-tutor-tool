@@ -1,7 +1,6 @@
 import type { ParsedDocument } from "@tutor/contract";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
-import { createTestDb } from "../db/test-utils.ts";
 import {
   assignments,
   lectures,
@@ -9,10 +8,11 @@ import {
   questions,
   units,
 } from "../db/schema.ts";
+import { createTestDb } from "../db/test-utils.ts";
 import {
   buildImportPlan,
-  loadLibrarySnapshot,
   type LibrarySnapshot,
+  loadLibrarySnapshot,
 } from "./import-actions.ts";
 
 /**
@@ -26,10 +26,7 @@ const FOLDER_A = "11111111-1111-4111-8111-111111111111";
 const FOLDER_B = "22222222-2222-4222-8222-222222222222";
 
 /** 最小练习文档（1 单元 n 题；题内容只要 id 参与 buildImportPlan，其余填最小合法值） */
-function parsedUnit(
-  unitId: string,
-  questionIds: string[],
-): ParsedDocument {
+function parsedUnit(unitId: string, questionIds: string[]): ParsedDocument {
   return {
     frontmatter: { kind: "practice", dsl: 2, unit: unitId },
     units: [
@@ -99,20 +96,19 @@ describe("buildImportPlan：单元动作（D18/D19）", () => {
     const plan = buildImportPlan({
       parsed: parsedUnit("练习四", ["练习四-1", "练习四-9"]),
       folderId: FOLDER_B, // 目标文件夹与单元原文件夹不同 → 仍标注原文件夹
-      snapshot:
-        snapshot({
-          units: new Map([
-            [
-              "练习四",
-              {
-                folderId: FOLDER_A,
-                deletedAt: null,
-                allQuestionIds: new Set(["练习四-1", "练习四-2", "练习四-3"]),
-                liveQuestionIds: new Set(["练习四-1", "练习四-2", "练习四-3"]),
-              },
-            ],
-          ]),
-        }),
+      snapshot: snapshot({
+        units: new Map([
+          [
+            "练习四",
+            {
+              folderId: FOLDER_A,
+              deletedAt: null,
+              allQuestionIds: new Set(["练习四-1", "练习四-2", "练习四-3"]),
+              liveQuestionIds: new Set(["练习四-1", "练习四-2", "练习四-3"]),
+            },
+          ],
+        ]),
+      }),
     });
     expect(plan.actions).toEqual([
       {
@@ -137,20 +133,19 @@ describe("buildImportPlan：单元动作（D18/D19）", () => {
     const plan = buildImportPlan({
       parsed: parsedUnit("练习四", ["练习四-1"]),
       folderId: null,
-      snapshot:
-        snapshot({
-          units: new Map([
-            [
-              "练习四",
-              {
-                folderId: null,
-                deletedAt: "2026-09-01T00:00:00.000Z", // 回收站中
-                allQuestionIds: new Set(["练习四-1", "练习四-2"]),
-                liveQuestionIds: new Set(["练习四-1"]), // -2 已软删
-              },
-            ],
-          ]),
-        }),
+      snapshot: snapshot({
+        units: new Map([
+          [
+            "练习四",
+            {
+              folderId: null,
+              deletedAt: "2026-09-01T00:00:00.000Z", // 回收站中
+              allQuestionIds: new Set(["练习四-1", "练习四-2"]),
+              liveQuestionIds: new Set(["练习四-1"]), // -2 已软删
+            },
+          ],
+        ]),
+      }),
     });
     expect(plan.actions).toEqual([
       {
@@ -169,21 +164,20 @@ describe("buildImportPlan：单元动作（D18/D19）", () => {
     const plan = buildImportPlan({
       parsed: parsedUnit("练习四", ["练习四-1"]),
       folderId: null,
-      snapshot:
-        snapshot({
-          units: new Map([
-            [
-              "练习四",
-              {
-                folderId: null,
-                deletedAt: null,
-                allQuestionIds: new Set(["练习四-1"]),
-                liveQuestionIds: new Set(["练习四-1"]),
-              },
-            ],
-          ]),
-          openAssignmentCountByUnitId: new Map([["练习四", 2]]),
-        }),
+      snapshot: snapshot({
+        units: new Map([
+          [
+            "练习四",
+            {
+              folderId: null,
+              deletedAt: null,
+              allQuestionIds: new Set(["练习四-1"]),
+              liveQuestionIds: new Set(["练习四-1"]),
+            },
+          ],
+        ]),
+        openAssignmentCountByUnitId: new Map([["练习四", 2]]),
+      }),
     });
     expect(plan.warnings).toContainEqual({
       code: "UNIT_USED_BY_OPEN_ASSIGNMENTS",
@@ -198,17 +192,16 @@ describe("buildImportPlan：讲义动作（D18）", () => {
     const plan = buildImportPlan({
       parsed: parsedLecture("第1讲"),
       folderId: FOLDER_A,
-      snapshot:
-        snapshot({
-          lectures: [
-            {
-              id: "l1",
-              title: "第1讲",
-              folderId: FOLDER_A,
-              deletedAt: null,
-            },
-          ],
-        }),
+      snapshot: snapshot({
+        lectures: [
+          {
+            id: "l1",
+            title: "第1讲",
+            folderId: FOLDER_A,
+            deletedAt: null,
+          },
+        ],
+      }),
     });
     expect(plan.actions).toEqual([
       {
@@ -226,23 +219,22 @@ describe("buildImportPlan：讲义动作（D18）", () => {
     const plan = buildImportPlan({
       parsed: parsedLecture("第1讲"),
       folderId: null,
-      snapshot:
-        snapshot({
-          lectures: [
-            {
-              id: "l1",
-              title: "第1讲",
-              folderId: FOLDER_B, // 其他文件夹
-              deletedAt: null,
-            },
-            {
-              id: "l2",
-              title: "第1讲（回收站）",
-              folderId: null,
-              deletedAt: "2026-09-01T00:00:00.000Z",
-            },
-          ],
-        }),
+      snapshot: snapshot({
+        lectures: [
+          {
+            id: "l1",
+            title: "第1讲",
+            folderId: FOLDER_B, // 其他文件夹
+            deletedAt: null,
+          },
+          {
+            id: "l2",
+            title: "第1讲（回收站）",
+            folderId: null,
+            deletedAt: "2026-09-01T00:00:00.000Z",
+          },
+        ],
+      }),
     });
     expect(plan.actions).toEqual([
       {

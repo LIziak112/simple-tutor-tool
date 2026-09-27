@@ -7,8 +7,8 @@ import {
   importCommitOkSchema,
   importCommitRequestSchema,
   importLintErrorBodySchema,
-  importPreviewBatchRequestSchema,
   importPreviewBatchDataSchema,
+  importPreviewBatchRequestSchema,
   importPreviewDataSchema,
   importPreviewOkSchema,
   importPreviewRequestSchema,
@@ -520,9 +520,9 @@ describe("T2A.3 commit 响应：courseId 可空（不再自动建默认课程）
 
   it("courseId/folderId 均可为 null（导入只进资源库，未归类）", () => {
     expect(importCommitDataSchema.safeParse(data).success).toBe(true);
-    expect(
-      importCommitOkSchema.safeParse({ ok: true, data }).success,
-    ).toBe(true);
+    expect(importCommitOkSchema.safeParse({ ok: true, data }).success).toBe(
+      true,
+    );
     expect(
       importCommitDataSchema.safeParse({
         ...data,

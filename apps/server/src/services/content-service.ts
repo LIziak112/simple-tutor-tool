@@ -338,9 +338,11 @@ export function previewImportBatch(
       }
     }
     const folderName =
-      folderId !== null ? (snapshot.folderNameById.get(folderId) ?? null) : (
-        folderToCreate ? subdirNameOf(file.path) : null
-      );
+      folderId !== null
+        ? (snapshot.folderNameById.get(folderId) ?? null)
+        : folderToCreate
+          ? subdirNameOf(file.path)
+          : null;
     const { version, issues, parsed } = analyzeImport(file.markdown);
     const plan = buildImportPlan({ parsed, folderId, snapshot });
     return {
@@ -433,7 +435,11 @@ export function commitImport(
       .where(eq(courses.id, input.addToCourse.courseId))
       .get();
     if (course === undefined) {
-      throw new HttpError(404, "COURSE_NOT_FOUND", "「同时加入课程」指定的课程不存在");
+      throw new HttpError(
+        404,
+        "COURSE_NOT_FOUND",
+        "「同时加入课程」指定的课程不存在",
+      );
     }
   }
 
@@ -617,7 +623,12 @@ export function commitImport(
     //      同一课程被两种参数同时指定时 addToCourse 优先（显式新语义覆盖兼容口径） ----
     const appendByKey = new Map<
       string,
-      { courseId: string; kind: "lecture" | "unit"; refId: string; visible: boolean }
+      {
+        courseId: string;
+        kind: "lecture" | "unit";
+        refId: string;
+        visible: boolean;
+      }
     >();
     const collectAppends = (
       courseId: string,

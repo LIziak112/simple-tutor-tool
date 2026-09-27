@@ -121,7 +121,8 @@ export function buildImportPlan(input: ImportPlanInput): ImportPlan {
     });
     // 其他文件夹已有同名讲义 → 重复导入提醒（D18 warning）
     for (const other of snapshot.lectures) {
-      if (other.folderId === folderId || other.title !== lecture.title) continue;
+      if (other.folderId === folderId || other.title !== lecture.title)
+        continue;
       const otherName = folderNameOf(snapshot, other.folderId);
       warnings.push({
         code: "DUPLICATE_LECTURE_TITLE_IN_OTHER_FOLDER",
@@ -202,7 +203,11 @@ export function loadLibrarySnapshot(db: Db, nowIso: string): LibrarySnapshot {
   const allByUnit = new Map<string, Set<string>>();
   const liveByUnit = new Map<string, Set<string>>();
   for (const row of db
-    .select({ unitId: questions.unitId, id: questions.id, deletedAt: questions.deletedAt })
+    .select({
+      unitId: questions.unitId,
+      id: questions.id,
+      deletedAt: questions.deletedAt,
+    })
     .from(questions)
     .all()) {
     let all = allByUnit.get(row.unitId);
@@ -255,10 +260,7 @@ export function loadLibrarySnapshot(db: Db, nowIso: string): LibrarySnapshot {
     .where(
       and(
         isNull(assignments.deletedAt),
-        or(
-          isNull(assignments.dueAt),
-          gt(assignments.dueAt, nowIso),
-        ),
+        or(isNull(assignments.dueAt), gt(assignments.dueAt, nowIso)),
       ),
     )
     .all()) {

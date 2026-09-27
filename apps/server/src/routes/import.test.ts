@@ -1,11 +1,11 @@
 import { readFileSync } from "node:fs";
 import type { ApiErr } from "@tutor/contract";
-import { eq } from "drizzle-orm";
 import {
   importCommitOkSchema,
   importLintErrorBodySchema,
   importPreviewOkSchema,
 } from "@tutor/contract";
+import { eq } from "drizzle-orm";
 import type { Logger } from "pino";
 import pino from "pino";
 import { describe, expect, it } from "vitest";
@@ -15,8 +15,8 @@ import {
   courseItems,
   courses,
   imports,
-  libraryFolders,
   lectures,
+  libraryFolders,
   questions,
   units,
 } from "../db/schema.ts";
@@ -344,7 +344,11 @@ describe("T2A.3 preview 动作清单（D19）与 warning（D18/D19）", () => {
       cookie,
     );
     expect(
-      db.select().from(questions).all().every((row) => row.version === 1),
+      db
+        .select()
+        .from(questions)
+        .all()
+        .every((row) => row.version === 1),
     ).toBe(true);
 
     const second = await postJson(

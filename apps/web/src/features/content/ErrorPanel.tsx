@@ -2,19 +2,20 @@ import type { LintIssue } from "@tutor/contract";
 import { CircleAlert, Copy, Info, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { buildLintErrorPrompt } from "./error-prompt";
+import { buildFixPrompt } from "./error-prompt";
 
 /**
- * lint 问题面板 + "复制错误给 AI"（T1.11，§5.1 制作端闭环）：
+ * lint 问题面板 + "复制错误给 AI"（T1.11；T2A.3 按 D21 重写复制格式）：
  * - 展示问题列表（行号/[code]/中文消息/建议），error 红 warning 黄；
- * - 复制：把 buildLintErrorPrompt 的提示词写入剪贴板，成功显示轻提示；
+ * - 复制：buildFixPrompt（路径 + 错误列表 + ±3 行片段，不附全文）写入剪贴板，
+ *   成功显示轻提示；
  * - 剪贴板不可用（非安全上下文/被浏览器拒绝）时降级为弹层展示，可全选手动复制。
  */
 
 export interface ErrorPanelProps {
-  /** 导入时填写的文件名（进入提示词） */
-  filename: string;
-  /** 编辑器当前原文（进入提示词；v1 文档为原始文本） */
+  /** 文件相对路径（进入提示词，D21）；空字符串 = 粘贴内容（无文件路径） */
+  path: string;
+  /** 编辑器当前原文（提示词片段来源；v1 文档为原始文本） */
   markdown: string;
   /** 问题列表（preview issues 或 commit 422 的 _issues） */
   issues: readonly LintIssue[];
@@ -26,7 +27,7 @@ export interface ErrorPanelProps {
 const COPIED_HINT_MS = 3000;
 
 export function ErrorPanel({
-  filename,
+  path,
   markdown,
   issues,
   version,
@@ -39,7 +40,7 @@ export function ErrorPanel({
   const copyButtonRef = useRef<HTMLButtonElement>(null);
   const fallbackTextareaRef = useRef<HTMLTextAreaElement>(null);
 
-  const prompt = buildLintErrorPrompt({ filename, markdown, issues, version });
+  const prompt = buildFixPrompt([{ path, markdown, issues, version }]);
 
   // 复制成功的轻提示自动消失
   useEffect(() => {
