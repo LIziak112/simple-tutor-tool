@@ -31,7 +31,7 @@ function parsedUnit(
   questionIds: string[],
 ): ParsedDocument {
   return {
-    frontmatter: { kind: "practice", unit: unitId },
+    frontmatter: { kind: "practice", dsl: 2, unit: unitId },
     units: [
       {
         id: unitId,
@@ -56,7 +56,7 @@ function parsedUnit(
 /** 最小讲义文档 */
 function parsedLecture(title: string): ParsedDocument {
   return {
-    frontmatter: { kind: "lecture" },
+    frontmatter: { kind: "lecture", dsl: 2 },
     units: [],
     lectures: [{ title, markdown: `# ${title}`, headings: [] }],
     issues: [],

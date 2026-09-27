@@ -4,9 +4,14 @@ import type {
   ContentTreeQuestion,
   CourseData,
   CourseUpdateRequest,
+  ImportBatchConflict,
+  ImportBatchData,
+  ImportBatchFilePreview,
   ImportCommitData,
   ImportCommitRequest,
   ImportLectureReport,
+  ImportPreviewBatchData,
+  ImportPreviewBatchRequest,
   ImportPreviewData,
   ImportPreviewRequest,
   ImportSummary,
@@ -20,6 +25,11 @@ import type {
   ReorderRequest,
   StudentLectureDetail,
   StudentLectureSummary,
+} from "@tutor/contract";
+import {
+  IMPORT_MAX_BATCH_BYTES,
+  IMPORT_MAX_FILE_BYTES,
+  IMPORT_MAX_FILES_PER_BATCH,
 } from "@tutor/contract";
 import {
   detectVersion,
@@ -41,11 +51,13 @@ import {
   imports,
   knowledgePoints,
   lectures,
+  libraryFolders,
   questionKnowledge,
   questions,
   units,
 } from "../db/schema";
 import { HttpError } from "../lib/http-error";
+import { buildImportPlan, loadLibrarySnapshot } from "./import-actions";
 import { softDeleteLecture } from "./library-service";
 import {
   loadKnowledgeIdByName,
@@ -58,11 +70,17 @@ import {
  * 的业务层。路由只做鉴权/校验/包装，本模块承载：
  * - 版本识别与统一 lint：detectVersion → v1 则 v1ToV2 转换（原文照旧留档）→ 一律走
  *   v2 lintDocument（§5.1 末段「v1 兼容」：导入时自动识别）；
- * - preview：纯读，不写库（dry-run 预览，§5.1）；
- * - commit：有 error 级 issue 拒绝（422 LINT_ERROR）；否则事务内落库——
- *   imports 留档原文 → 讲义按 (folderId, title) 替换 markdown → 单元按 id 合并 →
+ * - preview：纯读，不写库（dry-run 预览，§5.1）；T2A.3 起输出动作清单（D19）与
+ *   导入 warning（D18/D19），计算逻辑在 import-actions.buildImportPlan（纯函数复用）；
+ * - previewImportBatch（T2A.3，D20）：每文件预览 + 跨文件冲突（同 unit id / 同目标
+ *   文件夹同名讲义 → 两侧 error）+ 规模上限（≤50 文件 / 单文件 ≤1MB / 合计 ≤10MB，
+ *   超 413 IMPORT_TOO_LARGE，按原始 markdown UTF-8 字节判定）；
+ * - commit：有 error 级 issue 拒绝（422 LINT_ERROR）；否则单文件单事务落库——
+ *   imports 留档原文（T2A.3 起含 sourcePath/batchId/folderId）→ 讲义按
+ *   (folderId, title) 替换 markdown → 单元按 id 合并（命中保留原文件夹，D18）→
  *   题目 id 已存在则更新 + version+1（跨单元同 id 也按更新，unitId 随之更新）→
  *   知识考点同名归一（knowledge_points 复用 + 关联全量替换）；
+ * - getImportBatch（T2A.3）：GET /import/batches/:batchId 回看批次内逐文件留档；
  * - getContentTree：课程 → 讲义/单元 → 题目摘要（软删题目过滤）；
  * - T1.12：单题编辑（id/unitId 不变、version+1）、题目软删、讲义整篇编辑与
  *   软删（T2A.1 起取消物理删除，D3）、reorder（order 按新顺序下标重写）、
@@ -76,12 +94,17 @@ import {
  * - 讲义删除改软删（deleteLecture 委托 LibraryService）；
  * - 学生端讲义读路径全部过滤 deletedAt（D3 窗口期；可见性模型切换属 T2A.5）。
  *
+ * T2A.3 导入只进资源库（D17）：
+ * - commit 归属优先级 folderId > folderName（按名查找/新建，D20「按子目录自动建
+ *   文件夹」与就地新建共用）> courseId（兼容路径）> 未归类（folderId=null）；
+ * - addToCourse（D17 快捷项）：追加 course_items 到目标课程末尾（幂等 onConflict
+ *   DoNothing，visible 对讲义与单元统一生效），归属仍在资源库；
+ * - 「默认课程」自动创建分支已删除（原 resolveCourseId）：无 folderId 且无
+ *   courseId 的导入落「未归类」，不再新建任何课程（与 D23-7 一致）。
+ *
  * 「原文是真相」（§5.1.1(4)）：questions.sourceMd / lectures.markdown / imports.rawMd
  * 保存原文；结构化字段（type/answers/…）只是判分与统计必需的抽取结果。
  */
-
-/** 系统默认课程名（courseId 缺省时使用；不存在则自动创建） */
-export const DEFAULT_COURSE_TITLE = "默认课程";
 
 // ---------- 版本识别与统一 lint ----------
 
@@ -125,25 +148,249 @@ function summarizeParsed(parsed: ParsedDocument): ImportSummary {
 
 // ---------- preview：不写库 ----------
 
-/** 导入预览：识别版本 + 摘要 + 全部 lint issues（含 error，供前端标红；不写库） */
+/** 校验目标文件夹存在（404 FOLDER_NOT_FOUND）；null = 未归类直接放行 */
+function assertFolderExists(db: Db, folderId: string | null): void {
+  if (folderId === null) return;
+  const row = db
+    .select({ id: libraryFolders.id })
+    .from(libraryFolders)
+    .where(eq(libraryFolders.id, folderId))
+    .get();
+  if (row === undefined) {
+    throw new HttpError(404, "FOLDER_NOT_FOUND", "目标文件夹不存在");
+  }
+}
+
+/** 组装单文件预览（preview 与 preview-batch 共用；不写库） */
+function buildPreview(
+  db: Db,
+  markdown: string,
+  folderId: string | null,
+): ImportPreviewData {
+  const { version, issues, parsed } = analyzeImport(markdown);
+  const snapshot = loadLibrarySnapshot(db, new Date().toISOString());
+  const plan = buildImportPlan({ parsed, folderId, snapshot });
+  return {
+    version,
+    summary: summarizeParsed(parsed),
+    issues,
+    actions: [...plan.actions],
+    warnings: [...plan.warnings],
+  };
+}
+
+/**
+ * 导入预览：识别版本 + 摘要 + 全部 lint issues + 动作清单（D19）与 warning
+ * （D18/D19）（不写库）。folderId = 目标文件夹（null/缺省 = 未归类）。
+ */
 export function previewImport(
-  _db: Db,
+  db: Db,
   input: ImportPreviewRequest,
 ): ImportPreviewData {
-  const { version, issues, parsed } = analyzeImport(input.markdown);
-  return { version, summary: summarizeParsed(parsed), issues };
+  const folderId = input.folderId ?? null;
+  assertFolderExists(db, folderId);
+  return buildPreview(db, input.markdown, folderId);
+}
+
+// ---------- preview-batch：批量预览 + 跨文件冲突（D20，不写库） ----------
+
+/** 单文件 markdown 的 UTF-8 字节数（D20：按原始 markdown 字节判定，不以 JSON 体积为准） */
+function markdownBytes(markdown: string): number {
+  return Buffer.byteLength(markdown, "utf8");
+}
+
+/** 批量规模上限校验（≤50 文件 / 单文件 ≤1MB / 合计 ≤10MB → 413 IMPORT_TOO_LARGE） */
+function assertBatchLimits(
+  files: readonly { path: string; markdown: string }[],
+): void {
+  if (files.length > IMPORT_MAX_FILES_PER_BATCH) {
+    throw new HttpError(
+      413,
+      "IMPORT_TOO_LARGE",
+      `单批最多导入 ${IMPORT_MAX_FILES_PER_BATCH} 个文件（当前 ${files.length} 个），请分批导入`,
+    );
+  }
+  let total = 0;
+  for (const file of files) {
+    const size = markdownBytes(file.markdown);
+    if (size > IMPORT_MAX_FILE_BYTES) {
+      throw new HttpError(
+        413,
+        "IMPORT_TOO_LARGE",
+        `文件「${file.path}」超过单文件 1 MB 上限，请拆分后再导入`,
+      );
+    }
+    total += size;
+  }
+  if (total > IMPORT_MAX_BATCH_BYTES) {
+    throw new HttpError(
+      413,
+      "IMPORT_TOO_LARGE",
+      `单批 markdown 合计超过 10 MB 上限（当前约 ${Math.round(total / 1024 / 1024)} MB），请分批导入`,
+    );
+  }
+}
+
+/** 相对路径的直接父目录名（"/" 与 "\" 都按分隔符处理）；根目录文件返回 null */
+function subdirNameOf(path: string): string | null {
+  const normalized = path.replaceAll("\\", "/");
+  const lastSlash = normalized.lastIndexOf("/");
+  if (lastSlash <= 0) return null; // 无分隔符（根目录）或以 / 开头的首段
+  const subdir = normalized.slice(0, lastSlash).split("/").pop();
+  return subdir !== undefined && subdir.length > 0 ? subdir : null;
+}
+
+/** 跨文件冲突检测（D20）：同 unit id / 同目标文件夹同名讲义 → 涉及文件都标红 */
+function detectCrossFileConflicts(
+  entries: ImportBatchFilePreview[],
+): ImportBatchConflict[][] {
+  const conflictsByIndex: ImportBatchConflict[][] = entries.map(() => []);
+
+  // 同一 unit id 出现在多个文件
+  const filesByUnitId = new Map<string, number[]>();
+  for (const [index, entry] of entries.entries()) {
+    for (const action of entry.preview.actions) {
+      if (action.unitId === null) continue;
+      const list = filesByUnitId.get(action.unitId);
+      if (list === undefined) filesByUnitId.set(action.unitId, [index]);
+      else list.push(index);
+    }
+  }
+  for (const [unitId, indexes] of filesByUnitId) {
+    if (indexes.length < 2) continue;
+    for (const index of indexes) {
+      for (const other of indexes) {
+        if (other === index) continue;
+        conflictsByIndex[index]?.push({
+          code: "DUPLICATE_UNIT_ID",
+          message: `与「${entries[other]?.path ?? ""}」都定义了单元「${unitId}」，请合并到同一文件或修改 unit id`,
+          otherPath: entries[other]?.path ?? "",
+        });
+      }
+    }
+  }
+
+  // 同一目标文件夹下的同名讲义（目标文件夹标识：已有 id 或将新建的名字）
+  const filesByLectureKey = new Map<string, number[]>();
+  for (const [index, entry] of entries.entries()) {
+    const folderKey =
+      entry.folderId !== null
+        ? `id:${entry.folderId}`
+        : `name:${entry.folderName ?? ""}`;
+    for (const action of entry.preview.actions) {
+      if (action.unitId !== null) continue; // 讲义动作
+      const key = `${folderKey}\0${action.title}`;
+      const list = filesByLectureKey.get(key);
+      if (list === undefined) filesByLectureKey.set(key, [index]);
+      else list.push(index);
+    }
+  }
+  for (const [key, indexes] of filesByLectureKey) {
+    if (indexes.length < 2) continue;
+    const title = key.split("\0")[1] ?? "";
+    const firstIndex = indexes[0];
+    const folderLabel =
+      firstIndex === undefined
+        ? "未归类"
+        : (entries[firstIndex]?.folderName ?? "未归类");
+    for (const index of indexes) {
+      for (const other of indexes) {
+        if (other === index) continue;
+        conflictsByIndex[index]?.push({
+          code: "DUPLICATE_LECTURE_TITLE",
+          message: `与「${entries[other]?.path ?? ""}」在文件夹「${folderLabel}」下都定义了同名讲义「${title}」`,
+          otherPath: entries[other]?.path ?? "",
+        });
+      }
+    }
+  }
+  return conflictsByIndex;
+}
+
+/**
+ * 批量导入预览（D20）：每文件预览（动作清单/警告/统计/issues）+ 跨文件冲突 +
+ * autoFolderBySubdir 的目标文件夹解析（已存在同名复用、否则标记将新建）。
+ * 不写库——「将新建」的文件夹在 commit（前端逐文件调用）时按 folderName 落地。
+ */
+export function previewImportBatch(
+  db: Db,
+  input: ImportPreviewBatchRequest,
+): ImportPreviewBatchData {
+  assertBatchLimits(input.files);
+  const baseFolderId = input.folderId ?? null;
+  assertFolderExists(db, baseFolderId);
+  const snapshot = loadLibrarySnapshot(db, new Date().toISOString());
+  // 名称 → id（同名取 order 首个，与 ensureCourseFolder 复用口径一致）
+  const folderIdByName = new Map<string, string>();
+  for (const [id, name] of snapshot.folderNameById) {
+    if (!folderIdByName.has(name)) folderIdByName.set(name, id);
+  }
+
+  const entries: ImportBatchFilePreview[] = input.files.map((file) => {
+    let folderId = baseFolderId;
+    let folderToCreate = false;
+    if (input.autoFolderBySubdir) {
+      const subdir = subdirNameOf(file.path);
+      if (subdir !== null) {
+        const existingId = folderIdByName.get(subdir);
+        folderId = existingId ?? null;
+        folderToCreate = existingId === undefined;
+      }
+    }
+    const folderName =
+      folderId !== null ? (snapshot.folderNameById.get(folderId) ?? null) : (
+        folderToCreate ? subdirNameOf(file.path) : null
+      );
+    const { version, issues, parsed } = analyzeImport(file.markdown);
+    const plan = buildImportPlan({ parsed, folderId, snapshot });
+    return {
+      path: file.path,
+      folderId,
+      folderName,
+      folderToCreate,
+      preview: {
+        version,
+        summary: summarizeParsed(parsed),
+        issues,
+        actions: [...plan.actions],
+        warnings: [...plan.warnings],
+      },
+      conflicts: [],
+      hasError: false,
+    };
+  });
+
+  // 跨文件冲突（D20：视为 error，涉及文件都标红）
+  const conflictsByIndex = detectCrossFileConflicts(entries);
+  for (const [index, conflicts] of conflictsByIndex.entries()) {
+    const entry = entries[index];
+    if (entry === undefined) continue;
+    entry.conflicts = conflicts;
+    entry.hasError =
+      conflicts.length > 0 ||
+      entry.preview.issues.some((issue) => issue.level === "error");
+  }
+  return { files: entries };
 }
 
 // ---------- commit：lint 拒绝 + 事务落库 ----------
 
 /**
- * 导入提交。有 error 级 issue 时抛 422 LINT_ERROR（extra._issues 附错误列表，
- * 响应体为统一错误壳的超集）；courseId 缺省时使用系统默认课程（不存在则创建）。
- * 成功返回导入统计报告（报告同时序列化进 imports.reportJson 留档）。
+ * 导入提交（单文件单事务）。有 error 级 issue 时抛 422 LINT_ERROR（extra._issues
+ * 附错误列表，响应体为统一错误壳的超集）。
  *
- * T2A.1：内容归属资源库——courseId 用于定位「课程同名文件夹」（无则建）与追加
- * 课程目录条目（讲义 visible=true、单元 visible=false；已在该课程的资源跳过，
- * 导入是幂等更新场景，不走 409）。响应形状不变（courseId 仍为实际课程 id）。
+ * T2A.3 目标文件夹解析（D17：导入只进资源库；优先级从高到低）：
+ * 1. folderId（含 null = 未归类；非 null 校验存在，404 FOLDER_NOT_FOUND）；
+ * 2. folderName：按名称查找/新建（「按子目录自动建文件夹」与就地新建共用，
+ *    同名已存在则复用，事务内落定）；
+ * 3. courseId（T2A.1 兼容路径）：课程同名文件夹（无则建）+ 追加 course_items
+ *    （讲义 visible=true、单元 visible=false；重复跳过不报错）；
+ * 4. 全部缺省 → 未归类（folderId=null），**不创建任何课程**（「默认课程」自动
+ *    创建分支已随 resolveCourseId 删除，防止与 D23-7 冲突）。
+ * addToCourse（D17 快捷项）独立于归属：追加 course_items 到目标课程末尾
+ * （visible 统一生效、幂等跳过），响应 courseId 返回该课程 id。
+ * 成功返回导入统计报告（同时序列化进 imports.reportJson 留档，含
+ * sourcePath/batchId/folderId）。
  */
 export function commitImport(
   db: Db,
@@ -151,7 +398,7 @@ export function commitImport(
 ): ImportCommitData {
   const { issues, parsed } = analyzeImport(input.markdown);
 
-  // error 级 issue → 拒绝写入（此时连默认课程都不创建）
+  // error 级 issue → 拒绝写入（此时连文件夹/课程都不动）
   const errors = issues.filter((issue) => issue.level === "error");
   const first = errors[0];
   if (first !== undefined) {
@@ -163,22 +410,49 @@ export function commitImport(
     );
   }
 
-  const courseId = resolveCourseId(db, input.courseId);
+  // ---- 事务外校验（fail fast，不占事务） ----
+  if (input.folderId !== undefined && input.folderId !== null) {
+    assertFolderExists(db, input.folderId);
+  }
+  let legacyCourseTitle: string | undefined;
+  if (input.courseId !== undefined) {
+    const course = db
+      .select({ id: courses.id, title: courses.title })
+      .from(courses)
+      .where(eq(courses.id, input.courseId))
+      .get();
+    if (course === undefined) {
+      throw new HttpError(404, "COURSE_NOT_FOUND", "指定的课程不存在");
+    }
+    legacyCourseTitle = course.title;
+  }
+  if (input.addToCourse !== undefined) {
+    const course = db
+      .select({ id: courses.id })
+      .from(courses)
+      .where(eq(courses.id, input.addToCourse.courseId))
+      .get();
+    if (course === undefined) {
+      throw new HttpError(404, "COURSE_NOT_FOUND", "「同时加入课程」指定的课程不存在");
+    }
+  }
 
   return db.transaction((tx) => {
     const now = new Date().toISOString();
     const importId = crypto.randomUUID();
 
-    const course = tx
-      .select({ id: courses.id, title: courses.title })
-      .from(courses)
-      .where(eq(courses.id, courseId))
-      .get();
-    if (course === undefined) {
-      throw new HttpError(404, "COURSE_NOT_FOUND", "指定的课程不存在");
+    // ---- 目标文件夹落定（见函数头注释的优先级） ----
+    let folderId: string | null;
+    if (input.folderId !== undefined) {
+      folderId = input.folderId;
+    } else if (input.folderName !== undefined) {
+      // 按名称查找/新建（ensureCourseFolder = find-or-create by name，D20 复用口径）
+      folderId = ensureCourseFolder(tx, input.folderName, now).id;
+    } else if (legacyCourseTitle !== undefined) {
+      folderId = ensureCourseFolder(tx, legacyCourseTitle, now).id;
+    } else {
+      folderId = null; // 未归类
     }
-    // 课程同名文件夹（D23-1 同款规则：存在即复用，无则建）
-    const folder = ensureCourseFolder(tx, course.title, now);
 
     // ---- 讲义：按 (folderId, title) 匹配替换 markdown，无则插入 ----
     const lectureReports: ImportLectureReport[] = [];
@@ -186,7 +460,11 @@ export function commitImport(
     const folderLectures = tx
       .select({ id: lectures.id, title: lectures.title })
       .from(lectures)
-      .where(eq(lectures.folderId, folder.id))
+      .where(
+        folderId === null
+          ? isNull(lectures.folderId)
+          : eq(lectures.folderId, folderId),
+      )
       .all();
     for (const row of folderLectures) lectureIdByTitle.set(row.title, row.id);
     let nextLectureOrder = folderLectures.length;
@@ -211,7 +489,7 @@ export function commitImport(
         tx.insert(lectures)
           .values({
             id,
-            folderId: folder.id,
+            folderId,
             title: lecture.title,
             markdown: lecture.markdown,
             order: nextLectureOrder,
@@ -241,7 +519,11 @@ export function commitImport(
     let nextUnitOrder = tx
       .select({ id: units.id })
       .from(units)
-      .where(eq(units.folderId, folder.id))
+      .where(
+        folderId === null
+          ? isNull(units.folderId)
+          : eq(units.folderId, folderId),
+      )
       .all().length;
 
     for (const unit of parsed.units) {
@@ -272,7 +554,7 @@ export function commitImport(
         tx.insert(units)
           .values({
             id: unit.id,
-            folderId: folder.id,
+            folderId,
             lectureId,
             title: unit.title,
             topic: unit.topic ?? null,
@@ -330,58 +612,84 @@ export function commitImport(
       }
     }
 
-    // ---- 追加课程目录条目（T2A.1）：讲义 visible=true、单元 visible=false；
-    //      已在该课程的资源跳过（唯一约束 + onConflictDoNothing，幂等不报错） ----
-    let nextItemOrder =
-      tx
-        .select({ order: courseItems.order })
-        .from(courseItems)
-        .where(eq(courseItems.courseId, courseId))
-        .all()
-        .reduce((max, row) => Math.max(max, row.order), -1) + 1;
-    for (const report of lectureReports) {
-      tx.insert(courseItems)
-        .values({
-          id: crypto.randomUUID(),
+    // ---- 追加课程目录条目：兼容路径（courseId，讲义可见、单元隐藏）与
+    //      addToCourse（D17 快捷项，visible 统一）；重复资源幂等跳过（不走 409）。
+    //      同一课程被两种参数同时指定时 addToCourse 优先（显式新语义覆盖兼容口径） ----
+    const appendByKey = new Map<
+      string,
+      { courseId: string; kind: "lecture" | "unit"; refId: string; visible: boolean }
+    >();
+    const collectAppends = (
+      courseId: string,
+      lectureVisible: boolean,
+      unitVisible: boolean,
+    ): void => {
+      for (const report of lectureReports) {
+        appendByKey.set(`${courseId}:lecture:${report.id}`, {
           courseId,
           kind: "lecture",
           refId: report.id,
-          title: null,
-          order: nextItemOrder,
-          visible: true,
-          publishAt: null,
-          createdAt: now,
-        })
-        .onConflictDoNothing({
-          target: [courseItems.courseId, courseItems.kind, courseItems.refId],
-        })
-        .run();
-      nextItemOrder += 1;
-    }
-    for (const report of unitReports) {
-      tx.insert(courseItems)
-        .values({
-          id: crypto.randomUUID(),
+          visible: lectureVisible,
+        });
+      }
+      for (const report of unitReports) {
+        appendByKey.set(`${courseId}:unit:${report.id}`, {
           courseId,
           kind: "unit",
           refId: report.id,
+          visible: unitVisible,
+        });
+      }
+    };
+    if (input.courseId !== undefined) {
+      collectAppends(input.courseId, true, false); // T2A.1 兼容口径
+    }
+    if (input.addToCourse !== undefined) {
+      collectAppends(
+        input.addToCourse.courseId,
+        input.addToCourse.visible,
+        input.addToCourse.visible,
+      );
+    }
+    // 各课程内 order 接在该课程现有条目末尾
+    const nextOrderByCourse = new Map<string, number>();
+    for (const append of appendByKey.values()) {
+      let nextOrder = nextOrderByCourse.get(append.courseId);
+      if (nextOrder === undefined) {
+        nextOrder =
+          tx
+            .select({ order: courseItems.order })
+            .from(courseItems)
+            .where(eq(courseItems.courseId, append.courseId))
+            .all()
+            .reduce((max, row) => Math.max(max, row.order), -1) + 1;
+      }
+      tx.insert(courseItems)
+        .values({
+          id: crypto.randomUUID(),
+          courseId: append.courseId,
+          kind: append.kind,
+          refId: append.refId,
           title: null,
-          order: nextItemOrder,
-          visible: false,
+          order: nextOrder,
+          visible: append.visible,
           publishAt: null,
           createdAt: now,
         })
+        // 幂等兜底：唯一约束 (courseId, kind, refId) 命中即跳过（已在本课程的资源不动）
         .onConflictDoNothing({
           target: [courseItems.courseId, courseItems.kind, courseItems.refId],
         })
         .run();
-      nextItemOrder += 1;
+      nextOrderByCourse.set(append.courseId, nextOrder + 1);
     }
 
-    // ---- imports 留档（原文 = 老师提交的原文，v1 不存转换文本）----
+    // ---- imports 留档（原文 = 老师提交的原文，v1 不存转换文本；T2A.3 起含
+    //      sourcePath/batchId/folderId）----
     const report: ImportCommitData = {
       importId,
-      courseId,
+      courseId: input.courseId ?? input.addToCourse?.courseId ?? null,
+      folderId,
       units: unitReports,
       lectures: lectureReports,
       questions: { inserted: insertedQuestions, updated: updatedQuestions },
@@ -393,6 +701,9 @@ export function commitImport(
         kind: parsed.frontmatter?.kind ?? "practice",
         rawMd: input.markdown,
         reportJson: JSON.stringify(report),
+        sourcePath: input.sourcePath ?? null,
+        batchId: input.batchId ?? null,
+        folderId,
         createdAt: now,
       })
       .run();
@@ -400,35 +711,30 @@ export function commitImport(
   });
 }
 
-/** 解析实际导入的课程：显式 courseId 必须存在；缺省用默认课程（无则创建） */
-function resolveCourseId(db: Db, courseId: string | undefined): string {
-  if (courseId !== undefined) {
-    const row = db
-      .select({ id: courses.id })
-      .from(courses)
-      .where(eq(courses.id, courseId))
-      .get();
-    if (row === undefined) {
-      throw new HttpError(404, "COURSE_NOT_FOUND", "指定的课程不存在");
-    }
-    return row.id;
-  }
-  const existing = db
-    .select({ id: courses.id })
-    .from(courses)
-    .where(eq(courses.title, DEFAULT_COURSE_TITLE))
-    .get();
-  if (existing !== undefined) return existing.id;
-  const id = crypto.randomUUID();
-  db.insert(courses)
-    .values({
-      id,
-      title: DEFAULT_COURSE_TITLE,
-      order: 0,
-      createdAt: new Date().toISOString(),
-    })
-    .run();
-  return id;
+// ---------- 批次回看（T2A.3，GET /api/teacher/import/batches/:batchId） ----------
+
+/**
+ * 批次记录回看：batchId 是前端在批量预览时生成的 UUID，逐文件 commit 携带；
+ * 无任何成功记录（全部被跳过/失败）时返回空 files（200——合法批次）。
+ */
+export function getImportBatch(db: Db, batchId: string): ImportBatchData {
+  const rows = db
+    .select()
+    .from(imports)
+    .where(eq(imports.batchId, batchId))
+    .orderBy(asc(imports.createdAt), asc(imports.id))
+    .all();
+  return {
+    batchId,
+    files: rows.map((row) => ({
+      importId: row.id,
+      filename: row.filename,
+      sourcePath: row.sourcePath,
+      folderId: row.folderId,
+      createdAt: row.createdAt,
+      report: JSON.parse(row.reportJson) as ImportCommitData,
+    })),
+  };
 }
 
 // ---------- 内容树：GET /api/teacher/content（T1.11；T2A.1 改 course_items 组装） ----------
