@@ -257,13 +257,62 @@ describe("D23 数据搬迁（T2A 前结构 fixture → 迁移 → 回填）", ()
         .all()
         .every((m) => m.joinedAt === "2026-09-27T00:00:00.000Z"),
     ).toBe(true);
-    // 标记表只有一行
+    // 标记表：t2a1 与 t2a6 各一行，appliedAt 仍是首次时间戳
     expect(db.select().from(dataMigrations).all()).toEqual([
       {
         key: "t2a1_library_courses_backfill",
         appliedAt: "2026-09-27T00:00:00.000Z",
       },
+      {
+        key: "t2a6_attempts_source_backfill",
+        appliedAt: "2026-09-27T00:00:00.000Z",
+      },
     ]);
+  });
+
+  it("步骤 6（T2A.6，D23-6）：旧 attempts 全部 sourceType=assignment、attemptNo=1，原值保留", () => {
+    const db = createPreT2aDb();
+    insertPreT2aFixture(db);
+    migrateAndBackfill(db);
+
+    const attempt = db.select().from(attempts).get();
+    expect(attempt).toMatchObject({
+      id: "at-1",
+      sourceType: "assignment",
+      attemptNo: 1,
+      // assignmentId/unitId 原值保留（旧作业 attempt 的 unitId 即当时那份作业的单元）
+      assignmentId: "as-1",
+      unitId: "u-a1",
+      // assignment 来源 courseId 为 null（T2A.7 起才取作业所属课程）
+      courseId: null,
+    });
+
+    // 幂等：标记防重跑后，后续新建的 course 作答（attemptNo 递增）不被回填触碰
+    db.insert(attempts)
+      .values({
+        id: "at-course",
+        studentId: "s-1",
+        sourceType: "course",
+        assignmentId: null,
+        courseId: "c-a",
+        unitId: "u-a2",
+        attemptNo: 3,
+        status: "draft",
+        startedAt: "2026-09-28T00:00:00.000Z",
+        submittedAt: null,
+        activeSec: null,
+        device: null,
+        scoreAuto: null,
+        scoreFinal: null,
+      })
+      .run();
+    runBackfills(db, new Date("2026-09-29T00:00:00.000Z"));
+    const after = db
+      .select()
+      .from(attempts)
+      .where(eq(attempts.id, "at-course"))
+      .get();
+    expect(after).toMatchObject({ sourceType: "course", attemptNo: 3 });
   });
 
   it("全新空库（createTestDb 路径）：回填无数据可搬，仅写标记；结构即最终态", () => {
@@ -271,10 +320,10 @@ describe("D23 数据搬迁（T2A 前结构 fixture → 迁移 → 回填）", ()
     expect(db.select().from(libraryFolders).all()).toEqual([]);
     expect(db.select().from(courseItems).all()).toEqual([]);
     expect(db.select().from(courseStudents).all()).toEqual([]);
-    expect(db.select().from(dataMigrations).all()).toHaveLength(1);
+    expect(db.select().from(dataMigrations).all()).toHaveLength(2);
     // 全新库再跑一次同样幂等
     runBackfills(db);
-    expect(db.select().from(dataMigrations).all()).toHaveLength(1);
+    expect(db.select().from(dataMigrations).all()).toHaveLength(2);
   });
 });
 
@@ -445,6 +494,10 @@ describe("孤儿资源兜底（T2A.1 事故修复：与主标记无关、每次�
         key: "t2a1_library_courses_backfill",
         appliedAt: "2026-09-27T00:00:00.000Z",
       },
+      {
+        key: "t2a6_attempts_source_backfill",
+        appliedAt: "2026-09-27T00:00:00.000Z",
+      },
     ]);
   });
 
@@ -498,6 +551,6 @@ describe("孤儿资源兜底（T2A.1 事故修复：与主标记无关、每次�
           .map((row) => [row.id, row.folderId] as const),
       ),
     ).toEqual(unitFolderIds);
-    expect(db.select().from(dataMigrations).all()).toHaveLength(1);
+    expect(db.select().from(dataMigrations).all()).toHaveLength(2);
   });
 });
