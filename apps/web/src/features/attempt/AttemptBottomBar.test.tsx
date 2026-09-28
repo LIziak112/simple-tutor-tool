@@ -19,6 +19,7 @@ function renderBar(
     answered: 0,
     total: 5,
     offline: false,
+    denied: false,
     saveFailed: false,
     inkFlushError: false,
     submitError: null,

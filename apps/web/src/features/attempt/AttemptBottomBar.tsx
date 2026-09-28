@@ -1,4 +1,4 @@
-import { AlertTriangle, WifiOff } from "lucide-react";
+import { AlertTriangle, Ban, WifiOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 /**
@@ -6,13 +6,16 @@ import { Button } from "@/components/ui/button";
  * - 已答进度 + 保存/上传/交卷错误提示 + 交卷按钮；
  * - 离线（T2.12）：交卷按钮禁用并提示「离线中，已作答内容保存在本机，
  *   恢复网络后可交卷」——离线时交卷必然失败，提前禁用比让用户点了再报错
- *   更友好；作答不受影响（草稿本地保存，T2.9），恢复网络自动可交。
+ *   更友好；作答不受影响（草稿本地保存，T2.9），恢复网络自动可交；
+ * - 无权限（T2A.6，D7）：保存/上传收到 403/404 的终态——交卷同样必然被拒，
+ *   按钮禁用并提示「已无权限访问该练习」。
  * 从页面文件抽出以便直接做组件测试（离线态渲染断言），页面只负责接线。
  */
 export function AttemptBottomBar({
   answered,
   total,
   offline,
+  denied,
   saveFailed,
   inkFlushError,
   submitError,
@@ -22,6 +25,8 @@ export function AttemptBottomBar({
   total: number;
   /** 是否离线（useOnlineStatus；离线时禁用交卷） */
   offline: boolean;
+  /** 访问权终态失去（403/404，T2A.6 D7；禁用交卷并提示） */
+  denied: boolean;
   /** 有答案保存失败（T2.9 草稿链路） */
   saveFailed: boolean;
   /** 交卷 flush 笔迹失败（T2.8） */
@@ -41,6 +46,15 @@ export function AttemptBottomBar({
             <span className="flex items-center gap-1 text-xs text-amber-600">
               <WifiOff aria-hidden className="size-4" />
               离线中，已作答内容保存在本机，恢复网络后可交卷
+            </span>
+          )}
+          {denied && (
+            <span
+              role="alert"
+              className="flex items-center gap-1 text-xs text-destructive"
+            >
+              <Ban aria-hidden className="size-4" />
+              已无权限访问该练习，无法继续作答或交卷
             </span>
           )}
           {saveFailed && (
@@ -64,7 +78,7 @@ export function AttemptBottomBar({
         </p>
         <Button
           className="min-h-11 shrink-0 px-6"
-          disabled={total === 0 || offline}
+          disabled={total === 0 || offline || denied}
           onClick={onOpenSubmit}
         >
           交卷

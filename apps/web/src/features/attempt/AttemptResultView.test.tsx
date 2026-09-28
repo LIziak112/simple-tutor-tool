@@ -11,14 +11,18 @@ import { AttemptResultView } from "./AttemptResultView";
 const DATA: AttemptResultData = {
   attempt: {
     id: "55555555-5555-4555-8555-555555555555",
+    sourceType: "assignment",
     assignmentId: "44444444-4444-4444-8444-444444444444",
+    courseId: null,
     unitId: "练习四",
+    attemptNo: 1,
     status: "submitted",
     startedAt: "2026-09-27T02:00:00.000Z",
     submittedAt: "2026-09-27T02:30:00.000Z",
     scoreAuto: 60,
   },
   title: "周末加练",
+  courseName: null,
   dueAt: null,
   summary: {
     total: 4,

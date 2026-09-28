@@ -4,7 +4,7 @@ import type {
   LectureEvent,
 } from "@tutor/contract";
 import { createStore, del, get, set } from "idb-keyval";
-import { postAttemptEventsApi, postLectureEventsApi } from "./api";
+import { ApiError, postAttemptEventsApi, postLectureEventsApi } from "./api";
 
 /**
  * 学习痕迹事件队列（T2.10，架构 §5.5）：内存队列 + 每 5 秒批量 POST；
@@ -25,7 +25,11 @@ import { postAttemptEventsApi, postLectureEventsApi } from "./api";
  *   事件触发补发；IndexedDB 不可用时留在内存队列（绝不丢已 track 的事件，
  *   除非页面被杀且存储也失败——双重兜底的极限场景）；
  * - 页面隐藏（visibilitychange=hidden / pagehide）时优先 sendBeacon
- *   （fire-and-forget，浏览器保证在页面卸载后发出）。
+ *   （fire-and-forget，浏览器保证在页面卸载后发出）；
+ * - **终态停止（T2A.6，D7）**：上报收到 403/404（如课程练习移出成员后的
+ *   COURSE_ACCESS_DENIED）意味着访问权已永久失去——丢弃待发批次并停止
+ *   定时/事件触发的后续发送（区别于网络失败的无限重试），队列进入
+ *   stopped 状态（track 静默 no-op）。
  *
  * 测试注入：send / beacon / intervalMs / store 均可替换（installEventStore
  * 换干净内存后端）；jsdom 无 indexedDB 时自动退化为内存实现（同 draft-store）。
@@ -128,12 +132,17 @@ function defaultBeacon(scope: EventScope) {
 
 /** 队列对外 API */
 export interface EventQueueApi {
-  /** 入队一条事件（clientTs 由调用方填 Date.now()） */
+  /** 入队一条事件（clientTs 由调用方填 Date.now()）；队列已终态停止时静默丢弃 */
   track(event: LearningEvent): void;
-  /** 立即批量发送（离线时写 IndexedDB；页面隐藏时走 sendBeacon） */
+  /** 立即批量发送（离线时写 IndexedDB；页面隐藏时走 sendBeacon）；终态后 no-op */
   flush(): Promise<void>;
   /** 停止队列：清定时器、移除监听、尽力最后一轮发送 */
   dispose(): void;
+  /**
+   * 队列是否已因 403/404 终态停止（T2A.6，D7：访问权已失去，不再重试）。
+   * 答题页据此提示「已无权限访问该练习」。
+   */
+  isDenied(): boolean;
 }
 
 /** 创建选项（全部可注入，默认值即生产行为） */
@@ -165,7 +174,27 @@ export function createEventQueue(options: EventQueueOptions): EventQueueApi {
   let queue: LearningEvent[] = [];
   /** 一轮发送进行中（并发触发只跑一轮，剩余等下一轮） */
   let flushing = false;
+  /**
+   * 终态停止标记（T2A.6，D7）：上报收到 403/404（访问权永久失去）后置位——
+   * 丢弃待发事件、清离线仓、后续 track/flush 全部 no-op（不得当作网络失败
+   * 无限重试）。发送错误为普通网络/5xx 失败时不置位（离线仓重试路径不变）。
+   */
+  let denied = false;
   const key = keyOf(scope);
+
+  /** 是否为「访问权已失去」的终态错误（403/404，D7/D22；与网络失败区分） */
+  function isDeniedError(err: unknown): boolean {
+    return (
+      err instanceof ApiError && (err.status === 403 || err.status === 404)
+    );
+  }
+
+  /** 终态停止：丢弃待发与离线仓内容（不再上传），界面提示由调用方负责 */
+  async function stopDenied(): Promise<void> {
+    denied = true;
+    queue = [];
+    await clearPersisted();
+  }
 
   /** 读持久层（吞错：存储故障不阻塞发送链路） */
   async function loadPersisted(): Promise<LearningEvent[]> {
@@ -203,7 +232,7 @@ export function createEventQueue(options: EventQueueOptions): EventQueueApi {
   }
 
   async function flushNow(): Promise<void> {
-    if (flushing) return;
+    if (denied || flushing) return;
     flushing = true;
     try {
       const persisted = await loadPersisted();
@@ -220,6 +249,7 @@ export function createEventQueue(options: EventQueueOptions): EventQueueApi {
         typeof document !== "undefined" &&
         document.visibilityState === "hidden";
       const failed: LearningEvent[] = [];
+      let deniedHit = false;
       for (let start = 0; start < pending.length; start += BATCH_MAX) {
         const chunk = pending.slice(start, start + BATCH_MAX);
         try {
@@ -229,9 +259,22 @@ export function createEventQueue(options: EventQueueOptions): EventQueueApi {
             await send(chunk);
           }
         } catch (err) {
+          // 403/404 = 访问权终态（D7）：丢弃整批并停止（其余批次一并丢弃）
+          if (isDeniedError(err)) {
+            console.warn(
+              "事件上报被拒（403/404），已停止本练习的事件上报",
+              err,
+            );
+            deniedHit = true;
+            break;
+          }
           console.warn("事件批量上报失败（已留待重发）", err);
           failed.push(...chunk);
         }
+      }
+      if (deniedHit) {
+        await stopDenied();
+        return;
       }
       if (failed.length > 0) {
         // 失败批次写回离线仓；仓也不可用时留在内存
@@ -283,6 +326,7 @@ export function createEventQueue(options: EventQueueOptions): EventQueueApi {
 
   return {
     track(event: LearningEvent): void {
+      if (denied) return; // 终态停止：静默丢弃（不再上传）
       queue.push(event);
       // 队列攒到单批上限立即触发（防下一次越过 200 被契约拒绝）
       if (queue.length >= BATCH_MAX) void flushNow();
@@ -298,6 +342,9 @@ export function createEventQueue(options: EventQueueOptions): EventQueueApi {
         window.removeEventListener("online", onOnline);
       }
       void flushNow();
+    },
+    isDenied(): boolean {
+      return denied;
     },
   };
 }

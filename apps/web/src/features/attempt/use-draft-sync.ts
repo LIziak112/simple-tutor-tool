@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { ApiError } from "@/lib/api";
 import { saveDraftAnswer } from "./attempt-queries";
 import { unsyncedAnswerIds } from "./draft-merge";
 import { draftStore } from "./draft-store";
@@ -24,17 +25,22 @@ import type { InkUploadController } from "./use-ink-upload";
  * - 本地写（saveAnswer/saveInk）永不阻塞于网络；断网时顶栏转「离线，已存本机」，
  *   恢复 online 后自动补发；
  * - 顶栏三态：saving=本地有未确认内容；saved=全部内容已到服务端（附 HH:mm）；
- *   offline=断网或最近同步失败（内容已在本机）。
+ *   offline=断网或最近同步失败（内容已在本机）；
+ * - 终态 denied（T2A.6，D7）：草稿 PUT / 笔迹上传收到 403/404（如课程练习被移出
+ *   成员，COURSE_ACCESS_DENIED）= 访问权永久失去——停止定时与事件触发的重试
+ *   （不得当作网络失败无限循环、顶栏不得停在「离线已存本机」），本地草稿保留
+ *   但不再上传，顶栏提示「已无权限访问该练习」。
  */
 
 /** 增量同步周期（毫秒） */
 export const DRAFT_SYNC_INTERVAL_MS = 10_000;
 
-/** 顶栏三态 */
+/** 顶栏状态 */
 export type DraftSaveStatus =
   | { state: "saved"; savedAt: number }
   | { state: "saving" }
-  | { state: "offline" };
+  | { state: "offline" }
+  | { state: "denied" };
 
 /** 供答题页与手写控件联动的草稿同步 API */
 export interface DraftSyncApi {
@@ -42,16 +48,23 @@ export interface DraftSyncApi {
   status: DraftSaveStatus;
   /** 合并后的答案（undefined=合并未完成，答题页暂不播种） */
   recoveredDrafts: Record<string, StudentAnswer> | undefined;
-  /** 本地写入一笔/一题（状态转「保存中」；离线态保持离线） */
+  /** 本地写入一笔/一题（状态转「保存中」；离线态保持离线；终态保持终态） */
   noteLocalWrite(): void;
   /** 某题答案 PUT 成功（T2.6 即时链路回调） */
   noteAnswerSynced(questionId: string, answer: StudentAnswer): void;
   /** 某题笔迹上传成功（T2.8 通道回调） */
   noteInkSynced(): void;
-  /** 一次网络/服务端失败（顶栏转离线态，等下一轮重试） */
+  /** 一次网络/服务端失败（顶栏转离线态，等下一轮重试）；403/404 请改调 noteDenied */
   noteSyncFailed(): void;
-  /** 立即增量同步（合并完成/断网恢复/定时/切后台共用入口） */
+  /** 访问权终态失去（403/404）：停止全部重试与循环（T2A.6，D7） */
+  noteDenied(): void;
+  /** 立即增量同步（合并完成/断网恢复/定时/切后台共用入口）；终态后 no-op */
   syncNow(): Promise<void>;
+}
+
+/** 是否为「访问权已失去」的终态错误（403/404，D7/D22；与网络失败区分） */
+function isDeniedError(err: unknown): boolean {
+  return err instanceof ApiError && (err.status === 403 || err.status === 404);
 }
 
 /**
@@ -73,6 +86,12 @@ export function useDraftSync(
   >(undefined);
   /** 同步进行中标志（定时/事件并发触发时只跑一轮） */
   const syncingRef = useRef(false);
+  /**
+   * 终态停止标志（T2A.6，D7）：置位后定时器/visibility/online 触发的 syncNow
+   * 全部 no-op，本地草稿保留但不再上传。ref 而非 state：syncNow 是稳定回调，
+   * 判断必须在闭包内即时读取。
+   */
+  const deniedRef = useRef(false);
   const attemptIdRef = useRef(attemptId);
   attemptIdRef.current = attemptId;
 
@@ -93,6 +112,7 @@ export function useDraftSync(
   }, [inksClean]);
 
   const syncNow = useCallback(async (): Promise<void> => {
+    if (deniedRef.current) return; // 终态：不再上传（本地草稿保留）
     if (syncingRef.current) return;
     if (!navigator.onLine) {
       setStatus({ state: "offline" });
@@ -133,6 +153,17 @@ export function useDraftSync(
           ),
         ),
       ]);
+      // 403/404 = 访问权终态（D7）：停止重试与 10 秒循环，本地草稿保留不上传
+      const deniedHit =
+        answerSettled.some(
+          (result) =>
+            result.status === "rejected" && isDeniedError(result.reason),
+        ) || inkResults.includes("denied");
+      if (deniedHit) {
+        deniedRef.current = true;
+        setStatus({ state: "denied" });
+        return;
+      }
       const answersOk = answerSettled.every((r) => r.status === "fulfilled");
       const inksOk = !inkResults.includes("failed");
       if (answersOk && inksOk) {
@@ -157,8 +188,10 @@ export function useDraftSync(
   }, [inkControllers, inksClean, recomputeIfClean]);
 
   // 进入答题页：合并本地与服务端草稿，仍有差异则触发一次同步
+  // （attemptId 切换时重置终态标记——新一次作答重新计数）
   useEffect(() => {
     let alive = true;
+    deniedRef.current = false;
     setRecoveredDrafts(undefined);
     setStatus({ state: "saved", savedAt: 0 });
     void (async () => {
@@ -168,6 +201,7 @@ export function useDraftSync(
       );
       if (!alive) return;
       setRecoveredDrafts(merged);
+      if (deniedRef.current) return;
       const record = await draftStore.loadDraft(attemptId);
       if (!alive) return;
       if (record !== null && unsyncedAnswerIds(record).length > 0) {
@@ -221,7 +255,9 @@ export function useDraftSync(
 
   const noteLocalWrite = useCallback(() => {
     setStatus((prev) =>
-      prev.state === "offline" ? prev : { state: "saving" },
+      prev.state === "offline" || prev.state === "denied"
+        ? prev
+        : { state: "saving" },
     );
   }, []);
 
@@ -239,7 +275,15 @@ export function useDraftSync(
   }, [recomputeIfClean]);
 
   const noteSyncFailed = useCallback(() => {
-    setStatus({ state: "offline" });
+    setStatus((prev) =>
+      prev.state === "denied" ? prev : { state: "offline" },
+    );
+  }, []);
+
+  /** 访问权终态（403/404，T2A.6 D7）：停止重试与 10 秒循环，本地草稿保留不上传 */
+  const noteDenied = useCallback(() => {
+    deniedRef.current = true;
+    setStatus({ state: "denied" });
   }, []);
 
   return useMemo(
@@ -250,6 +294,7 @@ export function useDraftSync(
       noteAnswerSynced,
       noteInkSynced,
       noteSyncFailed,
+      noteDenied,
       syncNow,
     }),
     [
@@ -259,6 +304,7 @@ export function useDraftSync(
       noteAnswerSynced,
       noteInkSynced,
       noteSyncFailed,
+      noteDenied,
       syncNow,
     ],
   );

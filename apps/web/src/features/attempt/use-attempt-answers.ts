@@ -1,5 +1,6 @@
 import type { StudentAnswer } from "@tutor/contract";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { ApiError } from "@/lib/api";
 import { isAnswered } from "./answer-format";
 import { saveDraftAnswer } from "./attempt-queries";
 import { draftStore } from "./draft-store";
@@ -15,7 +16,9 @@ import type { DraftSyncApi } from "./use-draft-sync";
  *   不受网络状态影响），随后才走服务端 PUT；
  * - 卸载：flush 未落防抖窗的最新答案（防跳页丢最后一次输入）；
  * - 失败：saveFailed 置位供底栏提示「保存失败，请检查网络」（不阻塞作答）；
- *   同时通知 draftSync 转离线态。
+ *   同时通知 draftSync 转离线态；
+ * - 403/404（T2A.6，D7）：访问权终态——通知 draftSync.noteDenied 停止重试，
+ *   本地草稿保留但不再上传。
  */
 
 /** 文本类输入的防抖窗（毫秒） */
@@ -114,7 +117,16 @@ export function useAttemptAnswers(
           api.noteAnswerSynced(questionId, answer);
         }
       })
-      .catch(() => {
+      .catch((err: unknown) => {
+        // 403/404 = 访问权终态（T2A.6，D7）：停止重试循环（区别于网络失败）
+        if (
+          err instanceof ApiError &&
+          (err.status === 403 || err.status === 404)
+        ) {
+          syncRef.current?.noteDenied();
+          setSaveFailed(true);
+          return;
+        }
         setSaveFailed(true);
         syncRef.current?.noteSyncFailed();
       });

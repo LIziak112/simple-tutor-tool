@@ -2,7 +2,7 @@ import type { InkDoc } from "@tutor/contract";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { InkEngine } from "@/features/ink/engine/index.ts";
 import { gzipOrRaw } from "@/features/ink/gzip";
-import { putAttemptInkApi } from "@/lib/api";
+import { ApiError, putAttemptInkApi } from "@/lib/api";
 
 /**
  * 笔迹上传状态机（T2.8，任务要点「笔迹上传时机」）：
@@ -16,6 +16,7 @@ import { putAttemptInkApi } from "@/lib/api";
  * T2.9 增量同步扩展：
  * - sync()：供草稿同步循环调用——无待传=synced；引擎不可用（题卡收起等）=
  *   deferred（保留待传，等引擎恢复后再试）；真正失败=failed；
+ *   denied=上传收到 403/404（T2A.6，D7 访问权终态）——控制器停止后续上传；
  * - resync(doc)：进入答题页发现本地笔迹较新（或服务端拉取失败）时的补传入口，
  *   行为与书写一笔相同（进防抖）；
  * - hooks.onSynced(doc)：一次上传成功后回调（草稿仓记指纹用，传当次上传的 doc）；
@@ -35,8 +36,8 @@ export function isInkDocEmpty(doc: InkDoc): boolean {
     : doc.data.scene.elements.length === 0;
 }
 
-/** sync() 的三态结果 */
-export type InkSyncResult = "synced" | "deferred" | "failed";
+/** sync() 的四态结果（denied=访问权终态，T2A.6） */
+export type InkSyncResult = "synced" | "deferred" | "failed" | "denied";
 
 /** 交卷前逐题 flush 的控制器（AnswerView 收集所有手写题的 controller） */
 export interface InkUploadController {
@@ -47,7 +48,7 @@ export interface InkUploadController {
   /**
    * 增量同步（T2.9 草稿同步循环调用）：
    * synced=无待传或上传成功；deferred=引擎不可用/上传进行中（留待下次）；
-   * failed=网络/服务端失败。
+   * failed=网络/服务端失败；denied=403/404 访问权终态（不再上传）。
    */
   sync(): Promise<InkSyncResult>;
   /** 把文档标记为待上传并进防抖（本地较新恢复后的补传入口） */
@@ -58,8 +59,10 @@ export interface InkUploadController {
 export interface InkUploadHooks {
   /** 一次上传成功（doc=本次上传的文档） */
   onSynced?: (doc: InkDoc) => void;
-  /** 一次上传失败 */
+  /** 一次上传失败（网络/服务端错误） */
   onFailed?: () => void;
+  /** 上传被 403/404 拒绝（T2A.6，D7：访问权终态失去——停止重试） */
+  onDenied?: () => void;
 }
 
 /**
@@ -85,6 +88,11 @@ export function useInkUpload(
   const [saveFailed, setSaveFailed] = useState(false);
   /** 最新待上传文档（null=无变化） */
   const pendingRef = useRef<InkDoc | null>(null);
+  /**
+   * 访问权终态标志（T2A.6，D7）：上传收到 403/404 后置位——本地笔迹保留
+   * 但不再发起上传（flush/sync 均不再发包）。
+   */
+  const deniedRef = useRef(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** 上传进行中标志：flush 与防抖不并发（后到的覆盖等待下一次） */
   const uploadingRef = useRef(false);
@@ -98,6 +106,7 @@ export function useInkUpload(
 
   /** 执行一次上传；返回是否成功（不抛错——失败语义由返回值与 saveFailed 承载） */
   const doUpload = useCallback(async (): Promise<boolean> => {
+    if (deniedRef.current) return false; // 访问权终态：不再上传
     const doc = pendingRef.current;
     const engine = engineGetter();
     if (doc === null || engine === null) {
@@ -122,7 +131,16 @@ export function useInkUpload(
       setSaveFailed(false);
       hooksRef.current?.onSynced?.(doc);
       return true;
-    } catch {
+    } catch (err) {
+      // 403/404 = 访问权终态（T2A.6，D7）：停止后续上传，交由上层提示
+      if (
+        err instanceof ApiError &&
+        (err.status === 403 || err.status === 404)
+      ) {
+        deniedRef.current = true;
+        hooksRef.current?.onDenied?.();
+        return false;
+      }
       setSaveFailed(true);
       hooksRef.current?.onFailed?.();
       return false;
@@ -161,6 +179,7 @@ export function useInkUpload(
   }, [doUpload]);
 
   const sync = useCallback(async (): Promise<InkSyncResult> => {
+    if (deniedRef.current) return "denied";
     if (pendingRef.current === null) return "synced";
     if (engineGetter() === null || uploadingRef.current) return "deferred";
     return (await doUpload()) ? "synced" : "failed";

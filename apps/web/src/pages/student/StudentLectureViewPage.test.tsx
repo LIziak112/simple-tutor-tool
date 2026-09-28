@@ -16,7 +16,7 @@ import StudentLectureViewPage from "./StudentLectureViewPage";
  * :::solution 讲解块以折叠件呈现、错误态。API 层 mock。
  * T2.10 追加：折叠/逐步揭晓展开上报 lecture_expand（unmount 时队列 flush 出网）。
  * T2A.5 追加：课程上下文（?courseId= → 请求带参、返回课程目录、标题下课程名）
- * 与「本课配套练习」区块（D8：题数 + 即将开放）。
+ * 与「本课配套练习」区块（D8：T2A.6 起链接进单元落地页）。
  */
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -215,7 +215,7 @@ describe("StudentLectureViewPage：课程上下文与配套练习（T2A.5）", (
     expect(screen.queryByText("本课配套练习")).not.toBeInTheDocument();
   });
 
-  it("有可见配套单元：底部显示「本课配套练习」（标题/题数/即将开放，不可点击）", async () => {
+  it("有可见配套单元：底部显示「本课配套练习」（标题/题数/去练习链接，T2A.6）", async () => {
     mockedLecture.mockResolvedValue({
       ...LECTURE,
       companionUnits: [
@@ -224,15 +224,16 @@ describe("StudentLectureViewPage：课程上下文与配套练习（T2A.5）", (
     });
     renderPage();
 
-    const heading = await screen.findByRole("heading", {
+    await screen.findByRole("heading", {
       name: "本课配套练习",
     });
     expect(screen.getByText("有理数小练")).toBeInTheDocument();
     expect(screen.getByText("4 题")).toBeInTheDocument();
-    expect(screen.getAllByText("即将开放").length).toBe(1);
-    // 单元项暂不可进入（T2A.6 接入作答）：区块内没有链接
-    const section = heading.closest("section");
-    expect(section?.querySelector("a")).toBeNull();
+    expect(screen.getAllByText("去练习").length).toBe(1);
+    // T2A.6：配套单元链接进当前课程的单元落地页（带 courseId 上下文）
+    expect(
+      screen.getByRole("link", { name: "配套练习 有理数小练（4 题）" }),
+    ).toHaveAttribute("href", `/s/courses/${COURSE_ID}/units/有理数小练`);
   });
 });
 

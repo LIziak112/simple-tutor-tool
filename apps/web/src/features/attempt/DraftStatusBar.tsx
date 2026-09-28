@@ -1,5 +1,5 @@
 import dayjs from "dayjs";
-import { Check, CloudOff, LoaderCircle } from "lucide-react";
+import { Ban, Check, CloudOff, LoaderCircle } from "lucide-react";
 import { DISPLAY_TZ } from "@/lib/time";
 import type { DraftSaveStatus } from "./use-draft-sync";
 
@@ -30,6 +30,18 @@ export function DraftStatusBar({ status }: { status: DraftSaveStatus }) {
       >
         <CloudOff aria-hidden className="size-3.5" />
         离线，已存本机
+      </p>
+    );
+  }
+  if (status.state === "denied") {
+    return (
+      <p
+        data-testid="draft-status"
+        role="alert"
+        className="flex items-center gap-1.5 text-xs text-red-600"
+      >
+        <Ban aria-hidden className="size-3.5" />
+        已无权限访问该练习
       </p>
     );
   }

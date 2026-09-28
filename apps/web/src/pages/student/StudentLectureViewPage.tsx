@@ -1,4 +1,4 @@
-import { ArrowLeft, Dumbbell, ListTree, Lock } from "lucide-react";
+import { ArrowLeft, Dumbbell, ListTree } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
 import type { OutlineItem } from "@/features/markdown/outline";
@@ -179,7 +179,7 @@ export default function StudentLectureViewPage() {
             />
           </div>
 
-          {/* 本课配套练习（D8）：同课程可见的配套单元——题数 + 即将开放（T2A.6 接入作答） */}
+          {/* 本课配套练习（D8）：同课程可见的配套单元——进入单元落地页作答（T2A.6） */}
           {lectureQuery.data.companionUnits.length > 0 && (
             <section
               aria-labelledby="lecture-companions"
@@ -194,25 +194,26 @@ export default function StudentLectureViewPage() {
               </h2>
               <ul className="mt-3 flex flex-col gap-2">
                 {lectureQuery.data.companionUnits.map((unit) => (
-                  <li
-                    key={unit.id}
-                    aria-label={`配套练习 ${unit.title}（${unit.questionCount} 题，即将开放）`}
-                    className="flex min-h-14 items-center gap-3 rounded-xl border border-dashed border-border bg-muted/40 px-4 py-2"
-                  >
-                    <Dumbbell
-                      aria-hidden
-                      className="size-5 shrink-0 text-muted-foreground"
-                    />
-                    <span className="min-w-0 flex-1 truncate text-sm font-medium text-muted-foreground">
-                      {unit.title}
-                    </span>
-                    <span className="shrink-0 text-xs text-muted-foreground">
-                      {unit.questionCount} 题
-                    </span>
-                    <span className="flex shrink-0 items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground">
-                      <Lock aria-hidden className="size-3.5" />
-                      即将开放
-                    </span>
+                  <li key={unit.id}>
+                    <Link
+                      to={`/s/courses/${lectureQuery.data.courseId}/units/${unit.id}`}
+                      aria-label={`配套练习 ${unit.title}（${unit.questionCount} 题）`}
+                      className="flex min-h-14 items-center gap-3 rounded-xl border border-border bg-card px-4 py-2 outline-none transition-colors hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50"
+                    >
+                      <Dumbbell
+                        aria-hidden
+                        className="size-5 shrink-0 text-primary"
+                      />
+                      <span className="min-w-0 flex-1 truncate text-sm font-medium">
+                        {unit.title}
+                      </span>
+                      <span className="shrink-0 text-xs text-muted-foreground">
+                        {unit.questionCount} 题
+                      </span>
+                      <span className="shrink-0 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
+                        去练习
+                      </span>
+                    </Link>
                   </li>
                 ))}
               </ul>
