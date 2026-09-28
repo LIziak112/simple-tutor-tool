@@ -13,6 +13,7 @@ import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
 import {
   assignments,
+  assignmentUnits,
   attempts,
   courseItems,
   courseStudents,
@@ -933,21 +934,28 @@ describe("D4：课程删除", () => {
     );
     expect(detail.data.hasAttempts).toBe(false);
 
-    // 插入一条针对 练习四 的作答（现状口径：条目引用单元的任何 attempt 都算）
+    // 插入一份按课程布置的作业 + 一条课程练习作答（T2A.7 D4 口径：
+    // attempts.courseId 或 assignments.courseId 命中即有关联）
     const assignmentId = crypto.randomUUID();
     db.insert(assignments)
       .values({
         id: assignmentId,
-        unitId: UNIT_ID,
+        unitId: null,
+        courseId,
         title: "练习四作业",
         createdAt: "2026-09-01T00:00:00.000Z",
       })
+      .run();
+    db.insert(assignmentUnits)
+      .values({ assignmentId, unitId: UNIT_ID, order: 0 })
       .run();
     db.insert(attempts)
       .values({
         id: crypto.randomUUID(),
         studentId,
-        assignmentId,
+        sourceType: "course",
+        assignmentId: null,
+        courseId,
         unitId: UNIT_ID,
         status: "submitted",
         startedAt: "2026-09-01T00:00:00.000Z",

@@ -73,7 +73,8 @@ const ENTRY_LABEL: Record<AssignmentStatus, string> = {
 };
 
 /**
- * 「我的作业」卡片：标题/单元/主题/题数/截止/状态徽章 + 答题入口。
+ * 「我的作业」卡片（T2A.7 多单元化）：标题/单元/题数/截止/状态徽章 + 答题入口。
+ * 单元行：1 个单元显示该单元标题；多个单元显示「n 个单元」并列出各单元标题。
  * T2.6 起入口打通：点击进入 /s/assignments/:id（自动创建/取回 attempt，
  * 未开始与进行中都进答题视图，已交/已批进结果视图）。
  */
@@ -82,6 +83,7 @@ export function StudentAssignmentCard({
 }: {
   assignment: StudentAssignment;
 }) {
+  const unitNames = assignment.units.map((unit) => unit.title);
   return (
     <li className="flex flex-col gap-2 rounded-xl border border-border bg-card p-4 text-card-foreground">
       <div className="flex flex-wrap items-center gap-2">
@@ -90,8 +92,13 @@ export function StudentAssignmentCard({
         <AssignmentDueLabel dueAt={assignment.dueAt} />
       </div>
       <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
-        <span>单元：{assignment.unitTitle}</span>
-        {assignment.topic && <span>主题：{assignment.topic}</span>}
+        {unitNames.length > 1 ? (
+          <span>
+            {assignment.unitCount} 个单元（{unitNames.join("、")}）
+          </span>
+        ) : (
+          <span>单元：{unitNames[0] ?? "（内容整理中）"}</span>
+        )}
         <span>共 {assignment.questionCount} 题</span>
       </p>
       <Button asChild variant="outline" className="min-h-11">

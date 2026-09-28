@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import {
   assignments,
+  assignmentUnits,
   lectures,
   libraryFolders,
   questions,
@@ -342,31 +343,40 @@ describe("loadLibrarySnapshot：读库口径（内存库）", () => {
       .values([
         {
           id: "a1",
-          unitId: "练习四",
+          unitId: null,
           title: "未截止（无 dueAt）",
           createdAt: now,
         },
         {
           id: "a2",
-          unitId: "练习四",
+          unitId: null,
           title: "未截止（未来 dueAt）",
           dueAt: "2026-12-01T00:00:00.000Z",
           createdAt: now,
         },
         {
           id: "a3",
-          unitId: "练习四",
+          unitId: null,
           title: "已截止",
           dueAt: "2026-01-01T00:00:00.000Z",
           createdAt: now,
         },
         {
           id: "a4",
-          unitId: "练习四",
+          unitId: null,
           title: "已删除",
           createdAt: now,
           deletedAt: now,
         },
+      ])
+      .run();
+    // T2A.7：作业内容走 assignment_units（assignments.unitId 废弃）
+    db.insert(assignmentUnits)
+      .values([
+        { assignmentId: "a1", unitId: "练习四", order: 0 },
+        { assignmentId: "a2", unitId: "练习四", order: 0 },
+        { assignmentId: "a3", unitId: "练习四", order: 0 },
+        { assignmentId: "a4", unitId: "练习四", order: 0 },
       ])
       .run();
 

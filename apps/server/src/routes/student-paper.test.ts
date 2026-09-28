@@ -145,7 +145,7 @@ async function createAssignmentFor(
   const res = await app.request("/api/teacher/assignments", {
     method: "POST",
     headers: { "content-type": "application/json", cookie: teacherCookie },
-    body: JSON.stringify({ unitId, studentIds }),
+    body: JSON.stringify({ unitIds: [unitId], studentIds }),
   });
   expect(res.status).toBe(201);
   const body = (await res.json()) as { data: { id: string } };
@@ -165,7 +165,7 @@ function fetchPaper(
   );
 }
 
-/** 学生取试卷并解析 data.questions（断言 200） */
+/** 学生取试卷并平铺分组题目（T2A.7 units 结构；断言 200） */
 async function fetchPaperQuestions(
   app: ReturnType<typeof createApp>,
   cookie: string,
@@ -173,8 +173,10 @@ async function fetchPaperQuestions(
 ): Promise<QuestionPublic[]> {
   const res = await fetchPaper(app, cookie, assignmentId);
   expect(res.status).toBe(200);
-  const body = (await res.json()) as { data: { questions: QuestionPublic[] } };
-  return body.data.questions;
+  const body = (await res.json()) as {
+    data: { units: { questions: QuestionPublic[] }[] };
+  };
+  return body.data.units.flatMap((unit) => unit.questions);
 }
 
 /** 全套前置：导入样例 + 张三（被指派）/李四（未指派）+ 布置作业 */
@@ -214,8 +216,9 @@ describe("GET /api/student/assignments/:id/paper：被指派学生取试卷", ()
     const body = (await res.json()) as unknown;
     expect(studentPaperOkSchema.safeParse(body).success).toBe(true);
 
-    const list = (body as { data: { questions: QuestionPublic[] } }).data
-      .questions;
+    const list = (
+      body as { data: { units: { questions: QuestionPublic[] }[] } }
+    ).data.units.flatMap((unit) => unit.questions);
     // 前置：库里确实存在带答案的题目（泄露才是有意义的风险）
     expect(list.length).toBe(EXPECTED_ORDER.length);
     expect(
@@ -258,7 +261,9 @@ describe("GET /api/student/assignments/:id/paper：被指派学生取试卷", ()
     expect(JSON.stringify(body)).not.toContain("correct");
     // 确认拿到的是完整试卷（而非空列表导致「碰巧不泄露」）
     expect(
-      (body as { data: { questions: unknown[] } }).data.questions.length,
+      (
+        body as { data: { units: { questions: unknown[] }[] } }
+      ).data.units.flatMap((unit) => unit.questions).length,
     ).toBe(EXPECTED_ORDER.length);
   });
 
@@ -346,7 +351,7 @@ describe("GET /api/student/assignments/:id/paper：权限（验收项 2 + 错误
   });
 
   it("PATCH 换名单后被移出的学生从 200 变为 403（可见性联动）", async () => {
-    const { app, teacherCookie, aCookie, bId, assignmentId } =
+    const { app, teacherCookie, aCookie, aId, bId, assignmentId } =
       await makeAssignedPaper();
     expect((await fetchPaper(app, aCookie, assignmentId)).status).toBe(200);
 
@@ -355,7 +360,10 @@ describe("GET /api/student/assignments/:id/paper：权限（验收项 2 + 错误
       {
         method: "PATCH",
         headers: { "content-type": "application/json", cookie: teacherCookie },
-        body: JSON.stringify({ studentIds: [bId] }),
+        body: JSON.stringify({
+          removeStudentIds: [aId],
+          addStudentIds: [bId],
+        }),
       },
     );
     expect(patch.status).toBe(200);

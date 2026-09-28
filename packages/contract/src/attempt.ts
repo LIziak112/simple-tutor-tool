@@ -65,10 +65,14 @@ export const attemptSummarySchema = z.object({
   sourceType: attemptSourceSchema,
   /** 所属作业（assignments.id）；course 来源为 null */
   assignmentId: z.uuid().nullable(),
-  /** 课程练习所属课程（courses.id）；assignment 来源为 null（T2A.7 起可填） */
+  /** 课程练习所属课程（courses.id）；assignment 来源取作业所属课程（可空，D9/T2A.7） */
   courseId: z.uuid().nullable(),
-  /** 目标练习单元（units.id，作答期间的题目来源） */
-  unitId: z.string().min(1),
+  /**
+   * 目标练习单元（units.id）：course 来源恒有值（单单元）；assignment 来源
+   * 自 T2A.7 多单元化起为 null——题目集合改由 assignment_units 决定
+   * （题号全卷连续），不再落在单个单元上。
+   */
+  unitId: z.string().min(1).nullable(),
   /** 第几次作答（course 来源从 1 递增；assignment 来源恒 1） */
   attemptNo: z.number().int().min(1),
   status: attemptStatusSchema,
@@ -97,17 +101,35 @@ export const hintOpenedEntrySchema = z.object({
   text: z.string(),
 });
 
+/**
+ * 草稿视图的单元分组（T2A.7）：题目按所属单元分节下发。
+ * assignment 来源按 assignment_units.order 排列（题号全卷连续）；course 来源
+ * 恒为单组（单元标题）。live 题数为 0 的单元不出现（与试卷口径一致）。
+ */
+export const attemptDraftUnitSchema = z.object({
+  /** 练习单元 id（来自 DSL） */
+  id: z.string().min(1),
+  /** 单元标题（当前值；答题页分节标题） */
+  title: z.string().min(1),
+  /** 该单元的公开题目（QuestionPublic 形态，按单元内题序） */
+  questions: z.array(questionPublicSchema),
+});
+
 /** GET /api/student/attempts/:id 的草稿视图（status=draft）响应 data */
 export const attemptDraftDataSchema = z.object({
   attempt: attemptSummarySchema,
   /** 标题（答题页顶部展示）：assignment=作业标题；course=单元标题 */
   title: z.string().min(1),
-  /** 课程练习所属课程名（顶部来源行「课程：xx · 第 n 次」）；assignment 来源为 null */
+  /**
+   * 来源课程名：course 来源恒有值（顶部来源行「课程：xx · 第 n 次」）；
+   * assignment 来源自 T2A.7 起有所属课程时返回课程名（来源行「作业 · 课程名」），
+   * 无课程为 null。
+   */
   courseName: z.string().nullable(),
   /** 截止时间：UTC ISO；未设置为 null（course 来源恒 null，练习不限截止） */
   dueAt: assignmentDueAtSchema.nullable(),
-  /** 公开题目（与 T2.4 试卷同形态：QuestionPublic[]，按单元题序） */
-  questions: z.array(questionPublicSchema),
+  /** 公开题目分组（与试卷同形态：按单元分节，题号全卷连续） */
+  units: z.array(attemptDraftUnitSchema),
   /**
    * 本人草稿答案：questionId → StudentAnswer。未作答的题不在 Map 内；
    * 键名用 drafts（学生自己的答案），与结果视图的 answers（参考答案）区分。
@@ -171,19 +193,32 @@ export const attemptScoreSummarySchema = z.object({
   autoGradable: z.number().int().min(0),
 });
 
+/** 结果视图的单元分组（T2A.7）：逐题结果按交卷时的单元归属分节（单元序+题序） */
+export const attemptResultUnitSchema = z.object({
+  /** 练习单元 id（来自 DSL） */
+  id: z.string().min(1),
+  /** 单元标题（当前值；结果页分节标题） */
+  title: z.string().min(1),
+  /** 该单元的逐题结果（按单元内题序） */
+  questions: z.array(attemptResultQuestionSchema),
+});
+
 /** POST /api/student/attempts/:id/submit 响应与 GET 详情的结果视图（已交）共用 */
 export const attemptResultDataSchema = z.object({
   attempt: attemptSummarySchema,
   /** 标题（结果页顶部展示）：assignment=作业标题；course=单元标题 */
   title: z.string().min(1),
-  /** 课程练习所属课程名（顶部来源行「课程：xx · 第 n 次」）；assignment 来源为 null */
+  /**
+   * 来源课程名：course 来源恒有值；assignment 来源自 T2A.7 起有所属课程时
+   * 返回课程名（「作业 · 课程名」），无课程为 null。
+   */
   courseName: z.string().nullable(),
   /** 截止时间：UTC ISO；未设置为 null（course 来源恒 null） */
   dueAt: assignmentDueAtSchema.nullable(),
   /** 得分汇总 */
   summary: attemptScoreSummarySchema,
-  /** 逐题结果（按单元题序） */
-  questions: z.array(attemptResultQuestionSchema),
+  /** 逐题结果分组（T2A.7：assignment 按单元序分节，course 单组；组内按题序） */
+  units: z.array(attemptResultUnitSchema),
 });
 
 /** PUT /api/student/attempts/:id/answers/:questionId 请求体 */
@@ -247,7 +282,8 @@ export const attemptDetailDataSchema = z.union([
  * - ASSIGNMENT_NOT_FOUND：创建 attempt 的作业不存在（含已删除）（404）；
  * - ATTEMPT_NOT_FOUND：attempt 不存在（404）；
  * - ALREADY_SUBMITTED：attempt 已交卷，不能再保存草稿 / 重复交卷（409，验收项）；
- * - QUESTION_NOT_FOUND：题目不存在、已软删或不在该作业单元内（404）；
+ * - QUESTION_NOT_FOUND：题目不存在、已软删或不在该次作答的单元集合内（404，
+ *   T2A.7 起多单元作业为集合包含判断）；
  * - HINT_INDEX_OUT_OF_RANGE：提示序号越界（<0 或 ≥该题提示总数，含无提示题；
  *   400，T2.11 验收项）；
  * - FORBIDDEN：非本人 attempt / 未被指派的作业（403）；
@@ -292,7 +328,9 @@ export type AttemptSource = z.infer<typeof attemptSourceSchema>;
 export type AttemptSummary = z.infer<typeof attemptSummarySchema>;
 export type AttemptStartData = z.infer<typeof attemptStartDataSchema>;
 export type AttemptDraftData = z.infer<typeof attemptDraftDataSchema>;
+export type AttemptDraftUnit = z.infer<typeof attemptDraftUnitSchema>;
 export type AttemptResultQuestion = z.infer<typeof attemptResultQuestionSchema>;
+export type AttemptResultUnit = z.infer<typeof attemptResultUnitSchema>;
 export type AttemptScoreSummary = z.infer<typeof attemptScoreSummarySchema>;
 export type AttemptResultData = z.infer<typeof attemptResultDataSchema>;
 export type AttemptAnswerSaveRequest = z.infer<

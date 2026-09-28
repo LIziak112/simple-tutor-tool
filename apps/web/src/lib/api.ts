@@ -1,5 +1,8 @@
 import {
+  type AssignmentCheckData,
+  type AssignmentCheckRequest,
   type AssignmentCreateRequest,
+  type AssignmentDetailData,
   type AssignmentUpdateRequest,
   type AttemptAnswerSaveData,
   type AttemptAnswerSaveRequest,
@@ -510,21 +513,46 @@ export function loginStudentApi(
 
 // ---------- T2.2：作业管理（教师端） ----------
 
-/** 作业列表（默认只列未删除；includeDeleted=true 含已删除作业） */
+/**
+ * 作业列表（T2A.7：courseId 筛选——UUID 只看该课程作业、"none" 只看无课程作业、
+ * 缺省全部；includeDeleted=true 含已删除作业）
+ */
 export function fetchAssignmentsApi(
+  courseId: string | undefined,
   includeDeleted: boolean,
 ): Promise<TeacherAssignmentListData> {
+  const query: Record<string, string> = {};
+  if (courseId !== undefined) query.courseId = courseId;
+  if (includeDeleted) query.includeDeleted = "true";
   return callApi(() =>
     api.api.teacher.assignments.$get(
-      includeDeleted ? { query: { includeDeleted: "true" } } : undefined,
+      Object.keys(query).length > 0 ? { query } : undefined,
     ),
   );
 }
 
+/** 作业详情（T2A.7：roster 每人状态、startedCount、课程新成员） */
+export function fetchAssignmentDetailApi(
+  id: string,
+): Promise<AssignmentDetailData> {
+  return callApi(() =>
+    api.api.teacher.assignments[":id"].$get({ param: { id } }),
+  );
+}
+
+/** 布置前「已做过」检查（D15：名单学生在课程练习中对所选单元的已交卷次数） */
+export function checkAssignmentApi(
+  request: AssignmentCheckRequest,
+): Promise<AssignmentCheckData> {
+  return callApi(() =>
+    api.api.teacher.assignments.check.$post({ json: request }),
+  );
+}
+
 /**
- * 布置作业 {unitId, title?, studentIds[], dueAt?}。
+ * 布置作业（T2A.7）{unitIds[], studentIds[], title?, courseId?, dueAt?}。
  * dueAt 必须是带 Z 后缀的 UTC ISO（datetime-local 值先经页面转 UTC，见 lib/time.ts）；
- * unitId 不存在 404 UNIT_NOT_FOUND / studentIds 空或含未知 id 由后端契约拦截。
+ * 单元重复 400 DUPLICATE_UNIT；单元/学生/课程不存在 404（由后端契约拦截）。
  */
 export function createAssignmentApi(
   request: AssignmentCreateRequest,
@@ -533,7 +561,10 @@ export function createAssignmentApi(
 }
 
 /**
- * 更新作业（改标题/截止/全量替换名单；dueAt 显式 null = 取消截止）。
+ * 更新作业（T2A.7 增量语义：标题/截止/整组替换单元/名单增删）。
+ * unitIds 在锁定后（有 attempt）409 ASSIGNMENT_CONTENT_LOCKED；移出已开始学生
+ * 未带 confirmStarted 时 409 CONFIRM_REQUIRED（extra._students 为受影响学生名单，
+ * 调用方确认后带 confirmStarted 重发）。
  * json 以独立变量传入的原因同 updateQuestion（parseJsonBody 服务端校验）。
  */
 export function updateAssignmentApi(

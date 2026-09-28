@@ -3,6 +3,7 @@ import { and, asc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
   assignments,
+  assignmentUnits,
   attempts,
   courseItems,
   courses,
@@ -351,7 +352,9 @@ function usageCourseRefs(
     }));
 }
 
-/** 使用某资源的未删除作业（当前 assignments.unitId 单列引用；T2A.7 起走 assignment_units） */
+/**
+ * 使用某单元的未删除作业（T2A.7 起走 assignment_units 关联，多单元作业按行命中）。
+ */
 function usageAssignmentRefs(
   db: Db,
   unitId: string,
@@ -362,15 +365,61 @@ function usageAssignmentRefs(
       title: assignments.title,
       dueAt: assignments.dueAt,
     })
-    .from(assignments)
-    .where(and(eq(assignments.unitId, unitId), isNull(assignments.deletedAt)))
+    .from(assignmentUnits)
+    .innerJoin(assignments, eq(assignmentUnits.assignmentId, assignments.id))
+    .where(
+      and(eq(assignmentUnits.unitId, unitId), isNull(assignments.deletedAt)),
+    )
     .all();
 }
 
 /**
+ * 单元集合的作答数（D3 保守口径，含草稿——「没有任何作答记录」按存在性判断）：
+ * - attempts.unitId 直接命中（course 来源与旧 assignment 行）；
+ * - assignment 来源经 assignment_units 关联（T2A.7 起新 attempt 的 unitId 为
+ *   null，单按 unitId 计数会漏）。
+ */
+function attemptCountByUnits(db: Db, unitIds: readonly string[]): number {
+  if (unitIds.length === 0) return 0;
+  const assignmentIds = [
+    ...new Set(
+      db
+        .select({ assignmentId: assignmentUnits.assignmentId })
+        .from(assignmentUnits)
+        .where(inArray(assignmentUnits.unitId, [...unitIds]))
+        .all()
+        .map((row) => row.assignmentId),
+    ),
+  ];
+  const counted = new Set<string>(
+    db
+      .select({ id: attempts.id })
+      .from(attempts)
+      .where(inArray(attempts.unitId, [...unitIds]))
+      .all()
+      .map((row) => row.id),
+  );
+  if (assignmentIds.length > 0) {
+    for (const row of db
+      .select({ id: attempts.id })
+      .from(attempts)
+      .where(
+        and(
+          isNotNull(attempts.assignmentId),
+          inArray(attempts.assignmentId, assignmentIds),
+        ),
+      )
+      .all()) {
+      // 同一 attempt 可能既 unitId 命中又经 assignment 关联（旧数据），按 id 去重
+      counted.add(row.id);
+    }
+  }
+  return counted.size;
+}
+
+/**
  * 单元使用情况：课程引用（条目级可见性）、未删除作业、作答数。
- * now 可注入（publishAt 判断）。作答数 = attempts.unitId 命中数（含草稿——
- * D3「没有任何作答记录」按存在性判断，草稿也是记录）。
+ * now 可注入（publishAt 判断）。作答数口径见 attemptCountByUnits。
  */
 export function getUnitUsage(
   db: Db,
@@ -386,15 +435,10 @@ export function getUnitUsage(
     throw new HttpError(404, "UNIT_NOT_FOUND", "练习单元不存在");
   }
   const nowIso = typeof now === "string" ? now : now.toISOString();
-  const attemptCount = db
-    .select({ id: attempts.id })
-    .from(attempts)
-    .where(eq(attempts.unitId, id))
-    .all().length;
   return {
     courses: usageCourseRefs(db, "unit", id, nowIso),
     assignments: usageAssignmentRefs(db, id),
-    attemptCount,
+    attemptCount: attemptCountByUnits(db, [id]),
   };
 }
 
@@ -423,18 +467,10 @@ export function getLectureUsage(
     .where(eq(units.lectureId, id))
     .all()
     .map((row) => row.id);
-  const attemptCount =
-    companionUnitIds.length === 0
-      ? 0
-      : db
-          .select({ id: attempts.id })
-          .from(attempts)
-          .where(inArray(attempts.unitId, companionUnitIds))
-          .all().length;
   return {
     courses: usageCourseRefs(db, "lecture", id, nowIso),
     assignments: [],
-    attemptCount,
+    attemptCount: attemptCountByUnits(db, companionUnitIds),
   };
 }
 
@@ -559,15 +595,15 @@ export function listLibraryUnits(
       .all()
       .map((row) => [row.id, row.title] as const),
   );
-  // 使用各单元的未删除作业数
+  // 使用各单元的未删除作业数（T2A.7 起走 assignment_units 关联；复合主键保证
+  // 同一作业对同一单元只贡献 1）
   const assignmentCounts = new Map<string, number>();
   for (const row of db
-    .select({ unitId: assignments.unitId })
-    .from(assignments)
+    .select({ unitId: assignmentUnits.unitId })
+    .from(assignmentUnits)
+    .innerJoin(assignments, eq(assignmentUnits.assignmentId, assignments.id))
     .where(isNull(assignments.deletedAt))
     .all()) {
-    // T2A.7 起 unitId 可空（@deprecated，现有行恒有值）；多单元计数走 assignment_units
-    if (row.unitId === null) continue;
     assignmentCounts.set(
       row.unitId,
       (assignmentCounts.get(row.unitId) ?? 0) + 1,

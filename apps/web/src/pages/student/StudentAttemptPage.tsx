@@ -60,9 +60,13 @@ export default function StudentAttemptPage() {
   }
 
   const data = detailQuery.data;
-  // 退出目标：课程练习回单元落地页（继续「再做一次/历次记录」动线）；作业回首页
+  // 退出目标：课程练习回单元落地页（继续「再做一次/历次记录」动线）；作业回首页。
+  // T2A.7：attempt.unitId 可空（assignment 来源多单元化为 null）——course 来源
+  // 恒有值，仅在两者齐备时才构造单元落地页地址，否则回首页兜底。
   const exitTarget =
-    data.attempt.sourceType === "course" && data.attempt.courseId !== null
+    data.attempt.sourceType === "course" &&
+    data.attempt.courseId !== null &&
+    data.attempt.unitId !== null
       ? `/s/courses/${data.attempt.courseId}/units/${encodeURIComponent(data.attempt.unitId)}`
       : "/s/home";
   return (

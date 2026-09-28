@@ -14,7 +14,8 @@ const DATA: AttemptResultData = {
     sourceType: "assignment",
     assignmentId: "44444444-4444-4444-8444-444444444444",
     courseId: null,
-    unitId: "练习四",
+    // T2A.7：assignment 来源多单元化后 unitId 为 null
+    unitId: null,
     attemptNo: 1,
     status: "submitted",
     startedAt: "2026-09-27T02:00:00.000Z",
@@ -33,76 +34,83 @@ const DATA: AttemptResultData = {
     unanswered: 1,
     autoGradable: 3,
   },
-  questions: [
+  // T2A.7：逐题结果按单元分组（单单元不渲染节标题）
+  units: [
     {
-      questionId: "练习四-1",
-      snapshot: {
-        id: "练习四-1",
-        type: "judge",
-        difficulty: 1,
-        knowledge: ["有理数的概念"],
-        stemMd: "$0$ 既不是正数，也不是负数。[[正确]]",
-        hintCount: 0,
-      },
-      answers: { kind: "judge", value: true },
-      solutionMd: "$0$ 是正数与负数的分界点。",
-      answer: { kind: "judge", value: true },
-      autoCorrect: true,
-      hintsOpened: [],
-    },
-    {
-      questionId: "练习四-2",
-      snapshot: {
-        id: "练习四-2",
-        type: "choice",
-        difficulty: 1,
-        knowledge: ["相反数"],
-        stemMd: "$-5$ 的相反数是（　）",
-        options: ["$-5$", "$5$", "$\\frac{1}{5}$"],
-        hintCount: 1,
-      },
-      answers: { kind: "choice", index: 1 },
-      solutionMd: "故选 B。",
-      answer: { kind: "choice", index: 0 },
-      autoCorrect: false,
-      // T2.11：做题时解锁过第 0 条提示 → 结果视图回看
-      hintsOpened: [{ index: 0, text: "只有符号不同的两个数互为相反数。" }],
-    },
-    {
-      questionId: "练习四-4",
-      snapshot: {
-        id: "练习四-4",
-        type: "fill",
-        difficulty: 2,
-        knowledge: ["有理数的大小比较"],
-        stemMd: "写出相反数：$-\\frac{1}{2}$ 的相反数是（　）。",
-        hintCount: 0,
-      },
-      // T2.13 后规范约定：填空答案需公式展示时写 $…$（判分自动剥 $）
-      answers: {
-        kind: "fill",
-        blanks: [["$\\frac{1}{2}$", "1/2"], ["8"]],
-      },
-      solutionMd: null,
-      answer: { kind: "fill", values: ["1/2", ""] },
-      autoCorrect: false,
-      hintsOpened: [],
-    },
-    {
-      questionId: "p4-q7",
-      snapshot: {
-        id: "p4-q7",
-        type: "solve",
-        difficulty: 3,
-        knowledge: ["有理数混合运算"],
-        stemMd: "计算，写出过程。",
-        hintCount: 0,
-      },
-      answers: null,
-      solutionMd: null,
-      answer: null,
-      autoCorrect: null,
-      hintsOpened: [],
+      id: "练习四",
+      title: "练习四",
+      questions: [
+        {
+          questionId: "练习四-1",
+          snapshot: {
+            id: "练习四-1",
+            type: "judge",
+            difficulty: 1,
+            knowledge: ["有理数的概念"],
+            stemMd: "$0$ 既不是正数，也不是负数。[[正确]]",
+            hintCount: 0,
+          },
+          answers: { kind: "judge", value: true },
+          solutionMd: "$0$ 是正数与负数的分界点。",
+          answer: { kind: "judge", value: true },
+          autoCorrect: true,
+          hintsOpened: [],
+        },
+        {
+          questionId: "练习四-2",
+          snapshot: {
+            id: "练习四-2",
+            type: "choice",
+            difficulty: 1,
+            knowledge: ["相反数"],
+            stemMd: "$-5$ 的相反数是（　）",
+            options: ["$-5$", "$5$", "$\\frac{1}{5}$"],
+            hintCount: 1,
+          },
+          answers: { kind: "choice", index: 1 },
+          solutionMd: "故选 B。",
+          answer: { kind: "choice", index: 0 },
+          autoCorrect: false,
+          // T2.11：做题时解锁过第 0 条提示 → 结果视图回看
+          hintsOpened: [{ index: 0, text: "只有符号不同的两个数互为相反数。" }],
+        },
+        {
+          questionId: "练习四-4",
+          snapshot: {
+            id: "练习四-4",
+            type: "fill",
+            difficulty: 2,
+            knowledge: ["有理数的大小比较"],
+            stemMd: "写出相反数：$-\\frac{1}{2}$ 的相反数是（　）。",
+            hintCount: 0,
+          },
+          // T2.13 后规范约定：填空答案需公式展示时写 $…$（判分自动剥 $）
+          answers: {
+            kind: "fill",
+            blanks: [["$\\frac{1}{2}$", "1/2"], ["8"]],
+          },
+          solutionMd: null,
+          answer: { kind: "fill", values: ["1/2", ""] },
+          autoCorrect: false,
+          hintsOpened: [],
+        },
+        {
+          questionId: "p4-q7",
+          snapshot: {
+            id: "p4-q7",
+            type: "solve",
+            difficulty: 3,
+            knowledge: ["有理数混合运算"],
+            stemMd: "计算，写出过程。",
+            hintCount: 0,
+          },
+          answers: null,
+          solutionMd: null,
+          answer: null,
+          autoCorrect: null,
+          hintsOpened: [],
+        },
+      ],
     },
   ],
 };
@@ -130,6 +138,40 @@ describe("得分汇总卡", () => {
     renderView(onBackHome);
     fireEvent.click(screen.getByRole("button", { name: "返回首页" }));
     expect(onBackHome).toHaveBeenCalledTimes(1);
+  });
+
+  it("多单元作业渲染节标题（单元标题）且题号全卷连续；单单元不渲染节头", () => {
+    // 把第 4 题拆到第二个单元 → 两组；题号累计（第 4 题仍显示「第 4 题」）
+    const [firstUnit, ...rest] = DATA.units;
+    const secondUnit = {
+      id: "练习五",
+      title: "练习五",
+      questions: (firstUnit?.questions ?? []).slice(3),
+    };
+    const multi: AttemptResultData = {
+      ...DATA,
+      units: [
+        {
+          id: firstUnit?.id ?? "",
+          title: firstUnit?.title ?? "",
+          questions: (firstUnit?.questions ?? []).slice(0, 3),
+        },
+        ...(rest.length > 0 || secondUnit.questions.length === 0
+          ? []
+          : [secondUnit]),
+      ],
+    };
+    const view = render(
+      <AttemptResultView data={multi} onBackHome={vi.fn()} />,
+    );
+    expect(screen.getByText("练习四")).toBeInTheDocument();
+    expect(screen.getByText("练习五")).toBeInTheDocument();
+    expect(screen.getByText("第 4 题")).toBeInTheDocument();
+    view.unmount();
+
+    // 对照：单单元（DATA 本体）不渲染节标题
+    renderView();
+    expect(screen.queryByRole("heading", { name: "练习四" })).toBeNull();
   });
 });
 

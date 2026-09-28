@@ -19,7 +19,10 @@ import { and, eq } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { type InkRow, ink } from "../db/schema";
 import { HttpError } from "../lib/http-error";
-import { requireUnitQuestion, requireUsableAttempt } from "./attempt-service";
+import {
+  requireAttemptQuestion,
+  requireUsableAttempt,
+} from "./attempt-service";
 
 /**
  * InkService（T2.8）——手写笔迹的文件存储与元数据管理（架构 §5.2/§5.4）。
@@ -178,7 +181,7 @@ export function saveInk(
       "这份作业已交卷，不能再修改笔迹",
     );
   }
-  requireUnitQuestion(db, attempt, questionId);
+  requireAttemptQuestion(db, attempt, questionId);
 
   // 限额（契约口径：gzip 后 strokes + png 合计）
   if (

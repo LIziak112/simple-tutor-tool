@@ -3,19 +3,21 @@ import {
   type AttemptAnswerSaveData,
   type AttemptDetailData,
   type AttemptDraftData,
+  type AttemptDraftUnit,
   type AttemptResultData,
   type AttemptResultQuestion,
+  type AttemptResultUnit,
   type AttemptScoreSummary,
   type AttemptStartData,
   optionSchema,
   type Question,
   type QuestionAnswers,
   type QuestionOption,
-  type QuestionPublic,
   questionAnswersSchema,
   questionSchema,
   type StudentAnswer,
   type StudentPaperData,
+  type StudentPaperUnit,
   studentAnswerSchema,
 } from "@tutor/contract";
 import { grade } from "@tutor/grading";
@@ -26,6 +28,7 @@ import {
   type Attempt,
   assignmentStudents,
   assignments,
+  assignmentUnits,
   attempts,
   type Course,
   courses,
@@ -40,7 +43,7 @@ import { HttpError } from "../lib/http-error";
 import { computePerQuestionActiveSec, countAnswerChanges } from "./active-time";
 import {
   knowledgeNamesByQuestion,
-  publicQuestionsOfRows,
+  unitPublicQuestions,
 } from "./assignment-service";
 import { requireVisibleCourseUnit } from "./course-service";
 import { attemptTimeline } from "./event-service";
@@ -96,9 +99,9 @@ function attemptSummaryOf(row: Attempt): AttemptStartData {
     sourceType: row.sourceType,
     assignmentId: row.assignmentId,
     courseId: row.courseId,
-    // 全部现有链路（assignment/course）创建时都写 unitId；null 仅理论可达
-    // （防御性兜底为空串，契约层 min(1) 会拦住异常数据外流）
-    unitId: row.unitId ?? "",
+    // T2A.7：assignment 来源多单元化后 unitId 恒 null（题目集合走
+    // assignment_units）；course 来源恒有值。契约允许 null，直接透传。
+    unitId: row.unitId,
     attemptNo: row.attemptNo,
     status: row.status,
     startedAt: row.startedAt,
@@ -166,43 +169,84 @@ export function requireUsableAttempt(
   return attempt;
 }
 
-// ---------- 题目集合按来源分派（T2A.6） ----------
+// ---------- 题目集合按来源分派（T2A.6；T2A.7 多单元化） ----------
 
 /**
- * attempt 的判分/快照题目集合（按 sourceType 分派，D9）：
- * - course 来源：attempt.unitId 的未删除题；
- * - assignment 来源：该作业 unitId 的未删除题。**本阶段 assignments 仍是单单元
- *   （assignments.unitId 列仍在，assignment_units 表 T2A.7 才建）——assignment
- *   来源按「该作业 unitId 的未删题」实现，T2A.7 再切 assignment_units 多单元
- *   （按 assignment_units.order 拼接、题号全卷连续）。**
- * 两种来源现阶段各只含一个单元，但必须经本函数取题（判分、快照、公开题目投影
- * 都从这里走），T2A.7 只改 assignment 分支。
+ * attempt 的有序单元 id 列表（T2A.7）：
+ * - course 来源：[attempt.unitId]（单单元，创建时必写；防御性空列表兜底异常行）；
+ * - assignment 来源：该作业 assignment_units 按 order 升序的列表（作业行经 FK
+ *   必存在——含已删作业，作答不随作业软删消失），**不含已软删的单元**
+ *   （D16：已删单元的题目不进判分/快照/草稿口径）。
+ * 判分/快照/草稿/取卷/题目归属校验全部以本列表为唯一口径。
+ */
+export function attemptUnitIds(db: Db, attempt: Attempt): string[] {
+  if (attempt.sourceType === "course") {
+    return attempt.unitId !== null ? [attempt.unitId] : [];
+  }
+  const assignmentId = attempt.assignmentId;
+  if (assignmentId === null) return []; // 防御性兜底：assignment 来源必写 assignmentId
+  return db
+    .select({ unitId: assignmentUnits.unitId })
+    .from(assignmentUnits)
+    .innerJoin(units, eq(assignmentUnits.unitId, units.id))
+    .where(
+      and(
+        eq(assignmentUnits.assignmentId, assignmentId),
+        isNull(units.deletedAt),
+      ),
+    )
+    .orderBy(asc(assignmentUnits.order), asc(assignmentUnits.unitId))
+    .all()
+    .map((row) => row.unitId);
+}
+
+/**
+ * attempt 的判分/快照题目集合（按 sourceType 分派，D9；T2A.7 多单元拼接）：
+ * 各单元未删除题按 (order, id) 升序后**按 attemptUnitIds 的单元顺序拼接**——
+ * 题号全卷连续（D12），得分按全卷计算。course 来源为单单元的特例。
  */
 export function attemptQuestionRows(db: Db, attempt: Attempt): QuestionRow[] {
-  let unitIds: string[];
-  if (attempt.sourceType === "course") {
-    // course 来源：unitId 创建时必写（防御性空集合兜底异常行）
-    unitIds = attempt.unitId !== null ? [attempt.unitId] : [];
-  } else {
-    // assignment 来源：按作业行的 unitId（快照语义与 D23-6 一致；作业行经 FK
-    // 必存在——requireAssignmentRow 含已删作业，作答不随作业软删消失）。
-    // T2A.7 起 unitId 可空（@deprecated，现有行恒有值）；T2A.7 服务任务将切换为
-    // assignment_units 多单元拼接，空值先按空题集兜底（现阶段不可达）
-    const assignment = requireAssignmentRow(db, attempt.assignmentId ?? "");
-    unitIds = assignment.unitId !== null ? [assignment.unitId] : [];
-  }
+  const unitIds = attemptUnitIds(db, attempt);
   if (unitIds.length === 0) return [];
-  return db
+  const rows = db
     .select()
     .from(questions)
     .where(and(inArray(questions.unitId, unitIds), isNull(questions.deletedAt)))
     .orderBy(asc(questions.order), asc(questions.id))
     .all();
+  // 按单元顺序拼接（组内已按题序排序）
+  const byUnit = new Map<string, QuestionRow[]>();
+  for (const row of rows) {
+    const list = byUnit.get(row.unitId);
+    if (list === undefined) byUnit.set(row.unitId, [row]);
+    else list.push(row);
+  }
+  return unitIds.flatMap((unitId) => byUnit.get(unitId) ?? []);
 }
 
-/** attempt 的公开题目投影（草稿视图与通用取卷共用，QuestionPublic 形态） */
-function attemptPublicQuestions(db: Db, attempt: Attempt): QuestionPublic[] {
-  return publicQuestionsOfRows(db, attemptQuestionRows(db, attempt));
+/**
+ * attempt 的分组公开题目（T2A.7 草稿视图与通用取卷共用）：
+ * assignment 按 assignment_units.order 分节（live 题数为 0 的单元不出现，与
+ * 试卷口径一致）；course 恒单组（单元标题）。标题取单元当前值（D1 引用语义）。
+ */
+function attemptPublicUnitGroups(
+  db: Db,
+  attempt: Attempt,
+): (AttemptDraftUnit & StudentPaperUnit)[] {
+  const unitIds = attemptUnitIds(db, attempt);
+  const groups: (AttemptDraftUnit & StudentPaperUnit)[] = [];
+  for (const unitId of unitIds) {
+    const unit = db
+      .select({ title: units.title })
+      .from(units)
+      .where(eq(units.id, unitId))
+      .get();
+    if (unit === undefined) continue; // FK 保证存在，防御性跳过
+    const questionsOfUnit = unitPublicQuestions(db, unitId);
+    if (questionsOfUnit.length === 0) continue;
+    groups.push({ id: unitId, title: unit.title, questions: questionsOfUnit });
+  }
+  return groups;
 }
 
 /** 答题页顶部展示的来源信息（assignment=作业标题+截止；course=单元标题+课程名） */
@@ -234,20 +278,28 @@ function attemptSourceMeta(db: Db, attempt: Attempt): AttemptSourceMeta {
     };
   }
   const assignment = requireAssignmentRow(db, attempt.assignmentId ?? "");
+  // T2A.7：作业挂了课程时返回课程名（来源行「作业 · 课程名」）；无课程为 null
+  const course: Course | undefined =
+    assignment.courseId !== null
+      ? db
+          .select()
+          .from(courses)
+          .where(eq(courses.id, assignment.courseId))
+          .get()
+      : undefined;
   return {
     title: assignment.title,
-    courseName: null,
+    courseName: course?.title ?? null,
     dueAt: assignment.dueAt,
   };
 }
 
 /**
- * 校验题目属于 attempt 的题目集合（attemptQuestionRows 口径）且未软删，
+ * 校验题目属于 attempt 的题目集合（attemptUnitIds 口径）且未软删，
  * 否则 404 QUESTION_NOT_FOUND（T2.8 ink-service 复用：笔迹上传与草稿答案同一口径）。
- * 本阶段两种来源都是单单元（attempt.unitId / assignment.unitId 一致），按
- * attempt.unitId 校验；T2A.7 多单元时改为集合包含判断。
+ * T2A.7 起多单元作业为**集合包含**判断：任一所属单元的题都可保存草稿/笔迹。
  */
-export function requireUnitQuestion(
+export function requireAttemptQuestion(
   db: Db,
   attempt: Attempt,
   questionId: string,
@@ -264,7 +316,7 @@ export function requireUnitQuestion(
   if (
     question === undefined ||
     question.deletedAt !== null ||
-    question.unitId !== attempt.unitId
+    !attemptUnitIds(db, attempt).includes(question.unitId)
   ) {
     throw new HttpError(
       404,
@@ -355,7 +407,8 @@ function answerOf(answerJson: string | null): StudentAnswer | undefined {
  *   本规则仅对 assignment 来源生效，D10）；
  * - 已交卷/已批 → 返回最近一份（status 告知前端直接进结果视图，不另开新卷；
  *   作业不重做，attemptNo 恒 1）；
- * - 否则插入新 draft attempt（unitId 取作业的单元；sourceType=assignment）。
+ * - 否则插入新 draft attempt（courseId=作业所属课程、unitId=null——多单元
+ *   题目集合走 assignment_units；sourceType=assignment）。
  */
 export function startAttempt(
   db: Db,
@@ -389,8 +442,10 @@ export function startAttempt(
       studentId,
       sourceType: "assignment",
       assignmentId,
-      courseId: null, // T2A.7 起取作业所属课程
-      unitId: assignment.unitId,
+      // T2A.7：courseId 取作业所属课程（可空，D9/D13）；unitId 恒 null——
+      // 多单元作业题目集合走 assignment_units（attemptUnitIds），不再落单单元
+      courseId: assignment.courseId,
+      unitId: null,
       attemptNo: 1,
       status: "draft",
       startedAt,
@@ -484,7 +539,7 @@ export function startCourseAttempt(
  * - assignment 来源：与 GET /api/student/assignments/:id/paper 同口径
  *   （作业存在且未删 + 被指派，403/404 由 requireAssignmentVisible 给出）——
  *   该旧接口保留，内部经本函数复用；
- * - 题目经 attemptPublicQuestions 输出过滤（QuestionPublic，无答案/详解/提示）。
+ * - 题目经 attemptPublicUnitGroups 输出过滤（QuestionPublic，无答案/详解/提示）。
  */
 export function getStudentAttemptPaper(
   db: Db,
@@ -502,7 +557,8 @@ export function getStudentAttemptPaper(
   } else {
     requireAssignmentVisible(db, studentId, attempt.assignmentId ?? "");
   }
-  return { questions: attemptPublicQuestions(db, attempt) };
+  // T2A.7：分组结构（assignment 按单元序分节、题号全卷连续；course 单组）
+  return { units: attemptPublicUnitGroups(db, attempt) };
 }
 
 // ---------- PUT /api/student/attempts/:id/answers/:questionId ----------
@@ -532,7 +588,7 @@ export function saveDraftAnswer(
       "这份练习已交卷，不能再修改答案",
     );
   }
-  requireUnitQuestion(db, attempt, questionId);
+  requireAttemptQuestion(db, attempt, questionId);
 
   const answerJson = JSON.stringify(answer);
   const existing = db
@@ -755,12 +811,12 @@ export function getAttemptDetail(
 }
 
 /**
- * 草稿视图组装（题目经 attemptPublicQuestions：按来源分派 + QuestionPublic 投影）。
+ * 草稿视图组装（题目经 attemptPublicUnitGroups：按来源分派分组 + QuestionPublic 投影）。
  * course 来源的 draft 在 requireUsableAttempt 已过 D5 门（失去访问权 403）。
  */
 function buildDraftData(db: Db, attempt: Attempt): AttemptDraftData {
   const meta = attemptSourceMeta(db, attempt);
-  const publicQuestions = attemptPublicQuestions(db, attempt);
+  const unitGroups = attemptPublicUnitGroups(db, attempt);
   const draftRows = db
     .select({
       questionId: responses.questionId,
@@ -779,7 +835,8 @@ function buildDraftData(db: Db, attempt: Attempt): AttemptDraftData {
     title: meta.title,
     courseName: meta.courseName,
     dueAt: meta.dueAt,
-    questions: publicQuestions,
+    // T2A.7：题目按单元分组（与试卷同口径；空单元不出现）
+    units: unitGroups,
     drafts,
     // T2.11：已解锁提示回显（刷新页面后提示面板不丢；只含学生请求过的条目）
     hintsOpened: draftHintsOpenedView(db, attempt),
@@ -836,8 +893,11 @@ function scoreSummaryOf(
 }
 
 /**
- * 结果视图组装：responses 行按 questions 当前题序排列（快照内容仍以冻结行为准；
- * 排序只影响展示顺序）。无快照的行（异常数据）被跳过并按缺失计——正常链路不发生。
+ * 结果视图组装（T2A.7 分组化）：responses 行按**单元序 + 题序**分组排列
+ * （assignment 按 assignment_units.order；course 单组；快照内容仍以冻结行为准，
+ * 排序只影响展示顺序，题号全卷连续）。无快照的行（异常数据）被跳过并按缺失计
+ * ——正常链路不发生。历史/异常兜底：题目单元已不在 attempt 单元集合内的行
+ * （交卷后题目被移动单元等）按单元标题追加在末尾，不丢数据。
  * 历次记录的每次结果都使用各自 attempt 的 responses 快照行（D10：重做各次独立）。
  */
 function buildResultData(db: Db, attemptId: string): AttemptResultData {
@@ -848,15 +908,55 @@ function buildResultData(db: Db, attemptId: string): AttemptResultData {
       response: responses,
       order: questions.order,
       questionId: questions.id,
+      unitId: questions.unitId,
     })
     .from(responses)
     .innerJoin(questions, eq(responses.questionId, questions.id))
     .where(eq(responses.attemptId, attemptId))
     .orderBy(asc(questions.order), asc(questions.id))
     .all();
-  const resultQuestions = rows
-    .map((row) => resultQuestionOf(row.response))
-    .filter((item): item is AttemptResultQuestion => item !== null);
+  const resultByQuestion = new Map<string, AttemptResultQuestion>();
+  for (const row of rows) {
+    const item = resultQuestionOf(row.response);
+    if (item !== null) resultByQuestion.set(row.questionId, item);
+  }
+  const resultQuestions = [...resultByQuestion.values()];
+
+  // 分组：先按 attempt 单元顺序，同单元内按题序（rows 已按题序，组内保持）
+  const unitIds = attemptUnitIds(db, attempt);
+  const unitIndex = new Map(unitIds.map((unitId, i) => [unitId, i]));
+  const questionsByUnit = new Map<string, AttemptResultQuestion[]>();
+  for (const row of rows) {
+    const item = resultByQuestion.get(row.questionId);
+    if (item === undefined) continue;
+    const list = questionsByUnit.get(row.unitId);
+    if (list === undefined) questionsByUnit.set(row.unitId, [item]);
+    else list.push(item);
+  }
+  const orderedUnitIds = [
+    ...unitIds,
+    ...[...questionsByUnit.keys()].filter((unitId) => !unitIndex.has(unitId)),
+  ];
+  const unitTitleById = new Map(
+    orderedUnitIds.length > 0
+      ? db
+          .select({ id: units.id, title: units.title })
+          .from(units)
+          .where(inArray(units.id, orderedUnitIds))
+          .all()
+          .map((row) => [row.id, row.title] as const)
+      : [],
+  );
+  const unitGroups: AttemptResultUnit[] = [];
+  for (const unitId of orderedUnitIds) {
+    const questionsOfUnit = questionsByUnit.get(unitId);
+    if (questionsOfUnit === undefined || questionsOfUnit.length === 0) continue;
+    unitGroups.push({
+      id: unitId,
+      title: unitTitleById.get(unitId) ?? unitId,
+      questions: questionsOfUnit,
+    });
+  }
 
   return {
     attempt: attemptSummaryOf(attempt),
@@ -864,7 +964,7 @@ function buildResultData(db: Db, attemptId: string): AttemptResultData {
     courseName: meta.courseName,
     dueAt: meta.dueAt,
     summary: scoreSummaryOf(resultQuestions),
-    questions: resultQuestions,
+    units: unitGroups,
   };
 }
 

@@ -463,14 +463,14 @@ describe("T2A.6 课程练习：开始 / 继续作答 / 再做一次（D10）", (
     ).json()) as {
       data: {
         attempt: { scoreAuto: number };
-        questions: { snapshot: { stemMd: string } }[];
+        units: { questions: { snapshot: { stemMd: string } }[] }[];
       };
     };
     expect(secondResult.data.attempt.scoreAuto).toBe(0);
     expect(
-      secondResult.data.questions.some((question) =>
-        question.snapshot.stemMd.includes("$2$ 是正数"),
-      ),
+      secondResult.data.units
+        .flatMap((unit) => unit.questions)
+        .some((question) => question.snapshot.stemMd.includes("$2$ 是正数")),
     ).toBe(true);
 
     // 第一次结果视图仍是旧快照（题干 $1$，历次各自独立）
@@ -479,12 +479,12 @@ describe("T2A.6 课程练习：开始 / 继续作答 / 再做一次（D10）", (
         headers: { cookie: env.memberCookie },
       })
     ).json()) as {
-      data: { questions: { snapshot: { stemMd: string } }[] };
+      data: { units: { questions: { snapshot: { stemMd: string } }[] }[] };
     };
     expect(
-      firstView.data.questions.some((question) =>
-        question.snapshot.stemMd.includes("$1$ 是正数"),
-      ),
+      firstView.data.units
+        .flatMap((unit) => unit.questions)
+        .some((question) => question.snapshot.stemMd.includes("$1$ 是正数")),
     ).toBe(true);
 
     // 落地页历次记录与汇总：attemptNo 降序；first=100、latest=0、best=100、待批 1
@@ -696,10 +696,12 @@ describe("T2A.6 通用取卷与作业作答迁移形态", () => {
     );
     expect(paper.status).toBe(200);
     const body = (await paper.json()) as {
-      data: { questions: unknown[] };
+      data: { units: { questions: unknown[] }[] };
     };
     expect(studentPaperDataSchema.safeParse(body.data).success).toBe(true);
-    expect(body.data.questions).toHaveLength(3);
+    // T2A.7：course 来源单单元分组（1 组 3 题）
+    expect(body.data.units).toHaveLength(1);
+    expect(body.data.units[0]?.questions).toHaveLength(3);
     assertNoLeak(body);
   });
 
@@ -713,7 +715,7 @@ describe("T2A.6 通用取卷与作业作答迁移形态", () => {
         cookie: env.teacherCookie,
       },
       body: JSON.stringify({
-        unitId: env.unitId,
+        unitIds: [env.unitId],
         studentIds: [env.memberStudentId],
       }),
     });

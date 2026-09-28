@@ -41,14 +41,21 @@ const COURSE_DRAFT: AttemptDraftData = {
   title: "有理数小练",
   courseName: "初一上",
   dueAt: null,
-  questions: [
+  // T2A.7：草稿视图题目按单元分组（course 来源单组）
+  units: [
     {
-      id: "练习四-1",
-      type: "judge",
-      difficulty: 1,
-      knowledge: ["有理数的概念"],
-      stemMd: "$0$ 既不是正数，也不是负数。[[]]",
-      hintCount: 0,
+      id: "有理数小练",
+      title: "有理数小练",
+      questions: [
+        {
+          id: "练习四-1",
+          type: "judge",
+          difficulty: 1,
+          knowledge: ["有理数的概念"],
+          stemMd: "$0$ 既不是正数，也不是负数。[[]]",
+          hintCount: 0,
+        },
+      ],
     },
   ],
   drafts: {},
@@ -100,7 +107,7 @@ describe("StudentAttemptPage（/s/attempts/:attemptId，T2A.6）", () => {
         unanswered: 0,
         autoGradable: 1,
       },
-      questions: [],
+      units: [],
     });
     renderPage();
     expect(await screen.findByText(/得分/)).toBeInTheDocument();

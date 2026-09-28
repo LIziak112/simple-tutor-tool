@@ -779,35 +779,54 @@ describe("CourseService：appendCourseItems（T2A.4 批量口径 + D8）", () =>
 });
 
 describe("CourseService：教师端列表 / 详情 / hasAttempts（T2A.4）", () => {
-  it("courseHasAttempts：条目引用单元有作答 → true（D4 现状口径）", () => {
+  it("courseHasAttempts：attempts.courseId 或 assignments.courseId 命中 → true（T2A.7 D4 口径）", () => {
     const db = createTestDb();
     const { courseId, lectureId, unitId, studentId } = seed(db);
     addCourseItems(db, courseId, [
       { kind: "lecture", refId: lectureId },
       { kind: "unit", refId: unitId },
     ]);
+    // 干净课程：条目引用本身不算作答关联
     expect(courseHasAttempts(db, courseId)).toBe(false);
 
+    // 命中一：按课程布置的作业（assignments.courseId；多单元 attempt 的 unitId
+    // 为 null，原「按单元交集」口径会漏判——这正是 T2A.7 改直连的原因）
     const assignmentId = crypto.randomUUID();
     db.insert(assignments)
       .values({
         id: assignmentId,
-        unitId,
-        title: "作业",
+        unitId: null,
+        courseId,
+        title: "按课程布置的作业",
         createdAt: T0,
       })
       .run();
+    expect(courseHasAttempts(db, courseId)).toBe(true);
+
+    // 命中二：课程练习作答（attempts.courseId）
+    const otherCourseId = crypto.randomUUID();
+    db.insert(courses)
+      .values({
+        id: otherCourseId,
+        title: "另一门课",
+        order: 1,
+        createdAt: T0,
+      })
+      .run();
+    expect(courseHasAttempts(db, otherCourseId)).toBe(false);
     db.insert(attempts)
       .values({
         id: crypto.randomUUID(),
         studentId,
-        assignmentId,
+        sourceType: "course",
+        assignmentId: null,
+        courseId: otherCourseId,
         unitId,
         status: "draft",
         startedAt: T0,
       })
       .run();
-    expect(courseHasAttempts(db, courseId)).toBe(true);
+    expect(courseHasAttempts(db, otherCourseId)).toBe(true);
   });
 
   it("getCourseDetail：状态标签优先级（删除 > 无题目 > 隐藏 > 定时 > 可见）", () => {
