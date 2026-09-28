@@ -38,7 +38,9 @@ import { DiscardConfirmDialog } from "./DiscardConfirmDialog";
  *   （§4-1：该作业从其待办消失、已交卷结果保留）→ 带 confirmStarted 重发；
  * - 内容锁定展示（D14）：locked 时单元列表只读并说明锁定原因与人数；
  *   标题、截止时间、名单不受锁定影响，仍可编辑；
- * - 标题/截止为表单暂存编辑，有未保存改动时关闭需确认（§4-5）。
+ * - 标题/截止/公布时机（T2A.8：交卷即公布（默认）/ 截止后公布——后者须保留
+ *   截止时间，否则即时提示并阻止保存）为表单暂存编辑，有未保存改动时关闭需
+ *   确认（§4-5）。
  */
 
 /** 名单状态徽章文案（D13） */
@@ -78,6 +80,8 @@ export function AssignmentEditDialog({
   const [dueLocal, setDueLocal] = useState(
     assignment.dueAt !== null ? utcIsoToLocalInput(assignment.dueAt) : "",
   );
+  /** 答案公布时机（T2A.8）：与标题/截止同一「暂存编辑、保存提交」表单 */
+  const [answerRelease, setAnswerRelease] = useState(assignment.answerRelease);
   /** 名单中勾选待移出的学生（多选批量，§4-2） */
   const [selectedRemove, setSelectedRemove] = useState<ReadonlySet<string>>(
     new Set(),
@@ -95,11 +99,19 @@ export function AssignmentEditDialog({
 
   const detail = detailQuery.data;
 
-  /** 标题/截止是否有未保存改动（名单操作是即时的，不参与） */
+  /** 标题/截止/公布时机是否有未保存改动（名单操作是即时的，不参与） */
   const metaDirty =
     title !== assignment.title ||
     dueLocal !==
-      (assignment.dueAt !== null ? utcIsoToLocalInput(assignment.dueAt) : "");
+      (assignment.dueAt !== null ? utcIsoToLocalInput(assignment.dueAt) : "") ||
+    answerRelease !== assignment.answerRelease;
+
+  /**
+   * T2A.8：「截止后公布」必须有截止时间。改后状态的截止 = 表单值非空则新值，
+   * 清空则取消截止（null）——即 dueLocal 为空时改后恒无截止，此时选 after_due
+   * 即时提示并阻止保存（服务端同口径 400，双保险）。
+   */
+  const releaseBlocked = answerRelease === "after_due" && dueLocal.length === 0;
 
   function requestClose(): void {
     if (updateMutation.isPending) return;
@@ -110,7 +122,7 @@ export function AssignmentEditDialog({
     onClose();
   }
 
-  /** 组装标题/截止的增量 PATCH：只带发生变化的字段 */
+  /** 组装标题/截止/公布时机的增量 PATCH：只带发生变化的字段 */
   function buildMetaRequest() {
     const trimmed = title.trim();
     const nextDue =
@@ -126,11 +138,13 @@ export function AssignmentEditDialog({
       ...(nextDue !== undefined && nextDue !== assignment.dueAt
         ? { dueAt: nextDue }
         : {}),
+      ...(answerRelease !== assignment.answerRelease ? { answerRelease } : {}),
     };
   }
 
   function handleMetaSubmit(event: React.FormEvent): void {
     event.preventDefault();
+    if (releaseBlocked) return;
     updateMutation.mutate(
       { id: assignment.id, request: buildMetaRequest() },
       { onSuccess: onClose },
@@ -285,7 +299,7 @@ export function AssignmentEditDialog({
               )}
             </section>
 
-            {/* 标题 / 截止（暂存编辑，保存提交） */}
+            {/* 标题 / 截止 / 公布时机（暂存编辑，保存提交） */}
             <form className="flex flex-col gap-3" onSubmit={handleMetaSubmit}>
               <div className="flex flex-col gap-1.5">
                 <label htmlFor="edit-title" className="text-sm">
@@ -309,11 +323,38 @@ export function AssignmentEditDialog({
                   onChange={(e) => setDueLocal(e.target.value)}
                 />
               </div>
+              {/* T2A.8（D11）答案公布时机；after_due 需要截止时间 */}
+              <div className="flex flex-col gap-1.5">
+                <label htmlFor="edit-release" className="text-sm">
+                  答案公布时机
+                </label>
+                <select
+                  id="edit-release"
+                  value={answerRelease}
+                  onChange={(e) =>
+                    // 选项值受下方两个 option 约束，收窄安全
+                    setAnswerRelease(
+                      e.target.value as "on_submit" | "after_due",
+                    )
+                  }
+                  className="flex h-11 w-full rounded-lg border border-input bg-transparent px-3 text-base outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+                >
+                  <option value="on_submit">交卷即公布（默认）</option>
+                  <option value="after_due">
+                    截止后公布（须保留截止时间）
+                  </option>
+                </select>
+                {releaseBlocked && (
+                  <p role="alert" className="text-xs text-destructive">
+                    「截止后公布」需要截止时间：请先填写截止时间，或改回「交卷即公布」。
+                  </p>
+                )}
+              </div>
               <Button
                 type="submit"
                 variant="outline"
                 className="min-h-11 self-start px-4"
-                disabled={busy || !metaDirty}
+                disabled={busy || !metaDirty || releaseBlocked}
               >
                 {busy ? (
                   <Loader2 aria-hidden className="animate-spin" />
@@ -495,10 +536,10 @@ export function AssignmentEditDialog({
           />
         )}
 
-        {/* 标题/截止未保存改动时的关闭守卫（§4-5） */}
+        {/* 标题/截止/公布时机未保存改动时的关闭守卫（§4-5） */}
         {confirmDiscard && (
           <DiscardConfirmDialog
-            description="关闭后已修改但未保存的标题/截止时间会丢失（名单操作即时生效，不受影响）。"
+            description="关闭后已修改但未保存的标题/截止时间/公布时机会丢失（名单操作即时生效，不受影响）。"
             onCancel={() => setConfirmDiscard(false)}
             onDiscard={onClose}
           />

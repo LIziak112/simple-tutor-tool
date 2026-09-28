@@ -136,6 +136,7 @@ function makeAssignment(
     courseName: null,
     title: "周末加练",
     dueAt: "2026-10-01T12:00:00.000Z",
+    answerRelease: "on_submit",
     units: [
       {
         unitId: UNIT_ID,

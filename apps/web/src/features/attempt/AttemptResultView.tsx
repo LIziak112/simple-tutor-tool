@@ -31,6 +31,10 @@ import {
  * T2.11：做题时解锁过的提示在此回看（hintsOpened，只含学生自己请求过的条目；
  * 未解锁提示内容服务端从不下发）。详解只在交卷后由服务端下发
  * （AGENTS 第 3 条对「未交卷题目」的限制已解除）。
+ * T2A.8（D11）：answersReleased=false（作业「截止后公布」且未到截止）时——
+ * 汇总卡替换为「已交卷，答案将在截止后公布」横幅（含截止时间与已答统计），
+ * 逐题卡只渲染题干（公开化版）、选项、本人答案、笔迹与已解锁提示；
+ * 不显示对错判定、参考答案与详解（服务端本就不下发，前端双保险不渲染）。
  */
 
 /** 判定图标：true=绿勾、false=红叉、null=待批（含未作答，琥珀时钟） */
@@ -170,15 +174,17 @@ function InkThumbnail({
   );
 }
 
-/** 单题结果卡 */
+/** 单题结果卡；released=false（T2A.8 截止后公布且未到截止）时只渲染本人作答内容 */
 function ResultQuestionCard({
   index,
   question,
   attemptId,
+  released,
 }: {
   index: number;
   question: AttemptResultQuestion;
   attemptId: string;
+  released: boolean;
 }) {
   const isHandwritten =
     question.snapshot.type === "solve" ||
@@ -190,10 +196,13 @@ function ResultQuestionCard({
       aria-label={`第 ${index + 1} 题`}
     >
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-        <span className="flex items-center gap-1.5 text-sm font-semibold">
-          <VerdictIcon autoCorrect={question.autoCorrect} />
-          {verdictLabel(question.autoCorrect)}
-        </span>
+        {/* T2A.8：未公布时不显示对错判定（autoCorrect 已置 null，避免误读为待批） */}
+        {released && (
+          <span className="flex items-center gap-1.5 text-sm font-semibold">
+            <VerdictIcon autoCorrect={question.autoCorrect} />
+            {verdictLabel(question.autoCorrect)}
+          </span>
+        )}
         <p className="text-sm font-semibold">第 {index + 1} 题</p>
         <span
           className={`rounded-full px-2.5 py-1 text-xs font-medium ${QUESTION_TYPE_BADGE_CLASS[question.snapshot.type]}`}
@@ -220,7 +229,7 @@ function ResultQuestionCard({
         ))}
       </div>
 
-      {/* 题干快照（交卷时冻结的原文，[[答案]] 渲染为空框定位） */}
+      {/* 题干快照（released=false 时为公开化题干，服务端已替换 [[答案]] 标记） */}
       <RichMarkdown source={question.snapshot.stemMd} className="text-base" />
       <ResultOptions question={question} />
 
@@ -229,7 +238,8 @@ function ResultQuestionCard({
         <InkThumbnail attemptId={attemptId} questionId={question.questionId} />
       )}
 
-      {/* 做题时看过的提示（T2.11 回看；没解锁过则整块隐藏） */}
+      {/* 做题时看过的提示（T2.11 回看；没解锁过则整块隐藏。
+          未公布时照常回看——只含学生自己请求过的条目，不构成泄露） */}
       {question.hintsOpened.length > 0 && (
         <div className="flex flex-col gap-1.5">
           <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
@@ -254,21 +264,25 @@ function ResultQuestionCard({
         </p>
         {/* 参考答案走 RichMarkdown（T2.13 规范约定：填空答案需公式展示时写 $…$，
             判分归一化自动剥 $；此处按同一管线渲染，无 $ 的普通答案原样显示）。
-            外层 p→div：RichMarkdown 是块级 div，不能嵌在 <p> 内 */}
-        <div className="flex min-w-0 flex-wrap gap-1.5">
-          <span className="shrink-0 text-muted-foreground">参考答案：</span>
-          {question.answers === null ? (
-            <span className="font-medium">由老师批改后公布</span>
-          ) : (
-            <RichMarkdown
-              source={formatReferenceAnswers(question.answers)}
-              className="min-w-0 font-medium [&_p]:my-0"
-            />
-          )}
-        </div>
+            外层 p→div：RichMarkdown 是块级 div，不能嵌在 <p> 内。
+            T2A.8：未公布时整块不下发（服务端 answers=null） */}
+        {released && (
+          <div className="flex min-w-0 flex-wrap gap-1.5">
+            <span className="shrink-0 text-muted-foreground">参考答案：</span>
+            {question.answers === null ? (
+              <span className="font-medium">由老师批改后公布</span>
+            ) : (
+              <RichMarkdown
+                source={formatReferenceAnswers(question.answers)}
+                className="min-w-0 font-medium [&_p]:my-0"
+              />
+            )}
+          </div>
+        )}
       </div>
 
-      <SolutionFold solutionMd={question.solutionMd} />
+      {/* T2A.8：详解只在公布后渲染（未公布时服务端 solutionMd=null） */}
+      {released && <SolutionFold solutionMd={question.solutionMd} />}
     </article>
   );
 }
@@ -282,20 +296,22 @@ export function AttemptResultView({
   onBackHome: () => void;
 }) {
   const { attempt, summary } = data;
+  // T2A.8：答案是否已公布（on_submit / 课程练习 / 已到截止 = true）
+  const released = data.answersReleased;
   // T2A.7：逐题结果按单元分组；题号全卷连续（累计 index）。
   // 多单元时渲染节标题（单元标题），单单元不显示节头（与答题视图一致）。
   const flatQuestions = data.units.flatMap((unit) => unit.questions);
   const showUnitHeaders = data.units.length > 1;
   return (
     <div className="flex flex-col gap-5">
-      {/* 得分汇总卡 */}
+      {/* 得分汇总卡（未公布时替换为「已交卷」横幅 + 已答统计，不显示对错与得分） */}
       <section
         aria-labelledby="result-summary"
         className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
       >
         <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
           <h2 id="result-summary" className="text-base font-semibold">
-            {data.title} · 批改结果
+            {data.title} · {released ? "批改结果" : "已交卷"}
           </h2>
           {/* 来源行（T2A.6，与答题视图同口径）：课程练习带次数（历次回看可分辨
               第几次）；作业标「作业」（挂课程时「作业 · 课程名」，T2A.7） */}
@@ -312,33 +328,49 @@ export function AttemptResultView({
             </p>
           )}
         </div>
-        <div className="flex flex-wrap items-end gap-x-8 gap-y-3">
-          <p className="flex items-baseline gap-2">
-            <span className="text-4xl font-bold text-primary">
-              {attempt.scoreAuto === null ? "待批" : attempt.scoreAuto}
-            </span>
-            <span className="text-sm text-muted-foreground">
-              {attempt.scoreAuto === null
-                ? "暂无可自动判分的题目"
-                : "自动判分得分（满分 100）"}
-            </span>
-          </p>
-          <p className="flex flex-wrap gap-x-5 gap-y-1 text-sm text-muted-foreground">
-            <span>
-              共 <b className="text-foreground">{summary.total}</b> 题
-            </span>
-            <span>
-              答对 <b className="text-emerald-600">{summary.correct}</b> 题
-            </span>
-            <span>
-              答错 <b className="text-red-600">{summary.wrong}</b> 题
-            </span>
-            <span>
-              待批 <b className="text-amber-600">{summary.pending}</b> 题
-              {summary.unanswered > 0 && `（含未答 ${summary.unanswered} 题）`}
-            </span>
-          </p>
-        </div>
+        {released ? (
+          <div className="flex flex-wrap items-end gap-x-8 gap-y-3">
+            <p className="flex items-baseline gap-2">
+              <span className="text-4xl font-bold text-primary">
+                {attempt.scoreAuto === null ? "待批" : attempt.scoreAuto}
+              </span>
+              <span className="text-sm text-muted-foreground">
+                {attempt.scoreAuto === null
+                  ? "暂无可自动判分的题目"
+                  : "自动判分得分（满分 100）"}
+              </span>
+            </p>
+            <p className="flex flex-wrap gap-x-5 gap-y-1 text-sm text-muted-foreground">
+              <span>
+                共 <b className="text-foreground">{summary.total}</b> 题
+              </span>
+              <span>
+                答对 <b className="text-emerald-600">{summary.correct}</b> 题
+              </span>
+              <span>
+                答错 <b className="text-red-600">{summary.wrong}</b> 题
+              </span>
+              <span>
+                待批 <b className="text-amber-600">{summary.pending}</b> 题
+                {summary.unanswered > 0 &&
+                  `（含未答 ${summary.unanswered} 题）`}
+              </span>
+            </p>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-2 rounded-xl border border-amber-300/60 bg-amber-50 p-4 text-sm dark:border-amber-500/30 dark:bg-amber-500/10">
+            <p className="flex items-center gap-2 font-medium text-amber-800 dark:text-amber-300">
+              <Clock aria-hidden className="size-4 shrink-0" />
+              已交卷，答案将在截止后公布
+              {data.dueAt !== null &&
+                `（截止时间：${formatCnTime(data.dueAt)}）`}
+            </p>
+            <p className="text-amber-800 dark:text-amber-300">
+              截止前只显示你的作答内容；截止后将自动公布对错、参考答案与详解
+              （已作答 {summary.answered} 题 / 共 {summary.total} 题）。
+            </p>
+          </div>
+        )}
         <Button
           variant="outline"
           className="min-h-11 w-fit"
@@ -364,6 +396,7 @@ export function AttemptResultView({
                     index={flatQuestions.indexOf(question)}
                     question={question}
                     attemptId={attempt.id}
+                    released={released}
                   />
                 </li>
               ))}

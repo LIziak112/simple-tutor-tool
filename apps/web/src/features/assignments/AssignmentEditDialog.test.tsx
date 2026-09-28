@@ -62,6 +62,7 @@ function makeAssignment(
     courseName: "初一上",
     title: "周末加练",
     dueAt: "2026-10-01T12:00:00.000Z",
+    answerRelease: "on_submit",
     units: [
       {
         unitId: "unit-一元一次方程",
@@ -345,5 +346,51 @@ describe("AssignmentEditDialog 标题/截止与关闭守卫", () => {
     fireEvent.click(screen.getByRole("button", { name: "取消" }));
     fireEvent.click(await screen.findByRole("button", { name: "放弃并关闭" }));
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("AssignmentEditDialog 答案公布时机（T2A.8）", () => {
+  it("改为「截止后公布」保存 → PATCH 只带 answerRelease；改回 on_submit 同理", async () => {
+    renderDialog();
+    const select = (await screen.findByLabelText(
+      /答案公布时机/,
+    )) as HTMLSelectElement;
+    expect(select.value).toBe("on_submit");
+
+    fireEvent.change(select, { target: { value: "after_due" } });
+    expect(
+      screen.getByRole("button", { name: /保存标题与截止/ }),
+    ).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: /保存标题与截止/ }));
+
+    await waitFor(() => expect(mockedUpdate).toHaveBeenCalledTimes(1));
+    expect(mockedUpdate.mock.calls[0]?.[1]).toEqual({
+      answerRelease: "after_due",
+    });
+  });
+
+  it("无截止的作业选「截止后公布」→ 即时提示且保存禁用；填上截止或改回交卷即公布后恢复", async () => {
+    renderDialog(makeAssignment({ dueAt: null }));
+    const select = (await screen.findByLabelText(
+      /答案公布时机/,
+    )) as HTMLSelectElement;
+
+    fireEvent.change(select, { target: { value: "after_due" } });
+    expect(screen.getByText(/需要截止时间/)).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /保存标题与截止/ }),
+    ).toBeDisabled();
+
+    // 填上截止 → 提示消失、保存恢复，请求同时带 dueAt 与 answerRelease
+    fireEvent.change(screen.getByLabelText(/截止时间/), {
+      target: { value: "2026-10-02T20:00" },
+    });
+    expect(screen.queryByText(/需要截止时间/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /保存标题与截止/ }));
+    await waitFor(() => expect(mockedUpdate).toHaveBeenCalledTimes(1));
+    expect(mockedUpdate.mock.calls[0]?.[1]).toEqual({
+      dueAt: localInputToUtcIso("2026-10-02T20:00"),
+      answerRelease: "after_due",
+    });
   });
 });
