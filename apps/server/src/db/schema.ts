@@ -25,6 +25,9 @@ import {
  * course_items（课程目录条目，D6）、course_students（课程成员，D7）、data_migrations
  * （D23 数据搬迁幂等标记）；lectures/units 加 folderId 与 deletedAt（D3 软删），
  * courseId 废弃（保留列不再读写，@deprecated T2A）；courses 加 archivedAt/description（D4）。
+ * T2A.7 作业改造：追加 assignment_units（D12 作业内容 = 有序多个练习单元）；
+ * assignments 加 courseId（D13 可选所属课程）、unitId 废弃改可空；assignment_students
+ * 加 addedAt / removedAt（D13 名单增删、移出行保留以追溯）。
  *
  * 全库约定（见 docs/开发任务清单.md §0.3 与 db-change 技能）：
  * - 主键 id 一律为应用层生成的 crypto.randomUUID() 字符串；
@@ -406,8 +409,11 @@ export const imports = sqliteTable("imports", {
 
 /**
  * 作业表（T2.2，§5.2）——"布置作业"，才能回答"谁做了/没做"。
- * - 一条作业 = 某单元发给若干学生的一次练习（名单在 assignment_students）；
+ * - 一条作业 = 一组练习单元发给若干学生的一次练习（单元在 assignment_units、
+ *   名单在 assignment_students，T2A.7/D12/D13）；
  * - title 缺省用布置时的单元标题（快照语义，不随单元后续改名联动）；
+ * - courseId（T2A.7，D13）：可选所属课程——布置时若选课程，名单默认带出布置时刻
+ *   全部课程成员（保存即独立快照，此后课程成员变化不自动影响本作业）；
  * - deletedAt：软删（db-change 红线：删除作业不删除已有作答记录——attempts 通过
  *   assignmentId 关联历史，物理删除会破坏"谁做了/没做"统计；T2.6 起作答经
  *   快照照常回看）。软删后学生端立即不可见、教师列表默认不显示。
@@ -415,10 +421,19 @@ export const imports = sqliteTable("imports", {
 export const assignments = sqliteTable("assignments", {
   /** 主键：crypto.randomUUID()（§0.3 主键约定） */
   id: text("id").primaryKey(),
-  /** 目标练习单元（units.id，来自 DSL） */
-  unitId: text("unit_id")
-    .notNull()
-    .references(() => units.id),
+  /**
+   * @deprecated T2A 多单元改走 assignment_units（D12）；旧值保留不改（历史语义 =
+   * 当时布置的单个单元，D23-5 回填进 assignment_units）。新代码不再写入，
+   * 新多单元作业本列为 NULL——与 NOT NULL 约束冲突，故放开可空。
+   */
+  /**
+   * @deprecated T2A 多单元改走 assignment_units（D12）；旧值保留不改（历史语义 =
+   * 当时布置的单个单元，D23-5 回填进 assignment_units）。新代码不再写入，
+   * 新多单元作业本列为 NULL——与 NOT NULL 约束冲突，故放开可空。
+   */
+  unitId: text("unit_id").references(() => units.id),
+  /** 所属课程（courses.id，T2A.7/D13）：可空（作业可不挂课程）；布置时快照语义见表注释 */
+  courseId: text("course_id").references(() => courses.id),
   /** 作业标题；缺省为布置时的单元标题 */
   title: text("title").notNull(),
   /** 截止时间：UTC ISO 字符串；未设置为 NULL（PATCH 显式置 null = 取消截止） */
@@ -430,9 +445,36 @@ export const assignments = sqliteTable("assignments", {
 });
 
 /**
+ * 作业单元关联表（T2A.7，D12/D16）——作业内容 = 有序的多个练习单元。
+ * - 复合主键 (assignmentId, unitId)：同一作业中单元不可重复（服务层返回
+ *   400 DUPLICATE_UNIT；旧作业经 D23-5 回填每作业恰一行 order=0）；
+ * - order：同作业内排序（小在前），布置时按教师确认的顺序写入，答题页按此分节；
+ * - D16：单元软删（units.deletedAt 置值）不删本表行——作业照常可作答，
+ *   卡片显示「含已删除单元」提示。
+ */
+export const assignmentUnits = sqliteTable(
+  "assignment_units",
+  {
+    /** 所属作业（assignments.id） */
+    assignmentId: text("assignment_id")
+      .notNull()
+      .references(() => assignments.id),
+    /** 练习单元（units.id，来自 DSL） */
+    unitId: text("unit_id")
+      .notNull()
+      .references(() => units.id),
+    /** 同作业内排序（小在前） */
+    order: integer("order").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.assignmentId, table.unitId] })],
+);
+
+/**
  * 作业 ↔ 学生关联表（多对多，§5.2）：复合主键 (assignmentId, studentId)。
- * 名单以「全量替换」方式维护（PATCH studentIds 时删旧插新）；
- * 不做级联删除——作业走软删（deletedAt），关联行保留即可判定历史指派关系。
+ * T2A.7（D13）起名单改为「增删式」维护：移出学生 = 置 removedAt（行保留以追溯
+ * 历史指派与已交卷记录），再添加 = 置回 null（行复用，addedAt 刷新）；
+ * 在名单中 = removedAt IS NULL。不做级联删除——作业走软删（deletedAt），
+ * 关联行保留即可判定历史指派关系。
  */
 export const assignmentStudents = sqliteTable(
   "assignment_students",
@@ -445,6 +487,16 @@ export const assignmentStudents = sqliteTable(
     studentId: text("student_id")
       .notNull()
       .references(() => students.id),
+    /**
+     * 加入名单时间：UTC ISO 字符串。列可空仅因 SQLite 加 NOT NULL 列需重建表
+     * （D23 迁移代价），代码层（T2A.7 服务与 D23-5 回填）恒写非空值，读侧可视为必有。
+     */
+    addedAt: text("added_at"),
+    /**
+     * 移出名单时间：UTC ISO 字符串；NULL = 在名单中（D13：移出 = 置值不删行，
+     * 保留追溯；再添加 = 置回 null）。
+     */
+    removedAt: text("removed_at"),
   },
   (table) => [primaryKey({ columns: [table.assignmentId, table.studentId] })],
 );
@@ -732,6 +784,10 @@ export type NewImport = typeof imports.$inferInsert;
 export type Assignment = typeof assignments.$inferSelect;
 /** assignments 表插入类型 */
 export type NewAssignment = typeof assignments.$inferInsert;
+/** assignment_units 表行类型（SELECT 结果） */
+export type AssignmentUnit = typeof assignmentUnits.$inferSelect;
+/** assignment_units 表插入类型 */
+export type NewAssignmentUnit = typeof assignmentUnits.$inferInsert;
 /** assignment_students 表行类型（SELECT 结果） */
 export type AssignmentStudent = typeof assignmentStudents.$inferSelect;
 /** assignment_students 表插入类型 */

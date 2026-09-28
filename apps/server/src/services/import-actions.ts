@@ -264,6 +264,8 @@ export function loadLibrarySnapshot(db: Db, nowIso: string): LibrarySnapshot {
       ),
     )
     .all()) {
+    // T2A.7 起 unitId 可空（@deprecated，现有行恒有值）；多单元计数走 assignment_units
+    if (row.unitId === null) continue;
     openAssignmentCountByUnitId.set(
       row.unitId,
       (openAssignmentCountByUnitId.get(row.unitId) ?? 0) + 1,

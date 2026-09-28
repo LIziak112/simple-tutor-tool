@@ -146,7 +146,9 @@ function toTeacherAssignment(
 ): TeacherAssignment {
   return {
     id: row.id,
-    unitId: row.unitId,
+    // T2A.7 起 unitId 可空（@deprecated，改走 assignment_units）：现有行恒有值，
+    // 空串仅类型兜底（不可达）；多单元投影由 T2A.7 服务任务替换
+    unitId: row.unitId ?? "",
     unitTitle,
     title: row.title,
     dueAt: row.dueAt,
@@ -161,6 +163,11 @@ function toTeacherAssignment(
 /** 组装单条作业的教师摘要（单元标题取当前值，缺单元时兜底空串由调用方保证不发生） */
 function teacherAssignmentOf(db: Db, id: string): TeacherAssignment {
   const row = requireAssignmentRow(db, id);
+  const studentList = studentsByAssignment(db).get(row.id) ?? [];
+  // T2A.7 起 unitId 可空（@deprecated，现有行恒有值）；多单元切换在 T2A.7 服务任务
+  if (row.unitId === null) {
+    return toTeacherAssignment(row, row.title, 0, studentList);
+  }
   const unit = db
     .select({ title: units.title })
     .from(units)
@@ -170,7 +177,7 @@ function teacherAssignmentOf(db: Db, id: string): TeacherAssignment {
     row,
     unit?.title ?? row.title,
     liveQuestionCounts(db).get(row.unitId) ?? 0,
-    studentsByAssignment(db).get(row.id) ?? [],
+    studentList,
   );
 }
 
@@ -321,8 +328,10 @@ export function listTeacherAssignments(
     assignments: rows.map((row) =>
       toTeacherAssignment(
         row,
-        unitTitles.get(row.unitId) ?? row.title,
-        counts.get(row.unitId) ?? 0,
+        // T2A.7 起 unitId 可空（@deprecated，现有行恒有值）；空值兜底作业标题
+        (row.unitId !== null ? unitTitles.get(row.unitId) : undefined) ??
+          row.title,
+        row.unitId !== null ? (counts.get(row.unitId) ?? 0) : 0,
         nameLists.get(row.id) ?? [],
       ),
     ),
@@ -537,6 +546,12 @@ export function getStudentAssignmentPaper(
     .get();
   if (assigned === undefined) {
     throw new HttpError(403, "FORBIDDEN", "未被指派此作业，无权查看");
+  }
+
+  // T2A.7 起 unitId 可空（@deprecated）：多单元作业由 T2A.7 服务任务改分组取卷，
+  // 现阶段所有作业行恒有值，此分支不可达
+  if (row.unitId === null) {
+    throw new HttpError(404, "ASSIGNMENT_NOT_FOUND", "作业不存在");
   }
 
   return { questions: unitPublicQuestions(db, row.unitId) };

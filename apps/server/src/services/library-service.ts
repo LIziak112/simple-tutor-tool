@@ -566,6 +566,8 @@ export function listLibraryUnits(
     .from(assignments)
     .where(isNull(assignments.deletedAt))
     .all()) {
+    // T2A.7 起 unitId 可空（@deprecated，现有行恒有值）；多单元计数走 assignment_units
+    if (row.unitId === null) continue;
     assignmentCounts.set(
       row.unitId,
       (assignmentCounts.get(row.unitId) ?? 0) + 1,

@@ -185,9 +185,11 @@ export function attemptQuestionRows(db: Db, attempt: Attempt): QuestionRow[] {
     unitIds = attempt.unitId !== null ? [attempt.unitId] : [];
   } else {
     // assignment 来源：按作业行的 unitId（快照语义与 D23-6 一致；作业行经 FK
-    // 必存在——requireAssignmentRow 含已删作业，作答不随作业软删消失）
+    // 必存在——requireAssignmentRow 含已删作业，作答不随作业软删消失）。
+    // T2A.7 起 unitId 可空（@deprecated，现有行恒有值）；T2A.7 服务任务将切换为
+    // assignment_units 多单元拼接，空值先按空题集兜底（现阶段不可达）
     const assignment = requireAssignmentRow(db, attempt.assignmentId ?? "");
-    unitIds = [assignment.unitId];
+    unitIds = assignment.unitId !== null ? [assignment.unitId] : [];
   }
   if (unitIds.length === 0) return [];
   return db

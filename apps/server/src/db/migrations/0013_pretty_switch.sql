@@ -1,0 +1,1 @@
+ALTER TABLE `assignments` ADD `course_id` text REFERENCES courses(id);
