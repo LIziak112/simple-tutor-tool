@@ -28,6 +28,8 @@ export * from "./public-config.ts";
 export * from "./spec.ts";
 /** 学生账号契约（T2.1 起为权威定义）：学生 CRUD、两种登录、自助信息与改密码、错误码 */
 export * from "./student.ts";
+/** 学生端课程契约（T2A.5 起为权威定义）：我的课程、课程可见目录（D5）、D22 错误码 */
+export * from "./student-course-api.ts";
 
 /**
  * API 响应壳（占位示例）。

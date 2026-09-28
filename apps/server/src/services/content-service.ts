@@ -23,8 +23,6 @@ import type {
   QuestionDetail,
   QuestionUpdateData,
   ReorderRequest,
-  StudentLectureDetail,
-  StudentLectureSummary,
 } from "@tutor/contract";
 import {
   IMPORT_MAX_BATCH_BYTES,
@@ -41,7 +39,7 @@ import {
   wrapLectureMd,
   wrapSingleQuestionMd,
 } from "@tutor/md-dsl";
-import { and, asc, eq, isNotNull, isNull } from "drizzle-orm";
+import { and, asc, eq, isNull } from "drizzle-orm";
 import { ensureCourseFolder } from "../db/backfill";
 import type { Db } from "../db/client";
 import {
@@ -1395,123 +1393,7 @@ export function deleteCourse(db: Db, id: string): void {
   });
 }
 
-// ---------- 学生端：讲义（T2.3；T2A.1 加软删过滤） ----------
-
-/**
- * 讲义 id → 关联单元主题（units.lectureId 指向本讲义）。
- * 一篇讲义可能被多个单元关联：取单元 order 最靠前且标注了 topic 的那个；
- * 无关联单元 / 关联单元都未标注主题时映射缺席（调用方兜底 null）。
- * T2A.1：已软删单元不再贡献 topic（D3 窗口期过滤）。
- */
-function lectureTopics(db: Db): Map<string, string> {
-  const map = new Map<string, string>();
-  const rows = db
-    .select({ lectureId: units.lectureId, topic: units.topic })
-    .from(units)
-    .where(and(isNotNull(units.lectureId), isNull(units.deletedAt)))
-    .orderBy(asc(units.order))
-    .all();
-  for (const row of rows) {
-    if (row.lectureId === null || row.topic === null) continue;
-    if (!map.has(row.lectureId)) map.set(row.lectureId, row.topic);
-  }
-  return map;
-}
-
-/**
- * GET /api/student/lectures：全部讲义摘要。
- *
- * T2A.1 窗口期口径（可见性模型切换到 D5 属 T2A.5，此处不引入）：
- * - 软删讲义（deletedAt 非空）立即不出现在列表（D3 窗口期过滤）；
- * - 排序改按课程目录条目顺序（course.order → course_items.order）；
- *   未被任何课程引用的讲义按 lectures.order 排在末尾；同一讲义被多个课程
- *   引用时只出现一次（D5 并集方向的过渡行为）。
- *
- * 安全口径（AGENTS.md 第 3 条）：只 SELECT id/title/updatedAt 三列——列表接口
- * 不读 markdown 内容列，更不触碰 questions 表任何字段；泄露测试见
- * routes/student-lectures.test.ts。
- */
-export function listStudentLectures(db: Db): {
-  lectures: StudentLectureSummary[];
-} {
-  const rows = db
-    .select({
-      id: lectures.id,
-      title: lectures.title,
-      updatedAt: lectures.updatedAt,
-      order: lectures.order,
-    })
-    .from(lectures)
-    .where(isNull(lectures.deletedAt))
-    .all();
-
-  // 每篇讲义在课程目录中的最优（最靠前）位置
-  const itemRows = db
-    .select({
-      refId: courseItems.refId,
-      courseOrder: courses.order,
-      itemOrder: courseItems.order,
-    })
-    .from(courseItems)
-    .innerJoin(courses, eq(courseItems.courseId, courses.id))
-    .where(eq(courseItems.kind, "lecture"))
-    .all();
-  const bestKeyByLecture = new Map<string, readonly [number, number]>();
-  for (const row of itemRows) {
-    if (row.refId === null) continue;
-    const key: readonly [number, number] = [row.courseOrder, row.itemOrder];
-    const existing = bestKeyByLecture.get(row.refId);
-    if (
-      existing === undefined ||
-      key[0] < existing[0] ||
-      (key[0] === existing[0] && key[1] < existing[1])
-    ) {
-      bestKeyByLecture.set(row.refId, key);
-    }
-  }
-
-  const sorted = [...rows].sort((a, b) => {
-    const ka = bestKeyByLecture.get(a.id) ?? [Number.MAX_SAFE_INTEGER, a.order];
-    const kb = bestKeyByLecture.get(b.id) ?? [Number.MAX_SAFE_INTEGER, b.order];
-    if (ka[0] !== kb[0]) return ka[0] - kb[0];
-    if (ka[1] !== kb[1]) return ka[1] - kb[1];
-    return a.order === b.order
-      ? a.title.localeCompare(b.title)
-      : a.order - b.order;
-  });
-
-  const topics = lectureTopics(db);
-  return {
-    lectures: sorted.map((row) => ({
-      id: row.id,
-      title: row.title,
-      topic: topics.get(row.id) ?? null,
-      updatedAt: row.updatedAt,
-    })),
-  };
-}
-
-/**
- * GET /api/student/lectures/:id：讲义全文 markdown（含 H1 标题行）。
- *
- * 讲义全量下发是设计如此（§5.3）：讲义里的 :::solution 是讲解内容而非题目答案，
- * 学生端应见（前端默认折叠、点开查看）；但本函数只读 lectures 表行，
- * 不附带任何 questions 表字段（stemMd/answers/solutionMd/hintsJson/optionsJson）。
- * T2A.1：已软删讲义按不存在处理（404，D3 窗口期过滤）。
- */
-export function getStudentLecture(db: Db, id: string): StudentLectureDetail {
-  const row = db
-    .select({
-      id: lectures.id,
-      title: lectures.title,
-      markdown: lectures.markdown,
-      updatedAt: lectures.updatedAt,
-    })
-    .from(lectures)
-    .where(and(eq(lectures.id, id), isNull(lectures.deletedAt)))
-    .get();
-  if (row === undefined) {
-    throw new HttpError(404, "LECTURE_NOT_FOUND", "讲义不存在");
-  }
-  return row;
-}
+// ---------- 学生端：讲义（T2.3 起服务入口；T2A.5 迁移至 student-course-service） ----------
+// T2A.5 核心切换：学生端可见性模型从「全量讲义 + deletedAt 过滤」窗口期实现切换到
+// D5（课程成员 + 目录条目可见），listStudentLectures / getStudentLecture 已迁至
+// student-course-service.ts（复用 listVisibleItems → canStudentSeeItem 唯一判定）。

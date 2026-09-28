@@ -1,7 +1,9 @@
 import { devices, expect, test } from "@playwright/test";
 import {
+  addCourseMemberViaApi,
   attachLeakMonitor,
-  getStudentLinkToken,
+  ensureDefaultCourse,
+  getStudentViaApi,
   handwriteOneStroke,
   importPracticeSample,
   TEACHER_PASSWORD,
@@ -48,17 +50,29 @@ test.describe("主流程：布置作业 → 学生作答与交卷 → 结果与�
     await expect(page.getByText(studentName).first()).toBeVisible();
 
     // 学生 token 属教师侧数据（学生端不下发），经教师 API 查询
-    const linkToken = await getStudentLinkToken(request, studentName);
+    const student = await getStudentViaApi(request, studentName);
+    // T2A.5（D5）：学生能看到课程内容的前提是课程成员——导入挂默认课程，这里入成员
+    await addCourseMemberViaApi(
+      request,
+      await ensureDefaultCourse(request),
+      student.id,
+    );
 
-    // —— 教师端 UI：布置作业（默认第一个单元=练习四，勾选学生；标题唯一化——
+    // —— 教师端 UI：布置作业（显式选中导入的「练习四」，勾选学生；标题唯一化——
     //     两个浏览器项目并行跑同一份数据，不能断言全局计数）——
+    //     下拉列出全部课程的单元（T2A.5 起学生端浏览用例会并行造出别的课程/单元，
+    //     默认第一项不再保证是练习四——按 label 显式选中，不依赖默认值）
     const assignmentTitle = `E2E作业${uniqueSuffix()}`;
     await page.goto("/t/assignments");
     await page.getByRole("button", { name: "布置作业" }).first().click();
     await expect(page.getByText("正在加载单元与学生…")).toBeHidden();
-    await expect(page.locator("#assignment-unit option")).toContainText(
-      "练习四",
-    );
+    const practiceOption = page.locator("#assignment-unit option", {
+      hasText: " / 练习四（8 题）",
+    });
+    await expect(practiceOption).toHaveCount(1);
+    await page.selectOption("#assignment-unit", {
+      label: "默认课程 / 练习四（8 题）",
+    });
     await page.fill("#assignment-title", assignmentTitle);
     await page.getByRole("checkbox", { name: studentName }).check();
     await page.getByRole("button", { name: "确认布置" }).click();
@@ -79,7 +93,7 @@ test.describe("主流程：布置作业 → 学生作答与交卷 → 结果与�
       const leak = attachLeakMonitor(studentPage);
 
       // 专属链接登录：打开 /s/:token 自动写会话并进首页
-      await studentPage.goto(`/s/${linkToken}`);
+      await studentPage.goto(`/s/${student.linkToken}`);
       await studentPage.waitForURL("**/s/home");
       await expect(studentPage.getByText(studentName).first()).toBeVisible();
 

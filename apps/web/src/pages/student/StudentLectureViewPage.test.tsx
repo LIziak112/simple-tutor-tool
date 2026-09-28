@@ -15,6 +15,8 @@ import StudentLectureViewPage from "./StudentLectureViewPage";
  * 条目与正文标题一一配对、目录点击滚动到对应标题、目录可折叠、
  * :::solution 讲解块以折叠件呈现、错误态。API 层 mock。
  * T2.10 追加：折叠/逐步揭晓展开上报 lecture_expand（unmount 时队列 flush 出网）。
+ * T2A.5 追加：课程上下文（?courseId= → 请求带参、返回课程目录、标题下课程名）
+ * 与「本课配套练习」区块（D8：题数 + 即将开放）。
  */
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -30,11 +32,15 @@ const mockedLecture = vi.mocked(fetchStudentLectureApi);
 const mockedPostEvents = vi.mocked(postLectureEventsApi);
 
 const LECTURE_ID = "33333333-3333-4333-8333-333333333333";
+const COURSE_ID = "12121212-1212-4121-8121-121212121212";
 
 const LECTURE: StudentLectureDetail = {
   id: LECTURE_ID,
   title: "第1讲 有理数",
   updatedAt: "2026-09-20T10:00:00.000Z",
+  courseId: COURSE_ID,
+  courseName: "初一上",
+  companionUnits: [],
   markdown: [
     "# 第1讲 有理数",
     "",
@@ -163,15 +169,70 @@ describe("StudentLectureViewPage", () => {
     ).toBeInTheDocument();
   });
 
-  it("讲义不存在（404）显示错误态与重试", async () => {
+  it("讲义不可见（404 NOT_FOUND，D22 不暴露存在性）显示错误态与重试", async () => {
     mockedLecture.mockRejectedValue(
-      new ApiError("LECTURE_NOT_FOUND", "讲义不存在", 404),
+      new ApiError(
+        "NOT_FOUND",
+        "没有找到该内容（可能尚未发布或已被移除）",
+        404,
+      ),
     );
     renderPage("not-exist-id");
 
     expect(await screen.findByText("讲义加载失败")).toBeInTheDocument();
-    expect(screen.getByText("讲义不存在")).toBeInTheDocument();
+    expect(
+      screen.getByText("没有找到该内容（可能尚未发布或已被移除）"),
+    ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "重试" })).toBeInTheDocument();
+  });
+});
+
+// ---------- T2A.5：课程上下文与本课配套练习（D8） ----------
+
+describe("StudentLectureViewPage：课程上下文与配套练习（T2A.5）", () => {
+  it("带 courseId 进入：请求带参、标题下显示课程名、返回课程目录", async () => {
+    mockedLecture.mockResolvedValue(LECTURE);
+    renderWithStudentRoutes({
+      initialPath: `/s/lectures/${LECTURE_ID}?courseId=${COURSE_ID}`,
+      routePath: "/s/lectures/:id",
+      element: <StudentLectureViewPage />,
+    });
+
+    // 等待数据到达（课程名出现即 header 已渲染；正文 H1 同名，用文本定位）
+    await screen.findByText(/课程：初一上/);
+    expect(mockedLecture).toHaveBeenCalledWith(LECTURE_ID, COURSE_ID);
+    expect(screen.getByRole("link", { name: "返回课程目录" })).toHaveAttribute(
+      "href",
+      `/s/courses/${COURSE_ID}`,
+    );
+  });
+
+  it("无配套练习时不渲染「本课配套练习」区块", async () => {
+    mockedLecture.mockResolvedValue(LECTURE);
+    renderPage();
+
+    await screen.findByText(/课程：初一上/);
+    expect(screen.queryByText("本课配套练习")).not.toBeInTheDocument();
+  });
+
+  it("有可见配套单元：底部显示「本课配套练习」（标题/题数/即将开放，不可点击）", async () => {
+    mockedLecture.mockResolvedValue({
+      ...LECTURE,
+      companionUnits: [
+        { id: "有理数小练", title: "有理数小练", questionCount: 4 },
+      ],
+    });
+    renderPage();
+
+    const heading = await screen.findByRole("heading", {
+      name: "本课配套练习",
+    });
+    expect(screen.getByText("有理数小练")).toBeInTheDocument();
+    expect(screen.getByText("4 题")).toBeInTheDocument();
+    expect(screen.getAllByText("即将开放").length).toBe(1);
+    // 单元项暂不可进入（T2A.6 接入作答）：区块内没有链接
+    const section = heading.closest("section");
+    expect(section?.querySelector("a")).toBeNull();
   });
 });
 

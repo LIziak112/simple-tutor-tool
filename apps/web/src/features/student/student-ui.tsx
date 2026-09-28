@@ -1,5 +1,10 @@
-import type { AssignmentStatus, StudentAssignment } from "@tutor/contract";
+import type {
+  AssignmentStatus,
+  StudentAssignment,
+  StudentCourseSummary,
+} from "@tutor/contract";
 import { cn } from "cn";
+import { ChevronRight } from "lucide-react";
 import { Link } from "react-router";
 import { Button } from "@/components/ui/button";
 import { formatDueTime } from "@/lib/time";
@@ -147,5 +152,71 @@ export function StudentErrorPanel({
         重试
       </Button>
     </div>
+  );
+}
+
+/**
+ * 「我的课程」卡片（T2A.5，首页与 /s/courses 共用）：课程名/简介 + 可见讲义与
+ * 练习计数 + 完成进度条。completedUnitCount 在 T2A.6 前恒 0（进度条占位）；
+ * 无可见练习时显示「练习即将开放」代替 0/0 进度。整卡为触控目标 ≥44px 的链接。
+ */
+export function StudentCourseCard({
+  course,
+}: {
+  course: StudentCourseSummary;
+}) {
+  const { completedUnitCount, visibleUnitCount } = course;
+  const percent =
+    visibleUnitCount > 0
+      ? Math.round((completedUnitCount / visibleUnitCount) * 100)
+      : 0;
+  return (
+    <li>
+      <Link
+        to={`/s/courses/${course.id}`}
+        aria-label={`打开课程 ${course.name}`}
+        className="flex min-h-14 flex-col gap-2 rounded-xl border border-border bg-card p-4 text-card-foreground outline-none transition-colors hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50"
+      >
+        <div className="flex items-center justify-between gap-2">
+          <p className="min-w-0 truncate text-base font-semibold">
+            {course.name}
+          </p>
+          <ChevronRight
+            aria-hidden
+            className="size-5 shrink-0 text-muted-foreground"
+          />
+        </div>
+        {course.description && (
+          <p className="line-clamp-2 text-sm text-muted-foreground">
+            {course.description}
+          </p>
+        )}
+        <p className="text-xs text-muted-foreground">
+          {course.visibleLectureCount} 篇讲义 · {course.visibleUnitCount} 个练习
+        </p>
+        {visibleUnitCount > 0 ? (
+          <div className="flex items-center gap-2">
+            <div
+              role="progressbar"
+              aria-label={`${course.name} 的练习进度`}
+              aria-valuenow={percent}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              className="h-2 flex-1 overflow-hidden rounded-full bg-muted"
+            >
+              <div
+                className="h-full rounded-full bg-primary transition-[width]"
+                style={{ width: `${percent}%` }}
+              />
+            </div>
+            <span className="shrink-0 text-xs text-muted-foreground">
+              {completedUnitCount}/{visibleUnitCount}
+            </span>
+          </div>
+        ) : (
+          <p className="text-xs text-muted-foreground">练习即将开放</p>
+        )}
+      </Link>
+    </li>
   );
 }

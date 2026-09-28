@@ -1,16 +1,16 @@
 import { screen } from "@testing-library/react";
 import type {
   StudentAssignmentListData,
-  StudentLectureListData,
+  StudentCourseListData,
 } from "@tutor/contract";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fetchStudentAssignmentsApi, fetchStudentLecturesApi } from "@/lib/api";
+import { fetchStudentAssignmentsApi, fetchStudentCoursesApi } from "@/lib/api";
 import { renderWithStudentRoutes } from "@/test/student-routes";
 import StudentHomePage from "./StudentHomePage";
 
 /**
- * 学生首页组件测试（T2.3）：作业卡片（标题/单元/题数/截止/状态徽章）、
- * 讲义摘要入口、我的记录入口、作业与讲义空态。API 层 mock。
+ * 学生首页组件测试（T2A.5 改版）：待完成作业卡片 + 我的课程卡片（进度条占位）
+ * +「按讲义浏览」二级入口；作业与课程空态、错误态。API 层 mock。
  */
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -18,12 +18,12 @@ vi.mock("@/lib/api", async (importOriginal) => {
   return {
     ...actual,
     fetchStudentAssignmentsApi: vi.fn(),
-    fetchStudentLecturesApi: vi.fn(),
+    fetchStudentCoursesApi: vi.fn(),
   };
 });
 
 const mockedAssignments = vi.mocked(fetchStudentAssignmentsApi);
-const mockedLectures = vi.mocked(fetchStudentLecturesApi);
+const mockedCourses = vi.mocked(fetchStudentCoursesApi);
 
 const ASSIGNMENTS: StudentAssignmentListData = {
   assignments: [
@@ -52,19 +52,23 @@ const ASSIGNMENTS: StudentAssignmentListData = {
   ],
 };
 
-const LECTURES: StudentLectureListData = {
-  lectures: [
+const COURSES: StudentCourseListData = {
+  courses: [
     {
-      id: "33333333-3333-4333-8333-333333333333",
-      title: "第1讲 有理数",
-      topic: "有理数",
-      updatedAt: "2026-09-20T10:00:00.000Z",
+      id: "12121212-1212-4121-8121-121212121212",
+      name: "初一上",
+      description: "有理数与数轴",
+      visibleLectureCount: 3,
+      visibleUnitCount: 5,
+      completedUnitCount: 0,
     },
     {
-      id: "66666666-6666-4666-8666-666666666666",
-      title: "第2讲 数轴",
-      topic: null,
-      updatedAt: "2026-09-21T10:00:00.000Z",
+      id: "23232323-2323-4232-8232-232323232323",
+      name: "计算专项",
+      description: null,
+      visibleLectureCount: 0,
+      visibleUnitCount: 0,
+      completedUnitCount: 0,
     },
   ],
 };
@@ -79,13 +83,13 @@ function renderPage() {
 
 beforeEach(() => {
   mockedAssignments.mockReset();
-  mockedLectures.mockReset();
+  mockedCourses.mockReset();
 });
 
 describe("StudentHomePage", () => {
   it("渲染作业卡片：标题、单元、题数、截止北京时间、不限截止、状态徽章", async () => {
     mockedAssignments.mockResolvedValue(ASSIGNMENTS);
-    mockedLectures.mockResolvedValue(LECTURES);
+    mockedCourses.mockResolvedValue(COURSES);
     renderPage();
 
     // 第一份作业：有截止（UTC 12:00 = 北京时间 20:00）
@@ -118,7 +122,7 @@ describe("StudentHomePage", () => {
         },
       ],
     });
-    mockedLectures.mockResolvedValue(LECTURES);
+    mockedCourses.mockResolvedValue(COURSES);
     renderPage();
 
     const start = await screen.findByRole("link", { name: "开始练习" });
@@ -133,48 +137,69 @@ describe("StudentHomePage", () => {
     );
   });
 
-  it("渲染讲义摘要与「我的记录」入口", async () => {
+  it("渲染我的课程卡片：名称/简介/可见计数/进度条（T2A.6 前恒 0）与课程页链接", async () => {
     mockedAssignments.mockResolvedValue({ assignments: [] });
-    mockedLectures.mockResolvedValue(LECTURES);
+    mockedCourses.mockResolvedValue(COURSES);
     renderPage();
 
-    const lectureLink = await screen.findByRole("link", {
-      name: /第1讲 有理数/,
+    const courseLink = await screen.findByRole("link", {
+      name: "打开课程 初一上",
     });
-    expect(lectureLink).toHaveAttribute(
+    expect(courseLink).toHaveAttribute(
       "href",
-      `/s/lectures/${LECTURES.lectures[0]?.id}`,
+      "/s/courses/12121212-1212-4121-8121-121212121212",
     );
-    expect(
-      screen.getByRole("link", { name: /第2讲 数轴/ }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("link", { name: /做题记录与错题本/ }),
-    ).toHaveAttribute("href", "/s/records");
+    expect(screen.getByText("有理数与数轴")).toBeInTheDocument();
+    expect(screen.getByText("3 篇讲义 · 5 个练习")).toBeInTheDocument();
+    // 进度条占位：已完成 0 / 可见 5（T2A.6 接入作答后填充）
+    expect(screen.getByText("0/5")).toBeInTheDocument();
+    // 无可见练习的课程显示「练习即将开放」而非 0/0
+    expect(screen.getByText("练习即将开放")).toBeInTheDocument();
+    expect(screen.queryByText("0/0")).not.toBeInTheDocument();
   });
 
-  it("作业空态：解释性文案（下一步去看讲义）", async () => {
+  it("「按讲义浏览」二级入口指向讲义列表（顶栏导航已无讲义项）", async () => {
     mockedAssignments.mockResolvedValue({ assignments: [] });
-    mockedLectures.mockResolvedValue(LECTURES);
+    mockedCourses.mockResolvedValue(COURSES);
+    renderPage();
+
+    const lecturesLink = await screen.findByRole("link", {
+      name: /按讲义浏览/,
+    });
+    expect(lecturesLink).toHaveAttribute("href", "/s/lectures");
+  });
+
+  it("作业空态：解释性文案（下一步去课程看讲义）", async () => {
+    mockedAssignments.mockResolvedValue({ assignments: [] });
+    mockedCourses.mockResolvedValue(COURSES);
     renderPage();
 
     expect(await screen.findByText("现在没有待完成的作业")).toBeInTheDocument();
   });
 
-  it("讲义空态：老师还没有上传讲义", async () => {
+  it("课程空态：还没有加入课程（引导文案）", async () => {
     mockedAssignments.mockResolvedValue({ assignments: [] });
-    mockedLectures.mockResolvedValue({ lectures: [] });
+    mockedCourses.mockResolvedValue({ courses: [] });
     renderPage();
 
-    expect(await screen.findByText("老师还没有上传讲义")).toBeInTheDocument();
+    expect(await screen.findByText("还没有加入课程")).toBeInTheDocument();
   });
 
   it("作业加载失败显示错误态与重试按钮", async () => {
     mockedAssignments.mockRejectedValue(new Error("服务器响应异常"));
-    mockedLectures.mockResolvedValue(LECTURES);
+    mockedCourses.mockResolvedValue(COURSES);
     renderPage();
 
     expect(await screen.findByText("作业加载失败")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "重试" })).toBeInTheDocument();
+  });
+
+  it("课程加载失败显示错误态与重试按钮（两个分区互不影响）", async () => {
+    mockedAssignments.mockResolvedValue(ASSIGNMENTS);
+    mockedCourses.mockRejectedValue(new Error("服务器响应异常"));
+    renderPage();
+
+    expect(await screen.findByText("课程加载失败")).toBeInTheDocument();
+    expect(await screen.findByText("周末加练")).toBeInTheDocument();
   });
 });

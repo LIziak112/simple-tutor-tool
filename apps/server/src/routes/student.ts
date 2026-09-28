@@ -4,6 +4,7 @@ import {
   attemptEventBatchRequestSchema,
   hintOpenRequestSchema,
   lectureEventBatchRequestSchema,
+  studentLectureDetailQuerySchema,
   studentPasswordChangeRequestSchema,
 } from "@tutor/contract";
 import { Hono } from "hono";
@@ -29,15 +30,17 @@ import {
   submitAttempt,
 } from "../services/attempt-service";
 import {
-  getStudentLecture,
-  listStudentLectures,
-} from "../services/content-service";
-import {
   appendAttemptEvents,
   appendLectureEvents,
 } from "../services/event-service";
 import { openHint } from "../services/hint-service";
 import { getInkDoc, getStudentInkPng, saveInk } from "../services/ink-service";
+import {
+  getStudentCourseDetail,
+  getStudentLecture,
+  listStudentCourses,
+  listStudentLectures,
+} from "../services/student-course-service";
 import { changeStudentPassword } from "../services/student-service";
 
 /**
@@ -67,7 +70,12 @@ import { changeStudentPassword } from "../services/student-service";
  *   strokes（gzip 后 InkDoc JSON）+ snapshot（PNG），合计 ≤2MB 超 413）；
  * - GET  /attempts/:id/ink/:questionId：取回该题矢量 InkDoc（无笔迹 404）；
  * - GET  /attempts/:id/ink/:questionId.png：本人笔迹 PNG 直出（结果页缩略图）；
- * - GET  /lectures、GET /lectures/:id：讲义摘要列表与全文 markdown（T2.3）；
+ * - GET  /courses、GET /courses/:id：我的课程（可见讲义/单元计数，完成数 T2A.6 前恒 0）
+ *   与课程可见目录（T2A.5，D5 过滤；D22——非成员/学生归档/课程归档 403
+ *   COURSE_ACCESS_DENIED，课程不存在/条目不可见 404 NOT_FOUND 不暴露存在性）；
+ * - GET  /lectures、GET /lectures/:id：可见讲义双视图（去重并集 + 按课程分组）与
+ *   讲义详情（T2.3 起；T2A.5 切换 D5——只含所在课程可见讲义，详情带 ?courseId=
+ *   课程上下文与本课配套练习 D8）；
  * - POST /logout：删除会话行并清除 Cookie（T2.3，与教师 logout 同实现口径）。
  *
  * 路径段带后缀说明：Hono 的 path 参数会吞掉整个 segment（含 .png 后缀），
@@ -242,13 +250,47 @@ export function createStudentRoutes(
           ),
         });
       })
-      .get("/lectures", (c) => {
-        return c.json({ ok: true, data: listStudentLectures(db) });
-      })
-      .get("/lectures/:id", (c) => {
+      // T2A.5：我的课程与课程可见目录（D5，canStudentSeeItem 唯一判定；
+      // 隐藏条目零信息；D22——非成员/归档 403，不存在/不可见 404）
+      .get("/courses", (c) => {
         return c.json({
           ok: true,
-          data: getStudentLecture(db, c.req.param("id")),
+          data: listStudentCourses(db, c.var.student.id),
+        });
+      })
+      .get("/courses/:id", (c) => {
+        return c.json({
+          ok: true,
+          data: getStudentCourseDetail(db, c.var.student.id, c.req.param("id")),
+        });
+      })
+      // T2A.5：可见讲义双视图（去重并集 + 按课程分组，D5 过滤）
+      .get("/lectures", (c) => {
+        return c.json({
+          ok: true,
+          data: listStudentLectures(db, c.var.student.id),
+        });
+      })
+      // T2A.5：讲义详情带课程上下文（?courseId=，D22 访问判定）与本课配套练习（D8）
+      .get("/lectures/:id", (c) => {
+        const parsed = studentLectureDetailQuerySchema.safeParse({
+          courseId: c.req.query("courseId") ?? undefined,
+        });
+        if (!parsed.success) {
+          throw new HttpError(
+            400,
+            "VALIDATION_ERROR",
+            "查询参数不合法：courseId 必须是 UUID 格式",
+          );
+        }
+        return c.json({
+          ok: true,
+          data: getStudentLecture(
+            db,
+            c.var.student.id,
+            c.req.param("id"),
+            parsed.data.courseId,
+          ),
         });
       })
       .post("/logout", (c) => {

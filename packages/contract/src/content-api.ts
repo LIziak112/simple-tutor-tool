@@ -444,37 +444,88 @@ export const courseDataSchema = z.object({
   archivedAt: z.string().nullable(),
 });
 
-// ---------- 学生端：讲义（T2.3） ----------
+// ---------- 学生端：讲义（T2.3；T2A.5 切换 D5 可见性） ----------
 
 /**
  * GET /api/student/lectures 响应 data 中的讲义摘要。
- * 只含公开元信息（标题/主题/更新时间），按课程顺序（course.order → lecture.order）。
- * topic 取关联单元（units.lectureId 指向本讲义）中排序最靠前单元的主题，
- * 无关联单元或该单元未标注主题时为 null。
+ * 只含公开元信息（标题/主题/更新时间）。T2A.5 起按 D5 过滤：该生在所在全部课程中
+ * 可见讲义条目的并集（同一讲义出现在多个课程，去重列表只出现一次，但各课程分组中
+ * 各自出现）。topic 取**对该生可见**的配套单元（units.lectureId 指向本讲义且在
+ * 该生某门可见课程中有可见单元条目）中排序最靠前者的主题——隐藏单元不贡献 topic
+ * （隐藏条目零信息）；无可见配套单元或未标注主题时为 null。
  */
 export const studentLectureSummarySchema = z.object({
   /** 讲义 id（导入时生成的 UUID） */
   id: z.uuid(),
   /** 讲义标题（H1 标题文本） */
   title: z.string().min(1),
-  /** 关联单元主题；无关联或未标注为 null */
+  /** 可见配套单元的主题；无可见配套或未标注为 null */
   topic: z.string().nullable(),
   /** 最近更新时间：UTC ISO 字符串 */
   updatedAt: z.string().min(1),
 });
 
-/** GET /api/student/lectures 响应 data（按课程顺序排列） */
-export const studentLectureListDataSchema = z.object({
+/**
+ * 讲义列表的课程分组（T2A.5，D5）：
+ * 该生为成员且未归档、其中该生此刻可见讲义 ≥1 篇的课程各一组（组内按目录条目
+ * order 排序）。同一讲义在多个分组中重复出现是设计行为（分组视图各自完整）；
+ * 跨课程去重由 lectures 字段承担（并集只列一次）。
+ */
+export const studentLectureCourseGroupSchema = z.object({
+  courseId: z.uuid(),
+  courseName: z.string().min(1),
+  /** 该课程可见讲义摘要（目录条目顺序） */
   lectures: z.array(studentLectureSummarySchema),
 });
 
 /**
- * GET /api/student/lectures/:id 响应 data：讲义全文 markdown（含 H1 标题行）。
+ * GET /api/student/lectures 响应 data（T2A.5 双视图）：
+ * - lectures：可见讲义**去重并集**（同一讲义多课只列一次；排序取最优位置——
+ *   course.order → 首个可见条目 order，兜底讲义 title）；
+ * - courses：按课程分组视图（「我的课程页/讲义列表页」分组渲染用；只含有可见
+ *   讲义的课程组，按 course.order 升序）。
+ */
+export const studentLectureListDataSchema = z.object({
+  /** 去重并集（跨课程只出现一次） */
+  lectures: z.array(studentLectureSummarySchema),
+  /** 按课程分组（同一讲义可在多个课程组出现） */
+  courses: z.array(studentLectureCourseGroupSchema),
+});
+
+/** GET /api/student/lectures/:id 查询参数：课程上下文（D8 配套练习按课程计算）。缺省 = 取第一个可见该讲义的课程 */
+export const studentLectureDetailQuerySchema = z.object({
+  courseId: z.uuid("courseId 必须是 UUID 格式").optional(),
+});
+
+/**
+ * 学生阅读讲义页底部的「本课配套练习」条目（D8）：units.lectureId 指向该讲义、
+ * 且**在所选课程的目录中对该生可见**的单元（隐藏/未到发布时间/已删除的配套单元
+ * 不出现——零信息）。questionCount 为该单元未删除题目数；作答入口 T2A.6 开放
+ * （前端显示「n 题 · 即将开放」）。
+ */
+export const studentLectureCompanionUnitSchema = z.object({
+  /** 单元 id（来自 DSL，非 UUID） */
+  id: z.string().min(1),
+  /** 单元标题 */
+  title: z.string().min(1),
+  /** 未删除题目数 */
+  questionCount: z.number().int().min(0),
+});
+
+/**
+ * GET /api/student/lectures/:id 响应 data：讲义全文 markdown（含 H1 标题行）+
+ * 课程上下文与配套练习（T2A.5，D5/D8）。
  *
  * 讲义全量下发是设计如此（§5.3）：讲义中的 :::solution 是讲解内容而非题目答案，
  * 学生端应见（默认折叠、点开查看）。但本响应**不得**附带任何 questions 表字段
  * （answers/solutionMd/hintsJson/stemMd/optionsJson 等，AGENTS.md 第 3 条）——
  * 讲义 markdown 本身允许含指令语法文本。
+ *
+ * 访问判定（D22）：讲义只经课程可见（不再有全量讲义）——指定 courseId 时非成员/
+ * 课程归档 403 COURSE_ACCESS_DENIED，条目隐藏/未到发布/已删除 404 NOT_FOUND；
+ * 未指定 courseId 时该生在任何课程中都看不到该讲义 → 404 NOT_FOUND（不暴露存在性）。
+ * courseId/courseName 为该次访问的课程上下文（缺省时取第一个可见该讲义的课程，
+ * 排序 course.order → 条目 order）。
  */
 export const studentLectureDetailSchema = z.object({
   id: z.uuid(),
@@ -483,6 +534,11 @@ export const studentLectureDetailSchema = z.object({
   markdown: z.string().min(1),
   /** 最近更新时间：UTC ISO 字符串 */
   updatedAt: z.string().min(1),
+  /** 本次访问的课程上下文（可见该讲义的课程之一） */
+  courseId: z.uuid(),
+  courseName: z.string().min(1),
+  /** 本课配套练习（D8：同课程可见的配套单元；空数组 = 无可见配套） */
+  companionUnits: z.array(studentLectureCompanionUnitSchema),
 });
 
 /** 携带学生讲义列表/详情的成功响应壳 */
@@ -634,7 +690,16 @@ export type CourseCreateRequest = z.infer<typeof courseCreateRequestSchema>;
 export type CourseUpdateRequest = z.infer<typeof courseUpdateRequestSchema>;
 export type CourseData = z.infer<typeof courseDataSchema>;
 export type StudentLectureSummary = z.infer<typeof studentLectureSummarySchema>;
+export type StudentLectureCourseGroup = z.infer<
+  typeof studentLectureCourseGroupSchema
+>;
 export type StudentLectureListData = z.infer<
   typeof studentLectureListDataSchema
+>;
+export type StudentLectureDetailQuery = z.infer<
+  typeof studentLectureDetailQuerySchema
+>;
+export type StudentLectureCompanionUnit = z.infer<
+  typeof studentLectureCompanionUnitSchema
 >;
 export type StudentLectureDetail = z.infer<typeof studentLectureDetailSchema>;
