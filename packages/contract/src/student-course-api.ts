@@ -33,8 +33,8 @@ function apiOkExtend<T extends z.ZodType>(dataSchema: T) {
  * 学生端课程摘要（「我的课程」卡片数据源：首页与 /s/courses 共用）。
  * - visibleLectureCount / visibleUnitCount：该生此刻按 D5 可见的讲义/单元条目数
  *   （隐藏条目不计入——不通过计数差异泄露存在性）；
- * - completedUnitCount：已完成单元数（至少交卷 1 次的可见单元数；T2A.6 接入课程
- *   练习作答后填充，本任务恒返回 0，前端进度条按 0 渲染）。
+ * - completedUnitCount：已完成单元数（T2A.6 起 = 至少交卷 1 次的可见单元数；
+ *   作业作答不计入，D10「作业与课程练习互不计入对方次数」）。
  */
 export const studentCourseSummarySchema = z.object({
   id: z.uuid(),
@@ -45,7 +45,7 @@ export const studentCourseSummarySchema = z.object({
   visibleLectureCount: z.number().int().min(0),
   /** 可见单元条目数（D5） */
   visibleUnitCount: z.number().int().min(0),
-  /** 已完成单元数（T2A.6 前恒 0） */
+  /** 已完成单元数（至少交卷 1 次的可见单元数） */
   completedUnitCount: z.number().int().min(0),
 });
 
@@ -57,14 +57,39 @@ export const studentCourseListDataSchema = z.object({
   courses: z.array(studentCourseSummarySchema),
 });
 
+// ---------- 课程练习的作答状态（T2A.6，D10） ----------
+
+/**
+ * 目录单元条目上的课程练习作答摘要（D10：作答次数、首次/最近/最高得分、待批）。
+ * 全部只统计 sourceType='course' 的作答（作业作答不计入）；该生从未做过为 null。
+ * - count：全部作答次数（含进行中草稿）；
+ * - submittedCount：已交卷次数；
+ * - hasDraft：是否存在未交卷作答（「继续作答」入口依据，D10）；
+ * - first/latest/bestScore：首次/最近/最高一次**已交卷**作答得分（0–100 整数百分比；
+ *   scoreFinal ?? scoreAuto 口径；无可判分为 null）——首次得分最能反映真实掌握
+ *   程度，教师侧统计优先使用它；
+ * - pendingCount：待批题数（已作答但 autoCorrect 为 null 且未批的题数）。
+ */
+export const studentUnitAttemptSummarySchema = z.object({
+  count: z.number().int().min(0),
+  submittedCount: z.number().int().min(0),
+  hasDraft: z.boolean(),
+  firstScore: z.number().int().min(0).max(100).nullable(),
+  latestScore: z.number().int().min(0).max(100).nullable(),
+  bestScore: z.number().int().min(0).max(100).nullable(),
+  pendingCount: z.number().int().min(0),
+});
+
 // ---------- 课程可见目录（GET /api/student/courses/:id） ----------
 
 /**
  * 学生端目录条目（按 D5 过滤后仅含可见条目，order 升序）。
  * - kind：section=分节标题（仅文字）/ lecture=讲义 / unit=练习单元；
- * - questionCount：单元条目的未删除题目数（前端显示「n 题 · 即将开放」，作答入口
- *   T2A.6 开放）；分节与讲义条目为 null；
- * - 讲义条目点击进入 /s/lectures/:refId?courseId=<课程 id>（带课程上下文）。
+ * - questionCount：单元条目的未删除题目数；分节与讲义条目为 null；
+ * - attempt：单元条目的课程练习作答摘要（T2A.6 起）；从未做为 null。目录单元项
+ *   据此显示「未做 / 进行中 / 已完成（最近 xx 分 · 共 n 次）/ 有待批」；
+ * - 讲义条目点击进入 /s/lectures/:refId?courseId=<课程 id>（带课程上下文）；
+ * - 单元条目点击进入 /s/courses/:courseId/units/:refId（单元落地页，T2A.6）。
  */
 export const studentCourseItemSchema = z.object({
   /** course_items.id */
@@ -78,6 +103,8 @@ export const studentCourseItemSchema = z.object({
   order: z.number().int().min(0),
   /** 单元条目的未删除题目数；分节/讲义为 null */
   questionCount: z.number().int().min(0).nullable(),
+  /** 单元条目的课程练习作答摘要；从未做为 null */
+  attempt: studentUnitAttemptSummarySchema.nullable(),
 });
 
 /**
@@ -91,6 +118,51 @@ export const studentCourseDetailDataSchema = z.object({
   description: z.string().nullable(),
   /** 可见目录条目（order 升序；隐藏条目零信息） */
   items: z.array(studentCourseItemSchema),
+});
+
+// ---------- 单元落地页（GET /api/student/courses/:id/units/:unitId，T2A.6） ----------
+
+/**
+ * 历次作答记录行（D10 历次保留；点击进入该次结果视图，只读）。
+ * - score：scoreFinal ?? scoreAuto 口径；未交卷或无可判分为 null；
+ * - attemptId 供进入 /s/attempts/:attemptId。
+ */
+export const studentUnitAttemptRecordSchema = z.object({
+  attemptId: z.uuid(),
+  /** 第几次作答（从 1 起） */
+  attemptNo: z.number().int().min(1),
+  status: z.enum(["draft", "submitted", "graded"]),
+  /** 得分（0–100 整数百分比；未交/无可判分为 null） */
+  score: z.number().int().min(0).max(100).nullable(),
+  /** 开始时间：UTC ISO */
+  startedAt: z.string().min(1),
+  /** 交卷时间：UTC ISO；未交为 null */
+  submittedAt: z.string().nullable(),
+});
+
+/**
+ * GET /api/student/courses/:id/units/:unitId 响应 data：单元落地信息（D10）。
+ * 题数与题型分布基于未删除题目；attempts 按 attemptNo 降序（最近在前）；
+ * summary 为 null 表示从未做过（首次「开始练习」）。
+ * 错误（D22）：非成员/学生归档/课程归档 → 403 COURSE_ACCESS_DENIED；
+ * 课程或单元不存在/条目不可见 → 404 NOT_FOUND。
+ */
+export const studentUnitLandingDataSchema = z.object({
+  courseId: z.uuid(),
+  courseName: z.string().min(1),
+  unitId: z.string().min(1),
+  /** 单元标题（当前值，D1 引用而非复制） */
+  title: z.string().min(1),
+  /** 主题；未标注为 null */
+  topic: z.string().nullable(),
+  /** 未删除题目数 */
+  questionCount: z.number().int().min(0),
+  /** 题型分布：题型 → 题数（仅含有题数的题型） */
+  typeDistribution: z.record(z.string(), z.number().int().min(1)),
+  /** 历次作答（attemptNo 降序） */
+  attempts: z.array(studentUnitAttemptRecordSchema),
+  /** 作答汇总；从未做为 null */
+  summary: studentUnitAttemptSummarySchema.nullable(),
 });
 
 // ---------- 错误码（D22 学生访问课程资源） ----------
@@ -115,14 +187,26 @@ export const studentCourseListOkSchema = apiOkExtend(
 export const studentCourseDetailOkSchema = apiOkExtend(
   studentCourseDetailDataSchema,
 );
+export const studentUnitLandingOkSchema = apiOkExtend(
+  studentUnitLandingDataSchema,
+);
 
 // ---------- 推断类型导出 ----------
 
 export type StudentCourseSummary = z.infer<typeof studentCourseSummarySchema>;
 export type StudentCourseListData = z.infer<typeof studentCourseListDataSchema>;
+export type StudentUnitAttemptSummary = z.infer<
+  typeof studentUnitAttemptSummarySchema
+>;
 export type StudentCourseItem = z.infer<typeof studentCourseItemSchema>;
 export type StudentCourseDetailData = z.infer<
   typeof studentCourseDetailDataSchema
+>;
+export type StudentUnitAttemptRecord = z.infer<
+  typeof studentUnitAttemptRecordSchema
+>;
+export type StudentUnitLandingData = z.infer<
+  typeof studentUnitLandingDataSchema
 >;
 export type StudentCourseErrorCode = z.infer<
   typeof studentCourseErrorCodeSchema
