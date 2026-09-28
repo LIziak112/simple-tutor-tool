@@ -8,7 +8,7 @@ import { and, asc, eq, isNull } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { events, lectures, type NewEventRow } from "../db/schema";
 import { HttpError } from "../lib/http-error";
-import { requireOwnAttempt } from "./attempt-service";
+import { requireUsableAttempt } from "./attempt-service";
 
 /**
  * EventService（T2.10）——学习痕迹事件的写入与读取（架构文档 §5.2/§5.5）。
@@ -49,7 +49,9 @@ function insertEvents(
 
 /**
  * 批量追加 attempt 上下文事件（POST /api/student/attempts/:id/events）：
- * - attempt 不存在 → 404；非本人 → 403（requireOwnAttempt 统一口径）；
+ * - attempt 不存在 → 404；非本人 → 403（requireUsableAttempt 统一口径）；
+ *   T2A.6 起 course 来源 draft 失去课程访问权 → 403 COURSE_ACCESS_DENIED /
+ *   404 NOT_FOUND（前端事件队列据此按终态停发，不再无限重试）；
  * - draft / submitted / graded 均接收（宽松口径，见文件头）；
  * - questionId 不做归属校验：事件是学生自己的元数据，乱 id 只影响其本人统计，
  *   且草稿期被软删题的迟到事件仍应可落库（对应作答历史的一部分）。
@@ -60,7 +62,7 @@ export function appendAttemptEvents(
   attemptId: string,
   batch: readonly AttemptEvent[],
 ): LearningEventBatchData {
-  requireOwnAttempt(db, studentId, attemptId);
+  requireUsableAttempt(db, studentId, attemptId);
   return insertEvents(
     db,
     batch.map((event) => attemptEventRow(event, attemptId)),

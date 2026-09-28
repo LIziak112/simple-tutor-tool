@@ -3,10 +3,20 @@ import type {
   CourseDetailItem,
   CourseItemAdded,
   CourseItemSkipped,
+  CourseProgressCell,
+  CourseProgressData,
+  CourseProgressUnit,
   CourseStudentViewData,
   CourseSummary,
 } from "@tutor/contract";
-import { and, asc, eq, inArray, isNull } from "drizzle-orm";
+import {
+  and,
+  asc,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+} from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
   attempts,
@@ -17,6 +27,7 @@ import {
   courses,
   lectures,
   questions,
+  responses,
   students,
   units,
 } from "../db/schema";
@@ -727,6 +738,74 @@ export function listVisibleItems(
   return visibleItems;
 }
 
+// ---------- 单元可见性门（T2A.6：课程练习入口与作答访问权共用） ----------
+
+/** 403 COURSE_ACCESS_DENIED（D22：非成员 / 学生已归档 / 课程已归档） */
+function courseAccessDenied(): HttpError {
+  return new HttpError(
+    403,
+    "COURSE_ACCESS_DENIED",
+    "无法访问该课程（可能已被移出，或课程已结束归档）",
+  );
+}
+
+/** 404 NOT_FOUND（D22：不暴露存在性——课程/单元不存在、条目隐藏等统一口径） */
+function courseItemNotFound(): HttpError {
+  return new HttpError(
+    404,
+    "NOT_FOUND",
+    "没有找到该内容（可能尚未发布或已被移除）",
+  );
+}
+
+/**
+ * 校验某学生此刻能在某课程看到某单元（D5 + D22），失败抛 403/404：
+ * - 课程不存在 → 404 NOT_FOUND；
+ * - 非成员 / 学生已归档 / 课程已归档 → 403 COURSE_ACCESS_DENIED；
+ * - 单元条目不在该课程目录、隐藏、未到 publishAt、单元软删或无未删题 →
+ *   404 NOT_FOUND（不暴露存在性）。
+ *
+ * T2A.6 的三类调用方：课程单元落地页/开始练习（student.ts）、课程来源 attempt
+ * 的取卷与草稿访问权（attempt-service，D7——移出成员后未交卷草稿 403）。
+ * 返回可见条目（含标题）供调用方组装响应。
+ */
+export function requireVisibleCourseUnit(
+  db: Db,
+  studentId: string,
+  courseId: string,
+  unitId: string,
+  now: Date | string = new Date(),
+): VisibleCourseItem {
+  const course = db
+    .select({ id: courses.id, archivedAt: courses.archivedAt })
+    .from(courses)
+    .where(eq(courses.id, courseId))
+    .get();
+  if (course === undefined) {
+    throw courseItemNotFound();
+  }
+  const student = db
+    .select({ id: students.id, archivedAt: students.archivedAt })
+    .from(students)
+    .where(eq(students.id, studentId))
+    .get();
+  if (
+    student === undefined ||
+    student.archivedAt !== null ||
+    !isCourseMember(db, courseId, studentId) ||
+    course.archivedAt !== null
+  ) {
+    throw courseAccessDenied();
+  }
+  const item = listVisibleItems(db, studentId, courseId, now).find(
+    (entry) => entry.kind === "unit" && entry.refId === unitId,
+  );
+  if (item === undefined) {
+    throw courseItemNotFound();
+  }
+  return item;
+}
+
 // ---------- T2A.4：教师端课程列表 / 详情 / 学生可见预览 ----------
 
 /** 资源侧上下文（可见目录/详情共用：一次读全，内存分组——教师端量级小） */
@@ -807,24 +886,33 @@ function unitIdsByCourse(db: Db): Map<string, Set<string>> {
   return map;
 }
 
-/** 已有作答的单元 id 集合（attempts.unitId；当前所有 attempt 都带 unitId） */
+/** 已有作答的单元 id 集合（attempts.unitId） */
 function attemptedUnitIds(db: Db): Set<string> {
   return new Set(
     db
       .select({ unitId: attempts.unitId })
       .from(attempts)
       .all()
+      .filter((row): row is { unitId: string } => row.unitId !== null)
       .map((row) => row.unitId),
   );
 }
 
 /**
  * D4 删除条件：课程是否关联作答记录。
- * 现状口径（attempts 尚无 courseId，T2A.6 加；作业无 courseId，T2A.7 加）：
- * 课程目录条目引用的单元（含旧列兜底）名下的**全部 attempts**——含课程练习
- * 与「条目引用单元的全部作业」的作答，从保守：有作答即拒删。
+ * 口径（T2A.6 起 attempts 有 courseId）：
+ * - 直接命中：attempts.courseId = 该课程（课程练习作答，含未交卷草稿）；
+ * - 保守兜底：课程目录条目引用的单元（含旧列 units.courseId 痕迹）名下的全部
+ *   attempts——含「条目引用单元的全部作业」的作答，从保守：有作答即拒删。
  */
 export function courseHasAttempts(db: Db, courseId: string): boolean {
+  const direct =
+    db
+      .select({ id: attempts.id })
+      .from(attempts)
+      .where(eq(attempts.courseId, courseId))
+      .get() !== undefined;
+  if (direct) return true;
   const unitIds = unitIdsByCourse(db).get(courseId);
   if (unitIds === undefined || unitIds.size === 0) return false;
   const attempted = attemptedUnitIds(db);
@@ -1079,4 +1167,224 @@ export function getStudentView(
     isMember,
     items,
   };
+}
+
+// ---------- T2A.6：教师进度矩阵（GET /api/teacher/courses/:id/progress） ----------
+
+/**
+ * 课程练习作答的聚合口径（D10；学生端 studentUnitAttemptSummarySchema 同一定义）：
+ * - 只统计 sourceType='course' 的作答（作业作答不计入）；
+ * - 得分 = scoreFinal ?? scoreAuto（0–100 整数百分比；两者皆空为 null）；
+ * - 首次/最近/最高得分只取**已交卷**（submitted/graded）作答，按 attemptNo 排序；
+ * - pendingCount：待批题数 = 已作答（answerJson 非空）但 autoCorrect 与
+ *   finalCorrect 均为空的 responses 行数（未作答题不进待批）。
+ */
+interface CourseAttemptAggregate {
+  count: number;
+  submittedCount: number;
+  hasDraft: boolean;
+  firstScore: number | null;
+  latestScore: number | null;
+  bestScore: number | null;
+  pendingCount: number;
+}
+
+/** 行 → 有效得分（scoreFinal ?? scoreAuto） */
+function effectiveScore(row: {
+  scoreAuto: number | null;
+  scoreFinal: number | null;
+}): number | null {
+  return row.scoreFinal ?? row.scoreAuto;
+}
+
+/**
+ * 教师进度矩阵（T2A.6）：成员 × 可见单元，每格课程练习统计 + 历次列表。
+ * - 行（members）：全部课程成员（含已归档学生——教师侧保留统计视角），按姓名排序；
+ * - 列（units）：对学生可见的单元条目（visible=true 且已到 publishAt 且资源
+ *   未删且有未删题，D5 的资源侧口径），按目录条目顺序；
+ * - cells：只含有作答的单元格，缺席（从未做过）由前端按空渲染；
+ * - 点击单元格的历次列表内联在 cell.history（详情页属 T3.1）。
+ * now 可注入（publishAt 到点判断）。
+ */
+export function getCourseProgress(
+  db: Db,
+  courseId: string,
+  now: Date | string = new Date(),
+): CourseProgressData {
+  requireCourse(db, courseId);
+  const nowMs = typeof now === "string" ? Date.parse(now) : now.getTime();
+
+  // 行：成员（含已归档）
+  const members = db
+    .select({
+      studentId: students.id,
+      displayName: students.displayName,
+      studentArchivedAt: students.archivedAt,
+    })
+    .from(courseStudents)
+    .innerJoin(students, eq(courseStudents.studentId, students.id))
+    .where(eq(courseStudents.courseId, courseId))
+    .orderBy(asc(students.displayName))
+    .all()
+    .map((row) => ({
+      studentId: row.studentId,
+      displayName: row.displayName,
+      archived: row.studentArchivedAt !== null,
+    }));
+
+  // 列：可见单元（D5 资源侧口径）
+  const { unitById, liveQuestionCountByUnit } = loadResourceContext(db);
+  const unitItems = db
+    .select({
+      refId: courseItems.refId,
+      order: courseItems.order,
+      visible: courseItems.visible,
+      publishAt: courseItems.publishAt,
+    })
+    .from(courseItems)
+    .where(eq(courseItems.courseId, courseId))
+    .orderBy(asc(courseItems.order), asc(courseItems.id))
+    .all();
+  const units: CourseProgressUnit[] = [];
+  for (const item of unitItems) {
+    if (item.refId === null) continue;
+    const unit = unitById.get(item.refId);
+    if (unit === undefined || unit.deletedAt !== null) continue;
+    if (!item.visible) continue;
+    if (
+      item.publishAt !== null &&
+      Date.parse(item.publishAt) > nowMs
+    ) {
+      continue;
+    }
+    if ((liveQuestionCountByUnit.get(item.refId) ?? 0) < 1) continue;
+    units.push({
+      unitId: item.refId,
+      title: unit.title,
+      order: item.order,
+    });
+  }
+
+  // 课程练习作答（该课程全部成员的全部 course 作答；一对一量级内存聚合足够）
+  const memberIds = new Set(members.map((member) => member.studentId));
+  const courseAttempts = db
+    .select()
+    .from(attempts)
+    .where(
+      and(
+        eq(attempts.courseId, courseId),
+        eq(attempts.sourceType, "course"),
+      ),
+    )
+    .orderBy(asc(attempts.attemptNo))
+    .all()
+    .filter((row) => memberIds.has(row.studentId));
+
+  // 待批题数（按 attempt 聚合：answerJson 非空且 autoCorrect/finalCorrect 均空）
+  const pendingByAttempt = new Map<string, number>();
+  if (courseAttempts.length > 0) {
+    const attemptIds = courseAttempts.map((row) => row.id);
+    for (let start = 0; start < attemptIds.length; start += 500) {
+      const chunk = attemptIds.slice(start, start + 500);
+      for (const row of db
+        .select({ attemptId: responses.attemptId })
+        .from(responses)
+        .where(
+          and(
+            inArray(responses.attemptId, chunk),
+            isNotNull(responses.answerJson),
+            isNull(responses.autoCorrect),
+            isNull(responses.finalCorrect),
+          ),
+        )
+        .all()) {
+        pendingByAttempt.set(
+          row.attemptId,
+          (pendingByAttempt.get(row.attemptId) ?? 0) + 1,
+        );
+      }
+    }
+  }
+
+  // (studentId, unitId) → 聚合 + 历次
+  const aggregateByCell = new Map<
+    string,
+    {
+      aggregate: CourseAttemptAggregate;
+      history: CourseProgressCell["history"];
+      firstSubmittedSeen: boolean;
+    }
+  >();
+  for (const row of courseAttempts) {
+    const key = `${row.studentId}:${row.unitId}`;
+    const entry =
+      aggregateByCell.get(key) ??
+      {
+        aggregate: {
+          count: 0,
+          submittedCount: 0,
+          hasDraft: false,
+          firstScore: null,
+          latestScore: null,
+          bestScore: null,
+          pendingCount: 0,
+        } satisfies CourseAttemptAggregate,
+        history: [] as CourseProgressCell["history"],
+        firstSubmittedSeen: false,
+      };
+    entry.aggregate.count += 1;
+    entry.aggregate.pendingCount += pendingByAttempt.get(row.id) ?? 0;
+    const score = effectiveScore(row);
+    if (row.status === "draft") {
+      entry.aggregate.hasDraft = true;
+    } else {
+      entry.aggregate.submittedCount += 1;
+      // 已交卷按 attemptNo 升序遍历：首个交卷即首次得分（无可判分保持 null），
+      // 最后一个交卷即最近得分；最高分取非空得分的最大值
+      if (!entry.firstSubmittedSeen) {
+        entry.firstSubmittedSeen = true;
+        entry.aggregate.firstScore = score;
+      }
+      entry.aggregate.latestScore = score;
+      if (score !== null) {
+        entry.aggregate.bestScore = Math.max(
+          entry.aggregate.bestScore ?? 0,
+          score,
+        );
+      }
+    }
+    entry.history.push({
+      attemptId: row.id,
+      attemptNo: row.attemptNo,
+      status: row.status,
+      score,
+      submittedAt: row.submittedAt,
+    });
+    aggregateByCell.set(key, entry);
+  }
+
+  const cells: CourseProgressCell[] = [];
+  for (const [key, entry] of aggregateByCell) {
+    // key = "<studentId>:<unitId>"（studentId 是 UUID 无冒号；unitId 来自 DSL
+    // 理论可含冒号——用首个冒号切分，不用 split 限参避免截断）
+    const sep = key.indexOf(":");
+    if (sep <= 0) continue;
+    const studentId = key.slice(0, sep);
+    const unitId = key.slice(sep + 1);
+    // 矩阵只覆盖当前成员 × 可见单元；历史数据（已移出成员/已隐藏单元）不进矩阵
+    if (!memberIds.has(studentId)) continue;
+    if (!units.some((unit) => unit.unitId === unitId)) continue;
+    const latest = entry.history
+      .filter((h) => h.submittedAt !== null)
+      .sort((a, b) => b.attemptNo - a.attemptNo)[0];
+    cells.push({
+      studentId,
+      unitId,
+      ...entry.aggregate,
+      latestSubmittedAt: latest?.submittedAt ?? null,
+      history: entry.history.sort((a, b) => b.attemptNo - a.attemptNo),
+    });
+  }
+
+  return { courseId, members, units, cells };
 }

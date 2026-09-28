@@ -22,6 +22,7 @@ import {
   appendCourseItems,
   deleteCourseItem,
   getCourseDetail,
+  getCourseProgress,
   getStudentView,
   listCoursesForTeacher,
   removeCourseMembers,
@@ -90,6 +91,14 @@ export function createCourseRoutes(db: Db) {
       return c.json({
         ok: true,
         data: getStudentView(db, c.req.param("id"), parsed.data.studentId),
+      });
+    })
+    // T2A.6：课程进度矩阵（成员 × 可见单元；每格课程练习统计 + 历次列表，
+    // 详情页属 T3.1；只统计 sourceType='course' 的作答）
+    .get("/courses/:id/progress", (c) => {
+      return c.json({
+        ok: true,
+        data: getCourseProgress(db, c.req.param("id")),
       });
     })
     .post("/courses/:id/items", async (c) => {

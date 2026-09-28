@@ -5,19 +5,24 @@ import type {
   StudentLectureDetail,
   StudentLectureListData,
   StudentLectureSummary,
+  StudentUnitAttemptSummary,
+  StudentUnitLandingData,
 } from "@tutor/contract";
-import { and, asc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
+  type Attempt,
+  attempts,
   courseStudents,
   courses,
   lectures,
   questions,
+  responses,
   students,
   units,
 } from "../db/schema";
 import { HttpError } from "../lib/http-error";
-import { listVisibleItems } from "./course-service";
+import { listVisibleItems, requireVisibleCourseUnit } from "./course-service";
 
 /**
  * 学生端课程与讲义读路径（T2A.5，核心切换：可见性模型从「全量讲义 + deletedAt 过滤」
@@ -25,20 +30,19 @@ import { listVisibleItems } from "./course-service";
  * 唯一判定（清单 §2 D5），隐藏/未到发布/资源已删除条目零信息（不出现在条目列表，
  * 也不计入任何计数）：
  * - listStudentCourses：我的课程（成员 + 课程未归档），可见讲义/单元计数 +
- *   completedUnitCount 占位 0（T2A.6 接入课程练习作答后填充）；
- * - getStudentCourseDetail：课程可见目录（单元条目带题数）；
- * - listStudentLectures：可见讲义 = 所在全部课程中可见讲义条目的并集（双视图：
- *   去重 lectures + 按课程分组 courses；同一讲义多课在分组中各自出现、去重列表
- *   只出现一次）；topic 只由**对该生可见**的配套单元贡献（隐藏单元零信息）；
- * - getStudentLecture：讲义详情 + 课程上下文（?courseId= 或取第一个可见该讲义的
- *   课程）+「本课配套练习」（D8：同课程可见的 units.lectureId=该讲义单元）。
+ *   completedUnitCount（T2A.6 起 = 至少交卷 1 次的可见单元数，首页课程卡片进度）；
+ * - getStudentCourseDetail：课程可见目录（单元条目带题数 + 课程练习作答摘要，D10）；
+ * - getStudentUnitLanding（T2A.6）：单元落地信息——题数/题型分布/历次作答/
+ *   首次/最近/最高分/是否有未交卷作答；
+ * - listStudentLectures：可见讲义 = 所在全部课程中可见讲义条目的并集（双视图）；
+ * - getStudentLecture：讲义详情 + 课程上下文 +「本课配套练习」（D8）。
  *
  * 错误口径（D22）：非成员/学生已归档/课程已归档 → 403 COURSE_ACCESS_DENIED；
  * 课程或讲义不存在/条目隐藏/未到发布/资源已删除 → 404 NOT_FOUND（不暴露存在性）。
  * now 可注入（publishAt 到点判断；路由传真实时间，测试传固定时间）。
  *
  * 安全口径（AGENTS.md 第 3 条）：全部查询只 SELECT 目录与资源元信息列，
- * 不触碰 questions 的任何内容列（题数只做 COUNT(*)）。
+ * 不触碰 questions 的任何内容列（题数只做 COUNT(*)；题型分布只按 type 分组）。
  */
 
 /** 学生可见的课程上下文（D5 条件 1、2：成员 + 双方未归档） */
@@ -116,9 +120,104 @@ function notFound(): HttpError {
 // ---------- 我的课程（GET /api/student/courses） ----------
 
 /**
+ * 某学生在某课程的各单元课程练习作答汇总（D10；只统计 sourceType='course'——
+ * 作业作答不计入，互不计次）。返回 unitId → 摘要（含 pendingCount：已作答但
+ * autoCorrect/finalCorrect 均空的题数）。
+ */
+export function courseUnitAttemptSummaries(
+  db: Db,
+  studentId: string,
+  courseId: string,
+): Map<string, StudentUnitAttemptSummary> {
+  const rows = db
+    .select()
+    .from(attempts)
+    .where(
+      and(
+        eq(attempts.studentId, studentId),
+        eq(attempts.sourceType, "course"),
+        eq(attempts.courseId, courseId),
+      ),
+    )
+    .orderBy(asc(attempts.attemptNo))
+    .all();
+  if (rows.length === 0) return new Map();
+
+  // 待批题数（按 attempt 聚合后归到单元）
+  const pendingByAttempt = new Map<string, number>();
+  for (let start = 0; start < rows.length; start += 500) {
+    const chunk = rows.slice(start, start + 500).map((row) => row.id);
+    for (const response of db
+      .select({ attemptId: responses.attemptId })
+      .from(responses)
+      .where(
+        and(
+          inArray(responses.attemptId, chunk),
+          isNotNull(responses.answerJson),
+          isNull(responses.autoCorrect),
+          isNull(responses.finalCorrect),
+        ),
+      )
+      .all()) {
+      pendingByAttempt.set(
+        response.attemptId,
+        (pendingByAttempt.get(response.attemptId) ?? 0) + 1,
+      );
+    }
+  }
+
+  interface CellState extends StudentUnitAttemptSummary {
+    firstSubmittedSeen: boolean;
+  }
+  const byUnit = new Map<string, CellState>();
+  for (const row of rows) {
+    const unitId = row.unitId ?? "";
+    const cell =
+      byUnit.get(unitId) ??
+      ({
+        count: 0,
+        submittedCount: 0,
+        hasDraft: false,
+        firstScore: null,
+        latestScore: null,
+        bestScore: null,
+        pendingCount: 0,
+        firstSubmittedSeen: false,
+      } satisfies CellState);
+    cell.count += 1;
+    cell.pendingCount += pendingByAttempt.get(row.id) ?? 0;
+    const score = row.scoreFinal ?? row.scoreAuto;
+    if (row.status === "draft") {
+      cell.hasDraft = true;
+    } else {
+      cell.submittedCount += 1;
+      // attemptNo 升序遍历：首个交卷即首次得分（无可判分保持 null），
+      // 最后一个交卷即最近得分；最高分取非空得分的最大值（教师侧统计优先用首次分）
+      if (!cell.firstSubmittedSeen) {
+        cell.firstSubmittedSeen = true;
+        cell.firstScore = score;
+      }
+      cell.latestScore = score;
+      if (score !== null) {
+        cell.bestScore = Math.max(cell.bestScore ?? 0, score);
+      }
+    }
+    byUnit.set(unitId, cell);
+  }
+
+  const result = new Map<string, StudentUnitAttemptSummary>();
+  for (const [unitId, cell] of byUnit) {
+    const { firstSubmittedSeen: _omit, ...summary } = cell;
+    result.set(unitId, summary);
+  }
+  return result;
+}
+
+/**
  * 我的课程列表（成员 + 未归档课程，order 升序）。
- * 可见计数取自 listVisibleItems（隐藏条目不计入）；completedUnitCount 恒 0
- * （T2A.6 前占位）。归档课程与非成员课程完全不出现在列表（零信息）。
+ * 可见计数取自 listVisibleItems（隐藏条目不计入）；completedUnitCount =
+ * 至少交卷 1 次的可见单元数（T2A.6 起接入课程练习作答；作业作答不计入）。
+ * 归档课程与非成员课程完全不出现在列表（零信息）。
  */
 export function listStudentCourses(
   db: Db,
@@ -129,14 +228,20 @@ export function listStudentCourses(
   const courseSummaries: StudentCourseSummary[] = visibleCourses.map(
     (course) => {
       const items = listVisibleItems(db, studentId, course.id, now);
+      const unitItems = items.filter((item) => item.kind === "unit");
+      const summaries = courseUnitAttemptSummaries(db, studentId, course.id);
       return {
         id: course.id,
         name: course.title,
         description: course.description,
         visibleLectureCount: items.filter((item) => item.kind === "lecture")
           .length,
-        visibleUnitCount: items.filter((item) => item.kind === "unit").length,
-        completedUnitCount: 0, // T2A.6：接入课程练习作答后按「至少交卷 1 次的可见单元数」填充
+        visibleUnitCount: unitItems.length,
+        completedUnitCount: unitItems.filter(
+          (item) =>
+            item.refId !== null &&
+            (summaries.get(item.refId)?.submittedCount ?? 0) > 0,
+        ).length,
       };
     },
   );
@@ -146,7 +251,8 @@ export function listStudentCourses(
 // ---------- 课程可见目录（GET /api/student/courses/:id） ----------
 
 /**
- * 某课程的可见目录（D5 过滤，order 升序；单元条目带未删除题数）。
+ * 某课程的可见目录（D5 过滤，order 升序；单元条目带未删除题数 + 课程练习作答
+ * 摘要（T2A.6 起，目录单元项据此显示「未做/进行中/已完成/有待批」））。
  * 课程不存在 → 404 NOT_FOUND；非成员/学生已归档/课程已归档 → 403
  * COURSE_ACCESS_DENIED（D22）。隐藏条目零信息。
  */
@@ -199,6 +305,7 @@ export function getStudentCourseDetail(
     .filter((item) => item.kind === "unit")
     .map((item) => item.refId as string);
   const counts = liveQuestionCounts(db, unitIds);
+  const attemptSummaries = courseUnitAttemptSummaries(db, studentId, courseId);
   return {
     id: course.id,
     name: course.title,
@@ -211,7 +318,91 @@ export function getStudentCourseDetail(
       order: item.order,
       questionCount:
         item.kind === "unit" ? (counts.get(item.refId ?? "") ?? 0) : null,
+      // 单元条目的课程练习作答摘要（从未做为 null；作业作答不计入）
+      attempt:
+        item.kind === "unit"
+          ? (attemptSummaries.get(item.refId ?? "") ?? null)
+          : null,
     })),
+  };
+}
+
+// ---------- 单元落地页（GET /api/student/courses/:id/units/:unitId，T2A.6） ----------
+
+/**
+ * 单元落地信息（D10）：题数、题型分布、历次作答列表（attemptNo、状态、得分、
+ * 交卷时间）、首次/最近/最高分、是否存在未交卷作答。
+ * 访问权：requireVisibleCourseUnit（D5 + D22——非成员/归档 403、不可见 404）。
+ * 安全：只读 questions 的 type 列做分布统计，不触碰任何内容列。
+ */
+export function getStudentUnitLanding(
+  db: Db,
+  studentId: string,
+  courseId: string,
+  unitId: string,
+  now: Date | string = new Date(),
+): StudentUnitLandingData {
+  // 访问权门（D5 + D22；返回值不需要——标题/主题直接取资源当前值）
+  requireVisibleCourseUnit(db, studentId, courseId, unitId, now);
+  const course = db
+    .select({ title: courses.title })
+    .from(courses)
+    .where(eq(courses.id, courseId))
+    .get();
+  const unit = db
+    .select({ title: units.title, topic: units.topic })
+    .from(units)
+    .where(and(eq(units.id, unitId), isNull(units.deletedAt)))
+    .get();
+  if (course === undefined || unit === undefined) {
+    throw notFound(); // 防御：可见门通过后资源必存在
+  }
+
+  // 题数与题型分布（只按 type 分组计数）
+  const typeDistribution: Record<string, number> = {};
+  let questionCount = 0;
+  for (const row of db
+    .select({ type: questions.type })
+    .from(questions)
+    .where(and(eq(questions.unitId, unitId), isNull(questions.deletedAt)))
+    .all()) {
+    questionCount += 1;
+    typeDistribution[row.type] = (typeDistribution[row.type] ?? 0) + 1;
+  }
+
+  // 历次作答（attemptNo 降序，最近在前）
+  const attemptRows: Attempt[] = db
+    .select()
+    .from(attempts)
+    .where(
+      and(
+        eq(attempts.studentId, studentId),
+        eq(attempts.sourceType, "course"),
+        eq(attempts.courseId, courseId),
+        eq(attempts.unitId, unitId),
+      ),
+    )
+    .orderBy(desc(attempts.attemptNo))
+    .all();
+  const attemptsByUnit = courseUnitAttemptSummaries(db, studentId, courseId);
+
+  return {
+    courseId,
+    courseName: course.title,
+    unitId,
+    title: unit.title,
+    topic: unit.topic,
+    questionCount,
+    typeDistribution,
+    attempts: attemptRows.map((row) => ({
+      attemptId: row.id,
+      attemptNo: row.attemptNo,
+      status: row.status,
+      score: row.scoreFinal ?? row.scoreAuto,
+      startedAt: row.startedAt,
+      submittedAt: row.submittedAt,
+    })),
+    summary: attemptsByUnit.get(unitId) ?? null,
   };
 }
 
