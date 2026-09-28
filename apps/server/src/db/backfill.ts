@@ -69,7 +69,10 @@ export function runBackfills(db: Db, now: Date = new Date()): void {
     db.transaction((tx) => {
       backfillT2a6Attempts(tx);
       tx.insert(dataMigrations)
-        .values({ key: T2A6_ATTEMPTS_BACKFILL_KEY, appliedAt: now.toISOString() })
+        .values({
+          key: T2A6_ATTEMPTS_BACKFILL_KEY,
+          appliedAt: now.toISOString(),
+        })
         .run();
     });
   }
@@ -239,9 +242,7 @@ function backfillT2a1(tx: Tx, now: Date): void {
  * 那份作业的单元）。
  */
 function backfillT2a6Attempts(tx: Tx): void {
-  tx.update(attempts)
-    .set({ sourceType: "assignment", attemptNo: 1 })
-    .run();
+  tx.update(attempts).set({ sourceType: "assignment", attemptNo: 1 }).run();
 }
 
 // ---------- 孤儿资源兜底（T2A.1 事故修复） ----------

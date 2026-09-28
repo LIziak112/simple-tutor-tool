@@ -178,10 +178,7 @@ export function requireUsableAttempt(
  * 两种来源现阶段各只含一个单元，但必须经本函数取题（判分、快照、公开题目投影
  * 都从这里走），T2A.7 只改 assignment 分支。
  */
-export function attemptQuestionRows(
-  db: Db,
-  attempt: Attempt,
-): QuestionRow[] {
+export function attemptQuestionRows(db: Db, attempt: Attempt): QuestionRow[] {
   let unitIds: string[];
   if (attempt.sourceType === "course") {
     // course 来源：unitId 创建时必写（防御性空集合兜底异常行）
@@ -189,28 +186,20 @@ export function attemptQuestionRows(
   } else {
     // assignment 来源：按作业行的 unitId（快照语义与 D23-6 一致；作业行经 FK
     // 必存在——requireAssignmentRow 含已删作业，作答不随作业软删消失）
-    const assignment = requireAssignmentRow(
-      db,
-      attempt.assignmentId ?? "",
-    );
+    const assignment = requireAssignmentRow(db, attempt.assignmentId ?? "");
     unitIds = [assignment.unitId];
   }
   if (unitIds.length === 0) return [];
   return db
     .select()
     .from(questions)
-    .where(
-      and(inArray(questions.unitId, unitIds), isNull(questions.deletedAt)),
-    )
+    .where(and(inArray(questions.unitId, unitIds), isNull(questions.deletedAt)))
     .orderBy(asc(questions.order), asc(questions.id))
     .all();
 }
 
 /** attempt 的公开题目投影（草稿视图与通用取卷共用，QuestionPublic 形态） */
-function attemptPublicQuestions(
-  db: Db,
-  attempt: Attempt,
-): QuestionPublic[] {
+function attemptPublicQuestions(db: Db, attempt: Attempt): QuestionPublic[] {
   return publicQuestionsOfRows(db, attemptQuestionRows(db, attempt));
 }
 
@@ -230,7 +219,11 @@ function attemptSourceMeta(db: Db, attempt: Attempt): AttemptSourceMeta {
         : undefined;
     const course: Course | undefined =
       attempt.courseId !== null
-        ? db.select().from(courses).where(eq(courses.id, attempt.courseId)).get()
+        ? db
+            .select()
+            .from(courses)
+            .where(eq(courses.id, attempt.courseId))
+            .get()
         : undefined;
     return {
       title: unit?.title ?? "课程练习",

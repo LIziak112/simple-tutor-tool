@@ -186,11 +186,7 @@ export function createStudentRoutes(
       .get("/attempts/:id/paper", (c) => {
         return c.json({
           ok: true,
-          data: getStudentAttemptPaper(
-            db,
-            c.var.student.id,
-            c.req.param("id"),
-          ),
+          data: getStudentAttemptPaper(db, c.var.student.id, c.req.param("id")),
         });
       })
       // T2.10：学习痕迹事件批量上报（attempt 上下文，≤200 条/次由契约拦截）

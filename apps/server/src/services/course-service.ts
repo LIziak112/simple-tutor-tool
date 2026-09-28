@@ -9,14 +9,7 @@ import type {
   CourseStudentViewData,
   CourseSummary,
 } from "@tutor/contract";
-import {
-  and,
-  asc,
-  eq,
-  inArray,
-  isNotNull,
-  isNull,
-} from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
   attempts,
@@ -1251,10 +1244,7 @@ export function getCourseProgress(
     const unit = unitById.get(item.refId);
     if (unit === undefined || unit.deletedAt !== null) continue;
     if (!item.visible) continue;
-    if (
-      item.publishAt !== null &&
-      Date.parse(item.publishAt) > nowMs
-    ) {
+    if (item.publishAt !== null && Date.parse(item.publishAt) > nowMs) {
       continue;
     }
     if ((liveQuestionCountByUnit.get(item.refId) ?? 0) < 1) continue;
@@ -1271,10 +1261,7 @@ export function getCourseProgress(
     .select()
     .from(attempts)
     .where(
-      and(
-        eq(attempts.courseId, courseId),
-        eq(attempts.sourceType, "course"),
-      ),
+      and(eq(attempts.courseId, courseId), eq(attempts.sourceType, "course")),
     )
     .orderBy(asc(attempts.attemptNo))
     .all()
@@ -1317,21 +1304,19 @@ export function getCourseProgress(
   >();
   for (const row of courseAttempts) {
     const key = `${row.studentId}:${row.unitId}`;
-    const entry =
-      aggregateByCell.get(key) ??
-      {
-        aggregate: {
-          count: 0,
-          submittedCount: 0,
-          hasDraft: false,
-          firstScore: null,
-          latestScore: null,
-          bestScore: null,
-          pendingCount: 0,
-        } satisfies CourseAttemptAggregate,
-        history: [] as CourseProgressCell["history"],
-        firstSubmittedSeen: false,
-      };
+    const entry = aggregateByCell.get(key) ?? {
+      aggregate: {
+        count: 0,
+        submittedCount: 0,
+        hasDraft: false,
+        firstScore: null,
+        latestScore: null,
+        bestScore: null,
+        pendingCount: 0,
+      } satisfies CourseAttemptAggregate,
+      history: [] as CourseProgressCell["history"],
+      firstSubmittedSeen: false,
+    };
     entry.aggregate.count += 1;
     entry.aggregate.pendingCount += pendingByAttempt.get(row.id) ?? 0;
     const score = effectiveScore(row);

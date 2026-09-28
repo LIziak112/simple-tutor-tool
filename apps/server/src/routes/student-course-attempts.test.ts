@@ -285,8 +285,13 @@ describe("T2A.6 课程练习：开始 / 继续作答 / 再做一次（D10）", (
       { headers: { cookie: env.memberCookie } },
     );
     expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(studentUnitLandingOkSchema.safeParse(body).success).toBe(true);
+    const body = (await res.json()) as {
+      data: Record<string, unknown>;
+    };
+    expect(
+      studentUnitLandingOkSchema.safeParse({ ok: true, data: body.data })
+        .success,
+    ).toBe(true);
     expect(body.data).toMatchObject({
       courseName: "初一上",
       title: "有理数课程练习",
@@ -302,8 +307,13 @@ describe("T2A.6 课程练习：开始 / 继续作答 / 再做一次（D10）", (
     const env = await makeEnv();
     const first = await startAttempt(env);
     expect(first.status).toBe(201);
-    const firstBody = await first.json();
-    expect(attemptStartOkSchema.safeParse(firstBody).success).toBe(true);
+    const firstBody = (await first.json()) as {
+      data: Record<string, unknown>;
+    };
+    expect(
+      attemptStartOkSchema.safeParse({ ok: true, data: firstBody.data })
+        .success,
+    ).toBe(true);
     expect(firstBody.data).toMatchObject({
       sourceType: "course",
       assignmentId: null,
@@ -355,8 +365,16 @@ describe("T2A.6 课程练习：开始 / 继续作答 / 再做一次（D10）", (
       { headers: { cookie: env.memberCookie } },
     );
     expect(detail.status).toBe(200);
-    const detailBody = await detail.json();
-    expect(attemptDraftOkSchema.safeParse(detailBody).success).toBe(true);
+    const detailBody = (await detail.json()) as {
+      data: {
+        drafts: Record<string, unknown>;
+        attempt: Record<string, unknown>;
+      };
+    };
+    expect(
+      attemptDraftOkSchema.safeParse({ ok: true, data: detailBody.data })
+        .success,
+    ).toBe(true);
     expect(detailBody.data.drafts).toEqual({});
     expect(detailBody.data.attempt).toMatchObject({
       attemptNo: 2,
@@ -658,7 +676,9 @@ describe("T2A.6 课程练习：越权矩阵（D22）与移出成员（D7）", ()
       headers: { cookie: env.memberCookie },
     });
     expect(view.status).toBe(200);
-    const viewBody = await view.json();
+    const viewBody = (await view.json()) as {
+      data: { attempt: { id: string }; summary: { total: number } };
+    };
     expect(viewBody.data.attempt.id).toBe(first.id);
     expect(viewBody.data.summary.total).toBe(3);
   });
@@ -675,7 +695,9 @@ describe("T2A.6 通用取卷与作业作答迁移形态", () => {
       { headers: { cookie: env.memberCookie } },
     );
     expect(paper.status).toBe(200);
-    const body = await paper.json();
+    const body = (await paper.json()) as {
+      data: { questions: unknown[] };
+    };
     expect(studentPaperDataSchema.safeParse(body.data).success).toBe(true);
     expect(body.data.questions).toHaveLength(3);
     assertNoLeak(body);
@@ -703,7 +725,9 @@ describe("T2A.6 通用取卷与作业作答迁移形态", () => {
       { method: "POST", headers: { cookie: env.memberCookie } },
     );
     expect(started.status).toBe(200);
-    const startBody = await started.json();
+    const startBody = (await started.json()) as {
+      data: Record<string, unknown>;
+    };
     // 迁移形态：作业作答 sourceType=assignment、attemptNo=1（D23-6 同口径）
     expect(startBody.data).toMatchObject({
       sourceType: "assignment",
@@ -717,7 +741,7 @@ describe("T2A.6 通用取卷与作业作答迁移形态", () => {
       { headers: { cookie: env.memberCookie } },
     );
     expect(paper.status).toBe(200);
-    const body = await paper.json();
+    const body = (await paper.json()) as { data: unknown };
     expect(studentPaperDataSchema.safeParse(body.data).success).toBe(true);
     assertNoLeak(body);
 
@@ -792,6 +816,7 @@ describe("T2A.6 教师进度矩阵（GET /api/teacher/courses/:id/progress）", 
     expect(body.data.units[0]?.unitId).toBe(env.unitId);
     expect(body.data.cells).toHaveLength(1);
     const cell = body.data.cells[0];
+    if (cell === undefined) throw new Error("矩阵缺少成员 × 单元格");
     expect(cell).toMatchObject({
       studentId: env.memberStudentId,
       unitId: env.unitId,

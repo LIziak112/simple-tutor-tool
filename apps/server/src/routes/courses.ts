@@ -48,116 +48,118 @@ import {
  * 业务逻辑在 CourseService（api-endpoint 技能约定：路由只做鉴权→校验→调 service→包装）。
  */
 export function createCourseRoutes(db: Db) {
-  return new Hono<TeacherEnv>()
-    .get("/courses", (c) => {
-      // GET 无 JSON body：查询参数手工过契约 schema（stringbool 解析 "true"/"false"）
-      const parsed = courseListQuerySchema.safeParse({
-        archived: c.req.query("archived") ?? undefined,
-      });
-      if (!parsed.success) {
-        throw new HttpError(
-          400,
-          "VALIDATION_ERROR",
-          "查询参数不合法：archived 只能是 true 或 false",
-        );
-      }
-      const query: CourseListQuery = parsed.data;
-      return c.json({
-        ok: true,
-        data: {
-          courses: listCoursesForTeacher(db, {
-            archived: query.archived ?? false,
-          }),
-        },
-      });
-    })
-    .get("/courses/:id", (c) => {
-      return c.json({
-        ok: true,
-        data: getCourseDetail(db, c.req.param("id")),
-      });
-    })
-    .get("/courses/:id/student-view", (c) => {
-      const parsed = courseStudentViewQuerySchema.safeParse({
-        studentId: c.req.query("studentId") ?? undefined,
-      });
-      if (!parsed.success) {
-        throw new HttpError(
-          400,
-          "VALIDATION_ERROR",
-          "查询参数不合法：studentId 必须是 UUID（选择一位成员进行预览）",
-        );
-      }
-      return c.json({
-        ok: true,
-        data: getStudentView(db, c.req.param("id"), parsed.data.studentId),
-      });
-    })
-    // T2A.6：课程进度矩阵（成员 × 可见单元；每格课程练习统计 + 历次列表，
-    // 详情页属 T3.1；只统计 sourceType='course' 的作答）
-    .get("/courses/:id/progress", (c) => {
-      return c.json({
-        ok: true,
-        data: getCourseProgress(db, c.req.param("id")),
-      });
-    })
-    .post("/courses/:id/items", async (c) => {
-      const body: CourseItemsAddRequest = await parseJsonBody(
-        c,
-        courseItemsAddRequestSchema,
-      );
-      return c.json(
-        {
+  return (
+    new Hono<TeacherEnv>()
+      .get("/courses", (c) => {
+        // GET 无 JSON body：查询参数手工过契约 schema（stringbool 解析 "true"/"false"）
+        const parsed = courseListQuerySchema.safeParse({
+          archived: c.req.query("archived") ?? undefined,
+        });
+        if (!parsed.success) {
+          throw new HttpError(
+            400,
+            "VALIDATION_ERROR",
+            "查询参数不合法：archived 只能是 true 或 false",
+          );
+        }
+        const query: CourseListQuery = parsed.data;
+        return c.json({
           ok: true,
-          data: appendCourseItems(db, c.req.param("id"), body.items, {
-            visible: body.visible,
-            withCompanionUnits: body.withCompanionUnits,
-          }),
-        },
-        201,
-      );
-    })
-    .put("/courses/:id/items/order", async (c) => {
-      const body: CourseItemsReorderRequest = await parseJsonBody(
-        c,
-        courseItemsReorderRequestSchema,
-      );
-      reorderCourseItems(db, c.req.param("id"), body.ids);
-      return c.json({ ok: true, data: null });
-    })
-    .post("/courses/:id/members", async (c) => {
-      const body: CourseMembersRequest = await parseJsonBody(
-        c,
-        courseMembersRequestSchema,
-      );
-      addCourseMembers(db, c.req.param("id"), body.studentIds);
-      return c.json({ ok: true, data: null });
-    })
-    .delete("/courses/:id/members", async (c) => {
-      const body: CourseMembersRequest = await parseJsonBody(
-        c,
-        courseMembersRequestSchema,
-      );
-      removeCourseMembers(db, c.req.param("id"), body.studentIds);
-      return c.json({ ok: true, data: null });
-    })
-    .patch("/course-items/:id", async (c) => {
-      const body: CourseItemUpdateRequest = await parseJsonBody(
-        c,
-        courseItemUpdateRequestSchema,
-      );
-      // 服务层返回原始行；响应需要含状态标签数据 → 经详情组装路径重取该课程
-      const updated = updateCourseItem(db, c.req.param("id"), body);
-      const detail = getCourseDetail(db, updated.courseId);
-      const item = detail.items.find((entry) => entry.id === updated.id);
-      if (item === undefined) {
-        // 理论不可达（刚更新过的条目必在详情里）；防御性兜底
-        throw new HttpError(404, "COURSE_ITEM_NOT_FOUND", "目录条目不存在");
-      }
-      return c.json({ ok: true, data: item });
-    })
-    .delete("/course-items/:id", (c) => {
-      deleteCourseItem(db, c.req.param("id"));
-      return c.json({ ok: true, data: null });
-    });
+          data: {
+            courses: listCoursesForTeacher(db, {
+              archived: query.archived ?? false,
+            }),
+          },
+        });
+      })
+      .get("/courses/:id", (c) => {
+        return c.json({
+          ok: true,
+          data: getCourseDetail(db, c.req.param("id")),
+        });
+      })
+      .get("/courses/:id/student-view", (c) => {
+        const parsed = courseStudentViewQuerySchema.safeParse({
+          studentId: c.req.query("studentId") ?? undefined,
+        });
+        if (!parsed.success) {
+          throw new HttpError(
+            400,
+            "VALIDATION_ERROR",
+            "查询参数不合法：studentId 必须是 UUID（选择一位成员进行预览）",
+          );
+        }
+        return c.json({
+          ok: true,
+          data: getStudentView(db, c.req.param("id"), parsed.data.studentId),
+        });
+      })
+      // T2A.6：课程进度矩阵（成员 × 可见单元；每格课程练习统计 + 历次列表，
+      // 详情页属 T3.1；只统计 sourceType='course' 的作答）
+      .get("/courses/:id/progress", (c) => {
+        return c.json({
+          ok: true,
+          data: getCourseProgress(db, c.req.param("id")),
+        });
+      })
+      .post("/courses/:id/items", async (c) => {
+        const body: CourseItemsAddRequest = await parseJsonBody(
+          c,
+          courseItemsAddRequestSchema,
+        );
+        return c.json(
+          {
+            ok: true,
+            data: appendCourseItems(db, c.req.param("id"), body.items, {
+              visible: body.visible,
+              withCompanionUnits: body.withCompanionUnits,
+            }),
+          },
+          201,
+        );
+      })
+      .put("/courses/:id/items/order", async (c) => {
+        const body: CourseItemsReorderRequest = await parseJsonBody(
+          c,
+          courseItemsReorderRequestSchema,
+        );
+        reorderCourseItems(db, c.req.param("id"), body.ids);
+        return c.json({ ok: true, data: null });
+      })
+      .post("/courses/:id/members", async (c) => {
+        const body: CourseMembersRequest = await parseJsonBody(
+          c,
+          courseMembersRequestSchema,
+        );
+        addCourseMembers(db, c.req.param("id"), body.studentIds);
+        return c.json({ ok: true, data: null });
+      })
+      .delete("/courses/:id/members", async (c) => {
+        const body: CourseMembersRequest = await parseJsonBody(
+          c,
+          courseMembersRequestSchema,
+        );
+        removeCourseMembers(db, c.req.param("id"), body.studentIds);
+        return c.json({ ok: true, data: null });
+      })
+      .patch("/course-items/:id", async (c) => {
+        const body: CourseItemUpdateRequest = await parseJsonBody(
+          c,
+          courseItemUpdateRequestSchema,
+        );
+        // 服务层返回原始行；响应需要含状态标签数据 → 经详情组装路径重取该课程
+        const updated = updateCourseItem(db, c.req.param("id"), body);
+        const detail = getCourseDetail(db, updated.courseId);
+        const item = detail.items.find((entry) => entry.id === updated.id);
+        if (item === undefined) {
+          // 理论不可达（刚更新过的条目必在详情里）；防御性兜底
+          throw new HttpError(404, "COURSE_ITEM_NOT_FOUND", "目录条目不存在");
+        }
+        return c.json({ ok: true, data: item });
+      })
+      .delete("/course-items/:id", (c) => {
+        deleteCourseItem(db, c.req.param("id"));
+        return c.json({ ok: true, data: null });
+      })
+  );
 }
