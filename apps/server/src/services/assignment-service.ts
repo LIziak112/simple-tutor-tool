@@ -52,7 +52,7 @@ import { HttpError } from "../lib/http-error";
  * - 详情：列表口径 + roster（在册，按 addedAt 后姓名排序）+ startedCount + courseNewMembers；
  * - 学生列表：仅本人**在册**（removedAt IS NULL）且未删除的作业，多单元聚合；
  * - 学生试卷（T2.4；T2A.7 分组化）：按 assignment_units.order 逐单元公开题目分组，
- *   live 题数为 0 的单元跳过（软删单元被清空后自然消失）。
+ *   live 题数为 0 的单元跳过（题目全被软删/清空；单元软删本身不影响出卷，D16）。
  *
  * 安全口径（AGENTS.md 第 3 条）：学生端条目只有 id/标题/单元元信息/题数/截止/状态，
  * 不触碰 questions 表的内容列（题数只做 COUNT，见 liveQuestionCounts）；题目本体仅经
@@ -884,10 +884,9 @@ export function listStudentAssignments(
         title: row.title,
         units: unitList.map((unit) => ({ id: unit.unitId, title: unit.title })),
         unitCount: unitList.length,
-        // 题数只计未软删单元（与 paper/判分口径一致，D16）
+        // 各单元 live 题数之和（软删单元照常计入，D16：作业通道不受单元软删影响）
         questionCount: unitList.reduce(
-          (sum, unit) =>
-            unit.deleted ? sum : sum + (counts.get(unit.unitId) ?? 0),
+          (sum, unit) => sum + (counts.get(unit.unitId) ?? 0),
           0,
         ),
         dueAt: row.dueAt,
@@ -996,9 +995,9 @@ export function unitPublicQuestions(db: Db, unitId: string): QuestionPublic[] {
 
 /**
  * GET /api/student/assignments/:id/paper（T2A.7 分组试卷）：
- * 按 assignment_units.order 逐单元 unitPublicQuestions 分组；**软删单元与 live
- * 题数为 0 的单元不出现**（D16：已删单元题目不下发）；全部跳过时 units 为
- * 空数组（前端按空卷兜底提示）。
+ * 按 assignment_units.order 逐单元 unitPublicQuestions 分组；**live 题数为 0
+ * 的单元不出现**（题目全被软删/清空）；全部跳过时 units 为空数组（前端按空卷
+ * 兜底提示）。D16：单元软删不影响出卷——引用行保留，题目照常下发。
  * 权限（T2.4 验收项）：作业不存在 → 404；已删除 → 404（与学生列表过滤口径一致）；
  * 未被指派（assignment_students 未命中**或在册判定含 removedAt IS NULL**）→
  * 403 FORBIDDEN（D13：被移出的学生立即不可见）。
@@ -1039,20 +1038,16 @@ export function getStudentAssignmentPaper(
   }
 
   const unitRows = db
-    .select({
-      unitId: assignmentUnits.unitId,
-      title: units.title,
-      deletedAt: units.deletedAt,
-    })
+    .select({ unitId: assignmentUnits.unitId, title: units.title })
     .from(assignmentUnits)
     .innerJoin(units, eq(assignmentUnits.unitId, units.id))
     .where(eq(assignmentUnits.assignmentId, assignmentId))
     .orderBy(asc(assignmentUnits.order), asc(assignmentUnits.unitId))
     .all();
-  // D16：软删单元的题目不下发（作业照常可作答 = 其余单元照常）；
-  // live 题数为 0 的单元同样跳过；全部跳过 → units 空数组（前端空卷兜底）
+  // D16：单元软删不影响作业通道——引用行保留、题目照常下发（单元标题取当前值，
+  // 软删单元行在回收站保留故仍可读）；live 题数为 0 的单元（题目被清空/全软删）
+  // 跳过；全部跳过 → units 空数组（前端空卷兜底）
   const unitsOf = unitRows
-    .filter((unit) => unit.deletedAt === null)
     .map((unit) => ({
       id: unit.unitId,
       title: unit.title,

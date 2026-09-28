@@ -640,8 +640,8 @@ describe("资源库路由：软删、学生可见性与作业取卷（D3/D16）"
       listVisibleItems(db, student.id, courseId).map((item) => item.refId),
     ).not.toContain(UNIT_ID);
 
-    // 作业不受影响：学生照常开始作答（D16）；单单元作业的试卷在单元软删期间
-    // 为空卷（T2A.7：已删单元的题目不下发，前端按空卷兜底）；泄露断言不回归
+    // 作业不受影响：学生照常开始作答并取到全部题目（D16：单元软删不影响作业
+    // 通道——只有 questions.deletedAt 才从试卷排除）；泄露断言不回归
     const start = await request(
       app,
       "POST",
@@ -658,15 +658,17 @@ describe("资源库路由：软删、学生可见性与作业取卷（D3/D16）"
     expect(paper.status).toBe(200);
     const paperBody = (await paper.json()) as unknown;
     assertNoLeak(paperBody);
-    expect(
-      (
-        paperBody as {
-          data: { units: { questions: { id: string }[] }[] };
-        }
-      ).data.units.flatMap((unit) => unit.questions),
-    ).toEqual([]);
+    const paperQuestions = (
+      paperBody as {
+        data: { units: { questions: { id: string }[] }[] };
+      }
+    ).data.units.flatMap((unit) => unit.questions);
+    expect(paperQuestions).toHaveLength(8);
+    expect(paperQuestions.map((q) => q.id)).toEqual(
+      EXPECTED_QUESTIONS.map((q) => q.id),
+    );
 
-    // 恢复 → 可见性恢复、试卷内容恢复（8 题照常）
+    // 恢复 → 可见性恢复（试卷在软删期间本就照常，内容无变化）
     const restore = await request(
       app,
       "POST",
@@ -677,22 +679,6 @@ describe("资源库路由：软删、学生可见性与作业取卷（D3/D16）"
     expect(
       listVisibleItems(db, student.id, courseId).map((item) => item.refId),
     ).toContain(UNIT_ID);
-    const paperAgain = await request(
-      app,
-      "GET",
-      `/api/student/assignments/${assignmentId}/paper`,
-      student.cookie,
-    );
-    expect(paperAgain.status).toBe(200);
-    const paperQuestions = (
-      (await paperAgain.json()) as {
-        data: { units: { questions: { id: string }[] }[] };
-      }
-    ).data.units.flatMap((unit) => unit.questions);
-    expect(paperQuestions).toHaveLength(8);
-    expect(paperQuestions.map((q) => q.id)).toEqual(
-      EXPECTED_QUESTIONS.map((q) => q.id),
-    );
   });
 });
 

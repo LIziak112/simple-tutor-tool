@@ -307,7 +307,7 @@ export const studentAssignmentListDataSchema = z.object({
 export const studentPaperUnitSchema = z.object({
   /** 练习单元 id（来自 DSL） */
   id: z.string().min(1),
-  /** 单元标题（当前值；答题页分节标题） */
+  /** 单元标题（当前值；答题页分节标题。软删单元行保留在回收站，标题仍可读） */
   title: z.string().min(1),
   /** 该单元的公开题目（QuestionPublic[]，按单元内题序） */
   questions: z.array(questionPublicSchema),
@@ -316,8 +316,8 @@ export const studentPaperUnitSchema = z.object({
 /**
  * GET /api/student/assignments/:id/paper 响应 data（T2A.7 改分组结构）：
  * units 按布置顺序（assignment_units.order）；**live 题数为 0 的单元不出现**
- * （软删单元被软删题目清空后自然消失）；全部为 0 时 units 为空数组
- * （前端按空卷兜底提示）。
+ * （题目全被软删/清空；D16：单元软删不影响出卷，引用单元的题目照常下发）；
+ * 全部为 0 时 units 为空数组（前端按空卷兜底提示）。
  *
  * 安全口径（AGENTS.md 第 3 条 / 架构文档 §5.3）：
  * - questions 元素必须是 questionPublicSchema 解析（strip 语义）后的输出：

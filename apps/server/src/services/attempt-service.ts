@@ -173,10 +173,12 @@ export function requireUsableAttempt(
 
 /**
  * attempt 的有序单元 id 列表（T2A.7）：
- * - course 来源：[attempt.unitId]（单单元，创建时必写；防御性空列表兜底异常行）；
+ * - course 来源：[attempt.unitId]（单单元，创建时必写；防御性空列表兜底异常行；
+ *   课程侧可见性由 requireVisibleCourseUnit 把关）；
  * - assignment 来源：该作业 assignment_units 按 order 升序的列表（作业行经 FK
- *   必存在——含已删作业，作答不随作业软删消失），**不含已软删的单元**
- *   （D16：已删单元的题目不进判分/快照/草稿口径）。
+ *   必存在——含已删作业，作答不随作业软删消失）。
+ *   D16：**单元软删不影响作业通道**——引用行保留，题目照常下发/判分；
+ *   只有 questions.deletedAt（T1.12 题目级软删）才把题从判分/快照口径排除。
  * 判分/快照/草稿/取卷/题目归属校验全部以本列表为唯一口径。
  */
 export function attemptUnitIds(db: Db, attempt: Attempt): string[] {
@@ -188,13 +190,7 @@ export function attemptUnitIds(db: Db, attempt: Attempt): string[] {
   return db
     .select({ unitId: assignmentUnits.unitId })
     .from(assignmentUnits)
-    .innerJoin(units, eq(assignmentUnits.unitId, units.id))
-    .where(
-      and(
-        eq(assignmentUnits.assignmentId, assignmentId),
-        isNull(units.deletedAt),
-      ),
-    )
+    .where(eq(assignmentUnits.assignmentId, assignmentId))
     .orderBy(asc(assignmentUnits.order), asc(assignmentUnits.unitId))
     .all()
     .map((row) => row.unitId);

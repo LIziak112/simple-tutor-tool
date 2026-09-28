@@ -1247,9 +1247,9 @@ describe("POST /api/teacher/assignments/check（D15 已做过提示）", () => {
 
 // ---------- 软删单元（D16） ----------
 
-describe("软删单元的作业（D16：资源删除不影响作业）", () => {
-  it("paper 仍含其余单元、已删单元题目不出现在 paper/判分；作答交卷成功；列表含已删标记", async () => {
-    const { app, db, teacherCookie } = await makeApp();
+describe("软删单元的作业（D16：单元软删不影响作业通道）", () => {
+  it("单元软删后 paper 仍含该单元及其题目、判分含其题、作答交卷成功；列表含已删标记", async () => {
+    const { app, teacherCookie } = await makeApp();
     const unitA = await importDoc(app, teacherCookie, UNIT_A_MD);
     const unitB = await importDoc(app, teacherCookie, UNIT_B_MD);
     const aId = await createStudent(app, teacherCookie, "张三");
@@ -1260,7 +1260,7 @@ describe("软删单元的作业（D16：资源删除不影响作业）", () => {
     const assignmentId = created.id as string;
     const cookie = await loginStudent(app, "张三");
 
-    // 教师软删单元 A
+    // 教师软删单元 A（D3：进回收站；作业是显式布置的快照，不受影响）
     const del = await app.request(
       `/api/teacher/units/${encodeURIComponent(unitA)}`,
       {
@@ -1270,11 +1270,12 @@ describe("软删单元的作业（D16：资源删除不影响作业）", () => {
     );
     expect(del.status).toBe(200);
 
-    // paper：只剩单元 B（D16：已删单元的题目不下发，其余单元照常）
+    // D16：paper 仍含单元 A 及其题目（只有 questions.deletedAt 才从试卷排除）
     const paper = await studentPaper(app, cookie, assignmentId);
-    expect(paper.units.map((unit) => unit.id)).toEqual([unitB]);
+    expect(paper.units.map((unit) => unit.id)).toEqual([unitA, unitB]);
+    expect(paper.units[0]?.questions).toHaveLength(2);
 
-    // 教师列表：containsDeletedUnit=true，单元 A 标记 deleted（题数为 live 口径）
+    // 教师列表：containsDeletedUnit=true，单元 A 标记 deleted（题数照常统计）
     const list = await teacherList(app, teacherCookie);
     expect(list[0]?.containsDeletedUnit).toBe(true);
     expect(list[0]?.units).toEqual([
@@ -1282,46 +1283,33 @@ describe("软删单元的作业（D16：资源删除不影响作业）", () => {
       { unitId: unitB, title: UNIT_B, questionCount: 2, deleted: false },
     ]);
 
-    // 学生列表题数 = 未删单元合计（2）
+    // 学生列表题数 = 全部单元 live 题数之和（软删单元照常计入）
     const mine = await studentList(app, cookie);
-    expect(mine[0]?.questionCount).toBe(2);
+    expect(mine[0]?.questionCount).toBe(4);
 
-    // 作答：单元 B 的题正常保存；已删单元 A 的题 → 404 QUESTION_NOT_FOUND
+    // 已删单元的题照常可作答（归属集合 = assignment_units，不看单元软删）
     const attempt = await startAttempt(app, cookie, assignmentId);
-    const qb = paper.units[0]?.questions[0];
-    if (!qb) throw new Error("单元 B 试卷题目缺失");
+    const qa = paper.units[0]?.questions[0];
+    if (!qa) throw new Error("单元 A 试卷题目缺失");
     expect(
       (
-        await saveAnswer(app, cookie, attempt.id as string, qb.id, {
-          kind: "fill",
-          values: ["-6"],
-        })
-      ).status,
-    ).toBe(200);
-    const unitAQuestionId = db
-      .select({ id: questions.id })
-      .from(questions)
-      .where(eq(questions.unitId, unitA))
-      .all()[0]?.id;
-    if (!unitAQuestionId) throw new Error("单元 A 题目缺失");
-    expect(
-      (
-        await saveAnswer(app, cookie, attempt.id as string, unitAQuestionId, {
+        await saveAnswer(app, cookie, attempt.id as string, qa.id, {
           kind: "judge",
           value: true,
         })
       ).status,
-    ).toBe(404);
+    ).toBe(200);
 
-    // 交卷成功；判分只含单元 B 的 2 题（已删单元不进口径）
+    // 交卷成功；判分含已删单元的题（全卷 4 题）
     const result = await submitAttempt(app, cookie, attempt.id as string);
-    expect(result.summary).toMatchObject({ total: 2 });
+    expect(result.summary).toMatchObject({ total: 4 });
     expect((result.units as { id: string }[]).map((unit) => unit.id)).toEqual([
+      unitA,
       unitB,
     ]);
   });
 
-  it("单元题目全部软删后：该单元从 paper 消失（live 题数 0 跳过）；全部为空 → units 空数组", async () => {
+  it("单元的题目全部软删（questions 级，T1.12）→ 该单元从 paper 消失；全部为空 → units 空数组", async () => {
     const { app, db, teacherCookie } = await makeApp();
     const unitA = await importDoc(app, teacherCookie, UNIT_A_MD);
     const aId = await createStudent(app, teacherCookie, "张三");
@@ -1331,7 +1319,7 @@ describe("软删单元的作业（D16：资源删除不影响作业）", () => {
     });
     const cookie = await loginStudent(app, "张三");
 
-    // 库内软删该单元全部题目（等价于教师逐题删除）
+    // 库内软删该单元全部题目（等价于教师逐题删除；单元本身未删）
     for (const q of db.select().from(questions).all()) {
       if (q.unitId === unitA) {
         db.update(questions)
