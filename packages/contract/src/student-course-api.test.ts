@@ -155,9 +155,7 @@ describe("T2A.6 课程练习：单元条目作答摘要与单元落地页契约"
   const attemptId = "5fa85f64-5717-4562-b3fc-2c963f66afa6";
 
   it("单元条目携带作答摘要（D10：次数/首次/最近/最高分/待批）；从未做为 null", async () => {
-    const { studentCourseItemSchema } = await import(
-      "./student-course-api.ts"
-    );
+    const { studentCourseItemSchema } = await import("./student-course-api.ts");
     expect(
       studentCourseItemSchema.safeParse({
         id: "6fa85f64-5717-4562-b3fc-2c963f66afa6",
@@ -239,9 +237,9 @@ describe("T2A.6 课程练习：单元条目作答摘要与单元落地页契约"
         pendingCount: 0,
       },
     };
-    expect(studentUnitLandingOkSchema.safeParse({ ok: true, data }).success).toBe(
-      true,
-    );
+    expect(
+      studentUnitLandingOkSchema.safeParse({ ok: true, data }).success,
+    ).toBe(true);
     // summary 为 null（从未做）同样合法；缺 attempts 字段拒绝
     expect(
       studentUnitLandingOkSchema.safeParse({
