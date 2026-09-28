@@ -17,6 +17,7 @@ import {
   type CourseItemUpdateRequest,
   type CourseListData,
   type CourseMembersRequest,
+  type CourseProgressData,
   type CourseStudentViewData,
   type CourseUpdateRequest,
   type HintOpenData,
@@ -61,9 +62,11 @@ import {
   type StudentListData,
   type StudentLoginRequest,
   type StudentMeData,
+  type StudentPaperData,
   type StudentResetLinkData,
   type StudentResetPasswordData,
   type StudentSummary,
+  type StudentUnitLandingData,
   type StudentUpdateRequest,
   type TeacherAssignment,
   type TeacherAssignmentListData,
@@ -619,6 +622,45 @@ export function startAttemptApi(
   );
 }
 
+// ---------- T2A.6：课程练习（可重做 + 历次记录） ----------
+
+/** 单元落地信息（题数/题型分布/历次作答/首次/最近/最高分；D22 越权 403/404） */
+export function fetchStudentUnitLandingApi(
+  courseId: string,
+  unitId: string,
+): Promise<StudentUnitLandingData> {
+  return callApi(() =>
+    api.api.student.courses[":id"].units[":unitId"].$get({
+      param: { id: courseId, unitId },
+    }),
+  );
+}
+
+/**
+ * 课程练习入口（D10）：存在未交卷作答返回它（继续作答）；否则新建
+ * attemptNo+1（再做一次，从空白开始）。每次调用服务端都校验 D5 可见性——
+ * 移出成员 403 COURSE_ACCESS_DENIED / 条目不可见 404 NOT_FOUND。
+ */
+export function startCourseAttemptApi(
+  courseId: string,
+  unitId: string,
+): Promise<AttemptStartData> {
+  return callApi(() =>
+    api.api.student.courses[":id"].units[":unitId"].attempts.$post({
+      param: { id: courseId, unitId },
+    }),
+  );
+}
+
+/** 通用取卷（两种来源共用；课程来源每次校验可见性与成员资格） */
+export function fetchAttemptPaperApi(
+  attemptId: string,
+): Promise<StudentPaperData> {
+  return callApi(() =>
+    api.api.student.attempts[":id"].paper.$get({ param: { id: attemptId } }),
+  );
+}
+
 /**
  * 保存草稿答案（draft 阶段）。409 ALREADY_SUBMITTED = 已交卷；
  * 404 QUESTION_NOT_FOUND = 题目不属于这份作业或已被老师删除。
@@ -762,6 +804,15 @@ export function studentInkPngUrl(
 }
 
 // ---------- T2A.2：资源库（讲义库 / 题库 / 回收站 + 单元管理） ----------
+
+/** 课程进度矩阵（T2A.6：成员 × 可见单元；每格课程练习统计 + 历次列表） */
+export function fetchCourseProgressApi(
+  courseId: string,
+): Promise<CourseProgressData> {
+  return callApi(() =>
+    api.api.teacher.courses[":id"].progress.$get({ param: { id: courseId } }),
+  );
+}
 
 export type {
   LectureMetaUpdate,

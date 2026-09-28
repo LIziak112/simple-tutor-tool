@@ -88,6 +88,7 @@ describe("学生端课程契约（T2A.5）", () => {
         title: "第一章",
         order: 0,
         questionCount: null,
+        attempt: null,
       }).success,
     ).toBe(true);
     expect(
@@ -98,6 +99,7 @@ describe("学生端课程契约（T2A.5）", () => {
         title: "第1讲 有理数",
         order: 1,
         questionCount: null,
+        attempt: null,
       }).success,
     ).toBe(true);
     expect(
@@ -108,6 +110,7 @@ describe("学生端课程契约（T2A.5）", () => {
         title: "有理数小练",
         order: 2,
         questionCount: 4,
+        attempt: null,
       }).success,
     ).toBe(true);
     // unit 的 refId 来自 DSL（非 UUID 合法）；非法 kind 被拒
@@ -142,6 +145,113 @@ describe("学生端课程契约（T2A.5）", () => {
       studentCourseDetailOkSchema.safeParse({
         ok: true,
         data: { id: courseId, name: "初一上", items: [] },
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe("T2A.6 课程练习：单元条目作答摘要与单元落地页契约", () => {
+  const courseId = "3fa85f64-5717-4562-b3fc-2c963f66afa6";
+  const attemptId = "5fa85f64-5717-4562-b3fc-2c963f66afa6";
+
+  it("单元条目携带作答摘要（D10：次数/首次/最近/最高分/待批）；从未做为 null", async () => {
+    const { studentCourseItemSchema } = await import("./student-course-api.ts");
+    expect(
+      studentCourseItemSchema.safeParse({
+        id: "6fa85f64-5717-4562-b3fc-2c963f66afa6",
+        kind: "unit",
+        refId: "有理数小练",
+        title: "有理数小练",
+        order: 2,
+        questionCount: 4,
+        attempt: {
+          count: 2,
+          submittedCount: 1,
+          hasDraft: true,
+          firstScore: 60,
+          latestScore: 60,
+          bestScore: 60,
+          pendingCount: 1,
+        },
+      }).success,
+    ).toBe(true);
+    // 得分越界 → 拒绝
+    expect(
+      studentCourseItemSchema.safeParse({
+        id: "6fa85f64-5717-4562-b3fc-2c963f66afa6",
+        kind: "unit",
+        refId: "有理数小练",
+        title: "有理数小练",
+        order: 2,
+        questionCount: 4,
+        attempt: {
+          count: 1,
+          submittedCount: 1,
+          hasDraft: false,
+          firstScore: 101,
+          latestScore: null,
+          bestScore: null,
+          pendingCount: 0,
+        },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("单元落地页：题数/题型分布/历次列表（attemptNo 降序）+ 汇总；成功壳形态", async () => {
+    const { studentUnitLandingOkSchema } = await import(
+      "./student-course-api.ts"
+    );
+    const data = {
+      courseId,
+      courseName: "初一上",
+      unitId: "有理数小练",
+      title: "有理数小练",
+      topic: "正数与负数",
+      questionCount: 2,
+      typeDistribution: { judge: 1, fill: 1 },
+      attempts: [
+        {
+          attemptId,
+          attemptNo: 2,
+          status: "draft",
+          score: null,
+          startedAt: "2026-09-27T06:00:00.000Z",
+          submittedAt: null,
+        },
+        {
+          attemptId: "7fa85f64-5717-4562-b3fc-2c963f66afa6",
+          attemptNo: 1,
+          status: "submitted",
+          score: 75,
+          startedAt: "2026-09-27T02:00:00.000Z",
+          submittedAt: "2026-09-27T02:30:00.000Z",
+        },
+      ],
+      summary: {
+        count: 2,
+        submittedCount: 1,
+        hasDraft: true,
+        firstScore: 75,
+        latestScore: 75,
+        bestScore: 75,
+        pendingCount: 0,
+      },
+    };
+    expect(
+      studentUnitLandingOkSchema.safeParse({ ok: true, data }).success,
+    ).toBe(true);
+    // summary 为 null（从未做）同样合法；缺 attempts 字段拒绝
+    expect(
+      studentUnitLandingOkSchema.safeParse({
+        ok: true,
+        data: { ...data, summary: null, attempts: [] },
+      }).success,
+    ).toBe(true);
+    const { attempts: _omit, ...withoutAttempts } = data;
+    expect(
+      studentUnitLandingOkSchema.safeParse({
+        ok: true,
+        data: withoutAttempts,
       }).success,
     ).toBe(false);
   });

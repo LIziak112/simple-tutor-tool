@@ -132,8 +132,11 @@ const ATTEMPT_ID = "55555555-5555-4555-8555-555555555555";
 
 const START_DRAFT: AttemptStartData = {
   id: ATTEMPT_ID,
+  sourceType: "assignment",
   assignmentId: ASSIGNMENT_ID,
+  courseId: null,
   unitId: "练习四",
+  attemptNo: 1,
   status: "draft",
   startedAt: "2026-09-27T02:00:00.000Z",
   submittedAt: null,
@@ -143,6 +146,7 @@ const START_DRAFT: AttemptStartData = {
 const DRAFT_DATA: AttemptDraftData = {
   attempt: START_DRAFT,
   title: "周末加练",
+  courseName: null,
   dueAt: "2026-10-01T12:00:00.000Z",
   questions: [
     {
@@ -174,6 +178,7 @@ const RESULT_DATA: AttemptResultData = {
     scoreAuto: 100,
   },
   title: "周末加练",
+  courseName: null,
   dueAt: "2026-10-01T12:00:00.000Z",
   summary: {
     total: 2,
@@ -343,6 +348,7 @@ describe("StudentAssignmentAttemptPage：已交卷直接结果视图", () => {
 const HANDWRITTEN_DRAFT: AttemptDraftData = {
   attempt: START_DRAFT,
   title: "手写练习",
+  courseName: null,
   dueAt: null,
   questions: [
     {

@@ -10,7 +10,7 @@ import {
   responses,
 } from "../db/schema";
 import { HttpError } from "../lib/http-error";
-import { requireOwnAttempt, requireUnitQuestion } from "./attempt-service";
+import { requireUnitQuestion, requireUsableAttempt } from "./attempt-service";
 import { recordHintOpenEvent } from "./event-service";
 
 /**
@@ -119,7 +119,8 @@ function hintsOfAttempt(
 
 /**
  * 解锁并获取第 index 条提示（POST /api/student/attempts/:id/hints）：
- * - attempt 不存在 → 404；非本人 → 403（requireOwnAttempt 统一口径）；
+ * - attempt 不存在 → 404；非本人 → 403（requireUsableAttempt 统一口径；
+ *   T2A.6 起 course 来源 draft 需保有课程访问权——失去访问权 403/404）；
  * - draft / submitted / graded 均可用（验收项「交卷后仍可查看」）；
  * - 题目不属于该单元或已软删 → 404 QUESTION_NOT_FOUND（requireUnitQuestion）；
  * - index <0 或 ≥该题提示总数（含无提示题）→ 400 HINT_INDEX_OUT_OF_RANGE（验收项）；
@@ -134,7 +135,7 @@ export function openHint(
   questionId: string,
   index: number,
 ): HintOpenData {
-  const attempt = requireOwnAttempt(db, studentId, attemptId);
+  const attempt = requireUsableAttempt(db, studentId, attemptId);
   requireUnitQuestion(db, attempt, questionId);
 
   const hints = hintsOfAttempt(db, attempt, questionId);
@@ -223,7 +224,7 @@ export function draftHintsOpenedView(
   const questionRows = db
     .select({ id: questions.id, hintsJson: questions.hintsJson })
     .from(questions)
-    .where(eq(questions.unitId, attempt.unitId))
+    .where(eq(questions.unitId, attempt.unitId ?? ""))
     .all();
   const hintsByQuestion = new Map(
     questionRows.map((row) => [row.id, hintsOfJson(row.hintsJson)]),

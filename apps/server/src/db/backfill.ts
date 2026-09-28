@@ -1,6 +1,7 @@
 import { and, asc, eq, isNotNull, isNull } from "drizzle-orm";
 import type { Db } from "./client";
 import {
+  attempts,
   courseItems,
   courseStudents,
   courses,
@@ -22,13 +23,14 @@ type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
  * 以 data_migrations 表的完成标记防重跑，整个回填在单事务内完成
  * （标记行与数据同事务写入，失败即整体回滚，可安全重试）。
  *
- * 本任务执行 D23 步骤 1–4、7（5、6 属 T2A.7/T2A.6）：
+ * 本文件执行 D23 步骤 1–4、7（T2A.1）与步骤 6（T2A.6）：
  * 1. 每个现有课程在资源库建同名文件夹；课程下的讲义/单元 folderId 指向该文件夹；
  * 2. 每个现有课程生成课程目录：按讲义原顺序，每篇讲义后紧跟其配套单元
  *    （units.lectureId 指向该讲义且 courseId 属该课程，按单元原顺序），
  *    剩余单元按原顺序追加在末尾；
  * 3. 讲义条目 visible=true；单元条目 visible=false（默认隐藏，教师按教学节奏开放）；
  * 4. 所有现有未归档学生加入所有现有课程（保持「学生能看到全部讲义」现状）；
+ * 6. 现有 attempts：sourceType='assignment'、attemptNo=1（T2A.6，独立标记）；
  * 7. 「默认课程」按普通课程处理（无需特判，D23-7）。
  *
  * 另有孤儿资源兜底（backfillOrphans，与主标记无关、每次启动都执行、幂等），
@@ -37,6 +39,8 @@ type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 
 /** 本组回填的完成标记 key */
 const T2A1_BACKFILL_KEY = "t2a1_library_courses_backfill";
+/** D23-6（T2A.6 attempts 来源回填）的完成标记 key（与 t2a1 独立：两任务分期合入） */
+const T2A6_ATTEMPTS_BACKFILL_KEY = "t2a6_attempts_source_backfill";
 
 /**
  * 执行全部未完成的数据搬迁（启动流程在 runMigrations 之后调用；
@@ -46,16 +50,29 @@ const T2A1_BACKFILL_KEY = "t2a1_library_courses_backfill";
  * 结构：主搬迁（一次性，标记防重跑）→ 孤儿兜底（每次启动执行，幂等）。
  */
 export function runBackfills(db: Db, now: Date = new Date()): void {
-  const applied = db
-    .select({ key: dataMigrations.key })
-    .from(dataMigrations)
-    .where(eq(dataMigrations.key, T2A1_BACKFILL_KEY))
-    .get();
-  if (applied === undefined) {
+  const appliedKeys = new Set(
+    db
+      .select({ key: dataMigrations.key })
+      .from(dataMigrations)
+      .all()
+      .map((row) => row.key),
+  );
+  if (!appliedKeys.has(T2A1_BACKFILL_KEY)) {
     db.transaction((tx) => {
       backfillT2a1(tx, now);
       tx.insert(dataMigrations)
         .values({ key: T2A1_BACKFILL_KEY, appliedAt: now.toISOString() })
+        .run();
+    });
+  }
+  if (!appliedKeys.has(T2A6_ATTEMPTS_BACKFILL_KEY)) {
+    db.transaction((tx) => {
+      backfillT2a6Attempts(tx);
+      tx.insert(dataMigrations)
+        .values({
+          key: T2A6_ATTEMPTS_BACKFILL_KEY,
+          appliedAt: now.toISOString(),
+        })
         .run();
     });
   }
@@ -205,6 +222,27 @@ function backfillT2a1(tx: Tx, now: Date): void {
         .run();
     }
   }
+}
+
+// ---------- D23-6：attempts 来源回填（T2A.6） ----------
+
+/**
+ * 现有 attempts 一律 sourceType='assignment'、attemptNo=1（D23-6）。
+ *
+ * 幂等口径：
+ * - 迁移已给新列默认值（source_type DEFAULT 'assignment'、attempt_no DEFAULT 1），
+ *   本步骤是对「迁移默认值之外仍可能残留的中间态」的显式兜底（如迁移文件被
+ *   旧版本进程以手写 SQL 绕过、或列默认值在极端路径未生效）；
+ * - 首次执行时库中不可能存在 course 作答——课程作答只能由 T2A.6 之后的代码
+ *   创建，而新代码启动必先完成本回填（runBackfills 在服务监听前执行），
+ *   因此无条件 UPDATE 不会误伤 course 作答的 attemptNo；
+ * - 完成标记 t2a6_attempts_source_backfill 防重跑：此后新建的 course 作答
+ *   （attemptNo 递增）不会再被触碰。
+ * assignmentId/unitId 原值保留不改（D23-6：旧作业 attempt 的 unitId 即当时
+ * 那份作业的单元）。
+ */
+function backfillT2a6Attempts(tx: Tx): void {
+  tx.update(attempts).set({ sourceType: "assignment", attemptNo: 1 }).run();
 }
 
 // ---------- 孤儿资源兜底（T2A.1 事故修复） ----------

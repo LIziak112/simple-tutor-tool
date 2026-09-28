@@ -450,10 +450,16 @@ export const assignmentStudents = sqliteTable(
 );
 
 /**
- * 作答表（T2.6，§5.2）——一次完整作答（一个作业一人至多一份进行中）。
+ * 作答表（T2.6，§5.2；T2A.6 扩展作答来源 D9）——一次完整作答。
+ * - sourceType（D9）：assignment=作业作答（记 assignmentId）/ course=课程练习
+ *   （记 courseId + unitId，可重做，attemptNo 递增）。两种来源共用同一套
+ *   作答接口（判分/快照/提示/笔迹/事件全按 attemptId 工作）；
  * - status：draft=进行中（草稿）、submitted=已交卷（自动判分已写入）、
  *   graded=已批改（T3.2 教师批注后置位）；
  * - unitId 是作答期间的题目来源（快照自 questions 当前行，交卷时冻结）；
+ *   assignment 来源保留布置时作业的 unitId（D23-6：旧作业 attempt 的原值不改）；
+ * - attemptNo（D10）：course 来源同一 (学生, 课程, 单元) 从 1 递增；
+ *   assignment 来源恒 1（一个作业一人一份，不重做）；
  * - activeSec / device / scoreFinal 为 T2.10 / T2.10 / T3.2 预留列（建列不启用）。
  */
 export const attempts = sqliteTable(
@@ -465,14 +471,25 @@ export const attempts = sqliteTable(
     studentId: text("student_id")
       .notNull()
       .references(() => students.id),
-    /** 所属作业（assignments.id；作答记录不随作业软删消失，§5.2 删除作业不删作答） */
-    assignmentId: text("assignment_id")
+    /** 作答来源（D9）：assignment | course */
+    sourceType: text("source_type")
+      .$type<"assignment" | "course">()
       .notNull()
-      .references(() => assignments.id),
-    /** 目标练习单元（units.id，来自 DSL） */
-    unitId: text("unit_id")
-      .notNull()
-      .references(() => units.id),
+      .default("assignment"),
+    /**
+     * 所属作业（assignments.id；作答记录不随作业软删消失，§5.2 删除作业不删作答）。
+     * course 来源为 null（T2A.6 起可空）。
+     */
+    assignmentId: text("assignment_id").references(() => assignments.id),
+    /**
+     * 课程练习所属课程（courses.id）；course 来源必填，assignment 来源为 null
+     * （T2A.7 起可填作业所属课程）。D4：删除课程前校验无关联作答。
+     */
+    courseId: text("course_id").references(() => courses.id),
+    /** 目标练习单元（units.id，来自 DSL；T2A.7 起 assignment 来源为快照语义） */
+    unitId: text("unit_id").references(() => units.id),
+    /** 第几次作答（D10：course 来源从 1 递增；assignment 来源恒 1） */
+    attemptNo: integer("attempt_no").notNull().default(1),
     /** 作答状态：draft | submitted | graded */
     status: text("status").$type<AttemptStatus>().notNull(),
     /** 开始作答时间：UTC ISO 字符串 */
@@ -494,6 +511,13 @@ export const attempts = sqliteTable(
     index("attempts_student_assignment_idx").on(
       table.studentId,
       table.assignmentId,
+    ),
+    // 课程练习「同一 (学生, 课程, 单元)」历次查询索引（T2A.6，§3）；
+    // 「同时最多 1 份未交卷」由服务层事务先查后插保证
+    index("attempts_student_course_unit_idx").on(
+      table.studentId,
+      table.courseId,
+      table.unitId,
     ),
   ],
 );

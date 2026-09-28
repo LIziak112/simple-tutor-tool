@@ -17,7 +17,8 @@ import {
  * 引擎用可编程 stub（exportPng 返回固定 Blob）。
  */
 
-vi.mock("@/lib/api", () => ({
+vi.mock("@/lib/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/api")>()),
   putAttemptInkApi: vi.fn(async () => ({
     questionId: "q1",
     inkId: "ink-1",

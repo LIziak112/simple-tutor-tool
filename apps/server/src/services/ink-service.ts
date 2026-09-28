@@ -19,7 +19,7 @@ import { and, eq } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { type InkRow, ink } from "../db/schema";
 import { HttpError } from "../lib/http-error";
-import { requireOwnAttempt, requireUnitQuestion } from "./attempt-service";
+import { requireUnitQuestion, requireUsableAttempt } from "./attempt-service";
 
 /**
  * InkService（T2.8）——手写笔迹的文件存储与元数据管理（架构 §5.2/§5.4）。
@@ -170,7 +170,7 @@ export function saveInk(
   strokesBytes: Uint8Array,
   snapshotBytes: Uint8Array,
 ): InkUploadData {
-  const attempt = requireOwnAttempt(db, studentId, attemptId);
+  const attempt = requireUsableAttempt(db, studentId, attemptId);
   if (attempt.status !== "draft") {
     throw new HttpError(
       409,
@@ -257,7 +257,9 @@ export function saveInk(
 
 /**
  * 取回该题当前的矢量文档（学生端草稿恢复/刷新后续写）：
- * - attempt 不存在 → 404；非本人 → 403；draft 与已交卷都可取（看自己的笔迹不涉答案）；
+ * - attempt 不存在 → 404；非本人 → 403（requireUsableAttempt 统一口径：course
+ *   来源 draft 失去访问权 403/404；已交卷记录按只读保留）；draft 与已交卷都可取
+ *   （看自己的笔迹不涉答案）；
  * - 无笔迹 → 404 INK_NOT_FOUND（前端据此跳过 load，从空白开始）。
  */
 export function getInkDoc(
@@ -267,7 +269,7 @@ export function getInkDoc(
   attemptId: string,
   questionId: string,
 ): InkDoc {
-  requireOwnAttempt(db, studentId, attemptId);
+  requireUsableAttempt(db, studentId, attemptId);
   const row = requireInkRow(db, attemptId, questionId);
   let raw: Uint8Array;
   try {
@@ -319,7 +321,7 @@ export function getStudentInkPng(
   attemptId: string,
   questionId: string,
 ): InkPng {
-  requireOwnAttempt(db, studentId, attemptId);
+  requireUsableAttempt(db, studentId, attemptId);
   return readInkPng(db, dataDir, attemptId, questionId);
 }
 

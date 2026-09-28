@@ -249,8 +249,11 @@ describe("attempts / responses 表（T2.6 作答生命周期）", () => {
     const attempt = {
       id: randomUUID(),
       studentId,
+      sourceType: "assignment" as const,
       assignmentId,
+      courseId: null,
       unitId,
+      attemptNo: 1,
       status: "draft" as const,
       startedAt: now,
       submittedAt: null,

@@ -293,6 +293,13 @@ export function AttemptResultView({
           <h2 id="result-summary" className="text-base font-semibold">
             {data.title} · 批改结果
           </h2>
+          {/* 来源行（T2A.6，与答题视图同口径）：课程练习带次数（历次回看可分辨
+              第几次）；作业标「作业」 */}
+          <p className="text-xs text-muted-foreground">
+            {attempt.sourceType === "course"
+              ? `课程：${data.courseName ?? ""} · 第 ${attempt.attemptNo} 次`
+              : "作业"}
+          </p>
           {attempt.submittedAt !== null && (
             <p className="text-xs text-muted-foreground">
               交卷时间：{formatCnTime(attempt.submittedAt)}

@@ -6,8 +6,9 @@ import { renderWithStudentRoutes } from "@/test/student-routes";
 import StudentCourseDetailPage from "./StudentCourseDetailPage";
 
 /**
- * 课程目录页组件测试（T2A.5）：分节标题、讲义项（链接带 courseId）、
- * 单元项（题数 + 即将开放，不可点击）、越权 403 友好引导、空态、错误态。
+ * 课程目录页组件测试（T2A.5；T2A.6 单元项接入作答状态）：分节标题、讲义项
+ * （链接带 courseId）、单元项（链接进单元落地页 + 状态徽章：未做/进行中/
+ * 已完成/有待批）、越权 403 友好引导、空态、错误态。
  * API 层 mock（后端 D22 行为由 student-courses.test.ts 覆盖）。
  */
 
@@ -36,6 +37,7 @@ const DETAIL: StudentCourseDetailData = {
       title: "第一章 有理数",
       order: 0,
       questionCount: null,
+      attempt: null,
     },
     {
       id: "45454545-4545-4545-8545-454545454545",
@@ -44,6 +46,7 @@ const DETAIL: StudentCourseDetailData = {
       title: "第1讲 有理数",
       order: 1,
       questionCount: null,
+      attempt: null,
     },
     {
       id: "56565656-5656-4565-8565-565656565656",
@@ -52,6 +55,7 @@ const DETAIL: StudentCourseDetailData = {
       title: "有理数小练",
       order: 2,
       questionCount: 4,
+      attempt: null,
     },
   ],
 };
@@ -69,7 +73,7 @@ beforeEach(() => {
 });
 
 describe("StudentCourseDetailPage", () => {
-  it("渲染目录：课程名/简介、分节标题、讲义链接（带 courseId）、单元项（即将开放）", async () => {
+  it("渲染目录：课程名/简介、分节标题、讲义链接（带 courseId）、单元项（未做，链接进落地页）", async () => {
     mockedCourse.mockResolvedValue(DETAIL);
     renderPage();
 
@@ -84,17 +88,101 @@ describe("StudentCourseDetailPage", () => {
       "href",
       `/s/lectures/${LECTURE_ID}?courseId=${COURSE_ID}`,
     );
-    // 单元项：题数 + 即将开放，不可点击（T2A.6 接入作答）
+    // 单元项：题数 + 未做状态徽章，链接进单元落地页（T2A.6 接入作答）
     expect(screen.getByText("有理数小练")).toBeInTheDocument();
     expect(screen.getByText("4 题")).toBeInTheDocument();
-    expect(screen.getAllByText("即将开放").length).toBe(1);
-    const unitItem = screen.getByText("有理数小练").closest("li");
-    expect(unitItem?.querySelector("a")).toBeNull();
+    expect(screen.getAllByText("未做").length).toBe(1);
+    expect(
+      screen.getByRole("link", { name: "打开练习 有理数小练（4 题）" }),
+    ).toHaveAttribute("href", `/s/courses/${COURSE_ID}/units/有理数小练`);
     // 返回我的课程
     expect(screen.getByRole("link", { name: "返回我的课程" })).toHaveAttribute(
       "href",
       "/s/courses",
     );
+  });
+
+  it("单元项状态徽章：进行中（hasDraft）", async () => {
+    const items = DETAIL.items.map((item) =>
+      item.kind === "unit"
+        ? {
+            ...item,
+            attempt: {
+              count: 2,
+              submittedCount: 1,
+              hasDraft: true,
+              firstScore: 80,
+              latestScore: 80,
+              bestScore: 80,
+              pendingCount: 0,
+            },
+          }
+        : item,
+    );
+    mockedCourse.mockResolvedValue({ ...DETAIL, items });
+    renderPage();
+    expect(await screen.findByText("进行中")).toBeInTheDocument();
+  });
+
+  it("单元项状态徽章：已完成（最近 xx 分 · 共 n 次）；有待批优先于已完成", async () => {
+    const withAttempt = (attempt: {
+      count: number;
+      submittedCount: number;
+      hasDraft: boolean;
+      firstScore: number | null;
+      latestScore: number | null;
+      bestScore: number | null;
+      pendingCount: number;
+    }) => ({
+      ...DETAIL,
+      items: DETAIL.items.map((item) =>
+        item.kind === "unit" ? { ...item, attempt } : item,
+      ),
+    });
+    // 已完成（无待批、无草稿）
+    mockedCourse.mockResolvedValueOnce(
+      withAttempt({
+        count: 3,
+        submittedCount: 3,
+        hasDraft: false,
+        firstScore: 60,
+        latestScore: 90,
+        bestScore: 90,
+        pendingCount: 0,
+      }),
+    );
+    renderPage();
+    expect(
+      await screen.findByText(
+        (_, element) =>
+          element?.textContent === "已完成（最近 90 分 · 共 3 次）",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("单元项状态徽章：有待批（优先于已完成展示）", async () => {
+    mockedCourse.mockResolvedValue({
+      ...DETAIL,
+      items: DETAIL.items.map((item) =>
+        item.kind === "unit"
+          ? {
+              ...item,
+              attempt: {
+                count: 3,
+                submittedCount: 3,
+                hasDraft: false,
+                firstScore: 60,
+                latestScore: 90,
+                bestScore: 90,
+                pendingCount: 2,
+              },
+            }
+          : item,
+      ),
+    });
+    renderPage();
+    expect(await screen.findByText("有待批")).toBeInTheDocument();
+    expect(screen.queryByText("进行中")).not.toBeInTheDocument();
   });
 
   it("空态：老师还没有发布内容", async () => {

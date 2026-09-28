@@ -44,17 +44,33 @@ function apiOkExtend<T extends z.ZodType>(dataSchema: T) {
 export const attemptStatusSchema = z.enum(["draft", "submitted", "graded"]);
 
 /**
+ * 作答来源（T2A.6，Phase 2A 清单 D9）：
+ * - assignment：作业作答（记 assignmentId；courseId 可空，T2A.7 起取作业所属课程）；
+ * - course：课程练习作答（记 courseId + unitId，可重做，attemptNo 递增）。
+ * 两种来源共用同一套作答接口与答题页（判分/快照/提示/笔迹/事件全按 attemptId）。
+ */
+export const attemptSourceSchema = z.enum(["assignment", "course"]);
+
+/**
  * attempt 摘要（创建/取回的返回，也内嵌在详情视图里）。
- * 一个作业一人至多一份进行中（draft）attempt；交卷后再次 POST /attempt
- * 返回已交卷的那份（前端据此直接进结果视图，不另开新卷）。
+ * - assignment 来源：一个作业一人至多一份进行中（draft）attempt；交卷后再次 POST
+ *   /attempt 返回已交的那份（前端据此直接进结果视图，不另开新卷）；
+ * - course 来源：同一 (学生, 课程, 单元) 同时最多 1 份 draft；已交卷后「再做一次」
+ *   创建新 attempt（attemptNo 递增，从 1 起，新一次从空白开始，D10）。
  */
 export const attemptSummarySchema = z.object({
   /** attempts.id（crypto.randomUUID） */
   id: z.uuid(),
-  /** 所属作业（assignments.id） */
-  assignmentId: z.uuid(),
+  /** 作答来源（D9） */
+  sourceType: attemptSourceSchema,
+  /** 所属作业（assignments.id）；course 来源为 null */
+  assignmentId: z.uuid().nullable(),
+  /** 课程练习所属课程（courses.id）；assignment 来源为 null（T2A.7 起可填） */
+  courseId: z.uuid().nullable(),
   /** 目标练习单元（units.id，作答期间的题目来源） */
   unitId: z.string().min(1),
+  /** 第几次作答（course 来源从 1 递增；assignment 来源恒 1） */
+  attemptNo: z.number().int().min(1),
   status: attemptStatusSchema,
   /** 开始作答时间：UTC ISO */
   startedAt: z.string().min(1),
@@ -67,7 +83,7 @@ export const attemptSummarySchema = z.object({
   scoreAuto: z.number().int().min(0).max(100).nullable(),
 });
 
-/** POST /api/student/assignments/:id/attempt 响应 data（创建或取回进行中/已交的 attempt） */
+/** POST /api/student/assignments/:id/attempt 与 POST /api/student/courses/:cid/units/:uid/attempts 响应 data（创建或取回 attempt） */
 export const attemptStartDataSchema = attemptSummarySchema;
 
 /**
@@ -84,9 +100,11 @@ export const hintOpenedEntrySchema = z.object({
 /** GET /api/student/attempts/:id 的草稿视图（status=draft）响应 data */
 export const attemptDraftDataSchema = z.object({
   attempt: attemptSummarySchema,
-  /** 作业标题（答题页顶部展示） */
+  /** 标题（答题页顶部展示）：assignment=作业标题；course=单元标题 */
   title: z.string().min(1),
-  /** 截止时间：UTC ISO；未设置为 null */
+  /** 课程练习所属课程名（顶部来源行「课程：xx · 第 n 次」）；assignment 来源为 null */
+  courseName: z.string().nullable(),
+  /** 截止时间：UTC ISO；未设置为 null（course 来源恒 null，练习不限截止） */
   dueAt: assignmentDueAtSchema.nullable(),
   /** 公开题目（与 T2.4 试卷同形态：QuestionPublic[]，按单元题序） */
   questions: z.array(questionPublicSchema),
@@ -156,9 +174,11 @@ export const attemptScoreSummarySchema = z.object({
 /** POST /api/student/attempts/:id/submit 响应与 GET 详情的结果视图（已交）共用 */
 export const attemptResultDataSchema = z.object({
   attempt: attemptSummarySchema,
-  /** 作业标题（结果页顶部展示） */
+  /** 标题（结果页顶部展示）：assignment=作业标题；course=单元标题 */
   title: z.string().min(1),
-  /** 截止时间：UTC ISO；未设置为 null */
+  /** 课程练习所属课程名（顶部来源行「课程：xx · 第 n 次」）；assignment 来源为 null */
+  courseName: z.string().nullable(),
+  /** 截止时间：UTC ISO；未设置为 null（course 来源恒 null） */
   dueAt: assignmentDueAtSchema.nullable(),
   /** 得分汇总 */
   summary: attemptScoreSummarySchema,
@@ -231,6 +251,10 @@ export const attemptDetailDataSchema = z.union([
  * - HINT_INDEX_OUT_OF_RANGE：提示序号越界（<0 或 ≥该题提示总数，含无提示题；
  *   400，T2.11 验收项）；
  * - FORBIDDEN：非本人 attempt / 未被指派的作业（403）；
+ * - COURSE_ACCESS_DENIED：课程来源作答失去访问权（非成员/学生归档/课程归档，
+ *   D7+D22；403）——前端草稿同步与事件上报收到它（或 404）必须按终态停止重试；
+ * - NOT_FOUND：课程来源作答的单元条目已隐藏/未到发布/资源删除（D22 的不暴露
+ *   存在性口径，404）；
  * - UNAUTHORIZED / VALIDATION_ERROR：与 auth 模块同义（401 / 400）。
  */
 export const attemptErrorCodeSchema = z.enum([
@@ -240,6 +264,8 @@ export const attemptErrorCodeSchema = z.enum([
   "QUESTION_NOT_FOUND",
   "HINT_INDEX_OUT_OF_RANGE",
   "FORBIDDEN",
+  "COURSE_ACCESS_DENIED",
+  "NOT_FOUND",
   "UNAUTHORIZED",
   "VALIDATION_ERROR",
 ]);
@@ -262,6 +288,7 @@ export const hintOpenOkSchema = apiOkExtend(hintOpenDataSchema);
 // ---------- 推断类型导出 ----------
 
 export type AttemptStatus = z.infer<typeof attemptStatusSchema>;
+export type AttemptSource = z.infer<typeof attemptSourceSchema>;
 export type AttemptSummary = z.infer<typeof attemptSummarySchema>;
 export type AttemptStartData = z.infer<typeof attemptStartDataSchema>;
 export type AttemptDraftData = z.infer<typeof attemptDraftDataSchema>;

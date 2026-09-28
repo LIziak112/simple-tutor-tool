@@ -20,6 +20,7 @@ import {
   assignments,
   attempts,
   knowledgePoints,
+  type Question as QuestionRow,
   questionKnowledge,
   questions,
   students,
@@ -366,13 +367,15 @@ export function listStudentAssignments(
     .all();
   if (rows.length === 0) return { assignments: [] };
 
-  // T2.6 状态联动：该学生的全部 attempt 摘要按 assignmentId 归组
+  // T2.6 状态联动：该学生的全部作业 attempt 摘要按 assignmentId 归组
+  // （T2A.6 起 course 来源作答 assignmentId 为 null，不关联任何作业，跳过）
   const attemptsByAssignment = new Map<string, Pick<Attempt, "status">[]>();
   for (const attempt of db
     .select({ assignmentId: attempts.assignmentId, status: attempts.status })
     .from(attempts)
     .where(eq(attempts.studentId, studentId))
     .all()) {
+    if (attempt.assignmentId === null) continue;
     const list = attemptsByAssignment.get(attempt.assignmentId);
     if (list === undefined) {
       attemptsByAssignment.set(attempt.assignmentId, [
@@ -452,8 +455,7 @@ export function knowledgeNamesByQuestion(db: Db): Map<string, string[]> {
 }
 
 /**
- * 单元公开题目（T2.4 试卷与 T2.6 草稿视图共用投影）：
- * - 该单元未软删的题目按 order 升序（同 order 按 id 兜底稳定）；
+ * 题目行集合 → 公开题目投影（T2A.6 起与 unitPublicQuestions 共用的底层）：
  * - 从 questions 整行构造候选对象后经 questionPublicSchema.parse 输出过滤（strip
  *   未知键）：answersJson / solutionMd / hintsJson / sourceMd 等教师侧列一律被剥离，
  *   将来加列也不会经由本投影外泄（fail closed）；
@@ -462,13 +464,10 @@ export function knowledgeNamesByQuestion(db: Db): Map<string, string[]> {
  * - options 仅 choice/multi 携带，映射为纯文本数组（无 correct 标记）；
  * - hints 只暴露数量 hintCount（内容由 T2.11 分步提示接口按需下发）。
  */
-export function unitPublicQuestions(db: Db, unitId: string): QuestionPublic[] {
-  const liveQuestions = db
-    .select()
-    .from(questions)
-    .where(and(eq(questions.unitId, unitId), isNull(questions.deletedAt)))
-    .orderBy(asc(questions.order), asc(questions.id))
-    .all();
+export function publicQuestionsOfRows(
+  db: Db,
+  liveQuestions: readonly QuestionRow[],
+): QuestionPublic[] {
   const knowledge = knowledgeNamesByQuestion(db);
 
   return liveQuestions.map((question) =>
@@ -482,6 +481,21 @@ export function unitPublicQuestions(db: Db, unitId: string): QuestionPublic[] {
         : {}),
     }),
   );
+}
+
+/**
+ * 单元公开题目（T2.4 试卷与草稿视图的单元入口投影）：
+ * 该单元未软删的题目按 order 升序（同 order 按 id 兜底稳定），经
+ * publicQuestionsOfRows 输出过滤（见上方注释）。
+ */
+export function unitPublicQuestions(db: Db, unitId: string): QuestionPublic[] {
+  const liveQuestions = db
+    .select()
+    .from(questions)
+    .where(and(eq(questions.unitId, unitId), isNull(questions.deletedAt)))
+    .orderBy(asc(questions.order), asc(questions.id))
+    .all();
+  return publicQuestionsOfRows(db, liveQuestions);
 }
 
 /**

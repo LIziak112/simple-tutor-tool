@@ -14,27 +14,34 @@ import {
 } from "./attempt.ts";
 
 /**
- * 作答生命周期契约自测（T2.6）：锁定四个接口的请求/响应形态——
+ * 作答生命周期契约自测（T2.6；T2A.6 扩展作答来源）：锁定四个接口的请求/响应形态——
  * - attempt 摘要三态与 scoreAuto 口径（0–100 整数或 null）；
+ * - 作答来源（D9）：sourceType assignment|course、courseId 可空、attemptNo ≥1；
  * - 草稿视图：题目是 QuestionPublic 形态（无 answers/solutionMd/hints）、
- *   本人答案收在 drafts 键（键名与结果视图的参考答案 answers 区分）；
+ *   本人答案收在 drafts 键（键名与结果视图的参考答案 answers 区分）、
+ *   courseName 供顶部来源行（assignment 为 null）；
  * - 结果视图：快照 + 参考答案 + 详解 + 本人答案 + autoCorrect，但无提示内容键；
  * - 草稿保存请求体：answer 必须是 StudentAnswer 判别联合成员；
  * - 分步提示（T2.11）：请求体 {questionId, index}、响应只含被请求的那一条
  *   提示 + 计数；两个视图的 hintsOpened 只回显已解锁条目；
- * - 错误码集合（ALREADY_SUBMITTED / HINT_INDEX_OUT_OF_RANGE 为验收项）。
+ * - 错误码集合（ALREADY_SUBMITTED / HINT_INDEX_OUT_OF_RANGE 为验收项；
+ *   COURSE_ACCESS_DENIED / NOT_FOUND 为 T2A.6 课程来源访问权码，D22）。
  */
 
 const ASSIGNMENT_ID = "44444444-4444-4444-8444-444444444444";
 const ATTEMPT_ID = "55555555-5555-4555-8555-555555555555";
+const COURSE_ID = "77777777-7777-4777-8777-777777777777";
 const UNIT_ID = "练习四";
 const STARTED_AT = "2026-09-27T02:00:00.000Z";
 const SUBMITTED_AT = "2026-09-27T02:30:00.000Z";
 
 const SUMMARY_DRAFT = {
   id: ATTEMPT_ID,
+  sourceType: "assignment",
   assignmentId: ASSIGNMENT_ID,
+  courseId: null,
   unitId: UNIT_ID,
+  attemptNo: 1,
   status: "draft",
   startedAt: STARTED_AT,
   submittedAt: null,
@@ -46,6 +53,15 @@ const SUMMARY_SUBMITTED = {
   status: "submitted",
   submittedAt: SUBMITTED_AT,
   scoreAuto: 88,
+} as const;
+
+/** 课程练习来源的摘要（D9/D10：courseId 非空、assignmentId 空、attemptNo 递增） */
+const SUMMARY_COURSE_SECOND = {
+  ...SUMMARY_DRAFT,
+  sourceType: "course",
+  assignmentId: null,
+  courseId: COURSE_ID,
+  attemptNo: 2,
 } as const;
 
 describe("attemptStatusSchema / attemptSummarySchema", () => {
@@ -71,8 +87,32 @@ describe("attemptStatusSchema / attemptSummarySchema", () => {
     ).toBe(false);
   });
 
-  it("POST /attempt 响应 = 摘要本体（attemptStartDataSchema）", () => {
+  it("作答来源（T2A.6，D9）：assignment 记 assignmentId；course 记 courseId+attemptNo", () => {
+    const course = attemptSummarySchema.parse(SUMMARY_COURSE_SECOND);
+    expect(course.sourceType).toBe("course");
+    expect(course.assignmentId).toBeNull();
+    expect(course.courseId).toBe(COURSE_ID);
+    expect(course.attemptNo).toBe(2);
+    // 缺来源字段 / 非法来源值 → 拒绝
+    const { sourceType: _omitSource, ...withoutSource } = SUMMARY_DRAFT;
+    expect(attemptSummarySchema.safeParse(withoutSource).success).toBe(false);
+    expect(
+      attemptSummarySchema.safeParse({
+        ...SUMMARY_DRAFT,
+        sourceType: "exam",
+      }).success,
+    ).toBe(false);
+    expect(
+      attemptSummarySchema.safeParse({ ...SUMMARY_DRAFT, attemptNo: 0 })
+        .success,
+    ).toBe(false);
+  });
+
+  it("POST /attempt 响应 = 摘要本体（attemptStartDataSchema；两种来源共用）", () => {
     expect(attemptStartDataSchema.parse(SUMMARY_DRAFT)).toEqual(SUMMARY_DRAFT);
+    expect(attemptStartDataSchema.parse(SUMMARY_COURSE_SECOND)).toEqual(
+      SUMMARY_COURSE_SECOND,
+    );
   });
 });
 
@@ -81,6 +121,7 @@ describe("attemptDraftDataSchema（草稿视图）", () => {
     const parsed = attemptDraftDataSchema.parse({
       attempt: SUMMARY_DRAFT,
       title: "周末加练",
+      courseName: null,
       dueAt: null,
       questions: [
         {
@@ -119,6 +160,7 @@ describe("attemptDraftDataSchema（草稿视图）", () => {
     const parsed = attemptDraftDataSchema.parse({
       attempt: SUMMARY_DRAFT,
       title: "周末加练",
+      courseName: null,
       dueAt: null,
       questions: [
         {
@@ -146,6 +188,7 @@ describe("attemptResultDataSchema（结果视图）", () => {
   const RESULT = {
     attempt: SUMMARY_SUBMITTED,
     title: "周末加练",
+    courseName: null,
     dueAt: null,
     summary: {
       total: 2,
@@ -366,6 +409,7 @@ describe("attemptDetailDataSchema / attemptErrorCodeSchema", () => {
       attemptDetailDataSchema.safeParse({
         attempt: SUMMARY_DRAFT,
         title: "周末加练",
+        courseName: null,
         dueAt: null,
         questions: [],
         drafts: {},
@@ -376,6 +420,7 @@ describe("attemptDetailDataSchema / attemptErrorCodeSchema", () => {
       attemptDetailDataSchema.safeParse({
         attempt: SUMMARY_SUBMITTED,
         title: "周末加练",
+        courseName: null,
         dueAt: null,
         summary: {
           total: 0,
@@ -404,6 +449,10 @@ describe("attemptDetailDataSchema / attemptErrorCodeSchema", () => {
     expect(attemptErrorCodeSchema.parse("HINT_INDEX_OUT_OF_RANGE")).toBe(
       "HINT_INDEX_OUT_OF_RANGE",
     );
+    expect(attemptErrorCodeSchema.parse("COURSE_ACCESS_DENIED")).toBe(
+      "COURSE_ACCESS_DENIED",
+    );
+    expect(attemptErrorCodeSchema.parse("NOT_FOUND")).toBe("NOT_FOUND");
     expect(attemptErrorCodeSchema.safeParse("SUBMIT_TWICE").success).toBe(
       false,
     );

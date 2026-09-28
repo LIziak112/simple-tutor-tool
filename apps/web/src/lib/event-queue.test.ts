@@ -15,11 +15,14 @@ import {
  *   page_hidden / page_visible（仅 attempt scope）；
  * - 离线（navigator.onLine=false / 发送抛错）→ 写 IndexedDB（注入内存后端），
  *   online 恢复后连同积压一起补发；
+ * - 访问权终态（T2A.6，D7）：send 抛 403/404 ApiError → 丢弃批次并停止
+ *   （isDenied=true，后续 track/flush 不再发包）；
  * - dispose 尽力最后一轮发送；lecture scope 不注入 page_* 事件。
  * API 层（postAttemptEventsApi 等）已 mock——网络行为不在本文件范围。
  */
 
-vi.mock("./api", () => ({
+vi.mock("./api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./api")>()),
   postAttemptEventsApi: vi.fn().mockRejectedValue(new Error("不应直接调用")),
   postLectureEventsApi: vi.fn().mockRejectedValue(new Error("不应直接调用")),
 }));
@@ -248,5 +251,56 @@ describe("dispose", () => {
     const calls = send.mock.calls.length;
     await vi.advanceTimersByTimeAsync(10_000);
     expect(send.mock.calls.length).toBe(calls);
+  });
+});
+
+// ---------- T2A.6：访问权终态（403/404 停止上报） ----------
+
+describe("访问权终态（D7）：send 收到 403/404 → 丢弃批次并停止", () => {
+  it("403 ApiError → 不写离线仓、isDenied=true、后续 track/定时 flush 全 no-op", async () => {
+    const { ApiError } = await import("./api");
+    const store = memoryStore();
+    installEventStore(store);
+    const send = vi
+      .fn()
+      .mockRejectedValue(
+        new ApiError("COURSE_ACCESS_DENIED", "无法访问该课程", 403),
+      );
+    const q = makeQueue({ send });
+    q.track(ev("question_blur", { questionId: "q1" }));
+    await vi.advanceTimersByTimeAsync(5000);
+    // 终态：批次被丢弃（不进离线仓重试）
+    expect(store.dump()).toBeUndefined();
+    expect(q.isDenied()).toBe(true);
+
+    // 后续 track 静默丢弃；定时器到点不再发包
+    q.track(ev("question_view", { questionId: "q2" }));
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(send).toHaveBeenCalledTimes(1);
+    await q.flush();
+    expect(send).toHaveBeenCalledTimes(1);
+    q.dispose();
+  });
+
+  it("404 ApiError 同样终态；普通 5xx 仍走离线仓重试路径", async () => {
+    const { ApiError } = await import("./api");
+    const store = memoryStore();
+    installEventStore(store);
+    const send = vi.fn().mockRejectedValue(new ApiError("NOT_FOUND", "x", 404));
+    const q = makeQueue({ send });
+    q.track(ev("question_blur", { questionId: "q1" }));
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(q.isDenied()).toBe(true);
+
+    const store2 = memoryStore();
+    installEventStore(store2);
+    const send2 = vi.fn().mockRejectedValue(new Error("服务器异常"));
+    const q2 = makeQueue({ send: send2 });
+    q2.track(ev("question_blur", { questionId: "q1" }));
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(q2.isDenied()).toBe(false);
+    expect(store2.dump()?.events.length).toBe(1);
+    q.dispose();
+    q2.dispose();
   });
 });

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
   type AttemptAnswerSaveData,
   type AttemptDetailData,
+  type AttemptDraftData,
   type AttemptResultData,
   type AttemptResultQuestion,
   type AttemptScoreSummary,
@@ -14,6 +15,7 @@ import {
   questionAnswersSchema,
   questionSchema,
   type StudentAnswer,
+  type StudentPaperData,
   studentAnswerSchema,
 } from "@tutor/contract";
 import { grade } from "@tutor/grading";
@@ -25,17 +27,22 @@ import {
   assignmentStudents,
   assignments,
   attempts,
+  type Course,
+  courses,
   type Question as QuestionRow,
   questions,
   type ResponseRow,
   responses,
+  type Unit,
+  units,
 } from "../db/schema";
 import { HttpError } from "../lib/http-error";
 import { computePerQuestionActiveSec, countAnswerChanges } from "./active-time";
 import {
   knowledgeNamesByQuestion,
-  unitPublicQuestions,
+  publicQuestionsOfRows,
 } from "./assignment-service";
+import { requireVisibleCourseUnit } from "./course-service";
 import { attemptTimeline } from "./event-service";
 import {
   draftHintsOpenedView,
@@ -44,25 +51,39 @@ import {
 } from "./hint-service";
 
 /**
- * AttemptService（T2.6）——作答生命周期的业务层（架构文档 §5.2/§5.3/§5.6）。
- * 路由只做「鉴权 → 校验 → 调 service → 包装响应」（api-endpoint 技能约定），本模块承载：
+ * AttemptService（T2.6；T2A.6 扩展作答来源 D9/D10）——作答生命周期的业务层
+ * （架构文档 §5.2/§5.3/§5.6）。路由只做「鉴权 → 校验 → 调 service → 包装响应」
+ * （api-endpoint 技能约定），本模块承载：
  *
- * - startAttempt：创建或取回进行中的 attempt（幂等：一个作业一人一份进行中）；
- *   已交卷后再 POST 返回已交的那份（前端据此直接进结果视图，不另开新卷）；
+ * - startAttempt：创建或取回作业来源的 attempt（幂等：一个作业一人一份进行中，
+ *   仅对 assignment 来源生效）；已交卷后再 POST 返回已交的那份（前端据此直接进
+ *   结果视图，不另开新卷）；
+ * - startCourseAttempt（T2A.6）：课程练习入口——存在未交卷作答则返回它；否则
+ *   新建（attemptNo+1，从空白开始）。每次调用都校验 D5 可见性；「(学生, 课程,
+ *   单元) 同时最多 1 份未交卷」由事务先查后插保证（D10）；
  * - saveDraftAnswer：draft 阶段 upsert responses（answerJson + changeCount 累加）；
  *   快照不在此写——判分与快照冻结都在交卷时一次性完成；
  * - submitAttempt：服务端权威判分（@tutor/grading，AGENTS 第 4 条）、逐题写
  *   questionSnapshotJson（题目编辑/软删不影响历史回看，验收项）、scoreAuto 汇总、
- *   status=submitted；重复交卷 409 ALREADY_SUBMITTED（验收项）；
+ *   status=submitted；重复交卷 409 ALREADY_SUBMITTED（验收项）；题目集合按
+ *   sourceType 分派（attemptQuestionRows，见该函数注释）；
  * - getAttemptDetail：draft → 草稿视图（公开题目 + 本人草稿 + 已解锁提示回显，
  *   绝无答案/详解/未请求提示）；submitted/graded → 结果视图（快照 + 参考答案 +
- *   详解 + 判分 + 做题时已解锁提示的回看）。
+ *   详解 + 判分 + 做题时已解锁提示的回看）；
+ * - getStudentAttemptPaper（T2A.6）：通用取卷（两种来源共用；课程来源每次校验
+ *   可见性与成员资格，D22）。
  *
- * 权限口径：attempt 归属（studentId 匹配）是详情/草稿/交卷接口的唯一权限依据
- * （被指派校验只在创建时做一次）——学生被移出名单或作业被软删后，已创建的作答
- * 仍可继续与回看（§5.2「删除作业不删除已有作答记录」）。
+ * 权限口径（T2A.6 起）：
+ * - attempt 归属（studentId 匹配）是详情/草稿/交卷接口的第一道权限依据；
+ * - assignment 来源维持现状：被移出名单或作业软删后，已创建的作答仍可继续与
+ *   回看（§5.2「删除作业不删除已有作答记录」）；
+ * - course 来源 + draft：每次访问都重校验 D5 可见性与成员资格（requireUsableAttempt
+ *   → requireVisibleCourseUnit）——移出成员/课程归档 → 403 COURSE_ACCESS_DENIED，
+ *   条目隐藏等 → 404 NOT_FOUND（D7：未交卷草稿不再可访问，数据保留不删）；
+ * - course 来源 + 已交卷：只读记录，不做课程校验（D7/D10：已交卷课程练习记录
+ *   保留，学生本人的记录中仍可查看）。
  *
- * 安全口径（AGENTS 第 3 条）：草稿视图题目一律经 unitPublicQuestions 输出过滤
+ * 安全口径（AGENTS 第 3 条）：草稿视图题目一律经 publicQuestionsOfRows 输出过滤
  * （QuestionPublic 形态）；结果视图的 answers/solutionMd/stemMd（原文含答案标记）
  * 只在交卷后下发；提示内容只经 T2.11 按需接口（hint-service.openHint）逐条下发，
  * 两个视图仅回显「已解锁」条目（hintsOpened）。
@@ -72,8 +93,13 @@ import {
 function attemptSummaryOf(row: Attempt): AttemptStartData {
   return {
     id: row.id,
+    sourceType: row.sourceType,
     assignmentId: row.assignmentId,
-    unitId: row.unitId,
+    courseId: row.courseId,
+    // 全部现有链路（assignment/course）创建时都写 unitId；null 仅理论可达
+    // （防御性兜底为空串，契约层 min(1) 会拦住异常数据外流）
+    unitId: row.unitId ?? "",
+    attemptNo: row.attemptNo,
     status: row.status,
     startedAt: row.startedAt,
     submittedAt: row.submittedAt,
@@ -92,7 +118,7 @@ function requireAssignmentRow(db: Db, id: string): Assignment {
 
 /**
  * 取本人 attempt：不存在 → 404 ATTEMPT_NOT_FOUND；非本人 → 403 FORBIDDEN（验收项）。
- * attempt 归属是详情/草稿/交卷/笔迹（T2.8 ink-service 复用）接口的唯一权限依据，
+ * attempt 归属是所有 /attempts/:id/* 接口的第一道权限依据，
  * 抽为导出函数保证各接口口径永不漂移。
  */
 export function requireOwnAttempt(
@@ -115,8 +141,109 @@ export function requireOwnAttempt(
 }
 
 /**
- * 校验题目属于 attempt 的单元且未软删，否则 404 QUESTION_NOT_FOUND
- * （T2.8 ink-service 复用：笔迹上传与草稿答案同一口径）。
+ * 取本人 attempt 并按来源做访问权校验（T2A.6，D7/D22）：
+ * - course 来源且 draft：每次调用都重校验 D5 可见性与成员资格——移出成员/课程
+ *   归档 → 403 COURSE_ACCESS_DENIED；条目隐藏/未到发布/资源删除 → 404 NOT_FOUND
+ *   （requireVisibleCourseUnit 统一口径）；
+ * - course 来源且已交卷：只读记录，不做课程校验（D7：已交卷课程练习仍可回看）；
+ * - assignment 来源：维持现状（归属即权限，被移出名单后已建作答仍可继续）。
+ * 草稿保存、交卷、提示、笔迹、事件、详情（draft）全部经本函数进门。
+ */
+export function requireUsableAttempt(
+  db: Db,
+  studentId: string,
+  attemptId: string,
+): Attempt {
+  const attempt = requireOwnAttempt(db, studentId, attemptId);
+  if (attempt.sourceType === "course" && attempt.status === "draft") {
+    requireVisibleCourseUnit(
+      db,
+      studentId,
+      attempt.courseId ?? "",
+      attempt.unitId ?? "",
+    );
+  }
+  return attempt;
+}
+
+// ---------- 题目集合按来源分派（T2A.6） ----------
+
+/**
+ * attempt 的判分/快照题目集合（按 sourceType 分派，D9）：
+ * - course 来源：attempt.unitId 的未删除题；
+ * - assignment 来源：该作业 unitId 的未删除题。**本阶段 assignments 仍是单单元
+ *   （assignments.unitId 列仍在，assignment_units 表 T2A.7 才建）——assignment
+ *   来源按「该作业 unitId 的未删题」实现，T2A.7 再切 assignment_units 多单元
+ *   （按 assignment_units.order 拼接、题号全卷连续）。**
+ * 两种来源现阶段各只含一个单元，但必须经本函数取题（判分、快照、公开题目投影
+ * 都从这里走），T2A.7 只改 assignment 分支。
+ */
+export function attemptQuestionRows(db: Db, attempt: Attempt): QuestionRow[] {
+  let unitIds: string[];
+  if (attempt.sourceType === "course") {
+    // course 来源：unitId 创建时必写（防御性空集合兜底异常行）
+    unitIds = attempt.unitId !== null ? [attempt.unitId] : [];
+  } else {
+    // assignment 来源：按作业行的 unitId（快照语义与 D23-6 一致；作业行经 FK
+    // 必存在——requireAssignmentRow 含已删作业，作答不随作业软删消失）
+    const assignment = requireAssignmentRow(db, attempt.assignmentId ?? "");
+    unitIds = [assignment.unitId];
+  }
+  if (unitIds.length === 0) return [];
+  return db
+    .select()
+    .from(questions)
+    .where(and(inArray(questions.unitId, unitIds), isNull(questions.deletedAt)))
+    .orderBy(asc(questions.order), asc(questions.id))
+    .all();
+}
+
+/** attempt 的公开题目投影（草稿视图与通用取卷共用，QuestionPublic 形态） */
+function attemptPublicQuestions(db: Db, attempt: Attempt): QuestionPublic[] {
+  return publicQuestionsOfRows(db, attemptQuestionRows(db, attempt));
+}
+
+/** 答题页顶部展示的来源信息（assignment=作业标题+截止；course=单元标题+课程名） */
+interface AttemptSourceMeta {
+  title: string;
+  courseName: string | null;
+  dueAt: string | null;
+}
+
+function attemptSourceMeta(db: Db, attempt: Attempt): AttemptSourceMeta {
+  if (attempt.sourceType === "course") {
+    // 课程练习：标题 = 单元当前标题（D1 引用而非复制）；不限截止（D11 交卷即公布）
+    const unit: Unit | undefined =
+      attempt.unitId !== null
+        ? db.select().from(units).where(eq(units.id, attempt.unitId)).get()
+        : undefined;
+    const course: Course | undefined =
+      attempt.courseId !== null
+        ? db
+            .select()
+            .from(courses)
+            .where(eq(courses.id, attempt.courseId))
+            .get()
+        : undefined;
+    return {
+      title: unit?.title ?? "课程练习",
+      courseName: course?.title ?? null,
+      dueAt: null,
+    };
+  }
+  const assignment = requireAssignmentRow(db, attempt.assignmentId ?? "");
+  return {
+    title: assignment.title,
+    courseName: null,
+    dueAt: assignment.dueAt,
+  };
+}
+
+/**
+ * 校验题目属于 attempt 的题目集合（attemptQuestionRows 口径）且未软删，
+ * 否则 404 QUESTION_NOT_FOUND（T2.8 ink-service 复用：笔迹上传与草稿答案同一口径）。
+ * 本阶段两种来源都是单单元（attempt.unitId / assignment.unitId 一致），按
+ * attempt.unitId 校验；T2A.7 多单元时改为集合包含判断。
  */
 export function requireUnitQuestion(
   db: Db,
@@ -140,7 +267,7 @@ export function requireUnitQuestion(
     throw new HttpError(
       404,
       "QUESTION_NOT_FOUND",
-      "题目不存在或不属于这份作业",
+      "题目不存在或不属于这次练习",
     );
   }
 }
@@ -220,11 +347,13 @@ function answerOf(answerJson: string | null): StudentAnswer | undefined {
 // ---------- POST /api/student/assignments/:id/attempt ----------
 
 /**
- * 创建或取回 attempt（幂等）：
+ * 创建或取回作业来源的 attempt（幂等）：
  * - 作业不存在/已删除 → 404；未被指派 → 403；
- * - 已有进行中（draft）attempt → 直接返回它（一个作业一人一份进行中）；
- * - 已交卷/已批 → 返回最近一份（status 告知前端直接进结果视图，不另开新卷）；
- * - 否则插入新 draft attempt（unitId 取作业的单元）。
+ * - 已有进行中（draft）attempt → 直接返回它（一个作业一人一份进行中——
+ *   本规则仅对 assignment 来源生效，D10）；
+ * - 已交卷/已批 → 返回最近一份（status 告知前端直接进结果视图，不另开新卷；
+ *   作业不重做，attemptNo 恒 1）；
+ * - 否则插入新 draft attempt（unitId 取作业的单元；sourceType=assignment）。
  */
 export function startAttempt(
   db: Db,
@@ -256,8 +385,11 @@ export function startAttempt(
     .values({
       id,
       studentId,
+      sourceType: "assignment",
       assignmentId,
+      courseId: null, // T2A.7 起取作业所属课程
       unitId: assignment.unitId,
+      attemptNo: 1,
       status: "draft",
       startedAt,
       submittedAt: null,
@@ -272,6 +404,103 @@ export function startAttempt(
     throw new HttpError(500, "INTERNAL", "创建作答失败，请重试");
   }
   return attemptSummaryOf(row);
+}
+
+// ---------- POST /api/student/courses/:cid/units/:uid/attempts（T2A.6） ----------
+
+/**
+ * 课程练习入口（D10）：
+ * - 每次调用都先校验 D5 可见性（requireVisibleCourseUnit：非成员/归档 403、
+ *   条目不可见 404，D22）；
+ * - 存在未交卷（draft）作答 → 返回它（入口为「继续作答」）；
+ * - 否则新建 attempt（attemptNo = 该 (学生, 课程, 单元) 历次最大值 + 1，从 1 起；
+ *   新一次从空白开始——不预填上次答案与笔迹，历次记录互不影响）；
+ * - 「(学生, 课程, 单元) 同时最多 1 份未交卷」在事务内先查后插保证：
+ *   better-sqlite3 同步事务天然串行，并发两次 POST 只产生一份 draft。
+ */
+export function startCourseAttempt(
+  db: Db,
+  studentId: string,
+  courseId: string,
+  unitId: string,
+): AttemptStartData {
+  requireVisibleCourseUnit(db, studentId, courseId, unitId);
+
+  return db.transaction((tx) => {
+    const existing = tx
+      .select()
+      .from(attempts)
+      .where(
+        and(
+          eq(attempts.studentId, studentId),
+          eq(attempts.sourceType, "course"),
+          eq(attempts.courseId, courseId),
+          eq(attempts.unitId, unitId),
+        ),
+      )
+      .all();
+    const draft = existing.find((row) => row.status === "draft");
+    if (draft !== undefined) return attemptSummaryOf(draft);
+
+    const maxAttemptNo = existing.reduce(
+      (max, row) => Math.max(max, row.attemptNo),
+      0,
+    );
+    const id = randomUUID();
+    tx.insert(attempts)
+      .values({
+        id,
+        studentId,
+        sourceType: "course",
+        assignmentId: null,
+        courseId,
+        unitId,
+        attemptNo: maxAttemptNo + 1,
+        status: "draft",
+        startedAt: new Date().toISOString(),
+        submittedAt: null,
+        activeSec: null,
+        device: null,
+        scoreAuto: null,
+        scoreFinal: null,
+      })
+      .run();
+    const row = tx.select().from(attempts).where(eq(attempts.id, id)).get();
+    if (row === undefined) {
+      throw new HttpError(500, "INTERNAL", "创建作答失败，请重试");
+    }
+    return attemptSummaryOf(row);
+  });
+}
+
+// ---------- GET /api/student/attempts/:id/paper（T2A.6 通用取卷） ----------
+
+/**
+ * 通用取卷（两种来源共用同一响应形态 StudentPaperData）：
+ * - course 来源：每次取卷都重校验可见性与成员资格（requireVisibleCourseUnit，
+ *   draft 与已交一致——取卷是「看到这份练习题目」的入口，D22）；
+ * - assignment 来源：与 GET /api/student/assignments/:id/paper 同口径
+ *   （作业存在且未删 + 被指派，403/404 由 requireAssignmentVisible 给出）——
+ *   该旧接口保留，内部经本函数复用；
+ * - 题目经 attemptPublicQuestions 输出过滤（QuestionPublic，无答案/详解/提示）。
+ */
+export function getStudentAttemptPaper(
+  db: Db,
+  studentId: string,
+  attemptId: string,
+): StudentPaperData {
+  const attempt = requireOwnAttempt(db, studentId, attemptId);
+  if (attempt.sourceType === "course") {
+    requireVisibleCourseUnit(
+      db,
+      studentId,
+      attempt.courseId ?? "",
+      attempt.unitId ?? "",
+    );
+  } else {
+    requireAssignmentVisible(db, studentId, attempt.assignmentId ?? "");
+  }
+  return { questions: attemptPublicQuestions(db, attempt) };
 }
 
 // ---------- PUT /api/student/attempts/:id/answers/:questionId ----------
@@ -293,12 +522,12 @@ export function saveDraftAnswer(
   questionId: string,
   answer: StudentAnswer,
 ): AttemptAnswerSaveData {
-  const attempt = requireOwnAttempt(db, studentId, attemptId);
+  const attempt = requireUsableAttempt(db, studentId, attemptId);
   if (attempt.status !== "draft") {
     throw new HttpError(
       409,
       "ALREADY_SUBMITTED",
-      "这份作业已交卷，不能再修改答案",
+      "这份练习已交卷，不能再修改答案",
     );
   }
   requireUnitQuestion(db, attempt, questionId);
@@ -391,20 +620,13 @@ export function submitAttempt(
   studentId: string,
   attemptId: string,
 ): AttemptResultData {
-  const attempt = requireOwnAttempt(db, studentId, attemptId);
+  const attempt = requireUsableAttempt(db, studentId, attemptId);
   if (attempt.status !== "draft") {
-    throw new HttpError(409, "ALREADY_SUBMITTED", "这份作业已经交过卷了");
+    throw new HttpError(409, "ALREADY_SUBMITTED", "这份练习已经交过卷了");
   }
 
-  // 判分输入：单元内未软删的题（题序）+ 各题考点 + 草稿答案
-  const liveRows = db
-    .select()
-    .from(questions)
-    .where(
-      and(eq(questions.unitId, attempt.unitId), isNull(questions.deletedAt)),
-    )
-    .orderBy(asc(questions.order), asc(questions.id))
-    .all();
+  // 判分输入：attempt 题目集合（按 sourceType 分派，T2A.6）+ 各题考点 + 草稿答案
+  const liveRows = attemptQuestionRows(db, attempt);
   const knowledge = knowledgeNamesByQuestion(db);
   const draftRows = db
     .select()
@@ -523,20 +745,20 @@ export function getAttemptDetail(
   studentId: string,
   attemptId: string,
 ): AttemptDetailData {
-  const attempt = requireOwnAttempt(db, studentId, attemptId);
+  const attempt = requireUsableAttempt(db, studentId, attemptId);
   if (attempt.status === "draft") {
     return buildDraftData(db, attempt);
   }
   return buildResultData(db, attemptId);
 }
 
-/** 草稿视图组装（题目与 T2.4 试卷同一投影：unitPublicQuestions） */
-function buildDraftData(db: Db, attempt: Attempt): AttemptDetailData {
-  const assignment = requireAssignmentRow(db, attempt.assignmentId);
-  const publicQuestions: QuestionPublic[] = unitPublicQuestions(
-    db,
-    attempt.unitId,
-  );
+/**
+ * 草稿视图组装（题目经 attemptPublicQuestions：按来源分派 + QuestionPublic 投影）。
+ * course 来源的 draft 在 requireUsableAttempt 已过 D5 门（失去访问权 403）。
+ */
+function buildDraftData(db: Db, attempt: Attempt): AttemptDraftData {
+  const meta = attemptSourceMeta(db, attempt);
+  const publicQuestions = attemptPublicQuestions(db, attempt);
   const draftRows = db
     .select({
       questionId: responses.questionId,
@@ -552,8 +774,9 @@ function buildDraftData(db: Db, attempt: Attempt): AttemptDetailData {
   }
   return {
     attempt: attemptSummaryOf(attempt),
-    title: assignment.title,
-    dueAt: assignment.dueAt,
+    title: meta.title,
+    courseName: meta.courseName,
+    dueAt: meta.dueAt,
     questions: publicQuestions,
     drafts,
     // T2.11：已解锁提示回显（刷新页面后提示面板不丢；只含学生请求过的条目）
@@ -613,10 +836,11 @@ function scoreSummaryOf(
 /**
  * 结果视图组装：responses 行按 questions 当前题序排列（快照内容仍以冻结行为准；
  * 排序只影响展示顺序）。无快照的行（异常数据）被跳过并按缺失计——正常链路不发生。
+ * 历次记录的每次结果都使用各自 attempt 的 responses 快照行（D10：重做各次独立）。
  */
 function buildResultData(db: Db, attemptId: string): AttemptResultData {
   const attempt = requireAttemptRow(db, attemptId);
-  const assignment = requireAssignmentRow(db, attempt.assignmentId);
+  const meta = attemptSourceMeta(db, attempt);
   const rows = db
     .select({
       response: responses,
@@ -634,8 +858,9 @@ function buildResultData(db: Db, attemptId: string): AttemptResultData {
 
   return {
     attempt: attemptSummaryOf(attempt),
-    title: assignment.title,
-    dueAt: assignment.dueAt,
+    title: meta.title,
+    courseName: meta.courseName,
+    dueAt: meta.dueAt,
     summary: scoreSummaryOf(resultQuestions),
     questions: resultQuestions,
   };

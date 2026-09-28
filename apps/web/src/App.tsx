@@ -225,6 +225,12 @@ const studentRoutes = (() => {
   const StudentAssignmentAttemptPage = lazy(
     () => import("./pages/student/StudentAssignmentAttemptPage"),
   );
+  const StudentAttemptPage = lazy(
+    () => import("./pages/student/StudentAttemptPage"),
+  );
+  const StudentCourseUnitPage = lazy(
+    () => import("./pages/student/StudentCourseUnitPage"),
+  );
   const StudentCoursesPage = lazy(
     () => import("./pages/student/StudentCoursesPage"),
   );
@@ -289,6 +295,14 @@ const studentRoutes = (() => {
           }
         />
         <Route
+          path="attempts/:attemptId"
+          element={
+            <Suspense fallback={pageFallback}>
+              <StudentAttemptPage />
+            </Suspense>
+          }
+        />
+        <Route
           path="courses"
           element={
             <Suspense fallback={pageFallback}>
@@ -301,6 +315,14 @@ const studentRoutes = (() => {
           element={
             <Suspense fallback={pageFallback}>
               <StudentCourseDetailPage />
+            </Suspense>
+          }
+        />
+        <Route
+          path="courses/:id/units/:unitId"
+          element={
+            <Suspense fallback={pageFallback}>
+              <StudentCourseUnitPage />
             </Suspense>
           }
         />

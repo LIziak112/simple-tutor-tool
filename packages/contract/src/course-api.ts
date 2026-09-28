@@ -275,6 +275,69 @@ export const courseStudentViewDataSchema = z.object({
   items: z.array(courseStudentViewItemSchema),
 });
 
+// ---------- 课程进度矩阵（GET /api/teacher/courses/:id/progress，T2A.6） ----------
+
+/**
+ * 矩阵单元格：一位成员 × 一个可见单元的课程练习统计（D10；只统计
+ * sourceType='course' 的作答，作业作答不计入）。
+ * - count / submittedCount / first/latest/bestScore / pendingCount 口径与
+ *   studentUnitAttemptSummarySchema 一致（首次得分最能反映真实掌握程度）；
+ * - latestSubmittedAt：最近一次交卷时间（UTC ISO；从未交卷为 null）；
+ * - history：历次作答列表（attemptNo 降序；点击单元格展开显示，详情页属 T3.1）；
+ * 该生在该单元从未做过时整个单元格为 null。
+ */
+export const courseProgressCellSchema = z.object({
+  studentId: z.uuid(),
+  unitId: z.string().min(1),
+  count: z.number().int().min(0),
+  submittedCount: z.number().int().min(0),
+  firstScore: z.number().int().min(0).max(100).nullable(),
+  latestScore: z.number().int().min(0).max(100).nullable(),
+  bestScore: z.number().int().min(0).max(100).nullable(),
+  pendingCount: z.number().int().min(0),
+  /** 最近一次交卷时间：UTC ISO；从未交卷为 null */
+  latestSubmittedAt: z.string().nullable(),
+  /** 历次作答（attemptNo 降序；只含元信息，无任何题目内容） */
+  history: z.array(
+    z.object({
+      attemptId: z.uuid(),
+      attemptNo: z.number().int().min(1),
+      status: z.enum(["draft", "submitted", "graded"]),
+      score: z.number().int().min(0).max(100).nullable(),
+      submittedAt: z.string().nullable(),
+    }),
+  ),
+});
+
+/** 矩阵的单元列：可见单元（visible=true 且已到发布时间且资源未删且有题，D5 教师侧口径） */
+export const courseProgressUnitSchema = z.object({
+  unitId: z.string().min(1),
+  title: z.string().min(1),
+  /** 目录条目顺序（矩阵列顺序） */
+  order: z.number().int().min(0),
+});
+
+/**
+ * GET /api/teacher/courses/:id/progress 响应 data：成员 × 可见单元矩阵。
+ * members（行）按姓名排序；units（列）按目录条目顺序；cells 按成员 × 单元给出，
+ * 缺席（从未做过）的单元格不出现在 cells（前端按 null 渲染）。
+ */
+export const courseProgressDataSchema = z.object({
+  courseId: z.uuid(),
+  /** 课程成员（行；含已归档学生——教师侧保留统计视角） */
+  members: z.array(
+    z.object({
+      studentId: z.uuid(),
+      displayName: z.string().min(1),
+      archived: z.boolean(),
+    }),
+  ),
+  /** 可见单元（列） */
+  units: z.array(courseProgressUnitSchema),
+  /** 有作答的单元格（缺席 = 从未做过） */
+  cells: z.array(courseProgressCellSchema),
+});
+
 // ---------- 错误码 ----------
 
 /**
@@ -303,6 +366,7 @@ export const courseItemOkSchema = apiOkExtend(courseItemDataSchema);
 export const courseStudentViewOkSchema = apiOkExtend(
   courseStudentViewDataSchema,
 );
+export const courseProgressOkSchema = apiOkExtend(courseProgressDataSchema);
 
 // ---------- 推断类型导出 ----------
 
@@ -331,4 +395,7 @@ export type CourseStudentViewQuery = z.infer<
 >;
 export type CourseStudentViewItem = z.infer<typeof courseStudentViewItemSchema>;
 export type CourseStudentViewData = z.infer<typeof courseStudentViewDataSchema>;
+export type CourseProgressCell = z.infer<typeof courseProgressCellSchema>;
+export type CourseProgressUnit = z.infer<typeof courseProgressUnitSchema>;
+export type CourseProgressData = z.infer<typeof courseProgressDataSchema>;
 export type CourseErrorCode = z.infer<typeof courseErrorCodeSchema>;

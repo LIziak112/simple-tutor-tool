@@ -294,3 +294,56 @@ describe("笔迹上传通道联动", () => {
     expect(result.current.status.state).toBe("saved");
   });
 });
+
+// ---------- T2A.6：访问权终态（403/404 停止重试） ----------
+
+describe("访问权终态（D7）：403/404 后停止重试与 10 秒循环", () => {
+  it("PUT 收到 403 → 状态 denied；定时器不再重发；本地草稿保留", async () => {
+    const { ApiError } = await import("@/lib/api");
+    draftStore.saveAnswer("att-1", "q1", judge);
+    mockedSave.mockRejectedValue(
+      new ApiError("COURSE_ACCESS_DENIED", "无法访问该课程", 403),
+    );
+    const { result } = setupHook({});
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(result.current.status.state).toBe("denied");
+
+    // 10 秒循环不再发包（终态：不是网络失败，不无限重试）
+    const calls = mockedSave.mock.calls.length;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(DRAFT_SYNC_INTERVAL_MS * 3);
+    });
+    expect(mockedSave.mock.calls.length).toBe(calls);
+
+    // 本地草稿保留（不上传但不丢弃）
+    const record = await draftStore.loadDraft("att-1");
+    expect(record?.answers.q1).toEqual(judge);
+  });
+
+  it("noteDenied 后 noteLocalWrite 不再把状态拉回「保存中」", async () => {
+    const { result } = setupHook({});
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    act(() => result.current.noteDenied());
+    act(() => result.current.noteLocalWrite());
+    expect(result.current.status.state).toBe("denied");
+  });
+
+  it("ink 通道返回 denied 同样进入终态", async () => {
+    const { result } = setupHook(
+      {},
+      new Map([["q1", fakeInkController(true, "denied")]]),
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    // 无待传答案时挂载不自动发包——手动触发一轮（对应 10 秒定时）
+    await act(async () => {
+      await result.current.syncNow();
+    });
+    expect(result.current.status.state).toBe("denied");
+  });
+});

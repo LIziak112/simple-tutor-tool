@@ -25,8 +25,10 @@ import {
 } from "../services/assignment-service";
 import {
   getAttemptDetail,
+  getStudentAttemptPaper,
   saveDraftAnswer,
   startAttempt,
+  startCourseAttempt,
   submitAttempt,
 } from "../services/attempt-service";
 import {
@@ -38,6 +40,7 @@ import { getInkDoc, getStudentInkPng, saveInk } from "../services/ink-service";
 import {
   getStudentCourseDetail,
   getStudentLecture,
+  getStudentUnitLanding,
   listStudentCourses,
   listStudentLectures,
 } from "../services/student-course-service";
@@ -178,6 +181,14 @@ export function createStudentRoutes(
           data: getAttemptDetail(db, c.var.student.id, c.req.param("id")),
         });
       })
+      // T2A.6：通用取卷（两种来源共用；课程来源每次校验可见性与成员资格，
+      // D22——course draft 失去访问权 403/404，前端据此按终态停发）
+      .get("/attempts/:id/paper", (c) => {
+        return c.json({
+          ok: true,
+          data: getStudentAttemptPaper(db, c.var.student.id, c.req.param("id")),
+        });
+      })
       // T2.10：学习痕迹事件批量上报（attempt 上下文，≤200 条/次由契约拦截）
       .post("/attempts/:id/events", async (c) => {
         const body = await parseJsonBody(c, attemptEventBatchRequestSchema);
@@ -263,6 +274,35 @@ export function createStudentRoutes(
           ok: true,
           data: getStudentCourseDetail(db, c.var.student.id, c.req.param("id")),
         });
+      })
+      // T2A.6：单元落地页（D10——题数/题型分布/历次作答/首次/最近/最高分/未交卷标记；
+      // 每次调用都走 D5 可见性门，D22 错误口径）
+      .get("/courses/:id/units/:unitId", (c) => {
+        return c.json({
+          ok: true,
+          data: getStudentUnitLanding(
+            db,
+            c.var.student.id,
+            c.req.param("id"),
+            c.req.param("unitId"),
+          ),
+        });
+      })
+      // T2A.6：课程练习入口（存在未交卷作答返回它；否则新建 attemptNo+1，
+      // 新一次从空白开始；事务保证并发只得一份 draft）
+      .post("/courses/:id/units/:unitId/attempts", (c) => {
+        return c.json(
+          {
+            ok: true,
+            data: startCourseAttempt(
+              db,
+              c.var.student.id,
+              c.req.param("id"),
+              c.req.param("unitId"),
+            ),
+          },
+          201,
+        );
       })
       // T2A.5：可见讲义双视图（去重并集 + 按课程分组，D5 过滤）
       .get("/lectures", (c) => {

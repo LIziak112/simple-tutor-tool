@@ -131,6 +131,7 @@ export function HandwrittenControls({
       draftSyncRef.current?.noteInkSynced();
     },
     onFailed: () => draftSyncRef.current?.noteSyncFailed(),
+    onDenied: () => draftSyncRef.current?.noteDenied(),
   });
   /** 上传 controller 存 ref（controller 对象每次渲染都是新引用） */
   const controllerRef = useRef(uploadController);

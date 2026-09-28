@@ -20,6 +20,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { CourseCatalogTab } from "@/features/courses/CourseCatalogTab";
 import { CourseMembersTab } from "@/features/courses/CourseMembersTab";
+import { CourseProgressTab } from "@/features/courses/CourseProgressTab";
 import {
   useCourseDetail,
   useDeleteCourse,
@@ -130,15 +131,7 @@ export function CourseEditPage() {
       {tab === "members" && (
         <CourseMembersTab courseId={detail.id} detail={detail} />
       )}
-      {tab === "progress" && (
-        <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-border bg-card px-6 py-14 text-center">
-          <p className="text-sm font-medium">课程进度</p>
-          <p className="max-w-sm text-sm text-muted-foreground">
-            成员 × 可见练习单元的进度矩阵将在后续版本提供（T2A.6）。
-            当前可在「目录」页签用学生可见预览核对可见性。
-          </p>
-        </div>
-      )}
+      {tab === "progress" && <CourseProgressTab courseId={detail.id} />}
 
       {editOpen && (
         <EditCourseDialog
