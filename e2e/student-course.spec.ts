@@ -100,9 +100,10 @@ test.describe("学生端课程与讲义浏览（T2A.5，D5 可见性）", () => 
       ).toBeVisible();
       await expect(studentPage.getByText(companionName)).toBeVisible();
       await expect(studentPage.getByText("1 题").first()).toBeVisible();
-      await expect(studentPage.getByText("即将开放").first()).toBeVisible();
+      // T2A.6：配套单元可进入（去练习链接 → 单元落地页）
+      await expect(studentPage.getByText("去练习").first()).toBeVisible();
 
-      // 课程目录同步出现单元项（题数 + 即将开放）
+      // 课程目录同步出现单元项（题数 + 未做状态徽章）
       await studentPage.getByRole("link", { name: "返回课程目录" }).click();
       await studentPage.waitForURL(`**/s/courses/${courseId}`);
       await expect(studentPage.getByText(companionName)).toBeVisible();
