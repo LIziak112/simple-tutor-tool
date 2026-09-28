@@ -70,10 +70,7 @@ function visibleCoursesOfStudent(db: Db, studentId: string): VisibleCourse[] {
     .from(courseStudents)
     .innerJoin(courses, eq(courseStudents.courseId, courses.id))
     .where(
-      and(
-        eq(courseStudents.studentId, studentId),
-        isNull(courses.archivedAt),
-      ),
+      and(eq(courseStudents.studentId, studentId), isNull(courses.archivedAt)),
     )
     .orderBy(asc(courses.order), asc(courses.title))
     .all();
@@ -89,7 +86,9 @@ function liveQuestionCounts(
   for (const row of db
     .select({ unitId: questions.unitId })
     .from(questions)
-    .where(and(inArray(questions.unitId, [...unitIds]), isNull(questions.deletedAt)))
+    .where(
+      and(inArray(questions.unitId, [...unitIds]), isNull(questions.deletedAt)),
+    )
     .all()) {
     map.set(row.unitId, (map.get(row.unitId) ?? 0) + 1);
   }
@@ -107,7 +106,11 @@ function courseAccessDenied(): HttpError {
 
 /** 404 NOT_FOUND（D22：不暴露存在性——课程/讲义不存在、条目隐藏等统一口径） */
 function notFound(): HttpError {
-  return new HttpError(404, "NOT_FOUND", "没有找到该内容（可能尚未发布或已被移除）");
+  return new HttpError(
+    404,
+    "NOT_FOUND",
+    "没有找到该内容（可能尚未发布或已被移除）",
+  );
 }
 
 // ---------- 我的课程（GET /api/student/courses） ----------
@@ -123,17 +126,20 @@ export function listStudentCourses(
   now: Date | string = new Date(),
 ): { courses: StudentCourseSummary[] } {
   const visibleCourses = visibleCoursesOfStudent(db, studentId);
-  const courseSummaries: StudentCourseSummary[] = visibleCourses.map((course) => {
-    const items = listVisibleItems(db, studentId, course.id, now);
-    return {
-      id: course.id,
-      name: course.title,
-      description: course.description,
-      visibleLectureCount: items.filter((item) => item.kind === "lecture").length,
-      visibleUnitCount: items.filter((item) => item.kind === "unit").length,
-      completedUnitCount: 0, // T2A.6：接入课程练习作答后按「至少交卷 1 次的可见单元数」填充
-    };
-  });
+  const courseSummaries: StudentCourseSummary[] = visibleCourses.map(
+    (course) => {
+      const items = listVisibleItems(db, studentId, course.id, now);
+      return {
+        id: course.id,
+        name: course.title,
+        description: course.description,
+        visibleLectureCount: items.filter((item) => item.kind === "lecture")
+          .length,
+        visibleUnitCount: items.filter((item) => item.kind === "unit").length,
+        completedUnitCount: 0, // T2A.6：接入课程练习作答后按「至少交卷 1 次的可见单元数」填充
+      };
+    },
+  );
   return { courses: courseSummaries };
 }
 
@@ -264,7 +270,10 @@ function visibleCompanionTopics(
     .from(units)
     .where(
       and(
-        inArray(units.id, visibleUnits.map((unit) => unit.refId)),
+        inArray(
+          units.id,
+          visibleUnits.map((unit) => unit.refId),
+        ),
         isNull(units.deletedAt),
       ),
     )
@@ -357,7 +366,9 @@ export function listStudentLectures(
     db,
     visibleUnitItemsOfStudent(db, visibleCourses, studentId, now),
   );
-  const withTopic = (summary: StudentLectureSummary): StudentLectureSummary => ({
+  const withTopic = (
+    summary: StudentLectureSummary,
+  ): StudentLectureSummary => ({
     ...summary,
     topic: topics.get(summary.id) ?? null,
   });
@@ -439,7 +450,9 @@ export function getStudentLecture(
     for (const course of visibleCourses) {
       const items = listVisibleItems(db, studentId, course.id, now);
       if (
-        items.some((item) => item.kind === "lecture" && item.refId === lectureId)
+        items.some(
+          (item) => item.kind === "lecture" && item.refId === lectureId,
+        )
       ) {
         found = { course, items };
         break;

@@ -109,7 +109,9 @@ export const studentCourseErrorCodeSchema = z.enum([
 
 // ---------- 具体化的成功壳 ----------
 
-export const studentCourseListOkSchema = apiOkExtend(studentCourseListDataSchema);
+export const studentCourseListOkSchema = apiOkExtend(
+  studentCourseListDataSchema,
+);
 export const studentCourseDetailOkSchema = apiOkExtend(
   studentCourseDetailDataSchema,
 );

@@ -145,7 +145,9 @@ async function importDoc(
     method: "POST",
     headers: { "content-type": "application/json", cookie: teacherCookie },
     body: JSON.stringify(
-      courseId === undefined ? { markdown, filename } : { markdown, filename, courseId },
+      courseId === undefined
+        ? { markdown, filename }
+        : { markdown, filename, courseId },
     ),
   });
   expect(res.status).toBe(200);
@@ -180,8 +182,9 @@ describe("GET /api/student/lectures（讲义摘要列表，T2A.5 D5 切换）", 
     expect(res.status).toBe(200);
     const body = (await res.json()) as unknown;
     expect(studentLectureListOkSchema.safeParse(body).success).toBe(true);
-    expect((body as { data: { lectures: unknown[]; courses: unknown[] } }).data)
-      .toEqual({ lectures: [], courses: [] });
+    expect(
+      (body as { data: { lectures: unknown[]; courses: unknown[] } }).data,
+    ).toEqual({ lectures: [], courses: [] });
     assertNoQuestionFields(body);
   });
 

@@ -30,17 +30,17 @@ import {
   submitAttempt,
 } from "../services/attempt-service";
 import {
-  getStudentLecture,
-  getStudentCourseDetail,
-  listStudentCourses,
-  listStudentLectures,
-} from "../services/student-course-service";
-import {
   appendAttemptEvents,
   appendLectureEvents,
 } from "../services/event-service";
 import { openHint } from "../services/hint-service";
 import { getInkDoc, getStudentInkPng, saveInk } from "../services/ink-service";
+import {
+  getStudentCourseDetail,
+  getStudentLecture,
+  listStudentCourses,
+  listStudentLectures,
+} from "../services/student-course-service";
 import { changeStudentPassword } from "../services/student-service";
 
 /**

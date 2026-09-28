@@ -9,7 +9,10 @@ import { describe, expect, it } from "vitest";
  */
 
 // 被测模块（index.ts 已 re-export；这里直接读文件确认模块本身可独立解析）
-const source = readFileSync(new URL("./student-course-api.ts", import.meta.url), "utf8");
+const source = readFileSync(
+  new URL("./student-course-api.ts", import.meta.url),
+  "utf8",
+);
 
 describe("学生端课程契约（T2A.5）", () => {
   const courseId = "2d8e39ca-8dbc-4a2e-ad9e-9d3d3d3d3d3d";
@@ -29,18 +32,24 @@ describe("学生端课程契约（T2A.5）", () => {
   });
 
   it("错误码固定为 D22 两态（403 COURSE_ACCESS_DENIED / 404 NOT_FOUND）", async () => {
-    const { studentCourseErrorCodeSchema } = await import("./student-course-api.ts");
-    expect(studentCourseErrorCodeSchema.safeParse("COURSE_ACCESS_DENIED").success).toBe(
+    const { studentCourseErrorCodeSchema } = await import(
+      "./student-course-api.ts"
+    );
+    expect(
+      studentCourseErrorCodeSchema.safeParse("COURSE_ACCESS_DENIED").success,
+    ).toBe(true);
+    expect(studentCourseErrorCodeSchema.safeParse("NOT_FOUND").success).toBe(
       true,
     );
-    expect(studentCourseErrorCodeSchema.safeParse("NOT_FOUND").success).toBe(true);
-    expect(studentCourseErrorCodeSchema.safeParse("COURSE_NOT_FOUND").success).toBe(
-      false,
-    );
+    expect(
+      studentCourseErrorCodeSchema.safeParse("COURSE_NOT_FOUND").success,
+    ).toBe(false);
   });
 
   it("课程摘要：completedUnitCount 恒 0 占位字段为必填整数", async () => {
-    const { studentCourseSummarySchema } = await import("./student-course-api.ts");
+    const { studentCourseSummarySchema } = await import(
+      "./student-course-api.ts"
+    );
     const base = {
       id: courseId,
       name: "初一上",
@@ -60,7 +69,8 @@ describe("学生端课程契约（T2A.5）", () => {
     const { completedUnitCount: _drop, ...missing } = base;
     expect(studentCourseSummarySchema.safeParse(missing).success).toBe(false);
     expect(
-      studentCourseSummarySchema.safeParse({ ...base, visibleUnitCount: -1 }).success,
+      studentCourseSummarySchema.safeParse({ ...base, visibleUnitCount: -1 })
+        .success,
     ).toBe(false);
     expect(
       studentCourseSummarySchema.safeParse({ ...base, id: "not-uuid" }).success,
@@ -114,7 +124,9 @@ describe("学生端课程契约（T2A.5）", () => {
   });
 
   it("课程详情成功壳：ok=true + data 形态", async () => {
-    const { studentCourseDetailOkSchema } = await import("./student-course-api.ts");
+    const { studentCourseDetailOkSchema } = await import(
+      "./student-course-api.ts"
+    );
     expect(
       studentCourseDetailOkSchema.safeParse({
         ok: true,

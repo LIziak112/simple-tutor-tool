@@ -89,11 +89,16 @@ async function createStudentAndLogin(
     }),
   });
   expect(create.status).toBe(201);
-  const created = (await create.json()) as { data: { student: { id: string } } };
+  const created = (await create.json()) as {
+    data: { student: { id: string } };
+  };
   const login = await app.request("/api/public/student/login", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ loginName: displayName, password: STUDENT_PASSWORD }),
+    body: JSON.stringify({
+      loginName: displayName,
+      password: STUDENT_PASSWORD,
+    }),
   });
   expect(login.status).toBe(200);
   return {
@@ -161,7 +166,11 @@ async function makeEnv(options?: {
   }
 
   const member = await createStudentAndLogin(app, teacherCookie, "成员张三");
-  const outsider = await createStudentAndLogin(app, teacherCookie, "非成员李四");
+  const outsider = await createStudentAndLogin(
+    app,
+    teacherCookie,
+    "非成员李四",
+  );
   const added = await app.request(`/api/teacher/courses/${courseId}/members`, {
     method: "POST",
     headers: { "content-type": "application/json", cookie: teacherCookie },
@@ -194,10 +203,9 @@ async function teacherItems(
 ): Promise<
   { id: string; kind: string; refId: string | null; title: string }[]
 > {
-  const res = await env.app.request(
-    `/api/teacher/courses/${env.courseId}`,
-    { headers: { cookie: env.teacherCookie } },
-  );
+  const res = await env.app.request(`/api/teacher/courses/${env.courseId}`, {
+    headers: { cookie: env.teacherCookie },
+  });
   expect(res.status).toBe(200);
   const body = (await res.json()) as {
     data: {
@@ -442,7 +450,11 @@ describe("GET /api/student/lectures（可见讲义双视图）", () => {
     ).json()) as {
       data: {
         lectures: { title: string }[];
-        courses: { courseId: string; courseName: string; lectures: unknown[] }[];
+        courses: {
+          courseId: string;
+          courseName: string;
+          lectures: unknown[];
+        }[];
       };
     };
     expect(studentLectureListOkSchema.safeParse(before).success).toBe(true);
@@ -466,7 +478,10 @@ describe("GET /api/student/lectures（可见讲义双视图）", () => {
         headers: { cookie: memberCookie },
       })
     ).json()) as {
-      data: { lectures: { title: string }[]; courses: { lectures: unknown[] }[] };
+      data: {
+        lectures: { title: string }[];
+        courses: { lectures: unknown[] }[];
+      };
     };
     expect(after.data.lectures.map((l) => l.title)).toEqual(["第2讲 数轴"]);
     assertNoQuestionFields(after);
@@ -478,9 +493,8 @@ describe("GET /api/student/lectures/:id（讲义详情 + D8 配套练习）", ()
     const env = await makeEnv({ importLinkedPractice: true });
     const { app, memberCookie, courseId } = env;
     const items = await teacherItems(env);
-    const lecture1RefId = items.find(
-      (item) => item.title === "第1讲 有理数",
-    )?.refId as string;
+    const lecture1RefId = items.find((item) => item.title === "第1讲 有理数")
+      ?.refId as string;
 
     const res = await app.request(`/api/student/lectures/${lecture1RefId}`, {
       headers: { cookie: memberCookie },
@@ -570,9 +584,8 @@ describe("GET /api/student/lectures/:id（讲义详情 + D8 配套练习）", ()
     const env = await makeEnv();
     const { app, memberCookie, teacherCookie, courseId } = env;
     const items = await teacherItems(env);
-    const lecture1RefId = items.find(
-      (item) => item.title === "第1讲 有理数",
-    )?.refId as string;
+    const lecture1RefId = items.find((item) => item.title === "第1讲 有理数")
+      ?.refId as string;
 
     const del = await app.request(`/api/teacher/lectures/${lecture1RefId}`, {
       method: "DELETE",
@@ -599,9 +612,8 @@ describe("GET /api/student/lectures/:id（讲义详情 + D8 配套练习）", ()
     const env = await makeEnv();
     const { app, memberCookie, outsiderCookie, courseId } = env;
     const items = await teacherItems(env);
-    const lecture1RefId = items.find(
-      (item) => item.title === "第1讲 有理数",
-    )?.refId as string;
+    const lecture1RefId = items.find((item) => item.title === "第1讲 有理数")
+      ?.refId as string;
 
     const outsider = await app.request(
       `/api/student/lectures/${lecture1RefId}?courseId=${courseId}`,
@@ -631,7 +643,10 @@ describe("GET /api/student/lectures/:id（讲义详情 + D8 配套练习）", ()
       `/api/teacher/courses/${courseId}/members`,
       {
         method: "DELETE",
-        headers: { "content-type": "application/json", cookie: env.teacherCookie },
+        headers: {
+          "content-type": "application/json",
+          cookie: env.teacherCookie,
+        },
         body: JSON.stringify({ studentIds: [env.memberStudentId] }),
       },
     );
@@ -650,9 +665,8 @@ describe("GET /api/student/lectures/:id（讲义详情 + D8 配套练习）", ()
     const env = await makeEnv();
     const { app, outsiderCookie } = env;
     const items = await teacherItems(env);
-    const lecture1RefId = items.find(
-      (item) => item.title === "第1讲 有理数",
-    )?.refId as string;
+    const lecture1RefId = items.find((item) => item.title === "第1讲 有理数")
+      ?.refId as string;
     const res = await app.request(`/api/student/lectures/${lecture1RefId}`, {
       headers: { cookie: outsiderCookie },
     });

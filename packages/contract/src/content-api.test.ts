@@ -364,7 +364,11 @@ describe("学生端讲义契约（T2.3；T2A.5 扩展分组与配套练习）", 
           lectures: [summary, otherSummary],
           courses: [
             { courseId, courseName: "初一上", lectures: [summary] },
-            { courseId: otherCourseId, courseName: "初一下", lectures: [summary] },
+            {
+              courseId: otherCourseId,
+              courseName: "初一下",
+              lectures: [summary],
+            },
           ],
         },
       }).success,

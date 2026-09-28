@@ -382,11 +382,7 @@ describe("getStudentCourseDetail（课程可见目录，D22 矩阵）", () => {
     const detail = getStudentCourseDetail(db, ctx.memberId, ctx.courseAId);
     expect(detail.name).toBe("初一上");
     expect(
-      detail.items.map((item) => [
-        item.kind,
-        item.title,
-        item.questionCount,
-      ]),
+      detail.items.map((item) => [item.kind, item.title, item.questionCount]),
     ).toEqual([
       ["section", "第一章 有理数", null],
       ["lecture", "第1讲 有理数", null],
@@ -457,8 +453,8 @@ describe("listStudentLectures（可见讲义双视图）", () => {
       "初一下",
     ]);
     expect(
-      data.courses.map(
-        (group) => group.lectures.map((lecture) => lecture.title),
+      data.courses.map((group) =>
+        group.lectures.map((lecture) => lecture.title),
       ),
     ).toEqual([["第1讲 有理数"], ["第1讲 有理数"]]);
   });
@@ -567,7 +563,9 @@ describe("getStudentLecture（讲义详情 + D8 配套练习）", () => {
       "NOT_FOUND",
     );
     expectHttpError(
-      captureError(() => getStudentLecture(db, ctx.outsiderId, ctx.lectureL1Id)),
+      captureError(() =>
+        getStudentLecture(db, ctx.outsiderId, ctx.lectureL1Id),
+      ),
       404,
       "NOT_FOUND",
     );
@@ -579,7 +577,13 @@ describe("getStudentLecture（讲义详情 + D8 配套练习）", () => {
     // L2 定时 12:00:00Z 发布：11:59:59.999 不可见（404，不暴露存在性）
     expectHttpError(
       captureError(() =>
-        getStudentLecture(db, ctx.memberId, ctx.lectureL2Id, ctx.courseAId, BEFORE_PUBLISH),
+        getStudentLecture(
+          db,
+          ctx.memberId,
+          ctx.lectureL2Id,
+          ctx.courseAId,
+          BEFORE_PUBLISH,
+        ),
       ),
       404,
       "NOT_FOUND",
@@ -594,7 +598,12 @@ describe("getStudentLecture（讲义详情 + D8 配套练习）", () => {
     );
     expect(detail.title).toBe("第2讲 数轴");
     // 课程目录与列表同步生效
-    const detailAt = getStudentCourseDetail(db, ctx.memberId, ctx.courseAId, AT_PUBLISH);
+    const detailAt = getStudentCourseDetail(
+      db,
+      ctx.memberId,
+      ctx.courseAId,
+      AT_PUBLISH,
+    );
     expect(detailAt.items.some((item) => item.title === "第2讲 数轴")).toBe(
       true,
     );
