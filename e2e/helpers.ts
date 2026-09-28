@@ -139,6 +139,37 @@ async function ensureCourse(request: APIRequestContext): Promise<string> {
   return body.data.id;
 }
 
+/**
+ * 取「默认课程」id（无则创建；并发去重口径见 ensureCourse 注释）。
+ * T2A.5 主流程用例的造数入口（导入与成员都挂在这门课上）。
+ */
+export function ensureDefaultCourse(
+  request: APIRequestContext,
+): Promise<string> {
+  return ensureCourse(request);
+}
+
+/**
+ * 创建一门用例专属课程（标题带唯一后缀，T2A.5 学生端浏览用例）。
+ * 不与主流程共享「默认课程」：本用例要往课程里导入额外讲义/配套练习，
+ * 共享会让主流程「布置作业」下拉多出单元（select option 严格模式冲突）。
+ */
+export async function createCourseViaApi(
+  request: APIRequestContext,
+  title: string,
+): Promise<string> {
+  const created = await request.post("/api/teacher/courses", {
+    data: { title },
+  });
+  if (!created.ok()) {
+    throw new Error(
+      `创建课程「${title}」失败：HTTP ${created.status()} ${await created.text()}`,
+    );
+  }
+  const body = (await created.json()) as { data: { id: string } };
+  return body.data.id;
+}
+
 /** 教师列表里按登录名查学生的专属链接 token（教师端可见字段） */
 export async function getStudentLinkToken(
   request: APIRequestContext,
@@ -175,6 +206,139 @@ export async function createStudentViaApi(
   });
   if (!res.ok()) {
     throw new Error(`创建学生失败：HTTP ${res.status()} ${await res.text()}`);
+  }
+}
+
+// ---------- T2A.5：学生端课程与讲义浏览 ----------
+
+/** 教师列表里按登录名查学生（返回 id 与专属链接 token；教师端可见字段） */
+export async function getStudentViaApi(
+  request: APIRequestContext,
+  loginName: string,
+): Promise<{ id: string; linkToken: string }> {
+  const res = await request.get("/api/teacher/students");
+  if (!res.ok()) {
+    throw new Error(`查询学生列表失败：HTTP ${res.status()}`);
+  }
+  const body = (await res.json()) as {
+    data: {
+      students: Array<{ id: string; loginName: string; linkToken: string }>;
+    };
+  };
+  const found = body.data.students.find(
+    (student) => student.loginName === loginName,
+  );
+  if (found === undefined) {
+    throw new Error(`学生列表中未找到登录名为 ${loginName} 的学生`);
+  }
+  return { id: found.id, linkToken: found.linkToken };
+}
+
+/** 把学生加入课程成员（D5：学生能看到课程内容的前提） */
+export async function addCourseMemberViaApi(
+  request: APIRequestContext,
+  courseId: string,
+  studentId: string,
+): Promise<void> {
+  const res = await request.post(`/api/teacher/courses/${courseId}/members`, {
+    data: { studentIds: [studentId] },
+  });
+  if (!res.ok()) {
+    throw new Error(
+      `添加课程成员失败：HTTP ${res.status()} ${await res.text()}`,
+    );
+  }
+}
+
+/** 导入 samples/v2/讲义样例.md 进指定课程（讲义条目可见；幂等——同文件夹同名替换） */
+export async function importLectureSample(
+  request: APIRequestContext,
+  courseId: string,
+): Promise<void> {
+  const markdown = readFileSync(
+    join(
+      dirname(fileURLToPath(import.meta.url)),
+      "..",
+      "samples",
+      "v2",
+      "讲义样例.md",
+    ),
+    "utf8",
+  );
+  const res = await request.post("/api/teacher/import/commit", {
+    data: { markdown, filename: "讲义样例.md", courseId },
+  });
+  if (!res.ok()) {
+    throw new Error(
+      `导入讲义样例失败：HTTP ${res.status()} ${await res.text()}`,
+    );
+  }
+}
+
+/**
+ * 导入一个关联「第1讲 有理数」的练习单元进指定课程（D8 配套练习用例造数）。
+ * 单元条目默认隐藏（导入兼容口径），测试内用教师接口放开可见性。
+ * unitName 必须带唯一后缀：单元按 DSL id 全局匹配（D18），chromium/webkit 两个
+ * 项目并行跑本用例时同名单元会互相覆盖并把 lectureId 重链到对方课程的讲义，
+ * 导致先导入一方的「本课配套练习」消失（曾致 webkit 用例必挂）。
+ */
+export async function importCompanionPractice(
+  request: APIRequestContext,
+  courseId: string,
+  unitName: string,
+): Promise<void> {
+  const markdown = [
+    "---",
+    "kind: practice",
+    `unit: ${unitName}`,
+    "lecture: 第1讲 有理数",
+    "topic: 正数与负数",
+    "---",
+    "",
+    "::::question{type=judge difficulty=1}",
+    "$1$ 是正数。[[正确]]",
+    "",
+    ":::solution",
+    "$1$ 大于 $0$，是正数。",
+    ":::",
+    "::::",
+    "",
+  ].join("\n");
+  const res = await request.post("/api/teacher/import/commit", {
+    data: { markdown, filename: `${unitName}.md`, courseId },
+  });
+  if (!res.ok()) {
+    throw new Error(
+      `导入配套练习失败：HTTP ${res.status()} ${await res.text()}`,
+    );
+  }
+}
+
+/** 教师把某课程目录中指定标题的条目设为可见/隐藏（找不到标题则抛错） */
+export async function setCourseItemVisible(
+  request: APIRequestContext,
+  courseId: string,
+  itemTitle: string,
+  visible: boolean,
+): Promise<void> {
+  const detail = await request.get(`/api/teacher/courses/${courseId}`);
+  if (!detail.ok()) {
+    throw new Error(`查询课程详情失败：HTTP ${detail.status()}`);
+  }
+  const body = (await detail.json()) as {
+    data: { items: Array<{ id: string; title: string; visible: boolean }> };
+  };
+  const item = body.data.items.find((entry) => entry.title === itemTitle);
+  if (item === undefined) {
+    throw new Error(`课程目录中未找到条目「${itemTitle}」`);
+  }
+  const res = await request.patch(`/api/teacher/course-items/${item.id}`, {
+    data: { visible },
+  });
+  if (!res.ok()) {
+    throw new Error(
+      `修改条目可见性失败：HTTP ${res.status()} ${await res.text()}`,
+    );
   }
 }
 
@@ -343,6 +507,9 @@ export interface LeakMonitor {
  *   「未交卷题目」），用 submitted 标志切换；
  * - 键名级：JSON 递归遍历，对齐服务端 assert-no-leak 的禁键集合；
  * - 内容级：响应原文不含样例 md 的 hint/solution 片段（中文在 JSON 中不转义）。
+ *   讲义详情（GET /api/student/lectures/:id）除外——讲义 markdown 是设计内的
+ *   全量下发（:::solution 是讲解内容非题目答案，学生应见），且讲义样例正文
+ *   本身含有与练习样例 solution 相同的表述，只做键名级检查（T2A.5）。
  */
 export function attachLeakMonitor(page: Page): LeakMonitor {
   const violations: string[] = [];
@@ -357,10 +524,12 @@ export function attachLeakMonitor(page: Page): LeakMonitor {
     if (submitted) return;
     const contentType = response.headers()["content-type"] ?? "";
     if (!contentType.includes("application/json")) return;
+    // 讲义详情响应：markdown 设计内全量下发，内容级片段检查豁免（见函数头注释）
+    const isLectureDetail = /\/api\/student\/lectures\/[^/]+$/.test(url);
     void response
       .text()
       .then((body) => {
-        checkLeakBody(url, body, violations);
+        checkLeakBody(url, body, violations, isLectureDetail);
       })
       .catch(() => undefined);
   });
@@ -368,7 +537,12 @@ export function attachLeakMonitor(page: Page): LeakMonitor {
 }
 
 /** 单个响应体的键名级 + 内容级检查（violation 追加进列表） */
-function checkLeakBody(url: string, body: string, violations: string[]): void {
+function checkLeakBody(
+  url: string,
+  body: string,
+  violations: string[],
+  skipContentCheck: boolean,
+): void {
   let parsed: unknown;
   try {
     parsed = JSON.parse(body);
@@ -398,6 +572,7 @@ function checkLeakBody(url: string, body: string, violations: string[]): void {
   if (leakedKeys.length > 0) {
     violations.push(`${url} 出现禁用键：${leakedKeys.join("、")}`);
   }
+  if (skipContentCheck) return;
   for (const secret of SECRET_EXCERPTS) {
     if (body.includes(secret)) {
       violations.push(`${url} 含教师侧原文片段：「${secret}」`);
