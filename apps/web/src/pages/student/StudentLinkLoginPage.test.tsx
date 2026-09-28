@@ -16,6 +16,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
     ...actual,
     loginStudentByLinkApi: vi.fn(),
     fetchStudentAssignmentsApi: vi.fn(),
+    fetchStudentCoursesApi: vi.fn(),
     fetchStudentLecturesApi: vi.fn(),
   };
 });

@@ -52,6 +52,8 @@ import {
   type ReorderRequest,
   type SpecFileName,
   type StudentAssignmentListData,
+  type StudentCourseDetailData,
+  type StudentCourseListData,
   type StudentCreateData,
   type StudentCreateRequest,
   type StudentLectureDetail,
@@ -568,16 +570,37 @@ export function fetchStudentAssignmentsApi(): Promise<StudentAssignmentListData>
   return callApi(() => api.api.student.assignments.$get());
 }
 
-/** 讲义摘要列表（按课程顺序：标题 + 关联主题 + 更新时间） */
+/** 讲义摘要列表（T2A.5 D5：去重并集 + 按课程分组双视图；不含题目内容） */
 export function fetchStudentLecturesApi(): Promise<StudentLectureListData> {
   return callApi(() => api.api.student.lectures.$get());
 }
 
-/** 讲义全文 markdown（讲义全量下发是设计如此，:::solution 为讲解内容非题目答案） */
+/** 我的课程（T2A.5：所在课程卡片数据——名称/描述/可见计数；隐藏条目零信息） */
+export function fetchStudentCoursesApi(): Promise<StudentCourseListData> {
+  return callApi(() => api.api.student.courses.$get());
+}
+
+/** 课程可见目录（D5 过滤；非成员/课程归档 403 COURSE_ACCESS_DENIED） */
+export function fetchStudentCourseApi(
+  id: string,
+): Promise<StudentCourseDetailData> {
+  return callApi(() => api.api.student.courses[":id"].$get({ param: { id } }));
+}
+
+/**
+ * 讲义全文 markdown（T2A.5：需经课程可见——?courseId= 课程上下文与本课配套练习；
+ * 讲义全量下发是设计如此，:::solution 为讲解内容非题目答案）
+ */
 export function fetchStudentLectureApi(
   id: string,
+  courseId?: string | undefined,
 ): Promise<StudentLectureDetail> {
-  return callApi(() => api.api.student.lectures[":id"].$get({ param: { id } }));
+  return callApi(() =>
+    api.api.student.lectures[":id"].$get({
+      param: { id },
+      ...(courseId !== undefined ? { query: { courseId } } : {}),
+    }),
+  );
 }
 
 // ---------- T2.6：作答生命周期（学生端答题页） ----------

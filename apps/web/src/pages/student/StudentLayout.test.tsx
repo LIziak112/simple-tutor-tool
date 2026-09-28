@@ -72,23 +72,27 @@ describe("StudentLayout", () => {
     });
   });
 
-  it("已登录渲染顶栏：姓名、三分区导航与退出按钮", async () => {
+  it("已登录渲染顶栏：姓名、三分区导航（首页/课程/我的记录，T2A.5 定稿）与退出按钮", async () => {
     mockedMe.mockResolvedValue(STUDENT);
     renderLayout();
 
     expect(await screen.findByText("张三")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "我的作业" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "首页" })).toHaveAttribute(
       "href",
       "/s/home",
     );
-    expect(screen.getByRole("link", { name: "讲义" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "课程" })).toHaveAttribute(
       "href",
-      "/s/lectures",
+      "/s/courses",
     );
     expect(screen.getByRole("link", { name: "我的记录" })).toHaveAttribute(
       "href",
       "/s/records",
     );
+    // 顶栏不再有讲义入口（/s/lectures 保留为二级页面）
+    expect(
+      screen.queryByRole("link", { name: "讲义" }),
+    ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /退出/ })).toBeInTheDocument();
     // 子路由正常渲染
     expect(screen.getByTestId("route-stub")).toHaveTextContent("学生首页");

@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { StudentLoginRequest, StudentMeData } from "@tutor/contract";
 import {
   fetchStudentAssignmentsApi,
+  fetchStudentCoursesApi,
   fetchStudentLecturesApi,
   fetchStudentMe,
   loginStudentApi,
@@ -31,7 +32,7 @@ export function useStudentMe() {
   });
 }
 
-/** 登录成功后写入 me 缓存并预取我的作业/讲义（首页立即可用） */
+/** 登录成功后写入 me 缓存并预取我的作业/课程/讲义（首页立即可用，T2A.5 加课程） */
 function useApplyStudentAuthed() {
   const queryClient = useQueryClient();
   return (student: StudentMeData) => {
@@ -39,6 +40,10 @@ function useApplyStudentAuthed() {
     void queryClient.prefetchQuery({
       queryKey: ["student", "assignments"],
       queryFn: fetchStudentAssignmentsApi,
+    });
+    void queryClient.prefetchQuery({
+      queryKey: ["student", "courses"],
+      queryFn: fetchStudentCoursesApi,
     });
     void queryClient.prefetchQuery({
       queryKey: ["student", "lectures"],
