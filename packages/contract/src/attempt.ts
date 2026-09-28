@@ -21,7 +21,10 @@ import { studentAnswerSchema } from "./grading.ts";
  * - 分步提示（T2.11）：提示内容只经 POST /attempts/:id/hints 按需逐条下发；
  *   两个视图只回显「已解锁」的提示条目（hintsOpened，学生自己看过的不算泄露），
  *   未解锁条目的内容文本绝不出现在任何学生端响应（泄露矩阵专项断言，见
- *   routes/student-hints.test.ts）。
+ *   routes/student-hints.test.ts）；
+ * - 公布时机（T2A.8，D11）：assignment 来源 answerRelease='after_due' 且未到
+ *   截止时，结果视图降级为受限形态（answersReleased=false，见
+ *   attemptResultDataSchema.answersReleased 注释）；截止后自动恢复完整形态。
  *
  * 学生答案复用 grading.ts 的 StudentAnswer（T2.5），不在本文件重定义。
  */
@@ -215,6 +218,20 @@ export const attemptResultDataSchema = z.object({
   courseName: z.string().nullable(),
   /** 截止时间：UTC ISO；未设置为 null（course 来源恒 null） */
   dueAt: assignmentDueAtSchema.nullable(),
+  /**
+   * 答案是否已公布（T2A.8，D11）。false = 受限形态（assignment 来源且
+   * answerRelease='after_due' 且 now < dueAt，交卷瞬间未到截止同样适用）：
+   * - 逐题 answers / solutionMd / autoCorrect 一律 null（不下发参考答案、详解、
+   *   对错）；answer（本人答案）与 hintsOpened（本人已解锁提示）照常下发；
+   * - snapshot.stemMd 为 publicStemMd 公开化版（[[答案]] 标记替换为 [[]]，
+   *   与草稿视图同一防泄露口径）；
+   * - attempt.scoreAuto 置 null 投影（库里保留，截止后恢复真实值）；
+   * - summary 不泄露对错：correct/wrong/autoGradable = 0，pending 按 answered
+   *   口径（每道已答题都显示为「待批」），total/answered/unanswered 照常。
+   * 截止后（now ≥ dueAt）读时自动恢复完整形态（无定时任务）；on_submit 与
+   * course 来源恒为 true。
+   */
+  answersReleased: z.boolean(),
   /** 得分汇总 */
   summary: attemptScoreSummarySchema,
   /** 逐题结果分组（T2A.7：assignment 按单元序分节，course 单组；组内按题序） */

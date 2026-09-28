@@ -21,6 +21,7 @@ import {
   studentAnswerSchema,
 } from "@tutor/contract";
 import { grade } from "@tutor/grading";
+import { publicStemMd } from "@tutor/md-dsl";
 import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
@@ -89,7 +90,10 @@ import {
  * 安全口径（AGENTS 第 3 条）：草稿视图题目一律经 publicQuestionsOfRows 输出过滤
  * （QuestionPublic 形态）；结果视图的 answers/solutionMd/stemMd（原文含答案标记）
  * 只在交卷后下发；提示内容只经 T2.11 按需接口（hint-service.openHint）逐条下发，
- * 两个视图仅回显「已解锁」条目（hintsOpened）。
+ * 两个视图仅回显「已解锁」条目（hintsOpened）。T2A.8（D11）：作业
+ * answerRelease='after_due' 且未到截止时，结果视图（含交卷瞬间的 submit 响应）
+ * 降级为受限形态——只下发本人答案与已解锁提示，题干公开化、对错/得分不泄露
+ * （见 buildResultData）；截止后读时自动恢复。
  */
 
 /** attempt 行 → 摘要（接口形态） */
@@ -117,6 +121,25 @@ function requireAssignmentRow(db: Db, id: string): Assignment {
     throw new HttpError(404, "ASSIGNMENT_NOT_FOUND", "作业不存在");
   }
   return row;
+}
+
+/**
+ * 答案是否已公布（T2A.8，D11 的判定纯函数，服务测试单测覆盖）：
+ * - on_submit（默认）恒已公布；course 来源不适用本函数（D11 恒交卷即公布）；
+ * - after_due：now ≥ dueAt 才公布（**读时比较，无定时任务**——截止后下一次
+ *   请求自然恢复完整结果视图）；
+ * - after_due 而 dueAt 缺失：按未公布处理（fail closed）。该状态被
+ *   assignment-service 的 create/PATCH 组合校验 400 拦截，正常不可达，
+ *   防御性口径取不泄露的一侧。
+ */
+export function answersReleased(
+  assignment: Pick<Assignment, "answerRelease" | "dueAt">,
+  now: Date | string = new Date(),
+): boolean {
+  if (assignment.answerRelease !== "after_due") return true;
+  if (assignment.dueAt === null) return false;
+  const nowMs = now instanceof Date ? now.getTime() : Date.parse(now);
+  return Date.parse(assignment.dueAt) <= nowMs;
 }
 
 /**
@@ -667,12 +690,17 @@ function scoreAutoOf(graded: readonly GradedResponse[]): number | null {
  *   （T2.11 语义：交卷后仍可回看自己解锁过的提示）；
  * - attempt.status=submitted、submittedAt、scoreAuto 汇总、activeSec 总用时
  *   （各题之和；无任何事件时保持 NULL）；
- * - 返回结果视图（含答案与详解，AGENTS 第 3 条的「未交卷」限制就此解除）。
+ * - 返回结果视图（含答案与详解，AGENTS 第 3 条的「未交卷」限制就此解除；
+ *   T2A.8 例外：answerRelease='after_due' 且交卷瞬间未到截止时，响应同样是
+ *   受限形态——只下发本人答案，截止后恢复完整）。
+ *
+ * now 可注入（T2A.8 定时测试；默认当前时刻，submittedAt 亦取该时刻）。
  */
 export function submitAttempt(
   db: Db,
   studentId: string,
   attemptId: string,
+  now: Date | string = new Date(),
 ): AttemptResultData {
   const attempt = requireUsableAttempt(db, studentId, attemptId);
   if (attempt.status !== "draft") {
@@ -704,7 +732,7 @@ export function submitAttempt(
   });
   const scoreAuto = scoreAutoOf(graded);
 
-  const now = new Date().toISOString();
+  const nowIso = new Date(now).toISOString();
   const liveIds = new Set(graded.map((g) => g.row.id));
   db.transaction((tx) => {
     for (const g of graded) {
@@ -766,7 +794,7 @@ export function submitAttempt(
     tx.update(attempts)
       .set({
         status: "submitted",
-        submittedAt: now,
+        submittedAt: nowIso,
         scoreAuto,
         // 总有效用时 = 各题之和；无任何 focus 序列（未计算）保持 NULL
         activeSec:
@@ -781,7 +809,7 @@ export function submitAttempt(
       .run();
   });
 
-  return buildResultData(db, attemptId);
+  return buildResultData(db, attemptId, now);
 }
 
 // ---------- GET /api/student/attempts/:id ----------
@@ -793,17 +821,21 @@ export function submitAttempt(
  *   （泄露测试用 assertNoLeak 默认集合锁定）；
  * - submitted/graded → 结果视图：逐题快照 + 参考答案 + 详解 + 本人答案 +
  *   autoCorrect + 做题时已解锁提示（回看），得分汇总 + scoreAuto。
+ *   T2A.8：assignment 来源 answerRelease='after_due' 且未到截止 → 受限形态
+ *   （answersReleased=false，见 buildResultData 注释）。
+ * now 可注入（T2A.8 定时测试；默认当前时刻）。
  */
 export function getAttemptDetail(
   db: Db,
   studentId: string,
   attemptId: string,
+  now: Date | string = new Date(),
 ): AttemptDetailData {
   const attempt = requireUsableAttempt(db, studentId, attemptId);
   if (attempt.status === "draft") {
     return buildDraftData(db, attempt);
   }
-  return buildResultData(db, attemptId);
+  return buildResultData(db, attemptId, now);
 }
 
 /**
@@ -889,16 +921,52 @@ function scoreSummaryOf(
 }
 
 /**
- * 结果视图组装（T2A.7 分组化）：responses 行按**单元序 + 题序**分组排列
- * （assignment 按 assignment_units.order；course 单组；快照内容仍以冻结行为准，
- * 排序只影响展示顺序，题号全卷连续）。无快照的行（异常数据）被跳过并按缺失计
- * ——正常链路不发生。历史/异常兜底：题目单元已不在 attempt 单元集合内的行
+ * 结果视图组装（T2A.7 分组化；T2A.8 公布时机）：responses 行按**单元序 + 题序**
+ * 分组排列（assignment 按 assignment_units.order；course 单组；快照内容仍以冻结行
+ * 为准，排序只影响展示顺序，题号全卷连续）。无快照的行（异常数据）被跳过并按缺失
+ * 计——正常链路不发生。历史/异常兜底：题目单元已不在 attempt 单元集合内的行
  * （交卷后题目被移动单元等）按单元标题追加在末尾，不丢数据。
  * 历次记录的每次结果都使用各自 attempt 的 responses 快照行（D10：重做各次独立）。
+ *
+ * T2A.8（D11）公布时机：assignment 来源按作业 answerRelease + dueAt 与 now 判定
+ * （answersReleased 纯函数）；course 来源恒公布。未公布（受限形态）时逐题
+ * answers/solutionMd/autoCorrect 置 null、stemMd 经 publicStemMd 公开化（快照题干
+ * 含 [[答案]] 标记，与草稿视图同一防泄露口径）、attempt.scoreAuto 置 null 投影
+ * （库里保留）、summary 的对错计数不泄露（correct/wrong/autoGradable=0、
+ * pending=answered 口径——每道已答题显示为「待批」）。本人答案与已解锁提示照常。
+ * now 可注入（定时测试；默认当前时刻，截止后下一次请求自动恢复完整形态）。
  */
-function buildResultData(db: Db, attemptId: string): AttemptResultData {
+function buildResultData(
+  db: Db,
+  attemptId: string,
+  now: Date | string = new Date(),
+): AttemptResultData {
   const attempt = requireAttemptRow(db, attemptId);
   const meta = attemptSourceMeta(db, attempt);
+  // T2A.8：assignment 来源按作业判定；course 来源恒公布（D11 课程练习交卷即公布）
+  const assignmentRow =
+    attempt.sourceType === "assignment"
+      ? requireAssignmentRow(db, attempt.assignmentId ?? "")
+      : null;
+  const released =
+    assignmentRow === null || answersReleased(assignmentRow, now);
+
+  /** 受限形态的逐题投影（见函数头注释；已公布时原样返回） */
+  const releaseAwareQuestion = (item: AttemptResultQuestion) =>
+    released
+      ? item
+      : {
+          ...item,
+          snapshot: {
+            ...item.snapshot,
+            // 快照题干含 [[答案]] 标记：公开化后再下发（与草稿视图同口径）
+            stemMd: publicStemMd(item.snapshot.stemMd),
+          },
+          answers: null,
+          solutionMd: null,
+          autoCorrect: null,
+        };
+
   const rows = db
     .select({
       response: responses,
@@ -914,7 +982,9 @@ function buildResultData(db: Db, attemptId: string): AttemptResultData {
   const resultByQuestion = new Map<string, AttemptResultQuestion>();
   for (const row of rows) {
     const item = resultQuestionOf(row.response);
-    if (item !== null) resultByQuestion.set(row.questionId, item);
+    if (item !== null) {
+      resultByQuestion.set(row.questionId, releaseAwareQuestion(item));
+    }
   }
   const resultQuestions = [...resultByQuestion.values()];
 
@@ -954,12 +1024,33 @@ function buildResultData(db: Db, attemptId: string): AttemptResultData {
     });
   }
 
+  // 得分汇总：未公布时不泄露对错——correct/wrong/autoGradable 置 0，
+  // pending 按 answered 口径（每道已答题显示为「待批」，截止后恢复真实计数）
+  const fullSummary = scoreSummaryOf(resultQuestions);
+  const summary = released
+    ? fullSummary
+    : {
+        total: fullSummary.total,
+        answered: fullSummary.answered,
+        correct: 0,
+        wrong: 0,
+        pending: fullSummary.answered,
+        unanswered: fullSummary.unanswered,
+        autoGradable: 0,
+      };
+
+  // scoreAuto 同理：未公布时置 null 投影（库里保留，教师侧统计不受影响）
+  const attemptProjection = attemptSummaryOf(attempt);
+
   return {
-    attempt: attemptSummaryOf(attempt),
+    attempt: released
+      ? attemptProjection
+      : { ...attemptProjection, scoreAuto: null },
     title: meta.title,
     courseName: meta.courseName,
     dueAt: meta.dueAt,
-    summary: scoreSummaryOf(resultQuestions),
+    answersReleased: released,
+    summary,
     units: unitGroups,
   };
 }

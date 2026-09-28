@@ -8,6 +8,8 @@ import {
   attemptStartOkSchema,
   type StudentAssignmentListData,
 } from "@tutor/contract";
+import { publicStemMd } from "@tutor/md-dsl";
+import { eq } from "drizzle-orm";
 import type { Logger } from "pino";
 import pino from "pino";
 import { describe, expect, it } from "vitest";
@@ -27,7 +29,9 @@ import { assertNoLeak } from "../test/assert-no-leak.ts";
  * - 判分正确性（全对/部分错/未答组合）与 scoreAuto 口径（答对数/可自动判分数）；
  * - 泄露：draft 视图 assertNoLeak；submitted 视图放行答案/详解键后断言无提示内容；
  * - 越权：非本人 attempt 403、未登录 401、教师会话 401；
- * - 作业状态联动：开始作答 in_progress、交卷后 submitted。
+ * - 作业状态联动：开始作答 in_progress、交卷后 submitted；
+ * - T2A.8 答案公布时机：after_due 截止前 submit/详情两份响应受限（逐字段 +
+ *   assertNoLeak + 未解锁提示矩阵）、截止后完整、教师端 400 三态之创建/取消截止。
  * 夹具用 samples/v2/练习样例.md（八题七题型；题号顺序与 student-paper.test 一致）。
  */
 
@@ -164,11 +168,16 @@ async function createAssignment(
   teacherCookie: string,
   unitId: string,
   studentId: string,
+  extraBody: Record<string, unknown> = {},
 ): Promise<string> {
   const res = await app.request("/api/teacher/assignments", {
     method: "POST",
     headers: { "content-type": "application/json", cookie: teacherCookie },
-    body: JSON.stringify({ unitIds: [unitId], studentIds: [studentId] }),
+    body: JSON.stringify({
+      unitIds: [unitId],
+      studentIds: [studentId],
+      ...extraBody,
+    }),
   });
   expect(res.status).toBe(201);
   const body = (await res.json()) as { data: { id: string } };
@@ -734,6 +743,260 @@ describe("作业状态联动（GET /api/student/assignments）", () => {
     const after = await listAssignments(app, aCookie);
     expect(after.assignments.find((a) => a.id === assignmentId)?.status).toBe(
       "submitted",
+    );
+  });
+});
+
+describe("T2A.8 答案公布时机（after_due：截止前受限 / 截止后完整）", () => {
+  /** 远期截止（真实时钟下恒未到）与早已过期截止 */
+  const FAR_DUE = "2099-01-01T00:00:00.000Z";
+  const PAST_DUE = "2000-01-01T00:00:00.000Z";
+
+  it("after_due 截止前：submit 与 GET 详情两份响应都受限——无对错/参考答案/详解/含答案题干，assertNoLeak 通过", async () => {
+    const { app, db, teacherCookie } = await makeAttemptApp();
+    const importRes = await app.request("/api/teacher/import/commit", {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: teacherCookie },
+      body: JSON.stringify({ markdown: PRACTICE_MD, filename: "练习样例.md" }),
+    });
+    expect(importRes.status).toBe(200);
+    const unitId = (
+      (await importRes.json()) as { data: { units: { id: string }[] } }
+    ).data.units[0]?.id;
+    if (!unitId) throw new Error("样例导入未产出单元");
+    const studentsRes = await app.request("/api/teacher/students", {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: teacherCookie },
+      body: JSON.stringify({
+        displayName: "王五",
+        loginName: "王五",
+        password: STUDENT_PASSWORD,
+      }),
+    });
+    expect(studentsRes.status).toBe(201);
+    const studentId = (
+      (await studentsRes.json()) as { data: { student: { id: string } } }
+    ).data.student.id;
+    const assignmentId = await createAssignment(
+      app,
+      teacherCookie,
+      unitId,
+      studentId,
+      { dueAt: FAR_DUE, answerRelease: "after_due" },
+    );
+    const cookie = await loginStudent(app, "王五");
+
+    const attemptId = (await startAttemptOk(app, cookie, assignmentId))
+      .id as string;
+    await putAnswer(app, cookie, attemptId, Q.judge, {
+      kind: "judge",
+      value: true,
+    });
+    await putAnswer(app, cookie, attemptId, Q.fill, {
+      kind: "fill",
+      values: ["4", "-7", "1/2"],
+    });
+
+    // ① 交卷瞬间的 submit 响应：受限形态（交卷未到公布时机同样不下发）
+    const submitRes = await postSubmit(app, cookie, attemptId);
+    expect(submitRes.status).toBe(200);
+    const submitBody = (await submitRes.json()) as {
+      data: AttemptResultData;
+    };
+    expect(attemptResultOkSchema.safeParse(submitBody).success).toBe(true);
+    const submitted = submitBody.data;
+    expect(submitted.answersReleased).toBe(false);
+    expect(submitted.attempt.scoreAuto).toBeNull();
+    expect(submitted.summary).toEqual({
+      total: 8,
+      answered: 2,
+      correct: 0,
+      wrong: 0,
+      pending: 2,
+      unanswered: 6,
+      autoGradable: 0,
+    });
+
+    // ② GET 详情：同一受限形态，逐字段断言
+    const { res, body } = await getAttempt(app, cookie, attemptId);
+    expect(res.status).toBe(200);
+    expect(attemptResultOkSchema.safeParse(body).success).toBe(true);
+    const detail = (body as { data: AttemptResultData }).data;
+    expect(detail.answersReleased).toBe(false);
+    expect(detail.dueAt).toBe(FAR_DUE);
+    expect(detail.attempt.scoreAuto).toBeNull();
+
+    const qs = detail.units.flatMap((unit) => unit.questions);
+    expect(qs.length).toBe(8);
+    const rawStems = new Map(
+      db
+        .select({ id: questions.id, stemMd: questions.stemMd })
+        .from(questions)
+        .all()
+        .map((row) => [row.id, row.stemMd] as const),
+    );
+    for (const q of qs) {
+      expect(q.answers).toBeNull();
+      expect(q.solutionMd).toBeNull();
+      expect(q.autoCorrect).toBeNull();
+      // 题干 = 公开化版（比对 publicStemMd(库内原文)，[[答案]] 标记不残留）
+      expect(q.snapshot.stemMd).toBe(
+        publicStemMd(rawStems.get(q.snapshot.id) ?? ""),
+      );
+    }
+    // 本人答案照常（已答 2 题）
+    expect(qs.find((q) => q.questionId === Q.judge)?.answer).toEqual({
+      kind: "judge",
+      value: true,
+    });
+    expect(qs.find((q) => q.questionId === Q.fill)?.answer).toEqual({
+      kind: "fill",
+      values: ["4", "-7", "1/2"],
+    });
+
+    // 泄露矩阵：answer=本人答案放行；answers/solutionMd 键名放行（契约要求保留
+    // 可空键、值恒 null 已逐字段断言）；详解/答案标记/提示文本绝不出现
+    assertNoLeak(body, { allow: ["answer", "answers", "solutionMd"] });
+    const serialized = JSON.stringify(body);
+    expect(serialized).not.toContain("故选 B"); // 详解
+    expect(serialized).not.toContain("[[4]]"); // 含答案标记的原始题干
+    expect(serialized).not.toContain("[[正确]]");
+    for (const row of db
+      .select({ hintsJson: questions.hintsJson })
+      .from(questions)
+      .all()) {
+      for (const hint of JSON.parse(row.hintsJson) as string[]) {
+        expect(serialized).not.toContain(hint); // 未解锁提示内容（泄露矩阵）
+      }
+    }
+
+    // 库里判分照常写入（受限只是投影，教师侧统计不受影响）
+    const attemptRow = db
+      .select()
+      .from(attempts)
+      .where(eq(attempts.id, attemptId))
+      .get();
+    expect(attemptRow?.scoreAuto).not.toBeNull();
+  });
+
+  it("after_due 截止后（dueAt 已过）：交卷即完整形态", async () => {
+    const { app, teacherCookie } = await makeAttemptApp();
+    const importRes = await app.request("/api/teacher/import/commit", {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: teacherCookie },
+      body: JSON.stringify({ markdown: PRACTICE_MD, filename: "练习样例.md" }),
+    });
+    expect(importRes.status).toBe(200);
+    const unitId = (
+      (await importRes.json()) as { data: { units: { id: string }[] } }
+    ).data.units[0]?.id;
+    if (!unitId) throw new Error("样例导入未产出单元");
+    const studentsRes = await app.request("/api/teacher/students", {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: teacherCookie },
+      body: JSON.stringify({
+        displayName: "赵六",
+        loginName: "赵六",
+        password: STUDENT_PASSWORD,
+      }),
+    });
+    const studentId = (
+      (await studentsRes.json()) as { data: { student: { id: string } } }
+    ).data.student.id;
+    const assignmentId = await createAssignment(
+      app,
+      teacherCookie,
+      unitId,
+      studentId,
+      { dueAt: PAST_DUE, answerRelease: "after_due" },
+    );
+    const cookie = await loginStudent(app, "赵六");
+
+    const attemptId = (await startAttemptOk(app, cookie, assignmentId))
+      .id as string;
+    await putAnswer(app, cookie, attemptId, Q.judge, {
+      kind: "judge",
+      value: true,
+    });
+    const res = await postSubmit(app, cookie, attemptId);
+    expect(res.status).toBe(200);
+    const data = ((await res.json()) as { data: AttemptResultData }).data;
+    expect(data.answersReleased).toBe(true);
+    expect(data.attempt.scoreAuto).toBe(100);
+    const judge = data.units
+      .flatMap((unit) => unit.questions)
+      .find((q) => q.questionId === Q.judge);
+    expect(judge?.answers).toEqual({ kind: "judge", value: true });
+    expect(judge?.autoCorrect).toBe(true);
+    expect(JSON.stringify(data)).toContain("[[正确]]"); // 原始题干恢复下发
+  });
+
+  it("教师端 400：创建 after_due 无截止；after_due 下 PATCH 取消截止（VALIDATION_ERROR 中文缘由）", async () => {
+    const { app, teacherCookie, aCookie, assignmentId } =
+      await makeAttemptApp();
+
+    const listRes = await app.request("/api/teacher/assignments", {
+      headers: { cookie: teacherCookie },
+    });
+    const units = (
+      (await listRes.json()) as {
+        data: { assignments: { units: { unitId: string }[] }[] };
+      }
+    ).data.assignments[0]?.units;
+    const unitId = units?.[0]?.unitId;
+    if (!unitId) throw new Error("前置作业缺单元");
+    const studentId = await createStudent(app, teacherCookie, "孙七");
+
+    // 创建 after_due 而无截止 → 400
+    const badCreate = await app.request("/api/teacher/assignments", {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: teacherCookie },
+      body: JSON.stringify({
+        unitIds: [unitId],
+        studentIds: [studentId],
+        answerRelease: "after_due",
+      }),
+    });
+    expect(badCreate.status).toBe(400);
+    const createErr = (await badCreate.json()) as ApiErr;
+    expect(createErr.error).toBe("VALIDATION_ERROR");
+    expect(createErr.message).toContain("截止时间");
+
+    // 合法创建（带截止）后取消截止 → 400
+    const okCreate = await app.request("/api/teacher/assignments", {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: teacherCookie },
+      body: JSON.stringify({
+        unitIds: [unitId],
+        studentIds: [studentId],
+        dueAt: FAR_DUE,
+        answerRelease: "after_due",
+      }),
+    });
+    expect(okCreate.status).toBe(201);
+    const dueAssignmentId = (
+      (await okCreate.json()) as { data: { id: string } }
+    ).data.id;
+    const badPatch = await app.request(
+      `/api/teacher/assignments/${dueAssignmentId}`,
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json", cookie: teacherCookie },
+        body: JSON.stringify({ dueAt: null }),
+      },
+    );
+    expect(badPatch.status).toBe(400);
+    const patchErr = (await badPatch.json()) as ApiErr;
+    expect(patchErr.error).toBe("VALIDATION_ERROR");
+    expect(patchErr.message).toContain("截止后公布");
+
+    // 对照：默认 on_submit 作业照常交卷即完整（回归）
+    const attemptId = (await startAttemptOk(app, aCookie, assignmentId))
+      .id as string;
+    expect((await postSubmit(app, aCookie, attemptId)).status).toBe(200);
+    const { body } = await getAttempt(app, aCookie, attemptId);
+    expect((body as { data: AttemptResultData }).data.answersReleased).toBe(
+      true,
     );
   });
 });

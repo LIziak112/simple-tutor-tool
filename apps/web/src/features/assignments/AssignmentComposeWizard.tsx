@@ -58,7 +58,9 @@ import { DiscardConfirmDialog } from "./DiscardConfirmDialog";
  *   （前端即时过滤，§4-3）。右侧已选列表按选择顺序排列，可拖拽排序并有上移/下移
  *   兜底（§4-9），同一单元不可重复选（选择器中标记「已选」）；
  * - 第③步 确认：标题（占位符 = defaultAssignmentTitle 缺省组合）+ 截止时间
- *   （北京时间，附「x 天后」相对提示，§4-8）+ D15「已做过」提示（仅提示不阻止）；
+ *   （北京时间，附「x 天后」相对提示，§4-8）+ 答案公布时机（T2A.8：交卷即公布
+ *   （默认）/ 截止后公布——后者须先填截止，否则即时提示并阻止提交）+
+ *   D15「已做过」提示（仅提示不阻止）；
  * - 关闭守卫：有任何已选内容 / 已填字段时关闭需二次确认（§4-5）。
  * 三态齐全（加载 / 空态指引 / 错误重试），交互目标 ≥44px，文案中文。
  */
@@ -123,6 +125,10 @@ export function AssignmentComposeWizard({
   const [selectedUnitIds, setSelectedUnitIds] = useState<string[]>([]);
   const [title, setTitle] = useState("");
   const [dueLocal, setDueLocal] = useState("");
+  /** 答案公布时机（T2A.8，D11）：默认交卷即公布；截止后公布须先填截止时间 */
+  const [answerRelease, setAnswerRelease] = useState<"on_submit" | "after_due">(
+    "on_submit",
+  );
   const [tab, setTab] = useState<"course" | "library">("course");
   const [folderId, setFolderId] = useState<string>("all");
   const [search, setSearch] = useState("");
@@ -219,7 +225,8 @@ export function AssignmentComposeWizard({
     studentIds.size > 0 ||
     selectedUnitIds.length > 0 ||
     title.trim().length > 0 ||
-    dueLocal.length > 0;
+    dueLocal.length > 0 ||
+    answerRelease !== "on_submit";
 
   /** 关闭守卫（§4-5）：有已选内容 / 已填字段先确认；提交中不允许关闭 */
   function requestClose(): void {
@@ -267,6 +274,8 @@ export function AssignmentComposeWizard({
 
   function handleSubmit(event: React.FormEvent): void {
     event.preventDefault();
+    // T2A.8：选了「截止后公布」而没有截止时间时前端即时拦截（服务端同口径 400）
+    if (answerRelease === "after_due" && dueLocal.length === 0) return;
     createMutation.mutate(
       {
         unitIds: selectedUnitIds,
@@ -274,6 +283,7 @@ export function AssignmentComposeWizard({
         ...(courseId.length > 0 ? { courseId } : {}),
         ...(title.trim().length > 0 ? { title: title.trim() } : {}),
         ...(dueLocal.length > 0 ? { dueAt: localInputToUtcIso(dueLocal) } : {}),
+        answerRelease,
       },
       { onSuccess: onClose },
     );
@@ -378,6 +388,7 @@ export function AssignmentComposeWizard({
             totalQuestions={totalQuestions}
             title={title}
             dueLocal={dueLocal}
+            answerRelease={answerRelease}
             checkPending={checkMutation.isPending}
             checkError={
               checkMutation.isError
@@ -391,6 +402,7 @@ export function AssignmentComposeWizard({
             pending={createMutation.isPending}
             onTitleChange={setTitle}
             onDueChange={setDueLocal}
+            onAnswerReleaseChange={setAnswerRelease}
             onSubmit={handleSubmit}
           />
         )}
@@ -964,6 +976,7 @@ function StepConfirm({
   totalQuestions,
   title,
   dueLocal,
+  answerRelease,
   checkPending,
   checkError,
   checkHints,
@@ -971,6 +984,7 @@ function StepConfirm({
   pending,
   onTitleChange,
   onDueChange,
+  onAnswerReleaseChange,
   onSubmit,
 }: {
   courseName: string | null;
@@ -979,6 +993,7 @@ function StepConfirm({
   totalQuestions: number;
   title: string;
   dueLocal: string;
+  answerRelease: "on_submit" | "after_due";
   checkPending: boolean;
   checkError: string | null;
   checkHints: AssignmentCheckHint[];
@@ -986,12 +1001,22 @@ function StepConfirm({
   pending: boolean;
   onTitleChange: (title: string) => void;
   onDueChange: (dueLocal: string) => void;
+  onAnswerReleaseChange: (release: "on_submit" | "after_due") => void;
   onSubmit: (event: React.FormEvent) => void;
 }) {
   const dueHint = dueRelativeHint(dueLocal);
   const defaultTitle = defaultAssignmentTitle(
     selectedUnits.map((unit) => unit.title),
   );
+  /** T2A.8：「截止后公布」必须先有截止时间——即时提示并阻止提交 */
+  const releaseBlocked = answerRelease === "after_due" && dueLocal.length === 0;
+  /** 公布时机单选行的样式（选中态与添加名单弹层同一视觉语言） */
+  const releaseOptionClass = (selected: boolean): string =>
+    `flex min-h-11 flex-1 cursor-pointer items-start gap-3 rounded-lg border px-3 py-2.5 text-sm outline-none select-none transition-colors has-[:focus-visible]:ring-3 has-[:focus-visible]:ring-ring/50 ${
+      selected
+        ? "border-primary/50 bg-primary/5"
+        : "border-border hover:bg-muted/50"
+    }`;
 
   return (
     <section aria-label="第③步 确认布置" className="flex flex-col gap-4">
@@ -1045,6 +1070,52 @@ function StepConfirm({
           )}
         </div>
 
+        {/* T2A.8（D11）答案公布时机：交卷即公布（默认）/ 截止后公布 */}
+        <fieldset className="flex flex-col gap-1.5">
+          <legend className="text-sm">答案公布时机</legend>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <label
+              className={releaseOptionClass(answerRelease === "on_submit")}
+            >
+              <input
+                type="radio"
+                name="wizard-answer-release"
+                className="mt-0.5 size-5 shrink-0 accent-[var(--color-primary)]"
+                checked={answerRelease === "on_submit"}
+                onChange={() => onAnswerReleaseChange("on_submit")}
+              />
+              <span className="flex flex-col gap-0.5">
+                <span className="font-medium">交卷即公布（默认）</span>
+                <span className="text-xs text-muted-foreground">
+                  学生交卷后立刻看到对错、参考答案与详解
+                </span>
+              </span>
+            </label>
+            <label
+              className={releaseOptionClass(answerRelease === "after_due")}
+            >
+              <input
+                type="radio"
+                name="wizard-answer-release"
+                className="mt-0.5 size-5 shrink-0 accent-[var(--color-primary)]"
+                checked={answerRelease === "after_due"}
+                onChange={() => onAnswerReleaseChange("after_due")}
+              />
+              <span className="flex flex-col gap-0.5">
+                <span className="font-medium">截止后公布</span>
+                <span className="text-xs text-muted-foreground">
+                  截止时间前学生只见本人答案，截止后统一公布
+                </span>
+              </span>
+            </label>
+          </div>
+          {releaseBlocked && (
+            <p role="alert" className="text-xs text-destructive">
+              选择「截止后公布」时必须先填写截止时间。
+            </p>
+          )}
+        </fieldset>
+
         {/* D15 已做过提示（仅提示不阻止） */}
         {checkPending && (
           <p className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -1081,7 +1152,11 @@ function StepConfirm({
           </p>
         )}
 
-        <Button type="submit" className="min-h-11 px-4" disabled={pending}>
+        <Button
+          type="submit"
+          className="min-h-11 px-4"
+          disabled={pending || releaseBlocked}
+        >
           {pending ? (
             <>
               <Loader2 aria-hidden className="animate-spin" />

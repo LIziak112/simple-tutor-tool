@@ -188,6 +188,7 @@ const RESULT_DATA: AttemptResultData = {
   title: "周末加练",
   courseName: null,
   dueAt: "2026-10-01T12:00:00.000Z",
+  answersReleased: true,
   summary: {
     total: 2,
     answered: 2,

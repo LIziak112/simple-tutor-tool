@@ -107,6 +107,25 @@ describe("assignmentCreateRequestSchema（T2A.7 多单元 + 课程）", () => {
       }).success,
     ).toBe(false);
   });
+
+  it("answerRelease（T2A.8）可选、只接受两个枚举值（after_due 须配 dueAt 由服务端 400）", () => {
+    const base = { unitIds: [UNIT_ID], studentIds: [STUDENT_A] };
+    // 缺省合法（默认 on_submit 由服务端补齐）
+    expect(assignmentCreateRequestSchema.safeParse(base).success).toBe(true);
+    expect(
+      assignmentCreateRequestSchema.parse({
+        ...base,
+        dueAt: DUE_AT,
+        answerRelease: "after_due",
+      }).answerRelease,
+    ).toBe("after_due");
+    expect(
+      assignmentCreateRequestSchema.safeParse({
+        ...base,
+        answerRelease: "sometime",
+      }).success,
+    ).toBe(false);
+  });
 });
 
 describe("defaultAssignmentTitle（缺省标题规则，D12）", () => {
@@ -162,6 +181,23 @@ describe("assignmentUpdateRequestSchema（T2A.7 增量名单 + 内容锁定开�
       assignmentUpdateRequestSchema.safeParse({
         addStudentIds: ["nope"],
       }).success,
+    ).toBe(false);
+  });
+
+  it("answerRelease（T2A.8）可选枚举；组合校验（after_due 须有截止）由服务端 400", () => {
+    expect(
+      assignmentUpdateRequestSchema.safeParse({ answerRelease: "after_due" })
+        .success,
+    ).toBe(true);
+    expect(
+      assignmentUpdateRequestSchema.safeParse({
+        answerRelease: "on_submit",
+        dueAt: null,
+      }).success,
+    ).toBe(true);
+    expect(
+      assignmentUpdateRequestSchema.safeParse({ answerRelease: "never" })
+        .success,
     ).toBe(false);
   });
 });
@@ -229,6 +265,7 @@ describe("teacherAssignmentSchema（T2A.7 列表行字段集合）", () => {
       "courseName",
       "title",
       "dueAt",
+      "answerRelease",
       "units",
       "totalQuestionCount",
       "containsDeletedUnit",

@@ -25,6 +25,7 @@ const DATA: AttemptResultData = {
   title: "周末加练",
   courseName: null,
   dueAt: null,
+  answersReleased: true,
   summary: {
     total: 4,
     answered: 3,
@@ -251,5 +252,83 @@ describe("逐题结果卡", () => {
     ).toBeInTheDocument();
     // 只有一道题解锁过提示 → 区块标题只出现一次
     expect(screen.getAllByText(/做题时看过的提示/).length).toBe(1);
+  });
+});
+
+describe("T2A.8 未公布形态（answersReleased=false，截止后公布且未到截止）", () => {
+  /** 基础单元（DATA 单元；noUncheckedIndexedAccess 下先收窄再展开） */
+  const baseUnit = DATA.units[0];
+  /** 受限形态的逐题：answers/solutionMd/autoCorrect 全 null、题干公开化 */
+  const restrictedQuestions = (baseUnit?.questions ?? []).map((question) => ({
+    ...question,
+    snapshot: {
+      ...question.snapshot,
+      // 公开化版题干（[[答案]] 标记替换为 [[]]）
+      stemMd: question.snapshot.stemMd.replace(/\[\[[^[\]]*\]\]/g, "[[]]"),
+    },
+    answers: null,
+    solutionMd: null,
+    autoCorrect: null,
+  }));
+  /** 受限形态：服务端口径——逐题受限 + scoreAuto 置 null 投影 +
+   * summary 对错零化（pending=answered 口径） */
+  const RESTRICTED: AttemptResultData = {
+    ...DATA,
+    answersReleased: false,
+    dueAt: "2026-10-01T12:00:00.000Z",
+    attempt: { ...DATA.attempt, scoreAuto: null },
+    summary: {
+      total: 4,
+      answered: 3,
+      correct: 0,
+      wrong: 0,
+      pending: 3,
+      unanswered: 1,
+      autoGradable: 0,
+    },
+    units:
+      baseUnit === undefined
+        ? []
+        : [{ ...baseUnit, questions: restrictedQuestions }],
+  };
+
+  it("汇总卡替换为「已交卷，答案将在截止后公布」横幅：无得分数字、无对错计数、含截止时间与已答统计", () => {
+    render(<AttemptResultView data={RESTRICTED} onBackHome={vi.fn()} />);
+    expect(screen.getByText(/已交卷，答案将在截止后公布/)).toBeInTheDocument();
+    expect(screen.getByText(/截止时间：/)).toBeInTheDocument();
+    expect(screen.queryByText(/自动判分得分/)).toBeNull();
+    expect(screen.queryByText("60")).toBeNull();
+    const bodyText = document.body.textContent ?? "";
+    expect(bodyText).not.toContain("答对");
+    expect(bodyText).not.toContain("答错");
+    expect(bodyText).not.toContain("待批");
+    expect(bodyText).toContain("已作答 3 题 / 共 4 题");
+    // 标题后缀从「批改结果」换成「已交卷」
+    expect(screen.getByText(/周末加练 · 已交卷/)).toBeInTheDocument();
+  });
+
+  it("逐题卡只渲染本人作答内容：无对错图标、无参考答案、无详解；本人答案与已解锁提示保留", () => {
+    render(<AttemptResultView data={RESTRICTED} onBackHome={vi.fn()} />);
+    expect(screen.queryAllByLabelText("答对").length).toBe(0);
+    expect(screen.queryAllByLabelText("答错").length).toBe(0);
+    expect(screen.queryAllByLabelText("待批改").length).toBe(0);
+    expect(screen.queryAllByText("参考答案：").length).toBe(0);
+    expect(screen.queryAllByRole("button", { name: /查看详解/ }).length).toBe(
+      0,
+    );
+    // 详解文本（收起时也不渲染）与答案标记题干不出现
+    expect(screen.queryByText(/是正数与负数的分界点/)).toBeNull();
+    expect(screen.queryByText(/\[\[正确\]\]/)).toBeNull();
+    // 本人答案与做题时看过的提示照常
+    expect(screen.getAllByText("你的答案：").length).toBe(4);
+    expect(screen.getByText(/做题时看过的提示（1 条）/)).toBeInTheDocument();
+  });
+
+  it("对照：answersReleased=true（默认公布）完整渲染（回归保障）", () => {
+    renderView();
+    expect(screen.queryByText(/已交卷，答案将在截止后公布/)).toBeNull();
+    expect(screen.getAllByLabelText("答对").length).toBe(1);
+    expect(screen.getAllByText("参考答案：").length).toBe(4);
+    expect(screen.getAllByRole("button", { name: /查看详解/ }).length).toBe(2);
   });
 });

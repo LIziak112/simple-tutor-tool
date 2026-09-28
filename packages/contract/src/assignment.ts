@@ -3,12 +3,13 @@ import { questionPublicSchema } from "./content.ts";
 
 /**
  * 作业契约（T2.2 起为权威定义；T2A.7 大改——多单元内容 + 按课程布置 + 名单增删
- * + 内容锁定，D12–D16）：教师端布置作业 CRUD 请求/响应、布置前「已做过」检查
- * （D15）、作业列表（按课程筛选）与详情、学生端作业列表与试卷、错误码。
+ * + 内容锁定，D12–D16；T2A.8 追加答案公布时机 answerRelease，D11）：
+ * 教师端布置作业 CRUD 请求/响应、布置前「已做过」检查（D15）、作业列表（按课程
+ * 筛选）与详情、学生端作业列表与试卷、错误码。
  * 依据：docs/技术架构与实施方案.md §5.2（assignments / assignment_units /
- * assignment_students 表、attempts 状态字段）、docs/Phase2改进任务清单.md §2
- * D12（多单元）、D13（名单增删与课程快照）、D14（内容锁定）、D15（已做过提示）、
- * D16（资源删除不影响作业）、§5 T2A.7。
+ * assignment_students 表、attempts 状态字段）、docs/Phase2A改进任务清单.md §2
+ * D11（答案公布时机）、D12（多单元）、D13（名单增删与课程快照）、D14（内容锁定）、
+ * D15（已做过提示）、D16（资源删除不影响作业）、§5 T2A.7/T2A.8。
  *
  * 约定（与 student.ts / content-api.ts 一致）：
  * - 本文件只定义请求体/查询参数与 data 部分；响应壳统一由 index.ts 描述，
@@ -60,6 +61,16 @@ export const assignmentTitleSchema = z
  */
 export const assignmentDueAtSchema = z.iso.datetime({ offset: false });
 
+/**
+ * 答案公布时机（T2A.8，D11）：on_submit=交卷即公布（默认，现状语义）；
+ * after_due=截止后公布——**必须设置截止时间**：create 选 after_due 而 dueAt 缺失、
+ * 或 PATCH 把 dueAt 置 null / 去掉截止时当前为 after_due，均 400 VALIDATION_ERROR
+ * （防死锁态：永不公布）。截止前学生结果视图只下发「已交卷」与本人答案，
+ * 截止后（now ≥ dueAt）读时自动恢复完整结果（无定时任务）。
+ * course 来源作答恒为交卷即公布（D11），不适用本字段。
+ */
+export const assignmentAnswerReleaseSchema = z.enum(["on_submit", "after_due"]);
+
 /** 学生 id（crypto.randomUUID；studentIds 由服务端逐个校验存在性） */
 const studentIdSchema = z.uuid("studentId 必须是 UUID 格式");
 
@@ -89,7 +100,8 @@ export function defaultAssignmentTitle(unitTitles: readonly string[]): string {
  *   带名单——名单由 studentIds 显式给出（前端向导负责「带出课程成员」交互）；
  * - title 缺省规则见 defaultAssignmentTitle；
  * - studentIds 至少一名（服务端去重并逐个校验存在）；
- * - dueAt 可选（UTC ISO）。
+ * - dueAt 可选（UTC ISO）；answerRelease 可选（T2A.8，默认 on_submit；
+ *   after_due 时 dueAt 必填，否则服务端 400 VALIDATION_ERROR）。
  */
 export const assignmentCreateRequestSchema = z.object({
   title: assignmentTitleSchema.optional(),
@@ -97,6 +109,7 @@ export const assignmentCreateRequestSchema = z.object({
   unitIds: z.array(unitIdSchema).min(1, "作业必须至少包含一个练习单元"),
   studentIds: z.array(studentIdSchema).min(1, "作业必须至少指派一名学生"),
   dueAt: assignmentDueAtSchema.optional(),
+  answerRelease: assignmentAnswerReleaseSchema.optional(),
 });
 
 /**
@@ -109,11 +122,15 @@ export const assignmentCreateRequestSchema = z.object({
  * - removeStudentIds：增量移出名单（校验存在且在册）。移出的学生中若有人已
  *   开始作答（存在该作业的 attempt），必须携带 confirmStarted: true，否则
  *   409 CONFIRM_REQUIRED 且错误壳附带 _students: [{studentId, displayName}]；
- * - addStudentIds 与 removeStudentIds 的交集 → 400 VALIDATION_ERROR。
+ * - addStudentIds 与 removeStudentIds 的交集 → 400 VALIDATION_ERROR；
+ * - answerRelease：改公布时机（T2A.8）。与 dueAt 的组合校验：改后状态为
+ *   after_due 而截止缺失（当前无截止直接改 after_due，或 after_due 下把
+ *   dueAt 置 null / 取消截止）→ 400 VALIDATION_ERROR（防死锁态）。
  */
 export const assignmentUpdateRequestSchema = z.object({
   title: assignmentTitleSchema.optional(),
   dueAt: assignmentDueAtSchema.nullable().optional(),
+  answerRelease: assignmentAnswerReleaseSchema.optional(),
   unitIds: z.array(unitIdSchema).min(1, "unitIds 不能为空数组").optional(),
   addStudentIds: z.array(studentIdSchema).optional(),
   removeStudentIds: z.array(studentIdSchema).optional(),
@@ -203,6 +220,8 @@ export const teacherAssignmentSchema = z.object({
   title: z.string().min(1),
   /** 截止时间：UTC ISO；未设置为 null */
   dueAt: assignmentDueAtSchema.nullable(),
+  /** 答案公布时机（T2A.8，D11）：交卷即公布（默认）/ 截止后公布（需截止时间） */
+  answerRelease: assignmentAnswerReleaseSchema,
   /** 单元列表（按布置顺序；含软删单元） */
   units: z.array(teacherAssignmentUnitSchema),
   /** 全部单元 live 题数之和（学生答题页题数与此一致） */
@@ -385,6 +404,9 @@ export const studentAssignmentListOkSchema = apiOkExtend(
 // ---------- 推断类型导出 ----------
 
 export type AssignmentStatus = z.infer<typeof assignmentStatusSchema>;
+export type AssignmentAnswerRelease = z.infer<
+  typeof assignmentAnswerReleaseSchema
+>;
 export type AssignmentCreateRequest = z.infer<
   typeof assignmentCreateRequestSchema
 >;

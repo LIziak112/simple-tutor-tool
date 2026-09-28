@@ -438,6 +438,16 @@ export const assignments = sqliteTable("assignments", {
   title: text("title").notNull(),
   /** 截止时间：UTC ISO 字符串；未设置为 NULL（PATCH 显式置 null = 取消截止） */
   dueAt: text("due_at"),
+  /**
+   * 答案公布时机（T2A.8，D11）：on_submit=交卷即公布（默认，旧数据同语义，无需回填）；
+   * after_due=截止后公布——服务层强制要求 dueAt 非空（create 缺 dueAt / PATCH 取消
+   * 截止时为 after_due → 400，防「永不公布」死锁态）。公布与否在读结果视图时
+   * 比较 dueAt 与当前时间（无定时任务）；course 来源作答不适用本字段（恒交卷即公布）。
+   */
+  answerRelease: text("answer_release")
+    .$type<"on_submit" | "after_due">()
+    .notNull()
+    .default("on_submit"),
   /** 删除时间：UTC ISO 字符串；未删除为 NULL（软删，作答保留） */
   deletedAt: text("deleted_at"),
   /** 创建时间：UTC ISO 字符串 */

@@ -98,6 +98,8 @@ describe("StudentAttemptPage（/s/attempts/:attemptId，T2A.6）", () => {
         submittedAt: "2026-09-27T02:30:00.000Z",
         scoreAuto: 100,
       },
+      // T2A.8：课程练习恒交卷即公布（D11）——结果视图必带 answersReleased
+      answersReleased: true,
       summary: {
         total: 1,
         answered: 1,

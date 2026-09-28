@@ -308,6 +308,7 @@ function makeAssignment(): TeacherAssignment {
     courseName: null,
     title: "周末加练",
     dueAt: null,
+    answerRelease: "on_submit",
     units: [],
     totalQuestionCount: 3,
     containsDeletedUnit: false,
@@ -539,7 +540,7 @@ describe("AssignmentComposeWizard 第③步 确认", () => {
     fireEvent.change(screen.getByLabelText(/作业标题/), {
       target: { value: "国庆专项" },
     });
-    fireEvent.change(screen.getByLabelText(/截止时间/), {
+    fireEvent.change(screen.getByLabelText(/截止时间（可选，北京时间）/), {
       target: { value: "2026-10-01T20:00" },
     });
     fireEvent.click(
@@ -553,6 +554,41 @@ describe("AssignmentComposeWizard 第③步 确认", () => {
       courseId: COURSE_ID,
       title: "国庆专项",
       dueAt: localInputToUtcIso("2026-10-01T20:00"),
+      answerRelease: "on_submit",
+    });
+  });
+
+  it("T2A.8 公布时机：默认交卷即公布；选「截止后公布」未填截止 → 即时提示且提交禁用；填截止后请求体带 answerRelease", async () => {
+    await openStep2();
+    clickCourseUnit(UNIT_TITLES.A);
+    fireEvent.click(screen.getByRole("button", { name: "下一步" }));
+    await screen.findByText("③ 确认");
+
+    // 默认选中「交卷即公布」，无阻断提示
+    expect(
+      screen.getByRole("radio", { name: /交卷即公布（默认）/ }),
+    ).toBeChecked();
+    expect(
+      screen.getByRole("button", { name: /布置作业（1 个单元/ }),
+    ).toBeEnabled();
+
+    // 切「截止后公布」而未填截止 → 即时提示 + 提交禁用
+    fireEvent.click(screen.getByRole("radio", { name: /截止后公布/ }));
+    expect(screen.getByText(/必须先填写截止时间/)).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /布置作业（1 个单元/ }),
+    ).toBeDisabled();
+
+    // 填上截止 → 提示消失、提交恢复，请求体带 answerRelease=after_due 与 dueAt
+    fireEvent.change(screen.getByLabelText(/截止时间（可选，北京时间）/), {
+      target: { value: "2026-10-01T20:00" },
+    });
+    expect(screen.queryByText(/必须先填写截止时间/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /布置作业（1 个单元/ }));
+    await waitFor(() => expect(mockedCreate).toHaveBeenCalledTimes(1));
+    expect(mockedCreate.mock.calls[0]?.[0]).toMatchObject({
+      dueAt: localInputToUtcIso("2026-10-01T20:00"),
+      answerRelease: "after_due",
     });
   });
 
@@ -617,6 +653,7 @@ describe("AssignmentComposeWizard 第③步 确认", () => {
     expect(mockedCreate.mock.calls[0]?.[0]).toEqual({
       unitIds: [UNIT_A_ID],
       studentIds: [STUDENT_B_ID],
+      answerRelease: "on_submit",
     });
   });
 });
