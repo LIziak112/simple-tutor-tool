@@ -139,7 +139,7 @@ async function makeInkApp(): Promise<{
   const createRes = await app.request("/api/teacher/assignments", {
     method: "POST",
     headers: { "content-type": "application/json", cookie: teacherCookie },
-    body: JSON.stringify({ unitId, studentIds: [aId] }),
+    body: JSON.stringify({ unitIds: [unitId], studentIds: [aId] }),
   });
   expect(createRes.status).toBe(201);
   const assignmentId = ((await createRes.json()) as { data: { id: string } })

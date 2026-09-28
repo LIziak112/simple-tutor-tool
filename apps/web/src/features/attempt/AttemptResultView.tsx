@@ -282,6 +282,10 @@ export function AttemptResultView({
   onBackHome: () => void;
 }) {
   const { attempt, summary } = data;
+  // T2A.7：逐题结果按单元分组；题号全卷连续（累计 index）。
+  // 多单元时渲染节标题（单元标题），单单元不显示节头（与答题视图一致）。
+  const flatQuestions = data.units.flatMap((unit) => unit.questions);
+  const showUnitHeaders = data.units.length > 1;
   return (
     <div className="flex flex-col gap-5">
       {/* 得分汇总卡 */}
@@ -294,11 +298,13 @@ export function AttemptResultView({
             {data.title} · 批改结果
           </h2>
           {/* 来源行（T2A.6，与答题视图同口径）：课程练习带次数（历次回看可分辨
-              第几次）；作业标「作业」 */}
+              第几次）；作业标「作业」（挂课程时「作业 · 课程名」，T2A.7） */}
           <p className="text-xs text-muted-foreground">
             {attempt.sourceType === "course"
               ? `课程：${data.courseName ?? ""} · 第 ${attempt.attemptNo} 次`
-              : "作业"}
+              : data.courseName !== null
+                ? `作业 · ${data.courseName}`
+                : "作业"}
           </p>
           {attempt.submittedAt !== null && (
             <p className="text-xs text-muted-foreground">
@@ -342,15 +348,26 @@ export function AttemptResultView({
         </Button>
       </section>
 
-      {/* 逐题结果 */}
+      {/* 逐题结果（T2A.7：多单元按节分组，题号全卷连续） */}
       <ol className="flex flex-col gap-4">
-        {data.questions.map((question, index) => (
-          <li key={question.questionId}>
-            <ResultQuestionCard
-              index={index}
-              question={question}
-              attemptId={attempt.id}
-            />
+        {data.units.map((unit) => (
+          <li key={unit.id} className="flex flex-col gap-4">
+            {showUnitHeaders && (
+              <h3 className="border-b border-border pb-1.5 text-sm font-semibold text-muted-foreground">
+                {unit.title}
+              </h3>
+            )}
+            <ol className="flex flex-col gap-4">
+              {unit.questions.map((question) => (
+                <li key={question.questionId}>
+                  <ResultQuestionCard
+                    index={flatQuestions.indexOf(question)}
+                    question={question}
+                    attemptId={attempt.id}
+                  />
+                </li>
+              ))}
+            </ol>
           </li>
         ))}
       </ol>

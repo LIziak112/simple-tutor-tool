@@ -14,7 +14,9 @@ import { runBackfills } from "./backfill.ts";
 import { createDb, type Db } from "./client.ts";
 import { resolveMigrationsFolder, runMigrations } from "./migrate.ts";
 import {
+  assignmentStudents,
   assignments,
+  assignmentUnits,
   attempts,
   courseItems,
   courseStudents,
@@ -29,18 +31,22 @@ import { createTestDb } from "./test-utils.ts";
 /**
  * D23 数据搬迁测试（T2A.1 验收项）：「T2A 前结构」fixture 库 → 迁移 → 回填 → 断言。
  *
- * 旧库构造方式：把真实迁移目录截断到最后一个 T2A 前迁移（0008）复制到临时目录，
+ * 旧库构造方式：把真实迁移目录截断到指定边界迁移复制到临时目录，
  * 用 drizzle 官方 migrator 建出旧结构（journal 记录完整，随后 runMigrations 只补
- * 0009+）；fixture 数据用原生 SQL 插入（此时新 schema 的 drizzle 插入会带新列，
- * 对旧表不适用）。fixture 规模按任务要求：2 课程、3 讲义、4 单元、2 学生、
- * 1 作业、1 已交卷 attempt。
+ * 边界之后的迁移）；fixture 数据用原生 SQL 插入（此时新 schema 的 drizzle 插入
+ * 会带新列，对旧表不适用）。fixture 规模按任务要求：2 课程、3 讲义、4 单元、
+ * 2 学生、1 作业、1 已交卷 attempt。
+ *
+ * T2A.7（D23-5）用 T2A.6 时代结构（边界 0012）另建 fixture，见下方独立 describe。
  */
 
 /** T2A 前最后一个迁移的 tag（此后均为 Phase 2A 结构变更） */
 const PRE_T2A_LAST_TAG = "0008_curved_hex";
+/** T2A.7 前最后一个迁移的 tag（T2A.6 时代：attempts 已带来源列，作业仍单单元） */
+const PRE_T2A7_LAST_TAG = "0012_aromatic_piledriver";
 
-/** 用真实迁移目录的前半段（0000–0008）在临时目录拼出「T2A 前迁移目录」 */
-function makePreT2aMigrationsFolder(): string {
+/** 用真实迁移目录的前半段（0000 至 lastTag）拼出截断版迁移目录 */
+function makeMigrationsFolderUpTo(lastTag: string): string {
   const src = resolveMigrationsFolder();
   const journal: {
     version: string;
@@ -50,10 +56,10 @@ function makePreT2aMigrationsFolder(): string {
   const kept: { tag: string }[] = [];
   for (const entry of journal.entries) {
     kept.push(entry);
-    if (entry.tag === PRE_T2A_LAST_TAG) break;
+    if (entry.tag === lastTag) break;
   }
-  if (kept.at(-1)?.tag !== PRE_T2A_LAST_TAG) {
-    throw new Error(`迁移目录中未找到 T2A 前边界 ${PRE_T2A_LAST_TAG}`);
+  if (kept.at(-1)?.tag !== lastTag) {
+    throw new Error(`迁移目录中未找到边界 ${lastTag}`);
   }
   const tmp = mkdtempSync(join(tmpdir(), "tutor-pre-t2a-"));
   mkdirSync(join(tmp, "meta"), { recursive: true });
@@ -70,7 +76,16 @@ function makePreT2aMigrationsFolder(): string {
 /** 建「T2A 前结构」内存库（只应用 0000–0008） */
 function createPreT2aDb(): Db {
   const db = createDb(":memory:");
-  migrate(db, { migrationsFolder: makePreT2aMigrationsFolder() });
+  migrate(db, { migrationsFolder: makeMigrationsFolderUpTo(PRE_T2A_LAST_TAG) });
+  return db;
+}
+
+/** 建「T2A.6 时代结构」内存库（只应用 0000–0012，T2A.7 结构变更之前） */
+function createPreT2a7Db(): Db {
+  const db = createDb(":memory:");
+  migrate(db, {
+    migrationsFolder: makeMigrationsFolderUpTo(PRE_T2A7_LAST_TAG),
+  });
   return db;
 }
 
@@ -257,7 +272,7 @@ describe("D23 数据搬迁（T2A 前结构 fixture → 迁移 → 回填）", ()
         .all()
         .every((m) => m.joinedAt === "2026-09-27T00:00:00.000Z"),
     ).toBe(true);
-    // 标记表：t2a1 与 t2a6 各一行，appliedAt 仍是首次时间戳
+    // 标记表：t2a1、t2a6、t2a7 各一行，appliedAt 仍是首次时间戳
     expect(db.select().from(dataMigrations).all()).toEqual([
       {
         key: "t2a1_library_courses_backfill",
@@ -265,6 +280,10 @@ describe("D23 数据搬迁（T2A 前结构 fixture → 迁移 → 回填）", ()
       },
       {
         key: "t2a6_attempts_source_backfill",
+        appliedAt: "2026-09-27T00:00:00.000Z",
+      },
+      {
+        key: "t2a7_assignments_backfill",
         appliedAt: "2026-09-27T00:00:00.000Z",
       },
     ]);
@@ -283,8 +302,8 @@ describe("D23 数据搬迁（T2A 前结构 fixture → 迁移 → 回填）", ()
       // assignmentId/unitId 原值保留（旧作业 attempt 的 unitId 即当时那份作业的单元）
       assignmentId: "as-1",
       unitId: "u-a1",
-      // assignment 来源 courseId 为 null（T2A.7 起才取作业所属课程）
-      courseId: null,
+      // courseId 由 T2A.7 回填（D23-5）：取作业单元 u-a1 的 legacy 课程 c-a
+      courseId: "c-a",
     });
 
     // 幂等：标记防重跑后，后续新建的 course 作答（attemptNo 递增）不被回填触碰
@@ -320,10 +339,227 @@ describe("D23 数据搬迁（T2A 前结构 fixture → 迁移 → 回填）", ()
     expect(db.select().from(libraryFolders).all()).toEqual([]);
     expect(db.select().from(courseItems).all()).toEqual([]);
     expect(db.select().from(courseStudents).all()).toEqual([]);
-    expect(db.select().from(dataMigrations).all()).toHaveLength(2);
+    expect(db.select().from(dataMigrations).all()).toHaveLength(3);
     // 全新库再跑一次同样幂等
     runBackfills(db);
-    expect(db.select().from(dataMigrations).all()).toHaveLength(2);
+    expect(db.select().from(dataMigrations).all()).toHaveLength(3);
+  });
+});
+
+// ---------- D23-5：作业多单元与名单结构回填（T2A.7） ----------
+
+/**
+ * T2A.6 时代结构的 fixture（原生 SQL 插行，表结构 = 0000–0012）：
+ * 2 课程、2 单元（legacy courseId 一非 NULL（c-a）一 NULL）、2 学生、
+ * 2 作业（as-1 单元属 c-a、as-2 单元无课程）、各指派 1–2 学生、
+ * 1 份已交卷 assignment attempt（courseId 为 NULL，T2A.6 时代口径）。
+ */
+function insertPreT2a7Fixture(db: Db): void {
+  const t1 = "2026-02-10T08:00:00.000Z";
+  const t2 = "2026-02-12T08:00:00.000Z";
+  db.$client.exec(`
+    INSERT INTO courses (id, title, "order", created_at) VALUES
+      ('c-a', '初一上', 0, '${t1}');
+    INSERT INTO units (id, course_id, lecture_id, title, "order", updated_at) VALUES
+      ('u-a1', 'c-a', NULL, '有理数练习一', 0, '${t1}'),
+      ('u-b1', NULL,  NULL, '随堂补练',     0, '${t1}');
+    INSERT INTO students (id, display_name, login_name, link_token, link_enabled, password_enabled, archived_at, created_at) VALUES
+      ('s-1', '张三', '张三', 'tok-1', 1, 0, NULL, '${t1}'),
+      ('s-2', '李四', '李四', 'tok-2', 1, 0, NULL, '${t1}');
+    INSERT INTO assignments (id, unit_id, title, created_at) VALUES
+      ('as-1', 'u-a1', '有理数作业一', '${t1}'),
+      ('as-2', 'u-b1', '随堂补练作业', '${t2}');
+    INSERT INTO assignment_students (assignment_id, student_id) VALUES
+      ('as-1', 's-1'),
+      ('as-1', 's-2'),
+      ('as-2', 's-1');
+    INSERT INTO attempts (id, student_id, assignment_id, unit_id, status, started_at, submitted_at) VALUES
+      ('at-1', 's-1', 'as-1', 'u-a1', 'submitted', '${t2}', '${t2}');
+  `);
+}
+
+describe("D23-5 作业结构搬迁（T2A.6 时代结构 fixture → 迁移 → 回填）", () => {
+  it("每个作业写入 assignment_units 一行 order=0；unitId 原值保留", () => {
+    const db = createPreT2a7Db();
+    insertPreT2a7Fixture(db);
+    migrateAndBackfill(db);
+
+    const rows = db
+      .select()
+      .from(assignmentUnits)
+      .orderBy(asc(assignmentUnits.assignmentId))
+      .all();
+    expect(rows).toEqual([
+      { assignmentId: "as-1", unitId: "u-a1", order: 0 },
+      { assignmentId: "as-2", unitId: "u-b1", order: 0 },
+    ]);
+    // 旧列保留：unitId 值原样（@deprecated T2A，不删不写）
+    const assignmentRows = db
+      .select()
+      .from(assignments)
+      .orderBy(asc(assignments.id))
+      .all();
+    expect(assignmentRows.map((row) => [row.id, row.unitId])).toEqual([
+      ["as-1", "u-a1"],
+      ["as-2", "u-b1"],
+    ]);
+  });
+
+  it("courseId 取单元 legacy 课程：有课程写课程 id，无课程保持 null", () => {
+    const db = createPreT2a7Db();
+    insertPreT2a7Fixture(db);
+    migrateAndBackfill(db);
+
+    const courseById = db
+      .select({ id: assignments.id, courseId: assignments.courseId })
+      .from(assignments)
+      .all()
+      .map((row) => [row.id, row.courseId] as const);
+    expect(courseById).toEqual([
+      ["as-1", "c-a"], // u-a1 的 legacy courseId = c-a
+      ["as-2", null], // u-b1 无 legacy 课程 → 保持 null
+    ]);
+  });
+
+  it("assignment_students.addedAt 补作业 createdAt；removedAt 全 null", () => {
+    const db = createPreT2a7Db();
+    insertPreT2a7Fixture(db);
+    migrateAndBackfill(db);
+
+    const rows = db
+      .select()
+      .from(assignmentStudents)
+      .orderBy(
+        asc(assignmentStudents.assignmentId),
+        asc(assignmentStudents.studentId),
+      )
+      .all();
+    expect(
+      rows.map((row) => [
+        row.assignmentId,
+        row.studentId,
+        row.addedAt,
+        row.removedAt,
+      ]),
+    ).toEqual([
+      // addedAt = 各自作业的 createdAt（as-1 建于 t1、as-2 建于 t2）
+      ["as-1", "s-1", "2026-02-10T08:00:00.000Z", null],
+      ["as-1", "s-2", "2026-02-10T08:00:00.000Z", null],
+      ["as-2", "s-1", "2026-02-12T08:00:00.000Z", null],
+    ]);
+  });
+
+  it("旧作业 attempt 的 courseId 回填为所属作业课程（D9 语义）；外键完整性通过", () => {
+    const db = createPreT2a7Db();
+    insertPreT2a7Fixture(db);
+    migrateAndBackfill(db);
+
+    const attempt = db.select().from(attempts).get();
+    expect(attempt).toMatchObject({
+      id: "at-1",
+      sourceType: "assignment",
+      courseId: "c-a", // as-1 的课程
+      assignmentId: "as-1",
+      unitId: "u-a1",
+    });
+    expect(db.$client.pragma("foreign_key_check")).toHaveLength(0);
+  });
+
+  it("幂等：重复执行 runBackfills 无重复数据、值不漂移", () => {
+    const db = createPreT2a7Db();
+    insertPreT2a7Fixture(db);
+    migrateAndBackfill(db);
+
+    runMigrations(db);
+    runBackfills(db, new Date("2026-09-28T00:00:00.000Z"));
+
+    // assignment_units 仍各 1 行、order 不漂移
+    expect(db.select().from(assignmentUnits).all()).toEqual([
+      { assignmentId: "as-1", unitId: "u-a1", order: 0 },
+      { assignmentId: "as-2", unitId: "u-b1", order: 0 },
+    ]);
+    // courseId / addedAt / attempts.courseId 均不被第二次执行改写
+    const courseById = db
+      .select({ id: assignments.id, courseId: assignments.courseId })
+      .from(assignments)
+      .all()
+      .map((row) => [row.id, row.courseId] as const);
+    expect(courseById).toEqual([
+      ["as-1", "c-a"],
+      ["as-2", null],
+    ]);
+    expect(
+      db
+        .select()
+        .from(assignmentStudents)
+        .all()
+        .every((row) => row.addedAt !== null && row.removedAt === null),
+    ).toBe(true);
+    expect(db.select().from(attempts).get()?.courseId).toBe("c-a");
+    // 标记 appliedAt 仍是首次时间戳
+    expect(db.select().from(dataMigrations).all()).toHaveLength(3);
+    expect(
+      db
+        .select()
+        .from(dataMigrations)
+        .all()
+        .every((row) => row.appliedAt === "2026-09-27T00:00:00.000Z"),
+    ).toBe(true);
+  });
+
+  it("标记命中后，T2A.7 新形态数据（多单元作业/移出名单行）不被回填触碰", () => {
+    const db = createPreT2a7Db();
+    insertPreT2a7Fixture(db);
+    migrateAndBackfill(db);
+
+    // 模拟 T2A.7 服务写入的新形态：unitId=NULL 的多单元作业、名单行带 removedAt
+    const t3 = "2026-03-01T08:00:00.000Z";
+    db.insert(assignments)
+      .values({
+        id: "as-3",
+        unitId: null,
+        courseId: "c-a",
+        title: "两单元作业",
+        dueAt: null,
+        deletedAt: null,
+        createdAt: t3,
+      })
+      .run();
+    db.insert(assignmentUnits)
+      .values([
+        { assignmentId: "as-3", unitId: "u-a1", order: 0 },
+        { assignmentId: "as-3", unitId: "u-b1", order: 1 },
+      ])
+      .run();
+    db.insert(assignmentStudents)
+      .values({
+        assignmentId: "as-3",
+        studentId: "s-2",
+        addedAt: t3,
+        removedAt: t3,
+      })
+      .run();
+
+    runBackfills(db, new Date("2026-09-29T00:00:00.000Z"));
+
+    // 新形态原样：不加 assignment_units 行、不移除 removedAt、courseId 不动
+    expect(
+      db
+        .select()
+        .from(assignmentUnits)
+        .where(eq(assignmentUnits.assignmentId, "as-3"))
+        .all(),
+    ).toHaveLength(2);
+    const row = db
+      .select()
+      .from(assignmentStudents)
+      .where(eq(assignmentStudents.assignmentId, "as-3"))
+      .get();
+    expect(row).toMatchObject({ addedAt: t3, removedAt: t3 });
+    expect(
+      db.select().from(assignments).where(eq(assignments.id, "as-3")).get()
+        ?.courseId,
+    ).toBe("c-a");
   });
 });
 
@@ -498,6 +734,10 @@ describe("孤儿资源兜底（T2A.1 事故修复：与主标记无关、每次�
         key: "t2a6_attempts_source_backfill",
         appliedAt: "2026-09-27T00:00:00.000Z",
       },
+      {
+        key: "t2a7_assignments_backfill",
+        appliedAt: "2026-09-27T00:00:00.000Z",
+      },
     ]);
   });
 
@@ -551,6 +791,6 @@ describe("孤儿资源兜底（T2A.1 事故修复：与主标记无关、每次�
           .map((row) => [row.id, row.folderId] as const),
       ),
     ).toEqual(unitFolderIds);
-    expect(db.select().from(dataMigrations).all()).toHaveLength(2);
+    expect(db.select().from(dataMigrations).all()).toHaveLength(3);
   });
 });

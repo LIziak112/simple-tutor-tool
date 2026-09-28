@@ -12,6 +12,7 @@ import type {
 import { and, asc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
+  assignments,
   attempts,
   type CourseItem,
   type CourseItemKind,
@@ -855,64 +856,52 @@ function loadResourceContext(db: Db): ResourceContext {
 }
 
 /**
- * 每个课程关联的单元 id 集合：course_items 的 unit 引用（当前口径）
- * ∪ 旧列 units.courseId 兜底（迁移前归属痕迹，@deprecated T2A）。
- * 供 D4 删除条件（有作答即拒删）的保守判定。
- */
-function unitIdsByCourse(db: Db): Map<string, Set<string>> {
-  const map = new Map<string, Set<string>>();
-  for (const row of db
-    .select({ courseId: courseItems.courseId, refId: courseItems.refId })
-    .from(courseItems)
-    .where(eq(courseItems.kind, "unit"))
-    .all()) {
-    if (row.refId === null) continue;
-    const set = map.get(row.courseId) ?? new Set<string>();
-    set.add(row.refId);
-    map.set(row.courseId, set);
-  }
-  for (const row of db.select({ courseId: units.courseId }).from(units).all()) {
-    if (row.courseId === null) continue;
-    const set = map.get(row.courseId) ?? new Set<string>();
-    map.set(row.courseId, set);
-  }
-  return map;
-}
-
-/** 已有作答的单元 id 集合（attempts.unitId） */
-function attemptedUnitIds(db: Db): Set<string> {
-  return new Set(
-    db
-      .select({ unitId: attempts.unitId })
-      .from(attempts)
-      .all()
-      .filter((row): row is { unitId: string } => row.unitId !== null)
-      .map((row) => row.unitId),
-  );
-}
-
-/**
- * D4 删除条件：课程是否关联作答记录。
- * 口径（T2A.6 起 attempts 有 courseId）：
- * - 直接命中：attempts.courseId = 该课程（课程练习作答，含未交卷草稿）；
- * - 保守兜底：课程目录条目引用的单元（含旧列 units.courseId 痕迹）名下的全部
- *   attempts——含「条目引用单元的全部作业」的作答，从保守：有作答即拒删。
+ * D4 删除条件：课程是否关联作答/作业记录（T2A.7 口径，直接按 courseId 判）：
+ * - ∃ attempts.courseId = 该课程（课程练习作答，含未交卷草稿）；
+ * - ∃ assignments.courseId = 该课程（按课程布置的作业——多单元作业 attempt 的
+ *   unitId 为 null，原「按单元交集」口径会漏判；assignments 命中也挡删除，
+ *   保护 assignments.courseId 外键）。
+ * 任一命中即拒删（提示改用归档）。
  */
 export function courseHasAttempts(db: Db, courseId: string): boolean {
-  const direct =
+  const attemptHit =
     db
       .select({ id: attempts.id })
       .from(attempts)
       .where(eq(attempts.courseId, courseId))
       .get() !== undefined;
-  if (direct) return true;
-  const unitIds = unitIdsByCourse(db).get(courseId);
-  if (unitIds === undefined || unitIds.size === 0) return false;
-  const attempted = attemptedUnitIds(db);
-  for (const unitId of unitIds) {
-    if (attempted.has(unitId)) return true;
-  }
-  return false;
+  if (attemptHit) return true;
+  return (
+    db
+      .select({ id: assignments.id })
+      .from(assignments)
+      .where(eq(assignments.courseId, courseId))
+      .get() !== undefined
+  );
+}
+
+/** 有课程练习作答记录的课程 id 集合（attempts.courseId；D4 列表口径之一） */
+function attemptedCourseIds(db: Db): Set<string> {
+  return new Set(
+    db
+      .select({ courseId: attempts.courseId })
+      .from(attempts)
+      .where(isNotNull(attempts.courseId))
+      .all()
+      .map((row) => row.courseId as string),
+  );
+}
+
+/** 关联了作业的课程 id 集合（assignments.courseId；D4 列表口径之二，T2A.7） */
+function assignedCourseIds(db: Db): Set<string> {
+  return new Set(
+    db
+      .select({ courseId: assignments.courseId })
+      .from(assignments)
+      .where(isNotNull(assignments.courseId))
+      .all()
+      .map((row) => row.courseId as string),
+  );
 }
 
 /**
@@ -958,8 +947,9 @@ export function listCoursesForTeacher(
     list.push(row.studentId);
     membersByCourse.set(row.courseId, list);
   }
-  const unitsByCourse = unitIdsByCourse(db);
-  const attempted = attemptedUnitIds(db);
+  // D4 口径（T2A.7）：attempts.courseId 或 assignments.courseId 命中即有关联
+  const attempted = attemptedCourseIds(db);
+  const assigned = assignedCourseIds(db);
 
   return rows.map((course) => {
     const items = itemsByCourse.get(course.id) ?? [];
@@ -976,10 +966,7 @@ export function listCoursesForTeacher(
       }
       return true; // 分节无资源引用
     }).length;
-    const courseUnitIds = unitsByCourse.get(course.id);
-    const hasAttempts =
-      courseUnitIds !== undefined &&
-      [...courseUnitIds].some((unitId) => attempted.has(unitId));
+    const hasAttempts = attempted.has(course.id) || assigned.has(course.id);
     const memberIds = membersByCourse.get(course.id) ?? [];
     return {
       id: course.id,

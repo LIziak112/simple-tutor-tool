@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { Db } from "../db/client.ts";
 import {
   assignments,
+  assignmentUnits,
   attempts,
   courseItems,
   courses,
@@ -318,11 +319,12 @@ describe("LibraryService：使用情况查询（D3 删除确认弹层数据源�
       .run();
     const liveAssignmentId = crypto.randomUUID();
     const deletedAssignmentId = crypto.randomUUID();
+    // T2A.7：作业内容走 assignment_units（assignments.unitId 废弃）
     db.insert(assignments)
       .values([
         {
           id: liveAssignmentId,
-          unitId,
+          unitId: null,
           title: "进行中的作业",
           dueAt: "2026-10-01T00:00:00.000Z",
           deletedAt: null,
@@ -330,12 +332,18 @@ describe("LibraryService：使用情况查询（D3 删除确认弹层数据源�
         },
         {
           id: deletedAssignmentId,
-          unitId,
+          unitId: null,
           title: "已删作业",
           dueAt: null,
           deletedAt: T0,
           createdAt: T0,
         },
+      ])
+      .run();
+    db.insert(assignmentUnits)
+      .values([
+        { assignmentId: liveAssignmentId, unitId, order: 0 },
+        { assignmentId: deletedAssignmentId, unitId, order: 0 },
       ])
       .run();
     db.insert(attempts)

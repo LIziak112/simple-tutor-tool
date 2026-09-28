@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { HintOpenData, HintOpenedEntry } from "@tutor/contract";
 import { questionSchema } from "@tutor/contract";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
   type Attempt,
@@ -10,7 +10,11 @@ import {
   responses,
 } from "../db/schema";
 import { HttpError } from "../lib/http-error";
-import { requireUnitQuestion, requireUsableAttempt } from "./attempt-service";
+import {
+  attemptUnitIds,
+  requireAttemptQuestion,
+  requireUsableAttempt,
+} from "./attempt-service";
 import { recordHintOpenEvent } from "./event-service";
 
 /**
@@ -122,7 +126,7 @@ function hintsOfAttempt(
  * - attempt 不存在 → 404；非本人 → 403（requireUsableAttempt 统一口径；
  *   T2A.6 起 course 来源 draft 需保有课程访问权——失去访问权 403/404）；
  * - draft / submitted / graded 均可用（验收项「交卷后仍可查看」）；
- * - 题目不属于该单元或已软删 → 404 QUESTION_NOT_FOUND（requireUnitQuestion）；
+ * - 题目不属于该单元或已软删 → 404 QUESTION_NOT_FOUND（requireAttemptQuestion）；
  * - index <0 或 ≥该题提示总数（含无提示题）→ 400 HINT_INDEX_OUT_OF_RANGE（验收项）；
  * - 记录：responses 行 upsert（方案 A：无行则建，answerJson=null）+
  *   events 写 hint_open（每次都记，payload 只含 index）；
@@ -136,7 +140,7 @@ export function openHint(
   index: number,
 ): HintOpenData {
   const attempt = requireUsableAttempt(db, studentId, attemptId);
-  requireUnitQuestion(db, attempt, questionId);
+  requireAttemptQuestion(db, attempt, questionId);
 
   const hints = hintsOfAttempt(db, attempt, questionId);
   if (index < 0 || index >= hints.length) {
@@ -221,11 +225,17 @@ export function draftHintsOpenedView(
     .from(responses)
     .where(eq(responses.attemptId, attempt.id))
     .all();
-  const questionRows = db
-    .select({ id: questions.id, hintsJson: questions.hintsJson })
-    .from(questions)
-    .where(eq(questions.unitId, attempt.unitId ?? ""))
-    .all();
+  // T2A.7：题目集合按 attemptUnitIds（assignment=assignment_units 多单元；
+  // course=attempt.unitId）——attempt.unitId 已不再覆盖 assignment 来源
+  const unitIds = attemptUnitIds(db, attempt);
+  const questionRows =
+    unitIds.length === 0
+      ? []
+      : db
+          .select({ id: questions.id, hintsJson: questions.hintsJson })
+          .from(questions)
+          .where(inArray(questions.unitId, unitIds))
+          .all();
   const hintsByQuestion = new Map(
     questionRows.map((row) => [row.id, hintsOfJson(row.hintsJson)]),
   );

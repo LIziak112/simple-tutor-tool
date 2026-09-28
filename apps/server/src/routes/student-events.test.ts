@@ -156,7 +156,7 @@ async function createAssignment(
   const res = await app.request("/api/teacher/assignments", {
     method: "POST",
     headers: { "content-type": "application/json", cookie: teacherCookie },
-    body: JSON.stringify({ unitId, studentIds: [studentId] }),
+    body: JSON.stringify({ unitIds: [unitId], studentIds: [studentId] }),
   });
   expect(res.status).toBe(201);
   const body = (await res.json()) as { data: { id: string } };

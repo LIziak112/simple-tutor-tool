@@ -314,6 +314,45 @@ export async function importCompanionPractice(
   }
 }
 
+/**
+ * 导入一个独立小练习单元（1 道带答案的判断题）进指定课程（T2A.7 主流程 E2E 造数：
+ * 多单元作业的第二单元）。与 importCompanionPractice 的差别：frontmatter 不写
+ * lecture（非任何讲义的配套练习）。unitName 必须带唯一后缀：单元按 DSL id 全局
+ * 匹配（D18），chromium/webkit 两个项目并行跑同一份数据时同名单元会互相覆盖。
+ * 导入后单元在课程目录默认隐藏（D23-3）——布置作业向导的「本课程练习」页签含
+ * 隐藏条目并标注状态，可直接选，无需放开可见性（作业通道与课程可见性无关）。
+ */
+export async function importJudgeUnit(
+  request: APIRequestContext,
+  courseId: string,
+  unitName: string,
+): Promise<void> {
+  const markdown = [
+    "---",
+    "kind: practice",
+    `unit: ${unitName}`,
+    "topic: 正数与负数",
+    "---",
+    "",
+    '::::question{type=judge difficulty=1 knowledge="有理数的概念"}',
+    "$1$ 是正数。[[正确]]",
+    "",
+    ":::solution",
+    "$1$ 大于 $0$，是正数。",
+    ":::",
+    "::::",
+    "",
+  ].join("\n");
+  const res = await request.post("/api/teacher/import/commit", {
+    data: { markdown, filename: `${unitName}.md`, courseId },
+  });
+  if (!res.ok()) {
+    throw new Error(
+      `导入判断题单元失败：HTTP ${res.status()} ${await res.text()}`,
+    );
+  }
+}
+
 /** 教师把某课程目录中指定标题的条目设为可见/隐藏（找不到标题则抛错） */
 export async function setCourseItemVisible(
   request: APIRequestContext,

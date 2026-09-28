@@ -11,7 +11,7 @@ import type {
   CourseListData,
   CourseStudentViewData,
 } from "@tutor/contract";
-import { MemoryRouter, Route, Routes } from "react-router";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   fetchCourseDetail,
@@ -113,6 +113,12 @@ const STUDENT_VIEW: CourseStudentViewData = {
   ],
 };
 
+/** /t/assignments 的替身：显示当前 search，便于断言课程入口跳转参数（T2A.7） */
+function AssignmentsStub() {
+  const location = useLocation();
+  return <div data-testid="assignments-stub">{location.search}</div>;
+}
+
 function renderPage() {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -123,6 +129,7 @@ function renderPage() {
         <Routes>
           <Route path="/t/courses/:id" element={<CourseEditPage />} />
           <Route path="/t/courses" element={<CoursesPage />} />
+          <Route path="/t/assignments" element={<AssignmentsStub />} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -164,6 +171,17 @@ describe("CourseEditPage（T2A.4）", () => {
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("课程加载失败");
     expect(screen.getByRole("button", { name: "重试" })).toBeVisible();
+  });
+
+  it("头部「布置作业」跳转作业页并携带课程预选参数（T2A.7）", async () => {
+    renderPage();
+    await screen.findByText("第1讲 有理数");
+    fireEvent.click(screen.getByRole("button", { name: "布置作业" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("assignments-stub")).toHaveTextContent(
+        `courseId=${COURSE_ID}&compose=1`,
+      ),
+    );
   });
 });
 

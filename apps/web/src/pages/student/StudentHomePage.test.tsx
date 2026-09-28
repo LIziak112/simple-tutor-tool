@@ -30,9 +30,11 @@ const ASSIGNMENTS: StudentAssignmentListData = {
     {
       id: "44444444-4444-4444-8444-444444444444",
       title: "周末加练",
-      unitId: "unit-一元一次方程",
-      unitTitle: "一元一次方程",
-      topic: "方程",
+      units: [
+        { id: "unit-一元一次方程", title: "一元一次方程" },
+        { id: "unit-绝对值", title: "绝对值" },
+      ],
+      unitCount: 2,
       questionCount: 5,
       dueAt: "2026-10-01T12:00:00.000Z",
       createdAt: "2026-09-26T08:00:00.000Z",
@@ -41,9 +43,8 @@ const ASSIGNMENTS: StudentAssignmentListData = {
     {
       id: "55555555-5555-4555-8555-555555555555",
       title: "课前预习",
-      unitId: "unit-有理数",
-      unitTitle: "有理数",
-      topic: null,
+      units: [{ id: "unit-有理数", title: "有理数" }],
+      unitCount: 1,
       questionCount: 3,
       dueAt: null,
       createdAt: "2026-09-25T08:00:00.000Z",
@@ -94,7 +95,11 @@ describe("StudentHomePage", () => {
 
     // 第一份作业：有截止（UTC 12:00 = 北京时间 20:00）
     expect(await screen.findByText("周末加练")).toBeInTheDocument();
-    expect(screen.getByText("单元：一元一次方程")).toBeInTheDocument();
+    // T2A.7：多单元卡片显示「n 个单元（标题列表）」；单单元显示「单元：标题」
+    expect(
+      screen.getByText("2 个单元（一元一次方程、绝对值）"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("单元：有理数")).toBeInTheDocument();
     expect(screen.getByText("共 5 题")).toBeInTheDocument();
     expect(screen.getByText("10月1日 20:00 截止")).toBeInTheDocument();
     // 两份作业当前都未开始（状态徽章；四态配色见 student-ui）

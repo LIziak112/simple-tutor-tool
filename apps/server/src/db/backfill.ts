@@ -1,6 +1,8 @@
-import { and, asc, eq, isNotNull, isNull } from "drizzle-orm";
+import { and, asc, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import type { Db } from "./client";
 import {
+  assignments,
+  assignmentUnits,
   attempts,
   courseItems,
   courseStudents,
@@ -23,13 +25,17 @@ type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
  * 以 data_migrations 表的完成标记防重跑，整个回填在单事务内完成
  * （标记行与数据同事务写入，失败即整体回滚，可安全重试）。
  *
- * 本文件执行 D23 步骤 1–4、7（T2A.1）与步骤 6（T2A.6）：
+ * 本文件执行 D23 步骤 1–4、7（T2A.1）、步骤 6（T2A.6）与步骤 5（T2A.7）：
  * 1. 每个现有课程在资源库建同名文件夹；课程下的讲义/单元 folderId 指向该文件夹；
  * 2. 每个现有课程生成课程目录：按讲义原顺序，每篇讲义后紧跟其配套单元
  *    （units.lectureId 指向该讲义且 courseId 属该课程，按单元原顺序），
  *    剩余单元按原顺序追加在末尾；
  * 3. 讲义条目 visible=true；单元条目 visible=false（默认隐藏，教师按教学节奏开放）；
  * 4. 所有现有未归档学生加入所有现有课程（保持「学生能看到全部讲义」现状）；
+ * 5. 现有作业（T2A.7）：assignment_units 写入原 unitId（order=0）、courseId 取该
+ *    单元原所属课程（units.courseId，deprecated 列；无课程保持 null）、
+ *    assignment_students.addedAt 补作业 createdAt、旧作业 attempt 的 courseId
+ *    补作业所属课程（D9 语义）；
  * 6. 现有 attempts：sourceType='assignment'、attemptNo=1（T2A.6，独立标记）；
  * 7. 「默认课程」按普通课程处理（无需特判，D23-7）。
  *
@@ -41,6 +47,8 @@ type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 const T2A1_BACKFILL_KEY = "t2a1_library_courses_backfill";
 /** D23-6（T2A.6 attempts 来源回填）的完成标记 key（与 t2a1 独立：两任务分期合入） */
 const T2A6_ATTEMPTS_BACKFILL_KEY = "t2a6_attempts_source_backfill";
+/** D23-5（T2A.7 作业多单元/名单结构回填）的完成标记 key（与前两个独立） */
+const T2A7_ASSIGNMENTS_BACKFILL_KEY = "t2a7_assignments_backfill";
 
 /**
  * 执行全部未完成的数据搬迁（启动流程在 runMigrations 之后调用；
@@ -71,6 +79,17 @@ export function runBackfills(db: Db, now: Date = new Date()): void {
       tx.insert(dataMigrations)
         .values({
           key: T2A6_ATTEMPTS_BACKFILL_KEY,
+          appliedAt: now.toISOString(),
+        })
+        .run();
+    });
+  }
+  if (!appliedKeys.has(T2A7_ASSIGNMENTS_BACKFILL_KEY)) {
+    db.transaction((tx) => {
+      backfillT2a7Assignments(tx);
+      tx.insert(dataMigrations)
+        .values({
+          key: T2A7_ASSIGNMENTS_BACKFILL_KEY,
           appliedAt: now.toISOString(),
         })
         .run();
@@ -243,6 +262,84 @@ function backfillT2a1(tx: Tx, now: Date): void {
  */
 function backfillT2a6Attempts(tx: Tx): void {
   tx.update(attempts).set({ sourceType: "assignment", attemptNo: 1 }).run();
+}
+
+// ---------- D23-5：作业多单元与名单结构回填（T2A.7） ----------
+
+/**
+ * 现有作业搬到 T2A.7 结构（D23-5）：
+ * 1. assignment_units：每个现有作业写入原 unitId（order=0）——旧作业即单单元作业；
+ * 2. assignments.courseId：取该作业单元的 legacy units.courseId（deprecated 列），
+ *    单元无课程则保持 null；
+ * 3. assignment_students.addedAt：为空的行回填为该作业 createdAt（列可空仅因
+ *    SQLite 加 NOT NULL 列需重建表，代码层恒写保证非空）；
+ * 4. attempts.courseId：sourceType='assignment' 且 courseId 为空的行回填为所属
+ *    作业的 courseId（D9：assignment 作答记作业所属课程）——须在步骤 2 之后执行。
+ *
+ * 幂等口径（除完成标记外，每步自身也可重入）：
+ * - 步骤 1：onConflictDoNothing 命中复合主键 (assignmentId, unitId) 即跳过；
+ * - 步骤 2/3：UPDATE 带 WHERE course_id IS NULL / added_at IS NULL 守卫，
+ *   已回填或新代码已写入的行不再触碰；unit_id 为 NULL 的行（T2A.7 新作业）
+ *   子查询无命中，course_id 保持原值；
+ * - 步骤 4：只更新 courseId IS NULL 且映射命中的行，重跑时不再命中。
+ */
+function backfillT2a7Assignments(tx: Tx): void {
+  // ---- 步骤 1：assignment_units 写入原 unitId（order=0） ----
+  for (const row of tx
+    .select({ id: assignments.id, unitId: assignments.unitId })
+    .from(assignments)
+    .where(isNotNull(assignments.unitId))
+    .all()) {
+    if (row.unitId === null) continue; // 类型收窄（where 已过滤，运行时不可达）
+    tx.insert(assignmentUnits)
+      .values({ assignmentId: row.id, unitId: row.unitId, order: 0 })
+      .onConflictDoNothing({
+        target: [assignmentUnits.assignmentId, assignmentUnits.unitId],
+      })
+      .run();
+  }
+
+  // ---- 步骤 2：courseId 取单元 legacy 课程（单元无课程则子查询为 NULL，原值不动） ----
+  tx.run(sql`
+    UPDATE assignments
+    SET course_id = (SELECT course_id FROM units WHERE units.id = assignments.unit_id)
+    WHERE course_id IS NULL
+  `);
+
+  // ---- 步骤 3：addedAt 为空的行补作业 createdAt ----
+  tx.run(sql`
+    UPDATE assignment_students
+    SET added_at = (
+      SELECT created_at FROM assignments
+      WHERE assignments.id = assignment_students.assignment_id
+    )
+    WHERE added_at IS NULL
+  `);
+
+  // ---- 步骤 4：旧作业 attempt 的 courseId 补作业所属课程（D9） ----
+  // 先查 assignments 映射再逐行更新（步骤 2 已把 legacy courseId 写入映射来源）
+  const assignmentCourseById = new Map<string, string>();
+  for (const row of tx
+    .select({ id: assignments.id, courseId: assignments.courseId })
+    .from(assignments)
+    .all()) {
+    if (row.courseId !== null) assignmentCourseById.set(row.id, row.courseId);
+  }
+  for (const row of tx
+    .select({ id: attempts.id, assignmentId: attempts.assignmentId })
+    .from(attempts)
+    .where(
+      and(
+        eq(attempts.sourceType, "assignment"),
+        isNull(attempts.courseId),
+        isNotNull(attempts.assignmentId),
+      ),
+    )
+    .all()) {
+    const courseId = assignmentCourseById.get(row.assignmentId ?? "");
+    if (courseId === undefined) continue; // 作业无课程：保持 null
+    tx.update(attempts).set({ courseId }).where(eq(attempts.id, row.id)).run();
+  }
 }
 
 // ---------- 孤儿资源兜底（T2A.1 事故修复） ----------

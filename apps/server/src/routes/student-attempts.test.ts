@@ -168,7 +168,7 @@ async function createAssignment(
   const res = await app.request("/api/teacher/assignments", {
     method: "POST",
     headers: { "content-type": "application/json", cookie: teacherCookie },
-    body: JSON.stringify({ unitId, studentIds: [studentId] }),
+    body: JSON.stringify({ unitIds: [unitId], studentIds: [studentId] }),
   });
   expect(res.status).toBe(201);
   const body = (await res.json()) as { data: { id: string } };
@@ -266,7 +266,8 @@ describe("POST /api/student/assignments/:id/attempt：创建与幂等", () => {
       attemptStartOkSchema.safeParse({ ok: true, data: first }).success,
     ).toBe(true);
     expect(first.status).toBe("draft");
-    expect(first.unitId).toBe("练习四");
+    // T2A.7：多单元化后作业来源 attempt 的 unitId 为 null（题目集合走 assignment_units）
+    expect(first.unitId).toBeNull();
 
     const second = await startAttemptOk(app, aCookie, assignmentId);
     expect(second.id).toBe(first.id);
@@ -455,7 +456,11 @@ describe("POST /api/student/attempts/:id/submit：判分与快照", () => {
       unanswered: 0,
       autoGradable: 8,
     });
-    expect(data.questions.every((q) => q.autoCorrect === true)).toBe(true);
+    expect(
+      data.units.every((unit) =>
+        unit.questions.every((q) => q.autoCorrect === true),
+      ),
+    ).toBe(true);
   });
 
   it("部分错/未答组合：答错 false、未答 null 且不写 answerJson；scoreAuto=答对/可判分", async () => {
@@ -487,7 +492,11 @@ describe("POST /api/student/attempts/:id/submit：判分与快照", () => {
     const res = await postSubmit(app, aCookie, attemptId);
     expect(res.status).toBe(200);
     const data = ((await res.json()) as { data: AttemptResultData }).data;
-    const byId = new Map(data.questions.map((q) => [q.questionId, q]));
+    const byId = new Map(
+      data.units
+        .flatMap((unit) => unit.questions)
+        .map((q) => [q.questionId, q]),
+    );
 
     expect(byId.get(Q.judge)?.autoCorrect).toBe(true);
     expect(byId.get(Q.choice)?.autoCorrect).toBe(true);
@@ -563,7 +572,9 @@ describe("POST /api/student/attempts/:id/submit：判分与快照", () => {
     const { res, body } = await getAttempt(app, aCookie, attemptId);
     expect(res.status).toBe(200);
     const data = (body as { data: AttemptResultData }).data;
-    const fill = data.questions.find((q) => q.questionId === Q.fill);
+    const fill = data.units
+      .flatMap((unit) => unit.questions)
+      .find((q) => q.questionId === Q.fill);
     expect(fill?.snapshot.stemMd).toContain("[[4]]");
     expect(fill?.snapshot.stemMd).not.toContain("[[5]]");
     expect(fill?.answers).toEqual({
@@ -623,8 +634,11 @@ describe("GET /api/student/attempts/:id：草稿视图与结果视图", () => {
     expect(attemptDraftOkSchema.safeParse(body).success).toBe(true);
     assertNoLeak(body);
     const draft = (body as { data: AttemptDraftData }).data;
-    expect(draft.questions.length).toBe(8);
-    expect(draft.questions.map((q) => q.id)).toEqual([
+    // T2A.7：分组结构（样例单单元 → units 恰 1 组，组内 8 题按题序）
+    expect(draft.units.length).toBe(1);
+    const draftQuestions = draft.units[0]?.questions ?? [];
+    expect(draftQuestions.length).toBe(8);
+    expect(draftQuestions.map((q) => q.id)).toEqual([
       Q.judge,
       Q.choice,
       Q.multi,
@@ -635,8 +649,8 @@ describe("GET /api/student/attempts/:id：草稿视图与结果视图", () => {
       Q.findError,
     ]);
     // 题干脱敏：无任何 [[答案]] 残留；选项无正确项标记；详解文本绝不出现
-    expect(JSON.stringify(draft.questions)).not.toContain("[[4]]");
-    expect(JSON.stringify(draft.questions)).not.toContain("[[正确]]");
+    expect(JSON.stringify(draftQuestions)).not.toContain("[[4]]");
+    expect(JSON.stringify(draftQuestions)).not.toContain("[[正确]]");
     expect(JSON.stringify(body)).not.toContain("correct");
     expect(JSON.stringify(body)).not.toContain("故选 B");
   });
@@ -673,7 +687,9 @@ describe("GET /api/student/attempts/:id：草稿视图与结果视图", () => {
     const data = (body as { data: AttemptResultData }).data;
     expect(JSON.stringify(data)).toContain("故选 B");
     expect(JSON.stringify(data)).toContain("[[4]]"); // 原始题干含答案标记
-    const judge = data.questions.find((q) => q.questionId === Q.judge);
+    const judge = data.units
+      .flatMap((unit) => unit.questions)
+      .find((q) => q.questionId === Q.judge);
     expect(judge?.answers).toEqual({ kind: "judge", value: true });
     expect(judge?.answer).toEqual({ kind: "judge", value: true });
     expect(judge?.autoCorrect).toBe(true);

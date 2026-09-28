@@ -40,7 +40,8 @@ const SUMMARY_DRAFT = {
   sourceType: "assignment",
   assignmentId: ASSIGNMENT_ID,
   courseId: null,
-  unitId: UNIT_ID,
+  // T2A.7：assignment 来源多单元化后 unitId 为 null（题目集合走 assignment_units）
+  unitId: null,
   attemptNo: 1,
   status: "draft",
   startedAt: STARTED_AT,
@@ -117,28 +118,35 @@ describe("attemptStatusSchema / attemptSummarySchema", () => {
 });
 
 describe("attemptDraftDataSchema（草稿视图）", () => {
-  it("接受合法草稿视图：QuestionPublic 形态题目 + drafts 答案表 + hintsOpened 已解锁提示", () => {
+  it("接受合法草稿视图：单元分组 QuestionPublic 形态题目 + drafts 答案表 + hintsOpened 已解锁提示", () => {
     const parsed = attemptDraftDataSchema.parse({
       attempt: SUMMARY_DRAFT,
       title: "周末加练",
       courseName: null,
       dueAt: null,
-      questions: [
+      // T2A.7：题目按单元分组下发（题号全卷连续由 units 顺序保证）
+      units: [
         {
-          id: "练习四-1",
-          type: "judge",
-          difficulty: 1,
-          knowledge: ["有理数的概念"],
-          stemMd: "$0$ 既不是正数，也不是负数。[[]]",
-          hintCount: 0,
-        },
-        {
-          id: "练习四-4",
-          type: "fill",
-          difficulty: 2,
-          knowledge: ["有理数加法"],
-          stemMd: "计算：$(-3)+7=$ [[]]",
-          hintCount: 1,
+          id: UNIT_ID,
+          title: "练习四",
+          questions: [
+            {
+              id: "练习四-1",
+              type: "judge",
+              difficulty: 1,
+              knowledge: ["有理数的概念"],
+              stemMd: "$0$ 既不是正数，也不是负数。[[]]",
+              hintCount: 0,
+            },
+            {
+              id: "练习四-4",
+              type: "fill",
+              difficulty: 2,
+              knowledge: ["有理数加法"],
+              stemMd: "计算：$(-3)+7=$ [[]]",
+              hintCount: 1,
+            },
+          ],
         },
       ],
       drafts: {
@@ -162,23 +170,29 @@ describe("attemptDraftDataSchema（草稿视图）", () => {
       title: "周末加练",
       courseName: null,
       dueAt: null,
-      questions: [
+      units: [
         {
-          id: "练习四-1",
-          type: "judge",
-          difficulty: 1,
-          knowledge: [],
-          stemMd: "[[]]",
-          hintCount: 0,
-          // 教师侧字段混入草稿视图题目 → 契约层剥离（fail closed：只少给不多给）
-          answers: { kind: "judge", value: true },
-          solutionMd: "详解不应出现在草稿视图",
+          id: UNIT_ID,
+          title: "练习四",
+          questions: [
+            {
+              id: "练习四-1",
+              type: "judge",
+              difficulty: 1,
+              knowledge: [],
+              stemMd: "[[]]",
+              hintCount: 0,
+              // 教师侧字段混入草稿视图题目 → 契约层剥离（fail closed：只少给不多给）
+              answers: { kind: "judge", value: true },
+              solutionMd: "详解不应出现在草稿视图",
+            },
+          ],
         },
       ],
       drafts: {},
       hintsOpened: {},
     });
-    const question = parsed.questions[0];
+    const question = parsed.units[0]?.questions[0];
     expect(question && "answers" in question).toBe(false);
     expect(question && "solutionMd" in question).toBe(false);
   });
@@ -199,47 +213,55 @@ describe("attemptResultDataSchema（结果视图）", () => {
       unanswered: 0,
       autoGradable: 2,
     },
-    questions: [
+    // T2A.7：逐题结果按单元分组（单元序 + 题序；course 单组）
+    units: [
       {
-        questionId: "练习四-1",
-        snapshot: {
-          id: "练习四-1",
-          type: "judge",
-          difficulty: 1,
-          knowledge: ["有理数的概念"],
-          stemMd: "$0$ 既不是正数，也不是负数。[[正确]]",
-          hintCount: 0,
-        },
-        answers: { kind: "judge", value: true },
-        solutionMd: "$0$ 是整数，但既不是正数也不是负数。",
-        answer: { kind: "judge", value: true },
-        autoCorrect: true,
-        hintsOpened: [],
-      },
-      {
-        questionId: "练习四-4",
-        snapshot: {
-          id: "练习四-4",
-          type: "fill",
-          difficulty: 2,
-          knowledge: ["有理数加法"],
-          stemMd: "计算：$(-3)+7=$ [[4]]",
-          hintCount: 1,
-        },
-        answers: { kind: "fill", blanks: [["4"], ["-7"], ["0.5", "1/2"]] },
-        solutionMd: null,
-        answer: { kind: "fill", values: ["4", "-6", ""] },
-        autoCorrect: false,
-        // 做题时看过第 0 条提示 → 结果视图回显该条（其余不下发）
-        hintsOpened: [{ index: 0, text: "同号相加，取相同的符号。" }],
+        id: UNIT_ID,
+        title: "练习四",
+        questions: [
+          {
+            questionId: "练习四-1",
+            snapshot: {
+              id: "练习四-1",
+              type: "judge",
+              difficulty: 1,
+              knowledge: ["有理数的概念"],
+              stemMd: "$0$ 既不是正数，也不是负数。[[正确]]",
+              hintCount: 0,
+            },
+            answers: { kind: "judge", value: true },
+            solutionMd: "$0$ 是整数，但既不是正数也不是负数。",
+            answer: { kind: "judge", value: true },
+            autoCorrect: true,
+            hintsOpened: [],
+          },
+          {
+            questionId: "练习四-4",
+            snapshot: {
+              id: "练习四-4",
+              type: "fill",
+              difficulty: 2,
+              knowledge: ["有理数加法"],
+              stemMd: "计算：$(-3)+7=$ [[4]]",
+              hintCount: 1,
+            },
+            answers: { kind: "fill", blanks: [["4"], ["-7"], ["0.5", "1/2"]] },
+            solutionMd: null,
+            answer: { kind: "fill", values: ["4", "-6", ""] },
+            autoCorrect: false,
+            // 做题时看过第 0 条提示 → 结果视图回显该条（其余不下发）
+            hintsOpened: [{ index: 0, text: "同号相加，取相同的符号。" }],
+          },
+        ],
       },
     ],
   } as const;
 
   it("接受合法结果视图：快照 + 参考答案 + 详解 + 本人答案 + autoCorrect", () => {
     const parsed = attemptResultDataSchema.parse(RESULT);
-    expect(parsed.questions[0]?.autoCorrect).toBe(true);
-    expect(parsed.questions[1]?.answers).toEqual({
+    const resultQuestions = parsed.units[0]?.questions ?? [];
+    expect(resultQuestions[0]?.autoCorrect).toBe(true);
+    expect(resultQuestions[1]?.answers).toEqual({
       kind: "fill",
       blanks: [["4"], ["-7"], ["0.5", "1/2"]],
     });
@@ -248,17 +270,22 @@ describe("attemptResultDataSchema（结果视图）", () => {
   it("快照携带提示内容字段会被剥离（strip 语义；hintCount 是唯一提示形态）", () => {
     const parsed = attemptResultDataSchema.parse({
       ...RESULT,
-      questions: [
+      units: [
         {
-          ...RESULT.questions[0],
-          snapshot: {
-            ...RESULT.questions[0].snapshot,
-            hints: ["提示内容不应出现在结果视图"],
-          },
+          ...RESULT.units[0],
+          questions: [
+            {
+              ...RESULT.units[0].questions[0],
+              snapshot: {
+                ...RESULT.units[0].questions[0].snapshot,
+                hints: ["提示内容不应出现在结果视图"],
+              },
+            },
+          ],
         },
       ],
     });
-    const snapshot = parsed.questions[0]?.snapshot;
+    const snapshot = parsed.units[0]?.questions[0]?.snapshot;
     expect(snapshot && "hints" in snapshot).toBe(false);
     expect(snapshot?.hintCount).toBe(0);
   });
@@ -267,22 +294,28 @@ describe("attemptResultDataSchema（结果视图）", () => {
     expect(
       attemptResultDataSchema.safeParse({
         ...RESULT,
-        questions: [
+        units: [
           {
-            questionId: "p4-q7",
-            snapshot: {
-              id: "p4-q7",
-              type: "solve",
-              difficulty: 3,
-              knowledge: [],
-              stemMd: "计算 …",
-              hintCount: 0,
-            },
-            answers: null,
-            solutionMd: null,
-            answer: null,
-            autoCorrect: null,
-            hintsOpened: [],
+            id: "unit-练习七",
+            title: "练习七",
+            questions: [
+              {
+                questionId: "p4-q7",
+                snapshot: {
+                  id: "p4-q7",
+                  type: "solve",
+                  difficulty: 3,
+                  knowledge: [],
+                  stemMd: "计算 …",
+                  hintCount: 0,
+                },
+                answers: null,
+                solutionMd: null,
+                answer: null,
+                autoCorrect: null,
+                hintsOpened: [],
+              },
+            ],
           },
         ],
         summary: {
@@ -300,13 +333,18 @@ describe("attemptResultDataSchema（结果视图）", () => {
 
   it("结果视图缺 hintsOpened 字段整体拒绝（必填；回显已解锁提示是 T2.11 契约形态）", () => {
     const { hintsOpened: _omit, ...questionWithoutHints } = {
-      ...RESULT.questions[0],
+      ...RESULT.units[0].questions[0],
       questionId: "练习四-9",
     };
     expect(
       attemptResultDataSchema.safeParse({
         ...RESULT,
-        questions: [questionWithoutHints],
+        units: [
+          {
+            ...RESULT.units[0],
+            questions: [questionWithoutHints],
+          },
+        ],
       }).success,
     ).toBe(false);
   });
@@ -411,7 +449,7 @@ describe("attemptDetailDataSchema / attemptErrorCodeSchema", () => {
         title: "周末加练",
         courseName: null,
         dueAt: null,
-        questions: [],
+        units: [],
         drafts: {},
         hintsOpened: {},
       }).success,
@@ -431,7 +469,7 @@ describe("attemptDetailDataSchema / attemptErrorCodeSchema", () => {
           unanswered: 0,
           autoGradable: 0,
         },
-        questions: [],
+        units: [],
       }).success,
     ).toBe(true);
   });

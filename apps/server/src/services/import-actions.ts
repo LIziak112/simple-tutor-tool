@@ -3,10 +3,11 @@ import type {
   ImportPreviewWarning,
   ParsedDocument,
 } from "@tutor/contract";
-import { and, gt, isNull, or } from "drizzle-orm";
+import { and, eq, gt, isNull, or } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
   assignments,
+  assignmentUnits,
   lectures,
   libraryFolders,
   questions,
@@ -252,11 +253,12 @@ export function loadLibrarySnapshot(db: Db, nowIso: string): LibrarySnapshot {
     .from(lectures)
     .all();
 
-  // 未截止作业按单元计数（assignments.unitId 单列引用，T2A.7 起改 assignment_units）
+  // 未截止作业按单元计数（T2A.7 起走 assignment_units 关联；D19 warning 数据源）
   const openAssignmentCountByUnitId = new Map<string, number>();
   for (const row of db
-    .select({ unitId: assignments.unitId })
-    .from(assignments)
+    .select({ unitId: assignmentUnits.unitId })
+    .from(assignmentUnits)
+    .innerJoin(assignments, eq(assignmentUnits.assignmentId, assignments.id))
     .where(
       and(
         isNull(assignments.deletedAt),

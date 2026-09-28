@@ -2,6 +2,7 @@ import {
   Archive,
   ArchiveRestore,
   ChevronLeft,
+  ClipboardPen,
   Loader2,
   Pencil,
   TriangleAlert,
@@ -106,6 +107,11 @@ export function CourseEditPage() {
         description={detail.description}
         archived={detail.archived}
         onEdit={() => setEditOpen(true)}
+        onAssign={() =>
+          void navigate(
+            `/t/assignments?courseId=${encodeURIComponent(detail.id)}&compose=1`,
+          )
+        }
         onDeleted={() => void navigate("/t/courses")}
       />
 
@@ -153,6 +159,7 @@ function CourseHeader({
   description,
   archived,
   onEdit,
+  onAssign,
   onDeleted,
 }: {
   courseId: string;
@@ -160,6 +167,8 @@ function CourseHeader({
   description: string | null;
   archived: boolean;
   onEdit: () => void;
+  /** 布置作业：跳转作业页并预选本课程（T2A.7 课程页入口） */
+  onAssign: () => void;
   onDeleted: () => void;
 }) {
   const updateMutation = useUpdateCourse(courseId);
@@ -191,6 +200,10 @@ function CourseHeader({
         <Button variant="outline" className="min-h-11" onClick={onEdit}>
           <Pencil aria-hidden />
           编辑信息
+        </Button>
+        <Button variant="outline" className="min-h-11" onClick={onAssign}>
+          <ClipboardPen aria-hidden />
+          布置作业
         </Button>
         <Button
           variant="outline"

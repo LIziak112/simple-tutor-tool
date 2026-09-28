@@ -2,7 +2,9 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import {
+  assignmentStudents,
   assignments,
+  assignmentUnits,
   attempts,
   courses,
   loginFailures,
@@ -19,6 +21,119 @@ import { createTestDb } from "./test-utils";
 interface TableNameRow {
   name: string;
 }
+
+describe("assignments / assignment_units / assignment_students 表（T2A.7 作业结构）", () => {
+  /** 造最小外键链：课程 → 单元、学生，返回各 id */
+  function seedT2a7Refs(db: ReturnType<typeof createTestDb>): {
+    courseId: string;
+    unitId: string;
+    studentId: string;
+  } {
+    const courseId = randomUUID();
+    const unitId = "t2a7-练习一";
+    const studentId = randomUUID();
+    const now = new Date().toISOString();
+    db.insert(courses)
+      .values({ id: courseId, title: "初一上", order: 0, createdAt: now })
+      .run();
+    db.insert(units)
+      .values({
+        id: unitId,
+        courseId,
+        lectureId: null,
+        title: "练习一",
+        topic: null,
+        order: 0,
+        updatedAt: now,
+      })
+      .run();
+    db.insert(students)
+      .values({
+        id: studentId,
+        displayName: "张三",
+        loginName: "张三",
+        passwordHash: null,
+        linkToken: `link-${randomUUID()}`,
+        linkEnabled: true,
+        passwordEnabled: false,
+        note: null,
+        archivedAt: null,
+        createdAt: now,
+      })
+      .run();
+    return { courseId, unitId, studentId };
+  }
+
+  it("迁移后 assignment_units 表存在；复合主键 (assignmentId, unitId) 拒绝重复行", () => {
+    const db = createTestDb();
+    const tables = db.$client
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'assignment_units'",
+      )
+      .all() as TableNameRow[];
+    expect(tables.map((r) => r.name)).toEqual(["assignment_units"]);
+
+    const { unitId } = seedT2a7Refs(db);
+    const now = new Date().toISOString();
+    const assignmentId = randomUUID();
+    db.insert(assignments)
+      .values({ id: assignmentId, unitId, title: "作业一", createdAt: now })
+      .run();
+    db.insert(assignmentUnits).values({ assignmentId, unitId, order: 0 }).run();
+    // 同 (assignmentId, unitId) 第二行 → 违反复合主键
+    expect(() =>
+      db
+        .insert(assignmentUnits)
+        .values({ assignmentId, unitId, order: 1 })
+        .run(),
+    ).toThrow();
+    db.$client.close();
+  });
+
+  it("assignments.unitId 可空（多单元作业走 assignment_units）；courseId 与名单时间列可读写", () => {
+    const db = createTestDb();
+    const { courseId, studentId } = seedT2a7Refs(db);
+    const now = new Date().toISOString();
+    // T2A.7 新形态：unitId 为 NULL、courseId 指向课程
+    const assignmentId = randomUUID();
+    db.insert(assignments)
+      .values({
+        id: assignmentId,
+        unitId: null,
+        courseId,
+        title: "两单元作业",
+        dueAt: null,
+        deletedAt: null,
+        createdAt: now,
+      })
+      .run();
+    expect(
+      db
+        .select()
+        .from(assignments)
+        .where(eq(assignments.id, assignmentId))
+        .get(),
+    ).toMatchObject({ id: assignmentId, unitId: null, courseId });
+
+    // 名单行：addedAt 恒写非空、removedAt 置值（D13 移出 = 行保留）
+    db.insert(assignmentStudents)
+      .values({ assignmentId, studentId, addedAt: now, removedAt: now })
+      .run();
+    expect(
+      db
+        .select()
+        .from(assignmentStudents)
+        .where(eq(assignmentStudents.assignmentId, assignmentId))
+        .get(),
+    ).toEqual({
+      assignmentId,
+      studentId,
+      addedAt: now,
+      removedAt: now,
+    });
+    db.$client.close();
+  });
+});
 
 describe("createTestDb（内存库 + 迁移）", () => {
   it("迁移后 teachers 与 sessions 表存在", () => {

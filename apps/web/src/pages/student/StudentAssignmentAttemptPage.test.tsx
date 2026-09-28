@@ -135,7 +135,8 @@ const START_DRAFT: AttemptStartData = {
   sourceType: "assignment",
   assignmentId: ASSIGNMENT_ID,
   courseId: null,
-  unitId: "练习四",
+  // T2A.7：assignment 来源多单元化后 unitId 为 null
+  unitId: null,
   attemptNo: 1,
   status: "draft",
   startedAt: "2026-09-27T02:00:00.000Z",
@@ -148,22 +149,29 @@ const DRAFT_DATA: AttemptDraftData = {
   title: "周末加练",
   courseName: null,
   dueAt: "2026-10-01T12:00:00.000Z",
-  questions: [
+  // T2A.7：题目按单元分组下发（单单元一组）
+  units: [
     {
-      id: "练习四-1",
-      type: "judge",
-      difficulty: 1,
-      knowledge: ["有理数的概念"],
-      stemMd: "$0$ 既不是正数，也不是负数。[[]]",
-      hintCount: 0,
-    },
-    {
-      id: "练习四-4",
-      type: "fill",
-      difficulty: 2,
-      knowledge: ["有理数加法"],
-      stemMd: "计算：$(-3)+7=$ [[]]。",
-      hintCount: 1,
+      id: "练习四",
+      title: "练习四",
+      questions: [
+        {
+          id: "练习四-1",
+          type: "judge",
+          difficulty: 1,
+          knowledge: ["有理数的概念"],
+          stemMd: "$0$ 既不是正数，也不是负数。[[]]",
+          hintCount: 0,
+        },
+        {
+          id: "练习四-4",
+          type: "fill",
+          difficulty: 2,
+          knowledge: ["有理数加法"],
+          stemMd: "计算：$(-3)+7=$ [[]]。",
+          hintCount: 1,
+        },
+      ],
     },
   ],
   drafts: {},
@@ -189,38 +197,44 @@ const RESULT_DATA: AttemptResultData = {
     unanswered: 0,
     autoGradable: 2,
   },
-  questions: [
+  units: [
     {
-      questionId: "练习四-1",
-      snapshot: {
-        id: "练习四-1",
-        type: "judge",
-        difficulty: 1,
-        knowledge: ["有理数的概念"],
-        stemMd: "$0$ 既不是正数，也不是负数。[[正确]]",
-        hintCount: 0,
-      },
-      answers: { kind: "judge", value: true },
-      solutionMd: null,
-      answer: { kind: "judge", value: true },
-      autoCorrect: true,
-      hintsOpened: [],
-    },
-    {
-      questionId: "练习四-4",
-      snapshot: {
-        id: "练习四-4",
-        type: "fill",
-        difficulty: 2,
-        knowledge: ["有理数加法"],
-        stemMd: "计算：$(-3)+7=$ [[4]]。",
-        hintCount: 1,
-      },
-      answers: { kind: "fill", blanks: [["4"]] },
-      solutionMd: null,
-      answer: { kind: "fill", values: ["4"] },
-      autoCorrect: true,
-      hintsOpened: [],
+      id: "练习四",
+      title: "练习四",
+      questions: [
+        {
+          questionId: "练习四-1",
+          snapshot: {
+            id: "练习四-1",
+            type: "judge",
+            difficulty: 1,
+            knowledge: ["有理数的概念"],
+            stemMd: "$0$ 既不是正数，也不是负数。[[正确]]",
+            hintCount: 0,
+          },
+          answers: { kind: "judge", value: true },
+          solutionMd: null,
+          answer: { kind: "judge", value: true },
+          autoCorrect: true,
+          hintsOpened: [],
+        },
+        {
+          questionId: "练习四-4",
+          snapshot: {
+            id: "练习四-4",
+            type: "fill",
+            difficulty: 2,
+            knowledge: ["有理数加法"],
+            stemMd: "计算：$(-3)+7=$ [[4]]。",
+            hintCount: 1,
+          },
+          answers: { kind: "fill", blanks: [["4"]] },
+          solutionMd: null,
+          answer: { kind: "fill", values: ["4"] },
+          autoCorrect: true,
+          hintsOpened: [],
+        },
+      ],
     },
   ],
 };
@@ -350,22 +364,28 @@ const HANDWRITTEN_DRAFT: AttemptDraftData = {
   title: "手写练习",
   courseName: null,
   dueAt: null,
-  questions: [
+  units: [
     {
-      id: "q-ink-1",
-      type: "solve",
-      difficulty: 3,
-      knowledge: ["计算"],
-      stemMd: "第一道手写题",
-      hintCount: 0,
-    },
-    {
-      id: "q-ink-2",
-      type: "apply",
-      difficulty: 3,
-      knowledge: ["应用"],
-      stemMd: "第二道手写题",
-      hintCount: 0,
+      id: "练习四",
+      title: "练习四",
+      questions: [
+        {
+          id: "q-ink-1",
+          type: "solve",
+          difficulty: 3,
+          knowledge: ["计算"],
+          stemMd: "第一道手写题",
+          hintCount: 0,
+        },
+        {
+          id: "q-ink-2",
+          type: "apply",
+          difficulty: 3,
+          knowledge: ["应用"],
+          stemMd: "第二道手写题",
+          hintCount: 0,
+        },
+      ],
     },
   ],
   drafts: {},
@@ -726,25 +746,31 @@ describe("StudentAssignmentAttemptPage：学习痕迹埋点", () => {
 /** 带已解锁提示的草稿视图（练习四-4 共 2 条、解锁过第 0 条；练习四-8 共 2 条未解锁） */
 const DRAFT_WITH_HINTS: AttemptDraftData = {
   ...DRAFT_DATA,
-  questions: [
-    // 练习四-1（判断题，无提示）原样保留（slice 避免下标访问的 undefined 窄化）
-    ...DRAFT_DATA.questions.slice(0, 1),
-    // 练习四-4 在 DRAFT_DATA 中 hintCount=1，这里覆盖为 2 以构造「已解锁 1 条、剩余 1 条」状态
+  units: [
     {
-      id: "练习四-4",
-      type: "fill",
-      difficulty: 2,
-      knowledge: ["有理数加法"],
-      stemMd: "计算：$(-3)+7=$ [[]]。",
-      hintCount: 2,
-    },
-    {
-      id: "练习四-8",
-      type: "find-error",
-      difficulty: 2,
-      knowledge: ["有理数加法"],
-      stemMd: "下面是小明的解答，其中有一处错误：",
-      hintCount: 2,
+      id: "练习四",
+      title: "练习四",
+      questions: [
+        // 练习四-1（判断题，无提示）原样保留（slice 避免下标访问的 undefined 窄化）
+        ...(DRAFT_DATA.units[0]?.questions ?? []).slice(0, 1),
+        // 练习四-4 在 DRAFT_DATA 中 hintCount=1，这里覆盖为 2 以构造「已解锁 1 条、剩余 1 条」状态
+        {
+          id: "练习四-4",
+          type: "fill",
+          difficulty: 2,
+          knowledge: ["有理数加法"],
+          stemMd: "计算：$(-3)+7=$ [[]]。",
+          hintCount: 2,
+        },
+        {
+          id: "练习四-8",
+          type: "find-error",
+          difficulty: 2,
+          knowledge: ["有理数加法"],
+          stemMd: "下面是小明的解答，其中有一处错误：",
+          hintCount: 2,
+        },
+      ],
     },
   ],
   hintsOpened: {
@@ -799,16 +825,25 @@ describe("StudentAssignmentAttemptPage：分步提示", () => {
     mockedStart.mockResolvedValue(RESULT_DATA.attempt);
     mockedFetch.mockResolvedValue({
       ...RESULT_DATA,
-      questions: RESULT_DATA.questions.map((question) =>
-        question.questionId === "练习四-4"
-          ? {
-              ...question,
-              hintsOpened: [
-                { index: 0, text: "同号相加，取相同的符号，并把绝对值相加。" },
-              ],
-            }
-          : question,
-      ),
+      units: [
+        {
+          id: "练习四",
+          title: "练习四",
+          questions: (RESULT_DATA.units[0]?.questions ?? []).map((question) =>
+            question.questionId === "练习四-4"
+              ? {
+                  ...question,
+                  hintsOpened: [
+                    {
+                      index: 0,
+                      text: "同号相加，取相同的符号，并把绝对值相加。",
+                    },
+                  ],
+                }
+              : question,
+          ),
+        },
+      ],
     });
     renderPage();
 

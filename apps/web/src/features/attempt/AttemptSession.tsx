@@ -47,12 +47,12 @@ export function isResultDetail(
  *   交卷入口（交卷必然同样被拒）。
  */
 
-/** 来源行文案：课程练习带次数；作业显示「作业」 */
+/** 来源行文案：课程练习带次数；作业显示「作业」（挂课程时「作业 · 课程名」，T2A.7） */
 function sourceLabel(data: AttemptDetailData): string {
   if (data.attempt.sourceType === "course") {
     return `课程：${data.courseName ?? ""} · 第 ${data.attempt.attemptNo} 次`;
   }
-  return "作业";
+  return data.courseName !== null ? `作业 · ${data.courseName}` : "作业";
 }
 
 export function AttemptSession({
@@ -153,8 +153,12 @@ function AnswerView({
   const [inkFlushing, setInkFlushing] = useState(false);
   const submit = useSubmitAttempt(attemptId);
 
-  const questionIds = data.questions.map((question) => question.id);
-  const total = data.questions.length;
+  // T2A.7：题目按单元分组下发；答题页平铺渲染、题号全卷连续（累计 index）。
+  // 多单元时渲染节标题（单元标题），单单元不显示节头（避免与课程练习标题重复）。
+  const flatQuestions = data.units.flatMap((unit) => unit.questions);
+  const showUnitHeaders = data.units.length > 1;
+  const questionIds = flatQuestions.map((question) => question.id);
+  const total = flatQuestions.length;
   const answered = answers === null ? 0 : answeredCount(questionIds);
   const unanswered = total - answered;
 
@@ -239,29 +243,46 @@ function AnswerView({
           </div>
         )}
 
-        {/* 题卡列表（ref 注册进视口观察：question_view + 聚焦兜底，T2.10） */}
+        {/* 题卡列表（ref 注册进视口观察：question_view + 聚焦兜底，T2.10）。
+            T2A.7：多单元作业按单元分节（节标题 = 单元标题），题号全卷连续 */}
         <ol className="flex flex-col gap-4">
-          {data.questions.map((question, index) => (
-            <li
-              key={question.id}
-              ref={(el) => attemptEvents.registerCard(question.id, el)}
-            >
-              <AttemptQuestionCard
-                index={index}
-                question={question}
-                answer={answers?.[question.id]}
-                onAnswer={(answer, defer) =>
-                  setAnswer(question.id, answer, defer ?? false)
-                }
-                attemptId={attemptId}
-                registerInkController={registerInkController}
-                onInkStroke={(strokes) => {
-                  attemptEvents.noteInteraction(question.id);
-                  attemptEvents.trackInkStrokes(question.id, strokes);
-                }}
-                hints={hintsOpened[question.id] ?? []}
-                onHintUnlocked={(entry) => unlockHint(question.id, entry)}
-              />
+          {data.units.map((unit) => (
+            <li key={unit.id} className="flex flex-col gap-4">
+              {showUnitHeaders && (
+                <h2 className="border-b border-border pb-1.5 text-sm font-semibold text-muted-foreground">
+                  {unit.title}
+                </h2>
+              )}
+              <ol className="flex flex-col gap-4">
+                {unit.questions.map((question) => {
+                  const index = flatQuestions.indexOf(question);
+                  return (
+                    <li
+                      key={question.id}
+                      ref={(el) => attemptEvents.registerCard(question.id, el)}
+                    >
+                      <AttemptQuestionCard
+                        index={index}
+                        question={question}
+                        answer={answers?.[question.id]}
+                        onAnswer={(answer, defer) =>
+                          setAnswer(question.id, answer, defer ?? false)
+                        }
+                        attemptId={attemptId}
+                        registerInkController={registerInkController}
+                        onInkStroke={(strokes) => {
+                          attemptEvents.noteInteraction(question.id);
+                          attemptEvents.trackInkStrokes(question.id, strokes);
+                        }}
+                        hints={hintsOpened[question.id] ?? []}
+                        onHintUnlocked={(entry) =>
+                          unlockHint(question.id, entry)
+                        }
+                      />
+                    </li>
+                  );
+                })}
+              </ol>
             </li>
           ))}
         </ol>

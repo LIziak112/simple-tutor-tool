@@ -172,7 +172,7 @@ async function createAssignment(
   const res = await app.request("/api/teacher/assignments", {
     method: "POST",
     headers: { "content-type": "application/json", cookie: teacherCookie },
-    body: JSON.stringify({ unitId, studentIds: [studentId] }),
+    body: JSON.stringify({ unitIds: [unitId], studentIds: [studentId] }),
   });
   expect(res.status).toBe(201);
   const body = (await res.json()) as { data: { id: string } };
@@ -403,9 +403,9 @@ describe("验收项 2：交卷后仍可查看", () => {
     const detail = (await detailRes.json()) as unknown;
     expect(attemptResultOkSchema.safeParse(detail).success).toBe(true);
     const result = (detail as { data: AttemptResultData }).data;
-    const findError = result.questions.find(
-      (q) => q.questionId === Q.findError,
-    );
+    const findError = result.units
+      .flatMap((unit) => unit.questions)
+      .find((q) => q.questionId === Q.findError);
     expect(findError?.hintsOpened).toEqual([
       { index: 0, text: hints[0] },
       { index: 1, text: hints[1] },

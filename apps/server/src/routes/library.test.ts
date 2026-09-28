@@ -197,7 +197,7 @@ async function makeAssignment(
     "/api/teacher/assignments",
     teacherCookie,
     {
-      unitId,
+      unitIds: [unitId],
       studentIds,
     },
   );
@@ -640,7 +640,8 @@ describe("资源库路由：软删、学生可见性与作业取卷（D3/D16）"
       listVisibleItems(db, student.id, courseId).map((item) => item.refId),
     ).not.toContain(UNIT_ID);
 
-    // 作业不受影响：学生照常开始作答并取卷（D16）；泄露断言不回归
+    // 作业不受影响：学生照常开始作答并取到全部题目（D16：单元软删不影响作业
+    // 通道——只有 questions.deletedAt 才从试卷排除）；泄露断言不回归
     const start = await request(
       app,
       "POST",
@@ -659,15 +660,15 @@ describe("资源库路由：软删、学生可见性与作业取卷（D3/D16）"
     assertNoLeak(paperBody);
     const paperQuestions = (
       paperBody as {
-        data: { questions: { id: string }[] };
+        data: { units: { questions: { id: string }[] }[] };
       }
-    ).data.questions;
+    ).data.units.flatMap((unit) => unit.questions);
     expect(paperQuestions).toHaveLength(8);
     expect(paperQuestions.map((q) => q.id)).toEqual(
       EXPECTED_QUESTIONS.map((q) => q.id),
     );
 
-    // 恢复 → 可见性恢复
+    // 恢复 → 可见性恢复（试卷在软删期间本就照常，内容无变化）
     const restore = await request(
       app,
       "POST",
@@ -725,20 +726,24 @@ describe("资源库路由：purge（D3 条件）", () => {
 
     // 场景二：清掉作答与作业（模拟从未使用）→ purge 成功
     //（assignment_students 有 FK，先清名单再清作业；走底层 prepare 直跑 SQL）
+    // T2A.7：作业内容在 assignment_units（assignments.unitId 已废弃为空），按关联表清
     db.$client
       .prepare(
-        "DELETE FROM assignment_students WHERE assignment_id IN (SELECT id FROM assignments WHERE unit_id = ?)",
+        "DELETE FROM assignment_students WHERE assignment_id IN (SELECT assignment_id FROM assignment_units WHERE unit_id = ?)",
       )
       .run(UNIT_ID);
     db.$client
       .prepare(
-        "DELETE FROM responses WHERE attempt_id IN (SELECT id FROM attempts WHERE unit_id = ?)",
+        "DELETE FROM responses WHERE attempt_id IN (SELECT id FROM attempts WHERE unit_id = ? OR assignment_id IN (SELECT assignment_id FROM assignment_units WHERE unit_id = ?))",
       )
-      .run(UNIT_ID);
-    db.$client.prepare("DELETE FROM attempts WHERE unit_id = ?").run(UNIT_ID);
+      .run(UNIT_ID, UNIT_ID);
     db.$client
-      .prepare("DELETE FROM assignments WHERE unit_id = ?")
-      .run(UNIT_ID);
+      .prepare(
+        "DELETE FROM attempts WHERE unit_id = ? OR assignment_id IN (SELECT assignment_id FROM assignment_units WHERE unit_id = ?)",
+      )
+      .run(UNIT_ID, UNIT_ID);
+    db.$client.prepare("DELETE FROM assignment_units").run();
+    db.$client.prepare("DELETE FROM assignments").run();
     res = await request(
       app,
       "DELETE",
@@ -796,6 +801,7 @@ describe("资源库路由：purge（D3 条件）", () => {
     // 清掉作答与作业 → 讲义可 purge；单元配套关联被解除，单元保留
     for (const table of [
       "assignment_students",
+      "assignment_units",
       "responses",
       "attempts",
       "assignments",
