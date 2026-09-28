@@ -1,0 +1,1 @@
+ALTER TABLE `assignments` ADD `answer_release` text DEFAULT 'on_submit' NOT NULL;

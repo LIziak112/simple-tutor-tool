@@ -204,6 +204,8 @@ describe("attemptResultDataSchema（结果视图）", () => {
     title: "周末加练",
     courseName: null,
     dueAt: null,
+    // T2A.8：答案公布时机标记（on_submit / 已到截止的 after_due = 完整形态）
+    answersReleased: true,
     summary: {
       total: 2,
       answered: 2,
@@ -348,6 +350,59 @@ describe("attemptResultDataSchema（结果视图）", () => {
       }).success,
     ).toBe(false);
   });
+
+  it("T2A.8 answersReleased 缺失整体拒绝（必填；两种形态都须显式声明）", () => {
+    const { answersReleased: _omit, ...withoutRelease } = RESULT;
+    expect(attemptResultDataSchema.safeParse(withoutRelease).success).toBe(
+      false,
+    );
+  });
+
+  it("T2A.8 受限形态（answersReleased=false）合法：answers/solutionMd/autoCorrect 全 null + 零化对错计数 + scoreAuto 置 null 投影", () => {
+    const restricted = attemptResultDataSchema.parse({
+      ...RESULT,
+      attempt: { ...RESULT.attempt, scoreAuto: null },
+      dueAt: "2026-10-01T12:00:00.000Z",
+      answersReleased: false,
+      summary: {
+        total: 2,
+        answered: 2,
+        correct: 0,
+        wrong: 0,
+        // 未公布口径：每道已答题都显示为「待批」
+        pending: 2,
+        unanswered: 0,
+        autoGradable: 0,
+      },
+      units: [
+        {
+          ...RESULT.units[0],
+          questions: RESULT.units[0].questions.map((question) => ({
+            ...question,
+            // stemMd 为 publicStemMd 公开化版（[[答案]] 标记已替换为 [[]]）
+            snapshot: {
+              ...question.snapshot,
+              stemMd: question.snapshot.stemMd.replace(
+                /\[\[[^[\]]*\]\]/g,
+                "[[]]",
+              ),
+            },
+            answers: null,
+            solutionMd: null,
+            autoCorrect: null,
+          })),
+        },
+      ],
+    });
+    expect(restricted.answersReleased).toBe(false);
+    expect(restricted.attempt.scoreAuto).toBeNull();
+    const first = restricted.units[0]?.questions[0];
+    expect(first?.answers).toBeNull();
+    expect(first?.solutionMd).toBeNull();
+    expect(first?.autoCorrect).toBeNull();
+    // 本人答案不受影响（受限形态仍下发）
+    expect(first?.answer).toEqual({ kind: "judge", value: true });
+  });
 });
 
 describe("hintOpenRequestSchema / hintOpenDataSchema（T2.11 分步提示）", () => {
@@ -460,6 +515,7 @@ describe("attemptDetailDataSchema / attemptErrorCodeSchema", () => {
         title: "周末加练",
         courseName: null,
         dueAt: null,
+        answersReleased: true,
         summary: {
           total: 0,
           answered: 0,

@@ -35,7 +35,9 @@ import {
 import { HttpError } from "../lib/http-error";
 
 /**
- * AssignmentService（T2.2；T2A.7 大改——多单元 + 按课程布置 + 名单增删 + 内容锁定）。
+ * AssignmentService（T2.2；T2A.7 大改——多单元 + 按课程布置 + 名单增删 + 内容锁定；
+ * T2A.8 追加 answerRelease 公布时机：create/PATCH 与 dueAt 的组合校验防死锁态，
+ * 列表/详情/创建/更新响应带出该字段）。
  * 路由只做「鉴权 → 校验 → 调 service → 包装响应」（api-endpoint 技能约定），本模块承载：
  *
  * - 创建（D12/D13）：unitIds 全部存在、不可重复、按数组顺序写 assignment_units
@@ -346,6 +348,7 @@ function toTeacherAssignment(
       row.courseId !== null ? (courseNames.get(row.courseId) ?? null) : null,
     title: row.title,
     dueAt: row.dueAt,
+    answerRelease: row.answerRelease,
     units: unitsOf,
     totalQuestionCount: unitsOf.reduce(
       (sum, unit) => sum + unit.questionCount,
@@ -388,6 +391,8 @@ function teacherAssignmentOf(db: Db, id: string): TeacherAssignment {
  * - courseId 提供且不存在 → 404 COURSE_NOT_FOUND；
  * - studentIds 去重后逐个校验存在（空数组已被契约 min(1) 拦截）；
  * - title 缺省 = defaultAssignmentTitle（快照语义：之后单元改名不联动）；
+ * - answerRelease（T2A.8，D11）：公布时机，默认 on_submit；选 after_due 而
+ *   dueAt 缺失 → 400 VALIDATION_ERROR（防死锁态：永不公布）；
  * - 事务写 assignments（unitId=null——旧列 @deprecated，新代码不写）+
  *   assignment_units（order=0..n-1）+ 名单行（addedAt=now，removedAt=null）。
  */
@@ -408,6 +413,14 @@ export function createAssignment(
   }
   const studentIds = [...new Set(request.studentIds)];
   requireStudentsExist(db, studentIds);
+  // T2A.8（D11）：「截止后公布」必须设置截止时间（防死锁态：永不公布）
+  if (request.answerRelease === "after_due" && request.dueAt === undefined) {
+    throw new HttpError(
+      400,
+      "VALIDATION_ERROR",
+      "答案公布时机为「截止后公布」时，必须同时设置截止时间",
+    );
+  }
 
   const id = randomUUID();
   const now = new Date().toISOString();
@@ -420,6 +433,7 @@ export function createAssignment(
         title:
           request.title ?? defaultAssignmentTitle(unitList.map((u) => u.title)),
         dueAt: request.dueAt ?? null,
+        answerRelease: request.answerRelease ?? "on_submit",
         deletedAt: null,
         createdAt: now,
       })
@@ -447,7 +461,8 @@ export function createAssignment(
  *   否则插入新行；
  * - removeStudentIds：校验存在且当前在册；其中已开始作答（有该作业 attempt）者
  *   未带 confirmStarted → 409 CONFIRM_REQUIRED（错误壳附 _students 姓名，供确认弹层）；
- * - addStudentIds 与 removeStudentIds 交集 → 400 VALIDATION_ERROR。
+ * - addStudentIds 与 removeStudentIds 交集 → 400 VALIDATION_ERROR；
+ * - answerRelease（T2A.8）：改公布时机；与 dueAt 的组合校验见函数内注释。
  * 已删除的作业视为不存在（404，与软删题目的编辑口径一致）。
  */
 export function updateAssignment(
@@ -484,6 +499,20 @@ export function updateAssignment(
         "同一学生不能同时出现在新增与移出名单中",
       );
     }
+  }
+
+  // T2A.8（D11）：公布时机与截止时间的组合校验（按「改后状态」判断，防死锁态：
+  // after_due 却无截止 → 永不公布）。覆盖三种情况：无截止直接改 after_due、
+  // after_due 下把 dueAt 显式置 null、after_due 下去掉截止（配合发布语义二选一时
+  // 由前端先改回 on_submit，服务端只认组合结果）。
+  const nextAnswerRelease = request.answerRelease ?? row.answerRelease;
+  const nextDueAt = request.dueAt !== undefined ? request.dueAt : row.dueAt;
+  if (nextAnswerRelease === "after_due" && nextDueAt === null) {
+    throw new HttpError(
+      400,
+      "VALIDATION_ERROR",
+      "答案公布时机为「截止后公布」时必须保留截止时间（如需取消截止，先把公布时机改回「交卷即公布」）",
+    );
   }
 
   // 单元替换：先判内容锁定（D14），再校验并替换
@@ -559,6 +588,9 @@ export function updateAssignment(
     const patch: Partial<typeof assignments.$inferInsert> = {};
     if (request.title !== undefined) patch.title = request.title;
     if (request.dueAt !== undefined) patch.dueAt = request.dueAt;
+    if (request.answerRelease !== undefined) {
+      patch.answerRelease = request.answerRelease;
+    }
     if (Object.keys(patch).length > 0) {
       tx.update(assignments).set(patch).where(eq(assignments.id, id)).run();
     }

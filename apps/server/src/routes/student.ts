@@ -157,9 +157,15 @@ export function createStudentRoutes(
         });
       })
       .post("/attempts/:id/submit", (c) => {
+        // T2A.8：now 显式注入（服务层按 answerRelease+dueAt 决定交卷瞬间的形态）
         return c.json({
           ok: true,
-          data: submitAttempt(db, c.var.student.id, c.req.param("id")),
+          data: submitAttempt(
+            db,
+            c.var.student.id,
+            c.req.param("id"),
+            new Date(),
+          ),
         });
       })
       // T2.11：分步提示——按需下发被请求的那一条并记录（hint_open 事件 + 已解锁集合）
@@ -177,9 +183,15 @@ export function createStudentRoutes(
         });
       })
       .get("/attempts/:id", (c) => {
+        // T2A.8：now 显式注入（读时比较 dueAt，截止后自动恢复完整结果视图）
         return c.json({
           ok: true,
-          data: getAttemptDetail(db, c.var.student.id, c.req.param("id")),
+          data: getAttemptDetail(
+            db,
+            c.var.student.id,
+            c.req.param("id"),
+            new Date(),
+          ),
         });
       })
       // T2A.6：通用取卷（两种来源共用；课程来源每次校验可见性与成员资格，

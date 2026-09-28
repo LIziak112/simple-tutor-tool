@@ -106,6 +106,13 @@
       "when": 1790606110025,
       "tag": "0014_outgoing_annihilus",
       "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "6",
+      "when": 1790614311020,
+      "tag": "0015_oval_franklin_storm",
+      "breakpoints": true
     }
   ]
 }
