@@ -21,7 +21,7 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { Link, useLocation, useNavigate } from "react-router";
+import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -79,9 +79,16 @@ import { formatRelativeTime } from "@/lib/time";
  * 列表多选批量操作 + 搜索（前端即时过滤）+ 单元展开题目摘要（编辑抽屉 / 软删 /
  * 单元内拖拽排序复用）+ 单元详情面板（改标题/topic/文件夹/配套讲义、使用情况、
  * 导出、删除）。删除确认弹层列出使用情况（D3）；删除类 toast 带「撤销」（§4-6）。
+ * T2A.9：页签状态写入 URL（?tab=lectures|units|recycle，缺省 = 题库），
+ * 侧边栏「讲义库 / 题库」入口据此直达定位页签。
  */
 
 type TabKey = "lectures" | "units" | "recycle";
+
+/** URL ?tab= 的合法取值（缺省/非法值回落 units，保持 /t/library 直达旧口径） */
+function parseTabParam(value: string | null): TabKey {
+  return value === "lectures" || value === "recycle" ? value : "units";
+}
 
 const TABS: { key: TabKey; label: string; icon: typeof BookOpen }[] = [
   { key: "lectures", label: "讲义库", icon: BookOpen },
@@ -126,7 +133,10 @@ export function LibraryPage() {
   const [bannerVisible, setBannerVisible] = useState(
     importSuccess !== undefined,
   );
-  const [tab, setTab] = useState<TabKey>("units");
+  // 页签以 URL ?tab= 为唯一来源（T2A.9：侧边栏「讲义库/题库」入口按参数直达）；
+  // units 是默认页签，URL 不带参数即题库
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab = parseTabParam(searchParams.get("tab"));
   const [folder, setFolder] = useState<FolderSelection>(undefined);
   const [search, setSearch] = useState("");
   // 多选（分 kind 独立；全选当前筛选结果，§4-2）
@@ -397,7 +407,8 @@ export function LibraryPage() {
         </p>
       ) : null}
 
-      {/* 页签（讲义库 / 题库 / 回收站） */}
+      {/* 页签（讲义库 / 题库 / 回收站）；点击切换写回 URL（replace 不留历史，
+          保留 location.state——导入成功提示条不因切页签消失） */}
       <div
         role="tablist"
         aria-label="资源库分区"
@@ -410,7 +421,10 @@ export function LibraryPage() {
             role="tab"
             aria-selected={tab === key}
             onClick={() => {
-              setTab(key);
+              setSearchParams(key === "units" ? {} : { tab: key }, {
+                replace: true,
+                state: location.state,
+              });
               setSelectedLectures(new Set());
               setSelectedUnits(new Set());
             }}
