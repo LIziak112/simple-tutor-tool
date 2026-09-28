@@ -16,6 +16,7 @@ import {
  * 避免本用例的额外导入污染主流程「布置作业」单元下拉）+ 学生入成员 →
  * 学生链接登录 → 首页「我的课程」卡片 → 课程目录（分节/讲义/单元「即将开放」）→
  * 讲义阅读页（课程上下文 + 本课配套练习）→ 教师放开配套单元可见后学生刷新即变化。
+ * T2A.6：单元项接入作答入口（原「即将开放」占位改为状态徽章 + 落地页链接）。
  * 全程对学生端响应做泄露检查（讲义 markdown 之外不得出现题目侧内容）。
  */
 test.describe("学生端课程与讲义浏览（T2A.5，D5 可见性）", () => {
@@ -105,7 +106,13 @@ test.describe("学生端课程与讲义浏览（T2A.5，D5 可见性）", () => 
       await studentPage.getByRole("link", { name: "返回课程目录" }).click();
       await studentPage.waitForURL(`**/s/courses/${courseId}`);
       await expect(studentPage.getByText(companionName)).toBeVisible();
-      await expect(studentPage.getByText("即将开放").first()).toBeVisible();
+      // T2A.6：目录单元项显示状态徽章（未做）并可进入
+      await expect(studentPage.getByText("未做").first()).toBeVisible();
+      await expect(
+        studentPage.getByRole("link", {
+          name: `打开练习 ${companionName}（1 题）`,
+        }),
+      ).toBeVisible();
 
       // 讲义列表（二级页面）：按课程分组，链接带课程上下文
       await studentPage.goto("/s/lectures");
