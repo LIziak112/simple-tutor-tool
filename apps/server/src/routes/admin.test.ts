@@ -13,7 +13,6 @@ import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import { hashPassword } from "../auth/password.ts";
-import { createTeacherSession } from "../auth/session.ts";
 import type { Db } from "../db/client.ts";
 import { students, teachers } from "../db/schema.ts";
 import { createTestDb, createTestDir, TEST_TEACHER_ID } from "../db/test-utils.ts";
@@ -57,14 +56,17 @@ async function req(
   body?: unknown,
   headers: Record<string, string> = {},
 ): Promise<Response> {
-  return app.request(path, {
+  const init: RequestInit = {
     method,
     headers: {
       ...(body !== undefined ? { "content-type": "application/json" } : {}),
       ...headers,
     },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
+  };
+  if (body !== undefined) {
+    init.body = JSON.stringify(body);
+  }
+  return app.request(path, init);
 }
 
 /** 首启建管理员（teacher，即种子占位行升级）并登录，返回 Cookie 头 */
