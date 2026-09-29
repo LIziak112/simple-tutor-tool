@@ -6,6 +6,7 @@ import type { Logger } from "pino";
 import pino from "pino";
 import type { Db } from "./db/client";
 import { HttpError } from "./lib/http-error";
+import { createAdminRoutes } from "./routes/admin";
 import { createPublicRoutes } from "./routes/public";
 import { createStudentRoutes } from "./routes/student";
 import { createTeacherRoutes } from "./routes/teacher";
@@ -154,6 +155,11 @@ export function createApp(options: CreateAppOptions) {
     .route(
       "/api/student",
       createStudentRoutes(options.db, options.publicUrl, options.dataDir),
+    )
+    // —— 管理端（T2B.6，D7/D19）：整组 requireAdmin（非管理员 403 ADMIN_ONLY） ——
+    .route(
+      "/api/admin",
+      createAdminRoutes(options.db, options.publicUrl, options.dataDir),
     );
 
   // —— 生产模式：托管 apps/web/dist ——
