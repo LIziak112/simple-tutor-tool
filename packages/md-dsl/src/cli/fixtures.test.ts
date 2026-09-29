@@ -41,6 +41,7 @@ const EXPECTED: Record<string, string[]> = {
   "10-invalid-directive-attrs.md": ["INVALID_DIRECTIVE_ATTRS"],
   "11-unclosed-container.md": ["UNCLOSED_CONTAINER"],
   "12-directive-not-allowed-here.md": ["DIRECTIVE_NOT_ALLOWED_HERE"],
+  "13-math-left-right.md": ["MATH_LEFT_RIGHT_UNBALANCED"],
 };
 
 function lintFile(name: string, dir: string): FileLintResult {

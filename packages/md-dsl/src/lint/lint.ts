@@ -4,6 +4,7 @@ import { parseDocument } from "../v2/parse.ts";
 import { errorMessage, makeIssue, processor } from "../v2/shared.ts";
 import { lintDirectives } from "./directives.ts";
 import { lintUnclosedContainers } from "./fences.ts";
+import { lintMathDelimiters } from "./math.ts";
 import { lintQuestions } from "./questions.ts";
 
 /**
@@ -48,6 +49,7 @@ function runRules(
       ...lintUnclosedContainers(lines),
       ...lintDirectives(tree, kind),
       ...lintQuestions(tree, lines, parsed, options),
+      ...lintMathDelimiters(tree),
     ];
   } catch (err) {
     return [
