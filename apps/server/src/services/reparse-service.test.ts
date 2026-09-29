@@ -1,8 +1,13 @@
 import { readFileSync } from "node:fs";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import type { Db } from "../db/client.ts";
-import { lectures, questionKnowledge, questions } from "../db/schema.ts";
+import {
+  lectures,
+  questionKnowledge,
+  questions,
+  teachers,
+} from "../db/schema.ts";
 import { createTestDb, TEST_TEACHER_ID } from "../db/test-utils.ts";
 import { commitImport } from "./content-service.ts";
 import {
@@ -421,5 +426,81 @@ describe("renderReparseReport：变更摘要输出", () => {
 
     const dry: ReparseReport = reparseAll(db, { dryRun: true });
     expect(renderReparseReport(dry)).toContain("未写入");
+  });
+});
+
+describe("T2B.3：按教师分组遍历（每位教师的域独立分析、独立写入）", () => {
+  /** 最小单题练习（unit dup、题 dup-1），difficulty 可篡改以制造两组各一题待更新 */
+  const DUP_MD = `---
+kind: practice
+unit: dup
+---
+
+::::question{type=judge difficulty=1 id=dup-1}
+$1>0$。[[正确]]
+::::
+`;
+
+  it("两教师各持同 id 题（内容相同、篡改各自 difficulty）：两题都独立恢复，id 不串域", () => {
+    const db = createTestDb();
+    db.insert(teachers)
+      .values({
+        id: "th-reparse-b",
+        loginName: "乙老师",
+        isAdmin: false,
+        disabledAt: null,
+        passwordHash: "scrypt$fixture",
+        apiToken: null,
+        createdAt: "2026-06-01T00:00:00.000Z",
+      })
+      .run();
+    commitImport(db, TEST_TEACHER_ID, {
+      markdown: DUP_MD,
+      filename: "a.md",
+    });
+    commitImport(db, "th-reparse-b", {
+      markdown: DUP_MD,
+      filename: "a.md",
+    });
+    // 各组各篡改一行（甲 difficulty=5、乙 difficulty=4），reparse 应各自恢复为 1
+    db.update(questions)
+      .set({ difficulty: 5 })
+      .where(
+        and(
+          eq(questions.teacherId, TEST_TEACHER_ID),
+          eq(questions.id, "dup-1"),
+        ),
+      )
+      .run();
+    db.update(questions)
+      .set({ difficulty: 4 })
+      .where(
+        and(eq(questions.teacherId, "th-reparse-b"), eq(questions.id, "dup-1")),
+      )
+      .run();
+
+    const report = reparseAll(db, { dryRun: false });
+    expect(report.questions).toHaveLength(2);
+    expect(report.questions.every((r) => r.status === "updated")).toBe(true);
+
+    const rowA = db
+      .select({ difficulty: questions.difficulty, version: questions.version })
+      .from(questions)
+      .where(
+        and(
+          eq(questions.teacherId, TEST_TEACHER_ID),
+          eq(questions.id, "dup-1"),
+        ),
+      )
+      .get();
+    const rowB = db
+      .select({ difficulty: questions.difficulty, version: questions.version })
+      .from(questions)
+      .where(
+        and(eq(questions.teacherId, "th-reparse-b"), eq(questions.id, "dup-1")),
+      )
+      .get();
+    expect(rowA).toMatchObject({ difficulty: 1, version: 2 });
+    expect(rowB).toMatchObject({ difficulty: 1, version: 2 });
   });
 });
