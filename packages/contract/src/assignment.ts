@@ -125,7 +125,9 @@ export const assignmentCreateRequestSchema = z.object({
  * - addStudentIds 与 removeStudentIds 的交集 → 400 VALIDATION_ERROR；
  * - answerRelease：改公布时机（T2A.8）。与 dueAt 的组合校验：改后状态为
  *   after_due 而截止缺失（当前无截止直接改 after_due，或 after_due 下把
- *   dueAt 置 null / 取消截止）→ 400 VALIDATION_ERROR（防死锁态）。
+ *   dueAt 置 null / 取消截止）→ 400 VALIDATION_ERROR（防死锁态）；
+ * - courseId 创建后不可改（本 schema 无该字段）——如需调整所属课程，
+ *   删除后重新布置（D13 有意不支持改挂）。
  */
 export const assignmentUpdateRequestSchema = z.object({
   title: assignmentTitleSchema.optional(),
