@@ -25,6 +25,7 @@ import {
   responses,
   units,
 } from "../db/schema";
+import { getSingleTeacherId } from "../db/teacher-scope";
 import { HttpError } from "../lib/http-error";
 import { addCourseItems } from "./course-service.ts";
 
@@ -164,6 +165,7 @@ export function createFolder(
     .reduce((max, row) => Math.max(max, row.order), -1);
   const row = {
     id: crypto.randomUUID(),
+    teacherId: getSingleTeacherId(db),
     name,
     order: maxOrder + 1,
     createdAt: new Date().toISOString(),

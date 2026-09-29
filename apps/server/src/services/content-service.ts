@@ -42,7 +42,6 @@ import {
 import { and, asc, eq, isNull } from "drizzle-orm";
 import { ensureCourseFolder } from "../db/backfill";
 import type { Db } from "../db/client";
-import { getSingleTeacherId } from "../db/teacher-scope";
 import {
   courseItems,
   courseStudents,
@@ -55,6 +54,7 @@ import {
   questions,
   units,
 } from "../db/schema";
+import { getSingleTeacherId } from "../db/teacher-scope";
 import { HttpError } from "../lib/http-error";
 import { courseHasAttempts } from "./course-service";
 import { buildImportPlan, loadLibrarySnapshot } from "./import-actions";
@@ -192,8 +192,15 @@ function buildPreview(
   fallbackUnitId?: string,
 ): ImportPreviewData {
   const { version, issues, parsed } = analyzeImport(markdown, fallbackUnitId);
-  const snapshot = loadLibrarySnapshot(db, new Date().toISOString());
-  const plan = buildImportPlan({ parsed, folderId, snapshot });
+  const plan = buildImportPlan({
+    parsed,
+    folderId,
+    snapshot: loadLibrarySnapshot(
+      db,
+      new Date().toISOString(),
+      getSingleTeacherId(db),
+    ),
+  });
   return {
     version,
     summary: summarizeParsed(parsed),
@@ -348,7 +355,11 @@ export function previewImportBatch(
   assertBatchLimits(input.files);
   const baseFolderId = input.folderId ?? null;
   assertFolderExists(db, baseFolderId);
-  const snapshot = loadLibrarySnapshot(db, new Date().toISOString());
+  const snapshot = loadLibrarySnapshot(
+    db,
+    new Date().toISOString(),
+    getSingleTeacherId(db),
+  );
   // 名称 → id（同名取 order 首个，与 ensureCourseFolder 复用口径一致）
   const folderIdByName = new Map<string, string>();
   for (const [id, name] of snapshot.folderNameById) {
@@ -533,6 +544,7 @@ export function commitImport(
         tx.insert(lectures)
           .values({
             id,
+            teacherId,
             folderId,
             title: lecture.title,
             markdown: lecture.markdown,
@@ -551,12 +563,14 @@ export function commitImport(
       }
     }
 
-    // ---- 单元：按 id 匹配（id 来自 DSL，全局唯一）→ 更新或插入 ----
+    // ---- 单元：按 (teacherId, id) 匹配（D13 域内匹配；id 来自 DSL，域内唯一）
+    //      → 更新或插入 ----
     const unitReports: ImportUnitReport[] = [];
     const existingUnitIds = new Set(
       tx
         .select({ id: units.id })
         .from(units)
+        .where(eq(units.teacherId, teacherId))
         .all()
         .map((row) => row.id),
     );
@@ -586,7 +600,7 @@ export function commitImport(
             updatedAt: now,
             deletedAt: null,
           })
-          .where(eq(units.id, unit.id))
+          .where(and(eq(units.teacherId, teacherId), eq(units.id, unit.id)))
           .run();
         unitReports.push({
           id: unit.id,
@@ -598,6 +612,7 @@ export function commitImport(
         tx.insert(units)
           .values({
             id: unit.id,
+            teacherId,
             folderId,
             lectureId,
             title: unit.title,
@@ -617,13 +632,15 @@ export function commitImport(
       }
     }
 
-    // ---- 题目：id 已存在（含软删，视为恢复）→ 更新 + version+1；新 id → 插入 version=1 ----
+    // ---- 题目：id 已存在（含软删，视为恢复）→ 更新 + version+1；新 id → 插入 version=1。
+    //      匹配与写入都带 teacherId（复合主键，D10/D13）----
     let insertedQuestions = 0;
     let updatedQuestions = 0;
     const existingQuestions = new Map(
       tx
         .select({ id: questions.id, version: questions.version })
         .from(questions)
+        .where(eq(questions.teacherId, teacherId))
         .all()
         .map((row) => [row.id, row.version] as const),
     );
@@ -635,7 +652,7 @@ export function commitImport(
         const existingVersion = existingQuestions.get(question.id);
         if (existingVersion === undefined) {
           tx.insert(questions)
-            .values({ id: question.id, ...fields, version: 1 })
+            .values({ id: question.id, teacherId, ...fields, version: 1 })
             .run();
           existingQuestions.set(question.id, 1);
           insertedQuestions += 1;
@@ -647,12 +664,17 @@ export function commitImport(
               version: existingVersion + 1,
               deletedAt: null,
             })
-            .where(eq(questions.id, question.id))
+            .where(
+              and(
+                eq(questions.teacherId, teacherId),
+                eq(questions.id, question.id),
+              ),
+            )
             .run();
           existingQuestions.set(question.id, existingVersion + 1);
           updatedQuestions += 1;
         }
-        syncQuestionKnowledge(tx, question, knowledgeIdByName);
+        syncQuestionKnowledge(tx, question, knowledgeIdByName, teacherId);
       }
     }
 
@@ -746,6 +768,7 @@ export function commitImport(
     tx.insert(imports)
       .values({
         id: importId,
+        teacherId,
         filename: input.filename,
         kind: parsed.frontmatter?.kind ?? "practice",
         rawMd: input.markdown,
@@ -1049,16 +1072,17 @@ export function updateQuestion(
 
   const now = new Date().toISOString();
   const version = row.version + 1;
+  const teacherId = getSingleTeacherId(db);
   db.transaction((tx) => {
     tx.update(questions)
       .set({
         ...questionFields(next, row.unitId, row.order, now),
         version,
       })
-      .where(eq(questions.id, id))
+      .where(and(eq(questions.teacherId, teacherId), eq(questions.id, id)))
       .run();
     const knowledgeIdByName = loadKnowledgeIdByName(tx);
-    syncQuestionKnowledge(tx, next, knowledgeIdByName);
+    syncQuestionKnowledge(tx, next, knowledgeIdByName, teacherId);
   });
 
   return {
@@ -1327,6 +1351,7 @@ export function createCourse(
   db: Db,
   input: { title: string; description?: string | null | undefined },
 ): CourseData {
+  const teacherId = getSingleTeacherId(db);
   const count = db.select({ id: courses.id }).from(courses).all().length;
   const id = crypto.randomUUID();
   const order = count;
@@ -1337,6 +1362,7 @@ export function createCourse(
   db.insert(courses)
     .values({
       id,
+      teacherId,
       title: input.title,
       order,
       description,

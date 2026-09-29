@@ -7,7 +7,7 @@ import {
   wrapLectureMd,
   wrapSingleQuestionMd,
 } from "@tutor/md-dsl";
-import { asc, eq, isNull } from "drizzle-orm";
+import { and, asc, eq, isNull } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
 import type { Lecture, Question as QuestionRow } from "../db/schema.ts";
 import {
@@ -16,6 +16,7 @@ import {
   questionKnowledge,
   questions,
 } from "../db/schema.ts";
+import { getSingleTeacherId } from "../db/teacher-scope.ts";
 import {
   loadKnowledgeIdByName,
   questionFields,
@@ -403,9 +404,31 @@ export function reparseAll(db: Db, options: ReparseOptions): ReparseReport {
     }
   }
 
-  const questionPlans = questionRows.map((row) =>
-    planQuestion(row, knowledgeByQuestion.get(row.id) ?? []),
-  );
+  // T2B.1：题目按归属教师分组处理（当前库只有一位教师 = 一组）；复合主键
+  // (teacherId, id) 下同 id 题目可能存在于多个域——各组独立分析、独立写入，
+  // 考点关联也按域全量替换（syncQuestionKnowledge 带 teacherId）。
+  // 讲义 id 为 uuid 全局唯一，无需分组。组内保持 id 排序、组间按 teacherId 排序，
+  // 单教师下报告输出与历史完全一致。
+  const rowsByTeacher = new Map<string, QuestionRow[]>();
+  for (const row of questionRows) {
+    const key = row.teacherId ?? getSingleTeacherId(db); // D9 读侧视为必有
+    const list = rowsByTeacher.get(key);
+    if (list === undefined) rowsByTeacher.set(key, [row]);
+    else list.push(row);
+  }
+  const questionPlans: QuestionPlan[] = [];
+  const updateTasks: {
+    plan: QuestionPlan;
+    row: QuestionRow;
+    teacherId: string;
+  }[] = [];
+  for (const teacherId of [...rowsByTeacher.keys()].sort()) {
+    for (const row of rowsByTeacher.get(teacherId) ?? []) {
+      const plan = planQuestion(row, knowledgeByQuestion.get(row.id) ?? []);
+      questionPlans.push(plan);
+      updateTasks.push({ plan, row, teacherId });
+    }
+  }
   const lecturePlans = lectureRows.map((row) => planLecture(row));
 
   // 写入阶段：全部更新放进单个事务（要么全部生效、要么全部回滚）
@@ -413,20 +436,36 @@ export function reparseAll(db: Db, options: ReparseOptions): ReparseReport {
     db.transaction((tx) => {
       const now = new Date().toISOString();
       const knowledgeIdByName = loadKnowledgeIdByName(tx);
-      for (const [index, plan] of questionPlans.entries()) {
-        if (plan.status !== "updated" || plan.parsedQuestion === undefined) {
+      for (const task of updateTasks) {
+        if (
+          task.plan.status !== "updated" ||
+          task.plan.parsedQuestion === undefined
+        ) {
           continue;
         }
-        const row = questionRows[index];
-        if (row === undefined) continue; // 防御：plans 与 rows 一一对应
         tx.update(questions)
           .set({
-            ...questionFields(plan.parsedQuestion, row.unitId, row.order, now),
-            version: row.version + 1,
+            ...questionFields(
+              task.plan.parsedQuestion,
+              task.row.unitId,
+              task.row.order,
+              now,
+            ),
+            version: task.row.version + 1,
           })
-          .where(eq(questions.id, row.id))
+          .where(
+            and(
+              eq(questions.teacherId, task.teacherId),
+              eq(questions.id, task.row.id),
+            ),
+          )
           .run();
-        syncQuestionKnowledge(tx, plan.parsedQuestion, knowledgeIdByName);
+        syncQuestionKnowledge(
+          tx,
+          task.plan.parsedQuestion,
+          knowledgeIdByName,
+          task.teacherId,
+        );
       }
       for (const plan of lecturePlans) {
         if (plan.status !== "updated") continue;

@@ -213,8 +213,14 @@ export function buildImportPlan(input: ImportPlanInput): ImportPlan {
 /**
  * 读库生成资源快照（buildImportPlan 的唯一 IO 来源）。
  * nowIso 用于「未截止作业」判定：未删除且（无截止或截止时间未到）。
+ * teacherId（T2B.1/D13）：单元与题目按教师域过滤——复合主键 (teacherId, id) 下
+ * 同 id 可能存在于多个域，匹配快照只取本教师域的行（单教师期与原行为等价）。
  */
-export function loadLibrarySnapshot(db: Db, nowIso: string): LibrarySnapshot {
+export function loadLibrarySnapshot(
+  db: Db,
+  nowIso: string,
+  teacherId: string,
+): LibrarySnapshot {
   const folderNameById = new Map(
     db
       .select({ id: libraryFolders.id, name: libraryFolders.name })
@@ -233,6 +239,7 @@ export function loadLibrarySnapshot(db: Db, nowIso: string): LibrarySnapshot {
       deletedAt: questions.deletedAt,
     })
     .from(questions)
+    .where(eq(questions.teacherId, teacherId))
     .all()) {
     let all = allByUnit.get(row.unitId);
     if (all === undefined) {
@@ -257,6 +264,7 @@ export function loadLibrarySnapshot(db: Db, nowIso: string): LibrarySnapshot {
       deletedAt: units.deletedAt,
     })
     .from(units)
+    .where(eq(units.teacherId, teacherId))
     .all()) {
     unitSnapshot.set(row.id, {
       folderId: row.folderId,
