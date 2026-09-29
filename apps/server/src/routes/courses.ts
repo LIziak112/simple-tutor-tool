@@ -31,20 +31,23 @@ import {
 } from "../services/course-service";
 
 /**
- * 课程编辑页路由（需教师会话，T2A.4），由 teacher.ts 挂在 /api/teacher 之下：
+ * 课程编辑页路由（需教师会话，T2A.4），由 teacher.ts 挂在 /api/teacher 之下
+ * （T2B.4 起全部接口按会话教师 c.var.teacher.id——乙访问甲的课程/条目/成员
+ * → 404，D12 口径）：
  * - GET    /courses?archived：课程列表（成员数、条目数、可见条目数、memberIds、
  *   hasAttempts；archived=true 只列已归档，缺省只列未归档，D4）；
  * - GET    /courses/:id：课程详情（目录条目含资源摘要与状态标签数据 + 成员列表）；
  * - POST   /courses/:id/items：批量追加目录条目（重复跳过并返回清单，D6；
- *   withCompanionUnits 一并添加配套练习，D8）；
+ *   withCompanionUnits 一并添加配套练习，D8；refId 逐项校验归属本教师）；
  * - PUT    /courses/:id/items/order：目录排序（ids 全量重排，order 按下标）；
  * - PATCH  /course-items/:id：条目可见开关 / 定时发布 / 分节改名；
  * - DELETE /course-items/:id：从课程目录移除条目（不动资源库）；
- * - POST/DELETE /courses/:id/members：成员添加 / 移出（D7）；
+ * - POST/DELETE /courses/:id/members：成员添加 / 移出（D7；学生须归属本教师）；
  * - GET    /courses/:id/student-view：学生可见预览（按 D5 过滤的成员可见目录，§4-10）。
  *
  * 课程本体的 POST/PATCH/DELETE /courses(:id) 在 content.ts（T1.12 起；PATCH 已扩展
- * name/description/archived，DELETE 按 D4 升级为「有作答 409 COURSE_HAS_ATTEMPTS」）。
+ * name/description/archived，DELETE 按 D4 升级为「有作答 409 COURSE_HAS_ATTEMPTS」；
+ * T2B.4 起同样按会话教师）。
  * 业务逻辑在 CourseService（api-endpoint 技能约定：路由只做鉴权→校验→调 service→包装）。
  */
 export function createCourseRoutes(db: Db) {
@@ -66,7 +69,7 @@ export function createCourseRoutes(db: Db) {
         return c.json({
           ok: true,
           data: {
-            courses: listCoursesForTeacher(db, {
+            courses: listCoursesForTeacher(db, c.var.teacher.id, {
               archived: query.archived ?? false,
             }),
           },
@@ -75,7 +78,7 @@ export function createCourseRoutes(db: Db) {
       .get("/courses/:id", (c) => {
         return c.json({
           ok: true,
-          data: getCourseDetail(db, c.req.param("id")),
+          data: getCourseDetail(db, c.var.teacher.id, c.req.param("id")),
         });
       })
       .get("/courses/:id/student-view", (c) => {
@@ -91,7 +94,12 @@ export function createCourseRoutes(db: Db) {
         }
         return c.json({
           ok: true,
-          data: getStudentView(db, c.req.param("id"), parsed.data.studentId),
+          data: getStudentView(
+            db,
+            c.var.teacher.id,
+            c.req.param("id"),
+            parsed.data.studentId,
+          ),
         });
       })
       // T2A.6：课程进度矩阵（成员 × 可见单元；每格课程练习统计 + 历次列表，
@@ -99,7 +107,7 @@ export function createCourseRoutes(db: Db) {
       .get("/courses/:id/progress", (c) => {
         return c.json({
           ok: true,
-          data: getCourseProgress(db, c.req.param("id")),
+          data: getCourseProgress(db, c.var.teacher.id, c.req.param("id")),
         });
       })
       .post("/courses/:id/items", async (c) => {
@@ -110,10 +118,16 @@ export function createCourseRoutes(db: Db) {
         return c.json(
           {
             ok: true,
-            data: appendCourseItems(db, c.req.param("id"), body.items, {
-              visible: body.visible,
-              withCompanionUnits: body.withCompanionUnits,
-            }),
+            data: appendCourseItems(
+              db,
+              c.var.teacher.id,
+              c.req.param("id"),
+              body.items,
+              {
+                visible: body.visible,
+                withCompanionUnits: body.withCompanionUnits,
+              },
+            ),
           },
           201,
         );
@@ -123,7 +137,7 @@ export function createCourseRoutes(db: Db) {
           c,
           courseItemsReorderRequestSchema,
         );
-        reorderCourseItems(db, c.req.param("id"), body.ids);
+        reorderCourseItems(db, c.var.teacher.id, c.req.param("id"), body.ids);
         return c.json({ ok: true, data: null });
       })
       .post("/courses/:id/members", async (c) => {
@@ -131,7 +145,12 @@ export function createCourseRoutes(db: Db) {
           c,
           courseMembersRequestSchema,
         );
-        addCourseMembers(db, c.req.param("id"), body.studentIds);
+        addCourseMembers(
+          db,
+          c.var.teacher.id,
+          c.req.param("id"),
+          body.studentIds,
+        );
         return c.json({ ok: true, data: null });
       })
       .delete("/courses/:id/members", async (c) => {
@@ -139,7 +158,12 @@ export function createCourseRoutes(db: Db) {
           c,
           courseMembersRequestSchema,
         );
-        removeCourseMembers(db, c.req.param("id"), body.studentIds);
+        removeCourseMembers(
+          db,
+          c.var.teacher.id,
+          c.req.param("id"),
+          body.studentIds,
+        );
         return c.json({ ok: true, data: null });
       })
       .patch("/course-items/:id", async (c) => {
@@ -148,8 +172,13 @@ export function createCourseRoutes(db: Db) {
           courseItemUpdateRequestSchema,
         );
         // 服务层返回原始行；响应需要含状态标签数据 → 经详情组装路径重取该课程
-        const updated = updateCourseItem(db, c.req.param("id"), body);
-        const detail = getCourseDetail(db, updated.courseId);
+        const updated = updateCourseItem(
+          db,
+          c.var.teacher.id,
+          c.req.param("id"),
+          body,
+        );
+        const detail = getCourseDetail(db, c.var.teacher.id, updated.courseId);
         const item = detail.items.find((entry) => entry.id === updated.id);
         if (item === undefined) {
           // 理论不可达（刚更新过的条目必在详情里）；防御性兜底
@@ -158,7 +187,7 @@ export function createCourseRoutes(db: Db) {
         return c.json({ ok: true, data: item });
       })
       .delete("/course-items/:id", (c) => {
-        deleteCourseItem(db, c.req.param("id"));
+        deleteCourseItem(db, c.var.teacher.id, c.req.param("id"));
         return c.json({ ok: true, data: null });
       })
   );

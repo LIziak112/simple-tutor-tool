@@ -1229,31 +1229,11 @@ export function batchLibrary(
   }
   const results = input.ids.map((id) =>
     tryItem(id, () => {
-      // 资源归属预检（D12/D13）：addCourseItems 自身的域化属 T2B.4（课程域隔离），
-      // 本接口先按会话教师校验资源存在——乙不能把甲的单元/讲义塞进自己的课程
-      const owned =
-        input.kind === "unit"
-          ? db
-              .select({ id: units.id })
-              .from(units)
-              .where(and(eq(units.teacherId, teacherId), eq(units.id, id)))
-              .get() !== undefined
-          : db
-              .select({ id: lectures.id })
-              .from(lectures)
-              .where(
-                and(eq(lectures.teacherId, teacherId), eq(lectures.id, id)),
-              )
-              .get() !== undefined;
-      if (!owned) {
-        throw new HttpError(
-          404,
-          input.kind === "unit" ? "UNIT_NOT_FOUND" : "LECTURE_NOT_FOUND",
-          input.kind === "unit" ? "练习单元不存在" : "讲义不存在",
-        );
-      }
+      // addCourseItems 自 T2B.4 起按会话教师校验课程与资源归属（D12/D13：
+      // 乙不能把甲的单元/讲义塞进自己的课程——非本人资源按不存在 404）
       addCourseItems(
         db,
+        teacherId,
         input.courseId as string,
         [{ kind: input.kind, refId: id }],
         { visible: input.visible ?? true },

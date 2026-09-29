@@ -54,9 +54,6 @@ import {
   questions,
   units,
 } from "../db/schema";
-// T2B.4（课程域隔离）前 createCourse 仍用单教师等价取值；导入/题目/讲义/排序
-// 链路自 T2B.3 起已全部改传会话教师
-import { getSingleTeacherId } from "../db/teacher-scope";
 import { HttpError } from "../lib/http-error";
 import { courseHasAttempts } from "./course-service";
 import { buildImportPlan, loadLibrarySnapshot } from "./import-actions";
@@ -109,8 +106,9 @@ import {
  *
  * T2B.3 域隔离（D12/D13）：preview / preview-batch / commit / batches 回看 /
  * 单题与讲义的详情、编辑、软删、排序全部按会话教师（teacherId 形参，路由传
- * c.var.teacher.id）过滤与写入；课程 CRUD 与 getContentTree 的域化分别属
- * T2B.4 / T2B.5（本任务不动，单教师等价期行为不变）。
+ * c.var.teacher.id）过滤与写入；T2B.4 起课程 CRUD（createCourse / updateCourse /
+ * deleteCourse）同样按会话教师；getContentTree 的域化属 T2B.5（单教师等价期
+ * 行为不变）。
  */
 
 // ---------- 版本识别与统一 lint ----------
@@ -1451,13 +1449,20 @@ export function reorderContent(
   }
 }
 
-/** 新建课程（POST /api/teacher/courses）：order 追加到末尾；description 可选（T2A.4） */
+/**
+ * 新建课程（POST /api/teacher/courses）：order 追加到末尾（T2B.4：按会话教师的
+ * 课程数计数，写 courses.teacherId）；description 可选（T2A.4）。
+ */
 export function createCourse(
   db: Db,
+  teacherId: string,
   input: { title: string; description?: string | null | undefined },
 ): CourseData {
-  const teacherId = getSingleTeacherId(db);
-  const count = db.select({ id: courses.id }).from(courses).all().length;
+  const count = db
+    .select({ id: courses.id })
+    .from(courses)
+    .where(eq(courses.teacherId, teacherId))
+    .all().length;
   const id = crypto.randomUUID();
   const order = count;
   const description =
@@ -1488,13 +1493,19 @@ export function createCourse(
  * 课程更新（PATCH /api/teacher/courses/:id，T2A.4 扩展）：
  * - name / title 同义（name 为 Phase 2A 术语口径，title 兼容旧调用方），缺省 = 不改；
  * - description 显式 null = 清空；archived：true 归档（D4，学生端不可见）、false 恢复。
+ * T2B.4：按会话教师取课程行（非本人课程 → 404 COURSE_NOT_FOUND，D12）。
  */
 export function updateCourse(
   db: Db,
+  teacherId: string,
   id: string,
   input: CourseUpdateRequest,
 ): CourseData {
-  const row = db.select().from(courses).where(eq(courses.id, id)).get();
+  const row = db
+    .select()
+    .from(courses)
+    .where(and(eq(courses.teacherId, teacherId), eq(courses.id, id)))
+    .get();
   if (row === undefined) {
     throw new HttpError(404, "COURSE_NOT_FOUND", "课程不存在");
   }
@@ -1539,12 +1550,13 @@ export function updateCourse(
  * CourseService.courseHasAttempts——attempts.courseId OR assignments.courseId，
  * 保守口径），否则 409 COURSE_HAS_ATTEMPTS（提示改用归档）。删除不触碰
  * 资源库内容（D1 引用制），目录条目与成员随课程一并清理，成功后资源库原样保留。
+ * T2B.4：按会话教师取课程行（非本人课程 → 404 COURSE_NOT_FOUND，D12）。
  */
-export function deleteCourse(db: Db, id: string): void {
+export function deleteCourse(db: Db, teacherId: string, id: string): void {
   const row = db
     .select({ id: courses.id })
     .from(courses)
-    .where(eq(courses.id, id))
+    .where(and(eq(courses.teacherId, teacherId), eq(courses.id, id)))
     .get();
   if (row === undefined) {
     throw new HttpError(404, "COURSE_NOT_FOUND", "课程不存在");
