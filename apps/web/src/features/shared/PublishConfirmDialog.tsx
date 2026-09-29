@@ -81,7 +81,8 @@ export function PublishConfirmDialog({
                 </DialogDescription>
               </DialogHeader>
               <p className="rounded-lg bg-muted/50 px-3 py-2.5 text-sm text-muted-foreground">
-                发布的是「{title}」当前内容的
+                发布的是「{title}」
+                <strong className="text-foreground">已保存内容</strong>的
                 <strong className="text-foreground">快照副本</strong>
                 ——发布后继续修改源{kindLabel}，已发布文件不受影响。
               </p>
