@@ -181,6 +181,18 @@ describe("lintDocument：samples/lint/ 反例夹具", () => {
     expect(issues[0]?.message).toContain("example");
   });
 
+  it("13 公式 \\left/\\right 跨段不配对：MATH_LEFT_RIGHT_UNBALANCED @11 ×2 warning，无误报", () => {
+    const { issues } = lintDocument(load(lintDir, "13-math-left-right.md"));
+    expect(codes(issues)).toEqual([
+      "MATH_LEFT_RIGHT_UNBALANCED",
+      "MATH_LEFT_RIGHT_UNBALANCED",
+    ]);
+    for (const issue of issues) {
+      expect(issue.level).toBe("warning");
+      expect(issue.line).toBe(11);
+    }
+  });
+
   it("全部夹具的 issue 均符合 LintIssue 契约（level/line/column/code/message）", () => {
     for (const name of [
       "01-missing-frontmatter.md",
@@ -195,6 +207,7 @@ describe("lintDocument：samples/lint/ 反例夹具", () => {
       "10-invalid-directive-attrs.md",
       "11-unclosed-container.md",
       "12-directive-not-allowed-here.md",
+      "13-math-left-right.md",
     ]) {
       const { issues } = lintDocument(load(lintDir, name));
       for (const issue of issues) {
