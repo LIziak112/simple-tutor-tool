@@ -4,7 +4,7 @@ import { z } from "zod";
  * 学生端课程契约（T2A.5 起为权威定义）：我的课程列表、课程可见目录（按 D5 过滤）
  * 的响应 data 与错误码。讲义列表分组视图与讲义详情的配套练习扩展在 content-api.ts
  * （studentLectureCourseGroupSchema / studentLectureDetailSchema，与讲义摘要同文件）。
- * 依据：docs/Phase2改进任务清单.md §5 T2A.5、§2 D5（学生可见规则）、D8（配套练习）、
+ * 依据：docs/Phase2A改进任务清单.md §5 T2A.5、§2 D5（学生可见规则）、D8（配套练习）、
  * D22（访问错误码）。
  *
  * 约定（与 course-api.ts / content-api.ts 一致）：
