@@ -1259,8 +1259,9 @@ export function batchLibrary(
 
 // ---------- T2A.2：导出为可重新导入的 v2 Markdown ----------
 
-/** 文件名安全化（替换 Windows 保留字符与控制符，\p{Cc} = Unicode 控制字符类） */
-function safeFilename(name: string): string {
+/** 文件名安全化（替换 Windows 保留字符与控制符，\p{Cc} = Unicode 控制字符类）。
+ *  T2B.7 起导出：共享发布文件名的标题段复用同一实现（D16——标题先过现有 safeFilename） */
+export function safeFilename(name: string): string {
   const cleaned = name.replace(/[\\/:*?"<>|\p{Cc}]/gu, "_").trim();
   return cleaned.length > 0 ? cleaned : "export";
 }

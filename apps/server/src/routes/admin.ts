@@ -27,6 +27,11 @@ import {
   updateAdminSettings,
   updateTeacher,
 } from "../services/admin-service";
+import {
+  deleteSharedFileAsAdmin,
+  listSharedFiles,
+} from "../services/shared-service";
+import { parseSharedFilenameParam } from "./shared.ts";
 
 /**
  * 管理端路由（T2B.6，D7/D19），挂载在 /api/admin，整组套 requireAdmin 守卫
@@ -42,6 +47,8 @@ import {
  * - POST   /teachers/:id/reset-password：重置密码（一次性明文）
  * - GET    /settings + PATCH /settings：注册开关读写（D8）
  * - GET    /overview：聚合计数（D20，无任何明细）
+ * - GET    /shared-files + DELETE /shared-files/:filename（T2B.7，D18）：
+ *   共享目录列表（同教师端形状，canDelete 恒 true）与删除（可删任意，含本地文件）
  *
  * 业务逻辑在 admin-service。返回类型不显式标注 Hono：链式注册把路由签名累积进
  * 推断类型（AppType / hc 端到端类型前提）。
@@ -121,5 +128,17 @@ export function createAdminRoutes(db: Db, publicUrl: string, dataDir: string) {
     })
     .get("/overview", (c) => {
       return c.json({ ok: true, data: adminOverview(db, dataDir) });
+    })
+    // ---------- 共享文件管理（T2B.7，D18/D19：可删任意，含本地放入的） ----------
+    .get("/shared-files", (c) => {
+      return c.json({
+        ok: true,
+        data: listSharedFiles(dataDir, { kind: "admin" }),
+      });
+    })
+    .delete("/shared-files/:filename", (c) => {
+      const filename = parseSharedFilenameParam(c.req.param("filename"));
+      deleteSharedFileAsAdmin(dataDir, filename);
+      return c.json({ ok: true, data: null });
     });
 }
