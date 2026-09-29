@@ -17,7 +17,8 @@ import { assertNoLeak } from "../test/assert-no-leak.ts";
 /**
  * 手写笔迹接口集成测试（T2.8 全部验收项，app.request() 直调路由 + 内存库 +
  * 临时数据目录）：上传/取回往返、超限 413（验收项）、非本人 403（验收项）、
- * 已交 409、非法 gzip/InkDoc/PNG 400、无笔迹 404、教师 PNG 与元数据、
+ * 已交 409、非法 gzip/InkDoc/PNG 400、gzip 炸弹（解压超 32MB 上限）400、
+ * 无笔迹 404、教师 PNG 与元数据、
  * 路径安全（../ 与特殊字符不越界）、泄露（assertNoLeak）。
  * 夹具用 samples/v2/练习样例.md（手写题 id：p4-q7 / 练习四-7 / 练习四-8）。
  */
@@ -526,6 +527,22 @@ describe("状态与校验错误", () => {
     );
     expect(res.status).toBe(400);
     expect(((await res.json()) as ApiErr).error).toBe("INK_INVALID");
+  });
+
+  it("gzip 炸弹：压缩体积过上传限额但解压超 32MB 上限 → 400 INK_INVALID，不落盘", async () => {
+    const { app, db, dataDir, aCookie, attemptId } = await makeInkApp();
+    // 64MiB 高度可压缩字节：gzip 后只有几十 KB，远低于 2MiB 压缩侧限额，
+    // 解压后超 32MB 上限——须被拒绝而非解出大 Buffer
+    const bomb = new Uint8Array(gzipSync(Buffer.alloc(64 * 1024 * 1024)));
+    expect(bomb.byteLength).toBeLessThan(1024 * 1024); // 前置：确实绕过压缩侧限额
+    const res = await putInk(app, aCookie, attemptId, Q.solve, bomb, makePng());
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as ApiErr;
+    expect(body.error).toBe("INK_INVALID");
+    expect(body.message).toContain("32MB");
+    // 坏数据不落盘不写库
+    expect(db.select().from(inkTable).all()).toHaveLength(0);
+    expect(existsSync(join(dataDir, "blobs", "ink", attemptId))).toBe(false);
   });
 
   it("snapshot 魔数不是 PNG → 400 INK_INVALID", async () => {

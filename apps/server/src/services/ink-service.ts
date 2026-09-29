@@ -39,7 +39,8 @@ import {
  * 且最终路径强制校验落在 blobs/ink/<attemptId> 目录内（纵深防御，测试锁定）。
  *
  * 限额口径（契约 INK_MAX_UPLOAD_BYTES）：gzip 后 strokes 字节数 + PNG 字节数
- * 之和 ≤ 2 MiB，超出 413 INK_TOO_LARGE（T2.8 验收项）。
+ * 之和 ≤ 2 MiB，超出 413 INK_TOO_LARGE（T2.8 验收项）；解压侧另有 32 MiB
+ * 解压上限（INK_MAX_STROKES_UNCOMPRESSED，防 gzip 炸弹，超出 400 INK_INVALID）。
  */
 
 /** questionId → 安全文件名（不含扩展名）。export 供测试锁定路径安全行为 */
@@ -84,10 +85,18 @@ export function pngSize(
 }
 
 /**
+ * strokes 解压后体积上限（防 gzip 炸弹：上传限额只按压缩后字节计，≤2MiB 的
+ * gzip 理论上可解出数百 MiB）。前端压缩比通常 5-10 倍，2MiB 压缩包对应
+ * ~10-20MiB 原文，32MiB 留裕量；超限时 gunzipSync 抛错，落进 parseStrokesDoc
+ * 现有的 400 INK_INVALID 处理路径。
+ */
+const INK_MAX_STROKES_UNCOMPRESSED = 32 * 1024 * 1024;
+
+/**
  * strokes 字节 → InkDoc：
- * - gzip 魔数开头 → gunzip（前端 CompressionStream 压缩路径）；
+ * - gzip 魔数开头 → gunzip（前端 CompressionStream 压缩路径，解压体积有上限）；
  * - 否则当原始 JSON（老浏览器回退路径，兼容不带压缩的直传）；
- * - 解压失败 / JSON 非法 / 不符合 inkDocSchema → 400 INK_INVALID。
+ * - 解压失败（含超上限）/ JSON 非法 / 不符合 inkDocSchema → 400 INK_INVALID。
  */
 function parseStrokesDoc(bytes: Uint8Array): InkDoc {
   let jsonText: string;
@@ -95,14 +104,16 @@ function parseStrokesDoc(bytes: Uint8Array): InkDoc {
     const raw =
       bytes.length >= 2 &&
       (bytes[0] ?? 0) * 256 + (bytes[1] ?? 0) === GZIP_MAGIC
-        ? gunzipSync(bytes)
+        ? gunzipSync(bytes, {
+            maxOutputLength: INK_MAX_STROKES_UNCOMPRESSED,
+          })
         : Buffer.from(bytes);
     jsonText = raw.toString("utf8");
   } catch {
     throw new HttpError(
       400,
       "INK_INVALID",
-      "笔迹数据解压失败（不是合法的 gzip/JSON）",
+      "笔迹数据解压失败（不是合法的 gzip/JSON，或解压后超过 32MB 上限）",
     );
   }
   let parsedJson: unknown;
