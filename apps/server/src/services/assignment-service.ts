@@ -1048,11 +1048,12 @@ function optionTexts(optionsJson: string): string[] {
 }
 
 /** 题目 id → 考点名列表（同名归一后按考点名排序，与教师端内容树同口径；
- * teacherId 提供时按域过滤 question_knowledge——复合主键后同 id 题目分属
- * 不同教师，考点关联不可混。未传 = 全域（T2B.5 前 attempt 链路占位，届时改必填）） */
+ * 按 teacherId 域过滤 question_knowledge——复合主键后同 id 题目分属不同教师，
+ * 考点关联不可混（T2B.5 起必填：教师侧传会话教师，学生侧从 attempt → student /
+ * 作业根表推导教师域，D10） */
 export function knowledgeNamesByQuestion(
   db: Db,
-  teacherId?: string,
+  teacherId: string,
 ): Map<string, string[]> {
   const map = new Map<string, string[]>();
   const rows = db
@@ -1065,11 +1066,7 @@ export function knowledgeNamesByQuestion(
       knowledgePoints,
       eq(questionKnowledge.knowledgePointId, knowledgePoints.id),
     )
-    .where(
-      teacherId === undefined
-        ? undefined
-        : eq(questionKnowledge.teacherId, teacherId),
-    )
+    .where(eq(questionKnowledge.teacherId, teacherId))
     .orderBy(asc(knowledgePoints.name))
     .all();
   for (const row of rows) {
@@ -1088,12 +1085,14 @@ export function knowledgeNamesByQuestion(
  * - stemMd 先经 publicStemMd 公开化：填空/判断标记 [[答案]] 替换为空标记 [[]]，
  *   数学/代码环境内的 [[…]] 记号原样保留；
  * - options 仅 choice/multi 携带，映射为纯文本数组（无 correct 标记）；
- * - hints 只暴露数量 hintCount（内容由 T2.11 分步提示接口按需下发）。
+ * - hints 只暴露数量 hintCount（内容由 T2.11 分步提示接口按需下发）；
+ * - teacherId 必填（T2B.5）：考点关联按域过滤（D10/D11——考点本身公共，
+ *   同 id 题目的关联行分属不同教师）。
  */
 export function publicQuestionsOfRows(
   db: Db,
   liveQuestions: readonly QuestionRow[],
-  teacherId?: string,
+  teacherId: string,
 ): QuestionPublic[] {
   const knowledge = knowledgeNamesByQuestion(db, teacherId);
 
@@ -1113,26 +1112,25 @@ export function publicQuestionsOfRows(
 /**
  * 单元公开题目（T2.4 试卷与草稿视图的单元入口投影）：
  * 该单元未软删的题目按 order 升序（同 order 按 id 兜底稳定），经
- * publicQuestionsOfRows 输出过滤（见上方注释）。teacherId 提供时按域取题
- * （复合主键后同 id 单元分属不同教师；作业链路传作业根行的教师域）；
- * 未传 = 全域（T2B.5 前 attempt 草稿链路占位，届时改必填）。
+ * publicQuestionsOfRows 输出过滤（见上方注释）。teacherId 必填（T2B.5）：
+ * 按 (teacherId, unitId) 复合主键取题——同 id 单元分属不同教师，取卷/
+ * 判分/提示链路必须带域（D10；作业链路传作业根行的教师域，attempt 链路
+ * 从 attempt → student.teacherId 推导）。
  */
 export function unitPublicQuestions(
   db: Db,
   unitId: string,
-  teacherId?: string,
+  teacherId: string,
 ): QuestionPublic[] {
   const liveQuestions = db
     .select()
     .from(questions)
     .where(
-      teacherId === undefined
-        ? and(eq(questions.unitId, unitId), isNull(questions.deletedAt))
-        : and(
-            eq(questions.teacherId, teacherId),
-            eq(questions.unitId, unitId),
-            isNull(questions.deletedAt),
-          ),
+      and(
+        eq(questions.teacherId, teacherId),
+        eq(questions.unitId, unitId),
+        isNull(questions.deletedAt),
+      ),
     )
     .orderBy(asc(questions.order), asc(questions.id))
     .all();
@@ -1183,33 +1181,27 @@ export function getStudentAssignmentPaper(
     throw new HttpError(403, "FORBIDDEN", "未被指派此作业，无权查看");
   }
 
-  // T2B.4：教师域按 D10 从作业根行推导（学生侧无会话教师；对外行为不变）
+  // T2B.4：教师域按 D10 从作业根行推导（学生侧无会话教师；对外行为不变）。
+  // D9 异常行防御：无教师域的作业行（回填后不应存在）无从判定资源归属 → 空卷
   const teacherId = row.teacherId;
-  const unitRows =
-    teacherId === null
-      ? []
-      : db
-          .select({ unitId: assignmentUnits.unitId, title: units.title })
-          .from(assignmentUnits)
-          .innerJoin(
-            units,
-            and(
-              eq(assignmentUnits.unitId, units.id),
-              eq(units.teacherId, teacherId),
-            ),
-          )
-          .where(eq(assignmentUnits.assignmentId, assignmentId))
-          .orderBy(asc(assignmentUnits.order), asc(assignmentUnits.unitId))
-          .all();
+  if (teacherId === null) return { units: [] };
+  const unitRows = db
+    .select({ unitId: assignmentUnits.unitId, title: units.title })
+    .from(assignmentUnits)
+    .innerJoin(
+      units,
+      and(eq(assignmentUnits.unitId, units.id), eq(units.teacherId, teacherId)),
+    )
+    .where(eq(assignmentUnits.assignmentId, assignmentId))
+    .orderBy(asc(assignmentUnits.order), asc(assignmentUnits.unitId))
+    .all();
   // D16：单元软删不影响作业通道——引用行保留、题目照常下发（单元标题取当前值，
   // 软删单元行在回收站保留故仍可读）；live 题数为 0 的单元（题目被清空/全软删）
   // 跳过；全部跳过 → units 空数组（前端空卷兜底）
-  const unitsOf = unitRows
-    .map((unit) => ({
-      id: unit.unitId,
-      title: unit.title,
-      questions: unitPublicQuestions(db, unit.unitId, teacherId ?? undefined),
-    }))
-    .filter((unit) => unit.questions.length > 0);
-  return { units: unitsOf };
+  const unitsOf = unitRows.map((unit) => ({
+    id: unit.unitId,
+    title: unit.title,
+    questions: unitPublicQuestions(db, unit.unitId, teacherId),
+  }));
+  return { units: unitsOf.filter((unit) => unit.questions.length > 0) };
 }

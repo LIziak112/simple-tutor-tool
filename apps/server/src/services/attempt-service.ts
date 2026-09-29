@@ -37,6 +37,7 @@ import {
   questions,
   type ResponseRow,
   responses,
+  students,
   type Unit,
   units,
 } from "../db/schema";
@@ -204,6 +205,25 @@ export function requireUsableAttempt(
 // ---------- 题目集合按来源分派（T2A.6；T2A.7 多单元化） ----------
 
 /**
+ * attempt → student.teacherId 推导教师域（T2B.5，D10）：学生侧无会话教师，
+ * 取卷/判分/提示/结果视图等一切按 unitId/questionId 查 units/questions 的地方
+ * 在复合主键 (teacherId, id) 后不再唯一，必须带域（否则两位教师持同 id 单元/
+ * 题目时会串到别人的内容——既是泄露也是判分错误）。attempt 归属学生一生只归
+ * 一位教师（D14），故域取 students.teacherId。
+ * D9 异常行防御：无教师域的学生行（回填后不应存在）返回 null，调用方按
+ * 空结果/缺省处理（fail closed，与 T2B.4 listStudentAssignments 同口径）。
+ * 导出供 hint-service 复用（提示内容同样按域取题）。
+ */
+export function attemptTeacherId(db: Db, attempt: Attempt): string | null {
+  const row = db
+    .select({ teacherId: students.teacherId })
+    .from(students)
+    .where(eq(students.id, attempt.studentId))
+    .get();
+  return row?.teacherId ?? null;
+}
+
+/**
  * attempt 的有序单元 id 列表（T2A.7）：
  * - course 来源：[attempt.unitId]（单单元，创建时必写；防御性空列表兜底异常行；
  *   课程侧可见性由 requireVisibleCourseUnit 把关）；
@@ -232,14 +252,24 @@ export function attemptUnitIds(db: Db, attempt: Attempt): string[] {
  * attempt 的判分/快照题目集合（按 sourceType 分派，D9；T2A.7 多单元拼接）：
  * 各单元未删除题按 (order, id) 升序后**按 attemptUnitIds 的单元顺序拼接**——
  * 题号全卷连续（D12），得分按全卷计算。course 来源为单单元的特例。
+ * T2B.5：按 attempt → student.teacherId 域内取题（D10——同 id 题目分属不同
+ * 教师，判分输入不可串域；无教师域的异常行按空集合处理）。
  */
 export function attemptQuestionRows(db: Db, attempt: Attempt): QuestionRow[] {
   const unitIds = attemptUnitIds(db, attempt);
   if (unitIds.length === 0) return [];
+  const teacherId = attemptTeacherId(db, attempt);
+  if (teacherId === null) return [];
   const rows = db
     .select()
     .from(questions)
-    .where(and(inArray(questions.unitId, unitIds), isNull(questions.deletedAt)))
+    .where(
+      and(
+        eq(questions.teacherId, teacherId),
+        inArray(questions.unitId, unitIds),
+        isNull(questions.deletedAt),
+      ),
+    )
     .orderBy(asc(questions.order), asc(questions.id))
     .all();
   // 按单元顺序拼接（组内已按题序排序）
@@ -256,21 +286,25 @@ export function attemptQuestionRows(db: Db, attempt: Attempt): QuestionRow[] {
  * attempt 的分组公开题目（T2A.7 草稿视图与通用取卷共用）：
  * assignment 按 assignment_units.order 分节（live 题数为 0 的单元不出现，与
  * 试卷口径一致）；course 恒单组（单元标题）。标题取单元当前值（D1 引用语义）。
+ * T2B.5：units/questions 查询按 attempt → student.teacherId 域内取（D10）；
+ * 无教师域的异常行按空分组（fail closed，对外形态 = 空卷）。
  */
 function attemptPublicUnitGroups(
   db: Db,
   attempt: Attempt,
 ): (AttemptDraftUnit & StudentPaperUnit)[] {
   const unitIds = attemptUnitIds(db, attempt);
+  const teacherId = attemptTeacherId(db, attempt);
+  if (teacherId === null) return [];
   const groups: (AttemptDraftUnit & StudentPaperUnit)[] = [];
   for (const unitId of unitIds) {
     const unit = db
       .select({ title: units.title })
       .from(units)
-      .where(eq(units.id, unitId))
+      .where(and(eq(units.teacherId, teacherId), eq(units.id, unitId)))
       .get();
     if (unit === undefined) continue; // FK 保证存在，防御性跳过
-    const questionsOfUnit = unitPublicQuestions(db, unitId);
+    const questionsOfUnit = unitPublicQuestions(db, unitId, teacherId);
     if (questionsOfUnit.length === 0) continue;
     groups.push({ id: unitId, title: unit.title, questions: questionsOfUnit });
   }
@@ -286,10 +320,18 @@ interface AttemptSourceMeta {
 
 function attemptSourceMeta(db: Db, attempt: Attempt): AttemptSourceMeta {
   if (attempt.sourceType === "course") {
-    // 课程练习：标题 = 单元当前标题（D1 引用而非复制）；不限截止（D11 交卷即公布）
+    // 课程练习：标题 = 单元当前标题（D1 引用而非复制）；不限截止（D11 交卷即公布）。
+    // T2B.5：单元标题按 attempt → student.teacherId 域内读（D10）
+    const teacherId = attemptTeacherId(db, attempt);
     const unit: Unit | undefined =
-      attempt.unitId !== null
-        ? db.select().from(units).where(eq(units.id, attempt.unitId)).get()
+      attempt.unitId !== null && teacherId !== null
+        ? db
+            .select()
+            .from(units)
+            .where(
+              and(eq(units.teacherId, teacherId), eq(units.id, attempt.unitId)),
+            )
+            .get()
         : undefined;
     const course: Course | undefined =
       attempt.courseId !== null
@@ -326,21 +368,32 @@ function attemptSourceMeta(db: Db, attempt: Attempt): AttemptSourceMeta {
  * 校验题目属于 attempt 的题目集合（attemptUnitIds 口径）且未软删，
  * 否则 404 QUESTION_NOT_FOUND（T2.8 ink-service 复用：笔迹上传与草稿答案同一口径）。
  * T2A.7 起多单元作业为**集合包含**判断：任一所属单元的题都可保存草稿/笔迹。
+ * T2B.5：按 (teacherId, id) 复合主键取题行（D10——同 id 题目分属不同教师，
+ * 不带域会命中他人版本；域内取不到即按不存在处理）。
  */
 export function requireAttemptQuestion(
   db: Db,
   attempt: Attempt,
   questionId: string,
 ): void {
-  const question = db
-    .select({
-      id: questions.id,
-      unitId: questions.unitId,
-      deletedAt: questions.deletedAt,
-    })
-    .from(questions)
-    .where(eq(questions.id, questionId))
-    .get();
+  const teacherId = attemptTeacherId(db, attempt);
+  const question =
+    teacherId === null
+      ? undefined
+      : db
+          .select({
+            id: questions.id,
+            unitId: questions.unitId,
+            deletedAt: questions.deletedAt,
+          })
+          .from(questions)
+          .where(
+            and(
+              eq(questions.teacherId, teacherId),
+              eq(questions.id, questionId),
+            ),
+          )
+          .get();
   if (
     question === undefined ||
     question.deletedAt !== null ||
@@ -722,8 +775,13 @@ export function submitAttempt(
   }
 
   // 判分输入：attempt 题目集合（按 sourceType 分派，T2A.6）+ 各题考点 + 草稿答案
+  // T2B.5：考点关联按 attempt → student.teacherId 域内读（D10；attemptQuestionRows 同域）
   const liveRows = attemptQuestionRows(db, attempt);
-  const knowledge = knowledgeNamesByQuestion(db);
+  const teacherIdOfAttempt = attemptTeacherId(db, attempt);
+  const knowledgeByQuestion =
+    teacherIdOfAttempt === null
+      ? new Map<string, string[]>()
+      : knowledgeNamesByQuestion(db, teacherIdOfAttempt);
   const draftRows = db
     .select()
     .from(responses)
@@ -739,7 +797,7 @@ export function submitAttempt(
   const eventChangeCountByQuestion = countAnswerChanges(timeline);
 
   const graded: GradedResponse[] = liveRows.map((row) => {
-    const question = questionOfRow(row, knowledge.get(row.id) ?? []);
+    const question = questionOfRow(row, knowledgeByQuestion.get(row.id) ?? []);
     const draftRow = draftByQuestion.get(row.id);
     const answer = answerOf(draftRow?.answerJson ?? null);
     return { row, question, answer, autoCorrect: grade(question, answer) };
@@ -964,6 +1022,10 @@ function buildResultData(
 ): AttemptResultData {
   const attempt = requireAttemptRow(db, attemptId);
   const meta = attemptSourceMeta(db, attempt);
+  // T2B.5：结果视图的题目排序 join 与单元标题按 attempt → student.teacherId
+  // 域内读（D10——responses.questionId 在复合主键后不再唯一指向一行 questions；
+  // 快照内容仍取冻结行，join 只提供排序与分组元信息）
+  const teacherId = attemptTeacherId(db, attempt);
   // T2A.8：assignment 来源按作业判定；course 来源恒公布（D11 课程练习交卷即公布）
   const assignmentRow =
     attempt.sourceType === "assignment"
@@ -988,18 +1050,27 @@ function buildResultData(
           autoCorrect: null,
         };
 
-  const rows = db
-    .select({
-      response: responses,
-      order: questions.order,
-      questionId: questions.id,
-      unitId: questions.unitId,
-    })
-    .from(responses)
-    .innerJoin(questions, eq(responses.questionId, questions.id))
-    .where(eq(responses.attemptId, attemptId))
-    .orderBy(asc(questions.order), asc(questions.id))
-    .all();
+  const rows =
+    teacherId === null
+      ? []
+      : db
+          .select({
+            response: responses,
+            order: questions.order,
+            questionId: questions.id,
+            unitId: questions.unitId,
+          })
+          .from(responses)
+          .innerJoin(
+            questions,
+            and(
+              eq(responses.questionId, questions.id),
+              eq(questions.teacherId, teacherId),
+            ),
+          )
+          .where(eq(responses.attemptId, attemptId))
+          .orderBy(asc(questions.order), asc(questions.id))
+          .all();
   const resultByQuestion = new Map<string, AttemptResultQuestion>();
   for (const row of rows) {
     const item = resultQuestionOf(row.response);
@@ -1025,11 +1096,16 @@ function buildResultData(
     ...[...questionsByUnit.keys()].filter((unitId) => !unitIndex.has(unitId)),
   ];
   const unitTitleById = new Map(
-    orderedUnitIds.length > 0
+    teacherId !== null && orderedUnitIds.length > 0
       ? db
           .select({ id: units.id, title: units.title })
           .from(units)
-          .where(inArray(units.id, orderedUnitIds))
+          .where(
+            and(
+              eq(units.teacherId, teacherId),
+              inArray(units.id, orderedUnitIds),
+            ),
+          )
           .all()
           .map((row) => [row.id, row.title] as const)
       : [],

@@ -17,7 +17,7 @@ import {
 } from "@tutor/contract";
 import { and, eq } from "drizzle-orm";
 import type { Db } from "../db/client";
-import { type InkRow, attempts, ink, students } from "../db/schema";
+import { attempts, type InkRow, ink, students } from "../db/schema";
 import { HttpError } from "../lib/http-error";
 import {
   requireAttemptQuestion,
@@ -377,7 +377,11 @@ function readInkPng(
  * 判定归属——非本人学生的笔迹按不存在处理（404 INK_NOT_FOUND，不暴露存在性）。
  * ink.id 为 uuid 全局唯一，但归属链必须落到 students.teacherId 才放行。
  */
-function requireTeacherInkRow(db: Db, teacherId: string, inkId: string): InkRow {
+function requireTeacherInkRow(
+  db: Db,
+  teacherId: string,
+  inkId: string,
+): InkRow {
   const row = db
     .select({ ink: ink, ownerTeacherId: students.teacherId })
     .from(ink)

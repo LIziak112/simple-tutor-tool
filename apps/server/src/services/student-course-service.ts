@@ -43,19 +43,27 @@ import { listVisibleItems, requireVisibleCourseUnit } from "./course-service";
  *
  * 安全口径（AGENTS.md 第 3 条）：全部查询只 SELECT 目录与资源元信息列，
  * 不触碰 questions 的任何内容列（题数只做 COUNT(*)；题型分布只按 type 分组）。
+ *
+ * T2B.5（D10）：学生侧无会话教师，units/questions 的全部查询按课程根行
+ * （courses.teacherId，目录/落地页/配套练习）或学生归属（students.teacherId，
+ * 跨课程 topic 聚合）推导教师域带入——复合主键后同 id 单元/题目分属不同教师，
+ * 目录与题数不可串域；对外行为零变化（讲义/课程 id 为 uuid 全局唯一，无需域）。
  */
 
-/** 学生可见的课程上下文（D5 条件 1、2：成员 + 双方未归档） */
+/** 学生可见的课程上下文（D5 条件 1、2：成员 + 双方未归档）。teacherId 为课程
+ * 根行的教师域（T2B.5，D10：课程目录/题数/配套练习的资源侧查询全部按它域内读） */
 interface VisibleCourse {
   readonly id: string;
   readonly title: string;
   readonly description: string | null;
   readonly order: number;
+  readonly teacherId: string;
 }
 
 /**
  * 该生为成员且未归档的课程（按 course.order 升序）。
  * 学生已归档 → 空数组（requireStudent 守卫已拦 401，此处防御性兜底）。
+ * D9 异常行防御：无教师域的课程行（回填后不应存在）无从判定资源归属 → 跳过。
  */
 function visibleCoursesOfStudent(db: Db, studentId: string): VisibleCourse[] {
   const student = db
@@ -70,6 +78,7 @@ function visibleCoursesOfStudent(db: Db, studentId: string): VisibleCourse[] {
       title: courses.title,
       description: courses.description,
       order: courses.order,
+      teacherId: courses.teacherId,
     })
     .from(courseStudents)
     .innerJoin(courses, eq(courseStudents.courseId, courses.id))
@@ -77,12 +86,17 @@ function visibleCoursesOfStudent(db: Db, studentId: string): VisibleCourse[] {
       and(eq(courseStudents.studentId, studentId), isNull(courses.archivedAt)),
     )
     .orderBy(asc(courses.order), asc(courses.title))
-    .all();
+    .all()
+    .filter((course): course is VisibleCourse => course.teacherId !== null);
 }
 
-/** 若干单元的未删除题目数（D5 条件 4 与「n 题」展示共用；只 COUNT，不读内容列） */
+/**
+ * 若干单元的未删除题目数（D5 条件 4 与「n 题」展示共用；只 COUNT，不读内容列）。
+ * T2B.5：按课程根行的教师域域内统计（D10——同 id 单元分属不同教师，计数不可混）。
+ */
 function liveQuestionCounts(
   db: Db,
+  teacherId: string,
   unitIds: readonly string[],
 ): Map<string, number> {
   const map = new Map<string, number>();
@@ -91,7 +105,11 @@ function liveQuestionCounts(
     .select({ unitId: questions.unitId })
     .from(questions)
     .where(
-      and(inArray(questions.unitId, [...unitIds]), isNull(questions.deletedAt)),
+      and(
+        eq(questions.teacherId, teacherId),
+        inArray(questions.unitId, [...unitIds]),
+        isNull(questions.deletedAt),
+      ),
     )
     .all()) {
     map.set(row.unitId, (map.get(row.unitId) ?? 0) + 1);
@@ -105,6 +123,17 @@ function courseAccessDenied(): HttpError {
     403,
     "COURSE_ACCESS_DENIED",
     "无法访问该课程（可能已被移出，或课程已结束归档）",
+  );
+}
+
+/** 学生归属教师域（T2B.5，D10/D14：一生一位；D9 异常行 null → 调用方按空处理） */
+function studentTeacherIdOf(db: Db, studentId: string): string | null {
+  return (
+    db
+      .select({ teacherId: students.teacherId })
+      .from(students)
+      .where(eq(students.id, studentId))
+      .get()?.teacherId ?? null
   );
 }
 
@@ -255,6 +284,7 @@ export function listStudentCourses(
  * 摘要（T2A.6 起，目录单元项据此显示「未做/进行中/已完成/有待批」））。
  * 课程不存在 → 404 NOT_FOUND；非成员/学生已归档/课程已归档 → 403
  * COURSE_ACCESS_DENIED（D22）。隐藏条目零信息。
+ * T2B.5：题数按课程根行 teacherId 域内统计（D10，对外行为不变）。
  */
 export function getStudentCourseDetail(
   db: Db,
@@ -268,6 +298,7 @@ export function getStudentCourseDetail(
       title: courses.title,
       description: courses.description,
       archivedAt: courses.archivedAt,
+      teacherId: courses.teacherId,
     })
     .from(courses)
     .where(eq(courses.id, courseId))
@@ -299,12 +330,16 @@ export function getStudentCourseDetail(
   ) {
     throw courseAccessDenied();
   }
+  // D9 异常行防御：无教师域的课程无从判定资源归属 → 按不可见处理（fail closed）
+  if (course.teacherId === null) {
+    throw notFound();
+  }
 
   const items = listVisibleItems(db, studentId, courseId, now);
   const unitIds = items
     .filter((item) => item.kind === "unit")
     .map((item) => item.refId as string);
-  const counts = liveQuestionCounts(db, unitIds);
+  const counts = liveQuestionCounts(db, course.teacherId, unitIds);
   const attemptSummaries = courseUnitAttemptSummaries(db, studentId, courseId);
   return {
     id: course.id,
@@ -334,6 +369,7 @@ export function getStudentCourseDetail(
  * 交卷时间）、首次/最近/最高分、是否存在未交卷作答。
  * 访问权：requireVisibleCourseUnit（D5 + D22——非成员/归档 403、不可见 404）。
  * 安全：只读 questions 的 type 列做分布统计，不触碰任何内容列。
+ * T2B.5：单元标题/题数/题型分布按课程根行 teacherId 域内读（D10，对外行为不变）。
  */
 export function getStudentUnitLanding(
   db: Db,
@@ -345,26 +381,41 @@ export function getStudentUnitLanding(
   // 访问权门（D5 + D22；返回值不需要——标题/主题直接取资源当前值）
   requireVisibleCourseUnit(db, studentId, courseId, unitId, now);
   const course = db
-    .select({ title: courses.title })
+    .select({ title: courses.title, teacherId: courses.teacherId })
     .from(courses)
     .where(eq(courses.id, courseId))
     .get();
+  if (course === undefined || course.teacherId === null) {
+    throw notFound(); // 防御：可见门通过后资源必存在（D9 异常行 fail closed）
+  }
   const unit = db
     .select({ title: units.title, topic: units.topic })
     .from(units)
-    .where(and(eq(units.id, unitId), isNull(units.deletedAt)))
+    .where(
+      and(
+        eq(units.teacherId, course.teacherId),
+        eq(units.id, unitId),
+        isNull(units.deletedAt),
+      ),
+    )
     .get();
-  if (course === undefined || unit === undefined) {
+  if (unit === undefined) {
     throw notFound(); // 防御：可见门通过后资源必存在
   }
 
-  // 题数与题型分布（只按 type 分组计数）
+  // 题数与题型分布（只按 type 分组计数；域内统计）
   const typeDistribution: Record<string, number> = {};
   let questionCount = 0;
   for (const row of db
     .select({ type: questions.type })
     .from(questions)
-    .where(and(eq(questions.unitId, unitId), isNull(questions.deletedAt)))
+    .where(
+      and(
+        eq(questions.teacherId, course.teacherId),
+        eq(questions.unitId, unitId),
+        isNull(questions.deletedAt),
+      ),
+    )
     .all()) {
     questionCount += 1;
     typeDistribution[row.type] = (typeDistribution[row.type] ?? 0) + 1;
@@ -444,9 +495,11 @@ function visibleUnitItemsOfStudent(
 /**
  * 讲义 id → 可见配套单元中排序最靠前的 topic（单元 order 兜底课程条目 order）。
  * 只读 units 的 topic/order/lectureId/deletedAt 元信息列。
+ * T2B.5：按学生归属教师的域域内读（可见课程全部归属该教师，D10/D14）。
  */
 function visibleCompanionTopics(
   db: Db,
+  teacherId: string,
   visibleUnits: readonly { refId: string; order: number }[],
 ): Map<string, string> {
   const map = new Map<string, string>();
@@ -461,6 +514,7 @@ function visibleCompanionTopics(
     .from(units)
     .where(
       and(
+        eq(units.teacherId, teacherId),
         inArray(
           units.id,
           visibleUnits.map((unit) => unit.refId),
@@ -553,10 +607,16 @@ export function listStudentLectures(
   }
 
   // topic：可见配套单元（跨课程去重）中排序最靠前者的主题
-  const topics = visibleCompanionTopics(
-    db,
-    visibleUnitItemsOfStudent(db, visibleCourses, studentId, now),
-  );
+  //（配套单元按学生归属教师的域读，T2B.5 D10；异常行无域 → 无 topic，fail closed）
+  const teacherIdOfStudent = studentTeacherIdOf(db, studentId);
+  const topics =
+    teacherIdOfStudent === null
+      ? new Map<string, string>()
+      : visibleCompanionTopics(
+          db,
+          teacherIdOfStudent,
+          visibleUnitItemsOfStudent(db, visibleCourses, studentId, now),
+        );
   const withTopic = (
     summary: StudentLectureSummary,
   ): StudentLectureSummary => ({
@@ -677,6 +737,7 @@ export function getStudentLecture(
   }
 
   // 本课配套练习（D8）：同课程可见单元条目中 units.lectureId 指向该讲义者
+  //（域内读：context.teacherId 为课程根行的教师域，T2B.5 D10）
   const visibleUnitItems = contextItems.filter(
     (item) => item.kind === "unit" && item.refId !== null,
   );
@@ -687,6 +748,7 @@ export function getStudentLecture(
       .from(units)
       .where(
         and(
+          eq(units.teacherId, context.teacherId),
           inArray(
             units.id,
             visibleUnitItems.map((item) => item.refId as string),
@@ -704,12 +766,17 @@ export function getStudentLecture(
       }
     }
   }
-  const counts = liveQuestionCounts(db, companionUnitIds);
+  const counts = liveQuestionCounts(db, context.teacherId, companionUnitIds);
   const titles = new Map(
     db
       .select({ id: units.id, title: units.title })
       .from(units)
-      .where(inArray(units.id, companionUnitIds))
+      .where(
+        and(
+          eq(units.teacherId, context.teacherId),
+          inArray(units.id, companionUnitIds),
+        ),
+      )
       .all()
       .map((unit) => [unit.id, unit.title] as const),
   );
