@@ -123,7 +123,7 @@ function allQuestionIds(db: Db): Set<string> {
 describe("previewImport（不写库）", () => {
   it("v2 练习样例：version 2、摘要正确、无 error；库仍为空", () => {
     const db = createTestDb();
-    const data: ImportPreviewData = previewImport(db, {
+    const data: ImportPreviewData = previewImport(db, TEST_TEACHER_ID, {
       markdown: PRACTICE_MD,
       filename: "练习样例.md",
     });
@@ -148,7 +148,7 @@ describe("previewImport（不写库）", () => {
 
   it("v1 示例练习：version 1、题数 8", () => {
     const db = createTestDb();
-    const data = previewImport(db, {
+    const data = previewImport(db, TEST_TEACHER_ID, {
       markdown: V1_MD,
       filename: "示例练习.md",
     });
@@ -161,7 +161,7 @@ describe("previewImport（不写库）", () => {
 
   it("mixed 混合样例：讲义 2 篇 + 单元 1 个 + 题 3 道", () => {
     const db = createTestDb();
-    const data = previewImport(db, {
+    const data = previewImport(db, TEST_TEACHER_ID, {
       markdown: MIXED_MD,
       filename: "混合样例.md",
     });
@@ -176,7 +176,7 @@ describe("previewImport（不写库）", () => {
 
   it("讲义样例：lectureCount 2、无题目", () => {
     const db = createTestDb();
-    const data = previewImport(db, {
+    const data = previewImport(db, TEST_TEACHER_ID, {
       markdown: LECTURE_MD,
       filename: "讲义样例.md",
     });
@@ -190,7 +190,7 @@ describe("previewImport（不写库）", () => {
 
   it("有 error 的文档：preview 正常返回 issues（供前端标红），不抛异常", () => {
     const db = createTestDb();
-    const data = previewImport(db, {
+    const data = previewImport(db, TEST_TEACHER_ID, {
       markdown: BROKEN_MD,
       filename: "坏练习.md",
     });
@@ -203,7 +203,7 @@ describe("previewImport（不写库）", () => {
 describe("导入单元名锚定文件名（内容模型与导入规范化方案 §2/§7 第 3 步，服务端接线）", () => {
   it("单文件 preview：无 unit + filename「练习四.md」→ 单元名 = 文件名去扩展名，issues 透传 UNIT_FROM_FALLBACK warning", () => {
     const db = createTestDb();
-    const data = previewImport(db, {
+    const data = previewImport(db, TEST_TEACHER_ID, {
       markdown: NO_UNIT_MD,
       filename: "练习四.md",
     });
@@ -226,13 +226,13 @@ describe("导入单元名锚定文件名（内容模型与导入规范化方案 
 
   it("文件名按规则派生：.markdown 大小写不敏感、取 basename、只剩扩展名则不兜底（回到解析器原兜底）", () => {
     const db = createTestDb();
-    const withSubdir = previewImport(db, {
+    const withSubdir = previewImport(db, TEST_TEACHER_ID, {
       markdown: NO_UNIT_MD,
       filename: "第一章/有理数.MARKDOWN",
     });
     expect(withSubdir.actions[0]?.unitId).toBe("有理数");
 
-    const dotOnly = previewImport(db, {
+    const dotOnly = previewImport(db, TEST_TEACHER_ID, {
       markdown: NO_UNIT_MD,
       filename: ".md",
     });
@@ -241,7 +241,7 @@ describe("导入单元名锚定文件名（内容模型与导入规范化方案 
 
   it("frontmatter.unit 声明优先：不出现 UNIT_FROM_FALLBACK，单元名仍为 unit 值", () => {
     const db = createTestDb();
-    const data = previewImport(db, {
+    const data = previewImport(db, TEST_TEACHER_ID, {
       markdown: PRACTICE_MD,
       filename: "别的名.md",
     });
@@ -257,7 +257,7 @@ describe("导入单元名锚定文件名（内容模型与导入规范化方案 
 
   it("批量 preview：path 含子目录 dir/abc.md 无 unit → 单元名锚定 basename「abc」；warning 级不置 hasError", () => {
     const db = createTestDb();
-    const data = previewImportBatch(db, {
+    const data = previewImportBatch(db, TEST_TEACHER_ID, {
       autoFolderBySubdir: false,
       files: [{ path: "dir/abc.md", markdown: NO_UNIT_MD }],
     });
@@ -276,7 +276,7 @@ describe("导入单元名锚定文件名（内容模型与导入规范化方案 
 
   it("v1 文档：转换产物恒带 unit（v1ToV2 总是写 unit:），fallback 不生效——兜底无害", () => {
     const db = createTestDb();
-    const data = previewImport(db, {
+    const data = previewImport(db, TEST_TEACHER_ID, {
       markdown: V1_MD,
       filename: "别的名.md",
     });
@@ -288,7 +288,7 @@ describe("导入单元名锚定文件名（内容模型与导入规范化方案 
 
   it("commit：filename 兜底的单元名真正落库（units.id/title = 文件名去扩展名），缺省题目 id 前缀随之", () => {
     const db = createTestDb();
-    const report = commitImport(db, {
+    const report = commitImport(db, TEST_TEACHER_ID, {
       markdown: NO_UNIT_MD,
       filename: "练习四.md",
     });
@@ -305,7 +305,7 @@ describe("导入单元名锚定文件名（内容模型与导入规范化方案 
 describe("commitImport 基本路径（v2 练习样例）", () => {
   it("首次导入（无 folderId/courseId，T2A.3）：落未归类、不创建任何课程，单元与 8 题落库、知识点归一、imports 留档原文", () => {
     const db = createTestDb();
-    const report = commitImport(db, {
+    const report = commitImport(db, TEST_TEACHER_ID, {
       markdown: PRACTICE_MD,
       filename: "练习样例.md",
     });
@@ -385,8 +385,11 @@ describe("commitImport 基本路径（v2 练习样例）", () => {
 
   it("再导入同文件：题目 version+1 且 id 不变（验收 1）；单元更新不重复；知识点复用", () => {
     const db = createTestDb();
-    commitImport(db, { markdown: PRACTICE_MD, filename: "练习样例.md" });
-    const second = commitImport(db, {
+    commitImport(db, TEST_TEACHER_ID, {
+      markdown: PRACTICE_MD,
+      filename: "练习样例.md",
+    });
+    const second = commitImport(db, TEST_TEACHER_ID, {
       markdown: PRACTICE_MD,
       filename: "练习样例.md",
     });
@@ -415,7 +418,10 @@ describe("commitImport 基本路径（v2 练习样例）", () => {
   it("有 error 级 issue 时拒绝：422 LINT_ERROR + _issues；库无任何写入（验收 2）", () => {
     const db = createTestDb();
     const err = captureError(() =>
-      commitImport(db, { markdown: BROKEN_MD, filename: "坏练习.md" }),
+      commitImport(db, TEST_TEACHER_ID, {
+        markdown: BROKEN_MD,
+        filename: "坏练习.md",
+      }),
     );
     expect(err).toBeInstanceOf(HttpError);
     const httpErr = err as HttpError;
@@ -434,7 +440,7 @@ describe("commitImport 基本路径（v2 练习样例）", () => {
   it("courseId 不存在：404 COURSE_NOT_FOUND", () => {
     const db = createTestDb();
     const err = captureError(() =>
-      commitImport(db, {
+      commitImport(db, TEST_TEACHER_ID, {
         markdown: PRACTICE_MD,
         filename: "练习样例.md",
         courseId: "0b6f18ae-6b9a-4d0e-8b7c-9b1b1b1b1b1b",
@@ -447,8 +453,14 @@ describe("commitImport 基本路径（v2 练习样例）", () => {
 
   it("两次导入均未指定 courseId/folderId：都落未归类，courses 始终为 0（不再自动建默认课程）", () => {
     const db = createTestDb();
-    const first = commitImport(db, { markdown: PRACTICE_MD, filename: "a.md" });
-    const second = commitImport(db, { markdown: V1_MD, filename: "b.md" });
+    const first = commitImport(db, TEST_TEACHER_ID, {
+      markdown: PRACTICE_MD,
+      filename: "a.md",
+    });
+    const second = commitImport(db, TEST_TEACHER_ID, {
+      markdown: V1_MD,
+      filename: "b.md",
+    });
     expect(db.select().from(courses).all()).toHaveLength(0);
     expect(first.courseId).toBeNull();
     expect(second.courseId).toBeNull();
@@ -459,13 +471,13 @@ describe("commitImport 基本路径（v2 练习样例）", () => {
 describe("commitImport：v1 文档（验收 3）", () => {
   it("v1 原文经 toV2 落库：单元 练习四、8 题、知识点归一；imports.rawMd 存 v1 原文", () => {
     const db = createTestDb();
-    const preview = previewImport(db, {
+    const preview = previewImport(db, TEST_TEACHER_ID, {
       markdown: V1_MD,
       filename: "示例练习.md",
     });
     expect(preview.version).toBe(1);
 
-    const report = commitImport(db, {
+    const report = commitImport(db, TEST_TEACHER_ID, {
       markdown: V1_MD,
       filename: "示例练习.md",
     });
@@ -502,8 +514,11 @@ describe("commitImport：v1 文档（验收 3）", () => {
 
   it("再导入同一 v1 文件：题数不变、version+1、id 不变", () => {
     const db = createTestDb();
-    commitImport(db, { markdown: V1_MD, filename: "示例练习.md" });
-    const second = commitImport(db, {
+    commitImport(db, TEST_TEACHER_ID, {
+      markdown: V1_MD,
+      filename: "示例练习.md",
+    });
+    const second = commitImport(db, TEST_TEACHER_ID, {
       markdown: V1_MD,
       filename: "示例练习.md",
     });
@@ -517,7 +532,7 @@ describe("commitImport：v1 文档（验收 3）", () => {
 describe("commitImport：mixed 文档（讲义 + 单元）", () => {
   it("讲义 2 篇与单元都入库；unit.lectureTitle 关联到最后一题所在讲义", () => {
     const db = createTestDb();
-    const report = commitImport(db, {
+    const report = commitImport(db, TEST_TEACHER_ID, {
       markdown: MIXED_MD,
       filename: "混合样例.md",
     });
@@ -547,8 +562,11 @@ describe("commitImport：mixed 文档（讲义 + 单元）", () => {
     const db = createTestDb();
     const oldMd = "---\nkind: lecture\n---\n\n# 第1讲 测试\n\n旧内容。\n";
     const newMd = "---\nkind: lecture\n---\n\n# 第1讲 测试\n\n新内容。\n";
-    commitImport(db, { markdown: oldMd, filename: "讲义.md" });
-    const second = commitImport(db, { markdown: newMd, filename: "讲义.md" });
+    commitImport(db, TEST_TEACHER_ID, { markdown: oldMd, filename: "讲义.md" });
+    const second = commitImport(db, TEST_TEACHER_ID, {
+      markdown: newMd,
+      filename: "讲义.md",
+    });
 
     expect(second.lectures).toEqual([
       {
@@ -565,12 +583,15 @@ describe("commitImport：mixed 文档（讲义 + 单元）", () => {
 
   it("单元按 id 合并：同单元再导入（topic 变化）更新而不重复", () => {
     const db = createTestDb();
-    commitImport(db, { markdown: PRACTICE_MD, filename: "练习样例.md" });
+    commitImport(db, TEST_TEACHER_ID, {
+      markdown: PRACTICE_MD,
+      filename: "练习样例.md",
+    });
     const modified = PRACTICE_MD.replace(
       "topic: 有理数加减混合",
       "topic: 新主题",
     );
-    const second = commitImport(db, {
+    const second = commitImport(db, TEST_TEACHER_ID, {
       markdown: modified,
       filename: "练习样例.md",
     });
@@ -585,11 +606,11 @@ describe("commitImport：mixed 文档（讲义 + 单元）", () => {
 describe("commitImport：边界行为", () => {
   it("跨单元同 id 题目：按更新处理，unitId 随之更新到新单元（派单裁决 3）", () => {
     const db = createTestDb();
-    commitImport(db, {
+    commitImport(db, TEST_TEACHER_ID, {
       markdown: judgeDoc("单元A", "$1>0$。"),
       filename: "a.md",
     });
-    const second = commitImport(db, {
+    const second = commitImport(db, TEST_TEACHER_ID, {
       markdown: judgeDoc("单元B", "$2>0$。"),
       filename: "b.md",
     });
@@ -616,7 +637,7 @@ describe("commitImport：边界行为", () => {
 
   it("软删的同 id 题目再导入：恢复（deletedAt 清空）并 version+1，计入 updated", () => {
     const db = createTestDb();
-    commitImport(db, {
+    commitImport(db, TEST_TEACHER_ID, {
       markdown: judgeDoc("单元A", "$1>0$。"),
       filename: "a.md",
     });
@@ -626,7 +647,7 @@ describe("commitImport：边界行为", () => {
       .run();
     expect(db.select().from(questions).all()[0]?.deletedAt).not.toBeNull();
 
-    const second = commitImport(db, {
+    const second = commitImport(db, TEST_TEACHER_ID, {
       markdown: judgeDoc("单元A", "$1>0$。"),
       filename: "a.md",
     });
@@ -652,10 +673,10 @@ $1>0$。[[正确]]
 ::::
 `;
     const docB = docA.replace('knowledge="考点一"', 'knowledge="考点三"');
-    commitImport(db, { markdown: docA, filename: "a.md" });
+    commitImport(db, TEST_TEACHER_ID, { markdown: docA, filename: "a.md" });
     expect(db.select().from(questionKnowledge).all()).toHaveLength(1);
 
-    commitImport(db, { markdown: docB, filename: "b.md" });
+    commitImport(db, TEST_TEACHER_ID, { markdown: docB, filename: "b.md" });
     const links = db.select().from(questionKnowledge).all();
     expect(links).toHaveLength(1);
     const points = db.select().from(knowledgePoints).all();
@@ -695,13 +716,14 @@ $1>0$。[[正确]]
     const db = createTestDb();
     const course = {
       id: crypto.randomUUID(),
+      teacherId: TEST_TEACHER_ID,
       title: "目标课程",
       order: 0,
       createdAt: new Date().toISOString(),
     };
     db.insert(courses).values(course).run();
 
-    const report = commitImport(db, {
+    const report = commitImport(db, TEST_TEACHER_ID, {
       markdown: DOC,
       filename: "compat.md",
       courseId: course.id,
@@ -738,17 +760,18 @@ $1>0$。[[正确]]
     const db = createTestDb();
     const course = {
       id: crypto.randomUUID(),
+      teacherId: TEST_TEACHER_ID,
       title: "条目复用课程",
       order: 0,
       createdAt: new Date().toISOString(),
     };
     db.insert(courses).values(course).run();
-    const first = commitImport(db, {
+    const first = commitImport(db, TEST_TEACHER_ID, {
       markdown: DOC,
       filename: "a.md",
       courseId: course.id,
     });
-    const second = commitImport(db, {
+    const second = commitImport(db, TEST_TEACHER_ID, {
       markdown: DOC,
       filename: "a.md",
       courseId: course.id,
@@ -772,20 +795,30 @@ $1>0$。[[正确]]
     const db = createTestDb();
     const courseA = {
       id: crypto.randomUUID(),
+      teacherId: TEST_TEACHER_ID,
       title: "课程A",
       order: 0,
       createdAt: new Date().toISOString(),
     };
     const courseB = {
       id: crypto.randomUUID(),
+      teacherId: TEST_TEACHER_ID,
       title: "课程B",
       order: 1,
       createdAt: new Date().toISOString(),
     };
     db.insert(courses).values([courseA, courseB]).run();
 
-    commitImport(db, { markdown: DOC, filename: "a.md", courseId: courseA.id });
-    commitImport(db, { markdown: DOC, filename: "b.md", courseId: courseB.id });
+    commitImport(db, TEST_TEACHER_ID, {
+      markdown: DOC,
+      filename: "a.md",
+      courseId: courseA.id,
+    });
+    commitImport(db, TEST_TEACHER_ID, {
+      markdown: DOC,
+      filename: "b.md",
+      courseId: courseB.id,
+    });
 
     // 单元只有一行，folderId 保持在课程A的文件夹（D18：命中保留原文件夹）；
     // 讲义按 (folder, title) 匹配——B 文件夹无同名 → 新建讲义行（两个独立资源）
@@ -816,12 +849,18 @@ $1>0$。[[正确]]
 
   it("软删的讲义再导入同名：自动恢复（deletedAt 清空）并计入 updated", () => {
     const db = createTestDb();
-    const first = commitImport(db, { markdown: DOC, filename: "a.md" });
+    const first = commitImport(db, TEST_TEACHER_ID, {
+      markdown: DOC,
+      filename: "a.md",
+    });
     db.update(lectures)
       .set({ deletedAt: new Date().toISOString() })
       .where(eq(lectures.id, first.lectures[0]?.id ?? ""))
       .run();
-    const second = commitImport(db, { markdown: DOC, filename: "a.md" });
+    const second = commitImport(db, TEST_TEACHER_ID, {
+      markdown: DOC,
+      filename: "a.md",
+    });
     expect(second.lectures[0]).toMatchObject({
       id: first.lectures[0]?.id,
       updated: true,
@@ -851,13 +890,16 @@ $1>0$。[[正确]]
 describe("T2B.1 单教师等价：创建入口写 teacherId（D9）", () => {
   it("文件夹/课程/学生/讲义/单元/题目/导入留档/作业的创建行 teacherId 均为唯一教师", async () => {
     const db = createTestDb();
-    const folder = createFolder(db, { name: "第一章" });
+    const folder = createFolder(db, TEST_TEACHER_ID, { name: "第一章" });
     const course = createCourse(db, { title: "初一上" });
     const student = await createStudent(db, {
       displayName: "张三",
       loginName: "张三",
     });
-    commitImport(db, { filename: "练习.md", markdown: SCOPED_MD });
+    commitImport(db, TEST_TEACHER_ID, {
+      filename: "练习.md",
+      markdown: SCOPED_MD,
+    });
     const assignment = createAssignment(db, {
       unitIds: ["u1"],
       studentIds: [student.student.id],
@@ -988,8 +1030,14 @@ describe("T2B.1 域内匹配（D10/D13：复合主键下按 (teacherId, dslId) �
 
   it("同 teacherId 同 dslId 再导入：单元不重复、题目 version+1 且 id 不变", () => {
     const db = createTestDb();
-    commitImport(db, { filename: "练习.md", markdown: SCOPED_MD });
-    commitImport(db, { filename: "练习.md", markdown: SCOPED_MD });
+    commitImport(db, TEST_TEACHER_ID, {
+      filename: "练习.md",
+      markdown: SCOPED_MD,
+    });
+    commitImport(db, TEST_TEACHER_ID, {
+      filename: "练习.md",
+      markdown: SCOPED_MD,
+    });
 
     expect(
       db.select({ id: units.id }).from(units).where(eq(units.id, "u1")).all(),
@@ -1003,15 +1051,15 @@ describe("T2B.1 域内匹配（D10/D13：复合主键下按 (teacherId, dslId) �
     db.$client.close();
   });
 
-  it("两 teacherId 同 dslId 互不干扰：导入只更新最早教师（单教师取值）的域，乙域行数与内容不变", () => {
+  it("两 teacherId 同 dslId 互不干扰：甲（会话教师）导入只更新甲域，乙域行数与内容不变", () => {
     const db = createTestDb();
     seedTwoTeacherFixture(db);
-    const report = commitImport(db, {
+    const report = commitImport(db, TEST_TEACHER_ID, {
       filename: "练习.md",
       markdown: SCOPED_MD,
     });
 
-    // 导入按库中最早教师（甲）执行：甲域命中更新，不新增行（unitTitle = frontmatter.unit = "u1"）
+    // 导入按会话教师（甲）执行：甲域命中更新，不新增行（unitTitle = frontmatter.unit = "u1"）
     expect(report.units).toEqual([
       { id: "u1", title: "u1", inserted: false, updated: true },
     ]);
@@ -1073,6 +1121,88 @@ describe("T2B.1 域内匹配（D10/D13：复合主键下按 (teacherId, dslId) �
         .where(eq(questionKnowledge.teacherId, "th-b"))
         .all(),
     ).toHaveLength(0);
+    db.$client.close();
+  });
+
+  it("乙导入与甲同 dslId 的相同文件：乙域内新增独立单元，甲的题数与 version 不变（T2B.3 验收）", () => {
+    const db = createTestDb();
+    // 只种甲域的 u1/u1-1（乙域为空）+ 乙教师行——乙导入同 dslId 文件应全新增
+    const now = "2026-06-01T00:00:00.000Z";
+    db.insert(teachers)
+      .values({
+        id: "th-b",
+        loginName: "乙老师",
+        isAdmin: false,
+        disabledAt: null,
+        passwordHash: null,
+        apiToken: null,
+        createdAt: "2026-06-01T00:00:00.000Z",
+      })
+      .run();
+    db.insert(units)
+      .values({
+        id: "u1",
+        teacherId: TEST_TEACHER_ID,
+        folderId: null,
+        lectureId: null,
+        title: "甲的单元",
+        topic: null,
+        order: 0,
+        updatedAt: now,
+      })
+      .run();
+    db.insert(questions)
+      .values({
+        id: "u1-1",
+        teacherId: TEST_TEACHER_ID,
+        unitId: "u1",
+        order: 0,
+        type: "judge",
+        difficulty: 1,
+        stemMd: "甲的题干",
+        optionsJson: null,
+        answersJson: '{"kind":"judge","value":true}',
+        hintsJson: "[]",
+        solutionMd: null,
+        sourceMd: "::::question\n::::",
+        version: 3,
+        updatedAt: now,
+        deletedAt: null,
+      })
+      .run();
+
+    const reportB = commitImport(db, "th-b", {
+      filename: "练习.md",
+      markdown: SCOPED_MD,
+    });
+    expect(reportB.units).toEqual([
+      { id: "u1", title: "u1", inserted: true, updated: false },
+    ]);
+    expect(reportB.questions).toEqual({ inserted: 1, updated: 0 });
+
+    // 甲域完全不受影响：题数不变（1 题）、version 仍 3、题干原样
+    const questionA = db
+      .select()
+      .from(questions)
+      .where(
+        and(eq(questions.teacherId, TEST_TEACHER_ID), eq(questions.id, "u1-1")),
+      )
+      .get();
+    expect(questionA).toMatchObject({ version: 3, stemMd: "甲的题干" });
+    expect(
+      db
+        .select({ id: questions.id })
+        .from(questions)
+        .where(eq(questions.teacherId, TEST_TEACHER_ID))
+        .all(),
+    ).toHaveLength(1);
+    // 乙域持有自己的 u1-1（version=1，导入内容）
+    const questionB = db
+      .select()
+      .from(questions)
+      .where(and(eq(questions.teacherId, "th-b"), eq(questions.id, "u1-1")))
+      .get();
+    expect(questionB).toMatchObject({ version: 1, stemMd: "$1>0$。[[正确]]" });
     db.$client.close();
   });
 });

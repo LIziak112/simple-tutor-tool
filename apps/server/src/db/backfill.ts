@@ -138,6 +138,9 @@ function firstTeacherId(db: Tx | Db): string | null {
  * 事务内调用。content-service 的导入兼容路径复用本函数（同一套 find-or-create 口径）。
  * teacherId（T2B.1/D9）：新建文件夹时写入归属教师（代码层恒写非空；
  * null 仅在「无教师行且仍有课程数据」的不可能状态下出现）。
+ * T2B.3 起查找与 order 取值都限定本教师域（D13：导入只与本教师域的文件夹合并；
+ * teacherId 为 null 时库中必然没有教师行（也就无从分域），退回按名全局匹配，
+ * 与历史行为一致，保证孤儿兜底在该不可能状态下仍幂等）。
  */
 export function ensureCourseFolder(
   tx: Tx,
@@ -148,7 +151,14 @@ export function ensureCourseFolder(
   const existing = tx
     .select({ id: libraryFolders.id })
     .from(libraryFolders)
-    .where(eq(libraryFolders.name, courseTitle))
+    .where(
+      teacherId === null
+        ? eq(libraryFolders.name, courseTitle)
+        : and(
+            eq(libraryFolders.teacherId, teacherId),
+            eq(libraryFolders.name, courseTitle),
+          ),
+    )
     .orderBy(asc(libraryFolders.order))
     .get();
   if (existing !== undefined) return existing;
@@ -156,6 +166,9 @@ export function ensureCourseFolder(
   const maxOrder = tx
     .select({ order: libraryFolders.order })
     .from(libraryFolders)
+    .where(
+      teacherId === null ? undefined : eq(libraryFolders.teacherId, teacherId),
+    )
     .all()
     .reduce((max, row) => Math.max(max, row.order), -1);
   tx.insert(libraryFolders)

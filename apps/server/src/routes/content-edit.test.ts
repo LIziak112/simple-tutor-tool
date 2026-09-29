@@ -14,7 +14,11 @@ import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
 import { courseItems, lectures, questions, units } from "../db/schema.ts";
-import { createTestDb, createTestDir } from "../db/test-utils.ts";
+import {
+  createTestDb,
+  createTestDir,
+  TEST_TEACHER_ID,
+} from "../db/test-utils.ts";
 import { restoreLecture } from "../services/library-service.ts";
 
 /**
@@ -771,7 +775,7 @@ describe("讲义编辑与删除", () => {
     )?.id;
     if (lectureId === undefined) throw new Error("第2讲缺失");
     await request(app, "DELETE", `/api/teacher/lectures/${lectureId}`, cookie);
-    restoreLecture(db, lectureId);
+    restoreLecture(db, TEST_TEACHER_ID, lectureId);
     const after = await getTree(app, cookie);
     expect(after.courses[0]?.lectures.map((l) => l.title)).toEqual([
       "第1讲 有理数",

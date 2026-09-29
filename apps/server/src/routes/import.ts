@@ -34,6 +34,8 @@ import {
  * 业务逻辑全部在 ContentService（api-endpoint 技能约定：路由只做鉴权→校验→调
  * service→包装）。返回类型不显式标注 Hono：链式注册把路由签名累积进推断类型
  * （AppType / hc 前提）。
+ * T2B.3 起全部接口按会话教师（c.var.teacher.id）执行：匹配/写入域内（D13），
+ * batches 回看域内过滤。
  */
 export function createImportRoutes(db: Db) {
   return new Hono<TeacherEnv>()
@@ -42,26 +44,35 @@ export function createImportRoutes(db: Db) {
         c,
         importPreviewRequestSchema,
       );
-      return c.json({ ok: true, data: previewImport(db, body) });
+      return c.json({
+        ok: true,
+        data: previewImport(db, c.var.teacher.id, body),
+      });
     })
     .post("/import/preview-batch", async (c) => {
       const body: ImportPreviewBatchRequest = await parseJsonBody(
         c,
         importPreviewBatchRequestSchema,
       );
-      return c.json({ ok: true, data: previewImportBatch(db, body) });
+      return c.json({
+        ok: true,
+        data: previewImportBatch(db, c.var.teacher.id, body),
+      });
     })
     .post("/import/commit", async (c) => {
       const body: ImportCommitRequest = await parseJsonBody(
         c,
         importCommitRequestSchema,
       );
-      return c.json({ ok: true, data: commitImport(db, body) });
+      return c.json({
+        ok: true,
+        data: commitImport(db, c.var.teacher.id, body),
+      });
     })
     .get("/import/batches/:batchId", (c) => {
       return c.json({
         ok: true,
-        data: getImportBatch(db, c.req.param("batchId")),
+        data: getImportBatch(db, c.var.teacher.id, c.req.param("batchId")),
       });
     });
 }

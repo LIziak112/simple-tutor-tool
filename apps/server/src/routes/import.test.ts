@@ -20,7 +20,11 @@ import {
   questions,
   units,
 } from "../db/schema.ts";
-import { createTestDb, createTestDir } from "../db/test-utils.ts";
+import {
+  createTestDb,
+  createTestDir,
+  TEST_TEACHER_ID,
+} from "../db/test-utils.ts";
 
 /**
  * 内容导入接口集成测试（T1.10，app.request() 直调路由 + 内存库）：
@@ -579,6 +583,7 @@ describe("T2A.3 preview 动作清单（D19）与 warning（D18/D19）", () => {
     db.insert(libraryFolders)
       .values({
         id: folderId,
+        teacherId: TEST_TEACHER_ID,
         name: "第一章",
         order: 0,
         createdAt: new Date().toISOString(),
@@ -683,6 +688,7 @@ describe("T2A.3 POST /api/teacher/import/preview-batch（D20）", () => {
     db.insert(libraryFolders)
       .values({
         id: folderId,
+        teacherId: TEST_TEACHER_ID,
         name: "第一章",
         order: 0,
         createdAt: new Date().toISOString(),
@@ -880,6 +886,7 @@ describe("T2A.3 commit：folderId / folderName / addToCourse / batchId", () => {
     db.insert(courses)
       .values({
         id: courseId,
+        teacherId: TEST_TEACHER_ID,
         title: "目标课程",
         order: 0,
         createdAt: new Date().toISOString(),

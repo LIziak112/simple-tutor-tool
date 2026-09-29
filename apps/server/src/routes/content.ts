@@ -37,7 +37,8 @@ import {
  *   单题完整内容 / 单题编辑（重新解析，version+1）/ 软删（T1.12）；
  * - GET    /lectures/:id、PUT /lectures/:id、DELETE /lectures/:id：
  *   讲义完整内容 / 整篇编辑（title 从 H1 重取）/ 软删（T2A.1 起改软删，D3）；
- * - POST   /reorder：拖拽排序，order 按 ids 下标重写（T1.12）；
+ *   以上题目/讲义接口自 T2B.3 起按会话教师（c.var.teacher.id）过滤，越权 → 404；
+ * - POST   /reorder：拖拽排序，order 按 ids 下标重写（T1.12；题目/讲义/单元域内）；
  * - POST   /courses、PATCH /courses/:id、DELETE /courses/:id：课程 CRUD（T1.12；
  *   T2A.4 起 PATCH 接受 name（同 title）/description/archived，DELETE 改按 D4——
  *   有作答记录 409 COURSE_HAS_ATTEMPTS，无作答连目录条目与成员一并清理）。
@@ -55,7 +56,7 @@ export function createContentRoutes(db: Db) {
     .get("/questions/:id", (c) => {
       return c.json({
         ok: true,
-        data: getQuestionDetail(db, c.req.param("id")),
+        data: getQuestionDetail(db, c.var.teacher.id, c.req.param("id")),
       });
     })
     .put("/questions/:id", async (c) => {
@@ -65,17 +66,17 @@ export function createContentRoutes(db: Db) {
       );
       return c.json({
         ok: true,
-        data: updateQuestion(db, c.req.param("id"), body),
+        data: updateQuestion(db, c.var.teacher.id, c.req.param("id"), body),
       });
     })
     .delete("/questions/:id", (c) => {
-      deleteQuestion(db, c.req.param("id"));
+      deleteQuestion(db, c.var.teacher.id, c.req.param("id"));
       return c.json({ ok: true, data: null });
     })
     .get("/lectures/:id", (c) => {
       return c.json({
         ok: true,
-        data: getLectureDetail(db, c.req.param("id")),
+        data: getLectureDetail(db, c.var.teacher.id, c.req.param("id")),
       });
     })
     .put("/lectures/:id", async (c) => {
@@ -85,16 +86,16 @@ export function createContentRoutes(db: Db) {
       );
       return c.json({
         ok: true,
-        data: updateLecture(db, c.req.param("id"), body),
+        data: updateLecture(db, c.var.teacher.id, c.req.param("id"), body),
       });
     })
     .delete("/lectures/:id", (c) => {
-      deleteLecture(db, c.req.param("id"));
+      deleteLecture(db, c.var.teacher.id, c.req.param("id"));
       return c.json({ ok: true, data: null });
     })
     .post("/reorder", async (c) => {
       const body: ReorderRequest = await parseJsonBody(c, reorderRequestSchema);
-      reorderContent(db, body);
+      reorderContent(db, c.var.teacher.id, body);
       return c.json({ ok: true, data: null });
     })
     .post("/courses", async (c) => {

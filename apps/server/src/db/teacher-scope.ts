@@ -3,13 +3,15 @@ import type { Db } from "./client";
 import { teachers } from "./schema";
 
 /**
- * T2B.1 单教师等价占位：取库中唯一教师行的 id。
+ * T2B.1 单教师等价占位：取库中最早创建的教师行 id。
  *
- * 背景：teacherId 归属列已落库（D9），但域隔离要到 T2B.3 才完成——在此之前
- * 系统处于单教师等价状态，各创建入口与按 id 匹配单元/题目的查询都用本函数
- * 拿 teacherId（单教师下与原「全局匹配」行为完全一致）。
- *
- * T2B.3 起本函数的调用点全部替换为会话教师（c.var.teacher.id），届时退役。
+ * 背景：teacherId 归属列已落库（D9），域隔离按任务分期完成——
+ * - T2B.3（已完成）：资源库与导入域（library-service / content-service 的
+ *   导入、题目、讲义、排序链路 / import-actions / reparse）已全部改传会话教师，
+ *   不再调用本函数；
+ * - T2B.4（待做）：课程与作业域（assignment-service 等）；
+ * - T2B.5（待做）：学生域（student-service）。
+ * 在此之前相关链路仍处于单教师等价状态，用本函数拿 teacherId。
  *
  * 取「createdAt 最早、同刻按 id」的一行：正常库只有一位教师（T2B.1 回填保证
  * 存量库恰一行、全新库由 setup 创建一行）；若测试 fixture 构造了多位教师，

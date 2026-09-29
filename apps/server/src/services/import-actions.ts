@@ -213,8 +213,9 @@ export function buildImportPlan(input: ImportPlanInput): ImportPlan {
 /**
  * 读库生成资源快照（buildImportPlan 的唯一 IO 来源）。
  * nowIso 用于「未截止作业」判定：未删除且（无截止或截止时间未到）。
- * teacherId（T2B.1/D13）：单元与题目按教师域过滤——复合主键 (teacherId, id) 下
- * 同 id 可能存在于多个域，匹配快照只取本教师域的行（单教师期与原行为等价）。
+ * teacherId（T2B.1/D13）：单元、题目、讲义、文件夹与未截止作业计数全部按教师域
+ * 过滤——复合主键 (teacherId, id) 下同 id 可能存在于多个域，匹配快照只取本教师
+ * 域的行（单教师期与原行为等价；T2B.3 起调用方传会话教师）。
  */
 export function loadLibrarySnapshot(
   db: Db,
@@ -225,6 +226,7 @@ export function loadLibrarySnapshot(
     db
       .select({ id: libraryFolders.id, name: libraryFolders.name })
       .from(libraryFolders)
+      .where(eq(libraryFolders.teacherId, teacherId))
       .all()
       .map((row) => [row.id, row.name] as const),
   );
@@ -282,9 +284,11 @@ export function loadLibrarySnapshot(
       deletedAt: lectures.deletedAt,
     })
     .from(lectures)
+    .where(eq(lectures.teacherId, teacherId))
     .all();
 
-  // 未截止作业按单元计数（T2A.7 起走 assignment_units 关联；D19 warning 数据源）
+  // 未截止作业按单元计数（T2A.7 起走 assignment_units 关联；D19 warning 数据源；
+  // 只数本教师的作业——同 dslId 单元在其他教师域的作业与本次导入无关，D13）
   const openAssignmentCountByUnitId = new Map<string, number>();
   for (const row of db
     .select({ unitId: assignmentUnits.unitId })
@@ -292,6 +296,7 @@ export function loadLibrarySnapshot(
     .innerJoin(assignments, eq(assignmentUnits.assignmentId, assignments.id))
     .where(
       and(
+        eq(assignments.teacherId, teacherId),
         isNull(assignments.deletedAt),
         or(isNull(assignments.dueAt), gt(assignments.dueAt, nowIso)),
       ),

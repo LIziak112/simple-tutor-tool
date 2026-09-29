@@ -1,9 +1,14 @@
 import { readFileSync } from "node:fs";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import type { Db } from "../db/client.ts";
-import { lectures, questionKnowledge, questions } from "../db/schema.ts";
-import { createTestDb } from "../db/test-utils.ts";
+import {
+  lectures,
+  questionKnowledge,
+  questions,
+  teachers,
+} from "../db/schema.ts";
+import { createTestDb, TEST_TEACHER_ID } from "../db/test-utils.ts";
 import { commitImport } from "./content-service.ts";
 import {
   type ReparseReport,
@@ -67,7 +72,10 @@ function allQuestionIds(db: Db): Set<string> {
 describe("reparseAll：模拟解析器升级（验收核心）", () => {
   it("被篡改的结构化字段按当前解析器输出恢复：id 不变、题数不变、version+1、sourceMd 未动", () => {
     const db = createTestDb();
-    commitImport(db, { markdown: PRACTICE_MD, filename: "练习样例.md" });
+    commitImport(db, TEST_TEACHER_ID, {
+      markdown: PRACTICE_MD,
+      filename: "练习样例.md",
+    });
     const before = getQuestion(db, "练习四-2");
     expect(before).toBeDefined();
     if (before === undefined) return;
@@ -165,8 +173,14 @@ describe("reparseAll：模拟解析器升级（验收核心）", () => {
 describe("reparseAll：干净库（全部无变化）", () => {
   it("0 更新：version 与 updatedAt 全部不动，讲义与题目都报告 unchanged", () => {
     const db = createTestDb();
-    commitImport(db, { markdown: PRACTICE_MD, filename: "练习样例.md" });
-    commitImport(db, { markdown: LECTURE_MD, filename: "讲义样例.md" });
+    commitImport(db, TEST_TEACHER_ID, {
+      markdown: PRACTICE_MD,
+      filename: "练习样例.md",
+    });
+    commitImport(db, TEST_TEACHER_ID, {
+      markdown: LECTURE_MD,
+      filename: "讲义样例.md",
+    });
     const beforeRows = db.select().from(questions).all();
     const beforeLectures = db.select().from(lectures).all();
 
@@ -191,7 +205,10 @@ describe("reparseAll：干净库（全部无变化）", () => {
 describe("reparseAll：--dry-run", () => {
   it("报告变更但不写库：重查字段仍为篡改值、version 不变、报告标注 dryRun", () => {
     const db = createTestDb();
-    commitImport(db, { markdown: PRACTICE_MD, filename: "练习样例.md" });
+    commitImport(db, TEST_TEACHER_ID, {
+      markdown: PRACTICE_MD,
+      filename: "练习样例.md",
+    });
 
     db.update(questions)
       .set({ difficulty: 5 })
@@ -224,7 +241,10 @@ describe("reparseAll：--dry-run", () => {
 
   it("讲义 title 篡改后 dry-run 同样不写库", () => {
     const db = createTestDb();
-    commitImport(db, { markdown: LECTURE_MD, filename: "讲义样例.md" });
+    commitImport(db, TEST_TEACHER_ID, {
+      markdown: LECTURE_MD,
+      filename: "讲义样例.md",
+    });
     const first = db.select().from(lectures).all()[0];
     expect(first).toBeDefined();
     if (first === undefined) return;
@@ -247,7 +267,10 @@ describe("reparseAll：--dry-run", () => {
 describe("reparseAll：坏数据防御", () => {
   it("sourceMd 被篡改成解析不出题：跳过并记中文原因，该题原样保留、version 不变", () => {
     const db = createTestDb();
-    commitImport(db, { markdown: PRACTICE_MD, filename: "练习样例.md" });
+    commitImport(db, TEST_TEACHER_ID, {
+      markdown: PRACTICE_MD,
+      filename: "练习样例.md",
+    });
     const before = getQuestion(db, "练习四-2");
     expect(before).toBeDefined();
     if (before === undefined) return;
@@ -279,7 +302,10 @@ describe("reparseAll：坏数据防御", () => {
 
   it("软删题目不参与 reparse：不检查、不更新", () => {
     const db = createTestDb();
-    commitImport(db, { markdown: PRACTICE_MD, filename: "练习样例.md" });
+    commitImport(db, TEST_TEACHER_ID, {
+      markdown: PRACTICE_MD,
+      filename: "练习样例.md",
+    });
     db.update(questions)
       .set({ deletedAt: new Date().toISOString(), difficulty: 5 })
       .where(eq(questions.id, "练习四-2"))
@@ -297,7 +323,10 @@ describe("reparseAll：坏数据防御", () => {
 describe("reparseAll：讲义 title 重取", () => {
   it("title 被篡改后从 markdown 的 H1 恢复：markdown 不动、updatedAt 刷新；title 未变的讲义不动", () => {
     const db = createTestDb();
-    commitImport(db, { markdown: LECTURE_MD, filename: "讲义样例.md" });
+    commitImport(db, TEST_TEACHER_ID, {
+      markdown: LECTURE_MD,
+      filename: "讲义样例.md",
+    });
     const rows = db.select().from(lectures).all();
     expect(rows).toHaveLength(2);
     const first = rows[0];
@@ -346,7 +375,10 @@ describe("reparseAll：讲义 title 重取", () => {
 
   it("markdown 被篡改成无 H1：跳过并记原因、行原样保留", () => {
     const db = createTestDb();
-    commitImport(db, { markdown: LECTURE_MD, filename: "讲义样例.md" });
+    commitImport(db, TEST_TEACHER_ID, {
+      markdown: LECTURE_MD,
+      filename: "讲义样例.md",
+    });
     const first = db.select().from(lectures).all()[0];
     expect(first).toBeDefined();
     if (first === undefined) return;
@@ -376,7 +408,10 @@ describe("reparseAll：讲义 title 重取", () => {
 describe("renderReparseReport：变更摘要输出", () => {
   it("包含总计统计与 dry-run 标注（写入模式无「未写入」字样）", () => {
     const db = createTestDb();
-    commitImport(db, { markdown: PRACTICE_MD, filename: "练习样例.md" });
+    commitImport(db, TEST_TEACHER_ID, {
+      markdown: PRACTICE_MD,
+      filename: "练习样例.md",
+    });
     db.update(questions)
       .set({ difficulty: 5 })
       .where(eq(questions.id, "练习四-2"))
@@ -391,5 +426,81 @@ describe("renderReparseReport：变更摘要输出", () => {
 
     const dry: ReparseReport = reparseAll(db, { dryRun: true });
     expect(renderReparseReport(dry)).toContain("未写入");
+  });
+});
+
+describe("T2B.3：按教师分组遍历（每位教师的域独立分析、独立写入）", () => {
+  /** 最小单题练习（unit dup、题 dup-1），difficulty 可篡改以制造两组各一题待更新 */
+  const DUP_MD = `---
+kind: practice
+unit: dup
+---
+
+::::question{type=judge difficulty=1 id=dup-1}
+$1>0$。[[正确]]
+::::
+`;
+
+  it("两教师各持同 id 题（内容相同、篡改各自 difficulty）：两题都独立恢复，id 不串域", () => {
+    const db = createTestDb();
+    db.insert(teachers)
+      .values({
+        id: "th-reparse-b",
+        loginName: "乙老师",
+        isAdmin: false,
+        disabledAt: null,
+        passwordHash: "scrypt$fixture",
+        apiToken: null,
+        createdAt: "2026-06-01T00:00:00.000Z",
+      })
+      .run();
+    commitImport(db, TEST_TEACHER_ID, {
+      markdown: DUP_MD,
+      filename: "a.md",
+    });
+    commitImport(db, "th-reparse-b", {
+      markdown: DUP_MD,
+      filename: "a.md",
+    });
+    // 各组各篡改一行（甲 difficulty=5、乙 difficulty=4），reparse 应各自恢复为 1
+    db.update(questions)
+      .set({ difficulty: 5 })
+      .where(
+        and(
+          eq(questions.teacherId, TEST_TEACHER_ID),
+          eq(questions.id, "dup-1"),
+        ),
+      )
+      .run();
+    db.update(questions)
+      .set({ difficulty: 4 })
+      .where(
+        and(eq(questions.teacherId, "th-reparse-b"), eq(questions.id, "dup-1")),
+      )
+      .run();
+
+    const report = reparseAll(db, { dryRun: false });
+    expect(report.questions).toHaveLength(2);
+    expect(report.questions.every((r) => r.status === "updated")).toBe(true);
+
+    const rowA = db
+      .select({ difficulty: questions.difficulty, version: questions.version })
+      .from(questions)
+      .where(
+        and(
+          eq(questions.teacherId, TEST_TEACHER_ID),
+          eq(questions.id, "dup-1"),
+        ),
+      )
+      .get();
+    const rowB = db
+      .select({ difficulty: questions.difficulty, version: questions.version })
+      .from(questions)
+      .where(
+        and(eq(questions.teacherId, "th-reparse-b"), eq(questions.id, "dup-1")),
+      )
+      .get();
+    expect(rowA).toMatchObject({ difficulty: 1, version: 2 });
+    expect(rowB).toMatchObject({ difficulty: 1, version: 2 });
   });
 });

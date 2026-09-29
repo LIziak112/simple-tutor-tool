@@ -16,7 +16,6 @@ import {
   questionKnowledge,
   questions,
 } from "../db/schema.ts";
-import { getSingleTeacherId } from "../db/teacher-scope.ts";
 import {
   loadKnowledgeIdByName,
   questionFields,
@@ -404,16 +403,21 @@ export function reparseAll(db: Db, options: ReparseOptions): ReparseReport {
     }
   }
 
-  // T2B.1：题目按归属教师分组处理（当前库只有一位教师 = 一组）；复合主键
-  // (teacherId, id) 下同 id 题目可能存在于多个域——各组独立分析、独立写入，
-  // 考点关联也按域全量替换（syncQuestionKnowledge 带 teacherId）。
-  // 讲义 id 为 uuid 全局唯一，无需分组。组内保持 id 排序、组间按 teacherId 排序，
-  // 单教师下报告输出与历史完全一致。
+  // T2B.3：题目按归属教师分组处理（每位教师的域独立分析、独立写入）；复合主键
+  // (teacherId, id) 下同 id 题目可能存在于多个域——考点关联也按域全量替换
+  // （syncQuestionKnowledge 带 teacherId）。teacherId 为 NULL 的行（D9 下不应
+  // 存在：迁移回填后代码恒写非空）跳过并记原因——宁可跳过不可把更新写进错误
+  // 的教师域。讲义 id 为 uuid 全局唯一，无需分组。组内保持 id 排序、组间按
+  // teacherId 排序，单教师下报告输出与历史完全一致。
   const rowsByTeacher = new Map<string, QuestionRow[]>();
+  const orphanRows: QuestionRow[] = [];
   for (const row of questionRows) {
-    const key = row.teacherId ?? getSingleTeacherId(db); // D9 读侧视为必有
-    const list = rowsByTeacher.get(key);
-    if (list === undefined) rowsByTeacher.set(key, [row]);
+    if (row.teacherId === null) {
+      orphanRows.push(row);
+      continue;
+    }
+    const list = rowsByTeacher.get(row.teacherId);
+    if (list === undefined) rowsByTeacher.set(row.teacherId, [row]);
     else list.push(row);
   }
   const questionPlans: QuestionPlan[] = [];
@@ -428,6 +432,15 @@ export function reparseAll(db: Db, options: ReparseOptions): ReparseReport {
       questionPlans.push(plan);
       updateTasks.push({ plan, row, teacherId });
     }
+  }
+  for (const row of orphanRows) {
+    questionPlans.push({
+      id: row.id,
+      status: "skipped",
+      reason:
+        "行缺少归属教师（teacherId 为空，正常库不应发生），保持原样未修改",
+      changes: [],
+    });
   }
   const lecturePlans = lectureRows.map((row) => planLecture(row));
 
