@@ -1,6 +1,7 @@
 import { and, asc, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import type { Db } from "./client";
 import {
+  appSettings,
   assignments,
   assignmentUnits,
   attempts,
@@ -59,6 +60,11 @@ const T2A7_ASSIGNMENTS_BACKFILL_KEY = "t2a7_assignments_backfill";
  * t2a1 回填期间新建的文件夹行。
  */
 const T2B1_MULTI_TEACHER_BACKFILL_KEY = "t2b1_multi_teacher_backfill";
+/**
+ * T2B.6（app_settings 初始键回填，D8）的完成标记 key：插入
+ * allowRegistration='true'（注册开关默认开）。
+ */
+const T2B6_APP_SETTINGS_BACKFILL_KEY = "t2b6_app_settings_init";
 
 /**
  * 执行全部未完成的数据搬迁（启动流程在 runMigrations 之后调用；
@@ -111,6 +117,17 @@ export function runBackfills(db: Db, now: Date = new Date()): void {
       tx.insert(dataMigrations)
         .values({
           key: T2B1_MULTI_TEACHER_BACKFILL_KEY,
+          appliedAt: now.toISOString(),
+        })
+        .run();
+    });
+  }
+  if (!appliedKeys.has(T2B6_APP_SETTINGS_BACKFILL_KEY)) {
+    db.transaction((tx) => {
+      backfillT2b6(tx);
+      tx.insert(dataMigrations)
+        .values({
+          key: T2B6_APP_SETTINGS_BACKFILL_KEY,
           appliedAt: now.toISOString(),
         })
         .run();
@@ -456,6 +473,20 @@ function backfillT2b1(tx: Tx): void {
       sql`UPDATE ${table} SET teacher_id = ${teacher.id} WHERE teacher_id IS NULL`,
     );
   }
+}
+
+// ---------- T2B.6：app_settings 初始键（D8） ----------
+
+/**
+ * 插入注册开关初始键 allowRegistration='true'（一次性，标记防重跑）。
+ * onConflictDoNothing 双保险：即使标记行丢失重跑，也不会覆盖管理员改过的值
+ * （'false' 行已存在 → 冲突跳过）。
+ */
+function backfillT2b6(tx: Tx): void {
+  tx.insert(appSettings)
+    .values({ key: "allowRegistration", value: "true" })
+    .onConflictDoNothing({ target: appSettings.key })
+    .run();
 }
 
 // ---------- 孤儿资源兜底（T2A.1 事故修复） ----------
