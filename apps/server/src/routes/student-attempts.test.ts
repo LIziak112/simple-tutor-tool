@@ -465,11 +465,13 @@ describe("POST /api/student/attempts/:id/submit：判分与快照", () => {
       unanswered: 0,
       autoGradable: 8,
     });
-    expect(
-      data.units.every((unit) =>
-        unit.questions.every((q) => q.autoCorrect === true),
-      ),
-    ).toBe(true);
+    // 展开全部题目后逐题断言（every 对空数组恒真，units 为空时会真空通过）：
+    // 总数 8 与 summary.total 呼应，再逐题 autoCorrect=true
+    const allQuestions = data.units.flatMap((unit) => unit.questions);
+    expect(allQuestions).toHaveLength(8);
+    for (const q of allQuestions) {
+      expect(q.autoCorrect, `题目 ${q.questionId} 应判对`).toBe(true);
+    }
   });
 
   it("部分错/未答组合：答错 false、未答 null 且不写 answerJson；scoreAuto=答对/可判分", async () => {

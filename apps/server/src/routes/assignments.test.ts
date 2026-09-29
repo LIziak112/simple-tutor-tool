@@ -6,7 +6,7 @@ import {
   studentPaperOkSchema,
   teacherAssignmentListOkSchema,
 } from "@tutor/contract";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { Logger } from "pino";
 import pino from "pino";
 import { describe, expect, it } from "vitest";
@@ -288,6 +288,17 @@ async function studentList(
   return body.data.assignments;
 }
 
+/** 学生列表条目 units 的最小形状提取（按内容定位作业用，不做完整契约解析）：
+ *  units 非数组或元素无 id 时返回空列表，由调用方的「找不到即 throw」兜底 */
+function rowUnitIds(row: Record<string, unknown>): { id: unknown }[] {
+  const units = row.units;
+  if (!Array.isArray(units)) return [];
+  return units.filter(
+    (unit): unit is { id: unknown } =>
+      typeof unit === "object" && unit !== null && "id" in unit,
+  );
+}
+
 /** 学生取分组试卷（解析后的 data） */
 async function studentPaper(
   app: ReturnType<typeof createApp>,
@@ -553,7 +564,7 @@ describe("教师布置作业：POST /api/teacher/assignments（T2A.7 多单元�
 
 describe("多单元取卷与作答（D12）", () => {
   async function makeTwoUnitAssignment() {
-    const { app, teacherCookie } = await makeApp();
+    const { app, db, teacherCookie } = await makeApp();
     const unitA = await importDoc(app, teacherCookie, UNIT_A_MD);
     const unitB = await importDoc(app, teacherCookie, UNIT_B_MD);
     const aId = await createStudent(app, teacherCookie, "张三");
@@ -564,7 +575,8 @@ describe("多单元取卷与作答（D12）", () => {
     const cookie = await loginStudent(app, "张三");
     return {
       app,
-      db: undefined,
+      // makeApp 的真实内存库（透传，供库层断言；不再恒 undefined 误导维护者）
+      db,
       teacherCookie,
       cookie,
       unitA,
@@ -684,8 +696,14 @@ describe("多单元取卷与作答（D12）", () => {
     const cookie = await loginStudent(app, "张三");
     const attempt = await startAttempt(app, cookie, onlyB.id);
     const paperB = await studentPaper(app, cookie, onlyB.id);
-    // 学生列表按布置时间倒序：[0] 是后创建的「单元 A 作业」
-    const unitAAssignmentId = (await studentList(app, cookie))[0]?.id as string;
+    // 按内容定位「单元 A 作业」（units 含单元 A 的那份），不依赖列表排序：
+    // 两份作业若同毫秒创建，倒序假设不可靠
+    const unitAAssignmentId = (await studentList(app, cookie)).find((row) =>
+      rowUnitIds(row).some((unit) => unit.id === unitA),
+    )?.id;
+    if (typeof unitAAssignmentId !== "string") {
+      throw new Error("学生列表中未找到包含单元 A 的作业");
+    }
     const paperA = await studentPaper(app, cookie, unitAAssignmentId);
     const questionOfA = paperA.units[0]?.questions[0];
     if (!questionOfA) throw new Error("单元 A 试卷题目缺失");
@@ -717,7 +735,7 @@ describe("多单元取卷与作答（D12）", () => {
 
 describe("名单增删（D13：addStudentIds / removeStudentIds）", () => {
   async function makeEnv() {
-    const { app, teacherCookie } = await makeApp();
+    const { app, db, teacherCookie } = await makeApp();
     const unitId = await importUnit(app, teacherCookie);
     const aId = await createStudent(app, teacherCookie, "张三");
     const bId = await createStudent(app, teacherCookie, "李四");
@@ -727,6 +745,8 @@ describe("名单增删（D13：addStudentIds / removeStudentIds）", () => {
     });
     return {
       app,
+      // makeApp 的真实内存库（行复用等库层断言用）
+      db,
       teacherCookie,
       unitId,
       aId,
@@ -735,6 +755,32 @@ describe("名单增删（D13：addStudentIds / removeStudentIds）", () => {
       aCookie: await loginStudent(app, "张三"),
       bCookie: await loginStudent(app, "李四"),
     };
+  }
+
+  /** 直查库：某学生在某作业下的名单行（本表复合主键 assignmentId+studentId，
+   *  无独立行 id——「行复用」的可观测不变式 = 同键行不删不插、removedAt/addedAt 变化） */
+  function rosterRow(
+    db: Db,
+    assignmentId: string,
+    studentId: string,
+  ):
+    | {
+        assignmentId: string;
+        studentId: string;
+        addedAt: string | null;
+        removedAt: string | null;
+      }
+    | undefined {
+    return db
+      .select()
+      .from(assignmentStudents)
+      .where(
+        and(
+          eq(assignmentStudents.assignmentId, assignmentId),
+          eq(assignmentStudents.studentId, studentId),
+        ),
+      )
+      .get();
   }
 
   it("addStudentIds 后学生列表立即可见；详情 roster 增加", async () => {
@@ -903,11 +949,40 @@ describe("名单增删（D13：addStudentIds / removeStudentIds）", () => {
     );
     expect(notOnRoster.status).toBe(400);
 
-    // 张三移出后再加回：名单恢复、可继续作答
-    await patchAssignment(env.app, env.teacherCookie, env.assignmentId, {
-      removeStudentIds: [env.aId],
-    });
+    // 库层基线：张三的在册行 + 该作业名单总行数
+    const before = rosterRow(env.db, env.assignmentId, env.aId);
+    if (!before || before.addedAt === null) {
+      throw new Error("基线名单行缺失或 addedAt 为空");
+    }
+    const rowsOfAssignment = () =>
+      env.db
+        .select()
+        .from(assignmentStudents)
+        .where(eq(assignmentStudents.assignmentId, env.assignmentId))
+        .all();
+    expect(rowsOfAssignment()).toHaveLength(1);
+
+    // 张三移出：库层只置 removedAt 不删行（行数不变），学生待办消失
+    const removed = await patchAssignment(
+      env.app,
+      env.teacherCookie,
+      env.assignmentId,
+      {
+        removeStudentIds: [env.aId],
+      },
+    );
+    expect(removed.status).toBe(200);
     expect((await studentList(env.app, env.aCookie)).length).toBe(0);
+    expect(rosterRow(env.db, env.assignmentId, env.aId)?.removedAt).toEqual(
+      expect.any(String),
+    );
+    expect(rowsOfAssignment()).toHaveLength(1);
+
+    // 隔 3ms 保证「加回刷新 addedAt」可观测：addedAt 为毫秒精度 ISO 字符串，
+    // 同毫秒内创建与加回无法区分（与教师列表排序的同毫秒教训同因）
+    await new Promise((resolve) => setTimeout(resolve, 3));
+
+    // 再加回：名单恢复、可继续作答
     const back = await patchAssignment(
       env.app,
       env.teacherCookie,
@@ -918,6 +993,17 @@ describe("名单增删（D13：addStudentIds / removeStudentIds）", () => {
     );
     expect(back.status).toBe(200);
     expect((await studentList(env.app, env.aCookie)).length).toBe(1);
+
+    // 库层锁死行复用：同键行置回在册（removedAt=null）而非删行插行——
+    // 名单总行数不增；addedAt 口径 = **刷新为加回时间**（updateAssignment 的
+    // onConflictDoUpdate set addedAt=now，schema 注释「行复用，addedAt 刷新」）
+    const after = rosterRow(env.db, env.assignmentId, env.aId);
+    if (!after || after.addedAt === null) {
+      throw new Error("加回后名单行缺失或 addedAt 为空");
+    }
+    expect(after.removedAt).toBeNull();
+    expect(rowsOfAssignment()).toHaveLength(1);
+    expect(after.addedAt > before.addedAt).toBe(true); // ISO 字典序 = 时间序
   });
 });
 
@@ -959,14 +1045,15 @@ describe("课程成员变化不影响已布置作业名单（D13 快照语义）
     const cCookie = await loginStudent(app, "王五");
     expect((await studentList(app, cCookie)).length).toBe(0);
 
-    // 课程移出张三：作业名单不变（独立快照），仍可作答
-    await request(
+    // 课程移出张三：作业名单不变（独立快照），仍可作答（前置必须真成立）
+    const removedMember = await request(
       app,
       `/api/teacher/courses/${courseId}/members`,
       { studentIds: [aId] },
       teacherCookie,
       "DELETE",
     );
+    expect(removedMember.status).toBe(200);
     const list = await teacherList(app, teacherCookie, { courseId });
     expect(list.length).toBe(1);
     expect(list[0]?.studentCount).toBe(1);
@@ -1165,6 +1252,43 @@ describe("POST /api/teacher/assignments/check（D15 已做过提示）", () => {
     );
     expect(submitted.status).toBe(200);
 
+    // 「再做一次」补齐标题承诺的递增链路（D10：已交卷后再 POST 课程练习
+    // 入口 → 开新卷 attemptNo+1，从空白开始），走完整「取卷 → 答题 → 交卷」
+    const redo = await env.app.request(
+      `/api/student/courses/${env.courseId}/units/${encodeURIComponent(env.unitA)}/attempts`,
+      { method: "POST", headers: { cookie: env.aCookie } },
+    );
+    expect(redo.status).toBe(201);
+    const redoData = (
+      (await redo.json()) as { data: { id: string; attemptNo: number } }
+    ).data;
+    expect(redoData.id).not.toBe(attemptId); // 新开一卷，而非返回已交卷那份
+    expect(redoData.attemptNo).toBe(2);
+    const redoPaperRes = await env.app.request(
+      `/api/student/attempts/${redoData.id}/paper`,
+      { headers: { cookie: env.aCookie } },
+    );
+    expect(redoPaperRes.status).toBe(200);
+    const redoQid = (
+      (await redoPaperRes.json()) as {
+        data: { units: { questions: { id: string }[] }[] };
+      }
+    ).data.units[0]?.questions[0]?.id;
+    if (!redoQid) throw new Error("重做试卷题目缺失");
+    expect(
+      (
+        await saveAnswer(env.app, env.aCookie, redoData.id, redoQid, {
+          kind: "judge",
+          value: true,
+        })
+      ).status,
+    ).toBe(200);
+    const redoSubmitted = await env.app.request(
+      `/api/student/attempts/${redoData.id}/submit`,
+      { method: "POST", headers: { cookie: env.aCookie } },
+    );
+    expect(redoSubmitted.status).toBe(200);
+
     const check = await request(
       env.app,
       "/api/teacher/assignments/check",
@@ -1195,7 +1319,7 @@ describe("POST /api/teacher/assignments/check（D15 已做过提示）", () => {
         courseName: "初一上",
         unitId: env.unitA,
         unitTitle: UNIT_A,
-        submittedCount: 1,
+        submittedCount: 2, // 两份已交卷的课程练习都计入（次数递增）
       },
     ]);
   });
@@ -1226,10 +1350,15 @@ describe("POST /api/teacher/assignments/check（D15 已做过提示）", () => {
     );
     const qid = paper.units[0]?.questions[0]?.id;
     if (!qid) throw new Error("试卷题目缺失");
-    await saveAnswer(env.app, env.aCookie, aAttempt.id as string, qid, {
-      kind: "judge",
-      value: true,
-    });
+    expect(
+      (
+        await saveAnswer(env.app, env.aCookie, aAttempt.id as string, qid, {
+          kind: "judge",
+          value: true,
+        })
+      ).status,
+    ).toBe(200);
+    // submitAttempt helper 内部已断言 200（交卷失败会让本用例在此先红）
     await submitAttempt(env.app, env.aCookie, aAttempt.id as string);
 
     const check = await request(
