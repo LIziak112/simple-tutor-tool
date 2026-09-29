@@ -54,6 +54,8 @@ import {
   questions,
   units,
 } from "../db/schema";
+// T2B.4（课程域隔离）前 createCourse 仍用单教师等价取值；导入/题目/讲义/排序
+// 链路自 T2B.3 起已全部改传会话教师
 import { getSingleTeacherId } from "../db/teacher-scope";
 import { HttpError } from "../lib/http-error";
 import { courseHasAttempts } from "./course-service";
@@ -104,6 +106,11 @@ import {
  *
  * 「原文是真相」（§5.1.1(4)）：questions.sourceMd / lectures.markdown / imports.rawMd
  * 保存原文；结构化字段（type/answers/…）只是判分与统计必需的抽取结果。
+ *
+ * T2B.3 域隔离（D12/D13）：preview / preview-batch / commit / batches 回看 /
+ * 单题与讲义的详情、编辑、软删、排序全部按会话教师（teacherId 形参，路由传
+ * c.var.teacher.id）过滤与写入；课程 CRUD 与 getContentTree 的域化分别属
+ * T2B.4 / T2B.5（本任务不动，单教师等价期行为不变）。
  */
 
 // ---------- 版本识别与统一 lint ----------
@@ -171,22 +178,32 @@ function summarizeParsed(parsed: ParsedDocument): ImportSummary {
 
 // ---------- preview：不写库 ----------
 
-/** 校验目标文件夹存在（404 FOLDER_NOT_FOUND）；null = 未归类直接放行 */
-function assertFolderExists(db: Db, folderId: string | null): void {
+/** 校验目标文件夹存在（域内，404 FOLDER_NOT_FOUND）；null = 未归类直接放行 */
+function assertFolderExists(
+  db: Db,
+  teacherId: string,
+  folderId: string | null,
+): void {
   if (folderId === null) return;
   const row = db
     .select({ id: libraryFolders.id })
     .from(libraryFolders)
-    .where(eq(libraryFolders.id, folderId))
+    .where(
+      and(
+        eq(libraryFolders.teacherId, teacherId),
+        eq(libraryFolders.id, folderId),
+      ),
+    )
     .get();
   if (row === undefined) {
     throw new HttpError(404, "FOLDER_NOT_FOUND", "目标文件夹不存在");
   }
 }
 
-/** 组装单文件预览（preview 与 preview-batch 共用；不写库） */
+/** 组装单文件预览（preview 与 preview-batch 共用；不写库；匹配范围=本教师域，D13） */
 function buildPreview(
   db: Db,
+  teacherId: string,
   markdown: string,
   folderId: string | null,
   fallbackUnitId?: string,
@@ -195,11 +212,7 @@ function buildPreview(
   const plan = buildImportPlan({
     parsed,
     folderId,
-    snapshot: loadLibrarySnapshot(
-      db,
-      new Date().toISOString(),
-      getSingleTeacherId(db),
-    ),
+    snapshot: loadLibrarySnapshot(db, new Date().toISOString(), teacherId),
   });
   return {
     version,
@@ -216,12 +229,14 @@ function buildPreview(
  */
 export function previewImport(
   db: Db,
+  teacherId: string,
   input: ImportPreviewRequest,
 ): ImportPreviewData {
   const folderId = input.folderId ?? null;
-  assertFolderExists(db, folderId);
+  assertFolderExists(db, teacherId, folderId);
   return buildPreview(
     db,
+    teacherId,
     input.markdown,
     folderId,
     fallbackUnitIdOf(input.filename),
@@ -347,19 +362,17 @@ function detectCrossFileConflicts(
  * 批量导入预览（D20）：每文件预览（动作清单/警告/统计/issues）+ 跨文件冲突 +
  * autoFolderBySubdir 的目标文件夹解析（已存在同名复用、否则标记将新建）。
  * 不写库——「将新建」的文件夹在 commit（前端逐文件调用）时按 folderName 落地。
+ * 匹配与文件夹解析都在本教师域内（D13，T2B.3）。
  */
 export function previewImportBatch(
   db: Db,
+  teacherId: string,
   input: ImportPreviewBatchRequest,
 ): ImportPreviewBatchData {
   assertBatchLimits(input.files);
   const baseFolderId = input.folderId ?? null;
-  assertFolderExists(db, baseFolderId);
-  const snapshot = loadLibrarySnapshot(
-    db,
-    new Date().toISOString(),
-    getSingleTeacherId(db),
-  );
+  assertFolderExists(db, teacherId, baseFolderId);
+  const snapshot = loadLibrarySnapshot(db, new Date().toISOString(), teacherId);
   // 名称 → id（同名取 order 首个，与 ensureCourseFolder 复用口径一致）
   const folderIdByName = new Map<string, string>();
   for (const [id, name] of snapshot.folderNameById) {
@@ -425,6 +438,10 @@ export function previewImportBatch(
  * 导入提交（单文件单事务）。有 error 级 issue 时抛 422 LINT_ERROR（extra._issues
  * 附错误列表，响应体为统一错误壳的超集）。
  *
+ * T2B.3：teacherId = 会话教师，全部匹配/写入/课程与文件夹校验都在本教师域内
+ * （D13：单元 (teacherId, dslId)、讲义 (teacherId, folderId, title)、题目
+ * (teacherId, id)；越权 courseId/folderId → 404，与 D12 口径一致）。
+ *
  * T2A.3 目标文件夹解析（D17：导入只进资源库；优先级从高到低）：
  * 1. folderId（含 null = 未归类；非 null 校验存在，404 FOLDER_NOT_FOUND）；
  * 2. folderName：按名称查找/新建（「按子目录自动建文件夹」与就地新建共用，
@@ -440,6 +457,7 @@ export function previewImportBatch(
  */
 export function commitImport(
   db: Db,
+  teacherId: string,
   input: ImportCommitRequest,
 ): ImportCommitData {
   const { issues, parsed } = analyzeImport(
@@ -459,16 +477,18 @@ export function commitImport(
     );
   }
 
-  // ---- 事务外校验（fail fast，不占事务） ----
+  // ---- 事务外校验（fail fast，不占事务；课程/文件夹都须属本教师域） ----
   if (input.folderId !== undefined && input.folderId !== null) {
-    assertFolderExists(db, input.folderId);
+    assertFolderExists(db, teacherId, input.folderId);
   }
   let legacyCourseTitle: string | undefined;
   if (input.courseId !== undefined) {
     const course = db
       .select({ id: courses.id, title: courses.title })
       .from(courses)
-      .where(eq(courses.id, input.courseId))
+      .where(
+        and(eq(courses.teacherId, teacherId), eq(courses.id, input.courseId)),
+      )
       .get();
     if (course === undefined) {
       throw new HttpError(404, "COURSE_NOT_FOUND", "指定的课程不存在");
@@ -479,7 +499,12 @@ export function commitImport(
     const course = db
       .select({ id: courses.id })
       .from(courses)
-      .where(eq(courses.id, input.addToCourse.courseId))
+      .where(
+        and(
+          eq(courses.teacherId, teacherId),
+          eq(courses.id, input.addToCourse.courseId),
+        ),
+      )
       .get();
     if (course === undefined) {
       throw new HttpError(
@@ -493,8 +518,6 @@ export function commitImport(
   return db.transaction((tx) => {
     const now = new Date().toISOString();
     const importId = crypto.randomUUID();
-    // T2B.1 单教师等价：归属教师取库中唯一教师行（T2B.3 起换会话教师）
-    const teacherId = getSingleTeacherId(db);
 
     // ---- 目标文件夹落定（见函数头注释的优先级） ----
     let folderId: string | null;
@@ -509,16 +532,19 @@ export function commitImport(
       folderId = null; // 未归类
     }
 
-    // ---- 讲义：按 (folderId, title) 匹配替换 markdown，无则插入 ----
+    // ---- 讲义：按 (teacherId, folderId, title) 匹配替换 markdown，无则插入 ----
     const lectureReports: ImportLectureReport[] = [];
     const lectureIdByTitle = new Map<string, string>();
     const folderLectures = tx
       .select({ id: lectures.id, title: lectures.title })
       .from(lectures)
       .where(
-        folderId === null
-          ? isNull(lectures.folderId)
-          : eq(lectures.folderId, folderId),
+        and(
+          eq(lectures.teacherId, teacherId),
+          folderId === null
+            ? isNull(lectures.folderId)
+            : eq(lectures.folderId, folderId),
+        ),
       )
       .all();
     for (const row of folderLectures) lectureIdByTitle.set(row.title, row.id);
@@ -578,9 +604,12 @@ export function commitImport(
       .select({ id: units.id })
       .from(units)
       .where(
-        folderId === null
-          ? isNull(units.folderId)
-          : eq(units.folderId, folderId),
+        and(
+          eq(units.teacherId, teacherId),
+          folderId === null
+            ? isNull(units.folderId)
+            : eq(units.folderId, folderId),
+        ),
       )
       .all().length;
 
@@ -788,12 +817,17 @@ export function commitImport(
 /**
  * 批次记录回看：batchId 是前端在批量预览时生成的 UUID，逐文件 commit 携带；
  * 无任何成功记录（全部被跳过/失败）时返回空 files（200——合法批次）。
+ * 按会话教师域过滤（D13）：乙查不到甲的批次（batchId 相同也只返回乙的记录）。
  */
-export function getImportBatch(db: Db, batchId: string): ImportBatchData {
+export function getImportBatch(
+  db: Db,
+  teacherId: string,
+  batchId: string,
+): ImportBatchData {
   const rows = db
     .select()
     .from(imports)
-    .where(eq(imports.batchId, batchId))
+    .where(and(eq(imports.teacherId, teacherId), eq(imports.batchId, batchId)))
     .orderBy(asc(imports.createdAt), asc(imports.id))
     .all();
   return {
@@ -957,8 +991,16 @@ export function getContentTree(db: Db): ContentTree {
 // ---------- T1.12：单条编辑 / 删除 / 排序 / 课程 CRUD ----------
 
 /** 读取题目完整内容（编辑抽屉用）。不存在或已软删 → 404（软删题不在列表，按不存在处理） */
-export function getQuestionDetail(db: Db, id: string): QuestionDetail {
-  const row = db.select().from(questions).where(eq(questions.id, id)).get();
+export function getQuestionDetail(
+  db: Db,
+  teacherId: string,
+  id: string,
+): QuestionDetail {
+  const row = db
+    .select()
+    .from(questions)
+    .where(and(eq(questions.teacherId, teacherId), eq(questions.id, id)))
+    .get();
   if (row === undefined || row.deletedAt !== null) {
     throw new HttpError(
       404,
@@ -972,14 +1014,18 @@ export function getQuestionDetail(db: Db, id: string): QuestionDetail {
     order: row.order,
     type: row.type,
     difficulty: row.difficulty,
-    knowledge: knowledgeNamesOf(db, row.id),
+    knowledge: knowledgeNamesOf(db, teacherId, row.id),
     sourceMd: row.sourceMd,
     version: row.version,
   };
 }
 
-/** 某题关联的考点名列表（按名称排序，与内容树口径一致） */
-function knowledgeNamesOf(db: Db, questionId: string): string[] {
+/** 某题关联的考点名列表（按名称排序，与内容树口径一致；关联表按教师域过滤） */
+function knowledgeNamesOf(
+  db: Db,
+  teacherId: string,
+  questionId: string,
+): string[] {
   return db
     .select({ name: knowledgePoints.name })
     .from(questionKnowledge)
@@ -987,7 +1033,12 @@ function knowledgeNamesOf(db: Db, questionId: string): string[] {
       knowledgePoints,
       eq(questionKnowledge.knowledgePointId, knowledgePoints.id),
     )
-    .where(eq(questionKnowledge.questionId, questionId))
+    .where(
+      and(
+        eq(questionKnowledge.teacherId, teacherId),
+        eq(questionKnowledge.questionId, questionId),
+      ),
+    )
     .orderBy(asc(knowledgePoints.name))
     .all()
     .map((row) => row.name);
@@ -1004,10 +1055,15 @@ function knowledgeNamesOf(db: Db, questionId: string): string[] {
  */
 export function updateQuestion(
   db: Db,
+  teacherId: string,
   id: string,
   input: { sourceMd: string },
 ): QuestionUpdateData {
-  const row = db.select().from(questions).where(eq(questions.id, id)).get();
+  const row = db
+    .select()
+    .from(questions)
+    .where(and(eq(questions.teacherId, teacherId), eq(questions.id, id)))
+    .get();
   if (row === undefined || row.deletedAt !== null) {
     throw new HttpError(
       404,
@@ -1072,7 +1128,6 @@ export function updateQuestion(
 
   const now = new Date().toISOString();
   const version = row.version + 1;
-  const teacherId = getSingleTeacherId(db);
   db.transaction((tx) => {
     tx.update(questions)
       .set({
@@ -1097,13 +1152,13 @@ export function updateQuestion(
 
 /**
  * 题目软删（DELETE /api/teacher/questions/:id）：只写 deletedAt（§5.2 题目不物理删除，
- * 历史作答/统计保留；重新导入同 id 题目即恢复）。已软删时幂等成功。
+ * 历史作答/统计保留；重新导入同 id 题目即恢复）。已软删时幂等成功。域内取行（D12）。
  */
-export function deleteQuestion(db: Db, id: string): void {
+export function deleteQuestion(db: Db, teacherId: string, id: string): void {
   const row = db
     .select({ id: questions.id, deletedAt: questions.deletedAt })
     .from(questions)
-    .where(eq(questions.id, id))
+    .where(and(eq(questions.teacherId, teacherId), eq(questions.id, id)))
     .get();
   if (row === undefined) {
     throw new HttpError(404, "QUESTION_NOT_FOUND", "题目不存在");
@@ -1111,13 +1166,21 @@ export function deleteQuestion(db: Db, id: string): void {
   if (row.deletedAt !== null) return; // 幂等：重复删除同样成功
   db.update(questions)
     .set({ deletedAt: new Date().toISOString() })
-    .where(eq(questions.id, id))
+    .where(and(eq(questions.teacherId, teacherId), eq(questions.id, id)))
     .run();
 }
 
-/** 读取讲义完整内容（编辑抽屉用）。markdown 含 H1 标题行（原文是真相） */
-export function getLectureDetail(db: Db, id: string): LectureDetail {
-  const row = db.select().from(lectures).where(eq(lectures.id, id)).get();
+/** 读取讲义完整内容（编辑抽屉用）。markdown 含 H1 标题行（原文是真相）。域内取行 */
+export function getLectureDetail(
+  db: Db,
+  teacherId: string,
+  id: string,
+): LectureDetail {
+  const row = db
+    .select()
+    .from(lectures)
+    .where(and(eq(lectures.teacherId, teacherId), eq(lectures.id, id)))
+    .get();
   if (row === undefined) {
     throw new HttpError(404, "LECTURE_NOT_FOUND", "讲义不存在");
   }
@@ -1136,10 +1199,15 @@ export function getLectureDetail(db: Db, id: string): LectureDetail {
  */
 export function updateLecture(
   db: Db,
+  teacherId: string,
   id: string,
   input: { markdown: string },
 ): LectureUpdateData {
-  const row = db.select().from(lectures).where(eq(lectures.id, id)).get();
+  const row = db
+    .select()
+    .from(lectures)
+    .where(and(eq(lectures.teacherId, teacherId), eq(lectures.id, id)))
+    .get();
   if (row === undefined) {
     throw new HttpError(404, "LECTURE_NOT_FOUND", "讲义不存在");
   }
@@ -1193,13 +1261,14 @@ export function updateLecture(
  * 关联单元的 lectureId 保留：恢复讲义即回到原状（「从课程移除」由目录条目删除承担，
  * 属 T2A.4）。
  */
-export function deleteLecture(db: Db, id: string): void {
-  softDeleteLecture(db, id);
+export function deleteLecture(db: Db, teacherId: string, id: string): void {
+  softDeleteLecture(db, teacherId, id);
 }
 
-/** reorder 各 kind 的元信息：错误码 + 中文名 + 存活 id 集合（软删实体视同不存在） */
+/** reorder 各 kind 的元信息：错误码 + 中文名 + 存在活 id 集合（软删实体视同不存在；域内） */
 function reorderLiveIds(
   db: Db,
+  teacherId: string,
   kind: ReorderRequest["kind"],
 ): { code: string; entityName: string; ids: Set<string> } {
   const meta = {
@@ -1208,24 +1277,37 @@ function reorderLiveIds(
     unit: { code: "UNIT_NOT_FOUND", entityName: "单元" },
     course: { code: "COURSE_NOT_FOUND", entityName: "课程" },
   }[kind];
+  // course 的域化属 T2B.4（课程域隔离）；question/lecture/unit 自 T2B.3 起域内
   const ids =
     kind === "question"
       ? db
           .select({ id: questions.id })
           .from(questions)
-          .where(isNull(questions.deletedAt))
+          .where(
+            and(
+              eq(questions.teacherId, teacherId),
+              isNull(questions.deletedAt),
+            ),
+          )
           .all()
       : kind === "lecture"
         ? db
             .select({ id: lectures.id })
             .from(lectures)
-            .where(isNull(lectures.deletedAt))
+            .where(
+              and(
+                eq(lectures.teacherId, teacherId),
+                isNull(lectures.deletedAt),
+              ),
+            )
             .all()
         : kind === "unit"
           ? db
               .select({ id: units.id })
               .from(units)
-              .where(isNull(units.deletedAt))
+              .where(
+                and(eq(units.teacherId, teacherId), isNull(units.deletedAt)),
+              )
               .all()
           : db.select({ id: courses.id }).from(courses).all();
   return { ...meta, ids: new Set(ids.map((row) => row.id)) };
@@ -1236,21 +1318,28 @@ function reorderLiveIds(
  * 槽位保持：条目只在本课程同类条目已占据的 order 槽位内重排——与分节/其他类型
  * 条目的交错关系不变（course_items.order 是全 kind 共用一个序列）。
  * 已删资源不在全局顺序中（排最末，保持其原相对顺序——sort 稳定）。
+ * T2B.3：资源位置图与课程循环都限定本教师域（乙排序不得改写甲的课程条目）。
  */
-function reorderCourseItemSlots(db: Db, kind: "lecture" | "unit"): void {
+function reorderCourseItemSlots(
+  db: Db,
+  teacherId: string,
+  kind: "lecture" | "unit",
+): void {
   const resourceIds =
     kind === "lecture"
       ? db
           .select({ id: lectures.id })
           .from(lectures)
-          .where(isNull(lectures.deletedAt))
+          .where(
+            and(eq(lectures.teacherId, teacherId), isNull(lectures.deletedAt)),
+          )
           .orderBy(asc(lectures.order), asc(lectures.title))
           .all()
           .map((row) => row.id)
       : db
           .select({ id: units.id })
           .from(units)
-          .where(isNull(units.deletedAt))
+          .where(and(eq(units.teacherId, teacherId), isNull(units.deletedAt)))
           .orderBy(asc(units.order), asc(units.title))
           .all()
           .map((row) => row.id);
@@ -1258,12 +1347,16 @@ function reorderCourseItemSlots(db: Db, kind: "lecture" | "unit"): void {
     resourceIds.map((id, index) => [id, index] as const),
   );
 
+  // 只处理本教师的课程（join courses 判归属；course 的完整域化属 T2B.4）
   const courseIds = [
     ...new Set(
       db
         .select({ courseId: courseItems.courseId })
         .from(courseItems)
-        .where(eq(courseItems.kind, kind))
+        .innerJoin(courses, eq(courseItems.courseId, courses.id))
+        .where(
+          and(eq(courseItems.kind, kind), eq(courses.teacherId, teacherId)),
+        )
         .all()
         .map((row) => row.courseId),
     ),
@@ -1304,12 +1397,21 @@ function reorderCourseItemSlots(db: Db, kind: "lecture" | "unit"): void {
 /**
  * 排序（POST /api/teacher/reorder）：order 按 ids 数组下标（0 起）重写。
  * ids 为该 kind 下排序作用域内实体的完整新顺序（题目 = 所属单元内的题目）；
- * 任一 id 不存在（题目/讲义/单元软删视同不存在）→ 404，事务回滚保持原顺序。
+ * 任一 id 不存在或不属本教师（题目/讲义/单元软删视同不存在）→ 404，
+ * 事务回滚保持原顺序。
  * 讲义/单元排序同时同步各课程目录条目的相对顺序（T2A.1 起内容页顺序取自
- * course_items，见 reorderCourseItemSlots）。
+ * course_items，见 reorderCourseItemSlots）。course kind 的域化属 T2B.4。
  */
-export function reorderContent(db: Db, input: ReorderRequest): void {
-  const { code, entityName, ids: liveIds } = reorderLiveIds(db, input.kind);
+export function reorderContent(
+  db: Db,
+  teacherId: string,
+  input: ReorderRequest,
+): void {
+  const {
+    code,
+    entityName,
+    ids: liveIds,
+  } = reorderLiveIds(db, teacherId, input.kind);
   const missing = input.ids.find((id) => !liveIds.has(id));
   if (missing !== undefined) {
     throw new HttpError(
@@ -1324,15 +1426,18 @@ export function reorderContent(db: Db, input: ReorderRequest): void {
       if (input.kind === "question") {
         tx.update(questions)
           .set({ order: index })
-          .where(eq(questions.id, id))
+          .where(and(eq(questions.teacherId, teacherId), eq(questions.id, id)))
           .run();
       } else if (input.kind === "lecture") {
         tx.update(lectures)
           .set({ order: index })
-          .where(eq(lectures.id, id))
+          .where(and(eq(lectures.teacherId, teacherId), eq(lectures.id, id)))
           .run();
       } else if (input.kind === "unit") {
-        tx.update(units).set({ order: index }).where(eq(units.id, id)).run();
+        tx.update(units)
+          .set({ order: index })
+          .where(and(eq(units.teacherId, teacherId), eq(units.id, id)))
+          .run();
       } else {
         tx.update(courses)
           .set({ order: index })
@@ -1342,7 +1447,7 @@ export function reorderContent(db: Db, input: ReorderRequest): void {
     }
   });
   if (input.kind === "lecture" || input.kind === "unit") {
-    reorderCourseItemSlots(db, input.kind);
+    reorderCourseItemSlots(db, teacherId, input.kind);
   }
 }
 

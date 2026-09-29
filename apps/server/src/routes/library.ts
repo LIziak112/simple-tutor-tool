@@ -58,6 +58,7 @@ import {
  *
  * export.md 为文件直出（text/markdown 附件，非 { ok, data } 统一壳；处理方式同
  * /api/public/spec 的原文直出），文件名经 RFC 5987 编码支持中文。
+ * T2B.3 起全部接口按会话教师（c.var.teacher.id）过滤与写入：乙访问甲的资源 → 404。
  * 业务逻辑在 LibraryService（api-endpoint 技能约定：路由只做鉴权→校验→调 service→包装）。
  */
 export function createLibraryRoutes(db: Db) {
@@ -65,21 +66,27 @@ export function createLibraryRoutes(db: Db) {
     new Hono<TeacherEnv>()
       // ---------- 文件夹 ----------
       .get("/library/folders", (c) => {
-        return c.json({ ok: true, data: { folders: listFolders(db) } });
+        return c.json({
+          ok: true,
+          data: { folders: listFolders(db, c.var.teacher.id) },
+        });
       })
       .post("/library/folders", async (c) => {
         const body: LibraryFolderCreate = await parseJsonBody(
           c,
           libraryFolderCreateSchema,
         );
-        return c.json({ ok: true, data: createFolder(db, body) }, 201);
+        return c.json(
+          { ok: true, data: createFolder(db, c.var.teacher.id, body) },
+          201,
+        );
       })
       .post("/library/folders/reorder", async (c) => {
         const body: LibraryFolderReorder = await parseJsonBody(
           c,
           libraryFolderReorderSchema,
         );
-        reorderFolders(db, body.ids);
+        reorderFolders(db, c.var.teacher.id, body.ids);
         return c.json({ ok: true, data: null });
       })
       .patch("/library/folders/:id", async (c) => {
@@ -89,25 +96,28 @@ export function createLibraryRoutes(db: Db) {
         );
         return c.json({
           ok: true,
-          data: renameFolder(db, c.req.param("id"), body),
+          data: renameFolder(db, c.var.teacher.id, c.req.param("id"), body),
         });
       })
       .delete("/library/folders/:id", (c) => {
-        return c.json({ ok: true, data: deleteFolder(db, c.req.param("id")) });
+        return c.json({
+          ok: true,
+          data: deleteFolder(db, c.var.teacher.id, c.req.param("id")),
+        });
       })
       // ---------- 列表（讲义库 / 题库 / 回收站） ----------
       .get("/library/lectures", (c) => {
         const filter = parseListQuery(c.req.query());
         return c.json({
           ok: true,
-          data: { lectures: listLibraryLectures(db, filter) },
+          data: { lectures: listLibraryLectures(db, c.var.teacher.id, filter) },
         });
       })
       .get("/library/units", (c) => {
         const filter = parseListQuery(c.req.query());
         return c.json({
           ok: true,
-          data: { units: listLibraryUnits(db, filter) },
+          data: { units: listLibraryUnits(db, c.var.teacher.id, filter) },
         });
       })
       // ---------- 批量操作 ----------
@@ -116,7 +126,10 @@ export function createLibraryRoutes(db: Db) {
           c,
           libraryBatchRequestSchema,
         );
-        return c.json({ ok: true, data: batchLibrary(db, body) });
+        return c.json({
+          ok: true,
+          data: batchLibrary(db, c.var.teacher.id, body),
+        });
       })
       // ---------- 单元管理 ----------
       .patch("/units/:id", async (c) => {
@@ -126,26 +139,33 @@ export function createLibraryRoutes(db: Db) {
         );
         return c.json({
           ok: true,
-          data: updateUnitMeta(db, c.req.param("id"), body),
+          data: updateUnitMeta(db, c.var.teacher.id, c.req.param("id"), body),
         });
       })
       .delete("/units/:id", (c) => {
-        softDeleteUnit(db, c.req.param("id"));
+        softDeleteUnit(db, c.var.teacher.id, c.req.param("id"));
         return c.json({ ok: true, data: null });
       })
       .post("/units/:id/restore", (c) => {
-        restoreUnit(db, c.req.param("id"));
+        restoreUnit(db, c.var.teacher.id, c.req.param("id"));
         return c.json({ ok: true, data: null });
       })
       .delete("/units/:id/purge", (c) => {
-        purgeUnit(db, c.req.param("id"));
+        purgeUnit(db, c.var.teacher.id, c.req.param("id"));
         return c.json({ ok: true, data: null });
       })
       .get("/units/:id/usage", (c) => {
-        return c.json({ ok: true, data: getUnitUsage(db, c.req.param("id")) });
+        return c.json({
+          ok: true,
+          data: getUnitUsage(db, c.var.teacher.id, c.req.param("id")),
+        });
       })
       .get("/units/:id/export.md", (c) => {
-        const { markdown, filename } = exportUnitMd(db, c.req.param("id"));
+        const { markdown, filename } = exportUnitMd(
+          db,
+          c.var.teacher.id,
+          c.req.param("id"),
+        );
         return markdownResponse(markdown, filename);
       })
       // ---------- 讲义管理 ----------
@@ -156,25 +176,34 @@ export function createLibraryRoutes(db: Db) {
         );
         return c.json({
           ok: true,
-          data: updateLectureFolder(db, c.req.param("id"), body),
+          data: updateLectureFolder(
+            db,
+            c.var.teacher.id,
+            c.req.param("id"),
+            body,
+          ),
         });
       })
       .post("/lectures/:id/restore", (c) => {
-        restoreLecture(db, c.req.param("id"));
+        restoreLecture(db, c.var.teacher.id, c.req.param("id"));
         return c.json({ ok: true, data: null });
       })
       .delete("/lectures/:id/purge", (c) => {
-        purgeLecture(db, c.req.param("id"));
+        purgeLecture(db, c.var.teacher.id, c.req.param("id"));
         return c.json({ ok: true, data: null });
       })
       .get("/lectures/:id/usage", (c) => {
         return c.json({
           ok: true,
-          data: getLectureUsage(db, c.req.param("id")),
+          data: getLectureUsage(db, c.var.teacher.id, c.req.param("id")),
         });
       })
       .get("/lectures/:id/export.md", (c) => {
-        const { markdown, filename } = exportLectureMd(db, c.req.param("id"));
+        const { markdown, filename } = exportLectureMd(
+          db,
+          c.var.teacher.id,
+          c.req.param("id"),
+        );
         return markdownResponse(markdown, filename);
       })
   );

@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import type { Db } from "../db/client.ts";
 import { lectures, questionKnowledge, questions } from "../db/schema.ts";
-import { createTestDb } from "../db/test-utils.ts";
+import { createTestDb, TEST_TEACHER_ID } from "../db/test-utils.ts";
 import { commitImport } from "./content-service.ts";
 import {
   type ReparseReport,
@@ -67,7 +67,10 @@ function allQuestionIds(db: Db): Set<string> {
 describe("reparseAll：模拟解析器升级（验收核心）", () => {
   it("被篡改的结构化字段按当前解析器输出恢复：id 不变、题数不变、version+1、sourceMd 未动", () => {
     const db = createTestDb();
-    commitImport(db, { markdown: PRACTICE_MD, filename: "练习样例.md" });
+    commitImport(db, TEST_TEACHER_ID, {
+      markdown: PRACTICE_MD,
+      filename: "练习样例.md",
+    });
     const before = getQuestion(db, "练习四-2");
     expect(before).toBeDefined();
     if (before === undefined) return;
@@ -165,8 +168,14 @@ describe("reparseAll：模拟解析器升级（验收核心）", () => {
 describe("reparseAll：干净库（全部无变化）", () => {
   it("0 更新：version 与 updatedAt 全部不动，讲义与题目都报告 unchanged", () => {
     const db = createTestDb();
-    commitImport(db, { markdown: PRACTICE_MD, filename: "练习样例.md" });
-    commitImport(db, { markdown: LECTURE_MD, filename: "讲义样例.md" });
+    commitImport(db, TEST_TEACHER_ID, {
+      markdown: PRACTICE_MD,
+      filename: "练习样例.md",
+    });
+    commitImport(db, TEST_TEACHER_ID, {
+      markdown: LECTURE_MD,
+      filename: "讲义样例.md",
+    });
     const beforeRows = db.select().from(questions).all();
     const beforeLectures = db.select().from(lectures).all();
 
@@ -191,7 +200,10 @@ describe("reparseAll：干净库（全部无变化）", () => {
 describe("reparseAll：--dry-run", () => {
   it("报告变更但不写库：重查字段仍为篡改值、version 不变、报告标注 dryRun", () => {
     const db = createTestDb();
-    commitImport(db, { markdown: PRACTICE_MD, filename: "练习样例.md" });
+    commitImport(db, TEST_TEACHER_ID, {
+      markdown: PRACTICE_MD,
+      filename: "练习样例.md",
+    });
 
     db.update(questions)
       .set({ difficulty: 5 })
@@ -224,7 +236,10 @@ describe("reparseAll：--dry-run", () => {
 
   it("讲义 title 篡改后 dry-run 同样不写库", () => {
     const db = createTestDb();
-    commitImport(db, { markdown: LECTURE_MD, filename: "讲义样例.md" });
+    commitImport(db, TEST_TEACHER_ID, {
+      markdown: LECTURE_MD,
+      filename: "讲义样例.md",
+    });
     const first = db.select().from(lectures).all()[0];
     expect(first).toBeDefined();
     if (first === undefined) return;
@@ -247,7 +262,10 @@ describe("reparseAll：--dry-run", () => {
 describe("reparseAll：坏数据防御", () => {
   it("sourceMd 被篡改成解析不出题：跳过并记中文原因，该题原样保留、version 不变", () => {
     const db = createTestDb();
-    commitImport(db, { markdown: PRACTICE_MD, filename: "练习样例.md" });
+    commitImport(db, TEST_TEACHER_ID, {
+      markdown: PRACTICE_MD,
+      filename: "练习样例.md",
+    });
     const before = getQuestion(db, "练习四-2");
     expect(before).toBeDefined();
     if (before === undefined) return;
@@ -279,7 +297,10 @@ describe("reparseAll：坏数据防御", () => {
 
   it("软删题目不参与 reparse：不检查、不更新", () => {
     const db = createTestDb();
-    commitImport(db, { markdown: PRACTICE_MD, filename: "练习样例.md" });
+    commitImport(db, TEST_TEACHER_ID, {
+      markdown: PRACTICE_MD,
+      filename: "练习样例.md",
+    });
     db.update(questions)
       .set({ deletedAt: new Date().toISOString(), difficulty: 5 })
       .where(eq(questions.id, "练习四-2"))
@@ -297,7 +318,10 @@ describe("reparseAll：坏数据防御", () => {
 describe("reparseAll：讲义 title 重取", () => {
   it("title 被篡改后从 markdown 的 H1 恢复：markdown 不动、updatedAt 刷新；title 未变的讲义不动", () => {
     const db = createTestDb();
-    commitImport(db, { markdown: LECTURE_MD, filename: "讲义样例.md" });
+    commitImport(db, TEST_TEACHER_ID, {
+      markdown: LECTURE_MD,
+      filename: "讲义样例.md",
+    });
     const rows = db.select().from(lectures).all();
     expect(rows).toHaveLength(2);
     const first = rows[0];
@@ -346,7 +370,10 @@ describe("reparseAll：讲义 title 重取", () => {
 
   it("markdown 被篡改成无 H1：跳过并记原因、行原样保留", () => {
     const db = createTestDb();
-    commitImport(db, { markdown: LECTURE_MD, filename: "讲义样例.md" });
+    commitImport(db, TEST_TEACHER_ID, {
+      markdown: LECTURE_MD,
+      filename: "讲义样例.md",
+    });
     const first = db.select().from(lectures).all()[0];
     expect(first).toBeDefined();
     if (first === undefined) return;
@@ -376,7 +403,10 @@ describe("reparseAll：讲义 title 重取", () => {
 describe("renderReparseReport：变更摘要输出", () => {
   it("包含总计统计与 dry-run 标注（写入模式无「未写入」字样）", () => {
     const db = createTestDb();
-    commitImport(db, { markdown: PRACTICE_MD, filename: "练习样例.md" });
+    commitImport(db, TEST_TEACHER_ID, {
+      markdown: PRACTICE_MD,
+      filename: "练习样例.md",
+    });
     db.update(questions)
       .set({ difficulty: 5 })
       .where(eq(questions.id, "练习四-2"))

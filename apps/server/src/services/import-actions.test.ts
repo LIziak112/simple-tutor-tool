@@ -444,7 +444,13 @@ describe("loadLibrarySnapshot：读库口径（内存库）", () => {
     const db = createTestDb();
     const now = "2026-09-27T00:00:00.000Z";
     db.insert(libraryFolders)
-      .values({ id: FOLDER_A, name: "第一章", order: 0, createdAt: now })
+      .values({
+        id: FOLDER_A,
+        teacherId: TEST_TEACHER_ID,
+        name: "第一章",
+        order: 0,
+        createdAt: now,
+      })
       .run();
     db.insert(units)
       .values({
@@ -494,6 +500,7 @@ describe("loadLibrarySnapshot：读库口径（内存库）", () => {
     db.insert(lectures)
       .values({
         id: "l1",
+        teacherId: TEST_TEACHER_ID,
         folderId: null,
         title: "第1讲",
         markdown: "# 第1讲",
@@ -505,12 +512,14 @@ describe("loadLibrarySnapshot：读库口径（内存库）", () => {
       .values([
         {
           id: "a1",
+          teacherId: TEST_TEACHER_ID,
           unitId: null,
           title: "未截止（无 dueAt）",
           createdAt: now,
         },
         {
           id: "a2",
+          teacherId: TEST_TEACHER_ID,
           unitId: null,
           title: "未截止（未来 dueAt）",
           dueAt: "2026-12-01T00:00:00.000Z",
@@ -518,6 +527,7 @@ describe("loadLibrarySnapshot：读库口径（内存库）", () => {
         },
         {
           id: "a3",
+          teacherId: TEST_TEACHER_ID,
           unitId: null,
           title: "已截止",
           dueAt: "2026-01-01T00:00:00.000Z",
@@ -525,6 +535,7 @@ describe("loadLibrarySnapshot：读库口径（内存库）", () => {
         },
         {
           id: "a4",
+          teacherId: TEST_TEACHER_ID,
           unitId: null,
           title: "已删除",
           createdAt: now,
