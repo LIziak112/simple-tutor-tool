@@ -53,6 +53,14 @@ import {
   useResourceUsage,
 } from "@/features/library/library-queries";
 import {
+  type LibraryTab,
+  parseLibraryTab,
+  readRememberedFolder,
+  readRememberedTab,
+  writeRememberedFolder,
+  writeRememberedTab,
+} from "@/features/library/library-view-memory";
+import {
   ResourceDeleteDialog,
   type ResourceDeleteTarget,
 } from "@/features/library/ResourceDeleteDialog";
@@ -79,18 +87,12 @@ import { formatRelativeTime } from "@/lib/time";
  * 列表多选批量操作 + 搜索（前端即时过滤）+ 单元展开题目摘要（编辑抽屉 / 软删 /
  * 单元内拖拽排序复用）+ 单元详情面板（改标题/topic/文件夹/配套讲义、使用情况、
  * 导出、删除）。删除确认弹层列出使用情况（D3）；删除类 toast 带「撤销」（§4-6）。
- * T2A.9：页签状态写入 URL（?tab=lectures|units|recycle，缺省 = 题库），
- * 侧边栏「讲义库 / 题库」入口据此直达定位页签。
+ * T2A.9：页签状态写入 URL（?tab=lectures|units|recycle），显式参数直达；
+ * 无参数时用 sessionStorage 恢复上次页签与文件夹选中（跳转其他页面回来不丢
+ * 状态；首次访问缺省 = 题库，保持 /t/library 直达旧口径）。
  */
 
-type TabKey = "lectures" | "units" | "recycle";
-
-/** URL ?tab= 的合法取值（缺省/非法值回落 units，保持 /t/library 直达旧口径） */
-function parseTabParam(value: string | null): TabKey {
-  return value === "lectures" || value === "recycle" ? value : "units";
-}
-
-const TABS: { key: TabKey; label: string; icon: typeof BookOpen }[] = [
+const TABS: { key: LibraryTab; label: string; icon: typeof BookOpen }[] = [
   { key: "lectures", label: "讲义库", icon: BookOpen },
   { key: "units", label: "题库", icon: FileStack },
   { key: "recycle", label: "回收站", icon: Trash2 },
@@ -133,11 +135,19 @@ export function LibraryPage() {
   const [bannerVisible, setBannerVisible] = useState(
     importSuccess !== undefined,
   );
-  // 页签以 URL ?tab= 为唯一来源（T2A.9：侧边栏「讲义库/题库」入口按参数直达）；
-  // units 是默认页签，URL 不带参数即题库
+  // 页签：URL ?tab= 为显式意图（直达）；无参数时恢复上次记忆的页签，
+  // 记忆缺失/非法回落 units（保持 /t/library 直达旧口径）
   const [searchParams, setSearchParams] = useSearchParams();
-  const tab = parseTabParam(searchParams.get("tab"));
-  const [folder, setFolder] = useState<FolderSelection>(undefined);
+  const tabParam = searchParams.get("tab");
+  const [rememberedTab, setRememberedTab] = useState<LibraryTab>(() =>
+    readRememberedTab(),
+  );
+  const tab: LibraryTab =
+    tabParam !== null ? parseLibraryTab(tabParam) : rememberedTab;
+  // 文件夹选中：挂载时恢复上次记忆（undefined = 全部；null = 未归类）
+  const [folder, setFolder] = useState<FolderSelection>(() =>
+    readRememberedFolder(),
+  );
   const [search, setSearch] = useState("");
   // 多选（分 kind 独立；全选当前筛选结果，§4-2）
   const [selectedLectures, setSelectedLectures] = useState<Set<string>>(
@@ -174,6 +184,27 @@ export function LibraryPage() {
   const foldersQuery = useLibraryFolders();
   const lecturesQuery = useLibraryLectures(listParams);
   const unitsQuery = useLibraryUnits(listParams);
+
+  // 页签/文件夹变化时写入记忆（下次无 ?tab= 进入时恢复，跳转其他页面不丢状态）
+  useEffect(() => {
+    setRememberedTab(tab);
+    writeRememberedTab(tab);
+  }, [tab]);
+  useEffect(() => {
+    writeRememberedFolder(folder);
+  }, [folder]);
+
+  // 记忆的文件夹已被删除（如其他页签/会话中删除）→ 回落「全部」，避免空列表困惑
+  const folderList = foldersQuery.data?.folders;
+  useEffect(() => {
+    if (
+      foldersQuery.isSuccess &&
+      typeof folder === "string" &&
+      !(folderList ?? []).some((f) => f.id === folder)
+    ) {
+      setFolder(undefined);
+    }
+  }, [foldersQuery.isSuccess, folderList, folder]);
 
   // 前端即时过滤（§4-3：标题 / 单元 id / topic / 考点）
   const keyword = search.trim().toLowerCase();
@@ -398,7 +429,11 @@ export function LibraryPage() {
             aria-label="关闭提示"
             onClick={() => {
               setBannerVisible(false);
-              navigate(location.pathname, { replace: true, state: null });
+              // 保留 search（?tab=）：只清掉 location.state，不把页签打回默认
+              navigate(
+                { pathname: location.pathname, search: location.search },
+                { replace: true, state: null },
+              );
             }}
             className="-m-1 flex size-8 shrink-0 items-center justify-center rounded-md outline-none transition-colors hover:bg-emerald-500/10 focus-visible:ring-3 focus-visible:ring-ring/50"
           >
@@ -407,8 +442,8 @@ export function LibraryPage() {
         </p>
       ) : null}
 
-      {/* 页签（讲义库 / 题库 / 回收站）；点击切换写回 URL（replace 不留历史，
-          保留 location.state——导入成功提示条不因切页签消失） */}
+      {/* 页签（讲义库 / 题库 / 回收站）；点击切换写回 URL（含 units，replace 不留
+          历史，保留 location.state——导入成功提示条不因切页签消失） */}
       <div
         role="tablist"
         aria-label="资源库分区"
@@ -421,10 +456,13 @@ export function LibraryPage() {
             role="tab"
             aria-selected={tab === key}
             onClick={() => {
-              setSearchParams(key === "units" ? {} : { tab: key }, {
-                replace: true,
-                state: location.state,
-              });
+              setSearchParams(
+                { tab: key },
+                {
+                  replace: true,
+                  state: location.state,
+                },
+              );
               setSelectedLectures(new Set());
               setSelectedUnits(new Set());
             }}

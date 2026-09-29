@@ -1,8 +1,13 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { LibraryUnitList, LibraryUsage } from "@tutor/contract";
+import type {
+  LibraryLectureList,
+  LibraryUnitList,
+  LibraryUsage,
+} from "@tutor/contract";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { LIBRARY_FOLDER_STORAGE_KEY } from "@/features/library/library-view-memory";
 import {
   batchLibraryApi,
   deleteUnitApi,
@@ -10,6 +15,8 @@ import {
   fetchLibraryLectures,
   fetchLibraryUnits,
   fetchUnitUsageApi,
+  renameLibraryFolderApi,
+  reorderLibraryFoldersApi,
 } from "@/lib/api";
 import LibraryPage from "./LibraryPage";
 
@@ -17,6 +24,8 @@ import LibraryPage from "./LibraryPage";
  * 资源库页面组件测试（T2A.2 验收项）：
  * - 删除确认弹层列出使用情况（课程名 + 作业名 + 作答数）；
  * - 批量移动（选目标文件夹后调 batchLibraryApi action=move）、批量删除、批量恢复；
+ * - 页签 / 文件夹选中记忆（sessionStorage：离开再进入不丢状态，显式 ?tab= 优先）；
+ * - 文件夹行改名与上移/下移兜底排序（两行布局回归）；
  * - 三态基础（加载 / 空态）。
  * API 层 mock（真实接口行为由后端集成测试 library.test.ts 覆盖）。
  */
@@ -38,6 +47,9 @@ vi.mock("@/lib/api", async (importOriginal) => {
     purgeUnitApi: vi.fn(),
     purgeLectureApi: vi.fn(),
     downloadExportMd: vi.fn(),
+    renameLibraryFolderApi: vi.fn(),
+    reorderLibraryFoldersApi: vi.fn(),
+    deleteLibraryFolderApi: vi.fn(),
   };
 });
 
@@ -106,13 +118,26 @@ const USAGE: LibraryUsage = {
   attemptCount: 3,
 };
 
-function renderPage() {
+const LECTURES: LibraryLectureList = {
+  lectures: [
+    {
+      id: "22222222-2222-4222-8222-222222222222",
+      title: "第1讲 有理数",
+      folderId: FOLDER_ID,
+      updatedAt: "2026-09-26T00:00:00.000Z",
+      deletedAt: null,
+      courseCount: 0,
+    },
+  ],
+};
+
+function renderPage(initialEntry = "/t/library") {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={["/t/library"]}>
+      <MemoryRouter initialEntries={[initialEntry]}>
         <LibraryPage />
       </MemoryRouter>
     </QueryClientProvider>,
@@ -129,6 +154,7 @@ function mockDataLoaded(): void {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  sessionStorage.clear();
 });
 
 describe("资源库页面", () => {
@@ -242,5 +268,157 @@ describe("资源库页面", () => {
     await waitFor(() => {
       expect(mockedRestore).toHaveBeenCalledWith(UNIT_ID);
     });
+  });
+
+  // ---------- 页签 / 文件夹选中记忆（离开再进入不丢状态） ----------
+
+  it("页签记忆：切到讲义库后离开再进入，仍停在讲义库", async () => {
+    mockDataLoaded();
+    mockedLectures.mockResolvedValue(LECTURES as never);
+    const first = renderPage();
+    fireEvent.click(await screen.findByRole("tab", { name: "讲义库" }));
+    expect(screen.getByRole("tab", { name: "讲义库" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    first.unmount();
+
+    // 无 ?tab= 重新进入：恢复上次页签，而非回落默认题库
+    renderPage();
+    expect(screen.getByRole("tab", { name: "讲义库" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(await screen.findByText("第1讲 有理数")).toBeInTheDocument();
+  });
+
+  it("显式 ?tab=recycle 直达回收站，记忆随之更新", async () => {
+    mockDataLoaded();
+    const first = renderPage("/t/library?tab=recycle");
+    expect(screen.getByRole("tab", { name: "回收站" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    first.unmount();
+
+    renderPage();
+    expect(screen.getByRole("tab", { name: "回收站" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  });
+
+  it("切回题库后记忆同步：再进入仍是题库", async () => {
+    mockDataLoaded();
+    const first = renderPage();
+    fireEvent.click(await screen.findByRole("tab", { name: "讲义库" }));
+    fireEvent.click(screen.getByRole("tab", { name: "题库" }));
+    first.unmount();
+
+    renderPage();
+    expect(screen.getByRole("tab", { name: "题库" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(
+      await screen.findByRole("checkbox", { name: "选择单元 练习四" }),
+    ).toBeInTheDocument();
+  });
+
+  it("文件夹选中记忆：选中文件夹后离开再进入，仍选中该文件夹", async () => {
+    mockDataLoaded();
+    const first = renderPage();
+    // 名称 span 在选中按钮内：点击 span 冒泡即选中（按钮可访问名是名称+计数拼接，不便按名查询）
+    fireEvent.click(await screen.findByText("有理数"));
+    await waitFor(() => {
+      expect(mockedUnits).toHaveBeenCalledWith(
+        expect.objectContaining({ folderId: FOLDER_ID }),
+      );
+    });
+    first.unmount();
+
+    renderPage();
+    const nameText = await screen.findByText("有理数");
+    expect(nameText.closest("button")).toHaveAttribute("aria-current", "true");
+  });
+
+  it("记忆的文件夹已不存在时，回落「全部」", async () => {
+    mockDataLoaded();
+    sessionStorage.setItem(
+      LIBRARY_FOLDER_STORAGE_KEY,
+      JSON.stringify("99999999-9999-4999-8999-999999999999"),
+    );
+    renderPage();
+    // 文件夹列表加载后：失效记忆被清除，选中回落「全部」
+    await waitFor(() => {
+      expect(screen.getByText("全部").closest("button")).toHaveAttribute(
+        "aria-current",
+        "true",
+      );
+    });
+  });
+
+  // ---------- 文件夹行操作（两行布局回归） ----------
+
+  it("文件夹行内改名：输入新名保存 → renameLibraryFolderApi", async () => {
+    mockDataLoaded();
+    const mockedRename = vi.mocked(renameLibraryFolderApi);
+    mockedRename.mockResolvedValue(FOLDERS.folders[0] as never);
+    renderPage();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "重命名文件夹 有理数" }),
+    );
+    fireEvent.change(await screen.findByLabelText("文件夹「有理数」的新名称"), {
+      target: { value: "有理数运算" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存文件夹名" }));
+    await waitFor(() => {
+      expect(mockedRename).toHaveBeenCalledWith(FOLDER_ID, {
+        name: "有理数运算",
+      });
+    });
+  });
+
+  it("上移按钮兜底排序：上移第二个文件夹 → reorderLibraryFoldersApi 收到新顺序", async () => {
+    const SECOND_FOLDER_ID = "33333333-3333-4333-8333-333333333333";
+    mockedFolders.mockResolvedValue({
+      folders: [
+        FOLDERS.folders[0],
+        {
+          id: SECOND_FOLDER_ID,
+          name: "代数",
+          order: 1,
+          lectureCount: 0,
+          unitCount: 0,
+          createdAt: "2026-09-01T00:00:00.000Z",
+        },
+      ],
+    } as never);
+    mockedLectures.mockResolvedValue({ lectures: [] } as never);
+    mockedUnits.mockResolvedValue({ units: [] } as never);
+    const mockedReorder = vi.mocked(reorderLibraryFoldersApi);
+    mockedReorder.mockResolvedValue(null);
+    renderPage();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "上移文件夹 代数" }),
+    );
+    await waitFor(() => {
+      expect(mockedReorder).toHaveBeenCalledWith({
+        ids: [SECOND_FOLDER_ID, FOLDER_ID],
+      });
+    });
+  });
+
+  it("长文件夹名：完整名称在 DOM 中，名称按钮带 title 悬停全名", async () => {
+    const longName = "七年级下册有理数混合运算专项训练";
+    mockedFolders.mockResolvedValue({
+      folders: [{ ...FOLDERS.folders[0], name: longName }],
+    } as never);
+    mockedLectures.mockResolvedValue({ lectures: [] } as never);
+    mockedUnits.mockResolvedValue({ units: [] } as never);
+    renderPage();
+    // 名称 span 完整渲染（截断只是 CSS）；其所属按钮带 title 提供悬停全名
+    const nameText = await screen.findByText(longName);
+    expect(nameText.closest("button")).toHaveAttribute("title", longName);
   });
 });

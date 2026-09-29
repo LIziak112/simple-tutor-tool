@@ -1,6 +1,8 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { LibraryFolder } from "@tutor/contract";
 import {
+  ArrowDown,
+  ArrowUp,
   Check,
   FolderOpen,
   FolderPlus,
@@ -36,6 +38,9 @@ import { libraryFoldersKey } from "./library-queries";
 /**
  * 资源库左侧文件夹栏（D2 / T2A.2）：
  * - 「全部」与「未归类」为虚拟项（前端固定渲染，不可删改）；
+ * - 文件夹行两行布局：第一行 = 拖拽把手 + 名称（名称占满剩余宽度，超长截断、
+ *   title 悬停看全名）；第二行 = 重命名/上移/下移/删除，对齐名称起点且全部
+ *   ≥44px 触控目标（§4-9 拖拽把手 + 按钮兜底）——单行会把名称挤到不可读；
  * - 文件夹：新建、行内改名、删除（二次确认，显示将移动的讲义数/单元数）、
  *   拖拽排序（dnd-kit 把手 + 上移/下移按钮兜底，§4-9）；
  * - 每项显示未删除讲义/单元计数。
@@ -135,7 +140,7 @@ export function FolderSidebar({
   return (
     <aside
       aria-label="资源库文件夹"
-      className="w-full shrink-0 space-y-2 md:w-56"
+      className="w-full shrink-0 space-y-2 md:w-64"
     >
       <div className="flex items-center justify-between gap-2">
         <h2 className="text-sm font-semibold">文件夹</h2>
@@ -295,7 +300,7 @@ function FolderItemButton({
   );
 }
 
-/** 可排序的文件夹行：把手 + 名称（行内改名）+ 计数 + 上移/下移 + 删除 */
+/** 可排序的文件夹行（两行）：把手 + 名称/计数；重命名 / 上移 / 下移 / 删除 */
 function SortableFolderRow({
   folder,
   active,
@@ -326,14 +331,11 @@ function SortableFolderRow({
   return (
     <SortableItem id={folder.id}>
       {({ rowProps, handleListeners }) => (
-        <li {...rowProps} className="flex items-center gap-1">
-          <DragHandle
-            label={`拖拽调整文件夹「${folder.name}」的顺序`}
-            listeners={handleListeners}
-          />
+        <li {...rowProps} className="flex flex-col gap-0.5">
           {renaming ? (
+            /* 改名占整行（改名期间不渲染把手与操作行） */
             <form
-              className="flex min-w-0 flex-1 flex-wrap items-center gap-1"
+              className="flex min-w-0 flex-wrap items-center gap-1"
               onSubmit={(e) => {
                 e.preventDefault();
                 setRenaming(false);
@@ -345,13 +347,13 @@ function SortableFolderRow({
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 aria-label={`文件夹「${folder.name}」的新名称`}
-                className="min-h-11 flex-1"
+                className="min-h-11 min-w-0 flex-1 basis-40"
                 autoFocus
               />
               <Button
                 type="submit"
                 variant="ghost"
-                className="size-11"
+                className="size-11 shrink-0"
                 aria-label="保存文件夹名"
               >
                 <Check aria-hidden />
@@ -359,7 +361,7 @@ function SortableFolderRow({
               <Button
                 type="button"
                 variant="ghost"
-                className="size-11"
+                className="size-11 shrink-0"
                 aria-label="取消重命名"
                 onClick={() => {
                   setRenaming(false);
@@ -376,72 +378,77 @@ function SortableFolderRow({
             </form>
           ) : (
             <>
-              <button
-                type="button"
-                onClick={() => onSelect(folder.id)}
-                aria-current={active ? "true" : undefined}
-                className={`flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-lg px-2 text-sm font-medium outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 ${
-                  active
-                    ? "bg-primary/10 text-primary"
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                }`}
-              >
-                <FolderOpen aria-hidden className="size-4 shrink-0" />
-                <span className="min-w-0 flex-1 truncate text-left">
-                  {folder.name}
-                </span>
-                <span className="shrink-0 text-xs text-muted-foreground">
-                  {count}
-                </span>
-              </button>
-              <Button
-                type="button"
-                variant="ghost"
-                className="size-11 shrink-0"
-                aria-label={`重命名文件夹 ${folder.name}`}
-                onClick={() => {
-                  setDraft(folder.name);
-                  clearRenameError();
-                  setRenaming(true);
-                }}
-              >
-                <PencilLine aria-hidden />
-              </Button>
-              <span className="flex shrink-0 flex-col">
+              {/* 第一行：把手 + 名称（名称占满剩余宽度，超长截断、title 看全名） */}
+              <div className="flex items-center gap-1">
+                <DragHandle
+                  label={`拖拽调整文件夹「${folder.name}」的顺序`}
+                  listeners={handleListeners}
+                />
+                <button
+                  type="button"
+                  onClick={() => onSelect(folder.id)}
+                  aria-current={active ? "true" : undefined}
+                  title={folder.name}
+                  className={`flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-lg px-2 text-sm font-medium outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 ${
+                    active
+                      ? "bg-primary/10 text-primary"
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                  }`}
+                >
+                  <FolderOpen aria-hidden className="size-4 shrink-0" />
+                  <span className="min-w-0 flex-1 truncate text-left">
+                    {folder.name}
+                  </span>
+                  <span className="shrink-0 text-xs text-muted-foreground">
+                    {count}
+                  </span>
+                </button>
+              </div>
+              {/* 第二行：重命名 / 上移 / 下移 / 删除，与名称起点对齐（pl-12 = 把手 + 间距） */}
+              <div className="flex items-center gap-1 pl-12">
                 <Button
                   type="button"
                   variant="ghost"
-                  className="size-6"
+                  className="size-11 shrink-0"
+                  aria-label={`重命名文件夹 ${folder.name}`}
+                  onClick={() => {
+                    setDraft(folder.name);
+                    clearRenameError();
+                    setRenaming(true);
+                  }}
+                >
+                  <PencilLine aria-hidden />
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="size-11 shrink-0"
                   aria-label={`上移文件夹 ${folder.name}`}
                   disabled={!canMoveUp}
                   onClick={() => onMove(-1)}
                 >
-                  <span aria-hidden className="text-xs">
-                    ↑
-                  </span>
+                  <ArrowUp aria-hidden />
                 </Button>
                 <Button
                   type="button"
                   variant="ghost"
-                  className="size-6"
+                  className="size-11 shrink-0"
                   aria-label={`下移文件夹 ${folder.name}`}
                   disabled={!canMoveDown}
                   onClick={() => onMove(1)}
                 >
-                  <span aria-hidden className="text-xs">
-                    ↓
-                  </span>
+                  <ArrowDown aria-hidden />
                 </Button>
-              </span>
-              <Button
-                type="button"
-                variant="ghost"
-                className="size-11 shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                aria-label={`删除文件夹 ${folder.name}`}
-                onClick={onDelete}
-              >
-                <Trash2 aria-hidden />
-              </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="size-11 shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                  aria-label={`删除文件夹 ${folder.name}`}
+                  onClick={onDelete}
+                >
+                  <Trash2 aria-hidden />
+                </Button>
+              </div>
             </>
           )}
         </li>
