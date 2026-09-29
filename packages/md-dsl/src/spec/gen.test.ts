@@ -76,6 +76,29 @@ describe("renderSpecMarkdown：稳定性与完整性", () => {
     expect(spec).toContain("并入第一篇讲义");
     expect(spec).not.toContain("会被丢弃");
   });
+
+  it("命名与身份规则一节成文：统一身份表、匹配范围表与配套讲义措辞在文中", () => {
+    // 内容模型与导入规范化（task/content-model）：title 字段、unit 缺省文件名、
+    // lecture 改称「配套讲义」的指针语义，均须在生成规范中成文
+    expect(spec).toContain("### 命名与身份规则");
+    expect(spec).toContain(
+      "| 题目 | 容器 `id` 属性 | `单元名-序号` | 同 id → 更新（version+1） |",
+    );
+    expect(spec).toContain(
+      "| 单元 | frontmatter `unit:` | 文件名去扩展名 | 同名 → 合并题目 |",
+    );
+    expect(spec).toContain(
+      "| 讲义 | frontmatter `title:`（可选） | 第一个 H1 | 同文件夹同名 → 覆盖正文 |",
+    );
+    expect(spec).toContain("LECTURE_LINK_UNRESOLVED");
+    expect(spec).toContain(
+      "| title | 否 | 讲义显示名与导入键（仅单讲义文件生效）；缺省取第一个 H1；",
+    );
+    expect(spec).toContain("缺省取文件名（去扩展名）");
+    expect(spec).toContain("配套讲义的名字");
+    // 旧措辞不得回潮
+    expect(spec).not.toContain("关联的讲义标题");
+  });
 });
 
 describe("renderSpecMarkdown：临时指令（验收 2）", () => {
