@@ -50,6 +50,111 @@ export async function teacherApiLogin(
   }
 }
 
+// ---------- T2B.6/T2B.8：教师自助注册与双教师会话切换 ----------
+
+/**
+ * 等待注册开关为开放态（另一用例可能正短暂关闭它做关闭态验证；
+ * 最长 ~15 秒，期间每 500ms 轮询一次公开 status 接口）。
+ */
+export async function waitForRegistrationOpen(
+  request: APIRequestContext,
+): Promise<void> {
+  for (let i = 0; i < 30; i++) {
+    const res = await request.get("/api/public/teacher/status");
+    const body = (await res.json()) as { data: { registrationOpen: boolean } };
+    if (body.data.registrationOpen) return;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new Error("等待注册开关开放超时（另一用例可能未恢复开关）");
+}
+
+/**
+ * 给页面的注册请求注入用例专属 X-Forwarded-For（注册接口按 IP 限流，
+ * 默认经代理后两项目同为 unknown 会共享 5 次/小时额度，重试时可能被误锁）。
+ * 不同 spec 传不同 IP 段，各自持有独立额度。
+ */
+export async function isolateRegisterRateLimit(
+  page: Page,
+  ip: string,
+): Promise<void> {
+  await page.route("**/api/public/teacher/register", async (route) => {
+    const headers = { ...(await route.request().allHeaders()) };
+    headers["x-forwarded-for"] = ip;
+    await route.continue({ headers });
+  });
+}
+
+/**
+ * 教师经 /t/register UI 自助注册并自动登录进 /t/library（成功后 page 会话即该
+ * 教师）。注册开关短暂被其他用例关闭时，以「先等开放 + 表单/提交撞上关闭窗口
+ * 就重试」吸收竞态（三次内完成，否则抛错）。
+ */
+export async function registerTeacherViaUi(
+  page: Page,
+  request: APIRequestContext,
+  loginName: string,
+  password: string,
+): Promise<void> {
+  let registered = false;
+  for (let attempt = 0; attempt < 3 && !registered; attempt++) {
+    await waitForRegistrationOpen(request);
+    await page.goto("/t/register");
+    // 等表单或关闭提示任一出现（开关竞态时是关闭提示 → 下一轮重试）
+    const formVisible = page.locator("#register-login-name");
+    const closedVisible = page.getByText("注册已关闭，请联系管理员");
+    const raceResult = await Promise.race([
+      formVisible
+        .waitFor({ state: "visible", timeout: 10_000 })
+        .then(() => "form" as const)
+        .catch(() => "none" as const),
+      closedVisible
+        .waitFor({ state: "visible", timeout: 10_000 })
+        .then(() => "closed" as const)
+        .catch(() => "none" as const),
+    ]);
+    if (raceResult === "closed") continue;
+    if (raceResult !== "form") {
+      throw new Error("注册页既无表单也无关闭提示");
+    }
+
+    await page.fill("#register-login-name", loginName);
+    await page.fill("#register-password", password);
+    await page.getByRole("button", { name: "注册并进入" }).click();
+    // 成功 → 自动登录进入 /t（重定向到资源库）；提交瞬间开关被关则重试
+    try {
+      await page.waitForURL("**/t/library", { timeout: 10_000 });
+      registered = true;
+    } catch {
+      const closedShown = await closedVisible.isVisible().catch(() => false);
+      if (!closedShown) {
+        throw new Error("注册未成功且页面未显示关闭提示（表单提交失败）");
+      }
+    }
+  }
+  if (!registered) {
+    throw new Error(
+      `教师 ${loginName} 三次尝试内未完成注册（开关竞态或表单失败）`,
+    );
+  }
+}
+
+/**
+ * API 登录指定教师（把 request 上下文的会话 Cookie 换人；失败抛错）——
+ * 多教师用例里在甲/乙会话之间切换的统一入口。
+ */
+export async function teacherLoginViaApi(
+  request: APIRequestContext,
+  loginName: string,
+  password: string,
+): Promise<void> {
+  const login = await request.post("/api/public/teacher/login", {
+    data: { loginName, password },
+  });
+  if (!login.ok()) {
+    throw new Error(`教师 ${loginName} API 登录失败：HTTP ${login.status()}`);
+  }
+}
+
 /**
  * 导入 samples/v2/练习样例.md（教师 API，任务口径：内容准备走 API，不重复覆盖
  * 教师端导入 UI 的测试）。导入按 unitId 幂等（inserted/updated 均可）。
