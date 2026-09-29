@@ -12,6 +12,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { UsageSection } from "@/features/library/UsageSection";
+import { PublishConfirmDialog } from "@/features/shared/PublishConfirmDialog";
 import {
   downloadExportMd,
   type UnitMetaUpdate,
@@ -21,8 +22,8 @@ import { libraryFoldersKey } from "./library-queries";
 
 /**
  * 单元详情面板（T2A.2）：改标题 / 主题 / 文件夹 / 配套讲义（D8）、使用情况、
- * 导出、删除。注明「重新导入同 id 单元会用文件内容覆盖标题与主题」。
- * 未保存改动关闭时确认（§4-5）。
+ * 导出、发布到共享（T2B.7，D16 快照副本）、删除。注明「重新导入同 id 单元会用
+ * 文件内容覆盖标题与主题」。未保存改动关闭时确认（§4-5）。
  */
 
 /** 面板需要的下拉选项数据 */
@@ -329,6 +330,8 @@ export function UnitDetailSheet({
               </>
             )}
           </Button>
+          {/* T2B.7：发布到共享目录（D16 快照副本；确认弹层说明快照语义） */}
+          <PublishConfirmDialog kind="unit" id={unit.id} title={unit.title} />
           <Button
             type="button"
             variant="ghost"

@@ -1,5 +1,6 @@
 import {
   ArrowLeft,
+  FolderOpen,
   LayoutDashboard,
   ShieldCheck,
   UserRoundCog,
@@ -17,10 +18,11 @@ import { AuthScreenError, AuthScreenLoading } from "../teacher/SetupPage";
  * 触控目标 ≥44px（管理端也可能在 iPad 上使用，§4.8）。
  */
 
-/** 管理端导航条目 */
+/** 管理端导航条目（T2B.7 增共享文件页） */
 const ADMIN_NAV_ITEMS = [
   { to: "/a", label: "概览", icon: LayoutDashboard },
   { to: "/a/teachers", label: "教师管理", icon: UserRoundCog },
+  { to: "/a/shared-files", label: "共享文件", icon: FolderOpen },
 ] as const;
 
 function isNavActive(pathname: string, to: string): boolean {

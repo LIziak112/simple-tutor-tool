@@ -15,6 +15,7 @@ import { createContentRoutes } from "./content";
 import { createCourseRoutes } from "./courses";
 import { createImportRoutes } from "./import";
 import { createLibraryRoutes } from "./library";
+import { createSharedRoutes } from "./shared";
 import { createAssignmentTeacherRoutes } from "./teacher-assignments";
 import { createStudentTeacherRoutes } from "./teacher-students";
 
@@ -39,6 +40,8 @@ import { createStudentTeacherRoutes } from "./teacher-students";
  * - T2.8（业务在 InkService）：GET /ink/:inkId.png（笔迹 PNG 直出）、
  *   GET /ink/:inkId（元数据，T3.1 批改页用）。Hono path 参数吞掉整个 segment
  *   （含 .png 后缀），故注册一个 /ink/:file、handler 内按后缀分流。
+ * - T2B.7（业务在 shared-service）：POST /library/{units,lectures}/:id/publish、
+ *   GET /shared、POST /shared/preview、POST /shared/import、DELETE /shared/:filename
  *
  * 返回类型不显式标注：链式注册把路由签名累积进推断类型，
  * 挂载后 AppType 才能带上这些路由（前端 hc 端到端类型的前提）。
@@ -90,6 +93,8 @@ export function createTeacherRoutes(
       .route("/", createContentRoutes(db))
       .route("/", createCourseRoutes(db))
       .route("/", createLibraryRoutes(db))
+      // T2B.7：共享发布与导入（发布/列表/预览/导入/删除，业务在 shared-service）
+      .route("/", createSharedRoutes(db, dataDir))
       .route("/", createStudentTeacherRoutes(db))
       .route("/", createAssignmentTeacherRoutes(db))
   );
