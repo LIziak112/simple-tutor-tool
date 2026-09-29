@@ -72,6 +72,17 @@ export const teacherLoginRequestSchema = z.object({
 });
 
 /**
+ * POST /api/public/teacher/register 请求体（D3 来源一：教师自助注册，T2B.6）。
+ * 表单与登录一致为「登录名 + 密码」；成功创建 isAdmin=false 教师并自动登录。
+ * 受注册开关控制；无教师行时不可用（409 TEACHER_NOT_EXISTS，走首启 setup）；
+ * 同一 IP 1 小时内最多 5 次（429 LOCKED）。密码沿用 teacherPasswordSchema。
+ */
+export const teacherRegisterRequestSchema = z.object({
+  loginName: teacherLoginNameSchema,
+  password: teacherPasswordSchema,
+});
+
+/**
  * GET /api/public/teacher/status 响应 data（D8）：
  * - hasTeacher：是否已设置教师（首启判断，只回布尔值，无其他信息泄露）；
  * - registrationOpen：注册入口是否开放。T2B.2 契约即含该字段（避免二次变更），
@@ -129,6 +140,7 @@ export const teacherStatusOkSchema = apiOkExtend(teacherStatusDataSchema);
 
 export type TeacherSetupRequest = z.infer<typeof teacherSetupRequestSchema>;
 export type TeacherLoginRequest = z.infer<typeof teacherLoginRequestSchema>;
+export type TeacherRegisterRequest = z.infer<typeof teacherRegisterRequestSchema>;
 export type TeacherStatusData = z.infer<typeof teacherStatusDataSchema>;
 export type TeacherInfo = z.infer<typeof teacherInfoSchema>;
 export type AuthErrorCode = z.infer<typeof authErrorCodeSchema>;

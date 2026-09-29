@@ -4,8 +4,10 @@ import { z } from "zod";
 export * from "./assignment.ts";
 /** 作答生命周期契约（T2.6 起为权威定义）：attempt 创建/草稿/交卷/详情视图、错误码 */
 export * from "./attempt.ts";
-/** 身份认证契约（T1.9 起为权威定义）：密码策略、setup/login 请求体、教师信息、auth 错误码 */
+/** 身份认证契约（T1.9 起为权威定义）：密码策略、setup/login/register 请求体、教师信息、auth 错误码 */
 export * from "./auth.ts";
+/** 管理端 API 契约（T2B.6 起为权威定义）：教师账号管理、注册开关、概览计数、错误码 */
+export * from "./admin-api.ts";
 /** 内容契约（DSL v2）：题目、讲义、单元、解析结果、lint issue，T1.1 起为权威定义 */
 export * from "./content.ts";
 /** 内容导入 API 契约（T1.10 起为权威定义）：导入预览/提交请求体与响应、LINT_ERROR 错误壳 */
