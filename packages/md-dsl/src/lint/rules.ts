@@ -101,6 +101,24 @@ export const LINT_RULES: readonly LintRuleDoc[] = [
       "mixed 文档里题目出现在第一个一级标题之前：该题不与任何讲义关联",
   },
   {
+    code: "UNIT_FROM_FALLBACK",
+    level: "warning",
+    description:
+      "frontmatter 未声明 unit，单元名取自文件名：文件改名会改变单元身份（重导将新建单元而非合并），建议显式声明 unit",
+  },
+  {
+    code: "TITLE_IGNORED_MULTI_LECTURE",
+    level: "warning",
+    description:
+      "多讲义文件（多个 H1）声明的 title 被忽略：逐篇按各自 H1 命名，请直接修改对应 H1 标题",
+  },
+  {
+    code: "TITLE_NOT_APPLICABLE",
+    level: "warning",
+    description:
+      "practice 文档没有讲义，title 不适用（title 是讲义显示名，仅 lecture/mixed 生效）：请删除该字段",
+  },
+  {
     code: "PARSE_INTERNAL_ERROR",
     level: "error",
     description: "解析器内部错误（这是解析器缺陷，请反馈给开发者）",

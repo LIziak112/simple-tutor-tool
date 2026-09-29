@@ -466,3 +466,67 @@ describe("parseDocument：健壮性（纯函数不抛异常）", () => {
     });
   });
 });
+
+describe("parseDocument：fallbackUnitId 单元名锚定文件名（内容模型与导入规范化方案 §2）", () => {
+  /** 未声明 unit 的练习文档（导入场景：单元名缺省从文件名派生） */
+  const noUnit = [
+    "---",
+    "kind: practice",
+    "---",
+    "",
+    "::::question{type=judge difficulty=1}",
+    "$0$ 是正数。[[错误]]",
+    "::::",
+    "",
+  ].join("\n");
+  /** 声明了 unit 的练习文档（frontmatter 显式身份，fallback 不参与） */
+  const withUnit = noUnit.replace(
+    "kind: practice",
+    "kind: practice\nunit: 练习四",
+  );
+
+  it("frontmatter.unit 存在：frontmatter 赢，fallbackUnitId 不生效、无 UNIT_FROM_FALLBACK", () => {
+    const result = parseDocument(withUnit, { fallbackUnitId: "有理数练习" });
+    expect(result.units[0]?.id).toBe("练习四");
+    expect(result.units[0]?.title).toBe("练习四");
+    expect(result.units[0]?.questions[0]?.id).toBe("练习四-1");
+    expect(codes(result.issues)).not.toContain("UNIT_FROM_FALLBACK");
+  });
+
+  it("frontmatter.unit 缺失 + fallbackUnitId：单元 id/title 与缺省题目 id（文件名-序号）都用文件名", () => {
+    const result = parseDocument(noUnit, { fallbackUnitId: "有理数练习" });
+    expect(result.units[0]?.id).toBe("有理数练习");
+    expect(result.units[0]?.title).toBe("有理数练习");
+    expect(result.units[0]?.questions[0]?.id).toBe("有理数练习-1");
+  });
+
+  it("无 unit 无 fallback：兜底字面量，行为与现状一致", () => {
+    const result = parseDocument(noUnit);
+    expect(result.units[0]?.id).toBe("unit");
+    expect(result.units[0]?.title).toBe("未命名单元");
+    expect(result.units[0]?.questions[0]?.id).toBe("unit-1");
+    expect(codes(result.issues)).not.toContain("UNIT_FROM_FALLBACK");
+  });
+
+  it("UNIT_FROM_FALLBACK：fallback 生效时记 warning（消息含文件名与声明建议），frontmatter.unit 存在时不出现", () => {
+    const hit = parseDocument(noUnit, {
+      fallbackUnitId: "有理数练习",
+    }).issues.find((i) => i.code === "UNIT_FROM_FALLBACK");
+    expect(hit?.level).toBe("warning");
+    expect(hit?.message).toContain("有理数练习");
+    expect(hit?.message).toContain("unit");
+    const miss = parseDocument(withUnit, { fallbackUnitId: "有理数练习" });
+    expect(codes(miss.issues)).not.toContain("UNIT_FROM_FALLBACK");
+  });
+
+  it("options.unitId（reparse 语义）与 fallbackUnitId 同传：options.unitId 覆盖一切、无 UNIT_FROM_FALLBACK", () => {
+    const result = parseDocument(noUnit, {
+      unitId: "原单元",
+      fallbackUnitId: "有理数练习",
+    });
+    expect(result.units[0]?.id).toBe("原单元");
+    expect(result.units[0]?.title).toBe("原单元");
+    expect(result.units[0]?.questions[0]?.id).toBe("原单元-1");
+    expect(codes(result.issues)).not.toContain("UNIT_FROM_FALLBACK");
+  });
+});

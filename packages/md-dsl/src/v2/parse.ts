@@ -45,10 +45,14 @@ import {
  * - unitId：缺省单元 id。无 frontmatter.unit 时用它生成缺省题目 id 与单元 id。
  *   T1.12 单题编辑 / T1.14 reparse 时由调用方传入原单元 id，保证缺省 id 可复现；
  * - questionStartNumber：缺省题目序号起点（缺省 1）。reparse 单题片段时传入原题序号。
+ * - fallbackUnitId：单元名缺省锚定文件名（内容模型与导入规范化方案 §2，仅 frontmatter.unit
+ *   缺失时生效）：优先级低于 frontmatter 与 unitId（reparse/单题编辑路径行为不变），
+ *   导入分析（analyzeImport）按文件名传入；生效时记 warning UNIT_FROM_FALLBACK。
  */
 export interface ParseOptions {
   readonly unitId?: string;
   readonly questionStartNumber?: number;
+  readonly fallbackUnitId?: string;
 }
 
 /**
@@ -88,6 +92,11 @@ interface ParseContext {
   readonly contentStartLine: number;
   readonly unitId: string;
   readonly unitTitle: string;
+  /**
+   * 单元名实际取自 fallbackUnitId（方案 §2）时的值；其余来源为 undefined。
+   * 非 undefined 时组装单元要记 warning UNIT_FROM_FALLBACK。
+   */
+  readonly unitFromFallback: string | undefined;
   readonly options: ParseOptions;
   readonly issues: LintIssue[];
 }
@@ -114,16 +123,23 @@ function parseInner(md: string, options: ParseOptions): ParsedDocument {
     frontmatter = extractFrontmatter(yamlNode, issues);
   }
 
+  // 单元名链（方案 §2）：unitId 取 调用方覆盖 > frontmatter.unit > fallbackUnitId（文件名）> 兜底值；
+  // unitTitle 同链但 frontmatter.unit 优先（现状）。fallback 仅在前两者都缺时生效并记入 unitFromFallback
+  const frontmatterUnit = firstNonEmpty(frontmatter?.unit);
+  const optionUnitId = firstNonEmpty(options.unitId);
+  const fallbackUnit = firstNonEmpty(options.fallbackUnitId);
   const ctx: ParseContext = {
     tree,
     lines,
     frontmatter,
     contentStartLine: (yamlNode?.position?.end.line ?? 0) + 1,
-    // 单元 id：调用方覆盖 > frontmatter.unit（原样保留中文，仅 trim）> 兜底值
-    unitId:
-      firstNonEmpty(options.unitId, frontmatter?.unit) ?? FALLBACK_UNIT_ID,
+    unitId: optionUnitId ?? frontmatterUnit ?? fallbackUnit ?? FALLBACK_UNIT_ID,
     unitTitle:
-      firstNonEmpty(frontmatter?.unit, options.unitId) ?? FALLBACK_UNIT_TITLE,
+      frontmatterUnit ?? optionUnitId ?? fallbackUnit ?? FALLBACK_UNIT_TITLE,
+    unitFromFallback:
+      frontmatterUnit === undefined && optionUnitId === undefined
+        ? fallbackUnit
+        : undefined,
     options,
     issues,
   };
@@ -147,6 +163,19 @@ function parsePracticeDocument(ctx: ParseContext): {
   lectures: Lecture[];
   units: Unit[];
 } {
+  // practice 文档不产出讲义，title 无处安放（方案 §3）：声明了就提示删除
+  if (firstNonEmpty(ctx.frontmatter?.title) !== undefined) {
+    ctx.issues.push(
+      makeIssue(
+        "warning",
+        1,
+        1,
+        "TITLE_NOT_APPLICABLE",
+        "kind: practice 文档没有讲义，frontmatter 的 title 不适用（title 是讲义显示名，仅 lecture/mixed 生效）；请删除该字段",
+      ),
+    );
+  }
+
   const questions = extractQuestions(ctx.tree.children, {
     lines: ctx.lines,
     unitId: ctx.unitId,
@@ -218,7 +247,7 @@ function parseLectureDocument(ctx: ParseContext): {
       buildUnit(ctx, questions, firstNonEmpty(ctx.frontmatter?.lecture)),
     );
   }
-  return { lectures: split.lectures, units };
+  return { lectures: applyLectureTitleOverride(ctx, split.lectures), units };
 }
 
 // ---------- mixed（T1.4） ----------
@@ -256,12 +285,20 @@ function parseMixedDocument(ctx: ParseContext): {
     issues: ctx.issues,
   });
 
+  // 先应用 title 讲义命名链（方案 §3）：单讲义被 frontmatter.title 改名后，
+  // 下方按题目位置推断的配套指针必须指向覆盖后的最终讲义名（存储后的名字）
+  const lectures = applyLectureTitleOverride(ctx, split.lectures);
+
   // 全部题目进同一个单元；关联讲义：显式 frontmatter.lecture 优先，缺省按题目位置推断
   const units: Unit[] = [];
   if (questions.length > 0) {
     let lectureTitle = firstNonEmpty(ctx.frontmatter?.lecture);
-    if (lectureTitle === undefined) {
-      lectureTitle = firstNonEmpty(lastQuestionLectureTitle);
+    const inferred = firstNonEmpty(lastQuestionLectureTitle);
+    if (lectureTitle === undefined && inferred !== undefined) {
+      // 推断命中且是单讲义文件：配套指针指向 title 覆盖后的最终讲义名（存储后的名字）；
+      // 多讲义文件逐篇按各自 H1，推断值即 H1 文本（不变）
+      const single = lectures.length === 1 ? lectures[0] : undefined;
+      lectureTitle = single !== undefined ? single.title : inferred;
     }
     if (lectureTitle === undefined) {
       ctx.issues.push(
@@ -276,10 +313,40 @@ function parseMixedDocument(ctx: ParseContext): {
     }
     units.push(buildUnit(ctx, questions, lectureTitle));
   }
-  return { lectures: split.lectures, units };
+  return { lectures, units };
 }
 
 // ---------- 公共组装 ----------
+
+/**
+ * 应用 frontmatter.title 讲义命名链（内容模型与导入规范化方案 §3）：
+ * - 单讲义文件（产出恰 1 篇）：title 覆盖该讲显示名，markdown 原文不动（H1 行保留）；
+ * - 多讲义文件（≥2 篇）：逐篇按各自 H1（现状不变），声明的 title 记 warning 提示被忽略；
+ * - 未声明 title：原样返回（现状）。
+ */
+function applyLectureTitleOverride(
+  ctx: ParseContext,
+  lectures: Lecture[],
+): Lecture[] {
+  const declared = firstNonEmpty(ctx.frontmatter?.title);
+  if (declared === undefined) return lectures;
+  const [single] = lectures;
+  if (single !== undefined && lectures.length === 1) {
+    return [{ ...single, title: declared }];
+  }
+  if (lectures.length >= 2) {
+    ctx.issues.push(
+      makeIssue(
+        "warning",
+        1,
+        1,
+        "TITLE_IGNORED_MULTI_LECTURE",
+        `frontmatter 的 title 在多讲义文件中被忽略（本文件切分为 ${lectures.length} 篇讲义，逐篇按各自 H1 命名）；如需指定讲义名，请直接修改对应 H1 标题`,
+      ),
+    );
+  }
+  return lectures;
+}
 
 /** 组装单元：id/标题/topic/lectureTitle 清洗规则与 T1.3 完全一致 */
 function buildUnit(
@@ -287,6 +354,17 @@ function buildUnit(
   questions: Question[],
   lectureTitle: string | undefined,
 ): Unit {
+  if (ctx.unitFromFallback !== undefined) {
+    ctx.issues.push(
+      makeIssue(
+        "warning",
+        1,
+        1,
+        "UNIT_FROM_FALLBACK",
+        `单元名取自文件名「${ctx.unitFromFallback}」（frontmatter 未声明 unit）：建议在 frontmatter 显式声明 unit——文件改名会改变单元身份，重导时将新建单元而非合并`,
+      ),
+    );
+  }
   const unit: Unit = {
     id: ctx.unitId,
     title: ctx.unitTitle,
