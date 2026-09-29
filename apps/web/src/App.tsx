@@ -60,6 +60,7 @@ const inkDevRoute = (() => {
 const teacherRoutes = (() => {
   const SetupPage = lazy(() => import("./pages/teacher/SetupPage"));
   const LoginPage = lazy(() => import("./pages/teacher/LoginPage"));
+  const RegisterPage = lazy(() => import("./pages/teacher/RegisterPage"));
   const TeacherLayout = lazy(() => import("./pages/teacher/TeacherLayout"));
   const SettingsPage = lazy(() => import("./pages/teacher/SettingsPage"));
   const LibraryPage = lazy(() => import("./pages/teacher/LibraryPage"));
@@ -104,6 +105,15 @@ const teacherRoutes = (() => {
         element={
           <Suspense fallback={<TeacherRouteFallback />}>
             <LoginPage />
+          </Suspense>
+        }
+      />
+      <Route
+        // T2B.6：教师自助注册（注册开关关闭时页面内显示关闭提示）
+        path="/t/register"
+        element={
+          <Suspense fallback={<TeacherRouteFallback />}>
+            <RegisterPage />
           </Suspense>
         }
       />

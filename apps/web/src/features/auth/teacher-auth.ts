@@ -5,6 +5,7 @@ import {
   fetchTeacherStatus,
   loginTeacher,
   logoutTeacher,
+  registerTeacher,
   setupTeacher,
 } from "@/lib/api";
 
@@ -12,8 +13,8 @@ import {
  * 教师登录状态（T1.9）：TanStack Query 管服务端状态的既有模式——
  * - useTeacherStatus：是否已设置教师（/t/setup 与 /t/login 分流）；
  * - useTeacherMe：当前会话（路由守卫）；
- * - useSetupTeacher / useLoginTeacher / useLogoutTeacher：写操作，
- *   成功后同步 me 缓存，避免登录后守卫再闪一次 loading。
+ * - useSetupTeacher / useLoginTeacher / useRegisterTeacher（T2B.6）/ useLogoutTeacher：
+ *   写操作，成功后同步 me 缓存，避免登录后守卫再闪一次 loading。
  */
 
 export const teacherStatusKey = ["teacher", "status"] as const;
@@ -65,6 +66,15 @@ export function useLoginTeacher() {
   const applyAuthed = useApplyAuthed();
   return useMutation({
     mutationFn: loginTeacher,
+    onSuccess: applyAuthed,
+  });
+}
+
+/** 自助注册（T2B.6，D3：成功即自动登录，缓存同步与登录一致） */
+export function useRegisterTeacher() {
+  const applyAuthed = useApplyAuthed();
+  return useMutation({
+    mutationFn: registerTeacher,
     onSuccess: applyAuthed,
   });
 }

@@ -74,6 +74,7 @@ import {
   type TeacherAssignmentListData,
   type TeacherInfo,
   type TeacherLoginRequest,
+  type TeacherRegisterRequest,
   type TeacherSetupRequest,
   type TeacherStatusData,
   type UnitMetaData,
@@ -227,6 +228,19 @@ export function loginTeacher(
   request: TeacherLoginRequest,
 ): Promise<TeacherInfo> {
   return callApi(() => api.api.public.teacher.login.$post({ json: request }));
+}
+
+/**
+ * 教师自助注册（T2B.6，D3 来源一）：成功创建 isAdmin=false 教师并自动登录。
+ * 403 REGISTRATION_DISABLED = 注册开关已关；409 TEACHER_LOGIN_EXISTS = 登录名冲突；
+ * 409 TEACHER_NOT_EXISTS = 尚未做过首启；429 LOCKED = 同 IP 1 小时超过 5 次。
+ */
+export function registerTeacher(
+  request: TeacherRegisterRequest,
+): Promise<TeacherInfo> {
+  return callApi(() =>
+    api.api.public.teacher.register.$post({ json: request }),
+  );
 }
 
 /** 退出登录（删除会话并清除 Cookie） */

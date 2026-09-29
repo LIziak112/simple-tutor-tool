@@ -233,3 +233,27 @@ describe("LoginPage 记住登录名（localStorage 预填）", () => {
     expect(screen.getByLabelText("登录名")).toHaveValue("王老师");
   });
 });
+
+describe("LoginPage 注册入口（T2B.6：按 status.registrationOpen 显示）", () => {
+  it("开关开：显示「没有账号？注册」链接指向 /t/register", async () => {
+    apiMocks.fetchTeacherStatus.mockResolvedValue({
+      hasTeacher: true,
+      registrationOpen: true,
+    });
+    renderLoginPage();
+    const link = await screen.findByRole("link", { name: "注册" });
+    expect(link).toHaveAttribute("href", "/t/register");
+  });
+
+  it("开关关：不显示注册入口", async () => {
+    apiMocks.fetchTeacherStatus.mockResolvedValue({
+      hasTeacher: true,
+      registrationOpen: false,
+    });
+    renderLoginPage();
+    await waitFor(() => {
+      expect(screen.getByLabelText("登录名")).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("link", { name: "注册" })).not.toBeInTheDocument();
+  });
+});
