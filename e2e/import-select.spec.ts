@@ -1,5 +1,9 @@
 import { expect, test } from "@playwright/test";
-import { TEACHER_PASSWORD, teacherApiLogin } from "./helpers";
+import {
+  TEACHER_LOGIN_NAME,
+  TEACHER_PASSWORD,
+  teacherApiLogin,
+} from "./helpers";
 
 /**
  * 导入选择页文件入口 e2e（真实浏览器回归；组件测试在 jsdom 里无法复现——
@@ -38,6 +42,7 @@ test("导入页：选择 .md 文件进清单，预览可点击并进入单文件
 }) => {
   // 教师 UI 登录（API 会话在 request 上下文，浏览器需走登录页）
   await page.goto("/t/login");
+  await page.fill("#login-name", TEACHER_LOGIN_NAME);
   await page.fill("#login-password", TEACHER_PASSWORD);
   await page.getByRole("button", { name: "登录", exact: true }).click();
   await page.waitForURL("**/t/library");

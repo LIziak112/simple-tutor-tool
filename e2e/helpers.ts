@@ -9,6 +9,9 @@ import type { APIRequestContext, Locator, Page } from "@playwright/test";
  * 口径对齐服务端测试 src/test/assert-no-leak.ts（键名级）+ 样例 md 原文（内容级）。
  */
 
+/** E2E 教师登录名（T2B.2 起登录名 + 密码；首启 setup 与登录共用） */
+export const TEACHER_LOGIN_NAME = "teacher";
+
 /** E2E 教师密码（首启 setup 用；契约要求 ≥8 字符） */
 export const TEACHER_PASSWORD = "e2e-teacher-pass";
 
@@ -34,13 +37,13 @@ export async function teacherApiLogin(
   const body = (await status.json()) as { data: { hasTeacher: boolean } };
   if (!body.data.hasTeacher) {
     const setup = await request.post("/api/public/teacher/setup", {
-      data: { password: TEACHER_PASSWORD },
+      data: { loginName: TEACHER_LOGIN_NAME, password: TEACHER_PASSWORD },
     });
     // setup 成功即已登录（Cookie 已写入 request 上下文）
     if (setup.ok()) return;
   }
   const login = await request.post("/api/public/teacher/login", {
-    data: { password: TEACHER_PASSWORD },
+    data: { loginName: TEACHER_LOGIN_NAME, password: TEACHER_PASSWORD },
   });
   if (!login.ok()) {
     throw new Error(`教师 API 登录失败：HTTP ${login.status()}`);

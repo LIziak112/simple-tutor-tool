@@ -4,6 +4,7 @@ import {
   attachLeakMonitor,
   getStudentViaApi,
   setCourseItemVisible,
+  TEACHER_LOGIN_NAME,
   TEACHER_PASSWORD,
   teacherApiLogin,
   uniqueSuffix,
@@ -165,6 +166,7 @@ test.describe("全链路：批量导入 → 建课程 → 可见性 → 课程�
 
     // —— 2. 教师 UI：登录 → 建课程（创建后直达课程编辑页，取 URL 中的 courseId）——
     await page.goto("/t/login");
+    await page.fill("#login-name", TEACHER_LOGIN_NAME);
     await page.fill("#login-password", TEACHER_PASSWORD);
     await page.getByRole("button", { name: "登录", exact: true }).click();
     await page.waitForURL("**/t/library");

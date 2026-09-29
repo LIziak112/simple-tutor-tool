@@ -7,6 +7,7 @@ import {
   handwriteOneStroke,
   importJudgeUnit,
   importPracticeSample,
+  TEACHER_LOGIN_NAME,
   TEACHER_PASSWORD,
   teacherApiLogin,
   uniqueSuffix,
@@ -44,6 +45,7 @@ test.describe("主流程：布置作业 → 学生作答与交卷 → 结果与�
 
     // —— 教师端 UI：登录（教师已由 API setup，走密码登录页）——
     await page.goto("/t/login");
+    await page.fill("#login-name", TEACHER_LOGIN_NAME);
     await page.fill("#login-password", TEACHER_PASSWORD);
     await page.getByRole("button", { name: "登录", exact: true }).click();
     await page.waitForURL("**/t/library");
