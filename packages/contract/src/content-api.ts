@@ -146,6 +146,11 @@ export const importPreviewWarningSchema = z.object({
     "KEPT_QUESTIONS",
     /** 被更新的单元正被 N 个未截止作业使用（D19） */
     "UNIT_USED_BY_OPEN_ASSIGNMENTS",
+    /**
+     * 配套讲义（frontmatter lecture）在目标文件夹与本文件解析产出中都无同名讲义：
+     * 练习将暂不关联讲义（内容模型与导入规范化方案 §4，warning 级不阻断导入）
+     */
+    "LECTURE_LINK_UNRESOLVED",
   ]),
   message: z.string().min(1),
 });
