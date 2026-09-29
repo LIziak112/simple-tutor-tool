@@ -98,6 +98,19 @@ describe("renderSpecMarkdown：稳定性与完整性", () => {
     expect(spec).toContain("配套讲义的名字");
     // 旧措辞不得回潮
     expect(spec).not.toContain("关联的讲义标题");
+    // T2B.3/D13（2026-09-29 决策）：匹配范围＝各教师自己的资源库 + 公共考点库——
+    // 匹配范围表的「全局」措辞改为「各教师自己的资源库内」，表下注明考点为公共数据
+    expect(spec).toContain(
+      "| 题目 | 各教师自己的资源库内（按 id） | 同 id 更新；文件中缺失的已有题保留 |",
+    );
+    expect(spec).toContain(
+      "| 单元 | 各教师自己的资源库内（按 unit 名） | 同名合并，保留原文件夹 |",
+    );
+    expect(spec).toContain(
+      "考点（`knowledge` 属性）为公共数据，按名称全局匹配合并。",
+    );
+    expect(spec).not.toContain("全局（按 id）");
+    expect(spec).not.toContain("全局（按 unit 名）");
   });
 });
 
