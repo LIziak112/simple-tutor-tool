@@ -178,9 +178,10 @@ describe("RegisterPage 分流（开关与首启状态）", () => {
     ).toBeInTheDocument();
     expect(screen.queryByLabelText("登录名")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("密码")).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("link", { name: "返回登录" }),
-    ).toHaveAttribute("href", "/t/login");
+    expect(screen.getByRole("link", { name: "返回登录" })).toHaveAttribute(
+      "href",
+      "/t/login",
+    );
     expect(apiMocks.registerTeacher).not.toHaveBeenCalled();
   });
 

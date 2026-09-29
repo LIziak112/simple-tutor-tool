@@ -103,7 +103,10 @@ export function RegisterPage() {
       >
         <div className="flex flex-col gap-4">
           <div className="flex flex-col gap-1.5">
-            <label htmlFor="register-login-name" className="text-sm font-medium">
+            <label
+              htmlFor="register-login-name"
+              className="text-sm font-medium"
+            >
               登录名
             </label>
             <Input

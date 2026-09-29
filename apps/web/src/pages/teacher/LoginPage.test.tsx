@@ -254,6 +254,8 @@ describe("LoginPage 注册入口（T2B.6：按 status.registrationOpen 显示）
     await waitFor(() => {
       expect(screen.getByLabelText("登录名")).toBeInTheDocument();
     });
-    expect(screen.queryByRole("link", { name: "注册" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: "注册" }),
+    ).not.toBeInTheDocument();
   });
 });

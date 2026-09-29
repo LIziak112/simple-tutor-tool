@@ -1,4 +1,14 @@
 import {
+  type AdminOverviewData,
+  type AdminSettingsData,
+  type AdminSettingsUpdateRequest,
+  type AdminTeacherCreateData,
+  type AdminTeacherCreateRequest,
+  type AdminTeacherListData,
+  type AdminTeacherResetPasswordData,
+  type AdminTeacherResetPasswordRequest,
+  type AdminTeacherSummary,
+  type AdminTeacherUpdateRequest,
   type AssignmentCheckData,
   type AssignmentCheckRequest,
   type AssignmentCreateRequest,
@@ -1071,4 +1081,82 @@ export async function downloadExportMd(
   } finally {
     URL.revokeObjectURL(url);
   }
+}
+
+// ---------- T2B.6：管理端（/api/admin/*，requireAdmin；D19 管理员无业务数据权限） ----------
+
+/** 教师列表（loginName/isAdmin/disabledAt/createdAt/学生数；status=all|active|disabled 筛选） */
+export function fetchAdminTeachers(
+  status: "all" | "active" | "disabled",
+): Promise<AdminTeacherListData> {
+  // status=all 时也显式传参（契约默认同值，保持请求形状稳定便于缓存键区分）
+  return callApi(() => api.api.admin.teachers.$get({ query: { status } }));
+}
+
+/**
+ * 管理员创建教师（不受注册开关影响）。响应 initialPassword 为服务端生成的
+ * 一次性初始密码明文（管理员自备密码时为 null）——只在此响应出现一次。
+ */
+export function createAdminTeacherApi(
+  request: AdminTeacherCreateRequest,
+): Promise<AdminTeacherCreateData> {
+  return callApi(() => api.api.admin.teachers.$post({ json: request }));
+}
+
+/** 改登录名 / 授予撤销 isAdmin（409 TEACHER_LOGIN_EXISTS / LAST_ADMIN 由页面分支提示） */
+export function updateAdminTeacherApi(
+  id: string,
+  request: AdminTeacherUpdateRequest,
+): Promise<AdminTeacherSummary> {
+  const args = { param: { id }, json: request };
+  return callApi(() => api.api.admin.teachers[":id"].$patch(args));
+}
+
+/** 禁用教师（D5：会话立即失效、数据全保留、可再启用；409 LAST_ADMIN 不能禁自己/最后一位活跃管理员） */
+export function disableAdminTeacherApi(
+  id: string,
+): Promise<AdminTeacherSummary> {
+  return callApi(() =>
+    api.api.admin.teachers[":id"].disable.$post({ param: { id } }),
+  );
+}
+
+/** 启用教师（完全恢复原状） */
+export function enableAdminTeacherApi(
+  id: string,
+): Promise<AdminTeacherSummary> {
+  return callApi(() =>
+    api.api.admin.teachers[":id"].enable.$post({ param: { id } }),
+  );
+}
+
+/**
+ * 重置教师密码。响应 password 为一次性新密码明文（自备密码时即所提供值）
+ * ——需线下告知对方（§4.1）。
+ */
+export function resetAdminTeacherPasswordApi(
+  id: string,
+  request: AdminTeacherResetPasswordRequest,
+): Promise<AdminTeacherResetPasswordData> {
+  const args = { param: { id }, json: request };
+  return callApi(() =>
+    api.api.admin.teachers[":id"]["reset-password"].$post(args),
+  );
+}
+
+/** 注册开关当前状态（D8） */
+export function fetchAdminSettings(): Promise<AdminSettingsData> {
+  return callApi(() => api.api.admin.settings.$get());
+}
+
+/** 切换注册开关（登录页注册入口与 /t/register 关闭提示随 status 联动） */
+export function updateAdminSettingsApi(
+  request: AdminSettingsUpdateRequest,
+): Promise<AdminSettingsData> {
+  return callApi(() => api.api.admin.settings.$patch({ json: request }));
+}
+
+/** 概览聚合计数（D20：教师/学生/作答/共享文件/注册开关，无任何明细） */
+export function fetchAdminOverview(): Promise<AdminOverviewData> {
+  return callApi(() => api.api.admin.overview.$get());
 }

@@ -219,6 +219,53 @@ function TeacherRouteFallback() {
 }
 
 /**
+ * 管理端路由（T2B.6，D19）：独立布局（不套教师端导航）+ 路由守卫
+ * （me.isAdmin 否则跳 /t）。页面：概览（含注册开关行）/ 教师管理。
+ */
+const adminRoutes = (() => {
+  const AdminLayout = lazy(() => import("./pages/admin/AdminLayout"));
+  const AdminOverviewPage = lazy(
+    () => import("./pages/admin/AdminOverviewPage"),
+  );
+  const AdminTeachersPage = lazy(
+    () => import("./pages/admin/AdminTeachersPage"),
+  );
+
+  /** 页面级懒加载兜底（与教师端一致） */
+  const pageFallback = (
+    <p className="p-8 text-sm text-muted-foreground">页面加载中…</p>
+  );
+
+  return (
+    <Route
+      path="/a"
+      element={
+        <Suspense fallback={<TeacherRouteFallback />}>
+          <AdminLayout />
+        </Suspense>
+      }
+    >
+      <Route
+        index
+        element={
+          <Suspense fallback={pageFallback}>
+            <AdminOverviewPage />
+          </Suspense>
+        }
+      />
+      <Route
+        path="teachers"
+        element={
+          <Suspense fallback={pageFallback}>
+            <AdminTeachersPage />
+          </Suspense>
+        }
+      />
+    </Route>
+  );
+})();
+
+/**
  * 学生端路由（T2.3）：路由级代码分割，登录相关页与学生主布局分块加载。
  * 路由匹配：/s/login、/s/home 等静态段优先于 /s/:token（专属链接令牌为
  * base64url 随机串，不会与保留路径冲突）。
@@ -377,7 +424,7 @@ function StudentRouteFallback() {
   );
 }
 
-/** 顶层路由。学生端（/s/*，T2.3）与教师端（/t）分区扩展 */
+/** 顶层路由。学生端（/s/*，T2.3）与教师端（/t）、管理端（/a，T2B.6）分区扩展 */
 export function App() {
   return (
     <Routes>
@@ -386,6 +433,7 @@ export function App() {
       {inkDevRoute}
       {teacherRoutes}
       {studentRoutes}
+      {adminRoutes}
       <Route path="*" element={<NotFoundPage />} />
     </Routes>
   );
