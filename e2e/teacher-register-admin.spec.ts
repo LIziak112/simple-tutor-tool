@@ -55,7 +55,10 @@ test.describe("T2B.6 教师自助注册", () => {
   }) => {
     // 保证首位教师（甲）存在：无教师行时注册接口不可用（409 TEACHER_NOT_EXISTS）
     await teacherApiLogin(request);
-    await isolateRegisterRateLimit(page, `10.239.1.${browserName === "chromium" ? 1 : 2}`);
+    await isolateRegisterRateLimit(
+      page,
+      `10.239.1.${browserName === "chromium" ? 1 : 2}`,
+    );
     const loginName = `e2e乙-${browserName}-${uniqueSuffix()}`;
 
     // 开关短暂被关（另一项目的关闭态用例）时重试：先等开放，表单/提交撞上
@@ -88,9 +91,7 @@ test.describe("T2B.6 教师自助注册", () => {
         await page.waitForURL("**/t/library", { timeout: 10_000 });
         registered = true;
       } catch {
-        const closedShown = await closedVisible
-          .isVisible()
-          .catch(() => false);
+        const closedShown = await closedVisible.isVisible().catch(() => false);
         if (!closedShown) {
           throw new Error("注册未成功且页面未显示关闭提示（表单提交失败）");
         }
@@ -136,9 +137,7 @@ test.describe("T2B.6 管理端注册开关", () => {
 
       // 紧随其后断言 UI（缩短关闭窗口，降低与注册用例的竞态面）
       await page.goto("/t/register");
-      await expect(
-        page.getByText("注册已关闭，请联系管理员"),
-      ).toBeVisible();
+      await expect(page.getByText("注册已关闭，请联系管理员")).toBeVisible();
       // 表单不出现（关闭态整页提示）
       await expect(page.locator("#register-login-name")).toHaveCount(0);
 

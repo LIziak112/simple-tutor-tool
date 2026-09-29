@@ -926,7 +926,9 @@ describe("T2B.6 app_settings 初始键回填（D8：allowRegistration='true'）"
   /** 建「T2B.6 前结构」内存库（不含 app_settings 表） */
   function createPreT2b6Db(): Db {
     const db = createDb(":memory:");
-    migrate(db, { migrationsFolder: makeMigrationsFolderUpTo(PRE_T2B6_LAST_TAG) });
+    migrate(db, {
+      migrationsFolder: makeMigrationsFolderUpTo(PRE_T2B6_LAST_TAG),
+    });
     return db;
   }
 

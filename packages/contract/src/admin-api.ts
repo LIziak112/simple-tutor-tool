@@ -142,9 +142,13 @@ export const adminErrorCodeSchema = z.enum(["TEACHER_NOT_FOUND"]);
 /** 携带教师列表的成功响应壳 */
 export const adminTeacherListOkSchema = apiOkExtend(adminTeacherListDataSchema);
 /** 携带创建结果（含一次性初始密码）的成功响应壳 */
-export const adminTeacherCreateOkSchema = apiOkExtend(adminTeacherCreateDataSchema);
+export const adminTeacherCreateOkSchema = apiOkExtend(
+  adminTeacherCreateDataSchema,
+);
 /** 携带教师摘要的成功响应壳（PATCH） */
-export const adminTeacherUpdateOkSchema = apiOkExtend(adminTeacherSummarySchema);
+export const adminTeacherUpdateOkSchema = apiOkExtend(
+  adminTeacherSummarySchema,
+);
 /** 携带重置密码结果（一次性明文）的成功响应壳 */
 export const adminTeacherResetPasswordOkSchema = apiOkExtend(
   adminTeacherResetPasswordDataSchema,
@@ -162,7 +166,9 @@ export type AdminTeacherListData = z.infer<typeof adminTeacherListDataSchema>;
 export type AdminTeacherCreateRequest = z.infer<
   typeof adminTeacherCreateRequestSchema
 >;
-export type AdminTeacherCreateData = z.infer<typeof adminTeacherCreateDataSchema>;
+export type AdminTeacherCreateData = z.infer<
+  typeof adminTeacherCreateDataSchema
+>;
 export type AdminTeacherUpdateRequest = z.infer<
   typeof adminTeacherUpdateRequestSchema
 >;

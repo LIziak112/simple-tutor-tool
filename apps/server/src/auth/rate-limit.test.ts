@@ -8,9 +8,9 @@ import {
   LOGIN_LOCK_MS,
   loginFailureKeys,
   MAX_LOGIN_FAILURES,
-  recordLoginFailure,
   REGISTRATION_LOCK_MS,
   REGISTRATION_MAX_ATTEMPTS,
+  recordLoginFailure,
   recordRegistrationAttempt,
   registrationAttemptKey,
 } from "./rate-limit.ts";

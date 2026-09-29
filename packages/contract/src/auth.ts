@@ -140,7 +140,9 @@ export const teacherStatusOkSchema = apiOkExtend(teacherStatusDataSchema);
 
 export type TeacherSetupRequest = z.infer<typeof teacherSetupRequestSchema>;
 export type TeacherLoginRequest = z.infer<typeof teacherLoginRequestSchema>;
-export type TeacherRegisterRequest = z.infer<typeof teacherRegisterRequestSchema>;
+export type TeacherRegisterRequest = z.infer<
+  typeof teacherRegisterRequestSchema
+>;
 export type TeacherStatusData = z.infer<typeof teacherStatusDataSchema>;
 export type TeacherInfo = z.infer<typeof teacherInfoSchema>;
 export type AuthErrorCode = z.infer<typeof authErrorCodeSchema>;

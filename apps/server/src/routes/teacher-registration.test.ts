@@ -105,9 +105,10 @@ describe("POST /api/public/teacher/register（T2B.6，D3 来源一）", () => {
     // 库中：两位教师，第二位 isAdmin=false
     const rows = db.select().from(teachers).all();
     expect(rows).toHaveLength(2);
-    expect(
-      rows.find((row) => row.loginName === "王老师"),
-    ).toMatchObject({ isAdmin: false, disabledAt: null });
+    expect(rows.find((row) => row.loginName === "王老师")).toMatchObject({
+      isAdmin: false,
+      disabledAt: null,
+    });
     db.$client.close();
   });
 

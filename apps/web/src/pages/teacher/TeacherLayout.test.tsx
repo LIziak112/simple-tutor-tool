@@ -172,6 +172,8 @@ describe("TeacherLayout 管理入口（T2B.6：只对 isAdmin 显示）", () => 
     renderLayout("/t/courses");
 
     await screen.findByTestId("teacher-login-name");
-    expect(screen.queryByRole("link", { name: "管理" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: "管理" }),
+    ).not.toBeInTheDocument();
   });
 });

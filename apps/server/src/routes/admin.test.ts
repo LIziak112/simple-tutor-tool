@@ -1,3 +1,4 @@
+import { mkdirSync, writeFileSync } from "node:fs";
 import type { ApiErr } from "@tutor/contract";
 import {
   adminOverviewOkSchema,
@@ -6,7 +7,6 @@ import {
   adminTeacherUpdateOkSchema,
   apiErrSchema,
 } from "@tutor/contract";
-import { mkdirSync, writeFileSync } from "node:fs";
 import { eq } from "drizzle-orm";
 import type { Logger } from "pino";
 import pino from "pino";
@@ -15,7 +15,11 @@ import { createApp } from "../app.ts";
 import { hashPassword } from "../auth/password.ts";
 import type { Db } from "../db/client.ts";
 import { students, teachers } from "../db/schema.ts";
-import { createTestDb, createTestDir, TEST_TEACHER_ID } from "../db/test-utils.ts";
+import {
+  createTestDb,
+  createTestDir,
+  TEST_TEACHER_ID,
+} from "../db/test-utils.ts";
 import { disableTeacher } from "../services/admin-service.ts";
 
 /**
@@ -145,7 +149,11 @@ describe("requireAdmin 守卫（挂载在 /api/admin/*，D7）", () => {
 
     for (const [method, path, body] of [
       ["GET", "/api/admin/teachers", undefined],
-      ["POST", "/api/admin/teachers", { loginName: "x老师", password: "x-pass-888" }],
+      [
+        "POST",
+        "/api/admin/teachers",
+        { loginName: "x老师", password: "x-pass-888" },
+      ],
       ["GET", "/api/admin/settings", undefined],
       ["PATCH", "/api/admin/settings", { allowRegistration: false }],
       ["GET", "/api/admin/overview", undefined],
@@ -166,10 +174,16 @@ describe("GET /api/admin/teachers（列表）", () => {
     const yi = await registerAndLogin(app, "李老师", "10.1.1.2");
     // 乙建两名学生（其一归档也计入总数）
     for (const name of ["张三", "李四"]) {
-      const res = await req(app, "POST", "/api/teacher/students", {
-        displayName: name,
-        loginName: name,
-      }, { cookie: yi.cookie });
+      const res = await req(
+        app,
+        "POST",
+        "/api/teacher/students",
+        {
+          displayName: name,
+          loginName: name,
+        },
+        { cookie: yi.cookie },
+      );
       expect(res.status).toBe(201);
     }
 
@@ -224,7 +238,9 @@ describe("GET /api/admin/teachers（列表）", () => {
     const activeBody = (await active.json()) as {
       data: { teachers: { loginName: string }[] };
     };
-    expect(activeBody.data.teachers.map((t) => t.loginName)).toEqual(["teacher"]);
+    expect(activeBody.data.teachers.map((t) => t.loginName)).toEqual([
+      "teacher",
+    ]);
     const disabledList = await req(
       app,
       "GET",
@@ -235,7 +251,9 @@ describe("GET /api/admin/teachers（列表）", () => {
     const disabledBody = (await disabledList.json()) as {
       data: { teachers: { loginName: string }[] };
     };
-    expect(disabledBody.data.teachers.map((t) => t.loginName)).toEqual(["李老师"]);
+    expect(disabledBody.data.teachers.map((t) => t.loginName)).toEqual([
+      "李老师",
+    ]);
     db.$client.close();
   });
 
@@ -260,9 +278,15 @@ describe("POST /api/admin/teachers（管理员创建，D3 来源二）", () => {
     const { app, db } = makeApp();
     const admin = await setupAdmin(app);
 
-    const res = await req(app, "POST", "/api/admin/teachers", {
-      loginName: "新老师",
-    }, { cookie: admin.cookie });
+    const res = await req(
+      app,
+      "POST",
+      "/api/admin/teachers",
+      {
+        loginName: "新老师",
+      },
+      { cookie: admin.cookie },
+    );
     expect(res.status).toBe(201);
     const body = (await res.json()) as unknown;
     expect(adminTeacherCreateOkSchema.safeParse(body).success).toBe(true);
@@ -275,10 +299,16 @@ describe("POST /api/admin/teachers（管理员创建，D3 来源二）", () => {
     // 生成的新密码能登录
     const password = (body as { data: { initialPassword: string } }).data
       .initialPassword;
-    const login = await req(app, "POST", "/api/public/teacher/login", {
-      loginName: "新老师",
-      password,
-    }, { "x-forwarded-for": "10.2.2.2" });
+    const login = await req(
+      app,
+      "POST",
+      "/api/public/teacher/login",
+      {
+        loginName: "新老师",
+        password,
+      },
+      { "x-forwarded-for": "10.2.2.2" },
+    );
     expect(login.status).toBe(200);
     db.$client.close();
   });
@@ -286,18 +316,32 @@ describe("POST /api/admin/teachers（管理员创建，D3 来源二）", () => {
   it("自备密码：initialPassword 为 null（管理员已知）；教师可用该密码登录", async () => {
     const { app, db } = makeApp();
     const admin = await setupAdmin(app);
-    const res = await req(app, "POST", "/api/admin/teachers", {
-      loginName: "自备密码老师",
-      password: "given-pass-888",
-    }, { cookie: admin.cookie });
+    const res = await req(
+      app,
+      "POST",
+      "/api/admin/teachers",
+      {
+        loginName: "自备密码老师",
+        password: "given-pass-888",
+      },
+      { cookie: admin.cookie },
+    );
     expect(res.status).toBe(201);
-    const body = (await res.json()) as { data: { initialPassword: string | null } };
+    const body = (await res.json()) as {
+      data: { initialPassword: string | null };
+    };
     expect(body.data.initialPassword).toBeNull();
 
-    const login = await req(app, "POST", "/api/public/teacher/login", {
-      loginName: "自备密码老师",
-      password: "given-pass-888",
-    }, { "x-forwarded-for": "10.2.2.3" });
+    const login = await req(
+      app,
+      "POST",
+      "/api/public/teacher/login",
+      {
+        loginName: "自备密码老师",
+        password: "given-pass-888",
+      },
+      { "x-forwarded-for": "10.2.2.3" },
+    );
     expect(login.status).toBe(200);
     db.$client.close();
   });
@@ -305,9 +349,15 @@ describe("POST /api/admin/teachers（管理员创建，D3 来源二）", () => {
   it("重名 → 409 TEACHER_LOGIN_EXISTS，不落库", async () => {
     const { app, db } = makeApp();
     const admin = await setupAdmin(app);
-    const res = await req(app, "POST", "/api/admin/teachers", {
-      loginName: "teacher",
-    }, { cookie: admin.cookie });
+    const res = await req(
+      app,
+      "POST",
+      "/api/admin/teachers",
+      {
+        loginName: "teacher",
+      },
+      { cookie: admin.cookie },
+    );
     expect(res.status).toBe(409);
     expect(((await res.json()) as ApiErr).error).toBe("TEACHER_LOGIN_EXISTS");
     expect(db.select().from(teachers).all()).toHaveLength(1);
@@ -317,12 +367,24 @@ describe("POST /api/admin/teachers（管理员创建，D3 来源二）", () => {
   it("不受注册开关影响：开关关闭时管理员照常创建", async () => {
     const { app, db } = makeApp();
     const admin = await setupAdmin(app);
-    await req(app, "PATCH", "/api/admin/settings", { allowRegistration: false }, {
-      cookie: admin.cookie,
-    });
-    const res = await req(app, "POST", "/api/admin/teachers", {
-      loginName: "关开关也能建",
-    }, { cookie: admin.cookie });
+    await req(
+      app,
+      "PATCH",
+      "/api/admin/settings",
+      { allowRegistration: false },
+      {
+        cookie: admin.cookie,
+      },
+    );
+    const res = await req(
+      app,
+      "POST",
+      "/api/admin/teachers",
+      {
+        loginName: "关开关也能建",
+      },
+      { cookie: admin.cookie },
+    );
     expect(res.status).toBe(201);
     db.$client.close();
   });
@@ -351,15 +413,27 @@ describe("PATCH /api/admin/teachers/:id（改登录名 / 授予撤销 isAdmin）
     expect(adminTeacherUpdateOkSchema.safeParse(body).success).toBe(true);
     expect(body).toMatchObject({ data: { loginName: "李老师改名" } });
     // 改名后用新登录名登录成功（旧名 401）
-    const loginNew = await req(app, "POST", "/api/public/teacher/login", {
-      loginName: "李老师改名",
-      password: YI_PASSWORD,
-    }, { "x-forwarded-for": "10.3.1.3" });
+    const loginNew = await req(
+      app,
+      "POST",
+      "/api/public/teacher/login",
+      {
+        loginName: "李老师改名",
+        password: YI_PASSWORD,
+      },
+      { "x-forwarded-for": "10.3.1.3" },
+    );
     expect(loginNew.status).toBe(200);
-    const loginOld = await req(app, "POST", "/api/public/teacher/login", {
-      loginName: "李老师",
-      password: YI_PASSWORD,
-    }, { "x-forwarded-for": "10.3.1.4" });
+    const loginOld = await req(
+      app,
+      "POST",
+      "/api/public/teacher/login",
+      {
+        loginName: "李老师",
+        password: YI_PASSWORD,
+      },
+      { "x-forwarded-for": "10.3.1.4" },
+    );
     expect(loginOld.status).toBe(401);
 
     // 重名冲突
@@ -392,11 +466,12 @@ describe("PATCH /api/admin/teachers/:id（改登录名 / 授予撤销 isAdmin）
       "PATCH",
       `/api/admin/teachers/${yiRow?.id}`,
       { isAdmin: true },
-      { cookie: (await setupAdminAlready(app)) },
+      { cookie: await setupAdminAlready(app) },
     );
     expect(grant.status).toBe(200);
-    expect(((await grant.json()) as { data: { isAdmin: boolean } }).data.isAdmin)
-      .toBe(true);
+    expect(
+      ((await grant.json()) as { data: { isAdmin: boolean } }).data.isAdmin,
+    ).toBe(true);
 
     // 乙现在能过 requireAdmin
     const probe = await app.request("/api/admin/overview", {
@@ -439,9 +514,15 @@ describe("PATCH /api/admin/teachers/:id（改登录名 / 授予撤销 isAdmin）
       .get();
 
     // 授予乙（此时有两名活跃管理员）再撤销乙 → 合法
-    await req(app, "PATCH", `/api/admin/teachers/${yiRow?.id}`, { isAdmin: true }, {
-      cookie: admin.cookie,
-    });
+    await req(
+      app,
+      "PATCH",
+      `/api/admin/teachers/${yiRow?.id}`,
+      { isAdmin: true },
+      {
+        cookie: admin.cookie,
+      },
+    );
     const revoke = await req(
       app,
       "PATCH",
@@ -450,25 +531,39 @@ describe("PATCH /api/admin/teachers/:id（改登录名 / 授予撤销 isAdmin）
       { cookie: admin.cookie },
     );
     expect(revoke.status).toBe(200);
-    expect(((await revoke.json()) as { data: { isAdmin: boolean } }).data.isAdmin)
-      .toBe(false);
+    expect(
+      ((await revoke.json()) as { data: { isAdmin: boolean } }).data.isAdmin,
+    ).toBe(false);
 
     // 空 body：字段缺省 = 不改
-    const noop = await req(app, "PATCH", `/api/admin/teachers/${yiRow?.id}`, {}, {
-      cookie: admin.cookie,
-    });
+    const noop = await req(
+      app,
+      "PATCH",
+      `/api/admin/teachers/${yiRow?.id}`,
+      {},
+      {
+        cookie: admin.cookie,
+      },
+    );
     expect(noop.status).toBe(200);
-    expect(((await noop.json()) as { data: { loginName: string } }).data.loginName)
-      .toBe("李老师");
+    expect(
+      ((await noop.json()) as { data: { loginName: string } }).data.loginName,
+    ).toBe("李老师");
     db.$client.close();
   });
 
   it("目标不存在 → 404 TEACHER_NOT_FOUND", async () => {
     const { app, db } = makeApp();
     const admin = await setupAdmin(app);
-    const res = await req(app, "PATCH", "/api/admin/teachers/no-such-id", {
-      loginName: "改名",
-    }, { cookie: admin.cookie });
+    const res = await req(
+      app,
+      "PATCH",
+      "/api/admin/teachers/no-such-id",
+      {
+        loginName: "改名",
+      },
+      { cookie: admin.cookie },
+    );
     expect(res.status).toBe(404);
     expect(((await res.json()) as ApiErr).error).toBe("TEACHER_NOT_FOUND");
     db.$client.close();
@@ -516,15 +611,25 @@ describe("POST /api/admin/teachers/:id/disable 与 enable（D5 全流程）", ()
     const { app, db } = makeApp();
     // 两名管理员：甲 + 丙（保证禁乙不受 LAST_ADMIN 限制——乙本身非管理员）
     const admin = await setupAdmin(app);
-    await seedTeacher(db, { id: "admin-bing", loginName: "丙管理员", isAdmin: true }, "bing-pass-888");
+    await seedTeacher(
+      db,
+      { id: "admin-bing", loginName: "丙管理员", isAdmin: true },
+      "bing-pass-888",
+    );
     const yi = await registerAndLogin(app, "李老师", "10.4.3.2");
 
     // 乙建一名带密码学生
-    const stu = await req(app, "POST", "/api/teacher/students", {
-      displayName: "张三",
-      loginName: "张三",
-      password: "stu-pass-666",
-    }, { cookie: yi.cookie });
+    const stu = await req(
+      app,
+      "POST",
+      "/api/teacher/students",
+      {
+        displayName: "张三",
+        loginName: "张三",
+        password: "stu-pass-666",
+      },
+      { cookie: yi.cookie },
+    );
     expect(stu.status).toBe(201);
 
     const yiRow = db
@@ -559,10 +664,16 @@ describe("POST /api/admin/teachers/:id/disable 与 enable（D5 全流程）", ()
     expect(after.status).toBe(401);
 
     // 乙本人密码登录 → 403 ACCOUNT_DISABLED
-    const loginDisabled = await req(app, "POST", "/api/public/teacher/login", {
-      loginName: "李老师",
-      password: YI_PASSWORD,
-    }, { "x-forwarded-for": "10.4.3.9" });
+    const loginDisabled = await req(
+      app,
+      "POST",
+      "/api/public/teacher/login",
+      {
+        loginName: "李老师",
+        password: YI_PASSWORD,
+      },
+      { "x-forwarded-for": "10.4.3.9" },
+    );
     expect(loginDisabled.status).toBe(403);
     expect(((await loginDisabled.json()) as ApiErr).error).toBe(
       "ACCOUNT_DISABLED",
@@ -605,10 +716,16 @@ describe("POST /api/admin/teachers/:id/disable 与 enable（D5 全流程）", ()
       ((await enable.json()) as { data: { disabledAt: string | null } }).data
         .disabledAt,
     ).toBeNull();
-    const loginBack = await req(app, "POST", "/api/public/teacher/login", {
-      loginName: "李老师",
-      password: YI_PASSWORD,
-    }, { "x-forwarded-for": "10.4.3.11" });
+    const loginBack = await req(
+      app,
+      "POST",
+      "/api/public/teacher/login",
+      {
+        loginName: "李老师",
+        password: YI_PASSWORD,
+      },
+      { "x-forwarded-for": "10.4.3.11" },
+    );
     expect(loginBack.status).toBe(200);
     db.$client.close();
   });
@@ -653,15 +770,27 @@ describe("POST /api/admin/teachers/:id/reset-password", () => {
     const body = (await res.json()) as { data: { password: string } };
     expect(body.data.password).toMatch(/^.{12}$/);
 
-    const oldLogin = await req(app, "POST", "/api/public/teacher/login", {
-      loginName: "李老师",
-      password: YI_PASSWORD,
-    }, { "x-forwarded-for": "10.5.1.3" });
+    const oldLogin = await req(
+      app,
+      "POST",
+      "/api/public/teacher/login",
+      {
+        loginName: "李老师",
+        password: YI_PASSWORD,
+      },
+      { "x-forwarded-for": "10.5.1.3" },
+    );
     expect(oldLogin.status).toBe(401);
-    const newLogin = await req(app, "POST", "/api/public/teacher/login", {
-      loginName: "李老师",
-      password: body.data.password,
-    }, { "x-forwarded-for": "10.5.1.4" });
+    const newLogin = await req(
+      app,
+      "POST",
+      "/api/public/teacher/login",
+      {
+        loginName: "李老师",
+        password: body.data.password,
+      },
+      { "x-forwarded-for": "10.5.1.4" },
+    );
     expect(newLogin.status).toBe(200);
     db.$client.close();
   });
@@ -683,10 +812,16 @@ describe("POST /api/admin/teachers/:id/reset-password", () => {
       { cookie: admin.cookie },
     );
     expect(res.status).toBe(200);
-    const login = await req(app, "POST", "/api/public/teacher/login", {
-      loginName: "李老师",
-      password: "reset-given-888",
-    }, { "x-forwarded-for": "10.5.2.3" });
+    const login = await req(
+      app,
+      "POST",
+      "/api/public/teacher/login",
+      {
+        loginName: "李老师",
+        password: "reset-given-888",
+      },
+      { "x-forwarded-for": "10.5.2.3" },
+    );
     expect(login.status).toBe(200);
     db.$client.close();
   });
@@ -726,13 +861,15 @@ describe("GET/PATCH /api/admin/settings（注册开关，D8）", () => {
       { cookie: admin.cookie },
     );
     expect(patch.status).toBe(200);
-    expect(((await patch.json()) as { data: { allowRegistration: boolean } }).data)
-      .toMatchObject({ allowRegistration: false });
+    expect(
+      ((await patch.json()) as { data: { allowRegistration: boolean } }).data,
+    ).toMatchObject({ allowRegistration: false });
 
     // status 联动（关态）+ 注册被拒
     const status = await app.request("/api/public/teacher/status");
-    expect(((await status.json()) as { data: { registrationOpen: boolean } }).data)
-      .toMatchObject({ registrationOpen: false });
+    expect(
+      ((await status.json()) as { data: { registrationOpen: boolean } }).data,
+    ).toMatchObject({ registrationOpen: false });
     const register = await req(
       app,
       "POST",
@@ -753,8 +890,9 @@ describe("GET/PATCH /api/admin/settings（注册开关，D8）", () => {
       { allowRegistration: true },
       { cookie: admin.cookie },
     );
-    expect(((await reopen.json()) as { data: { allowRegistration: boolean } }).data)
-      .toMatchObject({ allowRegistration: true });
+    expect(
+      ((await reopen.json()) as { data: { allowRegistration: boolean } }).data,
+    ).toMatchObject({ allowRegistration: true });
     db.$client.close();
   });
 });
@@ -790,8 +928,9 @@ describe("GET /api/admin/overview（D20：聚合计数，无明细）", () => {
     const after = await req(app, "GET", "/api/admin/overview", undefined, {
       cookie: admin.cookie,
     });
-    expect(((await after.json()) as { data: { sharedFileCount: number } }).data)
-      .toMatchObject({ sharedFileCount: 2 });
+    expect(
+      ((await after.json()) as { data: { sharedFileCount: number } }).data,
+    ).toMatchObject({ sharedFileCount: 2 });
     db.$client.close();
   });
 });
@@ -800,10 +939,16 @@ describe("GET /api/admin/overview（D20：聚合计数，无明细）", () => {
 async function setupAdminAlready(
   app: ReturnType<typeof createApp>,
 ): Promise<string> {
-  const res = await req(app, "POST", "/api/public/teacher/login", {
-    loginName: "teacher",
-    password: ADMIN_PASSWORD,
-  }, { "x-forwarded-for": "10.3.2.9" });
+  const res = await req(
+    app,
+    "POST",
+    "/api/public/teacher/login",
+    {
+      loginName: "teacher",
+      password: ADMIN_PASSWORD,
+    },
+    { "x-forwarded-for": "10.3.2.9" },
+  );
   expect(res.status).toBe(200);
   return (
     res.headers

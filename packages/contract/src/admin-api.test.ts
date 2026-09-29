@@ -66,7 +66,7 @@ describe("adminTeacherSummarySchema（教师摘要）", () => {
     });
     expect(parsed.success).toBe(true);
     // 多余字段被剥离（strip 语义）
-    expect(parsed.success && parsed.data.passwordHash).toBeUndefined();
+    expect(parsed.success && "passwordHash" in parsed.data).toBe(false);
   });
 });
 
@@ -116,9 +116,9 @@ describe("请求体与查询参数", () => {
         password: "new-pass-123",
       }).success,
     ).toBe(true);
-    expect(
-      adminTeacherResetPasswordRequestSchema.safeParse({}).success,
-    ).toBe(true);
+    expect(adminTeacherResetPasswordRequestSchema.safeParse({}).success).toBe(
+      true,
+    );
     expect(
       adminTeacherResetPasswordRequestSchema.safeParse({ password: "short" })
         .success,
@@ -129,12 +129,13 @@ describe("请求体与查询参数", () => {
     const parsed = adminTeacherListQuerySchema.safeParse({});
     expect(parsed.success && parsed.data.status).toBe("all");
     for (const status of ["all", "active", "disabled"] as const) {
-      expect(
-        adminTeacherListQuerySchema.safeParse({ status }).success,
-      ).toBe(true);
+      expect(adminTeacherListQuerySchema.safeParse({ status }).success).toBe(
+        true,
+      );
     }
-    expect(adminTeacherListQuerySchema.safeParse({ status: "other" }).success)
-      .toBe(false);
+    expect(
+      adminTeacherListQuerySchema.safeParse({ status: "other" }).success,
+    ).toBe(false);
   });
 
   it("注册开关更新请求：allowRegistration 必填布尔", () => {

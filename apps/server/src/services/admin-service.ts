@@ -15,7 +15,7 @@ import type {
 import { and, asc, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import { hashPassword } from "../auth/password";
 import type { Db } from "../db/client";
-import { attempts, students, teachers, type Teacher } from "../db/schema";
+import { attempts, students, type Teacher, teachers } from "../db/schema";
 import { HttpError } from "../lib/http-error";
 import {
   isRegistrationOpen,
@@ -44,7 +44,9 @@ function generateInitialPassword(): string {
   for (let i = 0; i < TEACHER_INITIAL_PASSWORD_LENGTH; i++) {
     const byte = bytes[i] ?? 0;
     password +=
-      TEACHER_INITIAL_PASSWORD_ALPHABET[byte % TEACHER_INITIAL_PASSWORD_ALPHABET.length];
+      TEACHER_INITIAL_PASSWORD_ALPHABET[
+        byte % TEACHER_INITIAL_PASSWORD_ALPHABET.length
+      ];
   }
   return password;
 }
@@ -82,10 +84,7 @@ function studentCountByTeacher(db: Db): Map<string, number> {
 }
 
 /** 教师行 → 管理端摘要 */
-function toSummary(
-  row: Teacher,
-  studentCount: number,
-): AdminTeacherSummary {
+function toSummary(row: Teacher, studentCount: number): AdminTeacherSummary {
   return {
     id: row.id,
     // 列可空仅因迁移口径（D9 同款），各创建入口恒写非空，读侧视为必有
@@ -134,7 +133,11 @@ export async function createTeacher(
     .where(eq(teachers.loginName, request.loginName))
     .get();
   if (conflict) {
-    throw new HttpError(409, "TEACHER_LOGIN_EXISTS", "登录名已被使用，请换一个");
+    throw new HttpError(
+      409,
+      "TEACHER_LOGIN_EXISTS",
+      "登录名已被使用，请换一个",
+    );
   }
 
   const provided = request.password;
@@ -173,17 +176,18 @@ export function updateTeacher(
 ): AdminTeacherSummary {
   const row = requireTeacherRow(db, id);
 
-  if (
-    request.loginName !== undefined &&
-    request.loginName !== row.loginName
-  ) {
+  if (request.loginName !== undefined && request.loginName !== row.loginName) {
     const conflict = db
       .select({ id: teachers.id })
       .from(teachers)
       .where(eq(teachers.loginName, request.loginName))
       .get();
     if (conflict && conflict.id !== id) {
-      throw new HttpError(409, "TEACHER_LOGIN_EXISTS", "登录名已被使用，请换一个");
+      throw new HttpError(
+        409,
+        "TEACHER_LOGIN_EXISTS",
+        "登录名已被使用，请换一个",
+      );
     }
   }
   if (
@@ -254,7 +258,10 @@ export function disableTeacher(
 /** POST /api/admin/teachers/:id/enable：重新启用（完全恢复原状，D5） */
 export function enableTeacher(db: Db, id: string): AdminTeacherSummary {
   requireTeacherRow(db, id);
-  db.update(teachers).set({ disabledAt: null }).where(eq(teachers.id, id)).run();
+  db.update(teachers)
+    .set({ disabledAt: null })
+    .where(eq(teachers.id, id))
+    .run();
   return toSummary(requireTeacherRow(db, id), studentCountOf(db, id));
 }
 
@@ -296,7 +303,10 @@ export function updateAdminSettings(
 // ---------- 概览（D20：只返回聚合计数，无任何明细） ----------
 
 /** 表行数（count(*)） */
-function countOf(db: Db, table: typeof teachers | typeof students | typeof attempts): number {
+function countOf(
+  db: Db,
+  table: typeof teachers | typeof students | typeof attempts,
+): number {
   const row = db.select({ n: sql<number>`count(*)` }).from(table).get();
   return row?.n ?? 0;
 }

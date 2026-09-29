@@ -212,11 +212,7 @@ export async function registerTeacher(
 ): Promise<AuthResult> {
   const rateKey = registrationAttemptKey(ip);
   if (isLoginLocked(db, [rateKey])) {
-    throw new HttpError(
-      429,
-      "LOCKED",
-      "注册次数过多，请约 1 小时后再试",
-    );
+    throw new HttpError(429, "LOCKED", "注册次数过多，请约 1 小时后再试");
   }
   recordRegistrationAttempt(db, rateKey);
 
@@ -234,7 +230,11 @@ export async function registerTeacher(
     );
   }
   if (!isRegistrationOpen(db)) {
-    throw new HttpError(403, "REGISTRATION_DISABLED", "注册已关闭，请联系管理员");
+    throw new HttpError(
+      403,
+      "REGISTRATION_DISABLED",
+      "注册已关闭，请联系管理员",
+    );
   }
   const conflict = db
     .select({ id: teachers.id })
@@ -242,7 +242,11 @@ export async function registerTeacher(
     .where(eq(teachers.loginName, request.loginName))
     .get();
   if (conflict) {
-    throw new HttpError(409, "TEACHER_LOGIN_EXISTS", "登录名已被使用，请换一个");
+    throw new HttpError(
+      409,
+      "TEACHER_LOGIN_EXISTS",
+      "登录名已被使用，请换一个",
+    );
   }
 
   const id = randomUUID();
