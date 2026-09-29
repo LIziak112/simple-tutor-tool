@@ -139,11 +139,16 @@ export const lectureSchema = z.object({
   headings: z.array(lectureHeadingSchema),
 });
 
-/** frontmatter（DSL 文档头）。dsl 为版本号，缺省 2；kind 缺失属 lint error（MISSING_KIND） */
+/** frontmatter（DSL 文档头）。dsl 为版本号，缺省 2；kind 缺失属 lint error（MISSING_KIND）；新增字段遵守 DSL 兼容规则（只增不改、可选有默认、未知字段优雅降级） */
 export const frontmatterSchema = z.object({
   kind: documentKindSchema,
   dsl: z.number().int().min(1).default(2),
   unit: z.string().optional(),
+  /**
+   * 讲义显示名与导入键（内容模型与导入规范化方案 §2/§3）：
+   * 仅单讲义文件生效，缺省取第一个 H1；多讲义文件逐篇用各自 H1（此时声明 title 会被 lint warning 提示忽略）。
+   */
+  title: z.string().optional(),
   lecture: z.string().optional(),
   topic: z.string().optional(),
 });

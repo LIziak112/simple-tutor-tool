@@ -565,6 +565,9 @@
             "unit": {
               "type": "string"
             },
+            "title": {
+              "type": "string"
+            },
             "lecture": {
               "type": "string"
             },
