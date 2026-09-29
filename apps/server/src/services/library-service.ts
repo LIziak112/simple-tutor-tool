@@ -1,5 +1,14 @@
 import type { LibraryBatchRequest } from "@tutor/contract";
-import { and, asc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+  sql,
+} from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
   assignments,
@@ -359,18 +368,22 @@ function usageAssignmentRefs(
   db: Db,
   unitId: string,
 ): LibraryUsageAssignmentRef[] {
-  return db
-    .select({
-      id: assignments.id,
-      title: assignments.title,
-      dueAt: assignments.dueAt,
-    })
-    .from(assignmentUnits)
-    .innerJoin(assignments, eq(assignmentUnits.assignmentId, assignments.id))
-    .where(
-      and(eq(assignmentUnits.unitId, unitId), isNull(assignments.deletedAt)),
-    )
-    .all();
+  return (
+    db
+      .select({
+        id: assignments.id,
+        title: assignments.title,
+        dueAt: assignments.dueAt,
+      })
+      .from(assignmentUnits)
+      .innerJoin(assignments, eq(assignmentUnits.assignmentId, assignments.id))
+      .where(
+        and(eq(assignmentUnits.unitId, unitId), isNull(assignments.deletedAt)),
+      )
+      // 确定性排序：单元被多作业引用时面板顺序不依赖 SQLite 实现（新布置的在前）
+      .orderBy(desc(assignments.createdAt), asc(assignments.id))
+      .all()
+  );
 }
 
 /**
@@ -588,10 +601,13 @@ export function listLibraryUnits(
 ): LibraryUnitSummaryRow[] {
   const q = filter.q?.trim().toLowerCase() ?? "";
   const courseCounts = courseCountByRef(db);
+  // 配套讲义标题（软删讲义不出现，与「资源软删不出现在列表」口径一致：
+  // 软删后 lectureTitle 显示为 null，恢复后自动回来）
   const lectureTitles = new Map(
     db
       .select({ id: lectures.id, title: lectures.title })
       .from(lectures)
+      .where(isNull(lectures.deletedAt))
       .all()
       .map((row) => [row.id, row.title] as const),
   );

@@ -20,6 +20,7 @@ import {
   getLectureUsage,
   getUnitUsage,
   listFolders,
+  listLibraryUnits,
   renameFolder,
   reorderFolders,
   restoreLecture,
@@ -401,6 +402,31 @@ describe("LibraryService：使用情况查询（D3 删除确认弹层数据源�
     expect((err as HttpError).code).toBe("UNIT_NOT_FOUND");
   });
 
+  it("getUnitUsage：多个未删除作业按布置时间倒序（createdAt 同刻按 id 稳定）", () => {
+    const db = createTestDb();
+    const { unitId, liveAssignmentId } = seedUsage(db);
+    // 再布置一个更晚的作业（seedUsage 的 live 作业 createdAt = T0）
+    const laterId = crypto.randomUUID();
+    db.insert(assignments)
+      .values({
+        id: laterId,
+        unitId: null,
+        title: "更晚布置的作业",
+        dueAt: null,
+        deletedAt: null,
+        createdAt: "2026-09-05T00:00:00.000Z",
+      })
+      .run();
+    db.insert(assignmentUnits)
+      .values({ assignmentId: laterId, unitId, order: 0 })
+      .run();
+    const usage = getUnitUsage(db, unitId, NOW);
+    expect(usage.assignments.map((a) => a.id)).toEqual([
+      laterId,
+      liveAssignmentId,
+    ]);
+  });
+
   it("getLectureUsage：课程引用可见；作答数经配套单元统计；assignments 恒空", () => {
     const db = createTestDb();
     const { courseId, lectureId } = seedUsage(db);
@@ -413,5 +439,28 @@ describe("LibraryService：使用情况查询（D3 删除确认弹层数据源�
 
     const missing = captureError(() => getLectureUsage(db, "ghost"));
     expect((missing as HttpError).code).toBe("LECTURE_NOT_FOUND");
+  });
+});
+
+describe("LibraryService：题库列表（T2A.2）", () => {
+  it("listLibraryUnits：配套讲义软删后 lectureTitle 为 null，恢复后回来（软删不出现）", () => {
+    const db = createTestDb();
+    const { lectureId, unitId } = seedBase(db);
+    const before = listLibraryUnits(db, { deleted: false });
+    expect(before).toHaveLength(1);
+    expect(before[0]).toMatchObject({ id: unitId, lectureTitle: "第一讲" });
+
+    // 软删讲义 → 题库列表「配套讲义」位不再显示回收站讲义标题（与资源软删口径一致）
+    softDeleteLecture(db, lectureId);
+    const during = listLibraryUnits(db, { deleted: false });
+    expect(during).toHaveLength(1);
+    expect(during[0]).toMatchObject({ id: unitId, lectureTitle: null });
+
+    // 恢复后标题回来
+    restoreLecture(db, lectureId);
+    expect(listLibraryUnits(db, { deleted: false })[0]).toMatchObject({
+      id: unitId,
+      lectureTitle: "第一讲",
+    });
   });
 });
