@@ -40,6 +40,7 @@ async function makeApp(): Promise<{
     dataDir: createTestDir(),
   });
   const setup = await jsonRequest(app, "/api/public/teacher/setup", {
+    loginName: "teacher",
     password: TEACHER_PASSWORD,
   });
   return {
@@ -604,6 +605,7 @@ describe("密码登录（POST /api/public/student/login）", () => {
 
     // 教师登录不受学生锁定影响（命名空间隔离）
     const teacherLogin = await jsonRequest(app, "/api/public/teacher/login", {
+      loginName: "teacher",
       password: TEACHER_PASSWORD,
     });
     expect(teacherLogin.status).toBe(200);

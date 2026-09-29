@@ -89,7 +89,7 @@ async function makeApp(): Promise<TestApp> {
   const setup = await app.request("/api/public/teacher/setup", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ password: TEACHER_PASSWORD }),
+    body: JSON.stringify({ loginName: "teacher", password: TEACHER_PASSWORD }),
   });
   const teacherCookie = `tutor_session=${extractSessionToken(setup)}`;
   // T2A.3：导入不再自动创建「默认课程」——显式建课 + 兼容路径（courseId）导入，

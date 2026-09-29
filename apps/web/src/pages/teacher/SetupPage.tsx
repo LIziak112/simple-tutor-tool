@@ -1,4 +1,4 @@
-import { teacherPasswordSchema } from "@tutor/contract";
+import { teacherLoginNameSchema, teacherPasswordSchema } from "@tutor/contract";
 import { Loader2, LockKeyhole, TriangleAlert } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { Link, Navigate, useNavigate } from "react-router";
@@ -11,18 +11,21 @@ import {
 import { ApiError } from "@/lib/api";
 
 /**
- * /t/setup 首次启动设置教师密码。
+ * /t/setup 首次启动创建教师账号（T2B.2 起表单 = 登录名 + 密码，D4；
+ * 创建的必是第一位教师，即管理员）。
  * 分流（三态齐全）：
  * - status 加载中 → 全屏加载；
  * - status 失败 → 错误态 + 重试；
  * - 已设置教师 → 直接跳 /t/login（本页只在首启可用）。
- * 提交前用共享契约的密码策略做同款校验（与服务端同一份规则）。
+ * 提交前用共享契约的登录名与密码策略做同款校验（与服务端同一份规则）；
+ * 登录名默认建议 teacher（与存量迁移一致），可改。
  */
 export function SetupPage() {
   const statusQuery = useTeacherStatus();
   const setupMutation = useSetupTeacher();
   const navigate = useNavigate();
 
+  const [loginName, setLoginName] = useState("teacher");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
@@ -49,10 +52,15 @@ export function SetupPage() {
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    // 与服务端同一份契约规则（≥8 字符）
-    const parsed = teacherPasswordSchema.safeParse(password);
-    if (!parsed.success) {
-      setFormError(parsed.error.issues[0]?.message ?? "密码格式不正确");
+    // 与服务端同一份契约规则：登录名（D2 字符集与长度）+ 密码（≥8 字符）
+    const parsedName = teacherLoginNameSchema.safeParse(loginName);
+    if (!parsedName.success) {
+      setFormError(parsedName.error.issues[0]?.message ?? "登录名格式不正确");
+      return;
+    }
+    const parsedPassword = teacherPasswordSchema.safeParse(password);
+    if (!parsedPassword.success) {
+      setFormError(parsedPassword.error.issues[0]?.message ?? "密码格式不正确");
       return;
     }
     if (password !== confirmPassword) {
@@ -60,12 +68,15 @@ export function SetupPage() {
       return;
     }
     setFormError(null);
-    setupMutation.mutate(password, {
-      onSuccess: () => {
-        // 设置成功即自动登录，进入教师端
-        navigate("/t", { replace: true });
+    setupMutation.mutate(
+      { loginName: parsedName.data, password },
+      {
+        onSuccess: () => {
+          // 设置成功即自动登录，进入教师端
+          navigate("/t", { replace: true });
+        },
       },
-    });
+    );
   }
 
   const serverError =
@@ -85,7 +96,7 @@ export function SetupPage() {
           初始化教师账号
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          首次使用，请为教师账号设置登录密码
+          首次使用，请设置教师账号的登录名与密码
         </p>
       </header>
 
@@ -95,6 +106,27 @@ export function SetupPage() {
         className="w-full max-w-sm rounded-xl border border-border bg-card p-5 text-card-foreground shadow-sm"
       >
         <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="setup-login-name" className="text-sm font-medium">
+              登录名
+            </label>
+            <Input
+              id="setup-login-name"
+              type="text"
+              name="loginName"
+              autoComplete="username"
+              placeholder="默认 teacher，可修改"
+              value={loginName}
+              aria-invalid={shownError != null}
+              onChange={(e) => setLoginName(e.target.value)}
+              disabled={setupMutation.isPending}
+            />
+            <p className="text-xs text-muted-foreground">
+              2–32
+              个字符，可用中文、字母、数字、下划线或连字符；创建后即首位管理员。
+            </p>
+          </div>
+
           <div className="flex flex-col gap-1.5">
             <label htmlFor="setup-password" className="text-sm font-medium">
               密码
@@ -147,10 +179,10 @@ export function SetupPage() {
             {setupMutation.isPending ? (
               <>
                 <Loader2 aria-hidden className="animate-spin" />
-                正在设置…
+                正在创建…
               </>
             ) : (
-              "设置密码并进入"
+              "创建账号并进入"
             )}
           </Button>
 

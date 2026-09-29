@@ -73,6 +73,8 @@ import {
   type TeacherAssignment,
   type TeacherAssignmentListData,
   type TeacherInfo,
+  type TeacherLoginRequest,
+  type TeacherSetupRequest,
   type TeacherStatusData,
   type UnitMetaData,
   type UnitMetaUpdate,
@@ -213,18 +215,18 @@ export async function fetchSpecFile(file: SpecFileName): Promise<string> {
   return res.text();
 }
 
-/** 首次设置教师密码（仅无教师时可用；成功即自动登录并返回教师信息） */
-export function setupTeacher(password: string): Promise<TeacherInfo> {
-  return callApi(() =>
-    api.api.public.teacher.setup.$post({ json: { password } }),
-  );
+/** 首次创建教师账号（登录名 + 密码，仅无教师时可用；成功即自动登录并返回教师信息） */
+export function setupTeacher(
+  request: TeacherSetupRequest,
+): Promise<TeacherInfo> {
+  return callApi(() => api.api.public.teacher.setup.$post({ json: request }));
 }
 
-/** 教师密码登录（连续失败 5 次会被临时锁定，见后端 §5.7 限流） */
-export function loginTeacher(password: string): Promise<TeacherInfo> {
-  return callApi(() =>
-    api.api.public.teacher.login.$post({ json: { password } }),
-  );
+/** 教师登录名 + 密码登录（连续失败 5 次会被临时锁定，见后端 §5.7 限流） */
+export function loginTeacher(
+  request: TeacherLoginRequest,
+): Promise<TeacherInfo> {
+  return callApi(() => api.api.public.teacher.login.$post({ json: request }));
 }
 
 /** 退出登录（删除会话并清除 Cookie） */

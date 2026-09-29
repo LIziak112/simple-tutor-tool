@@ -26,6 +26,8 @@ const mockedMe = vi.mocked(fetchTeacherMe);
 
 const TEACHER: TeacherInfo = {
   id: "11111111-1111-4111-8111-111111111111",
+  loginName: "teacher",
+  isAdmin: true,
   createdAt: "2026-01-01T00:00:00.000Z",
 };
 
@@ -54,6 +56,15 @@ beforeEach(() => {
 });
 
 describe("TeacherLayout 导航（侧边栏去重简化）", () => {
+  it("顶栏显示当前登录名（D1：身份显示一律用登录名）", async () => {
+    mockedMe.mockResolvedValue(TEACHER);
+    renderLayout("/t/courses");
+
+    expect(await screen.findByTestId("teacher-login-name")).toHaveTextContent(
+      "teacher",
+    );
+  });
+
   it("渲染七个分区入口，讲义库/题库/导入不再单列", async () => {
     mockedMe.mockResolvedValue(TEACHER);
     renderLayout("/t/courses");

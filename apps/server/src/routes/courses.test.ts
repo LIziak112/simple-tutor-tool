@@ -76,7 +76,7 @@ async function makeApp(): Promise<TestApp> {
   const setup = await app.request("/api/public/teacher/setup", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ password: TEACHER_PASSWORD }),
+    body: JSON.stringify({ loginName: "teacher", password: TEACHER_PASSWORD }),
   });
   const teacherCookie = `tutor_session=${extractSessionToken(setup)}`;
   const courseRes = await app.request("/api/teacher/courses", {

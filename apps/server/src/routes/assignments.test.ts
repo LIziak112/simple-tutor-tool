@@ -112,6 +112,7 @@ async function makeApp(): Promise<{
     dataDir: createTestDir(),
   });
   const setup = await request(app, "/api/public/teacher/setup", {
+    loginName: "teacher",
     password: TEACHER_PASSWORD,
   });
   return {

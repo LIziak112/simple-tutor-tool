@@ -85,7 +85,7 @@ async function makeApp(options?: { importLecture?: boolean }): Promise<{
   const setup = await app.request("/api/public/teacher/setup", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ password: TEACHER_PASSWORD }),
+    body: JSON.stringify({ loginName: "teacher", password: TEACHER_PASSWORD }),
   });
   const teacherCookie = `tutor_session=${extractSessionToken(setup)}`;
 
@@ -321,7 +321,10 @@ describe("GET /api/student/lectures/:id（讲义详情）", () => {
     const login = await app.request("/api/public/teacher/login", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ password: TEACHER_PASSWORD }),
+      body: JSON.stringify({
+        loginName: "teacher",
+        password: TEACHER_PASSWORD,
+      }),
     });
     const res = await app.request("/api/student/lectures", {
       headers: { cookie: `tutor_session=${extractSessionToken(login)}` },
