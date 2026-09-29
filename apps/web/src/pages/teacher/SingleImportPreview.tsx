@@ -5,7 +5,10 @@ import { ArrowLeft, CircleAlert, Loader2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { Button } from "@/components/ui/button";
-import { ActionsPanel } from "@/features/content/ActionsPanel";
+import {
+  ActionsPanel,
+  describeImportNames,
+} from "@/features/content/ActionsPanel";
 import { parseApiIssues } from "@/features/content/api-issues";
 import { contentTreeKey } from "@/features/content/content-queries";
 import { ErrorPanel } from "@/features/content/ErrorPanel";
@@ -268,7 +271,7 @@ export function SingleImportPreview({
   );
 }
 
-/** 顶部统计条：版本徽章 + 单元/讲义/题数 + 题型分布（单文件与批量展开共用） */
+/** 顶部统计条：版本徽章 + 单元/讲义/题数 + 实际存储名（方案 §5）+ 题型分布（单文件与批量展开共用） */
 export function StatsBar({
   preview,
   pending,
@@ -294,6 +297,14 @@ export function StatsBar({
     );
   }
   const summary = preview?.summary;
+  // 「文件 → 存储名」实际名称（方案 §5：计数旁亮出单元/讲义名；无动作不显示）
+  const names = preview === null ? null : describeImportNames(preview.actions);
+  const nameParts =
+    names === null
+      ? []
+      : [names.unit, names.lecture].filter(
+          (part): part is string => part !== null,
+        );
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-border bg-card px-4 py-3 text-sm">
       {preview !== null ? (
@@ -323,6 +334,14 @@ export function StatsBar({
           <span>
             题目 <strong>{summary.questionCount}</strong>
           </span>
+          {nameParts.length > 0 ? (
+            <span
+              className="min-w-0 max-w-72 truncate text-muted-foreground"
+              title={nameParts.join(" · ")}
+            >
+              {nameParts.join(" · ")}
+            </span>
+          ) : null}
           <span className="flex flex-wrap items-center gap-1.5">
             {Object.entries(summary.typeDistribution).map(([type, count]) => (
               <span

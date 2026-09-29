@@ -401,10 +401,11 @@ describe("ImportPage 选择页（方案 §5 统一待导入清单）", () => {
         filename: "练习四.md",
       }),
     );
-    // 统计条：版本徽章 + 单元/讲义/题数（1/0/1）+ 题型分布 + 动作清单（D19）
+    // 统计条：版本徽章 + 单元/讲义/题数（1/0/1）+ 实际存储名 + 题型分布 + 动作清单（D19/方案 §5）
     expect(await screen.findByText("DSL v2")).toBeInTheDocument();
     expect(screen.getAllByText("1", { selector: "strong" })).toHaveLength(2);
     expect(screen.getByText("0", { selector: "strong" })).toBeInTheDocument();
+    expect(screen.getByText("单元「练习四」")).toBeInTheDocument();
     expect(screen.getByText("判断 1")).toBeInTheDocument();
     expect(screen.getByText("将执行的动作")).toBeInTheDocument();
     expect(
@@ -435,6 +436,51 @@ describe("ImportPage 单文件预览态", () => {
       screen.getByText("建议：在题干中用 [[答案]] 标记空位"),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "确认导入" })).toBeDisabled();
+  });
+
+  it("统计条显示「文件 → 存储名」实际名称：单元名与讲义名并列（方案 §5）", async () => {
+    mockedPreview.mockResolvedValue(
+      previewData({
+        summary: {
+          unitCount: 1,
+          lectureCount: 2,
+          questionCount: 3,
+          typeDistribution: { judge: 3 },
+        },
+        actions: [
+          {
+            kind: "createLecture",
+            title: "第4讲 有理数",
+            unitId: null,
+            folderName: null,
+            restore: false,
+          },
+          {
+            kind: "createLecture",
+            title: "第5讲 有理数加减",
+            unitId: null,
+            folderName: null,
+            restore: false,
+          },
+          {
+            kind: "createUnit",
+            title: "练习四",
+            unitId: "练习四",
+            folderName: null,
+            restore: false,
+          },
+        ],
+      }),
+    );
+    renderImportPage();
+    addPasteEntry(PRACTICE_MD, "混合.md");
+    fireEvent.click(screen.getByRole("button", { name: /预览/ }));
+
+    expect(await screen.findByText("DSL v2")).toBeInTheDocument();
+    // 计数旁亮出实际名称：单元名在前；多篇讲义取首篇 +「等 N 篇」
+    expect(
+      screen.getByText("单元「练习四」 · 讲义「第4讲 有理数」等 2 篇"),
+    ).toBeInTheDocument();
   });
 
   it("编辑器内容变化后 400ms debounce 重新调 preview", async () => {
@@ -545,14 +591,48 @@ describe("ImportPage 批量导入（T2A.3，D20）", () => {
     vi.clearAllMocks();
   });
 
-  /** 选 3 个文件（1 个有 error）进入批量预览 */
+  /** 选 3 个文件（1 个有 error 且无内容动作）进入批量预览 */
   async function setupBatch(): Promise<void> {
     mockedPreviewBatch.mockResolvedValue({
       files: [
         batchFile("a.md"),
-        batchFile("b.md"),
+        batchFile("b.md", {
+          preview: previewData({
+            summary: {
+              unitCount: 0,
+              lectureCount: 2,
+              questionCount: 0,
+              typeDistribution: {},
+            },
+            actions: [
+              {
+                kind: "createLecture",
+                title: "第1讲 有理数",
+                unitId: null,
+                folderName: null,
+                restore: false,
+              },
+              {
+                kind: "createLecture",
+                title: "第2讲 数轴",
+                unitId: null,
+                folderName: null,
+                restore: false,
+              },
+            ],
+          }),
+        }),
         batchFile("bad.md", {
-          preview: previewData({ issues: ERRORS }),
+          preview: previewData({
+            summary: {
+              unitCount: 0,
+              lectureCount: 0,
+              questionCount: 0,
+              typeDistribution: {},
+            },
+            actions: [],
+            issues: ERRORS,
+          }),
           hasError: true,
         }),
       ],
@@ -569,7 +649,7 @@ describe("ImportPage 批量导入（T2A.3，D20）", () => {
     fireEvent.click(screen.getByRole("button", { name: /预览/ }));
   }
 
-  it("3 个文件走批量预览：表格渲染行摘要，有 error 的文件标红并显示复制全部错误按钮", async () => {
+  it("3 个文件走批量预览：表格渲染行摘要与「文件 → 存储名」内容列，有 error 的文件标红并显示复制全部错误按钮", async () => {
     await setupBatch();
     expect(mockedPreviewBatch).toHaveBeenCalledWith({
       autoFolderBySubdir: false,
@@ -583,6 +663,11 @@ describe("ImportPage 批量导入（T2A.3，D20）", () => {
     expect(await screen.findByText("a.md")).toBeInTheDocument();
     expect(screen.getByText("b.md")).toBeInTheDocument();
     expect(screen.getByText("bad.md")).toBeInTheDocument();
+    // 内容列 = 实际存储名（方案 §5）：单元带题数；多篇讲义取首篇 +「等 N 篇」；
+    // 无动作 = 空文档
+    expect(screen.getByText("单元「练习四」· 1 题")).toBeInTheDocument();
+    expect(screen.getByText("讲义「第1讲 有理数」等 2 篇")).toBeInTheDocument();
+    expect(screen.getByText("（空文档）")).toBeInTheDocument();
     // 复制全部错误（仅含有 error 的文件 → 1 个）
     expect(
       screen.getByRole("button", { name: /复制全部错误给 AI（1 个文件）/ }),

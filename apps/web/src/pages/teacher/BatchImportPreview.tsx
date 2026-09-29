@@ -21,6 +21,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   ActionsPanel,
+  describeImportNames,
   formatImportAction,
 } from "@/features/content/ActionsPanel";
 import { contentTreeKey } from "@/features/content/content-queries";
@@ -37,7 +38,8 @@ import { StatsBar } from "./SingleImportPreview";
 
 /**
  * 批量导入预览与提交（T2A.3，D20）：
- * - 文件表格：相对路径、类型摘要（讲义/单元/题数）、error 数（lint + 跨文件冲突）、
+ * - 文件表格：相对路径、内容列（「文件 → 存储名」实际名称：讲义「title」/
+ *   单元「title」· N 题，方案 §5）、error 数（lint + 跨文件冲突）、
  *   warning 数（lint + 导入 warning）、动作摘要、目标文件夹、提交状态；
  * - 点击一行展开单文件预览（CodeMirror 标红 + 渲染 + 统计 + 动作清单 + 错误面板）；
  * - 提交：**每个文件独立调用 commit**（顺序执行显示进度），有 error 的文件自动
@@ -662,13 +664,14 @@ function CommitStateBadge({ state }: { state: FileCommitState }) {
   }
 }
 
-/** 摘要 → 「讲义 x 篇 / 单元 x · 题 y」短文案（识别出的类型，D20 表格列） */
+/** 内容列 → 「文件 → 存储名」实际名称（方案 §5；无动作 = 空文档） */
 function describeSummary(file: ImportBatchFilePreview): string {
-  const { summary } = file.preview;
+  const names = describeImportNames(file.preview.actions);
   const parts: string[] = [];
-  if (summary.lectureCount > 0) parts.push(`讲义 ${summary.lectureCount}`);
-  if (summary.unitCount > 0)
-    parts.push(`单元 ${summary.unitCount} · 题 ${summary.questionCount}`);
+  if (names.lecture !== null) parts.push(names.lecture);
+  if (names.unit !== null) {
+    parts.push(`${names.unit}· ${file.preview.summary.questionCount} 题`);
+  }
   return parts.length > 0 ? parts.join(" / ") : "（空文档）";
 }
 
