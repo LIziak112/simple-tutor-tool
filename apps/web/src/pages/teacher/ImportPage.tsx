@@ -320,7 +320,7 @@ export function ImportPage() {
       </nav>
 
       {stage === "select" ? (
-        <div className="mt-4 max-w-3xl">
+        <div className="mx-auto mt-4 max-w-3xl">
           <h1 className="text-lg font-semibold">导入内容</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             选择 .md

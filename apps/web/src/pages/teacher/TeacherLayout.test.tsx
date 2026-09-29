@@ -7,9 +7,11 @@ import { fetchTeacherMe } from "@/lib/api";
 import TeacherLayout from "./TeacherLayout";
 
 /**
- * 教师端布局导航测试（T2A.9 侧边栏定稿）：
- * 资源库组（讲义库 / 题库 / 导入）+ 课程 / 学生 / 作业 / 数据 / 学情 / 设置；
- * 讲义库与题库共用 /t/library，按 ?tab= 区分直达目标与高亮（aria-current 唯一）。
+ * 教师端布局导航测试（2026-09-29 侧边栏去重简化）：
+ * 资源库 · 课程 · 学生 · 作业 · 数据 · 学情 · 设置；
+ * 讲义库/题库/回收站由 /t/library 页内页签切换、导入经「导入内容」按钮，
+ * 侧边栏不再单列（与页内导航去重）；资源库在 /t/library 任意页签与
+ * /t/import（导入流程页）上均高亮（aria-current）。
  */
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -51,22 +53,14 @@ beforeEach(() => {
   mockedMe.mockReset();
 });
 
-describe("TeacherLayout 导航（T2A.9 定稿）", () => {
-  it("渲染资源库组（讲义库/题库/导入）与其余分区", async () => {
+describe("TeacherLayout 导航（侧边栏去重简化）", () => {
+  it("渲染七个分区入口，讲义库/题库/导入不再单列", async () => {
     mockedMe.mockResolvedValue(TEACHER);
     renderLayout("/t/courses");
 
-    expect(await screen.findByRole("link", { name: "讲义库" })).toHaveAttribute(
-      "href",
-      "/t/library?tab=lectures",
-    );
-    expect(screen.getByRole("link", { name: "题库" })).toHaveAttribute(
+    expect(await screen.findByRole("link", { name: "资源库" })).toHaveAttribute(
       "href",
       "/t/library",
-    );
-    expect(screen.getByRole("link", { name: "导入" })).toHaveAttribute(
-      "href",
-      "/t/import",
     );
     expect(screen.getByRole("link", { name: "课程" })).toHaveAttribute(
       "href",
@@ -92,35 +86,50 @@ describe("TeacherLayout 导航（T2A.9 定稿）", () => {
       "href",
       "/t/settings",
     );
-    // 旧的单一「资源库」入口不再存在（拆为组内三入口）；
-    // ByRole 的 name 按可达名整串匹配，不会误中「讲义库」等子项
+    // 讲义库/题库/导入由页内页签与「导入内容」按钮承担，侧边栏不再出现
     expect(
-      screen.queryByRole("link", { name: "资源库" }),
+      screen.queryByRole("link", { name: "讲义库" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: "题库" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: "导入" }),
     ).not.toBeInTheDocument();
   });
 
-  it("讲义库入口按 ?tab=lectures 直达并唯一高亮（aria-current）", async () => {
+  it("/t/library 任意页签均高亮「资源库」", async () => {
     mockedMe.mockResolvedValue(TEACHER);
     renderLayout("/t/library?tab=lectures");
 
-    expect(await screen.findByRole("link", { name: "讲义库" })).toHaveAttribute(
+    expect(await screen.findByRole("link", { name: "资源库" })).toHaveAttribute(
       "aria-current",
       "page",
-    );
-    expect(screen.getByRole("link", { name: "题库" })).not.toHaveAttribute(
-      "aria-current",
     );
   });
 
-  it("/t/library 无参数视为题库页签：题库高亮、讲义库不高亮", async () => {
+  it("/t/import（导入流程页）上「资源库」保持高亮", async () => {
     mockedMe.mockResolvedValue(TEACHER);
-    renderLayout("/t/library");
+    renderLayout("/t/import");
 
-    expect(await screen.findByRole("link", { name: "题库" })).toHaveAttribute(
+    expect(await screen.findByRole("link", { name: "资源库" })).toHaveAttribute(
       "aria-current",
       "page",
     );
-    expect(screen.getByRole("link", { name: "讲义库" })).not.toHaveAttribute(
+  });
+
+  it("其他分区不与「资源库」同时高亮", async () => {
+    mockedMe.mockResolvedValue(TEACHER);
+    renderLayout("/t/library");
+
+    expect(await screen.findByRole("link", { name: "资源库" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.getByRole("link", { name: "课程" })).not.toHaveAttribute(
+      "aria-current",
+    );
+    expect(screen.getByRole("link", { name: "设置" })).not.toHaveAttribute(
       "aria-current",
     );
   });
