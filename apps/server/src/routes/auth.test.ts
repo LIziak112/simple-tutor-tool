@@ -114,7 +114,7 @@ async function seedTeacher(
 }
 
 describe("GET /api/public/teacher/status", () => {
-  it("初始 hasTeacher=false 且 registrationOpen=false；设置后 hasTeacher=true", async () => {
+  it("初始 hasTeacher=false 且 registrationOpen 恒 false；设置后 hasTeacher=true 且开关联动真值", async () => {
     const { app } = makeApp();
     const before = await app.request("/api/public/teacher/status");
     expect(before.status).toBe(200);
@@ -122,6 +122,7 @@ describe("GET /api/public/teacher/status", () => {
     expect(teacherStatusOkSchema.safeParse(beforeBody).success).toBe(true);
     expect(beforeBody.data).toEqual({
       hasTeacher: false,
+      // 无教师行时恒 false（D8，即使 app_settings 开关为 true）
       registrationOpen: false,
     });
 
@@ -134,8 +135,8 @@ describe("GET /api/public/teacher/status", () => {
     const afterBody = (await after.json()) as { data: unknown };
     expect(afterBody.data).toEqual({
       hasTeacher: true,
-      // 注册接口 T2B.6 才上线，本任务恒 false
-      registrationOpen: false,
+      // T2B.6 起 registrationOpen 接 app_settings 真值（初始键默认开）
+      registrationOpen: true,
     });
     // 无泄露：响应只含布尔，不出现哈希等内部信息
     expect(JSON.stringify(afterBody)).not.toContain("scrypt$");

@@ -1,12 +1,14 @@
 import type {
   StudentLoginRequest,
   TeacherLoginRequest,
+  TeacherRegisterRequest,
   TeacherSetupRequest,
 } from "@tutor/contract";
 import {
   specFileNameSchema,
   studentLoginRequestSchema,
   teacherLoginRequestSchema,
+  teacherRegisterRequestSchema,
   teacherSetupRequestSchema,
 } from "@tutor/contract";
 import { type Context, Hono } from "hono";
@@ -20,6 +22,7 @@ import {
 } from "../auth/session";
 import {
   loginTeacher,
+  registerTeacher,
   setupTeacher,
   teacherStatus,
 } from "../auth/teacher-auth-service";
@@ -37,6 +40,8 @@ import { readSpecFile } from "../spec-files";
  * - GET  /config：运行时公开配置（T2.12——pwaEnabled 随 PUBLIC_URL 协议，
  *    前端入口据此决定是否注册 Service Worker；不缓存、无敏感信息）
  * - POST /teacher/setup：首次启动创建教师（登录名 + 密码，仅无教师时可用），成功自动登录
+ * - POST /teacher/register：教师自助注册（T2B.6，D3——受注册开关控制、IP 限流
+ *    reg:ip:<IP> 1 小时 5 次；成功创建 isAdmin=false 教师并自动登录）
  * - POST /teacher/login：教师登录名+密码登录（§5.7 限流，key 按登录名与 IP 双计）
  * - POST /student/login：学生登录名+密码登录（T2.1，§5.7 限流，key 与教师隔离）
  * - GET  /s/:token：学生专属链接登录（写学生 Cookie；前端 /s/:token 页面为 T2.3）
@@ -94,6 +99,25 @@ export function createPublicRoutes(
           teacherLoginRequestSchema,
         );
         const { teacher, token } = await loginTeacher(db, body, getClientIp(c));
+        setCookie(
+          c,
+          SESSION_COOKIE,
+          token,
+          sessionCookieOptions(secure, TEACHER_SESSION_TTL_MS),
+        );
+        return c.json({ ok: true, data: teacher });
+      })
+      // —— 教师自助注册（T2B.6，D3 来源一）：成功即自动登录（isAdmin=false） ——
+      .post("/teacher/register", async (c) => {
+        const body: TeacherRegisterRequest = await parseJsonBody(
+          c,
+          teacherRegisterRequestSchema,
+        );
+        const { teacher, token } = await registerTeacher(
+          db,
+          body,
+          getClientIp(c),
+        );
         setCookie(
           c,
           SESSION_COOKIE,

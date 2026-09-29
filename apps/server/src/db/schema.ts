@@ -34,6 +34,7 @@ import {
  * units/questions 主键改 (teacherId, id)、question_knowledge 主键改
  * (teacherId, questionId, knowledgePointId)（D10/D11，表重建）；D10 清单内全部
  * 指向 units/questions 的外键去除（值不变，子表表重建）。
+ * T2B.6 追加 app_settings（应用设置 KV：注册开关 allowRegistration，D8）。
  *
  * 全库约定（见 docs/开发任务清单.md §0.3 与 db-change 技能）：
  * - 主键 id 一律为应用层生成的 crypto.randomUUID() 字符串；
@@ -122,6 +123,24 @@ export const loginFailures = sqliteTable("login_failures", {
 export type LoginFailure = typeof loginFailures.$inferSelect;
 /** login_failures 表插入类型 */
 export type NewLoginFailure = typeof loginFailures.$inferInsert;
+
+/**
+ * 应用设置表（T2B.6，D8）——两列 KV，本阶段仅一个键 allowRegistration
+ * （'true' / 'false' 字符串布尔，默认 'true'，管理员经 /api/admin/settings 读写）。
+ * 初始键不写进迁移文件：由 migrate.ts 流程内的回填以代码插入（标记防重跑，
+ * onConflictDoNothing 兜底——管理员改过的值不会被启动回填覆盖）。
+ */
+export const appSettings = sqliteTable("app_settings", {
+  /** 设置键（主键），如 allowRegistration */
+  key: text("key").primaryKey(),
+  /** 设置值（字符串；布尔语义由服务层解析） */
+  value: text("value").notNull(),
+});
+
+/** app_settings 表行类型（SELECT 结果） */
+export type AppSetting = typeof appSettings.$inferSelect;
+/** app_settings 表插入类型 */
+export type NewAppSetting = typeof appSettings.$inferInsert;
 
 /**
  * 学生表（T2.1，§5.2）。一位老师多名学生；两种登录方式并存（§5.7）：

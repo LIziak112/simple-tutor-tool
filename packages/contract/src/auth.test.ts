@@ -5,14 +5,16 @@ import {
   teacherLoginNameSchema,
   teacherLoginRequestSchema,
   teacherPasswordSchema,
+  teacherRegisterRequestSchema,
   teacherSetupRequestSchema,
   teacherStatusOkSchema,
 } from "./auth.ts";
 import { apiErrSchema } from "./index.ts";
 
 /**
- * 身份认证契约测试（T1.9；T2B.2 起覆盖教师登录名规则 D2 与新错误码）：
- * 密码策略、登录名策略、setup/login 请求体、status 与教师信息响应壳、auth 错误码集合。
+ * 身份认证契约测试（T1.9；T2B.2 起覆盖教师登录名规则 D2 与新错误码；
+ * T2B.6 起覆盖注册请求体）：密码策略、登录名策略、setup/login/register 请求体、
+ * status 与教师信息响应壳、auth 错误码集合。
  * 契约是前后端唯一事实来源，策略在这里钉死后两端不允许各自放宽。
  */
 
@@ -153,6 +155,35 @@ describe("setup / login 请求体", () => {
     ).toBe(false);
     expect(
       teacherLoginRequestSchema.safeParse({ loginName: "张 三", password: "x" })
+        .success,
+    ).toBe(false);
+  });
+
+  it("register（T2B.6）要求登录名与密码同时满足策略（密码沿用 8 位下限）", () => {
+    expect(
+      teacherRegisterRequestSchema.safeParse({
+        loginName: "王老师",
+        password: "self-serve-pass",
+      }).success,
+    ).toBe(true);
+    // 登录名非法 / 密码过短 / 缺字段均拒绝
+    expect(
+      teacherRegisterRequestSchema.safeParse({
+        loginName: "a/b",
+        password: "self-serve-pass",
+      }).success,
+    ).toBe(false);
+    expect(
+      teacherRegisterRequestSchema.safeParse({
+        loginName: "王老师",
+        password: "short",
+      }).success,
+    ).toBe(false);
+    expect(
+      teacherRegisterRequestSchema.safeParse({ loginName: "王老师" }).success,
+    ).toBe(false);
+    expect(
+      teacherRegisterRequestSchema.safeParse({ password: "self-serve-pass" })
         .success,
     ).toBe(false);
   });

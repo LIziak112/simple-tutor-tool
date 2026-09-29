@@ -1,7 +1,7 @@
 import { teacherLoginNameSchema } from "@tutor/contract";
 import { Loader2, LogIn, TriangleAlert } from "lucide-react";
 import { type FormEvent, useState } from "react";
-import { Navigate, useNavigate } from "react-router";
+import { Link, Navigate, useNavigate } from "react-router";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -18,6 +18,7 @@ import { AuthScreenError, AuthScreenLoading } from "./SetupPage";
  * 出现在共享文件名里本来就公开）。
  * 错误提示区分：登录名或密码错误（INVALID_CREDENTIALS，统一口径防枚举）、
  * 账号停用（ACCOUNT_DISABLED，明示原因）、临时锁定（LOCKED）。
+ * T2B.6：底部按 status.registrationOpen 显示「没有账号？注册」入口（开关关时不显示）。
  */
 
 /** localStorage 键：上次成功登录的教师登录名（预填用） */
@@ -187,6 +188,18 @@ export function LoginPage() {
       <p className="max-w-sm text-center text-xs text-muted-foreground">
         连续输错 5 次将临时锁定 10 分钟。
       </p>
+
+      {statusQuery.data.registrationOpen && (
+        <p className="text-sm text-muted-foreground">
+          没有账号？
+          <Link
+            to="/t/register"
+            className="mx-1 font-medium text-primary underline-offset-4 hover:underline"
+          >
+            注册
+          </Link>
+        </p>
+      )}
     </main>
   );
 }

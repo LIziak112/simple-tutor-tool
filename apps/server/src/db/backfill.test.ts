@@ -14,6 +14,7 @@ import { runBackfills } from "./backfill.ts";
 import { createDb, type Db } from "./client.ts";
 import { resolveMigrationsFolder, runMigrations } from "./migrate.ts";
 import {
+  appSettings,
   assignmentStudents,
   assignments,
   assignmentUnits,
@@ -302,6 +303,10 @@ describe("D23 数据搬迁（T2A 前结构 fixture → 迁移 → 回填）", ()
         key: "t2b1_multi_teacher_backfill",
         appliedAt: "2026-09-27T00:00:00.000Z",
       },
+      {
+        key: "t2b6_app_settings_init",
+        appliedAt: "2026-09-27T00:00:00.000Z",
+      },
     ]);
   });
 
@@ -355,10 +360,10 @@ describe("D23 数据搬迁（T2A 前结构 fixture → 迁移 → 回填）", ()
     expect(db.select().from(libraryFolders).all()).toEqual([]);
     expect(db.select().from(courseItems).all()).toEqual([]);
     expect(db.select().from(courseStudents).all()).toEqual([]);
-    expect(db.select().from(dataMigrations).all()).toHaveLength(4);
+    expect(db.select().from(dataMigrations).all()).toHaveLength(5);
     // 全新库再跑一次同样幂等
     runBackfills(db);
-    expect(db.select().from(dataMigrations).all()).toHaveLength(4);
+    expect(db.select().from(dataMigrations).all()).toHaveLength(5);
   });
 });
 
@@ -513,7 +518,7 @@ describe("D23-5 作业结构搬迁（T2A.6 时代结构 fixture → 迁移 → �
     ).toBe(true);
     expect(db.select().from(attempts).get()?.courseId).toBe("c-a");
     // 标记 appliedAt 仍是首次时间戳
-    expect(db.select().from(dataMigrations).all()).toHaveLength(4);
+    expect(db.select().from(dataMigrations).all()).toHaveLength(5);
     expect(
       db
         .select()
@@ -914,6 +919,88 @@ describe("T2B.1 多教师基础结构迁移（post-T2A 结构 fixture → 迁移
   });
 });
 
+describe("T2B.6 app_settings 初始键回填（D8：allowRegistration='true'）", () => {
+  /** T2B.6 前最后一个迁移的 tag（T2B.5 完成态；T2B.6 在此之上建 app_settings） */
+  const PRE_T2B6_LAST_TAG = "0017_light_ulik";
+
+  /** 建「T2B.6 前结构」内存库（不含 app_settings 表） */
+  function createPreT2b6Db(): Db {
+    const db = createDb(":memory:");
+    migrate(db, {
+      migrationsFolder: makeMigrationsFolderUpTo(PRE_T2B6_LAST_TAG),
+    });
+    return db;
+  }
+
+  it("存量库升级：建出 app_settings 表并插入 allowRegistration='true'（默认开）", () => {
+    const db = createPreT2b6Db();
+    // 升级前无 app_settings 表（原生 SQL 探测，避免 drizzle 类型依赖新结构）
+    expect(() =>
+      db.$client.prepare("SELECT * FROM app_settings").all(),
+    ).toThrow();
+    migrateAndBackfill(db);
+
+    expect(db.select().from(appSettings).all()).toEqual([
+      { key: "allowRegistration", value: "true" },
+    ]);
+    db.$client.close();
+  });
+
+  it("全新库（createTestDb 同款全量流程）：键存在且为 'true'", () => {
+    const db = createTestDb();
+    expect(
+      db
+        .select()
+        .from(appSettings)
+        .where(eq(appSettings.key, "allowRegistration"))
+        .get(),
+    ).toEqual({ key: "allowRegistration", value: "true" });
+    db.$client.close();
+  });
+
+  it("幂等且不覆盖管理员改动：改 'false' 后重启不回弹；标记行丢失也不覆盖", () => {
+    const db = createTestDb();
+    // 管理员关闭注册
+    db.update(appSettings)
+      .set({ value: "false" })
+      .where(eq(appSettings.key, "allowRegistration"))
+      .run();
+
+    // 重启（标记已存在 → 跳过）
+    runBackfills(db, new Date("2026-09-30T00:00:00.000Z"));
+    expect(
+      db
+        .select()
+        .from(appSettings)
+        .where(eq(appSettings.key, "allowRegistration"))
+        .get()?.value,
+    ).toBe("false");
+
+    // 极端情形：标记行丢失（库被手工改过）→ onConflictDoNothing 兜底仍不覆盖
+    db.delete(dataMigrations)
+      .where(eq(dataMigrations.key, "t2b6_app_settings_init"))
+      .run();
+    runBackfills(db, new Date("2026-09-30T00:00:00.000Z"));
+    expect(
+      db
+        .select()
+        .from(appSettings)
+        .where(eq(appSettings.key, "allowRegistration"))
+        .get()?.value,
+    ).toBe("false");
+    // 标记重新写入，且表中仍只有一行
+    expect(
+      db
+        .select()
+        .from(dataMigrations)
+        .where(eq(dataMigrations.key, "t2b6_app_settings_init"))
+        .all(),
+    ).toHaveLength(1);
+    expect(db.select().from(appSettings).all()).toHaveLength(1);
+    db.$client.close();
+  });
+});
+
 describe("孤儿资源兜底（T2A.1 事故修复：与主标记无关、每次启动执行、幂等）", () => {
   /**
    * 复现事故形态：正常搬迁完成后（标记已存在），「新迁移+回填已执行、导入仍旧版
@@ -1093,6 +1180,10 @@ describe("孤儿资源兜底（T2A.1 事故修复：与主标记无关、每次�
         key: "t2b1_multi_teacher_backfill",
         appliedAt: "2026-09-27T00:00:00.000Z",
       },
+      {
+        key: "t2b6_app_settings_init",
+        appliedAt: "2026-09-27T00:00:00.000Z",
+      },
     ]);
   });
 
@@ -1146,6 +1237,6 @@ describe("孤儿资源兜底（T2A.1 事故修复：与主标记无关、每次�
           .map((row) => [row.id, row.folderId] as const),
       ),
     ).toEqual(unitFolderIds);
-    expect(db.select().from(dataMigrations).all()).toHaveLength(4);
+    expect(db.select().from(dataMigrations).all()).toHaveLength(5);
   });
 });

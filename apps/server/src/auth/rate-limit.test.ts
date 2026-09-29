@@ -8,12 +8,17 @@ import {
   LOGIN_LOCK_MS,
   loginFailureKeys,
   MAX_LOGIN_FAILURES,
+  REGISTRATION_LOCK_MS,
+  REGISTRATION_MAX_ATTEMPTS,
   recordLoginFailure,
+  recordRegistrationAttempt,
+  registrationAttemptKey,
 } from "./rate-limit.ts";
 
 /**
  * 登录限流单元测试（T1.9，§5.7）：
  * 连续失败 5 次锁定 10 分钟；锁过期后重新计数；成功清零；按 key 独立计数。
+ * T2B.6 追加注册限流：同一 IP 1 小时内最多 5 次注册尝试（含成功），超出锁定 1 小时。
  */
 
 describe("recordLoginFailure / isLoginLocked", () => {
@@ -133,6 +138,85 @@ describe("recordLoginFailure / isLoginLocked", () => {
       recordLoginFailure(db, "name:teacher");
     }
     expect(isLoginLocked(db, ["name:teacher"])).toBe(false);
+    db.$client.close();
+  });
+});
+
+describe("recordRegistrationAttempt（T2B.6 注册限流，D3）", () => {
+  it("key 形如 reg:ip:<IP>；前 5 次尝试计数递增且不锁，第 5 次写 1 小时锁", () => {
+    const db = createTestDb();
+    const key = registrationAttemptKey("10.2.3.4");
+    expect(key).toBe("reg:ip:10.2.3.4");
+
+    for (let i = 1; i < REGISTRATION_MAX_ATTEMPTS; i++) {
+      recordRegistrationAttempt(db, key);
+      expect(isLoginLocked(db, [key])).toBe(false);
+      const row = db
+        .select()
+        .from(loginFailures)
+        .where(eq(loginFailures.key, key))
+        .get();
+      expect(row?.count).toBe(i);
+      expect(row?.lockedUntil).toBeNull();
+    }
+    // 第 5 次尝试本身放行（锁定自此才生效），锁截止时间约为 1 小时后
+    recordRegistrationAttempt(db, key);
+    const row = db
+      .select()
+      .from(loginFailures)
+      .where(eq(loginFailures.key, key))
+      .get();
+    expect(row?.count).toBe(REGISTRATION_MAX_ATTEMPTS);
+    expect(row?.lockedUntil).not.toBeNull();
+    if (row?.lockedUntil) {
+      const remaining = Date.parse(row.lockedUntil) - Date.now();
+      expect(remaining).toBeGreaterThan(55 * 60 * 1000);
+      expect(remaining).toBeLessThanOrEqual(REGISTRATION_LOCK_MS);
+    }
+    expect(isLoginLocked(db, [key])).toBe(true);
+    db.$client.close();
+  });
+
+  it("尝试计数与登录失败计数同 key 命名空间隔离（reg: 前缀），互不污染", () => {
+    const db = createTestDb();
+    // 同一 IP：登录失败 5 次（ip key 锁）不影响注册尝试，反之亦然
+    for (let i = 0; i < MAX_LOGIN_FAILURES; i++) {
+      recordLoginFailure(db, "ip:10.5.5.5");
+    }
+    expect(isLoginLocked(db, ["ip:10.5.5.5"])).toBe(true);
+    expect(isLoginLocked(db, [registrationAttemptKey("10.5.5.5")])).toBe(false);
+
+    for (let i = 0; i < REGISTRATION_MAX_ATTEMPTS; i++) {
+      recordRegistrationAttempt(db, registrationAttemptKey("10.5.5.5"));
+    }
+    expect(isLoginLocked(db, [registrationAttemptKey("10.5.5.5")])).toBe(true);
+    // 两行各自独立
+    expect(db.select().from(loginFailures).all()).toHaveLength(2);
+    db.$client.close();
+  });
+
+  it("锁过期后计数清零重来（与登录限流同口径）", () => {
+    const db = createTestDb();
+    const key = registrationAttemptKey("10.6.6.6");
+    for (let i = 0; i < REGISTRATION_MAX_ATTEMPTS; i++) {
+      recordRegistrationAttempt(db, key);
+    }
+    expect(isLoginLocked(db, [key])).toBe(true);
+
+    db.update(loginFailures)
+      .set({ lockedUntil: new Date(Date.now() - 1000).toISOString() })
+      .where(eq(loginFailures.key, key))
+      .run();
+    expect(isLoginLocked(db, [key])).toBe(false);
+
+    recordRegistrationAttempt(db, key);
+    const row = db
+      .select()
+      .from(loginFailures)
+      .where(eq(loginFailures.key, key))
+      .get();
+    expect(row?.count).toBe(1);
+    expect(row?.lockedUntil).toBeNull();
     db.$client.close();
   });
 });

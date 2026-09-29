@@ -5,6 +5,7 @@ import {
   Library,
   LineChart,
   Settings,
+  ShieldCheck,
   UserRound,
   Users,
 } from "lucide-react";
@@ -16,6 +17,7 @@ import { AuthScreenError, AuthScreenLoading } from "./SetupPage";
 /**
  * /t 教师端布局 + 路由守卫（T1.9）。侧边栏（T2A.9 定稿，2026-09-29 去重简化）：
  * 资源库 · 课程 · 学生 · 作业 · 数据 · 学情 · 设置（数据/学情仍为占位页，T3/T4 提供）。
+ * T2B.6：管理员（me.isAdmin）在侧边栏末尾追加「管理」入口（/a 独立布局）。
  * 讲义库/题库/回收站由 /t/library 页面顶部页签切换（?tab= 直达，无参数时
  * 记忆上次页签），导入经页面
  * 「导入内容」按钮进入 /t/import——侧边栏不再单列，避免与页内导航重复；
@@ -48,6 +50,13 @@ const NAV_ITEMS: NavItemSpec[] = [
   { to: "/t/insights", label: "学情", icon: LineChart },
   { to: "/t/settings", label: "设置", icon: Settings },
 ];
+
+/** 管理端入口（T2B.6：只对 isAdmin 追加在导航末尾，D6/D19） */
+const ADMIN_NAV_ITEM: NavItemSpec = {
+  to: "/a",
+  label: "管理",
+  icon: ShieldCheck,
+};
 
 /**
  * 高亮判定：路径前缀匹配（/t/courses/:id 仍高亮「课程」）；
@@ -109,14 +118,16 @@ export function TeacherLayout() {
         <p className="mr-2 hidden px-2 pb-2 text-sm font-semibold md:block">
           辅导工作台
         </p>
-        {NAV_ITEMS.map((item) => (
+        {(meQuery.data.isAdmin
+          ? [...NAV_ITEMS, ADMIN_NAV_ITEM]
+          : NAV_ITEMS
+        ).map((item) => (
           <NavItem key={item.to} item={item} />
         ))}
       </nav>
 
       <main className="min-w-0 flex-1">
-        {/* 顶栏：教师身份一律显示登录名（D1 无 displayName；管理入口 T2B.6
-            才对 isAdmin 显示，本任务不加） */}
+        {/* 顶栏：教师身份一律显示登录名（D1 无 displayName）；管理员另有侧边栏「管理」入口 */}
         <header className="flex min-h-11 items-center justify-end gap-2 border-b border-border bg-card px-4 text-sm text-muted-foreground">
           <UserRound aria-hidden className="size-4" />
           <span data-testid="teacher-login-name">{meQuery.data.loginName}</span>
