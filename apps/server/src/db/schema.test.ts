@@ -149,6 +149,38 @@ describe("createTestDb（内存库 + 迁移）", () => {
 });
 
 describe("teachers / sessions 表读写", () => {
+  it("teachers.loginName 唯一索引（D2）：同登录名第二行被拒、多个 NULL 合法（迁移前中间态）", () => {
+    const db = createTestDb();
+    const t1 = {
+      id: randomUUID(),
+      loginName: "王老师",
+      isAdmin: true,
+      disabledAt: null,
+      passwordHash: "scrypt$模拟哈希",
+      apiToken: null,
+      createdAt: new Date().toISOString(),
+    };
+    db.insert(teachers).values(t1).run();
+    // 同 loginName 不同 id → 违反唯一索引
+    expect(() =>
+      db
+        .insert(teachers)
+        .values({ ...t1, id: randomUUID(), loginName: "王老师" })
+        .run(),
+    ).toThrow();
+    // 不同 loginName 可共存；多个 NULL（回填前的中间态）同样合法
+    db.insert(teachers)
+      .values({ ...t1, id: randomUUID(), loginName: "李老师" })
+      .run();
+    db.insert(teachers)
+      .values({ ...t1, id: randomUUID(), loginName: null })
+      .run();
+    db.insert(teachers)
+      .values({ ...t1, id: randomUUID(), loginName: null })
+      .run();
+    db.$client.close();
+  });
+
   it("插入一条 teacher 与一条 session 后可原样读回", () => {
     const db = createTestDb();
     const createdAt = new Date().toISOString();
@@ -170,9 +202,15 @@ describe("teachers / sessions 表读写", () => {
     };
     db.insert(sessions).values(session).run();
 
+    // T2B.1 新增列（loginName/isAdmin/disabledAt）落默认值读回
     expect(
       db.select().from(teachers).where(eq(teachers.id, teacher.id)).get(),
-    ).toEqual(teacher);
+    ).toEqual({
+      ...teacher,
+      loginName: null,
+      isAdmin: false,
+      disabledAt: null,
+    });
     expect(
       db.select().from(sessions).where(eq(sessions.id, session.id)).get(),
     ).toEqual(session);
@@ -188,7 +226,9 @@ describe("teachers / sessions 表读写", () => {
       createdAt: new Date().toISOString(),
     };
     db.insert(teachers).values(row).run();
-    expect(db.select().from(teachers).get()).toEqual(row);
+    expect(
+      db.select().from(teachers).where(eq(teachers.id, row.id)).get(),
+    ).toEqual({ ...row, loginName: null, isAdmin: false, disabledAt: null });
     db.$client.close();
   });
 });
@@ -198,6 +238,7 @@ describe("students 表（T2.1 学生账号）", () => {
   function studentRow(overrides: Partial<typeof students.$inferInsert> = {}) {
     return {
       id: randomUUID(),
+      teacherId: null,
       displayName: "张三",
       loginName: "张三",
       passwordHash: null,

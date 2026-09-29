@@ -139,6 +139,7 @@ describe("LibraryService：文件夹 CRUD", () => {
     expect(listFolders(db)).toEqual([
       {
         id: folderId,
+        teacherId: null,
         name: "有理数",
         order: 0,
         lectureCount: 0,

@@ -113,6 +113,20 @@
       "when": 1790614311020,
       "tag": "0015_oval_franklin_storm",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "6",
+      "when": 1790688899404,
+      "tag": "0016_rich_ghost_rider",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "6",
+      "when": 1790688903748,
+      "tag": "0017_light_ulik",
+      "breakpoints": true
     }
   ]
 }
