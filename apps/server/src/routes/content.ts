@@ -41,7 +41,8 @@ import {
  * - POST   /reorder：拖拽排序，order 按 ids 下标重写（T1.12；题目/讲义/单元域内）；
  * - POST   /courses、PATCH /courses/:id、DELETE /courses/:id：课程 CRUD（T1.12；
  *   T2A.4 起 PATCH 接受 name（同 title）/description/archived，DELETE 改按 D4——
- *   有作答记录 409 COURSE_HAS_ATTEMPTS，无作答连目录条目与成员一并清理）。
+ *   有作答记录 409 COURSE_HAS_ATTEMPTS，无作答连目录条目与成员一并清理；
+ *   T2B.4 起按会话教师 c.var.teacher.id——乙访问甲的课程 → 404）。
  *   GET /courses、GET /courses/:id 及课程目录/成员路由在 courses.ts（T2A.4）。
  *
  * 业务逻辑在 ContentService（api-endpoint 技能约定：路由只做鉴权→校验→调 service→包装）。
@@ -103,7 +104,10 @@ export function createContentRoutes(db: Db) {
         c,
         courseCreateRequestSchema,
       );
-      return c.json({ ok: true, data: createCourse(db, body) }, 201);
+      return c.json(
+        { ok: true, data: createCourse(db, c.var.teacher.id, body) },
+        201,
+      );
     })
     .patch("/courses/:id", async (c) => {
       const body: CourseUpdateRequest = await parseJsonBody(
@@ -112,11 +116,11 @@ export function createContentRoutes(db: Db) {
       );
       return c.json({
         ok: true,
-        data: updateCourse(db, c.req.param("id"), body),
+        data: updateCourse(db, c.var.teacher.id, c.req.param("id"), body),
       });
     })
     .delete("/courses/:id", (c) => {
-      deleteCourse(db, c.req.param("id"));
+      deleteCourse(db, c.var.teacher.id, c.req.param("id"));
       return c.json({ ok: true, data: null });
     });
 }

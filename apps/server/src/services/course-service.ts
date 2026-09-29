@@ -14,6 +14,7 @@ import type { Db } from "../db/client";
 import {
   assignments,
   attempts,
+  type Course,
   type CourseItem,
   type CourseItemKind,
   courseItems,
@@ -29,17 +30,20 @@ import { HttpError } from "../lib/http-error";
 import { canStudentSeeItem } from "./visibility.ts";
 
 /**
- * CourseService（T2A.1 建条目/成员服务层；T2A.4 扩展教师端课程接口的数据组装）：
+ * CourseService（T2A.1 建条目/成员服务层；T2A.4 扩展教师端课程接口的数据组装；
+ * T2B.4 起全部教师侧接口按会话教师 teacherId 形参过滤与写入——乙访问甲的课程/
+ * 条目/成员 → 404，D12 口径）：
  * - 目录条目（D6）：section/lecture/unit；同一资源在同一课程唯一
  *   （库级唯一约束 + addCourseItems 409 DUPLICATE_COURSE_ITEM）；新添加默认 visible=true；
  * - appendCourseItems（T2A.4 批量口径）：重复条目**跳过并返回清单**（与单条 409 不同），
  *   支持 withCompanionUnits（D8 配套练习一并添加，紧跟对应讲义之后）；
  * - 排序：ids 为该课程全部条目的完整新顺序，order 按下标重写；
- * - 成员（D7）：只由教师添加/移出；移出即删行（作答数据不动）；
+ * - 成员（D7）：只由教师添加/移出；移出即删行（作答数据不动）；学生须归属本教师；
  * - 列表/详情（T2A.4）：成员数、条目数、可见条目数（口径见 courseSummarySchema 注释）、
  *   状态标签（§4-4）与 hasAttempts（D4 删除条件）；
  * - 学生可见目录（D5，canStudentSeeItem 唯一判定）：listVisibleItems 供学生可见预览
- *   （getStudentView）与 T2A.5 学生端接口共用。
+ *   （getStudentView）与 T2A.5 学生端接口共用——**无会话教师**，教师域按 D10 从
+ *   课程根行（courses.teacherId）推导，资源侧查询全部域内（对外行为不变）。
  */
 
 /** 新增目录条目的输入（kind 决定 refId/title 的必填性，见 addCourseItems 校验） */
@@ -61,16 +65,20 @@ export interface VisibleCourseItem {
   readonly order: number;
 }
 
-/** 课程不存在 → 404（与 content-service 同码） */
-function requireCourse(db: Db, id: string): void {
+/**
+ * 按会话教师取课程行（T2B.4）：不存在或非本人课程 → 404 COURSE_NOT_FOUND
+ * （D12：不暴露存在性）。教师侧接口的统一入口校验。
+ */
+function requireCourseRow(db: Db, teacherId: string, id: string): Course {
   const row = db
-    .select({ id: courses.id })
+    .select()
     .from(courses)
-    .where(eq(courses.id, id))
+    .where(and(eq(courses.teacherId, teacherId), eq(courses.id, id)))
     .get();
   if (row === undefined) {
     throw new HttpError(404, "COURSE_NOT_FOUND", "课程不存在");
   }
+  return row;
 }
 
 /** 校验条目输入的 kind 相关必填性（422 VALIDATION_ERROR） */
@@ -117,15 +125,17 @@ function validateItemInput(item: CourseItemInput): void {
 /**
  * 追加目录条目到课程末尾（D6）。默认 visible=true（添加对话框「添加后对学生可见」
  * 开关默认开，T2A.4 UI）。同一资源在本课程已存在（或同批内重复）→ 409
- * DUPLICATE_COURSE_ITEM；引用的资源不存在或已软删 → 404（资源侧错误码）。
+ * DUPLICATE_COURSE_ITEM；引用的资源不存在、已软删或**不归属本教师** → 404
+ * （资源侧错误码；T2B.4：refId 逐项校验归属，防直接构造请求塞他人资源）。
  */
 export function addCourseItems(
   db: Db,
+  teacherId: string,
   courseId: string,
   items: readonly CourseItemInput[],
   options: { visible?: boolean } = {},
 ): CourseItem[] {
-  requireCourse(db, courseId);
+  requireCourseRow(db, teacherId, courseId);
   for (const item of items) validateItemInput(item);
 
   // 同批内重复先拦（避免只靠库级约束报生硬错误）
@@ -169,13 +179,19 @@ export function addCourseItems(
     }
   }
 
-  // 资源存在性 + 未软删校验（已删除的资源不能加入课程，D3）
+  // 资源存在性 + 未软删 + 归属校验（已删除的资源不能加入课程，D3；他人资源
+  // 一律按不存在处理，D12——T2B.4 起按复合主键 (teacherId, id) 查）
   for (const item of items) {
     if (item.kind === "lecture") {
       const row = db
         .select({ id: lectures.id, deletedAt: lectures.deletedAt })
         .from(lectures)
-        .where(eq(lectures.id, item.refId as string))
+        .where(
+          and(
+            eq(lectures.teacherId, teacherId),
+            eq(lectures.id, item.refId as string),
+          ),
+        )
         .get();
       if (row === undefined) {
         throw new HttpError(404, "LECTURE_NOT_FOUND", "讲义不存在");
@@ -191,7 +207,12 @@ export function addCourseItems(
       const row = db
         .select({ id: units.id, deletedAt: units.deletedAt })
         .from(units)
-        .where(eq(units.id, item.refId as string))
+        .where(
+          and(
+            eq(units.teacherId, teacherId),
+            eq(units.id, item.refId as string),
+          ),
+        )
         .get();
       if (row === undefined) {
         throw new HttpError(404, "UNIT_NOT_FOUND", "练习单元不存在");
@@ -247,11 +268,13 @@ export function addCourseItems(
  *   （units.lectureId）且未软删的单元，位置紧跟该讲义之后；配套单元同样逐条判重
  *   （已在课程/本批已含 → skipped）。已被跳过的讲义不再展开配套（其配套或早已入课，
  *   或由教师在题库页签显式添加）；
- * - 资源不存在或已软删仍抛 404（fail fast，全批不落库）；kind 相关校验同 addCourseItems；
+ * - 资源不存在、已软删或不归属本教师仍抛 404（fail fast，全批不落库；
+ *   T2B.4 起按 (teacherId, id) 查，他人资源按不存在处理）；kind 相关校验同 addCourseItems；
  * - visible 对整批（含配套单元）统一生效（D6「添加后对学生可见」开关，缺省 true）。
  */
 export function appendCourseItems(
   db: Db,
+  teacherId: string,
   courseId: string,
   items: readonly CourseItemInput[],
   options: {
@@ -259,7 +282,7 @@ export function appendCourseItems(
     withCompanionUnits?: boolean | undefined;
   } = {},
 ): { added: CourseItemAdded[]; skipped: CourseItemSkipped[] } {
-  requireCourse(db, courseId);
+  requireCourseRow(db, teacherId, courseId);
   for (const item of items) validateItemInput(item);
 
   const skipped: CourseItemSkipped[] = [];
@@ -308,7 +331,7 @@ export function appendCourseItems(
     planned.push({ ...item, companion: false });
   }
 
-  // D8 配套练习：本批新添讲义的配套单元，紧跟该讲义之后插入
+  // D8 配套练习：本批新添讲义的配套单元，紧跟该讲义之后插入（域内查，T2B.4）
   if (options.withCompanionUnits === true) {
     const addedLectureIds = planned
       .filter((item) => item.kind === "lecture")
@@ -319,6 +342,7 @@ export function appendCourseItems(
         .from(units)
         .where(
           and(
+            eq(units.teacherId, teacherId),
             inArray(units.lectureId, addedLectureIds),
             isNull(units.deletedAt),
           ),
@@ -355,13 +379,18 @@ export function appendCourseItems(
     }
   }
 
-  // 资源存在性 + 未软删校验（404；分节无资源可查）
+  // 资源存在性 + 未软删 + 归属校验（404；分节无资源可查；T2B.4 域内查）
   for (const item of planned) {
     if (item.kind === "lecture") {
       const row = db
         .select({ id: lectures.id, deletedAt: lectures.deletedAt })
         .from(lectures)
-        .where(eq(lectures.id, item.refId as string))
+        .where(
+          and(
+            eq(lectures.teacherId, teacherId),
+            eq(lectures.id, item.refId as string),
+          ),
+        )
         .get();
       if (row === undefined || row.deletedAt !== null) {
         throw new HttpError(
@@ -374,7 +403,12 @@ export function appendCourseItems(
       const row = db
         .select({ id: units.id, deletedAt: units.deletedAt })
         .from(units)
-        .where(eq(units.id, item.refId as string))
+        .where(
+          and(
+            eq(units.teacherId, teacherId),
+            eq(units.id, item.refId as string),
+          ),
+        )
         .get();
       if (row === undefined || row.deletedAt !== null) {
         throw new HttpError(
@@ -398,11 +432,12 @@ export function appendCourseItems(
       .all()
       .reduce((max, row) => Math.max(max, row.order), -1) + 1;
 
-  // 显示标题：lecture/unit 取资源当前标题（引用而非复制，D1）
+  // 显示标题：lecture/unit 取资源当前标题（引用而非复制，D1；域内读，T2B.4）
   const lectureTitles = new Map(
     db
       .select({ id: lectures.id, title: lectures.title })
       .from(lectures)
+      .where(eq(lectures.teacherId, teacherId))
       .all()
       .map((row) => [row.id, row.title] as const),
   );
@@ -410,6 +445,7 @@ export function appendCourseItems(
     db
       .select({ id: units.id, title: units.title })
       .from(units)
+      .where(eq(units.teacherId, teacherId))
       .all()
       .map((row) => [row.id, row.title] as const),
   );
@@ -464,9 +500,13 @@ export function appendCourseItems(
   return { added, skipped };
 }
 
-/** 目录条目更新：visible / publishAt（显式 null = 取消定时）/ title（仅 section）。 */
+/**
+ * 目录条目更新：visible / publishAt（显式 null = 取消定时）/ title（仅 section）。
+ * 条目不存在或所属课程非本教师 → 404（T2B.4，经 course_items → courses 判归属）。
+ */
 export function updateCourseItem(
   db: Db,
+  teacherId: string,
   id: string,
   input: {
     visible?: boolean | undefined;
@@ -474,7 +514,12 @@ export function updateCourseItem(
     title?: string | undefined;
   },
 ): CourseItem {
-  const row = db.select().from(courseItems).where(eq(courseItems.id, id)).get();
+  const row = db
+    .select({ item: courseItems })
+    .from(courseItems)
+    .innerJoin(courses, eq(courseItems.courseId, courses.id))
+    .where(and(eq(courseItems.id, id), eq(courses.teacherId, teacherId)))
+    .get()?.item;
   if (row === undefined) {
     throw new HttpError(404, "COURSE_ITEM_NOT_FOUND", "目录条目不存在");
   }
@@ -501,12 +546,16 @@ export function updateCourseItem(
   return { ...row, ...patch } as CourseItem;
 }
 
-/** 从课程目录移除条目（不触碰资源库本体）。不存在 → 404 */
-export function deleteCourseItem(db: Db, id: string): void {
+/**
+ * 从课程目录移除条目（不触碰资源库本体）。不存在或非本教师课程的条目 → 404
+ * （T2B.4，经 course_items → courses 判归属）。
+ */
+export function deleteCourseItem(db: Db, teacherId: string, id: string): void {
   const row = db
     .select({ id: courseItems.id })
     .from(courseItems)
-    .where(eq(courseItems.id, id))
+    .innerJoin(courses, eq(courseItems.courseId, courses.id))
+    .where(and(eq(courseItems.id, id), eq(courses.teacherId, teacherId)))
     .get();
   if (row === undefined) {
     throw new HttpError(404, "COURSE_ITEM_NOT_FOUND", "目录条目不存在");
@@ -517,13 +566,15 @@ export function deleteCourseItem(db: Db, id: string): void {
 /**
  * 课程目录排序：ids 必须恰好为该课程全部条目的完整新顺序（order 按下标 0 起重写）。
  * 缺失或包含他课程条目 → 404 COURSE_ITEM_NOT_FOUND，事务回滚保持原顺序。
+ * 课程不存在或非本教师 → 404 COURSE_NOT_FOUND（T2B.4）。
  */
 export function reorderCourseItems(
   db: Db,
+  teacherId: string,
   courseId: string,
   ids: readonly string[],
 ): void {
-  requireCourse(db, courseId);
+  requireCourseRow(db, teacherId, courseId);
   const rows = db
     .select({ id: courseItems.id })
     .from(courseItems)
@@ -550,19 +601,23 @@ export function reorderCourseItems(
 
 // ---------- 课程成员（D7） ----------
 
-/** 添加成员：学生不存在 → 404 STUDENT_NOT_FOUND；已在课幂等跳过 */
+/**
+ * 添加成员：学生不存在或**不归属本教师** → 404 STUDENT_NOT_FOUND（D12/D14：
+ * 学生一生只归一位教师，乙不能把甲的学生加进自己的课程）；已在课幂等跳过。
+ */
 export function addCourseMembers(
   db: Db,
+  teacherId: string,
   courseId: string,
   studentIds: readonly string[],
 ): void {
-  requireCourse(db, courseId);
+  requireCourseRow(db, teacherId, courseId);
   const ids = [...new Set(studentIds)];
   if (ids.length > 0) {
     const found = db
       .select({ id: students.id })
       .from(students)
-      .where(inArray(students.id, ids))
+      .where(and(eq(students.teacherId, teacherId), inArray(students.id, ids)))
       .all();
     const foundIds = new Set(found.map((row) => row.id));
     const missing = ids.find((id) => !foundIds.has(id));
@@ -584,10 +639,11 @@ export function addCourseMembers(
 /** 移出成员：删 course_students 行（作答数据保留，D7）。不在课的学生幂等无操作 */
 export function removeCourseMembers(
   db: Db,
+  teacherId: string,
   courseId: string,
   studentIds: readonly string[],
 ): void {
-  requireCourse(db, courseId);
+  requireCourseRow(db, teacherId, courseId);
   const ids = [...new Set(studentIds)];
   if (ids.length === 0) return;
   db.transaction((tx) => {
@@ -604,12 +660,13 @@ export function removeCourseMembers(
   });
 }
 
-/** 成员名单（学生姓名排序稳定输出） */
+/** 成员名单（学生姓名排序稳定输出；课程须归属本教师，T2B.4） */
 export function listCourseMembers(
   db: Db,
+  teacherId: string,
   courseId: string,
 ): { studentId: string; displayName: string; joinedAt: string }[] {
-  requireCourse(db, courseId);
+  requireCourseRow(db, teacherId, courseId);
   return db
     .select({
       studentId: students.id,
@@ -649,6 +706,8 @@ export function isCourseMember(
  * 某学生此刻在某课程可见的目录条目（按 order 升序）。
  * 非成员 / 学生归档 / 课程不存在或已归档 → 空数组（D5 条件 1、2；
  * 接口层 403/404 的区分属 T2A.4/T2A.5）。now 可注入（publishAt 到点判断）。
+ * T2B.4：教师域按 D10 从课程根行（courses.teacherId）推导，资源侧查询全部
+ * 域内（复合主键后按 id 查不再唯一）；对外签名与行为不变（学生侧无会话教师）。
  */
 export function listVisibleItems(
   db: Db,
@@ -664,18 +723,24 @@ export function listVisibleItems(
   if (student === undefined || student.archivedAt !== null) return [];
 
   const course = db
-    .select({ id: courses.id, archivedAt: courses.archivedAt })
+    .select({
+      id: courses.id,
+      archivedAt: courses.archivedAt,
+      teacherId: courses.teacherId,
+    })
     .from(courses)
     .where(eq(courses.id, courseId))
     .get();
   if (course === undefined || course.archivedAt !== null) return [];
+  // D9 异常行防御：无教师域的课程（回填后不应存在）无从判定资源归属 → 空目录
+  if (course.teacherId === null) return [];
 
   const isMember = isCourseMember(db, courseId, studentId);
   const studentArchived = false; // 上方已拦截归档学生
 
-  // 资源侧数据一次读全（教师端量级：一对一辅导，内存分组足够）
+  // 资源侧数据一次读全（教师端量级：一对一辅导，内存分组足够；域内读，T2B.4）
   const { lectureById, unitById, liveQuestionCountByUnit } =
-    loadResourceContext(db);
+    loadResourceContext(db, course.teacherId);
 
   const items = db
     .select()
@@ -761,7 +826,8 @@ function courseItemNotFound(): HttpError {
  *
  * T2A.6 的三类调用方：课程单元落地页/开始练习（student.ts）、课程来源 attempt
  * 的取卷与草稿访问权（attempt-service，D7——移出成员后未交卷草稿 403）。
- * 返回可见条目（含标题）供调用方组装响应。
+ * 返回可见条目（含标题）供调用方组装响应。T2B.4：资源判定经 listVisibleItems
+ * 已带课程根行的教师域（学生侧无会话教师，D10 推导；对外行为不变）。
  */
 export function requireVisibleCourseUnit(
   db: Db,
@@ -815,8 +881,8 @@ interface ResourceContext {
   readonly liveQuestionCountByUnit: Map<string, number>;
 }
 
-/** 读全讲义/单元摘要与未删除题目计数（D5 条件 4 与状态标签共用） */
-function loadResourceContext(db: Db): ResourceContext {
+/** 读全讲义/单元摘要与未删除题目计数（D5 条件 4 与状态标签共用；域内读，T2B.4） */
+function loadResourceContext(db: Db, teacherId: string): ResourceContext {
   const lectureById = new Map(
     db
       .select({
@@ -826,6 +892,7 @@ function loadResourceContext(db: Db): ResourceContext {
         updatedAt: lectures.updatedAt,
       })
       .from(lectures)
+      .where(eq(lectures.teacherId, teacherId))
       .all()
       .map((row) => [row.id, row] as const),
   );
@@ -838,6 +905,7 @@ function loadResourceContext(db: Db): ResourceContext {
         updatedAt: units.updatedAt,
       })
       .from(units)
+      .where(eq(units.teacherId, teacherId))
       .all()
       .map((row) => [row.id, row] as const),
   );
@@ -845,7 +913,7 @@ function loadResourceContext(db: Db): ResourceContext {
   for (const row of db
     .select({ unitId: questions.unitId })
     .from(questions)
-    .where(isNull(questions.deletedAt))
+    .where(and(eq(questions.teacherId, teacherId), isNull(questions.deletedAt)))
     .all()) {
     liveQuestionCountByUnit.set(
       row.unitId,
@@ -905,17 +973,19 @@ function assignedCourseIds(db: Db): Set<string> {
 }
 
 /**
- * 教师端课程列表（GET /api/teacher/courses?archived，T2A.4）。
+ * 教师端课程列表（GET /api/teacher/courses?archived，T2A.4；T2B.4 按会话教师）。
  * archived：true = 只列已归档，false = 只列未归档（D4 教师端可筛选查看）。
  * memberIds 随列表下发（学生页「所在课程」/「管理课程」数据源，量级小）。
  */
 export function listCoursesForTeacher(
   db: Db,
+  teacherId: string,
   filter: { archived: boolean },
 ): CourseSummary[] {
   const rows = db
     .select()
     .from(courses)
+    .where(eq(courses.teacherId, teacherId))
     .orderBy(asc(courses.order), asc(courses.title))
     .all()
     .filter((row) =>
@@ -923,7 +993,7 @@ export function listCoursesForTeacher(
     );
   if (rows.length === 0) return [];
 
-  const { lectureById, unitById } = loadResourceContext(db);
+  const { lectureById, unitById } = loadResourceContext(db, teacherId);
   const itemsByCourse = new Map<string, CourseItem[]>();
   for (const row of db
     .select()
@@ -1005,18 +1075,17 @@ function itemStatus(
 /**
  * 课程详情（GET /api/teacher/courses/:id，T2A.4）：目录条目（含资源摘要与状态
  * 标签数据）+ 成员列表 + hasAttempts（删除按钮禁用判断）。now 可注入（定时测试）。
+ * T2B.4：按会话教师取课程与资源（非本人课程 → 404）。
  */
 export function getCourseDetail(
   db: Db,
+  teacherId: string,
   id: string,
   now: Date = new Date(),
 ): CourseDetailData {
-  const course = db.select().from(courses).where(eq(courses.id, id)).get();
-  if (course === undefined) {
-    throw new HttpError(404, "COURSE_NOT_FOUND", "课程不存在");
-  }
+  const course = requireCourseRow(db, teacherId, id);
   const { lectureById, unitById, liveQuestionCountByUnit } =
-    loadResourceContext(db);
+    loadResourceContext(db, teacherId);
   const items = db
     .select()
     .from(courseItems)
@@ -1109,10 +1178,12 @@ export function getCourseDetail(
  * 学生可见预览（GET /api/teacher/courses/:id/student-view，§4-10，T2A.4）：
  * 按 D5（listVisibleItems → canStudentSeeItem 唯一判定）计算该成员此刻可见的
  * 目录，只含目录元信息，不含任何题目内容。courseArchived / studentArchived /
- * isMember 供前端解释空目录原因。
+ * isMember 供前端解释空目录原因。T2B.4：课程与学生均按会话教师（乙用甲的
+ * 学生 id 预览自己课程 → 404 STUDENT_NOT_FOUND，不泄露他人学生）。
  */
 export function getStudentView(
   db: Db,
+  teacherId: string,
   courseId: string,
   studentId: string,
   now: Date | string = new Date(),
@@ -1120,7 +1191,7 @@ export function getStudentView(
   const course = db
     .select({ id: courses.id, archivedAt: courses.archivedAt })
     .from(courses)
-    .where(eq(courses.id, courseId))
+    .where(and(eq(courses.teacherId, teacherId), eq(courses.id, courseId)))
     .get();
   if (course === undefined) {
     throw new HttpError(404, "COURSE_NOT_FOUND", "课程不存在");
@@ -1132,7 +1203,7 @@ export function getStudentView(
       archivedAt: students.archivedAt,
     })
     .from(students)
-    .where(eq(students.id, studentId))
+    .where(and(eq(students.teacherId, teacherId), eq(students.id, studentId)))
     .get();
   if (student === undefined) {
     throw new HttpError(404, "STUDENT_NOT_FOUND", "学生不存在");
@@ -1184,14 +1255,15 @@ function effectiveScore(row: {
  *   未删且有未删题，D5 的资源侧口径），按目录条目顺序；
  * - cells：只含有作答的单元格，缺席（从未做过）由前端按空渲染；
  * - 点击单元格的历次列表内联在 cell.history（详情页属 T3.1）。
- * now 可注入（publishAt 到点判断）。
+ * now 可注入（publishAt 到点判断）。T2B.4：按会话教师（非本人课程 → 404）。
  */
 export function getCourseProgress(
   db: Db,
+  teacherId: string,
   courseId: string,
   now: Date | string = new Date(),
 ): CourseProgressData {
-  requireCourse(db, courseId);
+  requireCourseRow(db, teacherId, courseId);
   const nowMs = typeof now === "string" ? Date.parse(now) : now.getTime();
 
   // 行：成员（含已归档）
@@ -1213,7 +1285,10 @@ export function getCourseProgress(
     }));
 
   // 列：可见单元（D5 资源侧口径）
-  const { unitById, liveQuestionCountByUnit } = loadResourceContext(db);
+  const { unitById, liveQuestionCountByUnit } = loadResourceContext(
+    db,
+    teacherId,
+  );
   const unitItems = db
     .select({
       refId: courseItems.refId,

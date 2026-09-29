@@ -12,7 +12,7 @@ import {
   students,
   units,
 } from "../db/schema.ts";
-import { createTestDb } from "../db/test-utils.ts";
+import { createTestDb, TEST_TEACHER_ID } from "../db/test-utils.ts";
 import { HttpError } from "../lib/http-error.ts";
 import {
   addCourseItems,
@@ -33,6 +33,8 @@ import {
  * DUPLICATE_COURSE_ITEM）、成员增删、listVisibleItems 的 D5 过滤。
  * T2A.4 追加：appendCourseItems（批量跳过 + D8 配套练习）、教师端列表/详情
  * （状态标签、可见条目数、hasAttempts）。
+ * T2B.4 起服务层按会话教师（teacherId 形参）执行：fixture 行补 teacherId
+ * （D9 读侧视为必有），服务调用传 TEST_TEACHER_ID。
  */
 
 const T0 = "2026-09-01T00:00:00.000Z";
@@ -61,7 +63,13 @@ function seed(db: Db): {
 } {
   const courseId = crypto.randomUUID();
   db.insert(courses)
-    .values({ id: courseId, title: "初一上", order: 0, createdAt: T0 })
+    .values({
+      id: courseId,
+      teacherId: TEST_TEACHER_ID,
+      title: "初一上",
+      order: 0,
+      createdAt: T0,
+    })
     .run();
   const lectureId = crypto.randomUUID();
   const deletedLectureId = crypto.randomUUID();
@@ -69,6 +77,7 @@ function seed(db: Db): {
     .values([
       {
         id: lectureId,
+        teacherId: TEST_TEACHER_ID,
         courseId: null,
         folderId: null,
         title: "第一讲",
@@ -79,6 +88,7 @@ function seed(db: Db): {
       },
       {
         id: deletedLectureId,
+        teacherId: TEST_TEACHER_ID,
         courseId: null,
         folderId: null,
         title: "已删讲",
@@ -96,6 +106,7 @@ function seed(db: Db): {
     .values([
       {
         id: unitId,
+        teacherId: TEST_TEACHER_ID,
         courseId: null,
         folderId: null,
         lectureId: lectureId,
@@ -106,6 +117,7 @@ function seed(db: Db): {
       },
       {
         id: deletedUnitId,
+        teacherId: TEST_TEACHER_ID,
         courseId: null,
         folderId: null,
         lectureId: null,
@@ -116,6 +128,7 @@ function seed(db: Db): {
       },
       {
         id: emptyUnitId,
+        teacherId: TEST_TEACHER_ID,
         courseId: null,
         folderId: null,
         lectureId: null,
@@ -131,6 +144,7 @@ function seed(db: Db): {
     .values([
       {
         id: "q1",
+        teacherId: TEST_TEACHER_ID,
         unitId,
         order: 0,
         type: "judge",
@@ -144,6 +158,7 @@ function seed(db: Db): {
       },
       {
         id: "q2",
+        teacherId: TEST_TEACHER_ID,
         unitId,
         order: 1,
         type: "judge",
@@ -157,6 +172,7 @@ function seed(db: Db): {
       },
       {
         id: "q3",
+        teacherId: TEST_TEACHER_ID,
         unitId: emptyUnitId,
         order: 0,
         type: "judge",
@@ -176,6 +192,7 @@ function seed(db: Db): {
     .values([
       {
         id: studentId,
+        teacherId: TEST_TEACHER_ID,
         displayName: "张三",
         loginName: "张三",
         linkToken: "tok-a",
@@ -186,6 +203,7 @@ function seed(db: Db): {
       },
       {
         id: archivedStudentId,
+        teacherId: TEST_TEACHER_ID,
         displayName: "李四",
         loginName: "李四",
         linkToken: "tok-b",
@@ -212,7 +230,7 @@ describe("CourseService：目录条目 CRUD（D6）", () => {
   it("添加讲义/单元/分节：默认 visible=true、order 追加；section 标题落库", () => {
     const db = createTestDb();
     const { courseId, lectureId, unitId } = seed(db);
-    const inserted = addCourseItems(db, courseId, [
+    const inserted = addCourseItems(db, TEST_TEACHER_ID, courseId, [
       { kind: "lecture", refId: lectureId },
       { kind: "unit", refId: unitId },
       { kind: "section", title: "  第一章  " },
@@ -230,9 +248,13 @@ describe("CourseService：目录条目 CRUD（D6）", () => {
   it("同一资源重复加入同一课程 → 409 DUPLICATE_COURSE_ITEM（验收项）", () => {
     const db = createTestDb();
     const { courseId, unitId } = seed(db);
-    addCourseItems(db, courseId, [{ kind: "unit", refId: unitId }]);
+    addCourseItems(db, TEST_TEACHER_ID, courseId, [
+      { kind: "unit", refId: unitId },
+    ]);
     const err = captureError(() =>
-      addCourseItems(db, courseId, [{ kind: "unit", refId: unitId }]),
+      addCourseItems(db, TEST_TEACHER_ID, courseId, [
+        { kind: "unit", refId: unitId },
+      ]),
     );
     expect(err).toBeInstanceOf(HttpError);
     const httpErr = err as HttpError;
@@ -241,7 +263,7 @@ describe("CourseService：目录条目 CRUD（D6）", () => {
 
     // 同一批次内重复同样 409
     const batchDup = captureError(() =>
-      addCourseItems(db, courseId, [
+      addCourseItems(db, TEST_TEACHER_ID, courseId, [
         { kind: "lecture", refId: "l-x" },
         { kind: "lecture", refId: "l-x" },
       ]),
@@ -256,14 +278,16 @@ describe("CourseService：目录条目 CRUD（D6）", () => {
     expect(
       (
         captureError(() =>
-          addCourseItems(db, courseId, [{ kind: "unit", refId: "ghost-u" }]),
+          addCourseItems(db, TEST_TEACHER_ID, courseId, [
+            { kind: "unit", refId: "ghost-u" },
+          ]),
         ) as HttpError
       ).code,
     ).toBe("UNIT_NOT_FOUND");
     expect(
       (
         captureError(() =>
-          addCourseItems(db, courseId, [
+          addCourseItems(db, TEST_TEACHER_ID, courseId, [
             { kind: "lecture", refId: deletedLectureId },
           ]),
         ) as HttpError
@@ -272,7 +296,7 @@ describe("CourseService：目录条目 CRUD（D6）", () => {
     expect(
       (
         captureError(() =>
-          addCourseItems(db, courseId, [
+          addCourseItems(db, TEST_TEACHER_ID, courseId, [
             { kind: "unit", refId: deletedUnitId },
           ]),
         ) as HttpError
@@ -282,7 +306,7 @@ describe("CourseService：目录条目 CRUD（D6）", () => {
     expect(
       (
         captureError(() =>
-          addCourseItems(db, courseId, [
+          addCourseItems(db, TEST_TEACHER_ID, courseId, [
             { kind: "section", title: "分节", refId: "x" },
           ]),
         ) as HttpError
@@ -291,21 +315,21 @@ describe("CourseService：目录条目 CRUD（D6）", () => {
     expect(
       (
         captureError(() =>
-          addCourseItems(db, courseId, [{ kind: "section" }]),
+          addCourseItems(db, TEST_TEACHER_ID, courseId, [{ kind: "section" }]),
         ) as HttpError
       ).status,
     ).toBe(422);
     expect(
       (
         captureError(() =>
-          addCourseItems(db, courseId, [{ kind: "lecture" }]),
+          addCourseItems(db, TEST_TEACHER_ID, courseId, [{ kind: "lecture" }]),
         ) as HttpError
       ).status,
     ).toBe(422);
     expect(
       (
         captureError(() =>
-          addCourseItems(db, courseId, [
+          addCourseItems(db, TEST_TEACHER_ID, courseId, [
             { kind: "lecture", refId: "l", title: "t" },
           ]),
         ) as HttpError
@@ -314,7 +338,7 @@ describe("CourseService：目录条目 CRUD（D6）", () => {
     expect(
       (
         captureError(() =>
-          addCourseItems(db, "no-such-course", [
+          addCourseItems(db, TEST_TEACHER_ID, "no-such-course", [
             { kind: "section", title: "s" },
           ]),
         ) as HttpError
@@ -325,10 +349,10 @@ describe("CourseService：目录条目 CRUD（D6）", () => {
   it("updateCourseItem：visible/publishAt/title；非分节改 title 422；不存在 404", () => {
     const db = createTestDb();
     const { courseId, lectureId } = seed(db);
-    const [sectionRow] = addCourseItems(db, courseId, [
+    const [sectionRow] = addCourseItems(db, TEST_TEACHER_ID, courseId, [
       { kind: "section", title: "旧标题" },
     ]);
-    const [lectureItemRow] = addCourseItems(db, courseId, [
+    const [lectureItemRow] = addCourseItems(db, TEST_TEACHER_ID, courseId, [
       { kind: "lecture", refId: lectureId },
     ]);
     if (sectionRow === undefined || lectureItemRow === undefined) {
@@ -337,10 +361,11 @@ describe("CourseService：目录条目 CRUD（D6）", () => {
     const section = sectionRow;
     const lectureItem = lectureItemRow;
 
-    expect(updateCourseItem(db, section.id, { title: "新标题" }).title).toBe(
-      "新标题",
-    );
-    const updated = updateCourseItem(db, lectureItem.id, {
+    expect(
+      updateCourseItem(db, TEST_TEACHER_ID, section.id, { title: "新标题" })
+        .title,
+    ).toBe("新标题");
+    const updated = updateCourseItem(db, TEST_TEACHER_ID, lectureItem.id, {
       visible: false,
       publishAt: "2026-10-01T00:00:00.000Z",
     });
@@ -348,20 +373,21 @@ describe("CourseService：目录条目 CRUD（D6）", () => {
     expect(updated.publishAt).toBe("2026-10-01T00:00:00.000Z");
     // 显式 null 取消定时
     expect(
-      updateCourseItem(db, lectureItem.id, { publishAt: null }).publishAt,
+      updateCourseItem(db, TEST_TEACHER_ID, lectureItem.id, { publishAt: null })
+        .publishAt,
     ).toBeNull();
 
     expect(
       (
         captureError(() =>
-          updateCourseItem(db, lectureItem.id, { title: "x" }),
+          updateCourseItem(db, TEST_TEACHER_ID, lectureItem.id, { title: "x" }),
         ) as HttpError
       ).status,
     ).toBe(422);
     expect(
       (
         captureError(() =>
-          updateCourseItem(db, "ghost", { visible: true }),
+          updateCourseItem(db, TEST_TEACHER_ID, "ghost", { visible: true }),
         ) as HttpError
       ).code,
     ).toBe("COURSE_ITEM_NOT_FOUND");
@@ -370,25 +396,29 @@ describe("CourseService：目录条目 CRUD（D6）", () => {
   it("deleteCourseItem 移除条目（资源不动）；不存在 404", () => {
     const db = createTestDb();
     const { courseId, unitId } = seed(db);
-    const [itemRow] = addCourseItems(db, courseId, [
+    const [itemRow] = addCourseItems(db, TEST_TEACHER_ID, courseId, [
       { kind: "unit", refId: unitId },
     ]);
     if (itemRow === undefined) throw new Error("条目插入失败");
     const item = itemRow;
-    deleteCourseItem(db, item.id);
+    deleteCourseItem(db, TEST_TEACHER_ID, item.id);
     expect(db.select().from(courseItems).all()).toEqual([]);
     expect(
       db.select().from(units).where(eq(units.id, unitId)).get(),
     ).toBeDefined();
     expect(
-      (captureError(() => deleteCourseItem(db, item.id)) as HttpError).code,
+      (
+        captureError(() =>
+          deleteCourseItem(db, TEST_TEACHER_ID, item.id),
+        ) as HttpError
+      ).code,
     ).toBe("COURSE_ITEM_NOT_FOUND");
   });
 
   it("reorderCourseItems：完整顺序重写持久化；缺/多 id 404", () => {
     const db = createTestDb();
     const { courseId, lectureId, unitId } = seed(db);
-    const rows = addCourseItems(db, courseId, [
+    const rows = addCourseItems(db, TEST_TEACHER_ID, courseId, [
       { kind: "lecture", refId: lectureId },
       { kind: "unit", refId: unitId },
       { kind: "section", title: "分节" },
@@ -399,7 +429,7 @@ describe("CourseService：目录条目 CRUD（D6）", () => {
     if (l === undefined || u === undefined || s === undefined) {
       throw new Error("条目插入失败");
     }
-    reorderCourseItems(db, courseId, [s.id, u.id, l.id]);
+    reorderCourseItems(db, TEST_TEACHER_ID, courseId, [s.id, u.id, l.id]);
     const after = db
       .select()
       .from(courseItems)
@@ -414,21 +444,26 @@ describe("CourseService：目录条目 CRUD（D6）", () => {
     expect(
       (
         captureError(() =>
-          reorderCourseItems(db, courseId, [s.id, u.id]),
+          reorderCourseItems(db, TEST_TEACHER_ID, courseId, [s.id, u.id]),
         ) as HttpError
       ).code,
     ).toBe("COURSE_ITEM_NOT_FOUND");
     expect(
       (
         captureError(() =>
-          reorderCourseItems(db, courseId, [s.id, u.id, l.id, "ghost"]),
+          reorderCourseItems(db, TEST_TEACHER_ID, courseId, [
+            s.id,
+            u.id,
+            l.id,
+            "ghost",
+          ]),
         ) as HttpError
       ).code,
     ).toBe("COURSE_ITEM_NOT_FOUND");
     expect(
       (
         captureError(() =>
-          reorderCourseItems(db, "ghost-course", []),
+          reorderCourseItems(db, TEST_TEACHER_ID, "ghost-course", []),
         ) as HttpError
       ).code,
     ).toBe("COURSE_NOT_FOUND");
@@ -439,8 +474,11 @@ describe("CourseService：课程成员（D7）", () => {
   it("添加/移出成员；重复添加幂等；学生不存在 404", () => {
     const db = createTestDb();
     const { courseId, studentId, archivedStudentId } = seed(db);
-    addCourseMembers(db, courseId, [studentId, archivedStudentId]);
-    addCourseMembers(db, courseId, [studentId]); // 幂等
+    addCourseMembers(db, TEST_TEACHER_ID, courseId, [
+      studentId,
+      archivedStudentId,
+    ]);
+    addCourseMembers(db, TEST_TEACHER_ID, courseId, [studentId]); // 幂等
     const memberRows = db
       .select()
       .from(courseStudents)
@@ -450,8 +488,8 @@ describe("CourseService：课程成员（D7）", () => {
       [studentId, archivedStudentId].sort(),
     );
 
-    removeCourseMembers(db, courseId, [studentId]);
-    removeCourseMembers(db, courseId, [studentId]); // 幂等
+    removeCourseMembers(db, TEST_TEACHER_ID, courseId, [studentId]);
+    removeCourseMembers(db, TEST_TEACHER_ID, courseId, [studentId]); // 幂等
     expect(
       db
         .select()
@@ -464,21 +502,21 @@ describe("CourseService：课程成员（D7）", () => {
     expect(
       (
         captureError(() =>
-          addCourseMembers(db, courseId, ["ghost-s"]),
+          addCourseMembers(db, TEST_TEACHER_ID, courseId, ["ghost-s"]),
         ) as HttpError
       ).code,
     ).toBe("STUDENT_NOT_FOUND");
     expect(
       (
         captureError(() =>
-          addCourseMembers(db, "ghost-course", []),
+          addCourseMembers(db, TEST_TEACHER_ID, "ghost-course", []),
         ) as HttpError
       ).code,
     ).toBe("COURSE_NOT_FOUND");
     expect(
       (
         captureError(() =>
-          removeCourseMembers(db, "ghost-course", []),
+          removeCourseMembers(db, TEST_TEACHER_ID, "ghost-course", []),
         ) as HttpError
       ).code,
     ).toBe("COURSE_NOT_FOUND");
@@ -495,6 +533,7 @@ describe("CourseService：listVisibleItems（D5 过滤）", () => {
     db.insert(lectures)
       .values({
         id: timedLectureId,
+        teacherId: TEST_TEACHER_ID,
         courseId: null,
         folderId: null,
         title: "定时讲",
@@ -587,7 +626,13 @@ describe("CourseService：listVisibleItems（D5 过滤）", () => {
     // 隐藏单元条目（与上面 order 1 同 refId 冲突——单独课程再放一个隐藏单元来覆盖该条件）
     const course2 = crypto.randomUUID();
     db.insert(courses)
-      .values({ id: course2, title: "初一下", order: 1, createdAt: T0 })
+      .values({
+        id: course2,
+        teacherId: TEST_TEACHER_ID,
+        title: "初一下",
+        order: 1,
+        createdAt: T0,
+      })
       .run();
     db.insert(courseItems)
       .values([
@@ -605,8 +650,8 @@ describe("CourseService：listVisibleItems（D5 过滤）", () => {
       ])
       .run();
 
-    addCourseMembers(db, courseId, [ctx.studentId]);
-    addCourseMembers(db, course2, [ctx.studentId]);
+    addCourseMembers(db, TEST_TEACHER_ID, courseId, [ctx.studentId]);
+    addCourseMembers(db, TEST_TEACHER_ID, course2, [ctx.studentId]);
 
     // 课程 1：可见 = 第一讲(0)、有题单元(1)、分节(5)；空题/软删/未到点被滤
     expect(
@@ -640,7 +685,7 @@ describe("CourseService：listVisibleItems（D5 过滤）", () => {
         createdAt: T0,
       })
       .run();
-    addCourseMembers(db, ctx.courseId, [ctx.studentId]);
+    addCourseMembers(db, TEST_TEACHER_ID, ctx.courseId, [ctx.studentId]);
 
     // 未到点 → 不可见；到点（注入未来时钟）→ 可见
     expect(listVisibleItems(db, ctx.studentId, ctx.courseId, NOW)).toEqual([]);
@@ -654,7 +699,7 @@ describe("CourseService：listVisibleItems（D5 过滤）", () => {
     ).toEqual(["第一讲"]);
 
     // 移出成员 → 空
-    removeCourseMembers(db, ctx.courseId, [ctx.studentId]);
+    removeCourseMembers(db, TEST_TEACHER_ID, ctx.courseId, [ctx.studentId]);
     expect(
       listVisibleItems(
         db,
@@ -669,7 +714,7 @@ describe("CourseService：listVisibleItems（D5 过滤）", () => {
       .set({ archivedAt: T0 })
       .where(eq(students.id, ctx.studentId))
       .run();
-    addCourseMembers(db, ctx.courseId, [ctx.studentId]);
+    addCourseMembers(db, TEST_TEACHER_ID, ctx.courseId, [ctx.studentId]);
     expect(
       listVisibleItems(
         db,
@@ -706,6 +751,7 @@ describe("CourseService：appendCourseItems（T2A.4 批量口径 + D8）", () =>
     // seed 中 u-live 的配套讲义就是 lectureId（units.lectureId）
     const result = appendCourseItems(
       db,
+      TEST_TEACHER_ID,
       courseId,
       [{ kind: "lecture", refId: lectureId }],
       { withCompanionUnits: true },
@@ -725,9 +771,12 @@ describe("CourseService：appendCourseItems（T2A.4 批量口径 + D8）", () =>
     const db = createTestDb();
     const { courseId, lectureId, unitId } = seed(db);
     // 先单独加入讲义（不带配套）
-    appendCourseItems(db, courseId, [{ kind: "lecture", refId: lectureId }]);
+    appendCourseItems(db, TEST_TEACHER_ID, courseId, [
+      { kind: "lecture", refId: lectureId },
+    ]);
     const result = appendCourseItems(
       db,
+      TEST_TEACHER_ID,
       courseId,
       [{ kind: "lecture", refId: lectureId }],
       { withCompanionUnits: true },
@@ -746,9 +795,12 @@ describe("CourseService：appendCourseItems（T2A.4 批量口径 + D8）", () =>
 
     // 配套单元已在课程：再讲一遍（先删讲义条目重加）→ 配套跳过、清单有据
     db.delete(courseItems).where(eq(courseItems.courseId, courseId)).run();
-    addCourseItems(db, courseId, [{ kind: "unit", refId: unitId }]);
+    addCourseItems(db, TEST_TEACHER_ID, courseId, [
+      { kind: "unit", refId: unitId },
+    ]);
     const second = appendCourseItems(
       db,
+      TEST_TEACHER_ID,
       courseId,
       [{ kind: "lecture", refId: lectureId }],
       { withCompanionUnits: true },
@@ -769,6 +821,7 @@ describe("CourseService：appendCourseItems（T2A.4 批量口径 + D8）", () =>
       .run();
     const result = appendCourseItems(
       db,
+      TEST_TEACHER_ID,
       courseId,
       [{ kind: "lecture", refId: lectureId }],
       { visible: false, withCompanionUnits: true },
@@ -782,7 +835,7 @@ describe("CourseService：教师端列表 / 详情 / hasAttempts（T2A.4）", ()
   it("courseHasAttempts：attempts.courseId 或 assignments.courseId 命中 → true（T2A.7 D4 口径）", () => {
     const db = createTestDb();
     const { courseId, lectureId, unitId, studentId } = seed(db);
-    addCourseItems(db, courseId, [
+    addCourseItems(db, TEST_TEACHER_ID, courseId, [
       { kind: "lecture", refId: lectureId },
       { kind: "unit", refId: unitId },
     ]);
@@ -795,6 +848,7 @@ describe("CourseService：教师端列表 / 详情 / hasAttempts（T2A.4）", ()
     db.insert(assignments)
       .values({
         id: assignmentId,
+        teacherId: TEST_TEACHER_ID,
         unitId: null,
         courseId,
         title: "按课程布置的作业",
@@ -808,6 +862,7 @@ describe("CourseService：教师端列表 / 详情 / hasAttempts（T2A.4）", ()
     db.insert(courses)
       .values({
         id: otherCourseId,
+        teacherId: TEST_TEACHER_ID,
         title: "另一门课",
         order: 1,
         createdAt: T0,
@@ -837,6 +892,7 @@ describe("CourseService：教师端列表 / 详情 / hasAttempts（T2A.4）", ()
     db.insert(units)
       .values({
         id: laterDeletedUnitId,
+        teacherId: TEST_TEACHER_ID,
         courseId: null,
         folderId: null,
         lectureId: null,
@@ -846,23 +902,30 @@ describe("CourseService：教师端列表 / 详情 / hasAttempts（T2A.4）", ()
         deletedAt: null,
       })
       .run();
-    addCourseMembers(db, courseId, [studentId]);
-    const inserted = addCourseItems(db, courseId, [
+    addCourseMembers(db, TEST_TEACHER_ID, courseId, [studentId]);
+    const inserted = addCourseItems(db, TEST_TEACHER_ID, courseId, [
       { kind: "section", title: "第一周" },
       { kind: "lecture", refId: lectureId },
       { kind: "unit", refId: unitId },
       { kind: "unit", refId: emptyUnitId },
       { kind: "unit", refId: laterDeletedUnitId },
     ]);
-    updateCourseItem(db, inserted[1]?.id as string, {
+    updateCourseItem(db, TEST_TEACHER_ID, inserted[1]?.id as string, {
       publishAt: "2027-01-01T00:00:00.000Z",
     });
-    updateCourseItem(db, inserted[2]?.id as string, { visible: false });
+    updateCourseItem(db, TEST_TEACHER_ID, inserted[2]?.id as string, {
+      visible: false,
+    });
     db.update(units)
       .set({ deletedAt: T0 })
       .where(eq(units.id, laterDeletedUnitId))
       .run();
-    const detail = getCourseDetail(db, courseId, new Date(NOW));
+    const detail = getCourseDetail(
+      db,
+      TEST_TEACHER_ID,
+      courseId,
+      new Date(NOW),
+    );
     expect(detail.items.map((item) => [item.kind, item.status])).toEqual([
       ["section", "visible"],
       ["lecture", "scheduled"],
@@ -877,16 +940,18 @@ describe("CourseService：教师端列表 / 详情 / hasAttempts（T2A.4）", ()
   it("listCoursesForTeacher：计数与归档筛选；visibleItemCount 不计隐藏与已删资源", () => {
     const db = createTestDb();
     const { courseId, lectureId, unitId, studentId } = seed(db);
-    addCourseMembers(db, courseId, [studentId]);
-    const inserted = addCourseItems(db, courseId, [
+    addCourseMembers(db, TEST_TEACHER_ID, courseId, [studentId]);
+    const inserted = addCourseItems(db, TEST_TEACHER_ID, courseId, [
       { kind: "lecture", refId: lectureId },
       { kind: "unit", refId: unitId },
       { kind: "section", title: "第一周" },
     ]);
-    updateCourseItem(db, inserted[1]?.id as string, { visible: false });
-    const summary = listCoursesForTeacher(db, { archived: false }).find(
-      (row) => row.id === courseId,
-    );
+    updateCourseItem(db, TEST_TEACHER_ID, inserted[1]?.id as string, {
+      visible: false,
+    });
+    const summary = listCoursesForTeacher(db, TEST_TEACHER_ID, {
+      archived: false,
+    }).find((row) => row.id === courseId);
     expect(summary?.memberCount).toBe(1);
     expect(summary?.memberIds).toEqual([studentId]);
     expect(summary?.itemCount).toBe(3);
@@ -899,12 +964,12 @@ describe("CourseService：教师端列表 / 详情 / hasAttempts（T2A.4）", ()
       .where(eq(courses.id, courseId))
       .run();
     expect(
-      listCoursesForTeacher(db, { archived: false }).find(
+      listCoursesForTeacher(db, TEST_TEACHER_ID, { archived: false }).find(
         (row) => row.id === courseId,
       ),
     ).toBeUndefined();
     expect(
-      listCoursesForTeacher(db, { archived: true }).find(
+      listCoursesForTeacher(db, TEST_TEACHER_ID, { archived: true }).find(
         (row) => row.id === courseId,
       )?.archived,
     ).toBe(true);

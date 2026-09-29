@@ -10,7 +10,7 @@ import {
   students,
   units,
 } from "../db/schema.ts";
-import { createTestDb } from "../db/test-utils.ts";
+import { createTestDb, TEST_TEACHER_ID } from "../db/test-utils.ts";
 import { HttpError } from "../lib/http-error.ts";
 import {
   getStudentCourseDetail,
@@ -108,6 +108,7 @@ function seed(db: Db): {
     .values([
       {
         id: courseAId,
+        teacherId: TEST_TEACHER_ID,
         title: "初一上",
         order: 0,
         description: "有理数与数轴",
@@ -116,6 +117,7 @@ function seed(db: Db): {
       },
       {
         id: courseBId,
+        teacherId: TEST_TEACHER_ID,
         title: "初一下",
         order: 1,
         archivedAt: null,
@@ -123,6 +125,7 @@ function seed(db: Db): {
       },
       {
         id: archivedCourseId,
+        teacherId: TEST_TEACHER_ID,
         title: "已归档课",
         order: 2,
         archivedAt: T0,
@@ -137,6 +140,7 @@ function seed(db: Db): {
     .values([
       {
         id: lectureL1Id,
+        teacherId: TEST_TEACHER_ID,
         courseId: null,
         folderId: null,
         title: "第1讲 有理数",
@@ -147,6 +151,7 @@ function seed(db: Db): {
       },
       {
         id: lectureL2Id,
+        teacherId: TEST_TEACHER_ID,
         courseId: null,
         folderId: null,
         title: "第2讲 数轴",
@@ -164,6 +169,7 @@ function seed(db: Db): {
     .values([
       {
         id: unitU1Id,
+        teacherId: TEST_TEACHER_ID,
         courseId: null,
         folderId: null,
         lectureId: lectureL1Id,
@@ -175,6 +181,7 @@ function seed(db: Db): {
       },
       {
         id: unitU2Id,
+        teacherId: TEST_TEACHER_ID,
         courseId: null,
         folderId: null,
         lectureId: lectureL1Id,
@@ -190,6 +197,7 @@ function seed(db: Db): {
     .values([
       {
         id: "sc-q1",
+        teacherId: TEST_TEACHER_ID,
         unitId: unitU1Id,
         order: 0,
         type: "judge",
@@ -203,6 +211,7 @@ function seed(db: Db): {
       },
       {
         id: "sc-q2",
+        teacherId: TEST_TEACHER_ID,
         unitId: unitU1Id,
         order: 1,
         type: "judge",
@@ -216,6 +225,7 @@ function seed(db: Db): {
       },
       {
         id: "sc-q3",
+        teacherId: TEST_TEACHER_ID,
         unitId: unitU1Id,
         order: 2,
         type: "judge",
@@ -230,6 +240,7 @@ function seed(db: Db): {
       {
         // U2 的存活题（D5 条件 4：单元至少 1 道未删题才可见——初一下的可见配套）
         id: "sc-q4",
+        teacherId: TEST_TEACHER_ID,
         unitId: unitU2Id,
         order: 0,
         type: "judge",
@@ -297,6 +308,7 @@ function seed(db: Db): {
     .values([
       {
         id: memberId,
+        teacherId: TEST_TEACHER_ID,
         displayName: "成员小张",
         loginName: "成员小张",
         linkToken: "tok-member",
@@ -307,6 +319,7 @@ function seed(db: Db): {
       },
       {
         id: outsiderId,
+        teacherId: TEST_TEACHER_ID,
         displayName: "非成员小王",
         loginName: "非成员小王",
         linkToken: "tok-outsider",
@@ -317,6 +330,7 @@ function seed(db: Db): {
       },
       {
         id: archivedStudentId,
+        teacherId: TEST_TEACHER_ID,
         displayName: "归档小李",
         loginName: "归档小李",
         linkToken: "tok-archived",
@@ -495,6 +509,7 @@ describe("listStudentLectures（可见讲义双视图）", () => {
     db.insert(lectures)
       .values({
         id: orphanId,
+        teacherId: TEST_TEACHER_ID,
         courseId: null,
         folderId: null,
         title: "孤儿讲义",

@@ -9,8 +9,9 @@ import { teachers } from "./schema";
  * - T2B.3（已完成）：资源库与导入域（library-service / content-service 的
  *   导入、题目、讲义、排序链路 / import-actions / reparse）已全部改传会话教师，
  *   不再调用本函数；
- * - T2B.4（待做）：课程与作业域（assignment-service 等）；
- * - T2B.5（待做）：学生域（student-service）。
+ * - T2B.4（已完成）：课程与作业域（course-service 全部接口、content-service
+ *   的课程 CRUD、assignment-service 教师侧）已全部改传会话教师，不再调用本函数；
+ * - T2B.5（待做）：学生域（student-service）——本函数当前唯一调用点。
  * 在此之前相关链路仍处于单教师等价状态，用本函数拿 teacherId。
  *
  * 取「createdAt 最早、同刻按 id」的一行：正常库只有一位教师（T2B.1 回填保证

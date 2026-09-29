@@ -891,7 +891,7 @@ describe("T2B.1 单教师等价：创建入口写 teacherId（D9）", () => {
   it("文件夹/课程/学生/讲义/单元/题目/导入留档/作业的创建行 teacherId 均为唯一教师", async () => {
     const db = createTestDb();
     const folder = createFolder(db, TEST_TEACHER_ID, { name: "第一章" });
-    const course = createCourse(db, { title: "初一上" });
+    const course = createCourse(db, TEST_TEACHER_ID, { title: "初一上" });
     const student = await createStudent(db, {
       displayName: "张三",
       loginName: "张三",
@@ -900,7 +900,7 @@ describe("T2B.1 单教师等价：创建入口写 teacherId（D9）", () => {
       filename: "练习.md",
       markdown: SCOPED_MD,
     });
-    const assignment = createAssignment(db, {
+    const assignment = createAssignment(db, TEST_TEACHER_ID, {
       unitIds: ["u1"],
       studentIds: [student.student.id],
       title: "作业一",
