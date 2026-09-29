@@ -1365,10 +1365,10 @@ export function updateCourse(
 
 /**
  * 课程删除（DELETE /api/teacher/courses/:id，D4，T2A.4 起语义升级）：
- * 仅在该课程**没有任何作答记录**时允许（判定见 CourseService.courseHasAttempts——
- * 目录条目引用单元的全部 attempts + 旧列兜底，保守口径），否则 409
- * COURSE_HAS_ATTEMPTS（提示改用归档）。删除不触碰资源库内容（D1 引用制），
- * 目录条目与成员随课程一并清理，成功后资源库原样保留。
+ * 仅在该课程**没有作答记录且没有按课程布置的作业**时允许（判定见
+ * CourseService.courseHasAttempts——attempts.courseId OR assignments.courseId，
+ * 保守口径），否则 409 COURSE_HAS_ATTEMPTS（提示改用归档）。删除不触碰
+ * 资源库内容（D1 引用制），目录条目与成员随课程一并清理，成功后资源库原样保留。
  */
 export function deleteCourse(db: Db, id: string): void {
   const row = db
@@ -1383,7 +1383,7 @@ export function deleteCourse(db: Db, id: string): void {
     throw new HttpError(
       409,
       "COURSE_HAS_ATTEMPTS",
-      "该课程下的练习已有作答记录，不能删除；请改用归档（归档后学生看不到，数据保留）",
+      "该课程已有作答记录或布置的作业，不能删除；请改用归档（归档后学生看不到，数据保留）",
     );
   }
   db.transaction((tx) => {

@@ -86,7 +86,22 @@ describe("入口进程优雅退出", () => {
       if (child.exitCode === null && !child.killed) {
         child.kill("SIGKILL");
       }
-      rmSync(dataDir, { recursive: true, force: true });
+      // Windows 下子进程退出后句柄可能延迟释放（杀毒/索引器扫描临时目录），
+      // rmSync 立即删除会 EPERM——重试几轮，仍失败则容忍（测试本体已过，
+      // 临时目录留给系统清理，不让清理竞态打挂用例）
+      for (let i = 0; ; i++) {
+        try {
+          rmSync(dataDir, { recursive: true, force: true });
+          break;
+        } catch (error) {
+          if (i >= 9 || (error as NodeJS.ErrnoException).code !== "EPERM") {
+            break;
+          }
+          await new Promise((resolve) => {
+            setTimeout(resolve, 200);
+          });
+        }
+      }
     }
   }, 60_000); // tsx 冷启动 + 迁移 + 信号退出，整体放宽
 });

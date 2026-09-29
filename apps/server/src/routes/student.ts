@@ -194,8 +194,9 @@ export function createStudentRoutes(
           ),
         });
       })
-      // T2A.6：通用取卷（两种来源共用；课程来源每次校验可见性与成员资格，
-      // D22——course draft 失去访问权 403/404，前端据此按终态停发）
+      // T2A.6：通用取卷（两种来源共用；T5 鉴权口径——assignment 来源归属即
+      // 权限，被移出/作业软删后已建作答仍可取卷；course 来源每次校验可见性与
+      // 成员资格，D22——course draft 失去访问权 403/404，前端据此按终态停发）
       .get("/attempts/:id/paper", (c) => {
         return c.json({
           ok: true,

@@ -101,7 +101,7 @@ export function useUpdateCourse(courseId: string) {
   });
 }
 
-/** 删除课程（有作答 409 COURSE_HAS_ATTEMPTS，由调用方 catch 提示改用归档） */
+/** 删除课程（有作答或作业 409 COURSE_HAS_ATTEMPTS，由调用方 catch 提示改用归档） */
 export function useDeleteCourse() {
   const invalidate = useInvalidateCourses();
   return useMutation({

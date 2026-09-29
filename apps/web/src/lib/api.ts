@@ -65,7 +65,6 @@ import {
   type StudentListData,
   type StudentLoginRequest,
   type StudentMeData,
-  type StudentPaperData,
   type StudentResetLinkData,
   type StudentResetPasswordData,
   type StudentSummary,
@@ -358,7 +357,7 @@ export function updateCourseApi(
   return callApi(() => api.api.teacher.courses[":id"].$patch(args));
 }
 
-/** 删除课程（有作答记录时后端 409 COURSE_HAS_ATTEMPTS，D4：提示改用归档） */
+/** 删除课程（有作答记录或按课程布置的作业时后端 409 COURSE_HAS_ATTEMPTS，D4：提示改用归档） */
 export function deleteCourseApi(id: string): Promise<null> {
   return callApi(() =>
     api.api.teacher.courses[":id"].$delete({ param: { id } }),
@@ -680,15 +679,6 @@ export function startCourseAttemptApi(
     api.api.student.courses[":id"].units[":unitId"].attempts.$post({
       param: { id: courseId, unitId },
     }),
-  );
-}
-
-/** 通用取卷（两种来源共用；课程来源每次校验可见性与成员资格） */
-export function fetchAttemptPaperApi(
-  attemptId: string,
-): Promise<StudentPaperData> {
-  return callApi(() =>
-    api.api.student.attempts[":id"].paper.$get({ param: { id: attemptId } }),
   );
 }
 

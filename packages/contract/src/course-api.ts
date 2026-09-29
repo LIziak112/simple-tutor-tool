@@ -55,7 +55,8 @@ export const courseDescriptionSchema = z
  *   「无题目」单元同样计入，学生侧真实可见数以 student-view 为准）；
  * - memberIds：成员学生 id 集合（学生页「所在课程」列 / 「管理课程」的数据源；
  *   一对一辅导量级小，直接随列表下发避免 N 次详情请求）；
- * - hasAttempts：课程是否关联作答记录（D4 删除条件，前端禁用删除按钮用）。
+ * - hasAttempts：是否有作答记录或按课程布置的作业（D4 删除条件，前端禁用删除
+ *   按钮用；只布置了作业、尚无作答的课程也为 true——删除会连带影响作业）。
  */
 export const courseSummarySchema = z.object({
   id: z.uuid(),
@@ -76,7 +77,10 @@ export const courseSummarySchema = z.object({
   visibleItemCount: z.number().int().min(0),
   /** 成员学生 id 列表（与 memberCount 同源） */
   memberIds: z.array(z.uuid()),
-  /** 是否关联作答记录（D4：true 时删除按钮禁用并提示改用归档） */
+  /**
+   * 是否有作答记录或按课程布置的作业（D4：true 时删除按钮禁用并提示改用归档；
+   * 只布置了作业、尚无作答的课程也为 true——删除会连带影响作业）
+   */
   hasAttempts: z.boolean(),
   createdAt: z.string().min(1),
 });
@@ -145,7 +149,7 @@ export const courseDetailDataSchema = z.object({
   archived: z.boolean(),
   archivedAt: z.string().nullable(),
   order: z.number().int().min(0),
-  /** 是否关联作答记录（D4 删除条件） */
+  /** 是否有作答记录或按课程布置的作业（D4 删除条件；口径同列表 hasAttempts） */
   hasAttempts: z.boolean(),
   items: z.array(courseDetailItemSchema),
   members: z.array(courseMemberSchema),
@@ -347,7 +351,8 @@ export const courseProgressDataSchema = z.object({
  * - DUPLICATE_COURSE_ITEM：同一资源重复加入同一课程（409；批量添加接口为跳过口径，
  *   该码保留给单条/其他添加路径，见 D6）；
  * - STUDENT_NOT_FOUND：成员接口的学生 id 不存在（404）；
- * - COURSE_HAS_ATTEMPTS：删除被拒——课程关联作答记录（409，D4，提示改用归档）。
+ * - COURSE_HAS_ATTEMPTS：删除被拒——课程有作答记录或按课程布置的作业
+ *   （409，D4，提示改用归档）。
  */
 export const courseErrorCodeSchema = z.enum([
   "COURSE_NOT_FOUND",

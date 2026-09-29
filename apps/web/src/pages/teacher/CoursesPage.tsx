@@ -32,8 +32,8 @@ import { formatRelativeTime } from "@/lib/time";
 
 /**
  * /t/courses 课程列表页（T2A.4）：课程卡片（名称、成员数、条目数、可见条目数）、
- * 新建、归档筛选（默认未归档，可切已归档）、归档/恢复、删除（D4：有作答时
- * 服务端 409 COURSE_HAS_ATTEMPTS，弹层先说清影响）。三态齐全，触控 ≥44px。
+ * 新建、归档筛选（默认未归档，可切已归档）、归档/恢复、删除（D4：有作答或
+ * 作业时服务端 409 COURSE_HAS_ATTEMPTS，弹层先说清影响）。三态齐全，触控 ≥44px。
  */
 
 export function CoursesPage() {
@@ -196,7 +196,7 @@ function CourseCard({ course }: { course: CourseSummary }) {
           )}
           {course.hasAttempts && (
             <span className="rounded-md bg-primary/10 px-2 py-0.5 text-xs text-primary">
-              有作答记录
+              有作答或作业
             </span>
           )}
         </span>
@@ -282,7 +282,7 @@ function CourseCard({ course }: { course: CourseSummary }) {
                 setConfirmDelete(false);
                 setActionError(
                   err instanceof ApiError && err.code === "COURSE_HAS_ATTEMPTS"
-                    ? "该课程下的练习已有作答记录，不能删除；请改用归档"
+                    ? "该课程已有作答记录或布置的作业，不能删除；请改用归档"
                     : err instanceof Error
                       ? err.message
                       : "删除失败，请稍后重试",
@@ -324,7 +324,7 @@ function DeleteCourseDialog({
             role="alert"
             className="rounded-lg bg-muted px-3 py-2 text-sm text-destructive"
           >
-            该课程下的练习已有作答记录，删除会被拒绝——请改用「归档」（学生看不到，数据保留）。
+            该课程已有作答记录或布置的作业，删除会被拒绝——请改用「归档」（学生看不到，数据保留）。
           </p>
         )}
         <DialogFooter>

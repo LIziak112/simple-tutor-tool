@@ -553,18 +553,23 @@ export function updateAssignment(
       );
     }
     if (request.confirmStarted !== true) {
-      const started = removeIds.filter(
-        (studentId) =>
-          db
-            .select({ id: attempts.id })
-            .from(attempts)
-            .where(
-              and(
-                eq(attempts.assignmentId, id),
-                eq(attempts.studentId, studentId),
-              ),
-            )
-            .get() !== undefined,
+      // removeIds 在上文守卫保证非空（空数组时为 undefined），inArray 安全；
+      // 一条查询取「已开始集合」（该作业存在 attempt 的学生），避免逐学生 N+1
+      const startedSet = new Set(
+        db
+          .select({ studentId: attempts.studentId })
+          .from(attempts)
+          .where(
+            and(
+              eq(attempts.assignmentId, id),
+              inArray(attempts.studentId, [...removeIds]),
+            ),
+          )
+          .all()
+          .map((row) => row.studentId),
+      );
+      const started = removeIds.filter((studentId) =>
+        startedSet.has(studentId),
       );
       if (started.length > 0) {
         const names = studentNamesById(db);
@@ -934,15 +939,27 @@ export function listStudentAssignments(
 
 // ---------- 学生端：试卷（T2.4；T2A.7 分组化） ----------
 
+/**
+ * 解析 JSON 列文本为 unknown：列由导入链路写入，正常必为合法 JSON；
+ * 坏数据（SyntaxError）按缺省处理，不打挂学生端接口。
+ */
+function parseJsonColumn(jsonText: string): unknown {
+  try {
+    return JSON.parse(jsonText) as unknown;
+  } catch {
+    return null;
+  }
+}
+
 /** 解析 hintsJson（string[]）为提示数量；只取长度，内容（教师侧）不随本函数外流 */
 function hintCountOf(hintsJson: string): number {
-  const parsed: unknown = JSON.parse(hintsJson);
+  const parsed = parseJsonColumn(hintsJson);
   return Array.isArray(parsed) ? parsed.length : 0;
 }
 
 /** 解析 optionsJson（QuestionOption[]）为公开选项文本数组——丢弃 correct 正确项标记 */
 function optionTexts(optionsJson: string): string[] {
-  const parsed: unknown = JSON.parse(optionsJson);
+  const parsed = parseJsonColumn(optionsJson);
   if (!Array.isArray(parsed)) return [];
   const texts: string[] = [];
   for (const item of parsed) {

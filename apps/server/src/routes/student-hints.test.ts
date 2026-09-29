@@ -27,7 +27,9 @@ import { assertNoLeak } from "../test/assert-no-leak.ts";
  *   questions.hintsJson 取原文比对「未解锁条目的内容文本绝不出现」；
  * - 去重口径：重复请求同一条 hintsUsed 不涨；逐条解锁后 hintsUsed = hintCount；
  * - 方案 A：草稿期首次请求提示即建 responses 行（answerJson=null，不覆盖已存答案）；
- * - hint_open 事件服务端直记（payload 只含 index，绝无提示内容）。
+ * - hint_open 事件服务端直记（payload 只含 index，绝无提示内容）；
+ * - 教师删减提示后的收敛：历史越界序号剔除（hintsRemaining 不为负，库内集合自愈）；
+ * - 软删题的已解锁键不残留（草稿视图 hintsOpened 与题目集合同口径）。
  * 夹具用 samples/v2/练习样例.md：练习四-8（find-error）有 2 条提示（泄露矩阵主角），
  * 练习四-2/4/7 各 1 条（未请求集合），练习四-1 无提示。
  */
@@ -419,6 +421,111 @@ describe("验收项 2：交卷后仍可查看", () => {
       .find((r) => r.questionId === Q.findError);
     expect(row?.hintsUsed).toBe(2);
     expect(JSON.parse(row?.hintsOpenedJson ?? "[]")).toEqual([0, 1]);
+  });
+});
+
+describe("教师删减提示后的收敛（历史越界序号自愈）", () => {
+  it("解锁全部提示后教师删减为 1 条：再请求合法 index → 200 且契约可解析（hintsRemaining ≥ 0），库内集合收敛", async () => {
+    const { app, db, teacherCookie, aCookie, attemptId } = await makeHintsApp();
+    const hints = hintsInDb(db, Q.findError);
+    expect(hints.length).toBe(2); // 前置：样例 find-error 题有 2 条提示
+
+    // 草稿期解锁全部 2 条（responses 行 hintsUsed=2、集合 [0,1]）
+    await postHint(app, aCookie, attemptId, Q.findError, 0);
+    await postHint(app, aCookie, attemptId, Q.findError, 1);
+    const rowBefore = db
+      .select()
+      .from(responses)
+      .all()
+      .find((r) => r.questionId === Q.findError);
+    expect(rowBefore?.hintsUsed).toBe(2);
+
+    // 教师编辑该题删掉第二条提示（真实教师路径：取详情 → 改 sourceMd → PUT 重新解析）
+    const detailRes = await app.request(
+      `/api/teacher/questions/${Q.findError}`,
+      { headers: { cookie: teacherCookie } },
+    );
+    expect(detailRes.status).toBe(200);
+    const sourceMd = (
+      (await detailRes.json()) as { data: { sourceMd: string } }
+    ).data.sourceMd;
+    // 样例里该题的提示容器是 3 冒号围栏（:::hint）；正则对 3~4 冒号都兼容
+    const secondHintBlock =
+      /:{3,}hint\s*逐项检查每一步的符号与绝对值是怎样得来的。\s*:{3,}/u;
+    expect(secondHintBlock.test(sourceMd)).toBe(true); // 前置：确实定位到第二条提示块
+    const put = await app.request(`/api/teacher/questions/${Q.findError}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", cookie: teacherCookie },
+      body: JSON.stringify({
+        sourceMd: sourceMd.replace(secondHintBlock, ""),
+      }),
+    });
+    expect(put.status).toBe(200);
+    const hintsAfter = hintsInDb(db, Q.findError);
+    expect(hintsAfter.length).toBe(1); // 教师删减生效
+
+    // 学生再请求合法 index=0（能过越界检查）：修复前历史集合 [0,1] 直接计数，
+    // hintsUsed=2 > hintCount=1、hintsRemaining=-1，违反契约 min(0) 使前端解析失败
+    const res = await postHint(app, aCookie, attemptId, Q.findError, 0);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as unknown;
+    expect(hintOpenOkSchema.safeParse(body).success).toBe(true); // 契约层锁死：不再出现负数
+    const data = (
+      body as {
+        data: {
+          hint: string;
+          hintCount: number;
+          hintsUsed: number;
+          hintsRemaining: number;
+        };
+      }
+    ).data;
+    expect(data.hint).toBe(hintsAfter[0]);
+    expect(data.hintCount).toBe(1);
+    expect(data.hintsUsed).toBeLessThanOrEqual(data.hintCount);
+    expect(data.hintsRemaining).toBeGreaterThanOrEqual(0);
+    expect(data.hintsUsed).toBe(1); // 收敛后只剩序号 0
+    expect(data.hintsRemaining).toBe(0);
+
+    // 库内自愈：越界序号 1 被剔除，回写收敛后的合法集合
+    const rowAfter = db
+      .select()
+      .from(responses)
+      .all()
+      .find((r) => r.questionId === Q.findError);
+    expect(rowAfter?.hintsUsed).toBe(1);
+    expect(JSON.parse(rowAfter?.hintsOpenedJson ?? "[]")).toEqual([0]);
+  });
+});
+
+describe("软删题的提示回显过滤", () => {
+  it("软删已解锁过提示的题 → 草稿视图 hintsOpened 不含该题（无孤儿键）；存留题回显不受影响", async () => {
+    const { app, db, teacherCookie, aCookie, attemptId } = await makeHintsApp();
+    // 两题各解锁第 0 条：findError（将被软删）与 choice（存留对照）
+    await postHint(app, aCookie, attemptId, Q.findError, 0);
+    await postHint(app, aCookie, attemptId, Q.choice, 0);
+    const choiceHint = hintsInDb(db, Q.choice)[0] ?? "";
+
+    // 教师软删 findError（真实教师路径 DELETE → questions.deletedAt 置位）
+    const del = await app.request(`/api/teacher/questions/${Q.findError}`, {
+      method: "DELETE",
+      headers: { cookie: teacherCookie },
+    });
+    expect(del.status).toBe(200);
+
+    const res = await app.request(`/api/student/attempts/${attemptId}`, {
+      headers: { cookie: aCookie },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as unknown;
+    expect(attemptDraftOkSchema.safeParse(body).success).toBe(true);
+    const draft = (body as { data: AttemptDraftData }).data;
+    // 软删题不回显：与 units[].questions 已不含该题保持一致（否则是孤儿键）
+    expect(draft.hintsOpened[Q.findError]).toBeUndefined();
+    // 对照：未软删的存留题回显不受影响
+    expect(draft.hintsOpened[Q.choice]).toEqual([
+      { index: 0, text: choiceHint },
+    ]);
   });
 });
 

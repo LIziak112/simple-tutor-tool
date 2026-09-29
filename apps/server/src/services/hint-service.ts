@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { HintOpenData, HintOpenedEntry } from "@tutor/contract";
 import { questionSchema } from "@tutor/contract";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
   type Attempt,
@@ -63,7 +63,8 @@ export function hintsOfJson(hintsJson: string | null): string[] {
 
 /**
  * responses.hintsOpenedJson → 已解锁序号数组（升序去重；坏数据按空处理）。
- * 只收非负整数，越界序号（题目提示变少的罕见编辑场景）在展示层过滤。
+ * 只收非负整数，越界序号（题目提示变少的罕见编辑场景）在展示层过滤；
+ * openHint 写入前也会收敛（见该函数），存量脏数据随之自愈。
  */
 export function openedIndexesOf(hintsOpenedJson: string | null): number[] {
   if (hintsOpenedJson === null) return [];
@@ -112,6 +113,11 @@ function hintsOfAttempt(
       jsonOf(responseRow.questionSnapshotJson),
     );
     if (parsed.success) return parsed.data.hints;
+    // 可观测性留痕（不改变回退行为）：快照存在但解析失败属异常数据，
+    // 服务层拿不到 app 层 pino 实例，用统一前缀 console.warn 便于检索
+    console.warn(
+      `【数据异常】hint-service：responses.questionSnapshotJson 解析失败，回退当前题行（attemptId=${attempt.id}，questionId=${questionId}）`,
+    );
   }
   const questionRow = db
     .select({ hintsJson: questions.hintsJson })
@@ -163,7 +169,12 @@ export function openHint(
       ),
     )
     .get();
-  const opened = openedIndexesOf(existing?.hintsOpenedJson ?? null);
+  const opened = openedIndexesOf(existing?.hintsOpenedJson ?? null).filter(
+    // 口径：教师删减提示后，历史越界序号收敛——不参与去重与计数，回写收敛后的
+    // 集合（存量脏数据自愈）。否则 hintsUsed 可能 > hintCount、hintsRemaining
+    // 为负，违反契约 hintOpenDataSchema 的 min(0)，前端解析会直接失败
+    (i) => i < hints.length,
+  );
   const nextOpened = opened.includes(index)
     ? opened
     : [...opened, index].sort((a, b) => a - b);
@@ -234,7 +245,14 @@ export function draftHintsOpenedView(
       : db
           .select({ id: questions.id, hintsJson: questions.hintsJson })
           .from(questions)
-          .where(inArray(questions.unitId, unitIds))
+          // 软删题过滤（与 attemptQuestionRows 同口径）：软删题不进 hintsByQuestion，
+          // 其已解锁键不残留在草稿视图（units[].questions 已不含该题，避免孤儿键）
+          .where(
+            and(
+              inArray(questions.unitId, unitIds),
+              isNull(questions.deletedAt),
+            ),
+          )
           .all();
   const hintsByQuestion = new Map(
     questionRows.map((row) => [row.id, hintsOfJson(row.hintsJson)]),
@@ -244,7 +262,7 @@ export function draftHintsOpenedView(
     const opened = openedIndexesOf(row.hintsOpenedJson);
     if (opened.length === 0) continue;
     const hints = hintsByQuestion.get(row.questionId);
-    if (hints === undefined) continue; // 已移出单元的题不回显（与草稿清理口径一致）
+    if (hints === undefined) continue; // 已移出单元或已软删的题不回显（与草稿清理口径一致）
     const entries = openedEntriesOf(opened, hints);
     if (entries.length > 0) result[row.questionId] = entries;
   }

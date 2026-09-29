@@ -283,7 +283,7 @@ function DeleteCourseButton({
       </Button>
       {hasAttempts && (
         <p className="text-xs text-muted-foreground">
-          该课程下的练习已有作答记录，删除不可用——请改用「归档」。
+          该课程已有作答记录或布置的作业，删除不可用——请改用「归档」。
         </p>
       )}
       {confirmOpen && (
@@ -321,7 +321,7 @@ function DeleteCourseButton({
                       onError(
                         err instanceof ApiError &&
                           err.code === "COURSE_HAS_ATTEMPTS"
-                          ? "该课程下的练习已有作答记录，不能删除；请改用归档"
+                          ? "该课程已有作答记录或布置的作业，不能删除；请改用归档"
                           : err instanceof Error
                             ? err.message
                             : "删除失败，请稍后重试",
