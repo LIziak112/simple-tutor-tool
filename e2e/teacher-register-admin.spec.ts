@@ -1,6 +1,10 @@
-import type { APIRequestContext, Page } from "@playwright/test";
 import { expect, test } from "@playwright/test";
-import { teacherApiLogin, uniqueSuffix } from "./helpers";
+import {
+  isolateRegisterRateLimit,
+  registerTeacherViaUi,
+  teacherApiLogin,
+  uniqueSuffix,
+} from "./helpers";
 
 /**
  * T2B.6 教师自助注册与管理端用例：
@@ -12,40 +16,14 @@ import { teacherApiLogin, uniqueSuffix } from "./helpers";
  *    「等开关开放 + 重试」吸收该竞态，结束后恢复开关）。
  *
  * 限流注意：注册接口按 IP 计数（同 IP 1 小时 5 次，经 vite 代理后 IP 同为
- * unknown）——页面请求经 page.route 注入项目专属 X-Forwarded-For，
- * 两个浏览器项目各自拥有独立额度，重试不共享计数。
+ * unknown）——页面请求经 page.route 注入项目专属 X-Forwarded-For（本文件用
+ * 10.239.1.x 段），两个浏览器项目各自拥有独立额度，重试不共享计数。
+ * T2B.8 起 multi-teacher-full-chain.spec.ts 的注册用例用 10.239.3.x 段，
+ * 与本文件互不占额。
  */
 
 /** 注册用教师密码（契约 ≥8 字符） */
 const YI_PASSWORD = "e2e-yi-pass-88";
-
-/**
- * 等待注册开关为开放态（另一项目可能正在短暂关闭它做关闭态验证；
- * 最长 ~15 秒，期间每 500ms 轮询一次公开 status 接口）。
- */
-async function waitForRegistrationOpen(
-  request: APIRequestContext,
-): Promise<void> {
-  for (let i = 0; i < 30; i++) {
-    const res = await request.get("/api/public/teacher/status");
-    const body = (await res.json()) as { data: { registrationOpen: boolean } };
-    if (body.data.registrationOpen) return;
-    await new Promise((resolve) => setTimeout(resolve, 500));
-  }
-  throw new Error("等待注册开关开放超时（另一用例可能未恢复开关）");
-}
-
-/**
- * 给页面的注册请求注入项目专属 X-Forwarded-For（限流按 IP 计数，
- * 默认经代理后两项目同为 unknown 会共享 5 次/小时额度，重试时可能被误锁）。
- */
-async function isolateRegisterRateLimit(page: Page, ip: string): Promise<void> {
-  await page.route("**/api/public/teacher/register", async (route) => {
-    const headers = { ...(await route.request().allHeaders()) };
-    headers["x-forwarded-for"] = ip;
-    await route.continue({ headers });
-  });
-}
 
 test.describe("T2B.6 教师自助注册", () => {
   test("乙自助注册 → 自动登录 → 空资源库/空课程/空学生（与甲隔离）", async ({
@@ -61,43 +39,8 @@ test.describe("T2B.6 教师自助注册", () => {
     );
     const loginName = `e2e乙-${browserName}-${uniqueSuffix()}`;
 
-    // 开关短暂被关（另一项目的关闭态用例）时重试：先等开放，表单/提交撞上
-    // 关闭窗口（页面显示关闭提示）也重试
-    let registered = false;
-    for (let attempt = 0; attempt < 3 && !registered; attempt++) {
-      await waitForRegistrationOpen(request);
-      await page.goto("/t/register");
-      // 等表单或关闭提示任一出现（开关竞态时是关闭提示 → 下一轮重试）
-      const formVisible = page.locator("#register-login-name");
-      const closedVisible = page.getByText("注册已关闭，请联系管理员");
-      const raceResult = await Promise.race([
-        formVisible
-          .waitFor({ state: "visible", timeout: 10_000 })
-          .then(() => "form" as const)
-          .catch(() => "none" as const),
-        closedVisible
-          .waitFor({ state: "visible", timeout: 10_000 })
-          .then(() => "closed" as const)
-          .catch(() => "none" as const),
-      ]);
-      if (raceResult === "closed") continue;
-      expect(raceResult, "注册页既无表单也无关闭提示").toBe("form");
-
-      await page.fill("#register-login-name", loginName);
-      await page.fill("#register-password", YI_PASSWORD);
-      await page.getByRole("button", { name: "注册并进入" }).click();
-      // 成功 → 自动登录进入 /t（重定向到资源库）；提交瞬间开关被关则重试
-      try {
-        await page.waitForURL("**/t/library", { timeout: 10_000 });
-        registered = true;
-      } catch {
-        const closedShown = await closedVisible.isVisible().catch(() => false);
-        if (!closedShown) {
-          throw new Error("注册未成功且页面未显示关闭提示（表单提交失败）");
-        }
-      }
-    }
-    expect(registered, "三次尝试内未完成注册（开关竞态或表单失败）").toBe(true);
+    // 注册（开关竞态的等待+重试在 helper 内）→ 成功自动登录进资源库
+    await registerTeacherViaUi(page, request, loginName, YI_PASSWORD);
 
     // 乙名下无任何资源：三页均为空态（甲并行用例导入的内容一概不可见）
     await expect(page.getByText("这里还没有内容")).toBeVisible();

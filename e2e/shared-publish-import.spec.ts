@@ -1,6 +1,5 @@
-import type { APIRequestContext } from "@playwright/test";
 import { expect, test } from "@playwright/test";
-import { teacherApiLogin, uniqueSuffix } from "./helpers";
+import { teacherApiLogin, teacherLoginViaApi, uniqueSuffix } from "./helpers";
 
 /**
  * T2B.7 共享发布与导入 E2E（验收：甲发布 → 乙导入 → 乙建课使用该单元）：
@@ -86,7 +85,7 @@ test("甲发布单元 → 乙共享页导入 → 乙建课使用该单元", asyn
   await page.getByRole("button", { name: "完成" }).click();
 
   // ---- 乙：API 建课并把该单元加进课程目录 ----
-  await loginViaApi(request, yiLoginName, YI_PASSWORD);
+  await teacherLoginViaApi(request, yiLoginName, YI_PASSWORD);
   const course = await request.post("/api/teacher/courses", {
     data: { title: `乙的共享课-${suffix}` },
   });
@@ -121,17 +120,3 @@ test("甲发布单元 → 乙共享页导入 → 乙建课使用该单元", asyn
   );
   expect(cleanup.ok(), "甲清理共享文件失败").toBeTruthy();
 });
-
-/** API 登录（request 上下文的 Cookie 换人；失败抛错） */
-async function loginViaApi(
-  request: APIRequestContext,
-  loginName: string,
-  password: string,
-): Promise<void> {
-  const login = await request.post("/api/public/teacher/login", {
-    data: { loginName, password },
-  });
-  if (!login.ok()) {
-    throw new Error(`乙 API 登录失败：HTTP ${login.status()}`);
-  }
-}
