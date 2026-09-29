@@ -211,9 +211,9 @@ export const importCommitDataSchema = z.object({
  * - LECTURE_NOT_FOUND：讲义不存在（404）；
  * - UNIT_NOT_FOUND：单元不存在（404）；
  * - ID_IMMUTABLE：单题编辑解析出的 id 与原 id 不一致（422，id 不可变）；
- * - COURSE_NOT_EMPTY：T2A.4 起课程删除改按 D4 语义（有作答 409 COURSE_HAS_ATTEMPTS），
- *   本码不再由 DELETE /courses/:id 产生，保留枚举值兼容旧契约消费者；
- * - COURSE_HAS_ATTEMPTS：课程关联作答记录时拒绝删除（409，D4；提示改用归档）；
+ * - COURSE_NOT_EMPTY：T2A.4 起课程删除改按 D4 语义（有作答或作业 409
+ *   COURSE_HAS_ATTEMPTS），本码不再由 DELETE /courses/:id 产生，保留枚举值兼容旧契约消费者；
+ * - COURSE_HAS_ATTEMPTS：课程有作答记录或按课程布置的作业时拒绝删除（409，D4；提示改用归档）；
  * - FOLDER_NOT_FOUND：导入目标文件夹不存在（404，T2A.3；与 library-api 同码同义）；
  * - IMPORT_TOO_LARGE：批量导入超规模上限（413，D20；也用于 preview-batch 的
  *   content-length 粗防线）。
