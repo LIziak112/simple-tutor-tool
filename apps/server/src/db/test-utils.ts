@@ -4,10 +4,21 @@ import { join } from "node:path";
 import { runBackfills } from "./backfill";
 import { createDb, type Db } from "./client";
 import { runMigrations } from "./migrate";
+import { teachers } from "./schema";
+
+/**
+ * createTestDb 种入的教师行（T2B.1）：固定 id/createdAt，loginName='teacher'、
+ * isAdmin=true——与生产「存量教师经回填升级后的形态」一致；passwordHash 为 null
+ * （路由测试走 setup 时会复用本行写入密码，与生产行为相同）。
+ * 服务层测试可直接引用本 id 断言归属列。
+ */
+export const TEST_TEACHER_ID = "teacher-test-0000";
 
 /**
  * 测试数据库工厂：内存库（":memory:"）+ 跑全部迁移 + D23 数据搬迁
  * （与生产启动流程一致：runMigrations 之后执行 runBackfills，见 src/index.ts）。
+ * T2B.1 起种入一位教师（生产中任何内容创建都发生在教师 setup 之后，
+ * 服务层测试直接调创建入口时同样要有教师行，getSingleTeacherId 才有值可取）。
  * 每次调用返回全新独立实例，互不干扰；用完可 db.$client.close() 释放，
  * 不关也会随进程退出回收。后续任务的服务层测试统一从这里取库。
  */
@@ -15,6 +26,17 @@ export function createTestDb(): Db {
   const db = createDb(":memory:");
   runMigrations(db);
   runBackfills(db);
+  db.insert(teachers)
+    .values({
+      id: TEST_TEACHER_ID,
+      loginName: "teacher",
+      isAdmin: true,
+      disabledAt: null,
+      passwordHash: null,
+      apiToken: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+    })
+    .run();
   return db;
 }
 

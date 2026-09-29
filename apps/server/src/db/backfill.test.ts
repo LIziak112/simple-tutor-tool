@@ -24,6 +24,7 @@ import {
   dataMigrations,
   lectures,
   libraryFolders,
+  teachers,
   units,
 } from "./schema.ts";
 import { createTestDb } from "./test-utils.ts";
@@ -283,7 +284,7 @@ describe("D23 数据搬迁（T2A 前结构 fixture → 迁移 → 回填）", ()
         .all()
         .every((m) => m.joinedAt === "2026-09-27T00:00:00.000Z"),
     ).toBe(true);
-    // 标记表：t2a1、t2a6、t2a7 各一行，appliedAt 仍是首次时间戳
+    // 标记表：t2a1、t2a6、t2a7、t2b1 各一行，appliedAt 仍是首次时间戳
     expect(db.select().from(dataMigrations).all()).toEqual([
       {
         key: "t2a1_library_courses_backfill",
@@ -295,6 +296,10 @@ describe("D23 数据搬迁（T2A 前结构 fixture → 迁移 → 回填）", ()
       },
       {
         key: "t2a7_assignments_backfill",
+        appliedAt: "2026-09-27T00:00:00.000Z",
+      },
+      {
+        key: "t2b1_multi_teacher_backfill",
         appliedAt: "2026-09-27T00:00:00.000Z",
       },
     ]);
@@ -350,10 +355,10 @@ describe("D23 数据搬迁（T2A 前结构 fixture → 迁移 → 回填）", ()
     expect(db.select().from(libraryFolders).all()).toEqual([]);
     expect(db.select().from(courseItems).all()).toEqual([]);
     expect(db.select().from(courseStudents).all()).toEqual([]);
-    expect(db.select().from(dataMigrations).all()).toHaveLength(3);
+    expect(db.select().from(dataMigrations).all()).toHaveLength(4);
     // 全新库再跑一次同样幂等
     runBackfills(db);
-    expect(db.select().from(dataMigrations).all()).toHaveLength(3);
+    expect(db.select().from(dataMigrations).all()).toHaveLength(4);
   });
 });
 
@@ -508,7 +513,7 @@ describe("D23-5 作业结构搬迁（T2A.6 时代结构 fixture → 迁移 → �
     ).toBe(true);
     expect(db.select().from(attempts).get()?.courseId).toBe("c-a");
     // 标记 appliedAt 仍是首次时间戳
-    expect(db.select().from(dataMigrations).all()).toHaveLength(3);
+    expect(db.select().from(dataMigrations).all()).toHaveLength(4);
     expect(
       db
         .select()
@@ -775,6 +780,83 @@ describe("T2B.1 多教师基础结构迁移（post-T2A 结构 fixture → 迁移
     db.$client.close();
   });
 
+  it("回填：唯一教师行升级（loginName/isAdmin，密码 id createdAt 不动）；全部根行 teacherId 正确且无 NULL", () => {
+    const db = createPreT2bDb();
+    insertPreT2bFixture(db);
+    migrateAndBackfill(db);
+
+    // D4 升级：只动 loginName/isAdmin，其余列原样
+    expect(db.select().from(teachers).all()).toEqual([
+      {
+        id: "th-1",
+        loginName: "teacher",
+        isAdmin: true,
+        disabledAt: null,
+        passwordHash: "scrypt$模拟哈希",
+        apiToken: null,
+        createdAt: "2026-01-10T08:00:00.000Z",
+      },
+    ]);
+
+    // 9 张根表全部行 teacherId = 'th-1' 且无 NULL（D9）
+    const rootTables = [
+      "students",
+      "courses",
+      "library_folders",
+      "lectures",
+      "units",
+      "questions",
+      "imports",
+      "assignments",
+      "question_knowledge",
+    ] as const;
+    for (const table of rootTables) {
+      const nullCount = db.$client
+        .prepare(`SELECT count(*) AS n FROM ${table} WHERE teacher_id IS NULL`)
+        .get() as { n: number };
+      expect(nullCount.n, table).toBe(0);
+      const wrongCount = db.$client
+        .prepare(
+          `SELECT count(*) AS n FROM ${table} WHERE teacher_id <> 'th-1'`,
+        )
+        .get() as { n: number };
+      expect(wrongCount.n, table).toBe(0);
+    }
+    // 复合主键语义在回填后对既有行生效：(th-1, 'u-a1') 已存在 → 重复插入被拒
+    expect(() =>
+      db.$client
+        .prepare(
+          `INSERT INTO units (id, teacher_id, folder_id, lecture_id, title, topic, "order", updated_at, deleted_at)
+           VALUES ('u-a1', 'th-1', NULL, NULL, '重复单元', NULL, 0, '2026-03-02T00:00:00.000Z', NULL)`,
+        )
+        .run(),
+    ).toThrow();
+    db.$client.close();
+  });
+
+  it("pre-T2A 库升级路径：t2a1 建的文件夹同获 teacherId 回填", () => {
+    const db = createPreT2aDb();
+    db.$client.exec(`
+      INSERT INTO teachers (id, password_hash, api_token, created_at) VALUES
+        ('th-old', 'scrypt$模拟哈希', NULL, '2026-01-01T00:00:00.000Z');
+    `);
+    insertPreT2aFixture(db);
+    migrateAndBackfill(db);
+
+    // t2a1 本次运行新建「初一上/初一下」文件夹 → t2b1 回填 teacherId
+    const folders = db.select().from(libraryFolders).all();
+    expect(folders.map((f) => [f.name, f.teacherId])).toEqual([
+      ["初一上", "th-old"],
+      ["初一下", "th-old"],
+    ]);
+    expect(db.select().from(teachers).get()).toMatchObject({
+      id: "th-old",
+      loginName: "teacher",
+      isAdmin: true,
+    });
+    db.$client.close();
+  });
+
   it("带 FK 的子表迁移后照常写入：交卷写 responses、上传笔迹写 ink 不报 foreign key mismatch", () => {
     const db = createPreT2bDb();
     insertPreT2bFixture(db);
@@ -1007,6 +1089,10 @@ describe("孤儿资源兜底（T2A.1 事故修复：与主标记无关、每次�
         key: "t2a7_assignments_backfill",
         appliedAt: "2026-09-27T00:00:00.000Z",
       },
+      {
+        key: "t2b1_multi_teacher_backfill",
+        appliedAt: "2026-09-27T00:00:00.000Z",
+      },
     ]);
   });
 
@@ -1060,6 +1146,6 @@ describe("孤儿资源兜底（T2A.1 事故修复：与主标记无关、每次�
           .map((row) => [row.id, row.folderId] as const),
       ),
     ).toEqual(unitFolderIds);
-    expect(db.select().from(dataMigrations).all()).toHaveLength(3);
+    expect(db.select().from(dataMigrations).all()).toHaveLength(4);
   });
 });

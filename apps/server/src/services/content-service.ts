@@ -42,6 +42,7 @@ import {
 import { and, asc, eq, isNull } from "drizzle-orm";
 import { ensureCourseFolder } from "../db/backfill";
 import type { Db } from "../db/client";
+import { getSingleTeacherId } from "../db/teacher-scope";
 import {
   courseItems,
   courseStudents,
@@ -481,6 +482,8 @@ export function commitImport(
   return db.transaction((tx) => {
     const now = new Date().toISOString();
     const importId = crypto.randomUUID();
+    // T2B.1 单教师等价：归属教师取库中唯一教师行（T2B.3 起换会话教师）
+    const teacherId = getSingleTeacherId(db);
 
     // ---- 目标文件夹落定（见函数头注释的优先级） ----
     let folderId: string | null;
@@ -488,9 +491,9 @@ export function commitImport(
       folderId = input.folderId;
     } else if (input.folderName !== undefined) {
       // 按名称查找/新建（ensureCourseFolder = find-or-create by name，D20 复用口径）
-      folderId = ensureCourseFolder(tx, input.folderName, now).id;
+      folderId = ensureCourseFolder(tx, input.folderName, now, teacherId).id;
     } else if (legacyCourseTitle !== undefined) {
-      folderId = ensureCourseFolder(tx, legacyCourseTitle, now).id;
+      folderId = ensureCourseFolder(tx, legacyCourseTitle, now, teacherId).id;
     } else {
       folderId = null; // 未归类
     }
