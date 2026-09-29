@@ -6,13 +6,15 @@ import {
 } from "@tutor/contract";
 import {
   CircleAlert,
+  ClipboardPaste,
   FileUp,
   FolderUp,
   Loader2,
+  Plus,
   Upload,
   X,
 } from "lucide-react";
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,16 +26,19 @@ import { BatchImportPreview } from "./BatchImportPreview";
 import { SingleImportPreview } from "./SingleImportPreview";
 
 /**
- * /t/import 导入页（T1.11 建立；T2A.3 重构为单文件与批量共用）：
- * - 输入区三入口：粘贴 / 选择 .md 文件（多选）/ 选择文件夹（webkitdirectory，
- *   特性检测降级——不支持时只显示多选文件，D20）；
- * - 目标文件夹选择（默认未归类，可就地新建）+「按子目录自动建文件夹」（批量）+
+ * /t/import 导入页（T1.11 建立；T2A.3 单文件与批量共用；内容模型方案 §5 重构）：
+ * - 选择页 = 一张统一待导入清单：三入口都往同一份 PickedFile[] 加条目——
+ *   「选择 .md 文件」（多选追加）/「选择文件夹」（webkitdirectory，特性检测降级 D20）/
+ *   「粘贴内容」（textarea + 文件名，加入清单）；同 path 重复 → 原位替换（保持最新）；
+ * - 清单只看名不看内容（正文检查交给预览态）：文件名 / 相对路径（文件夹选择时）/
+ *   大小 / 移除；粘贴条目文件名就地可编辑；
+ * - 规模预检实时化：清单一变立即跑 precheckBatchLimits，超限红字显示在清单区，
+ *   不必等点预览（≤50 文件 / 单文件 ≤1MB / 合计 ≤10MB，与后端同口径）；
+ * - 导入选项：目标文件夹（默认未归类，可就地新建）+「按子目录自动建文件夹」（≥2 条时）+
  *   「同时加入课程」快捷项（D17：归属仍在资源库，只追加课程目录条目）；
- * - 1 个文件或粘贴 → 单文件预览（可编辑、动作清单、错误面板、确认导入）；
- * - ≥2 个文件 → 批量预览（文件表格 + 展开单文件预览 + 跨文件冲突 + 逐文件提交 +
- *   汇总报告，D20）；
- * - 前端预检规模上限（≤50 文件 / 单文件 ≤1MB / 合计 ≤10MB，与后端同口径），
- *   超限直接提示不发请求。
+ * - 预览路由：1 条 → 单文件预览（可编辑、动作清单、错误面板、确认导入，粘贴与文件
+ *   条目一视同仁）；≥2 条 → 批量预览（文件表格 + 展开单文件预览 + 跨文件冲突 +
+ *   逐文件提交 + 汇总报告，D20）。
  */
 
 /** 文件名缺省值（契约要求非空；用户可改） */
@@ -41,13 +46,17 @@ export const DEFAULT_FILENAME = "未命名.md";
 
 /** 前端选中的待导入文件（.md；内容已读入内存） */
 export interface PickedFile {
-  /** 相对路径（文件夹选择时含子目录；多选时为文件名） */
+  /** 清单内稳定标识（条目 key 与改名/移除定位；path 会随改名变化，不能当 key） */
+  readonly id: string;
+  /** 相对路径（文件夹选择时含子目录；多选与粘贴为文件名；清单内唯一 = 条目身份） */
   readonly path: string;
-  /** 文件名（basename） */
+  /** 文件名（basename；粘贴条目可就地改名，改名同步 path） */
   readonly name: string;
   readonly markdown: string;
   /** 原文 UTF-8 字节数（与后端 Buffer.byteLength 同口径） */
   readonly bytes: number;
+  /** 来源：文件/文件夹选择，或粘贴（粘贴条目文件名可编辑；单文件预览不携带 sourcePath） */
+  readonly source: "file" | "paste";
 }
 
 /** 导入选项（单文件与批量共用；由输入区收集） */
@@ -71,10 +80,12 @@ export async function readPickedFiles(
     const path =
       relative !== undefined && relative.length > 0 ? relative : file.name;
     result.push({
+      id: crypto.randomUUID(),
       path,
       name: file.name,
       markdown,
       bytes: new TextEncoder().encode(markdown).length,
+      source: "file",
     });
   }
   return result;
@@ -105,19 +116,47 @@ export const SUPPORTS_DIRECTORY_PICKER =
   typeof HTMLInputElement !== "undefined" &&
   "webkitdirectory" in HTMLInputElement.prototype;
 
+/** 同 path 重复 → 原位替换（保持最新内容），否则追加（方案 §5：清单以 path 为身份） */
+function upsertByPath(
+  list: readonly PickedFile[],
+  entry: PickedFile,
+): PickedFile[] {
+  const index = list.findIndex((file) => file.path === entry.path);
+  if (index === -1) return [...list, entry];
+  return list.map((file, i) => (i === index ? entry : file));
+}
+
+/** 粘贴条目的默认文件名序列：未命名.md → 未命名-2.md → …（避开清单已有 path，
+ * 连续多次粘贴互不覆盖；显式输入已有名仍走「同 path 替换」更新旧条目） */
+function nextPasteFilename(list: readonly PickedFile[]): string {
+  const taken = new Set(list.map((file) => file.path));
+  if (!taken.has(DEFAULT_FILENAME)) return DEFAULT_FILENAME;
+  for (let n = 2; ; n += 1) {
+    const candidate = `未命名-${n}.md`;
+    if (!taken.has(candidate)) return candidate;
+  }
+}
+
+/** 字节数 → 「x.x KB」短文案（四舍五入到 0.1 KB，下限 0.1） */
+function formatSizeKb(bytes: number): string {
+  return `${Math.max(0.1, Math.round(bytes / 102.4) / 10)} KB`;
+}
+
 type Stage = "select" | "single" | "batch";
 
-/** 单文件预览的输入（来自粘贴或恰好一个文件） */
+/** 单文件预览的输入（来自清单中恰好一条：文件条目或粘贴条目） */
 interface SingleInput {
   readonly markdown: string;
   readonly filename: string;
-  /** 相对路径；空 = 粘贴内容（无文件路径） */
+  /** 相对路径；空 = 粘贴条目（无文件路径，D21 提示词口径） */
   readonly path: string;
 }
 
 export function ImportPage() {
   const [stage, setStage] = useState<Stage>("select");
   const [pickedFiles, setPickedFiles] = useState<PickedFile[]>([]);
+  // 粘贴输入区（展开式小面板）：内容与文件名只在「加入清单」那一刻转成清单条目
+  const [pasteOpen, setPasteOpen] = useState(false);
   const [pastedText, setPastedText] = useState("");
   const [pastedName, setPastedName] = useState(DEFAULT_FILENAME);
   const [singleInput, setSingleInput] = useState<SingleInput | null>(null);
@@ -134,7 +173,6 @@ export function ImportPage() {
     null,
   );
   const [creatingFolder, setCreatingFolder] = useState(false);
-  const [precheckError, setPrecheckError] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dirInputRef = useRef<HTMLInputElement>(null);
@@ -155,44 +193,81 @@ export function ImportPage() {
         : undefined,
   };
 
+  // 规模预检实时化（方案 §5）：清单一变立即重算，超限红字直接显示在清单区
+  const precheckError = useMemo(
+    () => precheckBatchLimits(pickedFiles),
+    [pickedFiles],
+  );
+
   async function handleFiles(event: React.ChangeEvent<HTMLInputElement>) {
     const list = event.target.files;
-    if (list === null || list.length === 0) return;
-    setPrecheckError(null);
-    setPickedFiles(await readPickedFiles(list));
     // 允许再次选择同一批文件（change 依赖 value 变化）
     event.target.value = "";
+    if (list === null || list.length === 0) return;
+    const incoming = await readPickedFiles(list);
+    if (incoming.length === 0) return;
+    // 继续选择 = 追加；同 path 重复 → 原位替换（保持最新）
+    setPickedFiles((prev) => incoming.reduce(upsertByPath, prev));
+  }
+
+  function togglePaste(): void {
+    if (!pasteOpen) {
+      // 展开时给一个不与清单冲突的默认名，连续粘贴互不覆盖
+      setPastedName(nextPasteFilename(pickedFiles));
+    }
+    setPasteOpen(!pasteOpen);
+  }
+
+  /** 粘贴内容 → 清单条目（加入后清空 textarea；文件名留作下一条默认值） */
+  function handleAddPasted(): void {
+    if (pastedText.trim().length === 0) return;
+    const name =
+      pastedName.trim().length > 0 ? pastedName.trim() : DEFAULT_FILENAME;
+    const entry: PickedFile = {
+      id: crypto.randomUUID(),
+      path: name,
+      name,
+      markdown: pastedText,
+      bytes: new TextEncoder().encode(pastedText).length,
+      source: "paste",
+    };
+    const next = upsertByPath(pickedFiles, entry);
+    setPickedFiles(next);
+    setPastedText("");
+    setPastedName(nextPasteFilename(next));
+  }
+
+  /** 粘贴条目就地改名（改名同步 path；与其他条目同 path = 同一份，保留本条） */
+  function handleRename(id: string, name: string): void {
+    setPickedFiles((prev) => {
+      const current = prev.find((file) => file.id === id);
+      if (current === undefined) return prev;
+      const renamed: PickedFile = { ...current, name, path: name };
+      return prev
+        .filter((file) => file.id === id || file.path !== renamed.path)
+        .map((file) => (file.id === id ? renamed : file));
+    });
+  }
+
+  function handleRemove(id: string): void {
+    setPickedFiles((prev) => prev.filter((file) => file.id !== id));
   }
 
   function handlePreviewClick(): void {
-    setPrecheckError(null);
-    if (pickedFiles.length > 0) {
-      const error = precheckBatchLimits(pickedFiles);
-      if (error !== null) {
-        setPrecheckError(error);
-        return;
-      }
-      if (pickedFiles.length === 1) {
-        const file = pickedFiles[0];
-        if (file === undefined) return;
-        setSingleInput({
-          markdown: file.markdown,
-          filename: file.name,
-          path: file.path,
-        });
-        setStage("single");
-      } else {
-        setStage("batch");
-      }
-      return;
-    }
-    if (pastedText.trim().length > 0) {
+    // 清单空 / 有未命名条目（按钮已禁用）或超限（红字已显示）时不进入预览
+    if (pickedFiles.length === 0 || precheckError !== null) return;
+    if (pickedFiles.length === 1) {
+      const file = pickedFiles[0];
+      if (file === undefined) return;
       setSingleInput({
-        markdown: pastedText,
-        filename: pastedName,
-        path: "",
+        markdown: file.markdown,
+        filename: file.name,
+        // 粘贴条目与文件条目一视同仁走单文件预览；粘贴无 sourcePath
+        path: file.source === "file" ? file.path : "",
       });
       setStage("single");
+    } else {
+      setStage("batch");
     }
   }
 
@@ -218,13 +293,12 @@ export function ImportPage() {
     }
   }
 
-  const filenameMissing =
-    pickedFiles.length === 0 &&
-    pastedText.trim().length > 0 &&
-    pastedName.trim().length === 0;
+  const hasBlankName = pickedFiles.some(
+    (file) => file.name.trim().length === 0,
+  );
   const canPreview =
-    (pickedFiles.length > 0 || pastedText.trim().length > 0) &&
-    !filenameMissing &&
+    pickedFiles.length > 0 &&
+    !hasBlankName &&
     !(addToCourseOn && courseSelection === "");
 
   return (
@@ -249,8 +323,9 @@ export function ImportPage() {
         <div className="mt-4 max-w-3xl">
           <h1 className="text-lg font-semibold">导入内容</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            内容统一导入资源库（支持 v2 DSL 与旧版 v1
-            格式）；可选多个文件或整个文件夹批量导入，预览无误后确认。
+            选择 .md
+            文件、整个文件夹或粘贴内容，加入同一份待导入清单；预览无误后确认
+            （支持 v2 DSL 与旧版 v1 格式）。
           </p>
 
           {/* AI 出题助手（T1.13）：复制「规范+样例+模板」提示词给 AI，产出可导入文档 */}
@@ -259,10 +334,25 @@ export function ImportPage() {
           </div>
 
           <div className="mt-4 flex flex-col gap-4 rounded-xl border border-border bg-card p-4">
-            {/* 三入口：粘贴 / 选文件 / 选文件夹 */}
-            <div className="flex flex-col gap-1.5">
+            {/* 统一待导入清单：三入口同源（方案 §5） */}
+            <div className="flex flex-col gap-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-sm font-medium">待导入清单</span>
+                {pickedFiles.length > 0 ? (
+                  <span className="text-xs text-muted-foreground">
+                    共 {pickedFiles.length} 条
+                    <button
+                      type="button"
+                      className="ml-2 rounded px-1 text-destructive underline underline-offset-2 outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+                      onClick={() => setPickedFiles([])}
+                    >
+                      清空清单
+                    </button>
+                  </span>
+                ) : null}
+              </div>
+
               <div className="flex flex-wrap items-center gap-2">
-                <span className="text-sm font-medium">选择内容</span>
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -312,48 +402,140 @@ export function ImportPage() {
                     </Button>
                   </>
                 ) : null}
-                {pickedFiles.length > 0 ? (
-                  <span className="text-xs text-muted-foreground">
-                    已选择 {pickedFiles.length} 个 .md 文件
-                    <button
-                      type="button"
-                      className="ml-2 rounded px-1 text-destructive underline underline-offset-2 outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
-                      onClick={() => setPickedFiles([])}
-                    >
-                      清除
-                    </button>
-                  </span>
-                ) : null}
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="min-h-11 px-4"
+                  aria-expanded={pasteOpen}
+                  aria-controls="import-paste-area"
+                  onClick={togglePaste}
+                >
+                  <ClipboardPaste aria-hidden />
+                  粘贴内容
+                </Button>
               </div>
 
-              <textarea
-                id="import-markdown"
-                aria-label="文档内容"
-                value={pastedText}
-                onChange={(e) => setPastedText(e.target.value)}
-                spellCheck={false}
-                placeholder={
-                  "或在此粘贴 Markdown 原文…\n\nv2 文档以 frontmatter 开头：\n---\nkind: practice\nunit: 练习四\n---"
-                }
-                className="min-h-48 w-full resize-y rounded-lg border border-border bg-background p-3 font-mono text-[13px] leading-6 outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
-              />
-              <div className="flex flex-wrap items-end gap-3">
-                <div className="flex w-64 flex-col gap-1.5">
-                  <label
-                    htmlFor="import-filename"
-                    className="text-sm font-medium"
-                  >
-                    文件名（粘贴内容用）
-                  </label>
-                  <Input
-                    id="import-filename"
-                    value={pastedName}
-                    onChange={(e) => setPastedName(e.target.value)}
-                    placeholder="练习四.md"
-                    className="min-h-11"
+              {/* 粘贴输入区（展开式小面板；加入后清空，可连续粘贴多条） */}
+              {pasteOpen ? (
+                <div
+                  id="import-paste-area"
+                  className="flex flex-col gap-2 rounded-lg border border-border bg-muted/20 p-3"
+                >
+                  <textarea
+                    id="import-markdown"
+                    aria-label="文档内容"
+                    value={pastedText}
+                    onChange={(e) => setPastedText(e.target.value)}
+                    spellCheck={false}
+                    placeholder={
+                      "粘贴 Markdown 原文…\n\nv2 文档以 frontmatter 开头：\n---\nkind: practice\nunit: 练习四\nlecture: 第4讲 有理数   # 配套讲义名，可选\n---"
+                    }
+                    className="min-h-40 w-full resize-y rounded-lg border border-border bg-background p-3 font-mono text-[13px] leading-6 outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
                   />
+                  <div className="flex flex-wrap items-end gap-3">
+                    <div className="flex w-64 flex-col gap-1.5">
+                      <label
+                        htmlFor="import-filename"
+                        className="text-sm font-medium"
+                      >
+                        文件名（粘贴内容用）
+                      </label>
+                      <Input
+                        id="import-filename"
+                        value={pastedName}
+                        onChange={(e) => setPastedName(e.target.value)}
+                        placeholder="练习四.md"
+                        className="min-h-11"
+                      />
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="min-h-11 px-4"
+                      disabled={pastedText.trim().length === 0}
+                      onClick={handleAddPasted}
+                    >
+                      <Plus aria-hidden />
+                      加入清单
+                    </Button>
+                  </div>
                 </div>
-              </div>
+              ) : null}
+
+              {/* 清单：只看名不看内容（正文检查交给预览态） */}
+              {pickedFiles.length === 0 ? (
+                <p className="rounded-lg border border-dashed border-border px-3 py-6 text-center text-sm text-muted-foreground">
+                  清单为空：选择 .md
+                  文件、整个文件夹，或用「粘贴内容」把文字加入清单。
+                </p>
+              ) : (
+                <ul
+                  aria-label="待导入清单"
+                  className="flex flex-col divide-y divide-border rounded-lg border border-border"
+                >
+                  {pickedFiles.map((file) => (
+                    <li
+                      key={file.id}
+                      className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-1.5"
+                    >
+                      {file.source === "paste" ? (
+                        /* 粘贴条目：文件名就地可编辑（改名同步 path） */
+                        <Input
+                          aria-label={`重命名 ${file.path}`}
+                          value={file.name}
+                          onChange={(e) =>
+                            handleRename(file.id, e.target.value)
+                          }
+                          className="min-h-11 w-56"
+                        />
+                      ) : (
+                        <span
+                          className="min-w-0 max-w-56 truncate font-mono text-sm"
+                          title={file.path}
+                        >
+                          {file.name}
+                        </span>
+                      )}
+                      {file.source === "file" && file.path !== file.name ? (
+                        /* 文件夹选择时显示相对路径 */
+                        <span
+                          className="min-w-0 max-w-64 truncate text-xs text-muted-foreground"
+                          title={file.path}
+                        >
+                          {file.path}
+                        </span>
+                      ) : null}
+                      {file.source === "paste" ? (
+                        <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
+                          粘贴
+                        </span>
+                      ) : null}
+                      <span className="ml-auto whitespace-nowrap text-xs text-muted-foreground">
+                        {formatSizeKb(file.bytes)}
+                      </span>
+                      <button
+                        type="button"
+                        aria-label={`移除 ${file.path}`}
+                        onClick={() => handleRemove(file.id)}
+                        className="flex size-11 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-destructive focus-visible:ring-3 focus-visible:ring-ring/50"
+                      >
+                        <X aria-hidden className="size-4" />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              {/* 规模预检实时提示（超限不发预览请求） */}
+              {precheckError !== null ? (
+                <p
+                  role="alert"
+                  className="flex items-start gap-2 rounded-lg bg-destructive/10 px-3 py-2.5 text-sm text-destructive"
+                >
+                  <CircleAlert aria-hidden className="mt-0.5 size-4 shrink-0" />
+                  {precheckError}
+                </p>
+              ) : null}
             </div>
 
             {/* 导入选项 */}
@@ -401,8 +583,7 @@ export function ImportPage() {
                   </label>
                 ) : (
                   <p className="min-h-11 text-xs leading-relaxed text-muted-foreground">
-                    选择 2
-                    个以上文件批量导入时，可按文件所在子目录自动建文件夹。
+                    清单达到 2 条批量导入时，可按文件所在子目录自动建文件夹。
                   </p>
                 )}
                 <label className="flex min-h-11 items-center gap-2 text-sm">
@@ -442,16 +623,6 @@ export function ImportPage() {
                 ) : null}
               </div>
             </div>
-
-            {precheckError !== null ? (
-              <p
-                role="alert"
-                className="flex items-start gap-2 rounded-lg bg-destructive/10 px-3 py-2.5 text-sm text-destructive"
-              >
-                <CircleAlert aria-hidden className="mt-0.5 size-4 shrink-0" />
-                {precheckError}
-              </p>
-            ) : null}
 
             <div className="flex items-center justify-end gap-3">
               <Button
