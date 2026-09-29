@@ -921,6 +921,38 @@ describe("名单增删（D13：addStudentIds / removeStudentIds）", () => {
     expect(((await blocked.json()) as ApiErr).error).toBe("CONFIRM_REQUIRED");
   });
 
+  it("批量移出混合名单：已开始者按移出顺序完整列入 _students，未开始者不混入", async () => {
+    const env = await makeEnv();
+    // 王五加入名单但不动笔；李四加入并开始；张三开始（合并查询取已开始集合的回归）
+    const cId = await createStudent(env.app, env.teacherCookie, "王五");
+    const added = await patchAssignment(
+      env.app,
+      env.teacherCookie,
+      env.assignmentId,
+      { addStudentIds: [env.bId, cId] },
+    );
+    expect(added.status).toBe(200);
+    await startAttempt(env.app, env.aCookie, env.assignmentId);
+    await startAttempt(env.app, env.bCookie, env.assignmentId);
+
+    const blocked = await patchAssignment(
+      env.app,
+      env.teacherCookie,
+      env.assignmentId,
+      { removeStudentIds: [cId, env.bId, env.aId] },
+    );
+    expect(blocked.status).toBe(409);
+    const blockedBody = (await blocked.json()) as ApiErr & {
+      _students?: { studentId: string; displayName: string }[];
+    };
+    expect(blockedBody.error).toBe("CONFIRM_REQUIRED");
+    // 只含已开始的李四/张三，且按 removeStudentIds 原序；王五未开始不出现
+    expect(blockedBody._students).toEqual([
+      { studentId: env.bId, displayName: "李四" },
+      { studentId: env.aId, displayName: "张三" },
+    ]);
+  });
+
   it("add 与 remove 交集返回 400 VALIDATION_ERROR", async () => {
     const env = await makeEnv();
     const res = await patchAssignment(
