@@ -16,7 +16,11 @@ import {
 } from "../db/schema.ts";
 import { createTestDb } from "../db/test-utils.ts";
 import { HttpError } from "../lib/http-error.ts";
-import { commitImport, previewImport } from "./content-service.ts";
+import {
+  commitImport,
+  previewImport,
+  previewImportBatch,
+} from "./content-service.ts";
 
 /**
  * ContentService 服务层测试（T1.10 验收项，createTestDb 内存库）：
@@ -61,6 +65,16 @@ unit: 练习
 
 ::::question{type=fill difficulty=2 knowledge="有理数加法"}
 计算：$(-3)+7=$ 4。（答案忘了写进双方括号）
+::::
+`;
+
+/** 无 frontmatter.unit 的单题练习（单元名应由文件名兜底，内容模型与导入规范化方案 §2） */
+const NO_UNIT_MD = `---
+kind: practice
+---
+
+::::question{type=judge difficulty=1}
+$1>0$。[[正确]]
 ::::
 `;
 
@@ -176,6 +190,108 @@ describe("previewImport（不写库）", () => {
     const errors = data.issues.filter((i) => i.level === "error");
     expect(errors.length).toBeGreaterThan(0);
     expect(errors.some((i) => i.code === "FILL_NO_BLANK")).toBe(true);
+  });
+});
+
+describe("导入单元名锚定文件名（内容模型与导入规范化方案 §2/§7 第 3 步，服务端接线）", () => {
+  it("单文件 preview：无 unit + filename「练习四.md」→ 单元名 = 文件名去扩展名，issues 透传 UNIT_FROM_FALLBACK warning", () => {
+    const db = createTestDb();
+    const data = previewImport(db, {
+      markdown: NO_UNIT_MD,
+      filename: "练习四.md",
+    });
+    expect(data.summary).toMatchObject({ unitCount: 1, questionCount: 1 });
+    expect(data.actions).toEqual([
+      {
+        kind: "createUnit",
+        title: "练习四",
+        unitId: "练习四",
+        folderName: null,
+        restore: false,
+      },
+    ]);
+    expect(
+      data.issues.some(
+        (i) => i.code === "UNIT_FROM_FALLBACK" && i.level === "warning",
+      ),
+    ).toBe(true);
+  });
+
+  it("文件名按规则派生：.markdown 大小写不敏感、取 basename、只剩扩展名则不兜底（回到解析器原兜底）", () => {
+    const db = createTestDb();
+    const withSubdir = previewImport(db, {
+      markdown: NO_UNIT_MD,
+      filename: "第一章/有理数.MARKDOWN",
+    });
+    expect(withSubdir.actions[0]?.unitId).toBe("有理数");
+
+    const dotOnly = previewImport(db, {
+      markdown: NO_UNIT_MD,
+      filename: ".md",
+    });
+    expect(dotOnly.actions[0]?.unitId).toBe("unit");
+  });
+
+  it("frontmatter.unit 声明优先：不出现 UNIT_FROM_FALLBACK，单元名仍为 unit 值", () => {
+    const db = createTestDb();
+    const data = previewImport(db, {
+      markdown: PRACTICE_MD,
+      filename: "别的名.md",
+    });
+    expect(data.issues.some((i) => i.code === "UNIT_FROM_FALLBACK")).toBe(
+      false,
+    );
+    expect(data.actions[0]).toMatchObject({
+      kind: "createUnit",
+      unitId: "练习四",
+      title: "练习四",
+    });
+  });
+
+  it("批量 preview：path 含子目录 dir/abc.md 无 unit → 单元名锚定 basename「abc」；warning 级不置 hasError", () => {
+    const db = createTestDb();
+    const data = previewImportBatch(db, {
+      autoFolderBySubdir: false,
+      files: [{ path: "dir/abc.md", markdown: NO_UNIT_MD }],
+    });
+    expect(data.files).toHaveLength(1);
+    const entry = data.files[0];
+    expect(entry?.preview.actions[0]).toMatchObject({
+      kind: "createUnit",
+      unitId: "abc",
+      title: "abc",
+    });
+    expect(
+      entry?.preview.issues.some((i) => i.code === "UNIT_FROM_FALLBACK"),
+    ).toBe(true);
+    expect(entry?.hasError).toBe(false);
+  });
+
+  it("v1 文档：转换产物恒带 unit（v1ToV2 总是写 unit:），fallback 不生效——兜底无害", () => {
+    const db = createTestDb();
+    const data = previewImport(db, {
+      markdown: V1_MD,
+      filename: "别的名.md",
+    });
+    expect(data.issues.some((i) => i.code === "UNIT_FROM_FALLBACK")).toBe(
+      false,
+    );
+    expect(data.actions[0]).toMatchObject({ unitId: "练习四" });
+  });
+
+  it("commit：filename 兜底的单元名真正落库（units.id/title = 文件名去扩展名），缺省题目 id 前缀随之", () => {
+    const db = createTestDb();
+    const report = commitImport(db, {
+      markdown: NO_UNIT_MD,
+      filename: "练习四.md",
+    });
+    expect(report.units).toEqual([
+      { id: "练习四", title: "练习四", inserted: true, updated: false },
+    ]);
+    const unitRow = db.select().from(units).all()[0];
+    expect(unitRow).toMatchObject({ id: "练习四", title: "练习四" });
+    const questionRow = db.select().from(questions).all()[0];
+    expect(questionRow).toMatchObject({ id: "练习四-1", unitId: "练习四" });
   });
 });
 

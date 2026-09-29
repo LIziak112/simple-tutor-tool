@@ -314,6 +314,104 @@ kind: lecture
 `;
 }
 
+/** 无 frontmatter.unit 的单题练习（单元名应由文件名兜底） */
+const NO_UNIT_MD = `---
+kind: practice
+---
+
+::::question{type=judge difficulty=1}
+$1>0$。[[正确]]
+::::
+`;
+
+/** practice 指向不存在的配套讲义（LECTURE_LINK_UNRESOLVED 触发形态） */
+const DANGLING_LINK_MD = `---
+kind: practice
+unit: 练习四
+lecture: 第4讲 有理数
+---
+
+::::question{type=judge difficulty=1}
+$1>0$。[[正确]]
+::::
+`;
+
+describe("内容模型与导入规范化（§7 第 3 步）：文件名兜底与配套讲义悬空 warning", () => {
+  it("preview：filename 兜底单元名 + UNIT_FROM_FALLBACK 透传；响应符合契约", async () => {
+    const { app, cookie } = await makeTeacherApp();
+    const res = await postJson(
+      app,
+      "/api/teacher/import/preview",
+      { markdown: NO_UNIT_MD, filename: "练习四.md" },
+      cookie,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      data: { actions: { unitId: string }[]; issues: { code: string }[] };
+    };
+    expect(importPreviewOkSchema.safeParse(body).success).toBe(true);
+    expect(body.data.actions[0]?.unitId).toBe("练习四");
+    expect(body.data.issues.some((i) => i.code === "UNIT_FROM_FALLBACK")).toBe(
+      true,
+    );
+  });
+
+  it("preview：配套讲义悬空 → warnings 含 LECTURE_LINK_UNRESOLVED（契约枚举经响应壳校验）", async () => {
+    const { app, cookie } = await makeTeacherApp();
+    const res = await postJson(
+      app,
+      "/api/teacher/import/preview",
+      { markdown: DANGLING_LINK_MD, filename: "练习四.md" },
+      cookie,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      data: { warnings: { code: string; message: string }[] };
+    };
+    // 契约兜底：新 warning code 必须在 importPreviewWarningSchema 枚举内
+    expect(importPreviewOkSchema.safeParse(body).success).toBe(true);
+    expect(body.data.warnings).toEqual([
+      {
+        code: "LECTURE_LINK_UNRESOLVED",
+        message:
+          "配套讲义「第4讲 有理数」在目标文件夹与本文件中都未找到：练习将暂不关联讲义；若讲义在其他文件夹或尚未导入，请调整后再试",
+      },
+    ]);
+  });
+
+  it("preview：配套讲义指向同文件产出（mixed 自包含）→ 无悬空 warning", async () => {
+    const { app, cookie } = await makeTeacherApp();
+    const mixed = `---
+kind: mixed
+unit: 随堂练习
+title: 第4讲 有理数
+lecture: 第4讲 有理数
+---
+
+# 第4讲 有理数
+
+正文。
+
+::::question{type=judge difficulty=1}
+$1>0$。[[正确]]
+::::
+`;
+    const res = await postJson(
+      app,
+      "/api/teacher/import/preview",
+      { markdown: mixed, filename: "混合.md" },
+      cookie,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      data: { warnings: { code: string }[] };
+    };
+    expect(
+      body.data.warnings.some((w) => w.code === "LECTURE_LINK_UNRESOLVED"),
+    ).toBe(false);
+  });
+});
+
 describe("T2A.3 preview 动作清单（D19）与 warning（D18/D19）", () => {
   it("首次导入 createUnit；再导入动作显示「更新」（updateUnit + 题目细分）且 commit 后 version+1（验收）", async () => {
     const { app, db, cookie } = await makeTeacherApp();

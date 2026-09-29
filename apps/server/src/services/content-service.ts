@@ -118,12 +118,35 @@ interface ImportAnalysis {
  * 识别版本并做完整 lint。
  * v1 文档先经 v1ToV2 转换再 lint（转换保证 0 error）；issues 行号对 v1 指向转换后的
  * v2 文本（教师侧修复时以 lint 输出为准）。rawMd 始终保留老师提交的原文。
+ *
+ * fallbackUnitId（内容模型与导入规范化方案 §2）：frontmatter 未声明 unit 时单元名
+ * 锚定文件名。v1 转换产物恒有 unit（v1ToV2 总是写 unit:），故 fallback 只对 v2
+ * 未声明 unit 的文档生效——转换后同样传入，兜底无害。
  */
-function analyzeImport(markdown: string): ImportAnalysis {
+function analyzeImport(
+  markdown: string,
+  fallbackUnitId?: string,
+): ImportAnalysis {
   const version = detectVersion(markdown);
   const v2Md = version === 1 ? v1ToV2(markdown) : markdown;
-  const { parsed, issues } = lintDocument(v2Md);
+  const { parsed, issues } = lintDocument(
+    v2Md,
+    fallbackUnitId === undefined ? {} : { fallbackUnitId },
+  );
   return { version, issues, parsed };
+}
+
+/**
+ * 文件名/路径 → 单元名锚（方案 §2「文件名去扩展名」）：取 basename（"/" 与 "\"
+ * 都按分隔符）→ 去掉最后一个 .md / .markdown（大小写不敏感）→ trim；
+ * 结果为空（如文件名只剩扩展名）返回 undefined——不传 fallback，走解析器原兜底。
+ */
+function fallbackUnitIdOf(name: string | undefined): string | undefined {
+  if (name === undefined) return undefined;
+  const base = name.replaceAll("\\", "/").split("/").pop() ?? "";
+  const withoutExt = base.replace(/\.(?:markdown|md)$/i, "");
+  const trimmed = withoutExt.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 /** 由解析结果统计预览摘要 */
@@ -165,8 +188,9 @@ function buildPreview(
   db: Db,
   markdown: string,
   folderId: string | null,
+  fallbackUnitId?: string,
 ): ImportPreviewData {
-  const { version, issues, parsed } = analyzeImport(markdown);
+  const { version, issues, parsed } = analyzeImport(markdown, fallbackUnitId);
   const snapshot = loadLibrarySnapshot(db, new Date().toISOString());
   const plan = buildImportPlan({ parsed, folderId, snapshot });
   return {
@@ -188,7 +212,12 @@ export function previewImport(
 ): ImportPreviewData {
   const folderId = input.folderId ?? null;
   assertFolderExists(db, folderId);
-  return buildPreview(db, input.markdown, folderId);
+  return buildPreview(
+    db,
+    input.markdown,
+    folderId,
+    fallbackUnitIdOf(input.filename),
+  );
 }
 
 // ---------- preview-batch：批量预览 + 跨文件冲突（D20，不写库） ----------
@@ -342,7 +371,11 @@ export function previewImportBatch(
         : folderToCreate
           ? subdirNameOf(file.path)
           : null;
-    const { version, issues, parsed } = analyzeImport(file.markdown);
+    const { version, issues, parsed } = analyzeImport(
+      file.markdown,
+      // 单元名锚定文件名（方案 §2）：批量路径取相对路径的 basename
+      fallbackUnitIdOf(file.path),
+    );
     const plan = buildImportPlan({ parsed, folderId, snapshot });
     return {
       path: file.path,
@@ -397,7 +430,10 @@ export function commitImport(
   db: Db,
   input: ImportCommitRequest,
 ): ImportCommitData {
-  const { issues, parsed } = analyzeImport(input.markdown);
+  const { issues, parsed } = analyzeImport(
+    input.markdown,
+    fallbackUnitIdOf(input.filename),
+  );
 
   // error 级 issue → 拒绝写入（此时连文件夹/课程都不动）
   const errors = issues.filter((issue) => issue.level === "error");
