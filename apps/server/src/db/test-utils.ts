@@ -18,7 +18,8 @@ export const TEST_TEACHER_ID = "teacher-test-0000";
  * 测试数据库工厂：内存库（":memory:"）+ 跑全部迁移 + D23 数据搬迁
  * （与生产启动流程一致：runMigrations 之后执行 runBackfills，见 src/index.ts）。
  * T2B.1 起种入一位教师（生产中任何内容创建都发生在教师 setup 之后，
- * 服务层测试直接调创建入口时同样要有教师行，getSingleTeacherId 才有值可取）。
+ * 服务层测试直接调创建入口时同样要有教师行可归属——T2B.5 起各创建入口
+ * 的 teacherId 形参直接引用本 id）。
  * 每次调用返回全新独立实例，互不干扰；用完可 db.$client.close() 释放，
  * 不关也会随进程退出回收。后续任务的服务层测试统一从这里取库。
  */

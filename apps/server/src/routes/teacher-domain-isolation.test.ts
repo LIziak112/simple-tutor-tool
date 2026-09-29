@@ -738,8 +738,9 @@ $1>0$。[[正确]]
 ::::
 `;
 
-/** 乙的学生（直插行：学生创建接口 T2B.5 才域化，直插模拟多教师库形态；
- * id 用合法 UUID——契约 studentIds 按 uuid 校验） */
+/** 乙的学生（直插行模拟多教师库形态：跳过创建接口直接构造归属乙的学生行；
+ * id 用合法 UUID——契约 studentIds 按 uuid 校验。创建接口本身的域归属
+ * （写会话教师）在下方 T2B.5 矩阵以 API 直测） */
 const STUDENT_B_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbb0001";
 
 interface CourseIsolationApp extends IsolationApp {
@@ -765,7 +766,7 @@ async function makeCourseIsolationApp(): Promise<CourseIsolationApp> {
   const base = await makeIsolationApp();
   const { app, db, cookieA, cookieB, courseAId } = base;
 
-  // 甲：学生（student-service T2B.5 前单教师等价 → 归甲）+ 成员 + 条目 + 作业
+  // 甲：学生（T2B.5 起创建接口写会话教师 → 归甲）+ 成员 + 条目 + 作业
   const studentRes = await request(
     app,
     "POST",
@@ -1278,5 +1279,122 @@ describe("T2B.4 隔离红线：作业域", () => {
       }),
       "STUDENT_NOT_FOUND",
     );
+  });
+});
+
+// ==================== T2B.5：学生与作答域隔离 ====================
+
+describe("T2B.5 隔离红线：学生域", () => {
+  it("乙学生列表只含自己学生（含归档视图）；乙建学生落乙域（teacherId 直查证据）", async () => {
+    const { app, db, cookieB } = await makeCourseIsolationApp();
+    for (const query of ["", "?includeArchived=true"]) {
+      const res = await request(
+        app,
+        "GET",
+        `/api/teacher/students${query}`,
+        cookieB,
+      );
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        data: { students: { id: string }[] };
+      };
+      // 乙视角只有直插的乙学生，甲学生零出现（数量断言）
+      expect(body.data.students.map((s) => s.id)).toEqual([STUDENT_B_ID]);
+    }
+
+    // 乙经 API 建学生 → 行落乙域（D14：归属创建教师）
+    const createRes = await request(app, "POST", "/api/teacher/students", cookieB, {
+      displayName: "乙新学生",
+      loginName: "乙新学生",
+    });
+    expect(createRes.status).toBe(201);
+    const newId = (
+      (await createRes.json()) as { data: { student: { id: string } } }
+    ).data.student.id;
+    expect(
+      db
+        .select({ teacherId: students.teacherId })
+        .from(students)
+        .where(eq(students.id, newId))
+        .get()?.teacherId,
+    ).toBe(TEACHER_B_ID);
+  });
+
+  it("乙对甲学生：编辑 / 重置密码 / 重置链接 / 归档 → 404 且甲行原样", async () => {
+    const { app, db, cookieB, studentAId } = await makeCourseIsolationApp();
+    await expectNotFound(
+      await request(app, "PATCH", `/api/teacher/students/${studentAId}`, cookieB, {
+        displayName: "乙改名",
+      }),
+      "STUDENT_NOT_FOUND",
+    );
+    await expectNotFound(
+      await request(
+        app,
+        "POST",
+        `/api/teacher/students/${studentAId}/reset-password`,
+        cookieB,
+      ),
+      "STUDENT_NOT_FOUND",
+    );
+    await expectNotFound(
+      await request(
+        app,
+        "POST",
+        `/api/teacher/students/${studentAId}/reset-link`,
+        cookieB,
+      ),
+      "STUDENT_NOT_FOUND",
+    );
+    // 归档也按归属教师（乙不能把甲的学生归档下线）
+    await expectNotFound(
+      await request(app, "PATCH", `/api/teacher/students/${studentAId}`, cookieB, {
+        archived: true,
+      }),
+      "STUDENT_NOT_FOUND",
+    );
+    const rowA = db
+      .select()
+      .from(students)
+      .where(eq(students.id, studentAId))
+      .get();
+    expect(rowA?.displayName).toBe("甲学生");
+    expect(rowA?.archivedAt).toBeNull();
+    expect(rowA?.teacherId).toBe(TEST_TEACHER_ID);
+  });
+
+  it("乙创建学生 loginName 与甲重名 → 409 且不落库；改「甲学生2」成功落乙域", async () => {
+    const { app, db, cookieB } = await makeCourseIsolationApp();
+    const res = await request(app, "POST", "/api/teacher/students", cookieB, {
+      displayName: "甲学生",
+      loginName: "甲学生",
+    });
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as ApiErr).error).toBe("LOGIN_NAME_TAKEN");
+    // 不落库重名（D14：loginName 全局唯一，命名空间不按教师分片）
+    expect(
+      db
+        .select({ id: students.id })
+        .from(students)
+        .where(eq(students.loginName, "甲学生"))
+        .all(),
+    ).toHaveLength(1);
+
+    // 前端提示「如：张三2」（D14 维持现状）——换名后乙成功创建，落乙域
+    const retry = await request(app, "POST", "/api/teacher/students", cookieB, {
+      displayName: "甲学生2",
+      loginName: "甲学生2",
+    });
+    expect(retry.status).toBe(201);
+    const retryId = (
+      (await retry.json()) as { data: { student: { id: string } } }
+    ).data.student.id;
+    expect(
+      db
+        .select({ teacherId: students.teacherId })
+        .from(students)
+        .where(eq(students.id, retryId))
+        .get()?.teacherId,
+    ).toBe(TEACHER_B_ID);
   });
 });

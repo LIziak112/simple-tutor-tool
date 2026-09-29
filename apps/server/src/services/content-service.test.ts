@@ -892,7 +892,7 @@ describe("T2B.1 单教师等价：创建入口写 teacherId（D9）", () => {
     const db = createTestDb();
     const folder = createFolder(db, TEST_TEACHER_ID, { name: "第一章" });
     const course = createCourse(db, TEST_TEACHER_ID, { title: "初一上" });
-    const student = await createStudent(db, {
+    const student = await createStudent(db, TEST_TEACHER_ID, {
       displayName: "张三",
       loginName: "张三",
     });

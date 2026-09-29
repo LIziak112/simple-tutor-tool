@@ -22,7 +22,6 @@ import {
 import { createStudentSession, pruneExpiredSessions } from "../auth/session";
 import type { Db } from "../db/client";
 import { type Student, students } from "../db/schema";
-import { getSingleTeacherId } from "../db/teacher-scope";
 import { HttpError } from "../lib/http-error";
 
 /**
@@ -38,6 +37,11 @@ import { HttpError } from "../lib/http-error";
  * - 密码登录失败一律 INVALID_CREDENTIALS（不区分「无此登录名/密码错/方式关闭/已归档」，防枚举）；
  * - 归档学生 = 两种登录都拒绝 + 会话立即失效（requireStudent 校验）；
  * - 密码/令牌明文只在创建/重置响应里出现一次，其余任何接口不返回。
+ *
+ * T2B.5 域隔离（D12/D14）：教师侧全部接口按会话教师——他人学生一律按不存在处理
+ * （404 STUDENT_NOT_FOUND，不暴露存在性）；loginName / linkToken 维持**全局唯一**
+ * （D14：学生一生只归创建教师，loginName 命名空间不按教师分片）；学生侧接口
+ * （登录 / me / 改密）按 studentId 工作，天然隔离，签名与行为不变。
  */
 
 /** 随机初始密码长度（无混淆字符字符集，方便口头/微信转述） */
@@ -123,8 +127,27 @@ function assertLoginNameFree(db: Db, loginName: string, selfId?: string) {
   }
 }
 
-/** 按 id 取学生，不存在 → 404 STUDENT_NOT_FOUND */
-function requireStudentRow(db: Db, id: string): Student {
+/**
+ * 按会话教师取学生行（T2B.5）：不存在或非本人学生 → 404 STUDENT_NOT_FOUND
+ * （D12：不暴露存在性；D14：学生一生只归一位教师）。
+ */
+function requireStudentRow(db: Db, teacherId: string, id: string): Student {
+  const row = db
+    .select()
+    .from(students)
+    .where(and(eq(students.teacherId, teacherId), eq(students.id, id)))
+    .get();
+  if (!row) {
+    throw new HttpError(404, "STUDENT_NOT_FOUND", "学生不存在");
+  }
+  return row;
+}
+
+/**
+ * 按 id 取学生行（不带教师域——学生侧自助链路专用：studentId 为 uuid 全局唯一，
+ * 天然隔离且无会话教师可传，D10；对外行为不变）。不存在 → 404 STUDENT_NOT_FOUND。
+ */
+function requireStudentRowById(db: Db, id: string): Student {
   const row = findById(db, id);
   if (!row) {
     throw new HttpError(404, "STUDENT_NOT_FOUND", "学生不存在");
@@ -140,14 +163,19 @@ function normalizeNote(note: string | undefined): string | null | undefined {
 
 // ---------- 教师：列表 / CRUD / 重置 ----------
 
-/** GET /api/teacher/students：默认只列未归档；includeArchived=true 时全部（含归档标记） */
+/**
+ * GET /api/teacher/students：默认只列本人未归档学生；includeArchived=true 时全部
+ * （含归档标记）。T2B.5：按归属教师过滤（乙视角甲的学生零出现，列表为空）。
+ */
 export function listStudents(
   db: Db,
+  teacherId: string,
   includeArchived: boolean,
 ): StudentListData {
   const rows = db
     .select()
     .from(students)
+    .where(eq(students.teacherId, teacherId))
     .orderBy(asc(students.createdAt))
     .all();
   const filtered = includeArchived
@@ -163,6 +191,7 @@ export function listStudents(
  */
 export async function createStudent(
   db: Db,
+  teacherId: string,
   request: StudentCreateRequest,
 ): Promise<StudentCreateData> {
   assertLoginNameFree(db, request.loginName);
@@ -172,7 +201,7 @@ export async function createStudent(
   const passwordHash = await hashPassword(initialPassword);
   const row: typeof students.$inferInsert = {
     id: randomUUID(),
-    teacherId: getSingleTeacherId(db), // D14：学生一生只归创建教师
+    teacherId, // D14：学生一生只归创建教师（T2B.5 起取会话教师）
     displayName: request.displayName,
     loginName: request.loginName,
     passwordHash,
@@ -185,7 +214,7 @@ export async function createStudent(
   };
   db.insert(students).values(row).run();
   return {
-    student: toSummary(requireStudentRow(db, row.id)),
+    student: toSummary(requireStudentRow(db, teacherId, row.id)),
     // 教师自备密码时不回显（自己已知）；生成密码时一次性明文返回
     initialPassword: provided ? null : initialPassword,
   };
@@ -193,14 +222,16 @@ export async function createStudent(
 
 /**
  * PATCH /api/teacher/students/:id。全部字段可选（缺省 = 不改）；
- * 改登录名仍要求全局唯一（不含自身）；archived=true 归档 / false 取消归档。
+ * 改登录名仍要求全局唯一（不含自身，D14）；archived=true 归档 / false 取消归档。
+ * T2B.5：按归属教师取行（乙对甲学生 → 404 STUDENT_NOT_FOUND）。
  */
 export function updateStudent(
   db: Db,
+  teacherId: string,
   id: string,
   request: StudentUpdateRequest,
 ): StudentSummary {
-  const row = requireStudentRow(db, id);
+  const row = requireStudentRow(db, teacherId, id);
   if (request.loginName !== undefined && request.loginName !== row.loginName) {
     assertLoginNameFree(db, request.loginName, id);
   }
@@ -226,19 +257,21 @@ export function updateStudent(
   if (Object.keys(patch).length > 0) {
     db.update(students).set(patch).where(eq(students.id, id)).run();
   }
-  return toSummary(requireStudentRow(db, id));
+  return toSummary(requireStudentRow(db, teacherId, id));
 }
 
 /**
  * POST /api/teacher/students/:id/reset-password：生成新密码（一次性明文）并
  * 顺带开启 passwordEnabled（重置即意图让学生用密码登录）；
  * 同时清掉该登录名的失败计数，避免旧暴力失败把新密码也锁住。
+ * T2B.5：按归属教师取行（乙对甲学生 → 404 STUDENT_NOT_FOUND）。
  */
 export async function resetStudentPassword(
   db: Db,
+  teacherId: string,
   id: string,
 ): Promise<StudentResetPasswordData> {
-  const row = requireStudentRow(db, id);
+  const row = requireStudentRow(db, teacherId, id);
   const password = generateInitialPassword();
   const passwordHash = await hashPassword(password);
   db.update(students)
@@ -253,9 +286,14 @@ export async function resetStudentPassword(
  * POST /api/teacher/students/:id/reset-link：生成新 linkToken，旧链接立即失效
  * （按 token 精确匹配，旧值已被覆盖不再命中）；顺带开启 linkEnabled。
  * 已登录学生会话不受影响（会话 token 与 linkToken 独立，90 天有效期内继续可用）。
+ * T2B.5：按归属教师取行（乙对甲学生 → 404 STUDENT_NOT_FOUND）。
  */
-export function resetStudentLink(db: Db, id: string): StudentResetLinkData {
-  const row = requireStudentRow(db, id);
+export function resetStudentLink(
+  db: Db,
+  teacherId: string,
+  id: string,
+): StudentResetLinkData {
+  const row = requireStudentRow(db, teacherId, id);
   const linkToken = generateLinkToken();
   db.update(students)
     .set({ linkToken, linkEnabled: true })
@@ -358,7 +396,7 @@ export async function changeStudentPassword(
   studentId: string,
   request: StudentPasswordChangeRequest,
 ): Promise<StudentMeData> {
-  const row = requireStudentRow(db, studentId);
+  const row = requireStudentRowById(db, studentId);
   if (row.passwordHash == null) {
     throw new HttpError(
       401,
@@ -374,6 +412,6 @@ export async function changeStudentPassword(
     .set({ passwordHash, passwordEnabled: true })
     .where(eq(students.id, studentId))
     .run();
-  const updated = requireStudentRow(db, studentId);
+  const updated = requireStudentRowById(db, studentId);
   return toMe(updated);
 }
