@@ -27,6 +27,9 @@ import {
  * - 讲义按 (目标文件夹, 标题) 匹配（D18）；
  * - 题目同 id 更新 version+1，文件中缺失的已有题目保留（D18）；软删题再导入
  *   即恢复（按 updated 计）；
+ * - 配套讲义指针（frontmatter lecture）：目标文件夹已有讲义或本文件产出讲义
+ *   （title 覆盖后的值）按名字匹配；都未命中 → LECTURE_LINK_UNRESOLVED warning
+ *   （内容模型与导入规范化方案 §4；commit 匹配不到仍静默 lectureId=null）；
  * - 命中回收站资源 → restore=true（自动恢复，D18）。
  */
 
@@ -134,6 +137,26 @@ export function buildImportPlan(input: ImportPlanInput): ImportPlan {
 
   // ---- 单元：按 DSL unit id 全局匹配（D18） ----
   for (const unit of parsed.units) {
+    // 配套讲义指针解析（内容模型与导入规范化方案 §4）：按最终讲义名匹配
+    // 目标文件夹内已有讲义（快照口径与 commit 一致，含回收站行）或本文件解析
+    // 产出的讲义（title 覆盖后的值）；两者皆无 → warning（不阻断导入；commit
+    // 行为不变：匹配不到仍静默 lectureId=null）
+    const { lectureTitle } = unit;
+    if (lectureTitle !== undefined) {
+      const inTargetFolder = snapshot.lectures.some(
+        (row) => row.folderId === folderId && row.title === lectureTitle,
+      );
+      const inThisFile = parsed.lectures.some(
+        (lecture) => lecture.title === lectureTitle,
+      );
+      if (!inTargetFolder && !inThisFile) {
+        warnings.push({
+          code: "LECTURE_LINK_UNRESOLVED",
+          message: `配套讲义「${lectureTitle}」在目标文件夹与本文件中都未找到：练习将暂不关联讲义；若讲义在其他文件夹或尚未导入，请调整后再试`,
+        });
+      }
+    }
+
     const existing = snapshot.units.get(unit.id);
     if (existing === undefined) {
       actions.push({

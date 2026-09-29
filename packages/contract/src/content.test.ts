@@ -371,6 +371,31 @@ describe("frontmatter 与文档类型", () => {
     });
     expect(parsed.dsl).toBe(2);
   });
+
+  it("title（讲义名）被解析并保留在 frontmatter", () => {
+    const parsed = frontmatterSchema.parse({
+      kind: "mixed",
+      title: "第4讲 有理数",
+    });
+    expect(parsed.title).toBe("第4讲 有理数");
+  });
+
+  it("frontmatter 缺 title 不报错，行为与现状一致（结果不含 title 字段）", () => {
+    const result = frontmatterSchema.safeParse({
+      kind: "lecture",
+      unit: "练习四",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data).not.toHaveProperty("title");
+    }
+  });
+
+  it("title 非字符串时拒绝", () => {
+    expect(
+      frontmatterSchema.safeParse({ kind: "lecture", title: 4 }).success,
+    ).toBe(false);
+  });
 });
 
 describe("ParsedDocument：解析结果（T1.3/T1.4/T1.6 产出）", () => {

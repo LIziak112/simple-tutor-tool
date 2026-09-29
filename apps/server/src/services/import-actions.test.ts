@@ -61,6 +61,75 @@ function parsedLecture(title: string): ParsedDocument {
   };
 }
 
+/** 最小判断题（id 参与 buildImportPlan，其余填最小合法值） */
+function makeJudgeQuestion(
+  id: string,
+): ParsedDocument["units"][number]["questions"][number] {
+  return {
+    id,
+    type: "judge",
+    difficulty: 1,
+    stemMd: "题干",
+    answers: { kind: "judge", value: true },
+    knowledge: [],
+    hints: [],
+    sourceMd: "::::question\n::::",
+  };
+}
+
+/** 带配套讲义指针的练习文档（frontmatter lecture → unit.lectureTitle，本文件无讲义产出） */
+function parsedUnitWithLecture(
+  unitId: string,
+  lectureTitle: string,
+): ParsedDocument {
+  return {
+    frontmatter: {
+      kind: "practice",
+      dsl: 2,
+      unit: unitId,
+      lecture: lectureTitle,
+    },
+    units: [
+      {
+        id: unitId,
+        title: unitId,
+        lectureTitle,
+        questions: [makeJudgeQuestion(`${unitId}-1`)],
+      },
+    ],
+    lectures: [],
+    issues: [],
+  };
+}
+
+/** mixed 文档：单元配套指针指向本文件产出的讲义（title 为 title: 覆盖后的最终标题） */
+function parsedMixedWithSelfLecture(
+  unitId: string,
+  lectureTitle: string,
+): ParsedDocument {
+  return {
+    frontmatter: {
+      kind: "mixed",
+      dsl: 2,
+      unit: unitId,
+      title: lectureTitle,
+      lecture: lectureTitle,
+    },
+    units: [
+      {
+        id: unitId,
+        title: unitId,
+        lectureTitle,
+        questions: [makeJudgeQuestion(`${unitId}-1`)],
+      },
+    ],
+    lectures: [
+      { title: lectureTitle, markdown: `# ${lectureTitle}`, headings: [] },
+    ],
+    issues: [],
+  };
+}
+
 function snapshot(overrides: Partial<LibrarySnapshot> = {}): LibrarySnapshot {
   return {
     units: new Map(),
@@ -277,6 +346,96 @@ describe("buildImportPlan：讲义动作（D18）", () => {
         restore: true,
       },
     ]);
+  });
+});
+
+describe("buildImportPlan：配套讲义悬空提示（LECTURE_LINK_UNRESOLVED，方案 §4）", () => {
+  it("lecture 指向的讲义在目标文件夹与本文件中都不存在 → warning（文案含讲义名）", () => {
+    const plan = buildImportPlan({
+      parsed: parsedUnitWithLecture("练习四", "第4讲 有理数"),
+      folderId: FOLDER_A,
+      snapshot: snapshot(),
+    });
+    expect(plan.warnings).toContainEqual({
+      code: "LECTURE_LINK_UNRESOLVED",
+      message:
+        "配套讲义「第4讲 有理数」在目标文件夹与本文件中都未找到：练习将暂不关联讲义；若讲义在其他文件夹或尚未导入，请调整后再试",
+    });
+  });
+
+  it("指向本文件产出的讲义（title: 覆盖后的最终标题）→ 不出 warning", () => {
+    const plan = buildImportPlan({
+      parsed: parsedMixedWithSelfLecture("随堂练习", "第4讲 有理数"),
+      folderId: FOLDER_A,
+      snapshot: snapshot(),
+    });
+    expect(plan.warnings).toEqual([]);
+  });
+
+  it("指向目标文件夹已有同名讲义 → 不出 warning；其他文件夹同名不算；回收站同名同文件夹也算（commit 恢复后即关联）", () => {
+    const base = { parsed: parsedUnitWithLecture("练习四", "第4讲 有理数") };
+
+    // 目标文件夹命中（未删）
+    const hit = buildImportPlan({
+      ...base,
+      folderId: FOLDER_A,
+      snapshot: snapshot({
+        lectures: [
+          {
+            id: "l1",
+            title: "第4讲 有理数",
+            folderId: FOLDER_A,
+            deletedAt: null,
+          },
+        ],
+      }),
+    });
+    expect(hit.warnings).toEqual([]);
+
+    // 同名讲义在别的文件夹 → 匹配范围限同文件夹，仍悬空
+    const miss = buildImportPlan({
+      ...base,
+      folderId: FOLDER_A,
+      snapshot: snapshot({
+        lectures: [
+          {
+            id: "l1",
+            title: "第4讲 有理数",
+            folderId: FOLDER_B,
+            deletedAt: null,
+          },
+        ],
+      }),
+    });
+    expect(miss.warnings.map((w) => w.code)).toContain(
+      "LECTURE_LINK_UNRESOLVED",
+    );
+
+    // 回收站中的同名讲义（同文件夹）：commit 会恢复并关联，预览不提示悬空
+    const recycled = buildImportPlan({
+      ...base,
+      folderId: FOLDER_A,
+      snapshot: snapshot({
+        lectures: [
+          {
+            id: "l1",
+            title: "第4讲 有理数",
+            folderId: FOLDER_A,
+            deletedAt: "2026-09-01T00:00:00.000Z",
+          },
+        ],
+      }),
+    });
+    expect(recycled.warnings).toEqual([]);
+  });
+
+  it("未声明 lecture（lectureTitle 缺省）→ 不参与悬空判定，无 warning", () => {
+    const plan = buildImportPlan({
+      parsed: parsedUnit("练习四", ["练习四-1"]),
+      folderId: FOLDER_A,
+      snapshot: snapshot(),
+    });
+    expect(plan.warnings).toEqual([]);
   });
 });
 

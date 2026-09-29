@@ -277,6 +277,33 @@ describe("lintDocument：解析层 issue 透传与合并", () => {
   });
 });
 
+describe("lintDocument：ParseOptions 透传（导入分析传入文件名场景，方案 §7 第 3 步）", () => {
+  const noUnit = md([
+    "---",
+    "kind: practice",
+    "---",
+    "",
+    "::::question{type=judge difficulty=1}",
+    "$0$ 是正数。[[错误]]",
+    "::::",
+  ]);
+
+  it("lintDocument(md, {fallbackUnitId}) 的 options 透传到 parseDocument：单元锚定文件名并出现 UNIT_FROM_FALLBACK", () => {
+    const { parsed, issues } = lintDocument(noUnit, {
+      fallbackUnitId: "有理数练习",
+    });
+    expect(parsed.units[0]?.id).toBe("有理数练习");
+    expect(codes(issues)).toContain("UNIT_FROM_FALLBACK");
+    expect(issueOf(issues, "UNIT_FROM_FALLBACK")?.level).toBe("warning");
+  });
+
+  it("不传 options：行为与现状一致（兜底字面量、无 UNIT_FROM_FALLBACK）", () => {
+    const { parsed, issues } = lintDocument(noUnit);
+    expect(parsed.units[0]?.id).toBe("unit");
+    expect(issues).toEqual([]);
+  });
+});
+
 describe("lintDocument：题目规则补充", () => {
   it("选择题题干完全没有选项：CHOICE_NO_CORRECT，message 提示补任务列表", () => {
     const text = md([

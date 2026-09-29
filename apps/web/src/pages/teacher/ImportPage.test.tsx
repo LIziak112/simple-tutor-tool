@@ -19,12 +19,15 @@ import {
 import ImportPage from "./ImportPage";
 
 /**
- * 导入页组件测试（T1.11 建立；T2A.3 重构后更新）：
- * - 输入区：粘贴 textarea / 文件选择按钮 / 目标文件夹下拉（可就地新建）；
- * - 粘贴 → 单文件预览（统计条、错误面板、debounce、commit payload 与成功跳转）；
+ * 导入页组件测试（T1.11 建立；T2A.3 重构；内容模型方案 §5 统一待导入清单）：
+ * - 选择页 = 一张清单：选择 .md 文件 / 选择文件夹（jsdom 无 webkitdirectory，
+ *   目录入口不渲染）/「粘贴内容」展开小输入区加入条目；同 path 替换、移除、
+ *   就地改名、规模预检实时红字；
+ * - 粘贴条目 → 单文件预览（统计条、错误面板、debounce、commit payload 与成功跳转）；
  * - commit 422 LINT_ERROR 的 _issues 并入同一面板；
- * - 多文件 → 批量预览表格（mock previewImportBatch）：行摘要、有 error 文件标红、
- *   「复制全部错误」按钮；提交时有 error 文件自动跳过、其余逐个 commit、汇总报告。
+ * - 多条（文件/粘贴混合）→ 批量预览表格（mock previewImportBatch）：行摘要、
+ *   有 error 文件标红、「复制全部错误」按钮；提交时有 error 文件自动跳过、
+ *   其余逐个 commit、汇总报告。
  * CodeMirror 编辑器 mock 为普通 textarea（jsdom 不跑真实 CM；真实集成走 Playwright 自验），
  * lint 标注的纯映射逻辑在 lint-diagnostics.test.ts 单独覆盖。
  */
@@ -159,17 +162,52 @@ function mdFile(name: string, markdown: string): File {
   return new File([markdown], name, { type: "text/markdown" });
 }
 
-describe("ImportPage 输入区（T2A.3 三入口 + 导入选项）", () => {
+/** 打开粘贴区、输入内容并「加入清单」（filename 省略 = 用当前默认名） */
+function addPasteEntry(markdown: string, filename?: string): void {
+  // 粘贴区可能已展开（连续加多条时不再点开关）
+  if (screen.queryByLabelText("文档内容") === null) {
+    fireEvent.click(screen.getByRole("button", { name: "粘贴内容" }));
+  }
+  fireEvent.change(screen.getByLabelText("文档内容"), {
+    target: { value: markdown },
+  });
+  if (filename !== undefined) {
+    fireEvent.change(screen.getByLabelText("文件名（粘贴内容用）"), {
+      target: { value: filename },
+    });
+  }
+  fireEvent.click(screen.getByRole("button", { name: "加入清单" }));
+}
+
+/** 触发隐藏的文件选择 input（多选一次性传入） */
+function pickFiles(
+  utils: ReturnType<typeof renderImportPage>,
+  files: File[],
+): void {
+  const fileInput = utils.container.querySelector(
+    'input[type="file"]',
+  ) as HTMLInputElement;
+  expect(fileInput).not.toBeNull();
+  fireEvent.change(fileInput, { target: { files } });
+}
+
+describe("ImportPage 选择页（方案 §5 统一待导入清单）", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it("渲染粘贴框、文件选择按钮与目标文件夹下拉（含未归类）；空内容时预览按钮禁用", async () => {
+  it("渲染文件与粘贴入口、清单空态与目标文件夹下拉；粘贴区默认收起，清单空时预览禁用", async () => {
     renderImportPage();
-    expect(screen.getByLabelText("文档内容")).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "选择 .md 文件" }),
     ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "粘贴内容" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    // 粘贴输入区默认收起；清单空态有明确提示
+    expect(screen.queryByLabelText("文档内容")).not.toBeInTheDocument();
+    expect(screen.getByText(/清单为空/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /预览/ })).toBeDisabled();
 
     // 文件夹下拉：未归类 + 拉到的文件夹（TanStack Query 异步）
@@ -180,7 +218,7 @@ describe("ImportPage 输入区（T2A.3 三入口 + 导入选项）", () => {
     ).toBeInTheDocument();
   });
 
-  it("输入区顶部带「AI 出题助手」入口，默认收起且不发请求（T1.13）", () => {
+  it("选择页顶部带「AI 出题助手」入口，默认收起且不发请求（T1.13）", () => {
     renderImportPage();
     const toggle = screen.getByRole("button", { name: /AI 出题助手/ });
     expect(toggle).toHaveAttribute("aria-expanded", "false");
@@ -233,15 +271,18 @@ describe("ImportPage 输入区（T2A.3 三入口 + 导入选项）", () => {
     expect(mockedCreateFolder).toHaveBeenCalledWith({ name: "新章节" });
   });
 
-  it("粘贴内容后点击预览：带正确 payload 调 previewImport，进入单文件预览态显示统计条", async () => {
+  it("粘贴生成条目（默认未命名.md）并可就地改名；预览携带改名后的文件名", async () => {
     mockedPreview.mockResolvedValue(previewData({}));
     renderImportPage();
-    fireEvent.change(screen.getByLabelText("文档内容"), {
-      target: { value: PRACTICE_MD },
-    });
-    fireEvent.change(screen.getByLabelText(/文件名/), {
+    addPasteEntry(PRACTICE_MD);
+    // 条目以可编辑文件名进入清单（粘贴条目 Input 就地改名）
+    expect(screen.getByLabelText("重命名 未命名.md")).toHaveValue("未命名.md");
+    fireEvent.change(screen.getByLabelText("重命名 未命名.md"), {
       target: { value: "练习四.md" },
     });
+    // 改名同步 path：旧标签消失，新标签可定位
+    expect(screen.queryByLabelText("重命名 未命名.md")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("重命名 练习四.md")).toHaveValue("练习四.md");
     fireEvent.click(screen.getByRole("button", { name: /预览/ }));
 
     await waitFor(() =>
@@ -250,10 +291,121 @@ describe("ImportPage 输入区（T2A.3 三入口 + 导入选项）", () => {
         filename: "练习四.md",
       }),
     );
-    // 统计条：版本徽章 + 单元/讲义/题数（1/0/1）+ 题型分布 + 动作清单（D19）
+  });
+
+  it("连续两次粘贴：默认名自动避让（未命名.md、未命名-2.md），两条都保留", () => {
+    renderImportPage();
+    addPasteEntry(PRACTICE_MD);
+    addPasteEntry(`${PRACTICE_MD}\n<!-- 第二段 -->`);
+    expect(screen.getByLabelText("重命名 未命名.md")).toBeInTheDocument();
+    expect(screen.getByLabelText("重命名 未命名-2.md")).toBeInTheDocument();
+  });
+
+  it("文件选择 = 追加进清单；同 path 重复选择 → 原位替换（保持最新内容）", async () => {
+    mockedPreviewBatch.mockResolvedValue({
+      files: [batchFile("a.md"), batchFile("b.md")],
+    });
+    const utils = renderImportPage();
+    const aV1 = `# a\n\n${"x".repeat(600)}`;
+    const bContent = `# b\n\n${"y".repeat(300)}`;
+    const aV2 = `# a\n\n${"x".repeat(1200)}`;
+    pickFiles(utils, [mdFile("a.md", aV1), mdFile("b.md", bContent)]);
+    expect(await screen.findByLabelText("移除 a.md")).toBeInTheDocument();
+    expect(screen.getByLabelText("移除 b.md")).toBeInTheDocument();
+
+    // 再次选择 a.md（内容更新）→ 替换而非追加（大小从 0.6 KB 变 1.2 KB）
+    pickFiles(utils, [mdFile("a.md", aV2)]);
+    expect(await screen.findByText("1.2 KB")).toBeInTheDocument();
+    expect(screen.getAllByLabelText(/^移除 /)).toHaveLength(2);
+
+    // 提交批量预览的 payload 里 a.md 是最新内容，且顺序保持（a.md 在前）
+    fireEvent.click(screen.getByRole("button", { name: /预览/ }));
+    await waitFor(() => expect(mockedPreviewBatch).toHaveBeenCalled());
+    expect(mockedPreviewBatch.mock.calls[0]?.[0]).toMatchObject({
+      files: [
+        { path: "a.md", markdown: aV2 },
+        { path: "b.md", markdown: bContent },
+      ],
+    });
+  });
+
+  it("移除条目：清单只剩 1 条文件时走单文件预览（1 条 → 单文件路由）", async () => {
+    mockedPreview.mockResolvedValue(previewData({}));
+    const utils = renderImportPage();
+    pickFiles(utils, [
+      mdFile("a.md", PRACTICE_MD),
+      mdFile("b.md", PRACTICE_MD),
+    ]);
+    await screen.findByLabelText("移除 a.md");
+    fireEvent.click(screen.getByLabelText("移除 a.md"));
+    expect(screen.queryByLabelText("移除 a.md")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /预览/ })).toBeEnabled();
+
+    fireEvent.click(screen.getByRole("button", { name: /预览/ }));
+    // 单文件预览统计条出现；preview 以剩余文件的 basename 为 filename
+    expect(await screen.findByText("DSL v2")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(mockedPreview).toHaveBeenCalledWith(
+        expect.objectContaining({ filename: "b.md", sourcePath: "b.md" }),
+      ),
+    );
+  });
+
+  it("规模预检实时化：粘贴超过 1 MB 的内容立即红字提示，点预览也不发请求", () => {
+    renderImportPage();
+    addPasteEntry(`${PRACTICE_MD}\n${"x".repeat(1024 * 1024)}`);
+    const alert = screen.getByRole("alert");
+    expect(alert.textContent).toContain("超过单文件 1 MB 上限");
+    // 预览按钮可点但被预检拦下：不发请求、停留在选择页
+    fireEvent.click(screen.getByRole("button", { name: /预览/ }));
+    expect(mockedPreview).not.toHaveBeenCalled();
+    expect(mockedPreviewBatch).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("button", { name: "粘贴内容" }),
+    ).toBeInTheDocument();
+  });
+
+  it("粘贴与文件混合清单：≥2 条走批量预览，粘贴条目以文件名为 path", async () => {
+    mockedPreviewBatch.mockResolvedValue({
+      files: [batchFile("未命名.md"), batchFile("a.md")],
+    });
+    const utils = renderImportPage();
+    addPasteEntry(PRACTICE_MD);
+    pickFiles(utils, [mdFile("a.md", PRACTICE_MD)]);
+    await screen.findByLabelText("移除 a.md");
+    fireEvent.click(screen.getByRole("button", { name: /预览/ }));
+
+    await waitFor(() =>
+      expect(mockedPreviewBatch).toHaveBeenCalledWith({
+        autoFolderBySubdir: false,
+        files: [
+          { path: "未命名.md", markdown: PRACTICE_MD },
+          { path: "a.md", markdown: PRACTICE_MD },
+        ],
+      }),
+    );
+    // 批量表格渲染两条文件路径
+    expect(await screen.findByText("未命名.md")).toBeInTheDocument();
+    expect(screen.getByText("a.md")).toBeInTheDocument();
+  });
+
+  it("粘贴内容后点击预览：带正确 payload 调 previewImport，进入单文件预览态显示统计条", async () => {
+    mockedPreview.mockResolvedValue(previewData({}));
+    renderImportPage();
+    addPasteEntry(PRACTICE_MD, "练习四.md");
+    fireEvent.click(screen.getByRole("button", { name: /预览/ }));
+
+    await waitFor(() =>
+      expect(mockedPreview).toHaveBeenCalledWith({
+        markdown: PRACTICE_MD,
+        filename: "练习四.md",
+      }),
+    );
+    // 统计条：版本徽章 + 单元/讲义/题数（1/0/1）+ 实际存储名 + 题型分布 + 动作清单（D19/方案 §5）
     expect(await screen.findByText("DSL v2")).toBeInTheDocument();
     expect(screen.getAllByText("1", { selector: "strong" })).toHaveLength(2);
     expect(screen.getByText("0", { selector: "strong" })).toBeInTheDocument();
+    expect(screen.getByText("单元「练习四」")).toBeInTheDocument();
     expect(screen.getByText("判断 1")).toBeInTheDocument();
     expect(screen.getByText("将执行的动作")).toBeInTheDocument();
     expect(
@@ -271,9 +423,7 @@ describe("ImportPage 单文件预览态", () => {
   it("有 error 时：错误面板渲染（行号/code/消息/建议），确认导入禁用", async () => {
     mockedPreview.mockResolvedValue(previewData({ issues: ERRORS }));
     renderImportPage();
-    fireEvent.change(screen.getByLabelText("文档内容"), {
-      target: { value: PRACTICE_MD },
-    });
+    addPasteEntry(PRACTICE_MD);
     fireEvent.click(screen.getByRole("button", { name: /预览/ }));
 
     expect(await screen.findByText("DSL v2")).toBeInTheDocument();
@@ -288,12 +438,55 @@ describe("ImportPage 单文件预览态", () => {
     expect(screen.getByRole("button", { name: "确认导入" })).toBeDisabled();
   });
 
+  it("统计条显示「文件 → 存储名」实际名称：单元名与讲义名并列（方案 §5）", async () => {
+    mockedPreview.mockResolvedValue(
+      previewData({
+        summary: {
+          unitCount: 1,
+          lectureCount: 2,
+          questionCount: 3,
+          typeDistribution: { judge: 3 },
+        },
+        actions: [
+          {
+            kind: "createLecture",
+            title: "第4讲 有理数",
+            unitId: null,
+            folderName: null,
+            restore: false,
+          },
+          {
+            kind: "createLecture",
+            title: "第5讲 有理数加减",
+            unitId: null,
+            folderName: null,
+            restore: false,
+          },
+          {
+            kind: "createUnit",
+            title: "练习四",
+            unitId: "练习四",
+            folderName: null,
+            restore: false,
+          },
+        ],
+      }),
+    );
+    renderImportPage();
+    addPasteEntry(PRACTICE_MD, "混合.md");
+    fireEvent.click(screen.getByRole("button", { name: /预览/ }));
+
+    expect(await screen.findByText("DSL v2")).toBeInTheDocument();
+    // 计数旁亮出实际名称：单元名在前；多篇讲义取首篇 +「等 N 篇」
+    expect(
+      screen.getByText("单元「练习四」 · 讲义「第4讲 有理数」等 2 篇"),
+    ).toBeInTheDocument();
+  });
+
   it("编辑器内容变化后 400ms debounce 重新调 preview", async () => {
     mockedPreview.mockResolvedValue(previewData({}));
     renderImportPage();
-    fireEvent.change(screen.getByLabelText("文档内容"), {
-      target: { value: PRACTICE_MD },
-    });
+    addPasteEntry(PRACTICE_MD);
     fireEvent.click(screen.getByRole("button", { name: /预览/ }));
     await screen.findByText("DSL v2");
 
@@ -321,9 +514,7 @@ describe("ImportPage 单文件预览态", () => {
       questions: { inserted: 1, updated: 0 },
     });
     renderImportPage();
-    fireEvent.change(screen.getByLabelText("文档内容"), {
-      target: { value: PRACTICE_MD },
-    });
+    addPasteEntry(PRACTICE_MD);
     fireEvent.click(screen.getByRole("button", { name: /预览/ }));
     await screen.findByText("DSL v2");
     fireEvent.click(screen.getByRole("button", { name: "确认导入" }));
@@ -354,9 +545,7 @@ describe("ImportPage 单文件预览态", () => {
     fireEvent.change(screen.getByLabelText("目标文件夹"), {
       target: { value: "f-1" },
     });
-    fireEvent.change(screen.getByLabelText("文档内容"), {
-      target: { value: PRACTICE_MD },
-    });
+    addPasteEntry(PRACTICE_MD);
     fireEvent.click(screen.getByRole("button", { name: /预览/ }));
     await screen.findByText("DSL v2");
 
@@ -384,9 +573,7 @@ describe("ImportPage 单文件预览态", () => {
       ),
     );
     renderImportPage();
-    fireEvent.change(screen.getByLabelText("文档内容"), {
-      target: { value: PRACTICE_MD },
-    });
+    addPasteEntry(PRACTICE_MD);
     fireEvent.click(screen.getByRole("button", { name: /预览/ }));
     await screen.findByText("DSL v2");
     fireEvent.click(screen.getByRole("button", { name: "确认导入" }));
@@ -404,40 +591,65 @@ describe("ImportPage 批量导入（T2A.3，D20）", () => {
     vi.clearAllMocks();
   });
 
-  /** 选 3 个文件（1 个有 error）进入批量预览 */
+  /** 选 3 个文件（1 个有 error 且无内容动作）进入批量预览 */
   async function setupBatch(): Promise<void> {
     mockedPreviewBatch.mockResolvedValue({
       files: [
         batchFile("a.md"),
-        batchFile("b.md"),
+        batchFile("b.md", {
+          preview: previewData({
+            summary: {
+              unitCount: 0,
+              lectureCount: 2,
+              questionCount: 0,
+              typeDistribution: {},
+            },
+            actions: [
+              {
+                kind: "createLecture",
+                title: "第1讲 有理数",
+                unitId: null,
+                folderName: null,
+                restore: false,
+              },
+              {
+                kind: "createLecture",
+                title: "第2讲 数轴",
+                unitId: null,
+                folderName: null,
+                restore: false,
+              },
+            ],
+          }),
+        }),
         batchFile("bad.md", {
-          preview: previewData({ issues: ERRORS }),
+          preview: previewData({
+            summary: {
+              unitCount: 0,
+              lectureCount: 0,
+              questionCount: 0,
+              typeDistribution: {},
+            },
+            actions: [],
+            issues: ERRORS,
+          }),
           hasError: true,
         }),
       ],
     });
     const utils = renderImportPage();
-    const fileInput = utils.container.querySelector(
-      'input[type="file"]',
-    ) as HTMLInputElement;
-    expect(fileInput).not.toBeNull();
-    fireEvent.change(fileInput, {
-      target: {
-        files: [
-          mdFile("a.md", PRACTICE_MD),
-          mdFile("b.md", PRACTICE_MD),
-          mdFile("bad.md", PRACTICE_MD),
-        ],
-      },
-    });
-    // 文件读取是异步的（file.text()）：等「已选择」计数出现再点预览
-    expect(
-      await screen.findByText(/已选择 3 个 \.md 文件/),
-    ).toBeInTheDocument();
+    pickFiles(utils, [
+      mdFile("a.md", PRACTICE_MD),
+      mdFile("b.md", PRACTICE_MD),
+      mdFile("bad.md", PRACTICE_MD),
+    ]);
+    // 文件读取是异步的（file.text()）：等清单行出现再点预览
+    expect(await screen.findByLabelText("移除 a.md")).toBeInTheDocument();
+    expect(await screen.findByLabelText("移除 bad.md")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /预览/ }));
   }
 
-  it("3 个文件走批量预览：表格渲染行摘要，有 error 的文件标红并显示复制全部错误按钮", async () => {
+  it("3 个文件走批量预览：表格渲染行摘要与「文件 → 存储名」内容列，有 error 的文件标红并显示复制全部错误按钮", async () => {
     await setupBatch();
     expect(mockedPreviewBatch).toHaveBeenCalledWith({
       autoFolderBySubdir: false,
@@ -451,6 +663,11 @@ describe("ImportPage 批量导入（T2A.3，D20）", () => {
     expect(await screen.findByText("a.md")).toBeInTheDocument();
     expect(screen.getByText("b.md")).toBeInTheDocument();
     expect(screen.getByText("bad.md")).toBeInTheDocument();
+    // 内容列 = 实际存储名（方案 §5）：单元带题数；多篇讲义取首篇 +「等 N 篇」；
+    // 无动作 = 空文档
+    expect(screen.getByText("单元「练习四」· 1 题")).toBeInTheDocument();
+    expect(screen.getByText("讲义「第1讲 有理数」等 2 篇")).toBeInTheDocument();
+    expect(screen.getByText("（空文档）")).toBeInTheDocument();
     // 复制全部错误（仅含有 error 的文件 → 1 个）
     expect(
       screen.getByRole("button", { name: /复制全部错误给 AI（1 个文件）/ }),

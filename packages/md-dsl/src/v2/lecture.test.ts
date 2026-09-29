@@ -493,3 +493,165 @@ describe("parseDocument：讲义与混合边界", () => {
     expect(result.lectures[0]?.markdown).toContain("正文继续属于第1讲。");
   });
 });
+
+describe("parseDocument：frontmatter.title 讲义命名链（内容模型与导入规范化方案 §3）", () => {
+  it("单讲义 lecture + title：讲义 title 用 frontmatter.title，markdown 原文不动（H1 行保留）", () => {
+    const md = [
+      "---",
+      "kind: lecture",
+      "title: 第4讲 有理数",
+      "---",
+      "",
+      "# 第4讲 有理数（草稿名）",
+      "",
+      "正文。",
+      "",
+    ].join("\n");
+    const result = parseDocument(md);
+    expect(result.issues).toEqual([]);
+    expect(result.lectures).toHaveLength(1);
+    expect(result.lectures[0]?.title).toBe("第4讲 有理数");
+    expect(result.lectures[0]?.markdown).toBe(
+      "# 第4讲 有理数（草稿名）\n\n正文。",
+    );
+  });
+
+  it("单讲义无 title：讲义 title 取 H1 文本（现状不变）", () => {
+    const md = [
+      "---",
+      "kind: lecture",
+      "---",
+      "",
+      "# 第4讲 有理数",
+      "",
+      "正文。",
+      "",
+    ].join("\n");
+    const result = parseDocument(md);
+    expect(result.issues).toEqual([]);
+    expect(result.lectures[0]?.title).toBe("第4讲 有理数");
+  });
+
+  it("多讲义 + title：逐篇按各自 H1 命名，记 TITLE_IGNORED_MULTI_LECTURE（warning）", () => {
+    const md = [
+      "---",
+      "kind: lecture",
+      "title: 有理数全讲",
+      "---",
+      "",
+      "# 第1讲 有理数",
+      "",
+      "正文一。",
+      "",
+      "# 第2讲 数轴",
+      "",
+      "正文二。",
+      "",
+    ].join("\n");
+    const result = parseDocument(md);
+    expect(result.lectures.map((l) => l.title)).toEqual([
+      "第1讲 有理数",
+      "第2讲 数轴",
+    ]);
+    const issue = result.issues.find(
+      (i) => i.code === "TITLE_IGNORED_MULTI_LECTURE",
+    );
+    expect(issue?.level).toBe("warning");
+    expect(issue?.message).toContain("title");
+  });
+
+  it("kind: practice + title：无讲义可命名，记 TITLE_NOT_APPLICABLE（warning）", () => {
+    const md = [
+      "---",
+      "kind: practice",
+      "unit: 练习",
+      "title: 第4讲 有理数",
+      "---",
+      "",
+      "::::question{type=judge difficulty=1}",
+      "$0$ 是正数。[[错误]]",
+      "::::",
+      "",
+    ].join("\n");
+    const result = parseDocument(md);
+    expect(result.lectures).toEqual([]);
+    const issue = result.issues.find((i) => i.code === "TITLE_NOT_APPLICABLE");
+    expect(issue?.level).toBe("warning");
+    expect(issue?.message).toContain("title");
+  });
+});
+
+describe("parseDocument：mixed 单讲义 title 覆盖与 unit.lectureTitle（方案 §2 配套讲义指针）", () => {
+  it("单讲义 + title + 题目在 H1 后：unit.lectureTitle 用 title 覆盖后的最终讲义名（指向存储后的名字）", () => {
+    const md = [
+      "---",
+      "kind: mixed",
+      "title: 第4讲 有理数",
+      "---",
+      "",
+      "# 第4讲 有理数（草稿名）",
+      "",
+      "正文。",
+      "",
+      "::::question{type=judge difficulty=1}",
+      "$0$ 是正数。[[错误]]",
+      "::::",
+      "",
+    ].join("\n");
+    const result = parseDocument(md);
+    expect(result.issues).toEqual([]);
+    expect(result.lectures[0]?.title).toBe("第4讲 有理数");
+    expect(result.units[0]?.lectureTitle).toBe("第4讲 有理数");
+  });
+
+  it("显式 frontmatter.lecture 优先级不变：不受 title 覆盖影响", () => {
+    const md = [
+      "---",
+      "kind: mixed",
+      "title: 第4讲 有理数",
+      "lecture: 第0讲 预备知识",
+      "---",
+      "",
+      "# 第4讲 有理数（草稿名）",
+      "",
+      "正文。",
+      "",
+      "::::question{type=judge difficulty=1}",
+      "$0$ 是正数。[[错误]]",
+      "::::",
+      "",
+    ].join("\n");
+    const result = parseDocument(md);
+    expect(result.issues).toEqual([]);
+    expect(result.lectures[0]?.title).toBe("第4讲 有理数");
+    expect(result.units[0]?.lectureTitle).toBe("第0讲 预备知识");
+  });
+
+  it("mixed 多讲义 + title：逐篇按各自 H1 命名并记 TITLE_IGNORED_MULTI_LECTURE，位置推断仍指向各 H1", () => {
+    const md = [
+      "---",
+      "kind: mixed",
+      "title: 有理数全讲",
+      "---",
+      "",
+      "# 第1讲 有理数",
+      "",
+      "::::question{type=judge difficulty=1}",
+      "$0$ 是正数。[[错误]]",
+      "::::",
+      "",
+      "# 第2讲 数轴",
+      "",
+      "正文二。",
+      "",
+    ].join("\n");
+    const result = parseDocument(md);
+    expect(result.lectures.map((l) => l.title)).toEqual([
+      "第1讲 有理数",
+      "第2讲 数轴",
+    ]);
+    // 题目在第1讲 H1 之后、第2讲 H1 之前：位置推断关联「第1讲 有理数」
+    expect(result.units[0]?.lectureTitle).toBe("第1讲 有理数");
+    expect(codes(result.issues)).toContain("TITLE_IGNORED_MULTI_LECTURE");
+  });
+});
