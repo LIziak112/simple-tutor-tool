@@ -65,7 +65,6 @@ import {
   type StudentListData,
   type StudentLoginRequest,
   type StudentMeData,
-  type StudentPaperData,
   type StudentResetLinkData,
   type StudentResetPasswordData,
   type StudentSummary,
@@ -680,15 +679,6 @@ export function startCourseAttemptApi(
     api.api.student.courses[":id"].units[":unitId"].attempts.$post({
       param: { id: courseId, unitId },
     }),
-  );
-}
-
-/** 通用取卷（两种来源共用；课程来源每次校验可见性与成员资格） */
-export function fetchAttemptPaperApi(
-  attemptId: string,
-): Promise<StudentPaperData> {
-  return callApi(() =>
-    api.api.student.attempts[":id"].paper.$get({ param: { id: attemptId } }),
   );
 }
 

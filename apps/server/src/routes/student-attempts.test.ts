@@ -7,6 +7,7 @@ import {
   attemptResultOkSchema,
   attemptStartOkSchema,
   type StudentAssignmentListData,
+  studentPaperDataSchema,
 } from "@tutor/contract";
 import { publicStemMd } from "@tutor/md-dsl";
 import { eq } from "drizzle-orm";
@@ -15,7 +16,7 @@ import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
-import { attempts, questions, responses } from "../db/schema.ts";
+import { attempts, questions, responses, units } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 
@@ -82,6 +83,7 @@ async function makeAttemptApp(): Promise<{
   app: App;
   db: Db;
   teacherCookie: string;
+  aId: string;
   aCookie: string;
   bCookie: string;
   assignmentId: string;
@@ -120,6 +122,7 @@ async function makeAttemptApp(): Promise<{
     app,
     db,
     teacherCookie,
+    aId,
     aCookie: await loginStudent(app, "张三"),
     bCookie: await loginStudent(app, "李四"),
     assignmentId,
@@ -312,6 +315,154 @@ describe("POST /api/student/assignments/:id/attempt：创建与幂等", () => {
     expect(((await notFound.json()) as ApiErr).error).toBe(
       "ASSIGNMENT_NOT_FOUND",
     );
+  });
+});
+
+describe("学生侧 attempt 接口鉴权口径（T5：入口类查可见性 / 续作类归属即权限）", () => {
+  /**
+   * 口径（attempt-service 文件头注释为权威）：
+   * - 入口类（从列表/目录进入）：GET /assignments、GET /assignments/:id/paper、
+   *   POST /assignments/:id/attempt——被移出名单 → 403，作业软删 → 404；
+   * - 续作类（已持有 attemptId 的 /attempts/:id/*）：归属即权限
+   *   （requireOwnAttempt），assignment 来源不叠加可见性校验——与
+   *   「删除作业不删除已有作答记录」「被移出后已建作答仍可继续」一致；
+   *   course 来源 + draft 的重校验是 D7/D22 特例（见 student-course-attempts）。
+   */
+
+  /** 把张三移出作业名单（已开始的学生需 confirmStarted，D13 移出立即不可见） */
+  async function removeFromRoster(
+    app: App,
+    teacherCookie: string,
+    assignmentId: string,
+    studentId: string,
+  ): Promise<void> {
+    const res = await app.request(`/api/teacher/assignments/${assignmentId}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json", cookie: teacherCookie },
+      body: JSON.stringify({
+        removeStudentIds: [studentId],
+        confirmStarted: true,
+      }),
+    });
+    expect(res.status).toBe(200);
+  }
+
+  it("入口类：被移出名单的学生 POST /assignments/:id/attempt → 403（不能再开新卷或取回旧卷）", async () => {
+    const { app, db, teacherCookie, aCookie, aId, assignmentId } =
+      await makeAttemptApp();
+    const attemptId = (await startAttemptOk(app, aCookie, assignmentId))
+      .id as string;
+    await removeFromRoster(app, teacherCookie, assignmentId, aId);
+
+    // 移出前已有 draft：POST /attempt 也不得取回它（requireAssignmentVisible
+    // 的在册判定含 removedAt IS NULL，与 T2.4 paper 接口同口径，D13）
+    const reopened = await postAttempt(app, aCookie, assignmentId);
+    expect(reopened.status).toBe(403);
+    expect(((await reopened.json()) as ApiErr).error).toBe("FORBIDDEN");
+    // 幂等取回确实被拦住：库里仍是那一份（没有被新建）
+    const rows = db
+      .select()
+      .from(attempts)
+      .where(eq(attempts.assignmentId, assignmentId))
+      .all();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.id).toBe(attemptId);
+  });
+
+  it("续作类：被移出名单但已建 draft 的学生 GET /attempts/:id/paper → 200（与详情 200 同口径）", async () => {
+    const { app, teacherCookie, aCookie, aId, assignmentId } =
+      await makeAttemptApp();
+    const attemptId = (await startAttemptOk(app, aCookie, assignmentId))
+      .id as string;
+    await removeFromRoster(app, teacherCookie, assignmentId, aId);
+
+    // 详情（归属即权限）照常 200
+    expect((await getAttempt(app, aCookie, attemptId)).res.status).toBe(200);
+
+    // 通用取卷与详情同口径：不再叠加 requireAssignmentVisible
+    // （被移出后已建作答仍可继续，§5.2）
+    const paper = await app.request(
+      `/api/student/attempts/${attemptId}/paper`,
+      {
+        headers: { cookie: aCookie },
+      },
+    );
+    expect(paper.status).toBe(200);
+    const body = (await paper.json()) as unknown;
+    expect(
+      studentPaperDataSchema.safeParse((body as { data: unknown }).data)
+        .success,
+    ).toBe(true);
+    // 续作类取卷仍是草稿阶段：不得泄露答案/详解（AGENTS 第 3 条）
+    assertNoLeak(body);
+  });
+
+  it("续作类：作业软删后已建 draft 的学生 GET /attempts/:id/paper → 200（作答记录不随作业软删消失）", async () => {
+    const { app, teacherCookie, aCookie, assignmentId } =
+      await makeAttemptApp();
+    const attemptId = (await startAttemptOk(app, aCookie, assignmentId))
+      .id as string;
+    const del = await app.request(`/api/teacher/assignments/${assignmentId}`, {
+      method: "DELETE",
+      headers: { cookie: teacherCookie },
+    });
+    expect(del.status).toBe(200);
+
+    expect((await getAttempt(app, aCookie, attemptId)).res.status).toBe(200);
+    const paper = await app.request(
+      `/api/student/attempts/${attemptId}/paper`,
+      {
+        headers: { cookie: aCookie },
+      },
+    );
+    expect(paper.status).toBe(200);
+    assertNoLeak(await paper.json());
+  });
+
+  it("摘要归一化：旧库回填的 assignment 来源 attempt（unitId 非空）→ startAttempt/详情摘要 unitId 恒 null", async () => {
+    const { app, db, aCookie, aId, assignmentId } = await makeAttemptApp();
+    const unitId = db.select().from(units).all()[0]?.id;
+    if (!unitId) throw new Error("样例未产出单元");
+
+    // 模拟 D23-6 回填数据：assignment 来源行带历史非空 unitId（原值保留）
+    const legacyId = crypto.randomUUID();
+    db.insert(attempts)
+      .values({
+        id: legacyId,
+        studentId: aId,
+        sourceType: "assignment",
+        assignmentId,
+        courseId: null,
+        unitId,
+        attemptNo: 1,
+        status: "draft",
+        startedAt: new Date().toISOString(),
+        submittedAt: null,
+        activeSec: null,
+        device: null,
+        scoreAuto: null,
+        scoreFinal: null,
+      })
+      .run();
+    // 前置：库行确为历史非空值（归一化只发生在摘要层，不回写库）
+    expect(
+      db.select().from(attempts).where(eq(attempts.id, legacyId)).get()?.unitId,
+    ).toBe(unitId);
+
+    // startAttempt 幂等取回该 draft：摘要按契约口径归一化（assignment 恒 null）
+    const started = await startAttemptOk(app, aCookie, assignmentId);
+    expect(started.id).toBe(legacyId);
+    expect(started.unitId).toBeNull();
+    expect(
+      attemptStartOkSchema.safeParse({ ok: true, data: started }).success,
+    ).toBe(true);
+
+    // 详情（草稿视图）内嵌摘要同样归一化
+    const { res, body } = await getAttempt(app, aCookie, legacyId);
+    expect(res.status).toBe(200);
+    const draft = (body as { data: AttemptDraftData }).data;
+    expect(draft.attempt.unitId).toBeNull();
+    expect(attemptDraftOkSchema.safeParse(body).success).toBe(true);
   });
 });
 

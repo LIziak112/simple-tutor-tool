@@ -74,18 +74,24 @@ import {
  * - getAttemptDetail：draft → 草稿视图（公开题目 + 本人草稿 + 已解锁提示回显，
  *   绝无答案/详解/未请求提示）；submitted/graded → 结果视图（快照 + 参考答案 +
  *   详解 + 判分 + 做题时已解锁提示的回看）；
- * - getStudentAttemptPaper（T2A.6）：通用取卷（两种来源共用；课程来源每次校验
- *   可见性与成员资格，D22）。
+ * - getStudentAttemptPaper（T2A.6）：通用取卷（两种来源共用；assignment 来源
+ *   归属即权限，course 来源每次校验可见性与成员资格，D22）。
  *
- * 权限口径（T2A.6 起）：
- * - attempt 归属（studentId 匹配）是详情/草稿/交卷接口的第一道权限依据；
- * - assignment 来源维持现状：被移出名单或作业软删后，已创建的作答仍可继续与
- *   回看（§5.2「删除作业不删除已有作答记录」）；
- * - course 来源 + draft：每次访问都重校验 D5 可见性与成员资格（requireUsableAttempt
- *   → requireVisibleCourseUnit）——移出成员/课程归档 → 403 COURSE_ACCESS_DENIED，
- *   条目隐藏等 → 404 NOT_FOUND（D7：未交卷草稿不再可访问，数据保留不删）；
- * - course 来源 + 已交卷：只读记录，不做课程校验（D7/D10：已交卷课程练习记录
- *   保留，学生本人的记录中仍可查看）。
+ * 权限口径（T5 统一：学生侧 attempt 相关接口分两类）：
+ * - **入口类**（从列表/目录进入，需要当前可见性）：GET /api/student/assignments
+ *   （列表）、GET /api/student/assignments/:id/paper（旧取卷）、POST
+ *   /api/student/assignments/:id/attempt（开卷，requireAssignmentVisible）——
+ *   被移出名单 → 403（在册判定含 removedAt IS NULL，D13 立即不可见）；
+ *   作业软删 → 404；
+ * - **续作类**（已持有 attemptId 的 /api/student/attempts/:id/* 全部接口：详情/
+ *   存答/交卷/提示/笔迹/事件/通用取卷）：归属即权限（requireOwnAttempt），
+ *   assignment 来源不再叠加可见性校验——与「删除作业不删除已有作答记录」
+ *   （§5.2）、「被移出后已建作答仍可继续」一致；
+ * - course 来源 + draft 的重校验是既有特例（D7/D22，requireUsableAttempt →
+ *   requireVisibleCourseUnit）：移出成员/课程归档 → 403 COURSE_ACCESS_DENIED，
+ *   条目隐藏等 → 404 NOT_FOUND（未交卷草稿不再可访问，数据保留不删）；
+ *   course 来源 + 已交卷不校验课程（D7/D10：已交卷课程练习记录保留，
+ *   学生本人的记录中仍可查看）。
  *
  * 安全口径（AGENTS 第 3 条）：草稿视图题目一律经 publicQuestionsOfRows 输出过滤
  * （QuestionPublic 形态）；结果视图的 answers/solutionMd/stemMd（原文含答案标记）
@@ -104,8 +110,11 @@ function attemptSummaryOf(row: Attempt): AttemptStartData {
     assignmentId: row.assignmentId,
     courseId: row.courseId,
     // T2A.7：assignment 来源多单元化后 unitId 恒 null（题目集合走
-    // assignment_units）；course 来源恒有值。契约允许 null，直接透传。
-    unitId: row.unitId,
+    // assignment_units）；course 来源恒有值。摘要层归一化而非直接透传：
+    // D23-6 回填「原值保留」可能让旧库 assignment 行带历史非空 unitId，
+    // 此处收敛到契约 superRefine 锁定的不变式（assignment 来源 unitId 恒
+    // null），不改库（题目集合本就只走 assignment_units，历史值无消费方）。
+    unitId: row.sourceType === "assignment" ? null : row.unitId,
     attemptNo: row.attemptNo,
     status: row.status,
     startedAt: row.startedAt,
@@ -345,7 +354,12 @@ export function requireAttemptQuestion(
   }
 }
 
-/** 校验学生被指派该作业且作业未删除，否则 403/404（与 T2.4 paper 接口同口径） */
+/**
+ * 入口类可见性校验（POST /assignments/:id/attempt 开卷用）：作业不存在/已
+ * 软删 → 404；未被指派**或在册判定含 removedAt IS NULL**（被移出名单的学生
+ * 立即不可见，D13）→ 403。与 T2.4 旧取卷接口（assignment-service 的
+ * getStudentAssignmentPaper）同口径。
+ */
 function requireAssignmentVisible(
   db: Db,
   studentId: string,
@@ -366,6 +380,7 @@ function requireAssignmentVisible(
       and(
         eq(assignmentStudents.assignmentId, assignmentId),
         eq(assignmentStudents.studentId, studentId),
+        isNull(assignmentStudents.removedAt),
       ),
     )
     .get();
@@ -420,8 +435,8 @@ function answerOf(answerJson: string | null): StudentAnswer | undefined {
 // ---------- POST /api/student/assignments/:id/attempt ----------
 
 /**
- * 创建或取回作业来源的 attempt（幂等）：
- * - 作业不存在/已删除 → 404；未被指派 → 403；
+ * 创建或取回作业来源的 attempt（幂等；入口类接口，先过 requireAssignmentVisible）：
+ * - 作业不存在/已删除 → 404；未被指派（含被移出名单，D13 立即不可见）→ 403；
  * - 已有进行中（draft）attempt → 直接返回它（一个作业一人一份进行中——
  *   本规则仅对 assignment 来源生效，D10）；
  * - 已交卷/已批 → 返回最近一份（status 告知前端直接进结果视图，不另开新卷；
@@ -553,11 +568,12 @@ export function startCourseAttempt(
 
 /**
  * 通用取卷（两种来源共用同一响应形态 StudentPaperData）：
+ * - assignment 来源：**归属即权限**（requireOwnAttempt 已做归属校验），不再
+ *   叠加 requireAssignmentVisible——被移出名单或作业软删后，已建作答仍可继续
+ *   （§5.2「删除作业不删除已有作答记录」），取卷与详情/存答/交卷同一口径；
  * - course 来源：每次取卷都重校验可见性与成员资格（requireVisibleCourseUnit，
- *   draft 与已交一致——取卷是「看到这份练习题目」的入口，D22）；
- * - assignment 来源：与 GET /api/student/assignments/:id/paper 同口径
- *   （作业存在且未删 + 被指派，403/404 由 requireAssignmentVisible 给出）——
- *   该旧接口保留，内部经本函数复用；
+ *   draft 与已交一致——D7/D22 特例：取卷是「看到这份练习题目」的入口，
+ *   移出成员 → 403 COURSE_ACCESS_DENIED、条目隐藏等 → 404 NOT_FOUND）；
  * - 题目经 attemptPublicUnitGroups 输出过滤（QuestionPublic，无答案/详解/提示）。
  */
 export function getStudentAttemptPaper(
@@ -573,8 +589,6 @@ export function getStudentAttemptPaper(
       attempt.courseId ?? "",
       attempt.unitId ?? "",
     );
-  } else {
-    requireAssignmentVisible(db, studentId, attempt.assignmentId ?? "");
   }
   // T2A.7：分组结构（assignment 按单元序分节、题号全卷连续；course 单组）
   return { units: attemptPublicUnitGroups(db, attempt) };
