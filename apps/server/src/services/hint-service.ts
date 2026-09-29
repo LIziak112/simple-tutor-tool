@@ -11,6 +11,7 @@ import {
 } from "../db/schema";
 import { HttpError } from "../lib/http-error";
 import {
+  attemptTeacherId,
   attemptUnitIds,
   requireAttemptQuestion,
   requireUsableAttempt,
@@ -90,7 +91,11 @@ export function openedEntriesOf(
     .map((index) => ({ index, text: hints[index] ?? "" }));
 }
 
-/** 取该题在该 attempt 下的提示列表（已交卷用快照，草稿期用当前题；见文件头口径） */
+/**
+ * 取该题在该 attempt 下的提示列表（已交卷用快照，草稿期用当前题；见文件头口径）。
+ * T2B.5：快照缺省回退 questions 当前行时按 (teacherId, id) 复合主键域内取
+ * （D10——同 id 题目分属不同教师，提示内容绝不可串域下发）。
+ */
 function hintsOfAttempt(
   db: Db,
   attempt: Attempt,
@@ -119,11 +124,20 @@ function hintsOfAttempt(
       `【数据异常】hint-service：responses.questionSnapshotJson 解析失败，回退当前题行（attemptId=${attempt.id}，questionId=${questionId}）`,
     );
   }
-  const questionRow = db
-    .select({ hintsJson: questions.hintsJson })
-    .from(questions)
-    .where(eq(questions.id, questionId))
-    .get();
+  const teacherId = attemptTeacherId(db, attempt);
+  const questionRow =
+    teacherId === null
+      ? undefined
+      : db
+          .select({ hintsJson: questions.hintsJson })
+          .from(questions)
+          .where(
+            and(
+              eq(questions.teacherId, teacherId),
+              eq(questions.id, questionId),
+            ),
+          )
+          .get();
   return hintsOfJson(questionRow?.hintsJson ?? null);
 }
 
@@ -223,6 +237,8 @@ export function openHint(
 /**
  * 草稿视图的已解锁提示回显（attempt-service 的 buildDraftData 调用）：
  * questionId → 已解锁条目（文本取自 questions 当前行——草稿视图与题目同源）。
+ * T2B.5：题目行按 attempt → student.teacherId 域内取（D10——同 id 题目分属
+ * 不同教师，提示文本不可串域；无教师域的异常行按无题处理）。
  */
 export function draftHintsOpenedView(
   db: Db,
@@ -239,8 +255,9 @@ export function draftHintsOpenedView(
   // T2A.7：题目集合按 attemptUnitIds（assignment=assignment_units 多单元；
   // course=attempt.unitId）——attempt.unitId 已不再覆盖 assignment 来源
   const unitIds = attemptUnitIds(db, attempt);
+  const teacherId = attemptTeacherId(db, attempt);
   const questionRows =
-    unitIds.length === 0
+    unitIds.length === 0 || teacherId === null
       ? []
       : db
           .select({ id: questions.id, hintsJson: questions.hintsJson })
@@ -249,6 +266,7 @@ export function draftHintsOpenedView(
           // 其已解锁键不残留在草稿视图（units[].questions 已不含该题，避免孤儿键）
           .where(
             and(
+              eq(questions.teacherId, teacherId),
               inArray(questions.unitId, unitIds),
               isNull(questions.deletedAt),
             ),

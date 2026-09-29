@@ -1,4 +1,6 @@
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { gzipSync } from "node:zlib";
 import type { ApiErr } from "@tutor/contract";
 import { and, eq } from "drizzle-orm";
 import type { Logger } from "pino";
@@ -9,8 +11,10 @@ import { createTeacherSession } from "../auth/session.ts";
 import type { Db } from "../db/client.ts";
 import {
   assignments,
+  attempts,
   courseItems,
   courses,
+  ink,
   knowledgePoints,
   questions,
   students,
@@ -75,6 +79,8 @@ interface IsolationApp {
   cookieA: string;
   /** 乙（第二位教师，直插行 + 伪造会话）的 Cookie */
   cookieB: string;
+  /** 应用数据目录（T2B.5 笔迹文件断言用） */
+  dataDir: string;
   /** 甲创建的文件夹 / 课程 id */
   folderAId: string;
   courseAId: string;
@@ -85,12 +91,13 @@ interface IsolationApp {
 /** 甲 setup + 导入练习/讲义进文件夹；乙直插教师行并建会话 */
 async function makeIsolationApp(): Promise<IsolationApp> {
   const db = createTestDb();
+  const dataDir = createTestDir();
   const app = createApp({
     isProduction: false,
     logger: silentLogger,
     db,
     publicUrl: "http://localhost:8787",
-    dataDir: createTestDir(),
+    dataDir,
   });
   const setup = await app.request("/api/public/teacher/setup", {
     method: "POST",
@@ -168,7 +175,16 @@ async function makeIsolationApp(): Promise<IsolationApp> {
     .run();
   const sessionB = createTeacherSession(db, TEACHER_B_ID);
   const cookieB = `tutor_session=${sessionB.token}`;
-  return { app, db, cookieA, cookieB, folderAId, courseAId, lectureAId };
+  return {
+    app,
+    db,
+    cookieA,
+    cookieB,
+    dataDir,
+    folderAId,
+    courseAId,
+    lectureAId,
+  };
 }
 
 function extractSessionToken(res: Response): string {
@@ -738,8 +754,9 @@ $1>0$。[[正确]]
 ::::
 `;
 
-/** 乙的学生（直插行：学生创建接口 T2B.5 才域化，直插模拟多教师库形态；
- * id 用合法 UUID——契约 studentIds 按 uuid 校验） */
+/** 乙的学生（直插行模拟多教师库形态：跳过创建接口直接构造归属乙的学生行；
+ * id 用合法 UUID——契约 studentIds 按 uuid 校验。创建接口本身的域归属
+ * （写会话教师）在下方 T2B.5 矩阵以 API 直测） */
 const STUDENT_B_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbb0001";
 
 interface CourseIsolationApp extends IsolationApp {
@@ -765,7 +782,7 @@ async function makeCourseIsolationApp(): Promise<CourseIsolationApp> {
   const base = await makeIsolationApp();
   const { app, db, cookieA, cookieB, courseAId } = base;
 
-  // 甲：学生（student-service T2B.5 前单教师等价 → 归甲）+ 成员 + 条目 + 作业
+  // 甲：学生（T2B.5 起创建接口写会话教师 → 归甲）+ 成员 + 条目 + 作业
   const studentRes = await request(
     app,
     "POST",
@@ -1278,5 +1295,849 @@ describe("T2B.4 隔离红线：作业域", () => {
       }),
       "STUDENT_NOT_FOUND",
     );
+  });
+});
+
+// ==================== T2B.5：学生与作答域隔离 ====================
+
+describe("T2B.5 隔离红线：学生域", () => {
+  it("乙学生列表只含自己学生（含归档视图）；乙建学生落乙域（teacherId 直查证据）", async () => {
+    const { app, db, cookieB } = await makeCourseIsolationApp();
+    for (const query of ["", "?includeArchived=true"]) {
+      const res = await request(
+        app,
+        "GET",
+        `/api/teacher/students${query}`,
+        cookieB,
+      );
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        data: { students: { id: string }[] };
+      };
+      // 乙视角只有直插的乙学生，甲学生零出现（数量断言）
+      expect(body.data.students.map((s) => s.id)).toEqual([STUDENT_B_ID]);
+    }
+
+    // 乙经 API 建学生 → 行落乙域（D14：归属创建教师）
+    const createRes = await request(
+      app,
+      "POST",
+      "/api/teacher/students",
+      cookieB,
+      {
+        displayName: "乙新学生",
+        loginName: "乙新学生",
+      },
+    );
+    expect(createRes.status).toBe(201);
+    const newId = (
+      (await createRes.json()) as { data: { student: { id: string } } }
+    ).data.student.id;
+    expect(
+      db
+        .select({ teacherId: students.teacherId })
+        .from(students)
+        .where(eq(students.id, newId))
+        .get()?.teacherId,
+    ).toBe(TEACHER_B_ID);
+  });
+
+  it("乙对甲学生：编辑 / 重置密码 / 重置链接 / 归档 → 404 且甲行原样", async () => {
+    const { app, db, cookieB, studentAId } = await makeCourseIsolationApp();
+    await expectNotFound(
+      await request(
+        app,
+        "PATCH",
+        `/api/teacher/students/${studentAId}`,
+        cookieB,
+        {
+          displayName: "乙改名",
+        },
+      ),
+      "STUDENT_NOT_FOUND",
+    );
+    await expectNotFound(
+      await request(
+        app,
+        "POST",
+        `/api/teacher/students/${studentAId}/reset-password`,
+        cookieB,
+      ),
+      "STUDENT_NOT_FOUND",
+    );
+    await expectNotFound(
+      await request(
+        app,
+        "POST",
+        `/api/teacher/students/${studentAId}/reset-link`,
+        cookieB,
+      ),
+      "STUDENT_NOT_FOUND",
+    );
+    // 归档也按归属教师（乙不能把甲的学生归档下线）
+    await expectNotFound(
+      await request(
+        app,
+        "PATCH",
+        `/api/teacher/students/${studentAId}`,
+        cookieB,
+        {
+          archived: true,
+        },
+      ),
+      "STUDENT_NOT_FOUND",
+    );
+    const rowA = db
+      .select()
+      .from(students)
+      .where(eq(students.id, studentAId))
+      .get();
+    expect(rowA?.displayName).toBe("甲学生");
+    expect(rowA?.archivedAt).toBeNull();
+    expect(rowA?.teacherId).toBe(TEST_TEACHER_ID);
+  });
+
+  it("乙创建学生 loginName 与甲重名 → 409 且不落库；改「甲学生2」成功落乙域", async () => {
+    const { app, db, cookieB } = await makeCourseIsolationApp();
+    const res = await request(app, "POST", "/api/teacher/students", cookieB, {
+      displayName: "甲学生",
+      loginName: "甲学生",
+    });
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as ApiErr).error).toBe("LOGIN_NAME_TAKEN");
+    // 不落库重名（D14：loginName 全局唯一，命名空间不按教师分片）
+    expect(
+      db
+        .select({ id: students.id })
+        .from(students)
+        .where(eq(students.loginName, "甲学生"))
+        .all(),
+    ).toHaveLength(1);
+
+    // 前端提示「如：张三2」（D14 维持现状）——换名后乙成功创建，落乙域
+    const retry = await request(app, "POST", "/api/teacher/students", cookieB, {
+      displayName: "甲学生2",
+      loginName: "甲学生2",
+    });
+    expect(retry.status).toBe(201);
+    const retryId = (
+      (await retry.json()) as { data: { student: { id: string } } }
+    ).data.student.id;
+    expect(
+      db
+        .select({ teacherId: students.teacherId })
+        .from(students)
+        .where(eq(students.id, retryId))
+        .get()?.teacherId,
+    ).toBe(TEACHER_B_ID);
+  });
+});
+
+/** T2B.5：甲学生 attempt + 笔迹行 + 落盘 PNG（直插模拟既有作答数据；目录懒建） */
+function seedInkOfTeacherA(
+  db: Db,
+  dataDir: string,
+  studentAId: string,
+  assignmentAId: string,
+): { attemptId: string; inkId: string } {
+  const attemptId = "cccccccc-cccc-4ccc-8ccc-cccccccc0001";
+  const inkId = "dddddddd-dddd-4ddd-8ddd-dddddddd0001";
+  db.insert(attempts)
+    .values({
+      id: attemptId,
+      studentId: studentAId,
+      sourceType: "assignment",
+      assignmentId: assignmentAId,
+      courseId: null,
+      unitId: null,
+      attemptNo: 1,
+      status: "draft",
+      startedAt: "2026-06-03T00:00:00.000Z",
+      submittedAt: null,
+      activeSec: null,
+      device: null,
+      scoreAuto: null,
+      scoreFinal: null,
+    })
+    .run();
+  const relPng = join("blobs", "ink", attemptId, "q-a.png");
+  const absDir = join(dataDir, "blobs", "ink", attemptId);
+  mkdirSync(absDir, { recursive: true });
+  writeFileSync(join(dataDir, relPng), Buffer.from("fake-png-bytes"));
+  db.insert(ink)
+    .values({
+      id: inkId,
+      attemptId,
+      questionId: `${UNIT_ID}-1`,
+      strokesPath: join("blobs", "ink", attemptId, "q-a.json.gz"),
+      pngPath: relPng,
+      width: 800,
+      height: 600,
+      strokeCount: 3,
+      updatedAt: "2026-06-03T00:00:00.000Z",
+    })
+    .run();
+  return { attemptId, inkId };
+}
+
+describe("T2B.5 隔离红线：教师侧作答链路（笔迹 / 内容树兼容接口）", () => {
+  it("乙取甲学生的笔迹 PNG 与元数据 → 404；甲本人正常读取", async () => {
+    const { app, db, dataDir, cookieA, cookieB, studentAId, assignmentAId } =
+      await makeCourseIsolationApp();
+    const { inkId } = seedInkOfTeacherA(db, dataDir, studentAId, assignmentAId);
+
+    // 甲本人：PNG 直出 + 元数据正常
+    const pngA = await request(
+      app,
+      "GET",
+      `/api/teacher/ink/${inkId}.png`,
+      cookieA,
+    );
+    expect(pngA.status).toBe(200);
+    expect(Buffer.from(await pngA.arrayBuffer()).toString()).toBe(
+      "fake-png-bytes",
+    );
+    const metaA = await request(
+      app,
+      "GET",
+      `/api/teacher/ink/${inkId}`,
+      cookieA,
+    );
+    expect(metaA.status).toBe(200);
+    expect(
+      ((await metaA.json()) as { data: { attemptId: string } }).data.attemptId,
+    ).toBe("cccccccc-cccc-4ccc-8ccc-cccccccc0001");
+
+    // 乙：归属链 ink → attempt → student.teacherId 不匹配 → 404（不暴露存在性）
+    await expectNotFound(
+      await request(app, "GET", `/api/teacher/ink/${inkId}.png`, cookieB),
+      "INK_NOT_FOUND",
+    );
+    await expectNotFound(
+      await request(app, "GET", `/api/teacher/ink/${inkId}`, cookieB),
+      "INK_NOT_FOUND",
+    );
+  });
+
+  it("GET /api/teacher/content（兼容接口）：甲乙各自只见自己的课程与题目（域内 version）", async () => {
+    const { app, cookieA, cookieB, courseAId, courseBId } =
+      await makeCourseIsolationApp();
+
+    // 甲编辑一道题（version+1）——只有甲域能看到新版本
+    const edit = await request(
+      app,
+      "PUT",
+      `/api/teacher/questions/${UNIT_ID}-1`,
+      cookieA,
+      { sourceMd: "::::question{type=judge}\n$2>0$。[[正确]]\n::::" },
+    );
+    expect(edit.status).toBe(200);
+
+    const treeA = await request(app, "GET", "/api/teacher/content", cookieA);
+    const bodyA = (await treeA.json()) as {
+      data: {
+        courses: {
+          id: string;
+          lectures: { id: string }[];
+          units: { id: string; questions: { id: string; version: number }[] }[];
+        }[];
+      };
+    };
+    expect(bodyA.data.courses.map((c) => c.id)).toEqual([courseAId]);
+    const unitA = bodyA.data.courses[0]?.units.find((u) => u.id === UNIT_ID);
+    expect(unitA?.questions).toHaveLength(8);
+    expect(unitA?.questions.find((q) => q.id === `${UNIT_ID}-1`)?.version).toBe(
+      2,
+    );
+
+    // 乙把自己的同 dslId 单元加进自己课程（fixture 只建了空课程；乙域自有副本）
+    const addItem = await request(
+      app,
+      "POST",
+      `/api/teacher/courses/${courseBId}/items`,
+      cookieB,
+      { items: [{ kind: "unit", refId: UNIT_ID }] },
+    );
+    expect(addItem.status).toBe(201);
+
+    const treeB = await request(app, "GET", "/api/teacher/content", cookieB);
+    const bodyB = (await treeB.json()) as {
+      data: {
+        courses: {
+          id: string;
+          lectures: { id: string }[];
+          units: { id: string; questions: { id: string; version: number }[] }[];
+        }[];
+      };
+    };
+    // 乙：只见自己的同名课程；同 dslId 单元下的题目是乙域自己的版本（version 1）
+    expect(bodyB.data.courses.map((c) => c.id)).toEqual([courseBId]);
+    const unitB = bodyB.data.courses[0]?.units.find((u) => u.id === UNIT_ID);
+    expect(unitB?.questions).toHaveLength(8);
+    expect(unitB?.questions.every((q) => q.version === 1)).toBe(true);
+  });
+});
+
+// ==================== T2B.5：同 id 冲突 + 学生端双教师全流程回归 ====================
+
+/** 同 id 冲突单元：甲乙各导同 dslId、同题目 id（same-q1）但题干/答案/提示/主题不同；
+ * 甲版多一道 only-a（题数差异验证目录统计按域） */
+const CONFLICT_UNIT_ID = "unit-same-id";
+const CONFLICT_STUDENT_PASSWORD = "student-pass-8";
+
+function conflictMd(owner: "甲" | "乙"): string {
+  const extra =
+    owner === "甲"
+      ? `\n::::question{id=only-a type=judge difficulty=1}\n$2>1$。[[正确]]\n::::\n`
+      : "";
+  return `---
+kind: practice
+unit: ${CONFLICT_UNIT_ID}
+topic: ${owner}版主题
+---
+
+::::question{id=same-q1 type=judge difficulty=1}
+${owner}版题干：$1>0$。[[${owner === "甲" ? "正确" : "错误"}]]
+
+:::hint
+${owner}老师的提示
+:::
+::::
+${extra}`;
+}
+
+/** 双教师学生端夹具：甲乙各导冲突单元 + 各建可登录学生 + 各布置作业 + 各建课程目录 */
+async function makeSameIdConflictApp() {
+  const base = await makeIsolationApp();
+  const { app, cookieA, cookieB } = base;
+
+  // 两域各导同 dslId、同题目 id 的不同版本
+  for (const [cookie, owner] of [
+    [cookieA, "甲"],
+    [cookieB, "乙"],
+  ] as const) {
+    const res = await request(
+      app,
+      "POST",
+      "/api/teacher/import/commit",
+      cookie,
+      {
+        markdown: conflictMd(owner),
+        filename: `冲突单元-${owner}.md`,
+      },
+    );
+    expect(res.status).toBe(200);
+  }
+
+  /** 各自建学生（带密码，可登录）+ 作业 + 课程成员与目录 */
+  async function setupTeacherSide(cookie: string, label: string) {
+    const studentName = label === "甲" ? "冲突甲生" : "冲突乙生";
+    const studentRes = await request(
+      app,
+      "POST",
+      "/api/teacher/students",
+      cookie,
+      {
+        displayName: studentName,
+        loginName: studentName,
+        password: CONFLICT_STUDENT_PASSWORD,
+      },
+    );
+    expect(studentRes.status).toBe(201);
+    const studentId = (
+      (await studentRes.json()) as { data: { student: { id: string } } }
+    ).data.student.id;
+    const courseRes = await request(
+      app,
+      "POST",
+      "/api/teacher/courses",
+      cookie,
+      {
+        title: `${label}的冲突课程`,
+      },
+    );
+    const courseId = ((await courseRes.json()) as { data: { id: string } }).data
+      .id;
+    expect(
+      await request(
+        app,
+        "POST",
+        `/api/teacher/courses/${courseId}/members`,
+        cookie,
+        { studentIds: [studentId] },
+      ),
+    ).toHaveProperty("status", 200);
+    expect(
+      await request(
+        app,
+        "POST",
+        `/api/teacher/courses/${courseId}/items`,
+        cookie,
+        { items: [{ kind: "unit", refId: CONFLICT_UNIT_ID }] },
+      ),
+    ).toHaveProperty("status", 201);
+    const assignmentRes = await request(
+      app,
+      "POST",
+      "/api/teacher/assignments",
+      cookie,
+      { unitIds: [CONFLICT_UNIT_ID], studentIds: [studentId] },
+    );
+    expect(assignmentRes.status).toBe(201);
+    const assignmentId = (
+      (await assignmentRes.json()) as { data: { id: string } }
+    ).data.id;
+
+    // 学生登录 + 开卷
+    const loginRes = await app.request("/api/public/student/login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        loginName: studentName,
+        password: CONFLICT_STUDENT_PASSWORD,
+      }),
+    });
+    expect(loginRes.status).toBe(200);
+    const studentCookie = `tutor_session=${extractSessionToken(loginRes)}`;
+    const attemptRes = await app.request(
+      `/api/student/assignments/${assignmentId}/attempt`,
+      { method: "POST", headers: { cookie: studentCookie } },
+    );
+    expect(attemptRes.status).toBe(200);
+    const attemptId = ((await attemptRes.json()) as { data: { id: string } })
+      .data.id;
+    return { studentId, studentCookie, courseId, assignmentId, attemptId };
+  }
+
+  const sideA = await setupTeacherSide(cookieA, "甲");
+  const sideB = await setupTeacherSide(cookieB, "乙");
+  return { ...base, sideA, sideB };
+}
+
+describe("T2B.5 同 id 冲突：甲乙各导同 dslId/同题目 id 的不同版本并各自布置", () => {
+  it("两边学生取卷、提示、判分、课程目录都只来自本教师的版本", async () => {
+    const { app, sideA, sideB } = await makeSameIdConflictApp();
+
+    // 取卷：题干与题数（甲 2 题 / 乙 1 题）都来自本域版本
+    const paperA = await request(
+      app,
+      "GET",
+      `/api/student/assignments/${sideA.assignmentId}/paper`,
+      sideA.studentCookie,
+    );
+    const paperABody = (await paperA.json()) as {
+      data: { units: { questions: { id: string; stemMd: string }[] }[] };
+    };
+    const questionsA = paperABody.data.units[0]?.questions ?? [];
+    expect(questionsA.map((q) => q.id)).toEqual(["same-q1", "only-a"]);
+    const stemA = questionsA[0]?.stemMd ?? "";
+    expect(stemA).toContain("甲版题干");
+    expect(stemA).not.toContain("乙版题干");
+
+    const paperB = await request(
+      app,
+      "GET",
+      `/api/student/assignments/${sideB.assignmentId}/paper`,
+      sideB.studentCookie,
+    );
+    const paperBBody = (await paperB.json()) as {
+      data: { units: { questions: { id: string; stemMd: string }[] }[] };
+    };
+    const questionsB = paperBBody.data.units[0]?.questions ?? [];
+    expect(questionsB.map((q) => q.id)).toEqual(["same-q1"]);
+    const stemB = questionsB[0]?.stemMd ?? "";
+    expect(stemB).toContain("乙版题干");
+    expect(stemB).not.toContain("甲版题干");
+
+    // 提示：同 questionId、同 index，内容只来自本域版本
+    const hintA = await request(
+      app,
+      "POST",
+      `/api/student/attempts/${sideA.attemptId}/hints`,
+      sideA.studentCookie,
+      { questionId: "same-q1", index: 0 },
+    );
+    expect(hintA.status).toBe(200);
+    expect(
+      ((await hintA.json()) as { data: { hint: string } }).data.hint,
+    ).toContain("甲老师的提示");
+    const hintB = await request(
+      app,
+      "POST",
+      `/api/student/attempts/${sideB.attemptId}/hints`,
+      sideB.studentCookie,
+      { questionId: "same-q1", index: 0 },
+    );
+    expect(hintB.status).toBe(200);
+    expect(
+      ((await hintB.json()) as { data: { hint: string } }).data.hint,
+    ).toContain("乙老师的提示");
+
+    // 判分：同一答案 true——甲版正确答案=正确（判对）、乙版=错误（判错）
+    for (const side of [sideA, sideB]) {
+      const save = await request(
+        app,
+        "PUT",
+        `/api/student/attempts/${side.attemptId}/answers/same-q1`,
+        side.studentCookie,
+        { answer: { kind: "judge", value: true } },
+      );
+      expect(save.status).toBe(200);
+    }
+    const submitA = await request(
+      app,
+      "POST",
+      `/api/student/attempts/${sideA.attemptId}/submit`,
+      sideA.studentCookie,
+    );
+    expect(submitA.status).toBe(200);
+    const resultA = (await submitA.json()) as {
+      data: {
+        summary: { correct: number; wrong: number };
+        units: {
+          questions: { questionId: string; autoCorrect: boolean | null }[];
+        }[];
+      };
+    };
+    expect(
+      resultA.data.units[0]?.questions.find((q) => q.questionId === "same-q1")
+        ?.autoCorrect,
+    ).toBe(true);
+    expect(resultA.data.summary.correct).toBe(1); // only-a 未作答按 null 待批
+
+    const submitB = await request(
+      app,
+      "POST",
+      `/api/student/attempts/${sideB.attemptId}/submit`,
+      sideB.studentCookie,
+    );
+    expect(submitB.status).toBe(200);
+    const resultB = (await submitB.json()) as {
+      data: {
+        summary: { correct: number; wrong: number };
+        units: {
+          questions: { questionId: string; autoCorrect: boolean | null }[];
+        }[];
+      };
+    };
+    expect(
+      resultB.data.units[0]?.questions.find((q) => q.questionId === "same-q1")
+        ?.autoCorrect,
+    ).toBe(false);
+    expect(resultB.data.summary.wrong).toBe(1);
+
+    // 课程目录与落地页：题数与主题只来自本域版本
+    const catalogA = await request(
+      app,
+      "GET",
+      `/api/student/courses/${sideA.courseId}`,
+      sideA.studentCookie,
+    );
+    const catalogABody = (await catalogA.json()) as {
+      data: {
+        items: { refId: string | null; questionCount: number | null }[];
+      };
+    };
+    expect(
+      catalogABody.data.items.find((i) => i.refId === CONFLICT_UNIT_ID)
+        ?.questionCount,
+    ).toBe(2);
+    const catalogB = await request(
+      app,
+      "GET",
+      `/api/student/courses/${sideB.courseId}`,
+      sideB.studentCookie,
+    );
+    const catalogBBody = (await catalogB.json()) as {
+      data: {
+        items: { refId: string | null; questionCount: number | null }[];
+      };
+    };
+    expect(
+      catalogBBody.data.items.find((i) => i.refId === CONFLICT_UNIT_ID)
+        ?.questionCount,
+    ).toBe(1);
+
+    const landingA = await request(
+      app,
+      "GET",
+      `/api/student/courses/${sideA.courseId}/units/${CONFLICT_UNIT_ID}`,
+      sideA.studentCookie,
+    );
+    expect(landingA.status).toBe(200);
+    expect(
+      ((await landingA.json()) as { data: { topic: string | null } }).data
+        .topic,
+    ).toContain("甲版主题");
+    const landingB = await request(
+      app,
+      "GET",
+      `/api/student/courses/${sideB.courseId}/units/${CONFLICT_UNIT_ID}`,
+      sideB.studentCookie,
+    );
+    expect(landingB.status).toBe(200);
+    expect(
+      ((await landingB.json()) as { data: { topic: string | null } }).data
+        .topic,
+    ).toContain("乙版主题");
+  });
+});
+
+/** 最小合法 PNG（服务端只校验魔数/IHDR；与学生端测试同构造） */
+function conflictPng(width = 320, height = 200): Uint8Array {
+  const buf = Buffer.alloc(64);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(buf, 0);
+  buf.writeUInt32BE(13, 8);
+  buf.write("IHDR", 12, "latin1");
+  buf.writeUInt32BE(width, 16);
+  buf.writeUInt32BE(height, 20);
+  return new Uint8Array(buf);
+}
+
+/** 构造 atrament InkDoc 并 gzip（与学生端测试同口径） */
+function conflictInkDoc(strokeCount: number): Uint8Array {
+  const doc = {
+    engine: "atrament" as const,
+    version: 1,
+    data: {
+      width: 1000,
+      strokes: Array.from({ length: strokeCount }, (_, i) => ({
+        tool: "pen" as const,
+        color: "#1f2328",
+        weight: 4,
+        points: [
+          { x: 10 + i, y: 20, p: 0.5, t: 0 },
+          { x: 30 + i, y: 1240, p: 0.8, t: 25 },
+        ],
+      })),
+    },
+    updatedAt: 1727392800000,
+  };
+  return new Uint8Array(gzipSync(Buffer.from(JSON.stringify(doc), "utf8")));
+}
+
+/** PUT 笔迹（multipart） */
+function putConflictInk(
+  app: ReturnType<typeof createApp>,
+  cookie: string,
+  attemptId: string,
+  questionId: string,
+  strokes: Uint8Array,
+): Promise<Response> {
+  const form = new FormData();
+  form.append(
+    "strokes",
+    new Blob([strokes], { type: "application/gzip" }),
+    "strokes.json.gz",
+  );
+  form.append(
+    "snapshot",
+    new Blob([conflictPng()], { type: "image/png" }),
+    "snapshot.png",
+  );
+  return Promise.resolve(
+    app.request(`/api/student/attempts/${attemptId}/ink/${questionId}`, {
+      method: "PUT",
+      headers: { cookie },
+      body: form,
+    }),
+  );
+}
+
+describe("T2B.5 学生端回归：两名不同教师的学生全流程互不串扰", () => {
+  it("草稿/笔迹/事件/结果各自独立；乙生访问甲生 attempt → 403", async () => {
+    const { app, db, sideA, sideB } = await makeSameIdConflictApp();
+
+    // 草稿：同 questionId（same-q1）各存各的 attempt，互不覆盖
+    for (const [side, value] of [
+      [sideA, true],
+      [sideB, false],
+    ] as const) {
+      const save = await request(
+        app,
+        "PUT",
+        `/api/student/attempts/${side.attemptId}/answers/same-q1`,
+        side.studentCookie,
+        { answer: { kind: "judge", value } },
+      );
+      expect(save.status).toBe(200);
+    }
+    const detailA = await request(
+      app,
+      "GET",
+      `/api/student/attempts/${sideA.attemptId}`,
+      sideA.studentCookie,
+    );
+    expect(
+      (
+        (await detailA.json()) as {
+          data: { drafts: Record<string, { value: boolean }> };
+        }
+      ).data.drafts["same-q1"]?.value,
+    ).toBe(true);
+    const detailB = await request(
+      app,
+      "GET",
+      `/api/student/attempts/${sideB.attemptId}`,
+      sideB.studentCookie,
+    );
+    expect(
+      (
+        (await detailB.json()) as {
+          data: { drafts: Record<string, { value: boolean }> };
+        }
+      ).data.drafts["same-q1"]?.value,
+    ).toBe(false);
+
+    // 笔迹：同 questionId 各传各的（甲 3 笔 / 乙 7 笔），回读只拿到自己的
+    expect(
+      (
+        await putConflictInk(
+          app,
+          sideA.studentCookie,
+          sideA.attemptId,
+          "same-q1",
+          conflictInkDoc(3),
+        )
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await putConflictInk(
+          app,
+          sideB.studentCookie,
+          sideB.attemptId,
+          "same-q1",
+          conflictInkDoc(7),
+        )
+      ).status,
+    ).toBe(200);
+    const inkA = await request(
+      app,
+      "GET",
+      `/api/student/attempts/${sideA.attemptId}/ink/same-q1`,
+      sideA.studentCookie,
+    );
+    expect(inkA.status).toBe(200);
+    expect(
+      (
+        (await inkA.json()) as {
+          data: { data: { strokes: unknown[] } };
+        }
+      ).data.data.strokes,
+    ).toHaveLength(3);
+    const inkB = await request(
+      app,
+      "GET",
+      `/api/student/attempts/${sideB.attemptId}/ink/same-q1`,
+      sideB.studentCookie,
+    );
+    expect(inkB.status).toBe(200);
+    expect(
+      (
+        (await inkB.json()) as {
+          data: { data: { strokes: unknown[] } };
+        }
+      ).data.data.strokes,
+    ).toHaveLength(7);
+
+    // 事件：各报各的（同 questionId 落各自 attempt 上下文）
+    for (const side of [sideA, sideB]) {
+      const events = await request(
+        app,
+        "POST",
+        `/api/student/attempts/${side.attemptId}/events`,
+        side.studentCookie,
+        {
+          events: [
+            {
+              type: "answer_change",
+              clientTs: 1727392800000,
+              questionId: "same-q1",
+            },
+          ],
+        },
+      );
+      expect(events.status).toBe(200);
+    }
+
+    // 越权：乙生访问甲生的 attempt（详情/取卷/笔迹/事件）→ 403 FORBIDDEN
+    const crossDetail = await request(
+      app,
+      "GET",
+      `/api/student/attempts/${sideA.attemptId}`,
+      sideB.studentCookie,
+    );
+    expect(crossDetail.status).toBe(403);
+    const crossPaper = await request(
+      app,
+      "GET",
+      `/api/student/attempts/${sideA.attemptId}/paper`,
+      sideB.studentCookie,
+    );
+    expect(crossPaper.status).toBe(403);
+    const crossInk = await request(
+      app,
+      "GET",
+      `/api/student/attempts/${sideA.attemptId}/ink/same-q1`,
+      sideB.studentCookie,
+    );
+    expect(crossInk.status).toBe(403);
+    const crossEvents = await request(
+      app,
+      "POST",
+      `/api/student/attempts/${sideA.attemptId}/events`,
+      sideB.studentCookie,
+      {
+        events: [
+          {
+            type: "answer_change",
+            clientTs: 1727392800000,
+            questionId: "same-q1",
+          },
+        ],
+      },
+    );
+    expect(crossEvents.status).toBe(403);
+
+    // 交卷后各自结果独立（甲生 true=对；乙生 false 在乙版答案下=对——判分同域）
+    const submitA = await request(
+      app,
+      "POST",
+      `/api/student/attempts/${sideA.attemptId}/submit`,
+      sideA.studentCookie,
+    );
+    expect(submitA.status).toBe(200);
+    const submitB = await request(
+      app,
+      "POST",
+      `/api/student/attempts/${sideB.attemptId}/submit`,
+      sideB.studentCookie,
+    );
+    expect(submitB.status).toBe(200);
+    const resultA = (await submitA.json()) as {
+      data: { summary: { correct: number } };
+    };
+    const resultB = (await submitB.json()) as {
+      data: { summary: { correct: number } };
+    };
+    expect(resultA.data.summary.correct).toBe(1);
+    expect(resultB.data.summary.correct).toBe(1); // 乙版正确答案=错误，乙生答 false 判对
+
+    // 归属直查证据：两份 attempt 的 ink 行各一条（各自 attemptId 名下）
+    expect(
+      db
+        .select({ id: ink.id })
+        .from(ink)
+        .where(eq(ink.attemptId, sideA.attemptId))
+        .all(),
+    ).toHaveLength(1);
+    expect(
+      db
+        .select({ id: ink.id })
+        .from(ink)
+        .where(eq(ink.attemptId, sideB.attemptId))
+        .all(),
+    ).toHaveLength(1);
   });
 });

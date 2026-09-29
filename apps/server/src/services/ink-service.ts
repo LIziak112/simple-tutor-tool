@@ -17,7 +17,7 @@ import {
 } from "@tutor/contract";
 import { and, eq } from "drizzle-orm";
 import type { Db } from "../db/client";
-import { type InkRow, ink } from "../db/schema";
+import { attempts, type InkRow, ink, students } from "../db/schema";
 import { HttpError } from "../lib/http-error";
 import {
   requireAttemptQuestion,
@@ -41,6 +41,10 @@ import {
  * 限额口径（契约 INK_MAX_UPLOAD_BYTES）：gzip 后 strokes 字节数 + PNG 字节数
  * 之和 ≤ 2 MiB，超出 413 INK_TOO_LARGE（T2.8 验收项）；解压侧另有 32 MiB
  * 解压上限（INK_MAX_STROKES_UNCOMPRESSED，防 gzip 炸弹，超出 400 INK_INVALID）。
+ *
+ * T2B.5 教师域（D10/D12）：教师侧取笔迹按 ink → attempt → student.teacherId
+ * 判定归属（乙取甲学生的笔迹 → 404，不暴露存在性）；学生侧接口按 attemptId
+ * （requireUsableAttempt 归属即权限）天然隔离，行为不变。
  */
 
 /** questionId → 安全文件名（不含扩展名）。export 供测试锁定路径安全行为 */
@@ -368,16 +372,40 @@ function readInkPng(
 
 // ---------- GET /api/teacher/ink/:inkId(.png) ----------
 
-/** 教师按 inkId 取 PNG（批改页缩略图/大图）；不存在 → 404 INK_NOT_FOUND */
+/**
+ * 按会话教师取 ink 行（T2B.5，D10/D12）：ink → attempt → student → teacherId
+ * 判定归属——非本人学生的笔迹按不存在处理（404 INK_NOT_FOUND，不暴露存在性）。
+ * ink.id 为 uuid 全局唯一，但归属链必须落到 students.teacherId 才放行。
+ */
+function requireTeacherInkRow(
+  db: Db,
+  teacherId: string,
+  inkId: string,
+): InkRow {
+  const row = db
+    .select({ ink: ink, ownerTeacherId: students.teacherId })
+    .from(ink)
+    .innerJoin(attempts, eq(ink.attemptId, attempts.id))
+    .innerJoin(students, eq(attempts.studentId, students.id))
+    .where(eq(ink.id, inkId))
+    .get();
+  if (row === undefined || row.ownerTeacherId !== teacherId) {
+    throw new HttpError(404, "INK_NOT_FOUND", "笔迹记录不存在");
+  }
+  return row.ink;
+}
+
+/**
+ * 教师按 inkId 取 PNG（批改页缩略图/大图）；不存在或非本人学生的笔迹 →
+ * 404 INK_NOT_FOUND（T2B.5：归属校验在文件读取之前）。
+ */
 export function getTeacherInkPng(
   db: Db,
   dataDir: string,
+  teacherId: string,
   inkId: string,
 ): InkPng {
-  const row = db.select().from(ink).where(eq(ink.id, inkId)).get();
-  if (row === undefined) {
-    throw new HttpError(404, "INK_NOT_FOUND", "笔迹记录不存在");
-  }
+  const row = requireTeacherInkRow(db, teacherId, inkId);
   try {
     return {
       bytes: readPngBytes(inkFileAbs(dataDir, row.pngPath, ".png")),
@@ -388,12 +416,13 @@ export function getTeacherInkPng(
   }
 }
 
-/** 教师取笔迹元数据（T3.1 批改页用）；不存在 → 404 */
-export function getTeacherInkMeta(db: Db, inkId: string): InkMeta {
-  const row = db.select().from(ink).where(eq(ink.id, inkId)).get();
-  if (row === undefined) {
-    throw new HttpError(404, "INK_NOT_FOUND", "笔迹记录不存在");
-  }
+/** 教师取笔迹元数据（T3.1 批改页用）；不存在或非本人学生的笔迹 → 404 */
+export function getTeacherInkMeta(
+  db: Db,
+  teacherId: string,
+  inkId: string,
+): InkMeta {
+  const row = requireTeacherInkRow(db, teacherId, inkId);
   return {
     id: row.id,
     attemptId: row.attemptId,

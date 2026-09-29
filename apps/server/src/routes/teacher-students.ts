@@ -21,10 +21,13 @@ import {
 
 /**
  * 学生管理路由（需教师会话），由 teacher.ts 挂在 /api/teacher 之下：
- * - GET  /students：列表（查询参数 includeArchived=true 含归档，默认只列未归档）；
- * - POST /students：新增（loginName 全局唯一，冲突 409 LOGIN_NAME_TAKEN；
- *   未提供密码则生成随机初始密码，响应一次性明文）；
- * - PATCH /students/:id：改名/登录名/开关两种方式/归档/备注；
+ * - GET  /students：列表（查询参数 includeArchived=true 含归档，默认只列未归档；
+ *   T2B.5 起只列本人学生）；
+ * - POST /students：新增（loginName 全局唯一，冲突 409 LOGIN_NAME_TAKEN——前端提示
+ *   「如：张三2」（D14 重名建议维持现状）；未提供密码则生成随机初始密码，响应一次性
+ *   明文；归属会话教师）；
+ * - PATCH /students/:id：改名/登录名/开关两种方式/归档/备注（T2B.5 起按归属教师，
+ *   他人学生 404）；
  * - POST /students/:id/reset-password：重置密码（一次性明文）；
  * - POST /students/:id/reset-link：重置专属链接（旧链接立即失效）。
  *
@@ -47,7 +50,11 @@ export function createStudentTeacherRoutes(db: Db) {
       }
       return c.json({
         ok: true,
-        data: listStudents(db, parsed.data.includeArchived ?? false),
+        data: listStudents(
+          db,
+          c.var.teacher.id,
+          parsed.data.includeArchived ?? false,
+        ),
       });
     })
     .post("/students", async (c) => {
@@ -55,7 +62,10 @@ export function createStudentTeacherRoutes(db: Db) {
         c,
         studentCreateRequestSchema,
       );
-      return c.json({ ok: true, data: await createStudent(db, body) }, 201);
+      return c.json(
+        { ok: true, data: await createStudent(db, c.var.teacher.id, body) },
+        201,
+      );
     })
     .patch("/students/:id", async (c) => {
       const body: StudentUpdateRequest = await parseJsonBody(
@@ -64,19 +74,23 @@ export function createStudentTeacherRoutes(db: Db) {
       );
       return c.json({
         ok: true,
-        data: updateStudent(db, c.req.param("id"), body),
+        data: updateStudent(db, c.var.teacher.id, c.req.param("id"), body),
       });
     })
     .post("/students/:id/reset-password", async (c) => {
       return c.json({
         ok: true,
-        data: await resetStudentPassword(db, c.req.param("id")),
+        data: await resetStudentPassword(
+          db,
+          c.var.teacher.id,
+          c.req.param("id"),
+        ),
       });
     })
     .post("/students/:id/reset-link", (c) => {
       return c.json({
         ok: true,
-        data: resetStudentLink(db, c.req.param("id")),
+        data: resetStudentLink(db, c.var.teacher.id, c.req.param("id")),
       });
     });
 }
