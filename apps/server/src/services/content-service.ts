@@ -107,8 +107,8 @@ import {
  * T2B.3 域隔离（D12/D13）：preview / preview-batch / commit / batches 回看 /
  * 单题与讲义的详情、编辑、软删、排序全部按会话教师（teacherId 形参，路由传
  * c.var.teacher.id）过滤与写入；T2B.4 起课程 CRUD（createCourse / updateCourse /
- * deleteCourse）同样按会话教师；getContentTree 的域化属 T2B.5（单教师等价期
- * 行为不变）。
+ * deleteCourse）同样按会话教师；T2B.5 起 getContentTree 亦域化（域内读课程/
+ * 题目/考点关联/讲义/单元，对外响应形状不变）。
  */
 
 // ---------- 版本识别与统一 lint ----------
@@ -852,11 +852,14 @@ export function getImportBatch(
  *   （D3：教师课程页「已删除」标记属 T2A.2/T2A.4 的课程编辑页，本接口纯过滤）；
  * - 讲义无题目数组；单元题目按单元内 order 排序，考点经关联表按考点名排序保证稳定输出；
  * - 未导入任何内容时 courses 为空数组（前端据此显示空态引导）。
+ * T2B.5：按会话教师域化（课程/题目/考点关联/讲义/单元全部域内读——复合主键后
+ * 同 id 单元/题目分属不同教师，乙视角甲的内容零出现）。
  */
-export function getContentTree(db: Db): ContentTree {
+export function getContentTree(db: Db, teacherId: string): ContentTree {
   const allCourses = db
     .select()
     .from(courses)
+    .where(eq(courses.teacherId, teacherId))
     .orderBy(asc(courses.order), asc(courses.title))
     .all();
 
@@ -871,7 +874,7 @@ export function getContentTree(db: Db): ContentTree {
       version: questions.version,
     })
     .from(questions)
-    .where(isNull(questions.deletedAt))
+    .where(and(eq(questions.teacherId, teacherId), isNull(questions.deletedAt)))
     // order 相同时按 id 兜底（不同来源导入可产生同 order，保证树输出稳定）
     .orderBy(asc(questions.unitId), asc(questions.order), asc(questions.id))
     .all();
@@ -885,6 +888,7 @@ export function getContentTree(db: Db): ContentTree {
       knowledgePoints,
       eq(questionKnowledge.knowledgePointId, knowledgePoints.id),
     )
+    .where(eq(questionKnowledge.teacherId, teacherId))
     .orderBy(asc(knowledgePoints.name))
     .all();
   const knowledgeByQuestion = new Map<string, string[]>();
@@ -913,7 +917,7 @@ export function getContentTree(db: Db): ContentTree {
     }
   }
 
-  // 存活资源（软删过滤）一次读全；目录条目引用已删资源时直接跳过该条目
+  // 存活资源（软删过滤）一次读全；目录条目引用已删资源时直接跳过该条目（域内读，T2B.5）
   const lectureById = new Map(
     db
       .select({
@@ -922,7 +926,7 @@ export function getContentTree(db: Db): ContentTree {
         updatedAt: lectures.updatedAt,
       })
       .from(lectures)
-      .where(isNull(lectures.deletedAt))
+      .where(and(eq(lectures.teacherId, teacherId), isNull(lectures.deletedAt)))
       .all()
       .map((row) => [row.id, row] as const),
   );
@@ -935,7 +939,7 @@ export function getContentTree(db: Db): ContentTree {
         updatedAt: units.updatedAt,
       })
       .from(units)
-      .where(isNull(units.deletedAt))
+      .where(and(eq(units.teacherId, teacherId), isNull(units.deletedAt)))
       .all()
       .map((row) => [row.id, row] as const),
   );

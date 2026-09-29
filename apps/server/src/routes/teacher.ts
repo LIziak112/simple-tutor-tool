@@ -68,18 +68,23 @@ export function createTeacherRoutes(
         );
         return c.json({ ok: true, data: null });
       })
-      // T2.8：教师读笔迹——<inkId>.png 直出 PNG；<inkId> 返回元数据
+      // T2.8：教师读笔迹——<inkId>.png 直出 PNG；<inkId> 返回元数据。
+      // T2B.5：按 ink → attempt → student.teacherId 判归属（乙取甲学生笔迹 → 404）
       .get("/ink/:file", (c) => {
         const file = c.req.param("file");
         if (file.endsWith(".png")) {
           const png = getTeacherInkPng(
             db,
             dataDir,
+            c.var.teacher.id,
             file.slice(0, -".png".length),
           );
           return pngResponse(png.bytes, png.etag);
         }
-        return c.json({ ok: true, data: getTeacherInkMeta(db, file) });
+        return c.json({
+          ok: true,
+          data: getTeacherInkMeta(db, c.var.teacher.id, file),
+        });
       })
       .route("/", createImportRoutes(db))
       .route("/", createContentRoutes(db))

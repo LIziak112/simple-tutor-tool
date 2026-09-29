@@ -52,7 +52,10 @@ import {
 export function createContentRoutes(db: Db) {
   return new Hono<TeacherEnv>()
     .get("/content", (c) => {
-      return c.json({ ok: true, data: getContentTree(db) });
+      return c.json({
+        ok: true,
+        data: getContentTree(db, c.var.teacher.id),
+      });
     })
     .get("/questions/:id", (c) => {
       return c.json({

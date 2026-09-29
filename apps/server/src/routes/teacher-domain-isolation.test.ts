@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import type { ApiErr } from "@tutor/contract";
 import { and, eq } from "drizzle-orm";
 import type { Logger } from "pino";
@@ -9,8 +10,10 @@ import { createTeacherSession } from "../auth/session.ts";
 import type { Db } from "../db/client.ts";
 import {
   assignments,
+  attempts,
   courseItems,
   courses,
+  ink,
   knowledgePoints,
   questions,
   students,
@@ -75,6 +78,8 @@ interface IsolationApp {
   cookieA: string;
   /** 乙（第二位教师，直插行 + 伪造会话）的 Cookie */
   cookieB: string;
+  /** 应用数据目录（T2B.5 笔迹文件断言用） */
+  dataDir: string;
   /** 甲创建的文件夹 / 课程 id */
   folderAId: string;
   courseAId: string;
@@ -85,12 +90,13 @@ interface IsolationApp {
 /** 甲 setup + 导入练习/讲义进文件夹；乙直插教师行并建会话 */
 async function makeIsolationApp(): Promise<IsolationApp> {
   const db = createTestDb();
+  const dataDir = createTestDir();
   const app = createApp({
     isProduction: false,
     logger: silentLogger,
     db,
     publicUrl: "http://localhost:8787",
-    dataDir: createTestDir(),
+    dataDir,
   });
   const setup = await app.request("/api/public/teacher/setup", {
     method: "POST",
@@ -168,7 +174,7 @@ async function makeIsolationApp(): Promise<IsolationApp> {
     .run();
   const sessionB = createTeacherSession(db, TEACHER_B_ID);
   const cookieB = `tutor_session=${sessionB.token}`;
-  return { app, db, cookieA, cookieB, folderAId, courseAId, lectureAId };
+  return { app, db, cookieA, cookieB, dataDir, folderAId, courseAId, lectureAId };
 }
 
 function extractSessionToken(res: Response): string {
@@ -1396,5 +1402,147 @@ describe("T2B.5 隔离红线：学生域", () => {
         .where(eq(students.id, retryId))
         .get()?.teacherId,
     ).toBe(TEACHER_B_ID);
+  });
+});
+
+/** T2B.5：甲学生 attempt + 笔迹行 + 落盘 PNG（直插模拟既有作答数据；目录懒建） */
+function seedInkOfTeacherA(
+  db: Db,
+  dataDir: string,
+  studentAId: string,
+  assignmentAId: string,
+): { attemptId: string; inkId: string } {
+  const attemptId = "cccccccc-cccc-4ccc-8ccc-cccccccc0001";
+  const inkId = "dddddddd-dddd-4ddd-8ddd-dddddddd0001";
+  db.insert(attempts)
+    .values({
+      id: attemptId,
+      studentId: studentAId,
+      sourceType: "assignment",
+      assignmentId: assignmentAId,
+      courseId: null,
+      unitId: null,
+      attemptNo: 1,
+      status: "draft",
+      startedAt: "2026-06-03T00:00:00.000Z",
+      submittedAt: null,
+      activeSec: null,
+      device: null,
+      scoreAuto: null,
+      scoreFinal: null,
+    })
+    .run();
+  const relPng = join("blobs", "ink", attemptId, "q-a.png");
+  const absDir = join(dataDir, "blobs", "ink", attemptId);
+  mkdirSync(absDir, { recursive: true });
+  writeFileSync(join(dataDir, relPng), Buffer.from("fake-png-bytes"));
+  db.insert(ink)
+    .values({
+      id: inkId,
+      attemptId,
+      questionId: `${UNIT_ID}-1`,
+      strokesPath: join("blobs", "ink", attemptId, "q-a.json.gz"),
+      pngPath: relPng,
+      width: 800,
+      height: 600,
+      strokeCount: 3,
+      updatedAt: "2026-06-03T00:00:00.000Z",
+    })
+    .run();
+  return { attemptId, inkId };
+}
+
+describe("T2B.5 隔离红线：教师侧作答链路（笔迹 / 内容树兼容接口）", () => {
+  it("乙取甲学生的笔迹 PNG 与元数据 → 404；甲本人正常读取", async () => {
+    const { app, db, dataDir, cookieA, cookieB, studentAId, assignmentAId } =
+      await makeCourseIsolationApp();
+    const { inkId } = seedInkOfTeacherA(
+      db,
+      dataDir,
+      studentAId,
+      assignmentAId,
+    );
+
+    // 甲本人：PNG 直出 + 元数据正常
+    const pngA = await request(app, "GET", `/api/teacher/ink/${inkId}.png`, cookieA);
+    expect(pngA.status).toBe(200);
+    expect(Buffer.from(await pngA.arrayBuffer()).toString()).toBe(
+      "fake-png-bytes",
+    );
+    const metaA = await request(app, "GET", `/api/teacher/ink/${inkId}`, cookieA);
+    expect(metaA.status).toBe(200);
+    expect(
+      ((await metaA.json()) as { data: { attemptId: string } }).data.attemptId,
+    ).toBe("cccccccc-cccc-4ccc-8ccc-cccccccc0001");
+
+    // 乙：归属链 ink → attempt → student.teacherId 不匹配 → 404（不暴露存在性）
+    await expectNotFound(
+      await request(app, "GET", `/api/teacher/ink/${inkId}.png`, cookieB),
+      "INK_NOT_FOUND",
+    );
+    await expectNotFound(
+      await request(app, "GET", `/api/teacher/ink/${inkId}`, cookieB),
+      "INK_NOT_FOUND",
+    );
+  });
+
+  it("GET /api/teacher/content（兼容接口）：甲乙各自只见自己的课程与题目（域内 version）", async () => {
+    const { app, cookieA, cookieB, courseAId, courseBId } =
+      await makeCourseIsolationApp();
+
+    // 甲编辑一道题（version+1）——只有甲域能看到新版本
+    const edit = await request(
+      app,
+      "PUT",
+      `/api/teacher/questions/${UNIT_ID}-1`,
+      cookieA,
+      { sourceMd: "::::question{type=judge}\n$2>0$。[[正确]]\n::::" },
+    );
+    expect(edit.status).toBe(200);
+
+    const treeA = await request(app, "GET", "/api/teacher/content", cookieA);
+    const bodyA = (await treeA.json()) as {
+      data: {
+        courses: {
+          id: string;
+          lectures: { id: string }[];
+          units: { id: string; questions: { id: string; version: number }[] }[];
+        }[];
+      };
+    };
+    expect(bodyA.data.courses.map((c) => c.id)).toEqual([courseAId]);
+    const unitA = bodyA.data.courses[0]?.units.find((u) => u.id === UNIT_ID);
+    expect(unitA?.questions).toHaveLength(8);
+    expect(
+      unitA?.questions.find((q) => q.id === `${UNIT_ID}-1`)?.version,
+    ).toBe(2);
+
+    // 乙把自己的同 dslId 单元加进自己课程（fixture 只建了空课程；乙域自有副本）
+    const addItem = await request(
+      app,
+      "POST",
+      `/api/teacher/courses/${courseBId}/items`,
+      cookieB,
+      { items: [{ kind: "unit", refId: UNIT_ID }] },
+    );
+    expect(addItem.status).toBe(201);
+
+    const treeB = await request(app, "GET", "/api/teacher/content", cookieB);
+    const bodyB = (await treeB.json()) as {
+      data: {
+        courses: {
+          id: string;
+          lectures: { id: string }[];
+          units: { id: string; questions: { id: string; version: number }[] }[];
+        }[];
+      };
+    };
+    // 乙：只见自己的同名课程；同 dslId 单元下的题目是乙域自己的版本（version 1）
+    expect(bodyB.data.courses.map((c) => c.id)).toEqual([courseBId]);
+    const unitB = bodyB.data.courses[0]?.units.find((u) => u.id === UNIT_ID);
+    expect(unitB?.questions).toHaveLength(8);
+    expect(
+      unitB?.questions.every((q) => q.version === 1),
+    ).toBe(true);
   });
 });
