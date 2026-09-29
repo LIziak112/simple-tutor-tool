@@ -64,6 +64,7 @@ const teacherRoutes = (() => {
   const TeacherLayout = lazy(() => import("./pages/teacher/TeacherLayout"));
   const SettingsPage = lazy(() => import("./pages/teacher/SettingsPage"));
   const LibraryPage = lazy(() => import("./pages/teacher/LibraryPage"));
+  const SharedPage = lazy(() => import("./pages/teacher/SharedPage"));
   const ImportPage = lazy(() => import("./pages/teacher/ImportPage"));
   const CoursesPage = lazy(() => import("./pages/teacher/CoursesPage"));
   const CourseEditPage = lazy(() => import("./pages/teacher/CourseEditPage"));
@@ -136,6 +137,15 @@ const teacherRoutes = (() => {
           element={
             <Suspense fallback={pageFallback}>
               <LibraryPage />
+            </Suspense>
+          }
+        />
+        <Route
+          // T2B.7：共享目录（发布 → 浏览 → 导入）
+          path="shared"
+          element={
+            <Suspense fallback={pageFallback}>
+              <SharedPage />
             </Suspense>
           }
         />
@@ -230,6 +240,9 @@ const adminRoutes = (() => {
   const AdminTeachersPage = lazy(
     () => import("./pages/admin/AdminTeachersPage"),
   );
+  const AdminSharedFilesPage = lazy(
+    () => import("./pages/admin/AdminSharedFilesPage"),
+  );
 
   /** 页面级懒加载兜底（与教师端一致） */
   const pageFallback = (
@@ -258,6 +271,15 @@ const adminRoutes = (() => {
         element={
           <Suspense fallback={pageFallback}>
             <AdminTeachersPage />
+          </Suspense>
+        }
+      />
+      <Route
+        // T2B.7：共享文件管理（列表/删除任意，含本地文件）
+        path="shared-files"
+        element={
+          <Suspense fallback={pageFallback}>
+            <AdminSharedFilesPage />
           </Suspense>
         }
       />

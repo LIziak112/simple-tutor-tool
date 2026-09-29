@@ -55,90 +55,92 @@ import { parseSharedFilenameParam } from "./shared.ts";
  */
 export function createAdminRoutes(db: Db, publicUrl: string, dataDir: string) {
   const requireAdmin = createRequireAdmin(db, publicUrl);
-  return new Hono<TeacherEnv>()
-    .use("*", requireAdmin)
-    .get("/teachers", (c) => {
-      // GET 无 JSON body：查询参数手工过契约 schema
-      const parsed = adminTeacherListQuerySchema.safeParse({
-        status: c.req.query("status") ?? undefined,
-      });
-      if (!parsed.success) {
-        throw new HttpError(
-          400,
-          "VALIDATION_ERROR",
-          "查询参数不合法：status 只能是 all、active 或 disabled",
+  return (
+    new Hono<TeacherEnv>()
+      .use("*", requireAdmin)
+      .get("/teachers", (c) => {
+        // GET 无 JSON body：查询参数手工过契约 schema
+        const parsed = adminTeacherListQuerySchema.safeParse({
+          status: c.req.query("status") ?? undefined,
+        });
+        if (!parsed.success) {
+          throw new HttpError(
+            400,
+            "VALIDATION_ERROR",
+            "查询参数不合法：status 只能是 all、active 或 disabled",
+          );
+        }
+        return c.json({
+          ok: true,
+          data: listTeachers(db, parsed.data.status),
+        });
+      })
+      .post("/teachers", async (c) => {
+        const body: AdminTeacherCreateRequest = await parseJsonBody(
+          c,
+          adminTeacherCreateRequestSchema,
         );
-      }
-      return c.json({
-        ok: true,
-        data: listTeachers(db, parsed.data.status),
-      });
-    })
-    .post("/teachers", async (c) => {
-      const body: AdminTeacherCreateRequest = await parseJsonBody(
-        c,
-        adminTeacherCreateRequestSchema,
-      );
-      return c.json({ ok: true, data: await createTeacher(db, body) }, 201);
-    })
-    .patch("/teachers/:id", async (c) => {
-      const body: AdminTeacherUpdateRequest = await parseJsonBody(
-        c,
-        adminTeacherUpdateRequestSchema,
-      );
-      return c.json({
-        ok: true,
-        data: updateTeacher(db, c.req.param("id"), body),
-      });
-    })
-    .post("/teachers/:id/disable", (c) => {
-      return c.json({
-        ok: true,
-        data: disableTeacher(db, c.req.param("id"), c.var.teacher.id),
-      });
-    })
-    .post("/teachers/:id/enable", (c) => {
-      return c.json({
-        ok: true,
-        data: enableTeacher(db, c.req.param("id")),
-      });
-    })
-    .post("/teachers/:id/reset-password", async (c) => {
-      const body: AdminTeacherResetPasswordRequest = await parseJsonBody(
-        c,
-        adminTeacherResetPasswordRequestSchema,
-      );
-      return c.json({
-        ok: true,
-        data: await resetTeacherPassword(db, c.req.param("id"), body),
-      });
-    })
-    .get("/settings", (c) => {
-      return c.json({ ok: true, data: getAdminSettings(db) });
-    })
-    .patch("/settings", async (c) => {
-      const body: AdminSettingsUpdateRequest = await parseJsonBody(
-        c,
-        adminSettingsUpdateRequestSchema,
-      );
-      return c.json({
-        ok: true,
-        data: updateAdminSettings(db, body),
-      });
-    })
-    .get("/overview", (c) => {
-      return c.json({ ok: true, data: adminOverview(db, dataDir) });
-    })
-    // ---------- 共享文件管理（T2B.7，D18/D19：可删任意，含本地放入的） ----------
-    .get("/shared-files", (c) => {
-      return c.json({
-        ok: true,
-        data: listSharedFiles(dataDir, { kind: "admin" }),
-      });
-    })
-    .delete("/shared-files/:filename", (c) => {
-      const filename = parseSharedFilenameParam(c.req.param("filename"));
-      deleteSharedFileAsAdmin(dataDir, filename);
-      return c.json({ ok: true, data: null });
-    });
+        return c.json({ ok: true, data: await createTeacher(db, body) }, 201);
+      })
+      .patch("/teachers/:id", async (c) => {
+        const body: AdminTeacherUpdateRequest = await parseJsonBody(
+          c,
+          adminTeacherUpdateRequestSchema,
+        );
+        return c.json({
+          ok: true,
+          data: updateTeacher(db, c.req.param("id"), body),
+        });
+      })
+      .post("/teachers/:id/disable", (c) => {
+        return c.json({
+          ok: true,
+          data: disableTeacher(db, c.req.param("id"), c.var.teacher.id),
+        });
+      })
+      .post("/teachers/:id/enable", (c) => {
+        return c.json({
+          ok: true,
+          data: enableTeacher(db, c.req.param("id")),
+        });
+      })
+      .post("/teachers/:id/reset-password", async (c) => {
+        const body: AdminTeacherResetPasswordRequest = await parseJsonBody(
+          c,
+          adminTeacherResetPasswordRequestSchema,
+        );
+        return c.json({
+          ok: true,
+          data: await resetTeacherPassword(db, c.req.param("id"), body),
+        });
+      })
+      .get("/settings", (c) => {
+        return c.json({ ok: true, data: getAdminSettings(db) });
+      })
+      .patch("/settings", async (c) => {
+        const body: AdminSettingsUpdateRequest = await parseJsonBody(
+          c,
+          adminSettingsUpdateRequestSchema,
+        );
+        return c.json({
+          ok: true,
+          data: updateAdminSettings(db, body),
+        });
+      })
+      .get("/overview", (c) => {
+        return c.json({ ok: true, data: adminOverview(db, dataDir) });
+      })
+      // ---------- 共享文件管理（T2B.7，D18/D19：可删任意，含本地放入的） ----------
+      .get("/shared-files", (c) => {
+        return c.json({
+          ok: true,
+          data: listSharedFiles(dataDir, { kind: "admin" }),
+        });
+      })
+      .delete("/shared-files/:filename", (c) => {
+        const filename = parseSharedFilenameParam(c.req.param("filename"));
+        deleteSharedFileAsAdmin(dataDir, filename);
+        return c.json({ ok: true, data: null });
+      })
+  );
 }

@@ -29,7 +29,10 @@ const summaryFixture = {
 
 describe("sharedFilenameSchema（文件名防穿越，D17）", () => {
   it("接受普通文件名（含中文与 .md 扩展名）", () => {
-    expect(sharedFilenameSchema.safeParse("练习四-teacher-20260930-120000.md").success).toBe(true);
+    expect(
+      sharedFilenameSchema.safeParse("练习四-teacher-20260930-120000.md")
+        .success,
+    ).toBe(true);
     expect(sharedFilenameSchema.safeParse("本地讲义.md").success).toBe(true);
   });
 
@@ -50,7 +53,9 @@ describe("sharedFilenameSchema（文件名防穿越，D17）", () => {
 
 describe("sharedFileSummarySchema（列表项）", () => {
   it("接受完整摘要；本地文件 publisher 为 null、来源 local", () => {
-    expect(sharedFileSummarySchema.safeParse(summaryFixture).success).toBe(true);
+    expect(sharedFileSummarySchema.safeParse(summaryFixture).success).toBe(
+      true,
+    );
     expect(
       sharedFileSummarySchema.safeParse({
         ...summaryFixture,
@@ -63,9 +68,9 @@ describe("sharedFileSummarySchema（列表项）", () => {
 
   it("拒绝缺失字段 / 非法 kind 与 source / 非法发布者登录名", () => {
     const { canDelete: _drop, ...withoutCanDelete } = summaryFixture;
-    expect(
-      sharedFileSummarySchema.safeParse(withoutCanDelete).success,
-    ).toBe(false);
+    expect(sharedFileSummarySchema.safeParse(withoutCanDelete).success).toBe(
+      false,
+    );
     expect(
       sharedFileSummarySchema.safeParse({ ...summaryFixture, kind: "quiz" })
         .success,
@@ -110,7 +115,9 @@ describe("sharedFileListSchema（规模防线字段，D15）", () => {
 
 describe("发布 / 预览 / 导入请求响应", () => {
   it("sharedPublishDataSchema：只含实际写入文件名", () => {
-    expect(sharedPublishDataSchema.safeParse({ filename: "a-2.md" }).success).toBe(true);
+    expect(
+      sharedPublishDataSchema.safeParse({ filename: "a-2.md" }).success,
+    ).toBe(true);
     expect(sharedPublishDataSchema.safeParse({}).success).toBe(false);
   });
 

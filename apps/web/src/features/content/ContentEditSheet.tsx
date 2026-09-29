@@ -23,6 +23,7 @@ import { contentTreeKey } from "@/features/content/content-queries";
 import { ErrorPanel } from "@/features/content/ErrorPanel";
 import { lintIssuesToDiagnostics } from "@/features/content/lint-diagnostics";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
+import { PublishConfirmDialog } from "@/features/shared/PublishConfirmDialog";
 import {
   ApiError,
   fetchLectureDetail,
@@ -535,6 +536,15 @@ export function LectureEditSheet({
               >
                 关闭
               </Button>
+              {/* T2B.7：发布到共享目录（D16 快照；服务端按已保存内容导出，未保存的
+                  编辑不进快照——确认弹层有说明） */}
+              {detailQuery.data !== undefined ? (
+                <PublishConfirmDialog
+                  kind="lecture"
+                  id={lectureId}
+                  title={detailQuery.data.title}
+                />
+              ) : null}
               {savedHint !== null ? (
                 <p
                   role="status"

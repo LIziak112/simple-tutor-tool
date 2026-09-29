@@ -1,4 +1,5 @@
 import {
+  type Dirent,
   existsSync,
   mkdirSync,
   readdirSync,
@@ -6,7 +7,6 @@ import {
   statSync,
   unlinkSync,
   writeFileSync,
-  type Dirent,
 } from "node:fs";
 import { join, resolve } from "node:path";
 import type { SharedFileSummary } from "@tutor/contract";
@@ -128,7 +128,11 @@ export function readSharedMeta(
     ) {
       return null;
     }
-    const record = raw as { teacherId: string; loginName: string; publishedAt: string };
+    const record = raw as {
+      teacherId: string;
+      loginName: string;
+      publishedAt: string;
+    };
     return {
       teacherId: record.teacherId,
       loginName: record.loginName,
@@ -383,7 +387,9 @@ export function listSharedFiles(
   // 时间倒序（新发布在前）；同刻按文件名稳定排序
   entries.sort((a, b) =>
     a.publishedAt === b.publishedAt
-      ? (a.filename < b.filename ? 1 : -1)
+      ? a.filename < b.filename
+        ? 1
+        : -1
       : a.publishedAt < b.publishedAt
         ? 1
         : -1,

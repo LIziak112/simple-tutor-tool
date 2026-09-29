@@ -1,6 +1,9 @@
 import { z } from "zod";
 import { teacherLoginNameSchema } from "./auth.ts";
-import { importCommitDataSchema, importPreviewDataSchema } from "./content-api.ts";
+import {
+  importCommitDataSchema,
+  importPreviewDataSchema,
+} from "./content-api.ts";
 
 /**
  * 共享发布 API 契约（T2B.7 起为权威定义）：教师端 /api/teacher/shared/*、

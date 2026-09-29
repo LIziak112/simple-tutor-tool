@@ -64,6 +64,10 @@ import {
   type QuestionUpdateData,
   type QuestionUpdateRequest,
   type ReorderRequest,
+  type SharedFileList,
+  type SharedImportRequest,
+  type SharedPreviewRequest,
+  type SharedPublishData,
   type SpecFileName,
   type StudentAssignmentListData,
   type StudentCourseDetailData,
@@ -867,6 +871,8 @@ export type {
   LibraryFolderCreate,
   LibraryFolderReorder,
   LibraryFolderUpdate,
+  SharedImportRequest,
+  SharedPreviewRequest,
   UnitMetaUpdate,
 } from "@tutor/contract";
 
@@ -1159,4 +1165,70 @@ export function updateAdminSettingsApi(
 /** 概览聚合计数（D20：教师/学生/作答/共享文件/注册开关，无任何明细） */
 export function fetchAdminOverview(): Promise<AdminOverviewData> {
   return callApi(() => api.api.admin.overview.$get());
+}
+
+// ---------- T2B.7：共享发布与导入（D15–D18；DATA_DIR/shared 目录） ----------
+
+/** 共享列表（D15：≤1MB 的 .md 按时间倒序最多 200 个；truncated/oversizeHidden 防线提示） */
+export function fetchSharedFiles(): Promise<SharedFileList> {
+  return callApi(() => api.api.teacher.shared.$get());
+}
+
+/** 发布单元到共享（D16 复制快照；响应 filename = 实际写入文件名，含序号） */
+export function publishUnitToSharedApi(id: string): Promise<SharedPublishData> {
+  return callApi(() =>
+    api.api.teacher.library.units[":id"].publish.$post({ param: { id } }),
+  );
+}
+
+/** 发布讲义到共享（D16：文件含 kind: lecture frontmatter） */
+export function publishLectureToSharedApi(
+  id: string,
+): Promise<SharedPublishData> {
+  return callApi(() =>
+    api.api.teacher.library.lectures[":id"].publish.$post({ param: { id } }),
+  );
+}
+
+/**
+ * 共享文件预览（D17：服务端读文件复用单文件预览逻辑，动作清单按本人域计算）。
+ * 有 error 级 lint 时响应仍 200（与普通 preview 一致，error 在 data.issues 里）。
+ */
+export function previewSharedFile(
+  request: SharedPreviewRequest,
+): Promise<ImportPreviewData> {
+  return callApi(() => api.api.teacher.shared.preview.$post({ json: request }));
+}
+
+/**
+ * 导入共享文件进本人资源库（D17）。文件有 error 级 lint 时 422 LINT_ERROR
+ * （extra._issues 由抽屉展示）。删除后文件不存在 → 404 SHARED_FILE_NOT_FOUND。
+ */
+export function importSharedFile(
+  request: SharedImportRequest,
+): Promise<ImportCommitData> {
+  return callApi(() => api.api.teacher.shared.import.$post({ json: request }));
+}
+
+/** 删除共享文件（D18：发布者删自己的；他人/本地文件 403 FORBIDDEN_SHARED_FILE） */
+export function deleteSharedFileApi(filename: string): Promise<null> {
+  return callApi(() =>
+    api.api.teacher.shared[":filename"].$delete({
+      param: { filename },
+    }),
+  );
+}
+
+/** 管理端共享列表（与教师端同形状；canDelete 恒 true——管理员可删任意） */
+export function fetchAdminSharedFiles(): Promise<SharedFileList> {
+  return callApi(() => api.api.admin["shared-files"].$get());
+}
+
+/** 管理端删除共享文件（可删任意，含本地放入的；连带删伴生 meta.json） */
+export function deleteAdminSharedFileApi(filename: string): Promise<null> {
+  return callApi(() =>
+    api.api.admin["shared-files"][":filename"].$delete({
+      param: { filename },
+    }),
+  );
 }

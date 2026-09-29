@@ -78,10 +78,16 @@ async function makeSharedApp(): Promise<SharedApp> {
     [PRACTICE_MD, "练习样例.md"],
     [LECTURE_MD, "讲义样例.md"],
   ] as const) {
-    const res = await request(app, "POST", "/api/teacher/import/commit", cookieA, {
-      markdown,
-      filename,
-    });
+    const res = await request(
+      app,
+      "POST",
+      "/api/teacher/import/commit",
+      cookieA,
+      {
+        markdown,
+        filename,
+      },
+    );
     expect(res.status).toBe(200);
   }
   const lecturesRes = await request(
@@ -167,7 +173,11 @@ async function fetchSharedList(
 }
 
 /** 直接把文件放进 shared 目录（模拟服务器本地放入，无 meta） */
-function dropLocalFile(dataDir: string, filename: string, content: string): void {
+function dropLocalFile(
+  dataDir: string,
+  filename: string,
+  content: string,
+): void {
   mkdirSync(sharedDirOf(dataDir), { recursive: true });
   writeFileSync(join(sharedDirOf(dataDir), filename), content, "utf8");
 }
@@ -226,9 +236,15 @@ describe("T2B.7 发布 → 列表 → 乙预览/导入（域内独立）", () =>
     ).data;
 
     // 乙预览：动作清单为新增单元（D13 域内匹配不到甲的单元）
-    const preview = await request(app, "POST", "/api/teacher/shared/preview", cookieB, {
-      filename,
-    });
+    const preview = await request(
+      app,
+      "POST",
+      "/api/teacher/shared/preview",
+      cookieB,
+      {
+        filename,
+      },
+    );
     expect(preview.status).toBe(200);
     const previewBody = (await preview.json()) as {
       data: { actions: { kind: string }[]; summary: { questionCount: number } };
@@ -237,34 +253,59 @@ describe("T2B.7 发布 → 列表 → 乙预览/导入（域内独立）", () =>
     expect(previewBody.data.summary.questionCount).toBe(8);
 
     // 甲域单元的当前题数（导入后应不变）
-    const unitsA1 = await request(app, "GET", "/api/teacher/library/units", cookieA);
+    const unitsA1 = await request(
+      app,
+      "GET",
+      "/api/teacher/library/units",
+      cookieA,
+    );
     const countBefore = (
       (await unitsA1.json()) as {
         data: { units: { id: string; questionCount: number }[] };
       }
-    )
-      .data.units.find((u) => u.id === UNIT_ID)?.questionCount;
+    ).data.units.find((u) => u.id === UNIT_ID)?.questionCount;
     expect(countBefore).toBe(8);
 
     // 乙导入（不指定文件夹 → 未归类）
-    const importRes = await request(app, "POST", "/api/teacher/shared/import", cookieB, {
-      filename,
-    });
+    const importRes = await request(
+      app,
+      "POST",
+      "/api/teacher/shared/import",
+      cookieB,
+      {
+        filename,
+      },
+    );
     expect(importRes.status).toBe(200);
     const report = (await importRes.json()) as {
-      data: { units: { id: string; inserted: boolean }[]; questions: { inserted: number } };
+      data: {
+        units: { id: string; inserted: boolean }[];
+        questions: { inserted: number };
+      };
     };
     expect(report.data.units).toHaveLength(1);
     expect(report.data.units[0]?.inserted).toBe(true);
     expect(report.data.questions.inserted).toBe(8);
 
     // 乙域内出现同 dslId 单元；甲域题数不变（隔离）
-    const unitsB = await request(app, "GET", "/api/teacher/library/units", cookieB);
+    const unitsB = await request(
+      app,
+      "GET",
+      "/api/teacher/library/units",
+      cookieB,
+    );
     const unitsBBody = (await unitsB.json()) as {
-      data: { units: { id: string; questionCount: number; teacherId?: string }[] };
+      data: {
+        units: { id: string; questionCount: number; teacherId?: string }[];
+      };
     };
     expect(unitsBBody.data.units.map((u) => u.id)).toEqual([UNIT_ID]);
-    const unitsA = await request(app, "GET", "/api/teacher/library/units", cookieA);
+    const unitsA = await request(
+      app,
+      "GET",
+      "/api/teacher/library/units",
+      cookieA,
+    );
     const unitsABody = (await unitsA.json()) as {
       data: { units: { id: string; questionCount: number }[] };
     };
@@ -316,9 +357,15 @@ describe("T2B.7 发布 → 列表 → 乙预览/导入（域内独立）", () =>
     expect(readFileSync(join(dataDir, "shared", filename), "utf8")).toBe(
       contentAtPublish,
     );
-    const importRes = await request(app, "POST", "/api/teacher/shared/import", cookieB, {
-      filename,
-    });
+    const importRes = await request(
+      app,
+      "POST",
+      "/api/teacher/shared/import",
+      cookieB,
+      {
+        filename,
+      },
+    );
     expect(importRes.status).toBe(200);
     // 乙域内该题 difficulty 为发布时的版本（1）：经单题编辑接口核验
     const detailB = await request(
@@ -459,13 +506,25 @@ describe("T2B.7 删除权限（D18）与路径穿越（D17）", () => {
     expect(entry?.questionCount).toBe(1);
 
     // 本地文件可预览、可导入（乙导入成功）
-    const preview = await request(app, "POST", "/api/teacher/shared/preview", cookieB, {
-      filename: "本地判断题.md",
-    });
+    const preview = await request(
+      app,
+      "POST",
+      "/api/teacher/shared/preview",
+      cookieB,
+      {
+        filename: "本地判断题.md",
+      },
+    );
     expect(preview.status).toBe(200);
-    const importRes = await request(app, "POST", "/api/teacher/shared/import", cookieB, {
-      filename: "本地判断题.md",
-    });
+    const importRes = await request(
+      app,
+      "POST",
+      "/api/teacher/shared/import",
+      cookieB,
+      {
+        filename: "本地判断题.md",
+      },
+    );
     expect(importRes.status).toBe(200);
 
     // 教师删本地文件 → 403（甲也是——仅管理员可删）；管理员删除成功且连带 meta（无 meta 时仅删 md）
@@ -487,7 +546,9 @@ describe("T2B.7 删除权限（D18）与路径穿越（D17）", () => {
     );
     expect(adminDel.status).toBe(200);
     const after = await fetchSharedList(app, cookieB);
-    expect(after.data.files.find((f) => f.filename === "本地判断题.md")).toBeUndefined();
+    expect(
+      after.data.files.find((f) => f.filename === "本地判断题.md"),
+    ).toBeUndefined();
   });
 });
 
@@ -496,7 +557,9 @@ describe("T2B.7 规模防线（D15）与文件形态", () => {
     const { app, cookieA, dataDir } = await makeSharedApp();
     dropLocalFile(dataDir, "超大.md", "x".repeat(1024 * 1024 + 1));
     const list = await fetchSharedList(app, cookieA);
-    expect(list.data.files.find((f) => f.filename === "超大.md")).toBeUndefined();
+    expect(
+      list.data.files.find((f) => f.filename === "超大.md"),
+    ).toBeUndefined();
     expect(list.data.oversizeHidden).toBe(1);
   });
 
@@ -516,7 +579,8 @@ describe("T2B.7 规模防线（D15）与文件形态", () => {
   });
 
   it("发布讲义：文件内容含 kind: lecture frontmatter（D16 往返口径）→ 乙导入讲义成功", async () => {
-    const { app, cookieA, cookieB, dataDir, lectureAId } = await makeSharedApp();
+    const { app, cookieA, cookieB, dataDir, lectureAId } =
+      await makeSharedApp();
     const publish = await request(
       app,
       "POST",
@@ -537,9 +601,15 @@ describe("T2B.7 规模防线（D15）与文件形态", () => {
     expect(entry?.kind).toBe("lecture");
     expect(entry?.title).toBe(LECTURE_TITLE);
 
-    const importRes = await request(app, "POST", "/api/teacher/shared/import", cookieB, {
-      filename,
-    });
+    const importRes = await request(
+      app,
+      "POST",
+      "/api/teacher/shared/import",
+      cookieB,
+      {
+        filename,
+      },
+    );
     expect(importRes.status).toBe(200);
     const lecturesB = await request(
       app,
@@ -550,9 +620,9 @@ describe("T2B.7 规模防线（D15）与文件形态", () => {
     const body = (await lecturesB.json()) as {
       data: { lectures: { title: string }[] };
     };
-    expect(
-      body.data.lectures.map((l) => l.title).includes(LECTURE_TITLE),
-    ).toBe(true);
+    expect(body.data.lectures.map((l) => l.title).includes(LECTURE_TITLE)).toBe(
+      true,
+    );
   });
 
   it("同秒重名自动加序号 -2（publishToShared 注入同一 now）", () => {
@@ -610,7 +680,12 @@ describe("T2B.7 管理端共享文件接口", () => {
       "ADMIN_ONLY",
     );
 
-    const adminList = await request(app, "GET", "/api/admin/shared-files", cookieA);
+    const adminList = await request(
+      app,
+      "GET",
+      "/api/admin/shared-files",
+      cookieA,
+    );
     expect(adminList.status).toBe(200);
     const body = (await adminList.json()) as SharedListBody;
     const entry = body.data.files.find((f) => f.filename === filename);
@@ -652,10 +727,16 @@ describe("T2B.7 教师端共享接口鉴权", () => {
   it("乙发布自己的单元后，甲不能删（反向 403）", async () => {
     const { app, cookieA, cookieB } = await makeSharedApp();
     // 乙先导入一份练习（乙域内出现单元），再以乙身份发布
-    const commit = await request(app, "POST", "/api/teacher/import/commit", cookieB, {
-      markdown: PRACTICE_MD,
-      filename: "练习样例.md",
-    });
+    const commit = await request(
+      app,
+      "POST",
+      "/api/teacher/import/commit",
+      cookieB,
+      {
+        markdown: PRACTICE_MD,
+        filename: "练习样例.md",
+      },
+    );
     expect(commit.status).toBe(200);
     const publish = await request(
       app,

@@ -5,6 +5,7 @@ import {
   Library,
   LineChart,
   Settings,
+  Share2,
   ShieldCheck,
   UserRound,
   Users,
@@ -35,7 +36,7 @@ interface NavItemSpec {
   matchPrefixes?: string[];
 }
 
-/** 导航分区（资源库 · 课程 / 学生 / 作业 / 数据 / 学情 / 设置） */
+/** 导航分区（资源库 · 共享 · 课程 / 学生 / 作业 / 数据 / 学情 / 设置） */
 const NAV_ITEMS: NavItemSpec[] = [
   {
     to: "/t/library",
@@ -43,6 +44,8 @@ const NAV_ITEMS: NavItemSpec[] = [
     icon: Library,
     matchPrefixes: ["/t/library", "/t/import"],
   },
+  // T2B.7：共享目录（发布 → 浏览 → 导入，D15–D18）
+  { to: "/t/shared", label: "共享", icon: Share2 },
   { to: "/t/courses", label: "课程", icon: GraduationCap },
   { to: "/t/students", label: "学生", icon: Users },
   { to: "/t/assignments", label: "作业", icon: ClipboardList },
