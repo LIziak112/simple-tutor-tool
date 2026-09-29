@@ -36,8 +36,8 @@ import { readSpecFile } from "../spec-files";
  * - GET  /teacher/status：是否已设置教师（前端首启判断，只回布尔值）
  * - GET  /config：运行时公开配置（T2.12——pwaEnabled 随 PUBLIC_URL 协议，
  *    前端入口据此决定是否注册 Service Worker；不缓存、无敏感信息）
- * - POST /teacher/setup：首次设置密码（仅无教师时可用），成功自动登录
- * - POST /teacher/login：教师密码登录（§5.7 限流）
+ * - POST /teacher/setup：首次启动创建教师（登录名 + 密码，仅无教师时可用），成功自动登录
+ * - POST /teacher/login：教师登录名+密码登录（§5.7 限流，key 按登录名与 IP 双计）
  * - POST /student/login：学生登录名+密码登录（T2.1，§5.7 限流，key 与教师隔离）
  * - GET  /s/:token：学生专属链接登录（写学生 Cookie；前端 /s/:token 页面为 T2.3）
  * - GET  /spec/:file：DSL 规范文档直出（T1.13，§3 公开区；md/json 原文作为
@@ -79,7 +79,7 @@ export function createPublicRoutes(
           c,
           teacherSetupRequestSchema,
         );
-        const { teacher, token } = await setupTeacher(db, body.password);
+        const { teacher, token } = await setupTeacher(db, body);
         setCookie(
           c,
           SESSION_COOKIE,
@@ -93,11 +93,7 @@ export function createPublicRoutes(
           c,
           teacherLoginRequestSchema,
         );
-        const { teacher, token } = await loginTeacher(
-          db,
-          body.password,
-          getClientIp(c),
-        );
+        const { teacher, token } = await loginTeacher(db, body, getClientIp(c));
         setCookie(
           c,
           SESSION_COOKIE,

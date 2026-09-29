@@ -71,7 +71,7 @@ async function makeTeacherApp(): Promise<{
   const res = await app.request("/api/public/teacher/setup", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ password: PASSWORD }),
+    body: JSON.stringify({ loginName: "teacher", password: PASSWORD }),
   });
   const line = res.headers
     .getSetCookie()

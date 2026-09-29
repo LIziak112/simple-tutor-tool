@@ -1,3 +1,4 @@
+import { teacherLoginNameSchema } from "@tutor/contract";
 import { Loader2, LogIn, TriangleAlert } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { Navigate, useNavigate } from "react-router";
@@ -11,15 +12,32 @@ import { ApiError } from "@/lib/api";
 import { AuthScreenError, AuthScreenLoading } from "./SetupPage";
 
 /**
- * /t/login 教师密码登录。
+ * /t/login 教师登录（T2B.2 起为「登录名 + 密码」双字段，D6）。
  * 分流：status 加载中 → 全屏加载；失败 → 错误态；未设置教师 → 跳 /t/setup。
- * 错误提示区分：密码错误（INVALID_CREDENTIALS）与临时锁定（LOCKED）。
+ * 登录名在成功登录后记入 localStorage 供下次预填（明文即可——登录名非机密，
+ * 出现在共享文件名里本来就公开）。
+ * 错误提示区分：登录名或密码错误（INVALID_CREDENTIALS，统一口径防枚举）、
+ * 账号停用（ACCOUNT_DISABLED，明示原因）、临时锁定（LOCKED）。
  */
+
+/** localStorage 键：上次成功登录的教师登录名（预填用） */
+const LOGIN_NAME_STORAGE_KEY = "tutor:teacher-login-name";
+
+/** 读记住的登录名（隐私模式等 localStorage 不可用时静默回退为空） */
+function readRememberedLoginName(): string {
+  try {
+    return window.localStorage.getItem(LOGIN_NAME_STORAGE_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
 export function LoginPage() {
   const statusQuery = useTeacherStatus();
   const loginMutation = useLoginTeacher();
   const navigate = useNavigate();
 
+  const [loginName, setLoginName] = useState(() => readRememberedLoginName());
   const [password, setPassword] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -45,16 +63,34 @@ export function LoginPage() {
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    // 与服务端同一份契约规则（D2 字符集与长度）
+    const parsedName = teacherLoginNameSchema.safeParse(loginName);
+    if (!parsedName.success) {
+      setFormError(parsedName.error.issues[0]?.message ?? "登录名格式不正确");
+      return;
+    }
     if (password.length === 0) {
       setFormError("请输入密码");
       return;
     }
     setFormError(null);
-    loginMutation.mutate(password, {
-      onSuccess: () => {
-        navigate("/t", { replace: true });
+    loginMutation.mutate(
+      { loginName: parsedName.data, password },
+      {
+        onSuccess: (_teacher, request) => {
+          // 记住登录名供下次预填（仅成功时记，避免把敲错的存下来）
+          try {
+            window.localStorage.setItem(
+              LOGIN_NAME_STORAGE_KEY,
+              request.loginName,
+            );
+          } catch {
+            // 存不进就算了，不影响登录
+          }
+          navigate("/t", { replace: true });
+        },
       },
-    });
+    );
   }
 
   // 服务端错误按 code 转成面向老师的提示（锁定时只说明锁定，不泄露其他信息）
@@ -77,7 +113,7 @@ export function LoginPage() {
           教师登录
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          输入密码进入辅导工作台
+          输入登录名与密码进入辅导工作台
         </p>
       </header>
 
@@ -87,6 +123,23 @@ export function LoginPage() {
         className="w-full max-w-sm rounded-xl border border-border bg-card p-5 text-card-foreground shadow-sm"
       >
         <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="login-name" className="text-sm font-medium">
+              登录名
+            </label>
+            <Input
+              id="login-name"
+              type="text"
+              name="loginName"
+              autoComplete="username"
+              placeholder="请输入登录名"
+              value={loginName}
+              aria-invalid={shownError != null}
+              onChange={(e) => setLoginName(e.target.value)}
+              disabled={loginMutation.isPending}
+            />
+          </div>
+
           <div className="flex flex-col gap-1.5">
             <label htmlFor="login-password" className="text-sm font-medium">
               密码

@@ -5,6 +5,7 @@ import {
   Library,
   LineChart,
   Settings,
+  UserRound,
   Users,
 } from "lucide-react";
 import { Link, Navigate, Outlet, useLocation } from "react-router";
@@ -114,6 +115,12 @@ export function TeacherLayout() {
       </nav>
 
       <main className="min-w-0 flex-1">
+        {/* 顶栏：教师身份一律显示登录名（D1 无 displayName；管理入口 T2B.6
+            才对 isAdmin 显示，本任务不加） */}
+        <header className="flex min-h-11 items-center justify-end gap-2 border-b border-border bg-card px-4 text-sm text-muted-foreground">
+          <UserRound aria-hidden className="size-4" />
+          <span data-testid="teacher-login-name">{meQuery.data.loginName}</span>
+        </header>
         <Outlet />
       </main>
     </div>
