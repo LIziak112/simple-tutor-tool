@@ -67,12 +67,14 @@ export interface ImportOptions {
   readonly addToCourse: { courseId: string; visible: boolean } | undefined;
 }
 
-/** 读取 FileList 中的 .md 文件（忽略其他扩展名），返回 PickedFile 列表 */
+/** 读取所选文件中的 .md（忽略其他扩展名），返回 PickedFile 列表。
+ * 入参是 File 数组而非 FileList：调用方须先快照（置空 input.value 会清空
+ * input.files 所指的同一 FileList 对象，活引用事后读恒为空，见 handleFiles） */
 export async function readPickedFiles(
-  fileList: FileList,
+  files: readonly File[],
 ): Promise<PickedFile[]> {
   const result: PickedFile[] = [];
-  for (const file of Array.from(fileList)) {
+  for (const file of files) {
     if (!/\.(md|markdown)$/i.test(file.name)) continue;
     const markdown = await file.text();
     const relative = (file as File & { webkitRelativePath?: string })
@@ -200,11 +202,14 @@ export function ImportPage() {
   );
 
   async function handleFiles(event: React.ChangeEvent<HTMLInputElement>) {
-    const list = event.target.files;
+    // 先把 FileList 快照成数组：真实浏览器里 input.value = "" 会同步清空
+    // input.files 所指的同一个 FileList 对象，之后再读 length 恒为 0（jsdom 模拟
+    // 不出该语义，曾致真实浏览器选完文件清单不进条目——e2e/import-select 回归）
+    const picked = Array.from(event.target.files ?? []);
     // 允许再次选择同一批文件（change 依赖 value 变化）
     event.target.value = "";
-    if (list === null || list.length === 0) return;
-    const incoming = await readPickedFiles(list);
+    if (picked.length === 0) return;
+    const incoming = await readPickedFiles(picked);
     if (incoming.length === 0) return;
     // 继续选择 = 追加；同 path 重复 → 原位替换（保持最新）
     setPickedFiles((prev) => incoming.reduce(upsertByPath, prev));
