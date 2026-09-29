@@ -60,35 +60,85 @@ export const attemptSourceSchema = z.enum(["assignment", "course"]);
  *   /attempt 返回已交的那份（前端据此直接进结果视图，不另开新卷）；
  * - course 来源：同一 (学生, 课程, 单元) 同时最多 1 份 draft；已交卷后「再做一次」
  *   创建新 attempt（attemptNo 递增，从 1 起，新一次从空白开始，D10）。
+ *
+ * 来源交叉不变式已在 schema 层锁定（下方 superRefine，不再是仅存于注释的约定）：
+ * - course 来源：assignmentId 恒 null，courseId / unitId 恒有值；
+ * - assignment 来源：assignmentId 恒有值，unitId 恒 null（courseId 随作业可空可非空）。
  */
-export const attemptSummarySchema = z.object({
-  /** attempts.id（crypto.randomUUID） */
-  id: z.uuid(),
-  /** 作答来源（D9） */
-  sourceType: attemptSourceSchema,
-  /** 所属作业（assignments.id）；course 来源为 null */
-  assignmentId: z.uuid().nullable(),
-  /** 课程练习所属课程（courses.id）；assignment 来源取作业所属课程（可空，D9/T2A.7） */
-  courseId: z.uuid().nullable(),
-  /**
-   * 目标练习单元（units.id）：course 来源恒有值（单单元）；assignment 来源
-   * 自 T2A.7 多单元化起为 null——题目集合改由 assignment_units 决定
-   * （题号全卷连续），不再落在单个单元上。
-   */
-  unitId: z.string().min(1).nullable(),
-  /** 第几次作答（course 来源从 1 递增；assignment 来源恒 1） */
-  attemptNo: z.number().int().min(1),
-  status: attemptStatusSchema,
-  /** 开始作答时间：UTC ISO */
-  startedAt: z.string().min(1),
-  /** 交卷时间：UTC ISO；未交为 null */
-  submittedAt: z.string().nullable(),
-  /**
-   * 自动判分得分（0–100 整数百分比；口径=答对数/可自动判分数）。
-   * 无可自动判分的题（全部待批）或未交卷时为 null；T3.2 批改后以 scoreFinal 为准。
-   */
-  scoreAuto: z.number().int().min(0).max(100).nullable(),
-});
+export const attemptSummarySchema = z
+  .object({
+    /** attempts.id（crypto.randomUUID） */
+    id: z.uuid(),
+    /** 作答来源（D9） */
+    sourceType: attemptSourceSchema,
+    /** 所属作业（assignments.id）；course 来源为 null */
+    assignmentId: z.uuid().nullable(),
+    /** 课程练习所属课程（courses.id）；assignment 来源取作业所属课程（可空，D9/T2A.7） */
+    courseId: z.uuid().nullable(),
+    /**
+     * 目标练习单元（units.id）：course 来源恒有值（单单元）；assignment 来源
+     * 自 T2A.7 多单元化起为 null——题目集合改由 assignment_units 决定
+     * （题号全卷连续），不再落在单个单元上。两条口径由下方 superRefine 强制。
+     */
+    unitId: z.string().min(1).nullable(),
+    /** 第几次作答（course 来源从 1 递增；assignment 来源恒 1） */
+    attemptNo: z.number().int().min(1),
+    status: attemptStatusSchema,
+    /** 开始作答时间：UTC ISO */
+    startedAt: z.string().min(1),
+    /** 交卷时间：UTC ISO；未交为 null */
+    submittedAt: z.string().nullable(),
+    /**
+     * 自动判分得分（0–100 整数百分比；口径=答对数/可自动判分数）。
+     * 无可自动判分的题（全部待批）或未交卷时为 null；T3.2 批改后以 scoreFinal 为准。
+     */
+    scoreAuto: z.number().int().min(0).max(100).nullable(),
+  })
+  .superRefine((summary, ctx) => {
+    if (summary.sourceType === "course") {
+      if (summary.assignmentId !== null) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["assignmentId"],
+          message:
+            "来源不变式冲突：course 来源的 assignmentId 必须为 null（课程练习不挂在作业上）",
+        });
+      }
+      if (summary.courseId === null) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["courseId"],
+          message:
+            "来源不变式冲突：course 来源的 courseId 必须非空（课程练习必须记录所属课程）",
+        });
+      }
+      if (summary.unitId === null) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["unitId"],
+          message:
+            "来源不变式冲突：course 来源的 unitId 必须非空（课程练习必须记录目标单元）",
+        });
+      }
+    } else {
+      if (summary.assignmentId === null) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["assignmentId"],
+          message:
+            "来源不变式冲突：assignment 来源的 assignmentId 必须非空（作业作答必须记录所属作业）",
+        });
+      }
+      if (summary.unitId !== null) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["unitId"],
+          message:
+            "来源不变式冲突：assignment 来源的 unitId 必须为 null（T2A.7 多单元化后题目集合由 assignment_units 决定，不落单单元）",
+        });
+      }
+    }
+  });
 
 /** POST /api/student/assignments/:id/attempt 与 POST /api/student/courses/:cid/units/:uid/attempts 响应 data（创建或取回 attempt） */
 export const attemptStartDataSchema = attemptSummarySchema;
@@ -287,12 +337,35 @@ export const hintOpenDataSchema = z.object({
 /**
  * GET /api/student/attempts/:id 响应 data：按 attempt.status 二选一
  * （draft → 草稿视图，submitted/graded → 结果视图；判别键在嵌套的 attempt.status
- * 上，Zod 不支持嵌套判别，用普通 union，具体形态由 attempt.ts 契约测试锁定）。
+ * 上，Zod 不支持嵌套判别，用普通 union）。union 之上另加状态-形态一致性校验
+ * （superRefine）：草稿独有键（drafts / hintsOpened）与结果独有键（summary /
+ * answersReleased）经 union 分支 strip 解析后互斥，据此判定实际命中的分支，
+ * 并要求它与 attempt.status 一致——状态与视图错配（如已交卷却命中草稿分支）
+ * 整体拒绝，不再静默解析进错误分支。混入的异视图多余键按对象 strip 语义
+ * 剥离（fail closed：只少给不多给），不影响本校验。
  */
-export const attemptDetailDataSchema = z.union([
-  attemptDraftDataSchema,
-  attemptResultDataSchema,
-]);
+export const attemptDetailDataSchema = z
+  .union([attemptDraftDataSchema, attemptResultDataSchema])
+  .superRefine((data, ctx) => {
+    // union 解析成功后只可能是两种形态之一：含 drafts/hintsOpened（草稿）或
+    // 含 summary/answersReleased（结果）——两键联合判定即可区分命中分支。
+    const isDraftShape = "drafts" in data && "hintsOpened" in data;
+    if (data.attempt.status === "draft" && !isDraftShape) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["attempt", "status"],
+        message:
+          "状态-形态不一致：attempt.status=draft 但数据是结果视图形态（应为含 drafts/hintsOpened 的草稿视图）",
+      });
+    } else if (data.attempt.status !== "draft" && isDraftShape) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["attempt", "status"],
+        message:
+          "状态-形态不一致：attempt.status 为 submitted/graded 但数据是草稿视图形态（应为含 summary/answersReleased 的结果视图）",
+      });
+    }
+  });
 
 /**
  * 作答模块错误码（UPPER_SNAKE_CODE 固定子集）：

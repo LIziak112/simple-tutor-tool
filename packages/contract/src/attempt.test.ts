@@ -17,6 +17,8 @@ import {
  * 作答生命周期契约自测（T2.6；T2A.6 扩展作答来源）：锁定四个接口的请求/响应形态——
  * - attempt 摘要三态与 scoreAuto 口径（0–100 整数或 null）；
  * - 作答来源（D9）：sourceType assignment|course、courseId 可空、attemptNo ≥1；
+ *   来源交叉不变式（schema superRefine 锁定）：course 恒 courseId+unitId 且不挂
+ *   作业；assignment 恒 assignmentId 且 unitId=null（courseId 随作业可空）；
  * - 草稿视图：题目是 QuestionPublic 形态（无 answers/solutionMd/hints）、
  *   本人答案收在 drafts 键（键名与结果视图的参考答案 answers 区分）、
  *   courseName 供顶部来源行（assignment 为 null）；
@@ -25,7 +27,10 @@ import {
  * - 分步提示（T2.11）：请求体 {questionId, index}、响应只含被请求的那一条
  *   提示 + 计数；两个视图的 hintsOpened 只回显已解锁条目；
  * - 错误码集合（ALREADY_SUBMITTED / HINT_INDEX_OUT_OF_RANGE 为验收项；
- *   COURSE_ACCESS_DENIED / NOT_FOUND 为 T2A.6 课程来源访问权码，D22）。
+ *   COURSE_ACCESS_DENIED / NOT_FOUND 为 T2A.6 课程来源访问权码，D22）；
+ * - 详情 union 的状态-形态一致性（superRefine 锁定）：attempt.status=draft ⇔
+ *   草稿视图形态（drafts/hintsOpened），submitted/graded ⇔ 结果视图形态
+ *   （summary/answersReleased），错配整体拒绝。
  */
 
 const ASSIGNMENT_ID = "44444444-4444-4444-8444-444444444444";
@@ -56,12 +61,15 @@ const SUMMARY_SUBMITTED = {
   scoreAuto: 88,
 } as const;
 
-/** 课程练习来源的摘要（D9/D10：courseId 非空、assignmentId 空、attemptNo 递增） */
+/** 课程练习来源的摘要（D9/D10：courseId 非空、assignmentId 空、unitId 恒有值、attemptNo 递增） */
 const SUMMARY_COURSE_SECOND = {
   ...SUMMARY_DRAFT,
   sourceType: "course",
   assignmentId: null,
   courseId: COURSE_ID,
+  // 来源不变式（schema 层 superRefine 锁定）：course 来源 unitId 不能继承
+  // assignment fixture 的 null——须显式给值（课程练习必须记录目标单元）
+  unitId: UNIT_ID,
   attemptNo: 2,
 } as const;
 
@@ -107,6 +115,51 @@ describe("attemptStatusSchema / attemptSummarySchema", () => {
       attemptSummarySchema.safeParse({ ...SUMMARY_DRAFT, attemptNo: 0 })
         .success,
     ).toBe(false);
+  });
+
+  it("来源交叉不变式（superRefine 锁定）：course 恒记单元、assignment 恒不落单单元", () => {
+    // course 来源 unitId=null → 拒绝（课程练习必须记录目标单元）
+    expect(
+      attemptSummarySchema.safeParse({
+        ...SUMMARY_COURSE_SECOND,
+        unitId: null,
+      }).success,
+    ).toBe(false);
+    // course 来源挂作业 assignmentId → 拒绝（课程练习不挂在作业上）
+    expect(
+      attemptSummarySchema.safeParse({
+        ...SUMMARY_COURSE_SECOND,
+        assignmentId: ASSIGNMENT_ID,
+      }).success,
+    ).toBe(false);
+    // course 来源缺课程 courseId=null → 拒绝
+    expect(
+      attemptSummarySchema.safeParse({
+        ...SUMMARY_COURSE_SECOND,
+        courseId: null,
+      }).success,
+    ).toBe(false);
+    // assignment 来源 unitId 非空 → 拒绝（T2A.7 多单元化后题目集合走 assignment_units）
+    expect(
+      attemptSummarySchema.safeParse({
+        ...SUMMARY_DRAFT,
+        unitId: "unit-一元一次方程",
+      }).success,
+    ).toBe(false);
+    // assignment 来源缺作业 assignmentId=null → 拒绝
+    expect(
+      attemptSummarySchema.safeParse({
+        ...SUMMARY_DRAFT,
+        assignmentId: null,
+      }).success,
+    ).toBe(false);
+    // assignment 来源挂课程（courseId 非空）合法——作业可挂课程（D9/T2A.7）
+    expect(
+      attemptSummarySchema.safeParse({
+        ...SUMMARY_DRAFT,
+        courseId: COURSE_ID,
+      }).success,
+    ).toBe(true);
   });
 
   it("POST /attempt 响应 = 摘要本体（attemptStartDataSchema；两种来源共用）", () => {
@@ -528,6 +581,41 @@ describe("attemptDetailDataSchema / attemptErrorCodeSchema", () => {
         units: [],
       }).success,
     ).toBe(true);
+  });
+
+  it("状态-形态一致性（superRefine 锁定）：status 与视图形态错配整体拒绝，不静默进错误分支", () => {
+    // 已交卷状态 + 草稿视图形态（drafts/hintsOpened、无 summary）→ 拒绝
+    expect(
+      attemptDetailDataSchema.safeParse({
+        attempt: SUMMARY_SUBMITTED,
+        title: "周末加练",
+        courseName: null,
+        dueAt: null,
+        units: [],
+        drafts: {},
+        hintsOpened: {},
+      }).success,
+    ).toBe(false);
+    // draft 状态 + 结果视图形态（summary/answersReleased、无 drafts）→ 拒绝
+    expect(
+      attemptDetailDataSchema.safeParse({
+        attempt: SUMMARY_DRAFT,
+        title: "周末加练",
+        courseName: null,
+        dueAt: null,
+        answersReleased: true,
+        summary: {
+          total: 0,
+          answered: 0,
+          correct: 0,
+          wrong: 0,
+          pending: 0,
+          unanswered: 0,
+          autoGradable: 0,
+        },
+        units: [],
+      }).success,
+    ).toBe(false);
   });
 
   it("错误码集合含 ALREADY_SUBMITTED（T2.6 验收项）、HINT_INDEX_OUT_OF_RANGE（T2.11 验收项）与越权/不存在码", () => {

@@ -39,7 +39,7 @@ export const ASSIGNMENT_TITLE_MAX = 100;
  * - submitted：已交（已交卷未批改）；
  * - graded：已批（教师已批改）。
  * 计算收敛在服务端纯函数 computeAssignmentStatus（assignment-service）：
- * 优先级 graded > submitted > draft > 无记录。
+ * 优先级 graded > submitted > in_progress > not_started。
  */
 export const assignmentStatusSchema = z.enum([
   "not_started",
@@ -236,8 +236,8 @@ export const teacherAssignmentSchema = z.object({
   rosterStats: assignmentRosterStatsSchema,
   /** 是否已删除（deletedAt 非空；软删，作答保留） */
   deleted: z.boolean(),
-  /** 删除时间：UTC ISO；未删除为 null */
-  deletedAt: z.string().nullable(),
+  /** 删除时间：UTC ISO；未删除为 null（min(1) 拦空串，与 createdAt 口径一致） */
+  deletedAt: z.string().min(1).nullable(),
   /** 创建时间：UTC ISO 字符串 */
   createdAt: z.string().min(1),
 });
