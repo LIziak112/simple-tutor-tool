@@ -876,7 +876,14 @@ function resultQuestionOf(row: ResponseRow): AttemptResultQuestion | null {
   const snapshotJson = row.questionSnapshotJson;
   if (snapshotJson === null) return null; // 理论不可达：交卷必写快照（防御性跳过）
   const parsed = questionSchema.safeParse(jsonOf(snapshotJson));
-  if (!parsed.success) return null;
+  if (!parsed.success) {
+    // 可观测性留痕（不改变按缺失计的既有行为）：快照坏数据此前静默跳过，
+    // 服务层拿不到 app 层 pino 实例，用统一前缀 console.warn 便于检索
+    console.warn(
+      `【数据异常】attempt-service：responses.questionSnapshotJson 解析失败，结果视图该题按缺失计（attemptId=${row.attemptId}，questionId=${row.questionId}）`,
+    );
+    return null;
+  }
   const snapshot = parsed.data;
   return {
     questionId: row.questionId,

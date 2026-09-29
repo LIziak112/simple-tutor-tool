@@ -113,6 +113,11 @@ function hintsOfAttempt(
       jsonOf(responseRow.questionSnapshotJson),
     );
     if (parsed.success) return parsed.data.hints;
+    // 可观测性留痕（不改变回退行为）：快照存在但解析失败属异常数据，
+    // 服务层拿不到 app 层 pino 实例，用统一前缀 console.warn 便于检索
+    console.warn(
+      `【数据异常】hint-service：responses.questionSnapshotJson 解析失败，回退当前题行（attemptId=${attempt.id}，questionId=${questionId}）`,
+    );
   }
   const questionRow = db
     .select({ hintsJson: questions.hintsJson })
