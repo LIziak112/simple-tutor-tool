@@ -88,3 +88,50 @@ export function clearLoginFailures(db: Db, keys: string[]): void {
   }
   db.delete(loginFailures).where(inArray(loginFailures.key, keys)).run();
 }
+
+// ---------- 注册限流（T2B.6，D3） ----------
+
+/** 同一 IP 注册尝试上限（1 小时窗口内，含成功尝试——这是防滥用上限，不是失败锁定） */
+export const REGISTRATION_MAX_ATTEMPTS = 5;
+
+/** 注册限流锁定时长（毫秒）：1 小时 */
+export const REGISTRATION_LOCK_MS = 60 * 60 * 1000;
+
+/** 注册限流 key：按 IP 一条（key 形如 reg:ip:<IP>，与登录 key 命名空间隔离） */
+export function registrationAttemptKey(ip: string): string {
+  return `reg:ip:${ip}`;
+}
+
+/**
+ * 记一次注册尝试（不论后续成功与否都计数——与登录的「只记失败」不同：
+ * 注册成功同样消耗额度，防止批量建号）。
+ * 计数 +1；达到阈值写 lockedUntil（1 小时）。仍在锁定期时为 no-op（外层应先查
+ * isLoginLocked 拦截）；上一轮锁已过期时计数清零重来（复用登录限流的口径）。
+ */
+export function recordRegistrationAttempt(db: Db, key: string): void {
+  const now = Date.now();
+  const nowIso = new Date(now).toISOString();
+  const row = db
+    .select()
+    .from(loginFailures)
+    .where(eq(loginFailures.key, key))
+    .get();
+
+  if (row?.lockedUntil && row.lockedUntil > nowIso) {
+    return;
+  }
+  const previousCount = row?.lockedUntil ? 0 : (row?.count ?? 0);
+  const count = previousCount + 1;
+  const lockedUntil =
+    count >= REGISTRATION_MAX_ATTEMPTS
+      ? new Date(now + REGISTRATION_LOCK_MS).toISOString()
+      : null;
+
+  db.insert(loginFailures)
+    .values({ key, count, lockedUntil })
+    .onConflictDoUpdate({
+      target: loginFailures.key,
+      set: { count, lockedUntil },
+    })
+    .run();
+}
