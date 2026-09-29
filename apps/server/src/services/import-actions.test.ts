@@ -9,7 +9,7 @@ import {
   questions,
   units,
 } from "../db/schema.ts";
-import { createTestDb } from "../db/test-utils.ts";
+import { createTestDb, TEST_TEACHER_ID } from "../db/test-utils.ts";
 import {
   buildImportPlan,
   type LibrarySnapshot,
@@ -449,6 +449,7 @@ describe("loadLibrarySnapshot：读库口径（内存库）", () => {
     db.insert(units)
       .values({
         id: "练习四",
+        teacherId: TEST_TEACHER_ID,
         folderId: FOLDER_A,
         lectureId: null,
         title: "练习四",
@@ -461,6 +462,7 @@ describe("loadLibrarySnapshot：读库口径（内存库）", () => {
       .values([
         {
           id: "练习四-1",
+          teacherId: TEST_TEACHER_ID,
           unitId: "练习四",
           order: 0,
           type: "judge",
@@ -474,6 +476,7 @@ describe("loadLibrarySnapshot：读库口径（内存库）", () => {
         },
         {
           id: "练习四-2",
+          teacherId: TEST_TEACHER_ID,
           unitId: "练习四",
           order: 1,
           type: "judge",
@@ -539,7 +542,8 @@ describe("loadLibrarySnapshot：读库口径（内存库）", () => {
       ])
       .run();
 
-    const snapshotLoaded = loadLibrarySnapshot(db, now);
+    // T2B.1：快照按教师域过滤（测试库教师行由 createTestDb 种入）
+    const snapshotLoaded = loadLibrarySnapshot(db, now, TEST_TEACHER_ID);
     const unit = snapshotLoaded.units.get("练习四");
     expect(unit).toBeDefined();
     expect(unit?.folderId).toBe(FOLDER_A);
@@ -562,6 +566,7 @@ describe("loadLibrarySnapshot：读库口径（内存库）", () => {
     db.insert(units)
       .values({
         id: "练习四",
+        teacherId: TEST_TEACHER_ID,
         folderId: null,
         lectureId: null,
         title: "练习四",
@@ -573,6 +578,7 @@ describe("loadLibrarySnapshot：读库口径（内存库）", () => {
     db.insert(questions)
       .values({
         id: "练习四-1",
+        teacherId: TEST_TEACHER_ID,
         unitId: "练习四",
         order: 0,
         type: "judge",
@@ -592,7 +598,7 @@ describe("loadLibrarySnapshot：读库口径（内存库）", () => {
     const plan = buildImportPlan({
       parsed: parsedUnit("练习四", ["练习四-1"]),
       folderId: null,
-      snapshot: loadLibrarySnapshot(db, now),
+      snapshot: loadLibrarySnapshot(db, now, TEST_TEACHER_ID),
     });
     expect(plan.actions[0]).toMatchObject({
       kind: "updateUnit",

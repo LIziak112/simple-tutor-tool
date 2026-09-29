@@ -32,6 +32,7 @@ import {
   students,
   units,
 } from "../db/schema";
+import { getSingleTeacherId } from "../db/teacher-scope";
 import { HttpError } from "../lib/http-error";
 
 /**
@@ -424,10 +425,12 @@ export function createAssignment(
 
   const id = randomUUID();
   const now = new Date().toISOString();
+  const teacherId = getSingleTeacherId(db);
   db.transaction((tx) => {
     tx.insert(assignments)
       .values({
         id,
+        teacherId,
         unitId: null,
         courseId: request.courseId ?? null,
         title:

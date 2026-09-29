@@ -1,5 +1,5 @@
 import type { Question } from "@tutor/contract";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 // 本模块会被 reparse CLI（Node 24 原生类型剥离运行）经 reparse-service 间接导入，
 // 相对导入必须带 .ts 扩展名（见 tsconfig.base.json 注释与 tutor-lint 先例）
 import type { Db } from "../db/client.ts";
@@ -63,14 +63,24 @@ export function loadKnowledgeIdByName(db: Tx): Map<string, string> {
   );
 }
 
-/** 同步题目的考点关联：同名 knowledge_point 复用（无则建），关联全量替换 */
+/**
+ * 同步题目的考点关联：同名 knowledge_point 复用（无则建），关联全量替换。
+ * T2B.1 起带 teacherId（question_knowledge 主键组成部分，D11）：删除与插入都
+ * 限定在本教师域内——两位教师各自维护同 id 题目的考点关联互不影响。
+ */
 export function syncQuestionKnowledge(
   tx: Tx,
   question: Question,
   knowledgeIdByName: Map<string, string>,
+  teacherId: string,
 ): void {
   tx.delete(questionKnowledge)
-    .where(eq(questionKnowledge.questionId, question.id))
+    .where(
+      and(
+        eq(questionKnowledge.teacherId, teacherId),
+        eq(questionKnowledge.questionId, question.id),
+      ),
+    )
     .run();
   const seen = new Set<string>();
   for (const name of question.knowledge) {
@@ -83,7 +93,7 @@ export function syncQuestionKnowledge(
       knowledgeIdByName.set(name, pointId);
     }
     tx.insert(questionKnowledge)
-      .values({ questionId: question.id, knowledgePointId: pointId })
+      .values({ teacherId, questionId: question.id, knowledgePointId: pointId })
       .run();
   }
 }

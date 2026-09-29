@@ -51,14 +51,27 @@ export async function setupTeacher(
   }
 
   const passwordHash = await hashPassword(password);
-  // 复用可能存在的无密码占位行，否则新建（id/createdAt 一经确定不再变）
+  // 复用可能存在的无密码占位行，否则新建（id/createdAt 一经确定不再变）。
+  // loginName/isAdmin（D4）：setup 创建的必是第一位教师 = 管理员；T2B.2 起登录名
+  // 改由表单提供，本处写入随之为请求值。
   const id = existing?.id ?? randomUUID();
   const createdAt = existing?.createdAt ?? new Date().toISOString();
   if (existing) {
-    db.update(teachers).set({ passwordHash }).where(eq(teachers.id, id)).run();
+    db.update(teachers)
+      .set({ passwordHash, loginName: "teacher", isAdmin: true })
+      .where(eq(teachers.id, id))
+      .run();
   } else {
     db.insert(teachers)
-      .values({ id, passwordHash, apiToken: null, createdAt })
+      .values({
+        id,
+        loginName: "teacher",
+        isAdmin: true,
+        disabledAt: null,
+        passwordHash,
+        apiToken: null,
+        createdAt,
+      })
       .run();
   }
 

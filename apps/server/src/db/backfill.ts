@@ -8,9 +8,13 @@ import {
   courseStudents,
   courses,
   dataMigrations,
+  imports,
   lectures,
   libraryFolders,
+  questionKnowledge,
+  questions,
   students,
+  teachers,
   units,
 } from "./schema";
 
@@ -49,6 +53,12 @@ const T2A1_BACKFILL_KEY = "t2a1_library_courses_backfill";
 const T2A6_ATTEMPTS_BACKFILL_KEY = "t2a6_attempts_source_backfill";
 /** D23-5（T2A.7 作业多单元/名单结构回填）的完成标记 key（与前两个独立） */
 const T2A7_ASSIGNMENTS_BACKFILL_KEY = "t2a7_assignments_backfill";
+/**
+ * T2B.1（多教师基础结构回填）的完成标记 key：唯一教师行升级（D4）+
+ * 全部业务根行 teacherId 回填（D9）。排在 t2a 系列之后，顺带覆盖
+ * t2a1 回填期间新建的文件夹行。
+ */
+const T2B1_MULTI_TEACHER_BACKFILL_KEY = "t2b1_multi_teacher_backfill";
 
 /**
  * 执行全部未完成的数据搬迁（启动流程在 runMigrations 之后调用；
@@ -95,17 +105,45 @@ export function runBackfills(db: Db, now: Date = new Date()): void {
         .run();
     });
   }
+  if (!appliedKeys.has(T2B1_MULTI_TEACHER_BACKFILL_KEY)) {
+    db.transaction((tx) => {
+      backfillT2b1(tx);
+      tx.insert(dataMigrations)
+        .values({
+          key: T2B1_MULTI_TEACHER_BACKFILL_KEY,
+          appliedAt: now.toISOString(),
+        })
+        .run();
+    });
+  }
   backfillOrphans(db, now);
+}
+
+/**
+ * 最早的教师行 id（createdAt 同刻按 id 稳定排序）；无教师行返回 null。
+ * T2B.1 单教师等价期的统一取值口径（正常库只有一行；返回 null 仅出现在
+ * 全新库首启、教师尚未创建的阶段——此时也不可能有任何课程/资源数据）。
+ */
+function firstTeacherId(db: Tx | Db): string | null {
+  const row = db
+    .select({ id: teachers.id })
+    .from(teachers)
+    .orderBy(asc(teachers.createdAt), asc(teachers.id))
+    .get();
+  return row?.id ?? null;
 }
 
 /**
  * 课程同名文件夹（存在即复用——D23-1 同款规则；无则追加到末尾）。
  * 事务内调用。content-service 的导入兼容路径复用本函数（同一套 find-or-create 口径）。
+ * teacherId（T2B.1/D9）：新建文件夹时写入归属教师（代码层恒写非空；
+ * null 仅在「无教师行且仍有课程数据」的不可能状态下出现）。
  */
 export function ensureCourseFolder(
   tx: Tx,
   courseTitle: string,
   nowIso: string,
+  teacherId: string | null,
 ): { id: string } {
   const existing = tx
     .select({ id: libraryFolders.id })
@@ -121,7 +159,13 @@ export function ensureCourseFolder(
     .all()
     .reduce((max, row) => Math.max(max, row.order), -1);
   tx.insert(libraryFolders)
-    .values({ id, name: courseTitle, order: maxOrder + 1, createdAt: nowIso })
+    .values({
+      id,
+      teacherId,
+      name: courseTitle,
+      order: maxOrder + 1,
+      createdAt: nowIso,
+    })
     .run();
   return { id };
 }
@@ -129,6 +173,7 @@ export function ensureCourseFolder(
 /** D23 步骤 1–4：资源库文件夹 + 课程目录 + 全员入课（见文件头注释） */
 function backfillT2a1(tx: Tx, now: Date): void {
   const nowIso = now.toISOString();
+  const teacherId = firstTeacherId(tx);
 
   const courseRows = tx
     .select()
@@ -138,7 +183,7 @@ function backfillT2a1(tx: Tx, now: Date): void {
 
   for (const course of courseRows) {
     // ---- 步骤 1：同名文件夹（存在即复用；同名不唯一，取 order 最靠前的一个） ----
-    const folderId = ensureCourseFolder(tx, course.title, nowIso).id;
+    const folderId = ensureCourseFolder(tx, course.title, nowIso, teacherId).id;
 
     // 课程下的讲义/单元（旧结构口径：courseId 归属；排序与原内容树一致）
     const courseLectures = tx
@@ -342,6 +387,64 @@ function backfillT2a7Assignments(tx: Tx): void {
   }
 }
 
+// ---------- T2B.1：教师升级与 teacherId 回填（D4/D9） ----------
+
+/**
+ * 多教师基础结构的数据回填（一次性，标记 t2b1_multi_teacher_backfill 防重跑）：
+ * 1. 唯一教师行升级为管理员（D4）：loginName='teacher'、isAdmin=true——
+ *    **只写这两列**，密码、id、createdAt 原样不动，部署者无感；
+ * 2. 全部业务根行 teacherId 回填该教师 id（D9）：students、courses、
+ *    library_folders、lectures、units、questions、imports、assignments、
+ *    question_knowledge（后者主键含 teacherId，D11）。
+ *
+ * 幂等口径：完成标记防重跑之外，每步 UPDATE 自带 IS NULL / 值收敛守卫——
+ * 已回填或新代码已写入的行不会再次触碰。
+ *
+ * 无教师行（全新库首启、setup 未做）：无数据可回填，仅写标记；此后 setup
+ * 创建的教师行自带 loginName/isAdmin（teacher-auth-service），业务行由各
+ * 创建入口写 teacherId。多教师行在本阶段不可能出现（第二位教师的入口
+ * T2B.6 才上线）——真出现说明库被手工改过，停下来抛错绝不猜归属。
+ */
+function backfillT2b1(tx: Tx): void {
+  const teacherRows = tx
+    .select({ id: teachers.id })
+    .from(teachers)
+    .orderBy(asc(teachers.createdAt), asc(teachers.id))
+    .all();
+  if (teacherRows.length > 1) {
+    throw new Error(
+      `T2B.1 回填发现 ${teacherRows.length} 行教师数据（本阶段系统应为单教师）——请先检查数据库是否被手工修改，再重试启动。`,
+    );
+  }
+  const teacher = teacherRows[0];
+  if (teacher === undefined) return; // 无教师行：无数据可搬（见函数头注释）
+
+  // 1. 教师行升级（值收敛写法：已是目标值时无实际变更）
+  tx.update(teachers)
+    .set({ loginName: "teacher", isAdmin: true })
+    .where(eq(teachers.id, teacher.id))
+    .run();
+
+  // 2. 根表 teacherId 回填（统一 sql 模板避开异构表的类型联合；
+  //    WHERE teacher_id IS NULL 守卫 → 重跑与新代码已写的行均不触碰）
+  const rootTables = [
+    students,
+    courses,
+    libraryFolders,
+    lectures,
+    units,
+    questions,
+    imports,
+    assignments,
+    questionKnowledge,
+  ];
+  for (const table of rootTables) {
+    tx.run(
+      sql`UPDATE ${table} SET teacher_id = ${teacher.id} WHERE teacher_id IS NULL`,
+    );
+  }
+}
+
 // ---------- 孤儿资源兜底（T2A.1 事故修复） ----------
 
 /**
@@ -370,6 +473,7 @@ function backfillT2a7Assignments(tx: Tx): void {
  */
 function backfillOrphans(db: Db, now: Date): void {
   const nowIso = now.toISOString();
+  const teacherId = firstTeacherId(db);
   const courseById = new Map(
     db
       .select({ id: courses.id, title: courses.title })
@@ -401,6 +505,7 @@ function backfillOrphans(db: Db, now: Date): void {
       courseTitle: course.title,
       visible: true,
       nowIso,
+      teacherId,
     });
   }
 
@@ -427,6 +532,7 @@ function backfillOrphans(db: Db, now: Date): void {
       courseTitle: course.title,
       visible: false,
       nowIso,
+      teacherId,
     });
   }
 }
@@ -441,6 +547,7 @@ function rescueOrphan(
     courseTitle: string;
     visible: boolean;
     nowIso: string;
+    teacherId: string | null;
   },
 ): void {
   const hasItem =
@@ -458,7 +565,12 @@ function rescueOrphan(
   if (hasItem) return; // 见 backfillOrphans 注释：整体跳过
 
   db.transaction((tx) => {
-    const folder = ensureCourseFolder(tx, input.courseTitle, input.nowIso);
+    const folder = ensureCourseFolder(
+      tx,
+      input.courseTitle,
+      input.nowIso,
+      input.teacherId,
+    );
     if (input.kind === "lecture") {
       tx.update(lectures)
         .set({ folderId: folder.id })

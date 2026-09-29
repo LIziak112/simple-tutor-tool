@@ -1,9 +1,10 @@
 import { readFileSync } from "node:fs";
 import type { ImportPreviewData } from "@tutor/contract";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import type { Db } from "../db/client.ts";
 import {
+  assignments,
   courseItems,
   courses,
   imports,
@@ -12,15 +13,21 @@ import {
   libraryFolders,
   questionKnowledge,
   questions,
+  students,
+  teachers,
   units,
 } from "../db/schema.ts";
-import { createTestDb } from "../db/test-utils.ts";
+import { createTestDb, TEST_TEACHER_ID } from "../db/test-utils.ts";
 import { HttpError } from "../lib/http-error.ts";
+import { createAssignment } from "./assignment-service.ts";
 import {
   commitImport,
+  createCourse,
   previewImport,
   previewImportBatch,
 } from "./content-service.ts";
+import { createFolder } from "./library-service.ts";
+import { createStudent } from "./student-service.ts";
 
 /**
  * ContentService 服务层测试（T1.10 验收项，createTestDb 内存库）：
@@ -825,5 +832,247 @@ $1>0$。[[正确]]
       .where(eq(lectures.id, first.lectures[0]?.id ?? ""))
       .get();
     expect(row?.deletedAt).toBeNull();
+  });
+});
+
+// ---------- T2B.1：单教师等价（创建入口写 teacherId + 域内匹配） ----------
+
+/** 最小单题练习文档（unit u1、显式 id 题目 u1-1，带考点） */
+const SCOPED_MD = `---
+kind: practice
+unit: u1
+---
+
+::::question{id=u1-1 type=judge difficulty=2 knowledge="有理数"}
+$1>0$。[[正确]]
+::::
+`;
+
+describe("T2B.1 单教师等价：创建入口写 teacherId（D9）", () => {
+  it("文件夹/课程/学生/讲义/单元/题目/导入留档/作业的创建行 teacherId 均为唯一教师", async () => {
+    const db = createTestDb();
+    const folder = createFolder(db, { name: "第一章" });
+    const course = createCourse(db, { title: "初一上" });
+    const student = await createStudent(db, {
+      displayName: "张三",
+      loginName: "张三",
+    });
+    commitImport(db, { filename: "练习.md", markdown: SCOPED_MD });
+    const assignment = createAssignment(db, {
+      unitIds: ["u1"],
+      studentIds: [student.student.id],
+      title: "作业一",
+    });
+
+    expect(
+      db
+        .select({ teacherId: libraryFolders.teacherId })
+        .from(libraryFolders)
+        .where(eq(libraryFolders.id, folder.id))
+        .get()?.teacherId,
+    ).toBe(TEST_TEACHER_ID);
+    expect(
+      db
+        .select({ teacherId: courses.teacherId })
+        .from(courses)
+        .where(eq(courses.id, course.id))
+        .get()?.teacherId,
+    ).toBe(TEST_TEACHER_ID);
+    expect(
+      db
+        .select({ teacherId: lectures.teacherId })
+        .from(lectures)
+        .all()
+        .every((row) => row.teacherId === TEST_TEACHER_ID),
+    ).toBe(true);
+    expect(
+      db
+        .select({ teacherId: units.teacherId })
+        .from(units)
+        .where(eq(units.id, "u1"))
+        .get()?.teacherId,
+    ).toBe(TEST_TEACHER_ID);
+    expect(
+      db
+        .select({ teacherId: questions.teacherId })
+        .from(questions)
+        .where(eq(questions.id, "u1-1"))
+        .get()?.teacherId,
+    ).toBe(TEST_TEACHER_ID);
+    expect(
+      db
+        .select({ teacherId: imports.teacherId })
+        .from(imports)
+        .all()
+        .every((row) => row.teacherId === TEST_TEACHER_ID),
+    ).toBe(true);
+    expect(
+      db
+        .select({ teacherId: assignments.teacherId })
+        .from(assignments)
+        .where(eq(assignments.id, assignment.id))
+        .get()?.teacherId,
+    ).toBe(TEST_TEACHER_ID);
+    expect(
+      db
+        .select({ teacherId: questionKnowledge.teacherId })
+        .from(questionKnowledge)
+        .all()
+        .every((row) => row.teacherId === TEST_TEACHER_ID),
+    ).toBe(true);
+    // 学生创建行（student-service，D14 归属创建教师）
+    expect(
+      db
+        .select({ teacherId: students.teacherId })
+        .from(students)
+        .where(eq(students.id, student.student.id))
+        .get()?.teacherId,
+    ).toBe(TEST_TEACHER_ID);
+    db.$client.close();
+  });
+});
+
+describe("T2B.1 域内匹配（D10/D13：复合主键下按 (teacherId, dslId) 匹配）", () => {
+  /** 手工造两教师域的同 dslId 冲突行：甲（=测试种子教师，createdAt 最早）与乙 */
+  function seedTwoTeacherFixture(db: Db): void {
+    const now = "2026-06-01T00:00:00.000Z";
+    db.insert(teachers)
+      .values({
+        id: "th-b",
+        loginName: "乙老师",
+        isAdmin: false,
+        disabledAt: null,
+        passwordHash: null,
+        apiToken: null,
+        createdAt: "2026-06-01T00:00:00.000Z", // 晚于种子教师（2026-01-01）
+      })
+      .run();
+    // 两域各持同 id 单元 u1 与题目 u1-1（内容/版本不同）
+    for (const [teacherId, stem, version] of [
+      [TEST_TEACHER_ID, "甲的题干", 3],
+      ["th-b", "乙的题干", 1],
+    ] as const) {
+      db.insert(units)
+        .values({
+          id: "u1",
+          teacherId,
+          folderId: null,
+          lectureId: null,
+          title: `${teacherId === TEST_TEACHER_ID ? "甲" : "乙"}的单元`,
+          topic: null,
+          order: 0,
+          updatedAt: now,
+        })
+        .run();
+      db.insert(questions)
+        .values({
+          id: "u1-1",
+          teacherId,
+          unitId: "u1",
+          order: 0,
+          type: "judge",
+          difficulty: 1,
+          stemMd: stem,
+          optionsJson: null,
+          answersJson: '{"kind":"judge","value":true}',
+          hintsJson: "[]",
+          solutionMd: null,
+          sourceMd: "::::question\n::::",
+          version,
+          updatedAt: now,
+          deletedAt: null,
+        })
+        .run();
+    }
+  }
+
+  it("同 teacherId 同 dslId 再导入：单元不重复、题目 version+1 且 id 不变", () => {
+    const db = createTestDb();
+    commitImport(db, { filename: "练习.md", markdown: SCOPED_MD });
+    commitImport(db, { filename: "练习.md", markdown: SCOPED_MD });
+
+    expect(
+      db.select({ id: units.id }).from(units).where(eq(units.id, "u1")).all(),
+    ).toHaveLength(1);
+    const question = db
+      .select()
+      .from(questions)
+      .where(eq(questions.id, "u1-1"))
+      .get();
+    expect(question).toMatchObject({ id: "u1-1", version: 2 });
+    db.$client.close();
+  });
+
+  it("两 teacherId 同 dslId 互不干扰：导入只更新最早教师（单教师取值）的域，乙域行数与内容不变", () => {
+    const db = createTestDb();
+    seedTwoTeacherFixture(db);
+    const report = commitImport(db, {
+      filename: "练习.md",
+      markdown: SCOPED_MD,
+    });
+
+    // 导入按库中最早教师（甲）执行：甲域命中更新，不新增行（unitTitle = frontmatter.unit = "u1"）
+    expect(report.units).toEqual([
+      { id: "u1", title: "u1", inserted: false, updated: true },
+    ]);
+    expect(report.questions).toEqual({ inserted: 0, updated: 1 });
+
+    // 行数不变：units/questions 各恰 2 行（甲乙各一）
+    expect(db.select({ id: units.id }).from(units).all()).toHaveLength(2);
+    expect(db.select({ id: questions.id }).from(questions).all()).toHaveLength(
+      2,
+    );
+
+    // 甲域：version 3→4、题干更新、标题更新、考点关联建立
+    const questionA = db
+      .select()
+      .from(questions)
+      .where(
+        and(eq(questions.teacherId, TEST_TEACHER_ID), eq(questions.id, "u1-1")),
+      )
+      .get();
+    expect(questionA).toMatchObject({ version: 4, stemMd: "$1>0$。[[正确]]" });
+    expect(
+      db
+        .select({ title: units.title })
+        .from(units)
+        .where(and(eq(units.teacherId, TEST_TEACHER_ID), eq(units.id, "u1")))
+        .get()?.title,
+    ).toBe("u1");
+    expect(
+      db
+        .select({ questionId: questionKnowledge.questionId })
+        .from(questionKnowledge)
+        .where(
+          and(
+            eq(questionKnowledge.teacherId, TEST_TEACHER_ID),
+            eq(questionKnowledge.questionId, "u1-1"),
+          ),
+        )
+        .all(),
+    ).toHaveLength(1);
+
+    // 乙域：version 仍 1、题干/标题原样、考点关联不被触碰（本域无关联行）
+    const questionB = db
+      .select()
+      .from(questions)
+      .where(and(eq(questions.teacherId, "th-b"), eq(questions.id, "u1-1")))
+      .get();
+    expect(questionB).toMatchObject({ version: 1, stemMd: "乙的题干" });
+    expect(
+      db
+        .select({ title: units.title })
+        .from(units)
+        .where(and(eq(units.teacherId, "th-b"), eq(units.id, "u1")))
+        .get()?.title,
+    ).toBe("乙的单元");
+    expect(
+      db
+        .select({ questionId: questionKnowledge.questionId })
+        .from(questionKnowledge)
+        .where(eq(questionKnowledge.teacherId, "th-b"))
+        .all(),
+    ).toHaveLength(0);
+    db.$client.close();
   });
 });

@@ -28,6 +28,12 @@ import {
  * T2A.7 作业改造：追加 assignment_units（D12 作业内容 = 有序多个练习单元）；
  * assignments 加 courseId（D13 可选所属课程）、unitId 废弃改可空；assignment_students
  * 加 addedAt / removedAt（D13 名单增删、移出行保留以追溯）。
+ * T2B.1 多教师基础结构：teachers 加 loginName（唯一索引）/isAdmin/disabledAt（D1）；
+ * 根表（students、courses、library_folders、lectures、units、questions、imports、
+ * assignments、question_knowledge）加 teacherId 归属列（D9：DB 可空、代码恒写非空）；
+ * units/questions 主键改 (teacherId, id)、question_knowledge 主键改
+ * (teacherId, questionId, knowledgePointId)（D10/D11，表重建）；D10 清单内全部
+ * 指向 units/questions 的外键去除（值不变，子表表重建）。
  *
  * 全库约定（见 docs/开发任务清单.md §0.3 与 db-change 技能）：
  * - 主键 id 一律为应用层生成的 crypto.randomUUID() 字符串；
@@ -37,18 +43,37 @@ import {
  */
 
 /**
- * 教师表——单行设计（一对一辅导场景全系统只有一位老师，首次启动设置密码时由 T1.9 写入）。
+ * 教师表——T2B.1 起为多教师基础结构（D1 单表多角色：管理员 = isAdmin 的教师）。
+ * 首位教师由首启 setup 创建（T2B.1 写 loginName='teacher'、isAdmin=true；T2B.2 起
+ * 表单带登录名）；存量部署唯一的教师行由 T2B.1 回填自动升级（D4）。
  */
-export const teachers = sqliteTable("teachers", {
-  /** 主键：crypto.randomUUID()（§0.3 主键约定） */
-  id: text("id").primaryKey(),
-  /** 登录密码的 scrypt 哈希；设置密码前为 NULL */
-  passwordHash: text("password_hash"),
-  /** MCP / 脚本调用用的 API Token（T4.5 接入），可重置；未生成时为 NULL */
-  apiToken: text("api_token"),
-  /** 创建时间：UTC ISO 字符串 */
-  createdAt: text("created_at").notNull(),
-});
+export const teachers = sqliteTable(
+  "teachers",
+  {
+    /** 主键：crypto.randomUUID()（§0.3 主键约定） */
+    id: text("id").primaryKey(),
+    /**
+     * 登录名（D2：全局唯一，字符集中文/字母/数字/下划线/连字符，长度 2–32，
+     * 契约校验在 T2B.2 落地）。列可空仅因迁移加列无法在 DDL 内回填（D9 同款口径）：
+     * 存量行由 T2B.1 回填写 'teacher'，此后各创建入口恒写非空，读侧可视为必有。
+     */
+    loginName: text("login_name"),
+    /** 是否管理员（D1）：管理员可兼任全部教师功能并进管理端（T2B.6）；默认 false */
+    isAdmin: integer("is_admin", { mode: "boolean" }).notNull().default(false),
+    /** 禁用时间（D5）：NULL = 未禁用；置值即禁用（会话立即失效、数据全保留、可再启用） */
+    disabledAt: text("disabled_at"),
+    /** 登录密码的 scrypt 哈希；设置密码前为 NULL */
+    passwordHash: text("password_hash"),
+    /** MCP / 脚本调用用的 API Token（T4.5 接入），可重置；未生成时为 NULL */
+    apiToken: text("api_token"),
+    /** 创建时间：UTC ISO 字符串 */
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    // 登录名全局唯一（D2；SQLite 唯一索引允许多个 NULL——回填前的中间态不冲突）
+    uniqueIndex("teachers_login_name_uk").on(table.loginName),
+  ],
+);
 
 /**
  * 会话表——老师与学生共用（登录后写入同一种会话 Cookie，见架构文档 §5.7）。
@@ -106,32 +131,42 @@ export type NewLoginFailure = typeof loginFailures.$inferInsert;
  * - linkEnabled / passwordEnabled：教师可对单个学生分别开关两种方式；
  * - archivedAt：归档（软删除语义）——不出现在默认列表、两种登录都拒绝。
  */
-export const students = sqliteTable("students", {
-  /** 主键：crypto.randomUUID()（§0.3 主键约定） */
-  id: text("id").primaryKey(),
-  /** 显示姓名 */
-  displayName: text("display_name").notNull(),
-  /** 登录名（密码登录用；全局唯一，大小写敏感精确匹配） */
-  loginName: text("login_name").notNull().unique(),
-  /** 密码 scrypt 哈希；未设密码为 NULL */
-  passwordHash: text("password_hash"),
-  /** 专属链接令牌（base64url 随机串；全局唯一，重置即更换） */
-  linkToken: text("link_token").notNull().unique(),
-  /** 专属链接登录是否开启 */
-  linkEnabled: integer("link_enabled", { mode: "boolean" })
-    .notNull()
-    .default(true),
-  /** 密码登录是否开启 */
-  passwordEnabled: integer("password_enabled", { mode: "boolean" })
-    .notNull()
-    .default(false),
-  /** 教师备注；未填为 NULL */
-  note: text("note"),
-  /** 归档时间：UTC ISO 字符串；未归档为 NULL（归档 = 软删除，不物理 DELETE） */
-  archivedAt: text("archived_at"),
-  /** 创建时间：UTC ISO 字符串 */
-  createdAt: text("created_at").notNull(),
-});
+export const students = sqliteTable(
+  "students",
+  {
+    /** 主键：crypto.randomUUID()（§0.3 主键约定） */
+    id: text("id").primaryKey(),
+    /**
+     * 归属教师（teachers.id，D14：一生只归一位教师，创建时写入）。
+     * 列可空仅因迁移加列无法在 DDL 内回填（D9），代码层恒写非空，读侧可视为必有。
+     * 不建外键（与 sessions.subjectId 同口径：教师数据永不连带删除）。
+     */
+    teacherId: text("teacher_id"),
+    /** 显示姓名 */
+    displayName: text("display_name").notNull(),
+    /** 登录名（密码登录用；全局唯一，大小写敏感精确匹配） */
+    loginName: text("login_name").notNull().unique(),
+    /** 密码 scrypt 哈希；未设密码为 NULL */
+    passwordHash: text("password_hash"),
+    /** 专属链接令牌（base64url 随机串；全局唯一，重置即更换） */
+    linkToken: text("link_token").notNull().unique(),
+    /** 专属链接登录是否开启 */
+    linkEnabled: integer("link_enabled", { mode: "boolean" })
+      .notNull()
+      .default(true),
+    /** 密码登录是否开启 */
+    passwordEnabled: integer("password_enabled", { mode: "boolean" })
+      .notNull()
+      .default(false),
+    /** 教师备注；未填为 NULL */
+    note: text("note"),
+    /** 归档时间：UTC ISO 字符串；未归档为 NULL（归档 = 软删除，不物理 DELETE） */
+    archivedAt: text("archived_at"),
+    /** 创建时间：UTC ISO 字符串 */
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [index("students_teacher_idx").on(table.teacherId)],
+);
 
 /** students 表行类型（SELECT 结果） */
 export type Student = typeof students.$inferSelect;
@@ -144,16 +179,25 @@ export type NewStudent = typeof students.$inferInsert;
  * 删除文件夹时其内容移入未归类（服务层先把 lecture/unit 的 folderId 置 NULL）。
  * name 不设唯一约束（清单 §3 未要求）；同名复用场景按 (name, order) 取首个。
  */
-export const libraryFolders = sqliteTable("library_folders", {
-  /** 主键：crypto.randomUUID()（§0.3 主键约定） */
-  id: text("id").primaryKey(),
-  /** 文件夹名（同名校验由应用层处理，见 D2/清单 §3） */
-  name: text("name").notNull(),
-  /** 同级排序（小在前） */
-  order: integer("order").notNull(),
-  /** 创建时间：UTC ISO 字符串 */
-  createdAt: text("created_at").notNull(),
-});
+export const libraryFolders = sqliteTable(
+  "library_folders",
+  {
+    /** 主键：crypto.randomUUID()（§0.3 主键约定） */
+    id: text("id").primaryKey(),
+    /**
+     * 归属教师（D9：DB 可空、代码恒写非空——迁移加列回填口径同 students.teacherId）。
+     * 资源库为域内私有（T2B.3 起按教师过滤）。
+     */
+    teacherId: text("teacher_id"),
+    /** 文件夹名（同名校验由应用层处理，见 D2/清单 §3） */
+    name: text("name").notNull(),
+    /** 同级排序（小在前） */
+    order: integer("order").notNull(),
+    /** 创建时间：UTC ISO 字符串 */
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [index("library_folders_teacher_idx").on(table.teacherId)],
+);
 
 /**
  * 数据搬迁标记表（T2A.1，D23）——应用启动时数据回填的幂等完成标记。
@@ -173,80 +217,106 @@ export const dataMigrations = sqliteTable("data_migrations", {
  * Phase 2A 起课程 = 一份有序目录（course_items）+ 成员（course_students）；
  * 「默认课程」按普通课程处理（D23-7，教师可改名/归档）。
  */
-export const courses = sqliteTable("courses", {
-  /** 主键：crypto.randomUUID()（§0.3 主键约定） */
-  id: text("id").primaryKey(),
-  /** 课程名；默认课程固定「默认课程」（同名复用） */
-  title: text("title").notNull(),
-  /** 同级排序（小在前）；首个课程为 0 */
-  order: integer("order").notNull(),
-  /** 归档时间：UTC ISO 字符串；未归档为 NULL（D4：归档后学生端不可见，可恢复） */
-  archivedAt: text("archived_at"),
-  /** 课程简介；未填为 NULL */
-  description: text("description"),
-  /** 创建时间：UTC ISO 字符串 */
-  createdAt: text("created_at").notNull(),
-});
+export const courses = sqliteTable(
+  "courses",
+  {
+    /** 主键：crypto.randomUUID()（§0.3 主键约定） */
+    id: text("id").primaryKey(),
+    /**
+     * 归属教师（D9：DB 可空、代码恒写非空）。课程与作业为域内私有（T2B.4 起按教师过滤）。
+     */
+    teacherId: text("teacher_id"),
+    /** 课程名；默认课程固定「默认课程」（同名复用） */
+    title: text("title").notNull(),
+    /** 同级排序（小在前）；首个课程为 0 */
+    order: integer("order").notNull(),
+    /** 归档时间：UTC ISO 字符串；未归档为 NULL（D4：归档后学生端不可见，可恢复） */
+    archivedAt: text("archived_at"),
+    /** 课程简介；未填为 NULL */
+    description: text("description"),
+    /** 创建时间：UTC ISO 字符串 */
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [index("courses_teacher_idx").on(table.teacherId)],
+);
 
 /**
  * 讲义表。markdown 保存讲义原文（§5.1.1(4) 原文是真相），目录等结构化数据渲染时再解析。
  * Phase 2A 起归属资源库：folderId 组织（NULL = 未归类）、deletedAt 软删进回收站（D3）；
  * 课程引用改走 course_items（kind='lecture'）。
  */
-export const lectures = sqliteTable("lectures", {
-  /** 主键：crypto.randomUUID()（讲义 id 在导入时生成，DSL 不声明） */
-  id: text("id").primaryKey(),
-  /**
-   * @deprecated T2A 归属改 folderId（资源库）；列保留不删（Phase 3 后统一清理），
-   * 新代码不再读写。已改可空并去掉外键（D4：删除/归档课程不影响资源库内容）。
-   */
-  courseId: text("course_id"),
-  /** 资源库文件夹（library_folders.id）；NULL = 未归类 */
-  folderId: text("folder_id").references(() => libraryFolders.id),
-  /** 讲义标题（H1 标题文本，导入匹配键） */
-  title: text("title").notNull(),
-  /** 讲义原始 Markdown（含 H1 标题行） */
-  markdown: text("markdown").notNull(),
-  /** 课程内排序（小在前）；@deprecated T2A 展示顺序改 course_items.order */
-  order: integer("order").notNull(),
-  /** 最近更新时间：UTC ISO 字符串 */
-  updatedAt: text("updated_at").notNull(),
-  /** 软删时间：UTC ISO 字符串；未删除为 NULL（D3：软删进回收站，可恢复） */
-  deletedAt: text("deleted_at"),
-});
+export const lectures = sqliteTable(
+  "lectures",
+  {
+    /** 主键：crypto.randomUUID()（讲义 id 在导入时生成，DSL 不声明） */
+    id: text("id").primaryKey(),
+    /** 归属教师（D9：DB 可空、代码恒写非空；讲义库域内私有） */
+    teacherId: text("teacher_id"),
+    /**
+     * @deprecated T2A 归属改 folderId（资源库）；列保留不删（Phase 3 后统一清理），
+     * 新代码不再读写。已改可空并去掉外键（D4：删除/归档课程不影响资源库内容）。
+     */
+    courseId: text("course_id"),
+    /** 资源库文件夹（library_folders.id）；NULL = 未归类 */
+    folderId: text("folder_id").references(() => libraryFolders.id),
+    /** 讲义标题（H1 标题文本，导入匹配键） */
+    title: text("title").notNull(),
+    /** 讲义原始 Markdown（含 H1 标题行） */
+    markdown: text("markdown").notNull(),
+    /** 课程内排序（小在前）；@deprecated T2A 展示顺序改 course_items.order */
+    order: integer("order").notNull(),
+    /** 最近更新时间：UTC ISO 字符串 */
+    updatedAt: text("updated_at").notNull(),
+    /** 软删时间：UTC ISO 字符串；未删除为 NULL（D3：软删进回收站，可恢复） */
+    deletedAt: text("deleted_at"),
+  },
+  (table) => [index("lectures_teacher_idx").on(table.teacherId)],
+);
 
 /**
- * 练习单元表。id 来自 DSL（frontmatter unit / v1 UNIT 注释），全局唯一（主键），
- * 编辑内容时 id 不变；导入按 unit.id 匹配合并（更新 title/topic/lectureId）。
+ * 练习单元表。id 来自 DSL（frontmatter unit / v1 UNIT 注释），编辑内容时 id 不变；
+ * 导入按 (teacherId, unit.id) 匹配合并（D13 域内匹配，更新 title/topic/lectureId）。
+ * T2B.1 起主键改 (teacherId, id)（D10）：两位教师各持同 id 单元合法；**所有指向
+ * units(id) 的外键已全部去除**（SQLite 外键必须引用完整唯一键组，见 D10 清单），
+ * 域一致性由服务层保证。
  * Phase 2A 起归属资源库：folderId 组织、deletedAt 软删（D3）；课程引用改走
- * course_items（kind='unit'）；lectureId 语义改为「配套讲义」（D8，列不变）。
+ * course_items（kind='unit'）；lectureId 语义为「配套讲义」（D8，列不变）。
  */
-export const units = sqliteTable("units", {
-  /** 主键：来自 DSL 的单元 id（§0.3 主键约定例外） */
-  id: text("id").primaryKey(),
-  /**
-   * @deprecated T2A 归属改 folderId（资源库）；列保留不删（Phase 3 后统一清理），
-   * 新代码不再读写。已改可空并去掉外键（D4：删除/归档课程不影响资源库内容）。
-   */
-  courseId: text("course_id"),
-  /** 资源库文件夹（library_folders.id）；NULL = 未归类 */
-  folderId: text("folder_id").references(() => libraryFolders.id),
-  /**
-   * 配套讲义（lectures.id，D8）：在课程中添加讲义时可一并添加配套练习；
-   * 学生阅读讲义页底部显示「本课配套练习」。无配套为 NULL。
-   */
-  lectureId: text("lecture_id").references(() => lectures.id),
-  /** 单元标题 */
-  title: text("title").notNull(),
-  /** 主题（frontmatter topic / v1 UNIT 第三段；未标注为 NULL） */
-  topic: text("topic"),
-  /** 课程内排序（小在前）；@deprecated T2A 展示顺序改 course_items.order */
-  order: integer("order").notNull(),
-  /** 最近更新时间：UTC ISO 字符串 */
-  updatedAt: text("updated_at").notNull(),
-  /** 软删时间：UTC ISO 字符串；未删除为 NULL（D3：软删进回收站，可恢复） */
-  deletedAt: text("deleted_at"),
-});
+export const units = sqliteTable(
+  "units",
+  {
+    /** 单元 id：来自 DSL（§0.3 主键约定例外），与 teacherId 组成复合主键 */
+    id: text("id").notNull(),
+    /**
+     * 归属教师（复合主键组成部分；D9：DB 可空、代码恒写非空，回填与创建入口
+     * 均写非空值，读侧可视为必有）。
+     */
+    teacherId: text("teacher_id"),
+    /**
+     * @deprecated T2A 归属改 folderId（资源库）；列保留不删（Phase 3 后统一清理），
+     * 新代码不再读写。已改可空并去掉外键（D4：删除/归档课程不影响资源库内容）。
+     */
+    courseId: text("course_id"),
+    /** 资源库文件夹（library_folders.id）；NULL = 未归类 */
+    folderId: text("folder_id").references(() => libraryFolders.id),
+    /**
+     * 配套讲义（lectures.id，D8）：在课程中添加讲义时可一并添加配套练习；
+     * 学生阅读讲义页底部显示「本课配套练习」。无配套为 NULL。
+     */
+    lectureId: text("lecture_id").references(() => lectures.id),
+    /** 单元标题 */
+    title: text("title").notNull(),
+    /** 主题（frontmatter topic / v1 UNIT 第三段；未标注为 NULL） */
+    topic: text("topic"),
+    /** 课程内排序（小在前）；@deprecated T2A 展示顺序改 course_items.order */
+    order: integer("order").notNull(),
+    /** 最近更新时间：UTC ISO 字符串 */
+    updatedAt: text("updated_at").notNull(),
+    /** 软删时间：UTC ISO 字符串；未删除为 NULL（D3：软删进回收站，可恢复） */
+    deletedAt: text("deleted_at"),
+  },
+  (table) => [primaryKey({ columns: [table.teacherId, table.id] })],
+);
 
 /**
  * 课程目录条目表（T2A.1，D6）——课程的有序目录：分节标题 / 讲义引用 / 练习单元引用。
@@ -316,43 +386,50 @@ export const courseStudents = sqliteTable(
 
 /**
  * 题目表（结构化字段 = 判分与统计必需的抽取结果，§5.1.1(4)）。
- * - id 来自 DSL（题目指令 id 属性 / 缺省 `单元slug-序号`），全局唯一（主键）：
- *   跨单元同 id 的导入按「更新」处理（unitId 随之更新）；
- * - version：内容更新计数，同 id 再导入 +1（T1.10 验收项；历史作答经快照不受影响）；
+ * - id 来自 DSL（题目指令 id 属性 / 缺省 `单元slug-序号`），T2B.1 起主键改
+ *   (teacherId, id)（D10）：两位教师各持同 id 题目合法（域内唯一）；
+ *   跨单元同 id 的导入在**本教师域内**按「更新」处理（unitId 随之更新）；
+ * - unitId 值不变但**外键已去除**（D10：units 主键改复合后子表外键必须拆），
+ *   域一致性由服务层保证；
+ * - version：内容更新计数，同 id 再导入 +1（历史作答经快照不受影响）；
  * - deletedAt：软删（db-change 红线：题目不物理删除）；软删后同 id 再导入视为恢复。
  */
-export const questions = sqliteTable("questions", {
-  /** 主键：来自 DSL 的题目 id（§0.3 主键约定例外） */
-  id: text("id").primaryKey(),
-  /** 所属单元（units.id） */
-  unitId: text("unit_id")
-    .notNull()
-    .references(() => units.id),
-  /** 单元内题序（0 起） */
-  order: integer("order").notNull(),
-  /** 题型（@tutor/contract questionTypeSchema 七种之一） */
-  type: text("type").$type<QuestionType>().notNull(),
-  /** 难度 1–5 */
-  difficulty: integer("difficulty").notNull(),
-  /** 题干 Markdown（含 [[答案]] 标记，教师侧内容） */
-  stemMd: text("stem_md").notNull(),
-  /** 选项 JSON（QuestionOption[]，仅 choice/multi）；无选项为 NULL */
-  optionsJson: text("options_json"),
-  /** 答案 JSON（QuestionAnswers 判别联合）；不完整答案由 linter 拦在导入前，此处可 NULL */
-  answersJson: text("answers_json"),
-  /** 提示 JSON（string[]，教师侧内容，学生端按需下发）；无提示存 [] */
-  hintsJson: text("hints_json").notNull(),
-  /** 详解 Markdown；未提供为 NULL */
-  solutionMd: text("solution_md"),
-  /** 该题原始 Markdown 片段（reparse 与单题编辑的依据，T1.12/T1.14） */
-  sourceMd: text("source_md").notNull(),
-  /** 内容版本：新插入 1，同 id 更新 +1 */
-  version: integer("version").notNull().default(1),
-  /** 最近更新时间：UTC ISO 字符串 */
-  updatedAt: text("updated_at").notNull(),
-  /** 软删时间：UTC ISO 字符串；未删除为 NULL（题目只软删，见 db-change 红线） */
-  deletedAt: text("deleted_at"),
-});
+export const questions = sqliteTable(
+  "questions",
+  {
+    /** 题目 id：来自 DSL（§0.3 主键约定例外），与 teacherId 组成复合主键 */
+    id: text("id").notNull(),
+    /** 归属教师（复合主键组成部分；D9：DB 可空、代码恒写非空） */
+    teacherId: text("teacher_id"),
+    /** 所属单元（units.id；D10 起无外键，值域一致性由服务层保证） */
+    unitId: text("unit_id").notNull(),
+    /** 单元内题序（0 起） */
+    order: integer("order").notNull(),
+    /** 题型（@tutor/contract questionTypeSchema 七种之一） */
+    type: text("type").$type<QuestionType>().notNull(),
+    /** 难度 1–5 */
+    difficulty: integer("difficulty").notNull(),
+    /** 题干 Markdown（含 [[答案]] 标记，教师侧内容） */
+    stemMd: text("stem_md").notNull(),
+    /** 选项 JSON（QuestionOption[]，仅 choice/multi）；无选项为 NULL */
+    optionsJson: text("options_json"),
+    /** 答案 JSON（QuestionAnswers 判别联合）；不完整答案由 linter 拦在导入前，此处可 NULL */
+    answersJson: text("answers_json"),
+    /** 提示 JSON（string[]，教师侧内容，学生端按需下发）；无提示存 [] */
+    hintsJson: text("hints_json").notNull(),
+    /** 详解 Markdown；未提供为 NULL */
+    solutionMd: text("solution_md"),
+    /** 该题原始 Markdown 片段（reparse 与单题编辑的依据，T1.12/T1.14） */
+    sourceMd: text("source_md").notNull(),
+    /** 内容版本：新插入 1，同 id 更新 +1 */
+    version: integer("version").notNull().default(1),
+    /** 最近更新时间：UTC ISO 字符串 */
+    updatedAt: text("updated_at").notNull(),
+    /** 软删时间：UTC ISO 字符串；未删除为 NULL（题目只软删，见 db-change 红线） */
+    deletedAt: text("deleted_at"),
+  },
+  (table) => [primaryKey({ columns: [table.teacherId, table.id] })],
+);
 
 /** 知识考点表。同名考点全局归一复用（knowledge 属性按 name 匹配）。 */
 export const knowledgePoints = sqliteTable("knowledge_points", {
@@ -362,19 +439,27 @@ export const knowledgePoints = sqliteTable("knowledge_points", {
   name: text("name").notNull().unique(),
 });
 
-/** 题目 ↔ 考点关联表（多对多）。导入时全量替换该题的关联。 */
+/**
+ * 题目 ↔ 考点关联表（多对多）。导入时全量替换该题的关联。
+ * T2B.1（D11）：考点保持全局共享（knowledge_points 不加 teacherId），本表主键改
+ * (teacherId, questionId, knowledgePointId)——两位教师各自维护同 id 题目的考点关联
+ * 互不覆盖；questionId 值不变但外键已去除（D10：questions 主键改复合后必须拆）。
+ */
 export const questionKnowledge = sqliteTable(
   "question_knowledge",
   {
-    questionId: text("question_id")
-      .notNull()
-      .references(() => questions.id),
+    /** 归属教师（复合主键组成部分；D9：DB 可空、代码恒写非空，与题目同行同值） */
+    teacherId: text("teacher_id"),
+    /** 题目（questions.id；D10 起无外键） */
+    questionId: text("question_id").notNull(),
     knowledgePointId: text("knowledge_point_id")
       .notNull()
       .references(() => knowledgePoints.id),
   },
   (table) => [
-    primaryKey({ columns: [table.questionId, table.knowledgePointId] }),
+    primaryKey({
+      columns: [table.teacherId, table.questionId, table.knowledgePointId],
+    }),
   ],
 );
 
@@ -386,26 +471,32 @@ export const questionKnowledge = sqliteTable(
  * （前端生成、逐文件 commit 携带，GET /import/batches/:batchId 回看）；
  * folderId = 实际落库的目标文件夹（NULL = 未归类）。
  */
-export const imports = sqliteTable("imports", {
-  /** 主键：crypto.randomUUID()（§0.3 主键约定；即响应中的 importId） */
-  id: text("id").primaryKey(),
-  /** 导入时的文件名（前端展示用） */
-  filename: text("filename").notNull(),
-  /** 文档类型（解析出的 frontmatter kind；缺 frontmatter 的兜底为 practice） */
-  kind: text("kind").$type<DocumentKind>().notNull(),
-  /** 原始 Markdown（v1 原样留档） */
-  rawMd: text("raw_md").notNull(),
-  /** 导入统计报告 JSON */
-  reportJson: text("report_json").notNull(),
-  /** 批量导入的文件相对路径（如 "chapter1/练习.md"）；单文件导入为 NULL */
-  sourcePath: text("source_path"),
-  /** 批量导入批次 id（crypto.randomUUID，前端生成）；单文件导入为 NULL */
-  batchId: text("batch_id"),
-  /** 实际落库的目标文件夹（library_folders.id）；NULL = 未归类 */
-  folderId: text("folder_id").references(() => libraryFolders.id),
-  /** 导入时间：UTC ISO 字符串 */
-  createdAt: text("created_at").notNull(),
-});
+export const imports = sqliteTable(
+  "imports",
+  {
+    /** 主键：crypto.randomUUID()（§0.3 主键约定；即响应中的 importId） */
+    id: text("id").primaryKey(),
+    /** 归属教师（D9：DB 可空、代码恒写非空；导入留档域内私有） */
+    teacherId: text("teacher_id"),
+    /** 导入时的文件名（前端展示用） */
+    filename: text("filename").notNull(),
+    /** 文档类型（解析出的 frontmatter kind；缺 frontmatter 的兜底为 practice） */
+    kind: text("kind").$type<DocumentKind>().notNull(),
+    /** 原始 Markdown（v1 原样留档） */
+    rawMd: text("raw_md").notNull(),
+    /** 导入统计报告 JSON */
+    reportJson: text("report_json").notNull(),
+    /** 批量导入的文件相对路径（如 "chapter1/练习.md"）；单文件导入为 NULL */
+    sourcePath: text("source_path"),
+    /** 批量导入批次 id（crypto.randomUUID，前端生成）；单文件导入为 NULL */
+    batchId: text("batch_id"),
+    /** 实际落库的目标文件夹（library_folders.id）；NULL = 未归类 */
+    folderId: text("folder_id").references(() => libraryFolders.id),
+    /** 导入时间：UTC ISO 字符串 */
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [index("imports_teacher_idx").on(table.teacherId)],
+);
 
 /**
  * 作业表（T2.2，§5.2）——"布置作业"，才能回答"谁做了/没做"。
@@ -418,41 +509,48 @@ export const imports = sqliteTable("imports", {
  *   assignmentId 关联历史，物理删除会破坏"谁做了/没做"统计；T2.6 起作答经
  *   快照照常回看）。软删后学生端立即不可见、教师列表默认不显示。
  */
-export const assignments = sqliteTable("assignments", {
-  /** 主键：crypto.randomUUID()（§0.3 主键约定） */
-  id: text("id").primaryKey(),
-  /**
-   * @deprecated T2A 多单元改走 assignment_units（D12）；旧值保留不改（历史语义 =
-   * 当时布置的单个单元，D23-5 回填进 assignment_units）。新代码不再写入，
-   * 新多单元作业本列为 NULL——与 NOT NULL 约束冲突，故放开可空。
-   */
-  /**
-   * @deprecated T2A 多单元改走 assignment_units（D12）；旧值保留不改（历史语义 =
-   * 当时布置的单个单元，D23-5 回填进 assignment_units）。新代码不再写入，
-   * 新多单元作业本列为 NULL——与 NOT NULL 约束冲突，故放开可空。
-   */
-  unitId: text("unit_id").references(() => units.id),
-  /** 所属课程（courses.id，T2A.7/D13）：可空（作业可不挂课程）；布置时快照语义见表注释 */
-  courseId: text("course_id").references(() => courses.id),
-  /** 作业标题；缺省为布置时的单元标题 */
-  title: text("title").notNull(),
-  /** 截止时间：UTC ISO 字符串；未设置为 NULL（PATCH 显式置 null = 取消截止） */
-  dueAt: text("due_at"),
-  /**
-   * 答案公布时机（T2A.8，D11）：on_submit=交卷即公布（默认，旧数据同语义，无需回填）；
-   * after_due=截止后公布——服务层强制要求 dueAt 非空（create 缺 dueAt / PATCH 取消
-   * 截止时为 after_due → 400，防「永不公布」死锁态）。公布与否在读结果视图时
-   * 比较 dueAt 与当前时间（无定时任务）；course 来源作答不适用本字段（恒交卷即公布）。
-   */
-  answerRelease: text("answer_release")
-    .$type<"on_submit" | "after_due">()
-    .notNull()
-    .default("on_submit"),
-  /** 删除时间：UTC ISO 字符串；未删除为 NULL（软删，作答保留） */
-  deletedAt: text("deleted_at"),
-  /** 创建时间：UTC ISO 字符串 */
-  createdAt: text("created_at").notNull(),
-});
+export const assignments = sqliteTable(
+  "assignments",
+  {
+    /** 主键：crypto.randomUUID()（§0.3 主键约定） */
+    id: text("id").primaryKey(),
+    /** 归属教师（D9：DB 可空、代码恒写非空；作业域内私有） */
+    teacherId: text("teacher_id"),
+    /**
+     * @deprecated T2A 多单元改走 assignment_units（D12）；旧值保留不改（历史语义 =
+     * 当时布置的单个单元，D23-5 回填进 assignment_units）。新代码不再写入，
+     * 新多单元作业本列为 NULL——与 NOT NULL 约束冲突，故放开可空。
+     * T2B.1（D10）：外键已去除（units 主键改复合），值不变。
+     */
+    /**
+     * @deprecated T2A 多单元改走 assignment_units（D12）；旧值保留不改（历史语义 =
+     * 当时布置的单个单元，D23-5 回填进 assignment_units）。新代码不再写入，
+     * 新多单元作业本列为 NULL——与 NOT NULL 约束冲突，故放开可空。
+     */
+    unitId: text("unit_id"),
+    /** 所属课程（courses.id，T2A.7/D13）：可空（作业可不挂课程）；布置时快照语义见表注释 */
+    courseId: text("course_id").references(() => courses.id),
+    /** 作业标题；缺省为布置时的单元标题 */
+    title: text("title").notNull(),
+    /** 截止时间：UTC ISO 字符串；未设置为 NULL（PATCH 显式置 null = 取消截止） */
+    dueAt: text("due_at"),
+    /**
+     * 答案公布时机（T2A.8，D11）：on_submit=交卷即公布（默认，旧数据同语义，无需回填）；
+     * after_due=截止后公布——服务层强制要求 dueAt 非空（create 缺 dueAt / PATCH 取消
+     * 截止时为 after_due → 400，防「永不公布」死锁态）。公布与否在读结果视图时
+     * 比较 dueAt 与当前时间（无定时任务）；course 来源作答不适用本字段（恒交卷即公布）。
+     */
+    answerRelease: text("answer_release")
+      .$type<"on_submit" | "after_due">()
+      .notNull()
+      .default("on_submit"),
+    /** 删除时间：UTC ISO 字符串；未删除为 NULL（软删，作答保留） */
+    deletedAt: text("deleted_at"),
+    /** 创建时间：UTC ISO 字符串 */
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [index("assignments_teacher_idx").on(table.teacherId)],
+);
 
 /**
  * 作业单元关联表（T2A.7，D12/D16）——作业内容 = 有序的多个练习单元。
@@ -469,10 +567,8 @@ export const assignmentUnits = sqliteTable(
     assignmentId: text("assignment_id")
       .notNull()
       .references(() => assignments.id),
-    /** 练习单元（units.id，来自 DSL） */
-    unitId: text("unit_id")
-      .notNull()
-      .references(() => units.id),
+    /** 练习单元（units.id，来自 DSL；T2B.1/D10 起无外键，值不变） */
+    unitId: text("unit_id").notNull(),
     /** 同作业内排序（小在前） */
     order: integer("order").notNull(),
   },
@@ -548,8 +644,9 @@ export const attempts = sqliteTable(
      * （T2A.7 起可填作业所属课程）。D4：删除课程前校验无关联作答。
      */
     courseId: text("course_id").references(() => courses.id),
-    /** 目标练习单元（units.id，来自 DSL；T2A.7 起 assignment 来源为快照语义） */
-    unitId: text("unit_id").references(() => units.id),
+    /** 目标练习单元（units.id，来自 DSL；T2A.7 起 assignment 来源为快照语义；
+     *  T2B.1/D10 起无外键，值不变） */
+    unitId: text("unit_id"),
     /** 第几次作答（D10：course 来源从 1 递增；assignment 来源恒 1） */
     attemptNo: integer("attempt_no").notNull().default(1),
     /** 作答状态：draft | submitted | graded */
@@ -605,10 +702,8 @@ export const responses = sqliteTable(
     attemptId: text("attempt_id")
       .notNull()
       .references(() => attempts.id),
-    /** 题目（questions.id，来自 DSL） */
-    questionId: text("question_id")
-      .notNull()
-      .references(() => questions.id),
+    /** 题目（questions.id，来自 DSL；T2B.1/D10 起无外键，值不变） */
+    questionId: text("question_id").notNull(),
     /** 作答/判分时的题目内容版本（questions.version）；草稿阶段为 0（快照未写入） */
     questionVersion: integer("question_version").notNull().default(0),
     /** 交卷时冻结的完整题目快照（questionSchema 序列化）；草稿阶段为 NULL */
@@ -667,10 +762,8 @@ export const ink = sqliteTable(
     attemptId: text("attempt_id")
       .notNull()
       .references(() => attempts.id),
-    /** 题目（questions.id，来自 DSL；可能含中文/点/连字符） */
-    questionId: text("question_id")
-      .notNull()
-      .references(() => questions.id),
+    /** 题目（questions.id，来自 DSL；可能含中文/点/连字符；T2B.1/D10 起无外键，值不变） */
+    questionId: text("question_id").notNull(),
     /** 矢量文档相对路径（DATA_DIR 内，blobs/ink/<attemptId>/<安全名>.json.gz） */
     strokesPath: text("strokes_path").notNull(),
     /** 快照 PNG 相对路径（DATA_DIR 内，blobs/ink/<attemptId>/<安全名>.png） */

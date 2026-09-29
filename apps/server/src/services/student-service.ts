@@ -22,6 +22,7 @@ import {
 import { createStudentSession, pruneExpiredSessions } from "../auth/session";
 import type { Db } from "../db/client";
 import { type Student, students } from "../db/schema";
+import { getSingleTeacherId } from "../db/teacher-scope";
 import { HttpError } from "../lib/http-error";
 
 /**
@@ -171,6 +172,7 @@ export async function createStudent(
   const passwordHash = await hashPassword(initialPassword);
   const row: typeof students.$inferInsert = {
     id: randomUUID(),
+    teacherId: getSingleTeacherId(db), // D14：学生一生只归创建教师
     displayName: request.displayName,
     loginName: request.loginName,
     passwordHash,

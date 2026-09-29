@@ -24,6 +24,7 @@ import {
   dataMigrations,
   lectures,
   libraryFolders,
+  teachers,
   units,
 } from "./schema.ts";
 import { createTestDb } from "./test-utils.ts";
@@ -44,6 +45,8 @@ import { createTestDb } from "./test-utils.ts";
 const PRE_T2A_LAST_TAG = "0008_curved_hex";
 /** T2A.7 前最后一个迁移的 tag（T2A.6 时代：attempts 已带来源列，作业仍单单元） */
 const PRE_T2A7_LAST_TAG = "0012_aromatic_piledriver";
+/** T2B 前最后一个迁移的 tag（T2A.9 完成态；T2B.1 在此之上加多教师基础结构） */
+const PRE_T2B_LAST_TAG = "0015_oval_franklin_storm";
 
 /** 用真实迁移目录的前半段（0000 至 lastTag）拼出截断版迁移目录 */
 function makeMigrationsFolderUpTo(lastTag: string): string {
@@ -85,6 +88,15 @@ function createPreT2a7Db(): Db {
   const db = createDb(":memory:");
   migrate(db, {
     migrationsFolder: makeMigrationsFolderUpTo(PRE_T2A7_LAST_TAG),
+  });
+  return db;
+}
+
+/** 建「T2B 前结构」内存库（只应用 0000–0015，T2B.1 结构变更之前） */
+function createPreT2bDb(): Db {
+  const db = createDb(":memory:");
+  migrate(db, {
+    migrationsFolder: makeMigrationsFolderUpTo(PRE_T2B_LAST_TAG),
   });
   return db;
 }
@@ -272,7 +284,7 @@ describe("D23 数据搬迁（T2A 前结构 fixture → 迁移 → 回填）", ()
         .all()
         .every((m) => m.joinedAt === "2026-09-27T00:00:00.000Z"),
     ).toBe(true);
-    // 标记表：t2a1、t2a6、t2a7 各一行，appliedAt 仍是首次时间戳
+    // 标记表：t2a1、t2a6、t2a7、t2b1 各一行，appliedAt 仍是首次时间戳
     expect(db.select().from(dataMigrations).all()).toEqual([
       {
         key: "t2a1_library_courses_backfill",
@@ -284,6 +296,10 @@ describe("D23 数据搬迁（T2A 前结构 fixture → 迁移 → 回填）", ()
       },
       {
         key: "t2a7_assignments_backfill",
+        appliedAt: "2026-09-27T00:00:00.000Z",
+      },
+      {
+        key: "t2b1_multi_teacher_backfill",
         appliedAt: "2026-09-27T00:00:00.000Z",
       },
     ]);
@@ -339,10 +355,10 @@ describe("D23 数据搬迁（T2A 前结构 fixture → 迁移 → 回填）", ()
     expect(db.select().from(libraryFolders).all()).toEqual([]);
     expect(db.select().from(courseItems).all()).toEqual([]);
     expect(db.select().from(courseStudents).all()).toEqual([]);
-    expect(db.select().from(dataMigrations).all()).toHaveLength(3);
+    expect(db.select().from(dataMigrations).all()).toHaveLength(4);
     // 全新库再跑一次同样幂等
     runBackfills(db);
-    expect(db.select().from(dataMigrations).all()).toHaveLength(3);
+    expect(db.select().from(dataMigrations).all()).toHaveLength(4);
   });
 });
 
@@ -497,7 +513,7 @@ describe("D23-5 作业结构搬迁（T2A.6 时代结构 fixture → 迁移 → �
     ).toBe(true);
     expect(db.select().from(attempts).get()?.courseId).toBe("c-a");
     // 标记 appliedAt 仍是首次时间戳
-    expect(db.select().from(dataMigrations).all()).toHaveLength(3);
+    expect(db.select().from(dataMigrations).all()).toHaveLength(4);
     expect(
       db
         .select()
@@ -560,6 +576,341 @@ describe("D23-5 作业结构搬迁（T2A.6 时代结构 fixture → 迁移 → �
       db.select().from(assignments).where(eq(assignments.id, "as-3")).get()
         ?.courseId,
     ).toBe("c-a");
+  });
+});
+
+// ---------- T2B.1：多教师基础结构迁移（D9/D10/D11） ----------
+
+/**
+ * T2B 前结构（T2A.9 完成态）fixture（原生 SQL 插行，表结构 = 0000–0015）。
+ * 规模按任务要求：2 课程、3 讲义、4 单元、2 学生、1 多单元作业、2 已交卷 attempt。
+ * 与 pre-T2A/pre-T2A7 fixture 不同：本 fixture 预置 t2a 系列回填标记（模拟
+ * 「已跑过 Phase 2A 回填的生产库升级到 T2B.1」这一真实路径），数据即 post-T2A 形态
+ * （folderId 直接落位、作业走 assignment_units、名单行带 addedAt）。
+ */
+function insertPreT2bFixture(db: Db): void {
+  const t0 = "2026-01-10T08:00:00.000Z";
+  const t1 = "2026-02-10T08:00:00.000Z";
+  const t2 = "2026-02-12T08:00:00.000Z";
+  db.$client.exec(`
+    -- 已跑过 Phase 2A 回填的标记（本 fixture 数据即回填后形态）
+    INSERT INTO data_migrations (key, applied_at) VALUES
+      ('t2a1_library_courses_backfill', '${t0}'),
+      ('t2a6_attempts_source_backfill', '${t0}'),
+      ('t2a7_assignments_backfill', '${t0}');
+    -- 唯一教师行（密码已设置；id/createdAt 固定便于断言「升级不动这三列」）
+    INSERT INTO teachers (id, password_hash, api_token, created_at) VALUES
+      ('th-1', 'scrypt$模拟哈希', NULL, '${t0}');
+    INSERT INTO library_folders (id, name, "order", created_at) VALUES
+      ('f-a', '初一上', 0, '${t0}'),
+      ('f-b', '初一下', 1, '${t0}');
+    INSERT INTO courses (id, title, "order", archived_at, description, created_at) VALUES
+      ('c-a', '初一上', 0, NULL, NULL, '${t0}'),
+      ('c-b', '初一下', 1, NULL, '下学期', '${t0}');
+    INSERT INTO lectures (id, course_id, folder_id, title, markdown, "order", updated_at, deleted_at) VALUES
+      ('l-a1', NULL, 'f-a', '第一讲 有理数', '# 第一讲 有理数', 0, '${t0}', NULL),
+      ('l-a2', NULL, 'f-a', '第二讲 数轴',   '# 第二讲 数轴',   1, '${t0}', NULL),
+      ('l-b1', NULL, 'f-b', '第三讲 绝对值', '# 第三讲 绝对值', 0, '${t0}', '${t1}');
+    INSERT INTO units (id, course_id, folder_id, lecture_id, title, topic, "order", updated_at, deleted_at) VALUES
+      ('u-a1', NULL, 'f-a', 'l-a1', '有理数练习一', '有理数', 0, '${t0}', NULL),
+      ('u-a2', NULL, 'f-a', 'l-a1', '有理数练习二', NULL,    1, '${t0}', NULL),
+      ('u-a3', NULL, 'f-a', NULL,   '随堂小测',     NULL,    2, '${t0}', NULL),
+      ('u-b1', NULL, 'f-b', 'l-b1', '绝对值练习',   NULL,    0, '${t0}', NULL);
+    INSERT INTO questions (id, unit_id, "order", type, difficulty, stem_md, options_json, answers_json, hints_json, solution_md, source_md, version, updated_at, deleted_at) VALUES
+      ('q-a1-1', 'u-a1', 0, 'judge', 1, '题干1 [[正确]]', NULL, '{"kind":"judge","value":true}', '["提示A"]', '详解1', '::::question{type=judge}\n题干1 [[正确]]\n::::', 2, '${t1}', NULL),
+      ('q-a1-2', 'u-a1', 1, 'fill',  2, '计算：__(-3)+7=$__ 4', NULL, NULL, '[]', NULL, '::::question{type=fill}\n::::', 1, '${t0}', NULL),
+      ('q-a2-1', 'u-a2', 0, 'judge', 1, '题干3 [[错误]]', NULL, '{"kind":"judge","value":false}', '[]', NULL, '::::question{type=judge}\n题干3 [[错误]]\n::::', 1, '${t0}', NULL),
+      ('q-a3-1', 'u-a3', 0, 'judge', 1, '题干4 [[正确]]', NULL, '{"kind":"judge","value":true}', '[]', NULL, '::::question{type=judge}\n题干4 [[正确]]\n::::', 1, '${t0}', '${t1}'),
+      ('q-b1-1', 'u-b1', 0, 'judge', 1, '题干5 [[正确]]', NULL, '{"kind":"judge","value":true}', '[]', NULL, '::::question{type=judge}\n题干5 [[正确]]\n::::', 1, '${t0}', NULL);
+    INSERT INTO knowledge_points (id, name) VALUES
+      ('kp-1', '一元一次方程'),
+      ('kp-2', '有理数');
+    INSERT INTO question_knowledge (question_id, knowledge_point_id) VALUES
+      ('q-a1-1', 'kp-1'),
+      ('q-a1-1', 'kp-2'),
+      ('q-a2-1', 'kp-1'),
+      ('q-b1-1', 'kp-2');
+    INSERT INTO imports (id, filename, kind, raw_md, report_json, source_path, batch_id, folder_id, created_at) VALUES
+      ('im-1', '练习.md', 'practice', '# 原文', '{}', 'chapter1/练习.md', 'batch-1', 'f-a', '${t1}');
+    INSERT INTO students (id, display_name, login_name, password_hash, link_token, link_enabled, password_enabled, note, archived_at, created_at) VALUES
+      ('s-1', '张三', '张三', 'scrypt$学生哈希', 'tok-1', 1, 1, NULL, NULL, '${t0}'),
+      ('s-2', '李四', '李四', NULL,             'tok-2', 1, 0, '备注', NULL, '${t0}');
+    INSERT INTO assignments (id, unit_id, course_id, title, due_at, answer_release, deleted_at, created_at) VALUES
+      ('as-1', NULL, 'c-a', '综合练习一', '${t2}', 'on_submit', NULL, '${t1}');
+    INSERT INTO assignment_units (assignment_id, unit_id, "order") VALUES
+      ('as-1', 'u-a1', 0),
+      ('as-1', 'u-a2', 1);
+    INSERT INTO assignment_students (assignment_id, student_id, added_at, removed_at) VALUES
+      ('as-1', 's-1', '${t1}', NULL),
+      ('as-1', 's-2', '${t1}', NULL);
+    INSERT INTO course_items (id, course_id, kind, ref_id, title, "order", visible, publish_at, created_at) VALUES
+      ('ci-1', 'c-a', 'lecture', 'l-a1', NULL,      0, 1, NULL, '${t0}'),
+      ('ci-2', 'c-a', 'unit',    'u-a1', NULL,      1, 0, NULL, '${t0}'),
+      ('ci-3', 'c-b', 'section', NULL,    '第一节', 0, 1, '${t1}', '${t0}');
+    INSERT INTO course_students (course_id, student_id, joined_at) VALUES
+      ('c-a', 's-1', '${t0}');
+    INSERT INTO attempts (id, student_id, source_type, assignment_id, course_id, unit_id, attempt_no, status, started_at, submitted_at, active_sec, device, score_auto, score_final) VALUES
+      ('at-1', 's-1', 'assignment', 'as-1', 'c-a', 'u-a1', 1, 'submitted', '${t1}', '${t1}', 120, 'iPad', 50, NULL),
+      ('at-2', 's-2', 'assignment', 'as-1', 'c-a', NULL,   1, 'graded',    '${t2}', '${t2}', 90,  NULL,   100, 100);
+    INSERT INTO responses (id, attempt_id, question_id, question_version, question_snapshot_json, answer_json, auto_correct, final_correct, teacher_mark, teacher_comment, active_sec, hints_used, hints_opened_json, change_count, ink_id) VALUES
+      ('r-1', 'at-1', 'q-a1-1', 2, '{"id":"q-a1-1"}', '{"kind":"judge","value":true}',  1, 1,    NULL, NULL, 30, 1, '[0]', 2, NULL),
+      ('r-2', 'at-1', 'q-a1-2', 1, '{"id":"q-a1-2"}', NULL,                              NULL, NULL, NULL, NULL, 0,  0, NULL,  0, 'ink-1'),
+      ('r-3', 'at-2', 'q-a1-1', 2, '{"id":"q-a1-1"}', '{"kind":"judge","value":false}', 0,    0,    '正确', '很好', 30, 0, NULL,  1, NULL);
+    INSERT INTO ink (id, attempt_id, question_id, strokes_path, png_path, width, height, stroke_count, updated_at) VALUES
+      ('ink-1', 'at-1', 'q-a1-2', 'blobs/ink/at-1/q.json.gz', 'blobs/ink/at-1/q.png', 800, 600, 12, '${t1}');
+  `);
+}
+
+/** 迁移涉及的全部业务表（teachers 单独断言：升级会改行，不进保真对比） */
+const PRE_T2B_TABLES = [
+  "library_folders",
+  "courses",
+  "lectures",
+  "units",
+  "questions",
+  "knowledge_points",
+  "question_knowledge",
+  "imports",
+  "students",
+  "assignments",
+  "assignment_units",
+  "assignment_students",
+  "course_items",
+  "course_students",
+  "attempts",
+  "responses",
+  "ink",
+] as const;
+
+/**
+ * 全库业务表快照（键排序 + 行排序，剔除 teacher_id 列）：
+ * 迁移只允许加 teacherId / 改主键 / 去外键，任何既有列的值都不得变化
+ * （任务要求「单元/题目数据与关联一字不差」，这里以全表逐行对比覆盖）。
+ */
+function snapshotBusinessTables(db: Db): Map<string, string[]> {
+  const snapshot = new Map<string, string[]>();
+  for (const table of PRE_T2B_TABLES) {
+    const rows = (
+      db.$client.prepare(`SELECT * FROM ${table}`).all() as Array<
+        Record<string, unknown>
+      >
+    ).map((row) => {
+      delete row.teacher_id; // 新增归属列不参与保真对比
+      return JSON.stringify(row, Object.keys(row).sort());
+    });
+    snapshot.set(table, rows.sort());
+  }
+  return snapshot;
+}
+
+describe("T2B.1 多教师基础结构迁移（post-T2A 结构 fixture → 迁移 → 回填）", () => {
+  it("结构变更：units/questions 复合主键生效、D10 外键全部去除（foreign_key_check 通过）", () => {
+    const db = createPreT2bDb();
+    insertPreT2bFixture(db);
+    migrateAndBackfill(db);
+
+    // 迁移后的建表 SQL 里不再有指向 units/questions 的外键（D10 核对清单）
+    const ddl = (
+      db.$client
+        .prepare(
+          "SELECT sql FROM sqlite_master WHERE type = 'table' AND name IN ('questions','units','question_knowledge','assignments','assignment_units','attempts','responses','ink')",
+        )
+        .all() as Array<{ sql: string }>
+    )
+      .map((row) => row.sql)
+      .join("\n");
+    expect(ddl).not.toMatch(/REFERENCES\s+`?units`?\s*\(/i);
+    expect(ddl).not.toMatch(/REFERENCES\s+`?questions`?\s*\(/i);
+    expect(db.$client.pragma("foreign_key_check")).toHaveLength(0);
+
+    // units：同 (teacherId, id) 拒绝重复；同 id 不同 teacherId 合法（D10 目标形态，
+    // 用全新 id 验证约束本身——fixture 行的 teacherId 由回填写入，属下一组断言）
+    expect(() =>
+      db.$client
+        .prepare(
+          `INSERT INTO units (id, teacher_id, folder_id, lecture_id, title, topic, "order", updated_at, deleted_at)
+           VALUES ('u-dup', 'th-1', NULL, NULL, '甲的单元', NULL, 0, '2026-01-01T00:00:00.000Z', NULL)`,
+        )
+        .run(),
+    ).not.toThrow();
+    expect(() =>
+      db.$client
+        .prepare(
+          `INSERT INTO units (id, teacher_id, folder_id, lecture_id, title, topic, "order", updated_at, deleted_at)
+           VALUES ('u-dup', 'th-1', NULL, NULL, '甲的重复单元', NULL, 0, '2026-01-01T00:00:00.000Z', NULL)`,
+        )
+        .run(),
+    ).toThrow();
+    db.$client
+      .prepare(
+        `INSERT INTO units (id, teacher_id, folder_id, lecture_id, title, topic, "order", updated_at, deleted_at)
+         VALUES ('u-dup', 'th-2', NULL, NULL, '乙的同名单元', NULL, 0, '2026-01-01T00:00:00.000Z', NULL)`,
+      )
+      .run();
+    // questions：同 id 不同 teacherId 合法；question_knowledge 主键含 teacherId
+    db.$client
+      .prepare(
+        `INSERT INTO questions (id, teacher_id, unit_id, "order", type, difficulty, stem_md, options_json, answers_json, hints_json, solution_md, source_md, version, updated_at, deleted_at)
+         VALUES ('q-dup', 'th-1', 'u-dup', 0, 'judge', 1, '甲的题干', NULL, NULL, '[]', NULL, '::::question\n::::', 1, '2026-01-01T00:00:00.000Z', NULL)`,
+      )
+      .run();
+    db.$client
+      .prepare(
+        `INSERT INTO questions (id, teacher_id, unit_id, "order", type, difficulty, stem_md, options_json, answers_json, hints_json, solution_md, source_md, version, updated_at, deleted_at)
+         VALUES ('q-dup', 'th-2', 'u-dup', 0, 'judge', 1, '乙的题干', NULL, NULL, '[]', NULL, '::::question\n::::', 1, '2026-01-01T00:00:00.000Z', NULL)`,
+      )
+      .run();
+    db.$client
+      .prepare(
+        "INSERT INTO question_knowledge (teacher_id, question_id, knowledge_point_id) VALUES ('th-2', 'q-dup', 'kp-1')",
+      )
+      .run();
+    db.$client.close();
+  });
+
+  it("数据保真：全部业务表逐行一字不差（仅新增 teacherId 列）", () => {
+    const db = createPreT2bDb();
+    insertPreT2bFixture(db);
+    const before = snapshotBusinessTables(db);
+    migrateAndBackfill(db);
+    const after = snapshotBusinessTables(db);
+    for (const table of PRE_T2B_TABLES) {
+      expect(after.get(table)).toEqual(before.get(table));
+    }
+    db.$client.close();
+  });
+
+  it("回填：唯一教师行升级（loginName/isAdmin，密码 id createdAt 不动）；全部根行 teacherId 正确且无 NULL", () => {
+    const db = createPreT2bDb();
+    insertPreT2bFixture(db);
+    migrateAndBackfill(db);
+
+    // D4 升级：只动 loginName/isAdmin，其余列原样
+    expect(db.select().from(teachers).all()).toEqual([
+      {
+        id: "th-1",
+        loginName: "teacher",
+        isAdmin: true,
+        disabledAt: null,
+        passwordHash: "scrypt$模拟哈希",
+        apiToken: null,
+        createdAt: "2026-01-10T08:00:00.000Z",
+      },
+    ]);
+
+    // 9 张根表全部行 teacherId = 'th-1' 且无 NULL（D9）
+    const rootTables = [
+      "students",
+      "courses",
+      "library_folders",
+      "lectures",
+      "units",
+      "questions",
+      "imports",
+      "assignments",
+      "question_knowledge",
+    ] as const;
+    for (const table of rootTables) {
+      const nullCount = db.$client
+        .prepare(`SELECT count(*) AS n FROM ${table} WHERE teacher_id IS NULL`)
+        .get() as { n: number };
+      expect(nullCount.n, table).toBe(0);
+      const wrongCount = db.$client
+        .prepare(
+          `SELECT count(*) AS n FROM ${table} WHERE teacher_id <> 'th-1'`,
+        )
+        .get() as { n: number };
+      expect(wrongCount.n, table).toBe(0);
+    }
+    // 复合主键语义在回填后对既有行生效：(th-1, 'u-a1') 已存在 → 重复插入被拒
+    expect(() =>
+      db.$client
+        .prepare(
+          `INSERT INTO units (id, teacher_id, folder_id, lecture_id, title, topic, "order", updated_at, deleted_at)
+           VALUES ('u-a1', 'th-1', NULL, NULL, '重复单元', NULL, 0, '2026-03-02T00:00:00.000Z', NULL)`,
+        )
+        .run(),
+    ).toThrow();
+    db.$client.close();
+  });
+
+  it("pre-T2A 库升级路径：t2a1 建的文件夹同获 teacherId 回填", () => {
+    const db = createPreT2aDb();
+    db.$client.exec(`
+      INSERT INTO teachers (id, password_hash, api_token, created_at) VALUES
+        ('th-old', 'scrypt$模拟哈希', NULL, '2026-01-01T00:00:00.000Z');
+    `);
+    insertPreT2aFixture(db);
+    migrateAndBackfill(db);
+
+    // t2a1 本次运行新建「初一上/初一下」文件夹 → t2b1 回填 teacherId
+    const folders = db.select().from(libraryFolders).all();
+    expect(folders.map((f) => [f.name, f.teacherId])).toEqual([
+      ["初一上", "th-old"],
+      ["初一下", "th-old"],
+    ]);
+    expect(db.select().from(teachers).get()).toMatchObject({
+      id: "th-old",
+      loginName: "teacher",
+      isAdmin: true,
+    });
+    db.$client.close();
+  });
+
+  it("带 FK 的子表迁移后照常写入：交卷写 responses、上传笔迹写 ink 不报 foreign key mismatch", () => {
+    const db = createPreT2bDb();
+    insertPreT2bFixture(db);
+    migrateAndBackfill(db);
+
+    // 交卷补写 responses（含快照与判分）；上传笔迹写 ink——外键已去除，
+    // 若有残留指向 questions 的 FK 会在此抛 foreign key mismatch
+    db.$client
+      .prepare(
+        "INSERT INTO responses (id, attempt_id, question_id, question_version, question_snapshot_json, answer_json, auto_correct, final_correct, teacher_mark, teacher_comment, active_sec, hints_used, hints_opened_json, change_count, ink_id) VALUES ('r-new', 'at-1', 'q-a2-1', 1, '{\"id\":\"q-a2-1\"}', '{\"kind\":\"judge\",\"value\":false}', 0, NULL, NULL, NULL, 10, 0, NULL, 0, NULL)",
+      )
+      .run();
+    db.$client
+      .prepare(
+        `INSERT INTO ink (id, attempt_id, question_id, strokes_path, png_path, width, height, stroke_count, updated_at)
+         VALUES ('ink-new', 'at-2', 'q-a1-1', 'blobs/ink/at-2/q.json.gz', 'blobs/ink/at-2/q.png', 800, 600, 5, '2026-03-01T00:00:00.000Z')`,
+      )
+      .run();
+    // 作业补单元（assignment_units 同为重建子表）
+    db.$client
+      .prepare(
+        "INSERT INTO assignment_units (assignment_id, unit_id, \"order\") VALUES ('as-1', 'u-b1', 2)",
+      )
+      .run();
+    expect(
+      db.$client.prepare("SELECT count(*) AS n FROM responses").get(),
+    ).toMatchObject({ n: 4 });
+    db.$client.close();
+  });
+
+  it("幂等：重复执行 runMigrations + runBackfills 无重复数据、值不漂移", () => {
+    const db = createPreT2bDb();
+    insertPreT2bFixture(db);
+    migrateAndBackfill(db);
+    const countsBefore = new Map(
+      PRE_T2B_TABLES.map((table) => {
+        const row = db.$client
+          .prepare(`SELECT count(*) AS n FROM ${table}`)
+          .get() as { n: number };
+        return [table, row.n] as const;
+      }),
+    );
+
+    runMigrations(db);
+    runBackfills(db, new Date("2026-09-28T00:00:00.000Z"));
+
+    for (const table of PRE_T2B_TABLES) {
+      const row = db.$client
+        .prepare(`SELECT count(*) AS n FROM ${table}`)
+        .get() as { n: number };
+      expect(row.n).toBe(countsBefore.get(table));
+    }
+    expect(db.$client.pragma("foreign_key_check")).toHaveLength(0);
+    db.$client.close();
   });
 });
 
@@ -738,6 +1089,10 @@ describe("孤儿资源兜底（T2A.1 事故修复：与主标记无关、每次�
         key: "t2a7_assignments_backfill",
         appliedAt: "2026-09-27T00:00:00.000Z",
       },
+      {
+        key: "t2b1_multi_teacher_backfill",
+        appliedAt: "2026-09-27T00:00:00.000Z",
+      },
     ]);
   });
 
@@ -791,6 +1146,6 @@ describe("孤儿资源兜底（T2A.1 事故修复：与主标记无关、每次�
           .map((row) => [row.id, row.folderId] as const),
       ),
     ).toEqual(unitFolderIds);
-    expect(db.select().from(dataMigrations).all()).toHaveLength(3);
+    expect(db.select().from(dataMigrations).all()).toHaveLength(4);
   });
 });
