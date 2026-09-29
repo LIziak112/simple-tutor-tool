@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import type { Db } from "../db/client.ts";
 import { attempts, questions, students, units } from "../db/schema.ts";
-import { createTestDb } from "../db/test-utils.ts";
+import { createTestDb, TEST_TEACHER_ID } from "../db/test-utils.ts";
 import { HttpError } from "../lib/http-error.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 import { createAssignment, updateAssignment } from "./assignment-service.ts";
@@ -79,6 +79,7 @@ function seed(db: Db): { studentId: string; unitId: string } {
   db.insert(students)
     .values({
       id: studentId,
+      teacherId: TEST_TEACHER_ID,
       displayName: "张三",
       loginName: `zhang-${studentId.slice(0, 8)}`,
       passwordHash: null,
@@ -90,6 +91,7 @@ function seed(db: Db): { studentId: string; unitId: string } {
   db.insert(units)
     .values({
       id: unitId,
+      teacherId: TEST_TEACHER_ID,
       courseId: null,
       folderId: null,
       lectureId: null,
@@ -104,6 +106,7 @@ function seed(db: Db): { studentId: string; unitId: string } {
     .values([
       {
         id: "rel-q1",
+        teacherId: TEST_TEACHER_ID,
         unitId,
         order: 0,
         type: "judge",
@@ -120,6 +123,7 @@ function seed(db: Db): { studentId: string; unitId: string } {
       },
       {
         id: "rel-q2",
+        teacherId: TEST_TEACHER_ID,
         unitId,
         order: 1,
         type: "fill",
@@ -156,7 +160,7 @@ function makeSubmittedAttempt(
   attemptId: string;
 } {
   const { studentId, unitId } = seed(db);
-  const assignment = createAssignment(db, {
+  const assignment = createAssignment(db, TEST_TEACHER_ID, {
     unitIds: [unitId],
     studentIds: [studentId],
     ...(options.dueAt !== undefined ? { dueAt: options.dueAt } : {}),
@@ -345,7 +349,7 @@ describe("截止后与 on_submit：完整形态", () => {
   it("交卷时已过截止：submit 响应直接是完整形态", () => {
     const db = createTestDb();
     const { studentId, unitId } = seed(db);
-    const assignment = createAssignment(db, {
+    const assignment = createAssignment(db, TEST_TEACHER_ID, {
       unitIds: [unitId],
       studentIds: [studentId],
       dueAt: "2026-01-01T00:00:00.000Z", // 早已截止
@@ -392,7 +396,7 @@ describe("create/PATCH 的 400 三态与合法组合", () => {
     const db = createTestDb();
     const { studentId, unitId } = seed(db);
     const err = captureError(() =>
-      createAssignment(db, {
+      createAssignment(db, TEST_TEACHER_ID, {
         unitIds: [unitId],
         studentIds: [studentId],
         answerRelease: "after_due",
@@ -407,25 +411,27 @@ describe("create/PATCH 的 400 三态与合法组合", () => {
     const db = createTestDb();
     const { studentId, unitId } = seed(db);
     // 无截止作业（默认 on_submit）
-    const plain = createAssignment(db, {
+    const plain = createAssignment(db, TEST_TEACHER_ID, {
       unitIds: [unitId],
       studentIds: [studentId],
     });
     const errSwitch = captureError(() =>
-      updateAssignment(db, plain.id, { answerRelease: "after_due" }),
+      updateAssignment(db, TEST_TEACHER_ID, plain.id, {
+        answerRelease: "after_due",
+      }),
     );
     expectHttpError(errSwitch, 400, "VALIDATION_ERROR");
     expect(errSwitch.message).toContain("截止时间");
 
     // 有截止的 after_due 作业：显式置 null 取消截止 → 400（防死锁态）
-    const due = createAssignment(db, {
+    const due = createAssignment(db, TEST_TEACHER_ID, {
       unitIds: [unitId],
       studentIds: [studentId],
       dueAt: DUE_AT,
       answerRelease: "after_due",
     });
     const errRemove = captureError(() =>
-      updateAssignment(db, due.id, { dueAt: null }),
+      updateAssignment(db, TEST_TEACHER_ID, due.id, { dueAt: null }),
     );
     expectHttpError(errRemove, 400, "VALIDATION_ERROR");
     expect(errRemove.message).toContain("截止后公布");
@@ -434,13 +440,13 @@ describe("create/PATCH 的 400 三态与合法组合", () => {
   it("合法组合放行：改 after_due 同时补截止；after_due 下改截止时间；先改回 on_submit 再取消截止", () => {
     const db = createTestDb();
     const { studentId, unitId } = seed(db);
-    const plain = createAssignment(db, {
+    const plain = createAssignment(db, TEST_TEACHER_ID, {
       unitIds: [unitId],
       studentIds: [studentId],
     });
 
     // 同一请求补截止 → 合法
-    const switched = updateAssignment(db, plain.id, {
+    const switched = updateAssignment(db, TEST_TEACHER_ID, plain.id, {
       answerRelease: "after_due",
       dueAt: DUE_AT,
     });
@@ -448,14 +454,14 @@ describe("create/PATCH 的 400 三态与合法组合", () => {
     expect(switched.dueAt).toBe(DUE_AT);
 
     // after_due 下改截止时间（非 null）→ 合法
-    const moved = updateAssignment(db, plain.id, {
+    const moved = updateAssignment(db, TEST_TEACHER_ID, plain.id, {
       dueAt: AFTER_DUE,
     });
     expect(moved.dueAt).toBe(AFTER_DUE);
     expect(moved.answerRelease).toBe("after_due");
 
     // 先改回 on_submit 再取消截止 → 合法（同一请求即满足组合约束）
-    const undone = updateAssignment(db, plain.id, {
+    const undone = updateAssignment(db, TEST_TEACHER_ID, plain.id, {
       answerRelease: "on_submit",
       dueAt: null,
     });

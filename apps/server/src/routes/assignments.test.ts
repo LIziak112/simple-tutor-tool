@@ -18,7 +18,11 @@ import {
   assignmentUnits,
   questions,
 } from "../db/schema.ts";
-import { createTestDb, createTestDir } from "../db/test-utils.ts";
+import {
+  createTestDb,
+  createTestDir,
+  TEST_TEACHER_ID,
+} from "../db/test-utils.ts";
 import {
   type AssignmentAttemptSummary,
   computeAssignmentStatus,
@@ -1944,11 +1948,13 @@ describe("迁移后旧作业兼容（D23-5 回填形态直插库）", () => {
     const aId = await createStudent(app, teacherCookie, "张三");
 
     // 直插 D23-5 回填后的形态：unitId 旧列有值 + assignment_units 一行 order=0
+    //（T2B.4：回填会同时填 teacherId，此处按回填后形态补齐）
     const legacyId = "88888888-8888-4888-8888-888888888888";
     const now = new Date().toISOString();
     db.insert(assignments)
       .values({
         id: legacyId,
+        teacherId: TEST_TEACHER_ID,
         unitId, // 旧列保留（@deprecated，读侧不再使用）
         courseId: null,
         title: "旧作业",

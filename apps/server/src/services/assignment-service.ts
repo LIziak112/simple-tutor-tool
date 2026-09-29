@@ -32,17 +32,21 @@ import {
   students,
   units,
 } from "../db/schema";
-import { getSingleTeacherId } from "../db/teacher-scope";
 import { HttpError } from "../lib/http-error";
 
 /**
  * AssignmentService（T2.2；T2A.7 大改——多单元 + 按课程布置 + 名单增删 + 内容锁定；
  * T2A.8 追加 answerRelease 公布时机：create/PATCH 与 dueAt 的组合校验防死锁态，
- * 列表/详情/创建/更新响应带出该字段）。
+ * 列表/详情/创建/更新响应带出该字段；T2B.4 起教师侧全部接口按会话教师
+ * teacherId 形参——乙访问甲的作业 → 404（D12），unitIds / courseId / studentIds
+ * 逐项校验归属；学生侧接口（listStudentAssignments / getStudentAssignmentPaper）
+ * 对外签名与行为不变，内部按 D10 从作业根行（assignments.teacherId）推导教师域
+ * 带入 units/questions 查询——复合主键后按 id 查不再唯一）。
  * 路由只做「鉴权 → 校验 → 调 service → 包装响应」（api-endpoint 技能约定），本模块承载：
  *
  * - 创建（D12/D13）：unitIds 全部存在、不可重复、按数组顺序写 assignment_units
- *   （order=0..n-1）；courseId 可选（不存在 404）；studentIds 去重逐个校验存在；
+ *   （order=0..n-1）；courseId 可选（不存在或非本人课程 404）；studentIds 去重
+ *   逐个校验存在且归属本教师；
  *   title 缺省 = 首个单元标题（1 个）或「首个单元标题 等 n 个单元」（≥2，快照语义）；
  * - 更新（D13/D14）：title/dueAt 恒可改；unitIds 整组替换但**已有任一 attempt 即锁定**
  *   （409 ASSIGNMENT_CONTENT_LOCKED）；名单增量增删（addStudentIds upsert 行、
@@ -89,22 +93,45 @@ export function computeAssignmentStatus(
   return "not_started";
 }
 
-/** 按 id 取作业行，不存在 → 404 ASSIGNMENT_NOT_FOUND */
-function requireAssignmentRow(db: Db, id: string): Assignment {
-  const row = db.select().from(assignments).where(eq(assignments.id, id)).get();
+/**
+ * 按会话教师取作业行（T2B.4）：不存在、已软删行外的非本人作业 → 404
+ * ASSIGNMENT_NOT_FOUND（D12：不暴露存在性）。
+ */
+function requireAssignmentRow(
+  db: Db,
+  teacherId: string,
+  id: string,
+): Assignment {
+  const row = db
+    .select()
+    .from(assignments)
+    .where(and(eq(assignments.teacherId, teacherId), eq(assignments.id, id)))
+    .get();
   if (!row) {
     throw new HttpError(404, "ASSIGNMENT_NOT_FOUND", "作业不存在");
   }
   return row;
 }
 
-/** 校验学生 id 全部存在，任一不存在 → 404 STUDENT_NOT_FOUND */
-function requireStudentsExist(db: Db, studentIds: readonly string[]): void {
+/**
+ * 校验学生 id 全部存在且归属本教师（T2B.4，D12/D14），任一不满足 →
+ * 404 STUDENT_NOT_FOUND（他人学生按不存在处理，不泄露存在性）。
+ */
+function requireStudentsExist(
+  db: Db,
+  teacherId: string,
+  studentIds: readonly string[],
+): void {
   const found = new Set(
     db
       .select({ id: students.id })
       .from(students)
-      .where(inArray(students.id, [...studentIds]))
+      .where(
+        and(
+          eq(students.teacherId, teacherId),
+          inArray(students.id, [...studentIds]),
+        ),
+      )
       .all()
       .map((row) => row.id),
   );
@@ -119,11 +146,13 @@ function requireStudentsExist(db: Db, studentIds: readonly string[]): void {
 }
 
 /**
- * 校验单元 id 列表：全部存在（否则 404 UNIT_NOT_FOUND）且不可重复
- * （否则 400 DUPLICATE_UNIT，D12）。返回按输入顺序的 (id, title) 列表。
+ * 校验单元 id 列表：全部存在且归属本教师（T2B.4，D12——他人单元按不存在处理；
+ * 复合主键后按 (teacherId, id) 查）且不可重复（否则 400 DUPLICATE_UNIT，D12）。
+ * 返回按输入顺序的 (id, title) 列表。
  */
 function requireUnitsUniqueExist(
   db: Db,
+  teacherId: string,
   unitIds: readonly string[],
 ): { id: string; title: string }[] {
   const seen = new Set<string>();
@@ -140,7 +169,7 @@ function requireUnitsUniqueExist(
   const rows = db
     .select({ id: units.id, title: units.title })
     .from(units)
-    .where(inArray(units.id, [...seen]))
+    .where(and(eq(units.teacherId, teacherId), inArray(units.id, [...seen])))
     .all();
   const byId = new Map(rows.map((row) => [row.id, row] as const));
   const ordered: { id: string; title: string }[] = [];
@@ -158,13 +187,16 @@ function requireUnitsUniqueExist(
   return ordered;
 }
 
-/** 每个单元的有效题目数（软删题目不计；只 COUNT，不读内容列，学生端同样安全） */
-function liveQuestionCounts(db: Db): Map<string, number> {
+/**
+ * 每个单元的有效题目数（软删题目不计；只 COUNT，不读内容列，学生端同样安全；
+ * T2B.4 域内统计——复合主键后同 id 单元分属不同教师，计数不可混）。
+ */
+function liveQuestionCounts(db: Db, teacherId: string): Map<string, number> {
   const counts = new Map<string, number>();
   for (const row of db
     .select({ unitId: questions.unitId })
     .from(questions)
-    .where(isNull(questions.deletedAt))
+    .where(and(eq(questions.teacherId, teacherId), isNull(questions.deletedAt)))
     .all()) {
     counts.set(row.unitId, (counts.get(row.unitId) ?? 0) + 1);
   }
@@ -174,9 +206,12 @@ function liveQuestionCounts(db: Db): Map<string, number> {
 /**
  * 作业 → 有序列单元行（assignment_units.order 升序，join units 取当前标题与
  * 软删标记；D16：软删单元行保留）。一次查询取全部作业，供列表/详情共用。
+ * T2B.4：join 条件带教师域（作业归属教师与单元归属教师一致——作业创建时
+ * unitIds 已逐项校验归属本教师；学生侧调用方从作业根行推导同值传入）。
  */
 function unitRowsByAssignment(
   db: Db,
+  teacherId: string,
   assignmentIds?: readonly string[],
 ): Map<string, { unitId: string; title: string; deleted: boolean }[]> {
   const map = new Map<
@@ -195,7 +230,13 @@ function unitRowsByAssignment(
             order: assignmentUnits.order,
           })
           .from(assignmentUnits)
-          .innerJoin(units, eq(assignmentUnits.unitId, units.id))
+          .innerJoin(
+            units,
+            and(
+              eq(assignmentUnits.unitId, units.id),
+              eq(units.teacherId, teacherId),
+            ),
+          )
           .where(
             assignmentIds !== undefined
               ? inArray(assignmentUnits.assignmentId, [...assignmentIds])
@@ -299,7 +340,7 @@ function hasAttempt(db: Db, assignmentId: string): boolean {
   );
 }
 
-/** 学生 id → 姓名（CONFIRM_REQUIRED 附带名单、check 提示行共用） */
+/** 学生 id → 姓名（CONFIRM_REQUIRED 附带名单、check 提示行共用；id 全局唯一） */
 function studentNamesById(db: Db): Map<string, string> {
   return new Map(
     db
@@ -307,6 +348,18 @@ function studentNamesById(db: Db): Map<string, string> {
       .from(students)
       .all()
       .map((row) => [row.id, row.displayName] as const),
+  );
+}
+
+/** 课程 id → 标题（T2B.4 域内读：列表/详情/check 的课程名展示只用本人课程） */
+function courseNamesOf(db: Db, teacherId: string): Map<string, string> {
+  return new Map(
+    db
+      .select({ id: courses.id, title: courses.title })
+      .from(courses)
+      .where(eq(courses.teacherId, teacherId))
+      .all()
+      .map((r) => [r.id, r.title] as const),
   );
 }
 
@@ -365,55 +418,57 @@ function toTeacherAssignment(
   };
 }
 
-/** 组装单条作业的教师列表行（详情在其上 extend） */
-function teacherAssignmentOf(db: Db, id: string): TeacherAssignment {
-  const row = requireAssignmentRow(db, id);
+/** 组装单条作业的教师列表行（详情在其上 extend；T2B.4 域内聚合） */
+function teacherAssignmentOf(
+  db: Db,
+  teacherId: string,
+  id: string,
+): TeacherAssignment {
+  const row = requireAssignmentRow(db, teacherId, id);
   return toTeacherAssignment(
     row,
-    unitRowsByAssignment(db, [id]),
-    liveQuestionCounts(db),
+    unitRowsByAssignment(db, teacherId, [id]),
+    liveQuestionCounts(db, teacherId),
     rosterRowsByAssignment(db, [id]),
     attemptGroupsByAssignment(db),
-    new Map(
-      db
-        .select({ id: courses.id, title: courses.title })
-        .from(courses)
-        .all()
-        .map((r) => [r.id, r.title] as const),
-    ),
+    courseNamesOf(db, teacherId),
   );
 }
 
 // ---------- 教师：布置作业 CRUD ----------
 
 /**
- * POST /api/teacher/assignments（T2A.7 多单元 + 课程）。
- * - unitIds 重复 → 400 DUPLICATE_UNIT；任一不存在 → 404 UNIT_NOT_FOUND；
- * - courseId 提供且不存在 → 404 COURSE_NOT_FOUND；
- * - studentIds 去重后逐个校验存在（空数组已被契约 min(1) 拦截）；
+ * POST /api/teacher/assignments（T2A.7 多单元 + 课程；T2B.4 按会话教师）。
+ * - unitIds 重复 → 400 DUPLICATE_UNIT；任一不存在或非本人单元 → 404 UNIT_NOT_FOUND；
+ * - courseId 提供且不存在或非本人课程 → 404 COURSE_NOT_FOUND；
+ * - studentIds 去重后逐个校验存在且归属本教师（空数组已被契约 min(1) 拦截）；
  * - title 缺省 = defaultAssignmentTitle（快照语义：之后单元改名不联动）；
  * - answerRelease（T2A.8，D11）：公布时机，默认 on_submit；选 after_due 而
  *   dueAt 缺失 → 400 VALIDATION_ERROR（防死锁态：永不公布）；
- * - 事务写 assignments（unitId=null——旧列 @deprecated，新代码不写）+
- *   assignment_units（order=0..n-1）+ 名单行（addedAt=now，removedAt=null）。
+ * - 事务写 assignments（unitId=null——旧列 @deprecated，新代码不写；teacherId
+ *   = 会话教师，T2B.4）+ assignment_units（order=0..n-1）+ 名单行（addedAt=now，
+ *   removedAt=null）。
  */
 export function createAssignment(
   db: Db,
+  teacherId: string,
   request: AssignmentCreateRequest,
 ): TeacherAssignment {
-  const unitList = requireUnitsUniqueExist(db, request.unitIds);
+  const unitList = requireUnitsUniqueExist(db, teacherId, request.unitIds);
   if (request.courseId !== null && request.courseId !== undefined) {
     const course = db
       .select({ id: courses.id })
       .from(courses)
-      .where(eq(courses.id, request.courseId))
+      .where(
+        and(eq(courses.teacherId, teacherId), eq(courses.id, request.courseId)),
+      )
       .get();
     if (course === undefined) {
       throw new HttpError(404, "COURSE_NOT_FOUND", "指定的课程不存在");
     }
   }
   const studentIds = [...new Set(request.studentIds)];
-  requireStudentsExist(db, studentIds);
+  requireStudentsExist(db, teacherId, studentIds);
   // T2A.8（D11）：「截止后公布」必须设置截止时间（防死锁态：永不公布）
   if (request.answerRelease === "after_due" && request.dueAt === undefined) {
     throw new HttpError(
@@ -425,7 +480,6 @@ export function createAssignment(
 
   const id = randomUUID();
   const now = new Date().toISOString();
-  const teacherId = getSingleTeacherId(db);
   db.transaction((tx) => {
     tx.insert(assignments)
       .values({
@@ -452,7 +506,7 @@ export function createAssignment(
         .run();
     }
   });
-  return teacherAssignmentOf(db, id);
+  return teacherAssignmentOf(db, teacherId, id);
 }
 
 /**
@@ -466,14 +520,17 @@ export function createAssignment(
  *   未带 confirmStarted → 409 CONFIRM_REQUIRED（错误壳附 _students 姓名，供确认弹层）；
  * - addStudentIds 与 removeStudentIds 交集 → 400 VALIDATION_ERROR；
  * - answerRelease（T2A.8）：改公布时机；与 dueAt 的组合校验见函数内注释。
- * 已删除的作业视为不存在（404，与软删题目的编辑口径一致）。
+ * 已删除的作业视为不存在（404，与软删题目的编辑口径一致）。T2B.4：按会话教师
+ * 取作业行（非本人作业 → 404）；unitIds / addStudentIds / removeStudentIds 逐项
+ * 校验归属本教师（他人单元/学生按不存在 404，D12/D14）。
  */
 export function updateAssignment(
   db: Db,
+  teacherId: string,
   id: string,
   request: AssignmentUpdateRequest,
 ): TeacherAssignment {
-  const row = requireAssignmentRow(db, id);
+  const row = requireAssignmentRow(db, teacherId, id);
   if (row.deletedAt !== null) {
     throw new HttpError(
       404,
@@ -528,17 +585,17 @@ export function updateAssignment(
         "已有学生开始作答，这份作业的单元内容已锁定，不能再修改",
       );
     }
-    unitList = requireUnitsUniqueExist(db, request.unitIds);
+    unitList = requireUnitsUniqueExist(db, teacherId, request.unitIds);
   }
 
-  // 新增：校验学生存在
+  // 新增：校验学生存在且归属本教师
   if (addIds !== undefined) {
-    requireStudentsExist(db, addIds);
+    requireStudentsExist(db, teacherId, addIds);
   }
 
   // 移出：校验学生存在且在册；已开始者须 confirmStarted
   if (removeIds !== undefined) {
-    requireStudentsExist(db, removeIds);
+    requireStudentsExist(db, teacherId, removeIds);
     const roster = new Set(
       (rosterRowsByAssignment(db, [id]).get(id) ?? []).map(
         (entry) => entry.studentId,
@@ -644,7 +701,7 @@ export function updateAssignment(
         .run();
     }
   });
-  return teacherAssignmentOf(db, id);
+  return teacherAssignmentOf(db, teacherId, id);
 }
 
 /**
@@ -652,12 +709,13 @@ export function updateAssignment(
  * 在册学生端立即不可见；教师列表默认不显示（includeDeleted=true 可见）。
  * 关联的 assignment_students / assignment_units 行保留（软删不物理删除任何数据，
  * 作答记录经 assignmentId 继续关联历史）。重复删除幂等成功。
+ * T2B.4：按会话教师取行（非本人作业 → 404，D12）。
  */
-export function deleteAssignment(db: Db, id: string): void {
+export function deleteAssignment(db: Db, teacherId: string, id: string): void {
   const row = db
     .select({ id: assignments.id, deletedAt: assignments.deletedAt })
     .from(assignments)
-    .where(eq(assignments.id, id))
+    .where(and(eq(assignments.teacherId, teacherId), eq(assignments.id, id)))
     .get();
   if (!row) {
     throw new HttpError(404, "ASSIGNMENT_NOT_FOUND", "作业不存在");
@@ -674,30 +732,28 @@ export function deleteAssignment(db: Db, id: string): void {
  * 对每个 studentId × unitId 统计 sourceType='course' 且 status∈{submitted,graded}
  * 的 attempts，按 (学生, attempt.courseId, 单元) 聚合计数，带出姓名/课程名/单元标题。
  * 未做过或仅有草稿的学生×单元不产生行；作业作答（sourceType='assignment'）不计入。
+ * T2B.4：按会话教师校验学生/单元归属（他人的按不存在 404）。
  */
 export function checkAssignment(
   db: Db,
+  teacherId: string,
   request: AssignmentCheckRequest,
 ): AssignmentCheckData {
-  requireStudentsExist(db, request.studentIds);
-  requireUnitsUniqueExist(db, request.unitIds);
+  requireStudentsExist(db, teacherId, request.studentIds);
+  requireUnitsUniqueExist(db, teacherId, request.unitIds);
 
   const unitTitles = new Map(
     db
       .select({ id: units.id, title: units.title })
       .from(units)
-      .where(inArray(units.id, request.unitIds))
+      .where(
+        and(eq(units.teacherId, teacherId), inArray(units.id, request.unitIds)),
+      )
       .all()
       .map((row) => [row.id, row.title] as const),
   );
   const studentNames = studentNamesById(db);
-  const courseNames = new Map(
-    db
-      .select({ id: courses.id, title: courses.title })
-      .from(courses)
-      .all()
-      .map((row) => [row.id, row.title] as const),
-  );
+  const courseNames = courseNamesOf(db, teacherId);
 
   // (studentId, courseId|null, unitId) → 已交卷次数（D15：按 学生×课程×单元 聚合一行）
   const counts = new Map<
@@ -764,15 +820,18 @@ export function checkAssignment(
 }
 
 /**
- * GET /api/teacher/assignments（T2A.7 扩展 courseId 筛选）：按创建时间倒序。
+ * GET /api/teacher/assignments（T2A.7 扩展 courseId 筛选；T2B.4 按会话教师）：
+ * 按创建时间倒序，只列本人作业（乙的课程/单元数据零出现——乙的作业不可能引用
+ * 甲的 courseId，筛选参数不泄露存在性，结果恒为空）。
  * - includeDeleted=false（默认）只列未删除；
  * - courseId=UUID 只看该课程的作业；courseId="none" 只看无课程作业（courseId IS NULL）。
  */
 export function listTeacherAssignments(
   db: Db,
+  teacherId: string,
   options: { includeDeleted: boolean; courseId?: string },
 ): { assignments: TeacherAssignment[] } {
-  const conditions = [];
+  const conditions = [eq(assignments.teacherId, teacherId)];
   if (!options.includeDeleted) conditions.push(isNull(assignments.deletedAt));
   if (options.courseId === "none")
     conditions.push(isNull(assignments.courseId));
@@ -782,7 +841,7 @@ export function listTeacherAssignments(
   const rows = db
     .select()
     .from(assignments)
-    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .where(and(...conditions))
     .orderBy(desc(assignments.createdAt))
     .all();
   if (rows.length === 0) return { assignments: [] };
@@ -792,30 +851,28 @@ export function listTeacherAssignments(
     assignments: rows.map((row) =>
       toTeacherAssignment(
         row,
-        unitRowsByAssignment(db, ids),
-        liveQuestionCounts(db),
+        unitRowsByAssignment(db, teacherId, ids),
+        liveQuestionCounts(db, teacherId),
         rosterRowsByAssignment(db, ids),
         attemptGroupsByAssignment(db),
-        new Map(
-          db
-            .select({ id: courses.id, title: courses.title })
-            .from(courses)
-            .all()
-            .map((r) => [r.id, r.title] as const),
-        ),
+        courseNamesOf(db, teacherId),
       ),
     ),
   };
 }
 
 /**
- * GET /api/teacher/assignments/:id（T2A.7 详情）：列表行口径 + roster（在册，
- * 按加入时间后姓名排序）+ startedCount（已开始人数，D14 锁定原因）+
+ * GET /api/teacher/assignments/:id（T2A.7 详情；T2B.4 按会话教师）：列表行口径 +
+ * roster（在册，按加入时间后姓名排序）+ startedCount（已开始人数，D14 锁定原因）+
  * courseNewMembers（当前课程成员 − 在册名单，D13「补充课程新成员」数据源；
  * 无课程时空数组）。已删除作业可读（教师 includeDeleted 视图配套）。
  */
-export function getAssignmentDetail(db: Db, id: string): AssignmentDetailData {
-  const base = teacherAssignmentOf(db, id);
+export function getAssignmentDetail(
+  db: Db,
+  teacherId: string,
+  id: string,
+): AssignmentDetailData {
+  const base = teacherAssignmentOf(db, teacherId, id);
   const roster = rosterRowsByAssignment(db, [id]).get(id) ?? [];
   const attemptGroups = attemptGroupsByAssignment(db).get(id) ?? new Map();
 
@@ -873,6 +930,7 @@ export function listStudentAssignments(
   const rows = db
     .select({
       id: assignments.id,
+      teacherId: assignments.teacherId,
       title: assignments.title,
       dueAt: assignments.dueAt,
       createdAt: assignments.createdAt,
@@ -893,6 +951,10 @@ export function listStudentAssignments(
     .all();
   if (rows.length === 0) return { assignments: [] };
 
+  // D14：学生一生只归一位教师 → 名下全部作业同域；教师域取首个作业根行
+  //（学生侧无会话教师，D10 从根表推导；对外行为不变）
+  const teacherId = rows[0]?.teacherId ?? null;
+
   // 该学生的全部作业 attempt 摘要按 assignmentId 归组（course 来源不关联作业）
   const attemptsByAssignment = new Map<string, Pick<Attempt, "status">[]>();
   for (const attempt of db
@@ -911,11 +973,18 @@ export function listStudentAssignments(
     }
   }
 
-  const unitLists = unitRowsByAssignment(
-    db,
-    rows.map((row) => row.id),
-  );
-  const counts = liveQuestionCounts(db);
+  const unitLists =
+    teacherId === null
+      ? new Map<string, { unitId: string; title: string; deleted: boolean }[]>()
+      : unitRowsByAssignment(
+          db,
+          teacherId,
+          rows.map((row) => row.id),
+        );
+  const counts =
+    teacherId === null
+      ? new Map<string, number>()
+      : liveQuestionCounts(db, teacherId);
   return {
     assignments: rows.map((row) => {
       const unitList = unitLists.get(row.id) ?? [];
@@ -978,8 +1047,13 @@ function optionTexts(optionsJson: string): string[] {
   return texts;
 }
 
-/** 题目 id → 考点名列表（同名归一后按考点名排序，与教师端内容树同口径） */
-export function knowledgeNamesByQuestion(db: Db): Map<string, string[]> {
+/** 题目 id → 考点名列表（同名归一后按考点名排序，与教师端内容树同口径；
+ * teacherId 提供时按域过滤 question_knowledge——复合主键后同 id 题目分属
+ * 不同教师，考点关联不可混。未传 = 全域（T2B.5 前 attempt 链路占位，届时改必填）） */
+export function knowledgeNamesByQuestion(
+  db: Db,
+  teacherId?: string,
+): Map<string, string[]> {
   const map = new Map<string, string[]>();
   const rows = db
     .select({
@@ -990,6 +1064,11 @@ export function knowledgeNamesByQuestion(db: Db): Map<string, string[]> {
     .innerJoin(
       knowledgePoints,
       eq(questionKnowledge.knowledgePointId, knowledgePoints.id),
+    )
+    .where(
+      teacherId === undefined
+        ? undefined
+        : eq(questionKnowledge.teacherId, teacherId),
     )
     .orderBy(asc(knowledgePoints.name))
     .all();
@@ -1014,8 +1093,9 @@ export function knowledgeNamesByQuestion(db: Db): Map<string, string[]> {
 export function publicQuestionsOfRows(
   db: Db,
   liveQuestions: readonly QuestionRow[],
+  teacherId?: string,
 ): QuestionPublic[] {
-  const knowledge = knowledgeNamesByQuestion(db);
+  const knowledge = knowledgeNamesByQuestion(db, teacherId);
 
   return liveQuestions.map((question) =>
     questionPublicSchema.parse({
@@ -1033,16 +1113,30 @@ export function publicQuestionsOfRows(
 /**
  * 单元公开题目（T2.4 试卷与草稿视图的单元入口投影）：
  * 该单元未软删的题目按 order 升序（同 order 按 id 兜底稳定），经
- * publicQuestionsOfRows 输出过滤（见上方注释）。
+ * publicQuestionsOfRows 输出过滤（见上方注释）。teacherId 提供时按域取题
+ * （复合主键后同 id 单元分属不同教师；作业链路传作业根行的教师域）；
+ * 未传 = 全域（T2B.5 前 attempt 草稿链路占位，届时改必填）。
  */
-export function unitPublicQuestions(db: Db, unitId: string): QuestionPublic[] {
+export function unitPublicQuestions(
+  db: Db,
+  unitId: string,
+  teacherId?: string,
+): QuestionPublic[] {
   const liveQuestions = db
     .select()
     .from(questions)
-    .where(and(eq(questions.unitId, unitId), isNull(questions.deletedAt)))
+    .where(
+      teacherId === undefined
+        ? and(eq(questions.unitId, unitId), isNull(questions.deletedAt))
+        : and(
+            eq(questions.teacherId, teacherId),
+            eq(questions.unitId, unitId),
+            isNull(questions.deletedAt),
+          ),
+    )
     .orderBy(asc(questions.order), asc(questions.id))
     .all();
-  return publicQuestionsOfRows(db, liveQuestions);
+  return publicQuestionsOfRows(db, liveQuestions, teacherId);
 }
 
 /**
@@ -1089,13 +1183,24 @@ export function getStudentAssignmentPaper(
     throw new HttpError(403, "FORBIDDEN", "未被指派此作业，无权查看");
   }
 
-  const unitRows = db
-    .select({ unitId: assignmentUnits.unitId, title: units.title })
-    .from(assignmentUnits)
-    .innerJoin(units, eq(assignmentUnits.unitId, units.id))
-    .where(eq(assignmentUnits.assignmentId, assignmentId))
-    .orderBy(asc(assignmentUnits.order), asc(assignmentUnits.unitId))
-    .all();
+  // T2B.4：教师域按 D10 从作业根行推导（学生侧无会话教师；对外行为不变）
+  const teacherId = row.teacherId;
+  const unitRows =
+    teacherId === null
+      ? []
+      : db
+          .select({ unitId: assignmentUnits.unitId, title: units.title })
+          .from(assignmentUnits)
+          .innerJoin(
+            units,
+            and(
+              eq(assignmentUnits.unitId, units.id),
+              eq(units.teacherId, teacherId),
+            ),
+          )
+          .where(eq(assignmentUnits.assignmentId, assignmentId))
+          .orderBy(asc(assignmentUnits.order), asc(assignmentUnits.unitId))
+          .all();
   // D16：单元软删不影响作业通道——引用行保留、题目照常下发（单元标题取当前值，
   // 软删单元行在回收站保留故仍可读）；live 题数为 0 的单元（题目被清空/全软删）
   // 跳过；全部跳过 → units 空数组（前端空卷兜底）
@@ -1103,7 +1208,7 @@ export function getStudentAssignmentPaper(
     .map((unit) => ({
       id: unit.unitId,
       title: unit.title,
-      questions: unitPublicQuestions(db, unit.unitId),
+      questions: unitPublicQuestions(db, unit.unitId, teacherId ?? undefined),
     }))
     .filter((unit) => unit.questions.length > 0);
   return { units: unitsOf };

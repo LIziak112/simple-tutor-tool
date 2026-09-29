@@ -900,7 +900,7 @@ describe("T2B.1 单教师等价：创建入口写 teacherId（D9）", () => {
       filename: "练习.md",
       markdown: SCOPED_MD,
     });
-    const assignment = createAssignment(db, {
+    const assignment = createAssignment(db, TEST_TEACHER_ID, {
       unitIds: ["u1"],
       studentIds: [student.student.id],
       title: "作业一",

@@ -23,12 +23,14 @@ import {
 } from "../services/assignment-service";
 
 /**
- * 作业管理路由（需教师会话），由 teacher.ts 挂在 /api/teacher 之下（T2A.7 大改）：
+ * 作业管理路由（需教师会话），由 teacher.ts 挂在 /api/teacher 之下（T2A.7 大改；
+ * T2B.4 起全部接口按会话教师 c.var.teacher.id——乙访问甲的作业 → 404（D12），
+ * unitIds / courseId / studentIds 逐项校验归属）：
  * - GET    /assignments：列表。查询参数：includeDeleted=true 含已删除（默认只列
  *   未删）；courseId=UUID 只看该课程作业 / "none" 只看无课程作业（非法值 400）；
  * - GET    /assignments/:id：详情（roster 每人状态、startedCount、课程新成员）；
  * - POST   /assignments：布置作业 {title?, courseId?, unitIds[], studentIds[], dueAt?}
- *   （单元重复 400 DUPLICATE_UNIT；单元/学生/课程不存在 404）；
+ *   （单元重复 400 DUPLICATE_UNIT；单元/学生/课程不存在或非本人 404）；
  * - POST   /assignments/check：D15 布置前「已做过」检查 {unitIds[], studentIds[]}；
  * - PATCH  /assignments/:id：改标题/截止（null 取消）/替换单元（锁定后 409
  *   ASSIGNMENT_CONTENT_LOCKED）/名单增删（移出已开始学生须 confirmStarted，
@@ -57,7 +59,7 @@ export function createAssignmentTeacherRoutes(db: Db) {
       }
       return c.json({
         ok: true,
-        data: listTeacherAssignments(db, {
+        data: listTeacherAssignments(db, c.var.teacher.id, {
           includeDeleted: parsed.data.includeDeleted ?? false,
           ...(parsed.data.courseId !== undefined
             ? { courseId: parsed.data.courseId }
@@ -68,7 +70,7 @@ export function createAssignmentTeacherRoutes(db: Db) {
     .get("/assignments/:id", (c) => {
       return c.json({
         ok: true,
-        data: getAssignmentDetail(db, c.req.param("id")),
+        data: getAssignmentDetail(db, c.var.teacher.id, c.req.param("id")),
       });
     })
     .post("/assignments", async (c) => {
@@ -76,14 +78,20 @@ export function createAssignmentTeacherRoutes(db: Db) {
         c,
         assignmentCreateRequestSchema,
       );
-      return c.json({ ok: true, data: createAssignment(db, body) }, 201);
+      return c.json(
+        { ok: true, data: createAssignment(db, c.var.teacher.id, body) },
+        201,
+      );
     })
     .post("/assignments/check", async (c) => {
       const body: AssignmentCheckRequest = await parseJsonBody(
         c,
         assignmentCheckRequestSchema,
       );
-      return c.json({ ok: true, data: checkAssignment(db, body) });
+      return c.json({
+        ok: true,
+        data: checkAssignment(db, c.var.teacher.id, body),
+      });
     })
     .patch("/assignments/:id", async (c) => {
       const body: AssignmentUpdateRequest = await parseJsonBody(
@@ -92,11 +100,11 @@ export function createAssignmentTeacherRoutes(db: Db) {
       );
       return c.json({
         ok: true,
-        data: updateAssignment(db, c.req.param("id"), body),
+        data: updateAssignment(db, c.var.teacher.id, c.req.param("id"), body),
       });
     })
     .delete("/assignments/:id", (c) => {
-      deleteAssignment(db, c.req.param("id"));
+      deleteAssignment(db, c.var.teacher.id, c.req.param("id"));
       return c.json({ ok: true, data: null });
     });
 }
