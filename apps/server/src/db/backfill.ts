@@ -1,4 +1,7 @@
-import { and, asc, eq, isNotNull, isNull, sql } from "drizzle-orm";
+import { questionSchema, studentAnswerSchema } from "@tutor/contract";
+import { grade } from "@tutor/grading";
+import { and, asc, eq, isNotNull, isNull, ne, sql } from "drizzle-orm";
+import { finalScoreOf } from "../services/attempt-service.ts";
 import type { Db } from "./client";
 import {
   appSettings,
@@ -14,6 +17,8 @@ import {
   libraryFolders,
   questionKnowledge,
   questions,
+  type ResponseRow,
+  responses,
   students,
   teachers,
   units,
@@ -65,6 +70,12 @@ const T2B1_MULTI_TEACHER_BACKFILL_KEY = "t2b1_multi_teacher_backfill";
  * allowRegistration='true'（注册开关默认开）。
  */
 const T2B6_APP_SETTINGS_BACKFILL_KEY = "t2b6_app_settings_init";
+/**
+ * T3.2a（判分口径 D1/D2/D3 存量回填）的完成标记 key：对已交卷 attempt 按
+ * 新判分语义重算 responses.autoCorrect / finalCorrect 与 attempt 的
+ * scoreAuto / scoreFinal / status。数据回填（非结构变更），见 backfillT32aGrading。
+ */
+const T32A_GRADING_SEMANTICS_BACKFILL_KEY = "t32a_grading_semantics_backfill";
 
 /**
  * 执行全部未完成的数据搬迁（启动流程在 runMigrations 之后调用；
@@ -128,6 +139,17 @@ export function runBackfills(db: Db, now: Date = new Date()): void {
       tx.insert(dataMigrations)
         .values({
           key: T2B6_APP_SETTINGS_BACKFILL_KEY,
+          appliedAt: now.toISOString(),
+        })
+        .run();
+    });
+  }
+  if (!appliedKeys.has(T32A_GRADING_SEMANTICS_BACKFILL_KEY)) {
+    db.transaction((tx) => {
+      backfillT32aGrading(tx);
+      tx.insert(dataMigrations)
+        .values({
+          key: T32A_GRADING_SEMANTICS_BACKFILL_KEY,
           appliedAt: now.toISOString(),
         })
         .run();
@@ -487,6 +509,112 @@ function backfillT2b6(tx: Tx): void {
     .values({ key: "allowRegistration", value: "true" })
     .onConflictDoNothing({ target: appSettings.key })
     .run();
+}
+
+// ---------- T3.2a：判分口径存量回填（D1/D2/D3） ----------
+
+/** JSON.parse 的窄化包装：坏数据返回 undefined（与 attempt-service 同口径） */
+function jsonOf(text: string): unknown {
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * T3.2a 判分口径存量回填（一次性，标记 t32a_grading_semantics_backfill）：
+ * D1（未作答客观题判错）/ D3（交卷写 finalCorrect = teacherMark ?? autoCorrect）
+ * / D2（scoreFinal 分母=全部题、graded=全部非 null）上线前已交卷的 attempt，
+ * 按新口径重算：
+ *
+ * 1. 逐题重判 autoCorrect：判分输入**以 responses.questionSnapshotJson 为准**
+ *    （与交卷时同源——题目此后可能被编辑/软删，当前 questions 内容不代表作答
+ *    当时）；快照缺失或解析失败的题**跳过并保留原值**（防御异常行，不猜）；
+ *    学生答案取 answerJson（坏数据按未作答）；
+ * 2. 写 finalCorrect = teacherMark ?? autoCorrect（存量 teacherMark 尚无写入
+ *    链路，防御性识别 'correct'/'wrong'，其余按 null）；
+ * 3. 重算 attempt：scoreAuto = 答对 ÷ autoCorrect 非 null 题数（未作答客观题
+ *    从此进分母）；scoreFinal/status 由 finalScoreOf（D2）——全部非 null →
+ *    graded + scoreFinal，否则 submitted + null。
+ *
+ * 范围与幂等：只处理**已交卷且有 responses 行**的 attempt（draft 不判分；
+ * 无 responses 的历史异常行无从重算，原样保留）。重算从快照确定性推导，
+ * 重复执行结果不变；行级/attempt 级仅在值有变化时 UPDATE（对按新口径已
+ * 一致的库零写入）。
+ */
+function backfillT32aGrading(tx: Tx): void {
+  const submittedAttempts = tx
+    .select()
+    .from(attempts)
+    .where(ne(attempts.status, "draft"))
+    .all();
+  if (submittedAttempts.length === 0) return;
+
+  const responsesByAttempt = new Map<string, ResponseRow[]>();
+  for (const row of tx.select().from(responses).all()) {
+    const list = responsesByAttempt.get(row.attemptId);
+    if (list === undefined) responsesByAttempt.set(row.attemptId, [row]);
+    else list.push(row);
+  }
+
+  for (const attempt of submittedAttempts) {
+    const rows = responsesByAttempt.get(attempt.id);
+    if (rows === undefined || rows.length === 0) continue; // 无 responses：无从重算
+
+    const autoCorrects: (boolean | null)[] = [];
+    const finalCorrects: (boolean | null)[] = [];
+    for (const row of rows) {
+      // 快照 → 契约 Question（缺失/解析失败 → null = 跳过重判，保留原 autoCorrect）
+      const snapshotParsed =
+        row.questionSnapshotJson === null
+          ? null
+          : questionSchema.safeParse(jsonOf(row.questionSnapshotJson));
+      const question = snapshotParsed?.success ? snapshotParsed.data : null;
+      const answerParsed =
+        row.answerJson === null
+          ? undefined
+          : studentAnswerSchema.safeParse(jsonOf(row.answerJson));
+      const answer = answerParsed?.success ? answerParsed.data : undefined;
+      const autoCorrect =
+        question !== null ? grade(question, answer) : row.autoCorrect;
+      const teacherMark =
+        row.teacherMark === "correct"
+          ? true
+          : row.teacherMark === "wrong"
+            ? false
+            : null;
+      const finalCorrect = teacherMark ?? autoCorrect;
+      if (autoCorrect !== row.autoCorrect || finalCorrect !== row.finalCorrect) {
+        tx.update(responses)
+          .set({ autoCorrect, finalCorrect })
+          .where(eq(responses.id, row.id))
+          .run();
+      }
+      autoCorrects.push(autoCorrect);
+      finalCorrects.push(finalCorrect);
+    }
+
+    // D1 口径的 scoreAuto（答对 ÷ autoCorrect 非 null 题数；无可判分为 null）
+    const autoGradable = autoCorrects.filter((v) => v !== null).length;
+    const scoreAuto =
+      autoGradable === 0
+        ? null
+        : Math.round(
+            (autoCorrects.filter((v) => v === true).length / autoGradable) * 100,
+          );
+    const { status, scoreFinal } = finalScoreOf(finalCorrects);
+    if (
+      attempt.scoreAuto !== scoreAuto ||
+      attempt.scoreFinal !== scoreFinal ||
+      attempt.status !== status
+    ) {
+      tx.update(attempts)
+        .set({ scoreAuto, scoreFinal, status })
+        .where(eq(attempts.id, attempt.id))
+        .run();
+    }
+  }
 }
 
 // ---------- 孤儿资源兜底（T2A.1 事故修复） ----------

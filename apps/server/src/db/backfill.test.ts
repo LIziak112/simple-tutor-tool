@@ -25,10 +25,12 @@ import {
   dataMigrations,
   lectures,
   libraryFolders,
+  responses,
+  students,
   teachers,
   units,
 } from "./schema.ts";
-import { createTestDb } from "./test-utils.ts";
+import { createTestDb, TEST_TEACHER_ID } from "./test-utils.ts";
 
 /**
  * D23 数据搬迁测试（T2A.1 验收项）：「T2A 前结构」fixture 库 → 迁移 → 回填 → 断言。
@@ -285,7 +287,7 @@ describe("D23 数据搬迁（T2A 前结构 fixture → 迁移 → 回填）", ()
         .all()
         .every((m) => m.joinedAt === "2026-09-27T00:00:00.000Z"),
     ).toBe(true);
-    // 标记表：t2a1、t2a6、t2a7、t2b1 各一行，appliedAt 仍是首次时间戳
+    // 标记表：各回填键各一行，appliedAt 仍是首次时间戳
     expect(db.select().from(dataMigrations).all()).toEqual([
       {
         key: "t2a1_library_courses_backfill",
@@ -305,6 +307,10 @@ describe("D23 数据搬迁（T2A 前结构 fixture → 迁移 → 回填）", ()
       },
       {
         key: "t2b6_app_settings_init",
+        appliedAt: "2026-09-27T00:00:00.000Z",
+      },
+      {
+        key: "t32a_grading_semantics_backfill",
         appliedAt: "2026-09-27T00:00:00.000Z",
       },
     ]);
@@ -360,10 +366,10 @@ describe("D23 数据搬迁（T2A 前结构 fixture → 迁移 → 回填）", ()
     expect(db.select().from(libraryFolders).all()).toEqual([]);
     expect(db.select().from(courseItems).all()).toEqual([]);
     expect(db.select().from(courseStudents).all()).toEqual([]);
-    expect(db.select().from(dataMigrations).all()).toHaveLength(5);
+    expect(db.select().from(dataMigrations).all()).toHaveLength(6);
     // 全新库再跑一次同样幂等
     runBackfills(db);
-    expect(db.select().from(dataMigrations).all()).toHaveLength(5);
+    expect(db.select().from(dataMigrations).all()).toHaveLength(6);
   });
 });
 
@@ -518,7 +524,7 @@ describe("D23-5 作业结构搬迁（T2A.6 时代结构 fixture → 迁移 → �
     ).toBe(true);
     expect(db.select().from(attempts).get()?.courseId).toBe("c-a");
     // 标记 appliedAt 仍是首次时间戳
-    expect(db.select().from(dataMigrations).all()).toHaveLength(5);
+    expect(db.select().from(dataMigrations).all()).toHaveLength(6);
     expect(
       db
         .select()
@@ -655,12 +661,15 @@ function insertPreT2bFixture(db: Db): void {
     INSERT INTO course_students (course_id, student_id, joined_at) VALUES
       ('c-a', 's-1', '${t0}');
     INSERT INTO attempts (id, student_id, source_type, assignment_id, course_id, unit_id, attempt_no, status, started_at, submitted_at, active_sec, device, score_auto, score_final) VALUES
-      ('at-1', 's-1', 'assignment', 'as-1', 'c-a', 'u-a1', 1, 'submitted', '${t1}', '${t1}', 120, 'iPad', 50, NULL),
-      ('at-2', 's-2', 'assignment', 'as-1', 'c-a', NULL,   1, 'graded',    '${t2}', '${t2}', 90,  NULL,   100, 100);
+      -- T3.2a 判分口径回填后的一致形态：at-1 = 1 可判分全对（r-1）、1 待批（r-2）
+      -- → scoreAuto=100、submitted；at-2 = 教师改判对（r-3 teacherMark=correct，
+      -- finalCorrect=1）→ scoreAuto=0（自动判错）、scoreFinal=100、graded
+      ('at-1', 's-1', 'assignment', 'as-1', 'c-a', 'u-a1', 1, 'submitted', '${t1}', '${t1}', 120, 'iPad', 100, NULL),
+      ('at-2', 's-2', 'assignment', 'as-1', 'c-a', NULL,   1, 'graded',    '${t2}', '${t2}', 90,  NULL,   0, 100);
     INSERT INTO responses (id, attempt_id, question_id, question_version, question_snapshot_json, answer_json, auto_correct, final_correct, teacher_mark, teacher_comment, active_sec, hints_used, hints_opened_json, change_count, ink_id) VALUES
       ('r-1', 'at-1', 'q-a1-1', 2, '{"id":"q-a1-1"}', '{"kind":"judge","value":true}',  1, 1,    NULL, NULL, 30, 1, '[0]', 2, NULL),
       ('r-2', 'at-1', 'q-a1-2', 1, '{"id":"q-a1-2"}', NULL,                              NULL, NULL, NULL, NULL, 0,  0, NULL,  0, 'ink-1'),
-      ('r-3', 'at-2', 'q-a1-1', 2, '{"id":"q-a1-1"}', '{"kind":"judge","value":false}', 0,    0,    '正确', '很好', 30, 0, NULL,  1, NULL);
+      ('r-3', 'at-2', 'q-a1-1', 2, '{"id":"q-a1-1"}', '{"kind":"judge","value":false}', 0,    1,    'correct', '很好', 30, 0, NULL,  1, NULL);
     INSERT INTO ink (id, attempt_id, question_id, strokes_path, png_path, width, height, stroke_count, updated_at) VALUES
       ('ink-1', 'at-1', 'q-a1-2', 'blobs/ink/at-1/q.json.gz', 'blobs/ink/at-1/q.png', 800, 600, 12, '${t1}');
   `);
@@ -1184,6 +1193,10 @@ describe("孤儿资源兜底（T2A.1 事故修复：与主标记无关、每次�
         key: "t2b6_app_settings_init",
         appliedAt: "2026-09-27T00:00:00.000Z",
       },
+      {
+        key: "t32a_grading_semantics_backfill",
+        appliedAt: "2026-09-27T00:00:00.000Z",
+      },
     ]);
   });
 
@@ -1237,6 +1250,332 @@ describe("孤儿资源兜底（T2A.1 事故修复：与主标记无关、每次�
           .map((row) => [row.id, row.folderId] as const),
       ),
     ).toEqual(unitFolderIds);
-    expect(db.select().from(dataMigrations).all()).toHaveLength(5);
+    expect(db.select().from(dataMigrations).all()).toHaveLength(6);
+  });
+});
+
+// ---------- T3.2a：判分口径存量回填（D1/D2/D3） ----------
+
+/**
+ * 契约 questionSchema 合法形态的题目快照（判分输入以 responses.
+ * questionSnapshotJson 为准——与交卷时同源）。
+ */
+function snapshotJson(question: {
+  id: string;
+  type: string;
+  answers?: unknown;
+  options?: unknown;
+}): string {
+  return JSON.stringify({
+    id: question.id,
+    type: question.type,
+    difficulty: 1,
+    knowledge: ["考点"],
+    stemMd: "题干",
+    ...(question.options !== undefined ? { options: question.options } : {}),
+    ...(question.answers !== undefined ? { answers: question.answers } : {}),
+    hints: [],
+    sourceMd: "原文",
+  });
+}
+
+/** 回填测试用的题目快照（choice 可判 / multi 全对答案 / fill 单空 / solve 无标准答案） */
+const SNAPSHOTS = {
+  choice: snapshotJson({
+    id: "bg-q1",
+    type: "choice",
+    options: [
+      { text: "A", correct: false },
+      { text: "B", correct: true },
+    ],
+    answers: { kind: "choice", index: 1 },
+  }),
+  multi: snapshotJson({
+    id: "bg-q2",
+    type: "multi",
+    options: [
+      { text: "A", correct: true },
+      { text: "B", correct: false },
+      { text: "C", correct: true },
+    ],
+    answers: { kind: "multi", indexes: [0, 2] },
+  }),
+  fill: snapshotJson({
+    id: "bg-q3",
+    type: "fill",
+    answers: { kind: "fill", blanks: [["8"]] },
+  }),
+  /** solve 未给标准答案（无 :::answer）——判 null 进待批，不受 D1 影响 */
+  solveNoAnswer: snapshotJson({ id: "bg-q4", type: "solve" }),
+} as const;
+
+/**
+ * 旧口径构造一份 attempt + responses（T3.2a 之前的交卷形态：
+ * finalCorrect 恒 null；未作答客观题 autoCorrect=null 而非 false）。
+ * 返回 attemptId。responses 形态由调用方逐行传入。
+ */
+function seedLegacyAttempt(
+  db: Db,
+  attempt: { id: string; status: string; scoreAuto: number | null },
+  rows: {
+    id: string;
+    questionId: string;
+    snapshot: string | null;
+    answerJson: string | null;
+    autoCorrect: boolean | null;
+  }[],
+): void {
+  db.insert(attempts)
+    .values({
+      id: attempt.id,
+      studentId: "bg-s1",
+      sourceType: "course",
+      assignmentId: null,
+      courseId: null,
+      unitId: "bg-u1",
+      attemptNo: 1,
+      status: attempt.status as "draft" | "submitted" | "graded",
+      startedAt: "2026-09-01T00:00:00.000Z",
+      submittedAt:
+        attempt.status === "draft" ? null : "2026-09-01T00:10:00.000Z",
+      activeSec: null,
+      device: null,
+      scoreAuto: attempt.scoreAuto,
+      scoreFinal: null,
+    })
+    .run();
+  for (const row of rows) {
+    db.insert(responses)
+      .values({
+        id: row.id,
+        attemptId: attempt.id,
+        questionId: row.questionId,
+        questionVersion: 1,
+        questionSnapshotJson: row.snapshot,
+        answerJson: row.answerJson,
+        autoCorrect: row.autoCorrect,
+        finalCorrect: null, // 旧口径：交卷从不写 finalCorrect
+        teacherMark: null,
+        teacherComment: null,
+        activeSec: null,
+        hintsUsed: 0,
+        changeCount: 0,
+        inkId: null,
+      })
+      .run();
+  }
+}
+
+/** 回填测试的最小前置：学生 + 单元（表 FK 需要；题目本体不参与——判分只看快照） */
+function seedBackfillFixture(db: Db): void {
+  db.insert(students)
+    .values({
+      id: "bg-s1",
+      teacherId: TEST_TEACHER_ID,
+      displayName: "回填学生",
+      loginName: "bg-s1",
+      passwordHash: null,
+      linkToken: "bg-tok",
+      createdAt: "2026-09-01T00:00:00.000Z",
+    })
+    .run();
+}
+
+/**
+ * 模拟「T3.2a 前的旧库升级」：createTestDb 已把空库标记跑完，先摘掉 t32a
+ * 标记再 runBackfills，让判分回填真正作用于刚构造的旧口径数据。
+ */
+function runGradingBackfill(db: Db): void {
+  db.delete(dataMigrations)
+    .where(eq(dataMigrations.key, "t32a_grading_semantics_backfill"))
+    .run();
+  runBackfills(db, new Date("2026-09-30T00:00:00.000Z"));
+}
+
+describe("T3.2a 判分口径回填（旧口径已交 attempt → D1/D2/D3 重算）", () => {
+  it("未作答客观题重判 false、finalCorrect 写回、scoreAuto 分母变化、status/scoreFinal 按 D2；快照缺失跳过保留原值；draft 不动", () => {
+    const db = createTestDb();
+    seedBackfillFixture(db);
+    // 旧口径已交卷：choice 答对（1/1 → scoreAuto=100）+ fill 未作答（null）+
+    // solve 已答无标准答案（null）+ 判断题快照缺失（当年判对，防御行）
+    seedLegacyAttempt(
+      db,
+      { id: "bg-at1", status: "submitted", scoreAuto: 100 },
+      [
+        {
+          id: "bg-r1",
+          questionId: "bg-q1",
+          snapshot: SNAPSHOTS.choice,
+          answerJson: JSON.stringify({ kind: "choice", index: 1 }),
+          autoCorrect: true,
+        },
+        {
+          id: "bg-r2",
+          questionId: "bg-q3",
+          snapshot: SNAPSHOTS.fill,
+          answerJson: null,
+          autoCorrect: null,
+        },
+        {
+          id: "bg-r3",
+          questionId: "bg-q4",
+          snapshot: SNAPSHOTS.solveNoAnswer,
+          answerJson: JSON.stringify({ kind: "final", finalAnswer: "略" }),
+          autoCorrect: null,
+        },
+        {
+          id: "bg-r4",
+          questionId: "bg-q9",
+          snapshot: null, // 快照缺失：跳过重判、保留原值
+          answerJson: JSON.stringify({ kind: "judge", value: true }),
+          autoCorrect: true,
+        },
+      ],
+    );
+    // 对照：draft 的 responses 不被回填触碰
+    seedLegacyAttempt(
+      db,
+      { id: "bg-atd", status: "draft", scoreAuto: null },
+      [
+        {
+          id: "bg-rd",
+          questionId: "bg-q3",
+          snapshot: null,
+          answerJson: JSON.stringify({ kind: "fill", values: ["8"] }),
+          autoCorrect: null,
+        },
+      ],
+    );
+
+    runGradingBackfill(db);
+
+    const rowOf = (id: string) =>
+      db.select().from(responses).where(eq(responses.id, id)).get();
+    // choice 答对：autoCorrect 不变，finalCorrect 按 D3 写回
+    expect(rowOf("bg-r1")).toMatchObject({ autoCorrect: true, finalCorrect: true });
+    // D1 核心：未作答填空由 null 重判 false，finalCorrect 同步写 false
+    expect(rowOf("bg-r2")).toMatchObject({
+      autoCorrect: false,
+      finalCorrect: false,
+    });
+    // 无标准答案 solve：仍 null/null（题目侧判定优先，进待批）
+    expect(rowOf("bg-r3")).toMatchObject({
+      autoCorrect: null,
+      finalCorrect: null,
+    });
+    // 快照缺失：autoCorrect 保留原值 true，finalCorrect = teacherMark ?? autoCorrect
+    expect(rowOf("bg-r4")).toMatchObject({ autoCorrect: true, finalCorrect: true });
+    // draft 行原样（未交卷不判分）
+    expect(rowOf("bg-rd")).toMatchObject({ autoCorrect: null, finalCorrect: null });
+
+    // attempt 级：scoreAuto 分母变化（旧 1/1=100 → 新 2/3=67，未作答填空进分母）；
+    // 存在待批（solve）→ 保持 submitted、scoreFinal=null（D2）
+    const attempt = db
+      .select()
+      .from(attempts)
+      .where(eq(attempts.id, "bg-at1"))
+      .get();
+    expect(attempt).toMatchObject({
+      status: "submitted",
+      scoreAuto: 67,
+      scoreFinal: null,
+    });
+    expect(
+      db.select().from(attempts).where(eq(attempts.id, "bg-atd")).get()?.status,
+    ).toBe("draft");
+    db.$client.close();
+  });
+
+  it("全客观题卷：回填后 graded 且 scoreFinal = round(对/全部题)（D2）；多选空选重判 false", () => {
+    const db = createTestDb();
+    seedBackfillFixture(db);
+    // 旧口径：multi 答对 + multi 空选（旧判 null 不进分母 → scoreAuto=100、submitted）
+    seedLegacyAttempt(
+      db,
+      { id: "bg-at2", status: "submitted", scoreAuto: 100 },
+      [
+        {
+          id: "bg-r5",
+          questionId: "bg-q2",
+          snapshot: SNAPSHOTS.multi,
+          answerJson: JSON.stringify({ kind: "multi", indexes: [0, 2] }),
+          autoCorrect: true,
+        },
+        {
+          id: "bg-r6",
+          questionId: "bg-q5",
+          snapshot: SNAPSHOTS.multi.replace("bg-q2", "bg-q5"),
+          answerJson: JSON.stringify({ kind: "multi", indexes: [] }),
+          autoCorrect: null,
+        },
+      ],
+    );
+
+    runGradingBackfill(db);
+
+    // D1：多选空选（学生选后又全部取消）重判 false
+    expect(
+      db.select().from(responses).where(eq(responses.id, "bg-r6")).get(),
+    ).toMatchObject({ autoCorrect: false, finalCorrect: false });
+    // 全部 finalCorrect 非 null → graded；scoreFinal = round(1/2×100) = 50（D2）
+    const attempt = db
+      .select()
+      .from(attempts)
+      .where(eq(attempts.id, "bg-at2"))
+      .get();
+    expect(attempt).toMatchObject({
+      status: "graded",
+      scoreAuto: 50,
+      scoreFinal: 50,
+    });
+    db.$client.close();
+  });
+
+  it("幂等：重复执行（标记防重跑 / 标记丢失后重跑）结果不变", () => {
+    const db = createTestDb();
+    seedBackfillFixture(db);
+    seedLegacyAttempt(
+      db,
+      { id: "bg-at3", status: "submitted", scoreAuto: 100 },
+      [
+        {
+          id: "bg-r7",
+          questionId: "bg-q1",
+          snapshot: SNAPSHOTS.choice,
+          answerJson: JSON.stringify({ kind: "choice", index: 0 }), // 答错
+          autoCorrect: false,
+        },
+        {
+          id: "bg-r8",
+          questionId: "bg-q3",
+          snapshot: SNAPSHOTS.fill,
+          answerJson: null,
+          autoCorrect: null,
+        },
+      ],
+    );
+
+    runGradingBackfill(db);
+    const afterFirst = {
+      responses: db.select().from(responses).all(),
+      attempts: db.select().from(attempts).all(),
+    };
+    expect(
+      afterFirst.attempts.find((row) => row.id === "bg-at3"),
+    ).toMatchObject({ status: "graded", scoreAuto: 0, scoreFinal: 0 });
+
+    // ① 标记命中：整体跳过
+    runBackfills(db, new Date("2026-10-01T00:00:00.000Z"));
+    expect(db.select().from(responses).all()).toEqual(afterFirst.responses);
+    expect(db.select().from(attempts).all()).toEqual(afterFirst.attempts);
+
+    // ② 极端情形：标记行丢失（库被手工改过）→ 重算确定性，结果不变
+    db.delete(dataMigrations)
+      .where(eq(dataMigrations.key, "t32a_grading_semantics_backfill"))
+      .run();
+    runBackfills(db, new Date("2026-10-01T00:00:00.000Z"));
+    expect(db.select().from(responses).all()).toEqual(afterFirst.responses);
+    expect(db.select().from(attempts).all()).toEqual(afterFirst.attempts);
+    db.$client.close();
   });
 });
