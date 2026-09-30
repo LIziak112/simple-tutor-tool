@@ -19,6 +19,7 @@ export function InkLightbox({
   alt,
   onClose,
   inkId,
+  hasStrokes = true,
   initialTab = "snapshot",
 }: {
   /** 笔迹 PNG 地址（契约下发的相对路径 /api/teacher/ink/{inkId}.png） */
@@ -28,6 +29,8 @@ export function InkLightbox({
   onClose: () => void;
   /** 笔迹定位 id：提供时显示「快照 / 回放」切换（矢量接口的定位） */
   inkId?: string;
+  /** 契约 ink.hasStrokes：false 时回放态不发矢量请求直接降级（透传 InkReplayPane） */
+  hasStrokes?: boolean;
   /** 打开时的初始视图（题卡当前处于回放态时从回放打开） */
   initialTab?: InkViewTab;
 }) {
@@ -82,6 +85,7 @@ export function InkLightbox({
             pngUrl={pngUrl}
             alt={alt}
             layout="fill"
+            hasStrokes={hasStrokes}
           />
         ) : (
           <img
