@@ -74,6 +74,9 @@ const teacherRoutes = (() => {
   const AttemptDetailPage = lazy(
     () => import("./pages/teacher/AttemptDetailPage"),
   );
+  const PendingMarkQueuePage = lazy(
+    () => import("./pages/teacher/PendingMarkQueuePage"),
+  );
   const PlaceholderPage = lazy(() => import("./pages/teacher/PlaceholderPage"));
 
   /** 布局内的懒加载兜底（骨架级提示即可，布局本身很快） */
@@ -203,6 +206,15 @@ const teacherRoutes = (() => {
           element={
             <Suspense fallback={pageFallback}>
               <AttemptDetailPage />
+            </Suspense>
+          }
+        />
+        <Route
+          // T3.2b：待批队列（D4 单题卡片连续批改；数据页头部「待批队列」入口的落点）
+          path="data/pending"
+          element={
+            <Suspense fallback={pageFallback}>
+              <PendingMarkQueuePage />
             </Suspense>
           }
         />
