@@ -7,8 +7,11 @@ import { studentAnswerSchema } from "./grading.ts";
  * 教师端作答数据页契约（T3.1，依据 Phase3 清单 D5–D8）：
  * GET /api/teacher/attempts 作答卡片列表（三视图/来源筛选共用一套查询）
  * 与 GET /api/teacher/attempts/:id 作答详情（D5：draft 亦可用）。
+ * T3.2b 增补（D3/D4）：POST /api/teacher/responses/:id/mark 批注与
+ * GET /api/teacher/pending-marks 待批队列。
  * 依据：docs/Phase3任务清单.md §2 D5（草稿可见）、D6（三视图与来源筛选）、
- * D7（详情逐题字段）、D8（入口衔接）；全局约定见 docs/开发任务清单.md §0.3。
+ * D7（详情逐题字段）、D8（入口衔接）、D3（批注语义）、D4（待批队列口径）；
+ * 全局约定见 docs/开发任务清单.md §0.3。
  *
  * 约定（与 assignment.ts / attempt.ts 一致）：
  * - 本文件只定义查询参数与 data 部分；响应壳统一由 index.ts 描述，
@@ -163,6 +166,12 @@ export const teacherAttemptInkSchema = z.object({
 export const teacherAttemptDetailQuestionSchema = z.object({
   /** 题目 id（来自 DSL） */
   questionId: z.string().min(1),
+  /**
+   * responses.id（POST /responses/:id/mark 的定位 id，D3 详情页内联批改用）：
+   * 仅已交卷 attempt 的逐题行携带（冻结 responses 行的 id）；draft 逐题来自
+   * 当前库题目、可能尚无 responses 行，恒 null（draft 本就不可批注）。
+   */
+  responseId: z.uuid().nullable(),
   /** 全卷连续题号（1 起 = attempt 单元顺序 × 单元内题序） */
   no: z.number().int().min(1),
   /** 所在单元 id */
@@ -246,6 +255,136 @@ export const teacherAttemptErrorCodeSchema = z.enum([
   "VALIDATION_ERROR",
 ]);
 
+// ---------- T3.2b 批注与待批队列（D3/D4） ----------
+
+/** 教师评语长度上限（D3：契约层校验，超出 400 VALIDATION_ERROR） */
+export const TEACHER_COMMENT_MAX = 2000;
+
+/**
+ * POST /api/teacher/responses/:id/mark 请求体（D3）：判定与评语两字段一次提交
+ * （UI 上一起保存），两个字段**都必须显式携带**（值可为 null）：
+ * - mark：'correct' | 'wrong' | null——null 清除教师判定（finalCorrect 回落
+ *   autoCorrect）；
+ * - comment：string | null——先按原始长度校验 ≤2000（超出 400），再 trim 归一化：
+ *   去首尾空白后空串按 null（清除评语），其余存 trim 后文本。服务层收到的一定是
+ *   归一化结果，不再二次处理。
+ * 允许对任何**已交卷**的题批注/改判（含自动判过的题）；draft attempt → 409
+ * NOT_SUBMITTED；非本人教师 → 404 RESPONSE_NOT_FOUND（见 teacherMarkErrorCodeSchema）。
+ */
+export const markRequestSchema = z.object({
+  mark: teacherMarkSchema.nullable(),
+  comment: z
+    .string({ message: "comment 必须是字符串" })
+    .max(TEACHER_COMMENT_MAX, `评语最长 ${TEACHER_COMMENT_MAX} 字`)
+    .nullable()
+    .transform((value) => {
+      const trimmed = value === null ? null : value.trim();
+      return trimmed === "" || trimmed === null ? null : trimmed;
+    }),
+});
+
+/**
+ * POST /api/teacher/responses/:id/mark 响应 data：批注写回后的最新状态
+ * （事务内落库后回读）。整卷字段按 D2 状态机重算：全部 finalCorrect 非 null →
+ * graded + scoreFinal；任一待批 → submitted + null。pendingCount 为该 attempt
+ * 剩余待批数（D4 共享谓词口径），前端据此更新批改进度 x/y。
+ */
+export const markResponseDataSchema = z.object({
+  /** responses.id（批注定位的题） */
+  responseId: z.uuid(),
+  /** 题目 id（来自 DSL） */
+  questionId: z.string().min(1),
+  /** 所属 attempt */
+  attemptId: z.uuid(),
+  /** 批注后的教师判定（mark=null 即已清除） */
+  teacherMark: teacherMarkSchema.nullable(),
+  /** 批注后的评语（契约已归一化：trim 后空串为 null） */
+  teacherComment: z.string().nullable(),
+  /** 本题最终判定（持久化口径 teacherMark ?? autoCorrect 的写回结果） */
+  finalCorrect: z.boolean().nullable(),
+  /** 批注后整卷状态（批注只发生在已交卷 attempt，draft 不可达） */
+  attemptStatus: z.enum(["submitted", "graded"]),
+  /** 批注后整卷最终得分（D2：round(对÷全部×100)；仍有待批为 null） */
+  scoreFinal: z.number().int().min(0).max(100).nullable(),
+  /** 该 attempt 剩余待批数（D4 共享谓词） */
+  pendingCount: z.number().int().min(0),
+});
+
+/**
+ * GET /api/teacher/pending-marks 查询参数（全部可选，可任意组合；D4）：
+ * courseId / assignmentId / studentId 按课程（assignment 来源取作业所属课程）、
+ * 作业、学生过滤。教师域过滤恒生效（乙只见自己的学生），排序恒 submittedAt
+ * 升序（先交先批），无分页（单教师待批队列规模有限，连续批改一次取全量）。
+ */
+export const pendingMarkListQuerySchema = z.object({
+  courseId: z.uuid("courseId 必须是 UUID 格式").optional(),
+  assignmentId: z.uuid("assignmentId 必须是 UUID 格式").optional(),
+  studentId: z.uuid("studentId 必须是 UUID 格式").optional(),
+});
+
+/**
+ * 待批队列的单题卡片（D4 口径 ≡ 已交卷 attempt 中 finalCorrect IS NULL 的
+ * responses；含只写笔迹未填最终答案的手写题）。教师端不受泄露约束——题干取
+ * questionSnapshotJson 快照原文（含 [[答案]] 标记），参考答案照常下发（批改要用）。
+ * 学生最终答案序列化为人类可读文本 answerText（多选按序字母、多空按序拼接、
+ * 手写题为最终答案原文；未作为 null——与 D13 CSV 序列化同一口径）。
+ */
+export const pendingMarkCardSchema = teacherAttemptSourceSchema.extend({
+  /** responses.id（POST /responses/:id/mark 的定位 id） */
+  responseId: z.uuid(),
+  /** 所属 attempt */
+  attemptId: z.uuid(),
+  /** 题目 id（来自 DSL） */
+  questionId: z.string().min(1),
+  /** 作答学生 id */
+  studentId: z.uuid(),
+  /** 学生姓名（students.displayName 当前值） */
+  studentName: z.string().min(1),
+  /** 题型（快照） */
+  type: questionTypeSchema,
+  /** 难度 1–5（快照） */
+  difficulty: z.number().int().min(1).max(5),
+  /** 考点名列表（快照） */
+  knowledge: z.array(z.string().min(1)),
+  /** 题干 Markdown（快照原文，含 [[答案]] 标记） */
+  stemMd: z.string(),
+  /** 选项纯文本（仅 choice/multi 快照携带） */
+  options: z.array(z.string()).optional(),
+  /** 参考答案（快照 QuestionAnswers；题目无标准答案为 null） */
+  answers: questionAnswersSchema.nullable(),
+  /** 学生最终答案（人类可读序列化；未作为 null） */
+  answerText: z.string().nullable(),
+  /** 手写信息（ink 表 (attemptId, questionId) 关联，D7 同口径）；无笔迹为 null */
+  ink: teacherAttemptInkSchema.nullable(),
+  /** 每题有效用时（秒；未计算为 null） */
+  activeSec: z.number().int().min(0).nullable(),
+  /** 已解锁提示数 */
+  hintsUsed: z.number().int().min(0),
+  /** 答案保存（改答案）次数 */
+  changeCount: z.number().int().min(0),
+  /** 交卷时间：UTC ISO（待批题必属已交卷 attempt，恒非空） */
+  submittedAt: z.string().min(1),
+});
+
+/** GET /api/teacher/pending-marks 响应 data（submittedAt 升序，先交先批） */
+export const pendingMarkListDataSchema = z.object({
+  marks: z.array(pendingMarkCardSchema),
+});
+
+/**
+ * 批注与待批队列错误码：
+ * - RESPONSE_NOT_FOUND：response 不存在或非本教师学生的作答（404，不暴露存在性，
+ *   与 ATTEMPT_NOT_FOUND 同口径）；
+ * - NOT_SUBMITTED：对 draft attempt 批注（409——未交卷的题没有可批改的冻结行）；
+ * - UNAUTHORIZED / VALIDATION_ERROR：与 auth 模块同义（401 / 400）。
+ */
+export const teacherMarkErrorCodeSchema = z.enum([
+  "RESPONSE_NOT_FOUND",
+  "NOT_SUBMITTED",
+  "UNAUTHORIZED",
+  "VALIDATION_ERROR",
+]);
+
 // ---------- 具体化的成功壳 ----------
 
 /** 携带教师作答列表的成功响应壳 */
@@ -256,6 +395,10 @@ export const teacherAttemptListOkSchema = apiOkExtend(
 export const teacherAttemptDetailOkSchema = apiOkExtend(
   teacherAttemptDetailDataSchema,
 );
+/** 携带批注结果的成功响应壳（T3.2b） */
+export const teacherMarkOkSchema = apiOkExtend(markResponseDataSchema);
+/** 携带待批队列的成功响应壳（T3.2b） */
+export const pendingMarkListOkSchema = apiOkExtend(pendingMarkListDataSchema);
 
 // ---------- 推断类型导出 ----------
 
@@ -277,3 +420,9 @@ export type TeacherAttemptDetailData = z.infer<
 export type TeacherAttemptErrorCode = z.infer<
   typeof teacherAttemptErrorCodeSchema
 >;
+export type MarkRequest = z.output<typeof markRequestSchema>;
+export type MarkResponseData = z.infer<typeof markResponseDataSchema>;
+export type PendingMarkListQuery = z.infer<typeof pendingMarkListQuerySchema>;
+export type PendingMarkCard = z.infer<typeof pendingMarkCardSchema>;
+export type PendingMarkListData = z.infer<typeof pendingMarkListDataSchema>;
+export type TeacherMarkErrorCode = z.infer<typeof teacherMarkErrorCodeSchema>;

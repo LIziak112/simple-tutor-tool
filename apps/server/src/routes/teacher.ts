@@ -46,6 +46,10 @@ import { createStudentTeacherRoutes } from "./teacher-students";
  * - T3.1（业务在 teacher-attempt-service）：GET /attempts（作答卡片列表，D6
  *   筛选与分页）、GET /attempts/:id（作答详情，D7；draft 亦可用，D5）。
  *   归属链 attempt → student → teacherId，非本人学生的作答 → 404。
+ * - T3.2b（业务在 mark-response）：POST /responses/:id/mark（D3 批注：判定 +
+ *   评语一次提交，事务内 finalCorrect=teacherMark??autoCorrect + D2 重算；
+ *   draft → 409 NOT_SUBMITTED）、GET /pending-marks（D4 待批队列：共享谓词
+ *   finalCorrect IS NULL + submittedAt 升序 + courseId/assignmentId/studentId 筛选）。
  *
  * 返回类型不显式标注：链式注册把路由签名累积进推断类型，
  * 挂载后 AppType 才能带上这些路由（前端 hc 端到端类型的前提）。

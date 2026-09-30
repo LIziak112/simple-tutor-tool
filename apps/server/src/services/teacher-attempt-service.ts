@@ -77,8 +77,9 @@ function jsonOf(text: string): unknown {
   }
 }
 
-/** answerJson → StudentAnswer（坏数据按未作答 null 处理，不让单行脏数据打挂接口） */
-function answerOf(answerJson: string | null): StudentAnswer | null {
+/** answerJson → StudentAnswer（坏数据按未作答 null 处理，不让单行脏数据打挂接口）；
+ * T3.2b 起导出——待批队列卡片拼装复用（mark-response.ts） */
+export function answerOf(answerJson: string | null): StudentAnswer | null {
   if (answerJson === null) return null;
   const parsed = studentAnswerSchema.safeParse(jsonOf(answerJson));
   return parsed.success ? parsed.data : null;
@@ -91,8 +92,11 @@ function optionTexts(optionsJson: string | null): string[] | undefined {
   return parsed.success ? parsed.data.map((option) => option.text) : undefined;
 }
 
-/** 手写信息投影（D7：ink 行存在才返回；pngUrl 指向教师端 PNG 直出接口） */
-function inkInfoOf(row: InkRow | undefined): TeacherAttemptInkInfo | null {
+/** 手写信息投影（D7：ink 行存在才返回；pngUrl 指向教师端 PNG 直出接口）；
+ * T3.2b 起导出——待批队列卡片拼装复用（mark-response.ts） */
+export function inkInfoOf(
+  row: InkRow | undefined,
+): TeacherAttemptInkInfo | null {
   if (row === undefined) return null;
   return {
     inkId: row.id,
@@ -106,8 +110,9 @@ function inkInfoOf(row: InkRow | undefined): TeacherAttemptInkInfo | null {
  * course=单元标题 + 课程名 + attemptNo（「单元标题 · 第 n 次」）。
  * 单元/课程按 teacherId 域内读；assignment 行经 FK 必存在（含已软删作业——
  * 作答记录不随作业删除消失，标题为布置时快照），异常缺失时兜底占位文案。
+ * T3.2b 起导出——待批队列卡片拼装复用（mark-response.ts）。
  */
-function sourceOf(
+export function sourceOf(
   db: Db,
   attempt: Attempt,
   teacherId: string,
@@ -173,8 +178,12 @@ function sourceOf(
   };
 }
 
-/** attempt 的笔迹行索引：questionId → ink 行（(attemptId, questionId) 唯一） */
-function inkByQuestionOf(db: Db, attemptId: string): Map<string, InkRow> {
+/** attempt 的笔迹行索引：questionId → ink 行（(attemptId, questionId) 唯一）；
+ * T3.2b 起导出——待批队列卡片拼装复用（mark-response.ts） */
+export function inkByQuestionOf(
+  db: Db,
+  attemptId: string,
+): Map<string, InkRow> {
   return new Map(
     db
       .select()
@@ -311,9 +320,12 @@ function requireTeacherAttempt(
   return { attempt: row.attempt, studentName: row.studentName };
 }
 
-/** 已交卷逐题的题目快照（responses.questionSnapshotJson → 契约 Question；
- * 坏数据按缺失计并留痕——正常链路交卷必写快照，与 attempt-service 同口径） */
-function snapshotOf(row: ResponseRow): Question | null {
+/**
+ * 已交卷逐题的题目快照（responses.questionSnapshotJson → 契约 Question；
+ * 坏数据按缺失计并留痕——正常链路交卷必写快照，与 attempt-service 同口径）。
+ * T3.2b 起导出——待批队列卡片拼装复用（mark-response.ts）。
+ */
+export function snapshotOf(row: ResponseRow): Question | null {
   if (row.questionSnapshotJson === null) return null;
   const parsed = questionSchema.safeParse(jsonOf(row.questionSnapshotJson));
   if (!parsed.success) {
@@ -379,6 +391,8 @@ export function getTeacherAttemptDetail(
       const options = optionTexts(row.optionsJson);
       items.push({
         questionId: row.id,
+        // draft 逐题来自当前库题目（可能尚无 responses 行），无批注定位 id
+        responseId: null,
         unitId: row.unitId,
         unitTitle: row.unitId, // 占位，下方经 unitTitles 统一回填
         type: row.type,
@@ -440,6 +454,8 @@ export function getTeacherAttemptDetail(
         if (snapshot === null) continue; // 坏快照按缺失计（见 snapshotOf 注释）
         items.push({
           questionId: response.questionId,
+          // 冻结 responses 行 id——详情页内联批改（POST /responses/:id/mark）定位用
+          responseId: response.id,
           unitId,
           unitTitle: unitId, // 占位，下方经 unitTitles 统一回填
           type: snapshot.type,

@@ -1,12 +1,22 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import type {
   TeacherAttemptDetailData,
   TeacherAttemptDetailQuestion,
 } from "@tutor/contract";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiError, fetchTeacherAttemptDetailApi } from "@/lib/api";
+import {
+  ApiError,
+  fetchTeacherAttemptDetailApi,
+  markResponseApi,
+} from "@/lib/api";
 import AttemptDetailPage from "./AttemptDetailPage";
 
 /**
@@ -14,6 +24,8 @@ import AttemptDetailPage from "./AttemptDetailPage";
  * 已交卷详情（来源头/得分汇总/连续题号与单元节标题/判定区/参考答案）、
  * draft 详情（判定区「未交卷」、无参考答案对比、进行中横幅）、
  * 手写缩略图与 lightbox、得分回退展示。API 层 mock。
+ * T3.2b（D3）：每题「改判 / 评语」内联编辑——draft 不显示、对自动判过的题
+ * 可改判、保存调用 mark 接口并经缓存失效刷新判定区与顶部汇总。
  */
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -21,10 +33,12 @@ vi.mock("@/lib/api", async (importOriginal) => {
   return {
     ...actual,
     fetchTeacherAttemptDetailApi: vi.fn(),
+    markResponseApi: vi.fn(),
   };
 });
 
 const mockedDetail = vi.mocked(fetchTeacherAttemptDetailApi);
+const mockedMark = vi.mocked(markResponseApi);
 
 const ATTEMPT_ID = "99999999-9999-4999-8999-999999999991";
 const INK_URL = "/api/teacher/ink/cccccccc-cccc-4ccc-8ccc-cccccccccccc.png";
@@ -35,6 +49,7 @@ function makeQuestion(
 ): TeacherAttemptDetailQuestion {
   return {
     questionId: "q1",
+    responseId: "88888888-8888-4888-8888-888888888881",
     no: 1,
     unitId: "unit-a",
     unitTitle: "单元A",
@@ -240,6 +255,8 @@ describe("AttemptDetailPage draft 详情（D5）", () => {
 
     // 每题判定区统一「未交卷」
     expect(screen.getAllByText(/未交卷——学生交卷前不产生判定/).length).toBe(2);
+    // T3.2b（D3）：draft 不渲染「改判 / 评语」内联编辑
+    expect(screen.queryByText("改判 / 评语")).not.toBeInTheDocument();
     // 无参考答案对比（服务端整卷不下发，前端不渲染）
     expect(screen.queryByText("参考答案：")).not.toBeInTheDocument();
     expect(
@@ -288,5 +305,125 @@ describe("AttemptDetailPage 手写缩略图与放大（D7）", () => {
     ).toBeInTheDocument();
     fireEvent.click(within(lightbox).getByRole("button", { name: "关闭" }));
     expect(screen.queryByLabelText("手写笔迹放大查看")).not.toBeInTheDocument();
+  });
+});
+
+describe("AttemptDetailPage 改判/评语内联编辑（T3.2b，D3）", () => {
+  it("对自动判过的题改判：判对 + 评语 + 保存 → mark 接口收到 responseId 与两字段，判定区与顶部汇总随重取刷新", async () => {
+    // 第 2 题为自动判错（autoCorrect/finalCorrect=false）——队列外改判入口
+    const before = makeDetail();
+    mockedDetail.mockResolvedValueOnce(before);
+    // 保存成功 → invalidate attempt-detail → 重取拿到改判后的详情
+    mockedDetail.mockResolvedValue(
+      makeDetail({
+        status: "graded",
+        scoreFinal: 100,
+        correctCount: 2,
+        wrongCount: 0,
+        pendingCount: 1,
+        questions: before.questions.map((question) =>
+          question.questionId === "q2"
+            ? {
+                ...question,
+                teacherMark: "correct",
+                teacherComment: "思路对了，抄写有误",
+                finalCorrect: true,
+              }
+            : question,
+        ),
+      }),
+    );
+    mockedMark.mockResolvedValue({
+      responseId: "88888888-8888-4888-8888-888888888881",
+      questionId: "q2",
+      attemptId: ATTEMPT_ID,
+      teacherMark: "correct",
+      teacherComment: "思路对了，抄写有误",
+      finalCorrect: true,
+      attemptStatus: "submitted",
+      scoreFinal: null,
+      pendingCount: 1,
+    });
+    renderPage();
+    const q2 = await screen.findByRole("article", { name: "第 2 题" });
+
+    // 判定区初始：教师判定未批改
+    expect(
+      within(q2.querySelector("dl") as HTMLElement).getByText("未批改"),
+    ).toBeInTheDocument();
+
+    // 编辑器在已交卷题上渲染：选判对 + 填评语 + 保存
+    fireEvent.click(within(q2).getByRole("button", { name: "判对" }));
+    fireEvent.change(within(q2).getByLabelText(/评语/), {
+      target: { value: "思路对了，抄写有误" },
+    });
+    fireEvent.click(within(q2).getByRole("button", { name: "保存判定与评语" }));
+
+    await waitFor(() => expect(mockedMark).toHaveBeenCalledTimes(1));
+    expect(mockedMark).toHaveBeenCalledWith(
+      "88888888-8888-4888-8888-888888888881",
+      { mark: "correct", comment: "思路对了，抄写有误" },
+    );
+    // 重取后：教师判定「判对」、评语显示、顶部最终得分 100（草稿值同步重置）
+    await waitFor(() =>
+      expect(
+        within(q2.querySelector("dl") as HTMLElement).getByText("判对", {
+          exact: true,
+        }),
+      ).toBeInTheDocument(),
+    );
+    expect(
+      within(q2.querySelector("dl") as HTMLElement).getByText(
+        "思路对了，抄写有误",
+      ),
+    ).toBeInTheDocument();
+    await waitFor(() => {
+      const finalScore = screen
+        .getAllByText("100")
+        .find((el) => el.classList.contains("text-2xl"));
+      expect(finalScore).toBeDefined();
+    });
+  });
+
+  it("草稿与服务端一致时保存与重置禁用；改选后可保存", async () => {
+    mockedDetail.mockResolvedValue(
+      makeDetail({
+        questions: [
+          makeQuestion({
+            teacherMark: "correct",
+            teacherComment: "已批过",
+            finalCorrect: true,
+          }),
+        ],
+      }),
+    );
+    renderPage();
+    const q1 = await screen.findByRole("article", { name: "第 1 题" });
+    expect(
+      within(q1).getByRole("button", { name: "保存判定与评语" }),
+    ).toBeDisabled();
+    expect(within(q1).getByRole("button", { name: "重置" })).toBeDisabled();
+    // 判对按钮呈选中态
+    expect(within(q1).getByRole("button", { name: "判对" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  it("保存失败显示就地错误提示，不改动判定区", async () => {
+    mockedDetail.mockResolvedValue(makeDetail());
+    mockedMark.mockRejectedValueOnce(new Error("网络中断"));
+    renderPage();
+    const q2 = await screen.findByRole("article", { name: "第 2 题" });
+    fireEvent.click(within(q2).getByRole("button", { name: "判错" }));
+    fireEvent.click(within(q2).getByRole("button", { name: "保存判定与评语" }));
+    const editor = q2.lastElementChild as HTMLElement;
+    await waitFor(() =>
+      expect(within(editor).getByRole("alert")).toHaveTextContent("网络中断"),
+    );
+    // 判定区（服务端数据）不受影响：教师判定仍「未批改」
+    expect(
+      within(q2.querySelector("dl") as HTMLElement).getByText("未批改"),
+    ).toBeInTheDocument();
   });
 });

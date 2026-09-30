@@ -11,6 +11,7 @@ import {
   QUESTION_TYPE_LABELS,
 } from "@/features/attempt/answer-format";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
+import { AttemptQuestionMarkEditor } from "./AttemptQuestionMarkEditor";
 import { InkLightbox } from "./InkLightbox";
 
 /**
@@ -19,6 +20,8 @@ import { InkLightbox } from "./InkLightbox";
  * （**仅已交卷**——draft 详情服务端整卷不下发，前端自然不渲染，D5）、判定区
  * （自动/最终/教师判定 + 评语；draft 显示「未交卷」）、activeSec/hintsUsed/
  * changeCount、手写缩略图（懒加载 + 点击放大）。
+ * T3.2b（D3）：已交卷且带 responseId 的题在判定区下渲染「改判 / 评语」内联编辑
+ * （对自动判过的题亦可改判）。
  */
 
 /** 有效用时（秒）→ 展示文本（"2 分 30 秒"；null → "—"） */
@@ -307,6 +310,11 @@ export function AttemptDetailQuestionCard({
       </p>
 
       <VerdictSection question={question} isDraft={isDraft} />
+
+      {/* 改判 / 评语（T3.2b，D3）：仅已交卷且带批注定位 id 的题渲染 */}
+      {!isDraft && question.responseId !== null && (
+        <AttemptQuestionMarkEditor question={question} />
+      )}
 
       {/* 详解（仅已交卷下发；draft 缺省不渲染） */}
       {question.solutionMd !== undefined &&

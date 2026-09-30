@@ -61,6 +61,9 @@ import {
   type LibraryLectureList,
   type LibraryUnitList,
   type LibraryUsage,
+  type MarkRequest,
+  type MarkResponseData,
+  type PendingMarkListData,
   type PublicConfigData,
   type QuestionDetail,
   type QuestionUpdateData,
@@ -1285,4 +1288,46 @@ export function fetchTeacherAttemptDetailApi(
   return callApi(() =>
     api.api.teacher.attempts[":id"].$get({ param: { id: attemptId } }),
   );
+}
+
+// ---------- T3.2b：批注与待批队列（D3/D4） ----------
+
+/**
+ * 待批队列查询参数（界面层形态；undefined 字段不发送 = 后端不过滤）。
+ * 排序由服务端恒定 submittedAt 升序（先交先批），无分页（D4）。
+ */
+export interface PendingMarkListParams {
+  courseId?: string | undefined;
+  assignmentId?: string | undefined;
+  studentId?: string | undefined;
+}
+
+/** 待批队列（D4：finalCorrect IS NULL 的已交卷 responses；课程/作业/学生筛选） */
+export function fetchPendingMarksApi(
+  params: PendingMarkListParams,
+): Promise<PendingMarkListData> {
+  const query: Record<string, string> = {};
+  if (params.courseId !== undefined) query.courseId = params.courseId;
+  if (params.assignmentId !== undefined) {
+    query.assignmentId = params.assignmentId;
+  }
+  if (params.studentId !== undefined) query.studentId = params.studentId;
+  return callApi(() =>
+    api.api.teacher["pending-marks"].$get(
+      Object.keys(query).length > 0 ? { query } : undefined,
+    ),
+  );
+}
+
+/**
+ * 批注单题（D3：判定与评语两字段一次提交，值可为 null——mark=null 清除教师判定，
+ * comment 由服务端 trim 归一化，空串按 null）。draft attempt → 409 NOT_SUBMITTED；
+ * 非本人教师 → 404 RESPONSE_NOT_FOUND。json 以独立变量传入的原因同 updateQuestion。
+ */
+export function markResponseApi(
+  responseId: string,
+  request: MarkRequest,
+): Promise<MarkResponseData> {
+  const args = { param: { id: responseId }, json: request };
+  return callApi(() => api.api.teacher.responses[":id"].mark.$post(args));
 }

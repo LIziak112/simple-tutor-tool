@@ -1,4 +1,8 @@
-import type { AttemptStatus, TeacherAttemptCard } from "@tutor/contract";
+import type {
+  AttemptStatus,
+  TeacherAttemptCard,
+  TeacherAttemptSource,
+} from "@tutor/contract";
 import { cn } from "cn";
 import { ChevronLeft, ChevronRight, Clock3 } from "lucide-react";
 import { Link } from "react-router";
@@ -60,8 +64,8 @@ function SourceBadge({ sourceType }: { sourceType: "assignment" | "course" }) {
   );
 }
 
-/** 卡片的来源上下文描述（与详情页头同口径） */
-export function sourceContextOf(card: TeacherAttemptCard): string {
+/** 来源上下文描述（与详情页头同口径；T3.2b 起待批队列卡片共用） */
+export function sourceContextOf(card: TeacherAttemptSource): string {
   if (card.sourceType === "assignment") {
     // 挂课程时配课程名；未挂课程只显示作业标题
     return card.courseName !== null

@@ -1,6 +1,6 @@
-import { TriangleAlert } from "lucide-react";
+import { ClipboardCheck, TriangleAlert } from "lucide-react";
 import { useMemo } from "react";
-import { useSearchParams } from "react-router";
+import { Link, useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
 import { useStudents } from "@/features/students/student-queries";
 import {
@@ -147,6 +147,13 @@ export function DataPage() {
             点击卡片查看逐题详情。
           </p>
         </div>
+        {/* T3.2b：待批队列入口（去 /t/data/pending 连续批改；未批徽章提示待处理） */}
+        <Button variant="outline" className="min-h-11" asChild>
+          <Link to="/t/data/pending" aria-label="打开待批队列">
+            <ClipboardCheck aria-hidden />
+            待批队列
+          </Link>
+        </Button>
       </header>
 
       <AttemptListFilters
