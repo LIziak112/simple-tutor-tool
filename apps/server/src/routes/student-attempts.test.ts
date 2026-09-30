@@ -10,7 +10,7 @@ import {
   studentPaperDataSchema,
 } from "@tutor/contract";
 import { publicStemMd } from "@tutor/md-dsl";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { Logger } from "pino";
 import pino from "pino";
 import { describe, expect, it } from "vitest";
@@ -1215,5 +1215,149 @@ describe("T2A.8 答案公布时机（after_due：截止前受限 / 截止后完�
     expect((body as { data: AttemptResultData }).data.answersReleased).toBe(
       true,
     );
+  });
+});
+
+describe("T3.5 D9 结果视图扩展（teacherMark/teacherComment/finalCorrect/scoreFinal/pendingCount）", () => {
+  /** 教师批注单题（改判 + 评语；responseId 从库内取——teacher-marks 同款口径） */
+  async function teacherMark(
+    app: App,
+    teacherCookie: string,
+    db: Db,
+    attemptId: string,
+    questionId: string,
+    body: { mark: "correct" | "wrong" | null; comment: string | null },
+  ): Promise<void> {
+    const row = db
+      .select({ id: responses.id })
+      .from(responses)
+      .where(
+        and(
+          eq(responses.attemptId, attemptId),
+          eq(responses.questionId, questionId),
+        ),
+      )
+      .get();
+    if (!row) throw new Error(`夹具缺少 response 行：${questionId}`);
+    const res = await app.request(`/api/teacher/responses/${row.id}/mark`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: teacherCookie },
+      body: JSON.stringify(body),
+    });
+    expect(res.status).toBe(200);
+  }
+
+  it("批注（改判）后：结果视图逐题含 teacherMark/teacherComment/finalCorrect，汇总含 scoreFinal/pendingCount；他人 attemptId 403", async () => {
+    const { app, db, teacherCookie, aCookie, bCookie, assignmentId } =
+      await makeAttemptApp();
+    const attemptId = (await startAttemptOk(app, aCookie, assignmentId))
+      .id as string;
+    for (const [questionId, answer] of Object.entries(ALL_CORRECT_ANSWERS)) {
+      await putAnswer(app, aCookie, attemptId, questionId, answer);
+    }
+    expect((await postSubmit(app, aCookie, attemptId)).status).toBe(200);
+
+    // 教师改判一道自动判过的题（错 + 评语）——D3：允许对已判定题批注
+    await teacherMark(app, teacherCookie, db, attemptId, Q.choice, {
+      mark: "wrong",
+      comment: "选项看串了，这题按错算。",
+    });
+
+    const { res, body } = await getAttempt(app, aCookie, attemptId);
+    expect(res.status).toBe(200);
+    expect(attemptResultOkSchema.safeParse(body).success).toBe(true);
+    const data = (body as { data: AttemptResultData }).data;
+    expect(data.attempt.status).toBe("graded");
+    const choice = data.units
+      .flatMap((unit) => unit.questions)
+      .find((q) => q.questionId === Q.choice);
+    expect(choice?.teacherMark).toBe("wrong");
+    expect(choice?.teacherComment).toBe("选项看串了，这题按错算。");
+    expect(choice?.finalCorrect).toBe(false); // 教师判定优先（D3）
+    expect(choice?.autoCorrect).toBe(true); // 自动判定原值保留
+    // 其余未批注题：teacherMark/teacherComment null，finalCorrect=autoCorrect
+    const others = data.units
+      .flatMap((unit) => unit.questions)
+      .filter((q) => q.questionId !== Q.choice);
+    for (const q of others) {
+      expect(q.teacherMark).toBeNull();
+      expect(q.teacherComment).toBeNull();
+      expect(q.finalCorrect).toBe(q.autoCorrect);
+    }
+    // 汇总：scoreAuto 不变 100；scoreFinal = 7/8 → 88（D2 分母=全部题）；待批 0
+    expect(data.attempt.scoreAuto).toBe(100);
+    expect(data.summary.scoreFinal).toBe(88);
+    expect(data.summary.pendingCount).toBe(0);
+
+    // 他人 attemptId → 403（学生端既有口径，结果视图扩展不变）
+    expect((await getAttempt(app, bCookie, attemptId)).res.status).toBe(403);
+
+    // 已交卷内容允许下发（AGENTS 第 3 条限制的是未交卷题目）；
+    // 放行参考答案/详解键后无禁用键
+    assertNoLeak(body, { allow: ["answer", "answers", "solutionMd"] });
+  });
+
+  it("after_due 截止前：批注字段与汇总新字段全 null（教师已批也不泄露）；库里已算好，截止后恢复", async () => {
+    const { app, db, teacherCookie } = await makeAttemptApp();
+    const importRes = await app.request("/api/teacher/import/commit", {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: teacherCookie },
+      body: JSON.stringify({ markdown: PRACTICE_MD, filename: "练习样例.md" }),
+    });
+    expect(importRes.status).toBe(200);
+    const unitId = (
+      (await importRes.json()) as { data: { units: { id: string }[] } }
+    ).data.units[0]?.id;
+    if (!unitId) throw new Error("样例导入未产出单元");
+    const studentId = await createStudent(app, teacherCookie, "批注钱八");
+    const assignmentId = await createAssignment(
+      app,
+      teacherCookie,
+      unitId,
+      studentId,
+      { dueAt: "2099-01-01T00:00:00.000Z", answerRelease: "after_due" },
+    );
+    const cookie = await loginStudent(app, "批注钱八");
+
+    const attemptId = (await startAttemptOk(app, cookie, assignmentId))
+      .id as string;
+    for (const [questionId, answer] of Object.entries(ALL_CORRECT_ANSWERS)) {
+      await putAnswer(app, cookie, attemptId, questionId, answer);
+    }
+    expect((await postSubmit(app, cookie, attemptId)).status).toBe(200);
+    // 截止前教师已改判 + 评语（库里已批好，学生侧不泄露）
+    await teacherMark(app, teacherCookie, db, attemptId, Q.choice, {
+      mark: "wrong",
+      comment: "改判：符号看错了。",
+    });
+
+    const { res, body } = await getAttempt(app, cookie, attemptId);
+    expect(res.status).toBe(200);
+    const data = (body as { data: AttemptResultData }).data;
+    expect(data.answersReleased).toBe(false);
+    expect(data.attempt.scoreAuto).toBeNull();
+    // D9 新字段全部置 null 投影：逐题批注三件套 + 汇总两件套
+    for (const q of data.units.flatMap((unit) => unit.questions)) {
+      expect(q.teacherMark).toBeNull();
+      expect(q.teacherComment).toBeNull();
+      expect(q.finalCorrect).toBeNull();
+    }
+    expect(data.summary.scoreFinal).toBeNull();
+    expect(data.summary.pendingCount).toBeNull();
+
+    // 泄露：教师评语文本绝不出现（批改进度不提前泄露）；
+    // 放行答案/详解键后无禁用键
+    assertNoLeak(body, { allow: ["answer", "answers", "solutionMd"] });
+    expect(JSON.stringify(body)).not.toContain("改判：符号看错了。");
+    expect(JSON.stringify(body)).not.toContain("选项看串了");
+
+    // 库里已按 D2/D3 算好（投影只是读侧口径）：graded、scoreFinal=88
+    const attemptRow = db
+      .select()
+      .from(attempts)
+      .where(eq(attempts.id, attemptId))
+      .get();
+    expect(attemptRow?.status).toBe("graded");
+    expect(attemptRow?.scoreFinal).toBe(88);
   });
 });

@@ -55,11 +55,13 @@ export function listWrongQuestions(
   // 窗口聚合：每个 questionId 一组，rn_asc=首次（submittedAt 最早）、rn_desc=最近，
   // wrong_count=该题已判定作答中的判错次数（入本条件）。同刻并列按 attemptId
   // 升序/降序兜底稳定（同一 attempt 内一题至多一行，唯一索引保证）。
+  // 两个 id 列必须显式别名（attempt_id / response_id）——裸列名都是 "id"，
+  // 子查询结果对象里会互相覆盖，导致后续按 responseId 回读内容失败。
   const ranked = db
     .select({
       questionId: responses.questionId,
-      attemptId: attempts.id,
-      responseId: responses.id,
+      attemptId: sql<string>`${attempts.id}`.as("attempt_id"),
+      responseId: sql<string>`${responses.id}`.as("response_id"),
       submittedAt: attempts.submittedAt,
       startedAt: attempts.startedAt,
       finalCorrect: responses.finalCorrect,
