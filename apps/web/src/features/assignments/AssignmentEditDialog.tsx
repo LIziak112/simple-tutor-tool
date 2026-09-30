@@ -12,6 +12,7 @@ import {
   UserRoundPlus,
 } from "lucide-react";
 import { useState } from "react";
+import { Link } from "react-router";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -433,11 +434,24 @@ export function AssignmentEditDialog({
                         <span className="min-w-0 flex-1 truncate">
                           {entry.displayName}
                         </span>
-                        <span
-                          className={`shrink-0 rounded-md px-2 py-0.5 text-xs ${ROSTER_STATUS_BADGE_CLASS[entry.status]}`}
-                        >
-                          {ROSTER_STATUS_LABELS[entry.status]}
-                        </span>
+                        {/* T3.1（D8）：已开始的名单状态徽章可点进该生 attempt 详情；
+                            未开始（attemptId=null）为纯徽章。链接在 label 内点击不会
+                            触发勾选（label 对交互后代不转发激活行为） */}
+                        {entry.attemptId !== null ? (
+                          <Link
+                            to={`/t/data/attempts/${entry.attemptId}`}
+                            aria-label={`查看 ${entry.displayName} 的作答详情`}
+                            className={`inline-flex min-h-11 shrink-0 items-center rounded-md px-2 text-xs underline-offset-2 outline-none transition-colors hover:underline focus-visible:ring-3 focus-visible:ring-ring/50 ${ROSTER_STATUS_BADGE_CLASS[entry.status]}`}
+                          >
+                            {ROSTER_STATUS_LABELS[entry.status]}
+                          </Link>
+                        ) : (
+                          <span
+                            className={`shrink-0 rounded-md px-2 py-0.5 text-xs ${ROSTER_STATUS_BADGE_CLASS[entry.status]}`}
+                          >
+                            {ROSTER_STATUS_LABELS[entry.status]}
+                          </span>
+                        )}
                       </label>
                       <Button
                         variant="ghost"

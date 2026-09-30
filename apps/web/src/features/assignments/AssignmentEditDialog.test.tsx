@@ -11,6 +11,7 @@ import type {
   StudentListData,
   TeacherAssignment,
 } from "@tutor/contract";
+import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ApiError,
@@ -155,8 +156,11 @@ function renderDialog(assignment: TeacherAssignment = makeAssignment()) {
   });
   const onClose = vi.fn();
   const utils = render(
+    // T3.1（D8）：名单状态徽章是 <Link>（跳 attempt 详情），需要 Router 上下文
     <QueryClientProvider client={client}>
-      <AssignmentEditDialog assignment={assignment} onClose={onClose} />
+      <MemoryRouter>
+        <AssignmentEditDialog assignment={assignment} onClose={onClose} />
+      </MemoryRouter>
     </QueryClientProvider>,
   );
   return { ...utils, onClose };
@@ -177,6 +181,17 @@ describe("AssignmentEditDialog 展示", () => {
     expect(screen.getByText("已交卷")).toBeInTheDocument();
     expect(screen.getAllByText("未开始").length).toBeGreaterThan(0);
     expect(screen.getByText("进行中")).toBeInTheDocument();
+
+    // T3.1（D8）：已开始学生的状态徽章是链接（跳该生 attempt 详情），未开始是纯文本
+    expect(
+      screen.getByRole("link", { name: "查看 张三 的作答详情" }),
+    ).toHaveAttribute("href", `/t/data/attempts/${ATTEMPT_A_ID}`);
+    expect(
+      screen.getByRole("link", { name: "查看 王五 的作答详情" }),
+    ).toHaveAttribute("href", `/t/data/attempts/${ATTEMPT_C_ID}`);
+    expect(
+      screen.queryByRole("link", { name: /李四/ }),
+    ).not.toBeInTheDocument();
 
     // D14 锁定原因 + 只读单元列表（含已删标记）
     expect(
