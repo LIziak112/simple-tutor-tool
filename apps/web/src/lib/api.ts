@@ -203,6 +203,30 @@ function pickExtraFields(body: unknown): Record<string, unknown> | undefined {
   return Object.keys(extra).length > 0 ? extra : undefined;
 }
 
+/**
+ * 非 2xx 响应 → 抛错（口径同 callApi 的错误路径，供文件直出接口复用）：
+ * { ok:false } 统一壳 → ApiError（code + 服务端中文 message + 壳外附加字段），
+ * 调用方按 code 分支（如 404 INK_NOT_FOUND 降级）；壳解析失败/非壳 → 通用中文 Error。
+ */
+async function throwShellError(res: Response): Promise<never> {
+  let body: unknown;
+  try {
+    body = await res.json();
+  } catch {
+    throw new Error(`服务器响应异常（HTTP ${res.status}），请稍后重试`);
+  }
+  const parsed = apiResponseSchema.safeParse(body);
+  if (parsed.success && !parsed.data.ok) {
+    throw new ApiError(
+      parsed.data.error,
+      parsed.data.message,
+      res.status,
+      pickExtraFields(body),
+    );
+  }
+  throw new Error(`服务器响应异常（HTTP ${res.status}），请稍后重试`);
+}
+
 /** 查询是否已设置教师（首启判断，无登录要求） */
 export function fetchTeacherStatus(): Promise<TeacherStatusData> {
   return callApi(() => api.api.public.teacher.status.$get());
@@ -860,6 +884,60 @@ export function studentInkPngUrl(
   questionId: string,
 ): string {
   return `/api/student/attempts/${encodeURIComponent(attemptId)}/ink/${encodeURIComponent(questionId)}.png`;
+}
+
+// ---------- T3.3：笔迹回放矢量数据（教师端，D12） ----------
+
+/**
+ * 教师按 inkId 取笔迹矢量文档（回放用）：
+ * fetch `/api/teacher/ink/{inkId}.json.gz`（同源相对路径自动带会话 Cookie，
+ * 与 putAttemptInkApi 的原生 fetch 同口径），成功时用 DecompressionStream
+ * 解压 → 文本 → JSON.parse。
+ *
+ * 返回类型刻意为 unknown 且本层不做 Zod 校验：这是文件直出接口（gzip 原字节，
+ * 不走 { ok, data } 统一壳），解出的文档形态由 <InkReplay> 按 engine 分派时
+ * 收窄并校验（下一单接入）。
+ *
+ * 失败：网络错误抛中文 Error；非 200 抛 ApiError——404 INK_NOT_FOUND 即
+ * 行不存在/域不匹配/文件缺失，调用方据此降级为 PNG 快照 + 「无回放数据」提示。
+ */
+export async function fetchTeacherInkStrokesApi(
+  inkId: string,
+): Promise<unknown> {
+  let res: Response;
+  try {
+    res = await fetch(`/api/teacher/ink/${encodeURIComponent(inkId)}.json.gz`);
+  } catch {
+    throw new Error(
+      "连不上服务器，请确认后端已启动（pnpm --filter server dev）后重试",
+    );
+  }
+  if (!res.ok) {
+    await throwShellError(res);
+  }
+  if (typeof DecompressionStream === "undefined") {
+    // 上传侧（gzipOrRaw）有原始 JSON 回退；回放只在支持解压的浏览器提供
+    throw new Error("当前浏览器不支持笔迹回放（缺少 DecompressionStream）");
+  }
+  // 解压：走 Response 的字节流（不用 Blob——jsdom 环境的 Blob 流与 Node 全局
+  // 流互操作不可靠，Response/DecompressionStream 在浏览器与测试环境同为原生）
+  let text: string;
+  try {
+    const src = new Response(new Uint8Array(await res.arrayBuffer()));
+    if (src.body === null) {
+      throw new Error("响应没有可读的字节流");
+    }
+    text = await new Response(
+      src.body.pipeThrough(new DecompressionStream("gzip")),
+    ).text();
+  } catch {
+    throw new Error("笔迹矢量数据解压失败（文件可能损坏），请刷新重试");
+  }
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    throw new Error("笔迹矢量数据损坏（不是合法的 JSON），请反馈老师处理");
+  }
 }
 
 // ---------- T2A.2：资源库（讲义库 / 题库 / 回收站 + 单元管理） ----------

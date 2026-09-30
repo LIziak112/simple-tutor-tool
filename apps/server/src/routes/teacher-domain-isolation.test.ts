@@ -1,6 +1,6 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { gzipSync } from "node:zlib";
+import { gunzipSync, gzipSync } from "node:zlib";
 import type { ApiErr } from "@tutor/contract";
 import { and, eq } from "drizzle-orm";
 import type { Logger } from "pino";
@@ -1433,13 +1433,37 @@ describe("T2B.5 隔离红线：学生域", () => {
   });
 });
 
-/** T2B.5：甲学生 attempt + 笔迹行 + 落盘 PNG（直插模拟既有作答数据；目录懒建） */
+/** T3.3：甲学生笔迹的矢量文档原文（gzip 后落盘，回放接口字节一致性断言用） */
+const SEED_INK_DOC = {
+  engine: "atrament" as const,
+  version: 1,
+  data: {
+    width: 800,
+    strokes: [
+      {
+        tool: "pen" as const,
+        color: "#1f2328",
+        weight: 4,
+        points: [
+          { x: 12, y: 34, p: 0.5, t: 0 },
+          { x: 56, y: 78, p: 0.8, t: 25 },
+        ],
+      },
+    ],
+  },
+  updatedAt: 1748918400000,
+};
+
+/**
+ * T2B.5：甲学生 attempt + 笔迹行 + 落盘 PNG 与 strokes gzip
+ * （直插模拟既有作答数据；目录懒建；矢量文件 T3.3 起一并落盘）
+ */
 function seedInkOfTeacherA(
   db: Db,
   dataDir: string,
   studentAId: string,
   assignmentAId: string,
-): { attemptId: string; inkId: string } {
+): { attemptId: string; inkId: string; strokesRel: string } {
   const attemptId = "cccccccc-cccc-4ccc-8ccc-cccccccc0001";
   const inkId = "dddddddd-dddd-4ddd-8ddd-dddddddd0001";
   db.insert(attempts)
@@ -1461,15 +1485,20 @@ function seedInkOfTeacherA(
     })
     .run();
   const relPng = join("blobs", "ink", attemptId, "q-a.png");
+  const relStrokes = join("blobs", "ink", attemptId, "q-a.json.gz");
   const absDir = join(dataDir, "blobs", "ink", attemptId);
   mkdirSync(absDir, { recursive: true });
   writeFileSync(join(dataDir, relPng), Buffer.from("fake-png-bytes"));
+  writeFileSync(
+    join(dataDir, relStrokes),
+    gzipSync(Buffer.from(JSON.stringify(SEED_INK_DOC), "utf8")),
+  );
   db.insert(ink)
     .values({
       id: inkId,
       attemptId,
       questionId: `${UNIT_ID}-1`,
-      strokesPath: join("blobs", "ink", attemptId, "q-a.json.gz"),
+      strokesPath: relStrokes,
       pngPath: relPng,
       width: 800,
       height: 600,
@@ -1477,7 +1506,7 @@ function seedInkOfTeacherA(
       updatedAt: "2026-06-03T00:00:00.000Z",
     })
     .run();
-  return { attemptId, inkId };
+  return { attemptId, inkId, strokesRel: relStrokes };
 }
 
 describe("T2B.5 隔离红线：教师侧作答链路（笔迹 / 内容树兼容接口）", () => {
@@ -1575,6 +1604,115 @@ describe("T2B.5 隔离红线：教师侧作答链路（笔迹 / 内容树兼容�
     const unitB = bodyB.data.courses[0]?.units.find((u) => u.id === UNIT_ID);
     expect(unitB?.questions).toHaveLength(8);
     expect(unitB?.questions.every((q) => q.version === 1)).toBe(true);
+  });
+});
+
+// ==================== T3.3：教师端笔迹矢量数据接口（D12） ====================
+
+describe("T3.3 教师端笔迹矢量数据接口（GET /api/teacher/ink/:inkId.json.gz）", () => {
+  it("甲本人取矢量：200 + application/gzip + 响应字节与落盘 strokes 文件逐字节一致", async () => {
+    const { app, db, dataDir, cookieA, studentAId, assignmentAId } =
+      await makeCourseIsolationApp();
+    const { inkId, strokesRel } = seedInkOfTeacherA(
+      db,
+      dataDir,
+      studentAId,
+      assignmentAId,
+    );
+    const res = await request(
+      app,
+      "GET",
+      `/api/teacher/ink/${inkId}.json.gz`,
+      cookieA,
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("application/gzip");
+    const body = Buffer.from(await res.arrayBuffer());
+    // 逐字节一致（服务端不解不校验，原样回传落盘 gzip）
+    expect(body.equals(readFileSync(join(dataDir, strokesRel)))).toBe(true);
+    // 是真 gzip（魔数 1f 8b），解压回原文档（内容闭环）
+    expect(body[0]).toBe(0x1f);
+    expect(body[1]).toBe(0x8b);
+    expect(JSON.parse(gunzipSync(body).toString("utf8"))).toEqual(SEED_INK_DOC);
+  });
+
+  it("乙取甲学生的笔迹矢量 → 404 INK_NOT_FOUND（域隔离红线，不暴露存在性）", async () => {
+    const { app, db, dataDir, cookieB, studentAId, assignmentAId } =
+      await makeCourseIsolationApp();
+    const { inkId } = seedInkOfTeacherA(db, dataDir, studentAId, assignmentAId);
+    await expectNotFound(
+      await request(app, "GET", `/api/teacher/ink/${inkId}.json.gz`, cookieB),
+      "INK_NOT_FOUND",
+    );
+  });
+
+  it("ink 行存在但磁盘 strokes 文件缺失 → 404；.png 分支不受影响仍 200", async () => {
+    const { app, db, dataDir, cookieA, studentAId, assignmentAId } =
+      await makeCourseIsolationApp();
+    const { inkId, strokesRel } = seedInkOfTeacherA(
+      db,
+      dataDir,
+      studentAId,
+      assignmentAId,
+    );
+    rmSync(join(dataDir, strokesRel));
+    await expectNotFound(
+      await request(app, "GET", `/api/teacher/ink/${inkId}.json.gz`, cookieA),
+      "INK_NOT_FOUND",
+    );
+    // PNG 文件仍在：快照分支照常直出（降级路径可用，D12）
+    const png = await request(
+      app,
+      "GET",
+      `/api/teacher/ink/${inkId}.png`,
+      cookieA,
+    );
+    expect(png.status).toBe(200);
+    expect(Buffer.from(await png.arrayBuffer()).toString()).toBe(
+      "fake-png-bytes",
+    );
+  });
+
+  it("三分支并存：同一 inkId 的 .png / 元数据 / .json.gz 各自正确分流", async () => {
+    const { app, db, dataDir, cookieA, studentAId, assignmentAId } =
+      await makeCourseIsolationApp();
+    const { inkId, attemptId } = seedInkOfTeacherA(
+      db,
+      dataDir,
+      studentAId,
+      assignmentAId,
+    );
+    // .png：PNG 字节直出
+    const png = await request(
+      app,
+      "GET",
+      `/api/teacher/ink/${inkId}.png`,
+      cookieA,
+    );
+    expect(png.status).toBe(200);
+    expect(png.headers.get("content-type")).toBe("image/png");
+    // 元数据：JSON 统一壳
+    const meta = await request(
+      app,
+      "GET",
+      `/api/teacher/ink/${inkId}`,
+      cookieA,
+    );
+    expect(meta.status).toBe(200);
+    expect(meta.headers.get("content-type")).toContain("application/json");
+    expect(
+      ((await meta.json()) as { data: { attemptId: string } }).data.attemptId,
+    ).toBe(attemptId);
+    // .json.gz：矢量 gzip 直出
+    const gz = await request(
+      app,
+      "GET",
+      `/api/teacher/ink/${inkId}.json.gz`,
+      cookieA,
+    );
+    expect(gz.status).toBe(200);
+    expect(gz.headers.get("content-type")).toBe("application/gzip");
+    expect(Buffer.from(await gz.arrayBuffer())[0]).toBe(0x1f);
   });
 });
 

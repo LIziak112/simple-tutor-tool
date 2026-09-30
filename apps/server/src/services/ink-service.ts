@@ -323,9 +323,9 @@ export function getInkDoc(
   return parsed.data;
 }
 
-/** PNG 文件读取结果（路由直出用） */
-export interface InkPng {
-  /** PNG 字节（独立 ArrayBuffer 拷贝，脱离 Node Buffer 视图——Response BodyInit 类型友好） */
+/** 笔迹落盘文件读取结果（路由直出用：PNG 快照与 gzip 矢量共用） */
+export interface InkFile {
+  /** 文件字节（独立 ArrayBuffer 拷贝，脱离 Node Buffer 视图——Response BodyInit 类型友好） */
   bytes: ArrayBuffer;
   /** 响应 ETag（行 id + updatedAt） */
   etag: string;
@@ -338,13 +338,13 @@ export function getStudentInkPng(
   studentId: string,
   attemptId: string,
   questionId: string,
-): InkPng {
+): InkFile {
   requireUsableAttempt(db, studentId, attemptId);
   return readInkPng(db, dataDir, attemptId, questionId);
 }
 
-/** 读取 PNG 文件为独立 ArrayBuffer（Buffer 视图 → 拷贝；运行时类型即 ArrayBuffer） */
-function readPngBytes(filePath: string): ArrayBuffer {
+/** 读取落盘文件为独立 ArrayBuffer（Buffer 视图 → 拷贝；运行时类型即 ArrayBuffer） */
+function readFileBytes(filePath: string): ArrayBuffer {
   const buf = readFileSync(filePath);
   return buf.buffer.slice(
     buf.byteOffset,
@@ -358,11 +358,11 @@ function readInkPng(
   dataDir: string,
   attemptId: string,
   questionId: string,
-): InkPng {
+): InkFile {
   const row = requireInkRow(db, attemptId, questionId);
   try {
     return {
-      bytes: readPngBytes(inkFileAbs(dataDir, row.pngPath, ".png")),
+      bytes: readFileBytes(inkFileAbs(dataDir, row.pngPath, ".png")),
       etag: `"${row.id}-${row.updatedAt}"`,
     };
   } catch {
@@ -370,7 +370,7 @@ function readInkPng(
   }
 }
 
-// ---------- GET /api/teacher/ink/:inkId(.png) ----------
+// ---------- GET /api/teacher/ink/:inkId(.png / .json.gz) ----------
 
 /**
  * 按会话教师取 ink 行（T2B.5，D10/D12）：ink → attempt → student → teacherId
@@ -404,15 +404,40 @@ export function getTeacherInkPng(
   dataDir: string,
   teacherId: string,
   inkId: string,
-): InkPng {
+): InkFile {
   const row = requireTeacherInkRow(db, teacherId, inkId);
   try {
     return {
-      bytes: readPngBytes(inkFileAbs(dataDir, row.pngPath, ".png")),
+      bytes: readFileBytes(inkFileAbs(dataDir, row.pngPath, ".png")),
       etag: `"${row.id}-${row.updatedAt}"`,
     };
   } catch {
     throw new HttpError(404, "INK_NOT_FOUND", "笔迹快照不存在");
+  }
+}
+
+/**
+ * 教师按 inkId 取矢量文档 gzip 原字节（T3.3 笔迹回放，D12）：
+ * - 归属口径同 getTeacherInkPng（乙取甲学生笔迹 → 404，不暴露存在性）；
+ * - 响应体 = 落盘 .json.gz 逐字节原样回传（服务端不解不校验，解压消费在前端
+ *   InkReplay）；IO 方式与 .png 分支一致（readFileBytes + inkFileAbs 后缀校验）；
+ * - 文件缺失（或路径不带 .json.gz 后缀的存量行，inkFileAbs 抛错）→ 404
+ *   INK_NOT_FOUND——前端据此降级为 PNG 快照 + 「无回放数据」提示（D12）。
+ */
+export function getTeacherInkStrokes(
+  db: Db,
+  dataDir: string,
+  teacherId: string,
+  inkId: string,
+): InkFile {
+  const row = requireTeacherInkRow(db, teacherId, inkId);
+  try {
+    return {
+      bytes: readFileBytes(inkFileAbs(dataDir, row.strokesPath, ".json.gz")),
+      etag: `"${row.id}-${row.updatedAt}"`,
+    };
+  } catch {
+    throw new HttpError(404, "INK_NOT_FOUND", "笔迹矢量数据不存在");
   }
 }
 

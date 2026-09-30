@@ -54,6 +54,34 @@ const MAX_DPR = 2;
 const TOUCH_ACTION_PAN_Y = "pan-y";
 const TOUCH_ACTION_NONE = "none";
 
+/**
+ * 按逻辑坐标在 Atrament 实例上重放一笔（atrament 官方程序化绘制流程）。
+ * T3.3 起导出：笔迹回放（features/ink/replay）复用同一绘制原语，不另写笔迹绘制。
+ * @param cssWidth 当前容器 CSS 宽（逻辑 1000 → 实际像素的换算基准）
+ */
+export function replayAtramentStroke(
+  atrament: Atrament,
+  cssWidth: number,
+  s: InkStroke,
+): void {
+  if (s.points.length === 0) return;
+  atrament.color = s.color;
+  atrament.weight = fromLogical(cssWidth, s.weight);
+  const first = s.points[0];
+  if (!first) return;
+  const start = fromLogicalPoint(cssWidth, first.x, first.y);
+  atrament.beginStroke(start.x, start.y);
+  // 先画起点（轻点也留下墨点；与实时书写路径一致）
+  let prev = atrament.draw(start.x, start.y, start.x, start.y, first.p);
+  for (let i = 1; i < s.points.length; i++) {
+    const pt = s.points[i];
+    if (!pt) continue;
+    const at = fromLogicalPoint(cssWidth, pt.x, pt.y);
+    prev = atrament.draw(at.x, at.y, prev.x, prev.y, pt.p);
+  }
+  atrament.endStroke(prev.x, prev.y);
+}
+
 export interface AtramentSurfaceOptions {
   /** 初始高度提示（CSS 像素）。容器高度最终由外部（InkPad）控制 */
   height?: number;
@@ -145,24 +173,10 @@ export function createAtramentSurface(
     c.lineJoin = "round";
   }
 
-  /** 按逻辑坐标重放一笔（atrament 官方程序化绘制流程） */
+  /** 按当前容器宽度重放一笔（模块级原语的闭包便捷封装） */
   function replayStroke(s: InkStroke): void {
-    if (!atrament || s.points.length === 0) return;
-    atrament.color = s.color;
-    atrament.weight = fromLogical(cssWidth, s.weight);
-    const first = s.points[0];
-    if (!first) return;
-    const start = fromLogicalPoint(cssWidth, first.x, first.y);
-    atrament.beginStroke(start.x, start.y);
-    // 先画起点（轻点也留下墨点；与实时书写路径一致）
-    let prev = atrament.draw(start.x, start.y, start.x, start.y, first.p);
-    for (let i = 1; i < s.points.length; i++) {
-      const pt = s.points[i];
-      if (!pt) continue;
-      const at = fromLogicalPoint(cssWidth, pt.x, pt.y);
-      prev = atrament.draw(at.x, at.y, prev.x, prev.y, pt.p);
-    }
-    atrament.endStroke(prev.x, prev.y);
+    if (!atrament) return;
+    replayAtramentStroke(atrament, cssWidth, s);
   }
 
   /** 全量重绘：清位图 → 重置 context → 依次重放（跳过 pendingErase 中的笔画） */

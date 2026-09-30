@@ -12,7 +12,8 @@ import {
 } from "@/features/attempt/answer-format";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { AttemptQuestionMarkEditor } from "./AttemptQuestionMarkEditor";
-import { InkLightbox } from "./InkLightbox";
+import { InkLightbox, type InkViewTab, InkViewTabs } from "./InkLightbox";
+import { InkReplayPane } from "./InkReplayPane";
 
 /**
  * 作答详情的单题卡片（T3.1，D7）：连续题号 + 题型/难度/考点、题干（RichMarkdown）、
@@ -96,7 +97,11 @@ function DetailOptions({
   );
 }
 
-/** 手写笔迹缩略图（懒加载；点击放大；hasStrokes=false 时提示无笔画） */
+/**
+ * 手写笔迹区（懒加载快照 + 点击放大；T3.3 起提供「快照 / 回放」切换）：
+ * 回放态三态交给 InkReplayPane（加载 / 重演 / PNG 降级）；放大层从当前视图打开。
+ * hasStrokes=false 时提示无笔画。
+ */
 function InkThumbnail({
   question,
 }: {
@@ -105,36 +110,50 @@ function InkThumbnail({
   const ink = question.ink;
   const [zoomed, setZoomed] = useState(false);
   const [available, setAvailable] = useState(true);
+  const [tab, setTab] = useState<InkViewTab>("snapshot");
   if (ink === null || !available) return null;
   return (
     <div className="flex flex-col gap-1.5">
-      <p className="flex flex-wrap items-center gap-1.5 text-sm text-muted-foreground">
-        <PenLine aria-hidden className="size-4" />
+      <div className="flex flex-wrap items-center gap-1.5 text-sm text-muted-foreground">
+        <PenLine aria-hidden className="size-4 shrink-0" />
         手写笔迹
         {!ink.hasStrokes && (
           <span className="rounded bg-muted px-1.5 py-0.5 text-xs">
             有笔迹记录但无笔画
           </span>
         )}
-      </p>
-      <button
-        type="button"
-        className="min-h-11 w-full rounded-lg outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
-        aria-label={`放大查看第 ${question.no} 题的手写笔迹`}
-        onClick={() => setZoomed(true)}
-      >
-        <img
-          src={ink.pngUrl}
+        <span className="ml-auto">
+          <InkViewTabs value={tab} onChange={setTab} />
+        </span>
+      </div>
+      {tab === "snapshot" ? (
+        <button
+          type="button"
+          className="min-h-11 w-full rounded-lg outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+          aria-label={`放大查看第 ${question.no} 题的手写笔迹`}
+          onClick={() => setZoomed(true)}
+        >
+          <img
+            src={ink.pngUrl}
+            alt={`第 ${question.no} 题的手写笔迹`}
+            loading="lazy"
+            className="w-full rounded-lg border border-border bg-white"
+            onError={() => setAvailable(false)}
+          />
+        </button>
+      ) : (
+        <InkReplayPane
+          inkId={ink.inkId}
+          pngUrl={ink.pngUrl}
           alt={`第 ${question.no} 题的手写笔迹`}
-          loading="lazy"
-          className="w-full rounded-lg border border-border bg-white"
-          onError={() => setAvailable(false)}
         />
-      </button>
+      )}
       {zoomed && (
         <InkLightbox
           pngUrl={ink.pngUrl}
           alt={`第 ${question.no} 题的手写笔迹`}
+          inkId={ink.inkId}
+          initialTab={tab}
           onClose={() => setZoomed(false)}
         />
       )}
