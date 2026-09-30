@@ -668,7 +668,7 @@ describe("多单元取卷与作答（D12）", () => {
       unanswered: 1,
       autoGradable: 3,
     });
-    expect((result.attempt as Record<string, unknown>)["scoreAuto"]).toBe(67);
+    expect((result.attempt as Record<string, unknown>).scoreAuto).toBe(67);
     // 结果视图按单元分组（顺序 = 布置顺序，组内按题序）
     const units = result.units as {
       id: string;
@@ -903,7 +903,7 @@ describe("名单增删（D13：addStudentIds / removeStudentIds）", () => {
     const detailData = (
       (await detail.json()) as { data: Record<string, unknown> }
     ).data;
-    expect((detailData.attempt as Record<string, unknown>)["status"]).toBe(
+    expect((detailData.attempt as Record<string, unknown>).status).toBe(
       "submitted",
     );
     expect(Array.isArray(detailData.units)).toBe(true);
