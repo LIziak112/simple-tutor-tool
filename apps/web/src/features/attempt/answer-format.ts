@@ -3,6 +3,7 @@ import type {
   QuestionType,
   StudentAnswer,
 } from "@tutor/contract";
+import { QUESTION_TYPE_LABELS as QUESTION_TYPE_LABELS_CONTRACT } from "@tutor/contract";
 
 /**
  * 作答展示的纯函数集（T2.6 答题页/结果视图共用）：
@@ -10,16 +11,9 @@ import type {
  * 纯函数无 IO，单测覆盖（answer-format.test.ts）。
  */
 
-/** 题型 → 中文标签（题卡徽章与结果视图共用） */
-export const QUESTION_TYPE_LABELS: Record<QuestionType, string> = {
-  judge: "判断",
-  choice: "单选",
-  multi: "多选",
-  fill: "填空",
-  solve: "计算",
-  apply: "应用",
-  "find-error": "找错",
-};
+/** 题型 → 中文标签（题卡徽章与结果视图共用；T3.4 起常量收归契约，前后端同一份） */
+export const QUESTION_TYPE_LABELS: Record<QuestionType, string> =
+  QUESTION_TYPE_LABELS_CONTRACT;
 
 /** 题型徽章配色（按客观/主观两档区分，视觉分组） */
 export const QUESTION_TYPE_BADGE_CLASS: Record<QuestionType, string> = {

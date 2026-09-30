@@ -23,6 +23,28 @@ export const questionTypeSchema = z.enum([
   "find-error",
 ]);
 
+/**
+ * 题型中文名（UI 徽章与 T3.4 CSV 导出共用；前后端共用同一份，禁止各自手写）。
+ * 手写题集合（solve/apply/find-error，答案 kind=final 的题型）也由此推导：
+ * 供 CSV 手写笔迹列等处判断题型是否可书写。
+ */
+export const QUESTION_TYPE_LABELS: Record<QuestionType, string> = {
+  judge: "判断",
+  choice: "单选",
+  multi: "多选",
+  fill: "填空",
+  solve: "计算",
+  apply: "应用",
+  "find-error": "找错",
+};
+
+/** 可书写（手写）题型：答案为 final 文本 + 可上传笔迹的三种 */
+export const HANDWRITTEN_QUESTION_TYPES: readonly QuestionType[] = [
+  "solve",
+  "apply",
+  "find-error",
+];
+
 /** 文档类型：练习 / 讲义 / 混合（frontmatter kind） */
 export const documentKindSchema = z.enum(["practice", "lecture", "mixed"]);
 

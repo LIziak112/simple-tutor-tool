@@ -14,6 +14,7 @@ import { MemoryRouter, Route, Routes } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ApiError,
+  downloadTeacherExportCsv,
   fetchTeacherAttemptDetailApi,
   markResponseApi,
 } from "@/lib/api";
@@ -26,6 +27,9 @@ import AttemptDetailPage from "./AttemptDetailPage";
  * 手写缩略图与 lightbox、得分回退展示。API 层 mock。
  * T3.2b（D3）：每题「改判 / 评语」内联编辑——draft 不显示、对自动判过的题
  * 可改判、保存调用 mark 接口并经缓存失效刷新判定区与顶部汇总。
+ * T3.4：「导出 CSV」按钮携带该 attempt 的定位参数（口径见
+ * exportCsvParamsOfAttempt：作业 studentId+assignmentId、课程练习
+ * studentId+courseId+sourceType）。
  */
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -34,14 +38,18 @@ vi.mock("@/lib/api", async (importOriginal) => {
     ...actual,
     fetchTeacherAttemptDetailApi: vi.fn(),
     markResponseApi: vi.fn(),
+    downloadTeacherExportCsv: vi.fn(),
   };
 });
 
 const mockedDetail = vi.mocked(fetchTeacherAttemptDetailApi);
 const mockedMark = vi.mocked(markResponseApi);
+const mockedDownload = vi.mocked(downloadTeacherExportCsv);
 
 const ATTEMPT_ID = "99999999-9999-4999-8999-999999999991";
 const INK_URL = "/api/teacher/ink/cccccccc-cccc-4ccc-8ccc-cccccccccccc.png";
+const COURSE_ID = "33333333-3333-4333-8333-333333333333";
+const ASSIGNMENT_ID = "44444444-4444-4444-8444-444444444444";
 
 /** 逐题行工厂（judge 默认；overrides 换题型/判定/手写/答案） */
 function makeQuestion(
@@ -165,6 +173,52 @@ describe("AttemptDetailPage 三态", () => {
     expect(
       screen.getByRole("button", { name: "返回数据页" }),
     ).toBeInTheDocument();
+  });
+});
+
+describe("AttemptDetailPage 导出 CSV（T3.4，D13）", () => {
+  it("课程练习来源：studentId + courseId + sourceType=course；作业来源：studentId + assignmentId", async () => {
+    mockedDownload.mockResolvedValue(undefined);
+    const STUDENT_ID = "11111111-1111-4111-8111-111111111111";
+
+    // 课程练习（默认工厂是 course 来源）
+    mockedDetail.mockResolvedValue(makeDetail());
+    const first = renderPage();
+    await screen.findByText("张三");
+    fireEvent.click(screen.getByRole("button", { name: "导出 CSV" }));
+    await waitFor(() => {
+      expect(mockedDownload).toHaveBeenCalledTimes(1);
+    });
+    expect(mockedDownload).toHaveBeenLastCalledWith({
+      studentId: STUDENT_ID,
+      courseId: COURSE_ID,
+      sourceType: "course",
+    });
+    first.unmount();
+
+    // 作业来源：一作业一人一份作答，studentId+assignmentId 唯一定位
+    mockedDetail.mockResolvedValue(
+      makeDetail({
+        sourceType: "assignment",
+        courseId: null,
+        courseName: null,
+        assignmentId: ASSIGNMENT_ID,
+        assignmentTitle: "第一周作业",
+        unitId: null,
+        unitTitle: null,
+        attemptNo: 1,
+      }),
+    );
+    renderPage();
+    await screen.findByText("张三");
+    fireEvent.click(screen.getByRole("button", { name: "导出 CSV" }));
+    await waitFor(() => {
+      expect(mockedDownload).toHaveBeenCalledTimes(2);
+    });
+    expect(mockedDownload).toHaveBeenLastCalledWith({
+      studentId: STUDENT_ID,
+      assignmentId: ASSIGNMENT_ID,
+    });
   });
 });
 

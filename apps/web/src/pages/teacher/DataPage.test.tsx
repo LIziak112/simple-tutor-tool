@@ -13,13 +13,19 @@ import type {
 } from "@tutor/contract";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fetchStudentsApi, fetchTeacherAttemptsApi } from "@/lib/api";
+import {
+  downloadTeacherExportCsv,
+  fetchStudentsApi,
+  fetchTeacherAttemptsApi,
+} from "@/lib/api";
+import { localInputToUtcIso } from "@/lib/time";
 import DataPage from "./DataPage";
 
 /**
  * /t/data 作答数据页组件测试（T3.1）：三态、三视图分组、卡片字段口径
  * （进行中徽章、得分回退 scoreFinal??scoreAuto、待批徽章）、筛选/分页与
  * URL 同步。API 层 mock（真实接口行为由后端集成与 E2E 覆盖）。
+ * T3.4 增补：「导出 CSV」按钮携带当前筛选（映射口径见 exportCsvParamsOf）。
  */
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -28,11 +34,13 @@ vi.mock("@/lib/api", async (importOriginal) => {
     ...actual,
     fetchTeacherAttemptsApi: vi.fn(),
     fetchStudentsApi: vi.fn(),
+    downloadTeacherExportCsv: vi.fn(),
   };
 });
 
 const mockedAttempts = vi.mocked(fetchTeacherAttemptsApi);
 const mockedStudents = vi.mocked(fetchStudentsApi);
+const mockedDownload = vi.mocked(downloadTeacherExportCsv);
 
 const STUDENT_ID = "11111111-1111-4111-8111-111111111111";
 const STUDENT_B_ID = "22222222-2222-4222-8222-222222222222";
@@ -221,6 +229,30 @@ describe("DataPage 三视图分组（D6）", () => {
     // 组标题带条数徽章（如「张三 1 条」），用正则匹配
     expect(screen.getByRole("heading", { name: /张三/ })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /李四/ })).toBeInTheDocument();
+  });
+});
+
+describe("DataPage 导出 CSV（T3.4，D13）", () => {
+  it("点击「导出 CSV」携带当前筛选（studentId/sourceType/from 映射；status 不映射）", async () => {
+    mockedDownload.mockResolvedValue(undefined);
+    mockedAttempts.mockResolvedValue({ attempts: [], total: 0 });
+    renderPage(
+      `/t/data?studentId=${STUDENT_ID}&sourceType=course&status=draft&from=2026-09-01T10:00`,
+    );
+    // status=draft 等筛选生效 → 空态是「当前筛选下没有作答」
+    await screen.findByText("当前筛选下没有作答");
+
+    fireEvent.click(screen.getByRole("button", { name: "导出 CSV" }));
+    await waitFor(() => {
+      expect(mockedDownload).toHaveBeenCalledTimes(1);
+    });
+    // from 用真实 localInputToUtcIso 计算期望（任何运行时区下都成立）；
+    // status=draft 不出现在导出参数——导出恒为已交卷数据，接口无该参数
+    expect(mockedDownload).toHaveBeenCalledWith({
+      studentId: STUDENT_ID,
+      sourceType: "course",
+      from: localInputToUtcIso("2026-09-01T10:00"),
+    });
   });
 });
 

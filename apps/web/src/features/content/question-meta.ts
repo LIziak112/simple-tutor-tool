@@ -1,20 +1,14 @@
 import type { QuestionType } from "@tutor/contract";
+import { QUESTION_TYPE_LABELS as QUESTION_TYPE_LABELS_CONTRACT } from "@tutor/contract";
 
 /**
  * 题目元信息的展示映射（内容列表与导入统计条共用）：
  * 题型中文徽章文案、难度星条。纯数据/纯函数，不含 React。
  */
 
-/** 题型 → 中文标签（§5.1 规则要点表的七种题型） */
-export const QUESTION_TYPE_LABELS: Record<QuestionType, string> = {
-  judge: "判断",
-  choice: "单选",
-  multi: "多选",
-  fill: "填空",
-  solve: "计算",
-  apply: "应用",
-  "find-error": "找错",
-};
+/** 题型 → 中文标签（T3.4 起常量收归契约，前后端同一份） */
+export const QUESTION_TYPE_LABELS: Record<QuestionType, string> =
+  QUESTION_TYPE_LABELS_CONTRACT;
 
 /** 题型徽章的配色（区分客观题/主观题两档即可，避免七色花哨） */
 export const QUESTION_TYPE_BADGE_CLASS: Record<QuestionType, string> = {

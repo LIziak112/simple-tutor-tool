@@ -9,6 +9,8 @@ import { studentAnswerSchema } from "./grading.ts";
  * 与 GET /api/teacher/attempts/:id 作答详情（D5：draft 亦可用）。
  * T3.2b 增补（D3/D4）：POST /api/teacher/responses/:id/mark 批注与
  * GET /api/teacher/pending-marks 待批队列。
+ * T3.4 增补（D13）：GET /api/teacher/export/csv 的查询参数（文件直出，
+ * 响应头与 CSV 内容口径见服务端 export-csv）。
  * 依据：docs/Phase3任务清单.md §2 D5（草稿可见）、D6（三视图与来源筛选）、
  * D7（详情逐题字段）、D8（入口衔接）、D3（批注语义）、D4（待批队列口径）；
  * 全局约定见 docs/开发任务清单.md §0.3。
@@ -385,6 +387,27 @@ export const teacherMarkErrorCodeSchema = z.enum([
   "VALIDATION_ERROR",
 ]);
 
+// ---------- T3.4 CSV 导出（D13） ----------
+
+/**
+ * GET /api/teacher/export/csv 查询参数（全部可选，可任意组合；D13）：
+ * - studentId / courseId / assignmentId：按学生、课程（assignment 来源取作业
+ *   所属课程，course 来源即练习课程）、作业过滤——语义与 teacherAttemptListQuerySchema
+ *   同口径（不含 unitId/status：导出恒为已交卷 attempt 的逐题行，status 筛选无意义）；
+ * - sourceType：来源类型（assignment / course）；
+ * - from / to：时间范围（UTC ISO，带 Z 后缀）——与列表同一「最近活动时间」
+ *   （submittedAt ?? startedAt）时间轴过滤（已交卷 attempt 即 submittedAt）。
+ * 导出为文件直出（text/csv + UTF-8 BOM，非 { ok, data } 统一壳），无分页。
+ */
+export const exportCsvQuerySchema = z.object({
+  studentId: z.uuid("studentId 必须是 UUID 格式").optional(),
+  courseId: z.uuid("courseId 必须是 UUID 格式").optional(),
+  assignmentId: z.uuid("assignmentId 必须是 UUID 格式").optional(),
+  sourceType: attemptSourceSchema.optional(),
+  from: z.iso.datetime({ offset: false }).optional(),
+  to: z.iso.datetime({ offset: false }).optional(),
+});
+
 // ---------- 具体化的成功壳 ----------
 
 /** 携带教师作答列表的成功响应壳 */
@@ -426,3 +449,4 @@ export type PendingMarkListQuery = z.infer<typeof pendingMarkListQuerySchema>;
 export type PendingMarkCard = z.infer<typeof pendingMarkCardSchema>;
 export type PendingMarkListData = z.infer<typeof pendingMarkListDataSchema>;
 export type TeacherMarkErrorCode = z.infer<typeof teacherMarkErrorCodeSchema>;
+export type ExportCsvQuery = z.infer<typeof exportCsvQuerySchema>;

@@ -132,6 +132,25 @@ export function attemptListApiParams(
   };
 }
 
+/**
+ * 状态 → CSV 导出接口查询参数（T3.4，D13）：studentId / sourceType / from / to
+ * 映射（from/to 与列表同一本地串 → UTC ISO 转换）。status **不映射**——导出
+ * 恒为已交卷 attempt 的逐题行，接口无该参数；view / offset 是展示概念同样不携带。
+ */
+export function exportCsvParamsOf(state: AttemptListUrlState): {
+  studentId?: string | undefined;
+  sourceType?: AttemptSource | undefined;
+  from?: string | undefined;
+  to?: string | undefined;
+} {
+  return {
+    ...(state.studentId !== null ? { studentId: state.studentId } : {}),
+    ...(state.sourceType !== "all" ? { sourceType: state.sourceType } : {}),
+    ...(state.from !== "" ? { from: localInputToUtcIso(state.from) } : {}),
+    ...(state.to !== "" ? { to: localInputToUtcIso(state.to) } : {}),
+  };
+}
+
 /** 视图中文名（切换按钮文案） */
 export const VIEW_MODE_LABELS: Record<AttemptViewMode, string> = {
   course: "按课程",
