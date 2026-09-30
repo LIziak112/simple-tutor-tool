@@ -1,4 +1,5 @@
 import {
+  exportCsvQuerySchema,
   markRequestSchema,
   pendingMarkListQuerySchema,
   teacherAttemptListQuerySchema,
@@ -7,6 +8,11 @@ import { Hono } from "hono";
 import type { TeacherEnv } from "../auth/require-teacher";
 import type { Db } from "../db/client";
 import { HttpError, parseJsonBody } from "../lib/http-error";
+import {
+  beijingExportStampOf,
+  CSV_UTF8_BOM,
+  exportCsv,
+} from "../services/export-csv";
 import { listPendingMarks, markResponse } from "../services/mark-response";
 import {
   getTeacherAttemptDetail,
@@ -14,7 +20,8 @@ import {
 } from "../services/teacher-attempt-service";
 
 /**
- * 教师端作答数据路由（T3.1 + T3.2b，需教师会话），由 teacher.ts 挂在 /api/teacher 之下：
+ * 教师端作答数据路由（T3.1 + T3.2b + T3.4，需教师会话），由 teacher.ts 挂在
+ * /api/teacher 之下：
  * - GET /attempts：作答卡片列表。查询参数（全可选）：studentId / courseId /
  *   assignmentId / unitId（DSL id）/ sourceType / status / from / to（时间范围按
  *   最近活动时间）/ limit（默认 50，1–200）/ offset（默认 0）；
@@ -27,69 +34,111 @@ import {
  *   业务在 mark-response（事务内 D3 持久化 + D2 重算）。
  * - GET /pending-marks（T3.2b，D4）：待批队列。查询参数（全可选）：
  *   courseId / assignmentId / studentId；submittedAt 升序（先交先批）；教师域过滤。
+ * - GET /export/csv（T3.4，D13）：CSV 导出（全部来源、仅已交卷 attempt、每题
+ *   一行）。查询参数（全可选）：studentId / courseId / assignmentId /
+ *   sourceType / from / to。文件直出（text/csv + UTF-8 BOM，非 { ok, data }
+ *   统一壳，处理方式同 export.md）；CSV 组装在 export-csv 服务；publicUrl 由
+ *   teacher.ts 传入（手写笔迹 PNG 绝对链接的部署根地址）。
  *
  * 路由只做「鉴权 → 校验 → 调 service → 包装响应」（api-endpoint 技能约定）；
  * GET 无 JSON body：查询参数手工过契约 schema（数值字段经 coerce 解析字符串）。
  * 返回类型不显式标注 Hono：链式注册把路由签名累积进推断类型（AppType 前提）。
  */
-export function createTeacherAttemptRoutes(db: Db) {
-  return new Hono<TeacherEnv>()
-    .get("/attempts", (c) => {
-      const parsed = teacherAttemptListQuerySchema.safeParse({
-        studentId: c.req.query("studentId") ?? undefined,
-        courseId: c.req.query("courseId") ?? undefined,
-        assignmentId: c.req.query("assignmentId") ?? undefined,
-        unitId: c.req.query("unitId") ?? undefined,
-        sourceType: c.req.query("sourceType") ?? undefined,
-        status: c.req.query("status") ?? undefined,
-        from: c.req.query("from") ?? undefined,
-        to: c.req.query("to") ?? undefined,
-        limit: c.req.query("limit") ?? undefined,
-        offset: c.req.query("offset") ?? undefined,
-      });
-      if (!parsed.success) {
-        const first = parsed.error.issues[0]?.message ?? "格式不正确";
-        throw new HttpError(
-          400,
-          "VALIDATION_ERROR",
-          `查询参数不合法：${first}`,
-        );
-      }
-      return c.json({
-        ok: true,
-        data: listTeacherAttempts(db, c.var.teacher.id, parsed.data),
-      });
-    })
-    .get("/attempts/:id", (c) => {
-      return c.json({
-        ok: true,
-        data: getTeacherAttemptDetail(db, c.var.teacher.id, c.req.param("id")),
-      });
-    })
-    .post("/responses/:id/mark", async (c) => {
-      const req = await parseJsonBody(c, markRequestSchema);
-      return c.json({
-        ok: true,
-        data: markResponse(db, c.var.teacher.id, c.req.param("id"), req),
-      });
-    })
-    .get("/pending-marks", (c) => {
-      const parsed = pendingMarkListQuerySchema.safeParse({
-        courseId: c.req.query("courseId") ?? undefined,
-        assignmentId: c.req.query("assignmentId") ?? undefined,
-        studentId: c.req.query("studentId") ?? undefined,
-      });
-      if (!parsed.success) {
-        const first = parsed.error.issues[0]?.message ?? "格式不正确";
-        throw new HttpError(
-          400,
-          "VALIDATION_ERROR",
-          `查询参数不合法：${first}`,
-        );
-      }
-      return c.json({
-        ok: true,
-        data: listPendingMarks(db, c.var.teacher.id, parsed.data),
-      });
-    });
+export function createTeacherAttemptRoutes(db: Db, publicUrl: string) {
+  return (
+    new Hono<TeacherEnv>()
+      .get("/attempts", (c) => {
+        const parsed = teacherAttemptListQuerySchema.safeParse({
+          studentId: c.req.query("studentId") ?? undefined,
+          courseId: c.req.query("courseId") ?? undefined,
+          assignmentId: c.req.query("assignmentId") ?? undefined,
+          unitId: c.req.query("unitId") ?? undefined,
+          sourceType: c.req.query("sourceType") ?? undefined,
+          status: c.req.query("status") ?? undefined,
+          from: c.req.query("from") ?? undefined,
+          to: c.req.query("to") ?? undefined,
+          limit: c.req.query("limit") ?? undefined,
+          offset: c.req.query("offset") ?? undefined,
+        });
+        if (!parsed.success) {
+          const first = parsed.error.issues[0]?.message ?? "格式不正确";
+          throw new HttpError(
+            400,
+            "VALIDATION_ERROR",
+            `查询参数不合法：${first}`,
+          );
+        }
+        return c.json({
+          ok: true,
+          data: listTeacherAttempts(db, c.var.teacher.id, parsed.data),
+        });
+      })
+      .get("/attempts/:id", (c) => {
+        return c.json({
+          ok: true,
+          data: getTeacherAttemptDetail(
+            db,
+            c.var.teacher.id,
+            c.req.param("id"),
+          ),
+        });
+      })
+      .post("/responses/:id/mark", async (c) => {
+        const req = await parseJsonBody(c, markRequestSchema);
+        return c.json({
+          ok: true,
+          data: markResponse(db, c.var.teacher.id, c.req.param("id"), req),
+        });
+      })
+      .get("/pending-marks", (c) => {
+        const parsed = pendingMarkListQuerySchema.safeParse({
+          courseId: c.req.query("courseId") ?? undefined,
+          assignmentId: c.req.query("assignmentId") ?? undefined,
+          studentId: c.req.query("studentId") ?? undefined,
+        });
+        if (!parsed.success) {
+          const first = parsed.error.issues[0]?.message ?? "格式不正确";
+          throw new HttpError(
+            400,
+            "VALIDATION_ERROR",
+            `查询参数不合法：${first}`,
+          );
+        }
+        return c.json({
+          ok: true,
+          data: listPendingMarks(db, c.var.teacher.id, parsed.data),
+        });
+      })
+      // T3.4（D13）：CSV 导出文件直出——UTF-8 BOM 前缀让 Excel 直接打开中文不
+      // 乱码；RFC 4180 转义与公式注入防护在 export-csv 服务。文件名时间戳 =
+      // 请求时刻北京时间；导出内容随批改变化，禁缓存（与 export.md 同口径）。
+      .get("/export/csv", (c) => {
+        const parsed = exportCsvQuerySchema.safeParse({
+          studentId: c.req.query("studentId") ?? undefined,
+          courseId: c.req.query("courseId") ?? undefined,
+          assignmentId: c.req.query("assignmentId") ?? undefined,
+          sourceType: c.req.query("sourceType") ?? undefined,
+          from: c.req.query("from") ?? undefined,
+          to: c.req.query("to") ?? undefined,
+        });
+        if (!parsed.success) {
+          const first = parsed.error.issues[0]?.message ?? "格式不正确";
+          throw new HttpError(
+            400,
+            "VALIDATION_ERROR",
+            `查询参数不合法：${first}`,
+          );
+        }
+        const csv = exportCsv(db, c.var.teacher.id, publicUrl, parsed.data);
+        const filename = `tutor-export-${beijingExportStampOf()}.csv`;
+        return new Response(`${CSV_UTF8_BOM}${csv}`, {
+          status: 200,
+          headers: {
+            "content-type": "text/csv; charset=utf-8",
+            "cache-control": "no-store",
+            "content-disposition": `attachment; filename="${filename}"`,
+          },
+        });
+      })
+  );
 }

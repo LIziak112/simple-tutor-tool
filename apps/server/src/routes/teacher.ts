@@ -122,6 +122,7 @@ export function createTeacherRoutes(
       .route("/", createStudentTeacherRoutes(db))
       .route("/", createAssignmentTeacherRoutes(db))
       // T3.1：教师端作答数据页（列表 + 详情，业务在 teacher-attempt-service）
-      .route("/", createTeacherAttemptRoutes(db))
+      // T3.4：/export/csv CSV 导出（业务在 export-csv；publicUrl 供笔迹绝对链接）
+      .route("/", createTeacherAttemptRoutes(db, publicUrl))
   );
 }

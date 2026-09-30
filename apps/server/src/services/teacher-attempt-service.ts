@@ -194,8 +194,9 @@ export function inkByQuestionOf(
   );
 }
 
-/** 单元 id → 标题（teacherId 域内；软删单元行保留，标题仍可读，D16） */
-function unitTitleByIdOf(
+/** 单元 id → 标题（teacherId 域内；软删单元行保留，标题仍可读，D16）。
+ * T3.4 起导出——CSV 导出行组装复用（export-csv.ts） */
+export function unitTitleByIdOf(
   db: Db,
   teacherId: string,
   unitIds: readonly string[],
