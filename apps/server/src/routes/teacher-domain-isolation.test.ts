@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { gzipSync, gunzipSync } from "node:zlib";
+import { gunzipSync, gzipSync } from "node:zlib";
 import type { ApiErr } from "@tutor/contract";
 import { and, eq } from "drizzle-orm";
 import type { Logger } from "pino";
@@ -1639,12 +1639,7 @@ describe("T3.3 教师端笔迹矢量数据接口（GET /api/teacher/ink/:inkId.j
   it("乙取甲学生的笔迹矢量 → 404 INK_NOT_FOUND（域隔离红线，不暴露存在性）", async () => {
     const { app, db, dataDir, cookieB, studentAId, assignmentAId } =
       await makeCourseIsolationApp();
-    const { inkId } = seedInkOfTeacherA(
-      db,
-      dataDir,
-      studentAId,
-      assignmentAId,
-    );
+    const { inkId } = seedInkOfTeacherA(db, dataDir, studentAId, assignmentAId);
     await expectNotFound(
       await request(app, "GET", `/api/teacher/ink/${inkId}.json.gz`, cookieB),
       "INK_NOT_FOUND",
@@ -1697,7 +1692,12 @@ describe("T3.3 教师端笔迹矢量数据接口（GET /api/teacher/ink/:inkId.j
     expect(png.status).toBe(200);
     expect(png.headers.get("content-type")).toBe("image/png");
     // 元数据：JSON 统一壳
-    const meta = await request(app, "GET", `/api/teacher/ink/${inkId}`, cookieA);
+    const meta = await request(
+      app,
+      "GET",
+      `/api/teacher/ink/${inkId}`,
+      cookieA,
+    );
     expect(meta.status).toBe(200);
     expect(meta.headers.get("content-type")).toContain("application/json");
     expect(
