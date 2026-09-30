@@ -4,7 +4,7 @@
 > 配套文档：`docs/技术架构与实施方案.md`（下称"架构文档"，引用写作 §x.x）。本文只写**做什么、按什么顺序、怎么验收**；判分/批改/记录的设计细节以本文 §2 为准（与架构文档冲突时以本文为准，T3.6 收尾时同步回架构文档）。
 > 执行对象：GLM 5.3。每次只下达**一个任务（T3.x）**。
 > **顺序前提**：Phase 2A（`docs/Phase2A改进任务清单.md`，至 T2A.9）与 Phase 2B（`docs/Phase2B改进任务清单.md`，至 T2B.8）全部完成后开始。
-> **2026-09-29 重写说明**：本版吸收了 T2A.9 / T2B.8 计划中的 Phase 3 条目修订（按课程视图、来源筛选、历次展开、记录分组、错题本口径、教师域化），并落实用户四项决策（§2 标注「用户定」）。**原 T3.6（旧版数据迁移）已整体删除**（用户决策：旧版数据不迁移，内容届时以 .md 重新导入）；T3.6 现为收尾任务。任务完成后在 [`docs/进度表.md`](进度表.md) 打勾。
+> **2026-09-29 重写说明**：本版吸收了 T2A.9 / T2B.8 计划中的 Phase 3 条目修订（按课程视图、来源筛选、历次展开、记录分组、错题本口径、教师域化），并落实用户四项决策（§2 标注「用户定」）。**原 T3.6（旧版数据迁移）已整体删除**（用户决策：旧版数据不迁移，内容届时以 .md 重新导入）；T3.6 现为收尾任务。同日按现有代码复核修订：D1 补多选空选与存量回填、D4 统一待批谓词、D7 草稿题目来源与笔迹关联、D9/D10/D11 按已实现的 T2A.8 收紧公布 gate、D11 错题本入本条件、D13 CSV 公式注入、T3.4 依赖改批注任务。同日用户再定四项：前置条件维持「2A/2B 全部完成」；T3.2 拆为 T3.2a（判分口径）/ T3.2b（批注与队列）；「我的记录」改为全部作答索引 + 筛选（D10）；学生端越权维持 403。任务完成后在 [`docs/进度表.md`](进度表.md) 打勾。
 
 ---
 
@@ -26,7 +26,7 @@
 - 严格按编号顺序执行；「依赖」未完成不得开始。每个任务一个分支 `task/T3.x`，验收通过后合并到 `v2`。
 - **每个任务结束时应用必须完整可用**：`pnpm e2e` 必须保持全绿（若任务改变了 E2E 覆盖的流程，在本任务内同步更新用例）。
 - **契约优先**（硬性规则 1）：涉及数据结构的改动先改 `packages/contract` 的 Zod schema 再实现，完成后运行 `pnpm schema:export` 并提交。
-- **判分逻辑修改先补测试**（硬性规则 9）：T3.2 对「未作答客观题判错」的语义变更，必须先写用例再改实现，并同步修订 T2.5/T2.6 时期锁定的相关测试期望与契约注释。
+- **判分逻辑修改先补测试**（硬性规则 9）：T3.2a 对「未作答客观题判错」的语义变更，必须先写用例再改实现，并同步修订 T2.5/T2.6 时期锁定的相关测试期望与契约注释。
 - **学生端任何新增/修改接口都必须接入 `assertNoLeak` 泄露测试**（硬性规则 3）。
 - **域隔离红线（沿用 T2B 口径）**：本阶段教师端每一个按 id 取数的新接口，都必须有「教师乙访问教师甲资源 → 404」的服务测试。
 - 本阶段**无数据库结构变更**：批注相关列（`responses.teacherMark / teacherComment / finalCorrect`、`attempts.scoreFinal`）已在 T2.6 预留，直接启用；若实施中发现确需结构变更，走 drizzle 迁移并在任务报告中列出理由。
@@ -53,11 +53,11 @@
               ▼
          scoreFinal / status=graded → 作业名单、进度矩阵、学生端记录联动更新 → CSV 导出
 
-学生侧   我的记录（/s/records）：作业组 + 课程练习组（历次展开）
+学生侧   我的记录（/s/records）：全部作答索引（作业 + 课程练习，时间倒序）+ 筛选
               │ 点击单次
               ▼
          单次结果视图（现有接口扩展）：对错 · 参考答案 · 详解 · 笔迹 · 老师评语
-         错题本（/s/records/wrong）：最近一次做错的题 + 首次是否做对标注 + 考点筛选
+         错题本（/s/records/wrong）：做错过的题（默认只显示最近仍错）+ 首次是否做对标注 + 考点筛选
 ```
 
 判分链（本阶段定稿）：`autoCorrect`（服务端自动，未作答客观题=**false**）→ `teacherMark`（教师批改/改判，优先）→ `finalCorrect`（统计唯一口径）→ `scoreFinal`（分母=全部题）与 `status`（draft → submitted → graded）。
@@ -70,25 +70,39 @@
 
 ### 判分与状态机
 
-- **D1 未作答客观题自动判错（用户定）**：交卷判分时，判断/单选/多选/填空**完全未作答**（`answerJson = null`）的题直接记 `autoCorrect = false`（恢复旧版口径），不进待批队列。判定逻辑放 `packages/grading`（可自动判分题型 + answer 为 null → false），先补用例再改实现；`attempt-service` 与 `contract/attempt.ts` 的相关注释、T2.5/T2.6 锁定的测试期望同步修订。此后 `autoCorrect = null` 只剩两种：手写题（待批）、题目无标准答案。
+- **D1 未作答客观题自动判错（用户定）**：交卷判分时，判断/单选/多选/填空**完全未作答**（`answerJson = null`）的题直接记 `autoCorrect = false`（恢复旧版口径），不进待批队列。判定逻辑放 `packages/grading`（可自动判分题型 + answer 为 null → false），先补用例再改实现；`attempt-service` 与 `contract/attempt.ts` 的相关注释、T2.5/T2.6 锁定的测试期望同步修订。此后 `autoCorrect = null` 只剩三种：手写题未能自动判（含只写笔迹未填最终答案、或整题未作答）、题目无标准答案、判断题写法无法归一化——全部进待批。
   - 附带影响（一并修订）：`scoreAuto` 公式不变（答对 ÷ autoCorrect 非 null 的题数），但未作答客观题从此进入分母，数值更真实；学生端结果视图对未作答题显示 ✗（原显示待判定）；受影响的既有断言（结果汇总 correct/wrong/pending 计数、进度矩阵与作业卡片得分）逐个核对更新。
   - 填空**部分空有答案**不属于未作答，按现有判分规则正常判定。
+  - 「未作答」判定口径：`answer === undefined`（answerJson 为 null）**或多选空选**（`indexes = []`，当前 `gradeMulti` 返回 null，学生选后又全部取消即落此态）。二者统一视为未作答 → false。判断题写法无法归一化仍为 null（进待批，教师裁定）。题目无标准答案的判定优先于此条（仍为 null）。
+  - **存量数据回填**：T3.2a 之前已交卷的 attempt 按新口径重算——在 `apps/server/src/db/backfill.ts` 新增一个 `data_migrations` 键（沿用 T2A 先例，幂等、事务内），对已交卷 responses 重判未作答客观题、按 D2 写 `finalCorrect / scoreAuto / scoreFinal / status`。不改表结构，无需 drizzle 迁移。
 - **D2 scoreFinal 分母 = 全部题（用户定）**：`scoreFinal = finalCorrect 为 true 的题数 ÷ 该 attempt 全部题数 × 100`（四舍五入）。`status = graded` 当且仅当该 attempt 全部 responses 的 `finalCorrect` 均非 null；清除批注使题目回落 null 时，status 回 `submitted`、`scoreFinal` 置 null 重算。所有界面「得分」展示**有 scoreFinal 用 scoreFinal，否则 scoreAuto**（作业卡片、课程进度矩阵、单元卡片首次/最近/最高分、我的记录、CSV）。
-- **D3 批注语义（默认）**：`POST /api/teacher/responses/:id/mark` 请求 `{ mark: 'correct' | 'wrong' | null, comment: string | null }`，两字段一次提交（UI 上判定与评语一起保存）。`mark = null` 清除教师判定（finalCorrect 回落 autoCorrect），`comment = null` 清除评语。**允许对任何已交卷的题批注/改判**（含自动判过的题，入口在详情页），不限待批队列。对 draft attempt 批注 → 409 `NOT_SUBMITTED`。
-- **D4 待批队列口径（默认）**：`autoCorrect = null` 且 `teacherMark` 为空（D1 之后即：手写题 + 无标准答案题）。排序 `submittedAt` 升序（先交先批）；支持按课程 / 作业 / 学生筛选。
+- **D3 批注语义（默认）**：`POST /api/teacher/responses/:id/mark` 请求 `{ mark: 'correct' | 'wrong' | null, comment: string | null }`，两字段一次提交（UI 上判定与评语一起保存）。`mark = null` 清除教师判定（finalCorrect 回落 autoCorrect），`comment = null` 清除评语；`comment` 去首尾空白后空串按 null 处理，上限 2000 字（契约校验，超出 400）。持久化口径：`finalCorrect = teacherMark ?? autoCorrect`，每次批注在事务内写回。**允许对任何已交卷的题批注/改判**（含自动判过的题，入口在详情页），不限待批队列。对 draft attempt 批注 → 409 `NOT_SUBMITTED`。
+- **D4 待批队列口径（默认）**：`autoCorrect = null` 且 `teacherMark` 为空（D1 之后即：手写题未能自动判、无标准答案题、判断题写法无法归一化）。排序 `submittedAt` 升序（先交先批）；支持按课程 / 作业 / 学生筛选。
+  - **全局唯一口径**：待批题 ≡ 已交卷 attempt 中 `finalCorrect` 为 null 的题（在 D3 持久化口径下与上句等价），因此「待批数 = 0 ⇔ status = graded」严格成立。服务端抽一个共享的待批谓词，数据页、队列、作业名单、课程进度矩阵、学生单元卡片、我的记录的待批数全部复用它。
+  - 现有 `course-service` / `student-course-service` 的 pendingCount 多了一个 `answerJson 非空` 条件，会漏掉**只写了笔迹、没填最终答案**的手写题（这类题 answerJson 为 null，却正是最需要批改的），而且会让该 attempt 永远到不了 graded。T3.2a 改为共享谓词，并补一个「仅笔迹无最终答案 → 进待批」的用例。
 
 ### 教师端数据页
 
 - **D5 草稿可见（用户定）**：数据页**包含进行中作答**，列表带显著「进行中」徽章；详情页只读展示当前草稿（已答内容 + 笔迹），判定列显示「未交卷」，不做实时自动刷新（刷新才更新）。
 - **D6 三视图与来源筛选（T2A.9 修订并入）**：按学生 / 按作业 / **按课程**（课程视图 = 该课程下的课程练习历次 + 关联作业）；列表支持 `sourceType`（assignment/course）、`status`（draft/submitted/graded）、学生、时间范围筛选；分页 `limit/offset`（默认 50，最大 200）。
 - **D7 详情页逐题字段（默认）**：全卷连续题号 + 所在单元节标题、题目快照公开形态（题型、难度、考点、题干）、学生答案、`autoCorrect`、`finalCorrect`、`teacherMark`、`teacherComment`、`activeSec`、`hintsUsed`、`changeCount`、手写信息 `{ inkId, pngUrl, hasStrokes }`。手写缩略图懒加载、点击放大（lightbox）；顶部得分汇总（对/错/待批计数、scoreAuto、scoreFinal）。
+  - 已交卷题目额外下发**参考答案与详解**（教师端不受泄露约束，改判与待批卡片都要用）。
+  - 题目来源：已交卷取 `questionSnapshotJson`；**draft 的 responses 行没有快照**（快照在交卷时才写，未答题甚至没有行），所以 draft 详情的题目列表取当前库中该 attempt 单元的题目（与学生草稿视图同源），且不下发参考答案。
+  - 手写信息按 `ink` 表 `(attemptId, questionId)` 关联取得，**不读 `responses.inkId`**（该列从未写入；draft 期也可能有笔迹无 responses 行）。
 - **D8 入口衔接（默认）**：作业详情名单中「进行中/已交卷/已批改」状态点击 → 该生 attempt 详情；课程进度矩阵的历次列表点击 → attempt 详情（替换 T2A.6 的占位交互「点击单元格暂只显示历次列表」）。
 
 ### 学生端记录
 
-- **D9 复用结果视图，不新建 records/:attemptId（默认）**：扩展现有 `GET /api/student/attempts/:id` 结果契约（`attemptResultQuestionSchema` 等），新增 `teacherMark / teacherComment / finalCorrect`，汇总新增 `scoreFinal` 与待批标记。快照形态与既有泄露规则不变（已交卷后本就公布答案详解）。若 T2A.8（after_due 公布时机）此前已实现，评语与对错同样受公布 gate：截止前只显示本人答案与「待公布」。
-- **D10 records 聚合（T2A.9 修订并入）**：`GET /api/student/records` = 作业组（每作业：状态、得分、待批数、进行中标记）+ 课程练习组（按课程分组：单元 × 历次 attemptNo / 时间 / 得分 / 待批，及首次 / 最近 / 最高分）。已移出课程的**已交卷**记录保留可见（T2A D7 口径）；已失权的进行中草稿不列出。
-- **D11 错题本口径（T2A.9 修订并入，默认补全聚合键）**：聚合键 = (学生, questionId)，**跨全部来源（作业 + 课程练习）取最近一次已交作答**，`finalCorrect = false` 入本；条目标注「首次是否做对」与最近一次来源（课程/作业名）。默认隐藏「最近已做对」的题，提供「显示已攻克」开关；考点筛选为服务端参数。答案/详解下发遵循 D9 的公布 gate。
+- **D9 复用结果视图，不新建 records/:attemptId（默认）**：扩展现有 `GET /api/student/attempts/:id` 结果契约（`attemptResultQuestionSchema` 等），新增 `teacherMark / teacherComment / finalCorrect`，汇总新增 `scoreFinal` 与待批标记。快照形态与既有泄露规则不变（已交卷后本就公布答案详解）。越权口径沿用学生端现状：访问他人 attempt → 403（与教师端 404 不同，用户定）。T2A.8（after_due 公布时机）已实现，因此 `teacherMark / teacherComment / finalCorrect / scoreFinal / pendingCount` 同样受公布 gate：截止前全部按现有 scoreAuto 的做法置 null 投影，只显示本人答案与「待公布」。
+- **D10 records = 全部作答的索引 + 筛选（用户定，替代原「作业组 + 课程练习组」分组聚合）**：`GET /api/student/records` 返回本人**每一次作答**一条（作业与课程练习都列），按「最近活动时间」（`submittedAt ?? startedAt`）倒序；筛选 `sourceType / courseId / assignmentId / status / from / to`，分页 `limit/offset`（默认 50，最大 200，同 D6）。
+  - 每条：attemptId、来源类型、课程名、作业标题或「单元标题 · 第 n 次」、状态、得分（D2 口径）、待批数、startedAt / submittedAt。
+  - 单元级首次 / 最近 / 最高分不在这里重复做，继续由 T2A 的学生课程单元页提供。
+  - 已移出课程的**已交卷**记录保留可见（T2A D7 口径）；已失权的进行中草稿不列出。after_due 未公布的作业，得分与待批数按 D9 置 null（显示「待公布」）。
+- **D11 错题本口径（T2A.9 修订并入，默认补全聚合键）**：聚合键 = (学生, questionId)，跨全部来源（作业 + 课程练习）。只统计**已判定**的作答（已交卷且 `finalCorrect` 非 null；待批题不参与，免得一道待批题把旧的「错」盖成未知）。
+  - 入本条件：任一次已判定作答为 `finalCorrect = false`。
+  - 默认只显示「最近一次判定仍为错」的题；「显示已攻克」开关额外列出「曾错、最近一次已做对」的题（原写法把入本条件写成「最近一次 = false」，那样开关就没有东西可显示了）。
+  - 条目标注「首次是否做对」（最早一次已判定作答）与最近一次来源（课程/作业名）；考点筛选为服务端参数。
+  - 公布 gate：after_due 未公布作业的作答**整体不参与聚合**（否则题目出现在错题本就等于泄露了对错）。
 
 ### 笔迹回放
 
@@ -96,7 +110,7 @@
 
 ### 导出
 
-- **D13 CSV（默认）**：包含**全部来源**（作业 + 课程练习），筛选 `studentId / courseId / assignmentId / sourceType / from / to`；UTF-8 BOM；每题一行（仅已交卷 attempt），列：学生、来源类型、课程、作业或单元（课程练习含「第 n 次」）、提交时间（北京时间）、单元标题、全卷题号、题型、难度、考点（分号分隔）、学生答案（序列化文本：多选/多空按序拼接，手写题为最终答案文本）、自动判定、最终判定、判定来源（自动/教师）、用时（秒）、提示数、改答案次数、教师评语、手写笔迹 PNG 链接（仅手写题，教师端绝对 URL）。考点取自题目快照；快照缺失时按题目 id 从当前库关联兜底。
+- **D13 CSV（默认）**：包含**全部来源**（作业 + 课程练习），筛选 `studentId / courseId / assignmentId / sourceType / from / to`；UTF-8 BOM；每题一行（仅已交卷 attempt），列：学生、来源类型、课程、作业或单元（课程练习含「第 n 次」）、提交时间（北京时间）、单元标题、全卷题号、题型、难度、考点（分号分隔）、学生答案（序列化文本：多选/多空按序拼接，手写题为最终答案文本）、自动判定、最终判定、判定来源（自动/教师）、用时（秒）、提示数、改答案次数、教师评语、手写笔迹 PNG 链接（仅手写题，教师端绝对 URL）。考点取自题目快照；快照缺失时按题目 id 从当前库关联兜底。**公式注入防护**：以 `= + - @`、制表符或回车开头的单元格内容前加 `'`（学生答案与评语都属不可信输入，Excel 打开时可能被当成公式执行）。
 
 ### 上线
 
@@ -108,11 +122,13 @@
 
 | 位置 | 变更 | 所在任务 |
 | --- | --- | --- |
-| 数据库 | **无结构变更**：直接启用 `responses.teacherMark / teacherComment / finalCorrect`、`attempts.scoreFinal`（T2.6 预留列） | T3.2 |
-| `packages/contract`（判分/结果） | `attemptResultQuestionSchema` + `teacherMark/teacherComment/finalCorrect`；得分汇总 + `scoreFinal / pendingCount`；`autoCorrect` 注释按 D1 修订 | T3.2、T3.5 |
-| `packages/contract`（教师端） | 作答列表/详情查询与数据 schema、`markRequestSchema`、待批队列 schema、CSV 导出查询 schema | T3.1、T3.2、T3.4 |
-| `packages/contract`（学生端） | `studentRecordsDataSchema`、`wrongQuestionsDataSchema`（含 query） | T3.5 |
-| `packages/grading` | 未作答客观题 → false（先补用例） | T3.2 |
+| 数据库 | **无结构变更**：直接启用 `responses.teacherMark / teacherComment / finalCorrect`、`attempts.scoreFinal`（T2.6 预留列） | T3.2a、T3.2b |
+| `packages/contract`（判分/结果） | `autoCorrect` 注释按 D1 修订 | T3.2a |
+| `packages/contract`（判分/结果） | `attemptResultQuestionSchema` + `teacherMark/teacherComment/finalCorrect`；得分汇总 + `scoreFinal / pendingCount` | T3.5 |
+| `packages/contract`（教师端） | 作答列表/详情查询与数据 schema、`markRequestSchema`、待批队列 schema、CSV 导出查询 schema | T3.1、T3.2b、T3.4 |
+| `packages/contract`（学生端） | `studentRecordsQuery/DataSchema`、`wrongQuestionsQuery/DataSchema` | T3.5 |
+| `packages/grading` | 未作答客观题（含多选空选）→ false（先补用例） | T3.2a |
+| `apps/server/src/db/backfill.ts` | 新增 data_migrations 键：已交卷 attempt 按 D1/D2 重算（数据回填，非结构变更） | T3.2a |
 
 每次契约改动后运行 `pnpm schema:export` 并提交（CI 校验）。
 
@@ -138,10 +154,21 @@
   - E2E：教师打开数据页，按课程视图看到课程练习历次，进详情见手写图。
   - 🧑 数据页能看到 Phase 2 / 2A 产生的全部数据（作业、课程练习、进行中草稿各至少一条样例）。
 
-### T3.2 批注、待批队列与判分口径修订
+### T3.2a 判分口径修订（无新界面）
 - 依赖：T3.1
 - 产出：
-  - **D1 落地（先补用例）**：`packages/grading` 对「可自动判分题型 + answer=null」返回 false；修订 `attempt-service` 交卷链路、contract 注释、T2.5/T2.6 锁定的测试期望（详见 D1 附带影响清单）。
+  - **D1 落地（先补用例）**：`packages/grading` 对「可自动判分题型 + 未作答（含多选空选）」返回 false；修订 `attempt-service` 交卷链路（交卷时按 D3 持久化口径同时写 `finalCorrect = autoCorrect`，全部非 null 时直接 `status=graded` 并写 `scoreFinal`）、contract 注释、T2.5/T2.6 锁定的测试期望（详见 D1 附带影响清单）。
+  - **共享待批谓词（D4）**：抽到服务层一处，`course-service`（进度矩阵）、`student-course-service`（单元卡片）、`assignment-service`（名单统计）的 pendingCount 全部改用它，去掉 `answerJson 非空` 条件。
+  - **存量回填（D1）**：`backfill.ts` 新增 data_migrations 键，幂等、事务内。
+- 要点：本任务只改语义与测试，不新增接口与页面；所有受影响的既有断言在本任务内改完，T3.2b 起不再碰判分口径。
+- 验收：
+  - 单测 / 服务测试：未作答客观题（含多选空选）→ false；手写题只写笔迹不填最终答案 → 进待批且 attempt 保持 `submitted`；全客观题卷交卷即 `graded` 且 `scoreFinal = scoreAuto`（此时分母相同）；回填：用旧口径构造的已交 attempt 经 backfill 后 autoCorrect/scoreAuto/finalCorrect/scoreFinal/status 按新口径更新，重复执行幂等。
+  - 既有测试修订后全绿：结果汇总计数、scoreAuto 数值（未作答进分母）、进度矩阵/单元卡片/作业卡片得分与待批数断言。
+  - `pnpm e2e` 全绿（如有断言依赖旧口径，在本任务内同步）。
+
+### T3.2b 批注与待批队列
+- 依赖：T3.2a
+- 产出：
   - 契约：`markRequestSchema`（D3）、`pendingMarkListDataSchema`（卡片：题干快照、参考答案、学生最终答案、手写图信息、activeSec/hintsUsed/changeCount、来源上下文〔课程/作业/单元/attemptNo〕、submittedAt）。
   - 接口：
     - `POST /api/teacher/responses/:id/mark`（D3；draft → 409 `NOT_SUBMITTED`；非本人教师 404）。
@@ -152,15 +179,14 @@
     - 详情页每题「改判 / 评语」内联编辑（对自动判过的题亦可改判）。
   - 联动核对（D2）：作业名单状态与「已批改」统计、课程进度矩阵「待批」消除、单元卡片「有待批」、各处得分展示切换为 scoreFinal 优先。
 - 验收：
-  - 服务测试：构造 8 题卷（6 客观含 1 题未作答 + 1 手写 + 1 无标准答案）——未作答题交卷即 false 且不进队列；批注手写与无答案题后 `scoreFinal = 6÷8 或 7÷8`（按批注结果）且 `status=graded`；清除批注回 `submitted`、scoreFinal 重算；对自动判过题改判生效；draft 批注 409；队列排序与筛选；域 404。
-  - 既有测试修订后全绿：结果汇总计数、scoreAuto 数值（未作答进分母）、进度矩阵/作业卡片得分断言。
+  - 服务测试：构造 8 题卷（6 客观：5 题答对 + 1 题未作答；1 手写只写笔迹不填最终答案；1 无标准答案题）——交卷后队列含手写题与无答案题（待批数 2）；两题都批对 → `scoreFinal = 88`（7÷8）、一对一错 → `75`（6÷8），且 `status=graded`；清除批注回 `submitted`、scoreFinal 置 null；对自动判过题改判生效（graded 卷改判后 scoreFinal 重算）；评语空串按 null、超 2000 字 400；draft 批注 409；队列排序与筛选；域 404。
   - E2E：教师批改一道手写题 → 学生作业状态「已批」。
   - 🧑 连续批改 5 题流畅（含快捷键与撤销上一题）。
 
 ### T3.3 笔迹回放
 - 依赖：T3.1
 - 产出：
-  - 接口：`GET /api/teacher/ink/:inkId.json.gz`（矢量数据；域判定；`Content-Type: application/gzip`；文件缺失 404）。
+  - 接口：`GET /api/teacher/ink/:inkId.json.gz`（矢量数据；域判定；`Content-Type: application/gzip`；文件缺失 404）。实现为现有 `/ink/:file` 路由的第三个后缀分支（与 `.png` / 元数据并列，Hono 路径参数吞整段的既有做法），不另注册路由；前端用 `DecompressionStream` 解压（学生端上传已用 CompressionStream，无需新依赖）。
   - 前端：`<InkReplay data>`（`features/ink/replay/`）：engine 分派（D12）——atrament 按点时间戳重演、excalidraw 按元素顺序匀速近似；播放/暂停/进度条拖动/1×2×4× 倍速；教师详情页手写题「快照 / 回放」切换；数据缺失降级 PNG + 提示。
   - 组件单测：构造带时间戳的 atrament 数据断言重演顺序、倍速与进度跳转；excalidraw 顺序重演；异常/空数据不崩溃。
 - 验收：
@@ -168,30 +194,30 @@
   - 🧑 用一次真实 iPad 作答的笔迹回放，顺序与书写过程一致；倍速与进度条拖动正常。
 
 ### T3.4 CSV 导出
-- 依赖：T3.1
+- 依赖：T3.2b（「最终判定 / 判定来源 / 教师评语」三列依赖批注落地）
 - 产出：
   - 接口：`GET /api/teacher/export/csv?studentId&courseId&assignmentId&sourceType&from&to`（D13 列清单与口径；`Content-Type: text/csv` + BOM；文件名 `tutor-export-YYYYMMDD-HHmmss.csv`；仅已交卷 attempt）。
   - 前端：数据页与详情页「导出 CSV」按钮（携带当前筛选条件）。
 - 验收：
-  - 服务测试：行数 = 筛选范围内已交 attempt 的逐题数（draft 不含）；列内容正确（多空/多选/手写序列化、考点分号分隔、判定来源、评语、手写链接）；BOM 存在；含逗号/引号/换行的字段正确转义；域过滤（乙只能导出自己的数据）。
+  - 服务测试：行数 = 筛选范围内已交 attempt 的逐题数（draft 不含）；列内容正确（多空/多选/手写序列化、考点分号分隔、判定来源、评语、手写链接）；BOM 存在；含逗号/引号/换行的字段正确转义；以 `=` 开头的学生答案被加 `'` 前缀；域过滤（乙只能导出自己的数据）。
   - 🧑 Excel 直接打开中文无乱码；抽查三行与页面详情一致。
 
 ### T3.5 学生「我的记录」与错题本
-- 依赖：T3.2
+- 依赖：T3.2b
 - 产出：
-  - 契约：`studentRecordsDataSchema`（D10）、`wrongQuestionsQuery/DataSchema`（D11）；`attemptResult*` 扩展（D9：teacherMark/teacherComment/finalCorrect/scoreFinal/pendingCount）。
+  - 契约：`studentRecordsQuery/DataSchema`（D10）、`wrongQuestionsQuery/DataSchema`（D11）；`attemptResult*` 扩展（D9：teacherMark/teacherComment/finalCorrect/scoreFinal/pendingCount）。
   - 接口：
-    - `GET /api/student/records`（D10 聚合；移出课程后已交卷保留、失权草稿不列）。
+    - `GET /api/student/records?sourceType&courseId&assignmentId&status&from&to&limit&offset`（D10 全量索引 + 筛选；移出课程后已交卷保留、失权草稿不列）。
     - `GET /api/student/attempts/:id` 结果视图扩展（D9；草稿视图不变）。
     - `GET /api/student/wrong-questions?knowledge&includeResolved`（D11）。
   - 前端：
-    - `/s/records`：作业组 + 课程练习组（按课程分组、单元历次展开）；状态徽章（进行中/已交/已批）、待批徽章；进行中条目「继续作答」入口。
+    - `/s/records`：全部作答的时间倒序索引（作业与课程练习混排，每条标来源）；顶部筛选（来源类型、课程、作业、状态、时间范围）+ 分页或「加载更多」；状态徽章（进行中/已交/已批）、待批徽章、after_due 未公布显示「待公布」；点击已交条目进单次结果视图，进行中条目「继续作答」。筛选条件同步到 URL query（刷新/返回不丢）。
     - `/s/records/wrong` 错题本：考点筛选 chips、「显示已攻克」开关；条目 = 题干（快照渲染）、本人最近答案、正确答案、详解折叠、首次是否做对标记、来源（课程/作业）。
     - 学生端导航「我的记录」指向新页；首页「我的记录」入口同步。
-- 要点：三个接口全部 `assertNoLeak`（含「构造 after_due 未公布场景」——仅当 T2A.8 已实现时）；错题本聚合在 SQL 层按 (studentId, questionId) 取 max(submittedAt) 的已交作答。
+- 要点：三个接口全部 `assertNoLeak`，且都要构造 after_due 未公布场景断言（T2A.8 已实现）；错题本聚合在 SQL 层按 (studentId, questionId) 分组，取已判定作答中 submittedAt 最早（首次）与最晚（最近）两条。
 - 验收：
-  - 服务测试：只能看到本人记录（他人 attemptId 403）；批注后结果视图含评语与最终判定；错题本口径（最近一次错才入本、首次做对标注、跨来源取最近、显示已攻克开关、考点筛选）；移出课程后记录可见性（已交可看、失权草稿不列）。
-  - E2E：T3.2 批改用例延伸——学生刷新「我的记录」看到评语、得分与「已批」徽章。
+  - 服务测试：只能看到本人记录（他人 attemptId 403，沿用学生端既有口径）；records 各筛选组合与分页边界、作业与课程练习都在索引中；批注后结果视图含评语与最终判定；after_due 截止前 records / 结果视图 / 错题本三处都不露对错、得分与评语；错题本口径（曾错入本、默认只显示最近仍错、「显示已攻克」列出已改对的题、待批作答不参与、首次做对标注、跨来源取最近、考点筛选）；移出课程后记录可见性（已交可看、失权草稿不列）。
+  - E2E：T3.2b 批改用例延伸——学生刷新「我的记录」看到评语、得分与「已批」徽章。
   - 🧑 老师批注后，学生在 iPad 上刷新即见评语。
 
 ### T3.6 收尾：E2E、文档同步与上线准备

@@ -78,11 +78,11 @@
 
 ### 学习痕迹采集（T4.0）
 
-- **D8 events 表补 `studentId` 列**：新增列 NOT NULL；存量回填——有 `attemptId` 的事件按 attempt → student 回填，无 attempt 的存量讲义事件（存量极少）回填不了的历史行允许 NULL 并在代码层兼容（只读聚合按非空过滤）；此后所有落库事件（含无 attempt 的讲义事件）必须携带。出处：T2.10 验收记录已预告「events 表无学生列，T4.x 学情统计需『谁读了讲义』时再立项加列」。
+- **D8 events 表补 `studentId` + `lectureId` 列（2026-09-30 复审修订）**：两列 DDL 均可空、代码恒写非空（T2B D9 同口径——原「新增列 NOT NULL + 存量行允许 NULL」表述自相矛盾，SQLite 加 NOT NULL 列须带默认值或整表重建，无收益）；存量回填——有 `attemptId` 的事件按 attempt → student 回填（同批从 payload 回填 lectureId），无 attempt 的存量讲义事件（存量极少）保留 NULL、只读聚合按非空过滤；此后所有落库事件两列必须携带（服务端从会话/payload 写入，前端不传）。索引 `(studentId, lectureId, clientTs)`。出处：T2.10 验收记录已预告「events 表无学生列，T4.x 学情统计需『谁读了讲义』时再立项加列」。
 - **D9 讲义阅读会话（补齐最大缺口）**：讲义端点契约从只收 `lecture_expand` 扩展为接收讲义域事件组（进入/离开讲义页 = lecture scope 注入 `page_visible`/`page_hidden` 的讲义版本，`visibilitychange` + `pagehide` 双兜底，与 attempt scope 同款机制），使「哪名学生、哪篇讲义、读了多久」可计算。
 - **D10 离线语义（用户关注点，先澄清再落地）**：离线期间**事件不会丢**——T2.10 队列离线时写 IndexedDB、恢复后自动补发（`apps/web/src/lib/event-queue.ts` 已实现）。缺口在于**没有「网络状态」这个上下文标记**：分析侧无法识别「这段作答是在离线状态下完成的」。落地：新增 `net_offline` / `net_online` 标记事件（window online/offline 驱动，attempt 与 lecture scope 均注入），并由服务端聚合成「离线作答时长占比」派生指标。
-- **D11 事件增强清单（全面完善，P0 必做 / P1 重要 / P2 可选）**：见 §4 T4.0 的清单表——题目操作（手写橡皮/撤销重做/全屏进出）、提示使用深化、讲义滚动深度与目录跳转、网络状态标记。**全部为新增事件类型，不改既有 11 种事件的语义与 activeSec 口径**。
-- **D12 事件量与 payload 纪律**：高频信号（滚动、笔画）必须**节流/阈值化后才上报**（滚动按 25/50/75/100% 阈值各至多 1 条；手写交互按操作批次聚合）；payload **不存题目内容**（learning-event.ts 既有注释原则），只存 id、序号、计数与时间戳；`clientTs` 毫秒约定不变。
+- **D11 事件增强清单（全面完善；以方案文件 §4.3 为准，2026-09-30 复审后定稿）**：环境族（lecture_visible/hidden、net_offline/online、idle_start/end）+ 位置族（lecture_section_focus 讲义分节聚焦——**替代原滚动深度设计**：折叠架构下滚动百分比会倒退、语义失真；lecture_toc_jump 目录跳转）+ 交互族（directive_interact 统一事件覆盖折叠开/合与 steps 揭晓、ink_edit_batch 手写橡皮/撤销/重做聚合计数、ink_fullscreen）。原 P2 的独立 hint_close（并入 directive_interact close）与 math_keyboard_toggle（无指标消费）已砍。**全部为新增事件类型，不改既有 11 种事件的语义与 activeSec 口径**。
+- **D12 事件量与 payload 纪律**：高频信号（滚动、笔画）必须**节流/阈值化后才上报**（section_focus 事件量=标题数、天然满足；手写交互按操作批次聚合；beacon 批次按条数**与字节（≤32KiB）双限切**——sendBeacon 队列上限 64KiB）；payload **不存题目内容**（learning-event.ts 既有注释原则），只存 id、序号、计数与时间戳；`clientTs` 毫秒约定不变。
 - **D13 聚合而非透传**：原始 events 不进学情页、不进 AI 数据包（D18/D22 之外无任何原始事件出口）；一律由服务端聚合成派生指标（activeSec/hintsUsed/changeCount 模式的延伸：讲义阅读时长、离线作答占比等），聚合在 SQL/服务层按需计算，**不建新表回写**。
 
 ### AI 学情数据包（T4.3/T4.4）
@@ -145,13 +145,13 @@
 
 ### T4.0 学习痕迹采集增强（前置，本阶段地基）
 - 依赖：Phase 3 完成（T3.6）；无数据库外的其他前置
-- **详细方案独立成文**：[`docs/T4.0学习痕迹采集增强方案.md`](T4.0学习痕迹采集增强方案.md)——含现状盘点（全部代码/文档引用）、缺口分析、新事件清单（P0/P1/P2）、服务端聚合指标、前端接入点、实施产出与验收、供外部 AI 复核的重点清单。**T4.0 的执行细节以该方案文件为准**（该文件经外部 AI 复核后定稿）；下达 T4.0 时，§0.1 提示词的阅读清单追加该文件。
+- **详细方案独立成文**：[`docs/T4.0学习痕迹采集增强方案.md`](T4.0学习痕迹采集增强方案.md)——含现状盘点（全部代码/文档引用）、缺口分析、新事件清单、服务端聚合指标（讲义阅读地图）、前端接入点、**§5.0 实现红线与坑位清单（2026-09-30 可行性复审产出，含队列层现存 IDB 键冲突修复、iPad 会话收尾规则、IntersectionObserver 细节等 19 条，执行时逐条对照）**、实施产出与验收。**T4.0 的执行细节以该方案文件为准**（该文件经外部 AI 复核 + 代码逐文件可行性复审后定稿）；下达 T4.0 时，§0.1 提示词的阅读清单追加该文件。
 - 要点摘要：
-  - `events` 表 + `studentId`（drizzle 迁移 + migrate.ts 幂等回填；服务端从会话写入，前端不传——T2.10 验收记录预告过的「谁读了讲义」缺口）。
-  - 讲义阅读会话事件（`lecture_visible`/`lecture_hidden`）：补齐「哪名学生读了哪篇讲义多久」这一最大缺口（现状：lecture scope 不注入 page 事件、讲义端点只收 lecture_expand）。
+  - `events` 表 + `studentId` + `lectureId` 两列（drizzle 迁移 + backfill.ts 幂等回填；服务端从会话/payload 写入，前端不传——T2.10 验收记录预告过的「谁读了讲义」缺口；两列口径见 D8）。
+  - 讲义阅读会话事件（`lecture_visible`/`lecture_hidden`，viewId 配对双标签页）：补齐「哪名学生读了哪篇讲义多久」这一最大缺口（现状：lecture scope 不注入 page 事件、讲义端点只收 lecture_expand）。
   - `net_offline`/`net_online` 离线标记。**澄清**：离线期间事件本就不丢（T2.10 队列写 IndexedDB、恢复后补发），缺的是「这段作答发生在离线状态」的上下文标记。
-  - P1 事件：讲义滚动深度（25/50/75/100% 阈值化）与目录跳转、手写橡皮/撤销重做（防抖聚合计数）/全屏进出；P2（hint_close、math_keyboard_toggle）经用户确认取舍。
-  - 服务端派生指标（纯函数 + 测试）：讲义阅读时长、阅读深度、离线作答时长占比、手写反复度——供 T4.1/T4.3 消费；原始 events 不出库。
+  - 位置与交互事件：`lecture_section_focus`（分节聚焦，替代滚动深度，见 D11）与 `lecture_toc_jump` 目录跳转、`directive_interact` 统一交互事件（折叠开/合、steps 揭晓、结果页看解析、提示解锁）、`ink_edit_batch` 手写橡皮/撤销/重做聚合计数、`ink_fullscreen`、`idle_start`/`idle_end`（分域阈值）。
+  - 服务端派生指标（纯函数 + 测试，先写用例再实现——硬性规则 9）：讲义阅读地图（逐节/逐折叠块/逐 steps 容器判定 + 汇总）、离线作答时长占比、手写反复度、复盘信号——供 T4.1/T4.3 消费；原始 events 不出库。
   - **红线：既有 11 种事件语义、payload 结构与 activeSec 计算口径零变化**（26 条 active-time 规则用例 + 全部泄露测试零修改通过是回归底线）。
 - 验收（与方案文件 §5 一致，以方案文件为准）：
   - 服务测试：新事件落库带 studentId（伪造无效）；讲义阅读时长与离线占比聚合正确；存量回填幂等；旧客户端全流程回归。
