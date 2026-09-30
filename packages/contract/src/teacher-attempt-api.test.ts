@@ -1,10 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
+  markRequestSchema,
+  pendingMarkCardSchema,
+  pendingMarkListQuerySchema,
+  TEACHER_COMMENT_MAX,
   teacherAttemptCardSchema,
   teacherAttemptDetailDataSchema,
   teacherAttemptDetailQuestionSchema,
   teacherAttemptErrorCodeSchema,
   teacherAttemptListQuerySchema,
+  teacherMarkErrorCodeSchema,
 } from "./teacher-attempt-api.ts";
 
 /**
@@ -220,6 +225,143 @@ describe("teacherAttemptErrorCodeSchema", () => {
   it("只收录作答数据页错误码（域隔离 404 口径）", () => {
     expect(teacherAttemptErrorCodeSchema.options).toEqual([
       "ATTEMPT_NOT_FOUND",
+      "UNAUTHORIZED",
+      "VALIDATION_ERROR",
+    ]);
+  });
+});
+
+// ---------- T3.2b 批注与待批队列 ----------
+
+describe("markRequestSchema（D3：两字段一次提交 + 评语归一化）", () => {
+  it("接受三种 mark 与评语 trim 归一化（空串 → null）", () => {
+    expect(markRequestSchema.parse({ mark: "correct", comment: " 好 " })).toEqual(
+      { mark: "correct", comment: "好" },
+    );
+    expect(markRequestSchema.parse({ mark: "wrong", comment: null })).toEqual({
+      mark: "wrong",
+      comment: null,
+    });
+    expect(
+      markRequestSchema.parse({ mark: null, comment: "   " }),
+    ).toEqual({ mark: null, comment: null });
+  });
+
+  it("评语按原始长度校验 ≤2000，超出拒绝（契约层 400 依据）", () => {
+    expect(
+      markRequestSchema.safeParse({
+        mark: "correct",
+        comment: "好".repeat(TEACHER_COMMENT_MAX),
+      }).success,
+    ).toBe(true);
+    expect(
+      markRequestSchema.safeParse({
+        mark: "correct",
+        comment: "好".repeat(TEACHER_COMMENT_MAX + 1),
+      }).success,
+    ).toBe(false);
+  });
+
+  it("两字段都必须显式携带；mark 只收 correct/wrong/null", () => {
+    expect(
+      markRequestSchema.safeParse({ mark: "correct" }).success,
+    ).toBe(false);
+    expect(markRequestSchema.safeParse({ comment: "好" }).success).toBe(false);
+    expect(
+      markRequestSchema.safeParse({ mark: "对", comment: null }).success,
+    ).toBe(false);
+    expect(
+      markRequestSchema.safeParse({ mark: "correct", comment: 42 }).success,
+    ).toBe(false);
+  });
+});
+
+describe("pendingMarkListQuerySchema（D4 筛选，全可选）", () => {
+  it("空对象与全部合法 UUID 组合可解析；非 UUID 拒绝", () => {
+    expect(pendingMarkListQuerySchema.safeParse({}).success).toBe(true);
+    expect(
+      pendingMarkListQuerySchema.safeParse({
+        courseId: UUID,
+        assignmentId: UUID,
+        studentId: UUID,
+      }).success,
+    ).toBe(true);
+    for (const bad of [
+      { courseId: "none" },
+      { assignmentId: 1 },
+      { studentId: "not-a-uuid" },
+    ] as const) {
+      expect(
+        pendingMarkListQuerySchema.safeParse(bad).success,
+        JSON.stringify(bad),
+      ).toBe(false);
+    }
+  });
+});
+
+describe("pendingMarkCardSchema（待批卡片）", () => {
+  /** 合法的 course 来源待批卡片样例（手写题只写笔迹：answerText null + ink） */
+  const cardFixture = {
+    sourceType: "course",
+    courseId: UUID,
+    courseName: "初一上",
+    assignmentId: null,
+    assignmentTitle: null,
+    unitId: "有理数课程练习",
+    unitTitle: "有理数课程练习",
+    attemptNo: 1,
+    responseId: UUID,
+    attemptId: UUID,
+    questionId: "有理数课程练习-2",
+    studentId: UUID,
+    studentName: "小明",
+    type: "solve",
+    difficulty: 3,
+    knowledge: ["计算"],
+    stemMd: "写一写：$2+2$ 是多少？",
+    answers: null,
+    answerText: null,
+    ink: { inkId: UUID, pngUrl: `/api/teacher/ink/${UUID}.png`, hasStrokes: true },
+    activeSec: null,
+    hintsUsed: 0,
+    changeCount: 0,
+    submittedAt: "2026-09-28T10:20:00.000Z",
+  };
+
+  it("接受 course 来源手写题卡片；多余字段被剥离", () => {
+    const parsed = pendingMarkCardSchema.safeParse(cardFixture);
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && "teacherId" in parsed.data).toBe(false);
+  });
+
+  it("接受 assignment 来源卡片（带参考答案/选项/答案文本/无笔迹）", () => {
+    expect(
+      pendingMarkCardSchema.safeParse({
+        ...cardFixture,
+        sourceType: "assignment",
+        assignmentId: UUID,
+        assignmentTitle: "第一周作业",
+        unitId: null,
+        unitTitle: null,
+        attemptNo: 1,
+        type: "multi",
+        options: ["$1$", "$-2$", "$3$"],
+        answers: { kind: "multi", indexes: [0, 2] },
+        answerText: "A、C",
+        ink: null,
+        activeSec: 120,
+        hintsUsed: 1,
+        changeCount: 2,
+      }).success,
+    ).toBe(true);
+  });
+});
+
+describe("teacherMarkErrorCodeSchema", () => {
+  it("只收录批注与待批队列错误码（404/409 口径）", () => {
+    expect(teacherMarkErrorCodeSchema.options).toEqual([
+      "RESPONSE_NOT_FOUND",
+      "NOT_SUBMITTED",
       "UNAUTHORIZED",
       "VALIDATION_ERROR",
     ]);
