@@ -85,6 +85,7 @@ import {
   type StudentListData,
   type StudentLoginRequest,
   type StudentMeData,
+  type StudentRecordsData,
   type StudentResetLinkData,
   type StudentResetPasswordData,
   type StudentSummary,
@@ -101,6 +102,7 @@ import {
   type TeacherStatusData,
   type UnitMetaData,
   type UnitMetaUpdate,
+  type WrongQuestionsData,
 } from "@tutor/contract";
 import { hc } from "hono/client";
 import type { AppType } from "server";
@@ -1476,4 +1478,73 @@ export async function downloadTeacherExportCsv(
   } finally {
     URL.revokeObjectURL(url);
   }
+}
+
+// ---------- T3.5：学生端「我的记录」与错题本（D9–D11） ----------
+
+/**
+ * 我的记录查询参数（界面层形态，D10）。undefined 字段不发送（= 后端不过滤）；
+ * limit / offset 恒发送（分页）。from / to 为带 Z 后缀的 UTC ISO（页面把
+ * datetime-local 本地值经 lib/time.localInputToUtcIso 转换后传入）。
+ */
+export interface StudentRecordsParams {
+  sourceType?: AttemptSource | undefined;
+  courseId?: string | undefined;
+  assignmentId?: string | undefined;
+  status?: AttemptStatus | undefined;
+  from?: string | undefined;
+  to?: string | undefined;
+  limit: number;
+  offset: number;
+}
+
+/**
+ * 我的记录（GET /api/student/records，D10）：本人全部作答的时间倒序索引
+ * （作业 + 课程练习混排，每条标来源）+ 筛选 + 分页。行内不含题目内容字段
+ * （答案/详解在单次结果视图按既有口径下发）。
+ */
+export function fetchStudentRecordsApi(
+  params: StudentRecordsParams,
+): Promise<StudentRecordsData> {
+  const query: Record<string, string> = {};
+  if (params.sourceType !== undefined) query.sourceType = params.sourceType;
+  if (params.courseId !== undefined) query.courseId = params.courseId;
+  if (params.assignmentId !== undefined) {
+    query.assignmentId = params.assignmentId;
+  }
+  if (params.status !== undefined) query.status = params.status;
+  if (params.from !== undefined) query.from = params.from;
+  if (params.to !== undefined) query.to = params.to;
+  query.limit = String(params.limit);
+  query.offset = String(params.offset);
+  return callApi(() => api.api.student.records.$get({ query }));
+}
+
+/**
+ * 错题本查询参数（界面层形态，D11）。undefined 字段不发送（= 后端默认：
+ * 不筛考点、只列最近仍错的题）。includeResolved 走 z.stringbool（"true"/"false"）。
+ */
+export interface WrongQuestionsParams {
+  knowledge?: string | undefined;
+  includeResolved?: boolean | undefined;
+}
+
+/**
+ * 错题本（GET /api/student/wrong-questions，D11）：按 (学生, 题目) 跨全部来源
+ * 聚合；题目内容取最近一次判定作答的快照（已交卷内容允许下发，与结果视图
+ * 同口径）。无分页（单学生错题规模有限）。
+ */
+export function fetchStudentWrongQuestionsApi(
+  params: WrongQuestionsParams,
+): Promise<WrongQuestionsData> {
+  const query: Record<string, string> = {};
+  if (params.knowledge !== undefined) query.knowledge = params.knowledge;
+  if (params.includeResolved !== undefined) {
+    query.includeResolved = String(params.includeResolved);
+  }
+  return callApi(() =>
+    api.api.student["wrong-questions"].$get(
+      Object.keys(query).length > 0 ? { query } : undefined,
+    ),
+  );
 }

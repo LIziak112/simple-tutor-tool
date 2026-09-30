@@ -1,5 +1,9 @@
 import { z } from "zod";
-import { attemptSourceSchema, attemptStatusSchema } from "./attempt.ts";
+import {
+  attemptSourceSchema,
+  attemptStatusSchema,
+  teacherMarkSchema,
+} from "./attempt.ts";
 import { questionAnswersSchema, questionTypeSchema } from "./content.ts";
 import { studentAnswerSchema } from "./grading.ts";
 
@@ -95,12 +99,8 @@ export const teacherAttemptSourceSchema = z.object({
   attemptNo: z.number().int().min(1),
 });
 
-/**
- * 教师批改标记（D3 持久化口径：teacherMark 优先于 autoCorrect）。
- * T3.2b 的 mark 接口落地写入；本阶段（T3.1）库内恒 null，只读下发。
- */
-export const teacherMarkSchema = z.enum(["correct", "wrong"]);
-
+// 教师批改标记 teacherMarkSchema 定义在 attempt.ts（T3.5/D9 起学生端结果视图
+// 复用同一份，避免循环导入——见该处注释）；本文件经顶部 import 引用。
 /**
  * 列表的单张作答卡片（平铺；按最近活动时间倒序）。
  * 待批数口径（D4 共享谓词，T3.2a 起）：已交卷 responses 中

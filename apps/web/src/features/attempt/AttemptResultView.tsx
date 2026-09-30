@@ -35,11 +35,20 @@ import {
  * 汇总卡替换为「已交卷，答案将在截止后公布」横幅（含截止时间与已答统计），
  * 逐题卡只渲染题干（公开化版）、选项、本人答案、笔迹与已解锁提示；
  * 不显示对错判定、参考答案与详解（服务端本就不下发，前端双保险不渲染）。
+ * D9（T3.5）：逐题展示最终判定（finalCorrect 优先于 autoCorrect——教师批注
+ * 后以批注为准）与老师批改块（teacherMark/teacherComment 显著展示，未批且
+ * 已交维持既有待批态）；汇总区大数字改 scoreFinal ?? scoreAuto（全部批完显示
+ * 「最终得分」），待批计数改用 pendingCount（D4 权威口径——批注后 autoCorrect
+ * 仍空而 finalCorrect 已定，summary.pending 会虚高）。公布 gate 截止前服务端
+ * 已把这些字段置 null 投影，前端照常落入「未批/待公布」分支（双保险）。
  */
 
-/** 判定图标：true=绿勾、false=红叉（D1 后含未作答客观题）、null=待批（琥珀时钟） */
-function VerdictIcon({ autoCorrect }: { autoCorrect: boolean | null }) {
-  if (autoCorrect === true) {
+/**
+ * 判定图标：true=绿勾、false=红叉（D1 后含未作答客观题；D9 后最终判定
+ * finalCorrect 优先——教师批注改判以批注为准）、null=待批（琥珀时钟）。
+ */
+function VerdictIcon({ verdict }: { verdict: boolean | null }) {
+  if (verdict === true) {
     return (
       <CheckCircle2
         aria-label="答对"
@@ -47,7 +56,7 @@ function VerdictIcon({ autoCorrect }: { autoCorrect: boolean | null }) {
       />
     );
   }
-  if (autoCorrect === false) {
+  if (verdict === false) {
     return (
       <XCircle aria-label="答错" className="size-5 shrink-0 text-red-600" />
     );
@@ -58,10 +67,41 @@ function VerdictIcon({ autoCorrect }: { autoCorrect: boolean | null }) {
 }
 
 /** 判定文字（与图标一致的辅助文本） */
-function verdictLabel(autoCorrect: boolean | null): string {
-  if (autoCorrect === true) return "答对";
-  if (autoCorrect === false) return "答错";
+function verdictLabel(verdict: boolean | null): string {
+  if (verdict === true) return "答对";
+  if (verdict === false) return "答错";
   return "待批改";
+}
+
+/**
+ * 老师批改块（D9，显著展示）：有 teacherMark / teacherComment 任一时渲染。
+ * teacherMark=null 且只有评语（清除判定保留评语）时标题显示「已评语」。
+ */
+function TeacherMarkBlock({
+  teacherMark,
+  teacherComment,
+}: {
+  teacherMark: "correct" | "wrong" | null;
+  teacherComment: string | null;
+}) {
+  return (
+    <div className="flex flex-col gap-1 rounded-lg border border-sky-200 bg-sky-50/70 p-3 dark:border-sky-500/30 dark:bg-sky-500/10">
+      <p className="flex items-center gap-1.5 text-sm font-medium text-sky-800 dark:text-sky-300">
+        <PenLine aria-hidden className="size-4 shrink-0" />
+        老师批改：
+        {teacherMark === "correct"
+          ? "判对"
+          : teacherMark === "wrong"
+            ? "判错"
+            : "已评语"}
+      </p>
+      {teacherComment !== null && (
+        <p className="text-sm text-sky-900 dark:text-sky-200">
+          {teacherComment}
+        </p>
+      )}
+    </div>
+  );
 }
 
 /** 选项行（含正确项与学生所选标记；仅 choice/multi） */
@@ -118,8 +158,11 @@ function ResultOptions({ question }: { question: AttemptResultQuestion }) {
   );
 }
 
-/** 详解折叠（默认收起，触控 ≥44px） */
-function SolutionFold({ solutionMd }: { solutionMd: string | null }) {
+/**
+ * 详解折叠（默认收起，触控 ≥44px）。结果视图与错题本卡片共用（同一概念
+ * 同一份实现；无详解显示提示文案）。
+ */
+export function SolutionFold({ solutionMd }: { solutionMd: string | null }) {
   const [open, setOpen] = useState(false);
   if (solutionMd === null) {
     return <p className="text-sm text-muted-foreground">这道题没有详解。</p>;
@@ -190,17 +233,20 @@ function ResultQuestionCard({
     question.snapshot.type === "solve" ||
     question.snapshot.type === "apply" ||
     question.snapshot.type === "find-error";
+  // D9：最终判定优先（交卷时 = autoCorrect，批注后以 teacherMark 为准）；
+  // null = 待批（D3 后可自动判分题交卷即有 finalCorrect，null 即真待批）
+  const verdict = question.finalCorrect ?? question.autoCorrect;
   return (
     <article
       className="flex flex-col gap-4 rounded-xl border border-border bg-card p-4 text-card-foreground sm:p-5"
       aria-label={`第 ${index + 1} 题`}
     >
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-        {/* T2A.8：未公布时不显示对错判定（autoCorrect 已置 null，避免误读为待批） */}
+        {/* T2A.8：未公布时不显示对错判定（finalCorrect/autoCorrect 已置 null） */}
         {released && (
           <span className="flex items-center gap-1.5 text-sm font-semibold">
-            <VerdictIcon autoCorrect={question.autoCorrect} />
-            {verdictLabel(question.autoCorrect)}
+            <VerdictIcon verdict={verdict} />
+            {verdictLabel(verdict)}
           </span>
         )}
         <p className="text-sm font-semibold">第 {index + 1} 题</p>
@@ -228,6 +274,15 @@ function ResultQuestionCard({
           </span>
         ))}
       </div>
+
+      {/* 老师批改块（D9）：有判定或评语时显著展示（未公布时服务端置 null 不渲染） */}
+      {released &&
+        (question.teacherMark !== null || question.teacherComment !== null) && (
+          <TeacherMarkBlock
+            teacherMark={question.teacherMark}
+            teacherComment={question.teacherComment}
+          />
+        )}
 
       {/* 题干快照（released=false 时为公开化题干，服务端已替换 [[答案]] 标记） */}
       <RichMarkdown source={question.snapshot.stemMd} className="text-base" />
@@ -298,6 +353,8 @@ export function AttemptResultView({
   const { attempt, summary } = data;
   // T2A.8：答案是否已公布（on_submit / 课程练习 / 已到截止 = true）
   const released = data.answersReleased;
+  // D9：大数字得分 = 最终得分优先，未批完回退自动判分（均 null = 全待批）
+  const displayScore = summary.scoreFinal ?? attempt.scoreAuto;
   // T2A.7：逐题结果按单元分组；题号全卷连续（累计 index）。
   // 多单元时渲染节标题（单元标题），单单元不显示节头（与答题视图一致）。
   const flatQuestions = data.units.flatMap((unit) => unit.questions);
@@ -332,12 +389,15 @@ export function AttemptResultView({
           <div className="flex flex-wrap items-end gap-x-8 gap-y-3">
             <p className="flex items-baseline gap-2">
               <span className="text-4xl font-bold text-primary">
-                {attempt.scoreAuto === null ? "待批" : attempt.scoreAuto}
+                {/* D9：全部批完显示最终得分，否则回退自动判分（无可判分为「待批」） */}
+                {displayScore === null ? "待批" : displayScore}
               </span>
               <span className="text-sm text-muted-foreground">
-                {attempt.scoreAuto === null
-                  ? "暂无可自动判分的题目"
-                  : "自动判分得分（满分 100）"}
+                {summary.scoreFinal !== null
+                  ? "最终得分（含老师批改，满分 100）"
+                  : attempt.scoreAuto === null
+                    ? "暂无可自动判分的题目"
+                    : "自动判分得分（满分 100）"}
               </span>
             </p>
             <p className="flex flex-wrap gap-x-5 gap-y-1 text-sm text-muted-foreground">
@@ -351,7 +411,13 @@ export function AttemptResultView({
                 答错 <b className="text-red-600">{summary.wrong}</b> 题
               </span>
               <span>
-                待批 <b className="text-amber-600">{summary.pending}</b> 题
+                待批{" "}
+                <b className="text-amber-600">
+                  {/* D9：pendingCount 为 D4 权威计数（批注后 autoCorrect 仍空而
+                      finalCorrect 已定；公布态下恒非 null，回退仅兜底） */}
+                  {summary.pendingCount ?? summary.pending}
+                </b>{" "}
+                题
               </span>
               {/* D1（T3.2a）：未作答客观题已判错计入「答错」；「未答」独立展示
                   （此前挂在待批下的「含未答」不再准确——未答的待批题只剩手写/

@@ -267,6 +267,9 @@ describe("attemptResultDataSchema（结果视图）", () => {
       pending: 0,
       unanswered: 0,
       autoGradable: 2,
+      // D9（T3.5）：最终得分与待批数（全部判定完成 → graded，待批 0）
+      scoreFinal: 50,
+      pendingCount: 0,
     },
     // T2A.7：逐题结果按单元分组（单元序 + 题序；course 单组）
     units: [
@@ -288,6 +291,10 @@ describe("attemptResultDataSchema（结果视图）", () => {
             solutionMd: "$0$ 是整数，但既不是正数也不是负数。",
             answer: { kind: "judge", value: true },
             autoCorrect: true,
+            // D9（T3.5）：未批注 → teacherMark/teacherComment null，finalCorrect=autoCorrect
+            teacherMark: null,
+            teacherComment: null,
+            finalCorrect: true,
             hintsOpened: [],
           },
           {
@@ -304,6 +311,10 @@ describe("attemptResultDataSchema（结果视图）", () => {
             solutionMd: null,
             answer: { kind: "fill", values: ["4", "-6", ""] },
             autoCorrect: false,
+            // D9（T3.5）：教师改判错 + 评语的合法形态（finalCorrect 以 teacherMark 为准）
+            teacherMark: "wrong",
+            teacherComment: "第三空漏了，重算一遍异号相加。",
+            finalCorrect: false,
             // 做题时看过第 0 条提示 → 结果视图回显该条（其余不下发）
             hintsOpened: [{ index: 0, text: "同号相加，取相同的符号。" }],
           },
@@ -316,6 +327,15 @@ describe("attemptResultDataSchema（结果视图）", () => {
     const parsed = attemptResultDataSchema.parse(RESULT);
     const resultQuestions = parsed.units[0]?.questions ?? [];
     expect(resultQuestions[0]?.autoCorrect).toBe(true);
+    // D9：批注字段与最终判定随结果视图透传
+    expect(resultQuestions[0]?.finalCorrect).toBe(true);
+    expect(resultQuestions[1]?.teacherMark).toBe("wrong");
+    expect(resultQuestions[1]?.teacherComment).toBe(
+      "第三空漏了，重算一遍异号相加。",
+    );
+    expect(resultQuestions[1]?.finalCorrect).toBe(false);
+    expect(parsed.summary.scoreFinal).toBe(50);
+    expect(parsed.summary.pendingCount).toBe(0);
     expect(resultQuestions[1]?.answers).toEqual({
       kind: "fill",
       blanks: [["4"], ["-7"], ["0.5", "1/2"]],
@@ -368,6 +388,10 @@ describe("attemptResultDataSchema（结果视图）", () => {
                 solutionMd: null,
                 answer: null,
                 autoCorrect: null,
+                // D9：待批题的批注与最终判定全 null
+                teacherMark: null,
+                teacherComment: null,
+                finalCorrect: null,
                 hintsOpened: [],
               },
             ],
@@ -381,6 +405,9 @@ describe("attemptResultDataSchema（结果视图）", () => {
           pending: 1,
           unanswered: 1,
           autoGradable: 0,
+          // D9：待批 → scoreFinal null、pendingCount 1
+          scoreFinal: null,
+          pendingCount: 1,
         },
       }).success,
     ).toBe(true);
@@ -426,6 +453,9 @@ describe("attemptResultDataSchema（结果视图）", () => {
         pending: 2,
         unanswered: 0,
         autoGradable: 0,
+        // D9：未公布口径下最终得分与待批数同样置 null 投影
+        scoreFinal: null,
+        pendingCount: null,
       },
       units: [
         {
@@ -443,6 +473,10 @@ describe("attemptResultDataSchema（结果视图）", () => {
             answers: null,
             solutionMd: null,
             autoCorrect: null,
+            // D9：教师批注与最终判定同样不下发（库里已批也不提前泄露）
+            teacherMark: null,
+            teacherComment: null,
+            finalCorrect: null,
           })),
         },
       ],
@@ -453,6 +487,11 @@ describe("attemptResultDataSchema（结果视图）", () => {
     expect(first?.answers).toBeNull();
     expect(first?.solutionMd).toBeNull();
     expect(first?.autoCorrect).toBeNull();
+    expect(first?.teacherMark).toBeNull();
+    expect(first?.teacherComment).toBeNull();
+    expect(first?.finalCorrect).toBeNull();
+    expect(restricted.summary.scoreFinal).toBeNull();
+    expect(restricted.summary.pendingCount).toBeNull();
     // 本人答案不受影响（受限形态仍下发）
     expect(first?.answer).toEqual({ kind: "judge", value: true });
   });
@@ -577,6 +616,9 @@ describe("attemptDetailDataSchema / attemptErrorCodeSchema", () => {
           pending: 0,
           unanswered: 0,
           autoGradable: 0,
+          // D9：空卷结果视图也须携带两个新汇总字段（无可判分 → null）
+          scoreFinal: null,
+          pendingCount: 0,
         },
         units: [],
       }).success,

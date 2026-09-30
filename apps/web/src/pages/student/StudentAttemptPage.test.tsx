@@ -108,6 +108,9 @@ describe("StudentAttemptPage（/s/attempts/:attemptId，T2A.6）", () => {
         pending: 0,
         unanswered: 0,
         autoGradable: 1,
+        // D9（T3.5）：交卷即 graded → scoreFinal=100、待批 0
+        scoreFinal: 100,
+        pendingCount: 0,
       },
       units: [],
     });

@@ -668,6 +668,9 @@ describe("多单元取卷与作答（D12）", () => {
       pending: 0,
       unanswered: 1,
       autoGradable: 4,
+      // D9：交卷即 graded → scoreFinal=50、待批 0
+      scoreFinal: 50,
+      pendingCount: 0,
     });
     expect((result.attempt as Record<string, unknown>).scoreAuto).toBe(50);
     expect((result.attempt as Record<string, unknown>).status).toBe("graded");

@@ -241,7 +241,8 @@ describe("after_due 截止前：受限形态（可注入时钟）", () => {
     expect(detail.dueAt).toBe(DUE_AT);
     // scoreAuto 置 null 投影（库里保留 100，见上方前置断言）
     expect(detail.attempt.scoreAuto).toBeNull();
-    // summary 不泄露对错：correct/wrong/autoGradable=0、pending=answered 口径
+    // summary 不泄露对错：correct/wrong/autoGradable=0、pending=answered 口径；
+    // D9：scoreFinal/pendingCount 同法置 null 投影
     expect(detail.summary).toEqual({
       total: 2,
       answered: 2,
@@ -250,6 +251,8 @@ describe("after_due 截止前：受限形态（可注入时钟）", () => {
       pending: 2,
       unanswered: 0,
       autoGradable: 0,
+      scoreFinal: null,
+      pendingCount: null,
     });
 
     const qs = detail.units.flatMap((unit) => unit.questions);
@@ -330,6 +333,9 @@ describe("截止后与 on_submit：完整形态", () => {
       pending: 0,
       unanswered: 0,
       autoGradable: 2,
+      // D9：截止后恢复完整形态——scoreFinal=100、待批 0
+      scoreFinal: 100,
+      pendingCount: 0,
     });
     const qs = full.units.flatMap((unit) => unit.questions);
     expect(qs.find((q) => q.questionId === "rel-q1")?.answers).toEqual({

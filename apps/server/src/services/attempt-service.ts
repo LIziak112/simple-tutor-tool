@@ -54,6 +54,7 @@ import {
   hintsOfJson,
   resultHintsOpenedOf,
 } from "./hint-service";
+import { pendingMarkCount } from "./pending-mark";
 
 /**
  * AttemptService（T2.6；T2A.6 扩展作答来源 D9/D10）——作答生命周期的业务层
@@ -982,7 +983,8 @@ function buildDraftData(db: Db, attempt: Attempt): AttemptDraftData {
   };
 }
 
-/** 结果视图的单题行（快照投影：除已解锁条目外无 hints 内容，options 转纯文本） */
+/** 结果视图的单题行（快照投影：除已解锁条目外无 hints 内容，options 转纯文本；
+ * D9〔T3.5〕新增 teacherMark / teacherComment / finalCorrect 透传 responses 行） */
 function resultQuestionOf(row: ResponseRow): AttemptResultQuestion | null {
   const snapshotJson = row.questionSnapshotJson;
   if (snapshotJson === null) return null; // 理论不可达：交卷必写快照（防御性跳过）
@@ -1013,15 +1015,25 @@ function resultQuestionOf(row: ResponseRow): AttemptResultQuestion | null {
     solutionMd: snapshot.solutionMd ?? null,
     answer: answerOf(row.answerJson) ?? null,
     autoCorrect: row.autoCorrect,
+    // D9：教师批注与最终判定（D3 持久化口径；公布 gate 在 releaseAwareQuestion 投影）
+    teacherMark:
+      row.teacherMark === "correct" || row.teacherMark === "wrong"
+        ? row.teacherMark
+        : null,
+    teacherComment: row.teacherComment,
+    finalCorrect: row.finalCorrect,
     // T2.11：只回显做题时已解锁的提示（文本取自快照；未解锁条目绝不在此）
     hintsOpened: resultHintsOpenedOf(row, snapshot.hints),
   };
 }
 
-/** 得分汇总（口径与 scoreAutoOf 一致：scoreAuto = correct/autoGradable 百分比） */
+/** 得分汇总的自动判分计数部分（口径与 scoreAutoOf 一致：scoreAuto =
+ * correct/autoGradable 百分比）。D9 的 scoreFinal/pendingCount 不在此算——
+ * 前者取 attempt 行、后者走 pendingMarkCount（D4 共享谓词），由 buildResultData
+ * 组装进完整 AttemptScoreSummary */
 function scoreSummaryOf(
   rows: readonly AttemptResultQuestion[],
-): AttemptScoreSummary {
+): Omit<AttemptScoreSummary, "scoreFinal" | "pendingCount"> {
   const total = rows.length;
   const answered = rows.filter((r) => r.answer !== null).length;
   const correct = rows.filter((r) => r.autoCorrect === true).length;
@@ -1073,7 +1085,9 @@ function buildResultData(
   const released =
     assignmentRow === null || answersReleased(assignmentRow, now);
 
-  /** 受限形态的逐题投影（见函数头注释；已公布时原样返回） */
+  /** 受限形态的逐题投影（见函数头注释；已公布时原样返回）。
+   * D9 新字段 teacherMark / teacherComment / finalCorrect 与 autoCorrect 同法置
+   * null——教师已批也不在截止前泄露对错与评语 */
   const releaseAwareQuestion = (item: AttemptResultQuestion) =>
     released
       ? item
@@ -1087,6 +1101,9 @@ function buildResultData(
           answers: null,
           solutionMd: null,
           autoCorrect: null,
+          teacherMark: null,
+          teacherComment: null,
+          finalCorrect: null,
         };
 
   const rows =
@@ -1161,10 +1178,17 @@ function buildResultData(
   }
 
   // 得分汇总：未公布时不泄露对错——correct/wrong/autoGradable 置 0，
-  // pending 按 answered 口径（每道已答题显示为「待批」，截止后恢复真实计数）
+  // pending 按 answered 口径（每道已答题显示为「待批」，截止后恢复真实计数）；
+  // D9 新增字段 scoreFinal / pendingCount 同法置 null 投影（待批数不 null 会
+  // 泄露整卷批改进度，与「待公布」口径冲突）。已公布时 scoreFinal 取 attempt 行、
+  // pendingCount 走 pendingMarkCount（D4 共享谓词，与教师端列表/详情同一实现）
   const fullSummary = scoreSummaryOf(resultQuestions);
   const summary = released
-    ? fullSummary
+    ? {
+        ...fullSummary,
+        scoreFinal: attempt.scoreFinal,
+        pendingCount: pendingMarkCount(db, attempt),
+      }
     : {
         total: fullSummary.total,
         answered: fullSummary.answered,
@@ -1173,6 +1197,8 @@ function buildResultData(
         pending: fullSummary.answered,
         unanswered: fullSummary.unanswered,
         autoGradable: 0,
+        scoreFinal: null,
+        pendingCount: null,
       };
 
   // scoreAuto 同理：未公布时置 null 投影（库里保留，教师侧统计不受影响）

@@ -197,6 +197,9 @@ const RESULT_DATA: AttemptResultData = {
     pending: 0,
     unanswered: 0,
     autoGradable: 2,
+    // D9（T3.5）：交卷即 graded → scoreFinal=100、待批 0
+    scoreFinal: 100,
+    pendingCount: 0,
   },
   units: [
     {
@@ -217,6 +220,9 @@ const RESULT_DATA: AttemptResultData = {
           solutionMd: null,
           answer: { kind: "judge", value: true },
           autoCorrect: true,
+          teacherMark: null,
+          teacherComment: null,
+          finalCorrect: true,
           hintsOpened: [],
         },
         {
@@ -233,6 +239,9 @@ const RESULT_DATA: AttemptResultData = {
           solutionMd: null,
           answer: { kind: "fill", values: ["4"] },
           autoCorrect: true,
+          teacherMark: null,
+          teacherComment: null,
+          finalCorrect: true,
           hintsOpened: [],
         },
       ],

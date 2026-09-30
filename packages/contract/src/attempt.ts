@@ -58,6 +58,15 @@ export const attemptStatusSchema = z.enum(["draft", "submitted", "graded"]);
 export const attemptSourceSchema = z.enum(["assignment", "course"]);
 
 /**
+ * 教师批改标记（D3 持久化口径：teacherMark 优先于 autoCorrect）。
+ * T3.2b 的 mark 接口写入；T3.5（D9）起学生端结果视图同样下发该标记——
+ * 定义从 teacher-attempt-api.ts 上移到本文件（attempt.ts 是 teacher-attempt-api
+ * 的下层模块，反向导入会形成循环），teacher-attempt-api.ts 改为导入复用，
+ * 全站仍只有这一份定义（AGENTS 第 1 条）。
+ */
+export const teacherMarkSchema = z.enum(["correct", "wrong"]);
+
+/**
  * attempt 摘要（创建/取回的返回，也内嵌在详情视图里）。
  * - assignment 来源：一个作业一人至多一份进行中（draft）attempt；交卷后再次 POST
  *   /attempt 返回已交的那份（前端据此直接进结果视图，不另开新卷）；
@@ -209,6 +218,10 @@ export const attemptDraftDataSchema = z.object({
  * - autoCorrect：服务端判分结果 true/false；null = 不能自动判定——D1（T3.2a）
  *   后仅三种：手写题未能自动判（未作答/只写笔迹未填最终答案）、题目无标准答案、
  *   判断题写法无法归一化；**未作答客观题（含多选空选）= false**（不再 null）；
+ * - teacherMark / teacherComment / finalCorrect（D9，T3.5）：教师批改标记与评语、
+ *   最终判定（D3 持久化口径，交卷时 = autoCorrect，批注后 teacherMark 优先）。
+ *   三者与 autoCorrect 同受公布 gate（T2A.8）：after_due 截止前一律置 null 投影
+ *   （库里保留，截止后恢复），与 scoreAuto 同法；
  * - hintsOpened：做题时已解锁的提示条目（含内容；交卷后回看自己用过的提示，
  *   T2.11）。快照里的其余提示内容仍不随本视图下发（hintCount 是唯一计数形态）。
  */
@@ -230,11 +243,22 @@ export const attemptResultQuestionSchema = z.object({
   solutionMd: z.string().nullable(),
   answer: studentAnswerSchema.nullable(),
   autoCorrect: z.boolean().nullable(),
+  /** 教师批改标记（D9；未批为 null；公布 gate 截止前置 null 投影） */
+  teacherMark: teacherMarkSchema.nullable(),
+  /** 教师评语（D9；未评为 null；公布 gate 截止前置 null 投影） */
+  teacherComment: z.string().nullable(),
+  /** 最终判定（D9；待批为 null；公布 gate 截止前置 null 投影——不下发对错） */
+  finalCorrect: z.boolean().nullable(),
   /** 做题时已解锁的提示（按序号升序；未解锁过为空数组） */
   hintsOpened: hintOpenedEntrySchema.array(),
 });
 
-/** 结果视图的得分汇总（口径见各字段注释；scoreAuto = correct/autoGradable 的百分比） */
+/**
+ * 结果视图的得分汇总（口径见各字段注释；scoreAuto = correct/autoGradable 的百分比）。
+ * D9（T3.5）新增 scoreFinal 与 pendingCount：两者与 scoreAuto 同受公布 gate
+ * （T2A.8）——after_due 截止前置 null 投影（待批数不 null 会泄露「有几题没判」
+ * 之外的整卷批改进度，且与「待公布」口径冲突，故一并不下发）。
+ */
 export const attemptScoreSummarySchema = z.object({
   /** 总题数（参与本次作答的题目） */
   total: z.number().int().min(0),
@@ -250,6 +274,17 @@ export const attemptScoreSummarySchema = z.object({
   unanswered: z.number().int().min(0),
   /** 可自动判分题数（autoCorrect 非 null）= correct + wrong */
   autoGradable: z.number().int().min(0),
+  /**
+   * 最终得分（D9，D2/D3 口径：round(finalCorrect=true 题数 ÷ 全部题数 × 100)；
+   * 全部判定完成（graded）才写入，仍有待批为 null；公布 gate 截止前置 null 投影）
+   */
+  scoreFinal: z.number().int().min(0).max(100).nullable(),
+  /**
+   * 待批题数（D9，D4 共享谓词：已交卷 attempt 中 finalCorrect IS NULL 的题数，
+   * 与 pending（autoCorrect 口径）区分——批注后 autoCorrect 仍空而 finalCorrect
+   * 已定，本字段才是「还剩几题没批」的权威计数；公布 gate 截止前置 null 投影）
+   */
+  pendingCount: z.number().int().min(0).nullable(),
 });
 
 /** 结果视图的单元分组（T2A.7）：逐题结果按交卷时的单元归属分节（单元序+题序） */
@@ -279,11 +314,14 @@ export const attemptResultDataSchema = z.object({
    * answerRelease='after_due' 且 now < dueAt，交卷瞬间未到截止同样适用）：
    * - 逐题 answers / solutionMd / autoCorrect 一律 null（不下发参考答案、详解、
    *   对错）；answer（本人答案）与 hintsOpened（本人已解锁提示）照常下发；
+   * - D9（T3.5）新增字段 teacherMark / teacherComment / finalCorrect 同法置
+   *   null 投影（教师已批也不提前泄露）；
    * - snapshot.stemMd 为 publicStemMd 公开化版（[[答案]] 标记替换为 [[]]，
    *   与草稿视图同一防泄露口径）；
    * - attempt.scoreAuto 置 null 投影（库里保留，截止后恢复真实值）；
    * - summary 不泄露对错：correct/wrong/autoGradable = 0，pending 按 answered
-   *   口径（每道已答题都显示为「待批」），total/answered/unanswered 照常。
+   *   口径（每道已答题都显示为「待批」），total/answered/unanswered 照常，
+   *   scoreFinal / pendingCount 置 null 投影。
    * 截止后（now ≥ dueAt）读时自动恢复完整形态（无定时任务）；on_submit 与
    * course 来源恒为 true。
    */
