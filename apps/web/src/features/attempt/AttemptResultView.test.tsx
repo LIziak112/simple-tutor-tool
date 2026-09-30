@@ -356,3 +356,89 @@ describe("T2A.8 未公布形态（answersReleased=false，截止后公布且未�
     expect(screen.getAllByRole("button", { name: /查看详解/ }).length).toBe(2);
   });
 });
+
+describe("D9（T3.5）老师批改后的展示", () => {
+  /**
+   * 批改后形态：手写题（第 4 题）批对 + 评语；判断题（第 1 题）被改判为错
+   * （finalCorrect 以 teacherMark 为准）；attempt 整卷 graded、scoreFinal=50、
+   * pendingCount=0。答对/答错计数仍是 autoCorrect 口径（契约字段如此）。
+   */
+  const baseUnit = DATA.units[0];
+  const GRADED: AttemptResultData = {
+    ...DATA,
+    attempt: { ...DATA.attempt, status: "graded", scoreAuto: 60 },
+    summary: {
+      ...DATA.summary,
+      correct: 1,
+      wrong: 2,
+      pending: 1,
+      scoreFinal: 50,
+      pendingCount: 0,
+    },
+    units:
+      baseUnit === undefined
+        ? []
+        : [
+            {
+              ...baseUnit,
+              questions: baseUnit.questions.map((question) => {
+                if (question.questionId === "p4-q7") {
+                  return {
+                    ...question,
+                    teacherMark: "correct" as const,
+                    teacherComment: "过程清晰，答案正确。",
+                    finalCorrect: true,
+                  };
+                }
+                if (question.questionId === "练习四-1") {
+                  return {
+                    ...question,
+                    teacherMark: "wrong" as const,
+                    teacherComment: null,
+                    finalCorrect: false,
+                  };
+                }
+                return question;
+              }),
+            },
+          ],
+  };
+
+  it("汇总大数字显示最终得分 scoreFinal（标签「含老师批改」），待批计数用 pendingCount 归零", () => {
+    render(<AttemptResultView data={GRADED} onBackHome={vi.fn()} />);
+    expect(screen.getByText("50")).toBeInTheDocument();
+    expect(screen.getByText(/最终得分（含老师批改/)).toBeInTheDocument();
+    // 回归：不再显示旧口径的自动判分标签
+    expect(screen.queryByText(/自动判分得分/)).toBeNull();
+    // pendingCount=0（summary.pending 仍为 1，展示以权威计数为准；
+    // 计数行内 <b> 拆分文本节点，用整体文本断言）
+    const bodyText = document.body.textContent ?? "";
+    expect(bodyText).toContain("待批 0 题");
+    expect(bodyText).not.toContain("待批 1 题");
+  });
+
+  it("批过的题显著展示「老师批改：判对/判错」与评语", () => {
+    render(<AttemptResultView data={GRADED} onBackHome={vi.fn()} />);
+    // 块标题行内文字被 JSX 拆分（老师批改：+ 判对/判错），用整体文本断言
+    const bodyText = document.body.textContent ?? "";
+    expect(bodyText).toContain("老师批改：判对");
+    expect(bodyText).toContain("老师批改：判错");
+    expect(screen.getByText("过程清晰，答案正确。")).toBeInTheDocument();
+  });
+
+  it("最终判定以批注为准：自动判对后被改判的题显示「答错」", () => {
+    render(<AttemptResultView data={GRADED} onBackHome={vi.fn()} />);
+    // 第 1 题 autoCorrect=true 但 finalCorrect=false（teacherMark=wrong）
+    expect(screen.getAllByLabelText("答错").length).toBe(3);
+    expect(screen.getAllByLabelText("答对").length).toBe(1);
+    expect(screen.queryAllByLabelText("待批改").length).toBe(0);
+  });
+
+  it("未批且已交（teacherMark/Comment 为 null）维持既有待批态，不渲染老师批改块", () => {
+    renderView();
+    // 用块标题「老师批改：」区分（题内另有「由老师批改后公布」的参考答案占位文案）
+    const bodyText = document.body.textContent ?? "";
+    expect(bodyText).not.toContain("老师批改：");
+    expect(screen.getAllByLabelText("待批改").length).toBe(1);
+  });
+});
