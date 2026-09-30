@@ -126,8 +126,9 @@ function courseAccessDenied(): HttpError {
   );
 }
 
-/** 学生归属教师域（T2B.5，D10/D14：一生一位；D9 异常行 null → 调用方按空处理） */
-function studentTeacherIdOf(db: Db, studentId: string): string | null {
+/** 学生归属教师域（T2B.5，D10/D14：一生一位；D9 异常行 null → 调用方按空处理）。
+ * T3.5 起导出——学生侧记录/错题本的来源上下文组装（sourceOf 需域）复用 */
+export function studentTeacherIdOf(db: Db, studentId: string): string | null {
   return (
     db
       .select({ teacherId: students.teacherId })

@@ -6,6 +6,7 @@ import {
   lectureEventBatchRequestSchema,
   studentLectureDetailQuerySchema,
   studentPasswordChangeRequestSchema,
+  studentRecordsQuerySchema,
 } from "@tutor/contract";
 import { Hono } from "hono";
 import { deleteCookie, getCookie } from "hono/cookie";
@@ -44,6 +45,7 @@ import {
   listStudentCourses,
   listStudentLectures,
 } from "../services/student-course-service";
+import { listStudentRecords } from "../services/student-records";
 import { changeStudentPassword } from "../services/student-service";
 
 /**
@@ -80,6 +82,9 @@ import { changeStudentPassword } from "../services/student-service";
  * - GET  /lectures、GET /lectures/:id：可见讲义双视图（去重并集 + 按课程分组）与
  *   讲义详情（T2.3 起；T2A.5 切换 D5——只含所在课程可见讲义，详情带 ?courseId=
  *   课程上下文与本课配套练习 D8）；
+ * - GET  /records（T3.5，D10）：我的记录——本人全部作答的时间倒序索引
+ *   （sourceType/courseId/assignmentId/status/from/to/limit/offset 筛选分页；
+ *   失权草稿不列、已交卷一律保留；after_due 未公布得分/待批置 null）；
  * - POST /logout：删除会话行并清除 Cookie（T2.3，与教师 logout 同实现口径）。
  *
  * 路径段带后缀说明：Hono 的 path 参数会吞掉整个 segment（含 .png 后缀），
@@ -323,6 +328,41 @@ export function createStudentRoutes(
         return c.json({
           ok: true,
           data: listStudentLectures(db, c.var.student.id),
+        });
+      })
+      // T3.5（D10）：我的记录——本人全部作答的时间倒序索引（作业 + 课程练习
+      // 混排）+ 筛选 + 分页。失权草稿不列、已交卷一律保留；after_due 未公布
+      // 的作业得分与待批数置 null（answersReleased=false）。行数据不含任何
+      // 题目内容字段（assertNoLeak 见 routes/student-records.test.ts）
+      .get("/records", (c) => {
+        // GET 无 JSON body：查询参数手工过契约 schema（数值字段经 coerce 解析）
+        const parsed = studentRecordsQuerySchema.safeParse({
+          sourceType: c.req.query("sourceType") ?? undefined,
+          courseId: c.req.query("courseId") ?? undefined,
+          assignmentId: c.req.query("assignmentId") ?? undefined,
+          status: c.req.query("status") ?? undefined,
+          from: c.req.query("from") ?? undefined,
+          to: c.req.query("to") ?? undefined,
+          limit: c.req.query("limit") ?? undefined,
+          offset: c.req.query("offset") ?? undefined,
+        });
+        if (!parsed.success) {
+          const first = parsed.error.issues[0]?.message ?? "格式不正确";
+          throw new HttpError(
+            400,
+            "VALIDATION_ERROR",
+            `查询参数不合法：${first}`,
+          );
+        }
+        // now 显式注入（after_due 读时比较，截止后自动恢复真实得分）
+        return c.json({
+          ok: true,
+          data: listStudentRecords(
+            db,
+            c.var.student.id,
+            parsed.data,
+            new Date(),
+          ),
         });
       })
       // T2A.5：讲义详情带课程上下文（?courseId=，D22 访问判定）与本课配套练习（D8）
