@@ -9,6 +9,7 @@ import {
   type AttemptViewMode,
   attemptListApiParams,
   attemptListUrlQuery,
+  exportCsvParamsOf,
   hasActiveFilters,
   parseAttemptListUrl,
   VIEW_MODE_LABELS,
@@ -17,6 +18,7 @@ import {
   AttemptGroupedList,
   AttemptListPagination,
 } from "@/features/teacher-attempts/attempt-views";
+import { ExportCsvButton } from "@/features/teacher-attempts/ExportCsvButton";
 import {
   ATTEMPT_PAGE_SIZE,
   useTeacherAttempts,
@@ -148,12 +150,15 @@ export function DataPage() {
           </p>
         </div>
         {/* T3.2b：待批队列入口（去 /t/data/pending 连续批改；未批徽章提示待处理） */}
-        <Button variant="outline" className="min-h-11" asChild>
-          <Link to="/t/data/pending" aria-label="打开待批队列">
-            <ClipboardCheck aria-hidden />
-            待批队列
-          </Link>
-        </Button>
+        <div className="flex gap-2">
+          <ExportCsvButton params={exportCsvParamsOf(state)} />
+          <Button variant="outline" className="min-h-11" asChild>
+            <Link to="/t/data/pending" aria-label="打开待批队列">
+              <ClipboardCheck aria-hidden />
+              待批队列
+            </Link>
+          </Button>
+        </div>
       </header>
 
       <AttemptListFilters

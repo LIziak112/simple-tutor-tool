@@ -8,6 +8,7 @@ import {
   formatActiveSec,
 } from "@/features/teacher-attempts/AttemptDetailQuestionCard";
 import { AttemptStatusBadge } from "@/features/teacher-attempts/attempt-views";
+import { ExportCsvButton } from "@/features/teacher-attempts/ExportCsvButton";
 import { useTeacherAttemptDetail } from "@/features/teacher-attempts/teacher-attempt-queries";
 import { ApiError } from "@/lib/api";
 import { formatCnTime } from "@/lib/time";
@@ -52,6 +53,33 @@ function BackToDataButton() {
       返回数据页
     </Button>
   );
+}
+
+/**
+ * 本 attempt 的 CSV 导出参数（T3.4，D13 六参数约束下取「能唯一定位」的组合）：
+ * - assignment 来源：studentId + assignmentId——一个作业一人恰一份作答
+ *   （开卷幂等），两参数即唯一确定本 attempt；
+ * - course 来源：接口无 attemptId 参数，取 studentId + courseId + sourceType
+ *   = 该学生在该课程的**全部练习历次**（CSV「作业或单元」列含「第 n 次」，
+ *   教师可按次定位本 attempt；这是 D13 参数集下最贴近的口径）。
+ */
+function exportCsvParamsOfAttempt(data: TeacherAttemptDetailData): {
+  studentId: string;
+  assignmentId?: string | undefined;
+  courseId?: string | undefined;
+  sourceType?: "course" | "assignment" | undefined;
+} {
+  if (data.sourceType === "assignment") {
+    return {
+      studentId: data.studentId,
+      assignmentId: data.assignmentId ?? undefined,
+    };
+  }
+  return {
+    studentId: data.studentId,
+    courseId: data.courseId ?? undefined,
+    sourceType: "course",
+  };
 }
 
 /** 得分汇总卡（draft 替换为「进行中」说明横幅，D5） */
@@ -123,9 +151,13 @@ function DetailBody({ data }: { data: TeacherAttemptDetailData }) {
 
       {/* 头部：学生 + 状态 + 来源 + 时间 */}
       <header className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5">
-        <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-xl font-semibold">{data.studentName}</h1>
-          <AttemptStatusBadge status={data.status} />
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <h1 className="text-xl font-semibold">{data.studentName}</h1>
+            <AttemptStatusBadge status={data.status} />
+          </div>
+          {/* T3.4：导出本 attempt 的 CSV（参数口径见 exportCsvParamsOfAttempt） */}
+          <ExportCsvButton params={exportCsvParamsOfAttempt(data)} />
         </div>
         <p className="text-sm text-muted-foreground">{sourceLineOf(data)}</p>
         <p className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted-foreground">

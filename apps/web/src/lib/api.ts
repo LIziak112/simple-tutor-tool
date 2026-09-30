@@ -1409,3 +1409,71 @@ export function markResponseApi(
   const args = { param: { id: responseId }, json: request };
   return callApi(() => api.api.teacher.responses[":id"].mark.$post(args));
 }
+
+// ---------- T3.4：CSV 导出（D13） ----------
+
+/**
+ * CSV 导出查询参数（界面层形态）。undefined 字段不发送（= 后端不过滤）；
+ * from / to 为带 Z 后缀的 UTC ISO（页面把 datetime-local 本地值经
+ * lib/time.localInputToUtcIso 转换后传入）。
+ */
+export interface TeacherExportCsvParams {
+  studentId?: string | undefined;
+  courseId?: string | undefined;
+  assignmentId?: string | undefined;
+  sourceType?: AttemptSource | undefined;
+  from?: string | undefined;
+  to?: string | undefined;
+}
+
+/**
+ * 下载教师端 CSV 导出（GET /api/teacher/export/csv，文件直出非统一壳）：
+ * 同构 fetch（同源自动带会话 Cookie，与 downloadExportMd 同口径）拿 blob 触发
+ * 浏览器下载；文件名优先取响应 Content-Disposition（服务端按请求时刻北京时间
+ * 生成 tutor-export-YYYYMMDD-HHmmss.csv），取不到时回退固定名。
+ * 失败时按统一错误壳解析成 ApiError（如 VALIDATION_ERROR），调用方 alert 提示。
+ */
+export async function downloadTeacherExportCsv(
+  params: TeacherExportCsvParams,
+): Promise<void> {
+  const query = new URLSearchParams();
+  if (params.studentId !== undefined) query.set("studentId", params.studentId);
+  if (params.courseId !== undefined) query.set("courseId", params.courseId);
+  if (params.assignmentId !== undefined) {
+    query.set("assignmentId", params.assignmentId);
+  }
+  if (params.sourceType !== undefined) {
+    query.set("sourceType", params.sourceType);
+  }
+  if (params.from !== undefined) query.set("from", params.from);
+  if (params.to !== undefined) query.set("to", params.to);
+  const qs = query.toString();
+  let res: Response;
+  try {
+    res = await fetch(`/api/teacher/export/csv${qs ? `?${qs}` : ""}`);
+  } catch {
+    throw new Error(
+      "连不上服务器，请确认后端已启动（pnpm --filter server dev）后重试",
+    );
+  }
+  if (!res.ok) {
+    // 文件接口的错误仍是统一 JSON 壳
+    await throwShellError(res);
+  }
+  const disposition = res.headers.get("content-disposition") ?? "";
+  const matched = /filename="?([^";]+)"?/i.exec(disposition)?.[1];
+  const filename =
+    matched !== undefined && matched.length > 0 ? matched : "tutor-export.csv";
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  try {
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = filename;
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
