@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   lectureMetaUpdateSchema,
+  libraryBatchItemResultSchema,
   libraryBatchRequestSchema,
   libraryFolderReorderSchema,
   libraryListQuerySchema,
@@ -92,12 +93,13 @@ describe("libraryUsageSchema", () => {
 });
 
 describe("libraryBatchRequestSchema", () => {
-  it("move/delete/restore/addToCourse 均要求非空 ids", () => {
+  it("move/delete/restore/addToCourse/publish 均要求非空 ids", () => {
     for (const action of [
       "move",
       "delete",
       "restore",
       "addToCourse",
+      "publish",
     ] as const) {
       expect(
         libraryBatchRequestSchema.safeParse({ action, kind: "unit", ids: [] })
@@ -131,6 +133,27 @@ describe("libraryBatchRequestSchema", () => {
         visible: false,
       }).success,
     ).toBe(true);
+  });
+
+  it("单条结果可携带 filename（publish 成功时 = 实际写入的共享文件名）", () => {
+    expect(
+      libraryBatchItemResultSchema.safeParse({
+        id: "练习四",
+        ok: true,
+        filename: "练习四-teacher-20260930-120000.md",
+      }).success,
+    ).toBe(true);
+    expect(
+      libraryBatchItemResultSchema.safeParse({ id: "练习四", ok: true })
+        .success,
+    ).toBe(true);
+    expect(
+      libraryBatchItemResultSchema.safeParse({
+        id: "练习四",
+        ok: true,
+        filename: "",
+      }).success,
+    ).toBe(false);
   });
 });
 

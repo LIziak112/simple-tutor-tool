@@ -92,7 +92,7 @@ export function createTeacherRoutes(
       .route("/", createImportRoutes(db))
       .route("/", createContentRoutes(db))
       .route("/", createCourseRoutes(db))
-      .route("/", createLibraryRoutes(db))
+      .route("/", createLibraryRoutes(db, dataDir))
       // T2B.7：共享发布与导入（发布/列表/预览/导入/删除，业务在 shared-service）
       .route("/", createSharedRoutes(db, dataDir))
       .route("/", createStudentTeacherRoutes(db))

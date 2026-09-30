@@ -244,6 +244,37 @@ describe("资源库页面", () => {
     });
   });
 
+  it("批量发布：选中单元 → 确认弹层说明快照语义 → batchLibraryApi(action=publish) + 成功提示", async () => {
+    mockDataLoaded();
+    mockedBatch.mockResolvedValue({
+      results: [
+        {
+          id: UNIT_ID,
+          ok: true,
+          filename: "练习四-teacher-20260930-120000.md",
+        },
+      ],
+    } as never);
+    renderPage();
+    fireEvent.click(
+      await screen.findByRole("checkbox", { name: "选择单元 练习四" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "发布到共享…" }));
+    // 确认弹层：快照语义说明（D16）
+    expect(screen.getByText(/快照副本/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^确认发布/ }));
+    await waitFor(() => {
+      expect(mockedBatch).toHaveBeenCalledWith({
+        action: "publish",
+        kind: "unit",
+        ids: [UNIT_ID],
+      });
+    });
+    expect(
+      await screen.findByText(/已发布 1 项到共享目录/),
+    ).toBeInTheDocument();
+  });
+
   it("回收站页签：恢复按钮调 restore 接口", async () => {
     const baseUnit = UNITS.units[0];
     if (baseUnit === undefined) throw new Error("测试夹具缺少单元");

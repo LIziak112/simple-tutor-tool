@@ -205,12 +205,13 @@ export const libraryUsageSchema = z.object({
 
 // ---------- 批量操作（§4-2） ----------
 
-/** 批量动作：移动到文件夹 / 软删 / 从回收站恢复 / 加入课程 */
+/** 批量动作：移动到文件夹 / 软删 / 从回收站恢复 / 加入课程 / 发布到共享目录 */
 export const libraryBatchActionSchema = z.enum([
   "move",
   "delete",
   "restore",
   "addToCourse",
+  "publish",
 ]);
 
 /** 批量资源类型 */
@@ -219,8 +220,9 @@ export const libraryBatchKindSchema = z.enum(["lecture", "unit"]);
 /**
  * POST /api/teacher/library/batch 请求体：
  * - move：folderId 必填（null = 移入未归类）；
- * - delete / restore：无需附加参数；
- * - addToCourse：courseId 必填，visible 缺省 true；重复加入按跳过处理（不报错）。
+ * - delete / restore / publish：无需附加参数；
+ * - addToCourse：courseId 必填，visible 缺省 true；重复加入按跳过处理（不报错）；
+ * - publish：逐项生成共享快照文件（与单项发布接口同一实现），无需附加参数。
  */
 export const libraryBatchRequestSchema = z.object({
   action: libraryBatchActionSchema,
@@ -244,6 +246,8 @@ export const libraryBatchItemResultSchema = z.object({
   error: z.string().min(1).optional(),
   /** 中文说明（跳过原因 / 失败原因） */
   message: z.string().min(1).optional(),
+  /** publish 成功时 = 实际写入共享目录的文件名（含同秒重名序号，供提示展示） */
+  filename: z.string().min(1).optional(),
 });
 
 /** POST /api/teacher/library/batch 响应 data */

@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ApiErr } from "@tutor/contract";
 import type { Logger } from "pino";
@@ -223,8 +223,60 @@ describe("T2B.7 发布 → 列表 → 乙预览/导入（域内独立）", () =>
     ).toContain('"teacherId"');
   });
 
+  it("批量发布（batch action=publish）：逐项生成快照并返回 filename；未知 id 逐条失败不中断", async () => {
+    const { app, cookieA, dataDir } = await makeSharedApp();
+    const batch = await request(
+      app,
+      "POST",
+      "/api/teacher/library/batch",
+      cookieA,
+      {
+        action: "publish",
+        kind: "unit",
+        ids: [UNIT_ID, "不存在的单元"],
+      },
+    );
+    expect(batch.status).toBe(200);
+    const body = (await batch.json()) as {
+      data: {
+        results: {
+          id: string;
+          ok: boolean;
+          filename?: string;
+          error?: string;
+        }[];
+      };
+    };
+    expect(body.data.results).toHaveLength(2);
+
+    // 成功项：返回实际写入的文件名，文件与伴生 meta 落盘（与单项发布同实现）
+    const okResult = body.data.results.find((r) => r.id === UNIT_ID);
+    expect(okResult?.ok).toBe(true);
+    expect(okResult?.filename).toMatch(/^练习四-甲老师-\d{8}-\d{6}\.md$/);
+    expect(existsSync(join(dataDir, "shared", okResult?.filename ?? ""))).toBe(
+      true,
+    );
+    expect(
+      readFileSync(
+        join(dataDir, "shared", `${okResult?.filename}.meta.json`),
+        "utf8",
+      ),
+    ).toContain('"teacherId"');
+
+    // 未知 id：逐条 ok=false UNIT_NOT_FOUND，不影响其余条目
+    const failResult = body.data.results.find((r) => r.id === "不存在的单元");
+    expect(failResult?.ok).toBe(false);
+    expect(failResult?.error).toBe("UNIT_NOT_FOUND");
+
+    // 共享列表出现新发布的文件
+    const list = await fetchSharedList(app, cookieA);
+    expect(list.data.files.some((f) => f.filename === okResult?.filename)).toBe(
+      true,
+    );
+  });
+
   it("乙预览动作清单为「新增」→ 乙导入 → 乙域内独立单元、甲域不受影响", async () => {
-    const { app, cookieA, cookieB } = await makeSharedApp();
+    const { app, cookieA, cookieB, dataDir } = await makeSharedApp();
     const publish = await request(
       app,
       "POST",
@@ -247,10 +299,18 @@ describe("T2B.7 发布 → 列表 → 乙预览/导入（域内独立）", () =>
     );
     expect(preview.status).toBe(200);
     const previewBody = (await preview.json()) as {
-      data: { actions: { kind: string }[]; summary: { questionCount: number } };
+      data: {
+        actions: { kind: string }[];
+        summary: { questionCount: number };
+        markdown: string;
+      };
     };
     expect(previewBody.data.actions.map((a) => a.kind)).toEqual(["createUnit"]);
     expect(previewBody.data.summary.questionCount).toBe(8);
+    // 响应携带 markdown 原文（共享页「查看预览」渲染用，与磁盘文件一致）
+    expect(previewBody.data.markdown).toBe(
+      readFileSync(join(dataDir, "shared", filename), "utf8"),
+    );
 
     // 甲域单元的当前题数（导入后应不变）
     const unitsA1 = await request(

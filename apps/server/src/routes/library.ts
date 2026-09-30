@@ -42,6 +42,7 @@ import {
   updateLectureFolder,
   updateUnitMeta,
 } from "../services/library-service";
+import { batchPublishToShared } from "../services/shared-service";
 
 /**
  * 资源库路由（需教师会话，T2A.2），由 teacher.ts 挂在 /api/teacher 之下：
@@ -54,14 +55,15 @@ import {
  *   GET /units/:id/usage、GET /units/:id/export.md；
  * - 讲义：PATCH /lectures/:id（移动文件夹）、POST /lectures/:id/restore、
  *   DELETE /lectures/:id/purge、GET /lectures/:id/usage、GET /lectures/:id/export.md；
- * - 批量：POST /library/batch（move/delete/restore/addToCourse）。
+ * - 批量：POST /library/batch（move/delete/restore/addToCourse/publish——
+ *   publish 为共享快照批量发布，业务在 shared-service）。
  *
  * export.md 为文件直出（text/markdown 附件，非 { ok, data } 统一壳；处理方式同
  * /api/public/spec 的原文直出），文件名经 RFC 5987 编码支持中文。
  * T2B.3 起全部接口按会话教师（c.var.teacher.id）过滤与写入：乙访问甲的资源 → 404。
  * 业务逻辑在 LibraryService（api-endpoint 技能约定：路由只做鉴权→校验→调 service→包装）。
  */
-export function createLibraryRoutes(db: Db) {
+export function createLibraryRoutes(db: Db, dataDir: string) {
   return (
     new Hono<TeacherEnv>()
       // ---------- 文件夹 ----------
@@ -126,10 +128,22 @@ export function createLibraryRoutes(db: Db) {
           c,
           libraryBatchRequestSchema,
         );
-        return c.json({
-          ok: true,
-          data: batchLibrary(db, c.var.teacher.id, body),
-        });
+        // publish 是共享目录写入（业务在 shared-service 单点；library-service
+        // 不 import shared-service，避免与其导出依赖形成循环），结果形状一致
+        const data =
+          body.action === "publish"
+            ? batchPublishToShared(
+                db,
+                dataDir,
+                c.var.teacher.id,
+                c.var.teacher.loginName,
+                {
+                  kind: body.kind,
+                  ids: body.ids,
+                },
+              )
+            : batchLibrary(db, c.var.teacher.id, body);
+        return c.json({ ok: true, data });
       })
       // ---------- 单元管理 ----------
       .patch("/units/:id", async (c) => {

@@ -16,6 +16,7 @@ import {
   RotateCcw,
   Search,
   Settings2,
+  Share2,
   Trash2,
   Upload,
   X,
@@ -69,6 +70,7 @@ import {
   UnitDetailSheet,
 } from "@/features/library/UnitDetailSheet";
 import { UnitQuestionTable } from "@/features/library/UnitQuestionTable";
+import { sharedListKey } from "@/features/shared/shared-queries";
 import {
   batchLibraryApi,
   deleteLectureApi,
@@ -115,13 +117,8 @@ interface UndoableAction {
   undo: () => Promise<void>;
 }
 
-/** 批量目标选择弹层 */
-interface BatchMoveTarget {
-  kind: "lecture" | "unit";
-  ids: string[];
-}
-
-interface BatchCourseTarget {
+/** 批量操作的目标（移动 / 加入课程 / 发布到共享共用：类型 + 选中 id 集） */
+interface BatchTarget {
   kind: "lecture" | "unit";
   ids: string[];
 }
@@ -165,11 +162,11 @@ export function LibraryPage() {
   } | null>(null);
   const [deleting, setDeleting] = useState<ResourceDeleteTarget | null>(null);
   const [purging, setPurging] = useState<ResourceDeleteTarget | null>(null);
-  const [batchMove, setBatchMove] = useState<BatchMoveTarget | null>(null);
-  const [batchCourse, setBatchCourse] = useState<BatchCourseTarget | null>(
-    null,
-  );
+  const [batchMove, setBatchMove] = useState<BatchTarget | null>(null);
+  const [batchCourse, setBatchCourse] = useState<BatchTarget | null>(null);
+  const [batchPublish, setBatchPublish] = useState<BatchTarget | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [actionHint, setActionHint] = useState<string | null>(null);
   const [undoable, setUndoable] = useState<UndoableAction | null>(null);
 
   const isRecycle = tab === "recycle";
@@ -338,14 +335,25 @@ export function LibraryPage() {
     // 只透传请求体（TanStack Query v5 会额外传 context 作为第二参数）
     mutationFn: (request: Parameters<typeof batchLibraryApi>[0]) =>
       batchLibraryApi(request),
-    onSuccess: async (data) => {
+    onSuccess: async (data, request) => {
       setBatchMove(null);
       setBatchCourse(null);
+      setBatchPublish(null);
       const failed = data.results.filter((r) => !r.ok);
       if (failed.length > 0) {
         setActionError(
           `${failed.length} 项操作失败：${failed[0]?.message ?? "请稍后重试"}`,
         );
+      }
+      // 发布到共享：成功项给轻量提示；共享页列表缓存一并失效
+      if (request.action === "publish") {
+        const okCount = data.results.filter((r) => r.ok).length;
+        if (okCount > 0) {
+          setActionHint(
+            `已发布 ${okCount} 项到共享目录，其他老师可在「共享」页查看并导入。`,
+          );
+        }
+        await queryClient.invalidateQueries({ queryKey: sharedListKey });
       }
       await invalidateAll();
     },
@@ -478,7 +486,23 @@ export function LibraryPage() {
         ))}
       </div>
 
-      {/* 操作提示条（错误 / 删除类 toast + 撤销） */}
+      {/* 操作提示条（成功提示 / 错误 / 删除类 toast + 撤销） */}
+      {actionHint !== null ? (
+        <p
+          role="status"
+          className="mt-4 flex items-start justify-between gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2.5 text-sm text-emerald-700 dark:text-emerald-300"
+        >
+          <span className="min-w-0 flex-1 break-all">{actionHint}</span>
+          <button
+            type="button"
+            aria-label="关闭成功提示"
+            onClick={() => setActionHint(null)}
+            className="-m-1 flex size-8 shrink-0 items-center justify-center rounded-md transition-colors hover:bg-emerald-500/10"
+          >
+            <X aria-hidden className="size-4" />
+          </button>
+        </p>
+      ) : null}
       {actionError !== null ? (
         <p
           role="alert"
@@ -633,6 +657,9 @@ export function LibraryPage() {
               onBatchCourse={() =>
                 setBatchCourse({ kind: "lecture", ids: [...selectedLectures] })
               }
+              onBatchPublish={() =>
+                setBatchPublish({ kind: "lecture", ids: [...selectedLectures] })
+              }
             />
           ) : (
             <UnitListView
@@ -676,6 +703,9 @@ export function LibraryPage() {
               }
               onBatchCourse={() =>
                 setBatchCourse({ kind: "unit", ids: [...selectedUnits] })
+              }
+              onBatchPublish={() =>
+                setBatchPublish({ kind: "unit", ids: [...selectedUnits] })
               }
             />
           )}
@@ -807,6 +837,21 @@ export function LibraryPage() {
           }
         />
       ) : null}
+      {batchPublish !== null ? (
+        <BatchPublishDialog
+          kind={batchPublish.kind}
+          ids={batchPublish.ids}
+          pending={batchMutation.isPending}
+          onCancel={() => setBatchPublish(null)}
+          onConfirm={() =>
+            batchMutation.mutate({
+              action: "publish",
+              kind: batchPublish.kind,
+              ids: batchPublish.ids,
+            })
+          }
+        />
+      ) : null}
     </section>
   );
 }
@@ -827,6 +872,7 @@ function LectureListView({
   onBatchMove,
   onBatchDelete,
   onBatchCourse,
+  onBatchPublish,
 }: {
   pending: boolean;
   error: string | null;
@@ -841,6 +887,7 @@ function LectureListView({
   onBatchMove: () => void;
   onBatchDelete: () => void;
   onBatchCourse: () => void;
+  onBatchPublish: () => void;
 }) {
   if (pending) return <ListSkeleton label="正在加载讲义…" />;
   if (error !== null) return <ListError message={error} onRetry={onRetry} />;
@@ -871,6 +918,16 @@ function LectureListView({
             >
               <ClipboardList aria-hidden />
               加入课程…
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-11 px-4"
+              disabled={selected.size === 0}
+              onClick={onBatchPublish}
+            >
+              <Share2 aria-hidden />
+              发布到共享…
             </Button>
             <Button
               type="button"
@@ -968,6 +1025,7 @@ function UnitListView({
   onBatchMove,
   onBatchDelete,
   onBatchCourse,
+  onBatchPublish,
 }: {
   pending: boolean;
   error: string | null;
@@ -984,6 +1042,7 @@ function UnitListView({
   onBatchMove: () => void;
   onBatchDelete: () => void;
   onBatchCourse: () => void;
+  onBatchPublish: () => void;
 }) {
   if (pending) return <ListSkeleton label="正在加载练习单元…" />;
   if (error !== null) return <ListError message={error} onRetry={onRetry} />;
@@ -1014,6 +1073,16 @@ function UnitListView({
             >
               <ClipboardList aria-hidden />
               加入课程…
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-11 px-4"
+              disabled={selected.size === 0}
+              onClick={onBatchPublish}
+            >
+              <Share2 aria-hidden />
+              发布到共享…
             </Button>
             <Button
               type="button"
@@ -1456,6 +1525,70 @@ function BatchCourseDialog({
             onClick={() => onConfirm(effectiveCourseId, visible)}
           >
             {pending ? "添加中…" : `加入（${ids.length} 项）`}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** 批量发布到共享确认弹层（快照语义说明，与单项发布确认弹层同一口径，D16） */
+function BatchPublishDialog({
+  kind,
+  ids,
+  pending,
+  onCancel,
+  onConfirm,
+}: {
+  kind: "lecture" | "unit";
+  ids: string[];
+  pending: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const kindLabel = kind === "unit" ? "单元" : "讲义";
+  return (
+    <Dialog open onOpenChange={(open) => (open ? undefined : onCancel())}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Share2 aria-hidden className="size-4 text-muted-foreground" />
+            发布 {ids.length} 个{kindLabel}到共享目录？
+          </DialogTitle>
+          <DialogDescription>
+            每个选中的{kindLabel}都会生成一份独立的快照文件（与「导出
+            Markdown」同一格式），其他老师可在「共享」页查看并导入。
+          </DialogDescription>
+        </DialogHeader>
+        <p className="rounded-lg bg-muted/50 px-3 py-2.5 text-sm text-muted-foreground">
+          发布的是当前<strong className="text-foreground">已保存内容</strong>的
+          <strong className="text-foreground">快照副本</strong>
+          ——发布后继续修改源{kindLabel}，已发布文件不受影响。
+        </p>
+        <DialogFooter>
+          <Button
+            type="button"
+            variant="outline"
+            className="min-h-11 px-5"
+            onClick={onCancel}
+            disabled={pending}
+          >
+            取消
+          </Button>
+          <Button
+            type="button"
+            className="min-h-11 px-5"
+            disabled={pending}
+            onClick={onConfirm}
+          >
+            {pending ? (
+              "发布中…"
+            ) : (
+              <>
+                <Share2 aria-hidden />
+                确认发布（{ids.length} 项）
+              </>
+            )}
           </Button>
         </DialogFooter>
       </DialogContent>

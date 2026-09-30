@@ -9,7 +9,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
-import type { SharedFileSummary } from "@tutor/contract";
+import type { LibraryBatchData, SharedFileSummary } from "@tutor/contract";
 import { and, eq } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { lectures, units } from "../db/schema";
@@ -252,6 +252,42 @@ export function publishLectureToShared(
     teacherId,
     loginName,
   });
+}
+
+/**
+ * 批量发布（POST /api/teacher/library/batch action=publish）：逐项复用上面的
+ * 单项发布实现（快照语义、文件名、伴生 meta 完全一致）。单条失败逐条记录、
+ * 不中断其余（越权/不存在的 id 按域口径 404 → ok=false，与 move/delete 等批量
+ * 动作同一结果形状；成功项带实际写入的 filename 供前端提示）。
+ */
+export function batchPublishToShared(
+  db: Db,
+  dataDir: string,
+  teacherId: string,
+  loginName: string,
+  input: { kind: "lecture" | "unit"; ids: string[] },
+): LibraryBatchData {
+  return {
+    results: input.ids.map((id) => {
+      try {
+        const { filename } =
+          input.kind === "unit"
+            ? publishUnitToShared(db, dataDir, teacherId, loginName, id)
+            : publishLectureToShared(db, dataDir, teacherId, loginName, id);
+        return { id, ok: true, filename };
+      } catch (err) {
+        if (err instanceof HttpError) {
+          return { id, ok: false, error: err.code, message: err.message };
+        }
+        return {
+          id,
+          ok: false,
+          error: "INTERNAL",
+          message: "操作失败，请稍后重试",
+        };
+      }
+    }),
+  };
 }
 
 // ---------- 轻量信息提取（D15：frontmatter / 标题级，不做完整解析） ----------
