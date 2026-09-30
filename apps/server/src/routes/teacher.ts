@@ -9,8 +9,12 @@ import {
   sessionCookieOptions,
 } from "../auth/session";
 import type { Db } from "../db/client";
-import { pngResponse } from "../lib/binary-response";
-import { getTeacherInkMeta, getTeacherInkPng } from "../services/ink-service";
+import { gzipResponse, pngResponse } from "../lib/binary-response";
+import {
+  getTeacherInkMeta,
+  getTeacherInkPng,
+  getTeacherInkStrokes,
+} from "../services/ink-service";
 import { createContentRoutes } from "./content";
 import { createCourseRoutes } from "./courses";
 import { createImportRoutes } from "./import";
@@ -39,8 +43,9 @@ import { createStudentTeacherRoutes } from "./teacher-students";
  * - T2.2（业务在 AssignmentService）：GET/POST /assignments、
  *   PATCH/DELETE /assignments/:id（删除为软删，作答保留）
  * - T2.8（业务在 InkService）：GET /ink/:inkId.png（笔迹 PNG 直出）、
- *   GET /ink/:inkId（元数据，T3.1 批改页用）。Hono path 参数吞掉整个 segment
- *   （含 .png 后缀），故注册一个 /ink/:file、handler 内按后缀分流。
+ *   GET /ink/:inkId（元数据，T3.1 批改页用）、GET /ink/:inkId.json.gz
+ *   （矢量文档 gzip 原字节直出，T3.3 笔迹回放用，D12）。Hono path 参数吞掉
+ *   整个 segment（含后缀），故注册一个 /ink/:file、handler 内按后缀分流。
  * - T2B.7（业务在 shared-service）：POST /library/{units,lectures}/:id/publish、
  *   GET /shared、POST /shared/preview、POST /shared/import、DELETE /shared/:filename
  * - T3.1（业务在 teacher-attempt-service）：GET /attempts（作答卡片列表，D6
@@ -81,6 +86,8 @@ export function createTeacherRoutes(
       })
       // T2.8：教师读笔迹——<inkId>.png 直出 PNG；<inkId> 返回元数据。
       // T2B.5：按 ink → attempt → student.teacherId 判归属（乙取甲学生笔迹 → 404）
+      // T3.3（D12）：<inkId>.json.gz 直出矢量文档 gzip 原字节（笔迹回放用，
+      //   与 .png / 元数据并列的第三个后缀分支，不另注册路由）。
       .get("/ink/:file", (c) => {
         const file = c.req.param("file");
         if (file.endsWith(".png")) {
@@ -91,6 +98,15 @@ export function createTeacherRoutes(
             file.slice(0, -".png".length),
           );
           return pngResponse(png.bytes, png.etag);
+        }
+        if (file.endsWith(".json.gz")) {
+          const strokes = getTeacherInkStrokes(
+            db,
+            dataDir,
+            c.var.teacher.id,
+            file.slice(0, -".json.gz".length),
+          );
+          return gzipResponse(strokes.bytes, strokes.etag);
         }
         return c.json({
           ok: true,
