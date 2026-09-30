@@ -374,9 +374,10 @@ function PendingCard({
         </ol>
       )}
 
-      {/* 参考答案 + 学生最终答案 */}
+      {/* 参考答案 + 学生最终答案（div：参考答案走 RichMarkdown 会产出块级 p，
+          不能嵌在 <p> 里） */}
       <div className="flex flex-col gap-1.5 rounded-lg bg-muted/40 px-4 py-3 text-sm sm:flex-row sm:gap-6">
-        <p className="flex min-w-0 flex-wrap gap-1.5">
+        <div className="flex min-w-0 flex-wrap gap-1.5">
           <span className="shrink-0 text-muted-foreground">参考答案：</span>
           {card.answers === null ? (
             <span className="font-medium">无标准答案（由你裁定）</span>
@@ -386,8 +387,8 @@ function PendingCard({
               className="min-w-0 font-medium [&_p]:my-0"
             />
           )}
-        </p>
-        <p className="flex flex-wrap gap-1.5">
+        </div>
+        <div className="flex flex-wrap gap-1.5">
           <span className="shrink-0 text-muted-foreground">学生最终答案：</span>
           <span
             className={cn(
@@ -397,7 +398,7 @@ function PendingCard({
           >
             {card.answerText === null ? "未作答（仅笔迹）" : card.answerText}
           </span>
-        </p>
+        </div>
       </div>
 
       {/* 手写笔迹（懒加载 + 点击放大） */}
