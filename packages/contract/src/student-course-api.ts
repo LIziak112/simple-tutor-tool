@@ -68,7 +68,8 @@ export const studentCourseListDataSchema = z.object({
  * - first/latest/bestScore：首次/最近/最高一次**已交卷**作答得分（0–100 整数百分比；
  *   scoreFinal ?? scoreAuto 口径；无可判分为 null）——首次得分最能反映真实掌握
  *   程度，教师侧统计优先使用它；
- * - pendingCount：待批题数（已作答但 autoCorrect 为 null 且未批的题数）。
+ * - pendingCount：待批题数（D4 共享谓词：已交卷 attempt 中 finalCorrect 为 null
+ *   的题数；draft 恒 0；含只写笔迹未填最终答案的手写题）。
  */
 export const studentUnitAttemptSummarySchema = z.object({
   count: z.number().int().min(0),

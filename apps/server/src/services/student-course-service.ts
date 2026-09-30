@@ -8,7 +8,7 @@ import type {
   StudentUnitAttemptSummary,
   StudentUnitLandingData,
 } from "@tutor/contract";
-import { and, asc, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
   type Attempt,
@@ -17,12 +17,12 @@ import {
   courses,
   lectures,
   questions,
-  responses,
   students,
   units,
 } from "../db/schema";
 import { HttpError } from "../lib/http-error";
 import { listVisibleItems, requireVisibleCourseUnit } from "./course-service";
+import { pendingMarkCounts } from "./pending-mark.ts";
 
 /**
  * 学生端课程与讲义读路径（T2A.5，核心切换：可见性模型从「全量讲义 + deletedAt 过滤」
@@ -150,8 +150,9 @@ function notFound(): HttpError {
 
 /**
  * 某学生在某课程的各单元课程练习作答汇总（D10；只统计 sourceType='course'——
- * 作业作答不计入，互不计次）。返回 unitId → 摘要（含 pendingCount：已作答但
- * autoCorrect/finalCorrect 均空的题数）。
+ * 作业作答不计入，互不计次）。返回 unitId → 摘要（含 pendingCount：D4 共享
+ * 待批谓词——已交卷 attempt 中 finalCorrect 为空的题数，draft 恒 0；不再叠加
+ * answerJson 非空条件，只写笔迹未填最终答案的手写题也计入）。
  */
 export function courseUnitAttemptSummaries(
   db: Db,
@@ -172,28 +173,8 @@ export function courseUnitAttemptSummaries(
     .all();
   if (rows.length === 0) return new Map();
 
-  // 待批题数（按 attempt 聚合后归到单元）
-  const pendingByAttempt = new Map<string, number>();
-  for (let start = 0; start < rows.length; start += 500) {
-    const chunk = rows.slice(start, start + 500).map((row) => row.id);
-    for (const response of db
-      .select({ attemptId: responses.attemptId })
-      .from(responses)
-      .where(
-        and(
-          inArray(responses.attemptId, chunk),
-          isNotNull(responses.answerJson),
-          isNull(responses.autoCorrect),
-          isNull(responses.finalCorrect),
-        ),
-      )
-      .all()) {
-      pendingByAttempt.set(
-        response.attemptId,
-        (pendingByAttempt.get(response.attemptId) ?? 0) + 1,
-      );
-    }
-  }
+  // 待批题数（按 attempt 聚合后归到单元；draft 恒 0）
+  const pendingByAttempt = pendingMarkCounts(db, rows);
 
   interface CellState extends StudentUnitAttemptSummary {
     firstSubmittedSeen: boolean;

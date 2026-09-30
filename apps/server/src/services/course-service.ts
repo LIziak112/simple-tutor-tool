@@ -22,11 +22,11 @@ import {
   courses,
   lectures,
   questions,
-  responses,
   students,
   units,
 } from "../db/schema";
 import { HttpError } from "../lib/http-error";
+import { pendingMarkCounts } from "./pending-mark.ts";
 import { canStudentSeeItem } from "./visibility.ts";
 
 /**
@@ -1227,8 +1227,9 @@ export function getStudentView(
  * - 只统计 sourceType='course' 的作答（作业作答不计入）；
  * - 得分 = scoreFinal ?? scoreAuto（0–100 整数百分比；两者皆空为 null）；
  * - 首次/最近/最高得分只取**已交卷**（submitted/graded）作答，按 attemptNo 排序；
- * - pendingCount：待批题数 = 已作答（answerJson 非空）但 autoCorrect 与
- *   finalCorrect 均为空的 responses 行数（未作答题不进待批）。
+ * - pendingCount：待批题数（D4 共享谓词：已交卷 attempt 中 finalCorrect 为空的
+ *   responses 行数；draft 恒 0；不再叠加 answerJson 非空条件——只写笔迹未填
+ *   最终答案的手写题也是待批）。
  */
 interface CourseAttemptAggregate {
   count: number;
@@ -1329,31 +1330,8 @@ export function getCourseProgress(
     .all()
     .filter((row) => memberIds.has(row.studentId));
 
-  // 待批题数（按 attempt 聚合：answerJson 非空且 autoCorrect/finalCorrect 均空）
-  const pendingByAttempt = new Map<string, number>();
-  if (courseAttempts.length > 0) {
-    const attemptIds = courseAttempts.map((row) => row.id);
-    for (let start = 0; start < attemptIds.length; start += 500) {
-      const chunk = attemptIds.slice(start, start + 500);
-      for (const row of db
-        .select({ attemptId: responses.attemptId })
-        .from(responses)
-        .where(
-          and(
-            inArray(responses.attemptId, chunk),
-            isNotNull(responses.answerJson),
-            isNull(responses.autoCorrect),
-            isNull(responses.finalCorrect),
-          ),
-        )
-        .all()) {
-        pendingByAttempt.set(
-          row.attemptId,
-          (pendingByAttempt.get(row.attemptId) ?? 0) + 1,
-        );
-      }
-    }
-  }
+  // 待批题数（D4 共享谓词：finalCorrect IS NULL，按 attempt 聚合；draft 恒 0）
+  const pendingByAttempt = pendingMarkCounts(db, courseAttempts);
 
   // (studentId, unitId) → 聚合 + 历次
   const aggregateByCell = new Map<

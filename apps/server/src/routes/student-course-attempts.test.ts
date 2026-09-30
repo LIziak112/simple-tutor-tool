@@ -11,6 +11,7 @@ import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
+import { attempts, responses } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 
@@ -518,7 +519,10 @@ describe("T2A.6 课程练习：开始 / 继续作答 / 再做一次（D10）", (
       firstScore: 100,
       latestScore: 0,
       bestScore: 100,
-      pendingCount: 1, // 手写题已作答但无标准答案（第一次交卷）
+      // D4 共享谓词（T3.2a）：finalCorrect IS NULL 且不再要求 answerJson 非空——
+      // 第一次 solve 已答无标准答案 + 第二次 solve 未作答（answerJson null）
+      // 都进待批，各计 1
+      pendingCount: 2,
     });
 
     // activeSec：事件区间计算回写（judge1 聚焦 8 秒）
@@ -827,7 +831,8 @@ describe("T2A.6 教师进度矩阵（GET /api/teacher/courses/:id/progress）", 
       firstScore: 100,
       latestScore: 0,
       bestScore: 100,
-      pendingCount: 1,
+      // D4 共享谓词：两次的 solve（第一次已答无标准答案、第二次未作答）都计待批
+      pendingCount: 2,
       latestSubmittedAt: expect.any(String),
     });
     expect(cell.history.map((h) => h.attemptNo)).toEqual([2, 1]);
@@ -862,6 +867,75 @@ describe("T2A.6 教师进度矩阵（GET /api/teacher/courses/:id/progress）", 
     };
     expect(body2.data.units).toEqual([]);
     expect(body2.data.cells).toEqual([]);
+  });
+
+  it("D4 共享谓词（T3.2a）：只写笔迹未填最终答案的手写题 → 进待批且 attempt 保持 submitted", async () => {
+    const env = await makeEnv();
+    const started = (
+      (await (await startAttempt(env)).json()) as { data: { id: string } }
+    ).data;
+    // 判断答对 + solve 只上传笔迹、不保存最终答案（answerJson 保持 null）
+    await saveAnswer(env, env.memberCookie, started.id, Q.judge1, {
+      kind: "judge",
+      value: true,
+    });
+    const form = new FormData();
+    form.append(
+      "strokes",
+      new Blob(
+        [
+          new Uint8Array(
+            gzipSync(Buffer.from(JSON.stringify(atramentDoc(2)), "utf8")),
+          ),
+        ],
+        { type: "application/gzip" },
+      ),
+      "strokes.json.gz",
+    );
+    form.append(
+      "snapshot",
+      new Blob([makePng()], { type: "image/png" }),
+      "snapshot.png",
+    );
+    const ink = await env.app.request(
+      `/api/student/attempts/${started.id}/ink/${encodeURIComponent(Q.solve)}`,
+      { method: "PUT", headers: { cookie: env.memberCookie }, body: form },
+    );
+    expect(ink.status).toBe(200);
+    expect((await submit(env, env.memberCookie, started.id)).status).toBe(200);
+
+    // 前置：solve 行 answerJson 为 null 且 finalCorrect 为 null（正是旧
+    // 「answerJson 非空」条件会漏掉、最需要批改的形态）
+    const solveRow = env.db
+      .select()
+      .from(responses)
+      .all()
+      .find((row) => row.attemptId === started.id && row.questionId === Q.solve);
+    expect(solveRow?.answerJson).toBeNull();
+    expect(solveRow?.finalCorrect).toBeNull();
+
+    // 学生落地页与教师进度矩阵：待批 1（旧口径此处为 0——漏报即本用例要防的回归）
+    const landing = (await (
+      await env.app.request(
+        `/api/student/courses/${env.courseId}/units/${env.unitId}`,
+        { headers: { cookie: env.memberCookie } },
+      )
+    ).json()) as { data: { summary: { pendingCount: number } | null } };
+    expect(landing.data.summary?.pendingCount).toBe(1);
+    const progress = (await (
+      await env.app.request(`/api/teacher/courses/${env.courseId}/progress`, {
+        headers: { cookie: env.teacherCookie },
+      })
+    ).json()) as { data: { cells: { pendingCount: number }[] } };
+    expect(progress.data.cells[0]?.pendingCount).toBe(1);
+
+    // 存在待批 → attempt 保持 submitted（D2：待批数 0 ⇔ graded）
+    const attemptRow = env.db
+      .select()
+      .from(attempts)
+      .all()
+      .find((row) => row.id === started.id);
+    expect(attemptRow?.status).toBe("submitted");
   });
 
   it("课程不存在 404；未登录 401", async () => {
