@@ -158,8 +158,11 @@ function ResultOptions({ question }: { question: AttemptResultQuestion }) {
   );
 }
 
-/** 详解折叠（默认收起，触控 ≥44px） */
-function SolutionFold({ solutionMd }: { solutionMd: string | null }) {
+/**
+ * 详解折叠（默认收起，触控 ≥44px）。结果视图与错题本卡片共用（同一概念
+ * 同一份实现；无详解显示提示文案）。
+ */
+export function SolutionFold({ solutionMd }: { solutionMd: string | null }) {
   const [open, setOpen] = useState(false);
   if (solutionMd === null) {
     return <p className="text-sm text-muted-foreground">这道题没有详解。</p>;

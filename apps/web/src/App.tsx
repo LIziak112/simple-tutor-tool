@@ -354,6 +354,9 @@ const studentRoutes = (() => {
   const StudentRecordsPage = lazy(
     () => import("./pages/student/StudentRecordsPage"),
   );
+  const StudentWrongQuestionsPage = lazy(
+    () => import("./pages/student/StudentWrongQuestionsPage"),
+  );
 
   const pageFallback = (
     <p className="p-8 text-sm text-muted-foreground">页面加载中…</p>
@@ -455,6 +458,15 @@ const studentRoutes = (() => {
           element={
             <Suspense fallback={pageFallback}>
               <StudentRecordsPage />
+            </Suspense>
+          }
+        />
+        <Route
+          // T3.5：错题本（D11 跨来源聚合；我的记录页「错题本」入口的落点）
+          path="records/wrong"
+          element={
+            <Suspense fallback={pageFallback}>
+              <StudentWrongQuestionsPage />
             </Suspense>
           }
         />

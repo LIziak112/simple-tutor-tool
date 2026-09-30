@@ -102,6 +102,7 @@ import {
   type TeacherStatusData,
   type UnitMetaData,
   type UnitMetaUpdate,
+  type WrongQuestionsData,
 } from "@tutor/contract";
 import { hc } from "hono/client";
 import type { AppType } from "server";
@@ -1517,4 +1518,33 @@ export function fetchStudentRecordsApi(
   query.limit = String(params.limit);
   query.offset = String(params.offset);
   return callApi(() => api.api.student.records.$get({ query }));
+}
+
+/**
+ * 错题本查询参数（界面层形态，D11）。undefined 字段不发送（= 后端默认：
+ * 不筛考点、只列最近仍错的题）。includeResolved 走 z.stringbool（"true"/"false"）。
+ */
+export interface WrongQuestionsParams {
+  knowledge?: string | undefined;
+  includeResolved?: boolean | undefined;
+}
+
+/**
+ * 错题本（GET /api/student/wrong-questions，D11）：按 (学生, 题目) 跨全部来源
+ * 聚合；题目内容取最近一次判定作答的快照（已交卷内容允许下发，与结果视图
+ * 同口径）。无分页（单学生错题规模有限）。
+ */
+export function fetchStudentWrongQuestionsApi(
+  params: WrongQuestionsParams,
+): Promise<WrongQuestionsData> {
+  const query: Record<string, string> = {};
+  if (params.knowledge !== undefined) query.knowledge = params.knowledge;
+  if (params.includeResolved !== undefined) {
+    query.includeResolved = String(params.includeResolved);
+  }
+  return callApi(() =>
+    api.api.student["wrong-questions"].$get(
+      Object.keys(query).length > 0 ? { query } : undefined,
+    ),
+  );
 }

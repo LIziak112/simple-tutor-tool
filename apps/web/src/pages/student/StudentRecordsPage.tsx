@@ -1,6 +1,6 @@
-import { History, TriangleAlert } from "lucide-react";
+import { BookX, History, TriangleAlert } from "lucide-react";
 import { useMemo } from "react";
-import { useSearchParams } from "react-router";
+import { Link, useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
 import {
   DEFAULT_STUDENT_RECORDS_URL_STATE,
@@ -116,18 +116,27 @@ export default function StudentRecordsPage() {
 
   return (
     <section aria-labelledby="records-title" className="flex flex-col gap-4">
-      <header>
-        <h1
-          id="records-title"
-          className="flex items-center gap-2 text-xl font-semibold"
-        >
-          <History aria-hidden className="size-5 text-primary" />
-          我的记录
-        </h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          你的每一次作答都按时间倒序排在这里——作业和课程练习混在一起，
-          点击卡片可以回看结果或继续没做完的练习。
-        </p>
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1
+            id="records-title"
+            className="flex items-center gap-2 text-xl font-semibold"
+          >
+            <History aria-hidden className="size-5 text-primary" />
+            我的记录
+          </h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            你的每一次作答都按时间倒序排在这里——作业和课程练习混在一起，
+            点击卡片可以回看结果或继续没做完的练习。
+          </p>
+        </div>
+        {/* T3.5：错题本入口（D11 跨来源聚合页） */}
+        <Button variant="outline" className="min-h-11" asChild>
+          <Link to="/s/records/wrong" aria-label="打开错题本">
+            <BookX aria-hidden />
+            错题本
+          </Link>
+        </Button>
       </header>
 
       <StudentRecordsFilters
