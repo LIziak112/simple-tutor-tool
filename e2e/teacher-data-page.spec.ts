@@ -199,6 +199,40 @@ test.describe("教师端作答数据页（T3.1：三视图 + 详情手写放大�
     await lightbox.getByRole("button", { name: "关闭", exact: true }).click();
     await expect(lightbox).not.toBeVisible();
 
+    // —— T3.3：笔迹回放——矢量数据来自学生真实书写（带点时间戳），题卡切
+    // 「回放」出现播放控件；播放进入重演（rAF 循环活着）；放大层内也可切换 ——
+    await q2Card.getByRole("button", { name: "回放", exact: true }).click();
+    const replayPlay = q2Card.getByRole("button", {
+      name: "播放",
+      exact: true,
+    });
+    await expect(replayPlay).toBeVisible({ timeout: 15_000 });
+    await expect(
+      q2Card.locator("canvas[data-slot=ink-replay-canvas]"),
+    ).toBeVisible();
+    // 矢量数据真实可用（未走「无回放数据」降级）
+    await expect(q2Card.getByText("无回放数据")).toHaveCount(0);
+    await replayPlay.click();
+    await expect(
+      q2Card.getByRole("button", { name: "暂停", exact: true }),
+    ).toBeVisible();
+    await expect(
+      q2Card.getByRole("slider", { name: "回放进度" }),
+    ).toBeVisible();
+
+    // 放大层内的「快照 / 回放」切换（回放态同样出播放控件）
+    await q2Card.getByRole("button", { name: "快照", exact: true }).click();
+    await q2Card
+      .getByRole("button", { name: "放大查看第 2 题的手写笔迹" })
+      .click();
+    await expect(lightbox).toBeVisible();
+    await lightbox.getByRole("button", { name: "回放", exact: true }).click();
+    await expect(
+      lightbox.getByRole("button", { name: "播放", exact: true }),
+    ).toBeVisible({ timeout: 15_000 });
+    await lightbox.getByRole("button", { name: "关闭", exact: true }).click();
+    await expect(lightbox).not.toBeVisible();
+
     // —— 返回数据页（筛选 URL 保留）→ 切按学生视图仍可见 ——
     await page.getByRole("button", { name: "返回数据页" }).click();
     await page.waitForURL("**/t/data");
