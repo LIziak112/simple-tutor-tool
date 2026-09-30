@@ -17,6 +17,7 @@ import { createImportRoutes } from "./import";
 import { createLibraryRoutes } from "./library";
 import { createSharedRoutes } from "./shared";
 import { createAssignmentTeacherRoutes } from "./teacher-assignments";
+import { createTeacherAttemptRoutes } from "./teacher-attempts";
 import { createStudentTeacherRoutes } from "./teacher-students";
 
 /**
@@ -42,6 +43,9 @@ import { createStudentTeacherRoutes } from "./teacher-students";
  *   （含 .png 后缀），故注册一个 /ink/:file、handler 内按后缀分流。
  * - T2B.7（业务在 shared-service）：POST /library/{units,lectures}/:id/publish、
  *   GET /shared、POST /shared/preview、POST /shared/import、DELETE /shared/:filename
+ * - T3.1（业务在 teacher-attempt-service）：GET /attempts（作答卡片列表，D6
+ *   筛选与分页）、GET /attempts/:id（作答详情，D7；draft 亦可用，D5）。
+ *   归属链 attempt → student → teacherId，非本人学生的作答 → 404。
  *
  * 返回类型不显式标注：链式注册把路由签名累积进推断类型，
  * 挂载后 AppType 才能带上这些路由（前端 hc 端到端类型的前提）。
@@ -97,5 +101,7 @@ export function createTeacherRoutes(
       .route("/", createSharedRoutes(db, dataDir))
       .route("/", createStudentTeacherRoutes(db))
       .route("/", createAssignmentTeacherRoutes(db))
+      // T3.1：教师端作答数据页（列表 + 详情，业务在 teacher-attempt-service）
+      .route("/", createTeacherAttemptRoutes(db))
   );
 }

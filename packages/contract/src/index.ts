@@ -34,6 +34,8 @@ export * from "./spec.ts";
 export * from "./student.ts";
 /** 学生端课程契约（T2A.5 起为权威定义）：我的课程、课程可见目录（D5）、D22 错误码 */
 export * from "./student-course-api.ts";
+/** 教师端作答数据契约（T3.1 起为权威定义，依据 Phase3 清单 D5–D8）：作答列表/详情查询与数据、错误码 */
+export * from "./teacher-attempt-api.ts";
 
 /**
  * API 响应壳（占位示例）。

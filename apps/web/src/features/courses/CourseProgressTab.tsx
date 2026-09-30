@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import type { CourseProgressData } from "@tutor/contract";
 import { Table2 } from "lucide-react";
 import { useState } from "react";
+import { Link } from "react-router";
 import { fetchCourseProgressApi } from "@/lib/api";
 import { formatCnTime } from "@/lib/time";
 
@@ -9,7 +10,8 @@ import { formatCnTime } from "@/lib/time";
  * 课程「进度」页签（T2A.6）：成员 × 可见单元矩阵。
  * - 单元格：次数、首次分（教师侧统计优先口径，D10）、最近分、待批数；
  *   从未做过显示「—」；
- * - 点击单元格展开该生该单元的历次列表（只读元信息；作答详情页属 T3.1）；
+ * - 点击单元格展开该生该单元的历次列表，每条历次可点击进入 attempt 详情
+ *   （T3.1 D8 入口衔接：/t/data/attempts/:id）；
  * - 列 = 此刻对学生可见的单元（隐藏/未到发布/无题不进矩阵）。
  */
 
@@ -123,40 +125,50 @@ export function CourseProgressTab({ courseId }: { courseId: string }) {
                     {cell === undefined ? (
                       <span className="text-muted-foreground">—</span>
                     ) : (
-                      <button
-                        type="button"
-                        aria-expanded={expanded}
-                        aria-label={`${member.displayName} 在 ${unit.title} 的练习记录（共 ${cell.count} 次）`}
-                        onClick={() => setOpenCell(expanded ? null : key)}
-                        className="flex min-h-11 w-full flex-col items-start gap-0.5 rounded-lg border border-border px-2.5 py-1.5 text-left outline-none transition-colors hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50"
-                      >
-                        <span>
-                          {cell.count} 次
-                          {cell.pendingCount > 0 && (
-                            <span className="ml-1.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">
-                              待批 {cell.pendingCount}
-                            </span>
-                          )}
-                        </span>
-                        <span className="text-xs text-muted-foreground">
-                          首次 {cell.firstScore ?? "—"} · 最近{" "}
-                          {cell.latestScore ?? "—"}
-                          {cell.bestScore !== null &&
-                            ` · 最高 ${cell.bestScore}`}
-                        </span>
-                        {expanded && (
-                          <span className="mt-1 w-full border-t border-border pt-1 text-xs text-muted-foreground">
-                            {cell.history.map((h) => (
-                              <span key={h.attemptId} className="block">
-                                第 {h.attemptNo} 次 · {statusLabel(h.status)}
-                                {h.score !== null && ` · ${h.score} 分`}
-                                {h.submittedAt !== null &&
-                                  ` · ${formatCnTime(h.submittedAt)}`}
+                      <div className="flex w-full flex-col">
+                        <button
+                          type="button"
+                          aria-expanded={expanded}
+                          aria-label={`${member.displayName} 在 ${unit.title} 的练习记录（共 ${cell.count} 次）`}
+                          onClick={() => setOpenCell(expanded ? null : key)}
+                          className="flex min-h-11 w-full flex-col items-start gap-0.5 rounded-lg border border-border px-2.5 py-1.5 text-left outline-none transition-colors hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50"
+                        >
+                          <span>
+                            {cell.count} 次
+                            {cell.pendingCount > 0 && (
+                              <span className="ml-1.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">
+                                待批 {cell.pendingCount}
                               </span>
-                            ))}
+                            )}
                           </span>
+                          <span className="text-xs text-muted-foreground">
+                            首次 {cell.firstScore ?? "—"} · 最近{" "}
+                            {cell.latestScore ?? "—"}
+                            {cell.bestScore !== null &&
+                              ` · 最高 ${cell.bestScore}`}
+                          </span>
+                        </button>
+                        {/* 历次列表（D8：每条可点进 attempt 详情；放在 button 之外，
+                            避免链接嵌进按钮的非法交互结构） */}
+                        {expanded && (
+                          <ul className="mt-1 w-full border-t border-border pt-1 text-xs">
+                            {cell.history.map((h) => (
+                              <li key={h.attemptId}>
+                                <Link
+                                  to={`/t/data/attempts/${h.attemptId}`}
+                                  aria-label={`查看 ${member.displayName} 在 ${unit.title} 的第 ${h.attemptNo} 次作答`}
+                                  className="-mx-1 flex min-h-11 items-center rounded-md px-1 text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
+                                >
+                                  第 {h.attemptNo} 次 · {statusLabel(h.status)}
+                                  {h.score !== null && ` · ${h.score} 分`}
+                                  {h.submittedAt !== null &&
+                                    ` · ${formatCnTime(h.submittedAt)}`}
+                                </Link>
+                              </li>
+                            ))}
+                          </ul>
                         )}
-                      </button>
+                      </div>
                     )}
                   </td>
                 );

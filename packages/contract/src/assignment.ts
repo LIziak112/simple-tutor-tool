@@ -261,6 +261,12 @@ export const assignmentRosterEntrySchema = z.object({
   displayName: z.string().min(1),
   /** 该学生在本作业下的完成状态（graded > submitted > in_progress > not_started） */
   status: assignmentStatusSchema,
+  /**
+   * 该生在本作业下的 attempt id（一人一份：draft 幂等、交卷后不再新建）。
+   * status 取同优先级（graded > submitted > draft）的代表行；未开始为 null。
+   * T3.1（D8）：名单状态徽章点击 → attempt 详情 /t/data/attempts/:id 的定位 id。
+   */
+  attemptId: z.uuid().nullable(),
   /** 加入名单时间：UTC ISO（assignment_students.addedAt） */
   addedAt: z.string().min(1),
 });

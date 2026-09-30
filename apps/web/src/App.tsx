@@ -70,6 +70,10 @@ const teacherRoutes = (() => {
   const CourseEditPage = lazy(() => import("./pages/teacher/CourseEditPage"));
   const StudentsPage = lazy(() => import("./pages/teacher/StudentsPage"));
   const AssignmentsPage = lazy(() => import("./pages/teacher/AssignmentsPage"));
+  const DataPage = lazy(() => import("./pages/teacher/DataPage"));
+  const AttemptDetailPage = lazy(
+    () => import("./pages/teacher/AttemptDetailPage"),
+  );
   const PlaceholderPage = lazy(() => import("./pages/teacher/PlaceholderPage"));
 
   /** 布局内的懒加载兜底（骨架级提示即可，布局本身很快） */
@@ -77,13 +81,8 @@ const teacherRoutes = (() => {
     <p className="p-8 text-sm text-muted-foreground">页面加载中…</p>
   );
 
-  /** 两个「建设中」占位分区（后续任务逐个替换；内容由 T1.11/T2.1 实现并移出占位） */
+  /** 「建设中」占位分区（后续任务逐个替换；内容由 T4.x 实现并移出占位） */
   const placeholders = [
-    {
-      path: "data",
-      title: "数据",
-      description: "作答数据导出与备份将在这里提供（T4.x 起）。",
-    },
     {
       path: "insights",
       title: "学情",
@@ -186,6 +185,24 @@ const teacherRoutes = (() => {
           element={
             <Suspense fallback={pageFallback}>
               <AssignmentsPage />
+            </Suspense>
+          }
+        />
+        <Route
+          // T3.1：作答数据页（三视图 + 筛选，侧边栏「数据」入口的落点）
+          path="data"
+          element={
+            <Suspense fallback={pageFallback}>
+              <DataPage />
+            </Suspense>
+          }
+        />
+        <Route
+          // T3.1：作答详情（D7 逐题 + 手写缩略图；draft 亦可用，D5）
+          path="data/attempts/:id"
+          element={
+            <Suspense fallback={pageFallback}>
+              <AttemptDetailPage />
             </Suspense>
           }
         />

@@ -18,7 +18,9 @@ import {
   type AttemptAnswerSaveRequest,
   type AttemptDetailData,
   type AttemptEvent,
+  type AttemptSource,
   type AttemptStartData,
+  type AttemptStatus,
   apiResponseSchema,
   type ContentTree,
   type CourseCreateRequest,
@@ -87,6 +89,8 @@ import {
   type StudentUpdateRequest,
   type TeacherAssignment,
   type TeacherAssignmentListData,
+  type TeacherAttemptDetailData,
+  type TeacherAttemptListData,
   type TeacherInfo,
   type TeacherLoginRequest,
   type TeacherRegisterRequest,
@@ -1169,7 +1173,6 @@ export function fetchAdminOverview(): Promise<AdminOverviewData> {
 }
 
 // ---------- T2B.7：共享发布与导入（D15–D18；DATA_DIR/shared 目录） ----------
-
 /** 共享列表（D15：≤1MB 的 .md 按时间倒序最多 200 个；truncated/oversizeHidden 防线提示） */
 export function fetchSharedFiles(): Promise<SharedFileList> {
   return callApi(() => api.api.teacher.shared.$get());
@@ -1232,5 +1235,54 @@ export function deleteAdminSharedFileApi(filename: string): Promise<null> {
     api.api.admin["shared-files"][":filename"].$delete({
       param: { filename },
     }),
+  );
+}
+
+// ---------- T3.1：教师端作答数据页（/t/data，D5–D7） ----------
+
+/**
+ * 作答列表查询参数（界面层形态）。undefined / null 字段不发送（= 后端不过滤）；
+ * limit / offset 恒发送（分页）。from / to 为带 Z 后缀的 UTC ISO（页面把
+ * datetime-local 本地值经 lib/time.localInputToUtcIso 转换后传入）。
+ */
+export interface TeacherAttemptListParams {
+  studentId?: string | undefined;
+  courseId?: string | undefined;
+  assignmentId?: string | undefined;
+  unitId?: string | undefined;
+  sourceType?: AttemptSource | undefined;
+  status?: AttemptStatus | undefined;
+  from?: string | undefined;
+  to?: string | undefined;
+  limit: number;
+  offset: number;
+}
+
+/** 教师作答卡片列表（D6 筛选与分页；按最近活动时间倒序） */
+export function fetchTeacherAttemptsApi(
+  params: TeacherAttemptListParams,
+): Promise<TeacherAttemptListData> {
+  const query: Record<string, string> = {};
+  if (params.studentId !== undefined) query.studentId = params.studentId;
+  if (params.courseId !== undefined) query.courseId = params.courseId;
+  if (params.assignmentId !== undefined) {
+    query.assignmentId = params.assignmentId;
+  }
+  if (params.unitId !== undefined) query.unitId = params.unitId;
+  if (params.sourceType !== undefined) query.sourceType = params.sourceType;
+  if (params.status !== undefined) query.status = params.status;
+  if (params.from !== undefined) query.from = params.from;
+  if (params.to !== undefined) query.to = params.to;
+  query.limit = String(params.limit);
+  query.offset = String(params.offset);
+  return callApi(() => api.api.teacher.attempts.$get({ query }));
+}
+
+/** 教师作答详情（D7 全字段；draft 亦可用，判定列语义见 D5） */
+export function fetchTeacherAttemptDetailApi(
+  attemptId: string,
+): Promise<TeacherAttemptDetailData> {
+  return callApi(() =>
+    api.api.teacher.attempts[":id"].$get({ param: { id: attemptId } }),
   );
 }

@@ -11,6 +11,7 @@ import type {
   StudentListData,
   TeacherAssignment,
 } from "@tutor/contract";
+import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ApiError,
@@ -52,6 +53,8 @@ const STUDENT_B_ID = "22222222-2222-4222-8222-222222222222"; // 李四 未开始
 const STUDENT_C_ID = "66666666-6666-4666-8666-666666666666"; // 王五 进行中
 const STUDENT_D_ID = "77777777-7777-4777-8777-777777777777"; // 赵六 课程新成员
 const STUDENT_E_ID = "88888888-8888-4888-8888-888888888888"; // 孙七 不在名单
+const ATTEMPT_A_ID = "99999999-9999-4999-8999-999999999991"; // 张三的 attempt（已交卷）
+const ATTEMPT_C_ID = "99999999-9999-4999-8999-999999999993"; // 王五的 attempt（进行中）
 
 function makeAssignment(
   overrides: Partial<TeacherAssignment> = {},
@@ -100,18 +103,21 @@ function makeDetail(
         studentId: STUDENT_A_ID,
         displayName: "张三",
         status: "submitted",
+        attemptId: ATTEMPT_A_ID,
         addedAt: "2026-09-26T08:00:00.000Z",
       },
       {
         studentId: STUDENT_B_ID,
         displayName: "李四",
         status: "not_started",
+        attemptId: null,
         addedAt: "2026-09-26T08:00:00.000Z",
       },
       {
         studentId: STUDENT_C_ID,
         displayName: "王五",
         status: "in_progress",
+        attemptId: ATTEMPT_C_ID,
         addedAt: "2026-09-26T08:00:00.000Z",
       },
     ],
@@ -150,8 +156,11 @@ function renderDialog(assignment: TeacherAssignment = makeAssignment()) {
   });
   const onClose = vi.fn();
   const utils = render(
+    // T3.1（D8）：名单状态徽章是 <Link>（跳 attempt 详情），需要 Router 上下文
     <QueryClientProvider client={client}>
-      <AssignmentEditDialog assignment={assignment} onClose={onClose} />
+      <MemoryRouter>
+        <AssignmentEditDialog assignment={assignment} onClose={onClose} />
+      </MemoryRouter>
     </QueryClientProvider>,
   );
   return { ...utils, onClose };
@@ -172,6 +181,17 @@ describe("AssignmentEditDialog 展示", () => {
     expect(screen.getByText("已交卷")).toBeInTheDocument();
     expect(screen.getAllByText("未开始").length).toBeGreaterThan(0);
     expect(screen.getByText("进行中")).toBeInTheDocument();
+
+    // T3.1（D8）：已开始学生的状态徽章是链接（跳该生 attempt 详情），未开始是纯文本
+    expect(
+      screen.getByRole("link", { name: "查看 张三 的作答详情" }),
+    ).toHaveAttribute("href", `/t/data/attempts/${ATTEMPT_A_ID}`);
+    expect(
+      screen.getByRole("link", { name: "查看 王五 的作答详情" }),
+    ).toHaveAttribute("href", `/t/data/attempts/${ATTEMPT_C_ID}`);
+    expect(
+      screen.queryByRole("link", { name: /李四/ }),
+    ).not.toBeInTheDocument();
 
     // D14 锁定原因 + 只读单元列表（含已删标记）
     expect(
