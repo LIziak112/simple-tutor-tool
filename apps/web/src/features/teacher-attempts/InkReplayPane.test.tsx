@@ -50,7 +50,7 @@ const ATRAMENT_DOC = {
   updatedAt: 1,
 };
 
-function renderPane(): void {
+function renderPane(hasStrokes?: boolean): void {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -60,6 +60,7 @@ function renderPane(): void {
         inkId="dddddddd-dddd-4ddd-8ddd-dddddddd0001"
         pngUrl="/api/teacher/ink/dddddddd-dddd-4ddd-8ddd-dddddddd0001.png"
         alt="第 2 题的手写笔迹"
+        {...(hasStrokes === undefined ? {} : { hasStrokes })}
       />
     </QueryClientProvider>,
   );
@@ -117,5 +118,18 @@ describe("InkReplayPane 三态（D12）", () => {
       await screen.findByText("无回放数据，已显示快照图片"),
     ).toBeInTheDocument();
     expect(screen.getByAltText("第 2 题的手写笔迹")).toBeInTheDocument();
+  });
+
+  it("hasStrokes=false（实测跟进）：不发起矢量请求，直接降级并注明「该题未书写笔迹」", () => {
+    // mock 有值也不该被取用——断言零调用即证明查询从未发出（消除服务端 404 噪声）
+    mockedFetch.mockResolvedValue(ATRAMENT_DOC);
+    renderPane(false);
+    expect(mockedFetch).not.toHaveBeenCalled();
+    expect(screen.getByText("无回放数据，已显示快照图片")).toBeInTheDocument();
+    expect(screen.getByText("（该题未书写笔迹）")).toBeInTheDocument();
+    expect(screen.getByAltText("第 2 题的手写笔迹")).toHaveAttribute(
+      "src",
+      "/api/teacher/ink/dddddddd-dddd-4ddd-8ddd-dddddddd0001.png",
+    );
   });
 });

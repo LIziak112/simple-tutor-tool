@@ -100,7 +100,7 @@ function DetailOptions({
 /**
  * 手写笔迹区（懒加载快照 + 点击放大；T3.3 起提供「快照 / 回放」切换）：
  * 回放态三态交给 InkReplayPane（加载 / 重演 / PNG 降级）；放大层从当前视图打开。
- * hasStrokes=false 时提示无笔画。
+ * hasStrokes=false 时提示无笔画（实测跟进：回放态同时不发矢量请求，见 InkReplayPane）。
  */
 function InkThumbnail({
   question,
@@ -146,6 +146,7 @@ function InkThumbnail({
           inkId={ink.inkId}
           pngUrl={ink.pngUrl}
           alt={`第 ${question.no} 题的手写笔迹`}
+          hasStrokes={ink.hasStrokes}
         />
       )}
       {zoomed && (
@@ -153,6 +154,7 @@ function InkThumbnail({
           pngUrl={ink.pngUrl}
           alt={`第 ${question.no} 题的手写笔迹`}
           inkId={ink.inkId}
+          hasStrokes={ink.hasStrokes}
           initialTab={tab}
           onClose={() => setZoomed(false)}
         />

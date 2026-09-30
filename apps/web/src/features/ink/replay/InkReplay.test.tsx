@@ -27,7 +27,10 @@ vi.mock("./ExcalidrawReplay.tsx", () => ({
 
 import { InkReplay } from "./InkReplay.tsx";
 
-/** 两笔带时间戳的文档：笔 1 点时刻 [0,100,200,300]，间隙 160，笔 2 [0,80,160] */
+/**
+ * 两笔带时间戳的文档：笔 1 点时刻 [0,1000,2000,3000]，间隙 160，
+ * 笔 2 [0,800,1600] → 总时长 4.76s ≥ 回放下限 2s（不触发拉伸，断言绝对时刻）。
+ */
 function atramentModel() {
   const model = parseInkReplayData({
     engine: "atrament",
@@ -41,9 +44,9 @@ function atramentModel() {
           weight: 4,
           points: [
             { x: 10, y: 10, p: 0.5, t: 0 },
-            { x: 50, y: 10, p: 0.6, t: 100 },
-            { x: 90, y: 10, p: 0.5, t: 200 },
-            { x: 130, y: 10, p: 0.5, t: 300 },
+            { x: 50, y: 10, p: 0.6, t: 1000 },
+            { x: 90, y: 10, p: 0.5, t: 2000 },
+            { x: 130, y: 10, p: 0.5, t: 3000 },
           ],
         },
         {
@@ -52,8 +55,8 @@ function atramentModel() {
           weight: 4,
           points: [
             { x: 30, y: 20, p: 0.5, t: 0 },
-            { x: 30, y: 60, p: 0.7, t: 80 },
-            { x: 30, y: 90, p: 0.5, t: 160 },
+            { x: 30, y: 60, p: 0.7, t: 800 },
+            { x: 30, y: 90, p: 0.5, t: 1600 },
           ],
         },
       ],
@@ -111,7 +114,7 @@ describe("<InkReplay>：atrament 控制逻辑", () => {
       "false",
     );
     expect(screen.getByRole("button", { name: "4×" })).toBeInTheDocument();
-    expect(screen.getByText("0.0 秒 / 0.6 秒")).toBeInTheDocument();
+    expect(screen.getByText("0.0 秒 / 4.8 秒")).toBeInTheDocument();
     expect(drawFrameMock).toHaveBeenCalledTimes(1);
     expect(drawFrameMock.mock.lastCall?.[1]).toEqual([1, 0]);
   });
@@ -122,11 +125,11 @@ describe("<InkReplay>：atrament 控制逻辑", () => {
     expect(screen.getByRole("button", { name: "暂停" })).toBeInTheDocument();
     expect(rafCb).not.toBeNull();
 
-    driveFrame(100); // t=100：第 1 笔走到第 2 点
+    driveFrame(1000); // t=1000：第 1 笔走到第 2 点
     expect(drawFrameMock.mock.lastCall?.[1]).toEqual([2, 0]);
-    expect(screen.getByText("0.1 秒 / 0.6 秒")).toBeInTheDocument();
+    expect(screen.getByText("1.0 秒 / 4.8 秒")).toBeInTheDocument();
 
-    driveFrame(360); // t=460：第 1 笔完整、第 2 笔起点刚落
+    driveFrame(2160); // t=3160：第 1 笔完整、第 2 笔起点刚落
     expect(drawFrameMock.mock.lastCall?.[1]).toEqual([4, 1]);
 
     fireEvent.click(screen.getByRole("button", { name: "暂停" }));
@@ -137,15 +140,15 @@ describe("<InkReplay>：atrament 控制逻辑", () => {
   it("播放到底自动停：按钮回「播放」、时刻停在总时长、画面为完整状态", () => {
     render(<InkReplay data={atramentModel()} />);
     fireEvent.click(screen.getByRole("button", { name: "播放" }));
-    driveFrame(10_000); // 远超总时长 620ms
+    driveFrame(10_000); // 远超总时长 4760ms
     expect(screen.getByRole("button", { name: "播放" })).toBeInTheDocument();
-    expect(screen.getByText("0.6 秒 / 0.6 秒")).toBeInTheDocument();
+    expect(screen.getByText("4.8 秒 / 4.8 秒")).toBeInTheDocument();
     expect(drawFrameMock.mock.lastCall?.[1]).toEqual([4, 3]);
     // 到尾后循环不再排队（当前 cb 已结束，不再发起新帧）
     const cbAtEnd = rafCb;
     driveFrame(100);
     expect(rafCb).toBe(cbAtEnd);
-    expect(screen.getByText("0.6 秒 / 0.6 秒")).toBeInTheDocument();
+    expect(screen.getByText("4.8 秒 / 4.8 秒")).toBeInTheDocument();
   });
 
   it("播完再按播放从头重演", () => {
@@ -153,7 +156,7 @@ describe("<InkReplay>：atrament 控制逻辑", () => {
     fireEvent.click(screen.getByRole("button", { name: "播放" }));
     driveFrame(10_000);
     fireEvent.click(screen.getByRole("button", { name: "播放" }));
-    expect(screen.getByText("0.0 秒 / 0.6 秒")).toBeInTheDocument();
+    expect(screen.getByText("0.0 秒 / 4.8 秒")).toBeInTheDocument();
     expect(drawFrameMock.mock.lastCall?.[1]).toEqual([1, 0]);
   });
 
@@ -165,27 +168,27 @@ describe("<InkReplay>：atrament 控制逻辑", () => {
       "true",
     );
     fireEvent.click(screen.getByRole("button", { name: "播放" }));
-    driveFrame(50); // 真实 50ms × 2 = t=100（与 1× 驱动 100ms 的画面一致）
-    expect(screen.getByText("0.1 秒 / 0.6 秒")).toBeInTheDocument();
+    driveFrame(500); // 真实 500ms × 2 = t=1000（与 1× 驱动 1000ms 的画面一致）
+    expect(screen.getByText("1.0 秒 / 4.8 秒")).toBeInTheDocument();
     expect(drawFrameMock.mock.lastCall?.[1]).toEqual([2, 0]);
   });
 
   it("进度条拖动（跳转）= 重绘到该时刻的累积状态，任意时刻状态正确", () => {
     render(<InkReplay data={atramentModel()} />);
     fireEvent.change(screen.getByRole("slider", { name: "回放进度" }), {
-      target: { value: "160" },
+      target: { value: "1600" },
     });
     expect(drawFrameMock.mock.lastCall?.[1]).toEqual([2, 0]);
-    expect(screen.getByText("0.2 秒 / 0.6 秒")).toBeInTheDocument();
+    expect(screen.getByText("1.6 秒 / 4.8 秒")).toBeInTheDocument();
 
     fireEvent.change(screen.getByRole("slider", { name: "回放进度" }), {
-      target: { value: "500" },
+      target: { value: "3560" },
     });
     expect(drawFrameMock.mock.lastCall?.[1]).toEqual([4, 1]);
 
     // 播放中拖动：从新时刻继续推进
     fireEvent.click(screen.getByRole("button", { name: "播放" }));
-    driveFrame(60); // 500 + 60 = 560：第 2 笔走到 100ms 处（第 2 点）
+    driveFrame(450); // 3560 + 450 = 4010：第 2 笔走到 850ms 处（第 2 点）
     expect(drawFrameMock.mock.lastCall?.[1]).toEqual([4, 2]);
   });
 
@@ -208,13 +211,14 @@ describe("<InkReplay>：atrament 控制逻辑", () => {
 
 describe("<InkReplay>：excalidraw 分支", () => {
   function excalidrawModel() {
+    // 200 点 freedraw（2400ms）+ 矩形（240ms）→ 总 2.64s ≥ 回放下限 2s，不触发拉伸
     const model = parseInkReplayData({
       engine: "excalidraw",
       version: 1,
       data: {
         scene: {
           elements: [
-            { id: "a", type: "freedraw", points: new Array(20).fill(0) },
+            { id: "a", type: "freedraw", points: new Array(200).fill(0) },
             { id: "b", type: "rectangle" },
           ],
         },
@@ -229,20 +233,20 @@ describe("<InkReplay>：excalidraw 分支", () => {
     render(<InkReplay data={excalidrawModel()} />);
     const stub = screen.getByTestId("excalidraw-stub");
     expect(stub).toHaveAttribute("data-visible", "1");
-    expect(screen.getByText("0.0 秒 / 0.5 秒")).toBeInTheDocument(); // 240+240
+    expect(screen.getByText("0.0 秒 / 2.6 秒")).toBeInTheDocument(); // 2400+240
 
     fireEvent.change(screen.getByRole("slider", { name: "回放进度" }), {
-      target: { value: "240" },
+      target: { value: "2400" },
     });
     expect(stub).toHaveAttribute("data-visible", "2");
-    expect(screen.getByText("0.2 秒 / 0.5 秒")).toBeInTheDocument();
+    expect(screen.getByText("2.4 秒 / 2.6 秒")).toBeInTheDocument();
   });
 
   it("播放推进同样驱动元素逐个出现", () => {
     render(<InkReplay data={excalidrawModel()} />);
     const stub = screen.getByTestId("excalidraw-stub");
     fireEvent.click(screen.getByRole("button", { name: "播放" }));
-    driveFrame(240);
+    driveFrame(2400);
     expect(stub).toHaveAttribute("data-visible", "2");
   });
 });
