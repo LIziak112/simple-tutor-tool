@@ -34,6 +34,9 @@ const DATA: AttemptResultData = {
     pending: 1,
     unanswered: 1,
     autoGradable: 3,
+    // D9（T3.5）：仍有待批 → scoreFinal null、pendingCount 1
+    scoreFinal: null,
+    pendingCount: 1,
   },
   // T2A.7：逐题结果按单元分组（单单元不渲染节标题）
   units: [
@@ -55,6 +58,10 @@ const DATA: AttemptResultData = {
           solutionMd: "$0$ 是正数与负数的分界点。",
           answer: { kind: "judge", value: true },
           autoCorrect: true,
+          // D9：未批注 → null，finalCorrect 随 autoCorrect
+          teacherMark: null,
+          teacherComment: null,
+          finalCorrect: true,
           hintsOpened: [],
         },
         {
@@ -72,6 +79,9 @@ const DATA: AttemptResultData = {
           solutionMd: "故选 B。",
           answer: { kind: "choice", index: 0 },
           autoCorrect: false,
+          teacherMark: null,
+          teacherComment: null,
+          finalCorrect: false,
           // T2.11：做题时解锁过第 0 条提示 → 结果视图回看
           hintsOpened: [{ index: 0, text: "只有符号不同的两个数互为相反数。" }],
         },
@@ -93,6 +103,9 @@ const DATA: AttemptResultData = {
           solutionMd: null,
           answer: { kind: "fill", values: ["1/2", ""] },
           autoCorrect: false,
+          teacherMark: null,
+          teacherComment: null,
+          finalCorrect: false,
           hintsOpened: [],
         },
         {
@@ -109,6 +122,10 @@ const DATA: AttemptResultData = {
           solutionMd: null,
           answer: null,
           autoCorrect: null,
+          // D9：手写题未批 → 批注与最终判定全 null（待批）
+          teacherMark: null,
+          teacherComment: null,
+          finalCorrect: null,
           hintsOpened: [],
         },
       ],
@@ -270,9 +287,13 @@ describe("T2A.8 未公布形态（answersReleased=false，截止后公布且未�
     answers: null,
     solutionMd: null,
     autoCorrect: null,
+    // D9：未公布口径下批注与最终判定同样置 null 投影
+    teacherMark: null,
+    teacherComment: null,
+    finalCorrect: null,
   }));
   /** 受限形态：服务端口径——逐题受限 + scoreAuto 置 null 投影 +
-   * summary 对错零化（pending=answered 口径） */
+   * summary 对错零化（pending=answered 口径；scoreFinal/pendingCount 置 null） */
   const RESTRICTED: AttemptResultData = {
     ...DATA,
     answersReleased: false,
@@ -286,6 +307,8 @@ describe("T2A.8 未公布形态（answersReleased=false，截止后公布且未�
       pending: 3,
       unanswered: 1,
       autoGradable: 0,
+      scoreFinal: null,
+      pendingCount: null,
     },
     units:
       baseUnit === undefined

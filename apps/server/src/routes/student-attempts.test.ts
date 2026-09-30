@@ -624,6 +624,9 @@ describe("POST /api/student/attempts/:id/submit：判分与快照", () => {
       pending: 0,
       unanswered: 0,
       autoGradable: 8,
+      // D9：全部判定完成 → scoreFinal=100、待批 0
+      scoreFinal: 100,
+      pendingCount: 0,
     });
     // 展开全部题目后逐题断言（every 对空数组恒真，units 为空时会真空通过）：
     // 总数 8 与 summary.total 呼应，再逐题 autoCorrect=true
@@ -1025,6 +1028,9 @@ describe("T2A.8 答案公布时机（after_due：截止前受限 / 截止后完�
       pending: 2,
       unanswered: 6,
       autoGradable: 0,
+      // D9：未公布口径下最终得分与待批数同样置 null 投影
+      scoreFinal: null,
+      pendingCount: null,
     });
 
     // ② GET 详情：同一受限形态，逐字段断言
