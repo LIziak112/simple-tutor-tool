@@ -27,7 +27,8 @@ import {
  *   伴生 meta.json（内容见 shared-service，全部读写集中在该 service 单点）；
  * - GET  /shared（D15）：扫目录列表（200 个与 1MB 防线、发布者/来源/题数）；
  * - POST /shared/preview {filename}（D17）：读文件后**复用现有单文件预览**
- *   （previewImport），动作清单按本人域计算（D13）；folderId 可选；
+ *   （previewImport），动作清单按本人域计算（D13）；folderId 可选；响应额外
+ *   携带 markdown 原文（共享页「查看预览」渲染用）；
  * - POST /shared/import {filename, folderId?}（D17）：复用现有提交
  *   （commitImport）进本人域；filename 白名单校验防路径穿越；
  * - DELETE /shared/:filename（D18）：发布者删自己的；他人/本地文件 →
@@ -82,6 +83,7 @@ export function createSharedRoutes(db: Db, dataDir: string) {
         });
       })
       // ---------- 预览（D17：复用单文件预览，动作清单按本人域计算） ----------
+      // 额外返回 markdown 原文：共享页「查看预览」抽屉用 RichMarkdown 只读渲染
       .post("/shared/preview", async (c) => {
         const body: SharedPreviewRequest = await parseJsonBody(
           c,
@@ -90,11 +92,14 @@ export function createSharedRoutes(db: Db, dataDir: string) {
         const markdown = readSharedMarkdown(dataDir, body.filename);
         return c.json({
           ok: true,
-          data: previewImport(db, c.var.teacher.id, {
+          data: {
+            ...previewImport(db, c.var.teacher.id, {
+              markdown,
+              filename: body.filename,
+              folderId: body.folderId ?? null,
+            }),
             markdown,
-            filename: body.filename,
-            folderId: body.folderId ?? null,
-          }),
+          },
         });
       })
       // ---------- 导入（D17：提交进本人域） ----------

@@ -5,6 +5,7 @@ import {
   sharedFilenameSchema,
   sharedFileSummarySchema,
   sharedImportRequestSchema,
+  sharedPreviewDataSchema,
   sharedPreviewRequestSchema,
   sharedPublishDataSchema,
 } from "./shared-api.ts";
@@ -119,6 +120,30 @@ describe("发布 / 预览 / 导入请求响应", () => {
       sharedPublishDataSchema.safeParse({ filename: "a-2.md" }).success,
     ).toBe(true);
     expect(sharedPublishDataSchema.safeParse({}).success).toBe(false);
+  });
+
+  it("sharedPreviewDataSchema：预览响应额外携带 markdown 原文（渲染预览用）", () => {
+    const preview = {
+      version: 2,
+      summary: {
+        unitCount: 1,
+        lectureCount: 0,
+        questionCount: 8,
+        typeDistribution: { judge: 8 },
+      },
+      issues: [],
+      actions: [],
+      warnings: [],
+      markdown: "---\nkind: practice\n---\n# 练习四\n",
+    };
+    const parsed = sharedPreviewDataSchema.safeParse(preview);
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data.markdown).toContain("# 练习四");
+    // 缺 markdown 被拒：渲染预览依赖该字段
+    const { markdown: _drop, ...withoutMarkdown } = preview;
+    expect(sharedPreviewDataSchema.safeParse(withoutMarkdown).success).toBe(
+      false,
+    );
   });
 
   it("sharedPreviewRequestSchema / sharedImportRequestSchema：folderId 可选可空", () => {

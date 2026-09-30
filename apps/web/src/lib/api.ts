@@ -66,6 +66,7 @@ import {
   type ReorderRequest,
   type SharedFileList,
   type SharedImportRequest,
+  type SharedPreviewData,
   type SharedPreviewRequest,
   type SharedPublishData,
   type SpecFileName,
@@ -1192,11 +1193,12 @@ export function publishLectureToSharedApi(
 
 /**
  * 共享文件预览（D17：服务端读文件复用单文件预览逻辑，动作清单按本人域计算）。
+ * 响应在导入预览字段之外携带 markdown 原文（「查看预览」渲染用）。
  * 有 error 级 lint 时响应仍 200（与普通 preview 一致，error 在 data.issues 里）。
  */
 export function previewSharedFile(
   request: SharedPreviewRequest,
-): Promise<ImportPreviewData> {
+): Promise<SharedPreviewData> {
   return callApi(() => api.api.teacher.shared.preview.$post({ json: request }));
 }
 

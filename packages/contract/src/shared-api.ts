@@ -116,9 +116,14 @@ export const sharedImportRequestSchema = z.object({
 
 /**
  * POST /api/teacher/shared/preview 响应 data：与单文件导入预览同形
- * （版本/摘要/lint issues/动作清单/warning），动作清单按**本人域**计算（D13/D17）。
+ * （版本/摘要/lint issues/动作清单/warning），动作清单按**本人域**计算（D13/D17）；
+ * 额外携带 markdown 原文，供「查看预览」抽屉用 RichMarkdown 只读渲染
+ * （共享文件是他人快照，前端不提供编辑）。
  */
-export const sharedPreviewDataSchema = importPreviewDataSchema;
+export const sharedPreviewDataSchema = importPreviewDataSchema.extend({
+  /** 共享文件原文（readSharedMarkdown 读出的完整 Markdown，含 frontmatter） */
+  markdown: z.string(),
+});
 
 /**
  * POST /api/teacher/shared/import 响应 data：与单文件导入提交同形
@@ -156,5 +161,6 @@ export type SharedFileSummary = z.infer<typeof sharedFileSummarySchema>;
 export type SharedFileList = z.infer<typeof sharedFileListSchema>;
 export type SharedPublishData = z.infer<typeof sharedPublishDataSchema>;
 export type SharedPreviewRequest = z.infer<typeof sharedPreviewRequestSchema>;
+export type SharedPreviewData = z.infer<typeof sharedPreviewDataSchema>;
 export type SharedImportRequest = z.infer<typeof sharedImportRequestSchema>;
 export type SharedErrorCode = z.infer<typeof sharedErrorCodeSchema>;

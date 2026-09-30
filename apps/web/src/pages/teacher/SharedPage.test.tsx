@@ -220,6 +220,89 @@ describe("SharedPage 预览抽屉与导入", () => {
   });
 });
 
+describe("SharedPage 查看预览抽屉", () => {
+  it("点「预览」→ 抽屉渲染原文内容 → 「导入到我的资源库」切换到导入抽屉", async () => {
+    apiMocks.fetchSharedFiles.mockResolvedValue(fileList());
+    apiMocks.previewSharedFile.mockResolvedValue({
+      version: 2,
+      summary: {
+        unitCount: 1,
+        lectureCount: 0,
+        questionCount: 8,
+        typeDistribution: { judge: 8 },
+      },
+      issues: [],
+      actions: [
+        {
+          kind: "createUnit",
+          title: "练习四",
+          unitId: "练习四",
+          folderName: null,
+          restore: false,
+        },
+      ],
+      warnings: [],
+      markdown: "# 练习四\n\n有理数加减混合练习。\n",
+    });
+    renderPage();
+    await screen.findByText("练习四");
+
+    fireEvent.click(
+      screen.getAllByRole("button", {
+        name: /^预览共享文件/,
+      })[0] as HTMLElement,
+    );
+    // 渲染抽屉：原文经 RichMarkdown 渲染出正文段落
+    expect(await screen.findByText("有理数加减混合练习。")).toBeInTheDocument();
+
+    // 切换到导入抽屉：出现导入专属的目标文件夹选择
+    fireEvent.click(screen.getByRole("button", { name: "导入到我的资源库" }));
+    expect(await screen.findByText("导入到文件夹")).toBeInTheDocument();
+  });
+
+  it("预览：有 error 级 lint 时提示导入会被拒绝，内容仍可查看", async () => {
+    apiMocks.fetchSharedFiles.mockResolvedValue(fileList());
+    apiMocks.previewSharedFile.mockResolvedValue({
+      version: 2,
+      summary: {
+        unitCount: 1,
+        lectureCount: 0,
+        questionCount: 0,
+        typeDistribution: {},
+      },
+      issues: [{ level: "error", line: 3, message: "题目缺少答案", rule: "X" }],
+      actions: [],
+      warnings: [],
+      markdown: "# 练习四\n\n题目内容。\n",
+    });
+    renderPage();
+    await screen.findByText("练习四");
+
+    fireEvent.click(
+      screen.getAllByRole("button", {
+        name: /^预览共享文件/,
+      })[0] as HTMLElement,
+    );
+    expect(await screen.findByText(/1 个错误级问题/)).toBeInTheDocument();
+    expect(screen.getByText("题目内容。")).toBeInTheDocument();
+  });
+
+  it("预览加载失败：展示错误与重试按钮", async () => {
+    apiMocks.fetchSharedFiles.mockResolvedValue(fileList());
+    apiMocks.previewSharedFile.mockRejectedValue(new Error("共享文件不存在"));
+    renderPage();
+    await screen.findByText("练习四");
+
+    fireEvent.click(
+      screen.getAllByRole("button", {
+        name: /^预览共享文件/,
+      })[0] as HTMLElement,
+    );
+    expect(await screen.findByText("共享文件不存在")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "重试" })).toBeInTheDocument();
+  });
+});
+
 describe("SharedPage 删除权限（canDelete）", () => {
   it("canDelete=false（本地文件）不显示删除按钮；canDelete=true 显示并走确认弹层", async () => {
     apiMocks.fetchSharedFiles.mockResolvedValue(fileList());

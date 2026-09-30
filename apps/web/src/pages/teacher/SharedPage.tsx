@@ -2,6 +2,7 @@ import type { SharedFileSummary } from "@tutor/contract";
 import {
   BookOpen,
   CircleAlert,
+  Eye,
   FileText,
   FolderInput,
   Loader2,
@@ -14,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useLibraryFolders } from "@/features/library/library-queries";
 import { SharedImportSheet } from "@/features/shared/SharedImportSheet";
+import { SharedPreviewSheet } from "@/features/shared/SharedPreviewSheet";
 import {
   useDeleteSharedFile,
   useSharedFiles,
@@ -23,7 +25,8 @@ import { formatCnTime, formatRelativeTime } from "@/lib/time";
 
 /**
  * /t/shared 共享页（T2B.7，D15–D18）：共享目录文件卡片（类型 + 来源标签 +
- * 发布者 + 相对时间 + 题数）、搜索（前端即时过滤）、「导入到我的资源库」预览
+ * 发布者 + 相对时间 + 题数）、搜索（前端即时过滤）、「预览」渲染抽屉
+ * （RichMarkdown 只读渲染原文）、「导入到我的资源库」预览
  * 抽屉（复用单文件预览组件）、删除按钮按权限显示（canDelete——发布者本人；
  * 本地文件仅管理员可删，在管理端操作）。三态齐全（§4.6）+ 空态引导。
  * 规模防线提示：目录文件过多（truncated）与超大文件未列出（oversizeHidden）。
@@ -40,6 +43,7 @@ export function SharedPage() {
   const foldersQuery = useLibraryFolders();
   const deleteMutation = useDeleteSharedFile();
   const [query, setQuery] = useState("");
+  const [previewing, setPreviewing] = useState<SharedFileSummary | null>(null);
   const [importing, setImporting] = useState<SharedFileSummary | null>(null);
   const [deleting, setDeleting] = useState<SharedFileSummary | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -220,6 +224,20 @@ export function SharedPage() {
                 <div className="flex shrink-0 flex-wrap items-center gap-2">
                   <Button
                     type="button"
+                    variant="outline"
+                    className="min-h-11 px-4"
+                    aria-label={`预览共享文件 ${file.title}`}
+                    onClick={() => {
+                      setActionError(null);
+                      setActionHint(null);
+                      setPreviewing(file);
+                    }}
+                  >
+                    <Eye aria-hidden />
+                    预览
+                  </Button>
+                  <Button
+                    type="button"
                     className="min-h-11 px-4"
                     onClick={() => {
                       setActionError(null);
@@ -252,6 +270,18 @@ export function SharedPage() {
           ))}
         </ul>
       )}
+
+      {/* 查看预览抽屉（RichMarkdown 只读渲染；「导入」切换到导入抽屉） */}
+      {previewing !== null ? (
+        <SharedPreviewSheet
+          file={previewing}
+          onClose={() => setPreviewing(null)}
+          onImport={() => {
+            setPreviewing(null);
+            setImporting(previewing);
+          }}
+        />
+      ) : null}
 
       {/* 导入预览抽屉（复用单文件预览组件，D17） */}
       {importing !== null ? (
