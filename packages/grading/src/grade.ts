@@ -3,16 +3,22 @@ import { judgeOf } from "./normalize.ts";
 import { equivalent } from "./rational.ts";
 
 /**
- * 各题型判分主入口（§5.6）：
+ * 各题型判分主入口（§5.6；D1 口径 T3.2a 修订）：
  * grade(question, answer) → true（对）| false（错）| null（不能自动判定）。
  *
- * 三类 null 语义（与旧版「手写题不自动判分 / 无标准答案不判分」口径一致并按 v2 显式化）：
- * 1. 题目侧 answers 缺省（解析不完整 / 手写题未给 :::answer）——无标准答案不判分；
- * 2. 学生未作答（answer 缺省）——未答与答错区分（旧版逐空比较对空输入判 false，
- *    v2 改为整题未提交答案对象时 null，见任务报告「待决问题」）；
- * 3. 手写题未填最终答案、判断题写法无法归一化——进教师待批队列。
+ * null 的语义（D1 之后仅三种，全部进教师待批队列）：
+ * 1. 题目侧 answers 缺省（解析不完整 / 手写题未给 :::answer）——无标准答案
+ *    不判分；**该判定优先级最高**，先于未作答判定（题目本身没答案时谈不上判错）；
+ * 2. 手写题（solve/apply/find-error）未能自动判：整题未作答（answer 缺省，
+ *    含只写笔迹未填最终答案）或最终答案为空（空串/纯空白）；
+ * 3. 判断题学生写法无法归一化（judgeOf 不识别）——教师裁定。
  *
- * 客观题判错（false）而非抛异常的边界：choice 索引越界、multi 部分选错、fill 部分空错。
+ * 未作答客观题（judge/choice/multi/fill 完全未作答 answer 缺省，或多选空选
+ * indexes=[]）→ **false**（D1 用户定，T3.2a：未作答判错，不进待批队列，
+ * scoreAuto 分母从此计入未作答客观题）。
+ *
+ * 客观题判错（false）而非抛异常的边界：未作答（含多选空选）、choice 索引越界、
+ * multi 部分选错/任一越界、fill 部分空错。
  * 纯函数：无 IO、无异常出口，任何输入形态错位返回 null。
  */
 
@@ -53,7 +59,7 @@ function gradeChoice(
 function gradeMulti(question: Question, answer: StudentAnswer): boolean | null {
   const answers = question.answers;
   if (answers?.kind !== "multi" || answer.kind !== "multi") return null;
-  if (answer.indexes.length === 0) return null; // 未选任何项 → 未作答
+  if (answer.indexes.length === 0) return false; // D1：空选 = 未作答 → 判错（学生选后又全部取消即落此态）
   const optionCount = question.options?.length;
   if (
     optionCount !== undefined &&
@@ -94,22 +100,41 @@ function gradeHandwritten(
   const answers = question.answers;
   if (answers?.kind !== "final" || answer.kind !== "final") return null;
   const finalAnswer = answer.finalAnswer.trim();
-  if (finalAnswer.length === 0) return null; // 未填最终答案 → 待批（验收项）
+  if (finalAnswer.length === 0) return null; // 未填最终答案（只写笔迹）→ 待批（验收项）
   return equivalent(finalAnswer, answers.answer);
+}
+
+/**
+ * 客观题「未作答」的判分结果（D1，T3.2a）：judge/choice/multi/fill 未提交答案
+ * 对象 → false（自动判错）；手写题未作答 → null（进待批，教师批改）。
+ * 仅在题目**有**标准答案时被调用（无标准答案的判定优先，见 grade）。
+ */
+function unansweredCorrect(question: Question): boolean | null {
+  switch (question.type) {
+    case "judge":
+    case "choice":
+    case "multi":
+    case "fill":
+      return false; // D1：未作答客观题判错
+    case "solve":
+    case "apply":
+    case "find-error":
+      return null; // 手写题未作答（含只写笔迹）→ 待批
+  }
 }
 
 /**
  * 判分主函数（服务端交卷时执行，客户端结果不可信）。
  * @param question 教师侧完整题目（含 answers）
- * @param answer   学生答案（缺省=未作答 → null）
+ * @param answer   学生答案（缺省=未作答：客观题 false（D1）、手写题 null）
  * @returns true 判对 / false 判错 / null 不能自动判定（进教师待批队列）
  */
 export function grade(
   question: Question,
   answer?: StudentAnswer,
 ): boolean | null {
-  if (question.answers === undefined) return null; // 题目无标准答案 → 不自动判分
-  if (answer === undefined) return null; // 未作答 → null（与答错区分）
+  if (question.answers === undefined) return null; // 题目无标准答案 → 不自动判分（优先级高于未作答判定）
+  if (answer === undefined) return unansweredCorrect(question); // D1：未作答按题型分派
 
   switch (question.type) {
     case "judge":

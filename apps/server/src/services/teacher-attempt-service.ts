@@ -15,7 +15,7 @@ import {
   studentAnswerSchema,
 } from "@tutor/contract";
 import { publicStemMd } from "@tutor/md-dsl";
-import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
   type Attempt,
@@ -33,6 +33,7 @@ import {
 import { HttpError } from "../lib/http-error";
 import { knowledgeNamesByQuestion } from "./assignment-service";
 import { attemptQuestionRows, attemptUnitIds } from "./attempt-service";
+import { pendingMarkCount } from "./pending-mark.ts";
 
 /**
  * TeacherAttemptService（T3.1，Phase3 清单 D5–D8）——教师端作答数据页业务层：
@@ -51,27 +52,6 @@ import { attemptQuestionRows, attemptUnitIds } from "./attempt-service";
  * 非本人学生的作答按不存在处理（404 ATTEMPT_NOT_FOUND，不暴露存在性）。
  * 题目/单元读取按该 teacherId 域内进行（attemptTeacherId 同源推导）。
  */
-
-/**
- * 待批数（本单口径，D4 的 T3.2a 前等价形式）：该 attempt 已交卷 responses 中
- * `autoCorrect IS NULL 且 teacherMark IS NULL` 的题数；draft 恒 0（未交卷不构成
- * 待批）。T3.2a 起替换为共享待批谓词（finalCorrect IS NULL）——独立成函数即为此。
- */
-export function attemptPendingMarkCount(db: Db, attempt: Attempt): number {
-  if (attempt.status === "draft") return 0;
-  const rows = db
-    .select({ id: responses.id })
-    .from(responses)
-    .where(
-      and(
-        eq(responses.attemptId, attempt.id),
-        isNull(responses.autoCorrect),
-        isNull(responses.teacherMark),
-      ),
-    )
-    .all();
-  return rows.length;
-}
 
 /**
  * 判定展示口径（D2/D3 前置约定）：`finalCorrect ?? autoCorrect`——教师批改
@@ -236,7 +216,7 @@ function unitTitleByIdOf(
  * - 分页：limit（默认 50，≤200）/ offset；total 为筛选后总条数；
  * - 卡片：来源上下文、单元数 / 题数（draft=当前 live 题数，已交卷=responses
  *   冻结行数）、得分双字段（scoreAuto / scoreFinal 透传，展示口径由前端取
- *   scoreFinal ?? scoreAuto，D2）、待批数（attemptPendingMarkCount 口径）。
+ *   scoreFinal ?? scoreAuto，D2）、待批数（pending-mark 共享谓词，D4）。
  */
 export function listTeacherAttempts(
   db: Db,
@@ -298,7 +278,8 @@ export function listTeacherAttempts(
     status: attempt.status,
     scoreAuto: attempt.scoreAuto,
     scoreFinal: attempt.scoreFinal,
-    pendingCount: attemptPendingMarkCount(db, attempt),
+    // D4 共享待批谓词（finalCorrect IS NULL；draft 恒 0）——与详情/矩阵/单元卡片同口径
+    pendingCount: pendingMarkCount(db, attempt),
     startedAt: attempt.startedAt,
     submittedAt: attempt.submittedAt,
     activeSec: attempt.activeSec,

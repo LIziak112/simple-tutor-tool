@@ -16,8 +16,11 @@ import { z } from "zod";
  * - final ↔ final：solve/apply/find-error 手写题共用，学生只提交"最终答案"文本
  *   （可空串=未填，判 null 进待批）；笔迹矢量不经判分包（存 DATA_DIR/blobs）。
  *
- * 「未作答」的表达：整题未提交答案对象（answer 缺省），而非某种空形态；
- * grading 的 grade(question, answer?) 对缺省返回 null（与答错 false 区分）。
+ * 「未作答」的表达与判分口径（D1，T3.2a 修订）：整题未提交答案对象（answer
+ * 缺省），而非某种空形态；可自动判分题型（judge/choice/multi/fill）未作答
+ * （answer 缺省**或多选空选** indexes=[]）→ grade 返回 **false**（未作答判错，
+ * 不进待批队列）；手写题未作答或未填最终答案 → null（进待批）。题目无标准
+ * 答案的判定优先（仍 null）。
  */
 export const judgeStudentAnswerSchema = z.object({
   kind: z.literal("judge"),
@@ -33,7 +36,7 @@ export const choiceStudentAnswerSchema = z.object({
 
 export const multiStudentAnswerSchema = z.object({
   kind: z.literal("multi"),
-  /** 所选下标集合（无序）；空数组=未选任何项 */
+  /** 所选下标集合（无序）；空数组=未选任何项（D1：判分按未作答 → false） */
   indexes: z.array(z.number().int().min(0)),
 });
 
@@ -45,7 +48,7 @@ export const fillStudentAnswerSchema = z.object({
 
 export const handwrittenStudentAnswerSchema = z.object({
   kind: z.literal("final"),
-  /** 手写题"最终答案"文本；空串=未填（判 null 进待批队列） */
+  /** 手写题"最终答案"文本；空串=未填（判 null 进待批队列——含只写笔迹未填的情形） */
   finalAnswer: z.string(),
 });
 

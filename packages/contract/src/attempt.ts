@@ -38,10 +38,13 @@ function apiOkExtend<T extends z.ZodType>(dataSchema: T) {
 }
 
 /**
- * attempt 状态（§5.2 attempts.status）：
+ * attempt 状态（§5.2 attempts.status；D2/D3 口径 T3.2a 修订）：
  * - draft：进行中（草稿，可保存答案、可交卷）；
- * - submitted：已交卷（自动判分已写入，等待教师批改手写题）；
- * - graded：已批改（T3.2 教师批注后置位）。
+ * - submitted：已交卷（存在待批题——手写/无标准答案/判断写法无法归一化，
+ *   等待教师批改）；
+ * - graded：已批改（= 全部 responses 的 finalCorrect 均非 null；**全客观题卷
+ *   交卷即 graded**——交卷时同时写 finalCorrect = autoCorrect（D3），无待批题
+ *   则直接置位并写 scoreFinal）。
  * 学生作业列表的四态（AssignmentStatus）由 computeAssignmentStatus 从本状态推导。
  */
 export const attemptStatusSchema = z.enum(["draft", "submitted", "graded"]);
@@ -90,7 +93,9 @@ export const attemptSummarySchema = z
     submittedAt: z.string().nullable(),
     /**
      * 自动判分得分（0–100 整数百分比；口径=答对数/可自动判分数）。
-     * 无可自动判分的题（全部待批）或未交卷时为 null；T3.2 批改后以 scoreFinal 为准。
+     * D1（T3.2a）后未作答客观题判 false 进入分母，数值更真实；无可自动判分的题
+     * （全部待批）或未交卷时为 null。graded 后以 scoreFinal 为准（全客观题卷
+     * 两者分母相同、数值相等）。
      */
     scoreAuto: z.number().int().min(0).max(100).nullable(),
   })
@@ -201,8 +206,9 @@ export const attemptDraftDataSchema = z.object({
  * - answers：参考答案（快照的 QuestionAnswers；题目未给标准答案为 null）；
  * - solutionMd：详解（快照；未提供为 null）；
  * - answer：本人答案（未作为 null）；
- * - autoCorrect：服务端判分结果 true/false；null = 不能自动判定
- *   （未作答、手写题未填最终答案、题目无标准答案——交教师批改，T3.2）；
+ * - autoCorrect：服务端判分结果 true/false；null = 不能自动判定——D1（T3.2a）
+ *   后仅三种：手写题未能自动判（未作答/只写笔迹未填最终答案）、题目无标准答案、
+ *   判断题写法无法归一化；**未作答客观题（含多选空选）= false**（不再 null）；
  * - hintsOpened：做题时已解锁的提示条目（含内容；交卷后回看自己用过的提示，
  *   T2.11）。快照里的其余提示内容仍不随本视图下发（hintCount 是唯一计数形态）。
  */
@@ -236,9 +242,9 @@ export const attemptScoreSummarySchema = z.object({
   answered: z.number().int().min(0),
   /** 自动判对数 */
   correct: z.number().int().min(0),
-  /** 自动判错数 */
+  /** 自动判错数（D1 后含未作答客观题） */
   wrong: z.number().int().min(0),
-  /** 不能自动判定数（autoCorrect=null：未作答 + 需教师批改） */
+  /** 不能自动判定数（autoCorrect=null：手写未自动判/无标准答案/判断写法无法归一化——D1 后不含未作答客观题） */
   pending: z.number().int().min(0),
   /** 未作答题数（answer=null） */
   unanswered: z.number().int().min(0),

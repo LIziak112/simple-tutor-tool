@@ -98,9 +98,9 @@ export const teacherMarkSchema = z.enum(["correct", "wrong"]);
 
 /**
  * 列表的单张作答卡片（平铺；按最近活动时间倒序）。
- * 待批数口径（本任务）：已交卷 responses 中 `autoCorrect IS NULL 且
- * teacherMark IS NULL` 的题数（D4 共享谓词在 T3.2a 前的等价形式；draft 恒 0，
- * 未交卷不构成待批）。T3.2a 起换共享谓词（finalCorrect IS NULL），数值含义不变。
+ * 待批数口径（D4 共享谓词，T3.2a 起）：已交卷 responses 中
+ * `finalCorrect IS NULL` 的题数（draft 恒 0，未交卷不构成待批；含只写笔迹
+ * 未填最终答案的手写题）。由此「待批数 = 0 ⇔ status = graded」。
  */
 export const teacherAttemptCardSchema = teacherAttemptSourceSchema.extend({
   /** attempts.id（crypto.randomUUID） */
@@ -116,7 +116,7 @@ export const teacherAttemptCardSchema = teacherAttemptSourceSchema.extend({
   status: attemptStatusSchema,
   /** 自动判分得分（0–100；无可判分或未交卷为 null） */
   scoreAuto: z.number().int().min(0).max(100).nullable(),
-  /** 最终得分（T3.2 批改后回写；未批为 null；展示口径：scoreFinal ?? scoreAuto，D2） */
+  /** 最终得分（D2/D3：交卷全部判定完成即写入；未批为 null；展示口径：scoreFinal ?? scoreAuto） */
   scoreFinal: z.number().int().min(0).max(100).nullable(),
   /** 待批数（口径见本 schema 头注释） */
   pendingCount: z.number().int().min(0),
@@ -206,7 +206,8 @@ export const teacherAttemptDetailQuestionSchema = z.object({
 /**
  * GET /api/teacher/attempts/:id 响应 data（D7；draft 亦可用，D5）。
  * 对/错/待批计数用统一展示口径 `effectiveCorrect = finalCorrect ?? autoCorrect`
- * （本阶段等价 autoCorrect；T3.2 批注后以教师判定优先）；draft 全 0（未交卷）。
+ * （T3.2a 起交卷即写 finalCorrect，故等价 finalCorrect；T3.2b 批注后以教师判定
+ * 优先）；draft 全 0（未交卷）。
  */
 export const teacherAttemptDetailDataSchema = teacherAttemptSourceSchema.extend(
   {

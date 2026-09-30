@@ -37,7 +37,7 @@ import {
  * 不显示对错判定、参考答案与详解（服务端本就不下发，前端双保险不渲染）。
  */
 
-/** 判定图标：true=绿勾、false=红叉、null=待批（含未作答，琥珀时钟） */
+/** 判定图标：true=绿勾、false=红叉（D1 后含未作答客观题）、null=待批（琥珀时钟） */
 function VerdictIcon({ autoCorrect }: { autoCorrect: boolean | null }) {
   if (autoCorrect === true) {
     return (
@@ -352,9 +352,16 @@ export function AttemptResultView({
               </span>
               <span>
                 待批 <b className="text-amber-600">{summary.pending}</b> 题
-                {summary.unanswered > 0 &&
-                  `（含未答 ${summary.unanswered} 题）`}
               </span>
+              {/* D1（T3.2a）：未作答客观题已判错计入「答错」；「未答」独立展示
+                  （此前挂在待批下的「含未答」不再准确——未答的待批题只剩手写/
+                  无标准答案，其余未答客观题在答错里） */}
+              {summary.unanswered > 0 && (
+                <span>
+                  未答 <b className="text-foreground">{summary.unanswered}</b>{" "}
+                  题
+                </span>
+              )}
             </p>
           </div>
         ) : (

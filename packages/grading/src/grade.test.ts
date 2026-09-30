@@ -3,11 +3,13 @@ import { describe, expect, it } from "vitest";
 import { grade } from "./grade";
 
 /**
- * 各题型判分（§5.6 + T2.5 验收清单）：
+ * 各题型判分（§5.6 + T2.5 验收清单；D1 口径 T3.2a 修订）：
  * - judge/choice/multi/fill 判 true/false；solve/apply/find-error 手写题无最终答案 → null；
  * - fill 多空全部空对才 true（部分错误判 false）；multi 全对才 true；
- * - 未作答（answer 缺省）→ null，与答错（false）区分；
- * - 题目侧 answers 缺省（解析不完整/手写题未给 :::answer）→ null（不自动判分）。
+ * - 未作答（answer 缺省或多选空选）客观题 → false（D1：未作答判错，不进待批）；
+ *   手写题未作答 → null（进待批）；
+ * - 题目侧 answers 缺省（解析不完整/手写题未给 :::answer）→ null（不自动判分，
+ *   该判定优先级高于未作答判定）。
  */
 
 /** 构造一道题（覆盖 Question 必填字段，answers/options 按用例传入） */
@@ -76,8 +78,8 @@ describe("grade：判断题", () => {
     expect(grade(q(true), { kind: "judge", value: "" })).toBeNull();
   });
 
-  it("未作答（answer 缺省）→ null；题目无 answers → null", () => {
-    expect(grade(q(true), undefined)).toBeNull();
+  it("未作答（answer 缺省）→ false（D1 修订）；题目无 answers → null", () => {
+    expect(grade(q(true), undefined)).toBe(false);
     expect(
       grade(makeQuestion({ type: "judge" }), { kind: "judge", value: true }),
     ).toBeNull();
@@ -107,8 +109,8 @@ describe("grade：单选题", () => {
     expect(grade(q, { kind: "choice", index: 99 })).toBe(false);
   });
 
-  it("未作答 → null；题目无 answers → null", () => {
-    expect(grade(q, undefined)).toBeNull();
+  it("未作答 → false（D1 修订）；题目无 answers → null", () => {
+    expect(grade(q, undefined)).toBe(false);
     expect(
       grade(makeQuestion({ type: "choice", options }), {
         kind: "choice",
@@ -143,13 +145,13 @@ describe("grade：多选题", () => {
     expect(grade(q, { kind: "multi", indexes: [3] })).toBe(false);
   });
 
-  it("任一越界下标 → false；空选（未选任何项）→ null", () => {
+  it("任一越界下标 → false；空选（未选任何项）→ false（D1 修订：空选=未作答判错）", () => {
     expect(grade(q, { kind: "multi", indexes: [0, 4] })).toBe(false);
-    expect(grade(q, { kind: "multi", indexes: [] })).toBeNull();
+    expect(grade(q, { kind: "multi", indexes: [] })).toBe(false);
   });
 
-  it("未作答 → null；题目无 answers → null", () => {
-    expect(grade(q, undefined)).toBeNull();
+  it("未作答 → false（D1 修订）；题目无 answers → null", () => {
+    expect(grade(q, undefined)).toBe(false);
     expect(
       grade(makeQuestion({ type: "multi", options }), {
         kind: "multi",
@@ -217,12 +219,12 @@ describe("grade：填空题", () => {
     expect(grade(q2, { kind: "fill", values: ["4"] })).toBe(false); // 缺第二空
   });
 
-  it("未作答 → null；题目无 answers（无填空标记）→ null", () => {
+  it("未作答 → false（D1 修订）；题目无 answers（无填空标记）→ null", () => {
     const q = makeQuestion({
       type: "fill",
       answers: { kind: "fill", blanks: [["8"]] },
     });
-    expect(grade(q, undefined)).toBeNull();
+    expect(grade(q, undefined)).toBe(false);
     expect(
       grade(makeQuestion({ type: "fill" }), { kind: "fill", values: ["8"] }),
     ).toBeNull();
@@ -246,7 +248,7 @@ describe("grade：手写题（solve/apply/find-error）", () => {
     },
   });
 
-  it("验收：未填最终答案 → null（进待批队列）", () => {
+  it("验收：未填最终答案 → null（进待批队列；D1 后手写题未作答仍 null）", () => {
     expect(grade(solveQ, undefined)).toBeNull(); // answer 缺省
     expect(grade(solveQ, { kind: "final", finalAnswer: "" })).toBeNull(); // 空串
     expect(grade(solveQ, { kind: "final", finalAnswer: "   " })).toBeNull(); // 纯空白
@@ -287,6 +289,99 @@ describe("grade：手写题（solve/apply/find-error）", () => {
     const noAnswer = makeQuestion({ type: "solve" });
     expect(grade(noAnswer, { kind: "final", finalAnswer: "-3" })).toBeNull();
     expect(grade(noAnswer, undefined)).toBeNull();
+  });
+});
+
+describe("grade：未作答口径（D1 修订，T3.2a——先补用例再改实现）", () => {
+  it("客观题完全未作答（answer 缺省）→ false（判错，不进待批）", () => {
+    expect(
+      grade(
+        makeQuestion({
+          type: "judge",
+          answers: { kind: "judge", value: true },
+        }),
+        undefined,
+      ),
+    ).toBe(false);
+    expect(
+      grade(
+        makeQuestion({
+          type: "choice",
+          options: [{ text: "A", correct: true }],
+          answers: { kind: "choice", index: 0 },
+        }),
+        undefined,
+      ),
+    ).toBe(false);
+    expect(
+      grade(
+        makeQuestion({
+          type: "fill",
+          answers: { kind: "fill", blanks: [["8"]] },
+        }),
+        undefined,
+      ),
+    ).toBe(false);
+  });
+
+  it("多选空选（indexes=[]，学生选后又全部取消）→ false（与未作答同口径）", () => {
+    const q = makeQuestion({
+      type: "multi",
+      options: [
+        { text: "A", correct: true },
+        { text: "B", correct: false },
+      ],
+      answers: { kind: "multi", indexes: [0] },
+    });
+    expect(grade(q, { kind: "multi", indexes: [] })).toBe(false);
+    expect(grade(q, undefined)).toBe(false);
+  });
+
+  it("多选任一越界下标维持 false（T2.5 已锁定，不受 D1 影响）", () => {
+    const q = makeQuestion({
+      type: "multi",
+      options: [
+        { text: "A", correct: true },
+        { text: "B", correct: false },
+      ],
+      answers: { kind: "multi", indexes: [0] },
+    });
+    expect(grade(q, { kind: "multi", indexes: [0, 2] })).toBe(false);
+  });
+
+  it("题目无标准答案的判定优先：即使未作答也 → null（不自动判分，各题型）", () => {
+    for (const q of [
+      makeQuestion({ type: "judge" }),
+      makeQuestion({ type: "choice", options: [{ text: "A", correct: true }] }),
+      makeQuestion({ type: "multi", options: [{ text: "A", correct: true }] }),
+      makeQuestion({ type: "fill" }),
+      makeQuestion({ type: "solve" }),
+    ]) {
+      expect(grade(q, undefined), `题型 ${q.type}`).toBeNull();
+      expect(
+        grade(q, { kind: "fill", values: ["8"] }),
+        `题型 ${q.type}（形态错位同样 null）`,
+      ).toBeNull();
+    }
+  });
+
+  it("判断题学生写法无法归一化 → null（进待批，教师裁定；不算未作答判错）", () => {
+    const q = makeQuestion({
+      type: "judge",
+      answers: { kind: "judge", value: true },
+    });
+    expect(grade(q, { kind: "judge", value: "随便写" })).toBeNull();
+    expect(grade(q, { kind: "judge", value: "" })).toBeNull();
+  });
+
+  it("手写题未作答 / 只写笔迹未填最终答案（answer 缺省或空串）→ null（进待批）", () => {
+    const q = makeQuestion({
+      type: "solve",
+      answers: { kind: "final", answer: "-3" },
+    });
+    expect(grade(q, undefined)).toBeNull(); // 整题未作答（笔迹不经判分包）
+    expect(grade(q, { kind: "final", finalAnswer: "" })).toBeNull(); // 只写笔迹未填最终答案
+    expect(grade(q, { kind: "final", finalAnswer: "   " })).toBeNull();
   });
 });
 

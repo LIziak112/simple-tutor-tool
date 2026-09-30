@@ -658,17 +658,19 @@ describe("多单元取卷与作答（D12）", () => {
     // fillB2 不作答（未答也进 responses，计待批/未答）
 
     const result = await submitAttempt(env.app, env.cookie, attemptId);
-    // 全卷口径：4 题、答 3、对 2、错 1（对错分布在两个单元）、可判 3 → scoreAuto=67
+    // 全卷口径：4 题、答 3、对 2、错 2（含未答的 fillB2——D1 未作答客观题判错）、
+    // 可判 4 → scoreAuto=50；全部 finalCorrect 非 null → 交卷即 graded（D2/D3）
     expect(result.summary).toEqual({
       total: 4,
       answered: 3,
       correct: 2,
-      wrong: 1,
-      pending: 1,
+      wrong: 2,
+      pending: 0,
       unanswered: 1,
-      autoGradable: 3,
+      autoGradable: 4,
     });
-    expect((result.attempt as Record<string, unknown>).scoreAuto).toBe(67);
+    expect((result.attempt as Record<string, unknown>).scoreAuto).toBe(50);
+    expect((result.attempt as Record<string, unknown>).status).toBe("graded");
     // 结果视图按单元分组（顺序 = 布置顺序，组内按题序）
     const units = result.units as {
       id: string;
@@ -910,8 +912,9 @@ describe("名单增删（D13：addStudentIds / removeStudentIds）", () => {
     const detailData = (
       (await detail.json()) as { data: Record<string, unknown> }
     ).data;
+    // 单题全对交卷：D1/D3 后无待批题 → attempt 直接 graded（结果视图照常可查）
     expect((detailData.attempt as Record<string, unknown>).status).toBe(
-      "submitted",
+      "graded",
     );
     expect(Array.isArray(detailData.units)).toBe(true);
     // 但作业从其待办消失

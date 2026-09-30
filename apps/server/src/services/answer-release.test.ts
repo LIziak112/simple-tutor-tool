@@ -358,7 +358,10 @@ describe("截止后与 on_submit：完整形态", () => {
     const attempt = startAttempt(db, studentId, assignment.id);
     const submitted = submitAttempt(db, studentId, attempt.id, AFTER_DUE);
     expect(submitted.answersReleased).toBe(true);
-    expect(submitted.attempt.scoreAuto).toBeNull(); // 未作答 → 无可自动判分
+    // D1（T3.2a）：未作答客观题（judge/fill）判 false 进分母 → 全错 0 分；
+    // 且全部 finalCorrect 非 null → 交卷即 graded（D3，attempt 状态已是 graded）
+    expect(submitted.attempt.scoreAuto).toBe(0);
+    expect(submitted.attempt.status).toBe("graded");
     expect(
       submitted.units.flatMap((unit) => unit.questions)[0]?.answers,
     ).toEqual({ kind: "judge", value: true });

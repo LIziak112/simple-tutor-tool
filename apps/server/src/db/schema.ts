@@ -631,8 +631,9 @@ export const assignmentStudents = sqliteTable(
  * - sourceType（D9）：assignment=作业作答（记 assignmentId）/ course=课程练习
  *   （记 courseId + unitId，可重做，attemptNo 递增）。两种来源共用同一套
  *   作答接口（判分/快照/提示/笔迹/事件全按 attemptId 工作）；
- * - status：draft=进行中（草稿）、submitted=已交卷（自动判分已写入）、
- *   graded=已批改（T3.2 教师批注后置位）；
+ * - status：draft=进行中（草稿）、submitted=已交卷（存在待批题，等教师批改）、
+ *   graded=已批改（= 全部 finalCorrect 非 null；全客观题卷交卷即 graded，D2/D3，
+ *   T3.2a）；
  * - unitId 是作答期间的题目来源（快照自 questions 当前行，交卷时冻结）；
  *   assignment 来源保留布置时作业的 unitId（D23-6：旧作业 attempt 的原值不改）；
  * - attemptNo（D10）：course 来源同一 (学生, 课程, 单元) 从 1 递增；
@@ -678,9 +679,9 @@ export const attempts = sqliteTable(
     activeSec: integer("active_sec"),
     /** 作答设备标识（T2.10 事件采集预留）；未记录为 NULL */
     device: text("device"),
-    /** 自动判分得分（0–100 整数百分比 = 答对数/可自动判分数）；无可判分为 NULL */
+    /** 自动判分得分（0–100 整数百分比 = 答对数/可自动判分数；D1 后未作答客观题进分母）；无可判分为 NULL */
     scoreAuto: integer("score_auto"),
-    /** 最终得分（T3.2 教师批改后回写；未批为 NULL，统计以 finalCorrect 为准） */
+    /** 最终得分（D2：round(finalCorrect=true 题数/全部题数×100)；T3.2a 起交卷时全非 null 即写入）；未批为 NULL */
     scoreFinal: integer("score_final"),
   },
   (table) => [
@@ -707,10 +708,12 @@ export const attempts = sqliteTable(
  * - questionSnapshotJson：交卷时冻结的完整 Question 序列化（contract questionSchema）。
  *   老师此后编辑/软删题目（version+1）不影响历史作答回看（T2.6 验收项）；
  *   草稿阶段为 NULL（判分与快照都在交卷时一次性写入）；
- * - autoCorrect：服务端判分 true/false；NULL = 不能自动判定（未作答/手写题未填
- *   最终答案/题目无标准答案，进教师待批队列 T3.2）；
- * - finalCorrect / teacherMark / teacherComment / activeSec / hintsUsed /
- *   changeCount / inkId 为 T2.10/T2.11/T2.8/T3.2 预留（建列不启用或默认 0）。
+ * - autoCorrect：服务端判分 true/false；NULL = 不能自动判定（D1 后仅：手写题
+ *   未能自动判〔未作答/只写笔迹〕、题目无标准答案、判断题写法无法归一化——
+ *   进教师待批队列；未作答客观题为 false）；
+ * - finalCorrect / teacherMark / teacherComment：T3.2a 起启用——交卷时同时写
+ *   finalCorrect = autoCorrect（D3），待批题 ≡ finalCorrect IS NULL（D4 共享
+ *   谓词）；teacherMark / teacherComment 留待 T3.2b 批注链路写入。
  */
 export const responses = sqliteTable(
   "responses",
@@ -729,9 +732,9 @@ export const responses = sqliteTable(
     questionSnapshotJson: text("question_snapshot_json"),
     /** 学生答案（StudentAnswer 序列化）；未作为 NULL（交卷时未答题行也为 NULL） */
     answerJson: text("answer_json"),
-    /** 自动判分结果：true/false；NULL = 不能自动判定 */
+    /** 自动判分结果：true/false；NULL = 不能自动判定（D1 后不含未作答客观题） */
     autoCorrect: integer("auto_correct", { mode: "boolean" }),
-    /** 最终判定（教师批注优先，否则取自动判分；T3.2 启用）；未批为 NULL */
+    /** 最终判定（D3：交卷时写 = autoCorrect，教师批注后 teacherMark 优先）；未批为 NULL，即待批（D4） */
     finalCorrect: integer("final_correct", { mode: "boolean" }),
     /** 教师批注标记（T3.2：正确 | 错误 | null）；未批为 NULL */
     teacherMark: text("teacher_mark"),

@@ -726,7 +726,10 @@ interface GradedResponse {
   question: Question;
   /** 学生答案（草稿；未作为 undefined） */
   answer: StudentAnswer | undefined;
-  /** 服务端判分结果：true/false/null（null=不能自动判定：未作答/无标准答案/手写未填） */
+  /**
+   * 服务端判分结果：true/false/null。null=不能自动判定（D1 后仅三种：手写题
+   * 未能自动判（含未作答/只写笔迹）、题目无标准答案、判断题写法无法归一化）。
+   */
   autoCorrect: boolean | null;
 }
 
@@ -739,14 +742,40 @@ function scoreAutoOf(graded: readonly GradedResponse[]): number | null {
 }
 
 /**
+ * D2/D3 口径的 attempt 级最终得分与状态（T3.2a）：
+ * - status=graded 当且仅当全部 finalCorrect 均非 null（此时必写 scoreFinal）；
+ * - scoreFinal = round（finalCorrect 为 true 的题数 ÷ 全部题数 × 100）；
+ *   任一待批（null）则 status=submitted、scoreFinal=null（批改完成后由 T3.2b 重算）；
+ * - 空卷（无题）防御性保持 submitted / null。
+ * 交卷链路调用时 finalCorrect=autoCorrect（teacherMark 必空）；backfill 与批改
+ * 链路以 teacherMark ?? autoCorrect 为输入复用同一口径。
+ */
+export function finalScoreOf(finalCorrects: readonly (boolean | null)[]): {
+  status: "submitted" | "graded";
+  scoreFinal: number | null;
+} {
+  if (finalCorrects.length === 0 || finalCorrects.some((v) => v === null)) {
+    return { status: "submitted", scoreFinal: null };
+  }
+  const correct = finalCorrects.filter((v) => v === true).length;
+  return {
+    status: "graded",
+    scoreFinal: Math.round((correct / finalCorrects.length) * 100),
+  };
+}
+
+/**
  * 交卷（服务端权威判分）：
  * - attempt 不存在 → 404；非本人 → 403；已交卷 → 409 ALREADY_SUBMITTED（验收项）；
  * - 逐题（单元内未软删的题，按题序）：
  *   - 快照：questions 当前行 → 契约 Question 序列化入 questionSnapshotJson，
  *     questionVersion 记当前版本（此后教师编辑 version+1 不影响本行，验收项）；
- *   - 判分：grade(question, answer)（@tutor/grading，未作答 answer=undefined → null）；
- *   - 未作答也写 responses 行（answerJson=null、autoCorrect=null）——保证
- *     「逐题结果视图」与题目视角统计（T4.1）有完整行覆盖；
+ *   - 判分：grade(question, answer)（@tutor/grading；D1 后未作答客观题（含多选
+ *     空选）判 false，未作答手写题 → null 进待批）；
+ *   - **finalCorrect = autoCorrect（D3 持久化口径，T3.2a）**：交卷时 teacherMark
+ *     必空，逐题同时写 finalCorrect——待批题 ≡ finalCorrect IS NULL（D4 共享谓词）；
+ *   - 未作答也写 responses 行（answerJson=null、autoCorrect 按题型 false/null）
+ *     ——保证「逐题结果视图」与题目视角统计（T4.1）有完整行覆盖；
  *   - activeSec：T2.10 起按 events 表事件序列计算（computePerQuestionActiveSec，
  *     不信任客户端汇总值，§5.5）；无事件的题保持 NULL；
  *   - changeCount：T2.10 口径 = max(草稿期 PUT 计数, answer_change 事件数)——
@@ -755,7 +784,9 @@ function scoreAutoOf(graded: readonly GradedResponse[]): number | null {
  * - 草稿期被软删的题目不进入本次作答（其草稿行清除）；
  * - hintsUsed 与已解锁序号集合（hintsOpenedJson）保留草稿期累计值
  *   （T2.11 语义：交卷后仍可回看自己解锁过的提示）；
- * - attempt.status=submitted、submittedAt、scoreAuto 汇总、activeSec 总用时
+ * - attempt.status/scoreAuto/scoreFinal 按 D2/D3：全部 finalCorrect 非 null →
+ *   直接 graded 并写 scoreFinal（=scoreAuto，此时分母相同）；否则 submitted、
+ *   scoreFinal=null（待批批改后由 T3.2b 重算）；submittedAt、activeSec 总用时
  *   （各题之和；无任何事件时保持 NULL）；
  * - 返回结果视图（含答案与详解，AGENTS 第 3 条的「未交卷」限制就此解除；
  *   T2A.8 例外：answerRelease='after_due' 且交卷瞬间未到截止时，响应同样是
@@ -803,6 +834,9 @@ export function submitAttempt(
     return { row, question, answer, autoCorrect: grade(question, answer) };
   });
   const scoreAuto = scoreAutoOf(graded);
+  // D3：交卷时 teacherMark 必空 → finalCorrect = autoCorrect；D2 据此定 status/scoreFinal
+  const finalCorrects = graded.map((g) => g.autoCorrect);
+  const { status: finalStatus, scoreFinal } = finalScoreOf(finalCorrects);
 
   const nowIso = new Date(now).toISOString();
   const liveIds = new Set(graded.map((g) => g.row.id));
@@ -820,7 +854,8 @@ export function submitAttempt(
           questionSnapshotJson: JSON.stringify(g.question),
           answerJson,
           autoCorrect: g.autoCorrect,
-          finalCorrect: null,
+          // D3：交卷同时写 finalCorrect = autoCorrect（teacherMark 必空）
+          finalCorrect: g.autoCorrect,
           teacherMark: null,
           teacherComment: null,
           activeSec: activeSecByQuestion[g.row.id] ?? null,
@@ -840,6 +875,7 @@ export function submitAttempt(
             questionSnapshotJson: JSON.stringify(g.question),
             answerJson,
             autoCorrect: g.autoCorrect,
+            finalCorrect: g.autoCorrect,
             activeSec: activeSecByQuestion[g.row.id] ?? null,
             changeCount: Math.max(
               draftRow?.changeCount ?? 0,
@@ -865,9 +901,12 @@ export function submitAttempt(
     }
     tx.update(attempts)
       .set({
-        status: "submitted",
+        // D2/D3：全部 finalCorrect 非 null → 直接 graded 并写 scoreFinal；
+        // 否则 submitted、scoreFinal=null（待批批改后由 T3.2b 重算）
+        status: finalStatus,
         submittedAt: nowIso,
         scoreAuto,
+        scoreFinal,
         // 总有效用时 = 各题之和；无任何 focus 序列（未计算）保持 NULL
         activeSec:
           Object.keys(activeSecByQuestion).length > 0
