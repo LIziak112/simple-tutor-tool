@@ -592,8 +592,8 @@ describe("PUT /api/student/attempts/:id/answers/:questionId：草稿保存", () 
 });
 
 describe("POST /api/student/attempts/:id/submit：判分与快照", () => {
-  it("全对组合：逐题 autoCorrect=true，scoreAuto=100，summary 齐全", async () => {
-    const { app, aCookie, assignmentId } = await makeAttemptApp();
+  it("全对组合：逐题 autoCorrect=true，scoreAuto=100，summary 齐全；全客观题卷交卷即 graded（D2/D3）", async () => {
+    const { app, db, aCookie, assignmentId } = await makeAttemptApp();
     const attemptId = (await startAttemptOk(app, aCookie, assignmentId))
       .id as string;
     for (const [questionId, answer] of Object.entries(ALL_CORRECT_ANSWERS)) {
@@ -605,8 +605,17 @@ describe("POST /api/student/attempts/:id/submit：判分与快照", () => {
     const body = (await res.json()) as unknown;
     expect(attemptResultOkSchema.safeParse(body).success).toBe(true);
     const data = (body as { data: AttemptResultData }).data;
-    expect(data.attempt.status).toBe("submitted");
+    // D3：交卷同时写 finalCorrect=autoCorrect，全部非 null → 直接 graded；
+    // D2：scoreFinal = 8/8 = 100（此时与 scoreAuto 分母相同、数值相等）
+    expect(data.attempt.status).toBe("graded");
     expect(data.attempt.scoreAuto).toBe(100);
+    const attemptRow = db
+      .select()
+      .from(attempts)
+      .where(eq(attempts.id, attemptId))
+      .get();
+    expect(attemptRow?.status).toBe("graded");
+    expect(attemptRow?.scoreFinal).toBe(100);
     expect(data.summary).toEqual({
       total: 8,
       answered: 8,
@@ -625,7 +634,7 @@ describe("POST /api/student/attempts/:id/submit：判分与快照", () => {
     }
   });
 
-  it("部分错/未答组合：答错 false、未答 null 且不写 answerJson；scoreAuto=答对/可判分", async () => {
+  it("部分错/未答组合：答错 false、未答客观题 false（D1）、未答手写题 null；scoreAuto=答对/可判分；finalCorrect 同步写（D3）", async () => {
     const { app, db, aCookie, assignmentId } = await makeAttemptApp();
     const attemptId = (await startAttemptOk(app, aCookie, assignmentId))
       .id as string;
@@ -665,17 +674,19 @@ describe("POST /api/student/attempts/:id/submit：判分与快照", () => {
     expect(byId.get(Q.solve)?.autoCorrect).toBe(true); // -3 与 \frac 写法数值等价
     expect(byId.get(Q.multi)?.autoCorrect).toBe(false); // 漏选 → false
     expect(byId.get(Q.fill)?.autoCorrect).toBe(false); // 部分空错 → false
-    expect(byId.get(Q.fillMath)?.autoCorrect).toBeNull(); // 未答 → null
-    expect(byId.get(Q.apply)?.autoCorrect).toBeNull();
+    expect(byId.get(Q.fillMath)?.autoCorrect).toBe(false); // 未答填空 → false（D1：未作答客观题判错）
+    expect(byId.get(Q.apply)?.autoCorrect).toBeNull(); // 未答手写 → null（进待批）
     expect(byId.get(Q.findError)?.autoCorrect).toBeNull();
 
-    // scoreAuto = 答对 3 / 可自动判分 5 = 60（四舍五入百分比）
-    expect(data.attempt.scoreAuto).toBe(60);
+    // scoreAuto = 答对 3 / 可自动判分 6（未答填空进分母）= 50（四舍五入百分比）
+    expect(data.attempt.scoreAuto).toBe(50);
     expect(data.summary.correct).toBe(3);
-    expect(data.summary.wrong).toBe(2);
-    expect(data.summary.pending).toBe(3);
+    expect(data.summary.wrong).toBe(3);
+    expect(data.summary.pending).toBe(2);
     expect(data.summary.unanswered).toBe(3);
-    expect(data.summary.autoGradable).toBe(5);
+    expect(data.summary.autoGradable).toBe(6);
+    // 存在待批（两道手写）→ attempt 保持 submitted、scoreFinal=null（D2/D3）
+    expect(data.attempt.status).toBe("submitted");
 
     // 未答题也写了 responses 行（answerJson=null、快照非空、版本冻结）
     const rows = db.select().from(responses).all();
@@ -684,7 +695,53 @@ describe("POST /api/student/attempts/:id/submit：判分与快照", () => {
     expect(unansweredRow?.answerJson).toBeNull();
     expect(unansweredRow?.questionSnapshotJson).toContain("水箱水位");
     expect(unansweredRow?.autoCorrect).toBeNull();
+    expect(unansweredRow?.finalCorrect).toBeNull(); // 手写未答 → finalCorrect 仍空（待批）
     expect(unansweredRow?.questionVersion).toBe(1);
+    // D3：finalCorrect = autoCorrect 逐题同步写入（已判题不再为 null）
+    const judgeRow = rows.find((row) => row.questionId === Q.judge);
+    expect(judgeRow?.finalCorrect).toBe(true);
+    const fillMathRow = rows.find((row) => row.questionId === Q.fillMath);
+    expect(fillMathRow?.autoCorrect).toBe(false);
+    expect(fillMathRow?.finalCorrect).toBe(false);
+    const attemptRow = db
+      .select()
+      .from(attempts)
+      .where(eq(attempts.id, attemptId))
+      .get();
+    expect(attemptRow?.status).toBe("submitted");
+    expect(attemptRow?.scoreAuto).toBe(50);
+    expect(attemptRow?.scoreFinal).toBeNull();
+  });
+
+  it("多选空选 = 未作答 → false（D1 集成验收：学生选后又全部取消）", async () => {
+    const { app, db, aCookie, assignmentId } = await makeAttemptApp();
+    const attemptId = (await startAttemptOk(app, aCookie, assignmentId))
+      .id as string;
+    // 先选后清空（保存空选集合），交卷后判 false 而非 null（不进待批）
+    await putAnswer(app, aCookie, attemptId, Q.multi, {
+      kind: "multi",
+      indexes: [0, 2],
+    });
+    await putAnswer(app, aCookie, attemptId, Q.multi, {
+      kind: "multi",
+      indexes: [],
+    });
+    const res = await postSubmit(app, aCookie, attemptId);
+    expect(res.status).toBe(200);
+    const data = ((await res.json()) as { data: AttemptResultData }).data;
+    const multi = data.units
+      .flatMap((unit) => unit.questions)
+      .find((q) => q.questionId === Q.multi);
+    expect(multi?.answer).toEqual({ kind: "multi", indexes: [] });
+    expect(multi?.autoCorrect).toBe(false);
+    const multiRow = db
+      .select()
+      .from(responses)
+      .all()
+      .find((row) => row.questionId === Q.multi);
+    expect(multiRow?.finalCorrect).toBe(false);
+    // 空选不进待批：pending 只含三道手写未答题
+    expect(data.summary.pending).toBe(3);
   });
 
   it("验收项 1：重复 submit 返回 409 ALREADY_SUBMITTED", async () => {
@@ -1075,7 +1132,8 @@ describe("T2A.8 答案公布时机（after_due：截止前受限 / 截止后完�
     expect(res.status).toBe(200);
     const data = ((await res.json()) as { data: AttemptResultData }).data;
     expect(data.answersReleased).toBe(true);
-    expect(data.attempt.scoreAuto).toBe(100);
+    // D1：仅判断题答对，其余客观题未答全进分母 → scoreAuto = 1/5 = 20
+    expect(data.attempt.scoreAuto).toBe(20);
     const judge = data.units
       .flatMap((unit) => unit.questions)
       .find((q) => q.questionId === Q.judge);

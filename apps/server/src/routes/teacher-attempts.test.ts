@@ -735,7 +735,8 @@ describe("T3.1 详情：已交卷（D7 快照 + ink 关联 + 连续题号）", (
       questionId: Q.courseJudge,
       answer: { kind: "judge", value: true },
       autoCorrect: true,
-      finalCorrect: null,
+      // D3（T3.2a）：交卷同时写 finalCorrect=autoCorrect——已自动判定的题不再为 null
+      finalCorrect: true,
       teacherMark: null,
       teacherComment: null,
       knowledge: ["有理数的概念"],
