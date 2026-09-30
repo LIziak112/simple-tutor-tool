@@ -7,16 +7,21 @@ import {
   parseInkReplayData,
   REPLAY_ELEMENT_MIN_MS,
   REPLAY_INTER_STROKE_GAP_MS,
+  REPLAY_MIN_DURATION_MS,
   REPLAY_SPEEDS,
   REPLAY_UNIFORM_POINT_MS,
 } from "./model.ts";
 
 /**
  * 回放纯数据层测试（T3.3 验收项）：atrament 带时间戳重演顺序 / 倍速只影响调度 /
- * 进度跳转任意时刻 / excalidraw 顺序重演 / 缺时间戳退化 / 空、坏数据不崩溃。
+ * 进度跳转任意时刻 / excalidraw 顺序重演 / 缺时间戳退化 / 空、坏数据不崩溃 /
+ * 总时长下限拉伸（实测跟进：回放可读性下限——夹具时长须 ≥ 下限才断言绝对时刻）。
  */
 
-/** 两笔带时间戳的 atrament 文档（书写顺序：先横线后竖线） */
+/**
+ * 两笔带时间戳的 atrament 文档（书写顺序：先横线后竖线）。
+ * 时间戳放大 10 倍使总时长 4.76s ≥ 下限 2s，不触发拉伸（本夹具用于绝对时刻断言）。
+ */
 function atramentDoc() {
   return {
     engine: "atrament",
@@ -30,9 +35,9 @@ function atramentDoc() {
           weight: 4,
           points: [
             { x: 10, y: 10, p: 0.5, t: 0 },
-            { x: 50, y: 10, p: 0.6, t: 100 },
-            { x: 90, y: 10, p: 0.5, t: 200 },
-            { x: 130, y: 10, p: 0.5, t: 300 },
+            { x: 50, y: 10, p: 0.6, t: 1000 },
+            { x: 90, y: 10, p: 0.5, t: 2000 },
+            { x: 130, y: 10, p: 0.5, t: 3000 },
           ],
         },
         {
@@ -41,8 +46,8 @@ function atramentDoc() {
           weight: 4,
           points: [
             { x: 30, y: 20, p: 0.5, t: 0 },
-            { x: 30, y: 60, p: 0.7, t: 80 },
-            { x: 30, y: 99, p: 0.5, t: 160 },
+            { x: 30, y: 60, p: 0.7, t: 800 },
+            { x: 30, y: 99, p: 0.5, t: 1600 },
           ],
         },
       ],
@@ -64,13 +69,13 @@ describe("parseInkReplayData：atrament 分支", () => {
     expect(model.engine).toBe("atrament");
     if (model.engine !== "atrament") return;
     expect(model.slots[0]?.startMs).toBe(0);
-    expect(model.slots[1]?.startMs).toBe(300 + REPLAY_INTER_STROKE_GAP_MS);
-    expect(model.durationMs).toBe(300 + REPLAY_INTER_STROKE_GAP_MS + 160);
+    expect(model.slots[1]?.startMs).toBe(3000 + REPLAY_INTER_STROKE_GAP_MS);
+    expect(model.durationMs).toBe(3000 + REPLAY_INTER_STROKE_GAP_MS + 1600);
     // 点的 t 归一为本笔内非递减时刻（首点恒 0）
     expect(model.strokes[0]?.points.map((p) => p.t)).toEqual([
-      0, 100, 200, 300,
+      0, 1000, 2000, 3000,
     ]);
-    expect(model.strokes[1]?.points.map((p) => p.t)).toEqual([0, 80, 160]);
+    expect(model.strokes[1]?.points.map((p) => p.t)).toEqual([0, 800, 1600]);
     // 内容高度 = maxY + 上下留白，且不低于最小高度 220（夹逼生效）
     expect(model.contentHeight).toBe(Math.max(220, 99 + 80));
   });
@@ -88,7 +93,7 @@ describe("parseInkReplayData：atrament 分支", () => {
             weight: 4,
             points: [
               { x: 12, y: 34, p: 0.5, t: 0 },
-              { x: 56, y: 78, p: 0.8, t: 25 },
+              { x: 56, y: 78, p: 0.8, t: 2500 },
             ],
           },
         ],
@@ -96,10 +101,11 @@ describe("parseInkReplayData：atrament 分支", () => {
       updatedAt: 1,
     });
     if (model.engine !== "atrament") throw new Error("engine 应为 atrament");
-    expect(model.slots[0]?.pointTimesMs).toEqual([0, 25]);
+    expect(model.slots[0]?.pointTimesMs).toEqual([0, 2500]);
   });
 
   it("缺时间戳的旧数据退化为匀速（每点固定时长）", () => {
+    // 200 点使总时长 2388ms ≥ 下限 2s，不触发拉伸（本用例断言退化口径的绝对值）
     const model = parseOk({
       engine: "atrament",
       version: 1,
@@ -109,26 +115,28 @@ describe("parseInkReplayData：atrament 分支", () => {
             tool: "pen",
             color: "#1f2328",
             weight: 4,
-            points: [
-              { x: 0, y: 0, p: 0.5 },
-              { x: 1, y: 1, p: 0.5 },
-              { x: 2, y: 2, p: 0.5 },
-            ],
+            points: Array.from({ length: 200 }, (_, i) => ({
+              x: i,
+              y: i,
+              p: 0.5,
+            })),
           },
         ],
       },
       updatedAt: 1,
     });
     if (model.engine !== "atrament") throw new Error("engine 应为 atrament");
-    expect(model.slots[0]?.pointTimesMs).toEqual([
+    expect(model.slots[0]?.pointTimesMs.slice(0, 3)).toEqual([
       0,
       REPLAY_UNIFORM_POINT_MS,
       REPLAY_UNIFORM_POINT_MS * 2,
     ]);
-    expect(model.durationMs).toBe(REPLAY_UNIFORM_POINT_MS * 2);
+    expect(model.slots[0]?.pointTimesMs).toHaveLength(200);
+    expect(model.durationMs).toBe(REPLAY_UNIFORM_POINT_MS * 199);
   });
 
   it("部分点缺 t / 时间倒退：缺失沿用前一刻，倒退夹逼为非递减", () => {
+    // 时间戳放大 50 倍使总时长 4500ms ≥ 下限 2s，不触发拉伸（断言归一口径绝对值）
     const model = parseOk({
       engine: "atrament",
       version: 1,
@@ -141,9 +149,9 @@ describe("parseInkReplayData：atrament 分支", () => {
             points: [
               { x: 0, y: 0, p: 0.5, t: 0 },
               { x: 1, y: 1, p: 0.5 },
-              { x: 2, y: 2, p: 0.5, t: 50 },
-              { x: 3, y: 3, p: 0.5, t: 30 },
-              { x: 4, y: 4, p: 0.5, t: 90 },
+              { x: 2, y: 2, p: 0.5, t: 2500 },
+              { x: 3, y: 3, p: 0.5, t: 1500 },
+              { x: 4, y: 4, p: 0.5, t: 4500 },
             ],
           },
         ],
@@ -151,8 +159,8 @@ describe("parseInkReplayData：atrament 分支", () => {
       updatedAt: 1,
     });
     if (model.engine !== "atrament") throw new Error("engine 应为 atrament");
-    // 第 2 点缺 t → 沿用 0；第 4 点倒退 → 夹逼到 50；末点 90 正常
-    expect(model.slots[0]?.pointTimesMs).toEqual([0, 0, 50, 50, 90]);
+    // 第 2 点缺 t → 沿用 0；第 4 点倒退（1500 < 2500）→ 夹逼到 2500；末点 4500 正常
+    expect(model.slots[0]?.pointTimesMs).toEqual([0, 0, 2500, 2500, 4500]);
   });
 
   it("单点笔画（轻点）与零点笔画不崩溃；空笔画不占时长", () => {
@@ -209,13 +217,14 @@ describe("parseInkReplayData：atrament 分支", () => {
 
 describe("parseInkReplayData：excalidraw 分支", () => {
   it("elements 数组解析：freedraw 按点数加权、其余元素固定最短时长", () => {
+    // 200 点使总时长 2880ms ≥ 下限 2s，不触发拉伸（本用例断言绝对时刻）
     const model = parseOk({
       engine: "excalidraw",
       version: 1,
       data: {
         scene: {
           elements: [
-            { id: "a", type: "freedraw", points: new Array(30).fill(0) },
+            { id: "a", type: "freedraw", points: new Array(200).fill(0) },
             { id: "b", type: "rectangle" },
             { id: "c", type: "text" },
           ],
@@ -225,18 +234,18 @@ describe("parseInkReplayData：excalidraw 分支", () => {
     });
     if (model.engine !== "excalidraw")
       throw new Error("engine 应为 excalidraw");
-    // freedraw：30 点 × 12ms = 360ms（> 最短时长 240）
-    expect(model.slots[0]?.endMs).toBe(30 * REPLAY_UNIFORM_POINT_MS);
+    // freedraw：200 点 × 12ms = 2400ms（> 最短时长 240）
+    expect(model.slots[0]?.endMs).toBe(200 * REPLAY_UNIFORM_POINT_MS);
     // 其余元素固定最短时长，逐个顺延
-    expect(model.slots[1]?.startMs).toBe(30 * REPLAY_UNIFORM_POINT_MS);
+    expect(model.slots[1]?.startMs).toBe(200 * REPLAY_UNIFORM_POINT_MS);
     expect(model.slots[1]?.endMs).toBe(
-      30 * REPLAY_UNIFORM_POINT_MS + REPLAY_ELEMENT_MIN_MS,
+      200 * REPLAY_UNIFORM_POINT_MS + REPLAY_ELEMENT_MIN_MS,
     );
     expect(model.slots[2]?.startMs).toBe(
-      30 * REPLAY_UNIFORM_POINT_MS + REPLAY_ELEMENT_MIN_MS,
+      200 * REPLAY_UNIFORM_POINT_MS + REPLAY_ELEMENT_MIN_MS,
     );
     expect(model.durationMs).toBe(
-      30 * REPLAY_UNIFORM_POINT_MS + REPLAY_ELEMENT_MIN_MS * 2,
+      200 * REPLAY_UNIFORM_POINT_MS + REPLAY_ELEMENT_MIN_MS * 2,
     );
   });
 
@@ -253,6 +262,150 @@ describe("parseInkReplayData：excalidraw 分支", () => {
     const frame = frameAt(model, 500);
     if (frame.engine !== "excalidraw") throw new Error("frame 应为 excalidraw");
     expect(frame.visibleElements).toBe(0);
+  });
+});
+
+describe("回放总时长下限（实测跟进：回放可读性下限）", () => {
+  it("0.3s 快速书写：拉伸后总时长 ≥2s，各点时刻等比缩放、相对顺序不变", () => {
+    // 单笔 3 点（0/150/300ms）总时长 300ms 不足下限 → 按下限/原时长比例拉伸
+    const model = parseOk({
+      engine: "atrament",
+      version: 1,
+      data: {
+        strokes: [
+          {
+            tool: "pen",
+            color: "#1f2328",
+            weight: 4,
+            points: [
+              { x: 0, y: 0, p: 0.5, t: 0 },
+              { x: 30, y: 0, p: 0.5, t: 150 },
+              { x: 60, y: 0, p: 0.5, t: 300 },
+            ],
+          },
+        ],
+      },
+      updatedAt: 1,
+    });
+    if (model.engine !== "atrament") throw new Error("engine 应为 atrament");
+    expect(model.durationMs).toBeGreaterThanOrEqual(REPLAY_MIN_DURATION_MS);
+    const scale = REPLAY_MIN_DURATION_MS / 300;
+    expect(model.slots[0]?.startMs).toBe(0);
+    for (const [i, original] of [0, 150, 300].entries()) {
+      expect(model.slots[0]?.pointTimesMs[i]).toBeCloseTo(original * scale, 6);
+      // 回写到 InkStroke 的 t 同步缩放（模型内自洽）
+      expect(model.strokes[0]?.points[i]?.t).toBeCloseTo(original * scale, 6);
+    }
+    // 相对顺序不变：原第 2 点刚落的时刻拉伸后仍只见 2 点，进度到尾全部可见
+    const mid = frameAt(model, 150 * scale);
+    const end = frameAt(model, model.durationMs);
+    if (mid.engine !== "atrament" || end.engine !== "atrament") {
+      throw new Error("frame 应为 atrament");
+    }
+    expect(mid.visiblePoints).toEqual([2]);
+    expect(end.visiblePoints).toEqual([3]);
+  });
+
+  it("多笔短数据：等比拉伸后笔间先后顺序与节奏保持（比例恰为整数 4，无浮点噪声）", () => {
+    // 第 1 笔 0→300ms、固定间隙 160ms、第 2 笔起点 460、0→40ms → 总 500ms，
+    // 拉伸比例 2000/500 = 4：所有时间戳恰为 4 倍整数，可做精确断言
+    const model = parseOk({
+      engine: "atrament",
+      version: 1,
+      data: {
+        strokes: [
+          {
+            tool: "pen",
+            color: "#1f2328",
+            weight: 4,
+            points: [
+              { x: 0, y: 0, p: 0.5, t: 0 },
+              { x: 30, y: 0, p: 0.5, t: 100 },
+              { x: 60, y: 0, p: 0.5, t: 300 },
+            ],
+          },
+          {
+            tool: "pen",
+            color: "#1f2328",
+            weight: 4,
+            points: [
+              { x: 0, y: 10, p: 0.5, t: 0 },
+              { x: 20, y: 10, p: 0.5, t: 40 },
+            ],
+          },
+        ],
+      },
+      updatedAt: 1,
+    });
+    if (model.engine !== "atrament") throw new Error("engine 应为 atrament");
+    expect(model.durationMs).toBe(REPLAY_MIN_DURATION_MS);
+    expect(model.slots[0]?.pointTimesMs).toEqual([0, 400, 1200]);
+    expect(model.slots[1]?.startMs).toBe(1840);
+    expect(model.slots[1]?.pointTimesMs).toEqual([0, 160]);
+    // 顺序不变：第 2 笔任何点可见 ⇒ 第 1 笔已完整（时间轴仍严格分段）
+    for (let t = 0; t <= model.durationMs; t += 37) {
+      const frame = frameAt(model, t);
+      if (frame.engine !== "atrament") throw new Error("frame 应为 atrament");
+      const [first, second] = frame.visiblePoints;
+      if ((second ?? 0) > 0) expect(first).toBe(3);
+      if ((first ?? 0) > 0 && (first ?? 0) < 3) expect(second).toBe(0);
+    }
+  });
+
+  it("excalidraw 短数据同样拉伸：元素起止等比缩放，总时长 ≥2s", () => {
+    // freedraw 30 点（360ms）+ 矩形（240ms）→ 总 600ms
+    const model = parseOk({
+      engine: "excalidraw",
+      version: 1,
+      data: {
+        scene: {
+          elements: [
+            { id: "a", type: "freedraw", points: new Array(30).fill(0) },
+            { id: "b", type: "rectangle" },
+          ],
+        },
+      },
+      updatedAt: 1,
+    });
+    if (model.engine !== "excalidraw")
+      throw new Error("engine 应为 excalidraw");
+    expect(model.durationMs).toBeGreaterThanOrEqual(REPLAY_MIN_DURATION_MS);
+    const scale = REPLAY_MIN_DURATION_MS / 600;
+    expect(model.slots[0]?.startMs).toBe(0);
+    expect(model.slots[0]?.endMs).toBeCloseTo(360 * scale, 6);
+    expect(model.slots[1]?.startMs).toBeCloseTo(360 * scale, 6);
+    expect(model.slots[1]?.endMs).toBeGreaterThanOrEqual(
+      REPLAY_MIN_DURATION_MS,
+    );
+  });
+
+  it("0 时长（单点笔画/空元素）不强行拉伸——保持「即时完整显示」原语义", () => {
+    const atrament = parseOk({
+      engine: "atrament",
+      version: 1,
+      data: {
+        strokes: [
+          {
+            tool: "pen",
+            color: "#1f2328",
+            weight: 4,
+            points: [{ x: 5, y: 5, p: 0.5, t: 0 }],
+          },
+        ],
+      },
+      updatedAt: 1,
+    });
+    if (atrament.engine !== "atrament") throw new Error("engine 应为 atrament");
+    expect(atrament.durationMs).toBe(0);
+    const excalidraw = parseOk({
+      engine: "excalidraw",
+      version: 1,
+      data: { scene: { elements: [] } },
+      updatedAt: 1,
+    });
+    if (excalidraw.engine !== "excalidraw")
+      throw new Error("engine 应为 excalidraw");
+    expect(excalidraw.durationMs).toBe(0);
   });
 });
 
@@ -321,7 +474,7 @@ describe("parseInkReplayData：坏数据返回 null（组件走降级）", () =>
 
 describe("frameAt：atrament 带时间戳重演", () => {
   const model = parseOk(atramentDoc());
-  const S2 = 300 + REPLAY_INTER_STROKE_GAP_MS; // 第 2 笔全局起点
+  const S2 = 3000 + REPLAY_INTER_STROKE_GAP_MS; // 第 2 笔全局起点
 
   it("t=0 只见第 1 笔的起点（前段）", () => {
     const frame = frameAt(model, 0);
@@ -330,14 +483,14 @@ describe("frameAt：atrament 带时间戳重演", () => {
   });
 
   it("t 中点：第 1 笔进行到一半，第 2 笔未开始", () => {
-    const frame = frameAt(model, 150);
+    const frame = frameAt(model, 1500);
     if (frame.engine !== "atrament") throw new Error("frame 应为 atrament");
     expect(frame.visiblePoints).toEqual([2, 0]);
   });
 
   it("笔内插值按点时间戳：恰好落在点时刻含该点，早一刻不含", () => {
-    const justBefore = frameAt(model, 99);
-    const atPoint = frameAt(model, 100);
+    const justBefore = frameAt(model, 999);
+    const atPoint = frameAt(model, 1000);
     if (justBefore.engine !== "atrament" || atPoint.engine !== "atrament") {
       throw new Error("frame 应为 atrament");
     }
@@ -384,13 +537,14 @@ describe("frameAt：atrament 带时间戳重演", () => {
 });
 
 describe("frameAt：excalidraw 顺序重演（元素逐个出现）", () => {
+  // 200 点 freedraw（2400ms）+ 矩形（240ms）→ 总时长 2640ms ≥ 下限，不触发拉伸
   const model = parseOk({
     engine: "excalidraw",
     version: 1,
     data: {
       scene: {
         elements: [
-          { id: "a", type: "freedraw", points: new Array(20).fill(0) },
+          { id: "a", type: "freedraw", points: new Array(200).fill(0) },
           { id: "b", type: "rectangle" },
         ],
       },
@@ -399,12 +553,12 @@ describe("frameAt：excalidraw 顺序重演（元素逐个出现）", () => {
   });
 
   it("每个元素的起点时刻整体出现，逐个累加", () => {
-    const frames = [0, 239, 240].map((t) => {
+    const frames = [0, 2399, 2400].map((t) => {
       const f = frameAt(model, t);
       if (f.engine !== "excalidraw") throw new Error("frame 应为 excalidraw");
       return f.visibleElements;
     });
-    expect(frames).toEqual([1, 1, 2]); // 首元素 t=0 即出现；到 240（=20×12）第 2 个出现
+    expect(frames).toEqual([1, 1, 2]); // 首元素 t=0 即出现；到 2400（=200×12）第 2 个出现
   });
 });
 

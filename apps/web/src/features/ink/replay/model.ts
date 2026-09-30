@@ -16,7 +16,10 @@
  * - 缺时间戳的旧数据（t 非有限正数）退化为匀速：每点固定 REPLAY_UNIFORM_POINT_MS；
  * - excalidraw 元素无时间戳：按元素顺序匀速近似——freedraw 按点数加权
  *   （每点 REPLAY_UNIFORM_POINT_MS，保底 REPLAY_ELEMENT_MIN_MS），其余元素固定
- *   REPLAY_ELEMENT_MIN_MS，逐个整体出现（无逐点重演，库原生数据无点级时刻）。
+ *   REPLAY_ELEMENT_MIN_MS，逐个整体出现（无逐点重演，库原生数据无点级时刻）；
+ * - 总时长下限（实测跟进：回放可读性下限）：正时长不足 REPLAY_MIN_DURATION_MS
+ *   时按比例拉伸各段时间戳（相对节奏与先后顺序不变）；0 时长（无笔画/空元素）
+ *   不拉伸——保持「即时完整显示」的原语义。
  */
 import type { InkStroke, InkStrokePoint } from "../engine/index.ts";
 
@@ -28,6 +31,13 @@ export const REPLAY_UNIFORM_POINT_MS = 12;
 
 /** excalidraw 每个元素的最短占位时长（ms；freedraw 按点数加权可更长） */
 export const REPLAY_ELEMENT_MIN_MS = 240;
+
+/**
+ * 回放总时长下限（ms）。实测跟进：回放可读性下限——快速书写（如点划）总时长
+ * 可能仅 0.3s 一闪而过，不足此值的时间轴等比拉伸到下限再交给回放（见
+ * stretchToMinDuration）。
+ */
+export const REPLAY_MIN_DURATION_MS = 2000;
 
 /** 倍速档位（只影响调度快慢，不影响 frameAt 的画面） */
 export const REPLAY_SPEEDS = [1, 2, 4] as const;
@@ -227,6 +237,42 @@ function parseExcalidrawElements(
 }
 
 /**
+ * 总时长下限拉伸（实测跟进：回放可读性下限）：0 < durationMs < 下限时，全部
+ * 时间戳（slot 起点、点时刻 / 元素起止，含回写到 InkStroke 的 t）按下限与原
+ * 时长之比等比缩放，相对节奏与先后顺序不变；0 时长不拉伸。总时长取下限与
+ * 拉伸后实际末点的较大者——浮点缩放可能让末点略微过冲，取 max 保证「进度
+ * 到尾 = 全部可见」不变式（≥ 下限，误差 < 1 纳秒，展示无感）。
+ */
+function stretchToMinDuration(model: InkReplayModel): void {
+  if (model.durationMs <= 0 || model.durationMs >= REPLAY_MIN_DURATION_MS) {
+    return;
+  }
+  const scale = REPLAY_MIN_DURATION_MS / model.durationMs;
+  /** 拉伸后的实际末点时刻 */
+  let end = 0;
+  if (model.engine === "atrament") {
+    // strokes 与 slots 一一对应（见 AtramentReplayModel），同步缩放保自洽
+    for (const [index, slot] of model.slots.entries()) {
+      slot.startMs *= scale;
+      slot.pointTimesMs = slot.pointTimesMs.map((t) => t * scale);
+      const stroke = model.strokes[index];
+      if (stroke) {
+        for (const point of stroke.points) point.t *= scale;
+      }
+      const last = slot.pointTimesMs[slot.pointTimesMs.length - 1];
+      if (last !== undefined) end = Math.max(end, slot.startMs + last);
+    }
+  } else {
+    for (const slot of model.slots) {
+      slot.startMs *= scale;
+      slot.endMs *= scale;
+      end = Math.max(end, slot.endMs);
+    }
+  }
+  model.durationMs = Math.max(REPLAY_MIN_DURATION_MS, end);
+}
+
+/**
  * 把矢量接口返回的 unknown 收窄成回放模型（宽松校验，见文件头）。
  * 任何结构不符（未知 engine / version 不支持 / 缺 strokes / elements 非数组…）
  * 返回 null，调用方走「无回放数据」降级。
@@ -238,7 +284,9 @@ export function parseInkReplayData(raw: unknown): InkReplayModel | null {
     if (!isPlainObject(raw.data)) return null;
     const parsed = parseAtramentStrokes(raw.data.strokes);
     if (parsed === null) return null;
-    return buildAtramentModel(parsed);
+    const model = buildAtramentModel(parsed);
+    stretchToMinDuration(model);
+    return model;
   }
   if (raw.engine === "excalidraw") {
     if (!isPlainObject(raw.data)) return null;
@@ -251,12 +299,14 @@ export function parseInkReplayData(raw: unknown): InkReplayModel | null {
       slots.push({ startMs: cursor, endMs: cursor + dur });
       cursor += dur;
     }
-    return {
+    const model: ExcalidrawReplayModel = {
       engine: "excalidraw",
       elements,
       slots,
       durationMs: cursor,
     };
+    stretchToMinDuration(model);
+    return model;
   }
   return null;
 }
