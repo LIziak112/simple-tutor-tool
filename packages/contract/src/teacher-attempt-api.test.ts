@@ -130,9 +130,10 @@ describe("teacherAttemptCardSchema（来源上下文与得分双字段）", () =
 });
 
 describe("teacherAttemptDetailQuestionSchema（D7：draft 不带答案详解）", () => {
-  /** draft 形态：无 answers / solutionMd 键，判定字段全 null */
+  /** draft 形态：无 answers / solutionMd 键，判定字段全 null，responseId 恒 null */
   const draftQuestion = {
     questionId: "有理数课程练习-1",
+    responseId: null,
     no: 1,
     unitId: "有理数课程练习",
     unitTitle: "有理数课程练习",
@@ -152,15 +153,16 @@ describe("teacherAttemptDetailQuestionSchema（D7：draft 不带答案详解）"
     ink: null,
   };
 
-  it("draft 逐题（无 answers/solutionMd）可解析", () => {
+  it("draft 逐题（无 answers/solutionMd，responseId=null）可解析", () => {
     expect(
       teacherAttemptDetailQuestionSchema.safeParse(draftQuestion).success,
     ).toBe(true);
   });
 
-  it("已交卷逐题带 answers / solutionMd / 手写信息", () => {
+  it("已交卷逐题带 responseId（批注定位）/ answers / solutionMd / 手写信息", () => {
     const parsed = teacherAttemptDetailQuestionSchema.safeParse({
       ...draftQuestion,
+      responseId: UUID,
       stemMd: "$1$ 是正数。[[正确]]",
       answer: null,
       ink: {
@@ -173,6 +175,20 @@ describe("teacherAttemptDetailQuestionSchema（D7：draft 不带答案详解）"
     });
     expect(parsed.success).toBe(true);
     expect(parsed.success && parsed.data.answers?.kind).toBe("judge");
+    expect(parsed.success && parsed.data.responseId).toBe(UUID);
+  });
+
+  it("responseId 缺失或非 UUID 拒绝（详情页内联批改定位字段，D3）", () => {
+    const { responseId: _omitted, ...withoutResponseId } = draftQuestion;
+    expect(
+      teacherAttemptDetailQuestionSchema.safeParse(withoutResponseId).success,
+    ).toBe(false);
+    expect(
+      teacherAttemptDetailQuestionSchema.safeParse({
+        ...draftQuestion,
+        responseId: "not-a-uuid",
+      }).success,
+    ).toBe(false);
   });
 
   it("teacherMark 只收 correct/wrong/null", () => {
@@ -235,16 +251,17 @@ describe("teacherAttemptErrorCodeSchema", () => {
 
 describe("markRequestSchema（D3：两字段一次提交 + 评语归一化）", () => {
   it("接受三种 mark 与评语 trim 归一化（空串 → null）", () => {
-    expect(markRequestSchema.parse({ mark: "correct", comment: " 好 " })).toEqual(
-      { mark: "correct", comment: "好" },
-    );
+    expect(
+      markRequestSchema.parse({ mark: "correct", comment: " 好 " }),
+    ).toEqual({ mark: "correct", comment: "好" });
     expect(markRequestSchema.parse({ mark: "wrong", comment: null })).toEqual({
       mark: "wrong",
       comment: null,
     });
-    expect(
-      markRequestSchema.parse({ mark: null, comment: "   " }),
-    ).toEqual({ mark: null, comment: null });
+    expect(markRequestSchema.parse({ mark: null, comment: "   " })).toEqual({
+      mark: null,
+      comment: null,
+    });
   });
 
   it("评语按原始长度校验 ≤2000，超出拒绝（契约层 400 依据）", () => {
@@ -263,9 +280,9 @@ describe("markRequestSchema（D3：两字段一次提交 + 评语归一化）", 
   });
 
   it("两字段都必须显式携带；mark 只收 correct/wrong/null", () => {
-    expect(
-      markRequestSchema.safeParse({ mark: "correct" }).success,
-    ).toBe(false);
+    expect(markRequestSchema.safeParse({ mark: "correct" }).success).toBe(
+      false,
+    );
     expect(markRequestSchema.safeParse({ comment: "好" }).success).toBe(false);
     expect(
       markRequestSchema.safeParse({ mark: "对", comment: null }).success,
@@ -321,7 +338,11 @@ describe("pendingMarkCardSchema（待批卡片）", () => {
     stemMd: "写一写：$2+2$ 是多少？",
     answers: null,
     answerText: null,
-    ink: { inkId: UUID, pngUrl: `/api/teacher/ink/${UUID}.png`, hasStrokes: true },
+    ink: {
+      inkId: UUID,
+      pngUrl: `/api/teacher/ink/${UUID}.png`,
+      hasStrokes: true,
+    },
     activeSec: null,
     hintsUsed: 0,
     changeCount: 0,

@@ -35,6 +35,7 @@ function makeQuestion(
 ): TeacherAttemptDetailQuestion {
   return {
     questionId: "q1",
+    responseId: "88888888-8888-4888-8888-888888888881",
     no: 1,
     unitId: "unit-a",
     unitTitle: "单元A",

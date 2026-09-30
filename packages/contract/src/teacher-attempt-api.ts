@@ -166,6 +166,12 @@ export const teacherAttemptInkSchema = z.object({
 export const teacherAttemptDetailQuestionSchema = z.object({
   /** 题目 id（来自 DSL） */
   questionId: z.string().min(1),
+  /**
+   * responses.id（POST /responses/:id/mark 的定位 id，D3 详情页内联批改用）：
+   * 仅已交卷 attempt 的逐题行携带（冻结 responses 行的 id）；draft 逐题来自
+   * 当前库题目、可能尚无 responses 行，恒 null（draft 本就不可批注）。
+   */
+  responseId: z.uuid().nullable(),
   /** 全卷连续题号（1 起 = attempt 单元顺序 × 单元内题序） */
   no: z.number().int().min(1),
   /** 所在单元 id */

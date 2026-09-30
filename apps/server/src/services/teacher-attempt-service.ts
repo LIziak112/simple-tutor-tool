@@ -391,6 +391,8 @@ export function getTeacherAttemptDetail(
       const options = optionTexts(row.optionsJson);
       items.push({
         questionId: row.id,
+        // draft 逐题来自当前库题目（可能尚无 responses 行），无批注定位 id
+        responseId: null,
         unitId: row.unitId,
         unitTitle: row.unitId, // 占位，下方经 unitTitles 统一回填
         type: row.type,
@@ -452,6 +454,8 @@ export function getTeacherAttemptDetail(
         if (snapshot === null) continue; // 坏快照按缺失计（见 snapshotOf 注释）
         items.push({
           questionId: response.questionId,
+          // 冻结 responses 行 id——详情页内联批改（POST /responses/:id/mark）定位用
+          responseId: response.id,
           unitId,
           unitTitle: unitId, // 占位，下方经 unitTitles 统一回填
           type: snapshot.type,
