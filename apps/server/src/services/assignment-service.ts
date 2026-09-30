@@ -70,6 +70,8 @@ import { HttpError } from "../lib/http-error";
 export interface AssignmentAttemptSummary {
   /** attempts.status：draft=进行中、submitted=已交、graded=已批 */
   status: "draft" | "submitted" | "graded";
+  /** attempts.id：详情名单行的 attemptId（D8 点击状态跳 attempt 详情的定位 id） */
+  attemptId: string;
 }
 
 /**
@@ -78,7 +80,7 @@ export interface AssignmentAttemptSummary {
  */
 export function computeAssignmentStatus(
   _assignment: Pick<Assignment, "id" | "dueAt">,
-  attemptsOfStudent: readonly AssignmentAttemptSummary[],
+  attemptsOfStudent: ReadonlyArray<Pick<AssignmentAttemptSummary, "status">>,
 ): AssignmentStatus {
   // 优先级：已批 > 已交 > 进行中 > 未开始（先交后批时以批改结果为准）
   if (attemptsOfStudent.some((attempt) => attempt.status === "graded")) {
@@ -91,6 +93,23 @@ export function computeAssignmentStatus(
     return "in_progress";
   }
   return "not_started";
+}
+
+/**
+ * 名单行 attemptId（T3.1，D8）：取与 computeAssignmentStatus 同优先级
+ * （graded > submitted > draft）的代表 attempt——一人一份（draft 幂等、交卷后
+ * 不再新建），通常只有一行；无记录（未开始）为 null。
+ */
+function representativeAttemptId(
+  attemptsOfStudent: readonly AssignmentAttemptSummary[],
+): string | null {
+  for (const status of ["graded", "submitted", "draft"] as const) {
+    const found = attemptsOfStudent.find(
+      (attempt) => attempt.status === status,
+    );
+    if (found !== undefined) return found.attemptId;
+  }
+  return null;
 }
 
 /**
@@ -313,6 +332,7 @@ function attemptGroupsByAssignment(
     .select({
       assignmentId: attempts.assignmentId,
       studentId: attempts.studentId,
+      attemptId: attempts.id,
       status: attempts.status,
     })
     .from(attempts)
@@ -322,7 +342,7 @@ function attemptGroupsByAssignment(
     if (assignmentId === null) continue;
     const byStudent = map.get(assignmentId) ?? new Map();
     const list = byStudent.get(row.studentId) ?? [];
-    list.push({ status: row.status });
+    list.push({ status: row.status, attemptId: row.attemptId });
     byStudent.set(row.studentId, list);
     map.set(assignmentId, byStudent);
   }
@@ -900,15 +920,19 @@ export function getAssignmentDetail(
 
   return {
     ...base,
-    roster: roster.map((entry) => ({
-      studentId: entry.studentId,
-      displayName: entry.displayName,
-      status: computeAssignmentStatus(
-        { id, dueAt: base.dueAt },
-        attemptGroups.get(entry.studentId) ?? [],
-      ),
-      addedAt: entry.addedAt,
-    })),
+    roster: roster.map((entry) => {
+      const attemptsOfStudent = attemptGroups.get(entry.studentId) ?? [];
+      return {
+        studentId: entry.studentId,
+        displayName: entry.displayName,
+        status: computeAssignmentStatus(
+          { id, dueAt: base.dueAt },
+          attemptsOfStudent,
+        ),
+        attemptId: representativeAttemptId(attemptsOfStudent),
+        addedAt: entry.addedAt,
+      };
+    }),
     startedCount: roster.filter((entry) => attemptGroups.has(entry.studentId))
       .length,
     courseNewMembers,

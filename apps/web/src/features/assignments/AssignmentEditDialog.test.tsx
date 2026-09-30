@@ -52,6 +52,8 @@ const STUDENT_B_ID = "22222222-2222-4222-8222-222222222222"; // 李四 未开始
 const STUDENT_C_ID = "66666666-6666-4666-8666-666666666666"; // 王五 进行中
 const STUDENT_D_ID = "77777777-7777-4777-8777-777777777777"; // 赵六 课程新成员
 const STUDENT_E_ID = "88888888-8888-4888-8888-888888888888"; // 孙七 不在名单
+const ATTEMPT_A_ID = "99999999-9999-4999-8999-999999999991"; // 张三的 attempt（已交卷）
+const ATTEMPT_C_ID = "99999999-9999-4999-8999-999999999993"; // 王五的 attempt（进行中）
 
 function makeAssignment(
   overrides: Partial<TeacherAssignment> = {},
@@ -100,18 +102,21 @@ function makeDetail(
         studentId: STUDENT_A_ID,
         displayName: "张三",
         status: "submitted",
+        attemptId: ATTEMPT_A_ID,
         addedAt: "2026-09-26T08:00:00.000Z",
       },
       {
         studentId: STUDENT_B_ID,
         displayName: "李四",
         status: "not_started",
+        attemptId: null,
         addedAt: "2026-09-26T08:00:00.000Z",
       },
       {
         studentId: STUDENT_C_ID,
         displayName: "王五",
         status: "in_progress",
+        attemptId: ATTEMPT_C_ID,
         addedAt: "2026-09-26T08:00:00.000Z",
       },
     ],

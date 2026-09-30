@@ -814,7 +814,12 @@ describe("名单增删（D13：addStudentIds / removeStudentIds）", () => {
     const detail = (
       (await detailRes.json()) as {
         data: {
-          roster: { studentId: string; status: string; addedAt: string }[];
+          roster: {
+            studentId: string;
+            status: string;
+            attemptId: string | null;
+            addedAt: string;
+          }[];
         };
       }
     ).data;
@@ -824,6 +829,8 @@ describe("名单增删（D13：addStudentIds / removeStudentIds）", () => {
     expect(detail.roster.every((entry) => entry.status === "not_started")).toBe(
       true,
     );
+    // T3.1（D8）：未开始学生的名单行不带 attemptId（无 attempt 可跳转）
+    expect(detail.roster.every((entry) => entry.attemptId === null)).toBe(true);
     expect(
       detail.roster.every((entry) => typeof entry.addedAt === "string"),
     ).toBe(true);
@@ -1160,7 +1167,7 @@ describe("内容锁定（D14：首个 attempt 后 unitIds 不可改）", () => {
 
   it("首个 attempt 创建后 PATCH unitIds → 409 ASSIGNMENT_CONTENT_LOCKED；标题/截止/名单仍可改", async () => {
     const env = await makeEnv();
-    await startAttempt(env.app, env.cookie, env.assignmentId);
+    const attempt = await startAttempt(env.app, env.cookie, env.assignmentId);
 
     const locked = await patchAssignment(
       env.app,
@@ -1207,9 +1214,17 @@ describe("内容锁定（D14：首个 attempt 后 unitIds 不可改）", () => {
         await env.app.request(`/api/teacher/assignments/${env.assignmentId}`, {
           headers: { cookie: env.teacherCookie },
         })
-      ).json()) as { data: { startedCount: number } }
+      ).json()) as {
+        data: {
+          startedCount: number;
+          roster: { studentId: string; attemptId: string | null }[];
+        };
+      }
     ).data;
     expect(detail.startedCount).toBe(1);
+    // T3.1（D8）：已开始学生（张三）的名单行带 attemptId（跳 attempt 详情的定位 id）
+    const started = detail.roster.find((entry) => entry.attemptId !== null);
+    expect(started?.attemptId).toBe(attempt.id);
   });
 
   it("锁定后即使 unitIds 重复也报 409（锁定判定优先于内容校验，D14）", async () => {
@@ -2049,7 +2064,7 @@ describe("computeAssignmentStatus 纯函数", () => {
   function withAttempts(statuses: AssignmentAttemptSummary["status"][]) {
     return computeAssignmentStatus(
       assignment,
-      statuses.map((status) => ({ status })),
+      statuses.map((status, index) => ({ status, attemptId: `a-${index}` })),
     );
   }
 
