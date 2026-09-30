@@ -71,6 +71,9 @@ const teacherRoutes = (() => {
   const StudentsPage = lazy(() => import("./pages/teacher/StudentsPage"));
   const AssignmentsPage = lazy(() => import("./pages/teacher/AssignmentsPage"));
   const DataPage = lazy(() => import("./pages/teacher/DataPage"));
+  const AttemptDetailPage = lazy(
+    () => import("./pages/teacher/AttemptDetailPage"),
+  );
   const PlaceholderPage = lazy(() => import("./pages/teacher/PlaceholderPage"));
 
   /** 布局内的懒加载兜底（骨架级提示即可，布局本身很快） */
@@ -191,6 +194,15 @@ const teacherRoutes = (() => {
           element={
             <Suspense fallback={pageFallback}>
               <DataPage />
+            </Suspense>
+          }
+        />
+        <Route
+          // T3.1：作答详情（D7 逐题 + 手写缩略图；draft 亦可用，D5）
+          path="data/attempts/:id"
+          element={
+            <Suspense fallback={pageFallback}>
+              <AttemptDetailPage />
             </Suspense>
           }
         />
