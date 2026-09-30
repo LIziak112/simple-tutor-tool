@@ -1,4 +1,10 @@
-import { BookOpen, ChevronRight, ClipboardList, School } from "lucide-react";
+import {
+  BookOpen,
+  ChevronRight,
+  ClipboardList,
+  History,
+  School,
+} from "lucide-react";
 import { Link } from "react-router";
 import {
   useStudentAssignments,
@@ -26,15 +32,26 @@ export default function StudentHomePage() {
 
   return (
     <div className="flex flex-col gap-8 lg:flex-row lg:items-start lg:gap-8">
-      {/* 我的作业（主区，占 3/5） */}
+      {/* 我的作业（主区，占 3/5；分区头右侧「我的记录」入口，T3.5 与顶栏导航同步） */}
       <section aria-labelledby="home-assignments" className="lg:w-3/5">
-        <h2
-          id="home-assignments"
-          className="mb-3 flex items-center gap-2 text-base font-semibold"
-        >
-          <ClipboardList aria-hidden className="size-5 text-primary" />
-          我的作业
-        </h2>
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <h2
+            id="home-assignments"
+            className="flex items-center gap-2 text-base font-semibold"
+          >
+            <ClipboardList aria-hidden className="size-5 text-primary" />
+            我的作业
+          </h2>
+          {/* 我的记录入口（T3.5：全部作答索引 + 错题本） */}
+          <Link
+            to="/s/records"
+            className="flex min-h-11 items-center gap-1 rounded-lg px-2 text-sm font-medium text-primary outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+          >
+            <History aria-hidden className="size-4 shrink-0" />
+            我的记录
+            <ChevronRight aria-hidden className="size-4 shrink-0" />
+          </Link>
+        </div>
 
         {assignmentsQuery.isPending && (
           <StudentListSkeleton label="正在加载作业" />

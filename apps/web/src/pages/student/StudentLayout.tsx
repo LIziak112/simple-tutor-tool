@@ -13,7 +13,7 @@ import { ScreenError, ScreenLoading } from "./StudentScreen";
  * T2A.5 信息架构），讲义的主要入口是课程目录。
  */
 
-/** 学生端分区导航（首页 / 课程 / 我的记录；「我的记录」T3.5 实现为占位页） */
+/** 学生端分区导航（首页 / 课程 / 我的记录；「我的记录」T3.5 起为全量作答索引 + 错题本入口） */
 const NAV_ITEMS = [
   { to: "/s/home", label: "首页", icon: Home },
   { to: "/s/courses", label: "课程", icon: School },
