@@ -121,7 +121,7 @@ function renderView(onBackHome = vi.fn()) {
 }
 
 describe("得分汇总卡", () => {
-  it("显示得分、对/错/待批计数（含未答说明）与交卷时间", () => {
+  it("显示得分、对/错/待批与未答计数（D1：未答独立展示）与交卷时间", () => {
     renderView();
     expect(screen.getByText("60")).toBeInTheDocument();
     expect(screen.getByText(/自动判分得分/)).toBeInTheDocument();
@@ -130,7 +130,8 @@ describe("得分汇总卡", () => {
     expect(bodyText).toContain("共 4 题");
     expect(bodyText).toContain("答对 1 题");
     expect(bodyText).toContain("答错 2 题");
-    expect(bodyText).toContain("待批 1 题（含未答 1 题）");
+    expect(bodyText).toContain("待批 1 题");
+    expect(bodyText).toContain("未答 1 题");
     expect(screen.getByText(/交卷时间：/)).toBeInTheDocument();
   });
 

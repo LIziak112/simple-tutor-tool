@@ -1433,26 +1433,25 @@ describe("T3.2a 判分口径回填（旧口径已交 attempt → D1/D2/D3 重算
       ],
     );
     // 对照：draft 的 responses 不被回填触碰
-    seedLegacyAttempt(
-      db,
-      { id: "bg-atd", status: "draft", scoreAuto: null },
-      [
-        {
-          id: "bg-rd",
-          questionId: "bg-q3",
-          snapshot: null,
-          answerJson: JSON.stringify({ kind: "fill", values: ["8"] }),
-          autoCorrect: null,
-        },
-      ],
-    );
+    seedLegacyAttempt(db, { id: "bg-atd", status: "draft", scoreAuto: null }, [
+      {
+        id: "bg-rd",
+        questionId: "bg-q3",
+        snapshot: null,
+        answerJson: JSON.stringify({ kind: "fill", values: ["8"] }),
+        autoCorrect: null,
+      },
+    ]);
 
     runGradingBackfill(db);
 
     const rowOf = (id: string) =>
       db.select().from(responses).where(eq(responses.id, id)).get();
     // choice 答对：autoCorrect 不变，finalCorrect 按 D3 写回
-    expect(rowOf("bg-r1")).toMatchObject({ autoCorrect: true, finalCorrect: true });
+    expect(rowOf("bg-r1")).toMatchObject({
+      autoCorrect: true,
+      finalCorrect: true,
+    });
     // D1 核心：未作答填空由 null 重判 false，finalCorrect 同步写 false
     expect(rowOf("bg-r2")).toMatchObject({
       autoCorrect: false,
@@ -1464,9 +1463,15 @@ describe("T3.2a 判分口径回填（旧口径已交 attempt → D1/D2/D3 重算
       finalCorrect: null,
     });
     // 快照缺失：autoCorrect 保留原值 true，finalCorrect = teacherMark ?? autoCorrect
-    expect(rowOf("bg-r4")).toMatchObject({ autoCorrect: true, finalCorrect: true });
+    expect(rowOf("bg-r4")).toMatchObject({
+      autoCorrect: true,
+      finalCorrect: true,
+    });
     // draft 行原样（未交卷不判分）
-    expect(rowOf("bg-rd")).toMatchObject({ autoCorrect: null, finalCorrect: null });
+    expect(rowOf("bg-rd")).toMatchObject({
+      autoCorrect: null,
+      finalCorrect: null,
+    });
 
     // attempt 级：scoreAuto 分母变化（旧 1/1=100 → 新 2/3=67，未作答填空进分母）；
     // 存在待批（solve）→ 保持 submitted、scoreFinal=null（D2）

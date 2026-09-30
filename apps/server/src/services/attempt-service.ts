@@ -750,9 +750,10 @@ function scoreAutoOf(graded: readonly GradedResponse[]): number | null {
  * 交卷链路调用时 finalCorrect=autoCorrect（teacherMark 必空）；backfill 与批改
  * 链路以 teacherMark ?? autoCorrect 为输入复用同一口径。
  */
-export function finalScoreOf(
-  finalCorrects: readonly (boolean | null)[],
-): { status: "submitted" | "graded"; scoreFinal: number | null } {
+export function finalScoreOf(finalCorrects: readonly (boolean | null)[]): {
+  status: "submitted" | "graded";
+  scoreFinal: number | null;
+} {
   if (finalCorrects.length === 0 || finalCorrects.some((v) => v === null)) {
     return { status: "submitted", scoreFinal: null };
   }

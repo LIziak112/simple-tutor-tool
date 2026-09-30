@@ -910,7 +910,9 @@ describe("T2A.6 教师进度矩阵（GET /api/teacher/courses/:id/progress）", 
       .select()
       .from(responses)
       .all()
-      .find((row) => row.attemptId === started.id && row.questionId === Q.solve);
+      .find(
+        (row) => row.attemptId === started.id && row.questionId === Q.solve,
+      );
     expect(solveRow?.answerJson).toBeNull();
     expect(solveRow?.finalCorrect).toBeNull();
 

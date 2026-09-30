@@ -166,10 +166,12 @@ test.describe("教师端作答数据页（T3.1：三视图 + 详情手写放大�
     await expect(page.getByText("答错 0 题")).toBeVisible();
     await expect(page.getByText("待批 1 题")).toBeVisible();
     await expect(page.getByText("未批", { exact: true })).toBeVisible();
-    // 逐题（单单元不显示节头）：第 1 题判对、第 2 题待批（手写）
-    await expect(
-      page.locator('article[aria-label="第 1 题"]').getByText("答对"),
-    ).toBeVisible();
+    // 逐题（单单元不显示节头）：第 1 题判对——D3（T3.2a）交卷即写 finalCorrect，
+    // 判定区「自动判定」与「最终判定」两行同为答对；第 2 题待批（手写只写笔迹，
+    // 自动判定「—」+ 最终判定「待批」）
+    const q1Card = page.locator('article[aria-label="第 1 题"]');
+    await expect(q1Card.getByText("自动判定：")).toBeVisible();
+    await expect(q1Card.getByText("答对", { exact: true })).toHaveCount(2);
     const q2Card = page.locator('article[aria-label="第 2 题"]');
     await expect(q2Card.getByText("待批", { exact: true })).toBeVisible();
     await expect(q2Card.getByText("学生答案：").first()).toBeVisible();

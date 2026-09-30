@@ -296,7 +296,10 @@ describe("grade：未作答口径（D1 修订，T3.2a——先补用例再改实
   it("客观题完全未作答（answer 缺省）→ false（判错，不进待批）", () => {
     expect(
       grade(
-        makeQuestion({ type: "judge", answers: { kind: "judge", value: true } }),
+        makeQuestion({
+          type: "judge",
+          answers: { kind: "judge", value: true },
+        }),
         undefined,
       ),
     ).toBe(false);
@@ -363,7 +366,10 @@ describe("grade：未作答口径（D1 修订，T3.2a——先补用例再改实
   });
 
   it("判断题学生写法无法归一化 → null（进待批，教师裁定；不算未作答判错）", () => {
-    const q = makeQuestion({ type: "judge", answers: { kind: "judge", value: true } });
+    const q = makeQuestion({
+      type: "judge",
+      answers: { kind: "judge", value: true },
+    });
     expect(grade(q, { kind: "judge", value: "随便写" })).toBeNull();
     expect(grade(q, { kind: "judge", value: "" })).toBeNull();
   });

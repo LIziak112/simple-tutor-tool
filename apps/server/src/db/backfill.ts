@@ -585,7 +585,10 @@ function backfillT32aGrading(tx: Tx): void {
             ? false
             : null;
       const finalCorrect = teacherMark ?? autoCorrect;
-      if (autoCorrect !== row.autoCorrect || finalCorrect !== row.finalCorrect) {
+      if (
+        autoCorrect !== row.autoCorrect ||
+        finalCorrect !== row.finalCorrect
+      ) {
         tx.update(responses)
           .set({ autoCorrect, finalCorrect })
           .where(eq(responses.id, row.id))
@@ -601,7 +604,8 @@ function backfillT32aGrading(tx: Tx): void {
       autoGradable === 0
         ? null
         : Math.round(
-            (autoCorrects.filter((v) => v === true).length / autoGradable) * 100,
+            (autoCorrects.filter((v) => v === true).length / autoGradable) *
+              100,
           );
     const { status, scoreFinal } = finalScoreOf(finalCorrects);
     if (

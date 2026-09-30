@@ -24,17 +24,17 @@ import { type Attempt, responses } from "../db/schema";
 export type PendingMarkAttempt = Pick<Attempt, "id" | "status">;
 
 /** 单个 attempt 的待批题数（draft 恒 0） */
-export function pendingMarkCount(
-  db: Db,
-  attempt: PendingMarkAttempt,
-): number {
+export function pendingMarkCount(db: Db, attempt: PendingMarkAttempt): number {
   if (attempt.status === "draft") return 0;
   return (
     db
       .select({ n: sql<number>`count(*)` })
       .from(responses)
       .where(
-        and(eq(responses.attemptId, attempt.id), isNull(responses.finalCorrect)),
+        and(
+          eq(responses.attemptId, attempt.id),
+          isNull(responses.finalCorrect),
+        ),
       )
       .get()?.n ?? 0
   );
