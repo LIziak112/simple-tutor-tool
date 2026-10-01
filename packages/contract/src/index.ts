@@ -10,6 +10,9 @@ export * from "./assignment.ts";
 export * from "./attempt.ts";
 /** 身份认证契约（T1.9 起为权威定义）：密码策略、setup/login/register 请求体、教师信息、auth 错误码 */
 export * from "./auth.ts";
+/** 备份与恢复 API 契约（T4.5 起为权威定义，依据 Phase4 清单 §2 D20/D21）：快照列表、
+ *  恢复（multipart zip + 登录密码）摘要、上传上限与保留份数、错误码 */
+export * from "./backup-api.ts";
 /** 内容契约（DSL v2）：题目、讲义、单元、解析结果、lint issue，T1.1 起为权威定义 */
 export * from "./content.ts";
 /** 内容导入 API 契约（T1.10 起为权威定义）：导入预览/提交请求体与响应、LINT_ERROR 错误壳 */
