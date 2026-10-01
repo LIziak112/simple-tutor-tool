@@ -3,13 +3,13 @@ import {
   buildIdleIntervals,
   buildLectureVisibleIntervals,
   buildOfflineIntervals,
+  type Interval,
   intersectIntervals,
   mergeIntervals,
   orderTraceEvents,
   subtractIntervals,
-  totalIntervalMs,
-  type Interval,
   type TraceEvent,
+  totalIntervalMs,
 } from "./trace-intervals";
 
 /**
@@ -26,7 +26,11 @@ const T0 = Date.UTC(2026, 9, 1, 10, 0, 0);
 /** 秒级偏移的便捷时间戳 */
 const at = (sec: number): number => T0 + sec * 1000;
 
-function ev(type: string, clientTs: number, extra?: Partial<TraceEvent>): TraceEvent {
+function ev(
+  type: string,
+  clientTs: number,
+  extra?: Partial<TraceEvent>,
+): TraceEvent {
   return { type, clientTs, ...extra };
 }
 

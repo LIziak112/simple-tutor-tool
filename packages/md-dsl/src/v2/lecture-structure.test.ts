@@ -22,7 +22,7 @@ const MD = [
   "a + b = c",
   "$$",
   "",
-  ":::fold{title=\"拓展\"}",
+  ':::fold{title="拓展"}',
   "折叠内容甲。",
   ":::",
   "",
@@ -41,7 +41,7 @@ const MD = [
   "整数与分数。",
   "",
   "::::steps",
-  ":::step{title=\"第 1 步\"}",
+  ':::step{title="第 1 步"}',
   "先处理乘方。",
   ":::",
   ":::step",
@@ -96,7 +96,8 @@ describe("analyzeLectureStructure", () => {
     // 数学段：行内 500+300（6 字）+ 块 a+b=c（5 字，空格不计）= 11
     expect(s0?.mathChars).toBe(11);
     // 文字 + 数学 = 原文非空白字符数 − 数学定界符（两条 $$ 围栏行 4 字 + 行内 $ 定界 4 字）
-    const section0Raw = MD.split("## 一、正数与负数")[1]?.split("### 1.1")[0] ?? "";
+    const section0Raw =
+      MD.split("## 一、正数与负数")[1]?.split("### 1.1")[0] ?? "";
     const rawNonWs = section0Raw.replace(/\s/g, "").length;
     expect((s0?.textChars ?? 0) + (s0?.mathChars ?? 0)).toBe(rawNonWs - 8);
   });
@@ -110,7 +111,17 @@ describe("analyzeLectureStructure", () => {
 
   it("标题前出现指令：hostHeadingIndex 收敛到 0（首节）", () => {
     const s = analyzeLectureStructure(
-      ["# 第1讲", "", ":::fold", "开头折叠", ":::", "", "## 第一节", "", "正文"].join("\n"),
+      [
+        "# 第1讲",
+        "",
+        ":::fold",
+        "开头折叠",
+        ":::",
+        "",
+        "## 第一节",
+        "",
+        "正文",
+      ].join("\n"),
     );
     expect(s.folds).toEqual([
       {

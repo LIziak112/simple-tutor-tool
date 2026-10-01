@@ -1,14 +1,14 @@
 import {
   buildOfflineIntervals,
+  type Interval,
   intersectIntervals,
   mergeIntervals,
   msToSec,
   orderTraceEvents,
   subtractIntervals,
-  totalIntervalMs,
   TRACE_GAP_CAP_MS,
-  type Interval,
   type TraceEvent,
+  totalIntervalMs,
 } from "./trace-intervals";
 
 /**
@@ -211,7 +211,8 @@ export function computeAttemptTraceMetrics(
           if (submitTs !== null && event.clientTs > submitTs) break;
           const acc = accountOf(q);
           acc.hintOpenTs.push(event.clientTs);
-          if (acc.firstHintOpenTs === null) acc.firstHintOpenTs = event.clientTs;
+          if (acc.firstHintOpenTs === null)
+            acc.firstHintOpenTs = event.clientTs;
         } else if (isDirectiveInteract(event, "result", "solution", "open")) {
           // 交卷后才算复盘（无 submit 事件的异常流按存在即算——结果页只在
           // 交卷后存在，缺 submit 属于事件丢失而非时序问题）
@@ -232,7 +233,10 @@ export function computeAttemptTraceMetrics(
         if (q === undefined) break;
         const acc = accountOf(q);
         acc.inkEditCount +=
-          (event.erase ?? 0) + (event.undo ?? 0) + (event.redo ?? 0) + (event.clear ?? 0);
+          (event.erase ?? 0) +
+          (event.undo ?? 0) +
+          (event.redo ?? 0) +
+          (event.clear ?? 0);
         break;
       }
       case "ink_fullscreen": {
@@ -281,7 +285,9 @@ export function computeAttemptTraceMetrics(
       }
       if (end > openTs) hintIntervals.push({ start: openTs, end });
     }
-    const hintDwellSec = msToSec(totalIntervalMs(mergeIntervals(hintIntervals)));
+    const hintDwellSec = msToSec(
+      totalIntervalMs(mergeIntervals(hintIntervals)),
+    );
 
     // offlineShare：|offline ∩ focus| ÷ (activeSec × 1000)
     const activeMs = (activeSecByQuestion[q] ?? 0) * 1000;

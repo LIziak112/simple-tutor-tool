@@ -222,7 +222,9 @@ export function analyzeLectureStructure(markdown: string): LectureStructure {
       index + 1 < sectionStartLines.length
         ? (sectionStartLines[index + 1] ?? lines.length) - 1
         : lines.length;
-    const counts = weightedCharCounts(sliceLines(lines, startLine + 1, endLine));
+    const counts = weightedCharCounts(
+      sliceLines(lines, startLine + 1, endLine),
+    );
     (section as { textChars: number; mathChars: number }).textChars =
       counts.textChars;
     (section as { textChars: number; mathChars: number }).mathChars =

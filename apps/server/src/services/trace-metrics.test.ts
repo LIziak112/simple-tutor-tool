@@ -17,7 +17,11 @@ import { computeAttemptTraceMetrics } from "./trace-metrics";
 const T0 = Date.UTC(2026, 9, 1, 9, 0, 0);
 const at = (sec: number): number => T0 + sec * 1000;
 
-function ev(type: string, clientTs: number, extra?: Partial<TraceEvent>): TraceEvent {
+function ev(
+  type: string,
+  clientTs: number,
+  extra?: Partial<TraceEvent>,
+): TraceEvent {
   return { type, clientTs, ...extra };
 }
 
@@ -98,8 +102,20 @@ describe("hintDwellSec", () => {
 describe("inkEditCount / fullscreenUsed", () => {
   it("四计数求和；全屏用过即 true", () => {
     const events = [
-      ev("ink_edit_batch", at(10), { questionId: "q1", erase: 2, undo: 1, redo: 0, clear: 0 }),
-      ev("ink_edit_batch", at(20), { questionId: "q1", erase: 0, undo: 0, redo: 3, clear: 1 }),
+      ev("ink_edit_batch", at(10), {
+        questionId: "q1",
+        erase: 2,
+        undo: 1,
+        redo: 0,
+        clear: 0,
+      }),
+      ev("ink_edit_batch", at(20), {
+        questionId: "q1",
+        erase: 0,
+        undo: 0,
+        redo: 3,
+        clear: 1,
+      }),
       ev("ink_fullscreen", at(30), { questionId: "q1", on: true }),
       ev("ink_fullscreen", at(60), { questionId: "q1", on: false }),
     ];
@@ -191,7 +207,13 @@ describe("综合与边界", () => {
     const events = [
       ev("question_focus", at(0), { questionId: "q1" }),
       ev("ink_stroke_batch", at(30), { questionId: "q1", strokes: 1 }),
-      ev("ink_edit_batch", at(40), { questionId: "q1", erase: 1, undo: 0, redo: 0, clear: 0 }),
+      ev("ink_edit_batch", at(40), {
+        questionId: "q1",
+        erase: 1,
+        undo: 0,
+        redo: 0,
+        clear: 0,
+      }),
       ev("ink_fullscreen", at(50), { questionId: "q1", on: true }),
       hintOpen(at(120), "q1"),
       ev("question_blur", at(200), { questionId: "q1" }),
