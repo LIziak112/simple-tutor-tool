@@ -264,19 +264,21 @@ export function BackupSection() {
               <TriangleAlert aria-hidden className="size-4" />
               确认恢复备份？
             </DialogTitle>
-            <DialogDescription className="flex flex-col gap-2 pt-1">
-              <span>
-                将使用「{pendingZip?.name ?? ""}」整体替换当前全部数据
-                （含全部教师与学生），数据回到该备份的时点，此后产生的变化会丢失。
-              </span>
-              <span>请知悉：</span>
-              <ul className="list-inside list-disc space-y-1 pl-1">
-                <li>恢复前系统会自动再保存一份当前数据的快照，可用于回滚；</li>
-                <li>恢复后当前登录可能失效，需要重新登录；</li>
-                <li>恢复需输入你的登录密码确认。</li>
-              </ul>
+            <DialogDescription>
+              将使用「{pendingZip?.name ?? ""}」整体替换当前全部数据
+              （含全部教师与学生），数据回到该备份的时点，此后产生的变化会丢失。
             </DialogDescription>
           </DialogHeader>
+          {/* 影响说明列表：ul 不能嵌在 DialogDescription（渲染为 p）内，
+              否则控制台报 invalid nesting（Opus 实测③-2）——独立成块 */}
+          <div className="flex flex-col gap-2 text-sm text-muted-foreground">
+            <span>请知悉：</span>
+            <ul className="list-inside list-disc space-y-1 pl-1">
+              <li>恢复前系统会自动再保存一份当前数据的快照，可用于回滚；</li>
+              <li>恢复后当前登录可能失效，需要重新登录；</li>
+              <li>恢复需输入你的登录密码确认。</li>
+            </ul>
+          </div>
           <form
             className="flex flex-col gap-3"
             onSubmit={(event) => {
