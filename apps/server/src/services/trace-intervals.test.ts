@@ -140,6 +140,56 @@ describe("讲义可见区间（viewId 配对 + gap-cap）", () => {
   });
 });
 
+describe("同毫秒 visible+hidden 对（自动化轨迹回归，Opus 复测 (C)）", () => {
+  /**
+   * D16 规范序 hidden(0) 先于 visible(1)：同毫秒的 visible+hidden 对（页面
+   * 亚毫秒生存期——真人操作不可能，自动化驱动 UI 可稳定产生）里 hidden 先到
+   * 被当孤立忽略，visible 成未闭合会话，capOpenInterval 按「下一会话起点」
+   * 截断 → 每组多算到下一次访问为止的幽灵停留（实测约 18s/组，永久留在
+   * 学情地图里）。口径裁定：同 (viewId, clientTs) 的被忽略 hidden 与其后
+   * visible 配对为 **0 时长会话**（不产生区间）——亚毫秒生存期的真实时长
+   * 就是 0，幽灵 18s 是错配；不同刻的孤立 hidden 仍按原语义忽略。
+   */
+  it("同毫秒对成 0 时长会话：不产生区间、不产生幽灵停留", () => {
+    const events = [
+      // 组 1：同毫秒开合（页面即开即关），18 秒后组 2
+      ev("lecture_visible", at(0), { viewId: "v1" }),
+      ev("lecture_hidden", at(0), { viewId: "v1" }),
+      // 组 2：真实 60 秒阅读
+      ev("lecture_visible", at(18), { viewId: "v2" }),
+      ev("lecture_hidden", at(78), { viewId: "v2" }),
+    ];
+    // 修复前：v1 被截断到下一会话起点 at(18) → 幽灵 [0,18) + [18,78) 两段
+    expect(buildLectureVisibleIntervals(events)).toEqual([
+      { start: at(18), end: at(78) },
+    ]);
+  });
+
+  it("连续多组同毫秒对（自动化逐页访问）：全部 0 时长、互不串场", () => {
+    const events = [
+      ev("lecture_visible", at(0), { viewId: "a" }),
+      ev("lecture_hidden", at(0), { viewId: "a" }),
+      ev("lecture_visible", at(20), { viewId: "b" }),
+      ev("lecture_hidden", at(20), { viewId: "b" }),
+      ev("lecture_visible", at(40), { viewId: "c" }),
+      ev("lecture_hidden", at(40), { viewId: "c" }),
+    ];
+    // 修复前：a→[0,20) b→[20,40) c→[40,30min) 三段幽灵停留
+    expect(buildLectureVisibleIntervals(events)).toEqual([]);
+  });
+
+  it("不同刻的孤立 hidden 不与后续 visible 配对（原孤立忽略语义不变）", () => {
+    const events = [
+      ev("lecture_hidden", at(0), { viewId: "v1" }), // 时刻不同于 visible@1
+      ev("lecture_visible", at(1), { viewId: "v1" }),
+      ev("lecture_hidden", at(61), { viewId: "v1" }),
+    ];
+    expect(buildLectureVisibleIntervals(events)).toEqual([
+      { start: at(1), end: at(61) },
+    ]);
+  });
+});
+
 describe("idle / net 区间（同构配对）", () => {
   it("idle 成对扣除区间；未闭合 idle_start 以流内最后事件收尾", () => {
     const events = [

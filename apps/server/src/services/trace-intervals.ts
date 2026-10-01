@@ -266,6 +266,9 @@ function orderedTraceBoundary(
 /**
  * 讲义可见区间（按 viewId 配对）：
  * - visible→hidden 成一段；重复 hidden / 孤立 hidden / 已开再开 忽略；
+ * - 同毫秒 visible+hidden 对（页面亚毫秒生存期，自动化轨迹可产生；D16 规范序
+ *   hidden 先到被当孤立忽略）按 0 时长会话闭环即弃——不产生区间，防
+ *   「未闭合」按下一会话起点截断出幽灵停留（Opus 复测 (C)）；
  * - 未闭合开区间收尾 = min(证据终点, 下一会话起点, 首个 idle_start,
  *   start + 30 分钟)；
  * - 负时长 clamp 0（直接丢弃）。
@@ -277,14 +280,26 @@ export function buildLectureVisibleIntervals(
   const ordered = orderTraceEvents(events);
   const out: Interval[] = [];
   const openByView = new Map<string, number>();
+  /** 被当孤立忽略的 hidden（viewId → clientTs），仅用于同刻 visible 回配 */
+  const ignoredHiddenAt = new Map<string, number>();
   for (const e of ordered) {
     if (e.type === "lecture_visible" && e.viewId !== undefined) {
+      if (ignoredHiddenAt.get(e.viewId) === e.clientTs) {
+        // 同毫秒对：0 时长会话闭环即弃（不 push；亚毫秒生存期真实时长为 0）
+        ignoredHiddenAt.delete(e.viewId);
+        continue;
+      }
       if (!openByView.has(e.viewId)) openByView.set(e.viewId, e.clientTs);
       continue;
     }
     if (e.type === "lecture_hidden" && e.viewId !== undefined) {
       const start = openByView.get(e.viewId);
-      if (start === undefined) continue; // 重复 hidden：忽略
+      if (start === undefined) {
+        // 孤立 hidden（重复/双兜底双发）：不再无条件丢弃——记下时刻供同毫秒
+        // visible 回配；不同刻的记录天然不会被消费，等价于原「忽略」
+        ignoredHiddenAt.set(e.viewId, e.clientTs);
+        continue;
+      }
       openByView.delete(e.viewId);
       if (e.clientTs > start) out.push({ start, end: e.clientTs });
     }

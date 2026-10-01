@@ -2,7 +2,7 @@ import { analyticsQuerySchema } from "@tutor/contract";
 import { and, eq } from "drizzle-orm";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { Db } from "../db/client";
-import { attempts, teachers } from "../db/schema";
+import { attempts, lectures, teachers } from "../db/schema";
 import { createTestDb, TEST_TEACHER_ID } from "../db/test-utils";
 import { HttpError } from "../lib/http-error";
 import {
@@ -10,6 +10,8 @@ import {
   getAnalyticsQuestions,
   getAnalyticsStudent,
 } from "./analytics-service";
+import { appendLectureEvents } from "./event-service";
+import { loadLectureTraceEvents } from "./lecture-insights";
 import { type SeedDemoResult, seedDemoData } from "./seed-demo";
 
 /**
@@ -600,6 +602,126 @@ describe("学生画像", () => {
       expect(httpError.status).toBe(404);
       expect(httpError.code).toBe("STUDENT_NOT_FOUND");
     }
+  });
+});
+
+describe("讲义阅读地图跨学生隔离（回归：两名学生读同一篇讲义）", () => {
+  /**
+   * 回归夹具（Opus 复测发现的学情数据污染）：loadLectureTraceEvents 的
+   * where 第一析取支曾只按 lectureId 过滤、缺 studentId——任何学生 × 讲义
+   * 的地图把所有读过该讲义学生的事件一起聚合。种子数据各学生读不同讲义
+   * （陈小明→L1、李小红→L2），覆盖不到同讲义共读；这里用**独立库**补
+   * 「李小红读陈小明已读的 L1」（30 秒短会话），断言双向不污染：
+   * 陈小明地图保持种子原值、李小红 L1 地图只含本人 30 秒。独立库隔离于
+   * 文件顶部共享库，插入的事件不影响上方既有断言。
+   */
+  let isoDb: Db;
+  let isoSeed: SeedDemoResult;
+
+  beforeAll(async () => {
+    isoDb = createTestDb();
+    isoSeed = await seedDemoData(isoDb, TEST_TEACHER_ID, { now: SEED_NOW });
+    const l1 = isoDb
+      .select({ id: lectures.id, updatedAt: lectures.updatedAt })
+      .from(lectures)
+      .where(eq(lectures.id, isoSeed.lectures.l1.id))
+      .get();
+    if (l1 === undefined) throw new Error("夹具缺少讲义 L1");
+    const sec = (offset: number): number =>
+      Date.parse(SEED_NOW) - 86_400_000 + offset * 1000;
+    appendLectureEvents(isoDb, isoSeed.students.s2.id, [
+      {
+        type: "lecture_visible",
+        clientTs: sec(0),
+        lectureId: l1.id,
+        viewId: "reg-s2-l1",
+      },
+      {
+        type: "lecture_section_focus",
+        clientTs: sec(2),
+        lectureId: l1.id,
+        headingIndex: 0,
+        lectureUpdatedAt: l1.updatedAt,
+      },
+      {
+        type: "lecture_hidden",
+        clientTs: sec(30),
+        lectureId: l1.id,
+        viewId: "reg-s2-l1",
+      },
+    ]);
+  });
+
+  it("loadLectureTraceEvents 只取本人事件（「学生 × 讲义」口径，11→3 条）", () => {
+    // 修复前：第一析取支缺 studentId，陈小明的 8 条 L1 事件全部混入
+    const trace = loadLectureTraceEvents(
+      isoDb,
+      isoSeed.students.s2.id,
+      isoSeed.lectures.l1.id,
+    );
+    expect(trace).toHaveLength(3);
+    expect([...trace.map((e) => e.type)].sort()).toEqual([
+      "lecture_hidden",
+      "lecture_section_focus",
+      "lecture_visible",
+    ]);
+  });
+
+  it("陈小明地图不被李小红的新会话污染（保持种子原值：355 秒 / 可见 360 秒）", () => {
+    const s1 = getAnalyticsStudent(
+      isoDb,
+      TEST_TEACHER_ID,
+      isoSeed.students.s1.id,
+      q,
+      SEED_NOW,
+    );
+    expect(s1.lectures).toHaveLength(1);
+    // 修复前：混入李小红 30 秒会话 → totalVisibleSec 390、h0 dwell 295+28
+    expect(s1.lectures[0]?.map.summary).toMatchObject({
+      readSec: 355,
+      totalVisibleSec: 360,
+      sectionCoverage: 0.5,
+    });
+    expect(
+      s1.lectures[0]?.map.sections.map((section) => section.status),
+    ).toEqual(["deep", "skimmed", "not-reached", "not-reached"]);
+  });
+
+  it("李小红 L1 地图只含本人 30 秒（不含陈小明的 360 秒阅读）", () => {
+    const s2 = getAnalyticsStudent(
+      isoDb,
+      TEST_TEACHER_ID,
+      isoSeed.students.s2.id,
+      q,
+      SEED_NOW,
+    );
+    expect(s2.lectures.map((entry) => entry.title)).toEqual([
+      "第1讲 有理数",
+      "第2讲 数轴",
+    ]);
+    const l1 = s2.lectures[0];
+    // 修复前：混入陈小明事件 → h0 dwell 28+295、h1 被标 reached/skimmed、
+    // coverage 0.5、totalVisibleSec 390
+    expect(l1?.map.sections[0]).toMatchObject({ reached: true, dwellSec: 28 });
+    expect(
+      l1?.map.sections
+        .slice(1)
+        .every((s) => s.reached === false && s.status === "not-reached"),
+    ).toBe(true);
+    expect(l1?.map.summary).toMatchObject({
+      readSec: 28,
+      totalVisibleSec: 30,
+      sectionCoverage: 0.25,
+    });
+    // 本组新会话不含折叠/steps 交互：地图上这些行保持未打开/未开始
+    expect(l1?.map.folds.every((fold) => fold.opened === false)).toBe(true);
+    expect(l1?.map.steps.every((step) => step.status === "not-started")).toBe(
+      true,
+    );
+    // 附带：她自己原有的 L2 地图不受影响（仍是 [deep, not-reached]）
+    expect(
+      s2.lectures[1]?.map.sections.map((section) => section.status),
+    ).toEqual(["deep", "not-reached"]);
   });
 });
 
