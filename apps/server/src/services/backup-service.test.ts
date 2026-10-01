@@ -309,7 +309,11 @@ describe("备份 → 改数据 → 恢复（验收核心往返）", () => {
           .get(),
       ).toBeDefined();
       expect(
-        check.select().from(students).where(eq(students.id, "stu-backup-1")).get(),
+        check
+          .select()
+          .from(students)
+          .where(eq(students.id, "stu-backup-1"))
+          .get(),
       ).toBeDefined();
     } finally {
       check.$client.close();
