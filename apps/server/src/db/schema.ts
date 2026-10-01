@@ -828,9 +828,21 @@ export const events = sqliteTable(
     id: text("id").primaryKey(),
     /** 所属作答（attempts.id）；讲义等无 attempt 上下文的事件为 NULL */
     attemptId: text("attempt_id").references(() => attempts.id),
-    /** 题目（questions.id）；无题目语义的事件（page_hidden/page_visible/submit/lecture_expand）为 NULL */
+    /** 题目（questions.id）；无题目语义的事件（page 两态、submit、讲义域事件等）为 NULL */
     questionId: text("question_id"),
-    /** 事件类型（learningEventTypeSchema 11 种之一） */
+    /**
+     * 学生（students.id；T4.0a D8）：DDL 可空、代码恒写非空（T2B D9 同口径）——
+     * 服务端落库时从**会话**写入（前端不传，防伪造）。存量无 attemptId 的
+     * 讲义事件（lecture_expand）无法归属，保留 NULL、读侧按非空过滤。
+     */
+    studentId: text("student_id"),
+    /**
+     * 讲义（lectures.id；T4.0a D8）：讲义域事件落库时从 payload 顶层提取
+     * （questionIdOf 同款模式）——「学生 × 讲义」地图查询走索引，不必逐行
+     * JSON.parse。环境族 net/idle 无讲义语义，为 NULL。
+     */
+    lectureId: text("lecture_id"),
+    /** 事件类型（learningEventTypeSchema 22 种之一：T2.10 既有 11 + T4.0a 新增 11） */
     type: text("type")
       .$type<
         | "attempt_start"
@@ -844,6 +856,17 @@ export const events = sqliteTable(
         | "page_visible"
         | "submit"
         | "lecture_expand"
+        | "lecture_visible"
+        | "lecture_hidden"
+        | "net_offline"
+        | "net_online"
+        | "idle_start"
+        | "idle_end"
+        | "lecture_section_focus"
+        | "lecture_toc_jump"
+        | "directive_interact"
+        | "ink_edit_batch"
+        | "ink_fullscreen"
       >()
       .notNull(),
     /** 事件载荷 JSON（契约各事件 schema 的序列化，不含题目侧内容） */
@@ -856,6 +879,13 @@ export const events = sqliteTable(
   (table) => [
     // 交卷时按 attempt 取全量事件序列计算的定位索引（clientTs 升序处理）
     index("events_attempt_client_ts_idx").on(table.attemptId, table.clientTs),
+    // 讲义阅读地图常驻查询的定位索引（T4.0a D8：学生 × 讲义 × 时间；
+    // type 过滤在少量行上做即可）
+    index("events_student_lecture_client_ts_idx").on(
+      table.studentId,
+      table.lectureId,
+      table.clientTs,
+    ),
   ],
 );
 

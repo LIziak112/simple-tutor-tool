@@ -134,6 +134,13 @@
       "when": 1790701223895,
       "tag": "0018_young_vivisector",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "6",
+      "when": 1790825017817,
+      "tag": "0019_melted_lucky_pierre",
+      "breakpoints": true
     }
   ]
 }

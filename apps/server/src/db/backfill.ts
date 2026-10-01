@@ -12,6 +12,7 @@ import {
   courseStudents,
   courses,
   dataMigrations,
+  events,
   imports,
   lectures,
   libraryFolders,
@@ -48,6 +49,8 @@ type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
  *    补作业所属课程（D9 语义）；
  * 6. 现有 attempts：sourceType='assignment'、attemptNo=1（T2A.6，独立标记）；
  * 7. 「默认课程」按普通课程处理（无需特判，D23-7）。
+ * 8. 现有 events：有 attemptId 的行按 attempt→student 回填 studentId、
+ *    同批从存量 lecture_expand payload 回填 lectureId（T4.0a，D8，独立标记）。
  *
  * 另有孤儿资源兜底（backfillOrphans，与主标记无关、每次启动都执行、幂等），
  * 见该函数注释。
@@ -76,6 +79,13 @@ const T2B6_APP_SETTINGS_BACKFILL_KEY = "t2b6_app_settings_init";
  * scoreAuto / scoreFinal / status。数据回填（非结构变更），见 backfillT32aGrading。
  */
 const T32A_GRADING_SEMANTICS_BACKFILL_KEY = "t32a_grading_semantics_backfill";
+/**
+ * T4.0a（events 表补 studentId / lectureId 列，D8）的完成标记 key：
+ * 有 attemptId 的行按 attempt → student 回填、同批从存量 lecture_expand
+ * payload 回填 lectureId；无 attemptId 的存量讲义事件 studentId 保留 NULL
+ * （无法归属，读侧按非空过滤）。见 backfillT40aEvents。
+ */
+const T40A_EVENTS_STUDENT_LECTURE_BACKFILL_KEY = "t40a_events_backfill";
 
 /**
  * 执行全部未完成的数据搬迁（启动流程在 runMigrations 之后调用；
@@ -150,6 +160,17 @@ export function runBackfills(db: Db, now: Date = new Date()): void {
       tx.insert(dataMigrations)
         .values({
           key: T32A_GRADING_SEMANTICS_BACKFILL_KEY,
+          appliedAt: now.toISOString(),
+        })
+        .run();
+    });
+  }
+  if (!appliedKeys.has(T40A_EVENTS_STUDENT_LECTURE_BACKFILL_KEY)) {
+    db.transaction((tx) => {
+      backfillT40aEvents(tx);
+      tx.insert(dataMigrations)
+        .values({
+          key: T40A_EVENTS_STUDENT_LECTURE_BACKFILL_KEY,
           appliedAt: now.toISOString(),
         })
         .run();
@@ -616,6 +637,47 @@ function backfillT32aGrading(tx: Tx): void {
       tx.update(attempts)
         .set({ scoreAuto, scoreFinal, status })
         .where(eq(attempts.id, attempt.id))
+        .run();
+    }
+  }
+}
+
+// ---------- T4.0a：events 表 studentId / lectureId 存量回填（D8） ----------
+
+/**
+ * events 表补列后的存量回填（一次性，标记 t40a_events_backfill 防重跑）：
+ * 1. 有 attemptId 的行按 attempt → attempts.studentId 回填 studentId
+ *    （关联子查询命中即写；attempt 行异常缺失时保持 NULL，不猜归属）；
+ * 2. 同批从存量 payload 回填 lectureId：payload 顶层带 lectureId 的行
+ *    （即 lecture_expand，T4.0a 前唯一讲义域事件）提取落列——「学生 × 讲义」
+ *    聚合走索引，不必逐行 JSON.parse（§4.2 复审新增的理由）。
+ *
+ * 边界与幂等：
+ * - 无 attemptId 的存量讲义事件（lecture_expand）：lectureId 从 payload 回填，
+ *    studentId 无法可靠归属保留 NULL、读侧按 studentId IS NOT NULL 过滤（D8）；
+ * - 两步 UPDATE 均带 IS NULL 守卫——已回填或新代码已写入的行不再触碰，
+ *    标记行丢失重跑结果不变（坏 payloadJson 跳过，防御异常行）。
+ */
+function backfillT40aEvents(tx: Tx): void {
+  // 1. attempt 上下文行：studentId ← 所属 attempt 的学生
+  tx.run(sql`
+    UPDATE events
+    SET student_id = (SELECT student_id FROM attempts WHERE attempts.id = events.attempt_id)
+    WHERE student_id IS NULL AND attempt_id IS NOT NULL
+  `);
+
+  // 2. 讲义域行：lectureId ← payload 顶层字段（TS 解析，坏数据跳过）
+  for (const row of tx
+    .select({ id: events.id, payloadJson: events.payloadJson })
+    .from(events)
+    .where(isNull(events.lectureId))
+    .all()) {
+    const parsed = jsonOf(row.payloadJson) as { lectureId?: unknown } | undefined;
+    const lectureId = parsed?.lectureId;
+    if (typeof lectureId === "string" && lectureId.length > 0) {
+      tx.update(events)
+        .set({ lectureId })
+        .where(eq(events.id, row.id))
         .run();
     }
   }
