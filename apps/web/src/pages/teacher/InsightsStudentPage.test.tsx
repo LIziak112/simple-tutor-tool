@@ -522,9 +522,10 @@ describe("InsightsStudentPage 指标区", () => {
     mockedStudent.mockResolvedValue(makeStudent());
     renderPage();
     await screen.findByText("讲义阅读地图");
-    expect(
-      screen.getByRole("link", { name: /导出给 AI/ }),
-    ).toHaveAttribute("href", `/t/export?studentId=${S2}`);
+    expect(screen.getByRole("link", { name: /导出给 AI/ })).toHaveAttribute(
+      "href",
+      `/t/export?studentId=${S2}`,
+    );
   });
 });
 

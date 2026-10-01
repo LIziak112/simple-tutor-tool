@@ -1664,9 +1664,7 @@ export async function downloadLearningPackApi(
   const disposition = res.headers.get("content-disposition") ?? "";
   const matched = /filename="?([^";]+)"?/i.exec(disposition)?.[1];
   const filename =
-    matched !== undefined && matched.length > 0
-      ? matched
-      : "learning-pack.zip";
+    matched !== undefined && matched.length > 0 ? matched : "learning-pack.zip";
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
   try {

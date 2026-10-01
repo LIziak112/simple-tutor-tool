@@ -1,6 +1,6 @@
+import type { LearningPackExportRequest } from "@tutor/contract";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiError, downloadLearningPackApi } from "@/lib/api";
-import type { LearningPackExportRequest } from "@tutor/contract";
 
 /**
  * downloadLearningPackApi 单元测试（T4.4）：zip 走原生 fetch POST（文件直出
@@ -101,7 +101,8 @@ describe("downloadLearningPackApi", () => {
     const errorBody = {
       ok: false,
       error: "EXPORT_TOO_LARGE",
-      message: "内容合计超过 50 MB 上限，请减少学生、取消手写图片或缩短时间范围",
+      message:
+        "内容合计超过 50 MB 上限，请减少学生、取消手写图片或缩短时间范围",
     };
     vi.stubGlobal(
       "fetch",
@@ -113,9 +114,7 @@ describe("downloadLearningPackApi", () => {
       ),
     );
 
-    const err = await downloadLearningPackApi(REQUEST).catch(
-      (e: unknown) => e,
-    );
+    const err = await downloadLearningPackApi(REQUEST).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ApiError);
     const apiError = err as ApiError;
     expect(apiError.code).toBe("EXPORT_TOO_LARGE");

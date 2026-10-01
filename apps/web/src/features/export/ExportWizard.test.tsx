@@ -25,8 +25,8 @@ import {
   fetchTeacherCourses,
   previewLearningPackApi,
 } from "@/lib/api";
-import { ExportWizard } from "./ExportWizard";
 import ExportPage from "@/pages/teacher/ExportPage";
+import { ExportWizard } from "./ExportWizard";
 
 /**
  * 「导出给 AI」五步向导组件测试（T4.4）：步骤流转与下一步禁用条件、回退
@@ -277,9 +277,7 @@ describe("ExportWizard 五步流转", () => {
   it("①未选学生时下一步禁用；勾选后进入②；②无内容模块时下一步禁用", async () => {
     await renderWizard();
     expect(nextButton()).toBeDisabled();
-    expect(
-      screen.getByText(/下一步需要至少一名学生/),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/下一步需要至少一名学生/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("checkbox", { name: /陈小明/ }));
     expect(nextButton()).toBeEnabled();
@@ -321,9 +319,7 @@ describe("ExportWizard 五步流转", () => {
     expect(screen.getByText("pack.json")).toBeInTheDocument();
     expect(screen.getByText("映射.txt")).toBeInTheDocument();
     expect(screen.getByText(/51.1 KB/)).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: /生成并下载/ }),
-    ).toBeEnabled();
+    expect(screen.getByRole("button", { name: /生成并下载/ })).toBeEnabled();
   });
 
   it("回退保留状态：⑤→① 学生勾选仍在，改勾后再进⑤重新预览", async () => {
@@ -413,16 +409,18 @@ describe("ExportWizard 模块联动", () => {
     await pickStudentAndGoStep2();
 
     // 默认不含题目
-    expect(
-      screen.getByRole("radio", { name: "不包含题目" }),
-    ).toBeChecked();
-    fireEvent.click(screen.getByRole("radio", { name: "仅题干（题干中的答案标记会隐去）" }));
+    expect(screen.getByRole("radio", { name: "不包含题目" })).toBeChecked();
+    fireEvent.click(
+      screen.getByRole("radio", { name: "仅题干（题干中的答案标记会隐去）" }),
+    );
     fireEvent.click(screen.getByRole("radio", { name: "题干 + 参考答案" }));
     // 升级式单选：后者覆盖前者
     expect(
       screen.getByRole("radio", { name: "题干 + 参考答案" }),
     ).toBeChecked();
-    expect(screen.getByRole("radio", { name: "仅题干（题干中的答案标记会隐去）" })).not.toBeChecked();
+    expect(
+      screen.getByRole("radio", { name: "仅题干（题干中的答案标记会隐去）" }),
+    ).not.toBeChecked();
 
     fireEvent.click(screen.getByRole("checkbox", { name: /逐题答案/ }));
     fireEvent.click(nextButton());
@@ -520,7 +518,9 @@ describe("ExportWizard 隐私（D16）", () => {
     expect(screen.getByText(/确认在数据包中包含真实姓名/)).toBeInTheDocument();
     // 取消：开关不变化
     fireEvent.click(screen.getByRole("button", { name: "仍使用化名" }));
-    expect(screen.queryByText(/确认在数据包中包含真实姓名/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/确认在数据包中包含真实姓名/),
+    ).not.toBeInTheDocument();
     expect(realNameToggle).not.toBeChecked();
 
     // 再次打开并确认：关闭化名
@@ -567,9 +567,7 @@ describe("ExportWizard 预览与下载", () => {
       hint: "建议减少学生人数或取消手写图片",
     });
     await goToPreview();
-    expect(
-      screen.getByText(/超过 50 MB 上限，无法下载/),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/超过 50 MB 上限，无法下载/)).toBeInTheDocument();
     expect(screen.getByText(/服务端提示：/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /生成并下载/ })).toBeDisabled();
   });
@@ -596,9 +594,7 @@ describe("ExportWizard 预览与下载", () => {
     });
 
     resolveDownload("learning-pack-20260101-120000.zip");
-    expect(
-      await screen.findByText(/已生成并开始下载/),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/已生成并开始下载/)).toBeInTheDocument();
     expect(
       screen.getByText(/learning-pack-20260101-120000\.zip/),
     ).toBeInTheDocument();
@@ -613,9 +609,7 @@ describe("ExportWizard 预览与下载", () => {
     expect(
       await screen.findByText(/内容合计超过 50 MB 上限/),
     ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: /生成并下载/ }),
-    ).toBeEnabled();
+    expect(screen.getByRole("button", { name: /生成并下载/ })).toBeEnabled();
   });
 });
 
@@ -632,7 +626,10 @@ describe("ExportWizard 未完成离开确认", () => {
       <QueryClientProvider client={makeQueryClient()}>
         <MemoryRouter initialEntries={["/t/export"]}>
           <Routes>
-            <Route path="/t/export" element={<ExportWizard initialStudentId={null} />} />
+            <Route
+              path="/t/export"
+              element={<ExportWizard initialStudentId={null} />}
+            />
             <Route path="/t/insights" element={<LocationProbe />} />
           </Routes>
         </MemoryRouter>
@@ -654,7 +651,10 @@ describe("ExportWizard 未完成离开确认", () => {
       <QueryClientProvider client={makeQueryClient()}>
         <MemoryRouter initialEntries={["/t/export"]}>
           <Routes>
-            <Route path="/t/export" element={<ExportWizard initialStudentId={null} />} />
+            <Route
+              path="/t/export"
+              element={<ExportWizard initialStudentId={null} />}
+            />
             <Route path="/t/insights" element={<LocationProbe />} />
           </Routes>
         </MemoryRouter>
@@ -665,9 +665,7 @@ describe("ExportWizard 未完成离开确认", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "取消" }));
     const dialog = await screen.findByRole("dialog");
-    expect(
-      within(dialog).getByText("放弃未保存的内容？"),
-    ).toBeInTheDocument();
+    expect(within(dialog).getByText("放弃未保存的内容？")).toBeInTheDocument();
 
     // 继续编辑：弹层关闭、留在向导（步骤条仍在）
     fireEvent.click(within(dialog).getByRole("button", { name: "继续编辑" }));
@@ -708,7 +706,10 @@ describe("ExportWizard 未完成离开确认", () => {
       <QueryClientProvider client={makeQueryClient()}>
         <MemoryRouter initialEntries={["/t/export"]}>
           <Routes>
-            <Route path="/t/export" element={<ExportWizard initialStudentId={null} />} />
+            <Route
+              path="/t/export"
+              element={<ExportWizard initialStudentId={null} />}
+            />
             <Route path="/t/insights" element={<LocationProbe />} />
           </Routes>
         </MemoryRouter>

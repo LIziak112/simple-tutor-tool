@@ -1,10 +1,7 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import type { LectureDetail } from "@tutor/contract";
-import {
-  fetchLectureDetail,
-  previewLearningPackApi,
-} from "@/lib/api";
 import { extractOutline, type OutlineItem } from "@/features/markdown/outline";
+import { fetchLectureDetail, previewLearningPackApi } from "@/lib/api";
 
 /**
  * 学情数据包导出向导的查询封装（T4.4，纯消费 T4.3 接口）：

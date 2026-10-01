@@ -29,14 +29,14 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { DiscardConfirmDialog } from "@/features/assignments/DiscardConfirmDialog";
 import { useTeacherAssignments } from "@/features/assignments/assignment-queries";
+import { DiscardConfirmDialog } from "@/features/assignments/DiscardConfirmDialog";
 import { useTeacherCourses } from "@/features/courses/course-queries";
-import { useLearningPackPreview, useLectureOutline } from "./export-queries";
 import { useLibraryLectures } from "@/features/library/library-queries";
 import type { OutlineItem } from "@/features/markdown/outline";
 import { useStudents } from "@/features/students/student-queries";
 import { downloadLearningPackApi } from "@/lib/api";
+import { useLearningPackPreview, useLectureOutline } from "./export-queries";
 
 /**
  * 「导出给 AI」五步向导（T4.4，D14–D18；契约 learning-pack.ts 是请求的
@@ -60,13 +60,7 @@ import { downloadLearningPackApi } from "@/lib/api";
  * 下载成功后视为完成，退出不再确认。三态齐全，触控目标 ≥44px。
  */
 
-const STEP_LABELS = [
-  "① 范围",
-  "② 内容",
-  "③ 目标",
-  "④ 隐私",
-  "⑤ 预览",
-] as const;
+const STEP_LABELS = ["① 范围", "② 内容", "③ 目标", "④ 隐私", "⑤ 预览"] as const;
 
 /** 时间范围快捷项（与学情页 AnalyticsFilterBar 同组，默认 30 天） */
 const DAYS_OPTIONS = [
@@ -279,7 +273,9 @@ export function ExportWizard({
       const filename = await downloadLearningPackApi(buildRequest());
       setDownloadedFile(filename);
     } catch (err) {
-      setDownloadError(err instanceof Error ? err.message : "下载失败，请稍后重试");
+      setDownloadError(
+        err instanceof Error ? err.message : "下载失败，请稍后重试",
+      );
     } finally {
       setDownloading(false);
     }
@@ -297,10 +293,7 @@ export function ExportWizard({
     setLecturePicks((prev) => {
       const next = new Map(prev);
       if (picked) {
-        if (
-          next.size >= LEARNING_PACK_MAX_LECTURES &&
-          !next.has(lectureId)
-        ) {
+        if (next.size >= LEARNING_PACK_MAX_LECTURES && !next.has(lectureId)) {
           return prev; // 单包篇数上限（防御；正常操作远达不到）
         }
         next.set(lectureId, new Set());
@@ -311,7 +304,11 @@ export function ExportWizard({
     });
   }
 
-  function toggleSection(lectureId: string, index: number, checked: boolean): void {
+  function toggleSection(
+    lectureId: string,
+    index: number,
+    checked: boolean,
+  ): void {
     setLecturePicks((prev) => {
       const next = new Map(prev);
       const sections = new Set(next.get(lectureId) ?? []);
@@ -552,13 +549,14 @@ function StepScope({
   const [studentSearch, setStudentSearch] = useState("");
   const q = studentSearch.trim().toLowerCase();
   const students = studentsQuery.data?.students ?? [];
-  const filtered = q.length === 0
-    ? students
-    : students.filter(
-        (s) =>
-          s.displayName.toLowerCase().includes(q) ||
-          s.loginName.toLowerCase().includes(q),
-      );
+  const filtered =
+    q.length === 0
+      ? students
+      : students.filter(
+          (s) =>
+            s.displayName.toLowerCase().includes(q) ||
+            s.loginName.toLowerCase().includes(q),
+        );
 
   return (
     <section aria-label="第①步 选择范围" className="flex flex-col gap-5">
@@ -652,8 +650,7 @@ function StepScope({
             )}
             <p aria-live="polite" className="text-sm text-muted-foreground">
               已选 {studentIds.length} 人
-              {studentIds.length > 0 &&
-                `（导出时依次编为学生A、学生B…）`}
+              {studentIds.length > 0 && `（导出时依次编为学生A、学生B…）`}
               {studentIds.length === 0 && "（下一步需要至少一名学生）"}
             </p>
           </>
@@ -705,7 +702,9 @@ function StepScope({
       </p>
 
       <fieldset className="flex flex-col gap-1.5">
-        <legend className="text-sm">时间范围（按提交时间，默认最近 30 天）</legend>
+        <legend className="text-sm">
+          时间范围（按提交时间，默认最近 30 天）
+        </legend>
         <div className="flex flex-wrap gap-2">
           {DAYS_OPTIONS.map((option) => (
             <label
@@ -759,19 +758,13 @@ function StepModules({
   ink: boolean;
   traces: boolean;
   onToggleLecture: (lectureId: string, picked: boolean) => void;
-  onToggleSection: (
-    lectureId: string,
-    index: number,
-    checked: boolean,
-  ) => void;
+  onToggleSection: (lectureId: string, index: number, checked: boolean) => void;
   onSetAllSections: (
     lectureId: string,
     outline: readonly OutlineItem[],
     checked: boolean,
   ) => void;
-  onQuestionLevelChange: (
-    level: "stem" | "answer" | "solution" | null,
-  ) => void;
+  onQuestionLevelChange: (level: "stem" | "answer" | "solution" | null) => void;
   onResponsesChange: (checked: boolean) => void;
   onSummariesChange: (checked: boolean) => void;
   onInkChange: (checked: boolean) => void;
@@ -783,7 +776,9 @@ function StepModules({
   /** 单选升级式 radio 行样式（题目三层与目标卡片共用视觉语言） */
   const radioRowClass = (selected: boolean): string =>
     `flex min-h-11 cursor-pointer items-center gap-3 rounded-lg border px-3 py-2 text-sm outline-none select-none transition-colors has-[:focus-visible]:ring-3 has-[:focus-visible]:ring-ring/50 ${
-      selected ? "border-primary/50 bg-primary/5" : "border-border hover:bg-muted/50"
+      selected
+        ? "border-primary/50 bg-primary/5"
+        : "border-border hover:bg-muted/50"
     }`;
 
   return (
@@ -846,8 +841,7 @@ function StepModules({
           <legend className="text-sm">题目（三层递进，单选）</legend>
           <div className="flex flex-col gap-2 sm:grid sm:grid-cols-2">
             {QUESTION_LEVEL_OPTIONS.map((option) => {
-              const value =
-                option.value === "none" ? null : option.value;
+              const value = option.value === "none" ? null : option.value;
               return (
                 <label
                   key={option.value}
@@ -959,7 +953,13 @@ function StepModules({
       </div>
 
       <p aria-live="polite" className="text-sm text-muted-foreground">
-        {hasContentModuleOf({ lectures: lecturePicks.size, questionLevel, responses, summaries, traces })
+        {hasContentModuleOf({
+          lectures: lecturePicks.size,
+          questionLevel,
+          responses,
+          summaries,
+          traces,
+        })
           ? "已勾选内容模块。"
           : "下一步需要至少勾选一个内容模块（讲义 / 题目 / 逐题作答 / 作答汇总 / 学习痕迹；手写 PNG 只是附件开关）。"}
       </p>
@@ -1003,11 +1003,7 @@ function LectureRow({
   sections: ReadonlySet<number>;
   pickDisabled: boolean;
   onToggleLecture: (lectureId: string, picked: boolean) => void;
-  onToggleSection: (
-    lectureId: string,
-    index: number,
-    checked: boolean,
-  ) => void;
+  onToggleSection: (lectureId: string, index: number, checked: boolean) => void;
   onSetAllSections: (
     lectureId: string,
     outline: readonly OutlineItem[],
@@ -1017,8 +1013,7 @@ function LectureRow({
   const [expanded, setExpanded] = useState(false);
   const outlineQuery = useLectureOutline(expanded ? lectureId : null);
   const outline = outlineQuery.data ?? [];
-  const allChecked =
-    outline.length > 0 && sections.size >= outline.length;
+  const allChecked = outline.length > 0 && sections.size >= outline.length;
 
   return (
     <li className="rounded-md">
@@ -1066,7 +1061,10 @@ function LectureRow({
               正在加载目录…
             </p>
           ) : outlineQuery.isError ? (
-            <div role="alert" className="flex flex-col items-start gap-2 px-2 py-2">
+            <div
+              role="alert"
+              className="flex flex-col items-start gap-2 px-2 py-2"
+            >
               <p className="text-sm text-destructive">
                 {outlineQuery.error instanceof Error
                   ? outlineQuery.error.message
@@ -1094,7 +1092,9 @@ function LectureRow({
                   type="button"
                   variant="ghost"
                   className="min-h-11 px-2 text-xs"
-                  onClick={() => onSetAllSections(lectureId, outline, !allChecked)}
+                  onClick={() =>
+                    onSetAllSections(lectureId, outline, !allChecked)
+                  }
                 >
                   {allChecked ? "清空小节" : "全选小节"}
                 </Button>
@@ -1118,7 +1118,9 @@ function LectureRow({
                       <span className="shrink-0 text-xs text-muted-foreground">
                         H{item.depth}
                       </span>
-                      <span className="min-w-0 flex-1 truncate">{item.text}</span>
+                      <span className="min-w-0 flex-1 truncate">
+                        {item.text}
+                      </span>
                     </label>
                   </li>
                 ))}
@@ -1259,7 +1261,9 @@ function StepPrivacy({
       {confirmRealName && (
         <Dialog
           open
-          onOpenChange={(open) => (open ? undefined : setConfirmRealName(false))}
+          onOpenChange={(open) =>
+            open ? undefined : setConfirmRealName(false)
+          }
         >
           <DialogContent className="max-w-md">
             <DialogHeader>
@@ -1351,14 +1355,21 @@ function StepPreview({
       )}
 
       {previewMutation.isError && (
-        <div role="alert" className="flex flex-col items-start gap-2 rounded-xl border border-border bg-card p-4">
+        <div
+          role="alert"
+          className="flex flex-col items-start gap-2 rounded-xl border border-border bg-card p-4"
+        >
           <p className="text-sm font-medium text-destructive">预览加载失败</p>
           <p className="text-sm text-muted-foreground">
             {previewMutation.error instanceof Error
               ? previewMutation.error.message
               : "网络异常，请稍后重试"}
           </p>
-          <Button variant="outline" className="min-h-11" onClick={onRetryPreview}>
+          <Button
+            variant="outline"
+            className="min-h-11"
+            onClick={onRetryPreview}
+          >
             重新预览
           </Button>
         </div>
@@ -1430,18 +1441,12 @@ function StepPreview({
 
           {downloadedFile !== null ? (
             <div className="flex flex-col items-start gap-2 rounded-xl border border-border bg-muted/30 p-4 text-sm">
-              <p className="font-medium">
-                已生成并开始下载：{downloadedFile}
-              </p>
+              <p className="font-medium">已生成并开始下载：{downloadedFile}</p>
               <p className="text-muted-foreground">
                 把整个 zip 交给 AI 即可——把包内 prompt.md 一并粘贴或上传，
                 分析任务与数据说明都在里面。
               </p>
-              <Button
-                variant="outline"
-                className="min-h-11"
-                onClick={onFinish}
-              >
+              <Button variant="outline" className="min-h-11" onClick={onFinish}>
                 返回学情总览
               </Button>
             </div>

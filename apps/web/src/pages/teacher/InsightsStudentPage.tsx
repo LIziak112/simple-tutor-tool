@@ -197,7 +197,9 @@ export function InsightsStudentPage() {
               to={{
                 pathname: "/t/data",
                 search:
-                  id !== undefined ? `?studentId=${encodeURIComponent(id)}` : "",
+                  id !== undefined
+                    ? `?studentId=${encodeURIComponent(id)}`
+                    : "",
               }}
             >
               <ArrowLeft aria-hidden />

@@ -360,9 +360,10 @@ describe("InsightsOverviewPage 完成矩阵（D2）", () => {
     mockedOverview.mockResolvedValue(makeOverview());
     renderPage();
     await screen.findByText("开学摸底练习");
-    expect(
-      screen.getByRole("link", { name: /导出给 AI/ }),
-    ).toHaveAttribute("href", "/t/export");
+    expect(screen.getByRole("link", { name: /导出给 AI/ })).toHaveAttribute(
+      "href",
+      "/t/export",
+    );
   });
 
   it("课程筛选时待批队列链接携带 courseId", async () => {
