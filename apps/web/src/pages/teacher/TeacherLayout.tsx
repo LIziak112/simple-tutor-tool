@@ -1,9 +1,11 @@
 import {
   ClipboardList,
   Database,
+  FileDown,
   GraduationCap,
   Library,
   LineChart,
+  PlugZap,
   Settings,
   Share2,
   ShieldCheck,
@@ -16,9 +18,11 @@ import { ApiError } from "@/lib/api";
 import { AuthScreenError, AuthScreenLoading } from "./SetupPage";
 
 /**
- * /t 教师端布局 + 路由守卫（T1.9）。侧边栏（T2A.9 定稿，2026-09-29 去重简化）：
- * 资源库 · 课程 · 学生 · 作业 · 数据 · 学情 · 设置（数据自 T3.1 起为作答数据页，
- * 学情自 T4.2 起为学情分析页三视图：总览 / 学生画像 / 题目视角）。
+ * /t 教师端布局 + 路由守卫（T1.9）。侧边栏（T2A.9 定稿，2026-09-29 去重简化；
+ * T4.7 起「学情」附近追加「导出」（/t/export 导出中心）与「连接 AI」
+ * （/t/connect，D26）两个入口）：资源库 · 课程 · 学生 · 作业 · 数据 · 学情 ·
+ * 导出 · 连接 AI · 设置（数据自 T3.1 起为作答数据页，学情自 T4.2 起为学情
+ * 分析页三视图：总览 / 学生画像 / 题目视角）。
  * T2B.6：管理员（me.isAdmin）在侧边栏末尾追加「管理」入口（/a 独立布局）。
  * 讲义库/题库/回收站由 /t/library 页面顶部页签切换（?tab= 直达，无参数时
  * 记忆上次页签），导入经页面
@@ -52,6 +56,9 @@ const NAV_ITEMS: NavItemSpec[] = [
   { to: "/t/assignments", label: "作业", icon: ClipboardList },
   { to: "/t/data", label: "数据", icon: Database },
   { to: "/t/insights", label: "学情", icon: LineChart },
+  // T4.7：导出中心（T4.4 五步向导）与连接 AI（D26）入口，放「学情」附近
+  { to: "/t/export", label: "导出", icon: FileDown },
+  { to: "/t/connect", label: "连接 AI", icon: PlugZap },
   { to: "/t/settings", label: "设置", icon: Settings },
 ];
 

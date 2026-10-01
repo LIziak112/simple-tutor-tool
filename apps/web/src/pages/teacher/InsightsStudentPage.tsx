@@ -24,6 +24,7 @@ import {
   formatScore,
 } from "@/features/insights/insights-format";
 import { LectureReadingMapView } from "@/features/insights/LectureReadingMapView";
+import { StudentReportsSection } from "@/features/insights/StudentReportsSection";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { formatActiveSec } from "@/features/teacher-attempts/AttemptDetailQuestionCard";
 import { ApiError } from "@/lib/api";
@@ -38,7 +39,8 @@ import { formatDueTime, formatRelativeTime } from "@/lib/time";
  * - 用时异常题卡片（D6：slow/hints 两类，跳作答详情）；
  * - 重做概览（独立指标 D1，不受时间范围限制）、离线作答占比；
  * - 讲义阅读地图（T4.0 §4.4.4：目录树逐项状态 + 行为推断标注 + 含挂机时长）；
- * - AI 报告列表区占位（T4.6 后接入，不做假数据）；
+ * - AI 报告列表区（T4.7 接入实数据：列表 / 点开 Markdown 渲染 / 删除确认，
+ *   数据来自 MCP save_report 与未来手动入口，见 StudentReportsSection）；
  * - 学生不存在 / 非本教师 → 接口 404 STUDENT_NOT_FOUND，页面呈现错误态。
  * 筛选（时间范围/课程）同步 URL，从总览矩阵点入时携带上下文。
  */
@@ -488,20 +490,8 @@ export function InsightsStudentPage() {
             <LectureReadingMapView entries={data.lectures} />
           </section>
 
-          {/* T4.6 后接入报告实数据；本阶段占位空态，不做假数据 */}
-          <section aria-label="AI 报告" className="flex flex-col gap-2">
-            <h2 className="flex items-center gap-1.5 text-sm font-semibold">
-              <Sparkles aria-hidden className="size-4 text-primary" />
-              AI 报告
-            </h2>
-            <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed border-border bg-card px-6 py-10 text-center">
-              <p className="text-sm font-medium">AI 报告将在连接 AI 后出现</p>
-              <p className="max-w-sm text-sm text-muted-foreground">
-                连接 AI（MCP）后，AI 可以基于这名学生的学情数据生成诊断与
-                讲解建议，报告会列在这里供你查看。
-              </p>
-            </div>
-          </section>
+          {/* T4.7：AI 报告实数据（T4.2 占位换实——列表/展开渲染/删除确认） */}
+          {id !== undefined && <StudentReportsSection studentId={id} />}
         </>
       )}
     </section>

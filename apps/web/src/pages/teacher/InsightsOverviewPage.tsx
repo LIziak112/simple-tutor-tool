@@ -103,7 +103,7 @@ export function InsightsOverviewPage() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <InsightsViewSwitcher view="overview" query={query} />
-          {/* T4.4：导出给 AI 入口（/t/export 五步向导；侧边栏不加，T4.7 统一调） */}
+          {/* T4.4：导出给 AI 入口（/t/export 五步向导；侧边栏「导出」同指） */}
           <Button variant="outline" className="min-h-11" asChild>
             <Link to="/t/export">
               <FileDown aria-hidden />

@@ -7,8 +7,9 @@ import { fetchTeacherMe } from "@/lib/api";
 import TeacherLayout from "./TeacherLayout";
 
 /**
- * 教师端布局导航测试（2026-09-29 侧边栏去重简化）：
- * 资源库 · 课程 · 学生 · 作业 · 数据 · 学情 · 设置；
+ * 教师端布局导航测试（2026-09-29 侧边栏去重简化；T4.7 起「学情」附近追加
+ * 「导出」与「连接 AI」）：
+ * 资源库 · 课程 · 学生 · 作业 · 数据 · 学情 · 导出 · 连接 AI · 设置；
  * 讲义库/题库/回收站由 /t/library 页内页签切换、导入经「导入内容」按钮，
  * 侧边栏不再单列（与页内导航去重）；资源库在 /t/library 任意页签与
  * /t/import（导入流程页）上均高亮（aria-current）。
@@ -65,7 +66,7 @@ describe("TeacherLayout 导航（侧边栏去重简化）", () => {
     );
   });
 
-  it("渲染七个分区入口，讲义库/题库/导入不再单列", async () => {
+  it("渲染九个分区入口（T4.7 增导出与连接 AI），讲义库/题库/导入不再单列", async () => {
     mockedMe.mockResolvedValue(TEACHER);
     renderLayout("/t/courses");
 
@@ -92,6 +93,15 @@ describe("TeacherLayout 导航（侧边栏去重简化）", () => {
     expect(screen.getByRole("link", { name: "学情" })).toHaveAttribute(
       "href",
       "/t/insights",
+    );
+    // T4.7：导出中心与连接 AI（D26），放「学情」附近
+    expect(screen.getByRole("link", { name: "导出" })).toHaveAttribute(
+      "href",
+      "/t/export",
+    );
+    expect(screen.getByRole("link", { name: "连接 AI" })).toHaveAttribute(
+      "href",
+      "/t/connect",
     );
     expect(screen.getByRole("link", { name: "设置" })).toHaveAttribute(
       "href",

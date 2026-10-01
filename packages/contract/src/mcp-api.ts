@@ -9,6 +9,8 @@ import { z } from "zod";
  *   旧 token 立即失效；前端重置需二次确认并提示「已配置的客户端需更新」）；
  * - GET  /api/teacher/students/:id/reports：学生报告列表（D24，createdAt 倒序；
  *   他人学生 → 404 不暴露存在性）；
+ * - GET  /api/teacher/reports/:id：单份报告详情（含 markdown 正文；T4.7 画像页
+ *   报告列表区「点开渲染」按需取，正文不进列表行——列表见 reportSummarySchema）；
  * - DELETE /api/teacher/reports/:id：删除报告（他人报告 → 404；不做编辑，D24）。
  *
  * MCP 端点 /mcp 本身不走 HTTP 统一壳（SDK 协议格式原样，Phase4 清单 §3 已注明
@@ -73,6 +75,11 @@ export const reportListDataSchema = z.object({
   reports: z.array(reportSummarySchema),
 });
 
+/** GET /api/teacher/reports/:id 响应 data（详情含 markdown 正文，T4.7 画像页按需取） */
+export const reportDetailSchema = reportSummarySchema.extend({
+  markdown: z.string().min(1),
+});
+
 /** save_report 成功回执（MCP 工具与 createReport 服务共用；教师 HTTP 端暂无 POST） */
 export const reportCreateDataSchema = z.object({
   id: z.uuid(),
@@ -100,4 +107,5 @@ export type ReportSource = z.infer<typeof reportSourceSchema>;
 export type ReportCreateRequest = z.infer<typeof reportCreateRequestSchema>;
 export type ReportSummary = z.infer<typeof reportSummarySchema>;
 export type ReportListData = z.infer<typeof reportListDataSchema>;
+export type ReportDetail = z.infer<typeof reportDetailSchema>;
 export type ReportCreateData = z.infer<typeof reportCreateDataSchema>;

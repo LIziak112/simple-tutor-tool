@@ -1,11 +1,13 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiTokenSection } from "@/features/teacher-settings/ApiTokenSection";
 import { fetchApiToken, resetApiToken } from "@/lib/api";
 
 /**
- * 设置页「AI 连接（API Token）」区组件测试（T4.6 D22）：
+ * 设置页「AI 连接（API Token）」区组件测试（T4.6 D22；T4.7 增 /t/connect
+ * 入口链接——组件含 Link，渲染需包 Router）：
  * - 三态：未生成（提示 + 生成按钮）、已生成（明文展示 + 复制 + 重置）、加载失败；
  * - 生成：直接调用（无弹层）；
  * - 重置：二次确认弹层（含「已配置的客户端需要更新」提示）→ 确认才调用；
@@ -31,7 +33,9 @@ function renderSection() {
   });
   return render(
     <QueryClientProvider client={queryClient}>
-      <ApiTokenSection />
+      <MemoryRouter>
+        <ApiTokenSection />
+      </MemoryRouter>
     </QueryClientProvider>,
   );
 }
@@ -118,5 +122,14 @@ describe("ApiTokenSection（T4.6 D22）", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: /生成 Token/ }));
     expect(await screen.findByText("重置失败")).toBeVisible();
+  });
+
+  it("T4.7：含「连接说明与配置示例」入口，指向 /t/connect", async () => {
+    renderSection();
+    const link = await screen.findByRole("link", {
+      name: /连接说明与配置示例/,
+    });
+    expect(link).toBeVisible();
+    expect(link.getAttribute("href")).toBe("/t/connect");
   });
 });
