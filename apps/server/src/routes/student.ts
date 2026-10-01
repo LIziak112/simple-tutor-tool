@@ -72,8 +72,12 @@ import { listWrongQuestions } from "../services/wrong-questions";
  * - POST /attempts/:id/events：学习痕迹事件批量上报（T2.10，≤200 条/次：
  *   超限/非法 type 400，非本人 403，未登录 401；已交后仍收——交卷瞬间的前台
  *   flush 可能晚到，宽松口径见 event-service）；响应只回 accepted 计数；
- * - POST /events：无 attempt 上下文的事件批量（T2.10；目前只有 lecture_expand
- *   讲义展开，attemptId/questionId 落 NULL、归属在 payload）；
+ *   T4.0a 增收交互族（host=question/result）、ink_edit_batch、ink_fullscreen、
+ *   net/idle（接收范围由契约 attemptEventSchema 锁定）；
+ * - POST /events：无 attempt 上下文的事件批量（T2.10 lecture_expand +
+ *   T4.0a 讲义域事件组：lecture_visible/hidden、net、idle、
+ *   lecture_section_focus、lecture_toc_jump、directive_interact host=lecture；
+ *   attemptId/questionId 落 NULL，studentId 从会话写、lectureId 从 payload 提取）；
  * - PUT  /attempts/:id/ink/:questionId：上传/覆盖手写笔迹（T2.8，multipart：
  *   strokes（gzip 后 InkDoc JSON）+ snapshot（PNG），合计 ≤2MB 超 413）；
  * - GET  /attempts/:id/ink/:questionId：取回该题矢量 InkDoc（无笔迹 404）；

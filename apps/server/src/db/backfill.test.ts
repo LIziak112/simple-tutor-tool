@@ -23,6 +23,7 @@ import {
   courseStudents,
   courses,
   dataMigrations,
+  events,
   lectures,
   libraryFolders,
   responses,
@@ -313,6 +314,10 @@ describe("D23 数据搬迁（T2A 前结构 fixture → 迁移 → 回填）", ()
         key: "t32a_grading_semantics_backfill",
         appliedAt: "2026-09-27T00:00:00.000Z",
       },
+      {
+        key: "t40a_events_backfill",
+        appliedAt: "2026-09-27T00:00:00.000Z",
+      },
     ]);
   });
 
@@ -366,10 +371,10 @@ describe("D23 数据搬迁（T2A 前结构 fixture → 迁移 → 回填）", ()
     expect(db.select().from(libraryFolders).all()).toEqual([]);
     expect(db.select().from(courseItems).all()).toEqual([]);
     expect(db.select().from(courseStudents).all()).toEqual([]);
-    expect(db.select().from(dataMigrations).all()).toHaveLength(6);
+    expect(db.select().from(dataMigrations).all()).toHaveLength(7);
     // 全新库再跑一次同样幂等
     runBackfills(db);
-    expect(db.select().from(dataMigrations).all()).toHaveLength(6);
+    expect(db.select().from(dataMigrations).all()).toHaveLength(7);
   });
 });
 
@@ -524,7 +529,7 @@ describe("D23-5 作业结构搬迁（T2A.6 时代结构 fixture → 迁移 → �
     ).toBe(true);
     expect(db.select().from(attempts).get()?.courseId).toBe("c-a");
     // 标记 appliedAt 仍是首次时间戳
-    expect(db.select().from(dataMigrations).all()).toHaveLength(6);
+    expect(db.select().from(dataMigrations).all()).toHaveLength(7);
     expect(
       db
         .select()
@@ -1197,6 +1202,10 @@ describe("孤儿资源兜底（T2A.1 事故修复：与主标记无关、每次�
         key: "t32a_grading_semantics_backfill",
         appliedAt: "2026-09-27T00:00:00.000Z",
       },
+      {
+        key: "t40a_events_backfill",
+        appliedAt: "2026-09-27T00:00:00.000Z",
+      },
     ]);
   });
 
@@ -1250,7 +1259,7 @@ describe("孤儿资源兜底（T2A.1 事故修复：与主标记无关、每次�
           .map((row) => [row.id, row.folderId] as const),
       ),
     ).toEqual(unitFolderIds);
-    expect(db.select().from(dataMigrations).all()).toHaveLength(6);
+    expect(db.select().from(dataMigrations).all()).toHaveLength(7);
   });
 });
 
@@ -1581,6 +1590,219 @@ describe("T3.2a 判分口径回填（旧口径已交 attempt → D1/D2/D3 重算
     runBackfills(db, new Date("2026-10-01T00:00:00.000Z"));
     expect(db.select().from(responses).all()).toEqual(afterFirst.responses);
     expect(db.select().from(attempts).all()).toEqual(afterFirst.attempts);
+    db.$client.close();
+  });
+});
+
+// ---------- T4.0a：events 表 studentId / lectureId 存量回填（D8） ----------
+
+/** T4.0a 前最后一个迁移的 tag（0019 为 events 加列迁移） */
+const PRE_T4_0A_LAST_TAG = "0018_young_vivisector";
+
+/** 建「T4.0a 前结构」内存库（events 无 student_id/lecture_id 列） */
+function createPreT40aDb(): Db {
+  const db = createDb(":memory:");
+  migrate(db, {
+    migrationsFolder: makeMigrationsFolderUpTo(PRE_T4_0A_LAST_TAG),
+  });
+  return db;
+}
+
+/**
+ * T4.0a 前形态 fixture（原生 SQL）：1 学生 + 1 attempt + 1 讲义，
+ * 事件覆盖三类——attempt 上下文 3 条（studentId 待按 attempt 回填，其中
+ * page_hidden 无题目语义）、无 attempt 的 lecture_expand 2 条（lectureId
+ * 待从 payload 回填、studentId 无法归属保留 NULL）。
+ */
+function insertPreT40aFixture(db: Db): void {
+  const t = "2026-03-01T08:00:00.000Z";
+  db.$client.exec(`
+    INSERT INTO students (id, teacher_id, display_name, login_name, link_token, link_enabled, password_enabled, archived_at, created_at) VALUES
+      ('s-1', '${TEST_TEACHER_ID}', '张三', '张三', 'tok-1', 1, 0, NULL, '${t}');
+    INSERT INTO attempts (id, student_id, source_type, assignment_id, course_id, unit_id, attempt_no, status, started_at, submitted_at, active_sec, device, score_auto, score_final) VALUES
+      ('at-1', 's-1', 'assignment', NULL, NULL, 'u-1', 1, 'draft', '${t}', NULL, NULL, NULL, NULL, NULL);
+    INSERT INTO lectures (id, teacher_id, course_id, folder_id, title, markdown, "order", updated_at, deleted_at) VALUES
+      ('l-1', '${TEST_TEACHER_ID}', NULL, NULL, '第一讲', '# 第一讲', 0, '${t}', NULL);
+    INSERT INTO events (id, attempt_id, question_id, type, payload_json, client_ts, server_ts) VALUES
+      ('ev-1', 'at-1', 'q-1', 'question_focus', '{"type":"question_focus","clientTs":1772000000000,"questionId":"q-1"}', 1772000000000, '${t}'),
+      ('ev-2', 'at-1', 'q-1', 'answer_change', '{"type":"answer_change","clientTs":1772000001000,"questionId":"q-1"}', 1772000001000, '${t}'),
+      ('ev-3', NULL, NULL, 'lecture_expand', '{"type":"lecture_expand","clientTs":1772000002000,"lectureId":"l-1","directive":"solution","index":1}', 1772000002000, '${t}'),
+      ('ev-4', NULL, NULL, 'lecture_expand', '{"type":"lecture_expand","clientTs":1772000003000,"lectureId":"l-1","directive":"fold","index":2}', 1772000003000, '${t}'),
+      ('ev-5', 'at-1', NULL, 'page_hidden', '{"type":"page_hidden","clientTs":1772000004000}', 1772000004000, '${t}');
+  `);
+}
+
+describe("T4.0a events 补列回填（pre-T4.0a 结构 fixture → 迁移 → 回填）", () => {
+  it("结构变更：events 加 student_id / lecture_id 列与 (studentId, lectureId, clientTs) 索引", () => {
+    const db = createPreT40aDb();
+    insertPreT40aFixture(db);
+    migrateAndBackfill(db);
+
+    const idx = db.$client
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'events'",
+      )
+      .all() as Array<{ name: string }>;
+    expect(idx.map((row) => row.name)).toContain(
+      "events_student_lecture_client_ts_idx",
+    );
+    expect(db.$client.pragma("foreign_key_check")).toHaveLength(0);
+    db.$client.close();
+  });
+
+  it("有 attemptId 的行按 attempt 回填 studentId；lecture_expand 从 payload 回填 lectureId；无归属的保留 NULL", () => {
+    const db = createPreT40aDb();
+    insertPreT40aFixture(db);
+    migrateAndBackfill(db);
+
+    const rowOf = (id: string) =>
+      db
+        .select({ studentId: events.studentId, lectureId: events.lectureId })
+        .from(events)
+        .where(eq(events.id, id))
+        .get();
+    // attempt 上下文行：studentId 回填、lectureId 保持 NULL（payload 无讲义语义）
+    expect(rowOf("ev-1")).toEqual({ studentId: "s-1", lectureId: null });
+    expect(rowOf("ev-2")).toEqual({ studentId: "s-1", lectureId: null });
+    // 讲义行：lectureId 从 payload 回填、studentId 无法归属保留 NULL（D8）
+    expect(rowOf("ev-3")).toEqual({ studentId: null, lectureId: "l-1" });
+    expect(rowOf("ev-4")).toEqual({ studentId: null, lectureId: "l-1" });
+    // attempt 上下文但无题目语义：同 ev-1 口径
+    expect(rowOf("ev-5")).toEqual({ studentId: "s-1", lectureId: null });
+    db.$client.close();
+  });
+
+  it("幂等：重复执行 runBackfills（乃至标记丢失重跑）结果不变；新代码写入的行不被触碰", () => {
+    const db = createPreT40aDb();
+    insertPreT40aFixture(db);
+    migrateAndBackfill(db);
+    const afterFirst = db
+      .select({
+        id: events.id,
+        studentId: events.studentId,
+        lectureId: events.lectureId,
+      })
+      .from(events)
+      .all();
+
+    // ① 标记命中：整体跳过
+    runMigrations(db);
+    runBackfills(db, new Date("2026-10-01T00:00:00.000Z"));
+    expect(
+      db
+        .select({
+          id: events.id,
+          studentId: events.studentId,
+          lectureId: events.lectureId,
+        })
+        .from(events)
+        .all(),
+    ).toEqual(afterFirst);
+
+    // ② 标记丢失（库被手工改过）→ IS NULL 守卫下重跑，值不漂移
+    db.delete(dataMigrations)
+      .where(eq(dataMigrations.key, "t40a_events_backfill"))
+      .run();
+    runBackfills(db, new Date("2026-10-02T00:00:00.000Z"));
+    expect(
+      db
+        .select({
+          id: events.id,
+          studentId: events.studentId,
+          lectureId: events.lectureId,
+        })
+        .from(events)
+        .all(),
+    ).toEqual(afterFirst);
+
+    // 新代码写入的行（两列已带值）不被触碰
+    db.insert(events)
+      .values({
+        id: "ev-new",
+        attemptId: null,
+        questionId: null,
+        studentId: "s-1",
+        lectureId: "l-1",
+        type: "lecture_visible",
+        payloadJson:
+          '{"type":"lecture_visible","clientTs":1772000005000,"lectureId":"l-1","viewId":"v-1"}',
+        clientTs: 1772000005000,
+        serverTs: "2026-10-02T00:00:00.000Z",
+      })
+      .run();
+    runBackfills(db, new Date("2026-10-03T00:00:00.000Z"));
+    expect(
+      db.select().from(events).where(eq(events.id, "ev-new")).get(),
+    ).toMatchObject({ studentId: "s-1", lectureId: "l-1" });
+    db.$client.close();
+  });
+
+  it("坏 payloadJson 行防御性跳过（不抛错、lectureId 保持 NULL）；读侧兼容 NULL 归属行", async () => {
+    const db = createTestDb();
+    // attempts.student_id 有外键：先建学生行
+    db.insert(students)
+      .values({
+        id: "s-bad",
+        teacherId: TEST_TEACHER_ID,
+        displayName: "坏数据学生",
+        loginName: "s-bad",
+        passwordHash: null,
+        linkToken: "tok-bad",
+        createdAt: "2026-03-01T00:00:00.000Z",
+      })
+      .run();
+    db.insert(attempts)
+      .values({
+        id: "at-bad",
+        studentId: "s-bad",
+        sourceType: "course",
+        assignmentId: null,
+        courseId: null,
+        unitId: "u-bad",
+        attemptNo: 1,
+        status: "draft",
+        startedAt: "2026-03-01T00:00:00.000Z",
+        submittedAt: null,
+        activeSec: null,
+        device: null,
+        scoreAuto: null,
+        scoreFinal: null,
+      })
+      .run();
+    db.insert(events)
+      .values({
+        id: "ev-bad",
+        attemptId: "at-bad",
+        questionId: null,
+        studentId: null,
+        lectureId: null,
+        type: "lecture_expand",
+        payloadJson: "不是 JSON",
+        clientTs: 1772000006000,
+        serverTs: "2026-03-01T00:00:00.000Z",
+      })
+      .run();
+    // createTestDb 已写标记：摘掉让回填真正作用于刚构造的行
+    db.delete(dataMigrations)
+      .where(eq(dataMigrations.key, "t40a_events_backfill"))
+      .run();
+    expect(() =>
+      runBackfills(db, new Date("2026-10-01T00:00:00.000Z")),
+    ).not.toThrow();
+    // 坏行：studentId 仍可按 attempt 回填（第 1 步不依赖 payload）；lectureId 跳过
+    expect(
+      db
+        .select({ studentId: events.studentId, lectureId: events.lectureId })
+        .from(events)
+        .where(eq(events.id, "ev-bad"))
+        .get(),
+    ).toEqual({ studentId: "s-bad", lectureId: null });
+
+    // 读侧兼容：既有读路径（attemptTimeline）对 NULL 归属行照常返回
+    const { attemptTimeline } = await import("../services/event-service.ts");
+    const timeline = attemptTimeline(db, "at-bad");
+    expect(timeline).toHaveLength(1);
+    expect(timeline[0]).toMatchObject({ type: "lecture_expand" });
     db.$client.close();
   });
 });

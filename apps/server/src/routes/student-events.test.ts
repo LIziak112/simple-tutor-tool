@@ -54,6 +54,7 @@ async function makeEventsApp(): Promise<{
   app: App;
   db: Db;
   aCookie: string;
+  aStudentId: string;
   bCookie: string;
   assignmentId: string;
   lectureId: string;
@@ -104,6 +105,7 @@ async function makeEventsApp(): Promise<{
     app,
     db,
     aCookie: await loginStudent(app, "张三"),
+    aStudentId: aId,
     bCookie: await loginStudent(app, "李四"),
     assignmentId,
     lectureId,
@@ -551,5 +553,262 @@ describe("交卷联动：事件序列 → responses.activeSec/changeCount 落库
     const fill = rows.find((row) => row.questionId === Q.fill);
     expect(fill?.activeSec).toBe(8);
     expect(fill?.changeCount).toBe(1);
+  });
+});
+
+// ---------- T4.0a：新事件落库带归属列（D8）+ 端点扩容 ----------
+
+describe("T4.0a attempt 端点：交互族/ink/环境族新事件 + studentId 会话写入", () => {
+  it("新事件落库带 studentId（会话写入，前端伪造无效）；payload 不含伪造键", async () => {
+    const { app, db, aCookie, aStudentId, assignmentId } =
+      await makeEventsApp();
+    const attemptId = await startAttempt(app, aCookie, assignmentId);
+    const batch = [
+      ev("directive_interact", 1, {
+        host: "question",
+        questionId: Q.choice,
+        name: "hint",
+        index: 0,
+        action: "open",
+        studentId: "forged-student", // 伪造：契约层不收，应被 Zod 剥离
+      }),
+      ev("directive_interact", 2, {
+        host: "result",
+        attemptId,
+        questionId: Q.choice,
+        name: "solution",
+        index: 1,
+        action: "close",
+      }),
+      ev("ink_edit_batch", 3, {
+        questionId: Q.judge,
+        erase: 1,
+        undo: 2,
+        redo: 0,
+        clear: 0,
+      }),
+      ev("ink_fullscreen", 4, { questionId: Q.judge, on: true }),
+      ev("net_offline", 5),
+      ev("net_online", 6),
+      ev("idle_start", 90),
+      ev("idle_end", 100),
+    ];
+    const res = await postEvents(app, aCookie, attemptId, batch);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: { accepted: number } };
+    expect(body.data).toEqual({ accepted: 8 });
+    assertNoLeak(body);
+
+    const rows = db.select().from(events).all();
+    expect(rows.length).toBe(8);
+    // 归属列：全部行 studentId=会话学生（伪造无效）；attempt 域无讲义语义 → NULL
+    expect(rows.every((row) => row.studentId === aStudentId)).toBe(true);
+    expect(rows.every((row) => row.lectureId === null)).toBe(true);
+    // 题目语义列照旧提取
+    expect(rows.find((row) => row.type === "ink_edit_batch")?.questionId).toBe(
+      Q.judge,
+    );
+    expect(
+      rows.find((row) => row.type === "net_offline")?.questionId,
+    ).toBeNull();
+    // 伪造 studentId 不进 payloadJson（Zod 剥离多余键）
+    const forgedRow = rows.find((row) => row.type === "directive_interact");
+    expect(JSON.parse(forgedRow?.payloadJson ?? "{}")).toEqual({
+      type: "directive_interact",
+      clientTs: BASE_TS + 1000,
+      host: "question",
+      questionId: Q.choice,
+      name: "hint",
+      index: 0,
+      action: "open",
+    });
+  });
+
+  it("讲义域事件发到 attempt 端点 → 400（端点互斥由契约锁定）", async () => {
+    const { app, aCookie, assignmentId } = await makeEventsApp();
+    const attemptId = await startAttempt(app, aCookie, assignmentId);
+    for (const bad of [
+      ev("lecture_visible", 0, { lectureId: "l-1", viewId: "v-1" }),
+      ev("lecture_hidden", 0, { lectureId: "l-1", viewId: "v-1" }),
+      ev("lecture_section_focus", 0, { lectureId: "l-1", headingIndex: 0 }),
+      ev("lecture_toc_jump", 0, { lectureId: "l-1", headingIndex: 1 }),
+      ev("directive_interact", 0, {
+        host: "lecture",
+        lectureId: "l-1",
+        name: "solution",
+        index: 1,
+        action: "open",
+      }),
+    ]) {
+      const res = await postEvents(app, aCookie, attemptId, [bad]);
+      expect(res.status, `讲义域事件 ${bad.type} 不应被 attempt 端点接收`).toBe(
+        400,
+      );
+      assertNoLeak(await res.json());
+    }
+  });
+
+  it("hint_open 服务端直记（POST hints）也带 studentId（§5.0-B7）", async () => {
+    const { app, db, aCookie, aStudentId, assignmentId } =
+      await makeEventsApp();
+    const attemptId = await startAttempt(app, aCookie, assignmentId);
+    // 练习四-2 有 1 条提示（与 student-hints.test 同口径）
+    const res = await app.request(`/api/student/attempts/${attemptId}/hints`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: aCookie },
+      body: JSON.stringify({ questionId: Q.choice, index: 0 }),
+    });
+    expect(res.status).toBe(200);
+    const hintRow = db
+      .select()
+      .from(events)
+      .all()
+      .find((row) => row.type === "hint_open");
+    expect(hintRow?.studentId).toBe(aStudentId);
+    expect(hintRow?.attemptId).toBe(attemptId);
+    expect(hintRow?.questionId).toBe(Q.choice);
+  });
+});
+
+describe("T4.0a 讲义端点：环境/位置/交互族扩容 + 归属列", () => {
+  it("讲义域新事件落库：studentId 会话写入、lectureId 从 payload 提取落列", async () => {
+    const { app, db, aCookie, aStudentId, lectureId } = await makeEventsApp();
+    const res = await postLectureEvents(app, aCookie, [
+      ev("lecture_visible", 0, {
+        lectureId,
+        viewId: "view-abc",
+        studentId: "forged-student",
+      }),
+      ev("lecture_hidden", 30, { lectureId, viewId: "view-abc" }),
+      ev("lecture_section_focus", 5, { lectureId, headingIndex: 0 }),
+      ev("lecture_toc_jump", 6, { lectureId, headingIndex: 2 }),
+      ev("directive_interact", 7, {
+        host: "lecture",
+        lectureId,
+        name: "solution",
+        index: 1,
+        action: "open",
+      }),
+      ev("directive_interact", 8, {
+        host: "lecture",
+        lectureId,
+        name: "steps",
+        index: 2,
+        action: "reveal",
+        step: 1,
+      }),
+    ]);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: { accepted: number } };
+    expect(body.data).toEqual({ accepted: 6 });
+    assertNoLeak(body);
+
+    const rows = db.select().from(events).all();
+    expect(rows.length).toBe(6);
+    // 归属列：studentId=会话学生（伪造无效）、lectureId=payload 提取
+    expect(rows.every((row) => row.studentId === aStudentId)).toBe(true);
+    expect(rows.every((row) => row.lectureId === lectureId)).toBe(true);
+    expect(rows.every((row) => row.attemptId === null)).toBe(true);
+    expect(rows.every((row) => row.questionId === null)).toBe(true);
+    // reveal 的 step 保真
+    const reveal = rows.find(
+      (row) =>
+        row.type === "directive_interact" &&
+        (JSON.parse(row.payloadJson) as { action?: string }).action ===
+          "reveal",
+    );
+    expect(
+      (JSON.parse(reveal?.payloadJson ?? "{}") as { step?: number }).step,
+    ).toBe(1);
+    // 伪造键剥离
+    const visible = rows.find((row) => row.type === "lecture_visible");
+    expect(JSON.parse(visible?.payloadJson ?? "{}")).toEqual({
+      type: "lecture_visible",
+      clientTs: BASE_TS,
+      lectureId,
+      viewId: "view-abc",
+    });
+  });
+
+  it("net/idle 无讲义语义：可收、lectureId 落 NULL（不做讲义存在性校验）", async () => {
+    const { app, db, aCookie, aStudentId } = await makeEventsApp();
+    const res = await postLectureEvents(app, aCookie, [
+      ev("net_offline", 0),
+      ev("net_online", 10),
+      ev("idle_start", 300),
+      ev("idle_end", 320),
+    ]);
+    expect(res.status).toBe(200);
+    assertNoLeak(await res.json());
+    const rows = db.select().from(events).all();
+    expect(rows.map((row) => row.type)).toEqual([
+      "net_offline",
+      "net_online",
+      "idle_start",
+      "idle_end",
+    ]);
+    // studentId 照写（学生归属）；lectureId NULL（无讲义语义，聚合按时间关联）
+    expect(rows.every((row) => row.studentId === aStudentId)).toBe(true);
+    expect(rows.every((row) => row.lectureId === null)).toBe(true);
+  });
+
+  it("新讲义事件讲义不存在 404；attempt 域事件发到讲义端点 400", async () => {
+    const { app, aCookie } = await makeEventsApp();
+    const notFound = await postLectureEvents(app, aCookie, [
+      ev("lecture_visible", 0, {
+        lectureId: "no-such-lecture",
+        viewId: "v",
+      }),
+    ]);
+    expect(notFound.status).toBe(404);
+    assertNoLeak(await notFound.json());
+
+    for (const bad of [
+      ev("directive_interact", 0, {
+        host: "question",
+        questionId: "q",
+        name: "hint",
+        index: 0,
+        action: "open",
+      }),
+      ev("directive_interact", 0, {
+        host: "result",
+        attemptId: "att-1",
+        questionId: "q",
+        name: "solution",
+        index: 0,
+        action: "open",
+      }),
+      ev("ink_edit_batch", 0, {
+        questionId: "q",
+        erase: 0,
+        undo: 0,
+        redo: 0,
+        clear: 0,
+      }),
+      ev("ink_fullscreen", 0, { questionId: "q", on: false }),
+    ]) {
+      const res = await postLectureEvents(app, aCookie, [bad]);
+      expect(res.status, `attempt 域事件 ${bad.type} 不应被讲义端点接收`).toBe(
+        400,
+      );
+      assertNoLeak(await res.json());
+    }
+  });
+
+  it("旧客户端回归：lecture_expand 照收（SW 缓存兼容）且同样带归属列", async () => {
+    const { app, db, aCookie, aStudentId, lectureId } = await makeEventsApp();
+    const res = await postLectureEvents(app, aCookie, [
+      ev("lecture_expand", 0, {
+        lectureId,
+        directive: "fold",
+        index: 3,
+      }),
+    ]);
+    expect(res.status).toBe(200);
+    const row = db.select().from(events).all()[0];
+    expect(row?.type).toBe("lecture_expand");
+    expect(row?.studentId).toBe(aStudentId);
+    expect(row?.lectureId).toBe(lectureId);
   });
 });
