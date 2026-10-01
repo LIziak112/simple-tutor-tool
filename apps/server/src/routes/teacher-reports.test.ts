@@ -1,4 +1,4 @@
-import type { ApiErr, ReportListData } from "@tutor/contract";
+import type { ApiErr, ReportDetail, ReportListData } from "@tutor/contract";
 import type { Logger } from "pino";
 import pino from "pino";
 import { describe, expect, it } from "vitest";
@@ -15,10 +15,11 @@ import { createReport } from "../services/report-service.ts";
 import { seedDemoData } from "../services/seed-demo.ts";
 
 /**
- * T4.6 学情报告教师接口测试（D24）：
+ * T4.6 学情报告教师接口测试（D24）+ T4.7 详情接口：
  * - 列表倒序（最新在前）与统一壳结构（reportListDataSchema 契约校验）；
+ * - 详情含 markdown 正文（reportDetailSchema 口径；列表行不带正文）；
  * - 删除成功与再查为空；
- * - 域隔离红线：教师乙查甲学生的报告 → 404；乙删甲写的报告 → 404（不暴露存在性）；
+ * - 域隔离红线：教师乙查甲学生的报告 → 404；乙取/删甲写的报告 → 404（不暴露存在性）；
  * - 未登录 401。
  * （save_report 写入经 MCP 工具测试覆盖；这里直调 service 夹具造数据。）
  */
@@ -175,6 +176,45 @@ describe("GET /api/teacher/students/:id/reports 与 DELETE /api/teacher/reports/
     expect(
       ((await listA.json()) as { data: ReportListData }).data.reports.length,
     ).toBe(1);
+  });
+
+  it("详情含 markdown 正文（T4.7）；列表行不携带正文；乙取甲的报告 → 404", async () => {
+    const { app, db, cookieA, cookieB, studentId } = await makeEnv();
+    const report = createReport(
+      db,
+      TEST_TEACHER_ID,
+      { studentId, title: "诊断报告", markdown: "# 薄弱点分析\n\n有理数加法需巩固。" },
+      "mcp",
+    );
+
+    // 未登录 401
+    const anon = await app.request(`/api/teacher/reports/${report.id}`);
+    expect(anon.status).toBe(401);
+
+    // 甲取详情：含 markdown，与摘要字段一致
+    const res = await app.request(`/api/teacher/reports/${report.id}`, {
+      headers: { cookie: cookieA },
+    });
+    expect(res.status).toBe(200);
+    const detail = ((await res.json()) as { data: ReportDetail }).data;
+    expect(detail.id).toBe(report.id);
+    expect(detail.title).toBe("诊断报告");
+    expect(detail.source).toBe("mcp");
+    expect(detail.markdown).toContain("有理数加法需巩固");
+    // 列表行不携带正文（reportSummarySchema 无 markdown 键）
+    const list = await app.request(
+      `/api/teacher/students/${studentId}/reports`,
+      { headers: { cookie: cookieA } },
+    );
+    const listBody = (await list.json()) as { data: ReportListData };
+    expect(listBody.data.reports[0]).not.toHaveProperty("markdown");
+
+    // 乙取甲的报告 → 404（域隔离，不暴露存在性）
+    const resB = await app.request(`/api/teacher/reports/${report.id}`, {
+      headers: { cookie: cookieB },
+    });
+    expect(resB.status).toBe(404);
+    expect(((await resB.json()) as ApiErr).error).toBe("REPORT_NOT_FOUND");
   });
 
   it("学生不存在 → 404 STUDENT_NOT_FOUND；报告不存在 → 404 REPORT_NOT_FOUND", async () => {

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type {
   ReportCreateData,
   ReportCreateRequest,
+  ReportDetail,
   ReportListData,
   ReportSource,
   ReportSummary,
@@ -18,7 +19,8 @@ import { HttpError } from "../lib/http-error";
  * - createReport：MCP save_report（source='mcp'）与未来教师手写入口
  *   （source='manual'，预留）共用的写入路径；studentId 域校验
  *   （不存在或非本教师 → 404 STUDENT_NOT_FOUND，不暴露存在性）；
- * - 列表按 createdAt 倒序（最新报告在前）；markdown 正文不进列表行；
+ * - 列表按 createdAt 倒序（最新报告在前）；markdown 正文不进列表行，
+ *   详情按 id 单取（getReportDetail，T4.7 画像页「点开渲染」）；
  * - deleteReport：非本教师报告 → 404 REPORT_NOT_FOUND（同口径）。
  */
 
@@ -91,6 +93,30 @@ export function listStudentReports(
     .orderBy(desc(reports.createdAt), desc(reports.id))
     .all();
   return { reports: rows satisfies ReportSummary[] };
+}
+
+/** 单份报告详情（含 markdown 正文；非本教师报告 → 404 REPORT_NOT_FOUND） */
+export function getReportDetail(
+  db: Db,
+  teacherId: string,
+  id: string,
+): ReportDetail {
+  const row = db
+    .select()
+    .from(reports)
+    .where(and(eq(reports.id, id), eq(reports.teacherId, teacherId)))
+    .get();
+  if (row === undefined) {
+    throw new HttpError(404, "REPORT_NOT_FOUND", "报告不存在");
+  }
+  return {
+    id: row.id,
+    studentId: row.studentId,
+    title: row.title,
+    source: row.source,
+    createdAt: row.createdAt,
+    markdown: row.markdown,
+  };
 }
 
 /** 删除报告（软硬删不做区分——报告无历史语义；非本教师报告 → 404） */
