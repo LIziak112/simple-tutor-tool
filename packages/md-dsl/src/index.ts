@@ -32,6 +32,16 @@ export {
   wrapLectureMd,
   wrapSingleQuestionMd,
 } from "./v2/edit-context.ts";
+export type {
+  LectureFoldStructure,
+  LectureSectionStructure,
+  LectureStepsStructure,
+  LectureStructure,
+} from "./v2/lecture-structure.ts";
+export {
+  analyzeLectureStructure,
+  weightedCharCounts,
+} from "./v2/lecture-structure.ts";
 export type { ParseOptions } from "./v2/parse.ts";
 export { parseDocument } from "./v2/parse.ts";
 export { publicStemMd } from "./v2/public-stem.ts";
