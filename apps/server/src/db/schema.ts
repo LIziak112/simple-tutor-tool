@@ -65,7 +65,8 @@ export const teachers = sqliteTable(
     disabledAt: text("disabled_at"),
     /** 登录密码的 scrypt 哈希；设置密码前为 NULL */
     passwordHash: text("password_hash"),
-    /** MCP / 脚本调用用的 API Token（T4.5 接入），可重置；未生成时为 NULL */
+    /** MCP / 脚本调用用的 API Token（T4.6 起启用，D22：randomBytes(32) base64url，
+     *  每教师一份、可重置；未生成时为 NULL。唯一索引允许多个 NULL（存量行不冲突）） */
     apiToken: text("api_token"),
     /** 创建时间：UTC ISO 字符串 */
     createdAt: text("created_at").notNull(),
@@ -73,6 +74,8 @@ export const teachers = sqliteTable(
   (table) => [
     // 登录名全局唯一（D2；SQLite 唯一索引允许多个 NULL——回填前的中间态不冲突）
     uniqueIndex("teachers_login_name_uk").on(table.loginName),
+    // API Token 全局唯一（D22；多个 NULL 合法——未生成 token 的教师不冲突）
+    uniqueIndex("teachers_api_token_uk").on(table.apiToken),
   ],
 );
 
@@ -893,6 +896,41 @@ export const events = sqliteTable(
 export type Course = typeof courses.$inferSelect;
 /** courses 表插入类型 */
 export type NewCourse = typeof courses.$inferInsert;
+/**
+ * 学情报告表（T4.6，D24）——AI 经 MCP save_report（source='mcp'）或教师手写
+ * （source='manual'，预留入口）写入的学情报告最小集。
+ * - 归属链 teacherId + studentId（服务层域校验；不建外键——教师数据永不连带
+ *   删除的既有口径，students.teacherId 同款）；
+ * - 教师端可查看（学生画像页 T4.7 接入）与删除，不做编辑；学生端不展示报告；
+ * - markdown 存报告原文（AI 输出的 Markdown，画像页渲染展示）。
+ */
+export const reports = sqliteTable(
+  "reports",
+  {
+    /** 主键：crypto.randomUUID()（§0.3 主键约定） */
+    id: text("id").primaryKey(),
+    /** 归属教师（D9：DB 可空、代码恒写非空；报告域内私有） */
+    teacherId: text("teacher_id"),
+    /** 学生（students.id；服务层校验属于本教师） */
+    studentId: text("student_id").notNull(),
+    /** 报告标题 */
+    title: text("title").notNull(),
+    /** 报告正文（Markdown 原文） */
+    markdown: text("markdown").notNull(),
+    /** 来源（D24）：mcp = AI 写入 / manual = 教师手写（预留） */
+    source: text("source").$type<"mcp" | "manual">().notNull(),
+    /** 创建时间：UTC ISO 字符串 */
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    // 学生报告列表的定位索引（teacherId + studentId，createdAt 倒序在少量行上做）
+    index("reports_teacher_student_idx").on(table.teacherId, table.studentId),
+  ],
+);
+/** reports 表行类型（SELECT 结果） */
+export type Report = typeof reports.$inferSelect;
+/** reports 表插入类型 */
+export type NewReport = typeof reports.$inferInsert;
 /** library_folders 表行类型（SELECT 结果） */
 export type LibraryFolder = typeof libraryFolders.$inferSelect;
 /** library_folders 表插入类型 */

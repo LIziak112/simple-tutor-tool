@@ -27,6 +27,9 @@ export * from "./grading.ts";
 export * from "./ink.ts";
 /** 学习痕迹事件契约（T2.10 起为权威定义）：11 种事件类型、批量上报请求/响应、上限常量 */
 export * from "./learning-event.ts";
+/** MCP 教师侧配套契约（T4.6 起为权威定义，依据 Phase4 清单 §2 D22/D24）：apiToken
+ *  查看/生成重置、reports 列表/删除、save_report 写入参数；/mcp 端点本身无契约变化 */
+export * from "./mcp-api.ts";
 /** AI 学情数据包契约（T4.3 起为权威定义，依据 Phase4 清单 §2 D14–D19）：导出请求（范围×模块×目标×隐私）、
  *  LearningPack 模块化 schema（content/attempts/traces/summary）、preview 响应、prompt.md 模板单一来源 */
 export * from "./learning-pack.ts";
