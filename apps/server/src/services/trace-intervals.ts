@@ -36,6 +36,10 @@ export interface TraceEvent {
   /** 阅读会话标识（lecture_visible/hidden payload；其他事件缺省） */
   readonly viewId?: string;
   readonly questionId?: string;
+  /** host=result 的 directive_interact 携带的 attemptId */
+  readonly attemptId?: string;
+  /** ink_stroke_batch 的本批笔画数（新指标暂不消费，投影保留） */
+  readonly strokes?: number;
   /** lecture_section_focus / lecture_toc_jump 的目录序号（0 起） */
   readonly headingIndex?: number;
   /** directive_interact 的判别字段 */
