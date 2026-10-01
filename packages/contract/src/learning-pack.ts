@@ -1,0 +1,838 @@
+import { z } from "zod";
+import { analyticsLectureReadingMapSchema } from "./analytics-api.ts";
+import { attemptSourceSchema, attemptStatusSchema } from "./attempt.ts";
+import { questionAnswersSchema, questionTypeSchema } from "./content.ts";
+
+/**
+ * AI 学情数据包契约（T4.3 起为权威定义，依据 Phase4 清单 §2 D14–D19 与架构
+ * 文档 §5.9 第二层）：
+ * - POST /api/teacher/export/learning-pack/preview（文件清单 + 预估大小 + 超限标志）；
+ * - POST /api/teacher/export/learning-pack（返回 zip 流：pack.json / summary.md /
+ *   prompt.md / schema.json / 映射.txt〔化名模式〕/ ink/*.png〔勾选且默认关〕）。
+ *
+ * 设计决策落点（服务端实现必须与本注释一致）：
+ * - **D14 模块化定向导出**：范围（学生多选/课程/作业/时间，可交叉）× 内容模块
+ *   勾选 × 任务目标 × 隐私，preview 与生成共用同一请求 schema；
+ * - **D15 历次口径**：数据包收录**全部历次已交卷作答**（attemptNo 与 isFirst
+ *   标记；draft 不收录——未交卷无判定无快照）；T4.1 指标层「课程练习默认首次」
+ *   的 D1 口径不适用于数据包；
+ * - **D16 化名与隐私**：默认化名（学生A/学生B…，按请求学生名单顺序编号）；
+ *   zip 附独立的 映射.txt（化名 ↔ 真名，**不进 pack.json**，仅教师本地保存）；
+ *   privacy.anonymize=false 即「包含真实姓名」（向导 UI 需二次确认）。学生字段
+ *   在化名模式下只有化名与 id。**教师评语原文一律不改动**——评语由教师手写
+ *   可能含真名，pack 头部 meta.note 与 summary.md 头部均注明；
+ * - **D18 大小上限**：内容合计 ≤ 50MB（LEARNING_PACK_MAX_BYTES）；preview 超限
+ *   返回 overLimit=true + 精简建议（减学生/减 ink/缩时间范围），生成接口 413
+ *   EXPORT_TOO_LARGE。手写 PNG 默认不勾选；
+ * - **D19 模块化 schema**：pack.json 按勾选模块分 section（content/attempts/
+ *   traces/summary），**未勾选的 section 不出现在 pack.json**；summary.md 只
+ *   统计勾选模块。LearningPack JSON Schema 纳入 pnpm schema:export
+ *   （docs/dsl/schema/learning-pack.json），zip 内 schema.json 即该文件内容
+ *   （learningPackJsonSchema() 单一来源）；
+ * - **D13 红线**：traces 只放派生指标（responses 列 + T4.0 computeAttemptTrace
+ *   Metrics 输出）与讲义阅读地图（聚合结果），**原始 events 绝不出库**；
+ * - **D7 教师域**：请求携带的学生/课程/作业/讲义 id 逐个域校验，不属于本教师
+ *   → 404（不暴露存在性，T2B 口径）；范围内数据全部经 attempt → student →
+ *   teacherId 归属过滤。
+ *
+ * 题目答案/详解只进教师侧导出（本契约全部接口为教师端），无学生端泄露问题。
+ */
+
+// ---------- 常量 ----------
+
+/** 数据包内容合计大小上限（D18：50 MB；preview 回显 limitBytes 同值） */
+export const LEARNING_PACK_MAX_BYTES = 50 * 1024 * 1024;
+
+/** 学生多选上限（化名编号与包体积的一对一规模防线） */
+export const LEARNING_PACK_MAX_STUDENTS = 200;
+
+/** 讲义模块单包篇数上限（大纲导出很便宜，上限只是防御） */
+export const LEARNING_PACK_MAX_LECTURES = 100;
+
+/** 自定义附加提示词长度上限（字符） */
+export const LEARNING_PACK_CUSTOM_PROMPT_MAX = 4000;
+
+/** 数据包时间范围缺省值（与学情页 D5 一致：最近 30 天） */
+export const LEARNING_PACK_DAYS_DEFAULT = 30;
+
+// ---------- 任务目标（D17：四模板 + 自定义附加段） ----------
+
+/** 任务目标（决定 prompt.md 模板；自定义附加段经 customPrompt 另行携带） */
+export const learningPackGoalSchema = z.enum([
+  /** 诊断薄弱点 */
+  "diagnose-weakness",
+  /** 备下节课讲解建议 */
+  "lesson-prep",
+  /** 生成变式练习（输出内容 DSL v2，可直接回导入流程） */
+  "variant-practice",
+  /** 阶段总结（可用于家长沟通） */
+  "period-summary",
+]);
+
+/** 任务目标中文名（summary.md、prompt.md 与向导共用；禁止前后端各自手写） */
+export const LEARNING_PACK_GOAL_LABELS: Record<LearningPackGoal, string> = {
+  "diagnose-weakness": "诊断薄弱点",
+  "lesson-prep": "备下节课讲解建议",
+  "variant-practice": "生成变式练习",
+  "period-summary": "阶段总结（家长沟通）",
+};
+
+// ---------- 导出请求（preview 与生成共用，D14） ----------
+
+/** 讲义模块勾选项：一篇讲义 + 勾选全文的小节索引（空数组 = 仅大纲） */
+export const learningPackLecturePickSchema = z.object({
+  /** 讲义（lectures.id；非本教师或已软删 → 404 LECTURE_NOT_FOUND） */
+  lectureId: z.uuid("lectureId 必须是 UUID 格式"),
+  /**
+   * 勾选全文的小节目录序号（headingIndex，0 起，与讲义 H2/H3 目录对齐）；
+   * 空数组（缺省）= 仅大纲。越界索引由服务端忽略（讲义可能已被编辑）。
+   */
+  sectionIndexes: z.array(z.number().int().min(0)).max(200).default([]),
+});
+
+/**
+ * 内容模块勾选（D14 清单逐项建模；缺省 = 不勾选）：
+ * - lectures：讲义（仅大纲 | 大纲 + 勾选小节全文，逐篇携带小节索引）；
+ * - questions：题目三层（stem=仅题干 / answer=+参考答案 / solution=+解析，
+ *   递进包含——answer 含题干与参考答案，solution 再加详解）；
+ * - responses：逐题作答与对错判定、教师评语（D15 全部历次）；
+ * - summaries：作答汇总（得分、状态、历次，D15）；
+ * - ink：手写过程 PNG（默认关，体积大，D18）；
+ * - traces：每题派生指标 + 讲义阅读地图（D13：只放派生结果）。
+ */
+export const learningPackModulesSchema = z.object({
+  lectures: z
+    .array(learningPackLecturePickSchema)
+    .max(
+      LEARNING_PACK_MAX_LECTURES,
+      `讲义模块一次最多 ${LEARNING_PACK_MAX_LECTURES} 篇`,
+    )
+    .default([]),
+  questions: z.enum(["stem", "answer", "solution"]).optional(),
+  responses: z.boolean().default(false),
+  summaries: z.boolean().default(false),
+  ink: z.boolean().default(false),
+  traces: z.boolean().default(false),
+});
+
+/**
+ * 导出范围（D14 ①：可交叉）。范围维度的取舍：
+ * - studentIds：显式学生名单；**化名编号顺序 = 该数组顺序**（D16），去重保序；
+ * - courseId：按课程（域校验 404）；作业作答按作业所属课程回退命中（T2A.7 同款）；
+ * - assignmentId：按作业（域校验 404，含已软删作业——历史作答可导出）；
+ * - days：时间范围（与 analytics D5 同口径：已交卷作答按 submittedAt 落
+ *   [now-days, now] 窗口；"all"=全部；缺省 30）。讲义/题目内容为当前库快照，
+ *   不受时间过滤；讲义阅读地图按讲义聚合、同样不受 days（与学情页口径一致）。
+ * 三个 id 维度全部缺省时 = 域内全部学生（时间窗内），属 D14 合法范围。
+ */
+export const learningPackScopeSchema = z.object({
+  studentIds: z
+    .array(z.uuid("studentId 必须是 UUID 格式"))
+    .max(
+      LEARNING_PACK_MAX_STUDENTS,
+      `学生一次最多勾选 ${LEARNING_PACK_MAX_STUDENTS} 名`,
+    )
+    .optional(),
+  courseId: z.uuid("courseId 必须是 UUID 格式").optional(),
+  assignmentId: z.uuid("assignmentId 必须是 UUID 格式").optional(),
+  days: z
+    .union([
+      z.number().int("days 必须是整数天数").min(1).max(3650),
+      z.literal("all"),
+    ])
+    .default(LEARNING_PACK_DAYS_DEFAULT),
+});
+
+/**
+ * 隐私选项（D16）：
+ * - anonymize 默认 true（化名：学生A/学生B… 按请求名单顺序编号）；
+ * - 「包含真实姓名」= 把 anonymize 置 false——**向导 UI 层必须二次确认**
+ *   （T4.4 D14 ④；本 schema 只表达语义，不承载确认状态）；
+ * - 无论化名与否，教师评语原文一律不改动（可能含真名），meta.note 注明。
+ */
+export const learningPackPrivacySchema = z.object({
+  anonymize: z.boolean().default(true),
+});
+
+/**
+ * 导出请求（preview 与生成接口共用请求体）。
+ * superRefine：至少勾选一个内容模块（讲义/题目/逐题作答/汇总/痕迹任一；
+ * ink 只是附件开关，单独勾选不构成有效数据包）。
+ */
+export const learningPackExportRequestSchema = z
+  .object({
+    scope: learningPackScopeSchema,
+    modules: learningPackModulesSchema,
+    goal: learningPackGoalSchema,
+    privacy: learningPackPrivacySchema.default({ anonymize: true }),
+    /** 自定义附加提示词段（D17：追加在 prompt.md 末尾「教师附加要求」） */
+    customPrompt: z
+      .string()
+      .trim()
+      .max(LEARNING_PACK_CUSTOM_PROMPT_MAX)
+      .optional(),
+  })
+  .superRefine((request, ctx) => {
+    const m = request.modules;
+    const hasContentModule =
+      m.lectures.length > 0 ||
+      m.questions !== undefined ||
+      m.responses ||
+      m.summaries ||
+      m.traces;
+    if (!hasContentModule) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["modules"],
+        message:
+          "至少勾选一个内容模块（讲义 / 题目 / 逐题作答 / 作答汇总 / 学习痕迹；手写 PNG 只是附件开关）",
+      });
+    }
+  });
+
+// ---------- LearningPack（pack.json，D19 模块化） ----------
+
+/**
+ * pack 头部元数据。note 为固定文案：评语为教师原文，可能包含真实姓名
+ * （D16 红线——不改动教师评语原文）。
+ */
+export const learningPackMetaSchema = z.object({
+  /** pack 结构版本（字段只增不改，与 DSL 兼容规则同精神） */
+  version: z.literal(1),
+  /** 生成时间：UTC ISO */
+  generatedAt: z.string().min(1),
+  goal: learningPackGoalSchema,
+  /** 时间窗口回显：days 原样；from=null 表示全部（days="all"）；to=请求时刻 */
+  days: z.union([z.number().int().min(1), z.literal("all")]),
+  from: z.string().nullable(),
+  to: z.string().min(1),
+  /** 是否化名（D16） */
+  anonymized: z.boolean(),
+  /** 勾选模块回显（questions 为勾选层级或 null=未勾选） */
+  modules: z.object({
+    lectures: z.boolean(),
+    questions: z.enum(["stem", "answer", "solution"]).nullable(),
+    responses: z.boolean(),
+    summaries: z.boolean(),
+    ink: z.boolean(),
+    traces: z.boolean(),
+  }),
+  /** 隐私与原文说明（固定文案，服务端生成） */
+  note: z.string().min(1),
+});
+
+/** 学生行：化名模式下 name=学生A/学生B…，只有化名与 id（D16）；真名在 映射.txt */
+export const learningPackStudentSchema = z.object({
+  id: z.uuid(),
+  /** 化名（anonymize=true）或真实姓名（anonymize=false） */
+  name: z.string().min(1),
+  /** 是否已归档（教师侧保留统计视角） */
+  archived: z.boolean(),
+});
+
+// ---------- content section（讲义 + 题目） ----------
+
+/** 讲义目录项（H2/H3，与 lectureHeadingSchema 同构） */
+export const learningPackOutlineItemSchema = z.object({
+  level: z.union([z.literal(2), z.literal(3)]),
+  text: z.string().min(1),
+});
+
+/** 勾选了全文的小节（markdown 含标题行；按 headingIndex 升序） */
+export const learningPackLectureSectionSchema = z.object({
+  headingIndex: z.number().int().min(0),
+  markdown: z.string(),
+});
+
+/** 讲义条目：大纲（H2/H3 目录）+ 勾选小节的全文 */
+export const learningPackLectureSchema = z.object({
+  lectureId: z.uuid(),
+  title: z.string().min(1),
+  outline: z.array(learningPackOutlineItemSchema),
+  /** 勾选全文的小节；仅大纲模式为空数组 */
+  sections: z.array(learningPackLectureSectionSchema),
+});
+
+/**
+ * 题目条目（取范围内作答的**交卷时快照**，题目编辑/软删不影响历史行）：
+ * - stemMd：stem 层级为公开化题干（[[答案]] 标记替换为 [[]]——仅题干不给答案）；
+ *   answer/solution 层级保留快照原文（含 [[答案]] 标记，教师侧导出无泄露问题）；
+ * - answers：questions 层级 ≥ answer 才出现；
+ * - solutionMd：questions 层级 = solution 才出现。
+ */
+export const learningPackQuestionSchema = z.object({
+  questionId: z.string().min(1),
+  /** 所属单元（当前库值；题已软删/移出时为 null） */
+  unitId: z.string().min(1).nullable(),
+  unitTitle: z.string().min(1).nullable(),
+  type: questionTypeSchema,
+  difficulty: z.number().int().min(1).max(5),
+  knowledge: z.array(z.string().min(1)),
+  stemMd: z.string(),
+  /** 选项纯文本（仅 choice/multi 携带） */
+  options: z.array(z.string()).optional(),
+  answers: questionAnswersSchema.optional(),
+  solutionMd: z.string().optional(),
+});
+
+/** content section：讲义或题目任一勾选才出现（D19） */
+export const learningPackContentSchema = z.object({
+  lectures: z.array(learningPackLectureSchema).optional(),
+  questions: z.array(learningPackQuestionSchema).optional(),
+});
+
+// ---------- attempts section（逐题作答 + 历次汇总） ----------
+
+/**
+ * 逐题作答行（D14「逐题答案与对错判定、教师评语」；D15 全部历次）。
+ * 教师评语原文不改动（可能含真名，meta.note 注明）。
+ */
+export const learningPackResponseSchema = z.object({
+  attemptId: z.uuid(),
+  studentId: z.uuid(),
+  questionId: z.string().min(1),
+  /** 全卷连续题号（该次作答内 1 起，与作答详情同口径） */
+  no: z.number().int().min(1),
+  /** 学生答案（人类可读序列化；未作为 null） */
+  answerText: z.string().nullable(),
+  /** 自动判定（null=不能自动判定） */
+  autoCorrect: z.boolean().nullable(),
+  /** 最终判定（统计唯一口径；null=待批） */
+  finalCorrect: z.boolean().nullable(),
+  teacherMark: z.enum(["correct", "wrong"]).nullable(),
+  /** 教师评语原文（不改动；未评为 null） */
+  teacherComment: z.string().nullable(),
+  /** zip 内笔迹文件路径（ink/…；勾选 ink 且该题有笔迹才出现） */
+  inkFile: z.string().optional(),
+});
+
+/** 历次作答汇总行（D15：attemptNo 与 isFirst；已交卷 attempt 才收录） */
+export const learningPackAttemptSummarySchema = z.object({
+  attemptId: z.uuid(),
+  studentId: z.uuid(),
+  sourceType: attemptSourceSchema,
+  assignmentId: z.uuid().nullable(),
+  /** 作业标题（布置时快照；course 来源为 null） */
+  assignmentTitle: z.string().nullable(),
+  courseId: z.uuid().nullable(),
+  courseName: z.string().nullable(),
+  unitId: z.string().min(1).nullable(),
+  unitTitle: z.string().min(1).nullable(),
+  /** 第几次作答（course 来源从 1 递增；assignment 恒 1） */
+  attemptNo: z.number().int().min(1),
+  /** 是否首次作答（attemptNo=1；D15「首次」标记） */
+  isFirst: z.boolean(),
+  status: attemptStatusSchema,
+  startedAt: z.string().min(1),
+  submittedAt: z.string().min(1),
+  scoreAuto: z.number().int().min(0).max(100).nullable(),
+  scoreFinal: z.number().int().min(0).max(100).nullable(),
+  questionCount: z.number().int().min(0),
+  /** finalCorrect=true 题数（统计唯一口径） */
+  correctCount: z.number().int().min(0),
+  wrongCount: z.number().int().min(0),
+  /** 待批数（finalCorrect=null，D4） */
+  pendingCount: z.number().int().min(0),
+});
+
+/** attempts section：逐题作答或汇总任一勾选才出现（D19） */
+export const learningPackAttemptsSectionSchema = z.object({
+  responses: z.array(learningPackResponseSchema).optional(),
+  summaries: z.array(learningPackAttemptSummarySchema).optional(),
+});
+
+// ---------- traces section（派生指标 + 阅读地图；原始 events 不出库 D13） ----------
+
+/**
+ * 每题派生指标（D14 学习痕迹；D13 聚合而非透传）：
+ * activeSec/hintsUsed/changeCount 为 responses 权威列；其余为 T4.0
+ * computeAttemptTraceMetrics 派生（无事件证据的题为缺省值——文档化为
+ * 行为信号，仅标记不下结论）。
+ */
+export const learningPackQuestionTraceSchema = z.object({
+  attemptId: z.uuid(),
+  studentId: z.uuid(),
+  questionId: z.string().min(1),
+  /** 有效用时（秒；responses 权威口径；未计算为 null） */
+  activeSec: z.number().int().min(0).nullable(),
+  /** 已解锁提示数（去重集合大小） */
+  hintsUsed: z.number().int().min(0),
+  /** 改答次数 */
+  changeCount: z.number().int().min(0),
+  /** 首次开提示距首次聚焦（秒；未用提示为 null） */
+  timeToFirstHintSec: z.number().min(0).nullable(),
+  /** 提示停留累计（秒） */
+  hintDwellSec: z.number().min(0),
+  /** 手写反复度（橡皮/撤销/重做/清空合计） */
+  inkEditCount: z.number().int().min(0),
+  /** 是否用过手写全屏 */
+  fullscreenUsed: z.boolean(),
+  /** 离线作答占比 ∈ [0,1] */
+  offlineShare: z.number().min(0).max(1),
+  /** 交卷后是否回看了解析 */
+  reviewedSolution: z.boolean(),
+});
+
+/** 讲义阅读地图条目（T4.0 §4.4.4：逐项地图直接进 pack.json；行为推断） */
+export const learningPackLectureTraceSchema = z.object({
+  studentId: z.uuid(),
+  lectureId: z.uuid(),
+  title: z.string().min(1),
+  /** 阅读地图（与学情画像页同源同构） */
+  map: analyticsLectureReadingMapSchema,
+});
+
+/** traces section：派生指标勾选才出现（D19）；两子模块随勾选语境生成 */
+export const learningPackTracesSectionSchema = z.object({
+  questions: z.array(learningPackQuestionTraceSchema).optional(),
+  lectures: z.array(learningPackLectureTraceSchema).optional(),
+});
+
+// ---------- summary section（统计摘要的结构化数据，供 summary.md 生成） ----------
+
+/** 学生汇总行（名单顺序；D4 口径正确率） */
+export const learningPackStudentSummarySchema = z.object({
+  studentId: z.uuid(),
+  /** 化名或真名（与 students 同源） */
+  name: z.string().min(1),
+  /** 已交卷作答份数（全部历次） */
+  attemptCount: z.number().int().min(0),
+  judgedCount: z.number().int().min(0),
+  correctCount: z.number().int().min(0),
+  pendingCount: z.number().int().min(0),
+  /** 正确率 = 判对 ÷ 已判定（D4）；无已判定为 null */
+  correctRate: z.number().min(0).max(1).nullable(),
+  /** 有效作答总时长（秒） */
+  activeSecTotal: z.number().int().min(0),
+  /** 离线作答占比（activeSec 加权，与学情页同口径） */
+  offlineShare: z.number().min(0).max(1),
+});
+
+/** summary section：作答/汇总/痕迹任一勾选才出现（统计对象是作答与痕迹） */
+export const learningPackSummarySectionSchema = z.object({
+  students: z.array(learningPackStudentSummarySchema),
+  overall: z.object({
+    studentCount: z.number().int().min(0),
+    attemptCount: z.number().int().min(0),
+    /** 逐题行总数（全部历次已交卷 responses 行数） */
+    questionCount: z.number().int().min(0),
+    judgedCount: z.number().int().min(0),
+    correctCount: z.number().int().min(0),
+    pendingCount: z.number().int().min(0),
+    correctRate: z.number().min(0).max(1).nullable(),
+    activeSecTotal: z.number().int().min(0),
+    offlineShare: z.number().min(0).max(1),
+  }),
+});
+
+// ---------- pack 根对象 ----------
+
+/**
+ * pack.json（zip 内主文件）。未勾选的 section 不出现（D19）：
+ * content ← 讲义|题目；attempts ← 逐题作答|汇总；traces ← 派生指标；
+ * summary ← 逐题作答|汇总|痕迹（统计摘要）。
+ */
+export const learningPackSchema = z.object({
+  meta: learningPackMetaSchema,
+  /** 学生名单（化名模式只有化名与 id；顺序 = 请求名单顺序或名单派生顺序） */
+  students: z.array(learningPackStudentSchema),
+  content: learningPackContentSchema.optional(),
+  attempts: learningPackAttemptsSectionSchema.optional(),
+  traces: learningPackTracesSectionSchema.optional(),
+  summary: learningPackSummarySectionSchema.optional(),
+});
+
+// ---------- preview 响应 ----------
+
+/** 预览文件清单行（路径 + 预估字节数；按内容字节合计，不含 zip 容器开销） */
+export const learningPackPreviewFileSchema = z.object({
+  /** zip 内路径（pack.json / summary.md / prompt.md / schema.json / 映射.txt / ink/…） */
+  path: z.string().min(1),
+  estimatedBytes: z.number().int().min(0),
+});
+
+/** POST /api/teacher/export/learning-pack/preview 响应 data（向导第⑤步数据源） */
+export const learningPackPreviewDataSchema = z.object({
+  files: z.array(learningPackPreviewFileSchema),
+  /** 内容合计预估字节数 */
+  totalEstimatedBytes: z.number().int().min(0),
+  /** 上限回显（LEARNING_PACK_MAX_BYTES） */
+  limitBytes: z.number().int().min(1),
+  /** 是否超限（preview 不报错，由向导提示精简；生成接口超限 413） */
+  overLimit: z.boolean(),
+  /** 超限时的精简方向提示（D18：减学生 / 减 ink / 缩时间范围）；未超限为 null */
+  hint: z.string().nullable(),
+});
+
+// ---------- 错误码 ----------
+
+/**
+ * 学情数据包错误码（UPPER_SNAKE_CODE 固定子集）：
+ * - EXPORT_TOO_LARGE：内容合计超过 50MB 上限（413，D18；中文说明含精简方向）；
+ * - STUDENT_NOT_FOUND / COURSE_NOT_FOUND / ASSIGNMENT_NOT_FOUND /
+ *   LECTURE_NOT_FOUND：范围 id 不存在或不属于本教师（404，不暴露存在性）；
+ * - UNAUTHORIZED / VALIDATION_ERROR：与 auth 模块同义（401 / 400）。
+ */
+export const learningPackErrorCodeSchema = z.enum([
+  "EXPORT_TOO_LARGE",
+  "STUDENT_NOT_FOUND",
+  "COURSE_NOT_FOUND",
+  "ASSIGNMENT_NOT_FOUND",
+  "LECTURE_NOT_FOUND",
+  "UNAUTHORIZED",
+  "VALIDATION_ERROR",
+]);
+
+// ---------- JSON Schema 单一来源（schema:export 与 zip 内 schema.json 共用） ----------
+
+/**
+ * 生成 LearningPack 的 JSON Schema（docs/dsl/schema/learning-pack.json 的内容；
+ * zip 内 schema.json 与该文件逐字节一致——export-schema 脚本与 export-service
+ * 共用本函数，保证两处永不漂移）。
+ */
+export function learningPackJsonSchema(): Record<string, unknown> {
+  return {
+    title: "simple-tutor-tool 学情数据包（LearningPack v1）",
+    description:
+      "AI 学情数据包 pack.json 的权威 JSON Schema，由 packages/contract/src/learning-pack.ts 的 learningPackSchema 经 zod v4 z.toJSONSchema 导出。未勾选的 section 不出现在 pack.json；教师评语为原文（可能含学生真实姓名）；traces 只含派生指标与阅读地图（原始事件不出库）。",
+    ...z.toJSONSchema(learningPackSchema),
+  };
+}
+
+// ---------- prompt.md 模板（D17：单一来源，gen:spec 与 export-service 共用） ----------
+
+/** prompt 拼装输入：按勾选模块与隐私开关决定数据说明段落 */
+export interface LearningPackPromptInput {
+  readonly goal: LearningPackGoal;
+  /** 讲义模块（大纲或含全文）是否勾选 */
+  readonly lectures: boolean;
+  /** 题目模块（任一层级）是否勾选；层级用于说明包含内容 */
+  readonly questionLevel: "stem" | "answer" | "solution" | null;
+  readonly responses: boolean;
+  readonly summaries: boolean;
+  readonly ink: boolean;
+  readonly traces: boolean;
+  readonly anonymized: boolean;
+  /** 教师自定义附加段（原样追加在「教师附加要求」） */
+  readonly customPrompt?: string;
+}
+
+/** 任务段落拼装的模块依赖（与 LearningPackPromptInput 的模块字段同构子集） */
+interface GoalSectionDeps {
+  readonly lectures: boolean;
+  readonly summaries: boolean;
+  readonly traces: boolean;
+  readonly ink: boolean;
+}
+
+/**
+ * 任务目标 → 任务段落与输出要求（D17 四模板；文本为单一来源，勿在服务层复写）。
+ * 任务段落按模块拼装：依赖讲义阅读/历次对比/手写过程的句子只在对应模块
+ * 勾选时出现（D17：未勾手写不提笔迹、未勾讲义不讲阅读情况）。
+ */
+const GOAL_SECTIONS: Record<
+  LearningPackGoal,
+  {
+    readonly task: (deps: GoalSectionDeps) => readonly string[];
+    readonly output: readonly string[];
+  }
+> = {
+  "diagnose-weakness": {
+    task: (deps) => {
+      const lines = [
+        "请基于数据包中的作答与学习痕迹，诊断该学生（或学生群）的薄弱点：",
+        "1. 按知识点/考点归纳错误模式（概念混淆、计算失误、审题偏差、过程不规范等），不要只罗列错题；",
+        "2. 区分「不会」与「失误」：结合改答次数、提示使用与用时判断" +
+          (deps.summaries
+            ? "，并利用历次作答（attemptNo/isFirst）看重做是否进步"
+            : ""),
+        ...(deps.traces
+          ? [
+              "3. 阅读状态（未到达/掠过/已读/细读均为行为推断）可作「知识点是否学过」的旁证，仅供参考；",
+            ]
+          : []),
+        ...(deps.ink
+          ? [
+              "4. 手写图片能反映书写过程与步骤规范性，请结合图片判断过程失分点；",
+            ]
+          : []),
+        `${
+          3 + (deps.traces ? 1 : 0) + (deps.ink ? 1 : 0)
+        }. 输出一份结构清晰的中文诊断报告，按薄弱程度排序，并指出最有价值的 2–3 个改进点。`,
+      ];
+      return lines;
+    },
+    output: [
+      "- 用中文输出 Markdown 报告：先给一句话总体判断，再分「薄弱点清单（按严重程度排序）」与「证据（引用题号/考点/历次对比）」两大部分；",
+      "- 每个薄弱点给出：考点、错误模式、证据、建议的讲解切入点；",
+      "- 不确定的地方明确说明证据不足，不要编造数据包里没有的结论。",
+    ],
+  },
+  "lesson-prep": {
+    task: (deps) => [
+      "请基于数据包，为下一节一对一辅导课准备讲解建议：",
+      "1. 优先针对数据中错误最集中" +
+        (deps.traces ? "、或讲义阅读最薄弱（未到达/掠过的节）" : "") +
+        "的知识点；",
+      "2. 给出本节课的讲解顺序（先补什么、再练什么），每个环节说明设计意图与预计时长；",
+      ...(deps.summaries
+        ? [
+            "3. 结合历次作答（attemptNo/isFirst）判断哪些内容可以快速带过、哪些需要从头讲；",
+          ]
+        : []),
+      `${
+        3 + (deps.summaries ? 1 : 0)
+      }. 给出 3–5 个课堂上可现场提问的检查问题（用于确认学生真的懂了）。`,
+    ],
+    output: [
+      "- 用中文输出 Markdown：课程目标 → 讲解路线（分环节，含时间分配）→ 检查问题清单 → 课后练习建议；",
+      "- 讲解路线要具体到「怎么讲」（用什么例子、先问什么），不要空泛的教学套话；",
+      "- 所有关键判断都要能对应到数据包中的具体证据（题号/考点/阅读状态）。",
+    ],
+  },
+  "variant-practice": {
+    task: (deps) => [
+      "请基于数据包中的错题与薄弱点，生成一份针对性变式练习，输出为**内容 DSL v2** 文档：",
+      "1. 挑选错误集中" +
+        (deps.summaries ? "或重做后仍错" : "") +
+        "的考点出题，难度与原题相当或略低，先保证掌握再提高；",
+      "2. 每道变式题与原题考查同一考点但换情境/换数字，避免原样重复；",
+      "3. 题量建议 6–10 题，题型搭配参考原错题的题型分布。",
+    ],
+    output: [
+      "- 只输出一个完整的 Markdown 文档（含 frontmatter），不要任何解释文字；",
+      "- DSL v2 语法要点（完整规范见《规范.md》，生成后用 `pnpm tutor-lint` 校验）：",
+      "  - frontmatter：`kind: practice`、`unit: 单元名`；",
+      "  - 题目容器：`::::question{type=… difficulty=… knowledge=…}` … `:::`（嵌套内层指令三个冒号）；",
+      "  - 七种题型：judge 判断（题干写 `[[正确]]`/`[[错误]]`）、choice 单选与 multi 多选（任务列表 `- [x]` 标正确项）、",
+      "    fill 填空（答案写进 `[[…]]`，等价答案用 `|` 分隔）、solve/apply/find-error 手写题；",
+      "  - 手写题可加 `:::answer`（最终答案，供自动判分）与 `:::solution`（详解，交卷后才下发）；",
+      "  - 提示用 `:::hint`（可多个）；数学公式 `$…$`；数学环境内的 `[[…]]` 不是填空标记；",
+      "  - 所有容器必须写结束围栏；题目 id 缺省按「单元名-序号」派生，如需指定用 `{#id}`；",
+      "- 输出后自查：每题 type 正确、填空有 `[[…]]`、选择题正确项数量正确、容器全部闭合。",
+    ],
+  },
+  "period-summary": {
+    task: (deps) => [
+      "请基于数据包，写一份面向家长的阶段性学习总结（教师审阅后转发）：",
+      "1. 语气客观、具体、鼓励为主，避免「粗心」「不认真」这类空泛评价，用数据说话；",
+      `2. 覆盖：本阶段学了什么${
+        deps.lectures ? "（讲义/考点范围）" : "（考点范围）"
+      }、掌握情况（正确率趋势${deps.summaries ? "、历次进步" : ""}）、薄弱环节${
+        deps.traces
+          ? "、学习状态（用时、提示使用、讲义阅读等行为信号——仅描述不武断）"
+          : ""
+      }；`,
+      "3. 给家长 2–3 条可操作的家庭配合建议；",
+      "4. 篇幅 400–800 字，分小节，方便家长快速阅读。",
+    ],
+    output: [
+      "- 用中文输出 Markdown：标题（如「XX 同学 X 月学习小结」）→ 学习内容 → 掌握情况 → 薄弱环节 → 给家长的建议；",
+      "- 涉及学生的称呼沿用数据包中的称呼（如为化名则用化名，教师转发前自行替换）；",
+      "- 数据引用要准确（正确率、题数、进步对比），不夸大不回避。",
+    ],
+  },
+};
+
+/** 化名编号（学生A…学生Z、学生AA…；D16 名单顺序编号） */
+export function learningPackAliasOf(index: number): string {
+  // 1→A … 26→Z、27→AA（电子表格列号同款进制；0 起入参 +1）
+  let n = index + 1;
+  let letters = "";
+  while (n > 0) {
+    const rem = (n - 1) % 26;
+    letters = String.fromCharCode(65 + rem) + letters;
+    n = Math.floor((n - 1) / 26);
+  }
+  return `学生${letters}`;
+}
+
+/**
+ * 渲染 prompt.md（D17）：按勾选模块自动拼装——未勾手写 PNG 不提笔迹、
+ * 未勾讲义不讲阅读情况；自定义段追加在「教师附加要求」。
+ * 本函数是模板文本的**单一来源**：export-service 生成 zip 内 prompt.md、
+ * gen:spec 生成 docs/dsl/学情分析提示词.md（按全模块示例渲染），两处共用。
+ */
+export function renderLearningPackPrompt(
+  input: LearningPackPromptInput,
+): string {
+  const goalLabel = LEARNING_PACK_GOAL_LABELS[input.goal];
+  /** 使用方法行按是否含手写图片分两形态（D17：未勾手写不提笔迹） */
+  const usageLines = input.ink
+    ? [
+        "> 使用方法：把整个数据包（本文件 + pack.json + summary.md + schema.json + ink/ 图片",
+        "> 目录）一并交给 AI。",
+      ]
+    : [
+        "> 使用方法：把整个数据包（本文件 + pack.json + summary.md + schema.json）",
+        "> 一并交给 AI。",
+      ];
+  const sections: string[] = [
+    [
+      `# 学情数据包分析任务：${goalLabel}`,
+      "",
+      "> 本文件由 simple-tutor-tool 按「学情分析提示词模板」生成（模板单一来源：",
+      "> packages/contract/src/learning-pack.ts，人读版见 docs/dsl/学情分析提示词.md）。",
+      ...usageLines,
+      "",
+    ].join("\n"),
+  ];
+
+  sections.push(
+    [
+      "## 角色",
+      "",
+      "你是一对一辅导老师的学情分析助手。数据包里是老师长期积累的真实作答与学习痕迹数据，",
+      "请基于数据说话，区分「证据充分」与「证据不足」，不编造数据包之外的信息。",
+      "",
+    ].join("\n"),
+  );
+
+  sections.push(
+    [
+      `## 任务目标：${goalLabel}`,
+      "",
+      ...GOAL_SECTIONS[input.goal].task({
+        lectures: input.lectures,
+        summaries: input.summaries,
+        traces: input.traces,
+        ink: input.ink,
+      }),
+      "",
+    ].join("\n"),
+  );
+
+  // 数据说明：按勾选模块拼装（未勾选的模块不提及，D17）
+  const dataLines: string[] = [
+    "## 数据说明（按本次包内实际内容）",
+    "",
+    "- pack.json：结构化数据（schema.json 是它的 JSON Schema，字段含义以 schema 与本节说明为准）。",
+  ];
+  dataLines.push(
+    input.anonymized
+      ? "- students：学生名单。已化名——学生以「学生A/学生B…」称呼（化名与真实姓名的对照只存在老师本地的 映射.txt，不在包内）。"
+      : "- students：学生名单（包含真实姓名，老师已确认）。",
+  );
+  if (input.lectures) {
+    dataLines.push(
+      "- content.lectures：讲义条目——title、outline（H2/H3 目录）；勾选了全文的小节另含 sections（headingIndex 对应 outline 里的目录序号）。",
+    );
+  }
+  if (input.questionLevel !== null) {
+    const scopeText =
+      input.questionLevel === "stem"
+        ? "仅题干（题干中的答案标记已隐去）"
+        : input.questionLevel === "answer"
+          ? "题干 + 参考答案（题干原文含 [[答案]] 标记）"
+          : "题干 + 参考答案 + 详解";
+    dataLines.push(
+      `- content.questions：题目（取作答时的快照，${scopeText}）。`,
+    );
+  }
+  if (input.responses) {
+    dataLines.push(
+      "- attempts.responses：逐题作答行——answerText（学生答案）、autoCorrect/finalCorrect（自动/最终判定，null=待批）、teacherComment（**教师评语原文，可能包含学生真实姓名**，属老师写给自己的批注，分析时可作参考）、no（该次作答内全卷连续题号）。",
+    );
+  }
+  if (input.summaries) {
+    dataLines.push(
+      "- attempts.summaries：历次作答汇总——sourceType（assignment=作业/course=课程练习）、attemptNo 与 isFirst（**收录全部历次**，重做进步可从历次对比看出）、得分（scoreAuto 自动判分 / scoreFinal 最终得分）与判定计数。",
+    );
+  }
+  if (input.traces) {
+    dataLines.push(
+      "- traces.questions：每题过程指标——有效用时/提示数/改答次数来自作答记录；开提示前思考时长、提示停留、手写反复度、离线作答占比、是否回看解析为**行为推断信号，仅供参照、不下结论**。",
+      "- traces.lectures：讲义阅读地图——逐节停留判定（未到达/掠过/部分/已读/细读）与折叠块、分步容器的交互记录，同样是时间代理的行为推断。",
+    );
+  }
+  if (input.responses || input.summaries || input.traces) {
+    dataLines.push(
+      "- summary：统计摘要（按学生汇总正确率〔待批不计入分母〕、有效用时、离线占比）。",
+    );
+  }
+  dataLines.push(
+    "- summary.md：人类可读的统计摘要（与 pack.json 同源，AI 读表格更方便）。",
+  );
+  if (input.ink) {
+    dataLines.push(
+      "- ink/*.png：手写过程图片（文件名含学生称呼、题目 id 与作答片段号）；如你是多模态模型请结合图片分析书写过程与步骤规范性。",
+    );
+  }
+  dataLines.push("");
+  sections.push(dataLines.join("\n"));
+
+  sections.push(
+    ["## 输出要求", "", ...GOAL_SECTIONS[input.goal].output, ""].join("\n"),
+  );
+
+  if (input.customPrompt !== undefined && input.customPrompt.length > 0) {
+    sections.push(["## 教师附加要求", "", input.customPrompt, ""].join("\n"));
+  }
+
+  return `${sections.join("\n")}\n`;
+}
+
+// ---------- 具体化的成功壳（与 analytics-api.ts 同款局部 helper） ----------
+
+function apiOkExtend<T extends z.ZodType>(dataSchema: T) {
+  return z.object({
+    ok: z.literal(true),
+    data: dataSchema,
+  });
+}
+
+/** 携带 preview 数据的成功响应壳 */
+export const learningPackPreviewOkSchema = apiOkExtend(
+  learningPackPreviewDataSchema,
+);
+
+// ---------- 推断类型导出 ----------
+
+export type LearningPackGoal = z.infer<typeof learningPackGoalSchema>;
+export type LearningPackLecturePick = z.infer<
+  typeof learningPackLecturePickSchema
+>;
+export type LearningPackModules = z.infer<typeof learningPackModulesSchema>;
+export type LearningPackScope = z.infer<typeof learningPackScopeSchema>;
+export type LearningPackPrivacy = z.infer<typeof learningPackPrivacySchema>;
+export type LearningPackExportRequest = z.infer<
+  typeof learningPackExportRequestSchema
+>;
+export type LearningPackMeta = z.infer<typeof learningPackMetaSchema>;
+export type LearningPackStudent = z.infer<typeof learningPackStudentSchema>;
+export type LearningPackOutlineItem = z.infer<
+  typeof learningPackOutlineItemSchema
+>;
+export type LearningPackLecture = z.infer<typeof learningPackLectureSchema>;
+export type LearningPackQuestion = z.infer<typeof learningPackQuestionSchema>;
+export type LearningPackContent = z.infer<typeof learningPackContentSchema>;
+export type LearningPackResponse = z.infer<typeof learningPackResponseSchema>;
+export type LearningPackAttemptSummary = z.infer<
+  typeof learningPackAttemptSummarySchema
+>;
+export type LearningPackAttemptsSection = z.infer<
+  typeof learningPackAttemptsSectionSchema
+>;
+export type LearningPackQuestionTrace = z.infer<
+  typeof learningPackQuestionTraceSchema
+>;
+export type LearningPackLectureTrace = z.infer<
+  typeof learningPackLectureTraceSchema
+>;
+export type LearningPackTracesSection = z.infer<
+  typeof learningPackTracesSectionSchema
+>;
+export type LearningPackStudentSummary = z.infer<
+  typeof learningPackStudentSummarySchema
+>;
+export type LearningPackSummarySection = z.infer<
+  typeof learningPackSummarySectionSchema
+>;
+export type LearningPack = z.infer<typeof learningPackSchema>;
+export type LearningPackPreviewFile = z.infer<
+  typeof learningPackPreviewFileSchema
+>;
+export type LearningPackPreviewData = z.infer<
+  typeof learningPackPreviewDataSchema
+>;
+export type LearningPackErrorCode = z.infer<typeof learningPackErrorCodeSchema>;

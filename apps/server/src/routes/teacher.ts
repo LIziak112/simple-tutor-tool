@@ -23,6 +23,7 @@ import { createSharedRoutes } from "./shared";
 import { createTeacherAnalyticsRoutes } from "./teacher-analytics";
 import { createAssignmentTeacherRoutes } from "./teacher-assignments";
 import { createTeacherAttemptRoutes } from "./teacher-attempts";
+import { createTeacherExportRoutes } from "./teacher-export";
 import { createStudentTeacherRoutes } from "./teacher-students";
 
 /**
@@ -59,6 +60,9 @@ import { createStudentTeacherRoutes } from "./teacher-students";
  * - T4.1（业务在 analytics-service）：GET /analytics/overview、
  *   GET /analytics/student/:id、GET /analytics/questions（学情三接口；
  *   查询参数 courseId/days/focusDays，D1–D7 口径见契约 analytics-api.ts）。
+ * - T4.3（业务在 export-service）：POST /export/learning-pack/preview（清单+
+ *   预估+超限标志）、POST /export/learning-pack（zip 直出；模块勾选/化名/
+ *   50MB 预检，D14–D19 口径见契约 learning-pack.ts）。
  *
  * 返回类型不显式标注：链式注册把路由签名累积进推断类型，
  * 挂载后 AppType 才能带上这些路由（前端 hc 端到端类型的前提）。
@@ -131,5 +135,8 @@ export function createTeacherRoutes(
       // T4.1：学情分析（总览/学生画像/题目视角，业务在 analytics-service；
       // 查询参数 courseId/days/focusDays，口径见契约 analytics-api.ts 的 D1–D7 注释）
       .route("/", createTeacherAnalyticsRoutes(db))
+      // T4.3：AI 学情数据包导出（preview 清单 + zip 直出，业务在 export-service；
+      // 请求体/口径见契约 learning-pack.ts 的 D14–D19 注释）
+      .route("/", createTeacherExportRoutes(db, dataDir))
   );
 }
