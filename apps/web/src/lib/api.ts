@@ -76,6 +76,8 @@ import {
   type QuestionUpdateData,
   type QuestionUpdateRequest,
   type ReorderRequest,
+  type ReportDetail,
+  type ReportListData,
   type SharedFileList,
   type SharedImportRequest,
   type SharedPreviewData,
@@ -1711,6 +1713,37 @@ export function fetchApiToken(): Promise<TeacherApiTokenData> {
  */
 export function resetApiToken(): Promise<TeacherApiTokenResetData> {
   return callApi(() => api.api.teacher["api-token"].$post());
+}
+
+// ---------- 学情报告（T4.6 接口；T4.7 画像页报告区消费，D24） ----------
+
+/**
+ * 学生报告列表（createdAt 倒序；摘要行不含 markdown 正文）。
+ * 学生不存在或非本教师 → 404 STUDENT_NOT_FOUND（画像页对 404 已有整页错误态，
+ * 报告区单独吞掉 404 展示为空即可——画像数据与报告同源自同一名学生）。
+ */
+export function fetchStudentReports(
+  studentId: string,
+): Promise<ReportListData> {
+  return callApi(() =>
+    api.api.teacher.students[":id"].reports.$get({
+      param: { id: studentId },
+    }),
+  );
+}
+
+/** 单份报告详情（含 markdown 正文；画像页「点开渲染」按需取） */
+export function fetchReportDetail(reportId: string): Promise<ReportDetail> {
+  return callApi(() =>
+    api.api.teacher.reports[":id"].$get({ param: { id: reportId } }),
+  );
+}
+
+/** 删除报告（D24：不做编辑；非本教师报告 404，删除前页面有确认弹层） */
+export function deleteReportApi(reportId: string): Promise<null> {
+  return callApi(() =>
+    api.api.teacher.reports[":id"].$delete({ param: { id: reportId } }),
+  );
 }
 
 /**

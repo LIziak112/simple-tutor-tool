@@ -12,6 +12,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ApiError,
   fetchAnalyticsStudentApi,
+  fetchStudentReports,
   fetchTeacherCourses,
 } from "@/lib/api";
 import InsightsStudentPage from "./InsightsStudentPage";
@@ -73,11 +74,14 @@ vi.mock("@/lib/api", async (importOriginal) => {
     ...actual,
     fetchAnalyticsStudentApi: vi.fn(),
     fetchTeacherCourses: vi.fn(),
+    // T4.7 报告区（列表默认空；报告区自身行为在 StudentReportsSection.test 覆盖）
+    fetchStudentReports: vi.fn(),
   };
 });
 
 const mockedStudent = vi.mocked(fetchAnalyticsStudentApi);
 const mockedCourses = vi.mocked(fetchTeacherCourses);
+const mockedReports = vi.mocked(fetchStudentReports);
 
 const S2 = "22222222-2222-4222-8222-222222222222";
 const COURSE_A = "44444444-4444-4444-8444-444444444444";
@@ -337,6 +341,7 @@ function renderPage(initialEntry = `/t/insights/students/${S2}`) {
 beforeEach(() => {
   vi.clearAllMocks();
   mockedCourses.mockResolvedValue({ courses: [] });
+  mockedReports.mockResolvedValue({ reports: [] });
 });
 
 describe("InsightsStudentPage 三态", () => {
@@ -569,13 +574,15 @@ describe("InsightsStudentPage 讲义阅读地图（T4.0 §4.4.4）", () => {
   });
 });
 
-describe("InsightsStudentPage AI 报告占位（T4.6 后接入）", () => {
-  it("空态文案「AI 报告将在连接 AI 后出现」，不做假数据", async () => {
+describe("InsightsStudentPage AI 报告区（T4.7 接入实数据，详见 StudentReportsSection.test）", () => {
+  it("空态文案说明报告来源与连接入口（不再说「将在连接 AI 后出现」）", async () => {
     mockedStudent.mockResolvedValue(makeStudent());
     renderPage();
-    expect(
-      await screen.findByText("AI 报告将在连接 AI 后出现"),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("还没有 AI 报告")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "连接 AI" })).toHaveAttribute(
+      "href",
+      "/t/connect",
+    );
   });
 });
 
