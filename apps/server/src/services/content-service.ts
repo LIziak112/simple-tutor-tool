@@ -128,8 +128,11 @@ interface ImportAnalysis {
  * fallbackUnitId（内容模型与导入规范化方案 §2）：frontmatter 未声明 unit 时单元名
  * 锚定文件名。v1 转换产物恒有 unit（v1ToV2 总是写 unit:），故 fallback 只对 v2
  * 未声明 unit 的文档生效——转换后同样传入，兜底无害。
+ *
+ * T4.6 起导出：MCP lint_markdown 工具复用本函数与 summarizeParsed（与导入预览
+ * 同一份 v1 兼容与 lint 口径，避免 MCP 侧另写一份漂移）。
  */
-function analyzeImport(
+export function analyzeImport(
   markdown: string,
   fallbackUnitId?: string,
 ): ImportAnalysis {
@@ -155,8 +158,8 @@ function fallbackUnitIdOf(name: string | undefined): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-/** 由解析结果统计预览摘要 */
-function summarizeParsed(parsed: ParsedDocument): ImportSummary {
+/** 由解析结果统计预览摘要（T4.6 起导出：MCP lint_markdown 复用） */
+export function summarizeParsed(parsed: ParsedDocument): ImportSummary {
   const typeDistribution: Record<string, number> = {};
   let questionCount = 0;
   for (const unit of parsed.units) {

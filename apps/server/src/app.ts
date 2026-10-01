@@ -10,6 +10,7 @@ import type { Logger } from "pino";
 import pino from "pino";
 import type { Db, DbHandle } from "./db/client";
 import { HttpError } from "./lib/http-error";
+import { createMcpRoutes } from "./mcp/mount";
 import { createAdminRoutes } from "./routes/admin";
 import { createPublicRoutes } from "./routes/public";
 import { createStudentRoutes } from "./routes/student";
@@ -192,6 +193,19 @@ export function createApp(options: CreateAppOptions) {
     .route(
       "/api/admin",
       createAdminRoutes(options.db, options.publicUrl, options.dataDir),
+    )
+    // —— MCP Server（T4.6）：/mcp 挂 SDK Streamable HTTP（stateless + JSON），
+    //    不走统一壳、不走 /api 前缀（SDK 协议格式原样）；Bearer apiToken 鉴权
+    //    （无/错 token/禁用教师 401 同文案防探测，D22），全部工具按 token 绑定
+    //    教师域隔离（11 工具见 src/mcp/server.ts，D23 清单）——
+    //    挂在 API 路由之后、静态托管之前（/mcp 不参与 SPA 回退）。
+    .route(
+      "/mcp",
+      createMcpRoutes({
+        db: options.db,
+        dataDir: options.dataDir,
+        specDir: options.specDir,
+      }),
     );
 
   // —— 生产模式：托管 apps/web/dist ——
