@@ -1,10 +1,14 @@
 import { existsSync } from "node:fs";
 import type { ApiErr } from "@tutor/contract";
-import { IMPORT_BATCH_BODY_LIMIT, INK_MAX_UPLOAD_BYTES } from "@tutor/contract";
+import {
+  BACKUP_UPLOAD_BODY_LIMIT,
+  IMPORT_BATCH_BODY_LIMIT,
+  INK_MAX_UPLOAD_BYTES,
+} from "@tutor/contract";
 import { Hono } from "hono";
 import type { Logger } from "pino";
 import pino from "pino";
-import type { Db } from "./db/client";
+import type { Db, DbHandle } from "./db/client";
 import { HttpError } from "./lib/http-error";
 import { createAdminRoutes } from "./routes/admin";
 import { createPublicRoutes } from "./routes/public";
@@ -28,6 +32,12 @@ export interface CreateAppOptions {
   isProduction: boolean;
   /** 数据库实例（教师鉴权等业务路由使用；测试注入 createTestDb() 内存库） */
   db: Db;
+  /**
+   * 可重启数据连接（T4.5 备份恢复）：恢复替换 DATA_DIR 后经它重启连接。
+   * 缺省时备份路由用静态句柄兜底（恢复会干净失败，见 client.ts）；
+   * 生产入口（index.ts）必传，恢复行为的测试须传文件库句柄。
+   */
+  dbHandle?: DbHandle;
   /**
    * 运行数据目录（§0.3）：T2.8 起笔迹文件落 DATA_DIR/blobs/ink/…，
    * 与数据库同源（生产传 config.dataDir；测试注入临时目录）。
@@ -148,9 +158,26 @@ export function createApp(options: CreateAppOptions) {
       }
       return next();
     })
+    // T4.5：备份恢复上传（POST multipart zip）的 body 大小防御——content-length
+    // 超限直接 413 BACKUP_TOO_LARGE，不进入 parseBody（整包进内存）。精确限额
+    // （zip ≤256MB）由 teacher-backup 路由按文件实际大小兜底（chunked 时）。
+    .use("/api/teacher/backup/restore", async (c, next) => {
+      if (c.req.method === "POST") {
+        const length = Number(c.req.header("content-length") ?? "0");
+        if (Number.isFinite(length) && length > BACKUP_UPLOAD_BODY_LIMIT) {
+          const body: ApiErr = {
+            ok: false,
+            error: "BACKUP_TOO_LARGE",
+            message: "备份文件超过 256 MB 上限，请检查是否选错了文件",
+          };
+          return c.json(body, 413);
+        }
+      }
+      return next();
+    })
     .route(
       "/api/teacher",
-      createTeacherRoutes(options.db, options.publicUrl, options.dataDir),
+      createTeacherRoutes(options.db, options.publicUrl, options.dataDir, options.dbHandle),
     )
     .route(
       "/api/student",

@@ -4,8 +4,9 @@ import pino from "pino";
 import { createApp } from "./app";
 import { loadOrCreateSecretKey, readConfig } from "./config";
 import { runBackfills } from "./db/backfill";
-import { createDb } from "./db/client";
+import { createDbHandle } from "./db/client";
 import { runMigrations } from "./db/migrate";
+import { startBackupScheduler } from "./services/backup-service";
 
 /**
  * 启动入口：读配置 → 准备数据目录与密钥 → 打开数据库并迁移 → 组装 app → 监听端口。
@@ -26,13 +27,20 @@ logger.info(
 );
 
 // 数据库：打开（或创建）DATA_DIR/tutor.db 并执行未应用的迁移。
-// runMigrations 幂等（已应用过的迁移记录在 __drizzle_migrations 表），每次启动都可安全调用。
-// 迁移之后执行 D23 数据搬迁（runBackfills，幂等：data_migrations 完成标记防重跑）。
+// 用可重启句柄（T4.5 恢复用）：onOpen 每次打开（含恢复后的重开）都执行
+// 迁移 + D23 数据搬迁，二者幂等（__drizzle_migrations / data_migrations
+// 完成标记防重跑）——从旧版本备份恢复的库也自动升级到当前结构。
 const dbPath = join(config.dataDir, "tutor.db");
-const db = createDb(dbPath);
-runMigrations(db);
-runBackfills(db);
+const dbHandle = createDbHandle(dbPath, (fresh) => {
+  runMigrations(fresh);
+  runBackfills(fresh);
+});
+const db = dbHandle.db;
 logger.info({ dbPath }, "数据库已就绪（迁移与数据搬迁已执行）");
+
+// 自动备份快照（T4.5，架构 §5.10）：启动立即一份 + 每 24h 一份，保留 14 份。
+// 失败只记日志（磁盘满等不拖垮服务）；句柄 db 让快照始终对着当前连接。
+const stopBackupScheduler = startBackupScheduler(config.dataDir, db, logger);
 
 const app = createApp({
   isProduction: config.isProduction,
@@ -40,6 +48,7 @@ const app = createApp({
   db,
   dataDir: config.dataDir,
   publicUrl: config.publicUrl,
+  dbHandle,
 });
 
 const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
@@ -63,6 +72,7 @@ const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
 // close 回调可能被 keep-alive 空闲连接拖住，3 秒后强制退出兜底。
 function shutdown(signal: NodeJS.Signals): void {
   logger.info({ signal }, "收到退出信号，正在关闭服务");
+  stopBackupScheduler();
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 3000).unref();
 }
