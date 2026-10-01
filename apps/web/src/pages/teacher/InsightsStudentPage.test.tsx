@@ -517,6 +517,16 @@ describe("InsightsStudentPage 指标区", () => {
       screen.getByRole("link", { name: /查看该生全部作答/ }),
     ).toHaveAttribute("href", `/t/data?studentId=${S2}`);
   });
+
+  it("「导出给 AI」入口指向导出页并携带 studentId 预填（T4.4）", async () => {
+    mockedStudent.mockResolvedValue(makeStudent());
+    renderPage();
+    await screen.findByText("讲义阅读地图");
+    expect(screen.getByRole("link", { name: /导出给 AI/ })).toHaveAttribute(
+      "href",
+      `/t/export?studentId=${S2}`,
+    );
+  });
 });
 
 describe("InsightsStudentPage 讲义阅读地图（T4.0 §4.4.4）", () => {

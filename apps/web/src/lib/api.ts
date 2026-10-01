@@ -49,6 +49,8 @@ import {
   type InkDoc,
   type InkUploadData,
   type LearningEventBatchData,
+  type LearningPackExportRequest,
+  type LearningPackPreviewData,
   type LectureDetail,
   type LectureEvent,
   type LectureMetaData,
@@ -1612,4 +1614,68 @@ export function fetchAnalyticsQuestionsApi(
       Object.keys(query).length > 0 ? { query } : undefined,
     ),
   );
+}
+
+// ---------- T4.4：AI 学情数据包导出向导（契约 learning-pack.ts；业务 T4.3） ----------
+
+/**
+ * 学情数据包预览（POST /api/teacher/export/learning-pack/preview，统一壳）：
+ * 向导第⑤步数据源——文件清单 + 预估大小 + 超限标志（overLimit 时向导提示
+ * 精简并禁用下载；D18）。请求 schema 与生成接口共用（D14 五步的同一份勾选）。
+ * 错误：范围 id 域校验 404 STUDENT_NOT_FOUND 等 → ApiError（页面错误态展示）。
+ */
+export function previewLearningPackApi(
+  request: LearningPackExportRequest,
+): Promise<LearningPackPreviewData> {
+  // 路径段按实际路由名取（learning-preview，连字符），hc 不做驼峰转换
+  return callApi(() =>
+    api.api.teacher.export["learning-pack"].preview.$post({ json: request }),
+  );
+}
+
+/**
+ * 生成并下载学情数据包 zip（POST /api/teacher/export/learning-pack，
+ * 文件直出非统一壳）：zip 二进制流不适合 hc 的 JSON 类型链，用同构 fetch
+ * （同源相对路径自动带会话 Cookie，与 downloadTeacherExportCsv 同口径）
+ * 拿 blob 触发浏览器下载；文件名取响应 Content-Disposition（服务端按请求
+ * 时刻北京时间生成 learning-pack-YYYYMMDD-HHmmss.zip），取不到时回退固定名。
+ * 失败：统一壳错误仍为 JSON（如 413 EXPORT_TOO_LARGE 含精简方向）→ 经
+ * throwShellError 抛 ApiError；返回值为实际使用的下载文件名。
+ */
+export async function downloadLearningPackApi(
+  request: LearningPackExportRequest,
+): Promise<string> {
+  let res: Response;
+  try {
+    res = await fetch("/api/teacher/export/learning-pack", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(request),
+    });
+  } catch {
+    throw new Error(
+      "连不上服务器，请确认后端已启动（pnpm --filter server dev）后重试",
+    );
+  }
+  if (!res.ok) {
+    // 文件接口的错误仍是统一 JSON 壳
+    await throwShellError(res);
+  }
+  const disposition = res.headers.get("content-disposition") ?? "";
+  const matched = /filename="?([^";]+)"?/i.exec(disposition)?.[1];
+  const filename =
+    matched !== undefined && matched.length > 0 ? matched : "learning-pack.zip";
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  try {
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = filename;
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+  return filename;
 }
