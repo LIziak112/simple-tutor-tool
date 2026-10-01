@@ -14,7 +14,8 @@ import { createMcpServer } from "./server";
  * stateless 模式（sessionIdGenerator: undefined）：每个 HTTP 请求独立成套
  * （新建 McpServer 实例 + transport，请求结束即关），无跨请求会话状态——
  * 工具全部无状态、按 token 绑定教师域，stateless 是最简且无状态漂移的形态
- * （SDK 文档：无 Session ID、无会话校验；GET/DELETE 由 SDK 返回 405）。
+ * （SDK 文档：无 Session ID、无会话校验；GET 带 token+accept SSE 返回 200 的立即关闭空流、
+ * DELETE 返回 200 空体——Opus 实测④核实的 SDK 1.31 实际行为，无功能与安全影响）。
  * enableJsonResponse: true——工具型服务器用 JSON 响应（非 SSE 流）。
  *
  * 鉴权：createRequireMcpToken 在 transport 之前执行（无/错 token/禁用教师 →
@@ -32,7 +33,8 @@ export interface McpMountOptions {
 
 /**
  * 创建 /mcp 子应用（app.route("/mcp", …) 挂载）。
- * 全方法接听（app.all）：POST 走 SDK；GET/DELETE 由 SDK stateless 语义返回 405。
+ * 全方法接听（app.all）：POST 走 SDK；GET/DELETE 交由 SDK stateless 语义处理
+ * （GET=200 立即关闭的空 SSE 流、DELETE=200 空体，见文件头注释；PUT/PATCH 等才 405）。
  */
 export function createMcpRoutes(options: McpMountOptions) {
   const requireToken = createRequireMcpToken(options.db);
