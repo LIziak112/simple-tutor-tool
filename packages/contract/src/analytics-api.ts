@@ -382,6 +382,38 @@ export const analyticsRedoRowSchema = z.object({
   latestSubmittedAt: z.string().nullable(),
 });
 
+/**
+ * 学生画像页的错题行（T4.2 起随学生画像下发，编排在 T4.1 契约内）：
+ * - 口径（D1/D4/D5）：该生在 qualifying 作答（D1：作业全部 + 课程练习首次，
+ *   且 submittedAt 落 days 窗口）中 finalCorrect=**false** 的逐题行——待批
+ *   （null）**不在列表**（待批经 totals.pendingCount 与矩阵展示）；
+ * - 同一题多次判错（如多次作业引用同一单元）取**最新一次** qualifying 作答为
+ *   代表：attemptId 即该次作答（点击跳 T3.1 作答详情），answerText 为该次
+ *   错误答案（未作为 null——Phase3 D1 未作答判错）；
+ * - 题干/题型/难度/考点取该次作答的 questionSnapshotJson 快照原文（与题目
+ *   视角同源；快照缺失按当前库 questionMeta 兜底）；
+ * - 排序按提交时间倒序（同刻按 attemptId、questionId 降序兜底稳定），
+ *   上限 200 条（一对一规模防御，超出只保留最近的）。
+ */
+export const analyticsWrongQuestionRowSchema = z.object({
+  questionId: z.string().min(1),
+  /** 所属单元 id（当前库值；题已软删/移出时为 null） */
+  unitId: z.string().min(1).nullable(),
+  /** 单元标题（当前库值；题已软删/移出时为 null） */
+  unitTitle: z.string().min(1).nullable(),
+  type: questionTypeSchema,
+  difficulty: z.number().int().min(1).max(5),
+  knowledge: z.array(z.string().min(1)),
+  /** 题干 Markdown（快照原文，含 [[答案]] 标记） */
+  stemMd: z.string(),
+  /** 代表作答所属 attempt（点击跳作答详情） */
+  attemptId: z.uuid(),
+  /** 该次的错误答案（人类可读序列化；未作为 null） */
+  answerText: z.string().nullable(),
+  /** 该次提交时间：UTC ISO */
+  submittedAt: z.string().min(1),
+});
+
 // ---------- 讲义阅读地图（T4.0b 聚合输出镜像，画像页直接渲染） ----------
 
 /** 节状态（阈值口径见服务端 TRACE_THRESHOLDS；全部为时间代理的行为推断） */
@@ -484,7 +516,8 @@ export const analyticsLectureMapEntrySchema = z.object({
 
 /**
  * GET /api/teacher/analytics/student/:id 响应 data（学生画像页）：
- * 该生的周趋势、考点正确率、异常题、重做概览、离线占比、讲义阅读地图。
+ * 该生的周趋势、考点正确率、异常题、重做概览、离线占比、讲义阅读地图与
+ * 错题列表（T4.2 起）。
  * 学生不属于本教师 → 404 STUDENT_NOT_FOUND（D7，不暴露存在性）。
  * redo 不受 days 限制（结构性事实）；其余指标按 days 窗口。
  */
@@ -507,6 +540,12 @@ export const analyticsStudentDataSchema = z.object({
   anomalies: z.array(analyticsAnomalyQuestionSchema),
   /** 重做概览（D1 独立指标；该生全部课程练习单元） */
   redo: z.array(analyticsRedoRowSchema),
+  /**
+   * 错题列表（T4.2：qualifying 中 finalCorrect=false 的逐题行；待批 null 不在
+   * 列表；同题多次判错取最新一次代表作答；提交时间倒序，上限 200 条——口径
+   * 详见 analyticsWrongQuestionRowSchema 注释）
+   */
+  wrongQuestions: z.array(analyticsWrongQuestionRowSchema),
   /** 离线作答占比（窗口内该生已交卷 attempt 聚合） */
   offline: analyticsOfflineSchema,
   /** 讲义阅读地图（该生有阅读事件的讲义；courseId 筛选时只含该课程讲义） */
@@ -624,6 +663,9 @@ export type AnalyticsAnomalyQuestion = z.infer<
   typeof analyticsAnomalyQuestionSchema
 >;
 export type AnalyticsRedoRow = z.infer<typeof analyticsRedoRowSchema>;
+export type AnalyticsWrongQuestionRow = z.infer<
+  typeof analyticsWrongQuestionRowSchema
+>;
 export type AnalyticsSectionStatus = z.infer<
   typeof analyticsSectionStatusSchema
 >;
