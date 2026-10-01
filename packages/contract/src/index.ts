@@ -24,6 +24,9 @@ export * from "./grading.ts";
 export * from "./ink.ts";
 /** 学习痕迹事件契约（T2.10 起为权威定义）：11 种事件类型、批量上报请求/响应、上限常量 */
 export * from "./learning-event.ts";
+/** AI 学情数据包契约（T4.3 起为权威定义，依据 Phase4 清单 §2 D14–D19）：导出请求（范围×模块×目标×隐私）、
+ *  LearningPack 模块化 schema（content/attempts/traces/summary）、preview 响应、prompt.md 模板单一来源 */
+export * from "./learning-pack.ts";
 /** 资源库 API 契约（T2A.2 起为权威定义）：资源库页面与单元管理的请求/响应、错误码 */
 export * from "./library-api.ts";
 /** 运行时公开配置契约（T2.12 起为权威定义）：GET /api/public/config 的 pwaEnabled/publicUrl */

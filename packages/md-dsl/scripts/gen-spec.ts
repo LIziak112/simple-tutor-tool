@@ -1,18 +1,25 @@
 /**
  * gen:spec 脚本入口（T1.7）：从指令注册表 + lint 规则清单生成
- * docs/dsl/规范.md 与 docs/dsl/提示词模板.md。
+ * docs/dsl/规范.md 与 docs/dsl/提示词模板.md；T4.3 起追加第三个输出
+ * docs/dsl/学情分析提示词.md（四种任务目标的完整提示词模板，人读版）。
  * 运行：根目录 `pnpm gen:spec`（本脚本与 contract 的 export-schema 串联，
- * 一次命令全量刷新规范、提示词模板与 JSON Schema）。
+ * 一次命令全量刷新规范、两份提示词模板与 JSON Schema）。
  *
  * - Node 24 原生类型剥离直接运行（相对导入带 .ts 扩展名）；
  * - 渲染逻辑在 src/spec/gen.ts（纯函数、有完整测试），本脚本只负责写盘；
+ *   学情分析提示词的模板常量在 @tutor/contract 的 learning-pack.ts
+ *   （D17 单一来源：教师端导出 zip 内 prompt.md 与本文档共用同一渲染函数）；
  * - 整体生成保证幂等：同一数据源生成字节相同，CI 用「gen:spec 后
  *   git diff --exit-code」防止忘记重新生成（docs/dsl/完整样例.md 手写维护，不经本脚本）。
  */
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { listDirectives } from "@tutor/contract";
+import {
+  LEARNING_PACK_GOAL_LABELS,
+  listDirectives,
+  renderLearningPackPrompt,
+} from "@tutor/contract";
 import { LINT_RULES } from "../src/lint/rules.ts";
 import {
   renderPromptTemplateMarkdown,
@@ -21,6 +28,51 @@ import {
 
 const directives = listDirectives();
 const rules = LINT_RULES;
+
+/** 学情分析提示词.md（人读版）：按全模块示例渲染四模板 + 拼装规则说明 */
+function renderLearningPackPromptDoc(): string {
+  const ALL_MODULES = {
+    lectures: true,
+    questionLevel: "solution" as const,
+    responses: true,
+    summaries: true,
+    ink: true,
+    traces: true,
+    anonymized: true,
+  };
+  const goals = Object.keys(LEARNING_PACK_GOAL_LABELS) as Array<
+    keyof typeof LEARNING_PACK_GOAL_LABELS
+  >;
+  const sections: string[] = [
+    [
+      "# 学情分析提示词模板（AI 学情数据包）",
+      "",
+      "> 本文件由 `pnpm gen:spec` 自动生成，请勿手改；模板单一来源在",
+      "> `packages/contract/src/learning-pack.ts`（renderLearningPackPrompt）——",
+      "> 教师端「导出给 AI」数据包（T4.3）zip 内的 prompt.md 由同一函数按实际勾选",
+      "> 模块拼装，与本文件永不漂移。下列四个模板按**全模块勾选 + 化名**的示例渲染；",
+      "> 实际导出时未勾选的模块（如手写 PNG、讲义）对应说明句不会出现。",
+      "",
+      "## 用法",
+      "",
+      "1. 教师端「导出中心」按向导生成数据包（zip：pack.json / summary.md /",
+      "   prompt.md / schema.json / 映射.txt〔化名模式〕/ ink/*.png〔勾选〕）；",
+      "2. 把整包交给任意 AI 对话（或多模态模型读 ink 图片），prompt.md 已按任务",
+      "   目标与勾选模块拼装完毕，无需再手动粘模板；",
+      "3. 四种任务目标：诊断薄弱点 / 备下节课讲解建议 / 生成变式练习（输出内容",
+      "   DSL v2，可直接回到导入流程）/ 阶段总结（家长沟通）；教师附加要求在向导",
+      "   第③步填写，追加在 prompt.md 的「教师附加要求」段。",
+      "",
+    ].join("\n"),
+  ];
+  for (const goal of goals) {
+    sections.push(
+      `## 模板：${LEARNING_PACK_GOAL_LABELS[goal]}（goal=${goal}）\n`,
+    );
+    sections.push(renderLearningPackPrompt({ ...ALL_MODULES, goal }));
+  }
+  return `${sections.join("\n")}\n`;
+}
 
 const outputs: ReadonlyArray<{
   readonly file: string;
@@ -31,6 +83,7 @@ const outputs: ReadonlyArray<{
     content: renderSpecMarkdown({ directives, rules }),
   },
   { file: "提示词模板.md", content: renderPromptTemplateMarkdown(directives) },
+  { file: "学情分析提示词.md", content: renderLearningPackPromptDoc() },
 ];
 
 // 输出目录按脚本自身位置定位（../../.. 即仓库根），与运行时 cwd 无关
