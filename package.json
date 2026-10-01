@@ -18,6 +18,7 @@
     "schema:export": "pnpm --filter @tutor/contract run export-schema",
     "tutor-lint": "node packages/md-dsl/scripts/tutor-lint.ts",
     "reparse": "node apps/server/scripts/reparse.ts",
+    "seed:demo": "pnpm --filter server run seed:demo",
     "gen:spec": "pnpm --filter @tutor/contract run export-schema && pnpm --filter @tutor/md-dsl run gen-spec"
   },
   "devDependencies": {

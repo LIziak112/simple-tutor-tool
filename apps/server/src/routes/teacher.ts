@@ -20,6 +20,7 @@ import { createCourseRoutes } from "./courses";
 import { createImportRoutes } from "./import";
 import { createLibraryRoutes } from "./library";
 import { createSharedRoutes } from "./shared";
+import { createTeacherAnalyticsRoutes } from "./teacher-analytics";
 import { createAssignmentTeacherRoutes } from "./teacher-assignments";
 import { createTeacherAttemptRoutes } from "./teacher-attempts";
 import { createStudentTeacherRoutes } from "./teacher-students";
@@ -55,6 +56,9 @@ import { createStudentTeacherRoutes } from "./teacher-students";
  *   评语一次提交，事务内 finalCorrect=teacherMark??autoCorrect + D2 重算；
  *   draft → 409 NOT_SUBMITTED）、GET /pending-marks（D4 待批队列：共享谓词
  *   finalCorrect IS NULL + submittedAt 升序 + courseId/assignmentId/studentId 筛选）。
+ * - T4.1（业务在 analytics-service）：GET /analytics/overview、
+ *   GET /analytics/student/:id、GET /analytics/questions（学情三接口；
+ *   查询参数 courseId/days/focusDays，D1–D7 口径见契约 analytics-api.ts）。
  *
  * 返回类型不显式标注：链式注册把路由签名累积进推断类型，
  * 挂载后 AppType 才能带上这些路由（前端 hc 端到端类型的前提）。
@@ -124,5 +128,8 @@ export function createTeacherRoutes(
       // T3.1：教师端作答数据页（列表 + 详情，业务在 teacher-attempt-service）
       // T3.4：/export/csv CSV 导出（业务在 export-csv；publicUrl 供笔迹绝对链接）
       .route("/", createTeacherAttemptRoutes(db, publicUrl))
+      // T4.1：学情分析（总览/学生画像/题目视角，业务在 analytics-service；
+      // 查询参数 courseId/days/focusDays，口径见契约 analytics-api.ts 的 D1–D7 注释）
+      .route("/", createTeacherAnalyticsRoutes(db))
   );
 }
