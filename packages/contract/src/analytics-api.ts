@@ -624,6 +624,23 @@ export type AnalyticsAnomalyQuestion = z.infer<
   typeof analyticsAnomalyQuestionSchema
 >;
 export type AnalyticsRedoRow = z.infer<typeof analyticsRedoRowSchema>;
+export type AnalyticsSectionStatus = z.infer<
+  typeof analyticsSectionStatusSchema
+>;
+export type AnalyticsLectureSectionRow = z.infer<
+  typeof analyticsLectureSectionRowSchema
+>;
+export type AnalyticsFoldStatus = z.infer<typeof analyticsFoldStatusSchema>;
+export type AnalyticsLectureFoldRow = z.infer<
+  typeof analyticsLectureFoldRowSchema
+>;
+export type AnalyticsStepsStatus = z.infer<typeof analyticsStepsStatusSchema>;
+export type AnalyticsLectureStepsRow = z.infer<
+  typeof analyticsLectureStepsRowSchema
+>;
+export type AnalyticsLectureMapSummary = z.infer<
+  typeof analyticsLectureMapSummarySchema
+>;
 export type AnalyticsLectureReadingMap = z.infer<
   typeof analyticsLectureReadingMapSchema
 >;
