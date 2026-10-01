@@ -20,6 +20,7 @@ import type {
   AnalyticsUnitCell,
   AnalyticsUnitColumn,
   AnalyticsWrongAnswer,
+  AnalyticsWrongQuestionRow,
   Question,
 } from "@tutor/contract";
 import {
@@ -1166,6 +1167,72 @@ function buildRedoRows(
   );
 }
 
+// ---------- 错题列表（画像页，T4.2 随契约补齐） ----------
+
+/** 错题行上限（一对一规模防御；超出只保留最近的——契约注释同值） */
+const WRONG_QUESTION_ROW_MAX = 200;
+
+/**
+ * 学生错题行：qualifying 响应中 finalCorrect=false 的逐题行（D4：待批 null
+ * 不在列表）；同题多次判错取最新一次 qualifying 作答为代表（attemptId 跳详情、
+ * answerText 取该次错误答案）；题干/题型/难度/考点与题目视角同源（快照优先、
+ * 当前库 questionMeta 兜底）。排序 submittedAt 倒序（同刻 attemptId、
+ * questionId 降序兜底稳定），截 200 条。复用已装载的 responses，零额外查询。
+ */
+function buildWrongQuestionRows(
+  ctx: AnalyticsContext,
+  responses: readonly ScopedResponse[],
+): AnalyticsWrongQuestionRow[] {
+  // questionId → 最新一次判错的响应（submittedAt/attemptId 降序取最大）
+  const latestByQuestion = new Map<string, ScopedResponse>();
+  for (const item of responses) {
+    if (item.response.finalCorrect !== false) continue;
+    const prev = latestByQuestion.get(item.response.questionId);
+    if (prev === undefined || laterThan(item.attempt, prev.attempt)) {
+      latestByQuestion.set(item.response.questionId, item);
+    }
+  }
+
+  const rows: AnalyticsWrongQuestionRow[] = [];
+  for (const [questionId, { response, attempt }] of latestByQuestion) {
+    const meta = ctx.questionMeta.get(questionId);
+    const snapshot = snapshotOf(response);
+    const unitId = meta?.unitId ?? null;
+    rows.push({
+      questionId,
+      unitId,
+      unitTitle: unitId !== null ? (ctx.unitTitles.get(unitId) ?? null) : null,
+      type:
+        snapshot?.type ??
+        (meta?.type as AnalyticsWrongQuestionRow["type"] | undefined) ??
+        "fill",
+      difficulty: snapshot?.difficulty ?? meta?.difficulty ?? 2,
+      knowledge:
+        snapshot?.knowledge ??
+        knowledgeOfResponse(response, ctx.knowledgeFallback),
+      stemMd: snapshot?.stemMd ?? meta?.stemMd ?? "",
+      attemptId: attempt.id,
+      answerText: serializeStudentAnswer(answerOf(response.answerJson)),
+      submittedAt: attempt.submittedAt ?? "",
+    });
+  }
+  return rows
+    .sort(
+      (a, b) =>
+        b.submittedAt.localeCompare(a.submittedAt) ||
+        b.attemptId.localeCompare(a.attemptId) ||
+        b.questionId.localeCompare(a.questionId),
+    )
+    .slice(0, WRONG_QUESTION_ROW_MAX);
+}
+
+/** 「候选是否比现有代表作答更新」（submittedAt 同刻按 attemptId 降序兜底） */
+function laterThan(candidate: Attempt, current: Attempt): boolean {
+  const a = candidate.submittedAt ?? "";
+  const b = current.submittedAt ?? "";
+  return a > b || (a === b && candidate.id > current.id);
+}
+
 // ---------- 讲义阅读地图（画像页，T4.0b 聚合消费） ----------
 
 /**
@@ -1502,6 +1569,7 @@ export function getAnalyticsStudent(
     },
     anomalies: buildAnomalies(ctx, scoped),
     redo: buildRedoRows(ctx, studentId),
+    wrongQuestions: buildWrongQuestionRows(ctx, responses),
     offline: buildOffline(db, ctx, scoped),
     lectures: buildLectureEntries(db, ctx, studentId),
   };

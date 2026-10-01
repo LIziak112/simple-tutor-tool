@@ -1,7 +1,8 @@
 import { analyticsQuerySchema } from "@tutor/contract";
+import { and, eq } from "drizzle-orm";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { Db } from "../db/client";
-import { teachers } from "../db/schema";
+import { attempts, teachers } from "../db/schema";
 import { createTestDb, TEST_TEACHER_ID } from "../db/test-utils";
 import { HttpError } from "../lib/http-error";
 import {
@@ -599,6 +600,149 @@ describe("学生画像", () => {
       expect(httpError.status).toBe(404);
       expect(httpError.code).toBe("STUDENT_NOT_FOUND");
     }
+  });
+});
+
+describe("错题列表（T4.2 随契约补齐：D1/D4/D5 口径）", () => {
+  /** 取该生某次作答的 attemptId（assignment 来源按作业；course 来源按 attemptNo+sourceType） */
+  function attemptIdOf(pred: {
+    studentId: string;
+    assignmentId?: string;
+    attemptNo?: number;
+  }): string {
+    const row = db
+      .select({ id: attempts.id })
+      .from(attempts)
+      .where(
+        and(
+          eq(attempts.studentId, pred.studentId),
+          pred.assignmentId !== undefined
+            ? eq(attempts.assignmentId, pred.assignmentId)
+            : // 作业 attempt 同样 attemptNo=1——课程首次必须限定 sourceType
+              and(
+                eq(attempts.sourceType, "course"),
+                eq(attempts.attemptNo, pred.attemptNo ?? 1),
+              ),
+        ),
+      )
+      .get();
+    if (row === undefined) throw new Error("夹具缺少 attempt");
+    return row.id;
+  }
+
+  it("李小红 5 行（提交倒序、同刻 questionId 降序）；代表作答与跳转 attemptId 正确", () => {
+    const s2 = getAnalyticsStudent(
+      db,
+      TEST_TEACHER_ID,
+      seed.students.s2.id,
+      q,
+      SEED_NOW,
+    );
+    const { u1q1, u1q2, u1q3, u1q5, u2q2 } = seed.questions;
+    // 期望序：u2q2（A4，09-27）→ 课程首次作答四错（09-23，同刻 questionId 降序）
+    expect(s2.wrongQuestions.map((row) => row.questionId)).toEqual([
+      u2q2,
+      u1q5,
+      u1q3,
+      u1q2,
+      u1q1,
+    ]);
+    // 代表作答取最新一次：u2q2 在 A3（09-25）与 A4（09-27）都判错 → 取 A4
+    const s2A4 = attemptIdOf({
+      studentId: seed.students.s2.id,
+      assignmentId: seed.assignments.a4.id,
+    });
+    expect(s2.wrongQuestions[0]).toMatchObject({
+      attemptId: s2A4,
+      unitTitle: "数轴练习",
+      type: "choice",
+      answerText: "A",
+      submittedAt: "2026-09-27T04:00:00.000Z",
+    });
+    // 其余四行同属课程首次作答（-8 天）；未作答填空 answerText=null
+    const s2Course1 = attemptIdOf({
+      studentId: seed.students.s2.id,
+      attemptNo: 1,
+    });
+    expect(
+      new Set(s2.wrongQuestions.slice(1).map((row) => row.attemptId)),
+    ).toEqual(new Set([s2Course1]));
+    const fillRow = s2.wrongQuestions.find((row) => row.questionId === u1q3);
+    expect(fillRow?.answerText).toBeNull();
+    expect(fillRow?.type).toBe("fill");
+    // 教师批注判错的手写题（A1 的 u1q5）也在列表，但代表取更新的课程首次作答
+    const solveRow = s2.wrongQuestions.find((row) => row.questionId === u1q5);
+    expect(solveRow?.attemptId).toBe(s2Course1);
+    expect(solveRow?.type).toBe("solve");
+  });
+
+  it("待批（finalCorrect=null）不出现在错题列表：李小红 A3 / 王小刚 A4 的未作答手写题", () => {
+    const s2 = getAnalyticsStudent(
+      db,
+      TEST_TEACHER_ID,
+      seed.students.s2.id,
+      q,
+      SEED_NOW,
+    );
+    const s3 = getAnalyticsStudent(
+      db,
+      TEST_TEACHER_ID,
+      seed.students.s3.id,
+      q,
+      SEED_NOW,
+    );
+    expect(
+      s2.wrongQuestions.some((row) => row.questionId === seed.questions.u2q3),
+    ).toBe(false);
+    expect(
+      s3.wrongQuestions.some((row) => row.questionId === seed.questions.u2q3),
+    ).toBe(false);
+  });
+
+  it("王小刚 2 行（同一 attempt，questionId 降序）且 attemptId 指向其唯一作答", () => {
+    const s3 = getAnalyticsStudent(
+      db,
+      TEST_TEACHER_ID,
+      seed.students.s3.id,
+      q,
+      SEED_NOW,
+    );
+    const s3A4 = attemptIdOf({
+      studentId: seed.students.s3.id,
+      assignmentId: seed.assignments.a4.id,
+    });
+    expect(s3.wrongQuestions.map((row) => row.questionId)).toEqual([
+      seed.questions.u2q2,
+      seed.questions.u2q1,
+    ]);
+    expect(s3.wrongQuestions.every((row) => row.attemptId === s3A4)).toBe(true);
+    expect(s3.wrongQuestions[0]?.answerText).toBe("B");
+    expect(s3.wrongQuestions[1]?.answerText).toBe("错误");
+  });
+
+  it("陈小明列表为空：课程重做（-16 天）的填空错误按 D1 首次口径不计入", () => {
+    const s1 = getAnalyticsStudent(
+      db,
+      TEST_TEACHER_ID,
+      seed.students.s1.id,
+      q,
+      SEED_NOW,
+    );
+    expect(s1.wrongQuestions).toEqual([]);
+  });
+
+  it("days=7 窗口收窄：李小红只剩 A4 的 u2q2（课程首次 -8 天出窗）", () => {
+    const q7 = analyticsQuerySchema.parse({ days: 7 });
+    const s2 = getAnalyticsStudent(
+      db,
+      TEST_TEACHER_ID,
+      seed.students.s2.id,
+      q7,
+      SEED_NOW,
+    );
+    expect(s2.wrongQuestions.map((row) => row.questionId)).toEqual([
+      seed.questions.u2q2,
+    ]);
   });
 });
 

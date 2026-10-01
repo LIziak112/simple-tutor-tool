@@ -228,7 +228,7 @@ describe("总览/画像/题目响应形态（完整 fixture）", () => {
     expect(data.focus.points[0]?.knowledge).toBe("有理数加法");
   });
 
-  it("画像：考点/异常/重做/离线/讲义地图", () => {
+  it("画像：考点/异常/重做/离线/讲义地图/错题列表", () => {
     const data = analyticsStudentDataSchema.parse({
       studentId: UUID,
       studentName: "小明",
@@ -280,6 +280,20 @@ describe("总览/画像/题目响应形态（完整 fixture）", () => {
         },
       ],
       offline: { offlineShare: 0, activeSecTotal: 0, offlineSecTotal: 0 },
+      wrongQuestions: [
+        {
+          questionId: "有理数随堂练习-3",
+          unitId: "有理数随堂练习",
+          unitTitle: "有理数随堂练习",
+          type: "fill",
+          difficulty: 2,
+          knowledge: ["有理数加法"],
+          stemMd: "计算：$(-3)+7=$ [[4]]",
+          attemptId: UUID,
+          answerText: null,
+          submittedAt: "2026-09-29T10:00:00.000Z",
+        },
+      ],
       lectures: [
         {
           lectureId: UUID,
@@ -340,6 +354,9 @@ describe("总览/画像/题目响应形态（完整 fixture）", () => {
     });
     expect(data.anomalies[0]?.reasons).toEqual(["slow"]);
     expect(data.lectures[0]?.map.summary.readSec).toBe(295);
+    // 错题行：answerText null=未作答（Phase3 D1 判错口径）合法
+    expect(data.wrongQuestions[0]?.answerText).toBeNull();
+    expect(data.wrongQuestions[0]?.questionId).toBe("有理数随堂练习-3");
   });
 
   it("题目统计：错误答案分布含「未作答」（null）条目", () => {

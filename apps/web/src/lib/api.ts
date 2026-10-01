@@ -9,6 +9,9 @@ import {
   type AdminTeacherResetPasswordRequest,
   type AdminTeacherSummary,
   type AdminTeacherUpdateRequest,
+  type AnalyticsOverviewData,
+  type AnalyticsQuestionsData,
+  type AnalyticsStudentData,
   type AssignmentCheckData,
   type AssignmentCheckRequest,
   type AssignmentCreateRequest,
@@ -1544,6 +1547,68 @@ export function fetchStudentWrongQuestionsApi(
   }
   return callApi(() =>
     api.api.student["wrong-questions"].$get(
+      Object.keys(query).length > 0 ? { query } : undefined,
+    ),
+  );
+}
+
+// ---------- T4.2：学情分析（纯消费 T4.1 三接口，口径见契约 analytics-api.ts） ----------
+
+/**
+ * 学情三接口共用查询参数（界面层形态）。undefined 字段不发送（= 后端默认：
+ * days=30、focusDays=14、课程不筛）；days 为正整数天数或 "all"（全部）；
+ * focusDays 只作用于「下节课重点」卡片（与 days 独立，D5）。
+ */
+export interface AnalyticsFetchParams {
+  courseId?: string | undefined;
+  days?: number | "all" | undefined;
+  focusDays?: number | undefined;
+}
+
+/** 学情查询参数 → querystring（undefined 字段不发送；数值转字符串） */
+function analyticsQueryOf(
+  params: AnalyticsFetchParams,
+): Record<string, string> {
+  const query: Record<string, string> = {};
+  if (params.courseId !== undefined) query.courseId = params.courseId;
+  if (params.days !== undefined) query.days = String(params.days);
+  if (params.focusDays !== undefined)
+    query.focusDays = String(params.focusDays);
+  return query;
+}
+
+/** 学情总览（完成矩阵 + 周趋势 + 下节课重点 + 关键计数 + 离线占比 + 重做计数） */
+export function fetchAnalyticsOverviewApi(
+  params: AnalyticsFetchParams = {},
+): Promise<AnalyticsOverviewData> {
+  const query = analyticsQueryOf(params);
+  return callApi(() =>
+    api.api.teacher.analytics.overview.$get(
+      Object.keys(query).length > 0 ? { query } : undefined,
+    ),
+  );
+}
+
+/**
+ * 学生画像（趋势/考点/异常题/重做/离线/讲义阅读地图）。
+ * 学生不存在或非本教师 → 404 STUDENT_NOT_FOUND（ApiError 由页面分支成错误态）。
+ */
+export function fetchAnalyticsStudentApi(
+  studentId: string,
+  params: AnalyticsFetchParams = {},
+): Promise<AnalyticsStudentData> {
+  // hc 对带 param 的路由只推断出 param 入参，query 以独立变量传入（同 updateQuestion）
+  const args = { param: { id: studentId }, query: analyticsQueryOf(params) };
+  return callApi(() => api.api.teacher.analytics.student[":id"].$get(args));
+}
+
+/** 题目视角（题目/考点正确率、平均用时、高频错误答案分布） */
+export function fetchAnalyticsQuestionsApi(
+  params: AnalyticsFetchParams = {},
+): Promise<AnalyticsQuestionsData> {
+  const query = analyticsQueryOf(params);
+  return callApi(() =>
+    api.api.teacher.analytics.questions.$get(
       Object.keys(query).length > 0 ? { query } : undefined,
     ),
   );
