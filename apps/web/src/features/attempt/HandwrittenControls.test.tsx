@@ -44,7 +44,12 @@ vi.mock("@/features/ink/InkPad", () => ({
   InkPad: (props: {
     engine?: string;
     initial?: InkDoc | undefined;
-    onDocChange?: ((doc: InkDoc) => void) | undefined;
+    onDocChange?:
+      | ((
+          doc: InkDoc,
+          reason: "stroke" | "erase" | "undo" | "redo" | "clear" | "load",
+        ) => void)
+      | undefined;
   }) => (
     <div data-slot="ink-pad" data-engine={props.engine ?? "atrament"}>
       {props.initial !== undefined ? (
@@ -54,30 +59,38 @@ vi.mock("@/features/ink/InkPad", () => ({
             : props.initial.data.scene.elements.length}
         </span>
       ) : null}
-      <button
-        type="button"
-        data-testid={`ink-emit-${props.engine ?? "atrament"}`}
-        onClick={() =>
-          props.onDocChange?.({
-            engine: "atrament",
-            version: 1,
-            data: {
-              width: 1000,
-              strokes: [
+      {(["stroke", "erase", "undo", "redo", "clear", "load"] as const).map(
+        (reason) => (
+          <button
+            type="button"
+            key={reason}
+            data-testid={`ink-emit-${props.engine ?? "atrament"}-${reason}`}
+            onClick={() =>
+              props.onDocChange?.(
                 {
-                  tool: "pen",
-                  color: "#000",
-                  weight: 4,
-                  points: [{ x: 1, y: 1, p: 0.5, t: 0 }],
+                  engine: "atrament",
+                  version: 1,
+                  data: {
+                    width: 1000,
+                    strokes: [
+                      {
+                        tool: "pen",
+                        color: "#000",
+                        weight: 4,
+                        points: [{ x: 1, y: 1, p: 0.5, t: 0 }],
+                      },
+                    ],
+                  },
+                  updatedAt: 2,
                 },
-              ],
-            },
-            updatedAt: 2,
-          })
-        }
-      >
-        模拟书写一笔
-      </button>
+                reason,
+              )
+            }
+          >
+            模拟变化-{reason}
+          </button>
+        ),
+      )}
     </div>
   ),
 }));
@@ -221,6 +234,97 @@ describe("最终答案（MathLive 切换）", () => {
       () => expect(document.querySelector("math-field")).not.toBeNull(),
       { timeout: 3000 },
     );
+  });
+});
+
+// ---------- T4.0b：ink_edit_batch 分型与 ink_fullscreen ----------
+
+describe("手写编辑分型与全屏事件（T4.0b）", () => {
+  it("onInkEdit 只收 erase/undo/redo/clear；stroke/load 走 onInkStroke", async () => {
+    const onInkStroke = vi.fn();
+    const onInkEdit = vi.fn();
+    render(
+      <HandwrittenControls
+        attemptId="att-1"
+        questionId="q1"
+        stemMd="计算并写出过程"
+        answer={undefined}
+        onAnswer={vi.fn()}
+        onInkStroke={onInkStroke}
+        onInkEdit={onInkEdit}
+      />,
+    );
+    // 展开手写区（InkPad mock 挂载后才可触发）
+    fireEvent.click(screen.getByRole("button", { name: /展开手写区/ }));
+    await waitFor(() => expect(queryInkPad()).not.toBeNull());
+
+    for (const reason of [
+      "stroke",
+      "erase",
+      "undo",
+      "redo",
+      "clear",
+      "load",
+    ] as const) {
+      fireEvent.click(screen.getByTestId(`ink-emit-atrament-${reason}`));
+    }
+    // 编辑四类进 onInkEdit；stroke/load 维持旧笔画计数回调
+    expect(onInkEdit.mock.calls.map((call) => call[0])).toEqual([
+      "erase",
+      "undo",
+      "redo",
+      "clear",
+    ]);
+    expect(onInkStroke.mock.calls.map((call) => call[0])).toEqual([1, 1]);
+  });
+
+  it("onInkFullscreen：进出全屏各触发一次（挂载初始 false 不报）", async () => {
+    fetchInkMock.mockResolvedValue(null);
+    const onInkFullscreen = vi.fn();
+    render(
+      <HandwrittenControls
+        attemptId="att-1"
+        questionId="q1"
+        stemMd="计算并写出过程"
+        answer={undefined}
+        onAnswer={vi.fn()}
+        onInkFullscreen={onInkFullscreen}
+      />,
+    );
+    // 挂载不报（等待加载态结束，确认无事件）
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /全屏作答/ })).toBeVisible(),
+    );
+    expect(onInkFullscreen).not.toHaveBeenCalled();
+    // 无笔迹直接进全屏（无确认弹层）；退出再进再退
+    fireEvent.click(screen.getByRole("button", { name: /全屏作答/ }));
+    expect(onInkFullscreen).toHaveBeenLastCalledWith(true);
+    fireEvent.click(screen.getByRole("button", { name: /^完成$/ }));
+    expect(onInkFullscreen).toHaveBeenLastCalledWith(false);
+    fireEvent.click(screen.getByRole("button", { name: /全屏作答/ }));
+    expect(onInkFullscreen).toHaveBeenLastCalledWith(true);
+    expect(onInkFullscreen).toHaveBeenCalledTimes(3);
+  });
+
+  it("「清空并改用页内手写」计一次 clear 编辑", async () => {
+    fetchInkMock.mockResolvedValue(excalidrawDoc(3));
+    const onInkEdit = vi.fn();
+    render(
+      <HandwrittenControls
+        attemptId="att-1"
+        questionId="q1"
+        stemMd="计算并写出过程"
+        answer={undefined}
+        onAnswer={vi.fn()}
+        onInkEdit={onInkEdit}
+      />,
+    );
+    await screen.findByText(/本题笔迹在全屏模式下创建（3 笔）/);
+    fireEvent.click(
+      screen.getByRole("button", { name: /清空笔迹，改用页内手写/ }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "清空并改用页内" }));
+    expect(onInkEdit).toHaveBeenCalledWith("clear");
   });
 });
 

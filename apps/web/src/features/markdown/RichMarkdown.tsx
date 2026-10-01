@@ -74,9 +74,7 @@ export interface RichMarkdownProps {
    * {name, index(文档全局序号), action, step?}——归属哪个 scope/宿主由本回调
    * 的提供方（页面层）决定；缺省不收集（教师端预览等场景）。
    */
-  onDirectiveTelemetry?:
-    | ((event: DirectiveTelemetryInfo) => void)
-    | undefined;
+  onDirectiveTelemetry?: ((event: DirectiveTelemetryInfo) => void) | undefined;
   /**
    * 指令展开回调（T2.10 兼容别名，仅 open 方向）：内部映射为
    * onDirectiveTelemetry 的 action=open；与 onDirectiveTelemetry 同时提供时

@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/dialog";
 import {
   create,
+  type InkChangeReason,
   type InkDoc,
   type InkEngine,
   type InkEngineKind,
@@ -34,7 +35,8 @@ import {
  *
  * - 引擎与输入处理在 features/ink/engine（纯 TS）；本组件只负责工具栏、
  *   清空二次确认、自动加高、加载/错误态等 UI；
- * - 每笔结束（含撤销/重做/清空）经 onDocChange 上抛 InkDoc（供 T2.9 草稿保存）；
+ * - 每笔结束（含撤销/重做/清空/load）经 onDocChange 上抛 InkDoc 与变化原因
+ *   （reason，T4.0b ink_edit_batch 分型；缺省 "stroke"，老回调忽略零影响）；
  * - 自动加高（§5.4.1 绘制层第 4 条）：最后一笔接近答题区底部时自动增高；
  * - 工具栏触控目标不小于 44px（ui-conventions iPad 硬性要求）。
  */
@@ -49,8 +51,8 @@ export interface InkPadProps {
   fill?: boolean;
   /** 无障碍标签 */
   label?: string;
-  /** 每次笔迹变化回调 */
-  onDocChange?: ((doc: InkDoc) => void) | undefined;
+  /** 每次笔迹变化回调（doc + 变化原因，T4.0b 起带 reason） */
+  onDocChange?: ((doc: InkDoc, reason: InkChangeReason) => void) | undefined;
   /** 引擎实例透出（开发页/草稿保存等需要命令式访问 getData/load/exportPng） */
   engineRef?: React.RefObject<InkEngine | null> | undefined;
 }
@@ -142,10 +144,10 @@ export function InkPad({
       });
       localEngineRef.current = ink;
       if (engineRef) engineRef.current = ink;
-      off = ink.on("change", (doc) => {
+      off = ink.on("change", (doc, reason) => {
         setCanUndo(ink.canUndo());
         setCanRedo(ink.canRedo());
-        onDocChangeRef.current?.(doc);
+        onDocChangeRef.current?.(doc, reason);
         // 自动加高：最后一笔的最低点接近底部时加高（仅 atrament 页内答题区）
         if (
           engine === "atrament" &&

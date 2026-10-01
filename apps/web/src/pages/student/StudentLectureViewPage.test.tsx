@@ -277,9 +277,7 @@ describe("StudentLectureViewPage：指令交互埋点（T4.0b directive_interact
     const events = mockedPostEvents.mock.calls.flatMap(
       (call) => call[0] as unknown as Array<Record<string, unknown>>,
     );
-    const interactions = events.filter(
-      (e) => e.type === "directive_interact",
-    );
+    const interactions = events.filter((e) => e.type === "directive_interact");
     // 新客户端不再产生 lecture_expand（§6 决策 1）
     expect(events.filter((e) => e.type === "lecture_expand")).toHaveLength(0);
     expect(interactions).toEqual([

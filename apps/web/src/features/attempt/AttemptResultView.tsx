@@ -161,8 +161,17 @@ function ResultOptions({ question }: { question: AttemptResultQuestion }) {
 /**
  * 详解折叠（默认收起，触控 ≥44px）。结果视图与错题本卡片共用（同一概念
  * 同一份实现；无详解显示提示文案）。
+ * T4.0b：可选 onToggle——结果页接入 directive_interact{host:result} 复盘埋点
+ * （「错后有没有看解析」，§3 缺口 5）；错题本等其余调用方缺省不报。
  */
-export function SolutionFold({ solutionMd }: { solutionMd: string | null }) {
+export function SolutionFold({
+  solutionMd,
+  onToggle,
+}: {
+  solutionMd: string | null;
+  /** 开合回调（open=收起→展开、close=展开→收起）；缺省 no-op */
+  onToggle?: ((action: "open" | "close") => void) | undefined;
+}) {
   const [open, setOpen] = useState(false);
   if (solutionMd === null) {
     return <p className="text-sm text-muted-foreground">这道题没有详解。</p>;
@@ -173,7 +182,11 @@ export function SolutionFold({ solutionMd }: { solutionMd: string | null }) {
         variant="outline"
         className="min-h-11 w-fit"
         aria-expanded={open}
-        onClick={() => setOpen((prev) => !prev)}
+        onClick={() => {
+          const next = !open;
+          onToggle?.(next ? "open" : "close");
+          setOpen(next);
+        }}
       >
         查看详解
         <ChevronDown
@@ -223,11 +236,19 @@ function ResultQuestionCard({
   question,
   attemptId,
   released,
+  onSolutionToggle,
 }: {
   index: number;
   question: AttemptResultQuestion;
   attemptId: string;
   released: boolean;
+  /**
+   * 详解折叠开合回调（T4.0b host=result 复盘埋点；缺省不报）。
+   * @param action open=收起→展开、close=展开→收起
+   */
+  onSolutionToggle?:
+    | ((questionId: string, index: number, action: "open" | "close") => void)
+    | undefined;
 }) {
   const isHandwritten =
     question.snapshot.type === "solve" ||
@@ -337,7 +358,16 @@ function ResultQuestionCard({
       </div>
 
       {/* T2A.8：详解只在公布后渲染（未公布时服务端 solutionMd=null） */}
-      {released && <SolutionFold solutionMd={question.solutionMd} />}
+      {released && (
+        <SolutionFold
+          solutionMd={question.solutionMd}
+          onToggle={
+            onSolutionToggle === undefined
+              ? undefined
+              : (action) => onSolutionToggle(question.questionId, index, action)
+          }
+        />
+      )}
     </article>
   );
 }
@@ -346,9 +376,18 @@ function ResultQuestionCard({
 export function AttemptResultView({
   data,
   onBackHome,
+  onSolutionToggle,
 }: {
   data: AttemptResultData;
   onBackHome: () => void;
+  /**
+   * 详解折叠开合回调（T4.0b host=result 复盘埋点）：页面层入队
+   * directive_interact{host:result, attemptId, questionId, name:solution,
+   * index=该题全卷 0 起序号, action}；缺省不报（测试等场景）。
+   */
+  onSolutionToggle?:
+    | ((questionId: string, index: number, action: "open" | "close") => void)
+    | undefined;
 }) {
   const { attempt, summary } = data;
   // T2A.8：答案是否已公布（on_submit / 课程练习 / 已到截止 = true）
@@ -470,6 +509,7 @@ export function AttemptResultView({
                     question={question}
                     attemptId={attempt.id}
                     released={released}
+                    onSolutionToggle={onSolutionToggle}
                   />
                 </li>
               ))}

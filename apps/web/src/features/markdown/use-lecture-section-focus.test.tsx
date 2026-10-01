@@ -94,7 +94,9 @@ beforeEach(() => {
 afterEach(() => {
   document.body.innerHTML = "";
   if (originalIO === undefined) {
-    delete globalThis.IntersectionObserver;
+    // jsdom 原本无 IntersectionObserver：还原为「不存在」
+    (globalThis as { IntersectionObserver?: unknown }).IntersectionObserver =
+      undefined;
   } else {
     globalThis.IntersectionObserver = originalIO as typeof IntersectionObserver;
   }
@@ -103,13 +105,7 @@ afterEach(() => {
 describe("useLectureSectionFocus（§5.0-C13）", () => {
   it("选择器只取 .rich-markdown 内的 h2/h3（与 scrollToHeading 同源）", () => {
     const rich = mountLecture(["## 一", "### 一点五", "## 二"]);
-    render(
-      <Harness
-        enabled
-        sourceKey="md"
-        onSectionFocus={() => undefined}
-      />,
-    );
+    render(<Harness enabled sourceKey="md" onSectionFocus={() => undefined} />);
     const observer = MockIntersectionObserver.last();
     expect(observer).toBeDefined();
     const observed = observer?.observed() ?? [];
@@ -161,11 +157,7 @@ describe("useLectureSectionFocus（§5.0-C13）", () => {
       const rich = mountLecture(["## 一", "## 二"]);
       const seen: number[] = [];
       render(
-        <Harness
-          enabled
-          sourceKey="md"
-          onSectionFocus={(i) => seen.push(i)}
-        />,
+        <Harness enabled sourceKey="md" onSectionFocus={(i) => seen.push(i)} />,
       );
       const observer = MockIntersectionObserver.last();
       const [h0, h1] = [...rich.querySelectorAll("h2")];

@@ -50,6 +50,7 @@ export function useLectureSectionFocus(
   const callbackRef = useRef(onSectionFocus);
   callbackRef.current = onSectionFocus;
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies(sourceKey, callbackRef): sourceKey 是重挂观察器的变更键（effect 体不直接读取，讲义内容变化必须重挂）；callbackRef 为稳定 ref，仅承载最新回调
   useEffect(() => {
     if (!enabled || typeof IntersectionObserver === "undefined") return;
     const headings = Array.from(

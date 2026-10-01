@@ -1,6 +1,10 @@
 import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import type { InkDoc, InkEngine } from "@/features/ink/engine/index.ts";
+import type {
+  InkChangeReason,
+  InkDoc,
+  InkEngine,
+} from "@/features/ink/engine/index.ts";
 import { InkPad } from "@/features/ink/InkPad";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 
@@ -22,8 +26,8 @@ export function InkFullscreenLayer({
   stemMd: string;
   /** 全屏引擎的初始笔迹（仅当权威笔迹本身是 excalidraw 引擎时非空） */
   initial?: InkDoc | undefined;
-  /** 笔迹变化（全屏内每笔结束触发，与页内同一回调语义） */
-  onDocChange: (doc: InkDoc) => void;
+  /** 笔迹变化（全屏内每笔结束触发，与页内同一回调语义；reason 透传 T4.0b） */
+  onDocChange: (doc: InkDoc, reason: InkChangeReason) => void;
   /** 关闭全屏（「完成」按钮；Esc 由 Dialog/浏览器处理或再次点击按钮） */
   onClose: () => void;
   /** 引擎实例透出（上传状态机导出 PNG 用） */

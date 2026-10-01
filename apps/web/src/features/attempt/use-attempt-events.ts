@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef } from "react";
 import { createEventQueue, type EventQueueApi } from "@/lib/event-queue";
 
 /**
- * 答题页学习痕迹埋点（T2.10，§5.5）：
+ * 答题页学习痕迹埋点（T2.10，§5.5；T4.0b 交互/手写增强）：
  * - 进入答题页报 attempt_start；卸载/交卷前 blur 当前聚焦题并尽力 flush；
  * - 「当前聚焦题」判定（简版，见任务报告取舍）：
  *   1. 最近交互的题（作答 / 手写）优先——noteInteraction 即 focusTo；
@@ -14,12 +14,32 @@ import { createEventQueue, type EventQueueApi } from "@/lib/event-queue";
  * - answer_change：与草稿保存同节奏（防抖/立即提交点回调，onAnswerCommitted），
  *   from 取该题上一次上报值——文本键击天然聚合，changeCount 不虚高；
  * - ink_stroke_batch：每笔结束报当前笔画数（HandwrittenControls onInkStroke）；
+ * - T4.0b 新增：
+ *   - trackHintUnlock：提示解锁**成功**回调报 directive_interact{host:question,
+ *     name:hint, action:open, index}——index 与 hint_open 服务端直记同一序号
+ *     口径（0 起的提示数组下标），配对才成立；解锁失败重试不发（避免同一次
+ *     解锁双报），解锁事实的权威记录仍是服务端直记的 hint_open；
+ *   - trackInkEdit：ink_edit_batch 四计数（erase/undo/redo/clear）按题聚合、
+ *     与笔迹上传同一 2 秒防抖窗口批量出队（§4.3.3）；load 不在此列（引擎间
+ *     笔迹移交不是编辑，§5.0-C14）；交卷/卸载前把未到期的批次冲出；
+ *   - trackInkFullscreen：全屏进出报 ink_fullscreen{on}；
  * - page_hidden / page_visible：事件队列内部自动注入（attempt scope）；
  * - submit：finalizeSubmit 在 POST submit 前补 blur + submit 事件并 flush，
  *   确保服务端交卷计算时事件序列已入库（flush 失败不阻塞交卷，宽松口径兜底）。
  *
  * 前端不计算任何汇总值（activeSec 由服务端按原始事件计算，§5.5）。
  */
+
+/** ink_edit_batch 的聚合窗口（与笔迹上传 INK_UPLOAD_DEBOUNCE_MS 同款节拍） */
+export const INK_EDIT_BATCH_DEBOUNCE_MS = 2000;
+
+/** ink_edit_batch 的四计数（一次防抖窗口内的累计值） */
+interface InkEditCounts {
+  erase: number;
+  undo: number;
+  redo: number;
+  clear: number;
+}
 
 /** 答题页对外的埋点 API */
 export interface AttemptEventsApi {
@@ -29,6 +49,21 @@ export interface AttemptEventsApi {
   trackAnswerChange(questionId: string, answer: StudentAnswer): void;
   /** 一批手写笔画结束 → ink_stroke_batch 事件 */
   trackInkStrokes(questionId: string, strokes: number): void;
+  /**
+   * 一次手写编辑操作（erase/undo/redo/clear）→ 防抖聚合成 ink_edit_batch；
+   * 交卷（finalizeSubmit）/卸载前自动冲出剩余计数
+   */
+  trackInkEdit(
+    questionId: string,
+    reason: "erase" | "undo" | "redo" | "clear",
+  ): void;
+  /** 全屏进出 → ink_fullscreen 事件（on 布尔，不拆 enter/exit） */
+  trackInkFullscreen(questionId: string, on: boolean): void;
+  /**
+   * 提示解锁成功 → directive_interact{host:question, name:hint, action:open}；
+   * index 用解锁接口返回的 0 起序号（与 hint_open 服务端直记同口径）
+   */
+  trackHintUnlock(questionId: string, index: number): void;
   /** 题卡 DOM 注册（li 元素）：question_view 首次进视口 + 视口兜底聚焦 */
   registerCard(questionId: string, el: HTMLElement | null): void;
   /** 交卷前收尾：blur 当前聚焦 + submit 事件 + flush（尽力，不抛错） */
@@ -49,9 +84,45 @@ export function useAttemptEvents(attemptId: string): AttemptEventsApi {
   const ratiosRef = useRef(new Map<string, number>());
   const observerRef = useRef<IntersectionObserver | null>(null);
 
+  /** T4.0b ink_edit_batch：各题防抖窗口内的累计计数（questionId → counts） */
+  const inkEditRef = useRef(new Map<string, InkEditCounts>());
+  /** 防抖冲出计时器（跨题共用一个：每题独立窗口反而碎批） */
+  const inkEditTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const track = useCallback((event: Parameters<EventQueueApi["track"]>[0]) => {
     queueRef.current?.track(event);
   }, []);
+
+  /** 冲出某题（或全部）累计的编辑计数为一条 ink_edit_batch 事件 */
+  const flushInkEdits = useCallback(
+    (questionId?: string): void => {
+      const pending = inkEditRef.current;
+      const targets =
+        questionId === undefined
+          ? [...pending.keys()]
+          : pending.has(questionId)
+            ? [questionId]
+            : [];
+      for (const qid of targets) {
+        const counts = pending.get(qid);
+        if (counts === undefined) continue;
+        pending.delete(qid);
+        if (counts.erase + counts.undo + counts.redo + counts.clear === 0) {
+          continue;
+        }
+        track({
+          type: "ink_edit_batch",
+          clientTs: Date.now(),
+          questionId: qid,
+          erase: counts.erase,
+          undo: counts.undo,
+          redo: counts.redo,
+          clear: counts.clear,
+        });
+      }
+    },
+    [track],
+  );
 
   /** 聚焦切换：不同题时补 blur 旧题 + focus 新题（幂等：同题直接返回） */
   const focusTo = useCallback(
@@ -71,7 +142,7 @@ export function useAttemptEvents(attemptId: string): AttemptEventsApi {
     [track],
   );
 
-  // 队列生命周期：进入报 attempt_start；卸载 blur + dispose（内部尽力 flush）
+  // 队列生命周期：进入报 attempt_start；卸载 blur + 冲出编辑批次 + dispose（内部尽力 flush）
   useEffect(() => {
     const queue = createEventQueue({
       scope: { kind: "attempt", attemptId },
@@ -89,10 +160,15 @@ export function useAttemptEvents(attemptId: string): AttemptEventsApi {
         });
         focusedRef.current = null;
       }
+      flushInkEdits(); // 未到期的编辑计数不丢（dispose 内部尽力 flush 出网）
+      if (inkEditTimerRef.current !== null) {
+        clearTimeout(inkEditTimerRef.current);
+        inkEditTimerRef.current = null;
+      }
       queue.dispose();
       queueRef.current = null;
     };
-  }, [attemptId]);
+  }, [attemptId, flushInkEdits]);
 
   // 视口观察：question_view（每题首次进视口）+ 聚焦题的视口兜底切换。
   // jsdom 等无 IntersectionObserver 的环境自动降级（聚焦只靠交互）。
@@ -175,6 +251,58 @@ export function useAttemptEvents(attemptId: string): AttemptEventsApi {
     [track],
   );
 
+  const trackInkEdit = useCallback(
+    (questionId: string, reason: "erase" | "undo" | "redo" | "clear") => {
+      const pending = inkEditRef.current;
+      const counts = pending.get(questionId) ?? {
+        erase: 0,
+        undo: 0,
+        redo: 0,
+        clear: 0,
+      };
+      counts[reason] += 1;
+      pending.set(questionId, counts);
+      // 防抖窗口：窗口内连续编辑合并为一条 ink_edit_batch（§4.3.3 聚合）
+      if (inkEditTimerRef.current === null) {
+        inkEditTimerRef.current = setTimeout(() => {
+          inkEditTimerRef.current = null;
+          flushInkEdits();
+        }, INK_EDIT_BATCH_DEBOUNCE_MS);
+      }
+    },
+    [flushInkEdits],
+  );
+
+  const trackInkFullscreen = useCallback(
+    (questionId: string, on: boolean) => {
+      track({
+        type: "ink_fullscreen",
+        clientTs: Date.now(),
+        questionId,
+        on,
+      });
+    },
+    [track],
+  );
+
+  const trackHintUnlock = useCallback(
+    (questionId: string, index: number) => {
+      // index 与 hint_open 服务端直记同口径（解锁接口返回的 0 起序号）——
+      // 服务端时钟的 hint_open 不可用于区间运算，客户端这条提供真实时钟，
+      // 两者按 (questionId, index) 配对（方案 §4.3.3 复审澄清）
+      track({
+        type: "directive_interact",
+        clientTs: Date.now(),
+        host: "question",
+        questionId,
+        name: "hint",
+        index,
+        action: "open",
+      });
+    },
+    [track],
+  );
+
   const registerCard = useCallback(
     (questionId: string, el: HTMLElement | null) => {
       const prev = cardsRef.current.get(questionId);
@@ -203,18 +331,27 @@ export function useAttemptEvents(attemptId: string): AttemptEventsApi {
       });
       focusedRef.current = null;
     }
+    // 未到期的编辑批次先冲出（submit 前事件序列完整，服务端交卷计算可用）
+    flushInkEdits();
+    if (inkEditTimerRef.current !== null) {
+      clearTimeout(inkEditTimerRef.current);
+      inkEditTimerRef.current = null;
+    }
     queue.track({ type: "submit", clientTs: Date.now() });
     try {
       await queue.flush();
     } catch {
       // flush 失败不阻塞交卷（事件留在队列/离线仓，服务端宽松口径收迟到事件）
     }
-  }, []);
+  }, [flushInkEdits]);
 
   return {
     noteInteraction,
     trackAnswerChange,
     trackInkStrokes,
+    trackInkEdit,
+    trackInkFullscreen,
+    trackHintUnlock,
     registerCard,
     finalizeSubmit,
   };

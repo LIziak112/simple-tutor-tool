@@ -35,7 +35,7 @@ import {
   toLogical,
   toLogicalPoint,
 } from "./normalize.ts";
-import type { ToolAwareSurface } from "./surface.ts";
+import type { InkChangeReason, ToolAwareSurface } from "./surface.ts";
 import {
   INK_ERASE_RADIUS,
   type InkDoc,
@@ -124,6 +124,37 @@ export function createAtramentSurface(
   let livePrev: { x: number; y: number } | null = null;
   /** 橡皮拖动中待删除的笔画下标集合（一次拖动合并为一个历史条目） */
   let pendingErase = new Set<number>();
+
+  /**
+   * 下一次 store 变化通知携带的原因（T4.0b，§5.0-C14）：在调用 store 的变更
+   * 方法前赋值，subscribe 回调读取后复位。store 的每次状态变化都由本适配器的
+   * 一个明确操作触发（commitAdd/commitErase/commitClear/undo/redo/replace），
+   * 未及赋值的旁路通知按缺省 "stroke" 处理。
+   */
+  let reasonOverride: InkChangeReason | null = null;
+  store.subscribe(() => {
+    const reason = reasonOverride ?? "stroke";
+    reasonOverride = null;
+    notifyListeners(reason);
+  });
+
+  /** 变更监听（surface.onChange 注册的回调集合） */
+  const changeListeners = new Set<
+    (doc: InkDoc, reason: InkChangeReason) => void
+  >();
+  function notifyListeners(reason: InkChangeReason): void {
+    const doc = buildAtramentDoc(store);
+    for (const cb of changeListeners) cb(doc, reason);
+  }
+  /** 在 reason 标记下执行一次 store 变更（§5.0-C14 分型） */
+  function withReason<T>(reason: InkChangeReason, action: () => T): T {
+    reasonOverride = reason;
+    try {
+      return action();
+    } finally {
+      reasonOverride = null;
+    }
+  }
 
   // ---- 工具函数 ----
 
@@ -322,7 +353,9 @@ export function createAtramentSurface(
 
     if (tool.type === "eraser") {
       // 一次拖动的全部命中合并为一个历史条目（撤销=全部恢复）
-      if (pendingErase.size > 0) store.commitErase([...pendingErase]);
+      if (pendingErase.size > 0) {
+        withReason("erase", () => store.commitErase([...pendingErase]));
+      }
       pendingErase = new Set();
       redraw();
     } else if (livePoints.length > 0 && liveBrush) {
@@ -330,14 +363,18 @@ export function createAtramentSurface(
         const last = livePrev ?? { x, y };
         atrament.endStroke(last.x, last.y);
       }
-      store.commitAdd([
-        {
-          tool: liveTool,
-          color: liveBrush.color,
-          weight: liveBrush.weight, // 逻辑单位（规格本身按宽度 1000 定义）
-          points: livePoints,
-        },
-      ]);
+      const brush = liveBrush;
+      const points = livePoints;
+      withReason("stroke", () =>
+        store.commitAdd([
+          {
+            tool: liveTool,
+            color: brush.color,
+            weight: brush.weight, // 逻辑单位（规格本身按宽度 1000 定义）
+            points,
+          },
+        ]),
+      );
     }
     drawingPointerId = null;
     drawingPointerType = "";
@@ -426,7 +463,9 @@ export function createAtramentSurface(
       applyTouchAction();
 
       if (initial) {
-        store.replace(parseAtramentDoc(initial), initial.updatedAt);
+        withReason("load", () =>
+          store.replace(parseAtramentDoc(initial), initial.updatedAt),
+        );
       }
       redraw();
 
@@ -453,7 +492,9 @@ export function createAtramentSurface(
     },
 
     load(data: InkDoc): void {
-      store.replace(parseAtramentDoc(data), data.updatedAt);
+      withReason("load", () =>
+        store.replace(parseAtramentDoc(data), data.updatedAt),
+      );
       redraw();
     },
 
@@ -476,17 +517,17 @@ export function createAtramentSurface(
     },
 
     undo(): void {
-      store.undo();
+      withReason("undo", () => store.undo());
       redraw();
     },
 
     redo(): void {
-      store.redo();
+      withReason("redo", () => store.redo());
       redraw();
     },
 
     clear(): void {
-      store.commitClear();
+      withReason("clear", () => store.commitClear());
       redraw();
     },
 
@@ -505,15 +546,17 @@ export function createAtramentSurface(
       return store.canRedo();
     },
 
-    onChange(cb: (doc: InkDoc) => void): () => void {
-      return store.subscribe(() => {
-        cb(buildAtramentDoc(store));
-      });
+    onChange(cb: (doc: InkDoc, reason: InkChangeReason) => void): () => void {
+      changeListeners.add(cb);
+      return () => {
+        changeListeners.delete(cb);
+      };
     },
 
     destroy(): void {
       observer?.disconnect();
       observer = null;
+      changeListeners.clear();
       if (canvas) {
         canvas.removeEventListener("pointerdown", onPointerDown);
         canvas.removeEventListener("pointermove", onPointerMove);

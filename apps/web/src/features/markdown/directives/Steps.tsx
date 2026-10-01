@@ -28,10 +28,7 @@ function useFoldTelemetry(
 }
 
 /** ::::steps 逐步揭晓容器：第一步默认可见，「显示下一步」逐个展开（触控目标 ≥44px） */
-export function StepsDirective({
-  children,
-  docIndex,
-}: DirectiveProps) {
+export function StepsDirective({ children, docIndex }: DirectiveProps) {
   const [revealed, setRevealed] = useState(1);
   const total = Children.count(children);
   const remaining = total - revealed;
@@ -93,21 +90,14 @@ export function StepDirective({ index, attrs, children }: DirectiveProps) {
 export function FoldDirective({ attrs, docIndex, children }: DirectiveProps) {
   const onToggle = useFoldTelemetry("fold", docIndex);
   return (
-    <LabeledFold
-      label={attrs.title?.trim() || "详情"}
-      onToggle={onToggle}
-    >
+    <LabeledFold label={attrs.title?.trim() || "详情"} onToggle={onToggle}>
       {children}
     </LabeledFold>
   );
 }
 
 /** :::hint 提示：题目内带序号（提示 N），讲义内不编号 */
-export function HintDirective({
-  index,
-  docIndex,
-  children,
-}: DirectiveProps) {
+export function HintDirective({ index, docIndex, children }: DirectiveProps) {
   const onToggle = useFoldTelemetry("hint", docIndex);
   return (
     <LabeledFold
@@ -134,10 +124,7 @@ export function AnswerDirective({ children }: DirectiveProps) {
 }
 
 /** :::solution 详解：预览折叠，交卷后才下发属学生端语义（本层不处理） */
-export function SolutionDirective({
-  docIndex,
-  children,
-}: DirectiveProps) {
+export function SolutionDirective({ docIndex, children }: DirectiveProps) {
   const onToggle = useFoldTelemetry("solution", docIndex);
   return (
     <LabeledFold

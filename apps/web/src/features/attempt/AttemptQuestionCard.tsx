@@ -229,6 +229,8 @@ export function AttemptQuestionCard({
   attemptId,
   registerInkController,
   onInkStroke,
+  onInkEdit,
+  onInkFullscreen,
   hints,
   onHintUnlocked,
 }: {
@@ -245,6 +247,10 @@ export function AttemptQuestionCard({
   registerInkController?: HandwrittenControlsProps["registerController"];
   /** 手写笔画批次回调（T2.10 ink_stroke_batch 埋点，透传 HandwrittenControls） */
   onInkStroke?: HandwrittenControlsProps["onInkStroke"];
+  /** 手写编辑操作回调（T4.0b ink_edit_batch 埋点，透传 HandwrittenControls） */
+  onInkEdit?: HandwrittenControlsProps["onInkEdit"];
+  /** 全屏进出回调（T4.0b ink_fullscreen 埋点，透传 HandwrittenControls） */
+  onInkFullscreen?: HandwrittenControlsProps["onInkFullscreen"];
   /** 已解锁提示（T2.11；缺省按未解锁处理） */
   hints?: readonly HintOpenedEntry[];
   /** 提示解锁成功回调（T2.11；与 attemptId 同时提供才渲染提示面板） */
@@ -324,6 +330,8 @@ export function AttemptQuestionCard({
             onAnswer={onAnswer}
             registerController={registerInkController}
             onInkStroke={onInkStroke}
+            onInkEdit={onInkEdit}
+            onInkFullscreen={onInkFullscreen}
           />
         )}
 

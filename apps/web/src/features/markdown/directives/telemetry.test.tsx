@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import type { DirectiveTelemetryInfo } from "./expand-context";
 import { RichMarkdown } from "../RichMarkdown";
+import type { DirectiveTelemetryInfo } from "./expand-context";
 
 /**
  * 指令遥测上下文测试（T4.0b，方案 §4.3.3 / §5.0-C11）：
@@ -19,22 +19,22 @@ const DOC = [
   "",
   "## 第一节",
   "",
-  ":::fold{title=\"甲\"}",
+  ':::fold{title="甲"}',
   "内容甲",
   ":::",
   "",
-  ":::fold{title=\"乙\"}",
+  ':::fold{title="乙"}',
   "内容乙",
   ":::",
   "",
   "::::steps",
-  ":::step{title=\"第 1 步\"}",
+  ':::step{title="第 1 步"}',
   "第一步",
   ":::",
-  ":::step{title=\"第 2 步\"}",
+  ':::step{title="第 2 步"}',
   "第二步",
   ":::",
-  ":::step{title=\"第 3 步\"}",
+  ':::step{title="第 3 步"}',
   "第三步",
   ":::",
   "::::",
@@ -43,7 +43,7 @@ const DOC = [
   "详解内容",
   ":::",
   "",
-  "一行 :mark[标记]{color=\"yellow\"} 文字",
+  '一行 :mark[标记]{color="yellow"} 文字',
 ].join("\n");
 
 describe("DirectiveTelemetryContext（T4.0b）", () => {

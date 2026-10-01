@@ -8,6 +8,24 @@
  */
 import type { InkDoc, InkToolConfig } from "./types.ts";
 
+/**
+ * 笔迹变化的触发原因（T4.0b，§5.0-C14）：
+ * - stroke：书写一笔结束（含荧光笔）；缺省值——老适配器/老调用方不带 reason
+ *   时按此处理（零影响）；
+ * - erase：整笔橡皮一次拖动提交；
+ * - undo / redo：历史栈操作；
+ * - clear：清空画布；
+ * - load：载入外部文档（全屏进出在页内/全屏两引擎间移交笔迹触发 load）——
+ *   **消费方把 load 排除在 inkEditCount 之外**（不得计成编辑，§5.0-C14）。
+ */
+export type InkChangeReason =
+  | "stroke"
+  | "erase"
+  | "undo"
+  | "redo"
+  | "clear"
+  | "load";
+
 export interface InkSurface {
   /** 挂载到容器元素（适配器自建 canvas 等内部结构）；initial 为恢复的笔迹 */
   mount(el: HTMLElement, initial?: InkDoc): void;
@@ -20,8 +38,12 @@ export interface InkSurface {
   undo(): void;
   redo(): void;
   clear(): void;
-  /** 每一笔结束（含撤销/重做/清空/load 等任何状态变化）触发，用于草稿保存 */
-  onChange(cb: (doc: InkDoc) => void): () => void;
+  /**
+   * 每次状态变化触发（stroke/erase/undo/redo/clear/load），用于草稿保存与
+   * 埋点分型（T4.0b ink_edit_batch）。reason 缺省 "stroke"（老回调忽略第二参
+   * 零影响；TS 少参函数可赋给多参签名）。
+   */
+  onChange(cb: (doc: InkDoc, reason: InkChangeReason) => void): () => void;
   destroy(): void;
 }
 
