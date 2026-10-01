@@ -42,6 +42,7 @@ const EXPECTED: Record<string, string[]> = {
   "11-unclosed-container.md": ["UNCLOSED_CONTAINER"],
   "12-directive-not-allowed-here.md": ["DIRECTIVE_NOT_ALLOWED_HERE"],
   "13-math-left-right.md": ["MATH_LEFT_RIGHT_UNBALANCED"],
+  "14-heading-in-container.md": ["HEADING_IN_CONTAINER"],
 };
 
 function lintFile(name: string, dir: string): FileLintResult {

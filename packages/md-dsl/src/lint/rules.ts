@@ -154,6 +154,12 @@ export const LINT_RULES: readonly LintRuleDoc[] = [
       "指令出现在不允许的位置（如 fold 只能用于讲义正文）：移到允许的位置或删除",
   },
   {
+    code: "HEADING_IN_CONTAINER",
+    level: "error",
+    description:
+      "H2/H3 标题写在折叠或逐步揭晓类容器（fold/hint/solution/steps/step）内部：收起时该标题不渲染，目录与正文的 h2/h3 序号会错位；请移到容器外或改为加粗段落",
+  },
+  {
     code: "HINT_OUTSIDE_QUESTION",
     level: "error",
     description:
