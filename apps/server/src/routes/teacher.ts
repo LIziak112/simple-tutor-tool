@@ -8,7 +8,8 @@ import {
   SESSION_COOKIE,
   sessionCookieOptions,
 } from "../auth/session";
-import type { Db } from "../db/client";
+import type { Db, DbHandle } from "../db/client";
+import { staticDbHandle } from "../db/client";
 import { gzipResponse, pngResponse } from "../lib/binary-response";
 import {
   getTeacherInkMeta,
@@ -23,6 +24,7 @@ import { createSharedRoutes } from "./shared";
 import { createTeacherAnalyticsRoutes } from "./teacher-analytics";
 import { createAssignmentTeacherRoutes } from "./teacher-assignments";
 import { createTeacherAttemptRoutes } from "./teacher-attempts";
+import { createTeacherBackupRoutes } from "./teacher-backup";
 import { createTeacherExportRoutes } from "./teacher-export";
 import { createStudentTeacherRoutes } from "./teacher-students";
 
@@ -63,6 +65,9 @@ import { createStudentTeacherRoutes } from "./teacher-students";
  * - T4.3（业务在 export-service）：POST /export/learning-pack/preview（清单+
  *   预估+超限标志）、POST /export/learning-pack（zip 直出；模块勾选/化名/
  *   50MB 预检，D14–D19 口径见契约 learning-pack.ts）。
+ * - T4.5（业务在 backup-service）：GET /backup/snapshots（快照列表）、
+ *   GET /backup/download（完整备份 zip 流式直出）、POST /backup/restore
+ *   （multipart zip + 登录密码，D21；整库操作无域隔离，见契约 backup-api.ts）。
  *
  * 返回类型不显式标注：链式注册把路由签名累积进推断类型，
  * 挂载后 AppType 才能带上这些路由（前端 hc 端到端类型的前提）。
@@ -71,6 +76,7 @@ export function createTeacherRoutes(
   db: Db,
   publicUrl: string,
   dataDir: string,
+  dbHandle?: DbHandle,
 ) {
   const requireTeacher = createRequireTeacher(db, publicUrl);
   return (
@@ -138,5 +144,12 @@ export function createTeacherRoutes(
       // T4.3：AI 学情数据包导出（preview 清单 + zip 直出，业务在 export-service；
       // 请求体/口径见契约 learning-pack.ts 的 D14–D19 注释）
       .route("/", createTeacherExportRoutes(db, dataDir))
+      // T4.5：备份与恢复（快照列表/zip 流式下载/multipart 恢复，业务在
+      // backup-service；D20/D21 口径见契约 backup-api.ts）。dbHandle 缺省时
+      // 用静态句柄兜底（恢复会干净失败——见 client.ts staticDbHandle 注释）
+      .route(
+        "/",
+        createTeacherBackupRoutes(db, dataDir, dbHandle ?? staticDbHandle(db)),
+      )
   );
 }
