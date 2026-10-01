@@ -1,8 +1,30 @@
+import { randomBytes, randomUUID } from "node:crypto";
 import type { AttemptEvent, StudentAnswer } from "@tutor/contract";
 import { analyzeLectureStructure } from "@tutor/md-dsl";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray, or } from "drizzle-orm";
+import { hashPassword } from "../auth/password";
 import type { Db } from "../db/client";
-import { courseItems, courseStudents, lectures, responses } from "../db/schema";
+import {
+  assignmentStudents,
+  assignments,
+  assignmentUnits,
+  attempts,
+  courseItems,
+  courseStudents,
+  courses,
+  events,
+  imports,
+  ink,
+  lectures,
+  libraryFolders,
+  questionKnowledge,
+  questions,
+  responses,
+  sessions,
+  students,
+  teachers,
+  units,
+} from "../db/schema";
 import { createAssignment } from "./assignment-service";
 import {
   saveDraftAnswer,
@@ -32,6 +54,11 @@ import { createStudent } from "./student-service";
  *
  * 消费方：analytics-service 测试（逐指标数值断言）+ scripts/seed-demo.ts
  * （往 DATA_DIR 真库灌演示数据）+ T4.2 页面联调。
+ *
+ * 多教师同库（T4.1 修复）：种子学生登录名全局唯一（D14），被其他域占用时
+ * 自动加数字后缀（resolveSeedStudentLoginName）；CLI 编排核心
+ * createDemoTeacherAndSeed 承担「定位/新建教师 + 播种 + 失败回滚」（初始密码
+ * 在种子成功后才打印，失败必须回滚教师行，不留无法登录的孤儿）。
  */
 
 /** 一天（种子时间轴的步长） */
@@ -206,15 +233,23 @@ export interface SeedRef {
   readonly name: string;
 }
 
+/**
+ * 种子学生引用：displayName 恒为种子名（登录名避让只改 loginName，展示不变）。
+ */
+export interface SeedStudentRef extends SeedRef {
+  /** 实际登录名（原名被全局占用时为「原名+数字后缀」；密码恒为 demo-pass-123） */
+  readonly loginName: string;
+}
+
 /** 种子结果：测试与 CLI 消费的 id 清单（题目 id 为 DSL 缺省编号，确定性） */
 export interface SeedDemoResult {
   /** 种子时间基准（options.now 的 ISO 形式；全部提交时刻相对它生成） */
   readonly now: string;
   readonly teacherId: string;
   readonly students: {
-    readonly s1: SeedRef;
-    readonly s2: SeedRef;
-    readonly s3: SeedRef;
+    readonly s1: SeedStudentRef;
+    readonly s2: SeedStudentRef;
+    readonly s3: SeedStudentRef;
   };
   readonly courses: { readonly a: SeedRef; readonly b: SeedRef };
   readonly lectures: { readonly l1: SeedRef; readonly l2: SeedRef };
@@ -237,8 +272,58 @@ export interface SeedDemoResult {
   };
 }
 
-/** 种子学生登录名（displayName 同名；CLI 幂等检查与 --reset 用） */
+/** 种子学生登录名（displayName 恒同名；CLI 幂等检查与 --reset 用） */
 export const SEED_STUDENT_LOGIN_NAMES = ["陈小明", "李小红", "王小刚"] as const;
+
+/** 登录名避让的后缀探测上限（同名账号 ≥100 视为库异常，人工介入） */
+const LOGIN_NAME_SUFFIX_LIMIT = 100;
+
+/**
+ * 解析种子学生的实际登录名（多教师同库播种，T4.1 修复）。
+ * students.login_name 是**全局唯一**索引（D14：命名空间不按教师分片），库里
+ * 已有其他教师域的种子学生时固定登录名必撞 409 LOGIN_NAME_TAKEN——创建前
+ * 先按全局索引查重，被占则按产品自身惯例（schema 注释「重名时教师改张三2」）
+ * 加数字后缀（陈小明 → 陈小明2 → 陈小明3 …）取第一个可用名。
+ * displayName 与密码不受影响（仍显示原名、仍为 demo-pass-123）。
+ * CLI 在播种前也用它做全局预检提示（同一实现，预检与实际创建不漂移）。
+ */
+export function resolveSeedStudentLoginName(db: Db, base: string): string {
+  const taken = (loginName: string): boolean =>
+    db
+      .select({ id: students.id })
+      .from(students)
+      .where(eq(students.loginName, loginName))
+      .get() !== undefined;
+  if (!taken(base)) return base;
+  for (let suffix = 2; suffix <= LOGIN_NAME_SUFFIX_LIMIT; suffix += 1) {
+    const candidate = `${base}${suffix}`;
+    if (!taken(candidate)) return candidate;
+  }
+  throw new Error(
+    `登录名「${base}」及其后缀 2–${LOGIN_NAME_SUFFIX_LIMIT} 全部被占用，无法为种子学生分配登录名；请人工检查 students 表。`,
+  );
+}
+
+/**
+ * 判断一行学生是否种子学生（CLI 幂等检查用）：displayName 为种子名之一，且
+ * loginName 等于该名或「该名 + 2–100 的纯数字后缀」（与避让产物集合一致，
+ * 陈小明2024 之类的教师手输名不误判）。displayName 是稳定标识——避让只改
+ * loginName，故按 displayName 识别而非登录名精确匹配（否则第二教师域重跑
+ * 种子会误判「无种子」而重复播种）。
+ */
+export function isSeedStudentRow(row: {
+  loginName: string;
+  displayName: string;
+}): boolean {
+  return SEED_STUDENT_LOGIN_NAMES.some((base) => {
+    if (row.displayName !== base) return false;
+    if (row.loginName === base) return true;
+    const suffix = row.loginName.slice(base.length);
+    if (!/^\d+$/.test(suffix)) return false;
+    const numeric = Number(suffix);
+    return numeric >= 2 && numeric <= LOGIN_NAME_SUFFIX_LIMIT;
+  });
+}
 
 /** 种子选项 */
 export interface SeedDemoOptions {
@@ -284,15 +369,16 @@ export async function seedDemoData(
   const at = (days: number, hours = 0): string =>
     new Date(nowMs + days * DAY_MS + hours * 3_600_000).toISOString();
 
-  // ---------- 学生 ----------
-  const made: SeedRef[] = [];
+  // ---------- 学生（loginName 全局唯一：被占则自动加数字后缀，displayName 不变） ----------
+  const made: SeedStudentRef[] = [];
   for (const name of SEED_STUDENT_LOGIN_NAMES) {
+    const loginName = resolveSeedStudentLoginName(db, name);
     const created = await createStudent(db, teacherId, {
       displayName: name,
-      loginName: name,
+      loginName,
       password: "demo-pass-123",
     });
-    made.push({ id: created.student.id, name });
+    made.push({ id: created.student.id, name, loginName });
   }
   const s1 = made[0];
   const s2 = made[1];
@@ -847,4 +933,185 @@ export async function seedDemoData(
     },
     questions,
   };
+}
+
+// ---------- CLI 编排核心（scripts/seed-demo.ts 复用；测试同源） ----------
+
+/**
+ * 清空一位教师域内的全部业务数据（--reset 与失败回滚共用）。
+ * FK 开启，按依赖顺序删除；保留教师行与教师会话——学生会话随学生删除自然
+ * 失效，教师本人不受影响。
+ */
+export function wipeTeacherDomain(db: Db, teacherId: string): void {
+  const studentIds = db
+    .select({ id: students.id })
+    .from(students)
+    .where(eq(students.teacherId, teacherId))
+    .all()
+    .map((row) => row.id);
+  const attemptIds =
+    studentIds.length > 0
+      ? db
+          .select({ id: attempts.id })
+          .from(attempts)
+          .where(inArray(attempts.studentId, studentIds))
+          .all()
+          .map((row) => row.id)
+      : [];
+  const assignmentIds = db
+    .select({ id: assignments.id })
+    .from(assignments)
+    .where(eq(assignments.teacherId, teacherId))
+    .all()
+    .map((row) => row.id);
+  const courseIds = db
+    .select({ id: courses.id })
+    .from(courses)
+    .where(eq(courses.teacherId, teacherId))
+    .all()
+    .map((row) => row.id);
+
+  // 事件：按 attemptId 或 studentId 命中（讲义域事件无 attempt 上下文）
+  const eventConditions = [];
+  if (attemptIds.length > 0)
+    eventConditions.push(inArray(events.attemptId, attemptIds));
+  if (studentIds.length > 0)
+    eventConditions.push(inArray(events.studentId, studentIds));
+  if (eventConditions.length === 1)
+    db.delete(events).where(eventConditions[0]).run();
+  else if (eventConditions.length > 1)
+    db.delete(events)
+      .where(or(...eventConditions))
+      .run();
+
+  if (attemptIds.length > 0) {
+    db.delete(ink).where(inArray(ink.attemptId, attemptIds)).run();
+    db.delete(responses).where(inArray(responses.attemptId, attemptIds)).run();
+  }
+  if (studentIds.length > 0) {
+    db.delete(attempts).where(inArray(attempts.studentId, studentIds)).run();
+  }
+  if (assignmentIds.length > 0) {
+    db.delete(assignmentStudents)
+      .where(inArray(assignmentStudents.assignmentId, assignmentIds))
+      .run();
+    db.delete(assignmentUnits)
+      .where(inArray(assignmentUnits.assignmentId, assignmentIds))
+      .run();
+  }
+  db.delete(assignments).where(eq(assignments.teacherId, teacherId)).run();
+  if (courseIds.length > 0) {
+    db.delete(courseStudents)
+      .where(inArray(courseStudents.courseId, courseIds))
+      .run();
+    db.delete(courseItems)
+      .where(inArray(courseItems.courseId, courseIds))
+      .run();
+  }
+  db.delete(courses).where(eq(courses.teacherId, teacherId)).run();
+  db.delete(questionKnowledge)
+    .where(eq(questionKnowledge.teacherId, teacherId))
+    .run();
+  db.delete(questions).where(eq(questions.teacherId, teacherId)).run();
+  // 依赖顺序：units.lectureId → lectures；units/lectures/imports.folderId →
+  // library_folders（导入的课程兼容路径会建同名文件夹，故 imports 先于 folders）
+  db.delete(units).where(eq(units.teacherId, teacherId)).run();
+  db.delete(lectures).where(eq(lectures.teacherId, teacherId)).run();
+  db.delete(imports).where(eq(imports.teacherId, teacherId)).run();
+  db.delete(libraryFolders)
+    .where(eq(libraryFolders.teacherId, teacherId))
+    .run();
+  db.delete(students).where(eq(students.teacherId, teacherId)).run();
+}
+
+/** createDemoTeacherAndSeed 的选项 */
+export interface CreateDemoTeacherAndSeedOptions extends SeedDemoOptions {
+  /**
+   * 种数据实现（缺省 seedDemoData）。测试注入 fake 失败验证回滚用，
+   * 生产调用方不传。
+   */
+  readonly seedFn?: typeof seedDemoData;
+}
+
+/** createDemoTeacherAndSeed 的结果 */
+export interface CreateDemoTeacherAndSeedResult {
+  /**
+   * 本次新建教师时生成的初始密码（仅此时非 null，由调用方一次性回显）；
+   * 教师已存在时为 null（按原密码登录）。
+   */
+  readonly initialPassword: string | null;
+  readonly seed: SeedDemoResult;
+}
+
+/** 演示教师初始密码：12 字节随机 base64url（16 字符；满足 teacherPasswordSchema 8–128 位） */
+function generateDemoTeacherPassword(): string {
+  return randomBytes(12).toString("base64url");
+}
+
+/**
+ * 定位（或创建）演示教师并播种（CLI 编排核心，测试同源；T4.1 修复：失败不留孤儿教师）。
+ * - 教师已存在：直接种数据；失败**不回滚**（其数据与密码归原教师所有）；
+ * - 教师不存在：创建（随机初始密码）→ 种数据；种数据抛错时回滚本次新建的
+ *   教师行——连同其会话与已落库的部分种子数据（学生建在最前，中途失败时
+ *   可能已入库；残留行既占全局唯一登录名又归属已删教师，必须一并清掉）——
+ *   再抛出带说明的中文错误（cause 保留原始错误）。初始密码只在种子成功后
+ *   由调用方打印，失败即无人知晓密码，孤儿教师行将永远无法登录，故须回滚。
+ */
+export async function createDemoTeacherAndSeed(
+  db: Db,
+  teacherLogin: string,
+  options: CreateDemoTeacherAndSeedOptions = {},
+): Promise<CreateDemoTeacherAndSeedResult> {
+  const { seedFn = seedDemoData, ...seedOptions } = options;
+  let teacher = db
+    .select()
+    .from(teachers)
+    .where(eq(teachers.loginName, teacherLogin))
+    .get();
+  let initialPassword: string | null = null;
+  if (teacher === undefined) {
+    initialPassword = generateDemoTeacherPassword();
+    db.insert(teachers)
+      .values({
+        id: randomUUID(),
+        loginName: teacherLogin,
+        isAdmin: false,
+        disabledAt: null,
+        passwordHash: await hashPassword(initialPassword),
+        apiToken: null,
+        createdAt: new Date().toISOString(),
+      })
+      .run();
+    teacher = db
+      .select()
+      .from(teachers)
+      .where(eq(teachers.loginName, teacherLogin))
+      .get();
+    if (teacher === undefined) {
+      throw new Error("演示教师创建失败（写入后读取不到教师行）");
+    }
+  }
+
+  try {
+    const seed = await seedFn(db, teacher.id, seedOptions);
+    return { initialPassword, seed };
+  } catch (error) {
+    if (initialPassword === null) throw error;
+    wipeTeacherDomain(db, teacher.id);
+    db.delete(sessions)
+      .where(
+        and(
+          eq(sessions.subjectType, "teacher"),
+          eq(sessions.subjectId, teacher.id),
+        ),
+      )
+      .run();
+    db.delete(teachers).where(eq(teachers.id, teacher.id)).run();
+    throw new Error(
+      `播种失败，已回滚本次新建的教师「${teacherLogin}」：教师行、会话与已写入的部分种子数据均已删除，库中无残留。原始错误：${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      { cause: error },
+    );
+  }
 }
