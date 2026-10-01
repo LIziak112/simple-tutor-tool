@@ -26,8 +26,14 @@ export type Db = BetterSQLite3Database<typeof schema> & {
  */
 export function createDb(filename: string): Db {
   const sqlite = new DatabaseCtor(filename);
-  sqlite.pragma("journal_mode = WAL");
-  sqlite.pragma("foreign_keys = ON");
+  try {
+    sqlite.pragma("journal_mode = WAL");
+    sqlite.pragma("foreign_keys = ON");
+  } catch (err) {
+    // pragma 失败（如文件不是数据库）：关掉句柄再抛，不泄漏 Windows 文件锁
+    sqlite.close();
+    throw err;
+  }
   return drizzle(sqlite, { schema });
 }
 
@@ -64,6 +70,13 @@ export function createDbHandle(
   let current = createDb(filename);
   onOpen?.(current);
 
+  // 关闭幂等：已关闭的连接跳过（恢复回滚路径可能对同一句柄连续 restart）
+  const safeClose = (): void => {
+    if (current.$client.open) {
+      current.$client.close();
+    }
+  };
+
   const db: Db = new Proxy({} as Db, {
     get(_target, prop): unknown {
       const value = Reflect.get(current as object, prop);
@@ -80,12 +93,22 @@ export function createDbHandle(
   return {
     db,
     close(): void {
-      current.$client.close();
+      safeClose();
     },
     restart(): Db {
-      current.$client.close();
-      current = createDb(filename);
-      onOpen?.(current);
+      safeClose();
+      // createDb 自身失败已在内部关闭句柄；onOpen 失败时关掉半开的新连接再抛，
+      // current 保持旧实例（已关闭）——两条路径都不泄漏文件锁
+      const next = createDb(filename);
+      try {
+        onOpen?.(next);
+      } catch (err) {
+        if (next.$client.open) {
+          next.$client.close();
+        }
+        throw err;
+      }
+      current = next;
       return current;
     },
   };
