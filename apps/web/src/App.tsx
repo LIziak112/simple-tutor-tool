@@ -77,21 +77,20 @@ const teacherRoutes = (() => {
   const PendingMarkQueuePage = lazy(
     () => import("./pages/teacher/PendingMarkQueuePage"),
   );
-  const PlaceholderPage = lazy(() => import("./pages/teacher/PlaceholderPage"));
+  const InsightsOverviewPage = lazy(
+    () => import("./pages/teacher/InsightsOverviewPage"),
+  );
+  const InsightsStudentPage = lazy(
+    () => import("./pages/teacher/InsightsStudentPage"),
+  );
+  const InsightsQuestionsPage = lazy(
+    () => import("./pages/teacher/InsightsQuestionsPage"),
+  );
 
   /** 布局内的懒加载兜底（骨架级提示即可，布局本身很快） */
   const pageFallback = (
     <p className="p-8 text-sm text-muted-foreground">页面加载中…</p>
   );
-
-  /** 「建设中」占位分区（后续任务逐个替换；内容由 T4.x 实现并移出占位） */
-  const placeholders = [
-    {
-      path: "insights",
-      title: "学情",
-      description: "学情分析与报告将在这里提供（T3.x 起）。",
-    },
-  ] as const;
 
   return (
     <>
@@ -219,6 +218,33 @@ const teacherRoutes = (() => {
           }
         />
         <Route
+          // T4.2：学情总览（完成矩阵 + 下节课重点 + 关键计数；侧边栏「学情」落点）
+          path="insights"
+          element={
+            <Suspense fallback={pageFallback}>
+              <InsightsOverviewPage />
+            </Suspense>
+          }
+        />
+        <Route
+          // T4.2：学生画像（趋势/考点条形图/异常题/重做/阅读地图/AI 报告占位）
+          path="insights/students/:id"
+          element={
+            <Suspense fallback={pageFallback}>
+              <InsightsStudentPage />
+            </Suspense>
+          }
+        />
+        <Route
+          // T4.2：题目视角（正确率/用时/高频错误答案；与总览同筛选）
+          path="insights/questions"
+          element={
+            <Suspense fallback={pageFallback}>
+              <InsightsQuestionsPage />
+            </Suspense>
+          }
+        />
+        <Route
           path="settings"
           element={
             <Suspense fallback={pageFallback}>
@@ -226,20 +252,6 @@ const teacherRoutes = (() => {
             </Suspense>
           }
         />
-        {placeholders.map((item) => (
-          <Route
-            key={item.path}
-            path={item.path}
-            element={
-              <Suspense fallback={pageFallback}>
-                <PlaceholderPage
-                  title={item.title}
-                  description={item.description}
-                />
-              </Suspense>
-            }
-          />
-        ))}
       </Route>
     </>
   );
