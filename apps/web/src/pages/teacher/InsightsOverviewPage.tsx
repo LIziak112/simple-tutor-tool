@@ -1,4 +1,4 @@
-import { ClipboardCheck, TriangleAlert } from "lucide-react";
+import { ClipboardCheck, FileDown, TriangleAlert } from "lucide-react";
 import { useMemo } from "react";
 import { Link, useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
@@ -101,7 +101,16 @@ export function InsightsOverviewPage() {
             计数区待批与离线一目了然。
           </p>
         </div>
-        <InsightsViewSwitcher view="overview" query={query} />
+        <div className="flex flex-wrap items-center gap-2">
+          <InsightsViewSwitcher view="overview" query={query} />
+          {/* T4.4：导出给 AI 入口（/t/export 五步向导；侧边栏不加，T4.7 统一调） */}
+          <Button variant="outline" className="min-h-11" asChild>
+            <Link to="/t/export">
+              <FileDown aria-hidden />
+              导出给 AI
+            </Link>
+          </Button>
+        </div>
       </header>
 
       <AnalyticsFilterBar

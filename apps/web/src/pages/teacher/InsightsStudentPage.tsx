@@ -176,18 +176,35 @@ export function InsightsStudentPage() {
             )}
           </p>
         </div>
-        <Button variant="outline" className="min-h-11" asChild>
-          <Link
-            to={{
-              pathname: "/t/data",
-              search:
-                id !== undefined ? `?studentId=${encodeURIComponent(id)}` : "",
-            }}
-          >
-            <ArrowLeft aria-hidden />
-            查看该生全部作答
-          </Link>
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          {/* T4.4：导出给 AI 入口（带 studentId 预填该生进入向导第①步） */}
+          <Button variant="outline" className="min-h-11" asChild>
+            <Link
+              to={{
+                pathname: "/t/export",
+                search:
+                  id !== undefined
+                    ? `?studentId=${encodeURIComponent(id)}`
+                    : "",
+              }}
+            >
+              <Sparkles aria-hidden />
+              导出给 AI
+            </Link>
+          </Button>
+          <Button variant="outline" className="min-h-11" asChild>
+            <Link
+              to={{
+                pathname: "/t/data",
+                search:
+                  id !== undefined ? `?studentId=${encodeURIComponent(id)}` : "",
+              }}
+            >
+              <ArrowLeft aria-hidden />
+              查看该生全部作答
+            </Link>
+          </Button>
+        </div>
       </header>
 
       <AnalyticsFilterBar

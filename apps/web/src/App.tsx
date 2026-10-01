@@ -86,6 +86,7 @@ const teacherRoutes = (() => {
   const InsightsQuestionsPage = lazy(
     () => import("./pages/teacher/InsightsQuestionsPage"),
   );
+  const ExportPage = lazy(() => import("./pages/teacher/ExportPage"));
 
   /** 布局内的懒加载兜底（骨架级提示即可，布局本身很快） */
   const pageFallback = (
@@ -241,6 +242,16 @@ const teacherRoutes = (() => {
           element={
             <Suspense fallback={pageFallback}>
               <InsightsQuestionsPage />
+            </Suspense>
+          }
+        />
+        <Route
+          // T4.4：导出中心（「导出给 AI」五步向导；学情页/画像页入口落点，
+          // ?studentId= 预填该生；侧边栏不加入口，T4.7 收尾统一调导航）
+          path="export"
+          element={
+            <Suspense fallback={pageFallback}>
+              <ExportPage />
             </Suspense>
           }
         />
