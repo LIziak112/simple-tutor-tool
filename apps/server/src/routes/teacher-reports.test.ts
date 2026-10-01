@@ -183,7 +183,11 @@ describe("GET /api/teacher/students/:id/reports 与 DELETE /api/teacher/reports/
     const report = createReport(
       db,
       TEST_TEACHER_ID,
-      { studentId, title: "诊断报告", markdown: "# 薄弱点分析\n\n有理数加法需巩固。" },
+      {
+        studentId,
+        title: "诊断报告",
+        markdown: "# 薄弱点分析\n\n有理数加法需巩固。",
+      },
       "mcp",
     );
 
