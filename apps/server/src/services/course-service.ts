@@ -881,8 +881,15 @@ interface ResourceContext {
   readonly liveQuestionCountByUnit: Map<string, number>;
 }
 
-/** 读全讲义/单元摘要与未删除题目计数（D5 条件 4 与状态标签共用；域内读，T2B.4） */
-function loadResourceContext(db: Db, teacherId: string): ResourceContext {
+/**
+ * 读全讲义/单元摘要与未删除题目计数（D5 条件 4 与状态标签共用；域内读，T2B.4）。
+ * T4.1 起导出：学情完成矩阵的「可见课程单元」列与进度矩阵同一可见性口径
+ * （analytics-service 复用，避免两处各写一份 D5 判定）。
+ */
+export function loadResourceContext(
+  db: Db,
+  teacherId: string,
+): ResourceContext {
   const lectureById = new Map(
     db
       .select({
