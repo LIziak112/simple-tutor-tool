@@ -539,7 +539,7 @@ describe("T4.0a lecture_visible / lecture_hidden 注入（viewId 配对）", () 
       type: "lecture_visible",
       lectureId: "lec-1",
     });
-    expect(typeof first.viewId).toBe("string");
+    expect(typeof first?.viewId).toBe("string");
 
     setVisibility("hidden");
     document.dispatchEvent(new Event("visibilitychange"));
