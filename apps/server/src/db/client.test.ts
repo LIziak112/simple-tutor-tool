@@ -1,8 +1,8 @@
 import { existsSync, mkdtempSync, renameSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createDb, createDbHandle, staticDbHandle } from "./client";
 import { runMigrations } from "./migrate";
 import { teachers } from "./schema";
@@ -58,14 +58,22 @@ describe("createDbHandle（T4.5 可重启连接）", () => {
       })
       .run();
     expect(
-      handle.db.select().from(teachers).where(eq(teachers.id, "t-handle-1")).get(),
+      handle.db
+        .select()
+        .from(teachers)
+        .where(eq(teachers.id, "t-handle-1"))
+        .get(),
     ).toBeDefined();
 
     handle.restart();
     expect(opened).toBe(2);
     // restart 后同一 db 引用仍可用，且读到的是磁盘上的既有数据
     expect(
-      handle.db.select().from(teachers).where(eq(teachers.id, "t-handle-1")).get(),
+      handle.db
+        .select()
+        .from(teachers)
+        .where(eq(teachers.id, "t-handle-1"))
+        .get(),
     ).toBeDefined();
     // 迁移钩子让重开的库可直接使用（表结构就绪）
     handle.db

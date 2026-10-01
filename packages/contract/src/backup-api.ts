@@ -115,7 +115,9 @@ function apiOkExtend<T extends z.ZodType>(dataSchema: T) {
   });
 }
 
-export const backupSnapshotListOkSchema = apiOkExtend(backupSnapshotListDataSchema);
+export const backupSnapshotListOkSchema = apiOkExtend(
+  backupSnapshotListDataSchema,
+);
 export const backupRestoreOkSchema = apiOkExtend(backupRestoreResultSchema);
 
 // ---------- 推断类型导出 ----------

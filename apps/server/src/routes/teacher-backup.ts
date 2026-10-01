@@ -1,6 +1,6 @@
+import { Readable } from "node:stream";
 import { BACKUP_MAX_UPLOAD_BYTES } from "@tutor/contract";
 import { Hono } from "hono";
-import { Readable } from "node:stream";
 import type { TeacherEnv } from "../auth/require-teacher";
 import type { Db, DbHandle } from "../db/client";
 import { HttpError } from "../lib/http-error";
@@ -34,7 +34,10 @@ export function createTeacherBackupRoutes(
     new Hono<TeacherEnv>()
       // T4.5：最近快照列表（设置页「最近快照」区数据源）
       .get("/backup/snapshots", (c) => {
-        return c.json({ ok: true, data: { snapshots: listSnapshots(dataDir) } });
+        return c.json({
+          ok: true,
+          data: { snapshots: listSnapshots(dataDir) },
+        });
       })
       // T4.5：下载完整备份（zip 流式直出；内容随数据变化，禁缓存）
       .get("/backup/download", (_c) => {

@@ -93,7 +93,11 @@ export function isSafeZipEntryName(name: string): boolean {
   const segments = name.split("/");
   // 任一段为空（"a//b"）、"."（"a/./b"）或 ".."（"../x"）都拒绝——
   // 合法备份条目名只会是干净的相对路径
-  if (segments.some((segment) => segment === "" || segment === "." || segment === "..")) {
+  if (
+    segments.some(
+      (segment) => segment === "" || segment === "." || segment === "..",
+    )
+  ) {
     return false;
   }
   return true;

@@ -7,10 +7,12 @@ import {
   useLogoutTeacher,
   useTeacherMe,
 } from "@/features/auth/teacher-auth";
+import { BackupSection } from "@/features/teacher-backup/BackupSection";
 import { formatCnTime } from "@/lib/time";
 
 /**
- * /t/settings 设置页（T1.9 只放「退出登录」；改密码、API Token 等后续任务补）。
+ * /t/settings 设置页（T1.9 账号与会话；T4.5 增「备份与恢复」区——
+ * 下载完整备份 / 从备份恢复 / 最近快照列表，见 features/teacher-backup）。
  */
 export function SettingsPage() {
   const meQuery = useTeacherMe();
@@ -84,6 +86,9 @@ export function SettingsPage() {
           </Button>
         </div>
       </div>
+
+      {/* T4.5：备份与恢复（下载 / 恢复上传 + 密码确认弹层 / 最近快照） */}
+      <BackupSection />
     </section>
   );
 }

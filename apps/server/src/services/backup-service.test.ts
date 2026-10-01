@@ -1,6 +1,17 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { eq } from "drizzle-orm";
+import pino from "pino";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { hashPassword } from "../auth/password";
 import { runBackfills } from "../db/backfill";
 import { createDbHandle, type DbHandle } from "../db/client";
@@ -9,9 +20,6 @@ import { students, teachers } from "../db/schema";
 import { TEST_TEACHER_ID } from "../db/test-utils";
 import { HttpError } from "../lib/http-error";
 import { readZipEntries } from "../lib/zip-read";
-import pino from "pino";
-import { eq } from "drizzle-orm";
-import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   BACKUP_DIR_NAME,
   buildBackupZip,
@@ -36,7 +44,9 @@ import {
 const PASSWORD = "backup-pass-123";
 
 /** 备份 zip 流收整为 Buffer（与下载链路同流，测试内消费） */
-async function zipToBuffer(zip: Awaited<ReturnType<typeof buildBackupZip>>): Promise<Buffer> {
+async function zipToBuffer(
+  zip: Awaited<ReturnType<typeof buildBackupZip>>,
+): Promise<Buffer> {
   const chunks: Buffer[] = [];
   zip.stream.on("data", (chunk: Buffer) => chunks.push(chunk));
   const done = new Promise<void>((resolve, reject) => {
@@ -60,7 +70,11 @@ async function makeFixture(): Promise<Fixture> {
   mkdirSync(join(dataDir, "shared"), { recursive: true });
   mkdirSync(join(dataDir, "blobs", "ink", "att-1"), { recursive: true });
   writeFileSync(join(dataDir, "shared", "共享练习.md"), "共享内容 v1", "utf8");
-  writeFileSync(join(dataDir, "blobs", "ink", "att-1", "手写.png"), "png-bytes-v1", "utf8");
+  writeFileSync(
+    join(dataDir, "blobs", "ink", "att-1", "手写.png"),
+    "png-bytes-v1",
+    "utf8",
+  );
 
   const handle = createDbHandle(join(dataDir, "tutor.db"), (fresh) => {
     runMigrations(fresh);
@@ -148,8 +162,16 @@ describe("备份 → 改数据 → 恢复（验收核心往返）", () => {
       })
       .run();
     writeFileSync(join(dataDir, "shared", "新增共享.md"), "不该存在", "utf8");
-    writeFileSync(join(dataDir, "shared", "共享练习.md"), "共享内容 v2", "utf8");
-    writeFileSync(join(dataDir, "blobs", "ink", "att-1", "新增.png"), "new", "utf8");
+    writeFileSync(
+      join(dataDir, "shared", "共享练习.md"),
+      "共享内容 v2",
+      "utf8",
+    );
+    writeFileSync(
+      join(dataDir, "blobs", "ink", "att-1", "新增.png"),
+      "new",
+      "utf8",
+    );
     writeFileSync(join(dataDir, "secret.key"), "cd".repeat(32), "utf8");
     expect(hasStudent(handle, "stu-backup-2")).toBe(true);
 
@@ -187,12 +209,20 @@ describe("备份 → 改数据 → 恢复（验收核心往返）", () => {
 
     // shared 回到备份时点：新增文件消失、被改文件回 v1
     expect(existsSync(join(dataDir, "shared", "新增共享.md"))).toBe(false);
-    expect(readFileSync(join(dataDir, "shared", "共享练习.md"), "utf8")).toBe("共享内容 v1");
+    expect(readFileSync(join(dataDir, "shared", "共享练习.md"), "utf8")).toBe(
+      "共享内容 v1",
+    );
     // blobs 回到备份时点
-    expect(existsSync(join(dataDir, "blobs", "ink", "att-1", "新增.png"))).toBe(false);
-    expect(readFileSync(join(dataDir, "blobs", "ink", "att-1", "手写.png"), "utf8")).toBe("png-bytes-v1");
+    expect(existsSync(join(dataDir, "blobs", "ink", "att-1", "新增.png"))).toBe(
+      false,
+    );
+    expect(
+      readFileSync(join(dataDir, "blobs", "ink", "att-1", "手写.png"), "utf8"),
+    ).toBe("png-bytes-v1");
     // secret.key 回到备份内容
-    expect(readFileSync(join(dataDir, "secret.key"), "utf8")).toBe("ab".repeat(32));
+    expect(readFileSync(join(dataDir, "secret.key"), "utf8")).toBe(
+      "ab".repeat(32),
+    );
     // 运行库文件名归位 tutor.db
     expect(existsSync(join(dataDir, "tutor.db"))).toBe(true);
 
@@ -212,7 +242,9 @@ describe("备份 → 改数据 → 恢复（验收核心往返）", () => {
     const entries = readZipEntries(zipBuffer);
     const names = entries.map((entry) => entry.name);
 
-    expect(names.some((name) => /^tutor-\d{8}-\d{6}\.db$/.test(name))).toBe(true);
+    expect(names.some((name) => /^tutor-\d{8}-\d{6}\.db$/.test(name))).toBe(
+      true,
+    );
     expect(names).toContain("secret.key");
     expect(names).toContain("shared/共享练习.md");
     expect(names).toContain("blobs/ink/att-1/手写.png");
@@ -260,7 +292,9 @@ describe("恢复的拒绝路径（原数据无损）", () => {
     expect((err as HttpError).status).toBe(400);
     expect((err as HttpError).code).toBe("BACKUP_ZIP_INVALID");
 
-    expect(readFileSync(join(dataDir, "shared", "共享练习.md"), "utf8")).toBe("恢复前内容");
+    expect(readFileSync(join(dataDir, "shared", "共享练习.md"), "utf8")).toBe(
+      "恢复前内容",
+    );
     expect(hasStudent(handle, "stu-backup-1")).toBe(true);
     expect(existsSync(join(dataDir, "tutor.db"))).toBe(true);
   });
@@ -288,24 +322,30 @@ describe("恢复的拒绝路径（原数据无损）", () => {
     };
 
     const noDb = await pack([{ name: "shared/a.md", data: Buffer.from("x") }]);
-    const err1 = await restoreFromBackup(dataDir, handle, TEST_TEACHER_ID, PASSWORD, noDb).catch(
-      (e: unknown) => e,
-    );
+    const err1 = await restoreFromBackup(
+      dataDir,
+      handle,
+      TEST_TEACHER_ID,
+      PASSWORD,
+      noDb,
+    ).catch((e: unknown) => e);
     expect((err1 as HttpError).code).toBe("BACKUP_ZIP_INVALID");
     expect((err1 as HttpError).message).toContain("数据库文件");
 
     // 未知顶层：readZipEntries 会因名字安全通过、白名单拒绝 backups/ 覆写
-    const validZip = await zipToBuffer(
-      buildBackupZip(dataDir, handle.db),
-    );
+    const validZip = await zipToBuffer(buildBackupZip(dataDir, handle.db));
     const entries = readZipEntries(validZip); // 借真实备份结构改造
     const rebuilt = await pack([
       ...entries.map((entry) => ({ name: entry.name, data: entry.data })),
       { name: "readme.txt", data: Buffer.from(" rogue ") },
     ]);
-    const err2 = await restoreFromBackup(dataDir, handle, TEST_TEACHER_ID, PASSWORD, rebuilt).catch(
-      (e: unknown) => e,
-    );
+    const err2 = await restoreFromBackup(
+      dataDir,
+      handle,
+      TEST_TEACHER_ID,
+      PASSWORD,
+      rebuilt,
+    ).catch((e: unknown) => e);
     expect((err2 as HttpError).code).toBe("BACKUP_ZIP_INVALID");
     expect((err2 as HttpError).message).toContain("readme.txt");
 
@@ -339,16 +379,24 @@ describe("恢复的拒绝路径（原数据无损）", () => {
     await done;
     const poisoned = Buffer.concat(chunks);
 
-    const err = await restoreFromBackup(dataDir, handle, TEST_TEACHER_ID, PASSWORD, poisoned).catch(
-      (e: unknown) => e,
-    );
+    const err = await restoreFromBackup(
+      dataDir,
+      handle,
+      TEST_TEACHER_ID,
+      PASSWORD,
+      poisoned,
+    ).catch((e: unknown) => e);
     expect((err as HttpError).status).toBe(500);
     expect((err as HttpError).code).toBe("BACKUP_RESTORE_FAILED");
 
     // 回滚复原：库行、secret.key、shared 都在原位且连接可用
     expect(hasStudent(handle, "stu-backup-1")).toBe(true);
-    expect(readFileSync(join(dataDir, "secret.key"), "utf8")).toBe("ab".repeat(32));
-    expect(readFileSync(join(dataDir, "shared", "共享练习.md"), "utf8")).toBe("共享内容 v1");
+    expect(readFileSync(join(dataDir, "secret.key"), "utf8")).toBe(
+      "ab".repeat(32),
+    );
+    expect(readFileSync(join(dataDir, "shared", "共享练习.md"), "utf8")).toBe(
+      "共享内容 v1",
+    );
   });
 });
 
@@ -369,11 +417,20 @@ describe("快照轮转与调度", () => {
     expect(snapshots.length).toBe(14);
     // 倒序：最新在前（北京时间 08:00:15），最早两份（08:00:00/01）被删
     expect(snapshots[0]?.filename).toBe("tutor-20261001-080015.db");
-    expect(snapshots.some((s) => s.filename.endsWith("-080000.db"))).toBe(false);
-    expect(snapshots.some((s) => s.filename.endsWith("-080001.db"))).toBe(false);
+    expect(snapshots.some((s) => s.filename.endsWith("-080000.db"))).toBe(
+      false,
+    );
+    expect(snapshots.some((s) => s.filename.endsWith("-080001.db"))).toBe(
+      false,
+    );
     // 列表形状：时间倒序 + 大小非负
     for (let i = 1; i < snapshots.length; i += 1) {
-      expect(snapshots[i - 1]?.createdAt >= snapshots[i]?.createdAt).toBe(true);
+      const previous = snapshots[i - 1];
+      const current = snapshots[i];
+      if (previous === undefined || current === undefined) {
+        throw new Error("快照列表项缺失");
+      }
+      expect(previous.createdAt >= current.createdAt).toBe(true);
     }
     expect(snapshots.every((s) => s.sizeBytes > 0)).toBe(true);
   });

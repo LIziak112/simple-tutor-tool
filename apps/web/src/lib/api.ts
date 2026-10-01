@@ -25,6 +25,8 @@ import {
   type AttemptStartData,
   type AttemptStatus,
   apiResponseSchema,
+  type BackupRestoreResult,
+  type BackupSnapshotList,
   type ContentTree,
   type CourseCreateRequest,
   type CourseData,
@@ -1678,4 +1680,68 @@ export async function downloadLearningPackApi(
     URL.revokeObjectURL(url);
   }
   return filename;
+}
+
+// ---------- 备份与恢复（T4.5，D20/D21 口径见契约 backup-api.ts） ----------
+
+/**
+ * 最近快照列表（设置页「最近快照」区数据源）。
+ * hc RPC 走统一壳（JSON 响应），与 snapshots 契约端到端类型一致。
+ */
+export function fetchBackupSnapshots(): Promise<BackupSnapshotList> {
+  return callApi(() => api.api.teacher.backup.snapshots.$get());
+}
+
+/**
+ * 下载完整备份 zip（GET 文件直出，同 downloadLearningPackApi 模式）：
+ * 同构 fetch（同源自动带会话 Cookie）→ blob 触发 a[download] 浏览器下载，
+ * 返回实际文件名；错误响应（统一 JSON 壳）抛 ApiError。
+ */
+export async function downloadBackupApi(): Promise<string> {
+  let res: Response;
+  try {
+    res = await fetch("/api/teacher/backup/download", { method: "GET" });
+  } catch {
+    throw new Error(
+      "连不上服务器，请确认后端已启动（pnpm --filter server dev）后重试",
+    );
+  }
+  if (!res.ok) {
+    // 文件接口的错误仍是统一 JSON 壳
+    await throwShellError(res);
+  }
+  const disposition = res.headers.get("content-disposition") ?? "";
+  const matched = /filename="?([^";]+)"?/i.exec(disposition)?.[1];
+  const filename =
+    matched !== undefined && matched.length > 0 ? matched : "tutor-backup.zip";
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  try {
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = filename;
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+  return filename;
+}
+
+/**
+ * 从备份 zip 恢复整库（D21：multipart zip 文件 + 登录密码，服务端 scrypt 校验）。
+ * multipart 路由 hc 推断不出 form 入参（与笔迹上传同因），用同构 fetch +
+ * callApi 统一壳校验；成功返回恢复摘要（sessionWarning=true 时页面提示重新登录）。
+ */
+export function restoreBackupApi(
+  zip: File,
+  password: string,
+): Promise<BackupRestoreResult> {
+  const form = new FormData();
+  form.append("zip", zip);
+  form.append("password", password);
+  return callApi(() =>
+    fetch("/api/teacher/backup/restore", { method: "POST", body: form }),
+  );
 }

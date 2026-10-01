@@ -14,15 +14,15 @@ import {
   BACKUP_KEEP_COUNT,
   BACKUP_SNAPSHOT_NAME_PATTERN,
 } from "@tutor/contract";
+import { ZipArchive } from "archiver";
+import { eq } from "drizzle-orm";
+import type { Logger } from "pino";
 import { verifyPassword } from "../auth/password";
 import type { Db, DbHandle } from "../db/client";
 import { teachers } from "../db/schema";
 import { HttpError } from "../lib/http-error";
 import { readZipEntries, type ZipEntry, ZipReadError } from "../lib/zip-read";
 import { beijingExportStampOf } from "./export-csv";
-import { ZipArchive } from "archiver";
-import { eq } from "drizzle-orm";
-import type { Logger } from "pino";
 
 /**
  * BackupService（T4.5，Phase4 清单 §4 / §2 D20/D21 + 架构 §5.10）——
@@ -140,9 +140,10 @@ export function listSnapshots(dataDir: string): BackupSnapshot[] {
 
 /** 从快照文件名解析时点（北京时间戳 → UTC ISO）；非快照命名返回 null */
 function snapshotTimeOf(dbFilename: string): string | null {
-  const matched = /^tutor-(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})(?:-\d+)?\.db$/.exec(
-    dbFilename,
-  );
+  const matched =
+    /^tutor-(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})(?:-\d+)?\.db$/.exec(
+      dbFilename,
+    );
   if (matched === null) {
     return null;
   }
@@ -199,7 +200,10 @@ export function buildBackupZip(dataDir: string, db: Db): BackupZip {
 
   // 不 await：finalize 写入流即开始，路由把流转成响应体
   void archive.finalize();
-  return { stream: archive, filename: `tutor-backup-${beijingExportStampOf()}.zip` };
+  return {
+    stream: archive,
+    filename: `tutor-backup-${beijingExportStampOf()}.zip`,
+  };
 }
 
 // ---------- 恢复（校验 → 保险快照 → 原子替换 → 重启连接） ----------
@@ -298,7 +302,11 @@ export async function restoreFromBackup(
     entries = readZipEntries(Buffer.from(zipBytes));
   } catch (err) {
     if (err instanceof ZipReadError) {
-      throw new HttpError(400, "BACKUP_ZIP_INVALID", `备份压缩包无法读取：${err.message}`);
+      throw new HttpError(
+        400,
+        "BACKUP_ZIP_INVALID",
+        `备份压缩包无法读取：${err.message}`,
+      );
     }
     throw err;
   }
@@ -310,7 +318,9 @@ export async function restoreFromBackup(
   // ④ 解压到暂存目录：与 DATA_DIR **同父目录**（同卷）→ rename 快且原子
   const absoluteDataDir = resolve(dataDir);
   const staging = mkdtempSync(join(dirname(absoluteDataDir), "tutor-restore-"));
-  const oldDir = mkdtempSync(join(dirname(absoluteDataDir), "tutor-restore-old-"));
+  const oldDir = mkdtempSync(
+    join(dirname(absoluteDataDir), "tutor-restore-old-"),
+  );
 
   try {
     for (const entry of entries) {
@@ -347,7 +357,7 @@ export async function restoreFromBackup(
       }
       // ⑥ 重启数据连接（迁移钩子在 onOpen 里，旧版快照恢复后自动升级）
       handle.restart();
-    } catch (err) {
+    } catch {
       // 回滚：清掉 DATA_DIR 里的新内容（若有），把旧内容原样放回
       for (const name of readdirSync(absoluteDataDir)) {
         if (name !== BACKUP_DIR_NAME) {

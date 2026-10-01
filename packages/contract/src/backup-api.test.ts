@@ -32,8 +32,7 @@ describe("backupSnapshotSchema / backupSnapshotListDataSchema", () => {
   it("接受完整快照项与列表（倒序由服务端保证）", () => {
     expect(backupSnapshotSchema.safeParse(SNAPSHOT).success).toBe(true);
     expect(
-      backupSnapshotListDataSchema.safeParse({ snapshots: [SNAPSHOT] })
-        .success,
+      backupSnapshotListDataSchema.safeParse({ snapshots: [SNAPSHOT] }).success,
     ).toBe(true);
   });
 
@@ -72,8 +71,10 @@ describe("backupRestoreResultSchema", () => {
       }).success,
     ).toBe(false);
     expect(
-      backupRestoreResultSchema.safeParse({ ...RESTORE_RESULT, restoredFiles: 0 })
-        .success,
+      backupRestoreResultSchema.safeParse({
+        ...RESTORE_RESULT,
+        restoredFiles: 0,
+      }).success,
     ).toBe(false);
   });
 });
@@ -81,7 +82,9 @@ describe("backupRestoreResultSchema", () => {
 describe("常量与枚举", () => {
   it("上传上限 256MB，body 预检上限多 1MB 余量", () => {
     expect(BACKUP_MAX_UPLOAD_BYTES).toBe(256 * 1024 * 1024);
-    expect(BACKUP_UPLOAD_BODY_LIMIT).toBe(BACKUP_MAX_UPLOAD_BYTES + 1024 * 1024);
+    expect(BACKUP_UPLOAD_BODY_LIMIT).toBe(
+      BACKUP_MAX_UPLOAD_BYTES + 1024 * 1024,
+    );
   });
 
   it("保留份数为 14（架构 §5.10）", () => {
@@ -96,9 +99,9 @@ describe("常量与枚举", () => {
       BACKUP_SNAPSHOT_NAME_PATTERN.test("tutor-20261001-120000-2.db"),
     ).toBe(true);
     expect(BACKUP_SNAPSHOT_NAME_PATTERN.test("tutor.db")).toBe(false);
-    expect(BACKUP_SNAPSHOT_NAME_PATTERN.test("../tutor-20260101-000000.db")).toBe(
-      false,
-    );
+    expect(
+      BACKUP_SNAPSHOT_NAME_PATTERN.test("../tutor-20260101-000000.db"),
+    ).toBe(false);
   });
 
   it("错误码枚举覆盖密码 / zip 结构 / 超限 / 回滚四类", () => {

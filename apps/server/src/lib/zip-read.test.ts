@@ -3,7 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ZipArchive } from "archiver";
 import { afterEach, describe, expect, it } from "vitest";
-import { isSafeZipEntryName, readZipEntries, ZipReadError } from "./zip-read.ts";
+import {
+  isSafeZipEntryName,
+  readZipEntries,
+  ZipReadError,
+} from "./zip-read.ts";
 
 /**
  * 最小 zip 读取器测试（T4.5）：与 archiver（写入端，技术栈内依赖）往返；
@@ -50,7 +54,9 @@ describe("readZipEntries：与 archiver 往返", () => {
     for (const level of [0, 6]) {
       const zip = await zipOf(files, level);
       const entries = readZipEntries(zip);
-      expect(entries.map((entry) => entry.name)).toEqual(files.map((f) => f.name));
+      expect(entries.map((entry) => entry.name)).toEqual(
+        files.map((f) => f.name),
+      );
       for (let i = 0; i < files.length; i += 1) {
         expect(entries[i]?.data.equals(files[i]?.data as Buffer)).toBe(true);
       }
@@ -77,11 +83,12 @@ describe("readZipEntries：与 archiver 往返", () => {
     const entries = readZipEntries(Buffer.concat(chunks));
     const names = entries.map((entry) => entry.name).sort();
     // 目录条目（以 / 结尾）被跳过，只剩文件
-    expect(names).toEqual([
-      "blobs/ink/a/x.png",
-      "blobs/ink/b.json.gz",
-    ]);
-    expect(entries.find((entry) => entry.name === "blobs/ink/a/x.png")?.data.toString()).toBe("png");
+    expect(names).toEqual(["blobs/ink/a/x.png", "blobs/ink/b.json.gz"]);
+    expect(
+      entries
+        .find((entry) => entry.name === "blobs/ink/a/x.png")
+        ?.data.toString(),
+    ).toBe("png");
   });
 });
 

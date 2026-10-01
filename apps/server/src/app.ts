@@ -177,7 +177,12 @@ export function createApp(options: CreateAppOptions) {
     })
     .route(
       "/api/teacher",
-      createTeacherRoutes(options.db, options.publicUrl, options.dataDir, options.dbHandle),
+      createTeacherRoutes(
+        options.db,
+        options.publicUrl,
+        options.dataDir,
+        options.dbHandle,
+      ),
     )
     .route(
       "/api/student",

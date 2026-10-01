@@ -1,7 +1,16 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { backupRestoreOkSchema, backupSnapshotListOkSchema } from "@tutor/contract";
+import {
+  backupRestoreOkSchema,
+  backupSnapshotListOkSchema,
+} from "@tutor/contract";
 import type { Logger } from "pino";
 import pino from "pino";
 import { afterEach, describe, expect, it } from "vitest";
@@ -97,16 +106,31 @@ describe("GET /api/teacher/backup/snapshots", () => {
   it("未登录 401；登录后返回契约形状的快照列表", async () => {
     const { app, cookie } = await makeBackupApp();
 
-    const denied = await request(app, "GET", "/api/teacher/backup/snapshots", undefined);
+    const denied = await request(
+      app,
+      "GET",
+      "/api/teacher/backup/snapshots",
+      undefined,
+    );
     expect(denied.status).toBe(401);
     const deniedBody = (await denied.json()) as { error: string };
     expect(deniedBody.error).toBe("UNAUTHORIZED");
 
     // 下载会补拍快照——先拍一份让列表非空
-    const download = await request(app, "GET", "/api/teacher/backup/download", cookie);
+    const download = await request(
+      app,
+      "GET",
+      "/api/teacher/backup/download",
+      cookie,
+    );
     expect(download.status).toBe(200);
 
-    const res = await request(app, "GET", "/api/teacher/backup/snapshots", cookie);
+    const res = await request(
+      app,
+      "GET",
+      "/api/teacher/backup/snapshots",
+      cookie,
+    );
     expect(res.status).toBe(200);
     const body = (await res.json()) as unknown;
     const parsed = backupSnapshotListOkSchema.safeParse(body);
@@ -123,10 +147,20 @@ describe("GET /api/teacher/backup/download", () => {
   it("未登录 401；登录后 zip 直出（响应头 + 可解包结构）", async () => {
     const { app, cookie, dataDir } = await makeBackupApp();
 
-    const denied = await request(app, "GET", "/api/teacher/backup/download", undefined);
+    const denied = await request(
+      app,
+      "GET",
+      "/api/teacher/backup/download",
+      undefined,
+    );
     expect(denied.status).toBe(401);
 
-    const res = await request(app, "GET", "/api/teacher/backup/download", cookie);
+    const res = await request(
+      app,
+      "GET",
+      "/api/teacher/backup/download",
+      cookie,
+    );
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("application/zip");
     expect(res.headers.get("cache-control")).toBe("no-store");
@@ -137,7 +171,9 @@ describe("GET /api/teacher/backup/download", () => {
     const bytes = Buffer.from(await res.arrayBuffer());
     expect(bytes.subarray(0, 2).toString("latin1")).toBe("PK");
     const names = readZipEntries(bytes).map((entry) => entry.name);
-    expect(names.some((name) => /^tutor-\d{8}-\d{6}\.db$/.test(name))).toBe(true);
+    expect(names.some((name) => /^tutor-\d{8}-\d{6}\.db$/.test(name))).toBe(
+      true,
+    );
     expect(names).toContain("secret.key");
     expect(names).toContain("shared/共享.md");
     expect(names.some((name) => name.startsWith("backups/"))).toBe(false);
@@ -158,9 +194,15 @@ describe("POST /api/teacher/backup/restore", () => {
 
   it("非 multipart（缺 zip/password 字段）→ 400 VALIDATION_ERROR", async () => {
     const { app, cookie } = await makeBackupApp();
-    const res = await request(app, "POST", "/api/teacher/backup/restore", cookie, {
-      body: new FormData(), // 空 multipart：两字段都缺
-    });
+    const res = await request(
+      app,
+      "POST",
+      "/api/teacher/backup/restore",
+      cookie,
+      {
+        body: new FormData(), // 空 multipart：两字段都缺
+      },
+    );
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string; message: string };
     expect(body.error).toBe("VALIDATION_ERROR");
@@ -169,16 +211,27 @@ describe("POST /api/teacher/backup/restore", () => {
 
   it("错误密码 → 403 BACKUP_INVALID_PASSWORD，原数据无损", async () => {
     const { app, cookie, dataDir } = await makeBackupApp();
-    const download = await request(app, "GET", "/api/teacher/backup/download", cookie);
+    const download = await request(
+      app,
+      "GET",
+      "/api/teacher/backup/download",
+      cookie,
+    );
     const zipBytes = Buffer.from(await download.arrayBuffer());
     writeFileSync(join(dataDir, "shared", "共享.md"), "改过", "utf8");
 
     const form = new FormData();
     form.append("zip", new File([zipBytes], "backup.zip"));
     form.append("password", "wrong-password");
-    const res = await request(app, "POST", "/api/teacher/backup/restore", cookie, {
-      body: form,
-    });
+    const res = await request(
+      app,
+      "POST",
+      "/api/teacher/backup/restore",
+      cookie,
+      {
+        body: form,
+      },
+    );
 
     expect(res.status).toBe(403);
     const body = (await res.json()) as { error: string };
@@ -191,7 +244,12 @@ describe("POST /api/teacher/backup/restore", () => {
     const fixture = await makeBackupApp();
     const { app, cookie, dataDir, handle } = fixture;
 
-    const download = await request(app, "GET", "/api/teacher/backup/download", cookie);
+    const download = await request(
+      app,
+      "GET",
+      "/api/teacher/backup/download",
+      cookie,
+    );
     const zipBytes = Buffer.from(await download.arrayBuffer());
 
     // 备份后改数据：shared 文件删除（回到时点后应复原）
@@ -200,9 +258,15 @@ describe("POST /api/teacher/backup/restore", () => {
     const form = new FormData();
     form.append("zip", new File([zipBytes], "backup.zip"));
     form.append("password", TEACHER_PASSWORD);
-    const res = await request(app, "POST", "/api/teacher/backup/restore", cookie, {
-      body: form,
-    });
+    const res = await request(
+      app,
+      "POST",
+      "/api/teacher/backup/restore",
+      cookie,
+      {
+        body: form,
+      },
+    );
 
     expect(res.status).toBe(200);
     const body = (await res.json()) as unknown;
@@ -216,10 +280,18 @@ describe("POST /api/teacher/backup/restore", () => {
     // 文件回到备份时点；恢复后的连接仍可服务（同一句柄读库成功）
     expect(existsSync(join(dataDir, "shared", "共享.md"))).toBe(true);
     expect(
-      handle.db.select().from((await import("../db/schema.ts")).teachers).all().length,
+      handle.db
+        .select()
+        .from((await import("../db/schema.ts")).teachers)
+        .all().length,
     ).toBe(1);
     // 恢复后再调接口正常（路由仍挂在同一 app 上，代理 db 已指向恢复库）
-    const again = await request(app, "GET", "/api/teacher/backup/snapshots", cookie);
+    const again = await request(
+      app,
+      "GET",
+      "/api/teacher/backup/snapshots",
+      cookie,
+    );
     expect(again.status).toBe(200);
   });
 });
