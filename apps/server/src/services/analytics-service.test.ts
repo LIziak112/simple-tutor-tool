@@ -604,11 +604,14 @@ describe("学生画像", () => {
 });
 
 describe("错题列表（T4.2 随契约补齐：D1/D4/D5 口径）", () => {
-  /** 取该生某次作答的 attemptId（assignment 来源按作业；course 来源按 attemptNo+sourceType） */
+  /** 取该生某次作答的 attemptId（assignment 来源按作业；course 来源按 attemptNo+unitId——
+   *  两门课程各有一次 attemptNo=1，不限单元时 .get() 取哪条随 courseId 随机 UUID 的
+   *  索引序翻面，是本用例曾经的偶发失败根源） */
   function attemptIdOf(pred: {
     studentId: string;
     assignmentId?: string;
     attemptNo?: number;
+    unitId?: string;
   }): string {
     const row = db
       .select({ id: attempts.id })
@@ -622,6 +625,9 @@ describe("错题列表（T4.2 随契约补齐：D1/D4/D5 口径）", () => {
               and(
                 eq(attempts.sourceType, "course"),
                 eq(attempts.attemptNo, pred.attemptNo ?? 1),
+                pred.unitId !== undefined
+                  ? eq(attempts.unitId, pred.unitId)
+                  : undefined,
               ),
         ),
       )
@@ -663,6 +669,7 @@ describe("错题列表（T4.2 随契约补齐：D1/D4/D5 口径）", () => {
     const s2Course1 = attemptIdOf({
       studentId: seed.students.s2.id,
       attemptNo: 1,
+      unitId: seed.units.u1.id,
     });
     expect(
       new Set(s2.wrongQuestions.slice(1).map((row) => row.attemptId)),
