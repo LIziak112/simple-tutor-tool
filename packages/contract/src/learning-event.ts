@@ -172,6 +172,16 @@ export const lectureExpandEventSchema = z.object({
 const lectureIdSchema = z.string().min(1, "lectureId 不能为空");
 
 /**
+ * 讲义版本定位（T4.0b，方案 §4.4.2 前提 1「条目身份要稳定」的编排者裁决）：
+ * 可选 ISO 字符串——发出事件时讲义数据的 updatedAt。headingIndex / 指令 index
+ * 都是文档顺序编号，讲义一改就错位；聚合只对 lectureUpdatedAt === 讲义当前
+ * updatedAt 的事件做逐项定位，不一致的历史事件按「计入总时长、不定位到具体
+ * 条目」降级。事件无该字段（旧客户端 / 存量行）→ 回退用 events.serverTs 与
+ * lecture.updatedAt 对比判定。缺省不填、零兼容风险（T4.0a 刚定义、未发布）。
+ */
+const lectureUpdatedAtSchema = z.string().min(1).optional();
+
+/**
  * 阅读会话标识：每次讲义页加载生成的随机串（不含任何内容）。解决双标签页
  * 同开、iPad Safari 被系统回收重开导致的区间交错——聚合按 viewId 配对、
  * 再对同一学生 × 讲义的区间求并集（方案 §4.3.1）。
@@ -245,6 +255,8 @@ export const lectureSectionFocusEventSchema = z.object({
   lectureId: lectureIdSchema,
   /** H2/H3 目录序号（0 起，与前端 extractOutline 列表下标同源；不含标题文字） */
   headingIndex: z.number().int().min(0),
+  /** 讲义版本定位（可选，见 lectureUpdatedAtSchema） */
+  lectureUpdatedAt: lectureUpdatedAtSchema,
 });
 
 /** 目录跳转（页面层目录点击注入）；headingIndex 口径同 lecture_section_focus */
@@ -253,6 +265,8 @@ export const lectureTocJumpEventSchema = z.object({
   clientTs: clientTsSchema,
   lectureId: lectureIdSchema,
   headingIndex: z.number().int().min(0),
+  /** 讲义版本定位（可选，见 lectureUpdatedAtSchema） */
+  lectureUpdatedAt: lectureUpdatedAtSchema,
 });
 
 /**
@@ -261,7 +275,10 @@ export const lectureTocJumpEventSchema = z.object({
  * 采集能力。action：open=收起→展开、close=展开→收起、reveal=steps「显示下一步」。
  *
  * **两套编号必须分清（§5.0-B8，聚合只用容器 index + step）**：
- * - index = DirectiveProps.index，**文档全局指令序号**（step 指令自身也有）；
+ * - index = **文档全局指令序号**（remark-directive-host 对全部块级指令按文档
+ *   顺序预序遍历的编号，从 1 起；step 指令自身也有自己的全局序号）。注意与
+ *   DirectiveProps.index（题号/提示 N/步序号等**按语义分别计数**的展示编号）
+ *   是两回事——折叠加装的全局序号在 DirectiveProps.docIndex（T4.0b）；
  * - step = 容器内步序号（第几步，从 1 起），仅 action=reveal 时携带，
  *   且 reveal 仅 host=lecture（答题页/结果页无 steps 容器语义）。
  */
@@ -277,6 +294,8 @@ export const directiveInteractLectureToggleEventSchema = z.object({
   name: directiveNameSchema,
   index: directiveIndexSchema,
   action: z.enum(["open", "close"]),
+  /** 讲义版本定位（可选，见 lectureUpdatedAtSchema） */
+  lectureUpdatedAt: lectureUpdatedAtSchema,
 });
 
 export const directiveInteractLectureRevealEventSchema = z.object({
@@ -289,6 +308,8 @@ export const directiveInteractLectureRevealEventSchema = z.object({
   action: z.literal("reveal"),
   /** 容器内步序号（从 1 起）；与文档全局 index 是两套编号，见上 */
   step: z.number().int().min(1),
+  /** 讲义版本定位（可选，见 lectureUpdatedAtSchema） */
+  lectureUpdatedAt: lectureUpdatedAtSchema,
 });
 
 /** host=question：答题页提示解锁（attempt 端点接收；与 hint_open 服务端直记一一配对） */
