@@ -672,13 +672,12 @@ function backfillT40aEvents(tx: Tx): void {
     .from(events)
     .where(isNull(events.lectureId))
     .all()) {
-    const parsed = jsonOf(row.payloadJson) as { lectureId?: unknown } | undefined;
+    const parsed = jsonOf(row.payloadJson) as
+      | { lectureId?: unknown }
+      | undefined;
     const lectureId = parsed?.lectureId;
     if (typeof lectureId === "string" && lectureId.length > 0) {
-      tx.update(events)
-        .set({ lectureId })
-        .where(eq(events.id, row.id))
-        .run();
+      tx.update(events).set({ lectureId }).where(eq(events.id, row.id)).run();
     }
   }
 }

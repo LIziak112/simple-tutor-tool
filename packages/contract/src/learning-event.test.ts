@@ -236,10 +236,7 @@ describe("T4.0a 环境族（lecture_visible/hidden、net、idle）", () => {
 
 describe("T4.0a 位置族（lecture_section_focus / lecture_toc_jump）", () => {
   it("headingIndex 非负整数；缺 lectureId 拒绝；attempt 联合不收（讲义域）", () => {
-    for (const type of [
-      "lecture_section_focus",
-      "lecture_toc_jump",
-    ] as const) {
+    for (const type of ["lecture_section_focus", "lecture_toc_jump"] as const) {
       expect(
         lectureEventSchema.safeParse(
           eventOf(type, { lectureId: "lec-1", headingIndex: 0 }),
@@ -427,7 +424,10 @@ describe("T4.0a 交互族（directive_interact / ink_edit_batch / ink_fullscreen
     ).toBe(false);
     expect(
       attemptEventSchema.safeParse(
-        eventOf("lecture_section_focus", { lectureId: "lec-1", headingIndex: 1 }),
+        eventOf("lecture_section_focus", {
+          lectureId: "lec-1",
+          headingIndex: 1,
+        }),
       ).success,
     ).toBe(false);
     expect(

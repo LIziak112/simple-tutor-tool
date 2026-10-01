@@ -560,7 +560,8 @@ describe("交卷联动：事件序列 → responses.activeSec/changeCount 落库
 
 describe("T4.0a attempt 端点：交互族/ink/环境族新事件 + studentId 会话写入", () => {
   it("新事件落库带 studentId（会话写入，前端伪造无效）；payload 不含伪造键", async () => {
-    const { app, db, aCookie, aStudentId, assignmentId } = await makeEventsApp();
+    const { app, db, aCookie, aStudentId, assignmentId } =
+      await makeEventsApp();
     const attemptId = await startAttempt(app, aCookie, assignmentId);
     const batch = [
       ev("directive_interact", 1, {
@@ -604,10 +605,12 @@ describe("T4.0a attempt 端点：交互族/ink/环境族新事件 + studentId �
     expect(rows.every((row) => row.studentId === aStudentId)).toBe(true);
     expect(rows.every((row) => row.lectureId === null)).toBe(true);
     // 题目语义列照旧提取
+    expect(rows.find((row) => row.type === "ink_edit_batch")?.questionId).toBe(
+      Q.judge,
+    );
     expect(
-      rows.find((row) => row.type === "ink_edit_batch")?.questionId,
-    ).toBe(Q.judge);
-    expect(rows.find((row) => row.type === "net_offline")?.questionId).toBeNull();
+      rows.find((row) => row.type === "net_offline")?.questionId,
+    ).toBeNull();
     // 伪造 studentId 不进 payloadJson（Zod 剥离多余键）
     const forgedRow = rows.find((row) => row.type === "directive_interact");
     expect(JSON.parse(forgedRow?.payloadJson ?? "{}")).toEqual({
@@ -638,23 +641,23 @@ describe("T4.0a attempt 端点：交互族/ink/环境族新事件 + studentId �
       }),
     ]) {
       const res = await postEvents(app, aCookie, attemptId, [bad]);
-      expect(res.status).toBe(400, bad.type);
+      expect(res.status, `讲义域事件 ${bad.type} 不应被 attempt 端点接收`).toBe(
+        400,
+      );
       assertNoLeak(await res.json());
     }
   });
 
   it("hint_open 服务端直记（POST hints）也带 studentId（§5.0-B7）", async () => {
-    const { app, db, aCookie, aStudentId, assignmentId } = await makeEventsApp();
+    const { app, db, aCookie, aStudentId, assignmentId } =
+      await makeEventsApp();
     const attemptId = await startAttempt(app, aCookie, assignmentId);
     // 练习四-2 有 1 条提示（与 student-hints.test 同口径）
-    const res = await app.request(
-      `/api/student/attempts/${attemptId}/hints`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json", cookie: aCookie },
-        body: JSON.stringify({ questionId: Q.choice, index: 0 }),
-      },
-    );
+    const res = await app.request(`/api/student/attempts/${attemptId}/hints`, {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: aCookie },
+      body: JSON.stringify({ questionId: Q.choice, index: 0 }),
+    });
     expect(res.status).toBe(200);
     const hintRow = db
       .select()
@@ -786,7 +789,9 @@ describe("T4.0a 讲义端点：环境/位置/交互族扩容 + 归属列", () =>
       ev("ink_fullscreen", 0, { questionId: "q", on: false }),
     ]) {
       const res = await postLectureEvents(app, aCookie, [bad]);
-      expect(res.status).toBe(400, bad.type);
+      expect(res.status, `attempt 域事件 ${bad.type} 不应被讲义端点接收`).toBe(
+        400,
+      );
       assertNoLeak(await res.json());
     }
   });
