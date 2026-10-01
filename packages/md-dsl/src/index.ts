@@ -45,3 +45,4 @@ export {
 export type { ParseOptions } from "./v2/parse.ts";
 export { parseDocument } from "./v2/parse.ts";
 export { publicStemMd } from "./v2/public-stem.ts";
+export { processor } from "./v2/shared.ts";
