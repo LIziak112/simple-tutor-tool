@@ -28,11 +28,14 @@ import { beijingExportStampOf } from "./export-csv";
  * BackupService（T4.5，Phase4 清单 §4 / §2 D20/D21 + 架构 §5.10）——
  * 自动快照、备份 zip 打包、从 zip 恢复整库、快照列表。
  *
- * 口径（D20，备份 = 全量 DATA_DIR）：
+ * 口径（D20，备份 = 全量 DATA_DIR，下载 = 当前时刻全量）：
  * - 日常快照只做 db：`VACUUM INTO data/backups/tutor-<北京时间戳>.db`
  *   （WAL 模式下安全，快照含已提交事务），保留 14 份轮转删最旧；
- * - 下载时实时打包：最新 db 快照（保留快照原名，恢复侧可解析时点）+
- *   blobs/ + shared/ + secret.key，**排除 backups/ 自身**；
+ * - 下载时恒先补拍一份**当前时刻**快照再实时打包（Opus 实测③-1：
+ *   快照只在启动 + 每 24h 拍，复用最新已有快照会让备份 db 最长落后
+ *   24h——首启灌种后立刻下载会得到空库；VACUUM INTO 小库毫秒级，
+ *   代价可忽略）：快照原名（恢复侧可解析时点）+ blobs/ + shared/ +
+ *   secret.key，**排除 backups/ 自身**；
  * - 恢复是整库操作（多教师同库，无域隔离——一对一自部署既定口径，
  *   契约 backup-api.ts 注释同源）；恢复需操作者本人登录密码（D21）。
  *
@@ -163,18 +166,21 @@ export interface BackupZip {
 }
 
 /**
- * 组装完整备份 zip（D20）：最新 db 快照（保留原名）+ blobs/ + shared/ +
+ * 组装完整备份 zip（D20，下载 = 当前时刻全量）：恒先补拍一份**当前时刻**
+ * db 快照（Opus 实测③-1：避免复用最长落后 24h 的旧快照；VACUUM INTO
+ * 小库毫秒级），再打包快照（保留原名）+ blobs/ + shared/ +
  * secret.key（各自存在才打包），排除 backups/ 自身。
- * 一份快照都没有时先补拍一份（下载永远可用）。
  * 流式：返回未 finalize 的 archiver 流，由路由转 web 流边打包边响应，
  * 不整包进内存（blobs 可能很大）。
+ * now 仅测试注入用（快照名与 zip 名的时间戳来源）。
  */
-export function buildBackupZip(dataDir: string, db: Db): BackupZip {
-  let latest = listSnapshots(dataDir)[0];
-  if (latest === undefined) {
-    createSnapshot(dataDir, db);
-    latest = listSnapshots(dataDir)[0];
-  }
+export function buildBackupZip(
+  dataDir: string,
+  db: Db,
+  now: Date = new Date(),
+): BackupZip {
+  createSnapshot(dataDir, db, now);
+  const latest = listSnapshots(dataDir)[0];
   if (latest === undefined) {
     // 理论不可达（刚拍完必有最新）；防御性兜底
     throw new HttpError(500, "INTERNAL", "备份快照不可用");
@@ -202,7 +208,7 @@ export function buildBackupZip(dataDir: string, db: Db): BackupZip {
   void archive.finalize();
   return {
     stream: archive,
-    filename: `tutor-backup-${beijingExportStampOf()}.zip`,
+    filename: `tutor-backup-${beijingExportStampOf(now)}.zip`,
   };
 }
 

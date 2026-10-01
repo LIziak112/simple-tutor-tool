@@ -29,10 +29,12 @@ import { formatCnTime } from "@/lib/time";
 
 /**
  * 设置页「备份与恢复」区（T4.5，D20/D21）：
- * - 下载完整备份（db 快照 + 笔迹 + 共享 + 密钥），成功后显示下载文件名；
+ * - 下载完整备份（下载前服务端恒先拍一份当前时刻 db 快照，再打包笔迹 /
+ *   共享 / 密钥——备份始终是下载时的最新数据），成功后显示下载文件名；
  * - 恢复上传：选 zip → 密码确认弹层（影响说明：数据回到压缩包时点、当前登录
  *   可能失效需重新登录、恢复前服务端会自动再做一次快照可回滚）→ 提交；
- *   成功后展示「请重新登录」提示（会话以恢复库为准，sessionWarning 恒 true）；
+ *   成功后展示「请重新登录」提示（会话以恢复库为准，sessionWarning 恒 true），
+ *   快照列表区同时改为重新登录引导（失效重取的 401 不再以错误态展示）；
  * - 最近快照列表（时间 + 大小，来自服务端 24h 自动快照，保留 14 份）。
  * 三态齐全（加载/空/错误）、触控目标 ≥44px（min-h-11）。
  */
@@ -96,49 +98,56 @@ export function BackupSection() {
           <DatabaseBackup aria-hidden className="size-4" />
           备份与恢复
         </h2>
+        {/* 备份内容表述（Opus 实测③-4）：blobs/shared 不存在时不打包；
+            换行落在全角标点后（JSX 换行折叠为空格，避免插进词中间） */}
         <p className="mt-1 text-sm text-muted-foreground">
-          系统每天自动保存一份数据库快照（保留最近 14 份）。完整备份还包含手写
-          笔迹、共享发布与会话密钥；恢复是整库操作，会将当前数据整体替换为
-          压缩包内容。
+          系统每天自动保存一份数据库快照（保留最近 14 份）。完整备份包含：
+          数据库快照、会话密钥，以及当前存在的手写笔迹与共享发布目录；
+          恢复是整库操作，会将当前数据整体替换为压缩包内容。
         </p>
       </div>
 
-      {/* 下载 */}
-      <div className="flex flex-wrap items-center gap-3">
-        <Button
-          variant="outline"
-          className="min-h-11 px-5"
-          disabled={downloadMutation.isPending}
-          onClick={() => downloadMutation.mutate(undefined)}
-        >
-          {downloadMutation.isPending ? (
-            <>
-              <Loader2 aria-hidden className="animate-spin" />
-              正在打包…
-            </>
-          ) : (
-            <>
-              <Download aria-hidden />
-              下载完整备份
-            </>
-          )}
-        </Button>
-        {downloadMutation.isSuccess && (
-          <p className="text-sm text-muted-foreground" role="status">
-            已下载 {downloadMutation.data}
-          </p>
-        )}
-        {downloadMutation.isError && (
-          <p
-            role="alert"
-            className="flex items-start gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive"
+      {/* 下载（Opus 实测③-1：服务端下载前恒先拍当前时刻快照，文案同步说明） */}
+      <div className="flex flex-col gap-2">
+        <div className="flex flex-wrap items-center gap-3">
+          <Button
+            variant="outline"
+            className="min-h-11 px-5"
+            disabled={downloadMutation.isPending}
+            onClick={() => downloadMutation.mutate(undefined)}
           >
-            <TriangleAlert aria-hidden className="mt-0.5 size-4 shrink-0" />
-            {downloadMutation.error instanceof Error
-              ? downloadMutation.error.message
-              : "下载失败，请稍后重试"}
-          </p>
-        )}
+            {downloadMutation.isPending ? (
+              <>
+                <Loader2 aria-hidden className="animate-spin" />
+                正在打包…
+              </>
+            ) : (
+              <>
+                <Download aria-hidden />
+                下载完整备份
+              </>
+            )}
+          </Button>
+          {downloadMutation.isSuccess && (
+            <p className="text-sm text-muted-foreground" role="status">
+              已下载 {downloadMutation.data}
+            </p>
+          )}
+          {downloadMutation.isError && (
+            <p
+              role="alert"
+              className="flex items-start gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive"
+            >
+              <TriangleAlert aria-hidden className="mt-0.5 size-4 shrink-0" />
+              {downloadMutation.error instanceof Error
+                ? downloadMutation.error.message
+                : "下载失败，请稍后重试"}
+            </p>
+          )}
+        </div>
+        <p className="text-sm text-muted-foreground">
+          下载前会先拍摄当前时刻的数据库快照，备份内容始终为下载时的最新数据。
+        </p>
       </div>
 
       {/* 恢复上传 */}
@@ -208,45 +217,56 @@ export function BackupSection() {
           <History aria-hidden className="size-4" />
           最近快照
         </h3>
-        {snapshotsQuery.isPending && (
-          <p className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Loader2 aria-hidden className="size-4 animate-spin" />
-            正在加载…
+        {restoreDone ? (
+          /* 恢复成功后会话可能已失效（sessionWarning 恒 true）：列表失效重取
+             若得 401 不再以红字错误态与成功横幅同屏（Opus 实测③-5），
+             改为重新登录引导 */
+          <p className="text-sm text-muted-foreground">
+            已恢复，请重新登录后查看快照列表
           </p>
+        ) : (
+          <>
+            {snapshotsQuery.isPending && (
+              <p className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 aria-hidden className="size-4 animate-spin" />
+                正在加载…
+              </p>
+            )}
+            {snapshotsQuery.isError && (
+              <p role="alert" className="text-sm text-destructive">
+                快照列表加载失败：
+                {snapshotsQuery.error instanceof Error
+                  ? snapshotsQuery.error.message
+                  : "请稍后重试"}
+              </p>
+            )}
+            {snapshotsQuery.isSuccess &&
+              snapshotsQuery.data.snapshots.length === 0 && (
+                <p className="text-sm text-muted-foreground">
+                  暂无快照（下载完整备份时会自动先拍一份）
+                </p>
+              )}
+            {snapshotsQuery.isSuccess &&
+              snapshotsQuery.data.snapshots.length > 0 && (
+                <ul className="flex flex-col divide-y divide-border rounded-lg border border-border">
+                  {snapshotsQuery.data.snapshots.map((snapshot) => (
+                    <li
+                      key={snapshot.filename}
+                      className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-sm"
+                    >
+                      <span>{formatCnTime(snapshot.createdAt)}</span>
+                      <span className="flex items-center gap-3 text-muted-foreground">
+                        <span className="font-mono text-xs">
+                          {snapshot.filename}
+                        </span>
+                        <span>{formatBytes(snapshot.sizeBytes)}</span>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+          </>
         )}
-        {snapshotsQuery.isError && (
-          <p role="alert" className="text-sm text-destructive">
-            快照列表加载失败：
-            {snapshotsQuery.error instanceof Error
-              ? snapshotsQuery.error.message
-              : "请稍后重试"}
-          </p>
-        )}
-        {snapshotsQuery.isSuccess &&
-          snapshotsQuery.data.snapshots.length === 0 && (
-            <p className="text-sm text-muted-foreground">
-              暂无快照（下载完整备份时会自动先拍一份）
-            </p>
-          )}
-        {snapshotsQuery.isSuccess &&
-          snapshotsQuery.data.snapshots.length > 0 && (
-            <ul className="flex flex-col divide-y divide-border rounded-lg border border-border">
-              {snapshotsQuery.data.snapshots.map((snapshot) => (
-                <li
-                  key={snapshot.filename}
-                  className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-sm"
-                >
-                  <span>{formatCnTime(snapshot.createdAt)}</span>
-                  <span className="flex items-center gap-3 text-muted-foreground">
-                    <span className="font-mono text-xs">
-                      {snapshot.filename}
-                    </span>
-                    <span>{formatBytes(snapshot.sizeBytes)}</span>
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
       </div>
 
       {/* 恢复密码确认弹层（D21：影响说明 + 登录密码） */}
@@ -264,19 +284,21 @@ export function BackupSection() {
               <TriangleAlert aria-hidden className="size-4" />
               确认恢复备份？
             </DialogTitle>
-            <DialogDescription className="flex flex-col gap-2 pt-1">
-              <span>
-                将使用「{pendingZip?.name ?? ""}」整体替换当前全部数据
-                （含全部教师与学生），数据回到该备份的时点，此后产生的变化会丢失。
-              </span>
-              <span>请知悉：</span>
-              <ul className="list-inside list-disc space-y-1 pl-1">
-                <li>恢复前系统会自动再保存一份当前数据的快照，可用于回滚；</li>
-                <li>恢复后当前登录可能失效，需要重新登录；</li>
-                <li>恢复需输入你的登录密码确认。</li>
-              </ul>
+            <DialogDescription>
+              将使用「{pendingZip?.name ?? ""}」整体替换当前全部数据
+              （含全部教师与学生），数据回到该备份的时点，此后产生的变化会丢失。
             </DialogDescription>
           </DialogHeader>
+          {/* 影响说明列表：ul 不能嵌在 DialogDescription（渲染为 p）内，
+              否则控制台报 invalid nesting（Opus 实测③-2）——独立成块 */}
+          <div className="flex flex-col gap-2 text-sm text-muted-foreground">
+            <span>请知悉：</span>
+            <ul className="list-inside list-disc space-y-1 pl-1">
+              <li>恢复前系统会自动再保存一份当前数据的快照，可用于回滚；</li>
+              <li>恢复后当前登录可能失效，需要重新登录；</li>
+              <li>恢复需输入你的登录密码确认。</li>
+            </ul>
+          </div>
           <form
             className="flex flex-col gap-3"
             onSubmit={(event) => {

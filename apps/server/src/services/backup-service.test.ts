@@ -14,7 +14,7 @@ import pino from "pino";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { hashPassword } from "../auth/password";
 import { runBackfills } from "../db/backfill";
-import { createDbHandle, type DbHandle } from "../db/client";
+import { createDb, createDbHandle, type DbHandle } from "../db/client";
 import { runMigrations } from "../db/migrate";
 import { students, teachers } from "../db/schema";
 import { TEST_TEACHER_ID } from "../db/test-utils";
@@ -38,7 +38,9 @@ import {
  * - 替换中途失败（zip 内 db 是坏文件，重启连接抛错）→ 回滚复原；
  * - 保留 14 份轮转（造 16 份只剩最新 14）；
  * - 恢复后数据连接重启可用（同一 db 引用读到恢复数据）；
- * - 下载 zip 结构（快照原名 + blobs + shared + secret.key，无 backups/）。
+ * - 下载 zip 结构（快照原名 + blobs + shared + secret.key，无 backups/）；
+ * - 下载恒先拍当前快照（Opus 实测③-1：zip 内 db 含下载前刚写入的行，
+ *   不复用最长落后 24h 的旧快照；下载本身新增一份快照）。
  */
 
 const PASSWORD = "backup-pass-123";
@@ -140,9 +142,12 @@ describe("备份 → 改数据 → 恢复（验收核心往返）", () => {
     fixtures.push(fixture);
     const { dataDir, handle } = fixture;
 
-    // 备份（zip 内含全部内容）
-    createSnapshot(dataDir, handle.db, new Date("2026-10-01T04:00:00.000Z"));
-    const zip = await zipToBuffer(buildBackupZip(dataDir, handle.db));
+    // 备份（zip 内含全部内容；下载恒先拍一份「当前时刻」快照——注入固定
+    // 时点便于断言 zip 内 db 不是下面这行先拍的旧快照）
+    createSnapshot(dataDir, handle.db, new Date("2026-10-01T03:00:00.000Z"));
+    const zip = await zipToBuffer(
+      buildBackupZip(dataDir, handle.db, new Date("2026-10-01T04:00:00.000Z")),
+    );
 
     // 改数据：库增行、shared 加文件与改文件、blobs 加文件、secret.key 换内容
     handle.db
@@ -230,7 +235,7 @@ describe("备份 → 改数据 → 恢复（验收核心往返）", () => {
     const names = readdirSync(join(dataDir, BACKUP_DIR_NAME));
     const snapshots = listSnapshots(dataDir);
     expect(snapshots.length).toBe(names.length);
-    expect(snapshots.length).toBeGreaterThanOrEqual(2); // 手拍 + 恢复前保险
+    expect(snapshots.length).toBeGreaterThanOrEqual(3); // 旧手拍 + 下载补拍 + 恢复前保险
   });
 
   it("下载 zip 结构：快照原名 db + blobs/ + shared/ + secret.key，无 backups/", async () => {
@@ -250,6 +255,69 @@ describe("备份 → 改数据 → 恢复（验收核心往返）", () => {
     expect(names).toContain("blobs/ink/att-1/手写.png");
     expect(names.some((name) => name.startsWith("backups/"))).toBe(false);
     expect(names.some((name) => name.includes("tutor.db-wal"))).toBe(false);
+  });
+
+  it("下载恒先拍当前快照：下载新增一份且 zip 内 db 含下载前刚写入的行（Opus 实测③-1）", async () => {
+    const fixture = await makeFixture();
+    fixtures.push(fixture);
+    const { dataDir, handle } = fixture;
+
+    // 旧快照（模拟启动/24h 调度拍的）：不含下面即将写入的新学生——
+    // 修复前 zip 会复用这份旧快照，恢复它将丢掉新写入的行
+    createSnapshot(dataDir, handle.db, new Date("2026-09-01T00:00:00.000Z"));
+    const beforeDownload = listSnapshots(dataDir).length;
+
+    handle.db
+      .insert(students)
+      .values({
+        id: "stu-before-download",
+        teacherId: TEST_TEACHER_ID,
+        loginName: "stu-fresh",
+        displayName: "下载前刚写入",
+        passwordHash: null,
+        linkToken: "link-stu-fresh",
+        linkEnabled: true,
+        passwordEnabled: false,
+        note: null,
+        archivedAt: null,
+        createdAt: "2026-03-01T00:00:00.000Z",
+      })
+      .run();
+
+    const zipBuffer = await zipToBuffer(buildBackupZip(dataDir, handle.db));
+
+    // 下载本身新增一份快照（恒拍，不再只在零快照时补拍）
+    expect(listSnapshots(dataDir).length).toBe(beforeDownload + 1);
+
+    // zip 内 db 是下载时刻的：解出 db 条目、落临时文件开连接直查，
+    // 断言含下载前刚写入的行（= 当前时刻全量，而非旧快照时点）
+    const entries = readZipEntries(zipBuffer);
+    const dbEntry = entries.find((entry) =>
+      /^tutor-\d{8}-\d{6}(?:-\d+)?\.db$/.test(entry.name),
+    );
+    expect(dbEntry).toBeDefined();
+    if (!dbEntry) return;
+    const tmpDbPath = join(dataDir, "zip-db-检查临时.db");
+    writeFileSync(tmpDbPath, dbEntry.data);
+    const check = createDb(tmpDbPath);
+    try {
+      expect(
+        check
+          .select()
+          .from(students)
+          .where(eq(students.id, "stu-before-download"))
+          .get(),
+      ).toBeDefined();
+      expect(
+        check
+          .select()
+          .from(students)
+          .where(eq(students.id, "stu-backup-1"))
+          .get(),
+      ).toBeDefined();
+    } finally {
+      check.$client.close();
+    }
   });
 });
 
@@ -370,7 +438,8 @@ describe("恢复的拒绝路径（原数据无损）", () => {
       archive.on("error", (e: Error) => reject(e));
     });
     for (const entry of entries) {
-      const isDb = /^tutor-\d{8}-\d{6}\.db$/.test(entry.name);
+      // 同秒补拍的快照名可能带 -2/-3 序号，正则需兼容
+      const isDb = /^tutor-\d{8}-\d{6}(?:-\d+)?\.db$/.test(entry.name);
       archive.append(isDb ? Buffer.from("这不是一个数据库文件") : entry.data, {
         name: entry.name,
       });

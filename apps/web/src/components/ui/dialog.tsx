@@ -43,10 +43,13 @@ const DialogContent = ({
       {...props}
     >
       {children}
+      {/* 关闭钮触控目标 ≥44px（size-11，Opus 实测③-3）；图标中心保持
+          在 padding 网格原位（top-2.5 + 22px = 原 top-4 + 16px = 32px），
+          仅扩大热区，视觉位置不变 */}
       <DialogPrimitive.Close
         data-slot="dialog-close"
         aria-label="关闭弹层"
-        className="absolute top-4 right-4 flex size-8 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
+        className="absolute top-2.5 right-2.5 flex size-11 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
       >
         <X aria-hidden className="size-4" />
       </DialogPrimitive.Close>

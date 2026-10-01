@@ -11,10 +11,12 @@ import {
 } from "@/lib/api";
 
 /**
- * 设置页「备份与恢复」区组件测试（T4.5）：区块渲染（下载按钮 / 恢复入口 /
- * 快照列表三态）、上传 + 密码弹层流转（影响说明 → 输密码 → 提交 → 重新登录
- * 提示）、错误分支。API 层 mock（真实恢复与打包由服务测试覆盖）；
- * download/restore 函数自身的请求形状另见 api-teacher-backup.test.ts。
+ * 设置页「备份与恢复」区组件测试（T4.5 + Opus 实测③修复）：区块渲染
+ * （下载按钮 / 恢复入口 / 备份内容与下载说明文案 / 快照列表三态）、
+ * 上传 + 密码弹层流转（影响说明 → 输密码 → 提交 → 重新登录提示；成功后
+ * 快照区切引导、失效重取 401 不显红字）、错误分支。API 层 mock（真实恢复
+ * 与打包由服务测试覆盖）；download/restore 函数自身的请求形状另见
+ * api-teacher-backup.test.ts。
  */
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -65,11 +67,22 @@ beforeEach(() => {
 });
 
 describe("BackupSection 渲染与快照列表", () => {
-  it("区块渲染：下载按钮、恢复入口、快照列表（时间 + 大小）", async () => {
+  it("区块渲染：下载按钮、恢复入口、快照列表（时间 + 大小）；备份内容与下载说明文案准确", async () => {
     renderSection();
 
     expect(screen.getByRole("button", { name: /下载完整备份/ })).toBeEnabled();
     expect(screen.getByRole("button", { name: /从备份恢复/ })).toBeEnabled();
+
+    // 备份内容表述（Opus 实测③-4：blobs/shared 不存在时不打包，不写「还包含」）；
+    // \s* 容纳 JSX 换行折叠出的空格
+    expect(
+      screen.getByText(/完整备份包含：\s*数据库快照、会话密钥/),
+    ).toBeVisible();
+    expect(screen.getByText(/当前存在的手写笔迹与共享发布目录/)).toBeVisible();
+    // 下载恒先拍当前快照（Opus 实测③-1 文案）
+    expect(
+      screen.getByText(/下载前会先拍摄当前时刻的数据库快照/),
+    ).toBeVisible();
 
     expect(await screen.findByText("tutor-20261001-080000.db")).toBeVisible();
     // 大小展示（4.0 KB / 2.0 MB）与时间本地化
@@ -153,8 +166,51 @@ describe("恢复流转（上传 + 密码弹层）", () => {
     expect(mockedRestore).toHaveBeenCalledWith(file, "backup-pass-123");
 
     // 成功提示：请重新登录（会话以恢复库为准）+ 前往登录入口
-    expect(await screen.findByText(/请重新登录/)).toBeVisible();
+    expect(await screen.findByText(/可能已失效——请重新登录/)).toBeVisible();
     expect(screen.getByRole("button", { name: /前往登录/ })).toBeVisible();
+
+    // 快照列表区同步切换为重新登录引导（Opus 实测③-5），列表内容不再展示
+    expect(
+      await screen.findByText(/已恢复，请重新登录后查看快照列表/),
+    ).toBeVisible();
+    expect(screen.queryByText("tutor-20261001-080000.db")).toBeNull();
+  });
+
+  it("恢复成功后快照列表失效重取 401：不显示红字错误，保持重新登录引导", async () => {
+    mockedRestore.mockResolvedValue({
+      dbFilename: "tutor-20261001-080000.db",
+      snapshotTime: "2026-10-01T00:00:00.000Z",
+      restoredFiles: 4,
+      sessionWarning: true,
+    });
+    const { container } = renderSection();
+
+    // 初始列表已加载（进入恢复流程前快照区为正常列表态）
+    expect(await screen.findByText("tutor-20261001-080000.db")).toBeVisible();
+
+    await chooseZip(container);
+    fireEvent.change(screen.getByLabelText("登录密码"), {
+      target: { value: "backup-pass-123" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /输入密码并恢复/ }));
+
+    // 恢复成功 → 快照列表失效重取：模拟会话已失效（401）
+    mockedSnapshots.mockRejectedValue(
+      Object.assign(new Error("未登录或会话已过期"), {
+        code: "UNAUTHORIZED",
+        status: 401,
+      }),
+    );
+
+    // 引导文案出现；失效重取完成（第 2 次调用）后也不出现红字错误
+    expect(
+      await screen.findByText(/已恢复，请重新登录后查看快照列表/),
+    ).toBeVisible();
+    await waitFor(() => {
+      expect(mockedSnapshots).toHaveBeenCalledTimes(2);
+    });
+    expect(screen.queryByText(/快照列表加载失败/)).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("错误密码（403）显示服务端中文说明，弹层保留可重试", async () => {
