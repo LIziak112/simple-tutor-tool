@@ -2,6 +2,8 @@ import { z } from "zod";
 
 /** 管理端 API 契约（T2B.6 起为权威定义）：教师账号管理、注册开关、概览计数、错误码 */
 export * from "./admin-api.ts";
+/** 学情分析 API 契约（T4.1 起为权威定义，依据 Phase4 清单 §2 D1–D7）：总览/画像/题目三接口 */
+export * from "./analytics-api.ts";
 /** 作业契约（T2.2 起为权威定义）：教师布置作业 CRUD、学生作业列表与完成状态、错误码 */
 export * from "./assignment.ts";
 /** 作答生命周期契约（T2.6 起为权威定义）：attempt 创建/草稿/交卷/详情视图、错误码 */
