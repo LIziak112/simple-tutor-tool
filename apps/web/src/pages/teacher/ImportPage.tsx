@@ -670,7 +670,9 @@ export function ImportPage() {
                     type="button"
                     aria-label="关闭弹层"
                     onClick={() => setCreateOpen(false)}
-                    className="flex size-8 items-center justify-center rounded-md outline-none transition-colors hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50"
+                    // 触控目标 ≥44px（size-11，T4.7 与全局 dialog.tsx 同处理：
+                    // -mr-1.5 外扩补偿保持图标中心原位，仅扩热区不改视觉位）
+                    className="-mr-1.5 flex size-11 items-center justify-center rounded-md outline-none transition-colors hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50"
                   >
                     <X aria-hidden className="size-4" />
                   </button>
