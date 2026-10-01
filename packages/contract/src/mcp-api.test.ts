@@ -18,9 +18,9 @@ describe("teacherApiTokenDataSchema", () => {
     expect(teacherApiTokenDataSchema.parse({ token: null })).toEqual({
       token: null,
     });
-    expect(
-      teacherApiTokenDataSchema.parse({ token: "abc123_-XYZ" }),
-    ).toEqual({ token: "abc123_-XYZ" });
+    expect(teacherApiTokenDataSchema.parse({ token: "abc123_-XYZ" })).toEqual({
+      token: "abc123_-XYZ",
+    });
   });
 
   it("拒绝空字符串（未生成必须显式 null）", () => {
@@ -32,9 +32,9 @@ describe("teacherApiTokenDataSchema", () => {
 
 describe("teacherApiTokenResetDataSchema", () => {
   it("接受新 token 字符串", () => {
-    expect(teacherApiTokenResetDataSchema.parse({ token: "new-token" })).toEqual(
-      { token: "new-token" },
-    );
+    expect(
+      teacherApiTokenResetDataSchema.parse({ token: "new-token" }),
+    ).toEqual({ token: "new-token" });
   });
 });
 

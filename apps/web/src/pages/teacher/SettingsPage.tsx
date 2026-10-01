@@ -7,8 +7,8 @@ import {
   useLogoutTeacher,
   useTeacherMe,
 } from "@/features/auth/teacher-auth";
-import { ApiTokenSection } from "@/features/teacher-settings/ApiTokenSection";
 import { BackupSection } from "@/features/teacher-backup/BackupSection";
+import { ApiTokenSection } from "@/features/teacher-settings/ApiTokenSection";
 import { formatCnTime } from "@/lib/time";
 
 /**

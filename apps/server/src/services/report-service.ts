@@ -85,7 +85,9 @@ export function listStudentReports(
       createdAt: reports.createdAt,
     })
     .from(reports)
-    .where(and(eq(reports.teacherId, teacherId), eq(reports.studentId, studentId)))
+    .where(
+      and(eq(reports.teacherId, teacherId), eq(reports.studentId, studentId)),
+    )
     .orderBy(desc(reports.createdAt), desc(reports.id))
     .all();
   return { reports: rows satisfies ReportSummary[] };

@@ -1,6 +1,4 @@
-import {
-  WebStandardStreamableHTTPServerTransport,
-} from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
+import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { Hono } from "hono";
 import type { Db } from "../db/client";
 import { createRequireMcpToken, type McpEnv } from "./auth";
@@ -38,34 +36,32 @@ export interface McpMountOptions {
  */
 export function createMcpRoutes(options: McpMountOptions) {
   const requireToken = createRequireMcpToken(options.db);
-  return new Hono<McpEnv>()
-    .use("*", requireToken)
-    .all("/", async (c) => {
-      // 鉴权通过：token 绑定的教师（c.var.mcpTeacher）成为本请求全部工具的域
-      const server = createMcpServer({
-        db: options.db,
-        dataDir: options.dataDir,
-        teacherId: c.var.mcpTeacher.id,
-        specDir: options.specDir,
-      });
-      // stateless 模式：不传 sessionIdGenerator（运行时读 options.sessionIdGenerator，
-      // 缺省即 undefined = 无会话；SDK 文档的显式 undefined 写法在
-      // exactOptionalPropertyTypes 下类型不接受，省略语义完全相同）。
-      // enableJsonResponse: true——工具型服务器用 JSON 响应（非 SSE 流）。
-      const transport = new WebStandardStreamableHTTPServerTransport({
-        enableJsonResponse: true,
-      });
-      // 请求结束关闭 transport 与 server 实例（stateless：不留任何状态）
-      transport.onclose = () => {
-        void server.close();
-      };
-      try {
-        await server.connect(transport);
-        return await transport.handleRequest(c.req.raw);
-      } finally {
-        // 兜底清理（onclose 之外路径，如 handleRequest 抛错）；
-        // 已关闭时再关为幂等 no-op
-        await transport.close();
-      }
+  return new Hono<McpEnv>().use("*", requireToken).all("/", async (c) => {
+    // 鉴权通过：token 绑定的教师（c.var.mcpTeacher）成为本请求全部工具的域
+    const server = createMcpServer({
+      db: options.db,
+      dataDir: options.dataDir,
+      teacherId: c.var.mcpTeacher.id,
+      specDir: options.specDir,
     });
+    // stateless 模式：不传 sessionIdGenerator（运行时读 options.sessionIdGenerator，
+    // 缺省即 undefined = 无会话；SDK 文档的显式 undefined 写法在
+    // exactOptionalPropertyTypes 下类型不接受，省略语义完全相同）。
+    // enableJsonResponse: true——工具型服务器用 JSON 响应（非 SSE 流）。
+    const transport = new WebStandardStreamableHTTPServerTransport({
+      enableJsonResponse: true,
+    });
+    // 请求结束关闭 transport 与 server 实例（stateless：不留任何状态）
+    transport.onclose = () => {
+      void server.close();
+    };
+    try {
+      await server.connect(transport);
+      return await transport.handleRequest(c.req.raw);
+    } finally {
+      // 兜底清理（onclose 之外路径，如 handleRequest 抛错）；
+      // 已关闭时再关为幂等 no-op
+      await transport.close();
+    }
+  });
 }

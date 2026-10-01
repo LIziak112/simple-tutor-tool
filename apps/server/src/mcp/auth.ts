@@ -1,8 +1,8 @@
 import type { Context, Next } from "hono";
 import type { Db } from "../db/client";
 import {
-  authenticateApiToken,
   type ApiTokenTeacher,
+  authenticateApiToken,
 } from "../services/api-token-service";
 
 /**

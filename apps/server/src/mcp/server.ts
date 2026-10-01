@@ -8,23 +8,23 @@ import {
 import { z } from "zod";
 import type { Db } from "../db/client";
 import { HttpError } from "../lib/http-error";
-import { readSpecFile } from "../spec-files";
+import { getAnalyticsQuestions } from "../services/analytics-service";
+import { listTeacherAssignments } from "../services/assignment-service";
 import {
   analyzeImport,
   commitImport,
   previewImport,
   summarizeParsed,
 } from "../services/content-service";
+import { listCoursesForTeacher } from "../services/course-service";
 import {
   assembleLearningPack,
   type LearningPackServiceOptions,
 } from "../services/export-service";
 import { exportLectureMd, exportUnitMd } from "../services/library-service";
-import { listCoursesForTeacher } from "../services/course-service";
-import { listTeacherAssignments } from "../services/assignment-service";
-import { listStudents } from "../services/student-service";
 import { createReport } from "../services/report-service";
-import { getAnalyticsQuestions } from "../services/analytics-service";
+import { listStudents } from "../services/student-service";
+import { readSpecFile } from "../spec-files";
 
 /**
  * MCP 工具注册（T4.6，D23 清单定稿 11 个全部实现）。
@@ -215,7 +215,9 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
           .string()
           .min(1)
           .optional()
-          .describe("留档文件名（缺省 mcp-import.md；frontmatter 未声明 unit 时用作单元名锚定）"),
+          .describe(
+            "留档文件名（缺省 mcp-import.md；frontmatter 未声明 unit 时用作单元名锚定）",
+          ),
         confirm: z
           .boolean()
           .optional()
@@ -288,7 +290,8 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
   server.registerTool(
     "list_assignments",
     {
-      description: "列出当前教师的作业（id、标题、所属课程、截止时间、题数、在册人数、是否已删除）。",
+      description:
+        "列出当前教师的作业（id、标题、所属课程、截止时间、题数、在册人数、是否已删除）。",
       inputSchema: {
         includeDeleted: z
           .boolean()
@@ -354,7 +357,10 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
       description:
         "按讲义 id 返回可原样重新导入的 Markdown 原文（含 kind: lecture frontmatter）。非本教师的讲义返回「未找到」结构化结果（不暴露存在性）。",
       inputSchema: {
-        id: z.string().uuid().describe("讲义 id（list_courses / 课程详情可见）"),
+        id: z
+          .string()
+          .uuid()
+          .describe("讲义 id（list_courses / 课程详情可见）"),
       },
       annotations: { readOnlyHint: true },
     },
@@ -403,14 +409,23 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
           .optional()
           .describe("时间范围天数（按交卷时间）；缺省 30，'all' 为全部"),
         goal: z
-          .enum(["diagnose-weakness", "lesson-prep", "variant-practice", "period-summary"])
+          .enum([
+            "diagnose-weakness",
+            "lesson-prep",
+            "variant-practice",
+            "period-summary",
+          ])
           .optional()
-          .describe("任务目标（决定 pack 内 prompt 模板；缺省 diagnose-weakness）"),
+          .describe(
+            "任务目标（决定 pack 内 prompt 模板；缺省 diagnose-weakness）",
+          ),
         anonymize: z
           .boolean()
           .optional()
           .describe("是否化名（学生A/学生B…）；默认 false（教师本人域调用）"),
-        modules: packModulesOverrideSchema.describe("内容模块覆盖（缺省全开：题目三层全量+作答+痕迹）"),
+        modules: packModulesOverrideSchema.describe(
+          "内容模块覆盖（缺省全开：题目三层全量+作答+痕迹）",
+        ),
       },
       annotations: { readOnlyHint: true },
     },
@@ -506,7 +521,11 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
       inputSchema: {
         studentId: z.string().uuid().describe("学生 id"),
         title: z.string().trim().min(1).max(200).describe("报告标题"),
-        markdown: z.string().min(1).max(1_000_000).describe("报告正文（Markdown）"),
+        markdown: z
+          .string()
+          .min(1)
+          .max(1_000_000)
+          .describe("报告正文（Markdown）"),
       },
       annotations: { destructiveHint: false },
     },

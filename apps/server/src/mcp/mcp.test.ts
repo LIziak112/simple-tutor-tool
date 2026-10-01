@@ -1,17 +1,21 @@
+import { readFileSync } from "node:fs";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { TextContent } from "@modelcontextprotocol/sdk/types.js";
 import type { ApiErr, ReportListData } from "@tutor/contract";
 import { eq } from "drizzle-orm";
-import { readFileSync } from "node:fs";
 import type { Logger } from "pino";
 import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client.ts";
 import { students, teachers, units } from "../db/schema.ts";
-import { createTestDb, createTestDir, TEST_TEACHER_ID } from "../db/test-utils.ts";
+import {
+  createTestDb,
+  createTestDir,
+  TEST_TEACHER_ID,
+} from "../db/test-utils.ts";
 import { seedDemoData } from "../services/seed-demo.ts";
 
 /**
@@ -147,15 +151,13 @@ async function makeEnv(): Promise<McpEnv> {
 function fetchViaApp(app: ReturnType<typeof createApp>): FetchLike {
   return (url, init) => {
     const target = new URL(String(url));
-    return app.request(target.pathname + target.search, init);
+    // app.request 返回 Response | Promise<Response>，统一包成 Promise
+    return Promise.resolve(app.request(target.pathname + target.search, init));
   };
 }
 
 /** 建立 SDK 客户端连接（Streamable HTTP + Bearer token） */
-async function connectClient(
-  env: McpEnv,
-  token: string,
-): Promise<Client> {
+async function connectClient(env: McpEnv, token: string): Promise<Client> {
   const client = new Client({ name: "t46-mcp-test", version: "1.0.0" });
   const transport = new StreamableHTTPClientTransport(
     new URL("http://localhost/mcp"),
@@ -164,15 +166,20 @@ async function connectClient(
       fetch: fetchViaApp(env.app),
     },
   );
-  await client.connect(transport);
+  // SDK 的可选回调属性在 exactOptionalPropertyTypes 下与 Transport 接口
+  // 形态有出入（实现侧 implements 声明正常），单层收窄断言连接（运行时无误）
+  await client.connect(
+    transport as unknown as Parameters<Client["connect"]>[0],
+  );
   return client;
 }
 
-/** 取工具结果的第一段 text */
-function textOf(result: { content: unknown }): string {
-  const block = (result.content as TextContent[]).find(
-    (c) => c.type === "text",
-  );
+/** 取工具结果的第一段 text（参数取 unknown：callTool 返回联合形态，内部收窄） */
+function textOf(result: unknown): string {
+  const content = (result as { content?: unknown }).content as
+    | TextContent[]
+    | undefined;
+  const block = content?.find((c) => c.type === "text");
   if (block === undefined) throw new Error("工具结果没有 text content");
   return block.text;
 }
@@ -188,11 +195,13 @@ function postRpc(
     accept: "application/json, text/event-stream",
   };
   if (token !== undefined) headers.authorization = `Bearer ${token}`;
-  return env.app.request("/mcp", {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
-  });
+  return Promise.resolve(
+    env.app.request("/mcp", {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    }),
+  );
 }
 
 describe("MCP 鉴权（T4.6 D22）", () => {
@@ -324,7 +333,7 @@ describe("MCP 工具（SDK 客户端逐个断言，T4.6 D23）", () => {
     expect(blocks.length).toBe(2);
     expect(blocks[0]?.text).toContain("DSL 规范");
     expect(blocks[1]?.text).toContain("完整样例");
-    expect((blocks[0]?.text.length ?? 0)).toBeGreaterThan(1000);
+    expect(blocks[0]?.text.length ?? 0).toBeGreaterThan(1000);
     await client.close();
   });
 
@@ -340,9 +349,9 @@ describe("MCP 工具（SDK 客户端逐个断言，T4.6 D23）", () => {
       issues: Array<{ level: string; line: number; message: string }>;
     };
     expect(data.issues.some((i) => i.level === "error")).toBe(true);
-    expect(
-      data.issues.every((i) => i.line >= 1 && i.message.length > 0),
-    ).toBe(true);
+    expect(data.issues.every((i) => i.line >= 1 && i.message.length > 0)).toBe(
+      true,
+    );
 
     const clean = await client.callTool({
       name: "lint_markdown",
@@ -375,15 +384,15 @@ describe("MCP 工具（SDK 客户端逐个断言，T4.6 D23）", () => {
     };
     expect(dryData.dryRun).toBe(true);
     expect(dryData.preview.actions).toContainEqual(
-      expect.objectContaining({ kind: "createUnit", unitId: "mcp-import-unit" }),
+      expect.objectContaining({
+        kind: "createUnit",
+        unitId: "mcp-import-unit",
+      }),
     );
     // 未落库
     expect(
-      env.db
-        .select()
-        .from(units)
-        .where(eq(units.id, "mcp-import-unit"))
-        .all().length,
+      env.db.select().from(units).where(eq(units.id, "mcp-import-unit")).all()
+        .length,
     ).toBe(0);
 
     const confirmed = await client.callTool({
@@ -418,9 +427,9 @@ describe("MCP 工具（SDK 客户端逐个断言，T4.6 D23）", () => {
     expect(dataA.students.map((s) => s.name)).toEqual(
       expect.arrayContaining([env.seed.students.s1.name]),
     );
-    expect(
-      dataA.students.some((s) => s.id === "student-b-t46-mcp-0001"),
-    ).toBe(false);
+    expect(dataA.students.some((s) => s.id === "student-b-t46-mcp-0001")).toBe(
+      false,
+    );
     await clientA.close();
 
     const clientB = await connectClient(env, TOKEN_B);
@@ -533,9 +542,7 @@ describe("MCP 工具（SDK 客户端逐个断言，T4.6 D23）", () => {
     expect(pack.students[0]?.id).toBe(env.seed.students.s1.id);
     expect(pack.content.questions.length).toBeGreaterThan(0);
     expect(pack.attempts.summaries.length).toBeGreaterThan(0);
-    expect(
-      pack.attempts.summaries.some((s) => s.attemptNo >= 1),
-    ).toBe(true); // 历次口径（D15）
+    expect(pack.attempts.summaries.some((s) => s.attemptNo >= 1)).toBe(true); // 历次口径（D15）
     expect(pack.traces.questions.length).toBeGreaterThan(0); // 痕迹在
     await client.close();
   });
@@ -584,7 +591,10 @@ describe("MCP 工具（SDK 客户端逐个断言，T4.6 D23）", () => {
     );
     const list = ((await listRes.json()) as { data: ReportListData }).data;
     expect(list.reports).toContainEqual(
-      expect.objectContaining({ id: savedData.report.id, title: "MCP 诊断报告" }),
+      expect.objectContaining({
+        id: savedData.report.id,
+        title: "MCP 诊断报告",
+      }),
     );
 
     const delRes = await env.app.request(

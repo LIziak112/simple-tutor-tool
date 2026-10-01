@@ -73,9 +73,7 @@ describe("ApiTokenSection（T4.6 D22）", () => {
     });
     expect(await screen.findByText("已复制")).toBeVisible();
 
-    expect(
-      screen.getByRole("button", { name: /重置 Token/ }),
-    ).toBeEnabled();
+    expect(screen.getByRole("button", { name: /重置 Token/ })).toBeEnabled();
   });
 
   it("重置走二次确认弹层：提示旧 token 立即失效与客户端需更新；确认后调用、取消不调用", async () => {

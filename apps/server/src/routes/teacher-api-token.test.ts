@@ -6,7 +6,11 @@ import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
 import { teachers } from "../db/schema.ts";
-import { createTestDb, createTestDir, TEST_TEACHER_ID } from "../db/test-utils.ts";
+import {
+  createTestDb,
+  createTestDir,
+  TEST_TEACHER_ID,
+} from "../db/test-utils.ts";
 import { authenticateApiToken } from "../services/api-token-service.ts";
 
 /**
@@ -63,7 +67,9 @@ describe("GET/POST /api/teacher/api-token（T4.6 D22）", () => {
     const get = await app.request("/api/teacher/api-token");
     expect(get.status).toBe(401);
     expect(((await get.json()) as ApiErr).error).toBe("UNAUTHORIZED");
-    const post = await app.request("/api/teacher/api-token", { method: "POST" });
+    const post = await app.request("/api/teacher/api-token", {
+      method: "POST",
+    });
     expect(post.status).toBe(401);
   });
 
@@ -73,9 +79,9 @@ describe("GET/POST /api/teacher/api-token（T4.6 D22）", () => {
       headers: { cookie },
     });
     expect(before.status).toBe(200);
-    expect(((await before.json()) as { data: TeacherApiTokenData }).data).toEqual(
-      { token: null },
-    );
+    expect(
+      ((await before.json()) as { data: TeacherApiTokenData }).data,
+    ).toEqual({ token: null });
 
     const created = await app.request("/api/teacher/api-token", {
       method: "POST",
@@ -90,7 +96,9 @@ describe("GET/POST /api/teacher/api-token（T4.6 D22）", () => {
     const after = await app.request("/api/teacher/api-token", {
       headers: { cookie },
     });
-    expect(((await after.json()) as { data: TeacherApiTokenData }).data).toEqual({
+    expect(
+      ((await after.json()) as { data: TeacherApiTokenData }).data,
+    ).toEqual({
       token: token1,
     });
     expect(db.select().from(teachers).get()?.apiToken).toBe(token1);

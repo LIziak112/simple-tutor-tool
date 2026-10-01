@@ -30,7 +30,10 @@ export function regenerateApiToken(
 }
 
 /** 查看当前 API Token（未生成为 null；D22：可随时查看，不做「只显示一次」） */
-export function getApiToken(db: Db, teacherId: string): {
+export function getApiToken(
+  db: Db,
+  teacherId: string,
+): {
   token: string | null;
 } {
   const row = db

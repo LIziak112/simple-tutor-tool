@@ -6,7 +6,11 @@ import { createApp } from "../app.ts";
 import { createTeacherSession } from "../auth/session.ts";
 import type { Db } from "../db/client";
 import { teachers } from "../db/schema.ts";
-import { createTestDb, createTestDir, TEST_TEACHER_ID } from "../db/test-utils.ts";
+import {
+  createTestDb,
+  createTestDir,
+  TEST_TEACHER_ID,
+} from "../db/test-utils.ts";
 import { createReport } from "../services/report-service.ts";
 import { seedDemoData } from "../services/seed-demo.ts";
 
@@ -86,9 +90,12 @@ describe("GET /api/teacher/students/:id/reports 与 DELETE /api/teacher/reports/
     );
     expect(list.status).toBe(401);
     expect(((await list.json()) as ApiErr).error).toBe("UNAUTHORIZED");
-    const del = await app.request("/api/teacher/reports/00000000-0000-4000-8000-000000000000", {
-      method: "DELETE",
-    });
+    const del = await app.request(
+      "/api/teacher/reports/00000000-0000-4000-8000-000000000000",
+      {
+        method: "DELETE",
+      },
+    );
     expect(del.status).toBe(401);
   });
 

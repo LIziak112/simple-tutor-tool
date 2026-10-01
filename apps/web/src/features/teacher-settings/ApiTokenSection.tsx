@@ -1,4 +1,11 @@
-import { Check, Copy, KeyRound, Loader2, RotateCcw, TriangleAlert } from "lucide-react";
+import {
+  Check,
+  Copy,
+  KeyRound,
+  Loader2,
+  RotateCcw,
+  TriangleAlert,
+} from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -9,7 +16,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { apiTokenKey, useApiToken, useResetApiToken } from "@/features/teacher-settings/api-token-queries";
+import {
+  useApiToken,
+  useResetApiToken,
+} from "@/features/teacher-settings/api-token-queries";
 import { copyText } from "@/lib/copy";
 
 /**
@@ -158,10 +168,7 @@ export function ApiTokenSection() {
       )}
 
       {/* 重置二次确认（D22：重置后旧 token 立即失效；列表性内容放 Dialog 正文而非 DialogDescription） */}
-      <Dialog
-        open={confirmOpen}
-        onOpenChange={(open) => setConfirmOpen(open)}
-      >
+      <Dialog open={confirmOpen} onOpenChange={(open) => setConfirmOpen(open)}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>重置 API Token？</DialogTitle>
@@ -172,7 +179,10 @@ export function ApiTokenSection() {
           <div className="text-sm text-muted-foreground">
             <p>重置后：</p>
             <ul className="mt-1 list-disc pl-5">
-              <li>已配置的客户端（如 Claude Desktop）需要更新为新 Token 才能继续连接；</li>
+              <li>
+                已配置的客户端（如 Claude Desktop）需要更新为新 Token
+                才能继续连接；
+              </li>
               <li>正在使用旧 Token 的 AI 会话会立即失去访问权限。</li>
             </ul>
           </div>
