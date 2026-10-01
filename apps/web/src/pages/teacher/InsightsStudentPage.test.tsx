@@ -1,5 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import type { AnalyticsStudentData } from "@tutor/contract";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -71,6 +77,8 @@ const COURSE_A = "44444444-4444-4444-8444-444444444444";
 const LECTURE_1 = "99999999-9999-4999-8999-999999999991";
 const ATT_SLOW = "77777777-7777-4777-8777-777777777771";
 const ATT_HINTS = "77777777-7777-4777-8777-777777777772";
+const ATT_WRONG_1 = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1";
+const ATT_WRONG_2 = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2";
 const NOW = "2026-09-24T04:00:00.000Z";
 
 /** 画像数据工厂（对齐 seed-demo 李小红构成：异常×2、待批、阅读地图） */
@@ -162,6 +170,32 @@ function makeStudent(
         redoCount: 0,
         firstScore: 80,
         latestSubmittedAt: NOW,
+      },
+    ],
+    wrongQuestions: [
+      {
+        questionId: "unit-u2-2",
+        unitId: "unit-u2",
+        unitTitle: "数轴练习",
+        type: "choice",
+        difficulty: 2,
+        knowledge: ["绝对值"],
+        stemMd: "数轴上到原点的距离等于 $3$ 的点表示的数是（　）",
+        attemptId: ATT_WRONG_1,
+        answerText: "A",
+        submittedAt: NOW,
+      },
+      {
+        questionId: "unit-u1-3",
+        unitId: "unit-u1",
+        unitTitle: "有理数随堂练习",
+        type: "fill",
+        difficulty: 2,
+        knowledge: ["有理数加法"],
+        stemMd: "计算：$(-3)+7=$ [[4]]。",
+        attemptId: ATT_WRONG_2,
+        answerText: null,
+        submittedAt: NOW,
       },
     ],
     offline: { offlineShare: 2 / 3, activeSecTotal: 990, offlineSecTotal: 60 },
@@ -423,13 +457,48 @@ describe("InsightsStudentPage 指标区", () => {
     ]);
   });
 
+  it("错题列表：判错行渲染（单元/题型/学生答案）与整行跳作答详情；空列表空态", async () => {
+    mockedStudent.mockResolvedValue(makeStudent());
+    renderPage();
+    await screen.findByText("用时异常题");
+
+    // 两行判错题，整行 Link 跳对应 attempt 详情（aria-label 按题定位）
+    const choiceLink = screen.getByRole("link", {
+      name: "查看错题 unit-u2-2 的作答详情",
+    });
+    expect(choiceLink).toHaveAttribute(
+      "href",
+      `/t/data/attempts/${ATT_WRONG_1}`,
+    );
+    expect(within(choiceLink).getByText("数轴练习")).toBeInTheDocument();
+    expect(within(choiceLink).getByText("学生答案：A")).toBeInTheDocument();
+
+    const fillLink = screen.getByRole("link", {
+      name: "查看错题 unit-u1-3 的作答详情",
+    });
+    expect(fillLink).toHaveAttribute("href", `/t/data/attempts/${ATT_WRONG_2}`);
+    // 未作答的判错行 answerText=null →「未作答」（Phase3 D1 口径）
+    expect(within(fillLink).getByText("学生答案：未作答")).toBeInTheDocument();
+
+    // 空列表空态
+    mockedStudent.mockResolvedValue(makeStudent({ wrongQuestions: [] }));
+    renderPage();
+    expect(
+      await screen.findByText("该生在当前范围内没有判错的题目。"),
+    ).toBeInTheDocument();
+  });
+
   it("重做概览与离线作答占比", async () => {
     mockedStudent.mockResolvedValue(makeStudent());
     renderPage();
     await screen.findByText("课程练习重做");
 
-    expect(screen.getByText("有理数随堂练习")).toBeInTheDocument();
-    expect(screen.getByText("80 分")).toBeInTheDocument();
+    // 错题行与重做表可能同名单元——重做断言限定在表格内
+    const redoTable = screen.getByRole("table", {
+      name: /课程练习重做概览/,
+    });
+    expect(within(redoTable).getByText("有理数随堂练习")).toBeInTheDocument();
+    expect(within(redoTable).getByText("80 分")).toBeInTheDocument();
     expect(screen.getByText(/离线 1 分钟 \/ 有效 17 分钟/)).toBeInTheDocument();
   });
 

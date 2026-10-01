@@ -33,6 +33,8 @@ import { formatDueTime, formatRelativeTime } from "@/lib/time";
  * /t/insights/students/:id 学生画像（T4.2）：
  * - 正确率周趋势折线（ECharts 按需 chunk，D5 自然周）；
  * - 考点正确率横向条形图（D25：升序 top N、薄弱在上）+ 全量考点表（薄弱在前）；
+ * - 错题列表（T4.2 契约补齐：qualifying 中 finalCorrect=false 的逐题行，待批
+ *   不在列；整行点击跳 T3.1 作答详情 /t/data/attempts/:attemptId）；
  * - 用时异常题卡片（D6：slow/hints 两类，跳作答详情）；
  * - 重做概览（独立指标 D1，不受时间范围限制）、离线作答占比；
  * - 讲义阅读地图（T4.0 §4.4.4：目录树逐项状态 + 行为推断标注 + 含挂机时长）；
@@ -308,6 +310,49 @@ export function InsightsStudentPage() {
                   </tbody>
                 </table>
               </div>
+            )}
+          </section>
+
+          <section aria-label="错题列表" className="flex flex-col gap-2">
+            <h2 className="text-sm font-semibold">
+              错题列表
+              <span className="ml-2 text-xs font-normal text-muted-foreground">
+                当前范围内判错的题（同题多次判错取最近一次）；点击查看作答详情
+              </span>
+            </h2>
+            {data.wrongQuestions.length === 0 ? (
+              <p className="rounded-xl border border-dashed border-border bg-card px-4 py-6 text-center text-sm text-muted-foreground">
+                该生在当前范围内没有判错的题目。
+              </p>
+            ) : (
+              <ul className="flex flex-col gap-2">
+                {data.wrongQuestions.map((row) => (
+                  <li key={`${row.attemptId}:${row.questionId}`}>
+                    <Link
+                      to={`/t/data/attempts/${row.attemptId}`}
+                      aria-label={`查看错题 ${row.questionId} 的作答详情`}
+                      className="flex flex-col gap-1.5 rounded-xl border border-border bg-card px-4 py-3 outline-none transition-colors hover:bg-muted/40 focus-visible:ring-3 focus-visible:ring-ring/50"
+                    >
+                      <p className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                        <span className="rounded-full bg-muted px-2 py-0.5">
+                          {row.unitTitle ?? "（已移出单元）"}
+                        </span>
+                        <span>
+                          {QUESTION_TYPE_LABELS[row.type]} · 难度{" "}
+                          {row.difficulty}
+                        </span>
+                        <span className="ml-auto">
+                          {formatRelativeTime(row.submittedAt)}
+                        </span>
+                      </p>
+                      <RichMarkdown source={row.stemMd} className="text-sm" />
+                      <p className="text-xs text-muted-foreground">
+                        学生答案：{row.answerText ?? "未作答"}
+                      </p>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
             )}
           </section>
 
