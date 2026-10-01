@@ -116,7 +116,7 @@ describe("GET /api/teacher/backup/snapshots", () => {
     const deniedBody = (await denied.json()) as { error: string };
     expect(deniedBody.error).toBe("UNAUTHORIZED");
 
-    // 下载会补拍快照——先拍一份让列表非空
+    // 下载恒先补拍当前快照——先下载一次让列表非空
     const download = await request(
       app,
       "GET",
@@ -177,7 +177,7 @@ describe("GET /api/teacher/backup/download", () => {
     expect(names).toContain("secret.key");
     expect(names).toContain("shared/共享.md");
     expect(names.some((name) => name.startsWith("backups/"))).toBe(false);
-    // 无快照时下载自动补拍（dataDir 里出现 backups/）
+    // 下载恒先补拍当前快照（dataDir 里出现 backups/）
     expect(existsSync(join(dataDir, "backups"))).toBe(true);
   });
 });

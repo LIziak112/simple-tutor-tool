@@ -14,8 +14,9 @@ import {
  * 教师端备份与恢复路由（T4.5，需教师会话；D20/D21 口径见契约 backup-api.ts），
  * 由 teacher.ts 挂在 /api/teacher 之下：
  * - GET  /backup/snapshots：最近快照列表（时间倒序；只列 db 快照，供设置页展示）；
- * - GET  /backup/download：完整备份 zip 文件直出（最新 db 快照 + blobs + shared +
- *   secret.key，排除 backups/ 自身）。文件直出非统一壳，处理方式同
+ * - GET  /backup/download：完整备份 zip 文件直出（下载前恒先拍一份当前时刻
+ *   db 快照 + blobs + shared + secret.key，排除 backups/ 自身）。文件直出
+ *   非统一壳，处理方式同
  *   /export/learning-pack；archiver 流式打包经 Readable.toWeb 转 web 流，
  *   边打包边响应、不整包进内存（blobs 可能很大）；
  * - POST /backup/restore：multipart（zip 文件 + password 登录密码字段，D21 服务端
