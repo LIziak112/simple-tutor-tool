@@ -78,12 +78,15 @@ export default function StudentLectureViewPage() {
   /** 目录折叠状态（长讲义可收起；默认展开方便跳转） */
   const [outlineOpen, setOutlineOpen] = useState(true);
 
-  // 学习痕迹（T2.10）：lecture_expand 事件队列（无 attempt 上下文）。
-  // 回调经 ref 转发——RichMarkdown 不因队列创建而重渲染/重挂载。
+  // 学习痕迹（T2.10 + T4.0a）：lecture scope 队列（无 attempt 上下文，带
+  // lectureId 供队列层注入 lecture_visible/hidden）。回调经 ref 转发——
+  // RichMarkdown 不因队列创建而重渲染/重挂载。
   const queueRef = useRef<ReturnType<typeof createEventQueue> | null>(null);
   useEffect(() => {
     if (id === "") return;
-    const queue = createEventQueue({ scope: { kind: "lecture" } });
+    const queue = createEventQueue({
+      scope: { kind: "lecture", lectureId: id },
+    });
     queueRef.current = queue;
     return () => {
       queue.dispose();
