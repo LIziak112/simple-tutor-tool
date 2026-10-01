@@ -87,6 +87,7 @@ const teacherRoutes = (() => {
     () => import("./pages/teacher/InsightsQuestionsPage"),
   );
   const ExportPage = lazy(() => import("./pages/teacher/ExportPage"));
+  const ConnectPage = lazy(() => import("./pages/teacher/ConnectPage"));
 
   /** 布局内的懒加载兜底（骨架级提示即可，布局本身很快） */
   const pageFallback = (
@@ -247,11 +248,21 @@ const teacherRoutes = (() => {
         />
         <Route
           // T4.4：导出中心（「导出给 AI」五步向导；学情页/画像页入口落点，
-          // ?studentId= 预填该生；侧边栏不加入口，T4.7 收尾统一调导航）
+          // ?studentId= 预填该生；T4.7 起侧边栏「导出」同指此页）
           path="export"
           element={
             <Suspense fallback={pageFallback}>
               <ExportPage />
+            </Suspense>
+          }
+        />
+        <Route
+          // T4.7（D26）：连接 AI 说明页——MCP 地址 / Token / 通用与
+          // Claude Desktop 配置示例；设置页与侧边栏「连接 AI」入口落点
+          path="connect"
+          element={
+            <Suspense fallback={pageFallback}>
+              <ConnectPage />
             </Suspense>
           }
         />

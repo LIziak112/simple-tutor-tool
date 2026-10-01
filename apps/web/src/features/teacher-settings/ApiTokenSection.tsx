@@ -7,6 +7,7 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import { useState } from "react";
+import { Link } from "react-router";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -29,7 +30,8 @@ import { copyText } from "@/lib/copy";
  * - 生成 / 重置：同一动作（无则生成、有则覆盖列值）；重置走二次确认弹层，
  *   明确「重置后旧 token 立即失效，已配置的客户端（如 Claude Desktop）需要
  *   更新 token」；
- * - 连接说明页（/t/connect，含配置 JSON 片段）在 T4.7，本区只管凭证本身。
+ * - 连接说明页（/t/connect，含配置 JSON 片段）在 T4.7：本区底部「连接说明
+ *   与配置示例」链接直达。
  * 三态齐全（加载/错误/数据）、触控目标 ≥44px（min-h-11）。
  */
 export function ApiTokenSection() {
@@ -102,6 +104,11 @@ export function ApiTokenSection() {
           {errorText}
         </p>
       )}
+
+      {/* T4.7：连接说明页入口（MCP 地址与配置示例在 /t/connect） */}
+      <Button variant="outline" className="min-h-11 self-start px-4" asChild>
+        <Link to="/t/connect">连接说明与配置示例 →</Link>
+      </Button>
 
       {tokenQuery.data && (
         <div className="flex flex-col gap-3">
