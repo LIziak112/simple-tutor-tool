@@ -15,7 +15,8 @@ import {
   DirectiveLeafHost,
   DirectiveTextHost,
 } from "./directives";
-import { DirectiveExpandContext } from "./directives/expand-context";
+import type { DirectiveTelemetryInfo } from "./directives/expand-context";
+import { DirectiveTelemetryContext } from "./directives/expand-context";
 import { remarkBlank } from "./remark/remark-blank";
 import { remarkDirectiveHost } from "./remark/remark-directive-host";
 import { richMarkdownSanitizeSchema } from "./sanitize";
@@ -68,9 +69,18 @@ export interface RichMarkdownProps {
   /** 追加到根容器的样式类 */
   className?: string;
   /**
-   * 指令折叠/逐步揭晓的展开回调（T2.10 lecture_expand 埋点）。
-   * 缺省不收集（教师端预览等场景）；经 DirectiveExpandContext 下发到
-   * 各指令组件，不改变组件树结构。
+   * 指令交互遥测回调（T4.0b directive_interact 埋点）：折叠开/合、steps 揭晓
+   * 都经 DirectiveTelemetryContext 下发到各指令组件，组件只报
+   * {name, index(文档全局序号), action, step?}——归属哪个 scope/宿主由本回调
+   * 的提供方（页面层）决定；缺省不收集（教师端预览等场景）。
+   */
+  onDirectiveTelemetry?:
+    | ((event: DirectiveTelemetryInfo) => void)
+    | undefined;
+  /**
+   * 指令展开回调（T2.10 兼容别名，仅 open 方向）：内部映射为
+   * onDirectiveTelemetry 的 action=open；与 onDirectiveTelemetry 同时提供时
+   * 以后者为准（新回调信息量是旧回调的严格超集）。
    */
   onDirectiveExpand?:
     | ((info: { name: string; index: number }) => void)
@@ -80,11 +90,22 @@ export interface RichMarkdownProps {
 export function RichMarkdown({
   source,
   className,
+  onDirectiveTelemetry,
   onDirectiveExpand,
 }: RichMarkdownProps) {
+  // 兼容别名：旧回调只收 open 方向（收起/揭晓是 T4.0b 新增语义，旧回调不感知）
+  const telemetry: ((event: DirectiveTelemetryInfo) => void) | null =
+    onDirectiveTelemetry ??
+    (onDirectiveExpand !== undefined
+      ? (event) => {
+          if (event.action === "open") {
+            onDirectiveExpand({ name: event.name, index: event.index });
+          }
+        }
+      : null);
   return (
     <div className={cn("rich-markdown", className)}>
-      <DirectiveExpandContext.Provider value={onDirectiveExpand ?? null}>
+      <DirectiveTelemetryContext.Provider value={telemetry}>
         <ReactMarkdown
           remarkPlugins={remarkPlugins}
           rehypePlugins={rehypePlugins}
@@ -92,7 +113,7 @@ export function RichMarkdown({
         >
           {source}
         </ReactMarkdown>
-      </DirectiveExpandContext.Provider>
+      </DirectiveTelemetryContext.Provider>
     </div>
   );
 }

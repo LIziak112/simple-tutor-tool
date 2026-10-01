@@ -119,6 +119,7 @@ const DIRECTIVE_HOST_ATTRS = [
   "directive", // 指令名（刻意避开 sanitize 的 clobber 属性 name/id）
   "dclass", // `{.样式类}` 简写
   "index", // 文档顺序编号（第 N 题 / 提示 N / 第 N 步）
+  "dindex", // 文档全局指令序号（T4.0b directive_interact 的 index 口径）
   "title",
   "type",
   "difficulty",

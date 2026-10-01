@@ -1,9 +1,11 @@
 import { ArrowLeft, Dumbbell, ListTree } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
+import type { DirectiveTelemetryInfo } from "@/features/markdown/directives/expand-context";
 import type { OutlineItem } from "@/features/markdown/outline";
 import { extractOutline } from "@/features/markdown/outline";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
+import { useLectureSectionFocus } from "@/features/markdown/use-lecture-section-focus";
 import { useStudentLecture } from "@/features/student/student-queries";
 import {
   StudentErrorPanel,
@@ -20,8 +22,12 @@ import { formatCnTime } from "@/lib/time";
  *   返回键回课程目录（无 courseId 时回讲义列表）；
  * - T2A.5（D8）：底部「本课配套练习」——同课程可见的配套单元（题数 +「即将开放」，
  *   作答入口 T2A.6 开放，先不可点击）；
- * - T2.10：折叠/逐步揭晓的每次展开上报 lecture_expand 事件（无 attempt 上下文，
- *   走 POST /api/student/events；队列 dispose 时尽力 flush）；
+ * - 学习痕迹（T2.10 + T4.0a/b）：lecture scope 队列（无 attempt 上下文，带
+ *   lectureId 供队列层注入 lecture_visible/hidden、net、idle）；折叠开/合与
+ *   steps 揭晓报 directive_interact（host=lecture，T4.0b 起新客户端不再发
+ *   lecture_expand）；「当前阅读节」切换报 lecture_section_focus（迟滞防抖，
+ *   §5.0-C13）；目录点击报 lecture_toc_jump。讲义域位置/交互事件带
+ *   lectureUpdatedAt（版本定位，§4.4.2 前提 1）；队列 dispose 时尽力 flush；
  * - 自动目录（H2/H3）：目录条目顺序 = 正文 h2/h3 顺序，点击滚动到对应标题；
  * - 目录可折叠（长讲义收起目录专注正文）；
  * - iPad 适配：竖屏目录在正文上方；横屏（lg:）目录固定在左侧 sticky 双栏，
@@ -78,8 +84,8 @@ export default function StudentLectureViewPage() {
   /** 目录折叠状态（长讲义可收起；默认展开方便跳转） */
   const [outlineOpen, setOutlineOpen] = useState(true);
 
-  // 学习痕迹（T2.10 + T4.0a）：lecture scope 队列（无 attempt 上下文，带
-  // lectureId 供队列层注入 lecture_visible/hidden）。回调经 ref 转发——
+  // 学习痕迹（T2.10 + T4.0a/b）：lecture scope 队列（无 attempt 上下文，带
+  // lectureId 供队列层注入 lecture_visible/hidden、net、idle）。回调经 ref 转发——
   // RichMarkdown 不因队列创建而重渲染/重挂载。
   const queueRef = useRef<ReturnType<typeof createEventQueue> | null>(null);
   useEffect(() => {
@@ -93,14 +99,64 @@ export default function StudentLectureViewPage() {
       queueRef.current = null;
     };
   }, [id]);
-  const onDirectiveExpand = useRef((info: { name: string; index: number }) => {
+
+  /** 讲义版本定位（§4.4.2 前提 1）：正文加载后填入位置/交互事件 payload；
+   *  经 ref 转发——数据晚于稳定回调创建到达，不重建回调引用 */
+  const lectureUpdatedAtRef = useRef<string | null>(null);
+  lectureUpdatedAtRef.current = lectureQuery.data?.updatedAt ?? null;
+
+  // T4.0b 交互族：折叠开/合、steps 揭晓 → directive_interact（host=lecture）。
+  // index=文档全局指令序号（docIndex）；reveal 额外带容器内步序号 step。
+  const onDirectiveTelemetry = useRef(
+    (event: DirectiveTelemetryInfo): void => {
+      queueRef.current?.track({
+        type: "directive_interact",
+        clientTs: Date.now(),
+        host: "lecture",
+        lectureId: id,
+        name: event.name,
+        index: event.index,
+        action: event.action,
+        ...(event.action === "reveal" && event.step !== undefined
+          ? { step: event.step }
+          : {}),
+        ...(lectureUpdatedAtRef.current !== null
+          ? { lectureUpdatedAt: lectureUpdatedAtRef.current }
+          : {}),
+      });
+    },
+  ).current;
+
+  // T4.0b 位置族：「当前阅读节」切换 → lecture_section_focus（迟滞防抖 §5.0-C13）
+  const trackSectionFocus = useRef((headingIndex: number): void => {
     queueRef.current?.track({
-      type: "lecture_expand",
+      type: "lecture_section_focus",
       clientTs: Date.now(),
       lectureId: id,
-      directive: info.name,
-      index: info.index,
+      headingIndex,
+      ...(lectureUpdatedAtRef.current !== null
+        ? { lectureUpdatedAt: lectureUpdatedAtRef.current }
+        : {}),
     });
+  }).current;
+  useLectureSectionFocus({
+    enabled: lectureQuery.data !== undefined,
+    sourceKey: lectureQuery.data?.markdown ?? "",
+    onSectionFocus: trackSectionFocus,
+  });
+
+  // T4.0b 位置族：目录点击 → lecture_toc_jump（headingIndex 与自动目录下标同源）
+  const onOutlineNavigate = useRef((headingIndex: number): void => {
+    queueRef.current?.track({
+      type: "lecture_toc_jump",
+      clientTs: Date.now(),
+      lectureId: id,
+      headingIndex,
+      ...(lectureUpdatedAtRef.current !== null
+        ? { lectureUpdatedAt: lectureUpdatedAtRef.current }
+        : {}),
+    });
+    scrollToHeading(headingIndex);
   }).current;
 
   const outline = useMemo(
@@ -166,7 +222,7 @@ export default function StudentLectureViewPage() {
                   <div className="max-h-[40dvh] overflow-y-auto lg:max-h-[70dvh]">
                     <LectureOutline
                       items={outline}
-                      onNavigate={(index) => scrollToHeading(index)}
+                      onNavigate={onOutlineNavigate}
                     />
                   </div>
                 )}
@@ -174,11 +230,12 @@ export default function StudentLectureViewPage() {
             )}
 
             {/* 正文（讲义全文；rich-markdown 内部处理公式块横向滚动；
-              折叠/步骤展开经 onDirectiveExpand 上报 lecture_expand，T2.10） */}
+              折叠开合/步骤揭晓经 onDirectiveTelemetry 上报 directive_interact
+              〔host=lecture〕，T4.0b；旧 lecture_expand 不再产生） */}
             <RichMarkdown
               source={lectureQuery.data.markdown}
               className="min-w-0 flex-1 rounded-xl border border-border bg-card px-4 py-4 sm:px-6 lg:px-8"
-              onDirectiveExpand={onDirectiveExpand}
+              onDirectiveTelemetry={onDirectiveTelemetry}
             />
           </div>
 

@@ -73,20 +73,29 @@ function readDirective(node: HastElementLike | undefined): {
   attrs: Record<string, string>;
   directiveClass: string | undefined;
   index: number;
+  docIndex: number;
 } {
   const properties = node?.properties ?? {};
   const attrs: Record<string, string> = {};
   for (const [key, value] of Object.entries(properties)) {
-    if (key === "directive" || key === "index" || key === "dclass") continue;
+    if (
+      key === "directive" ||
+      key === "index" ||
+      key === "dindex" ||
+      key === "dclass"
+    ) {
+      continue;
+    }
     if (typeof value === "string") attrs[key] = value;
     else if (typeof value === "number") attrs[key] = String(value);
   }
-  const { directive, dclass, index } = properties;
+  const { directive, dclass, index, dindex } = properties;
   return {
     name: typeof directive === "string" ? directive : "",
     attrs,
     directiveClass: typeof dclass === "string" ? dclass : undefined,
     index: typeof index === "number" ? index : 0,
+    docIndex: typeof dindex === "number" ? dindex : 0,
   };
 }
 
@@ -107,6 +116,7 @@ function createDirectiveHost(inline: boolean) {
       name: primaryName,
       attrs: info.attrs,
       index: info.index,
+      docIndex: info.docIndex,
       children,
       // exactOptionalPropertyTypes：仅在存在时携带该字段
       ...(info.directiveClass !== undefined

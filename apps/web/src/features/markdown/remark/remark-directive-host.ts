@@ -41,6 +41,15 @@ interface DirectiveCounters {
    * 编号把空框渲染为可输入控件（BlankAnswersContext）。
    */
   blank: number;
+  /**
+   * 文档全局指令序号（T4.0b）：对全部**块级**指令（container/leaf，不含
+   * mark/blank 等行内 textDirective）按文档顺序预序遍历从 1 计数。
+   * directive_interact 的 payload index 用它（方案 §4.3.3：一份讲义可有多个
+   * steps 容器、多个 fold，按语义计数的展示编号无法区分个体；服务端解析按
+   * 同一规则复算即可把 (name, index) 定位回具体指令）。挂在 hast 属性
+   * `dindex`（DirectiveProps.docIndex），与展示编号 index（hName 同键）互不干扰。
+   */
+  global: number;
 }
 
 function annotate(
@@ -49,6 +58,11 @@ function annotate(
 ): DirectiveCounters {
   const next: DirectiveCounters = { ...counters };
   const props: Record<string, string | number> = { directive: node.name };
+
+  if (node.type !== "textDirective") {
+    next.global += 1;
+    props.dindex = next.global;
+  }
 
   if (node.name === "question") {
     next.question += 1;
@@ -110,6 +124,6 @@ function walk(
 /** remark 插件入口：无选项，遍历一次完成映射与编号 */
 export function remarkDirectiveHost() {
   return (tree: MdNode) => {
-    walk(tree, { question: 0, hint: 0, step: 0, blank: 0 });
+    walk(tree, { question: 0, hint: 0, step: 0, blank: 0, global: 0 });
   };
 }

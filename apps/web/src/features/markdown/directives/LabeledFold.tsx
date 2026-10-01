@@ -21,8 +21,17 @@ interface LabeledFoldProps {
   icon?: ReactNode;
   /** secret：教师侧机密内容（answer）用琥珀色标识 */
   tone?: FoldTone;
-  /** 展开回调（仅收起 → 展开方向触发一次；T2.10 lecture_expand 埋点用，缺省 no-op） */
+  /**
+   * 展开回调（仅收起 → 展开方向触发一次；T2.10 lecture_expand 埋点用，缺省 no-op）。
+   * T4.0b 起新代码用 onToggle（双向）；本 prop 保留兼容。
+   */
   onExpand?: (() => void) | undefined;
+  /**
+   * 开合回调（T4.0b，§5.0-C11）：open=收起→展开、close=展开→收起，
+   * 每次点击恰好触发一次（与 onExpand 并存时两个都触发——onExpand 是
+   * open 的旧形态别名，不影响新语义）。
+   */
+  onToggle?: ((action: "open" | "close") => void) | undefined;
   children?: ReactNode;
 }
 
@@ -31,6 +40,7 @@ export function LabeledFold({
   icon,
   tone = "neutral",
   onExpand,
+  onToggle,
   children,
 }: LabeledFoldProps) {
   const [open, setOpen] = useState(false);
@@ -40,12 +50,13 @@ export function LabeledFold({
       <button
         type="button"
         aria-expanded={open}
-        onClick={() =>
-          setOpen((v) => {
-            if (!v) onExpand?.();
-            return !v;
-          })
-        }
+        onClick={() => {
+          // 回调放在 state updater 外执行（StrictMode 会双调 updater，内嵌会双发事件）
+          const next = !open;
+          if (next) onExpand?.();
+          onToggle?.(next ? "open" : "close");
+          setOpen(next);
+        }}
         className="flex min-h-11 w-full items-center gap-2 rounded-xl px-3 text-left text-sm font-medium text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         <ChevronRight
