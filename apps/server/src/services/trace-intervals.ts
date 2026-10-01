@@ -32,34 +32,34 @@ export interface TraceEvent {
   readonly type: string;
   readonly clientTs: number;
   /** 服务端接收时间（UTC ISO）——仅 lectureUpdatedAt 缺省时的版本判定回退用 */
-  readonly serverTs?: string;
+  readonly serverTs?: string | undefined;
   /** 阅读会话标识（lecture_visible/hidden payload；其他事件缺省） */
-  readonly viewId?: string;
-  readonly questionId?: string;
+  readonly viewId?: string | undefined;
+  readonly questionId?: string | undefined;
   /** host=result 的 directive_interact 携带的 attemptId */
-  readonly attemptId?: string;
+  readonly attemptId?: string | undefined;
   /** ink_stroke_batch 的本批笔画数（新指标暂不消费，投影保留） */
-  readonly strokes?: number;
+  readonly strokes?: number | undefined;
   /** lecture_section_focus / lecture_toc_jump 的目录序号（0 起） */
-  readonly headingIndex?: number;
+  readonly headingIndex?: number | undefined;
   /** directive_interact 的判别字段 */
-  readonly host?: string;
-  readonly name?: string;
-  readonly index?: number;
-  readonly action?: string;
+  readonly host?: string | undefined;
+  readonly name?: string | undefined;
+  readonly index?: number | undefined;
+  readonly action?: string | undefined;
   /** steps reveal 的容器内步序号（1 起） */
-  readonly step?: number;
+  readonly step?: number | undefined;
   /** 讲义版本定位（ISO） */
-  readonly lectureUpdatedAt?: string;
+  readonly lectureUpdatedAt?: string | undefined;
   /** ink_fullscreen */
-  readonly on?: boolean;
+  readonly on?: boolean | undefined;
   /** ink_edit_batch 四计数 */
-  readonly erase?: number;
-  readonly undo?: number;
-  readonly redo?: number;
-  readonly clear?: number;
+  readonly erase?: number | undefined;
+  readonly undo?: number | undefined;
+  readonly redo?: number | undefined;
+  readonly clear?: number | undefined;
   /** lecture_expand 存量事件的指令名（payload.directive） */
-  readonly directive?: string;
+  readonly directive?: string | undefined;
 }
 
 /**
@@ -88,9 +88,7 @@ const EVENT_TYPE_ORDER: Readonly<Record<string, number>> = {
 };
 
 /** 排序：clientTs 升序 → type 优先级 → type 字典序（整体确定） */
-export function orderTraceEvents(
-  events: readonly TraceEvent[],
-): TraceEvent[] {
+export function orderTraceEvents(events: readonly TraceEvent[]): TraceEvent[] {
   return [...events].sort(
     (a, b) =>
       a.clientTs - b.clientTs ||
@@ -102,9 +100,7 @@ export function orderTraceEvents(
 // ---------- 区间集合运算 ----------
 
 /** 求并集（排序后线性合并相邻/重叠区间；乱序输入稳定） */
-export function mergeIntervals(
-  intervals: readonly Interval[],
-): Interval[] {
+export function mergeIntervals(intervals: readonly Interval[]): Interval[] {
   const sorted = [...intervals]
     .filter((i) => i.end > i.start) // 负/零时长直接丢弃（clamp 0）
     .sort((a, b) => a.start - b.start || a.end - b.end);
@@ -178,6 +174,71 @@ export function msToSec(ms: number): number {
   return Math.round(ms / 1000);
 }
 
+// ---------- events 表行 → TraceEvent ----------
+
+/** traceEventsFromRows 接受的最小行投影（events 表 SELECT 子集可直接传入） */
+export interface TraceEventRow {
+  readonly type: string;
+  readonly clientTs: number;
+  readonly serverTs: string;
+  readonly payloadJson: string;
+}
+
+function strOf(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+function numOf(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
+}
+function boolOf(value: unknown): boolean | undefined {
+  return typeof value === "boolean" ? value : undefined;
+}
+
+/**
+ * events 表行批量映射为 TraceEvent（payloadJson 摊平；未知键忽略）。
+ * 解析失败的行按 {type, clientTs, serverTs} 兜底（区间族事件只需要这三列）。
+ */
+export function traceEventsFromRows(
+  rows: readonly TraceEventRow[],
+): TraceEvent[] {
+  const out: TraceEvent[] = [];
+  for (const row of rows) {
+    let payload: Record<string, unknown> = {};
+    try {
+      const parsed: unknown = JSON.parse(row.payloadJson);
+      if (parsed !== null && typeof parsed === "object") {
+        payload = parsed as Record<string, unknown>;
+      }
+    } catch {
+      // 兜底：不带 payload 字段
+    }
+    out.push({
+      type: row.type,
+      clientTs: row.clientTs,
+      serverTs: row.serverTs,
+      viewId: strOf(payload.viewId),
+      questionId: strOf(payload.questionId),
+      attemptId: strOf(payload.attemptId),
+      headingIndex: numOf(payload.headingIndex),
+      host: strOf(payload.host),
+      name: strOf(payload.name) ?? strOf(payload.directive),
+      index: numOf(payload.index),
+      action: strOf(payload.action),
+      step: numOf(payload.step),
+      lectureUpdatedAt: strOf(payload.lectureUpdatedAt),
+      on: boolOf(payload.on),
+      erase: numOf(payload.erase),
+      undo: numOf(payload.undo),
+      redo: numOf(payload.redo),
+      clear: numOf(payload.clear),
+      strokes: numOf(payload.strokes),
+    });
+  }
+  return out;
+}
+
 // ---------- 事件 → 区间（配对与 gap-cap） ----------
 
 /** 未闭合开区间的硬上限（Caliper gap-cap；方案 §4.4.2 前提 4：30 分钟） */
@@ -226,21 +287,13 @@ export function buildLectureVisibleIntervals(
       if (start === undefined) continue; // 重复 hidden：忽略
       openByView.delete(e.viewId);
       if (e.clientTs > start) out.push({ start, end: e.clientTs });
-      continue;
     }
-    if (e.type === "idle_start") {
-      // 空闲开始即阅读结束：把所有未闭合会话的收尾候选压到该时刻
-      for (const [viewId, start] of openByView) {
-        const capped = capOpenInterval(ordered, start, e.clientTs);
-        if (capped !== null) {
-          out.push(capped);
-          openByView.delete(viewId);
-        }
-      }
-    }
+    // idle 不在循环内截断：中途 idle（idle_end 后有后续事件）只是暂停，
+    // 会话继续（停留由调用方减 idle 区间）；只有「尾随 idle」才截断未闭合
+    // 会话（见 capOpenInterval）
   }
   for (const [viewId, start] of openByView) {
-    const capped = capOpenInterval(ordered, start, null);
+    const capped = capOpenInterval(ordered, start);
     if (capped !== null) out.push(capped);
     openByView.delete(viewId);
   }
@@ -248,19 +301,23 @@ export function buildLectureVisibleIntervals(
 }
 
 /**
- * 未闭合开区间的收尾（§5.0-D15）：min(证据终点, 下一会话起点, idleAt,
- * start + 硬上限)。证据终点 = 下一会话（任意 viewId 的 lecture_visible）前的
- * 最后一个事件时刻；**无任何证据事件时按 Caliper TimedOut 记硬上限**——
- * 实践中讲义页加载即有 section_focus(0)，孤 visible 几乎不出现；宁可该极端
- * 场景高估 30 分钟，也不把「hidden 双兜底都失败」的真实长阅读记成 0。
+ * 未闭合开区间的收尾（§5.0-D15）：min(证据终点, 下一会话起点, 尾随 idle_start,
+ * start + 硬上限)。
+ * - 证据终点 = 下一会话（任意 viewId 的 lecture_visible）前的最后一个事件
+ *   时刻——页面被杀时只计到有事件证明存活的那一刻（GA4「最后一页零时长」
+ *   的防反例：长会话不被截断到第二个事件）；
+ * - 尾随 idle：start 之后首个 idle_start 且其后**再无任何非 idle 事件**——
+ *   用户在讲义页上空闲后再无动作，idle_start 即阅读结束（§4.4.1 附带收益）；
+ *   中途 idle（idle_end 后有阅读事件）不截断，会话继续；
+ * - 无任何证据事件时按 Caliper TimedOut 记硬上限——实践中讲义页加载即有
+ *   section_focus(0)，孤 visible 几乎不出现；宁可该极端场景高估 30 分钟，
+ *   也不把「hidden 双兜底都失败」的真实长阅读记成 0。
  */
 function capOpenInterval(
   ordered: readonly TraceEvent[],
   start: number,
-  idleAt: number | null,
 ): Interval | null {
   const candidates: number[] = [start + TRACE_GAP_CAP_MS];
-  if (idleAt !== null) candidates.push(idleAt);
   // 下一会话起点：start 之后最早的 lecture_visible（任何 viewId）
   for (const e of ordered) {
     if (e.clientTs <= start) continue;
@@ -272,6 +329,24 @@ function capOpenInterval(
   // 证据终点：下一会话（或流末）之前的最后一个事件时刻
   const evidence = orderedTraceBoundary(ordered, start);
   if (evidence !== null && evidence > start) candidates.push(evidence);
+  // 尾随 idle：流末连续的 idle 事件段里最早的 idle_start（其后再无阅读/
+  // 环境事件）——从流尾倒扫
+  let trailingIdleStart: number | null = null;
+  let i = ordered.length - 1;
+  while (
+    i >= 0 &&
+    (ordered[i]?.type === "idle_start" || ordered[i]?.type === "idle_end")
+  ) {
+    i -= 1;
+  }
+  for (let j = i + 1; j < ordered.length; j += 1) {
+    const e = ordered[j];
+    if (e?.type === "idle_start" && e.clientTs > start) {
+      trailingIdleStart = e.clientTs;
+      break;
+    }
+  }
+  if (trailingIdleStart !== null) candidates.push(trailingIdleStart);
   const end = Math.min(...candidates);
   return end > start ? { start, end } : null;
 }
@@ -280,9 +355,7 @@ function capOpenInterval(
  * idle 区间（idle_start→idle_end）：重复 idle_start 忽略、孤立 idle_end 忽略；
  * 未闭合 idle_start 收尾 = 流内最后事件（证据终点）与硬上限的较小者。
  */
-export function buildIdleIntervals(
-  events: readonly TraceEvent[],
-): Interval[] {
+export function buildIdleIntervals(events: readonly TraceEvent[]): Interval[] {
   const ordered = orderTraceEvents(events);
   const out: Interval[] = [];
   let open: number | null = null;
@@ -299,10 +372,7 @@ export function buildIdleIntervals(
   }
   if (open !== null && ordered.length > 0) {
     const last = ordered[ordered.length - 1] as TraceEvent;
-    const end = Math.min(
-      last.clientTs,
-      open + TRACE_GAP_CAP_MS,
-    );
+    const end = Math.min(last.clientTs, open + TRACE_GAP_CAP_MS);
     if (end > open) out.push({ start: open, end });
   }
   return out;

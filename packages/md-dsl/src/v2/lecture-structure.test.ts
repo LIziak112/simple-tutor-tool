@@ -87,16 +87,18 @@ describe("analyzeLectureStructure", () => {
     ]);
   });
 
-  it("每节字数：普通文字计满、公式段打折、标题行不计", () => {
+  it("每节字数分量：普通文字与数学段分开返回（折扣系数归服务层）", () => {
     const [s0, s1, s2] = structure.sections;
-    // 第 0 节正文：中文文字（收入元与支出元。+ 折叠内容甲。）+ 行内公式 500/300 + 公式块 a+b=c
-    expect(s0?.charCount).toBeGreaterThan(10);
-    expect(s1?.charCount).toBeGreaterThan(0);
-    expect(s2?.charCount).toBeGreaterThan(0);
-    // 公式占比高的节 charCount 低于其原文非空白字符数（打折生效的粗校验）
+    // 第 0 节正文：中文文字 + 行内公式 500/300 + 公式块 a+b=c（数学段单列）
+    expect(s0?.textChars).toBeGreaterThan(5);
+    expect(s1?.textChars).toBeGreaterThan(0);
+    expect(s2?.textChars).toBeGreaterThan(0);
+    // 数学段：行内 500+300（6 字）+ 块 a+b=c（5 字，空格不计）= 11
+    expect(s0?.mathChars).toBe(11);
+    // 文字 + 数学 = 原文非空白字符数 − 数学定界符（两条 $$ 围栏行 4 字 + 行内 $ 定界 4 字）
     const section0Raw = MD.split("## 一、正数与负数")[1]?.split("### 1.1")[0] ?? "";
     const rawNonWs = section0Raw.replace(/\s/g, "").length;
-    expect(s0?.charCount).toBeLessThanOrEqual(rawNonWs);
+    expect((s0?.textChars ?? 0) + (s0?.mathChars ?? 0)).toBe(rawNonWs - 8);
   });
 
   it("无标题/无指令的讲义：空结构不抛错", () => {
@@ -111,7 +113,13 @@ describe("analyzeLectureStructure", () => {
       ["# 第1讲", "", ":::fold", "开头折叠", ":::", "", "## 第一节", "", "正文"].join("\n"),
     );
     expect(s.folds).toEqual([
-      { docIndex: 1, name: "fold", hostHeadingIndex: 0, innerCharCount: expect.any(Number) },
+      {
+        docIndex: 1,
+        name: "fold",
+        hostHeadingIndex: 0,
+        innerTextChars: expect.any(Number),
+        innerMathChars: expect.any(Number),
+      },
     ]);
   });
 });

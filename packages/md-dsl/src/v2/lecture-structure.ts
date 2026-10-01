@@ -27,8 +27,10 @@ export interface LectureSectionStructure {
   readonly level: 2 | 3;
   /** 标题纯文本（拼接 text/inlineMath/inlineCode，与 lectureHeadingSchema 同构） */
   readonly text: string;
-  /** 该节正文的加权字数（公式段打折后的阅读量估计输入，见 weightedCharCounts） */
-  readonly charCount: number;
+  /** 该节正文的普通文字字数（公式段折扣系数归服务层配置） */
+  readonly textChars: number;
+  /** 该节正文内数学段的字数（$$…$$ 块与 $…$ 行内；打折用） */
+  readonly mathChars: number;
 }
 
 /** 单个可折叠指令的结构信息（hint / solution / fold，含 example 内嵌） */
@@ -39,8 +41,10 @@ export interface LectureFoldStructure {
   readonly name: string;
   /** 所属节（headingIndex；标题前出现的收敛到 0） */
   readonly hostHeadingIndex: number;
-  /** 指令内部正文的加权字数 */
-  readonly innerCharCount: number;
+  /** 指令内部正文的普通文字字数 */
+  readonly innerTextChars: number;
+  /** 指令内部数学段的字数 */
+  readonly innerMathChars: number;
 }
 
 /** 单个 steps 容器的结构信息 */
@@ -167,7 +171,8 @@ export function analyzeLectureStructure(markdown: string): LectureStructure {
               headingIndex: sections.length,
               level: child.depth,
               text,
-              charCount: 0, // 内容范围要等下一节的起始行确定后回填
+              textChars: 0, // 内容范围要等下一节的起始行确定后回填
+              mathChars: 0,
             });
           }
         }
@@ -187,7 +192,8 @@ export function analyzeLectureStructure(markdown: string): LectureStructure {
             docIndex,
             name,
             hostHeadingIndex,
-            innerCharCount: inner.textChars + inner.mathChars,
+            innerTextChars: inner.textChars,
+            innerMathChars: inner.mathChars,
           });
         } else if (name === "steps") {
           let totalSteps = 0;
@@ -217,8 +223,10 @@ export function analyzeLectureStructure(markdown: string): LectureStructure {
         ? (sectionStartLines[index + 1] ?? lines.length) - 1
         : lines.length;
     const counts = weightedCharCounts(sliceLines(lines, startLine + 1, endLine));
-    (section as { charCount: number }).charCount =
-      counts.textChars + counts.mathChars;
+    (section as { textChars: number; mathChars: number }).textChars =
+      counts.textChars;
+    (section as { textChars: number; mathChars: number }).mathChars =
+      counts.mathChars;
   }
   return { sections, folds, steps };
 }
