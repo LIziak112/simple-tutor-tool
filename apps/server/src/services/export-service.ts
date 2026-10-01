@@ -1325,9 +1325,9 @@ export function previewLearningPack(
   };
 }
 
-/** zip 构建结果（内存 Buffer；路由层直出） */
+/** zip 构建结果（内存字节；路由层直出——ArrayBuffer 底座满足 DOM BodyInit 类型） */
 export interface LearningPackZip {
-  readonly bytes: Uint8Array;
+  readonly bytes: Uint8Array<ArrayBuffer>;
   /** 下载文件名（learning-pack-<北京时间戳>.zip） */
   readonly filename: string;
 }
