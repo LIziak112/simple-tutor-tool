@@ -540,6 +540,11 @@ export function getLectureStructure(
  * T4.0a schema 里 idle/net 不带 lectureId（环境族无讲义语义），学生级 idle
  * 近似为讲义空闲：idle 的语义是「该生在任一队列实例域内无输入」，与「没在
  * 读讲义」一致（单设备使用是常态）。net 事件不参与讲义地图。
+ *
+ * 两个析取支都必须限定 studentId（口径「学生 × 讲义」）：同班多学生共读
+ * 同一讲义是常态，只按 lectureId 取会把别的学生的阅读聚进本人地图
+ * （跨学生污染回归见 analytics-service.test.ts）；存量 studentId 为 NULL
+ * 的旧讲义事件按 D8 读侧非空过滤，不进任何学生的地图。
  */
 export function loadLectureTraceEvents(
   db: Db,
@@ -556,7 +561,7 @@ export function loadLectureTraceEvents(
     .from(events)
     .where(
       or(
-        eq(events.lectureId, lectureId),
+        and(eq(events.lectureId, lectureId), eq(events.studentId, studentId)),
         and(
           eq(events.studentId, studentId),
           isNull(events.lectureId),
