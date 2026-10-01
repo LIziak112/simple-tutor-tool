@@ -633,5 +633,7 @@ export type AnalyticsLectureMapEntry = z.infer<
 export type AnalyticsStudentData = z.infer<typeof analyticsStudentDataSchema>;
 export type AnalyticsWrongAnswer = z.infer<typeof analyticsWrongAnswerSchema>;
 export type AnalyticsQuestionRow = z.infer<typeof analyticsQuestionRowSchema>;
-export type AnalyticsQuestionsData = z.infer<typeof analyticsQuestionsDataSchema>;
+export type AnalyticsQuestionsData = z.infer<
+  typeof analyticsQuestionsDataSchema
+>;
 export type AnalyticsErrorCode = z.infer<typeof analyticsErrorCodeSchema>;

@@ -47,7 +47,9 @@ describe("analyticsQuerySchema（D3/D5 查询参数）", () => {
     expect(analyticsQuerySchema.safeParse({ days: "0" }).success).toBe(false);
     expect(analyticsQuerySchema.safeParse({ days: "-7" }).success).toBe(false);
     expect(analyticsQuerySchema.safeParse({ days: "abc" }).success).toBe(false);
-    expect(analyticsQuerySchema.safeParse({ days: "9999" }).success).toBe(false);
+    expect(analyticsQuerySchema.safeParse({ days: "9999" }).success).toBe(
+      false,
+    );
     expect(analyticsQuerySchema.safeParse({ focusDays: "0" }).success).toBe(
       false,
     );
@@ -134,7 +136,11 @@ describe("周趋势桶（D5）", () => {
 describe("总览/画像/题目响应形态（完整 fixture）", () => {
   it("总览：矩阵 + 趋势 + 重点 + 离线 + 关键计数", () => {
     const data = analyticsOverviewDataSchema.parse({
-      range: { days: 30, from: "2026-09-01T04:00:00.000Z", to: "2026-10-01T04:00:00.000Z" },
+      range: {
+        days: 30,
+        from: "2026-09-01T04:00:00.000Z",
+        to: "2026-10-01T04:00:00.000Z",
+      },
       focusDays: 14,
       matrix: {
         students: [{ studentId: UUID, displayName: "小明", archived: false }],
@@ -239,7 +245,12 @@ describe("总览/画像/题目响应形态（完整 fixture）", () => {
           correctRate: 1 / 3,
         },
       ],
-      totals: { judgedCount: 3, correctCount: 1, pendingCount: 1, correctRate: 1 / 3 },
+      totals: {
+        judgedCount: 3,
+        correctCount: 1,
+        pendingCount: 1,
+        correctRate: 1 / 3,
+      },
       anomalies: [
         {
           attemptId: UUID,
@@ -333,7 +344,11 @@ describe("总览/画像/题目响应形态（完整 fixture）", () => {
 
   it("题目统计：错误答案分布含「未作答」（null）条目", () => {
     const data = analyticsQuestionsDataSchema.parse({
-      range: { days: 7, from: "2026-09-24T04:00:00.000Z", to: "2026-10-01T04:00:00.000Z" },
+      range: {
+        days: 7,
+        from: "2026-09-24T04:00:00.000Z",
+        to: "2026-10-01T04:00:00.000Z",
+      },
       questions: [
         {
           questionId: "数轴练习-2",
@@ -388,9 +403,9 @@ describe("讲义阅读地图镜像（T4.0b 输出形状）", () => {
 
 describe("错误码集合", () => {
   it("固定子集（STUDENT_NOT_FOUND 为域隔离 404 口径）", () => {
-    expect(
-      analyticsErrorCodeSchema.parse("STUDENT_NOT_FOUND"),
-    ).toBe("STUDENT_NOT_FOUND");
+    expect(analyticsErrorCodeSchema.parse("STUDENT_NOT_FOUND")).toBe(
+      "STUDENT_NOT_FOUND",
+    );
     expect(analyticsErrorCodeSchema.safeParse("NOT_FOUND").success).toBe(false);
   });
 });

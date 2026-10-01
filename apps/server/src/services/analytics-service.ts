@@ -22,7 +22,10 @@ import type {
   AnalyticsWrongAnswer,
   Question,
 } from "@tutor/contract";
-import { ANALYTICS_WRONG_ANSWER_TOP_N } from "@tutor/contract";
+import {
+  ANALYTICS_WRONG_ANSWER_TOP_N,
+  analyticsQuerySchema,
+} from "@tutor/contract";
 import { and, asc, eq, inArray, isNotNull, isNull, ne } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
@@ -97,16 +100,14 @@ function beijingWeekStartMs(ms: number): number {
   return (beijingDays - dayOfWeek) * DAY_MS - BEIJING_OFFSET_MS;
 }
 
-/** submittedAt（UTC ISO）→ 该作答所在自然周的周一北京日期键（YYYY-MM-DD） */
-function beijingWeekKeyOf(iso: string): string {
-  return new Date(beijingWeekStartMs(Date.parse(iso)))
-    .toISOString()
-    .slice(0, 10);
+/** 周一起点毫秒 → 周一北京日期键（YYYY-MM-DD；先平移回北京时区再切日期） */
+function weekKeyOfMs(weekStartMs: number): string {
+  return new Date(weekStartMs + BEIJING_OFFSET_MS).toISOString().slice(0, 10);
 }
 
-/** 周一起点毫秒 → 周一北京日期键（与 beijingWeekKeyOf 同一格式） */
-function weekKeyOfMs(ms: number): string {
-  return new Date(ms).toISOString().slice(0, 10);
+/** submittedAt（UTC ISO）→ 该作答所在自然周的周一北京日期键（YYYY-MM-DD） */
+function beijingWeekKeyOf(iso: string): string {
+  return weekKeyOfMs(beijingWeekStartMs(Date.parse(iso)));
 }
 
 /** 数值中位数（空数组为 null；偶数个取中间两数平均） */
@@ -262,12 +263,14 @@ function buildContext(
             .select(studentSelect)
             .from(students)
             .where(eq(students.teacherId, teacherId))
+            .orderBy(asc(students.displayName), asc(students.id))
             .all()
         : db
             .select(studentSelect)
             .from(courseStudents)
             .innerJoin(students, eq(courseStudents.studentId, students.id))
             .where(eq(courseStudents.courseId, query.courseId))
+            .orderBy(asc(students.displayName), asc(students.id))
             .all()
       ).map((row) => ({
         studentId: row.id,
@@ -1389,7 +1392,13 @@ export function getAnalyticsOverview(
   query: AnalyticsQuery,
   now: Date | string = new Date(),
 ): AnalyticsOverviewData {
-  const ctx = buildContext(db, teacherId, query, now);
+  // 查询归一化（路由层已解析过，幂等；直接调 service 的测试与后续 MCP 复用同默认值）
+  const ctx = buildContext(
+    db,
+    teacherId,
+    analyticsQuerySchema.parse(query),
+    now,
+  );
   const matrix = buildMatrix(db, ctx);
   const trend = buildTrend(ctx, ctx.qualifying);
   const focus = buildFocusCard(db, ctx);
@@ -1450,6 +1459,7 @@ export function getAnalyticsStudent(
   query: AnalyticsQuery,
   now: Date | string = new Date(),
 ): AnalyticsStudentData {
+  query = analyticsQuerySchema.parse(query);
   const row = db
     .select({
       id: students.id,
@@ -1507,6 +1517,11 @@ export function getAnalyticsQuestions(
   query: AnalyticsQuery,
   now: Date | string = new Date(),
 ): AnalyticsQuestionsData {
-  const ctx = buildContext(db, teacherId, query, now);
+  const ctx = buildContext(
+    db,
+    teacherId,
+    analyticsQuerySchema.parse(query),
+    now,
+  );
   return { range: ctx.range, questions: buildQuestionRows(ctx) };
 }
