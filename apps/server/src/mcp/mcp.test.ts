@@ -412,6 +412,21 @@ describe("MCP 工具（SDK 客户端逐个断言，T4.6 D23）", () => {
     expect(rows.length).toBe(1);
     expect(rows[0]?.teacherId).toBe(TEST_TEACHER_ID); // 落到 token 教师域
     await client.close();
+
+    // 乙 confirm 同一文档 → 乙域内独立成行（域隔离写入，D13 口径）
+    const clientB = await connectClient(env, TOKEN_B);
+    await clientB.callTool({
+      name: "import_markdown",
+      arguments: { markdown: CLEAN_MD, confirm: true },
+    });
+    const rowsB = env.db
+      .select()
+      .from(units)
+      .where(eq(units.id, "mcp-import-unit"))
+      .all();
+    expect(rowsB.length).toBe(2); // 甲乙各一行（复合主键 (teacherId, id)）
+    expect(rowsB.map((r) => r.teacherId)).toContain(TEACHER_B_ID);
+    await clientB.close();
   });
 
   it("list_students 只见本域：甲见种子 3 名学生；乙只见乙的学生", async () => {
@@ -545,6 +560,16 @@ describe("MCP 工具（SDK 客户端逐个断言，T4.6 D23）", () => {
     expect(pack.attempts.summaries.some((s) => s.attemptNo >= 1)).toBe(true); // 历次口径（D15）
     expect(pack.traces.questions.length).toBeGreaterThan(0); // 痕迹在
     await client.close();
+
+    // 乙取甲学生的数据包 → 结构化未找到（域隔离，404 不暴露存在性）
+    const clientB = await connectClient(env, TOKEN_B);
+    const packB = await clientB.callTool({
+      name: "get_student_learning_pack",
+      arguments: { studentId: env.seed.students.s1.id, days: "all" },
+    });
+    expect(packB.isError).toBe(true);
+    expect(JSON.parse(textOf(packB)).error).toBe("STUDENT_NOT_FOUND");
+    await clientB.close();
   });
 
   it("get_question_stats：返回统计结构（种子数据下题目行非空）", async () => {
