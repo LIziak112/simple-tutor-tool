@@ -356,6 +356,15 @@ describe("InsightsOverviewPage 完成矩阵（D2）", () => {
     );
   });
 
+  it("头部「导出给 AI」入口指向导出中心 /t/export（T4.4）", async () => {
+    mockedOverview.mockResolvedValue(makeOverview());
+    renderPage();
+    await screen.findByText("开学摸底练习");
+    expect(
+      screen.getByRole("link", { name: /导出给 AI/ }),
+    ).toHaveAttribute("href", "/t/export");
+  });
+
   it("课程筛选时待批队列链接携带 courseId", async () => {
     mockedOverview.mockResolvedValue(makeOverview());
     renderPage(`/t/insights?courseId=${COURSE_A}`);
