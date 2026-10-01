@@ -4,6 +4,7 @@ import {
   ArrowDown,
   ArrowUp,
   Check,
+  Ellipsis,
   FolderOpen,
   FolderPlus,
   Loader2,
@@ -21,6 +22,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import {
   DragHandle,
@@ -36,13 +44,14 @@ import {
 import { libraryFoldersKey } from "./library-queries";
 
 /**
- * 资源库左侧文件夹栏（D2 / T2A.2）：
+ * 资源库左侧文件夹栏（D2 / T2A.2；界面优化方案 A+C 后单行布局）：
  * - 「全部」与「未归类」为虚拟项（前端固定渲染，不可删改）；
- * - 文件夹行两行布局：第一行 = 拖拽把手 + 名称（名称占满剩余宽度，超长截断、
- *   title 悬停看全名）；第二行 = 重命名/上移/下移/删除，对齐名称起点且全部
- *   ≥44px 触控目标（§4-9 拖拽把手 + 按钮兜底）——单行会把名称挤到不可读；
+ * - 文件夹行单行布局：拖拽把手 + 名称（占满剩余宽度，超长截断、title 悬停看
+ *   全名）+ 计数 + 「⋯」更多操作菜单（重命名/上移/下移/删除）——操作收进菜单
+ *   消除图标噪音，行高减半；「⋯」hover / 行内键盘聚焦时浮现，触屏
+ *   （pointer-coarse）常显保证可发现；双击名称也可直接进入改名；
  * - 文件夹：新建、行内改名、删除（二次确认，显示将移动的讲义数/单元数）、
- *   拖拽排序（dnd-kit 把手 + 上移/下移按钮兜底，§4-9）；
+ *   拖拽排序（dnd-kit 把手 + 上移/下移菜单项兜底，§4-9）；
  * - 每项显示未删除讲义/单元计数。
  */
 
@@ -140,7 +149,7 @@ export function FolderSidebar({
   return (
     <aside
       aria-label="资源库文件夹"
-      className="w-full shrink-0 space-y-2 md:w-64"
+      className="w-full shrink-0 space-y-2 rounded-xl border bg-muted/30 p-2 md:sticky md:top-6 md:max-h-[calc(100vh-3rem)] md:w-64 md:overflow-y-auto"
     >
       <div className="flex items-center justify-between gap-2">
         <h2 className="text-sm font-semibold">文件夹</h2>
@@ -289,18 +298,20 @@ function FolderItemButton({
       aria-current={active ? "true" : undefined}
       className={`flex min-h-11 w-full items-center gap-2 rounded-lg px-3 text-sm font-medium outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 ${
         active
-          ? "bg-primary/10 text-primary"
+          ? "bg-primary/10 text-primary shadow-[inset_2px_0_0_var(--primary)]"
           : "text-muted-foreground hover:bg-muted hover:text-foreground"
       }`}
     >
       {icon}
       <span className="min-w-0 flex-1 truncate text-left">{label}</span>
-      <span className="shrink-0 text-xs text-muted-foreground">{count}</span>
+      <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+        {count}
+      </span>
     </button>
   );
 }
 
-/** 可排序的文件夹行（两行）：把手 + 名称/计数；重命名 / 上移 / 下移 / 删除 */
+/** 可排序的文件夹行（单行）：把手 + 名称/计数 + 「⋯」更多操作菜单 */
 function SortableFolderRow({
   folder,
   active,
@@ -328,12 +339,18 @@ function SortableFolderRow({
   const [draft, setDraft] = useState(folder.name);
   const count = folder.lectureCount + folder.unitCount;
 
+  const startRename = (): void => {
+    setDraft(folder.name);
+    clearRenameError();
+    setRenaming(true);
+  };
+
   return (
     <SortableItem id={folder.id}>
       {({ rowProps, handleListeners }) => (
-        <li {...rowProps} className="flex flex-col gap-0.5">
+        <li {...rowProps} className="group/item flex flex-col gap-0.5">
           {renaming ? (
-            /* 改名占整行（改名期间不渲染把手与操作行） */
+            /* 改名占整行（改名期间不渲染把手与操作入口） */
             <form
               className="flex min-w-0 flex-wrap items-center gap-1"
               onSubmit={(e) => {
@@ -377,79 +394,78 @@ function SortableFolderRow({
               ) : null}
             </form>
           ) : (
-            <>
-              {/* 第一行：把手 + 名称（名称占满剩余宽度，超长截断、title 看全名） */}
-              <div className="flex items-center gap-1">
-                <DragHandle
-                  label={`拖拽调整文件夹「${folder.name}」的顺序`}
-                  listeners={handleListeners}
-                />
-                <button
+            /* 单行：把手 + 名称（计数在选中按钮内，点击目标更大）+ ⋯ 菜单 */
+            <div className="flex items-center gap-1">
+              <DragHandle
+                label={`拖拽调整文件夹「${folder.name}」的顺序`}
+                listeners={handleListeners}
+              />
+              <button
+                type="button"
+                onClick={() => onSelect(folder.id)}
+                onDoubleClick={startRename}
+                aria-current={active ? "true" : undefined}
+                title={folder.name}
+                className={`flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-lg px-2 text-sm font-medium outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 ${
+                  active
+                    ? "bg-primary/10 text-primary shadow-[inset_2px_0_0_var(--primary)]"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                }`}
+              >
+                <FolderOpen aria-hidden className="size-4 shrink-0" />
+                <span className="min-w-0 flex-1 truncate text-left">
+                  {folder.name}
+                </span>
+                <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+                  {count}
+                </span>
+              </button>
+              <DropdownMenu>
+                <DropdownMenuTrigger
                   type="button"
-                  onClick={() => onSelect(folder.id)}
-                  aria-current={active ? "true" : undefined}
-                  title={folder.name}
-                  className={`flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-lg px-2 text-sm font-medium outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 ${
-                    active
-                      ? "bg-primary/10 text-primary"
-                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                  }`}
+                  aria-label={`文件夹「${folder.name}」的更多操作`}
+                  className="size-11 shrink-0 opacity-0 transition-opacity group-hover/item:opacity-100 group-focus-within/item:opacity-100 pointer-coarse:opacity-100 data-[state=open]:opacity-100"
                 >
-                  <FolderOpen aria-hidden className="size-4 shrink-0" />
-                  <span className="min-w-0 flex-1 truncate text-left">
-                    {folder.name}
-                  </span>
-                  <span className="shrink-0 text-xs text-muted-foreground">
-                    {count}
-                  </span>
-                </button>
-              </div>
-              {/* 第二行：重命名 / 上移 / 下移 / 删除，与名称起点对齐（pl-12 = 把手 + 间距） */}
-              <div className="flex items-center gap-1 pl-12">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  className="size-11 shrink-0"
-                  aria-label={`重命名文件夹 ${folder.name}`}
-                  onClick={() => {
-                    setDraft(folder.name);
-                    clearRenameError();
-                    setRenaming(true);
-                  }}
-                >
-                  <PencilLine aria-hidden />
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  className="size-11 shrink-0"
-                  aria-label={`上移文件夹 ${folder.name}`}
-                  disabled={!canMoveUp}
-                  onClick={() => onMove(-1)}
-                >
-                  <ArrowUp aria-hidden />
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  className="size-11 shrink-0"
-                  aria-label={`下移文件夹 ${folder.name}`}
-                  disabled={!canMoveDown}
-                  onClick={() => onMove(1)}
-                >
-                  <ArrowDown aria-hidden />
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  className="size-11 shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                  aria-label={`删除文件夹 ${folder.name}`}
-                  onClick={onDelete}
-                >
-                  <Trash2 aria-hidden />
-                </Button>
-              </div>
-            </>
+                  <Ellipsis aria-hidden />
+                </DropdownMenuTrigger>
+                {/* 菜单可访问名由 radix 自动取触发器文案（aria-labelledby）：
+                    「文件夹「X」的更多操作」，比裸文件夹名更具辨识度 */}
+                <DropdownMenuContent>
+                  <DropdownMenuItem
+                    aria-label={`重命名文件夹 ${folder.name}`}
+                    onSelect={startRename}
+                  >
+                    <PencilLine aria-hidden />
+                    重命名
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    aria-label={`上移文件夹 ${folder.name}`}
+                    disabled={!canMoveUp}
+                    onSelect={() => onMove(-1)}
+                  >
+                    <ArrowUp aria-hidden />
+                    上移
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    aria-label={`下移文件夹 ${folder.name}`}
+                    disabled={!canMoveDown}
+                    onSelect={() => onMove(1)}
+                  >
+                    <ArrowDown aria-hidden />
+                    下移
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    variant="destructive"
+                    aria-label={`删除文件夹 ${folder.name}`}
+                    onSelect={onDelete}
+                  >
+                    <Trash2 aria-hidden />
+                    删除
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
           )}
         </li>
       )}
