@@ -21,10 +21,11 @@ import InsightsStudentPage from "./InsightsStudentPage";
  * FOUND 错误页）、考点/异常题/重做/离线口径、讲义阅读地图中文渲染（含挂机与
  * 行为推断标注）、AI 报告占位。
  *
- * ECharts 在 jsdom 无法渲染 canvas——mock 其静态绑定层 echarts-for-react/
- * lib/core（拦截确定、比 mock 动态 import 的 charts 模块可靠）：真实图表组件
- * 与 option 构造照常执行，桩把类目/序列数据落到 data-* 属性上供断言
- * （「断言容器与数据装配而非像素」，装配口径另由 chart-options.test 锁定）。
+ * ECharts 在 jsdom 无法渲染 canvas——mock echarts/core（自有 EChart 封装
+ * 直连 echarts/core）：init 桩返回 setOption/resize/dispose 实例，setOption
+ * 把 option 的类目/序列落到容器 data-* 属性上供断言
+ * （「断言容器与数据装配而非像素」，装配口径另由 chart-options.test 锁定）；
+ * 注册源模块（charts/components/renderers）一并置空桩，不拖入真实 echarts。
  */
 
 /** 桩可见的 option 形状（chart-options 构造结果的子集） */
@@ -34,31 +35,37 @@ interface StubOption {
   series?: { data?: unknown[] }[];
 }
 
-vi.mock("echarts-for-react/lib/core", () => ({
-  default: function EChartsCoreStub(props: {
-    option: StubOption;
-    "data-testid"?: string;
-  }) {
-    // 条形图的数据项是 { value, itemStyle }——统一抽成纯数值便于断言
-    const plainData = (series: { data?: unknown[] }): unknown[] =>
-      (series.data ?? []).map((item) =>
-        typeof item === "object" && item !== null && "value" in item
-          ? (item as { value: unknown }).value
-          : item,
-      );
-    return (
-      <div
-        data-testid={props["data-testid"]}
-        data-categories={JSON.stringify(
-          props.option.yAxis?.data ?? props.option.xAxis?.data,
-        )}
-        data-series={JSON.stringify(
-          props.option.series?.map((series) => plainData(series)),
-        )}
-      />
+vi.mock("echarts/core", () => {
+  // 条形图的数据项是 { value, itemStyle }——统一抽成纯数值便于断言
+  const plainData = (series: { data?: unknown[] }): unknown[] =>
+    (series.data ?? []).map((item) =>
+      typeof item === "object" && item !== null && "value" in item
+        ? (item as { value: unknown }).value
+        : item,
     );
-  },
+  // init 桩：setOption 把 option 的类目/序列写回容器 data-* 供断言
+  const init = vi.fn((el: HTMLElement) => ({
+    setOption: vi.fn((option: StubOption) => {
+      el.setAttribute(
+        "data-categories",
+        JSON.stringify(option.yAxis?.data ?? option.xAxis?.data),
+      );
+      el.setAttribute(
+        "data-series",
+        JSON.stringify(option.series?.map((series) => plainData(series))),
+      );
+    }),
+    resize: vi.fn(),
+    dispose: vi.fn(),
+  }));
+  return { use: vi.fn(), init };
+});
+vi.mock("echarts/charts", () => ({ LineChart: {}, BarChart: {} }));
+vi.mock("echarts/components", () => ({
+  GridComponent: {},
+  TooltipComponent: {},
 }));
+vi.mock("echarts/renderers", () => ({ CanvasRenderer: {} }));
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
@@ -376,7 +383,7 @@ describe("InsightsStudentPage 指标区", () => {
       screen.getByText(/正确率 50%（对 3 \/ 已判定 6 题）· 待批 2 题/),
     ).toBeInTheDocument();
 
-    // 图表数据装配（mock echarts 绑定层后走真实 option 构造）：
+    // 图表数据装配（mock echarts/core 后走真实 option 构造）：
     // 趋势两周 [66.7, null]（第二周无已判定题断线）；考点条形最薄弱（null）在上
     const trend = await screen.findByTestId("analytics-trend-chart");
     expect(trend).toHaveAttribute(
