@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@hono/node-server": "^2.1.1",
+    "@modelcontextprotocol/sdk": "^1.31.0",
     "@tutor/contract": "workspace:*",
     "@tutor/grading": "workspace:*",
     "@tutor/md-dsl": "workspace:*",

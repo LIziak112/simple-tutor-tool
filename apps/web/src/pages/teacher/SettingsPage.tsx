@@ -8,11 +8,14 @@ import {
   useTeacherMe,
 } from "@/features/auth/teacher-auth";
 import { BackupSection } from "@/features/teacher-backup/BackupSection";
+import { ApiTokenSection } from "@/features/teacher-settings/ApiTokenSection";
 import { formatCnTime } from "@/lib/time";
 
 /**
  * /t/settings 设置页（T1.9 账号与会话；T4.5 增「备份与恢复」区——
- * 下载完整备份 / 从备份恢复 / 最近快照列表，见 features/teacher-backup）。
+ * 下载完整备份 / 从备份恢复 / 最近快照列表，见 features/teacher-backup；
+ * T4.6 增「AI 连接（API Token）」区——查看 / 生成 / 重置（二次确认），
+ * 见 features/teacher-settings）。
  */
 export function SettingsPage() {
   const meQuery = useTeacherMe();
@@ -89,6 +92,9 @@ export function SettingsPage() {
 
       {/* T4.5：备份与恢复（下载 / 恢复上传 + 密码确认弹层 / 最近快照） */}
       <BackupSection />
+
+      {/* T4.6：AI 连接（API Token 查看 / 生成 / 重置，D22） */}
+      <ApiTokenSection />
     </section>
   );
 }

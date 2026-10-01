@@ -98,6 +98,8 @@ import {
   type StudentSummary,
   type StudentUnitLandingData,
   type StudentUpdateRequest,
+  type TeacherApiTokenData,
+  type TeacherApiTokenResetData,
   type TeacherAssignment,
   type TeacherAssignmentListData,
   type TeacherAttemptDetailData,
@@ -1690,6 +1692,25 @@ export async function downloadLearningPackApi(
  */
 export function fetchBackupSnapshots(): Promise<BackupSnapshotList> {
   return callApi(() => api.api.teacher.backup.snapshots.$get());
+}
+
+// ---------- API Token（T4.6，D22；MCP 鉴权凭证，设置页数据源） ----------
+
+/**
+ * 查看当前 API Token（D22：可随时查看，不做「只显示一次」）。
+ * 从未生成时 data.token=null（设置页提示可生成）。
+ */
+export function fetchApiToken(): Promise<TeacherApiTokenData> {
+  return callApi(() => api.api.teacher["api-token"].$get());
+}
+
+/**
+ * 生成 / 重置 API Token（同一动作：无则生成、有则覆盖列值）。
+ * 返回新 token；**旧 token 立即失效**——调用方（设置页）在重置前必须二次确认
+ * 并提示「已配置的客户端（如 Claude Desktop）需要更新 token」。
+ */
+export function resetApiToken(): Promise<TeacherApiTokenResetData> {
+  return callApi(() => api.api.teacher["api-token"].$post());
 }
 
 /**

@@ -22,10 +22,12 @@ import { createImportRoutes } from "./import";
 import { createLibraryRoutes } from "./library";
 import { createSharedRoutes } from "./shared";
 import { createTeacherAnalyticsRoutes } from "./teacher-analytics";
+import { createTeacherApiTokenRoutes } from "./teacher-api-token";
 import { createAssignmentTeacherRoutes } from "./teacher-assignments";
 import { createTeacherAttemptRoutes } from "./teacher-attempts";
 import { createTeacherBackupRoutes } from "./teacher-backup";
 import { createTeacherExportRoutes } from "./teacher-export";
+import { createTeacherReportRoutes } from "./teacher-reports";
 import { createStudentTeacherRoutes } from "./teacher-students";
 
 /**
@@ -68,6 +70,10 @@ import { createStudentTeacherRoutes } from "./teacher-students";
  * - T4.5（业务在 backup-service）：GET /backup/snapshots（快照列表）、
  *   GET /backup/download（完整备份 zip 流式直出）、POST /backup/restore
  *   （multipart zip + 登录密码，D21；整库操作无域隔离，见契约 backup-api.ts）。
+ * - T4.6（业务在 api-token-service）：GET/POST /api-token（D22 查看 / 生成重置，
+ *   重置即覆盖列值、旧 token 立即失效）。
+ * - T4.6（业务在 report-service）：GET /students/:id/reports（D24 倒序列表）、
+ *   DELETE /reports/:id（域隔离 404；画像页 UI 在 T4.7 接入）。
  *
  * 返回类型不显式标注：链式注册把路由签名累积进推断类型，
  * 挂载后 AppType 才能带上这些路由（前端 hc 端到端类型的前提）。
@@ -151,5 +157,9 @@ export function createTeacherRoutes(
         "/",
         createTeacherBackupRoutes(db, dataDir, dbHandle ?? staticDbHandle(db)),
       )
+      // T4.6（D22）：API Token 查看 / 生成重置（设置页数据源；MCP 鉴权凭证）
+      .route("/", createTeacherApiTokenRoutes(db))
+      // T4.6（D24）：学情报告列表 / 删除（save_report 的教师端出口；画像页 UI 在 T4.7）
+      .route("/", createTeacherReportRoutes(db))
   );
 }
