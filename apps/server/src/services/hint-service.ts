@@ -221,8 +221,9 @@ export function openHint(
       .run();
   }
 
-  // 服务端直记 hint_open（每次打开都记；payload 只含 index，不含提示内容）
-  recordHintOpenEvent(db, attemptId, questionId, index);
+  // 服务端直记 hint_open（每次打开都记；payload 只含 index，不含提示内容；
+  // studentId 取 attempt 行——T4.0a D8，会话学生与 attempt 归属一致）
+  recordHintOpenEvent(db, attempt.studentId, attemptId, questionId, index);
 
   return {
     questionId,

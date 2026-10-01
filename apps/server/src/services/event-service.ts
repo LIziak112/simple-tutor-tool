@@ -15,7 +15,8 @@ import { requireUsableAttempt } from "./attempt-service";
  * 路由只做「鉴权 → 校验 → 调 service → 包装响应」，本模块承载：
  *
  * - appendAttemptEvents：本人 attempt 的批量事件追加（≤200 由契约拦截）；
- * - appendLectureEvents：讲义展开事件（lecture_expand，无 attempt 上下文）追加；
+ * - appendLectureEvents：讲义域事件批量追加（T4.0a 起为事件组：
+ *   lecture_expand 旧事件 + 环境/位置/交互族新事件，无 attempt 上下文）；
  * - recordHintOpenEvent：hint_open 事件服务端直记（T2.11 分步提示接口内部调用）；
  * - attemptTimeline：交卷计算用——按 clientTs 升序取该 attempt 的全部事件
  *   投影（type/clientTs/questionId），供 active-time 纯函数消费。
@@ -26,7 +27,10 @@ import { requireUsableAttempt } from "./attempt-service";
  *   attempt（draft/submitted 均收），入库不影响已计算的 activeSec（submit 是
  *   计算截止事件，迟到事件在 computePerQuestionActiveSec 里天然被忽略）；
  * - **追加写**：本服务只 INSERT，永不 UPDATE/DELETE（events 表语义）；
- * - **泄露红线**：事件 payload 只存元信息（契约层保证），响应只回 accepted 计数。
+ * - **泄露红线**：事件 payload 只存元信息（契约层保证），响应只回 accepted 计数；
+ * - **归属列（T4.0a D8）**：studentId 恒从会话写入（前端传的无效——契约层
+ *   不收该字段，多余键被 Zod 剥离）、lectureId 从 payload 顶层提取（questionIdOf
+ *   同款模式）；既有 11 种事件与新事件一律携带（net/idle 无讲义语义除外）。
  */
 
 /** 事件行 → { events: [...] }（逐条校验后的合法输入）批量插入，返回落库条数 */
@@ -54,7 +58,9 @@ function insertEvents(
  *   404 NOT_FOUND（前端事件队列据此按终态停发，不再无限重试）；
  * - draft / submitted / graded 均接收（宽松口径，见文件头）；
  * - questionId 不做归属校验：事件是学生自己的元数据，乱 id 只影响其本人统计，
- *   且草稿期被软删题的迟到事件仍应可落库（对应作答历史的一部分）。
+ *   且草稿期被软删题的迟到事件仍应可落库（对应作答历史的一部分）；
+ * - studentId 从**会话**写入（T4.0a D8：前端传的无效——契约层不收该字段，
+ *   多余键被 Zod 剥离，防伪造）。
  */
 export function appendAttemptEvents(
   db: Db,
@@ -65,34 +71,43 @@ export function appendAttemptEvents(
   requireUsableAttempt(db, studentId, attemptId);
   return insertEvents(
     db,
-    batch.map((event) => attemptEventRow(event, attemptId)),
+    batch.map((event) => attemptEventRow(event, attemptId, studentId)),
   );
 }
 
 /**
- * 批量追加无 attempt 上下文事件（POST /api/student/events，目前只有 lecture_expand）：
- * 讲义不存在 → 404 LECTURE_NOT_FOUND（与 GET 讲义同口径）。
- * events 表该类行 attemptId/questionId 均为 NULL，归属在 payloadJson。
- * 注意：events 表按 §5.2 无学生列，讲义事件暂无学生归属（见任务报告待决问题）。
+ * 批量追加无 attempt 上下文事件（POST /api/student/events）：
+ * T4.0a 起接收讲义域事件组（lecture_expand 旧事件 + 环境/位置/交互族新事件）。
+ * 讲义可见性校验对齐学生端 GET 讲义的现状口径（存在 + 未软删，§5.0-B10），
+ * 只对 **payload 带 lectureId 的事件** 校验（net/idle 等环境族事件无讲义语义，
+ * 不应因讲义不可见而被拒）。studentId 从会话写入（同 appendAttemptEvents）。
  */
 export function appendLectureEvents(
   db: Db,
-  _studentId: string,
+  studentId: string,
   batch: readonly LectureEvent[],
 ): LearningEventBatchData {
   // 讲义可见性校验（一对一场景学生可见全部讲义，T2.3 口径；这里只验存在——
   // T2A.1 起讲义软删，已删讲义按不存在处理，D3 窗口期过滤）
+  const lectureIds = new Set<string>();
   for (const event of batch) {
+    const lectureId = lectureIdOf(event);
+    if (lectureId !== null) lectureIds.add(lectureId);
+  }
+  for (const lectureId of lectureIds) {
     const row = db
       .select({ id: lectures.id })
       .from(lectures)
-      .where(and(eq(lectures.id, event.lectureId), isNull(lectures.deletedAt)))
+      .where(and(eq(lectures.id, lectureId), isNull(lectures.deletedAt)))
       .get();
     if (row === undefined) {
       throw new HttpError(404, "LECTURE_NOT_FOUND", "讲义不存在");
     }
   }
-  return insertEvents(db, batch.map(lectureEventRow));
+  return insertEvents(
+    db,
+    batch.map((event) => lectureEventRow(event, studentId)),
+  );
 }
 
 /**
@@ -100,9 +115,13 @@ export function appendLectureEvents(
  * 避免与解锁响应竞态、防绕过：只要提示被下发就必有事件）。
  * payload 只含元信息（type/clientTs/questionId/index），不含提示内容（泄露红线）；
  * 每次打开都记一条（含同条重复请求——回看也是一次 hint_open 行为痕迹）。
+ * T4.0a（§5.0-B7）：studentId 由调用方（hint-service）从 attempt 行取——
+ * 注意本路径 clientTs 用服务端时钟，与其他前端队列事件不同源（§2.6-3），
+ * 任何区间运算不得与之混排。
  */
 export function recordHintOpenEvent(
   db: Db,
+  studentId: string,
   attemptId: string,
   questionId: string,
   index: number,
@@ -112,7 +131,9 @@ export function recordHintOpenEvent(
     {
       id: "",
       attemptId,
+      studentId,
       questionId,
+      lectureId: null,
       type: "hint_open",
       payloadJson: JSON.stringify({
         type: "hint_open",
@@ -126,12 +147,22 @@ export function recordHintOpenEvent(
   ]);
 }
 
-/** 契约事件 → events 行（attempt 上下文：questionId 按事件语义提取） */
-function attemptEventRow(event: AttemptEvent, attemptId: string): NewEventRow {
+/**
+ * 契约事件 → events 行（attempt 上下文：questionId 按事件语义提取；
+ * studentId 恒写会话学生，lectureId 由 payload 顶层提取——attempt 域事件
+ * 目前均无讲义语义，保持 NULL，与 lectureEventRow 走同一提取模式）
+ */
+function attemptEventRow(
+  event: AttemptEvent,
+  attemptId: string,
+  studentId: string,
+): NewEventRow {
   return {
     id: "", // insertEvents 统一生成
     attemptId,
+    studentId,
     questionId: questionIdOf(event),
+    lectureId: lectureIdOf(event),
     type: event.type,
     payloadJson: JSON.stringify(event),
     clientTs: event.clientTs,
@@ -139,12 +170,18 @@ function attemptEventRow(event: AttemptEvent, attemptId: string): NewEventRow {
   };
 }
 
-/** 契约事件 → events 行（讲义上下文：attemptId/questionId 均 NULL） */
-function lectureEventRow(event: LectureEvent): NewEventRow {
+/**
+ * 契约事件 → events 行（讲义上下文：attemptId/questionId 均 NULL；
+ * studentId 恒写会话学生、lectureId 从 payload 提取落列——「学生 × 讲义」
+ * 聚合走索引，不必逐行 JSON.parse，D8）
+ */
+function lectureEventRow(event: LectureEvent, studentId: string): NewEventRow {
   return {
     id: "",
     attemptId: null,
+    studentId,
     questionId: null,
+    lectureId: lectureIdOf(event),
     type: event.type,
     payloadJson: JSON.stringify(event),
     clientTs: event.clientTs,
@@ -157,6 +194,14 @@ function questionIdOf(event: AttemptEvent): string | null {
   const questionId = (event as { questionId?: unknown }).questionId;
   return typeof questionId === "string" && questionId.length > 0
     ? questionId
+    : null;
+}
+
+/** 带讲义语义的事件提取 lectureId（payload 顶层字段；net/idle 等无讲义语义 → NULL） */
+function lectureIdOf(event: AttemptEvent | LectureEvent): string | null {
+  const lectureId = (event as { lectureId?: unknown }).lectureId;
+  return typeof lectureId === "string" && lectureId.length > 0
+    ? lectureId
     : null;
 }
 
