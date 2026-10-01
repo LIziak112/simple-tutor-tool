@@ -25,7 +25,7 @@ import LibraryPage from "./LibraryPage";
  * - 删除确认弹层列出使用情况（课程名 + 作业名 + 作答数）；
  * - 批量移动（选目标文件夹后调 batchLibraryApi action=move）、批量删除、批量恢复；
  * - 页签 / 文件夹选中记忆（sessionStorage：离开再进入不丢状态，显式 ?tab= 优先）；
- * - 文件夹行改名与上移/下移兜底排序（两行布局回归）；
+ * - 文件夹行改名与上移/下移兜底排序（单行布局 + ⋯ 菜单回归，含边界禁用）；
  * - 三态基础（加载 / 空态）。
  * API 层 mock（真实接口行为由后端集成测试 library.test.ts 覆盖）。
  */
@@ -389,15 +389,25 @@ describe("资源库页面", () => {
     });
   });
 
-  // ---------- 文件夹行操作（两行布局回归） ----------
+  // ---------- 文件夹行操作（⋯ 菜单回归：单行布局，操作收进更多菜单） ----------
 
-  it("文件夹行内改名：输入新名保存 → renameLibraryFolderApi", async () => {
+  /** 打开指定文件夹行的「⋯」更多操作菜单（radix 触发器 pointerdown 即开） */
+  async function openFolderMenu(folderName: string) {
+    fireEvent.pointerDown(
+      await screen.findByRole("button", {
+        name: `文件夹「${folderName}」的更多操作`,
+      }),
+    );
+  }
+
+  it("文件夹行内改名：⋯ 菜单 → 重命名 → 输入新名保存 → renameLibraryFolderApi", async () => {
     mockDataLoaded();
     const mockedRename = vi.mocked(renameLibraryFolderApi);
     mockedRename.mockResolvedValue(FOLDERS.folders[0] as never);
     renderPage();
+    await openFolderMenu("有理数");
     fireEvent.click(
-      await screen.findByRole("button", { name: "重命名文件夹 有理数" }),
+      await screen.findByRole("menuitem", { name: "重命名文件夹 有理数" }),
     );
     fireEvent.change(await screen.findByLabelText("文件夹「有理数」的新名称"), {
       target: { value: "有理数运算" },
@@ -410,7 +420,25 @@ describe("资源库页面", () => {
     });
   });
 
-  it("上移按钮兜底排序：上移第二个文件夹 → reorderLibraryFoldersApi 收到新顺序", async () => {
+  it("双击文件夹名直接进入改名：输入新名保存 → renameLibraryFolderApi", async () => {
+    mockDataLoaded();
+    const mockedRename = vi.mocked(renameLibraryFolderApi);
+    mockedRename.mockResolvedValue(FOLDERS.folders[0] as never);
+    renderPage();
+    const nameText = await screen.findByText("有理数");
+    fireEvent.doubleClick(nameText);
+    fireEvent.change(await screen.findByLabelText("文件夹「有理数」的新名称"), {
+      target: { value: "有理数运算" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存文件夹名" }));
+    await waitFor(() => {
+      expect(mockedRename).toHaveBeenCalledWith(FOLDER_ID, {
+        name: "有理数运算",
+      });
+    });
+  });
+
+  it("上移菜单项兜底排序：上移第二个文件夹 → reorderLibraryFoldersApi 收到新顺序", async () => {
     const SECOND_FOLDER_ID = "33333333-3333-4333-8333-333333333333";
     mockedFolders.mockResolvedValue({
       folders: [
@@ -430,14 +458,61 @@ describe("资源库页面", () => {
     const mockedReorder = vi.mocked(reorderLibraryFoldersApi);
     mockedReorder.mockResolvedValue(null);
     renderPage();
+    await openFolderMenu("代数");
     fireEvent.click(
-      await screen.findByRole("button", { name: "上移文件夹 代数" }),
+      await screen.findByRole("menuitem", { name: "上移文件夹 代数" }),
     );
     await waitFor(() => {
       expect(mockedReorder).toHaveBeenCalledWith({
         ids: [SECOND_FOLDER_ID, FOLDER_ID],
       });
     });
+  });
+
+  it("菜单边界禁用：首个「上移」禁用、末个「下移」禁用，排序零调用", async () => {
+    const SECOND_FOLDER_ID = "33333333-3333-4333-8333-333333333333";
+    mockedFolders.mockResolvedValue({
+      folders: [
+        FOLDERS.folders[0],
+        {
+          id: SECOND_FOLDER_ID,
+          name: "代数",
+          order: 1,
+          lectureCount: 0,
+          unitCount: 0,
+          createdAt: "2026-09-01T00:00:00.000Z",
+        },
+      ],
+    } as never);
+    mockedLectures.mockResolvedValue({ lectures: [] } as never);
+    mockedUnits.mockResolvedValue({ units: [] } as never);
+    const mockedReorder = vi.mocked(reorderLibraryFoldersApi);
+    mockedReorder.mockResolvedValue(null);
+    renderPage();
+    // 首个文件夹：上移禁用（radix 禁用项标 data-disabled）、下移可用
+    await openFolderMenu("有理数");
+    expect(
+      await screen.findByRole("menuitem", { name: "上移文件夹 有理数" }),
+    ).toHaveAttribute("data-disabled");
+    expect(
+      screen.getByRole("menuitem", { name: "下移文件夹 有理数" }),
+    ).not.toHaveAttribute("data-disabled");
+    // Esc 关闭首个菜单（菜单开着时 radix 会把菜单外元素 aria-hidden，须先收起）
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("menuitem", { name: "上移文件夹 有理数" }),
+      ).toBeNull();
+    });
+    // 打开末个文件夹菜单：下移禁用、上移可用
+    await openFolderMenu("代数");
+    expect(
+      await screen.findByRole("menuitem", { name: "下移文件夹 代数" }),
+    ).toHaveAttribute("data-disabled");
+    expect(
+      screen.getByRole("menuitem", { name: "上移文件夹 代数" }),
+    ).not.toHaveAttribute("data-disabled");
+    expect(mockedReorder).not.toHaveBeenCalled();
   });
 
   it("长文件夹名：完整名称在 DOM 中，名称按钮带 title 悬停全名", async () => {
