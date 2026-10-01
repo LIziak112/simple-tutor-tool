@@ -12,12 +12,16 @@
  */
 import { createAtramentSurface } from "./atrament-adapter.ts";
 import { createExcalidrawSurface } from "./excalidraw-adapter.ts";
-import type { ToolAwareSurface } from "./surface.ts";
+import type { InkChangeReason, ToolAwareSurface } from "./surface.ts";
 import type { InkDoc, InkEngineKind, InkToolConfig } from "./types.ts";
 
 export type { InkHistoryEntry } from "./history.ts";
 export { InkStore } from "./history.ts";
-export type { InkSurface, ToolAwareSurface } from "./surface.ts";
+export type {
+  InkChangeReason,
+  InkSurface,
+  ToolAwareSurface,
+} from "./surface.ts";
 export * from "./types.ts";
 
 export interface InkEngineOptions {
@@ -42,8 +46,14 @@ export interface InkEngine {
   redo(): void;
   clear(): void;
   setTool(tool: InkToolConfig): void;
-  /** 每一笔结束（及撤销/重做/清空/load）触发；返回取消订阅函数 */
-  on(event: "change", cb: (doc: InkDoc) => void): () => void;
+  /**
+   * 每次状态变化触发（reason：stroke/erase/undo/redo/clear/load，§5.0-C14）；
+   * 返回取消订阅函数。老回调（只收 doc）仍可注册——reason 缺省语义见 surface.ts。
+   */
+  on(
+    event: "change",
+    cb: (doc: InkDoc, reason: InkChangeReason) => void,
+  ): () => void;
   /** 工具栏禁用态查询（附加能力） */
   canUndo(): boolean;
   canRedo(): boolean;

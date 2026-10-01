@@ -25,7 +25,7 @@ import type { ExcalidrawElement } from "@excalidraw/excalidraw/element/types";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import { createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import type { ToolAwareSurface } from "./surface.ts";
+import type { InkChangeReason, ToolAwareSurface } from "./surface.ts";
 import type { InkDoc, InkToolConfig } from "./types.ts";
 
 declare global {
@@ -67,27 +67,34 @@ export function createExcalidrawSurface(
   let applying = false;
 
   let updatedAt = 0;
-  const listeners = new Set<(doc: InkDoc) => void>();
+  const listeners = new Set<(doc: InkDoc, reason: InkChangeReason) => void>();
   /** 就绪前排队的命令（setTool/undo/redo/clear/load） */
   const queue: Array<() => void> = [];
 
-  function notify(): void {
+  function notify(reason: InkChangeReason): void {
     updatedAt = Date.now();
     const doc = surface.getDoc();
-    for (const cb of listeners) cb(doc);
+    for (const cb of listeners) cb(doc, reason);
   }
 
-  /** 场景真实变化（非自己 updateScene）：入撤销栈并通知 */
+  /**
+   * 场景真实变化（非自己 updateScene）：入撤销栈并通知。
+   * 变化原因分型（T4.0b，§5.0-C14）：元素减少视为橡皮（eraser 工具删除），
+   * 其余（新增笔画、选择工具的移动/缩放编辑）按 "stroke"——移动/编辑不是
+   * erase/undo/redo/clear 四类编辑计数，不进 inkEditCount。
+   */
   function pushSnapshot(next: readonly ExcalidrawElement[]): void {
     if (applying) {
       lastElements = next;
       return;
     }
     if (next !== lastElements) {
+      const reason: InkChangeReason =
+        next.length < lastElements.length ? "erase" : "stroke";
       undoStack.push({ elements: lastElements });
       redoStack.length = 0;
       lastElements = next;
-      notify();
+      notify(reason);
     }
   }
 
@@ -205,7 +212,7 @@ export function createExcalidrawSurface(
         api.updateScene({ elements: [...prev.elements] });
         applying = false;
         lastElements = prev.elements;
-        notify();
+        notify("undo");
       });
     },
 
@@ -218,7 +225,7 @@ export function createExcalidrawSurface(
         api.updateScene({ elements: [...next.elements] });
         applying = false;
         lastElements = next.elements;
-        notify();
+        notify("redo");
       });
     },
 
@@ -232,7 +239,7 @@ export function createExcalidrawSurface(
         api.updateScene({ elements: [] });
         applying = false;
         lastElements = [];
-        notify();
+        notify("clear");
       });
     },
 
@@ -281,13 +288,14 @@ export function createExcalidrawSurface(
           applying = false;
           lastElements = elements;
           updatedAt = data.updatedAt;
+          // load：外部文档载入（全屏进出引擎移交），消费方不计入 inkEditCount
           const doc = surface.getDoc();
-          for (const cb of listeners) cb(doc);
+          for (const cb of listeners) cb(doc, "load");
         })();
       });
     },
 
-    onChange(cb: (doc: InkDoc) => void): () => void {
+    onChange(cb: (doc: InkDoc, reason: InkChangeReason) => void): () => void {
       listeners.add(cb);
       return () => {
         listeners.delete(cb);

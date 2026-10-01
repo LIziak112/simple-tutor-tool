@@ -237,7 +237,7 @@ describe("StudentLectureViewPage：课程上下文与配套练习（T2A.5）", (
   });
 });
 
-// ---------- T2.10：lecture_expand 埋点 ----------
+// ---------- T2.10 → T4.0b：directive_interact / 位置事件埋点 ----------
 
 /** 含 :::steps 逐步揭晓的讲义 */
 const STEPS_LECTURE: StudentLectureDetail = {
@@ -261,14 +261,14 @@ const STEPS_LECTURE: StudentLectureDetail = {
   ].join("\n"),
 };
 
-describe("StudentLectureViewPage：lecture_expand 埋点（T2.10）", () => {
-  it("点开详解折叠 → unmount flush 上报 lecture_expand（含讲义 id/指令名/序号）", async () => {
+describe("StudentLectureViewPage：指令交互埋点（T4.0b directive_interact）", () => {
+  it("详解折叠开/合双向上报 directive_interact（host=lecture，带版本定位）", async () => {
     mockedLecture.mockResolvedValue(LECTURE);
     const { unmount } = renderPage();
     await screen.findByRole("button", { name: /详解/ });
 
     fireEvent.click(screen.getByRole("button", { name: /详解/ }));
-    // 再收起再展开：第二次展开也上报（§5.3「每次展开都上报」）
+    // 收起 → close；再展开 → open（每次交互都上报，T4.0b §6 决策 3）
     fireEvent.click(screen.getByRole("button", { name: /详解/ }));
     fireEvent.click(screen.getByRole("button", { name: /详解/ }));
 
@@ -277,16 +277,26 @@ describe("StudentLectureViewPage：lecture_expand 埋点（T2.10）", () => {
     const events = mockedPostEvents.mock.calls.flatMap(
       (call) => call[0] as unknown as Array<Record<string, unknown>>,
     );
-    const expandEvents = events.filter((e) => e.type === "lecture_expand");
-    expect(expandEvents.length).toBe(2);
-    expect(expandEvents[0]).toMatchObject({
-      lectureId: LECTURE_ID,
-      directive: "solution",
-    });
-    expect(typeof expandEvents[0]?.clientTs).toBe("number");
+    const interactions = events.filter((e) => e.type === "directive_interact");
+    // 新客户端不再产生 lecture_expand（§6 决策 1）
+    expect(events.filter((e) => e.type === "lecture_expand")).toHaveLength(0);
+    expect(interactions).toEqual([
+      // LECTURE 的块指令序：example=1、solution=2（index=文档全局指令序号）
+      expect.objectContaining({
+        host: "lecture",
+        lectureId: LECTURE_ID,
+        name: "solution",
+        index: 2,
+        action: "open",
+        lectureUpdatedAt: LECTURE.updatedAt,
+      }),
+      expect.objectContaining({ name: "solution", action: "close" }),
+      expect.objectContaining({ name: "solution", action: "open" }),
+    ]);
+    expect(typeof interactions[0]?.clientTs).toBe("number");
   });
 
-  it("逐步揭晓「显示下一步」上报 step 指令与步序", async () => {
+  it("steps「显示下一步」上报 reveal：index=容器全局序号、step=容器内步序", async () => {
     mockedLecture.mockResolvedValue(STEPS_LECTURE);
     const { unmount } = renderPage();
     const next = await screen.findByRole("button", { name: /显示下一步/ });
@@ -299,11 +309,39 @@ describe("StudentLectureViewPage：lecture_expand 埋点（T2.10）", () => {
     );
     expect(events).toContainEqual(
       expect.objectContaining({
-        type: "lecture_expand",
+        type: "directive_interact",
+        host: "lecture",
         lectureId: LECTURE_ID,
-        directive: "step",
-        index: 2,
+        name: "steps",
+        index: 1, // 容器自己的文档全局序号（step 指令自身的序号是 2/3，不用）
+        step: 2,
+        action: "reveal",
+        lectureUpdatedAt: LECTURE.updatedAt,
       }),
     );
+  });
+
+  it("目录点击上报 lecture_toc_jump（headingIndex 与目录下标同源）并滚动", async () => {
+    mockedLecture.mockResolvedValue(LECTURE);
+    const { unmount } = renderPage();
+    const tocButton = await screen.findByRole("button", {
+      name: "二、有理数的分类",
+    });
+    fireEvent.click(tocButton);
+
+    unmount();
+    await waitFor(() => expect(mockedPostEvents).toHaveBeenCalled());
+    const events = mockedPostEvents.mock.calls.flatMap(
+      (call) => call[0] as unknown as Array<Record<string, unknown>>,
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "lecture_toc_jump",
+        lectureId: LECTURE_ID,
+        headingIndex: 2, // 目录第 3 项（0 起）
+        lectureUpdatedAt: LECTURE.updatedAt,
+      }),
+    );
+    expect(scrollIntoViewMock).toHaveBeenCalled();
   });
 });

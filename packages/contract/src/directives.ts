@@ -344,7 +344,7 @@ export const solutionDirective = defineDirective({
   allowedIn: ["question", "lecture"],
   attrs: directiveAttrs({}),
   description:
-    "详解/讲解。题目内：交卷后才下发给学生；讲义内：常与 :::example 搭配写例题解析，默认折叠、展开即上报事件。",
+    "详解/讲解。题目内：交卷后才下发给学生；讲义内：常与 :::example 搭配写例题解析，默认折叠、展开/收起均上报事件。",
   example: ":::solution\n$(-3)+7=4$；$(-2)+(-5)=-7$。\n:::",
 });
 
@@ -375,7 +375,7 @@ export const exampleDirective = defineDirective({
   }),
   attrDocs: { title: "例题标题，可选；缺省前端显示「例题」" },
   description:
-    "讲义例题块：题面 + 解析，解析常以 :::solution 写在本块内（默认折叠，展开即上报事件）。嵌套时外层要多一个冒号（::::example）。仅用于讲义/混合文档的讲义段落。",
+    "讲义例题块：题面 + 解析，解析常以 :::solution 写在本块内（默认折叠，展开/收起均上报事件）。嵌套时外层要多一个冒号（::::example）。仅用于讲义/混合文档的讲义段落。",
   example:
     '::::example{title="例 1"}\n计算 $(-3)+7$。\n\n:::solution\n$(-3)+7=4$。\n:::\n::::',
 });
@@ -421,7 +421,7 @@ export const foldDirective = defineDirective({
   }),
   attrDocs: { title: "折叠标题，缺省「详情」" },
   description:
-    "通用折叠块：默认收起、点击展开（展开事件上报）。适合放拓展阅读、次级说明等不挡主线的内容。仅讲义正文可用。",
+    "通用折叠块：默认收起、点击展开（展开/收起均上报事件）。适合放拓展阅读、次级说明等不挡主线的内容。仅讲义正文可用。",
   example: ':::fold{title="拓展：为什么 0 不能作除数"}\n…\n:::',
 });
 

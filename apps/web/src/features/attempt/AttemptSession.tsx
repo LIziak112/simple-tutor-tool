@@ -19,6 +19,7 @@ import {
   useDraftSync,
 } from "@/features/attempt/use-draft-sync";
 import type { InkUploadController } from "@/features/attempt/use-ink-upload";
+import { createEventQueue } from "@/lib/event-queue";
 import { formatDueTime } from "@/lib/time";
 import { useOnlineStatus } from "@/lib/use-online-status";
 import { useSubmitAttempt } from "./attempt-queries";
@@ -74,6 +75,9 @@ export function AttemptSession({
 /**
  * 结果视图外壳（T2.9）：进入即清本地草稿——覆盖「在别的设备交卷后，本机残留
  * 旧草稿」的路径（正常交卷在 AnswerView 里清，这里是兜底，幂等）。
+ * T4.0b（§5.0-C12）：自建 attempt scope 队列实例（同一 attemptId）收
+ * directive_interact{host:result} 复盘事件——requireUsableAttempt 宽松口径
+ * 已支持交卷后上报，无需改服务端；离开结果页 dispose（内部尽力 flush）。
  */
 function AttemptResultWithDraftCleanup({
   data,
@@ -82,10 +86,41 @@ function AttemptResultWithDraftCleanup({
   data: AttemptResultData;
   onBackHome: () => void;
 }) {
+  const attemptId = data.attempt.id;
   useEffect(() => {
-    void draftStore.clearDraft(data.attempt.id);
-  }, [data.attempt.id]);
-  return <AttemptResultView data={data} onBackHome={onBackHome} />;
+    void draftStore.clearDraft(attemptId);
+  }, [attemptId]);
+  const queueRef = useRef<ReturnType<typeof createEventQueue> | null>(null);
+  useEffect(() => {
+    const queue = createEventQueue({ scope: { kind: "attempt", attemptId } });
+    queueRef.current = queue;
+    return () => {
+      queue.dispose();
+      queueRef.current = null;
+    };
+  }, [attemptId]);
+  /** 详解折叠开合 → directive_interact{host=result}；index=该题全卷 0 起序号 */
+  const onSolutionToggle = useRef(
+    (questionId: string, index: number, action: "open" | "close") => {
+      queueRef.current?.track({
+        type: "directive_interact",
+        clientTs: Date.now(),
+        host: "result",
+        attemptId,
+        questionId,
+        name: "solution",
+        index,
+        action,
+      });
+    },
+  ).current;
+  return (
+    <AttemptResultView
+      data={data}
+      onBackHome={onBackHome}
+      onSolutionToggle={onSolutionToggle}
+    />
+  );
 }
 
 /** 答题视图（draft）：题卡 + 吸底操作条 + 交卷确认（T2.9：本地草稿仓 + 增量同步） */
@@ -138,6 +173,11 @@ function AnswerView({
   }, [data]);
   const unlockHint = useCallback(
     (questionId: string, entry: HintOpenedEntry) => {
+      // T4.0b：解锁成功回调报 directive_interact{host:question, hint, open}——
+      // index 与 hint_open 服务端直记同口径（entry.index 为解锁接口返回值），
+      // 失败重试不触发本回调（HintPanel 只在成功后 onUnlocked），无双报
+      attemptEvents.trackHintUnlock(questionId, entry.index);
+      attemptEvents.noteInteraction(questionId);
       setHintsOpened((prev) => ({
         ...prev,
         [questionId]: [...(prev[questionId] ?? []), entry].sort(
@@ -145,7 +185,7 @@ function AnswerView({
         ),
       }));
     },
-    [],
+    [attemptEvents],
   );
   /** 笔迹上传失败提示（交卷 flush 失败时展示，重试交卷消除） */
   const [inkFlushError, setInkFlushError] = useState(false);
@@ -273,6 +313,14 @@ function AnswerView({
                         onInkStroke={(strokes) => {
                           attemptEvents.noteInteraction(question.id);
                           attemptEvents.trackInkStrokes(question.id, strokes);
+                        }}
+                        onInkEdit={(reason) => {
+                          attemptEvents.noteInteraction(question.id);
+                          attemptEvents.trackInkEdit(question.id, reason);
+                        }}
+                        onInkFullscreen={(on) => {
+                          attemptEvents.noteInteraction(question.id);
+                          attemptEvents.trackInkFullscreen(question.id, on);
                         }}
                         hints={hintsOpened[question.id] ?? []}
                         onHintUnlocked={(entry) =>

@@ -193,6 +193,42 @@ describe("lintDocument：samples/lint/ 反例夹具", () => {
     }
   });
 
+  it("14 折叠/逐步揭晓容器内的 H2/H3：HEADING_IN_CONTAINER @11 与 @21 error，H4 与容器外不报", () => {
+    const { issues } = lintDocument(
+      load(lintDir, "14-heading-in-container.md"),
+    );
+    expect(codes(issues)).toEqual([
+      "HEADING_IN_CONTAINER",
+      "HEADING_IN_CONTAINER",
+    ]);
+    expect(issues[0]).toMatchObject({ level: "error", line: 11 });
+    expect(issues[0]?.message).toContain("fold");
+    expect(issues[1]).toMatchObject({ level: "error", line: 21 });
+    expect(issues[1]?.message).toContain("step");
+    for (const issue of issues) expect(issue.fix).toBeDefined();
+  });
+
+  it("14b question/columns 内的 H2/H3 不报（题目容器内容另行抽取、始终渲染）", () => {
+    const { issues } = lintDocument(
+      md([
+        "---",
+        "kind: practice",
+        "---",
+        "",
+        "::::question{type=solve}",
+        "计算。",
+        "",
+        ":::columns",
+        "## 列内标题（columns 始终渲染，不报）",
+        ":::",
+        "::::",
+      ]),
+    );
+    expect(codes(issues).filter((c) => c === "HEADING_IN_CONTAINER")).toEqual(
+      [],
+    );
+  });
+
   it("全部夹具的 issue 均符合 LintIssue 契约（level/line/column/code/message）", () => {
     for (const name of [
       "01-missing-frontmatter.md",
@@ -208,6 +244,7 @@ describe("lintDocument：samples/lint/ 反例夹具", () => {
       "11-unclosed-container.md",
       "12-directive-not-allowed-here.md",
       "13-math-left-right.md",
+      "14-heading-in-container.md",
     ]) {
       const { issues } = lintDocument(load(lintDir, name));
       for (const issue of issues) {

@@ -16,7 +16,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import type { InkDoc, InkEngine } from "@/features/ink/engine/index.ts";
+import type {
+  InkChangeReason,
+  InkDoc,
+  InkEngine,
+} from "@/features/ink/engine/index.ts";
 import { InkPad } from "@/features/ink/InkPad";
 import { fetchAttemptInkApi, studentInkPngUrl } from "@/lib/api";
 import { mergeInkDocs } from "./draft-merge";
@@ -83,6 +87,19 @@ export interface HandwrittenControlsProps {
    * 缺省不触发——不影响 T2.8 既有行为与组件测试。
    */
   onInkStroke?: ((strokes: number) => void) | undefined;
+  /**
+   * 一次笔迹编辑操作回调（T4.0b ink_edit_batch 埋点）：reason 为 erase/undo/
+   * redo/clear 之一（stroke 不算编辑；load 是引擎间笔迹移交，消费方须排除在
+   * inkEditCount 外，§5.0-C14——本回调不转发 stroke/load）。缺省不触发。
+   */
+  onInkEdit?:
+    | ((reason: "erase" | "undo" | "redo" | "clear") => void)
+    | undefined;
+  /**
+   * 全屏进出回调（T4.0b ink_fullscreen 埋点）：fullscreen state 每次翻转
+   * 触发一次（on=进入全屏 true / 退出 false）。缺省不触发。
+   */
+  onInkFullscreen?: ((on: boolean) => void) | undefined;
 }
 
 export function HandwrittenControls({
@@ -93,6 +110,8 @@ export function HandwrittenControls({
   onAnswer,
   registerController,
   onInkStroke,
+  onInkEdit,
+  onInkFullscreen,
 }: HandwrittenControlsProps) {
   /** 权威笔迹：undefined=服务端加载中；null=无笔迹；有值=当前文档 */
   const [masterDoc, setMasterDoc] = useState<InkDoc | null | undefined>(
@@ -144,16 +163,31 @@ export function HandwrittenControls({
   }, [questionId, uploadController, registerController]);
 
   // 笔迹变化：更新权威文档 + 写本地草稿仓（T2.9，网络无关）+ 进上传防抖
-  // + T2.10 埋点（每笔/每批结束报 ink_stroke_batch，经 ref 取最新回调）
+  // + T2.10/T4.0b 埋点（ink_stroke_batch 每笔/每批结束；ink_edit_batch 的
+  // erase/undo/redo/clear 分型经 ref 取最新回调；load 不转发——引擎间移交
+  // 不是编辑，§5.0-C14）
   const onInkStrokeRef = useRef(onInkStroke);
   onInkStrokeRef.current = onInkStroke;
+  const onInkEditRef = useRef(onInkEdit);
+  onInkEditRef.current = onInkEdit;
   const handleDocChange = useCallback(
-    (doc: InkDoc) => {
+    (doc: InkDoc, reason: InkChangeReason) => {
       setMasterDoc(doc);
       draftStore.saveInk(attemptId, questionId, doc);
       draftSyncRef.current?.noteLocalWrite();
       onDocChangeUpload(doc);
-      onInkStrokeRef.current?.(inkStrokeCount(doc));
+      if (
+        reason === "erase" ||
+        reason === "undo" ||
+        reason === "redo" ||
+        reason === "clear"
+      ) {
+        onInkEditRef.current?.(reason);
+      } else {
+        // stroke/load 维持旧笔画计数回调（ink_stroke_batch 语义不变；
+        // 作答链路无 engine.load 调用，load 只在开发页/回放出现）
+        onInkStrokeRef.current?.(inkStrokeCount(doc));
+      }
     },
     [attemptId, questionId, onDocChangeUpload],
   );
@@ -214,6 +248,19 @@ export function HandwrittenControls({
 
   const finalAnswer = answer?.kind === "final" ? answer.finalAnswer : "";
 
+  // T4.0b ink_fullscreen：挂现成 fullscreen state 的翻转处（§5.0-C14）——
+  // 初始 false 不报（挂载即进入答题页不是全屏动作），此后每次进出各报一次
+  const onInkFullscreenRef = useRef(onInkFullscreen);
+  onInkFullscreenRef.current = onInkFullscreen;
+  const fullscreenInitializedRef = useRef(false);
+  useEffect(() => {
+    if (!fullscreenInitializedRef.current) {
+      fullscreenInitializedRef.current = true;
+      return;
+    }
+    onInkFullscreenRef.current?.(fullscreen);
+  }, [fullscreen]);
+
   /** 打开全屏：页内有笔迹（atrament）先确认覆盖；excalidraw 权威直接续写 */
   const openFullscreen = () => {
     if (
@@ -238,7 +285,7 @@ export function HandwrittenControls({
   const confirmResetToPage = () => {
     const empty = emptyAtramentDoc();
     setMasterDoc(empty);
-    handleDocChange(empty);
+    handleDocChange(empty, "clear");
     setConfirmReset(false);
     setExpanded(true);
   };

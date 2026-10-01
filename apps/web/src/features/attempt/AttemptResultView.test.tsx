@@ -442,3 +442,27 @@ describe("D9（T3.5）老师批改后的展示", () => {
     expect(screen.getAllByLabelText("待批改").length).toBe(1);
   });
 });
+
+// ---------- T4.0b：详解折叠开合回调（host=result 复盘埋点的组件面） ----------
+
+describe("详解折叠开合回调（T4.0b）", () => {
+  it("onSolutionToggle 收到该题 questionId、全卷序号与 open/close 动作；缺省不传不报", () => {
+    const onSolutionToggle = vi.fn();
+    render(
+      <AttemptResultView
+        data={DATA}
+        onBackHome={vi.fn()}
+        onSolutionToggle={onSolutionToggle}
+      />,
+    );
+    const folds = screen.getAllByRole("button", { name: /查看详解/ });
+    // 第一题的详解折叠：展开 → 收起
+    fireEvent.click(folds[0] as HTMLElement);
+    fireEvent.click(folds[0] as HTMLElement);
+    // DATA 第一题（0 起序号 0）的 questionId 来自夹具
+    expect(onSolutionToggle.mock.calls).toEqual([
+      [DATA.units[0]?.questions[0]?.questionId, 0, "open"],
+      [DATA.units[0]?.questions[0]?.questionId, 0, "close"],
+    ]);
+  });
+});

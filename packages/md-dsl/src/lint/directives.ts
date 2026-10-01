@@ -5,7 +5,7 @@ import {
   type LintIssue,
   type RegisteredDirective,
 } from "@tutor/contract";
-import type { Root } from "mdast";
+import type { Heading, Root } from "mdast";
 import type {
   ContainerDirective,
   LeafDirective,
@@ -15,6 +15,20 @@ import type { Node } from "unist";
 import { canonicalName, makeIssue } from "../v2/shared.ts";
 import { suggestAttrKey, suggestDirectiveName } from "./similarity.ts";
 
+/**
+ * 折叠/隐藏类容器（T4.0b HEADING_IN_CONTAINER）：这些容器收起（或未揭晓）时
+ * 子节点不渲染——内部若出现 H2/H3，前端目录（extractOutline 按原文行扫描、
+ * 不跳过容器）与渲染 DOM、服务端解析三方的 h2/h3 序号就会错位，且不报错、
+ * 只是数字错（方案 §4.4.2 前提 5）。question/columns/col 始终渲染全部子节点
+ * （mixed 的题目段落另行抽取），不在受限之列。
+ */
+const HEADING_COLLAPSIBLE_CONTAINERS = new Set([
+  "fold",
+  "hint",
+  "solution",
+  "steps",
+  "step",
+]);
 /**
  * 指令层 lint 规则（T1.5）：在解析产出的 AST 上遍历全部指令节点（容器/块/行内），
  * 校验「是否注册、属性是否合法、是否出现在 allowedIn 允许的位置」。
@@ -67,6 +81,11 @@ function childNodes(node: Node): readonly Node[] {
   return children ?? [];
 }
 
+/** 是否为 ATX 标题节点（heading 的 depth 才区分层级） */
+function isHeading(node: Node): node is Heading {
+  return node.type === "heading";
+}
+
 /** 文档顶层语境链（按 kind；与解析层 frontmatter 不可用时的 practice 兜底一致） */
 function initialChain(kind: DocumentKind): readonly string[] {
   if (kind === "lecture") return ["lecture"];
@@ -80,7 +99,7 @@ function chainLabel(chain: readonly string[]): string {
     .join(" → ");
 }
 
-/** 指令层规则入口：遍历 AST，输出 UNKNOWN_DIRECTIVE / INVALID_DIRECTIVE_ATTRS / DIRECTIVE_NOT_ALLOWED_HERE / *_OUTSIDE_QUESTION */
+/** 指令层规则入口：遍历 AST，输出 UNKNOWN_DIRECTIVE / INVALID_DIRECTIVE_ATTRS / DIRECTIVE_NOT_ALLOWED_HERE / *_OUTSIDE_QUESTION / HEADING_IN_CONTAINER */
 export function lintDirectives(tree: Root, kind: DocumentKind): LintIssue[] {
   const issues: LintIssue[] = [];
   walk(tree, initialChain(kind), true, issues);
@@ -93,7 +112,16 @@ function walk(
   isTopLevel: boolean,
   issues: LintIssue[],
 ): void {
+  const insideCollapsible = chain.some((context) =>
+    HEADING_COLLAPSIBLE_CONTAINERS.has(context),
+  );
   for (const child of childNodes(node)) {
+    if (isHeading(child)) {
+      if (insideCollapsible && (child.depth === 2 || child.depth === 3)) {
+        issues.push(reportHeadingInContainer(child));
+      }
+      continue; // 标题节点无指令语义，子节点只有行内内容，无需继续下钻判断
+    }
     let childChain = chain;
     if (isDirectiveNode(child)) {
       checkDirective(child, chain, isTopLevel, issues);
@@ -101,11 +129,30 @@ function walk(
         const canonical = canonicalName(child);
         if (CONTEXT_CONTAINER_NAMES.has(canonical)) {
           childChain = [...chain, canonical];
+        } else if (HEADING_COLLAPSIBLE_CONTAINERS.has(canonical)) {
+          // 折叠类容器不在 allowedIn 语境链里，但同样约束内部标题
+          childChain = [...chain, canonical];
         }
       }
     }
     walk(child, childChain, false, issues);
   }
+}
+
+/** H2/H3 出现在折叠/隐藏类容器内部（HEADING_IN_CONTAINER，error） */
+function reportHeadingInContainer(heading: Heading): LintIssue {
+  const line = heading.position?.start.line ?? 1;
+  const column = heading.position?.start.column ?? 1;
+  return {
+    ...makeIssue(
+      "error",
+      line,
+      column,
+      "HEADING_IN_CONTAINER",
+      `H${heading.depth} 标题（第 ${line} 行）出现在折叠或逐步揭晓类容器（fold/hint/solution/steps/step）内部：容器收起时该标题不渲染，会破坏自动目录与正文 h2/h3 的序号配对（目录跳转、阅读地图会错位）；请把标题移到容器外，或改为容器内的加粗段落`,
+    ),
+    fix: "删掉标题行的 # 号（改为 **加粗段落**），或把该标题移到容器围栏之外",
+  };
 }
 
 function checkDirective(

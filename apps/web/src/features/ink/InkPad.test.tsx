@@ -1,7 +1,12 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { InkDoc, InkEngine, InkToolConfig } from "./engine/index.ts";
+import type {
+  InkChangeReason,
+  InkDoc,
+  InkEngine,
+  InkToolConfig,
+} from "./engine/index.ts";
 
 /**
  * <InkPad> 工具栏交互测试。
@@ -14,7 +19,7 @@ const mockUndo = vi.fn();
 const mockRedo = vi.fn();
 const mockClear = vi.fn();
 const mockDestroy = vi.fn();
-let emitChange: ((doc: InkDoc) => void) | null = null;
+let emitChange: ((doc: InkDoc, reason: InkChangeReason) => void) | null = null;
 let mockCanUndo = false;
 let mockCanRedo = false;
 
@@ -30,7 +35,10 @@ vi.mock("./engine/index.ts", () => ({
       redo: mockRedo,
       clear: mockClear,
       setTool: (tool: InkToolConfig) => mockSetTool(tool),
-      on: (event: string, cb: (doc: InkDoc) => void) => {
+      on: (
+        event: string,
+        cb: (doc: InkDoc, reason: InkChangeReason) => void,
+      ) => {
         if (event === "change") emitChange = cb;
         return () => {
           emitChange = null;
@@ -87,7 +95,7 @@ describe("<InkPad> 工具栏", () => {
     mockCanUndo = true;
     mockCanRedo = true;
     act(() => {
-      emitChange?.(emptyDoc());
+      emitChange?.(emptyDoc(), "stroke");
     });
 
     fireEvent.click(screen.getByRole("button", { name: "撤销" }));
@@ -143,7 +151,7 @@ describe("<InkPad> 工具栏", () => {
   it("卸载时销毁引擎；onDocChange 在每次 change 上抛", () => {
     const onDocChange = vi.fn();
     const { unmount } = render(<InkPad onDocChange={onDocChange} />);
-    emitChange?.(emptyDoc());
+    emitChange?.(emptyDoc(), "stroke");
     expect(onDocChange).toHaveBeenCalledTimes(1);
     unmount();
     expect(mockDestroy).toHaveBeenCalledTimes(1);
