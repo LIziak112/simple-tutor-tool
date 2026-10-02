@@ -384,9 +384,9 @@ test.describe("Phase 3 全链路（T3.6）：作答 → 数据页 → 批改 →
         recordLink.getByText("课程练习", { exact: true }),
       ).toBeVisible();
       await expect(recordLink.getByText("67", { exact: true })).toBeVisible();
-      // 页头错题本入口（最后一段用）
+      // 2026-10 IA 调整：错题本入口升为顶栏导航（记录页页头入口已移除）
       await expect(
-        studentPage.getByRole("link", { name: "打开错题本" }),
+        studentPage.getByRole("link", { name: "错题本" }),
       ).toBeVisible();
 
       // —— 结果视图（D9）：最终得分 67（含老师批改）+ 评语与最终判定 ——
@@ -501,7 +501,7 @@ test.describe("Phase 3 全链路（T3.6）：作答 → 数据页 → 批改 →
 
       // —— 错题本（D11）：答错的第 2 题出现（正确答案 + 详解折叠），
       //    答对的第 1 题与批对的手写题不出现 ——
-      await studentPage.goto("/s/records/wrong");
+      await studentPage.goto("/s/wrong");
       const wrongCard = studentPage.locator("article", {
         hasText: "正数与负数",
       });

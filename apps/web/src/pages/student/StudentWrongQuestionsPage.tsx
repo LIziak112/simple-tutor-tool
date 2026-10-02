@@ -1,6 +1,6 @@
 import { BookX, TriangleAlert } from "lucide-react";
 import { useMemo } from "react";
-import { Link, useSearchParams } from "react-router";
+import { useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
 import { useStudentWrongQuestions } from "@/features/student/student-records-queries";
 import {
@@ -14,11 +14,12 @@ import {
 } from "@/features/student/wrong-questions-ui";
 
 /**
- * /s/records/wrong 错题本（T3.5，D11）：按 (学生, 题目) 跨作业 + 课程练习
- * 聚合的错题列表，按最近判定时间倒序。考点筛选 chips（选项从全量形态聚合，
- * 服务端 knowledge 精确匹配）与「显示已攻克」开关（includeResolved）都同步
- * URL query。默认只列「最近一次判定仍为错」的题；开关打开额外列出「曾错、
- * 最近一次已做对」（已攻克徽章）。三态齐全，触控目标 ≥44px。
+ * /s/wrong 错题本（T3.5，D11；2026-10 IA 调整升为一级路由，入口 = 顶栏导航
+ * 与首页概览卡）：按 (学生, 题目) 跨作业 + 课程练习聚合的错题列表，按最近判定
+ * 时间倒序。考点筛选 chips（选项从全量形态聚合，服务端 knowledge 精确匹配）
+ * 与「显示已攻克」开关（includeResolved）都同步 URL query。默认只列「最近
+ * 一次判定仍为错」的题；开关打开额外列出「曾错、最近一次已做对」（已攻克
+ * 徽章）。三态齐全，触控目标 ≥44px。
  */
 
 /** 加载骨架（不白屏） */
@@ -128,11 +129,6 @@ export default function StudentWrongQuestionsPage() {
             标记为「已攻克」。
           </p>
         </div>
-        <Button variant="outline" className="min-h-11" asChild>
-          <Link to="/s/records" aria-label="返回我的记录">
-            返回我的记录
-          </Link>
-        </Button>
       </header>
 
       <div className="flex flex-col gap-3 rounded-xl border border-border bg-card p-3">

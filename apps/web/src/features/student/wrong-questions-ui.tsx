@@ -14,7 +14,7 @@ import { formatRelativeTime } from "@/lib/time";
 import { RecordSourceBadge, recordTitleOf } from "./records-views";
 
 /**
- * /s/records/wrong 错题本的 URL 状态与卡片（T3.5，D11）：
+ * /s/wrong 错题本的 URL 状态与卡片（T3.5，D11；2026-10 升为一级路由）：
  * - 筛选同步 URL query：knowledge（考点精确匹配，服务端参数）与
  *   includeResolved（「显示已攻克」开关）——刷新、返回不丢；
  * - 考点 chips：选项从错题本全量数据（includeResolved=true 形态）聚合，

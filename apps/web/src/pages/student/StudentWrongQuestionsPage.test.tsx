@@ -7,9 +7,9 @@ import { fetchStudentWrongQuestionsApi } from "@/lib/api";
 import StudentWrongQuestionsPage from "./StudentWrongQuestionsPage";
 
 /**
- * /s/records/wrong 错题本页组件测试（T3.5，D11）：考点 chips（全量形态聚合）
- * 与「显示已攻克」开关的 URL 同步、条目卡片内容（首次做对标记/我的答案/
- * 正确答案/详解折叠/已攻克徽章）、三态。API 层 mock。
+ * /s/wrong 错题本页组件测试（T3.5，D11；2026-10 升为一级路由）：考点 chips
+ * （全量形态聚合）与「显示已攻克」开关的 URL 同步、条目卡片内容（首次做对
+ * 标记/我的答案/正确答案/详解折叠/已攻克徽章）、三态。API 层 mock。
  */
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -81,7 +81,7 @@ function LocationProbe() {
   );
 }
 
-function renderPage(initialEntry = "/s/records/wrong") {
+function renderPage(initialEntry = "/s/wrong") {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -90,17 +90,13 @@ function renderPage(initialEntry = "/s/records/wrong") {
       <MemoryRouter initialEntries={[initialEntry]}>
         <Routes>
           <Route
-            path="/s/records/wrong"
+            path="/s/wrong"
             element={
               <>
                 <StudentWrongQuestionsPage />
                 <LocationProbe />
               </>
             }
-          />
-          <Route
-            path="/s/records"
-            element={<p data-testid="route-stub">我的记录</p>}
           />
         </Routes>
       </MemoryRouter>
@@ -258,7 +254,7 @@ describe("StudentWrongQuestionsPage 三态", () => {
     expect(await screen.findByText("还没有需要复习的错题")).toBeInTheDocument();
 
     mockedWrong.mockClear();
-    renderPage("/s/records/wrong?knowledge=不存在的考点");
+    renderPage("/s/wrong?knowledge=不存在的考点");
     expect(await screen.findByText("当前考点下没有错题")).toBeInTheDocument();
   });
 
