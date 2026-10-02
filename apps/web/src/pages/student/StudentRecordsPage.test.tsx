@@ -307,4 +307,14 @@ describe("StudentRecordsPage 筛选与分页的 URL 同步", () => {
       ),
     );
   });
+
+  it("页头不再有「错题本」入口（2026-10 IA 调整：错题本升为一级导航 /s/wrong）", async () => {
+    mockedRecords.mockResolvedValue({ records: [makeRow()], total: 1 });
+    renderPage();
+
+    await screen.findByText("我的记录");
+    expect(
+      screen.queryByRole("link", { name: /打开错题本|错题本/ }),
+    ).not.toBeInTheDocument();
+  });
 });

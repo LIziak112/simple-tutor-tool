@@ -496,13 +496,19 @@ const studentRoutes = (() => {
           }
         />
         <Route
-          // T3.5：错题本（D11 跨来源聚合；我的记录页「错题本」入口的落点）
-          path="records/wrong"
+          // 2026-10 IA 调整：错题本升为一级路由（D11 跨来源聚合；
+          // 顶栏导航与首页概览卡的入口落点）
+          path="wrong"
           element={
             <Suspense fallback={pageFallback}>
               <StudentWrongQuestionsPage />
             </Suspense>
           }
+        />
+        <Route
+          // 旧路径重定向（书签/历史链接不 404）
+          path="records/wrong"
+          element={<Navigate to="/s/wrong" replace />}
         />
       </Route>
     </>

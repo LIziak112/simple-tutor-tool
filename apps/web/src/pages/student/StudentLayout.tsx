@@ -1,22 +1,24 @@
-import { History, Home, Loader2, LogOut, School } from "lucide-react";
+import { BookX, History, Home, Loader2, LogOut, School } from "lucide-react";
 import { Navigate, NavLink, Outlet, useNavigate } from "react-router";
 import { useLogoutStudent, useStudentMe } from "@/features/auth/student-auth";
 import { ApiError } from "@/lib/api";
 import { ScreenError, ScreenLoading } from "./StudentScreen";
 
 /**
- * /s 学生端布局 + 路由守卫（T2.3；T2A.5 导航定稿为「首页 / 课程 / 我的记录」）。
+ * /s 学生端布局 + 路由守卫（T2.3；2026-10 IA 调整：导航定稿为
+ * 「首页 / 课程 / 错题本 / 我的记录」）。
  * 守卫：me 查询 pending → 全屏加载；401 → 跳 /s/login；其他错误 → 错误态 + 重试。
- * 布局：顶部简洁导航（姓名 + 三个分区 + 退出），内容区居中限宽；
+ * 布局：顶部简洁导航（姓名 + 四个分区 + 退出），内容区居中限宽；
  * iPad 竖屏单栏，横屏（lg:）加宽；导航项触控目标 ≥44px。
- * 讲义不再占顶栏入口：/s/lectures 保留为二级页面（首页「按讲义浏览」进入，
- * T2A.5 信息架构），讲义的主要入口是课程目录。
+ * 讲义不占顶栏入口：/s/lectures 保留为二级页面（首页「按讲义浏览」进入，
+ * 讲义的主要入口是课程目录）。
  */
 
-/** 学生端分区导航（首页 / 课程 / 我的记录；「我的记录」T3.5 起为全量作答索引 + 错题本入口） */
+/** 学生端分区导航（首页 / 课程 / 错题本 / 我的记录；错题本 2026-10 起为一级功能） */
 const NAV_ITEMS = [
   { to: "/s/home", label: "首页", icon: Home },
   { to: "/s/courses", label: "课程", icon: School },
+  { to: "/s/wrong", label: "错题本", icon: BookX },
   { to: "/s/records", label: "我的记录", icon: History },
 ] as const;
 

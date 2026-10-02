@@ -8,7 +8,8 @@ import StudentLayout from "./StudentLayout";
 
 /**
  * 学生端布局与守卫测试（T2.3）：未登录跳 /s/login；已登录渲染顶栏
- * （姓名 / 三分区导航 / 退出）；退出调 logout 接口并回登录页。
+ * （姓名 / 四分区导航 / 退出）；退出调 logout 接口并回登录页。
+ * 2026-10 学生端 IA 调整：错题本升为一级导航（/s/wrong）。
  */
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -72,7 +73,7 @@ describe("StudentLayout", () => {
     });
   });
 
-  it("已登录渲染顶栏：姓名、三分区导航（首页/课程/我的记录，T2A.5 定稿）与退出按钮", async () => {
+  it("已登录渲染顶栏：姓名、四分区导航（首页/课程/错题本/我的记录）与退出按钮", async () => {
     mockedMe.mockResolvedValue(STUDENT);
     renderLayout();
 
@@ -84,6 +85,10 @@ describe("StudentLayout", () => {
     expect(screen.getByRole("link", { name: "课程" })).toHaveAttribute(
       "href",
       "/s/courses",
+    );
+    expect(screen.getByRole("link", { name: "错题本" })).toHaveAttribute(
+      "href",
+      "/s/wrong",
     );
     expect(screen.getByRole("link", { name: "我的记录" })).toHaveAttribute(
       "href",

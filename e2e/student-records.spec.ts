@@ -183,9 +183,9 @@ test.describe("学生我的记录与错题本（T3.5：批改延伸）", () => {
       // 随机后缀里可能恰好含「50」子串，模糊匹配会撞标题/课程名（曾致 flake）
       await expect(recordLink.getByText("作业", { exact: true })).toBeVisible();
       await expect(recordLink.getByText("50", { exact: true })).toBeVisible();
-      // 页头错题本入口存在
+      // 2026-10 IA 调整：错题本入口升为顶栏导航（记录页页头入口已移除）
       await expect(
-        studentPage.getByRole("link", { name: "打开错题本" }),
+        studentPage.getByRole("link", { name: "错题本" }),
       ).toBeVisible();
 
       // —— 进结果视图：老师评语与最终判定（D9）——
@@ -206,7 +206,7 @@ test.describe("学生我的记录与错题本（T3.5：批改延伸）", () => {
       await expect(q1Result.getByText(/老师批改/)).toHaveCount(0);
 
       // —— 错题本：做错的判断题（正确答案 + 详解折叠）——
-      await studentPage.goto("/s/records/wrong");
+      await studentPage.goto("/s/wrong");
       const wrongCard = studentPage.locator("article", {
         hasText: "有理数的概念",
       });
@@ -225,6 +225,10 @@ test.describe("学生我的记录与错题本（T3.5：批改延伸）", () => {
       await expect(wrongCard.getByText(/大于/)).toHaveCount(0);
       await wrongCard.getByRole("button", { name: /查看详解/ }).click();
       await expect(wrongCard.getByText(/大于/)).toBeVisible();
+
+      // 旧路径 /s/records/wrong 重定向到 /s/wrong（2026-10 路由迁移，书签不 404）
+      await studentPage.goto("/s/records/wrong");
+      await studentPage.waitForURL("**/s/wrong");
 
       // 泄露检查：全程 /api/student/* 响应无禁用键、无提示/详解原文（交卷后放行）
       await studentPage.waitForTimeout(800); // 等最后一批响应体读完

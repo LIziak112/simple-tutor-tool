@@ -2,15 +2,22 @@ import { screen } from "@testing-library/react";
 import type {
   StudentAssignmentListData,
   StudentCourseListData,
+  WrongQuestionsData,
 } from "@tutor/contract";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fetchStudentAssignmentsApi, fetchStudentCoursesApi } from "@/lib/api";
+import {
+  fetchStudentAssignmentsApi,
+  fetchStudentCoursesApi,
+  fetchStudentWrongQuestionsApi,
+} from "@/lib/api";
 import { renderWithStudentRoutes } from "@/test/student-routes";
 import StudentHomePage from "./StudentHomePage";
 
 /**
- * 学生首页组件测试（T2A.5 改版）：待完成作业卡片 + 我的课程卡片（进度条占位）
- * +「按讲义浏览」二级入口；作业与课程空态、错误态。API 层 mock。
+ * 学生首页组件测试（T2A.5 改版 + 2026-10 IA 调整）：待完成作业卡片 +
+ * 我的课程卡片（进度条占位）+「按讲义浏览」二级入口 + 错题本概览卡
+ * （待复习/已攻克计数 + 去复习入口）；作业/课程/错题本空态、错误态；
+ * 首页不再有「我的记录」入口（顶栏导航独占）。API 层 mock。
  */
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -19,11 +26,13 @@ vi.mock("@/lib/api", async (importOriginal) => {
     ...actual,
     fetchStudentAssignmentsApi: vi.fn(),
     fetchStudentCoursesApi: vi.fn(),
+    fetchStudentWrongQuestionsApi: vi.fn(),
   };
 });
 
 const mockedAssignments = vi.mocked(fetchStudentAssignmentsApi);
 const mockedCourses = vi.mocked(fetchStudentCoursesApi);
+const mockedWrong = vi.mocked(fetchStudentWrongQuestionsApi);
 
 const ASSIGNMENTS: StudentAssignmentListData = {
   assignments: [
@@ -74,6 +83,56 @@ const COURSES: StudentCourseListData = {
   ],
 };
 
+/** 错题本全量形态（includeResolved=true）：1 道仍错 + 1 道已攻克 */
+const WRONG_DATA: WrongQuestionsData = {
+  questions: [
+    {
+      sourceType: "course",
+      courseId: "12121212-1212-4121-8121-121212121212",
+      courseName: "初一上",
+      assignmentId: null,
+      assignmentTitle: null,
+      unitId: "unit-有理数",
+      unitTitle: "有理数",
+      attemptNo: 1,
+      questionId: "q-judge-1",
+      type: "judge",
+      difficulty: 1,
+      knowledge: ["有理数的概念"],
+      stemMd: "$1$ 是正数。[[正确]]",
+      answers: { kind: "judge", value: true },
+      solutionMd: "$1$ 大于 $0$，是正数。",
+      answerText: "错",
+      firstCorrect: false,
+      resolved: false,
+      firstAt: "2026-09-20T02:00:00.000Z",
+      lastAt: "2026-09-28T02:00:00.000Z",
+    },
+    {
+      sourceType: "course",
+      courseId: "12121212-1212-4121-8121-121212121212",
+      courseName: "初一上",
+      assignmentId: null,
+      assignmentTitle: null,
+      unitId: "unit-有理数",
+      unitTitle: "有理数",
+      attemptNo: 2,
+      questionId: "q-fill-2",
+      type: "fill",
+      difficulty: 2,
+      knowledge: ["有理数加法"],
+      stemMd: "计算：$(-2)+5=$（　）。",
+      answers: { kind: "fill", blanks: [["3"]] },
+      solutionMd: "$(-2)+5=3$。",
+      answerText: "3",
+      firstCorrect: false,
+      resolved: true,
+      firstAt: "2026-09-21T02:00:00.000Z",
+      lastAt: "2026-09-29T02:00:00.000Z",
+    },
+  ],
+};
+
 function renderPage() {
   return renderWithStudentRoutes({
     initialPath: "/s/home",
@@ -85,6 +144,9 @@ function renderPage() {
 beforeEach(() => {
   mockedAssignments.mockReset();
   mockedCourses.mockReset();
+  mockedWrong.mockReset();
+  // 默认无错题（多数用例不关心错题本；需要时各自覆盖）
+  mockedWrong.mockResolvedValue({ questions: [] });
 });
 
 describe("StudentHomePage", () => {
@@ -205,6 +267,55 @@ describe("StudentHomePage", () => {
     renderPage();
 
     expect(await screen.findByText("课程加载失败")).toBeInTheDocument();
+    expect(await screen.findByText("周末加练")).toBeInTheDocument();
+  });
+
+  // —— 2026-10 IA 调整：错题本概览卡 + 移除「我的记录」重复入口 ——
+
+  it("首页不再有「我的记录」入口（顶栏导航独占，去重复）", async () => {
+    mockedAssignments.mockResolvedValue(ASSIGNMENTS);
+    mockedCourses.mockResolvedValue(COURSES);
+    renderPage();
+
+    await screen.findByText("周末加练");
+    expect(
+      screen.queryByRole("link", { name: /我的记录/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("错题本概览卡：待复习/已攻克计数 + 去复习入口指向 /s/wrong", async () => {
+    mockedAssignments.mockResolvedValue(ASSIGNMENTS);
+    mockedCourses.mockResolvedValue(COURSES);
+    mockedWrong.mockResolvedValue(WRONG_DATA);
+    renderPage();
+
+    expect(
+      await screen.findByText("待复习 1 题 · 已攻克 1 题"),
+    ).toBeInTheDocument();
+    const reviewLink = screen.getByRole("link", { name: "去复习" });
+    expect(reviewLink).toHaveAttribute("href", "/s/wrong");
+  });
+
+  it("错题本空态：还没有错题的解释文案 + 查看错题本次级入口", async () => {
+    mockedAssignments.mockResolvedValue(ASSIGNMENTS);
+    mockedCourses.mockResolvedValue(COURSES);
+    renderPage();
+
+    expect(await screen.findByText("还没有错题")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "查看错题本" })).toHaveAttribute(
+      "href",
+      "/s/wrong",
+    );
+  });
+
+  it("错题本加载失败显示错误态与重试按钮（不影响作业与课程分区）", async () => {
+    mockedAssignments.mockResolvedValue(ASSIGNMENTS);
+    mockedCourses.mockResolvedValue(COURSES);
+    mockedWrong.mockRejectedValue(new Error("服务器响应异常"));
+    renderPage();
+
+    expect(await screen.findByText("错题本加载失败")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "重试" })).toBeInTheDocument();
     expect(await screen.findByText("周末加练")).toBeInTheDocument();
   });
 });
