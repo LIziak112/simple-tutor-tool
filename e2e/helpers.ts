@@ -657,6 +657,12 @@ export interface LeakMonitor {
  *   讲义详情（GET /api/student/lectures/:id）除外——讲义 markdown 是设计内的
  *   全量下发（:::solution 是讲解内容非题目答案，学生应见），且讲义样例正文
  *   本身含有与练习样例 solution 相同的表述，只做键名级检查（T2A.5）。
+ * - 错题本（GET /api/student/wrong-questions）按服务端同口径豁免
+ *   answers/solutionMd 两键与内容级片段：条目只来自已交卷且已判定的作答
+ *   （draft 谓词排除 + after_due 公布 gate，见 services/wrong-questions.ts），
+ *   与结果视图同一「交卷即公布」口径。学生首页错题计数会预取本接口
+ *   （includeResolved=true），交卷前新开的监控页面（如换页再进 /s/home）
+ *   也会命中，submitted 标志放行不了，须按端点豁免。
  */
 export function attachLeakMonitor(page: Page): LeakMonitor {
   const violations: string[] = [];
@@ -673,14 +679,32 @@ export function attachLeakMonitor(page: Page): LeakMonitor {
     if (!contentType.includes("application/json")) return;
     // 讲义详情响应：markdown 设计内全量下发，内容级片段检查豁免（见函数头注释）
     const isLectureDetail = /\/api\/student\/lectures\/[^/]+$/.test(url);
+    // 错题本响应：answers/solutionMd 设计内下发（豁免口径见函数头注释）
+    const isWrongQuestions = /\/api\/student\/wrong-questions/.test(url);
     void response
       .text()
       .then((body) => {
-        checkLeakBody(url, body, violations, isLectureDetail);
+        checkLeakBody(url, body, violations, {
+          skipContentCheck: isLectureDetail || isWrongQuestions,
+          allowedKeys: isWrongQuestions
+            ? WRONG_QUESTIONS_ALLOWED_KEYS
+            : undefined,
+        });
       })
       .catch(() => undefined);
   });
   return { violations: () => violations };
+}
+
+/** 错题本豁免键：对齐服务端 assertNoLeak({ allow: ["answers", "solutionMd"] }) */
+const WRONG_QUESTIONS_ALLOWED_KEYS = new Set(["answers", "solutionMd"]);
+
+/** 单个响应体的检查选项 */
+interface CheckLeakBodyOptions {
+  /** 跳过内容级片段检查（讲义详情 / 错题本：详解原文设计内下发） */
+  skipContentCheck: boolean;
+  /** 本次响应额外放行的禁键（错题本：answers/solutionMd） */
+  allowedKeys?: ReadonlySet<string> | undefined;
 }
 
 /** 单个响应体的键名级 + 内容级检查（violation 追加进列表） */
@@ -688,7 +712,7 @@ function checkLeakBody(
   url: string,
   body: string,
   violations: string[],
-  skipContentCheck: boolean,
+  options: CheckLeakBodyOptions,
 ): void {
   let parsed: unknown;
   try {
@@ -709,6 +733,7 @@ function checkLeakBody(
       const keyPath = path === "" ? key : `${path}.${key}`;
       const forbidden =
         !ALLOWED_EXACT_KEYS.has(key) &&
+        !options.allowedKeys?.has(key) &&
         (FORBIDDEN_EXACT_KEYS.has(key) ||
           FORBIDDEN_KEY_PREFIXES.some((prefix) => key.startsWith(prefix)));
       if (forbidden) leakedKeys.push(keyPath);
@@ -719,7 +744,7 @@ function checkLeakBody(
   if (leakedKeys.length > 0) {
     violations.push(`${url} 出现禁用键：${leakedKeys.join("、")}`);
   }
-  if (skipContentCheck) return;
+  if (options.skipContentCheck) return;
   for (const secret of SECRET_EXCERPTS) {
     if (body.includes(secret)) {
       violations.push(`${url} 含教师侧原文片段：「${secret}」`);
