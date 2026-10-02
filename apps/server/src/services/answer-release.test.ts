@@ -1,4 +1,9 @@
-import type { AttemptDetailData, AttemptResultData } from "@tutor/contract";
+import type {
+  AssignmentCreateRequest,
+  AttemptDetailData,
+  AttemptResultData,
+  TeacherAssignment,
+} from "@tutor/contract";
 import { publicStemMd } from "@tutor/md-dsl";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
@@ -148,6 +153,21 @@ function seed(db: Db): { studentId: string; unitId: string } {
 }
 
 /**
+ * 布置作业（merged 单份口径）取首份：2026-10 起创建响应为 { assignments: [...] }
+ * 列表形态，本文件全部用例都是单份语义，统一在此解包。
+ */
+function createOneAssignment(
+  db: Db,
+  request: AssignmentCreateRequest,
+): TeacherAssignment {
+  const first = createAssignment(db, TEST_TEACHER_ID, request).assignments[0];
+  if (first === undefined) {
+    throw new Error("创建作业未产出首份");
+  }
+  return first;
+}
+
+/**
  * 布置作业并交卷（两题全对）：返回定位三件套。
  * answerRelease/dueAt 透传给 createAssignment；交卷时刻由调用方传入 submit。
  */
@@ -164,7 +184,7 @@ function makeSubmittedAttempt(
   attemptId: string;
 } {
   const { studentId, unitId } = seed(db);
-  const assignment = createAssignment(db, TEST_TEACHER_ID, {
+  const assignment = createOneAssignment(db, {
     unitIds: [unitId],
     studentIds: [studentId],
     ...(options.dueAt !== undefined ? { dueAt: options.dueAt } : {}),
@@ -359,7 +379,7 @@ describe("截止后与 on_submit：完整形态", () => {
   it("交卷时已过截止：submit 响应直接是完整形态", () => {
     const db = createTestDb();
     const { studentId, unitId } = seed(db);
-    const assignment = createAssignment(db, TEST_TEACHER_ID, {
+    const assignment = createOneAssignment(db, {
       unitIds: [unitId],
       studentIds: [studentId],
       dueAt: "2026-01-01T00:00:00.000Z", // 早已截止
@@ -424,7 +444,7 @@ describe("create/PATCH 的 400 三态与合法组合", () => {
     const db = createTestDb();
     const { studentId, unitId } = seed(db);
     // 无截止作业（默认 on_submit）
-    const plain = createAssignment(db, TEST_TEACHER_ID, {
+    const plain = createOneAssignment(db, {
       unitIds: [unitId],
       studentIds: [studentId],
     });
@@ -437,7 +457,7 @@ describe("create/PATCH 的 400 三态与合法组合", () => {
     expect(errSwitch.message).toContain("截止时间");
 
     // 有截止的 after_due 作业：显式置 null 取消截止 → 400（防死锁态）
-    const due = createAssignment(db, TEST_TEACHER_ID, {
+    const due = createOneAssignment(db, {
       unitIds: [unitId],
       studentIds: [studentId],
       dueAt: DUE_AT,
@@ -453,7 +473,7 @@ describe("create/PATCH 的 400 三态与合法组合", () => {
   it("合法组合放行：改 after_due 同时补截止；after_due 下改截止时间；先改回 on_submit 再取消截止", () => {
     const db = createTestDb();
     const { studentId, unitId } = seed(db);
-    const plain = createAssignment(db, TEST_TEACHER_ID, {
+    const plain = createOneAssignment(db, {
       unitIds: [unitId],
       studentIds: [studentId],
     });

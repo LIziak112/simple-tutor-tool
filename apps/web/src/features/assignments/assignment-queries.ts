@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   AssignmentCheckData,
   AssignmentCheckRequest,
+  AssignmentCreateData,
   AssignmentCreateRequest,
   AssignmentUpdateRequest,
   TeacherAssignment,
@@ -64,10 +65,14 @@ function useInvalidateAssignments() {
   };
 }
 
-/** 布置作业（多单元 + 课程 + 学生多选 + 可选截止；4xx/409 由调用方 catch ApiError 展示） */
+/**
+ * 布置作业（多单元 + 课程 + 学生多选 + 可选截止 + 组合方式；4xx/409 由调用方
+ * catch ApiError 展示）。响应为列表形态（2026-10）：merged 恰一份、separate
+ * 每个 unitIds 顺序 N 份——向导提交后只做缓存失效，不逐份消费。
+ */
 export function useCreateAssignment() {
   const invalidate = useInvalidateAssignments();
-  return useMutation<TeacherAssignment, Error, AssignmentCreateRequest>({
+  return useMutation<AssignmentCreateData, Error, AssignmentCreateRequest>({
     mutationFn: createAssignmentApi,
     onSuccess: invalidate,
   });

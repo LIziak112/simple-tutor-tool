@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type {
   AssignmentCheckData,
   AssignmentCheckRequest,
+  AssignmentCreateData,
   AssignmentCreateRequest,
   AssignmentDetailData,
   AssignmentStatus,
@@ -41,7 +42,9 @@ import { HttpError } from "../lib/http-error";
  * teacherId 形参——乙访问甲的作业 → 404（D12），unitIds / courseId / studentIds
  * 逐项校验归属；学生侧接口（listStudentAssignments / getStudentAssignmentPaper）
  * 对外签名与行为不变，内部按 D10 从作业根行（assignments.teacherId）推导教师域
- * 带入 units/questions 查询——复合主键后按 id 查不再唯一）。
+ * 带入 units/questions 查询——复合主键后按 id 查不再唯一；2026-10 createAssignment
+ * 追加组合方式 unitGrouping：separate = 一个事务按 unitIds 顺序建 N 份单单元作业，
+ * merged（缺省，向后兼容）= 合并一份，创建响应统一 { assignments: [...] } 列表）。
  * 路由只做「鉴权 → 校验 → 调 service → 包装响应」（api-endpoint 技能约定），本模块承载：
  *
  * - 创建（D12/D13）：unitIds 全部存在、不可重复、按数组顺序写 assignment_units
@@ -458,22 +461,33 @@ function teacherAssignmentOf(
 // ---------- 教师：布置作业 CRUD ----------
 
 /**
- * POST /api/teacher/assignments（T2A.7 多单元 + 课程；T2B.4 按会话教师）。
+ * POST /api/teacher/assignments（T2A.7 多单元 + 课程；T2B.4 按会话教师；
+ * 2026-10 追加组合方式 unitGrouping，创建响应统一列表形态）。
  * - unitIds 重复 → 400 DUPLICATE_UNIT；任一不存在或非本人单元 → 404 UNIT_NOT_FOUND；
  * - courseId 提供且不存在或非本人课程 → 404 COURSE_NOT_FOUND；
  * - studentIds 去重后逐个校验存在且归属本教师（空数组已被契约 min(1) 拦截）；
  * - title 缺省 = defaultAssignmentTitle（快照语义：之后单元改名不联动）；
  * - answerRelease（T2A.8，D11）：公布时机，默认 on_submit；选 after_due 而
  *   dueAt 缺失 → 400 VALIDATION_ERROR（防死锁态：永不公布）；
- * - 事务写 assignments（unitId=null——旧列 @deprecated，新代码不写；teacherId
- *   = 会话教师，T2B.4）+ assignment_units（order=0..n-1）+ 名单行（addedAt=now，
- *   removedAt=null）。
+ * - unitGrouping（缺省 merged，向后兼容）：merged = 一个事务写一份 assignments
+ *   （unitId=null——旧列 @deprecated，新代码不写；teacherId=会话教师，T2B.4）+
+ *   assignment_units（order=0..n-1）+ 名单行——行为与本字段引入前完全一致；
+ *   separate = 同一事务按 unitIds 顺序写 N 份，每份单单元（order 恒 0），
+ *   courseId/studentIds/dueAt/answerRelease 共用，标题规则：
+ *   教师没填标题 → 每份 = 该单元自己的标题（defaultAssignmentTitle 单单元语义）；
+ *   填了标题 → 每份 = 「教师标题·单元标题」（可能超 100 字符，不截断——输入侧
+ *   长度上限只约束教师手填字段，组合产物截断会丢语义）；
+ * - 响应 { assignments: [...] }：本批创建的全部作业按 unitIds 顺序（merged 恰一份）；
+ * - 同批各份 createdAt 逐份递减 1ms（首份最晚、仍在请求时刻的几毫秒内）：
+ *   列表按 createdAt 倒序时批内顺序 = 教师选择的 unitIds 顺序（学生端先看到
+ *   第一份），且不依赖 SQLite 同毫秒并列时的未定义排序；
+ * - 全部校验发生在事务开始前，任一失败零写入（无半成品）。
  */
 export function createAssignment(
   db: Db,
   teacherId: string,
   request: AssignmentCreateRequest,
-): TeacherAssignment {
+): AssignmentCreateData {
   const unitList = requireUnitsUniqueExist(db, teacherId, request.unitIds);
   if (request.courseId !== null && request.courseId !== undefined) {
     const course = db
@@ -498,35 +512,69 @@ export function createAssignment(
     );
   }
 
-  const id = randomUUID();
-  const now = new Date().toISOString();
+  // 组合方式：separate = 每个单元一份；缺省/merged = 合并一份（现状行为不变）
+  const grouping = request.unitGrouping ?? "merged";
+  const batches: { units: { id: string; title: string }[]; title: string }[] =
+    grouping === "separate"
+      ? unitList.map((unit) => ({
+          units: [unit],
+          title:
+            request.title !== undefined
+              ? `${request.title}·${unit.title}`
+              : defaultAssignmentTitle([unit.title]),
+        }))
+      : [
+          {
+            units: unitList,
+            title:
+              request.title ??
+              defaultAssignmentTitle(unitList.map((unit) => unit.title)),
+          },
+        ];
+
+  const baseMs = Date.now();
+  const createdIds: string[] = [];
   db.transaction((tx) => {
-    tx.insert(assignments)
-      .values({
-        id,
-        teacherId,
-        unitId: null,
-        courseId: request.courseId ?? null,
-        title:
-          request.title ?? defaultAssignmentTitle(unitList.map((u) => u.title)),
-        dueAt: request.dueAt ?? null,
-        answerRelease: request.answerRelease ?? "on_submit",
-        deletedAt: null,
-        createdAt: now,
-      })
-      .run();
-    unitList.forEach((unit, index) => {
-      tx.insert(assignmentUnits)
-        .values({ assignmentId: id, unitId: unit.id, order: index })
+    batches.forEach((batch, index) => {
+      const id = randomUUID();
+      createdIds.push(id);
+      // 逐份递减 1ms（首份最晚）：倒序列表内批内顺序 = unitIds 顺序（见函数注释）
+      const stamp = new Date(
+        baseMs + (batches.length - 1 - index),
+      ).toISOString();
+      tx.insert(assignments)
+        .values({
+          id,
+          teacherId,
+          unitId: null,
+          courseId: request.courseId ?? null,
+          title: batch.title,
+          dueAt: request.dueAt ?? null,
+          answerRelease: request.answerRelease ?? "on_submit",
+          deletedAt: null,
+          createdAt: stamp,
+        })
         .run();
+      batch.units.forEach((unit, order) => {
+        tx.insert(assignmentUnits)
+          .values({ assignmentId: id, unitId: unit.id, order })
+          .run();
+      });
+      for (const studentId of studentIds) {
+        tx.insert(assignmentStudents)
+          .values({
+            assignmentId: id,
+            studentId,
+            addedAt: stamp,
+            removedAt: null,
+          })
+          .run();
+      }
     });
-    for (const studentId of studentIds) {
-      tx.insert(assignmentStudents)
-        .values({ assignmentId: id, studentId, addedAt: now, removedAt: null })
-        .run();
-    }
   });
-  return teacherAssignmentOf(db, teacherId, id);
+  return {
+    assignments: createdIds.map((id) => teacherAssignmentOf(db, teacherId, id)),
+  };
 }
 
 /**

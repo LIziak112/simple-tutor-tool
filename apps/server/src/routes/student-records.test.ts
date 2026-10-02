@@ -363,9 +363,13 @@ async function makeRecordsEnv(): Promise<RecordsEnv> {
       }),
     });
     expect(res.status).toBe(201);
-    assignmentIds.push(
-      ((await res.json()) as { data: { id: string } }).data.id,
-    );
+    const createdId = (
+      (await res.json()) as { data: { assignments: { id: string }[] } }
+    ).data.assignments[0]?.id;
+    if (createdId === undefined) {
+      throw new Error("布置作业响应缺少作业 id");
+    }
+    assignmentIds.push(createdId);
   }
 
   // course1：课程练习第 1 次（全对 + solve 未答 → submitted / 待批 1）

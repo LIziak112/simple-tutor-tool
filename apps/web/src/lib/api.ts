@@ -14,6 +14,7 @@ import {
   type AnalyticsStudentData,
   type AssignmentCheckData,
   type AssignmentCheckRequest,
+  type AssignmentCreateData,
   type AssignmentCreateRequest,
   type AssignmentDetailData,
   type AssignmentUpdateRequest,
@@ -624,13 +625,16 @@ export function checkAssignmentApi(
 }
 
 /**
- * 布置作业（T2A.7）{unitIds[], studentIds[], title?, courseId?, dueAt?}。
- * dueAt 必须是带 Z 后缀的 UTC ISO（datetime-local 值先经页面转 UTC，见 lib/time.ts）；
- * 单元重复 400 DUPLICATE_UNIT；单元/学生/课程不存在 404（由后端契约拦截）。
+ * 布置作业（T2A.7）{unitIds[], studentIds[], title?, courseId?, dueAt?,
+ * unitGrouping?}。dueAt 必须是带 Z 后缀的 UTC ISO（datetime-local 值先经页面
+ * 转 UTC，见 lib/time.ts）；单元重复 400 DUPLICATE_UNIT；单元/学生/课程不
+ * 存在 404（由后端契约拦截）。unitGrouping 缺省 merged（合并一份）；separate
+ * = 每个单元一份。响应 data = { assignments: [...] }（2026-10 列表形态）：
+ * 本批创建的全部作业，merged 恰一份、separate 按 unitIds 顺序 N 份。
  */
 export function createAssignmentApi(
   request: AssignmentCreateRequest,
-): Promise<TeacherAssignment> {
+): Promise<AssignmentCreateData> {
   return callApi(() => api.api.teacher.assignments.$post({ json: request }));
 }
 

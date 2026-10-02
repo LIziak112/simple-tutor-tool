@@ -202,8 +202,12 @@ async function makeAssignment(
     },
   );
   expect(res.status).toBe(201);
-  const body = (await res.json()) as { data: { id: string } };
-  return body.data.id;
+  const body = (await res.json()) as {
+    data: { assignments: { id: string }[] };
+  };
+  const id = body.data.assignments[0]?.id;
+  if (id === undefined) throw new Error("布置作业响应缺少作业 id");
+  return id;
 }
 
 /** 「默认课程」id（导入样例时自动创建并追加目录条目） */

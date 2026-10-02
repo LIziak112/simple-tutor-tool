@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   assignmentCheckRequestSchema,
+  assignmentCreateDataSchema,
   assignmentCreateRequestSchema,
   assignmentDueAtSchema,
   assignmentErrorCodeSchema,
@@ -125,6 +126,68 @@ describe("assignmentCreateRequestSchema（T2A.7 多单元 + 课程）", () => {
         answerRelease: "sometime",
       }).success,
     ).toBe(false);
+  });
+
+  it("unitGrouping 可选、只接受 separate/merged；缺省 = merged（向后兼容）", () => {
+    const base = { unitIds: [UNIT_ID, UNIT_ID_2], studentIds: [STUDENT_A] };
+    // 不传合法：parsed 后仍为 undefined，服务端按 merged 处理（现有调用行为不变）
+    const parsed = assignmentCreateRequestSchema.parse(base);
+    expect(parsed.unitGrouping).toBeUndefined();
+    expect(
+      assignmentCreateRequestSchema.parse({ ...base, unitGrouping: "separate" })
+        .unitGrouping,
+    ).toBe("separate");
+    expect(
+      assignmentCreateRequestSchema.parse({ ...base, unitGrouping: "merged" })
+        .unitGrouping,
+    ).toBe("merged");
+    expect(
+      assignmentCreateRequestSchema.safeParse({
+        ...base,
+        unitGrouping: "batch",
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe("assignmentCreateDataSchema（创建响应统一列表形态）", () => {
+  it("形态为 { assignments: [...] }；元素 = 教师作业列表行；单份（merged）也是一元素列表", () => {
+    const keys = Object.keys(assignmentCreateDataSchema.shape);
+    expect(keys).toEqual(["assignments"]);
+    // 合法最小载荷：一个列表行（字段完整性由 teacherAssignmentSchema 单测口径约束）
+    const row = {
+      id: ASSIGNMENT_ID,
+      courseId: null,
+      courseName: null,
+      title: "一元一次方程",
+      dueAt: null,
+      answerRelease: "on_submit",
+      units: [
+        {
+          unitId: UNIT_ID,
+          title: "一元一次方程",
+          questionCount: 2,
+          deleted: false,
+        },
+      ],
+      totalQuestionCount: 2,
+      containsDeletedUnit: false,
+      locked: false,
+      studentCount: 1,
+      rosterStats: { notStarted: 1, inProgress: 0, submitted: 0, graded: 0 },
+      deleted: false,
+      deletedAt: null,
+      createdAt: "2026-10-02T08:00:00.000Z",
+    };
+    expect(
+      assignmentCreateDataSchema.safeParse({ assignments: [row] }).success,
+    ).toBe(true);
+    // 空列表拒绝（创建至少产出一份）
+    expect(
+      assignmentCreateDataSchema.safeParse({ assignments: [] }).success,
+    ).toBe(false);
+    // 旧单对象形态不再合法（响应升级为列表）
+    expect(assignmentCreateDataSchema.safeParse(row).success).toBe(false);
   });
 });
 

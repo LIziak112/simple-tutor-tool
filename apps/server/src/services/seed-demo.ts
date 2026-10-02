@@ -1,5 +1,10 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import type { AttemptEvent, StudentAnswer } from "@tutor/contract";
+import type {
+  AssignmentCreateRequest,
+  AttemptEvent,
+  StudentAnswer,
+  TeacherAssignment,
+} from "@tutor/contract";
 import { analyzeLectureStructure } from "@tutor/md-dsl";
 import { and, eq, inArray, or } from "drizzle-orm";
 import { hashPassword } from "../auth/password";
@@ -456,27 +461,38 @@ export async function seedDemoData(
   } as const;
 
   // ---------- 作业 ----------
-  const a1 = createAssignment(db, teacherId, {
+  /** 布置作业（merged 单份口径）取首份：2026-10 起创建响应为 { assignments: [...] }
+   *  列表形态，seed 全部为合并语义作业，统一在此解包。 */
+  const createMerged = (
+    request: AssignmentCreateRequest,
+  ): TeacherAssignment => {
+    const first = createAssignment(db, teacherId, request).assignments[0];
+    if (first === undefined) {
+      throw new Error("seed 布置作业未产出作业行");
+    }
+    return first;
+  };
+  const a1 = createMerged({
     title: "开学摸底练习",
     courseId: courseA.id,
     unitIds: [unitU1.id],
     studentIds: [s1.id, s2.id, s3.id],
     dueAt: at(-5),
   });
-  const a2 = createAssignment(db, teacherId, {
+  const a2 = createMerged({
     title: "周末加练",
     courseId: courseA.id,
     unitIds: [unitU1.id],
     studentIds: [s1.id, s2.id], // 王小刚不在名单 → 矩阵 not-assigned 用例
     dueAt: at(7),
   });
-  const a3 = createAssignment(db, teacherId, {
+  const a3 = createMerged({
     title: "口算天天练",
     courseId: null,
     unitIds: [unitU2.id],
     studentIds: [s1.id, s2.id, s3.id],
   });
-  const a4 = createAssignment(db, teacherId, {
+  const a4 = createMerged({
     title: "数轴专题作业",
     courseId: courseB.id,
     unitIds: [unitU2.id],

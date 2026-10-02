@@ -402,8 +402,10 @@ test.describe("全链路：批量导入 → 建课程 → 可见性 → 课程�
       await expect(page.getByText("已选 2 个单元 · 共 3 题")).toBeVisible();
       await page.getByRole("button", { name: "下一步", exact: true }).click();
 
-      // ③ 确认：D15「已做过」提示（学生 A 已在课程练习中做过主单元 2 次）；
-      //    内容摘要分节；填唯一化标题后提交
+      // ③ 确认：组合方式默认「每个单元一份」（2026-10）——本用例保持合并口径，
+      //    显式切「合并为一份作业」；D15「已做过」提示（学生 A 已在课程练习中
+      //    做过主单元 2 次）；内容摘要分节；填唯一化标题后提交
+      await page.getByRole("radio", { name: /合并为一份作业/ }).check();
       await expect(
         page.getByText(/以下学生已在课程练习中做过所选单元/),
       ).toBeVisible();

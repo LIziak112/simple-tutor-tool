@@ -357,8 +357,13 @@ async function makeEnv(): Promise<TestEnv> {
   );
   expect(assignmentRes.status).toBe(201);
   const assignmentId = (
-    (await assignmentRes.json()) as { data: { id: string } }
-  ).data.id;
+    (await assignmentRes.json()) as {
+      data: { assignments: { id: string }[] };
+    }
+  ).data.assignments[0]?.id;
+  if (assignmentId === undefined) {
+    throw new Error("布置作业响应缺少作业 id");
+  }
 
   // 课程练习第 1 次：判断答对；solve 只写笔迹不填最终答案 → 交卷（待批 1）
   const c1Res = await request(
