@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import type {
-  AttemptEvent,
   AssignmentCreateRequest,
+  AttemptEvent,
   StudentAnswer,
   TeacherAssignment,
 } from "@tutor/contract";
