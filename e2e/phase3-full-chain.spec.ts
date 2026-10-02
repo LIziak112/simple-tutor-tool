@@ -489,11 +489,13 @@ test.describe("Phase 3 全链路（T3.6）：作答 → 数据页 → 批改 →
       ]);
       expect(solveRow[17]).toBe(commentText);
       // 手写笔迹链接：教师端绝对 URL（publicUrl = E2E web 端口，见
-      // playwright.config.ts 的 PUBLIC_URL），且用教师会话真实可取回
+      // playwright.config.ts 的 PUBLIC_URL——端口可能临时调整，从教师页当前
+      // origin 动态构造期望前缀，不写死端口号），且用教师会话真实可取回
       const inkUrl = solveRow[18] ?? "";
-      expect(inkUrl).toMatch(
-        /^http:\/\/127\.0\.0\.1:5199\/api\/teacher\/ink\/[0-9a-f-]{36}\.png$/,
+      const inkUrlPattern = new RegExp(
+        `^${new URL(page.url()).origin.replaceAll(".", "\\.")}/api/teacher/ink/[0-9a-f-]{36}\\.png$`,
       );
+      expect(inkUrl).toMatch(inkUrlPattern);
       const inkRes = await request.get(inkUrl);
       expect(inkRes.status()).toBe(200);
 

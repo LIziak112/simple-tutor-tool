@@ -17,7 +17,11 @@ import {
  * （首次 100 / 最近 0）。全程对学生端响应做泄露检查。
  */
 
-/** 两题小练习（判断 + 填空，均可自动判分；两次作答制造 100 → 0 的分差） */
+/**
+ * 两题小练习（判断 + 单选，均可自动判分；两次作答制造 100 → 0 的分差）。
+ * 2026-10-02 fill 改全人工批改（gradeFill 恒 null）后，「交卷即出分 / 历次
+ * 得分独立」的用例意图改由仍自动判分的单选题承载（原第二题为填空题）。
+ */
 function practiceMarkdown(unitName: string): string {
   return [
     "---",
@@ -34,11 +38,16 @@ function practiceMarkdown(unitName: string): string {
     ":::",
     "::::",
     "",
-    '::::question{type=fill difficulty=1 knowledge="有理数加法"}',
-    "计算：$(-3)+7=$ [[4]]",
+    '::::question{type=choice difficulty=1 knowledge="有理数加法"}',
+    "$(-3)+7=$ 的计算结果是（　）",
+    "",
+    "- [ ] $-10$",
+    "- [x] $4$",
+    "- [ ] $-4$",
+    "- [ ] $10$",
     "",
     ":::solution",
-    "$(-3)+7=4$。",
+    "$(-3)+7=4$，故选 B。",
     ":::",
     "::::",
     "",
@@ -115,8 +124,11 @@ test.describe("课程练习：完成单元 → 结果 → 再做一次 → 历�
         .getByRole("radio", { name: "对", exact: true })
         .locator("xpath=ancestor::label[1]")
         .click();
-      const fill1 = studentPage.locator('article[aria-label="第 2 题"]');
-      await fill1.getByLabel("第1空").fill("4");
+      const choice1 = studentPage.locator('article[aria-label="第 2 题"]');
+      await choice1
+        .getByRole("radio", { name: "选项 B" })
+        .locator("xpath=ancestor::label[1]")
+        .click();
       await expect
         .poll(async () => studentPage.getByTestId("draft-status").textContent())
         .not.toContain("保存中");
@@ -165,8 +177,11 @@ test.describe("课程练习：完成单元 → 结果 → 再做一次 → 历�
         .getByRole("radio", { name: "错", exact: true })
         .locator("xpath=ancestor::label[1]")
         .click();
-      const fill2 = studentPage.locator('article[aria-label="第 2 题"]');
-      await fill2.getByLabel("第1空").fill("-1");
+      const choice2 = studentPage.locator('article[aria-label="第 2 题"]');
+      await choice2
+        .getByRole("radio", { name: "选项 A" })
+        .locator("xpath=ancestor::label[1]")
+        .click();
       await expect
         .poll(async () => studentPage.getByTestId("draft-status").textContent())
         .not.toContain("保存中");

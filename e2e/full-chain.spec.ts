@@ -26,7 +26,11 @@ import {
  *    D15「已做过」提示出现）；学生 A 作答交卷，结果视图按单元分节完整。
  */
 
-/** 主单元：2 题（判断 + 填空，均可自动判分；两次作答制造 100 → 0 的分差） */
+/**
+ * 主单元：2 题（判断 + 单选，均可自动判分；两次作答制造 100 → 0 的分差）。
+ * 2026-10-02 fill 改全人工批改（gradeFill 恒 null）后，「交卷即出分 / 历次得分」
+ * 的用例意图改由仍自动判分的单选题承载（原第二题为填空题）。
+ */
 function courseUnitMarkdown(unitName: string): string {
   return [
     "---",
@@ -43,11 +47,16 @@ function courseUnitMarkdown(unitName: string): string {
     ":::",
     "::::",
     "",
-    '::::question{type=fill difficulty=1 knowledge="有理数加法"}',
-    "计算：$(-3)+7=$ [[4]]",
+    '::::question{type=choice difficulty=1 knowledge="有理数加法"}',
+    "$(-3)+7=$ 的计算结果是（　）",
+    "",
+    "- [ ] $-10$",
+    "- [x] $4$",
+    "- [ ] $-4$",
+    "- [ ] $10$",
     "",
     ":::solution",
-    "$(-3)+7=4$。",
+    "$(-3)+7=4$，故选 B。",
     ":::",
     "::::",
     "",
@@ -273,7 +282,10 @@ test.describe("全链路：批量导入 → 建课程 → 可见性 → 课程�
         .locator("xpath=ancestor::label[1]")
         .click();
       const firstQ2 = studentPage.locator('article[aria-label="第 2 题"]');
-      await firstQ2.getByLabel("第1空").fill("4");
+      await firstQ2
+        .getByRole("radio", { name: "选项 B" })
+        .locator("xpath=ancestor::label[1]")
+        .click();
       await expect
         .poll(async () => studentPage.getByTestId("draft-status").textContent())
         .not.toContain("保存中");
@@ -313,7 +325,10 @@ test.describe("全链路：批量导入 → 建课程 → 可见性 → 课程�
         .locator("xpath=ancestor::label[1]")
         .click();
       const secondQ2 = studentPage.locator('article[aria-label="第 2 题"]');
-      await secondQ2.getByLabel("第1空").fill("-1");
+      await secondQ2
+        .getByRole("radio", { name: "选项 A" })
+        .locator("xpath=ancestor::label[1]")
+        .click();
       await expect
         .poll(async () => studentPage.getByTestId("draft-status").textContent())
         .not.toContain("保存中");
@@ -444,7 +459,10 @@ test.describe("全链路：批量导入 → 建课程 → 可见性 → 课程�
         .locator("xpath=ancestor::label[1]")
         .click();
       const aq2 = assignPage.locator('article[aria-label="第 2 题"]');
-      await aq2.getByLabel("第1空").fill("4");
+      await aq2
+        .getByRole("radio", { name: "选项 B" })
+        .locator("xpath=ancestor::label[1]")
+        .click();
       const aq3 = assignPage.locator('article[aria-label="第 3 题"]');
       await aq3
         .getByRole("radio", { name: "错", exact: true })

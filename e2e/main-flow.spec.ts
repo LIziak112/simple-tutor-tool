@@ -19,8 +19,9 @@ import {
  * 内容准备（导入练习样例）按任务口径走教师 API，其余教师操作走 UI。
  * T2A.7：布置作业改走三步向导（对象 → 内容 → 确认），作业含两个单元
  * （练习四 8 题 + 追加的判断题小单元 1 题，共 9 题），学生答题页按单元分节、
- * 题号全卷连续；判分口径 = 可自动判分 7 题（5 客观 + solve 最终答案 + 追加判断题）、
- * 手写未答 2 题待批。
+ * 题号全卷连续；判分口径（2026-10-02 fill 改全人工批改后）= 可自动判分 5 题
+ * （判断/单选/多选 + solve 最终答案 + 追加判断题），练习四的填空 2 题（第 4、
+ * 5 题，均有作答）不再自动判对错 → 与手写未答 2 题（第 7、8 题）共 4 题待批。
  */
 test.describe("主流程：布置作业 → 学生作答与交卷 → 结果与泄露检查", () => {
   test("教师 UI 建学生经三步向导布置两单元作业，学生答完客观题并手写一题后交卷", async ({
@@ -244,13 +245,15 @@ test.describe("主流程：布置作业 → 学生作答与交卷 → 结果与�
       await expect(studentPage.getByText("批改结果")).toBeVisible({
         timeout: 30_000,
       });
-      // 7 道可自动判分题（5 客观 + solve 最终答案 + 第 9 题判断）全对 →
-      // scoreAuto=100；共 9 题 = 答对 7 + 待批 2（第 7、8 题手写未答）
+      // 5 道可自动判分题（判断/单选/多选 + solve 最终答案 + 第 9 题判断）全对 →
+      // scoreAuto=100；共 9 题 = 答对 5 + 待批 4（填空第 4、5 题——fill 全人工
+      // 批改后不自动判对错 + 手写未答第 7、8 题），未答 2 = 手写第 7、8 题
       await expect(studentPage.getByText("100", { exact: true })).toBeVisible();
       await expect(studentPage.getByText("共 9 题")).toBeVisible();
-      await expect(studentPage.getByText("答对 7 题")).toBeVisible();
+      await expect(studentPage.getByText("答对 5 题")).toBeVisible();
       await expect(studentPage.getByText("答错 0 题")).toBeVisible();
-      await expect(studentPage.getByText("待批 2 题")).toBeVisible();
+      await expect(studentPage.getByText("待批 4 题")).toBeVisible();
+      await expect(studentPage.getByText("未答 2 题")).toBeVisible();
 
       // 多单元分节（结果视图 h3 = 单元标题，按布置顺序）；题号 1–9 连续
       const resultUnitHeaders = studentPage.locator("h3");
@@ -268,6 +271,9 @@ test.describe("主流程：布置作业 → 学生作答与交卷 → 结果与�
       await expect(r9.getByText("答对", { exact: true })).toBeVisible();
       const r7 = studentPage.locator('article[aria-label="第 7 题"]');
       await expect(r7.getByText("待批改", { exact: true })).toBeVisible();
+      // 填空第 4 题（3 空，均已作答）不再自动判分 → 待批改（2026-10-02 口径）
+      const r4 = studentPage.locator('article[aria-label="第 4 题"]');
+      await expect(r4.getByText("待批改", { exact: true })).toBeVisible();
 
       // 手写题笔迹缩略图：学生本人 PNG 直出，naturalWidth>0 才算真的画出来了
       const r6 = studentPage.locator('article[aria-label="第 6 题"]');

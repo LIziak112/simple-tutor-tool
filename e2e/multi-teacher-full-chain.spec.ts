@@ -51,7 +51,9 @@ test.describe("T2B.8 多教师全链路：乙注册 → 甲发布 → 乙导入�
     );
     await registerTeacherViaUi(page, request, yiLoginName, yiPassword);
 
-    // —— 3. 甲导入 2 题单元（判断 + 填空，均可自动判分）并发布到共享目录 ——
+    // —— 3. 甲导入 2 题单元（判断 + 单选，均可自动判分——2026-10-02 fill 改
+    //    全人工批改后，本用例「交卷即全对出分」意图改用仍自动判分的单选题承载，
+    //    原第二题为填空题）并发布到共享目录 ——
     //    （request 会话仍为甲——注册走的是 page，未动 request）
     const markdown = [
       "---",
@@ -68,11 +70,16 @@ test.describe("T2B.8 多教师全链路：乙注册 → 甲发布 → 乙导入�
       ":::",
       "::::",
       "",
-      '::::question{type=fill difficulty=1 knowledge="有理数加法"}',
-      "计算：$(-3)+7=$ [[4]]",
+      '::::question{type=choice difficulty=1 knowledge="有理数加法"}',
+      "$(-3)+7=$ 的计算结果是（　）",
+      "",
+      "- [ ] $-10$",
+      "- [x] $4$",
+      "- [ ] $-4$",
+      "- [ ] $10$",
       "",
       ":::solution",
-      "$(-3)+7=4$。",
+      "$(-3)+7=4$，故选 B。",
       ":::",
       "::::",
       "",
@@ -211,14 +218,17 @@ test.describe("T2B.8 多教师全链路：乙注册 → 甲发布 → 乙导入�
       await expect(studentPage.locator("h2")).toHaveCount(0);
       await expect(studentPage.locator("article[aria-label]")).toHaveCount(2);
 
-      // 第 1 题判断答「对」；第 2 题填空填「4」（选择控件点可见 label，与主流程一致）
+      // 第 1 题判断答「对」；第 2 题单选选 B（选择控件点可见 label，与主流程一致）
       const q1 = studentPage.locator('article[aria-label="第 1 题"]');
       await q1
         .getByRole("radio", { name: "对", exact: true })
         .locator("xpath=ancestor::label[1]")
         .click();
       const q2 = studentPage.locator('article[aria-label="第 2 题"]');
-      await q2.getByLabel("第1空").fill("4");
+      await q2
+        .getByRole("radio", { name: "选项 B" })
+        .locator("xpath=ancestor::label[1]")
+        .click();
       await expect
         .poll(async () => studentPage.getByTestId("draft-status").textContent())
         .not.toContain("保存中");
