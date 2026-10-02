@@ -114,8 +114,10 @@ test.describe("主流程：布置作业 → 学生作答与交卷 → 结果与�
     await expect(page.getByText("已选 2 个单元 · 共 9 题")).toBeVisible();
     await page.getByRole("button", { name: "下一步", exact: true }).click();
 
-    // ③ 确认：D15「已做过」检查完成（该学生没做过课程练习 → 无提示行）；
-    //    内容摘要按作答顺序分节；填唯一化标题后提交
+    // ③ 确认：组合方式默认「每个单元一份」（2026-10）——本用例保持合并口径，
+    //    显式切「合并为一份作业」；D15「已做过」检查完成（该学生没做过课程练习
+    //    → 无提示行）；内容摘要按作答顺序分节；填唯一化标题后提交
+    await page.getByRole("radio", { name: /合并为一份作业/ }).check();
     await expect(page.locator("#wizard-title")).toBeVisible();
     await expect(
       page.getByText("正在检查名单学生在课程练习中的已做过记录…"),

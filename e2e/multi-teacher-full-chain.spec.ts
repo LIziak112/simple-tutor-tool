@@ -162,7 +162,10 @@ test.describe("T2B.8 多教师全链路：乙注册 → 甲发布 → 乙导入�
     await expect(page.getByText("已选 1 个单元 · 共 2 题")).toBeVisible();
     await page.getByRole("button", { name: "下一步", exact: true }).click();
 
-    // ③ 确认：该学生没做过课程练习 → 无「已做过」提示；摘要分节后提交
+    // ③ 确认：组合方式默认「每个单元一份」（2026-10）——本用例保持合并口径，
+    //    显式切「合并为一份作业」；该学生没做过课程练习 → 无「已做过」提示；
+    //    摘要分节后提交
+    await page.getByRole("radio", { name: /合并为一份作业/ }).check();
     await expect(page.locator("#wizard-title")).toBeVisible();
     await expect(
       page.getByText("以下学生已在课程练习中做过所选单元"),
