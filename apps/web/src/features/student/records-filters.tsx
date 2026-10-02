@@ -60,7 +60,7 @@ export function parseStudentRecordsUrl(
   return {
     sourceType: pickEnum(
       search.get("sourceType"),
-      ["all", "assignment", "course"],
+      ["all", "assignment", "course", "wrong"],
       "all",
     ),
     courseId: courseId !== null && courseId !== "" ? courseId : null,
@@ -172,6 +172,7 @@ export function StudentRecordsFilters({
           <option value="all">全部来源</option>
           <option value="assignment">作业</option>
           <option value="course">课程练习</option>
+          <option value="wrong">错题重练</option>
         </select>
       </div>
 

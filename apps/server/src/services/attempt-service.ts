@@ -13,7 +13,9 @@ import {
   type Question,
   type QuestionAnswers,
   type QuestionOption,
+  type QuestionPublic,
   questionAnswersSchema,
+  questionPublicSchema,
   questionSchema,
   type StudentAnswer,
   type StudentPaperData,
@@ -22,7 +24,7 @@ import {
 } from "@tutor/contract";
 import { grade } from "@tutor/grading";
 import { publicStemMd } from "@tutor/md-dsl";
-import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
   type Assignment,
@@ -67,6 +69,10 @@ import { pendingMarkCount } from "./pending-mark";
  * - startCourseAttempt（T2A.6）：课程练习入口——存在未交卷作答则返回它；否则
  *   新建（attemptNo+1，从空白开始）。每次调用都校验 D5 可见性；「(学生, 课程,
  *   单元) 同时最多 1 份未交卷」由事务先查后插保证（D10）；
+ * - wrong 来源（2026-10 错题重练）：组卷在 wrong-practice.ts 的 startWrongPractice
+ *   （校验 + 快照冻结），本模块只承接读路径——attemptUnitIds 恒 []（题目集合
+ *   在 attempt 自己的 responses 行，按建卷插入序 rowid 读取，见各 wrong 分支）、
+ *   requireUsableAttempt 不做课程校验（无课程归属，attempt 永不失权）；
  * - saveDraftAnswer：draft 阶段 upsert responses（answerJson + changeCount 累加）；
  *   快照不在此写——判分与快照冻结都在交卷时一次性完成；
  * - submitAttempt：服务端权威判分（@tutor/grading，AGENTS 第 4 条）、逐题写
@@ -104,15 +110,16 @@ import { pendingMarkCount } from "./pending-mark";
  * （见 buildResultData）；截止后读时自动恢复。
  */
 
-/** attempt 行 → 摘要（接口形态） */
-function attemptSummaryOf(row: Attempt): AttemptStartData {
+/** attempt 行 → 摘要（接口形态）；导出供 wrong-practice.ts 组卷复用（同一投影） */
+export function attemptSummaryOf(row: Attempt): AttemptStartData {
   return {
     id: row.id,
     sourceType: row.sourceType,
     assignmentId: row.assignmentId,
     courseId: row.courseId,
     // T2A.7：assignment 来源多单元化后 unitId 恒 null（题目集合走
-    // assignment_units）；course 来源恒有值。摘要层归一化而非直接透传：
+    // assignment_units）；course 来源恒有值；wrong 来源恒 null（2026-10）。
+    // 摘要层归一化而非直接透传：
     // D23-6 回填「原值保留」可能让旧库 assignment 行带历史非空 unitId，
     // 此处收敛到契约 superRefine 锁定的不变式（assignment 来源 unitId 恒
     // null），不改库（题目集合本就只走 assignment_units，历史值无消费方）。
@@ -123,6 +130,20 @@ function attemptSummaryOf(row: Attempt): AttemptStartData {
     submittedAt: row.submittedAt,
     scoreAuto: row.scoreAuto,
   };
+}
+
+/**
+ * wrong 来源 attempt 的自有 responses 行（按建卷插入序 rowid 升序 = 组卷
+ * questionIds 顺序，见 schema.ts responses 表注释）。wrong 卷的题目集合、
+ * 快照与题序全部以这些行为唯一口径（不经 units/questions）。
+ */
+function wrongAttemptResponseRows(db: Db, attemptId: string): ResponseRow[] {
+  return db
+    .select()
+    .from(responses)
+    .where(eq(responses.attemptId, attemptId))
+    .orderBy(sql`rowid`)
+    .all();
 }
 
 /** 作业行（含已删除——作答记录不随作业软删消失）；不存在 → 404 ASSIGNMENT_NOT_FOUND */
@@ -232,9 +253,15 @@ export function attemptTeacherId(db: Db, attempt: Attempt): string | null {
  *   必存在——含已删作业，作答不随作业软删消失）。
  *   D16：**单元软删不影响作业通道**——引用行保留，题目照常下发/判分；
  *   只有 questions.deletedAt（T1.12 题目级软删）才把题从判分/快照口径排除。
- * 判分/快照/草稿/取卷/题目归属校验全部以本列表为唯一口径。
+ * - wrong 来源（2026-10）：恒 []——错题重练卷不落单元，题目集合/快照/题序
+ *   全在 attempt 自己的 responses 行（wrongAttemptResponseRows）。
+ * 判分/快照/草稿/取卷/题目归属校验全部以本列表为唯一口径（wrong 来源除外，
+ * 各消费方按 wrong 分支走自有行）。
  */
 export function attemptUnitIds(db: Db, attempt: Attempt): string[] {
+  if (attempt.sourceType === "wrong") {
+    return [];
+  }
   if (attempt.sourceType === "course") {
     return attempt.unitId !== null ? [attempt.unitId] : [];
   }
@@ -284,9 +311,38 @@ export function attemptQuestionRows(db: Db, attempt: Attempt): QuestionRow[] {
 }
 
 /**
+ * 错题重练卷的统一标题（2026-10）：答题页/结果页 h1、草稿视图与结果视图的
+ * 单组标题、来源 meta 均用它；「错题重练 · 第 n 次」的次数串由前端拼。
+ */
+export const WRONG_PRACTICE_TITLE = "错题重练";
+
+/**
+ * 冻结快照（契约 Question）→ QuestionPublic 投影（wrong 来源草稿视图/通用取卷
+ * 用）：stemMd 公开化（[[答案]] → [[]]）、options 转纯文本、hints 只留数量，
+ * answers/solutionMd/sourceMd 一律剥离——与 publicQuestionsOfRows 同一防泄露
+ * 口径（fail closed，经 questionPublicSchema.parse strip 未知键）。
+ */
+function publicOfSnapshot(question: Question): QuestionPublic {
+  return questionPublicSchema.parse({
+    id: question.id,
+    type: question.type,
+    difficulty: question.difficulty,
+    knowledge: question.knowledge,
+    stemMd: publicStemMd(question.stemMd),
+    ...(question.options !== undefined
+      ? { options: question.options.map((option) => option.text) }
+      : {}),
+    hintCount: question.hints.length,
+  });
+}
+
+/**
  * attempt 的分组公开题目（T2A.7 草稿视图与通用取卷共用）：
  * assignment 按 assignment_units.order 分节（live 题数为 0 的单元不出现，与
  * 试卷口径一致）；course 恒单组（单元标题）。标题取单元当前值（D1 引用语义）。
+ * wrong 来源（2026-10）：恒单组「错题重练」——题目取 attempt 自有 responses
+ * 行的冻结快照（建卷时写入，教师改题库不影响），经 publicOfSnapshot 输出过滤，
+ * 题序 = 建卷插入序（rowid）。
  * T2B.5：units/questions 查询按 attempt → student.teacherId 域内取（D10）；
  * 无教师域的异常行按空分组（fail closed，对外形态 = 空卷）。
  */
@@ -294,6 +350,16 @@ function attemptPublicUnitGroups(
   db: Db,
   attempt: Attempt,
 ): (AttemptDraftUnit & StudentPaperUnit)[] {
+  if (attempt.sourceType === "wrong") {
+    const questions: QuestionPublic[] = [];
+    for (const row of wrongAttemptResponseRows(db, attempt.id)) {
+      const snapshot = snapshotOfRow(row);
+      if (snapshot === null) continue; // 坏快照按缺失计（建卷即冻结，理论不可达）
+      questions.push(publicOfSnapshot(snapshot));
+    }
+    // 组 id 用 attemptId（卷无单元语义，仅作分组键/React key，不指涉资源）
+    return [{ id: attempt.id, title: WRONG_PRACTICE_TITLE, questions }];
+  }
   const unitIds = attemptUnitIds(db, attempt);
   const teacherId = attemptTeacherId(db, attempt);
   if (teacherId === null) return [];
@@ -320,6 +386,11 @@ interface AttemptSourceMeta {
 }
 
 function attemptSourceMeta(db: Db, attempt: Attempt): AttemptSourceMeta {
+  if (attempt.sourceType === "wrong") {
+    // 错题重练（2026-10）：标题固定「错题重练」，无课程/截止
+    //（「错题重练 · 第 n 次」的来源行由前端从 attemptNo 拼）
+    return { title: WRONG_PRACTICE_TITLE, courseName: null, dueAt: null };
+  }
   if (attempt.sourceType === "course") {
     // 课程练习：标题 = 单元当前标题（D1 引用而非复制）；不限截止（D11 交卷即公布）。
     // T2B.5：单元标题按 attempt → student.teacherId 域内读（D10）
@@ -377,6 +448,28 @@ export function requireAttemptQuestion(
   attempt: Attempt,
   questionId: string,
 ): void {
+  if (attempt.sourceType === "wrong") {
+    // wrong（2026-10）：题目集合 = attempt 自有 responses 行（建卷时冻结），
+    // 不查 questions 表（教师软删/改题不影响已建的卷）
+    const hit = db
+      .select({ id: responses.id })
+      .from(responses)
+      .where(
+        and(
+          eq(responses.attemptId, attempt.id),
+          eq(responses.questionId, questionId),
+        ),
+      )
+      .get();
+    if (hit === undefined) {
+      throw new HttpError(
+        404,
+        "QUESTION_NOT_FOUND",
+        "题目不存在或不属于这次练习",
+      );
+    }
+    return;
+  }
   const teacherId = attemptTeacherId(db, attempt);
   const question =
     teacherId === null
@@ -484,6 +577,16 @@ function answerOf(answerJson: string | null): StudentAnswer | undefined {
   if (answerJson === null) return undefined;
   const parsed = studentAnswerSchema.safeParse(jsonOf(answerJson));
   return parsed.success ? parsed.data : undefined;
+}
+
+/**
+ * responses 行 → 冻结快照（契约 Question）；无快照/坏数据为 null。
+ * wrong 来源建卷即写入快照（2026-10），该来源下 null 属理论不可达的异常行。
+ */
+function snapshotOfRow(row: ResponseRow): Question | null {
+  if (row.questionSnapshotJson === null) return null;
+  const parsed = questionSchema.safeParse(jsonOf(row.questionSnapshotJson));
+  return parsed.success ? parsed.data : null;
 }
 
 // ---------- POST /api/student/assignments/:id/attempt ----------
@@ -721,8 +824,8 @@ export function saveDraftAnswer(
 
 /** 交卷时逐题的判分中间结果（先在内存算完再进事务写入） */
 interface GradedResponse {
-  /** questions 当前行（版本与快照的来源） */
-  row: QuestionRow;
+  /** 题目定位（questions 当前行或 wrong 卷自有行的窄形态） */
+  row: Pick<QuestionRow, "id" | "version">;
   /** 契约 Question（快照内容、判分输入） */
   question: Question;
   /** 学生答案（草稿；未作为 undefined） */
@@ -808,12 +911,9 @@ export function submitAttempt(
 
   // 判分输入：attempt 题目集合（按 sourceType 分派，T2A.6）+ 各题考点 + 草稿答案
   // T2B.5：考点关联按 attempt → student.teacherId 域内读（D10；attemptQuestionRows 同域）
-  const liveRows = attemptQuestionRows(db, attempt);
-  const teacherIdOfAttempt = attemptTeacherId(db, attempt);
-  const knowledgeByQuestion =
-    teacherIdOfAttempt === null
-      ? new Map<string, string[]>()
-      : knowledgeNamesByQuestion(db, teacherIdOfAttempt);
+  // wrong 来源（2026-10）：题目集合 = attempt 自有 responses 行的冻结快照
+  // （建卷时从最近一次判定作答复制；教师此后改题库/软删题不影响本次判分），
+  // 不查 questions 表、不带考点重查（快照自带 knowledge）。
   const draftRows = db
     .select()
     .from(responses)
@@ -828,12 +928,39 @@ export function submitAttempt(
   const activeSecByQuestion = computePerQuestionActiveSec(timeline);
   const eventChangeCountByQuestion = countAnswerChanges(timeline);
 
-  const graded: GradedResponse[] = liveRows.map((row) => {
-    const question = questionOfRow(row, knowledgeByQuestion.get(row.id) ?? []);
-    const draftRow = draftByQuestion.get(row.id);
-    const answer = answerOf(draftRow?.answerJson ?? null);
-    return { row, question, answer, autoCorrect: grade(question, answer) };
-  });
+  let graded: GradedResponse[];
+  if (attempt.sourceType === "wrong") {
+    graded = wrongAttemptResponseRows(db, attemptId).flatMap((ownRow) => {
+      const snapshot = snapshotOfRow(ownRow);
+      if (snapshot === null) return []; // 坏快照按缺失计（建卷即冻结，理论不可达）
+      const draftRow = draftByQuestion.get(ownRow.questionId);
+      const answer = answerOf(draftRow?.answerJson ?? null);
+      return [
+        {
+          row: { id: ownRow.questionId, version: ownRow.questionVersion },
+          question: snapshot,
+          answer,
+          autoCorrect: grade(snapshot, answer),
+        },
+      ];
+    });
+  } else {
+    const liveRows = attemptQuestionRows(db, attempt);
+    const teacherIdOfAttempt = attemptTeacherId(db, attempt);
+    const knowledgeByQuestion =
+      teacherIdOfAttempt === null
+        ? new Map<string, string[]>()
+        : knowledgeNamesByQuestion(db, teacherIdOfAttempt);
+    graded = liveRows.map((row) => {
+      const question = questionOfRow(
+        row,
+        knowledgeByQuestion.get(row.id) ?? [],
+      );
+      const draftRow = draftByQuestion.get(row.id);
+      const answer = answerOf(draftRow?.answerJson ?? null);
+      return { row, question, answer, autoCorrect: grade(question, answer) };
+    });
+  }
   const scoreAuto = scoreAutoOf(graded);
   // D3：交卷时 teacherMark 必空 → finalCorrect = autoCorrect；D2 据此定 status/scoreFinal
   const finalCorrects = graded.map((g) => g.autoCorrect);
@@ -1107,26 +1234,41 @@ function buildResultData(
         };
 
   const rows =
-    teacherId === null
-      ? []
-      : db
-          .select({
-            response: responses,
-            order: questions.order,
-            questionId: questions.id,
-            unitId: questions.unitId,
-          })
+    attempt.sourceType === "wrong"
+      ? // wrong（2026-10）：自有冻结行按建卷插入序（rowid）取，不 join 当前
+        // questions（快照内容即权威；教师改题库/软删不影响结果视图题序与分组）
+        db
+          .select({ response: responses })
           .from(responses)
-          .innerJoin(
-            questions,
-            and(
-              eq(responses.questionId, questions.id),
-              eq(questions.teacherId, teacherId),
-            ),
-          )
           .where(eq(responses.attemptId, attemptId))
-          .orderBy(asc(questions.order), asc(questions.id))
-          .all();
+          .orderBy(sql`rowid`)
+          .all()
+          .map((row) => ({
+            response: row.response,
+            order: 0,
+            questionId: row.response.questionId,
+            unitId: "",
+          }))
+      : teacherId === null
+        ? []
+        : db
+            .select({
+              response: responses,
+              order: questions.order,
+              questionId: questions.id,
+              unitId: questions.unitId,
+            })
+            .from(responses)
+            .innerJoin(
+              questions,
+              and(
+                eq(responses.questionId, questions.id),
+                eq(questions.teacherId, teacherId),
+              ),
+            )
+            .where(eq(responses.attemptId, attemptId))
+            .orderBy(asc(questions.order), asc(questions.id))
+            .all();
   const resultByQuestion = new Map<string, AttemptResultQuestion>();
   for (const row of rows) {
     const item = resultQuestionOf(row.response);
@@ -1136,45 +1278,58 @@ function buildResultData(
   }
   const resultQuestions = [...resultByQuestion.values()];
 
-  // 分组：先按 attempt 单元顺序，同单元内按题序（rows 已按题序，组内保持）
-  const unitIds = attemptUnitIds(db, attempt);
-  const unitIndex = new Map(unitIds.map((unitId, i) => [unitId, i]));
-  const questionsByUnit = new Map<string, AttemptResultQuestion[]>();
-  for (const row of rows) {
-    const item = resultByQuestion.get(row.questionId);
-    if (item === undefined) continue;
-    const list = questionsByUnit.get(row.unitId);
-    if (list === undefined) questionsByUnit.set(row.unitId, [item]);
-    else list.push(item);
-  }
-  const orderedUnitIds = [
-    ...unitIds,
-    ...[...questionsByUnit.keys()].filter((unitId) => !unitIndex.has(unitId)),
-  ];
-  const unitTitleById = new Map(
-    teacherId !== null && orderedUnitIds.length > 0
-      ? db
-          .select({ id: units.id, title: units.title })
-          .from(units)
-          .where(
-            and(
-              eq(units.teacherId, teacherId),
-              inArray(units.id, orderedUnitIds),
-            ),
-          )
-          .all()
-          .map((row) => [row.id, row.title] as const)
-      : [],
-  );
   const unitGroups: AttemptResultUnit[] = [];
-  for (const unitId of orderedUnitIds) {
-    const questionsOfUnit = questionsByUnit.get(unitId);
-    if (questionsOfUnit === undefined || questionsOfUnit.length === 0) continue;
-    unitGroups.push({
-      id: unitId,
-      title: unitTitleById.get(unitId) ?? unitId,
-      questions: questionsOfUnit,
-    });
+  if (attempt.sourceType === "wrong") {
+    // wrong（2026-10）：恒单组「错题重练」；rows 已按建卷插入序（rowid）排列，
+    // resultQuestions 逐行收集保持该序（不按当前题库单元重排）
+    if (resultQuestions.length > 0) {
+      unitGroups.push({
+        id: attempt.id,
+        title: WRONG_PRACTICE_TITLE,
+        questions: resultQuestions,
+      });
+    }
+  } else {
+    // 分组：先按 attempt 单元顺序，同单元内按题序（rows 已按题序，组内保持）
+    const unitIds = attemptUnitIds(db, attempt);
+    const unitIndex = new Map(unitIds.map((unitId, i) => [unitId, i]));
+    const questionsByUnit = new Map<string, AttemptResultQuestion[]>();
+    for (const row of rows) {
+      const item = resultByQuestion.get(row.questionId);
+      if (item === undefined) continue;
+      const list = questionsByUnit.get(row.unitId);
+      if (list === undefined) questionsByUnit.set(row.unitId, [item]);
+      else list.push(item);
+    }
+    const orderedUnitIds = [
+      ...unitIds,
+      ...[...questionsByUnit.keys()].filter((unitId) => !unitIndex.has(unitId)),
+    ];
+    const unitTitleById = new Map(
+      teacherId !== null && orderedUnitIds.length > 0
+        ? db
+            .select({ id: units.id, title: units.title })
+            .from(units)
+            .where(
+              and(
+                eq(units.teacherId, teacherId),
+                inArray(units.id, orderedUnitIds),
+              ),
+            )
+            .all()
+            .map((row) => [row.id, row.title] as const)
+        : [],
+    );
+    for (const unitId of orderedUnitIds) {
+      const questionsOfUnit = questionsByUnit.get(unitId);
+      if (questionsOfUnit === undefined || questionsOfUnit.length === 0)
+        continue;
+      unitGroups.push({
+        id: unitId,
+        title: unitTitleById.get(unitId) ?? unitId,
+        questions: questionsOfUnit,
+      });
+    }
   }
 
   // 得分汇总：未公布时不泄露对错——correct/wrong/autoGradable 置 0，

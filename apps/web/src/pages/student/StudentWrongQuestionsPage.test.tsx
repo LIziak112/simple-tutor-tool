@@ -1,6 +1,10 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { WrongQuestionCard, WrongQuestionsData } from "@tutor/contract";
+import type {
+  AttemptStartData,
+  WrongQuestionCard,
+  WrongQuestionsData,
+} from "@tutor/contract";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -8,7 +12,10 @@ import {
   parseWrongQuestionsUrl,
   stemSummaryOf,
 } from "@/features/student/wrong-questions-ui";
-import { fetchStudentWrongQuestionsApi } from "@/lib/api";
+import {
+  fetchStudentWrongQuestionsApi,
+  startWrongPracticeApi,
+} from "@/lib/api";
 import StudentWrongQuestionsPage from "./StudentWrongQuestionsPage";
 
 /**
@@ -23,10 +30,12 @@ vi.mock("@/lib/api", async (importOriginal) => {
   return {
     ...actual,
     fetchStudentWrongQuestionsApi: vi.fn(),
+    startWrongPracticeApi: vi.fn(),
   };
 });
 
 const mockedWrong = vi.mocked(fetchStudentWrongQuestionsApi);
+const mockedPractice = vi.mocked(startWrongPracticeApi);
 
 const ATTEMPT_A = "66666666-6666-4666-8666-666666666666";
 const ATTEMPT_B = "77777777-7777-4777-8777-777777777777";
@@ -424,5 +433,122 @@ describe("wrong-questions-ui 纯函数", () => {
     // 按练习：未归类组存在
     const unitGroups = groupWrongQuestions([orphans], "unit", now);
     expect(unitGroups[0]?.title).toBe("未归类");
+  });
+});
+
+describe("StudentWrongQuestionsPage 重练入口（2026-10）", () => {
+  const NEW_ATTEMPT_ID = "99999999-9999-4999-8999-999999999999";
+
+  /** 组卷成功响应（wrong 来源 attempt 摘要；id 由各用例覆盖） */
+  const PRACTICE_SUMMARY: AttemptStartData = {
+    id: NEW_ATTEMPT_ID,
+    sourceType: "wrong",
+    assignmentId: null,
+    courseId: null,
+    unitId: null,
+    attemptNo: 1,
+    status: "draft",
+    startedAt: "2020-09-30T02:00:00.000Z",
+    submittedAt: null,
+    scoreAuto: null,
+  };
+
+  /** 带答题页路由的渲染（组卷成功后断言跳 /s/attempts/:id；mutation 不重试） */
+  function renderPageWithAttemptRoute(initialEntry = "/s/wrong") {
+    const client = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
+    });
+    return render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={[initialEntry]}>
+          <Routes>
+            <Route
+              path="/s/wrong"
+              element={
+                <>
+                  <StudentWrongQuestionsPage />
+                  <LocationProbe />
+                </>
+              }
+            />
+            <Route path="/s/attempts/:attemptId" element={<LocationProbe />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+  }
+
+  it("按钮示数：页头「重练全部」= 当前 tab 题数；组头「重练本组」= 组内题数；空 tab 禁用", async () => {
+    // 只有待复习一题（错-错）：已攻克为空 → 切过去后重练全部（0 题）禁用
+    mockedWrong.mockResolvedValue({
+      questions: [makeQuestion()],
+    });
+    renderPageWithAttemptRoute();
+    expect(
+      await screen.findByRole("button", { name: "重练全部（1 题）" }),
+    ).toBeEnabled();
+    // 按练习分组单组 → 一个组头按钮，示数 1
+    expect(
+      screen.getByRole("button", { name: "重练本组（1 题）" }),
+    ).toBeEnabled();
+
+    // 切已攻克（空 tab）：按钮示 0 并禁用（空态区无组头按钮）
+    fireEvent.click(screen.getByRole("button", { name: "已攻克 0 题" }));
+    const emptyPractice = screen.getByRole("button", { name: /重练全部/ });
+    expect(emptyPractice).toHaveTextContent("重练全部（0 题）");
+    expect(emptyPractice).toBeDisabled();
+  });
+
+  it("点击「重练全部」→ 按列表序提交 questionIds → 成功后跳 /s/attempts/:id", async () => {
+    mockedWrong.mockResolvedValue(ALL_DATA);
+    mockedPractice.mockResolvedValue({
+      ...PRACTICE_SUMMARY,
+      id: NEW_ATTEMPT_ID,
+    });
+    renderPageWithAttemptRoute();
+    await screen.findByRole("button", { name: "重练全部（2 题）" });
+    fireEvent.click(screen.getByRole("button", { name: "重练全部（2 题）" }));
+    // 顺序 = 当前 tab 列表序（q-fill-2 在前、q-judge-1 在后）
+    await waitFor(() => {
+      expect(mockedPractice).toHaveBeenCalledWith(["q-fill-2", "q-judge-1"]);
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("location-probe")).toHaveTextContent(
+        `/s/attempts/${NEW_ATTEMPT_ID}`,
+      );
+    });
+  });
+
+  it("点击「重练本组」只提交该组题目；组卷失败显示错误横幅，重试成功后照常跳转", async () => {
+    mockedWrong.mockResolvedValue(ALL_DATA);
+    mockedPractice
+      .mockRejectedValueOnce(new Error("这些题目不在你的错题本里"))
+      .mockResolvedValueOnce({
+        ...PRACTICE_SUMMARY,
+        id: NEW_ATTEMPT_ID,
+      });
+    renderPageWithAttemptRoute();
+    // 首组 = 有理数加法（lastAt 最新），组内只 q-fill-2；两组各一题 → 取第一个
+    const groupButtons = await screen.findAllByRole("button", {
+      name: "重练本组（1 题）",
+    });
+    expect(groupButtons).toHaveLength(2);
+    fireEvent.click(groupButtons[0] as HTMLElement);
+    await waitFor(() => {
+      expect(mockedPractice).toHaveBeenCalledWith(["q-fill-2"]);
+    });
+    // 失败：错误横幅出现（含服务端信息），页面仍留在错题本
+    expect(await screen.findByRole("alert")).toHaveTextContent("重练组卷失败");
+    expect(screen.getByTestId("location-probe")).toHaveTextContent("/s/wrong");
+    // 重试（第二次 mock 已换成功）→ 跳答题页
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("location-probe")).toHaveTextContent(
+        `/s/attempts/${NEW_ATTEMPT_ID}`,
+      );
+    });
   });
 });

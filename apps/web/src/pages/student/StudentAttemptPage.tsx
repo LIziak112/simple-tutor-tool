@@ -1,4 +1,4 @@
-import { School } from "lucide-react";
+import { BookX, School } from "lucide-react";
 import { Link, useNavigate, useParams } from "react-router";
 import { AttemptSession } from "@/features/attempt/AttemptSession";
 import { useAttemptDetail } from "@/features/attempt/attempt-queries";
@@ -60,15 +60,18 @@ export default function StudentAttemptPage() {
   }
 
   const data = detailQuery.data;
-  // 退出目标：课程练习回单元落地页（继续「再做一次/历次记录」动线）；作业回首页。
+  // 退出目标：课程练习回单元落地页（继续「再做一次/历次记录」动线）；错题重练
+  // 回错题本（2026-10，交卷后能直接看到轮次史新增一轮与攻克状态）；作业回首页。
   // T2A.7：attempt.unitId 可空（assignment 来源多单元化为 null）——course 来源
   // 恒有值，仅在两者齐备时才构造单元落地页地址，否则回首页兜底。
   const exitTarget =
-    data.attempt.sourceType === "course" &&
-    data.attempt.courseId !== null &&
-    data.attempt.unitId !== null
-      ? `/s/courses/${data.attempt.courseId}/units/${encodeURIComponent(data.attempt.unitId)}`
-      : "/s/home";
+    data.attempt.sourceType === "wrong"
+      ? "/s/wrong"
+      : data.attempt.sourceType === "course" &&
+          data.attempt.courseId !== null &&
+          data.attempt.unitId !== null
+        ? `/s/courses/${data.attempt.courseId}/units/${encodeURIComponent(data.attempt.unitId)}`
+        : "/s/home";
   return (
     <div className="flex flex-col gap-3">
       {data.attempt.sourceType === "course" && (
@@ -80,6 +83,18 @@ export default function StudentAttemptPage() {
           >
             <School aria-hidden className="size-4" />
             返回单元练习
+          </Link>
+        </nav>
+      )}
+      {data.attempt.sourceType === "wrong" && (
+        <nav aria-label="返回" className="flex items-center gap-2">
+          <Link
+            to={exitTarget}
+            aria-label="返回错题本"
+            className="flex min-h-11 items-center gap-1 rounded-lg text-sm text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
+          >
+            <BookX aria-hidden className="size-4" />
+            返回错题本
           </Link>
         </nav>
       )}

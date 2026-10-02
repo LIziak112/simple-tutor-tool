@@ -761,6 +761,21 @@ export function startCourseAttemptApi(
   );
 }
 
+// ---------- 2026-10：错题重练（/s/wrong 圈题组卷） ----------
+
+/**
+ * 错题重练组卷（POST /api/student/wrong-practice）：questionIds 由页面按当前
+ * tab + 分组圈定（顺序即组卷题序）。服务端校验「∈ 错题本聚合且快照可用」，
+ * 不在聚合内的题静默剔除；全部被剔 → 400 WRONG_PRACTICE_EMPTY（提示刷新）。
+ * 返回新 wrong 来源 attempt 摘要（跳 /s/attempts/:id 走既有答题会话）。
+ */
+export function startWrongPracticeApi(
+  questionIds: string[],
+): Promise<AttemptStartData> {
+  const args = { json: { questionIds } };
+  return callApi(() => api.api.student["wrong-practice"].$post(args));
+}
+
 /**
  * 保存草稿答案（draft 阶段）。409 ALREADY_SUBMITTED = 已交卷；
  * 404 QUESTION_NOT_FOUND = 题目不属于这份作业或已被老师删除。

@@ -33,6 +33,9 @@ function sourceLineOf(data: TeacherAttemptDetailData): string {
   if (data.sourceType === "course") {
     return `课程：${data.courseName ?? ""} · 第 ${data.attemptNo} 次`;
   }
+  if (data.sourceType === "wrong") {
+    return `错题重练 · 第 ${data.attemptNo} 次`;
+  }
   return data.courseName !== null
     ? `作业 · ${data.courseName}`
     : `作业 · ${data.assignmentTitle ?? ""}`;
@@ -61,18 +64,26 @@ function BackToDataButton() {
  *   （开卷幂等），两参数即唯一确定本 attempt；
  * - course 来源：接口无 attemptId 参数，取 studentId + courseId + sourceType
  *   = 该学生在该课程的**全部练习历次**（CSV「作业或单元」列含「第 n 次」，
- *   教师可按次定位本 attempt；这是 D13 参数集下最贴近的口径）。
+ *   教师可按次定位本 attempt；这是 D13 参数集下最贴近的口径）；
+ * - wrong 来源（2026-10）：无课程/作业可定位，取 studentId + sourceType=wrong
+ *   = 该生的全部错题重练卷（同按「第 n 次」列定位）。
  */
 function exportCsvParamsOfAttempt(data: TeacherAttemptDetailData): {
   studentId: string;
   assignmentId?: string | undefined;
   courseId?: string | undefined;
-  sourceType?: "course" | "assignment" | undefined;
+  sourceType?: "course" | "assignment" | "wrong" | undefined;
 } {
   if (data.sourceType === "assignment") {
     return {
       studentId: data.studentId,
       assignmentId: data.assignmentId ?? undefined,
+    };
+  }
+  if (data.sourceType === "wrong") {
+    return {
+      studentId: data.studentId,
+      sourceType: "wrong",
     };
   }
   return {

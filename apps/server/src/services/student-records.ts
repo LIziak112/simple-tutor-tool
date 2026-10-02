@@ -86,6 +86,7 @@ function assignmentDraftReachable(
  * 失权草稿的 attempt id 集合（见模块头注释的可见性口径）。
  * course 维度按 (courseId, unitId) 缓存 requireVisibleCourseUnit 的判定结果
  * （同组草稿不重复走门）；一个学生的草稿总量有限，全量扫描无压力。
+ * wrong 来源（2026-10）恒不失权——无课程/作业归属，草稿与记录一直可见。
  */
 function lostAccessDraftIds(
   db: Db,
@@ -100,6 +101,9 @@ function lostAccessDraftIds(
   const excluded = new Set<string>();
   const courseUnitVisible = new Map<string, boolean>();
   for (const draft of drafts) {
+    if (draft.sourceType === "wrong") {
+      continue; // 错题重练无归属，永不失权（草稿照常列出、可续作）
+    }
     if (draft.sourceType === "course") {
       const key = `${draft.courseId ?? ""}\n${draft.unitId ?? ""}`;
       const cached = courseUnitVisible.get(key);

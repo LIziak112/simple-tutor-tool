@@ -222,6 +222,99 @@ export function exportCsv(
   for (const { attempt, studentName } of attemptRows) {
     const source = sourceOf(db, attempt, teacherId);
     const inkByQuestion = inkByQuestionOf(db, attempt.id);
+
+    // wrong 来源（2026-10 错题重练）：逐题行 = attempt 自有冻结行，按建卷插入序
+    // （rowid，限定 responses 表防 join 二义）；单元列取题目当前归属单元（域内，
+    // 与教师端详情/错题本 originUnit 同口径），行缺失留空。不走按单元分组的
+    // 主路径（那里的题序取当前题库 order，会打乱组卷题序）。
+    if (attempt.sourceType === "wrong") {
+      const ownRows = db
+        .select({
+          response: responses,
+          questionUnitId: questions.unitId,
+          questionType: questions.type,
+          questionDifficulty: questions.difficulty,
+        })
+        .from(responses)
+        .leftJoin(
+          questions,
+          and(
+            eq(responses.questionId, questions.id),
+            eq(questions.teacherId, teacherId),
+          ),
+        )
+        .where(eq(responses.attemptId, attempt.id))
+        .orderBy(sql`responses.rowid`)
+        .all();
+      const unitTitles = unitTitleByIdOf(db, teacherId, [
+        ...new Set(
+          ownRows
+            .map((row) => row.questionUnitId)
+            .filter((unitId): unitId is string => unitId !== null),
+        ),
+      ]);
+      const submittedText = beijingDateTimeOf(
+        attempt.submittedAt ?? attempt.startedAt,
+      );
+      /** 快照缺失时的考点兜底（懒加载一次；noAssignInExpressions 口径改函数式） */
+      const fallbackKnowledgeOf = (questionId: string): string[] => {
+        knowledgeFallback ??= knowledgeNamesByQuestion(db, teacherId);
+        return knowledgeFallback.get(questionId) ?? [];
+      };
+      let wrongNo = 0;
+      for (const row of ownRows) {
+        wrongNo += 1;
+        const snapshot = snapshotOf(row.response);
+        const type = snapshot?.type ?? row.questionType ?? null;
+        const difficulty =
+          snapshot?.difficulty ?? row.questionDifficulty ?? null;
+        const knowledge =
+          snapshot?.knowledge ?? fallbackKnowledgeOf(row.response.questionId);
+        const answerText =
+          serializeStudentAnswer(answerOf(row.response.answerJson)) ?? "";
+        const inkRow = inkByQuestion.get(row.response.questionId);
+        const inkUrl =
+          type !== null &&
+          HANDWRITTEN_QUESTION_TYPES.includes(type) &&
+          inkRow !== undefined
+            ? `${base}/api/teacher/ink/${inkRow.id}.png`
+            : "";
+        lines.push(
+          [
+            studentName,
+            "错题重练",
+            "",
+            `第 ${attempt.attemptNo} 次`,
+            submittedText,
+            row.questionUnitId !== null
+              ? (unitTitles.get(row.questionUnitId) ?? row.questionUnitId)
+              : "",
+            String(wrongNo),
+            type === null ? "" : (QUESTION_TYPE_LABELS[type] ?? type),
+            difficulty === null ? "" : String(difficulty),
+            knowledge.join("；"),
+            answerText,
+            autoCorrectText(row.response.autoCorrect),
+            finalCorrectText(row.response.finalCorrect),
+            row.response.teacherMark === "correct" ||
+            row.response.teacherMark === "wrong"
+              ? "教师"
+              : "自动",
+            row.response.activeSec === null
+              ? ""
+              : String(row.response.activeSec),
+            String(row.response.hintsUsed),
+            String(row.response.changeCount),
+            row.response.teacherComment ?? "",
+            inkUrl,
+          ]
+            .map(csvCell)
+            .join(","),
+        );
+      }
+      continue;
+    }
+
     const unitIds = attemptUnitIds(db, attempt);
 
     // 已交卷逐题：leftJoin 当前 questions（teacherId 域）提供单元归属与题序

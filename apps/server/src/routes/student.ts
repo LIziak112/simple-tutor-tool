@@ -7,6 +7,7 @@ import {
   studentLectureDetailQuerySchema,
   studentPasswordChangeRequestSchema,
   studentRecordsQuerySchema,
+  wrongPracticeRequestSchema,
   wrongQuestionsQuerySchema,
 } from "@tutor/contract";
 import { Hono } from "hono";
@@ -48,6 +49,7 @@ import {
 } from "../services/student-course-service";
 import { listStudentRecords } from "../services/student-records";
 import { changeStudentPassword } from "../services/student-service";
+import { startWrongPractice } from "../services/wrong-practice";
 import { listWrongQuestions } from "../services/wrong-questions";
 
 /**
@@ -96,6 +98,11 @@ import { listWrongQuestions } from "../services/wrong-questions";
  *   已攻克；只统计已判定作答；after_due 未公布作业的作答整体不参与聚合；
  *   rounds 轮次史 + wrongCount/correctCount + originUnit 归属单元一并下发，
  *   攻克判定规则由端上自选、服务端不下发）；
+ * - POST /wrong-practice（2026-10 错题重练）：{questionIds} 圈题组卷——范围
+ *   由前端按错题本当前 tab + 分组圈定，服务端校验（∈ 聚合且快照可用，否则
+ *   静默剔除；剔完为空 400 WRONG_PRACTICE_EMPTY）并按最近一次判定作答的
+ *   快照冻结组卷（sourceType=wrong，题目顺序 = questionIds 顺序）；响应为新
+ *   attempt 摘要（201）；作答/判分/批改复用既有 /attempts/:id/* 机制；
  * - POST /logout：删除会话行并清除 Cookie（T2.3，与教师 logout 同实现口径）。
  *
  * 路径段带后缀说明：Hono 的 path 参数会吞掉整个 segment（含 .png 后缀），
@@ -406,6 +413,20 @@ export function createStudentRoutes(
             new Date(),
           ),
         });
+      })
+      // 2026-10 错题重练组卷：范围由前端按错题本筛选口径圈定（questionIds 顺序
+      // 即题序），服务端校验 + 快照冻结组卷（wrong-practice.ts，泄露口径与既有
+      // 作答接口一致——响应只有 attempt 摘要，无任何题目内容；未交卷详情/试卷
+      // 照旧走公开投影，泄露测试见 routes/student-wrong-practice.test.ts）
+      .post("/wrong-practice", async (c) => {
+        const body = await parseJsonBody(c, wrongPracticeRequestSchema);
+        return c.json(
+          {
+            ok: true,
+            data: startWrongPractice(db, c.var.student.id, body.questionIds),
+          },
+          201,
+        );
       })
       // T2A.5：讲义详情带课程上下文（?courseId=，D22 访问判定）与本课配套练习（D8）
       .get("/lectures/:id", (c) => {

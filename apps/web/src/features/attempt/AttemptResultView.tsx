@@ -411,13 +411,16 @@ export function AttemptResultView({
             {data.title} · {released ? "批改结果" : "已交卷"}
           </h2>
           {/* 来源行（T2A.6，与答题视图同口径）：课程练习带次数（历次回看可分辨
-              第几次）；作业标「作业」（挂课程时「作业 · 课程名」，T2A.7） */}
+              第几次）；作业标「作业」（挂课程时「作业 · 课程名」，T2A.7）；
+              错题重练「错题重练 · 第 n 次」（2026-10） */}
           <p className="text-xs text-muted-foreground">
             {attempt.sourceType === "course"
               ? `课程：${data.courseName ?? ""} · 第 ${attempt.attemptNo} 次`
-              : data.courseName !== null
-                ? `作业 · ${data.courseName}`
-                : "作业"}
+              : attempt.sourceType === "wrong"
+                ? `错题重练 · 第 ${attempt.attemptNo} 次`
+                : data.courseName !== null
+                  ? `作业 · ${data.courseName}`
+                  : "作业"}
           </p>
           {attempt.submittedAt !== null && (
             <p className="text-xs text-muted-foreground">

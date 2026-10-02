@@ -67,7 +67,7 @@ export function parseAttemptListUrl(
     view: pickEnum(search.get("view"), VIEW_MODES, "course"),
     sourceType: pickEnum(
       search.get("sourceType"),
-      ["all", "assignment", "course"],
+      ["all", "assignment", "course", "wrong"],
       "all",
     ),
     status: pickEnum(
@@ -190,6 +190,7 @@ export function AttemptListFilters({
           <option value="all">全部来源</option>
           <option value="assignment">作业</option>
           <option value="course">课程练习</option>
+          <option value="wrong">错题重练</option>
         </select>
       </div>
 

@@ -630,17 +630,20 @@ export const assignmentStudents = sqliteTable(
 );
 
 /**
- * 作答表（T2.6，§5.2；T2A.6 扩展作答来源 D9）——一次完整作答。
+ * 作答表（T2.6，§5.2；T2A.6 扩展作答来源 D9；2026-10 增 wrong 来源）——一次完整作答。
  * - sourceType（D9）：assignment=作业作答（记 assignmentId）/ course=课程练习
- *   （记 courseId + unitId，可重做，attemptNo 递增）。两种来源共用同一套
- *   作答接口（判分/快照/提示/笔迹/事件全按 attemptId 工作）；
+ *   （记 courseId + unitId，可重做，attemptNo 递增）/ wrong=错题重练（2026-10，
+ *   三归属键恒 null、永不失权；题目集合与快照在该 attempt 自己的 responses 行，
+ *   创建时按组卷顺序冻结）。三种来源共用同一套作答接口（判分/快照/提示/笔迹/
+ *   事件全按 attemptId 工作）；
  * - status：draft=进行中（草稿）、submitted=已交卷（存在待批题，等教师批改）、
  *   graded=已批改（= 全部 finalCorrect 非 null；全客观题卷交卷即 graded，D2/D3，
  *   T3.2a）；
  * - unitId 是作答期间的题目来源（快照自 questions 当前行，交卷时冻结）；
  *   assignment 来源保留布置时作业的 unitId（D23-6：旧作业 attempt 的原值不改）；
  * - attemptNo（D10）：course 来源同一 (学生, 课程, 单元) 从 1 递增；
- *   assignment 来源恒 1（一个作业一人一份，不重做）；
+ *   assignment 来源恒 1（一个作业一人一份，不重做）；wrong 来源按该生已有
+ *   wrong 来源 attempt 数从 1 递增（每次重练都是新卷）；
  * - activeSec / device / scoreFinal 为 T2.10 / T2.10 / T3.2 预留列（建列不启用）。
  */
 export const attempts = sqliteTable(
@@ -652,9 +655,9 @@ export const attempts = sqliteTable(
     studentId: text("student_id")
       .notNull()
       .references(() => students.id),
-    /** 作答来源（D9）：assignment | course */
+    /** 作答来源（D9 + 2026-10 wrong）：assignment | course | wrong */
     sourceType: text("source_type")
-      .$type<"assignment" | "course">()
+      .$type<"assignment" | "course" | "wrong">()
       .notNull()
       .default("assignment"),
     /**
@@ -710,7 +713,13 @@ export const attempts = sqliteTable(
  *   交卷时整行重写（写入快照与判分结果）；
  * - questionSnapshotJson：交卷时冻结的完整 Question 序列化（contract questionSchema）。
  *   老师此后编辑/软删题目（version+1）不影响历史作答回看（T2.6 验收项）；
- *   草稿阶段为 NULL（判分与快照都在交卷时一次性写入）；
+ *   草稿阶段为 NULL（判分与快照都在交卷时一次性写入）。**例外（2026-10 wrong
+ *   来源）**：错题重练 attempt 在**创建时**即按组卷顺序逐行预插入（questionId
+ *   顺序 = 请求 questionIds 顺序），行内直接携带从最近一次判定作答复制的
+ *   questionSnapshotJson 与 questionVersion（练的就是当时做错的那道题，教师
+ *   改题库不影响）；wrong 卷的题目顺序以**插入顺序**为准（rowid 升序——
+ *   better-sqlite3 同步单进程，建卷事务内顺序插入、行不被删除，rowid 序 =
+ *   组卷序；不要对该表做整卷 DELETE/重插，会破坏 wrong 卷的题序）；
  * - autoCorrect：服务端判分 true/false；NULL = 不能自动判定（D1 后仅：手写题
  *   未能自动判〔未作答/只写笔迹〕、题目无标准答案、判断题写法无法归一化——
  *   进教师待批队列；未作答客观题为 false）；
@@ -729,7 +738,7 @@ export const responses = sqliteTable(
       .references(() => attempts.id),
     /** 题目（questions.id，来自 DSL；T2B.1/D10 起无外键，值不变） */
     questionId: text("question_id").notNull(),
-    /** 作答/判分时的题目内容版本（questions.version）；草稿阶段为 0（快照未写入） */
+    /** 作答/判分时的题目内容版本（questions.version）；草稿阶段为 0（快照未写入；wrong 来源建卷时直接写源快照的版本） */
     questionVersion: integer("question_version").notNull().default(0),
     /** 交卷时冻结的完整题目快照（questionSchema 序列化）；草稿阶段为 NULL */
     questionSnapshotJson: text("question_snapshot_json"),

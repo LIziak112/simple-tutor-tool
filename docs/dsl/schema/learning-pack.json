@@ -504,7 +504,8 @@
                 "type": "string",
                 "enum": [
                   "assignment",
-                  "course"
+                  "course",
+                  "wrong"
                 ]
               },
               "assignmentId": {

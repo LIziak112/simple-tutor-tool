@@ -237,7 +237,10 @@ export function openHint(
 
 /**
  * 草稿视图的已解锁提示回显（attempt-service 的 buildDraftData 调用）：
- * questionId → 已解锁条目（文本取自 questions 当前行——草稿视图与题目同源）。
+ * questionId → 已解锁条目。hints 文本来源：
+ * - wrong 来源（2026-10）：自有 responses 行的冻结快照（建卷即写入——与
+ *   hintsOfAttempt 同源，教师改题库不影响已建卷的提示回显）；
+ * - 其余来源：questions 当前行（草稿视图与题目同源）。
  * T2B.5：题目行按 attempt → student.teacherId 域内取（D10——同 id 题目分属
  * 不同教师，提示文本不可串域；无教师域的异常行按无题处理）。
  */
@@ -249,33 +252,44 @@ export function draftHintsOpenedView(
     .select({
       questionId: responses.questionId,
       hintsOpenedJson: responses.hintsOpenedJson,
+      questionSnapshotJson: responses.questionSnapshotJson,
     })
     .from(responses)
     .where(eq(responses.attemptId, attempt.id))
     .all();
-  // T2A.7：题目集合按 attemptUnitIds（assignment=assignment_units 多单元；
-  // course=attempt.unitId）——attempt.unitId 已不再覆盖 assignment 来源
-  const unitIds = attemptUnitIds(db, attempt);
-  const teacherId = attemptTeacherId(db, attempt);
-  const questionRows =
-    unitIds.length === 0 || teacherId === null
-      ? []
-      : db
-          .select({ id: questions.id, hintsJson: questions.hintsJson })
-          .from(questions)
-          // 软删题过滤（与 attemptQuestionRows 同口径）：软删题不进 hintsByQuestion，
-          // 其已解锁键不残留在草稿视图（units[].questions 已不含该题，避免孤儿键）
-          .where(
-            and(
-              eq(questions.teacherId, teacherId),
-              inArray(questions.unitId, unitIds),
-              isNull(questions.deletedAt),
-            ),
-          )
-          .all();
-  const hintsByQuestion = new Map(
-    questionRows.map((row) => [row.id, hintsOfJson(row.hintsJson)]),
-  );
+  const hintsByQuestion = new Map<string, string[]>();
+  if (attempt.sourceType === "wrong") {
+    for (const row of draftRows) {
+      if (row.questionSnapshotJson === null) continue;
+      const parsed = questionSchema.safeParse(jsonOf(row.questionSnapshotJson));
+      if (parsed.success)
+        hintsByQuestion.set(row.questionId, parsed.data.hints);
+    }
+  } else {
+    // T2A.7：题目集合按 attemptUnitIds（assignment=assignment_units 多单元；
+    // course=attempt.unitId）——attempt.unitId 已不再覆盖 assignment 来源
+    const unitIds = attemptUnitIds(db, attempt);
+    const teacherId = attemptTeacherId(db, attempt);
+    const questionRows =
+      unitIds.length === 0 || teacherId === null
+        ? []
+        : db
+            .select({ id: questions.id, hintsJson: questions.hintsJson })
+            .from(questions)
+            // 软删题过滤（与 attemptQuestionRows 同口径）：软删题不进 hintsByQuestion，
+            // 其已解锁键不残留在草稿视图（units[].questions 已不含该题，避免孤儿键）
+            .where(
+              and(
+                eq(questions.teacherId, teacherId),
+                inArray(questions.unitId, unitIds),
+                isNull(questions.deletedAt),
+              ),
+            )
+            .all();
+    for (const row of questionRows) {
+      hintsByQuestion.set(row.id, hintsOfJson(row.hintsJson));
+    }
+  }
   const result: Record<string, HintOpenedEntry[]> = {};
   for (const row of draftRows) {
     const opened = openedIndexesOf(row.hintsOpenedJson);
