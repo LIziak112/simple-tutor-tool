@@ -1,6 +1,9 @@
 import type { WrongQuestionCard } from "@tutor/contract";
 import { cn } from "cn";
-import { CheckCircle2, XCircle } from "lucide-react";
+import dayjs from "dayjs";
+import timezone from "dayjs/plugin/timezone";
+import utc from "dayjs/plugin/utc";
+import { CheckCircle2, ChevronDown, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SolutionFold } from "@/features/attempt/AttemptResultView";
 import {
@@ -10,42 +13,62 @@ import {
   QUESTION_TYPE_LABELS,
 } from "@/features/attempt/answer-format";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
-import { formatRelativeTime } from "@/lib/time";
+import { DISPLAY_TZ, formatRelativeTime } from "@/lib/time";
 import { RecordSourceBadge, recordTitleOf } from "./records-views";
 
+// 与 lib/time.ts 同一 dayjs 单例（extend 幂等；本文件分组函数独立可用）
+dayjs.extend(utc);
+dayjs.extend(timezone);
+
 /**
- * /s/wrong 错题本的 URL 状态与卡片（T3.5，D11；2026-10 升为一级路由）：
- * - 筛选同步 URL query：knowledge（考点精确匹配，服务端参数）与
- *   includeResolved（「显示已攻克」开关）——刷新、返回不丢；
- * - 考点 chips：选项从错题本全量数据（includeResolved=true 形态）聚合，
- *   与列表查询互不影响各自缓存；
- * - 条目卡片：题干（快照 RichMarkdown 渲染，[[答案]] 标记渲染为空框不显示
- *   答案原文）、本人最近答案、正确答案、详解默认折叠（共用结果视图的
- *   SolutionFold）、首次是否做对标记、最近来源（课程/作业 + 时间）。
+ * /s/wrong 错题本的 URL 状态、分组与卡片（T3.5，D11；2026-10 升为一级路由；
+ * 2026-10 轮次史改版）：
+ * - 页面统一拉全量形态（includeResolved=true）一次，「待复习/已攻克」tab 与
+ *   分组维度全部本地计算；tab 与分组维度同步 URL query（刷新、返回不丢）；
+ * - 旧 URL 参数兼容：includeResolved=true 映射为 tab=conquered（旧「显示已
+ *   攻克」开关的书签/深链不丢语义）；旧 knowledge 筛选被「按考点」分组取代，
+ *   忽略不报错；
+ * - 条目默认紧凑行（题型徽章 + 题干纯文本摘要 + 错 N 次 + 最近一轮 ✓/✗ +
+ *   相对时间），点击行展开完整卡片；
+ * - 展开卡：题干（快照 RichMarkdown 渲染，[[答案]] 标记渲染为空框）、本人
+ *   最近答案、正确答案、详解折叠（共用结果视图的 SolutionFold）、首次是否
+ *   做对标记、轮次史区块（已做错 N 次 · 做对 M 次 + 每轮一行）、最近来源。
  */
+
+/** 错题本页 tab（成员由本地攻克标准从 rounds 计算） */
+export type WrongTab = "pending" | "conquered";
+
+/** 分组维度 */
+export type WrongGroupMode = "unit" | "time" | "knowledge";
 
 /** 错题本页 URL 状态（单一事实来源是 URL query） */
 export interface WrongQuestionsUrlState {
-  /** 考点筛选（null = 不筛） */
-  knowledge: string | null;
-  /** 「显示已攻克」开关（false = 只列最近仍错的题，D11 默认） */
-  includeResolved: boolean;
+  tab: WrongTab;
+  group: WrongGroupMode;
 }
 
-/** 默认状态（不筛考点、不显示已攻克） */
+/** 默认状态（待复习 + 按练习分组） */
 export const DEFAULT_WRONG_QUESTIONS_URL_STATE: WrongQuestionsUrlState = {
-  knowledge: null,
-  includeResolved: false,
+  tab: "pending",
+  group: "unit",
 };
 
-/** URLSearchParams → 页面状态（knowledge 空串视为未选） */
+/**
+ * URLSearchParams → 页面状态。
+ * 兼容（2026-10 改版前的旧参数，见模块头注释）：includeResolved=true →
+ * tab=conquered；knowledge 忽略（被「按考点」分组取代）；非法值回默认。
+ */
 export function parseWrongQuestionsUrl(
   search: URLSearchParams,
 ): WrongQuestionsUrlState {
-  const knowledge = search.get("knowledge");
+  const group = search.get("group");
   return {
-    knowledge: knowledge !== null && knowledge !== "" ? knowledge : null,
-    includeResolved: search.get("includeResolved") === "true",
+    tab:
+      search.get("tab") === "conquered" ||
+      search.get("includeResolved") === "true"
+        ? "conquered"
+        : "pending",
+    group: group === "time" || group === "knowledge" ? group : "unit",
   };
 }
 
@@ -54,71 +77,195 @@ export function wrongQuestionsUrlQuery(
   state: WrongQuestionsUrlState,
 ): URLSearchParams {
   const params = new URLSearchParams();
-  if (state.knowledge !== null) params.set("knowledge", state.knowledge);
-  if (state.includeResolved) params.set("includeResolved", "true");
+  if (state.tab !== DEFAULT_WRONG_QUESTIONS_URL_STATE.tab) {
+    params.set("tab", state.tab);
+  }
+  if (state.group !== DEFAULT_WRONG_QUESTIONS_URL_STATE.group) {
+    params.set("group", state.group);
+  }
   return params;
 }
 
+// ---------- 分组 ----------
+
+/** 分组结果（组内条目按 lastAt 倒序——入参即服务端排序，逐组保序收集） */
+export interface WrongQuestionGroup {
+  /** 组键（单元 id / 时间桶 key / 考点名） */
+  key: string;
+  /** 组头标题（单元标题 / 本周 / 考点名） */
+  title: string;
+  /** 组内题目（lastAt 倒序） */
+  questions: WrongQuestionCard[];
+}
+
+/** 时间桶（按 lastAt 相对今天，显示时区 Asia/Shanghai 的自然周/自然月） */
+interface TimeBucket {
+  key: string;
+  title: string;
+  /** 展示顺序（小在前） */
+  rank: number;
+}
+
+/** lastAt → 时间桶：本周（本周一起）/ 上周 / 本月（本月 1 日起）/ 更早 */
+function timeBucketOf(lastAt: string, now: Date): TimeBucket {
+  const time = dayjs.utc(lastAt).tz(DISPLAY_TZ);
+  const today = dayjs(now).tz(DISPLAY_TZ).startOf("day");
+  // 周一为一周起点（dayjs startOf("week") 受 locale 影响，显式计算更稳）
+  const thisMonday = today.subtract((today.day() + 6) % 7, "day");
+  if (!time.isBefore(thisMonday))
+    return { key: "this-week", title: "本周", rank: 0 };
+  const lastMonday = thisMonday.subtract(7, "day");
+  if (!time.isBefore(lastMonday))
+    return { key: "last-week", title: "上周", rank: 1 };
+  if (!time.isBefore(today.startOf("month"))) {
+    return { key: "this-month", title: "本月", rank: 2 };
+  }
+  return { key: "earlier", title: "更早", rank: 3 };
+}
+
+/** 组头最新活动时间（组排序用：最近活跃的组在前） */
+function latestAtOf(group: WrongQuestionGroup): string {
+  return group.questions[0]?.lastAt ?? "";
+}
+
 /**
- * 考点 chips（全部 + 各考点；aria-pressed 表当前选中，触控 ≥44px）。
- * 选项由页面从全量形态聚合传入。
+ * 按维度分组当前 tab 的条目（组内保持 lastAt 倒序）：
+ * - unit：按题目归属单元（originUnitId；null 落「未归类」组）——历史合并作业
+ *   里的错题也按题挂回各自单元；
+ * - time：本周 / 上周 / 本月 / 更早（固定顺序，空桶不显示）；
+ * - knowledge：按考点分组。**取第一考点归组**（一道题多考点时只出现在第一个
+ *   考点组，避免同题重复出现在多组——考点完整清单仍在展开卡内展示）。
  */
-export function KnowledgeChips({
-  knowledge,
-  options,
-  onSelect,
-}: {
-  knowledge: string | null;
-  options: string[];
-  onSelect: (knowledge: string | null) => void;
-}) {
-  return (
-    <fieldset
-      className="flex flex-wrap items-center gap-2"
-      aria-label="考点筛选"
-    >
-      <Button
-        variant={knowledge === null ? "default" : "outline"}
-        className="min-h-11"
-        aria-pressed={knowledge === null}
-        onClick={() => onSelect(null)}
-      >
-        全部考点
-      </Button>
-      {options.map((name) => (
-        <Button
-          key={name}
-          variant={knowledge === name ? "default" : "outline"}
-          className="min-h-11"
-          aria-pressed={knowledge === name}
-          onClick={() => onSelect(name)}
-        >
-          {name}
-        </Button>
-      ))}
-    </fieldset>
+export function groupWrongQuestions(
+  questions: WrongQuestionCard[],
+  mode: WrongGroupMode,
+  now: Date = new Date(),
+): WrongQuestionGroup[] {
+  if (mode === "time") {
+    const byBucket = new Map<
+      string,
+      WrongQuestionGroup & { bucket: TimeBucket }
+    >();
+    for (const question of questions) {
+      const bucket = timeBucketOf(question.lastAt, now);
+      const group = byBucket.get(bucket.key) ?? {
+        key: bucket.key,
+        title: bucket.title,
+        questions: [],
+        bucket,
+      };
+      group.questions.push(question);
+      byBucket.set(bucket.key, group);
+    }
+    return [...byBucket.values()]
+      .sort((a, b) => a.bucket.rank - b.bucket.rank)
+      .map(({ bucket: _bucket, ...group }) => group);
+  }
+  const byKey = new Map<string, WrongQuestionGroup>();
+  for (const question of questions) {
+    const key =
+      mode === "unit"
+        ? (question.originUnitId ?? "")
+        : (question.knowledge[0] ?? "");
+    const title =
+      mode === "unit"
+        ? (question.originUnitTitle ?? "未归类")
+        : (question.knowledge[0] ?? "未标注考点");
+    const group = byKey.get(key) ?? { key, title, questions: [] };
+    group.questions.push(question);
+    byKey.set(key, group);
+  }
+  // 组间按最近活跃倒序（同刻按组头标题稳定兜底）
+  return [...byKey.values()].sort(
+    (a, b) =>
+      latestAtOf(b).localeCompare(latestAtOf(a)) ||
+      a.title.localeCompare(b.title, "zh"),
   );
 }
 
-/** 「显示已攻克」开关（aria-pressed；触控 ≥44px） */
-export function IncludeResolvedSwitch({
-  checked,
-  onToggle,
-}: {
-  checked: boolean;
-  onToggle: (checked: boolean) => void;
-}) {
+/** tab 的组头计数文案（当前 tab 口径） */
+export function groupCountLabel(tab: WrongTab, count: number): string {
+  return tab === "pending" ? `待复习 ${count} 题` : `已攻克 ${count} 题`;
+}
+
+// ---------- 紧凑行 ----------
+
+/**
+ * 题干纯文本摘要（单行截断预览）：[[答案]] 标记替换为空框（绝不显示答案原文），
+ * 指令围栏与强调记号剥除、公式取内文（LaTeX 命令保留原文——预览不求精美，
+ * 完整渲染看展开卡）。仅为行内预览口径。
+ */
+export function stemSummaryOf(stemMd: string): string {
   return (
-    <Button
-      variant={checked ? "default" : "outline"}
-      className="min-h-11"
-      aria-pressed={checked}
-      onClick={() => onToggle(!checked)}
-    >
-      显示已攻克
-    </Button>
+    stemMd
+      .replace(/\[\[[^\]]*\]\]/g, "（　）")
+      .replace(/:::+[a-zA-Z-]*/g, " ")
+      .replace(/\$\$?([^$]+)\$\$?/g, "$1")
+      .replace(/[*_`>#~]/g, "")
+      // 只折叠 ASCII 空白（\s 会把全角空格 U+3000 一并折叠，破坏「（　）」空框）
+      .replace(/[ \t\r\n]+/g, " ")
+      .trim()
   );
 }
+
+/**
+ * 单条错题紧凑行（默认形态；点击展开完整卡片）。触控 ≥44px。
+ */
+export function WrongQuestionRow({
+  question,
+  expanded,
+  onToggle,
+}: {
+  question: WrongQuestionCard;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const lastRound = question.rounds[question.rounds.length - 1];
+  return (
+    <button
+      type="button"
+      aria-expanded={expanded}
+      onClick={onToggle}
+      className="flex min-h-11 w-full items-center gap-x-3 gap-y-1 rounded-xl border border-border bg-card px-4 py-2.5 text-left text-card-foreground outline-none transition-colors hover:bg-muted/40 focus-visible:ring-3 focus-visible:ring-ring/50"
+    >
+      <span
+        className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${QUESTION_TYPE_BADGE_CLASS[question.type]}`}
+      >
+        {QUESTION_TYPE_LABELS[question.type]}
+      </span>
+      <span className="min-w-0 flex-1 truncate text-sm">
+        {stemSummaryOf(question.stemMd)}
+      </span>
+      <span className="shrink-0 text-xs text-muted-foreground">
+        错 {question.wrongCount} 次
+      </span>
+      {lastRound !== undefined &&
+        (lastRound.correct ? (
+          <CheckCircle2
+            aria-label="最近一轮做对"
+            className="size-4 shrink-0 text-emerald-600 dark:text-emerald-400"
+          />
+        ) : (
+          <XCircle
+            aria-label="最近一轮做错"
+            className="size-4 shrink-0 text-red-600 dark:text-red-400"
+          />
+        ))}
+      <span className="w-16 shrink-0 text-right text-xs text-muted-foreground">
+        {formatRelativeTime(question.lastAt)}
+      </span>
+      <ChevronDown
+        aria-hidden
+        className={cn(
+          "size-4 shrink-0 text-muted-foreground transition-transform",
+          expanded && "rotate-180",
+        )}
+      />
+    </button>
+  );
+}
+
+// ---------- 展开卡（沿用旧卡片 + 轮次史区块） ----------
 
 /** 首次是否做对标记（最早一次已判定作答；D11 条目标注） */
 function FirstCorrectMark({ firstCorrect }: { firstCorrect: boolean }) {
@@ -132,6 +279,54 @@ function FirstCorrectMark({ firstCorrect }: { firstCorrect: boolean }) {
       <XCircle aria-hidden className="size-3" />
       首次做错
     </span>
+  );
+}
+
+/**
+ * 轮次史区块（2026-10）：「已做错 N 次 · 做对 M 次」汇总 + 每轮一行
+ * （第 k 轮 ✓/✗ · 相对时间 · 来源标题）。攻克判定由端上按学生自选标准
+ * 从本区块的原料（rounds）计算，服务端不下发规则。
+ */
+function RoundsHistory({ question }: { question: WrongQuestionCard }) {
+  return (
+    <section
+      aria-label="轮次史"
+      className="flex flex-col gap-2 rounded-lg border border-border bg-muted/30 px-4 py-3"
+    >
+      <p className="text-sm font-medium">
+        已做错 {question.wrongCount} 次 · 做对 {question.correctCount} 次
+      </p>
+      <ol className="flex flex-col gap-1.5">
+        {question.rounds.map((round, index) => (
+          <li
+            key={round.attemptId}
+            className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground"
+          >
+            <span className="font-medium text-foreground">
+              第 {index + 1} 轮
+            </span>
+            {round.correct ? (
+              <span className="flex shrink-0 items-center gap-1 font-medium text-emerald-700 dark:text-emerald-300">
+                <CheckCircle2 aria-hidden className="size-3.5" />
+                做对
+              </span>
+            ) : (
+              <span className="flex shrink-0 items-center gap-1 font-medium text-red-700 dark:text-red-300">
+                <XCircle aria-hidden className="size-3.5" />
+                做错
+              </span>
+            )}
+            <span className="shrink-0">
+              {formatRelativeTime(round.submittedAt)}
+            </span>
+            <span className="min-w-0 truncate">
+              {round.sourceTitle}
+              {round.courseName !== null && `（${round.courseName}）`}
+            </span>
+          </li>
+        ))}
+      </ol>
+    </section>
   );
 }
 
@@ -175,7 +370,7 @@ function WrongOptions({ question }: { question: WrongQuestionCard }) {
   );
 }
 
-/** 单条错题卡片（最近仍错 / 已攻克两形态共用） */
+/** 单条错题完整卡片（紧凑行点击展开；待复习/已攻克两形态共用） */
 export function WrongQuestionItem({
   question,
 }: {
@@ -185,11 +380,6 @@ export function WrongQuestionItem({
     <article className="flex flex-col gap-4 rounded-xl border border-border bg-card p-4 text-card-foreground sm:p-5">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
         <FirstCorrectMark firstCorrect={question.firstCorrect} />
-        {question.resolved && (
-          <span className="rounded-full bg-emerald-500/15 px-2.5 py-0.5 text-xs font-medium text-emerald-700 dark:text-emerald-300">
-            已攻克
-          </span>
-        )}
         <span
           className={`rounded-full px-2.5 py-1 text-xs font-medium ${QUESTION_TYPE_BADGE_CLASS[question.type]}`}
         >
@@ -248,6 +438,8 @@ export function WrongQuestionItem({
 
       <SolutionFold solutionMd={question.solutionMd} />
 
+      <RoundsHistory question={question} />
+
       <p className="flex flex-wrap items-center gap-2 border-t border-border pt-3 text-xs text-muted-foreground">
         <RecordSourceBadge sourceType={question.sourceType} />
         <span className="min-w-0 truncate">
@@ -259,5 +451,77 @@ export function WrongQuestionItem({
         </span>
       </p>
     </article>
+  );
+}
+
+// ---------- 页内控件 ----------
+
+/** tab 分段控件（待复习/已攻克；aria-pressed 表当前，触控 ≥44px） */
+export function WrongTabSwitch({
+  tab,
+  pendingCount,
+  conqueredCount,
+  onSelect,
+}: {
+  tab: WrongTab;
+  pendingCount: number;
+  conqueredCount: number;
+  onSelect: (tab: WrongTab) => void;
+}) {
+  return (
+    <fieldset
+      aria-label="错题分区"
+      className="flex flex-wrap items-center gap-2"
+    >
+      <Button
+        variant={tab === "pending" ? "default" : "outline"}
+        className="min-h-11"
+        aria-pressed={tab === "pending"}
+        onClick={() => onSelect("pending")}
+      >
+        待复习 {pendingCount} 题
+      </Button>
+      <Button
+        variant={tab === "conquered" ? "default" : "outline"}
+        className="min-h-11"
+        aria-pressed={tab === "conquered"}
+        onClick={() => onSelect("conquered")}
+      >
+        已攻克 {conqueredCount} 题
+      </Button>
+    </fieldset>
+  );
+}
+
+/** 分组维度分段控件（按练习/按时间/按考点；触控 ≥44px） */
+export function WrongGroupSwitch({
+  group,
+  onSelect,
+}: {
+  group: WrongGroupMode;
+  onSelect: (group: WrongGroupMode) => void;
+}) {
+  const options: Array<{ value: WrongGroupMode; label: string }> = [
+    { value: "unit", label: "按练习" },
+    { value: "time", label: "按时间" },
+    { value: "knowledge", label: "按考点" },
+  ];
+  return (
+    <fieldset
+      aria-label="分组维度"
+      className="flex flex-wrap items-center gap-2"
+    >
+      {options.map((option) => (
+        <Button
+          key={option.value}
+          variant={group === option.value ? "default" : "outline"}
+          className="min-h-11"
+          aria-pressed={group === option.value}
+          onClick={() => onSelect(option.value)}
+        >
+          {option.label}
+        </Button>
+      ))}
+    </fieldset>
   );
 }

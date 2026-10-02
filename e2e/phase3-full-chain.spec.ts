@@ -499,9 +499,20 @@ test.describe("Phase 3 全链路（T3.6）：作答 → 数据页 → 批改 →
       const inkRes = await request.get(inkUrl);
       expect(inkRes.status()).toBe(200);
 
-      // —— 错题本（D11）：答错的第 2 题出现（正确答案 + 详解折叠），
-      //    答对的第 1 题与批对的手写题不出现 ——
+      // —— 错题本（D11；2026-10 轮次史视图）：默认待复习 + 按练习分组，
+      //    答错的第 2 题出现（正确答案 + 详解折叠），答对的第 1 题与批对的
+      //    手写题不出现 ——
       await studentPage.goto("/s/wrong");
+      // 组头 = 归属单元标题 + 待复习计数
+      await expect(
+        studentPage.getByRole("heading", {
+          name: `${unitName} · 待复习 1 题`,
+        }),
+      ).toBeVisible();
+      // 紧凑行（错 1 次）→ 点击展开完整卡片
+      const wrongRow = studentPage.getByRole("button", { name: /错 1 次/ });
+      await expect(wrongRow).toBeVisible();
+      await wrongRow.click();
       const wrongCard = studentPage.locator("article", {
         hasText: "正数与负数",
       });
@@ -513,6 +524,15 @@ test.describe("Phase 3 全链路（T3.6）：作答 → 数据页 → 批改 →
       await expect(wrongCard.getByText("正确", { exact: true })).toBeVisible();
       await expect(wrongCard.getByText("正确答案：")).toBeVisible();
       await expect(wrongCard.getByText("错", { exact: true })).toBeVisible();
+      // 轮次史区块（2026-10）：1 轮（错），来源 = 「单元标题 · 第 1 次」
+      // （页脚「最近来源」同名 substring 也命中，取 first）
+      await expect(
+        wrongCard.getByText("已做错 1 次 · 做对 0 次"),
+      ).toBeVisible();
+      await expect(wrongCard.getByText("第 1 轮")).toBeVisible();
+      await expect(
+        wrongCard.getByText(`${unitName} · 第 1 次`).first(),
+      ).toBeVisible();
       // 详解默认折叠，展开后可见（KaTeX 渲染，用纯文本片段断言）
       await expect(wrongCard.getByText(/大于/)).toHaveCount(0);
       await wrongCard.getByRole("button", { name: /查看详解/ }).click();

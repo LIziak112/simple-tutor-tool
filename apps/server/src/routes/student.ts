@@ -91,9 +91,11 @@ import { listWrongQuestions } from "../services/wrong-questions";
  * - GET  /records（T3.5，D10）：我的记录——本人全部作答的时间倒序索引
  *   （sourceType/courseId/assignmentId/status/from/to/limit/offset 筛选分页；
  *   失权草稿不列、已交卷一律保留；after_due 未公布得分/待批置 null）；
- * - GET  /wrong-questions（T3.5，D11）：错题本——按 (学生, 题目) 跨全部来源
- *   聚合（knowledge 精确筛选、includeResolved 显示已攻克；只统计已判定作答；
- *   after_due 未公布作业的作答整体不参与聚合）；
+ * - GET  /wrong-questions（T3.5，D11；2026-10 轮次史扩展）：错题本——按
+ *   (学生, 题目) 跨全部来源聚合（knowledge 精确筛选、includeResolved 显示
+ *   已攻克；只统计已判定作答；after_due 未公布作业的作答整体不参与聚合；
+ *   rounds 轮次史 + wrongCount/correctCount + originUnit 归属单元一并下发，
+ *   攻克判定规则由端上自选、服务端不下发）；
  * - POST /logout：删除会话行并清除 Cookie（T2.3，与教师 logout 同实现口径）。
  *
  * 路径段带后缀说明：Hono 的 path 参数会吞掉整个 segment（含 .png 后缀），
@@ -374,10 +376,11 @@ export function createStudentRoutes(
           ),
         });
       })
-      // T3.5（D11）：错题本——按 (studentId, questionId) 跨全部来源聚合的错题
-      // 索引。只统计已判定作答（待批不参与）；after_due 未公布作业的作答整体
-      // 不参与聚合（题目完全消失，防泄露对错）；题目内容来自已交卷快照
-      // （assertNoLeak 放行 answers 后专项断言见
+      // T3.5（D11；2026-10 轮次史扩展）：错题本——按 (studentId, questionId)
+      // 跨全部来源聚合的错题索引。只统计已判定作答（待批不参与）；after_due
+      // 未公布作业的作答整体不参与聚合（题目完全消失，防泄露对错）；题目内容
+      // 来自已交卷快照；rounds/计数/归属单元随条目下发（攻克判定在端上算，
+      // 服务端不下发规则）（assertNoLeak 放行 answers 后专项断言见
       // routes/student-wrong-questions.test.ts）
       .get("/wrong-questions", (c) => {
         // GET 无 JSON body：查询参数手工过契约 schema（stringbool 解析 "true"）

@@ -9,24 +9,31 @@ import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
-import { attempts, responses, students } from "../db/schema.ts";
+import { attempts, questions, responses, students } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 
 /**
- * T3.5 错题本集成测试（D11；app.request() 直调路由 + 内存库）：
+ * T3.5 错题本集成测试（D11；2026-10 轮次史 + 归属单元扩展；app.request() 直调
+ * 路由 + 内存库）：
  * - 入本条件：任一次已判定作答判错（曾错入本）；默认只显示「最近一次判定仍为
  *   错」，includeResolved=true 额外列出「曾错、最近一次已做对」（resolved）；
  * - 待批作答不参与（无标准答案手写题未批绝不出现在本子里）；教师批改后的
  *   finalCorrect 参与聚合（批错入本）；
  * - 首次是否做对标注（firstCorrect）；跨来源取最近（课程练习先错、作业后对 →
  *   最近来源=作业）；排序 lastAt 倒序；
+ * - 轮次史（rounds）：该题全部已判定作答按时间升序，每轮带来源标题/课程名；
+ *   wrongCount/correctCount 计数；攻克判定在端上从 rounds 计算（服务端不下发
+ *   判定规则，resolved 保留服务端口径）；
+ * - 归属单元（originUnitId/originUnitTitle）：questions.unitId join units，
+ *   assignment 来源条目也按题挂回单元（与「最近来源上下文」unitId 区分）；
+ *   软删题目行仍在、值照常返回；
  * - 考点筛选（与条目展示同源的精确匹配）；
  * - 公布 gate：after_due 未公布作业的作答整体不参与聚合——该题完全消失
  *   （出现即泄露对错）；
  * - 参数与权限：includeResolved 非法 400、knowledge 空串 400、未登录 401；
  * - 泄露：条目只含已交卷题目内容（assertNoLeak 放行 answers/solutionMd 后
- *   断言无提示内容——未解锁提示文本绝不出现）。
+ *   断言无提示内容——未解锁提示文本绝不出现；rounds 等新字段无敏感键）。
  * 夹具：两道判断（含提示，可自动判分）+ 一道无标准答案手写题（待批）。
  */
 
@@ -76,9 +83,10 @@ const Q = {
 /** after_due 远期截止（真实时钟下恒未到） */
 const FAR_DUE = "2099-01-01T00:00:00.000Z";
 
-/** 两次交卷的确定性时间轴（first/last 与排序断言用） */
+/** 多次交卷的确定性时间轴（first/last/轮次史与排序断言用） */
 const T1 = "2026-09-01T10:00:00.000Z";
 const T2 = "2026-09-02T10:00:00.000Z";
+const T3 = "2026-09-03T10:00:00.000Z";
 
 type App = ReturnType<typeof createApp>;
 
@@ -366,6 +374,83 @@ describe("GET /api/student/wrong-questions（T3.5 D11 错题本）", () => {
     expect(serialized).not.toContain("$-1$ 小于 $0$。");
   });
 
+  it("轮次史：同题三次作答 错-对-错 → rounds=3、wrongCount=2、correctCount=1、lastAt=第三次、resolved=false；归属单元下发（软删题目行仍在）；assertNoLeak 通过", async () => {
+    const env = await makeWrongEnv();
+    // 第 1 次：judge1 错 / judge2 对
+    const a1 = await startCourseAttempt(env);
+    await saveAnswer(env, a1, Q.judge1, { kind: "judge", value: false });
+    await saveAnswer(env, a1, Q.judge2, { kind: "judge", value: false });
+    await submitAt(env, a1, T1);
+    // 第 2 次：judge1 对 / judge2 对（judge2 全对永不入本）
+    const a2 = await startCourseAttempt(env);
+    await saveAnswer(env, a2, Q.judge1, { kind: "judge", value: true });
+    await saveAnswer(env, a2, Q.judge2, { kind: "judge", value: false });
+    await submitAt(env, a2, T2);
+    // 第 3 次：judge1 再错 / judge2 对
+    const a3 = await startCourseAttempt(env);
+    await saveAnswer(env, a3, Q.judge1, { kind: "judge", value: false });
+    await saveAnswer(env, a3, Q.judge2, { kind: "judge", value: false });
+    await submitAt(env, a3, T3);
+
+    const { status, body, data } = await getWrongQuestions(env);
+    expect(status).toBe(200);
+    expect(wrongQuestionsOkSchema.safeParse(body).success).toBe(true);
+    expect(data?.questions.map((card) => card.questionId)).toEqual([Q.judge1]);
+    const card = data?.questions[0];
+    // 轮次史：三轮按时间升序，每轮带判定/时间/来源标题
+    expect(card?.rounds).toHaveLength(3);
+    expect(card?.rounds.map((round) => round.correct)).toEqual([
+      false,
+      true,
+      false,
+    ]);
+    expect(card?.rounds.map((round) => round.submittedAt)).toEqual([
+      T1,
+      T2,
+      T3,
+    ]);
+    expect(card?.rounds.map((round) => round.sourceType)).toEqual([
+      "course",
+      "course",
+      "course",
+    ]);
+    expect(card?.rounds.map((round) => round.sourceTitle)).toEqual([
+      "有理数课程练习 · 第 1 次",
+      "有理数课程练习 · 第 2 次",
+      "有理数课程练习 · 第 3 次",
+    ]);
+    expect(card?.rounds[0]?.attemptId).toBe(a1);
+    expect(card?.rounds[0]?.courseName).toBe("初一上");
+    // 计数与端上攻克判定的原料（严格标准下 错-对-错 仍待复习）
+    expect(card?.wrongCount).toBe(2);
+    expect(card?.correctCount).toBe(1);
+    expect(card?.lastAt).toBe(T3);
+    expect(card?.resolved).toBe(false);
+    // 归属单元（questions.unitId join units；按练习分组的依据）
+    expect(card?.originUnitId).toBe(env.unitId);
+    expect(card?.originUnitTitle).toBe("有理数课程练习");
+
+    // 泄露：新字段（rounds/wrongCount/correctCount/originUnit*）无敏感键——
+    // 放行参考答案/详解键后无禁用键；未解锁提示内容绝不出现
+    assertNoLeak(body, { allow: ["answers", "solutionMd"] });
+    const serialized = JSON.stringify(body);
+    expect(serialized).not.toContain("大于 $0$ 的数是正数。");
+    expect(serialized).not.toContain("$-1$ 小于 $0$。");
+
+    // 软删题目行（题目只软删，db-change 红线）：行仍在 → 归属单元照常返回
+    // （单教师测试环境，按 id 定位即可命中唯一行）
+    env.db
+      .update(questions)
+      .set({ deletedAt: T3 })
+      .where(eq(questions.id, Q.judge1))
+      .run();
+    const afterDelete = await getWrongQuestions(env);
+    expect(afterDelete.data?.questions[0]?.originUnitId).toBe(env.unitId);
+    expect(afterDelete.data?.questions[0]?.originUnitTitle).toBe(
+      "有理数课程练习",
+    );
+  });
+
   it("教师批改后的判定参与聚合：批错的手写题入本（默认列表），批对则只在 includeResolved 中出现", async () => {
     const env = await makeWrongEnv();
     const attemptId = await startCourseAttempt(env);
@@ -460,6 +545,23 @@ describe("GET /api/student/wrong-questions（T3.5 D11 错题本）", () => {
     expect(judge1?.assignmentTitle).toBeTruthy();
     expect(judge1?.attemptNo).toBe(1);
     expect(judge1?.courseName).toBe("初一上");
+    // 轮次史跨来源：课程练习（错）→ 作业（对），来源标题各按各的口径
+    expect(judge1?.rounds).toHaveLength(2);
+    expect(judge1?.rounds.map((round) => round.sourceType)).toEqual([
+      "course",
+      "assignment",
+    ]);
+    expect(judge1?.rounds[0]?.sourceTitle).toBe("有理数课程练习 · 第 1 次");
+    // 作业轮标题 = 作业标题（本例未显式传 title → 缺省为首单元标题，快照语义）
+    expect(judge1?.rounds[1]?.sourceTitle).toBe("有理数课程练习");
+    expect(judge1?.rounds.map((round) => round.correct)).toEqual([false, true]);
+    expect(judge1?.wrongCount).toBe(1);
+    expect(judge1?.correctCount).toBe(1);
+    // 归属单元 vs 最近来源上下文：assignment 来源 unitId 为 null（来源口径），
+    // 但错题按题挂回 home unit（合并作业里的错题也归回各自单元，分组依据）
+    expect(judge1?.unitId).toBeNull();
+    expect(judge1?.originUnitId).toBe(env.unitId);
+    expect(judge1?.originUnitTitle).toBe("有理数课程练习");
   });
 
   it("公布 gate：after_due 未公布作业的作答整体不参与聚合——该题完全消失（含 includeResolved）", async () => {

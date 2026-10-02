@@ -5,6 +5,7 @@ import {
   ClipboardList,
   School,
 } from "lucide-react";
+import { useMemo } from "react";
 import { Link } from "react-router";
 import { Button } from "@/components/ui/button";
 import {
@@ -18,14 +19,19 @@ import {
   StudentErrorPanel,
   StudentListSkeleton,
 } from "@/features/student/student-ui";
+import {
+  isConquered,
+  loadWrongMasteryStandard,
+} from "@/features/student/wrong-mastery";
 
 /**
  * /s/home 学生首页（T2A.5 改版 + 2026-10 IA 调整）：待完成作业 + 错题本概览 +
  * 我的课程卡片。首页呈现学生要做的三件事：要做的（作业）、要复习的（错题）、
  * 在学的（课程）；「我的记录」只在顶栏导航，不在首页重复（去重复入口）。
  * - 「我的作业」：作业卡片（标题/单元/题数/截止北京时间/状态徽章）；
- * - 「错题本」：概览卡（待复习/已攻克计数 + 去复习入口，数据为全量形态
- *   includeResolved=true 前端分流计数）；
+ * - 「错题本」：概览卡（待复习/已攻克计数 + 去复习入口；数据为全量形态
+ *   includeResolved=true 前端分流计数，攻克标准与 /s/wrong 页共用
+ *   wrong-mastery.ts 同一口径——严格默认=连续做对 2 次，宽松=做对 1 次）；
  * - 「我的课程」：课程卡片（进度条），分区标题右侧「按讲义浏览」二级入口。
  * 布局：竖屏单栏（作业 → 错题本 → 课程）；横屏（lg:）作业在左，
  * 错题本与课程在右列。顶部姓名与退出在 StudentLayout（本页不再重复）。
@@ -33,8 +39,11 @@ import {
 
 /** 错题本概览卡：待复习/已攻克计数 + 入口按钮（计数与入口随数据变化） */
 function WrongQuestionsOverview() {
-  // 全量形态（含已攻克）拉一次，前端分流计数——单学生错题规模有限（D11 口径）
+  // 全量形态（含已攻克）拉一次，前端分流计数——单学生错题规模有限（D11 口径）。
+  // 攻克标准与 /s/wrong 页共用同一函数（wrong-mastery.ts，本设备 localStorage）：
+  // 宽松=最后一轮做对；严格（默认）=最后两轮连续做对，两处口径一致
   const wrongQuery = useStudentWrongQuestions({ includeResolved: true });
+  const standard = useMemo(() => loadWrongMasteryStandard(), []);
 
   if (wrongQuery.isPending) {
     return (
@@ -61,7 +70,7 @@ function WrongQuestionsOverview() {
 
   const questions = wrongQuery.data.questions;
   const pendingCount = questions.filter(
-    (question) => !question.resolved,
+    (question) => !isConquered(question, standard),
   ).length;
   const conqueredCount = questions.length - pendingCount;
 

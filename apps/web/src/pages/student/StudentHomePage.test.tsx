@@ -2,6 +2,7 @@ import { screen } from "@testing-library/react";
 import type {
   StudentAssignmentListData,
   StudentCourseListData,
+  WrongQuestionCard,
   WrongQuestionsData,
 } from "@tutor/contract";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -83,7 +84,7 @@ const COURSES: StudentCourseListData = {
   ],
 };
 
-/** 错题本全量形态（includeResolved=true）：1 道仍错 + 1 道已攻克 */
+/** 错题本全量形态（includeResolved=true）：1 道仍错（错）+ 1 道错-对-对（严格标准下已攻克） */
 const WRONG_DATA: WrongQuestionsData = {
   questions: [
     {
@@ -107,6 +108,20 @@ const WRONG_DATA: WrongQuestionsData = {
       resolved: false,
       firstAt: "2026-09-20T02:00:00.000Z",
       lastAt: "2026-09-28T02:00:00.000Z",
+      rounds: [
+        {
+          attemptId: "66666666-6666-4666-8666-666666666666",
+          sourceType: "course",
+          correct: false,
+          submittedAt: "2026-09-20T02:00:00.000Z",
+          sourceTitle: "有理数 · 第 1 次",
+          courseName: "初一上",
+        },
+      ],
+      wrongCount: 1,
+      correctCount: 0,
+      originUnitId: "unit-有理数",
+      originUnitTitle: "有理数",
     },
     {
       sourceType: "course",
@@ -129,6 +144,36 @@ const WRONG_DATA: WrongQuestionsData = {
       resolved: true,
       firstAt: "2026-09-21T02:00:00.000Z",
       lastAt: "2026-09-29T02:00:00.000Z",
+      rounds: [
+        {
+          attemptId: "77777777-7777-4777-8777-777777777777",
+          sourceType: "course",
+          correct: false,
+          submittedAt: "2026-09-21T02:00:00.000Z",
+          sourceTitle: "有理数 · 第 1 次",
+          courseName: "初一上",
+        },
+        {
+          attemptId: "88888888-8888-4888-8888-888888888888",
+          sourceType: "course",
+          correct: true,
+          submittedAt: "2026-09-28T02:00:00.000Z",
+          sourceTitle: "有理数 · 第 2 次",
+          courseName: "初一上",
+        },
+        {
+          attemptId: "99999999-9999-4999-8999-999999999999",
+          sourceType: "course",
+          correct: true,
+          submittedAt: "2026-09-29T02:00:00.000Z",
+          sourceTitle: "有理数 · 第 3 次",
+          courseName: "初一上",
+        },
+      ],
+      wrongCount: 1,
+      correctCount: 2,
+      originUnitId: "unit-有理数",
+      originUnitTitle: "有理数",
     },
   ],
 };
@@ -145,6 +190,8 @@ beforeEach(() => {
   mockedAssignments.mockReset();
   mockedCourses.mockReset();
   mockedWrong.mockReset();
+  // 攻克标准回默认「严格」（概览卡与 /s/wrong 共用本设备 localStorage）
+  localStorage.clear();
   // 默认无错题（多数用例不关心错题本；需要时各自覆盖）
   mockedWrong.mockResolvedValue({ questions: [] });
 });
@@ -294,6 +341,40 @@ describe("StudentHomePage", () => {
     ).toBeInTheDocument();
     const reviewLink = screen.getByRole("link", { name: "去复习" });
     expect(reviewLink).toHaveAttribute("href", "/s/wrong");
+  });
+
+  it("概览卡计数随攻克标准：错→对 的题严格算待复习、宽松算已攻克（与 /s/wrong 同口径）", async () => {
+    mockedAssignments.mockResolvedValue(ASSIGNMENTS);
+    mockedCourses.mockResolvedValue(COURSES);
+    // 错→对（只做对一次）：严格=待复习；宽松=已攻克
+    const base = WRONG_DATA.questions[0];
+    if (base === undefined) throw new Error("夹具缺少错题数据");
+    const onceRight: WrongQuestionCard = {
+      ...base,
+      rounds: [
+        ...base.rounds,
+        {
+          attemptId: "99999999-9999-4999-8999-999999999999",
+          sourceType: "course",
+          correct: true,
+          submittedAt: "2026-09-29T02:00:00.000Z",
+          sourceTitle: "有理数 · 第 2 次",
+          courseName: "初一上",
+        },
+      ],
+      correctCount: 1,
+    };
+    mockedWrong.mockResolvedValue({ questions: [onceRight] });
+    renderPage();
+    expect(
+      await screen.findByText("待复习 1 题 · 已攻克 0 题"),
+    ).toBeInTheDocument();
+
+    localStorage.setItem("tutor.wrong-mastery-standard", "lenient");
+    renderPage();
+    expect(
+      await screen.findByText("待复习 0 题 · 已攻克 1 题"),
+    ).toBeInTheDocument();
   });
 
   it("错题本空态：还没有错题的解释文案 + 查看错题本次级入口", async () => {

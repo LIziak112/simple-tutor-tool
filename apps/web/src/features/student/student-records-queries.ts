@@ -35,8 +35,11 @@ export const studentWrongQuestionsKey = (params: WrongQuestionsParams) =>
   ["student", "wrong-questions", params] as const;
 
 /**
- * 错题本（D11：(学生, 题目) 跨来源聚合）。includeResolved=true 的全量形态
- * 另作考点 chips 选项的数据源（见错题本页），与主列表互不影响各自缓存。
+ * 错题本（D11：(学生, 题目) 跨来源聚合）。2026-10 轮次史改版后页面统一拉
+ * **全量形态**（includeResolved=true）一次，tab 归属/分组/攻克标准全部本地
+ * 计算（待复习/已攻克从 rounds 按学生自选标准算，见 wrong-mastery.ts）；
+ * knowledge/includeResolved 服务端参数保留兼容（存量深链可用），本端新代码
+ * 只消费全量形态。
  */
 export function useStudentWrongQuestions(params: WrongQuestionsParams) {
   return useQuery({
