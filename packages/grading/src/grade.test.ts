@@ -172,13 +172,17 @@ describe("grade：填空题（2026-10-02 修订：全人工批改，恒 null 进
     expect(grade(q, { kind: "fill", values: ["0.5", "-7"] })).toBeNull();
     expect(grade(q, { kind: "fill", values: ["1/2", "－7"] })).toBeNull(); // 全角负号
     expect(grade(q, { kind: "fill", values: ["一半", "$-7$"] })).toBeNull(); // 候选/去 $ 归一
-    expect(grade(q, { kind: "fill", values: ["\\frac{1}{2}", "-7"] })).toBeNull(); // 列表外数值等价
+    expect(
+      grade(q, { kind: "fill", values: ["\\frac{1}{2}", "-7"] }),
+    ).toBeNull(); // 列表外数值等价
   });
 
   it("答案与标准答案不一致 → null（不自动判错：等价形式长尾误判风险交老师裁量）", () => {
     expect(grade(q, { kind: "fill", values: ["0.7", "7"] })).toBeNull();
     expect(grade(q, { kind: "fill", values: ["0.25", "-7"] })).toBeNull();
-    expect(grade(q, { kind: "fill", values: ["随便写的", "不知道"] })).toBeNull();
+    expect(
+      grade(q, { kind: "fill", values: ["随便写的", "不知道"] }),
+    ).toBeNull();
   });
 
   it("多空部分空错 / 某空空串或缺失（比 blanks 短）→ null（原「部分错误判错」口径废止）", () => {

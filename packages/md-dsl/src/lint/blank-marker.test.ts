@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { type LintIssue } from "@tutor/contract";
+import type { LintIssue } from "@tutor/contract";
 import { describe, expect, it } from "vitest";
 import { lintDocument } from "./lint.ts";
 
@@ -28,14 +28,7 @@ const md = (lines: readonly string[]): string => lines.join("\n");
 
 /** 合法练习骨架（frontmatter 占 4 行 + 空行，题目开栏落在第 6 行、题干第 7 行） */
 function practiceDoc(bodyLines: readonly string[]): string {
-  return md([
-    "---",
-    "kind: practice",
-    "unit: 练习",
-    "---",
-    "",
-    ...bodyLines,
-  ]);
+  return md(["---", "kind: practice", "unit: 练习", "---", "", ...bodyLines]);
 }
 
 /** 合法讲义骨架（代码块负例用） */
@@ -65,7 +58,10 @@ describe("lintDocument：BLANK_MARKER_CONTAINS_DOLLAR", () => {
     );
     const { issues } = lintDocument(fixture);
     // 标记被切开后题干没有任何完整 [[…]]，FILL_NO_BLANK 必然连带出现（同一地雷的另一面）
-    expect(codes(issues)).toEqual(["FILL_NO_BLANK", "BLANK_MARKER_CONTAINS_DOLLAR"]);
+    expect(codes(issues)).toEqual([
+      "FILL_NO_BLANK",
+      "BLANK_MARKER_CONTAINS_DOLLAR",
+    ]);
     const blank = issueOf(issues, "BLANK_MARKER_CONTAINS_DOLLAR");
     expect(blank).toMatchObject({ level: "error", line: 8 });
     expect(blank?.fix).toBeDefined();
@@ -82,7 +78,10 @@ describe("lintDocument：BLANK_MARKER_CONTAINS_DOLLAR", () => {
         "::::",
       ]),
     );
-    expect(codes(issues)).toEqual(["FILL_NO_BLANK", "BLANK_MARKER_CONTAINS_DOLLAR"]);
+    expect(codes(issues)).toEqual([
+      "FILL_NO_BLANK",
+      "BLANK_MARKER_CONTAINS_DOLLAR",
+    ]);
     const blank = issues.filter(
       (i) => i.code === "BLANK_MARKER_CONTAINS_DOLLAR",
     );
@@ -98,7 +97,10 @@ describe("lintDocument：BLANK_MARKER_CONTAINS_DOLLAR", () => {
         "::::",
       ]),
     );
-    expect(codes(issues)).toEqual(["FILL_NO_BLANK", "BLANK_MARKER_CONTAINS_DOLLAR"]);
+    expect(codes(issues)).toEqual([
+      "FILL_NO_BLANK",
+      "BLANK_MARKER_CONTAINS_DOLLAR",
+    ]);
     expect(issueOf(issues, "BLANK_MARKER_CONTAINS_DOLLAR")).toMatchObject({
       level: "error",
       line: 7,

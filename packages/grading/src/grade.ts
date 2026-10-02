@@ -89,7 +89,10 @@ function gradeMulti(question: Question, answer: StudentAnswer): boolean | null {
  * 自动判分误判风险高。原逐空判分逻辑废止；normalize/rational 一行未动，
  * 仍服务手写题 final 答案判分。未作答 fill 亦返回 null（见 unansweredCorrect）。
  */
-function gradeFill(_question: Question, _answer: StudentAnswer): boolean | null {
+function gradeFill(
+  _question: Question,
+  _answer: StudentAnswer,
+): boolean | null {
   return null; // 2026-10-02：fill 全人工批改，待批队列/scoreAuto/状态机天然支持 null 路径
 }
 

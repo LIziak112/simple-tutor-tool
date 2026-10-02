@@ -113,7 +113,11 @@ export function lintBlankMarkerDollar(tree: Root): LintIssue[] {
 
     // 以 ]] 开头且其前紧邻公式：公式与 ]] 分离
     const prev = siblings[index - 1];
-    if (value.startsWith("]]") && prev !== undefined && !reportedMath.has(prev)) {
+    if (
+      value.startsWith("]]") &&
+      prev !== undefined &&
+      !reportedMath.has(prev)
+    ) {
       const math = mathValueOf(prev);
       if (math !== undefined) {
         reportedMath.add(prev);
