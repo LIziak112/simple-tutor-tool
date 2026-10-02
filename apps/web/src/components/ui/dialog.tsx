@@ -37,7 +37,13 @@ const DialogContent = ({
     <DialogPrimitive.Content
       data-slot="dialog-content"
       className={cn(
-        "fixed top-1/2 left-1/2 z-50 grid w-full max-w-lg -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl border border-border bg-card p-6 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95",
+        // max-h + 内滚：内容超出视口时限高在弹窗内部滚动，保证底部按钮
+        // （取消/创建等）始终可达。固定定位居中的弹窗无法靠页面滚动救回
+        // 视口外的内容——小屏 iPad 或数据多（如「新增学生」的课程多选）
+        // 时会把 footer 挤出屏幕（webkit E2E 高负载下曾致「创建」按钮
+        // 滚不进视口超时）。与原 AssignmentComposeWizard/
+        // AssignmentEditDialog 的 per-usage 写法同一取值，已收敛到基座。
+        "fixed top-1/2 left-1/2 z-50 grid max-h-[88vh] w-full max-w-lg -translate-x-1/2 -translate-y-1/2 gap-4 overflow-y-auto rounded-xl border border-border bg-card p-6 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95",
         className,
       )}
       {...props}

@@ -313,7 +313,7 @@ export function AssignmentComposeWizard({
 
   return (
     <Dialog open onOpenChange={(open) => (open ? undefined : requestClose())}>
-      <DialogContent className="max-h-[88vh] overflow-y-auto sm:max-w-3xl">
+      <DialogContent className="sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>布置作业</DialogTitle>
           <DialogDescription>
