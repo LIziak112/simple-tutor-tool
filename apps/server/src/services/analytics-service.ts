@@ -327,13 +327,16 @@ function buildContext(
         .filter(inCourseScope)
     : [];
 
-  // D5 窗口 + D1（统计作答）
+  // D5 窗口 + D1（统计作答）——wrong 来源（2026-10 错题重练）不计入：重练是
+  // 对已做过题目的再作答，不属于「首次见到这批题」的统计口径（作业全部 +
+  // 课程首次；其作答在错题本/记录/数据页照常可见）
   const qualifying = allAttempts.filter(
     (attempt) =>
       attempt.status !== "draft" &&
       attempt.submittedAt !== null &&
       (fromIso === null || attempt.submittedAt >= fromIso) &&
       attempt.submittedAt <= nowIso &&
+      attempt.sourceType !== "wrong" &&
       (attempt.sourceType === "assignment" || attempt.attemptNo === 1),
   );
 
@@ -855,6 +858,7 @@ function buildFocusCard(db: Db, ctx: AnalyticsContext): AnalyticsFocusCard {
       attempt.submittedAt !== null &&
       attempt.submittedAt >= fromIso &&
       attempt.submittedAt <= ctx.range.to &&
+      attempt.sourceType !== "wrong" &&
       (attempt.sourceType === "assignment" || attempt.attemptNo === 1),
   );
   // focus 窗口与 days 窗口独立：其作答的 responses 单独装载

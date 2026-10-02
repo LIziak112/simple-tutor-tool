@@ -11,6 +11,7 @@ import {
   assignments,
   attempts,
   questions,
+  type ResponseRow,
   responses,
   units,
 } from "../db/schema";
@@ -56,22 +57,36 @@ import { answerOf, snapshotOf, sourceOf } from "./teacher-attempt-service";
  */
 
 /**
- * 错题本聚合（D11 + 2026-10 轮次史）。now 可注入（after_due gate 的定时测试；
- * 默认当前时刻——读时比较，截止后下一次请求自动把该作业的作答纳入聚合）。
+ * 已判定作答的轮次行（judgedRoundsByQuestion 的值元素）：该生某题的一次
+ * 已交卷且 finalCorrect 非 null 的作答（公布 gate 过滤后）。
  */
-export function listWrongQuestions(
+interface JudgedRoundRow {
+  questionId: string;
+  attemptId: string;
+  responseId: string;
+  submittedAt: string | null;
+  startedAt: string;
+  finalCorrect: boolean | null;
+}
+
+/**
+ * 该生全部已判定作答按题分组的轮次行（组内升序：submittedAt ?? startedAt，
+ * 同刻 attemptId 升序兜底稳定——与旧窗口函数 order by 同口径）。
+ * 公布 gate（answer-release 的 SQL 化）：after_due 未公布的作业 attempt 整体
+ * 不参与（见模块头注释）；course 来源恒参与（D11 交卷即公布）。
+ * 两个 id 列必须显式别名（attempt_id / response_id）——裸列名都是 "id"，
+ * 子查询结果对象里会互相覆盖，导致后续按 responseId 回读内容失败。
+ *
+ * 2026-10 抽出为独立函数：listWrongQuestions（聚合条目）与重练组卷
+ * （latestJudgedResponsesByQuestion，attempt-service startWrongPractice 调用）
+ * 共用同一查询与排序，保证「入本判定」与「重练快照来源」两处口径永不漂移。
+ */
+function judgedRoundsByQuestion(
   db: Db,
   studentId: string,
-  query: WrongQuestionsQuery,
-  now: Date | string = new Date(),
-): WrongQuestionsData {
+  now: Date | string,
+): Map<string, JudgedRoundRow[]> {
   const nowIso = new Date(now).toISOString();
-  const includeResolved = query.includeResolved ?? false;
-
-  // 该学生全部已判定作答行（公布 gate 过滤后）。两个 id 列必须显式别名
-  // （attempt_id / response_id）——裸列名都是 "id"，子查询结果对象里会互相覆盖，
-  // 导致后续按 responseId 回读内容失败。首末/计数在 JS 侧按组内排序计算
-  // （2026-10 起需要全部行构造 rounds，窗口函数取首末两行的方式随之退役）。
   const ranked = db
     .select({
       questionId: responses.questionId,
@@ -109,10 +124,7 @@ export function listWrongQuestions(
     .as("ranked");
 
   const rows = db.select().from(ranked).all();
-
-  // 按题分组构造轮次（升序：submittedAt ?? startedAt，同刻 attemptId 升序——
-  // 与旧窗口函数 order by 同口径，first/last 取组内首尾）
-  const roundsByQuestion = new Map<string, (typeof rows)[number][]>();
+  const roundsByQuestion = new Map<string, JudgedRoundRow[]>();
   for (const row of rows) {
     const list = roundsByQuestion.get(row.questionId) ?? [];
     list.push(row);
@@ -126,6 +138,61 @@ export function listWrongQuestions(
         ) || a.attemptId.localeCompare(b.attemptId),
     );
   }
+  return roundsByQuestion;
+}
+
+/**
+ * 错题本聚合入本题 → 最近一次判定作答的 responses 行（2026-10 重练组卷的
+ * 快照来源）。入本条件与 listWrongQuestions 完全一致（任一次已判定作答判错；
+ * includeResolved 全量口径——已攻克的题同样可重练）。返回 Map 以 questionId
+ * 为键，attempt-service 的 startWrongPractice 用它做成员校验 + 快照复制。
+ * 坏快照（questionSnapshotJson 缺失/不可解析）的题同样返回行——由调用方经
+ * snapshotOf 判定可用性并剔除（组卷校验的一部分）。
+ */
+export function latestJudgedResponsesByQuestion(
+  db: Db,
+  studentId: string,
+  now: Date | string = new Date(),
+): Map<string, ResponseRow> {
+  const roundsByQuestion = judgedRoundsByQuestion(db, studentId, now);
+  // 候选（入本）= 任一次判错；每题取组内最后一轮（时间升序的尾元素）
+  const lastResponseIdByQuestion = new Map<string, string>();
+  for (const [questionId, rounds] of roundsByQuestion) {
+    if (!rounds.some((round) => round.finalCorrect === false)) continue;
+    const last = rounds[rounds.length - 1];
+    if (last !== undefined) {
+      lastResponseIdByQuestion.set(questionId, last.responseId);
+    }
+  }
+  return new Map(
+    lastResponseIdByQuestion.size > 0
+      ? db
+          .select()
+          .from(responses)
+          .where(inArray(responses.id, [...lastResponseIdByQuestion.values()]))
+          .all()
+          .map((row) => [row.questionId, row] as const)
+      : [],
+  );
+}
+
+/**
+ * 错题本聚合（D11 + 2026-10 轮次史）。now 可注入（after_due gate 的定时测试；
+ * 默认当前时刻——读时比较，截止后下一次请求自动把该作业的作答纳入聚合）。
+ */
+export function listWrongQuestions(
+  db: Db,
+  studentId: string,
+  query: WrongQuestionsQuery,
+  now: Date | string = new Date(),
+): WrongQuestionsData {
+  const includeResolved = query.includeResolved ?? false;
+
+  // 该学生全部已判定作答行（公布 gate 过滤后）按题分组构造轮次
+  // （升序：submittedAt ?? startedAt，同刻 attemptId 升序——与旧窗口函数
+  // order by 同口径，first/last 取组内首尾；2026-10 起需要全部行构造 rounds，
+  // 窗口函数取首末两行的方式随之退役）
+  const roundsByQuestion = judgedRoundsByQuestion(db, studentId, now);
 
   // 候选：入本（任一次判错）+ 默认剔除已攻克（服务端口径=最近一次做对）
   const candidates = [...roundsByQuestion.entries()].filter(
@@ -293,12 +360,16 @@ export function listWrongQuestions(
 
 /**
  * 轮次来源标题（服务端算好的展示串）：作业=作业标题；课程练习=「单元标题 ·
- * 第 n 次」。与前端 records-views.recordTitleOf 同口径（展示约定在
+ * 第 n 次」；错题重练=「错题重练 · 第 n 次」（2026-10，重练交卷后自动成为
+ * 新一轮）。与前端 records-views.recordTitleOf 同口径（展示约定在
  * teacherAttemptSourceSchema 注释；跨端小格式化函数不进契约包，注释互指）。
  */
 function roundSourceTitle(source: TeacherAttemptSource): string {
   if (source.sourceType === "assignment") {
     return source.assignmentTitle ?? "（作业已删除）";
+  }
+  if (source.sourceType === "wrong") {
+    return `错题重练 · 第 ${source.attemptNo} 次`;
   }
   return `${source.unitTitle ?? ""} · 第 ${source.attemptNo} 次`;
 }

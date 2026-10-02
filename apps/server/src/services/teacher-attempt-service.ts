@@ -107,7 +107,9 @@ export function inkInfoOf(
 
 /**
  * 来源上下文（列表卡片与详情头共用）：assignment=作业标题（+可选课程名）；
- * course=单元标题 + 课程名 + attemptNo（「单元标题 · 第 n 次」）。
+ * course=单元标题 + 课程名 + attemptNo（「单元标题 · 第 n 次」）；wrong=错题
+ * 重练（2026-10：courseId/assignmentId/unitId 全 null，展示「错题重练 ·
+ * 第 n 次」，由前端/CSV 拼串）。
  * 单元/课程按 teacherId 域内读；assignment 行经 FK 必存在（含已软删作业——
  * 作答记录不随作业删除消失，标题为布置时快照），异常缺失时兜底占位文案。
  * T3.2b 起导出——待批队列卡片拼装复用（mark-response.ts）。
@@ -117,6 +119,18 @@ export function sourceOf(
   attempt: Attempt,
   teacherId: string,
 ): TeacherAttemptSource {
+  if (attempt.sourceType === "wrong") {
+    return {
+      sourceType: "wrong",
+      courseId: null,
+      courseName: null,
+      assignmentId: null,
+      assignmentTitle: null,
+      unitId: null,
+      unitTitle: null,
+      attemptNo: attempt.attemptNo,
+    };
+  }
   if (attempt.sourceType === "course") {
     const course =
       attempt.courseId !== null
@@ -277,14 +291,16 @@ export function listTeacherAttempts(
     studentName,
     ...sourceOf(db, attempt, teacherId),
     unitCount: attemptUnitIds(db, attempt).length,
+    // 题数：wrong 来源（建卷即有自有行）draft 与已交卷同口径 = responses 行数；
+    // 其余来源 draft = 当前 live 题数（attemptQuestionRows），已交卷 = 冻结行数
     questionCount:
-      attempt.status === "draft"
-        ? attemptQuestionRows(db, attempt).length
-        : (db
+      attempt.sourceType === "wrong" || attempt.status !== "draft"
+        ? (db
             .select({ n: sql<number>`count(*)` })
             .from(responses)
             .where(eq(responses.attemptId, attempt.id))
-            .get()?.n ?? 0),
+            .get()?.n ?? 0)
+        : attemptQuestionRows(db, attempt).length,
     status: attempt.status,
     scoreAuto: attempt.scoreAuto,
     scoreFinal: attempt.scoreFinal,
@@ -369,7 +385,76 @@ export function getTeacherAttemptDetail(
 
   // 逐题条目（先按单元归属排序，再统一编号）
   const items: Omit<TeacherAttemptDetailQuestion, "no">[] = [];
-  if (attempt.status === "draft") {
+  if (attempt.sourceType === "wrong") {
+    // wrong（2026-10）：题目集合 = attempt 自有 responses 行（建卷时冻结的错题
+    // 快照，按插入序 = 组卷题序）；draft 与已交卷同源（不查当前题库出题——
+    // 教师改题不影响已建的卷）。draft 题干公开化、无判定与参考答案（与
+    // assignment/course 的 draft 口径一致）；已交卷快照原文 + 参考答案/详解。
+    // 单元列取题目当前归属单元（域内读，软删行仍在——错题「来自哪个练习」的
+    // 展示口径，与错题本 originUnit 同源）；题目行缺失回退 questionId 占位。
+    const ownRows = db
+      .select()
+      .from(responses)
+      .where(eq(responses.attemptId, attemptId))
+      .orderBy(sql`rowid`)
+      .all();
+    const unitByQuestion = new Map(
+      ownRows.length > 0
+        ? db
+            .select({ id: questions.id, unitId: questions.unitId })
+            .from(questions)
+            .where(
+              and(
+                eq(questions.teacherId, teacherId),
+                inArray(
+                  questions.id,
+                  ownRows.map((row) => row.questionId),
+                ),
+              ),
+            )
+            .all()
+            .map((row) => [row.id, row.unitId] as const)
+        : [],
+    );
+    for (const row of ownRows) {
+      const snapshot = snapshotOf(row);
+      if (snapshot === null) continue; // 坏快照按缺失计（建卷即冻结，理论不可达）
+      const isDraft = attempt.status === "draft";
+      items.push({
+        questionId: row.questionId,
+        // draft 不提供批注定位（与既有 draft 口径一致——批注要求已交卷）
+        responseId: isDraft ? null : row.id,
+        unitId: unitByQuestion.get(row.questionId) ?? row.questionId,
+        unitTitle: unitByQuestion.get(row.questionId) ?? row.questionId, // 占位，下方统一回填
+        type: snapshot.type,
+        difficulty: snapshot.difficulty,
+        knowledge: snapshot.knowledge,
+        stemMd: isDraft ? publicStemMd(snapshot.stemMd) : snapshot.stemMd,
+        ...(snapshot.options !== undefined
+          ? { options: snapshot.options.map((option) => option.text) }
+          : {}),
+        answer: answerOf(row.answerJson),
+        autoCorrect: isDraft ? null : row.autoCorrect,
+        finalCorrect: isDraft ? null : row.finalCorrect,
+        teacherMark: isDraft
+          ? null
+          : row.teacherMark === "correct" || row.teacherMark === "wrong"
+            ? row.teacherMark
+            : null,
+        teacherComment: isDraft ? null : row.teacherComment,
+        activeSec: row.activeSec,
+        hintsUsed: row.hintsUsed,
+        changeCount: row.changeCount,
+        ink: inkInfoOf(inkByQuestion.get(row.questionId)),
+        ...(isDraft
+          ? {}
+          : {
+              answers: snapshot.answers ?? null,
+              solutionMd: snapshot.solutionMd ?? null,
+            }),
+      });
+    }
+  } else if (attempt.status === "draft") {
     // draft：当前库 live 题目 + 草稿答案（attemptQuestionRows 已按单元序 × 题序拼接）
     const questionRows = attemptQuestionRows(db, attempt);
     const knowledge = knowledgeNamesByQuestion(db, teacherId);
