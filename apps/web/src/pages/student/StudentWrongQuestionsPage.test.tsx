@@ -47,6 +47,28 @@ function makeQuestion(
     resolved: false,
     firstAt: "2026-09-20T02:00:00.000Z",
     lastAt: "2026-09-28T02:00:00.000Z",
+    rounds: [
+      {
+        attemptId: "66666666-6666-4666-8666-666666666666",
+        sourceType: "assignment",
+        correct: false,
+        submittedAt: "2026-09-20T02:00:00.000Z",
+        sourceTitle: "周末加练",
+        courseName: "初一上",
+      },
+      {
+        attemptId: "77777777-7777-4777-8777-777777777777",
+        sourceType: "assignment",
+        correct: false,
+        submittedAt: "2026-09-28T02:00:00.000Z",
+        sourceTitle: "周末加练",
+        courseName: "初一上",
+      },
+    ],
+    wrongCount: 2,
+    correctCount: 0,
+    originUnitId: "unit-有理数",
+    originUnitTitle: "有理数",
     ...overrides,
   };
 }
@@ -63,6 +85,26 @@ const RESOLVED_ONE = makeQuestion({
   answerText: "3",
   firstCorrect: false,
   resolved: true,
+  rounds: [
+    {
+      attemptId: "66666666-6666-4666-8666-666666666666",
+      sourceType: "assignment",
+      correct: false,
+      submittedAt: "2026-09-20T02:00:00.000Z",
+      sourceTitle: "周末加练",
+      courseName: "初一上",
+    },
+    {
+      attemptId: "88888888-8888-4888-8888-888888888888",
+      sourceType: "assignment",
+      correct: true,
+      submittedAt: "2026-09-28T02:00:00.000Z",
+      sourceTitle: "周末加练",
+      courseName: "初一上",
+    },
+  ],
+  wrongCount: 1,
+  correctCount: 1,
 });
 
 /** 全量形态（chips 数据源）：含已攻克 */

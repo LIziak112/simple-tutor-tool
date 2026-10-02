@@ -111,10 +111,35 @@ export const studentRecordsDataSchema = z.object({
  *   作答的题目快照 knowledge，与展示同源；不匹配的题不返回）；
  * - includeResolved：true 额外列出「曾错、最近一次已做对」的题（默认只显示
  *   最近一次判定仍为错的题）。
+ *
+ * 2026-10 错题本升级后前端页面统一拉 includeResolved=true 全量形态本地分流
+ * （攻克判定改在端上从 rounds 按学生自选标准计算，服务端不下发判定规则），
+ * 两个参数保留兼容不删（存量书签/深链与其他消费方照常可用）。
  */
 export const wrongQuestionsQuerySchema = z.object({
   knowledge: z.string().trim().min(1, "knowledge 不能为空").optional(),
   includeResolved: z.stringbool().optional(),
+});
+
+/**
+ * 错题本单轮作答（wrongQuestionCardSchema.rounds 的元素，2026-10 轮次史）：
+ * 该题的一次**已判定**作答（已交卷且 finalCorrect 非 null；待批轮不出现）。
+ * 来源标题为服务端算好的展示串（作业=作业标题；课程练习=「单元标题 · 第 n 次」，
+ * 与前端 records-views.recordTitleOf 同口径），无教师侧敏感键。
+ */
+export const wrongQuestionRoundSchema = z.object({
+  /** 该轮作答 id（attempts.id） */
+  attemptId: z.uuid(),
+  /** 该轮作答来源 */
+  sourceType: attemptSourceSchema,
+  /** 该轮最终判定是否做对 */
+  correct: z.boolean(),
+  /** 该轮交卷时间（attempt 的 submittedAt，防御回退 startedAt）：UTC ISO */
+  submittedAt: z.string().min(1),
+  /** 该轮来源标题（服务端口径：作业=作业标题；课程=「单元标题 · 第 n 次」） */
+  sourceTitle: z.string().min(1),
+  /** 该轮来源课程名（当前值）；无课程为 null */
+  courseName: z.string().min(1).nullable(),
 });
 
 /**
@@ -128,9 +153,11 @@ export const wrongQuestionsQuerySchema = z.object({
  * - answerText：本人最近答案的人类可读序列化（与教师端待批卡片/CSV 同一
  *   serializeStudentAnswer 口径；未作为 null）；
  * - firstCorrect：首次（submittedAt 最早的已判定作答）是否做对；
- * - resolved：最近一次判定是否已做对（true = 曾错已攻克；默认列表不含、
- *   includeResolved=true 才下发）；
- * - 来源上下文与 firstAt/lastAt 均取**最近一次**判定作答所属 attempt。
+ * - resolved：最近一次判定是否已做对（服务端口径「做对 1 次即攻克」；2026-10
+ *   起攻克判定改由前端从 rounds 按学生自选标准计算，本字段保留兼容）；
+ * - 来源上下文与 firstAt/lastAt 均取**最近一次**判定作答所属 attempt；
+ * - rounds / wrongCount / correctCount / originUnitId / originUnitTitle：
+ *   2026-10 轮次史与归属单元（按练习分组用），详见各字段注释。
  */
 export const wrongQuestionCardSchema = teacherAttemptSourceSchema.extend({
   /** 题目 id（来自 DSL；聚合键的学生侧另一维） */
@@ -153,12 +180,31 @@ export const wrongQuestionCardSchema = teacherAttemptSourceSchema.extend({
   answerText: z.string().nullable(),
   /** 首次已判定作答是否做对（最早一次） */
   firstCorrect: z.boolean(),
-  /** 最近一次判定是否已做对（true = 曾错已攻克；默认列表不含该类条目） */
+  /** 最近一次判定是否已做对（服务端口径；攻克判定 2026-10 起在端上算，保留兼容） */
   resolved: z.boolean(),
   /** 首次判定时间（首次已判定作答的 submittedAt）：UTC ISO */
   firstAt: z.string().min(1),
   /** 最近判定时间（最近已判定作答的 submittedAt）：UTC ISO */
   lastAt: z.string().min(1),
+  /**
+   * 轮次史：该题全部已判定作答，按时间升序（同刻按 attemptId 升序兜底稳定）。
+   * 端上攻克标准（宽松=最后一轮做对；严格=最后两轮连续做对且 ≥2 轮）从本数组
+   * 计算——服务端不下发判定规则（学生自选，存本设备 localStorage）。
+   */
+  rounds: z.array(wrongQuestionRoundSchema),
+  /** 已判定作答中判错次数（= rounds 中 correct=false 的数量，省端上重算） */
+  wrongCount: z.number().int().min(0),
+  /** 已判定作答中判对次数（= rounds 中 correct=true 的数量） */
+  correctCount: z.number().int().min(0),
+  /**
+   * 题目**归属单元** id（questions.unitId，题库 home unit；2026-10 按练习分组
+   * 的依据——历史合并作业里的错题也按题挂回各自单元）。软删题目行仍在、值照常
+   * 返回；题目行万一缺失的防御为 null。注意与上方 unitId（**最近来源上下文**，
+   * 仅 course 来源非空）语义区分。
+   */
+  originUnitId: z.string().min(1).nullable(),
+  /** 题目归属单元标题（units 当前值，软删单元标题仍可读；行缺失为 null） */
+  originUnitTitle: z.string().min(1).nullable(),
 });
 
 /**
@@ -183,5 +229,6 @@ export type StudentRecordsQuery = z.infer<typeof studentRecordsQuerySchema>;
 export type StudentRecordRow = z.infer<typeof studentRecordRowSchema>;
 export type StudentRecordsData = z.infer<typeof studentRecordsDataSchema>;
 export type WrongQuestionsQuery = z.infer<typeof wrongQuestionsQuerySchema>;
+export type WrongQuestionRound = z.infer<typeof wrongQuestionRoundSchema>;
 export type WrongQuestionCard = z.infer<typeof wrongQuestionCardSchema>;
 export type WrongQuestionsData = z.infer<typeof wrongQuestionsDataSchema>;
