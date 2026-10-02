@@ -43,6 +43,8 @@ const EXPECTED: Record<string, string[]> = {
   "12-directive-not-allowed-here.md": ["DIRECTIVE_NOT_ALLOWED_HERE"],
   "13-math-left-right.md": ["MATH_LEFT_RIGHT_UNBALANCED"],
   "14-heading-in-container.md": ["HEADING_IN_CONTAINER"],
+  "15-math-spacing-outside.md": ["MATH_SPACING_OUTSIDE"],
+  "16-table-pipe-split.md": ["TABLE_CELL_PIPE_SPLIT"],
 };
 
 function lintFile(name: string, dir: string): FileLintResult {
