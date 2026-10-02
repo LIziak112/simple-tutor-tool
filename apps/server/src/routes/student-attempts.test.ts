@@ -78,8 +78,64 @@ const ALL_CORRECT_ANSWERS: Record<string, unknown> = {
 
 type App = ReturnType<typeof createApp>;
 
+/**
+ * 「全对 → 交卷即 graded」用例的整卷可自动判分夹具（2026-10-02 fill 全人工
+ * 批改起需要）：把样例两道 fill（练习四-4/5）替换为同题号位置的 judge/choice，
+ * 其余六题不动——样例原卷含 fill 后交卷必进待批（status=submitted），
+ * 「客观题全对即 graded」的断言语义需要不含 fill 的卷才能保住。
+ */
+const NO_FILL_MD = PRACTICE_MD.replace(
+  `::::question{type=fill difficulty=2 knowledge="有理数加法"}
+计算：$(-3)+7=$ [[4]]；$(-2)+(-5)=$ [[-7]]。
+
+写等价形式：$0.5=$ [[0.5|1/2]]（填小数或分数均可）。
+
+:::hint
+同号相加，取相同的符号，并把绝对值相加；异号相加，取绝对值较大的加数的符号，并用较大的绝对值减去较小的绝对值。
+:::
+
+:::solution
+$(-3)+7=4$；$(-2)+(-5)=-7$；$0.5=\\dfrac{1}{2}$。
+:::
+::::`,
+  `::::question{type=judge difficulty=2 knowledge="有理数加法"}
+$(-3)+7=4$ 且 $(-2)+(-5)=-7$。[[正确]]
+
+:::solution
+异号相加取绝对值较大者的符号：$(-3)+7=4$；同号相加取相同的符号：$(-2)+(-5)=-7$。
+:::
+::::`,
+).replace(
+  `::::question{type=fill difficulty=3 knowledge="数轴与有理数加减"}
+观察下面的下标记号：$a_{[[1]]}$ 与 $a_{[[2]]}$ 只是公式内部的记号（不构成作答空位）。若 $a_{1}=2$，$a_{2}=-5$，则 $a_{1}+a_{2}=$ [[-3]]。
+
+:::solution
+$a_{1}+a_{2}=2+(-5)=-3$。题干公式里的 $[[1]]$、$[[2]]$ 位于 $…$ 数学环境内，不是填空标记。
+:::
+::::`,
+  `::::question{type=choice difficulty=3 knowledge="数轴与有理数加减"}
+若 $a_{1}=2$，$a_{2}=-5$，则 $a_{1}+a_{2}=$（　）
+
+- [ ] $7$
+- [ ] $-7$
+- [x] $-3$
+- [ ] $3$
+
+:::solution
+$a_{1}+a_{2}=2+(-5)=-3$，故选 C。
+:::
+::::`,
+);
+
+/** NO_FILL_MD 卷的全部答对答案（练习四-4/5 已换为 judge/choice） */
+const NO_FILL_ANSWERS: Record<string, unknown> = {
+  ...ALL_CORRECT_ANSWERS,
+  [Q.fill]: { kind: "judge", value: true },
+  [Q.fillMath]: { kind: "choice", index: 2 },
+};
+
 /** 全套前置：教师 + 导入样例 + 张三（被指派）/李四（未被指派）+ 一份作业 */
-async function makeAttemptApp(): Promise<{
+async function makeAttemptApp(markdown: string = PRACTICE_MD): Promise<{
   app: App;
   db: Db;
   teacherCookie: string;
@@ -106,7 +162,7 @@ async function makeAttemptApp(): Promise<{
   const importRes = await app.request("/api/teacher/import/commit", {
     method: "POST",
     headers: { "content-type": "application/json", cookie: teacherCookie },
-    body: JSON.stringify({ markdown: PRACTICE_MD, filename: "练习样例.md" }),
+    body: JSON.stringify({ markdown, filename: "练习样例.md" }),
   });
   expect(importRes.status).toBe(200);
   const imported = (await importRes.json()) as {
@@ -593,10 +649,13 @@ describe("PUT /api/student/attempts/:id/answers/:questionId：草稿保存", () 
 
 describe("POST /api/student/attempts/:id/submit：判分与快照", () => {
   it("全对组合：逐题 autoCorrect=true，scoreAuto=100，summary 齐全；全客观题卷交卷即 graded（D2/D3）", async () => {
-    const { app, db, aCookie, assignmentId } = await makeAttemptApp();
+    // 2026-10-02 fill 全人工批改起换 NO_FILL_MD 卷（两道 fill → judge/choice）：
+    // 「全对 → 交卷即 graded」的断言语义需要整卷可自动判分（含 fill 的卷恒进待批，
+    // 见「部分错/未答组合」用例的 fill=null 断言）
+    const { app, db, aCookie, assignmentId } = await makeAttemptApp(NO_FILL_MD);
     const attemptId = (await startAttemptOk(app, aCookie, assignmentId))
       .id as string;
-    for (const [questionId, answer] of Object.entries(ALL_CORRECT_ANSWERS)) {
+    for (const [questionId, answer] of Object.entries(NO_FILL_ANSWERS)) {
       const res = await putAnswer(app, aCookie, attemptId, questionId, answer);
       expect(res.status, `保存 ${questionId} 失败`).toBe(200);
     }
@@ -637,18 +696,15 @@ describe("POST /api/student/attempts/:id/submit：判分与快照", () => {
     }
   });
 
-  it("部分错/未答组合：答错 false、未答客观题 false（D1）、未答手写题 null；scoreAuto=答对/可判分；finalCorrect 同步写（D3）", async () => {
+  it("部分错/未答组合：答错 false、未答客观题 false（D1）、未答手写题与 fill 恒 null；scoreAuto=答对/可判分；finalCorrect 同步写（D3）", async () => {
     const { app, db, aCookie, assignmentId } = await makeAttemptApp();
     const attemptId = (await startAttemptOk(app, aCookie, assignmentId))
       .id as string;
-    // 对：judge、choice、solve；错：multi（漏选）、fill（第二空错）；未答：其余三题
+    // 对：judge、solve；错：multi（漏选）；fill 答但部分空错（2026-10-02 起恒 null
+    // 不自动判）；未答：choice（D1 判错）、fillMath、apply、findError（null 进待批）
     await putAnswer(app, aCookie, attemptId, Q.judge, {
       kind: "judge",
       value: true,
-    });
-    await putAnswer(app, aCookie, attemptId, Q.choice, {
-      kind: "choice",
-      index: 1,
     });
     await putAnswer(app, aCookie, attemptId, Q.multi, {
       kind: "multi",
@@ -673,22 +729,23 @@ describe("POST /api/student/attempts/:id/submit：判分与快照", () => {
     );
 
     expect(byId.get(Q.judge)?.autoCorrect).toBe(true);
-    expect(byId.get(Q.choice)?.autoCorrect).toBe(true);
     expect(byId.get(Q.solve)?.autoCorrect).toBe(true); // -3 与 \frac 写法数值等价
     expect(byId.get(Q.multi)?.autoCorrect).toBe(false); // 漏选 → false
-    expect(byId.get(Q.fill)?.autoCorrect).toBe(false); // 部分空错 → false
-    expect(byId.get(Q.fillMath)?.autoCorrect).toBe(false); // 未答填空 → false（D1：未作答客观题判错）
+    expect(byId.get(Q.choice)?.autoCorrect).toBe(false); // 未答客观题 → false（D1）
+    expect(byId.get(Q.fill)?.autoCorrect).toBeNull(); // fill 全人工批改：答了也不自动判
+    expect(byId.get(Q.fillMath)?.autoCorrect).toBeNull(); // 未答 fill 亦进待批（2026-10-02）
     expect(byId.get(Q.apply)?.autoCorrect).toBeNull(); // 未答手写 → null（进待批）
     expect(byId.get(Q.findError)?.autoCorrect).toBeNull();
 
-    // scoreAuto = 答对 3 / 可自动判分 6（未答填空进分母）= 50（四舍五入百分比）
+    // scoreAuto = 答对 2 / 可自动判分 4（judge/solve 对、multi 漏选错、未答 choice
+    // 错；两道 fill 不进分母）= 50（四舍五入百分比）
     expect(data.attempt.scoreAuto).toBe(50);
-    expect(data.summary.correct).toBe(3);
-    expect(data.summary.wrong).toBe(3);
-    expect(data.summary.pending).toBe(2);
-    expect(data.summary.unanswered).toBe(3);
-    expect(data.summary.autoGradable).toBe(6);
-    // 存在待批（两道手写）→ attempt 保持 submitted、scoreFinal=null（D2/D3）
+    expect(data.summary.correct).toBe(2);
+    expect(data.summary.wrong).toBe(2);
+    expect(data.summary.pending).toBe(4);
+    expect(data.summary.unanswered).toBe(4);
+    expect(data.summary.autoGradable).toBe(4);
+    // 存在待批（两道 fill + 两道手写）→ attempt 保持 submitted、scoreFinal=null（D2/D3）
     expect(data.attempt.status).toBe("submitted");
 
     // 未答题也写了 responses 行（answerJson=null、快照非空、版本冻结）
@@ -703,9 +760,12 @@ describe("POST /api/student/attempts/:id/submit：判分与快照", () => {
     // D3：finalCorrect = autoCorrect 逐题同步写入（已判题不再为 null）
     const judgeRow = rows.find((row) => row.questionId === Q.judge);
     expect(judgeRow?.finalCorrect).toBe(true);
+    const choiceRow = rows.find((row) => row.questionId === Q.choice);
+    expect(choiceRow?.autoCorrect).toBe(false); // D1：未作答客观题判错
+    expect(choiceRow?.finalCorrect).toBe(false);
     const fillMathRow = rows.find((row) => row.questionId === Q.fillMath);
-    expect(fillMathRow?.autoCorrect).toBe(false);
-    expect(fillMathRow?.finalCorrect).toBe(false);
+    expect(fillMathRow?.autoCorrect).toBeNull(); // 未答 fill → 待批（不判错）
+    expect(fillMathRow?.finalCorrect).toBeNull();
     const attemptRow = db
       .select()
       .from(attempts)
@@ -743,8 +803,8 @@ describe("POST /api/student/attempts/:id/submit：判分与快照", () => {
       .all()
       .find((row) => row.questionId === Q.multi);
     expect(multiRow?.finalCorrect).toBe(false);
-    // 空选不进待批：pending 只含三道手写未答题
-    expect(data.summary.pending).toBe(3);
+    // 空选不进待批：pending = 两道 fill（全人工批改）+ 三道手写未答 = 5
+    expect(data.summary.pending).toBe(5);
   });
 
   it("验收项 1：重复 submit 返回 409 ALREADY_SUBMITTED", async () => {
@@ -1138,8 +1198,9 @@ describe("T2A.8 答案公布时机（after_due：截止前受限 / 截止后完�
     expect(res.status).toBe(200);
     const data = ((await res.json()) as { data: AttemptResultData }).data;
     expect(data.answersReleased).toBe(true);
-    // D1：仅判断题答对，其余客观题未答全进分母 → scoreAuto = 1/5 = 20
-    expect(data.attempt.scoreAuto).toBe(20);
+    // D1：仅判断题答对；未答 choice/multi 判错进分母、两道 fill 全人工不进
+    // → scoreAuto = 1/3 = 33（四舍五入百分比）
+    expect(data.attempt.scoreAuto).toBe(33);
     const judge = data.units
       .flatMap((unit) => unit.questions)
       .find((q) => q.questionId === Q.judge);
@@ -1248,11 +1309,13 @@ describe("T3.5 D9 结果视图扩展（teacherMark/teacherComment/finalCorrect/s
   }
 
   it("批注（改判）后：结果视图逐题含 teacherMark/teacherComment/finalCorrect，汇总含 scoreFinal/pendingCount；他人 attemptId 403", async () => {
+    // NO_FILL_MD 卷（见全对组合用例说明）：scoreFinal=88（7÷8）需要交卷后全部
+    // finalCorrect 非 null——含 fill 的卷交卷即进待批，批注一题仍到不了 graded
     const { app, db, teacherCookie, aCookie, bCookie, assignmentId } =
-      await makeAttemptApp();
+      await makeAttemptApp(NO_FILL_MD);
     const attemptId = (await startAttemptOk(app, aCookie, assignmentId))
       .id as string;
-    for (const [questionId, answer] of Object.entries(ALL_CORRECT_ANSWERS)) {
+    for (const [questionId, answer] of Object.entries(NO_FILL_ANSWERS)) {
       await putAnswer(app, aCookie, attemptId, questionId, answer);
     }
     expect((await postSubmit(app, aCookie, attemptId)).status).toBe(200);
@@ -1298,11 +1361,13 @@ describe("T3.5 D9 结果视图扩展（teacherMark/teacherComment/finalCorrect/s
   });
 
   it("after_due 截止前：批注字段与汇总新字段全 null（教师已批也不泄露）；库里已算好，截止后恢复", async () => {
-    const { app, db, teacherCookie } = await makeAttemptApp();
+    // NO_FILL_MD 卷（见全对组合用例说明）：库里 graded、scoreFinal=88 的断言
+    // 需要整卷可自动判分（含 fill 的卷恒为 submitted/待批）
+    const { app, db, teacherCookie } = await makeAttemptApp(NO_FILL_MD);
     const importRes = await app.request("/api/teacher/import/commit", {
       method: "POST",
       headers: { "content-type": "application/json", cookie: teacherCookie },
-      body: JSON.stringify({ markdown: PRACTICE_MD, filename: "练习样例.md" }),
+      body: JSON.stringify({ markdown: NO_FILL_MD, filename: "练习样例.md" }),
     });
     expect(importRes.status).toBe(200);
     const unitId = (
@@ -1321,7 +1386,7 @@ describe("T3.5 D9 结果视图扩展（teacherMark/teacherComment/finalCorrect/s
 
     const attemptId = (await startAttemptOk(app, cookie, assignmentId))
       .id as string;
-    for (const [questionId, answer] of Object.entries(ALL_CORRECT_ANSWERS)) {
+    for (const [questionId, answer] of Object.entries(NO_FILL_ANSWERS)) {
       await putAnswer(app, cookie, attemptId, questionId, answer);
     }
     expect((await postSubmit(app, cookie, attemptId)).status).toBe(200);

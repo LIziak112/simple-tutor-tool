@@ -1405,8 +1405,10 @@ describe("T3.2a 判分口径回填（旧口径已交 attempt → D1/D2/D3 重算
   it("未作答客观题重判 false、finalCorrect 写回、scoreAuto 分母变化、status/scoreFinal 按 D2；快照缺失跳过保留原值；draft 不动", () => {
     const db = createTestDb();
     seedBackfillFixture(db);
-    // 旧口径已交卷：choice 答对（1/1 → scoreAuto=100）+ fill 未作答（null）+
-    // solve 已答无标准答案（null）+ 判断题快照缺失（当年判对，防御行）
+    // 旧口径已交卷：choice 答对（1/1 → scoreAuto=100）+ 单选未作答（旧判 null）+
+    // solve 已答无标准答案（null）+ 判断题快照缺失（当年判对，防御行）。
+    // （D1「未作答客观题重判 false」的题位原为填空——2026-10-02 fill 全人工批改
+    // 起未作答 fill 亦为 null，改用未作答单选保住该断言；fill 的新口径见幂等用例）
     seedLegacyAttempt(
       db,
       { id: "bg-at1", status: "submitted", scoreAuto: 100 },
@@ -1420,8 +1422,8 @@ describe("T3.2a 判分口径回填（旧口径已交 attempt → D1/D2/D3 重算
         },
         {
           id: "bg-r2",
-          questionId: "bg-q3",
-          snapshot: SNAPSHOTS.fill,
+          questionId: "bg-q6",
+          snapshot: SNAPSHOTS.choice.replace("bg-q1", "bg-q6"),
           answerJson: null,
           autoCorrect: null,
         },
@@ -1461,7 +1463,7 @@ describe("T3.2a 判分口径回填（旧口径已交 attempt → D1/D2/D3 重算
       autoCorrect: true,
       finalCorrect: true,
     });
-    // D1 核心：未作答填空由 null 重判 false，finalCorrect 同步写 false
+    // D1 核心：未作答单选由 null 重判 false，finalCorrect 同步写 false
     expect(rowOf("bg-r2")).toMatchObject({
       autoCorrect: false,
       finalCorrect: false,
@@ -1482,7 +1484,7 @@ describe("T3.2a 判分口径回填（旧口径已交 attempt → D1/D2/D3 重算
       finalCorrect: null,
     });
 
-    // attempt 级：scoreAuto 分母变化（旧 1/1=100 → 新 2/3=67，未作答填空进分母）；
+    // attempt 级：scoreAuto 分母变化（旧 1/1=100 → 新 2/3=67，未作答单选进分母）；
     // 存在待批（solve）→ 保持 submitted、scoreFinal=null（D2）
     const attempt = db
       .select()
@@ -1574,9 +1576,11 @@ describe("T3.2a 判分口径回填（旧口径已交 attempt → D1/D2/D3 重算
       responses: db.select().from(responses).all(),
       attempts: db.select().from(attempts).all(),
     };
+    // fill 未作答重判 null（2026-10-02 起 fill 全人工批改，未作答亦进待批）→
+    // 存在待批 → submitted、scoreFinal=null；唯一可判题（choice）答错 → scoreAuto=0
     expect(
       afterFirst.attempts.find((row) => row.id === "bg-at3"),
-    ).toMatchObject({ status: "graded", scoreAuto: 0, scoreFinal: 0 });
+    ).toMatchObject({ status: "submitted", scoreAuto: 0, scoreFinal: null });
 
     // ① 标记命中：整体跳过
     runBackfills(db, new Date("2026-10-01T00:00:00.000Z"));

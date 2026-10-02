@@ -15,9 +15,11 @@ import { createTestDb, createTestDir } from "../db/test-utils.ts";
  * GET /api/teacher/pending-marks，Phase3 清单 §2 D3/D4）。
  *
  * 核心场景（清单 §4 T3.2b 验收原文）——8 题卷：
- * 6 客观（判断×2 + 单选×2 + 多选×1 + 填空×1：前 5 题答对、填空未作答 → false，
- * 不进队列）+ 1 手写题只写笔迹不填最终答案（有标准答案 → 待批）+ 1 无标准
- * 答案题（答了最终答案 → 待批）。交卷后队列恰含后两题（待批数 2）；
+ * 6 客观（判断×2 + 单选×3 + 多选×1：前 5 题答对、单选 3 未作答 → false，
+ * 不进队列；2026-10-02 fill 全人工批改起，原「填空未作答判 false」的题位换成
+ * 单选——fill 恒进待批会破坏「恰含 2 题待批」的夹具口径）+ 1 手写题只写笔迹
+ * 不填最终答案（有标准答案 → 待批）+ 1 无标准答案题（答了最终答案 → 待批）。
+ * 交卷后队列恰含后两题（待批数 2）；
  * 两题都批对 → scoreFinal = 88（7÷8）、一对一错 → 75（6÷8）且 status=graded；
  * 清除批注（mark=null）→ finalCorrect 回落 autoCorrect、status 回 submitted、
  * scoreFinal 置 null；对自动判过的题改判生效（graded 卷重算）；评语空串按 null、
@@ -77,8 +79,12 @@ $3-0=$（　）
 - [ ] $-4$
 ::::
 
-::::question{type=fill difficulty=2 knowledge="计算"}
-$2+3=$ [[5]]。
+::::question{type=choice difficulty=2 knowledge="计算"}
+$10-7=$（　）
+
+- [ ] $2$
+- [x] $3$
+- [ ] $4$
 ::::
 
 ::::question{type=solve difficulty=3 knowledge="计算"}
@@ -109,7 +115,8 @@ const Q = {
   choice1: `${UNIT}-3`,
   choice2: `${UNIT}-4`,
   multi: `${UNIT}-5`,
-  fill: `${UNIT}-6`,
+  /** 题 6：未作答的客观题（原为填空，2026-10-02 fill 全人工批改起换单选） */
+  choice3: `${UNIT}-6`,
   solve: `${UNIT}-7`,
   open: `${UNIT}-8`,
 } as const;
@@ -318,7 +325,7 @@ function setAttemptTimes(
     .run();
 }
 
-/** 5 道客观题答对（题 6 填空不答 → D1 判 false 不进队列） */
+/** 5 道客观题答对（题 6 单选不答 → D1 判 false 不进队列） */
 async function answerFiveCorrect(
   app: App,
   cookie: string,
@@ -563,7 +570,7 @@ describe("T3.2b 待批队列（D4 口径）：8 题卷交卷后恰含 2 题待�
       (m) => m.attemptId === env.courseSubmittedId,
     );
     expect(courseCards.map((m) => m.questionId)).toEqual([Q.solve, Q.open]);
-    // 未作答填空题（autoCorrect=false）与已判对的客观题都不在队列
+    // 未作答单选题（autoCorrect=false）与已判对的客观题都不在队列
     const allQuestionIds = new Set(body.marks.map((m) => m.questionId));
     expect(allQuestionIds).toEqual(new Set([Q.solve, Q.open]));
 
@@ -950,7 +957,7 @@ describe("T3.2b 批注（D3 持久化 + D2 状态机重算）", () => {
       scoreAuto: 83,
       scoreFinal: null,
       correctCount: 5,
-      wrongCount: 2, // 未作答填空（false）+ 批错的 solve
+      wrongCount: 2, // 未作答单选（false）+ 批错的 solve
       pendingCount: 1,
     });
     const solve = (detail.questions as Record<string, unknown>[]).find(
