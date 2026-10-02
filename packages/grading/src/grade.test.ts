@@ -3,11 +3,12 @@ import { describe, expect, it } from "vitest";
 import { grade } from "./grade";
 
 /**
- * 各题型判分（§5.6 + T2.5 验收清单；D1 口径 T3.2a 修订）：
- * - judge/choice/multi/fill 判 true/false；solve/apply/find-error 手写题无最终答案 → null；
- * - fill 多空全部空对才 true（部分错误判 false）；multi 全对才 true；
- * - 未作答（answer 缺省或多选空选）客观题 → false（D1：未作答判错，不进待批）；
- *   手写题未作答 → null（进待批）；
+ * 各题型判分（§5.6 + T2.5 验收清单；D1 口径 T3.2a 修订；2026-10-02 修订：fill 全人工批改）：
+ * - judge/choice/multi 判 true/false；solve/apply/find-error 手写题无最终答案 → null；
+ * - fill 一律 → null（2026-10-02：数学答案等价形式长尾误判风险，不自动判，交老师批改；
+ *   正确 / 错误 / 部分空错 / 未作答全部进待批，与手写题同流程）；
+ * - 未作答（answer 缺省或多选空选）judge/choice/multi → false（D1：未作答判错，不进待批；
+ *   fill 不在此列）；fill 与手写题未作答 → null（进待批）；
  * - 题目侧 answers 缺省（解析不完整/手写题未给 :::answer）→ null（不自动判分，
  *   该判定优先级高于未作答判定）。
  */
@@ -161,70 +162,37 @@ describe("grade：多选题", () => {
   });
 });
 
-describe("grade：填空题", () => {
-  it("单空：normalize 全等即对", () => {
-    const q = makeQuestion({
-      type: "fill",
-      answers: { kind: "fill", blanks: [["-7"]] },
-    });
-    expect(grade(q, { kind: "fill", values: ["-7"] })).toBe(true);
-    expect(grade(q, { kind: "fill", values: ["－7"] })).toBe(true); // 全角负号
-    expect(grade(q, { kind: "fill", values: ["$-7$"] })).toBe(true);
-    expect(grade(q, { kind: "fill", values: ["7"] })).toBe(false);
+describe("grade：填空题（2026-10-02 修订：全人工批改，恒 null 进待批）", () => {
+  const q = makeQuestion({
+    type: "fill",
+    answers: { kind: "fill", blanks: [["0.5", "1/2", "一半"], ["-7"]] },
   });
 
-  it("验收：数值等价 \\frac{1}{2} = 0.5 = 1/2", () => {
-    const q = makeQuestion({
-      type: "fill",
-      answers: { kind: "fill", blanks: [["0.5"]] },
-    });
-    expect(grade(q, { kind: "fill", values: ["\\frac{1}{2}"] })).toBe(true);
-    expect(grade(q, { kind: "fill", values: ["1/2"] })).toBe(true);
-    expect(grade(q, { kind: "fill", values: ["0.25"] })).toBe(false);
+  it("答案与标准答案一致（含数值等价、全角负号、等价答案列表候选）→ null（不自动判对）", () => {
+    expect(grade(q, { kind: "fill", values: ["0.5", "-7"] })).toBeNull();
+    expect(grade(q, { kind: "fill", values: ["1/2", "－7"] })).toBeNull(); // 全角负号
+    expect(grade(q, { kind: "fill", values: ["一半", "$-7$"] })).toBeNull(); // 候选/去 $ 归一
+    expect(grade(q, { kind: "fill", values: ["\\frac{1}{2}", "-7"] })).toBeNull(); // 列表外数值等价
   });
 
-  it("等价答案列表（[[0.5|1/2]] 多候选）任一匹配即对（旧版语义）", () => {
-    const q = makeQuestion({
-      type: "fill",
-      answers: { kind: "fill", blanks: [["0.5", "1/2", "一半"]] },
-    });
-    expect(grade(q, { kind: "fill", values: ["0.5"] })).toBe(true);
-    expect(grade(q, { kind: "fill", values: ["1/2"] })).toBe(true);
-    expect(grade(q, { kind: "fill", values: ["一半"] })).toBe(true);
-    expect(grade(q, { kind: "fill", values: ["\\frac{1}{2}"] })).toBe(true); // 列表外的数值等价也认可
-    expect(grade(q, { kind: "fill", values: ["0.7"] })).toBe(false);
+  it("答案与标准答案不一致 → null（不自动判错：等价形式长尾误判风险交老师裁量）", () => {
+    expect(grade(q, { kind: "fill", values: ["0.7", "7"] })).toBeNull();
+    expect(grade(q, { kind: "fill", values: ["0.25", "-7"] })).toBeNull();
+    expect(grade(q, { kind: "fill", values: ["随便写的", "不知道"] })).toBeNull();
   });
 
-  it("多空全对才 true（验收：部分错误判 false）", () => {
-    const q = makeQuestion({
-      type: "fill",
-      answers: { kind: "fill", blanks: [["4"], ["-7"], ["0.5", "1/2"]] },
-    });
-    expect(grade(q, { kind: "fill", values: ["4", "-7", "1/2"] })).toBe(true);
-    expect(grade(q, { kind: "fill", values: ["4", "7", "0.5"] })).toBe(false); // 第二空错
-    expect(grade(q, { kind: "fill", values: ["4", "-7", "0.6"] })).toBe(false); // 第三空错
+  it("多空部分空错 / 某空空串或缺失（比 blanks 短）→ null（原「部分错误判错」口径废止）", () => {
+    expect(grade(q, { kind: "fill", values: ["0.5", "7"] })).toBeNull(); // 第二空错
+    expect(grade(q, { kind: "fill", values: ["", "-7"] })).toBeNull(); // 某空空串
+    expect(grade(q, { kind: "fill", values: ["0.5"] })).toBeNull(); // 缺第二空
+    expect(grade(q, { kind: "fill", values: [] })).toBeNull();
   });
 
-  it("某空空串或缺失（比 blanks 短）按旧版口径判错 → false", () => {
-    const q = makeQuestion({
-      type: "fill",
-      answers: { kind: "fill", blanks: [["8"]] },
-    });
-    expect(grade(q, { kind: "fill", values: [""] })).toBe(false);
-    expect(grade(q, { kind: "fill", values: [] })).toBe(false);
-    const q2 = makeQuestion({
-      type: "fill",
-      answers: { kind: "fill", blanks: [["4"], ["-7"]] },
-    });
-    expect(grade(q2, { kind: "fill", values: ["4"] })).toBe(false); // 缺第二空
+  it("未作答（answer 缺省）→ null（进待批由老师裁量；D1 对 fill 的未作答判错口径废止）", () => {
+    expect(grade(q, undefined)).toBeNull();
   });
 
-  it("未作答 → false（D1 修订）；题目无 answers（无填空标记）→ null", () => {
-    const q = makeQuestion({
-      type: "fill",
-      answers: { kind: "fill", blanks: [["8"]] },
-    });
-    expect(grade(q, undefined)).toBe(false);
+  it("题目无 answers（无填空标记）→ null（口径不变）", () => {
     expect(
       grade(makeQuestion({ type: "fill" }), { kind: "fill", values: ["8"] }),
     ).toBeNull();
@@ -292,8 +260,8 @@ describe("grade：手写题（solve/apply/find-error）", () => {
   });
 });
 
-describe("grade：未作答口径（D1 修订，T3.2a——先补用例再改实现）", () => {
-  it("客观题完全未作答（answer 缺省）→ false（判错，不进待批）", () => {
+describe("grade：未作答口径（D1 修订，T3.2a——先补用例再改实现；2026-10-02 起 fill 除外）", () => {
+  it("客观题完全未作答（judge/choice/multi，answer 缺省）→ false（判错，不进待批）", () => {
     expect(
       grade(
         makeQuestion({
@@ -313,6 +281,9 @@ describe("grade：未作答口径（D1 修订，T3.2a——先补用例再改实
         undefined,
       ),
     ).toBe(false);
+  });
+
+  it("fill 未作答（answer 缺省）→ null（2026-10-02 修订：fill 全人工批改，进待批）", () => {
     expect(
       grade(
         makeQuestion({
@@ -321,7 +292,7 @@ describe("grade：未作答口径（D1 修订，T3.2a——先补用例再改实
         }),
         undefined,
       ),
-    ).toBe(false);
+    ).toBeNull();
   });
 
   it("多选空选（indexes=[]，学生选后又全部取消）→ false（与未作答同口径）", () => {

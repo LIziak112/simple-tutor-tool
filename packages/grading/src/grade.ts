@@ -3,22 +3,27 @@ import { judgeOf } from "./normalize.ts";
 import { equivalent } from "./rational.ts";
 
 /**
- * 各题型判分主入口（§5.6；D1 口径 T3.2a 修订）：
+ * 各题型判分主入口（§5.6；D1 口径 T3.2a 修订；2026-10-02 修订：fill 全人工批改）：
  * grade(question, answer) → true（对）| false（错）| null（不能自动判定）。
  *
- * null 的语义（D1 之后仅三种，全部进教师待批队列）：
+ * null 的语义（2026-10-02 之后共四种，全部进教师待批队列）：
  * 1. 题目侧 answers 缺省（解析不完整 / 手写题未给 :::answer）——无标准答案
  *    不判分；**该判定优先级最高**，先于未作答判定（题目本身没答案时谈不上判错）；
  * 2. 手写题（solve/apply/find-error）未能自动判：整题未作答（answer 缺省，
  *    含只写笔迹未填最终答案）或最终答案为空（空串/纯空白）；
- * 3. 判断题学生写法无法归一化（judgeOf 不识别）——教师裁定。
+ * 3. 判断题学生写法无法归一化（judgeOf 不识别）——教师裁定；
+ * 4. 填空题（fill）一律 null——2026-10-02 产品决策：数学答案等价形式长尾
+ *    （±、√、π、区间、单位等）自动判分误判风险高，fill 不自动判、交老师批改
+ *    （与手写题同流程）；无论答对、答错、部分空错还是未作答。
  *
- * 未作答客观题（judge/choice/multi/fill 完全未作答 answer 缺省，或多选空选
+ * 未作答客观题（judge/choice/multi 完全未作答 answer 缺省，或多选空选
  * indexes=[]）→ **false**（D1 用户定，T3.2a：未作答判错，不进待批队列，
- * scoreAuto 分母从此计入未作答客观题）。
+ * scoreAuto 分母从此计入未作答客观题）。原 D1 对 fill 的「未作答判错」口径
+ * 于 2026-10-02 废止（fill 全人工，未作答亦进待批由老师裁量）；历史决策
+ * 记录见 docs/技术架构与实施方案.md §5.6。
  *
  * 客观题判错（false）而非抛异常的边界：未作答（含多选空选）、choice 索引越界、
- * multi 部分选错/任一越界、fill 部分空错。
+ * multi 部分选错/任一越界（fill 部分空错原在此列，2026-10-02 起改判 null）。
  * 纯函数：无 IO、无异常出口，任何输入形态错位返回 null。
  */
 
@@ -77,19 +82,15 @@ function gradeMulti(question: Question, answer: StudentAnswer): boolean | null {
   return true;
 }
 
-/** 填空题判分：逐空对等价答案列表（[[0.5|1/2]] 任一匹配即该空对），全部空对才 true */
-function gradeFill(question: Question, answer: StudentAnswer): boolean | null {
-  const answers = question.answers;
-  if (answers?.kind !== "fill" || answer.kind !== "fill") return null;
-  for (const [i, candidates] of answers.blanks.entries()) {
-    // 学生答案比 blanks 短时缺失的空按空串（旧版 parts.length > i ? parts[i] : '' 口径）
-    const value = answer.values[i] ?? "";
-    const blankCorrect = candidates.some((candidate) =>
-      equivalent(value, candidate),
-    );
-    if (!blankCorrect) return false; // 任一空错即整题 false（部分错误判错）
-  }
-  return true;
+/**
+ * 填空题判分（2026-10-02 产品决策修订）：恒返回 null —— fill 一律不自动判，
+ * 交老师人工批改（与手写题同流程，进待批队列）。原因：数学答案等价形式长尾
+ * （±、√、π、区间、单位等）导致 normalize + 有理数等价 + 等价答案列表的
+ * 自动判分误判风险高。原逐空判分逻辑废止；normalize/rational 一行未动，
+ * 仍服务手写题 final 答案判分。未作答 fill 亦返回 null（见 unansweredCorrect）。
+ */
+function gradeFill(_question: Question, _answer: StudentAnswer): boolean | null {
+  return null; // 2026-10-02：fill 全人工批改，待批队列/scoreAuto/状态机天然支持 null 路径
 }
 
 /** 手写题（solve/apply/find-error）判分：有最终答案且题目给了 :::answer 才自动判，否则 null 待批 */
@@ -105,8 +106,9 @@ function gradeHandwritten(
 }
 
 /**
- * 客观题「未作答」的判分结果（D1，T3.2a）：judge/choice/multi/fill 未提交答案
- * 对象 → false（自动判错）；手写题未作答 → null（进待批，教师批改）。
+ * 客观题「未作答」的判分结果（D1，T3.2a）：judge/choice/multi 未提交答案对象
+ * → false（自动判错）；fill（2026-10-02 修订：全人工批改）与手写题未作答
+ * → null（进待批，教师批改/裁量）。原 D1 对 fill 的「未作答判错」口径废止。
  * 仅在题目**有**标准答案时被调用（无标准答案的判定优先，见 grade）。
  */
 function unansweredCorrect(question: Question): boolean | null {
@@ -114,19 +116,20 @@ function unansweredCorrect(question: Question): boolean | null {
     case "judge":
     case "choice":
     case "multi":
+      return false; // D1：未作答客观题判错（fill 除外，2026-10-02 起 fill 全人工批改）
     case "fill":
-      return false; // D1：未作答客观题判错
     case "solve":
     case "apply":
     case "find-error":
-      return null; // 手写题未作答（含只写笔迹）→ 待批
+      return null; // fill（2026-10-02 修订）与手写题未作答（含只写笔迹）→ 待批
   }
 }
 
 /**
  * 判分主函数（服务端交卷时执行，客户端结果不可信）。
  * @param question 教师侧完整题目（含 answers）
- * @param answer   学生答案（缺省=未作答：客观题 false（D1）、手写题 null）
+ * @param answer   学生答案（缺省=未作答：judge/choice/multi → false（D1）、
+ *                 fill 与手写题 → null（2026-10-02 修订：fill 全人工批改））
  * @returns true 判对 / false 判错 / null 不能自动判定（进教师待批队列）
  */
 export function grade(
