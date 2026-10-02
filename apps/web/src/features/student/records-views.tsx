@@ -1,9 +1,9 @@
 import type {
+  AttemptSource,
   AttemptStatus,
   StudentRecordRow,
   TeacherAttemptSource,
 } from "@tutor/contract";
-import { cn } from "cn";
 import { ChevronLeft, ChevronRight, Clock3 } from "lucide-react";
 import { Link } from "react-router";
 import { Button } from "@/components/ui/button";
@@ -46,33 +46,48 @@ function RecordStatusBadge({ status }: { status: AttemptStatus }) {
   );
 }
 
-/** 来源徽章（作业 / 课程练习；与教师数据页同配色） */
+/** 来源徽章配色：作业蓝、课程练习紫、错题重练橙（与教师数据页同配色词表） */
+const SOURCE_BADGE_CLASS: Record<AttemptSource, string> = {
+  assignment: "bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-300",
+  course:
+    "bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-300",
+  wrong:
+    "bg-orange-100 text-orange-700 dark:bg-orange-500/20 dark:text-orange-300",
+};
+
+/** 来源中文（作业 / 课程练习 / 错题重练；与教师数据页同词表） */
+const SOURCE_LABELS: Record<AttemptSource, string> = {
+  assignment: "作业",
+  course: "课程练习",
+  wrong: "错题重练",
+};
+
+/** 来源徽章（与教师数据页同配色） */
 export function RecordSourceBadge({
   sourceType,
 }: {
-  sourceType: "assignment" | "course";
+  sourceType: AttemptSource;
 }) {
   return (
     <span
-      className={cn(
-        "shrink-0 rounded-full px-2 py-0.5 text-xs font-medium",
-        sourceType === "assignment"
-          ? "bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-300"
-          : "bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-300",
-      )}
+      className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${SOURCE_BADGE_CLASS[sourceType]}`}
     >
-      {sourceType === "assignment" ? "作业" : "课程练习"}
+      {SOURCE_LABELS[sourceType]}
     </span>
   );
 }
 
 /**
- * 来源标题（行主标题）：作业 → 作业标题；课程练习 → 「单元标题 · 第 n 次」。
- * 与结果视图/教师端同口径（teacherAttemptSourceSchema 的展示约定）。
+ * 来源标题（行主标题）：作业 → 作业标题；课程练习 → 「单元标题 · 第 n 次」；
+ * 错题重练 → 「错题重练 · 第 n 次」（2026-10）。与结果视图/教师端同口径
+ * （teacherAttemptSourceSchema 的展示约定）。
  */
 export function recordTitleOf(row: TeacherAttemptSource): string {
   if (row.sourceType === "assignment") {
     return row.assignmentTitle ?? "（作业已删除）";
+  }
+  if (row.sourceType === "wrong") {
+    return `错题重练 · 第 ${row.attemptNo} 次`;
   }
   return `${row.unitTitle ?? ""} · 第 ${row.attemptNo} 次`;
 }

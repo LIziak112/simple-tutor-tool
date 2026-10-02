@@ -48,10 +48,14 @@ export function isResultDetail(
  *   交卷入口（交卷必然同样被拒）。
  */
 
-/** 来源行文案：课程练习带次数；作业显示「作业」（挂课程时「作业 · 课程名」，T2A.7） */
+/** 来源行文案：课程练习带次数；作业显示「作业」（挂课程时「作业 · 课程名」，T2A.7）；
+ * 错题重练显示「错题重练 · 第 n 次」（2026-10，与结果视图/记录卡同口径） */
 function sourceLabel(data: AttemptDetailData): string {
   if (data.attempt.sourceType === "course") {
     return `课程：${data.courseName ?? ""} · 第 ${data.attempt.attemptNo} 次`;
+  }
+  if (data.attempt.sourceType === "wrong") {
+    return `错题重练 · 第 ${data.attempt.attemptNo} 次`;
   }
   return data.courseName !== null ? `作业 · ${data.courseName}` : "作业";
 }

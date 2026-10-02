@@ -3,7 +3,7 @@ import { cn } from "cn";
 import dayjs from "dayjs";
 import timezone from "dayjs/plugin/timezone";
 import utc from "dayjs/plugin/utc";
-import { CheckCircle2, ChevronDown, XCircle } from "lucide-react";
+import { CheckCircle2, ChevronDown, RotateCcw, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SolutionFold } from "@/features/attempt/AttemptResultView";
 import {
@@ -455,6 +455,51 @@ export function WrongQuestionItem({
 }
 
 // ---------- 页内控件 ----------
+
+/**
+ * 重练按钮（2026-10 错题重练入口；页头「重练全部」与组头「重练本组」共用）：
+ * - 示数：按钮文案携带范围题数（「重练全部（N 题）」/「重练本组（x 题）」）；
+ * - 0 题禁用（空 tab/空组示数但不发请求）；提交中 loading（旋转图标 + 「正在组卷…」）
+ *   并禁用——防重复建卷；
+ * - 组头用 compact 形态（小尺寸内边距，触控高度仍 ≥44px）。
+ */
+export function WrongPracticeButton({
+  label,
+  count,
+  loading = false,
+  compact = false,
+  onPractice,
+}: {
+  /** 范围文案（重练全部 / 重练本组） */
+  label: string;
+  /** 范围内题数（示数与禁用判据） */
+  count: number;
+  /** 提交中（组卷请求进行时） */
+  loading?: boolean;
+  /** 组头紧凑形态 */
+  compact?: boolean;
+  onPractice: () => void;
+}) {
+  return (
+    <Button
+      variant="default"
+      className={compact ? "min-h-11 px-3" : "min-h-11"}
+      disabled={count === 0 || loading}
+      aria-label={
+        count === 0
+          ? `${label}（当前没有可重练的题）`
+          : `${label}（${count} 题）`
+      }
+      onClick={onPractice}
+    >
+      <RotateCcw
+        aria-hidden
+        className={loading ? "size-4 animate-spin" : "size-4"}
+      />
+      {loading ? "正在组卷…" : `${label}（${count} 题）`}
+    </Button>
+  );
+}
 
 /** tab 分段控件（待复习/已攻克；aria-pressed 表当前，触控 ≥44px） */
 export function WrongTabSwitch({
