@@ -256,6 +256,11 @@ export function exportCsv(
       const submittedText = beijingDateTimeOf(
         attempt.submittedAt ?? attempt.startedAt,
       );
+      /** 快照缺失时的考点兜底（懒加载一次；noAssignInExpressions 口径改函数式） */
+      const fallbackKnowledgeOf = (questionId: string): string[] => {
+        knowledgeFallback ??= knowledgeNamesByQuestion(db, teacherId);
+        return knowledgeFallback.get(questionId) ?? [];
+      };
       let wrongNo = 0;
       for (const row of ownRows) {
         wrongNo += 1;
@@ -264,11 +269,7 @@ export function exportCsv(
         const difficulty =
           snapshot?.difficulty ?? row.questionDifficulty ?? null;
         const knowledge =
-          snapshot?.knowledge ??
-          (knowledgeFallback ??= knowledgeNamesByQuestion(db, teacherId)).get(
-            row.response.questionId,
-          ) ??
-          [];
+          snapshot?.knowledge ?? fallbackKnowledgeOf(row.response.questionId);
         const answerText =
           serializeStudentAnswer(answerOf(row.response.answerJson)) ?? "";
         const inkRow = inkByQuestion.get(row.response.questionId);

@@ -4,7 +4,6 @@ import { BookX, TriangleAlert } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
-import { startWrongPracticeApi } from "@/lib/api";
 import { useStudentWrongQuestions } from "@/features/student/student-records-queries";
 import {
   loadWrongMasteryStandard,
@@ -24,6 +23,7 @@ import {
   WrongTabSwitch,
   wrongQuestionsUrlQuery,
 } from "@/features/student/wrong-questions-ui";
+import { startWrongPracticeApi } from "@/lib/api";
 
 /**
  * /s/wrong 错题本（T3.5，D11；2026-10 IA 调整升为一级路由；2026-10 轮次史
