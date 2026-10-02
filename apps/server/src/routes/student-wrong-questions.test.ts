@@ -222,8 +222,12 @@ async function startAssignmentAttempt(
     }),
   });
   expect(created.status).toBe(201);
-  const assignmentId = ((await created.json()) as { data: { id: string } }).data
-    .id;
+  const assignmentId = (
+    (await created.json()) as { data: { assignments: { id: string }[] } }
+  ).data.assignments[0]?.id;
+  if (assignmentId === undefined) {
+    throw new Error("布置作业响应缺少作业 id");
+  }
   const res = await env.app.request(
     `/api/student/assignments/${assignmentId}/attempt`,
     { method: "POST", headers: { cookie: env.aCookie } },

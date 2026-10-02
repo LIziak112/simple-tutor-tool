@@ -161,8 +161,12 @@ async function createAssignment(
     body: JSON.stringify({ unitIds: [unitId], studentIds: [studentId] }),
   });
   expect(res.status).toBe(201);
-  const body = (await res.json()) as { data: { id: string } };
-  return body.data.id;
+  const body = (await res.json()) as {
+    data: { assignments: { id: string }[] };
+  };
+  const id = body.data.assignments[0]?.id;
+  if (id === undefined) throw new Error("布置作业响应缺少作业 id");
+  return id;
 }
 
 /** POST /attempt 取 attempt id */

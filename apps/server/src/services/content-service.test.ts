@@ -904,7 +904,10 @@ describe("T2B.1 单教师等价：创建入口写 teacherId（D9）", () => {
       unitIds: ["u1"],
       studentIds: [student.student.id],
       title: "作业一",
-    });
+    }).assignments[0];
+    if (assignment === undefined) {
+      throw new Error("创建作业未产出首份");
+    }
 
     expect(
       db

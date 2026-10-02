@@ -29,8 +29,10 @@ import {
  * - GET    /assignments：列表。查询参数：includeDeleted=true 含已删除（默认只列
  *   未删）；courseId=UUID 只看该课程作业 / "none" 只看无课程作业（非法值 400）；
  * - GET    /assignments/:id：详情（roster 每人状态、startedCount、课程新成员）；
- * - POST   /assignments：布置作业 {title?, courseId?, unitIds[], studentIds[], dueAt?}
- *   （单元重复 400 DUPLICATE_UNIT；单元/学生/课程不存在或非本人 404）；
+ * - POST   /assignments：布置作业 {title?, courseId?, unitIds[], studentIds[],
+ *   dueAt?, unitGrouping?}（单元重复 400 DUPLICATE_UNIT；单元/学生/课程不存在
+ *   或非本人 404；unitGrouping 缺省 merged 合并一份，separate 每个单元一份；
+ *   响应 data = { assignments: [...] } 列表形态，本批创建的全部作业）；
  * - POST   /assignments/check：D15 布置前「已做过」检查 {unitIds[], studentIds[]}；
  * - PATCH  /assignments/:id：改标题/截止（null 取消）/替换单元（锁定后 409
  *   ASSIGNMENT_CONTENT_LOCKED）/名单增删（移出已开始学生须 confirmStarted，

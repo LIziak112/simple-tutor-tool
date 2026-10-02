@@ -833,8 +833,13 @@ async function makeCourseIsolationApp(): Promise<CourseIsolationApp> {
   );
   expect(assignmentRes.status).toBe(201);
   const assignmentAId = (
-    (await assignmentRes.json()) as { data: { id: string } }
-  ).data.id;
+    (await assignmentRes.json()) as {
+      data: { assignments: { id: string }[] };
+    }
+  ).data.assignments[0]?.id;
+  if (assignmentAId === undefined) {
+    throw new Error("布置作业响应缺少作业 id");
+  }
   // 甲独有单元（乙域不存在）
   const onlyA = await request(
     app,
@@ -894,8 +899,13 @@ async function makeCourseIsolationApp(): Promise<CourseIsolationApp> {
   );
   expect(assignmentBRes.status).toBe(201);
   const assignmentBId = (
-    (await assignmentBRes.json()) as { data: { id: string } }
-  ).data.id;
+    (await assignmentBRes.json()) as {
+      data: { assignments: { id: string }[] };
+    }
+  ).data.assignments[0]?.id;
+  if (assignmentBId === undefined) {
+    throw new Error("布置作业响应缺少作业 id");
+  }
   // 同 dslId 单元在乙域正常布置（不串甲）：乙作业行落乙域、单元数 1
   expect(
     db
@@ -1823,8 +1833,13 @@ async function makeSameIdConflictApp() {
     );
     expect(assignmentRes.status).toBe(201);
     const assignmentId = (
-      (await assignmentRes.json()) as { data: { id: string } }
-    ).data.id;
+      (await assignmentRes.json()) as {
+        data: { assignments: { id: string }[] };
+      }
+    ).data.assignments[0]?.id;
+    if (assignmentId === undefined) {
+      throw new Error("布置作业响应缺少作业 id");
+    }
 
     // 学生登录 + 开卷
     const loginRes = await app.request("/api/public/student/login", {

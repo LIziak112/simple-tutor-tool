@@ -143,8 +143,12 @@ async function makeInkApp(): Promise<{
     body: JSON.stringify({ unitIds: [unitId], studentIds: [aId] }),
   });
   expect(createRes.status).toBe(201);
-  const assignmentId = ((await createRes.json()) as { data: { id: string } })
-    .data.id;
+  const assignmentId = (
+    (await createRes.json()) as { data: { assignments: { id: string }[] } }
+  ).data.assignments[0]?.id;
+  if (assignmentId === undefined) {
+    throw new Error("布置作业响应缺少作业 id");
+  }
 
   const attemptRes = await app.request(
     `/api/student/assignments/${assignmentId}/attempt`,

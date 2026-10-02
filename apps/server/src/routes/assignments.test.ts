@@ -30,7 +30,9 @@ import {
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 
 /**
- * 作业接口集成测试（T2.2 验收项起家；T2A.7 大改后覆盖 D12–D16）：
+ * 作业接口集成测试（T2.2 验收项起家；T2A.7 大改后覆盖 D12–D16；2026-10 追加
+ * 组合方式 unitGrouping——separate 每个单元一份 / merged（缺省）合并一份，
+ * 创建响应统一 { assignments: [...] } 列表形态）：
  * - 多单元布置：unitIds 顺序 = 作业内单元顺序；重复 400 DUPLICATE_UNIT；
  *   缺省标题 = 首个单元标题 /「首个单元标题 等 n 个单元」；courseId 校验；
  * - 多单元取卷（paper.units 分组、顺序、空单元跳过）与题号全卷连续的作答链路
@@ -224,12 +226,12 @@ async function loginStudent(
   return `tutor_session=${extractSessionToken(res)}`;
 }
 
-/** 布置作业（断言 201），返回响应 data */
-async function createAssignment(
+/** 布置作业（断言 201），返回响应 data（{ assignments: [...] } 列表形态，2026-10） */
+async function createAssignments(
   app: ReturnType<typeof createApp>,
   teacherCookie: string,
   body: Record<string, unknown>,
-): Promise<Record<string, unknown>> {
+): Promise<{ assignments: Record<string, unknown>[] }> {
   const res = await request(
     app,
     "/api/teacher/assignments",
@@ -237,8 +239,28 @@ async function createAssignment(
     teacherCookie,
   );
   expect(res.status).toBe(201);
-  const parsed = (await res.json()) as { data: Record<string, unknown> };
-  return parsed.data;
+  return (
+    (await res.json()) as {
+      data: { assignments: Record<string, unknown>[] };
+    }
+  ).data;
+}
+
+/**
+ * 布置作业（断言 201 且本批恰创建一份——merged / 旧调用口径），返回首份。
+ * 既有用例的单行断言（data.title / data.units / created.id 等）沿用。
+ */
+async function createAssignment(
+  app: ReturnType<typeof createApp>,
+  teacherCookie: string,
+  body: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const data = await createAssignments(app, teacherCookie, body);
+  const first = data.assignments[0];
+  if (first === undefined) {
+    throw new Error("创建响应 assignments 为空列表");
+  }
+  return first;
 }
 
 /** PATCH 作业（返回原始 Response） */
@@ -400,7 +422,7 @@ describe("教师布置作业：POST /api/teacher/assignments（T2A.7 多单元�
     const aId = await createStudent(app, teacherCookie, "王五");
     const bId = await createStudent(app, teacherCookie, "张三");
 
-    const data = await createAssignment(app, teacherCookie, {
+    const data = await createAssignments(app, teacherCookie, {
       unitIds: [unitB, unitA],
       studentIds: [aId, bId, aId],
       dueAt: DUE_AT,
@@ -408,28 +430,32 @@ describe("教师布置作业：POST /api/teacher/assignments（T2A.7 多单元�
     expect(assignmentCreateOkSchema.safeParse({ ok: true, data }).success).toBe(
       true,
     );
+    // 缺省（不传 unitGrouping）= merged：恰创建一份（列表形态，2026-10）
+    expect(data.assignments).toHaveLength(1);
+    const row = data.assignments[0];
+    if (!row) throw new Error("merged 创建响应缺少首份");
     // 缺省标题：多单元 =「首个单元标题 等 n 个单元」（快照语义）
-    expect(data.title).toBe(`${UNIT_B} 等 2 个单元`);
-    expect(data.dueAt).toBe(DUE_AT);
-    expect(data.courseId).toBeNull();
-    expect(data.courseName).toBeNull();
+    expect(row.title).toBe(`${UNIT_B} 等 2 个单元`);
+    expect(row.dueAt).toBe(DUE_AT);
+    expect(row.courseId).toBeNull();
+    expect(row.courseName).toBeNull();
     // units 按布置顺序（先 B 后 A），各单元 live 题数与总题数
-    expect(data.units).toEqual([
+    expect(row.units).toEqual([
       { unitId: unitB, title: UNIT_B, questionCount: 2, deleted: false },
       { unitId: unitA, title: UNIT_A, questionCount: 2, deleted: false },
     ]);
-    expect(data.totalQuestionCount).toBe(4);
-    expect(data.containsDeletedUnit).toBe(false);
-    expect(data.locked).toBe(false);
+    expect(row.totalQuestionCount).toBe(4);
+    expect(row.containsDeletedUnit).toBe(false);
+    expect(row.locked).toBe(false);
     // 重复 studentIds 去重后计数；全员未开始
-    expect(data.studentCount).toBe(2);
-    expect(data.rosterStats).toEqual({
+    expect(row.studentCount).toBe(2);
+    expect(row.rosterStats).toEqual({
       notStarted: 2,
       inProgress: 0,
       submitted: 0,
       graded: 0,
     });
-    expect(data.deleted).toBe(false);
+    expect(row.deleted).toBe(false);
   });
 
   it("单单元作业缺省标题 = 该单元标题", async () => {
@@ -572,6 +598,234 @@ describe("教师布置作业：POST /api/teacher/assignments（T2A.7 多单元�
       teacherCookie,
     );
     expect(offset.status).toBe(400);
+  });
+});
+
+// ---------- 组合方式（2026-10 产品决策：默认不合并） ----------
+
+describe("组合方式 unitGrouping（每个单元一份 / 合并一份）", () => {
+  /** 两单元 + 两学生 + 课程「初一上」的公共造数 */
+  async function makeSeparateEnv() {
+    const { app, db, teacherCookie } = await makeApp();
+    const unitA = await importDoc(app, teacherCookie, UNIT_A_MD);
+    const unitB = await importDoc(app, teacherCookie, UNIT_B_MD);
+    const aId = await createStudent(app, teacherCookie, "张三");
+    const bId = await createStudent(app, teacherCookie, "王五");
+    const courseRes = await request(
+      app,
+      "/api/teacher/courses",
+      { title: "初一上" },
+      teacherCookie,
+    );
+    expect(courseRes.status).toBe(201);
+    const courseId = ((await courseRes.json()) as { data: { id: string } }).data
+      .id;
+    return { app, db, teacherCookie, unitA, unitB, aId, bId, courseId };
+  }
+
+  it("separate：按 unitIds 顺序创建 N 份；每份单单元、缺省标题 = 各自单元标题；courseId/studentIds/dueAt/answerRelease 共用", async () => {
+    const env = await makeSeparateEnv();
+    const data = await createAssignments(env.app, env.teacherCookie, {
+      unitIds: [env.unitB, env.unitA],
+      studentIds: [env.aId, env.bId],
+      courseId: env.courseId,
+      dueAt: DUE_AT,
+      answerRelease: "on_submit",
+      unitGrouping: "separate",
+    });
+    expect(assignmentCreateOkSchema.safeParse({ ok: true, data }).success).toBe(
+      true,
+    );
+    // 份数与顺序：assignments 按 unitIds 顺序（先 B 后 A），每份恰一个单元
+    expect(data.assignments).toHaveLength(2);
+    const [first, second] = data.assignments;
+    if (!first || !second) throw new Error("separate 创建响应缺份");
+    expect(first.id).not.toBe(second.id);
+    // 缺省标题规则：教师没填标题 → 每份 = 该单元自己的标题（快照语义）
+    expect(first.title).toBe(UNIT_B);
+    expect(second.title).toBe(UNIT_A);
+    expect(first.units).toEqual([
+      { unitId: env.unitB, title: UNIT_B, questionCount: 2, deleted: false },
+    ]);
+    expect(second.units).toEqual([
+      { unitId: env.unitA, title: UNIT_A, questionCount: 2, deleted: false },
+    ]);
+    // 共享字段与名单：两份各自完整（courseId/dueAt/answerRelease/学生两人）
+    for (const row of [first, second]) {
+      expect(row.courseId).toBe(env.courseId);
+      expect(row.courseName).toBe("初一上");
+      expect(row.dueAt).toBe(DUE_AT);
+      expect(row.answerRelease).toBe("on_submit");
+      expect(row.totalQuestionCount).toBe(2);
+      expect(row.studentCount).toBe(2);
+      expect(row.rosterStats).toEqual({
+        notStarted: 2,
+        inProgress: 0,
+        submitted: 0,
+        graded: 0,
+      });
+      expect(row.locked).toBe(false);
+    }
+    // 教师列表两份都可见；库层行数：assignments 2 行、单元各 1 行、名单各 2 行
+    expect(await teacherList(env.app, env.teacherCookie)).toHaveLength(2);
+    expect(env.db.select().from(assignments).all()).toHaveLength(2);
+    expect(env.db.select().from(assignmentUnits).all()).toHaveLength(2);
+    expect(env.db.select().from(assignmentStudents).all()).toHaveLength(4);
+  });
+
+  it("separate + 教师填了标题：每份标题 = 「教师标题·单元标题」", async () => {
+    const env = await makeSeparateEnv();
+    const data = await createAssignments(env.app, env.teacherCookie, {
+      unitIds: [env.unitA, env.unitB],
+      studentIds: [env.aId],
+      title: "周末专项",
+      unitGrouping: "separate",
+    });
+    expect(data.assignments).toHaveLength(2);
+    expect(data.assignments.map((row) => row.title)).toEqual([
+      `周末专项·${UNIT_A}`,
+      `周末专项·${UNIT_B}`,
+    ]);
+  });
+
+  it("separate：学生完成其中一份（交卷自动判分），另一份仍 not_started——各份独立作答", async () => {
+    const env = await makeSeparateEnv();
+    const data = await createAssignments(env.app, env.teacherCookie, {
+      unitIds: [env.unitB, env.unitA],
+      studentIds: [env.aId],
+      unitGrouping: "separate",
+    });
+    const cookie = await loginStudent(env.app, "张三");
+    const firstId = data.assignments[0]?.id;
+    if (typeof firstId !== "string") throw new Error("首份作业缺 id");
+
+    // 学生列表：两张独立卡（各单元标题、各 2 题、均未开始）
+    const before = await studentList(env.app, cookie);
+    expect(before).toHaveLength(2);
+    expect(before.map((row) => row.title)).toEqual([UNIT_B, UNIT_A]);
+    for (const row of before) {
+      expect(row.unitCount).toBe(1);
+      expect(row.questionCount).toBe(2);
+      expect(row.status).toBe("not_started");
+    }
+
+    // 完成第一份（单元 B：单选选 -6 + 判断对 → 全对自动判分 graded）
+    const attempt = await startAttempt(env.app, cookie, firstId);
+    const paper = await studentPaper(env.app, cookie, firstId);
+    const questions = paper.units[0]?.questions ?? [];
+    expect(questions).toHaveLength(2);
+    expect(
+      (
+        await saveAnswer(
+          env.app,
+          cookie,
+          attempt.id as string,
+          questions[0]?.id as string,
+          {
+            kind: "choice",
+            index: 0,
+          },
+        )
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await saveAnswer(
+          env.app,
+          cookie,
+          attempt.id as string,
+          questions[1]?.id as string,
+          {
+            kind: "judge",
+            value: true,
+          },
+        )
+      ).status,
+    ).toBe(200);
+    await submitAttempt(env.app, cookie, attempt.id as string);
+
+    // 交卷后：第一份已批（全对自动判分），第二份仍 not_started
+    const after = await studentList(env.app, cookie);
+    const statusByTitle = new Map(after.map((row) => [row.title, row.status]));
+    expect(statusByTitle.get(UNIT_B)).toBe("graded");
+    expect(statusByTitle.get(UNIT_A)).toBe("not_started");
+  });
+
+  it("显式 unitGrouping=merged 与缺省一致：恰一份、组合缺省标题（回归）", async () => {
+    const env = await makeSeparateEnv();
+    const data = await createAssignments(env.app, env.teacherCookie, {
+      unitIds: [env.unitB, env.unitA],
+      studentIds: [env.aId, env.bId],
+      unitGrouping: "merged",
+    });
+    expect(data.assignments).toHaveLength(1);
+    const row = data.assignments[0];
+    if (!row) throw new Error("merged 创建响应缺首份");
+    expect(row.title).toBe(`${UNIT_B} 等 2 个单元`);
+    expect(row.units).toEqual([
+      { unitId: env.unitB, title: UNIT_B, questionCount: 2, deleted: false },
+      { unitId: env.unitA, title: UNIT_A, questionCount: 2, deleted: false },
+    ]);
+    expect(row.totalQuestionCount).toBe(4);
+    expect(row.studentCount).toBe(2);
+  });
+
+  it("校验失败不残留半成品：404/400 后库中零作业行（事务前全量拦截）", async () => {
+    const env = await makeSeparateEnv();
+    // unitIds 含不存在单元 → 404 UNIT_NOT_FOUND
+    const notFound = await request(
+      env.app,
+      "/api/teacher/assignments",
+      {
+        unitIds: [env.unitB, "no-such-unit"],
+        studentIds: [env.aId],
+        unitGrouping: "separate",
+      },
+      env.teacherCookie,
+    );
+    expect(notFound.status).toBe(404);
+    expect(((await notFound.json()) as ApiErr).error).toBe("UNIT_NOT_FOUND");
+    // unitIds 重复 → 400 DUPLICATE_UNIT
+    const dup = await request(
+      env.app,
+      "/api/teacher/assignments",
+      {
+        unitIds: [env.unitB, env.unitB],
+        studentIds: [env.aId],
+        unitGrouping: "separate",
+      },
+      env.teacherCookie,
+    );
+    expect(dup.status).toBe(400);
+    expect(((await dup.json()) as ApiErr).error).toBe("DUPLICATE_UNIT");
+    // studentIds 含未知学生 → 404 STUDENT_NOT_FOUND
+    const unknownStudent = await request(
+      env.app,
+      "/api/teacher/assignments",
+      {
+        unitIds: [env.unitB, env.unitA],
+        studentIds: ["99999999-9999-4999-8999-999999999999"],
+        unitGrouping: "separate",
+      },
+      env.teacherCookie,
+    );
+    expect(unknownStudent.status).toBe(404);
+    expect(((await unknownStudent.json()) as ApiErr).error).toBe(
+      "STUDENT_NOT_FOUND",
+    );
+    // 空数组 → 400（契约层，路由校验即拒）
+    const empty = await request(
+      env.app,
+      "/api/teacher/assignments",
+      { unitIds: [], studentIds: [env.aId], unitGrouping: "separate" },
+      env.teacherCookie,
+    );
+    expect(empty.status).toBe(400);
+
+    // 半成品检查：三张表零行（校验全部发生在事务开始前，且失败不落库）
+    expect(env.db.select().from(assignments).all()).toHaveLength(0);
+    expect(env.db.select().from(assignmentUnits).all()).toHaveLength(0);
+    expect(env.db.select().from(assignmentStudents).all()).toHaveLength(0);
   });
 });
 

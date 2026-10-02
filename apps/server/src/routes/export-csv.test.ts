@@ -455,8 +455,13 @@ async function makeEnv(): Promise<TestEnv> {
   );
   expect(assignmentRes.status).toBe(201);
   const assignmentId = (
-    (await assignmentRes.json()) as { data: { id: string } }
-  ).data.id;
+    (await assignmentRes.json()) as {
+      data: { assignments: { id: string }[] };
+    }
+  ).data.assignments[0]?.id;
+  if (assignmentId === undefined) {
+    throw new Error("布置作业响应缺少作业 id");
+  }
 
   // 课程练习第 1 次：判断/单选（存两次验改答案次数+解锁一条提示）/多选/
   // 两空填空/注入填空/手写只写笔迹/开放题答公式串 → 交卷

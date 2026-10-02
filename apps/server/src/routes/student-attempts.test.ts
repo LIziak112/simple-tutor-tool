@@ -239,8 +239,12 @@ async function createAssignment(
     }),
   });
   expect(res.status).toBe(201);
-  const body = (await res.json()) as { data: { id: string } };
-  return body.data.id;
+  const body = (await res.json()) as {
+    data: { assignments: { id: string }[] };
+  };
+  const id = body.data.assignments[0]?.id;
+  if (id === undefined) throw new Error("布置作业响应缺少作业 id");
+  return id;
 }
 
 /** POST /attempt，返回原始 Response */
@@ -1253,8 +1257,13 @@ describe("T2A.8 答案公布时机（after_due：截止前受限 / 截止后完�
     });
     expect(okCreate.status).toBe(201);
     const dueAssignmentId = (
-      (await okCreate.json()) as { data: { id: string } }
-    ).data.id;
+      (await okCreate.json()) as {
+        data: { assignments: { id: string }[] };
+      }
+    ).data.assignments[0]?.id;
+    if (dueAssignmentId === undefined) {
+      throw new Error("布置作业响应缺少作业 id");
+    }
     const badPatch = await app.request(
       `/api/teacher/assignments/${dueAssignmentId}`,
       {
