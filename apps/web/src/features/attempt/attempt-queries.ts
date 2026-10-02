@@ -72,7 +72,9 @@ export function useStartCourseAttempt(courseId: string, unitId: string) {
 
 /**
  * 交卷：成功后失效 attempt 详情、作业列表（首页状态徽章联动）与课程侧数据
- * （T2A.6：目录单元状态、单元落地页、首页课程卡片进度）。
+ * （T2A.6：目录单元状态、单元落地页、首页课程卡片进度）；错题本与我的记录
+ * 同步失效——交卷即产生新的已判定轮次（2026-10 重练后回错题本立即可见新轮次，
+ * 不受 15s staleTime 影响看到旧聚合）。
  */
 export function useSubmitAttempt(attemptId: string) {
   const queryClient = useQueryClient();
@@ -85,6 +87,11 @@ export function useSubmitAttempt(attemptId: string) {
       void queryClient.invalidateQueries({ queryKey: studentAssignmentsKey });
       void queryClient.invalidateQueries({ queryKey: studentCoursesKey });
       void queryClient.invalidateQueries({ queryKey: ["student", "course"] });
+      // 前缀失效（studentWrongQuestionsKey 是带参函数，这里取其前两层前缀）
+      void queryClient.invalidateQueries({
+        queryKey: ["student", "wrong-questions"],
+      });
+      void queryClient.invalidateQueries({ queryKey: ["student", "records"] });
     },
   });
 }
