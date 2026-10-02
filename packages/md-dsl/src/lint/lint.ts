@@ -5,7 +5,9 @@ import { errorMessage, makeIssue, processor } from "../v2/shared.ts";
 import { lintDirectives } from "./directives.ts";
 import { lintUnclosedContainers } from "./fences.ts";
 import { lintMathDelimiters } from "./math.ts";
+import { lintMathSpacingOutside } from "./math-text.ts";
 import { lintQuestions } from "./questions.ts";
+import { lintTablePipes } from "./tables.ts";
 
 /**
  * DSL v2 lint 入口（T1.5）：lintDocument = 解析（透传其 issues，不重复报）+ 规则层新增
@@ -50,6 +52,8 @@ function runRules(
       ...lintDirectives(tree, kind),
       ...lintQuestions(tree, lines, parsed, options),
       ...lintMathDelimiters(tree),
+      ...lintMathSpacingOutside(tree),
+      ...lintTablePipes(tree),
     ];
   } catch (err) {
     return [

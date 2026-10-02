@@ -211,6 +211,18 @@ export const LINT_RULES: readonly LintRuleDoc[] = [
       "公式内 \\left 与 \\right 不配对（KaTeX 无法渲染，页面会显示 LaTeX 源码）：必须在同一条公式内配对；要在算式中间插填空 [[…]] 而断开公式时，断点两侧改用普通括号 ( )",
   },
   {
+    code: "MATH_SPACING_OUTSIDE",
+    level: "warning",
+    description:
+      "公式之外出现 \\quad / \\qquad 等间距命令（不经过 KaTeX，原样显示成乱码）：把间距命令移进 $…$ 公式内（如 $a,\\quad b$），公式之间用普通空格或全角空格",
+  },
+  {
+    code: "TABLE_CELL_PIPE_SPLIT",
+    level: "warning",
+    description:
+      "表格行被公式或填空里的 | 切开（单元格错位、公式断成源码显示）：公式内绝对值竖线改用 \\lvert … \\rvert，填空 [[答案|显示]] 内的 | 转义为 \\|，或把公式移出表格",
+  },
+  {
     code: "DUPLICATE_QUESTION_ID",
     level: "error",
     description:

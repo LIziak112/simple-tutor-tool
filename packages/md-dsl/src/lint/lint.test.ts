@@ -245,6 +245,8 @@ describe("lintDocument：samples/lint/ 反例夹具", () => {
       "12-directive-not-allowed-here.md",
       "13-math-left-right.md",
       "14-heading-in-container.md",
+      "15-math-spacing-outside.md",
+      "16-table-pipe-split.md",
     ]) {
       const { issues } = lintDocument(load(lintDir, name));
       for (const issue of issues) {
