@@ -223,6 +223,12 @@ export const LINT_RULES: readonly LintRuleDoc[] = [
       "表格行被公式或填空里的 | 切开（单元格错位、公式断成源码显示）：公式内绝对值竖线改用 \\lvert … \\rvert，填空 [[答案|显示]] 内的 | 转义为 \\|，或把公式移出表格",
   },
   {
+    code: "BLANK_MARKER_CONTAINS_DOLLAR",
+    level: "error",
+    description:
+      "填空/判断标记 [[…]] 内出现 $（$…$ 会被先行识别成公式定界符、把标记从中间切开：空位识别不到无法判分，答案原文还会随题干泄露给学生）：LaTeX 答案直接写在标记内不要包 $，如 [[\\frac{5}{4}|0.5]]",
+  },
+  {
     code: "DUPLICATE_QUESTION_ID",
     level: "error",
     description:

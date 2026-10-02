@@ -247,6 +247,7 @@ describe("lintDocument：samples/lint/ 反例夹具", () => {
       "14-heading-in-container.md",
       "15-math-spacing-outside.md",
       "16-table-pipe-split.md",
+      "17-blank-marker-dollar.md",
     ]) {
       const { issues } = lintDocument(load(lintDir, name));
       for (const issue of issues) {
