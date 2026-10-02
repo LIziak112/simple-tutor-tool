@@ -205,22 +205,39 @@ test.describe("学生我的记录与错题本（T3.5：批改延伸）", () => {
       await expect(q1Result.getByLabel("答错")).toBeVisible();
       await expect(q1Result.getByText(/老师批改/)).toHaveCount(0);
 
-      // —— 错题本：做错的判断题（正确答案 + 详解折叠）——
+      // —— 错题本（D11；2026-10 轮次史视图）：默认待复习 + 按练习分组 ——
       await studentPage.goto("/s/wrong");
+      // 组头 = 归属单元标题 + 待复习计数（按练习分组的依据是题目归属单元）
+      await expect(
+        studentPage.getByRole("heading", {
+          name: `${unitName} · 待复习 1 题`,
+        }),
+      ).toBeVisible();
+      // 紧凑行（默认形态）：错 1 次；手写题已批对 → 不在错题本
+      const wrongRow = studentPage.getByRole("button", { name: /错 1 次/ });
+      await expect(wrongRow).toBeVisible();
+      await expect(
+        studentPage.getByText("有理数加法", { exact: true }),
+      ).toHaveCount(0);
+      // 点击行展开完整卡片
+      await wrongRow.click();
       const wrongCard = studentPage.locator("article", {
         hasText: "有理数的概念",
       });
       await expect(wrongCard).toBeVisible();
       await expect(wrongCard.getByText("首次做错")).toBeVisible();
-      // 手写题已批对 → 不在错题本（无「有理数加法」考点条目）
-      await expect(
-        studentPage.getByText("有理数加法", { exact: true }),
-      ).toHaveCount(0);
       // 本人最近答案「错误」（serializeStudentAnswer 的判断题文本口径）与正确答案「对」
       await expect(wrongCard.getByText("我的最近答案：")).toBeVisible();
       await expect(wrongCard.getByText("错误", { exact: true })).toBeVisible();
       await expect(wrongCard.getByText("正确答案：")).toBeVisible();
       await expect(wrongCard.getByText("对", { exact: true })).toBeVisible();
+      // 轮次史区块（2026-10）：只做过 1 轮（错）；来源标题与页脚「最近来源」都会
+      // 带作业标题（substring 命中两处，取 first）
+      await expect(
+        wrongCard.getByText("已做错 1 次 · 做对 0 次"),
+      ).toBeVisible();
+      await expect(wrongCard.getByText("第 1 轮")).toBeVisible();
+      await expect(wrongCard.getByText(assignmentTitle).first()).toBeVisible();
       // 详解默认折叠，展开后可见（KaTeX 渲染，用纯文本片段断言）
       await expect(wrongCard.getByText(/大于/)).toHaveCount(0);
       await wrongCard.getByRole("button", { name: /查看详解/ }).click();

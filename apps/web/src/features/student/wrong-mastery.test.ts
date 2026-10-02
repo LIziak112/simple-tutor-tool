@@ -1,12 +1,12 @@
-import { describe, expect, it } from "vitest";
 import type { WrongQuestionCard } from "@tutor/contract";
+import { describe, expect, it } from "vitest";
 import {
   DEFAULT_WRONG_MASTERY_STANDARD,
-  WRONG_MASTERY_STORAGE_KEY,
   isConquered,
   loadWrongMasteryStandard,
   saveWrongMasteryStandard,
   splitByMastery,
+  WRONG_MASTERY_STORAGE_KEY,
 } from "./wrong-mastery";
 
 /**
@@ -47,9 +47,7 @@ describe("isConquered（按标准从轮次史计算）", () => {
     expect(isConquered(cardOf(true, true), "strict")).toBe(true);
     expect(isConquered(cardOf(true, false, true, true), "strict")).toBe(true);
     // 错-对-对-错：最后一轮错 → 未攻克（中间连续对被最后的错打断）
-    expect(isConquered(cardOf(false, true, true, false), "strict")).toBe(
-      false,
-    );
+    expect(isConquered(cardOf(false, true, true, false), "strict")).toBe(false);
     // 对-错-对：最后一轮对但前一轮错 → 未攻克（重新计数）
     expect(isConquered(cardOf(true, false, true), "strict")).toBe(false);
   });
