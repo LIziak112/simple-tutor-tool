@@ -5,6 +5,7 @@ import {
   isAnswered,
   judgeLabelOf,
   letterOf,
+  mathifyAnswerText,
   withBlankValue,
 } from "./answer-format";
 
@@ -67,6 +68,25 @@ describe("formatStudentAnswer", () => {
   });
 });
 
+describe("mathifyAnswerText（参考答案显示侧 LaTeX 启发式）", () => {
+  it("含 LaTeX 命令形态 → 整段包 $…$（\\frac、\\pm、\\sqrt 等）", () => {
+    expect(mathifyAnswerText("-\\frac{5}{4}")).toBe("$-\\frac{5}{4}$");
+    expect(mathifyAnswerText("\\pm 1")).toBe("$\\pm 1$");
+    expect(mathifyAnswerText("\\sqrt{2}+1")).toBe("$\\sqrt{2}+1$");
+  });
+
+  it("普通文本原样返回（不含命令不包 $）", () => {
+    expect(mathifyAnswerText("-5/4")).toBe("-5/4");
+    expect(mathifyAnswerText("8")).toBe("8");
+    expect(mathifyAnswerText("x>0 且 x≠2")).toBe("x>0 且 x≠2");
+  });
+
+  it("已含 $ 的文本不二次包裹（T2.13 旧写法原样走管线，避免拆错定界符）", () => {
+    expect(mathifyAnswerText("$\\frac{1}{2}$")).toBe("$\\frac{1}{2}$");
+    expect(mathifyAnswerText("$x$ 与 $y$")).toBe("$x$ 与 $y$");
+  });
+});
+
 describe("formatReferenceAnswers", () => {
   it("各题型参考答案文本化（填空等价答案用「或」连接）", () => {
     expect(formatReferenceAnswers({ kind: "judge", value: true })).toBe("对");
@@ -80,6 +100,29 @@ describe("formatReferenceAnswers", () => {
         blanks: [["4"], ["0.5", "1/2"]],
       }),
     ).toBe("4；0.5 或 1/2");
+    expect(formatReferenceAnswers({ kind: "final", answer: "-3" })).toBe("-3");
+  });
+
+  it("fill 逐个等价答案显示侧包 $：裸 LaTeX 包裹、普通写法原样，再 join「或/；」", () => {
+    expect(
+      formatReferenceAnswers({
+        kind: "fill",
+        blanks: [["-\\frac{5}{4}", "-5/4"], ["\\sqrt{2}"]],
+      }),
+    ).toBe("$-\\frac{5}{4}$ 或 -5/4；$\\sqrt{2}$");
+    // T2.13 旧写法（答案里已写 $…$）不二次包裹，保持原样走管线
+    expect(
+      formatReferenceAnswers({
+        kind: "fill",
+        blanks: [["$\\frac{1}{2}$", "1/2"], ["8"]],
+      }),
+    ).toBe("$\\frac{1}{2}$ 或 1/2；8");
+  });
+
+  it("final 答案含裸 LaTeX 同样包 $；普通文本原样", () => {
+    expect(formatReferenceAnswers({ kind: "final", answer: "x=\\pm 1" })).toBe(
+      "$x=\\pm 1$",
+    );
     expect(formatReferenceAnswers({ kind: "final", answer: "-3" })).toBe("-3");
   });
 });

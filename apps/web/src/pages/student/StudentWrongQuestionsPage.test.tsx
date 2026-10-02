@@ -219,6 +219,30 @@ describe("StudentWrongQuestionsPage 条目卡片（D11）", () => {
     // 字母 B：选项行与「正确答案」文本都会出现
     expect(screen.getAllByText("B").length).toBeGreaterThanOrEqual(1);
   });
+
+  it("填空正确答案为裸 LaTeX 时按 KaTeX 渲染（显示侧自动包 $，与结果视图同一管线）", async () => {
+    mockedWrong.mockResolvedValue({
+      questions: [
+        makeQuestion({
+          questionId: "q-fill-latex",
+          type: "fill",
+          difficulty: 2,
+          knowledge: ["有理数加法"],
+          stemMd: "计算（　）。",
+          answers: { kind: "fill", blanks: [["-\\frac{5}{4}", "-5/4"]] },
+          answerText: "-5/4",
+        }),
+      ],
+    });
+    renderPage();
+    await screen.findByText("首次做错", {}, { timeout: 5000 });
+    // 正确答案行：裸 LaTeX 等价答案自动包 $ 渲染出 KaTeX 节点，普通写法保留文本
+    const label = screen.getAllByText("正确答案：")[0];
+    const row = label?.parentElement;
+    expect(row?.querySelectorAll(".katex").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText(/或 -5\/4/)).toBeInTheDocument();
+    expect(screen.queryByText(/-\\frac\{5\}\{4\} 或 -5\/4/)).toBeNull();
+  });
 });
 
 describe("StudentWrongQuestionsPage 三态", () => {

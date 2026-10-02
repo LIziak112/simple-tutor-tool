@@ -86,7 +86,29 @@ export function formatStudentAnswer(answer: StudentAnswer | null): string {
   }
 }
 
-/** 参考答案 → 展示文本（结果视图「参考答案」行；填空的等价答案用「或」连接） */
+/** LaTeX 命令形态（\frac、\pm、\sqrt 等；显示侧判断答案是否要走公式管线） */
+const LATEX_COMMAND_RE = /\\[a-zA-Z]+/;
+
+/**
+ * 参考答案的显示侧 LaTeX 启发式包裹：
+ * [[答案|等价…]] 标记内禁止写 $（remark-math 会切开标记导致答案泄露学生端，
+ * 写侧由 lint 拦截），因此答案常存为裸 LaTeX（如 -\frac{5}{4}）——显示侧
+ * 检测到 LaTeX 命令形态时整段包 $…$，交给 RichMarkdown 的 remark-math→KaTeX
+ * 管线渲染；不含命令的普通写法（-5/4）原样返回。
+ * 已含 $ 的文本（T2.13 旧写法 $…$）不二次包裹，避免拆错既有定界符。
+ */
+export function mathifyAnswerText(text: string): string {
+  if (!LATEX_COMMAND_RE.test(text)) return text;
+  if (text.includes("$")) return text;
+  return `$${text}$`;
+}
+
+/**
+ * 参考答案 → 展示文本（结果视图「参考答案」行；填空的等价答案用「或」连接）。
+ * fill 逐个等价答案、final 整段套用 mathifyAnswerText：裸 LaTeX 显示侧包 $
+ * 走公式管线（四个消费方——结果页/错题本/教师批改详情/待批队列——共用本函数，
+ * 均以 RichMarkdown 渲染）。
+ */
 export function formatReferenceAnswers(answers: QuestionAnswers): string {
   switch (answers.kind) {
     case "judge":
@@ -99,9 +121,11 @@ export function formatReferenceAnswers(answers: QuestionAnswers): string {
         .map(letterOf)
         .join("");
     case "fill":
-      return answers.blanks.map((b) => b.join(" 或 ")).join("；");
+      return answers.blanks
+        .map((b) => b.map(mathifyAnswerText).join(" 或 "))
+        .join("；");
     case "final":
-      return answers.answer;
+      return mathifyAnswerText(answers.answer);
   }
 }
 

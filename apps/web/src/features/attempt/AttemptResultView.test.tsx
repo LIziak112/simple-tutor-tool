@@ -230,6 +230,51 @@ describe("逐题结果卡", () => {
     expect(screen.getByText(/或 1\/2/)).toBeInTheDocument();
   });
 
+  it("参考答案为裸 LaTeX（标记内禁 $ 后的新写法）时显示侧自动包 $ 渲染；final 答案同理", () => {
+    // fill 第 3 题换新写法（无 $ 的裸 LaTeX 等价答案）；solve 第 4 题补 final 参考答案
+    const data: AttemptResultData = {
+      ...DATA,
+      units: DATA.units.map((unit) => ({
+        ...unit,
+        questions: unit.questions.map((question) => {
+          if (question.questionId === "练习四-4") {
+            return {
+              ...question,
+              answers: {
+                kind: "fill" as const,
+                blanks: [["-\\frac{5}{4}", "-5/4"], ["\\sqrt{2}"]],
+              },
+            };
+          }
+          if (question.questionId === "p4-q7") {
+            return {
+              ...question,
+              answers: { kind: "final" as const, answer: "x=\\pm 1" },
+            };
+          }
+          return question;
+        }),
+      })),
+    };
+    render(<AttemptResultView data={data} onBackHome={vi.fn()} />);
+    const labels = screen.getAllByText("参考答案：");
+    expect(labels.length).toBe(4);
+    // fill 行（第 3 题）：裸 LaTeX 等价答案自动包 $，两个公式渲染为 KaTeX 节点；
+    // 普通写法 -5/4 作为文本保留
+    const fillRow = labels[2]?.parentElement;
+    expect(fillRow?.querySelectorAll(".katex").length).toBeGreaterThanOrEqual(
+      2,
+    );
+    expect(screen.getByText(/或 -5\/4/)).toBeInTheDocument();
+    // final 行（第 4 题）：x=\pm 1 同样走公式管线
+    const finalRow = labels[3]?.parentElement;
+    expect(finalRow?.querySelectorAll(".katex").length).toBeGreaterThanOrEqual(
+      1,
+    );
+    // 裸 LaTeX 源码串不作为纯文本出现
+    expect(screen.queryByText(/-\\frac\{5\}\{4\} 或 -5\/4/)).toBeNull();
+  });
+
   it("手写题显示「我的手写笔迹」缩略图（学生本人 PNG 直出）；客观题不显示", () => {
     renderView();
     const img = screen.getByAltText("第 p4-q7 题的手写笔迹");

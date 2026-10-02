@@ -338,8 +338,9 @@ function ResultQuestionCard({
             {formatStudentAnswer(question.answer)}
           </span>
         </p>
-        {/* 参考答案走 RichMarkdown（T2.13 规范约定：填空答案需公式展示时写 $…$，
-            判分归一化自动剥 $；此处按同一管线渲染，无 $ 的普通答案原样显示）。
+        {/* 参考答案走 RichMarkdown：[[…]] 标记内禁写 $（防 remark-math 切开
+            标记泄露答案），裸 LaTeX 由 formatReferenceAnswers 显示侧自动包 $；
+            T2.13 旧写法 $…$ 原样走同一管线，判分归一化剥 $ 不受影响。
             外层 p→div：RichMarkdown 是块级 div，不能嵌在 <p> 内。
             T2A.8：未公布时整块不下发（服务端 answers=null） */}
         {released && (
