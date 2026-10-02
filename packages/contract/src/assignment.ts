@@ -3,7 +3,9 @@ import { questionPublicSchema } from "./content.ts";
 
 /**
  * 作业契约（T2.2 起为权威定义；T2A.7 大改——多单元内容 + 按课程布置 + 名单增删
- * + 内容锁定，D12–D16；T2A.8 追加答案公布时机 answerRelease，D11）：
+ * + 内容锁定，D12–D16；T2A.8 追加答案公布时机 answerRelease，D11；2026-10 追加
+ * 组合方式 unitGrouping——默认 merged 向后兼容，separate 每个单元一份作业，
+ * 创建响应随之统一为 { assignments: [...] } 列表形态）：
  * 教师端布置作业 CRUD 请求/响应、布置前「已做过」检查（D15）、作业列表（按课程
  * 筛选）与详情、学生端作业列表与试卷、错误码。
  * 依据：docs/技术架构与实施方案.md §5.2（assignments / assignment_units /
@@ -75,6 +77,15 @@ export const assignmentAnswerReleaseSchema = z.enum(["on_submit", "after_due"]);
 const studentIdSchema = z.uuid("studentId 必须是 UUID 格式");
 
 /**
+ * 作业组合方式（2026-10 产品决策：默认不合并）：
+ * - separate：每个单元一份作业——unitIds 顺序创建 N 份，每份只含一个单元，
+ *   学生端分别看到 N 份，各自作答与交卷；
+ * - merged：合并为一份作业（旧行为）——所有单元合成一份试卷，一次作答一次交卷。
+ * 缺省/不传 = merged：向后兼容，契约发布前既有调用行为不变（服务端 ?? "merged"）。
+ */
+export const assignmentUnitGroupingSchema = z.enum(["separate", "merged"]);
+
+/**
  * 单元 id（来自 DSL，如 "unit-一元一次方程"——非 UUID）；不存在由服务端 404。
  * 同一请求内重复由服务端判 400 DUPLICATE_UNIT（D12：同一作业中单元不可重复）。
  */
@@ -101,7 +112,10 @@ export function defaultAssignmentTitle(unitTitles: readonly string[]): string {
  * - title 缺省规则见 defaultAssignmentTitle；
  * - studentIds 至少一名（服务端去重并逐个校验存在）；
  * - dueAt 可选（UTC ISO）；answerRelease 可选（T2A.8，默认 on_submit；
- *   after_due 时 dueAt 必填，否则服务端 400 VALIDATION_ERROR）。
+ *   after_due 时 dueAt 必填，否则服务端 400 VALIDATION_ERROR）；
+ * - unitGrouping 可选（默认 merged）：separate = 每个单元一份作业（一个事务按
+ *   unitIds 顺序创建 N 份，courseId/studentIds/dueAt/answerRelease 共用），
+ *   merged = 合并一份（现状行为，完全不因本字段变化）。
  */
 export const assignmentCreateRequestSchema = z.object({
   title: assignmentTitleSchema.optional(),
@@ -110,6 +124,7 @@ export const assignmentCreateRequestSchema = z.object({
   studentIds: z.array(studentIdSchema).min(1, "作业必须至少指派一名学生"),
   dueAt: assignmentDueAtSchema.optional(),
   answerRelease: assignmentAnswerReleaseSchema.optional(),
+  unitGrouping: assignmentUnitGroupingSchema.optional(),
 });
 
 /**
@@ -249,8 +264,15 @@ export const teacherAssignmentListDataSchema = z.object({
   assignments: z.array(teacherAssignmentSchema),
 });
 
-/** POST /api/teacher/assignments 响应 data（同列表行结构） */
-export const assignmentCreateDataSchema = teacherAssignmentSchema;
+/**
+ * POST /api/teacher/assignments 响应 data（2026-10 组合方式起统一为列表形态）：
+ * 本批创建的全部作业按创建顺序排列——merged（缺省）= 恰一个元素（同列表行结构，
+ * 行为不变）；separate = unitIds 顺序的 N 个元素。前端拿全批作业，不需要按模式
+ * 分叉解析；空数组的响应不可能出现（创建至少产出一份），min(1) 固化该口径。
+ */
+export const assignmentCreateDataSchema = z.object({
+  assignments: z.array(teacherAssignmentSchema).min(1),
+});
 
 /** PATCH /api/teacher/assignments/:id 响应 data（同列表行结构） */
 export const assignmentUpdateDataSchema = teacherAssignmentSchema;
@@ -418,6 +440,9 @@ export type AssignmentAnswerRelease = z.infer<
 export type AssignmentCreateRequest = z.infer<
   typeof assignmentCreateRequestSchema
 >;
+export type AssignmentUnitGrouping = z.infer<
+  typeof assignmentUnitGroupingSchema
+>;
 export type AssignmentUpdateRequest = z.infer<
   typeof assignmentUpdateRequestSchema
 >;
@@ -430,6 +455,7 @@ export type AssignmentListQuery = z.infer<typeof assignmentListQuerySchema>;
 export type TeacherAssignmentUnit = z.infer<typeof teacherAssignmentUnitSchema>;
 export type AssignmentRosterStats = z.infer<typeof assignmentRosterStatsSchema>;
 export type TeacherAssignment = z.infer<typeof teacherAssignmentSchema>;
+export type AssignmentCreateData = z.infer<typeof assignmentCreateDataSchema>;
 export type TeacherAssignmentListData = z.infer<
   typeof teacherAssignmentListDataSchema
 >;
