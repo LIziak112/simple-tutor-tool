@@ -736,7 +736,7 @@ export function renderLearningPackPrompt(
   }
   if (input.summaries) {
     dataLines.push(
-      "- attempts.summaries：历次作答汇总——sourceType（assignment=作业/course=课程练习）、attemptNo 与 isFirst（**收录全部历次**，重做进步可从历次对比看出）、得分（scoreAuto 自动判分 / scoreFinal 最终得分）与判定计数。",
+      "- attempts.summaries：历次作答汇总——sourceType（assignment=作业/course=课程练习/wrong=错题重练）、attemptNo 与 isFirst（**收录全部历次**，重做进步可从历次对比看出）、得分（scoreAuto 自动判分 / scoreFinal 最终得分）与判定计数。",
     );
   }
   if (input.traces) {

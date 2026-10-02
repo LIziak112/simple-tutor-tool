@@ -50,12 +50,16 @@ function apiOkExtend<T extends z.ZodType>(dataSchema: T) {
 export const attemptStatusSchema = z.enum(["draft", "submitted", "graded"]);
 
 /**
- * 作答来源（T2A.6，Phase 2A 清单 D9）：
+ * 作答来源（T2A.6，Phase 2A 清单 D9；2026-10 增 wrong）：
  * - assignment：作业作答（记 assignmentId；courseId 可空，T2A.7 起取作业所属课程）；
- * - course：课程练习作答（记 courseId + unitId，可重做，attemptNo 递增）。
- * 两种来源共用同一套作答接口与答题页（判分/快照/提示/笔迹/事件全按 attemptId）。
+ * - course：课程练习作答（记 courseId + unitId，可重做，attemptNo 递增）；
+ * - wrong：错题重练作答（2026-10 学生端闭环）：assignmentId / courseId / unitId
+ *   恒 null（无课程/作业归属，attempt 永不失权），attemptNo 按该生已有 wrong
+ *   来源 attempt 数从 1 递增；题目集合是创建时圈定的错题快照（不落单元，
+ *   见服务端 startWrongPractice）。
+ * 三种来源共用同一套作答接口与答题页（判分/快照/提示/笔迹/事件全按 attemptId）。
  */
-export const attemptSourceSchema = z.enum(["assignment", "course"]);
+export const attemptSourceSchema = z.enum(["assignment", "course", "wrong"]);
 
 /**
  * 教师批改标记（D3 持久化口径：teacherMark 优先于 autoCorrect）。
@@ -75,7 +79,9 @@ export const teacherMarkSchema = z.enum(["correct", "wrong"]);
  *
  * 来源交叉不变式已在 schema 层锁定（下方 superRefine，不再是仅存于注释的约定）：
  * - course 来源：assignmentId 恒 null，courseId / unitId 恒有值；
- * - assignment 来源：assignmentId 恒有值，unitId 恒 null（courseId 随作业可空可非空）。
+ * - assignment 来源：assignmentId 恒有值，unitId 恒 null（courseId 随作业可空可非空）；
+ * - wrong 来源（2026-10）：assignmentId / courseId / unitId 恒 null（错题重练
+ *   无课程与作业归属；题目集合 = 创建 attempt 时冻结进 responses 的错题快照）。
  */
 export const attemptSummarySchema = z
   .object({
@@ -134,6 +140,22 @@ export const attemptSummarySchema = z
             "来源不变式冲突：course 来源的 unitId 必须非空（课程练习必须记录目标单元）",
         });
       }
+    } else if (summary.sourceType === "wrong") {
+      // wrong（2026-10 错题重练）：三归属键恒 null（无课程/作业归属，
+      // 题目集合在 attempt 自己的 responses 行里，不经 assignment_units/单元）
+      for (const [path, value] of [
+        ["assignmentId", summary.assignmentId],
+        ["courseId", summary.courseId],
+        ["unitId", summary.unitId],
+      ] as const) {
+        if (value !== null) {
+          ctx.addIssue({
+            code: "custom",
+            path: [path],
+            message: `来源不变式冲突：wrong 来源的 ${path} 必须为 null（错题重练不挂作业/课程/单元）`,
+          });
+        }
+      }
     } else {
       if (summary.assignmentId === null) {
         ctx.addIssue({
@@ -156,6 +178,25 @@ export const attemptSummarySchema = z
 
 /** POST /api/student/assignments/:id/attempt 与 POST /api/student/courses/:cid/units/:uid/attempts 响应 data（创建或取回 attempt） */
 export const attemptStartDataSchema = attemptSummarySchema;
+
+/**
+ * POST /api/student/wrong-practice 请求体（2026-10 错题重练组卷）：
+ * - questionIds：前端按错题本当前筛选口径（tab + 分组）圈出的题目 id，顺序即
+ *   组卷题序（服务端按此顺序冻结进新 attempt 的 responses 行）；
+ * - min(1)：空数组 400 VALIDATION_ERROR；重复 id 由服务端去重（保序），
+ *   不在契约层拦截——前端从聚合结果取 id 天然无重复；
+ * - 每个 id 服务端校验「∈ 该生错题本聚合（includeResolved 全量口径）且最近
+ *   一次判定作答的快照可用」，不满足的静默剔除；剔完为空 → 400
+ *   WRONG_PRACTICE_EMPTY（附中文说明）。
+ */
+export const wrongPracticeRequestSchema = z.object({
+  questionIds: z
+    .array(z.string().min(1, "题目 id 不能为空"))
+    .min(1, "至少选择一道错题"),
+});
+
+/** POST /api/student/wrong-practice 响应（新建 wrong 来源 attempt；201） */
+export const wrongPracticeOkSchema = apiOkExtend(attemptStartDataSchema);
 
 /**
  * 已解锁的提示条目（T2.11）：草稿视图/结果视图回显、解锁响应共用的最小形态。
@@ -185,12 +226,12 @@ export const attemptDraftUnitSchema = z.object({
 /** GET /api/student/attempts/:id 的草稿视图（status=draft）响应 data */
 export const attemptDraftDataSchema = z.object({
   attempt: attemptSummarySchema,
-  /** 标题（答题页顶部展示）：assignment=作业标题；course=单元标题 */
+  /** 标题（答题页顶部展示）：assignment=作业标题；course=单元标题；wrong=「错题重练」 */
   title: z.string().min(1),
   /**
    * 来源课程名：course 来源恒有值（顶部来源行「课程：xx · 第 n 次」）；
    * assignment 来源自 T2A.7 起有所属课程时返回课程名（来源行「作业 · 课程名」），
-   * 无课程为 null。
+   * 无课程为 null；wrong 来源恒 null（来源行「错题重练 · 第 n 次」由前端拼）。
    */
   courseName: z.string().nullable(),
   /** 截止时间：UTC ISO；未设置为 null（course 来源恒 null，练习不限截止） */
@@ -300,11 +341,11 @@ export const attemptResultUnitSchema = z.object({
 /** POST /api/student/attempts/:id/submit 响应与 GET 详情的结果视图（已交）共用 */
 export const attemptResultDataSchema = z.object({
   attempt: attemptSummarySchema,
-  /** 标题（结果页顶部展示）：assignment=作业标题；course=单元标题 */
+  /** 标题（结果页顶部展示）：assignment=作业标题；course=单元标题；wrong=「错题重练」 */
   title: z.string().min(1),
   /**
    * 来源课程名：course 来源恒有值；assignment 来源自 T2A.7 起有所属课程时
-   * 返回课程名（「作业 · 课程名」），无课程为 null。
+   * 返回课程名（「作业 · 课程名」），无课程为 null；wrong 来源恒 null。
    */
   courseName: z.string().nullable(),
   /** 截止时间：UTC ISO；未设置为 null（course 来源恒 null） */
@@ -421,6 +462,8 @@ export const attemptDetailDataSchema = z
  * - HINT_INDEX_OUT_OF_RANGE：提示序号越界（<0 或 ≥该题提示总数，含无提示题；
  *   400，T2.11 验收项）；
  * - FORBIDDEN：非本人 attempt / 未被指派的作业（403）；
+ * - WRONG_PRACTICE_EMPTY：错题重练组卷的 questionIds 经校验全部被剔除
+ *   （不在错题本聚合内或快照不可用；400，2026-10，附中文说明）；
  * - COURSE_ACCESS_DENIED：课程来源作答失去访问权（非成员/学生归档/课程归档，
  *   D7+D22；403）——前端草稿同步与事件上报收到它（或 404）必须按终态停止重试；
  * - NOT_FOUND：课程来源作答的单元条目已隐藏/未到发布/资源删除（D22 的不暴露
@@ -434,6 +477,7 @@ export const attemptErrorCodeSchema = z.enum([
   "QUESTION_NOT_FOUND",
   "HINT_INDEX_OUT_OF_RANGE",
   "FORBIDDEN",
+  "WRONG_PRACTICE_EMPTY",
   "COURSE_ACCESS_DENIED",
   "NOT_FOUND",
   "UNAUTHORIZED",
@@ -475,6 +519,8 @@ export type HintOpenedEntry = z.infer<typeof hintOpenedEntrySchema>;
 export type HintOpenRequest = z.infer<typeof hintOpenRequestSchema>;
 export type HintOpenData = z.infer<typeof hintOpenDataSchema>;
 export type AttemptErrorCode = z.infer<typeof attemptErrorCodeSchema>;
+/** 错题重练组卷请求（2026-10） */
+export type WrongPracticeRequest = z.infer<typeof wrongPracticeRequestSchema>;
 /** 详情响应 data：草稿视图或结果视图（服务端按 attempt.status 返回其一） */
 export type AttemptDetailData = z.infer<typeof attemptDetailDataSchema>;
 

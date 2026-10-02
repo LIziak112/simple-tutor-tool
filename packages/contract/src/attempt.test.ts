@@ -6,19 +6,23 @@ import {
   attemptDraftDataSchema,
   attemptErrorCodeSchema,
   attemptResultDataSchema,
+  attemptSourceSchema,
   attemptStartDataSchema,
   attemptStatusSchema,
   attemptSummarySchema,
   hintOpenDataSchema,
   hintOpenRequestSchema,
+  wrongPracticeRequestSchema,
 } from "./attempt.ts";
 
 /**
  * 作答生命周期契约自测（T2.6；T2A.6 扩展作答来源）：锁定四个接口的请求/响应形态——
  * - attempt 摘要三态与 scoreAuto 口径（0–100 整数或 null）；
- * - 作答来源（D9）：sourceType assignment|course、courseId 可空、attemptNo ≥1；
+ * - 作答来源（D9）：sourceType assignment|course|wrong、courseId 可空、attemptNo ≥1；
  *   来源交叉不变式（schema superRefine 锁定）：course 恒 courseId+unitId 且不挂
  *   作业；assignment 恒 assignmentId 且 unitId=null（courseId 随作业可空）；
+ *   wrong（2026-10 错题重练）恒三归属键全 null；组卷请求 wrongPracticeRequestSchema
+ *   至少一题、重复 id 由服务端去重；
  * - 草稿视图：题目是 QuestionPublic 形态（无 answers/solutionMd/hints）、
  *   本人答案收在 drafts 键（键名与结果视图的参考答案 answers 区分）、
  *   courseName 供顶部来源行（assignment 为 null）；
@@ -96,12 +100,18 @@ describe("attemptStatusSchema / attemptSummarySchema", () => {
     ).toBe(false);
   });
 
-  it("作答来源（T2A.6，D9）：assignment 记 assignmentId；course 记 courseId+attemptNo", () => {
+  it("作答来源（T2A.6，D9）：assignment 记 assignmentId；course 记 courseId+attemptNo；wrong 三键全空（2026-10）", () => {
     const course = attemptSummarySchema.parse(SUMMARY_COURSE_SECOND);
     expect(course.sourceType).toBe("course");
     expect(course.assignmentId).toBeNull();
     expect(course.courseId).toBe(COURSE_ID);
     expect(course.attemptNo).toBe(2);
+    // 来源枚举三种（assignment | course | wrong）
+    expect(attemptSourceSchema.options).toEqual([
+      "assignment",
+      "course",
+      "wrong",
+    ]);
     // 缺来源字段 / 非法来源值 → 拒绝
     const { sourceType: _omitSource, ...withoutSource } = SUMMARY_DRAFT;
     expect(attemptSummarySchema.safeParse(withoutSource).success).toBe(false);
@@ -167,6 +177,51 @@ describe("attemptStatusSchema / attemptSummarySchema", () => {
     expect(attemptStartDataSchema.parse(SUMMARY_COURSE_SECOND)).toEqual(
       SUMMARY_COURSE_SECOND,
     );
+  });
+
+  it("wrong 来源（2026-10 错题重练）：三归属键恒 null 才合法，任一非空整体拒绝", () => {
+    const wrong = {
+      ...SUMMARY_DRAFT,
+      sourceType: "wrong",
+      assignmentId: null,
+      courseId: null,
+      unitId: null,
+      attemptNo: 1,
+    } as const;
+    expect(attemptSummarySchema.parse(wrong).sourceType).toBe("wrong");
+    expect(attemptStartDataSchema.parse(wrong)).toEqual(wrong);
+    // 任一归属键非空 → 拒绝（错题重练不挂作业/课程/单元）
+    expect(
+      attemptSummarySchema.safeParse({
+        ...wrong,
+        assignmentId: ASSIGNMENT_ID,
+      }).success,
+    ).toBe(false);
+    expect(
+      attemptSummarySchema.safeParse({ ...wrong, courseId: COURSE_ID }).success,
+    ).toBe(false);
+    expect(
+      attemptSummarySchema.safeParse({ ...wrong, unitId: UNIT_ID }).success,
+    ).toBe(false);
+  });
+
+  it("错题重练组卷请求（wrongPracticeRequestSchema）：至少一题；空数组/空串元素拒绝", () => {
+    expect(
+      wrongPracticeRequestSchema.parse({ questionIds: ["练习四-1"] }),
+    ).toEqual({ questionIds: ["练习四-1"] });
+    // 重复 id 不在契约层拦截（服务端去重保序）
+    expect(
+      wrongPracticeRequestSchema.safeParse({
+        questionIds: ["练习四-1", "练习四-1"],
+      }).success,
+    ).toBe(true);
+    expect(
+      wrongPracticeRequestSchema.safeParse({ questionIds: [] }).success,
+    ).toBe(false);
+    expect(
+      wrongPracticeRequestSchema.safeParse({ questionIds: [""] }).success,
+    ).toBe(false);
+    expect(wrongPracticeRequestSchema.safeParse({}).success).toBe(false);
   });
 });
 
@@ -677,6 +732,9 @@ describe("attemptDetailDataSchema / attemptErrorCodeSchema", () => {
       "COURSE_ACCESS_DENIED",
     );
     expect(attemptErrorCodeSchema.parse("NOT_FOUND")).toBe("NOT_FOUND");
+    expect(attemptErrorCodeSchema.parse("WRONG_PRACTICE_EMPTY")).toBe(
+      "WRONG_PRACTICE_EMPTY",
+    );
     expect(attemptErrorCodeSchema.safeParse("SUBMIT_TWICE").success).toBe(
       false,
     );
