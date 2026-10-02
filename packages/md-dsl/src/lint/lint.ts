@@ -2,6 +2,7 @@ import type { DocumentKind, LintIssue, ParsedDocument } from "@tutor/contract";
 import type { ParseOptions } from "../v2/parse.ts";
 import { parseDocument } from "../v2/parse.ts";
 import { errorMessage, makeIssue, processor } from "../v2/shared.ts";
+import { lintBlankMarkerDollar } from "./blank-marker.ts";
 import { lintDirectives } from "./directives.ts";
 import { lintUnclosedContainers } from "./fences.ts";
 import { lintMathDelimiters } from "./math.ts";
@@ -54,6 +55,7 @@ function runRules(
       ...lintMathDelimiters(tree),
       ...lintMathSpacingOutside(tree),
       ...lintTablePipes(tree),
+      ...lintBlankMarkerDollar(tree),
     ];
   } catch (err) {
     return [

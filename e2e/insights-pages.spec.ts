@@ -12,8 +12,10 @@ import {
 
 /**
  * T4.7 学情页 E2E：种子口径的最小确定性造数（1 门课 + 讲义 + 2 题练习
- * 〔填空答错 + 判断答对 → 交卷即 graded、正确率 50%〕+ 1 名学生读讲义后
- * 作答交卷），教师端依次验证：
+ * 〔填空答错 + 判断答对〕+ 1 名学生读讲义后作答交卷；2026-10-02 fill 改全
+ * 人工批改后，交卷先 submitted 进待批——教师在待批队列把答错的填空批错 →
+ * 整卷 graded、正确率 50%，下方全部断言与批改前原口径数字一致），教师端
+ * 依次验证：
  * - 总览：关键计数（总正确率 50%、对 1/已判定 2、待批 0）+ 完成矩阵
  *   （学生名 + 课程单元列「已批 / 做过 1 次 · 首次 50 分」），点学生名进画像；
  * - 画像：周趋势与考点条形图容器（ECharts canvas）、讲义阅读地图含该讲义、
@@ -28,7 +30,7 @@ import {
 /** 独立教师初始密码（e2e 内约定；仅本 run 的临时库有效） */
 const INSIGHTS_TEACHER_PASSWORD = "e2e-ins-pass-8";
 
-/** 两题练习：填空（学生会答错 → 高频错误答案可聚合）+ 判断（答对） */
+/** 两题练习：填空（学生会答错 → 教师批错 → 高频错误答案可聚合）+ 判断（答对） */
 function practiceMarkdown(unitName: string): string {
   return [
     "---",
@@ -152,15 +154,35 @@ test.describe("学情页三视图（T4.7：总览矩阵/计数 + 画像图表与
       await studentContext.close();
     }
 
-    // —— 教师端 UI：登录（学情专属教师）→ 学情总览 ——
+    // —— 教师端 UI：登录（学情专属教师）→ 待批队列批错填空题 → 学情总览 ——
     await page.goto("/t/login");
     await page.fill("#login-name", teacherName);
     await page.fill("#login-password", INSIGHTS_TEACHER_PASSWORD);
     await page.getByRole("button", { name: "登录", exact: true }).click();
     await page.waitForURL("**/t/library");
 
+    // fill 全人工批改（2026-10-02）：学生答 6 的填空题交卷后不自动判错 → 进
+    // 待批；教师批错后整卷 graded（判断自动判对 + 填空教师判错 → 1/2 = 50%），
+    // 下方总览/矩阵/错题断言与批改前的原口径数字一致。点「标错（2）」按钮
+    // （与快捷键 2 同款）：selectOption 后焦点在 select 内会被快捷键守卫跳过。
+    await page.goto("/t/data/pending");
+    await page
+      .locator("#pending-student-filter option", { hasText: studentName })
+      .waitFor({ state: "attached" });
+    await page.selectOption("#pending-student-filter", {
+      label: studentName,
+    });
+    const pendingCard = page.locator(
+      `article[aria-label="待批卡片：${studentName}"]`,
+    );
+    await expect(pendingCard).toBeVisible();
+    await expect(pendingCard.getByText("参考答案：")).toBeVisible();
+    await pendingCard.getByRole("button", { name: "标错（2）" }).click();
+    await expect(pendingCard).toHaveCount(0);
+    await expect(page.getByText("本组待批题已全部批完")).toBeVisible();
+
     await page.goto("/t/insights");
-    // 关键计数：全判断自动判 → 交卷即 graded，正确率 50%（D4：判对 1 / 已判定 2）
+    // 关键计数：判断自动判对 + 填空教师批错 → graded，正确率 50%（D4：判对 1 / 已判定 2）
     await expect(page.getByText("总正确率")).toBeVisible();
     const overall = page.getByText("总正确率").locator("..");
     await expect(overall.getByText("50%", { exact: true })).toBeVisible();

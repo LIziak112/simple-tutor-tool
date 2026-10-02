@@ -700,14 +700,11 @@ describe("T3.4 CSV 导出（D13）：列内容", () => {
       "答对",
     ]);
 
-    // 两空填空（题号 4）：按空序以「；」拼接
-    expect(rowOf(rows, COURSE_LABEL, 4).slice(7, 12)).toEqual([
-      "填空",
-      "2",
-      "计算",
-      "3；4",
-      "答对",
-    ]);
+    // 两空填空（题号 4）：按空序以「；」拼接；2026-10-02 起 fill 全人工批改 →
+    // 自动判定「—」（不自动判）、最终判定「待批」、来源「自动」（尚无教师批注）
+    const fillRow = rowOf(rows, COURSE_LABEL, 4);
+    expect(fillRow.slice(7, 11)).toEqual(["填空", "2", "计算", "3；4"]);
+    expect(fillRow.slice(11, 14)).toEqual(["—", "待批", "自动"]);
 
     // 手写题（题号 6）：只写笔迹未填最终答案 → 学生答案空、自动判定「—」、
     // 最终判定「待批」、判定来源「自动」；链接 = publicUrl 前缀的教师端绝对 URL

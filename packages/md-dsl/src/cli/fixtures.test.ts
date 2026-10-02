@@ -45,6 +45,10 @@ const EXPECTED: Record<string, string[]> = {
   "14-heading-in-container.md": ["HEADING_IN_CONTAINER"],
   "15-math-spacing-outside.md": ["MATH_SPACING_OUTSIDE"],
   "16-table-pipe-split.md": ["TABLE_CELL_PIPE_SPLIT"],
+  "17-blank-marker-dollar.md": [
+    "BLANK_MARKER_CONTAINS_DOLLAR",
+    "FILL_NO_BLANK",
+  ],
 };
 
 function lintFile(name: string, dir: string): FileLintResult {

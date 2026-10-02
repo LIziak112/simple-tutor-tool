@@ -55,19 +55,21 @@ const STUDENT_PASSWORD = "stu-pass-6";
 /** 合法 UTC 截止时间（契约要求带 Z 后缀） */
 const DUE_AT = "2026-10-01T12:00:00.000Z";
 
-/** 单题练习文档（1 个单元、1 道带答案的填空题；泄露测试需库里真实存在答案） */
+/** 单题练习文档（1 个单元、1 道带答案的判断题；泄露测试需库里真实存在答案。
+ *  原为填空题——2026-10-02 fill 全人工批改起改为判断：「单题全对交卷 → 直接
+ *  graded」的断言需要可自动判分的题，含 fill 的卷交卷恒进待批） */
 const PRACTICE_MD = (unit: string): string => `---
 kind: practice
 unit: ${unit}
 topic: 方程
 ---
 
-::::question{type=fill difficulty=2}
-解方程 $x+1=3$，则 $x=$ [[2]]
+::::question{type=judge difficulty=2}
+方程 $x+1=3$ 的解是 $x=2$。[[正确]]
 ::::
 `;
 
-/** 双题单元 A（判断 + 填空，均可自动判分） */
+/** 双题单元 A（判断 + 单选，均可自动判分；题 2 原为填空，随 fill 全人工批改换单选） */
 const UNIT_A = "一元一次方程";
 const UNIT_A_MD = `---
 kind: practice
@@ -79,12 +81,16 @@ topic: 方程
 等式两边同时加上同一个数，等式仍然成立。[[正确]]
 ::::
 
-::::question{type=fill difficulty=2}
-解方程 $x+1=3$，则 $x=$ [[2]]
+::::question{type=choice difficulty=2}
+解方程 $x+1=3$，则 $x=$（　）
+
+- [ ] $1$
+- [x] $2$
+- [ ] $3$
 ::::
 `;
 
-/** 双题单元 B（两道填空，均可自动判分） */
+/** 双题单元 B（单选 + 判断，均可自动判分；原为两道填空，随 fill 全人工批改替换） */
 const UNIT_B = "有理数乘除";
 const UNIT_B_MD = `---
 kind: practice
@@ -92,12 +98,16 @@ unit: ${UNIT_B}
 topic: 有理数
 ---
 
-::::question{type=fill difficulty=1}
-计算：$(-3) \\times 2=$ [[-6]]
+::::question{type=choice difficulty=1}
+计算：$(-3) \\times 2=$（　）
+
+- [x] $-6$
+- [ ] $6$
+- [ ] $-8$
 ::::
 
-::::question{type=fill difficulty=2}
-计算：$12 \\div (-4)=$ [[-3]]
+::::question{type=judge difficulty=2}
+计算：$12 \\div (-4)=-3$。[[正确]]
 ::::
 `;
 
@@ -599,7 +609,7 @@ describe("多单元取卷与作答（D12）", () => {
     ).toBe(true);
     expect(paper.units.map((unit) => unit.id)).toEqual([env.unitA, env.unitB]);
     expect(paper.units.map((unit) => unit.title)).toEqual([UNIT_A, UNIT_B]);
-    // 每单元 2 题（按题序：judge→fill / fill→fill）
+    // 每单元 2 题（按题序：judge→choice / choice→judge）
     expect(paper.units[0]?.questions.map((q) => q.id)).toHaveLength(2);
     expect(paper.units[1]?.questions.map((q) => q.id)).toHaveLength(2);
 
@@ -623,14 +633,14 @@ describe("多单元取卷与作答（D12）", () => {
     const unitAQuestions = paper.units[0]?.questions ?? [];
     const unitBQuestions = paper.units[1]?.questions ?? [];
     const judgeQ = unitAQuestions[0];
-    const fillA = unitAQuestions[1];
-    const fillB1 = unitBQuestions[0];
-    const fillB2 = unitBQuestions[1];
-    if (!judgeQ || !fillA || !fillB1 || !fillB2) {
+    const choiceA = unitAQuestions[1];
+    const choiceB = unitBQuestions[0];
+    const judgeB = unitBQuestions[1];
+    if (!judgeQ || !choiceA || !choiceB || !judgeB) {
       throw new Error("试卷题目缺失");
     }
 
-    // 跨单元保存草稿（单元 A 判断题对 + 填空答错，单元 B 填空对）
+    // 跨单元保存草稿（单元 A 判断题对 + 单选答错，单元 B 单选对）
     expect(
       (
         await saveAnswer(env.app, env.cookie, attemptId, judgeQ.id, {
@@ -641,25 +651,26 @@ describe("多单元取卷与作答（D12）", () => {
     ).toBe(200);
     expect(
       (
-        await saveAnswer(env.app, env.cookie, attemptId, fillA.id, {
-          kind: "fill",
-          values: ["5"], // 答错（正确答案 2）——验证跨单元的错题计入全卷口径
+        await saveAnswer(env.app, env.cookie, attemptId, choiceA.id, {
+          kind: "choice",
+          index: 0, // 答错（正确 B）——验证跨单元的错题计入全卷口径
         })
       ).status,
     ).toBe(200);
     expect(
       (
-        await saveAnswer(env.app, env.cookie, attemptId, fillB1.id, {
-          kind: "fill",
-          values: ["-6"],
+        await saveAnswer(env.app, env.cookie, attemptId, choiceB.id, {
+          kind: "choice",
+          index: 0,
         })
       ).status,
     ).toBe(200);
-    // fillB2 不作答（未答也进 responses，计待批/未答）
+    // judgeB 不作答（未答也进 responses，D1 未作答客观题判错）
 
     const result = await submitAttempt(env.app, env.cookie, attemptId);
-    // 全卷口径：4 题、答 3、对 2、错 2（含未答的 fillB2——D1 未作答客观题判错）、
+    // 全卷口径：4 题、答 3、对 2、错 2（含未答的 judgeB——D1 未作答客观题判错）、
     // 可判 4 → scoreAuto=50；全部 finalCorrect 非 null → 交卷即 graded（D2/D3）
+    // （单元 MD 已随 2026-10-02 fill 全人工批改改为可自动判题型，保住本断言口径）
     expect(result.summary).toEqual({
       total: 4,
       answered: 3,
@@ -727,14 +738,14 @@ describe("多单元取卷与作答（D12）", () => {
     );
     expect(res.status).toBe(404);
     expect(((await res.json()) as ApiErr).error).toBe("QUESTION_NOT_FOUND");
-    // 单元 B 自己的题正常
+    // 单元 B 自己的题正常（首题已是单选）
     const ownQ = paperB.units[0]?.questions[0];
     if (!ownQ) throw new Error("单元 B 试卷题目缺失");
     expect(
       (
         await saveAnswer(app, cookie, attempt.id as string, ownQ.id, {
-          kind: "fill",
-          values: ["-6"],
+          kind: "choice",
+          index: 0,
         })
       ).status,
     ).toBe(200);
@@ -873,8 +884,8 @@ describe("名单增删（D13：addStudentIds / removeStudentIds）", () => {
     const qid = paper.units[0]?.questions[0]?.id;
     if (!qid) throw new Error("试卷题目缺失");
     await saveAnswer(env.app, env.aCookie, attempt.id as string, qid, {
-      kind: "fill",
-      values: ["2"],
+      kind: "judge",
+      value: true,
     });
     await submitAttempt(env.app, env.aCookie, attempt.id as string);
 

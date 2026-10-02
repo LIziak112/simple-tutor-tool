@@ -73,7 +73,11 @@ function asResultView(data: AttemptDetailData): AttemptResultData {
   return data;
 }
 
-/** fixture：学生 + 单元 + 两道可自动判分的题（判断对 / 填空对，题干含 [[答案]] 标记） */
+/**
+ * fixture：学生 + 单元 + 两道可自动判分的判断题（对 / 错，题干含 [[答案]] 标记）。
+ * 原第二题为填空——2026-10-02 fill 全人工批改起改为判断：公布机制的「截止后
+ * 完整恢复 scoreFinal=100」断言需要整卷交卷即 graded，含 fill 的卷恒进待批。
+ */
 function seed(db: Db): { studentId: string; unitId: string } {
   const studentId = crypto.randomUUID();
   db.insert(students)
@@ -126,13 +130,13 @@ function seed(db: Db): { studentId: string; unitId: string } {
         teacherId: TEST_TEACHER_ID,
         unitId,
         order: 1,
-        type: "fill",
+        type: "judge",
         difficulty: 2,
-        stemMd: "解方程 $x+1=3$，则 $x=$ [[2]]",
+        stemMd: "判断：方程 $x+1=3$ 的解是 $x=1$。[[错误]]",
         optionsJson: null,
-        answersJson: JSON.stringify({ kind: "fill", blanks: [["2"]] }),
+        answersJson: JSON.stringify({ kind: "judge", value: false }),
         hintsJson: "[]",
-        solutionMd: "移项得 $x=3-1=2$。",
+        solutionMd: "移项得 $x=3-1=2$，解不是 $x=1$。",
         sourceMd: "::::question",
         version: 1,
         updatedAt: T0,
@@ -175,8 +179,8 @@ function makeSubmittedAttempt(
     value: true,
   });
   saveDraftAnswer(db, studentId, attempt.id, "rel-q2", {
-    kind: "fill",
-    values: ["2"],
+    kind: "judge",
+    value: false,
   });
   submitAttempt(db, studentId, attempt.id, options.submitAt ?? BEFORE_DUE);
   return { studentId, assignmentId: assignment.id, attemptId: attempt.id };
@@ -274,7 +278,7 @@ describe("after_due 截止前：受限形态（可注入时钟）", () => {
         publicStemMd(rawStems.get(q.snapshot.id) ?? ""),
       );
       expect(q.snapshot.stemMd).not.toContain("[[正确]]");
-      expect(q.snapshot.stemMd).not.toContain("[[2]]");
+      expect(q.snapshot.stemMd).not.toContain("[[错误]]");
     }
     // 本人答案照常下发（受限形态仍可见）
     expect(qs.find((q) => q.questionId === "rel-q1")?.answer).toEqual({
@@ -282,8 +286,8 @@ describe("after_due 截止前：受限形态（可注入时钟）", () => {
       value: true,
     });
     expect(qs.find((q) => q.questionId === "rel-q2")?.answer).toEqual({
-      kind: "fill",
-      values: ["2"],
+      kind: "judge",
+      value: false,
     });
 
     // 泄露矩阵：answer（本人答案）放行；answers/solutionMd 键名放行——契约要求
@@ -364,7 +368,7 @@ describe("截止后与 on_submit：完整形态", () => {
     const attempt = startAttempt(db, studentId, assignment.id);
     const submitted = submitAttempt(db, studentId, attempt.id, AFTER_DUE);
     expect(submitted.answersReleased).toBe(true);
-    // D1（T3.2a）：未作答客观题（judge/fill）判 false 进分母 → 全错 0 分；
+    // D1（T3.2a）：未作答客观题（两道判断）判 false 进分母 → 全错 0 分；
     // 且全部 finalCorrect 非 null → 交卷即 graded（D3，attempt 状态已是 graded）
     expect(submitted.attempt.scoreAuto).toBe(0);
     expect(submitted.attempt.status).toBe("graded");

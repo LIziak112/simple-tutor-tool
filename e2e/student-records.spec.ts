@@ -179,9 +179,10 @@ test.describe("学生我的记录与错题本（T3.5：批改延伸）", () => {
         name: `查看结果：${assignmentTitle}（已批改）`,
       });
       await expect(recordLink).toBeVisible();
-      // 来源徽章（exact：标题本身也含「作业」两字）
+      // 来源徽章（exact：标题本身也含「作业」两字）；得分同样 exact——
+      // 随机后缀里可能恰好含「50」子串，模糊匹配会撞标题/课程名（曾致 flake）
       await expect(recordLink.getByText("作业", { exact: true })).toBeVisible();
-      await expect(recordLink.getByText("50")).toBeVisible();
+      await expect(recordLink.getByText("50", { exact: true })).toBeVisible();
       // 页头错题本入口存在
       await expect(
         studentPage.getByRole("link", { name: "打开错题本" }),
@@ -190,8 +191,9 @@ test.describe("学生我的记录与错题本（T3.5：批改延伸）", () => {
       // —— 进结果视图：老师评语与最终判定（D9）——
       await recordLink.click();
       await studentPage.waitForURL("**/s/attempts/**");
-      // 汇总：最终得分大数字 50 + 「含老师批改」标签；待批 0
-      await expect(studentPage.getByText("50").first()).toBeVisible();
+      // 汇总：最终得分大数字 50（text-4xl 定位，避开随机后缀里的同数字子串）
+      // + 「含老师批改」标签；待批 0
+      await expect(studentPage.locator("span.text-4xl")).toHaveText("50");
       await expect(studentPage.getByText(/最终得分（含老师批改/)).toBeVisible();
       // 手写题（第 2 题）：老师批改块「判对」+ 评语；图标答对
       const q2Result = studentPage.locator('article[aria-label="第 2 题"]');

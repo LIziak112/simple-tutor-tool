@@ -231,7 +231,8 @@ export function WrongQuestionItem({
             {question.answerText ?? "未作答"}
           </span>
         </p>
-        {/* 正确答案走 RichMarkdown（填空答案 $…$ 公式与结果视图同一管线渲染） */}
+        {/* 正确答案走 RichMarkdown（裸 LaTeX 由 formatReferenceAnswers 显示侧
+            包 $，与结果视图同一管线渲染） */}
         <div className="flex min-w-0 flex-wrap gap-1.5">
           <span className="shrink-0 text-muted-foreground">正确答案：</span>
           {question.answers === null ? (
