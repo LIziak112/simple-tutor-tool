@@ -228,7 +228,7 @@ export function AssignmentEditDialog({
 
   return (
     <Dialog open onOpenChange={(open) => (open ? undefined : requestClose())}>
-      <DialogContent className="max-h-[88vh] overflow-y-auto">
+      <DialogContent>
         <DialogHeader>
           <DialogTitle>编辑作业</DialogTitle>
           <DialogDescription>
