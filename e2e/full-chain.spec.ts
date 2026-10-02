@@ -181,7 +181,12 @@ test.describe("全链路：批量导入 → 建课程 → 可见性 → 课程�
     await page.waitForURL("**/t/library");
 
     await page.goto("/t/courses");
-    await page.getByRole("button", { name: "新建课程" }).click();
+    // 空态会渲染第二个同名按钮，此处固定点页头常驻按钮（布局顶栏 header 无按钮，
+    // header 作用域唯一命中 /t/courses 页头）
+    await page
+      .locator("header")
+      .getByRole("button", { name: "新建课程" })
+      .click();
     await page.fill("#course-name", courseName);
     await page.getByRole("button", { name: "创建", exact: true }).click();
     await page.waitForURL(/\/t\/courses\/[0-9a-f-]{36}$/);
