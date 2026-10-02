@@ -384,7 +384,8 @@ beforeEach(() => {
   mockedFolders.mockResolvedValue(FOLDERS);
   mockedLibraryUnits.mockResolvedValue(LIBRARY_UNITS);
   mockedCheck.mockResolvedValue(CHECK_EMPTY);
-  mockedCreate.mockResolvedValue(makeAssignment());
+  // 创建响应为列表形态（2026-10）：mock 与契约 AssignmentCreateData 对齐
+  mockedCreate.mockResolvedValue({ assignments: [makeAssignment()] });
 });
 
 describe("AssignmentComposeWizard 第①步 对象", () => {
@@ -521,7 +522,52 @@ describe("AssignmentComposeWizard 第②步 内容", () => {
 });
 
 describe("AssignmentComposeWizard 第③步 确认", () => {
-  it("标题占位符为缺省组合；提交请求体 unitIds 顺序 = 已选顺序（含 courseId/title/dueAt）", async () => {
+  it("组合方式默认「每个单元一份」：按钮份数口径 + 标题说明文案 + payload 带 unitGrouping=separate（留空不带 title）", async () => {
+    await openStep2();
+    clickCourseUnit(UNIT_TITLES.A);
+    clickCourseUnit(UNIT_TITLES.B);
+    fireEvent.click(screen.getByRole("button", { name: "下一步" }));
+    await screen.findByText("③ 确认");
+
+    // 默认选中「每个单元一份作业（推荐）」；「合并为一份作业」未选中
+    expect(
+      screen.getByRole("radio", { name: /每个单元一份作业（推荐）/ }),
+    ).toBeChecked();
+    expect(
+      screen.getByRole("radio", { name: /合并为一份作业/ }),
+    ).not.toBeChecked();
+
+    // 说明文案与提交按钮份数口径
+    expect(
+      screen.getByText("学生端分别看到 2 份作业，各自作答与交卷"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "布置作业（2 份 · 共 3 题）" }),
+    ).toBeEnabled();
+
+    // 此模式下标题输入框说明留空/填写两种效果
+    expect(
+      screen.getByLabelText(/留空时每份使用各自单元的标题/),
+    ).toHaveAttribute(
+      "placeholder",
+      "填写后每份标题为「标题·单元名」，留空则用各单元自己的标题",
+    );
+
+    // 不填标题直接提交 → payload 带 unitGrouping=separate 且不带 title
+    fireEvent.click(
+      screen.getByRole("button", { name: "布置作业（2 份 · 共 3 题）" }),
+    );
+    await waitFor(() => expect(mockedCreate).toHaveBeenCalledTimes(1));
+    expect(mockedCreate.mock.calls[0]?.[0]).toEqual({
+      unitIds: [UNIT_A_ID, UNIT_B_ID],
+      studentIds: [STUDENT_A_ID, STUDENT_C_ID],
+      courseId: COURSE_ID,
+      answerRelease: "on_submit",
+      unitGrouping: "separate",
+    });
+  });
+
+  it("切「合并为一份作业」：标题回默认占位、按钮单元口径、payload 带 unitGrouping=merged；提交请求体 unitIds 顺序 = 已选顺序（含 courseId/title/dueAt）", async () => {
     await openStep2();
     clickCourseUnit(UNIT_TITLES.A);
     clickCourseUnit(UNIT_TITLES.B);
@@ -531,20 +577,28 @@ describe("AssignmentComposeWizard 第③步 确认", () => {
     fireEvent.click(screen.getByRole("button", { name: "下一步" }));
 
     await screen.findByText("③ 确认");
-    // 重排后 [有理数乘除, 一元一次方程] → 缺省标题 = 首个 等 2 个单元
-    expect(screen.getByLabelText(/作业标题/)).toHaveAttribute(
-      "placeholder",
-      "默认：有理数乘除 等 2 个单元",
-    );
+    // 切换到合并：说明文案与按钮口径随之变化
+    fireEvent.click(screen.getByRole("radio", { name: /合并为一份作业/ }));
+    expect(
+      screen.getByText("所有单元合成一份试卷，一次作答一次交卷"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "布置作业（2 个单元 · 3 题）" }),
+    ).toBeEnabled();
 
-    fireEvent.change(screen.getByLabelText(/作业标题/), {
+    // 重排后 [有理数乘除, 一元一次方程] → 缺省标题 = 首个 等 2 个单元
+    expect(
+      screen.getByLabelText(/作业标题（留空使用默认标题）/),
+    ).toHaveAttribute("placeholder", "默认：有理数乘除 等 2 个单元");
+
+    fireEvent.change(screen.getByLabelText(/作业标题（留空使用默认标题）/), {
       target: { value: "国庆专项" },
     });
     fireEvent.change(screen.getByLabelText(/截止时间（可选，北京时间）/), {
       target: { value: "2026-10-01T20:00" },
     });
     fireEvent.click(
-      screen.getByRole("button", { name: /布置作业（2 个单元 · 3 题）/ }),
+      screen.getByRole("button", { name: "布置作业（2 个单元 · 3 题）" }),
     );
 
     await waitFor(() => expect(mockedCreate).toHaveBeenCalledTimes(1));
@@ -555,6 +609,7 @@ describe("AssignmentComposeWizard 第③步 确认", () => {
       title: "国庆专项",
       dueAt: localInputToUtcIso("2026-10-01T20:00"),
       answerRelease: "on_submit",
+      unitGrouping: "merged",
     });
   });
 
@@ -569,14 +624,14 @@ describe("AssignmentComposeWizard 第③步 确认", () => {
       screen.getByRole("radio", { name: /交卷即公布（默认）/ }),
     ).toBeChecked();
     expect(
-      screen.getByRole("button", { name: /布置作业（1 个单元/ }),
+      screen.getByRole("button", { name: "布置作业（1 份 · 共 2 题）" }),
     ).toBeEnabled();
 
     // 切「截止后公布」而未填截止 → 即时提示 + 提交禁用
     fireEvent.click(screen.getByRole("radio", { name: /截止后公布/ }));
     expect(screen.getByText(/必须先填写截止时间/)).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /布置作业（1 个单元/ }),
+      screen.getByRole("button", { name: "布置作业（1 份 · 共 2 题）" }),
     ).toBeDisabled();
 
     // 填上截止 → 提示消失、提交恢复，请求体带 answerRelease=after_due 与 dueAt
@@ -584,7 +639,9 @@ describe("AssignmentComposeWizard 第③步 确认", () => {
       target: { value: "2026-10-01T20:00" },
     });
     expect(screen.queryByText(/必须先填写截止时间/)).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /布置作业（1 个单元/ }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "布置作业（1 份 · 共 2 题）" }),
+    );
     await waitFor(() => expect(mockedCreate).toHaveBeenCalledTimes(1));
     expect(mockedCreate.mock.calls[0]?.[0]).toMatchObject({
       dueAt: localInputToUtcIso("2026-10-01T20:00"),
@@ -617,7 +674,7 @@ describe("AssignmentComposeWizard 第③步 确认", () => {
     ).toBeInTheDocument();
     // 仅提示不阻止：提交按钮可用；check 请求携带全部已选对象与单元
     expect(
-      screen.getByRole("button", { name: /布置作业（1 个单元/ }),
+      screen.getByRole("button", { name: "布置作业（1 份 · 共 2 题）" }),
     ).toBeEnabled();
     expect(mockedCheck.mock.calls[0]?.[0]).toEqual({
       unitIds: [UNIT_A_ID],
@@ -625,7 +682,7 @@ describe("AssignmentComposeWizard 第③步 确认", () => {
     });
   });
 
-  it("未选课程：本课程练习页签置灰并提示先选课程；提交不带 courseId；单单元缺省标题为该单元标题", async () => {
+  it("未选课程：本课程练习页签置灰并提示先选课程；提交不带 courseId；合并模式单单元缺省标题为该单元标题", async () => {
     renderWizard();
     const li = await screen.findByLabelText(/李四/);
     fireEvent.click(li);
@@ -641,19 +698,21 @@ describe("AssignmentComposeWizard 第③步 确认", () => {
     clickLibraryUnit(UNIT_TITLES.A);
     fireEvent.click(screen.getByRole("button", { name: "下一步" }));
     await screen.findByText("③ 确认");
-    expect(screen.getByLabelText(/作业标题/)).toHaveAttribute(
-      "placeholder",
-      "默认：一元一次方程",
-    );
+    // 切合并后单单元缺省标题 = 该单元标题
+    fireEvent.click(screen.getByRole("radio", { name: /合并为一份作业/ }));
+    expect(
+      screen.getByLabelText(/作业标题（留空使用默认标题）/),
+    ).toHaveAttribute("placeholder", "默认：一元一次方程");
 
     fireEvent.click(
-      screen.getByRole("button", { name: /布置作业（1 个单元 · 2 题）/ }),
+      screen.getByRole("button", { name: "布置作业（1 个单元 · 2 题）" }),
     );
     await waitFor(() => expect(mockedCreate).toHaveBeenCalledTimes(1));
     expect(mockedCreate.mock.calls[0]?.[0]).toEqual({
       unitIds: [UNIT_A_ID],
       studentIds: [STUDENT_B_ID],
       answerRelease: "on_submit",
+      unitGrouping: "merged",
     });
   });
 });

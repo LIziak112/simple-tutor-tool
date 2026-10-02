@@ -57,10 +57,13 @@ import { DiscardConfirmDialog } from "./DiscardConfirmDialog";
  *   条目并标注可见状态（跳过已删除与无题目条目）；资源库支持文件夹筛选与搜索
  *   （前端即时过滤，§4-3）。右侧已选列表按选择顺序排列，可拖拽排序并有上移/下移
  *   兜底（§4-9），同一单元不可重复选（选择器中标记「已选」）；
- * - 第③步 确认：标题（占位符 = defaultAssignmentTitle 缺省组合）+ 截止时间
- *   （北京时间，附「x 天后」相对提示，§4-8）+ 答案公布时机（T2A.8：交卷即公布
- *   （默认）/ 截止后公布——后者须先填截止，否则即时提示并阻止提交）+
- *   D15「已做过」提示（仅提示不阻止）；
+ * - 第③步 确认：作业组合方式（2026-10 产品决策：默认不合并——「每个单元一份
+ *   作业（推荐）」默认选中，学生端分别看到 N 份作业各自作答与交卷；可切
+ *   「合并为一份作业」回到旧行为。separate 模式下标题留空 = 每份用各自单元
+ *   标题、填写 = 每份「标题·单元名」）+ 标题（merged 占位符 =
+ *   defaultAssignmentTitle 缺省组合）+ 截止时间（北京时间，附「x 天后」相对
+ *   提示，§4-8）+ 答案公布时机（T2A.8：交卷即公布（默认）/ 截止后公布——后者
+ *   须先填截止，否则即时提示并阻止提交）+ D15「已做过」提示（仅提示不阻止）；
  * - 关闭守卫：有任何已选内容 / 已填字段时关闭需二次确认（§4-5）。
  * 三态齐全（加载 / 空态指引 / 错误重试），交互目标 ≥44px，文案中文。
  */
@@ -125,6 +128,14 @@ export function AssignmentComposeWizard({
   const [selectedUnitIds, setSelectedUnitIds] = useState<string[]>([]);
   const [title, setTitle] = useState("");
   const [dueLocal, setDueLocal] = useState("");
+  /**
+   * 组合方式（2026-10 产品决策：默认不合并）：separate = 每个单元一份作业
+   * （推荐，学生端分别作答与交卷）；merged = 合并为一份试卷（旧行为）。
+   * 提交 payload 始终携带本字段；服务端缺省按 merged 解析（向后兼容）。
+   */
+  const [unitGrouping, setUnitGrouping] = useState<"separate" | "merged">(
+    "separate",
+  );
   /** 答案公布时机（T2A.8，D11）：默认交卷即公布；截止后公布须先填截止时间 */
   const [answerRelease, setAnswerRelease] = useState<"on_submit" | "after_due">(
     "on_submit",
@@ -226,7 +237,8 @@ export function AssignmentComposeWizard({
     selectedUnitIds.length > 0 ||
     title.trim().length > 0 ||
     dueLocal.length > 0 ||
-    answerRelease !== "on_submit";
+    answerRelease !== "on_submit" ||
+    unitGrouping !== "separate";
 
   /** 关闭守卫（§4-5）：有已选内容 / 已填字段先确认；提交中不允许关闭 */
   function requestClose(): void {
@@ -284,6 +296,7 @@ export function AssignmentComposeWizard({
         ...(title.trim().length > 0 ? { title: title.trim() } : {}),
         ...(dueLocal.length > 0 ? { dueAt: localInputToUtcIso(dueLocal) } : {}),
         answerRelease,
+        unitGrouping,
       },
       { onSuccess: onClose },
     );
@@ -388,6 +401,7 @@ export function AssignmentComposeWizard({
             totalQuestions={totalQuestions}
             title={title}
             dueLocal={dueLocal}
+            unitGrouping={unitGrouping}
             answerRelease={answerRelease}
             checkPending={checkMutation.isPending}
             checkError={
@@ -402,6 +416,7 @@ export function AssignmentComposeWizard({
             pending={createMutation.isPending}
             onTitleChange={setTitle}
             onDueChange={setDueLocal}
+            onUnitGroupingChange={setUnitGrouping}
             onAnswerReleaseChange={setAnswerRelease}
             onSubmit={handleSubmit}
           />
@@ -976,6 +991,7 @@ function StepConfirm({
   totalQuestions,
   title,
   dueLocal,
+  unitGrouping,
   answerRelease,
   checkPending,
   checkError,
@@ -984,6 +1000,7 @@ function StepConfirm({
   pending,
   onTitleChange,
   onDueChange,
+  onUnitGroupingChange,
   onAnswerReleaseChange,
   onSubmit,
 }: {
@@ -993,6 +1010,7 @@ function StepConfirm({
   totalQuestions: number;
   title: string;
   dueLocal: string;
+  unitGrouping: "separate" | "merged";
   answerRelease: "on_submit" | "after_due";
   checkPending: boolean;
   checkError: string | null;
@@ -1001,6 +1019,7 @@ function StepConfirm({
   pending: boolean;
   onTitleChange: (title: string) => void;
   onDueChange: (dueLocal: string) => void;
+  onUnitGroupingChange: (grouping: "separate" | "merged") => void;
   onAnswerReleaseChange: (release: "on_submit" | "after_due") => void;
   onSubmit: (event: React.FormEvent) => void;
 }) {
@@ -1010,8 +1029,8 @@ function StepConfirm({
   );
   /** T2A.8：「截止后公布」必须先有截止时间——即时提示并阻止提交 */
   const releaseBlocked = answerRelease === "after_due" && dueLocal.length === 0;
-  /** 公布时机单选行的样式（选中态与添加名单弹层同一视觉语言） */
-  const releaseOptionClass = (selected: boolean): string =>
+  /** 单选行的样式（选中态与添加名单弹层同一视觉语言；公布时机/组合方式共用） */
+  const optionClass = (selected: boolean): string =>
     `flex min-h-11 flex-1 cursor-pointer items-start gap-3 rounded-lg border px-3 py-2.5 text-sm outline-none select-none transition-colors has-[:focus-visible]:ring-3 has-[:focus-visible]:ring-ring/50 ${
       selected
         ? "border-primary/50 bg-primary/5"
@@ -1040,17 +1059,72 @@ function StepConfirm({
       </div>
 
       <form className="flex flex-col gap-4" onSubmit={onSubmit}>
+        {/* 组合方式（2026-10 产品决策：默认不合并）——每个单元一份（推荐，默认）/
+            合并为一份；视觉语言与「答案公布时机」radio 组一致 */}
+        <fieldset className="flex flex-col gap-1.5">
+          <legend className="text-sm">作业组合方式</legend>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <label className={optionClass(unitGrouping === "separate")}>
+              <input
+                type="radio"
+                name="wizard-unit-grouping"
+                className="mt-0.5 size-5 shrink-0 accent-[var(--color-primary)]"
+                checked={unitGrouping === "separate"}
+                onChange={() => onUnitGroupingChange("separate")}
+              />
+              <span className="flex flex-col gap-0.5">
+                <span className="font-medium">每个单元一份作业（推荐）</span>
+                <span className="text-xs text-muted-foreground">
+                  学生端分别看到 {selectedUnits.length} 份作业，各自作答与交卷
+                </span>
+              </span>
+            </label>
+            <label className={optionClass(unitGrouping === "merged")}>
+              <input
+                type="radio"
+                name="wizard-unit-grouping"
+                className="mt-0.5 size-5 shrink-0 accent-[var(--color-primary)]"
+                checked={unitGrouping === "merged"}
+                onChange={() => onUnitGroupingChange("merged")}
+              />
+              <span className="flex flex-col gap-0.5">
+                <span className="font-medium">合并为一份作业</span>
+                <span className="text-xs text-muted-foreground">
+                  所有单元合成一份试卷，一次作答一次交卷
+                </span>
+              </span>
+            </label>
+          </div>
+        </fieldset>
+
         <div className="flex flex-col gap-1.5">
-          <label htmlFor="wizard-title" className="text-sm">
-            作业标题（留空使用默认标题）
-          </label>
-          <Input
-            id="wizard-title"
-            value={title}
-            onChange={(e) => onTitleChange(e.target.value)}
-            placeholder={`默认：${defaultTitle}`}
-            maxLength={100}
-          />
+          {unitGrouping === "separate" ? (
+            <>
+              <label htmlFor="wizard-title" className="text-sm">
+                作业标题（留空时每份使用各自单元的标题）
+              </label>
+              <Input
+                id="wizard-title"
+                value={title}
+                onChange={(e) => onTitleChange(e.target.value)}
+                placeholder="填写后每份标题为「标题·单元名」，留空则用各单元自己的标题"
+                maxLength={100}
+              />
+            </>
+          ) : (
+            <>
+              <label htmlFor="wizard-title" className="text-sm">
+                作业标题（留空使用默认标题）
+              </label>
+              <Input
+                id="wizard-title"
+                value={title}
+                onChange={(e) => onTitleChange(e.target.value)}
+                placeholder={`默认：${defaultTitle}`}
+                maxLength={100}
+              />
+            </>
+          )}
         </div>
 
         <div className="flex flex-col gap-1.5">
@@ -1074,9 +1148,7 @@ function StepConfirm({
         <fieldset className="flex flex-col gap-1.5">
           <legend className="text-sm">答案公布时机</legend>
           <div className="flex flex-col gap-2 sm:flex-row">
-            <label
-              className={releaseOptionClass(answerRelease === "on_submit")}
-            >
+            <label className={optionClass(answerRelease === "on_submit")}>
               <input
                 type="radio"
                 name="wizard-answer-release"
@@ -1091,9 +1163,7 @@ function StepConfirm({
                 </span>
               </span>
             </label>
-            <label
-              className={releaseOptionClass(answerRelease === "after_due")}
-            >
+            <label className={optionClass(answerRelease === "after_due")}>
               <input
                 type="radio"
                 name="wizard-answer-release"
@@ -1161,6 +1231,11 @@ function StepConfirm({
             <>
               <Loader2 aria-hidden className="animate-spin" />
               正在布置…
+            </>
+          ) : unitGrouping === "separate" ? (
+            <>
+              <Plus aria-hidden />
+              布置作业（{selectedUnits.length} 份 · 共 {totalQuestions} 题）
             </>
           ) : (
             <>
