@@ -1,0 +1,81 @@
+核实结论总览
+
+报告质量总体可信：31 条里 27 条属实，但其中 4 条“属实却无需处理”（2 条已被后续提交修复、1 条设计如此、1 条已被数据回填兜住），真正值得动手的是 1 个真 bug + 8 个小修，其余 20 条 🟢 属实但都是防御性改进。另外我在核对中发现了一处报告没抓到的细节（见 🟡|B06 一节）。
+
+一、无需处理（4 条）
+报告条目	核实结果
+🔴 B05 测试标题与断言矛盾（assignments.test.ts:1079）	当前代码不存在。现在 assignments.test.ts:1091 的标题就是“锁定后即使 unitIds 重复也报 409”，且 L1103-1105 断言了 ASSIGNMENT_CONTENT_LOCKED 错误码。审查看到的是 T2A.7 未提交的中间态，首个提交 3630d29 已是修正后形态
+🔴 B03 D16 软删单元口径	已被 c18d290 修复。当前实现（assignment-service.ts:919、1079-1088）、契约注释、测试三方一致：软删单元照常出卷、照常计题数
+🟡 B04 pending/unanswered 重叠	设计如此。契约 attempt.ts:191-194 明确定义 pending = autoCorrect=null（未作答 + 需教师批改），未答题同时计入两处是文档化行为，不是判分 bug
+🟡 B08 旧作业引用无兜底	已被回填覆盖。backfill.ts 的 backfillT2a7Assignments 步骤 1（带完成标记、单事务）把存量 assignments.unitId 回填进了 assignment_units，purge 校验不会被绕过。attempts 那边的双路径只是防御性写法
+二、需要修的（按优先级）
+1. 🔴 唯一的真 bug：提示删减后 hintsRemaining 为负（hint-service）
+
+属实。hint-service.ts:166-170 取历史已解锁集合 opened 直接算 hintsUsed = nextOpened.length，L208 hintsRemaining: hints.length - hintsUsed。
+
+复现路径：草稿期学生解锁了全部 5 条提示 → 教师编辑题目把提示删到 2 条 → 学生再请求任一提示 → hintsRemaining = 2 - 5 = -3，违反契约 attempt.ts:284 的 min(0)，前端 apiResponseSchema 解析直接失败，提示功能打挂。
+
+改法：openHint 里对历史集合先收敛再计算——
+
+const opened = openedIndexesOf(existing?.hintsOpenedJson ?? null)
+  .filter((i) => i < hints.length); // 教师删减提示后，越界序号收敛掉
+
+回写 hintsOpenedJson 时用收敛后的集合，存量脏数据随之自愈。按硬性规则 9 的精神，先在 hint-service 测试里补一条“解锁全部→删减→再请求，hintsRemaining ≥ 0 且 hintsUsed ≤ hintCount”的用例再改实现。
+
+2. 🔴 契约测试把“course 来源 unitId=null”锁成合法（attempt.test.ts）
+
+属实。attempt.test.ts:60-66 的 SUMMARY_COURSE_SECOND 展开 SUMMARY_DRAFT（unitId: null）却没覆写 unitId，L114 的 parse 照样通过——与契约注释“course 来源恒有值”（attempt.ts:74）直接矛盾。服务端目前确实会写 unitId（attempt-service.ts:106-108），所以这是“测试未守住不变式”而非线上错数据。
+
+改法（两步，第二步可选）：
+
+fixture 补 unitId: UNIT_ID；如想锁反面样例，另加一条“assignment 来源 unitId=null 可解析”的断言；
+顺手把同根因的 🟢（summary 无交叉不变式）一起收掉：给 attemptSummarySchema 加 superRefine，锁定“course → courseId/unitId 非空且 assignmentId 空；assignment → assignmentId 非空且 unitId 空”。改了 contract 要重跑 pnpm schema:export 并提交（AGENTS.md 规则）。
+3. 🟡 hasAttempts 语义与文案脱节（三处同步）
+
+属实。服务端 course-service.ts:969 与 courseHasAttempts 均为“有作答或有作业”，但契约注释（course-api.ts:58）只写“关联作答记录”，前端 CoursesPage.tsx:199、285、327 三处文案都是“有作答记录”。只布置了作业、零作答的课程会挂一个与事实不符的“有作答记录”徽章。删除守卫本身是对的，不用动逻辑。
+
+改法：三处文案改成“有作答或作业”（如“该课程已有作答或作业，不能删除；请改用归档”），契约注释同步。注意 course-api.ts 在工作区有未提交改动，改在其上即可。
+
+4. 🟡 草稿提示回显不过滤软删题（hint-service，与真 bug 同文件）
+
+属实。hint-service.ts:237 的查询缺 isNull(questions.deletedAt)（对照 attempt-service.ts:233 有过滤），软删题的 hintsOpened 键会残留在草稿视图里成为孤儿键。不泄露（都是学生自己解锁的），但和修 #1 一起改掉最顺：where 补一个条件 + 一条软删题不回显的测试。
+
+5. 🟡 取卷（paper）与详情/存答的鉴权口径割裂（attempt-service）
+
+属实，但影响比报告描述的小——我核实过前端根本没有消费任何取卷接口：fetchAttemptPaperApi（api.ts:687）是死导出，答题页走 detail 草稿视图（自带题目）。另外我还发现报告没提到的一点：attempt 侧的 requireAssignmentVisible（attempt-service.ts:362-371）没过滤 removedAt，与其注释宣称的“与旧 paper 接口同口径”不符——实际效果反而符合“被移出学生已建作答仍可继续”的口径。真正割裂的场景是作业软删后：draft 学生详情/存答 200、取卷 404。
+
+改法：getStudentAttemptPaper 的 assignment 分支改成“归属即权限”（只要有本人的 attempt 就放行取卷，与 requireUsableAttempt 的 assignment 口径对齐）；同时修正两处注释（"D22 分层”的 course 分支保留不动，那是有意设计并已注释）。既然前端不用这个接口，优先级中低，但值得在下一批次收掉，顺带删掉 fetchAttemptPaperApi 死导出。
+
+6. 🟡 学生列表倒序无决胜键 + 测试 as string 掩盖空值
+
+属实。服务端 assignment-service.ts:884 只有 orderBy(desc(createdAt))，同一毫秒创建时顺序不定；测试侧 assignments.test.ts:688 用 [0]?.id as string 取“后创建的作业”，列表为空时问题被推迟且报错误导。
+
+改法：测试侧改为按 units 内容筛选目标作业（如找到 units 含单元 A 的那份），不依赖顺序——这比给 SQL 加决胜键更稳（同毫秒时任何决胜键都不保证“后创建”语义）。
+
+7. 🟡 check 测试承诺“再交一次次数递增”但只交了一次
+
+属实。assignments.test.ts:1152 标题承诺递增，断言止于 submittedCount: 1（L1190-1200）。改法：补第二次开卷交卷后 submittedCount: 2 的断言（D10 的核心行为目前无覆盖），或删掉标题里的承诺。
+
+8. 🟡 状态注释过时：draft 不在枚举里（assignment.ts）
+
+属实。assignment.ts:42 写“graded > submitted > draft > 无记录”，枚举里是 in_progress，且同文件 L260、L314 都已是正确写法，仅此一处漏改。一行注释改成"graded > submitted > in_progress > not_started"即可。
+
+9. 🟡（低优先）题库列表 lectureTitles 不过滤软删讲义
+
+属实。library-service.ts:591-597 全量取讲义无 where，回收站里讲义的标题仍会出现在题库列表的“配套讲义”展示位。教师端、无泄露，属展示口径问题。改法：补 isNull(lectures.deletedAt)（软删后配套讲义显示为空），或加注释说明刻意保留标题。
+
+三、🟢 类：属实，按“顺手修/可不修”分
+
+值得顺手修的（改动一行到几行，收益明确）：
+
+assignments.test.ts:567 db: undefined 残留——删掉该字段（它正是“行复用”断言补不上的原因，见下条）；
+assignments.test.ts:893-921 “行复用”只有可见性断言——fixture 暴露真实 db 后补“行数不增/addedAt 保留”断言，或把标题收窄为“恢复在册”；
+assignments.test.ts:962-969 前置 DELETE 未断言 200——补一行，否则“课程成员变化不影响名单”的场景可能没被真正构造；
+assignments.test.ts:1229-1233 saveAnswer/submitAttempt 未断言 200——submit 静默失败时“作业作答不计入”仍会绿，补断言；
+student-attempts.test.ts:468-472 every() 在 units 为空时恒真——仿同文件 L504-508 的 flatten+Map 模式改写；
+library-service.ts:362-373 usage 查询无 orderBy——补 orderBy(desc(assignments.createdAt), asc(assignments.id))；
+hint-service.ts:110-121 与 attempt-service.ts:878-879 两处 safeParse/解析失败静默吞掉——各补一行 warn 日志（带 attemptId/questionId），修 #1 时顺带；
+ink-service.ts:187-199 限额只算压缩字节，L98 gunzipSync 无解压上限——gzip 炸弹可放大内存。自部署单机+已登录学生，风险低，但修法一行：gunzipSync(bytes, { maxOutputLength: INK_MAX_UPLOAD_BYTES * 4 }) 之类设个解压后上限；
+assignment.ts:240 deletedAt 裸 z.string().nullable()——对齐同行 createdAt 的 min(1)（改契约须重跑 pnpm schema:export）；
+assignment-service.ts:556-568 移出校验 N+1——换成一条 inArray(attempts.studentId, removeIds) 查询；
+assignment-service.ts:939/945 JSON.parse 无容错——坏数据会炸 500，包 try/catch 按空处理（attempt-service 已有 jsonOf 现成模式可抄）。
