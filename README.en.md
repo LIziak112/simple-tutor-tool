@@ -33,6 +33,15 @@ AI writes content (DSL-spec MD) ──→ import: auto-parse & render ──→ 
 | --- | --- |
 | ![Per-student answer data](docs/screenshots/teacher-data.png) | ![Mistake notebook](docs/screenshots/wrong-book.png) |
 
+## Try it online
+
+A live demo environment, seeded with sample data (it gets reset from time to time — please don't enter real student information):
+
+- **Student side**: open the personal link and you're in — <http://47.116.99.166/s/L_N7GTSUpoWnxzR03laTsnzUP8lqpecS>; or sign in on the [student login page](http://47.116.99.166/s/login) with the name `测试` and password `12345678`.
+- **Teacher side**: open the [teacher login page](http://47.116.99.166/t/login) and sign in with the login name `demo` and password `12345678`.
+
+To see the whole chain, submit an exercise as the student, then open the "data" page as the teacher — per-question answers, the original handwriting images, and the learning analytics are all there.
+
 ## Feature overview
 
 ### Content engine (Markdown in, interactive pages out)
