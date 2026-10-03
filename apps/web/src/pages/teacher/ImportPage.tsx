@@ -30,9 +30,10 @@ import { SingleImportPreview } from "./SingleImportPreview";
  * /t/import 导入页（T1.11 建立；T2A.3 单文件与批量共用；内容模型方案 §5 重构）：
  * - 选择页 = 一张统一待导入清单：三入口都往同一份 PickedFile[] 加条目——
  *   「选择 .md 文件」（多选追加）/「选择文件夹」（webkitdirectory，特性检测降级 D20）/
- *   「粘贴内容」（textarea + 文件名，加入清单）；同 path 重复 → 原位替换（保持最新）；
+ *   「粘贴内容」（textarea + 文件名，加入清单）；同 path 重复 → 原位替换（保持最新），
+ *   每次选择给一行反馈（加入/更新同名/忽略的文件及原因，2026-10 审核修复）；
  * - 清单只看名不看内容（正文检查交给预览态）：文件名 / 相对路径（文件夹选择时）/
- *   大小 / 移除；粘贴条目文件名就地可编辑；
+ *   大小 / 移除；文件与粘贴条目都可就地改名（改名只换 basename，目录前缀保留）；
  * - 规模预检实时化：清单一变立即跑 precheckBatchLimits，超限红字显示在清单区，
  *   不必等点预览（≤50 文件 / 单文件 ≤1MB / 合计 ≤10MB，与后端同口径）；
  * - 导入选项：目标文件夹（默认未归类，可就地新建）+「按子目录自动建文件夹」（≥2 条时）+
@@ -68,30 +69,62 @@ export interface ImportOptions {
   readonly addToCourse: { courseId: string; visible: boolean } | undefined;
 }
 
-/** 读取所选文件中的 .md（忽略其他扩展名），返回 PickedFile 列表。
+/** 读取所选文件的结果：入清单条目 + 被忽略的文件与中文原因（选择反馈行用） */
+export interface ReadPickedResult {
+  readonly entries: readonly PickedFile[];
+  readonly skipped: ReadonlyArray<{
+    readonly name: string;
+    readonly reason: string;
+  }>;
+}
+
+/**
+ * 读取所选文件中的 .md（忽略其他扩展名），返回条目与被忽略清单。
  * 入参是 File 数组而非 FileList：调用方须先快照（置空 input.value 会清空
- * input.files 所指的同一 FileList 对象，活引用事后读恒为空，见 handleFiles） */
+ * input.files 所指的同一 FileList 对象，活引用事后读恒为空，见 handleFiles）。
+ * 2026-10 审核修复：非 .md 与读取失败不再静默吞掉——曾经「选 4 个只进 3 个」
+ * 毫无提示，用户无从知道差在哪个文件；现在清单位置给一行反馈说明忽略原因。
+ */
 export async function readPickedFiles(
   files: readonly File[],
-): Promise<PickedFile[]> {
-  const result: PickedFile[] = [];
+): Promise<ReadPickedResult> {
+  const entries: PickedFile[] = [];
+  const skipped: ReadPickedResult["skipped"][number][] = [];
   for (const file of files) {
-    if (!/\.(md|markdown)$/i.test(file.name)) continue;
-    const markdown = await file.text();
-    const relative = (file as File & { webkitRelativePath?: string })
-      .webkitRelativePath;
-    const path =
-      relative !== undefined && relative.length > 0 ? relative : file.name;
-    result.push({
-      id: randomUuid(),
-      path,
-      name: file.name,
-      markdown,
-      bytes: new TextEncoder().encode(markdown).length,
-      source: "file",
-    });
+    if (!/\.(md|markdown)$/i.test(file.name)) {
+      skipped.push({ name: file.name, reason: "非 .md 文件" });
+      continue;
+    }
+    try {
+      const markdown = await file.text();
+      const relative = (file as File & { webkitRelativePath?: string })
+        .webkitRelativePath;
+      const path =
+        relative !== undefined && relative.length > 0 ? relative : file.name;
+      entries.push({
+        id: randomUuid(),
+        path,
+        name: file.name,
+        markdown,
+        bytes: new TextEncoder().encode(markdown).length,
+        source: "file",
+      });
+    } catch {
+      // 单个文件读取失败（被其他程序独占锁定等）不影响其余文件进清单
+      skipped.push({
+        name: file.name,
+        reason: "读取失败（可能被其他程序占用）",
+      });
+    }
   }
-  return result;
+  return { entries, skipped };
+}
+
+/** 条目改名后的 path：文件夹选择的条目带子目录前缀（「按子目录自动建文件夹」
+ * 的依据），改名只换 basename、保留目录；根级条目 path 即文件名。 */
+export function renamedPath(path: string, name: string): string {
+  const slash = path.lastIndexOf("/");
+  return slash >= 0 ? `${path.slice(0, slash + 1)}${name}` : name;
 }
 
 /** 规模预检（D20；与后端 IMPORT_TOO_LARGE 同口径），超限返回中文提示 */
@@ -163,6 +196,8 @@ export function ImportPage() {
   const [pastedText, setPastedText] = useState("");
   const [pastedName, setPastedName] = useState(DEFAULT_FILENAME);
   const [singleInput, setSingleInput] = useState<SingleInput | null>(null);
+  // 最近一次文件选择的反馈（加入/更新同名/忽略及原因；再选择或清空时刷新）
+  const [pickNotice, setPickNotice] = useState<string | null>(null);
 
   // ---- 导入选项 ----
   const [folderSelection, setFolderSelection] = useState<string>("none");
@@ -210,10 +245,33 @@ export function ImportPage() {
     // 允许再次选择同一批文件（change 依赖 value 变化）
     event.target.value = "";
     if (picked.length === 0) return;
-    const incoming = await readPickedFiles(picked);
-    if (incoming.length === 0) return;
-    // 继续选择 = 追加；同 path 重复 → 原位替换（保持最新）
-    setPickedFiles((prev) => incoming.reduce(upsertByPath, prev));
+    const { entries: incoming, skipped } = await readPickedFiles(picked);
+    if (incoming.length === 0 && skipped.length === 0) return;
+    // 与清单既有条目同 path = 同一份内容 → 原位替换；计数进反馈行让「更新了
+    // 哪些同名文件」可见（用户改完本地文件重选时能确认拿到的是新内容）
+    const existingPaths = new Set(pickedFiles.map((file) => file.path));
+    const replacedCount = incoming.filter((file) =>
+      existingPaths.has(file.path),
+    ).length;
+    if (incoming.length > 0) {
+      setPickedFiles((prev) => incoming.reduce(upsertByPath, prev));
+    }
+    const parts: string[] = [];
+    if (incoming.length > 0) {
+      parts.push(
+        replacedCount > 0
+          ? `加入 ${incoming.length - replacedCount} 条，更新同名 ${replacedCount} 条（已用所选文件的内容）`
+          : `已加入 ${incoming.length} 条`,
+      );
+    }
+    if (skipped.length > 0) {
+      parts.push(
+        `忽略 ${skipped.length} 个：${skipped
+          .map((item) => `${item.name}（${item.reason}）`)
+          .join("、")}`,
+      );
+    }
+    setPickNotice(parts.join("；"));
   }
 
   function togglePaste(): void {
@@ -243,12 +301,16 @@ export function ImportPage() {
     setPastedName(nextPasteFilename(next));
   }
 
-  /** 粘贴条目就地改名（改名同步 path；与其他条目同 path = 同一份，保留本条） */
+  /** 条目就地改名（文件与粘贴条目都可改；改名同步 path——目录前缀保留） */
   function handleRename(id: string, name: string): void {
     setPickedFiles((prev) => {
       const current = prev.find((file) => file.id === id);
       if (current === undefined) return prev;
-      const renamed: PickedFile = { ...current, name, path: name };
+      const renamed: PickedFile = {
+        ...current,
+        name,
+        path: renamedPath(current.path, name),
+      };
       return prev
         .filter((file) => file.id === id || file.path !== renamed.path)
         .map((file) => (file.id === id ? renamed : file));
@@ -350,7 +412,10 @@ export function ImportPage() {
                     <button
                       type="button"
                       className="ml-2 rounded px-1 text-destructive underline underline-offset-2 outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
-                      onClick={() => setPickedFiles([])}
+                      onClick={() => {
+                        setPickedFiles([]);
+                        setPickNotice(null);
+                      }}
                     >
                       清空清单
                     </button>
@@ -421,6 +486,17 @@ export function ImportPage() {
                 </Button>
               </div>
 
+              {/* 最近一次选择的反馈：加入了什么 / 更新了哪些同名条目 / 忽略了
+                  哪些文件及原因（审核修复：此前静默跳过，用户无从对账） */}
+              {pickNotice !== null ? (
+                <p
+                  role="status"
+                  className="text-xs leading-relaxed text-muted-foreground"
+                >
+                  {pickNotice}
+                </p>
+              ) : null}
+
               {/* 粘贴输入区（展开式小面板；加入后清空，可连续粘贴多条） */}
               {pasteOpen ? (
                 <div
@@ -484,26 +560,16 @@ export function ImportPage() {
                       key={file.id}
                       className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-1.5"
                     >
-                      {file.source === "paste" ? (
-                        /* 粘贴条目：文件名就地可编辑（改名同步 path） */
-                        <Input
-                          aria-label={`重命名 ${file.path}`}
-                          value={file.name}
-                          onChange={(e) =>
-                            handleRename(file.id, e.target.value)
-                          }
-                          className="min-h-11 w-56"
-                        />
-                      ) : (
-                        <span
-                          className="min-w-0 max-w-56 truncate font-mono text-sm"
-                          title={file.path}
-                        >
-                          {file.name}
-                        </span>
-                      )}
-                      {file.source === "file" && file.path !== file.name ? (
-                        /* 文件夹选择时显示相对路径 */
+                      {/* 文件与粘贴条目都可就地改名（改名同步 path，目录前缀保留；
+                          审核修复：此前文件条目只读，选错名只能回磁盘改文件重选） */}
+                      <Input
+                        aria-label={`重命名 ${file.path}`}
+                        value={file.name}
+                        onChange={(e) => handleRename(file.id, e.target.value)}
+                        className="min-h-11 w-56"
+                      />
+                      {file.path !== file.name ? (
+                        /* 文件夹选择时显示相对路径（含子目录前缀） */
                         <span
                           className="min-w-0 max-w-64 truncate text-xs text-muted-foreground"
                           title={file.path}

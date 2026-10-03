@@ -5,6 +5,7 @@ import { ArrowLeft, CircleAlert, Loader2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   ActionsPanel,
   describeImportNames,
@@ -23,6 +24,8 @@ import { MarkdownEditor } from "./MarkdownEditor";
 /**
  * 单文件导入预览（T1.11 的预览态；T2A.3 从 ImportPage 拆出并接入资源库选项）：
  * - 左 CodeMirror（Markdown 高亮 + lint 标注），右 RichMarkdown 渲染（v1 先转换）；
+ * - 文件名预览态可就地修改（2026-10 审核修复；改名走同一条 debounce 重预览链路，
+ *   实际存储标题来自 frontmatter 的提示见编辑器头）；
  * - 顶部统计条（版本徽章、单元/讲义/题数/题型分布）；
  * - 动作清单与注意事项面板（D18/D19，T2A.3）；
  * - 编辑即校验：预览态下改动 400ms debounce 重新调 preview；
@@ -57,8 +60,9 @@ export function SingleImportPreview({
   /** commit 422 附带的 issue 列表（非空时覆盖 preview.issues 展示） */
   const [commitIssues, setCommitIssues] = useState<LintIssue[] | null>(null);
   const [commitError, setCommitError] = useState<string | null>(null);
-  // 文件名在输入区确定（input.filename），预览态不可改
-  const filename = input.filename;
+  // 文件名预览态可改（2026-10 审核修复：此前只读，选错名只能回磁盘改文件重选）；
+  // 改名触发 debounce 重新预览（与内容编辑同一条 400ms 链路）
+  const [filename, setFilename] = useState(input.filename);
 
   const seqRef = useRef(0);
   const queryClient = useQueryClient();
@@ -150,7 +154,8 @@ export function SingleImportPreview({
     !previewPending &&
     previewError === null &&
     !commitMutation.isPending &&
-    text.trim().length > 0;
+    text.trim().length > 0 &&
+    filename.trim().length > 0;
 
   return (
     <div className="mt-4">
@@ -175,10 +180,33 @@ export function SingleImportPreview({
       {/* 左编辑器 / 右渲染预览 */}
       <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
         <div className="flex h-[65vh] flex-col overflow-hidden rounded-xl border border-border bg-card">
-          <p className="shrink-0 border-b border-border px-3 py-2 text-xs font-medium text-muted-foreground">
-            原文（带 lint 标注，编辑后自动重新校验）
-            {input.path.length > 0 ? ` · ${input.path}` : ""}
-          </p>
+          <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-border px-3 py-2 text-xs text-muted-foreground">
+            <span className="font-medium">
+              原文（带 lint 标注，编辑后自动重新校验）
+            </span>
+            {input.path.length > 0 ? (
+              <span
+                className="min-w-0 max-w-64 truncate"
+                title={input.path}
+              >{` · ${input.path}`}</span>
+            ) : null}
+            <span className="flex items-center gap-1.5">
+              <Input
+                aria-label="导入文件名"
+                value={filename}
+                onChange={(e) => setFilename(e.target.value)}
+                placeholder="文件名.md"
+                className="h-9 w-48 text-xs"
+              />
+              文件名可改
+            </span>
+            <span
+              title="文件名用于导入留档显示；单元 / 讲义的实际存储标题以文档开头 frontmatter（unit: / title:）为准，可在下方编辑器修改"
+              className="ml-auto cursor-help underline decoration-dotted underline-offset-2"
+            >
+              单元 / 讲义标题来自文档开头 frontmatter
+            </span>
+          </div>
           <div className="min-h-0 flex-1 overflow-y-auto">
             <MarkdownEditor
               value={text}
