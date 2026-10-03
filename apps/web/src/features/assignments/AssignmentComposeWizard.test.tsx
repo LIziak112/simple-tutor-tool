@@ -450,9 +450,11 @@ describe("AssignmentComposeWizard 第②步 内容", () => {
     fireEvent.click(screen.getByRole("tab", { name: "资源库" }));
     const list = libraryList();
 
-    // 题数与题型分布
-    expect(within(list).getByText(/2 题 · 填空×2/)).toBeInTheDocument();
-    expect(within(list).getByText(/3 题 · 单选×2 计算×1/)).toBeInTheDocument();
+    // 题数（名称行右侧）与题型分布（名称下方第二行，长分布不遮挡标题）
+    expect(within(list).getByText("2 题")).toBeInTheDocument();
+    expect(within(list).getByText("填空×2")).toBeInTheDocument();
+    expect(within(list).getByText("3 题")).toBeInTheDocument();
+    expect(within(list).getByText("单选×2 计算×1")).toBeInTheDocument();
 
     // 搜索即时过滤（标题）
     fireEvent.change(screen.getByLabelText(/搜索单元/), {

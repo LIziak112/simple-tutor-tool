@@ -876,12 +876,21 @@ function StepContent({
                             onToggleUnit(unit.id, e.target.checked)
                           }
                         />
-                        <span className="min-w-0 flex-1 truncate">
-                          {unit.title}
-                        </span>
-                        <span className="shrink-0 text-xs text-muted-foreground">
-                          {unit.questionCount} 题
-                          {distribution.length > 0 && ` · ${distribution}`}
+                        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                          <span className="flex min-w-0 items-baseline gap-2">
+                            <span className="min-w-0 flex-1 truncate">
+                              {unit.title}
+                            </span>
+                            <span className="shrink-0 text-xs text-muted-foreground">
+                              {unit.questionCount} 题
+                            </span>
+                          </span>
+                          {/* 题型分布可很长，放名称下方第二行换行展示，避免把标题挤出可视区 */}
+                          {distribution.length > 0 && (
+                            <span className="text-xs leading-snug text-muted-foreground">
+                              {distribution}
+                            </span>
+                          )}
                         </span>
                         {empty && (
                           <span className="shrink-0 rounded-md bg-muted px-2 py-0.5 text-xs text-muted-foreground">
