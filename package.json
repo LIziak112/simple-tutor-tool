@@ -2,6 +2,7 @@
   "name": "simple-tutor-tool",
   "version": "2.0.0",
   "private": true,
+  "license": "MIT",
   "packageManager": "pnpm@12.6.0",
   "engines": {
     "node": ">=24"
