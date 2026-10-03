@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { Link, Navigate, useParams } from "react-router";
 import { useStudentLinkLogin } from "@/features/auth/student-auth";
+import { useStudentTheme } from "@/features/student/use-student-theme";
 import { ApiError } from "@/lib/api";
 import { ScreenError, ScreenLoading } from "./StudentScreen";
 
@@ -11,6 +12,7 @@ import { ScreenError, ScreenLoading } from "./StudentScreen";
  * StrictMode 双挂载会触发两次 mutate——登录幂等（重复登录只是多写一行会话）。
  */
 export default function StudentLinkLoginPage() {
+  useStudentTheme();
   const { token = "" } = useParams<{ token: string }>();
   const linkLogin = useStudentLinkLogin();
   // mutate 引用在 TanStack Query 中稳定（可安全进依赖；对象本身每次渲染都是新引用）

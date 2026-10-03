@@ -6,6 +6,7 @@ import {
   judgeLabelOf,
   letterOf,
   mathifyAnswerText,
+  stemWithoutOptionList,
   withBlankValue,
 } from "./answer-format";
 
@@ -132,5 +133,27 @@ describe("withBlankValue", () => {
     expect(withBlankValue([], 2, "7")).toEqual(["", "", "7"]);
     expect(withBlankValue(["4"], 0, "5")).toEqual(["5"]);
     expect(withBlankValue(["4", "-7"], 1, "-6")).toEqual(["4", "-6"]);
+  });
+});
+
+describe("stemWithoutOptionList（选择题题干去掉选项任务列表）", () => {
+  it("剥掉 - [ ] / - [x] / 1. [ ] 选项行，保留其余题干", () => {
+    expect(
+      stemWithoutOptionList(
+        "$-5$ 的相反数是（　）\n\n- [ ] $-5$\n- [x] $5$\n* [X] 0",
+      ),
+    ).toBe("$-5$ 的相反数是（　）");
+    expect(stemWithoutOptionList("下列正确的是\n1. [ ] 甲\n2) [x] 乙")).toBe(
+      "下列正确的是",
+    );
+  });
+
+  it("无任务列表的题干原样返回（普通列表与方括号不受影响）", () => {
+    expect(stemWithoutOptionList("计算 $[1,2]$ 的长度")).toBe(
+      "计算 $[1,2]$ 的长度",
+    );
+    expect(stemWithoutOptionList("已知：\n- 甲\n- 乙")).toBe(
+      "已知：\n- 甲\n- 乙",
+    );
   });
 });

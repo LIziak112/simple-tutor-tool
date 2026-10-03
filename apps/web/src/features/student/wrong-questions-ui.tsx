@@ -11,6 +11,7 @@ import {
   letterOf,
   QUESTION_TYPE_BADGE_CLASS,
   QUESTION_TYPE_LABELS,
+  stemWithoutOptionList,
 } from "@/features/attempt/answer-format";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { DISPLAY_TZ, formatRelativeTime } from "@/lib/time";
@@ -197,7 +198,7 @@ export function groupCountLabel(tab: WrongTab, count: number): string {
  */
 export function stemSummaryOf(stemMd: string): string {
   return (
-    stemMd
+    stemWithoutOptionList(stemMd)
       .replace(/\[\[[^\]]*\]\]/g, "（　）")
       .replace(/:::+[a-zA-Z-]*/g, " ")
       .replace(/\$\$?([^$]+)\$\$?/g, "$1")
@@ -226,7 +227,10 @@ export function WrongQuestionRow({
       type="button"
       aria-expanded={expanded}
       onClick={onToggle}
-      className="flex min-h-11 w-full items-center gap-x-3 gap-y-1 rounded-xl border border-border bg-card px-4 py-2.5 text-left text-card-foreground outline-none transition-colors hover:bg-muted/40 focus-visible:ring-3 focus-visible:ring-ring/50"
+      className={cn(
+        "flex min-h-12 w-full items-center gap-x-3 gap-y-1 rounded-2xl border bg-card px-4 py-2.5 text-left text-card-foreground shadow-xs outline-none transition-colors hover:border-primary/40 focus-visible:ring-3 focus-visible:ring-ring/50",
+        expanded ? "border-primary/50 bg-accent/40" : "border-border",
+      )}
     >
       <span
         className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${QUESTION_TYPE_BADGE_CLASS[question.type]}`}
@@ -377,7 +381,7 @@ export function WrongQuestionItem({
   question: WrongQuestionCard;
 }) {
   return (
-    <article className="flex flex-col gap-4 rounded-xl border border-border bg-card p-4 text-card-foreground sm:p-5">
+    <article className="flex flex-col gap-4 rounded-2xl border border-primary/30 bg-card p-4 text-card-foreground shadow-xs sm:p-5">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
         <FirstCorrectMark firstCorrect={question.firstCorrect} />
         <span
@@ -406,7 +410,14 @@ export function WrongQuestionItem({
       </div>
 
       {/* 题干快照（[[答案]] 标记渲染为空框，答案在下方面板单独展示） */}
-      <RichMarkdown source={question.stemMd} className="text-base" />
+      <RichMarkdown
+        source={
+          question.options !== undefined
+            ? stemWithoutOptionList(question.stemMd)
+            : question.stemMd
+        }
+        className="text-base"
+      />
       <WrongOptions question={question} />
 
       <div className="flex flex-col gap-1.5 rounded-lg bg-muted/40 px-4 py-3 text-sm sm:flex-row sm:gap-6">
@@ -482,8 +493,8 @@ export function WrongPracticeButton({
 }) {
   return (
     <Button
-      variant="default"
-      className={compact ? "min-h-11 px-3" : "min-h-11"}
+      variant={compact ? "outline" : "default"}
+      className={compact ? "min-h-11 px-3" : "min-h-11 px-5"}
       disabled={count === 0 || loading}
       aria-label={
         count === 0
@@ -498,6 +509,16 @@ export function WrongPracticeButton({
       />
       {loading ? "正在组卷…" : `${label}（${count} 题）`}
     </Button>
+  );
+}
+
+/** 分段控件按钮样式（灰底胶囊里的一段；选中白底主色字；触控 ≥44px） */
+function segmentClass(active: boolean): string {
+  return cn(
+    "flex min-h-11 items-center justify-center gap-1.5 rounded-lg px-3 text-sm font-medium whitespace-nowrap outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50",
+    active
+      ? "bg-card text-primary shadow-sm"
+      : "text-muted-foreground hover:text-foreground",
   );
 }
 
@@ -516,24 +537,24 @@ export function WrongTabSwitch({
   return (
     <fieldset
       aria-label="错题分区"
-      className="flex flex-wrap items-center gap-2"
+      className="flex items-center gap-1 rounded-xl bg-muted p-1"
     >
-      <Button
-        variant={tab === "pending" ? "default" : "outline"}
-        className="min-h-11"
+      <button
+        type="button"
+        className={segmentClass(tab === "pending")}
         aria-pressed={tab === "pending"}
         onClick={() => onSelect("pending")}
       >
         待复习 {pendingCount} 题
-      </Button>
-      <Button
-        variant={tab === "conquered" ? "default" : "outline"}
-        className="min-h-11"
+      </button>
+      <button
+        type="button"
+        className={segmentClass(tab === "conquered")}
         aria-pressed={tab === "conquered"}
         onClick={() => onSelect("conquered")}
       >
         已攻克 {conqueredCount} 题
-      </Button>
+      </button>
     </fieldset>
   );
 }
@@ -554,18 +575,18 @@ export function WrongGroupSwitch({
   return (
     <fieldset
       aria-label="分组维度"
-      className="flex flex-wrap items-center gap-2"
+      className="flex items-center gap-1 rounded-xl bg-muted p-1"
     >
       {options.map((option) => (
-        <Button
+        <button
+          type="button"
           key={option.value}
-          variant={group === option.value ? "default" : "outline"}
-          className="min-h-11"
+          className={segmentClass(group === option.value)}
           aria-pressed={group === option.value}
           onClick={() => onSelect(option.value)}
         >
           {option.label}
-        </Button>
+        </button>
       ))}
     </fieldset>
   );

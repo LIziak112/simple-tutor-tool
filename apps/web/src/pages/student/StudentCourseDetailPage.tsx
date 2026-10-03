@@ -11,8 +11,10 @@ import {
 import { Link, useParams } from "react-router";
 import { useStudentCourse } from "@/features/student/student-queries";
 import {
+  StudentEmptyState,
   StudentErrorPanel,
   StudentListSkeleton,
+  StudentSectionLink,
 } from "@/features/student/student-ui";
 import { ApiError } from "@/lib/api";
 
@@ -30,28 +32,28 @@ function UnitStatusBadge({ item }: { item: StudentCourseItem }) {
   const attempt = item.attempt;
   if (attempt === null || attempt.count === 0) {
     return (
-      <span className="shrink-0 rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground">
+      <span className="w-fit shrink-0 rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground">
         未做
       </span>
     );
   }
   if (attempt.pendingCount > 0) {
     return (
-      <span className="shrink-0 rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">
+      <span className="w-fit shrink-0 rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">
         有待批
       </span>
     );
   }
   if (attempt.hasDraft) {
     return (
-      <span className="flex shrink-0 items-center gap-1 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
+      <span className="flex w-fit shrink-0 items-center gap-1 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
         <LoaderCircle aria-hidden className="size-3.5" />
         进行中
       </span>
     );
   }
   return (
-    <span className="flex shrink-0 items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">
+    <span className="flex w-fit shrink-0 items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">
       <CircleCheck aria-hidden className="size-3.5" />
       已完成（最近 {attempt.latestScore ?? "—"} 分 · 共 {attempt.count} 次）
     </span>
@@ -123,13 +125,16 @@ export default function StudentCourseDetailPage() {
 
       {courseQuery.data &&
         (courseQuery.data.items.length === 0 ? (
-          <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed border-border bg-card px-6 py-14 text-center">
-            <BookOpen aria-hidden className="size-8 text-muted-foreground" />
-            <p className="text-sm font-medium">老师还没有发布内容</p>
-            <p className="text-sm text-muted-foreground">
-              课程内容发布后会自动出现在这里。
-            </p>
-          </div>
+          <StudentEmptyState
+            icon={<BookOpen />}
+            title="老师还没有发布内容"
+            description="课程内容发布后会自动出现在这里。"
+            action={
+              <StudentSectionLink to="/s/courses">
+                返回我的课程
+              </StudentSectionLink>
+            }
+          />
         ) : (
           <ol className="flex flex-col gap-2">
             {courseQuery.data.items.map((item) =>
@@ -138,7 +143,7 @@ export default function StudentCourseDetailPage() {
                 <li
                   key={item.id}
                   aria-label={`分节 ${item.title}`}
-                  className="pt-3 text-sm font-semibold text-muted-foreground first:pt-0"
+                  className="flex items-center gap-2 pt-4 pb-1 text-sm font-semibold text-foreground first:pt-0 before:h-4 before:w-1 before:rounded-full before:bg-primary"
                 >
                   {item.title}
                 </li>
@@ -147,15 +152,26 @@ export default function StudentCourseDetailPage() {
                   <Link
                     to={`/s/lectures/${item.refId}?courseId=${courseQuery.data.id}`}
                     aria-label={`阅读讲义 ${item.title}`}
-                    className="flex min-h-14 items-center gap-3 rounded-xl border border-border bg-card px-4 py-2 outline-none transition-colors hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50"
+                    className="group flex min-h-16 items-center gap-3 rounded-2xl border border-border bg-card px-4 py-3 shadow-xs outline-none transition-colors hover:border-primary/40 hover:bg-accent/40 focus-visible:ring-3 focus-visible:ring-ring/50"
                   >
-                    <BookOpen
+                    <span
                       aria-hidden
-                      className="size-5 shrink-0 text-primary"
-                    />
-                    <span className="min-w-0 flex-1 truncate text-sm font-medium">
-                      {item.title}
+                      className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-300"
+                    >
+                      <BookOpen className="size-5" />
                     </span>
+                    <span className="flex min-w-0 flex-1 flex-col">
+                      <span className="truncate text-sm font-medium">
+                        {item.title}
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        讲义
+                      </span>
+                    </span>
+                    <ChevronRight
+                      aria-hidden
+                      className="size-4 shrink-0 text-muted-foreground"
+                    />
                   </Link>
                 </li>
               ) : (
@@ -164,19 +180,25 @@ export default function StudentCourseDetailPage() {
                   <Link
                     to={`/s/courses/${courseQuery.data.id}/units/${item.refId}`}
                     aria-label={`打开练习 ${item.title}（${item.questionCount ?? 0} 题）`}
-                    className="flex min-h-14 items-center gap-3 rounded-xl border border-border bg-card px-4 py-2 outline-none transition-colors hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50"
+                    className="group flex min-h-16 items-center gap-3 rounded-2xl border border-border bg-card px-4 py-3 shadow-xs outline-none transition-colors hover:border-primary/40 hover:bg-accent/40 focus-visible:ring-3 focus-visible:ring-ring/50"
                   >
-                    <Dumbbell
+                    <span
                       aria-hidden
-                      className="size-5 shrink-0 text-primary"
-                    />
-                    <span className="min-w-0 flex-1 truncate text-sm font-medium">
-                      {item.title}
+                      className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-300"
+                    >
+                      <Dumbbell className="size-5" />
                     </span>
-                    <span className="shrink-0 text-xs text-muted-foreground">
-                      {item.questionCount ?? 0} 题
+                    <span className="flex min-w-0 flex-1 flex-col gap-1 sm:flex-row sm:items-center sm:gap-3">
+                      <span className="flex min-w-0 flex-1 flex-col">
+                        <span className="truncate text-sm font-medium">
+                          {item.title}
+                        </span>
+                        <span className="text-xs text-muted-foreground">
+                          练习 · <span>{item.questionCount ?? 0} 题</span>
+                        </span>
+                      </span>
+                      <UnitStatusBadge item={item} />
                     </span>
-                    <UnitStatusBadge item={item} />
                     <ChevronRight
                       aria-hidden
                       className="size-4 shrink-0 text-muted-foreground"

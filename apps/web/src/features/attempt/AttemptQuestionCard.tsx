@@ -11,6 +11,7 @@ import {
   letterOf,
   QUESTION_TYPE_BADGE_CLASS,
   QUESTION_TYPE_LABELS,
+  stemWithoutOptionList,
   withBlankValue,
 } from "./answer-format";
 import {
@@ -44,7 +45,15 @@ function QuestionMeta({
 }) {
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-      <p className="text-sm font-semibold">第 {index + 1} 题</p>
+      <p className="flex items-center gap-2 text-sm font-semibold">
+        <span
+          aria-hidden
+          className="flex size-7 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground"
+        >
+          {index + 1}
+        </span>
+        <span>第 {index + 1} 题</span>
+      </p>
       <span
         className={`rounded-full px-2.5 py-1 text-xs font-medium ${QUESTION_TYPE_BADGE_CLASS[question.type]}`}
       >
@@ -77,8 +86,8 @@ function optionShellClass(selected: boolean): string {
   return cn(
     "flex min-h-14 w-full cursor-pointer items-start gap-3 rounded-lg border px-4 py-3 text-left outline-none transition-colors has-[:focus-visible]:ring-3 has-[:focus-visible]:ring-ring/50",
     selected
-      ? "border-primary bg-primary/5"
-      : "border-border bg-card hover:bg-muted/60",
+      ? "border-primary bg-primary/5 ring-1 ring-primary"
+      : "border-border bg-card hover:border-primary/40 hover:bg-accent/40",
   );
 }
 
@@ -260,7 +269,7 @@ export function AttemptQuestionCard({
 
   return (
     <article
-      className="flex flex-col gap-4 rounded-xl border border-border bg-card p-4 text-card-foreground sm:p-5"
+      className="flex flex-col gap-4 rounded-2xl border border-border bg-card p-4 text-card-foreground shadow-xs sm:p-5"
       aria-label={`第 ${index + 1} 题`}
     >
       <QuestionMeta index={index} question={question} />
@@ -292,6 +301,12 @@ export function AttemptQuestionCard({
         >
           <RichMarkdown source={question.stemMd} className="text-base" />
         </BlankAnswersProvider>
+      ) : question.type === "choice" || question.type === "multi" ? (
+        // 选择题：选项在下方按钮里，题干去掉任务列表避免重复（[x] 还会显示成打勾框）
+        <RichMarkdown
+          source={stemWithoutOptionList(question.stemMd)}
+          className="text-base"
+        />
       ) : (
         <RichMarkdown source={question.stemMd} className="text-base" />
       )}

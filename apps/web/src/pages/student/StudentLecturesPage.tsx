@@ -2,6 +2,7 @@ import { ArrowLeft, BookOpen, ChevronRight, School } from "lucide-react";
 import { Link } from "react-router";
 import { useStudentLectures } from "@/features/student/student-queries";
 import {
+  StudentEmptyState,
   StudentErrorPanel,
   StudentListSkeleton,
 } from "@/features/student/student-ui";
@@ -49,13 +50,11 @@ export default function StudentLecturesPage() {
 
       {lecturesQuery.data &&
         (lecturesQuery.data.courses.length === 0 ? (
-          <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed border-border bg-card px-6 py-14 text-center">
-            <BookOpen aria-hidden className="size-8 text-muted-foreground" />
-            <p className="text-sm font-medium">还没有可看的讲义</p>
-            <p className="text-sm text-muted-foreground">
-              老师把你加入课程并发布讲义后，这里会按课程分组展示。
-            </p>
-          </div>
+          <StudentEmptyState
+            icon={<BookOpen />}
+            title="还没有可看的讲义"
+            description="老师把你加入课程并发布讲义后，这里会按课程分组展示。"
+          />
         ) : (
           lecturesQuery.data.courses.map((group) => (
             <section
@@ -72,7 +71,7 @@ export default function StudentLecturesPage() {
                   <li key={lecture.id}>
                     <Link
                       to={`/s/lectures/${lecture.id}?courseId=${group.courseId}`}
-                      className="flex min-h-14 items-center justify-between gap-3 rounded-xl border border-border bg-card px-4 py-2 outline-none transition-colors hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50"
+                      className="flex min-h-14 items-center justify-between gap-3 rounded-2xl border border-border bg-card px-4 py-2 shadow-xs outline-none transition-colors hover:border-primary/40 hover:bg-accent/40 focus-visible:ring-3 focus-visible:ring-ring/50"
                     >
                       <span className="min-w-0 flex-1 truncate text-sm font-medium">
                         {lecture.title}

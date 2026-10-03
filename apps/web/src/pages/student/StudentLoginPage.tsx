@@ -1,9 +1,10 @@
-import { Loader2, LogIn } from "lucide-react";
+import { GraduationCap, Loader2, LogIn } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { Navigate, useNavigate } from "react-router";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useLoginStudent, useStudentMe } from "@/features/auth/student-auth";
+import { useStudentTheme } from "@/features/student/use-student-theme";
 import { ApiError } from "@/lib/api";
 
 /**
@@ -12,6 +13,7 @@ import { ApiError } from "@/lib/api";
  * （INVALID_CREDENTIALS 防枚举统一口径 / LOCKED 限流提示）。
  */
 export default function StudentLoginPage() {
+  useStudentTheme();
   const meQuery = useStudentMe();
   const loginMutation = useLoginStudent();
   const navigate = useNavigate();
@@ -47,8 +49,14 @@ export default function StudentLoginPage() {
 
   return (
     <main className="flex min-h-dvh flex-col items-center justify-center bg-background px-6 text-foreground">
-      <div className="w-full max-w-sm">
-        <h1 className="text-center text-xl font-semibold">学生登录</h1>
+      <div className="w-full max-w-sm rounded-2xl border border-border bg-card p-6 shadow-sm sm:p-8">
+        <span
+          aria-hidden
+          className="mx-auto flex size-14 items-center justify-center rounded-2xl bg-primary text-primary-foreground"
+        >
+          <GraduationCap className="size-7" />
+        </span>
+        <h1 className="mt-4 text-center text-xl font-semibold">学生登录</h1>
         <p className="mt-2 mb-6 text-center text-sm text-muted-foreground">
           输入老师给你的登录名和密码
         </p>
@@ -95,7 +103,7 @@ export default function StudentLoginPage() {
 
           <Button
             type="submit"
-            className="min-h-11 px-4 text-base"
+            className="min-h-12 px-4 text-base"
             disabled={loginMutation.isPending}
           >
             {loginMutation.isPending ? (

@@ -4,6 +4,7 @@ import type {
   StudentRecordRow,
   TeacherAttemptSource,
 } from "@tutor/contract";
+import { cn } from "cn";
 import { ChevronLeft, ChevronRight, Clock3 } from "lucide-react";
 import { Link } from "react-router";
 import { Button } from "@/components/ui/button";
@@ -125,7 +126,10 @@ export function RecordCard({ row }: { row: StudentRecordRow }) {
       <Link
         to={`/s/attempts/${row.attemptId}`}
         aria-label={`${isDraft ? "继续作答" : "查看结果"}：${recordTitleOf(row)}（${RECORD_STATUS_LABELS[row.status]}）`}
-        className="flex min-h-11 flex-col gap-1.5 rounded-xl border border-border bg-card px-4 py-3 text-card-foreground outline-none transition-colors hover:bg-muted/40 focus-visible:ring-3 focus-visible:ring-ring/50"
+        className={cn(
+          "group flex min-h-11 flex-col gap-1.5 rounded-2xl border bg-card px-4 py-3 text-card-foreground shadow-xs outline-none transition-colors hover:border-primary/40 hover:bg-accent/30 focus-visible:ring-3 focus-visible:ring-ring/50",
+          isDraft ? "border-sky-300 dark:border-sky-500/40" : "border-border",
+        )}
       >
         <p className="flex flex-wrap items-center gap-2">
           <RecordSourceBadge sourceType={row.sourceType} />
@@ -156,8 +160,12 @@ export function RecordCard({ row }: { row: StudentRecordRow }) {
               待批 {row.pendingCount}
             </span>
           )}
-          <span className="ml-auto flex items-center gap-1 text-sm font-medium text-primary">
+          <span className="ml-auto flex items-center gap-0.5 text-sm font-medium text-primary">
             {isDraft ? "继续作答" : "查看结果"}
+            <ChevronRight
+              aria-hidden
+              className="size-4 transition-transform group-hover:translate-x-0.5"
+            />
           </span>
         </p>
       </Link>

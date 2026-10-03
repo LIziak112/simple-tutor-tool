@@ -20,6 +20,7 @@ import {
   letterOf,
   QUESTION_TYPE_BADGE_CLASS,
   QUESTION_TYPE_LABELS,
+  stemWithoutOptionList,
 } from "./answer-format";
 
 /**
@@ -259,7 +260,17 @@ function ResultQuestionCard({
   const verdict = question.finalCorrect ?? question.autoCorrect;
   return (
     <article
-      className="flex flex-col gap-4 rounded-xl border border-border bg-card p-4 text-card-foreground sm:p-5"
+      className={cn(
+        "relative flex flex-col gap-4 overflow-hidden rounded-2xl border border-border bg-card p-4 pl-5 text-card-foreground shadow-xs sm:p-5 sm:pl-6",
+        "before:absolute before:inset-y-0 before:left-0 before:w-1.5",
+        !released
+          ? "before:bg-muted"
+          : verdict === true
+            ? "before:bg-emerald-500"
+            : verdict === false
+              ? "before:bg-red-500"
+              : "before:bg-amber-400",
+      )}
       aria-label={`第 ${index + 1} 题`}
     >
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
@@ -306,7 +317,14 @@ function ResultQuestionCard({
         )}
 
       {/* 题干快照（released=false 时为公开化题干，服务端已替换 [[答案]] 标记） */}
-      <RichMarkdown source={question.snapshot.stemMd} className="text-base" />
+      <RichMarkdown
+        source={
+          question.snapshot.options !== undefined
+            ? stemWithoutOptionList(question.snapshot.stemMd)
+            : question.snapshot.stemMd
+        }
+        className="text-base"
+      />
       <ResultOptions question={question} />
 
       {/* 手写题：我的手写笔迹缩略图（T2.8；无笔迹时隐藏） */}
@@ -404,7 +422,7 @@ export function AttemptResultView({
       {/* 得分汇总卡（未公布时替换为「已交卷」横幅 + 已答统计，不显示对错与得分） */}
       <section
         aria-labelledby="result-summary"
-        className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5"
+        className="flex flex-col gap-4 rounded-2xl border border-border bg-card p-5 shadow-xs"
       >
         <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
           <h2 id="result-summary" className="text-base font-semibold">
@@ -443,7 +461,7 @@ export function AttemptResultView({
                     : "自动判分得分（满分 100）"}
               </span>
             </p>
-            <p className="flex flex-wrap gap-x-5 gap-y-1 text-sm text-muted-foreground">
+            <p className="flex flex-wrap gap-2 text-sm text-muted-foreground [&>span]:rounded-lg [&>span]:bg-muted/60 [&>span]:px-3 [&>span]:py-1.5">
               <span>
                 共 <b className="text-foreground">{summary.total}</b> 题
               </span>
@@ -474,7 +492,7 @@ export function AttemptResultView({
             </p>
           </div>
         ) : (
-          <div className="flex flex-col gap-2 rounded-xl border border-amber-300/60 bg-amber-50 p-4 text-sm dark:border-amber-500/30 dark:bg-amber-500/10">
+          <div className="flex flex-col gap-2 rounded-2xl border border-amber-300/60 bg-amber-50 p-4 text-sm dark:border-amber-500/30 dark:bg-amber-500/10">
             <p className="flex items-center gap-2 font-medium text-amber-800 dark:text-amber-300">
               <Clock aria-hidden className="size-4 shrink-0" />
               已交卷，答案将在截止后公布
@@ -501,7 +519,7 @@ export function AttemptResultView({
         {data.units.map((unit) => (
           <li key={unit.id} className="flex flex-col gap-4">
             {showUnitHeaders && (
-              <h3 className="border-b border-border pb-1.5 text-sm font-semibold text-muted-foreground">
+              <h3 className="flex items-center gap-2 pt-2 text-sm font-semibold text-foreground before:h-4 before:w-1 before:rounded-full before:bg-primary">
                 {unit.title}
               </h3>
             )}
