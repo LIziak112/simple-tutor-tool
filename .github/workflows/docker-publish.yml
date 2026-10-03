@@ -1,0 +1,72 @@
+# 发布镜像：推送 v* tag 时自动构建多平台 Docker 镜像并推送到 GHCR，配合 GitHub Release 使用。
+# 平时的代码检查走 ci.yml；本工作流只在发版（打 tag）或手动触发时运行。
+name: docker-publish
+
+# 触发：推送 v* tag（正式发版）+ 手动触发（预演构建、补发镜像）
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+# 推送 GHCR 用默认 GITHUB_TOKEN 即可，无需额外配置 PAT：
+# 拉代码只需 contents: read，写镜像需要 packages: write
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    name: 构建并推送多平台镜像
+    runs-on: ubuntu-latest
+    env:
+      # 双平台：amd64 覆盖绝大多数服务器，arm64 覆盖树莓派 / ARM 云主机。
+      # 若 arm64 构建过慢或失败（better-sqlite3 原生依赖在 QEMU 下偶发问题），
+      # 可临时改为仅 linux/amd64。
+      PLATFORMS: linux/amd64,linux/arm64
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v5
+
+      # runner 本身是 x64，跨架构构建 arm64 需要 QEMU 模拟
+      - name: 安装 QEMU（模拟 arm64）
+        uses: docker/setup-qemu-action@v3
+
+      # buildx 负责多平台构建，也是 gha 缓存的前置条件
+      - name: 安装 buildx
+        uses: docker/setup-buildx-action@v3
+
+      # 登录 ghcr.io：默认 GITHUB_TOKEN 即有本仓库命名空间的镜像推送权限
+      - name: 登录 ghcr.io
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 生成标签与标注。镜像名硬编码全小写：不用 ${{ github.repository }}，
+      # 它展开为 LIziak112/simple-tutor-tool（含大写字母），GHCR 拒绝大写镜像名。
+      # 标签规则：v2.0.1 → :2.0.1；latest 仅在正式版（tag 不含 -，如 v2.0.1）
+      # 打上，预发布（如 v2.1.0-rc.1）不覆盖 latest。
+      - name: 生成镜像标签与标注
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/liziak112/simple-tutor-tool
+          tags: |
+            type=semver,pattern={{version}}
+            type=raw,value=latest,enable=${{ !contains(github.ref, '-') }}
+
+      # 构建上下文就是仓库根的 Dockerfile（多阶段，pnpm workspace 全量构建），
+      # 不需要额外 build-args。缓存走 GitHub Actions cache 服务（type=gha，
+      # mode=max 缓存全部中间层）：依赖安装与构建层在两次 tag 之间可复用，双平台下提速明显。
+      - name: 构建并推送镜像
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ env.PLATFORMS }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
