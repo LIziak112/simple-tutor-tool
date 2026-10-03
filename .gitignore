@@ -14,6 +14,12 @@ deploy/
 *.local
 .zcode/tmp/
 
+# 本机调试采集工件（含学生专属链接令牌，不入库）
+.claude/phase3-capture/
+
+# 库内数据修复用的源文件副本（随数据库修复同步，不进 git）
+/练习六 乘法与倒数.公式修复.md
+
 # Playwright E2E 产物（T2.13）：诊断输出与 html 报告
 e2e/.artifacts/
 playwright-report/
