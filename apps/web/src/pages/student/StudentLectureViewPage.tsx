@@ -247,7 +247,7 @@ export default function StudentLectureViewPage() {
               〔host=lecture〕，T4.0b；旧 lecture_expand 不再产生） */}
             <RichMarkdown
               source={lectureQuery.data.markdown}
-              className="min-w-0 flex-1 rounded-xl border border-border bg-card px-4 py-4 sm:px-6 lg:px-8"
+              className="min-w-0 flex-1 rounded-2xl border border-border bg-card px-4 py-5 shadow-xs sm:px-6 lg:px-8"
               onDirectiveTelemetry={onDirectiveTelemetry}
             />
           </div>
@@ -256,7 +256,7 @@ export default function StudentLectureViewPage() {
           {lectureQuery.data.companionUnits.length > 0 && (
             <section
               aria-labelledby="lecture-companions"
-              className="rounded-xl border border-border bg-card p-4"
+              className="rounded-2xl border border-border bg-card p-4 shadow-xs"
             >
               <h2
                 id="lecture-companions"

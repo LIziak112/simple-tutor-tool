@@ -1,4 +1,4 @@
-import { History, TriangleAlert } from "lucide-react";
+import { History, SearchX, TriangleAlert } from "lucide-react";
 import { useMemo } from "react";
 import { useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
@@ -23,6 +23,11 @@ import {
   STUDENT_RECORDS_PAGE_SIZE,
   useStudentRecords,
 } from "@/features/student/student-records-queries";
+import {
+  StudentEmptyState,
+  StudentPageHeader,
+  StudentSectionLink,
+} from "@/features/student/student-ui";
 
 /**
  * /s/records 我的记录（T3.5，D10）：本人全部作答的时间倒序索引——作业与
@@ -44,7 +49,7 @@ function RecordsSkeleton() {
       {[0, 1, 2].map((i) => (
         <div
           key={i}
-          className="h-28 animate-pulse rounded-xl border border-border bg-muted/50"
+          className="h-28 animate-pulse rounded-2xl border border-border bg-muted/60"
         />
       ))}
       <p className="text-sm text-muted-foreground">正在加载我的记录…</p>
@@ -54,25 +59,21 @@ function RecordsSkeleton() {
 
 /** 空态（区分「还没有作答」与「当前筛选为空」） */
 function RecordsEmpty({ filtered }: { filtered: boolean }) {
-  return (
-    <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-border bg-card px-6 py-14 text-center">
-      {filtered ? (
-        <>
-          <p className="text-sm font-medium">当前筛选下没有记录</p>
-          <p className="max-w-sm text-sm text-muted-foreground">
-            换一组筛选条件（或点「清除筛选」）再看看。
-          </p>
-        </>
-      ) : (
-        <>
-          <p className="text-sm font-medium">还没有作答记录</p>
-          <p className="max-w-sm text-sm text-muted-foreground">
-            做过的作业和课程练习（包括进行中的）都会汇总在这里，
-            先去首页看看有什么待完成的作业吧。
-          </p>
-        </>
-      )}
-    </div>
+  return filtered ? (
+    <StudentEmptyState
+      icon={<SearchX />}
+      title="当前筛选下没有记录"
+      description="换一组筛选条件（或点「清除筛选」）再看看。"
+    />
+  ) : (
+    <StudentEmptyState
+      icon={<History />}
+      title="还没有作答记录"
+      description="做过的作业和课程练习（包括进行中的）都会汇总在这里，先去首页看看有什么待完成的作业吧。"
+      action={
+        <StudentSectionLink to="/s/home">回首页看作业</StudentSectionLink>
+      }
+    />
   );
 }
 
@@ -117,21 +118,12 @@ export default function StudentRecordsPage() {
 
   return (
     <section aria-labelledby="records-title" className="flex flex-col gap-4">
-      <header className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1
-            id="records-title"
-            className="flex items-center gap-2 text-xl font-semibold"
-          >
-            <History aria-hidden className="size-5 text-primary" />
-            我的记录
-          </h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            你的每一次作答都按时间倒序排在这里——作业和课程练习混在一起，
-            点击卡片可以回看结果或继续没做完的练习。
-          </p>
-        </div>
-      </header>
+      <StudentPageHeader
+        icon={<History />}
+        title="我的记录"
+        titleId="records-title"
+        description="每一次作答都按时间排在这里，点卡片可以回看结果或继续没做完的练习。"
+      />
 
       <StudentRecordsFilters
         state={state}
@@ -146,7 +138,7 @@ export default function StudentRecordsPage() {
       {recordsQuery.isError && (
         <div
           role="alert"
-          className="flex flex-col items-start gap-3 rounded-xl border border-border bg-card p-5"
+          className="flex flex-col items-start gap-3 rounded-2xl border border-red-200 bg-card p-5 dark:border-red-500/30"
         >
           <p className="flex items-center gap-2 text-sm font-medium text-destructive">
             <TriangleAlert aria-hidden className="size-4 shrink-0" />

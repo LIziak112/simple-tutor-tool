@@ -255,24 +255,31 @@ function AnswerView({
     <DraftSyncContext.Provider value={draftSync}>
       <div className="flex flex-col gap-5 pb-24">
         {/* 练习头：来源 + 标题 + 截止 + 草稿保存状态（T2.9 三态 + T2A.6 终态） */}
-        <header className="flex flex-wrap items-center gap-x-4 gap-y-1">
-          <h1 className="text-lg font-bold">{data.title}</h1>
-          <p className="text-xs text-muted-foreground">{sourceLabel(data)}</p>
-          <p className="text-xs text-muted-foreground">
-            {data.attempt.sourceType === "assignment"
-              ? data.dueAt === null
-                ? "不限截止"
-                : `${formatDueTime(data.dueAt)} 截止`
-              : null}
-          </p>
-          <div className="ml-auto">
-            <DraftStatusBar status={draftSync.status} />
+        <header className="flex flex-col gap-1.5 rounded-2xl border border-border bg-card px-4 py-4 shadow-xs sm:px-5">
+          <div className="flex items-start justify-between gap-3">
+            <h1 className="min-w-0 text-xl font-bold break-words">
+              {data.title}
+            </h1>
+            <div className="shrink-0 pt-1">
+              <DraftStatusBar status={draftSync.status} />
+            </div>
           </div>
+          <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+            <span>{sourceLabel(data)}</span>
+            {data.attempt.sourceType === "assignment" && (
+              <span>
+                {data.dueAt === null
+                  ? "不限截止"
+                  : `${formatDueTime(data.dueAt)} 截止`}
+              </span>
+            )}
+            <span>共 {total} 题</span>
+          </p>
         </header>
 
         {/* 空试卷：单元没有可作答的题目 */}
         {total === 0 && (
-          <div className="rounded-xl border border-dashed border-border bg-card px-6 py-10 text-center">
+          <div className="rounded-2xl border border-dashed border-border bg-card px-6 py-10 text-center">
             <p className="text-sm font-medium">这份练习还没有题目</p>
             <p className="mt-1 text-sm text-muted-foreground">
               可能老师正在整理内容，请联系老师确认后再来。
@@ -293,7 +300,7 @@ function AnswerView({
           {data.units.map((unit) => (
             <li key={unit.id} className="flex flex-col gap-4">
               {showUnitHeaders && (
-                <h2 className="border-b border-border pb-1.5 text-sm font-semibold text-muted-foreground">
+                <h2 className="flex items-center gap-2 pt-2 text-sm font-semibold text-foreground before:h-4 before:w-1 before:rounded-full before:bg-primary">
                   {unit.title}
                 </h2>
               )}

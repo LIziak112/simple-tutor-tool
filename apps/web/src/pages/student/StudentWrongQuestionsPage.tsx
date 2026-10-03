@@ -1,10 +1,14 @@
 import { useMutation } from "@tanstack/react-query";
 import type { WrongQuestionCard } from "@tutor/contract";
-import { BookX, TriangleAlert } from "lucide-react";
+import { BookX, PartyPopper, TriangleAlert, Trophy } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
 import { useStudentWrongQuestions } from "@/features/student/student-records-queries";
+import {
+  StudentEmptyState,
+  StudentPageHeader,
+} from "@/features/student/student-ui";
 import {
   loadWrongMasteryStandard,
   saveWrongMasteryStandard,
@@ -65,7 +69,7 @@ function WrongSkeleton() {
       {[0, 1, 2].map((i) => (
         <div
           key={i}
-          className="h-14 animate-pulse rounded-xl border border-border bg-muted/50"
+          className="h-14 animate-pulse rounded-2xl border border-border bg-muted/60"
         />
       ))}
       <p className="text-sm text-muted-foreground">正在加载错题本…</p>
@@ -86,26 +90,25 @@ function WrongEmpty({
   const standardText = standard === "lenient" ? "做对 1 次" : "连续做对 2 次";
   if (!hasAnyQuestion) {
     return (
-      <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-border bg-card px-6 py-14 text-center">
-        <p className="text-sm font-medium">还没有错题</p>
-        <p className="max-w-sm text-sm text-muted-foreground">
-          做错的题会自动收进这里（等待老师批改的题先不算）；
-          做对的题永远不删，攻克后随时可以回来翻看。
-        </p>
-      </div>
+      <StudentEmptyState
+        icon={<PartyPopper />}
+        title="还没有错题"
+        description="做错的题会自动收进这里（等待老师批改的题先不算）；做对的题永远不删，攻克后随时可以回来翻看。"
+      />
     );
   }
   return (
-    <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-border bg-card px-6 py-14 text-center">
-      <p className="text-sm font-medium">
-        {tab === "pending" ? "当前没有需要复习的错题" : "还没有攻克过的错题"}
-      </p>
-      <p className="max-w-sm text-sm text-muted-foreground">
-        {tab === "pending"
+    <StudentEmptyState
+      icon={tab === "pending" ? <PartyPopper /> : <Trophy />}
+      title={
+        tab === "pending" ? "当前没有需要复习的错题" : "还没有攻克过的错题"
+      }
+      description={
+        tab === "pending"
           ? `按当前攻克标准（${standardText}），做错的题达标后就移进「已攻克」。`
-          : `按当前攻克标准（${standardText}）还没有攻克的错题；可以把标准调成「做对 1 次」试试，或再去练习里做对一次。`}
-      </p>
-    </div>
+          : `按当前攻克标准（${standardText}）还没有攻克的错题；可以把标准调成「做对 1 次」试试，或再去练习里做对一次。`
+      }
+    />
   );
 }
 
@@ -120,27 +123,35 @@ function MasteryStandardPicker({
   return (
     <fieldset
       aria-label="攻克标准"
-      className="flex flex-wrap items-center gap-2"
+      className="flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-border pt-3"
     >
-      <span className="text-sm text-muted-foreground">攻克标准：</span>
+      <span className="text-sm text-muted-foreground">算作攻克：</span>
       <Button
-        variant={standard === "strict" ? "default" : "outline"}
-        className="min-h-9 px-3"
+        variant={standard === "strict" ? "secondary" : "ghost"}
+        className={
+          standard === "strict"
+            ? "min-h-11 px-3 text-primary"
+            : "min-h-11 px-3 text-muted-foreground"
+        }
         aria-pressed={standard === "strict"}
         onClick={() => onChange("strict")}
       >
         连续做对 2 次（默认）
       </Button>
       <Button
-        variant={standard === "lenient" ? "default" : "outline"}
-        className="min-h-9 px-3"
+        variant={standard === "lenient" ? "secondary" : "ghost"}
+        className={
+          standard === "lenient"
+            ? "min-h-11 px-3 text-primary"
+            : "min-h-11 px-3 text-muted-foreground"
+        }
         aria-pressed={standard === "lenient"}
         onClick={() => onChange("lenient")}
       >
         做对 1 次
       </Button>
       <span className="text-xs text-muted-foreground">
-        连续两次做对须在不同练习中（一次练习一题只答一次，天然满足）；设置只在本设备生效。
+        只在这台设备上生效。
       </span>
     </fieldset>
   );
@@ -219,30 +230,23 @@ export default function StudentWrongQuestionsPage() {
 
   return (
     <section aria-labelledby="wrong-title" className="flex flex-col gap-4">
-      <header className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1
-            id="wrong-title"
-            className="flex items-center gap-2 text-xl font-semibold"
-          >
-            <BookX aria-hidden className="size-5 text-primary" />
-            错题本
-          </h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            作业和课程练习里做错的题都会收进来；做对的题永远不删，
-            攻克后随时可以回来翻看。
-          </p>
-        </div>
-        {/* 重练全部：范围 = 当前 tab 全部题（数据未到时 0 题禁用） */}
-        <WrongPracticeButton
-          label="重练全部"
-          count={tabQuestions.length}
-          loading={practiceScope === "all"}
-          onPractice={() => practiceQuestions("all", tabQuestions)}
-        />
-      </header>
+      <StudentPageHeader
+        icon={<BookX />}
+        title="错题本"
+        titleId="wrong-title"
+        description="做错的题会自动收进来；做对了也不会删，攻克后随时可以回来翻看。"
+        actions={
+          // 重练全部：范围 = 当前 tab 全部题（数据未到时 0 题禁用）
+          <WrongPracticeButton
+            label="重练全部"
+            count={tabQuestions.length}
+            loading={practiceScope === "all"}
+            onPractice={() => practiceQuestions("all", tabQuestions)}
+          />
+        }
+      />
 
-      <div className="flex flex-col gap-3 rounded-xl border border-border bg-card p-3">
+      <div className="flex flex-col gap-3 rounded-2xl border border-border bg-card p-3 shadow-xs">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <WrongTabSwitch
             tab={state.tab}
@@ -268,7 +272,7 @@ export default function StudentWrongQuestionsPage() {
       {listQuery.isError && (
         <div
           role="alert"
-          className="flex flex-col items-start gap-3 rounded-xl border border-border bg-card p-5"
+          className="flex flex-col items-start gap-3 rounded-2xl border border-red-200 bg-card p-5 dark:border-red-500/30"
         >
           <p className="flex items-center gap-2 text-sm font-medium text-destructive">
             <TriangleAlert aria-hidden className="size-4 shrink-0" />
@@ -293,7 +297,7 @@ export default function StudentWrongQuestionsPage() {
       {practice.isError && (
         <div
           role="alert"
-          className="flex flex-col items-start gap-3 rounded-xl border border-border bg-card p-5"
+          className="flex flex-col items-start gap-3 rounded-2xl border border-red-200 bg-card p-5 dark:border-red-500/30"
         >
           <p className="flex items-center gap-2 text-sm font-medium text-destructive">
             <TriangleAlert aria-hidden className="size-4 shrink-0" />
@@ -347,7 +351,7 @@ export default function StudentWrongQuestionsPage() {
                 <h2
                   id={groupIdOf(group.key)}
                   aria-label={`${group.title} · ${groupCountLabel(state.tab, group.questions.length)}`}
-                  className="flex flex-wrap items-center gap-2 text-sm font-semibold"
+                  className="flex flex-wrap items-center gap-2 text-sm font-semibold before:h-4 before:w-1 before:rounded-full before:bg-primary"
                 >
                   <span className="min-w-0 truncate">{group.title}</span>
                   <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">

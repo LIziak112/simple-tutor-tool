@@ -18,7 +18,7 @@ import {
   StudentListSkeleton,
 } from "@/features/student/student-ui";
 import { ApiError } from "@/lib/api";
-import { formatCnTime } from "@/lib/time";
+import { formatRelativeTime } from "@/lib/time";
 
 /**
  * /s/courses/:id/units/:unitId 单元落地页（T2A.6，D10）：
@@ -70,7 +70,7 @@ function RedoConfirmDialog({
       aria-label="再做一次确认"
       className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 sm:items-center"
     >
-      <div className="w-full max-w-sm rounded-xl border border-border bg-card p-5 shadow-lg">
+      <div className="w-full max-w-sm rounded-2xl border border-border bg-card p-6 shadow-lg">
         <h2 className="text-base font-semibold">再做一次</h2>
         <p className="mt-2 text-sm text-muted-foreground">
           将开始第 {nextAttemptNo}{" "}
@@ -187,15 +187,20 @@ export default function StudentCourseUnitPage() {
           <p className="text-xs text-muted-foreground">
             课程：{landing.courseName}
           </p>
-          <h1 className="flex items-center gap-2 truncate text-lg font-semibold">
-            <Dumbbell aria-hidden className="size-5 shrink-0 text-primary" />
+          <h1 className="flex items-center gap-2 truncate text-xl font-semibold">
+            <span
+              aria-hidden
+              className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-300"
+            >
+              <Dumbbell className="size-5" />
+            </span>
             {landing.title}
           </h1>
         </div>
       </header>
 
-      {/* 单元信息卡：题数/题型分布/得分汇总 */}
-      <div className="flex flex-col gap-2 rounded-xl border border-border bg-card p-4">
+      {/* 单元信息卡：题数/题型分布/得分汇总 + 入口按钮 */}
+      <div className="flex flex-col gap-4 rounded-2xl border border-border bg-card p-5 shadow-xs">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
           <span>
             共 <b className="text-primary">{landing.questionCount}</b> 题
@@ -204,6 +209,27 @@ export default function StudentCourseUnitPage() {
             <span className="text-xs text-muted-foreground">{typeBadges}</span>
           )}
         </div>
+        {summary !== null && submittedCount > 0 && (
+          <div aria-hidden className="grid grid-cols-3 gap-2">
+            {[
+              { label: "首次", value: summary.firstScore },
+              { label: "最近", value: summary.latestScore },
+              { label: "最高", value: summary.bestScore },
+            ].map((tile) => (
+              <div
+                key={tile.label}
+                className="rounded-xl bg-muted/60 px-3 py-2.5 text-center"
+              >
+                <p className="text-2xl font-bold text-foreground">
+                  {tile.value ?? "—"}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {tile.label}得分
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
         {summary !== null && submittedCount > 0 && (
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
             <span>已做 {summary.count} 次</span>
@@ -219,47 +245,47 @@ export default function StudentCourseUnitPage() {
             )}
           </div>
         )}
-      </div>
 
-      {/* 入口：开始练习（从未做）/ 继续作答（有未交卷）/ 再做一次（确认后新建） */}
-      <div className="flex flex-wrap items-center gap-3">
-        {summary === null ? (
-          <Button
-            className="min-h-11 px-6"
-            disabled={busy}
-            onClick={onStart}
-            aria-label={`开始练习 ${landing.title}`}
-          >
-            <Play aria-hidden className="size-4" />
-            {busy ? "正在开始…" : "开始练习"}
-          </Button>
-        ) : hasDraft ? (
-          <Button
-            className="min-h-11 px-6"
-            disabled={busy}
-            onClick={onStart}
-            aria-label="继续作答"
-          >
-            <Play aria-hidden className="size-4" />
-            {busy ? "正在打开…" : "继续作答"}
-          </Button>
-        ) : (
-          <Button
-            className="min-h-11 px-6"
-            onClick={() => setRedoOpen(true)}
-            aria-label="再做一次"
-          >
-            <RotateCcw aria-hidden className="size-4" />
-            再做一次
-          </Button>
-        )}
-        {startAttempt.isError && (
-          <p role="alert" className="text-xs text-destructive">
-            {startAttempt.error instanceof Error
-              ? startAttempt.error.message
-              : "开始失败，请稍后重试"}
-          </p>
-        )}
+        {/* 入口：开始练习（从未做）/ 继续作答（有未交卷）/ 再做一次（确认后新建） */}
+        <div className="flex flex-wrap items-center gap-3">
+          {summary === null ? (
+            <Button
+              className="min-h-12 px-8 text-base"
+              disabled={busy}
+              onClick={onStart}
+              aria-label={`开始练习 ${landing.title}`}
+            >
+              <Play aria-hidden className="size-4" />
+              {busy ? "正在开始…" : "开始练习"}
+            </Button>
+          ) : hasDraft ? (
+            <Button
+              className="min-h-12 px-8 text-base"
+              disabled={busy}
+              onClick={onStart}
+              aria-label="继续作答"
+            >
+              <Play aria-hidden className="size-4" />
+              {busy ? "正在打开…" : "继续作答"}
+            </Button>
+          ) : (
+            <Button
+              className="min-h-12 px-8 text-base"
+              onClick={() => setRedoOpen(true)}
+              aria-label="再做一次"
+            >
+              <RotateCcw aria-hidden className="size-4" />
+              再做一次
+            </Button>
+          )}
+          {startAttempt.isError && (
+            <p role="alert" className="text-xs text-destructive">
+              {startAttempt.error instanceof Error
+                ? startAttempt.error.message
+                : "开始失败，请稍后重试"}
+            </p>
+          )}
+        </div>
       </div>
 
       {/* 历次记录 */}
@@ -269,7 +295,7 @@ export default function StudentCourseUnitPage() {
           历次记录（{landing.attempts.length}）
         </h2>
         {landing.attempts.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-border bg-card px-6 py-8 text-center text-sm text-muted-foreground">
+          <div className="rounded-2xl border border-dashed border-border bg-card px-6 py-8 text-center text-sm text-muted-foreground">
             <ClipboardList aria-hidden className="mx-auto mb-2 size-6" />
             还没有做过——从上面的按钮开始第一次练习。
           </div>
@@ -281,7 +307,7 @@ export default function StudentCourseUnitPage() {
                   type="button"
                   aria-label={`查看第 ${attempt.attemptNo} 次记录`}
                   onClick={() => enterAttempt(attempt.attemptId)}
-                  className="flex min-h-14 w-full items-center gap-3 rounded-xl border border-border bg-card px-4 py-2 text-left outline-none transition-colors hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50"
+                  className="flex min-h-14 w-full items-center gap-3 rounded-2xl border border-border bg-card px-4 py-2 text-left shadow-xs outline-none transition-colors hover:border-primary/40 hover:bg-accent/40 focus-visible:ring-3 focus-visible:ring-ring/50"
                 >
                   <span className="w-14 shrink-0 text-sm font-medium">
                     第 {attempt.attemptNo} 次
@@ -296,7 +322,7 @@ export default function StudentCourseUnitPage() {
                   )}
                   <span className="ml-auto truncate text-xs text-muted-foreground">
                     {attempt.submittedAt !== null
-                      ? formatCnTime(attempt.submittedAt)
+                      ? formatRelativeTime(attempt.submittedAt)
                       : "未交卷"}
                   </span>
                 </button>

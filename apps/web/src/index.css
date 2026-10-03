@@ -83,6 +83,19 @@
   --sidebar-ring: oklch(0.708 0 0);
 }
 
+/* 学生端主题（2026-10 UI 打磨）：面向中小学生，主色换成清爽的蓝色、页面底色
+   微带冷调，让白色卡片浮起来；教师端不受影响。由 useStudentTheme 在学生端
+   页面挂载时给 <html> 加 .student-theme（弹窗经 Portal 挂在 body 上，同样生效）。
+   与 :root 同优先级，写在其后覆盖。 */
+.student-theme {
+  --background: oklch(0.982 0.006 255);
+  --primary: oklch(0.55 0.2 260);
+  --primary-foreground: oklch(0.985 0 0);
+  --ring: oklch(0.65 0.15 260);
+  --accent: oklch(0.955 0.025 260);
+  --accent-foreground: oklch(0.42 0.16 260);
+}
+
 .dark {
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);
