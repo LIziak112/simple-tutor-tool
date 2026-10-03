@@ -1,0 +1,6 @@
+# 关闭空白 issue，引导到模板；提问类引导到 Discussions
+blank_issues_enabled: false
+contact_links:
+  - name: 提问与使用交流
+    url: https://github.com/LIziak112/simple-tutor-tool/discussions
+    about: 使用疑问、部署问题、想法讨论请优先发到这里；若 Discussions 尚未开放，提 issue 也完全没问题
