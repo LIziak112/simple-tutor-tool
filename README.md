@@ -1,10 +1,13 @@
 # simple-tutor-tool
 
 [![CI](https://github.com/LIziak112/simple-tutor-tool/actions/workflows/ci.yml/badge.svg)](https://github.com/LIziak112/simple-tutor-tool/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-线上一对一辅导老师的**自部署、AI 原生**轻量讲练工具。
+[简体中文](README.md) · [English](README.en.md)
 
-一条主线跑通整个产品：老师（用 AI 等工具）制作符合规范的 Markdown → 导入平台，自动渲染成可互动的讲义与练习 → 学生打开链接线上答题（含 iPad 手写作答）→ 老师从后台查看逐题作答、手写笔迹与总结性学情 → 数据整包交回 AI 统计整理，服务于下一节课。
+这是一个为线上一对一辅导老师做的**自部署、AI 原生**讲练工具——最初只是为了解决「讲义散在各个文档里、每个学生的做题情况全靠脑子记」的日常麻烦，后来在一轮轮真实使用中逐渐长成了现在的样子。
+
+它想把一件事做好，并把整条链路串起来：老师（可以借助 AI）按规范写好 Markdown，导入即自动渲染成可互动的讲义与练习；学生打开链接就能答题，包括用 Apple Pencil 手写作答；老师随后在后台看到每个学生逐题的作答、原始笔迹与学情总结；这些结构化数据还能整包交回 AI，帮助准备下一节课。
 
 **单进程、数据自持**：一个 Node 进程同时提供教师端、学生端与全部 API；数据就是本机 `data/` 目录里的一个 SQLite 文件加 blobs 目录（笔迹原图、备份、共享内容都在内），不经任何第三方平台，备份 = 复制目录。
 
@@ -15,6 +18,20 @@ AI 产内容（符合 DSL 规范的 MD）──→ 导入自动解析渲染 ─�
         ▲                                                    │
         └──────── AI 分析学情 / 生成针对性练习 ←── 结构化作答数据 ──┘
 ```
+
+## 界面一览
+
+| 学生答题（iPad / 浏览器） | 交卷后即时反馈 |
+| --- | --- |
+| ![学生答题页](docs/screenshots/student-answering.png) | ![交卷结果视图](docs/screenshots/student-result.png) |
+
+| 手写作答 · 笔迹回放 | 教师逐题批阅 |
+| --- | --- |
+| ![手写笔迹回放](docs/screenshots/handwriting-replay.png) | ![教师批阅详情](docs/screenshots/teacher-grading.png) |
+
+| 作答数据（按学生） | 学生错题本 |
+| --- | --- |
+| ![按学生查看作答数据](docs/screenshots/teacher-data.png) | ![错题本](docs/screenshots/wrong-book.png) |
 
 ## 功能总览
 
@@ -118,6 +135,12 @@ mkdir -p data && sudo chown -R 1000:1000 data    # 容器内以 uid 1000 的 nod
 docker compose up -d --build                     # 浏览器打开 http://localhost（云服务器用公网 IP）
 ```
 
+发布版本 tag 后，CI 会自动把镜像推到 GHCR（`ghcr.io/liziak112/simple-tutor-tool`）；不想本地构建时，快速试用也可以：
+
+```bash
+docker run -d -p 8787:8787 -v ./data:/app/data ghcr.io/liziak112/simple-tutor-tool
+```
+
 方式二：`pnpm build` 后 `node apps/server/dist/index.js`，配 systemd 常驻（文档见部署 §2）。
 
 关键环境变量：
@@ -163,3 +186,7 @@ docker compose up -d --build                     # 浏览器打开 http://localh
 | [docs/dsl/](docs/dsl/) | DSL 规范、完整样例与给 AI 的提示词模板（`pnpm gen:spec` 生成，`/spec` 路由对外提供） |
 | [docs/进度表.md](docs/进度表.md) | 开发任务进度与验收记录 |
 | [AGENTS.md](AGENTS.md) | 开发工作约定（硬性规则，对人和 AI 执行者同样生效） |
+
+## 许可证
+
+[MIT](LICENSE)——可自由使用、修改与部署。如果它在你的教学里帮上了忙，欢迎回来提个 issue 或聊聊你的场景，这会比 star 更让我们高兴。
