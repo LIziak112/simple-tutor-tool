@@ -32,6 +32,7 @@ import { useClipboardCopy } from "@/features/content/use-clipboard";
 import { libraryInvalidations } from "@/features/library/library-queries";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { commitImport, previewImportBatch } from "@/lib/api";
+import { randomUuid } from "@/lib/uuid";
 import type { ImportOptions, PickedFile } from "./ImportPage";
 import { MarkdownEditor } from "./MarkdownEditor";
 import { StatsBar } from "./SingleImportPreview";
@@ -79,7 +80,7 @@ export function BatchImportPreview({
   onBack,
 }: BatchImportPreviewProps) {
   // batchId 在本组件生命周期内保持不变（重新预览不换批次，服务端按它聚合留档）
-  const [batchId] = useState(() => crypto.randomUUID());
+  const [batchId] = useState(() => randomUuid());
   const [data, setData] = useState<ImportPreviewBatchData | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);

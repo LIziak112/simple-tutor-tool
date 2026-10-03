@@ -22,6 +22,7 @@ import { AiPromptPanel } from "@/features/content/AiPromptPanel";
 import { useContentTree } from "@/features/content/content-queries";
 import { useLibraryFolders } from "@/features/library/library-queries";
 import { ApiError, createLibraryFolderApi } from "@/lib/api";
+import { randomUuid } from "@/lib/uuid";
 import { BatchImportPreview } from "./BatchImportPreview";
 import { SingleImportPreview } from "./SingleImportPreview";
 
@@ -82,7 +83,7 @@ export async function readPickedFiles(
     const path =
       relative !== undefined && relative.length > 0 ? relative : file.name;
     result.push({
-      id: crypto.randomUUID(),
+      id: randomUuid(),
       path,
       name: file.name,
       markdown,
@@ -229,7 +230,7 @@ export function ImportPage() {
     const name =
       pastedName.trim().length > 0 ? pastedName.trim() : DEFAULT_FILENAME;
     const entry: PickedFile = {
-      id: crypto.randomUUID(),
+      id: randomUuid(),
       path: name,
       name,
       markdown: pastedText,
