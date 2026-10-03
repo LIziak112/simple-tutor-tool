@@ -16,7 +16,7 @@ import {
   previewImport,
   previewImportBatch,
 } from "@/lib/api";
-import ImportPage from "./ImportPage";
+import ImportPage, { renamedPath } from "./ImportPage";
 
 /**
  * 导入页组件测试（T1.11 建立；T2A.3 重构；内容模型方案 §5 统一待导入清单）：
@@ -329,6 +329,63 @@ describe("ImportPage 选择页（方案 §5 统一待导入清单）", () => {
     });
   });
 
+  it("同 path 重复选择给「更新同名」反馈行（用户改完本地文件重选时能确认拿到新内容）", async () => {
+    const utils = renderImportPage();
+    pickFiles(utils, [mdFile("a.md", "# a v1")]);
+    expect(await screen.findByLabelText("移除 a.md")).toBeInTheDocument();
+    pickFiles(utils, [mdFile("a.md", "# a v2")]);
+    expect(
+      await screen.findByText(/更新同名 1 条（已用所选文件的内容）/),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("status").textContent).toContain("加入 0 条");
+  });
+
+  it("非 .md 文件被忽略并在反馈行说明（不再静默吞掉，选 4 进 3 时能看到差谁）", async () => {
+    const utils = renderImportPage();
+    const txt = new File(["说明"], "说明.txt", { type: "text/plain" });
+    pickFiles(utils, [mdFile("a.md", "# a"), txt]);
+    expect(await screen.findByLabelText("移除 a.md")).toBeInTheDocument();
+    expect(screen.queryByLabelText(/移除 说明/)).not.toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "" })).toHaveTextContent(
+      "已加入 1 条",
+    );
+    expect(screen.getByRole("status").textContent).toContain(
+      "忽略 1 个：说明.txt（非 .md 文件）",
+    );
+  });
+
+  it("文件条目可就地改名（与粘贴条目一致）；改名同步 path", async () => {
+    const utils = renderImportPage();
+    pickFiles(utils, [mdFile("旧名.md", "# a")]);
+    const renameInput = await screen.findByLabelText("重命名 旧名.md");
+    fireEvent.change(renameInput, { target: { value: "新名.md" } });
+    expect(await screen.findByLabelText("移除 新名.md")).toBeInTheDocument();
+    expect(screen.queryByLabelText("移除 旧名.md")).not.toBeInTheDocument();
+  });
+
+  it("文件夹条目改名保留子目录前缀（「按子目录自动建文件夹」依据不丢）", async () => {
+    const utils = renderImportPage();
+    const file = mdFile("a.md", "# a");
+    // jsdom 的 File 构造不支持 webkitRelativePath，手工挂上模拟文件夹选择
+    Object.defineProperty(file, "webkitRelativePath", {
+      value: "第一章/a.md",
+    });
+    pickFiles(utils, [file]);
+    const renameInput = await screen.findByLabelText("重命名 第一章/a.md");
+    fireEvent.change(renameInput, { target: { value: "改.md" } });
+    expect(
+      await screen.findByLabelText("移除 第一章/改.md"),
+    ).toBeInTheDocument();
+  });
+
+  it("renamedPath 纯函数：根级条目 path 即新名；带目录条目只换 basename", () => {
+    expect(renamedPath("a.md", "b.md")).toBe("b.md");
+    expect(renamedPath("第一章/a.md", "b.md")).toBe("第一章/b.md");
+    expect(renamedPath("第一章/子目录/a.md", "b.md")).toBe(
+      "第一章/子目录/b.md",
+    );
+  });
+
   it("移除条目：清单只剩 1 条文件时走单文件预览（1 条 → 单文件路由）", async () => {
     mockedPreview.mockResolvedValue(previewData({}));
     const utils = renderImportPage();
@@ -527,6 +584,45 @@ describe("ImportPage 单文件预览态", () => {
     const stub = await screen.findByTestId("content-stub");
     expect(stub.textContent).toContain("导入完成：单元 1 个");
     expect(stub.textContent).toContain("题目新增 1 / 更新 0");
+  });
+
+  it("预览态可就地改文件名（2026-10 审核修复）：改名后 commit 携带新文件名", async () => {
+    mockedPreview.mockResolvedValue(previewData({}));
+    mockedCommit.mockResolvedValue({
+      importId: "5b0b7ba4-6c07-4a5e-9df7-3b1e0d0b5c67",
+      courseId: null,
+      folderId: null,
+      units: [],
+      lectures: [],
+      questions: { inserted: 0, updated: 0 },
+    });
+    renderImportPage();
+    addPasteEntry(PRACTICE_MD, "旧名.md");
+    fireEvent.click(screen.getByRole("button", { name: /预览/ }));
+    await screen.findByText("DSL v2");
+
+    // 编辑器头的「导入文件名」输入框改名 → 确认导入按新名提交
+    fireEvent.change(screen.getByLabelText("导入文件名"), {
+      target: { value: "新名.md" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "确认导入" }));
+    await waitFor(() => expect(mockedCommit).toHaveBeenCalled());
+    expect(mockedCommit.mock.calls[0]?.[0]).toMatchObject({
+      filename: "新名.md",
+    });
+  });
+
+  it("预览态文件名清空时确认导入禁用（契约要求非空）", async () => {
+    mockedPreview.mockResolvedValue(previewData({}));
+    renderImportPage();
+    addPasteEntry(PRACTICE_MD, "旧名.md");
+    fireEvent.click(screen.getByRole("button", { name: /预览/ }));
+    await screen.findByText("DSL v2");
+
+    fireEvent.change(screen.getByLabelText("导入文件名"), {
+      target: { value: "  " },
+    });
+    expect(screen.getByRole("button", { name: "确认导入" })).toBeDisabled();
   });
 
   it("选择目标文件夹后：preview 与 commit payload 携带 folderId", async () => {
