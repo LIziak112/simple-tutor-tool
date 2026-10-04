@@ -8,14 +8,15 @@ import { cn } from "cn";
 import { ChevronLeft, ChevronRight, Clock3 } from "lucide-react";
 import { Link } from "react-router";
 import { Button } from "@/components/ui/button";
-import { formatRelativeTime } from "@/lib/time";
+import { formatCnTime } from "@/lib/time";
 
 /**
  * /s/records 我的记录列表的卡片与分页（T3.5，D10）：
  * - 卡片：来源徽章（作业/课程练习）、来源上下文（作业标题或「单元标题 ·
  *   第 n 次」+ 课程名）、状态徽章（进行中/已交卷/已批改）、待批徽章、得分
  *   （服务端已按 scoreFinal ?? scoreAuto 口径下发；未公布显示「待公布」）、
- *   最近活动时间；整卡为触控目标（≥44px）；
+ *   最近活动时间（2026-10 起绝对时间 formatCnTime，与错题本同口径）；
+ *   整卡为触控目标（≥44px）；
  * - 点击：已交/已批 → /s/attempts/:attemptId（结果视图）；进行中 → 同一
  *   路由（AttemptSession 按 status 分支进答题视图，即「继续作答」）。
  */
@@ -135,7 +136,7 @@ export function RecordCard({ row }: { row: StudentRecordRow }) {
           <RecordSourceBadge sourceType={row.sourceType} />
           <RecordStatusBadge status={row.status} />
           <span className="ml-auto text-xs text-muted-foreground">
-            {formatRelativeTime(activityAt)}
+            {formatCnTime(activityAt)}
           </span>
         </p>
         <p className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-sm">

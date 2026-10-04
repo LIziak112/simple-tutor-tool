@@ -24,6 +24,7 @@ function roundsOf(...corrects: boolean[]): WrongQuestionCard["rounds"] {
     correct,
     submittedAt: `2026-10-0${index + 1}T00:00:00.000Z`,
     sourceTitle: `单元 · 第 ${index + 1} 次`,
+    courseId: "00000000-0000-4000-8000-00000000000a",
     courseName: "初一上",
   }));
 }

@@ -509,8 +509,8 @@ test.describe("Phase 3 全链路（T3.6）：作答 → 数据页 → 批改 →
           name: `${unitName} · 待复习 1 题`,
         }),
       ).toBeVisible();
-      // 紧凑行（错 1 次）→ 点击展开完整卡片
-      const wrongRow = studentPage.getByRole("button", { name: /错 1 次/ });
+      // 紧凑行（错 1 · 对 0）→ 点击展开完整卡片
+      const wrongRow = studentPage.getByRole("button", { name: /错 1 · 对 0/ });
       await expect(wrongRow).toBeVisible();
       await wrongRow.click();
       const wrongCard = studentPage.locator("article", {

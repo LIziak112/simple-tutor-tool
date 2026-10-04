@@ -6,6 +6,8 @@ import {
   Clock,
   Lightbulb,
   PenLine,
+  RotateCcw,
+  TriangleAlert,
   XCircle,
 } from "lucide-react";
 import { useState } from "react";
@@ -42,6 +44,12 @@ import {
  * 「最终得分」），待批计数改用 pendingCount（D4 权威口径——批注后 autoCorrect
  * 仍空而 finalCorrect 已定，summary.pending 会虚高）。公布 gate 截止前服务端
  * 已把这些字段置 null 投影，前端照常落入「未批/待公布」分支（双保险）。
+ * 2026-10（学生端闭环补完）：汇总卡操作区新增「练习本卷错题（N 题）」次级
+ * 按钮——N = 本卷已判定为错的题数（逐题 finalCorrect === false，不含待批
+ * finalCorrect=null；公布前已被 gate 置 null，天然不参与计数）。未公布
+ * （answersReleased=false）或 N=0（全对/只剩待批）时隐藏。点击由页面层调
+ * POST /wrong-practice 组新重练卷并跳作答（onStart 携带按本卷题序的
+ * questionIds，服务端校验这些题必在错题本聚合内）。
  */
 
 /**
@@ -396,6 +404,7 @@ export function AttemptResultView({
   data,
   onBackHome,
   onSolutionToggle,
+  wrongPractice,
 }: {
   data: AttemptResultData;
   onBackHome: () => void;
@@ -407,6 +416,19 @@ export function AttemptResultView({
   onSolutionToggle?:
     | ((questionId: string, index: number, action: "open" | "close") => void)
     | undefined;
+  /**
+   * 「练习本卷错题」直达重练入口（2026-10）：页面层传入组卷动作与状态；
+   * 缺省不渲染该按钮（测试等场景）。可见性由本视图按数据判定：
+   * answersReleased 且 finalCorrect=false 的题数 > 0。
+   */
+  wrongPractice?: {
+    /** 组卷请求进行中（按钮 loading 禁用，防重复建卷） */
+    loading: boolean;
+    /** 组卷失败的中文提示（null = 无失败）；非 null 时按钮下方渲染告警 */
+    error: string | null;
+    /** 点击按钮（questionIds = 本卷判错题按本卷题序） */
+    onStart: (questionIds: string[]) => void;
+  };
 }) {
   const { attempt, summary } = data;
   // T2A.8：答案是否已公布（on_submit / 课程练习 / 已到截止 = true）
@@ -417,6 +439,14 @@ export function AttemptResultView({
   // 多单元时渲染节标题（单元标题），单单元不显示节头（与答题视图一致）。
   const flatQuestions = data.units.flatMap((unit) => unit.questions);
   const showUnitHeaders = data.units.length > 1;
+  // 2026-10：本卷判错题（finalCorrect === false，按本卷题序）——直达重练的
+  // 圈题范围与示数。未公布时服务端已把 finalCorrect 置 null（数出来必为 0），
+  // 与 released 显隐判据双保险。
+  const wrongQuestionIds = flatQuestions
+    .filter((question) => question.finalCorrect === false)
+    .map((question) => question.questionId);
+  const showWrongPractice =
+    released && wrongPractice !== undefined && wrongQuestionIds.length > 0;
   return (
     <div className="flex flex-col gap-5">
       {/* 得分汇总卡（未公布时替换为「已交卷」横幅 + 已答统计，不显示对错与得分） */}
@@ -505,13 +535,48 @@ export function AttemptResultView({
             </p>
           </div>
         )}
-        <Button
-          variant="outline"
-          className="min-h-11 w-fit"
-          onClick={onBackHome}
-        >
-          返回首页
-        </Button>
+        <div className="flex flex-col gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" className="min-h-11" onClick={onBackHome}>
+              返回首页
+            </Button>
+            {/* 练习本卷错题（2026-10 直达重练）：N=本卷判错题数；点击组新
+                重练卷并跳作答（提交中 loading 禁用防重复建卷） */}
+            {showWrongPractice && wrongPractice !== undefined && (
+              <Button
+                variant="secondary"
+                className="min-h-11"
+                disabled={wrongPractice.loading}
+                onClick={() => wrongPractice.onStart(wrongQuestionIds)}
+              >
+                <RotateCcw
+                  aria-hidden
+                  className={cn(
+                    "size-4",
+                    wrongPractice.loading && "animate-spin",
+                  )}
+                />
+                {wrongPractice.loading
+                  ? "正在组卷…"
+                  : `练习本卷错题（${wrongQuestionIds.length} 题）`}
+              </Button>
+            )}
+          </div>
+          {/* 组卷失败（网络/题目状态变化含 400 WRONG_PRACTICE_EMPTY 极端
+              情况）：中文告警，可重试（再点按钮）或刷新本页 */}
+          {showWrongPractice &&
+            wrongPractice !== undefined &&
+            wrongPractice.error !== null && (
+              <p
+                role="alert"
+                className="flex items-center gap-1.5 text-sm text-destructive"
+              >
+                <TriangleAlert aria-hidden className="size-4 shrink-0" />
+                练习本卷错题组卷失败：{wrongPractice.error}
+                ；题目状态可能有变化，请稍后重试或刷新本页。
+              </p>
+            )}
+        </div>
       </section>
 
       {/* 逐题结果（T2A.7：多单元按节分组，题号全卷连续） */}

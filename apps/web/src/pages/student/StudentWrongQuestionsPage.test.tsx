@@ -1,52 +1,94 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import type {
   AttemptStartData,
+  StudentCourseListData,
   WrongQuestionCard,
   WrongQuestionsData,
 } from "@tutor/contract";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  filterWrongQuestionsByCourse,
   groupWrongQuestions,
   parseWrongQuestionsUrl,
   stemSummaryOf,
 } from "@/features/student/wrong-questions-ui";
 import {
+  fetchStudentCoursesApi,
   fetchStudentWrongQuestionsApi,
   startWrongPracticeApi,
 } from "@/lib/api";
 import StudentWrongQuestionsPage from "./StudentWrongQuestionsPage";
 
 /**
- * /s/wrong 错题本页组件测试（T3.5，D11；2026-10 轮次史改版）：两 tab
- * （待复习/已攻克，本地攻克标准从 rounds 计算）、分组维度（按练习/按时间/
- * 按考点，URL 同步）、紧凑行 → 展开完整卡片（含轮次史区块）、旧 URL 参数
- * 兼容映射、三态。API 层 mock（页面统一拉全量形态 includeResolved=true）。
+ * /s/wrong 错题本页组件测试（T3.5，D11；2026-10 轮次史改版；2026-10 课程
+ * 筛选 + 绝对时间）：两 tab（待复习/已攻克，本地攻克标准从 rounds 计算）、
+ * 分组维度（按练习/按时间/按考点，URL 同步）、课程筛选（rounds 任一轮
+ * courseId 命中；URL 同步；作用于两 tab 与重练范围）、紧凑行「错 N · 对 M」
+ * 与绝对时间、待批轮提示、紧凑行 → 展开完整卡片（含轮次史区块）、旧 URL
+ * 参数兼容映射、三态。API 层 mock（页面统一拉全量形态 includeResolved=true；
+ * 课程下拉选项走我的课程接口）。
  */
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
   return {
     ...actual,
+    fetchStudentCoursesApi: vi.fn(),
     fetchStudentWrongQuestionsApi: vi.fn(),
     startWrongPracticeApi: vi.fn(),
   };
 });
 
 const mockedWrong = vi.mocked(fetchStudentWrongQuestionsApi);
+const mockedCourses = vi.mocked(fetchStudentCoursesApi);
 const mockedPractice = vi.mocked(startWrongPracticeApi);
 
 const ATTEMPT_A = "66666666-6666-4666-8666-666666666666";
 const ATTEMPT_B = "77777777-7777-4777-8777-777777777777";
 const ATTEMPT_C = "88888888-8888-4888-8888-888888888888";
 
-/** 轮次工厂 */
+/** 两门课程（下拉选项 + rounds.courseId 夹具用） */
+const COURSE_A = "12121212-1212-4121-8121-121212121212"; // 初一上
+const COURSE_B = "34343434-3434-4343-8343-343434343434"; // 初一下
+
+/** 我的课程接口默认 mock（两门课；个别用例按需覆盖） */
+const COURSES_DATA: StudentCourseListData = {
+  courses: [
+    {
+      id: COURSE_A,
+      name: "初一上",
+      description: null,
+      visibleLectureCount: 1,
+      visibleUnitCount: 1,
+      completedUnitCount: 0,
+    },
+    {
+      id: COURSE_B,
+      name: "初一下",
+      description: null,
+      visibleLectureCount: 1,
+      visibleUnitCount: 1,
+      completedUnitCount: 0,
+    },
+  ],
+};
+
+/** 轮次工厂（courseId/courseName 默认初一上作业轮） */
 function round(
   attemptId: string,
   correct: boolean,
   submittedAt: string,
   sourceTitle = "周末加练",
+  courseId: string | null = COURSE_A,
+  courseName: string | null = "初一上",
 ): WrongQuestionCard["rounds"][number] {
   return {
     attemptId,
@@ -54,7 +96,8 @@ function round(
     correct,
     submittedAt,
     sourceTitle,
-    courseName: "初一上",
+    courseId,
+    courseName,
   };
 }
 
@@ -89,6 +132,7 @@ function makeQuestion(
     ],
     wrongCount: 2,
     correctCount: 0,
+    pendingCount: 0,
     originUnitId: "unit-有理数",
     originUnitTitle: "有理数",
     ...overrides,
@@ -139,6 +183,75 @@ const ALL_DATA: WrongQuestionsData = {
   questions: [WRONG_THEN_RIGHT, CONQUERED_TWO, makeQuestion()],
 };
 
+/** 跨两门课的题：第 1 轮初一上（作业，错）、第 2 轮初一下（课程练习，对）——任一轮命中即保留 */
+const CROSS_COURSE = makeQuestion({
+  questionId: "q-cross",
+  knowledge: ["数轴"],
+  stemMd: "$-1$ 在数轴上位于原点左边。[[正确]]",
+  answerText: "错",
+  lastAt: "2020-09-26T02:00:00.000Z",
+  rounds: [
+    round(ATTEMPT_A, false, "2020-09-22T02:00:00.000Z", "周末加练"),
+    {
+      ...round(
+        ATTEMPT_B,
+        true,
+        "2020-09-26T02:00:00.000Z",
+        "有理数小练 · 第 1 次",
+        COURSE_B,
+        "初一下",
+      ),
+      sourceType: "course",
+    },
+  ],
+  wrongCount: 1,
+  correctCount: 1,
+  originUnitId: "unit-数轴",
+  originUnitTitle: "数轴",
+});
+
+/** 只有错题重练轮的题（rounds.courseId 恒 null）——任意课程筛选下都不出现 */
+const WRONG_PRACTICE_ONLY = makeQuestion({
+  questionId: "q-wrong-only",
+  knowledge: ["绝对值"],
+  stemMd: "$|-3|=3$。[[正确]]",
+  answerText: "错",
+  sourceType: "wrong",
+  courseId: null,
+  courseName: null,
+  assignmentId: null,
+  assignmentTitle: null,
+  unitId: null,
+  unitTitle: null,
+  lastAt: "2020-09-30T02:00:00.000Z",
+  rounds: [
+    {
+      ...round(
+        ATTEMPT_C,
+        false,
+        "2020-09-30T02:00:00.000Z",
+        "错题重练 · 第 1 次",
+        null,
+        null,
+      ),
+      sourceType: "wrong",
+    },
+  ],
+  wrongCount: 1,
+  correctCount: 0,
+  originUnitId: "unit-绝对值",
+  originUnitTitle: "绝对值",
+});
+
+/**
+ * 课程筛选用数据（严格标准下全在待复习）：初一上 1 题（makeQuestion 两轮全
+ * 初一上）+ 跨课程 1 题（初一上/初一下各一轮）+ 纯重练 1 题（无课程轮）。
+ * 筛初一下只剩跨课程题；筛未知课程全空。
+ */
+const COURSE_FILTER_DATA: WrongQuestionsData = {
+  questions: [makeQuestion(), CROSS_COURSE, WRONG_PRACTICE_ONLY],
+};
+
 /** 路由地址探针（断言 tab/分组写进 URL） */
 function LocationProbe() {
   const location = useLocation();
@@ -176,6 +289,7 @@ function renderPage(initialEntry = "/s/wrong") {
 beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear(); // 攻克标准回默认「严格」
+  mockedCourses.mockResolvedValue(COURSES_DATA); // 课程下拉默认两门课
 });
 
 describe("StudentWrongQuestionsPage 视图与 URL 同步", () => {
@@ -202,31 +316,50 @@ describe("StudentWrongQuestionsPage 视图与 URL 同步", () => {
     expect(
       screen.getByRole("heading", { name: /有理数 · 待复习 1 题/ }),
     ).toBeInTheDocument();
-    // 紧凑行：题干摘要（公式取内文、[[正确]] 渲染为空框）+ 错 N 次
-    expect(await screen.findByText("错 2 次")).toBeInTheDocument();
-    expect(screen.getByText("错 1 次")).toBeInTheDocument();
+    // 紧凑行：题干摘要（公式取内文、[[正确]] 渲染为空框）+ 错 N · 对 M + 绝对时间
+    expect(await screen.findByText("错 2 · 对 0")).toBeInTheDocument();
+    expect(screen.getByText("错 1 · 对 1")).toBeInTheDocument();
     expect(screen.getByText(/1 是正数。/)).toBeInTheDocument();
+    // 绝对时间（formatCnTime：UTC → Asia/Shanghai；不再出现相对时间口径）
+    expect(screen.getByText("2020年9月28日 10:00:00")).toBeInTheDocument();
+    expect(screen.getByText("2020年9月29日 10:00:00")).toBeInTheDocument();
+    expect(
+      screen.queryByText(/年前|天前|小时前|分钟前/),
+    ).not.toBeInTheDocument();
     // 默认不展开完整卡片（无「我的最近答案」）
     expect(screen.queryByText("我的最近答案：")).not.toBeInTheDocument();
   });
 
-  it("点击紧凑行展开完整卡片：答案/详解折叠/轮次史（统计 + 每轮一行）；再点收起", async () => {
+  it("点击紧凑行展开完整卡片：答案/详解折叠/轮次史（统计 + 每轮一行 + 绝对时间）；再点收起", async () => {
     mockedWrong.mockResolvedValue(ALL_DATA);
     renderPage();
     const row = await screen.findByRole("button", {
-      name: /错 2 次/,
+      name: /错 2 · 对 0/,
     });
     fireEvent.click(row);
     // 完整卡片：首次标记 + 我的最近答案 + 正确答案
     expect(screen.getByText("首次做错")).toBeInTheDocument();
     expect(screen.getByText("我的最近答案：")).toBeInTheDocument();
     expect(screen.getByText("正确答案：")).toBeInTheDocument();
-    // 轮次史区块：汇总 + 每轮一行（第 1/2 轮 · 做错 · 来源标题）
+    // 轮次史区块：汇总 + 每轮一行（第 1/2 轮 · 做错 · 来源标题 · 绝对时间）
     expect(screen.getByText("已做错 2 次 · 做对 0 次")).toBeInTheDocument();
     expect(screen.getAllByText("第 1 轮").length).toBe(1);
     expect(screen.getAllByText("第 2 轮").length).toBe(1);
     expect(screen.getAllByText("做错").length).toBeGreaterThanOrEqual(2);
     expect(screen.getAllByText(/周末加练/).length).toBeGreaterThanOrEqual(2);
+    // 每轮一行可点（2026-10）：链接 → /s/attempts/:attemptId 回看该轮作答
+    expect(
+      screen.getByRole("link", { name: "查看第 1 轮作答：周末加练" }),
+    ).toHaveAttribute("href", `/s/attempts/${ATTEMPT_A}`);
+    expect(
+      screen.getByRole("link", { name: "查看第 2 轮作答：周末加练" }),
+    ).toHaveAttribute("href", `/s/attempts/${ATTEMPT_B}`);
+    // 每轮时间与页脚「最近来源」时间都是绝对时间：9-20 只在轮次行；9-28 在
+    // 紧凑行 + 轮次行 + 页脚共 3 处
+    expect(screen.getAllByText("2020年9月20日 10:00:00").length).toBe(1);
+    expect(screen.getAllByText("2020年9月28日 10:00:00").length).toBe(3);
+    // 待批轮提示：pendingCount=0 不显示
+    expect(screen.queryByText(/另有 \d+ 轮待老师批改/)).not.toBeInTheDocument();
     // 详解默认折叠
     expect(screen.queryByText(/大于/)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: /查看详解/ }));
@@ -234,7 +367,7 @@ describe("StudentWrongQuestionsPage 视图与 URL 同步", () => {
       await screen.findByText(/大于/, {}, { timeout: 3000 }),
     ).toBeVisible();
     // 收起
-    fireEvent.click(screen.getByRole("button", { name: /错 2 次/ }));
+    fireEvent.click(screen.getByRole("button", { name: /错 2 · 对 0/ }));
     expect(screen.queryByText("我的最近答案：")).not.toBeInTheDocument();
   });
 
@@ -371,6 +504,102 @@ describe("StudentWrongQuestionsPage 三态", () => {
   });
 });
 
+describe("StudentWrongQuestionsPage 课程筛选（2026-10）", () => {
+  it("选课程后列表/tab 计数/重练全部只剩该课程的题并写 URL；改回全部课程恢复", async () => {
+    mockedWrong.mockResolvedValue(COURSE_FILTER_DATA);
+    renderPage();
+    await screen.findByText("错 2 · 对 0"); // 列表就绪
+    // 默认全部课程：三题都在（严格标准下全在待复习）
+    expect(
+      screen.getByRole("button", { name: "待复习 3 题" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "重练全部（3 题）" }),
+    ).toBeEnabled();
+    // 下拉选项 = 全部课程 + 两门课（我的课程接口）
+    const select = screen.getByLabelText("课程");
+    expect(select).toHaveDisplayValue("全部课程");
+    expect(screen.getByRole("option", { name: "初一上" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "初一下" })).toBeInTheDocument();
+
+    // 选初一下：只剩跨课程题（rounds 第 2 轮命中）；纯初一上/纯重练的题消失
+    fireEvent.change(select, { target: { value: COURSE_B } });
+    await waitFor(() =>
+      expect(screen.getByTestId("location-probe")).toHaveTextContent(
+        `courseId=${COURSE_B}`,
+      ),
+    );
+    expect(
+      screen.getByRole("button", { name: "待复习 1 题" }),
+    ).toBeInTheDocument();
+    // 两个 tab 的计数都受课程筛选作用（跨课程题错-对、严格标准下待复习）
+    expect(
+      screen.getByRole("button", { name: "已攻克 0 题" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/-1 在数轴上位于原点左边/)).toBeInTheDocument();
+    expect(screen.queryByText(/1 是正数。/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/\|-3\|=3/)).not.toBeInTheDocument();
+    // 页头「重练全部」计数跟随筛选后的集合
+    expect(
+      screen.getByRole("button", { name: "重练全部（1 题）" }),
+    ).toBeEnabled();
+
+    // 改回全部课程：URL 参数移除、列表与计数恢复
+    fireEvent.change(select, { target: { value: "" } });
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "待复习 3 题" }),
+      ).toBeInTheDocument(),
+    );
+    expect(screen.getByTestId("location-probe")).not.toHaveTextContent(
+      "courseId=",
+    );
+  });
+
+  it("深链 courseId 直接生效；课程列表外的 courseId 给占位选项且空态指向筛选", async () => {
+    mockedWrong.mockResolvedValue(COURSE_FILTER_DATA);
+    renderPage(`/s/wrong?courseId=${COURSE_B}`);
+    // 不经交互即筛好：只剩跨课程题，下拉回显初一下
+    expect(
+      await screen.findByText(/-1 在数轴上位于原点左边/),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("课程")).toHaveValue(COURSE_B);
+    expect(screen.queryByText(/1 是正数。/)).not.toBeInTheDocument();
+    cleanup();
+
+    // 课程列表外的 courseId（课程已归档/已移出成员）：占位选项兜底 + 空态归因筛选
+    const unknownId = "00000000-0000-4000-8000-000000000000";
+    renderPage(`/s/wrong?courseId=${unknownId}`);
+    expect(
+      await screen.findByRole("option", { name: "已不在我的课程" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("这门课暂无待复习的错题")).toBeInTheDocument();
+    expect(screen.getByText(/可以换一门课程试试/)).toBeInTheDocument();
+  });
+
+  it("课程接口失败/为空不阻塞列表：下拉只显示全部课程", async () => {
+    mockedCourses.mockResolvedValue({ courses: [] });
+    mockedWrong.mockResolvedValue(COURSE_FILTER_DATA);
+    renderPage();
+    await screen.findByRole("button", { name: "待复习 3 题" });
+    expect(
+      screen.getByRole("option", { name: "全部课程" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("option", { name: "初一上" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("pendingCount>0 的题展开卡轮次史尾部显示「另有 N 轮待老师批改」", async () => {
+    mockedWrong.mockResolvedValue({
+      questions: [makeQuestion({ pendingCount: 2 })],
+    });
+    renderPage();
+    fireEvent.click(await screen.findByRole("button", { name: /错 2 · 对 0/ }));
+    expect(screen.getByText("另有 2 轮待老师批改")).toBeInTheDocument();
+  });
+});
+
 describe("wrong-questions-ui 纯函数", () => {
   it("stemSummaryOf：[[答案]] 替换为空框（不泄露答案原文）、公式取内文、剥 Markdown 记号", () => {
     expect(stemSummaryOf("$1$ 是正数。[[正确]]")).toBe("1 是正数。（　）");
@@ -379,20 +608,54 @@ describe("wrong-questions-ui 纯函数", () => {
     );
   });
 
-  it("parseWrongQuestionsUrl：默认待复习+按练习；tab/group 解析；旧参数映射/忽略", () => {
+  it("parseWrongQuestionsUrl：默认待复习+按练习+全部课程；tab/group/courseId 解析；旧参数映射/忽略", () => {
     expect(parseWrongQuestionsUrl(new URLSearchParams(""))).toEqual({
       tab: "pending",
       group: "unit",
+      courseId: null,
     });
     expect(
-      parseWrongQuestionsUrl(new URLSearchParams("tab=conquered&group=time")),
-    ).toEqual({ tab: "conquered", group: "time" });
+      parseWrongQuestionsUrl(
+        new URLSearchParams("tab=conquered&group=time&courseId=abc"),
+      ),
+    ).toEqual({ tab: "conquered", group: "time", courseId: "abc" });
     expect(
       parseWrongQuestionsUrl(new URLSearchParams("includeResolved=true")),
-    ).toEqual({ tab: "conquered", group: "unit" });
+    ).toEqual({ tab: "conquered", group: "unit", courseId: null });
     expect(
       parseWrongQuestionsUrl(new URLSearchParams("tab=what&group=nope")),
-    ).toEqual({ tab: "pending", group: "unit" });
+    ).toEqual({ tab: "pending", group: "unit", courseId: null });
+    // courseId 空串 = 未选（全部课程）
+    expect(parseWrongQuestionsUrl(new URLSearchParams("courseId="))).toEqual({
+      tab: "pending",
+      group: "unit",
+      courseId: null,
+    });
+  });
+
+  it("filterWrongQuestionsByCourse：rounds 任一轮命中即保留；null 轮不参与命中；全部课程原样返回", () => {
+    const questions = COURSE_FILTER_DATA.questions;
+    // 全部课程：原样返回（同一引用，不复制列表）
+    expect(filterWrongQuestionsByCourse(questions, null)).toBe(questions);
+    // 筛初一上：两轮全初一上的题 + 跨课程题（第 1 轮命中）
+    expect(
+      filterWrongQuestionsByCourse(questions, COURSE_A).map(
+        (q) => q.questionId,
+      ),
+    ).toEqual(["q-judge-1", "q-cross"]);
+    // 筛初一下：只剩跨课程题（第 2 轮命中）；纯重练轮（null）的题不出现
+    expect(
+      filterWrongQuestionsByCourse(questions, COURSE_B).map(
+        (q) => q.questionId,
+      ),
+    ).toEqual(["q-cross"]);
+    // 未知课程：全空
+    expect(
+      filterWrongQuestionsByCourse(
+        questions,
+        "00000000-0000-4000-8000-000000000000",
+      ),
+    ).toEqual([]);
   });
 
   it("groupWrongQuestions：时间桶按固定顺序、空桶不出现；未归类单元落「未归类」", () => {

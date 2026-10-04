@@ -488,6 +488,157 @@ describe("D9（T3.5）老师批改后的展示", () => {
   });
 });
 
+// ---------- 2026-10：练习本卷错题（结果页直达重练入口） ----------
+
+describe("练习本卷错题按钮（2026-10 直达重练）", () => {
+  /** 通用入口 props（个别用例按需覆盖 loading/error/onStart） */
+  const practiceProps = () => ({
+    loading: false,
+    error: null,
+    onStart: vi.fn(),
+  });
+
+  it("已公布且有判错题：示数 N = finalCorrect=false 题数（不含答对与待批）；点击回传按本卷题序的 questionIds", () => {
+    const onStart = vi.fn();
+    render(
+      <AttemptResultView
+        data={DATA}
+        onBackHome={vi.fn()}
+        wrongPractice={{ loading: false, error: null, onStart }}
+      />,
+    );
+    // DATA 四题：对 / 错 / 错 / 待批 → N=2（待批 finalCorrect=null 不计）
+    fireEvent.click(
+      screen.getByRole("button", { name: "练习本卷错题（2 题）" }),
+    );
+    expect(onStart).toHaveBeenCalledTimes(1);
+    expect(onStart).toHaveBeenCalledWith(["练习四-2", "练习四-4"]);
+  });
+
+  it("教师改判后计数跟随 finalCorrect（GRADED：改判错 + 自动错两题 → 3 题）", () => {
+    const baseUnit = DATA.units[0];
+    const GRADED: AttemptResultData = {
+      ...DATA,
+      attempt: { ...DATA.attempt, status: "graded" },
+      units:
+        baseUnit === undefined
+          ? []
+          : [
+              {
+                ...baseUnit,
+                questions: baseUnit.questions.map((question) =>
+                  question.questionId === "练习四-1"
+                    ? {
+                        ...question,
+                        teacherMark: "wrong" as const,
+                        finalCorrect: false,
+                      }
+                    : question.questionId === "p4-q7"
+                      ? {
+                          ...question,
+                          teacherMark: "correct" as const,
+                          finalCorrect: true,
+                        }
+                      : question,
+                ),
+              },
+            ],
+    };
+    render(
+      <AttemptResultView
+        data={GRADED}
+        onBackHome={vi.fn()}
+        wrongPractice={practiceProps()}
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: "练习本卷错题（3 题）" }),
+    ).toBeInTheDocument();
+  });
+
+  it("提交中：按钮禁用并显示「正在组卷…」", () => {
+    render(
+      <AttemptResultView
+        data={DATA}
+        onBackHome={vi.fn()}
+        wrongPractice={{ loading: true, error: null, onStart: vi.fn() }}
+      />,
+    );
+    const button = screen.getByRole("button", { name: "正在组卷…" });
+    expect(button).toBeDisabled();
+    expect(screen.queryByRole("button", { name: /练习本卷错题/ })).toBeNull();
+  });
+
+  it("失败：error 非 null 时按钮下方显示中文告警（role=alert）", () => {
+    render(
+      <AttemptResultView
+        data={DATA}
+        onBackHome={vi.fn()}
+        wrongPractice={{
+          loading: false,
+          error: "没有可重练的题目",
+          onStart: vi.fn(),
+        }}
+      />,
+    );
+    // role=alert 按 ARIA 不能从内容取名（name 查询恒空），断言用文本内容
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("练习本卷错题组卷失败：没有可重练的题目");
+  });
+
+  it("未公布（answersReleased=false）隐藏——公布 gate 双保险", () => {
+    const unreleased: AttemptResultData = { ...DATA, answersReleased: false };
+    render(
+      <AttemptResultView
+        data={unreleased}
+        onBackHome={vi.fn()}
+        wrongPractice={practiceProps()}
+      />,
+    );
+    expect(
+      screen.queryByRole("button", { name: /练习本卷错题|正在组卷/ }),
+    ).toBeNull();
+  });
+
+  it("全对/只剩待批（N=0）隐藏", () => {
+    const baseUnit = DATA.units[0];
+    const allRight: AttemptResultData = {
+      ...DATA,
+      units:
+        baseUnit === undefined
+          ? []
+          : [
+              {
+                ...baseUnit,
+                questions: baseUnit.questions.map((question) =>
+                  // 两道自动判错题改为判对；手写题保持待批 null
+                  question.finalCorrect === false
+                    ? { ...question, finalCorrect: true, autoCorrect: true }
+                    : question,
+                ),
+              },
+            ],
+    };
+    render(
+      <AttemptResultView
+        data={allRight}
+        onBackHome={vi.fn()}
+        wrongPractice={practiceProps()}
+      />,
+    );
+    expect(
+      screen.queryByRole("button", { name: /练习本卷错题|正在组卷/ }),
+    ).toBeNull();
+  });
+
+  it("缺省不传 wrongPractice：不渲染（既有调用方零影响）", () => {
+    renderView();
+    expect(
+      screen.queryByRole("button", { name: /练习本卷错题|正在组卷/ }),
+    ).toBeNull();
+  });
+});
+
 // ---------- T4.0b：详解折叠开合回调（host=result 复盘埋点的组件面） ----------
 
 describe("详解折叠开合回调（T4.0b）", () => {
