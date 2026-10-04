@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
@@ -79,6 +80,8 @@ unit: mcp-import-unit
 interface McpEnv {
   app: ReturnType<typeof createApp>;
   db: Db;
+  /** 测试 DATA_DIR（upload_image 的图片落盘断言用） */
+  dataDir: string;
   /** 甲（种子教师）的 API Token */
   tokenA: string;
   /** 甲的会话 Cookie（教师 HTTP 接口用） */
@@ -96,12 +99,13 @@ function extractSessionToken(res: Response): string {
 
 async function makeEnv(): Promise<McpEnv> {
   const db = createTestDb();
+  const dataDir = createTestDir();
   const app = createApp({
     isProduction: false,
     logger: silentLogger,
     db,
     publicUrl: "http://localhost:8787",
-    dataDir: createTestDir(),
+    dataDir,
   });
   const setup = await app.request("/api/public/teacher/setup", {
     method: "POST",
@@ -144,7 +148,7 @@ async function makeEnv(): Promise<McpEnv> {
       createdAt: "2026-01-02T00:00:00.000Z",
     })
     .run();
-  return { app, db, tokenA, cookieA, seed };
+  return { app, db, dataDir, tokenA, cookieA, seed };
 }
 
 /** fetch 桥接：SDK 客户端的 HTTP 请求直达 app.request（协议链路真实） */
@@ -298,7 +302,7 @@ describe("MCP 鉴权（T4.6 D22）", () => {
 });
 
 describe("MCP 工具（SDK 客户端逐个断言，T4.6 D23）", () => {
-  it("tools/list 列出 D23 定稿的 11 个工具", async () => {
+  it("tools/list 列出 12 个工具（D23 定稿 11 个 + 媒体管线 upload_image）", async () => {
     const env = await makeEnv();
     const client = await connectClient(env, env.tokenA);
     const list = await client.listTools();
@@ -316,6 +320,7 @@ describe("MCP 工具（SDK 客户端逐个断言，T4.6 D23）", () => {
         "get_student_learning_pack",
         "get_question_stats",
         "save_report",
+        "upload_image",
       ].sort(),
     );
     await client.close();
@@ -651,6 +656,63 @@ describe("MCP 工具（SDK 客户端逐个断言，T4.6 D23）", () => {
     };
     expect(data.summary.lectureCount).toBeGreaterThan(0);
     expect(data.issues.some((i) => i.level === "error")).toBe(false);
+    await client.close();
+  });
+
+  it("upload_image：真 PNG 字节 → 契约 src + 文件落盘；坏 base64 / 非图片 → 结构化错误", async () => {
+    const env = await makeEnv();
+    const client = await connectClient(env, env.tokenA);
+    // 最小 PNG（魔数 + 填充；saveMedia 只看魔数）——含折行空白也应被容忍
+    const png = Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      Buffer.alloc(16, 0xab),
+    ]);
+    const folded = `${png.toString("base64").slice(0, 8)}\n${png
+      .toString("base64")
+      .slice(8)}`;
+    const uploaded = await client.callTool({
+      name: "upload_image",
+      arguments: { dataBase64: folded, filename: "图示.png" },
+    });
+    expect(uploaded.isError).toBeFalsy();
+    const data = JSON.parse(textOf(uploaded)) as {
+      src: string;
+      bytes: number;
+      usage: string;
+    };
+    // 契约口径：src 即 ::image 的 src（blobs/media/<64 hex>.<ext>）
+    expect(data.src).toMatch(/^blobs\/media\/[0-9a-f]{64}\.png$/);
+    expect(data.bytes).toBe(png.byteLength);
+    expect(data.usage).toContain("::image");
+    expect(data.usage).toContain(data.src);
+    // 文件落盘且逐字节一致（内容寻址，条目名 = src 相对路径）
+    const file = join(env.dataDir, ...data.src.split("/"));
+    expect(existsSync(file)).toBe(true);
+    expect(readFileSync(file).equals(png)).toBe(true);
+
+    // 坏 base64 → 工具级错误（isError + 中文提示定位文件名）
+    const bad = await client.callTool({
+      name: "upload_image",
+      arguments: { dataBase64: "不是-base64!!", filename: "broken.png" },
+    });
+    expect(bad.isError).toBe(true);
+    const badData = JSON.parse(textOf(bad)) as {
+      error: string;
+      message: string;
+    };
+    expect(badData.error).toBe("INVALID_BASE64");
+    expect(badData.message).toContain("「broken.png」");
+    expect(badData.message).toContain("base64");
+
+    // 合法 base64 但非图片字节 → 415 白名单错误透出（saveMedia 同口径）
+    const notImage = await client.callTool({
+      name: "upload_image",
+      arguments: {
+        dataBase64: Buffer.from("<svg>not an image</svg>").toString("base64"),
+      },
+    });
+    expect(notImage.isError).toBe(true);
+    expect(JSON.parse(textOf(notImage)).error).toBe("UNSUPPORTED_MEDIA_TYPE");
     await client.close();
   });
 });

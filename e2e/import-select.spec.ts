@@ -57,9 +57,10 @@ test("导入页：选择 .md 文件进清单，预览可点击并进入单文件
   const previewButton = page.getByRole("button", { name: "预览", exact: true });
   await expect(previewButton).toBeDisabled();
 
-  // 多选文件 input 是第一个隐藏 input（第二个是选择文件夹入口，webkitdirectory
-  // 属性只在点击该按钮时才 setAttribute，静态选择器区分不了，用 DOM 顺序）
-  const fileInput = page.locator('input[type="file"]').first();
+  // .md 多选 input 按 accept 属性锁定（媒体管线第三单起页面上方还有「图片
+  // 上传」小卡的图片 input，其 accept 为 image/*；选择文件夹入口的
+  // webkitdirectory 属性只在点击该按钮时才 setAttribute，静态选择器区分不了）
+  const fileInput = page.locator('input[type="file"][accept*="markdown"]');
   await fileInput.setInputFiles({
     name: "选择回归.md",
     mimeType: "text/markdown",

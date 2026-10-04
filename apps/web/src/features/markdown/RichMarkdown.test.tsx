@@ -223,14 +223,42 @@ describe("RichMarkdown：版式与强调指令", () => {
     expect(screen.getByText("右栏内容。")).toBeInTheDocument();
   });
 
-  it("::image 渲染本地图片并应用宽度", () => {
+  it("::image 渲染本地图片：blobs/ 前缀归一化为根相对路径并应用宽度", () => {
     const { container } = renderMd(
       '::image{src="blobs/fig-1.png" width="60%"}',
     );
     const img = container.querySelector("img");
     expect(img).not.toBeNull();
-    expect(img?.getAttribute("src")).toBe("blobs/fig-1.png");
+    // 服务端不变量：契约 src 前加 / 即根相对伺服 URL
+    expect(img?.getAttribute("src")).toBe("/blobs/fig-1.png");
     expect(img).toHaveStyle({ width: "60%" });
+  });
+
+  it("::image alt 透传（缺省「图片」），http(s) 绝对 URL 原样渲染", () => {
+    const { container } = renderMd(
+      [
+        '::image{src="https://example.com/fig.png" alt="直角三角形图示"}',
+        "",
+        '::image{src="blobs/media/0000000000000000000000000000000000000000000000000000000000000000.png"}',
+      ].join("\n"),
+    );
+    const imgs = container.querySelectorAll("img");
+    expect(imgs).toHaveLength(2);
+    expect(imgs[0]).toHaveAttribute("src", "https://example.com/fig.png");
+    expect(imgs[0]).toHaveAttribute("alt", "直角三角形图示");
+    expect(imgs[1]).toHaveAttribute("alt", "图片");
+  });
+
+  it("::image 加载失败切入占位（不裂图），并提示检查 src 是否已上传", () => {
+    const { container } = renderMd('::image{src="blobs/fig-1.png"}');
+    const img = container.querySelector("img");
+    expect(img).not.toBeNull();
+    fireEvent.error(img as HTMLImageElement);
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("图片加载失败");
+    expect(alert).toHaveTextContent("blobs/fig-1.png");
+    // 失败后不再渲染 <img> 本体（不用浏览器裂图）
+    expect(container.querySelector("img")).toBeNull();
   });
 
   it("::graph 渲染图像容器而不崩溃", () => {

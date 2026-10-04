@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { inflateRawSync } from "node:zlib";
 import type { LearningPack, LearningPackExportRequest } from "@tutor/contract";
 import {
@@ -8,16 +9,18 @@ import {
 import { and, eq } from "drizzle-orm";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { Db } from "../db/client";
-import { attempts } from "../db/schema";
+import { attempts, lectures } from "../db/schema";
 import { createTestDb, createTestDir, TEST_TEACHER_ID } from "../db/test-utils";
 import { HttpError } from "../lib/http-error";
 import { submitAttempt } from "./attempt-service";
 import {
   assembleLearningPack,
   buildLearningPackZip,
+  extractMediaImageSrcs,
   previewLearningPack,
 } from "./export-service";
 import { saveInk } from "./ink-service";
+import { saveMedia } from "./media-service";
 import { type SeedDemoResult, seedDemoData } from "./seed-demo";
 
 /**
@@ -585,5 +588,163 @@ describe("教师域隔离（D7）", () => {
     expect(pack.attempts?.responses).toEqual([]);
     expect(pack.summary?.overall.attemptCount).toBe(0);
     expect(assembly.packJson).not.toContain(seed.assignments.a1.id);
+  });
+});
+
+// ---------- 媒体管线第三单：::image 引用的图片进学习包 ----------
+
+describe("::image 配图进学习包（媒体管线第三单）", () => {
+  /** 已落盘图片的 src 与字节（saveMedia 内容寻址返回） */
+  let mediaSrc: string;
+  let mediaBytes: Uint8Array;
+  /** 含三类 ::image 引用的讲义 id（命中 / 合法形态但缺文件 / 旧式路径） */
+  const picLectureId = "0e8d6b1e-7f3a-4c2d-9b5e-1a2b3c4d5e6f";
+
+  beforeAll(() => {
+    mediaBytes = fakePng();
+    mediaSrc = saveMedia(dataDir, mediaBytes).src;
+    db.insert(lectures)
+      .values({
+        id: picLectureId,
+        teacherId: TEST_TEACHER_ID,
+        courseId: null,
+        folderId: null,
+        title: "第9讲 配图讲义",
+        markdown: [
+          "# 第9讲 配图讲义",
+          "",
+          "## 插图小节",
+          "",
+          `::image{src="${mediaSrc}" alt="测试图"}`,
+          "",
+          '::image{src="blobs/media/ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff.png"}',
+          "",
+          '::image{src="blobs/fig-1.png"}',
+          "",
+        ].join("\n"),
+        order: 99,
+        updatedAt: "2026-10-01T00:00:00.000Z",
+        deletedAt: null,
+      })
+      .run();
+  });
+
+  /** 只勾选配图讲义第一节（全部 ::image 引用都在该节内） */
+  function mediaRequest(): LearningPackExportRequest {
+    return makeRequest({
+      modules: { lectures: [{ lectureId: picLectureId, sectionIndexes: [0] }] },
+    });
+  }
+
+  it("含图讲义导出：zip 含 blobs/media/<hash>.png 条目且逐字节一致；缺文件与旧式引用静默跳过", async () => {
+    const zip = await buildLearningPackZip(
+      db,
+      dataDir,
+      TEST_TEACHER_ID,
+      mediaRequest(),
+      { now: SEED_NOW },
+    );
+    const entries = unzipEntries(zip.bytes);
+    // 条目名 = src 原相对路径（zip 内含 blobs/media/ 子目录条目）
+    expect(entries.has(mediaSrc)).toBe(true);
+    expect(entries.get(mediaSrc)?.equals(Buffer.from(mediaBytes))).toBe(true);
+    // 合法形态但文件不存在（未上传）与旧式路径：不产生条目、不炸
+    const blobsNames = [...entries.keys()].filter((name) =>
+      name.startsWith("blobs/"),
+    );
+    expect(blobsNames).toEqual([mediaSrc]);
+  });
+
+  it("装配与 preview：media 条目进 files 清单；summary.md 列「讲义配图」；pack.json 形状不变", () => {
+    const assembly = assembleLearningPack(
+      db,
+      dataDir,
+      TEST_TEACHER_ID,
+      mediaRequest(),
+      { now: SEED_NOW },
+    );
+    expect(assembly.mediaEntries).toEqual([
+      {
+        entry: mediaSrc,
+        absPath: join(dataDir, ...mediaSrc.split("/")),
+        bytes: mediaBytes.byteLength,
+      },
+    ]);
+    expect(assembly.files).toContainEqual({
+      path: mediaSrc,
+      estimatedBytes: mediaBytes.byteLength,
+    });
+    expect(assembly.summaryMd).toContain("## 讲义配图（1 张）");
+    expect(assembly.summaryMd).toContain(`- ${mediaSrc}`);
+    const preview = previewLearningPack(
+      db,
+      dataDir,
+      TEST_TEACHER_ID,
+      mediaRequest(),
+      { now: SEED_NOW },
+    );
+    expect(preview.files.map((file) => file.path)).toContain(mediaSrc);
+    // pack.json 仍是契约形状（服务内已做往返校验，这里锁定讲义切片原文带引用）
+    const pack = learningPackSchema.parse(JSON.parse(assembly.packJson));
+    expect(pack.content?.lectures?.[0]?.sections?.[0]?.markdown).toContain(
+      mediaSrc,
+    );
+  });
+
+  it("无图文档：无 media 条目、files 无 blobs/ 路径、summary 不出现配图节（响应形状与现状一致）", () => {
+    const assembly = assembleLearningPack(
+      db,
+      dataDir,
+      TEST_TEACHER_ID,
+      makeRequest({
+        modules: {
+          lectures: [{ lectureId: seed.lectures.l1.id, sectionIndexes: [0] }],
+        },
+      }),
+      { now: SEED_NOW },
+    );
+    expect(assembly.mediaEntries).toEqual([]);
+    expect(assembly.files.some((file) => file.path.startsWith("blobs/"))).toBe(
+      false,
+    );
+    expect(assembly.summaryMd).not.toContain("讲义配图");
+  });
+});
+
+describe("extractMediaImageSrcs（::image 引用提取纯函数）", () => {
+  const H1 = "a".repeat(64);
+  const H2 = "0123456789abcdef".repeat(4);
+
+  it("提取严格形态引用：src 位置无关、去重保序", () => {
+    const md = [
+      `::image{src="blobs/media/${H1}.png"}`,
+      `::image{alt="前缀属性" src="blobs/media/${H2}.jpg"}`,
+      `::image{src="blobs/media/${H1}.png"}`, // 重复引用 → 只收集一份
+    ].join("\n\n");
+    expect(extractMediaImageSrcs([md])).toEqual([
+      `blobs/media/${H1}.png`,
+      `blobs/media/${H2}.jpg`,
+    ]);
+  });
+
+  it("非契约形态静默跳过（旧式路径/外链/大写 hash/短 hash/其他目录）", () => {
+    const md = [
+      '::image{src="blobs/fig-1.png"}',
+      '::image{src="https://example.com/a.png"}',
+      `::image{src="blobs/media/${H1.toUpperCase()}.png"}`,
+      `::image{src="blobs/media/${"a".repeat(63)}.png"}`,
+      '::image{src="blobs/ink/whatever.png"}',
+      '正文里没有指令的 src="blobs/media/…" 不算数',
+    ].join("\n");
+    expect(extractMediaImageSrcs([md])).toEqual([]);
+  });
+
+  it("跨多段文本收集且不重复；题干/详解形态的题目 md 同样命中", () => {
+    const stem = `题干：观察下图。::image{src="blobs/media/${H1}.webp"}`;
+    const solution = `详解：如图。::image{src="blobs/media/${H2}.gif"}`;
+    expect(extractMediaImageSrcs([stem, solution, stem])).toEqual([
+      `blobs/media/${H1}.webp`,
+      `blobs/media/${H2}.gif`,
+    ]);
   });
 });

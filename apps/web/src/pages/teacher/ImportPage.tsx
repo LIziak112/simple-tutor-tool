@@ -20,6 +20,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { AiPromptPanel } from "@/features/content/AiPromptPanel";
 import { useContentTree } from "@/features/content/content-queries";
+import { MediaUploadCard } from "@/features/content/MediaUploadCard";
 import { useLibraryFolders } from "@/features/library/library-queries";
 import { ApiError, createLibraryFolderApi } from "@/lib/api";
 import { randomUuid } from "@/lib/uuid";
@@ -399,6 +400,11 @@ export function ImportPage() {
           {/* AI 出题助手（T1.13）：复制「规范+样例+模板」提示词给 AI，产出可导入文档 */}
           <div className="mt-4">
             <AiPromptPanel />
+          </div>
+
+          {/* 图片上传（媒体管线第三单）：上传配图并复制 ::image 片段进 Markdown */}
+          <div className="mt-4">
+            <MediaUploadCard />
           </div>
 
           <div className="mt-4 flex flex-col gap-4 rounded-xl border border-border bg-card p-4">

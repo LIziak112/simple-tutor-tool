@@ -68,7 +68,8 @@ import { computeAttemptTraceMetrics } from "./trace-metrics";
  *
  * 分层：
  * - assembleLearningPack：范围解析（域校验 404）→ 装配 pack.json / summary.md /
- *   prompt.md / schema.json / 映射.txt / ink 清单与预估大小（preview 与生成共用）；
+ *   prompt.md / schema.json / 映射.txt / ink 与 media 清单及预估大小
+ *   （preview 与生成共用）；
  * - previewLearningPack：装配 + 文件清单响应（超限不报错，D18 由向导提示精简）；
  * - buildLearningPackZip：装配 + 50MB 预检（超限 413 EXPORT_TOO_LARGE）+
  *   archiver 打包为内存 Buffer（上限内的一对一规模，无需落盘临时文件）。
@@ -246,6 +247,31 @@ function sectionRangesOf(markdown: string): Array<[number, number]> {
   });
 }
 
+// ---------- ::image 图片引用提取（学习包 media 条目） ----------
+
+/**
+ * 从进入 pack 的 markdown 文本提取 ::image 引用的图片 src（严格契约形态）。
+ * 导出层用单一正则扫指令行的 src 值、不引入 md-dsl 解析器依赖——这里只需要
+ * 「哪些文件要打进 zip」这一份清单，完整指令语义（未知属性降级等）由解析/
+ * 渲染层负责；正则按契约 MEDIA_SRC_PATTERN 的严格形态匹配（64 位小写 hex +
+ * 白名单扩展名），旧式 blobs/fig-1.png 等无内容寻址文件可寻的引用静默跳过。
+ */
+export function extractMediaImageSrcs(markdowns: readonly string[]): string[] {
+  // 字面量求值即新对象（非模块级共享）：/g 正则被 matchAll 提前中止会留下
+  // 非零 lastIndex，共享实例会跨调用串状态
+  const pattern =
+    /::image\{[^}\n]*?\bsrc="(blobs\/media\/[0-9a-f]{64}\.(?:png|jpe?g|webp|gif))"/g;
+  const seen = new Set<string>();
+  for (const md of markdowns) {
+    for (const match of md.matchAll(pattern)) {
+      const src = match[1];
+      if (src !== undefined) seen.add(src);
+    }
+  }
+  // Set 保插入序：同图多处引用只收集一次，条目顺序稳定可测
+  return [...seen];
+}
+
 // ---------- 装配 ----------
 
 /** 装配结果：pack 各文件内容 + ink 清单（zip 写入与 preview 共用） */
@@ -260,6 +286,16 @@ export interface LearningPackAssembly {
   readonly mappingTxt: string | null;
   /** ink 条目：zip 路径 + 绝对路径 + 实测字节数（statSync；缺文件已跳过） */
   readonly inkEntries: ReadonlyArray<{
+    readonly entry: string;
+    readonly absPath: string;
+    readonly bytes: number;
+  }>;
+  /**
+   * media 条目（媒体管线第三单）：进入 pack 的 md 中 ::image 引用的图片。
+   * zip 路径即契约 src 相对路径（blobs/media/<hash>.<ext>，zip 内含子目录
+   * 条目）；缺文件已跳过（同 ink 口径）。
+   */
+  readonly mediaEntries: ReadonlyArray<{
     readonly entry: string;
     readonly absPath: string;
     readonly bytes: number;
@@ -579,6 +615,38 @@ export function assembleLearningPack(
       if (metaB !== undefined) return 1;
       return a.questionId.localeCompare(b.questionId);
     });
+  }
+
+  // —— media 条目（媒体管线第三单：::image 引用的图片打进 zip，条目名 = src 原相对路径） ——
+  const mediaEntries: Array<{ entry: string; absPath: string; bytes: number }> =
+    [];
+  {
+    // 扫描**进入 pack 的全部 md 文本**（讲义切片全文、题干与详解——按勾选
+    // 模块实际收录的文本扫，未勾选模块的 md 不进包也不带图）
+    const mdTexts: string[] = [];
+    for (const item of lectureItems) {
+      for (const section of item.sections) mdTexts.push(section.markdown);
+    }
+    if (m.questions !== undefined) {
+      for (const item of questionItems) {
+        mdTexts.push(item.stemMd);
+        if (item.solutionMd !== undefined) mdTexts.push(item.solutionMd);
+      }
+    }
+    const mediaRoot = resolve(dataDir, "blobs", "media");
+    for (const src of extractMediaImageSrcs(mdTexts)) {
+      const absPath = resolve(dataDir, ...src.split("/"));
+      // 理论不可达（扫描正则已限定单段内容寻址形态，无穿越空间）：路径必须
+      // 落在 blobs/media/ 内，越界按缺文件跳过（不炸，与缺文件同口径）
+      if (!absPath.startsWith(mediaRoot)) continue;
+      let bytes: number;
+      try {
+        bytes = statSync(absPath).size;
+      } catch {
+        continue; // 图片文件缺失（未上传过/已清理）：跳过该条目（同 ink 缺文件口径）
+      }
+      mediaEntries.push({ entry: src, absPath, bytes });
+    }
   }
 
   // —— attempts.responses / attempts.summaries / traces.questions 共用的逐题行序 ——
@@ -1040,6 +1108,7 @@ export function assembleLearningPack(
     traceRows,
     lectureTraceRows,
     inkEntries,
+    mediaEntries,
     displayNameOf,
     nowIso,
   });
@@ -1066,6 +1135,10 @@ export function assembleLearningPack(
   for (const entry of inkEntries) {
     files.push({ path: entry.entry, estimatedBytes: entry.bytes });
   }
+  // media 条目（::image 引用的图片）：preview 清单与大小预检与 ink 同口径
+  for (const entry of mediaEntries) {
+    files.push({ path: entry.entry, estimatedBytes: entry.bytes });
+  }
   const totalBytes = files.reduce((sum, file) => sum + file.estimatedBytes, 0);
 
   return {
@@ -1075,6 +1148,7 @@ export function assembleLearningPack(
     schemaJson,
     mappingTxt,
     inkEntries,
+    mediaEntries,
     files,
     totalBytes,
     displayNameOf,
@@ -1094,6 +1168,8 @@ interface SummaryMdInput {
   readonly traceRows: readonly LearningPackQuestionTrace[];
   readonly lectureTraceRows: readonly LearningPackLectureTrace[];
   readonly inkEntries: ReadonlyArray<{ readonly entry: string }>;
+  /** ::image 引用的图片条目（媒体管线第三单；无图为空数组，section 不出现） */
+  readonly mediaEntries: ReadonlyArray<{ readonly entry: string }>;
   readonly displayNameOf: ReadonlyMap<string, string>;
   readonly nowIso: string;
 }
@@ -1289,6 +1365,16 @@ function renderSummaryMd(input: SummaryMdInput): string {
     lines.push("");
   }
 
+  // 讲义/题目里的 ::image 配图（有图才出现；无图响应形状与现状一致）
+  if (input.mediaEntries.length > 0) {
+    lines.push(`## 讲义配图（${input.mediaEntries.length} 张）`);
+    lines.push("");
+    for (const entry of input.mediaEntries) {
+      lines.push(`- ${entry.entry}`);
+    }
+    lines.push("");
+  }
+
   return `${lines.join("\n")}\n`;
 }
 
@@ -1338,7 +1424,8 @@ export interface LearningPackZip {
  * POST /api/teacher/export/learning-pack：装配 + 50MB 预检（超限 413
  * EXPORT_TOO_LARGE，中文说明含精简方向，D18）+ archiver 打包。
  * zip 结构（顶层）：pack.json / summary.md / prompt.md / schema.json /
- * 映射.txt（化名模式）/ ink/*.png（勾选）。
+ * 映射.txt（化名模式）/ ink/*.png（勾选）/ blobs/media/<hash>.<ext>
+ * （md 中 ::image 引用的图片，条目名即契约 src 相对路径）。
  */
 export async function buildLearningPackZip(
   db: Db,
@@ -1387,6 +1474,10 @@ export async function buildLearningPackZip(
     });
   }
   for (const entry of assembly.inkEntries) {
+    archive.file(entry.absPath, { name: entry.entry });
+  }
+  // media 条目：条目名含子目录（blobs/media/…），archiver 按路径写目录条目
+  for (const entry of assembly.mediaEntries) {
     archive.file(entry.absPath, { name: entry.entry });
   }
   await archive.finalize();

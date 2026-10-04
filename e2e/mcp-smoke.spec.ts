@@ -15,7 +15,7 @@ import { createStudentViaApi, teacherApiLogin, uniqueSuffix } from "./helpers";
 /** 与 playwright.config.ts 保持一致（server 直连地址） */
 const MCP_URL = "http://127.0.0.1:8899/mcp";
 
-/** D23 定稿的 11 个工具名（与服务端 mcp.test.ts 同清单） */
+/** 12 个工具名：D23 定稿 11 个 + 媒体管线第三单 upload_image（与服务端 mcp.test.ts 同清单） */
 const EXPECTED_TOOLS = [
   "get_dsl_spec",
   "lint_markdown",
@@ -28,6 +28,7 @@ const EXPECTED_TOOLS = [
   "get_student_learning_pack",
   "get_question_stats",
   "save_report",
+  "upload_image",
 ].sort();
 
 /** JSON-RPC 请求体构造 */
@@ -59,7 +60,7 @@ async function postRpc(
 }
 
 test.describe("MCP 工具冒烟（T4.7：initialize / tools/list / list_students）", () => {
-  test("教师 token 经 /mcp 完成 initialize → 11 工具清单 → list_students 见本域学生", async ({
+  test("教师 token 经 /mcp 完成 initialize → 12 工具清单 → list_students 见本域学生", async ({
     request,
   }) => {
     test.setTimeout(60_000);

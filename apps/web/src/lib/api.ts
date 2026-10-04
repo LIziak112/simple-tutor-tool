@@ -71,6 +71,7 @@ import {
   type LibraryUsage,
   type MarkRequest,
   type MarkResponseData,
+  type MediaUploadResult,
   type PendingMarkListData,
   type PublicConfigData,
   type QuestionDetail,
@@ -970,6 +971,26 @@ export async function fetchTeacherInkStrokesApi(
   } catch {
     throw new Error("笔迹矢量数据损坏（不是合法的 JSON），请反馈老师处理");
   }
+}
+
+// ---------- 图片上传（媒体管线第三单：::image 的图片来源入口） ----------
+
+/**
+ * 上传一张图片（multipart 字段 file；PNG/JPG/WEBP/GIF，≤5MB），返回
+ * { src, bytes }——src 即 ::image 指令的 src（blobs/media/<hash>.<ext>，
+ * 渲染层归一化为根相对路径后请求）。
+ * 说明：服务端 handler 用 c.req.parseBody() 解析 multipart，hc RPC 对这类
+ * 路由推断不出 form 入参类型——与 putAttemptInkApi 同口径改用同构 fetch
+ * （同源相对路径自动带会话 Cookie），响应仍走 callApi 的统一壳校验。
+ * 失败抛 ApiError（message 为服务端中文文案：413 MEDIA_TOO_LARGE /
+ * 415 UNSUPPORTED_MEDIA_TYPE）或网络层中文 Error，由调用方原样透出。
+ */
+export function postTeacherMediaApi(file: File): Promise<MediaUploadResult> {
+  const form = new FormData();
+  form.append("file", file);
+  return callApi(() =>
+    fetch("/api/teacher/media", { method: "POST", body: form }),
+  );
 }
 
 // ---------- T2A.2：资源库（讲义库 / 题库 / 回收站 + 单元管理） ----------

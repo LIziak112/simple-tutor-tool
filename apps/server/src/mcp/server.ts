@@ -22,12 +22,13 @@ import {
   type LearningPackServiceOptions,
 } from "../services/export-service";
 import { exportLectureMd, exportUnitMd } from "../services/library-service";
+import { saveMedia } from "../services/media-service";
 import { createReport } from "../services/report-service";
 import { listStudents } from "../services/student-service";
 import { readSpecFile } from "../spec-files";
 
 /**
- * MCP 工具注册（T4.6，D23 清单定稿 11 个全部实现）。
+ * MCP 工具注册（T4.6，D23 清单定稿 11 个 + 媒体管线第三单增补 upload_image）。
  *
  * 全部工具绑定 token 教师域（teacherId 来自鉴权中间件，不信任客户端入参）；
  * 返回统一用 SDK content 结构（text；JSON 数据序列化后作为文本——AI 阅读
@@ -35,7 +36,8 @@ import { readSpecFile } from "../spec-files";
  * 转结构化错误文本（isError + {error, message}），lint 错误清单原样透传
  * （复用 T2A「复制错误给 AI」的思想）。
  *
- * 红线：除 import_markdown(confirm=true) 与 save_report 外无任何写操作；
+ * 红线：除 import_markdown(confirm=true)、save_report 与 upload_image
+ * （图片内容寻址落盘 DATA_DIR，不写数据库）外无任何写操作；
  * 不提供任何删除类工具（D23）。
  */
 
@@ -146,7 +148,7 @@ function packRequestDefaults() {
 // ---------- 工具注册 ----------
 
 /**
- * 创建一台绑定单教师的 MCP 服务器实例（11 工具）。
+ * 创建一台绑定单教师的 MCP 服务器实例（12 工具）。
  * stateless 挂载下每个 HTTP 请求新建一个实例（注册开销可忽略，无跨请求状态）。
  */
 export function createMcpServer(deps: McpServerDeps): McpServer {
@@ -537,6 +539,54 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
         "mcp",
       );
       return jsonContent({ saved: true, report });
+    }),
+  );
+
+  // 12. upload_image：base64 图片字节 → saveMedia 内容寻址落盘 → ::image 的 src
+  server.registerTool(
+    "upload_image",
+    {
+      description:
+        "上传一张图片供 ::image 指令引用（PNG/JPG/WEBP/GIF，≤5MB）。入参为图片字节的 base64 编码；成功返回 { src, bytes }，在 ::image 指令的 src 属性使用该路径即可。内容寻址幂等：同一张图重复上传返回相同 src。",
+      inputSchema: {
+        dataBase64: z
+          .string()
+          .min(1)
+          .describe(
+            "图片字节的 base64 编码（标准字母表 A-Z a-z 0-9 + / 与 = 填充，可含换行空白）",
+          ),
+        filename: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("文件名（可选，仅用于错误提示定位）"),
+      },
+      // 写操作但非破坏性：只新增 blobs/media 内容寻址文件，不覆盖不删除
+      annotations: { destructiveHint: false },
+    },
+    guard(({ dataBase64, filename }) => {
+      const nameHint = filename !== undefined ? `「${filename}」` : "图片";
+      // 容忍传输层折行（长 base64 常被换行），剥离空白后整体校验标准形态；
+      // url-safe（-/_）等其他编码不给静默误解码，直接中文报错指导重新编码
+      const compact = dataBase64.replace(/\s+/g, "");
+      if (
+        compact.length === 0 ||
+        compact.length % 4 !== 0 ||
+        !/^[A-Za-z0-9+/]+={0,2}$/.test(compact)
+      ) {
+        throw new HttpError(
+          400,
+          "INVALID_BASE64",
+          `${nameHint}的 dataBase64 不是合法 base64（需标准字母表 A-Z a-z 0-9 + / 与至多两个 = 填充），请重新编码后重试`,
+        );
+      }
+      const bytes = new Uint8Array(Buffer.from(compact, "base64"));
+      // saveMedia：魔数白名单外 415、超 5MB 413（HttpError 经 guard 转结构化错误）
+      const result = saveMedia(dataDir, bytes);
+      return jsonContent({
+        ...result,
+        usage: `在 ::image 指令的 src 属性使用该路径，如 ::image{src="${result.src}" alt="图示"}`,
+      });
     }),
   );
 
