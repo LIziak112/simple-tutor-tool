@@ -1,17 +1,26 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { crc32 } from "node:zlib";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { TextContent } from "@modelcontextprotocol/sdk/types.js";
 import type { ApiErr, ReportListData } from "@tutor/contract";
+import { ZipArchive } from "archiver";
 import { eq } from "drizzle-orm";
 import type { Logger } from "pino";
 import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client.ts";
-import { students, teachers, units } from "../db/schema.ts";
+import {
+  imports,
+  lectures,
+  questions,
+  students,
+  teachers,
+  units,
+} from "../db/schema.ts";
 import {
   createTestDb,
   createTestDir,
@@ -302,7 +311,7 @@ describe("MCP 鉴权（T4.6 D22）", () => {
 });
 
 describe("MCP 工具（SDK 客户端逐个断言，T4.6 D23）", () => {
-  it("tools/list 列出 12 个工具（D23 定稿 11 个 + 媒体管线 upload_image）", async () => {
+  it("tools/list 列出 13 个工具（D23 定稿 11 个 + upload_image + import_zip）", async () => {
     const env = await makeEnv();
     const client = await connectClient(env, env.tokenA);
     const list = await client.listTools();
@@ -321,6 +330,7 @@ describe("MCP 工具（SDK 客户端逐个断言，T4.6 D23）", () => {
         "get_question_stats",
         "save_report",
         "upload_image",
+        "import_zip",
       ].sort(),
     );
     await client.close();
@@ -758,6 +768,582 @@ describe("MCP import_markdown 图片存在性核对贯通（IMAGE_SRC_NOT_FOUND�
     };
     expect(confirmedData.confirmed).toBe(true);
     expect(confirmedData.report.lectures).toHaveLength(1);
+    await client.close();
+  });
+});
+
+describe("MCP import_zip（AI 侧 zip 打包上传导入）", () => {
+  /**
+   * 验收口径（任务定稿）：
+   * - dry-run 零写入（库表与 blobs/media 均无变化），报告含逐 md 预览与
+   *   配对 / 冲突 / 未配对 / 不上传 / 已忽略清单；
+   * - confirm：被引用图片落盘、题目 sourceMd 已改写为新哈希、未引用图片不上传、
+   *   同图多 md 只传一次、未配对引用进 unresolvedRefs；
+   * - 坏 base64 / 非 zip / 损坏 zip / 超限 / 危险条目名 → 结构化中文错误；
+   * - basename 冲突不配对不改写；部分失败（魔数非法 / lint error）不回滚其余。
+   */
+
+  /** 用 archiver 现打 zip（与 zip-read.test.ts 同款写入端） */
+  async function zipOf(
+    files: ReadonlyArray<{ name: string; data: Buffer }>,
+  ): Promise<Buffer> {
+    const archive = new ZipArchive({ zlib: { level: 6 } });
+    const chunks: Buffer[] = [];
+    archive.on("data", (chunk: Buffer) => chunks.push(chunk));
+    const done = new Promise<void>((resolve, reject) => {
+      archive.on("end", () => resolve());
+      archive.on("error", (err: Error) => reject(err));
+    });
+    for (const file of files) {
+      archive.append(file.data, { name: file.name });
+    }
+    await archive.finalize();
+    await done;
+    return Buffer.concat(chunks);
+  }
+
+  /**
+   * 手工 stored zip（危险条目名专用）：archiver 会清洗 ../ 名，只能按 zip 格式
+   * 规范手打（本地头 + 中央目录 + EOCD，逐条 CRC 正确——除名字外是合法 zip）。
+   */
+  function rawStoredZip(
+    files: ReadonlyArray<{ name: string; data: Buffer }>,
+  ): Buffer {
+    const u16 = (v: number) => {
+      const b = Buffer.alloc(2);
+      b.writeUInt16LE(v);
+      return b;
+    };
+    const u32 = (v: number) => {
+      const b = Buffer.alloc(4);
+      b.writeUInt32LE(v);
+      return b;
+    };
+    const locals: Buffer[] = [];
+    const centrals: Buffer[] = [];
+    let offset = 0;
+    for (const { name, data } of files) {
+      const nameBuf = Buffer.from(name, "utf8");
+      const crc = crc32(data);
+      const local = Buffer.concat([
+        u32(0x04034b50),
+        u16(20),
+        u16(0x0800),
+        u16(0),
+        u16(0),
+        u16(0),
+        u32(crc),
+        u32(data.length),
+        u32(data.length),
+        u16(nameBuf.length),
+        u16(0),
+        nameBuf,
+        data,
+      ]);
+      locals.push(local);
+      centrals.push(
+        Buffer.concat([
+          u32(0x02014b50),
+          u16(20),
+          u16(20),
+          u16(0x0800),
+          u16(0),
+          u16(0),
+          u16(0),
+          u32(crc),
+          u32(data.length),
+          u32(data.length),
+          u16(nameBuf.length),
+          u16(0),
+          u16(0),
+          u16(0),
+          u16(0),
+          u32(0),
+          u32(offset),
+          nameBuf,
+        ]),
+      );
+      offset += local.length;
+    }
+    const cd = Buffer.concat(centrals);
+    return Buffer.concat([
+      ...locals,
+      cd,
+      u32(0x06054b50),
+      u16(0),
+      u16(0),
+      u16(files.length),
+      u16(files.length),
+      u32(cd.length),
+      u32(offset),
+      u16(0),
+    ]);
+  }
+
+  /** 最小 PNG 字节（魔数 + 填充；saveMedia 只看魔数） */
+  function pngBytes(fill = 0xab): Buffer {
+    return Buffer.concat([
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      Buffer.alloc(16, fill),
+    ]);
+  }
+
+  /** 带配图题目的练习文档（::image src 为任意本地文件名，交给配对改写） */
+  function practiceMdWithImages(
+    unitId: string,
+    srcs: readonly string[],
+  ): string {
+    return [
+      "---",
+      "kind: practice",
+      `unit: ${unitId}`,
+      "---",
+      "",
+      "::::question{type=judge difficulty=1}",
+      "",
+      "判断：下图所示成立。",
+      "",
+      ...srcs.map((src) => `::image{src="${src}"}`),
+      "",
+      "[[正确]]",
+      "",
+      "::::",
+      "",
+    ].join("\n");
+  }
+
+  /** blobs/media 现有文件名清单（目录不存在 = 空清单；零写入断言用） */
+  function mediaFiles(dataDir: string): string[] {
+    const dir = join(dataDir, "blobs", "media");
+    return existsSync(dir) ? readdirSync(dir).sort() : [];
+  }
+
+  /** 库表行数快照（零写入断言用） */
+  function libraryCounts(env: McpEnv) {
+    return {
+      units: env.db.select({ id: units.id }).from(units).all().length,
+      questions: env.db.select({ id: questions.id }).from(questions).all()
+        .length,
+      lectures: env.db.select({ id: lectures.id }).from(lectures).all().length,
+      imports: env.db.select({ id: imports.id }).from(imports).all().length,
+    };
+  }
+
+  it("dry-run：零写入；配对/冲突/未配对/不上传/忽略清单正确；无 IMAGE_SRC_NOT_FOUND 误导", async () => {
+    const env = await makeEnv();
+    const before = { ...libraryCounts(env), media: mediaFiles(env.dataDir) };
+    const client = await connectClient(env, env.tokenA);
+
+    const md = practiceMdWithImages("zip-dry-unit", [
+      "pics/fig1.png",
+      "fig2.png",
+      "dup.png",
+      "missing.png",
+      "https://ext.example.com/x.png",
+    ]);
+    const zip = await zipOf([
+      { name: "chapter/练习.md", data: Buffer.from(md, "utf8") },
+      { name: "pics/fig1.png", data: pngBytes(1) },
+      { name: "assets/fig2.png", data: pngBytes(2) },
+      { name: "a/dup.png", data: pngBytes(3) },
+      { name: "b/dup.png", data: pngBytes(4) },
+      { name: "unreferenced.png", data: pngBytes(5) },
+      { name: "notes.txt", data: Buffer.from("备注", "utf8") },
+    ]);
+    const dry = await client.callTool({
+      name: "import_zip",
+      arguments: { dataBase64: zip.toString("base64"), filename: "讲义包.zip" },
+    });
+    expect(dry.isError).toBeFalsy();
+    const data = JSON.parse(textOf(dry)) as {
+      confirmed: boolean;
+      dryRun: boolean;
+      zipName: string;
+      files: Array<{
+        path: string;
+        summary: { questionCount: number };
+        issues: Array<{ code: string }>;
+        actions: Array<{ kind: string }>;
+        images: {
+          paired: Array<{ src: string; zipEntry: string }>;
+          conflicts: Array<{ src: string; name: string }>;
+          unmatched: string[];
+        };
+      }>;
+      images: {
+        uploadCount: number;
+        uploads: Array<{
+          zipEntry: string;
+          bytes: number;
+          referencedSrcs: string[];
+        }>;
+        conflicts: Array<{ src: string; name: string }>;
+        unmatched: string[];
+        notReferenced: string[];
+      };
+      ignoredFiles: string[];
+      notice: string;
+    };
+    expect(data.confirmed).toBe(false);
+    expect(data.dryRun).toBe(true);
+    expect(data.zipName).toBe("讲义包.zip");
+    expect(data.notice).toContain("confirm=true");
+
+    // 逐 md：路径 + 摘要 + 动作清单；dry-run 不做图片存在性核对（图还没传）
+    const file = data.files[0];
+    expect(file?.path).toBe("chapter/练习.md");
+    expect(file?.summary.questionCount).toBe(1);
+    expect(file?.actions.some((a) => a.kind === "createUnit")).toBe(true);
+    expect(file?.issues.some((i) => i.code === "IMAGE_SRC_NOT_FOUND")).toBe(
+      false,
+    );
+    // 该文件的配对视图：精确 / basename / 冲突 / 未配对（含外链）
+    expect(file?.images.paired).toEqual([
+      { src: "pics/fig1.png", zipEntry: "pics/fig1.png" },
+      { src: "fig2.png", zipEntry: "assets/fig2.png" },
+    ]);
+    expect(file?.images.conflicts).toEqual([
+      { src: "dup.png", name: "dup.png" },
+    ]);
+    expect(file?.images.unmatched).toEqual([
+      "missing.png",
+      "https://ext.example.com/x.png",
+    ]);
+
+    // 全局图片总览
+    expect(data.images.uploadCount).toBe(2);
+    expect(data.images.uploads).toEqual([
+      {
+        zipEntry: "pics/fig1.png",
+        bytes: pngBytes(1).byteLength,
+        referencedSrcs: ["pics/fig1.png"],
+      },
+      {
+        zipEntry: "assets/fig2.png",
+        bytes: pngBytes(2).byteLength,
+        referencedSrcs: ["fig2.png"],
+      },
+    ]);
+    expect(data.images.conflicts).toEqual([
+      { src: "dup.png", name: "dup.png" },
+    ]);
+    expect(data.images.unmatched).toEqual([
+      "missing.png",
+      "https://ext.example.com/x.png",
+    ]);
+    expect(data.images.notReferenced).toEqual(["unreferenced.png"]);
+    expect(data.ignoredFiles).toEqual(["notes.txt"]);
+
+    // 零写入：库表与 blobs/media 均无变化
+    expect(libraryCounts(env)).toEqual({
+      units: before.units,
+      questions: before.questions,
+      lectures: before.lectures,
+      imports: before.imports,
+    });
+    expect(mediaFiles(env.dataDir)).toEqual(before.media);
+    await client.close();
+  });
+
+  it("confirm：md 导入成功、被引用图片落盘且 sourceMd 改写为新哈希、未引用图片不上传", async () => {
+    const env = await makeEnv();
+    const client = await connectClient(env, env.tokenA);
+    const md = practiceMdWithImages("zip-confirm-unit", ["img/fig.png"]);
+    const zip = await zipOf([
+      { name: "练习.md", data: Buffer.from(md, "utf8") },
+      { name: "img/fig.png", data: pngBytes(9) },
+      { name: "unused.png", data: pngBytes(8) },
+    ]);
+    const res = await client.callTool({
+      name: "import_zip",
+      arguments: { dataBase64: zip.toString("base64"), confirm: true },
+    });
+    expect(res.isError).toBeFalsy();
+    const data = JSON.parse(textOf(res)) as {
+      confirmed: boolean;
+      images: {
+        uploaded: number;
+        failed: number;
+        results: Array<{
+          zipEntry: string;
+          src: string | null;
+          error: { code: string } | null;
+        }>;
+      };
+      files: Array<{
+        ok: boolean;
+        path: string;
+        unresolvedRefs: string[];
+        report: { units: Array<{ id: string }> };
+      }>;
+    };
+    expect(data.confirmed).toBe(true);
+    expect(data.images.uploaded).toBe(1);
+    expect(data.images.failed).toBe(0);
+    const uploaded = data.images.results[0];
+    expect(uploaded?.zipEntry).toBe("img/fig.png");
+    expect(uploaded?.src).toMatch(/^blobs\/media\/[0-9a-f]{64}\.png$/);
+    expect(uploaded?.error).toBeNull();
+
+    // 被引用图片落盘且逐字节一致；未引用图片不上传（blobs/media 只此一个文件）
+    const realSrc = uploaded?.src ?? "";
+    const file = join(env.dataDir, ...realSrc.split("/"));
+    expect(existsSync(file)).toBe(true);
+    expect(readFileSync(file).equals(pngBytes(9))).toBe(true);
+    expect(mediaFiles(env.dataDir)).toEqual([realSrc.split("/").pop()]);
+
+    // 题目 sourceMd 已改写为新哈希、不再含原引用
+    const rows = env.db
+      .select()
+      .from(questions)
+      .where(eq(questions.unitId, "zip-confirm-unit"))
+      .all();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.sourceMd).toContain(realSrc);
+    expect(rows[0]?.sourceMd).not.toContain('src="img/fig.png"');
+
+    // 导入成功 + imports 留档 sourcePath = zip:<zip内路径>
+    const fileReport = data.files[0];
+    expect(fileReport?.ok).toBe(true);
+    expect(fileReport?.path).toBe("练习.md");
+    expect(fileReport?.unresolvedRefs).toEqual([]);
+    expect(
+      fileReport?.report.units.some((u) => u.id === "zip-confirm-unit"),
+    ).toBe(true);
+    const importRows = env.db
+      .select()
+      .from(imports)
+      .where(eq(imports.teacherId, TEST_TEACHER_ID))
+      .all();
+    expect(importRows.some((row) => row.sourcePath === "zip:练习.md")).toBe(
+      true,
+    );
+    await client.close();
+  });
+
+  it("confirm：同图多 md 只传一次；未配对引用原样保留进 unresolvedRefs（不阻断导入）", async () => {
+    const env = await makeEnv();
+    const client = await connectClient(env, env.tokenA);
+    const orphan = `blobs/media/${"cd".repeat(32)}.png`;
+    const mdA = practiceMdWithImages("zip-multi-a", ["shared.png", orphan]);
+    const mdB = practiceMdWithImages("zip-multi-b", ["img/shared.png"]);
+    const zip = await zipOf([
+      { name: "a.md", data: Buffer.from(mdA, "utf8") },
+      { name: "b.md", data: Buffer.from(mdB, "utf8") },
+      { name: "img/shared.png", data: pngBytes(7) },
+    ]);
+    const res = await client.callTool({
+      name: "import_zip",
+      arguments: { dataBase64: zip.toString("base64"), confirm: true },
+    });
+    expect(res.isError).toBeFalsy();
+    const data = JSON.parse(textOf(res)) as {
+      images: {
+        uploaded: number;
+        results: Array<{
+          zipEntry: string;
+          src: string | null;
+          referencedSrcs: string[];
+        }>;
+      };
+      files: Array<{
+        ok: boolean;
+        path: string;
+        unresolvedRefs: string[];
+      }>;
+    };
+    // 一个 zip 条目、两个 src 引用（basename + 精确各一）→ 只上传一次
+    expect(data.images.uploaded).toBe(1);
+    expect(data.images.results).toHaveLength(1);
+    expect(data.images.results[0]?.referencedSrcs).toEqual([
+      "shared.png",
+      "img/shared.png",
+    ]);
+    const realSrc = data.images.results[0]?.src ?? "";
+    // 两份 md 都成功导入；a.md 的未配对（严格形态哈希）引用原样保留
+    expect(data.files.map((f) => f.ok)).toEqual([true, true]);
+    const fileA = data.files[0];
+    expect(fileA?.unresolvedRefs).toEqual([orphan]);
+    expect(data.files[1]?.unresolvedRefs).toEqual([]);
+    // a.md 的题目 sourceMd：shared.png 已改写、orphan 原样保留
+    const rowsA = env.db
+      .select()
+      .from(questions)
+      .where(eq(questions.unitId, "zip-multi-a"))
+      .all();
+    expect(rowsA[0]?.sourceMd).toContain(realSrc);
+    expect(rowsA[0]?.sourceMd).toContain(orphan);
+    // blobs/media 只有一个文件（内容寻址去重）
+    expect(mediaFiles(env.dataDir)).toEqual([realSrc.split("/").pop()]);
+    await client.close();
+  });
+
+  it("坏 base64 / 非 zip / 损坏 zip / 超限 / 危险条目名 → 结构化中文错误", async () => {
+    const env = await makeEnv();
+    const client = await connectClient(env, env.tokenA);
+    const call = async (args: Record<string, unknown>) => {
+      const res = await client.callTool({
+        name: "import_zip",
+        arguments: args,
+      });
+      expect(res.isError).toBe(true);
+      return JSON.parse(textOf(res)) as { error: string; message: string };
+    };
+
+    // 坏 base64（提示定位 zip 名）
+    const bad = await call({
+      dataBase64: "不是-base64!!",
+      filename: "资料包.zip",
+    });
+    expect(bad.error).toBe("INVALID_BASE64");
+    expect(bad.message).toContain("「资料包.zip」");
+
+    // 合法 base64 但不是 zip
+    const notZip = await call({
+      dataBase64: Buffer.from("plain text, definitely not a zip").toString(
+        "base64",
+      ),
+    });
+    expect(notZip.error).toBe("ZIP_INVALID");
+    expect(notZip.message.length).toBeGreaterThan(0);
+
+    // 损坏 zip（数据区首字节被翻转）
+    const zip = Buffer.from(
+      await zipOf([
+        { name: "a.md", data: Buffer.from("# a".repeat(200), "utf8") },
+      ]),
+    );
+    zip[35] = (zip[35] as number) ^ 0xff;
+    const corrupt = await call({ dataBase64: zip.toString("base64") });
+    expect(corrupt.error).toBe("ZIP_INVALID");
+
+    // 单文件超 5MB（提示定位条目名）
+    const oversized = await zipOf([
+      { name: "a.md", data: Buffer.from("# a", "utf8") },
+      { name: "big.png", data: Buffer.alloc(5 * 1024 * 1024 + 1, 7) },
+    ]);
+    const tooLarge = await call({
+      dataBase64: oversized.toString("base64"),
+    });
+    expect(tooLarge.error).toBe("ZIP_TOO_LARGE");
+    expect(tooLarge.message).toContain("big.png");
+
+    // 危险条目名（../x.md，手打 stored zip——archiver 会清洗该名）
+    const evil = rawStoredZip([
+      { name: "../x.md", data: Buffer.from("# evil", "utf8") },
+    ]);
+    const dangerous = await call({ dataBase64: evil.toString("base64") });
+    expect(dangerous.error).toBe("ZIP_INVALID");
+    expect(dangerous.message).toContain("../x.md");
+    expect(dangerous.message).toContain("不安全");
+    await client.close();
+  });
+
+  it("basename 冲突不配对：不改写、不上传，导入照常（原引用保留在 sourceMd）", async () => {
+    const env = await makeEnv();
+    const client = await connectClient(env, env.tokenA);
+    const md = practiceMdWithImages("zip-conflict-unit", ["dup.png"]);
+    const zip = await zipOf([
+      { name: "练习.md", data: Buffer.from(md, "utf8") },
+      { name: "a/dup.png", data: pngBytes(1) },
+      { name: "b/dup.png", data: pngBytes(2) },
+    ]);
+    const res = await client.callTool({
+      name: "import_zip",
+      arguments: { dataBase64: zip.toString("base64"), confirm: true },
+    });
+    expect(res.isError).toBeFalsy();
+    const data = JSON.parse(textOf(res)) as {
+      images: { uploaded: number; failed: number; results: unknown[] };
+      files: Array<{
+        ok: boolean;
+        unresolvedRefs: string[];
+        report: { units: Array<{ id: string }> };
+      }>;
+    };
+    // 冲突：不上传（零结果）、导入不受阻断
+    expect(data.images.uploaded).toBe(0);
+    expect(data.images.results).toEqual([]);
+    expect(data.files[0]?.ok).toBe(true);
+    expect(data.files[0]?.unresolvedRefs).toEqual(["dup.png"]);
+    expect(
+      data.files[0]?.report.units.some((u) => u.id === "zip-conflict-unit"),
+    ).toBe(true);
+    // 原引用原样保留；blobs/media 未产生任何文件
+    const rows = env.db
+      .select()
+      .from(questions)
+      .where(eq(questions.unitId, "zip-conflict-unit"))
+      .all();
+    expect(rows[0]?.sourceMd).toContain('src="dup.png"');
+    expect(mediaFiles(env.dataDir)).toEqual([]);
+    await client.close();
+  });
+
+  it("部分失败：一张图魔数非法该图失败其余照常；一份 md lint error 不回滚另一份", async () => {
+    const env = await makeEnv();
+    const client = await connectClient(env, env.tokenA);
+    const md = practiceMdWithImages("zip-partial-unit", [
+      "good.png",
+      "bad.png",
+    ]);
+    const zip = await zipOf([
+      { name: "练习.md", data: Buffer.from(md, "utf8") },
+      { name: "坏文档.md", data: Buffer.from(BROKEN_MD, "utf8") },
+      { name: "good.png", data: pngBytes(5) },
+      { name: "bad.png", data: Buffer.from("<svg>not an image</svg>", "utf8") },
+    ]);
+    const res = await client.callTool({
+      name: "import_zip",
+      arguments: { dataBase64: zip.toString("base64"), confirm: true },
+    });
+    expect(res.isError).toBeFalsy();
+    const data = JSON.parse(textOf(res)) as {
+      images: {
+        uploaded: number;
+        failed: number;
+        results: Array<{
+          zipEntry: string;
+          src: string | null;
+          error: { code: string; message: string } | null;
+        }>;
+      };
+      files: Array<{
+        ok: boolean;
+        path: string;
+        unresolvedRefs: string[];
+        error?: { code: string; _issues?: Array<{ level: string }> };
+      }>;
+    };
+    // 图片：good 成功、bad 415（魔数白名单外），失败如实呈现
+    expect(data.images.uploaded).toBe(1);
+    expect(data.images.failed).toBe(1);
+    const bad = data.images.results.find((r) => r.zipEntry === "bad.png");
+    expect(bad?.src).toBeNull();
+    expect(bad?.error?.code).toBe("UNSUPPORTED_MEDIA_TYPE");
+    const good = data.images.results.find((r) => r.zipEntry === "good.png");
+    expect(good?.error).toBeNull();
+
+    // md：练习.md 成功（good 已改写、bad 原样保留）；坏文档.md 422 LINT_ERROR 带 _issues
+    const ok = data.files.find((f) => f.path === "练习.md");
+    expect(ok?.ok).toBe(true);
+    expect(ok?.unresolvedRefs).toEqual(["bad.png"]);
+    const rows = env.db
+      .select()
+      .from(questions)
+      .where(eq(questions.unitId, "zip-partial-unit"))
+      .all();
+    expect(rows[0]?.sourceMd).toContain(good?.src ?? "");
+    expect(rows[0]?.sourceMd).toContain('src="bad.png"');
+
+    const broken = data.files.find((f) => f.path === "坏文档.md");
+    expect(broken?.ok).toBe(false);
+    expect(broken?.error?.code).toBe("LINT_ERROR");
+    expect(broken?.error?._issues?.length).toBeGreaterThan(0);
+    // 坏文档单元未落库（部分失败不回滚整体，但失败文件本身不写入）
+    expect(
+      env.db.select().from(units).where(eq(units.id, "mcp-坏文档")).all(),
+    ).toHaveLength(0);
     await client.close();
   });
 });

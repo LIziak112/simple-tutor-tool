@@ -232,7 +232,7 @@ export function createApp(options: CreateAppOptions) {
     // —— MCP Server（T4.6）：/mcp 挂 SDK Streamable HTTP（stateless + JSON），
     //    不走统一壳、不走 /api 前缀（SDK 协议格式原样）；Bearer apiToken 鉴权
     //    （无/错 token/禁用教师 401 同文案防探测，D22），全部工具按 token 绑定
-    //    教师域隔离（11 工具见 src/mcp/server.ts，D23 清单）——
+    //    教师域隔离（13 工具见 src/mcp/server.ts，D23 清单 + upload_image/import_zip）——
     //    挂在 API 路由之后、静态托管之前（/mcp 不参与 SPA 回退）。
     .route(
       "/mcp",
