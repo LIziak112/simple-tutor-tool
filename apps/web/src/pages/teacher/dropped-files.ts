@@ -16,9 +16,7 @@ function entryFile(entry: FileSystemFileEntry): Promise<File> {
 function readEntryBatch(
   reader: FileSystemDirectoryReader,
 ): Promise<FileSystemEntry[]> {
-  return new Promise((resolve, reject) =>
-    reader.readEntries(resolve, reject),
-  );
+  return new Promise((resolve, reject) => reader.readEntries(resolve, reject));
 }
 
 /** 递归收集目录下全部文件（relPath 为该目录自身的相对路径，含结尾 /） */

@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   basenameOf,
+  type CompanionCandidate,
   extractImageRefs,
   isExternalSrc,
   pairImageRefs,
   rewriteImageSrcs,
-  type CompanionCandidate,
 } from "./companion-media";
 
 /**
@@ -39,9 +39,9 @@ describe("extractImageRefs（任意文件名形态，去重保序）", () => {
       '::image{src="a.png"}',
       '::image{width="60%" src="a.png"}',
       '::image{src=""}',
-      ':::tip',
+      ":::tip",
       '内容里的字面 src="b.png" 不在指令里',
-      ':::',
+      ":::",
       '::video{src="c.mp4"}',
     ].join("\n");
     expect(extractImageRefs([md])).toEqual(["a.png"]);
@@ -60,31 +60,36 @@ describe("extractImageRefs（任意文件名形态，去重保序）", () => {
 
 describe("pairImageRefs（配对规则四情形）", () => {
   it("① src 与所选文件相对路径完全一致优先", () => {
-    const result = pairImageRefs(["blobs/media/x.jpg"], [
-      candidate("blobs/media/x.jpg"),
-      candidate("别的目录/x.jpg"),
-    ]);
+    const result = pairImageRefs(
+      ["blobs/media/x.jpg"],
+      [candidate("blobs/media/x.jpg"), candidate("别的目录/x.jpg")],
+    );
     expect(result.pairs.get("blobs/media/x.jpg")).toBe("blobs/media/x.jpg");
     expect(result.conflicts).toHaveLength(0);
   });
 
   it("② 路径不完全一致时按 basename 唯一匹配（文件夹选择带根目录前缀的常态）", () => {
-    const result = pairImageRefs(["blobs/media/6a48.jpg"], [
-      candidate("考研学习/blobs/media/6a48.jpg"),
-      candidate("考研学习/封面.png"),
-    ]);
+    const result = pairImageRefs(
+      ["blobs/media/6a48.jpg"],
+      [
+        candidate("考研学习/blobs/media/6a48.jpg"),
+        candidate("考研学习/封面.png"),
+      ],
+    );
     expect(result.pairs.get("blobs/media/6a48.jpg")).toBe(
       "考研学习/blobs/media/6a48.jpg",
     );
   });
 
   it("③ basename 命中多个候选 → 冲突不配对（记录 src 与同名）", () => {
-    const result = pairImageRefs(["blobs/media/img.jpg"], [
-      candidate("章节一/img.jpg", 100),
-      candidate("章节二/img.jpg", 200),
-    ]);
+    const result = pairImageRefs(
+      ["blobs/media/img.jpg"],
+      [candidate("章节一/img.jpg", 100), candidate("章节二/img.jpg", 200)],
+    );
     expect(result.pairs.size).toBe(0);
-    expect(result.conflicts).toEqual([{ src: "blobs/media/img.jpg", name: "img.jpg" }]);
+    expect(result.conflicts).toEqual([
+      { src: "blobs/media/img.jpg", name: "img.jpg" },
+    ]);
     expect(result.unmatched).toHaveLength(0);
   });
 
@@ -116,11 +121,14 @@ describe("pairImageRefs（配对规则四情形）", () => {
   });
 
   it("未被引用的所选文件不产生任何配对（只上传被引用到的图片）", () => {
-    const result = pairImageRefs(["a.png"], [
-      candidate("a.png"),
-      candidate("未引用.png"),
-      candidate("子目录/也未引用.png"),
-    ]);
+    const result = pairImageRefs(
+      ["a.png"],
+      [
+        candidate("a.png"),
+        candidate("未引用.png"),
+        candidate("子目录/也未引用.png"),
+      ],
+    );
     expect([...result.pairs.values()]).toEqual(["a.png"]);
   });
 });
@@ -139,7 +147,10 @@ describe("rewriteImageSrcs（只动配对成功的 src 值）", () => {
       md,
       new Map([
         ["blobs/media/本地名.jpg", SERVER_SRC],
-        ["另一张.png", "blobs/media/2222222222222222222222222222222222222222222222222222222222222222.gif"],
+        [
+          "另一张.png",
+          "blobs/media/2222222222222222222222222222222222222222222222222222222222222222.gif",
+        ],
       ]),
     );
     expect(out).toBe(

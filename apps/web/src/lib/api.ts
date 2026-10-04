@@ -973,7 +973,7 @@ export async function fetchTeacherInkStrokesApi(
   }
 }
 
-// ---------- 图片上传（媒体管线第三单：::image 的图片来源入口） ----------
+// ---------- 图片上传（POST /api/teacher/media：导入页随行图片流程在用） ----------
 
 /**
  * 上传一张图片（multipart 字段 file；PNG/JPG/WEBP/GIF，≤5MB），返回

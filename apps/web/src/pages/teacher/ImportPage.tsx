@@ -26,9 +26,9 @@ import { useContentTree } from "@/features/content/content-queries";
 import { useLibraryFolders } from "@/features/library/library-queries";
 import { ApiError, createLibraryFolderApi } from "@/lib/api";
 import { randomUuid } from "@/lib/uuid";
+import { BatchImportPreview } from "./BatchImportPreview";
 import { extractImageRefs, rewriteImageSrcs } from "./companion-media";
 import { filesFromDataTransfer } from "./dropped-files";
-import { BatchImportPreview } from "./BatchImportPreview";
 import { SingleImportPreview } from "./SingleImportPreview";
 import { useCompanionImages } from "./use-companion-images";
 
@@ -319,9 +319,11 @@ export function ImportPage() {
    */
   async function ingestFiles(picked: readonly File[]): Promise<void> {
     if (picked.length === 0) return;
-    const { entries: incoming, images, skipped } = await readPickedFiles(
-      picked,
-    );
+    const {
+      entries: incoming,
+      images,
+      skipped,
+    } = await readPickedFiles(picked);
     if (incoming.length === 0 && images.length === 0 && skipped.length === 0) {
       return;
     }
@@ -369,20 +371,20 @@ export function ImportPage() {
   }
 
   /** 拖拽文件 / 文件夹到清单卡（webkitGetAsEntry 递归展开，桌面浏览器） */
-  async function handleDrop(event: React.DragEvent<HTMLDivElement>) {
+  async function handleDrop(event: React.DragEvent<HTMLElement>) {
     // 阻止浏览器默认打开文件；dragover 的 preventDefault 是允许 drop 的前提
     event.preventDefault();
     setDragOver(false);
     await ingestFiles(await filesFromDataTransfer(event.dataTransfer));
   }
 
-  function handleDragOver(event: React.DragEvent<HTMLDivElement>): void {
+  function handleDragOver(event: React.DragEvent<HTMLElement>): void {
     event.preventDefault();
     setDragOver(true);
   }
 
   /** 悬停离开：只有真正离开清单卡（不含移入子元素）才撤高亮，避免子元素间闪动 */
-  function handleDragLeave(event: React.DragEvent<HTMLDivElement>): void {
+  function handleDragLeave(event: React.DragEvent<HTMLElement>): void {
     event.preventDefault();
     const related = event.relatedTarget;
     if (related instanceof Node && event.currentTarget.contains(related)) {
@@ -494,13 +496,10 @@ export function ImportPage() {
   const mediaSummary = useMemo<ImportMediaSummary | null>(() => {
     if (companion.images.length === 0) return null;
     const failed = companion.images
-      .filter(
-        (image) => companion.uploads[image.path]?.phase === "failed",
-      )
+      .filter((image) => companion.uploads[image.path]?.phase === "failed")
       .map((image) => ({
         name: image.name,
-        reason:
-          companion.uploads[image.path]?.error ?? "上传失败，请稍后重试",
+        reason: companion.uploads[image.path]?.error ?? "上传失败，请稍后重试",
       }));
     // 保持原样的引用处数：未配对 + 同名冲突 + 配对但上传失败（每个 src 预览时逐条核对）
     const failedSrcCount = [...companion.pairing.pairs.values()].filter(
@@ -545,8 +544,8 @@ export function ImportPage() {
           <h1 className="text-lg font-semibold">导入内容</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             选择 .md 与图片文件、整个文件夹或粘贴内容，加入同一份待导入清单；
-            文档引用到的图片会自动上传并替换为服务器路径，预览无误后确认
-            （支持 v2 DSL 与旧版 v1 格式）。
+            文档引用到的图片会自动上传并替换为服务器路径，预览无误后确认 （支持
+            v2 DSL 与旧版 v1 格式）。
           </p>
 
           {/* AI 出题助手（T1.13）：复制「规范+样例+模板」提示词给 AI，产出可导入文档 */}
@@ -554,15 +553,16 @@ export function ImportPage() {
             <AiPromptPanel />
           </div>
 
-          <div
-            // 拖拽投放区 = 整张清单卡（桌面拖文件/文件夹；见 handleDrop）
+          <section
+            // 拖拽投放区 = 整张清单卡（桌面拖文件/文件夹；见 handleDrop）。
+            // 语义化 section + aria-label：键盘用户走上方三按钮入口，拖拽是
+            // 桌面增强，不承担键盘可达性
+            aria-label="待导入清单（可把 md 与图片拖入此处）"
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onDrop={(event) => void handleDrop(event)}
             className={`mt-4 flex flex-col gap-4 rounded-xl border border-dashed p-4 transition-colors ${
-              dragOver
-                ? "border-primary bg-primary/5"
-                : "border-border bg-card"
+              dragOver ? "border-primary bg-primary/5" : "border-border bg-card"
             }`}
           >
             {/* 统一待导入清单：三入口同源（方案 §5） */}
@@ -718,7 +718,8 @@ export function ImportPage() {
               {/* 清单：只看名不看内容（正文检查交给预览态） */}
               {pickedFiles.length === 0 ? (
                 <p className="rounded-lg border border-dashed border-border px-3 py-6 text-center text-sm text-muted-foreground">
-                  清单为空：选择 md / 图片文件、整个文件夹，或用「粘贴内容」把文字加入清单。
+                  清单为空：选择 md /
+                  图片文件、整个文件夹，或用「粘贴内容」把文字加入清单。
                 </p>
               ) : (
                 <ul
@@ -992,7 +993,7 @@ export function ImportPage() {
               上限：单批 ≤{IMPORT_MAX_FILES_PER_BATCH} 个文件、单文件 ≤1
               MB、合计 ≤10 MB。
             </p>
-          </div>
+          </section>
 
           {/* 就地新建文件夹弹层 */}
           {createOpen ? (

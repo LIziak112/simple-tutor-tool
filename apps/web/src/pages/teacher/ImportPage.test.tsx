@@ -858,7 +858,10 @@ describe("ImportPage 随行图片（媒体管线第四单：只上传被引用�
   });
 
   it("选择 md + 图片：仅被引用图片上传一次（多 md 同图去重、未引用不传不列），预览收到改写后 md，常驻提示与汇总卡可见", async () => {
-    mockedUpload.mockResolvedValue({ src: SERVER_SRC, bytes: 8 } satisfies MediaUploadResult);
+    mockedUpload.mockResolvedValue({
+      src: SERVER_SRC,
+      bytes: 8,
+    } satisfies MediaUploadResult);
     const mdA = '::image{alt="示意图" src="blobs/media/6a48.jpg"}';
     const mdB = '::image{src="6a48.jpg"}';
     const utils = renderImportPage();
@@ -874,16 +877,12 @@ describe("ImportPage 随行图片（媒体管线第四单：只上传被引用�
     await waitFor(() => expect(mockedUpload).toHaveBeenCalledTimes(1));
     expect(mockedUpload.mock.calls[0]?.[0].name).toBe("6a48.jpg");
     expect(
-      mockedUpload.mock.calls.some(
-        (call) => call[0].name === "未引用.png",
-      ),
+      mockedUpload.mock.calls.some((call) => call[0].name === "未引用.png"),
     ).toBe(false);
 
     // 逐张列出上传结果（成功 → 服务器路径）；未引用只计数、不列为将上传
     expect(await screen.findByText(/→ blobs\/media\//)).toBeInTheDocument();
-    expect(
-      screen.getByText(/未被任何文档引用，不会上传/),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/未被任何文档引用，不会上传/)).toBeInTheDocument();
     expect(screen.queryByText("未引用.png")).not.toBeInTheDocument();
 
     // 选择区常驻提示可见（任务口径：可一起选择、只上传被引用的并替换引用）
@@ -998,7 +997,10 @@ describe("ImportPage 随行图片（媒体管线第四单：只上传被引用�
   });
 
   it("配对优先级：src 与相对路径完全一致优先于 basename 命中", async () => {
-    mockedUpload.mockResolvedValue({ src: SERVER_SRC, bytes: 8 } satisfies MediaUploadResult);
+    mockedUpload.mockResolvedValue({
+      src: SERVER_SRC,
+      bytes: 8,
+    } satisfies MediaUploadResult);
     const utils = renderImportPage();
     const exact = withPath(imageFile("img.jpg"), "blobs/media/img.jpg");
     const other = withPath(imageFile("img.jpg"), "其他目录/img.jpg");
@@ -1015,7 +1017,10 @@ describe("ImportPage 随行图片（媒体管线第四单：只上传被引用�
   it("失败图片可整组重试：重试成功后 src 补改写", async () => {
     mockedUpload
       .mockRejectedValueOnce(new Error("网络中断，请稍后重试"))
-      .mockResolvedValueOnce({ src: SERVER_SRC, bytes: 8 } satisfies MediaUploadResult);
+      .mockResolvedValueOnce({
+        src: SERVER_SRC,
+        bytes: 8,
+      } satisfies MediaUploadResult);
     const md = '::image{src="配图.jpg"}';
     const utils = renderImportPage();
     pickFiles(utils, [mdFile("a.md", md), imageFile("配图.jpg")]);
@@ -1024,9 +1029,7 @@ describe("ImportPage 随行图片（媒体管线第四单：只上传被引用�
     fireEvent.click(
       screen.getByRole("button", { name: /重试失败图片（1 张）/ }),
     );
-    expect(
-      await screen.findByText(/→ blobs\/media\//),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/→ blobs\/media\//)).toBeInTheDocument();
 
     mockedPreview.mockResolvedValue(previewData({}));
     await waitFor(() =>

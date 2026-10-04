@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { postTeacherMediaApi } from "@/lib/api";
-import type { PickedFile } from "./ImportPage";
 import {
+  type ImagePairing,
   MEDIA_UPLOAD_CONCURRENCY,
   pairImageRefs,
-  type ImagePairing,
 } from "./companion-media";
+import type { PickedFile } from "./ImportPage";
 
 /**
  * 导入随行图片的编排 hook（配对/上传/改写映射，全部前端完成、服务端零改动）：
@@ -136,13 +136,10 @@ export function useCompanionImages(
     );
   }, [pickedFiles, images]);
 
-  const pairedPaths = useMemo(
-    () => new Set(pairing.pairs.values()),
-    [pairing],
-  );
+  const pairedPaths = useMemo(() => new Set(pairing.pairs.values()), [pairing]);
 
   // 上传编排：只发起「已配对且未在途、无终态」的文件，填满并发额度即止；
-  // 每次 uploads/pairing 变化后重跑，自然续上下一段（滚动窗口式 3 并发）
+  // 每次 uploads/pairedPaths 变化后重跑，自然续上下一段（滚动窗口式 3 并发）
   useEffect(() => {
     const free = MEDIA_UPLOAD_CONCURRENCY - inFlightRef.current.size;
     if (free <= 0) return;
@@ -185,7 +182,7 @@ export function useCompanionImages(
         }
       })();
     }
-  }, [images, pairing, pairedPaths, uploads]);
+  }, [images, pairedPaths, uploads]);
 
   // 已上传 → src 改写映射（多 md 引用同一张图时多个 src 指向同一 serverSrc）
   const rewriteMap = useMemo(() => {
@@ -222,8 +219,7 @@ export function useCompanionImages(
       pairing.conflicts.map((conflict) => conflict.name),
     );
     return images.filter(
-      (image) =>
-        !pairedPaths.has(image.path) && !conflictNames.has(image.name),
+      (image) => !pairedPaths.has(image.path) && !conflictNames.has(image.name),
     ).length;
   }, [images, pairing, pairedPaths]);
 
