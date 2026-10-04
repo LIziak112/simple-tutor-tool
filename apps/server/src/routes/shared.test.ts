@@ -820,3 +820,70 @@ describe("T2B.7 教师端共享接口鉴权", () => {
     );
   });
 });
+
+describe("图片存在性核对贯通（IMAGE_SRC_NOT_FOUND，媒体管线第四单）", () => {
+  const SRC = `blobs/media/${"ab".repeat(32)}.png`;
+
+  it("本地放入含未上传图片引用的讲义：乙预览报 warning；乙导入不被阻断", async () => {
+    const { app, db, cookieB, dataDir } = await makeSharedApp();
+    const md = [
+      "---",
+      "kind: lecture",
+      "---",
+      "",
+      "# 共享配图讲义",
+      "",
+      `::image{src="${SRC}"}`,
+      "",
+    ].join("\n");
+    dropLocalFile(dataDir, "共享配图讲义.md", md);
+
+    // 预览：IMAGE_SRC_NOT_FOUND warning（dataDir 已贯通 shared 路由）
+    const preview = await request(
+      app,
+      "POST",
+      "/api/teacher/shared/preview",
+      cookieB,
+      {
+        filename: "共享配图讲义.md",
+      },
+    );
+    expect(preview.status).toBe(200);
+    const previewBody = (await preview.json()) as {
+      data: {
+        issues: { code: string; level: string; message: string }[];
+        markdown: string;
+      };
+    };
+    const notFound = previewBody.data.issues.filter(
+      (i) => i.code === "IMAGE_SRC_NOT_FOUND",
+    );
+    expect(notFound).toHaveLength(1);
+    expect(notFound[0]?.level).toBe("warning");
+    expect(notFound[0]?.message).toContain(SRC);
+
+    // 导入：warning 不阻断，照常落库进乙域
+    const importRes = await request(
+      app,
+      "POST",
+      "/api/teacher/shared/import",
+      cookieB,
+      {
+        filename: "共享配图讲义.md",
+      },
+    );
+    expect(importRes.status).toBe(200);
+    const report = (await importRes.json()) as {
+      data: { lectures: { title: string; inserted: boolean }[] };
+    };
+    expect(report.data.lectures).toEqual([
+      {
+        title: "共享配图讲义",
+        inserted: true,
+        id: expect.any(String),
+        updated: false,
+      },
+    ]);
+    db.$client.close();
+  });
+});

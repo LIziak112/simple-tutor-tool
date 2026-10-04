@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import type { ImportPreviewData } from "@tutor/contract";
 import { and, eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
@@ -17,7 +18,11 @@ import {
   teachers,
   units,
 } from "../db/schema.ts";
-import { createTestDb, TEST_TEACHER_ID } from "../db/test-utils.ts";
+import {
+  createTestDb,
+  createTestDir,
+  TEST_TEACHER_ID,
+} from "../db/test-utils.ts";
 import { HttpError } from "../lib/http-error.ts";
 import { createAssignment } from "./assignment-service.ts";
 import {
@@ -1206,6 +1211,201 @@ describe("T2B.1 域内匹配（D10/D13：复合主键下按 (teacherId, dslId) �
       .where(and(eq(questions.teacherId, "th-b"), eq(questions.id, "u1-1")))
       .get();
     expect(questionB).toMatchObject({ version: 1, stemMd: "$1>0$。[[正确]]" });
+    db.$client.close();
+  });
+});
+
+describe("导入图片存在性核对（IMAGE_SRC_NOT_FOUND，媒体管线第四单）", () => {
+  /** 两个互不相同的 64 位小写 hex（严格契约形态） */
+  const HASH_A = "ab".repeat(32);
+  const HASH_B = "cd".repeat(32);
+  const SRC_A = `blobs/media/${HASH_A}.png`;
+  const SRC_B = `blobs/media/${HASH_B}.jpg`;
+
+  /** 合法讲义文档：第 9 行引用图 A、第 13 行引用图 B、第 14 行重复引用图 A */
+  const IMAGE_LECTURE_MD = [
+    "---",
+    "kind: lecture",
+    "---",
+    "",
+    "# 图象讲义",
+    "",
+    "观察第一张图。",
+    "",
+    `::image{src="${SRC_A}"}`,
+    "",
+    "再看第二张图。",
+    "",
+    `::image{src="${SRC_B}"}`,
+    `::image{alt="同图再引" src="${SRC_A}"}`,
+    "",
+  ].join("\n");
+
+  /** 往临时 dataDir 种入一张「已上传」图片文件 */
+  function seedMediaFile(dataDir: string, src: string): void {
+    mkdirSync(join(dataDir, "blobs", "media"), { recursive: true });
+    writeFileSync(join(dataDir, ...src.split("/")), new Uint8Array([1, 2, 3]));
+  }
+
+  it("未上传的严格形态引用：预览逐图报 warning（同图去重、行号=首次出现行、含路径与修复指引）", () => {
+    const db = createTestDb();
+    const data = previewImport(
+      db,
+      TEST_TEACHER_ID,
+      { markdown: IMAGE_LECTURE_MD, filename: "图象讲义.md" },
+      createTestDir(),
+    );
+    const notFound = data.issues.filter(
+      (issue) => issue.code === "IMAGE_SRC_NOT_FOUND",
+    );
+    expect(notFound).toHaveLength(2); // 图 A 两次引用去重为一条
+    expect(notFound[0]).toMatchObject({
+      level: "warning",
+      line: 9,
+      column: 1,
+      code: "IMAGE_SRC_NOT_FOUND",
+    });
+    expect(notFound[0]?.message).toContain(SRC_A);
+    expect(notFound[0]?.message).toContain("图片上传");
+    expect(notFound[1]).toMatchObject({ level: "warning", line: 13 });
+    expect(notFound[1]?.message).toContain(SRC_B);
+    expect(notFound[0]?.fix).toContain("blobs/media/");
+    // 文档本身合法：除存在性 warning 外无其他 issue
+    expect(
+      data.issues.filter((issue) => issue.code !== "IMAGE_SRC_NOT_FOUND"),
+    ).toEqual([]);
+    db.$client.close();
+  });
+
+  it("dataDir 种入对应文件后不再告警（先导 md 后补图的工作流闭环）", () => {
+    const db = createTestDb();
+    const dataDir = createTestDir();
+    seedMediaFile(dataDir, SRC_A);
+    seedMediaFile(dataDir, SRC_B);
+    const data = previewImport(
+      db,
+      TEST_TEACHER_ID,
+      { markdown: IMAGE_LECTURE_MD, filename: "图象讲义.md" },
+      dataDir,
+    );
+    expect(data.issues).toEqual([]); // 文件齐了：0 issue
+    db.$client.close();
+  });
+
+  it("部分缺失只报缺失的：种入图 A 后只剩图 B 一条", () => {
+    const db = createTestDb();
+    const dataDir = createTestDir();
+    seedMediaFile(dataDir, SRC_A);
+    const data = previewImport(
+      db,
+      TEST_TEACHER_ID,
+      { markdown: IMAGE_LECTURE_MD, filename: "图象讲义.md" },
+      dataDir,
+    );
+    expect(
+      data.issues.filter((i) => i.code === "IMAGE_SRC_NOT_FOUND"),
+    ).toHaveLength(1);
+    expect(data.issues[0]?.message).toContain(SRC_B);
+    db.$client.close();
+  });
+
+  it("旧式 blobs/fig-1.png 引用不触发本检查（无内容寻址文件名可核对，维持现状）", () => {
+    const db = createTestDb();
+    const dataDir = createTestDir();
+    const md = [
+      "---",
+      "kind: lecture",
+      "---",
+      "",
+      "# 旧式配图讲义",
+      "",
+      '::image{src="blobs/fig-1.png"}',
+      "",
+    ].join("\n");
+    const data = previewImport(
+      db,
+      TEST_TEACHER_ID,
+      { markdown: md, filename: "旧式配图讲义.md" },
+      dataDir,
+    );
+    expect(
+      data.issues.some(
+        (i) =>
+          i.code === "IMAGE_SRC_NOT_FOUND" || i.code === "IMAGE_SRC_NOT_BLOBS",
+      ),
+    ).toBe(false); // blobs/ 前缀豁免前缀规则，也无文件可核对
+    db.$client.close();
+  });
+
+  it("commit 不被阻断：缺失图片照常落库（warning 仅提示，预览侧可见）", () => {
+    const db = createTestDb();
+    const report = commitImport(
+      db,
+      TEST_TEACHER_ID,
+      { markdown: IMAGE_LECTURE_MD, filename: "图象讲义.md" },
+      createTestDir(),
+    );
+    expect(report.lectures).toHaveLength(1);
+    expect(report.lectures[0]?.inserted).toBe(true);
+    db.$client.close();
+  });
+
+  it("dataDir 缺省时跳过核对（seed/无 DATA_DIR 语境的直调不因缺目录而报）", () => {
+    const db = createTestDb();
+    const data = previewImport(db, TEST_TEACHER_ID, {
+      markdown: IMAGE_LECTURE_MD,
+      filename: "图象讲义.md",
+    });
+    expect(data.issues.some((i) => i.code === "IMAGE_SRC_NOT_FOUND")).toBe(
+      false,
+    );
+    db.$client.close();
+  });
+
+  it("批量预览：不同文件各自缺失各自报（每文件 issues 独立、hasError 不受 warning 影响）", () => {
+    const db = createTestDb();
+    const dataDir = createTestDir();
+    const mdA = [
+      "---",
+      "kind: lecture",
+      "---",
+      "",
+      "# 甲讲义",
+      "",
+      `::image{src="${SRC_A}"}`,
+      "",
+    ].join("\n");
+    const mdB = [
+      "---",
+      "kind: lecture",
+      "---",
+      "",
+      "# 乙讲义",
+      "",
+      `::image{src="${SRC_B}"}`,
+      "",
+    ].join("\n");
+    const batch = previewImportBatch(
+      db,
+      TEST_TEACHER_ID,
+      {
+        autoFolderBySubdir: false,
+        files: [
+          { path: "甲.md", markdown: mdA },
+          { path: "乙.md", markdown: mdB },
+        ],
+      },
+      dataDir,
+    );
+    const issuesA = batch.files[0]?.preview.issues ?? [];
+    const issuesB = batch.files[1]?.preview.issues ?? [];
+    expect(issuesA).toHaveLength(1);
+    expect(issuesA[0]).toMatchObject({ code: "IMAGE_SRC_NOT_FOUND", line: 7 });
+    expect(issuesA[0]?.message).toContain(SRC_A);
+    expect(issuesB).toHaveLength(1);
+    expect(issuesB[0]?.message).toContain(SRC_B);
+    // warning 不置 hasError（只有 error 级/跨文件冲突才标红）
+    expect(batch.files.map((f) => f.hasError)).toEqual([false, false]);
     db.$client.close();
   });
 });

@@ -58,6 +58,7 @@ import { HttpError } from "../lib/http-error";
 import { courseHasAttempts } from "./course-service";
 import { buildImportPlan, loadLibrarySnapshot } from "./import-actions";
 import { softDeleteLecture } from "./library-service";
+import { missingMediaImageSrcs } from "./media-service";
 import {
   loadKnowledgeIdByName,
   questionFields,
@@ -208,6 +209,7 @@ function buildPreview(
   markdown: string,
   folderId: string | null,
   fallbackUnitId?: string,
+  dataDir?: string,
 ): ImportPreviewData {
   const { version, issues, parsed } = analyzeImport(markdown, fallbackUnitId);
   const plan = buildImportPlan({
@@ -218,20 +220,51 @@ function buildPreview(
   return {
     version,
     summary: summarizeParsed(parsed),
-    issues,
+    issues: [...issues, ...mediaImageExistenceIssues(markdown, dataDir)],
     actions: [...plan.actions],
     warnings: [...plan.warnings],
   };
 }
 
 /**
- * 导入预览：识别版本 + 摘要 + 全部 lint issues + 动作清单（D19）与 warning
- * （D18/D19）（不写库）。folderId = 目标文件夹（null/缺省 = 未归类）。
+ * ::image 引用图片的文件存在性核对（IMAGE_SRC_NOT_FOUND，warning 不阻断）：
+ * 对导入 md **原文**（覆盖文档内全部引用，含未进解析产物的文本）的严格形态
+ * src 逐一核对 DATA_DIR 落盘文件，缺失的每个 src 报一条 warning（同文档同图
+ * 多次引用经提取侧去重，只报一次），行号取该 src 首次出现的行、列 1（与
+ * IMAGE_SRC_NOT_BLOBS 报在指令行的口径一致）。
+ * dataDir 缺省（seed-demo 无 DATA_DIR 语境、不关心该项的旧测试直调）时跳过
+ * 核对——生产导入入口（路由 /import、/shared、MCP import_markdown）全部传参。
+ * warning 不阻断 commit：保留「先导 md 后补图」的工作流，文案给出修复指引。
+ */
+function mediaImageExistenceIssues(
+  markdown: string,
+  dataDir?: string,
+): LintIssue[] {
+  if (dataDir === undefined) return [];
+  return missingMediaImageSrcs(dataDir, [markdown]).map((src) => {
+    const at = markdown.indexOf(src);
+    const line = at < 0 ? 1 : markdown.slice(0, at).split("\n").length;
+    return {
+      level: "warning" as const,
+      line,
+      column: 1,
+      code: "IMAGE_SRC_NOT_FOUND",
+      message: `::image（第 ${line} 行）引用的图片文件不存在：${src}。请先在导入页「图片上传」上传图片，并把 src 替换为上传返回的路径；若该哈希路径是手写或 AI 生成的，上传真实图片后必须用返回的新 src 替换（原路径永远不会有对应文件）`,
+      fix: "在导入页「图片上传」上传图片后，用返回的 blobs/media/… src 替换原引用",
+    };
+  });
+}
+
+/**
+ * 导入预览：识别版本 + 摘要 + 全部 lint issues（含 IMAGE_SRC_NOT_FOUND
+ * 图片存在性 warning）+ 动作清单（D19）与 warning（D18/D19）（不写库）。
+ * folderId = 目标文件夹（null/缺省 = 未归类）。
  */
 export function previewImport(
   db: Db,
   teacherId: string,
   input: ImportPreviewRequest,
+  dataDir?: string,
 ): ImportPreviewData {
   const folderId = input.folderId ?? null;
   assertFolderExists(db, teacherId, folderId);
@@ -241,6 +274,7 @@ export function previewImport(
     input.markdown,
     folderId,
     fallbackUnitIdOf(input.filename),
+    dataDir,
   );
 }
 
@@ -364,11 +398,13 @@ function detectCrossFileConflicts(
  * autoFolderBySubdir 的目标文件夹解析（已存在同名复用、否则标记将新建）。
  * 不写库——「将新建」的文件夹在 commit（前端逐文件调用）时按 folderName 落地。
  * 匹配与文件夹解析都在本教师域内（D13，T2B.3）。
+ * dataDir 传入时逐文件附 IMAGE_SRC_NOT_FOUND 图片存在性 warning（各自缺失各自报）。
  */
 export function previewImportBatch(
   db: Db,
   teacherId: string,
   input: ImportPreviewBatchRequest,
+  dataDir?: string,
 ): ImportPreviewBatchData {
   assertBatchLimits(input.files);
   const baseFolderId = input.folderId ?? null;
@@ -411,7 +447,10 @@ export function previewImportBatch(
       preview: {
         version,
         summary: summarizeParsed(parsed),
-        issues,
+        issues: [
+          ...issues,
+          ...mediaImageExistenceIssues(file.markdown, dataDir),
+        ],
         actions: [...plan.actions],
         warnings: [...plan.warnings],
       },
@@ -460,14 +499,21 @@ export function commitImport(
   db: Db,
   teacherId: string,
   input: ImportCommitRequest,
+  dataDir?: string,
 ): ImportCommitData {
+  // 图片存在性核对与 lint 合并为完整 issue 集（IMAGE_SRC_NOT_FOUND 是 warning
+  // 级、不阻断提交——保留「先导 md 后补图」的工作流，问题在预览响应可见）
   const { issues, parsed } = analyzeImport(
     input.markdown,
     fallbackUnitIdOf(input.filename),
   );
+  const allIssues = [
+    ...issues,
+    ...mediaImageExistenceIssues(input.markdown, dataDir),
+  ];
 
   // error 级 issue → 拒绝写入（此时连文件夹/课程都不动）
-  const errors = issues.filter((issue) => issue.level === "error");
+  const errors = allIssues.filter((issue) => issue.level === "error");
   const first = errors[0];
   if (first !== undefined) {
     throw new HttpError(

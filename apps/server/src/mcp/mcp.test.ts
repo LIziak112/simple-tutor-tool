@@ -716,3 +716,48 @@ describe("MCP 工具（SDK 客户端逐个断言，T4.6 D23）", () => {
     await client.close();
   });
 });
+
+describe("MCP import_markdown 图片存在性核对贯通（IMAGE_SRC_NOT_FOUND）", () => {
+  it("dry-run 报未上传图片的 warning；confirm 不被阻断照常落库", async () => {
+    const env = await makeEnv();
+    const client = await connectClient(env, env.tokenA);
+    const md = [
+      "---",
+      "kind: lecture",
+      "---",
+      "",
+      "# MCP 配图讲义",
+      "",
+      `::image{src="blobs/media/${"ab".repeat(32)}.png"}`,
+      "",
+    ].join("\n");
+
+    const dry = await client.callTool({
+      name: "import_markdown",
+      arguments: { markdown: md },
+    });
+    expect(dry.isError).toBeFalsy();
+    const dryData = JSON.parse(textOf(dry)) as {
+      preview: { issues: { code: string; level: string; message: string }[] };
+    };
+    const notFound = dryData.preview.issues.filter(
+      (i) => i.code === "IMAGE_SRC_NOT_FOUND",
+    );
+    expect(notFound).toHaveLength(1);
+    expect(notFound[0]?.level).toBe("warning");
+    expect(notFound[0]?.message).toContain("blobs/media/");
+
+    const confirmed = await client.callTool({
+      name: "import_markdown",
+      arguments: { markdown: md, confirm: true },
+    });
+    expect(confirmed.isError).toBeFalsy();
+    const confirmedData = JSON.parse(textOf(confirmed)) as {
+      confirmed: boolean;
+      report: { lectures: { title: string }[] };
+    };
+    expect(confirmedData.confirmed).toBe(true);
+    expect(confirmedData.report.lectures).toHaveLength(1);
+    await client.close();
+  });
+});

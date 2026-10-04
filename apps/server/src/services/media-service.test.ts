@@ -4,8 +4,10 @@ import { describe, expect, it } from "vitest";
 import { createTestDir } from "../db/test-utils";
 import { HttpError } from "../lib/http-error";
 import {
+  extractMediaImageSrcs,
   MEDIA_BLOB_URL_TAIL_PATTERN,
   MEDIA_MAX_UPLOAD_BYTES,
+  missingMediaImageSrcs,
   readMediaBlob,
   saveMedia,
 } from "./media-service";
@@ -255,5 +257,100 @@ describe("readMediaBlob：/blobs/* 伺服读取", () => {
     ]) {
       expect(MEDIA_BLOB_URL_TAIL_PATTERN.exec(evil)).toBeNull();
     }
+  });
+});
+
+describe("extractMediaImageSrcs（::image 引用提取纯函数，自 export-service 迁入）", () => {
+  const H1 = "a".repeat(64);
+  const H2 = "0123456789abcdef".repeat(4);
+
+  it("提取严格形态引用：src 位置无关、去重保序", () => {
+    const md = [
+      `::image{src="blobs/media/${H1}.png"}`,
+      `::image{alt="前缀属性" src="blobs/media/${H2}.jpg"}`,
+      `::image{src="blobs/media/${H1}.png"}`, // 重复引用 → 只收集一份
+    ].join("\n\n");
+    expect(extractMediaImageSrcs([md])).toEqual([
+      `blobs/media/${H1}.png`,
+      `blobs/media/${H2}.jpg`,
+    ]);
+  });
+
+  it("非契约形态静默跳过（旧式路径/外链/大写 hash/短 hash/其他目录）", () => {
+    const md = [
+      '::image{src="blobs/fig-1.png"}',
+      '::image{src="https://example.com/a.png"}',
+      `::image{src="blobs/media/${H1.toUpperCase()}.png"}`,
+      `::image{src="blobs/media/${"a".repeat(63)}.png"}`,
+      '::image{src="blobs/ink/whatever.png"}',
+      '正文里没有指令的 src="blobs/media/…" 不算数',
+    ].join("\n");
+    expect(extractMediaImageSrcs([md])).toEqual([]);
+  });
+
+  it("跨多段文本收集且不重复；题干/详解形态的题目 md 同样命中", () => {
+    const stem = `题干：观察下图。::image{src="blobs/media/${H1}.webp"}`;
+    const solution = `详解：如图。::image{src="blobs/media/${H2}.gif"}`;
+    expect(extractMediaImageSrcs([stem, solution, stem])).toEqual([
+      `blobs/media/${H1}.webp`,
+      `blobs/media/${H2}.gif`,
+    ]);
+  });
+});
+
+describe("missingMediaImageSrcs（导入存在性核对数据源）", () => {
+  const HASH_A = "ab".repeat(32);
+  const HASH_B = "cd".repeat(32);
+  const SRC_A = `blobs/media/${HASH_A}.png`;
+  const SRC_B = `blobs/media/${HASH_B}.jpg`;
+
+  /** 往 dataDir 种入 src 对应的普通文件（模拟已上传） */
+  function seed(dataDir: string, src: string): void {
+    mkdirSync(join(dataDir, "blobs", "media"), { recursive: true });
+    writeFileSync(join(dataDir, ...src.split("/")), new Uint8Array([1, 2, 3]));
+  }
+
+  it("缺失的按提取顺序返回；已上传的跳过；同图去重只算一次", () => {
+    const dataDir = createTestDir();
+    seed(dataDir, SRC_B); // 只上传了图 B
+    const md = [
+      `::image{src="${SRC_A}"}`,
+      `::image{src="${SRC_B}"}`,
+      `::image{src="${SRC_A}"}`, // 重复引用
+    ].join("\n");
+    expect(missingMediaImageSrcs(dataDir, [md])).toEqual([SRC_A]);
+  });
+
+  it("dataDir 无 blobs/media 目录（从未上传过任何图）：全部引用报缺失", () => {
+    expect(
+      missingMediaImageSrcs(createTestDir(), [`::image{src="${SRC_A}"}`]),
+    ).toEqual([SRC_A]);
+  });
+
+  it("同名「目录」不算文件存在（stat().isFile() 口径，比 existsSync 稳）", () => {
+    const dataDir = createTestDir();
+    mkdirSync(join(dataDir, ...SRC_A.split("/")), { recursive: true });
+    expect(missingMediaImageSrcs(dataDir, [`::image{src="${SRC_A}"}`])).toEqual(
+      [SRC_A],
+    );
+  });
+
+  it("旧式/非严格形态引用不参与核对（提取侧已静默跳过）", () => {
+    const md = [
+      '::image{src="blobs/fig-1.png"}',
+      '::image{src="https://example.com/a.png"}',
+    ].join("\n");
+    expect(missingMediaImageSrcs(createTestDir(), [md])).toEqual([]);
+  });
+
+  it("跨多段文本核对（讲义切片 + 题干的合并清单）", () => {
+    const dataDir = createTestDir();
+    seed(dataDir, SRC_B);
+    expect(
+      missingMediaImageSrcs(dataDir, [
+        `::image{src="${SRC_A}"}`,
+        `题干 ::image{src="${SRC_B}"} 详解`,
+      ]),
+    ).toEqual([SRC_A]);
   });
 });
