@@ -30,9 +30,14 @@ import { answerOf, snapshotOf, sourceOf } from "./teacher-attempt-service";
  *   首末皆对但曾错的题）；默认只显示「最近一次判定仍为错」（resolved=false）；
  *   includeResolved=true 额外列出「曾错、最近一次已做对」（resolved=true）；
  * - rounds：该题全部已判定作答按时间升序（同刻按 attemptId 升序兜底稳定），
- *   每轮带来源标题/课程名（服务端算好展示串）；攻克判定 2026-10 起在端上从
- *   rounds 按学生自选标准计算（宽松=最后一轮对；严格=最后两轮连续对且 ≥2 轮），
- *   服务端不下发判定规则；
+ *   每轮带来源标题/课程名（服务端算好展示串）与 courseId（与 courseName 同一
+ *   处 sourceOf 取值：course=练习课程、assignment=作业所属课程〔attempt 冗余
+ *   列优先、为空回退作业行〕、wrong 恒 null——「按课程筛选错题」按任一轮
+ *   courseId 求集合）；攻克判定 2026-10 起在端上从 rounds 按学生自选标准计算
+ *   （宽松=最后一轮对；严格=最后两轮连续对且 ≥2 轮），服务端不下发判定规则；
+ * - pendingCount：该题已交卷、待老师判定（finalCorrect IS NULL）的作答轮数
+ *   （D4 共享谓词 × 公布 gate）——待批轮不进 rounds，本字段补足「做了 4 次
+ *   只有 3 轮」的差额；draft 不计；
  * - 公布 gate（answer-release 的 SQL 化）：after_due 未公布的作业 attempt
  *   **整体不参与聚合**——否则题目出现在错题本就等于泄露了对错。判定与
  *   attempt-service.answersReleased 纯函数逐条对应：作业 answerRelease 非
@@ -70,6 +75,23 @@ interface JudgedRoundRow {
 }
 
 /**
+ * 公布 gate 的 SQL 片段（answersReleased 的 SQL 化）：after_due 未公布的作业
+ * attempt 整体排除。or 的三分支覆盖 course / 非 after_due / 已到截止；leftJoin
+ * 未命中时 answerRelease 为 NULL → isNull 分支放行（防御口径：assignment 来源
+ * 经 FK 必命中，NULL 只可能是 course/wrong 行——wrong 无 assignmentId 恒放行）。
+ * 已判定轮次查询（judgedRoundsByQuestion）与待批轮计数（pendingCountByQuestion）
+ * 共用本片段，保证「进 rounds」与「计 pendingCount」两处公布口径永不漂移。
+ */
+function releaseGateSql(nowIso: string) {
+  return or(
+    eq(attempts.sourceType, "course"),
+    isNull(assignments.answerRelease),
+    ne(assignments.answerRelease, "after_due"),
+    and(isNotNull(assignments.dueAt), sql`${assignments.dueAt} <= ${nowIso}`),
+  );
+}
+
+/**
  * 该生全部已判定作答按题分组的轮次行（组内升序：submittedAt ?? startedAt，
  * 同刻 attemptId 升序兜底稳定——与旧窗口函数 order by 同口径）。
  * 公布 gate（answer-release 的 SQL 化）：after_due 未公布的作业 attempt 整体
@@ -98,7 +120,8 @@ function judgedRoundsByQuestion(
     })
     .from(responses)
     .innerJoin(attempts, eq(responses.attemptId, attempts.id))
-    // 公布 gate 的作业维度（course 行 leftJoin 不命中；FK 保证 assignment 来源必命中）
+    // 公布 gate 的作业维度（course/wrong 行 leftJoin 不命中；FK 保证 assignment
+    // 来源必命中）
     .leftJoin(assignments, eq(attempts.assignmentId, assignments.id))
     .where(
       and(
@@ -106,19 +129,8 @@ function judgedRoundsByQuestion(
         // 已判定作答谓词（D11）：已交卷 + finalCorrect 非 null（待批不参与）
         ne(attempts.status, "draft"),
         isNotNull(responses.finalCorrect),
-        // 公布 gate（answersReleased 的 SQL 化，见模块头注释）：未公布的作业
-        // attempt 整体排除。or 的三分支覆盖 course / 非 after_due / 已到截止；
-        // leftJoin 未命中时 answerRelease 为 NULL → isNull 分支放行（防御口径：
-        // assignment 来源经 FK 必命中，NULL 只可能是 course 行）
-        or(
-          eq(attempts.sourceType, "course"),
-          isNull(assignments.answerRelease),
-          ne(assignments.answerRelease, "after_due"),
-          and(
-            isNotNull(assignments.dueAt),
-            sql`${assignments.dueAt} <= ${nowIso}`,
-          ),
-        ),
+        // 公布 gate（answersReleased 的 SQL 化，见 releaseGateSql 注释）
+        releaseGateSql(nowIso),
       ),
     )
     .as("ranked");
@@ -177,6 +189,42 @@ export function latestJudgedResponsesByQuestion(
 }
 
 /**
+ * 该生各题的待批轮数（卡片 pendingCount 的数据源）：已交卷
+ * （status != 'draft'）且 `responses.finalCorrect IS NULL` 的作答次数按
+ * questionId 分组计数——D4 共享谓词逐题跨 attempt 版（不叠加 answerJson 非空
+ * 条件，只写笔迹未填最终答案的手写题正是最需要批的）。
+ * 与 rounds 用同一公布 gate（releaseGateSql 共用片段）：after_due 未公布的
+ * 作业作答不计入——数字会泄露「有一轮在等老师判定」，与题目整体消失的口径
+ * 一致，防侧漏；course/wrong 来源恒公布。待批轮与已判定轮按 finalCorrect
+ * 互斥，两查询合起来恰为该题全部应计作答。
+ */
+function pendingCountByQuestion(
+  db: Db,
+  studentId: string,
+  now: Date | string,
+): Map<string, number> {
+  const nowIso = new Date(now).toISOString();
+  return new Map(
+    db
+      .select({ questionId: responses.questionId, n: sql<number>`count(*)` })
+      .from(responses)
+      .innerJoin(attempts, eq(responses.attemptId, attempts.id))
+      .leftJoin(assignments, eq(attempts.assignmentId, assignments.id))
+      .where(
+        and(
+          eq(attempts.studentId, studentId),
+          ne(attempts.status, "draft"),
+          isNull(responses.finalCorrect),
+          releaseGateSql(nowIso),
+        ),
+      )
+      .groupBy(responses.questionId)
+      .all()
+      .map((row) => [row.questionId, row.n] as const),
+  );
+}
+
+/**
  * 错题本聚合（D11 + 2026-10 轮次史）。now 可注入（after_due gate 的定时测试；
  * 默认当前时刻——读时比较，截止后下一次请求自动把该作业的作答纳入聚合）。
  */
@@ -193,6 +241,10 @@ export function listWrongQuestions(
   // order by 同口径，first/last 取组内首尾；2026-10 起需要全部行构造 rounds，
   // 窗口函数取首末两行的方式随之退役）
   const roundsByQuestion = judgedRoundsByQuestion(db, studentId, now);
+
+  // 待批轮数（pendingCount）：与轮次查询同一公布 gate、同一 now（见
+  // pendingCountByQuestion 注释）；查出后按题取值 ?? 0
+  const pendingCounts = pendingCountByQuestion(db, studentId, now);
 
   // 候选：入本（任一次判错）+ 默认剔除已攻克（服务端口径=最近一次做对）
   const candidates = [...roundsByQuestion.entries()].filter(
@@ -320,6 +372,9 @@ export function listWrongQuestions(
         correct: round.finalCorrect === true,
         submittedAt: round.submittedAt ?? round.startedAt,
         sourceTitle: roundSourceTitle(source),
+        // 与 courseName 同一处（sourceOf）取值：course=练习课程、assignment=
+        // 作业所属课程（attempt 冗余列优先、为空回退作业行）、wrong 恒 null
+        courseId: source.courseId,
         courseName: source.courseName,
       });
     }
@@ -344,6 +399,7 @@ export function listWrongQuestions(
       rounds: roundsPayload,
       wrongCount: roundsPayload.filter((round) => !round.correct).length,
       correctCount: roundsPayload.filter((round) => round.correct).length,
+      pendingCount: pendingCounts.get(questionId) ?? 0,
       originUnitId: origin?.unitId ?? null,
       originUnitTitle: origin?.unitTitle ?? null,
     });

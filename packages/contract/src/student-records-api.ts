@@ -138,6 +138,14 @@ export const wrongQuestionRoundSchema = z.object({
   submittedAt: z.string().min(1),
   /** 该轮来源标题（服务端口径：作业=作业标题；课程=「单元标题 · 第 n 次」） */
   sourceTitle: z.string().min(1),
+  /**
+   * 该轮来源课程 id（与 courseName 同一处计算、同一套取值口径）：course 轮 =
+   * 练习课程（attempts.courseId）；assignment 轮 = attempts.courseId，为空回退
+   * 作业所属课程（assignments.courseId）；wrong（错题重练）轮恒为 null。
+   * 「按课程筛选错题」按「任一轮发生在该课程」计算，即对 rounds 的 courseId
+   * 求集合。课程 id 稳定（不随课程改名变化），课程行软删后仍返回原 id。
+   */
+  courseId: z.uuid().nullable(),
   /** 该轮来源课程名（当前值）；无课程为 null */
   courseName: z.string().min(1).nullable(),
 });
@@ -157,7 +165,10 @@ export const wrongQuestionRoundSchema = z.object({
  *   起攻克判定改由前端从 rounds 按学生自选标准计算，本字段保留兼容）；
  * - 来源上下文与 firstAt/lastAt 均取**最近一次**判定作答所属 attempt；
  * - rounds / wrongCount / correctCount / originUnitId / originUnitTitle：
- *   2026-10 轮次史与归属单元（按练习分组用），详见各字段注释。
+ *   2026-10 轮次史与归属单元（按练习分组用），详见各字段注释；
+ * - pendingCount：该题已交卷、尚未判定（finalCorrect 为 null）的作答轮数——
+ *   待批轮不进 rounds（见上），学生「做了 4 次只有 3 轮」的差额即在此；
+ *   与 rounds 用同一公布 gate（after_due 未公布的作业作答不计入，防侧漏）。
  */
 export const wrongQuestionCardSchema = teacherAttemptSourceSchema.extend({
   /** 题目 id（来自 DSL；聚合键的学生侧另一维） */
@@ -196,6 +207,13 @@ export const wrongQuestionCardSchema = teacherAttemptSourceSchema.extend({
   wrongCount: z.number().int().min(0),
   /** 已判定作答中判对次数（= rounds 中 correct=true 的数量） */
   correctCount: z.number().int().min(0),
+  /**
+   * 该题已交卷、待老师判定（responses.finalCorrect 为 null）的作答轮数。
+   * 待批轮不进 rounds（入本条件只认已判定作答），本字段补足差额（学生视角
+   * 「做了 4 次只有 3 轮」的第 4 轮多半在此）；draft 不计，after_due 未公布
+   * 的作业作答与 rounds 用同一公布 gate 排除（出现数字即泄露判定状态，防侧漏）。
+   */
+  pendingCount: z.number().int().min(0),
   /**
    * 题目**归属单元** id（questions.unitId，题库 home unit；2026-10 按练习分组
    * 的依据——历史合并作业里的错题也按题挂回各自单元）。软删题目行仍在、值照常

@@ -54,6 +54,7 @@ function round(
     correct,
     submittedAt,
     sourceTitle,
+    courseId: "12121212-1212-4121-8121-121212121212",
     courseName: "初一上",
   };
 }
@@ -89,6 +90,7 @@ function makeQuestion(
     ],
     wrongCount: 2,
     correctCount: 0,
+    pendingCount: 0,
     originUnitId: "unit-有理数",
     originUnitTitle: "有理数",
     ...overrides,
