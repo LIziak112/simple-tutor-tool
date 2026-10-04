@@ -62,9 +62,7 @@ export function MediaUploadCard() {
   }
 
   const snippet =
-    state.phase === "done"
-      ? buildImageSnippet(state.result.src, alt)
-      : null;
+    state.phase === "done" ? buildImageSnippet(state.result.src, alt) : null;
 
   return (
     <section
@@ -79,9 +77,8 @@ export function MediaUploadCard() {
         图片上传
       </h2>
       <p className="mt-1 text-sm text-muted-foreground">
-        上传讲义配图，把生成的 ::image
-        片段粘贴进 Markdown 即可在文档中显示。支持 PNG / JPG / WEBP / GIF，单张
-        ≤5MB。
+        上传讲义配图，把生成的 ::image 片段粘贴进 Markdown
+        即可在文档中显示。支持 PNG / JPG / WEBP / GIF，单张 ≤5MB。
       </p>
 
       <input
@@ -135,10 +132,7 @@ export function MediaUploadCard() {
           </p>
           <div className="flex flex-wrap items-end gap-2">
             <div className="flex w-56 flex-col gap-1">
-              <label
-                htmlFor="media-upload-alt"
-                className="text-sm font-medium"
-              >
+              <label htmlFor="media-upload-alt" className="text-sm font-medium">
                 替代文本（alt，可选）
               </label>
               <Input
@@ -167,13 +161,13 @@ export function MediaUploadCard() {
               </p>
             ) : null}
           </div>
-          {/* 片段预览：与复制内容一致，便于肉眼核对 */}
-          <p
+          {/* 片段预览：与复制内容一致，便于肉眼核对（figure 支持 aria-label） */}
+          <figure
             aria-label="::image 片段预览"
             className="break-all rounded-md border border-border bg-background px-3 py-2 font-mono text-[13px] leading-6"
           >
             {snippet}
-          </p>
+          </figure>
           {clipboard.fallbackText !== null ? (
             <div className="rounded-lg border border-border bg-background p-3">
               <p className="text-xs text-muted-foreground">

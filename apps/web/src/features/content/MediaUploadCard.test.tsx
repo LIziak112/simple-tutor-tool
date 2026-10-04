@@ -129,14 +129,14 @@ describe("MediaUploadCard（图片上传小卡）", () => {
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain("图片超过 5MB 上传上限，请压缩后重试");
     // 失败后可重新选择（按钮回到可用态）
-    expect(
-      screen.getByRole("button", { name: /选择图片/ }),
-    ).toBeEnabled();
+    expect(screen.getByRole("button", { name: /选择图片/ })).toBeEnabled();
   });
 
   it("失败路径：网络层中文文案同样透出", async () => {
     mockedUpload.mockRejectedValue(
-      new Error("连不上服务器，请确认后端已启动（pnpm --filter server dev）后重试"),
+      new Error(
+        "连不上服务器，请确认后端已启动（pnpm --filter server dev）后重试",
+      ),
     );
     render(<MediaUploadCard />);
 

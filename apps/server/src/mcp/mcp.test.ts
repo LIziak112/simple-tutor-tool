@@ -712,9 +712,7 @@ describe("MCP 工具（SDK 客户端逐个断言，T4.6 D23）", () => {
       },
     });
     expect(notImage.isError).toBe(true);
-    expect(JSON.parse(textOf(notImage)).error).toBe(
-      "UNSUPPORTED_MEDIA_TYPE",
-    );
+    expect(JSON.parse(textOf(notImage)).error).toBe("UNSUPPORTED_MEDIA_TYPE");
     await client.close();
   });
 });

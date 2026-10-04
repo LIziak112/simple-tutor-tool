@@ -256,9 +256,7 @@ function sectionRangesOf(markdown: string): Array<[number, number]> {
  * 渲染层负责；正则按契约 MEDIA_SRC_PATTERN 的严格形态匹配（64 位小写 hex +
  * 白名单扩展名），旧式 blobs/fig-1.png 等无内容寻址文件可寻的引用静默跳过。
  */
-export function extractMediaImageSrcs(
-  markdowns: readonly string[],
-): string[] {
+export function extractMediaImageSrcs(markdowns: readonly string[]): string[] {
   // 字面量求值即新对象（非模块级共享）：/g 正则被 matchAll 提前中止会留下
   // 非零 lastIndex，共享实例会跨调用串状态
   const pattern =

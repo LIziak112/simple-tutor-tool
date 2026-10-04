@@ -617,7 +617,7 @@ describe("::image 配图进学习包（媒体管线第三单）", () => {
           "",
           `::image{src="${mediaSrc}" alt="测试图"}`,
           "",
-          "::image{src=\"blobs/media/ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff.png\"}",
+          '::image{src="blobs/media/ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff.png"}',
           "",
           '::image{src="blobs/fig-1.png"}',
           "",
@@ -647,9 +647,7 @@ describe("::image 配图进学习包（媒体管线第三单）", () => {
     const entries = unzipEntries(zip.bytes);
     // 条目名 = src 原相对路径（zip 内含 blobs/media/ 子目录条目）
     expect(entries.has(mediaSrc)).toBe(true);
-    expect(
-      entries.get(mediaSrc)?.equals(Buffer.from(mediaBytes)),
-    ).toBe(true);
+    expect(entries.get(mediaSrc)?.equals(Buffer.from(mediaBytes))).toBe(true);
     // 合法形态但文件不存在（未上传）与旧式路径：不产生条目、不炸
     const blobsNames = [...entries.keys()].filter((name) =>
       name.startsWith("blobs/"),
@@ -706,9 +704,9 @@ describe("::image 配图进学习包（媒体管线第三单）", () => {
       { now: SEED_NOW },
     );
     expect(assembly.mediaEntries).toEqual([]);
-    expect(
-      assembly.files.some((file) => file.path.startsWith("blobs/")),
-    ).toBe(false);
+    expect(assembly.files.some((file) => file.path.startsWith("blobs/"))).toBe(
+      false,
+    );
     expect(assembly.summaryMd).not.toContain("讲义配图");
   });
 });
@@ -736,7 +734,7 @@ describe("extractMediaImageSrcs（::image 引用提取纯函数）", () => {
       `::image{src="blobs/media/${H1.toUpperCase()}.png"}`,
       `::image{src="blobs/media/${"a".repeat(63)}.png"}`,
       '::image{src="blobs/ink/whatever.png"}',
-      "正文里没有指令的 src=\"blobs/media/…\" 不算数",
+      '正文里没有指令的 src="blobs/media/…" 不算数',
     ].join("\n");
     expect(extractMediaImageSrcs([md])).toEqual([]);
   });
