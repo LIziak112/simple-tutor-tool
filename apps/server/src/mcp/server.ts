@@ -25,10 +25,17 @@ import { exportLectureMd, exportUnitMd } from "../services/library-service";
 import { saveMedia } from "../services/media-service";
 import { createReport } from "../services/report-service";
 import { listStudents } from "../services/student-service";
+import {
+  commitZipImport,
+  decodeImportZipBase64,
+  previewZipImport,
+  unpackImportZip,
+} from "../services/zip-import-service";
 import { readSpecFile } from "../spec-files";
 
 /**
- * MCP 工具注册（T4.6，D23 清单定稿 11 个 + 媒体管线第三单增补 upload_image）。
+ * MCP 工具注册（T4.6，D23 清单定稿 11 个 + 媒体管线第三单增补 upload_image
+ * + AI 侧 zip 打包上传导入 import_zip，共 13 个）。
  *
  * 全部工具绑定 token 教师域（teacherId 来自鉴权中间件，不信任客户端入参）；
  * 返回统一用 SDK content 结构（text；JSON 数据序列化后作为文本——AI 阅读
@@ -36,8 +43,9 @@ import { readSpecFile } from "../spec-files";
  * 转结构化错误文本（isError + {error, message}），lint 错误清单原样透传
  * （复用 T2A「复制错误给 AI」的思想）。
  *
- * 红线：除 import_markdown(confirm=true)、save_report 与 upload_image
- * （图片内容寻址落盘 DATA_DIR，不写数据库）外无任何写操作；
+ * 红线：除 import_markdown(confirm=true)、save_report、upload_image 与
+ * import_zip(confirm=true)（后两者只落盘 DATA_DIR/blobs/media 内容寻址文件；
+ * import_zip 另经 commitImport 写教师资源库）外无任何写操作；
  * 不提供任何删除类工具（D23）。
  */
 
@@ -148,7 +156,7 @@ function packRequestDefaults() {
 // ---------- 工具注册 ----------
 
 /**
- * 创建一台绑定单教师的 MCP 服务器实例（12 工具）。
+ * 创建一台绑定单教师的 MCP 服务器实例（13 工具）。
  * stateless 挂载下每个 HTTP 请求新建一个实例（注册开销可忽略，无跨请求状态）。
  */
 export function createMcpServer(deps: McpServerDeps): McpServer {
@@ -598,6 +606,59 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
         ...result,
         usage: `在 ::image 指令的 src 属性使用该路径，如 ::image{src="${result.src}" alt="图示"}`,
       });
+    }),
+  );
+
+  // 13. import_zip：AI 侧 zip 打包上传导入（md + 被引用图片一次调用；dry-run/confirm 两段式）
+  server.registerTool(
+    "import_zip",
+    {
+      description:
+        "一次调用完成「zip 解包 → md 与图片配对 → 上传被引用图片 → 改写 ::image src → 导入」：把若干内容 Markdown 与其引用的图片（PNG/JPG/WEBP/GIF，可带子目录）打成一个 zip，dataBase64 传 zip 字节的 base64。默认 dry-run：只返回逐 md 的 lint/动作预览与图片配对总览（将上传/冲突/未配对/已忽略清单），不写库、不上传；确认后带 confirm=true 再次调用才真正执行。配对口径：::image 的 src 与 zip 内条目相对路径完全一致优先，其次文件名（basename）全局唯一；同名多候选视为冲突不配对不改写；外链 URL 不参与。zip 限制：条目 ≤300、单文件 ≤5MB、解压后合计 ≤48MB。部分失败不回滚：每份 md 独立导入、图片逐张上传，结果逐项呈现。",
+      inputSchema: {
+        dataBase64: z
+          .string()
+          .min(1)
+          .describe(
+            "zip 字节的 base64 编码（标准字母表 A-Z a-z 0-9 + / 与 = 填充，可含换行空白）",
+          ),
+        filename: z
+          .string()
+          .min(1)
+          .optional()
+          .describe(
+            "zip 留档展示名（缺省 mcp-import.zip，仅用于错误提示与报告回显）",
+          ),
+        confirm: z
+          .boolean()
+          .optional()
+          .describe(
+            "默认 false（dry-run：只预览，不写库不上传）；true 时上传被引用图片并逐份导入",
+          ),
+        folderId: z
+          .string()
+          .uuid()
+          .nullable()
+          .optional()
+          .describe("目标资源库文件夹 id；null / 缺省 = 未归类"),
+      },
+      annotations: { destructiveHint: true },
+    },
+    guard(({ dataBase64, filename, confirm, folderId }) => {
+      const zipName = filename ?? "mcp-import.zip";
+      // base64 解码与解包校验（限额 / 损坏 / 危险条目名 → 结构化中文错误）；
+      // 配对、改写与 dry-run/confirm 编排在 zip-import-service（口径注释见该文件头）
+      const zipBytes = decodeImportZipBase64(dataBase64, zipName);
+      const bundle = unpackImportZip(zipBytes);
+      const runInput = { bundle, folderId: folderId ?? null, zipName };
+      if (confirm === true) {
+        // 写路径：上传被引用图片（saveMedia 魔数/5MB 校验）→ 改写 src → 逐份
+        // commitImport（带 dataDir，图片存在性核对真实生效；sourcePath=zip:<路径>）
+        return jsonContent(commitZipImport(db, teacherId, dataDir, runInput));
+      }
+      // dry-run：previewImport 不传 dataDir（图片还没传，IMAGE_SRC_NOT_FOUND
+      // 会误导 AI），配对/冲突/未配对状态由报告单独给出——零写入
+      return jsonContent(previewZipImport(db, teacherId, runInput));
     }),
   );
 
