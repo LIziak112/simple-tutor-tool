@@ -48,7 +48,7 @@ export const MCP_SERVER_VERSION = "2.0.0";
 /** createMcpServer 的依赖注入 */
 export interface McpServerDeps {
   readonly db: Db;
-  /** DATA_DIR（learning-pack 装配的 ink 定位；默认模块集不含 ink，签名保持一致） */
+  /** DATA_DIR（learning-pack 装配的 ink 定位，默认模块集不含 ink；import_markdown 的图片存在性核对） */
   readonly dataDir: string;
   /** token 绑定的教师（全部查询以此域隔离） */
   readonly teacherId: string;
@@ -235,19 +235,30 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     },
     guard(({ markdown, filename, confirm, folderId }) => {
       if (confirm === true) {
-        // 复用既有导入服务：写 token 教师的资源库（域内匹配/落库/留档一体）
-        const report = commitImport(db, teacherId, {
+        // 复用既有导入服务：写 token 教师的资源库（域内匹配/落库/留档一体）；
+        // dataDir 贯通：::image 图片存在性核对（IMAGE_SRC_NOT_FOUND warning 不阻断）
+        const report = commitImport(
+          db,
+          teacherId,
+          {
+            markdown,
+            filename: filename ?? "mcp-import.md",
+            folderId: folderId ?? null,
+          },
+          dataDir,
+        );
+        return jsonContent({ confirmed: true, report });
+      }
+      const preview = previewImport(
+        db,
+        teacherId,
+        {
           markdown,
           filename: filename ?? "mcp-import.md",
           folderId: folderId ?? null,
-        });
-        return jsonContent({ confirmed: true, report });
-      }
-      const preview = previewImport(db, teacherId, {
-        markdown,
-        filename: filename ?? "mcp-import.md",
-        folderId: folderId ?? null,
-      });
+        },
+        dataDir,
+      );
       return jsonContent({
         confirmed: false,
         dryRun: true,

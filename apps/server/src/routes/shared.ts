@@ -93,11 +93,17 @@ export function createSharedRoutes(db: Db, dataDir: string) {
         return c.json({
           ok: true,
           data: {
-            ...previewImport(db, c.var.teacher.id, {
-              markdown,
-              filename: body.filename,
-              folderId: body.folderId ?? null,
-            }),
+            ...previewImport(
+              db,
+              c.var.teacher.id,
+              {
+                markdown,
+                filename: body.filename,
+                folderId: body.folderId ?? null,
+              },
+              // dataDir 贯通：::image 引用的图片存在性核对（warning 不阻断）
+              dataDir,
+            ),
             markdown,
           },
         });
@@ -111,13 +117,19 @@ export function createSharedRoutes(db: Db, dataDir: string) {
         const markdown = readSharedMarkdown(dataDir, body.filename);
         return c.json({
           ok: true,
-          data: commitImport(db, c.var.teacher.id, {
-            markdown,
-            filename: body.filename,
-            folderId: body.folderId ?? null,
-            // 留档来源：从共享目录导入（导入批次回看可见）
-            sourcePath: `shared/${body.filename}`,
-          }),
+          data: commitImport(
+            db,
+            c.var.teacher.id,
+            {
+              markdown,
+              filename: body.filename,
+              folderId: body.folderId ?? null,
+              // 留档来源：从共享目录导入（导入批次回看可见）
+              sourcePath: `shared/${body.filename}`,
+            },
+            // dataDir 贯通：同 preview，存在性核对 warning 不阻断共享导入
+            dataDir,
+          ),
         });
       })
       // ---------- 删除（D18：发布者删自己的） ----------

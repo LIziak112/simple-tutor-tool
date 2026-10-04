@@ -36,8 +36,11 @@ import {
  * （AppType / hc 前提）。
  * T2B.3 起全部接口按会话教师（c.var.teacher.id）执行：匹配/写入域内（D13），
  * batches 回看域内过滤。
+ * dataDir 贯通（媒体管线第四单）：preview / preview-batch / commit 传给
+ * ContentService 做 ::image 引用的图片文件存在性核对（IMAGE_SRC_NOT_FOUND
+ * warning，不阻断提交）。
  */
-export function createImportRoutes(db: Db) {
+export function createImportRoutes(db: Db, dataDir: string) {
   return new Hono<TeacherEnv>()
     .post("/import/preview", async (c) => {
       const body: ImportPreviewRequest = await parseJsonBody(
@@ -46,7 +49,7 @@ export function createImportRoutes(db: Db) {
       );
       return c.json({
         ok: true,
-        data: previewImport(db, c.var.teacher.id, body),
+        data: previewImport(db, c.var.teacher.id, body, dataDir),
       });
     })
     .post("/import/preview-batch", async (c) => {
@@ -56,7 +59,7 @@ export function createImportRoutes(db: Db) {
       );
       return c.json({
         ok: true,
-        data: previewImportBatch(db, c.var.teacher.id, body),
+        data: previewImportBatch(db, c.var.teacher.id, body, dataDir),
       });
     })
     .post("/import/commit", async (c) => {
@@ -66,7 +69,7 @@ export function createImportRoutes(db: Db) {
       );
       return c.json({
         ok: true,
-        data: commitImport(db, c.var.teacher.id, body),
+        data: commitImport(db, c.var.teacher.id, body, dataDir),
       });
     })
     .get("/import/batches/:batchId", (c) => {

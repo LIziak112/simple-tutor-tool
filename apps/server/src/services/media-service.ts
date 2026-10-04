@@ -4,9 +4,10 @@ import {
   mkdirSync,
   readFileSync,
   renameSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import type { MediaUploadResult } from "@tutor/contract";
 import { mediaUploadResultSchema } from "@tutor/contract";
 import { HttpError } from "../lib/http-error";
@@ -87,6 +88,32 @@ export function extractMediaImageSrcs(markdowns: readonly string[]): string[] {
   }
   // Set 保插入序：同图多处引用只收集一次，条目顺序稳定可测
   return [...seen];
+}
+
+/**
+ * 导入图片存在性核对（IMAGE_SRC_NOT_FOUND 的数据源）：对 md 文本的严格形态
+ * ::image 引用逐一 stat DATA_DIR/<src>，返回缺失的 src（不存在或不是普通
+ * 文件），顺序与提取顺序一致（提取侧已按文档内去重）。旧式 blobs/fig-1.png
+ * 等非严格形态引用不参与核对——无内容寻址文件名可定位，维持现状不告警。
+ * 供 content-service 在导入预览/提交组装 warning issues 使用（warning 不阻断
+ * 提交：保留「先导 md 后补图」的工作流）。
+ */
+export function missingMediaImageSrcs(
+  dataDir: string,
+  markdowns: readonly string[],
+): string[] {
+  const missing: string[] = [];
+  for (const src of extractMediaImageSrcs(markdowns)) {
+    // 严格形态已限定单段内容寻址路径，无穿越空间；stat().isFile() 比
+    // existsSync 稳（同名目录不算文件存在）
+    try {
+      if (statSync(resolve(dataDir, ...src.split("/"))).isFile()) continue;
+    } catch {
+      // 文件不存在：落入缺失清单
+    }
+    missing.push(src);
+  }
+  return missing;
 }
 
 /**

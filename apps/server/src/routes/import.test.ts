@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import type { ApiErr } from "@tutor/contract";
 import {
   importCommitOkSchema,
@@ -58,19 +59,21 @@ unit: 练习
 ::::
 `;
 
-/** 组装被测应用并完成教师 setup，返回 app、库与登录 Cookie */
+/** 组装被测应用并完成教师 setup，返回 app、库、登录 Cookie 与 dataDir */
 async function makeTeacherApp(): Promise<{
   app: ReturnType<typeof createApp>;
   db: Db;
   cookie: string;
+  dataDir: string;
 }> {
   const db = createTestDb();
+  const dataDir = createTestDir();
   const app = createApp({
     isProduction: false,
     logger: silentLogger,
     db,
     publicUrl: "http://localhost:8787",
-    dataDir: createTestDir(),
+    dataDir,
   });
   const res = await app.request("/api/public/teacher/setup", {
     method: "POST",
@@ -82,7 +85,7 @@ async function makeTeacherApp(): Promise<{
     .find((c) => c.toLowerCase().startsWith("tutor_session="));
   if (!line) throw new Error("setup 未下发会话 Cookie");
   const token = line.slice("tutor_session=".length).split(";")[0] ?? "";
-  return { app, db, cookie: `tutor_session=${token}` };
+  return { app, db, cookie: `tutor_session=${token}`, dataDir };
 }
 
 /** 组装未登录的被测应用 */
@@ -1029,5 +1032,174 @@ describe("T2A.3 GET /api/teacher/import/batches/:batchId（回看）", () => {
       "批量目录/b.md",
     ]);
     expect(body.data.files[0]?.report.units[0]?.id).toBe("单元A");
+  });
+});
+
+describe("图片存在性核对（IMAGE_SRC_NOT_FOUND，dataDir 贯通 createImportRoutes）", () => {
+  const HASH_A = "ab".repeat(32);
+  const HASH_B = "cd".repeat(32);
+  const SRC_A = `blobs/media/${HASH_A}.png`;
+  const SRC_B = `blobs/media/${HASH_B}.jpg`;
+
+  /** 合法讲义：引用两张未上传的图（第 7 行 A、第 9 行 B）；title 可注入避免跨文件同名讲义冲突 */
+  const imageLectureMd = (a = SRC_A, b = SRC_B, title = "配图讲义"): string =>
+    [
+      "---",
+      "kind: lecture",
+      "---",
+      "",
+      `# ${title}`,
+      "",
+      `::image{src="${a}"}`,
+      "",
+      `::image{src="${b}"}`,
+      "",
+    ].join("\n");
+
+  /** issue 集里按 code 过滤（保留原始元素类型供后续字段断言） */
+  const byCode = <T extends { code: string }>(issues: T[], code: string): T[] =>
+    issues.filter((i) => i.code === code);
+
+  it("preview 报 IMAGE_SRC_NOT_FOUND warning（路径与行号正确）；commit 不被阻断", async () => {
+    const { app, db, cookie } = await makeTeacherApp();
+    const preview = await postJson(
+      app,
+      "/api/teacher/import/preview",
+      { markdown: imageLectureMd(), filename: "配图讲义.md" },
+      cookie,
+    );
+    expect(preview.status).toBe(200);
+    const previewBody = (await preview.json()) as {
+      data: {
+        issues: {
+          code: string;
+          level: string;
+          line: number;
+          message: string;
+        }[];
+      };
+    };
+    const notFound = byCode(previewBody.data.issues, "IMAGE_SRC_NOT_FOUND");
+    expect(notFound).toHaveLength(2);
+    expect(notFound[0]).toMatchObject({ level: "warning", line: 7 });
+    expect(notFound[0]?.message).toContain(SRC_A);
+    expect(notFound[1]).toMatchObject({ level: "warning", line: 9 });
+    expect(notFound[1]?.message).toContain(SRC_B);
+
+    // warning 不阻断提交：commit 仍 200 落库
+    const commit = await postJson(
+      app,
+      "/api/teacher/import/commit",
+      { markdown: imageLectureMd(), filename: "配图讲义.md" },
+      cookie,
+    );
+    expect(commit.status).toBe(200);
+    expect(importCommitOkSchema.safeParse(await commit.json()).success).toBe(
+      true,
+    );
+    db.$client.close();
+  });
+
+  it("dataDir 种入对应文件后：预览不再报（先导 md 后补图闭环）", async () => {
+    const { app, db, cookie, dataDir } = await makeTeacherApp();
+    mkdirSync(join(dataDir, "blobs", "media"), { recursive: true });
+    writeFileSync(
+      join(dataDir, ...SRC_A.split("/")),
+      new Uint8Array([1, 2, 3]),
+    );
+    writeFileSync(
+      join(dataDir, ...SRC_B.split("/")),
+      new Uint8Array([4, 5, 6]),
+    );
+    const preview = await postJson(
+      app,
+      "/api/teacher/import/preview",
+      { markdown: imageLectureMd(), filename: "配图讲义.md" },
+      cookie,
+    );
+    expect(preview.status).toBe(200);
+    const body = (await preview.json()) as {
+      data: { issues: { code: string }[] };
+    };
+    expect(byCode(body.data.issues, "IMAGE_SRC_NOT_FOUND")).toEqual([]);
+    db.$client.close();
+  });
+
+  it("preview-batch：不同文件各自缺失各自报；hasError 不受影响", async () => {
+    const { app, db, cookie } = await makeTeacherApp();
+    const res = await postJson(
+      app,
+      "/api/teacher/import/preview-batch",
+      {
+        autoFolderBySubdir: false,
+        files: [
+          {
+            path: "甲.md",
+            markdown: imageLectureMd(SRC_A, SRC_A, "甲配图讲义"),
+          },
+          {
+            path: "乙.md",
+            markdown: imageLectureMd(SRC_B, SRC_B, "乙配图讲义"),
+          },
+        ],
+      },
+      cookie,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      data: {
+        files: {
+          hasError: boolean;
+          preview: {
+            issues: { code: string; message: string }[];
+          };
+        }[];
+      };
+    };
+    const issuesA = byCode(
+      body.data.files[0]?.preview.issues ?? [],
+      "IMAGE_SRC_NOT_FOUND",
+    );
+    const issuesB = byCode(
+      body.data.files[1]?.preview.issues ?? [],
+      "IMAGE_SRC_NOT_FOUND",
+    );
+    expect(issuesA).toHaveLength(1);
+    expect(issuesA[0]?.message).toContain(SRC_A);
+    expect(issuesB).toHaveLength(1);
+    expect(issuesB[0]?.message).toContain(SRC_B);
+    expect(body.data.files.map((f) => f.hasError)).toEqual([false, false]);
+    db.$client.close();
+  });
+
+  it("旧式 blobs/fig-1.png 引用不触发存在性检查（维持现状）", async () => {
+    const { app, db, cookie } = await makeTeacherApp();
+    const md = [
+      "---",
+      "kind: lecture",
+      "---",
+      "",
+      "# 旧式配图讲义",
+      "",
+      '::image{src="blobs/fig-1.png"}',
+      "",
+    ].join("\n");
+    const preview = await postJson(
+      app,
+      "/api/teacher/import/preview",
+      { markdown: md, filename: "旧式配图讲义.md" },
+      cookie,
+    );
+    expect(preview.status).toBe(200);
+    const body = (await preview.json()) as {
+      data: { issues: { code: string }[] };
+    };
+    expect(
+      body.data.issues.some(
+        (i) =>
+          i.code === "IMAGE_SRC_NOT_FOUND" || i.code === "IMAGE_SRC_NOT_BLOBS",
+      ),
+    ).toBe(false);
+    db.$client.close();
   });
 });

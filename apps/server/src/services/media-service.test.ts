@@ -7,6 +7,7 @@ import {
   extractMediaImageSrcs,
   MEDIA_BLOB_URL_TAIL_PATTERN,
   MEDIA_MAX_UPLOAD_BYTES,
+  missingMediaImageSrcs,
   readMediaBlob,
   saveMedia,
 } from "./media-service";
@@ -294,5 +295,62 @@ describe("extractMediaImageSrcs（::image 引用提取纯函数，自 export-ser
       `blobs/media/${H1}.webp`,
       `blobs/media/${H2}.gif`,
     ]);
+  });
+});
+
+describe("missingMediaImageSrcs（导入存在性核对数据源）", () => {
+  const HASH_A = "ab".repeat(32);
+  const HASH_B = "cd".repeat(32);
+  const SRC_A = `blobs/media/${HASH_A}.png`;
+  const SRC_B = `blobs/media/${HASH_B}.jpg`;
+
+  /** 往 dataDir 种入 src 对应的普通文件（模拟已上传） */
+  function seed(dataDir: string, src: string): void {
+    mkdirSync(join(dataDir, "blobs", "media"), { recursive: true });
+    writeFileSync(join(dataDir, ...src.split("/")), new Uint8Array([1, 2, 3]));
+  }
+
+  it("缺失的按提取顺序返回；已上传的跳过；同图去重只算一次", () => {
+    const dataDir = createTestDir();
+    seed(dataDir, SRC_B); // 只上传了图 B
+    const md = [
+      `::image{src="${SRC_A}"}`,
+      `::image{src="${SRC_B}"}`,
+      `::image{src="${SRC_A}"}`, // 重复引用
+    ].join("\n");
+    expect(missingMediaImageSrcs(dataDir, [md])).toEqual([SRC_A]);
+  });
+
+  it("dataDir 无 blobs/media 目录（从未上传过任何图）：全部引用报缺失", () => {
+    expect(
+      missingMediaImageSrcs(createTestDir(), [`::image{src="${SRC_A}"}`]),
+    ).toEqual([SRC_A]);
+  });
+
+  it("同名「目录」不算文件存在（stat().isFile() 口径，比 existsSync 稳）", () => {
+    const dataDir = createTestDir();
+    mkdirSync(join(dataDir, ...SRC_A.split("/")), { recursive: true });
+    expect(missingMediaImageSrcs(dataDir, [`::image{src="${SRC_A}"}`])).toEqual(
+      [SRC_A],
+    );
+  });
+
+  it("旧式/非严格形态引用不参与核对（提取侧已静默跳过）", () => {
+    const md = [
+      '::image{src="blobs/fig-1.png"}',
+      '::image{src="https://example.com/a.png"}',
+    ].join("\n");
+    expect(missingMediaImageSrcs(createTestDir(), [md])).toEqual([]);
+  });
+
+  it("跨多段文本核对（讲义切片 + 题干的合并清单）", () => {
+    const dataDir = createTestDir();
+    seed(dataDir, SRC_B);
+    expect(
+      missingMediaImageSrcs(dataDir, [
+        `::image{src="${SRC_A}"}`,
+        `题干 ::image{src="${SRC_B}"} 详解`,
+      ]),
+    ).toEqual([SRC_A]);
   });
 });

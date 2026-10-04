@@ -141,7 +141,7 @@ export function createTeacherRoutes(
       // 媒体管线第二单：图片上传（multipart 字段 file；类型/限额/内容寻址落盘
       // 在 media-service，content-length 粗防线在 app.ts）
       .route("/", createTeacherMediaRoutes(dataDir))
-      .route("/", createImportRoutes(db))
+      .route("/", createImportRoutes(db, dataDir))
       .route("/", createContentRoutes(db))
       .route("/", createCourseRoutes(db))
       .route("/", createLibraryRoutes(db, dataDir))
