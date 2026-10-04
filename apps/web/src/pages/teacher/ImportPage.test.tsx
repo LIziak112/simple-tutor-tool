@@ -179,13 +179,15 @@ function addPasteEntry(markdown: string, filename?: string): void {
   fireEvent.click(screen.getByRole("button", { name: "加入清单" }));
 }
 
-/** 触发隐藏的文件选择 input（多选一次性传入） */
+/** 触发隐藏的文件选择 input（多选一次性传入）。
+ * 页面上还有「图片上传」小卡的图片 input（媒体管线第三单），按 accept 锁定
+ * .md 多选 input，避免取到页面更靠前的图片选择框。 */
 function pickFiles(
   utils: ReturnType<typeof renderImportPage>,
   files: File[],
 ): void {
   const fileInput = utils.container.querySelector(
-    'input[type="file"]',
+    'input[type="file"][accept*="markdown"]',
   ) as HTMLInputElement;
   expect(fileInput).not.toBeNull();
   fireEvent.change(fileInput, { target: { files } });
