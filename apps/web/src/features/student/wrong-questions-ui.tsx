@@ -3,7 +3,14 @@ import { cn } from "cn";
 import dayjs from "dayjs";
 import timezone from "dayjs/plugin/timezone";
 import utc from "dayjs/plugin/utc";
-import { CheckCircle2, ChevronDown, RotateCcw, XCircle } from "lucide-react";
+import {
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  RotateCcw,
+  XCircle,
+} from "lucide-react";
+import { Link } from "react-router";
 import { Button } from "@/components/ui/button";
 import { SolutionFold } from "@/features/attempt/AttemptResultView";
 import {
@@ -37,8 +44,9 @@ dayjs.extend(timezone);
  *   + 绝对时间），点击行展开完整卡片；
  * - 展开卡：题干（快照 RichMarkdown 渲染，[[答案]] 标记渲染为空框）、本人
  *   最近答案、正确答案、详解折叠（共用结果视图的 SolutionFold）、首次是否
- *   做对标记、轮次史区块（已做错 N 次 · 做对 M 次 + 每轮一行 + 待批轮差额
- *   提示）、最近来源。时间一律绝对时间（formatCnTime，Asia/Shanghai）。
+ *   做对标记、轮次史区块（已做错 N 次 · 做对 M 次 + 每轮一行可点回看该轮
+ *   作答 + 待批轮差额提示）、最近来源。时间一律绝对时间（formatCnTime，
+ *   Asia/Shanghai）。
  */
 
 /** 错题本页 tab（成员由本地攻克标准从 rounds 计算） */
@@ -321,6 +329,9 @@ function FirstCorrectMark({ firstCorrect }: { firstCorrect: boolean }) {
  * 轮次史区块（2026-10）：「已做错 N 次 · 做对 M 次」汇总 + 每轮一行
  * （第 k 轮 ✓/✗ · 绝对时间 · 来源标题）+ 待批轮差额提示（pendingCount>0
  * 时「另有 N 轮待老师批改」——待批轮不进 rounds，在此补足差额口径）。
+ * 每轮一行整体为链接 → /s/attempts/:attemptId 回看该轮作答（rounds 只含
+ * 已判定轮，目标必为已交卷卷的结果视图）；弱化样式（muted 文字，hover 才
+ * 浮出背景与前景色，尾部小箭头暗示可点），触控目标 ≥44px。
  * 攻克判定由端上按学生自选标准从本区块的原料（rounds）计算，服务端不下发
  * 规则。
  */
@@ -333,33 +344,41 @@ function RoundsHistory({ question }: { question: WrongQuestionCard }) {
       <p className="text-sm font-medium">
         已做错 {question.wrongCount} 次 · 做对 {question.correctCount} 次
       </p>
-      <ol className="flex flex-col gap-1.5">
+      <ol className="flex flex-col gap-1">
         {question.rounds.map((round, index) => (
-          <li
-            key={round.attemptId}
-            className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground"
-          >
-            <span className="font-medium text-foreground">
-              第 {index + 1} 轮
-            </span>
-            {round.correct ? (
-              <span className="flex shrink-0 items-center gap-1 font-medium text-emerald-700 dark:text-emerald-300">
-                <CheckCircle2 aria-hidden className="size-3.5" />
-                做对
+          <li key={round.attemptId}>
+            <Link
+              to={`/s/attempts/${round.attemptId}`}
+              aria-label={`查看第 ${index + 1} 轮作答：${round.sourceTitle}`}
+              title="查看这一次的作答"
+              className="-mx-2 flex min-h-11 flex-wrap items-center gap-x-2 gap-y-0.5 rounded-lg px-2 text-xs text-muted-foreground outline-none transition-colors hover:bg-muted/70 hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
+            >
+              <span className="font-medium text-foreground">
+                第 {index + 1} 轮
               </span>
-            ) : (
-              <span className="flex shrink-0 items-center gap-1 font-medium text-red-700 dark:text-red-300">
-                <XCircle aria-hidden className="size-3.5" />
-                做错
+              {round.correct ? (
+                <span className="flex shrink-0 items-center gap-1 font-medium text-emerald-700 dark:text-emerald-300">
+                  <CheckCircle2 aria-hidden className="size-3.5" />
+                  做对
+                </span>
+              ) : (
+                <span className="flex shrink-0 items-center gap-1 font-medium text-red-700 dark:text-red-300">
+                  <XCircle aria-hidden className="size-3.5" />
+                  做错
+                </span>
+              )}
+              <span className="shrink-0 whitespace-nowrap tabular-nums">
+                {formatCnTime(round.submittedAt)}
               </span>
-            )}
-            <span className="shrink-0 whitespace-nowrap tabular-nums">
-              {formatCnTime(round.submittedAt)}
-            </span>
-            <span className="min-w-0 truncate">
-              {round.sourceTitle}
-              {round.courseName !== null && `（${round.courseName}）`}
-            </span>
+              <span className="min-w-0 truncate">
+                {round.sourceTitle}
+                {round.courseName !== null && `（${round.courseName}）`}
+              </span>
+              <ChevronRight
+                aria-hidden
+                className="ml-auto size-3.5 shrink-0 text-muted-foreground/50"
+              />
+            </Link>
           </li>
         ))}
       </ol>
