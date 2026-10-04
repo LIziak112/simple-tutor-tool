@@ -5,9 +5,10 @@ import {
   IMPORT_BATCH_BODY_LIMIT,
   INK_MAX_UPLOAD_BYTES,
 } from "@tutor/contract";
-import { Hono } from "hono";
+import { type Context, Hono } from "hono";
 import type { Logger } from "pino";
 import pino from "pino";
+import { createRequireAnySession } from "./auth/require-any-session";
 import type { Db, DbHandle } from "./db/client";
 import { HttpError } from "./lib/http-error";
 import { createMcpRoutes } from "./mcp/mount";
@@ -15,6 +16,10 @@ import { createAdminRoutes } from "./routes/admin";
 import { createPublicRoutes } from "./routes/public";
 import { createStudentRoutes } from "./routes/student";
 import { createTeacherRoutes } from "./routes/teacher";
+import {
+  MEDIA_BLOB_URL_TAIL_PATTERN,
+  readMediaBlob,
+} from "./services/media-service";
 import { createSpaStatic, defaultWebDistDir } from "./static";
 
 /**
@@ -61,8 +66,19 @@ export interface CreateAppOptions {
  */
 export const INK_UPLOAD_BODY_LIMIT = INK_MAX_UPLOAD_BYTES + 64 * 1024;
 
+/**
+ * 图片上传路由的 body 预检上限（媒体管线第二单）：图片本身 ≤5MB（契约口径，
+ * media-service 的 MEDIA_MAX_UPLOAD_BYTES）+ multipart boundary/头部编码开销余量，
+ * 取整 6MB。超限在 parseBody（整包进内存）之前就拒绝，不落盘不缓冲；
+ * 精确的 5MB 限额由 media-service 按文件实际字节数校验（chunked 传输无
+ * content-length 时兜底，同 ink 的两级防线设计）。
+ */
+export const MEDIA_UPLOAD_BODY_LIMIT = 6 * 1024 * 1024;
+
 export function createApp(options: CreateAppOptions) {
   const logger = options.logger ?? pino({ level: "info" });
+  const requireAnySession = createRequireAnySession(options.db);
+  const serveMediaBlob = createServeMediaBlob(options.dataDir);
 
   // —— 统一错误处理（响应格式见 §0.3：{ ok:false, error:"UPPER_SNAKE_CODE", message:"中文说明" }）——
 
@@ -176,6 +192,25 @@ export function createApp(options: CreateAppOptions) {
       }
       return next();
     })
+    // 媒体管线第二单：图片上传（POST multipart）的 body 大小防御——content-length
+    // 超限直接 413 MEDIA_TOO_LARGE，不进入 parseBody（整包进内存）。粗防线取
+    // 6MB（MEDIA_UPLOAD_BODY_LIMIT，5MB 契约限额 + multipart 编码开销余量）；
+    // 精确的 5MB 限额由 media-service 按文件实际字节数校验（chunked 传输无
+    // content-length 时兜底）。
+    .use("/api/teacher/media", async (c, next) => {
+      if (c.req.method === "POST") {
+        const length = Number(c.req.header("content-length") ?? "0");
+        if (Number.isFinite(length) && length > MEDIA_UPLOAD_BODY_LIMIT) {
+          const body: ApiErr = {
+            ok: false,
+            error: "MEDIA_TOO_LARGE",
+            message: "图片超过 5MB 上传上限，请压缩后重试",
+          };
+          return c.json(body, 413);
+        }
+      }
+      return next();
+    })
     .route(
       "/api/teacher",
       createTeacherRoutes(
@@ -206,7 +241,15 @@ export function createApp(options: CreateAppOptions) {
         dataDir: options.dataDir,
         specDir: options.specDir,
       }),
-    );
+    )
+    // —— 媒体图片伺服（媒体管线第二单）：GET/HEAD /blobs/media/<hash>.<ext> ——
+    // 注册在全部 /api/* 与 /mcp 之后、createSpaStatic 之前：/blobs/* 命中
+    // handler 后必返回（200/401/404），永不落入 SPA 回退；鉴权是任意有效
+    // 会话（教师或学生，见 auth/require-any-session.ts）。
+    // HEAD 用 .on 注册：链式对象不暴露 .head；handler 内按方法回空体。
+    .use("/blobs/*", requireAnySession)
+    .get("/blobs/*", serveMediaBlob)
+    .on("HEAD", "/blobs/*", serveMediaBlob);
 
   // —— 生产模式：托管 apps/web/dist ——
   // 注册在 API 路由之后：API 请求命中路由后不再经过静态；未命中的 /api 请求被静态中间件放行到统一 404
@@ -224,6 +267,51 @@ export function createApp(options: CreateAppOptions) {
   }
 
   return app;
+}
+
+/**
+ * /blobs/* 图片的缓存头：内容寻址（文件名即 sha256）永不变化，可长缓存到
+ * 一年且 immutable；private——图片仅在会话内可见，不经共享缓存/CDN 存副本。
+ */
+const MEDIA_BLOB_CACHE_CONTROL = "private, max-age=31536000, immutable";
+
+/**
+ * /blobs/media/<hash>.<ext> 图片伺服 handler（鉴权已由前置的 requireAnySession 完成）：
+ * - 不变量：契约 src（blobs/media/<hash>.<ext>）前加 / 即根相对伺服 URL，
+ *   二者一一对应——前端把 ::image 的 src 归一化为根相对路径即可直接请求；
+ * - 取 c.req.path 去掉 /blobs/ 前缀，剩余尾段必须整体匹配
+ *   ^media/([0-9a-f]{64}\.(png|jpe?g|webp|gif))$（MEDIA_BLOB_URL_TAIL_PATTERN），
+ *   捕获组即单段文件名，其余一律 404——media 是唯一合法前缀段：缺它
+ *   （/blobs/<名>）、别的子目录（/blobs/ink/… 即笔迹）、`..` 穿越、大写 hash、
+ *   未知扩展名均不匹配正则天然不可达；文件名再经 readMediaBlob 的单段正则
+ *   复核，join 落点永远在 blobs/media/ 内（纵深防御，测试锁定）；
+ * - 文件读 DATA_DIR/blobs/media/<文件名>（saveMedia 的内容寻址落点），miss 404；
+ * - Content-Type 按扩展名（png/jpg|jpeg/webp/gif）；Cache-Control 见
+ *   MEDIA_BLOB_CACHE_CONTROL；HEAD 只回响应头不带体。
+ */
+function createServeMediaBlob(dataDir: string) {
+  return async (c: Context): Promise<Response> => {
+    const tail = c.req.path.startsWith("/blobs/")
+      ? c.req.path.slice("/blobs/".length)
+      : "";
+    const name = MEDIA_BLOB_URL_TAIL_PATTERN.exec(tail)?.[1] ?? null;
+    const blob = name === null ? null : readMediaBlob(dataDir, name);
+    if (blob === null) {
+      const body: ApiErr = {
+        ok: false,
+        error: "NOT_FOUND",
+        message: "图片不存在",
+      };
+      return c.json(body, 404);
+    }
+    return new Response(c.req.method === "HEAD" ? null : blob.bytes, {
+      status: 200,
+      headers: {
+        "content-type": blob.contentType,
+        "cache-control": MEDIA_BLOB_CACHE_CONTROL,
+      },
+    });
+  };
 }
 
 /** 应用完整类型（含全部路由签名）。前端（apps/web）用 Hono hc 客户端做端到端类型：hc<AppType> */

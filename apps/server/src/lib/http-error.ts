@@ -11,7 +11,8 @@ import type { ZodType } from "zod";
  * 业务错误允许的状态码（Hono 的 c.json 需要字面量状态类型，收窄在这里集中管理）。
  * 500 仅用于需要向调用方传达中文原因的部署级错误（如 T1.13 的 SPEC_UNAVAILABLE：
  * 规范文档目录缺失），其余未处理异常仍走 app.ts 的通用 500 INTERNAL 壳。
- * 413 为 T2.8 笔迹超限（INK_TOO_LARGE）启用。
+ * 413 为 T2.8 笔迹超限（INK_TOO_LARGE）启用；
+ * 415 为图片白名单外格式（UNSUPPORTED_MEDIA_TYPE，媒体管线）启用。
  */
 export type HttpErrorStatus =
   | 400
@@ -20,6 +21,7 @@ export type HttpErrorStatus =
   | 404
   | 409
   | 413
+  | 415
   | 422
   | 429
   | 500;

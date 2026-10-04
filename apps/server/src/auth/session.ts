@@ -128,6 +128,31 @@ export function getStudentSession(
 }
 
 /**
+ * 按会话 token 查询任意有效会话（教师或学生；媒体管线第二单起，/blobs/* 图片
+ * 伺服等双端可访问的路由用）。token 不存在 / 已过期 → null。
+ * 「教师未禁用 / 学生未归档」的主体有效性由调用方按 subjectType 另行校验
+ * （见 auth/require-any-session.ts，与 require-teacher / require-student 同口径）。
+ */
+export function getAnySession(
+  db: Db,
+  token: string,
+): { subjectType: "teacher" | "student"; subjectId: string } | null {
+  const row = db
+    .select()
+    .from(sessions)
+    .where(
+      and(
+        eq(sessions.id, token),
+        gt(sessions.expiresAt, new Date().toISOString()),
+      ),
+    )
+    .get();
+  return row
+    ? { subjectType: row.subjectType, subjectId: row.subjectId }
+    : null;
+}
+
+/**
  * 滑动续期：守卫校验通过时调用，把会话寿命重置为「now + ttl」。
  * 必须与重设 Cookie 的 Max-Age 成对出现（见 require-teacher / require-student），
  * 否则浏览器侧 Cookie 到期即停发，DB 续了也白续。
