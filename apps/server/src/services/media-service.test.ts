@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { createTestDir } from "../db/test-utils";
 import { HttpError } from "../lib/http-error";
 import {
+  MEDIA_BLOB_URL_TAIL_PATTERN,
   MEDIA_MAX_UPLOAD_BYTES,
   readMediaBlob,
   saveMedia,
@@ -219,7 +220,7 @@ describe("readMediaBlob：/blobs/* 伺服读取", () => {
       Buffer.from("ink"),
     );
     for (const evil of [
-      `media/${hash}.png`, // 多段：/blobs/media/… 形态不可达
+      `media/${hash}.png`, // 多段：URL 的 media/ 前缀段由 app.ts 路由层剥离后传入，本函数只收单段文件名
       `ink/${hash}.png`, // 多段：笔迹 blobs/ink/ 下真实存在也不可达
       `../${hash}.png`, // 穿越
       "media/../../secret", // 深层穿越
@@ -229,6 +230,30 @@ describe("readMediaBlob：/blobs/* 伺服读取", () => {
       "", // /blobs/ 前缀后无内容
     ]) {
       expect(readMediaBlob(dataDir, evil)).toBeNull();
+    }
+  });
+
+  it("URL 尾段形态：media/<名> 命中并捕获文件名；缺 media 段/其他子目录/穿越拒绝", () => {
+    const name = `${"c".repeat(64)}.png`;
+    const match = MEDIA_BLOB_URL_TAIL_PATTERN.exec(`media/${name}`);
+    expect(match?.[1]).toBe(name);
+    // jpg/jpeg 两种写法都放行（与文件名正则同源）
+    expect(
+      MEDIA_BLOB_URL_TAIL_PATTERN.exec(`media/${"c".repeat(64)}.jpg`),
+    ).not.toBeNull();
+    expect(
+      MEDIA_BLOB_URL_TAIL_PATTERN.exec(`media/${"c".repeat(64)}.jpeg`),
+    ).not.toBeNull();
+    for (const evil of [
+      name, // 缺 media 前缀段
+      `MEDIA/${name}`, // 前缀段大小写敏感
+      `ink/${name}`, // 其他子目录
+      `media/../${name}`, // 穿越
+      `media/${name}/extra`, // 尾部多段
+      `media/`, // 前缀段后无文件名
+      "", // 裸前缀
+    ]) {
+      expect(MEDIA_BLOB_URL_TAIL_PATTERN.exec(evil)).toBeNull();
     }
   });
 });

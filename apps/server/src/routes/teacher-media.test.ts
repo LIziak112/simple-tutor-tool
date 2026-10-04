@@ -15,10 +15,11 @@ import { createTestDb, createTestDir } from "../db/test-utils.ts";
  *   文件落盘 DATA_DIR/blobs/media/；无会话 401；svg/纯文本 415；>5MB 413
  *   （service 精确限额）；超大 body 413（app.ts content-length 粗防线）；
  *   缺 file 字段/字段非文件 400；
- * - GET/HEAD /blobs/<hash>.<ext>：未登录/伪造会话 401（ApiErr）；教师与学生
- *   会话都 200 且 Content-Type 与 Cache-Control 正确、字节与上传一致；
- *   不存在的 hash 404；/blobs/ink/… 即使文件真实存在也 404；../ 穿越、
- *   /blobs/media/<名> 多段、/blobs/other 均不命中文件；HEAD 无响应体。
+ * - GET/HEAD /blobs/media/<hash>.<ext>（契约 src 前加 / 即根相对 URL）：未登录/
+ *   伪造会话 401（ApiErr）；教师与学生 200 且 Content-Type 与 Cache-Control
+ *   正确、字节与上传一致；不存在 hash 404；/blobs/ink/… 即使文件真实存在也
+ *   404；../ 穿越、缺 media 段（/blobs/<名>）、/blobs/other 均不命中文件；
+ *   HEAD 无响应体。
  */
 
 const silentLogger: Logger = pino({ enabled: false });
@@ -126,6 +127,11 @@ async function uploadPng(
   return { name: src.split("/").pop() ?? "", bytes };
 }
 
+/** 伺服 URL：契约 src（blobs/media/<名>）前加 / 即根相对 URL，一一对应 */
+function blobUrl(name: string): string {
+  return `/blobs/media/${name}`;
+}
+
 describe("POST /api/teacher/media：上传", () => {
   it("教师上传真 PNG → 200，data 过 mediaUploadResultSchema，文件落盘 blobs/media/ 且字节一致", async () => {
     const { app, dataDir, teacherCookie } = await makeMediaApp();
@@ -218,17 +224,17 @@ describe("POST /api/teacher/media：上传", () => {
   });
 });
 
-describe("GET/HEAD /blobs/<hash>.<ext>：伺服", () => {
+describe("GET/HEAD /blobs/media/<hash>.<ext>：伺服", () => {
   it("未登录 → 401（ApiErr 形状、中文文案）；伪造会话同样 401", async () => {
     const { app, teacherCookie } = await makeMediaApp();
     const { name } = await uploadPng(app, teacherCookie);
-    const anonymous = await app.request(`/blobs/${name}`);
+    const anonymous = await app.request(blobUrl(name));
     expect(anonymous.status).toBe(401);
     const body = (await anonymous.json()) as ApiErr;
     expect(body.ok).toBe(false);
     expect(body.error).toBe("UNAUTHORIZED");
     expect(body.message).toContain("登录");
-    const forged = await app.request(`/blobs/${name}`, {
+    const forged = await app.request(blobUrl(name), {
       headers: { cookie: "tutor_session=forged-token" },
     });
     expect(forged.status).toBe(401);
@@ -237,7 +243,7 @@ describe("GET/HEAD /blobs/<hash>.<ext>：伺服", () => {
   it("教师会话 → 200，Content-Type/Cache-Control 正确，字节与上传一致", async () => {
     const { app, teacherCookie } = await makeMediaApp();
     const { name, bytes } = await uploadPng(app, teacherCookie);
-    const res = await app.request(`/blobs/${name}`, {
+    const res = await app.request(blobUrl(name), {
       headers: { cookie: teacherCookie },
     });
     expect(res.status).toBe(200);
@@ -249,7 +255,7 @@ describe("GET/HEAD /blobs/<hash>.<ext>：伺服", () => {
   it("学生会话 → 200（讲义/练习图片对学生可见）", async () => {
     const { app, teacherCookie, studentCookie } = await makeMediaApp();
     const { name } = await uploadPng(app, teacherCookie);
-    const res = await app.request(`/blobs/${name}`, {
+    const res = await app.request(blobUrl(name), {
       headers: { cookie: studentCookie },
     });
     expect(res.status).toBe(200);
@@ -259,7 +265,7 @@ describe("GET/HEAD /blobs/<hash>.<ext>：伺服", () => {
   it("HEAD → 200 只回响应头不带体，头与 GET 一致", async () => {
     const { app, teacherCookie } = await makeMediaApp();
     const { name } = await uploadPng(app, teacherCookie);
-    const res = await app.request(`/blobs/${name}`, {
+    const res = await app.request(blobUrl(name), {
       method: "HEAD",
       headers: { cookie: teacherCookie },
     });
@@ -271,7 +277,7 @@ describe("GET/HEAD /blobs/<hash>.<ext>：伺服", () => {
 
   it("不存在的 hash → 404", async () => {
     const { app, teacherCookie } = await makeMediaApp();
-    const res = await app.request(`/blobs/${"0".repeat(64)}.png`, {
+    const res = await app.request(blobUrl(`${"0".repeat(64)}.png`), {
       headers: { cookie: teacherCookie },
     });
     expect(res.status).toBe(404);
@@ -312,15 +318,18 @@ describe("GET/HEAD /blobs/<hash>.<ext>：伺服", () => {
     }
   });
 
-  it("非 hash 形态的单段名与多段 media 路径 → 404", async () => {
+  it("缺 media 段、非 hash 形态、多余段 → 404", async () => {
     const { app, teacherCookie } = await makeMediaApp();
     const { name } = await uploadPng(app, teacherCookie);
     for (const evil of [
-      "/blobs/other", // 单段但不是 hash 形态
-      `/blobs/${"A".repeat(64)}.png`, // 大写 hash
-      `/blobs/${name.slice(0, 63)}.png`, // hash 不足 64 位
-      `/blobs/${name.replace(/\.png$/, ".svg")}`, // 扩展名白名单外
-      `/blobs/media/${name}`, // 多段（src 字面拼 URL 的常见误用形态）
+      `/blobs/${name}`, // 缺 media 前缀段（旧单段 URL 形态）
+      "/blobs/other", // 无 media 前缀段
+      `/blobs/MEDIA/${name}`, // 前缀段大小写敏感
+      blobUrl(`${"A".repeat(64)}.png`), // 大写 hash
+      blobUrl(`${name.slice(0, 63)}.png`), // hash 不足 64 位
+      blobUrl(name.replace(/\.png$/, ".svg")), // 扩展名白名单外
+      `${blobUrl(name)}/extra`, // 尾部多段
+      "/blobs/media/", // 前缀段后无文件名
       "/blobs/", // 前缀后无内容
     ]) {
       const res = await app.request(evil, {

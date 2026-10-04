@@ -16,7 +16,10 @@ import { createAdminRoutes } from "./routes/admin";
 import { createPublicRoutes } from "./routes/public";
 import { createStudentRoutes } from "./routes/student";
 import { createTeacherRoutes } from "./routes/teacher";
-import { readMediaBlob } from "./services/media-service";
+import {
+  MEDIA_BLOB_URL_TAIL_PATTERN,
+  readMediaBlob,
+} from "./services/media-service";
 import { createSpaStatic, defaultWebDistDir } from "./static";
 
 /**
@@ -239,7 +242,7 @@ export function createApp(options: CreateAppOptions) {
         specDir: options.specDir,
       }),
     )
-    // —— 媒体图片伺服（媒体管线第二单）：GET/HEAD /blobs/<hash>.<ext> ——
+    // —— 媒体图片伺服（媒体管线第二单）：GET/HEAD /blobs/media/<hash>.<ext> ——
     // 注册在全部 /api/* 与 /mcp 之后、createSpaStatic 之前：/blobs/* 命中
     // handler 后必返回（200/401/404），永不落入 SPA 回退；鉴权是任意有效
     // 会话（教师或学生，见 auth/require-any-session.ts）。
@@ -273,22 +276,26 @@ export function createApp(options: CreateAppOptions) {
 const MEDIA_BLOB_CACHE_CONTROL = "private, max-age=31536000, immutable";
 
 /**
- * /blobs/<hash>.<ext> 图片伺服 handler（鉴权已由前置的 requireAnySession 完成）：
- * - 取 c.req.path 去掉 /blobs/ 前缀，只接受整体匹配 ^[0-9a-f]{64}\.(png|jpe?g|webp|gif)$
- *   的**单段文件名**（MEDIA_BLOB_FILENAME_PATTERN，与契约 src 的文件名段同源），
- *   其余一律 404——多段路径使 /blobs/ink/… 与 /blobs/media/… 下的穿越形态天然
- *   不可达，`..`、大写 hash、未知扩展名同样不匹配正则，readMediaBlob 的 join
- *   落点永远在 blobs/media/ 内（纵深防御，测试锁定）；
+ * /blobs/media/<hash>.<ext> 图片伺服 handler（鉴权已由前置的 requireAnySession 完成）：
+ * - 不变量：契约 src（blobs/media/<hash>.<ext>）前加 / 即根相对伺服 URL，
+ *   二者一一对应——前端把 ::image 的 src 归一化为根相对路径即可直接请求；
+ * - 取 c.req.path 去掉 /blobs/ 前缀，剩余尾段必须整体匹配
+ *   ^media/([0-9a-f]{64}\.(png|jpe?g|webp|gif))$（MEDIA_BLOB_URL_TAIL_PATTERN），
+ *   捕获组即单段文件名，其余一律 404——media 是唯一合法前缀段：缺它
+ *   （/blobs/<名>）、别的子目录（/blobs/ink/… 即笔迹）、`..` 穿越、大写 hash、
+ *   未知扩展名均不匹配正则天然不可达；文件名再经 readMediaBlob 的单段正则
+ *   复核，join 落点永远在 blobs/media/ 内（纵深防御，测试锁定）；
  * - 文件读 DATA_DIR/blobs/media/<文件名>（saveMedia 的内容寻址落点），miss 404；
  * - Content-Type 按扩展名（png/jpg|jpeg/webp/gif）；Cache-Control 见
  *   MEDIA_BLOB_CACHE_CONTROL；HEAD 只回响应头不带体。
  */
 function createServeMediaBlob(dataDir: string) {
   return async (c: Context): Promise<Response> => {
-    const name = c.req.path.startsWith("/blobs/")
+    const tail = c.req.path.startsWith("/blobs/")
       ? c.req.path.slice("/blobs/".length)
       : "";
-    const blob = readMediaBlob(dataDir, name);
+    const name = MEDIA_BLOB_URL_TAIL_PATTERN.exec(tail)?.[1] ?? null;
+    const blob = name === null ? null : readMediaBlob(dataDir, name);
     if (blob === null) {
       const body: ApiErr = {
         ok: false,

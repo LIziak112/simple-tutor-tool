@@ -25,21 +25,41 @@ import { HttpError } from "../lib/http-error";
  * - 写入走 <名>.tmp + rename 原子替换（写一半崩溃不留半截文件，同 ink-service）；
  *   文件已存在则幂等跳过写入（内容寻址同名即同内容，重复上传零成本）。
  *
- * 伺服：readMediaBlob 按 /blobs/<hash>.<ext> 的单段文件名读回字节与
- * Content-Type（app.ts 的 /blobs/* 路由直出）。文件名形态用与契约同源的
- * 严格正则锁定：多段路径、`..` 穿越、非白名单扩展名一律按未命中处理，
- * blobs/ink/ 等其他子目录经 /blobs/* 天然不可达（测试锁定）。
+ * 伺服：URL 是 /blobs/media/<hash>.<ext>——契约 src（blobs/media/<hash>.<ext>）
+ * 前加 / 即根相对伺服 URL，一一对应。app.ts 的 /blobs/* 路由按
+ * MEDIA_BLOB_URL_TAIL_PATTERN 剥掉字面 media/ 前缀段得到单段文件名，交给
+ * readMediaBlob 读回字节与 Content-Type。两层正则均与契约同源：多段路径、
+ * `..` 穿越、非白名单扩展名一律按未命中处理，blobs/ink/ 等其他子目录经
+ * /blobs/* 天然不可达（测试锁定）。
  */
 
 /** 图片上传上限：5MB（契约口径见 media-api.ts 的 MEDIA_TOO_LARGE 说明） */
 export const MEDIA_MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
 
 /**
- * /blobs/<文件名> 伺服只接受的单段文件名形态：
- * 与契约 MEDIA_SRC_PATTERN 的文件名段一致（64 位小写 hex + 白名单扩展名）。
+ * 单段文件名的核心形态（无锚点）：与契约 MEDIA_SRC_PATTERN 的文件名段一致
+ * （64 位小写 hex + 白名单扩展名）。文件名与 URL 尾段两个正则都由它拼装
+ * （注意 RegExp.source 含锚点，不能从成品正则反解，故以字符串为源）。
  */
-export const MEDIA_BLOB_FILENAME_PATTERN =
-  /^[0-9a-f]{64}\.(png|jpe?g|webp|gif)$/;
+const MEDIA_BLOB_FILENAME_SOURCE = "[0-9a-f]{64}\\.(png|jpe?g|webp|gif)";
+
+/**
+ * 伺服文件名的单段形态（readMediaBlob 只接受它）。
+ */
+export const MEDIA_BLOB_FILENAME_PATTERN = new RegExp(
+  `^${MEDIA_BLOB_FILENAME_SOURCE}$`,
+);
+
+/**
+ * /blobs/* 伺服 URL 去掉 /blobs/ 前缀后的合法尾段：字面 media/ 段 + 单段文件名
+ * （捕获组 1 即文件名，与 MEDIA_BLOB_FILENAME_PATTERN 同源拼装）。
+ * 不变量：契约 src 前加 / 即根相对伺服 URL，一一对应——前端把 ::image 的 src
+ * 归一化为根相对路径即可直接请求。media 是唯一合法前缀段：缺它（/blobs/<名>）、
+ * 别的子目录（ink/ 等）、`..` 穿越形态一律不匹配。
+ */
+export const MEDIA_BLOB_URL_TAIL_PATTERN = new RegExp(
+  `^media/(${MEDIA_BLOB_FILENAME_SOURCE})$`,
+);
 
 /**
  * 魔数检测：命中白名单返回规范化扩展名（JPEG → jpg），其余 null。
@@ -150,7 +170,8 @@ export interface MediaBlob {
 }
 
 /**
- * 按 /blobs/<hash>.<ext> 的单段文件名读回图片：
+ * 按单段文件名读回图片（app.ts 的 /blobs/media/<名> 路由剥掉字面 media/
+ * 前缀段后传入；也可以在已持有文件名的任何调用点直接使用）：
  * - 文件名必须整体匹配 MEDIA_BLOB_FILENAME_PATTERN——多段路径（如 ink/xxx.png）、
  *   `..` 穿越、大写 hash、非白名单扩展名一律按未命中（null）处理，调用方回 404。
  *   正则只放行「64 位小写 hex + 点 + 图片扩展名」的单段名，join 的落点永远在
