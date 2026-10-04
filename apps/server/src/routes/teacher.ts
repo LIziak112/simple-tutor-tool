@@ -27,6 +27,7 @@ import { createAssignmentTeacherRoutes } from "./teacher-assignments";
 import { createTeacherAttemptRoutes } from "./teacher-attempts";
 import { createTeacherBackupRoutes } from "./teacher-backup";
 import { createTeacherExportRoutes } from "./teacher-export";
+import { createTeacherMediaRoutes } from "./teacher-media";
 import { createTeacherReportRoutes } from "./teacher-reports";
 import { createStudentTeacherRoutes } from "./teacher-students";
 
@@ -75,6 +76,9 @@ import { createStudentTeacherRoutes } from "./teacher-students";
  * - T4.6（业务在 report-service）：GET /students/:id/reports（D24 倒序列表）、
  *   DELETE /reports/:id（域隔离 404）；T4.7 增 GET /reports/:id（详情含
  *   markdown 正文，画像页「点开渲染」按需取，域隔离同口径）。
+ * - 媒体管线第二单（业务在 media-service）：POST /media 图片上传
+ *   （multipart file 字段，::image 的图片来源入口；415/413 口径见契约
+ *   media-api.ts，伺服走 GET /blobs/* 见 app.ts）。
  *
  * 返回类型不显式标注：链式注册把路由签名累积进推断类型，
  * 挂载后 AppType 才能带上这些路由（前端 hc 端到端类型的前提）。
@@ -134,6 +138,9 @@ export function createTeacherRoutes(
           data: getTeacherInkMeta(db, c.var.teacher.id, file),
         });
       })
+      // 媒体管线第二单：图片上传（multipart 字段 file；类型/限额/内容寻址落盘
+      // 在 media-service，content-length 粗防线在 app.ts）
+      .route("/", createTeacherMediaRoutes(dataDir))
       .route("/", createImportRoutes(db))
       .route("/", createContentRoutes(db))
       .route("/", createCourseRoutes(db))
