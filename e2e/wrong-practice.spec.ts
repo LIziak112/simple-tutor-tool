@@ -18,6 +18,11 @@ import {
  * （默认）下仍待复习（只连对 1 次）→ 再重练 q1 答对 → 连续 2 次迁入已攻克 →
  * 我的记录来源=错题重练 → 教师数据页（按作业视图）「错题重练」组可见该卷、
  * CSV 导出来源列「错题重练」。全程学生端网络层泄露拦截。
+ *
+ * 2026-10 结果页直达重练 + 轮次史可点：做错一题的课程卷结果页出
+ * 「练习本卷错题（1 题）」（只计判错）→ 从我的记录卡片进结果页点它 →
+ * 新重练卷题数=判错数 → 交卷 → 错题本该题轮次史多一轮且每轮可点回看；
+ * 全对卷结果页无该按钮（N=0 隐藏）。
  */
 
 /** 两道判断（考点互不相同：按考点分组时各成一组，可只重练一道） */
@@ -288,5 +293,203 @@ test.describe("错题重练：组卷 → 作答 → 轮次史/攻克 → 教师�
     const csvText = await csvRes.text();
     expect(csvText).toContain("错题重练");
     expect(csvText).toContain(studentName);
+  });
+});
+
+test.describe("结果页「练习本卷错题」直达重练 + 轮次史可点（2026-10）", () => {
+  test("做错一题的课程卷：结果页按钮只圈判错题 → 新卷单题 → 交卷后轮次史多一轮且可点回看；全对卷无按钮", async ({
+    request,
+    browser,
+  }) => {
+    test.setTimeout(300_000);
+
+    // —— 造数（教师 API）：专属课程 + 两题判断单元放开可见 + 学生入成员 ——
+    await teacherApiLogin(request);
+    const suffix = uniqueSuffix();
+    const courseName = `e2e结果页重练课程${suffix}`;
+    const unitName = `结果页重练小练${suffix}`;
+    const courseId = await createCourseViaApi(request, courseName);
+    const importRes = await request.post("/api/teacher/import/commit", {
+      data: {
+        markdown: practiceMarkdown(unitName),
+        filename: `${unitName}.md`,
+        courseId,
+      },
+    });
+    if (!importRes.ok()) {
+      throw new Error(`导入课程练习失败：HTTP ${importRes.status()}`);
+    }
+    await setCourseItemVisible(request, courseId, unitName, true);
+
+    const loginName = `e2e-resultpractice-${suffix}`;
+    const studentName = `e2e结果页重练生${suffix}`;
+    await request.post("/api/teacher/students", {
+      data: { displayName: studentName, loginName },
+    });
+    const student = await getStudentViaApi(request, loginName);
+    await addCourseMemberViaApi(request, courseId, student.id);
+
+    // —— 学生端：iPad 独立 context，全程泄露拦截 ——
+    const studentContext = await browser.newContext(devices["iPad (gen 7)"]);
+    const studentPage = await studentContext.newPage();
+    try {
+      const leak = attachLeakMonitor(studentPage);
+      await studentPage.goto(`/s/${student.linkToken}`);
+      await studentPage.waitForURL("**/s/home");
+
+      // —— 第 1 轮课程练习：q1 答「错」（判错）、q2 答「对」（判对）→ 交卷 ——
+      const unitPath = `/s/courses/${courseId}/units/${encodeURIComponent(unitName)}`;
+      await studentPage.goto(unitPath);
+      await studentPage.getByRole("button", { name: "开始练习" }).click();
+      await studentPage.waitForURL("**/s/attempts/**");
+      // q1 答「错」（判错）、q2 答「对」（判对）
+      await studentPage
+        .locator('article[aria-label="第 1 题"]')
+        .getByRole("radio", { name: "错", exact: true })
+        .locator("xpath=ancestor::label[1]")
+        .click();
+      await studentPage
+        .locator('article[aria-label="第 2 题"]')
+        .getByRole("radio", { name: "对", exact: true })
+        .locator("xpath=ancestor::label[1]")
+        .click();
+      await expect
+        .poll(async () => studentPage.getByTestId("draft-status").textContent())
+        .not.toContain("保存中");
+      await studentPage
+        .getByRole("button", { name: "交卷", exact: true })
+        .click();
+      await studentPage
+        .getByRole("button", { name: "确认交卷" })
+        .first()
+        .click();
+      await expect(studentPage.getByText("批改结果")).toBeVisible({
+        timeout: 30_000,
+      });
+      // 结果页按钮：示数 = 判错题数（q2 答对不计、未答不计）
+      await expect(
+        studentPage.getByRole("button", { name: "练习本卷错题（1 题）" }),
+      ).toBeVisible();
+
+      // —— 我的记录：该课程练习记录卡存在 → 点击进结果视图 ——
+      await studentPage.goto("/s/records");
+      const recordCard = studentPage.getByRole("link", {
+        name: `查看结果：${unitName} · 第 1 次（已批改）`,
+      });
+      await expect(recordCard).toBeVisible({ timeout: 30_000 });
+      await recordCard.click();
+      await studentPage.waitForURL("**/s/attempts/**");
+      await expect(studentPage.getByText("批改结果")).toBeVisible({
+        timeout: 30_000,
+      });
+      const firstAttemptPath = new URL(studentPage.url()).pathname;
+
+      // —— 点「练习本卷错题」→ 新重练卷题数 = 判错数（单题、来源错题重练）——
+      await studentPage
+        .getByRole("button", { name: "练习本卷错题（1 题）" })
+        .click();
+      await studentPage.waitForURL(
+        (url) => url.pathname !== firstAttemptPath,
+        { timeout: 30_000 },
+      );
+      await expect(
+        studentPage.getByRole("heading", { name: "错题重练", exact: true }),
+      ).toBeVisible();
+      await expect(
+        studentPage.getByText("错题重练 · 第 1 次"),
+      ).toBeVisible();
+      await expect(
+        studentPage.locator('article[aria-label="第 1 题"]'),
+      ).toBeVisible();
+      await expect(
+        studentPage.locator('article[aria-label="第 2 题"]'),
+      ).toHaveCount(0);
+
+      // —— 重练卷答对并交卷 ——
+      await studentPage
+        .locator('article[aria-label="第 1 题"]')
+        .getByRole("radio", { name: "对", exact: true })
+        .locator("xpath=ancestor::label[1]")
+        .click();
+      await expect
+        .poll(async () => studentPage.getByTestId("draft-status").textContent())
+        .not.toContain("保存中");
+      await studentPage
+        .getByRole("button", { name: "交卷", exact: true })
+        .click();
+      await studentPage
+        .getByRole("button", { name: "确认交卷" })
+        .first()
+        .click();
+      await expect(studentPage.getByText("批改结果")).toBeVisible({
+        timeout: 30_000,
+      });
+
+      // —— 错题本：该题轮次史多一轮（第 2 轮 ✓ · 错题重练 · 第 1 次），
+      //    且每轮一行可点 → 回看该轮作答结果 ——
+      await studentPage.goto("/s/wrong");
+      await studentPage.getByRole("button", { name: /1 是正数/ }).click();
+      const q1Card = studentPage.locator("article", {
+        hasText: "有理数的概念",
+      });
+      const rounds = q1Card.getByLabel("轮次史");
+      await expect(rounds).toBeVisible({ timeout: 30_000 });
+      await expect(
+        rounds.getByText("已做错 1 次 · 做对 1 次"),
+      ).toBeVisible();
+      const round2Link = rounds.getByRole("link", {
+        name: "查看第 2 轮作答：错题重练 · 第 1 次",
+      });
+      await expect(round2Link).toBeVisible();
+      await round2Link.click();
+      await studentPage.waitForURL("**/s/attempts/**");
+      // 落在重练卷的结果视图（rounds 只含已判定轮，必为已交卷）
+      await expect(studentPage.getByText("批改结果")).toBeVisible({
+        timeout: 30_000,
+      });
+      await expect(
+        studentPage.getByText("错题重练 · 第 1 次"),
+      ).toBeVisible();
+
+      // —— 负例：全对卷（再做一次第 2 次全对）结果页无「练习本卷错题」按钮 ——
+      await studentPage.goto(unitPath);
+      await studentPage.getByRole("button", { name: "再做一次" }).click();
+      await studentPage
+        .getByRole("button", { name: "开始新一次" })
+        .click();
+      await studentPage.waitForURL("**/s/attempts/**");
+      await expect(
+        studentPage.getByText(`课程：${courseName} · 第 2 次`),
+      ).toBeVisible();
+      for (const q of [1, 2]) {
+        await studentPage
+          .locator(`article[aria-label="第 ${q} 题"]`)
+          .getByRole("radio", { name: "对", exact: true })
+          .locator("xpath=ancestor::label[1]")
+          .click();
+      }
+      await expect
+        .poll(async () => studentPage.getByTestId("draft-status").textContent())
+        .not.toContain("保存中");
+      await studentPage
+        .getByRole("button", { name: "交卷", exact: true })
+        .click();
+      await studentPage
+        .getByRole("button", { name: "确认交卷" })
+        .first()
+        .click();
+      await expect(studentPage.getByText("批改结果")).toBeVisible({
+        timeout: 30_000,
+      });
+      await expect(
+        studentPage.getByRole("button", { name: /练习本卷错题/ }),
+      ).toHaveCount(0);
+
+      // 泄露检查：全程 /api/student/* 响应无禁用键、无未解锁提示/详解原文
+      await studentPage.waitForTimeout(800); // 等最后一批响应体读完
+      expect(leak.violations().join("\n")).toBe("");
+    } finally {
+      await studentContext.close();
+    }
   });
 });
