@@ -243,6 +243,19 @@ describe("StudentRecordsPage 卡片字段口径（D10）", () => {
     expect(within(unreleasedCard).getByText("待公布")).toBeInTheDocument();
     expect(within(unreleasedCard).queryByText("得分")).not.toBeInTheDocument();
     expect(within(unreleasedCard).queryByText(/待批/)).not.toBeInTheDocument();
+
+    // 最近活动时间为绝对时间（2026-10 与错题本同口径 formatCnTime）：
+    // submittedAt 2026-09-28T10:05Z → 18:05:00（Asia/Shanghai）；draft 卡无
+    // submittedAt 回落 startedAt 10:00Z → 18:00:00；不再出现相对时间文案
+    expect(
+      within(gradedCard).getByText("2026年9月28日 18:05:00"),
+    ).toBeInTheDocument();
+    expect(
+      within(draftCard).getByText("2026年9月28日 18:00:00"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/分钟前|小时前|天前|刚刚/),
+    ).not.toBeInTheDocument();
   });
 
   it("点击已交条目跳转 /s/attempts/:attemptId（路由桩命中）", async () => {

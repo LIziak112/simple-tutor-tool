@@ -1,7 +1,7 @@
-import { screen } from "@testing-library/react";
-import type { AttemptDraftData } from "@tutor/contract";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
+import type { AttemptDraftData, AttemptResultData } from "@tutor/contract";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiError, fetchAttemptApi } from "@/lib/api";
+import { ApiError, fetchAttemptApi, startWrongPracticeApi } from "@/lib/api";
 import { renderWithStudentRoutes } from "@/test/student-routes";
 import StudentAttemptPage from "./StudentAttemptPage";
 
@@ -9,6 +9,7 @@ import StudentAttemptPage from "./StudentAttemptPage";
  * /s/attempts/:attemptId 通用答题页组件测试（T2A.6）：按 attemptId 直接加载
  * 详情（两种来源共用）；课程来源显示「课程：xx · 第 n 次」与返回单元落地页；
  * 403/404 → 终态面板「已无权限访问该练习」（D7，不做无限重试）。
+ * 2026-10：结果视图「练习本卷错题」直达重练接线（组卷 → 跳新卷作答）。
  */
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -16,10 +17,12 @@ vi.mock("@/lib/api", async (importOriginal) => {
   return {
     ...actual,
     fetchAttemptApi: vi.fn(),
+    startWrongPracticeApi: vi.fn(),
   };
 });
 
 const mockedFetch = vi.mocked(fetchAttemptApi);
+const mockedPractice = vi.mocked(startWrongPracticeApi);
 
 const COURSE_ID = "12121212-1212-4121-8121-121212121212";
 const ATTEMPT_ID = "55555555-5555-4555-8555-555555555555";
@@ -72,6 +75,7 @@ function renderPage() {
 
 beforeEach(() => {
   mockedFetch.mockReset();
+  mockedPractice.mockReset();
 });
 
 describe("StudentAttemptPage（/s/attempts/:attemptId，T2A.6）", () => {
@@ -147,5 +151,115 @@ describe("StudentAttemptPage（/s/attempts/:attemptId，T2A.6）", () => {
     renderPage();
     expect(await screen.findByText("练习加载失败")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "重试" })).toBeInTheDocument();
+  });
+});
+
+describe("结果页「练习本卷错题」直达重练（2026-10）", () => {
+  const NEW_ATTEMPT_ID = "99999999-9999-4999-8999-999999999999";
+
+  /** 已交卷课程卷：单题判断，答错（finalCorrect=false），公布态 */
+  const RESULT_WITH_WRONG: AttemptResultData = {
+    attempt: {
+      id: ATTEMPT_ID,
+      sourceType: "course",
+      assignmentId: null,
+      courseId: COURSE_ID,
+      unitId: "有理数小练",
+      attemptNo: 1,
+      status: "submitted",
+      startedAt: "2026-09-27T02:00:00.000Z",
+      submittedAt: "2026-09-27T02:30:00.000Z",
+      scoreAuto: 0,
+    },
+    title: "有理数小练",
+    courseName: "初一上",
+    dueAt: null,
+    answersReleased: true,
+    summary: {
+      total: 1,
+      answered: 1,
+      correct: 0,
+      wrong: 1,
+      pending: 0,
+      unanswered: 0,
+      autoGradable: 1,
+      scoreFinal: 0,
+      pendingCount: 0,
+    },
+    units: [
+      {
+        id: "有理数小练",
+        title: "有理数小练",
+        questions: [
+          {
+            questionId: "练习四-1",
+            snapshot: {
+              id: "练习四-1",
+              type: "judge",
+              difficulty: 1,
+              knowledge: ["有理数的概念"],
+              stemMd: "$0$ 既不是正数，也不是负数。[[正确]]",
+              hintCount: 0,
+            },
+            answers: { kind: "judge", value: true },
+            solutionMd: null,
+            answer: { kind: "judge", value: false },
+            autoCorrect: false,
+            teacherMark: null,
+            teacherComment: null,
+            finalCorrect: false,
+            hintsOpened: [],
+          },
+        ],
+      },
+    ],
+  };
+
+  it("点击「练习本卷错题（1 题）」：按本卷题序调组卷接口，成功后跳新卷作答页", async () => {
+    // 首次进入旧卷结果页；组卷成功后跳新 id → 再次 fetch（返回新卷结果）
+    mockedFetch.mockResolvedValueOnce(RESULT_WITH_WRONG);
+    mockedFetch.mockResolvedValue({
+      ...RESULT_WITH_WRONG,
+      attempt: { ...RESULT_WITH_WRONG.attempt, id: NEW_ATTEMPT_ID },
+    });
+    mockedPractice.mockResolvedValue({
+      ...RESULT_WITH_WRONG.attempt,
+      id: NEW_ATTEMPT_ID,
+      sourceType: "wrong",
+    });
+    renderPage();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "练习本卷错题（1 题）" }),
+    );
+    await waitFor(() =>
+      expect(mockedPractice).toHaveBeenCalledWith(["练习四-1"]),
+    );
+    // 跳转 /s/attempts/:新id（同路由重挂载）→ 按新 attemptId 重新拉详情
+    await waitFor(() =>
+      expect(mockedFetch).toHaveBeenCalledWith(NEW_ATTEMPT_ID),
+    );
+  });
+
+  it("组卷失败（400 WRONG_PRACTICE_EMPTY 等）：留结果页显示中文告警，可再试", async () => {
+    mockedFetch.mockResolvedValue(RESULT_WITH_WRONG);
+    mockedPractice.mockRejectedValue(
+      new ApiError("WRONG_PRACTICE_EMPTY", "没有可重练的错题，请刷新本页", 400),
+    );
+    renderPage();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "练习本卷错题（1 题）" }),
+    );
+    await waitFor(() =>
+      expect(mockedPractice).toHaveBeenCalledWith(["练习四-1"]),
+    );
+    // role=alert 按 ARIA 不能从内容取名（name 查询恒空），断言用文本内容
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(
+      "练习本卷错题组卷失败：没有可重练的错题，请刷新本页",
+    );
+    // 按钮仍在（非 loading 态），可重试
+    expect(
+      screen.getByRole("button", { name: "练习本卷错题（1 题）" }),
+    ).toBeEnabled();
   });
 });

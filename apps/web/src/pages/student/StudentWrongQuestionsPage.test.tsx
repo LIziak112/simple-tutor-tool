@@ -347,6 +347,13 @@ describe("StudentWrongQuestionsPage 视图与 URL 同步", () => {
     expect(screen.getAllByText("第 2 轮").length).toBe(1);
     expect(screen.getAllByText("做错").length).toBeGreaterThanOrEqual(2);
     expect(screen.getAllByText(/周末加练/).length).toBeGreaterThanOrEqual(2);
+    // 每轮一行可点（2026-10）：链接 → /s/attempts/:attemptId 回看该轮作答
+    expect(
+      screen.getByRole("link", { name: "查看第 1 轮作答：周末加练" }),
+    ).toHaveAttribute("href", `/s/attempts/${ATTEMPT_A}`);
+    expect(
+      screen.getByRole("link", { name: "查看第 2 轮作答：周末加练" }),
+    ).toHaveAttribute("href", `/s/attempts/${ATTEMPT_B}`);
     // 每轮时间与页脚「最近来源」时间都是绝对时间：9-20 只在轮次行；9-28 在
     // 紧凑行 + 轮次行 + 页脚共 3 处
     expect(screen.getAllByText("2020年9月20日 10:00:00").length).toBe(1);
