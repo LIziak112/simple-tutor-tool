@@ -61,6 +61,34 @@ export const MEDIA_BLOB_URL_TAIL_PATTERN = new RegExp(
   `^media/(${MEDIA_BLOB_FILENAME_SOURCE})$`,
 );
 
+// ---------- ::image 图片引用提取（导出打包与导入存在性核对共用） ----------
+
+/**
+ * 从 markdown 文本提取 ::image 引用的图片 src（严格契约形态）。
+ * 落点说明（自 export-service 抽取为共享函数）：既供学习包导出扫「哪些图片
+ * 要打进 zip」，也供导入链路核对「引用的文件是否真的上传过」——两处口径
+ * 必须同源（同一份正则），故收敛在本模块（media 域）单点维护。
+ * 用单一正则扫指令行的 src 值、不引入 md-dsl 解析器依赖——调用方只需要
+ * 「一份 src 清单」，完整指令语义（未知属性降级等）由解析/渲染层负责；
+ * 正则按契约 MEDIA_SRC_PATTERN 的严格形态匹配（64 位小写 hex + 白名单扩展名），
+ * 旧式 blobs/fig-1.png 等无内容寻址文件可寻的引用静默跳过。
+ */
+export function extractMediaImageSrcs(markdowns: readonly string[]): string[] {
+  // 字面量求值即新对象（非模块级共享）：/g 正则被 matchAll 提前中止会留下
+  // 非零 lastIndex，共享实例会跨调用串状态
+  const pattern =
+    /::image\{[^}\n]*?\bsrc="(blobs\/media\/[0-9a-f]{64}\.(?:png|jpe?g|webp|gif))"/g;
+  const seen = new Set<string>();
+  for (const md of markdowns) {
+    for (const match of md.matchAll(pattern)) {
+      const src = match[1];
+      if (src !== undefined) seen.add(src);
+    }
+  }
+  // Set 保插入序：同图多处引用只收集一次，条目顺序稳定可测
+  return [...seen];
+}
+
 /**
  * 魔数检测：命中白名单返回规范化扩展名（JPEG → jpg），其余 null。
  * 只看文件头字节，不看上传方声明的 MIME/文件名（两者都可伪造）。

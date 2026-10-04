@@ -16,7 +16,6 @@ import { submitAttempt } from "./attempt-service";
 import {
   assembleLearningPack,
   buildLearningPackZip,
-  extractMediaImageSrcs,
   previewLearningPack,
 } from "./export-service";
 import { saveInk } from "./ink-service";
@@ -710,41 +709,4 @@ describe("::image 配图进学习包（媒体管线第三单）", () => {
     expect(assembly.summaryMd).not.toContain("讲义配图");
   });
 });
-
-describe("extractMediaImageSrcs（::image 引用提取纯函数）", () => {
-  const H1 = "a".repeat(64);
-  const H2 = "0123456789abcdef".repeat(4);
-
-  it("提取严格形态引用：src 位置无关、去重保序", () => {
-    const md = [
-      `::image{src="blobs/media/${H1}.png"}`,
-      `::image{alt="前缀属性" src="blobs/media/${H2}.jpg"}`,
-      `::image{src="blobs/media/${H1}.png"}`, // 重复引用 → 只收集一份
-    ].join("\n\n");
-    expect(extractMediaImageSrcs([md])).toEqual([
-      `blobs/media/${H1}.png`,
-      `blobs/media/${H2}.jpg`,
-    ]);
-  });
-
-  it("非契约形态静默跳过（旧式路径/外链/大写 hash/短 hash/其他目录）", () => {
-    const md = [
-      '::image{src="blobs/fig-1.png"}',
-      '::image{src="https://example.com/a.png"}',
-      `::image{src="blobs/media/${H1.toUpperCase()}.png"}`,
-      `::image{src="blobs/media/${"a".repeat(63)}.png"}`,
-      '::image{src="blobs/ink/whatever.png"}',
-      '正文里没有指令的 src="blobs/media/…" 不算数',
-    ].join("\n");
-    expect(extractMediaImageSrcs([md])).toEqual([]);
-  });
-
-  it("跨多段文本收集且不重复；题干/详解形态的题目 md 同样命中", () => {
-    const stem = `题干：观察下图。::image{src="blobs/media/${H1}.webp"}`;
-    const solution = `详解：如图。::image{src="blobs/media/${H2}.gif"}`;
-    expect(extractMediaImageSrcs([stem, solution, stem])).toEqual([
-      `blobs/media/${H1}.webp`,
-      `blobs/media/${H2}.gif`,
-    ]);
-  });
-});
+// extractMediaImageSrcs 的纯函数单测随函数本体迁至 media-service.test.ts
