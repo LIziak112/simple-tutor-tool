@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { ImportPreviewData, LintIssue } from "@tutor/contract";
 import { v1ToV2 } from "@tutor/md-dsl";
-import { ArrowLeft, CircleAlert, Loader2 } from "lucide-react";
+import { ArrowLeft, CircleAlert, Images, Loader2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { Button } from "@/components/ui/button";
@@ -18,7 +18,7 @@ import { QUESTION_TYPE_LABELS } from "@/features/content/question-meta";
 import { libraryInvalidations } from "@/features/library/library-queries";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { ApiError, commitImport, previewImport } from "@/lib/api";
-import type { ImportOptions } from "./ImportPage";
+import type { ImportMediaSummary, ImportOptions } from "./ImportPage";
 import { MarkdownEditor } from "./MarkdownEditor";
 
 /**
@@ -45,12 +45,15 @@ export interface SingleImportPreviewProps {
     readonly path: string;
   };
   readonly options: ImportOptions;
+  /** 随行图片汇总（md ×N / 自动上传图片 ×N 成功失败分列；null 或无实质内容不渲染） */
+  readonly mediaSummary?: ImportMediaSummary | null;
   readonly onBack: () => void;
 }
 
 export function SingleImportPreview({
   input,
   options,
+  mediaSummary = null,
   onBack,
 }: SingleImportPreviewProps) {
   const [text, setText] = useState(input.markdown);
@@ -166,6 +169,9 @@ export function SingleImportPreview({
         error={previewError}
         onRetry={() => void runPreview(text, filename)}
       />
+
+      {/* 随行图片汇总（选择阶段选过图片才渲染；单文件与批量预览同款） */}
+      <ImportMediaSummaryCard summary={mediaSummary} />
 
       {previewError !== null && (
         <p
@@ -397,5 +403,53 @@ export function StatsBar({
         </span>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * 随行图片汇总卡（单文件与批量预览共用，媒体管线第四单）：
+ * 预览/确认步骤给用户对账——本批 md ×N、识别并自动上传关联图片 ×N（成功/失败
+ * 分列、失败附原因逐张列出）、未配对/失败的引用保持原样并在预览中由服务端
+ * 核对提示。无实质内容（没传图片相关环节）时返回 null 不占位。
+ */
+export function ImportMediaSummaryCard({
+  summary,
+}: {
+  readonly summary: ImportMediaSummary | null;
+}) {
+  if (
+    summary === null ||
+    (summary.imageCount === 0 &&
+      summary.failed.length === 0 &&
+      summary.unresolvedCount === 0)
+  ) {
+    return null;
+  }
+  return (
+    <section
+      aria-label="随行图片汇总"
+      className="mt-3 rounded-xl border border-border bg-card px-4 py-3 text-sm"
+    >
+      <p className="flex items-center gap-1.5 font-medium">
+        <Images aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+        本批将导入 Markdown {summary.mdCount} 份，识别并自动上传关联图片{" "}
+        {summary.imageCount} 张（成功 {summary.uploadedCount} / 失败{" "}
+        {summary.failed.length}）。
+      </p>
+      {summary.failed.length > 0 ? (
+        <ul className="mt-1.5 list-disc space-y-0.5 pl-8 text-xs text-destructive">
+          {summary.failed.map((item) => (
+            <li key={`${item.name}-${item.reason}`}>
+              {item.name}：{item.reason}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
+        {summary.unresolvedCount > 0
+          ? `未配对或上传失败的引用 ${summary.unresolvedCount} 处将保持原样；预览时服务端会逐条核对引用的图片，缺失的将以警告提示（不影响导入其余内容）。`
+          : "全部引用已替换为服务器路径。"}
+      </p>
+    </section>
   );
 }

@@ -33,9 +33,13 @@ import { libraryInvalidations } from "@/features/library/library-queries";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { commitImport, previewImportBatch } from "@/lib/api";
 import { randomUuid } from "@/lib/uuid";
-import type { ImportOptions, PickedFile } from "./ImportPage";
+import type {
+  ImportMediaSummary,
+  ImportOptions,
+  PickedFile,
+} from "./ImportPage";
 import { MarkdownEditor } from "./MarkdownEditor";
-import { StatsBar } from "./SingleImportPreview";
+import { ImportMediaSummaryCard, StatsBar } from "./SingleImportPreview";
 
 /**
  * 批量导入预览与提交（T2A.3，D20）：
@@ -70,6 +74,8 @@ export interface BatchImportPreviewProps {
   readonly options: ImportOptions;
   /** 按子目录自动建文件夹（D20） */
   readonly autoSubdir: boolean;
+  /** 随行图片汇总（md ×N / 自动上传图片 ×N 成功失败分列；null 或无实质内容不渲染） */
+  readonly mediaSummary?: ImportMediaSummary | null;
   readonly onBack: () => void;
 }
 
@@ -77,6 +83,7 @@ export function BatchImportPreview({
   files,
   options,
   autoSubdir,
+  mediaSummary = null,
   onBack,
 }: BatchImportPreviewProps) {
   // batchId 在本组件生命周期内保持不变（重新预览不换批次，服务端按它聚合留档）
@@ -301,6 +308,9 @@ export function BatchImportPreview({
           助手即可。
         </p>
       ) : null}
+
+      {/* 随行图片汇总（选择阶段选过图片才渲染；单文件与批量预览同款） */}
+      <ImportMediaSummaryCard summary={mediaSummary} />
 
       {/* 三态：加载 / 错误 / 表格 */}
       {pending && data === null ? (
