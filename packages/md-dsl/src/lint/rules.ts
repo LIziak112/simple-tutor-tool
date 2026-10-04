@@ -235,6 +235,12 @@ export const LINT_RULES: readonly LintRuleDoc[] = [
       "表格行被公式或填空里的 | 切开（单元格错位、公式断成源码显示）：公式内绝对值竖线改用 \\lvert … \\rvert，填空 [[答案|显示]] 内的 | 转义为 \\|，或把公式移出表格",
   },
   {
+    code: "RAW_HTML",
+    level: "warning",
+    description:
+      "正文/题干里写了原始 HTML（如 <table>、<u>，AI 生成的结点结构表常见）：渲染管线只解析 Markdown 与 DSL，原始 HTML 不会生效——块级 HTML 连同其后直到空行的文字会在页面上整体消失，行内 HTML 的标签会原样显示成文字。表格改用 GFM 管道语法（| data | next |，前后各留一个空行），其他排版改用 DSL 指令或 Markdown 语法",
+  },
+  {
     code: "BLANK_MARKER_CONTAINS_DOLLAR",
     level: "error",
     description:
