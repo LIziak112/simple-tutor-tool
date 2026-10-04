@@ -144,6 +144,9 @@ export default defineConfig({
       // DEV_API_PROXY_TARGET 覆盖目标：E2E（T2.13）起独立 server 在 8899，
       // 与日常 pnpm dev（8787）互不干扰；不设置时行为不变。
       "/api": process.env.DEV_API_PROXY_TARGET ?? "http://127.0.0.1:8787",
+      // 图片伺服（媒体管线第二单）：/blobs/* 由 server 从 DATA_DIR/blobs/media
+      // 内容寻址直出（生产同源托管，无代理）；dev 下与 /api 同目标同逻辑转发。
+      "/blobs": process.env.DEV_API_PROXY_TARGET ?? "http://127.0.0.1:8787",
     },
   },
   // build.outDir 保持默认 dist：生产模式由 apps/server 托管 apps/web/dist
