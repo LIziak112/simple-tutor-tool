@@ -154,6 +154,12 @@ export const LINT_RULES: readonly LintRuleDoc[] = [
       "::image 的 src 不以 blobs/ 开头（外链 URL 或散路径）：图片需先上传，src 使用上传接口返回的 blobs/media/… 路径，外链 URL 不受支持",
   },
   {
+    code: "IMAGE_SRC_NOT_FOUND",
+    level: "warning",
+    description:
+      "::image 引用的 blobs/media/… 图片文件未上传（服务端导入预览/提交时的文件存在性检查，CLI tutor-lint 无文件系统语义不触发）：先在导入页「图片上传」上传图片，并把 src 替换为上传返回的路径；手写或 AI 生成的哈希路径永远不会有对应文件，上传后必须用返回的新 src 替换",
+  },
+  {
     code: "DIRECTIVE_NOT_ALLOWED_HERE",
     level: "warning",
     description:
