@@ -4,6 +4,7 @@ import type {
   ImportBatchFilePreview,
   ImportPreviewData,
   LintIssue,
+  MediaUploadResult,
 } from "@tutor/contract";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -13,16 +14,21 @@ import {
   createLibraryFolderApi,
   fetchLibraryFolders,
   fetchSpecFile,
+  postTeacherMediaApi,
   previewImport,
   previewImportBatch,
 } from "@/lib/api";
 import ImportPage, { renamedPath } from "./ImportPage";
 
 /**
- * 导入页组件测试（T1.11 建立；T2A.3 重构；内容模型方案 §5 统一待导入清单）：
- * - 选择页 = 一张清单：选择 .md 文件 / 选择文件夹（jsdom 无 webkitdirectory，
+ * 导入页组件测试（T1.11 建立；T2A.3 重构；内容模型方案 §5 统一待导入清单；
+ * 媒体管线第四单：随行图片——选 md + 图片，只上传被引用到的、src 自动改写）：
+ * - 选择页 = 一张清单：选择 md / 图片文件 / 选择文件夹（jsdom 无 webkitdirectory，
  *   目录入口不渲染）/「粘贴内容」展开小输入区加入条目；同 path 替换、移除、
  *   就地改名、规模预检实时红字；
+ * - 随行图片：仅被引用图片调上传接口（多 md 同图去重、未引用不传不列）、
+ *   上传成功后预览 payload 是改写后 md、上传中预览禁用、单图失败不阻断且
+ *   src 不改写、同名冲突不配对；
  * - 粘贴条目 → 单文件预览（统计条、错误面板、debounce、commit payload 与成功跳转）；
  * - commit 422 LINT_ERROR 的 _issues 并入同一面板；
  * - 多条（文件/粘贴混合）→ 批量预览表格（mock previewImportBatch）：行摘要、
@@ -41,6 +47,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
     commitImport: vi.fn(),
     createLibraryFolderApi: vi.fn(),
     fetchSpecFile: vi.fn(),
+    postTeacherMediaApi: vi.fn(),
     fetchContentTree: vi.fn().mockResolvedValue({
       courses: [{ id: "c-1", title: "初一上", lectures: [], units: [] }],
     }),
@@ -70,6 +77,7 @@ const mockedPreview = vi.mocked(previewImport);
 const mockedPreviewBatch = vi.mocked(previewImportBatch);
 const mockedCommit = vi.mocked(commitImport);
 const mockedCreateFolder = vi.mocked(createLibraryFolderApi);
+const mockedUpload = vi.mocked(postTeacherMediaApi);
 
 /** /t/library 的替身：显示成功提示 state，便于断言跳转参数（T2A.2 起导入跳资源库） */
 function LibraryStub() {
@@ -162,6 +170,23 @@ function mdFile(name: string, markdown: string): File {
   return new File([markdown], name, { type: "text/markdown" });
 }
 
+/** 服务端上传返回形态的 src 夹具（64 位 hex + png） */
+const SERVER_SRC =
+  "blobs/media/1111111111111111111111111111111111111111111111111111111111111111.png";
+
+/** 构造图片 File（内容任意：前端不做魔数校验，真实格式校验在服务端） */
+function imageFile(name: string): File {
+  return new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], name, {
+    type: "image/png",
+  });
+}
+
+/** 给 File 挂相对路径（模拟文件夹选择/拖拽展开；jsdom File 构造不支持该属性） */
+function withPath(file: File, path: string): File {
+  Object.defineProperty(file, "webkitRelativePath", { value: path });
+  return file;
+}
+
 /** 打开粘贴区、输入内容并「加入清单」（filename 省略 = 用当前默认名） */
 function addPasteEntry(markdown: string, filename?: string): void {
   // 粘贴区可能已展开（连续加多条时不再点开关）
@@ -180,8 +205,8 @@ function addPasteEntry(markdown: string, filename?: string): void {
 }
 
 /** 触发隐藏的文件选择 input（多选一次性传入）。
- * 页面上还有「图片上传」小卡的图片 input（媒体管线第三单），按 accept 锁定
- * .md 多选 input，避免取到页面更靠前的图片选择框。 */
+ * 按 accept 含 markdown 锁定 .md/图片多选 input（文件夹入口的
+ * webkitdirectory 属性只在点击该按钮时才 setAttribute，静态选择器区分不了）。 */
 function pickFiles(
   utils: ReturnType<typeof renderImportPage>,
   files: File[],
@@ -201,7 +226,7 @@ describe("ImportPage 选择页（方案 §5 统一待导入清单）", () => {
   it("渲染文件与粘贴入口、清单空态与目标文件夹下拉；粘贴区默认收起，清单空时预览禁用", async () => {
     renderImportPage();
     expect(
-      screen.getByRole("button", { name: "选择 .md 文件" }),
+      screen.getByRole("button", { name: "选择 md / 图片文件" }),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "粘贴内容" })).toHaveAttribute(
       "aria-expanded",
@@ -342,7 +367,7 @@ describe("ImportPage 选择页（方案 §5 统一待导入清单）", () => {
     expect(screen.getByRole("status").textContent).toContain("加入 0 条");
   });
 
-  it("非 .md 文件被忽略并在反馈行说明（不再静默吞掉，选 4 进 3 时能看到差谁）", async () => {
+  it("非 md / 图片文件被忽略并在反馈行说明（不再静默吞掉，选 4 进 3 时能看到差谁）", async () => {
     const utils = renderImportPage();
     const txt = new File(["说明"], "说明.txt", { type: "text/plain" });
     pickFiles(utils, [mdFile("a.md", "# a"), txt]);
@@ -352,7 +377,7 @@ describe("ImportPage 选择页（方案 §5 统一待导入清单）", () => {
       "已加入 1 条",
     );
     expect(screen.getByRole("status").textContent).toContain(
-      "忽略 1 个：说明.txt（非 .md 文件）",
+      "忽略 1 个：说明.txt（非 .md 或图片文件）",
     );
   });
 
@@ -824,5 +849,197 @@ describe("ImportPage 批量导入（T2A.3，D20）", () => {
       await screen.findByLabelText("Markdown 原文编辑器（带 lint 标注）"),
     ).toBeInTheDocument();
     expect(screen.getByText("将执行的动作")).toBeInTheDocument();
+  });
+});
+
+describe("ImportPage 随行图片（媒体管线第四单：只上传被引用的、src 自动改写）", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("选择 md + 图片：仅被引用图片上传一次（多 md 同图去重、未引用不传不列），预览收到改写后 md，常驻提示与汇总卡可见", async () => {
+    mockedUpload.mockResolvedValue({
+      src: SERVER_SRC,
+      bytes: 8,
+    } satisfies MediaUploadResult);
+    const mdA = '::image{alt="示意图" src="blobs/media/6a48.jpg"}';
+    const mdB = '::image{src="6a48.jpg"}';
+    const utils = renderImportPage();
+    pickFiles(utils, [
+      mdFile("a.md", mdA),
+      mdFile("b.md", mdB),
+      imageFile("6a48.jpg"),
+      imageFile("未引用.png"),
+    ]);
+    expect(await screen.findByLabelText("移除 a.md")).toBeInTheDocument();
+
+    // 只调一次上传、参数是被引用的文件；未引用的没进接口
+    await waitFor(() => expect(mockedUpload).toHaveBeenCalledTimes(1));
+    expect(mockedUpload.mock.calls[0]?.[0].name).toBe("6a48.jpg");
+    expect(
+      mockedUpload.mock.calls.some((call) => call[0].name === "未引用.png"),
+    ).toBe(false);
+
+    // 逐张列出上传结果（成功 → 服务器路径）；未引用只计数、不列为将上传
+    expect(await screen.findByText(/→ blobs\/media\//)).toBeInTheDocument();
+    expect(screen.getByText(/未被任何文档引用，不会上传/)).toBeInTheDocument();
+    expect(screen.queryByText("未引用.png")).not.toBeInTheDocument();
+
+    // 选择区常驻提示可见（任务口径：可一起选择、只上传被引用的并替换引用）
+    expect(
+      screen.getByText(/系统只会自动上传文档引用到的图片/),
+    ).toBeInTheDocument();
+
+    // 上传结束后预览可点：批量预览 payload 是改写后 md（alt 保留、仅 src 值变）
+    mockedPreviewBatch.mockResolvedValue({
+      files: [batchFile("a.md"), batchFile("b.md")],
+    });
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /预览/ })).toBeEnabled(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /预览/ }));
+    await waitFor(() => expect(mockedPreviewBatch).toHaveBeenCalled());
+    expect(mockedPreviewBatch.mock.calls[0]?.[0]).toMatchObject({
+      files: [
+        { path: "a.md", markdown: `::image{alt="示意图" src="${SERVER_SRC}"}` },
+        { path: "b.md", markdown: `::image{src="${SERVER_SRC}"}` },
+      ],
+    });
+
+    // 预览/确认步骤的汇总卡：md ×N + 自动上传图片 ×N（成功/失败分列）
+    expect(
+      await screen.findByText(
+        /本批将导入 Markdown 2 份，识别并自动上传关联图片 1 张（成功 1 \/ 失败 0）/,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("上传中「预览」禁用并显示进度；传完自动恢复可点", async () => {
+    let release!: (value: MediaUploadResult) => void;
+    mockedUpload.mockImplementation(
+      () =>
+        new Promise<MediaUploadResult>((resolve) => {
+          release = resolve;
+        }),
+    );
+    const utils = renderImportPage();
+    pickFiles(utils, [
+      mdFile("a.md", '::image{src="配图.jpg"}'),
+      imageFile("配图.jpg"),
+    ]);
+    // 先等 md 条目真正进清单（此前按钮因清单为空而禁用，不能当作上传中证据）
+    expect(await screen.findByLabelText("移除 a.md")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /预览/ })).toBeDisabled(),
+    );
+    expect(screen.getByText(/正在自动上传关联图片/)).toBeInTheDocument();
+
+    release({ src: SERVER_SRC, bytes: 8 });
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /预览/ })).toBeEnabled(),
+    );
+  });
+
+  it("单图失败不阻断：失败原因逐张透出、src 不改写（预览 payload 原样），汇总卡计入失败与未解决引用", async () => {
+    mockedUpload.mockRejectedValue(
+      new ApiError(
+        "MEDIA_TOO_LARGE",
+        "图片超过 5MB 上传上限，请压缩后重试",
+        413,
+      ),
+    );
+    const md = '::image{src="blobs/media/大图.jpg"}';
+    const utils = renderImportPage();
+    pickFiles(utils, [mdFile("a.md", md), imageFile("大图.jpg")]);
+    expect(
+      await screen.findByText(/图片超过 5MB 上传上限，请压缩后重试/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/失败 1/)).toBeInTheDocument();
+
+    mockedPreview.mockResolvedValue(previewData({}));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /预览/ })).toBeEnabled(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /预览/ }));
+    await waitFor(() => expect(mockedPreview).toHaveBeenCalled());
+    // 失败图对应的 src 不改写：预览拿到的是原文
+    expect(mockedPreview.mock.calls[0]?.[0].markdown).toBe(md);
+    // 汇总卡：失败明细（名字 + 原因）与保持原样的引用处数
+    expect(
+      await screen.findByText(/大图.jpg：图片超过 5MB 上传上限/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/失败 1）/)).toBeInTheDocument();
+    expect(screen.getByText(/未配对或上传失败的引用 1 处/)).toBeInTheDocument();
+  });
+
+  it("同名多图冲突：不配对、不上传、不改写，冲突提示可见", async () => {
+    const md = '::image{src="blobs/media/img.jpg"}';
+    const utils = renderImportPage();
+    pickFiles(utils, [
+      mdFile("a.md", md),
+      withPath(imageFile("img.jpg"), "章节一/img.jpg"),
+      withPath(imageFile("img.jpg"), "章节二/img.jpg"),
+    ]);
+    expect(await screen.findByText(/同名冲突/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/无法确定「blobs\/media\/img.jpg」对应哪一张/),
+    ).toBeInTheDocument();
+    expect(mockedUpload).not.toHaveBeenCalled();
+
+    mockedPreview.mockResolvedValue(previewData({}));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /预览/ })).toBeEnabled(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /预览/ }));
+    await waitFor(() => expect(mockedPreview).toHaveBeenCalled());
+    expect(mockedPreview.mock.calls[0]?.[0].markdown).toBe(md);
+    expect(screen.getByText(/未配对或上传失败的引用 1 处/)).toBeInTheDocument();
+  });
+
+  it("配对优先级：src 与相对路径完全一致优先于 basename 命中", async () => {
+    mockedUpload.mockResolvedValue({
+      src: SERVER_SRC,
+      bytes: 8,
+    } satisfies MediaUploadResult);
+    const utils = renderImportPage();
+    const exact = withPath(imageFile("img.jpg"), "blobs/media/img.jpg");
+    const other = withPath(imageFile("img.jpg"), "其他目录/img.jpg");
+    pickFiles(utils, [
+      mdFile("a.md", '::image{src="blobs/media/img.jpg"}'),
+      exact,
+      other,
+    ]);
+    await waitFor(() => expect(mockedUpload).toHaveBeenCalledTimes(1));
+    // 上传的是精确路径命中的那份（同一 File 实例）
+    expect(mockedUpload.mock.calls[0]?.[0]).toBe(exact);
+  });
+
+  it("失败图片可整组重试：重试成功后 src 补改写", async () => {
+    mockedUpload
+      .mockRejectedValueOnce(new Error("网络中断，请稍后重试"))
+      .mockResolvedValueOnce({
+        src: SERVER_SRC,
+        bytes: 8,
+      } satisfies MediaUploadResult);
+    const md = '::image{src="配图.jpg"}';
+    const utils = renderImportPage();
+    pickFiles(utils, [mdFile("a.md", md), imageFile("配图.jpg")]);
+    expect(await screen.findByText(/网络中断，请稍后重试/)).toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: /重试失败图片（1 张）/ }),
+    );
+    expect(await screen.findByText(/→ blobs\/media\//)).toBeInTheDocument();
+
+    mockedPreview.mockResolvedValue(previewData({}));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /预览/ })).toBeEnabled(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /预览/ }));
+    await waitFor(() => expect(mockedPreview).toHaveBeenCalled());
+    // 重试成功后进入预览的是改写后的 md
+    expect(mockedPreview.mock.calls[0]?.[0].markdown).toBe(
+      `::image{src="${SERVER_SRC}"}`,
+    );
   });
 });

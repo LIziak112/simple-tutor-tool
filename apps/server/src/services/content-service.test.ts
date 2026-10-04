@@ -1266,7 +1266,7 @@ describe("导入图片存在性核对（IMAGE_SRC_NOT_FOUND，媒体管线第四
       code: "IMAGE_SRC_NOT_FOUND",
     });
     expect(notFound[0]?.message).toContain(SRC_A);
-    expect(notFound[0]?.message).toContain("图片上传");
+    expect(notFound[0]?.message).toContain("一起在导入页选择导入");
     expect(notFound[1]).toMatchObject({ level: "warning", line: 13 });
     expect(notFound[1]?.message).toContain(SRC_B);
     expect(notFound[0]?.fix).toContain("blobs/media/");

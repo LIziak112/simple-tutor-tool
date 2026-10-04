@@ -249,8 +249,8 @@ function mediaImageExistenceIssues(
       line,
       column: 1,
       code: "IMAGE_SRC_NOT_FOUND",
-      message: `::image（第 ${line} 行）引用的图片文件不存在：${src}。请先在导入页「图片上传」上传图片，并把 src 替换为上传返回的路径；若该哈希路径是手写或 AI 生成的，上传真实图片后必须用返回的新 src 替换（原路径永远不会有对应文件）`,
-      fix: "在导入页「图片上传」上传图片后，用返回的 blobs/media/… src 替换原引用",
+      message: `::image（第 ${line} 行）引用的图片文件不存在：${src}。请把本文件与其引用的图片（或整个文件夹）一起在导入页选择导入，系统会自动上传被引用的图片并替换引用；AI 生成或手写的哈希路径不会与真实文件对应，必须在随图导入时自动替换（或经 MCP upload_image 上传后用返回的新 src 替换）`,
+      fix: "在导入页把 md 与其引用的图片一起选择（随行自动上传改写），或上传图片后用返回的 blobs/media/… src 替换原引用",
     };
   });
 }

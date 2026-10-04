@@ -46,7 +46,8 @@ export function ImageDirective({ attrs }: DirectiveProps) {
           图片加载失败
         </span>
         <span className="text-xs">
-          请检查 src 是否已通过「图片上传」上传（src：{src}）
+          请把图片与文档一起在导入页选择上传（引用会自动替换为服务器路径）（src：
+          {src}）
         </span>
       </div>
     );
