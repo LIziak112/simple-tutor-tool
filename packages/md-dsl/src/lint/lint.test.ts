@@ -229,6 +229,21 @@ describe("lintDocument：samples/lint/ 反例夹具", () => {
     );
   });
 
+  it("18 原始 HTML：RAW_HTML @8（块级 table 连同后续行）与 @20（行内 <u> 开闭聚合为一条），均 warning", () => {
+    const { issues } = lintDocument(load(lintDir, "18-raw-html.md"));
+    expect(codes(issues)).toEqual(["RAW_HTML", "RAW_HTML"]);
+    expect(issueOf(issues, "RAW_HTML")).toMatchObject({
+      level: "warning",
+      line: 8,
+    });
+    const inline = issues[1];
+    expect(inline).toMatchObject({ level: "warning", line: 20 });
+    // message 列出该行涉及的标签（行内 <u>/</u> 两个节点聚合去重）
+    expect(issueOf(issues, "RAW_HTML")?.message).toContain("table");
+    expect(inline?.message).toContain("u");
+    expect(inline?.fix).toContain("管道");
+  });
+
   it("全部夹具的 issue 均符合 LintIssue 契约（level/line/column/code/message）", () => {
     for (const name of [
       "01-missing-frontmatter.md",
@@ -248,6 +263,7 @@ describe("lintDocument：samples/lint/ 反例夹具", () => {
       "15-math-spacing-outside.md",
       "16-table-pipe-split.md",
       "17-blank-marker-dollar.md",
+      "18-raw-html.md",
     ]) {
       const { issues } = lintDocument(load(lintDir, name));
       for (const issue of issues) {
@@ -805,6 +821,69 @@ describe("lintDocument：未闭合容器补充", () => {
       ':::tip{title="真容器"}',
       "内容",
       ":::",
+    ]);
+    const { issues } = lintDocument(text);
+    expect(issues).toEqual([]);
+  });
+});
+
+describe("lintDocument：原始 HTML 补充（RAW_HTML）", () => {
+  it("代码块与行内代码里的 HTML 是代码内容，不报 RAW_HTML", () => {
+    const text = md([
+      "---",
+      "kind: practice",
+      "unit: 练习",
+      "---",
+      "",
+      "::::question{type=fill id=q3}",
+      "看下面的 HTML：",
+      "",
+      "```html",
+      "<table><tr><td>data</td></tr></table>",
+      "```",
+      "",
+      "行内代码 `<div>` 也不算。标签名是 [[div]]",
+      "::::",
+    ]);
+    const { issues } = lintDocument(text);
+    expect(issues).toEqual([]);
+  });
+
+  it("块级 HTML 节点跨多行时只报起始行；同一行多个开闭标签聚合并去重", () => {
+    const text = md([
+      "---",
+      "kind: lecture",
+      "unit: 讲义",
+      "---",
+      "",
+      "# 第1讲 结构",
+      "",
+      "<table>",
+      "<tr><td>a</td><td>b</td></tr>",
+      "</table>",
+      "",
+      "下一段。",
+    ]);
+    const { issues } = lintDocument(text);
+    // 块级 HTML 从 <table> 行起到空行前是一个节点；起始行 8，message 聚合 table、tr、td
+    expect(codes(issues)).toEqual(["RAW_HTML"]);
+    expect(issues[0]).toMatchObject({ level: "warning", line: 8, column: 1 });
+    expect(issues[0]?.message).toContain("table");
+    expect(issues[0]?.message).toContain("td");
+  });
+
+  it("HTML 注释不报：注释本就不该渲染，是作者注记而非渲染错误", () => {
+    const text = md([
+      "---",
+      "kind: lecture",
+      "unit: 讲义",
+      "---",
+      "",
+      "# 第1讲 结构",
+      "",
+      "<!-- 待补充例题 -->",
+      "",
+      "正文。",
     ]);
     const { issues } = lintDocument(text);
     expect(issues).toEqual([]);

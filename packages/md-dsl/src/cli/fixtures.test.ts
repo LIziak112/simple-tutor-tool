@@ -49,6 +49,7 @@ const EXPECTED: Record<string, string[]> = {
     "BLANK_MARKER_CONTAINS_DOLLAR",
     "FILL_NO_BLANK",
   ],
+  "18-raw-html.md": ["RAW_HTML"],
 };
 
 function lintFile(name: string, dir: string): FileLintResult {

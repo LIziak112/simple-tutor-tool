@@ -8,6 +8,7 @@ import { lintUnclosedContainers } from "./fences.ts";
 import { lintMathDelimiters } from "./math.ts";
 import { lintMathSpacingOutside } from "./math-text.ts";
 import { lintQuestions } from "./questions.ts";
+import { lintRawHtml } from "./raw-html.ts";
 import { lintTablePipes } from "./tables.ts";
 
 /**
@@ -56,6 +57,7 @@ function runRules(
       ...lintMathSpacingOutside(tree),
       ...lintTablePipes(tree),
       ...lintBlankMarkerDollar(tree),
+      ...lintRawHtml(tree),
     ];
   } catch (err) {
     return [
