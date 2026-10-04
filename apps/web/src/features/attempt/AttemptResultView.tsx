@@ -537,11 +537,7 @@ export function AttemptResultView({
         )}
         <div className="flex flex-col gap-2">
           <div className="flex flex-wrap items-center gap-2">
-            <Button
-              variant="outline"
-              className="min-h-11"
-              onClick={onBackHome}
-            >
+            <Button variant="outline" className="min-h-11" onClick={onBackHome}>
               返回首页
             </Button>
             {/* 练习本卷错题（2026-10 直达重练）：N=本卷判错题数；点击组新

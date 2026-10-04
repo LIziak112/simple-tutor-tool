@@ -566,9 +566,7 @@ describe("练习本卷错题按钮（2026-10 直达重练）", () => {
     );
     const button = screen.getByRole("button", { name: "正在组卷…" });
     expect(button).toBeDisabled();
-    expect(
-      screen.queryByRole("button", { name: /练习本卷错题/ }),
-    ).toBeNull();
+    expect(screen.queryByRole("button", { name: /练习本卷错题/ })).toBeNull();
   });
 
   it("失败：error 非 null 时按钮下方显示中文告警（role=alert）", () => {
@@ -585,9 +583,7 @@ describe("练习本卷错题按钮（2026-10 直达重练）", () => {
     );
     // role=alert 按 ARIA 不能从内容取名（name 查询恒空），断言用文本内容
     const alert = screen.getByRole("alert");
-    expect(alert).toHaveTextContent(
-      "练习本卷错题组卷失败：没有可重练的题目",
-    );
+    expect(alert).toHaveTextContent("练习本卷错题组卷失败：没有可重练的题目");
   });
 
   it("未公布（answersReleased=false）隐藏——公布 gate 双保险", () => {

@@ -388,16 +388,13 @@ test.describe("结果页「练习本卷错题」直达重练 + 轮次史可点�
       await studentPage
         .getByRole("button", { name: "练习本卷错题（1 题）" })
         .click();
-      await studentPage.waitForURL(
-        (url) => url.pathname !== firstAttemptPath,
-        { timeout: 30_000 },
-      );
+      await studentPage.waitForURL((url) => url.pathname !== firstAttemptPath, {
+        timeout: 30_000,
+      });
       await expect(
         studentPage.getByRole("heading", { name: "错题重练", exact: true }),
       ).toBeVisible();
-      await expect(
-        studentPage.getByText("错题重练 · 第 1 次"),
-      ).toBeVisible();
+      await expect(studentPage.getByText("错题重练 · 第 1 次")).toBeVisible();
       await expect(
         studentPage.locator('article[aria-label="第 1 题"]'),
       ).toBeVisible();
@@ -434,9 +431,7 @@ test.describe("结果页「练习本卷错题」直达重练 + 轮次史可点�
       });
       const rounds = q1Card.getByLabel("轮次史");
       await expect(rounds).toBeVisible({ timeout: 30_000 });
-      await expect(
-        rounds.getByText("已做错 1 次 · 做对 1 次"),
-      ).toBeVisible();
+      await expect(rounds.getByText("已做错 1 次 · 做对 1 次")).toBeVisible();
       const round2Link = rounds.getByRole("link", {
         name: "查看第 2 轮作答：错题重练 · 第 1 次",
       });
@@ -447,16 +442,12 @@ test.describe("结果页「练习本卷错题」直达重练 + 轮次史可点�
       await expect(studentPage.getByText("批改结果")).toBeVisible({
         timeout: 30_000,
       });
-      await expect(
-        studentPage.getByText("错题重练 · 第 1 次"),
-      ).toBeVisible();
+      await expect(studentPage.getByText("错题重练 · 第 1 次")).toBeVisible();
 
       // —— 负例：全对卷（再做一次第 2 次全对）结果页无「练习本卷错题」按钮 ——
       await studentPage.goto(unitPath);
       await studentPage.getByRole("button", { name: "再做一次" }).click();
-      await studentPage
-        .getByRole("button", { name: "开始新一次" })
-        .click();
+      await studentPage.getByRole("button", { name: "开始新一次" }).click();
       await studentPage.waitForURL("**/s/attempts/**");
       await expect(
         studentPage.getByText(`课程：${courseName} · 第 2 次`),
