@@ -9,9 +9,24 @@ import type { DirectiveProps } from "./types";
  * 三态齐全：加载中占位 / 渲染失败（带重试）/ 成功。
  */
 
-/** ::image 块级图片：src 为服务端 blobs 路径，width 缺省自适应 */
+/**
+ * ::image 的 src 归一化：以 "blobs/" 开头（契约上传路径）→ 前缀 "/" 成根相对
+ * 伺服 URL——服务端不变量「契约 src 前加 / 即根相对 URL」一一对应；http(s)
+ * 绝对 URL 与其他写法原样返回（危险协议已由 sanitize 的 protocols 白名单拦截）。
+ */
+function normalizeImageSrc(src: string): string {
+  return src.startsWith("blobs/") ? `/${src}` : src;
+}
+
+/**
+ * ::image 块级图片：src 为服务端 blobs 路径（归一化为根相对），width 缺省自适应，
+ * alt 缺省「图片」。三态齐全：加载成功 / 加载失败占位（onError 切入，不裂图）/
+ * src 缺失提示。
+ */
 export function ImageDirective({ attrs }: DirectiveProps) {
   const src = attrs.src?.trim();
+  // 失败按 src 记录：文档编辑换图（src 变化）后不再命中，无需 effect 重置
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
   if (!src || src.length === 0) {
     return (
       <div className="my-3 flex min-h-11 items-center gap-2 rounded-xl border border-dashed border-border bg-muted/40 px-3 text-sm text-muted-foreground">
@@ -20,11 +35,28 @@ export function ImageDirective({ attrs }: DirectiveProps) {
       </div>
     );
   }
+  if (failedSrc === src) {
+    return (
+      <div
+        role="alert"
+        className="my-3 flex min-h-11 flex-col items-start gap-1 rounded-xl border border-dashed border-border bg-muted/40 px-3 py-2.5 text-sm text-muted-foreground"
+      >
+        <span className="flex items-center gap-2 text-foreground">
+          <ImageOff aria-hidden className="size-4" />
+          图片加载失败
+        </span>
+        <span className="text-xs">
+          请检查 src 是否已通过「图片上传」上传（src：{src}）
+        </span>
+      </div>
+    );
+  }
   return (
     <img
-      src={src}
+      src={normalizeImageSrc(src)}
       alt={attrs.alt?.trim() || "图片"}
       loading="lazy"
+      onError={() => setFailedSrc(src)}
       className="my-3 h-auto max-w-full rounded-xl border border-border"
       style={attrs.width ? { width: attrs.width } : undefined}
     />

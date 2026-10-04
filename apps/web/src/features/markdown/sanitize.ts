@@ -125,6 +125,7 @@ const DIRECTIVE_HOST_ATTRS = [
   "difficulty",
   "knowledge",
   "src",
+  "alt", // ::image 的替代文本（缺省「图片」，契约 image 指令可选属性）
   "width",
   "fn",
   "range",
