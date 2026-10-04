@@ -22,9 +22,12 @@ import { assertNoLeak } from "../test/assert-no-leak.ts";
  *   finalCorrect 参与聚合（批错入本）；
  * - 首次是否做对标注（firstCorrect）；跨来源取最近（课程练习先错、作业后对 →
  *   最近来源=作业）；排序 lastAt 倒序；
- * - 轮次史（rounds）：该题全部已判定作答按时间升序，每轮带来源标题/课程名；
- *   wrongCount/correctCount 计数；攻克判定在端上从 rounds 计算（服务端不下发
- *   判定规则，resolved 保留服务端口径）；
+ * - 轮次史（rounds）：该题全部已判定作答按时间升序，每轮带来源标题/课程名
+ *   courseId（course=练习课程、assignment=作业所属课程〔attempt 冗余列置空
+ *   回退作业行〕、wrong 恒 null）；wrongCount/correctCount 计数；攻克判定在
+ *   端上从 rounds 计算（服务端不下发判定规则，resolved 保留服务端口径）；
+ * - pendingCount：该题已交卷待批轮数（D4 谓词 × 同一公布 gate）——fill 交卷
+ *   待批计 1、老师批完归 0 并入 rounds；after_due 未公布与 draft 不计入；
  * - 归属单元（originUnitId/originUnitTitle）：questions.unitId join units，
  *   assignment 来源条目也按题挂回单元（与「最近来源上下文」unitId 区分）；
  *   软删题目行仍在、值照常返回；
@@ -562,6 +565,185 @@ describe("GET /api/student/wrong-questions（T3.5 D11 错题本）", () => {
     expect(judge1?.unitId).toBeNull();
     expect(judge1?.originUnitId).toBe(env.unitId);
     expect(judge1?.originUnitTitle).toBe("有理数课程练习");
+  });
+
+  it("轮次 courseId：course 轮=练习课程、assignment 轮=作业所属课程（attempt 冗余列置空回退作业行）、无课程作业轮为 null", async () => {
+    const env = await makeWrongEnv();
+    // judge1/judge2：课程练习判错（T1）
+    const a1 = await startCourseAttempt(env);
+    await saveAnswer(env, a1, Q.judge1, { kind: "judge", value: false });
+    await saveAnswer(env, a1, Q.judge2, { kind: "judge", value: false });
+    await submitAt(env, a1, T1);
+    // 挂课程的作业上再错（T2；开卷时 attempts.courseId 拷贝作业所属课程）
+    const a2 = await startAssignmentAttempt(env, { courseId: env.courseId });
+    await saveAnswer(env, a2, Q.judge1, { kind: "judge", value: false });
+    await saveAnswer(env, a2, Q.judge2, { kind: "judge", value: false });
+    await submitAt(env, a2, T2);
+    // 不挂课程的作业（T3）：judge1 答错、judge2 未答（D1 未答判错）→ 均成轮
+    const a3 = await startAssignmentAttempt(env);
+    await saveAnswer(env, a3, Q.judge1, { kind: "judge", value: false });
+    await submitAt(env, a3, T3);
+
+    const { status, body, data } = await getWrongQuestions(env);
+    expect(status).toBe(200);
+    expect(wrongQuestionsOkSchema.safeParse(body).success).toBe(true);
+    const byId = new Map(
+      data?.questions.map((card) => [card.questionId, card]),
+    );
+    // course 轮 = attempts.courseId（练习课程）；assignment 轮 = 冗余列优先
+    const judge1 = byId.get(Q.judge1);
+    expect(judge1?.rounds.map((round) => round.sourceType)).toEqual([
+      "course",
+      "assignment",
+      "assignment",
+    ]);
+    expect(judge1?.rounds[0]?.courseId).toBe(env.courseId);
+    expect(judge1?.rounds[1]?.courseId).toBe(env.courseId);
+    // 无课程作业轮 = null（assignments.courseId 与 attempts.courseId 均 null）
+    expect(judge1?.rounds[2]?.courseId).toBeNull();
+    expect(judge1?.rounds[2]?.courseName).toBeNull();
+
+    // 模拟旧数据：把挂课程作业 attempt 的冗余列 courseId 置空 → 回退作业行
+    // assignments.courseId（口径与 sourceOf 一致，courseName 同处取不受影响）
+    env.db
+      .update(attempts)
+      .set({ courseId: null })
+      .where(eq(attempts.id, a2))
+      .run();
+    const fallback = await getWrongQuestions(env);
+    const judge1Fallback = fallback.data?.questions.find(
+      (card) => card.questionId === Q.judge1,
+    );
+    expect(judge1Fallback?.rounds[1]?.courseId).toBe(env.courseId);
+    expect(judge1Fallback?.rounds[1]?.courseName).toBe("初一上");
+
+    // 新字段非敏感键：泄露断言照常通过
+    assertNoLeak(body, { allow: ["answers", "solutionMd"] });
+  });
+
+  it("错题重练轮 courseId 恒为 null（rounds 混排 course → wrong，来源标题按重练口径）", async () => {
+    const env = await makeWrongEnv();
+    const a1 = await startCourseAttempt(env);
+    await saveAnswer(env, a1, Q.judge1, { kind: "judge", value: false });
+    await saveAnswer(env, a1, Q.judge2, { kind: "judge", value: false });
+    await submitAt(env, a1, T1);
+    // 错题重练（只组 judge1）再错 → 第二轮 sourceType=wrong（三归属键恒 null）
+    const practice = await env.app.request("/api/student/wrong-practice", {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: env.aCookie },
+      body: JSON.stringify({ questionIds: [Q.judge1] }),
+    });
+    expect(practice.status).toBe(201);
+    const practiceAttemptId = (
+      (await practice.json()) as { data: { id: string } }
+    ).data.id;
+    await saveAnswer(env, practiceAttemptId, Q.judge1, {
+      kind: "judge",
+      value: false,
+    });
+    await submitAt(env, practiceAttemptId, T2);
+
+    const { status, data } = await getWrongQuestions(env);
+    expect(status).toBe(200);
+    const judge1 = data?.questions.find((card) => card.questionId === Q.judge1);
+    expect(judge1?.rounds.map((round) => round.sourceType)).toEqual([
+      "course",
+      "wrong",
+    ]);
+    expect(judge1?.rounds[1]?.courseId).toBeNull();
+    expect(judge1?.rounds[1]?.courseName).toBeNull();
+    expect(judge1?.rounds[1]?.sourceTitle).toBe("错题重练 · 第 1 次");
+  });
+
+  it("pendingCount：fill 待批轮计数——交卷待批计 1、老师批完归 0 并入 rounds；after_due 未公布与 draft 不计入（同一公布 gate）", async () => {
+    const env = await makeWrongEnv();
+    const cardOf = (data: WrongQuestionsData | undefined, questionId: string) =>
+      data?.questions.find((card) => card.questionId === questionId);
+    const markResponse = async (
+      attemptId: string,
+      questionId: string,
+      mark: "correct" | "wrong",
+    ) => {
+      const target = env.db
+        .select({ id: responses.id })
+        .from(responses)
+        .where(
+          and(
+            eq(responses.attemptId, attemptId),
+            eq(responses.questionId, questionId),
+          ),
+        )
+        .get();
+      if (!target) throw new Error(`夹具缺少 ${questionId} 的 response 行`);
+      const res = await env.app.request(
+        `/api/teacher/responses/${target.id}/mark`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            cookie: env.teacherCookie,
+          },
+          // D3：mark 与 comment 都必须显式携带（comment 可 null）
+          body: JSON.stringify({ mark, comment: null }),
+        },
+      );
+      expect(res.status).toBe(200);
+    };
+
+    // 第 1 次：判断题都对，solve 已答（无标准答案）→ 交卷后待批，未入本
+    const a1 = await startCourseAttempt(env);
+    await saveAnswer(env, a1, Q.judge1, { kind: "judge", value: true });
+    await saveAnswer(env, a1, Q.judge2, { kind: "judge", value: false });
+    await saveAnswer(env, a1, Q.solve, { kind: "final", finalAnswer: "2" });
+    await submitAt(env, a1, T1);
+    expect((await getWrongQuestions(env)).data?.questions).toEqual([]);
+    // 教师批错 → solve 入本：rounds=1、pendingCount=0（该轮已判定）
+    await markResponse(a1, Q.solve, "wrong");
+    const marked = await getWrongQuestions(env);
+    expect(cardOf(marked.data, Q.solve)?.rounds).toHaveLength(1);
+    expect(cardOf(marked.data, Q.solve)?.pendingCount).toBe(0);
+
+    // 第 2 次：solve 再答交卷 → 待批轮不进 rounds、pendingCount=1
+    // （学生视角「做了 2 次只有 1 轮」的差额即在此）
+    const a2 = await startCourseAttempt(env);
+    await saveAnswer(env, a2, Q.judge1, { kind: "judge", value: true });
+    await saveAnswer(env, a2, Q.judge2, { kind: "judge", value: false });
+    await saveAnswer(env, a2, Q.solve, { kind: "final", finalAnswer: "3" });
+    await submitAt(env, a2, T2);
+    const { body, data: pendingData } = await getWrongQuestions(env);
+    expect(cardOf(pendingData, Q.solve)?.rounds).toHaveLength(1);
+    expect(cardOf(pendingData, Q.solve)?.pendingCount).toBe(1);
+
+    // after_due 未公布的作业作答不计入（与 rounds 同 gate——数字本身即泄露
+    // 「有一轮在等判定」，防侧漏）
+    const a3 = await startAssignmentAttempt(env, {
+      dueAt: FAR_DUE,
+      answerRelease: "after_due",
+    });
+    await saveAnswer(env, a3, Q.solve, { kind: "final", finalAnswer: "4" });
+    await submitAt(env, a3, T3);
+    const gated = await getWrongQuestions(env);
+    expect(cardOf(gated.data, Q.solve)?.pendingCount).toBe(1);
+    expect(cardOf(gated.data, Q.solve)?.rounds).toHaveLength(1);
+
+    // draft 不计（未交卷不构成待批轮；草稿存了答案也一样）
+    const a4 = await startCourseAttempt(env);
+    await saveAnswer(env, a4, Q.solve, { kind: "final", finalAnswer: "5" });
+    const drafted = await getWrongQuestions(env);
+    expect(cardOf(drafted.data, Q.solve)?.pendingCount).toBe(1);
+    expect(cardOf(drafted.data, Q.solve)?.rounds).toHaveLength(1);
+
+    // 教师批对第 2 次 → pendingCount 归 0，该轮判定完成进 rounds（共 2 轮、
+    // 最近一轮对 → resolved，默认列表隐藏，用 includeResolved 断言）
+    await markResponse(a2, Q.solve, "correct");
+    const settled = await getWrongQuestions(env, "?includeResolved=true");
+    const solveSettled = cardOf(settled.data, Q.solve);
+    expect(solveSettled?.pendingCount).toBe(0);
+    expect(solveSettled?.rounds).toHaveLength(2);
+    expect(solveSettled?.rounds[1]?.correct).toBe(true);
+
+    // 泄露：pendingCount/courseId 等新字段非敏感键，assertNoLeak 照常通过
+    assertNoLeak(body, { allow: ["answers", "solutionMd"] });
   });
 
   it("公布 gate：after_due 未公布作业的作答整体不参与聚合——该题完全消失（含 includeResolved）", async () => {

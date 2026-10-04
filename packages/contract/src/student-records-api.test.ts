@@ -9,9 +9,10 @@ import {
 /**
  * 学生端「我的记录/错题本」契约测试（T3.5 起；2026-10 错题本升级补齐）：
  * - 查询参数 stringbool（includeResolved）与 knowledge 空串拒绝；
- * - 错题本条目 2026-10 新字段：rounds（轮次史元素类型）、wrongCount/correctCount、
- *   originUnitId/originUnitTitle（归属单元，与「最近来源上下文」字段语义区分）
- *   的类型与缺省（必填缺失不通过、null 只允许出现在可空字段）。
+ * - 错题本条目 2026-10 新字段：rounds（轮次史元素类型，含轮次 courseId）、
+ *   wrongCount/correctCount、pendingCount（待批轮数）、originUnitId/
+ *   originUnitTitle（归属单元，与「最近来源上下文」字段语义区分）的类型与
+ *   缺省（必填缺失不通过、null 只允许出现在可空字段）。
  * 契约是前后端唯一事实来源（AGENTS 第 1 条），服务端路由测试共用同一份定义。
  */
 
@@ -24,6 +25,7 @@ const roundFixture = {
   correct: true,
   submittedAt: "2026-10-01T02:00:00.000Z",
   sourceTitle: "有理数课程练习 · 第 2 次",
+  courseId: UUID,
   courseName: "初一上",
 };
 
@@ -57,12 +59,15 @@ function cardFixture(): Record<string, unknown> {
         correct: false,
         submittedAt: "2026-09-28T02:00:00.000Z",
         sourceTitle: "有理数课程练习 · 第 1 次",
+        courseId: UUID,
         courseName: "初一上",
       },
       roundFixture,
     ],
     wrongCount: 1,
     correctCount: 1,
+    // 夹具虚构值（两轮均已判定、本应无待批）：非零只为断言字段透传
+    pendingCount: 1,
     originUnitId: "有理数课程练习",
     originUnitTitle: "有理数课程练习",
   };
@@ -93,9 +98,13 @@ describe("wrongQuestionRoundSchema（轮次史元素）", () => {
     expect(parsed.sourceTitle).toBe("有理数课程练习 · 第 2 次");
   });
 
-  it("courseName 可 null；类型不符拒绝（correct 非布尔、空 sourceTitle、非法 sourceType、空时间）", () => {
+  it("courseId/courseName 可 null（错题重练轮/无课程来源）；类型不符拒绝（correct 非布尔、空 sourceTitle、非法 sourceType、空时间、courseId 非 UUID）", () => {
     expect(
       wrongQuestionRoundSchema.safeParse({ ...roundFixture, courseName: null })
+        .success,
+    ).toBe(true);
+    expect(
+      wrongQuestionRoundSchema.safeParse({ ...roundFixture, courseId: null })
         .success,
     ).toBe(true);
     for (const bad of [
@@ -104,6 +113,7 @@ describe("wrongQuestionRoundSchema（轮次史元素）", () => {
       { ...roundFixture, sourceType: "exam" },
       { ...roundFixture, submittedAt: "" },
       { ...roundFixture, attemptId: "not-a-uuid" },
+      { ...roundFixture, courseId: "初一上" },
     ] as const) {
       expect(
         wrongQuestionRoundSchema.safeParse(bad).success,
@@ -144,12 +154,13 @@ describe("wrongQuestionCardSchema（2026-10 新字段）", () => {
     expect(parsed.originUnitTitle).toBeNull();
   });
 
-  it("新字段缺省不通过；wrongCount/correctCount 拒绝非负整数以外形态；rounds 拒绝坏元素", () => {
+  it("新字段缺省不通过；wrongCount/correctCount/pendingCount 拒绝非负整数以外形态；rounds 拒绝坏元素", () => {
     const base = cardFixture();
     for (const key of [
       "rounds",
       "wrongCount",
       "correctCount",
+      "pendingCount",
       "originUnitId",
       "originUnitTitle",
     ] as const) {
@@ -163,9 +174,13 @@ describe("wrongQuestionCardSchema（2026-10 新字段）", () => {
       { ...base, wrongCount: -1 },
       { ...base, wrongCount: 1.5 },
       { ...base, correctCount: "2" },
+      { ...base, pendingCount: -1 },
+      { ...base, pendingCount: 1.5 },
+      { ...base, pendingCount: "0" },
       { ...base, originUnitId: "" },
       { ...base, originUnitTitle: 0 },
       { ...base, rounds: [{ ...roundFixture, correct: 1 }] },
+      { ...base, rounds: [{ ...roundFixture, courseId: "初一上" }] },
     ] as const) {
       expect(
         wrongQuestionCardSchema.safeParse(bad).success,
