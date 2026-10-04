@@ -213,8 +213,8 @@ test.describe("学生我的记录与错题本（T3.5：批改延伸）", () => {
           name: `${unitName} · 待复习 1 题`,
         }),
       ).toBeVisible();
-      // 紧凑行（默认形态）：错 1 次；手写题已批对 → 不在错题本
-      const wrongRow = studentPage.getByRole("button", { name: /错 1 次/ });
+      // 紧凑行（默认形态）：错 1 · 对 0；手写题已批对 → 不在错题本
+      const wrongRow = studentPage.getByRole("button", { name: /错 1 · 对 0/ });
       await expect(wrongRow).toBeVisible();
       await expect(
         studentPage.getByText("有理数加法", { exact: true }),

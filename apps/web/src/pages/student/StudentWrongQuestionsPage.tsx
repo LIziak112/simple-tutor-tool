@@ -1,9 +1,16 @@
 import { useMutation } from "@tanstack/react-query";
 import type { WrongQuestionCard } from "@tutor/contract";
-import { BookX, PartyPopper, TriangleAlert, Trophy } from "lucide-react";
+import {
+  BookX,
+  Filter,
+  PartyPopper,
+  TriangleAlert,
+  Trophy,
+} from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
+import { useStudentCourses } from "@/features/student/student-queries";
 import { useStudentWrongQuestions } from "@/features/student/student-records-queries";
 import {
   StudentEmptyState,
@@ -16,9 +23,11 @@ import {
   type WrongMasteryStandard,
 } from "@/features/student/wrong-mastery";
 import {
+  filterWrongQuestionsByCourse,
   groupCountLabel,
   groupWrongQuestions,
   parseWrongQuestionsUrl,
+  WrongCourseSelect,
   WrongGroupSwitch,
   WrongPracticeButton,
   WrongQuestionItem,
@@ -42,13 +51,20 @@ import { startWrongPracticeApi } from "@/lib/api";
  *   同一函数同一数据源，两处口径一致）；
  * - 分组维度：按练习（默认，按题目归属单元）/ 按时间（本周/上周/本月/更早）/
  *   按考点；组内按最近判定时间倒序；
- * - 条目默认紧凑行，点击展开完整卡片（含轮次史区块）；
+ * - 课程筛选（2026-10）：页头「课程」下拉（默认全部课程，选项 = 我的课程
+ *   接口，与我的记录页同源；加载失败不阻塞列表）。筛选口径 = rounds 任一轮
+ *   courseId 命中（错题重练轮恒 null 不参与；跨课程的题任一轮命中即保留），
+ *   作用于两个 tab 的成员与计数、页头「重练全部」的范围（组头「重练本组」
+ *   随列表天然跟随）；不自动切换分组维度（用户自己点「按练习」等）；
+ * - 条目默认紧凑行，点击展开完整卡片（含轮次史区块）；时间一律绝对时间
+ *   （formatCnTime，Asia/Shanghai）；紧凑行示「错 N · 对 M」；轮次史尾部在
+ *   pendingCount>0 时提示「另有 N 轮待老师批改」；
  * - **重练（2026-10）**：范围沿用当前 tab + 分组口径——页头「重练全部
  *   （N 题）」= 当前 tab 全部题；每个组头「重练本组（x 题）」= 该组在当前
  *   tab 的题；点击 POST /wrong-practice（题目顺序 = 圈定顺序）→ 跳
  *   /s/attempts/:attemptId 走既有答题会话；交卷后回本页自然看到轮次史新增
  *   一轮与攻克状态更新（聚合自动纳入）；
- * - tab 与分组维度同步 URL query（刷新/返回不丢；旧参数兼容映射见
+ * - tab、分组维度与课程筛选同步 URL query（刷新/返回不丢；旧参数兼容映射见
  *   wrong-questions-ui.parseWrongQuestionsUrl）；三态齐全，触控目标 ≥44px。
  */
 
@@ -77,15 +93,18 @@ function WrongSkeleton() {
   );
 }
 
-/** 空态（区分「还没有错题」/「当前分区为空」并按攻克标准给出解释） */
+/** 空态（区分「还没有错题」/「当前分区为空」/「课程筛选后为空」并给出解释） */
 function WrongEmpty({
   tab,
   standard,
   hasAnyQuestion,
+  courseFilterActive,
 }: {
   tab: "pending" | "conquered";
   standard: WrongMasteryStandard;
   hasAnyQuestion: boolean;
+  /** 课程筛选生效中（空列表优先归因筛选，给下一步动作） */
+  courseFilterActive: boolean;
 }) {
   const standardText = standard === "lenient" ? "做对 1 次" : "连续做对 2 次";
   if (!hasAnyQuestion) {
@@ -94,6 +113,19 @@ function WrongEmpty({
         icon={<PartyPopper />}
         title="还没有错题"
         description="做错的题会自动收进这里（等待老师批改的题先不算）；做对的题永远不删，攻克后随时可以回来翻看。"
+      />
+    );
+  }
+  if (courseFilterActive) {
+    return (
+      <StudentEmptyState
+        icon={<Filter />}
+        title={
+          tab === "pending"
+            ? "这门课暂无待复习的错题"
+            : "这门课暂无已攻克的错题"
+        }
+        description="可以换一门课程试试，或改选「全部课程」。"
       />
     );
   }
@@ -172,14 +204,28 @@ export default function StudentWrongQuestionsPage() {
   // 展开的紧凑行（同屏单开；切 tab/分组后目标不在列表则自然收起）
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  // 全量形态一次拉取：tab/分组/攻克标准全在本地算（D11 口径：单学生错题
-  // 规模有限；含已攻克条目——做对的题永远不删）
+  // 全量形态一次拉取：tab/分组/课程筛选/攻克标准全在本地算（D11 口径：单学生
+  // 错题规模有限；含已攻克条目——做对的题永远不删）
   const listQuery = useStudentWrongQuestions({ includeResolved: true });
 
+  // 课程下拉选项（我的课程；与我的记录页同一接口同一数据源，失败不阻塞
+  // 列表——只显示「全部课程」）
+  const coursesQuery = useStudentCourses();
+  const courses = useMemo(
+    () =>
+      (coursesQuery.data?.courses ?? []).map(({ id, name }) => ({ id, name })),
+    [coursesQuery.data],
+  );
+
   const questions = listQuery.data?.questions ?? [];
+  // 课程筛选在 tab 分流前生效：两个 tab 的成员与计数、「重练全部」范围都跟随
+  const courseFiltered = useMemo(
+    () => filterWrongQuestionsByCourse(questions, state.courseId),
+    [questions, state.courseId],
+  );
   const { pending, conquered } = useMemo(
-    () => splitByMastery(questions, standard),
-    [questions, standard],
+    () => splitByMastery(courseFiltered, standard),
+    [courseFiltered, standard],
   );
   const tabQuestions = state.tab === "pending" ? pending : conquered;
   const groups = useMemo(
@@ -236,7 +282,7 @@ export default function StudentWrongQuestionsPage() {
         titleId="wrong-title"
         description="做错的题会自动收进来；做对了也不会删，攻克后随时可以回来翻看。"
         actions={
-          // 重练全部：范围 = 当前 tab 全部题（数据未到时 0 题禁用）
+          // 重练全部：范围 = 当前 tab 且课程筛选后的全部题（数据未到时 0 题禁用）
           <WrongPracticeButton
             label="重练全部"
             count={tabQuestions.length}
@@ -254,10 +300,18 @@ export default function StudentWrongQuestionsPage() {
             conqueredCount={conquered.length}
             onSelect={(tab) => applyPatch({ tab })}
           />
-          <WrongGroupSwitch
-            group={state.group}
-            onSelect={(group) => applyPatch({ group })}
-          />
+          <div className="flex flex-wrap items-center gap-2">
+            <WrongGroupSwitch
+              group={state.group}
+              onSelect={(group) => applyPatch({ group })}
+            />
+            <WrongCourseSelect
+              courseId={state.courseId}
+              courses={courses}
+              coursesPending={coursesQuery.isPending}
+              onChange={(courseId) => applyPatch({ courseId })}
+            />
+          </div>
         </div>
         <MasteryStandardPicker standard={standard} onChange={changeStandard} />
         {state.group === "knowledge" && (
@@ -339,6 +393,7 @@ export default function StudentWrongQuestionsPage() {
             tab={state.tab}
             standard={standard}
             hasAnyQuestion={questions.length > 0}
+            courseFilterActive={state.courseId !== null}
           />
         ) : (
           groups.map((group) => (

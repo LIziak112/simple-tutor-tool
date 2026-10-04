@@ -12,8 +12,8 @@ import {
 /**
  * 错题本轮次史 + 三维度分组 + 攻克标准自选（2026-10 升级）：
  * 课程练习做三轮（q1 判断 错→对→错；q2 判断 错→错→对）→ /s/wrong：
- * - 默认待复习 + 按练习分组：归属单元组头 + 计数；紧凑行「错 2 次」；
- * - 点击行展开：轮次史区块三轮逐行（第 k 轮 ✓/✗ · 时间 · 「单元 · 第 n 次」）
+ * - 默认待复习 + 按练习分组：归属单元组头 + 计数；紧凑行「错 2 · 对 1」；
+ * - 点击行展开：轮次史区块三轮逐行（第 k 轮 ✓/✗ · 绝对时间 · 「单元 · 第 n 次」）
  *   与「已做错 2 次 · 做对 1 次」统计；
  * - 分组维度切换：按时间（本周桶）/ 按考点（两考点各一组）写 URL；
  * - 攻克标准切换：严格（默认）下 q2（最后仅对一次）在待复习、已攻克空；
@@ -45,6 +45,26 @@ function practiceMarkdown(unitName: string): string {
     "",
     ":::solution",
     "$-1$ 小于 $0$，是负数。",
+    ":::",
+    "::::",
+    "",
+  ].join("\n");
+}
+
+/** 单道判断的课程练习（课程筛选用：两门课各一题，题干不同便于定位行） */
+function singleJudgeMarkdown(unitName: string, stem: string): string {
+  return [
+    "---",
+    "kind: practice",
+    `unit: ${unitName}`,
+    "topic: 正数与负数",
+    "---",
+    "",
+    '::::question{type=judge difficulty=1 knowledge="有理数的概念"}',
+    stem,
+    "",
+    ":::solution",
+    "判断题详解。",
     ":::",
     "::::",
     "",
@@ -151,9 +171,9 @@ test.describe("错题本：轮次史 + 分组维度 + 攻克标准（2026-10）"
           name: `${unitName} · 待复习 2 题`,
         }),
       ).toBeVisible({ timeout: 30_000 });
-      // 两道题各错 2 次（紧凑行要素）
+      // 两道题各「错 2 · 对 1」（紧凑行要素）
       await expect(
-        studentPage.getByRole("button", { name: /错 2 次/ }),
+        studentPage.getByRole("button", { name: /错 2 · 对 1/ }),
       ).toHaveCount(2);
 
       // —— 展开 q1 完整卡片：轮次史三轮逐行 + 统计 ——
@@ -232,6 +252,162 @@ test.describe("错题本：轮次史 + 分组维度 + 攻克标准（2026-10）"
 
       // 泄露检查：全程 /api/student/* 响应无禁用键、无提示/详解原文（交卷后放行；
       // /wrong-questions 的 answers/solutionMd 豁免口径不变，rounds 无敏感键）
+      await studentPage.waitForTimeout(800); // 等最后一批响应体读完
+      expect(leak.violations().join("\n")).toBe("");
+    } finally {
+      await studentContext.close();
+    }
+  });
+});
+
+test.describe("错题本：课程筛选（2026-10）", () => {
+  test("选课程后列表只剩该课程的题且重练全部计数跟随筛选；深链与全部课程恢复", async ({
+    request,
+    browser,
+  }) => {
+    test.setTimeout(180_000);
+
+    // —— 造数（教师 API）：两门课程各一个单元一道判断题，学生两门各做错一轮 ——
+    await teacherApiLogin(request);
+    const suffix = uniqueSuffix();
+    const courseAName = `e2e筛选课A${suffix}`;
+    const courseBName = `e2e筛选课B${suffix}`;
+    const unitAName = `筛选单元A${suffix}`;
+    const unitBName = `筛选单元B${suffix}`;
+    const courseAId = await createCourseViaApi(request, courseAName);
+    const courseBId = await createCourseViaApi(request, courseBName);
+    const courseImports = [
+      {
+        courseId: courseAId,
+        unitName: unitAName,
+        stem: "$1$ 是正数。[[正确]]",
+      },
+      {
+        courseId: courseBId,
+        unitName: unitBName,
+        stem: "$7$ 是正数。[[正确]]",
+      },
+    ];
+    for (const item of courseImports) {
+      const importRes = await request.post("/api/teacher/import/commit", {
+        data: {
+          markdown: singleJudgeMarkdown(item.unitName, item.stem),
+          filename: `${item.unitName}.md`,
+          courseId: item.courseId,
+        },
+      });
+      if (!importRes.ok()) {
+        throw new Error(`导入课程练习失败：HTTP ${importRes.status()}`);
+      }
+      await setCourseItemVisible(request, item.courseId, item.unitName, true);
+    }
+
+    const loginName = `e2e-filter-${suffix}`;
+    await request.post("/api/teacher/students", {
+      data: { displayName: `e2e筛选生${suffix}`, loginName },
+    });
+    const student = await getStudentViaApi(request, loginName);
+    await addCourseMemberViaApi(request, courseAId, student.id);
+    await addCourseMemberViaApi(request, courseBId, student.id);
+
+    // —— 学生端：iPad 独立 context，两门课各做一轮并答错（judge 即时判分）——
+    const studentContext = await browser.newContext(devices["iPad (gen 7)"]);
+    const studentPage = await studentContext.newPage();
+    try {
+      const leak = attachLeakMonitor(studentPage);
+      await studentPage.goto(`/s/${student.linkToken}`);
+      await studentPage.waitForURL("**/s/home");
+
+      /** 一门课做一轮课程练习并答错（每课单题，第 1 次练习） */
+      const doWrongRound = async (
+        courseName: string,
+        courseId: string,
+        unitName: string,
+      ) => {
+        await studentPage.goto(
+          `/s/courses/${courseId}/units/${encodeURIComponent(unitName)}`,
+        );
+        await studentPage.getByRole("button", { name: "开始练习" }).click();
+        await studentPage.waitForURL("**/s/attempts/**");
+        await expect(
+          studentPage.getByText(`课程：${courseName} · 第 1 次`),
+        ).toBeVisible();
+        const question = studentPage.locator('article[aria-label="第 1 题"]');
+        await question
+          .getByRole("radio", { name: "错", exact: true })
+          .locator("xpath=ancestor::label[1]")
+          .click();
+        await expect
+          .poll(async () =>
+            studentPage.getByTestId("draft-status").textContent(),
+          )
+          .not.toContain("保存中");
+        await studentPage
+          .getByRole("button", { name: "交卷", exact: true })
+          .click();
+        await studentPage
+          .getByRole("button", { name: "确认交卷" })
+          .first()
+          .click();
+        await expect(studentPage.getByText("批改结果")).toBeVisible({
+          timeout: 30_000,
+        });
+      };
+
+      await doWrongRound(courseAName, courseAId, unitAName);
+      await doWrongRound(courseBName, courseBId, unitBName);
+
+      // —— /s/wrong：默认全部课程，两题都在；课程下拉（我的课程接口）就绪 ——
+      await studentPage.goto("/s/wrong");
+      const courseSelect = studentPage.locator("#wrong-course-filter");
+      await expect(courseSelect).toBeVisible({ timeout: 30_000 });
+      await expect(
+        studentPage.getByRole("button", { name: "待复习 2 题" }),
+      ).toBeVisible({ timeout: 30_000 });
+      await expect(
+        studentPage.getByRole("button", { name: "重练全部（2 题）" }),
+      ).toBeEnabled();
+      await expect(
+        studentPage.getByRole("option", { name: courseBName }),
+      ).toHaveCount(1);
+
+      // —— 选课 B：列表只剩课 B 的题；tab 计数与「重练全部」范围跟随 ——
+      await courseSelect.selectOption({ label: courseBName });
+      await expect(studentPage).toHaveURL(new RegExp(`courseId=${courseBId}`));
+      await expect(
+        studentPage.getByRole("button", { name: "待复习 1 题" }),
+      ).toBeVisible();
+      await expect(
+        studentPage.getByRole("button", { name: /7 是正数/ }),
+      ).toBeVisible();
+      await expect(
+        studentPage.getByRole("button", { name: /1 是正数/ }),
+      ).toHaveCount(0);
+      await expect(
+        studentPage.getByRole("button", { name: "重练全部（1 题）" }),
+      ).toBeEnabled();
+
+      // —— 刷新：URL 深链保持课程筛选（下拉回显同一门课）——
+      await studentPage.reload();
+      await expect(
+        studentPage.getByRole("button", { name: /7 是正数/ }),
+      ).toBeVisible({ timeout: 30_000 });
+      await expect(
+        studentPage.getByRole("button", { name: /1 是正数/ }),
+      ).toHaveCount(0);
+      await expect(courseSelect).toHaveValue(courseBId);
+
+      // —— 改回全部课程：列表与计数恢复、URL 参数移除 ——
+      await courseSelect.selectOption({ label: "全部课程" });
+      await expect(studentPage).not.toHaveURL(/courseId=/);
+      await expect(
+        studentPage.getByRole("button", { name: "待复习 2 题" }),
+      ).toBeVisible();
+      await expect(
+        studentPage.getByRole("button", { name: "重练全部（2 题）" }),
+      ).toBeEnabled();
+
+      // 泄露检查：全程 /api/student/* 响应无禁用键（含新增的我的课程请求）
       await studentPage.waitForTimeout(800); // 等最后一批响应体读完
       expect(leak.violations().join("\n")).toBe("");
     } finally {

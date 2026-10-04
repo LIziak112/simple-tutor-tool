@@ -14,7 +14,7 @@ import {
   stemWithoutOptionList,
 } from "@/features/attempt/answer-format";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
-import { DISPLAY_TZ, formatRelativeTime } from "@/lib/time";
+import { DISPLAY_TZ, formatCnTime } from "@/lib/time";
 import { RecordSourceBadge, recordTitleOf } from "./records-views";
 
 // 与 lib/time.ts 同一 dayjs 单例（extend 幂等；本文件分组函数独立可用）
@@ -24,16 +24,21 @@ dayjs.extend(timezone);
 /**
  * /s/wrong 错题本的 URL 状态、分组与卡片（T3.5，D11；2026-10 升为一级路由；
  * 2026-10 轮次史改版）：
- * - 页面统一拉全量形态（includeResolved=true）一次，「待复习/已攻克」tab 与
- *   分组维度全部本地计算；tab 与分组维度同步 URL query（刷新、返回不丢）；
+ * - 页面统一拉全量形态（includeResolved=true）一次，「待复习/已攻克」tab、
+ *   分组维度、课程筛选全部本地计算；tab 与分组维度同步 URL query（刷新、
+ *   返回不丢）；
+ * - 课程筛选（2026-10）：页头「课程」下拉（默认全部课程；选项 = 我的课程
+ *   接口），选中课程 C 时保留 rounds 任一轮 courseId 命中 C 的题（错题重练
+ *   轮恒 null 不参与命中）；课程选择同步 URL query（courseId）；
  * - 旧 URL 参数兼容：includeResolved=true 映射为 tab=conquered（旧「显示已
  *   攻克」开关的书签/深链不丢语义）；旧 knowledge 筛选被「按考点」分组取代，
  *   忽略不报错；
- * - 条目默认紧凑行（题型徽章 + 题干纯文本摘要 + 错 N 次 + 最近一轮 ✓/✗ +
- *   相对时间），点击行展开完整卡片；
+ * - 条目默认紧凑行（题型徽章 + 题干纯文本摘要 + 错 N · 对 M + 最近一轮 ✓/✗
+ *   + 绝对时间），点击行展开完整卡片；
  * - 展开卡：题干（快照 RichMarkdown 渲染，[[答案]] 标记渲染为空框）、本人
  *   最近答案、正确答案、详解折叠（共用结果视图的 SolutionFold）、首次是否
- *   做对标记、轮次史区块（已做错 N 次 · 做对 M 次 + 每轮一行）、最近来源。
+ *   做对标记、轮次史区块（已做错 N 次 · 做对 M 次 + 每轮一行 + 待批轮差额
+ *   提示）、最近来源。时间一律绝对时间（formatCnTime，Asia/Shanghai）。
  */
 
 /** 错题本页 tab（成员由本地攻克标准从 rounds 计算） */
@@ -46,12 +51,15 @@ export type WrongGroupMode = "unit" | "time" | "knowledge";
 export interface WrongQuestionsUrlState {
   tab: WrongTab;
   group: WrongGroupMode;
+  /** 课程筛选（2026-10）：null = 全部课程；选中时保留 rounds 任一轮 courseId 命中的题 */
+  courseId: string | null;
 }
 
-/** 默认状态（待复习 + 按练习分组） */
+/** 默认状态（待复习 + 按练习分组 + 全部课程） */
 export const DEFAULT_WRONG_QUESTIONS_URL_STATE: WrongQuestionsUrlState = {
   tab: "pending",
   group: "unit",
+  courseId: null,
 };
 
 /**
@@ -63,6 +71,7 @@ export function parseWrongQuestionsUrl(
   search: URLSearchParams,
 ): WrongQuestionsUrlState {
   const group = search.get("group");
+  const courseId = search.get("courseId");
   return {
     tab:
       search.get("tab") === "conquered" ||
@@ -70,6 +79,7 @@ export function parseWrongQuestionsUrl(
         ? "conquered"
         : "pending",
     group: group === "time" || group === "knowledge" ? group : "unit",
+    courseId: courseId !== null && courseId !== "" ? courseId : null,
   };
 }
 
@@ -84,7 +94,28 @@ export function wrongQuestionsUrlQuery(
   if (state.group !== DEFAULT_WRONG_QUESTIONS_URL_STATE.group) {
     params.set("group", state.group);
   }
+  if (state.courseId !== null) {
+    params.set("courseId", state.courseId);
+  }
   return params;
+}
+
+// ---------- 课程筛选 ----------
+
+/**
+ * 课程筛选（2026-10）：选中课程 C 时保留「任一轮发生在 C」的题（rounds 任一
+ * 元素 courseId === C，跨课程的题任一轮命中即保留）；错题重练轮 courseId
+ * 恒 null、不参与命中——只有重练轮的题在任意课程筛选下都不出现。
+ * null（全部课程）原样返回。
+ */
+export function filterWrongQuestionsByCourse(
+  questions: WrongQuestionCard[],
+  courseId: string | null,
+): WrongQuestionCard[] {
+  if (courseId === null) return questions;
+  return questions.filter((question) =>
+    question.rounds.some((round) => round.courseId === courseId),
+  );
 }
 
 // ---------- 分组 ----------
@@ -241,7 +272,7 @@ export function WrongQuestionRow({
         {stemSummaryOf(question.stemMd)}
       </span>
       <span className="shrink-0 text-xs text-muted-foreground">
-        错 {question.wrongCount} 次
+        错 {question.wrongCount} · 对 {question.correctCount}
       </span>
       {lastRound !== undefined &&
         (lastRound.correct ? (
@@ -255,8 +286,8 @@ export function WrongQuestionRow({
             className="size-4 shrink-0 text-red-600 dark:text-red-400"
           />
         ))}
-      <span className="w-16 shrink-0 text-right text-xs text-muted-foreground">
-        {formatRelativeTime(question.lastAt)}
+      <span className="shrink-0 whitespace-nowrap text-right text-xs tabular-nums text-muted-foreground">
+        {formatCnTime(question.lastAt)}
       </span>
       <ChevronDown
         aria-hidden
@@ -288,8 +319,10 @@ function FirstCorrectMark({ firstCorrect }: { firstCorrect: boolean }) {
 
 /**
  * 轮次史区块（2026-10）：「已做错 N 次 · 做对 M 次」汇总 + 每轮一行
- * （第 k 轮 ✓/✗ · 相对时间 · 来源标题）。攻克判定由端上按学生自选标准
- * 从本区块的原料（rounds）计算，服务端不下发规则。
+ * （第 k 轮 ✓/✗ · 绝对时间 · 来源标题）+ 待批轮差额提示（pendingCount>0
+ * 时「另有 N 轮待老师批改」——待批轮不进 rounds，在此补足差额口径）。
+ * 攻克判定由端上按学生自选标准从本区块的原料（rounds）计算，服务端不下发
+ * 规则。
  */
 function RoundsHistory({ question }: { question: WrongQuestionCard }) {
   return (
@@ -320,8 +353,8 @@ function RoundsHistory({ question }: { question: WrongQuestionCard }) {
                 做错
               </span>
             )}
-            <span className="shrink-0">
-              {formatRelativeTime(round.submittedAt)}
+            <span className="shrink-0 whitespace-nowrap tabular-nums">
+              {formatCnTime(round.submittedAt)}
             </span>
             <span className="min-w-0 truncate">
               {round.sourceTitle}
@@ -330,6 +363,11 @@ function RoundsHistory({ question }: { question: WrongQuestionCard }) {
           </li>
         ))}
       </ol>
+      {question.pendingCount > 0 && (
+        <p className="text-xs text-muted-foreground">
+          另有 {question.pendingCount} 轮待老师批改
+        </p>
+      )}
     </section>
   );
 }
@@ -457,8 +495,8 @@ export function WrongQuestionItem({
           最近来源：{recordTitleOf(question)}
           {question.courseName !== null && `（${question.courseName}）`}
         </span>
-        <span className="ml-auto shrink-0">
-          {formatRelativeTime(question.lastAt)}
+        <span className="ml-auto shrink-0 whitespace-nowrap tabular-nums">
+          {formatCnTime(question.lastAt)}
         </span>
       </p>
     </article>
@@ -589,5 +627,61 @@ export function WrongGroupSwitch({
         </button>
       ))}
     </fieldset>
+  );
+}
+
+/**
+ * 课程筛选下拉（2026-10，与我的记录页同一数据源与近似样式）：选项 = 全部
+ * 课程 + 我的课程（useStudentCourses；加载失败由页面传空数组，不阻塞列表）。
+ * 深链/回退到已不在课程列表的 courseId（课程归档或移出成员）时补一个占位
+ * 选项，select 不显示空白、筛选语义不丢；课程还在加载时占位为「课程加载中…」。
+ * 触控 ≥44px。
+ */
+export function WrongCourseSelect({
+  courseId,
+  courses,
+  coursesPending,
+  onChange,
+}: {
+  /** 当前筛选课程（null = 全部课程） */
+  courseId: string | null;
+  /** 课程下拉选项（我的课程；加载失败为空数组） */
+  courses: { id: string; name: string }[];
+  /** 课程选项仍在加载（占位选项文案用） */
+  coursesPending: boolean;
+  onChange: (courseId: string | null) => void;
+}) {
+  // 选中课程不在选项里：占位选项兜底（加载中 → 选项就绪后消失）
+  const unknownSelected =
+    courseId !== null && !courses.some((course) => course.id === courseId);
+  return (
+    <div className="flex min-w-0 items-center gap-2">
+      <label
+        htmlFor="wrong-course-filter"
+        className="shrink-0 text-sm text-muted-foreground"
+      >
+        课程
+      </label>
+      <select
+        id="wrong-course-filter"
+        className="min-h-11 min-w-0 max-w-56 rounded-lg border border-input bg-transparent px-3 text-base outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+        value={courseId ?? ""}
+        onChange={(e) =>
+          onChange(e.target.value === "" ? null : e.target.value)
+        }
+      >
+        <option value="">全部课程</option>
+        {courses.map((course) => (
+          <option key={course.id} value={course.id}>
+            {course.name}
+          </option>
+        ))}
+        {unknownSelected && (
+          <option value={courseId}>
+            {coursesPending ? "课程加载中…" : "已不在我的课程"}
+          </option>
+        )}
+      </select>
+    </div>
   );
 }
