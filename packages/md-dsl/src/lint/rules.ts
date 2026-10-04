@@ -157,7 +157,7 @@ export const LINT_RULES: readonly LintRuleDoc[] = [
     code: "IMAGE_SRC_NOT_FOUND",
     level: "warning",
     description:
-      "::image 引用的 blobs/media/… 图片文件未上传（服务端导入预览/提交时的文件存在性检查，CLI tutor-lint 无文件系统语义不触发）：先在导入页「图片上传」上传图片，并把 src 替换为上传返回的路径；手写或 AI 生成的哈希路径永远不会有对应文件，上传后必须用返回的新 src 替换",
+      "::image 引用的 blobs/media/… 图片文件未上传（服务端导入预览/提交时的文件存在性检查，CLI tutor-lint 无文件系统语义不触发）：在导入页把 md 与其引用的图片一起选择导入（随行自动上传并替换引用）；手写或 AI 生成的哈希路径永远不会有对应文件，需随图导入自动替换或上传后用返回的新 src 替换",
   },
   {
     code: "DIRECTIVE_NOT_ALLOWED_HERE",
