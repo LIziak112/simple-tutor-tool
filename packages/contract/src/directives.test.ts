@@ -229,6 +229,39 @@ describe("非法属性校验失败（验收第 3 条）", () => {
   });
 });
 
+describe("image：新增可选属性 alt（媒体管线，只增不改合规）", () => {
+  it("alt 可选：不写时解析结果不含 alt 键（缺省「图片」由渲染端兜底）", () => {
+    const parsed = imageDirective.attrs.parse({
+      src: "blobs/media/9af3.png",
+    });
+    expect(parsed.src).toBe("blobs/media/9af3.png");
+    expect(parsed).not.toHaveProperty("alt");
+  });
+
+  it("alt 写非空值即通过并保留；空串 / 无值简写被拒", () => {
+    expect(
+      imageDirective.attrs.safeParse({
+        src: "blobs/fig-1.png",
+        alt: "数轴示意图",
+      }).success,
+    ).toBe(true);
+    expect(
+      imageDirective.attrs.parse({ src: "blobs/fig-1.png", alt: "数轴" }).alt,
+    ).toBe("数轴");
+    expect(
+      imageDirective.attrs.safeParse({ src: "blobs/fig-1.png", alt: "" })
+        .success,
+    ).toBe(false);
+  });
+
+  it("example 与 attrDocs 自洽：示例含 blobs/media/ 路径且用到 alt", () => {
+    expect(imageDirective.example).toContain("blobs/media/");
+    expect(imageDirective.example).toContain("alt=");
+    expect(imageDirective.attrDocs?.src).toContain("blobs/media/");
+    expect(imageDirective.attrDocs?.alt).toBeDefined();
+  });
+});
+
 describe("allowedIn：与 §5.1 规则要点表一致", () => {
   it("question 只在文档顶层；hint/solution 在题目与讲义；answer 仅题目内", () => {
     expect(questionDirective.allowedIn).toEqual(["document"]);

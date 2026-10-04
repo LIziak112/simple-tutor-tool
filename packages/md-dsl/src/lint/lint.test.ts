@@ -693,6 +693,77 @@ describe("lintDocument：指令规则补充", () => {
   });
 });
 
+describe("lintDocument：image src 前缀校验（IMAGE_SRC_NOT_BLOBS，媒体管线第一单）", () => {
+  const lectureImage = (src: string): string =>
+    md([
+      "---",
+      "kind: lecture",
+      "---",
+      "",
+      "# 第1讲 有理数",
+      "",
+      `::image{src="${src}"}`,
+    ]);
+
+  it("外链 URL：warning，报在指令行，message/fix 指引上传并使用 blobs/media/ 路径", () => {
+    const { issues } = lintDocument(
+      lectureImage("https://cdn.example.com/fig.png"),
+    );
+    expect(codes(issues)).toEqual(["IMAGE_SRC_NOT_BLOBS"]);
+    expect(issues[0]).toMatchObject({ level: "warning", line: 7, column: 1 });
+    expect(issues[0]?.message).toContain("blobs/media/");
+    expect(issues[0]?.message).toContain("外链");
+    expect(issues[0]?.fix).toContain("blobs/media/");
+  });
+
+  it("非 blobs/ 开头的相对散路径：同样 warning", () => {
+    const { issues } = lintDocument(lectureImage("images/fig-1.png"));
+    expect(codes(issues)).toEqual(["IMAGE_SRC_NOT_BLOBS"]);
+    expect(issues[0]?.level).toBe("warning");
+  });
+
+  it("blobs/ 前缀不触发：旧式 blobs/fig-1.png 与新式 blobs/media/<64 位哈希>.png 均 0 issue", () => {
+    expect(lintDocument(lectureImage("blobs/fig-1.png")).issues).toEqual([]);
+    expect(
+      lintDocument(lectureImage(`blobs/media/${"9af3".padEnd(64, "0")}.png`))
+        .issues,
+    ).toEqual([]);
+  });
+
+  it("缺 src 只报 INVALID_DIRECTIVE_ATTRS error，不双报 IMAGE_SRC_NOT_BLOBS", () => {
+    const { issues } = lintDocument(
+      md([
+        "---",
+        "kind: lecture",
+        "---",
+        "",
+        "# 第1讲 有理数",
+        "",
+        '::image{width="60%"}',
+      ]),
+    );
+    expect(codes(issues)).toEqual(["INVALID_DIRECTIVE_ATTRS"]);
+    expect(issues[0]?.level).toBe("error");
+  });
+
+  it("题目内（question 语境）的 image 同样受校验", () => {
+    const { issues } = lintDocument(
+      md([
+        "---",
+        "kind: practice",
+        "unit: 练习",
+        "---",
+        "",
+        "::::question{type=solve}",
+        '::image{src="https://example.com/a.png"}',
+        "::::",
+      ]),
+    );
+    expect(codes(issues)).toEqual(["IMAGE_SRC_NOT_BLOBS"]);
+    expect(issues[0]?.level).toBe("warning");
+  });
+});
+
 describe("lintDocument：未闭合容器补充", () => {
   it("未闭合 question 会吞掉后续内容：栈内每个未闭合容器各报一条 UNCLOSED_CONTAINER", () => {
     const text = md([

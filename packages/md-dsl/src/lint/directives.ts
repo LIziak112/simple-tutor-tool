@@ -99,7 +99,7 @@ function chainLabel(chain: readonly string[]): string {
     .join(" → ");
 }
 
-/** 指令层规则入口：遍历 AST，输出 UNKNOWN_DIRECTIVE / INVALID_DIRECTIVE_ATTRS / DIRECTIVE_NOT_ALLOWED_HERE / *_OUTSIDE_QUESTION / HEADING_IN_CONTAINER */
+/** 指令层规则入口：遍历 AST，输出 UNKNOWN_DIRECTIVE / INVALID_DIRECTIVE_ATTRS / DIRECTIVE_NOT_ALLOWED_HERE / IMAGE_SRC_NOT_BLOBS / *_OUTSIDE_QUESTION / HEADING_IN_CONTAINER */
 export function lintDirectives(tree: Root, kind: DocumentKind): LintIssue[] {
   const issues: LintIssue[] = [];
   walk(tree, initialChain(kind), true, issues);
@@ -215,6 +215,39 @@ function checkDirective(
     );
   }
   validateAttrs(node, definition, sigil, line, column, issues);
+  if (name === "image") {
+    reportImageSrcNotInBlobs(node, line, column, issues);
+  }
+}
+
+/**
+ * ::image 的 src 前缀校验（IMAGE_SRC_NOT_BLOBS，媒体管线第一单）。
+ * 分级与既有 warning 口径一致（见 validateAttrs 注释：值不合法但有合理
+ * 缺省 → warning）：src 缺失/为空已由 INVALID_DIRECTIVE_ATTRS 报 error
+ * （指令没有可渲染的内容），本规则只看「src 存在但不以 blobs/ 开头」的
+ * 外链 URL 或散路径——降级为 warning 而非 error，历史文档不被阻断；
+ * blobs/ 前缀（含旧式 blobs/fig-1.png 与新式 blobs/media/…）一律不告警。
+ */
+function reportImageSrcNotInBlobs(
+  node: AnyDirectiveNode,
+  line: number,
+  column: number,
+  issues: LintIssue[],
+): void {
+  const src = node.attributes?.src;
+  // 缺失/为空/无值简写：INVALID_DIRECTIVE_ATTRS 已报 error，这里不双报
+  if (typeof src !== "string" || src === "") return;
+  if (src.startsWith("blobs/")) return;
+  issues.push({
+    ...makeIssue(
+      "warning",
+      line,
+      column,
+      "IMAGE_SRC_NOT_BLOBS",
+      `::image（第 ${line} 行）的 src 不是 blobs/ 路径：图片需先上传，src 使用上传接口返回的 blobs/media/… 路径，外链 URL 不受支持`,
+    ),
+    fix: "把 src 改为图片上传接口返回的 blobs/media/… 路径",
+  });
 }
 
 function reportUnknownDirective(

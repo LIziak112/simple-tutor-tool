@@ -148,6 +148,12 @@ export const LINT_RULES: readonly LintRuleDoc[] = [
       "指令属性不合法：必填属性缺失或值为空是 error；未知属性名/值不合法但有缺省是 warning",
   },
   {
+    code: "IMAGE_SRC_NOT_BLOBS",
+    level: "warning",
+    description:
+      "::image 的 src 不以 blobs/ 开头（外链 URL 或散路径）：图片需先上传，src 使用上传接口返回的 blobs/media/… 路径，外链 URL 不受支持",
+  },
+  {
     code: "DIRECTIVE_NOT_ALLOWED_HERE",
     level: "warning",
     description:

@@ -533,18 +533,21 @@ export const imageDirective = defineDirective({
   since: "2.0",
   allowedIn: ["lecture", "question"],
   attrs: directiveAttrs({
-    /** 图片路径（必填）：导入时上传到服务端 blobs 的文件，非外链 URL */
+    /** 图片路径（必填）：图片上传接口返回的 blobs/media/<内容哈希>.<扩展名> 路径，非外链 URL */
     src: z.string().min(1),
+    /** 替代文本（图片加载失败/读屏时显示），缺省「图片」；可选新增（只增不改合规） */
+    alt: z.string().min(1).optional(),
     /** 显示宽度（如 "60%"、"320px"），缺省自适应 */
     width: z.string().min(1).optional(),
   }),
   attrDocs: {
-    src: '图片路径，必填：写导入时上传到服务端 blobs 的文件路径（如 "blobs/fig-1.png"），不支持外链 URL',
+    src: '图片路径，必填：写图片上传接口返回的 blobs/media/<内容哈希>.<扩展名> 路径（如 "blobs/media/9af3….png"），不支持外链 URL',
+    alt: "替代文本（图片加载失败或读屏时显示），缺省「图片」",
     width: '显示宽度（如 "60%"、"320px"），缺省自适应',
   },
   description:
-    "块级图片。图片以文件形式存放在服务端 data/blobs/（导入时上传），src 写 blobs 内路径，不支持外链 URL；width 缺省自适应。",
-  example: '::image{src="blobs/fig-1.png" width="60%"}',
+    "块级图片。src 写图片上传接口返回的 blobs/media/<内容哈希>.<扩展名> 路径（如 blobs/media/9af3….png），不支持外链 URL；alt 为替代文本，缺省「图片」；width 缺省自适应。",
+  example: '::image{src="blobs/media/9af3….png" alt="数轴示意图" width="60%"}',
 });
 
 /** 函数图像 */

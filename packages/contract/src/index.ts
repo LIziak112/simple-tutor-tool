@@ -35,6 +35,9 @@ export * from "./library-api.ts";
 /** MCP 教师侧配套契约（T4.6 起为权威定义，依据 Phase4 清单 §2 D22/D24）：apiToken
  *  查看/生成重置、reports 列表/删除、save_report 写入参数；/mcp 端点本身无契约变化 */
 export * from "./mcp-api.ts";
+/** 图片上传 API 契约（媒体管线第一单起为权威定义）：上传响应的内容寻址路径与字节数；
+ *  请求为 multipart（无 JSON 请求 schema），MEDIA_TOO_LARGE / UNSUPPORTED_MEDIA_TYPE 走通用 ApiErr */
+export * from "./media-api.ts";
 /** 运行时公开配置契约（T2.12 起为权威定义）：GET /api/public/config 的 pwaEnabled/publicUrl */
 export * from "./public-config.ts";
 /** 共享发布 API 契约（T2B.7 起为权威定义）：DATA_DIR/shared 目录的发布/列表/预览/导入/删除 */
