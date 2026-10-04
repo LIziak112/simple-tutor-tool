@@ -4,7 +4,9 @@ import type {
   AttemptResultData,
   HintOpenedEntry,
 } from "@tutor/contract";
+import { useMutation } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router";
 import { Button } from "@/components/ui/button";
 import { AttemptBottomBar } from "@/features/attempt/AttemptBottomBar";
 import { AttemptQuestionCard } from "@/features/attempt/AttemptQuestionCard";
@@ -19,6 +21,7 @@ import {
   useDraftSync,
 } from "@/features/attempt/use-draft-sync";
 import type { InkUploadController } from "@/features/attempt/use-ink-upload";
+import { startWrongPracticeApi } from "@/lib/api";
 import { createEventQueue } from "@/lib/event-queue";
 import { formatDueTime } from "@/lib/time";
 import { useOnlineStatus } from "@/lib/use-online-status";
@@ -82,6 +85,9 @@ export function AttemptSession({
  * T4.0b（§5.0-C12）：自建 attempt scope 队列实例（同一 attemptId）收
  * directive_interact{host:result} 复盘事件——requireUsableAttempt 宽松口径
  * 已支持交卷后上报，无需改服务端；离开结果页 dispose（内部尽力 flush）。
+ * 2026-10：「练习本卷错题」直达重练——POST /wrong-practice（questionIds 由
+ * AttemptResultView 按本卷判错题回传）成功后跳新卷作答（与错题本「重练本组」
+ * 同一动线）；失败把服务端中文信息回传结果视图告警展示。
  */
 function AttemptResultWithDraftCleanup({
   data,
@@ -91,6 +97,7 @@ function AttemptResultWithDraftCleanup({
   onBackHome: () => void;
 }) {
   const attemptId = data.attempt.id;
+  const navigate = useNavigate();
   useEffect(() => {
     void draftStore.clearDraft(attemptId);
   }, [attemptId]);
@@ -118,11 +125,31 @@ function AttemptResultWithDraftCleanup({
       });
     },
   ).current;
+  // 练习本卷错题（2026-10）：组新重练卷 → 跳作答；失败留告警可重试
+  const practice = useMutation({
+    mutationFn: (questionIds: string[]) => startWrongPracticeApi(questionIds),
+    onSuccess: (attempt) => {
+      void navigate(`/s/attempts/${attempt.id}`);
+    },
+  });
+  const practiceErrorText = practice.isError
+    ? practice.error instanceof Error
+      ? practice.error.message
+      : "网络异常，请稍后重试"
+    : null;
   return (
     <AttemptResultView
       data={data}
       onBackHome={onBackHome}
       onSolutionToggle={onSolutionToggle}
+      wrongPractice={{
+        loading: practice.isPending,
+        error: practiceErrorText,
+        onStart: (questionIds) => {
+          if (questionIds.length === 0) return; // 判错 0 题按钮本就不渲染（防御）
+          practice.mutate(questionIds);
+        },
+      }}
     />
   );
 }
