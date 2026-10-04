@@ -174,7 +174,7 @@ test.describe("错题重练：组卷 → 作答 → 轮次史/攻克 → 教师�
       await expect(
         studentPage.getByRole("button", { name: "待复习 2 题" }),
       ).toBeVisible({ timeout: 30_000 });
-      // 展开 q1：紧凑行「错 1 次」+ 轮次史两轮（第 2 轮 ✓ · 错题重练 · 第 1 次）
+      // 展开 q1：紧凑行「错 1 · 对 1」+ 轮次史两轮（第 2 轮 ✓ · 错题重练 · 第 1 次）
       await studentPage.getByRole("button", { name: /1 是正数/ }).click();
       const q1Card = studentPage.locator("article", {
         hasText: "有理数的概念",
