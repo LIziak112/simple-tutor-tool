@@ -8,10 +8,14 @@ import {
   attempts,
   courses,
   loginFailures,
+  noteImages,
+  notes,
+  noteVersions,
   questions,
   responses,
   sessions,
   students,
+  submissionEvidence,
   teachers,
   units,
 } from "./schema";
@@ -20,6 +24,24 @@ import { createTestDb } from "./test-utils";
 /** sqlite_master 行的最小形状（建表元数据查询用） */
 interface TableNameRow {
   name: string;
+}
+
+/** 一条可直接落库的学生行（linkToken/loginName 均唯一） */
+function studentRow(overrides: Partial<typeof students.$inferInsert> = {}) {
+  return {
+    id: randomUUID(),
+    teacherId: null,
+    displayName: "张三",
+    loginName: "张三",
+    passwordHash: null,
+    linkToken: `link-${randomUUID()}`,
+    linkEnabled: true,
+    passwordEnabled: false,
+    note: null,
+    archivedAt: null,
+    createdAt: new Date().toISOString(),
+    ...overrides,
+  };
 }
 
 describe("assignments / assignment_units / assignment_students 表（T2A.7 作业结构）", () => {
@@ -234,24 +256,6 @@ describe("teachers / sessions 表读写", () => {
 });
 
 describe("students 表（T2.1 学生账号）", () => {
-  /** 一条可直接落库的学生行（linkToken/loginName 均唯一） */
-  function studentRow(overrides: Partial<typeof students.$inferInsert> = {}) {
-    return {
-      id: randomUUID(),
-      teacherId: null,
-      displayName: "张三",
-      loginName: "张三",
-      passwordHash: null,
-      linkToken: `link-${randomUUID()}`,
-      linkEnabled: true,
-      passwordEnabled: false,
-      note: null,
-      archivedAt: null,
-      createdAt: new Date().toISOString(),
-      ...overrides,
-    };
-  }
-
   it("迁移后 students 表存在，可原样读回（布尔列按 0/1 映射）", () => {
     const db = createTestDb();
     const tables = db.$client
@@ -493,6 +497,298 @@ describe("attempts / responses 表（T2.6 作答生命周期）", () => {
         })
         .run(),
     ).toThrow();
+    db.$client.close();
+  });
+});
+
+describe("notes / note_versions / note_images / submission_evidence 表（T6R.2 题目草稿）", () => {
+  /** 造最小外键链：学生 + attempt（notes 只外键 attempts；题目/版本引用不带外键） */
+  function seedNoteRefs(db: ReturnType<typeof createTestDb>): {
+    attemptId: string;
+    questionId: string;
+  } {
+    const student = studentRow();
+    const studentId = student.id;
+    const attemptId = randomUUID();
+    const questionId = "练习四-7";
+    const now = new Date().toISOString();
+    db.insert(students).values(student).run();
+    db.insert(attempts)
+      .values({
+        id: attemptId,
+        studentId,
+        sourceType: "assignment",
+        assignmentId: null,
+        courseId: null,
+        unitId: null,
+        attemptNo: 1,
+        status: "draft",
+        startedAt: now,
+        submittedAt: null,
+        activeSec: null,
+        device: null,
+        scoreAuto: null,
+        scoreFinal: null,
+      })
+      .run();
+    return { attemptId, questionId };
+  }
+
+  /** 造一行 notes（缺省 rev-a）；返回 noteId */
+  function seedNote(
+    db: ReturnType<typeof createTestDb>,
+    o: { attemptId: string; questionId: string; questionRevisionId?: string },
+  ): string {
+    const noteId = randomUUID();
+    db.insert(notes)
+      .values({
+        id: noteId,
+        attemptId: o.attemptId,
+        questionId: o.questionId,
+        questionRevisionId: o.questionRevisionId ?? "rev-a",
+        updatedAt: new Date().toISOString(),
+      })
+      .run();
+    return noteId;
+  }
+
+  /** 造一行 note_versions（缺省 revision=1/hash=a*64）；返回整行 */
+  function seedNoteVersion(
+    db: ReturnType<typeof createTestDb>,
+    noteId: string,
+    o: Partial<typeof noteVersions.$inferInsert> = {},
+  ): typeof noteVersions.$inferInsert {
+    const revision = o.revision ?? 1;
+    // renderVersion 不设基值：缺省由 DB DEFAULT 填（调用方可显式覆盖）
+    const version = {
+      id: randomUUID(),
+      noteId,
+      revision,
+      bodyPath: `blobs/notes/${noteId}/v${revision}.json.gz`,
+      hash: o.hash ?? "a".repeat(64),
+      strokeCount: 1,
+      pointCount: 10,
+      paperWidth: 1000,
+      paperHeight: 800,
+      serverSavedAt: new Date().toISOString(),
+      ...o,
+    };
+    db.insert(noteVersions).values(version).run();
+    return version;
+  }
+
+  it("迁移后四表存在；notes 行落默认值（phase=scratch、currentRevision=0、头指针空）", () => {
+    const db = createTestDb();
+    const tables = db.$client
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('notes','note_versions','note_images','submission_evidence') ORDER BY name",
+      )
+      .all() as TableNameRow[];
+    expect(tables.map((r) => r.name)).toEqual([
+      "note_images",
+      "note_versions",
+      "notes",
+      "submission_evidence",
+    ]);
+
+    const { attemptId, questionId } = seedNoteRefs(db);
+    const noteId = seedNote(db, {
+      attemptId,
+      questionId,
+      questionRevisionId: "练习四-7@3@snap",
+    });
+    const row = db.select().from(notes).where(eq(notes.id, noteId)).get();
+    expect(row).toMatchObject({
+      id: noteId,
+      attemptId,
+      questionId,
+      phase: "scratch",
+      currentRevision: 0,
+      currentVersionId: null,
+      serverSavedAt: null,
+    });
+    db.$client.close();
+  });
+
+  it("scratch 唯一性由服务层保证（与 attempts 先例同口径）：库里两行同键不炸——决策见 schema 注释", () => {
+    const db = createTestDb();
+    const { attemptId, questionId } = seedNoteRefs(db);
+    seedNote(db, { attemptId, questionId });
+    // 同 (attemptId, questionId, phase='scratch') 第二行：DB 层放行（correction 多行性
+    // 使全列唯一索引不可行；partial unique index 依 attempts 表先例不建）
+    expect(() => seedNote(db, { attemptId, questionId })).not.toThrow();
+    db.$client.close();
+  });
+
+  it("note_versions：行可读写、renderVersion 默认 1；(noteId, revision) 唯一拒绝重复", () => {
+    const db = createTestDb();
+    const { attemptId, questionId } = seedNoteRefs(db);
+    const noteId = seedNote(db, { attemptId, questionId });
+    // 插入省略 renderVersion——默认值路径真实被 exercise（勿显式传 1）
+    const version = seedNoteVersion(db, noteId, {
+      strokeCount: 12,
+      pointCount: 2400,
+      paperHeight: 1200,
+      serverSavedAt: "2026-10-06T02:00:00.000Z",
+    });
+    expect(
+      db
+        .select()
+        .from(noteVersions)
+        .where(eq(noteVersions.id, version.id))
+        .get(),
+    ).toEqual({ ...version, renderVersion: 1 });
+
+    // 同 (noteId, revision) 第二行 → 唯一索引拒绝
+    expect(() =>
+      db
+        .insert(noteVersions)
+        .values({ ...version, id: randomUUID() })
+        .run(),
+    ).toThrow();
+    // 外键：孤儿 noteId 拒绝（foreign_keys=ON）
+    expect(() =>
+      db
+        .insert(noteVersions)
+        .values({ ...version, id: randomUUID(), noteId: randomUUID() })
+        .run(),
+    ).toThrow();
+    db.$client.close();
+  });
+
+  it("note_images：默认 state=pending/hash=null；(noteVersionId, spec, pageIndex) 唯一", () => {
+    const db = createTestDb();
+    const { attemptId, questionId } = seedNoteRefs(db);
+    const noteId = seedNote(db, { attemptId, questionId });
+    const versionId = seedNoteVersion(db, noteId).id;
+    const image = {
+      id: randomUUID(),
+      noteVersionId: versionId,
+      spec: "analysis" as const,
+      pageIndex: 0,
+      cropX: 0,
+      cropY: 0,
+      cropW: 1000,
+      cropH: 760,
+      pixelWidth: 1000,
+      pixelHeight: 760,
+      path: `blobs/notes/${noteId}/img-${randomUUID()}.png`,
+      hash: null,
+    };
+    db.insert(noteImages).values(image).run();
+    const row = db
+      .select()
+      .from(noteImages)
+      .where(eq(noteImages.id, image.id))
+      .get();
+    expect(row).toMatchObject({ ...image, state: "pending" });
+
+    // 同 (noteVersionId, spec, pageIndex) 第二行 → 唯一索引拒绝；换 pageIndex 合法
+    expect(() =>
+      db
+        .insert(noteImages)
+        .values({ ...image, id: randomUUID() })
+        .run(),
+    ).toThrow();
+    db.insert(noteImages)
+      .values({ ...image, id: randomUUID(), pageIndex: 1 })
+      .run();
+    // 外键：孤儿版本拒绝
+    expect(() =>
+      db
+        .insert(noteImages)
+        .values({ ...image, id: randomUUID(), noteVersionId: randomUUID() })
+        .run(),
+    ).toThrow();
+    db.$client.close();
+  });
+
+  it("submission_evidence：(attemptId, questionId) 唯一；frozen 指向版本、外键有效", () => {
+    const db = createTestDb();
+    const { attemptId, questionId } = seedNoteRefs(db);
+    const noteId = seedNote(db, { attemptId, questionId });
+    const versionId = seedNoteVersion(db, noteId, {
+      revision: 2,
+      hash: "b".repeat(64),
+    }).id;
+    const now = new Date().toISOString();
+    const evidence = {
+      id: randomUUID(),
+      attemptId,
+      questionId,
+      state: "frozen" as const,
+      versionId,
+      recordedAt: now,
+    };
+    db.insert(submissionEvidence).values(evidence).run();
+    expect(
+      db
+        .select()
+        .from(submissionEvidence)
+        .where(eq(submissionEvidence.id, evidence.id))
+        .get(),
+    ).toEqual(evidence);
+
+    // 同 (attemptId, questionId) 第二行 → 唯一索引拒绝
+    expect(() =>
+      db
+        .insert(submissionEvidence)
+        .values({
+          ...evidence,
+          id: randomUUID(),
+          state: "none",
+          versionId: null,
+        })
+        .run(),
+    ).toThrow();
+    // 外键：孤儿 attemptId / versionId 拒绝
+    expect(() =>
+      db
+        .insert(submissionEvidence)
+        .values({
+          ...evidence,
+          id: randomUUID(),
+          attemptId: randomUUID(),
+          versionId: null,
+        })
+        .run(),
+    ).toThrow();
+    expect(() =>
+      db
+        .insert(submissionEvidence)
+        .values({
+          ...evidence,
+          id: randomUUID(),
+          attemptId,
+          versionId: randomUUID(),
+        })
+        .run(),
+    ).toThrow();
+    db.$client.close();
+  });
+
+  it("notes 头指针可随 CAS 切换（mutable head）；questionId 无外键（DSL id，D10 口径）", () => {
+    const db = createTestDb();
+    const { attemptId } = seedNoteRefs(db);
+    const noteId = seedNote(db, { attemptId, questionId: "任意-DSL.id" });
+    const versionId = seedNoteVersion(db, noteId).id;
+    const now = new Date().toISOString();
+    db.update(notes)
+      .set({
+        currentRevision: 1,
+        currentVersionId: versionId,
+        serverSavedAt: now,
+        updatedAt: now,
+      })
+      .where(eq(notes.id, noteId))
+      .run();
+    expect(
+      db.select().from(notes).where(eq(notes.id, noteId)).get(),
+    ).toMatchObject({
+      currentRevision: 1,
+      currentVersionId: versionId,
+      serverSavedAt: now,
+    });
     db.$client.close();
   });
 });
