@@ -18,27 +18,32 @@ permissions:
 jobs:
   publish:
     name: 构建并推送多平台镜像
-    runs-on: ubuntu-latest
+    # ubuntu-latest 自 2026-10-19 起渐进迁移到 Ubuntu 26.04（至 11-19），窗口期内同一工作流
+    # 会随机落在 24/26 两代系统上；显式钉 24.04 保证多架构构建环境确定。
+    runs-on: ubuntu-24.04
     env:
       # 双平台：amd64 覆盖绝大多数服务器，arm64 覆盖树莓派 / ARM 云主机。
       # 若 arm64 构建过慢或失败（better-sqlite3 原生依赖在 QEMU 下偶发问题），
       # 可临时改为仅 linux/amd64。
       PLATFORMS: linux/amd64,linux/arm64
     steps:
+      # docker/* 系列动作已陆续升到 Node 24 运行时的新主版本（qemu/buildx/login v4、metadata v6、
+      # build-push v7）；旧 v3/v5/v6 主版本仍是 node20，打 tag 发版时会被 GitHub 弃用告警。
+      # 本工作流所用输入（platforms/tags/labels/cache-from/cache-to 等）在新版本中均未变化。
       - name: 检出代码
         uses: actions/checkout@v5
 
       # runner 本身是 x64，跨架构构建 arm64 需要 QEMU 模拟
       - name: 安装 QEMU（模拟 arm64）
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
 
       # buildx 负责多平台构建，也是 gha 缓存的前置条件
       - name: 安装 buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       # 登录 ghcr.io：默认 GITHUB_TOKEN 即有本仓库命名空间的镜像推送权限
       - name: 登录 ghcr.io
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -50,7 +55,7 @@ jobs:
       # 打上，预发布（如 v2.1.0-rc.1）不覆盖 latest。
       - name: 生成镜像标签与标注
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ghcr.io/liziak112/simple-tutor-tool
           tags: |
@@ -61,7 +66,7 @@ jobs:
       # 不需要额外 build-args。缓存走 GitHub Actions cache 服务（type=gha，
       # mode=max 缓存全部中间层）：依赖安装与构建层在两次 tag 之间可复用，双平台下提速明显。
       - name: 构建并推送镜像
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           platforms: ${{ env.PLATFORMS }}

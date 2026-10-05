@@ -14,15 +14,18 @@ concurrency:
 jobs:
   ci:
     name: lint / typecheck / test / build
-    runs-on: ubuntu-latest
+    # ubuntu-latest 自 2026-10-19 起渐进迁移到 Ubuntu 26.04（至 11-19），窗口期内同一工作流
+    # 会随机落在 24/26 两代系统上；显式钉 24.04 保证构建环境确定。切 26.04 时另行专门验证。
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: 检出代码
         uses: actions/checkout@v5
 
-      # 不传 version，pnpm/action-setup 自动读取根 package.json 的 packageManager 字段（pnpm@12.6.0）
+      # 不传 version，pnpm/action-setup 自动读取根 package.json 的 packageManager 字段（pnpm@12.6.0）。
+      # v6 运行在 Node 24（v4 标签仍指向 node20 构建，已被 GitHub 弃用告警），v6.1.0 起明确支持 pnpm v12
       - name: 安装 pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
 
       # Node 版本与仓库约定一致（根 engines: >=24、.nvmrc: 24）；启用 pnpm store 缓存加速安装
       - name: 安装 Node 24
@@ -61,14 +64,17 @@ jobs:
   # 25 分钟实测不够（首跑被 GitHub 超时取消表现为 completed cancelled）。
   e2e:
     name: e2e (chromium + webkit, iPad 模拟)
-    runs-on: ubuntu-latest
+    # 钉 24.04 而非跟随 ubuntu-latest 渐进迁移（2026-10-19 起）到 26.04：webkit 的 apt 系统
+    # 库随发行版走。Playwright 1.61 起官方支持 Ubuntu 26.04（本仓库 @playwright/test 1.63），
+    # 后续可单独起分支跑一轮 e2e 验证后再切 ubuntu-26.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
       - name: 检出代码
         uses: actions/checkout@v5
 
       - name: 安装 pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
 
       - name: 安装 Node 24
         uses: actions/setup-node@v5
@@ -83,9 +89,10 @@ jobs:
       # chromium 用 playwright 自带 build（config 中 CI 不走 msedge channel），
       # 与 webkit 一起落在 ~/.cache/ms-playwright，可整体缓存；系统库由 --with-deps 装。
       # restore-keys：版本升级后锁文件哈希变化时，降级命中旧目录（install 会补齐缺失部分）。
+      # actions/cache@v6 起运行在 Node 24（v4 为 node20，已被 GitHub 弃用告警），用法不变。
       - name: 缓存 Playwright 浏览器
         id: playwright-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
@@ -119,7 +126,8 @@ jobs:
 
       - name: 上传测试报告
         if: failure()
-        uses: actions/upload-artifact@v4
+        # v7 运行在 Node 24；此前 @v4 为 node20（仅失败时才执行，故弃用告警一直未暴露）
+        uses: actions/upload-artifact@v7
         with:
           name: playwright-report
           path: playwright-report/
