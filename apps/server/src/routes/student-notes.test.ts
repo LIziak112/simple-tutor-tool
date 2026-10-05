@@ -457,7 +457,14 @@ describe("上传、CAS 与幂等（路由级）", () => {
       gzipDoc(noteDoc(1, 20)),
     );
     expect(first.status).toBe(200);
-    const firstData = (await first.json()) as { data: { hash: string } };
+    const firstData = (await first.json()) as {
+      data: {
+        noteId: string;
+        versionId: string;
+        hash: string;
+        savedAt: string;
+      };
+    };
 
     const second = await putNote(
       app,
@@ -469,9 +476,13 @@ describe("上传、CAS 与幂等（路由级）", () => {
     expect(second.status).toBe(409);
     const err = (await second.json()) as ApiErr & { _current?: unknown };
     expect(err.error).toBe("NOTE_REVISION_CONFLICT");
-    expect(err._current).toMatchObject({
+    // 五字段全量锁定（复审⑤：摘要形态契约化）
+    expect(err._current).toEqual({
+      noteId: firstData.data.noteId,
       revision: 1,
+      versionId: firstData.data.versionId,
       hash: firstData.data.hash,
+      serverSavedAt: firstData.data.savedAt,
     });
     // 输掉的请求没有留下任何版本行；错误响应同样过泄露检查
     expect(db.select().from(noteVersionsTable).all()).toHaveLength(1);

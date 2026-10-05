@@ -432,6 +432,30 @@ export const noteUploadMetaSchema = z.object({
 });
 
 /**
+ * NOTE_REVISION_CONFLICT 的当前版本摘要（服务端经 HttpError extra 以
+ * `_current` 键附加在 409 响应上，客户端据此提示「保留云端或将本地另存
+ * 一份」）：字段命名对齐 noteVersionMeta 的 versionId/serverSavedAt 视角。
+ * 无 head（revision=0，笔记尚未建立或从未确认）时 noteId/versionId/hash/
+ * serverSavedAt 为 null——五字段可空规则与服务端 revisionConflict 组装
+ * 一致（服务端组装经本 schema parse，漂移即编程错误）。
+ */
+export const noteRevisionConflictCurrentSchema = z.object({
+  /** 冲突笔记的 notes.id；无 head 时为 null */
+  noteId: z.uuid().nullable(),
+  /** 服务端当前 head revision（0 = 无版本） */
+  revision: z.number().int().min(0),
+  /** 当前 head 的 note_versions.id；无 head 时为 null */
+  versionId: z.uuid().nullable(),
+  /** 当前 head 的服务端正文 hash；无 head 时为 null */
+  hash: noteBodyHashSchema.nullable(),
+  /** 当前 head 的服务端确认时间（UTC ISO）；无 head 时为 null */
+  serverSavedAt: z.string().min(1).nullable(),
+});
+export type NoteRevisionConflictCurrent = z.infer<
+  typeof noteRevisionConflictCurrentSchema
+>;
+
+/**
  * 服务端回执：CAS 成功（或幂等命中）后返回。revision 从 1 起（回执只在
  * 版本产生后存在）；hash 为服务端规范化正文 sha-256（客户端不自行计算）。
  */

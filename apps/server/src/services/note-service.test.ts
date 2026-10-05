@@ -474,6 +474,42 @@ describe("正文解析与限额分级", () => {
     expect(bad2).toMatchObject({ status: 400, code: "NOTE_VALIDATION_FAILED" });
   });
 
+  it("混合错误（坐标越界+单笔超点数并存）→ 413 且消息为限额 issue 文案（复审⑥）", () => {
+    // 2002 点（超单笔上限）且首点 x=-1（形状错误）：两类 issue 并存时按
+    // 限额口径 413，消息取限额 issue 自身文案（含具体数值，可诊断）
+    const points = [
+      { x: -1, y: 20, p: 0.5, t: 0 },
+      ...Array.from({ length: 2001 }, (_, i) => ({
+        x: i % 1000,
+        y: 20,
+        p: 0.5,
+        t: i,
+      })),
+    ];
+    const rawErr = capture(() =>
+      save(db, dataDir, {
+        studentId,
+        attemptId,
+        questionId: "q1",
+        body: {
+          version: 1,
+          ink: {
+            width: 1000,
+            strokes: [{ tool: "pen", color: "#1f2328", weight: 4, points }],
+          },
+        },
+        baseRevision: 2,
+      }),
+    );
+    expect(errInfo(rawErr)).toMatchObject({
+      status: 413,
+      code: "NOTE_LIMIT_EXCEEDED",
+    });
+    expect((rawErr as { message?: string }).message).toContain(
+      "单笔点数超上限",
+    );
+  });
+
   it("复杂度超预算（单笔/总点数超上限）→ 413 NOTE_LIMIT_EXCEEDED（与形状错误分级）", () => {
     // 单笔 2001 点 > NOTE_MAX_POINTS_PER_STROKE(2000)
     const perStroke = noteDoc(1);
@@ -660,9 +696,13 @@ describe("CAS 与幂等（T6R.4 核心不变量）", () => {
     ) as { status: number; code: string; extra?: Record<string, unknown> };
     expect(err.status).toBe(409);
     expect(err.code).toBe("NOTE_REVISION_CONFLICT");
-    expect(err.extra?._current).toMatchObject({
+    // 五字段全量锁定（复审⑤：摘要契约化后形态受契约保护）
+    expect(err.extra?._current).toEqual({
+      noteId: ra.noteId,
       revision: 1,
+      versionId: ra.versionId,
       hash: noteDocSha256(docA),
+      serverSavedAt: ra.savedAt,
     });
     // B 无落盘：目录里只有 A 的 v1 文件，且无任何 tmp
     expect(noteFiles(dataDir)).toHaveLength(1);
@@ -942,20 +982,29 @@ describe("CAS 与幂等（T6R.4 核心不变量）", () => {
         ),
       ),
     ).toMatchObject({ status: 409, code: "ALREADY_SUBMITTED" });
-    // baseRevision 超前（head=0，期望 99）
-    expect(
-      errInfo(
-        capture(() =>
-          save(db, dataDir, {
-            studentId: aId,
-            attemptId,
-            questionId: "q1",
-            body: noteDoc(1),
-            baseRevision: 99,
-          }),
-        ),
+    // baseRevision 超前（head=0，期望 99）：无 head 摘要（除 revision 外全空）
+    const stale = errInfo(
+      capture(() =>
+        save(db, dataDir, {
+          studentId: aId,
+          attemptId,
+          questionId: "q1",
+          body: noteDoc(1),
+          baseRevision: 99,
+        }),
       ),
-    ).toMatchObject({ status: 409, code: "NOTE_REVISION_CONFLICT" });
+    );
+    expect(stale).toMatchObject({
+      status: 409,
+      code: "NOTE_REVISION_CONFLICT",
+    });
+    expect(stale.extra?._current).toEqual({
+      noteId: null,
+      revision: 0,
+      versionId: null,
+      hash: null,
+      serverSavedAt: null,
+    });
     // 快照为空的历史行不算冻结集合成员（T6R.3 口径）
     db.$client
       .prepare(

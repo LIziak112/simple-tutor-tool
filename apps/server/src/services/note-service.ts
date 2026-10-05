@@ -17,6 +17,7 @@ import {
   type NoteVersionReceipt,
   noteDocSchema,
   noteIssueIsLimit,
+  noteRevisionConflictCurrentSchema,
 } from "@tutor/contract";
 import { and, eq, isNotNull, lt } from "drizzle-orm";
 import type { Db } from "../db/client";
@@ -213,13 +214,12 @@ export function parseNoteBodyBytes(bytes: Uint8Array): NoteDoc {
     const first = parsed.error.issues[0]?.message ?? "NoteDoc 结构不合法";
     // 复杂度超预算（413）与形状错误（400）分级：契约限额 issue 携带结构
     // 标记 params.limit===true（判据集中在契约 noteIssueIsLimit，措辞无关
-    // ——勿退回中文消息子串匹配）
-    if (parsed.error.issues.some(noteIssueIsLimit)) {
-      throw new HttpError(
-        413,
-        "NOTE_LIMIT_EXCEEDED",
-        `草稿复杂度超上限：${first}（暂定值）`,
-      );
+    // ——勿退回中文消息子串匹配）。混合错误（形状+限额并存）按限额口径
+    // 413，且消息取限额 issue 自己的文案（复审⑥：限额消息自带
+    // 「（N > 上限，暂定值）」数值，比首条 issue 更可诊断）
+    const limitIssue = parsed.error.issues.find(noteIssueIsLimit);
+    if (limitIssue !== undefined) {
+      throw new HttpError(413, "NOTE_LIMIT_EXCEEDED", limitIssue.message);
     }
     throw new HttpError(
       400,
@@ -268,31 +268,31 @@ export function writeNoteBodyFile(
  * 「保留云端或将本地另存一份」，方案 §6.2 禁止自动覆盖/拼接）。
  */
 function revisionConflict(db: Db, existing: NoteRow | undefined): HttpError {
-  const currentRevision = existing?.currentRevision ?? 0;
-  const head =
-    existing?.currentVersionId === null || existing === undefined
-      ? undefined
-      : db
-          .select({ hash: noteVersions.hash })
-          .from(noteVersions)
-          .where(eq(noteVersions.id, existing.currentVersionId))
-          .get();
+  // 无 head（revision=0）时除 revision 外全空；有 head 时补版本 hash——
+  // 组装经契约 noteRevisionConflictCurrentSchema.parse（复审⑤：摘要形态
+  // 契约化，服务端与实现漂移即编程错误在这里当场暴露）
+  const head = existing?.currentVersionId
+    ? db
+        .select({ hash: noteVersions.hash })
+        .from(noteVersions)
+        .where(eq(noteVersions.id, existing.currentVersionId))
+        .get()
+    : undefined;
   return new HttpError(
     409,
     "NOTE_REVISION_CONFLICT",
     "草稿已在别处保存了更新的版本（其他标签页/设备），请刷新后选择保留哪一份",
     {
-      _current: {
+      _current: noteRevisionConflictCurrentSchema.parse({
         noteId: existing?.id ?? null,
-        revision: currentRevision,
+        revision: existing?.currentRevision ?? 0,
         versionId: existing?.currentVersionId ?? null,
         hash: head?.hash ?? null,
         serverSavedAt: existing?.serverSavedAt ?? null,
-      },
+      }),
     },
   );
 }
-
 /** 版本行 → 回执（预检幂等命中与跨进程约束兜底共用一处组装） */
 function receiptOf(row: NoteVersionRow): NoteVersionReceipt {
   return {
