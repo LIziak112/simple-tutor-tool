@@ -26,7 +26,6 @@ import {
   noteImages as noteImagesTable,
   notes as notesTable,
   noteVersions as noteVersionsTable,
-  responses as responsesTable,
   students as studentsTable,
   submissionEvidence as submissionEvidenceTable,
 } from "../db/schema.ts";
@@ -119,20 +118,17 @@ function makeFrozenAttempt(
   db.transaction((tx) => {
     tx.insert(attemptsTable).values(attempt).run();
     for (const qid of questionIds) {
-      insertFrozenResponse(tx, {
-        attemptId: attempt.id,
-        questionId: qid,
-        questionVersion: 1,
-        questionSnapshotJson: JSON.stringify({ id: qid, stem: "占位" }),
-        unitId: null,
-      });
-      const rows = tx
-        .select({ id: responsesTable.id })
-        .from(responsesTable)
-        .all();
-      // 本夹具逐题顺序插入，最后一行即刚插的（无并发写入）
-      const last = rows.at(-1);
-      if (last) revisionIds.set(qid, last.id);
+      // insertFrozenResponse 返回行 id（= questionRevisionId），直接取用
+      revisionIds.set(
+        qid,
+        insertFrozenResponse(tx, {
+          attemptId: attempt.id,
+          questionId: qid,
+          questionVersion: 1,
+          questionSnapshotJson: JSON.stringify({ id: qid, stem: "占位" }),
+          unitId: null,
+        }),
+      );
     }
   });
   return { attemptId: attempt.id, revisionIds };
@@ -246,6 +242,25 @@ function tmpFiles(dataDir: string): string[] {
   return noteFiles(dataDir).filter((f) => f.includes(".tmp-"));
 }
 
+/** 标准测试世界：内存库 + 临时目录 + 一名学生 + 已冻结 attempt（默认两题） */
+function makeWorld(questionIds: readonly string[] = ["q1", "q2"]): {
+  db: Db;
+  dataDir: string;
+  studentId: string;
+  attemptId: string;
+  revisionIds: Map<string, string>;
+} {
+  const db = createTestDb();
+  const dataDir = createTestDir();
+  const studentId = makeStudent(db);
+  const { attemptId, revisionIds } = makeFrozenAttempt(
+    db,
+    studentId,
+    questionIds,
+  );
+  return { db, dataDir, studentId, attemptId, revisionIds };
+}
+
 /** 把某版本 serverSavedAt 改到过去（模拟安全窗口流逝；直插场景专用） */
 function ageVersion(
   db: Db,
@@ -320,10 +335,7 @@ describe("hash 规范化：固定字段顺序 + 默认值物化", () => {
   });
 
   it("gzip 压缩字节不参与 hash：同文档不同压缩级别上传命中同一幂等回执", () => {
-    const db = createTestDb();
-    const dataDir = createTestDir();
-    const studentId = makeStudent(db);
-    const { attemptId } = makeFrozenAttempt(db, studentId, ["q1"]);
+    const { db, dataDir, studentId, attemptId } = makeWorld(["q1"]);
     const doc = noteDoc(1);
     const m = "00000000-0000-4000-8000-000000000001";
     const r1 = save(db, dataDir, {
@@ -581,18 +593,6 @@ describe("路径与目录边界", () => {
 // ---------- CAS / 幂等 / 并发 ----------
 
 describe("CAS 与幂等（T6R.4 核心不变量）", () => {
-  function makeWorld(questionIds = ["q1", "q2"]) {
-    const db = createTestDb();
-    const dataDir = createTestDir();
-    const studentId = makeStudent(db);
-    const { attemptId, revisionIds } = makeFrozenAttempt(
-      db,
-      studentId,
-      questionIds,
-    );
-    return { db, dataDir, studentId, attemptId, revisionIds };
-  }
-
   it("首次上传：revision 1、回执过契约 schema、文件与行齐全、questionRevisionId=responses 行 id", () => {
     const { db, dataDir, studentId, attemptId, revisionIds } = makeWorld();
     const doc = noteDoc(2);
@@ -941,10 +941,7 @@ describe("CAS 与幂等（T6R.4 核心不变量）", () => {
 
 describe("故障注入：不破坏上一版本", () => {
   it("写临时文件失败：抛错、无 tmp 残留、无新行，v1 完好可读", () => {
-    const db = createTestDb();
-    const dataDir = createTestDir();
-    const studentId = makeStudent(db);
-    const { attemptId } = makeFrozenAttempt(db, studentId, ["q1"]);
+    const { db, dataDir, studentId, attemptId } = makeWorld(["q1"]);
     const r1 = save(db, dataDir, {
       studentId,
       attemptId,
@@ -976,10 +973,7 @@ describe("故障注入：不破坏上一版本", () => {
   });
 
   it("rename 失败（目标不可变路径被目录占据）：tmp 清理、无新行，v1 完好", () => {
-    const db = createTestDb();
-    const dataDir = createTestDir();
-    const studentId = makeStudent(db);
-    const { attemptId } = makeFrozenAttempt(db, studentId, ["q1"]);
+    const { db, dataDir, studentId, attemptId } = makeWorld(["q1"]);
     const r1 = save(db, dataDir, {
       studentId,
       attemptId,
@@ -1051,10 +1045,7 @@ describe("故障注入：不破坏上一版本", () => {
   });
 
   it("崩溃模拟——rename 后中断：留下未引用文件但 DB 无行，v1 完好；GC 在安全窗口后清掉孤儿", () => {
-    const db = createTestDb();
-    const dataDir = createTestDir();
-    const studentId = makeStudent(db);
-    const { attemptId } = makeFrozenAttempt(db, studentId, ["q1"]);
+    const { db, dataDir, studentId, attemptId } = makeWorld(["q1"]);
     const r1 = save(db, dataDir, {
       studentId,
       attemptId,
@@ -1089,10 +1080,7 @@ describe("故障注入：不破坏上一版本", () => {
   });
 
   it("崩溃模拟——rename 前中断：留 tmp 不伤 v1；GC 清过期 tmp、保留窗口内 tmp", () => {
-    const db = createTestDb();
-    const dataDir = createTestDir();
-    const studentId = makeStudent(db);
-    const { attemptId } = makeFrozenAttempt(db, studentId, ["q1"]);
+    const { db, dataDir, studentId, attemptId } = makeWorld(["q1"]);
     const r1 = save(db, dataDir, {
       studentId,
       attemptId,
@@ -1119,10 +1107,7 @@ describe("故障注入：不破坏上一版本", () => {
   });
 
   it("两并发请求不共享 tmp：两次在途写入的临时文件名互不相同", () => {
-    const db = createTestDb();
-    const dataDir = createTestDir();
-    const studentId = makeStudent(db);
-    const { attemptId } = makeFrozenAttempt(db, studentId, ["q1"]);
+    const { db, dataDir, studentId, attemptId } = makeWorld(["q1"]);
     const seen: string[] = [];
     const hook = () => {
       const tmp = noteFiles(dataDir).find((f) => f.includes(".tmp-"));
@@ -1158,10 +1143,7 @@ describe("故障注入：不破坏上一版本", () => {
   });
 
   it("首传即写失败（blobs/notes 根被同名文件占据）：抛错、零文件零行", () => {
-    const db = createTestDb();
-    const dataDir = createTestDir();
-    const studentId = makeStudent(db);
-    const { attemptId } = makeFrozenAttempt(db, studentId, ["q1"]);
+    const { db, dataDir, studentId, attemptId } = makeWorld(["q1"]);
     mkdirSync(join(dataDir, "blobs"), { recursive: true });
     writeFileSync(join(dataDir, "blobs", "notes"), "占位文件");
     // mkdirSync 在「同名文件占据目录路径」时抛 ENOTDIR/EEXIST
@@ -1247,14 +1229,6 @@ describe("服务重启：新进程重开库后已确认正文可读且 hash 稳�
 // ---------- GC ----------
 
 describe("未引用版本延迟回收（GC 骨架）", () => {
-  function makeWorld() {
-    const db = createTestDb();
-    const dataDir = createTestDir();
-    const studentId = makeStudent(db);
-    const { attemptId } = makeFrozenAttempt(db, studentId, ["q1"]);
-    return { db, dataDir, studentId, attemptId };
-  }
-
   it("超窗口的未引用版本被删（行+文件）；head 版本无论如何保留", () => {
     const { db, dataDir, studentId, attemptId } = makeWorld();
     const r1 = save(db, dataDir, {
