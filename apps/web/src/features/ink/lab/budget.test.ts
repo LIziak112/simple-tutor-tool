@@ -4,6 +4,7 @@ import {
   evaluateBudgetRow,
   evaluateBudgetRowForDoc,
   firstCrossing,
+  TENTATIVE_ANALYSIS_PNG_MAX_BYTES,
   TENTATIVE_BUDGET_LIMITS,
 } from "./budget.ts";
 import { buildSyntheticAtramentDoc, totalPoints } from "./synthetic-strokes.ts";
@@ -116,11 +117,12 @@ describe("firstCrossing", () => {
 });
 
 describe("常量", () => {
-  it("暂定限额与方案 §7 建议起点一致（2MiB / 32MiB）", () => {
+  it("暂定限额与方案 §7 建议起点一致（2MiB / 32MiB / 每图 2MiB）", () => {
     expect(TENTATIVE_BUDGET_LIMITS.bodyGzipMaxBytes).toBe(2 * 1024 * 1024);
     expect(TENTATIVE_BUDGET_LIMITS.bodyDecompressedMaxBytes).toBe(
       32 * 1024 * 1024,
     );
+    expect(TENTATIVE_ANALYSIS_PNG_MAX_BYTES).toBe(2 * 1024 * 1024);
   });
 
   it("默认阶梯为递增笔数", () => {

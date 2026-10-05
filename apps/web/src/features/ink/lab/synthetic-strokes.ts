@@ -8,6 +8,7 @@ import {
   type InkPenSize,
   type InkStroke,
   type InkStrokePoint,
+  type InkToolConfig,
 } from "../engine/types.ts";
 
 /**
@@ -484,4 +485,24 @@ export function buildSyntheticAtramentDoc(
 /** 文档总点数（各笔点数之和） */
 export function totalPoints(doc: InkDoc<"atrament">): number {
   return doc.data.strokes.reduce((n, s) => n + s.points.length, 0);
+}
+
+/**
+ * 合成笔画 → 引擎工具配置（注入前 setTool 用）。
+ * InkStroke 只存 CSS 颜色与逻辑线宽（契约形状），档位信息在此反查；
+ * 未知值回退默认笔（black/medium），不抛错。
+ */
+export function toolConfigForStroke(stroke: InkStroke): InkToolConfig {
+  if (stroke.tool === "highlighter") return { type: "highlighter" };
+  const colorEntry = (
+    Object.entries(INK_PEN_COLORS) as [InkPenColor, string][]
+  ).find(([, css]) => css === stroke.color);
+  const sizeEntry = (
+    Object.entries(INK_PEN_SIZES) as [InkPenSize, number][]
+  ).find(([, weight]) => weight === stroke.weight);
+  return {
+    type: "pen",
+    color: colorEntry?.[0] ?? "black",
+    size: sizeEntry?.[0] ?? "medium",
+  };
 }

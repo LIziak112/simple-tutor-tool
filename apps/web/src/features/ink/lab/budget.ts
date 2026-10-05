@@ -23,6 +23,9 @@ export const TENTATIVE_BUDGET_LIMITS: BudgetLimits = {
   bodyDecompressedMaxBytes: 32 * 1024 * 1024,
 };
 
+/** 每张分析图 ≤2MiB（方案 §7 暂定值；切片策略真机定标后细化） */
+export const TENTATIVE_ANALYSIS_PNG_MAX_BYTES = 2 * 1024 * 1024;
+
 /** 默认试验阶梯（笔数；逐级翻倍直到触线） */
 export const DEFAULT_BUDGET_RUNGS: readonly number[] = [
   50, 100, 200, 400, 800, 1600, 3200,

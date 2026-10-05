@@ -12,6 +12,7 @@ import {
   DEFAULT_BUDGET_RUNGS,
   evaluateBudgetRowForDoc,
   firstCrossing,
+  TENTATIVE_ANALYSIS_PNG_MAX_BYTES,
 } from "@/features/ink/lab/budget.ts";
 import {
   createDurationSampler,
@@ -22,6 +23,7 @@ import {
 } from "@/features/ink/lab/measure.ts";
 import {
   buildSyntheticAtramentDoc,
+  toolConfigForStroke,
   totalPoints,
 } from "@/features/ink/lab/synthetic-strokes.ts";
 
@@ -91,8 +93,10 @@ interface ProbeRow {
   key: string;
   label: string;
   status: "支持" | "不支持" | "未知";
-  /** 信息项显示实际值（如协议），不套三态 */
+  /** 信息项显示实际值（如协议）；显示后不再重复状态文案 */
   value?: string;
+  /** 补充说明（如剪贴板在非安全上下文下的限制） */
+  note?: string;
 }
 
 /**
@@ -173,9 +177,7 @@ function probeCapabilities(): ProbeRow[] {
     key: "clipboard",
     label: "剪贴板（navigator.clipboard）",
     status: clipboard ? "支持" : "不支持",
-    ...(clipboard
-      ? {}
-      : { value: "HTTP 下通常不可用，以探测为准" }),
+    ...(clipboard ? {} : { note: "非安全上下文下通常不可用，以探测为准" }),
   });
 
   return rows;
@@ -195,18 +197,20 @@ function CapabilityProbeSection() {
             className="flex min-h-11 flex-wrap items-center justify-between gap-2 px-3 py-2"
           >
             <span className="font-medium">{row.label}</span>
-            <span
-              className={
-                row.status === "支持"
-                  ? "text-green-700"
-                  : row.status === "不支持"
-                    ? "text-destructive"
-                    : "text-muted-foreground"
-              }
-            >
-              {row.value ?? row.status}
-              {row.value && row.value !== row.status ? (
-                <span className="ml-2 text-muted-foreground">{row.status}</span>
+            <span className="flex items-baseline gap-2">
+              <span
+                className={
+                  row.status === "支持"
+                    ? "text-green-700"
+                    : row.status === "不支持"
+                      ? "text-destructive"
+                      : "text-muted-foreground"
+                }
+              >
+                {row.value ?? row.status}
+              </span>
+              {row.note ? (
+                <span className="text-muted-foreground">{row.note}</span>
               ) : null}
             </span>
           </li>
@@ -244,6 +248,17 @@ function SyntheticBenchSection() {
   const [report, setReport] = useState<string | null>(null);
   const [liveDoc, setLiveDoc] = useState<InkDoc<"atrament"> | null>(null);
 
+  // dev-only 调试钩子：控制台可取当前引擎文档（实验室排障用，不进生产路径）
+  useEffect(() => {
+    const w = window as typeof window & {
+      __inkLabBench?: () => InkEngine | null;
+    };
+    w.__inkLabBench = () => engineRef.current;
+    return () => {
+      delete w.__inkLabBench;
+    };
+  }, []);
+
   const liveStrokes = liveDoc?.data.strokes.length ?? 0;
   const livePoints = liveDoc ? totalPoints(liveDoc) : 0;
   const lastStrokePoints = liveDoc?.data.strokes.at(-1)?.points.length ?? 0;
@@ -276,12 +291,6 @@ function SyntheticBenchSection() {
       });
       ink.clear();
       await yieldFrame();
-      const rect = canvas.getBoundingClientRect();
-      const scale = rect.width / 1000; // 逻辑 1000 → CSS 像素（y 同以宽度为基准）
-      const toClient = (p: { x: number; y: number }) => ({
-        clientX: rect.left + p.x * scale,
-        clientY: rect.top + p.y * scale,
-      });
       const down = createDurationSampler();
       const move = createDurationSampler();
       const up = createDurationSampler();
@@ -292,6 +301,17 @@ function SyntheticBenchSection() {
         await yieldFrame();
         const stroke = strokes[s];
         if (!stroke) continue;
+        // 按笔画切换引擎工具（荧光笔/笔档位），否则荧光笔会被画成普通笔
+        ink.setTool(toolConfigForStroke(stroke));
+        // 每笔取新 rect：进度行渲染/布局变化会推移画布位置，用陈旧 rect 会把
+        // clientY 系统性偏移（首行笔画会被边界校验整笔拒绝）——测量必须贴
+        // 真实布局，这与真实输入受布局影响是同一件事。
+        const rect = canvas.getBoundingClientRect();
+        const scale = rect.width / 1000; // 逻辑 1000 → CSS 像素（y 同以宽度为基准）
+        const toClient = (p: { x: number; y: number }) => ({
+          clientX: rect.left + p.x * scale,
+          clientY: rect.top + p.y * scale,
+        });
         const dispatch = (
           phase: "pointerdown" | "pointermove" | "pointerup",
           p: { x: number; y: number; p: number },
@@ -578,8 +598,12 @@ function BudgetSection({ rungs }: { rungs: readonly number[] }) {
           pngBytes = blob.size;
         }
         out.push({ ...row, redrawMs, pngBytes, pngMs });
-        // 两条字节线都已触达：更大的阶梯只会更超，提前结束
-        if (row.hitsGzipLimit && row.hitsDecompressedLimit) {
+        // 三条预算线都已触达：更大的阶梯只会更超，提前结束
+        if (
+          row.hitsGzipLimit &&
+          row.hitsDecompressedLimit &&
+          pngBytes > TENTATIVE_ANALYSIS_PNG_MAX_BYTES
+        ) {
           stoppedEarly = true;
           break;
         }
@@ -720,11 +744,16 @@ function BudgetSection({ rungs }: { rungs: readonly number[] }) {
                     <td className="px-2 py-1.5">{formatBytes(row.pngBytes)}</td>
                     <td className="px-2 py-1.5">{fmtMs(row.pngMs)}</td>
                     <td className="px-2 py-1.5">
-                      {row.hitsGzipLimit || row.hitsDecompressedLimit ? (
+                      {row.hitsGzipLimit ||
+                      row.hitsDecompressedLimit ||
+                      row.pngBytes > TENTATIVE_ANALYSIS_PNG_MAX_BYTES ? (
                         <span className="text-destructive">
                           {[
                             row.hitsGzipLimit ? "gzip" : null,
                             row.hitsDecompressedLimit ? "解压" : null,
+                            row.pngBytes > TENTATIVE_ANALYSIS_PNG_MAX_BYTES
+                              ? "分析图"
+                              : null,
                           ]
                             .filter(Boolean)
                             .join("＋")}
@@ -763,36 +792,37 @@ function buildBudgetSummary(
     row ? `${row.strokes} 笔（${row.points} 点）` : "0 笔";
   const gzipHit = firstCrossing(rows, (r) => r.hitsGzipLimit);
   const rawHit = firstCrossing(rows, (r) => r.hitsDecompressedLimit);
+  const pngHit = firstCrossing(
+    rows,
+    (r) => r.pngBytes > TENTATIVE_ANALYSIS_PNG_MAX_BYTES,
+  );
   const last = rows[rows.length - 1] as BudgetRunRow | undefined;
   const lines: string[] = [];
-  if (gzipHit === null && rawHit === null) {
+  if (gzipHit === null && rawHit === null && pngHit === null) {
     lines.push(`未触任何暂定预算线（最大阶梯 ${desc(last ?? null)}）`);
   } else {
-    if (gzipHit) {
-      lines.push(
-        `正文 gzip ≤2MiB（暂定）：在 ${desc(gzipHit.before)} 与 ${desc(gzipHit.crossing)} 之间触线`,
-      );
-    } else {
-      lines.push(
-        `正文 gzip ≤2MiB（暂定）：最大阶梯 ${desc(last ?? null)} 未触线`,
-      );
-    }
-    if (rawHit) {
-      lines.push(
-        `正文解压 ≤32MiB（暂定）：在 ${desc(rawHit.before)} 与 ${desc(rawHit.crossing)} 之间触线`,
-      );
-    } else {
-      lines.push(
-        `正文解压 ≤32MiB（暂定）：最大阶梯 ${desc(last ?? null)} 未触线`,
-      );
-    }
+    lines.push(
+      gzipHit
+        ? `正文 gzip ≤2MiB（暂定）：在 ${desc(gzipHit.before)} 与 ${desc(gzipHit.crossing)} 之间触线`
+        : `正文 gzip ≤2MiB（暂定）：最大阶梯 ${desc(last ?? null)} 未触线`,
+    );
+    lines.push(
+      rawHit
+        ? `正文解压 ≤32MiB（暂定）：在 ${desc(rawHit.before)} 与 ${desc(rawHit.crossing)} 之间触线`
+        : `正文解压 ≤32MiB（暂定）：最大阶梯 ${desc(last ?? null)} 未触线`,
+    );
+    lines.push(
+      pngHit
+        ? `每分析图 ≤2MiB（暂定，整幅不切片口径）：在 ${desc(pngHit.before)} 与 ${desc(pngHit.crossing)} 之间触线`
+        : `每分析图 ≤2MiB（暂定，整幅不切片口径）：最大阶梯 ${desc(last ?? null)} 未触线`,
+    );
   }
   const maxPng = rows.reduce((m, r) => Math.max(m, r.pngBytes), 0);
   lines.push(
     `分析图（逻辑宽 1000px、纸高 3000）最大 PNG：${formatBytes(maxPng)}（桌面参考，真机待测）`,
   );
   if (stoppedEarly) {
-    lines.push("两条字节线均已触达，更大阶梯已跳过");
+    lines.push("三条预算线均已触达，更大阶梯已跳过");
   }
   lines.push(memoryLine(memBefore, memAfter));
   return lines;
