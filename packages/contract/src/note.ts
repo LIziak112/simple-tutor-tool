@@ -1,3 +1,4 @@
+import type { ZodIssue } from "zod";
 import { z } from "zod";
 import { questionRevisionIdSchema } from "./attempt.ts";
 import { INK_LOGICAL_WIDTH, inkAtramentDataSchema } from "./ink.ts";
@@ -222,6 +223,16 @@ export const notePhaseSchema = z.enum(["scratch", "correction", "supplement"]);
 export const noteBodyHashSchema = z
   .string()
   .regex(/^[0-9a-f]{64}$/, "正文 hash 须为 64 位小写十六进制（sha-256）");
+
+/**
+ * issue 是否携带限额结构标记（noteDocSchema superRefine 的 params.limit===true，
+ * 见上方两类点数限额 addIssue）：服务端据它区分「超预算→413
+ * NOTE_LIMIT_EXCEEDED」与「形状错误→400」。集中一处类型断言（$ZodIssue
+ * 联合中仅 $ZodIssueCustom 声明 params，运行时透传可靠）。
+ */
+export function noteIssueIsLimit(issue: ZodIssue): boolean {
+  return (issue as { params?: { limit?: boolean } }).params?.limit === true;
+}
 
 // 题目版本引用 questionRevisionIdSchema：定义在 attempt.ts（T6R.3 收敛——
 // 铸造规则 = responses 行 id，属作答域；本文件 import 复用同一份，不重复定义）

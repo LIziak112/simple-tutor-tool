@@ -13,6 +13,7 @@ import {
   noteDocSchema,
   noteErrorCodeSchema,
   noteImageMetaSchema,
+  noteIssueIsLimit,
   noteLocalBodyStateSchema,
   notePhaseSchema,
   noteRecordMetaSchema,
@@ -251,17 +252,21 @@ describe("noteDocSchema：坐标与点数限额（暂定值，真机定标后修
     expect(noteDocSchema.safeParse(docWithPoints(exact)).success).toBe(true);
     // T6R.4：限额类 issue 带 params.limit===true（服务端 413/400 分级依据，
     // 契约锁定——措辞可改、标记不可丢）
-    const issues = noteDocSchema.safeParse(docWithPoints(over)).error?.issues;
-    expect(issues.length).toBeGreaterThan(0);
-    expect(issues.some((i) => (i.params as { limit?: boolean })?.limit === true)).toBe(true);
+    const overResult = noteDocSchema.safeParse(docWithPoints(over));
+    expect(overResult.success).toBe(false);
+    if (!overResult.success) {
+      expect(overResult.error.issues.length).toBeGreaterThan(0);
+      expect(overResult.error.issues.some(noteIssueIsLimit)).toBe(true);
+    }
     // 对照：坐标越界（形状类）不带限额标记
-    const shapeIssues = noteDocSchema.safeParse(
+    const shapeResult = noteDocSchema.safeParse(
       docWithPoints([{ x: -1, y: 1 }]),
-    ).error?.issues;
-    expect(shapeIssues.length).toBeGreaterThan(0);
-    expect(
-      shapeIssues.some((i) => (i.params as { limit?: boolean })?.limit === true),
-    ).toBe(false);
+    );
+    expect(shapeResult.success).toBe(false);
+    if (!shapeResult.success) {
+      expect(shapeResult.error.issues.length).toBeGreaterThan(0);
+      expect(shapeResult.error.issues.some(noteIssueIsLimit)).toBe(false);
+    }
   });
 
   it("限额联动：NOTE_COORD_MAX_Y 与 NOTE_PAPER_HEIGHT_MAX 同源相等（防漂移）", () => {
@@ -290,11 +295,7 @@ describe("noteDocSchema：坐标与点数限额（暂定值，真机定标后修
     });
     expect(result.success).toBe(false);
     if (!result.success) {
-      expect(
-        result.error.issues.some(
-          (i) => (i.params as { limit?: boolean })?.limit === true,
-        ),
-      ).toBe(true);
+      expect(result.error.issues.some(noteIssueIsLimit)).toBe(true);
     }
   });
 });

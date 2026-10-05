@@ -16,6 +16,7 @@ import {
   type NoteDoc,
   type NoteVersionReceipt,
   noteDocSchema,
+  noteIssueIsLimit,
 } from "@tutor/contract";
 import { and, eq, lt } from "drizzle-orm";
 import type { Db } from "../db/client";
@@ -210,15 +211,10 @@ export function parseNoteBodyBytes(bytes: Uint8Array): NoteDoc {
   const parsed = noteDocSchema.safeParse(parsedJson);
   if (!parsed.success) {
     const first = parsed.error.issues[0]?.message ?? "NoteDoc 结构不合法";
-    // 复杂度超预算（413）与形状错误（400）分级：契约 superRefine 的限额
-    // issue 携带结构标记 params.limit===true（note.ts，措辞无关——勿退回
-    // 中文消息子串匹配）
-    if (
-      parsed.error.issues.some(
-        (issue) =>
-          (issue.params as { limit?: boolean } | undefined)?.limit === true,
-      )
-    ) {
+    // 复杂度超预算（413）与形状错误（400）分级：契约限额 issue 携带结构
+    // 标记 params.limit===true（判据集中在契约 noteIssueIsLimit，措辞无关
+    // ——勿退回中文消息子串匹配）
+    if (parsed.error.issues.some(noteIssueIsLimit)) {
       throw new HttpError(
         413,
         "NOTE_LIMIT_EXCEEDED",
@@ -260,7 +256,7 @@ export function writeNoteBodyFile(
   writeFileAtomic({
     finalPath: absPath,
     bytes: gzipSync(canonicalBytes),
-    faults,
+    ...(faults !== undefined ? { faults } : {}),
   });
   return { relPath, absPath };
 }
