@@ -11,7 +11,7 @@ import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
-import { attempts, responses, students } from "../db/schema";
+import { attempts, questions, responses, students } from "../db/schema";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { assertNoLeak } from "../test/assert-no-leak";
 import { submitAttemptRequest } from "../test/submit-revisions";
@@ -1379,5 +1379,104 @@ describe("T6R.3 /code-review P0 回归：幽灵行 / 懒冻结展示序 / wrong 
     expect(wrongRows.map((line) => line.split(",")[9] ?? "")).toEqual(
       wrongKnowledge,
     );
+  });
+});
+
+describe("T6R.3 /code-review 补口：开卷后加题 / 改选项文本与正确项", () => {
+  it("开卷后教师往单元加新题：当前卷不含该题，新开的卷（另一学生）含", async () => {
+    const { app, db, teacherCookie, aCookie, bCookie, assignmentId } =
+      await makeEnv();
+    const attemptId = await startAttemptId(app, aCookie, assignmentId);
+    expect(await draftQuestions(app, aCookie, attemptId)).toHaveLength(8);
+
+    // 教师往同单元加第九题（真实路径：同文件名重导入更新原单元，题目 id 缺省编号）
+    const addedMd = `${PRACTICE_MD}
+::::question{type=judge difficulty=1 knowledge="有理数的概念"}
+$-1$ 是负数。[[正确]]
+::::
+`;
+    const reimport = await app.request("/api/teacher/import/commit", {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: teacherCookie },
+      body: JSON.stringify({ markdown: addedMd, filename: "练习样例.md" }),
+    });
+    expect(reimport.status).toBe(200);
+    // 前置自检：单元确已加上第九题（缺省 id 练习四-9）
+    const addedRow = db
+      .select()
+      .from(questions)
+      .all()
+      .find((row) => row.id === "练习四-9" && row.deletedAt === null);
+    expect(addedRow).toBeDefined();
+
+    // 张三的进行中卷：不含新题（冻结集合固定）
+    const current = await draftQuestions(app, aCookie, attemptId);
+    expect(current).toHaveLength(8);
+    expect(current.some((question) => question.id === "练习四-9")).toBe(false);
+
+    // 李四后开卷：新卷含新题（9 题）
+    const bAttemptId = await startAttemptId(app, bCookie, assignmentId);
+    const bQuestions = await draftQuestions(app, bCookie, bAttemptId);
+    expect(bQuestions).toHaveLength(9);
+    expect(bQuestions.some((question) => question.id === "练习四-9")).toBe(
+      true,
+    );
+  });
+
+  it("开卷后教师改选项文本与正确项：当前卷显示旧选项文本、判分按旧正确项；新卷用新选项", async () => {
+    const { app, teacherCookie, aCookie, bCookie, assignmentId } =
+      await makeEnv();
+    const attemptId = await startAttemptId(app, aCookie, assignmentId);
+    const oldOptions = (await draftQuestions(app, aCookie, attemptId)).find(
+      (question) => question.id === Q.choice,
+    )?.options;
+    expect(oldOptions).toEqual([
+      "$-5$",
+      "$5$",
+      "$\\frac{1}{5}$",
+      "$-\\frac{1}{5}$",
+    ]);
+
+    // 教师改选项文本（B 项 $5$ → $+5$）并把正确项从 B 挪到 D
+    await editQuestion(app, teacherCookie, Q.choice, [
+      ["- [x] $5$", "- [ ] $+5$"],
+      ["- [ ] $-\\frac{1}{5}$", "- [x] $-\\frac{1}{5}$"],
+    ]);
+
+    // 张三当前卷：选项文本仍是旧版（含 $5$ 不含 $+5$）
+    const current = (await draftQuestions(app, aCookie, attemptId)).find(
+      (question) => question.id === Q.choice,
+    );
+    expect(current?.options).toEqual(oldOptions);
+
+    // 判分按旧正确项：答旧正确 B（index 1）→ true（当前题库正确项已是 D）
+    expect(
+      (
+        await putAnswer(app, aCookie, attemptId, Q.choice, {
+          kind: "choice",
+          index: 1,
+        })
+      ).status,
+    ).toBe(200);
+    const submitRes = await submitAttemptRequest(app, aCookie, attemptId);
+    expect(submitRes.status).toBe(200);
+    const result = (await submitRes.json()) as {
+      data: {
+        units: {
+          questions: { questionId: string; autoCorrect: boolean | null }[];
+        }[];
+      };
+    };
+    const choiceResult = result.data.units
+      .flatMap((unit) => unit.questions)
+      .find((item) => item.questionId === Q.choice);
+    expect(choiceResult?.autoCorrect).toBe(true);
+
+    // 李四的新卷：新选项文本（$+5$）
+    const bAttemptId = await startAttemptId(app, bCookie, assignmentId);
+    const newOptions = (await draftQuestions(app, bCookie, bAttemptId)).find(
+      (question) => question.id === Q.choice,
+    )?.options;
+    expect(newOptions?.[1]).toBe("$+5$");
   });
 });

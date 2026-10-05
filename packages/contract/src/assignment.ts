@@ -387,6 +387,12 @@ export const studentPaperUnitSchema = z.object({
  */
 export const studentPaperDataSchema = z.object({
   units: z.array(studentPaperUnitSchema),
+  /**
+   * 冻结来源不可信标记（T6R.3，可选——与草稿视图的 attemptDraftDataSchema.
+   * legacyUnverified 对齐）：true = 升级后懒冻结的恢复版本。作业开卷前预览
+   * （无 attempt 语境）与服务端旧版响应不带该字段，缺省按 false 处理。
+   */
+  legacyUnverified: z.boolean().optional(),
 });
 
 /** 携带学生试卷的成功响应壳 */

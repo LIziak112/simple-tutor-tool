@@ -1169,9 +1169,14 @@ export function getStudentAttemptPaper(
   studentId: string,
   attemptId: string,
 ): StudentPaperData {
-  // T6R.3：requireUsableAttempt 统一进门（归属/课程分态校验 + 懒冻结兜底）
+  // T6R.3：requireUsableAttempt 统一进门（归属/课程分态校验 + 懒冻结兜底）；
+  // legacyUnverified 与草稿视图对齐（已交卷回看恒 false）
   const attempt = requireUsableAttempt(db, studentId, attemptId);
-  return { units: attemptPublicUnitGroups(db, attempt) };
+  return {
+    units: attemptPublicUnitGroups(db, attempt),
+    legacyUnverified:
+      attempt.status === "draft" ? attempt.legacyUnverified : false,
+  };
 }
 
 // ---------- PUT /api/student/attempts/:id/answers/:questionId ----------

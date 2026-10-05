@@ -258,6 +258,12 @@ describe("T6R.2 迁移：空库与带存量库", () => {
     };
     expect(attemptRow.frozen_at).toBeNull();
     expect(attemptRow.legacy_unverified).toBe(0);
+    // T6R.3（0023）：存量 responses 行的冻结单元归属列补 NULL（升级遗留，
+    // 读路径按域内 join 兜底分组）
+    const responseRow = db.$client
+      .prepare("SELECT unit_id FROM responses WHERE attempt_id = ?")
+      .get(seeded.attemptId) as { unit_id: string | null };
+    expect(responseRow.unit_id).toBeNull();
     // 新表可直接写入并引用存量 attempt（外键生效）
     db.$client
       .prepare(
