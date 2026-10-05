@@ -87,6 +87,13 @@ export interface AtramentSurfaceOptions {
   height?: number;
 }
 
+/**
+ * 引擎画布的 DOM 标识与选择器——外部驱动方（实验室注入器等）凭此定位画布，
+ * 与适配器自身标记同源，避免字面量三处复述后失同步。
+ */
+export const INK_CANVAS_DATA_SLOT = "ink-canvas";
+export const INK_CANVAS_SELECTOR = `canvas[data-slot="${INK_CANVAS_DATA_SLOT}"]`;
+
 export function createAtramentSurface(
   options: AtramentSurfaceOptions = {},
 ): ToolAwareSurface {
@@ -428,7 +435,7 @@ export function createAtramentSurface(
       el.style.setProperty("-webkit-touch-callout", "none");
 
       canvas = document.createElement("canvas");
-      canvas.setAttribute("data-slot", "ink-canvas");
+      canvas.setAttribute("data-slot", INK_CANVAS_DATA_SLOT);
       canvas.style.position = "absolute";
       canvas.style.inset = "0";
       canvas.style.width = "100%";

@@ -7,11 +7,13 @@ import type {
   InkEngineKind,
 } from "@/features/ink/engine/index.ts";
 import { InkPad } from "@/features/ink/InkPad.tsx";
+import { totalPoints } from "@/features/ink/lab/synthetic-strokes.ts";
+import { InkLabPanel } from "./InkLabPanel.tsx";
 
 /**
  * /dev/ink 手写开发页（T2.7，架构 §5.4「Phase 2 第一步先做真机试验」的实验场）。
  *
- * 两个区块：
+ * 三个区块：
  * ① Atrament 页内答题区（默认形态）
  * ② Excalidraw 全屏作答（按钮进入；懒加载，只在打开时下载库 chunk）
  *
@@ -29,7 +31,7 @@ export default function InkDevPage() {
         <div className="mx-auto flex max-w-4xl flex-wrap items-baseline gap-3">
           <h1 className="text-sm font-semibold">手写开发页 /dev/ink</h1>
           <span className="text-xs text-muted-foreground">
-            T2.7 真机调手感的实验场：两个区块分别试写；iPad 调试可加 ?debug=1
+            T2.7 真机调手感的实验场：三个区块分别试写；iPad 调试可加 ?debug=1
           </span>
         </div>
       </header>
@@ -64,6 +66,18 @@ export default function InkDevPage() {
               进入全屏作答
             </Button>
           </div>
+        </section>
+
+        <section aria-labelledby="ink-sec-lab">
+          <h2 id="ink-sec-lab" className="mb-1 text-base font-semibold">
+            ③ T6R.1 实验室（合成笔迹、预算测量与真机清单）
+          </h2>
+          <p className="mb-3 text-xs text-muted-foreground">
+            Phase6 手写技术验证的隔离实验场：能力探测、合成书写注入、预算试验、
+            真机场景清单。所有数字均为桌面自动化参考，不冒充 iPad 真机结论
+            （报告见 docs/审查报告/Phase6-手写真机验证.md）。
+          </p>
+          <InkLabPanel />
         </section>
 
         <section aria-labelledby="ink-sec-checklist">
@@ -270,7 +284,7 @@ function summarize(doc: InkDoc | null): {
     const strokes = (doc as InkDoc<"atrament">).data.strokes;
     return {
       strokes: strokes.length,
-      points: strokes.reduce((n, s) => n + s.points.length, 0),
+      points: totalPoints(doc as InkDoc<"atrament">),
       bytes: JSON.stringify(doc).length,
     };
   }
