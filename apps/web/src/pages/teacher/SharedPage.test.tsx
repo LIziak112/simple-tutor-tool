@@ -182,8 +182,8 @@ describe("SharedPage 预览抽屉与导入", () => {
       })[0] as HTMLElement,
     );
 
-    // 抽屉：统计条（版本徽章 + 题数）与动作清单（D19「将发生什么」）
-    expect(await screen.findByText("DSL v2")).toBeInTheDocument();
+    // 抽屉：统计条（题数）与动作清单（D19「将发生什么」）
+    expect(await screen.findByText("将执行的动作")).toBeInTheDocument();
     expect(screen.getByText(/新增单元「练习四」/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "确认导入" }));

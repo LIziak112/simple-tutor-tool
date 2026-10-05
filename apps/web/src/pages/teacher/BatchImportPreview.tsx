@@ -4,7 +4,6 @@ import type {
   ImportCommitData,
   ImportPreviewBatchData,
 } from "@tutor/contract";
-import { v1ToV2 } from "@tutor/md-dsl";
 import {
   ArrowLeft,
   CheckCircle2,
@@ -206,7 +205,6 @@ export function BatchImportPreview({
             path: file.path,
             markdown: markdownByPath.get(file.path) ?? "",
             issues: file.preview.issues,
-            version: file.preview.version,
             // 仅因跨文件冲突被标 error 的文件（lint issues 为空）也要在
             // 提示词中说明冲突原因（D21 语境下冲突就是该文件的 error）
             conflicts: file.conflicts,
@@ -500,7 +498,6 @@ function BatchFileRow({
     () => lintIssuesToDiagnostics(file.preview.issues, markdown),
     [file.preview.issues, markdown],
   );
-  const renderSource = file.preview.version === 1 ? v1ToV2(markdown) : markdown;
 
   return (
     <>
@@ -604,12 +601,10 @@ function BatchFileRow({
               <div className="flex h-[50vh] flex-col overflow-hidden rounded-xl border border-border bg-card">
                 <p className="shrink-0 border-b border-border px-3 py-2 text-xs font-medium text-muted-foreground">
                   渲染预览
-                  {file.preview.version === 1 &&
-                    "（v1 文档已自动转换为 v2 后渲染）"}
                 </p>
                 <div className="min-h-0 flex-1 overflow-y-auto p-4">
                   <div className="mx-auto max-w-3xl">
-                    <RichMarkdown source={renderSource} />
+                    <RichMarkdown source={markdown} />
                   </div>
                 </div>
               </div>
@@ -622,7 +617,6 @@ function BatchFileRow({
                 path={file.path}
                 markdown={markdown}
                 issues={file.preview.issues}
-                version={file.preview.version}
               />
             ) : null}
           </td>

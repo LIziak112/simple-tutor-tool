@@ -427,7 +427,7 @@ describe("ImportPage 选择页（方案 §5 统一待导入清单）", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /预览/ }));
     // 单文件预览统计条出现；preview 以剩余文件的 basename 为 filename
-    expect(await screen.findByText("DSL v2")).toBeInTheDocument();
+    expect(await screen.findByText("将执行的动作")).toBeInTheDocument();
     await waitFor(() =>
       expect(mockedPreview).toHaveBeenCalledWith(
         expect.objectContaining({ filename: "b.md", sourcePath: "b.md" }),
@@ -485,8 +485,8 @@ describe("ImportPage 选择页（方案 §5 统一待导入清单）", () => {
         filename: "练习四.md",
       }),
     );
-    // 统计条：版本徽章 + 单元/讲义/题数（1/0/1）+ 实际存储名 + 题型分布 + 动作清单（D19/方案 §5）
-    expect(await screen.findByText("DSL v2")).toBeInTheDocument();
+    // 统计条：单元/讲义/题数（1/0/1）+ 实际存储名 + 题型分布 + 动作清单（D19/方案 §5）
+    expect(await screen.findByText("将执行的动作")).toBeInTheDocument();
     expect(screen.getAllByText("1", { selector: "strong" })).toHaveLength(2);
     expect(screen.getByText("0", { selector: "strong" })).toBeInTheDocument();
     expect(screen.getByText("单元「练习四」")).toBeInTheDocument();
@@ -510,7 +510,7 @@ describe("ImportPage 单文件预览态", () => {
     addPasteEntry(PRACTICE_MD);
     fireEvent.click(screen.getByRole("button", { name: /预览/ }));
 
-    expect(await screen.findByText("DSL v2")).toBeInTheDocument();
+    expect(await screen.findByText("将执行的动作")).toBeInTheDocument();
     const panel = screen.getByRole("region", { name: /发现 1 个问题/ });
     expect(panel).toBeInTheDocument();
     expect(screen.getByText("第 5 行")).toBeInTheDocument();
@@ -560,7 +560,7 @@ describe("ImportPage 单文件预览态", () => {
     addPasteEntry(PRACTICE_MD, "混合.md");
     fireEvent.click(screen.getByRole("button", { name: /预览/ }));
 
-    expect(await screen.findByText("DSL v2")).toBeInTheDocument();
+    expect(await screen.findByText("将执行的动作")).toBeInTheDocument();
     // 计数旁亮出实际名称：单元名在前；多篇讲义取首篇 +「等 N 篇」
     expect(
       screen.getByText("单元「练习四」 · 讲义「第4讲 有理数」等 2 篇"),
@@ -572,7 +572,7 @@ describe("ImportPage 单文件预览态", () => {
     renderImportPage();
     addPasteEntry(PRACTICE_MD);
     fireEvent.click(screen.getByRole("button", { name: /预览/ }));
-    await screen.findByText("DSL v2");
+    await screen.findByText("将执行的动作");
 
     fireEvent.change(
       screen.getByLabelText("Markdown 原文编辑器（带 lint 标注）"),
@@ -600,7 +600,7 @@ describe("ImportPage 单文件预览态", () => {
     renderImportPage();
     addPasteEntry(PRACTICE_MD);
     fireEvent.click(screen.getByRole("button", { name: /预览/ }));
-    await screen.findByText("DSL v2");
+    await screen.findByText("将执行的动作");
     fireEvent.click(screen.getByRole("button", { name: "确认导入" }));
 
     await waitFor(() => expect(mockedCommit).toHaveBeenCalled());
@@ -626,7 +626,7 @@ describe("ImportPage 单文件预览态", () => {
     renderImportPage();
     addPasteEntry(PRACTICE_MD, "旧名.md");
     fireEvent.click(screen.getByRole("button", { name: /预览/ }));
-    await screen.findByText("DSL v2");
+    await screen.findByText("将执行的动作");
 
     // 编辑器头的「导入文件名」输入框改名 → 确认导入按新名提交
     fireEvent.change(screen.getByLabelText("导入文件名"), {
@@ -644,7 +644,7 @@ describe("ImportPage 单文件预览态", () => {
     renderImportPage();
     addPasteEntry(PRACTICE_MD, "旧名.md");
     fireEvent.click(screen.getByRole("button", { name: /预览/ }));
-    await screen.findByText("DSL v2");
+    await screen.findByText("将执行的动作");
 
     fireEvent.change(screen.getByLabelText("导入文件名"), {
       target: { value: "  " },
@@ -670,7 +670,7 @@ describe("ImportPage 单文件预览态", () => {
     });
     addPasteEntry(PRACTICE_MD);
     fireEvent.click(screen.getByRole("button", { name: /预览/ }));
-    await screen.findByText("DSL v2");
+    await screen.findByText("将执行的动作");
 
     await waitFor(() =>
       expect(mockedPreview).toHaveBeenCalledWith(
@@ -698,7 +698,7 @@ describe("ImportPage 单文件预览态", () => {
     renderImportPage();
     addPasteEntry(PRACTICE_MD);
     fireEvent.click(screen.getByRole("button", { name: /预览/ }));
-    await screen.findByText("DSL v2");
+    await screen.findByText("将执行的动作");
     fireEvent.click(screen.getByRole("button", { name: "确认导入" }));
 
     expect(

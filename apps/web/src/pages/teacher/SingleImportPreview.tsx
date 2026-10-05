@@ -1,6 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { ImportPreviewData, LintIssue } from "@tutor/contract";
-import { v1ToV2 } from "@tutor/md-dsl";
 import { ArrowLeft, CircleAlert, Images, Loader2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
@@ -148,8 +147,6 @@ export function SingleImportPreview({
     () => lintIssuesToDiagnostics(displayedIssues, text),
     [displayedIssues, text],
   );
-  // v1 文档：issues 行号指向转换后的 v2 文本；渲染预览也按转换后文本
-  const renderSource = preview?.version === 1 ? v1ToV2(text) : text;
 
   const canCommit =
     preview !== null &&
@@ -224,11 +221,10 @@ export function SingleImportPreview({
         <div className="flex h-[65vh] flex-col overflow-hidden rounded-xl border border-border bg-card">
           <p className="shrink-0 border-b border-border px-3 py-2 text-xs font-medium text-muted-foreground">
             渲染预览
-            {preview?.version === 1 && "（v1 文档已自动转换为 v2 后渲染）"}
           </p>
           <div className="min-h-0 flex-1 overflow-y-auto p-4">
             <div className="mx-auto max-w-3xl">
-              <RichMarkdown source={renderSource} />
+              <RichMarkdown source={text} />
             </div>
           </div>
         </div>
@@ -243,7 +239,6 @@ export function SingleImportPreview({
           path={input.path}
           markdown={text}
           issues={displayedIssues}
-          version={preview?.version ?? 2}
         />
       ) : null}
 
@@ -305,7 +300,7 @@ export function SingleImportPreview({
   );
 }
 
-/** 顶部统计条：版本徽章 + 单元/讲义/题数 + 实际存储名（方案 §5）+ 题型分布（单文件与批量展开共用） */
+/** 顶部统计条：单元/讲义/题数 + 实际存储名（方案 §5）+ 题型分布（单文件与批量展开共用） */
 export function StatsBar({
   preview,
   pending,
@@ -341,22 +336,6 @@ export function StatsBar({
         );
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-border bg-card px-4 py-3 text-sm">
-      {preview !== null ? (
-        <span
-          className={
-            preview.version === 2
-              ? "rounded-full bg-sky-500/10 px-2.5 py-1 text-xs font-semibold text-sky-700 dark:text-sky-300"
-              : "rounded-full bg-amber-500/10 px-2.5 py-1 text-xs font-semibold text-amber-700 dark:text-amber-300"
-          }
-          title={
-            preview.version === 2
-              ? "DSL v2 文档"
-              : "旧版 v1 文档（导入时自动转换为 v2）"
-          }
-        >
-          DSL v{preview.version}
-        </span>
-      ) : null}
       {summary !== undefined ? (
         <>
           <span>

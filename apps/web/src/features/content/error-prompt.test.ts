@@ -8,7 +8,7 @@ import { buildFixPrompt, type FixPromptFile } from "./error-prompt.ts";
  * - 相邻错误片段合并；远离的片段分开；
  * - 片段总行数超 200 行截断并注明「其余 N 处错误略」；
  * - 无路径（粘贴内容）标注「粘贴内容（无文件路径）」；
- * - 多文件逐文件列出；v1 附加行号说明；四反引号围栏不被原文三反引号破坏。
+ * - 多文件逐文件列出；四反引号围栏不被原文三反引号破坏。
  */
 
 const ERROR_AT_6: LintIssue = {
@@ -52,7 +52,6 @@ function file(overrides: Partial<FixPromptFile> = {}): FixPromptFile {
     path: "chapter1/练习.md",
     markdown: MD,
     issues: [ERROR_AT_6, WARNING_AT_12],
-    version: 2,
     ...overrides,
   };
 }
@@ -127,7 +126,6 @@ describe("buildFixPrompt（D21 新格式）", () => {
       file({
         path: "b/讲义.md",
         issues: [{ ...WARNING_AT_12, line: 4 }],
-        version: 1,
       }),
     ]);
     expect(prompt).toContain("## a.md");
@@ -135,9 +133,6 @@ describe("buildFixPrompt（D21 新格式）", () => {
     expect(prompt.indexOf("## a.md")).toBeLessThan(
       prompt.indexOf("## b/讲义.md"),
     );
-    // v1 行号说明只出现在 v1 文件块内
-    const v1Block = prompt.slice(prompt.indexOf("## b/讲义.md"));
-    expect(v1Block).toContain("旧版 v1 文档");
   });
 
   it("片段总行数超 200 行时截断并注明「其余 N 处错误略」（验收）", () => {

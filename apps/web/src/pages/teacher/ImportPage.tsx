@@ -544,8 +544,7 @@ export function ImportPage() {
           <h1 className="text-lg font-semibold">导入内容</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             选择 .md 与图片文件、整个文件夹或粘贴内容，加入同一份待导入清单；
-            文档引用到的图片会自动上传并替换为服务器路径，预览无误后确认 （支持
-            v2 DSL 与旧版 v1 格式）。
+            文档引用到的图片会自动上传并替换为服务器路径，预览无误后确认。
           </p>
 
           {/* AI 出题助手（T1.13）：复制「规范+样例+模板」提示词给 AI，产出可导入文档 */}

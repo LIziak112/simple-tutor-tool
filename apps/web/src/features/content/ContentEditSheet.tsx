@@ -260,7 +260,6 @@ export function QuestionEditSheet({
                   path={filenameOf("题目", questionId)}
                   markdown={text}
                   issues={displayedIssues}
-                  version={2}
                 />
               </div>
             ) : null}
@@ -499,7 +498,6 @@ export function LectureEditSheet({
                   path={filenameOf("讲义", lectureId)}
                   markdown={text}
                   issues={displayedIssues}
-                  version={2}
                 />
               </div>
             ) : null}

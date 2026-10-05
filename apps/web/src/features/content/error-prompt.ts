@@ -14,12 +14,10 @@ import type { ImportBatchConflict, LintIssue } from "@tutor/contract";
 export interface FixPromptFile {
   /** 文件相对路径（如 "chapter1/练习.md"）；空字符串 = 粘贴内容（无文件路径） */
   readonly path: string;
-  /** 文件原文（片段截取的来源；v1 文档为原始 v1 文本） */
+  /** 文件原文（片段截取的来源） */
   readonly markdown: string;
   /** lint 问题列表（error + warning 全部带上，warning 也值得让 AI 顺手修） */
   readonly issues: readonly LintIssue[];
-  /** 文档版本：v1 时附加"行号对应转换后 v2 文本"的说明 */
-  readonly version: 1 | 2;
   /** 同批次跨文件冲突（preview-batch 返回；无原文行号，不参与片段生成） */
   readonly conflicts?: readonly ImportBatchConflict[];
 }
@@ -117,12 +115,6 @@ export function buildFixPrompt(files: readonly FixPromptFile[]): string {
     } else {
       for (const issue of file.issues) parts.push(issueLine(issue));
       parts.push(...conflictEntries);
-    }
-    if (file.version === 1) {
-      parts.push(
-        "",
-        "注意：这是旧版 v1 文档，上行号对应自动转换后的 v2 文本，与原始 v1 行号可能不同。",
-      );
     }
 
     // 片段（±3 行、相邻合并、单文件累计 ≤200 行）

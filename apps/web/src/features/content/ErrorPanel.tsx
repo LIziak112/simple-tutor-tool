@@ -1,5 +1,5 @@
 import type { LintIssue } from "@tutor/contract";
-import { CircleAlert, Copy, Info, X } from "lucide-react";
+import { CircleAlert, Copy, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { buildFixPrompt } from "./error-prompt";
@@ -15,23 +15,16 @@ import { buildFixPrompt } from "./error-prompt";
 export interface ErrorPanelProps {
   /** 文件相对路径（进入提示词，D21）；空字符串 = 粘贴内容（无文件路径） */
   path: string;
-  /** 编辑器当前原文（提示词片段来源；v1 文档为原始文本） */
+  /** 编辑器当前原文（提示词片段来源） */
   markdown: string;
   /** 问题列表（preview issues 或 commit 422 的 _issues） */
   issues: readonly LintIssue[];
-  /** 文档版本（v1 提示词附加行号说明） */
-  version: 1 | 2;
 }
 
 /** 轻提示自动消失时长 */
 const COPIED_HINT_MS = 3000;
 
-export function ErrorPanel({
-  path,
-  markdown,
-  issues,
-  version,
-}: ErrorPanelProps) {
+export function ErrorPanel({ path, markdown, issues }: ErrorPanelProps) {
   const errorCount = issues.filter((i) => i.level === "error").length;
   const warningCount = issues.length - errorCount;
 
@@ -40,7 +33,7 @@ export function ErrorPanel({
   const copyButtonRef = useRef<HTMLButtonElement>(null);
   const fallbackTextareaRef = useRef<HTMLTextAreaElement>(null);
 
-  const prompt = buildFixPrompt([{ path, markdown, issues, version }]);
+  const prompt = buildFixPrompt([{ path, markdown, issues }]);
 
   // 复制成功的轻提示自动消失
   useEffect(() => {
@@ -114,13 +107,6 @@ export function ErrorPanel({
           className="mt-2 rounded-lg bg-emerald-500/10 px-3 py-1.5 text-sm text-emerald-700 dark:text-emerald-300"
         >
           已复制提示词，粘贴给任意 AI 助手即可让它修正文档。
-        </p>
-      ) : null}
-
-      {version === 1 ? (
-        <p className="mt-1.5 flex items-start gap-1.5 text-xs text-muted-foreground">
-          <Info aria-hidden className="mt-0.5 size-3.5 shrink-0" />
-          v1 文档：问题行号对应自动转换后的 v2 文本，与左侧原文行号可能不一致。
         </p>
       ) : null}
 
