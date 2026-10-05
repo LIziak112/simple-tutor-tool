@@ -137,3 +137,28 @@ export function resolveToolSpec(
       return { brush: null, base };
   }
 }
+
+/** CSS 颜色 → 笔颜色档位（逆向查找表，模块级一次构建，零分配查询） */
+const PEN_COLOR_BY_CSS = new Map<string, InkPenColor>(
+  Object.entries(INK_PEN_COLORS).map(([k, v]) => [v, k as InkPenColor]),
+);
+
+/** 逻辑线宽 → 笔粗细档位（逆向查找表） */
+const PEN_SIZE_BY_WEIGHT = new Map<number, InkPenSize>(
+  Object.entries(INK_PEN_SIZES).map(([k, v]) => [v, k as InkPenSize]),
+);
+
+/**
+ * 笔画 → 工具配置（resolveToolSpec 的逆向；重放、统计、合成注入共用）。
+ * InkStroke 只存 CSS 颜色与逻辑线宽（契约形状），档位在此反查；
+ * 未知值回退默认笔（black/medium），不抛错——回退语义集中在引擎层，
+ * 消费方不再各自 Object.entries 扫描。
+ */
+export function toolConfigFromStroke(stroke: InkStroke): InkToolConfig {
+  if (stroke.tool === "highlighter") return { type: "highlighter" };
+  return {
+    type: "pen",
+    color: PEN_COLOR_BY_CSS.get(stroke.color) ?? "black",
+    size: PEN_SIZE_BY_WEIGHT.get(stroke.weight) ?? "medium",
+  };
+}

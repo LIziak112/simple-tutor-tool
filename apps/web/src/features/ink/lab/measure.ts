@@ -1,4 +1,7 @@
-import { gzipOrRaw } from "../gzip.ts";
+import { canGzip, gzipBytesOrRaw } from "../gzip.ts";
+
+// 字节格式化上提为共享实现（ExportWizard/BackupSection 旧副本见该文件历史注）
+export { formatBytes } from "../../../lib/format.ts";
 
 /**
  * 测量原语（T6R.1 桌面自动化测量用）：耗时统计、字节测量、可观测内存。
@@ -43,6 +46,8 @@ export function timingStats(samples: readonly number[]): TimingStats | null {
 }
 
 /** 同步回调耗时采样器：measure 包裹回调并记录 performance.now() 差值 */
+export type DurationSampler = ReturnType<typeof createDurationSampler>;
+
 export function createDurationSampler(): {
   measure<T>(fn: () => T): T;
   stats(): TimingStats | null;
@@ -86,30 +91,23 @@ export interface EncodingMeasurement {
 }
 
 /**
- * 当前环境能否真实执行 gzip 压缩测量。
- * 需要 CompressionStream + 可流的 Blob（jsdom 的 Blob 无 .stream()，会抛错）+
- * Response；任一缺失时测量降级为原始字节，不冒充压缩结果。
+ * 当前环境能否真实执行 gzip 压缩测量（gzip.ts 的共用探测，
+ * 与上传路径同一份判断，不各自猜测实现行为）。
  */
-export function canGzipInThisEnvironment(): boolean {
-  return (
-    typeof CompressionStream !== "undefined" &&
-    typeof Blob === "function" &&
-    typeof Blob.prototype.stream === "function" &&
-    typeof Response !== "undefined"
-  );
-}
+export const canGzipInThisEnvironment = canGzip;
 
 /** 测量一段文本（通常是 InkDoc 的 JSON 序列化）的原始/gzip 字节与压缩耗时 */
 export async function measureEncoding(
   text: string,
 ): Promise<EncodingMeasurement> {
+  // 只 encode 一次：raw 直接进压缩管道，避免同一文本两份 UTF-8 编码驻留
   const raw = new TextEncoder().encode(text);
   let gz: Uint8Array<ArrayBuffer> = raw;
   let compressed = false;
   const start = performance.now();
-  if (canGzipInThisEnvironment()) {
+  if (canGzip()) {
     try {
-      gz = await gzipOrRaw(text);
+      gz = await gzipBytesOrRaw(raw);
       compressed = true;
     } catch {
       // 极端环境压缩中途失败：降级原始字节，不冒充压缩测量
@@ -168,13 +166,4 @@ export function observableMemory(): MemorySnapshot | null {
     // 极端环境（如 Object getter 抛错）下不冒泡——测量工具不能成为故障源
     return null;
   }
-}
-
-/** 字节数的人类可读格式（1024 进制，一位小数） */
-export function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes < 0) return "—";
-  if (bytes < 1024) return `${Math.round(bytes)} B`;
-  const kib = bytes / 1024;
-  if (kib < 1024) return `${(Math.round(kib * 10) / 10).toFixed(1)} KiB`;
-  return `${(Math.round((kib / 1024) * 10) / 10).toFixed(1)} MiB`;
 }

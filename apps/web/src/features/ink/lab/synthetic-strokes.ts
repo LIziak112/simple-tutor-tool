@@ -8,8 +8,9 @@ import {
   type InkPenSize,
   type InkStroke,
   type InkStrokePoint,
-  type InkToolConfig,
 } from "../engine/types.ts";
+
+// 工具档位反查已上提引擎层：toolConfigFromStroke（engine/types.ts）
 
 /**
  * 确定性合成类手写数学笔迹生成器（T6R.1 桌面自动化测量用）。
@@ -130,6 +131,16 @@ function pt(x: number, y: number, p: number, t: number): InkStrokePoint {
   };
 }
 
+/** 组装一支笔的笔画外壳（五个形状函数共用的档位映射，一处维护） */
+function penStroke(pen: PenConfig, points: InkStrokePoint[]): InkStroke {
+  return {
+    tool: "pen",
+    color: INK_PEN_COLORS[pen.color],
+    weight: INK_PEN_SIZES[pen.size],
+    points,
+  };
+}
+
 /** 演算线段（short/medium/long）：横写波浪线，长度与点数按档位折算 */
 function lineStroke(
   rng: () => number,
@@ -168,12 +179,7 @@ function lineStroke(
     points.push(pt(x, y, pressureBase + jitter(rng, 0.08), t));
   }
   return {
-    stroke: {
-      tool: "pen",
-      color: INK_PEN_COLORS[pen.color],
-      weight: INK_PEN_SIZES[pen.size],
-      points,
-    },
+    stroke: penStroke(pen, points),
     advance: length + STROKE_GAP,
   };
 }
@@ -198,12 +204,7 @@ function dotStroke(
     );
   }
   return {
-    stroke: {
-      tool: "pen",
-      color: INK_PEN_COLORS[pen.color],
-      weight: INK_PEN_SIZES[pen.size],
-      points,
-    },
+    stroke: penStroke(pen, points),
     advance: 26,
   };
 }
@@ -276,12 +277,10 @@ function sqrtStroke(
   ];
   const count = Math.max(6, Math.ceil(basePoints * 1.4));
   return {
-    stroke: {
-      tool: "pen",
-      color: INK_PEN_COLORS[pen.color],
-      weight: INK_PEN_SIZES[pen.size],
-      points: polylinePoints(rng, vertices, count, 0.3 + rng() * 0.5),
-    },
+    stroke: penStroke(
+      pen,
+      polylinePoints(rng, vertices, count, 0.3 + rng() * 0.5),
+    ),
     advance: 12 + diagonal * 0.9 + vinculum + STROKE_GAP,
   };
 }
@@ -303,12 +302,10 @@ function fractionStroke(
   ];
   const count = Math.max(4, Math.ceil(basePoints * 0.7));
   return {
-    stroke: {
-      tool: "pen",
-      color: INK_PEN_COLORS[pen.color],
-      weight: INK_PEN_SIZES[pen.size],
-      points: polylinePoints(rng, vertices, count, 0.35 + rng() * 0.4),
-    },
+    stroke: penStroke(
+      pen,
+      polylinePoints(rng, vertices, count, 0.35 + rng() * 0.4),
+    ),
     advance: length + STROKE_GAP,
   };
 }
@@ -344,12 +341,7 @@ function supsubStroke(
     );
   }
   return {
-    stroke: {
-      tool: "pen",
-      color: INK_PEN_COLORS[pen.color],
-      weight: INK_PEN_SIZES[pen.size],
-      points,
-    },
+    stroke: penStroke(pen, points),
     advance: width + STROKE_GAP * 0.7,
   };
 }
@@ -387,14 +379,12 @@ function highlightStroke(
   };
 }
 
+/** 非荧光、非点按的演算线形状（pickLineKind 的选择域） */
+type LineKind = Exclude<SyntheticShapeKind, "dot" | "highlight">;
+
 /** 非荧光形状的加权随机（荧光/点按有固定周期保底，见 buildSyntheticAtramentDoc） */
-function pickLineKind(
-  rng: () => number,
-): "short" | "medium" | "long" | "sqrt" | "fraction" | "supsub" {
-  const weights: [
-    "short" | "medium" | "long" | "sqrt" | "fraction" | "supsub",
-    number,
-  ][] = [
+function pickLineKind(rng: () => number): LineKind {
+  const weights: [LineKind, number][] = [
     ["short", 3],
     ["medium", 3],
     ["long", 2],
@@ -485,24 +475,4 @@ export function buildSyntheticAtramentDoc(
 /** 文档总点数（各笔点数之和） */
 export function totalPoints(doc: InkDoc<"atrament">): number {
   return doc.data.strokes.reduce((n, s) => n + s.points.length, 0);
-}
-
-/**
- * 合成笔画 → 引擎工具配置（注入前 setTool 用）。
- * InkStroke 只存 CSS 颜色与逻辑线宽（契约形状），档位信息在此反查；
- * 未知值回退默认笔（black/medium），不抛错。
- */
-export function toolConfigForStroke(stroke: InkStroke): InkToolConfig {
-  if (stroke.tool === "highlighter") return { type: "highlighter" };
-  const colorEntry = (
-    Object.entries(INK_PEN_COLORS) as [InkPenColor, string][]
-  ).find(([, css]) => css === stroke.color);
-  const sizeEntry = (
-    Object.entries(INK_PEN_SIZES) as [InkPenSize, number][]
-  ).find(([, weight]) => weight === stroke.weight);
-  return {
-    type: "pen",
-    color: colorEntry?.[0] ?? "black",
-    size: sizeEntry?.[0] ?? "medium",
-  };
 }

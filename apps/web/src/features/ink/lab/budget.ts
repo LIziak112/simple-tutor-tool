@@ -17,7 +17,12 @@ export interface BudgetLimits {
   bodyDecompressedMaxBytes: number;
 }
 
-/** 暂定限额：真机定标前一律以此标注，不与旧 ink 的 2MB 常量混用（独立命名） */
+/**
+ * 暂定限额：真机定标前一律以此标注，不与旧 ink 的 2MB 常量混用（独立命名）。
+ * 数值起点＝契约 INK_MAX_UPLOAD_BYTES（packages/contract/src/ink.ts）与服务端
+ * INK_MAX_STROKES_UNCOMPRESSED（apps/server ink-service.ts）——数值巧合对齐、
+ * 语义独立（草稿新契约 vs 现行作答 ink 上传），真机定标后各自演化。
+ */
 export const TENTATIVE_BUDGET_LIMITS: BudgetLimits = {
   bodyGzipMaxBytes: 2 * 1024 * 1024,
   bodyDecompressedMaxBytes: 32 * 1024 * 1024,
@@ -53,7 +58,11 @@ export interface EvaluateBudgetRowOptions {
   paperHeightLogical?: number;
 }
 
-/** 测一级阶梯：构建合成文档 → JSON → 原始/gzip 字节 + 触线标志 */
+/**
+ * 测一级阶梯：构建合成文档 → JSON → 原始/gzip 字节 + 触线标志。
+ * 预期使用方：测试与"从参数直接定阶梯"的脚本；UI 面板用
+ * evaluateBudgetRowForDoc（同一份文档既测字节又进引擎渲染）。
+ */
 export async function evaluateBudgetRow(
   opts: EvaluateBudgetRowOptions,
 ): Promise<BudgetRow> {

@@ -1,11 +1,11 @@
 import { inkDocSchema } from "@tutor/contract";
 import { describe, expect, it } from "vitest";
-import type { InkDoc, InkStroke } from "../engine/types.ts";
 import {
-  buildSyntheticAtramentDoc,
-  toolConfigForStroke,
-  totalPoints,
-} from "./synthetic-strokes.ts";
+  type InkDoc,
+  type InkStroke,
+  toolConfigFromStroke,
+} from "../engine/types.ts";
+import { buildSyntheticAtramentDoc, totalPoints } from "./synthetic-strokes.ts";
 
 /**
  * 合成笔迹生成器测试（T6R.1，TDD 先行）：
@@ -145,7 +145,7 @@ describe("buildSyntheticAtramentDoc", () => {
   });
 });
 
-describe("toolConfigForStroke（注入前切换引擎工具用）", () => {
+describe("toolConfigFromStroke（引擎层反查；注入前切换工具用）", () => {
   function strokeOf(partial: Partial<InkStroke>): InkStroke {
     return {
       tool: "pen",
@@ -158,7 +158,7 @@ describe("toolConfigForStroke（注入前切换引擎工具用）", () => {
 
   it("荧光笔笔画映射到 highlighter 工具", () => {
     expect(
-      toolConfigForStroke(
+      toolConfigFromStroke(
         strokeOf({
           tool: "highlighter",
           color: "rgba(250, 204, 21, 0.45)",
@@ -170,21 +170,21 @@ describe("toolConfigForStroke（注入前切换引擎工具用）", () => {
 
   it("笔笔画按 CSS 颜色与逻辑线宽反查档位", () => {
     expect(
-      toolConfigForStroke(strokeOf({ color: "#1f2328", weight: 4 })),
+      toolConfigFromStroke(strokeOf({ color: "#1f2328", weight: 4 })),
     ).toEqual({
       type: "pen",
       color: "black",
       size: "medium",
     });
     expect(
-      toolConfigForStroke(strokeOf({ color: "#1d4ed8", weight: 2.5 })),
+      toolConfigFromStroke(strokeOf({ color: "#1d4ed8", weight: 2.5 })),
     ).toEqual({
       type: "pen",
       color: "blue",
       size: "thin",
     });
     expect(
-      toolConfigForStroke(strokeOf({ color: "#dc2626", weight: 6 })),
+      toolConfigFromStroke(strokeOf({ color: "#dc2626", weight: 6 })),
     ).toEqual({
       type: "pen",
       color: "red",
@@ -194,7 +194,7 @@ describe("toolConfigForStroke（注入前切换引擎工具用）", () => {
 
   it("未知颜色/线宽回退默认笔档位（不抛错）", () => {
     expect(
-      toolConfigForStroke(strokeOf({ color: "#abc", weight: 99 })),
+      toolConfigFromStroke(strokeOf({ color: "#abc", weight: 99 })),
     ).toEqual({
       type: "pen",
       color: "black",

@@ -6,6 +6,8 @@ import {
   type InkDoc,
   type InkEngine,
 } from "@/features/ink/engine/index.ts";
+// INK_LOGICAL_WIDTH 走纯类型模块（engine/index.ts 在测试里被整体 mock）
+import { INK_LOGICAL_WIDTH } from "@/features/ink/engine/types.ts";
 import { InkPad } from "@/features/ink/InkPad.tsx";
 import {
   type BudgetRow,
@@ -14,6 +16,8 @@ import {
   firstCrossing,
   TENTATIVE_ANALYSIS_PNG_MAX_BYTES,
 } from "@/features/ink/lab/budget.ts";
+import { probeCapabilities } from "@/features/ink/lab/capabilities.ts";
+import { drivePointerEvents } from "@/features/ink/lab/inject.ts";
 import {
   createDurationSampler,
   formatBytes,
@@ -23,7 +27,6 @@ import {
 } from "@/features/ink/lab/measure.ts";
 import {
   buildSyntheticAtramentDoc,
-  toolConfigForStroke,
   totalPoints,
 } from "@/features/ink/lab/synthetic-strokes.ts";
 
@@ -67,7 +70,7 @@ function yieldFrame(): Promise<void> {
 
 /** 毫秒格式化：小值保留两位、大值一位 */
 function fmtMs(ms: number | undefined): string {
-  if (ms === undefined || ms === null) return "—";
+  if (ms === undefined) return "—";
   return `${ms >= 10 ? ms.toFixed(1) : ms.toFixed(2)} ms`;
 }
 
@@ -100,91 +103,51 @@ interface ProbeRow {
 }
 
 /**
- * 逐项运行时探测。全部基于对象/原型/真实 context 属性的存在性，
- * **不读 navigator.userAgent**（方案 §4.1：不以 UA 推断能力）。
+ * 结构化探测结果 → 展示行（检测逻辑在 lab/capabilities.ts，此处只做中文文案
+ * 映射；产品侧将来直接消费 CapabilitySnapshot，不经过本层）。
  */
-function probeCapabilities(): ProbeRow[] {
-  const rows: ProbeRow[] = [];
-
-  // 协议：信息项，显示实际值
-  const protocol = typeof location !== "undefined" ? location.protocol : "未知";
-  rows.push({
-    key: "protocol",
-    label: "页面协议",
-    status: "未知",
-    value: protocol || "未知",
-  });
-
-  // 合并采样：PointerEvent 原型上是否有 getCoalescedEvents
-  const coalesced =
-    typeof PointerEvent !== "undefined" &&
-    "getCoalescedEvents" in PointerEvent.prototype;
-  rows.push({
-    key: "coalesced",
-    label: "getCoalescedEvents（合并采样）",
-    status: coalesced ? "支持" : "不支持",
-  });
-
-  // pointerrawupdate：处理器属性是否存在（Chromium 系；Safari/Firefox 无）
-  const rawUpdate =
-    typeof window !== "undefined" && "onpointerrawupdate" in window;
-  rows.push({
-    key: "pointerrawupdate",
-    label: "pointerrawupdate（原始高频更新）",
-    status: rawUpdate ? "支持" : "不支持",
-  });
-
-  // Ink API：navigator.ink（Chromium 旗标级；Safari 无）
-  const inkApi = typeof navigator !== "undefined" && "ink" in navigator;
-  rows.push({
-    key: "ink-api",
-    label: "Ink API",
-    status: inkApi ? "支持" : "不支持",
-  });
-
-  // canvas desynchronized：真实取一次 2d context 读回属性（不猜）
-  let desync: ProbeRow["status"] = "未知";
-  try {
-    const probe = document.createElement("canvas");
-    const ctx = probe.getContext("2d", {
-      desynchronized: true,
-    }) as
-      | (CanvasRenderingContext2D & {
-          getContextAttributes?: () => { desynchronized?: boolean };
-        })
-      | null;
-    if (ctx) {
-      desync =
-        typeof ctx.getContextAttributes === "function"
-          ? ctx.getContextAttributes().desynchronized
-            ? "支持"
-            : "不支持"
-          : "未知";
-    }
-  } catch {
-    // 探测本身失败：保持"未知"，不抛错
-  }
-  rows.push({
-    key: "desynchronized",
-    label: "canvas desynchronized",
-    status: desync,
-  });
-
-  // 剪贴板：对象存在性（实际可用还取决于安全上下文与用户手势）
-  const clipboard =
-    typeof navigator !== "undefined" && navigator.clipboard !== undefined;
-  rows.push({
-    key: "clipboard",
-    label: "剪贴板（navigator.clipboard）",
-    status: clipboard ? "支持" : "不支持",
-    ...(clipboard ? {} : { note: "非安全上下文下通常不可用，以探测为准" }),
-  });
-
-  return rows;
+function capabilityRows(): ProbeRow[] {
+  const c = probeCapabilities();
+  const yn = (b: boolean): ProbeRow["status"] => (b ? "支持" : "不支持");
+  return [
+    {
+      key: "protocol",
+      label: "页面协议",
+      status: "未知",
+      value: c.protocol ?? "未知",
+    },
+    {
+      key: "coalesced",
+      label: "getCoalescedEvents（合并采样）",
+      status: yn(c.coalescedEvents),
+    },
+    {
+      key: "pointerrawupdate",
+      label: "pointerrawupdate（原始高频更新）",
+      status: yn(c.pointerrawupdate),
+    },
+    { key: "ink-api", label: "Ink API", status: yn(c.inkApi) },
+    {
+      key: "desynchronized",
+      label: "canvas desynchronized",
+      status:
+        c.canvasDesynchronized === "yes"
+          ? "支持"
+          : c.canvasDesynchronized === "no"
+            ? "不支持"
+            : "未知",
+    },
+    {
+      key: "clipboard",
+      label: "剪贴板（navigator.clipboard）",
+      status: yn(c.clipboard),
+      ...(c.clipboard ? {} : { note: "非安全上下文下通常不可用，以探测为准" }),
+    },
+  ];
 }
 
 function CapabilityProbeSection() {
-  const rows = useMemo(() => probeCapabilities(), []);
+  const rows = useMemo(() => capabilityRows(), []);
   return (
     <section aria-labelledby="ink-lab-probe" className="space-y-2">
       <h3 id="ink-lab-probe" className="text-sm font-semibold">
@@ -236,6 +199,10 @@ function CapabilityProbeSection() {
  * 已知限制：合成 PointerEvent 的 getCoalescedEvents() 为空 → 走单点回退路径；
  * 合并采样批次的真实耗时只能真机测（见验证报告）。
  */
+/** 数字输入框样式（两个区块共用，模块级一处维护） */
+const NUM_INPUT_CLASS =
+  "h-11 w-24 rounded-lg border border-border bg-background px-2 text-sm";
+
 function SyntheticBenchSection() {
   const engineRef = useRef<InkEngine | null>(null);
   const padWrapRef = useRef<HTMLDivElement>(null);
@@ -263,6 +230,29 @@ function SyntheticBenchSection() {
   const livePoints = liveDoc ? totalPoints(liveDoc) : 0;
   const lastStrokePoints = liveDoc?.data.strokes.at(-1)?.points.length ?? 0;
 
+  /**
+   * 两个注入入口共用的运行骨架：busy 标记 + 错误/报告重置 + 收尾。
+   * busyRef 与 busy 状态同值——onDocChange 在注入期间跳过 setLiveDoc
+   * （每笔全文档 setState 会把注入拖成 O(n²) 的渲染压力，最终统计以结束时
+   * 的一次 getData 为准），手写时的实时统计不受影响。
+   */
+  const busyRef = useRef(false);
+  async function runBench(measure: () => Promise<void>): Promise<void> {
+    busyRef.current = true;
+    setBusy(true);
+    setError(null);
+    setReport(null);
+    try {
+      await measure();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+      setProgress(null);
+    }
+  }
+
   async function runPointerInjection(): Promise<void> {
     const ink = engineRef.current;
     if (!ink) {
@@ -280,10 +270,7 @@ function SyntheticBenchSection() {
       setError("当前环境不支持 PointerEvent，无法驱动指针事件");
       return;
     }
-    setBusy(true);
-    setError(null);
-    setReport(null);
-    try {
+    await runBench(async () => {
       const doc = buildSyntheticAtramentDoc({
         seed,
         strokeCount,
@@ -291,83 +278,36 @@ function SyntheticBenchSection() {
       });
       ink.clear();
       await yieldFrame();
-      const down = createDurationSampler();
-      const move = createDurationSampler();
-      const up = createDurationSampler();
       const memBefore = observableMemory();
-      const strokes = doc.data.strokes;
-      for (let s = 0; s < strokes.length; s++) {
-        setProgress(`注入中：第 ${s + 1}/${strokes.length} 笔`);
-        await yieldFrame();
-        const stroke = strokes[s];
-        if (!stroke) continue;
-        // 按笔画切换引擎工具（荧光笔/笔档位），否则荧光笔会被画成普通笔
-        ink.setTool(toolConfigForStroke(stroke));
-        // 每笔取新 rect：进度行渲染/布局变化会推移画布位置，用陈旧 rect 会把
-        // clientY 系统性偏移（首行笔画会被边界校验整笔拒绝）——测量必须贴
-        // 真实布局，这与真实输入受布局影响是同一件事。
-        const rect = canvas.getBoundingClientRect();
-        const scale = rect.width / 1000; // 逻辑 1000 → CSS 像素（y 同以宽度为基准）
-        const toClient = (p: { x: number; y: number }) => ({
-          clientX: rect.left + p.x * scale,
-          clientY: rect.top + p.y * scale,
-        });
-        const dispatch = (
-          phase: "pointerdown" | "pointermove" | "pointerup",
-          p: { x: number; y: number; p: number },
-          isUp: boolean,
-        ): void => {
-          const { clientX, clientY } = toClient(p);
-          const sampler =
-            phase === "pointerdown" ? down : phase === "pointerup" ? up : move;
-          const evt = new PointerEvent(phase, {
-            bubbles: true,
-            cancelable: true,
-            composed: true,
-            pointerId: 1,
-            pointerType: "pen", // 模拟 Apple Pencil（pressure 走真实压感值）
-            isPrimary: true,
-            buttons: isUp ? 0 : 1,
-            pressure: p.p,
-            clientX,
-            clientY,
-          });
-          sampler.measure(() => canvas.dispatchEvent(evt));
-        };
-        for (let i = 0; i < stroke.points.length; i++) {
-          const p = stroke.points[i];
-          if (!p) continue;
-          dispatch(i === 0 ? "pointerdown" : "pointermove", p, false);
-        }
-        const last = stroke.points[stroke.points.length - 1];
-        if (last) dispatch("pointerup", last, true);
-      }
+      const { down, move, up } = await drivePointerEvents(
+        ink,
+        canvas,
+        doc.data.strokes,
+        {
+          onProgress: (done, total) =>
+            setProgress(`注入中：${done}/${total} 笔`),
+          yieldFrame,
+        },
+      );
       const memAfter = observableMemory();
       const finalDoc = ink.getData();
-      const finalStrokes =
-        finalDoc.engine === "atrament" ? finalDoc.data.strokes.length : 0;
-      const finalPoints =
-        finalDoc.engine === "atrament" ? totalPoints(finalDoc) : 0;
-      // 全量重绘：load(getData()) 走确定性重放路径（T6R.6 渲染器同款原语）
+      const atr = finalDoc.engine === "atrament" ? finalDoc : null;
+      setLiveDoc(atr);
+      // 全量重绘：load 同一份文档走确定性重放路径（T6R.6 渲染器同款原语）
       const redraw = createDurationSampler();
-      redraw.measure(() => ink.load(ink.getData()));
+      redraw.measure(() => ink.load(finalDoc));
       const ms = move.stats();
       setReport(
         [
-          `注入完成：计划 ${strokes.length} 笔 / ${totalPoints(doc)} 点；引擎实际 ${finalStrokes} 笔 / ${finalPoints} 点`,
+          `注入完成：计划 ${doc.data.strokes.length} 笔 / ${totalPoints(doc)} 点；引擎实际 ${atr?.data.strokes.length ?? 0} 笔 / ${atr ? totalPoints(atr) : 0} 点`,
           `事件处理耗时（pointermove ×${move.sampleCount()}）：p50 ${fmtMs(ms?.p50)}｜p95 ${fmtMs(ms?.p95)}｜max ${fmtMs(ms?.max)}`,
           `落笔（pointerdown ×${down.sampleCount()}）max ${fmtMs(down.stats()?.max)}；收笔（pointerup ×${up.sampleCount()}）max ${fmtMs(up.stats()?.max)}`,
-          `全量重绘 load(getData())：${fmtMs(redraw.stats()?.max)}`,
+          `全量重绘（load 注入后文档）：${fmtMs(redraw.stats()?.max)}`,
           memoryLine(memBefore, memAfter),
           "限制：合成 PointerEvent 无合并采样（回退单点路径），合并批次真实耗时须真机测量",
         ].join("\n"),
       );
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-      setProgress(null);
-    }
+    });
   }
 
   async function runLoadInjection(): Promise<void> {
@@ -376,10 +316,7 @@ function SyntheticBenchSection() {
       setError("引擎尚未就绪");
       return;
     }
-    setBusy(true);
-    setError(null);
-    setReport(null);
-    try {
+    await runBench(async () => {
       const doc = buildSyntheticAtramentDoc({
         seed,
         strokeCount,
@@ -392,6 +329,7 @@ function SyntheticBenchSection() {
       redraw.measure(() => ink.load(doc));
       const memAfter = observableMemory();
       const m = await measureEncoding(JSON.stringify(doc));
+      setLiveDoc(doc);
       setReport(
         [
           `load 注入完成：${doc.data.strokes.length} 笔 / ${totalPoints(doc)} 点`,
@@ -400,16 +338,8 @@ function SyntheticBenchSection() {
           memoryLine(memBefore, memAfter),
         ].join("\n"),
       );
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setBusy(false);
-      setProgress(null);
-    }
+    });
   }
-
-  const numInputClass =
-    "h-11 w-24 rounded-lg border border-border bg-background px-2 text-sm";
 
   return (
     <section aria-labelledby="ink-lab-bench" className="space-y-3">
@@ -435,7 +365,7 @@ function SyntheticBenchSection() {
             max={5000}
             value={strokeCount}
             onChange={(e) => setStrokeCount(Number(e.target.value) || 0)}
-            className={numInputClass}
+            className={NUM_INPUT_CLASS}
           />
         </label>
         <label className="flex flex-col gap-1 text-xs">
@@ -446,7 +376,7 @@ function SyntheticBenchSection() {
             max={500}
             value={pointsPerStroke}
             onChange={(e) => setPointsPerStroke(Number(e.target.value) || 1)}
-            className={numInputClass}
+            className={NUM_INPUT_CLASS}
           />
         </label>
         <label className="flex flex-col gap-1 text-xs">
@@ -455,7 +385,7 @@ function SyntheticBenchSection() {
             type="number"
             value={seed}
             onChange={(e) => setSeed(Number(e.target.value) || 0)}
-            className={numInputClass}
+            className={NUM_INPUT_CLASS}
           />
         </label>
         <Button
@@ -484,7 +414,7 @@ function SyntheticBenchSection() {
       </div>
 
       {progress && (
-        <p className="flex items-center gap-2 text-xs text-muted-foreground">
+        <p className="flex min-h-6 items-center gap-2 text-xs tabular-nums text-muted-foreground">
           <LoaderCircle aria-hidden className="size-4 animate-spin" />
           {progress}
         </p>
@@ -503,20 +433,27 @@ function SyntheticBenchSection() {
           engine="atrament"
           initialHeight={720}
           engineRef={engineRef}
-          onDocChange={(doc) =>
-            setLiveDoc(doc.engine === "atrament" ? doc : null)
-          }
+          onDocChange={(doc) => {
+            // 注入期间跳过（见 runBench 注释）；手写时正常实时统计
+            if (!busyRef.current) {
+              setLiveDoc(doc.engine === "atrament" ? doc : null);
+            }
+          }}
           label="合成书写台（真实引擎与工具栏，可手写）"
         />
       </div>
 
       <div className="rounded-xl border border-border bg-muted/30 p-3 text-xs">
-        <div className="flex flex-wrap gap-x-4 gap-y-1">
-          <span className="font-medium">实时文档</span>
-          <span>笔画：{liveStrokes}</span>
-          <span>总点数：{livePoints}</span>
-          <span>最近一笔点数：{lastStrokePoints}</span>
-        </div>
+        {busy ? (
+          <p className="font-medium">注入运行中——实时统计暂停，结束后更新</p>
+        ) : (
+          <div className="flex flex-wrap gap-x-4 gap-y-1">
+            <span className="font-medium">实时文档</span>
+            <span>笔画：{liveStrokes}</span>
+            <span>总点数：{livePoints}</span>
+            <span>最近一笔点数：{lastStrokePoints}</span>
+          </div>
+        )}
         {report && (
           <pre className="mt-2 whitespace-pre-wrap font-mono text-xs leading-5">
             {report}
@@ -531,11 +468,13 @@ function SyntheticBenchSection() {
 // ③ 预算试验
 // ---------------------------------------------------------------------------
 
-/** 预算试验行：字节部分（BudgetRow）+ 分析图渲染部分 */
+/** 预算试验行：字节部分（BudgetRow）+ 分析图渲染部分 + 行级触线标志 */
 interface BudgetRunRow extends BudgetRow {
   redrawMs: number;
   pngBytes: number;
   pngMs: number;
+  /** 分析图 PNG 超暂定限额（行级算一次，展示/结论/提前终止共用） */
+  hitsPngLimit: boolean;
 }
 
 function BudgetSection({ rungs }: { rungs: readonly number[] }) {
@@ -597,12 +536,18 @@ function BudgetSection({ rungs }: { rungs: readonly number[] }) {
           pngMs = performance.now() - t1;
           pngBytes = blob.size;
         }
-        out.push({ ...row, redrawMs, pngBytes, pngMs });
+        out.push({
+          ...row,
+          redrawMs,
+          pngBytes,
+          pngMs,
+          hitsPngLimit: pngBytes > TENTATIVE_ANALYSIS_PNG_MAX_BYTES,
+        });
         // 三条预算线都已触达：更大的阶梯只会更超，提前结束
         if (
           row.hitsGzipLimit &&
           row.hitsDecompressedLimit &&
-          pngBytes > TENTATIVE_ANALYSIS_PNG_MAX_BYTES
+          out[out.length - 1]?.hitsPngLimit
         ) {
           stoppedEarly = true;
           break;
@@ -618,9 +563,6 @@ function BudgetSection({ rungs }: { rungs: readonly number[] }) {
       setProgress(null);
     }
   }
-
-  const numInputClass =
-    "h-11 w-24 rounded-lg border border-border bg-background px-2 text-sm";
 
   return (
     <section aria-labelledby="ink-lab-budget" className="space-y-3">
@@ -643,7 +585,7 @@ function BudgetSection({ rungs }: { rungs: readonly number[] }) {
             max={500}
             value={pointsPerStroke}
             onChange={(e) => setPointsPerStroke(Number(e.target.value) || 1)}
-            className={numInputClass}
+            className={NUM_INPUT_CLASS}
           />
         </label>
         <label className="flex flex-col gap-1 text-xs">
@@ -652,7 +594,7 @@ function BudgetSection({ rungs }: { rungs: readonly number[] }) {
             type="number"
             value={seed}
             onChange={(e) => setSeed(Number(e.target.value) || 0)}
-            className={numInputClass}
+            className={NUM_INPUT_CLASS}
           />
         </label>
         <Button
@@ -670,7 +612,7 @@ function BudgetSection({ rungs }: { rungs: readonly number[] }) {
         </Button>
       </div>
 
-      {/* 分析图离屏宿主：不可见但参与布局，保证 clientWidth=1000 */}
+      {/* 分析图离屏宿主：不可见但参与布局，宽度＝逻辑宽常量（非魔法数） */}
       <div
         aria-hidden
         ref={analysisHostRef}
@@ -678,13 +620,13 @@ function BudgetSection({ rungs }: { rungs: readonly number[] }) {
           position: "absolute",
           left: "-9999px",
           top: "0",
-          width: "1000px",
+          width: `${INK_LOGICAL_WIDTH}px`,
           height: "3000px",
         }}
       />
 
       {progress && (
-        <p className="flex items-center gap-2 text-xs text-muted-foreground">
+        <p className="flex min-h-6 items-center gap-2 text-xs tabular-nums text-muted-foreground">
           <LoaderCircle aria-hidden className="size-4 animate-spin" />
           {progress}
         </p>
@@ -746,14 +688,12 @@ function BudgetSection({ rungs }: { rungs: readonly number[] }) {
                     <td className="px-2 py-1.5">
                       {row.hitsGzipLimit ||
                       row.hitsDecompressedLimit ||
-                      row.pngBytes > TENTATIVE_ANALYSIS_PNG_MAX_BYTES ? (
+                      row.hitsPngLimit ? (
                         <span className="text-destructive">
                           {[
                             row.hitsGzipLimit ? "gzip" : null,
                             row.hitsDecompressedLimit ? "解压" : null,
-                            row.pngBytes > TENTATIVE_ANALYSIS_PNG_MAX_BYTES
-                              ? "分析图"
-                              : null,
+                            row.hitsPngLimit ? "分析图" : null,
                           ]
                             .filter(Boolean)
                             .join("＋")}
@@ -790,31 +730,36 @@ function buildBudgetSummary(
 ): string[] {
   const desc = (row: BudgetRow | null): string =>
     row ? `${row.strokes} 笔（${row.points} 点）` : "0 笔";
-  const gzipHit = firstCrossing(rows, (r) => r.hitsGzipLimit);
-  const rawHit = firstCrossing(rows, (r) => r.hitsDecompressedLimit);
-  const pngHit = firstCrossing(
-    rows,
-    (r) => r.pngBytes > TENTATIVE_ANALYSIS_PNG_MAX_BYTES,
-  );
   const last = rows[rows.length - 1] as BudgetRunRow | undefined;
+  /** 三条预算线共用的结论模板（命中=括号区间，未命中=最大阶梯） */
+  const crossingLine = (
+    label: string,
+    hit: { crossing: BudgetRow; before: BudgetRow | null } | null,
+  ): string =>
+    hit
+      ? `${label}：在 ${desc(hit.before)} 与 ${desc(hit.crossing)} 之间触线`
+      : `${label}：最大阶梯 ${desc(last ?? null)} 未触线`;
   const lines: string[] = [];
-  if (gzipHit === null && rawHit === null && pngHit === null) {
+  if (
+    !rows.some(
+      (r) => r.hitsGzipLimit || r.hitsDecompressedLimit || r.hitsPngLimit,
+    )
+  ) {
     lines.push(`未触任何暂定预算线（最大阶梯 ${desc(last ?? null)}）`);
   } else {
     lines.push(
-      gzipHit
-        ? `正文 gzip ≤2MiB（暂定）：在 ${desc(gzipHit.before)} 与 ${desc(gzipHit.crossing)} 之间触线`
-        : `正文 gzip ≤2MiB（暂定）：最大阶梯 ${desc(last ?? null)} 未触线`,
-    );
-    lines.push(
-      rawHit
-        ? `正文解压 ≤32MiB（暂定）：在 ${desc(rawHit.before)} 与 ${desc(rawHit.crossing)} 之间触线`
-        : `正文解压 ≤32MiB（暂定）：最大阶梯 ${desc(last ?? null)} 未触线`,
-    );
-    lines.push(
-      pngHit
-        ? `每分析图 ≤2MiB（暂定，整幅不切片口径）：在 ${desc(pngHit.before)} 与 ${desc(pngHit.crossing)} 之间触线`
-        : `每分析图 ≤2MiB（暂定，整幅不切片口径）：最大阶梯 ${desc(last ?? null)} 未触线`,
+      crossingLine(
+        "正文 gzip ≤2MiB（暂定）",
+        firstCrossing(rows, (r) => r.hitsGzipLimit),
+      ),
+      crossingLine(
+        "正文解压 ≤32MiB（暂定）",
+        firstCrossing(rows, (r) => r.hitsDecompressedLimit),
+      ),
+      crossingLine(
+        "每分析图 ≤2MiB（暂定，整幅不切片口径）",
+        firstCrossing(rows, (r) => r.hitsPngLimit),
+      ),
     );
   }
   const maxPng = rows.reduce((m, r) => Math.max(m, r.pngBytes), 0);
@@ -904,13 +849,13 @@ function DeviceChecklistSection() {
   const doneCount = entries.filter((e) => e.done).length;
 
   function update(index: number, patch: Partial<ChecklistEntry>): void {
-    setEntries((prev) => {
-      const next = prev.map((entry, i) =>
-        i === index ? { ...entry, ...patch } : entry,
-      );
-      persistChecklist(next);
-      return next;
-    });
+    // 先算 next 再提交：副作用（持久化）不放 setState updater——
+    // StrictMode 下 updater 双调用会重复写 localStorage
+    const next = entries.map((entry, i) =>
+      i === index ? { ...entry, ...patch } : entry,
+    );
+    setEntries(next);
+    persistChecklist(next);
   }
 
   return (
