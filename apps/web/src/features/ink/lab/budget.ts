@@ -31,6 +31,9 @@ export const TENTATIVE_BUDGET_LIMITS: BudgetLimits = {
 /** 每张分析图 ≤2MiB（方案 §7 暂定值；切片策略真机定标后细化） */
 export const TENTATIVE_ANALYSIS_PNG_MAX_BYTES = 2 * 1024 * 1024;
 
+/** 分析图逻辑纸高（方案 §7 暂定规格：逻辑宽 1000 × 高 3000，整幅不切片口径） */
+export const TENTATIVE_ANALYSIS_LOGICAL_HEIGHT = 3000;
+
 /** 默认试验阶梯（笔数；逐级翻倍直到触线） */
 export const DEFAULT_BUDGET_RUNGS: readonly number[] = [
   50, 100, 200, 400, 800, 1600, 3200,
@@ -66,6 +69,8 @@ export interface EvaluateBudgetRowOptions {
 export async function evaluateBudgetRow(
   opts: EvaluateBudgetRowOptions,
 ): Promise<BudgetRow> {
+  // 条件展开是 exactOptionalPropertyTypes 下的必要写法（显式 undefined
+  // 不能赋给可选属性；生成器侧 ?? 默认值处理缺省）
   const doc = buildSyntheticAtramentDoc({
     seed: opts.seed,
     strokeCount: opts.strokeCount,

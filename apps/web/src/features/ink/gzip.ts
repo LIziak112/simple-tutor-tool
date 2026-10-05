@@ -41,8 +41,5 @@ export async function gzipBytesOrRaw(
 export async function gzipOrRaw(
   text: string,
 ): Promise<Uint8Array<ArrayBuffer>> {
-  if (typeof CompressionStream === "undefined") {
-    return new TextEncoder().encode(text);
-  }
   return gzipBytesOrRaw(new TextEncoder().encode(text));
 }

@@ -1,4 +1,5 @@
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -112,31 +113,45 @@ describe("<InkLabPanel> 真机场景清单", () => {
     expect(screen.getByText(/尚无场景完成实测/)).toBeInTheDocument();
   });
 
-  it("勾选与备注写入 localStorage，重挂载后恢复", () => {
-    const { unmount } = render(<InkLabPanel />);
-    const boxes = screen.getAllByRole("checkbox");
-    fireEvent.click(boxes[0] as HTMLInputElement);
-    const notes = screen.getAllByRole("textbox");
-    fireEvent.change(notes[1] as HTMLTextAreaElement, {
-      target: { value: "HTTPS 下掌先落未误触" },
-    });
+  it("勾选立即写、备注防抖写 localStorage，重挂载后恢复", () => {
+    vi.useFakeTimers();
+    try {
+      const { unmount } = render(<InkLabPanel />);
+      const boxes = screen.getAllByRole("checkbox");
+      fireEvent.click(boxes[0] as HTMLInputElement);
+      // 勾选低频：立即持久化
+      let saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "[]") as {
+        done: boolean;
+        note: string;
+      }[];
+      expect(saved[0]?.done).toBe(true);
 
-    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "[]") as {
-      done: boolean;
-      note: string;
-    }[];
-    expect(saved[0]?.done).toBe(true);
-    expect(saved[1]?.note).toBe("HTTPS 下掌先落未误触");
+      const notes = screen.getAllByRole("textbox");
+      fireEvent.change(notes[1] as HTMLTextAreaElement, {
+        target: { value: "HTTPS 下掌先落未误触" },
+      });
+      // 备注逐键高频：500ms 防抖后落盘
+      act(() => {
+        vi.advanceTimersByTime(500);
+      });
+      saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "[]") as {
+        done: boolean;
+        note: string;
+      }[];
+      expect(saved[1]?.note).toBe("HTTPS 下掌先落未误触");
 
-    unmount();
-    cleanup();
-    render(<InkLabPanel />);
-    expect(
-      (screen.getAllByRole("checkbox")[0] as HTMLInputElement).checked,
-    ).toBe(true);
-    expect(
-      (screen.getAllByRole("textbox")[1] as HTMLTextAreaElement).value,
-    ).toBe("HTTPS 下掌先落未误触");
+      unmount();
+      cleanup();
+      render(<InkLabPanel />);
+      expect(
+        (screen.getAllByRole("checkbox")[0] as HTMLInputElement).checked,
+      ).toBe(true);
+      expect(
+        (screen.getAllByRole("textbox")[1] as HTMLTextAreaElement).value,
+      ).toBe("HTTPS 下掌先落未误触");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

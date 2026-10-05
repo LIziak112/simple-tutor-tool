@@ -1,3 +1,4 @@
+import { emptyAtramentDoc } from "../engine/doc.ts";
 import {
   INK_HIGHLIGHTER,
   INK_LOGICAL_WIDTH,
@@ -111,13 +112,27 @@ function jitter(rng: () => number, scale: number): number {
   return (rng() * 2 - 1) * scale;
 }
 
+/** 笔配置候选（黑色更常见的权重；模块级一次构建） */
+const PEN_COLOR_POOL: InkPenColor[] = [
+  "black",
+  "black",
+  "black",
+  "blue",
+  "red",
+];
+const PEN_SIZE_POOL: InkPenSize[] = [
+  "thin",
+  "medium",
+  "medium",
+  "medium",
+  "thick",
+];
+
 /** 生成一支笔（颜色/粗细按权重挑，黑色更常见） */
 function pickPen(rng: () => number): PenConfig {
-  const colors: InkPenColor[] = ["black", "black", "black", "blue", "red"];
-  const sizes: InkPenSize[] = ["thin", "medium", "medium", "medium", "thick"];
   return {
-    color: colors[Math.floor(rng() * colors.length)] ?? "black",
-    size: sizes[Math.floor(rng() * sizes.length)] ?? "medium",
+    color: PEN_COLOR_POOL[Math.floor(rng() * PEN_COLOR_POOL.length)] ?? "black",
+    size: PEN_SIZE_POOL[Math.floor(rng() * PEN_SIZE_POOL.length)] ?? "medium",
   };
 }
 
@@ -464,12 +479,8 @@ export function buildSyntheticAtramentDoc(
     }
   }
 
-  return {
-    engine: "atrament",
-    version: 1,
-    data: { width: INK_LOGICAL_WIDTH, strokes },
-    updatedAt: 0,
-  };
+  // 外壳复用引擎空文档工厂（version/updatedAt 语义与 adapter 组装同源）
+  return { ...emptyAtramentDoc(), data: { width: INK_LOGICAL_WIDTH, strokes } };
 }
 
 /** 文档总点数（各笔点数之和） */

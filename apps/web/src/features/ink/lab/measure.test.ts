@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { formatBytes } from "../../../lib/format.ts";
+import { canGzip } from "../gzip.ts";
 import {
-  canGzipInThisEnvironment,
   createDurationSampler,
-  formatBytes,
   measureEncoding,
   observableMemory,
   timingStats,
@@ -98,7 +98,7 @@ describe("measureEncoding", () => {
   it("高重复文本 gzip 后显著变小（能真实压缩的环境）", async () => {
     const text = "0123456789abcdef".repeat(4000);
     const m = await measureEncoding(text);
-    if (canGzipInThisEnvironment()) {
+    if (canGzip()) {
       expect(m.compressed).toBe(true);
       expect(m.gzipBytes).toBeLessThan(m.rawBytes / 4);
     } else {

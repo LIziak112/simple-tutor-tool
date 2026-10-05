@@ -130,4 +130,59 @@ describe("drivePointerEvents", () => {
     expect(new Set(pointerTypes)).toEqual(new Set(["pen"]));
     canvas.remove();
   });
+  it("整笔越界的笔画被计数为 droppedStrokes 并跳过派发", async () => {
+    const { engine } = fakeEngine();
+    const canvas = setupCanvas();
+    vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue({
+      left: 0,
+      top: 0,
+      width: 500,
+      height: 300,
+      right: 500,
+      bottom: 300,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    } as DOMRect);
+    // 纸高 800、宽换算 500/1000=0.5 → CSS y 最大 400 > 300：底部笔画整笔越界
+    const doc = buildSyntheticAtramentDoc({
+      seed: 42,
+      strokeCount: 40,
+      pointsPerStroke: 4,
+    });
+    const before = doc.data.strokes.filter((st) => {
+      const maxY = Math.max(...st.points.map((pt) => pt.y));
+      const minY = Math.min(...st.points.map((pt) => pt.y));
+      const maxX = Math.max(...st.points.map((pt) => pt.x));
+      const minX = Math.min(...st.points.map((pt) => pt.x));
+      return (
+        (maxY * 500) / INK_LOGICAL_WIDTH < 0 ||
+        (minY * 500) / INK_LOGICAL_WIDTH > 300 ||
+        (maxX * 500) / INK_LOGICAL_WIDTH < 0 ||
+        (minX * 500) / INK_LOGICAL_WIDTH > 500
+      );
+    }).length;
+    const dispatchSpy = vi.fn();
+    canvas.addEventListener("pointerdown", dispatchSpy);
+    const result = await drivePointerEvents(engine, canvas, doc.data.strokes);
+    expect(result.droppedStrokes).toBe(before);
+    canvas.remove();
+  });
+
+  it("同配置连续笔画在节流边界重设工具（注入期工具栏被点击的自愈）", async () => {
+    const { engine, setToolCalls } = fakeEngine();
+    const canvas = setupCanvas();
+    const doc = buildSyntheticAtramentDoc({
+      seed: 2026,
+      strokeCount: 60,
+      pointsPerStroke: 3,
+    });
+    // progressEvery=10：边界笔（第 10/20/…笔索引 9/19/…）即使工具键未变也会重设
+    await drivePointerEvents(engine, canvas, doc.data.strokes, {
+      progressEvery: 10,
+    });
+    // 首笔 + 每个键变化 + 每个边界（含重叠）——至少多于纯键变化数
+    expect(setToolCalls.length).toBeGreaterThanOrEqual(7);
+    canvas.remove();
+  });
 });

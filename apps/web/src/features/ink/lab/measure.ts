@@ -1,8 +1,5 @@
 import { canGzip, gzipBytesOrRaw } from "../gzip.ts";
 
-// 字节格式化上提为共享实现（ExportWizard/BackupSection 旧副本见该文件历史注）
-export { formatBytes } from "../../../lib/format.ts";
-
 /**
  * 测量原语（T6R.1 桌面自动化测量用）：耗时统计、字节测量、可观测内存。
  *
@@ -91,12 +88,12 @@ export interface EncodingMeasurement {
 }
 
 /**
- * 当前环境能否真实执行 gzip 压缩测量（gzip.ts 的共用探测，
- * 与上传路径同一份判断，不各自猜测实现行为）。
+ * 测量一段文本（通常是 InkDoc 的 JSON 序列化）的原始/gzip 字节与压缩耗时。
+ *
+ * 口径注：gzipMs 只计压缩管道耗时，不含 UTF-8 encode（encode 移出计时区间
+ * 是为避免同一文本双份驻留——c89181b 起；更早的验证报告数字含 encode，
+ * 复核对比时须注意口径差）。未尝试压缩（canGzip 为 false）时 gzipMs 为 0。
  */
-export const canGzipInThisEnvironment = canGzip;
-
-/** 测量一段文本（通常是 InkDoc 的 JSON 序列化）的原始/gzip 字节与压缩耗时 */
 export async function measureEncoding(
   text: string,
 ): Promise<EncodingMeasurement> {
@@ -104,8 +101,9 @@ export async function measureEncoding(
   const raw = new TextEncoder().encode(text);
   let gz: Uint8Array<ArrayBuffer> = raw;
   let compressed = false;
-  const start = performance.now();
+  let gzipMs = 0;
   if (canGzip()) {
+    const start = performance.now();
     try {
       gz = await gzipBytesOrRaw(raw);
       compressed = true;
@@ -114,8 +112,8 @@ export async function measureEncoding(
       gz = raw;
       compressed = false;
     }
+    gzipMs = performance.now() - start;
   }
-  const gzipMs = performance.now() - start;
   return {
     textLength: text.length,
     rawBytes: raw.length,

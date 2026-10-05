@@ -1,4 +1,5 @@
 import type { InkEngine } from "../engine/index.ts";
+import { fromLogicalPoint } from "../engine/normalize.ts";
 import {
   INK_LOGICAL_WIDTH,
   type InkStroke,
@@ -32,6 +33,12 @@ export interface InjectionResult {
   move: DurationSampler;
   /** 收笔（pointerup）耗时采样 */
   up: DurationSampler;
+  /**
+   * 被画布边界校验静默丢弃的笔画数（整笔的 CSS 坐标全部落在画布外）。
+   * 适配器对越界 pointerdown 直接拒绝（move/up 因无活动指针全部无效）——
+   * 本计数把这些"注定丢弃"的笔画显式化并跳过派发，避免测量数据无告警失真。
+   */
+  droppedStrokes: number;
 }
 
 /**
@@ -41,8 +48,13 @@ export interface InjectionResult {
  * - 每笔重取 canvas.getBoundingClientRect()——进度行渲染/布局变化会推移画布
  *   位置，用陈旧 rect 会把 clientY 系统性偏移；测量必须贴真实布局（与真实
  *   输入受布局影响是同一件事）；
- * - 坐标换算以 INK_LOGICAL_WIDTH 为基准（y 同以宽度为基准，与适配器一致）；
- * - setTool 仅在笔画工具配置变化时下发（含一次 touchAction 写，省掉冗余调用）。
+ * - 坐标换算用引擎 normalize 层的 fromLogicalPoint（与真实记录路径
+ *   toLogicalPoint 同源，y 同以宽度为基准）；
+ * - **画布尺寸约束**：逻辑纸高 × (画布 CSS 宽 / 1000) 不得超过画布 CSS 高，
+ *   否则纸底笔画会整笔越界被丢（计入 droppedStrokes 并在报告可见）；
+ * - setTool 在工具配置变化时下发，且每个进度节流边界重设一次——注入期间
+ *   InkPad 工具栏仍可交互（其禁用条件不含 busy），用户点击会改引擎工具，
+ *   批边界重设让失配至多存活 progressEvery 笔而非整场。
  */
 export async function drivePointerEvents(
   engine: InkEngine,
@@ -54,35 +66,60 @@ export async function drivePointerEvents(
   const down = createDurationSampler();
   const move = createDurationSampler();
   const up = createDurationSampler();
+  let droppedStrokes = 0;
 
   /** 上一次下发的工具配置键（color/weight/tool 全等的字符串指纹） */
   let lastToolKey = "";
   for (let s = 0; s < strokes.length; s++) {
     const stroke = strokes[s];
     if (stroke === undefined) continue;
+    const reportable =
+      s === 0 || (s + 1) % progressEvery === 0 || s === strokes.length - 1;
     const tool = toolConfigFromStroke(stroke);
     const toolKey =
       tool.type === "pen" ? `pen|${stroke.color}|${stroke.weight}` : tool.type;
-    if (toolKey !== lastToolKey) {
+    if (toolKey !== lastToolKey || reportable) {
       engine.setTool(tool);
       lastToolKey = toolKey;
     }
     const rect = canvas.getBoundingClientRect();
-    const scale = rect.width / INK_LOGICAL_WIDTH;
     const toClient = (p: {
       x: number;
       y: number;
     }): {
       clientX: number;
       clientY: number;
-    } => ({
-      clientX: rect.left + p.x * scale,
-      clientY: rect.top + p.y * scale,
-    });
+    } => {
+      const css = fromLogicalPoint(rect.width, p.x, p.y);
+      return { clientX: rect.left + css.x, clientY: rect.top + css.y };
+    };
+    // 整笔越界检测：全部点都落在画布外 → 适配器必拒，跳过派发并计数
+    let minX = Number.POSITIVE_INFINITY;
+    let maxX = Number.NEGATIVE_INFINITY;
+    let minY = Number.POSITIVE_INFINITY;
+    let maxY = Number.NEGATIVE_INFINITY;
+    for (const p of stroke.points) {
+      const x = (p.x * rect.width) / INK_LOGICAL_WIDTH;
+      const y = (p.y * rect.width) / INK_LOGICAL_WIDTH;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+    const fullyOutside =
+      stroke.points.length > 0 &&
+      (maxX < 0 || minX > rect.width || maxY < 0 || minY > rect.height);
+    if (fullyOutside) {
+      droppedStrokes++;
+      if (reportable) {
+        opts.onProgress?.(s + 1, strokes.length);
+        await opts.yieldFrame?.();
+      }
+      continue;
+    }
     const dispatch = (
       phase: "pointerdown" | "pointermove" | "pointerup",
       p: { x: number; y: number; p: number },
-      isUp: boolean,
     ): void => {
       const { clientX, clientY } = toClient(p);
       const sampler =
@@ -94,7 +131,7 @@ export async function drivePointerEvents(
         pointerId: 1,
         pointerType: "pen", // 模拟 Apple Pencil（pressure 走真实压感值）
         isPrimary: true,
-        buttons: isUp ? 0 : 1,
+        buttons: phase === "pointerup" ? 0 : 1,
         pressure: p.p,
         clientX,
         clientY,
@@ -104,15 +141,15 @@ export async function drivePointerEvents(
     for (let i = 0; i < stroke.points.length; i++) {
       const p = stroke.points[i];
       if (!p) continue;
-      dispatch(i === 0 ? "pointerdown" : "pointermove", p, false);
+      dispatch(i === 0 ? "pointerdown" : "pointermove", p);
     }
     const last = stroke.points[stroke.points.length - 1];
-    if (last) dispatch("pointerup", last, true);
+    if (last) dispatch("pointerup", last);
 
-    if (s === 0 || (s + 1) % progressEvery === 0 || s === strokes.length - 1) {
+    if (reportable) {
       opts.onProgress?.(s + 1, strokes.length);
       await opts.yieldFrame?.();
     }
   }
-  return { down, move, up };
+  return { down, move, up, droppedStrokes };
 }

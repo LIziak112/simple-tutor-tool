@@ -168,14 +168,22 @@ livePoints 收集、收笔 commitAdd、InkPad onDocChange 通知与自动加高�
 5. **预测层（T6R.22 触发条件）**：桌面数据不构成触发证据；按方案 §4.2，
    仅当真机实测输入手感不达标且瓶颈定位在采样/绘制时才立项。
 
-## 5. 质量闸门输出（task/T6R-1 分支）
+## 5. 质量闸门输出（task/T6R-1 分支，含 /simplify 与 /code-review 两轮闸门修复后的终态）
 
 - `pnpm lint`：exit 0（20 条 warning，均为测试文件非空断言
   `lint/style/noNonNullAssertion`，无 error；与主干基线同口径）
 - `pnpm typecheck`：exit 0（e2e/contract/grading/md-dsl/server/web 全部 Done）
-- `pnpm test`：exit 0，**Test Files 211 passed (211)，Tests 2436 passed (2436)**
-  （本任务新增 44 项：lab 37＋InkLabPanel 7）
-- `pnpm build`：exit 0（web 构建含 PWA precache 336 entries；server 与包全建）
+- `pnpm test`：exit 0，**Test Files 213 passed (213)，Tests 2444 passed (2444)**
+  （本分支累计新增 52 项：lab 五模块 45＋InkLabPanel 7；初版 44 项 + 两轮
+  质量闸门修复补测 8 项——注入器边界重设/越界丢弃、能力探测 UA 无关性等）
+- `pnpm build`：exit 0（web 构建含 PWA precache；server 与包全建）
+
+**口径变更注记（2026-10-06 两轮闸门后）**：
+① gzipMs 自 simplify 起**不含 UTF-8 encode 耗时**（encode 移出计时区间以省
+32MiB 级双份驻留），§1.4 的 gzip 耗时列为旧口径（含 encode），复核重跑会得到
+系统性偏小的数字，勿误读为性能变化；未尝试压缩的环境 gzipMs 现为精确 0。
+② §1.3 的注入事件处理耗时在进度节流（每 25 笔一报）后测量，批间节奏变化不
+影响单事件计时区间（sampler 只包 dispatchEvent）。
 
 手动验证路径：`pnpm --filter web dev` 打开 `/dev/ink` → ③ 实验室：能力探测
 逐项三态；合成书写台「注入合成笔迹」后核对「引擎实际＝计划」行；预算试验

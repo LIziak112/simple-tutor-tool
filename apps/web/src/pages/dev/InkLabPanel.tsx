@@ -1,12 +1,14 @@
 import { ClipboardCheck, FlaskConical, LoaderCircle, Play } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { INK_CANVAS_SELECTOR } from "@/features/ink/engine/atrament-adapter.ts";
 import {
   create,
   type InkDoc,
   type InkEngine,
 } from "@/features/ink/engine/index.ts";
-// INK_LOGICAL_WIDTH 走纯类型模块（engine/index.ts 在测试里被整体 mock）
+// INK_LOGICAL_WIDTH / INK_CANVAS_SELECTOR 走纯模块（engine/index.ts 在测试里被整体 mock）
 import { INK_LOGICAL_WIDTH } from "@/features/ink/engine/types.ts";
 import { InkPad } from "@/features/ink/InkPad.tsx";
 import {
@@ -14,13 +16,13 @@ import {
   DEFAULT_BUDGET_RUNGS,
   evaluateBudgetRowForDoc,
   firstCrossing,
+  TENTATIVE_ANALYSIS_LOGICAL_HEIGHT,
   TENTATIVE_ANALYSIS_PNG_MAX_BYTES,
 } from "@/features/ink/lab/budget.ts";
 import { probeCapabilities } from "@/features/ink/lab/capabilities.ts";
 import { drivePointerEvents } from "@/features/ink/lab/inject.ts";
 import {
   createDurationSampler,
-  formatBytes,
   type MemorySnapshot,
   measureEncoding,
   observableMemory,
@@ -29,6 +31,7 @@ import {
   buildSyntheticAtramentDoc,
   totalPoints,
 } from "@/features/ink/lab/synthetic-strokes.ts";
+import { formatBytes } from "@/lib/format";
 
 /**
  * T6R.1 隔离实验组件（挂 /dev/ink，不进任何学生/教师功能路径）。
@@ -83,9 +86,10 @@ function memoryLine(
     return "内存：本浏览器不可观测（performance.memory 不存在，属正常）";
   }
   const delta = after.usedJSHeapSize - before.usedJSHeapSize;
+  // formatBytes 对负值返回占位符（字节量语义），差值须先取绝对值再拼符号
   return `内存（usedJSHeapSize）：${formatBytes(before.usedJSHeapSize)} → ${formatBytes(
     after.usedJSHeapSize,
-  )}（Δ ${delta >= 0 ? "+" : ""}${formatBytes(delta)}）`;
+  )}（Δ ${delta >= 0 ? "+" : "-"}${formatBytes(Math.abs(delta))}）`;
 }
 
 // ---------------------------------------------------------------------------
@@ -199,10 +203,6 @@ function CapabilityProbeSection() {
  * 已知限制：合成 PointerEvent 的 getCoalescedEvents() 为空 → 走单点回退路径；
  * 合并采样批次的真实耗时只能真机测（见验证报告）。
  */
-/** 数字输入框样式（两个区块共用，模块级一处维护） */
-const NUM_INPUT_CLASS =
-  "h-11 w-24 rounded-lg border border-border bg-background px-2 text-sm";
-
 function SyntheticBenchSection() {
   const engineRef = useRef<InkEngine | null>(null);
   const padWrapRef = useRef<HTMLDivElement>(null);
@@ -238,6 +238,7 @@ function SyntheticBenchSection() {
    */
   const busyRef = useRef(false);
   async function runBench(measure: () => Promise<void>): Promise<void> {
+    if (busyRef.current) return; // 重入守卫：不依赖按钮 disabled 的重渲染时序
     busyRef.current = true;
     setBusy(true);
     setError(null);
@@ -250,24 +251,30 @@ function SyntheticBenchSection() {
       busyRef.current = false;
       setBusy(false);
       setProgress(null);
+      // 中途失败也复位实时统计（引擎里已有前 k 笔，不能停留在注入前快照）
+      const doc = engineRef.current?.getData();
+      setLiveDoc(doc?.engine === "atrament" ? doc : null);
     }
   }
 
   async function runPointerInjection(): Promise<void> {
     const ink = engineRef.current;
+    const failPrecondition = (message: string): void => {
+      setReport(null); // 前置失败也清旧报告，避免成功报告与错误同屏并存
+      setError(message);
+    };
     if (!ink) {
-      setError("引擎尚未就绪");
+      failPrecondition("引擎尚未就绪");
       return;
     }
-    const canvas = padWrapRef.current?.querySelector<HTMLCanvasElement>(
-      'canvas[data-slot="ink-canvas"]',
-    );
+    const canvas =
+      padWrapRef.current?.querySelector<HTMLCanvasElement>(INK_CANVAS_SELECTOR);
     if (!canvas) {
-      setError("未找到手写画布（引擎未挂载）");
+      failPrecondition("未找到手写画布（引擎未挂载）");
       return;
     }
     if (typeof PointerEvent === "undefined") {
-      setError("当前环境不支持 PointerEvent，无法驱动指针事件");
+      failPrecondition("当前环境不支持 PointerEvent，无法驱动指针事件");
       return;
     }
     await runBench(async () => {
@@ -279,7 +286,7 @@ function SyntheticBenchSection() {
       ink.clear();
       await yieldFrame();
       const memBefore = observableMemory();
-      const { down, move, up } = await drivePointerEvents(
+      const { down, move, up, droppedStrokes } = await drivePointerEvents(
         ink,
         canvas,
         doc.data.strokes,
@@ -304,6 +311,11 @@ function SyntheticBenchSection() {
           `落笔（pointerdown ×${down.sampleCount()}）max ${fmtMs(down.stats()?.max)}；收笔（pointerup ×${up.sampleCount()}）max ${fmtMs(up.stats()?.max)}`,
           `全量重绘（load 注入后文档）：${fmtMs(redraw.stats()?.max)}`,
           memoryLine(memBefore, memAfter),
+          ...(droppedStrokes > 0
+            ? [
+                `⚠ 整笔越界被画布边界校验丢弃：${droppedStrokes} 笔（画布过小或纸高超限，测量样本已失真）`,
+              ]
+            : []),
           "限制：合成 PointerEvent 无合并采样（回退单点路径），合并批次真实耗时须真机测量",
         ].join("\n"),
       );
@@ -313,6 +325,7 @@ function SyntheticBenchSection() {
   async function runLoadInjection(): Promise<void> {
     const ink = engineRef.current;
     if (!ink) {
+      setReport(null);
       setError("引擎尚未就绪");
       return;
     }
@@ -357,37 +370,48 @@ function SyntheticBenchSection() {
       </p>
 
       <div className="flex flex-wrap items-end gap-3">
-        <label className="flex flex-col gap-1 text-xs">
-          注入笔数
-          <input
+        <div className="flex flex-col gap-1 text-xs">
+          <label htmlFor="ink-lab-bench-strokes">注入笔数</label>
+          <Input
+            id="ink-lab-bench-strokes"
             type="number"
             min={0}
             max={5000}
             value={strokeCount}
-            onChange={(e) => setStrokeCount(Number(e.target.value) || 0)}
-            className={NUM_INPUT_CLASS}
+            onChange={(e) =>
+              setStrokeCount(
+                Math.min(5000, Math.max(0, Number(e.target.value) || 0)),
+              )
+            }
+            className="w-24"
           />
-        </label>
-        <label className="flex flex-col gap-1 text-xs">
-          注入每笔点数
-          <input
+        </div>
+        <div className="flex flex-col gap-1 text-xs">
+          <label htmlFor="ink-lab-bench-points">注入每笔点数</label>
+          <Input
+            id="ink-lab-bench-points"
             type="number"
             min={1}
             max={500}
             value={pointsPerStroke}
-            onChange={(e) => setPointsPerStroke(Number(e.target.value) || 1)}
-            className={NUM_INPUT_CLASS}
+            onChange={(e) =>
+              setPointsPerStroke(
+                Math.min(500, Math.max(1, Number(e.target.value) || 1)),
+              )
+            }
+            className="w-24"
           />
-        </label>
-        <label className="flex flex-col gap-1 text-xs">
-          随机种子
-          <input
+        </div>
+        <div className="flex flex-col gap-1 text-xs">
+          <label htmlFor="ink-lab-bench-seed">随机种子</label>
+          <Input
+            id="ink-lab-bench-seed"
             type="number"
             value={seed}
             onChange={(e) => setSeed(Number(e.target.value) || 0)}
-            className={NUM_INPUT_CLASS}
+            className="w-24"
           />
-        </label>
+        </div>
         <Button
           type="button"
           className="h-11"
@@ -481,6 +505,8 @@ function BudgetSection({ rungs }: { rungs: readonly number[] }) {
   const [pointsPerStroke, setPointsPerStroke] = useState(40);
   const [seed, setSeed] = useState(20261005);
   const [running, setRunning] = useState(false);
+  /** 分析引擎懒建：首次运行才创建 1000×3000 画布（DPR2 下约 48MB 位图），不运行为省内存——本页正是内存压力实测场地 */
+  const [labReady, setLabReady] = useState(false);
   const [progress, setProgress] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [rows, setRows] = useState<BudgetRunRow[] | null>(null);
@@ -491,20 +517,31 @@ function BudgetSection({ rungs }: { rungs: readonly number[] }) {
   const analysisEngineRef = useRef<InkEngine | null>(null);
 
   useEffect(() => {
+    if (!labReady) return; // 懒建：宿主未渲染时 effect 短路
     const host = analysisHostRef.current;
     if (!host) return;
     // 逻辑宽 1000px 的分析图渲染（方案 §7 暂定）：宿主 CSS 宽正好 1000
     analysisEngineRef.current = create(host, {
       engine: "atrament",
-      height: 3000,
+      height: TENTATIVE_ANALYSIS_LOGICAL_HEIGHT,
     });
     return () => {
       analysisEngineRef.current?.destroy();
       analysisEngineRef.current = null;
     };
-  }, []);
+  }, [labReady]);
 
   async function runExperiment(): Promise<void> {
+    if (!labReady) {
+      setLabReady(true);
+      // 等渲染 + effect 建好引擎（两拍：一拍渲染、一拍 effect 后的布局）
+      await yieldFrame();
+      await yieldFrame();
+      if (analysisEngineRef.current === null) {
+        setError("分析图引擎尚未就绪，请重试");
+        return;
+      }
+    }
     setRunning(true);
     setError(null);
     setRows(null);
@@ -520,7 +557,7 @@ function BudgetSection({ rungs }: { rungs: readonly number[] }) {
           seed,
           strokeCount,
           pointsPerStroke,
-          paperHeightLogical: 3000, // 方案 §4.3 首版纸高上限
+          paperHeightLogical: TENTATIVE_ANALYSIS_LOGICAL_HEIGHT, // 方案 §7 分析图暂定规格
         });
         const row = await evaluateBudgetRowForDoc(doc);
         const engine = analysisEngineRef.current;
@@ -577,26 +614,32 @@ function BudgetSection({ rungs }: { rungs: readonly number[] }) {
       </p>
 
       <div className="flex flex-wrap items-end gap-3">
-        <label className="flex flex-col gap-1 text-xs">
-          预算每笔点数
-          <input
+        <div className="flex flex-col gap-1 text-xs">
+          <label htmlFor="ink-lab-budget-points">预算每笔点数</label>
+          <Input
+            id="ink-lab-budget-points"
             type="number"
             min={1}
             max={500}
             value={pointsPerStroke}
-            onChange={(e) => setPointsPerStroke(Number(e.target.value) || 1)}
-            className={NUM_INPUT_CLASS}
+            onChange={(e) =>
+              setPointsPerStroke(
+                Math.min(500, Math.max(1, Number(e.target.value) || 1)),
+              )
+            }
+            className="w-24"
           />
-        </label>
-        <label className="flex flex-col gap-1 text-xs">
-          预算随机种子
-          <input
+        </div>
+        <div className="flex flex-col gap-1 text-xs">
+          <label htmlFor="ink-lab-budget-seed">预算随机种子</label>
+          <Input
+            id="ink-lab-budget-seed"
             type="number"
             value={seed}
             onChange={(e) => setSeed(Number(e.target.value) || 0)}
-            className={NUM_INPUT_CLASS}
+            className="w-24"
           />
-        </label>
+        </div>
         <Button
           type="button"
           className="h-11"
@@ -612,18 +655,20 @@ function BudgetSection({ rungs }: { rungs: readonly number[] }) {
         </Button>
       </div>
 
-      {/* 分析图离屏宿主：不可见但参与布局，宽度＝逻辑宽常量（非魔法数） */}
-      <div
-        aria-hidden
-        ref={analysisHostRef}
-        style={{
-          position: "absolute",
-          left: "-9999px",
-          top: "0",
-          width: `${INK_LOGICAL_WIDTH}px`,
-          height: "3000px",
-        }}
-      />
+      {/* 分析图离屏宿主：懒建（首次运行才挂载），不可见但参与布局 */}
+      {labReady && (
+        <div
+          aria-hidden
+          ref={analysisHostRef}
+          style={{
+            position: "absolute",
+            left: "-9999px",
+            top: "0",
+            width: `${INK_LOGICAL_WIDTH}px`,
+            height: `${TENTATIVE_ANALYSIS_LOGICAL_HEIGHT}px`,
+          }}
+        />
+      )}
 
       {progress && (
         <p className="flex min-h-6 items-center gap-2 text-xs tabular-nums text-muted-foreground">
@@ -674,7 +719,10 @@ function BudgetSection({ rungs }: { rungs: readonly number[] }) {
               </thead>
               <tbody className="divide-y divide-border">
                 {rows.map((row) => (
-                  <tr key={row.strokes} className="tabular-nums">
+                  <tr
+                    key={`${row.strokes}-${row.points}`}
+                    className="tabular-nums"
+                  >
                     <td className="px-2 py-1.5">{row.strokes}</td>
                     <td className="px-2 py-1.5">{row.points}</td>
                     <td className="px-2 py-1.5">{formatBytes(row.rawBytes)}</td>
@@ -764,7 +812,7 @@ function buildBudgetSummary(
   }
   const maxPng = rows.reduce((m, r) => Math.max(m, r.pngBytes), 0);
   lines.push(
-    `分析图（逻辑宽 1000px、纸高 3000）最大 PNG：${formatBytes(maxPng)}（桌面参考，真机待测）`,
+    `分析图（逻辑宽 ${INK_LOGICAL_WIDTH}px、纸高 ${TENTATIVE_ANALYSIS_LOGICAL_HEIGHT}）最大 PNG：${formatBytes(maxPng)}（桌面参考，真机待测）`,
   );
   if (stoppedEarly) {
     lines.push("三条预算线均已触达，更大阶梯已跳过");
@@ -845,6 +893,27 @@ function persistChecklist(entries: readonly ChecklistEntry[]): void {
 
 function DeviceChecklistSection() {
   const [entries, setEntries] = useState<ChecklistEntry[]>(loadChecklist);
+  // 备注逐键同步写 localStorage 会在慢设备卡输入手感：防抖 500ms，卸载前冲刷
+  const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const entriesRef = useRef(entries);
+  entriesRef.current = entries;
+  useEffect(() => {
+    return () => {
+      if (persistTimerRef.current !== null) {
+        clearTimeout(persistTimerRef.current);
+      }
+      persistChecklist(entriesRef.current);
+    };
+  }, []);
+  const schedulePersist = (next: readonly ChecklistEntry[]): void => {
+    if (persistTimerRef.current !== null) {
+      clearTimeout(persistTimerRef.current);
+    }
+    persistTimerRef.current = setTimeout(() => {
+      persistTimerRef.current = null;
+      persistChecklist(next);
+    }, 500);
+  };
 
   const doneCount = entries.filter((e) => e.done).length;
 
@@ -855,7 +924,16 @@ function DeviceChecklistSection() {
       i === index ? { ...entry, ...patch } : entry,
     );
     setEntries(next);
-    persistChecklist(next);
+    if (patch.done !== undefined) {
+      // 勾选低频：立即持久化（并取消待写的防抖，避免旧数据回写覆盖）
+      if (persistTimerRef.current !== null) {
+        clearTimeout(persistTimerRef.current);
+        persistTimerRef.current = null;
+      }
+      persistChecklist(next);
+    } else {
+      schedulePersist(next);
+    }
   }
 
   return (

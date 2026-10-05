@@ -43,12 +43,15 @@ export function probeCapabilities(): CapabilitySnapshot {
         })
       | null;
     if (ctx) {
-      canvasDesynchronized =
-        typeof ctx.getContextAttributes === "function"
-          ? ctx.getContextAttributes().desynchronized
-            ? "yes"
-            : "no"
-          : "unknown";
+      if (typeof ctx.getContextAttributes === "function") {
+        const attrs = ctx.getContextAttributes();
+        canvasDesynchronized =
+          typeof attrs.desynchronized === "boolean"
+            ? attrs.desynchronized
+              ? "yes"
+              : "no"
+            : "unknown"; // 返回对象缺键：探测不到 ≠ 明确不支持
+      }
     }
   } catch {
     // 探测本身失败：保持"未知"，不抛错

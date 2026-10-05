@@ -7,12 +7,13 @@ import type {
   InkEngineKind,
 } from "@/features/ink/engine/index.ts";
 import { InkPad } from "@/features/ink/InkPad.tsx";
+import { totalPoints } from "@/features/ink/lab/synthetic-strokes.ts";
 import { InkLabPanel } from "./InkLabPanel.tsx";
 
 /**
  * /dev/ink 手写开发页（T2.7，架构 §5.4「Phase 2 第一步先做真机试验」的实验场）。
  *
- * 两个区块：
+ * 三个区块：
  * ① Atrament 页内答题区（默认形态）
  * ② Excalidraw 全屏作答（按钮进入；懒加载，只在打开时下载库 chunk）
  *
@@ -30,7 +31,7 @@ export default function InkDevPage() {
         <div className="mx-auto flex max-w-4xl flex-wrap items-baseline gap-3">
           <h1 className="text-sm font-semibold">手写开发页 /dev/ink</h1>
           <span className="text-xs text-muted-foreground">
-            T2.7 真机调手感的实验场：两个区块分别试写；iPad 调试可加 ?debug=1
+            T2.7 真机调手感的实验场：三个区块分别试写；iPad 调试可加 ?debug=1
           </span>
         </div>
       </header>
@@ -283,7 +284,7 @@ function summarize(doc: InkDoc | null): {
     const strokes = (doc as InkDoc<"atrament">).data.strokes;
     return {
       strokes: strokes.length,
-      points: strokes.reduce((n, s) => n + s.points.length, 0),
+      points: totalPoints(doc as InkDoc<"atrament">),
       bytes: JSON.stringify(doc).length,
     };
   }
