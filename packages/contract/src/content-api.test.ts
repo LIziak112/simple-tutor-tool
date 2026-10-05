@@ -87,7 +87,6 @@ describe("importCommitRequestSchema", () => {
 
 describe("importPreviewDataSchema / importPreviewOkSchema", () => {
   const data = {
-    version: 1,
     summary: {
       unitCount: 1,
       lectureCount: 0,
@@ -97,17 +96,8 @@ describe("importPreviewDataSchema / importPreviewOkSchema", () => {
     issues: [],
   };
 
-  it("v1/v2 版本号与摘要形态通过", () => {
+  it("摘要形态通过", () => {
     expect(importPreviewDataSchema.safeParse(data).success).toBe(true);
-    expect(
-      importPreviewDataSchema.safeParse({ ...data, version: 2 }).success,
-    ).toBe(true);
-  });
-
-  it("版本号只允许 1|2", () => {
-    expect(
-      importPreviewDataSchema.safeParse({ ...data, version: 3 }).success,
-    ).toBe(false);
   });
 
   it("issues 携带 LintIssue 数组（含 warning 级）", () => {

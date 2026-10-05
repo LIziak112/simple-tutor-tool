@@ -31,7 +31,8 @@ import {
  * 内容导入接口集成测试（T1.10，app.request() 直调路由 + 内存库）：
  * 未登录 401；参数错误 400；preview 200 且不写库；commit 200 且符合契约；
  * 再导入同文件 version 递增（经接口返回 updated）；有 error 时 422 LINT_ERROR（含 _issues）；
- * v1 文档可导入；courseId 不存在 404。
+ * v1 旧格式不再可导入（preview 报 MISSING_FRONTMATTER、commit 422，2026-10-05 移除
+ * v1 兼容层）；courseId 不存在 404。
  * T2A.3 追加：preview 动作清单（D19）与 warning（D18）、preview-batch 跨文件冲突
  * （D20）、413 IMPORT_TOO_LARGE 三档上限 + content-length 粗防线、folderName
  * find-or-create、addToCourse、回收站恢复预览标注、批次回看。
@@ -48,7 +49,9 @@ function loadSample(relative: string): string {
 }
 
 const PRACTICE_MD = loadSample("v2/练习样例.md");
-const V1_MD = loadSample("v1/示例练习.md");
+/** v1 旧格式片段（无 frontmatter，题号行 + 题型标记 + ANSWER 注释） */
+const V1_LEGACY_MD =
+  "#### 题 1（★）\n【题型】判断\n判断：1+1=2。\n\n<!-- ANSWER: 正确 -->\n";
 const BROKEN_MD = `---
 kind: practice
 unit: 练习
@@ -181,20 +184,26 @@ describe("POST /api/teacher/import/preview", () => {
     expect(db.select().from(imports).all()).toHaveLength(0);
   });
 
-  it("v1 文档 preview 返回 version 1", async () => {
+  it("v1 旧格式 preview：不再自动转换，返回 MISSING_FRONTMATTER error（2026-10-05 移除 v1 兼容层）", async () => {
     const { app, cookie } = await makeTeacherApp();
     const res = await postJson(
       app,
       "/api/teacher/import/preview",
-      { markdown: V1_MD, filename: "示例练习.md" },
+      { markdown: V1_LEGACY_MD, filename: "示例练习.md" },
       cookie,
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      data: { version: number; summary: { questionCount: number } };
+      data: {
+        summary: { questionCount: number };
+        issues: Array<{ code: string; level: string }>;
+      };
     };
-    expect(body.data.version).toBe(1);
-    expect(body.data.summary.questionCount).toBe(8);
+    expect(
+      body.data.issues.some(
+        (i) => i.code === "MISSING_FRONTMATTER" && i.level === "error",
+      ),
+    ).toBe(true);
   });
 });
 
@@ -261,20 +270,18 @@ describe("POST /api/teacher/import/commit", () => {
     expect(db.select().from(imports).all()).toHaveLength(0);
   });
 
-  it("v1 文档导入成功：8 题落库（验收 3）", async () => {
+  it("v1 旧格式 commit：422 LINT_ERROR 拒绝且零写入（验收 3 修订）", async () => {
     const { app, db, cookie } = await makeTeacherApp();
     const res = await postJson(
       app,
       "/api/teacher/import/commit",
-      { markdown: V1_MD, filename: "示例练习.md" },
+      { markdown: V1_LEGACY_MD, filename: "示例练习.md" },
       cookie,
     );
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as {
-      data: { questions: { inserted: number; updated: number } };
-    };
-    expect(body.data.questions).toEqual({ inserted: 8, updated: 0 });
-    expect(db.select().from(questions).all()).toHaveLength(8);
+    expect(res.status).toBe(422);
+    expect(((await res.json()) as ApiErr).error).toBe("LINT_ERROR");
+    expect(db.select().from(questions).all()).toHaveLength(0);
+    expect(db.select().from(imports).all()).toHaveLength(0);
   });
 
   it("courseId 不存在返回 404 COURSE_NOT_FOUND", async () => {

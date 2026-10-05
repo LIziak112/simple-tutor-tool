@@ -30,12 +30,10 @@ import {
   IMPORT_MAX_FILES_PER_BATCH,
 } from "@tutor/contract";
 import {
-  detectVersion,
   LECTURE_PREFIX_LINES,
   lintDocument,
   SINGLE_QUESTION_PREFIX_LINES,
   shiftLintIssuesToFragment,
-  v1ToV2,
   wrapLectureMd,
   wrapSingleQuestionMd,
 } from "@tutor/md-dsl";
@@ -68,8 +66,8 @@ import {
 /**
  * ContentService（T1.10 导入、T1.11 内容树、T1.12 单条编辑/删除/排序/课程 CRUD）
  * 的业务层。路由只做鉴权/校验/包装，本模块承载：
- * - 版本识别与统一 lint：detectVersion → v1 则 v1ToV2 转换（原文照旧留档）→ 一律走
- *   v2 lintDocument（§5.1 末段「v1 兼容」：导入时自动识别）；
+ * - 统一 lint：一律走 v2 lintDocument（2026-10-05 起不再支持 v1 旧格式自动转换，
+ *   v1 特征文档因无 frontmatter 被 MISSING_FRONTMATTER 拒绝，见架构文档 §10 决策 10）；
  * - preview：纯读，不写库（dry-run 预览，§5.1）；T2A.3 起输出动作清单（D19）与
  *   导入 warning（D18/D19），计算逻辑在 import-actions.buildImportPlan（纯函数复用）；
  * - previewImportBatch（T2A.3，D20）：每文件预览 + 跨文件冲突（同 unit id / 同目标
@@ -112,38 +110,32 @@ import {
  * 题目/考点关联/讲义/单元，对外响应形状不变）。
  */
 
-// ---------- 版本识别与统一 lint ----------
+// ---------- 统一 lint ----------
 
-/** 导入分析的中间产物：识别版本 + lint 结果（parsed.issues 与 issues 同源全量） */
+/** 导入分析的中间产物：lint 结果（parsed.issues 与 issues 同源全量） */
 interface ImportAnalysis {
-  readonly version: 1 | 2;
   readonly issues: LintIssue[];
   readonly parsed: ParsedDocument;
 }
 
 /**
- * 识别版本并做完整 lint。
- * v1 文档先经 v1ToV2 转换再 lint（转换保证 0 error）；issues 行号对 v1 指向转换后的
- * v2 文本（教师侧修复时以 lint 输出为准）。rawMd 始终保留老师提交的原文。
+ * 对文档做完整 lint（v2 唯一口径）。
  *
  * fallbackUnitId（内容模型与导入规范化方案 §2）：frontmatter 未声明 unit 时单元名
- * 锚定文件名。v1 转换产物恒有 unit（v1ToV2 总是写 unit:），故 fallback 只对 v2
- * 未声明 unit 的文档生效——转换后同样传入，兜底无害。
+ * 锚定文件名。
  *
  * T4.6 起导出：MCP lint_markdown 工具复用本函数与 summarizeParsed（与导入预览
- * 同一份 v1 兼容与 lint 口径，避免 MCP 侧另写一份漂移）。
+ * 同一份 lint 口径，避免 MCP 侧另写一份漂移）。
  */
 export function analyzeImport(
   markdown: string,
   fallbackUnitId?: string,
 ): ImportAnalysis {
-  const version = detectVersion(markdown);
-  const v2Md = version === 1 ? v1ToV2(markdown) : markdown;
   const { parsed, issues } = lintDocument(
-    v2Md,
+    markdown,
     fallbackUnitId === undefined ? {} : { fallbackUnitId },
   );
-  return { version, issues, parsed };
+  return { issues, parsed };
 }
 
 /**
@@ -211,14 +203,13 @@ function buildPreview(
   fallbackUnitId?: string,
   dataDir?: string,
 ): ImportPreviewData {
-  const { version, issues, parsed } = analyzeImport(markdown, fallbackUnitId);
+  const { issues, parsed } = analyzeImport(markdown, fallbackUnitId);
   const plan = buildImportPlan({
     parsed,
     folderId,
     snapshot: loadLibrarySnapshot(db, new Date().toISOString(), teacherId),
   });
   return {
-    version,
     summary: summarizeParsed(parsed),
     issues: [...issues, ...mediaImageExistenceIssues(markdown, dataDir)],
     actions: [...plan.actions],
@@ -433,7 +424,7 @@ export function previewImportBatch(
         : folderToCreate
           ? subdirNameOf(file.path)
           : null;
-    const { version, issues, parsed } = analyzeImport(
+    const { issues, parsed } = analyzeImport(
       file.markdown,
       // 单元名锚定文件名（方案 §2）：批量路径取相对路径的 basename
       fallbackUnitIdOf(file.path),
@@ -445,7 +436,6 @@ export function previewImportBatch(
       folderName,
       folderToCreate,
       preview: {
-        version,
         summary: summarizeParsed(parsed),
         issues: [
           ...issues,

@@ -115,7 +115,6 @@ unit: 练习四
 
 function previewData(overrides: Partial<ImportPreviewData>): ImportPreviewData {
   return {
-    version: 2,
     summary: {
       unitCount: 1,
       lectureCount: 0,

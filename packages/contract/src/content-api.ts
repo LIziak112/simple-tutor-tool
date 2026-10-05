@@ -39,8 +39,7 @@ export const IMPORT_BATCH_BODY_LIMIT = 30 * 1024 * 1024;
 
 /**
  * POST /api/teacher/import/preview 请求体。
- * markdown 为文档原文（v1/v2 均可，服务端 detectVersion 自动识别）；filename 仅用于
- * imports 留档与前端展示，不参与解析。
+ * markdown 为 v2 DSL 文档原文；filename 仅用于 imports 留档与前端展示，不参与解析。
  * T2A.3 扩展（D17/D18）：folderId = 目标文件夹（null / 缺省 = 未归类，不再自动创建
  * 「默认课程」）；sourcePath = 批量导入时的相对路径（单文件粘贴无路径，可缺省）。
  */
@@ -155,12 +154,10 @@ export const importPreviewWarningSchema = z.object({
   message: z.string().min(1),
 });
 
-/** POST /api/teacher/import/preview 响应 data：识别版本 + 摘要 + 全部 lint issues（不写库） */
+/** POST /api/teacher/import/preview 响应 data：摘要 + 全部 lint issues（不写库） */
 export const importPreviewDataSchema = z.object({
-  /** detectVersion 识别结果；v1 文档服务端内部转 v2 处理，但版本号如实返回 */
-  version: z.union([z.literal(1), z.literal(2)]),
   summary: importSummarySchema,
-  /** lintDocument 的全部 issue（error + warning）；issue 行号对 v1 指向转换后的 v2 文本 */
+  /** lintDocument 的全部 issue（error + warning） */
   issues: z.array(lintIssueSchema),
   /** 动作清单（D19；T2A.3 起提供，兼容旧消费者解析时缺省为空数组） */
   actions: z.array(importActionSchema).default([]),

@@ -360,7 +360,6 @@ describe("MCP 工具（SDK 客户端逐个断言，T4.6 D23）", () => {
       arguments: { markdown: BROKEN_MD },
     });
     const data = JSON.parse(textOf(broken)) as {
-      version: number;
       issues: Array<{ level: string; line: number; message: string }>;
     };
     expect(data.issues.some((i) => i.level === "error")).toBe(true);
@@ -373,11 +372,9 @@ describe("MCP 工具（SDK 客户端逐个断言，T4.6 D23）", () => {
       arguments: { markdown: SAMPLE_PRACTICE },
     });
     const cleanData = JSON.parse(textOf(clean)) as {
-      version: number;
       summary: { questionCount: number };
       issues: Array<{ level: string }>;
     };
-    expect(cleanData.version).toBe(2);
     expect(cleanData.summary.questionCount).toBeGreaterThan(0);
     expect(cleanData.issues.some((i) => i.level === "error")).toBe(false);
     await client.close();
@@ -653,7 +650,7 @@ describe("MCP 工具（SDK 客户端逐个断言，T4.6 D23）", () => {
     ).toBe(false);
   });
 
-  it("讲义样例可经 lint（v1/v2 兼容口径与导入预览同源）", async () => {
+  it("讲义样例可经 lint（口径与导入预览同源）", async () => {
     const env = await makeEnv();
     const client = await connectClient(env, env.tokenA);
     const result = await client.callTool({

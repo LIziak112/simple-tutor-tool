@@ -145,7 +145,6 @@ describe("SharedPage 预览抽屉与导入", () => {
   it("点「导入到我的资源库」→ 抽屉展示统计与动作清单 → 确认导入成功", async () => {
     apiMocks.fetchSharedFiles.mockResolvedValue(fileList());
     apiMocks.previewSharedFile.mockResolvedValue({
-      version: 2,
       summary: {
         unitCount: 1,
         lectureCount: 0,
@@ -196,7 +195,6 @@ describe("SharedPage 预览抽屉与导入", () => {
   it("有 error 级 lint 时禁用「导入到我的资源库」并显示错误说明", async () => {
     apiMocks.fetchSharedFiles.mockResolvedValue(fileList());
     apiMocks.previewSharedFile.mockResolvedValue({
-      version: 2,
       summary: {
         unitCount: 1,
         lectureCount: 0,
@@ -224,7 +222,6 @@ describe("SharedPage 查看预览抽屉", () => {
   it("点「预览」→ 抽屉渲染原文内容 → 「导入到我的资源库」切换到导入抽屉", async () => {
     apiMocks.fetchSharedFiles.mockResolvedValue(fileList());
     apiMocks.previewSharedFile.mockResolvedValue({
-      version: 2,
       summary: {
         unitCount: 1,
         lectureCount: 0,
@@ -263,7 +260,6 @@ describe("SharedPage 查看预览抽屉", () => {
   it("预览：有 error 级 lint 时提示导入会被拒绝，内容仍可查看", async () => {
     apiMocks.fetchSharedFiles.mockResolvedValue(fileList());
     apiMocks.previewSharedFile.mockResolvedValue({
-      version: 2,
       summary: {
         unitCount: 1,
         lectureCount: 0,

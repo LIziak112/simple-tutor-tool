@@ -26,6 +26,7 @@ import {
 import { HttpError } from "../lib/http-error.ts";
 import { createAssignment } from "./assignment-service.ts";
 import {
+  analyzeImport,
   commitImport,
   createCourse,
   previewImport,
@@ -36,10 +37,11 @@ import { createStudent } from "./student-service.ts";
 
 /**
  * ContentService 服务层测试（T1.10 验收项，createTestDb 内存库）：
- * - preview 不写库；v1/v2 版本识别与摘要；
+ * - preview 不写库；摘要正确；
  * - commit：导入 → 再导入同文件题目 version 递增且 id 不变（验收 1）；
  * - 有 error 时 commit 抛 LINT_ERROR（422，验收 2）；
- * - v1 文档可导入：经 toV2 落库、题数正确、再导入 version+1（验收 3）；
+ * - v1 旧格式不再自动转换：按 v2 lint 直接报 MISSING_FRONTMATTER（2026-10-05
+ *   移除 v1 兼容层后的新口径，见架构文档 §10 决策 10）；
  * - mixed 文档：讲义 + 单元都入、lectureTitle 关联；讲义按标题替换；
  * - T2A.3：无 folderId/courseId 的导入落「未归类」、不再自动创建「默认课程」；
  *   courseId 不存在报错；跨单元同 id 更新；软删同 id 恢复。
@@ -56,7 +58,6 @@ function loadSample(relative: string): string {
 const PRACTICE_MD = loadSample("v2/练习样例.md");
 const LECTURE_MD = loadSample("v2/讲义样例.md");
 const MIXED_MD = loadSample("v2/混合样例.md");
-const V1_MD = loadSample("v1/示例练习.md");
 
 /** 练习样例 8 题的题型分布（缺省 id `练习四-N`，第 7 题显式 id=p4-q7） */
 const PRACTICE_TYPE_DISTRIBUTION = {
@@ -126,13 +127,12 @@ function allQuestionIds(db: Db): Set<string> {
 }
 
 describe("previewImport（不写库）", () => {
-  it("v2 练习样例：version 2、摘要正确、无 error；库仍为空", () => {
+  it("v2 练习样例：摘要正确、无 error；库仍为空", () => {
     const db = createTestDb();
     const data: ImportPreviewData = previewImport(db, TEST_TEACHER_ID, {
       markdown: PRACTICE_MD,
       filename: "练习样例.md",
     });
-    expect(data.version).toBe(2);
     expect(data.summary).toEqual({
       unitCount: 1,
       lectureCount: 0,
@@ -151,16 +151,23 @@ describe("previewImport（不写库）", () => {
     expect(db.select().from(imports).all()).toHaveLength(0);
   });
 
-  it("v1 示例练习：version 1、题数 8", () => {
+  it("v1 旧格式不再自动转换：按 v2 lint 直接报 MISSING_FRONTMATTER error（2026-10-05 移除 v1 兼容层）", () => {
     const db = createTestDb();
     const data = previewImport(db, TEST_TEACHER_ID, {
-      markdown: V1_MD,
-      filename: "示例练习.md",
+      markdown:
+        "#### 题 1（★）\n【题型】判断\n判断：1+1=2。\n\n<!-- ANSWER: 正确 -->\n",
+      filename: "旧格式练习.md",
     });
-    expect(data.version).toBe(1);
-    expect(data.summary.unitCount).toBe(1);
-    expect(data.summary.questionCount).toBe(8);
-    expect(data.issues.filter((i) => i.level === "error")).toHaveLength(0);
+    expect(
+      data.issues.some(
+        (i) => i.code === "MISSING_FRONTMATTER" && i.level === "error",
+      ),
+    ).toBe(true);
+    // 纯函数口径同源：analyzeImport 与 preview 同一结果
+    const { issues } = analyzeImport(
+      "#### 题 1（★）\n【题型】判断\n判断：1+1=2。\n\n<!-- ANSWER: 正确 -->\n",
+    );
+    expect(issues.some((i) => i.code === "MISSING_FRONTMATTER")).toBe(true);
     expect(db.select().from(imports).all()).toHaveLength(0);
   });
 
@@ -170,7 +177,6 @@ describe("previewImport（不写库）", () => {
       markdown: MIXED_MD,
       filename: "混合样例.md",
     });
-    expect(data.version).toBe(2);
     expect(data.summary).toEqual({
       unitCount: 1,
       lectureCount: 2,
@@ -277,18 +283,6 @@ describe("导入单元名锚定文件名（内容模型与导入规范化方案 
       entry?.preview.issues.some((i) => i.code === "UNIT_FROM_FALLBACK"),
     ).toBe(true);
     expect(entry?.hasError).toBe(false);
-  });
-
-  it("v1 文档：转换产物恒带 unit（v1ToV2 总是写 unit:），fallback 不生效——兜底无害", () => {
-    const db = createTestDb();
-    const data = previewImport(db, TEST_TEACHER_ID, {
-      markdown: V1_MD,
-      filename: "别的名.md",
-    });
-    expect(data.issues.some((i) => i.code === "UNIT_FROM_FALLBACK")).toBe(
-      false,
-    );
-    expect(data.actions[0]).toMatchObject({ unitId: "练习四" });
   });
 
   it("commit：filename 兜底的单元名真正落库（units.id/title = 文件名去扩展名），缺省题目 id 前缀随之", () => {
@@ -463,74 +457,13 @@ describe("commitImport 基本路径（v2 练习样例）", () => {
       filename: "a.md",
     });
     const second = commitImport(db, TEST_TEACHER_ID, {
-      markdown: V1_MD,
+      markdown: MIXED_MD,
       filename: "b.md",
     });
     expect(db.select().from(courses).all()).toHaveLength(0);
     expect(first.courseId).toBeNull();
     expect(second.courseId).toBeNull();
     expect(db.select().from(libraryFolders).all()).toHaveLength(0);
-  });
-});
-
-describe("commitImport：v1 文档（验收 3）", () => {
-  it("v1 原文经 toV2 落库：单元 练习四、8 题、知识点归一；imports.rawMd 存 v1 原文", () => {
-    const db = createTestDb();
-    const preview = previewImport(db, TEST_TEACHER_ID, {
-      markdown: V1_MD,
-      filename: "示例练习.md",
-    });
-    expect(preview.version).toBe(1);
-
-    const report = commitImport(db, TEST_TEACHER_ID, {
-      markdown: V1_MD,
-      filename: "示例练习.md",
-    });
-    expect(report.questions).toEqual({ inserted: 8, updated: 0 });
-    expect(report.units[0]?.id).toBe("练习四");
-
-    const rows = db.select().from(questions).all();
-    expect(rows).toHaveLength(8);
-    expect(rows.every((r) => r.version === 1 && r.unitId === "练习四")).toBe(
-      true,
-    );
-    // v1 题目 id：{单元id}-{题号}
-    expect(allQuestionIds(db)).toEqual(
-      new Set([
-        "练习四-1",
-        "练习四-2",
-        "练习四-3",
-        "练习四-4",
-        "练习四-5",
-        "练习四-6",
-        "练习四-7",
-        "练习四-8",
-      ]),
-    );
-    // 知识点同名归一（示例练习 7 个不同考点、8 条关联）
-    expect(db.select().from(knowledgePoints).all()).toHaveLength(7);
-    expect(db.select().from(questionKnowledge).all()).toHaveLength(8);
-
-    // 留档的是 v1 原文（不是转换后的 v2 文本）
-    const importRow = db.select().from(imports).all()[0];
-    expect(importRow?.rawMd).toBe(V1_MD);
-    expect(importRow?.kind).toBe("practice");
-  });
-
-  it("再导入同一 v1 文件：题数不变、version+1、id 不变", () => {
-    const db = createTestDb();
-    commitImport(db, TEST_TEACHER_ID, {
-      markdown: V1_MD,
-      filename: "示例练习.md",
-    });
-    const second = commitImport(db, TEST_TEACHER_ID, {
-      markdown: V1_MD,
-      filename: "示例练习.md",
-    });
-    expect(second.questions).toEqual({ inserted: 0, updated: 8 });
-    const rows = db.select().from(questions).all();
-    expect(rows).toHaveLength(8);
-    expect(rows.every((r) => r.version === 2)).toBe(true);
   });
 });
 

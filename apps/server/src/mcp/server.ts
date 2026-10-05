@@ -197,16 +197,15 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     "lint_markdown",
     {
       description:
-        "校验一份内容 Markdown（练习 / 讲义 / 混合文档；v1 旧格式自动兼容转换），返回版本识别、解析摘要与全部 lint 问题（error/warning 级别、行列、错误码、中文说明）。生成内容后请先用本工具校验，有 error 再修正，通过后导入。",
+        "校验一份内容 Markdown（练习 / 讲义 / 混合文档，v2 DSL），返回解析摘要与全部 lint 问题（error/warning 级别、行列、错误码、中文说明）。生成内容后请先用本工具校验，有 error 再修正，通过后导入。",
       inputSchema: {
         markdown: z.string().min(1).describe("待校验的 Markdown 全文"),
       },
     },
     guard(({ markdown }) => {
-      // 与导入预览同一份口径（analyzeImport：v1 兼容 + fallback 锚定 + lintDocument）
-      const { version, issues, parsed } = analyzeImport(markdown, "mcp-import");
+      // 与导入预览同一份口径（analyzeImport：fallback 锚定 + lintDocument）
+      const { issues, parsed } = analyzeImport(markdown, "mcp-import");
       return jsonContent({
-        version,
         summary: summarizeParsed(parsed),
         issues,
       });

@@ -12,7 +12,7 @@ import { createTestDb, createTestDir } from "../db/test-utils.ts";
 
 /**
  * 内容树接口集成测试（T1.11，app.request() 直调路由 + 内存库）：
- * 未登录 401；未导入空树；导入三份 v2 样例 + v1 样例后的树结构与合并语义断言；
+ * 未登录 401；未导入空树；导入三份 v2 样例后的树结构与合并语义断言；
  * 软删题目不出现。
  */
 
@@ -30,7 +30,6 @@ const SAMPLES = [
   { markdown: loadSample("v2/练习样例.md"), filename: "练习样例.md" },
   { markdown: loadSample("v2/讲义样例.md"), filename: "讲义样例.md" },
   { markdown: loadSample("v2/混合样例.md"), filename: "混合样例.md" },
-  { markdown: loadSample("v1/示例练习.md"), filename: "示例练习.md" },
 ] as const;
 
 /** 组装被测应用并完成教师 setup，返回 app、库与登录 Cookie */
@@ -129,7 +128,7 @@ describe("GET /api/teacher/content", () => {
     expect(body.data.courses).toEqual([]);
   });
 
-  it("导入三份 v2 样例 + v1 样例后：默认课程下 2 讲义、2 单元，题目摘要结构正确", async () => {
+  it("导入三份 v2 样例后：默认课程下 2 讲义、2 单元，题目摘要结构正确", async () => {
     const { tree } = await importAllAndGetTree();
 
     // 四份文档均按 courseId 兼容路径导入 → 全部落到显式创建的「默认课程」
@@ -149,7 +148,7 @@ describe("GET /api/teacher/content", () => {
       expect(Object.keys(lecture).sort()).toEqual(["id", "title", "updatedAt"]);
     }
 
-    // 单元：练习四（v2 练习样例 + v1 样例合并）与随堂练习（混合样例）
+    // 单元：练习四（练习样例）与随堂练习（混合样例）
     expect(course.units.map((u) => u.id)).toEqual(["练习四", "随堂练习"]);
 
     const unit = course.units[0];
@@ -157,8 +156,7 @@ describe("GET /api/teacher/content", () => {
     expect(unit.title).toBe("练习四");
     expect(unit.topic).toBe("有理数加减混合");
 
-    // 练习四 = v2 样例 8 题 + v1 样例特有的 练习四-6（其余 7 题同 id 被更新而非新增）。
-    // 练习四-6（v1 题 6）与 p4-q7（v2 题 6）order 同为 5，按 id 兜底排序 p4-q7 在前
+    // 练习四 = v2 样例 8 题（第 6 题显式 id=p4-q7，其余缺省 练习四-N）
     expect(unit.questions.map((q) => q.id)).toEqual([
       "练习四-1",
       "练习四-2",
@@ -166,11 +164,10 @@ describe("GET /api/teacher/content", () => {
       "练习四-4",
       "练习四-5",
       "p4-q7", // v2 练习样例的显式 id
-      "练习四-6", // v1 样例特有（插入时 order 取 v1 文档内题序 5）
       "练习四-7",
       "练习四-8",
     ]);
-    // 摘要字段：题型/难度/考点/版本（p4-q7 只导入一次 → version 1，knowledge 来自 DSL）
+    // 摘要字段：题型/难度/考点/版本（各题只导入一次 → version 1，knowledge 来自 DSL）
     const p4q7 = unit.questions.find((q) => q.id === "p4-q7");
     expect(p4q7).toEqual({
       id: "p4-q7",
@@ -179,8 +176,7 @@ describe("GET /api/teacher/content", () => {
       knowledge: ["有理数混合运算"],
       version: 1,
     });
-    // 同 id 再导入 → version+1（v2 先导入、v1 后导入的 7 道重叠题）
-    expect(unit.questions.find((q) => q.id === "练习四-1")?.version).toBe(2);
+    expect(unit.questions.find((q) => q.id === "练习四-1")?.version).toBe(1);
 
     const mixedUnit = course.units[1];
     if (mixedUnit === undefined) throw new Error("随堂练习单元缺失");

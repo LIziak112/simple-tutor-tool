@@ -358,7 +358,6 @@ function fileImageRefs(
 /** dry-run 单文件条目：lint/动作预览 + 该文件的配对视图 */
 export interface ZipImportDryRunFile {
   readonly path: string;
-  readonly version: 1 | 2;
   readonly summary: ImportPreviewData["summary"];
   readonly issues: ImportPreviewData["issues"];
   readonly actions: ImportPreviewData["actions"];
@@ -425,7 +424,6 @@ export function previewZipImport(
     );
     return {
       path: file.path,
-      version: preview.version,
       summary: preview.summary,
       issues: preview.issues,
       actions: preview.actions,
