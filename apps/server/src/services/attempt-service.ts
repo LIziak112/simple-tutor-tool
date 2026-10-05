@@ -67,38 +67,46 @@ import { pendingMarkCount } from "./pending-mark";
 import type { Tx } from "./question-sync";
 
 /**
- * AttemptService（T2.6；T2A.6 扩展作答来源 D9/D10）——作答生命周期的业务层
- * （架构文档 §5.2/§5.3/§5.6）。路由只做「鉴权 → 校验 → 调 service → 包装响应」
- * （api-endpoint 技能约定），本模块承载：
+ * AttemptService（T2.6；T2A.6 扩展作答来源 D9/D10；T6R.3 全来源建卷冻结）
+ * ——作答生命周期的业务层（架构文档 §5.2/§5.3/§5.6）。路由只做
+ * 「鉴权 → 校验 → 调 service → 包装响应」（api-endpoint 技能约定），本模块承载：
+ *
+ * **T6R.3 冻结口径（方案 §5.1，三来源统一）**：新 attempt 建立时逐题预插
+ * responses 冻结行（完整 Question 快照 + questionVersion，行 id 即对外下发的
+ * questionRevisionId）；此后取卷、草稿读题、提示、判分、结果、导出一律读冻结
+ * 快照，题库修改只影响之后新建的卷。升级前进行中的 attempt 首次恢复访问时由
+ * ensureAttemptFrozen 懒冻结（标记 legacy_unverified）；升级前已交卷的行沿用
+ * 交卷快照。**冻结内容不冻结权限**：作业到期/课程撤权/学生停用仍按既有守卫。
  *
  * - startAttempt：创建或取回作业来源的 attempt（幂等：一个作业一人一份进行中，
  *   仅对 assignment 来源生效）；已交卷后再 POST 返回已交的那份（前端据此直接进
- *   结果视图，不另开新卷）；
+ *   结果视图，不另开新卷）；新建时建卷冻结（assignment 单元序 × 题序）；
  * - startCourseAttempt（T2A.6）：课程练习入口——存在未交卷作答则返回它；否则
- *   新建（attemptNo+1，从空白开始）。每次调用都校验 D5 可见性；「(学生, 课程,
- *   单元) 同时最多 1 份未交卷」由事务先查后插保证（D10）；
+ *   新建（attemptNo+1，从空白开始，建卷冻结）。每次调用都校验 D5 可见性；
+ *   「(学生, 课程, 单元) 同时最多 1 份未交卷」由事务先查后插保证（D10）；
  * - wrong 来源（2026-10 错题重练）：组卷在 wrong-practice.ts 的 startWrongPractice
- *   （校验 + 快照冻结），本模块只承接读路径——attemptUnitIds 恒 []（题目集合
- *   在 attempt 自己的 responses 行，按建卷插入序 rowid 读取，见各 wrong 分支）、
- *   requireUsableAttempt 不做课程校验（无课程归属，attempt 永不失权）；
+ *   （校验 + 快照冻结），本模块承接读路径——attemptUnitIds 恒 []（题目集合在
+ *   attempt 自己的 responses 行，按建卷插入序 rowid 读取）、requireUsableAttempt
+ *   不做课程校验（无课程归属，attempt 永不失权）；
  * - saveDraftAnswer：draft 阶段 upsert responses（answerJson + changeCount 累加）；
- *   快照不在此写——判分与快照冻结都在交卷时一次性完成；
- * - submitAttempt：服务端权威判分（@tutor/grading，AGENTS 第 4 条）、逐题写
- *   questionSnapshotJson（题目编辑/软删不影响历史回看，验收项）、scoreAuto 汇总、
- *   status=submitted；重复交卷 409 ALREADY_SUBMITTED（验收项）；题目集合按
- *   sourceType 分派（attemptQuestionRows，见该函数注释）；
- * - getAttemptDetail：draft → 草稿视图（公开题目 + 本人草稿 + 已解锁提示回显，
- *   绝无答案/详解/未请求提示）；submitted/graded → 结果视图（快照 + 参考答案 +
- *   详解 + 判分 + 做题时已解锁提示的回看）；
- * - getStudentAttemptPaper（T2A.6）：通用取卷（两种来源共用；assignment 来源
- *   归属即权限，course 来源每次校验可见性与成员资格，D22）。
+ *   快照在建卷时已冻结，不在此写；
+ * - submitAttempt：服务端权威判分（@tutor/grading，AGENTS 第 4 条）——判分输入
+ *   = 冻结快照（不查当前题库）；逐题原行更新判分结果（行 id 不变）、scoreAuto
+ *   汇总、status=submitted；重复交卷 409 ALREADY_SUBMITTED；交卷回传版本集合
+ *   验证不符 → 409 QUESTION_REVISION_STALE（旧标签页可诊断提示刷新）；
+ * - getAttemptDetail：draft → 草稿视图（冻结快照的公开投影 + questionRevisionId
+ *   + 本人草稿 + 已解锁提示回显 + legacyUnverified 标记，绝无答案/详解/未请求
+ *   提示）；submitted/graded → 结果视图（快照 + 参考答案 + 详解 + 判分 +
+ *   做题时已解锁提示的回看）；
+ * - getStudentAttemptPaper（T2A.6）：通用取卷（三种来源共用，读冻结快照；
+ *   assignment 来源归属即权限，course 来源每次校验可见性与成员资格，D22）。
  *
  * 权限口径（T5 统一：学生侧 attempt 相关接口分两类）：
  * - **入口类**（从列表/目录进入，需要当前可见性）：GET /api/student/assignments
- *   （列表）、GET /api/student/assignments/:id/paper（旧取卷）、POST
- *   /api/student/assignments/:id/attempt（开卷，requireAssignmentVisible）——
- *   被移出名单 → 403（在册判定含 removedAt IS NULL，D13 立即不可见）；
- *   作业软删 → 404；
+ *   （列表）、GET /api/student/assignments/:id/paper（开卷前预览，读当前题库）、
+ *   POST /api/student/assignments/:id/attempt（开卷，requireAssignmentVisible，
+ *   开卷即冻结）——被移出名单 → 403（在册判定含 removedAt IS NULL，D13 立即
+ *   不可见）；作业软删 → 404；
  * - **续作类**（已持有 attemptId 的 /api/student/attempts/:id/* 全部接口：详情/
  *   存答/交卷/提示/笔迹/事件/通用取卷）：归属即权限（requireOwnAttempt），
  *   assignment 来源不再叠加可见性校验——与「删除作业不删除已有作答记录」
@@ -109,10 +117,11 @@ import type { Tx } from "./question-sync";
  *   course 来源 + 已交卷不校验课程（D7/D10：已交卷课程练习记录保留，
  *   学生本人的记录中仍可查看）。
  *
- * 安全口径（AGENTS 第 3 条）：草稿视图题目一律经 publicQuestionsOfRows 输出过滤
- * （QuestionPublic 形态）；结果视图的 answers/solutionMd/stemMd（原文含答案标记）
- * 只在交卷后下发；提示内容只经 T2.11 按需接口（hint-service.openHint）逐条下发，
- * 两个视图仅回显「已解锁」条目（hintsOpened）。T2A.8（D11）：作业
+ * 安全口径（AGENTS 第 3 条）：草稿视图题目一律经 publicOfSnapshot 输出过滤
+ * （QuestionPublic 形态 + questionRevisionId，fail closed）；结果视图的
+ * answers/solutionMd/stemMd（原文含答案标记）只在交卷后下发；提示内容只经
+ * T2.11 按需接口（hint-service.openHint，冻结快照口径）逐条下发，两个视图仅
+ * 回显「已解锁」条目（hintsOpened）。T2A.8（D11）：作业
  * answerRelease='after_due' 且未到截止时，结果视图（含交卷瞬间的 submit 响应）
  * 降级为受限形态——只下发本人答案与已解锁提示，题干公开化、对错/得分不泄露
  * （见 buildResultData）；截止后读时自动恢复。
