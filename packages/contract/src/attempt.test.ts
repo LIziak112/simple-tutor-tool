@@ -9,6 +9,7 @@ import {
   attemptSourceSchema,
   attemptStartDataSchema,
   attemptStatusSchema,
+  attemptSubmitRequestSchema,
   attemptSummarySchema,
   hintOpenDataSchema,
   hintOpenRequestSchema,
@@ -640,6 +641,77 @@ describe("attemptAnswerSaveRequestSchema / attemptAnswerSaveDataSchema", () => {
         changeCount: 0,
       }).success,
     ).toBe(false);
+  });
+});
+
+describe("attemptSubmitRequestSchema（T6R.3 交卷回传题目版本）", () => {
+  it("接受合法请求：每题 questionId + questionRevisionId；空 revisions 合法（空卷）", () => {
+    expect(
+      attemptSubmitRequestSchema.parse({
+        revisions: [
+          {
+            questionId: "练习四-1",
+            questionRevisionId: "11111111-1111-4111-8111-111111111111",
+          },
+          {
+            questionId: "练习四-2",
+            questionRevisionId: "22222222-2222-4222-8222-222222222222",
+          },
+        ],
+      }),
+    ).toEqual({
+      revisions: [
+        {
+          questionId: "练习四-1",
+          questionRevisionId: "11111111-1111-4111-8111-111111111111",
+        },
+        {
+          questionId: "练习四-2",
+          questionRevisionId: "22222222-2222-4222-8222-222222222222",
+        },
+      ],
+    });
+    expect(attemptSubmitRequestSchema.parse({ revisions: [] })).toEqual({
+      revisions: [],
+    });
+  });
+
+  it("拒绝：revisionId 空/纯空白/首尾空白、questionId 空、超 500 条", () => {
+    const valid = {
+      questionId: "练习四-1",
+      questionRevisionId: "11111111-1111-4111-8111-111111111111",
+    };
+    expect(
+      attemptSubmitRequestSchema.safeParse({
+        revisions: [{ ...valid, questionRevisionId: "" }],
+      }).success,
+    ).toBe(false);
+    expect(
+      attemptSubmitRequestSchema.safeParse({
+        revisions: [{ ...valid, questionRevisionId: "  " }],
+      }).success,
+    ).toBe(false);
+    expect(
+      attemptSubmitRequestSchema.safeParse({
+        revisions: [{ ...valid, questionRevisionId: " abc " }],
+      }).success,
+    ).toBe(false);
+    expect(
+      attemptSubmitRequestSchema.safeParse({
+        revisions: [{ ...valid, questionId: "" }],
+      }).success,
+    ).toBe(false);
+    expect(
+      attemptSubmitRequestSchema.safeParse({
+        revisions: Array.from({ length: 501 }, () => ({ ...valid })),
+      }).success,
+    ).toBe(false);
+  });
+
+  it("错误码集合包含 QUESTION_REVISION_STALE（陈旧题目版本提交，409）", () => {
+    expect(
+      attemptErrorCodeSchema.safeParse("QUESTION_REVISION_STALE").success,
+    ).toBe(true);
   });
 });
 

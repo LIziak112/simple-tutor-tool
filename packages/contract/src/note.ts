@@ -218,9 +218,10 @@ export const noteBodyHashSchema = z
 
 /**
  * 题目版本引用（T6R.3 冻结）：定位「本次作答时被冻结的那道题」，对学生不透明。
- * 契约只固定非空、无首尾空白、长度 ≤512；具体铸造规则（responses 行 id 或
- * 等价稳定标识）由 T6R.3 落地，本文件不预设。该引用只能定位授权记录，
- * 不能当访问凭证（方案 §5.1）。
+ * 铸造规则已由 T6R.3 定稿：**该 (attempt, question) 的 responses 行 id**
+ * （crypto.randomUUID）——每题每次作答天然唯一、快照与版本引用同源同寿、
+ * 交卷回传比对即可验证题目版本，契约长度上限自然满足。该引用只能定位授权
+ * 记录，不能当访问凭证（方案 §5.1）。
  */
 export const questionRevisionIdSchema = z
   .string()

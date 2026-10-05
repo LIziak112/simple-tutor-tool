@@ -2,6 +2,7 @@ import { z } from "zod";
 import { assignmentDueAtSchema } from "./assignment.ts";
 import { questionAnswersSchema, questionPublicSchema } from "./content.ts";
 import { studentAnswerSchema } from "./grading.ts";
+import { questionRevisionIdSchema } from "./note.ts";
 
 /**
  * 作答生命周期契约（T2.6 起为权威定义）：attempt 的创建（幂等）、草稿保存、
@@ -387,6 +388,24 @@ export const attemptAnswerSaveDataSchema = z.object({
 });
 
 /**
+ * POST /api/student/attempts/:id/submit 请求体（T6R.3 全来源题目版本冻结）：
+ * 交卷回传建卷时下发的每题 questionRevisionId（responses 行 id，对学生不透明），
+ * 服务端与本次冻结集合逐一比对——旧标签页/陈旧页面的提交（缺项、错版、多项）
+ * 被 409 QUESTION_REVISION_STALE 可诊断拒绝（前端提示刷新后重交），不静默接受。
+ * 空 revisions 合法（空卷交卷；服务端把不带请求体同样按空集合处理，非空卷
+ * 由此自然落入 409）；上限 500 为防御性边界（单卷题数远低于此）。
+ */
+export const attemptSubmitRevisionSchema = z.object({
+  questionId: z.string().min(1),
+  questionRevisionId: questionRevisionIdSchema,
+});
+
+/** 交卷请求体（revisions = 取卷/草稿视图下发过的全部题目版本引用） */
+export const attemptSubmitRequestSchema = z.object({
+  revisions: z.array(attemptSubmitRevisionSchema).max(500),
+});
+
+/**
  * POST /api/student/attempts/:id/hints 请求体（T2.11 分步提示）：
  * 获取该题第 index 条提示（0 起）并解锁（服务端记录 hint_open 事件与已解锁集合）。
  * index 只拦非整数；越界（<0 或 ≥该题提示总数）统一由服务端判
@@ -457,6 +476,9 @@ export const attemptDetailDataSchema = z
  * - ASSIGNMENT_NOT_FOUND：创建 attempt 的作业不存在（含已删除）（404）；
  * - ATTEMPT_NOT_FOUND：attempt 不存在（404）；
  * - ALREADY_SUBMITTED：attempt 已交卷，不能再保存草稿 / 重复交卷（409，验收项）；
+ * - QUESTION_REVISION_STALE：交卷回传的题目版本集合与本次冻结集合不一致
+ *   （缺项 / questionRevisionId 错版 / 多出未知题目 / 未带请求体的非空卷；
+ *   409，T6R.3）——旧标签页或陈旧页面的提交被可诊断拒绝，前端提示刷新后重交；
  * - QUESTION_NOT_FOUND：题目不存在、已软删或不在该次作答的单元集合内（404，
  *   T2A.7 起多单元作业为集合包含判断）；
  * - HINT_INDEX_OUT_OF_RANGE：提示序号越界（<0 或 ≥该题提示总数，含无提示题；
@@ -474,6 +496,7 @@ export const attemptErrorCodeSchema = z.enum([
   "ASSIGNMENT_NOT_FOUND",
   "ATTEMPT_NOT_FOUND",
   "ALREADY_SUBMITTED",
+  "QUESTION_REVISION_STALE",
   "QUESTION_NOT_FOUND",
   "HINT_INDEX_OUT_OF_RANGE",
   "FORBIDDEN",
@@ -515,6 +538,12 @@ export type AttemptAnswerSaveRequest = z.infer<
   typeof attemptAnswerSaveRequestSchema
 >;
 export type AttemptAnswerSaveData = z.infer<typeof attemptAnswerSaveDataSchema>;
+/** 交卷回传的单题版本对（T6R.3；questionRevisionId = responses 行 id，不透明） */
+export type AttemptSubmitRevision = z.infer<
+  typeof attemptSubmitRevisionSchema
+>;
+/** 交卷请求体（T6R.3） */
+export type AttemptSubmitRequest = z.infer<typeof attemptSubmitRequestSchema>;
 export type HintOpenedEntry = z.infer<typeof hintOpenedEntrySchema>;
 export type HintOpenRequest = z.infer<typeof hintOpenRequestSchema>;
 export type HintOpenData = z.infer<typeof hintOpenDataSchema>;

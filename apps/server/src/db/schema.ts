@@ -649,8 +649,11 @@ export const assignmentStudents = sqliteTable(
  * - status：draft=进行中（草稿）、submitted=已交卷（存在待批题，等教师批改）、
  *   graded=已批改（= 全部 finalCorrect 非 null；全客观题卷交卷即 graded，D2/D3，
  *   T3.2a）；
- * - unitId 是作答期间的题目来源（快照自 questions 当前行，交卷时冻结）；
- *   assignment 来源保留布置时作业的 unitId（D23-6：旧作业 attempt 的原值不改）；
+ * - T6R.3 起三来源统一**建卷冻结**：题目集合、题序与完整快照在创建 attempt 时
+ *   逐题预插入该 attempt 自己的 responses 行（frozenAt 记冻结时刻），此后取卷/
+ *   草稿/提示/判分/结果/导出一律读冻结行，教师改题库只影响之后新建的卷；
+ *   unitId 仍记录作答期间的题目来源单元（course 必填；assignment 来源保留布置
+ *   时作业的历史值，D23-6 原值不改）；
  * - attemptNo（D10）：course 来源同一 (学生, 课程, 单元) 从 1 递增；
  *   assignment 来源恒 1（一个作业一人一份，不重做）；wrong 来源按该生已有
  *   wrong 来源 attempt 数从 1 递增（每次重练都是新卷）；
@@ -691,6 +694,15 @@ export const attempts = sqliteTable(
     startedAt: text("started_at").notNull(),
     /** 交卷时间：UTC ISO 字符串；未交为 NULL */
     submittedAt: text("submitted_at"),
+    /**
+     * 题目集合冻结时刻（T6R.3 全来源冻结）：UTC ISO。建卷（三来源）时与
+     * startedAt 同值写入；NULL = 尚未冻结，仅两类行：升级前遗留的进行中
+     * attempt（首次恢复访问时由 attempt-service 的 ensureAttemptFrozen 懒冻结
+     * 补写）与升级前已交卷的 attempt（沿用交卷快照，永不补冻结——读路径对
+     * 已交卷直接读 responses 行，不依赖本列）。冻结后题目集合/题序/内容以
+     * 本 attempt 的 responses 行为唯一口径，不再读当前题库。
+     */
+    frozenAt: text("frozen_at"),
     /** 有效作答用时（秒；T2.10 由服务端按事件计算回写）；未计算为 NULL */
     activeSec: integer("active_sec"),
     /** 作答设备标识（T2.10 事件采集预留）；未记录为 NULL */
@@ -699,6 +711,14 @@ export const attempts = sqliteTable(
     scoreAuto: integer("score_auto"),
     /** 最终得分（D2：round(finalCorrect=true 题数/全部题数×100)；T3.2a 起交卷时全非 null 即写入）；未批为 NULL */
     scoreFinal: integer("score_final"),
+    /**
+     * 冻结来源不可信标记（T6R.3，方案 §5.1「legacy_unverified」）：true = 本卷
+     * 快照是升级后首次恢复访问时懒冻结的当前版本，不能宣称是学生更早看到的
+     * 内容；false = 建卷即冻结（可信）。草稿视图透传给前端展示提示。
+     */
+    legacyUnverified: integer("legacy_unverified", { mode: "boolean" })
+      .notNull()
+      .default(false),
   },
   (table) => [
     // 「一个作业一人一份进行中」的查询索引；唯一性由服务层保证（先查后插，
@@ -718,18 +738,20 @@ export const attempts = sqliteTable(
 );
 
 /**
- * 逐题响应表（T2.6，§5.2）——一行 = 一道题的作答与判定。
- * - (attemptId, questionId) 唯一：草稿阶段 upsert（answerJson/changeCount 累加），
- *   交卷时整行重写（写入快照与判分结果）；
- * - questionSnapshotJson：交卷时冻结的完整 Question 序列化（contract questionSchema）。
- *   老师此后编辑/软删题目（version+1）不影响历史作答回看（T2.6 验收项）；
- *   草稿阶段为 NULL（判分与快照都在交卷时一次性写入）。**例外（2026-10 wrong
- *   来源）**：错题重练 attempt 在**创建时**即按组卷顺序逐行预插入（questionId
- *   顺序 = 请求 questionIds 顺序），行内直接携带从最近一次判定作答复制的
- *   questionSnapshotJson 与 questionVersion（练的就是当时做错的那道题，教师
- *   改题库不影响）；wrong 卷的题目顺序以**插入顺序**为准（rowid 升序——
- *   better-sqlite3 同步单进程，建卷事务内顺序插入、行不被删除，rowid 序 =
- *   组卷序；不要对该表做整卷 DELETE/重插，会破坏 wrong 卷的题序）；
+ * 逐题响应表（T2.6，§5.2；T6R.3 起三来源建卷冻结）——一行 = 一道题的作答与判定。
+ * - (attemptId, questionId) 唯一：建卷时逐题预插入（携带冻结快照），草稿阶段
+ *   upsert（answerJson/changeCount 累加），交卷时**原行更新**判分结果（行 id
+ *   不变——id 即对外下发的 questionRevisionId，T6R.3，冻结/判分/交卷回传同源）；
+ * - questionSnapshotJson：**建卷时冻结**的完整 Question 序列化（contract
+ *   questionSchema）。此后老师编辑/软删题目（version+1）不影响本次作答的显示、
+ *   提示、判分与结果回看（T6R.3 验收项）。NULL 仅存在于升级遗留行：升级前
+ *   进行中的 attempt 首次恢复访问时由懒冻结补写（快照存在/未软删的题），
+ *   软删/缺失的题保留 NULL = 「历史题目缺失」，不拿当前题库回填伪造；
+ *   升级前已交卷的行沿用交卷时快照，不重写；
+ * - 题目顺序：wrong 卷以**插入顺序**为准（rowid 升序 = 组卷题序）；assignment/
+ *   course 卷的展示分组与组内排序经 questions 域内 join（快照内容仍是唯一
+ *   真相，join 只提供单元归属与展示序）。**不要对该表做整卷 DELETE/重插**
+ *   （会破坏 wrong 卷题序，也会改写 questionRevisionId 的稳定引用）；
  * - autoCorrect：服务端判分 true/false；NULL = 不能自动判定（D1 后仅：手写题
  *   未能自动判〔未作答/只写笔迹〕、题目无标准答案、判断题写法无法归一化——
  *   进教师待批队列；未作答客观题为 false）；
@@ -740,7 +762,11 @@ export const attempts = sqliteTable(
 export const responses = sqliteTable(
   "responses",
   {
-    /** 主键：crypto.randomUUID()（§0.3 主键约定） */
+    /**
+     * 主键：crypto.randomUUID()（§0.3 主键约定）。T6R.3 起兼作对外下发的
+     * questionRevisionId（学生对每题看到的不透明版本引用；建卷铸造、交卷回传
+     * 比对、笔记/证据关联同源，见 contract note.ts questionRevisionIdSchema）。
+     */
     id: text("id").primaryKey(),
     /** 所属作答（attempts.id） */
     attemptId: text("attempt_id")
@@ -748,9 +774,15 @@ export const responses = sqliteTable(
       .references(() => attempts.id),
     /** 题目（questions.id，来自 DSL；T2B.1/D10 起无外键，值不变） */
     questionId: text("question_id").notNull(),
-    /** 作答/判分时的题目内容版本（questions.version）；草稿阶段为 0（快照未写入；wrong 来源建卷时直接写源快照的版本） */
+    /**
+     * 建卷冻结时的题目内容版本（questions.version；wrong 来源 = 源快照的版本）。
+     * 升级遗留的未冻结行为 0（懒冻结补写时更新）。
+     */
     questionVersion: integer("question_version").notNull().default(0),
-    /** 交卷时冻结的完整题目快照（questionSchema 序列化）；草稿阶段为 NULL */
+    /**
+     * 建卷时冻结的完整题目快照（questionSchema 序列化）。NULL 仅存在于升级
+     * 遗留行（懒冻结补写，或软删/缺失题的「历史题目缺失」标记），不回填伪造。
+     */
     questionSnapshotJson: text("question_snapshot_json"),
     /** 学生答案（StudentAnswer 序列化）；未作为 NULL（交卷时未答题行也为 NULL） */
     answerJson: text("answer_json"),
