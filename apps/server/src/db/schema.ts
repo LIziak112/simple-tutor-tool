@@ -1,6 +1,10 @@
 import type {
   AttemptStatus,
   DocumentKind,
+  NoteImageSpec,
+  NoteImageState,
+  NotePhase,
+  NoteSubmissionEvidenceState,
   QuestionType,
 } from "@tutor/contract";
 import {
@@ -35,6 +39,9 @@ import {
  * (teacherId, questionId, knowledgePointId)（D10/D11，表重建）；D10 清单内全部
  * 指向 units/questions 的外键去除（值不变，子表表重建）。
  * T2B.6 追加 app_settings（应用设置 KV：注册开关 allowRegistration，D8）。
+ * T6R.2 追加题目草稿四表：notes（当前头）、note_versions（不可变正文）、
+ * note_images（派生图）、submission_evidence（逐题提交证据）——方案见
+ * docs/题目草稿功能方案.md §5；契约见 packages/contract/src/note.ts。
  *
  * 全库约定（见 docs/开发任务清单.md §0.3 与 db-change 技能）：
  * - 主键 id 一律为应用层生成的 crypto.randomUUID() 字符串；
@@ -901,6 +908,204 @@ export const events = sqliteTable(
   ],
 );
 
+/**
+ * 题目草稿四表（T6R.2，方案 §5.2「身份、正文、图片分开」）——
+ * notes 当前头 + note_versions 不可变正文 + note_images 派生图 + submission_evidence
+ * 逐题提交证据。契约权威定义在 packages/contract/src/note.ts（契约优先），
+ * 本处 $type 仅引用其枚举类型，不重复手写值域。
+ *
+ * 归属推导（方案 §5.2/§8，T6R.0 决策 1）：一律 attemptId → attempts.studentId →
+ * students.teacherId 服务端推导，客户端不可指定 studentId/teacherId/serverSavedAt；
+ * **不使用 responses.inkId**——那是 T2.8 手写作答通道（手写题答案本体）的引用，
+ * 与题目草稿（演算证据）是两条数据链，不得互相替代或混用作归属/证据引用。
+ *
+ * 正文与图片不进数据库（db-change 红线，ink 同款口径）：文件以不可变路径存
+ * DATA_DIR/blobs/notes/…，库里只存相对路径（T6R.4 定稿路径规则与临时文件协议）。
+ */
+export const notes = sqliteTable(
+  "notes",
+  {
+    /** 主键：crypto.randomUUID()（§0.3 主键约定；即契约 NoteRecord.noteId） */
+    id: text("id").primaryKey(),
+    /** 所属作答（attempts.id；归属链入口） */
+    attemptId: text("attempt_id")
+      .notNull()
+      .references(() => attempts.id),
+    /** 题目（questions.id，来自 DSL；无外键，D10 口径） */
+    questionId: text("question_id").notNull(),
+    /**
+     * 题目版本引用（T6R.3 冻结；契约 questionRevisionIdSchema：非空 opaque 串）。
+     * 定位「建卷时冻结的那道题」，历史读取不依赖题库当前存活；具体铸造规则
+     * （如 responses 行 id）由 T6R.3 落地，本列只存值不做外键。
+     */
+    questionRevisionId: text("question_revision_id").notNull(),
+    /** 笔记阶段：scratch=本次工作稿（首版服务层只放行 scratch）/ correction=订正（T6R.15）/ supplement=交卷后找回（T6R.15） */
+    phase: text("phase").$type<NotePhase>().notNull().default("scratch"),
+    /** 当前 head 的 revision 号；0 = 建行后尚未产生任何版本（预留中间态） */
+    currentRevision: integer("current_revision").notNull().default(0),
+    /** 当前 head 版本（note_versions.id）；currentRevision=0 时为 NULL */
+    currentVersionId: text("current_version_id"),
+    /** 最近一次服务端确认时间（UTC ISO）；从未确认为 NULL */
+    serverSavedAt: text("server_saved_at"),
+    /** 头指针最近更新时间：UTC ISO 字符串（四表中唯一可 UPDATE 的表） */
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    // 工作稿定位索引（attempt 下取题的热路径）。
+    // 唯一性设计（T6R.2 决策）：「同 attempt 同题 scratch 唯一」是核心不变量，但
+    // correction/supplement 允许多行（方案 §5.2/T6R.15：每次订正是独立 NoteRecord，
+    // 再编辑另起），全列唯一索引不可行；partial unique index（WHERE phase='scratch'）
+    // 依 attempts 表既有先例不建（「唯一性由服务层保证（先查后插，better-sqlite3
+    // 同步单进程无并发竞态），不建 partial unique index 以保迁移简单」）——
+    // scratch 唯一性由 T6R.4 服务层在同一事务内先查后插保证。
+    index("notes_attempt_question_phase_idx").on(
+      table.attemptId,
+      table.questionId,
+      table.phase,
+    ),
+  ],
+);
+
+/**
+ * 笔记版本表（T6R.2，方案 §5.2/§6.3）——不可变正文：行只 INSERT 不 UPDATE，
+ * 头指针切换在事务里改 notes；未引用版本由 GC 在安全窗口后回收（T6R.4）。
+ * - (noteId, revision) 唯一：同一笔记内版本号从 1 递增（CAS 语义的基础）；
+ * - bodyPath：gzip 后 NoteDoc 的不可变文件路径（相对 DATA_DIR；先写唯一临时
+ *   文件再 rename，禁止覆盖既有版本路径——T6R.4 实现）；
+ * - hash：服务端对规范化正文计算的 sha-256（64 位小写 hex，契约 noteBodyHashSchema）；
+ * - paperWidth 恒 = 1000（INK_LOGICAL_WIDTH），冗余存储便于不解正文即知几何；
+ * - renderVersion：派生图确定性口径（渲染器行为变更时递增；从 1 起）。
+ */
+export const noteVersions = sqliteTable(
+  "note_versions",
+  {
+    /** 主键：crypto.randomUUID()（§0.3；即契约 versionId——交卷/补图引用它） */
+    id: text("id").primaryKey(),
+    /** 所属笔记（notes.id） */
+    noteId: text("note_id")
+      .notNull()
+      .references(() => notes.id),
+    /** 版本号（同一 note 内从 1 递增） */
+    revision: integer("revision").notNull(),
+    /** 正文文件相对路径（DATA_DIR 内，blobs/notes/…；不可变，路径规则 T6R.4 定稿） */
+    bodyPath: text("body_path").notNull(),
+    /** 服务端正文 hash（sha-256 hex64；规范化规则 T6R.4 定稿） */
+    hash: text("hash").notNull(),
+    /** 笔画数（ink.strokes.length） */
+    strokeCount: integer("stroke_count").notNull(),
+    /** 总点数（全稿 points 之和；契约限额 NOTE_MAX_TOTAL_POINTS） */
+    pointCount: integer("point_count").notNull(),
+    /** 纸张逻辑宽（恒 1000，冗余存储） */
+    paperWidth: integer("paper_width").notNull(),
+    /** 纸张逻辑高（本版本正文的 paperHeightLogical） */
+    paperHeight: integer("paper_height").notNull(),
+    /** 服务端确认时间：UTC ISO 字符串 */
+    serverSavedAt: text("server_saved_at").notNull(),
+    /** 渲染版本（从 1 起） */
+    renderVersion: integer("render_version").notNull().default(1),
+  },
+  (table) => [
+    // 同一笔记内版本号唯一（CAS 期望值的物理基础）
+    uniqueIndex("note_versions_note_revision_uk").on(
+      table.noteId,
+      table.revision,
+    ),
+  ],
+);
+
+/**
+ * 笔记派生图表（T6R.2，方案 §5.2/§7）——从不可变 NoteVersion 生成的 PNG 附件：
+ * 缩略图（thumbnail）与分析图（analysis，可切片）；同版本可有多个规格/多页。
+ * - (noteVersionId, spec, pageIndex) 唯一：一个版本一个规格一个页号一个槽位，
+ *   重建补图 = 行 upsert + 新文件新路径（不可变文件，不覆盖原路径）；
+ * - 裁剪区（crop_x/y/w/h）：整数逻辑坐标（切片范围与重叠区，契约 noteCropRectSchema）；
+ * - state：pending/ready/failed/missing（契约 noteImageStateSchema）；
+ *   仅 ready 保证 hash/path 指向可用文件（与契约一致性校验同口径，DB 不强制）；
+ * - 补图只能挂既定版本（T6R.5/6 校验），不能修改原稿正文与提交引用。
+ */
+export const noteImages = sqliteTable(
+  "note_images",
+  {
+    /** 主键：crypto.randomUUID()（§0.3；即契约 imageId） */
+    id: text("id").primaryKey(),
+    /** 所属版本（note_versions.id） */
+    noteVersionId: text("note_version_id")
+      .notNull()
+      .references(() => noteVersions.id),
+    /** 渲染规格：thumbnail=缩略图 / analysis=分析图 */
+    spec: text("spec").$type<NoteImageSpec>().notNull(),
+    /** 页号/切片序（同版本同规格内从 0 递增） */
+    pageIndex: integer("page_index").notNull(),
+    /** 裁剪区左上 x（整数逻辑坐标） */
+    cropX: integer("crop_x").notNull(),
+    /** 裁剪区左上 y（整数逻辑坐标） */
+    cropY: integer("crop_y").notNull(),
+    /** 裁剪区宽（逻辑单位） */
+    cropW: integer("crop_w").notNull(),
+    /** 裁剪区高（逻辑单位） */
+    cropH: integer("crop_h").notNull(),
+    /** 像素宽 */
+    pixelWidth: integer("pixel_width").notNull(),
+    /** 像素高 */
+    pixelHeight: integer("pixel_height").notNull(),
+    /** 图片文件相对路径（DATA_DIR 内；不可变文件，重建 = 新路径） */
+    path: text("path").notNull(),
+    /** 图片文件 sha-256（hex64）；未就绪为 NULL（仅 state='ready' 保证非空） */
+    hash: text("hash"),
+    /** 图片状态：pending=排队/生成中 / ready=可用 / failed=生成失败 / missing=文件缺失 */
+    state: text("state").$type<NoteImageState>().notNull().default("pending"),
+  },
+  (table) => [
+    // 槽位唯一：同版本同规格同页号只有一张图（重建走 upsert）
+    uniqueIndex("note_images_version_spec_page_uk").on(
+      table.noteVersionId,
+      table.spec,
+      table.pageIndex,
+    ),
+  ],
+);
+
+/**
+ * 提交证据表（T6R.2，方案 §5.2/§6.4）——交卷事务固定的逐题原稿声明。
+ * - (attemptId, questionId) 唯一：一次作答一道题一条证据；
+ * - state：none=确实空稿 / frozen=已固定版本 / missing=用户明确选择缺稿交卷 /
+ *   legacy_unverified=升级前进行中 attempt 首次恢复时的降级标记（T6R.3）；
+ * - versionId：仅 state='frozen' 时指向 note_versions.id（交卷携带的 versionId），
+ *   其余状态为 NULL——写入后**不能换原稿**：订正/重练/清空都不动本行
+ *   （订正是新 NoteRecord，见 notes.phase）；
+ * - recordedAt：交卷事务写入时间（UTC ISO）。
+ * 旧客户端无笔记的兼容交卷按「未采集」处理（T6R.10：不落本表 = 无证据行，
+ * 与 state='none'〔明确空稿〕区分）。
+ */
+export const submissionEvidence = sqliteTable(
+  "submission_evidence",
+  {
+    /** 主键：crypto.randomUUID()（§0.3 主键约定） */
+    id: text("id").primaryKey(),
+    /** 所属作答（attempts.id） */
+    attemptId: text("attempt_id")
+      .notNull()
+      .references(() => attempts.id),
+    /** 题目（questions.id，来自 DSL；无外键，D10 口径） */
+    questionId: text("question_id").notNull(),
+    /** 证据状态（见 table 注释四值） */
+    state: text("state").$type<NoteSubmissionEvidenceState>().notNull(),
+    /** 被固定的版本（note_versions.id）；仅 state='frozen' 非 NULL，写入后不换 */
+    versionId: text("version_id").references(() => noteVersions.id),
+    /** 记录时间：UTC ISO 字符串（交卷事务写入） */
+    recordedAt: text("recorded_at").notNull(),
+  },
+  (table) => [
+    // 一次作答一道题一条证据（交卷事务定位键）
+    uniqueIndex("submission_evidence_attempt_question_uk").on(
+      table.attemptId,
+      table.questionId,
+    ),
+    // GC 反查：版本被证据引用时不得回收（T6R.4；NULL 不进索引条目语义由查询侧处理）
+    index("submission_evidence_version_idx").on(table.versionId),
+  ],
+);
+
 /** courses 表行类型（SELECT 结果） */
 export type Course = typeof courses.$inferSelect;
 /** courses 表插入类型 */
@@ -1010,3 +1215,19 @@ export type NewInkRow = typeof ink.$inferInsert;
 export type EventRow = typeof events.$inferSelect;
 /** events 表插入类型 */
 export type NewEventRow = typeof events.$inferInsert;
+/** notes 表行类型（SELECT 结果；T6R.2 笔记当前头） */
+export type NoteRow = typeof notes.$inferSelect;
+/** notes 表插入类型 */
+export type NewNoteRow = typeof notes.$inferInsert;
+/** note_versions 表行类型（SELECT 结果；不可变正文） */
+export type NoteVersionRow = typeof noteVersions.$inferSelect;
+/** note_versions 表插入类型 */
+export type NewNoteVersionRow = typeof noteVersions.$inferInsert;
+/** note_images 表行类型（SELECT 结果；派生图附件） */
+export type NoteImageRow = typeof noteImages.$inferSelect;
+/** note_images 表插入类型 */
+export type NewNoteImageRow = typeof noteImages.$inferInsert;
+/** submission_evidence 表行类型（SELECT 结果；逐题提交证据） */
+export type SubmissionEvidenceRow = typeof submissionEvidence.$inferSelect;
+/** submission_evidence 表插入类型 */
+export type NewSubmissionEvidenceRow = typeof submissionEvidence.$inferInsert;
