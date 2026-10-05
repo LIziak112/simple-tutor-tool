@@ -112,7 +112,12 @@ export function QuestionEditSheet({
     );
     const questions = parsed.units.flatMap((unit) => unit.questions);
     const extra: LintIssue[] = [];
-    if (questions.length === 0) {
+    if (
+      questions.length === 0 &&
+      // 空练习守卫（PRACTICE_NO_QUESTIONS）已就该条件报 error（与服务端拒绝一致），
+      // 不再叠加同义 warning；此分支只作 lint 缺位时的兜底提示
+      !local.some((issue) => issue.code === "PRACTICE_NO_QUESTIONS")
+    ) {
       extra.push(
         warn(
           1,

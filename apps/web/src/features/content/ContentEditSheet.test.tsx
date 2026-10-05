@@ -124,6 +124,22 @@ describe("QuestionEditSheet", () => {
     expect(mockedUpdate).not.toHaveBeenCalled();
   });
 
+  it("清空题目容器（0 题）：报 PRACTICE_NO_QUESTIONS error 且不叠加同义 warning（2026-10-05 空练习守卫）", async () => {
+    await openSheet();
+    fireEvent.change(
+      screen.getByLabelText("Markdown 原文编辑器（带 lint 标注）"),
+      { target: { value: "只剩普通文本，题目容器被删了。" } },
+    );
+    expect(
+      await screen.findAllByText("PRACTICE_NO_QUESTIONS", undefined, {
+        timeout: 2000,
+      }),
+    ).not.toHaveLength(0);
+    expect(screen.getByRole("button", { name: /保存/ })).toBeDisabled();
+    // 空练习守卫已报 error，不再叠加「未解析出任何题目」同义 warning
+    expect(screen.queryByText(/未解析出任何题目/)).not.toBeInTheDocument();
+  });
+
   it("改动题目 id：本地提示 id 不可变并禁用保存", async () => {
     await openSheet();
     const renamed = QUESTION_MD.replace(
