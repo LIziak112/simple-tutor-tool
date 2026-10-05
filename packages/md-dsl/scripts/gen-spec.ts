@@ -1,7 +1,9 @@
 /**
  * gen:spec 脚本入口（T1.7）：从指令注册表 + lint 规则清单生成
  * docs/dsl/规范.md 与 docs/dsl/提示词模板.md；T4.3 起追加第三个输出
- * docs/dsl/学情分析提示词.md（四种任务目标的完整提示词模板，人读版）。
+ * docs/dsl/学情分析提示词.md（四种任务目标的完整提示词模板，人读版）；
+ * dsl-kit 起（一站式分发包）另把规范三件套 + content.json 同步拷贝进
+ * 仓库根 dsl-kit/（README.md / SKILL.md 手写维护，不经本脚本）。
  * 运行：根目录 `pnpm gen:spec`（本脚本与 contract 的 export-schema 串联，
  * 一次命令全量刷新规范、两份提示词模板与 JSON Schema）。
  *
@@ -12,7 +14,7 @@
  * - 整体生成保证幂等：同一数据源生成字节相同，CI 用「gen:spec 后
  *   git diff --exit-code」防止忘记重新生成（docs/dsl/完整样例.md 手写维护，不经本脚本）。
  */
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -87,18 +89,44 @@ const outputs: ReadonlyArray<{
 ];
 
 // 输出目录按脚本自身位置定位（../../.. 即仓库根），与运行时 cwd 无关
-const outDir = join(
+const repoRoot = join(
   dirname(fileURLToPath(import.meta.url)),
   "..",
   "..",
   "..",
-  "docs",
-  "dsl",
 );
+const outDir = join(repoRoot, "docs", "dsl");
 await mkdir(outDir, { recursive: true });
 for (const { file, content } of outputs) {
   await writeFile(join(outDir, file), content, "utf8");
   console.log(`已生成 ${join(outDir, file)}（${content.length} 字符）`);
+}
+
+// dsl-kit 一站式分发包同步：规范三件套 + JSON Schema 复制进仓库根 dsl-kit/
+// （README.md 与 SKILL.md 手写维护，不经本脚本；拷贝与 docs/dsl 逐字节一致，
+// CI 的 gen:spec diff 校验同样覆盖这里，两边不允许漂移）。
+// 完整样例.md 与 schema/content.json 是链路上前序步骤（手写 / export-schema）
+// 的产物，从 docs/dsl 读取后原样拷贝；单独运行 gen-spec 时读到的即已提交版本。
+const kitDir = join(repoRoot, "dsl-kit");
+const kitCopies: ReadonlyArray<{ file: string; content: string }> = [
+  { file: "规范.md", content: renderSpecMarkdown({ directives, rules }) },
+  {
+    file: "提示词模板.md",
+    content: renderPromptTemplateMarkdown(directives),
+  },
+  {
+    file: "完整样例.md",
+    content: await readFile(join(outDir, "完整样例.md"), "utf8"),
+  },
+  {
+    file: "schema/content.json",
+    content: await readFile(join(outDir, "schema", "content.json"), "utf8"),
+  },
+];
+await mkdir(join(kitDir, "schema"), { recursive: true });
+for (const { file, content } of kitCopies) {
+  await writeFile(join(kitDir, file), content, "utf8");
+  console.log(`已同步 ${join(kitDir, file)}（${content.length} 字符）`);
 }
 console.log(
   `共 ${directives.length} 个指令、${rules.length} 条 lint 规则；完整样例.md 为手写文件，不在此列`,

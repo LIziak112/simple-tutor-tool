@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineDirective, listDirectives } from "@tutor/contract";
 import { describe, expect, it } from "vitest";
@@ -68,6 +69,9 @@ describe("renderSpecMarkdown：稳定性与完整性", () => {
     expect(spec).toContain("完整样例.md");
     expect(spec).toContain("pnpm tutor-lint");
     expect(spec).toContain("schema/content.json");
+    // dsl-kit 一站式分发包（README/SKILL 手写、规范件自动同步）须在配套资源里可发现
+    expect(spec).toContain("dsl-kit/");
+    expect(spec).toContain("SKILL.md");
   });
 
   it("讲义行为描述与实现一致：H1 前正文并入第一篇讲义（内容不丢失），不得出现「会被丢弃」", () => {
@@ -176,5 +180,36 @@ describe("生成的规范与磁盘上已提交的版本一致（CI diff 检查�
     );
     expect(readFileSync(`${docDir}规范.md`, "utf8")).toBe(spec);
     expect(readFileSync(`${docDir}提示词模板.md`, "utf8")).toBe(prompt);
+  });
+});
+
+describe("dsl-kit 一站式分发包（规范 + 校验 + 材料整理技能，单一固定文件夹）", () => {
+  const repoRoot = fileURLToPath(new URL("../../../../", import.meta.url));
+
+  it("同步件与 docs/dsl 逐字节一致：规范 / 完整样例 / 提示词模板 / content.json", () => {
+    // gen-spec 脚本拷贝生成；此测试在 CI diff 检查之前拦住手改 dsl-kit 同步件的漂移
+    for (const rel of [
+      "规范.md",
+      "完整样例.md",
+      "提示词模板.md",
+      "schema/content.json",
+    ]) {
+      expect(readFileSync(join(repoRoot, "dsl-kit", rel), "utf8"), rel).toBe(
+        readFileSync(join(repoRoot, "docs", "dsl", rel), "utf8"),
+      );
+    }
+  });
+
+  it("手写件在位且要点齐全：README 指路三种用法与校验路径，SKILL 是材料整理技能", () => {
+    const readme = readFileSync(join(repoRoot, "dsl-kit", "README.md"), "utf8");
+    const skill = readFileSync(join(repoRoot, "dsl-kit", "SKILL.md"), "utf8");
+    expect(readme).toContain("material-to-dsl");
+    expect(readme).toContain("pnpm tutor-lint");
+    expect(readme).toContain("请勿手改");
+    expect(skill).toContain("name: material-to-dsl");
+    // 技能必须强制校验循环与规范权威（防退化成「凭感觉整理」）
+    expect(skill).toContain("lint_markdown");
+    expect(skill).toContain("0 error");
+    expect(skill).toContain("规范.md");
   });
 });

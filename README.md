@@ -76,7 +76,7 @@ AI 产内容（符合 DSL 规范的 MD）──→ 导入自动解析渲染 ─�
 
 | 层 | 方式 |
 | --- | --- |
-| 制作端（AI 产内容） | DSL 规范 + 提示词模板 + linter（`/spec` 路由对外提供）：把规范交给任何 AI，它产出的 MD 即可直接导入。老师从"写材料"变成"审材料"。 |
+| 制作端（AI 产内容） | DSL 规范 + 提示词模板 + linter（`/spec` 路由对外提供）：把规范交给任何 AI，它产出的 MD 即可直接导入。老师从"写材料"变成"审材料"。这些资产还打包在 [`dsl-kit/`](dsl-kit/) 文件夹（含「材料整理」技能 SKILL.md），拷给自己的 AI 工具即可离线使用。 |
 | 数据端（AI 读数据） | 一键导出"AI 学情数据包"：结构化作答数据 + 预置提示词，交给 AI 即得错误分布、薄弱考点与下节课建议。 |
 | 实时接入（MCP Server） | 内置 MCP（`/mcp`，教师 API Token 鉴权）：Claude 等 AI 客户端可直接列学生、取学情包、写报告、取 DSL 规范、校验并导入内容。 |
 
@@ -116,6 +116,7 @@ simple-tutor-tool/
     md-dsl/     # DSL 解析器 + linter + CLI（tutor-lint）
     grading/    # 纯函数判分（服务端权威执行）
   docs/         # 架构、部署、DSL 规范、功能清单、进度等文档
+  dsl-kit/      # 一站式分发包：DSL 规范 + 完整样例 + 提示词模板 + 材料整理技能（拷给自己的 AI 工具即可用）
   samples/      # 样例 MD（v1/v2 各一套），同时作为解析器兼容性回归夹具
   e2e/          # Playwright E2E
 ```
@@ -171,7 +172,7 @@ docker run -d -p 8787:8787 -v ./data:/app/data ghcr.io/liziak112/simple-tutor-to
 | `pnpm lint` / `pnpm typecheck` / `pnpm format` | Biome 检查 / 类型检查 / 格式化 |
 | `pnpm db:generate` | 修改 Drizzle schema 后生成数据库迁移（禁止手改线上库） |
 | `pnpm schema:export` | 导出内容契约 JSON Schema（改 contract 后须重跑并提交） |
-| `pnpm gen:spec` | 从指令注册表生成 `docs/dsl/规范.md`、`提示词模板.md` 并刷新 JSON Schema（改注册表/lint/契约后必跑，CI 校验产物无漂移） |
+| `pnpm gen:spec` | 从指令注册表生成 `docs/dsl/规范.md`、`提示词模板.md` 并刷新 JSON Schema，同时同步 `dsl-kit/` 分发包（改注册表/lint/契约后必跑，CI 校验产物无漂移） |
 | `pnpm tutor-lint <文件或目录>` | 校验 DSL 文档，有 error 时退出码 1 |
 | `pnpm reparse [--dry-run]` | 解析器升级后从库内原文重抽取结构化字段（题目 id 不变） |
 | `pnpm seed:demo` | 灌入演示数据 |
@@ -193,6 +194,7 @@ docker run -d -p 8787:8787 -v ./data:/app/data ghcr.io/liziak112/simple-tutor-to
 | [docs/页面功能清单.md](docs/页面功能清单.md) | 页面级功能规格 |
 | [docs/项目最终愿景.md](docs/项目最终愿景.md) | 产品定位与愿景 |
 | [docs/dsl/](docs/dsl/) | DSL 规范、完整样例与给 AI 的提示词模板（`pnpm gen:spec` 生成，`/spec` 路由对外提供） |
+| [dsl-kit/](dsl-kit/) | 给用户 AI 工具的一站式分发包：DSL 规范 + 完整样例 + 提示词模板 + 材料整理技能（SKILL.md） |
 | [docs/进度表.md](docs/进度表.md) | 开发任务进度与验收记录 |
 | [AGENTS.md](AGENTS.md) | 开发工作约定（硬性规则，对人和 AI 执行者同样生效） |
 
