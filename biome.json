@@ -6,7 +6,12 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["**", "!apps/server/src/db/migrations", "!docs/dsl/schema"]
+    "includes": [
+      "**",
+      "!apps/server/src/db/migrations",
+      "!docs/dsl/schema",
+      "!dsl-kit/schema"
+    ]
   },
   "formatter": {
     "enabled": true,
