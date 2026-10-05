@@ -58,9 +58,12 @@ description: 把教学材料（讲义、题目集、课本章节、笔记、错�
 
 | 优先级 | 路径 | 适用 |
 | --- | --- | --- |
-| 1 | MCP `lint_markdown` | 环境已接入 simple-tutor-tool 服务器（自部署用户） |
-| 2 | `pnpm tutor-lint <文件或目录>`（在 simple-tutor-tool 源码仓库内执行） | 本地有仓库源码 |
-| 3 | 教师端「导入」页预览 | 兜底，人人可用：把文件拖进去即 lint 门禁 |
+| 1 | `node tutor-lint.mjs <文件或目录>`（本文件夹自带的单文件校验脚本） | 任何装有 Node ≥20 的机器，离线可用，能执行命令就选它 |
+| 2 | MCP `lint_markdown` | 环境已接入 simple-tutor-tool 服务器（自部署用户），还可用 upload_image / import 一条龙 |
+| 3 | `pnpm tutor-lint <文件或目录>`（在 simple-tutor-tool 源码仓库内执行） | 本地有仓库源码 |
+| 4 | 教师端「导入」页预览 | 兜底，人人可用：把文件拖进去即 lint 门禁 |
+
+三条 CLI/MCP 路径是同一个 linter，结果一致。
 
 循环执行：校验 → 逐条按 issue 的 message / fix 修正 → 重新校验，**直至 0
 error**。warning 逐条判断：能改则改（如补 `unit:`），确属内容意图的可保留并在
