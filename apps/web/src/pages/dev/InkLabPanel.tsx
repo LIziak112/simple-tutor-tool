@@ -561,10 +561,13 @@ function BudgetSection({ rungs }: { rungs: readonly number[] }) {
         });
         const row = await evaluateBudgetRowForDoc(doc);
         const engine = analysisEngineRef.current;
+        if (engine === null) {
+          break; // 组件已卸载（effect cleanup 销毁引擎）：停止后续阶梯白跑
+        }
         let redrawMs = 0;
         let pngBytes = 0;
         let pngMs = 0;
-        if (engine) {
+        {
           const t0 = performance.now();
           engine.load(doc);
           redrawMs = performance.now() - t0;
