@@ -304,10 +304,7 @@ export function AttemptQuestionCard({
       ) : question.type === "choice" || question.type === "multi" ? (
         // 选择题：选项在下方按钮里——服务端 stemMd 已是 studentStemMd 投影形态，
         // displayStemMd 兜底剥内嵌列表（防未来新路径漏走投影，重复且 [x] 会显示成打勾框）
-        <RichMarkdown
-          source={displayStemMd(question)}
-          className="text-base"
-        />
+        <RichMarkdown source={displayStemMd(question)} className="text-base" />
       ) : (
         <RichMarkdown source={question.stemMd} className="text-base" />
       )}

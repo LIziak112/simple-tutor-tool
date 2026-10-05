@@ -1,4 +1,5 @@
 import type { WrongQuestionCard } from "@tutor/contract";
+import { displayStemMd, stripOptionListMd } from "@tutor/md-dsl";
 import { cn } from "cn";
 import dayjs from "dayjs";
 import timezone from "dayjs/plugin/timezone";
@@ -13,7 +14,6 @@ import {
 import { Link } from "react-router";
 import { Button } from "@/components/ui/button";
 import { SolutionFold } from "@/features/attempt/AttemptResultView";
-import { displayStemMd, stripOptionListMd } from "@tutor/md-dsl";
 import {
   formatReferenceAnswers,
   letterOf,
@@ -467,10 +467,7 @@ export function WrongQuestionItem({
       </div>
 
       {/* 题干快照（服务端已 studentStemMd 投影，答案在下方面板单独展示） */}
-      <RichMarkdown
-        source={displayStemMd(question)}
-        className="text-base"
-      />
+      <RichMarkdown source={displayStemMd(question)} className="text-base" />
       <WrongOptions question={question} />
 
       <div className="flex flex-col gap-1.5 rounded-lg bg-muted/40 px-4 py-3 text-sm sm:flex-row sm:gap-6">
