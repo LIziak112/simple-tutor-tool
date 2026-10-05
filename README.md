@@ -117,7 +117,7 @@ simple-tutor-tool/
     grading/    # 纯函数判分（服务端权威执行）
   docs/         # 架构、部署、DSL 规范、功能清单、进度等文档
   dsl-kit/      # 一站式分发包：DSL 规范 + 完整样例 + 提示词模板 + 材料整理技能（拷给自己的 AI 工具即可用）
-  samples/      # 样例 MD（v1/v2 各一套），同时作为解析器兼容性回归夹具
+  samples/      # 样例 MD（v2 一套 + lint 反例），同时作为解析器兼容性回归夹具
   e2e/          # Playwright E2E
 ```
 

@@ -118,7 +118,7 @@ simple-tutor-tool/
     grading/    # pure-function grading (authoritative, server-side only)
   docs/         # architecture, deployment, DSL spec, feature lists, progress
   dsl-kit/      # one-stop kit: DSL spec + samples + prompt templates + material-organizing skill for your own AI tool
-  samples/      # sample MD documents (one set each for v1/v2), also parser regression fixtures
+  samples/      # sample MD documents (v2 set + lint counterexamples), also parser regression fixtures
   e2e/          # Playwright E2E
 ```
 
