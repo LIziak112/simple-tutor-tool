@@ -59,7 +59,8 @@ import { beijingDateTimeOf, beijingExportStampOf } from "./export-csv";
 import { lectureReadingMapFor } from "./lecture-insights";
 import { serializeStudentAnswer } from "./mark-response";
 import { extractMediaImageSrcs } from "./media-service";
-import { answerOf, snapshotOf, sourceOf } from "./teacher-attempt-service";
+import { snapshotOfRow } from "./snapshot.ts";
+import { answerOf, sourceOf } from "./teacher-attempt-service";
 import { type TraceEvent, traceEventsFromRows } from "./trace-intervals";
 import { computeAttemptTraceMetrics } from "./trace-metrics";
 
@@ -535,7 +536,7 @@ export function assembleLearningPack(
         .map((row) => [row.id, row] as const),
     );
     for (const [questionId, { row }] of latestSnapshot) {
-      const snapshot = snapshotOf(row);
+      const snapshot = snapshotOfRow(row);
       const meta = metaOf.get(questionId);
       // 快照缺失按当前库题干兜底（题目统计同口径；两者皆缺按空题干行追加在末尾）
       const stemMd = snapshot?.stemMd ?? meta?.stemMd ?? "";

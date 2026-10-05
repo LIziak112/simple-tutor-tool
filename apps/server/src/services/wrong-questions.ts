@@ -17,8 +17,9 @@ import {
   units,
 } from "../db/schema";
 import { serializeStudentAnswer } from "./mark-response";
+import { snapshotOfRow } from "./snapshot.ts";
 import { studentTeacherIdOf } from "./student-course-service";
-import { answerOf, snapshotOf, sourceOf } from "./teacher-attempt-service";
+import { answerOf, sourceOf } from "./teacher-attempt-service";
 
 /**
  * 错题本业务层（T3.5，Phase3 清单 D11；2026-10 升级轮次史 + 归属单元）——
@@ -46,7 +47,7 @@ import { answerOf, snapshotOf, sourceOf } from "./teacher-attempt-service";
  *   即公布）。leftJoin 保证 course 行不被 NULL 三值逻辑误伤；
  * - 条目内容（题干/题型/难度/考点/参考答案/详解）取**最近一次判定作答**的
  *   questionSnapshotJson 快照（含 [[答案]] 标记原文——已交卷内容允许下发，
- *   与结果视图同一口径；坏快照按缺失计跳过并留痕，snapshotOf 同口径）；
+ *   与结果视图同一口径；坏快照按缺失计跳过并留痕，snapshotOfRow 同口径）；
  * - answerText：本人最近答案的序列化文本（serializeStudentAnswer，与教师端
  *   待批卡片/CSV 导出同一口径）；来源上下文取最近一次判定作答所属 attempt；
  * - originUnitId/originUnitTitle：题目**归属单元**（questions.unitId join
@@ -160,7 +161,7 @@ function judgedRoundsByQuestion(
  * includeResolved 全量口径——已攻克的题同样可重练）。返回 Map 以 questionId
  * 为键，attempt-service 的 startWrongPractice 用它做成员校验 + 快照复制。
  * 坏快照（questionSnapshotJson 缺失/不可解析）的题同样返回行——由调用方经
- * snapshotOf 判定可用性并剔除（组卷校验的一部分）。
+ * snapshotOfRow 判定可用性并剔除（组卷校验的一部分）。
  */
 export function latestJudgedResponsesByQuestion(
   db: Db,
@@ -354,7 +355,7 @@ export function listWrongQuestions(
     }
     const lastSource = sourceOfAttempt(last.attemptId);
     if (lastSource === null) continue; // 来源 attempt 行缺失的防御（理论不可达）
-    const snapshot = snapshotOf(lastResponse);
+    const snapshot = snapshotOfRow(lastResponse);
     if (snapshot === null) continue; // 坏快照按缺失计（snapshotOf 内留痕）
     // knowledge 筛选：与展示同源（最近一次快照）精确匹配
     if (

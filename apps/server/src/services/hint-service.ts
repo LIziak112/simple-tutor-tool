@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import type { HintOpenData, HintOpenedEntry } from "@tutor/contract";
-import { questionSchema } from "@tutor/contract";
 import { and, eq } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
@@ -16,6 +15,7 @@ import {
   requireUsableAttempt,
 } from "./attempt-service";
 import { recordHintOpenEvent } from "./event-service";
+import { snapshotOfRow } from "./snapshot.ts";
 
 /**
  * HintService（T2.11）——分步提示的业务层（架构文档 §5.3「提示通过
@@ -96,20 +96,20 @@ export function openedEntriesOf(
  * 升级前已交卷的遗留行〔frozenAt IS NULL〕沿用「快照优先、回退当前题」的
  * 既有口径）。
  * - 冻结卷（frozenAt 非 null，建卷或懒冻结）：提示文本取 questionSnapshotJson；
- *   快照缺失（历史题目缺失）不回退当前题库——不拿当前内容伪造历史，按无提示
- *   处理（openHint → 400 HINT_INDEX_OUT_OF_RANGE「这道题没有提示」）；
+ *   快照缺失/损坏（历史题目缺失）不回退当前题库——不拿当前内容伪造历史，按
+ *   无提示处理（openHint → 400 HINT_INDEX_OUT_OF_RANGE「这道题没有提示」）；
  * - 遗留已交卷：快照可解析 → 快照；否则回退 questions 当前行
  *   （T2B.5：按 (teacherId, id) 复合主键域内取，D10 不串域）。
+ * 快照解析经 services/snapshot.ts 统一出口（含坏数据 warn 留痕）。
+ * attempt 必须是 requireUsableAttempt 的**返回值**（懒冻结后 frozenAt 才正确分态）。
  */
 function hintsOfAttempt(
   db: Db,
   attempt: Attempt,
   questionId: string,
 ): string[] {
-  const responseRow = db
-    .select({
-      questionSnapshotJson: responses.questionSnapshotJson,
-    })
+  const row = db
+    .select()
     .from(responses)
     .where(
       and(
@@ -118,19 +118,12 @@ function hintsOfAttempt(
       ),
     )
     .get();
-  if (responseRow?.questionSnapshotJson != null) {
-    const parsed = questionSchema.safeParse(
-      jsonOf(responseRow.questionSnapshotJson),
-    );
-    if (parsed.success) return parsed.data.hints;
-    // 可观测性留痕（不改变按缺失计的行为）：快照存在但解析失败属异常数据，
-    // 服务层拿不到 app 层 pino 实例，用统一前缀 console.warn 便于检索
-    console.warn(
-      `【数据异常】hint-service：responses.questionSnapshotJson 解析失败，该题提示按缺失计（attemptId=${attempt.id}，questionId=${questionId}）`,
-    );
+  if (row !== undefined) {
+    const snapshot = snapshotOfRow(row);
+    if (snapshot !== null) return snapshot.hints;
   }
   if (attempt.frozenAt !== null) {
-    // T6R.3：冻结卷（含快照缺失的历史题目）不回退当前题库
+    // T6R.3：冻结卷（含快照缺失/损坏的历史题目）不回退当前题库
     return [];
   }
   const teacherId = attemptTeacherId(db, attempt);
@@ -245,41 +238,16 @@ export function openHint(
 }
 
 /**
- * 草稿视图的已解锁提示回显（attempt-service 的 buildDraftData 调用）：
- * questionId → 已解锁条目。hints 文本来源（T6R.3 三来源统一）：**一律取该
- * attempt 自有 responses 行的冻结快照**（建卷/懒冻结写入——教师改题库不影响
- * 已建卷的提示回显）；快照缺失的历史行（历史题目缺失）不回显。
- * 调用前 buildDraftData 已过 ensureAttemptFrozen（升级遗留草稿先冻结）。
+ * 草稿视图的已解锁提示回显（**纯函数**，T6R.3 收敛）：hints 文本由调用方
+ * （attempt-service.buildDraftData）从同一批冻结行已 parse 的快照传入——不再
+ * 独立查库/解析（热路径去重），口径不变：只回显学生请求过的条目，越界序号
+ * 防御性过滤；无回显条目返回空数组（调用方不落键）。
  */
-export function draftHintsOpenedView(
-  db: Db,
-  attempt: Attempt,
-): Record<string, HintOpenedEntry[]> {
-  const draftRows = db
-    .select({
-      questionId: responses.questionId,
-      hintsOpenedJson: responses.hintsOpenedJson,
-      questionSnapshotJson: responses.questionSnapshotJson,
-    })
-    .from(responses)
-    .where(eq(responses.attemptId, attempt.id))
-    .all();
-  const hintsByQuestion = new Map<string, string[]>();
-  for (const row of draftRows) {
-    if (row.questionSnapshotJson === null) continue;
-    const parsed = questionSchema.safeParse(jsonOf(row.questionSnapshotJson));
-    if (parsed.success) hintsByQuestion.set(row.questionId, parsed.data.hints);
-  }
-  const result: Record<string, HintOpenedEntry[]> = {};
-  for (const row of draftRows) {
-    const opened = openedIndexesOf(row.hintsOpenedJson);
-    if (opened.length === 0) continue;
-    const hints = hintsByQuestion.get(row.questionId);
-    if (hints === undefined) continue; // 历史题目缺失（快照空/坏）不回显
-    const entries = openedEntriesOf(opened, hints);
-    if (entries.length > 0) result[row.questionId] = entries;
-  }
-  return result;
+export function openedHintEcho(
+  hintsOpenedJson: string | null,
+  hints: readonly string[],
+): HintOpenedEntry[] {
+  return openedEntriesOf(openedIndexesOf(hintsOpenedJson), hints);
 }
 
 /** 结果视图单题回显（attempt-service 的 resultQuestionOf 调用；文本取自快照） */

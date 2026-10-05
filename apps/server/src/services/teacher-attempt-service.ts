@@ -1,5 +1,4 @@
 import type {
-  Question,
   StudentAnswer,
   TeacherAttemptCard,
   TeacherAttemptDetailData,
@@ -9,9 +8,9 @@ import type {
   TeacherAttemptListQuery,
   TeacherAttemptSource,
 } from "@tutor/contract";
-import { questionSchema, studentAnswerSchema } from "@tutor/contract";
+import { studentAnswerSchema } from "@tutor/contract";
 import { studentStemMd } from "@tutor/md-dsl";
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
   type Attempt,
@@ -21,7 +20,6 @@ import {
   type InkRow,
   ink,
   questions,
-  type ResponseRow,
   responses,
   students,
   units,
@@ -31,9 +29,10 @@ import {
   attemptQuestionRows,
   attemptUnitIds,
   ensureAttemptFrozen,
-  frozenRowsInDisplayOrder,
+  unitGroupedRows,
 } from "./attempt-service";
 import { pendingMarkCount } from "./pending-mark.ts";
+import { snapshotOfRow } from "./snapshot.ts";
 
 /**
  * TeacherAttemptService（T3.1，Phase3 清单 D5–D8）——教师端作答数据页业务层：
@@ -333,22 +332,9 @@ function requireTeacherAttempt(
   return { attempt: row.attempt, studentName: row.studentName };
 }
 
-/**
- * 已交卷逐题的题目快照（responses.questionSnapshotJson → 契约 Question；
- * 坏数据按缺失计并留痕——正常链路交卷必写快照，与 attempt-service 同口径）。
- * T3.2b 起导出——待批队列卡片拼装复用（mark-response.ts）。
- */
-export function snapshotOf(row: ResponseRow): Question | null {
-  if (row.questionSnapshotJson === null) return null;
-  const parsed = questionSchema.safeParse(jsonOf(row.questionSnapshotJson));
-  if (!parsed.success) {
-    console.warn(
-      `【数据异常】teacher-attempt-service：responses.questionSnapshotJson 解析失败，详情该题按缺失计（attemptId=${row.attemptId}，questionId=${row.questionId}）`,
-    );
-    return null;
-  }
-  return parsed.data;
-}
+// 快照解析统一走 services/snapshot.ts 的 snapshotOfRow（T6R.3 全服务端唯一
+// 实现，含坏数据 warn 留痕）——本文件与 mark-response/wrong-practice 均经其
+// 读取，不再各自 safeParse。
 
 /**
  * 教师端作答详情（D7 全字段；draft 亦可用，D5；T6R.3 起三来源统一读冻结行）：
@@ -359,9 +345,9 @@ export function snapshotOf(row: ResponseRow): Question | null {
  *   answers / solutionMd 字段缺省不发；快照缺失的历史行按「历史题目缺失」跳过；
  * - submitted / graded：逐题取 responses 冻结行（快照题干原文含 [[答案]] 标记、
  *   参考答案与详解照常下发——教师端不受泄露约束，改判与待批卡片都要用）；
- *   排序 join 当前 questions（teacherId 域内）提供单元归属与题序，快照内容仍以
- *   冻结行为准（与 attempt-service 结果视图同口径；题目移出单元等异常行按单元
- *   标题追加在末尾，不丢数据）；
+ *   分组与排序经 unitGroupedRows 从冻结行自身重建（与学生结果视图同一实现；
+ *   升级前已交卷的遗留行沿用域内 join 口径，questions 行缺失的响应行进末尾
+ *   兜底组不丢弃——修正旧 inner join 直接丢行的行为）；
  * - 手写信息：ink 表 (attemptId, questionId) 关联（draft 也可能有笔迹无行）；
  * - 全卷连续题号：attempt 单元顺序 × 题目顺序，1 起；
  * - 计数：effectiveCorrect（finalCorrect ?? autoCorrect）口径；draft 全 0。
@@ -378,7 +364,6 @@ export function getTeacherAttemptDetail(
   );
   const source = sourceOf(db, attempt, teacherId);
   const inkByQuestion = inkByQuestionOf(db, attemptId);
-  const unitIds = attemptUnitIds(db, attempt);
 
   // 逐题条目（先按单元归属排序，再统一编号）
   const items: Omit<TeacherAttemptDetailQuestion, "no">[] = [];
@@ -414,7 +399,7 @@ export function getTeacherAttemptDetail(
         : [],
     );
     for (const row of ownRows) {
-      const snapshot = snapshotOf(row);
+      const snapshot = snapshotOfRow(row);
       if (snapshot === null) continue; // 坏快照按缺失计（建卷即冻结，理论不可达）
       const isDraft = attempt.status === "draft";
       items.push({
@@ -451,108 +436,55 @@ export function getTeacherAttemptDetail(
             }),
       });
     }
-  } else if (attempt.status === "draft") {
-    // draft（T6R.3）：与学生草稿视图同源——题目取冻结快照行（懒冻结兜底升级
-    // 遗留草稿），题干经 studentStemMd 学生端投影（详情不下发参考答案，题干
-    // 标记里的答案与 [x] 正确项同样不外露）；判定字段整卷 null（判定列显示
-    // 「未交卷」）；快照缺失的历史行按「历史题目缺失」跳过。
-    ensureAttemptFrozen(db, attempt);
-    for (const { row, unitId } of frozenRowsInDisplayOrder(db, attempt)) {
-      const snapshot = snapshotOf(row);
-      if (snapshot === null) continue;
-      items.push({
-        questionId: row.questionId,
-        // draft 不提供批注定位（与既有口径一致——批注要求已交卷）
-        responseId: null,
-        unitId: unitId ?? row.questionId,
-        unitTitle: unitId ?? row.questionId, // 占位，下方经 unitTitles 统一回填
-        type: snapshot.type,
-        difficulty: snapshot.difficulty,
-        knowledge: snapshot.knowledge,
-        stemMd: studentStemMd(snapshot),
-        ...(snapshot.options !== undefined
-          ? { options: snapshot.options.map((option) => option.text) }
-          : {}),
-        answer: answerOf(row.answerJson),
-        autoCorrect: null,
-        finalCorrect: null,
-        teacherMark: null,
-        teacherComment: null,
-        activeSec: row.activeSec,
-        hintsUsed: row.hintsUsed,
-        changeCount: row.changeCount,
-        ink: inkInfoOf(inkByQuestion.get(row.questionId)),
-      });
-    }
   } else {
-    // 已交卷：responses 冻结行（快照内容）+ 当前 questions 提供单元归属与排序
-    const rows = db
-      .select({
-        response: responses,
-        order: questions.order,
-        questionUnitId: questions.unitId,
-        questionId: questions.id,
-      })
-      .from(responses)
-      .innerJoin(
-        questions,
-        and(
-          eq(responses.questionId, questions.id),
-          eq(questions.teacherId, teacherId),
-        ),
-      )
-      .where(eq(responses.attemptId, attemptId))
-      .orderBy(asc(questions.order), asc(questions.id))
-      .all();
-    const unitIndex = new Map(unitIds.map((unitId, i) => [unitId, i]));
-    // 按 attempt 单元顺序分组（组内保持题序）；题目单元已不在集合内的异常行追加在末尾
-    const groups = new Map<
-      string,
-      { response: ResponseRow; order: number }[]
-    >();
-    for (const row of rows) {
-      const list = groups.get(row.questionUnitId);
-      if (list === undefined) groups.set(row.questionUnitId, [row]);
-      else list.push(row);
-    }
-    const orderedUnitIds = [
-      ...unitIds,
-      ...[...groups.keys()].filter((unitId) => !unitIndex.has(unitId)),
-    ];
-    for (const unitId of orderedUnitIds) {
-      const group = groups.get(unitId);
-      if (group === undefined) continue;
-      for (const { response } of group) {
-        const snapshot = snapshotOf(response);
-        if (snapshot === null) continue; // 坏快照按缺失计（见 snapshotOf 注释）
+    // 非 wrong（T6R.3）：draft 与 submitted/graded 统一消费 unitGroupedRows——
+    // 分组与顺序从冻结行自身重建（unitId 首现序分组 + rowid 组内序）；升级前
+    // 已交卷的遗留行沿用域内 join 口径。旧已交卷实现 inner join 会把 questions
+    // 行缺失的响应行直接丢弃——统一为末尾兜底组展示（修正，不丢数据）。
+    // draft 与学生草稿视图同源：题干经 studentStemMd 学生端投影（详情不下发
+    // 参考答案，题干标记里的答案与 [x] 正确项同样不外露）、判定字段整卷 null
+    // （判定列显示「未交卷」）；已交卷快照原文 + 参考答案/详解。快照缺失的
+    // 历史行按「历史题目缺失」跳过；draft 进门先懒冻结（教师路径不经
+    // requireUsableAttempt）。
+    const isDraft = attempt.status === "draft";
+    if (isDraft) ensureAttemptFrozen(db, attempt);
+    for (const group of unitGroupedRows(db, attempt)) {
+      for (const row of group.rows) {
+        const snapshot = snapshotOfRow(row);
+        if (snapshot === null) continue;
         items.push({
-          questionId: response.questionId,
-          // 冻结 responses 行 id——详情页内联批改（POST /responses/:id/mark）定位用
-          responseId: response.id,
-          unitId,
-          unitTitle: unitId, // 占位，下方经 unitTitles 统一回填
+          questionId: row.questionId,
+          // draft 不提供批注定位（与既有口径一致——批注要求已交卷）；已交卷给
+          // 冻结行 id——详情页内联批改（POST /responses/:id/mark）定位用
+          responseId: isDraft ? null : row.id,
+          unitId: group.unitId ?? row.questionId,
+          unitTitle: group.unitId ?? row.questionId, // 占位，下方经 unitTitles 统一回填
           type: snapshot.type,
           difficulty: snapshot.difficulty,
           knowledge: snapshot.knowledge,
-          stemMd: snapshot.stemMd,
+          stemMd: isDraft ? studentStemMd(snapshot) : snapshot.stemMd,
           ...(snapshot.options !== undefined
             ? { options: snapshot.options.map((option) => option.text) }
             : {}),
-          answer: answerOf(response.answerJson),
-          autoCorrect: response.autoCorrect,
-          finalCorrect: response.finalCorrect,
-          teacherMark:
-            response.teacherMark === "correct" ||
-            response.teacherMark === "wrong"
-              ? response.teacherMark
+          answer: answerOf(row.answerJson),
+          autoCorrect: isDraft ? null : row.autoCorrect,
+          finalCorrect: isDraft ? null : row.finalCorrect,
+          teacherMark: isDraft
+            ? null
+            : row.teacherMark === "correct" || row.teacherMark === "wrong"
+              ? row.teacherMark
               : null,
-          teacherComment: response.teacherComment,
-          activeSec: response.activeSec,
-          hintsUsed: response.hintsUsed,
-          changeCount: response.changeCount,
-          ink: inkInfoOf(inkByQuestion.get(response.questionId)),
-          answers: snapshot.answers ?? null,
-          solutionMd: snapshot.solutionMd ?? null,
+          teacherComment: isDraft ? null : row.teacherComment,
+          activeSec: row.activeSec,
+          hintsUsed: row.hintsUsed,
+          changeCount: row.changeCount,
+          ink: inkInfoOf(inkByQuestion.get(row.questionId)),
+          ...(isDraft
+            ? {}
+            : {
+                answers: snapshot.answers ?? null,
+                solutionMd: snapshot.solutionMd ?? null,
+              }),
         });
       }
     }

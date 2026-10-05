@@ -15,10 +15,10 @@ import {
 import { knowledgeNamesByQuestion } from "./assignment-service";
 import { attemptUnitIds } from "./attempt-service";
 import { serializeStudentAnswer } from "./mark-response";
+import { snapshotOfRow } from "./snapshot.ts";
 import {
   answerOf,
   inkByQuestionOf,
-  snapshotOf,
   sourceOf,
   unitTitleByIdOf,
 } from "./teacher-attempt-service";
@@ -35,7 +35,7 @@ import {
  * - 归属过滤：attempt → student → teacherId（乙教师导不出甲学生的行，T2B 域红线）；
  * - 筛选：六参数语义与列表接口同轴（from/to 按「最近活动时间」
  *   submittedAt ?? startedAt 过滤；已交卷 attempt 即 submittedAt）；
- * - 来源上下文 / 题目快照 / 答案序列化 / ink 关联：sourceOf / snapshotOf /
+ * - 来源上下文 / 题目快照 / 答案序列化 / ink 关联：sourceOf / snapshotOfRow /
  *   answerOf + serializeStudentAnswer（待批卡片同一序列化口径）/ inkByQuestionOf；
  * - 题号：与 T3.1 详情同口径的全卷连续题号（attempt 单元顺序 × 单元内题序，1 起）；
  * - 考点取自题目快照（responses.questionSnapshotJson）；快照缺失按题目 id 从
@@ -264,7 +264,7 @@ export function exportCsv(
       let wrongNo = 0;
       for (const row of ownRows) {
         wrongNo += 1;
-        const snapshot = snapshotOf(row.response);
+        const snapshot = snapshotOfRow(row.response);
         const type = snapshot?.type ?? row.questionType ?? null;
         const difficulty =
           snapshot?.difficulty ?? row.questionDifficulty ?? null;
@@ -413,7 +413,7 @@ export function exportCsv(
       for (const { response, type: qType, difficulty: qDifficulty } of group) {
         no += 1;
         // 快照优先；缺失回落当前 questions 行（考点经关联表兜底）
-        const snapshot = snapshotOf(response);
+        const snapshot = snapshotOfRow(response);
         const type = snapshot?.type ?? qType ?? null;
         const difficulty = snapshot?.difficulty ?? qDifficulty ?? null;
         let knowledge: string[];

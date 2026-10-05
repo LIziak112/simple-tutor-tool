@@ -550,6 +550,92 @@ describe("T6R.3 建卷冻结：assignment 来源", () => {
     expect(opened).toContain("同号相加，取相同的符号");
   });
 
+  it("编排者裁决：建卷后教师重排题序，进行中卷的分组与题序不变（从冻结行自身重建）；新开的卷用新序", async () => {
+    const { app, teacherCookie, aCookie, bCookie, assignmentId } =
+      await makeEnv();
+    const attemptId = await startAttemptId(app, aCookie, assignmentId);
+    const before = (await draftQuestions(app, aCookie, attemptId)).map(
+      (question) => question.id,
+    );
+    expect(before).toEqual(Object.values(Q)); // 建卷序 = 单元题序
+
+    // 教师把单元内题目倒序重排（真实教师路径 POST /reorder，order 按下标重写）
+    const reversed = [...Object.values(Q)].reverse();
+    const reorder = await app.request("/api/teacher/reorder", {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: teacherCookie },
+      body: JSON.stringify({ kind: "question", ids: reversed }),
+    });
+    expect(reorder.status).toBe(200);
+
+    // 张三的进行中卷：分组与题序不变（冻结行 unitId 首现序分组 + rowid 组内序，
+    // 不读 questions.order）；判分与结果视图同序
+    const after = (await draftQuestions(app, aCookie, attemptId)).map(
+      (question) => question.id,
+    );
+    expect(after).toEqual(before);
+    expect(
+      (
+        await putAnswer(app, aCookie, attemptId, Q.judge, {
+          kind: "judge",
+          value: true,
+        })
+      ).status,
+    ).toBe(200);
+    const submitRes = await submitWithCurrentRevisions(app, aCookie, attemptId);
+    expect(submitRes.status).toBe(200);
+    const result = (await submitRes.json()) as {
+      data: { units: { questions: { questionId: string }[] }[] };
+    };
+    expect(
+      result.data.units
+        .flatMap((unit) => unit.questions)
+        .map((item) => item.questionId),
+    ).toEqual(before); // 结果视图同一冻结序
+
+    // 李四在重排后才开卷 → 新卷用新序（题库 order 已变，建卷冻结取当前序）
+    const bAttemptId = await startAttemptId(app, bCookie, assignmentId);
+    const bOrder = (await draftQuestions(app, bCookie, bAttemptId)).map(
+      (question) => question.id,
+    );
+    expect(bOrder).toEqual(reversed);
+  });
+
+  it("真 bug 回归：冻结卷的坏快照题请求提示 → 400 HINT_INDEX_OUT_OF_RANGE（requireUsableAttempt 返回冻结后的行，分态正确，绝不回退当前题库）", async () => {
+    const { app, db, teacherCookie, aCookie, assignmentId } = await makeEnv();
+    void teacherCookie;
+    const attemptId = await startAttemptId(app, aCookie, assignmentId);
+    // 冻结后把某行快照改坏（数据异常模拟）：修复前 hintsOfAttempt 拿旧
+    // attempt 对象（frozenAt=null）误走遗留分支，回退当前题库返回了提示内容
+    db.update(responses)
+      .set({ questionSnapshotJson: "{bad json" })
+      .where(
+        and(
+          eq(responses.attemptId, attemptId),
+          eq(responses.questionId, Q.fill),
+        ),
+      )
+      .run();
+
+    const hintRes = await app.request(
+      `/api/student/attempts/${attemptId}/hints`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json", cookie: aCookie },
+        body: JSON.stringify({ questionId: Q.fill, index: 0 }),
+      },
+    );
+    expect(hintRes.status).toBe(400);
+    expect(((await hintRes.json()) as ApiErr).error).toBe(
+      "HINT_INDEX_OUT_OF_RANGE",
+    );
+    // 该题从草稿视图消失（按缺失计）；对照正常题（findError 有提示）照常解锁
+    const questions = await draftQuestions(app, aCookie, attemptId);
+    expect(questions.some((question) => question.id === Q.fill)).toBe(false);
+    const okHint = await openHint(app, aCookie, attemptId, Q.findError, 0);
+    expect(okHint.res.status).toBe(200);
+  });
+
   it("泄露：草稿视图与取卷 assertNoLeak 全量通过（含 questionRevisionId 新字段后仍无答案/详解/提示内容）", async () => {
     const { app, aCookie, assignmentId } = await makeEnv();
     const attemptId = await startAttemptId(app, aCookie, assignmentId);

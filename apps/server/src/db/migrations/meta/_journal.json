@@ -162,6 +162,13 @@
       "when": 1791226714737,
       "tag": "0022_modern_hobgoblin",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "6",
+      "when": 1791230564277,
+      "tag": "0023_youthful_felicia_hardy",
+      "breakpoints": true
     }
   ]
 }

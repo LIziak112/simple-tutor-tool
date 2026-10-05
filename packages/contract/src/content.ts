@@ -143,6 +143,15 @@ export const questionPublicSchema = z.object({
   hintCount: z.number().int().min(0),
 });
 
+/**
+ * 截止时间格式（UTC ISO 字符串，带 Z 后缀；datetime-local 本地值由前端转
+ * UTC 后提交）。不接受无时区的本地格式（如 2026-09-30T18:00）与 +hh:mm
+ * 偏移写法，避免歧义。原定义在 assignment.ts；T6R.3 收敛时下移本文件——
+ * attempt.ts 的视图（dueAt 字段）与 assignment.ts 的创建/PATCH 共用同一份，
+ * 且 attempt ↔ assignment 不可互相导入（避免环）。
+ */
+export const assignmentDueAtSchema = z.iso.datetime({ offset: false });
+
 /** 练习单元（练习集）。id 来自 DSL（标题 slug，题目缺省 id `单元slug-序号` 中的"单元slug"即它）；数据库层的 courseId/order/updatedAt 与解析无关 */
 export const unitSchema = z.object({
   id: z.string().min(1),

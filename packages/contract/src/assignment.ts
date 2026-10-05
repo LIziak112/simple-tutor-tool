@@ -1,6 +1,6 @@
 import { z } from "zod";
-import { questionPublicSchema } from "./content.ts";
-import { questionRevisionIdSchema } from "./note.ts";
+import { studentPaperQuestionSchema } from "./attempt.ts";
+import { assignmentDueAtSchema } from "./content.ts";
 
 /**
  * 作业契约（T2.2 起为权威定义；T2A.7 大改——多单元内容 + 按课程布置 + 名单增删
@@ -58,11 +58,9 @@ export const assignmentTitleSchema = z
   .min(1, "作业标题不能为空")
   .max(ASSIGNMENT_TITLE_MAX, `作业标题最多 ${ASSIGNMENT_TITLE_MAX} 个字符`);
 
-/**
- * 截止时间：UTC ISO 字符串（带 Z 后缀；datetime-local 本地值由前端转 UTC 后提交）。
- * 不接受无时区的本地格式（如 2026-09-30T18:00）与 +hh:mm 偏移写法，避免歧义。
- */
-export const assignmentDueAtSchema = z.iso.datetime({ offset: false });
+// 截止时间格式 assignmentDueAtSchema：定义已下移 content.ts（T6R.3 收敛——
+// attempt.ts 视图与本文件共用同一份，attempt ↔ assignment 不可互导），
+// 本文件经顶部 import 使用；包级导出经 index.ts 的 content.ts 星号导出不变。
 
 /**
  * 答案公布时机（T2A.8，D11）：on_submit=交卷即公布（默认，现状语义）；
@@ -365,12 +363,12 @@ export const studentPaperUnitSchema = z.object({
   id: z.string().min(1),
   /** 单元标题（当前值；答题页分节标题。软删单元行保留在回收站，标题仍可读） */
   title: z.string().min(1),
-  /** 该单元的公开题目（QuestionPublic[]，按单元内题序） */
-  questions: z.array(
-    questionPublicSchema.extend({
-      questionRevisionId: questionRevisionIdSchema.optional(),
-    }),
-  ),
+  /**
+   * 该单元的公开题目（QuestionPublic 基底 + 可选 questionRevisionId，按单元内
+   * 题序）。T6R.3：题形态派生自 attempt.ts 的 studentPaperQuestionSchema
+   * （单一出处——仅通用取卷携带 revisionId，作业预览缺省合法）。
+   */
+  questions: z.array(studentPaperQuestionSchema),
 });
 
 /**

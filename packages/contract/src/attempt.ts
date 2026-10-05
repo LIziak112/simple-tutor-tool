@@ -1,8 +1,10 @@
 import { z } from "zod";
-import { assignmentDueAtSchema } from "./assignment.ts";
-import { questionAnswersSchema, questionPublicSchema } from "./content.ts";
+import {
+  assignmentDueAtSchema,
+  questionAnswersSchema,
+  questionPublicSchema,
+} from "./content.ts";
 import { studentAnswerSchema } from "./grading.ts";
-import { questionRevisionIdSchema } from "./note.ts";
 
 /**
  * 作答生命周期契约（T2.6 起为权威定义）：attempt 的创建（幂等）、草稿保存、
@@ -211,6 +213,21 @@ export const hintOpenedEntrySchema = z.object({
 });
 
 /**
+ * 题目版本引用（T6R.3 冻结，方案 §5.1）：定位「本次作答时被冻结的那道题」，
+ * 对学生不透明。铸造规则已由 T6R.3 定稿：**该 (attempt, question) 的
+ * responses 行 id**（crypto.randomUUID）——每题每次作答天然唯一、快照与版本
+ * 引用同源同寿、交卷回传比对即可验证题目版本，契约长度上限自然满足。
+ * 该引用只能定位授权记录，不能当访问凭证。
+ * （定义原在 note.ts；T6R.3 收敛时移入本文件——铸造规则属作答域，且 attempt
+ * 视图/试卷形态与笔记元信息共用同一份，单一出处。）
+ */
+export const questionRevisionIdSchema = z
+  .string()
+  .min(1, "questionRevisionId 不能为空")
+  .max(512)
+  .refine((v) => v === v.trim(), "questionRevisionId 不能含首尾空白或为纯空白");
+
+/**
  * attempt 视图的公开题目（T6R.3 全来源冻结）：QuestionPublic 白名单投影 +
  * 每题不透明 questionRevisionId（该题在本 attempt 的 responses 行 id——建卷
  * 冻结时铸造，交卷时原样回传以验证题目版本；只能定位授权记录，不能当访问
@@ -219,6 +236,17 @@ export const hintOpenedEntrySchema = z.object({
  */
 export const attemptQuestionPublicSchema = questionPublicSchema.extend({
   questionRevisionId: questionRevisionIdSchema,
+});
+
+/**
+ * 试卷题目的可选版本形态（T6R.3）：**仅通用取卷（GET /attempts/:id/paper，
+ * 题目来自建卷冻结快照）携带** questionRevisionId；作业预览
+ * （GET /assignments/:id/paper，开卷前的当前题库）没有 attempt 语境，不带
+ * 该字段（可选语义，缺省合法）。由 attemptQuestionPublicSchema 派生
+ * （单一出处），供 assignment.ts 的 studentPaperUnitSchema 复用。
+ */
+export const studentPaperQuestionSchema = attemptQuestionPublicSchema.partial({
+  questionRevisionId: true,
 });
 
 /**
@@ -549,6 +577,10 @@ export type AttemptDraftData = z.infer<typeof attemptDraftDataSchema>;
 export type AttemptDraftUnit = z.infer<typeof attemptDraftUnitSchema>;
 /** attempt 视图公开题目（QuestionPublic + questionRevisionId，T6R.3） */
 export type AttemptQuestionPublic = z.infer<typeof attemptQuestionPublicSchema>;
+/** 题目版本引用（T6R.3；随 schema 自 note.ts 移入本文件） */
+export type QuestionRevisionId = z.infer<typeof questionRevisionIdSchema>;
+/** 试卷题目的可选版本形态（仅通用取卷携带 revisionId） */
+export type StudentPaperQuestion = z.infer<typeof studentPaperQuestionSchema>;
 export type AttemptResultQuestion = z.infer<typeof attemptResultQuestionSchema>;
 export type AttemptResultUnit = z.infer<typeof attemptResultUnitSchema>;
 export type AttemptScoreSummary = z.infer<typeof attemptScoreSummarySchema>;

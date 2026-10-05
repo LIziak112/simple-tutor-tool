@@ -18,11 +18,11 @@ import {
 import { HttpError } from "../lib/http-error";
 import { finalScoreOf } from "./attempt-service";
 import { pendingMarkCount } from "./pending-mark";
+import { snapshotOfRow } from "./snapshot.ts";
 import {
   answerOf,
   inkByQuestionOf,
   inkInfoOf,
-  snapshotOf,
   sourceOf,
 } from "./teacher-attempt-service";
 
@@ -190,7 +190,7 @@ export function markResponse(
  * studentId 筛选。排序 submittedAt 升序（先交先批；同刻并列按 attemptId、
  * questionId 升序兜底稳定，同一 attempt 的待批题相邻）。无分页（见契约注释）。
  * 卡片拼装：按 attempt 分组复用 sourceOf/inkByQuestionOf（每 attempt 一次查询），
- * 快照坏数据行跳过并留痕（snapshotOf 内 warn，与 T3.1 详情同口径）。
+ * 快照坏数据行跳过并留痕（snapshotOfRow 内 warn，全服务端同一口径）。
  */
 export function listPendingMarks(
   db: Db,
@@ -256,8 +256,8 @@ export function listPendingMarks(
     const source = sourceOf(db, group.attempt, teacherId);
     const inkByQuestion = inkByQuestionOf(db, attemptId);
     for (const response of group.responses) {
-      const snapshot = snapshotOf(response);
-      if (snapshot === null) continue; // 坏快照按缺失计（snapshotOf 内留痕）
+      const snapshot = snapshotOfRow(response);
+      if (snapshot === null) continue; // 坏快照按缺失计（snapshotOfRow 内留痕）
       marks.push({
         responseId: response.id,
         attemptId,

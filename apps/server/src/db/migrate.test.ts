@@ -11,7 +11,6 @@ import {
   courses,
   ink,
   questions,
-  responses,
   students,
   teachers,
   units,
@@ -85,7 +84,7 @@ describe("T6R.2 迁移：空库与带存量库", () => {
    * 库本身由 makeMigrationsFolderUpTo(PRE_T6R2_LAST_TAG) 的截断迁移目录建出
    * （backfill.test.ts 既有惯例：journal 天然只到边界）。**attempts 行用原生
    * SQL 插入**——drizzle 绑定当前 schema，T6R.3 起含 frozen_at 等截断旧表
-   * 没有的列；responses/ink 等未改列的表继续走 drizzle。
+   * 没有的列；ink 等未改列的表继续走 drizzle。
    */
   function seedLegacyData(db: ReturnType<typeof createDb>): {
     attemptId: string;
@@ -185,32 +184,20 @@ describe("T6R.2 迁移：空库与带存量库", () => {
       })
       .run();
     const attemptId = randomUUID();
-    // T6R.3：attempts 用原生 SQL（截断库没有 frozen_at/legacy_unverified 列）
+    // T6R.3：attempts/responses 用原生 SQL（截断旧库没有 frozen_at/
+    // legacy_unverified（attempts）与 unit_id（responses）等后续迁移列）
     db.$client
       .prepare(
         `INSERT INTO attempts (id, student_id, source_type, assignment_id, course_id, unit_id, attempt_no, status, started_at, submitted_at, active_sec, device, score_auto, score_final)
          VALUES (?, ?, 'assignment', ?, ?, ?, 1, 'draft', ?, NULL, NULL, NULL, NULL, NULL)`,
       )
       .run(attemptId, studentId, assignmentId, courseId, unitId, now);
-    db.insert(responses)
-      .values({
-        id: randomUUID(),
-        attemptId,
-        questionId,
-        questionVersion: 3,
-        questionSnapshotJson: '{"id":"练习四-1","type":"judge"}',
-        answerJson: '{"kind":"judge","value":true}',
-        autoCorrect: null,
-        finalCorrect: null,
-        teacherMark: null,
-        teacherComment: null,
-        activeSec: null,
-        hintsUsed: 0,
-        hintsOpenedJson: null,
-        changeCount: 2,
-        inkId: null,
-      })
-      .run();
+    db.$client
+      .prepare(
+        `INSERT INTO responses (id, attempt_id, question_id, question_version, question_snapshot_json, answer_json, auto_correct, final_correct, teacher_mark, teacher_comment, active_sec, hints_used, hints_opened_json, change_count, ink_id)
+         VALUES (?, ?, ?, 3, '{"id":"练习四-1","type":"judge"}', '{"kind":"judge","value":true}', NULL, NULL, NULL, NULL, NULL, 0, NULL, 2, NULL)`,
+      )
+      .run(randomUUID(), attemptId, questionId);
     db.insert(ink)
       .values({
         id: randomUUID(),

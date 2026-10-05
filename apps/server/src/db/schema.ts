@@ -765,7 +765,7 @@ export const responses = sqliteTable(
     /**
      * 主键：crypto.randomUUID()（§0.3 主键约定）。T6R.3 起兼作对外下发的
      * questionRevisionId（学生对每题看到的不透明版本引用；建卷铸造、交卷回传
-     * 比对、笔记/证据关联同源，见 contract note.ts questionRevisionIdSchema）。
+     * 比对、笔记/证据关联同源，见 contract attempt.ts questionRevisionIdSchema）。
      */
     id: text("id").primaryKey(),
     /** 所属作答（attempts.id） */
@@ -774,6 +774,14 @@ export const responses = sqliteTable(
       .references(() => attempts.id),
     /** 题目（questions.id，来自 DSL；T2B.1/D10 起无外键，值不变） */
     questionId: text("question_id").notNull(),
+    /**
+     * 冻结时刻的单元归属（T6R.3）：建卷/懒冻结时随快照一并写入——分组与
+     * 展示序全部从冻结行自身重建（unit_id 首现序分组 + rowid 组内序，即建卷
+     * 组卷序），教师此后重排/移单元不影响进行中卷的结构。wrong 恒 null
+     * （卷无单元语义）；升级前已交卷的遗留行恒 null（沿用交卷快照、读路径
+     * 按域内 join 兜底分组，见 attempt-service.frozenRowsInDisplayOrder）。
+     */
+    unitId: text("unit_id"),
     /**
      * 建卷冻结时的题目内容版本（questions.version；wrong 来源 = 源快照的版本）。
      * 升级遗留的未冻结行为 0（懒冻结补写时更新）。

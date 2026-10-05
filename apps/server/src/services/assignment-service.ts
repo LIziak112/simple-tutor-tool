@@ -1126,8 +1126,11 @@ function optionTexts(optionsJson: string): string[] {
 export function knowledgeNamesByQuestion(
   db: Db,
   teacherId: string,
+  /** 只查这些题（T6R.3 冻结路径传卷内题 id，避免拉全教师域关联）；缺省全量 */
+  questionIds?: readonly string[],
 ): Map<string, string[]> {
   const map = new Map<string, string[]>();
+  if (questionIds !== undefined && questionIds.length === 0) return map;
   const rows = db
     .select({
       questionId: questionKnowledge.questionId,
@@ -1138,7 +1141,14 @@ export function knowledgeNamesByQuestion(
       knowledgePoints,
       eq(questionKnowledge.knowledgePointId, knowledgePoints.id),
     )
-    .where(eq(questionKnowledge.teacherId, teacherId))
+    .where(
+      questionIds === undefined
+        ? eq(questionKnowledge.teacherId, teacherId)
+        : and(
+            eq(questionKnowledge.teacherId, teacherId),
+            inArray(questionKnowledge.questionId, [...questionIds]),
+          ),
+    )
     .orderBy(asc(knowledgePoints.name))
     .all();
   for (const row of rows) {
