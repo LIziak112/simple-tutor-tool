@@ -15,7 +15,7 @@ import {
   requireUsableAttempt,
 } from "./attempt-service";
 import { recordHintOpenEvent } from "./event-service";
-import { snapshotOfRow } from "./snapshot.ts";
+import { snapshotOfRow } from "./snapshot";
 
 /**
  * HintService（T2.11）——分步提示的业务层（架构文档 §5.3「提示通过

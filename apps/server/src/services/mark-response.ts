@@ -6,7 +6,7 @@ import type {
   PendingMarkListQuery,
   StudentAnswer,
 } from "@tutor/contract";
-import { and, asc, eq, isNull, ne } from "drizzle-orm";
+import { and, asc, eq, isNotNull, isNull, ne } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
   type Attempt,
@@ -18,7 +18,7 @@ import {
 import { HttpError } from "../lib/http-error";
 import { finalScoreOf } from "./attempt-service";
 import { pendingMarkCount } from "./pending-mark";
-import { snapshotOfRow } from "./snapshot.ts";
+import { snapshotOfRow } from "./snapshot";
 import {
   answerOf,
   inkByQuestionOf,
@@ -135,11 +135,18 @@ export function markResponse(
       })
       .where(eq(responses.id, responseId))
       .run();
-    // 2. 整卷重算（finalScoreOf 与交卷链路同一实现，D2 状态机不复制公式）
+    // 2. 整卷重算（finalScoreOf 与交卷链路同一实现，D2 状态机不复制公式）。
+    //    与待批谓词同口径过滤幽灵行（快照空的历史题目缺失行不进重算——
+    //    它们永远 null finalCorrect，计入会让 attempt 永卡 submitted）
     const finalCorrects = tx
       .select({ finalCorrect: responses.finalCorrect })
       .from(responses)
-      .where(eq(responses.attemptId, attemptId))
+      .where(
+        and(
+          eq(responses.attemptId, attemptId),
+          isNotNull(responses.questionSnapshotJson),
+        ),
+      )
       .all()
       .map((r) => r.finalCorrect);
     const { status, scoreFinal } = finalScoreOf(finalCorrects);
@@ -200,8 +207,10 @@ export function listPendingMarks(
   const where = and(
     eq(students.teacherId, teacherId),
     // 共享谓词（pending-mark.ts 同口径）：已交卷 attempt + finalCorrect IS NULL
+    // + 快照非空（T6R.3：幽灵行不进队列——它们不可批也不显示）
     ne(attempts.status, "draft"),
     isNull(responses.finalCorrect),
+    isNotNull(responses.questionSnapshotJson),
     query.studentId !== undefined
       ? eq(attempts.studentId, query.studentId)
       : undefined,

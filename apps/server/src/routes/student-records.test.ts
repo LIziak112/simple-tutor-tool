@@ -12,7 +12,7 @@ import type { Db } from "../db/client";
 import { assignments, attempts, responses } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
-import { fetchSubmitRevisions } from "../test/submit-revisions.ts";
+import { fetchSubmitRevisions } from "../test/submit-revisions";
 
 /**
  * T3.5「我的记录」集成测试（D10；app.request() 直调路由 + 内存库）：

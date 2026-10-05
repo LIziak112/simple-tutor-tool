@@ -13,7 +13,7 @@ import { attempts, questions, responses, students } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 import { assertNoStemLeak } from "../test/assert-no-stem-leak.ts";
-import { fetchSubmitRevisions } from "../test/submit-revisions.ts";
+import { fetchSubmitRevisions } from "../test/submit-revisions";
 
 /**
  * T3.5 错题本集成测试（D11；2026-10 轮次史 + 归属单元扩展；app.request() 直调

@@ -17,7 +17,7 @@ import {
   units,
 } from "../db/schema";
 import { serializeStudentAnswer } from "./mark-response";
-import { snapshotOfRow } from "./snapshot.ts";
+import { snapshotOfRow } from "./snapshot";
 import { studentTeacherIdOf } from "./student-course-service";
 import { answerOf, sourceOf } from "./teacher-attempt-service";
 

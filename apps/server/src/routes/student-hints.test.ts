@@ -16,7 +16,7 @@ import type { Db } from "../db/client";
 import { events, questions, responses } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
-import { fetchSubmitRevisions } from "../test/submit-revisions.ts";
+import { fetchSubmitRevisions } from "../test/submit-revisions";
 
 /**
  * 分步提示集成测试（T2.11 全部验收项，app.request() 直调路由 + 内存库）：

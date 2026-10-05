@@ -13,7 +13,7 @@ import { attempts, questions, responses } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 import { assertNoStemLeak } from "../test/assert-no-stem-leak.ts";
-import { fetchSubmitRevisions } from "../test/submit-revisions.ts";
+import { fetchSubmitRevisions } from "../test/submit-revisions";
 
 /**
  * 2026-10 错题重练集成测试（POST /api/student/wrong-practice；app.request()

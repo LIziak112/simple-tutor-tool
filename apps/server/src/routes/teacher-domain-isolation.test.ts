@@ -26,7 +26,7 @@ import {
   createTestDir,
   TEST_TEACHER_ID,
 } from "../db/test-utils.ts";
-import { fetchSubmitRevisions } from "../test/submit-revisions.ts";
+import { fetchSubmitRevisions } from "../test/submit-revisions";
 
 /**
  * T2B.3 隔离红线测试矩阵（§0.2：教师乙访问教师甲资源 → 404 或列表为空；

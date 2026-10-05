@@ -54,12 +54,12 @@ import {
   units,
 } from "../db/schema";
 import { HttpError } from "../lib/http-error";
-import { attemptUnitIds } from "./attempt-service";
+import { frozenRowsInDisplayOrder } from "./attempt-service";
 import { beijingDateTimeOf, beijingExportStampOf } from "./export-csv";
 import { lectureReadingMapFor } from "./lecture-insights";
 import { serializeStudentAnswer } from "./mark-response";
 import { extractMediaImageSrcs } from "./media-service";
-import { snapshotOfRow } from "./snapshot.ts";
+import { snapshotOfRow } from "./snapshot";
 import { answerOf, sourceOf } from "./teacher-attempt-service";
 import { type TraceEvent, traceEventsFromRows } from "./trace-intervals";
 import { computeAttemptTraceMetrics } from "./trace-metrics";
@@ -538,8 +538,9 @@ export function assembleLearningPack(
     for (const [questionId, { row }] of latestSnapshot) {
       const snapshot = snapshotOfRow(row);
       const meta = metaOf.get(questionId);
-      // 快照缺失按当前库题干兜底（题目统计同口径；两者皆缺按空题干行追加在末尾）
-      const stemMd = snapshot?.stemMd ?? meta?.stemMd ?? "";
+      // T6R.3：快照缺失按**显式缺失**处理（空题干），不拿当前题库兜底——
+      // 历史题目缺失不伪造当时内容；缺失清单标记由 T6R.12 细化
+      const stemMd = snapshot?.stemMd ?? "";
       const item: LearningPackQuestion = {
         questionId,
         unitId: meta?.unitId ?? null,
@@ -550,8 +551,11 @@ export function assembleLearningPack(
         stemMd:
           m.questions === "stem"
             ? // 「仅题干」层经 studentStemMd 学生端投影：[[答案]] 脱敏 + 选项列表
-              // 剥除（options 文本数组另行携带），不给答案（D14）
-              studentStemMd(snapshot ?? { stemMd })
+              // 剥除（options 文本数组另行携带），不给答案（D14）；快照缺失
+              // 时同样空串（不取当前题库）
+              snapshot !== null
+              ? studentStemMd(snapshot)
+              : ""
             : stemMd,
       };
       if (snapshot?.options !== undefined) {
@@ -702,55 +706,11 @@ export function assembleLearningPack(
     }
   }
 
-  /** 该 attempt 的逐题行序（attempt 单元顺序 × 单元内题序，与作答详情同口径） */
-  const orderedResponsesOf = (attempt: Attempt): ResponseRow[] => {
-    const rows = responsesByAttempt.get(attempt.id) ?? [];
-    if (rows.length === 0) return rows;
-    const unitIds = attemptUnitIds(db, attempt);
-    const orderById = new Map(
-      db
-        .select({
-          id: questions.id,
-          unitId: questions.unitId,
-          order: questions.order,
-        })
-        .from(questions)
-        .where(
-          and(
-            eq(questions.teacherId, teacherId),
-            inArray(
-              questions.id,
-              rows.map((row) => row.questionId),
-            ),
-          ),
-        )
-        .all()
-        .map((row) => [row.id, row] as const),
-    );
-    const unitIndex = new Map(unitIds.map((unitId, i) => [unitId, i] as const));
-    const unitOf = (questionId: string): string | null =>
-      orderById.get(questionId)?.unitId ?? null;
-    return [...rows].sort((a, b) => {
-      const unitA = unitOf(a.questionId);
-      const unitB = unitOf(b.questionId);
-      const idxA =
-        unitA !== null
-          ? (unitIndex.get(unitA) ?? unitIds.length)
-          : unitIds.length + 1;
-      const idxB =
-        unitB !== null
-          ? (unitIndex.get(unitB) ?? unitIds.length)
-          : unitIds.length + 1;
-      if (idxA !== idxB) return idxA - idxB;
-      const ordA =
-        orderById.get(a.questionId)?.order ?? Number.MAX_SAFE_INTEGER;
-      const ordB =
-        orderById.get(b.questionId)?.order ?? Number.MAX_SAFE_INTEGER;
-      return ordA !== ordB
-        ? ordA - ordB
-        : a.questionId.localeCompare(b.questionId);
-    });
-  };
+  /** 该 attempt 的逐题行序：frozenRowsInDisplayOrder 统一口径（T6R.3 冻结
+   * 行自身重建；懒冻结存量卷与升级前已交卷沿用题库 join 序——与学生结果
+   * 视图/教师详情同一实现，导出与学生看到的题序一致） */
+  const orderedResponsesOf = (attempt: Attempt): ResponseRow[] =>
+    frozenRowsInDisplayOrder(db, attempt).map((entry) => entry.row);
 
   // —— attempts.responses（D15 全部历次；评语原文不改动 D16） ——
   const responseRows: LearningPackResponse[] = [];

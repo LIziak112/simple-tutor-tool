@@ -14,7 +14,7 @@ import {
   CSV_COLUMNS,
   csvCell,
 } from "../services/export-csv.ts";
-import { fetchSubmitRevisions } from "../test/submit-revisions.ts";
+import { fetchSubmitRevisions } from "../test/submit-revisions";
 
 /**
  * T3.4 CSV 导出服务测试（GET /api/teacher/export/csv，Phase3 清单 §2 D13、

@@ -5,7 +5,7 @@ import type { Db } from "../db/client";
 import { attempts, type ResponseRow } from "../db/schema";
 import { HttpError } from "../lib/http-error";
 import { attemptSummaryOf, insertFrozenResponse } from "./attempt-service";
-import { snapshotOfRow } from "./snapshot.ts";
+import { snapshotOfRow } from "./snapshot";
 import { latestJudgedResponsesByQuestion } from "./wrong-questions";
 
 /**

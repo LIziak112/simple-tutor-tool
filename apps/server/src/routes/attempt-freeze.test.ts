@@ -11,7 +11,7 @@ import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
-import { attempts, responses } from "../db/schema.ts";
+import { attempts, responses, students } from "../db/schema";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 
@@ -1105,5 +1105,285 @@ describe("T6R.3 交卷回传题目版本验证（questionRevisionId）", () => {
     };
     expect(body.data.summary.total).toBe(0);
     expect(["submitted", "graded"]).toContain(body.data.attempt.status);
+  });
+});
+
+describe("T6R.3 /code-review P0 回归：幽灵行 / 懒冻结展示序 / wrong 存量标记 / 导出序", () => {
+  it("幽灵行不卡批改状态机：存量卷含软删已答的题 → 交卷后待批只含真实题，批完即 graded（幽灵行不计入重算/谓词/队列/题数）", async () => {
+    const { app, db, teacherCookie, aCookie, assignmentId } = await makeEnv();
+    const attemptId = await startAttemptId(app, aCookie, assignmentId);
+    // 张三答对五道客观题 + 答过 fill（将被软删成幽灵行）；fillMath 不答（真实待批）
+    for (const [qid, answer] of [
+      [Q.judge, { kind: "judge", value: true }],
+      [Q.choice, { kind: "choice", index: 1 }],
+      [Q.multi, { kind: "multi", indexes: [0, 2] }],
+      [Q.solve, { kind: "final", finalAnswer: "-3" }],
+      [Q.apply, { kind: "final", finalAnswer: "1.4" }],
+    ] as const) {
+      expect(
+        (await putAnswer(app, aCookie, attemptId, qid, answer)).status,
+      ).toBe(200);
+    }
+    expect(
+      (
+        await putAnswer(app, aCookie, attemptId, Q.fill, {
+          kind: "fill",
+          values: ["4", "-7", "1/2"],
+        })
+      ).status,
+    ).toBe(200);
+    await downgradeToLegacyDraft(db, attemptId);
+    // 恢复访问前教师软删 fill（张三答过的题 → 幽灵行：快照空、答案保留）与
+    // 未答的 findError（升级前无行 → 不进冻结集合，连幽灵行都不是）
+    await softDeleteQuestion(app, teacherCookie, Q.fill);
+    await softDeleteQuestion(app, teacherCookie, Q.findError);
+
+    // 首次访问懒冻结：fill 的行不补快照（幽灵行），其余 live 题冻结
+    const questions = await draftQuestions(app, aCookie, attemptId);
+    expect(questions).toHaveLength(6); // fill/findError 缺席（历史题目缺失）
+    expect(questions.some((question) => question.id === Q.fill)).toBe(false);
+
+    // 交卷：参与判分 7 题；fillMath 真实待批 1 题（幽灵行不计入）
+    const submitRes = await submitWithCurrentRevisions(app, aCookie, attemptId);
+    expect(submitRes.status).toBe(200);
+    const submitted = (await submitRes.json()) as {
+      data: {
+        summary: { total: number; pending: number };
+        attempt: { status: string };
+      };
+    };
+    expect(submitted.data.summary.total).toBe(6);
+    expect(submitted.data.summary.pending).toBe(1); // 仅 fillMath
+    expect(submitted.data.attempt.status).toBe("submitted");
+
+    // 教师待批队列：只有 fillMath 一张真实卡片（幽灵行绝不进队列）
+    const queue = await app.request("/api/teacher/pending-marks", {
+      headers: { cookie: teacherCookie },
+    });
+    expect(queue.status).toBe(200);
+    const marks = (
+      (await queue.json()) as { data: { marks: { questionId: string }[] } }
+    ).data.marks;
+    expect(marks.map((m) => m.questionId)).toEqual([Q.fillMath]);
+
+    // 教师批完 fillMath → 整卷重算排除幽灵行 → graded（不再永卡 submitted）
+    const fillMathRowId = db
+      .select({ id: responses.id })
+      .from(responses)
+      .where(
+        and(
+          eq(responses.attemptId, attemptId),
+          eq(responses.questionId, Q.fillMath),
+        ),
+      )
+      .get()?.id;
+    expect(fillMathRowId).toBeDefined();
+    const mark = await app.request(
+      `/api/teacher/responses/${fillMathRowId}/mark`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json", cookie: teacherCookie },
+        body: JSON.stringify({ mark: "correct", comment: null }),
+      },
+    );
+    expect(mark.status).toBe(200);
+    const marked = (await mark.json()) as {
+      data: { attemptStatus: string; pendingCount: number; scoreFinal: number };
+    };
+    expect(marked.data.attemptStatus).toBe("graded");
+    expect(marked.data.pendingCount).toBe(0);
+    expect(marked.data.scoreFinal).toBe(100);
+
+    // 教师列表题数同过滤（幽灵行不计数）
+    const list = await app.request("/api/teacher/attempts?status=graded", {
+      headers: { cookie: teacherCookie },
+    });
+    expect(list.status).toBe(200);
+    const cards = (
+      (await list.json()) as {
+        data: { attempts: { attemptId: string; questionCount: number }[] };
+      }
+    ).data.attempts;
+    const card = cards.find((c) => c.attemptId === attemptId);
+    expect(card?.questionCount).toBe(6);
+  });
+
+  it("懒冻结存量卷展示序走遗留 join 序：多单元存量草稿（单元二先答）→ 懒冻结后展示序 = 组卷序（单元一在前）", async () => {
+    const { app, db, teacherCookie, aCookie } = await makeEnv();
+    // 导入第二份练习生成另一单元，布置双单元作业（单元一练习四、单元二练习五）
+    const otherMd = PRACTICE_MD.replace("unit: 练习四", "unit: 练习五").replace(
+      /练习四-/g,
+      "练习五-",
+    );
+    const commit = await app.request("/api/teacher/import/commit", {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: teacherCookie },
+      body: JSON.stringify({ markdown: otherMd, filename: "练习五.md" }),
+    });
+    expect(commit.status).toBe(200);
+    const aIdRow = db
+      .select()
+      .from(students)
+      .all()
+      .find((row) => row.displayName === "张三");
+    expect(aIdRow).toBeDefined();
+    const assignRes = await app.request("/api/teacher/assignments", {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: teacherCookie },
+      body: JSON.stringify({
+        unitIds: ["练习四", "练习五"],
+        studentIds: [aIdRow?.id ?? ""],
+      }),
+    });
+    expect(assignRes.status).toBe(201);
+    const assignmentId = (
+      (await assignRes.json()) as { data: { assignments: { id: string }[] } }
+    ).data.assignments[0]?.id;
+    if (assignmentId === undefined) throw new Error("布置双单元作业缺 id");
+
+    const attemptId = await startAttemptId(app, aCookie, assignmentId);
+    // 先答单元二的题（升级前创建的行 rowid 靠前——若按冻结 rowid 序会置顶）
+    expect(
+      (
+        await putAnswer(app, aCookie, attemptId, "练习五-1", {
+          kind: "judge",
+          value: true,
+        })
+      ).status,
+    ).toBe(200);
+    await downgradeToLegacyDraft(db, attemptId);
+
+    // 懒冻结后：展示序走遗留 join（单元一在前、组内题序），不是 rowid 序
+    const { body } = await getAttempt(app, aCookie, attemptId);
+    const parsed = attemptDraftOkSchema.safeParse(body);
+    if (!parsed.success) throw new Error(`草稿视图解析失败：${parsed.error}`);
+    expect(parsed.data.data.legacyUnverified).toBe(true);
+    expect(parsed.data.data.units[0]?.id).toBe("练习四");
+    expect(parsed.data.data.units[1]?.id).toBe("练习五");
+    expect(parsed.data.data.units[0]?.questions[0]?.id).toBe(Q.judge);
+    expect(parsed.data.data.units[1]?.questions[0]?.id).toBe("练习五-1");
+  });
+
+  it("存量 wrong 卷：首次恢复访问只补冻结标记（frozenAt=startedAt、legacyUnverified=false），不重读题库", async () => {
+    const { app, db, aCookie, assignmentId } = await makeEnv();
+    // 交一份含判错题的卷 → 组 wrong 重练卷
+    const attemptId = await startAttemptId(app, aCookie, assignmentId);
+    await putAnswer(app, aCookie, attemptId, Q.judge, {
+      kind: "judge",
+      value: false,
+    });
+    expect(
+      (await submitWithCurrentRevisions(app, aCookie, attemptId)).status,
+    ).toBe(200);
+    const wrongRes = await app.request("/api/student/wrong-practice", {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: aCookie },
+      body: JSON.stringify({ questionIds: [Q.judge] }),
+    });
+    expect(wrongRes.status).toBe(201);
+    const wrongAttemptId = ((await wrongRes.json()) as { data: { id: string } })
+      .data.id;
+    // 还原升级前形态：行不变（快照齐备）、冻结标记清空
+    const startedAt = db
+      .select()
+      .from(attempts)
+      .where(eq(attempts.id, wrongAttemptId))
+      .get()?.startedAt;
+    db.update(attempts)
+      .set({ frozenAt: null, legacyUnverified: false })
+      .where(eq(attempts.id, wrongAttemptId))
+      .run();
+
+    // 首次恢复访问：只补标记（frozenAt 回填 startedAt，非当下时刻；非 legacy）
+    const { res } = await getAttempt(app, aCookie, wrongAttemptId);
+    expect(res.status).toBe(200);
+    const row = db
+      .select()
+      .from(attempts)
+      .where(eq(attempts.id, wrongAttemptId))
+      .get();
+    expect(row?.frozenAt).toBe(startedAt);
+    expect(row?.legacyUnverified).toBe(false);
+  });
+
+  it("重排后导出题序与学生视图一致（assignment 与 wrong 卷——考点列为指纹）", async () => {
+    const { app, teacherCookie, aCookie, assignmentId } = await makeEnv();
+    const attemptId = await startAttemptId(app, aCookie, assignmentId);
+    // judge/choice 答错（进错题本，供 wrong 重练组卷）
+    await putAnswer(app, aCookie, attemptId, Q.judge, {
+      kind: "judge",
+      value: false,
+    });
+    await putAnswer(app, aCookie, attemptId, Q.choice, {
+      kind: "choice",
+      index: 0,
+    });
+    const frozenView = await draftQuestions(app, aCookie, attemptId);
+    const frozenOrder = frozenView.map((question) => question.id);
+    const frozenKnowledge = frozenView.map((question) =>
+      question.knowledge.join("；"),
+    );
+    expect(
+      (await submitWithCurrentRevisions(app, aCookie, attemptId)).status,
+    ).toBe(200);
+
+    // 教师倒序重排 → CSV 导出题序仍 = 学生冻结序（旧 join 实现会导出倒序）
+    const reorder = await app.request("/api/teacher/reorder", {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: teacherCookie },
+      body: JSON.stringify({
+        kind: "question",
+        ids: [...frozenOrder].reverse(),
+      }),
+    });
+    expect(reorder.status).toBe(200);
+    const csvRes = await app.request(
+      `/api/teacher/export/csv?assignmentId=${assignmentId}`,
+      { headers: { cookie: teacherCookie } },
+    );
+    expect(csvRes.status).toBe(200);
+    const bytes = new Uint8Array(await csvRes.arrayBuffer());
+    const text = new TextDecoder().decode(bytes.slice(3)); // 剥 BOM
+    const lines = text.split("\r\n").filter((line) => line.trim() !== "");
+    const body = lines.slice(1); // 去表头
+    expect(body).toHaveLength(8);
+    // 第 10 列（考点）= 各题冻结 knowledge，顺序 = 学生冻结序
+    const csvKnowledge = body.map((line) => line.split(",")[9] ?? "");
+    expect(csvKnowledge).toEqual(frozenKnowledge);
+
+    // wrong 卷：导出同样按建卷 rowid 序（学生视图同一序）
+    const wrongRes = await app.request("/api/student/wrong-practice", {
+      method: "POST",
+      headers: { "content-type": "application/json", cookie: aCookie },
+      body: JSON.stringify({ questionIds: [Q.judge, Q.choice] }),
+    });
+    expect(wrongRes.status).toBe(201);
+    const wrongAttemptId = ((await wrongRes.json()) as { data: { id: string } })
+      .data.id;
+    const wrongView = await draftQuestions(app, aCookie, wrongAttemptId);
+    expect(wrongView.map((question) => question.id)).toEqual([
+      Q.judge,
+      Q.choice,
+    ]);
+    const wrongKnowledge = wrongView.map((question) =>
+      question.knowledge.join("；"),
+    );
+    expect(
+      (await submitWithCurrentRevisions(app, aCookie, wrongAttemptId)).status,
+    ).toBe(200);
+    const wrongCsv = await app.request(
+      `/api/teacher/export/csv?sourceType=wrong`,
+      { headers: { cookie: teacherCookie } },
+    );
+    expect(wrongCsv.status).toBe(200);
+    const wrongBytes = new Uint8Array(await wrongCsv.arrayBuffer());
+    const wrongText = new TextDecoder().decode(wrongBytes.slice(3));
+    const wrongRows = wrongText
+      .split("\r\n")
+      .filter((line) => line.includes("错题重练") && line.trim() !== "");
+    expect(wrongRows).toHaveLength(2);
+    expect(wrongRows.map((line) => line.split(",")[9] ?? "")).toEqual(
+      wrongKnowledge,
+    );
   });
 });

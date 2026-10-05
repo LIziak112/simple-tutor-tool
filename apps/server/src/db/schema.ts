@@ -748,16 +748,20 @@ export const attempts = sqliteTable(
  *   进行中的 attempt 首次恢复访问时由懒冻结补写（快照存在/未软删的题），
  *   软删/缺失的题保留 NULL = 「历史题目缺失」，不拿当前题库回填伪造；
  *   升级前已交卷的行沿用交卷时快照，不重写；
- * - 题目顺序：wrong 卷以**插入顺序**为准（rowid 升序 = 组卷题序）；assignment/
- *   course 卷的展示分组与组内排序经 questions 域内 join（快照内容仍是唯一
- *   真相，join 只提供单元归属与展示序）。**不要对该表做整卷 DELETE/重插**
- *   （会破坏 wrong 卷题序，也会改写 questionRevisionId 的稳定引用）；
+ * - 题目顺序：建卷插入序（rowid 升序 = 组卷题序）。建卷即冻结的卷（三来源，
+ *   行带冻结 unitId）分组与组内序**完全从冻结行自身重建**（unitId 首现序分组
+ *   + rowid 组内序，教师重排/移单元不影响）；懒冻结的存量卷与升级前已交卷的
+ *   遗留行沿用 questions 域内 join 提供归属与展示序（口径见 attempt-service
+ *   的 frozenRowsInDisplayOrder）。**不要对该表做整卷 DELETE/重插**（会破坏
+ *   题序，也会改写 questionRevisionId 的稳定引用）；
  * - autoCorrect：服务端判分 true/false；NULL = 不能自动判定（D1 后仅：手写题
  *   未能自动判〔未作答/只写笔迹〕、题目无标准答案、判断题写法无法归一化——
  *   进教师待批队列；未作答客观题为 false）；
  * - finalCorrect / teacherMark / teacherComment：T3.2a 起启用——交卷时同时写
- *   finalCorrect = autoCorrect（D3），待批题 ≡ finalCorrect IS NULL（D4 共享
- *   谓词）；teacherMark / teacherComment 留待 T3.2b 批注链路写入。
+ *   finalCorrect = autoCorrect（D3），待批题 ≡ finalCorrect IS NULL 且快照
+ *   非空（D4 共享谓词；T6R.3 起叠加快照非空——排除「历史题目缺失」的幽灵行，
+ *   它们不进判分/视图/待批队列，见 pending-mark.ts）；teacherMark /
+ *   teacherComment 留待 T3.2b 批注链路写入。
  */
 export const responses = sqliteTable(
   "responses",

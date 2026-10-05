@@ -29,7 +29,7 @@ import {
 } from "../services/assignment-service.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 import { assertNoStemLeak } from "../test/assert-no-stem-leak.ts";
-import { fetchSubmitRevisions } from "../test/submit-revisions.ts";
+import { fetchSubmitRevisions } from "../test/submit-revisions";
 
 /**
  * 作业接口集成测试（T2.2 验收项起家；T2A.7 大改后覆盖 D12–D16；2026-10 追加
