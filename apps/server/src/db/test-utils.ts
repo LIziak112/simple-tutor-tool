@@ -1,9 +1,15 @@
-import { mkdtempSync } from "node:fs";
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runBackfills } from "./backfill";
 import { createDb, type Db } from "./client";
-import { runMigrations } from "./migrate";
+import { resolveMigrationsFolder, runMigrations } from "./migrate";
 import { teachers } from "./schema";
 
 /**
@@ -53,3 +59,35 @@ export function createTestDir(): string {
  */
 export const V1_LEGACY_MD =
   "#### 题 1（★）\n【题型】判断\n判断：1+1=2。\n\n<!-- ANSWER: 正确 -->\n";
+
+/**
+ * 用真实迁移目录的前半段（0000 至 lastTag）拼出截断版迁移目录
+ * （自 backfill.test.ts 提升共享：模拟「某历史边界之前的存量库」的既有惯例，
+ * journal 天然只到边界，随后 runMigrations 只补边界后的迁移）。
+ */
+export function makeMigrationsFolderUpTo(lastTag: string): string {
+  const src = resolveMigrationsFolder();
+  const journal: {
+    version: string;
+    dialect: string;
+    entries: { tag: string }[];
+  } = JSON.parse(readFileSync(join(src, "meta", "_journal.json"), "utf8"));
+  const kept: { tag: string }[] = [];
+  for (const entry of journal.entries) {
+    kept.push(entry);
+    if (entry.tag === lastTag) break;
+  }
+  if (kept.at(-1)?.tag !== lastTag) {
+    throw new Error(`迁移目录中未找到边界 ${lastTag}`);
+  }
+  const tmp = mkdtempSync(join(tmpdir(), "tutor-migrations-prefix-"));
+  mkdirSync(join(tmp, "meta"), { recursive: true });
+  writeFileSync(
+    join(tmp, "meta", "_journal.json"),
+    JSON.stringify({ ...journal, entries: kept }),
+  );
+  for (const entry of kept) {
+    copyFileSync(join(src, `${entry.tag}.sql`), join(tmp, `${entry.tag}.sql`));
+  }
+  return tmp;
+}

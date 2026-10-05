@@ -172,31 +172,23 @@ describe("noteDocSchema：坐标与点数限额（暂定值，真机定标后修
 
   it("负值坐标拒绝（x/y 各一）", () => {
     expect(
-      noteDocSchema.safeParse(docWithPoints([{ x: -1, y: 10, p: 0.5, t: 0 }]))
-        .success,
+      noteDocSchema.safeParse(docWithPoints([{ x: -1, y: 10 }])).success,
     ).toBe(false);
     expect(
-      noteDocSchema.safeParse(docWithPoints([{ x: 10, y: -0.5, p: 0.5, t: 0 }]))
-        .success,
+      noteDocSchema.safeParse(docWithPoints([{ x: 10, y: -0.5 }])).success,
     ).toBe(false);
   });
 
   it("超界坐标拒绝（x>1000 / y>3000）；边界值 x=1000、y=3000 合法", () => {
     expect(
-      noteDocSchema.safeParse(
-        docWithPoints([{ x: 1000.5, y: 10, p: 0.5, t: 0 }]),
-      ).success,
+      noteDocSchema.safeParse(docWithPoints([{ x: 1000.5, y: 10 }])).success,
+    ).toBe(false);
+    expect(
+      noteDocSchema.safeParse(docWithPoints([{ x: 10, y: 3000.5 }])).success,
     ).toBe(false);
     expect(
       noteDocSchema.safeParse(
-        docWithPoints([{ x: 10, y: 3000.5, p: 0.5, t: 0 }]),
-      ).success,
-    ).toBe(false);
-    expect(
-      noteDocSchema.safeParse(
-        docWithPoints([
-          { x: NOTE_COORD_MAX_X, y: NOTE_COORD_MAX_Y, p: 0.5, t: 0 },
-        ]),
+        docWithPoints([{ x: NOTE_COORD_MAX_X, y: NOTE_COORD_MAX_Y }]),
       ).success,
     ).toBe(true);
   });
@@ -205,50 +197,69 @@ describe("noteDocSchema：坐标与点数限额（暂定值，真机定标后修
     expect(
       noteDocSchema.safeParse(
         docWithPoints([
-          { x: 100, y: 100, p: 0.5, t: 0 },
-          { x: Number.POSITIVE_INFINITY, y: 100, p: 0.5, t: 0 },
+          { x: 100, y: 100 },
+          { x: Number.POSITIVE_INFINITY, y: 100 },
         ]),
       ).success,
     ).toBe(false);
     expect(
       noteDocSchema.safeParse(
         docWithPoints([
-          { x: 100, y: 100, p: 0.5, t: 0 },
-          { x: Number.NaN, y: 100, p: 0.5, t: 0 },
+          { x: 100, y: 100 },
+          { x: Number.NaN, y: 100 },
         ]),
       ).success,
     ).toBe(false);
   });
 
   it("单笔点数超上限拒绝；恰好等于上限合法", () => {
-    const over = Array.from({ length: NOTE_MAX_POINTS_PER_STROKE + 1 }, () => ({
-      x: 1,
-      y: 1,
-      p: 0.5,
-      t: 0,
-    }));
-    expect(noteDocSchema.safeParse(docWithPoints(over)).success).toBe(false);
+    // p/t 缺省走 docWithPoints 默认分支（0.5/0）
     const exact = Array.from({ length: NOTE_MAX_POINTS_PER_STROKE }, () => ({
       x: 1,
       y: 1,
-      p: 0.5,
-      t: 0,
     }));
+    const over = [...exact, { x: 1, y: 1, p: 0.5, t: 0 }];
+    expect(noteDocSchema.safeParse(docWithPoints(over)).success).toBe(false);
     expect(noteDocSchema.safeParse(docWithPoints(exact)).success).toBe(true);
   });
 
+  it("noteVersionMeta.paperWidth 恒等于 INK_LOGICAL_WIDTH（literal 锚定，错值拒绝）", () => {
+    const version = {
+      versionId: "44444444-4444-4444-8444-444444444444",
+      noteId: "33333333-3333-4333-8333-333333333333",
+      revision: 1,
+      hash: "a".repeat(64),
+      strokeCount: 1,
+      pointCount: 10,
+      paperWidth: INK_LOGICAL_WIDTH,
+      paperHeight: 800,
+      serverSavedAt: "2026-10-06T02:00:00.000Z",
+      renderVersion: 1,
+    };
+    expect(noteVersionMetaSchema.parse(version).paperWidth).toBe(
+      INK_LOGICAL_WIDTH,
+    );
+    expect(
+      noteVersionMetaSchema.safeParse({ ...version, paperWidth: 999 }).success,
+    ).toBe(false);
+  });
+
+  it("限额联动：NOTE_COORD_MAX_Y 与 NOTE_PAPER_HEIGHT_MAX 同源相等（防漂移）", () => {
+    expect(NOTE_COORD_MAX_Y).toBe(NOTE_PAPER_HEIGHT_MAX);
+  });
+
   it("全稿总点数超上限拒绝（多笔累计口径）", () => {
-    // 151 笔 × 2000 点 = 302000 > 300000：单笔均不超限，靠总量拦截
+    // 151 笔 × 2000 点 = 302000 > 300000：单笔均不超限，靠总量拦截。
+    // 151 份笔画共享同一份只读点数组（safeParse 不改写输入）
+    const pts = Array.from({ length: NOTE_MAX_POINTS_PER_STROKE }, () => ({
+      x: 1,
+      y: 1,
+    }));
     const strokes = Array.from({ length: 151 }, () => ({
       tool: "pen",
       color: "#000",
       weight: 4,
-      points: Array.from({ length: NOTE_MAX_POINTS_PER_STROKE }, () => ({
-        x: 1,
-        y: 1,
-        p: 0.5,
-        t: 0,
-      })),
+      points: pts,
     }));
     expect(
       noteDocSchema.safeParse({

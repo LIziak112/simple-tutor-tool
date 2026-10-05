@@ -48,14 +48,19 @@ export const NOTE_MAX_POINTS_PER_STROKE = 2000;
 /** 逻辑坐标 x 上限（含）；下限 0。**暂定，真机定标后修订** */
 export const NOTE_COORD_MAX_X = INK_LOGICAL_WIDTH;
 
-/** 逻辑坐标 y 上限（含）；下限 0（等于纸高硬上限，不与单稿 paperHeightLogical 耦合）。**暂定，真机定标后修订** */
-export const NOTE_COORD_MAX_Y = 3000;
-
 /** 纸张逻辑高度默认值。**暂定，真机定标后修订**（方案 §4.3） */
 export const NOTE_PAPER_HEIGHT_DEFAULT = 800;
 
 /** 纸张逻辑高度上限。**暂定，真机定标后修订**（方案 §4.3） */
 export const NOTE_PAPER_HEIGHT_MAX = 3000;
+
+/**
+ * 逻辑坐标 y 上限（含）；下限 0。语义即「最大可能纸高」（与裁剪区硬上限同口径），
+ * 引用 PAPER_HEIGHT_MAX 保持同源——定标修订时不会两处漂移。
+ * 不与单稿 paperHeightLogical 耦合（旧答题区笔迹按默认高度读入必须合法）。
+ * **暂定，真机定标后修订**
+ */
+export const NOTE_COORD_MAX_Y = NOTE_PAPER_HEIGHT_MAX;
 
 // ---------- NoteDoc v1 ----------
 
@@ -104,11 +109,11 @@ export const noteDocSchema = z
       }
       totalPoints += stroke.points.length;
       stroke.points.forEach((point, pointIndex) => {
-        const path = ["ink", "strokes", strokeIndex, "points", pointIndex];
+        // path 数组只在失败分支内构造：合法全稿（上限 30 万点）不付逐点分配
         if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) {
           ctx.addIssue({
             code: "custom",
-            path,
+            path: ["ink", "strokes", strokeIndex, "points", pointIndex],
             message: "坐标必须是有限数（拒绝 NaN/Infinity）",
           });
           return;
@@ -116,14 +121,14 @@ export const noteDocSchema = z
         if (point.x < 0 || point.x > NOTE_COORD_MAX_X) {
           ctx.addIssue({
             code: "custom",
-            path: [...path, "x"],
+            path: ["ink", "strokes", strokeIndex, "points", pointIndex, "x"],
             message: `x 坐标越界（须 0≤x≤${NOTE_COORD_MAX_X}）`,
           });
         }
         if (point.y < 0 || point.y > NOTE_COORD_MAX_Y) {
           ctx.addIssue({
             code: "custom",
-            path: [...path, "y"],
+            path: ["ink", "strokes", strokeIndex, "points", pointIndex, "y"],
             message: `y 坐标越界（须 0≤y≤${NOTE_COORD_MAX_Y}）`,
           });
         }
@@ -282,8 +287,8 @@ export const noteVersionMetaSchema = z.object({
   strokeCount: z.number().int().min(0),
   /** 总点数（全稿 points 之和；限额见 NOTE_MAX_TOTAL_POINTS） */
   pointCount: z.number().int().min(0),
-  /** 纸张逻辑宽（恒 = INK_LOGICAL_WIDTH=1000；冗余存储便于不解正文即知几何） */
-  paperWidth: z.number().int().min(1),
+  /** 纸张逻辑宽（恒 = 正文 ink.width；literal 锚定不变量，冗余存储便于不解正文即知几何） */
+  paperWidth: z.literal(INK_LOGICAL_WIDTH),
   /** 纸张逻辑高（本版本正文里的 paperHeightLogical） */
   paperHeight: z.number().int().min(1),
   /** 服务端确认时间（UTC ISO） */

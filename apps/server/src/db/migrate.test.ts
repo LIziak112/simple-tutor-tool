@@ -2,9 +2,10 @@ import { randomUUID } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createDb } from "./client";
-import { resolveMigrationsFolder, runMigrations } from "./migrate";
+import { createDb } from "./client.ts";
+import { resolveMigrationsFolder, runMigrations } from "./migrate.ts";
 import {
   assignments,
   attempts,
@@ -16,6 +17,7 @@ import {
   teachers,
   units,
 } from "./schema";
+import { makeMigrationsFolderUpTo } from "./test-utils.ts";
 
 let dir: string;
 
@@ -61,67 +63,19 @@ describe("runMigrations（幂等）", () => {
 });
 
 describe("T6R.2 迁移：空库与带存量库", () => {
-  /** journal 条目最小形状（定位新迁移用） */
-  interface JournalEntry {
-    idx: number;
-    when: number;
-    tag: string;
-  }
-
-  function journalEntries(): JournalEntry[] {
-    const journal = JSON.parse(
-      readFileSync(
-        join(resolveMigrationsFolder(), "meta", "_journal.json"),
-        "utf8",
-      ),
-    ) as { entries: JournalEntry[] };
-    return journal.entries;
-  }
-
-  /** 找到创建 notes 表的迁移（从最新往回扫；本任务新增迁移是唯一命中） */
-  function notesMigrationEntry(): JournalEntry {
-    const entries = journalEntries();
-    for (let i = entries.length - 1; i >= 0; i--) {
-      const entry = entries[i];
-      if (entry === undefined) {
-        continue;
-      }
-      const sql = readFileSync(
-        join(resolveMigrationsFolder(), `${entry.tag}.sql`),
-        "utf8",
-      );
-      // drizzle-kit 生成反引号，历史迁移有双引号——两种都兼容
-      if (/CREATE TABLE [`"]notes[`"]/.test(sql)) {
-        return entry;
-      }
-    }
-    throw new Error("journal 中未找到创建 notes 表的迁移（T6R.2）");
-  }
+  /** T6R.2 前最后一个迁移的 tag（0021 创建题目草稿四表） */
+  const PRE_T6R2_LAST_TAG = "0020_chubby_silver_fox";
 
   /**
-   * 模拟 T6R.2 之前的存量库：全量迁移后撤销新迁移（按依赖序 drop 四表 +
-   * 删除其 __drizzle_migrations 记账行，created_at 与 journal.when 对齐），
-   * 然后插入存量业务数据（attempts/responses/ink 等），再 runMigrations
-   * 让新迁移在带数据的库上真实执行一遍。
+   * 在 T6R.2 之前的存量库上插入业务数据（attempts/responses/ink 等）。
+   * 库本身由 makeMigrationsFolderUpTo(PRE_T6R2_LAST_TAG) 的截断迁移目录建出
+   * （backfill.test.ts 既有惯例：journal 天然只到边界，drizzle 插入对旧表安全
+   * ——0021 未改任何既有表列）。
    */
-  function revertNotesMigrationAndSeedLegacy(db: ReturnType<typeof createDb>): {
+  function seedLegacyData(db: ReturnType<typeof createDb>): {
     attemptId: string;
     questionId: string;
   } {
-    const entry = notesMigrationEntry();
-    // 子表在前（外键依赖序）
-    for (const table of [
-      "submission_evidence",
-      "note_images",
-      "note_versions",
-      "notes",
-    ]) {
-      db.$client.exec(`DROP TABLE IF EXISTS "${table}"`);
-    }
-    db.$client
-      .prepare("DELETE FROM __drizzle_migrations WHERE created_at >= ?")
-      .run(entry.when);
-
     // 存量夹具：教师 → 学生 → 课程 → 单元 → 题目 → 作业 → attempt → response → ink
     const now = new Date().toISOString();
     const teacherId = randomUUID();
@@ -290,10 +244,13 @@ describe("T6R.2 迁移：空库与带存量库", () => {
 
   it("带存量 attempts/responses/ink 的库上迁移成功：存量数据完好、外键干净、幂等", () => {
     const db = createDb(join(dir, "legacy.db"));
-    runMigrations(db);
-    const seeded = revertNotesMigrationAndSeedLegacy(db);
+    // 截断迁移目录建出 T6R.2 前的旧结构（真实 0000–0020 迁移链）
+    migrate(db, {
+      migrationsFolder: makeMigrationsFolderUpTo(PRE_T6R2_LAST_TAG),
+    });
+    const seeded = seedLegacyData(db);
 
-    // 模拟旧库启动：只应用被撤销的 notes 迁移
+    // 模拟旧库启动：补应用 0021（题目草稿四表）
     expect(() => runMigrations(db)).not.toThrow();
 
     const tables = db.$client

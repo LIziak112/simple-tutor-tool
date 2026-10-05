@@ -26,6 +26,24 @@ interface TableNameRow {
   name: string;
 }
 
+/** 一条可直接落库的学生行（linkToken/loginName 均唯一） */
+function studentRow(overrides: Partial<typeof students.$inferInsert> = {}) {
+  return {
+    id: randomUUID(),
+    teacherId: null,
+    displayName: "张三",
+    loginName: "张三",
+    passwordHash: null,
+    linkToken: `link-${randomUUID()}`,
+    linkEnabled: true,
+    passwordEnabled: false,
+    note: null,
+    archivedAt: null,
+    createdAt: new Date().toISOString(),
+    ...overrides,
+  };
+}
+
 describe("assignments / assignment_units / assignment_students 表（T2A.7 作业结构）", () => {
   /** 造最小外键链：课程 → 单元、学生，返回各 id */
   function seedT2a7Refs(db: ReturnType<typeof createTestDb>): {
@@ -238,24 +256,6 @@ describe("teachers / sessions 表读写", () => {
 });
 
 describe("students 表（T2.1 学生账号）", () => {
-  /** 一条可直接落库的学生行（linkToken/loginName 均唯一） */
-  function studentRow(overrides: Partial<typeof students.$inferInsert> = {}) {
-    return {
-      id: randomUUID(),
-      teacherId: null,
-      displayName: "张三",
-      loginName: "张三",
-      passwordHash: null,
-      linkToken: `link-${randomUUID()}`,
-      linkEnabled: true,
-      passwordEnabled: false,
-      note: null,
-      archivedAt: null,
-      createdAt: new Date().toISOString(),
-      ...overrides,
-    };
-  }
-
   it("迁移后 students 表存在，可原样读回（布尔列按 0/1 映射）", () => {
     const db = createTestDb();
     const tables = db.$client
@@ -507,25 +507,12 @@ describe("notes / note_versions / note_images / submission_evidence 表（T6R.2 
     attemptId: string;
     questionId: string;
   } {
-    const studentId = randomUUID();
+    const student = studentRow();
+    const studentId = student.id;
     const attemptId = randomUUID();
     const questionId = "练习四-7";
     const now = new Date().toISOString();
-    db.insert(students)
-      .values({
-        id: studentId,
-        teacherId: null,
-        displayName: "张三",
-        loginName: "张三",
-        passwordHash: null,
-        linkToken: `link-${randomUUID()}`,
-        linkEnabled: true,
-        passwordEnabled: false,
-        note: null,
-        archivedAt: null,
-        createdAt: now,
-      })
-      .run();
+    db.insert(students).values(student).run();
     db.insert(attempts)
       .values({
         id: attemptId,
@@ -547,6 +534,48 @@ describe("notes / note_versions / note_images / submission_evidence 表（T6R.2 
     return { attemptId, questionId };
   }
 
+  /** 造一行 notes（缺省 rev-a）；返回 noteId */
+  function seedNote(
+    db: ReturnType<typeof createTestDb>,
+    o: { attemptId: string; questionId: string; questionRevisionId?: string },
+  ): string {
+    const noteId = randomUUID();
+    db.insert(notes)
+      .values({
+        id: noteId,
+        attemptId: o.attemptId,
+        questionId: o.questionId,
+        questionRevisionId: o.questionRevisionId ?? "rev-a",
+        updatedAt: new Date().toISOString(),
+      })
+      .run();
+    return noteId;
+  }
+
+  /** 造一行 note_versions（缺省 revision=1/hash=a*64）；返回整行 */
+  function seedNoteVersion(
+    db: ReturnType<typeof createTestDb>,
+    noteId: string,
+    o: { revision?: number; hash?: string } = {},
+  ): typeof noteVersions.$inferInsert {
+    const revision = o.revision ?? 1;
+    const version = {
+      id: randomUUID(),
+      noteId,
+      revision,
+      bodyPath: `blobs/notes/${noteId}/v${revision}.json.gz`,
+      hash: o.hash ?? "a".repeat(64),
+      strokeCount: 1,
+      pointCount: 10,
+      paperWidth: 1000,
+      paperHeight: 800,
+      serverSavedAt: new Date().toISOString(),
+      renderVersion: 1,
+    };
+    db.insert(noteVersions).values(version).run();
+    return version;
+  }
+
   it("迁移后四表存在；notes 行落默认值（phase=scratch、currentRevision=0、头指针空）", () => {
     const db = createTestDb();
     const tables = db.$client
@@ -562,16 +591,11 @@ describe("notes / note_versions / note_images / submission_evidence 表（T6R.2 
     ]);
 
     const { attemptId, questionId } = seedNoteRefs(db);
-    const noteId = randomUUID();
-    db.insert(notes)
-      .values({
-        id: noteId,
-        attemptId,
-        questionId,
-        questionRevisionId: "练习四-7@3@snap",
-        updatedAt: new Date().toISOString(),
-      })
-      .run();
+    const noteId = seedNote(db, {
+      attemptId,
+      questionId,
+      questionRevisionId: "练习四-7@3@snap",
+    });
     const row = db.select().from(notes).where(eq(notes.id, noteId)).get();
     expect(row).toMatchObject({
       id: noteId,
@@ -588,30 +612,10 @@ describe("notes / note_versions / note_images / submission_evidence 表（T6R.2 
   it("scratch 唯一性由服务层保证（与 attempts 先例同口径）：库里两行同键不炸——决策见 schema 注释", () => {
     const db = createTestDb();
     const { attemptId, questionId } = seedNoteRefs(db);
-    const now = new Date().toISOString();
-    db.insert(notes)
-      .values({
-        id: randomUUID(),
-        attemptId,
-        questionId,
-        questionRevisionId: "rev-a",
-        updatedAt: now,
-      })
-      .run();
+    seedNote(db, { attemptId, questionId });
     // 同 (attemptId, questionId, phase='scratch') 第二行：DB 层放行（correction 多行性
     // 使全列唯一索引不可行；partial unique index 依 attempts 表先例不建）
-    expect(() =>
-      db
-        .insert(notes)
-        .values({
-          id: randomUUID(),
-          attemptId,
-          questionId,
-          questionRevisionId: "rev-a",
-          updatedAt: now,
-        })
-        .run(),
-    ).not.toThrow();
+    expect(() => seedNote(db, { attemptId, questionId })).not.toThrow();
     db.$client.close();
   });
 
@@ -670,33 +674,8 @@ describe("notes / note_versions / note_images / submission_evidence 表（T6R.2 
   it("note_images：默认 state=pending/hash=null；(noteVersionId, spec, pageIndex) 唯一", () => {
     const db = createTestDb();
     const { attemptId, questionId } = seedNoteRefs(db);
-    const noteId = randomUUID();
-    const versionId = randomUUID();
-    const now = new Date().toISOString();
-    db.insert(notes)
-      .values({
-        id: noteId,
-        attemptId,
-        questionId,
-        questionRevisionId: "rev-a",
-        updatedAt: now,
-      })
-      .run();
-    db.insert(noteVersions)
-      .values({
-        id: versionId,
-        noteId,
-        revision: 1,
-        bodyPath: `blobs/notes/${noteId}/v1.json.gz`,
-        hash: "a".repeat(64),
-        strokeCount: 1,
-        pointCount: 10,
-        paperWidth: 1000,
-        paperHeight: 800,
-        serverSavedAt: now,
-        renderVersion: 1,
-      })
-      .run();
+    const noteId = seedNote(db, { attemptId, questionId });
+    const versionId = seedNoteVersion(db, noteId).id;
     const image = {
       id: randomUUID(),
       noteVersionId: versionId,
@@ -742,33 +721,12 @@ describe("notes / note_versions / note_images / submission_evidence 表（T6R.2 
   it("submission_evidence：(attemptId, questionId) 唯一；frozen 指向版本、外键有效", () => {
     const db = createTestDb();
     const { attemptId, questionId } = seedNoteRefs(db);
-    const noteId = randomUUID();
-    const versionId = randomUUID();
+    const noteId = seedNote(db, { attemptId, questionId });
+    const versionId = seedNoteVersion(db, noteId, {
+      revision: 2,
+      hash: "b".repeat(64),
+    }).id;
     const now = new Date().toISOString();
-    db.insert(notes)
-      .values({
-        id: noteId,
-        attemptId,
-        questionId,
-        questionRevisionId: "rev-a",
-        updatedAt: now,
-      })
-      .run();
-    db.insert(noteVersions)
-      .values({
-        id: versionId,
-        noteId,
-        revision: 2,
-        bodyPath: `blobs/notes/${noteId}/v2.json.gz`,
-        hash: "b".repeat(64),
-        strokeCount: 3,
-        pointCount: 30,
-        paperWidth: 1000,
-        paperHeight: 800,
-        serverSavedAt: now,
-        renderVersion: 1,
-      })
-      .run();
     const evidence = {
       id: randomUUID(),
       attemptId,
@@ -827,33 +785,9 @@ describe("notes / note_versions / note_images / submission_evidence 表（T6R.2 
   it("notes 头指针可随 CAS 切换（mutable head）；questionId 无外键（DSL id，D10 口径）", () => {
     const db = createTestDb();
     const { attemptId } = seedNoteRefs(db);
-    const noteId = randomUUID();
-    const versionId = randomUUID();
+    const noteId = seedNote(db, { attemptId, questionId: "任意-DSL.id" });
+    const versionId = seedNoteVersion(db, noteId).id;
     const now = new Date().toISOString();
-    db.insert(notes)
-      .values({
-        id: noteId,
-        attemptId,
-        questionId: "任意-DSL.id",
-        questionRevisionId: "rev-a",
-        updatedAt: now,
-      })
-      .run();
-    db.insert(noteVersions)
-      .values({
-        id: versionId,
-        noteId,
-        revision: 1,
-        bodyPath: `blobs/notes/${noteId}/v1.json.gz`,
-        hash: "a".repeat(64),
-        strokeCount: 1,
-        pointCount: 10,
-        paperWidth: 1000,
-        paperHeight: 800,
-        serverSavedAt: now,
-        renderVersion: 1,
-      })
-      .run();
     db.update(notes)
       .set({
         currentRevision: 1,

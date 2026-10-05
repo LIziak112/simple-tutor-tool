@@ -1,18 +1,9 @@
-import {
-  copyFileSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { asc, eq } from "drizzle-orm";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import { describe, expect, it } from "vitest";
 import { runBackfills } from "./backfill.ts";
 import { createDb, type Db } from "./client.ts";
-import { resolveMigrationsFolder, runMigrations } from "./migrate.ts";
+import { runMigrations } from "./migrate.ts";
 import {
   appSettings,
   assignmentStudents,
@@ -31,7 +22,11 @@ import {
   teachers,
   units,
 } from "./schema.ts";
-import { createTestDb, TEST_TEACHER_ID } from "./test-utils.ts";
+import {
+  createTestDb,
+  makeMigrationsFolderUpTo,
+  TEST_TEACHER_ID,
+} from "./test-utils.ts";
 
 /**
  * D23 数据搬迁测试（T2A.1 验收项）：「T2A 前结构」fixture 库 → 迁移 → 回填 → 断言。
@@ -51,34 +46,6 @@ const PRE_T2A_LAST_TAG = "0008_curved_hex";
 const PRE_T2A7_LAST_TAG = "0012_aromatic_piledriver";
 /** T2B 前最后一个迁移的 tag（T2A.9 完成态；T2B.1 在此之上加多教师基础结构） */
 const PRE_T2B_LAST_TAG = "0015_oval_franklin_storm";
-
-/** 用真实迁移目录的前半段（0000 至 lastTag）拼出截断版迁移目录 */
-function makeMigrationsFolderUpTo(lastTag: string): string {
-  const src = resolveMigrationsFolder();
-  const journal: {
-    version: string;
-    dialect: string;
-    entries: { tag: string }[];
-  } = JSON.parse(readFileSync(join(src, "meta", "_journal.json"), "utf8"));
-  const kept: { tag: string }[] = [];
-  for (const entry of journal.entries) {
-    kept.push(entry);
-    if (entry.tag === lastTag) break;
-  }
-  if (kept.at(-1)?.tag !== lastTag) {
-    throw new Error(`迁移目录中未找到边界 ${lastTag}`);
-  }
-  const tmp = mkdtempSync(join(tmpdir(), "tutor-pre-t2a-"));
-  mkdirSync(join(tmp, "meta"), { recursive: true });
-  writeFileSync(
-    join(tmp, "meta", "_journal.json"),
-    JSON.stringify({ ...journal, entries: kept }),
-  );
-  for (const entry of kept) {
-    copyFileSync(join(src, `${entry.tag}.sql`), join(tmp, `${entry.tag}.sql`));
-  }
-  return tmp;
-}
 
 /** 建「T2A 前结构」内存库（只应用 0000–0008） */
 function createPreT2aDb(): Db {
