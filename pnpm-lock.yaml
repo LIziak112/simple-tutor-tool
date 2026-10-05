@@ -455,6 +455,9 @@ importers:
       '@types/unist':
         specifier: ^3.0.3
         version: 3.0.3
+      esbuild:
+        specifier: ^0.28.2
+        version: 0.28.2
 
 packages:
 

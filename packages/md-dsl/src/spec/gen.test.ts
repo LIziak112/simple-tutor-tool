@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineDirective, listDirectives } from "@tutor/contract";
@@ -198,6 +198,12 @@ describe("dsl-kit 一站式分发包（规范 + 校验 + 材料整理技能，�
         readFileSync(join(repoRoot, "docs", "dsl", rel), "utf8"),
       );
     }
+  });
+
+  it("离线校验脚本在位：dsl-kit/tutor-lint.mjs 为非空打包产物", () => {
+    // 运行行为与退出码的冒烟在 cli/standalone.test.ts；这里只保证产物随仓库提交
+    const size = statSync(join(repoRoot, "dsl-kit", "tutor-lint.mjs")).size;
+    expect(size).toBeGreaterThan(100_000);
   });
 
   it("手写件在位且要点齐全：README 指路三种用法与校验路径，SKILL 是材料整理技能", () => {

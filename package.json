@@ -20,7 +20,7 @@
     "tutor-lint": "node packages/md-dsl/scripts/tutor-lint.ts",
     "reparse": "node apps/server/scripts/reparse.ts",
     "seed:demo": "pnpm --filter server run seed:demo",
-    "gen:spec": "pnpm --filter @tutor/contract run export-schema && pnpm --filter @tutor/md-dsl run gen-spec"
+    "gen:spec": "pnpm --filter @tutor/contract run export-schema && pnpm --filter @tutor/md-dsl run gen-spec && pnpm --filter @tutor/md-dsl run bundle-standalone"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.14",

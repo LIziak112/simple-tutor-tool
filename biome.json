@@ -10,7 +10,8 @@
       "**",
       "!apps/server/src/db/migrations",
       "!docs/dsl/schema",
-      "!dsl-kit/schema"
+      "!dsl-kit/schema",
+      "!dsl-kit/tutor-lint.mjs"
     ]
   },
   "formatter": {
