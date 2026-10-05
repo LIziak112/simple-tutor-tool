@@ -225,6 +225,15 @@ describe("parseDocument：健壮性（纯函数不抛异常）", () => {
     expect(codes(result.issues)).toContain("INVALID_FRONTMATTER");
   });
 
+  it("dsl 声明非 2：记 INVALID_FRONTMATTER 且消息指向 dsl 字段（仅支持 v2，§10 决策 10）", () => {
+    const result = parseDocument("---\nkind: practice\ndsl: 1\n---\n");
+    expect(codes(result.issues)).toContain("INVALID_FRONTMATTER");
+    expect(
+      result.issues.find((i) => i.code === "INVALID_FRONTMATTER")?.message,
+    ).toContain("dsl");
+    expect(result.frontmatter).toBeUndefined();
+  });
+
   it("未知题型（essay）：记 UNKNOWN_QUESTION_TYPE，该题不入库但不影响后续题（序号仍占位）", () => {
     const md = [
       "---",

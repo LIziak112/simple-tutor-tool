@@ -598,7 +598,7 @@ export const importBatchFilePreviewSchema = z.object({
   folderName: z.string().nullable(),
   /** 目标文件夹尚不存在、commit 时将按 folderName 新建（D20 复用同名） */
   folderToCreate: z.boolean(),
-  /** 单文件预览（version/摘要/issues/动作清单/警告——与单文件 preview 同构） */
+  /** 单文件预览（摘要/issues/动作清单/警告——与单文件 preview 同构） */
   preview: importPreviewDataSchema,
   /** 本文件涉及的跨文件冲突（空 = 无） */
   conflicts: z.array(importBatchConflictSchema),

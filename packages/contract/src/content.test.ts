@@ -368,6 +368,18 @@ describe("frontmatter 与文档类型", () => {
     expect(parsed.dsl).toBe(2);
   });
 
+  it("dsl 只接受 2（唯一支持版本，架构文档 §10 决策 10）：1/3 被拒、2 通过", () => {
+    expect(
+      frontmatterSchema.safeParse({ kind: "practice", dsl: 1 }).success,
+    ).toBe(false);
+    expect(
+      frontmatterSchema.safeParse({ kind: "practice", dsl: 3 }).success,
+    ).toBe(false);
+    expect(
+      frontmatterSchema.safeParse({ kind: "practice", dsl: 2 }).success,
+    ).toBe(true);
+  });
+
   it("title（讲义名）被解析并保留在 frontmatter", () => {
     const parsed = frontmatterSchema.parse({
       kind: "mixed",

@@ -41,14 +41,10 @@ import {
 const silentLogger: Logger = pino({ enabled: false });
 const PASSWORD = "teacher-pass-8";
 
-function loadSample(relative: string): string {
-  return readFileSync(
-    new URL(`../../../../samples/${relative}`, import.meta.url),
-    "utf8",
-  );
-}
-
-const PRACTICE_MD = loadSample("v2/练习样例.md");
+const PRACTICE_MD = readFileSync(
+  new URL("../../../../samples/v2/练习样例.md", import.meta.url),
+  "utf8",
+);
 /** v1 旧格式片段（无 frontmatter，题号行 + 题型标记 + ANSWER 注释） */
 const V1_LEGACY_MD =
   "#### 题 1（★）\n【题型】判断\n判断：1+1=2。\n\n<!-- ANSWER: 正确 -->\n";

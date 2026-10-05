@@ -6,9 +6,6 @@
  * （解析器/转换/版本检测一并移除，见架构文档 §10 决策 10）。
  */
 
-/** 内容 DSL 规范版本 */
-export const MD_DSL_VERSION = "2";
-
 export type { LintResult } from "./lint/lint.ts";
 export { lintDocument } from "./lint/lint.ts";
 export {

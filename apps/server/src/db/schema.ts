@@ -296,7 +296,7 @@ export const lectures = sqliteTable(
 );
 
 /**
- * 练习单元表。id 来自 DSL（frontmatter unit / v1 UNIT 注释），编辑内容时 id 不变；
+ * 练习单元表。id 来自 DSL（frontmatter unit），编辑内容时 id 不变；
  * 导入按 (teacherId, unit.id) 匹配合并（D13 域内匹配，更新 title/topic/lectureId）。
  * T2B.1 起主键改 (teacherId, id)（D10）：两位教师各持同 id 单元合法；**所有指向
  * units(id) 的外键已全部去除**（SQLite 外键必须引用完整唯一键组，见 D10 清单），
@@ -328,7 +328,7 @@ export const units = sqliteTable(
     lectureId: text("lecture_id").references(() => lectures.id),
     /** 单元标题 */
     title: text("title").notNull(),
-    /** 主题（frontmatter topic / v1 UNIT 第三段；未标注为 NULL） */
+    /** 主题（frontmatter topic；未标注为 NULL） */
     topic: text("topic"),
     /** 课程内排序（小在前）；@deprecated T2A 展示顺序改 course_items.order */
     order: integer("order").notNull(),
@@ -487,7 +487,7 @@ export const questionKnowledge = sqliteTable(
 
 /**
  * 导入留档表——原始 Markdown 留档，可追溯可重导（§5.2）。
- * rawMd 存老师提交的原文（v1 文档存 v1 原文，不存转换后的 v2 文本）；
+ * rawMd 存老师提交的原文；
  * reportJson 为本次导入统计报告（importCommitDataSchema 序列化）。
  * T2A.3 扩展（D17/D20）：sourcePath = 批量导入的相对路径；batchId = 批次 id
  * （前端生成、逐文件 commit 携带，GET /import/batches/:batchId 回看）；
@@ -504,7 +504,7 @@ export const imports = sqliteTable(
     filename: text("filename").notNull(),
     /** 文档类型（解析出的 frontmatter kind；缺 frontmatter 的兜底为 practice） */
     kind: text("kind").$type<DocumentKind>().notNull(),
-    /** 原始 Markdown（v1 原样留档） */
+    /** 原始 Markdown 原样留档 */
     rawMd: text("raw_md").notNull(),
     /** 导入统计报告 JSON */
     reportJson: text("report_json").notNull(),

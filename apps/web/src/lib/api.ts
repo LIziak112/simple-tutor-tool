@@ -319,7 +319,7 @@ export function fetchContentTree(): Promise<ContentTree> {
   return callApi(() => api.api.teacher.content.$get());
 }
 
-/** 导入预览（dry-run，不写库）：识别版本 + 摘要 + 全部 lint issues */
+/** 导入预览（dry-run，不写库）：摘要 + 全部 lint issues */
 export function previewImport(
   request: ImportPreviewRequest,
 ): Promise<ImportPreviewData> {

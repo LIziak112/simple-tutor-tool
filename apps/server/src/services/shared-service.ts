@@ -317,7 +317,7 @@ const QUESTION_OPEN_RE = /^:{4}question(\{.*)?$/;
 
 /**
  * 轻量提取类型 / 标题 / 题数（D15：解析 frontmatter/标题级信息，不做完整 lint）：
- * - kind：frontmatter `kind: lecture` → lecture，其余（含 v1 与缺省）→ practice；
+ * - kind：frontmatter `kind: lecture` → lecture，其余（缺省）→ practice；
  * - title：讲义取首个 H1；练习取 frontmatter unit；兜底文件名去 .md 扩展名；
  * - questionCount：`::::question` 行数。
  */

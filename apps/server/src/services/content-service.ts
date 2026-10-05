@@ -31,6 +31,7 @@ import {
 } from "@tutor/contract";
 import {
   LECTURE_PREFIX_LINES,
+  type LintResult,
   lintDocument,
   SINGLE_QUESTION_PREFIX_LINES,
   shiftLintIssuesToFragment,
@@ -112,14 +113,8 @@ import {
 
 // ---------- 统一 lint ----------
 
-/** 导入分析的中间产物：lint 结果（parsed.issues 与 issues 同源全量） */
-interface ImportAnalysis {
-  readonly issues: LintIssue[];
-  readonly parsed: ParsedDocument;
-}
-
 /**
- * 对文档做完整 lint（v2 唯一口径）。
+ * 对文档做完整 lint（v2 唯一口径），结果即 md-dsl 的 LintResult。
  *
  * fallbackUnitId（内容模型与导入规范化方案 §2）：frontmatter 未声明 unit 时单元名
  * 锚定文件名。
@@ -130,12 +125,11 @@ interface ImportAnalysis {
 export function analyzeImport(
   markdown: string,
   fallbackUnitId?: string,
-): ImportAnalysis {
-  const { parsed, issues } = lintDocument(
+): LintResult {
+  return lintDocument(
     markdown,
     fallbackUnitId === undefined ? {} : { fallbackUnitId },
   );
-  return { issues, parsed };
 }
 
 /**
@@ -247,7 +241,7 @@ function mediaImageExistenceIssues(
 }
 
 /**
- * 导入预览：识别版本 + 摘要 + 全部 lint issues（含 IMAGE_SRC_NOT_FOUND
+ * 导入预览：摘要 + 全部 lint issues（含 IMAGE_SRC_NOT_FOUND
  * 图片存在性 warning）+ 动作清单（D19）与 warning（D18/D19）（不写库）。
  * folderId = 目标文件夹（null/缺省 = 未归类）。
  */
@@ -821,7 +815,7 @@ export function commitImport(
       nextOrderByCourse.set(append.courseId, nextOrder + 1);
     }
 
-    // ---- imports 留档（原文 = 老师提交的原文，v1 不存转换文本；T2A.3 起含
+    // ---- imports 留档（原文 = 老师提交的原文；T2A.3 起含
     //      sourcePath/batchId/folderId）----
     const report: ImportCommitData = {
       importId,

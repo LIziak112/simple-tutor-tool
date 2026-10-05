@@ -71,8 +71,8 @@ test("导入页：选择 .md 文件进清单，预览可点击并进入单文件
   await expect(page.getByLabel("移除 选择回归.md")).toBeVisible();
   await expect(previewButton).toBeEnabled();
 
-  // 预览可点击并进入单文件预览：统计条版本徽章 + 确认导入按钮
+  // 预览可点击并进入单文件预览：动作清单 + 确认导入按钮
   await previewButton.click();
-  await expect(page.getByText("DSL v2")).toBeVisible();
+  await expect(page.getByText("将执行的动作")).toBeVisible();
   await expect(page.getByRole("button", { name: "确认导入" })).toBeEnabled();
 });
