@@ -89,9 +89,9 @@ describe("grade：判断题", () => {
 
 describe("grade：单选题", () => {
   const options = [
-    { text: "$-5$", correct: false },
-    { text: "$5$", correct: true },
-    { text: "$\\frac{1}{5}$", correct: false },
+    { text: "$-5$" },
+    { text: "$5$" },
+    { text: "$\\frac{1}{5}$" },
   ];
   const q = makeQuestion({
     type: "choice",
@@ -123,10 +123,10 @@ describe("grade：单选题", () => {
 
 describe("grade：多选题", () => {
   const options = [
-    { text: "$(-3)+7$", correct: true },
-    { text: "$(-2)+(-5)$", correct: false },
-    { text: "$0+4.8$", correct: true },
-    { text: "$|-9|+(-10)$", correct: false },
+    { text: "$(-3)+7$" },
+    { text: "$(-2)+(-5)$" },
+    { text: "$0+4.8$" },
+    { text: "$|-9|+(-10)$" },
   ];
   const q = makeQuestion({
     type: "multi",
@@ -279,7 +279,7 @@ describe("grade：未作答口径（D1 修订，T3.2a——先补用例再改实
       grade(
         makeQuestion({
           type: "choice",
-          options: [{ text: "A", correct: true }],
+          options: [{ text: "A" }],
           answers: { kind: "choice", index: 0 },
         }),
         undefined,
@@ -303,8 +303,8 @@ describe("grade：未作答口径（D1 修订，T3.2a——先补用例再改实
     const q = makeQuestion({
       type: "multi",
       options: [
-        { text: "A", correct: true },
-        { text: "B", correct: false },
+        { text: "A" },
+        { text: "B" },
       ],
       answers: { kind: "multi", indexes: [0] },
     });
@@ -316,8 +316,8 @@ describe("grade：未作答口径（D1 修订，T3.2a——先补用例再改实
     const q = makeQuestion({
       type: "multi",
       options: [
-        { text: "A", correct: true },
-        { text: "B", correct: false },
+        { text: "A" },
+        { text: "B" },
       ],
       answers: { kind: "multi", indexes: [0] },
     });
@@ -327,8 +327,8 @@ describe("grade：未作答口径（D1 修订，T3.2a——先补用例再改实
   it("题目无标准答案的判定优先：即使未作答也 → null（不自动判分，各题型）", () => {
     for (const q of [
       makeQuestion({ type: "judge" }),
-      makeQuestion({ type: "choice", options: [{ text: "A", correct: true }] }),
-      makeQuestion({ type: "multi", options: [{ text: "A", correct: true }] }),
+      makeQuestion({ type: "choice", options: [{ text: "A" }] }),
+      makeQuestion({ type: "multi", options: [{ text: "A" }] }),
       makeQuestion({ type: "fill" }),
       makeQuestion({ type: "solve" }),
     ]) {
@@ -369,7 +369,7 @@ describe("grade：形态错位与防御", () => {
     expect(grade(fillQ, { kind: "choice", index: 0 })).toBeNull();
     const choiceQ = makeQuestion({
       type: "choice",
-      options: [{ text: "A", correct: true }],
+      options: [{ text: "A" }],
       answers: { kind: "choice", index: 0 },
     });
     expect(grade(choiceQ, { kind: "fill", values: ["A"] })).toBeNull();

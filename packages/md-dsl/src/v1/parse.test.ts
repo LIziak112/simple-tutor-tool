@@ -105,13 +105,13 @@ describe("parseV1：旧样例（人工推演预期，八题覆盖 v1 六种题�
     expect(byId("练习四-6")?.stemMd).toBe("填空：$|-6|=$ ____。");
   });
 
-  it("选择题：A.~D. 行抽为 options（无 correct 之外的 key 字段），ANSWER 字母映射下标", () => {
+  it("选择题：A.~D. 行抽为 options（纯文本，正确项以 answers 为权威），ANSWER 字母映射下标", () => {
     const choice = byId("练习四-3");
     expect(choice?.options).toEqual([
-      { text: "$-10$", correct: false },
-      { text: "$4$", correct: true },
-      { text: "$-4$", correct: false },
-      { text: "$10$", correct: false },
+      { text: "$-10$" },
+      { text: "$4$" },
+      { text: "$-4$" },
+      { text: "$10$" },
     ]);
     expect(choice?.answers).toEqual({ kind: "choice", index: 1 });
     expect(choice?.stemMd).toBe("计算 $-3-(-7)$ 的结果是（　）。");

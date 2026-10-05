@@ -1294,8 +1294,8 @@ const SNAPSHOTS = {
     id: "bg-q1",
     type: "choice",
     options: [
-      { text: "A", correct: false },
-      { text: "B", correct: true },
+      { text: "A" },
+      { text: "B" },
     ],
     answers: { kind: "choice", index: 1 },
   }),
@@ -1303,9 +1303,9 @@ const SNAPSHOTS = {
     id: "bg-q2",
     type: "multi",
     options: [
-      { text: "A", correct: true },
-      { text: "B", correct: false },
-      { text: "C", correct: true },
+      { text: "A" },
+      { text: "B" },
+      { text: "C" },
     ],
     answers: { kind: "multi", indexes: [0, 2] },
   }),

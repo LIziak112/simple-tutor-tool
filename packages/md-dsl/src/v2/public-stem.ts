@@ -125,7 +125,7 @@ export function stripOptionListMd(stemMd: string): string {
 export interface StudentStemInput {
   readonly stemMd: string;
   /** 选项（仅 choice/multi 有）：存在即「选项将另行渲染/下发」，题干内嵌列表随之剥除 */
-  readonly options?: readonly unknown[];
+  readonly options?: readonly unknown[] | undefined;
 }
 
 /**

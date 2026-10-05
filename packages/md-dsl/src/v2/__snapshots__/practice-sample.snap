@@ -50,19 +50,15 @@ $0$ 是整数，但既不是正数也不是负数，它是正数与负数的分�
           ],
           "options": [
             {
-              "correct": false,
               "text": "$-5$",
             },
             {
-              "correct": true,
               "text": "$5$",
             },
             {
-              "correct": false,
               "text": "$\frac{1}{5}$",
             },
             {
-              "correct": false,
               "text": "$-\frac{1}{5}$",
             },
           ],
@@ -107,19 +103,15 @@ $-5$ 的相反数是 $5$，故选 B。
           ],
           "options": [
             {
-              "correct": true,
               "text": "$(-3)+7$",
             },
             {
-              "correct": false,
               "text": "$(-2)+(-5)$",
             },
             {
-              "correct": true,
               "text": "$0+4.8$",
             },
             {
-              "correct": false,
               "text": "$|-9|+(-10)$",
             },
           ],

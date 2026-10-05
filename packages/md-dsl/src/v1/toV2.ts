@@ -133,8 +133,16 @@ function stemRowsFor(
   }
   if (effType === "choice" || effType === "multi") {
     const rows = trimBlankEdges([...raw.stemLines]);
+    // 正确项以 answers 为权威（choice.index / multi.indexes；effectiveType 保证
+    // 到这里的答案形态必为二者之一，空集仅为防御）
+    const correct =
+      mapped.answers?.kind === "choice"
+        ? new Set<number>([mapped.answers.index])
+        : mapped.answers?.kind === "multi"
+          ? new Set<number>(mapped.answers.indexes)
+          : new Set<number>();
     const items = (mapped.options ?? []).map(
-      (option) => `- [${option.correct ? "x" : " "}] ${option.text}`,
+      (option, index) => `- [${correct.has(index) ? "x" : " "}] ${option.text}`,
     );
     return [...rows, "", ...items];
   }

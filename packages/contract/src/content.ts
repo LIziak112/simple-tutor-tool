@@ -48,10 +48,15 @@ export const HANDWRITTEN_QUESTION_TYPES: readonly QuestionType[] = [
 /** 文档类型：练习 / 讲义 / 混合（frontmatter kind） */
 export const documentKindSchema = z.enum(["practice", "lecture", "mixed"]);
 
-/** 选择题选项：text 为选项 Markdown（字母 A/B/C/D 由顺序推导，不单独存）；correct 为正确项标记（仅教师侧） */
+/**
+ * 选择题选项：text 为选项 Markdown（字母 A/B/C/D 由顺序推导，不单独存）。
+ * 正确项的唯一权威表示是 answers（choice.index / multi.indexes）——历史上本对象
+ * 曾冗余存过 correct 布尔，因全链路零消费方且与 answers 双家并存易漂移，已于
+ * 2026-10 移除；旧库 options_json / 冻结快照中的 correct 经 questionSchema
+ * 解析时被 strip（本 schema 非 strict），无需数据迁移。
+ */
 export const optionSchema = z.object({
   text: z.string(),
-  correct: z.boolean(),
 });
 
 /**
@@ -100,7 +105,7 @@ export const questionAnswersSchema = z.discriminatedUnion("kind", [
  * - id：来自 DSL；缺省由解析器按 `单元slug-序号` 生成。编辑内容时保持 id 不变，学情统计才能跨版本延续；
  * - difficulty：1–5 的整数（沿用 v1 ★ 颗粒度），题目指令属性缺省值由注册表（T1.2）决定；
  * - knowledge：考点列表（§5.2 经 knowledge_points/question_knowledge 关联表存储），DSL 单个 knowledge 属性也归一为数组；
- * - options：仅 choice/multi 有（GFM 任务列表，`[x]` 为正确项）；
+ * - options：仅 choice/multi 有（GFM 任务列表形式存于 stemMd，抽取为纯文本数组；正确项以 answers 为权威）；
  * - answers：见 questionAnswersSchema，缺失/不完整由 linter 报 issue，契约层允许缺省以便表达"带错误的解析结果"；
  * - stemMd：题干 Markdown。注意填空题 stemMd 中的 `[[答案]]` 标记含参考答案，属教师侧内容；
  * - solutionMd：详解，交卷后才下发；

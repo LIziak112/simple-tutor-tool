@@ -87,14 +87,10 @@
             "properties": {
               "text": {
                 "type": "string"
-              },
-              "correct": {
-                "type": "boolean"
               }
             },
             "required": [
-              "text",
-              "correct"
+              "text"
             ],
             "additionalProperties": false
           }
@@ -345,14 +341,10 @@
                   "properties": {
                     "text": {
                       "type": "string"
-                    },
-                    "correct": {
-                      "type": "boolean"
                     }
                   },
                   "required": [
-                    "text",
-                    "correct"
+                    "text"
                   ],
                   "additionalProperties": false
                 }
@@ -696,14 +688,10 @@
                         "properties": {
                           "text": {
                             "type": "string"
-                          },
-                          "correct": {
-                            "type": "boolean"
                           }
                         },
                         "required": [
-                          "text",
-                          "correct"
+                          "text"
                         ],
                         "additionalProperties": false
                       }
