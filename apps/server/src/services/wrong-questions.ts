@@ -5,6 +5,7 @@ import type {
   WrongQuestionsData,
   WrongQuestionsQuery,
 } from "@tutor/contract";
+import { studentStemMd } from "@tutor/md-dsl";
 import { and, eq, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
@@ -385,7 +386,7 @@ export function listWrongQuestions(
       type: snapshot.type,
       difficulty: snapshot.difficulty,
       knowledge: snapshot.knowledge,
-      stemMd: snapshot.stemMd,
+      stemMd: studentStemMd(snapshot),
       ...(snapshot.options !== undefined
         ? { options: snapshot.options.map((option) => option.text) }
         : {}),

@@ -23,7 +23,7 @@ import {
   learningPackSchema,
   renderLearningPackPrompt,
 } from "@tutor/contract";
-import { analyzeLectureStructure, publicStemMd } from "@tutor/md-dsl";
+import { analyzeLectureStructure, studentStemMd } from "@tutor/md-dsl";
 import { ZipArchive } from "archiver";
 import {
   and,
@@ -85,7 +85,7 @@ import { computeAttemptTraceMetrics } from "./trace-metrics";
  *   阅读地图（lectureReadingMapFor），原始 events 不出库；
  * - D7 域隔离：请求携带的学生/课程/作业/讲义 id 逐个域校验（404 不暴露存在性），
  *   作答经 attempt → student → teacherId 过滤（乙教师拿不到甲的任何行）；
- * - 题目三层（D14）：stem 层题干经 publicStemMd 公开化（不给答案）；
+ * - 题目三层（D14）：stem 层题干经 studentStemMd 学生端投影（不给答案，选项列表剥除）；
  *   answer/solution 层保留快照原文（含 [[答案]] 标记，教师侧导出无泄露问题）。
  *
  * now 可注入（时间窗与生成时间的确定性测试；默认当前时刻）。
@@ -546,7 +546,12 @@ export function assembleLearningPack(
         type: snapshot?.type ?? "fill",
         difficulty: snapshot?.difficulty ?? 2,
         knowledge: snapshot?.knowledge ?? [],
-        stemMd: m.questions === "stem" ? publicStemMd(stemMd) : stemMd,
+        stemMd:
+          m.questions === "stem"
+            ? // 「仅题干」层经 studentStemMd 学生端投影：[[答案]] 脱敏 + 选项列表
+              // 剥除（options 文本数组另行携带），不给答案（D14）
+              studentStemMd(snapshot ?? { stemMd })
+            : stemMd,
       };
       if (snapshot?.options !== undefined) {
         item.options = snapshot.options.map((option) => option.text);

@@ -357,8 +357,8 @@ export const attemptResultDataSchema = z.object({
    *   对错）；answer（本人答案）与 hintsOpened（本人已解锁提示）照常下发；
    * - D9（T3.5）新增字段 teacherMark / teacherComment / finalCorrect 同法置
    *   null 投影（教师已批也不提前泄露）；
-   * - snapshot.stemMd 为 publicStemMd 公开化版（[[答案]] 标记替换为 [[]]，
-   *   与草稿视图同一防泄露口径）；
+   * - snapshot.stemMd 为 studentStemMd 学生端投影版（[[答案]] 标记替换为 [[]]、
+   *   选项任务列表剥除——已公布与受限形态同口径，选项经 options 文本数组下发）；
    * - attempt.scoreAuto 置 null 投影（库里保留，截止后恢复真实值）；
    * - summary 不泄露对错：correct/wrong/autoGradable = 0，pending 按 answered
    *   口径（每道已答题都显示为「待批」），total/answered/unanswered 照常，

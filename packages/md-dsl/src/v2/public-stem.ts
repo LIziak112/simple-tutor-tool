@@ -1,6 +1,6 @@
 import type { ListItem } from "mdast";
-import { SKIP, visit } from "unist-util-visit";
 import type { Node } from "unist";
+import { SKIP, visit } from "unist-util-visit";
 import { lineRange, processor } from "./shared.ts";
 
 /**
@@ -147,4 +147,45 @@ export function displayStemMd(question: StudentStemInput): string {
  */
 export function studentStemMd(question: StudentStemInput): string {
   return publicStemMd(displayStemMd(question));
+}
+
+/** 非空标记（math/code 子树外才算，与 publicStemMd 同语义）；无 g 标志，test 无状态 */
+const NON_EMPTY_MARKER_RE = /\[\[[^[\]]+\]\]/;
+
+/**
+ * 题干是否仍携带可判定答案的内容——学生端泄露断言的 oracle 谓词：
+ * 存在任务列表项（选项，含 [x] 正确项标记），或公式/代码环境外存在非空 [[…]]
+ * 标记。与解析器 scanStem / publicStemMd 同一识别语义；服务端内容级泄露测试
+ * （assert-no-stem-leak.ts）对全部 stemMd 字段值调用本谓词。
+ */
+export function stemMdLeaksAnswers(stemMd: string): boolean {
+  // 快路径（与 stripOptionListMd 同论证方向：预检只会漏不会错——AST 任务项/标记
+  // 的原文行必然命中两个预检之一）
+  if (!stemMd.includes("[[") && !TASK_ITEM_HINT_RE.test(stemMd)) return false;
+  const tree = processor.parse(stemMd);
+  let leaks = false;
+  visit(tree, (node) => {
+    if (leaks) return SKIP;
+    if (
+      node.type === "math" ||
+      node.type === "inlineMath" ||
+      node.type === "code" ||
+      node.type === "inlineCode"
+    ) {
+      return SKIP;
+    }
+    if (isTaskListItem(node)) {
+      leaks = true;
+      return SKIP;
+    }
+    if (node.type === "text") {
+      const value = (node as { value?: unknown }).value;
+      if (typeof value === "string" && NON_EMPTY_MARKER_RE.test(value)) {
+        leaks = true;
+        return SKIP;
+      }
+    }
+    return undefined;
+  });
+  return leaks;
 }

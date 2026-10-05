@@ -44,13 +44,14 @@ export {
 } from "./v2/lecture-structure.ts";
 export type { ParseOptions } from "./v2/parse.ts";
 export { parseDocument } from "./v2/parse.ts";
+// 题干形态变换唯一公开面：学生端 payload 用 studentStemMd（脱敏 + 剥选项），
+// 显示侧用 displayStemMd（剥选项不脱敏）；publicStemMd 不再出口——单独使用
+// 它组学生载荷会泄露 [x] 正确项标记（v2/public-stem.ts 内部实现）。
 export {
   displayStemMd,
   type StudentStemInput,
+  stemMdLeaksAnswers,
   stripOptionListMd,
   studentStemMd,
 } from "./v2/public-stem.ts";
 export { processor } from "./v2/shared.ts";
-// @deprecated 过渡出口：仅标记脱敏、不剥选项任务列表，学生端 payload 单独使用即泄露
-// [x] 正确项标记。服务端调用方迁移到 studentStemMd 后本出口即移除（见 v2/public-stem.ts）。
-export { publicStemMd } from "./v2/public-stem.ts";

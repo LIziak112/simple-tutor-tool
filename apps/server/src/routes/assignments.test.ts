@@ -28,6 +28,7 @@ import {
   computeAssignmentStatus,
 } from "../services/assignment-service.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
+import { assertNoStemLeak } from "../test/assert-no-stem-leak.ts";
 
 /**
  * 作业接口集成测试（T2.2 验收项起家；T2A.7 大改后覆盖 D12–D16；2026-10 追加
@@ -2180,6 +2181,7 @@ describe("学生端无泄露（多单元新结构逐接口断言）", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as unknown;
     assertNoLeak(body);
+    assertNoStemLeak(body);
     expect(
       (body as { data: { units: unknown[] } }).data.units.length,
     ).toBeGreaterThan(0);
@@ -2197,6 +2199,7 @@ describe("学生端无泄露（多单元新结构逐接口断言）", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as unknown;
     assertNoLeak(body);
+    assertNoStemLeak(body);
     expect(
       (body as { data: { units: unknown[] } }).data.units.length,
     ).toBeGreaterThan(0);
@@ -2220,6 +2223,7 @@ describe("学生端无泄露（多单元新结构逐接口断言）", () => {
     const body = (await res.json()) as unknown;
     // 交卷后放行 answers/answer/solutionMd（参考答案语义），其余照禁（含 hints）
     assertNoLeak(body, { allow: ["answers", "answer", "solutionMd"] });
+    assertNoStemLeak(body);
     const data = body as { data: { units: unknown[] } };
     expect(data.data.units.length).toBe(2);
   });

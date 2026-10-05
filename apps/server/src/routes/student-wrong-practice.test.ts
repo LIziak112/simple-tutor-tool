@@ -12,6 +12,7 @@ import type { Db } from "../db/client";
 import { attempts, questions, responses } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
+import { assertNoStemLeak } from "../test/assert-no-stem-leak.ts";
 
 /**
  * 2026-10 错题重练集成测试（POST /api/student/wrong-practice；app.request()
@@ -329,6 +330,7 @@ describe("POST /api/student/wrong-practice（2026-10 错题重练）", () => {
         .success,
     ).toBe(true);
     assertNoLeak(detailBody);
+    assertNoStemLeak(detailBody);
     const draft = (
       detailBody as {
         data: {
@@ -358,8 +360,9 @@ describe("POST /api/student/wrong-practice（2026-10 错题重练）", () => {
       { headers: { cookie: env.aCookie } },
     );
     expect(paper.status).toBe(200);
-    assertNoLeak(await paper.json());
-
+    const paperJsonBody = await paper.json();
+    assertNoLeak(paperJsonBody);
+    assertNoStemLeak(paperJsonBody);
     // 我的记录：wrong 草稿一直可见（永不失权——无课程归属）
     const records = await env.app.request(
       "/api/student/records?sourceType=wrong",
@@ -507,6 +510,7 @@ describe("POST /api/student/wrong-practice（2026-10 错题重练）", () => {
     ]);
     // 泄露：交卷后 answers 允许出现，但提示内容绝不出现（两题各一条未解锁提示）
     assertNoLeak(result, { allow: ["answers", "answer", "solutionMd"] });
+    assertNoStemLeak(result);
     const serialized = JSON.stringify(result);
     expect(serialized).not.toContain("大于 $0$ 的数是正数。");
     expect(serialized).not.toContain("$-1$ 小于 $0$。");

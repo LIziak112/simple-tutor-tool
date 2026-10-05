@@ -16,7 +16,7 @@ import { expect } from "vitest";
  *   公开形态的 options: string[] 不在此列）；
  * - 账号机密：passwordHash / linkToken。
  *
- * 注意：stemMd 本身是公开字段（T2.4 试卷下发，填空脱敏由 publicStemMd 保证），
+ * 注意：stemMd 本身是公开字段（T2.4 试卷下发；投影语义见 studentStemMd——填空脱敏 + 选项剥除，内容级断言 assertNoStemLeak），
  * 不在默认禁用集合内；不应下发题干的接口（列表类）用 opts.forbid 追加。
  */
 const FORBIDDEN_EXACT_KEYS = new Set([

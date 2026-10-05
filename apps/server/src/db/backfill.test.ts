@@ -1293,20 +1293,13 @@ const SNAPSHOTS = {
   choice: snapshotJson({
     id: "bg-q1",
     type: "choice",
-    options: [
-      { text: "A" },
-      { text: "B" },
-    ],
+    options: [{ text: "A" }, { text: "B" }],
     answers: { kind: "choice", index: 1 },
   }),
   multi: snapshotJson({
     id: "bg-q2",
     type: "multi",
-    options: [
-      { text: "A" },
-      { text: "B" },
-      { text: "C" },
-    ],
+    options: [{ text: "A" }, { text: "B" }, { text: "C" }],
     answers: { kind: "multi", indexes: [0, 2] },
   }),
   fill: snapshotJson({

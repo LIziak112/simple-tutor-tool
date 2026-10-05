@@ -27,6 +27,7 @@ import {
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { listVisibleItems } from "../services/course-service.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
+import { assertNoStemLeak } from "../test/assert-no-stem-leak.ts";
 
 /**
  * 资源库路由集成测试（T2A.2，app.request() 直调路由 + 内存库）：
@@ -662,6 +663,7 @@ describe("资源库路由：软删、学生可见性与作业取卷（D3/D16）"
     expect(paper.status).toBe(200);
     const paperBody = (await paper.json()) as unknown;
     assertNoLeak(paperBody);
+    assertNoStemLeak(paperBody);
     const paperQuestions = (
       paperBody as {
         data: { units: { questions: { id: string }[] }[] };

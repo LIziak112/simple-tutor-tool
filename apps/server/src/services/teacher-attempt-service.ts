@@ -14,7 +14,7 @@ import {
   questionSchema,
   studentAnswerSchema,
 } from "@tutor/contract";
-import { publicStemMd } from "@tutor/md-dsl";
+import { studentStemMd } from "@tutor/md-dsl";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
@@ -357,9 +357,9 @@ export function snapshotOf(row: ResponseRow): Question | null {
 /**
  * 教师端作答详情（D7 全字段；draft 亦可用，D5）：
  * - draft：题目取当前库该 attempt 单元的 live 题目（attemptQuestionRows，与学生
- *   草稿视图同源——未答题也有行），题干经 publicStemMd 公开化（详情不下发参考
- *   答案，题干标记里的答案同样不外露）；判定字段整卷 null（判定列显示「未交卷」）；
- *   answers / solutionMd 字段缺省不发；
+ *   草稿视图同源——未答题也有行），题干经 studentStemMd 学生端投影（详情不下发
+ *   参考答案，题干标记里的答案与 [x] 正确项同样不外露）；判定字段整卷 null
+ *   （判定列显示「未交卷」）；answers / solutionMd 字段缺省不发；
  * - submitted / graded：逐题取 responses 冻结行（快照题干原文含 [[答案]] 标记、
  *   参考答案与详解照常下发——教师端不受泄露约束，改判与待批卡片都要用）；
  *   排序 join 当前 questions（teacherId 域内）提供单元归属与题序，快照内容仍以
@@ -429,7 +429,7 @@ export function getTeacherAttemptDetail(
         type: snapshot.type,
         difficulty: snapshot.difficulty,
         knowledge: snapshot.knowledge,
-        stemMd: isDraft ? publicStemMd(snapshot.stemMd) : snapshot.stemMd,
+        stemMd: isDraft ? studentStemMd(snapshot) : snapshot.stemMd,
         ...(snapshot.options !== undefined
           ? { options: snapshot.options.map((option) => option.text) }
           : {}),
@@ -484,7 +484,7 @@ export function getTeacherAttemptDetail(
         type: row.type,
         difficulty: row.difficulty,
         knowledge: knowledge.get(row.id) ?? [],
-        stemMd: publicStemMd(row.stemMd),
+        stemMd: studentStemMd({ stemMd: row.stemMd, options }),
         ...(options !== undefined ? { options } : {}),
         answer: answerOf(draft?.answerJson ?? null),
         autoCorrect: null,

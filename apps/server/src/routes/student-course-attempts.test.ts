@@ -14,6 +14,7 @@ import type { Db } from "../db/client";
 import { attempts, responses } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
+import { assertNoStemLeak } from "../test/assert-no-stem-leak.ts";
 
 /**
  * T2A.6 课程练习作答集成测试（app.request() 直调路由 + 内存库）：
@@ -324,7 +325,7 @@ describe("T2A.6 课程练习：开始 / 继续作答 / 再做一次（D10）", (
       status: "draft",
     });
     assertNoLeak(firstBody);
-
+    assertNoStemLeak(firstBody);
     // 同时两次开始（幂等取回同一份 draft；服务层事务先查后插保证唯一）
     const second = await startAttempt(env);
     expect(second.status).toBe(201);
@@ -382,6 +383,7 @@ describe("T2A.6 课程练习：开始 / 继续作答 / 再做一次（D10）", (
       sourceType: "course",
     });
     assertNoLeak(detailBody, { allow: ["drafts"] });
+    assertNoStemLeak(detailBody);
   });
 
   it("历次记录完整：首次/最近/最高分、待批数；每次结果使用各自快照", async () => {
@@ -707,6 +709,7 @@ describe("T2A.6 通用取卷与作业作答迁移形态", () => {
     expect(body.data.units).toHaveLength(1);
     expect(body.data.units[0]?.questions).toHaveLength(3);
     assertNoLeak(body);
+    assertNoStemLeak(body);
   });
 
   it("GET /attempts/:id/paper：作业来源照常（未被指派的他人 attempt 403）", async () => {
@@ -756,7 +759,7 @@ describe("T2A.6 通用取卷与作业作答迁移形态", () => {
     const body = (await paper.json()) as { data: unknown };
     expect(studentPaperDataSchema.safeParse(body.data).success).toBe(true);
     assertNoLeak(body);
-
+    assertNoStemLeak(body);
     // 作业与课程练习互不计次：作业作答后课程单元落地页仍无记录
     const landing = await env.app.request(
       `/api/student/courses/${env.courseId}/units/${env.unitId}`,
