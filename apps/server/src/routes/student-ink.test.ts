@@ -13,7 +13,7 @@ import { ink as inkTable } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { safeInkFileName } from "../services/ink-service.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
-import { fetchSubmitRevisions } from "../test/submit-revisions";
+import { submitAttemptRequest } from "../test/submit-revisions";
 
 /**
  * 手写笔迹接口集成测试（T2.8 全部验收项，app.request() 直调路由 + 内存库 +
@@ -254,15 +254,7 @@ async function submitAttempt(
   cookie: string,
   attemptId: string,
 ): Promise<Response> {
-  return (async () => {
-    // T6R.3：自动回传题目版本集合（与前端同流程）
-    const revisions = await fetchSubmitRevisions(app, cookie, attemptId);
-    return app.request(`/api/student/attempts/${attemptId}/submit`, {
-      method: "POST",
-      headers: { cookie },
-      body: JSON.stringify({ revisions }),
-    });
-  })();
+  return submitAttemptRequest(app, cookie, attemptId);
 }
 
 describe("PUT + GET 笔迹：上传取回往返", () => {

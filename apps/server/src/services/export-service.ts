@@ -54,13 +54,13 @@ import {
   units,
 } from "../db/schema";
 import { HttpError } from "../lib/http-error";
-import { frozenRowsInDisplayOrder } from "./attempt-service";
+import { answerOf, frozenRowsInDisplayOrder } from "./attempt-service";
 import { beijingDateTimeOf, beijingExportStampOf } from "./export-csv";
 import { lectureReadingMapFor } from "./lecture-insights";
 import { serializeStudentAnswer } from "./mark-response";
 import { extractMediaImageSrcs } from "./media-service";
 import { snapshotOfRow } from "./snapshot";
-import { answerOf, sourceOf } from "./teacher-attempt-service";
+import { sourceOf } from "./teacher-attempt-service";
 import { type TraceEvent, traceEventsFromRows } from "./trace-intervals";
 import { computeAttemptTraceMetrics } from "./trace-metrics";
 

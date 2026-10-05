@@ -2,8 +2,12 @@ import type { Question } from "@tutor/contract";
 import { questionSchema } from "@tutor/contract";
 import type { ResponseRow } from "../db/schema";
 
-/** JSON.parse 的窄化包装：坏数据返回 undefined（列由写入链路保证为合法 JSON） */
-function jsonOf(text: string): unknown {
+/**
+ * JSON.parse 的窄化包装：坏数据返回 undefined（列由写入链路保证为合法 JSON）。
+ * T6R.3 /code-review 收敛：服务层各处平行副本统一导入本实现（db 层除外——
+ * backfill 不引服务层，保留本地副本）。
+ */
+export function jsonOf(text: string): unknown {
   try {
     return JSON.parse(text) as unknown;
   } catch {

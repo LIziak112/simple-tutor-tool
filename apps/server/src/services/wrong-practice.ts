@@ -4,7 +4,11 @@ import { and, eq, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { attempts, type ResponseRow } from "../db/schema";
 import { HttpError } from "../lib/http-error";
-import { attemptSummaryOf, insertFrozenResponse } from "./attempt-service";
+import {
+  attemptSummaryOf,
+  insertFrozenResponse,
+  newDraftAttempt,
+} from "./attempt-service";
 import { snapshotOfRow } from "./snapshot";
 import { latestJudgedResponsesByQuestion } from "./wrong-questions";
 
@@ -79,30 +83,20 @@ export function startWrongPractice(
       .get();
     const attemptNo = (countRow?.n ?? 0) + 1;
 
-    const id = randomUUID();
-    const startedAt = new Date().toISOString();
-    tx.insert(attempts)
-      .values({
-        id,
-        studentId,
-        sourceType: "wrong",
-        // 契约来源不变式（attempt.ts superRefine）：wrong 三归属键恒 null
-        assignmentId: null,
-        courseId: null,
-        unitId: null,
-        attemptNo,
-        status: "draft",
-        startedAt,
-        submittedAt: null,
-        activeSec: null,
-        device: null,
-        scoreAuto: null,
-        scoreFinal: null,
-        // T6R.3：建卷即冻结（与三来源统一口径；快照在下方逐题预插）
-        frozenAt: startedAt,
-        legacyUnverified: false,
-      })
-      .run();
+    // T6R.3：行字面量复用 newDraftAttempt（三来源建卷共用；wrong 三归属键恒
+    // null——契约来源不变式，frozenAt=startedAt 建卷即冻结，快照在下方逐题预插）
+    const attempt = newDraftAttempt({
+      id: randomUUID(),
+      studentId,
+      sourceType: "wrong",
+      assignmentId: null,
+      courseId: null,
+      unitId: null,
+      attemptNo,
+      startedAt: new Date().toISOString(),
+    });
+    const id = attempt.id;
+    tx.insert(attempts).values(attempt).run();
     // 建卷即冻结：逐题复制最近一次判定作答的快照（插入顺序 = 组卷题序）。
     // 行写入复用 attempt-service 的 insertFrozenResponse（15 列字面量全服务端
     // 唯一处；wrong 卷 unitId 恒 null——卷无单元语义）

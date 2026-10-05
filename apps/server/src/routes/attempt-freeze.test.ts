@@ -13,7 +13,8 @@ import { createApp } from "../app.ts";
 import type { Db } from "../db/client";
 import { attempts, responses, students } from "../db/schema";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
-import { assertNoLeak } from "../test/assert-no-leak.ts";
+import { assertNoLeak } from "../test/assert-no-leak";
+import { submitAttemptRequest } from "../test/submit-revisions";
 
 /**
  * T6R.3 全来源 attempt 题目版本冻结集成测试（app.request() 直调 + 内存库）。
@@ -319,16 +320,9 @@ async function submitWithCurrentRevisions(
   cookie: string,
   attemptId: string,
 ): Promise<Response> {
-  const questions = await draftQuestions(app, cookie, attemptId);
-  return postSubmitWithRevisions(
-    app,
-    cookie,
-    attemptId,
-    questions.map((question) => ({
-      questionId: question.id,
-      questionRevisionId: question.questionRevisionId,
-    })),
-  );
+  // 共享 submitAttemptRequest（自动取版本集合并回传；错版/缺项/多项的定向
+  // 用例走 postSubmitWithRevisions 显式构造）
+  return submitAttemptRequest(app, cookie, attemptId);
 }
 
 /**

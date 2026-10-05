@@ -16,7 +16,7 @@ import type { Db } from "../db/client";
 import { events, questions, responses } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
-import { fetchSubmitRevisions } from "../test/submit-revisions";
+import { submitAttemptRequest } from "../test/submit-revisions";
 
 /**
  * 分步提示集成测试（T2.11 全部验收项，app.request() 直调路由 + 内存库）：
@@ -212,15 +212,7 @@ function postSubmit(
   cookie: string,
   attemptId: string,
 ): Promise<Response> {
-  return (async () => {
-    // T6R.3：自动回传题目版本集合（与前端同流程）
-    const revisions = await fetchSubmitRevisions(app, cookie, attemptId);
-    return app.request(`/api/student/attempts/${attemptId}/submit`, {
-      method: "POST",
-      headers: { cookie },
-      body: JSON.stringify({ revisions }),
-    });
-  })();
+  return submitAttemptRequest(app, cookie, attemptId);
 }
 
 describe("POST /api/student/attempts/:id/hints：解锁与记录", () => {

@@ -7,11 +7,10 @@ import { and, asc, eq, inArray, ne, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { attempts, questions, responses, students } from "../db/schema";
 import { knowledgeNamesByQuestion } from "./assignment-service";
-import { unitGroupedRows } from "./attempt-service";
+import { answerOf, unitGroupedRows } from "./attempt-service";
 import { serializeStudentAnswer } from "./mark-response";
 import { snapshotOfRow } from "./snapshot";
 import {
-  answerOf,
   inkByQuestionOf,
   sourceOf,
   unitTitleByIdOf,

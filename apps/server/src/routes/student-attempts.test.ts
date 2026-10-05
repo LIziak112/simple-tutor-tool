@@ -20,7 +20,7 @@ import { attempts, questions, responses, units } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 import { assertNoStemLeak } from "../test/assert-no-stem-leak.ts";
-import { fetchSubmitRevisions } from "../test/submit-revisions";
+import { submitAttemptRequest } from "../test/submit-revisions";
 
 /**
  * 作答生命周期集成测试（T2.6 全部验收项，app.request() 直调路由 + 内存库）：
@@ -296,20 +296,13 @@ function putAnswer(
   );
 }
 
-/** POST 交卷（T6R.3：自动取草稿视图的题目版本集合并随请求体回传，与前端同流程） */
+/** POST 交卷（T6R.3：经共享 submitAttemptRequest 自动回传题目版本集合） */
 function postSubmit(
   app: App,
   cookie: string | undefined,
   attemptId: string,
 ): Promise<Response> {
-  return (async () => {
-    const revisions = await fetchSubmitRevisions(app, cookie, attemptId);
-    return app.request(`/api/student/attempts/${attemptId}/submit`, {
-      method: "POST",
-      headers: cookie === undefined ? {} : { cookie },
-      body: JSON.stringify({ revisions }),
-    });
-  })();
+  return submitAttemptRequest(app, cookie, attemptId);
 }
 
 /** GET attempt 详情（200 时一并取 body） */

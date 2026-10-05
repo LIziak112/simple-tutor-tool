@@ -16,11 +16,10 @@ import {
   students,
 } from "../db/schema";
 import { HttpError } from "../lib/http-error";
-import { finalScoreOf } from "./attempt-service";
+import { answerOf, finalScoreOf } from "./attempt-service";
 import { pendingMarkCount } from "./pending-mark";
 import { snapshotOfRow } from "./snapshot";
 import {
-  answerOf,
   inkByQuestionOf,
   inkInfoOf,
   sourceOf,

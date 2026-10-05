@@ -36,3 +36,26 @@ export async function fetchSubmitRevisions(
       : [];
   return attemptSubmitRequestSchema.parse({ revisions }).revisions;
 }
+
+/**
+ * 交卷请求的统一发送（路由测试 13 个文件共用——收敛各自手写的
+ * fetchSubmitRevisions + POST body 样板）：自动取详情里的题目版本集合并随
+ * 请求体回传（与前端同流程）；详情取不到（未登录/无权限/不存在）按空集合
+ * 提交——这些用例的交卷预期同样是 4xx，空 body 不改变断言结果。
+ */
+export async function submitAttemptRequest(
+  app: {
+    request: (path: string, init?: RequestInit) => Promise<Response> | Response;
+  },
+  cookie: string | undefined,
+  attemptId: string,
+): Promise<Response> {
+  const revisions = await fetchSubmitRevisions(app, cookie, attemptId);
+  return Promise.resolve(
+    app.request(`/api/student/attempts/${attemptId}/submit`, {
+      method: "POST",
+      headers: cookie === undefined ? {} : { cookie },
+      body: JSON.stringify({ revisions }),
+    }),
+  );
+}

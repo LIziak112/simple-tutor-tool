@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import type { HintOpenData, HintOpenedEntry } from "@tutor/contract";
 import { and, eq } from "drizzle-orm";
 import type { Db } from "../db/client";
@@ -9,11 +8,7 @@ import {
   responses,
 } from "../db/schema";
 import { HttpError } from "../lib/http-error";
-import {
-  attemptTeacherId,
-  requireAttemptQuestion,
-  requireUsableAttempt,
-} from "./attempt-service";
+import { attemptTeacherId, requireUsableAttempt } from "./attempt-service";
 import { recordHintOpenEvent } from "./event-service";
 import { snapshotOfRow } from "./snapshot";
 
@@ -36,9 +31,8 @@ import { snapshotOfRow } from "./snapshot";
  *   （frozenAt NULL）沿用「快照优先、域内当前题兜底」的既有口径；
  * - **hintsUsed = 去重后的已解锁序号集合大小**（同条重复请求不涨；集合存
  *   responses.hintsOpenedJson，冗余计数 hintsUsed 免解析读路径）；
- * - **方案 A（草稿期首次请求提示即建 responses 行，answerJson=null）**：
- *   未作答题的提示解锁有处可记；answerOf(null)=undefined 使草稿视图不受影响，
- *   后续作答走 saveDraftAnswer 的 upsert（changeCount 从 0 起 +1，口径不变）；
+ * - 记录载体：建卷冻结已为每题预插 responses 行（T6R.3 后方案 A 的「无行
+ *   则建」分支不可达，已删）——解锁只做原行更新（hintsUsed/hintsOpenedJson）；
  * - **泄露红线（AGENTS 第 3 条）**：提示内容只经本接口逐条下发（被请求的那条）；
  *   hint_open 事件 payload 只含 index 不含内容；未解锁条目的文本绝不进任何
  *   学生端响应（泄露矩阵测试 routes/student-hints.test.ts 专项比对）。
@@ -107,7 +101,9 @@ function hintsOfAttempt(
   db: Db,
   attempt: Attempt,
   questionId: string,
-): string[] {
+): { row: ResponseRow; hints: string[] } {
+  // 一次查询同时完成成员校验与行获取（openHint 复用行做解锁回写——三查合一）：
+  // 行缺失或快照为空 = 不在冻结集合（对齐 requireAttemptQuestion 的 NOT NULL 语义）
   const row = db
     .select()
     .from(responses)
@@ -118,13 +114,19 @@ function hintsOfAttempt(
       ),
     )
     .get();
-  if (row !== undefined) {
-    const snapshot = snapshotOfRow(row);
-    if (snapshot !== null) return snapshot.hints;
+  if (row === undefined || row.questionSnapshotJson === null) {
+    throw new HttpError(
+      404,
+      "QUESTION_NOT_FOUND",
+      "题目不存在或不属于这次练习",
+    );
   }
+  const snapshot = snapshotOfRow(row);
+  if (snapshot !== null) return { row, hints: snapshot.hints };
   if (attempt.frozenAt !== null) {
-    // T6R.3：冻结卷（含快照缺失/损坏的历史题目）不回退当前题库
-    return [];
+    // T6R.3：冻结卷的快照缺失/损坏（历史题目缺失）不回退当前题库——按无提示计
+    //（openHint → 400 HINT_INDEX_OUT_OF_RANGE）
+    return { row, hints: [] };
   }
   const teacherId = attemptTeacherId(db, attempt);
   const questionRow =
@@ -140,7 +142,7 @@ function hintsOfAttempt(
             ),
           )
           .get();
-  return hintsOfJson(questionRow?.hintsJson ?? null);
+  return { row, hints: hintsOfJson(questionRow?.hintsJson ?? null) };
 }
 
 /**
@@ -150,7 +152,7 @@ function hintsOfAttempt(
  * - draft / submitted / graded 均可用（验收项「交卷后仍可查看」）；
  * - 题目不属于该单元或已软删 → 404 QUESTION_NOT_FOUND（requireAttemptQuestion）；
  * - index <0 或 ≥该题提示总数（含无提示题）→ 400 HINT_INDEX_OUT_OF_RANGE（验收项）；
- * - 记录：responses 行 upsert（方案 A：无行则建，answerJson=null）+
+ * - 记录：responses 原行更新已解锁集合（行建卷冻结时已预插）+
  *   events 写 hint_open（每次都记，payload 只含 index）；
  * - 返回：被请求的那条提示 + hintCount / hintsUsed（去重集合大小）/ hintsRemaining。
  */
@@ -162,9 +164,9 @@ export function openHint(
   index: number,
 ): HintOpenData {
   const attempt = requireUsableAttempt(db, studentId, attemptId);
-  requireAttemptQuestion(db, attempt, questionId);
-
-  const hints = hintsOfAttempt(db, attempt, questionId);
+  // 三查合一：成员校验 + 提示来源 + 解锁回写目标行一次取出（行在建卷冻结时
+  // 已预插——旧的「无行则建」方案 A 分支不可达，已删）
+  const { row, hints } = hintsOfAttempt(db, attempt, questionId);
   if (index < 0 || index >= hints.length) {
     throw new HttpError(
       400,
@@ -175,17 +177,7 @@ export function openHint(
     );
   }
 
-  const existing = db
-    .select()
-    .from(responses)
-    .where(
-      and(
-        eq(responses.attemptId, attemptId),
-        eq(responses.questionId, questionId),
-      ),
-    )
-    .get();
-  const opened = openedIndexesOf(existing?.hintsOpenedJson ?? null).filter(
+  const opened = openedIndexesOf(row.hintsOpenedJson).filter(
     // 口径：教师删减提示后，历史越界序号收敛——不参与去重与计数，回写收敛后的
     // 集合（存量脏数据自愈）。否则 hintsUsed 可能 > hintCount、hintsRemaining
     // 为负，违反契约 hintOpenDataSchema 的 min(0)，前端解析会直接失败
@@ -195,33 +187,10 @@ export function openHint(
     ? opened
     : [...opened, index].sort((a, b) => a - b);
   const hintsUsed = nextOpened.length; // 去重口径：同条重复请求不涨
-  if (existing === undefined) {
-    // 方案 A：草稿期首次请求提示即建行（answerJson=null，不影响草稿视图与判分）
-    db.insert(responses)
-      .values({
-        id: randomUUID(),
-        attemptId,
-        questionId,
-        questionVersion: 0,
-        questionSnapshotJson: null,
-        answerJson: null,
-        autoCorrect: null,
-        finalCorrect: null,
-        teacherMark: null,
-        teacherComment: null,
-        activeSec: null,
-        hintsUsed,
-        changeCount: 0,
-        inkId: null,
-        hintsOpenedJson: JSON.stringify(nextOpened),
-      })
-      .run();
-  } else {
-    db.update(responses)
-      .set({ hintsUsed, hintsOpenedJson: JSON.stringify(nextOpened) })
-      .where(eq(responses.id, existing.id))
-      .run();
-  }
+  db.update(responses)
+    .set({ hintsUsed, hintsOpenedJson: JSON.stringify(nextOpened) })
+    .where(eq(responses.id, row.id))
+    .run();
 
   // 服务端直记 hint_open（每次打开都记；payload 只含 index，不含提示内容；
   // studentId 取 attempt 行——T4.0a D8，会话学生与 attempt 归属一致）

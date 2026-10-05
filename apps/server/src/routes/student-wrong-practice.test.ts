@@ -13,7 +13,7 @@ import { attempts, questions, responses } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 import { assertNoStemLeak } from "../test/assert-no-stem-leak.ts";
-import { fetchSubmitRevisions } from "../test/submit-revisions";
+import { submitAttemptRequest } from "../test/submit-revisions";
 
 /**
  * 2026-10 错题重练集成测试（POST /api/student/wrong-practice；app.request()
@@ -252,15 +252,7 @@ async function submitAt(
   attemptId: string,
   submittedAt: string,
 ): Promise<void> {
-  const revisions = await fetchSubmitRevisions(env.app, env.aCookie, attemptId);
-  const res = await env.app.request(
-    `/api/student/attempts/${attemptId}/submit`,
-    {
-      method: "POST",
-      headers: { cookie: env.aCookie },
-      body: JSON.stringify({ revisions }),
-    },
-  );
+  const res = await submitAttemptRequest(env.app, env.aCookie, attemptId);
   expect(res.status).toBe(200);
   env.db
     .update(attempts)

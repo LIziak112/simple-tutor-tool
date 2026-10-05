@@ -48,12 +48,12 @@ import {
   units,
 } from "../db/schema";
 import { HttpError } from "../lib/http-error";
+import { answerOf } from "./attempt-service";
 import { loadResourceContext } from "./course-service";
 import { lectureReadingMapFor } from "./lecture-insights";
 import { serializeStudentAnswer } from "./mark-response";
 import { pendingMarkCounts } from "./pending-mark";
 import { snapshotOfRow } from "./snapshot";
-import { answerOf } from "./teacher-attempt-service";
 import { type TraceEvent, traceEventsFromRows } from "./trace-intervals";
 import { computeAttemptTraceMetrics } from "./trace-metrics";
 

@@ -15,7 +15,7 @@ import { attempts, responses } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 import { assertNoStemLeak } from "../test/assert-no-stem-leak.ts";
-import { fetchSubmitRevisions } from "../test/submit-revisions";
+import { submitAttemptRequest } from "../test/submit-revisions";
 
 /**
  * T2A.6 课程练习作答集成测试（app.request() 直调路由 + 内存库）：
@@ -260,14 +260,7 @@ async function submit(
   cookie: string,
   attemptId: string,
 ): Promise<Response> {
-  return (async () => {
-    const revisions = await fetchSubmitRevisions(env.app, cookie, attemptId);
-    return env.app.request(`/api/student/attempts/${attemptId}/submit`, {
-      method: "POST",
-      headers: { cookie },
-      body: JSON.stringify({ revisions }),
-    });
-  })();
+  return submitAttemptRequest(env.app, cookie, attemptId);
 }
 
 /** 上报学习痕迹事件（focus/blur 区间 → activeSec 计算数据源） */

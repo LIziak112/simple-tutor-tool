@@ -16,10 +16,11 @@ import {
   responses,
   units,
 } from "../db/schema";
+import { answerOf } from "./attempt-service";
 import { serializeStudentAnswer } from "./mark-response";
 import { snapshotOfRow } from "./snapshot";
 import { studentTeacherIdOf } from "./student-course-service";
-import { answerOf, sourceOf } from "./teacher-attempt-service";
+import { sourceOf } from "./teacher-attempt-service";
 
 /**
  * 错题本业务层（T3.5，Phase3 清单 D11；2026-10 升级轮次史 + 归属单元）——

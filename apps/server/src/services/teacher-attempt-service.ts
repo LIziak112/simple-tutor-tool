@@ -1,5 +1,5 @@
 import type {
-  StudentAnswer,
+  Question,
   TeacherAttemptCard,
   TeacherAttemptDetailData,
   TeacherAttemptDetailQuestion,
@@ -8,7 +8,6 @@ import type {
   TeacherAttemptListQuery,
   TeacherAttemptSource,
 } from "@tutor/contract";
-import { type Question, studentAnswerSchema } from "@tutor/contract";
 import { studentStemMd } from "@tutor/md-dsl";
 import { and, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
@@ -27,12 +26,14 @@ import {
 } from "../db/schema";
 import { HttpError } from "../lib/http-error";
 import {
+  answerOf,
   attemptQuestionRows,
+  attemptResponseRows,
   attemptUnitIds,
   ensureAttemptFrozen,
   unitGroupedRows,
 } from "./attempt-service";
-import { pendingMarkCount } from "./pending-mark.ts";
+import { pendingMarkCount } from "./pending-mark";
 import { snapshotOfRow } from "./snapshot";
 
 /**
@@ -68,22 +69,8 @@ export function effectiveCorrect(
 /** 最近活动时间排序键（D6/D10 同一口径：submittedAt ?? startedAt） */
 const lastActivitySql = sql`coalesce(${attempts.submittedAt}, ${attempts.startedAt})`;
 
-/** JSON.parse 的窄化包装：坏数据返回 undefined（列由写入链路保证为合法 JSON） */
-function jsonOf(text: string): unknown {
-  try {
-    return JSON.parse(text) as unknown;
-  } catch {
-    return undefined;
-  }
-}
-
-/** answerJson → StudentAnswer（坏数据按未作答 null 处理，不让单行脏数据打挂接口）；
- * T3.2b 起导出——待批队列卡片拼装复用（mark-response.ts） */
-export function answerOf(answerJson: string | null): StudentAnswer | null {
-  if (answerJson === null) return null;
-  const parsed = studentAnswerSchema.safeParse(jsonOf(answerJson));
-  return parsed.success ? parsed.data : null;
-}
+// answerOf/jsonOf 已收敛唯一实现：attempt-service.answerOf（null 语义）与
+// snapshot.jsonOf——本文件经顶部 import 使用，不再留平行副本
 
 /** 手写信息投影（D7：ink 行存在才返回；pngUrl 指向教师端 PNG 直出接口）；
  * T3.2b 起导出——待批队列卡片拼装复用（mark-response.ts） */
@@ -439,12 +426,7 @@ export function getTeacherAttemptDetail(
     // assignment/course 的 draft 口径一致）；已交卷快照原文 + 参考答案/详解。
     // 单元列取题目当前归属单元（域内读，软删行仍在——错题「来自哪个练习」的
     // 展示口径，与错题本 originUnit 同源）；题目行缺失回退 questionId 占位。
-    const ownRows = db
-      .select()
-      .from(responses)
-      .where(eq(responses.attemptId, attemptId))
-      .orderBy(sql`rowid`)
-      .all();
+    const ownRows = attemptResponseRows(db, attemptId);
     const unitByQuestion = new Map(
       ownRows.length > 0
         ? db
