@@ -4,6 +4,7 @@ import {
   BACKUP_UPLOAD_BODY_LIMIT,
   IMPORT_BATCH_BODY_LIMIT,
   INK_MAX_UPLOAD_BYTES,
+  NOTE_BODY_GZIP_MAX_BYTES,
 } from "@tutor/contract";
 import { type Context, Hono } from "hono";
 import type { Logger } from "pino";
@@ -65,6 +66,15 @@ export interface CreateAppOptions {
  * 不落盘不缓冲（任务要点：超限尽早拒绝）。
  */
 export const INK_UPLOAD_BODY_LIMIT = INK_MAX_UPLOAD_BYTES + 64 * 1024;
+
+/**
+ * 草稿正文上传路由的 body 预检上限（T6R.4）：正文 gzip 后 ≤2MiB（契约
+ * NOTE_BODY_GZIP_MAX_BYTES）+ multipart boundary/头部编码开销余量，取整
+ * 2MiB+64KiB。超限在 parseBody（整包进内存）之前就拒绝（413
+ * NOTE_LIMIT_EXCEEDED，不落盘不缓冲）；精确限额由 note-service 按文件实际
+ * 字节校验（chunked 传输无 content-length 时兜底，与 ink 两级防线同款）。
+ */
+export const NOTE_UPLOAD_BODY_LIMIT = NOTE_BODY_GZIP_MAX_BYTES + 64 * 1024;
 
 /**
  * 图片上传路由的 body 预检上限（媒体管线第二单）：图片本身 ≤5MB（契约口径，
@@ -150,6 +160,23 @@ export function createApp(options: CreateAppOptions) {
             ok: false,
             error: "INK_TOO_LARGE",
             message: "上传数据过大（超过笔迹上传上限），请精简后重试",
+          };
+          return c.json(body, 413);
+        }
+      }
+      return next();
+    })
+    // T6R.4：草稿正文上传（PUT multipart）的 body 大小防御——content-length
+    // 超限直接 413 NOTE_LIMIT_EXCEEDED，不进入 parseBody（整包进内存）更不
+    // 落盘；精确限额（gzip 后 ≤2MiB）由 note-service 校验（chunked 时兜底）。
+    .use("/api/student/attempts/:id/notes/:questionId", async (c, next) => {
+      if (c.req.method === "PUT") {
+        const length = Number(c.req.header("content-length") ?? "0");
+        if (Number.isFinite(length) && length > NOTE_UPLOAD_BODY_LIMIT) {
+          const body: ApiErr = {
+            ok: false,
+            error: "NOTE_LIMIT_EXCEEDED",
+            message: "上传数据过大（超过草稿上传上限），请精简后重试",
           };
           return c.json(body, 413);
         }
