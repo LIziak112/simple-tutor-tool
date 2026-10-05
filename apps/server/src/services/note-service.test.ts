@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  type Dirent,
   existsSync,
   mkdirSync,
   readdirSync,
@@ -8,7 +9,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { gzipSync, gunzipSync } from "node:zlib";
+import { gunzipSync, gzipSync } from "node:zlib";
 import type { NoteDoc, NoteDocInput } from "@tutor/contract";
 import {
   NOTE_BODY_GZIP_MAX_BYTES,
@@ -20,6 +21,7 @@ import { describe, expect, it } from "vitest";
 import { createDb, type Db } from "../db/client.ts";
 import { runMigrations } from "../db/migrate.ts";
 import {
+  type Attempt,
   attempts as attemptsTable,
   noteImages as noteImagesTable,
   notes as notesTable,
@@ -105,9 +107,13 @@ function makeFrozenAttempt(
     attemptNo: 1,
     startedAt: "2026-10-01T00:00:00.000Z",
   });
-  const attempt =
+  const attempt: Attempt =
     status === "submitted"
-      ? { ...base, status: "submitted", submittedAt: "2026-10-01T01:00:00.000Z" }
+      ? {
+          ...base,
+          status: "submitted",
+          submittedAt: "2026-10-01T01:00:00.000Z",
+        }
       : base;
   const revisionIds = new Map<string, string>();
   db.transaction((tx) => {
@@ -168,7 +174,8 @@ interface SaveArgs {
 
 /** 直调服务（默认 gzip 打包 NoteDocInput；body 传字节则原样使用） */
 function save(db: Db, dataDir: string, args: SaveArgs) {
-  const bytes = args.body instanceof Uint8Array ? args.body : gzipJson(args.body);
+  const bytes =
+    args.body instanceof Uint8Array ? args.body : gzipJson(args.body);
   return saveNoteVersion(
     db,
     dataDir,
@@ -186,9 +193,13 @@ function save(db: Db, dataDir: string, args: SaveArgs) {
 function errInfo(err: unknown): {
   status: number;
   code: string;
-  extra?: Record<string, unknown>;
+  extra: Record<string, unknown> | undefined;
 } {
-  const e = err as { status?: number; code?: string; extra?: Record<string, unknown> };
+  const e = err as {
+    status?: number;
+    code?: string;
+    extra?: Record<string, unknown>;
+  };
   return { status: e.status ?? -1, code: e.code ?? "", extra: e.extra };
 }
 
@@ -202,13 +213,21 @@ function capture(fn: () => unknown): unknown {
   throw new Error("期望抛错但成功了");
 }
 
+/** 取唯一行（空/多行即测试失败；替代非空断言的行断言口径） */
+function sole<T>(rows: readonly T[], what: string): T {
+  const row = rows[0];
+  if (row === undefined) throw new Error(`预期存在唯一行：${what}`);
+  expect(rows).toHaveLength(1);
+  return row;
+}
+
 /** blobs/notes 下全部文件（相对 dataDir），用于断言落盘布局与残留 */
 function noteFiles(dataDir: string): string[] {
   const root = join(dataDir, "blobs", "notes");
   if (!existsSync(root)) return [];
   const out: string[] = [];
   // 根被同名文件占据等异常形态（故障注入现场）按无文件处理
-  let entries;
+  let entries: Dirent[];
   try {
     entries = readdirSync(root, { withFileTypes: true });
   } catch {
@@ -228,7 +247,11 @@ function tmpFiles(dataDir: string): string[] {
 }
 
 /** 把某版本 serverSavedAt 改到过去（模拟安全窗口流逝；直插场景专用） */
-function ageVersion(db: Db, versionId: string, iso = "2026-01-01T00:00:00.000Z") {
+function ageVersion(
+  db: Db,
+  versionId: string,
+  iso = "2026-01-01T00:00:00.000Z",
+) {
   db.$client
     .prepare("UPDATE note_versions SET server_saved_at = ? WHERE id = ?")
     .run(iso, versionId);
@@ -239,7 +262,9 @@ function ageVersion(db: Db, versionId: string, iso = "2026-01-01T00:00:00.000Z")
 describe("hash 规范化：固定字段顺序 + 默认值物化", () => {
   it("canonicalNoteJson 输出固定键序的紧凑 JSON（逐字符断言）", () => {
     const doc = noteDoc(1);
-    doc.ink.strokes[0]!.points = [{ x: 10, y: 20, p: 0.5, t: 0 }];
+    const stroke = doc.ink.strokes[0];
+    if (stroke === undefined) throw new Error("夹具错误：无笔画");
+    stroke.points = [{ x: 10, y: 20, p: 0.5, t: 0 }];
     expect(canonicalNoteJson(doc)).toBe(
       JSON.stringify({
         version: 1,
@@ -363,7 +388,11 @@ describe("正文解析与限额分级", () => {
     );
     expect(info).toMatchObject({ status: 413, code: "NOTE_LIMIT_EXCEEDED" });
     expect(
-      db.select().from(noteVersionsTable).all().filter((r) => r.revision === 3),
+      db
+        .select()
+        .from(noteVersionsTable)
+        .all()
+        .filter((r) => r.revision === 3),
     ).toHaveLength(0);
   });
 
@@ -415,7 +444,9 @@ describe("正文解析与限额分级", () => {
     expect(bad1).toMatchObject({ status: 400, code: "NOTE_VALIDATION_FAILED" });
 
     const badDoc = noteDoc(1);
-    badDoc.ink.strokes[0]!.points[0] = { x: -1, y: 20, p: 0.5, t: 0 };
+    const badStroke = badDoc.ink.strokes[0];
+    if (badStroke === undefined) throw new Error("夹具错误：无笔画");
+    badStroke.points[0] = { x: -1, y: 20, p: 0.5, t: 0 };
     const bad2 = errInfo(
       capture(() =>
         save(db, dataDir, {
@@ -433,7 +464,9 @@ describe("正文解析与限额分级", () => {
   it("复杂度超预算（单笔/总点数超上限）→ 413 NOTE_LIMIT_EXCEEDED（与形状错误分级）", () => {
     // 单笔 2001 点 > NOTE_MAX_POINTS_PER_STROKE(2000)
     const perStroke = noteDoc(1);
-    perStroke.ink.strokes[0]!.points = Array.from({ length: 2001 }, (_, i) => ({
+    const perStrokeStroke = perStroke.ink.strokes[0];
+    if (perStrokeStroke === undefined) throw new Error("夹具错误：无笔画");
+    perStrokeStroke.points = Array.from({ length: 2001 }, (_, i) => ({
       x: i % 1000,
       y: 20,
       p: 0.5,
@@ -500,7 +533,9 @@ describe("路径与目录边界", () => {
       ),
     ).toThrowError();
     // 根目录本身与向上逃逸
-    expect(() => resolveNoteBodyPath(dataDir, join("blobs", "notes"))).toThrowError();
+    expect(() =>
+      resolveNoteBodyPath(dataDir, join("blobs", "notes")),
+    ).toThrowError();
     expect(() =>
       resolveNoteBodyPath(dataDir, join("blobs", "notes", "a", "..", "..")),
     ).toThrowError();
@@ -525,7 +560,12 @@ describe("路径与目录边界", () => {
     ];
     const { attemptId } = makeFrozenAttempt(db, studentId, specialIds);
     for (const qid of specialIds) {
-      save(db, dir, { studentId, attemptId, questionId: qid, body: noteDoc(1) });
+      save(db, dir, {
+        studentId,
+        attemptId,
+        questionId: qid,
+        body: noteDoc(1),
+      });
     }
     const root = join(dir, "blobs", "notes");
     const dirs = readdirSync(root);
@@ -566,7 +606,7 @@ describe("CAS 与幂等（T6R.4 核心不变量）", () => {
     expect(r.revision).toBe(1);
     expect(r.hash).toBe(noteDocSha256(doc));
 
-    const noteRow = db.select().from(notesTable).all()[0]!;
+    const noteRow = sole(db.select().from(notesTable).all(), "notes 行");
     expect(noteRow.attemptId).toBe(attemptId);
     expect(noteRow.questionId).toBe("q1");
     expect(noteRow.phase).toBe("scratch");
@@ -575,14 +615,19 @@ describe("CAS 与幂等（T6R.4 核心不变量）", () => {
     expect(noteRow.currentVersionId).toBe(r.versionId);
     expect(noteRow.serverSavedAt).toBe(r.savedAt);
 
-    const vRow = db.select().from(noteVersionsTable).all()[0]!;
+    const vRow = sole(
+      db.select().from(noteVersionsTable).all(),
+      "note_versions 行",
+    );
     expect(vRow.noteId).toBe(r.noteId);
     expect(vRow.revision).toBe(1);
     expect(vRow.strokeCount).toBe(2);
     expect(vRow.pointCount).toBe(4);
     expect(vRow.paperWidth).toBe(1000);
     expect(vRow.paperHeight).toBe(800);
-    expect(vRow.bodyPath).toBe(noteBodyRelPath(r.noteId, 1, noteDocSha256(doc)));
+    expect(vRow.bodyPath).toBe(
+      noteBodyRelPath(r.noteId, 1, noteDocSha256(doc)),
+    );
     expect(vRow.mutationId).toBeTruthy(); // 服务层恒写非空
     // 文件存在且为规范化正文的 gzip
     const abs = resolveNoteBodyPath(dataDir, vRow.bodyPath);
@@ -636,7 +681,7 @@ describe("CAS 与幂等（T6R.4 核心不变量）", () => {
       mutationId,
     });
     // 客户端丢了回执，仍以旧 baseRevision 重试（含键序重排的同一文档）
-    const reorderedRaw = {
+    const reorderedRaw: NoteDocInput = {
       version: 1,
       ink: {
         strokes: doc.ink.strokes.map((s) => ({
@@ -735,7 +780,7 @@ describe("CAS 与幂等（T6R.4 核心不变量）", () => {
     expect(db.select().from(notesTable).all()).toHaveLength(1);
     expect(db.select().from(noteVersionsTable).all()).toHaveLength(2);
     expect(noteFiles(dataDir)).toHaveLength(2);
-    const head = db.select().from(notesTable).all()[0]!;
+    const head = sole(db.select().from(notesTable).all(), "notes head 行");
     expect(head.currentRevision).toBe(2);
     expect(head.currentVersionId).toBe(r2.versionId);
   });
@@ -770,7 +815,7 @@ describe("CAS 与幂等（T6R.4 核心不变量）", () => {
     // B 没有任何笔记行；notes 只属 A
     const noteRows = db.select().from(notesTable).all();
     expect(noteRows).toHaveLength(1);
-    expect(noteRows[0]!.attemptId).toBe(a.attemptId);
+    expect(sole(noteRows, "A 的 notes 行").attemptId).toBe(a.attemptId);
   });
 
   it("跨 attempt 重放自己的 mutationId → 409 NOTE_MUTATION_MISMATCH", () => {
@@ -873,7 +918,9 @@ describe("CAS 与幂等（T6R.4 核心不变量）", () => {
     ).toMatchObject({ status: 409, code: "NOTE_REVISION_CONFLICT" });
     // 快照为空的历史行不算冻结集合成员（T6R.3 口径）
     db.$client
-      .prepare("UPDATE responses SET question_snapshot_json = NULL WHERE attempt_id = ?")
+      .prepare(
+        "UPDATE responses SET question_snapshot_json = NULL WHERE attempt_id = ?",
+      )
       .run(attemptId);
     expect(
       errInfo(
@@ -943,7 +990,9 @@ describe("故障注入：不破坏上一版本", () => {
     const doc2 = noteDoc(2);
     const hash2 = noteDocSha256(doc2);
     // 抢先在目标不可变路径建目录，让 renameSync(file→dir) 失败
-    mkdirSync(resolveNoteBodyPath(dataDir, noteBodyRelPath(r1.noteId, 2, hash2)));
+    mkdirSync(
+      resolveNoteBodyPath(dataDir, noteBodyRelPath(r1.noteId, 2, hash2)),
+    );
 
     expect(() =>
       save(db, dataDir, {
@@ -956,7 +1005,9 @@ describe("故障注入：不破坏上一版本", () => {
     ).toThrowError();
     expect(tmpFiles(dataDir)).toHaveLength(0);
     expect(db.select().from(noteVersionsTable).all()).toHaveLength(1);
-    expect(readNoteVersionDoc(db, dataDir, r1.versionId).doc).toEqual(noteDoc(1));
+    expect(readNoteVersionDoc(db, dataDir, r1.versionId).doc).toEqual(
+      noteDoc(1),
+    );
   });
 
   it("DB 失败（rename 后事务前关闭连接）：抛错、孤儿不可变文件被清理、重开库 v1 完好 head 未变", () => {
@@ -988,10 +1039,14 @@ describe("故障注入：不破坏上一版本", () => {
 
     // 重开库（服务重启口径）：head 仍是 v1、v2 无行；v2 孤儿文件已被清理
     const db2 = createDb(dbFile);
-    expect(db2.select().from(notesTable).all()[0]!.currentRevision).toBe(1);
+    expect(
+      sole(db2.select().from(notesTable).all(), "head 行").currentRevision,
+    ).toBe(1);
     expect(db2.select().from(noteVersionsTable).all()).toHaveLength(1);
     expect(noteFiles(dataDir)).toHaveLength(1);
-    expect(readNoteVersionDoc(db2, dataDir, r1.versionId).doc).toEqual(noteDoc(1));
+    expect(readNoteVersionDoc(db2, dataDir, r1.versionId).doc).toEqual(
+      noteDoc(1),
+    );
     db2.$client.close();
   });
 
@@ -1019,8 +1074,12 @@ describe("故障注入：不破坏上一版本", () => {
     );
     expect(noteFiles(dataDir)).toHaveLength(2);
     // v1 仍完好、head 未变
-    expect(readNoteVersionDoc(db, dataDir, r1.versionId).doc).toEqual(noteDoc(1));
-    expect(db.select().from(notesTable).all()[0]!.currentRevision).toBe(1);
+    expect(readNoteVersionDoc(db, dataDir, r1.versionId).doc).toEqual(
+      noteDoc(1),
+    );
+    expect(
+      sole(db.select().from(notesTable).all(), "head 行").currentRevision,
+    ).toBe(1);
     // GC（远期 now）清掉未引用孤儿文件（无 DB 行的崩溃残留）
     const gcResult = gcNoteVersions(db, dataDir, {
       now: new Date("2027-01-01T00:00:00.000Z"),
@@ -1050,7 +1109,9 @@ describe("故障注入：不破坏上一版本", () => {
     const staleTime = new Date(Date.now() - 48 * 3600 * 1000);
     utimesSync(staleTmp, staleTime, staleTime);
 
-    expect(readNoteVersionDoc(db, dataDir, r1.versionId).doc).toEqual(noteDoc(1));
+    expect(readNoteVersionDoc(db, dataDir, r1.versionId).doc).toEqual(
+      noteDoc(1),
+    );
     const result = gcNoteVersions(db, dataDir, { now: new Date() });
     expect(result.sweptTmp).toBe(1);
     expect(existsSync(staleTmp)).toBe(false);
@@ -1105,7 +1166,12 @@ describe("故障注入：不破坏上一版本", () => {
     writeFileSync(join(dataDir, "blobs", "notes"), "占位文件");
     // mkdirSync 在「同名文件占据目录路径」时抛 ENOTDIR/EEXIST
     expect(() =>
-      save(db, dataDir, { studentId, attemptId, questionId: "q1", body: noteDoc(1) }),
+      save(db, dataDir, {
+        studentId,
+        attemptId,
+        questionId: "q1",
+        body: noteDoc(1),
+      }),
     ).toThrowError();
     expect(noteFiles(dataDir)).toHaveLength(0);
     expect(db.select().from(notesTable).all()).toHaveLength(0);
@@ -1152,14 +1218,20 @@ describe("服务重启：新进程重开库后已确认正文可读且 hash 稳�
     expect(v2.recomputedHash).toBe(r2.hash);
     // 文件字节稳定（未被重启/读取改动）
     expect(
-      readFileSync(resolveNoteBodyPath(dataDir, noteBodyRelPath(r1.noteId, 1, r1.hash))),
+      readFileSync(
+        resolveNoteBodyPath(dataDir, noteBodyRelPath(r1.noteId, 1, r1.hash)),
+      ),
     ).toEqual(bytes1);
     // 幂等记录仍在：重开库后重放 mutation1 依旧原回执
-    const m1 = db2
+    const m1Row = db2
       .select()
       .from(noteVersionsTable)
       .all()
-      .find((row) => row.revision === 1)!.mutationId!;
+      .find((row) => row.revision === 1);
+    if (m1Row === undefined || m1Row.mutationId === null) {
+      throw new Error("缺 v1 幂等行");
+    }
+    const m1 = m1Row.mutationId;
     const replay = save(db2, dataDir, {
       studentId,
       attemptId,
@@ -1207,14 +1279,17 @@ describe("未引用版本延迟回收（GC 骨架）", () => {
     expect(result.deletedVersionRows).toBe(1);
     const rows = db.select().from(noteVersionsTable).all();
     expect(rows).toHaveLength(1);
-    expect(rows[0]!.id).toBe(r2.versionId);
+    const keptRow = sole(rows, "保留的 head 版本行");
+    expect(keptRow.id).toBe(r2.versionId);
     // v1 文件删、v2（head）文件留
-    expect(existsSync(resolveNoteBodyPath(dataDir, rows[0]!.bodyPath))).toBe(true);
+    expect(existsSync(resolveNoteBodyPath(dataDir, keptRow.bodyPath))).toBe(
+      true,
+    );
     expect(noteFiles(dataDir)).toHaveLength(1);
     // head 未受影响
-    expect(db.select().from(notesTable).all()[0]!.currentVersionId).toBe(
-      r2.versionId,
-    );
+    expect(
+      sole(db.select().from(notesTable).all(), "head 行").currentVersionId,
+    ).toBe(r2.versionId);
   });
 
   it("submission_evidence 引用的版本超窗口仍保留", () => {
@@ -1243,7 +1318,9 @@ describe("未引用版本延迟回收（GC 骨架）", () => {
       })
       .run();
     db.$client
-      .prepare("UPDATE note_versions SET server_saved_at = '2026-01-01T00:00:00.000Z'")
+      .prepare(
+        "UPDATE note_versions SET server_saved_at = '2026-01-01T00:00:00.000Z'",
+      )
       .run();
     const result = gcNoteVersions(db, dataDir, {
       now: new Date("2026-10-06T00:00:00.000Z"),
@@ -1255,7 +1332,12 @@ describe("未引用版本延迟回收（GC 骨架）", () => {
 
   it("窗口内的未引用版本保留（安全窗口）", () => {
     const { db, dataDir, studentId, attemptId } = makeWorld();
-    save(db, dataDir, { studentId, attemptId, questionId: "q1", body: noteDoc(1) });
+    save(db, dataDir, {
+      studentId,
+      attemptId,
+      questionId: "q1",
+      body: noteDoc(1),
+    });
     save(db, dataDir, {
       studentId,
       attemptId,

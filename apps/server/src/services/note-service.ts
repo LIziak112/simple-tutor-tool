@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { gunzipSync, gzipSync } from "node:zlib";
+import type { NoteUploadMeta } from "@tutor/contract";
 import {
   INK_LOGICAL_WIDTH,
   NOTE_BODY_DECOMPRESSED_MAX_BYTES,
@@ -19,7 +20,6 @@ import {
   type NoteVersionReceipt,
   noteDocSchema,
 } from "@tutor/contract";
-import type { NoteUploadMeta } from "@tutor/contract";
 import { and, eq, lt } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
@@ -95,7 +95,9 @@ export function canonicalNoteJson(doc: NoteDoc): string {
 
 /** 规范化正文 → sha-256（64 位小写 hex，契约 noteBodyHashSchema） */
 export function noteDocSha256(doc: NoteDoc): string {
-  return createHash("sha256").update(canonicalNoteJson(doc), "utf8").digest("hex");
+  return createHash("sha256")
+    .update(canonicalNoteJson(doc), "utf8")
+    .digest("hex");
 }
 
 /** 正文计数（note_versions 行的 strokeCount/pointCount/paperHeight 来源） */
@@ -217,7 +219,11 @@ export function parseNoteBodyBytes(bytes: Uint8Array): NoteDoc {
   try {
     parsedJson = JSON.parse(jsonText) as unknown;
   } catch {
-    throw new HttpError(400, "NOTE_VALIDATION_FAILED", "草稿正文不是合法的 JSON 文档");
+    throw new HttpError(
+      400,
+      "NOTE_VALIDATION_FAILED",
+      "草稿正文不是合法的 JSON 文档",
+    );
   }
   const parsed = noteDocSchema.safeParse(parsedJson);
   if (!parsed.success) {
@@ -231,7 +237,11 @@ export function parseNoteBodyBytes(bytes: Uint8Array): NoteDoc {
         `草稿复杂度超上限：${first}（暂定值）`,
       );
     }
-    throw new HttpError(400, "NOTE_VALIDATION_FAILED", `草稿文档不合法：${first}`);
+    throw new HttpError(
+      400,
+      "NOTE_VALIDATION_FAILED",
+      `草稿文档不合法：${first}`,
+    );
   }
   return parsed.data;
 }
@@ -367,12 +377,19 @@ export function saveNoteVersion(
     .select({ id: responses.id })
     .from(responses)
     .where(
-      and(eq(responses.attemptId, attempt.id), eq(responses.questionId, questionId)),
+      and(
+        eq(responses.attemptId, attempt.id),
+        eq(responses.questionId, questionId),
+      ),
     )
     .get();
   // requireAttemptQuestion 已保证快照非空的行存在；防御性兜底（fail closed）
   if (revisionRow === undefined) {
-    throw new HttpError(404, "QUESTION_NOT_FOUND", "题目不存在或不属于这次练习");
+    throw new HttpError(
+      404,
+      "QUESTION_NOT_FOUND",
+      "题目不存在或不属于这次练习",
+    );
   }
 
   // 2. 解析 + 规范化 hash（先验后写）
@@ -460,7 +477,11 @@ export function saveNoteVersion(
           throw revisionConflict(db, row);
         }
         if (row.id !== noteId) {
-          throw new HttpError(500, "INTERNAL", "笔记行身份不一致（防御性拒绝）");
+          throw new HttpError(
+            500,
+            "INTERNAL",
+            "笔记行身份不一致（防御性拒绝）",
+          );
         }
       }
       tx.insert(noteVersions)
@@ -492,7 +513,9 @@ export function saveNoteVersion(
             serverSavedAt: now,
             updatedAt: now,
           })
-          .where(and(eq(notes.id, noteId), eq(notes.currentRevision, headRevision)))
+          .where(
+            and(eq(notes.id, noteId), eq(notes.currentRevision, headRevision)),
+          )
           .run();
       }
     });
@@ -538,7 +561,11 @@ export function readNoteVersionDoc(
   }
   const parsed = noteDocSchema.safeParse(JSON.parse(jsonText) as unknown);
   if (!parsed.success) {
-    throw new HttpError(500, "NOTE_BODY_UNREADABLE", "笔记正文文件损坏，请联系老师处理");
+    throw new HttpError(
+      500,
+      "NOTE_BODY_UNREADABLE",
+      "笔记正文文件损坏，请联系老师处理",
+    );
   }
   return {
     doc: parsed.data,

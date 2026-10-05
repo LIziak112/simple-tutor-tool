@@ -233,13 +233,18 @@ describe("PUT /attempts/:id/notes/:qid 鉴权与状态门槛", () => {
         .status,
     ).toBe(403);
     expect(
-      (
-        await putNote(app, aCookie, randomUUID(), Q.solve, gzipDoc(noteDoc()))
-      ).status,
+      (await putNote(app, aCookie, randomUUID(), Q.solve, gzipDoc(noteDoc())))
+        .status,
     ).toBe(404);
     expect(
       (
-        await putNote(app, aCookie, attemptId, "not-in-paper", gzipDoc(noteDoc()))
+        await putNote(
+          app,
+          aCookie,
+          attemptId,
+          "not-in-paper",
+          gzipDoc(noteDoc()),
+        )
       ).status,
     ).toBe(404);
   });
@@ -252,9 +257,16 @@ describe("PUT /attempts/:id/notes/:qid 鉴权与状态门槛", () => {
     ).toBe(200);
     const submitRes = await submitAttemptRequest(app, aCookie, attemptId);
     expect(submitRes.status).toBe(200);
-    const res = await putNote(app, aCookie, attemptId, Q.solve, gzipDoc(noteDoc(2)), {
-      baseRevision: 1,
-    });
+    const res = await putNote(
+      app,
+      aCookie,
+      attemptId,
+      Q.solve,
+      gzipDoc(noteDoc(2)),
+      {
+        baseRevision: 1,
+      },
+    );
     expect(res.status).toBe(409);
     expect(((await res.json()) as ApiErr).error).toBe("ALREADY_SUBMITTED");
   });
@@ -286,7 +298,11 @@ describe("multipart 元信息校验 400", () => {
     const form1 = new FormData();
     form1.append("baseRevision", "0");
     form1.append("mutationId", randomUUID());
-    const res1 = await app.request(url, { method: "PUT", headers, body: form1 });
+    const res1 = await app.request(url, {
+      method: "PUT",
+      headers,
+      body: form1,
+    });
     expect(res1.status).toBe(400);
 
     // baseRevision 非数字（字符串字段直传，绕不过元信息校验）
@@ -297,7 +313,11 @@ describe("multipart 元信息校验 400", () => {
     );
     form2.append("baseRevision", "abc");
     form2.append("mutationId", randomUUID());
-    const res2 = await app.request(url, { method: "PUT", headers, body: form2 });
+    const res2 = await app.request(url, {
+      method: "PUT",
+      headers,
+      body: form2,
+    });
     expect(res2.status).toBe(400);
 
     const res3 = await putNote(
@@ -360,9 +380,9 @@ describe("上传、CAS 与幂等（路由级）", () => {
       new Uint8Array(Buffer.from(JSON.stringify(noteDoc(1)), "utf8")),
     );
     expect(res.status).toBe(200);
-    expect(((await res.json()) as { data: { revision: number } }).data.revision).toBe(
-      1,
-    );
+    expect(
+      ((await res.json()) as { data: { revision: number } }).data.revision,
+    ).toBe(1);
   });
 
   it("A/B 同 baseRevision：仅一个 200，另一个 409 NOTE_REVISION_CONFLICT 附 _current 摘要", async () => {
@@ -416,9 +436,16 @@ describe("上传、CAS 与幂等（路由级）", () => {
     await putNote(app, aCookie, attemptId, Q.solve, gzipDoc(noteDoc(1)), {
       mutationId: m,
     });
-    const res = await putNote(app, aCookie, attemptId, Q.solve, gzipDoc(noteDoc(2)), {
-      mutationId: m,
-    });
+    const res = await putNote(
+      app,
+      aCookie,
+      attemptId,
+      Q.solve,
+      gzipDoc(noteDoc(2)),
+      {
+        mutationId: m,
+      },
+    );
     expect(res.status).toBe(409);
     expect(((await res.json()) as ApiErr).error).toBe("NOTE_MUTATION_MISMATCH");
     expect(db.select().from(noteVersionsTable).all()).toHaveLength(1);
@@ -432,9 +459,16 @@ describe("上传、CAS 与幂等（路由级）", () => {
     await putNote(app, aCookie, attemptId, Q.solve, gzipDoc(noteDoc(1)), {
       mutationId: m,
     });
-    const res = await putNote(app, bCookie, attemptId, Q.solve, gzipDoc(noteDoc(1)), {
-      mutationId: m,
-    });
+    const res = await putNote(
+      app,
+      bCookie,
+      attemptId,
+      Q.solve,
+      gzipDoc(noteDoc(1)),
+      {
+        mutationId: m,
+      },
+    );
     expect(res.status).toBe(403);
     expect(db.select().from(notesTable).all()).toHaveLength(1);
   });
@@ -459,7 +493,13 @@ describe("DSL 特殊 questionId 与服务端字段不可覆盖", () => {
       }
     });
     for (const qid of specialIds) {
-      const res = await putNote(app, aCookie, attemptId, qid, gzipDoc(noteDoc(1)));
+      const res = await putNote(
+        app,
+        aCookie,
+        attemptId,
+        qid,
+        gzipDoc(noteDoc(1)),
+      );
       expect(res.status).toBe(200);
     }
     const root = join(dataDir, "blobs", "notes");
@@ -475,22 +515,32 @@ describe("DSL 特殊 questionId 与服务端字段不可覆盖", () => {
   it("客户端发送 noteId/serverSavedAt/phase/studentId 等字段被忽略：行值全由服务端定", async () => {
     const { app, db, aCookie, attemptId } = await makeNotesApp();
     const evilNoteId = "99999999-9999-4999-8999-999999999999";
-    const res = await putNote(app, aCookie, attemptId, Q.solve, gzipDoc(noteDoc(1)), {
-      extra: {
-        noteId: evilNoteId,
-        serverSavedAt: "1999-01-01T00:00:00.000Z",
-        phase: "correction",
-        studentId: "someone-else",
-        teacherId: "someone-else",
-        currentVersionId: evilNoteId,
+    const res = await putNote(
+      app,
+      aCookie,
+      attemptId,
+      Q.solve,
+      gzipDoc(noteDoc(1)),
+      {
+        extra: {
+          noteId: evilNoteId,
+          serverSavedAt: "1999-01-01T00:00:00.000Z",
+          phase: "correction",
+          studentId: "someone-else",
+          teacherId: "someone-else",
+          currentVersionId: evilNoteId,
+        },
       },
-    });
+    );
     expect(res.status).toBe(200);
     const receipt = (await res.json()) as {
       data: { noteId: string; savedAt: string };
     };
     expect(receipt.data.noteId).not.toBe(evilNoteId);
-    const row = db.select().from(notesTable).all()[0]!;
+    const rows = db.select().from(notesTable).all();
+    expect(rows).toHaveLength(1);
+    const row = rows[0];
+    if (row === undefined) throw new Error("缺少 notes 行");
     expect(row.id).toBe(receipt.data.noteId);
     expect(row.phase).toBe("scratch");
     expect(row.serverSavedAt).toBe(receipt.data.savedAt);
