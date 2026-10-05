@@ -777,6 +777,10 @@ export function gcNoteVersions(
     // 孤儿清扫（tmp 清扫不受影响），计数 malformedBodyPaths 暴露给运维。
     // 两位审查角的折中：不做逐行 resolve 校验（多数派：纯集合足够），也不
     // 无条件信任集合（少数派：异常数据宁可漏删不可误删）。
+    // 匹配双方一律 toLowerCase：NTFS 大小写不敏感，手工迁移/改目录名大小写
+    // 后磁盘目录名与 DB 路径可能仅大小写不同——不做归一会把活文件误判成
+    // 孤儿误删（复审④）。malformed 判定（basename 模式）保持大小写敏感：
+    // 非小写规范形态本就该按异常保守处理。
     let liveBodyRelSet: Set<string> | null = null;
     const liveBodyRel = (): Set<string> => {
       if (liveBodyRelSet === null) {
@@ -796,7 +800,7 @@ export function gcNoteVersions(
             result.malformedBodyPaths += 1;
             continue;
           }
-          liveBodyRelSet.add(rel);
+          liveBodyRelSet.add(rel.toLowerCase());
         }
       }
       return liveBodyRelSet;
@@ -813,7 +817,7 @@ export function gcNoteVersions(
             result.sweptTmp += 1;
           } else if (
             bodyFilePattern.test(name) &&
-            !liveBodyRel().has(join(entry.name, name)) &&
+            !liveBodyRel().has(join(entry.name, name).toLowerCase()) &&
             result.malformedBodyPaths === 0
           ) {
             unlinkSync(filePath);

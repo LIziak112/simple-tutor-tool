@@ -5,6 +5,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  renameSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
@@ -1544,6 +1545,36 @@ describe("未引用版本延迟回收（GC 骨架）", () => {
     expect(result.keptByReference).toBe(0);
     expect(db.select().from(noteVersionsTable).all()).toHaveLength(2);
     expect(noteFiles(dataDir)).toHaveLength(2);
+  });
+
+  it("磁盘目录名与 DB 路径仅大小写不同（NTFS 手工迁移形态）→ 活文件不被误判孤儿（复审④）", () => {
+    const { db, dataDir, studentId, attemptId } = makeWorld();
+    const r1 = save(db, dataDir, {
+      studentId,
+      attemptId,
+      questionId: "q1",
+      body: noteDoc(1),
+    });
+    // 模拟：目录名被改成大写（NTFS 大小写不敏感场景的可见形态；Linux 上
+    // 则是磁盘目录与 DB 存储路径仅大小写不同的等价形态）
+    const dirAbs = resolve(dataDir, "blobs", "notes", r1.noteId);
+    renameSync(
+      dirAbs,
+      resolve(dataDir, "blobs", "notes", r1.noteId.toUpperCase()),
+    );
+    ageVersion(db, r1.versionId);
+    const result = gcNoteVersions(db, dataDir, {
+      now: new Date("2026-10-06T00:00:00.000Z"),
+    });
+    // head 版本：行在保留集合（本就不可删）——这里关键断言文件未被孤儿
+    // 清扫路径误删（目录大小写不同也能对账）
+    expect(result.deletedVersionRows).toBe(0);
+    expect(result.sweptOrphanFiles).toBe(0);
+    const dirs = readdirSync(join(dataDir, "blobs", "notes"));
+    expect(dirs).toContain(r1.noteId.toUpperCase());
+    expect(
+      readdirSync(join(dataDir, "blobs", "notes", dirs[0] ?? "")).length,
+    ).toBe(1);
   });
 
   it("存量 bodyPath 形态异常 → 放弃本轮孤儿清扫（保守不删），tmp 清扫不受影响", () => {
