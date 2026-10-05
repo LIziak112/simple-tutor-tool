@@ -120,4 +120,4 @@ it("v1 特征文档不再自动转换：直接按 v2 lint，报 MISSING_FRONTMAT
 - [x] **Step 1: `/simplify`** 对本分支完整 diff，确认发现当场修复或逐条给理由。（065d81d：4 角度 13 项修复，3 项跳过有理由——Zip 干跑形状嵌套、ErrorPanel 每渲染重建、跨文件夹具共享不合项目惯例）
 - [x] **Step 2: `/code-review`** 正确性审查，同上处理。（10 路查找 + sweep：1 项实质正确性缺口——v1 正文+合法 frontmatter 静默空导入，以新通用 lint 规则 PRACTICE_NO_QUESTIONS 堵住（60934b3）；sweep 补漏编辑抽屉重复提示（5cedf63）；12 修复 / 2 保留 / 1 无需改）
 - [x] **Step 3: 终验（贴输出）**——`pnpm test && pnpm lint && pnpm typecheck && pnpm build && pnpm e2e`；`pnpm gen:spec && git diff --exit-code`；`grep -rn "v1ToV2\|parseV1\|detectVersion" apps packages --include="*.ts" --exclude-dir=node_modules` 为空、`grep -rn "旧版 v1" apps/web/src` 为空。（test 2392/2392 ×2 轮、e2e 50/50、typecheck/lint/build 绿、gen:spec 幂等复验通过；grep 残留清零；首跑 e2e 6 失败为与 10 审查代理并发导致的资源争用抖动，独跑复验 50/50）
-- [ ] **Step 4: 合并**——分支全绿后并入 `v2`，推送（VPN 代理见记忆），再发 `main`；PR 描述列手动验证步骤（导入一份 v2 样例正常、粘一段 `#### 题 1` 文本预览报 MISSING_FRONTMATTER、MCP lint_markdown 调用一次）。
+- [x] **Step 4: 合并**——分支全绿后并入 `v2`，推送（VPN 代理见记忆），再发 `main`；PR 描述列手动验证步骤（导入一份 v2 样例正常、粘一段 `#### 题 1` 文本预览报 MISSING_FRONTMATTER、MCP lint_markdown 调用一次）。（v2 与 main 均已推送至 e59d9fe；本仓库直连合并无 PR，手动验证步骤见最终交付说明）
