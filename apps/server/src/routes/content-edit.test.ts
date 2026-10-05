@@ -294,7 +294,7 @@ describe("PUT /api/teacher/questions/:id 单题编辑", () => {
     expect(((await res.json()) as ApiErr).error).toBe("VALIDATION_ERROR");
   });
 
-  it("未解析出题目（正文没有 question 容器）→ 422 VALIDATION_ERROR", async () => {
+  it("未解析出题目（正文没有 question 容器）→ 422 LINT_ERROR（PRACTICE_NO_QUESTIONS，2026-10-05 空练习守卫）", async () => {
     const { app, cookie } = await makeTeacherApp();
     const res = await request(
       app,
@@ -306,9 +306,13 @@ describe("PUT /api/teacher/questions/:id 单题编辑", () => {
       },
     );
     expect(res.status).toBe(422);
-    const body = (await res.json()) as ApiErr;
-    expect(body.error).toBe("VALIDATION_ERROR");
-    expect(body.message).toContain("未解析出任何题目");
+    const body = (await res.json()) as ApiErr & {
+      _issues?: Array<{ code: string }>;
+    };
+    expect(body.error).toBe("LINT_ERROR");
+    expect(body._issues?.some((i) => i.code === "PRACTICE_NO_QUESTIONS")).toBe(
+      true,
+    );
   });
 
   it("一次提交多道题 → 422 VALIDATION_ERROR（一次只能编辑一道题）", async () => {

@@ -25,6 +25,7 @@ import {
   createTestDb,
   createTestDir,
   TEST_TEACHER_ID,
+  V1_LEGACY_MD,
 } from "../db/test-utils.ts";
 
 /**
@@ -45,9 +46,6 @@ const PRACTICE_MD = readFileSync(
   new URL("../../../../samples/v2/练习样例.md", import.meta.url),
   "utf8",
 );
-/** v1 旧格式片段（无 frontmatter，题号行 + 题型标记 + ANSWER 注释） */
-const V1_LEGACY_MD =
-  "#### 题 1（★）\n【题型】判断\n判断：1+1=2。\n\n<!-- ANSWER: 正确 -->\n";
 const BROKEN_MD = `---
 kind: practice
 unit: 练习
@@ -264,6 +262,45 @@ describe("POST /api/teacher/import/commit", () => {
     // 拒绝时无任何写入
     expect(db.select().from(questions).all()).toHaveLength(0);
     expect(db.select().from(imports).all()).toHaveLength(0);
+  });
+
+  it("v1 正文被补上合法 frontmatter：报 PRACTICE_NO_QUESTIONS error，commit 422 拒绝（防静默空导入，决策 10 后补守卫）", async () => {
+    const { app, db, cookie } = await makeTeacherApp();
+    const md = `---
+kind: practice
+unit: 练习四
+---
+
+#### 题 1（★）
+【题型】判断
+判断：1+1=2。
+
+<!-- ANSWER: 正确 -->
+`;
+    const preview = await postJson(
+      app,
+      "/api/teacher/import/preview",
+      { markdown: md, filename: "补头旧文档.md" },
+      cookie,
+    );
+    expect(preview.status).toBe(200);
+    const previewBody = (await preview.json()) as {
+      data: { issues: Array<{ code: string; level: string }> };
+    };
+    expect(
+      previewBody.data.issues.some(
+        (i) => i.code === "PRACTICE_NO_QUESTIONS" && i.level === "error",
+      ),
+    ).toBe(true);
+
+    const res = await postJson(
+      app,
+      "/api/teacher/import/commit",
+      { markdown: md, filename: "补头旧文档.md" },
+      cookie,
+    );
+    expect(res.status).toBe(422);
+    expect(db.select().from(units).all()).toHaveLength(0);
   });
 
   it("v1 旧格式 commit：422 LINT_ERROR 拒绝且零写入（验收 3 修订）", async () => {

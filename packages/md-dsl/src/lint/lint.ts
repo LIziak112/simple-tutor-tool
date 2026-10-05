@@ -1,6 +1,8 @@
 import type { DocumentKind, LintIssue, ParsedDocument } from "@tutor/contract";
+import type { Root } from "mdast";
 import type { ParseOptions } from "../v2/parse.ts";
 import { parseDocument } from "../v2/parse.ts";
+import { isQuestionContainer } from "../v2/question.ts";
 import { errorMessage, makeIssue, processor } from "../v2/shared.ts";
 import { lintBlankMarkerDollar } from "./blank-marker.ts";
 import { lintDirectives } from "./directives.ts";
@@ -58,6 +60,7 @@ function runRules(
       ...lintTablePipes(tree),
       ...lintBlankMarkerDollar(tree),
       ...lintRawHtml(tree),
+      ...lintEmptyPractice(parsed, tree),
     ];
   } catch (err) {
     return [
@@ -70,6 +73,28 @@ function runRules(
       ),
     ];
   }
+}
+
+/**
+ * 空练习守卫（2026-10-05 移除 v1 兼容层后补，架构文档 §10 决策 10）：
+ * 显式声明 kind: practice 却没有任何 question 容器时，导入会静默产出一个
+ * 空单元、全部内容无声丢失。最现实的成因是把旧版 v1 正文贴进了带 frontmatter 的
+ * 文档（v1 已停止支持、不再自动转换）。按「源文本中存在容器」判定而非解析成功的
+ * 题——题型非法的题已由 UNKNOWN_QUESTION_TYPE 等规则指出，不叠加噪声；只在显式
+ * 声明 practice 时报，无 frontmatter 的文档已由解析层 MISSING_FRONTMATTER 拦截。
+ */
+function lintEmptyPractice(parsed: ParsedDocument, tree: Root): LintIssue[] {
+  if (parsed.frontmatter?.kind !== "practice") return [];
+  if (tree.children.some(isQuestionContainer)) return [];
+  return [
+    makeIssue(
+      "error",
+      1,
+      1,
+      "PRACTICE_NO_QUESTIONS",
+      "练习文档正文中没有任何 ::::question 题目容器，至少要有一道题（若是旧版 v1 格式的内容：v1 已停止支持，请按 docs/dsl/规范.md 改写为 v2）",
+    ),
+  ];
 }
 
 /** 合并排序：行 → 列 → code → message，保证同输入输出稳定（「复制错误给 AI」列表顺序可复现） */

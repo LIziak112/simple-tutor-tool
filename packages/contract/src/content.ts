@@ -103,7 +103,7 @@ export const questionAnswersSchema = z.discriminatedUnion("kind", [
 /**
  * 题目（教师侧完整形态）。字段参考 §5.2 questions 表：
  * - id：来自 DSL；缺省由解析器按 `单元slug-序号` 生成。编辑内容时保持 id 不变，学情统计才能跨版本延续；
- * - difficulty：1–5 的整数（沿用 v1 ★ 颗粒度），题目指令属性缺省值由注册表（T1.2）决定；
+ * - difficulty：1–5 的整数（星级颗粒度），题目指令属性缺省值由注册表（T1.2）决定；
  * - knowledge：考点列表（§5.2 经 knowledge_points/question_knowledge 关联表存储），DSL 单个 knowledge 属性也归一为数组；
  * - options：仅 choice/multi 有（GFM 任务列表形式存于 stemMd，抽取为纯文本数组；正确项以 answers 为权威）；
  * - answers：见 questionAnswersSchema，缺失/不完整由 linter 报 issue，契约层允许缺省以便表达"带错误的解析结果"；

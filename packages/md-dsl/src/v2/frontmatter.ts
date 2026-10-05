@@ -88,6 +88,16 @@ export function extractFrontmatter(
           ),
         );
       }
+    } else if (path === "dsl") {
+      issues.push(
+        makeIssue(
+          "error",
+          fenceLine + 1,
+          fenceColumn,
+          "INVALID_FRONTMATTER",
+          "dsl 版本号不合法：当前唯一支持的版本是 2（写 dsl: 2，或删掉这一行用缺省值）",
+        ),
+      );
     } else {
       issues.push(
         makeIssue(

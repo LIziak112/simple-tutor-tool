@@ -116,7 +116,7 @@ function parseInner(md: string, options: ParseOptions): ParsedDocument {
         1,
         1,
         "MISSING_FRONTMATTER",
-        "缺少 YAML frontmatter：文档必须以「---」围栏开头，并在其中声明 kind: practice | lecture | mixed",
+        "缺少 YAML frontmatter：文档必须以「---」围栏开头，并在其中声明 kind: practice | lecture | mixed。如这是旧版 v1 格式文档：v1 已停止支持，请按 docs/dsl/规范.md 改写为 v2 后再导入",
       ),
     );
   } else {

@@ -45,3 +45,11 @@ export function createTestDb(): Db {
 export function createTestDir(): string {
   return mkdtempSync(join(tmpdir(), "tutor-ink-test-"));
 }
+
+/**
+ * v1 旧格式片段（无 frontmatter，题号行 + 题型标记 + ANSWER 注释）：
+ * v1 兼容层移除（架构文档 §10 决策 10）后用于「旧格式被拒」口径的服务层/路由层回归测试，
+ * 服务层与路由层共享同一份，避免双副本漂移。
+ */
+export const V1_LEGACY_MD =
+  "#### 题 1（★）\n【题型】判断\n判断：1+1=2。\n\n<!-- ANSWER: 正确 -->\n";

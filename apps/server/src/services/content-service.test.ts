@@ -22,11 +22,11 @@ import {
   createTestDb,
   createTestDir,
   TEST_TEACHER_ID,
+  V1_LEGACY_MD,
 } from "../db/test-utils.ts";
 import { HttpError } from "../lib/http-error.ts";
 import { createAssignment } from "./assignment-service.ts";
 import {
-  analyzeImport,
   commitImport,
   createCourse,
   previewImport,
@@ -58,9 +58,6 @@ function loadSample(relative: string): string {
 const PRACTICE_MD = loadSample("v2/练习样例.md");
 const LECTURE_MD = loadSample("v2/讲义样例.md");
 const MIXED_MD = loadSample("v2/混合样例.md");
-/** v1 旧格式片段（无 frontmatter，题号行 + 题型标记 + ANSWER 注释；命名与 import.test.ts 对齐） */
-const V1_LEGACY_MD =
-  "#### 题 1（★）\n【题型】判断\n判断：1+1=2。\n\n<!-- ANSWER: 正确 -->\n";
 
 /** 练习样例 8 题的题型分布（缺省 id `练习四-N`，第 7 题显式 id=p4-q7） */
 const PRACTICE_TYPE_DISTRIBUTION = {
@@ -165,9 +162,6 @@ describe("previewImport（不写库）", () => {
         (i) => i.code === "MISSING_FRONTMATTER" && i.level === "error",
       ),
     ).toBe(true);
-    // 纯函数口径同源：analyzeImport（MCP lint_markdown 同款入口）与 preview 同一结果
-    const { issues } = analyzeImport(V1_LEGACY_MD);
-    expect(issues.some((i) => i.code === "MISSING_FRONTMATTER")).toBe(true);
     expect(db.select().from(imports).all()).toHaveLength(0);
   });
 

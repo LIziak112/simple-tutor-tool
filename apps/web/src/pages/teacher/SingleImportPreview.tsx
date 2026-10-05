@@ -22,10 +22,10 @@ import { MarkdownEditor } from "./MarkdownEditor";
 
 /**
  * 单文件导入预览（T1.11 的预览态；T2A.3 从 ImportPage 拆出并接入资源库选项）：
- * - 左 CodeMirror（Markdown 高亮 + lint 标注），右 RichMarkdown 渲染（v1 先转换）；
+ * - 左 CodeMirror（Markdown 高亮 + lint 标注），右 RichMarkdown 渲染；
  * - 文件名预览态可就地修改（2026-10 审核修复；改名走同一条 debounce 重预览链路，
  *   实际存储标题来自 frontmatter 的提示见编辑器头）；
- * - 顶部统计条（版本徽章、单元/讲义/题数/题型分布）；
+ * - 顶部统计条（单元/讲义/题数/题型分布）；
  * - 动作清单与注意事项面板（D18/D19，T2A.3）；
  * - 编辑即校验：预览态下改动 400ms debounce 重新调 preview；
  * - 有 error 时「确认导入」禁用并显示错误面板（「复制错误给 AI」按 D21 新格式）；
@@ -159,7 +159,7 @@ export function SingleImportPreview({
 
   return (
     <div className="mt-4">
-      {/* 统计条（版本徽章 + 单元/讲义/题数 + 题型分布） */}
+      {/* 统计条（单元/讲义/题数 + 题型分布） */}
       <StatsBar
         preview={preview}
         pending={previewPending}

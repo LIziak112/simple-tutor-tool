@@ -288,6 +288,52 @@ describe("lintDocument：合法样例 0 issue（夹具质量回归）", () => {
   });
 });
 
+describe("lintDocument：空练习守卫（PRACTICE_NO_QUESTIONS，决策 10 后补）", () => {
+  it("显式声明 kind: practice 但正文没有任何 ::::question 容器 → error（防止静默空导入）", () => {
+    const result = lintDocument(
+      md([
+        "---",
+        "kind: practice",
+        "unit: 练习四",
+        "---",
+        "",
+        "只有一段普通正文。",
+      ]),
+    );
+    expect(codes(result.issues)).toContain("PRACTICE_NO_QUESTIONS");
+    const issue = issueOf(result.issues, "PRACTICE_NO_QUESTIONS");
+    expect(issue?.level).toBe("error");
+    expect(issue?.line).toBe(1);
+  });
+
+  it("旧版 v1 正文被补上 frontmatter 后（决策 10 删除转换后的现实路径）→ 报 PRACTICE_NO_QUESTIONS 而非静默空导入", () => {
+    const result = lintDocument(
+      md([
+        "---",
+        "kind: practice",
+        "unit: 练习四",
+        "---",
+        "",
+        "#### 题 1（★）",
+        "【题型】判断",
+        "判断：1+1=2。",
+        "",
+        "<!-- ANSWER: 正确 -->",
+      ]),
+    );
+    expect(codes(result.issues)).toContain("PRACTICE_NO_QUESTIONS");
+  });
+
+  it("lecture / mixed 不受影响；无 frontmatter 文档不重复报（MISSING_FRONTMATTER 已拦）", () => {
+    const lecture = lintDocument(
+      md(["---", "kind: lecture", "---", "", "# 第1讲", "", "正文。"]),
+    );
+    expect(codes(lecture.issues)).not.toContain("PRACTICE_NO_QUESTIONS");
+    const noFrontmatter = lintDocument("#### 题 1（★）\n【题型】判断\n");
+    expect(codes(noFrontmatter.issues)).toEqual(["MISSING_FRONTMATTER"]);
+  });
+});
+
 describe("lintDocument：解析层 issue 透传与合并", () => {
   it("透传不重复报：未知题型只出现一次 UNKNOWN_QUESTION_TYPE / INVALID_QUESTION_ATTRS", () => {
     const text = md([

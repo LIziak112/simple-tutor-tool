@@ -225,12 +225,12 @@ describe("parseDocument：健壮性（纯函数不抛异常）", () => {
     expect(codes(result.issues)).toContain("INVALID_FRONTMATTER");
   });
 
-  it("dsl 声明非 2：记 INVALID_FRONTMATTER 且消息指向 dsl 字段（仅支持 v2，§10 决策 10）", () => {
+  it("dsl 声明非 2：记 INVALID_FRONTMATTER 且消息给出可操作指引（仅支持 v2，§10 决策 10）", () => {
     const result = parseDocument("---\nkind: practice\ndsl: 1\n---\n");
     expect(codes(result.issues)).toContain("INVALID_FRONTMATTER");
     expect(
       result.issues.find((i) => i.code === "INVALID_FRONTMATTER")?.message,
-    ).toContain("dsl");
+    ).toContain("唯一支持的版本是 2");
     expect(result.frontmatter).toBeUndefined();
   });
 

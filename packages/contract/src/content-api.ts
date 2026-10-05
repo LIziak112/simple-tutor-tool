@@ -283,7 +283,7 @@ export const contentTreeUnitSchema = z.object({
   /** 单元 id（来自 DSL） */
   id: z.string().min(1),
   title: z.string().min(1),
-  /** 主题；未标注为 null（数据库列可空，与 v1 UNIT 第三段语义一致） */
+  /** 主题；未标注为 null（数据库列可空） */
   topic: z.string().nullable(),
   /** 最近更新时间：UTC ISO 字符串 */
   updatedAt: z.string().min(1),

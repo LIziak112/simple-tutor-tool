@@ -50,6 +50,12 @@ export const LINT_RULES: readonly LintRuleDoc[] = [
       "frontmatter YAML 语法解析失败：检查缩进、引号、方括号是否闭合",
   },
   {
+    code: "PRACTICE_NO_QUESTIONS",
+    level: "error",
+    description:
+      "练习文档没有任何 ::::question 题目容器（常见于把旧版 v1 正文贴进带 frontmatter 的文档）：改写为 v2 后再导入",
+  },
+  {
     code: "MISSING_QUESTION_TYPE",
     level: "error",
     description: "question 缺 type 属性：必须写明七种题型之一",

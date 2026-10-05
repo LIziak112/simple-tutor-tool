@@ -502,7 +502,6 @@ describe("T2A.3 导入请求扩展（folderId/folderName/batchId/addToCourse）"
 
 describe("T2A.3 preview 响应扩展（动作清单 + warning）", () => {
   const data = {
-    version: 2,
     summary: {
       unitCount: 1,
       lectureCount: 0,
@@ -547,7 +546,6 @@ describe("T2A.3 preview 响应扩展（动作清单 + warning）", () => {
 
   it("actions/warnings 缺省时解析为空数组（兼容旧响应消费方）", () => {
     const r = importPreviewDataSchema.safeParse({
-      version: 2,
       summary: data.summary,
       issues: [],
     });
@@ -627,7 +625,6 @@ describe("T2A.3 preview-batch 与批次回看契约", () => {
           folderName: "chapter1",
           folderToCreate: true,
           preview: {
-            version: 2,
             summary: {
               unitCount: 1,
               lectureCount: 0,

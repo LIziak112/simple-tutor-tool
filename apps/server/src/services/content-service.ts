@@ -114,13 +114,12 @@ import {
 // ---------- 统一 lint ----------
 
 /**
- * 对文档做完整 lint（v2 唯一口径），结果即 md-dsl 的 LintResult。
+ * 对文档做完整 lint（v2 唯一口径）——lintDocument 的直通入口：仅收敛
+ * fallbackUnitId 可选参的传递（exactOptionalPropertyTypes 下不传 undefined）。
+ * 保留为具名入口供 MCP lint_markdown 与导入预览/commit 共用，口径单点。
  *
  * fallbackUnitId（内容模型与导入规范化方案 §2）：frontmatter 未声明 unit 时单元名
  * 锚定文件名。
- *
- * T4.6 起导出：MCP lint_markdown 工具复用本函数与 summarizeParsed（与导入预览
- * 同一份 lint 口径，避免 MCP 侧另写一份漂移）。
  */
 export function analyzeImport(
   markdown: string,

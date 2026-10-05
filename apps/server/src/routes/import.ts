@@ -21,7 +21,7 @@ import {
 
 /**
  * 内容导入路由（需教师会话），由 teacher.ts 挂在 /api/teacher 之下：
- * - POST /import/preview：dry-run 预览（不写库），返回版本、摘要、lint issues、
+ * - POST /import/preview：dry-run 预览（不写库），返回摘要、lint issues、
  *   动作清单（D19）与 warning（D18/D19）；
  * - POST /import/preview-batch：批量预览（D20）——每文件预览 + 跨文件冲突 +
  *   autoFolderBySubdir 目标文件夹解析；规模超限 413 IMPORT_TOO_LARGE
