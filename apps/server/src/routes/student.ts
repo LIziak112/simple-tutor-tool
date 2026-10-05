@@ -332,12 +332,18 @@ export function createStudentRoutes(
             "请求需为 multipart/form-data，且包含 body 文件与 baseRevision、mutationId 字段",
           );
         }
-        // multipart 字段全是字符串：baseRevision 手工转数后再过契约 schema
+        // multipart 字段全是字符串：baseRevision 按严格十进制整数串转数
+        // （T6R.4 复审③——Number("")===0/Number("  ")===0 会骗过 min(0)，
+        // 空串与科学计数/十六进制/小数一律不转，交契约 schema 出 400；
+        // JSON 通道的 number 形态契约不变，此转换属 multipart 传输层）
+        const rawBase =
+          typeof form.baseRevision === "string" ? form.baseRevision : undefined;
+        const baseRevision =
+          rawBase !== undefined && /^\d+$/.test(rawBase)
+            ? Number(rawBase)
+            : undefined;
         const parsed = noteUploadMetaSchema.safeParse({
-          baseRevision:
-            typeof form.baseRevision === "string"
-              ? Number(form.baseRevision)
-              : undefined,
+          baseRevision,
           mutationId:
             typeof form.mutationId === "string" ? form.mutationId : undefined,
         });

@@ -331,6 +331,45 @@ describe("multipart 元信息校验 400", () => {
     expect(res3.status).toBe(400);
     expect(((await res3.json()) as ApiErr).error).toBe("VALIDATION_ERROR");
   });
+
+  it("baseRevision 空串/纯空白/非十进制整数串 → 400（Number('') 的 0 缺口，T6R.4 复审③）", async () => {
+    const { app, db, aCookie, attemptId } = await makeNotesApp();
+    const url = `/api/student/attempts/${attemptId}/notes/${Q.solve}`;
+    const headers = { cookie: aCookie };
+    // 反例集合：空串（Number('')===0 会骗过 min(0)）、空白、科学计数、
+    // 十六进制、负号、小数——multipart 字符串一律按严格十进制整数解析
+    for (const bad of ["", "   ", "1e0", "0x1", "-1", "1.5", "１"]) {
+      const form = new FormData();
+      form.append(
+        "body",
+        new Blob([gzipDoc(noteDoc())], { type: "application/gzip" }),
+      );
+      form.append("baseRevision", bad);
+      form.append("mutationId", randomUUID());
+      const res = await app.request(url, {
+        method: "PUT",
+        headers,
+        body: form,
+      });
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as ApiErr).error).toBe("VALIDATION_ERROR");
+    }
+    // 合法形态仍通：前导零十进制
+    const formOk = new FormData();
+    formOk.append(
+      "body",
+      new Blob([gzipDoc(noteDoc())], { type: "application/gzip" }),
+    );
+    formOk.append("baseRevision", "000");
+    formOk.append("mutationId", randomUUID());
+    const resOk = await app.request(url, {
+      method: "PUT",
+      headers,
+      body: formOk,
+    });
+    expect(resOk.status).toBe(200);
+    expect(db.select().from(notesTable).all()).toHaveLength(1);
+  });
 });
 
 // ---------- 上传成功与幂等/CAS ----------
