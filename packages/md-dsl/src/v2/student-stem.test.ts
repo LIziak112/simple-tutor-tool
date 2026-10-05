@@ -1,16 +1,16 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
 import type { ListItem } from "mdast";
 import { SKIP, visit } from "unist-util-visit";
-import { processor } from "./shared.ts";
+import { describe, expect, it } from "vitest";
+import { parseDocument } from "./parse.ts";
 import {
   displayStemMd,
   stripOptionListMd,
   studentStemMd,
 } from "./public-stem.ts";
-import { parseDocument } from "./parse.ts";
+import { processor } from "./shared.ts";
 
 /**
  * 学生端题干投影单测（2026-10 选项内嵌泄露修复）：
@@ -45,15 +45,13 @@ describe("stripOptionListMd（题干选项任务列表结构剥离）", () => {
   it("多行选项的续行一并剥除（AST 按行区间定位，非逐行正则）", () => {
     const stem =
       "阅读代码：\n\n```c\nint m = 0;\n```\n\n- [x] 复杂度为 $O(n)$\n  当 n 翻倍时\n  运行时间随之翻倍\n- [ ] 复杂度为 $O(1)$";
-    expect(stripOptionListMd(stem)).toBe(
-      "阅读代码：\n\n```c\nint m = 0;\n```",
-    );
+    expect(stripOptionListMd(stem)).toBe("阅读代码：\n\n```c\nint m = 0;\n```");
   });
 
   it("有序列表写法 1. [ ] / 2. [x] 同样剥除", () => {
-    expect(stripOptionListMd("下列正确的是（　）\n\n1. [ ] 甲\n2. [x] 乙")).toBe(
-      "下列正确的是（　）",
-    );
+    expect(
+      stripOptionListMd("下列正确的是（　）\n\n1. [ ] 甲\n2. [x] 乙"),
+    ).toBe("下列正确的是（　）");
   });
 
   it("选项列表与后续段落之间的空行整理为单个分隔（不残留连续空行）", () => {
@@ -116,7 +114,9 @@ describe("displayStemMd（显示侧题干：选项另行渲染时剥内嵌列表
 });
 
 describe("samples 语料属性测试（解析器为 oracle：投影后提取不到任何答案）", () => {
-  const corpusRoot = fileURLToPath(new URL("../../../../samples/", import.meta.url));
+  const corpusRoot = fileURLToPath(
+    new URL("../../../../samples/", import.meta.url),
+  );
   const files: Array<{ name: string; md: string }> = [];
   for (const dir of ["v2", "lint"]) {
     for (const entry of readdirSync(join(corpusRoot, dir))) {
@@ -154,8 +154,13 @@ describe("samples 语料属性测试（解析器为 oracle：投影后提取不�
             }
             if (node.type === "text") {
               const value = (node as { value?: unknown }).value;
-              if (typeof value === "string" && NON_EMPTY_MARKER_RE.test(value)) {
-                violations.push(`${name} ${question.id}: 非空标记泄露 ${value}`);
+              if (
+                typeof value === "string" &&
+                NON_EMPTY_MARKER_RE.test(value)
+              ) {
+                violations.push(
+                  `${name} ${question.id}: 非空标记泄露 ${value}`,
+                );
               }
             }
             return undefined;

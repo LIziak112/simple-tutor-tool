@@ -302,10 +302,7 @@ describe("grade：未作答口径（D1 修订，T3.2a——先补用例再改实
   it("多选空选（indexes=[]，学生选后又全部取消）→ false（与未作答同口径）", () => {
     const q = makeQuestion({
       type: "multi",
-      options: [
-        { text: "A" },
-        { text: "B" },
-      ],
+      options: [{ text: "A" }, { text: "B" }],
       answers: { kind: "multi", indexes: [0] },
     });
     expect(grade(q, { kind: "multi", indexes: [] })).toBe(false);
@@ -315,10 +312,7 @@ describe("grade：未作答口径（D1 修订，T3.2a——先补用例再改实
   it("多选任一越界下标维持 false（T2.5 已锁定，不受 D1 影响）", () => {
     const q = makeQuestion({
       type: "multi",
-      options: [
-        { text: "A" },
-        { text: "B" },
-      ],
+      options: [{ text: "A" }, { text: "B" }],
       answers: { kind: "multi", indexes: [0] },
     });
     expect(grade(q, { kind: "multi", indexes: [0, 2] })).toBe(false);
