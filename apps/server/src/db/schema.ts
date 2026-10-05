@@ -1066,6 +1066,16 @@ export const noteVersions = sqliteTable(
     serverSavedAt: text("server_saved_at").notNull(),
     /** 渲染版本（从 1 起） */
     renderVersion: integer("render_version").notNull().default(1),
+    /**
+     * 幂等键（T6R.4）：客户端为本次变更生成的 mutationId（契约 noteUploadMetaSchema）。
+     * 可空仅因 SQLite「ALTER ADD COLUMN NOT NULL 必须带默认值」——服务层
+     * （note-service.saveNoteVersion）恒写非空，存量行不存在（本任务前无写入通道）。
+     * 全局唯一索引承载幂等查重：同 mutationId 重放比对正文 hash——相同回原回执、
+     * 不同 409 NOTE_MUTATION_MISMATCH；版本行被 GC 回收后幂等记录随之消失，
+     * 幂等窗口 = GC 安全窗口（设计取舍：不为幂等另建长命表，重放远晚于安全窗口
+     * 时按 CAS 冲突处理，可诊断）。
+     */
+    mutationId: text("mutation_id"),
   },
   (table) => [
     // 同一笔记内版本号唯一（CAS 期望值的物理基础）
@@ -1073,6 +1083,9 @@ export const noteVersions = sqliteTable(
       table.noteId,
       table.revision,
     ),
+    // 幂等键全局唯一（见 mutation_id 列注释；SQLite 唯一索引允许多个 NULL，
+    // 存量空行互不冲突）
+    uniqueIndex("note_versions_mutation_id_uk").on(table.mutationId),
     check("note_versions_paper_width_check", sql`${table.paperWidth} = 1000`),
   ],
 );
