@@ -12,6 +12,7 @@ import type { Db } from "../db/client";
 import { attempts, events, responses } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
+import { submitAttemptRequest } from "../test/submit-revisions";
 
 /**
  * 学习痕迹事件接口集成测试（T2.10，app.request() 直调 + 内存库）：
@@ -346,10 +347,7 @@ describe("POST /api/student/attempts/:id/events：批量上报", () => {
       ev("question_focus", 0, { questionId: Q.judge }),
       ev("submit", 10),
     ]);
-    const submitRes = await app.request(
-      `/api/student/attempts/${attemptId}/submit`,
-      { method: "POST", headers: { cookie: aCookie } },
-    );
+    const submitRes = await submitAttemptRequest(app, aCookie, attemptId);
     expect(submitRes.status).toBe(200);
     // 交卷后迟到事件：仍 200 落库（不影响已计算的 activeSec）
     const late = await postEvents(app, aCookie, attemptId, [
@@ -461,10 +459,7 @@ describe("交卷联动：事件序列 → responses.activeSec/changeCount 落库
       }),
       ev("submit", 75), // q2：45→75 共 30s
     ]);
-    const submitRes = await app.request(
-      `/api/student/attempts/${attemptId}/submit`,
-      { method: "POST", headers: { cookie: aCookie } },
-    );
+    const submitRes = await submitAttemptRequest(app, aCookie, attemptId);
     expect(submitRes.status).toBe(200);
     const result = (await submitRes.json()) as {
       data: AttemptResultData;
@@ -519,10 +514,7 @@ describe("交卷联动：事件序列 → responses.activeSec/changeCount 落库
         body: JSON.stringify({ answer: { kind: "choice", index: 0 } }),
       },
     );
-    const submitRes = await app.request(
-      `/api/student/attempts/${attemptId}/submit`,
-      { method: "POST", headers: { cookie: aCookie } },
-    );
+    const submitRes = await submitAttemptRequest(app, aCookie, attemptId);
     expect(submitRes.status).toBe(200);
     const rows = db.select().from(responses).all();
     const byQuestion = new Map(rows.map((row) => [row.questionId, row]));
@@ -543,10 +535,7 @@ describe("交卷联动：事件序列 → responses.activeSec/changeCount 落库
       ev("answer_change", 3, { questionId: Q.fill }),
       ev("submit", 8),
     ]);
-    const submitRes = await app.request(
-      `/api/student/attempts/${attemptId}/submit`,
-      { method: "POST", headers: { cookie: aCookie } },
-    );
+    const submitRes = await submitAttemptRequest(app, aCookie, attemptId);
     expect(submitRes.status).toBe(200);
     const draft = (await app.request(`/api/student/attempts/${attemptId}`, {
       headers: { cookie: aCookie },

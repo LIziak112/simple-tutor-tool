@@ -9,6 +9,7 @@ import {
   attemptSourceSchema,
   attemptStartDataSchema,
   attemptStatusSchema,
+  attemptSubmitRequestSchema,
   attemptSummarySchema,
   hintOpenDataSchema,
   hintOpenRequestSchema,
@@ -226,13 +227,14 @@ describe("attemptStatusSchema / attemptSummarySchema", () => {
 });
 
 describe("attemptDraftDataSchema（草稿视图）", () => {
-  it("接受合法草稿视图：单元分组 QuestionPublic 形态题目 + drafts 答案表 + hintsOpened 已解锁提示", () => {
+  it("接受合法草稿视图：单元分组题目带 questionRevisionId + drafts 答案表 + hintsOpened 已解锁提示 + legacyUnverified", () => {
     const parsed = attemptDraftDataSchema.parse({
       attempt: SUMMARY_DRAFT,
       title: "周末加练",
       courseName: null,
       dueAt: null,
-      // T2A.7：题目按单元分组下发（题号全卷连续由 units 顺序保证）
+      // T2A.7：题目按单元分组下发（题号全卷连续由 units 顺序保证）；
+      // T6R.3：每题携带不透明 questionRevisionId（= responses 行 id）
       units: [
         {
           id: UNIT_ID,
@@ -245,6 +247,7 @@ describe("attemptDraftDataSchema（草稿视图）", () => {
               knowledge: ["有理数的概念"],
               stemMd: "$0$ 既不是正数，也不是负数。[[]]",
               hintCount: 0,
+              questionRevisionId: "11111111-1111-4111-8111-111111111111",
             },
             {
               id: "练习四-4",
@@ -253,6 +256,7 @@ describe("attemptDraftDataSchema（草稿视图）", () => {
               knowledge: ["有理数加法"],
               stemMd: "计算：$(-3)+7=$ [[]]",
               hintCount: 1,
+              questionRevisionId: "22222222-2222-4222-8222-222222222222",
             },
           ],
         },
@@ -267,9 +271,55 @@ describe("attemptDraftDataSchema（草稿视图）", () => {
           { index: 0, text: "同号相加，取相同的符号，并把绝对值相加。" },
         ],
       },
+      // T6R.3：建卷即冻结（false）；懒冻结的升级遗留卷为 true
+      legacyUnverified: false,
     });
     expect(parsed.drafts["练习四-1"]).toEqual({ kind: "judge", value: true });
     expect(parsed.hintsOpened["练习四-4"]?.[0]?.index).toBe(0);
+    expect(parsed.units[0]?.questions[0]?.questionRevisionId).toBe(
+      "11111111-1111-4111-8111-111111111111",
+    );
+  });
+
+  it("草稿视图缺 questionRevisionId 或 legacyUnverified → 整体拒绝（必填，防漏发）", () => {
+    const base = {
+      attempt: SUMMARY_DRAFT,
+      title: "周末加练",
+      courseName: null,
+      dueAt: null,
+      drafts: {},
+      hintsOpened: {},
+      legacyUnverified: false,
+    };
+    const question = {
+      id: "练习四-1",
+      type: "judge",
+      difficulty: 1,
+      knowledge: [],
+      stemMd: "[[]]",
+      hintCount: 0,
+      questionRevisionId: "11111111-1111-4111-8111-111111111111",
+    };
+    expect(
+      attemptDraftDataSchema.safeParse({
+        ...base,
+        units: [
+          {
+            id: UNIT_ID,
+            title: "练习四",
+            questions: [{ ...question, questionRevisionId: undefined }],
+          },
+        ],
+      }).success,
+    ).toBe(false);
+    const { legacyUnverified: _omit, ...withoutFlag } = base;
+    void _omit;
+    expect(
+      attemptDraftDataSchema.safeParse({
+        ...withoutFlag,
+        units: [{ id: UNIT_ID, title: "练习四", questions: [question] }],
+      }).success,
+    ).toBe(false);
   });
 
   it("草稿视图里的题目携带教师侧字段会被剥离（strip 语义，与 QuestionPublic 一致）", () => {
@@ -290,6 +340,7 @@ describe("attemptDraftDataSchema（草稿视图）", () => {
               knowledge: [],
               stemMd: "[[]]",
               hintCount: 0,
+              questionRevisionId: "11111111-1111-4111-8111-111111111111",
               // 教师侧字段混入草稿视图题目 → 契约层剥离（fail closed：只少给不多给）
               answers: { kind: "judge", value: true },
               solutionMd: "详解不应出现在草稿视图",
@@ -299,6 +350,7 @@ describe("attemptDraftDataSchema（草稿视图）", () => {
       ],
       drafts: {},
       hintsOpened: {},
+      legacyUnverified: false,
     });
     const question = parsed.units[0]?.questions[0];
     expect(question && "answers" in question).toBe(false);
@@ -643,6 +695,77 @@ describe("attemptAnswerSaveRequestSchema / attemptAnswerSaveDataSchema", () => {
   });
 });
 
+describe("attemptSubmitRequestSchema（T6R.3 交卷回传题目版本）", () => {
+  it("接受合法请求：每题 questionId + questionRevisionId；空 revisions 合法（空卷）", () => {
+    expect(
+      attemptSubmitRequestSchema.parse({
+        revisions: [
+          {
+            questionId: "练习四-1",
+            questionRevisionId: "11111111-1111-4111-8111-111111111111",
+          },
+          {
+            questionId: "练习四-2",
+            questionRevisionId: "22222222-2222-4222-8222-222222222222",
+          },
+        ],
+      }),
+    ).toEqual({
+      revisions: [
+        {
+          questionId: "练习四-1",
+          questionRevisionId: "11111111-1111-4111-8111-111111111111",
+        },
+        {
+          questionId: "练习四-2",
+          questionRevisionId: "22222222-2222-4222-8222-222222222222",
+        },
+      ],
+    });
+    expect(attemptSubmitRequestSchema.parse({ revisions: [] })).toEqual({
+      revisions: [],
+    });
+  });
+
+  it("拒绝：revisionId 空/纯空白/首尾空白、questionId 空、超 500 条", () => {
+    const valid = {
+      questionId: "练习四-1",
+      questionRevisionId: "11111111-1111-4111-8111-111111111111",
+    };
+    expect(
+      attemptSubmitRequestSchema.safeParse({
+        revisions: [{ ...valid, questionRevisionId: "" }],
+      }).success,
+    ).toBe(false);
+    expect(
+      attemptSubmitRequestSchema.safeParse({
+        revisions: [{ ...valid, questionRevisionId: "  " }],
+      }).success,
+    ).toBe(false);
+    expect(
+      attemptSubmitRequestSchema.safeParse({
+        revisions: [{ ...valid, questionRevisionId: " abc " }],
+      }).success,
+    ).toBe(false);
+    expect(
+      attemptSubmitRequestSchema.safeParse({
+        revisions: [{ ...valid, questionId: "" }],
+      }).success,
+    ).toBe(false);
+    expect(
+      attemptSubmitRequestSchema.safeParse({
+        revisions: Array.from({ length: 501 }, () => ({ ...valid })),
+      }).success,
+    ).toBe(false);
+  });
+
+  it("错误码集合包含 QUESTION_REVISION_STALE（陈旧题目版本提交，409）", () => {
+    expect(
+      attemptErrorCodeSchema.safeParse("QUESTION_REVISION_STALE").success,
+    ).toBe(true);
+  });
+});
+
 describe("attemptDetailDataSchema / attemptErrorCodeSchema", () => {
   it("详情 data 是草稿视图与结果视图的 union（按 attempt.status 分支）", () => {
     expect(
@@ -654,6 +777,7 @@ describe("attemptDetailDataSchema / attemptErrorCodeSchema", () => {
         units: [],
         drafts: {},
         hintsOpened: {},
+        legacyUnverified: false,
       }).success,
     ).toBe(true);
     expect(
@@ -691,6 +815,7 @@ describe("attemptDetailDataSchema / attemptErrorCodeSchema", () => {
         units: [],
         drafts: {},
         hintsOpened: {},
+        legacyUnverified: false,
       }).success,
     ).toBe(false);
     // draft 状态 + 结果视图形态（summary/answersReleased、无 drafts）→ 拒绝

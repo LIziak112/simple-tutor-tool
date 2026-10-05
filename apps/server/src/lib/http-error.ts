@@ -54,9 +54,30 @@ export async function parseJsonBody<T>(
   c: Context,
   schema: ZodType<T>,
 ): Promise<T> {
+  return parseJsonText(await c.req.text(), schema);
+}
+
+/**
+ * parseJsonBody 的空请求体变体（T6R.3 交卷）：请求体为空（无 body 或纯空白）
+ * 时返回 **undefined** 而不是 400——供「请求体可省略、省略按空集合语义」的
+ * 接口使用（交卷不带请求体 → 空 revisions → 与冻结集合比对失败 →
+ * 409 QUESTION_REVISION_STALE 可诊断，见 attempt-service.submitAttempt）。
+ * 非空但非法（非 JSON / 不符合 schema）仍走 400 VALIDATION_ERROR。
+ */
+export async function parseJsonBodyOrEmpty<T>(
+  c: Context,
+  schema: ZodType<T>,
+): Promise<T | undefined> {
+  const text = await c.req.text();
+  if (text.trim() === "") return undefined;
+  return parseJsonText(text, schema);
+}
+
+/** 两个 parseJsonBody 变体的共享段：文本 → JSON.parse → schema 校验（400 口径一致） */
+function parseJsonText<T>(text: string, schema: ZodType<T>): T {
   let raw: unknown;
   try {
-    raw = await c.req.json();
+    raw = JSON.parse(text) as unknown;
   } catch {
     throw new HttpError(400, "VALIDATION_ERROR", "请求体不是合法的 JSON");
   }

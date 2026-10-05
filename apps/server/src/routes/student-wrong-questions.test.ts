@@ -13,6 +13,7 @@ import { attempts, questions, responses, students } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 import { assertNoStemLeak } from "../test/assert-no-stem-leak.ts";
+import { submitAttemptRequest } from "../test/submit-revisions";
 
 /**
  * T3.5 错题本集成测试（D11；2026-10 轮次史 + 归属单元扩展；app.request() 直调
@@ -277,19 +278,13 @@ async function saveAnswer(
   expect(res.status, `保存 ${questionId} 失败`).toBe(200);
 }
 
-/** POST 交卷并直写提交时间（first/last 确定性断言用） */
+/** POST 交卷并直写提交时间（first/last 确定性断言用；T6R.3 自动回传版本集合） */
 async function submitAt(
   env: WrongEnv,
   attemptId: string,
   submittedAt: string,
 ): Promise<void> {
-  const res = await env.app.request(
-    `/api/student/attempts/${attemptId}/submit`,
-    {
-      method: "POST",
-      headers: { cookie: env.aCookie },
-    },
-  );
+  const res = await submitAttemptRequest(env.app, env.aCookie, attemptId);
   expect(res.status).toBe(200);
   env.db
     .update(attempts)

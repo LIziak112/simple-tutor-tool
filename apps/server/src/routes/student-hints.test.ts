@@ -16,6 +16,7 @@ import type { Db } from "../db/client";
 import { events, questions, responses } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
+import { submitAttemptRequest } from "../test/submit-revisions";
 
 /**
  * 分步提示集成测试（T2.11 全部验收项，app.request() 直调路由 + 内存库）：
@@ -211,12 +212,7 @@ function postSubmit(
   cookie: string,
   attemptId: string,
 ): Promise<Response> {
-  return Promise.resolve(
-    app.request(`/api/student/attempts/${attemptId}/submit`, {
-      method: "POST",
-      headers: { cookie },
-    }),
-  );
+  return submitAttemptRequest(app, cookie, attemptId);
 }
 
 describe("POST /api/student/attempts/:id/hints：解锁与记录", () => {
@@ -465,15 +461,15 @@ describe("教师删减提示后的收敛（历史越界序号自愈）", () => {
       }),
     });
     expect(put.status).toBe(200);
-    const hintsAfter = hintsInDb(db, Q.findError);
-    expect(hintsAfter.length).toBe(1); // 教师删减生效
+    expect(hintsInDb(db, Q.findError).length).toBe(1); // 题库侧删减生效
 
-    // 学生再请求合法 index=0（能过越界检查）：修复前历史集合 [0,1] 直接计数，
-    // hintsUsed=2 > hintCount=1、hintsRemaining=-1，违反契约 min(0) 使前端解析失败
-    const res = await postHint(app, aCookie, attemptId, Q.findError, 0);
+    // T6R.3 建卷冻结：教师删减不影响已建卷——学生再请求同一 index 仍 200，
+    // hintCount/内容/计数都来自冻结快照（hintsUsed ≤ hintCount 恒成立，
+    // 「历史越界序号」在冻结卷内不再可能发生；收敛逻辑仅服务升级遗留行）
+    const res = await postHint(app, aCookie, attemptId, Q.findError, 1);
     expect(res.status).toBe(200);
     const body = (await res.json()) as unknown;
-    expect(hintOpenOkSchema.safeParse(body).success).toBe(true); // 契约层锁死：不再出现负数
+    expect(hintOpenOkSchema.safeParse(body).success).toBe(true);
     const data = (
       body as {
         data: {
@@ -484,30 +480,28 @@ describe("教师删减提示后的收敛（历史越界序号自愈）", () => {
         };
       }
     ).data;
-    expect(data.hint).toBe(hintsAfter[0]);
-    expect(data.hintCount).toBe(1);
-    expect(data.hintsUsed).toBeLessThanOrEqual(data.hintCount);
-    expect(data.hintsRemaining).toBeGreaterThanOrEqual(0);
-    expect(data.hintsUsed).toBe(1); // 收敛后只剩序号 0
+    expect(data.hintCount).toBe(2); // 冻结的提示数，不随题库删减变 1
+    expect(data.hintsUsed).toBe(2);
     expect(data.hintsRemaining).toBe(0);
 
-    // 库内自愈：越界序号 1 被剔除，回写收敛后的合法集合
+    // 库内集合保持 [0,1]（冻结口径，无需收敛）
     const rowAfter = db
       .select()
       .from(responses)
       .all()
       .find((r) => r.questionId === Q.findError);
-    expect(rowAfter?.hintsUsed).toBe(1);
-    expect(JSON.parse(rowAfter?.hintsOpenedJson ?? "[]")).toEqual([0]);
+    expect(rowAfter?.hintsUsed).toBe(2);
+    expect(JSON.parse(rowAfter?.hintsOpenedJson ?? "[]")).toEqual([0, 1]);
   });
 });
 
-describe("软删题的提示回显过滤", () => {
-  it("软删已解锁过提示的题 → 草稿视图 hintsOpened 不含该题（无孤儿键）；存留题回显不受影响", async () => {
+describe("T6R.3 冻结：软删题的提示与回显保持（不再过滤孤儿键）", () => {
+  it("软删已解锁过提示的题 → 题与回显都留在当前卷（冻结集合固定）；对照题不受影响", async () => {
     const { app, db, teacherCookie, aCookie, attemptId } = await makeHintsApp();
     // 两题各解锁第 0 条：findError（将被软删）与 choice（存留对照）
     await postHint(app, aCookie, attemptId, Q.findError, 0);
     await postHint(app, aCookie, attemptId, Q.choice, 0);
+    const findErrorHint = hintsInDb(db, Q.findError)[0] ?? "";
     const choiceHint = hintsInDb(db, Q.choice)[0] ?? "";
 
     // 教师软删 findError（真实教师路径 DELETE → questions.deletedAt 置位）
@@ -524,8 +518,16 @@ describe("软删题的提示回显过滤", () => {
     const body = (await res.json()) as unknown;
     expect(attemptDraftOkSchema.safeParse(body).success).toBe(true);
     const draft = (body as { data: AttemptDraftData }).data;
-    // 软删题不回显：与 units[].questions 已不含该题保持一致（否则是孤儿键）
-    expect(draft.hintsOpened[Q.findError]).toBeUndefined();
+    // T6R.3：软删题仍在当前卷（units[].questions 含该题），提示回显照常
+    // ——冻结集合固定，不存在旧口径的「孤儿键」问题
+    expect(
+      draft.units
+        .flatMap((unit) => unit.questions)
+        .some((question) => question.id === Q.findError),
+    ).toBe(true);
+    expect(draft.hintsOpened[Q.findError]).toEqual([
+      { index: 0, text: findErrorHint },
+    ]);
     // 对照：未软删的存留题回显不受影响
     expect(draft.hintsOpened[Q.choice]).toEqual([
       { index: 0, text: choiceHint },

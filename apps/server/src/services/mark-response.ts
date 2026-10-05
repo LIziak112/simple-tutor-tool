@@ -6,7 +6,7 @@ import type {
   PendingMarkListQuery,
   StudentAnswer,
 } from "@tutor/contract";
-import { and, asc, eq, isNull, ne } from "drizzle-orm";
+import { and, asc, eq, isNotNull, isNull, ne } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
   type Attempt,
@@ -16,13 +16,12 @@ import {
   students,
 } from "../db/schema";
 import { HttpError } from "../lib/http-error";
-import { finalScoreOf } from "./attempt-service";
+import { answerOf, finalScoreOf } from "./attempt-service";
 import { pendingMarkCount } from "./pending-mark";
+import { snapshotOfRow } from "./snapshot";
 import {
-  answerOf,
   inkByQuestionOf,
   inkInfoOf,
-  snapshotOf,
   sourceOf,
 } from "./teacher-attempt-service";
 
@@ -135,11 +134,18 @@ export function markResponse(
       })
       .where(eq(responses.id, responseId))
       .run();
-    // 2. 整卷重算（finalScoreOf 与交卷链路同一实现，D2 状态机不复制公式）
+    // 2. 整卷重算（finalScoreOf 与交卷链路同一实现，D2 状态机不复制公式）。
+    //    与待批谓词同口径过滤幽灵行（快照空的历史题目缺失行不进重算——
+    //    它们永远 null finalCorrect，计入会让 attempt 永卡 submitted）
     const finalCorrects = tx
       .select({ finalCorrect: responses.finalCorrect })
       .from(responses)
-      .where(eq(responses.attemptId, attemptId))
+      .where(
+        and(
+          eq(responses.attemptId, attemptId),
+          isNotNull(responses.questionSnapshotJson),
+        ),
+      )
       .all()
       .map((r) => r.finalCorrect);
     const { status, scoreFinal } = finalScoreOf(finalCorrects);
@@ -190,7 +196,7 @@ export function markResponse(
  * studentId 筛选。排序 submittedAt 升序（先交先批；同刻并列按 attemptId、
  * questionId 升序兜底稳定，同一 attempt 的待批题相邻）。无分页（见契约注释）。
  * 卡片拼装：按 attempt 分组复用 sourceOf/inkByQuestionOf（每 attempt 一次查询），
- * 快照坏数据行跳过并留痕（snapshotOf 内 warn，与 T3.1 详情同口径）。
+ * 快照坏数据行跳过并留痕（snapshotOfRow 内 warn，全服务端同一口径）。
  */
 export function listPendingMarks(
   db: Db,
@@ -200,8 +206,10 @@ export function listPendingMarks(
   const where = and(
     eq(students.teacherId, teacherId),
     // 共享谓词（pending-mark.ts 同口径）：已交卷 attempt + finalCorrect IS NULL
+    // + 快照非空（T6R.3：幽灵行不进队列——它们不可批也不显示）
     ne(attempts.status, "draft"),
     isNull(responses.finalCorrect),
+    isNotNull(responses.questionSnapshotJson),
     query.studentId !== undefined
       ? eq(attempts.studentId, query.studentId)
       : undefined,
@@ -256,8 +264,8 @@ export function listPendingMarks(
     const source = sourceOf(db, group.attempt, teacherId);
     const inkByQuestion = inkByQuestionOf(db, attemptId);
     for (const response of group.responses) {
-      const snapshot = snapshotOf(response);
-      if (snapshot === null) continue; // 坏快照按缺失计（snapshotOf 内留痕）
+      const snapshot = snapshotOfRow(response);
+      if (snapshot === null) continue; // 坏快照按缺失计（snapshotOfRow 内留痕）
       marks.push({
         responseId: response.id,
         attemptId,

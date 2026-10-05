@@ -20,6 +20,7 @@ import { attempts, questions, responses, units } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 import { assertNoStemLeak } from "../test/assert-no-stem-leak.ts";
+import { submitAttemptRequest } from "../test/submit-revisions";
 
 /**
  * 作答生命周期集成测试（T2.6 全部验收项，app.request() 直调路由 + 内存库）：
@@ -141,6 +142,7 @@ async function makeAttemptApp(markdown: string = PRACTICE_MD): Promise<{
   db: Db;
   teacherCookie: string;
   aId: string;
+  bId: string;
   aCookie: string;
   bCookie: string;
   assignmentId: string;
@@ -173,13 +175,14 @@ async function makeAttemptApp(markdown: string = PRACTICE_MD): Promise<{
   if (!unitId) throw new Error("样例导入未产出单元");
 
   const aId = await createStudent(app, teacherCookie, "张三");
-  await createStudent(app, teacherCookie, "李四");
+  const bId = await createStudent(app, teacherCookie, "李四");
   const assignmentId = await createAssignment(app, teacherCookie, unitId, aId);
   return {
     app,
     db,
     teacherCookie,
     aId,
+    bId,
     aCookie: await loginStudent(app, "张三"),
     bCookie: await loginStudent(app, "李四"),
     assignmentId,
@@ -293,18 +296,13 @@ function putAnswer(
   );
 }
 
-/** POST 交卷 */
+/** POST 交卷（T6R.3：经共享 submitAttemptRequest 自动回传题目版本集合） */
 function postSubmit(
   app: App,
   cookie: string | undefined,
   attemptId: string,
 ): Promise<Response> {
-  return Promise.resolve(
-    app.request(`/api/student/attempts/${attemptId}/submit`, {
-      method: "POST",
-      headers: cookie === undefined ? {} : { cookie },
-    }),
-  );
+  return submitAttemptRequest(app, cookie, attemptId);
 }
 
 /** GET attempt 详情（200 时一并取 body） */
@@ -585,8 +583,8 @@ describe("PUT /api/student/attempts/:id/answers/:questionId：草稿保存", () 
     expect(bad2.status).toBe(400);
   });
 
-  it("跨单元题 404 QUESTION_NOT_FOUND；已软删题 404", async () => {
-    const { app, teacherCookie, aCookie, assignmentId } =
+  it("跨单元题 404 QUESTION_NOT_FOUND；开卷后软删的题仍在冻结集合（T6R.3 可继续作答）；开卷前软删的题不进卷（404）", async () => {
+    const { app, teacherCookie, aCookie, bId, bCookie, assignmentId } =
       await makeAttemptApp();
     const attemptId = (await startAttemptOk(app, aCookie, assignmentId))
       .id as string;
@@ -610,17 +608,38 @@ describe("PUT /api/student/attempts/:id/answers/:questionId：草稿保存", () 
     expect(cross.status).toBe(404);
     expect(((await cross.json()) as ApiErr).error).toBe("QUESTION_NOT_FOUND");
 
-    // 软删本题后保存 → 404
+    // T6R.3：开卷后软删——题在冻结集合内，继续可作答（当前卷显示与判分一致，
+    // 软删不再把题从进行中的卷里移走；详见 attempt-freeze.test.ts）
     const del = await app.request(`/api/teacher/questions/${Q.apply}`, {
       method: "DELETE",
       headers: { cookie: teacherCookie },
     });
     expect(del.status).toBe(200);
-    const gone = await putAnswer(app, aCookie, attemptId, Q.apply, {
+    const frozenStill = await putAnswer(app, aCookie, attemptId, Q.apply, {
       kind: "final",
       finalAnswer: "1.4",
     });
-    expect(gone.status).toBe(404);
+    expect(frozenStill.status).toBe(200);
+
+    // 对照：开卷前软删的题不进新卷（把李四加进名单后开新卷 → 该题 404）
+    const del2 = await app.request(`/api/teacher/questions/${Q.judge}`, {
+      method: "DELETE",
+      headers: { cookie: teacherCookie },
+    });
+    expect(del2.status).toBe(200);
+    const addB = await app.request(`/api/teacher/assignments/${assignmentId}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json", cookie: teacherCookie },
+      body: JSON.stringify({ addStudentIds: [bId] }),
+    });
+    expect(addB.status).toBe(200);
+    const bAttemptId = (await startAttemptOk(app, bCookie, assignmentId))
+      .id as string;
+    const neverFrozen = await putAnswer(app, bCookie, bAttemptId, Q.judge, {
+      kind: "judge",
+      value: true,
+    });
+    expect(neverFrozen.status).toBe(404);
   });
 
   it("已交卷后 PUT 409 ALREADY_SUBMITTED；非本人 attempt 403；attempt 不存在 404", async () => {

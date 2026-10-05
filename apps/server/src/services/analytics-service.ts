@@ -48,11 +48,12 @@ import {
   units,
 } from "../db/schema";
 import { HttpError } from "../lib/http-error";
+import { answerOf } from "./attempt-service";
 import { loadResourceContext } from "./course-service";
 import { lectureReadingMapFor } from "./lecture-insights";
 import { serializeStudentAnswer } from "./mark-response";
 import { pendingMarkCounts } from "./pending-mark";
-import { answerOf, snapshotOf } from "./teacher-attempt-service";
+import { snapshotOfRow } from "./snapshot";
 import { type TraceEvent, traceEventsFromRows } from "./trace-intervals";
 import { computeAttemptTraceMetrics } from "./trace-metrics";
 
@@ -958,7 +959,7 @@ function buildFocusCard(db: Db, ctx: AnalyticsContext): AnalyticsFocusCard {
       const meta = item
         ? ctx.questionMeta.get(item.response.questionId)
         : undefined;
-      const snapshot = item ? snapshotOf(item.response) : null;
+      const snapshot = item ? snapshotOfRow(item.response) : null;
       const judged = tally.correct + tally.wrong;
       return {
         knowledge,
@@ -1089,7 +1090,7 @@ function buildAnomalies(
       }
       if (response.hintsUsed >= 2) reasons.push("hints");
       if (reasons.length === 0) continue;
-      const snapshot = snapshotOf(response);
+      const snapshot = snapshotOfRow(response);
       const meta = ctx.questionMeta.get(response.questionId);
       out.push({
         attemptId: attempt.id,
@@ -1204,7 +1205,7 @@ function buildWrongQuestionRows(
   const rows: AnalyticsWrongQuestionRow[] = [];
   for (const [questionId, { response, attempt }] of latestByQuestion) {
     const meta = ctx.questionMeta.get(questionId);
-    const snapshot = snapshotOf(response);
+    const snapshot = snapshotOfRow(response);
     const unitId = meta?.unitId ?? null;
     rows.push({
       questionId,
@@ -1354,7 +1355,7 @@ function buildQuestionRows(ctx: AnalyticsContext): AnalyticsQuestionRow[] {
     ) {
       group.latestSubmittedAt = submittedAt;
       group.latestAttemptId = item.attempt.id;
-      group.latestSnapshot = snapshotOf(item.response);
+      group.latestSnapshot = snapshotOfRow(item.response);
     }
   }
 

@@ -2,10 +2,14 @@ import { randomUUID } from "node:crypto";
 import type { AttemptStartData } from "@tutor/contract";
 import { and, eq, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
-import { attempts, type ResponseRow, responses } from "../db/schema";
+import { attempts, type ResponseRow } from "../db/schema";
 import { HttpError } from "../lib/http-error";
-import { attemptSummaryOf } from "./attempt-service";
-import { snapshotOf } from "./teacher-attempt-service";
+import {
+  attemptSummaryOf,
+  insertFrozenResponse,
+  newDraftAttempt,
+} from "./attempt-service";
+import { snapshotOfRow } from "./snapshot";
 import { latestJudgedResponsesByQuestion } from "./wrong-questions";
 
 /**
@@ -16,7 +20,7 @@ import { latestJudgedResponsesByQuestion } from "./wrong-questions";
  * - 校验：每个 questionId ∈ 该生错题本聚合（latestJudgedResponsesByQuestion，
  *   入本条件与 listWrongQuestions 完全一致——任一次已判定作答判错；includeResolved
  *   全量口径，已攻克的题同样可重练）**且最近一次判定作答的快照可用**
- *   （questionSnapshotJson 可解析，snapshotOf 同口径）。不满足的题**静默剔除**
+ *   （questionSnapshotJson 可解析，snapshotOfRow 同口径）。不满足的题**静默剔除**
  *   （不在聚合内 = 从未错过/公布 gate 挡住的题，不给信息量）；剔完为空 →
  *   400 WRONG_PRACTICE_EMPTY；
  * - 组卷（快照冻结口径）：练的就是**当时做错的那道题**——每题复制最近一次判定
@@ -52,7 +56,7 @@ export function startWrongPractice(
   const pickOf = (questionId: string): ResponseRow | null => {
     const source = latestByQuestion.get(questionId);
     if (source === undefined) return null; // 不在聚合内（从未错过/公布 gate 挡住）
-    return snapshotOf(source) !== null ? source : null; // 坏快照不可组卷
+    return snapshotOfRow(source) !== null ? source : null; // 坏快照不可组卷
   };
   const picked = uniqueIds
     .map((questionId) => pickOf(questionId))
@@ -79,47 +83,33 @@ export function startWrongPractice(
       .get();
     const attemptNo = (countRow?.n ?? 0) + 1;
 
-    const id = randomUUID();
-    tx.insert(attempts)
-      .values({
-        id,
-        studentId,
-        sourceType: "wrong",
-        // 契约来源不变式（attempt.ts superRefine）：wrong 三归属键恒 null
-        assignmentId: null,
-        courseId: null,
-        unitId: null,
-        attemptNo,
-        status: "draft",
-        startedAt: new Date().toISOString(),
-        submittedAt: null,
-        activeSec: null,
-        device: null,
-        scoreAuto: null,
-        scoreFinal: null,
-      })
-      .run();
-    // 建卷即冻结：逐题复制最近一次判定作答的快照（插入顺序 = 组卷题序）
+    // T6R.3：行字面量复用 newDraftAttempt（三来源建卷共用；wrong 三归属键恒
+    // null——契约来源不变式，frozenAt=startedAt 建卷即冻结，快照在下方逐题预插）
+    const attempt = newDraftAttempt({
+      id: randomUUID(),
+      studentId,
+      sourceType: "wrong",
+      assignmentId: null,
+      courseId: null,
+      unitId: null,
+      attemptNo,
+      startedAt: new Date().toISOString(),
+    });
+    const id = attempt.id;
+    tx.insert(attempts).values(attempt).run();
+    // 建卷即冻结：逐题复制最近一次判定作答的快照（插入顺序 = 组卷题序）。
+    // 行写入复用 attempt-service 的 insertFrozenResponse（15 列字面量全服务端
+    // 唯一处；wrong 卷 unitId 恒 null——卷无单元语义）
     for (const source of picked) {
-      tx.insert(responses)
-        .values({
-          id: randomUUID(),
-          attemptId: id,
-          questionId: source.questionId,
-          questionVersion: source.questionVersion,
-          questionSnapshotJson: source.questionSnapshotJson,
-          answerJson: null,
-          autoCorrect: null,
-          finalCorrect: null,
-          teacherMark: null,
-          teacherComment: null,
-          activeSec: null,
-          hintsUsed: 0,
-          changeCount: 0,
-          inkId: null,
-          hintsOpenedJson: null,
-        })
-        .run();
+      const snapshotJson = source.questionSnapshotJson;
+      if (snapshotJson === null) continue; // pickOf 已校验非空（坏快照剔除），防御性收敛
+      insertFrozenResponse(tx, {
+        attemptId: id,
+        questionId: source.questionId,
+        questionVersion: source.questionVersion,
+        questionSnapshotJson: snapshotJson,
+        unitId: null,
+      });
     }
     const row = tx.select().from(attempts).where(eq(attempts.id, id)).get();
     if (row === undefined) {

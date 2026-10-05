@@ -682,6 +682,13 @@ function snapshotBusinessTables(db: Db): Map<string, string[]> {
       >
     ).map((row) => {
       delete row.teacher_id; // 新增归属列不参与保真对比
+      // 迁移新增列（带默认值/可空）同理不参与保真对比——本测试断言的是存量
+      // 数据不丢不坏，新增列见 schema/migrate 测试：T6R.3 的 frozen_at /
+      // legacy_unverified（attempts）与 unit_id（**仅 responses**——0023 新增；
+      // attempts.unit_id 是 T2A.6 既有列，必须保留在对比内）
+      delete row.frozen_at;
+      delete row.legacy_unverified;
+      if (table === "responses") delete row.unit_id;
       return JSON.stringify(row, Object.keys(row).sort());
     });
     snapshot.set(table, rows.sort());

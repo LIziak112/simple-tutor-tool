@@ -9,6 +9,7 @@ import { createTeacherSession } from "../auth/session.ts";
 import type { Db } from "../db/client";
 import { attempts, teachers } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
+import { fetchSubmitRevisions } from "../test/submit-revisions";
 
 /**
  * T3.1 教师端作答数据接口测试（GET /api/teacher/attempts 与 /:id）：
@@ -385,7 +386,13 @@ async function makeEnv(): Promise<TestEnv> {
       await request(
         app,
         `/api/student/attempts/${courseSubmittedId}/submit`,
-        {},
+        {
+          revisions: await fetchSubmitRevisions(
+            app,
+            studentCookie,
+            courseSubmittedId,
+          ),
+        },
         studentCookie,
       )
     ).status,
@@ -440,7 +447,13 @@ async function makeEnv(): Promise<TestEnv> {
       await request(
         app,
         `/api/student/attempts/${assignmentSubmittedId}/submit`,
-        {},
+        {
+          revisions: await fetchSubmitRevisions(
+            app,
+            studentCookie,
+            assignmentSubmittedId,
+          ),
+        },
         studentCookie,
       )
     ).status,

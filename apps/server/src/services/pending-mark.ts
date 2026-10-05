@@ -1,4 +1,4 @@
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { type Attempt, responses } from "../db/schema";
 
@@ -14,6 +14,9 @@ import { type Attempt, responses } from "../db/schema";
  * - **不得叠加 `answerJson 非空` 条件**（T3.2a 前的旧口径）：只写笔迹、未填
  *   最终答案的手写题 answerJson 为 null，却正是最需要批改的题——旧条件会漏掉
  *   它们并让该 attempt 永远到不了 graded；
+ * - **叠加 `questionSnapshotJson 非空`（T6R.3）**：排除「历史题目缺失」的
+ *   幽灵行（升级遗留卷中软删/缺失题的行——不进判分、不进任何视图，若计入
+ *   待批会让 attempt 永卡 submitted 且队列出现不可批的空卡片）；
  * - 消费方：course-service（进度矩阵）、student-course-service（单元卡片）、
  *   teacher-attempt-service（数据页卡片与详情）；T3.2b 待批队列同口径复用。
  *
@@ -34,6 +37,7 @@ export function pendingMarkCount(db: Db, attempt: PendingMarkAttempt): number {
         and(
           eq(responses.attemptId, attempt.id),
           isNull(responses.finalCorrect),
+          isNotNull(responses.questionSnapshotJson),
         ),
       )
       .get()?.n ?? 0
@@ -62,6 +66,7 @@ export function pendingMarkCounts(
         and(
           inArray(responses.attemptId, chunk),
           isNull(responses.finalCorrect),
+          isNotNull(responses.questionSnapshotJson),
         ),
       )
       .groupBy(responses.attemptId)

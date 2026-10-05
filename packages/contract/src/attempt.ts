@@ -1,6 +1,9 @@
 import { z } from "zod";
-import { assignmentDueAtSchema } from "./assignment.ts";
-import { questionAnswersSchema, questionPublicSchema } from "./content.ts";
+import {
+  assignmentDueAtSchema,
+  questionAnswersSchema,
+  questionPublicSchema,
+} from "./content.ts";
 import { studentAnswerSchema } from "./grading.ts";
 
 /**
@@ -210,17 +213,54 @@ export const hintOpenedEntrySchema = z.object({
 });
 
 /**
+ * 题目版本引用（T6R.3 冻结，方案 §5.1）：定位「本次作答时被冻结的那道题」，
+ * 对学生不透明。铸造规则已由 T6R.3 定稿：**该 (attempt, question) 的
+ * responses 行 id**（crypto.randomUUID）——每题每次作答天然唯一、快照与版本
+ * 引用同源同寿、交卷回传比对即可验证题目版本，契约长度上限自然满足。
+ * 该引用只能定位授权记录，不能当访问凭证。
+ * （定义原在 note.ts；T6R.3 收敛时移入本文件——铸造规则属作答域，且 attempt
+ * 视图/试卷形态与笔记元信息共用同一份，单一出处。）
+ */
+export const questionRevisionIdSchema = z
+  .string()
+  .min(1, "questionRevisionId 不能为空")
+  .max(512)
+  .refine((v) => v === v.trim(), "questionRevisionId 不能含首尾空白或为纯空白");
+
+/**
+ * attempt 视图的公开题目（T6R.3 全来源冻结）：QuestionPublic 白名单投影 +
+ * 每题不透明 questionRevisionId（该题在本 attempt 的 responses 行 id——建卷
+ * 冻结时铸造，交卷时原样回传以验证题目版本；只能定位授权记录，不能当访问
+ * 凭证，方案 §5.1）。fail closed 语义与 questionPublicSchema 一致：多给的
+ * 教师侧字段在 parse 时被 strip。
+ */
+export const attemptQuestionPublicSchema = questionPublicSchema.extend({
+  questionRevisionId: questionRevisionIdSchema,
+});
+
+/**
+ * 试卷题目的可选版本形态（T6R.3）：**仅通用取卷（GET /attempts/:id/paper，
+ * 题目来自建卷冻结快照）携带** questionRevisionId；作业预览
+ * （GET /assignments/:id/paper，开卷前的当前题库）没有 attempt 语境，不带
+ * 该字段（可选语义，缺省合法）。由 attemptQuestionPublicSchema 派生
+ * （单一出处），供 assignment.ts 的 studentPaperUnitSchema 复用。
+ */
+export const studentPaperQuestionSchema = attemptQuestionPublicSchema.partial({
+  questionRevisionId: true,
+});
+
+/**
  * 草稿视图的单元分组（T2A.7）：题目按所属单元分节下发。
  * assignment 来源按 assignment_units.order 排列（题号全卷连续）；course 来源
- * 恒为单组（单元标题）。live 题数为 0 的单元不出现（与试卷口径一致）。
+ * 恒为单组（单元标题）。T6R.3 起题目来自建卷冻结快照（教师改题库不影响）。
  */
 export const attemptDraftUnitSchema = z.object({
-  /** 练习单元 id（来自 DSL） */
+  /** 练习单元 id（来自 DSL；wrong 来源为 attemptId——卷无单元语义，仅作分组键） */
   id: z.string().min(1),
-  /** 单元标题（当前值；答题页分节标题） */
+  /** 单元标题（当前值；答题页分节标题。wrong 来源恒「错题重练」） */
   title: z.string().min(1),
-  /** 该单元的公开题目（QuestionPublic 形态，按单元内题序） */
-  questions: z.array(questionPublicSchema),
+  /** 该单元的公开题目（冻结快照的 QuestionPublic 投影 + questionRevisionId） */
+  questions: z.array(attemptQuestionPublicSchema),
 });
 
 /** GET /api/student/attempts/:id 的草稿视图（status=draft）响应 data */
@@ -248,6 +288,12 @@ export const attemptDraftDataSchema = z.object({
    * 未解锁提示的内容不在此（也不在任何学生端响应）。
    */
   hintsOpened: z.record(z.string(), hintOpenedEntrySchema.array()),
+  /**
+   * 冻结来源不可信标记（T6R.3，方案 §5.1「legacy_unverified」）：true = 本卷
+   * 快照是升级后首次恢复访问时懒冻结的当前版本，不能宣称是学生更早看到的
+   * 内容——前端据此展示「练习内容为恢复后的版本」提示；false = 建卷即冻结。
+   */
+  legacyUnverified: z.boolean(),
 });
 
 /**
@@ -387,6 +433,24 @@ export const attemptAnswerSaveDataSchema = z.object({
 });
 
 /**
+ * POST /api/student/attempts/:id/submit 请求体（T6R.3 全来源题目版本冻结）：
+ * 交卷回传建卷时下发的每题 questionRevisionId（responses 行 id，对学生不透明），
+ * 服务端与本次冻结集合逐一比对——旧标签页/陈旧页面的提交（缺项、错版、多项）
+ * 被 409 QUESTION_REVISION_STALE 可诊断拒绝（前端提示刷新后重交），不静默接受。
+ * 空 revisions 合法（空卷交卷；服务端把不带请求体同样按空集合处理，非空卷
+ * 由此自然落入 409）；上限 500 为防御性边界（单卷题数远低于此）。
+ */
+export const attemptSubmitRevisionSchema = z.object({
+  questionId: z.string().min(1),
+  questionRevisionId: questionRevisionIdSchema,
+});
+
+/** 交卷请求体（revisions = 取卷/草稿视图下发过的全部题目版本引用） */
+export const attemptSubmitRequestSchema = z.object({
+  revisions: z.array(attemptSubmitRevisionSchema).max(500),
+});
+
+/**
  * POST /api/student/attempts/:id/hints 请求体（T2.11 分步提示）：
  * 获取该题第 index 条提示（0 起）并解锁（服务端记录 hint_open 事件与已解锁集合）。
  * index 只拦非整数；越界（<0 或 ≥该题提示总数）统一由服务端判
@@ -457,6 +521,9 @@ export const attemptDetailDataSchema = z
  * - ASSIGNMENT_NOT_FOUND：创建 attempt 的作业不存在（含已删除）（404）；
  * - ATTEMPT_NOT_FOUND：attempt 不存在（404）；
  * - ALREADY_SUBMITTED：attempt 已交卷，不能再保存草稿 / 重复交卷（409，验收项）；
+ * - QUESTION_REVISION_STALE：交卷回传的题目版本集合与本次冻结集合不一致
+ *   （缺项 / questionRevisionId 错版 / 多出未知题目 / 未带请求体的非空卷；
+ *   409，T6R.3）——旧标签页或陈旧页面的提交被可诊断拒绝，前端提示刷新后重交；
  * - QUESTION_NOT_FOUND：题目不存在、已软删或不在该次作答的单元集合内（404，
  *   T2A.7 起多单元作业为集合包含判断）；
  * - HINT_INDEX_OUT_OF_RANGE：提示序号越界（<0 或 ≥该题提示总数，含无提示题；
@@ -474,6 +541,7 @@ export const attemptErrorCodeSchema = z.enum([
   "ASSIGNMENT_NOT_FOUND",
   "ATTEMPT_NOT_FOUND",
   "ALREADY_SUBMITTED",
+  "QUESTION_REVISION_STALE",
   "QUESTION_NOT_FOUND",
   "HINT_INDEX_OUT_OF_RANGE",
   "FORBIDDEN",
@@ -507,6 +575,12 @@ export type AttemptSummary = z.infer<typeof attemptSummarySchema>;
 export type AttemptStartData = z.infer<typeof attemptStartDataSchema>;
 export type AttemptDraftData = z.infer<typeof attemptDraftDataSchema>;
 export type AttemptDraftUnit = z.infer<typeof attemptDraftUnitSchema>;
+/** attempt 视图公开题目（QuestionPublic + questionRevisionId，T6R.3） */
+export type AttemptQuestionPublic = z.infer<typeof attemptQuestionPublicSchema>;
+/** 题目版本引用（T6R.3；随 schema 自 note.ts 移入本文件） */
+export type QuestionRevisionId = z.infer<typeof questionRevisionIdSchema>;
+/** 试卷题目的可选版本形态（仅通用取卷携带 revisionId） */
+export type StudentPaperQuestion = z.infer<typeof studentPaperQuestionSchema>;
 export type AttemptResultQuestion = z.infer<typeof attemptResultQuestionSchema>;
 export type AttemptResultUnit = z.infer<typeof attemptResultUnitSchema>;
 export type AttemptScoreSummary = z.infer<typeof attemptScoreSummarySchema>;
@@ -515,6 +589,10 @@ export type AttemptAnswerSaveRequest = z.infer<
   typeof attemptAnswerSaveRequestSchema
 >;
 export type AttemptAnswerSaveData = z.infer<typeof attemptAnswerSaveDataSchema>;
+/** 交卷回传的单题版本对（T6R.3；questionRevisionId = responses 行 id，不透明） */
+export type AttemptSubmitRevision = z.infer<typeof attemptSubmitRevisionSchema>;
+/** 交卷请求体（T6R.3） */
+export type AttemptSubmitRequest = z.infer<typeof attemptSubmitRequestSchema>;
 export type HintOpenedEntry = z.infer<typeof hintOpenedEntrySchema>;
 export type HintOpenRequest = z.infer<typeof hintOpenRequestSchema>;
 export type HintOpenData = z.infer<typeof hintOpenDataSchema>;

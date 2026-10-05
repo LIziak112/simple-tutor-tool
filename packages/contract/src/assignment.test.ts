@@ -3,7 +3,6 @@ import {
   assignmentCheckRequestSchema,
   assignmentCreateDataSchema,
   assignmentCreateRequestSchema,
-  assignmentDueAtSchema,
   assignmentErrorCodeSchema,
   assignmentListQuerySchema,
   assignmentUpdateRequestSchema,
@@ -12,6 +11,8 @@ import {
   studentPaperDataSchema,
   teacherAssignmentSchema,
 } from "./assignment.ts";
+// assignmentDueAtSchema 已下移 content.ts（T6R.3 收敛），从定义处导入
+import { assignmentDueAtSchema } from "./content.ts";
 
 /**
  * 作业契约自测（T2.2；T2A.7 大改后同步）：锁定创建/更新/检查请求的关键校验

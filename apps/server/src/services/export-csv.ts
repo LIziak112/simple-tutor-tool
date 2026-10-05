@@ -1,24 +1,17 @@
-import type { ExportCsvQuery, QuestionType } from "@tutor/contract";
+import type { ExportCsvQuery } from "@tutor/contract";
 import {
   HANDWRITTEN_QUESTION_TYPES,
   QUESTION_TYPE_LABELS,
 } from "@tutor/contract";
-import { and, asc, eq, ne, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, ne, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
-import {
-  attempts,
-  questions,
-  type ResponseRow,
-  responses,
-  students,
-} from "../db/schema";
+import { attempts, questions, responses, students } from "../db/schema";
 import { knowledgeNamesByQuestion } from "./assignment-service";
-import { attemptUnitIds } from "./attempt-service";
+import { answerOf, unitGroupedRows } from "./attempt-service";
 import { serializeStudentAnswer } from "./mark-response";
+import { snapshotOfRow } from "./snapshot";
 import {
-  answerOf,
   inkByQuestionOf,
-  snapshotOf,
   sourceOf,
   unitTitleByIdOf,
 } from "./teacher-attempt-service";
@@ -35,7 +28,7 @@ import {
  * - 归属过滤：attempt → student → teacherId（乙教师导不出甲学生的行，T2B 域红线）；
  * - 筛选：六参数语义与列表接口同轴（from/to 按「最近活动时间」
  *   submittedAt ?? startedAt 过滤；已交卷 attempt 即 submittedAt）；
- * - 来源上下文 / 题目快照 / 答案序列化 / ink 关联：sourceOf / snapshotOf /
+ * - 来源上下文 / 题目快照 / 答案序列化 / ink 关联：sourceOf / snapshotOfRow /
  *   answerOf + serializeStudentAnswer（待批卡片同一序列化口径）/ inkByQuestionOf；
  * - 题号：与 T3.1 详情同口径的全卷连续题号（attempt 单元顺序 × 单元内题序，1 起）；
  * - 考点取自题目快照（responses.questionSnapshotJson）；快照缺失按题目 id 从
@@ -264,7 +257,7 @@ export function exportCsv(
       let wrongNo = 0;
       for (const row of ownRows) {
         wrongNo += 1;
-        const snapshot = snapshotOf(row.response);
+        const snapshot = snapshotOfRow(row.response);
         const type = snapshot?.type ?? row.questionType ?? null;
         const difficulty =
           snapshot?.difficulty ?? row.questionDifficulty ?? null;
@@ -315,80 +308,40 @@ export function exportCsv(
       continue;
     }
 
-    const unitIds = attemptUnitIds(db, attempt);
-
-    // 已交卷逐题：leftJoin 当前 questions（teacherId 域）提供单元归属与题序
-    // （T3.1 详情同口径；leftJoin 保证当前库缺行也不丢导出行，行追加在末尾）
-    const rows = db
-      .select({
-        response: responses,
-        order: questions.order,
-        questionUnitId: questions.unitId,
-        questionType: questions.type,
-        questionDifficulty: questions.difficulty,
-      })
-      .from(responses)
-      .leftJoin(
-        questions,
-        and(
-          eq(responses.questionId, questions.id),
-          eq(questions.teacherId, teacherId),
-        ),
-      )
-      .where(eq(responses.attemptId, attempt.id))
-      .all();
-
-    // 按 attempt 单元顺序分组（组内按 (order, questionId) 升序）；
-    // 题目单元不在 attempt 单元集合内的异常行与当前库缺行的孤儿行追加在末尾
-    const unitIndex = new Map(unitIds.map((unitId, i) => [unitId, i]));
-    const groups = new Map<
-      string,
-      {
-        response: ResponseRow;
-        order: number | null;
-        type: QuestionType | null;
-        difficulty: number | null;
-      }[]
-    >();
-    const ORPHAN_UNIT_KEY = "\u0000orphan";
-    for (const row of rows) {
-      const key = row.questionUnitId ?? ORPHAN_UNIT_KEY;
-      const entry = {
-        response: row.response,
-        order: row.order,
-        type: row.questionType,
-        difficulty: row.questionDifficulty,
-      };
-      const list = groups.get(key);
-      if (list === undefined) groups.set(key, [entry]);
-      else list.push(entry);
-    }
-    for (const list of groups.values()) {
-      list.sort((a, b) => {
-        const orderA = a.order ?? Number.MAX_SAFE_INTEGER;
-        const orderB = b.order ?? Number.MAX_SAFE_INTEGER;
-        return orderA !== orderB
-          ? orderA - orderB
-          : a.response.questionId < b.response.questionId
-            ? -1
-            : 1;
-      });
-    }
-    const orderedUnitIds = [
-      ...unitIds,
-      ...[...groups.keys()].filter(
-        (key) => key !== ORPHAN_UNIT_KEY && !unitIndex.has(key),
-      ),
-      ...(groups.has(ORPHAN_UNIT_KEY) ? [ORPHAN_UNIT_KEY] : []),
-    ];
-
-    // 单元标题统一解析（域内读，含软删单元；孤儿行回退 attempt 单元——
-    // course 来源即练习单元，assignment 来源无单元则空）
-    const orphanUnitId = attempt.unitId ?? "";
-    const unitTitles = unitTitleByIdOf(
-      db,
-      teacherId,
-      orderedUnitIds.filter((key) => key !== ORPHAN_UNIT_KEY),
+    // 已交卷逐题（T6R.3）：行序与分组消费 unitGroupedRows——与学生结果视图/
+    // 教师详情同一实现（冻结行自身重建，导出题序=学生看到的题序；懒冻结存量
+    // 卷与升级前已交卷沿用题库 join 序）。快照缺失行的题型/难度仅作展示元信息
+    // 回落当前 questions，题干/答案等内容一律不回落
+    const groupedRows = unitGroupedRows(db, attempt);
+    const metaByQuestion = new Map(
+      groupedRows.some((group) => group.rows.length > 0)
+        ? db
+            .select({
+              id: questions.id,
+              type: questions.type,
+              difficulty: questions.difficulty,
+            })
+            .from(questions)
+            .where(
+              and(
+                eq(questions.teacherId, teacherId),
+                inArray(
+                  questions.id,
+                  groupedRows.flatMap((group) =>
+                    group.rows.map((row) => row.questionId),
+                  ),
+                ),
+              ),
+            )
+            .all()
+            .map(
+              (row) =>
+                [
+                  row.id,
+                  { type: row.type, difficulty: row.difficulty },
+                ] as const,
+            )
+        : [],
     );
 
     // 来源列的固定值（整份 attempt 一致）
@@ -403,19 +356,15 @@ export function exportCsv(
     );
 
     let no = 0;
-    for (const unitId of orderedUnitIds) {
-      const group = groups.get(unitId);
-      if (group === undefined) continue;
-      const unitTitle =
-        unitId === ORPHAN_UNIT_KEY
-          ? (unitTitles.get(orphanUnitId) ?? orphanUnitId)
-          : (unitTitles.get(unitId) ?? unitId);
-      for (const { response, type: qType, difficulty: qDifficulty } of group) {
+    for (const group of groupedRows) {
+      const unitTitle = group.title;
+      for (const response of group.rows) {
         no += 1;
-        // 快照优先；缺失回落当前 questions 行（考点经关联表兜底）
-        const snapshot = snapshotOf(response);
-        const type = snapshot?.type ?? qType ?? null;
-        const difficulty = snapshot?.difficulty ?? qDifficulty ?? null;
+        // 快照优先；缺失行仅题型/难度元信息回落当前 questions（考点经关联表兜底）
+        const snapshot = snapshotOfRow(response);
+        const meta = metaByQuestion.get(response.questionId);
+        const type = snapshot?.type ?? meta?.type ?? null;
+        const difficulty = snapshot?.difficulty ?? meta?.difficulty ?? null;
         let knowledge: string[];
         if (snapshot !== null) {
           knowledge = snapshot.knowledge;

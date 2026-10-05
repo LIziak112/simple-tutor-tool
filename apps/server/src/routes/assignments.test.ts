@@ -29,6 +29,7 @@ import {
 } from "../services/assignment-service.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 import { assertNoStemLeak } from "../test/assert-no-stem-leak.ts";
+import { submitAttemptRequest } from "../test/submit-revisions";
 
 /**
  * 作业接口集成测试（T2.2 验收项起家；T2A.7 大改后覆盖 D12–D16；2026-10 追加
@@ -390,16 +391,13 @@ function saveAnswer(
   );
 }
 
-/** 交卷（断言 200），返回结果视图 data */
+/** 交卷（断言 200），返回结果视图 data（T6R.3：自动回传题目版本集合） */
 async function submitAttempt(
   app: ReturnType<typeof createApp>,
   studentCookie: string,
   attemptId: string,
 ): Promise<Record<string, unknown>> {
-  const res = await app.request(`/api/student/attempts/${attemptId}/submit`, {
-    method: "POST",
-    headers: { cookie: studentCookie },
-  });
+  const res = await submitAttemptRequest(app, studentCookie, attemptId);
   expect(res.status).toBe(200);
   return ((await res.json()) as { data: Record<string, unknown> }).data;
 }
@@ -1570,9 +1568,10 @@ describe("POST /api/teacher/assignments/check（D15 已做过提示）", () => {
     expect(started.status).toBe(201);
     const attemptId = ((await started.json()) as { data: { id: string } }).data
       .id;
-    const submitted = await env.app.request(
-      `/api/student/attempts/${attemptId}/submit`,
-      { method: "POST", headers: { cookie: env.aCookie } },
+    const submitted = await submitAttemptRequest(
+      env.app,
+      env.aCookie,
+      attemptId,
     );
     expect(submitted.status).toBe(200);
 
@@ -1607,9 +1606,10 @@ describe("POST /api/teacher/assignments/check（D15 已做过提示）", () => {
         })
       ).status,
     ).toBe(200);
-    const redoSubmitted = await env.app.request(
-      `/api/student/attempts/${redoData.id}/submit`,
-      { method: "POST", headers: { cookie: env.aCookie } },
+    const redoSubmitted = await submitAttemptRequest(
+      env.app,
+      env.aCookie,
+      redoData.id,
     );
     expect(redoSubmitted.status).toBe(200);
 
@@ -2215,9 +2215,10 @@ describe("学生端无泄露（多单元新结构逐接口断言）", () => {
       kind: "judge",
       value: true,
     });
-    const res = await env.app.request(
-      `/api/student/attempts/${attempt.id as string}/submit`,
-      { method: "POST", headers: { cookie: env.cookie } },
+    const res = await submitAttemptRequest(
+      env.app,
+      env.cookie,
+      attempt.id as string,
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as unknown;

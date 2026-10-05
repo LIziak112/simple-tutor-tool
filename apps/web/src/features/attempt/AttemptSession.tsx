@@ -233,13 +233,21 @@ function AnswerView({
   const answered = answers === null ? 0 : answeredCount(questionIds);
   const unanswered = total - answered;
 
+  // T6R.3：交卷回传的题目版本集合（建卷冻结时下发的 questionRevisionId 原样
+  // 回传，服务端与冻结集合比对——本页数据即学生看到的卷，天然一致）
+  const submitRevisions = flatQuestions.map((question) => ({
+    questionId: question.id,
+    questionRevisionId: question.questionRevisionId,
+  }));
+
   /**
    * 交卷（T2.8 口径）：先把每道手写题的最新笔迹 flush 上传（Promise.all），
    * 任一失败 → 阻止交卷并提示重试（「交卷时确保每道手写题最新笔迹已上传」）；
    * 全部成功后先收尾学习痕迹（T2.10：blur 当前聚焦 + submit 事件 + 事件队列
-   * flush——保证服务端交卷计算时事件序列已入库），再调 submit（服务端判分），
-   * 成功后清本地草稿（T2.9）。失败时关闭确认弹层让底栏提示可见（重新点
-   * 「交卷」即可重试 flush）。
+   * flush——保证服务端交卷计算时事件序列已入库），再调 submit（服务端判分，
+   * T6R.3 起携带题目版本集合——旧标签页陈旧提交被 409 QUESTION_REVISION_STALE
+   * 可诊断拒绝，底栏提示刷新页面后重交），成功后清本地草稿（T2.9）。失败时
+   * 关闭确认弹层让底栏提示可见（重新点「交卷」即可重试 flush）。
    */
   const confirmSubmit = async () => {
     setInkFlushing(true);
@@ -257,7 +265,7 @@ function AnswerView({
     }
     // T2.10：submit 前收尾事件（尽力 flush；失败不阻塞交卷，宽松口径兜底迟到事件）
     await attemptEvents.finalizeSubmit();
-    submit.mutate(undefined, {
+    submit.mutate(submitRevisions, {
       onSuccess: () => {
         void draftStore.clearDraft(attemptId);
       },
@@ -265,7 +273,8 @@ function AnswerView({
     });
   };
 
-  // 交卷失败（网络等）：留在答题视图，底栏提示后可重试
+  // 交卷失败：网络等错误留中文提示；QUESTION_REVISION_STALE（旧标签页/陈旧
+  // 页面）由服务端中文 message 直接提示刷新重交（T6R.3）
   const submitError = submit.isError
     ? submit.error instanceof Error
       ? submit.error.message
@@ -302,6 +311,14 @@ function AnswerView({
             )}
             <span>共 {total} 题</span>
           </p>
+          {/* T6R.3：升级遗留卷懒冻结标记——内容为恢复时刻的版本，不能宣称是
+              学生更早看到的（方案 §5.1 legacy_unverified），如实告知 */}
+          {data.legacyUnverified && (
+            <p className="rounded-lg bg-muted px-3 py-2 text-xs text-muted-foreground">
+              这份练习的内容是系统升级后恢复的版本，可能与之前看到的不同；请按
+              当前页面内容作答。
+            </p>
+          )}
         </header>
 
         {/* 空试卷：单元没有可作答的题目 */}

@@ -57,12 +57,14 @@ const COURSE_DRAFT: AttemptDraftData = {
           knowledge: ["有理数的概念"],
           stemMd: "$0$ 既不是正数，也不是负数。[[]]",
           hintCount: 0,
+          questionRevisionId: "rev-练习四-1",
         },
       ],
     },
   ],
   drafts: {},
   hintsOpened: {},
+  legacyUnverified: false,
 };
 
 function renderPage() {
@@ -91,6 +93,19 @@ describe("StudentAttemptPage（/s/attempts/:attemptId，T2A.6）", () => {
       `/s/courses/${COURSE_ID}/units/${encodeURIComponent("有理数小练")}`,
     );
     expect(screen.getByRole("button", { name: "交卷" })).toBeInTheDocument();
+  });
+
+  it("T6R.3 legacyUnverified 横幅（true）：懒冻结的升级遗留卷显示恢复版本提示", async () => {
+    mockedFetch.mockResolvedValue({ ...COURSE_DRAFT, legacyUnverified: true });
+    renderPage();
+    expect(await screen.findByText(/系统升级后恢复的版本/)).toBeInTheDocument();
+  });
+
+  it("T6R.3 legacyUnverified 横幅（false）：正常卷不显示恢复版本提示", async () => {
+    mockedFetch.mockResolvedValue(COURSE_DRAFT);
+    renderPage();
+    await screen.findByText("课程：初一上 · 第 2 次");
+    expect(screen.queryByText(/系统升级后恢复的版本/)).toBeNull();
   });
 
   it("已交卷的课程作答：直接结果视图（只读回看）", async () => {

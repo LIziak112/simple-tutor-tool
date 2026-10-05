@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { questionRevisionIdSchema } from "./attempt.ts";
 import { INK_LOGICAL_WIDTH, inkAtramentDataSchema } from "./ink.ts";
 
 /**
@@ -216,17 +217,8 @@ export const noteBodyHashSchema = z
   .string()
   .regex(/^[0-9a-f]{64}$/, "正文 hash 须为 64 位小写十六进制（sha-256）");
 
-/**
- * 题目版本引用（T6R.3 冻结）：定位「本次作答时被冻结的那道题」，对学生不透明。
- * 契约只固定非空、无首尾空白、长度 ≤512；具体铸造规则（responses 行 id 或
- * 等价稳定标识）由 T6R.3 落地，本文件不预设。该引用只能定位授权记录，
- * 不能当访问凭证（方案 §5.1）。
- */
-export const questionRevisionIdSchema = z
-  .string()
-  .min(1, "questionRevisionId 不能为空")
-  .max(512)
-  .refine((v) => v === v.trim(), "questionRevisionId 不能含首尾空白或为纯空白");
+// 题目版本引用 questionRevisionIdSchema：定义在 attempt.ts（T6R.3 收敛——
+// 铸造规则 = responses 行 id，属作答域；本文件 import 复用同一份，不重复定义）
 
 // ---------- 元信息形状（API 投影；磁盘路径等服务端内部字段不进契约） ----------
 
@@ -491,7 +483,6 @@ export type NoteSubmissionEvidenceMeta = z.infer<
 export type NoteUploadMeta = z.infer<typeof noteUploadMetaSchema>;
 export type NoteVersionReceipt = z.infer<typeof noteVersionReceiptSchema>;
 export type NoteErrorCode = z.infer<typeof noteErrorCodeSchema>;
-export type QuestionRevisionId = z.infer<typeof questionRevisionIdSchema>;
 
 // ---------- 与后续任务的关系 ----------
 
