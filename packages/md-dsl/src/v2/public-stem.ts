@@ -1,5 +1,7 @@
+import type { ListItem } from "mdast";
 import { SKIP, visit } from "unist-util-visit";
-import { processor } from "./shared.ts";
+import type { Node } from "unist";
+import { lineRange, processor } from "./shared.ts";
 
 /**
  * 题干公开化（T2.4，学生端防泄露的关键一环）：
@@ -64,4 +66,85 @@ export function publicStemMd(stemMd: string): string {
       result.slice(to);
   }
   return result;
+}
+
+// ---------- 学生端题干投影（2026-10 选项内嵌泄露修复） ----------
+
+/**
+ * 任务列表项行首快路径预检：任何行都不形如「列表标记 + [」时必然没有任务列表项
+ * （GFM 任务标记必须是项内第一个非空白内容），免解析直接返回。
+ * 预检只会多不会少：命中后仍以 AST 判定为准（如 `- [备注]` 普通列表项会被排除）。
+ */
+const TASK_ITEM_HINT_RE = /^\s*(?:[-*+]|\d+[.)])\s+\[/m;
+
+/** 与解析器 scanStem 同一谓词：listItem.checked 为布尔即 GFM 任务列表项（选择题选项） */
+function isTaskListItem(node: Node): node is ListItem {
+  return (
+    node.type === "listItem" && typeof (node as ListItem).checked === "boolean"
+  );
+}
+
+/**
+ * 剥除题干中的选项任务列表（按 AST 定位，非逐行正则）：
+ * - 与解析器抽取 options 的口径完全一致（同一 mdast 谓词），解析器认多少项就剥多少项，
+ *   含多行选项的续行——按节点行区间整段删除，杜绝逐行正则漏掉续行的孤儿文本；
+ * - 每个被删区间上方紧邻的空行（列表与正文的分隔）一并删除，避免残留连续空行；
+ * - 代码块内的 `- [x]`、转义写法 `\- \[x\]` 不是任务列表项，不受影响；
+ * - 无任务列表项时原样返回同一字符串。
+ * 本函数无条件剥除，调用方负责条件（选项另行渲染/下发时才调用）。
+ */
+export function stripOptionListMd(stemMd: string): string {
+  if (!TASK_ITEM_HINT_RE.test(stemMd)) return stemMd;
+
+  const tree = processor.parse(stemMd);
+  const lines = stemMd.split("\n");
+  const dropped = new Set<number>(); // 1 起行号
+  visit(tree, (node) => {
+    if (!isTaskListItem(node)) return undefined;
+    const [start, end] = lineRange(node);
+    for (let line = start; line <= end; line += 1) dropped.add(line);
+    let above = start - 1;
+    while (
+      above >= 1 &&
+      (lines[above - 1] ?? "").trim() === "" &&
+      !dropped.has(above)
+    ) {
+      dropped.add(above);
+      above -= 1;
+    }
+    return undefined;
+  });
+  if (dropped.size === 0) return stemMd;
+  return lines
+    .filter((_, index) => !dropped.has(index + 1))
+    .join("\n")
+    .trim();
+}
+
+/** studentStemMd / displayStemMd 的最小输入：Question、冻结快照、DB 投影行皆可 */
+export interface StudentStemInput {
+  readonly stemMd: string;
+  /** 选项（仅 choice/multi 有）：存在即「选项将另行渲染/下发」，题干内嵌列表随之剥除 */
+  readonly options?: readonly unknown[];
+}
+
+/**
+ * 显示侧题干（教师端与学生端 UI 共用）：选项另行渲染时剥掉题干内嵌列表，
+ * 不做标记脱敏（[[答案]] 由 remark-blank 统一渲染为空框，原文语义留给教师侧）。
+ */
+export function displayStemMd(question: StudentStemInput): string {
+  return question.options === undefined
+    ? question.stemMd
+    : stripOptionListMd(question.stemMd);
+}
+
+/**
+ * 学生端题干唯一投影：剥选项（options 另行下发时）+ [[答案]] → [[]] 脱敏。
+ * 学生端一切下发路径（取卷/草稿/结果/错题本/学习包「仅题干」层）都必须且只需
+ * 经过本函数——投影后题干不得携带任何可判定答案的标记（`[x]` 任务标记、非空
+ * [[…]]），该不变量由 student-stem.test.ts 的 samples 属性测试以解析器为
+ * oracle 守卫（AGENTS.md 第 3 条）。
+ */
+export function studentStemMd(question: StudentStemInput): string {
+  return publicStemMd(displayStemMd(question));
 }

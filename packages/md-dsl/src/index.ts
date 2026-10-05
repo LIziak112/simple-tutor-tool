@@ -44,5 +44,13 @@ export {
 } from "./v2/lecture-structure.ts";
 export type { ParseOptions } from "./v2/parse.ts";
 export { parseDocument } from "./v2/parse.ts";
-export { publicStemMd } from "./v2/public-stem.ts";
+export {
+  displayStemMd,
+  type StudentStemInput,
+  stripOptionListMd,
+  studentStemMd,
+} from "./v2/public-stem.ts";
 export { processor } from "./v2/shared.ts";
+// @deprecated 过渡出口：仅标记脱敏、不剥选项任务列表，学生端 payload 单独使用即泄露
+// [x] 正确项标记。服务端调用方迁移到 studentStemMd 后本出口即移除（见 v2/public-stem.ts）。
+export { publicStemMd } from "./v2/public-stem.ts";
