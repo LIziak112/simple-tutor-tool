@@ -807,7 +807,9 @@ export function listLibraryUnits(
         deletedAt: row.deletedAt,
         questionCount: unitQuestions.length,
         typeDistribution,
-        knowledge: [...knowledgeSet].sort((a, b) => a.localeCompare(b)),
+        knowledge: [...knowledgeSet].sort((a, b) =>
+          a.localeCompare(b, "zh-Hans-CN"),
+        ),
         courseCount: courseCounts.get(row.id) ?? 0,
         assignmentCount: assignmentCounts.get(row.id) ?? 0,
         questions: unitQuestions,

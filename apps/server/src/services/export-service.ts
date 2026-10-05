@@ -389,7 +389,8 @@ export function assembleLearningPack(
     const rows = ids.map((id) => requireOwnedStudent(db, teacherId, id));
     rows.sort(
       (a, b) =>
-        a.displayName.localeCompare(b.displayName) || a.id.localeCompare(b.id),
+        a.displayName.localeCompare(b.displayName, "zh-Hans-CN") ||
+        a.id.localeCompare(b.id),
     );
     roster = rows.map((row) => ({
       id: row.id,
@@ -897,7 +898,7 @@ export function assembleLearningPack(
         .filter((entry): entry is LearningPackLectureTrace => entry !== null);
       entries.sort(
         (a, b) =>
-          a.title.localeCompare(b.title) ||
+          a.title.localeCompare(b.title, "zh-Hans-CN") ||
           a.lectureId.localeCompare(b.lectureId),
       );
       lectureTraceRows.push(...entries);

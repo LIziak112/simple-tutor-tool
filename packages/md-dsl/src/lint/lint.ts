@@ -79,6 +79,6 @@ export function sortIssues(issues: readonly LintIssue[]): LintIssue[] {
       a.line - b.line ||
       a.column - b.column ||
       a.code.localeCompare(b.code) ||
-      a.message.localeCompare(b.message),
+      a.message.localeCompare(b.message, "zh-Hans-CN"),
   );
 }

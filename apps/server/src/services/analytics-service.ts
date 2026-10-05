@@ -837,7 +837,8 @@ function buildKnowledgeRows(
     })
     .sort(
       (a, b) =>
-        b.wrongCount - a.wrongCount || a.knowledge.localeCompare(b.knowledge),
+        b.wrongCount - a.wrongCount ||
+        a.knowledge.localeCompare(b.knowledge, "zh-Hans-CN"),
     );
 }
 
@@ -938,7 +939,10 @@ function buildFocusCard(db: Db, ctx: AnalyticsContext): AnalyticsFocusCard {
 
   const points: AnalyticsFocusPoint[] = [...byKnowledge.entries()]
     .filter(([, tally]) => tally.wrong > 0)
-    .sort((a, b) => b[1].wrong - a[1].wrong || a[0].localeCompare(b[0]))
+    .sort(
+      (a, b) =>
+        b[1].wrong - a[1].wrong || a[0].localeCompare(b[0], "zh-Hans-CN"),
+    )
     .slice(0, 3)
     .map(([knowledge, tally]) => {
       // 代表错题：周期内错误次数最多的题；同次数取最近错例（worst）
@@ -1166,8 +1170,8 @@ function buildRedoRows(
   }
   return rows.sort(
     (a, b) =>
-      (a.courseName ?? "").localeCompare(b.courseName ?? "") ||
-      a.unitTitle.localeCompare(b.unitTitle),
+      (a.courseName ?? "").localeCompare(b.courseName ?? "", "zh-Hans-CN") ||
+      a.unitTitle.localeCompare(b.unitTitle, "zh-Hans-CN"),
   );
 }
 
@@ -1304,7 +1308,8 @@ function buildLectureEntries(
   }
   return entries.sort(
     (a, b) =>
-      a.title.localeCompare(b.title) || a.lectureId.localeCompare(b.lectureId),
+      a.title.localeCompare(b.title, "zh-Hans-CN") ||
+      a.lectureId.localeCompare(b.lectureId),
   );
 }
 
@@ -1402,7 +1407,10 @@ function buildQuestionRows(ctx: AnalyticsContext): AnalyticsQuestionRow[] {
       .sort(
         (a, b) =>
           b.count - a.count ||
-          (a.answerText ?? "￿").localeCompare(b.answerText ?? "￿"),
+          (a.answerText ?? "￿").localeCompare(
+            b.answerText ?? "￿",
+            "zh-Hans-CN",
+          ),
       )
       .slice(0, ANALYTICS_WRONG_ANSWER_TOP_N);
 

@@ -618,7 +618,7 @@ export function listStudentLectures(
     ];
     if (ka[0] !== kb[0]) return ka[0] - kb[0];
     if (ka[1] !== kb[1]) return ka[1] - kb[1];
-    return a.title.localeCompare(b.title);
+    return a.title.localeCompare(b.title, "zh-Hans-CN");
   });
 
   return {
