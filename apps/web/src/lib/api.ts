@@ -25,6 +25,7 @@ import {
   type AttemptSource,
   type AttemptStartData,
   type AttemptStatus,
+  type AttemptSubmitRequest,
   apiResponseSchema,
   type BackupRestoreResult,
   type BackupSnapshotList,
@@ -794,15 +795,21 @@ export function saveAttemptAnswerApi(
 }
 
 /**
- * 交卷：服务端判分、冻结题目快照，返回结果视图（含参考答案与详解）。
- * 重复交卷抛 409 ALREADY_SUBMITTED。
+ * 交卷：服务端判分、按建卷冻结快照判分，返回结果视图（含参考答案与详解）。
+ * T6R.3：请求体回传每题 questionRevisionId（建卷时下发的题目版本引用），
+ * 服务端与冻结集合精确比对——旧标签页/陈旧页面的提交抛 409
+ * QUESTION_REVISION_STALE（提示刷新页面后重交）；重复交卷抛 409
+ * ALREADY_SUBMITTED。
  */
 export function submitAttemptApi(
   attemptId: string,
+  revisions: AttemptSubmitRequest["revisions"],
 ): Promise<AttemptDetailData> {
-  return callApi(() =>
-    api.api.student.attempts[":id"].submit.$post({ param: { id: attemptId } }),
-  );
+  const args = {
+    param: { id: attemptId },
+    json: { revisions: [...revisions] },
+  };
+  return callApi(() => api.api.student.attempts[":id"].submit.$post(args));
 }
 
 /**

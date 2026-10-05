@@ -334,7 +334,13 @@ describe("StudentAssignmentAttemptPage：草稿作答流程", () => {
     ).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "确认交卷" }));
-    await waitFor(() => expect(mockedSubmit).toHaveBeenCalledWith(ATTEMPT_ID));
+    await waitFor(() =>
+      // T6R.3：交卷回传建卷下发的题目版本集合（questionRevisionId）
+      expect(mockedSubmit).toHaveBeenCalledWith(ATTEMPT_ID, [
+        { questionId: "练习四-1", questionRevisionId: "rev-练习四-1" },
+        { questionId: "练习四-4", questionRevisionId: "rev-练习四-4" },
+      ]),
+    );
     // 详情已失效重取 → 结果视图
     expect(await screen.findByText(/批改结果/)).toBeInTheDocument();
     expect(screen.getByText("100")).toBeInTheDocument();

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { StudentAnswer } from "@tutor/contract";
+import type { AttemptSubmitRevision, StudentAnswer } from "@tutor/contract";
 import {
   studentAssignmentsKey,
   studentCoursesKey,
@@ -71,15 +71,19 @@ export function useStartCourseAttempt(courseId: string, unitId: string) {
 }
 
 /**
- * 交卷：成功后失效 attempt 详情、作业列表（首页状态徽章联动）与课程侧数据
- * （T2A.6：目录单元状态、单元落地页、首页课程卡片进度）；错题本与我的记录
- * 同步失效——交卷即产生新的已判定轮次（2026-10 重练后回错题本立即可见新轮次，
- * 不受 15s staleTime 影响看到旧聚合）。
+ * 交卷：mutation 入参 = 页面渲染的题目版本集合（T6R.3 建卷冻结下发过
+ * questionRevisionId，交卷原样回传验证——旧标签页陈旧提交被 409
+ * QUESTION_REVISION_STALE 可诊断拒绝，提示刷新后重交）。成功后失效
+ * attempt 详情、作业列表（首页状态徽章联动）与课程侧数据（T2A.6：目录单元
+ * 状态、单元落地页、首页课程卡片进度）；错题本与我的记录同步失效——交卷即
+ * 产生新的已判定轮次（2026-10 重练后回错题本立即可见新轮次，不受 15s
+ * staleTime 影响看到旧聚合）。
  */
 export function useSubmitAttempt(attemptId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: () => submitAttemptApi(attemptId),
+    mutationFn: (revisions: AttemptSubmitRevision[]) =>
+      submitAttemptApi(attemptId, revisions),
     onSuccess: () => {
       void queryClient.invalidateQueries({
         queryKey: studentAttemptKey(attemptId),
