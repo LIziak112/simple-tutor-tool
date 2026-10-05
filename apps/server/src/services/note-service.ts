@@ -297,20 +297,24 @@ function revisionConflict(db: Db, existing: NoteRow | undefined): HttpError {
 /**
  * 上传一版草稿正文，返回版本回执（契约 noteVersionReceiptSchema）。
  *
- * 顺序（方案 §6.2/§6.3；幂等检查先于冲突判断——已成功但丢回执的请求
- * 不能被误判成 409）：
- * 1. requireUsableAttempt（本人 + 来源访问权 + 懒冻结）→ draft 校验 →
+ * 顺序（方案 §6.2/§6.3；幂等检查先于冲突判断与状态门槛——已成功但丢回执
+ * 的请求不能被误判成 409）：
+ * 1. requireUsableAttempt（本人 + 来源访问权 + 懒冻结）→
  *    requireAttemptQuestion（题目属冻结集合，快照非空）；
  * 2. 解析限额 + 规范化 hash；
- * 3. 幂等查重：mutationId 全局命中且（同一 scratch 笔记 + 同正文 hash）→
- *    返回原回执（逐字段，savedAt 用行内原值）；命中但笔记不同或正文不同 →
+ * 3. 幂等查重（**前置于 draft 校验**——复审①裁决：mutationId+归属+hash
+ *    匹配的重放在**任何 attempt 状态**（含已交卷）都返回原回执，丢回执的
+ *    客户端在交卷后补传重试不被 409 挡；只有非重放才走 409）：
+ *    mutationId 全局命中且（同一 scratch 笔记 + 同正文 hash）→ 返回原回执
+ *    （逐字段，savedAt 用行内原值）；命中但笔记不同或正文不同 →
  *    409 NOTE_MUTATION_MISMATCH（跨学生/跨 attempt 重放同走此拒绝，绝不
  *    把他人回执发回、也绝不在别人的笔记下关联版本）；
- * 4. CAS 预检：baseRevision ≠ 当前 head → 409 附 _current 摘要；
- * 5. 文件落位（唯一 tmp → rename 不可变路径）；
- * 6. 事务：CAS 复核 → scratch 先查后插（同 attempt 同题唯一，沿用服务层
+ * 4. draft 校验（非重放写入）：已交卷 → 409 ALREADY_SUBMITTED；
+ * 5. CAS 预检：baseRevision ≠ 当前 head → 409 附 _current 摘要；
+ * 6. 文件落位（唯一 tmp → rename 不可变路径）；
+ * 7. 事务：CAS 复核 → scratch 先查后插（同 attempt 同题唯一，沿用服务层
  *    保证口径）→ 插 note_versions 不可变行 → 切 notes 头指针；
- * 7. 事务失败：删除刚落位的孤儿文件（事务已回滚，无行引用它；删除失败
+ * 8. 事务失败：删除刚落位的孤儿文件（事务已回滚，无行引用它；删除失败
  *    留给 GC 兜底），再抛原错误。
  *
  * faults 为测试故障注入专用（生产恒不传）：beforeTmpWrite/beforeRename/
@@ -329,13 +333,6 @@ export function saveNoteVersion(
   // 1. 权限与冻结集合（T6R.3 统一门口；「冻结内容不冻结权限」——课程撤权
   //    等照常在 requireUsableAttempt 拦截）
   const attempt = requireUsableAttempt(db, studentId, attemptId);
-  if (attempt.status !== "draft") {
-    throw new HttpError(
-      409,
-      "ALREADY_SUBMITTED",
-      "这份作业已交卷，草稿已固定为原稿，不能再写入新版本",
-    );
-  }
   // 冻结集合校验即取题目版本引用（requireAttemptQuestion 返回行 id =
   // questionRevisionId，不必再回查 responses）
   const { id: questionRevisionId } = requireAttemptQuestion(
@@ -357,7 +354,7 @@ export function saveNoteVersion(
     eq(notes.phase, "scratch"),
   );
 
-  // 3. 幂等查重（先于冲突判断）
+  // 3. 幂等查重（先于冲突判断与 draft 状态门槛，见函数头注释）
   const existing = db.select().from(notes).where(scratchWhere).get();
   const replay = db
     .select()
@@ -379,6 +376,15 @@ export function saveNoteVersion(
       409,
       "NOTE_MUTATION_MISMATCH",
       "同一 mutationId 已绑定其他正文变更（或另一份草稿），请生成新的 mutationId 重试",
+    );
+  }
+
+  // 4. draft 校验（非重放的新写入才受交卷门槛约束）
+  if (attempt.status !== "draft") {
+    throw new HttpError(
+      409,
+      "ALREADY_SUBMITTED",
+      "这份作业已交卷，草稿已固定为原稿，不能再写入新版本",
     );
   }
 

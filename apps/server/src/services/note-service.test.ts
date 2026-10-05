@@ -760,6 +760,45 @@ describe("CAS 与幂等（T6R.4 核心不变量）", () => {
     expect(replay).toEqual(r1);
   });
 
+  it("幂等重放前置于状态门槛：已交卷后重放原请求仍得原回执（复审①裁决）", () => {
+    const { db, dataDir, studentId, attemptId } = makeWorld(["q1"]);
+    const m = "88888888-8888-4888-8888-888888888888";
+    const r1 = save(db, dataDir, {
+      studentId,
+      attemptId,
+      questionId: "q1",
+      body: noteDoc(1),
+      mutationId: m,
+    });
+    // 置为已交卷（重放不应被状态门槛挡）
+    db.$client
+      .prepare(
+        "UPDATE attempts SET status = 'submitted', submitted_at = ? WHERE id = ?",
+      )
+      .run("2026-10-02T00:00:00.000Z", attemptId);
+    const replay = save(db, dataDir, {
+      studentId,
+      attemptId,
+      questionId: "q1",
+      body: noteDoc(1),
+      mutationId: m,
+    });
+    expect(replay).toEqual(r1);
+    // 新 mutation 的写入仍受交卷门槛约束（只有重放豁免）
+    const info = errInfo(
+      capture(() =>
+        save(db, dataDir, {
+          studentId,
+          attemptId,
+          questionId: "q1",
+          body: noteDoc(2),
+          baseRevision: 1,
+        }),
+      ),
+    );
+    expect(info).toMatchObject({ status: 409, code: "ALREADY_SUBMITTED" });
+  });
+
   it("续写：revision 递增、head 切换、旧版本文件仍在、scratch 行唯一且 noteId 稳定", () => {
     const { db, dataDir, studentId, attemptId } = makeWorld();
     const r1 = save(db, dataDir, {

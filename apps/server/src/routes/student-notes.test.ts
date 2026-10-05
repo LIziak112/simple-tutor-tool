@@ -249,14 +249,24 @@ describe("PUT /attempts/:id/notes/:qid 鉴权与状态门槛", () => {
     ).toBe(404);
   });
 
-  it("已交卷 attempt 409 ALREADY_SUBMITTED（原稿固定后不可再写）", async () => {
+  it("已交卷 attempt：新写入 409 ALREADY_SUBMITTED；幂等重放仍返回原回执（复审①）", async () => {
     const { app, aCookie, attemptId } = await makeNotesApp();
-    expect(
-      (await putNote(app, aCookie, attemptId, Q.solve, gzipDoc(noteDoc())))
-        .status,
-    ).toBe(200);
+    const m = randomUUID();
+    const doc = noteDoc();
+    const first = await putNote(
+      app,
+      aCookie,
+      attemptId,
+      Q.solve,
+      gzipDoc(doc),
+      {
+        mutationId: m,
+      },
+    );
+    expect(first.status).toBe(200);
     const submitRes = await submitAttemptRequest(app, aCookie, attemptId);
     expect(submitRes.status).toBe(200);
+    // 新 mutation 的新写入 → 409（原稿固定）
     const res = await putNote(
       app,
       aCookie,
@@ -269,6 +279,19 @@ describe("PUT /attempts/:id/notes/:qid 鉴权与状态门槛", () => {
     );
     expect(res.status).toBe(409);
     expect(((await res.json()) as ApiErr).error).toBe("ALREADY_SUBMITTED");
+    // 同 mutationId 同正文的重放 → 原回执逐字段（不被状态门槛挡）
+    const replay = await putNote(
+      app,
+      aCookie,
+      attemptId,
+      Q.solve,
+      gzipDoc(doc),
+      {
+        mutationId: m,
+      },
+    );
+    expect(replay.status).toBe(200);
+    expect(await replay.json()).toEqual(await first.json());
   });
 });
 

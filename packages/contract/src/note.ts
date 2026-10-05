@@ -421,6 +421,10 @@ export const noteSubmissionEvidenceMetaSchema = z
  * - baseRevision：客户端所见的当前 head revision（CAS 期望值；初版 0）；
  * - mutationId：本次变更的幂等键（客户端 crypto.randomUUID）——同 id 同正文
  *   重试返回原回执，同 id 不同正文拒绝（NOTE_MUTATION_MISMATCH）。
+ *   **幂等窗口 = GC 安全窗口**（暂定 24h，见 NOTE_GC_SAFETY_WINDOW_MS 的
+ *   服务端实现）：版本行被 GC 回收后幂等记录随之消失，窗口外的重放按
+ *   CAS 冲突（409 NOTE_REVISION_CONFLICT）可诊断处理，不误造新版本。
+ *   幂等重放不受 attempt 状态门槛约束（含已交卷，服务端裁决口径）。
  */
 export const noteUploadMetaSchema = z.object({
   baseRevision: z.number().int().min(0),
