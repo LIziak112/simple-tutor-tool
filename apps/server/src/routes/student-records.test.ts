@@ -12,6 +12,7 @@ import type { Db } from "../db/client";
 import { assignments, attempts, responses } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
+import { fetchSubmitRevisions } from "../test/submit-revisions.ts";
 
 /**
  * T3.5「我的记录」集成测试（D10；app.request() 直调路由 + 内存库）：
@@ -233,15 +234,17 @@ async function saveAnswer(
   expect(res.status, `保存 ${questionId} 失败`).toBe(200);
 }
 
-/** POST 交卷 */
+/** POST 交卷（T6R.3：自动回传题目版本集合，与前端同流程） */
 async function submit(
   app: App,
   cookie: string,
   attemptId: string,
 ): Promise<void> {
+  const revisions = await fetchSubmitRevisions(app, cookie, attemptId);
   const res = await app.request(`/api/student/attempts/${attemptId}/submit`, {
     method: "POST",
     headers: { cookie },
+    body: JSON.stringify({ revisions }),
   });
   expect(res.status).toBe(200);
 }

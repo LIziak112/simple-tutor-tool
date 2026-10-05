@@ -682,6 +682,10 @@ function snapshotBusinessTables(db: Db): Map<string, string[]> {
       >
     ).map((row) => {
       delete row.teacher_id; // 新增归属列不参与保真对比
+      // T6R.3 迁移新增列（frozen_at/legacy_unverified，带默认值）同理不参与
+      // 保真对比——本测试断言的是存量数据不丢不坏，新增列见 schema/migrate 测试
+      delete row.frozen_at;
+      delete row.legacy_unverified;
       return JSON.stringify(row, Object.keys(row).sort());
     });
     snapshot.set(table, rows.sort());

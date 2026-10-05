@@ -162,6 +162,7 @@ const DRAFT_DATA: AttemptDraftData = {
           knowledge: ["有理数的概念"],
           stemMd: "$0$ 既不是正数，也不是负数。[[]]",
           hintCount: 0,
+          questionRevisionId: "rev-练习四-1",
         },
         {
           id: "练习四-4",
@@ -170,12 +171,14 @@ const DRAFT_DATA: AttemptDraftData = {
           knowledge: ["有理数加法"],
           stemMd: "计算：$(-3)+7=$ [[]]。",
           hintCount: 1,
+          questionRevisionId: "rev-练习四-4",
         },
       ],
     },
   ],
   drafts: {},
   hintsOpened: {},
+  legacyUnverified: false,
 };
 
 const RESULT_DATA: AttemptResultData = {
@@ -386,6 +389,7 @@ const HANDWRITTEN_DRAFT: AttemptDraftData = {
           knowledge: ["计算"],
           stemMd: "第一道手写题",
           hintCount: 0,
+          questionRevisionId: "rev-q-ink-1",
         },
         {
           id: "q-ink-2",
@@ -394,12 +398,14 @@ const HANDWRITTEN_DRAFT: AttemptDraftData = {
           knowledge: ["应用"],
           stemMd: "第二道手写题",
           hintCount: 0,
+          questionRevisionId: "rev-q-ink-2",
         },
       ],
     },
   ],
   drafts: {},
   hintsOpened: {},
+  legacyUnverified: false,
 };
 
 /** 展开下一道未展开的手写题并「书写一笔」（展开后按钮变「收起」，故每次取第一个） */
@@ -771,6 +777,7 @@ const DRAFT_WITH_HINTS: AttemptDraftData = {
           knowledge: ["有理数加法"],
           stemMd: "计算：$(-3)+7=$ [[]]。",
           hintCount: 2,
+          questionRevisionId: "rev-练习四-4",
         },
         {
           id: "练习四-8",
@@ -779,6 +786,7 @@ const DRAFT_WITH_HINTS: AttemptDraftData = {
           knowledge: ["有理数加法"],
           stemMd: "下面是小明的解答，其中有一处错误：",
           hintCount: 2,
+          questionRevisionId: "rev-练习四-8",
         },
       ],
     },

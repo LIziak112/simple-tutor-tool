@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { questionPublicSchema } from "./content.ts";
+import { questionRevisionIdSchema } from "./note.ts";
 
 /**
  * 作业契约（T2.2 起为权威定义；T2A.7 大改——多单元内容 + 按课程布置 + 名单增删
@@ -353,13 +354,23 @@ export const studentAssignmentListDataSchema = z.object({
 // ---------- 学生端：试卷（T2.4；T2A.7 分组化） ----------
 
 /** 试卷单元分组（T2A.7：题号全卷连续由 units 顺序 + 各单元题序共同保证） */
+/**
+ * 试卷单元分组（T2A.7）：两种取卷接口共用的分组形态。
+ * questionRevisionId（T6R.3）：**仅通用取卷（GET /attempts/:id/paper，题目来自
+ * 建卷冻结快照）携带**；作业预览（GET /assignments/:id/paper，开卷前的当前
+ * 题库）没有 attempt 语境，不带该字段（可选语义，缺省合法）。
+ */
 export const studentPaperUnitSchema = z.object({
   /** 练习单元 id（来自 DSL） */
   id: z.string().min(1),
   /** 单元标题（当前值；答题页分节标题。软删单元行保留在回收站，标题仍可读） */
   title: z.string().min(1),
   /** 该单元的公开题目（QuestionPublic[]，按单元内题序） */
-  questions: z.array(questionPublicSchema),
+  questions: z.array(
+    questionPublicSchema.extend({
+      questionRevisionId: questionRevisionIdSchema.optional(),
+    }),
+  ),
 });
 
 /**

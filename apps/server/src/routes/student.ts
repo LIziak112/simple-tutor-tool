@@ -2,6 +2,7 @@ import type { StudentPasswordChangeRequest } from "@tutor/contract";
 import {
   attemptAnswerSaveRequestSchema,
   attemptEventBatchRequestSchema,
+  attemptSubmitRequestSchema,
   hintOpenRequestSchema,
   lectureEventBatchRequestSchema,
   studentLectureDetailQuerySchema,
@@ -21,7 +22,11 @@ import {
 } from "../auth/session";
 import type { Db } from "../db/client";
 import { pngResponse } from "../lib/binary-response";
-import { HttpError, parseJsonBody } from "../lib/http-error";
+import {
+  HttpError,
+  parseJsonBody,
+  parseJsonBodyOrEmpty,
+} from "../lib/http-error";
 import {
   getStudentAssignmentPaper,
   listStudentAssignments,
@@ -179,8 +184,12 @@ export function createStudentRoutes(
           ),
         });
       })
-      .post("/attempts/:id/submit", (c) => {
+      .post("/attempts/:id/submit", async (c) => {
         // T2A.8：now 显式注入（服务层按 answerRelease+dueAt 决定交卷瞬间的形态）
+        // T6R.3：交卷回传每题 questionRevisionId 验证题目版本（与冻结集合精确
+        // 比对）；不带请求体按空集合传入——非空卷自然 409 QUESTION_REVISION_STALE
+        // （旧标签页/陈旧页面可诊断提示刷新，不静默接受）
+        const body = await parseJsonBodyOrEmpty(c, attemptSubmitRequestSchema);
         return c.json({
           ok: true,
           data: submitAttempt(
@@ -188,6 +197,7 @@ export function createStudentRoutes(
             c.var.student.id,
             c.req.param("id"),
             new Date(),
+            body?.revisions ?? [],
           ),
         });
       })

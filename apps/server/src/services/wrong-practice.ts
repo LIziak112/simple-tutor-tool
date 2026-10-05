@@ -80,6 +80,7 @@ export function startWrongPractice(
     const attemptNo = (countRow?.n ?? 0) + 1;
 
     const id = randomUUID();
+    const startedAt = new Date().toISOString();
     tx.insert(attempts)
       .values({
         id,
@@ -91,12 +92,15 @@ export function startWrongPractice(
         unitId: null,
         attemptNo,
         status: "draft",
-        startedAt: new Date().toISOString(),
+        startedAt,
         submittedAt: null,
         activeSec: null,
         device: null,
         scoreAuto: null,
         scoreFinal: null,
+        // T6R.3：建卷即冻结（与三来源统一口径；快照在下方逐题预插）
+        frozenAt: startedAt,
+        legacyUnverified: false,
       })
       .run();
     // 建卷即冻结：逐题复制最近一次判定作答的快照（插入顺序 = 组卷题序）

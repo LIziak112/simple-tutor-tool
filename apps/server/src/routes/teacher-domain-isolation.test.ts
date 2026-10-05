@@ -26,6 +26,7 @@ import {
   createTestDir,
   TEST_TEACHER_ID,
 } from "../db/test-utils.ts";
+import { fetchSubmitRevisions } from "../test/submit-revisions.ts";
 
 /**
  * T2B.3 隔离红线测试矩阵（§0.2：教师乙访问教师甲资源 → 404 或列表为空；
@@ -1942,6 +1943,13 @@ describe("T2B.5 同 id 冲突：甲乙各导同 dslId/同题目 id 的不同版�
       "POST",
       `/api/student/attempts/${sideA.attemptId}/submit`,
       sideA.studentCookie,
+      {
+        revisions: await fetchSubmitRevisions(
+          app,
+          sideA.studentCookie,
+          sideA.attemptId,
+        ),
+      },
     );
     expect(submitA.status).toBe(200);
     const resultA = (await submitA.json()) as {
@@ -1963,6 +1971,13 @@ describe("T2B.5 同 id 冲突：甲乙各导同 dslId/同题目 id 的不同版�
       "POST",
       `/api/student/attempts/${sideB.attemptId}/submit`,
       sideB.studentCookie,
+      {
+        revisions: await fetchSubmitRevisions(
+          app,
+          sideB.studentCookie,
+          sideB.attemptId,
+        ),
+      },
     );
     expect(submitB.status).toBe(200);
     const resultB = (await submitB.json()) as {
@@ -2259,6 +2274,13 @@ describe("T2B.5 学生端回归：两名不同教师的学生全流程互不串�
       "POST",
       `/api/student/attempts/${sideA.attemptId}/submit`,
       sideA.studentCookie,
+      {
+        revisions: await fetchSubmitRevisions(
+          app,
+          sideA.studentCookie,
+          sideA.attemptId,
+        ),
+      },
     );
     expect(submitA.status).toBe(200);
     const submitB = await request(
@@ -2266,6 +2288,13 @@ describe("T2B.5 学生端回归：两名不同教师的学生全流程互不串�
       "POST",
       `/api/student/attempts/${sideB.attemptId}/submit`,
       sideB.studentCookie,
+      {
+        revisions: await fetchSubmitRevisions(
+          app,
+          sideB.studentCookie,
+          sideB.attemptId,
+        ),
+      },
     );
     expect(submitB.status).toBe(200);
     const resultA = (await submitA.json()) as {

@@ -211,17 +211,28 @@ export const hintOpenedEntrySchema = z.object({
 });
 
 /**
+ * attempt 视图的公开题目（T6R.3 全来源冻结）：QuestionPublic 白名单投影 +
+ * 每题不透明 questionRevisionId（该题在本 attempt 的 responses 行 id——建卷
+ * 冻结时铸造，交卷时原样回传以验证题目版本；只能定位授权记录，不能当访问
+ * 凭证，方案 §5.1）。fail closed 语义与 questionPublicSchema 一致：多给的
+ * 教师侧字段在 parse 时被 strip。
+ */
+export const attemptQuestionPublicSchema = questionPublicSchema.extend({
+  questionRevisionId: questionRevisionIdSchema,
+});
+
+/**
  * 草稿视图的单元分组（T2A.7）：题目按所属单元分节下发。
  * assignment 来源按 assignment_units.order 排列（题号全卷连续）；course 来源
- * 恒为单组（单元标题）。live 题数为 0 的单元不出现（与试卷口径一致）。
+ * 恒为单组（单元标题）。T6R.3 起题目来自建卷冻结快照（教师改题库不影响）。
  */
 export const attemptDraftUnitSchema = z.object({
-  /** 练习单元 id（来自 DSL） */
+  /** 练习单元 id（来自 DSL；wrong 来源为 attemptId——卷无单元语义，仅作分组键） */
   id: z.string().min(1),
-  /** 单元标题（当前值；答题页分节标题） */
+  /** 单元标题（当前值；答题页分节标题。wrong 来源恒「错题重练」） */
   title: z.string().min(1),
-  /** 该单元的公开题目（QuestionPublic 形态，按单元内题序） */
-  questions: z.array(questionPublicSchema),
+  /** 该单元的公开题目（冻结快照的 QuestionPublic 投影 + questionRevisionId） */
+  questions: z.array(attemptQuestionPublicSchema),
 });
 
 /** GET /api/student/attempts/:id 的草稿视图（status=draft）响应 data */
@@ -249,6 +260,12 @@ export const attemptDraftDataSchema = z.object({
    * 未解锁提示的内容不在此（也不在任何学生端响应）。
    */
   hintsOpened: z.record(z.string(), hintOpenedEntrySchema.array()),
+  /**
+   * 冻结来源不可信标记（T6R.3，方案 §5.1「legacy_unverified」）：true = 本卷
+   * 快照是升级后首次恢复访问时懒冻结的当前版本，不能宣称是学生更早看到的
+   * 内容——前端据此展示「练习内容为恢复后的版本」提示；false = 建卷即冻结。
+   */
+  legacyUnverified: z.boolean(),
 });
 
 /**
@@ -530,6 +547,8 @@ export type AttemptSummary = z.infer<typeof attemptSummarySchema>;
 export type AttemptStartData = z.infer<typeof attemptStartDataSchema>;
 export type AttemptDraftData = z.infer<typeof attemptDraftDataSchema>;
 export type AttemptDraftUnit = z.infer<typeof attemptDraftUnitSchema>;
+/** attempt 视图公开题目（QuestionPublic + questionRevisionId，T6R.3） */
+export type AttemptQuestionPublic = z.infer<typeof attemptQuestionPublicSchema>;
 export type AttemptResultQuestion = z.infer<typeof attemptResultQuestionSchema>;
 export type AttemptResultUnit = z.infer<typeof attemptResultUnitSchema>;
 export type AttemptScoreSummary = z.infer<typeof attemptScoreSummarySchema>;
@@ -539,9 +558,7 @@ export type AttemptAnswerSaveRequest = z.infer<
 >;
 export type AttemptAnswerSaveData = z.infer<typeof attemptAnswerSaveDataSchema>;
 /** 交卷回传的单题版本对（T6R.3；questionRevisionId = responses 行 id，不透明） */
-export type AttemptSubmitRevision = z.infer<
-  typeof attemptSubmitRevisionSchema
->;
+export type AttemptSubmitRevision = z.infer<typeof attemptSubmitRevisionSchema>;
 /** 交卷请求体（T6R.3） */
 export type AttemptSubmitRequest = z.infer<typeof attemptSubmitRequestSchema>;
 export type HintOpenedEntry = z.infer<typeof hintOpenedEntrySchema>;

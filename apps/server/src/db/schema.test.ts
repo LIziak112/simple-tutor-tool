@@ -421,6 +421,10 @@ describe("attempts / responses 表（T2.6 作答生命周期）", () => {
       device: null,
       scoreAuto: null,
       scoreFinal: null,
+      // T6R.3 冻结列：显式给值（回读相等断言用；缺省时 DB 默认 frozenAt=null /
+      // legacyUnverified=false，见迁移测试）
+      frozenAt: now,
+      legacyUnverified: false,
     };
     db.insert(attempts).values(attempt).run();
     expect(

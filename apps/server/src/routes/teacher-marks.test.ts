@@ -9,6 +9,7 @@ import { createTeacherSession } from "../auth/session.ts";
 import type { Db } from "../db/client";
 import { attempts, responses, teachers } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
+import { fetchSubmitRevisions } from "../test/submit-revisions.ts";
 
 /**
  * T3.2b 批注与待批队列服务测试（POST /api/teacher/responses/:id/mark 与
@@ -480,7 +481,13 @@ async function makeEnv(): Promise<TestEnv> {
       await request(
         app,
         `/api/student/attempts/${courseSubmittedId}/submit`,
-        {},
+        {
+          revisions: await fetchSubmitRevisions(
+            app,
+            studentCookie,
+            courseSubmittedId,
+          ),
+        },
         studentCookie,
       )
     ).status,
@@ -511,7 +518,13 @@ async function makeEnv(): Promise<TestEnv> {
       await request(
         app,
         `/api/student/attempts/${assignmentSubmittedId}/submit`,
-        {},
+        {
+          revisions: await fetchSubmitRevisions(
+            app,
+            studentCookie,
+            assignmentSubmittedId,
+          ),
+        },
         studentCookie,
       )
     ).status,

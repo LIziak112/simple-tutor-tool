@@ -8,7 +8,6 @@ import { createDb } from "./client.ts";
 import { resolveMigrationsFolder, runMigrations } from "./migrate.ts";
 import {
   assignments,
-  attempts,
   courses,
   ink,
   questions,
@@ -84,8 +83,9 @@ describe("T6R.2 迁移：空库与带存量库", () => {
   /**
    * 在 T6R.2 之前的存量库上插入业务数据（attempts/responses/ink 等）。
    * 库本身由 makeMigrationsFolderUpTo(PRE_T6R2_LAST_TAG) 的截断迁移目录建出
-   * （backfill.test.ts 既有惯例：journal 天然只到边界，drizzle 插入对旧表安全
-   * ——0021 未改任何既有表列）。
+   * （backfill.test.ts 既有惯例：journal 天然只到边界）。**attempts 行用原生
+   * SQL 插入**——drizzle 绑定当前 schema，T6R.3 起含 frozen_at 等截断旧表
+   * 没有的列；responses/ink 等未改列的表继续走 drizzle。
    */
   function seedLegacyData(db: ReturnType<typeof createDb>): {
     attemptId: string;
@@ -185,24 +185,13 @@ describe("T6R.2 迁移：空库与带存量库", () => {
       })
       .run();
     const attemptId = randomUUID();
-    db.insert(attempts)
-      .values({
-        id: attemptId,
-        studentId,
-        sourceType: "assignment",
-        assignmentId,
-        courseId,
-        unitId,
-        attemptNo: 1,
-        status: "draft",
-        startedAt: now,
-        submittedAt: null,
-        activeSec: null,
-        device: null,
-        scoreAuto: null,
-        scoreFinal: null,
-      })
-      .run();
+    // T6R.3：attempts 用原生 SQL（截断库没有 frozen_at/legacy_unverified 列）
+    db.$client
+      .prepare(
+        `INSERT INTO attempts (id, student_id, source_type, assignment_id, course_id, unit_id, attempt_no, status, started_at, submitted_at, active_sec, device, score_auto, score_final)
+         VALUES (?, ?, 'assignment', ?, ?, ?, 1, 'draft', ?, NULL, NULL, NULL, NULL, NULL)`,
+      )
+      .run(attemptId, studentId, assignmentId, courseId, unitId, now);
     db.insert(responses)
       .values({
         id: randomUUID(),
@@ -272,6 +261,16 @@ describe("T6R.2 迁移：空库与带存量库", () => {
     expect(
       db.$client.prepare("SELECT count(*) AS n FROM ink").get(),
     ).toMatchObject({ n: 1 });
+    // T6R.3（0022）：存量 attempts 行补冻结列默认值——未冻结、非 legacy
+    // （升级前已交卷的行沿用交卷快照；进行中行由服务层懒冻结，见 attempt-service）
+    const attemptRow = db.$client
+      .prepare("SELECT frozen_at, legacy_unverified FROM attempts WHERE id = ?")
+      .get(seeded.attemptId) as {
+      frozen_at: string | null;
+      legacy_unverified: number;
+    };
+    expect(attemptRow.frozen_at).toBeNull();
+    expect(attemptRow.legacy_unverified).toBe(0);
     // 新表可直接写入并引用存量 attempt（外键生效）
     db.$client
       .prepare(

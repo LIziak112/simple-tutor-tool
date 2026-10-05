@@ -57,12 +57,14 @@ const COURSE_DRAFT: AttemptDraftData = {
           knowledge: ["有理数的概念"],
           stemMd: "$0$ 既不是正数，也不是负数。[[]]",
           hintCount: 0,
+          questionRevisionId: "rev-练习四-1",
         },
       ],
     },
   ],
   drafts: {},
   hintsOpened: {},
+  legacyUnverified: false,
 };
 
 function renderPage() {

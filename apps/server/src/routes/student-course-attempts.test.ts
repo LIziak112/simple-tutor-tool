@@ -15,6 +15,7 @@ import { attempts, responses } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 import { assertNoStemLeak } from "../test/assert-no-stem-leak.ts";
+import { fetchSubmitRevisions } from "../test/submit-revisions.ts";
 
 /**
  * T2A.6 课程练习作答集成测试（app.request() 直调路由 + 内存库）：
@@ -253,16 +254,20 @@ async function saveAnswer(
   );
 }
 
-/** 交卷 */
+/** 交卷（T6R.3：自动回传题目版本集合，与前端同流程） */
 async function submit(
   env: TestEnv,
   cookie: string,
   attemptId: string,
 ): Promise<Response> {
-  return env.app.request(`/api/student/attempts/${attemptId}/submit`, {
-    method: "POST",
-    headers: { cookie },
-  });
+  return (async () => {
+    const revisions = await fetchSubmitRevisions(env.app, cookie, attemptId);
+    return env.app.request(`/api/student/attempts/${attemptId}/submit`, {
+      method: "POST",
+      headers: { cookie },
+      body: JSON.stringify({ revisions }),
+    });
+  })();
 }
 
 /** 上报学习痕迹事件（focus/blur 区间 → activeSec 计算数据源） */
