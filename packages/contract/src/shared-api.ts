@@ -9,7 +9,7 @@ import {
  * 共享发布 API 契约（T2B.7 起为权威定义）：教师端 /api/teacher/shared/*、
  * 发布接口 /api/teacher/library/{units,lectures}/:id/publish 与管理端
  * /api/admin/shared-files 的请求/响应与错误码。
- * 依据：docs/Phase2B改进任务清单.md §2 D15（共享目录与规模防线）、D16（发布=复制快照
+ * 依据：docs/archive/Phase2B改进任务清单.md §2 D15（共享目录与规模防线）、D16（发布=复制快照
  * + 伴生 meta）、D17（导入复用单文件预览/提交，filename 白名单防穿越）、D18（删除
  * 权限：发布者本人 / 管理员任意）。
  *

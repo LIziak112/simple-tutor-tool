@@ -5,7 +5,7 @@ import { contentTreeQuestionSchema } from "./content-api.ts";
 /**
  * 资源库 API 契约（T2A.2 起为权威定义）：教师端资源库页面（讲义库 / 题库 / 回收站）
  * 与单元管理的请求体/响应 data、错误码。
- * 依据：docs/Phase2A改进任务清单.md §5 T2A.2、§2 D2（文件夹）、D3（软删+回收站+purge 条件）、
+ * 依据：docs/archive/Phase2A改进任务清单.md §5 T2A.2、§2 D2（文件夹）、D3（软删+回收站+purge 条件）、
  * D8（配套讲义）、D16（资源删除不影响作业）；§4 教师端通用使用约定。
  *
  * 约定（与 content-api.ts 一致）：

@@ -9,7 +9,7 @@ import { questionPublicSchema } from "./content.ts";
  * 教师端布置作业 CRUD 请求/响应、布置前「已做过」检查（D15）、作业列表（按课程
  * 筛选）与详情、学生端作业列表与试卷、错误码。
  * 依据：docs/技术架构与实施方案.md §5.2（assignments / assignment_units /
- * assignment_students 表、attempts 状态字段）、docs/Phase2A改进任务清单.md §2
+ * assignment_students 表、attempts 状态字段）、docs/archive/Phase2A改进任务清单.md §2
  * D11（答案公布时机）、D12（多单元）、D13（名单增删与课程快照）、D14（内容锁定）、
  * D15（已做过提示）、D16（资源删除不影响作业）、§5 T2A.7/T2A.8。
  *

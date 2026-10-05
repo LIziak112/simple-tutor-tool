@@ -15,7 +15,7 @@ import { studentAnswerSchema } from "./grading.ts";
  * GET /api/teacher/pending-marks 待批队列。
  * T3.4 增补（D13）：GET /api/teacher/export/csv 的查询参数（文件直出，
  * 响应头与 CSV 内容口径见服务端 export-csv）。
- * 依据：docs/Phase3任务清单.md §2 D5（草稿可见）、D6（三视图与来源筛选）、
+ * 依据：docs/archive/Phase3任务清单.md §2 D5（草稿可见）、D6（三视图与来源筛选）、
  * D7（详情逐题字段）、D8（入口衔接）、D3（批注语义）、D4（待批队列口径）；
  * 全局约定见 docs/开发任务清单.md §0.3。
  *

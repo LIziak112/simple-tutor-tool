@@ -3,7 +3,7 @@ import { teacherLoginNameSchema, teacherPasswordSchema } from "./auth.ts";
 
 /**
  * 管理端 API 契约（T2B.6 起为权威定义）：/api/admin/* 的请求/响应与错误码。
- * 依据：docs/Phase2B改进任务清单.md §2 D3/D7/D8/D19/D20 与 §4 管理端通用使用约定。
+ * 依据：docs/archive/Phase2B改进任务清单.md §2 D3/D7/D8/D19/D20 与 §4 管理端通用使用约定。
  *
  * 约定（与 auth.ts / student.ts 一致）：
  * - 本文件只定义请求体/查询参数与 data 部分；响应壳统一由 index.ts 描述，
