@@ -1,15 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
   existsSync,
-  mkdirSync,
   readdirSync,
   readFileSync,
-  renameSync,
   statSync,
   unlinkSync,
-  writeFileSync,
 } from "node:fs";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { gunzipSync, gzipSync } from "node:zlib";
 import type { NoteUploadMeta } from "@tutor/contract";
 import {
@@ -30,6 +27,12 @@ import {
   responses,
   submissionEvidence,
 } from "../db/schema";
+import {
+  type AtomicFileFaults,
+  parseGzipOrJsonBytes,
+  resolveWithinRoot,
+  writeFileAtomic,
+} from "../lib/blob-io";
 import { HttpError } from "../lib/http-error";
 import {
   requireAttemptQuestion,
@@ -134,53 +137,38 @@ export function noteBodyRelPath(
 /**
  * 相对路径 → 绝对路径，并做**目录边界**校验（方案 §6.3：路径包含关系不能
  * 只用字符串 startsWith——blobs/notes-evil 会骗过 startsWith(blobs/notes)）。
- * 用 path.relative 判定：结果为空串（根本身）或以 .. 开头或为绝对路径即越界。
- * 后缀白名单（.json.gz）为纵深防御，防止把任意文件当正文读。
+ * 强算法唯一实现在 lib/blob-io 的 resolveWithinRoot（path.relative 判定），
+ * 本函数是携带 note 域错误码与 .json.gz 后缀的薄壳。
  */
 export function resolveNoteBodyPath(dataDir: string, relPath: string): string {
-  const root = resolve(dataDir, "blobs", "notes");
-  const abs = resolve(dataDir, relPath);
-  const rel = relative(root, abs);
-  if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
-    throw new HttpError(500, "NOTE_BODY_PATH_INVALID", "笔记正文路径越界");
-  }
-  if (!abs.endsWith(".json.gz")) {
-    throw new HttpError(500, "NOTE_BODY_PATH_INVALID", "笔记正文路径后缀非法");
-  }
-  return abs;
+  return resolveWithinRoot(dataDir, join("blobs", "notes"), relPath, {
+    suffix: ".json.gz",
+    violationCode: "NOTE_BODY_PATH_INVALID",
+  });
 }
 
-/** 派生图等其它 notes 域内文件的边界校验（后缀可指定；T6R.6/_GC 用） */
+/** 派生图等其它 notes 域内文件的边界校验（后缀可指定；T6R.6/GC 用） */
 function resolveNoteBlobPath(
   dataDir: string,
   relPath: string,
   suffix: string | null,
 ): string {
-  const root = resolve(dataDir, "blobs", "notes");
-  const abs = resolve(dataDir, relPath);
-  const rel = relative(root, abs);
-  if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
-    throw new HttpError(500, "NOTE_BODY_PATH_INVALID", "笔记文件路径越界");
-  }
-  if (suffix !== null && !abs.endsWith(suffix)) {
-    throw new HttpError(500, "NOTE_BODY_PATH_INVALID", "笔记文件路径后缀非法");
-  }
-  return abs;
+  return resolveWithinRoot(dataDir, join("blobs", "notes"), relPath, {
+    suffix,
+    violationCode: "NOTE_BODY_PATH_INVALID",
+  });
 }
 
 // ---------- 正文解析与限额（契约 NOTE_LIMIT_EXCEEDED / NOTE_VALIDATION_FAILED 分级） ----------
 
-/** gzip 魔数（1f 8b）：前端 CompressionStream 压缩；老浏览器回退发原始 JSON */
-const GZIP_MAGIC = 0x1f8b;
-
 /**
  * 上传字节 → NoteDoc（先验后写，坏数据不落盘）：
  * - 接收字节（gzip 后或原始 JSON）超 NOTE_BODY_GZIP_MAX_BYTES → 413；
- * - gzip 魔数开头 → gunzip（解压上限 NOTE_BODY_DECOMPRESSED_MAX_BYTES：
- *   超限 Node 抛 ERR_BUFFER_TOO_LARGE → 413 高压缩比炸弹；数据损坏
- *   Z_DATA_ERROR → 400）；否则当原始 JSON；
- * - JSON 非法 / 不符合 noteDocSchema → 400；其中「超上限」类校验问题
- *   （单笔/总点数，契约 superRefine 中文消息以「超上限」措辞标识）→ 413。
+ * - gzip 解压（机制在 lib/blob-io.parseGzipOrJsonBytes，解压上限
+ *   NOTE_BODY_DECOMPRESSED_MAX_BYTES）：超限 Node 抛 ERR_BUFFER_TOO_LARGE
+ *   → 413 高压缩比炸弹；数据损坏 Z_DATA_ERROR → 400；
+ * - JSON 非法 / 不符合 noteDocSchema → 400；其中限额类校验问题（单笔/总
+ *   点数，契约 superRefine 以 params.limit===true 结构标记）→ 413。
  */
 export function parseNoteBodyBytes(bytes: Uint8Array): NoteDoc {
   if (bytes.byteLength > NOTE_BODY_GZIP_MAX_BYTES) {
@@ -191,29 +179,23 @@ export function parseNoteBodyBytes(bytes: Uint8Array): NoteDoc {
     );
   }
   let jsonText: string;
-  const isGzip =
-    bytes.length >= 2 && (bytes[0] ?? 0) * 256 + (bytes[1] ?? 0) === GZIP_MAGIC;
-  if (isGzip) {
-    try {
-      jsonText = gunzipSync(bytes, {
-        maxOutputLength: NOTE_BODY_DECOMPRESSED_MAX_BYTES,
-      }).toString("utf8");
-    } catch (err) {
-      if ((err as { code?: string }).code === "ERR_BUFFER_TOO_LARGE") {
-        throw new HttpError(
-          413,
-          "NOTE_LIMIT_EXCEEDED",
-          "草稿解压后超过 32MiB 上限（高压缩比数据），请精简后重试",
-        );
-      }
+  try {
+    jsonText = parseGzipOrJsonBytes(bytes, {
+      maxDecompressed: NOTE_BODY_DECOMPRESSED_MAX_BYTES,
+    });
+  } catch (err) {
+    if ((err as { code?: string }).code === "ERR_BUFFER_TOO_LARGE") {
       throw new HttpError(
-        400,
-        "NOTE_VALIDATION_FAILED",
-        "草稿数据解压失败（不是合法的 gzip 文档）",
+        413,
+        "NOTE_LIMIT_EXCEEDED",
+        "草稿解压后超过 32MiB 上限（高压缩比数据），请精简后重试",
       );
     }
-  } else {
-    jsonText = Buffer.from(bytes).toString("utf8");
+    throw new HttpError(
+      400,
+      "NOTE_VALIDATION_FAILED",
+      "草稿数据解压失败（不是合法的 gzip 文档）",
+    );
   }
   let parsedJson: unknown;
   try {
@@ -233,7 +215,8 @@ export function parseNoteBodyBytes(bytes: Uint8Array): NoteDoc {
     // 中文消息子串匹配）
     if (
       parsed.error.issues.some(
-        (issue) => (issue.params as { limit?: boolean } | undefined)?.limit === true,
+        (issue) =>
+          (issue.params as { limit?: boolean } | undefined)?.limit === true,
       )
     ) {
       throw new HttpError(
@@ -253,23 +236,16 @@ export function parseNoteBodyBytes(bytes: Uint8Array): NoteDoc {
 
 // ---------- 不可变文件写入（唯一临时文件 → rename） ----------
 
-/** 测试故障注入钩子（生产恒不传；见 saveNoteVersion 注释） */
-export interface NoteWriteFaults {
-  /** 临时文件写之前触发（模拟磁盘写失败/此刻崩溃） */
-  beforeTmpWrite?: () => void;
-  /** 临时文件写完、rename 之前触发（捕获 tmp 名/模拟 rename 前中断） */
-  beforeRename?: () => void;
-  /** rename 落位后、调用方事务之前触发（模拟 DB 层失败/此刻崩溃） */
-  afterRename?: () => void;
-}
+/** 测试故障注入钩子（生产恒不传；三个中断点语义见 lib/blob-io.AtomicFileFaults） */
+export type NoteWriteFaults = AtomicFileFaults;
 
 /**
  * 规范化正文字节 → gzip → 唯一临时文件 → rename 到不可变路径。
- * - 临时文件名含每次调用的 randomUUID：两并发请求永不共享 tmp（任务验收项）；
- * - rename 到的目标含本请求的 revision+hash：与已确认版本同名的场景只可能
- *   是「上次崩溃留下的未引用孤儿」（同 hash 必同字节），覆盖无害；
- * - 写/rename 失败：清理本次 tmp 再抛（不留半截文件）。
- * 亦导出供测试直接构造「rename 前/后中断」的崩溃现场。
+ * 机制（唯一 tmp 名/失败清理/故障钩子）在 lib/blob-io.writeFileAtomic；
+ * 本函数只补 note 域两件事：按 (noteId, revision, hash) 定不可变路径 +
+ * 目录边界校验。亦导出供测试直接构造「rename 前/后中断」的崩溃现场。
+ * rename 目标与已确认版本同名的场景只可能是「上次崩溃留下的未引用孤儿」
+ * （同 hash 必同字节），覆盖无害。
  */
 export function writeNoteBodyFile(
   dataDir: string,
@@ -281,23 +257,11 @@ export function writeNoteBodyFile(
 ): { relPath: string; absPath: string } {
   const relPath = noteBodyRelPath(noteId, revision, hash);
   const absPath = resolveNoteBodyPath(dataDir, relPath);
-  const dir = resolve(dataDir, "blobs", "notes", noteId);
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  const tmpPath = join(dir, `.tmp-${randomUUID()}.json.gz`);
-  faults?.beforeTmpWrite?.();
-  try {
-    writeFileSync(tmpPath, gzipSync(canonicalBytes));
-    faults?.beforeRename?.();
-    renameSync(tmpPath, absPath);
-  } catch (err) {
-    try {
-      unlinkSync(tmpPath);
-    } catch {
-      // tmp 尚未创建（写失败）或已被并发清理——无需处理
-    }
-    throw err;
-  }
-  faults?.afterRename?.();
+  writeFileAtomic({
+    finalPath: absPath,
+    bytes: gzipSync(canonicalBytes),
+    faults,
+  });
   return { relPath, absPath };
 }
 

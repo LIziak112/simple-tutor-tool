@@ -1,12 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  writeFileSync,
-} from "node:fs";
-import { join, resolve } from "node:path";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
 import {
   INK_MAX_UPLOAD_BYTES,
@@ -18,6 +12,11 @@ import {
 import { and, eq } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { attempts, type InkRow, ink, students } from "../db/schema";
+import {
+  parseGzipOrJsonBytes,
+  resolveWithinRoot,
+  writeFileAtomic,
+} from "../lib/blob-io";
 import { HttpError } from "../lib/http-error";
 import {
   requireAttemptQuestion,
@@ -31,8 +30,9 @@ import {
  * - 矢量文档：gzip 后写 `DATA_DIR/blobs/ink/<attemptId>/<安全名>.json.gz`；
  * - 快照 PNG：写同目录 `<安全名>.png`；
  * - 数据库 ink 表只存相对路径与元数据（width/height/strokeCount/updatedAt）；
- * - 同题再上传幂等覆盖：文件先写 `<名>.tmp` 再 rename（原子替换，写一半崩溃
- *   不会留下半截文件），行 upsert 且 id 保持不变（教师端 inkId 引用稳定）。
+ * - 同题再上传幂等覆盖：文件经 lib/blob-io.writeFileAtomic 原子替换（唯一
+ *   临时文件 + rename，写一半崩溃不会留下半截文件），行 upsert 且 id 保持
+ *   不变（教师端 inkId 引用稳定）。
  *
  * 路径安全：questionId 来自 DSL（可能含中文/点/`../`），落盘前经 safeInkFileName
  * 映射成安全文件名（encodeURIComponent + 超长/Windows 保留名回退 hash），
@@ -61,20 +61,17 @@ export function safeInkFileName(questionId: string): string {
 /** PNG 魔数（\x89PNG\r\n\x1a\n） */
 const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
-/** gzip 魔数（1f 8b）：前端 CompressionStream 压缩；老浏览器回退发原始 JSON */
-const GZIP_MAGIC = 0x1f8b;
-
-/** 相对路径（DATA_DIR 内）→ 绝对路径，并校验不越出 blobs/ink 根（纵深防御） */
+/**
+ * 相对路径（DATA_DIR 内）→ 绝对路径，并校验不越出 blobs/ink 根（纵深防御）。
+ * 边界算法在 lib/blob-io.resolveWithinRoot（path.relative 强判定——T6R.4 复审
+ * ①换掉旧 startsWith 弱实现：同前缀相邻目录不再可能骗过）；suffix 传空串
+ * 表示不做后缀检查（旧签名兼容口径）。
+ */
 function inkFileAbs(dataDir: string, relPath: string, suffix: string): string {
-  const abs = resolve(dataDir, relPath);
-  const root = resolve(dataDir, "blobs", "ink");
-  if (!abs.startsWith(root)) {
-    throw new HttpError(500, "INK_UNREADABLE", "笔迹文件路径非法");
-  }
-  if (suffix !== "" && !abs.endsWith(suffix)) {
-    throw new HttpError(500, "INK_UNREADABLE", "笔迹文件扩展名非法");
-  }
-  return abs;
+  return resolveWithinRoot(dataDir, join("blobs", "ink"), relPath, {
+    suffix: suffix === "" ? null : suffix,
+    violationCode: "INK_UNREADABLE",
+  });
 }
 
 /** 解析 PNG 尺寸（IHDR 固定偏移：大端 u32 宽/高）；非法 PNG 返回 null */
@@ -98,21 +95,17 @@ const INK_MAX_STROKES_UNCOMPRESSED = 32 * 1024 * 1024;
 
 /**
  * strokes 字节 → InkDoc：
- * - gzip 魔数开头 → gunzip（前端 CompressionStream 压缩路径，解压体积有上限）；
- * - 否则当原始 JSON（老浏览器回退路径，兼容不带压缩的直传）；
- * - 解压失败（含超上限）/ JSON 非法 / 不符合 inkDocSchema → 400 INK_INVALID。
+ * - gzip/原始 JSON 识别与解压上限的机制在 lib/blob-io.parseGzipOrJsonBytes
+ *   （T6R.4 复审①抽取共用；错误分类留在此处：解压失败含超上限统一
+ *   400 INK_INVALID，与既有口径一致）；
+ * - JSON 非法 / 不符合 inkDocSchema → 400 INK_INVALID。
  */
 function parseStrokesDoc(bytes: Uint8Array): InkDoc {
   let jsonText: string;
   try {
-    const raw =
-      bytes.length >= 2 &&
-      (bytes[0] ?? 0) * 256 + (bytes[1] ?? 0) === GZIP_MAGIC
-        ? gunzipSync(bytes, {
-            maxOutputLength: INK_MAX_STROKES_UNCOMPRESSED,
-          })
-        : Buffer.from(bytes);
-    jsonText = raw.toString("utf8");
+    jsonText = parseGzipOrJsonBytes(bytes, {
+      maxDecompressed: INK_MAX_STROKES_UNCOMPRESSED,
+    });
   } catch {
     throw new HttpError(
       400,
@@ -146,13 +139,6 @@ function inkDir(dataDir: string, attemptId: string): string {
   const dir = join(dataDir, "blobs", "ink", attemptId);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   return dir;
-}
-
-/** 原子写文件：先写 <名>.tmp 再 rename 覆盖（写一半崩溃不留半截文件） */
-function writeFileAtomic(filePath: string, bytes: Uint8Array): void {
-  const tmp = `${filePath}.tmp`;
-  writeFileSync(tmp, bytes);
-  renameSync(tmp, filePath);
 }
 
 /** 取 ink 行：不存在 → 404 INK_NOT_FOUND */
@@ -217,13 +203,14 @@ export function saveInk(
     throw new HttpError(400, "INK_INVALID", "快照不是合法的 PNG 文件");
   }
 
-  // 落盘（原子替换）：文件名用安全映射后的 questionId
+  // 落盘（原子替换：唯一 tmp + rename，机制在 lib/blob-io.writeFileAtomic——
+  // T6R.4 复审①起 tmp 名每次唯一，并发上传不再共享/互清临时文件）
   const dir = inkDir(dataDir, attemptId);
   const base = safeInkFileName(questionId);
   const strokesPath = join(dir, `${base}.json.gz`);
   const pngPath = join(dir, `${base}.png`);
-  writeFileAtomic(strokesPath, strokesBytes);
-  writeFileAtomic(pngPath, snapshotBytes);
+  writeFileAtomic({ finalPath: strokesPath, bytes: strokesBytes });
+  writeFileAtomic({ finalPath: pngPath, bytes: snapshotBytes });
 
   // upsert ink 行（幂等覆盖保留 id）
   const now = new Date().toISOString();

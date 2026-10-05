@@ -1,15 +1,9 @@
 import { createHash } from "node:crypto";
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { MediaUploadResult } from "@tutor/contract";
 import { mediaUploadResultSchema } from "@tutor/contract";
+import { writeFileAtomic } from "../lib/blob-io";
 import { HttpError } from "../lib/http-error";
 
 /**
@@ -23,8 +17,9 @@ import { HttpError } from "../lib/http-error";
  *   blobs/media/<hash>.<ext>，与契约 MEDIA_SRC_PATTERN（media-api.ts）一致；
  * - 上传上限 5MB（MEDIA_MAX_UPLOAD_BYTES），超限 413 MEDIA_TOO_LARGE
  *   （app.ts 另有 6MB content-length 粗防线，此处按实际字节数兜底 chunked）；
- * - 写入走 <名>.tmp + rename 原子替换（写一半崩溃不留半截文件，同 ink-service）；
- *   文件已存在则幂等跳过写入（内容寻址同名即同内容，重复上传零成本）。
+ * - 写入经 lib/blob-io.writeFileAtomic 原子替换（唯一临时文件 + rename，
+ *   写一半崩溃不留半截文件；T6R.4 复审①起 tmp 名每次唯一——并发上传不再
+ *   共享/互清临时文件）；文件已存在则幂等跳过写入（内容寻址同名即同内容）。
  *
  * 伺服：URL 是 /blobs/media/<hash>.<ext>——契约 src（blobs/media/<hash>.<ext>）
  * 前加 / 即根相对伺服 URL，一一对应。app.ts 的 /blobs/* 路由按
@@ -156,13 +151,6 @@ function mediaDir(dataDir: string): string {
   return dir;
 }
 
-/** 原子写文件：先写 <名>.tmp 再 rename 覆盖（写一半崩溃不留半截文件） */
-function writeFileAtomic(filePath: string, bytes: Uint8Array): void {
-  const tmp = `${filePath}.tmp`;
-  writeFileSync(tmp, bytes);
-  renameSync(tmp, filePath);
-}
-
 /**
  * 保存一张上传图片（multipart 解析后的文件字节）：
  * - 魔数不在 PNG/JPEG/GIF/WEBP 白名单 → 415 UNSUPPORTED_MEDIA_TYPE；
@@ -199,7 +187,7 @@ export function saveMedia(
     .digest("hex");
   const filePath = join(mediaDir(dataDir), `${hash}.${ext}`);
   if (!existsSync(filePath)) {
-    writeFileAtomic(filePath, bytes);
+    writeFileAtomic({ finalPath: filePath, bytes });
   }
   return mediaUploadResultSchema.parse({
     src: `blobs/media/${hash}.${ext}`,
