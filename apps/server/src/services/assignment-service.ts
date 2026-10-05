@@ -14,7 +14,7 @@ import type {
   TeacherAssignmentUnit,
 } from "@tutor/contract";
 import { defaultAssignmentTitle, questionPublicSchema } from "@tutor/contract";
-import { publicStemMd } from "@tutor/md-dsl";
+import { studentStemMd } from "@tutor/md-dsl";
 import { and, asc, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
@@ -1154,7 +1154,8 @@ export function knowledgeNamesByQuestion(
  * - 从 questions 整行构造候选对象后经 questionPublicSchema.parse 输出过滤（strip
  *   未知键）：answersJson / solutionMd / hintsJson / sourceMd 等教师侧列一律被剥离，
  *   将来加列也不会经由本投影外泄（fail closed）；
- * - stemMd 先经 publicStemMd 公开化：填空/判断标记 [[答案]] 替换为空标记 [[]]，
+ * - stemMd 经 studentStemMd 学生端唯一投影：options 另行下发时剥除题干内嵌的
+ *   选项任务列表（含 [x] 正确项标记）+ 填空/判断标记 [[答案]] 替换为空标记 [[]]，
  *   数学/代码环境内的 [[…]] 记号原样保留；
  * - options 仅 choice/multi 携带，映射为纯文本数组（无 correct 标记）；
  * - hints 只暴露数量 hintCount（内容由 T2.11 分步提示接口按需下发）；
@@ -1168,17 +1169,19 @@ export function publicQuestionsOfRows(
 ): QuestionPublic[] {
   const knowledge = knowledgeNamesByQuestion(db, teacherId);
 
-  return liveQuestions.map((question) =>
-    questionPublicSchema.parse({
+  return liveQuestions.map((question) => {
+    const options =
+      question.optionsJson !== null
+        ? optionTexts(question.optionsJson)
+        : undefined;
+    return questionPublicSchema.parse({
       ...question,
-      stemMd: publicStemMd(question.stemMd),
+      stemMd: studentStemMd({ stemMd: question.stemMd, options }),
       knowledge: knowledge.get(question.id) ?? [],
       hintCount: hintCountOf(question.hintsJson),
-      ...(question.optionsJson !== null
-        ? { options: optionTexts(question.optionsJson) }
-        : {}),
-    }),
-  );
+      ...(options !== undefined ? { options } : {}),
+    });
+  });
 }
 
 /**

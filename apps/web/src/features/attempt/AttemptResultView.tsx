@@ -1,4 +1,5 @@
 import type { AttemptResultData, AttemptResultQuestion } from "@tutor/contract";
+import { displayStemMd } from "@tutor/md-dsl";
 import { cn } from "cn";
 import {
   CheckCircle2,
@@ -22,7 +23,6 @@ import {
   letterOf,
   QUESTION_TYPE_BADGE_CLASS,
   QUESTION_TYPE_LABELS,
-  stemWithoutOptionList,
 } from "./answer-format";
 
 /**
@@ -324,13 +324,9 @@ function ResultQuestionCard({
           />
         )}
 
-      {/* 题干快照（released=false 时为公开化题干，服务端已替换 [[答案]] 标记） */}
+      {/* 题干快照（服务端已 studentStemMd 投影；displayStemMd 兜底剥内嵌选项列表） */}
       <RichMarkdown
-        source={
-          question.snapshot.options !== undefined
-            ? stemWithoutOptionList(question.snapshot.stemMd)
-            : question.snapshot.stemMd
-        }
+        source={displayStemMd(question.snapshot)}
         className="text-base"
       />
       <ResultOptions question={question} />

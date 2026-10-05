@@ -13,12 +13,12 @@ import {
 import { Link } from "react-router";
 import { Button } from "@/components/ui/button";
 import { SolutionFold } from "@/features/attempt/AttemptResultView";
+import { displayStemMd, stripOptionListMd } from "@tutor/md-dsl";
 import {
   formatReferenceAnswers,
   letterOf,
   QUESTION_TYPE_BADGE_CLASS,
   QUESTION_TYPE_LABELS,
-  stemWithoutOptionList,
 } from "@/features/attempt/answer-format";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { DISPLAY_TZ, formatCnTime } from "@/lib/time";
@@ -237,7 +237,7 @@ export function groupCountLabel(tab: WrongTab, count: number): string {
  */
 export function stemSummaryOf(stemMd: string): string {
   return (
-    stemWithoutOptionList(stemMd)
+    stripOptionListMd(stemMd)
       .replace(/\[\[[^\]]*\]\]/g, "（　）")
       .replace(/:::+[a-zA-Z-]*/g, " ")
       .replace(/\$\$?([^$]+)\$\$?/g, "$1")
@@ -466,13 +466,9 @@ export function WrongQuestionItem({
         ))}
       </div>
 
-      {/* 题干快照（[[答案]] 标记渲染为空框，答案在下方面板单独展示） */}
+      {/* 题干快照（服务端已 studentStemMd 投影，答案在下方面板单独展示） */}
       <RichMarkdown
-        source={
-          question.options !== undefined
-            ? stemWithoutOptionList(question.stemMd)
-            : question.stemMd
-        }
+        source={displayStemMd(question)}
         className="text-base"
       />
       <WrongOptions question={question} />

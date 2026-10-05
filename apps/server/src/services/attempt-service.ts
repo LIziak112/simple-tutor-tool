@@ -23,7 +23,7 @@ import {
   studentAnswerSchema,
 } from "@tutor/contract";
 import { grade } from "@tutor/grading";
-import { publicStemMd } from "@tutor/md-dsl";
+import { studentStemMd } from "@tutor/md-dsl";
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
@@ -318,7 +318,8 @@ export const WRONG_PRACTICE_TITLE = "错题重练";
 
 /**
  * 冻结快照（契约 Question）→ QuestionPublic 投影（wrong 来源草稿视图/通用取卷
- * 用）：stemMd 公开化（[[答案]] → [[]]）、options 转纯文本、hints 只留数量，
+ * 用）：stemMd 经 studentStemMd 学生端唯一投影（options 另行下发时剥除题干内嵌
+ * 选项任务列表 + [[答案]] → [[]] 脱敏）、options 转纯文本、hints 只留数量，
  * answers/solutionMd/sourceMd 一律剥离——与 publicQuestionsOfRows 同一防泄露
  * 口径（fail closed，经 questionPublicSchema.parse strip 未知键）。
  */
@@ -328,7 +329,7 @@ function publicOfSnapshot(question: Question): QuestionPublic {
     type: question.type,
     difficulty: question.difficulty,
     knowledge: question.knowledge,
-    stemMd: publicStemMd(question.stemMd),
+    stemMd: studentStemMd(question),
     ...(question.options !== undefined
       ? { options: question.options.map((option) => option.text) }
       : {}),
@@ -1187,9 +1188,9 @@ function scoreSummaryOf(
  *
  * T2A.8（D11）公布时机：assignment 来源按作业 answerRelease + dueAt 与 now 判定
  * （answersReleased 纯函数）；course 来源恒公布。未公布（受限形态）时逐题
- * answers/solutionMd/autoCorrect 置 null、stemMd 经 publicStemMd 公开化（快照题干
- * 含 [[答案]] 标记，与草稿视图同一防泄露口径）、attempt.scoreAuto 置 null 投影
- * （库里保留）、summary 的对错计数不泄露（correct/wrong/autoGradable=0、
+ * answers/solutionMd/autoCorrect 置 null、stemMd 经 studentStemMd 投影（快照题干
+ * 含 [[答案]] 标记与 [x] 正确项，与草稿视图同一防泄露口径）、attempt.scoreAuto
+ * 置 null 投影（库里保留）、summary 的对错计数不泄露（correct/wrong/autoGradable=0、
  * pending=answered 口径——每道已答题显示为「待批」）。本人答案与已解锁提示照常。
  * now 可注入（定时测试；默认当前时刻，截止后下一次请求自动恢复完整形态）。
  */
@@ -1212,19 +1213,21 @@ function buildResultData(
   const released =
     assignmentRow === null || answersReleased(assignmentRow, now);
 
-  /** 受限形态的逐题投影（见函数头注释；已公布时原样返回）。
-   * D9 新字段 teacherMark / teacherComment / finalCorrect 与 autoCorrect 同法置
+  /** 受限形态的逐题投影（见函数头注释）。
+   * stemMd 一律经 studentStemMd 学生端投影（已公布也不例外）：[[答案]] 渲染为
+   * 空框、选择题选项列表由前端 options 行渲染——保证学生载荷在任何形态下都不含
+   * [x] 正确项标记与非空 [[…]] 标记（AGENTS 第 3 条，studentStemMd 唯一入口）。
+   * D9 字段 teacherMark / teacherComment / finalCorrect 与 autoCorrect 同法置
    * null——教师已批也不在截止前泄露对错与评语 */
-  const releaseAwareQuestion = (item: AttemptResultQuestion) =>
-    released
-      ? item
+  const releaseAwareQuestion = (item: AttemptResultQuestion) => {
+    const projected: AttemptResultQuestion = {
+      ...item,
+      snapshot: { ...item.snapshot, stemMd: studentStemMd(item.snapshot) },
+    };
+    return released
+      ? projected
       : {
-          ...item,
-          snapshot: {
-            ...item.snapshot,
-            // 快照题干含 [[答案]] 标记：公开化后再下发（与草稿视图同口径）
-            stemMd: publicStemMd(item.snapshot.stemMd),
-          },
+          ...projected,
           answers: null,
           solutionMd: null,
           autoCorrect: null,
@@ -1232,6 +1235,7 @@ function buildResultData(
           teacherComment: null,
           finalCorrect: null,
         };
+  };
 
   const rows =
     attempt.sourceType === "wrong"

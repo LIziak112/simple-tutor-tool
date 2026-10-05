@@ -3,6 +3,7 @@ import type {
   QuestionPublic,
   StudentAnswer,
 } from "@tutor/contract";
+import { displayStemMd } from "@tutor/md-dsl";
 import { cn } from "cn";
 import { Check, X } from "lucide-react";
 import { BlankAnswersProvider } from "@/features/markdown/BlankAnswersContext";
@@ -11,7 +12,6 @@ import {
   letterOf,
   QUESTION_TYPE_BADGE_CLASS,
   QUESTION_TYPE_LABELS,
-  stemWithoutOptionList,
   withBlankValue,
 } from "./answer-format";
 import {
@@ -30,7 +30,7 @@ import { HintPanel } from "./HintPanel";
  * （对错由按钮作答，空框反而误导）。
  */
 
-/** 判断题题干尾部的空标记（publicStemMd 把 [[正确]] 脱敏成 [[]]） */
+/** 判断题题干尾部的空标记（studentStemMd 投影把 [[正确]] 脱敏成 [[]]） */
 function judgeStemOf(stemMd: string): string {
   return stemMd.replace(/\s*\[\[\]\]\s*$/, "（　）");
 }
@@ -302,9 +302,10 @@ export function AttemptQuestionCard({
           <RichMarkdown source={question.stemMd} className="text-base" />
         </BlankAnswersProvider>
       ) : question.type === "choice" || question.type === "multi" ? (
-        // 选择题：选项在下方按钮里，题干去掉任务列表避免重复（[x] 还会显示成打勾框）
+        // 选择题：选项在下方按钮里——服务端 stemMd 已是 studentStemMd 投影形态，
+        // displayStemMd 兜底剥内嵌列表（防未来新路径漏走投影，重复且 [x] 会显示成打勾框）
         <RichMarkdown
-          source={stemWithoutOptionList(question.stemMd)}
+          source={displayStemMd(question)}
           className="text-base"
         />
       ) : (

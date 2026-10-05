@@ -4,7 +4,6 @@ import {
   parsedDocumentSchema,
   type Question,
   type QuestionAnswers,
-  type QuestionOption,
   type Unit,
 } from "@tutor/contract";
 import {
@@ -676,17 +675,9 @@ export function mapQuestion(raw: V1RawQuestion, issues: LintIssue[]): Question {
     sourceMd: raw.sourceMd,
   };
   if (raw.options.length > 0 && (type === "choice" || type === "multi")) {
-    const correctIndexes =
-      answers?.kind === "choice"
-        ? [answers.index]
-        : answers?.kind === "multi"
-          ? answers.indexes
-          : [];
-    const options: QuestionOption[] = raw.options.map((option, index) => ({
-      text: option.text,
-      correct: correctIndexes.includes(index),
-    }));
-    question.options = options;
+    // 选项纯文本：正确项的权威表示是 answers（choice.index/multi.indexes），
+    // options 不再冗余携带 correct（契约 optionSchema，2026-10 移除）
+    question.options = raw.options.map((option) => ({ text: option.text }));
   }
   if (answers !== undefined) question.answers = answers;
   if (raw.solutionMd.length > 0) question.solutionMd = raw.solutionMd;

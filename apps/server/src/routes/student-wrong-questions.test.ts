@@ -12,6 +12,7 @@ import type { Db } from "../db/client";
 import { attempts, questions, responses, students } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
+import { assertNoStemLeak } from "../test/assert-no-stem-leak.ts";
 
 /**
  * T3.5 错题本集成测试（D11；2026-10 轮次史 + 归属单元扩展；app.request() 直调
@@ -355,7 +356,9 @@ describe("GET /api/student/wrong-questions（T3.5 D11 错题本）", () => {
     expect(judge2?.type).toBe("judge");
     expect(judge2?.knowledge).toEqual(["有理数的概念"]);
     expect(judge2?.answers).toEqual({ kind: "judge", value: false }); // 快照参考答案
-    expect(judge2?.stemMd).toContain("[[错误]]"); // 快照原文（已交卷允许）
+    // 题干为学生端投影（已交卷允许的答案经 answers 键下发；stemMd 恒脱敏，[x]/[[…]] 不残留）
+    expect(judge2?.stemMd).toContain("[[]]");
+    expect(judge2?.stemMd).not.toContain("[[错误]]");
 
     // includeResolved=true：judge1（曾错、最近做对）额外列出；lastAt 倒序
     // （两者 lastAt 同为 T2 → questionId 升序兜底稳定）
@@ -372,6 +375,7 @@ describe("GET /api/student/wrong-questions（T3.5 D11 错题本）", () => {
     // 泄露：条目只含已交卷题目内容——放行参考答案/详解键后无禁用键；
     // 未解锁提示内容绝不出现（两道判断题各有一条提示）
     assertNoLeak(body, { allow: ["answers", "solutionMd"] });
+    assertNoStemLeak(body);
     const serialized = JSON.stringify(body);
     expect(serialized).not.toContain("大于 $0$ 的数是正数。");
     expect(serialized).not.toContain("$-1$ 小于 $0$。");
@@ -436,6 +440,7 @@ describe("GET /api/student/wrong-questions（T3.5 D11 错题本）", () => {
     // 泄露：新字段（rounds/wrongCount/correctCount/originUnit*）无敏感键——
     // 放行参考答案/详解键后无禁用键；未解锁提示内容绝不出现
     assertNoLeak(body, { allow: ["answers", "solutionMd"] });
+    assertNoStemLeak(body);
     const serialized = JSON.stringify(body);
     expect(serialized).not.toContain("大于 $0$ 的数是正数。");
     expect(serialized).not.toContain("$-1$ 小于 $0$。");
@@ -619,6 +624,7 @@ describe("GET /api/student/wrong-questions（T3.5 D11 错题本）", () => {
 
     // 新字段非敏感键：泄露断言照常通过
     assertNoLeak(body, { allow: ["answers", "solutionMd"] });
+    assertNoStemLeak(body);
   });
 
   it("错题重练轮 courseId 恒为 null（rounds 混排 course → wrong，来源标题按重练口径）", async () => {
@@ -744,6 +750,7 @@ describe("GET /api/student/wrong-questions（T3.5 D11 错题本）", () => {
 
     // 泄露：pendingCount/courseId 等新字段非敏感键，assertNoLeak 照常通过
     assertNoLeak(body, { allow: ["answers", "solutionMd"] });
+    assertNoStemLeak(body);
   });
 
   it("公布 gate：after_due 未公布作业的作答整体不参与聚合——该题完全消失（含 includeResolved）", async () => {

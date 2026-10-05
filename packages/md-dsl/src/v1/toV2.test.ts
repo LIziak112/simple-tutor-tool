@@ -81,19 +81,15 @@ describe("v1ToV2 → v2 解析：往返结构一致（样例八题逐题对照�
     });
   });
 
-  it("逐题：选项语义一致（v1 key+答案下标 ↔ v2 correct 标记）", () => {
+  it("逐题：选项语义一致（v1 key+答案下标 ↔ v2 [x] 标记）", () => {
     const v1Choice = v1Questions[2];
     const v2Choice = v2Questions[2];
     expect(v1Choice?.type).toBe("choice");
     expect(v2Choice?.options?.map((o) => o.text)).toEqual(
       v1Choice?.options?.map((o) => o.text),
     );
-    expect(v2Choice?.options?.map((o) => o.correct)).toEqual([
-      false,
-      true,
-      false,
-      false,
-    ]);
+    // 正确项权威在 answers：两边 index 一致即语义一致（[x] 由 toV2 按它生成）
+    expect(v2Choice?.answers).toEqual(v1Choice?.answers);
   });
 
   it("逐题：solutionMd 完全一致（details 剔除 summary 后内容）", () => {

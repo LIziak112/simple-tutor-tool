@@ -19,11 +19,7 @@ const fullChoiceQuestion = {
   difficulty: 1,
   knowledge: ["相反数"],
   stemMd: "$-5$ 的相反数是（ ）",
-  options: [
-    { text: "$-5$", correct: false },
-    { text: "$5$", correct: true },
-    { text: "$\\frac{1}{5}$", correct: false },
-  ],
+  options: [{ text: "$-5$" }, { text: "$5$" }, { text: "$\\frac{1}{5}$" }],
   answers: { kind: "choice", index: 1 },
   hints: ["只有符号不同的两个数互为相反数"],
   solutionMd: "只有符号不同的两个数互为相反数，故 $-5$ 的相反数是 $5$。",

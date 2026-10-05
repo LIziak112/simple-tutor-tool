@@ -4,7 +4,7 @@ import type {
   AttemptResultData,
   TeacherAssignment,
 } from "@tutor/contract";
-import { publicStemMd } from "@tutor/md-dsl";
+import { studentStemMd } from "@tutor/md-dsl";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import type { Db } from "../db/client.ts";
@@ -12,6 +12,7 @@ import { attempts, questions, students, units } from "../db/schema.ts";
 import { createTestDb, TEST_TEACHER_ID } from "../db/test-utils.ts";
 import { HttpError } from "../lib/http-error.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
+import { assertNoStemLeak } from "../test/assert-no-stem-leak.ts";
 import { createAssignment, updateAssignment } from "./assignment-service.ts";
 import {
   answersReleased,
@@ -26,7 +27,7 @@ import {
  * - answersReleased 纯函数：on_submit 恒公布；after_due 按 now ≥ dueAt 判定
  *   （读时比较、无定时任务）；after_due 无截止（防御态）fail closed；
  * - after_due 截止**前**：submit 响应与 GET 详情两份响应都是受限形态——
- *   answers/solutionMd/autoCorrect 全 null、题干公开化（比对 publicStemMd）、
+ *   answers/solutionMd/autoCorrect 全 null、题干经 studentStemMd 投影（比对库内原文）、
  *   summary 对错计数零化（pending=answered 口径）、scoreAuto 置 null 投影
  *   （库里保留真实判分）；assertNoLeak 通过且未解锁提示内容绝不下发；
  * - 截止**后**：同一 attempt 详情完整可见（无需任何后台动作）；
@@ -281,13 +282,29 @@ describe("after_due 截止前：受限形态（可注入时钟）", () => {
 
     const qs = detail.units.flatMap((unit) => unit.questions);
     expect(qs.length).toBe(2);
-    // 题干 = publicStemMd 公开化版（[[答案]] 标记已替换为 [[]]，比对库内原文）
+    // 题干 = studentStemMd 学生端投影（[[答案]] 标记与选项 [x] 都不残留，比对库内原文）
     const rawStems = new Map(
       db
-        .select({ id: questions.id, stemMd: questions.stemMd })
+        .select({
+          id: questions.id,
+          stemMd: questions.stemMd,
+          optionsJson: questions.optionsJson,
+        })
         .from(questions)
         .all()
-        .map((row) => [row.id, row.stemMd] as const),
+        .map(
+          (row) =>
+            [
+              row.id,
+              {
+                stemMd: row.stemMd,
+                options:
+                  row.optionsJson === null
+                    ? undefined
+                    : (JSON.parse(row.optionsJson) as readonly unknown[]),
+              },
+            ] as const,
+        ),
     );
     for (const q of qs) {
       expect(q.answers).toBeNull();
@@ -295,7 +312,7 @@ describe("after_due 截止前：受限形态（可注入时钟）", () => {
       expect(q.autoCorrect).toBeNull();
       expect(rawStems.get(q.snapshot.id)).toBeDefined();
       expect(q.snapshot.stemMd).toBe(
-        publicStemMd(rawStems.get(q.snapshot.id) ?? ""),
+        studentStemMd(rawStems.get(q.snapshot.id) ?? { stemMd: "" }),
       );
       expect(q.snapshot.stemMd).not.toContain("[[正确]]");
       expect(q.snapshot.stemMd).not.toContain("[[错误]]");
@@ -314,6 +331,7 @@ describe("after_due 截止前：受限形态（可注入时钟）", () => {
     // 受限形态保留这两个可空键（值恒 null，上方已逐字段断言），assertNoLeak 按
     // 键名判定故需放行；提示内容与其余教师侧键仍全量拦截
     assertNoLeak(detail, { allow: ["answer", "answers", "solutionMd"] });
+    assertNoStemLeak(detail);
     expect(JSON.stringify(detail)).not.toContain(LOCKED_HINT);
     expect(JSON.stringify(detail)).not.toContain("分界点"); // 详解文本
     expect(JSON.stringify(detail)).not.toContain("移项得"); // 详解文本
@@ -332,6 +350,7 @@ describe("after_due 截止前：受限形态（可注入时钟）", () => {
     expect(resubmitView.attempt.scoreAuto).toBeNull();
     // 键名放行理由见上：值恒 null 已另行逐字段断言
     assertNoLeak(resubmitView, { allow: ["answer", "answers", "solutionMd"] });
+    assertNoStemLeak(resubmitView);
   });
 });
 
@@ -367,10 +386,14 @@ describe("截止后与 on_submit：完整形态", () => {
       value: true,
     });
     expect(qs.find((q) => q.questionId === "rel-q1")?.autoCorrect).toBe(true);
-    // 原始题干（含答案标记）恢复下发
+    // 题干恒为学生端投影（已公布也不例外）：标记脱敏为 [[]]，答案经 answers 键
+    // 下发（上方已断言）——学生载荷任何形态都不含原始 [[正确]] 标记
     expect(
       qs.find((q) => q.questionId === "rel-q1")?.snapshot.stemMd,
-    ).toContain("[[正确]]");
+    ).toContain("[[]]");
+    expect(
+      qs.find((q) => q.questionId === "rel-q1")?.snapshot.stemMd,
+    ).not.toContain("[[正确]]");
     expect(qs.find((q) => q.questionId === "rel-q2")?.solutionMd).toContain(
       "移项得",
     );

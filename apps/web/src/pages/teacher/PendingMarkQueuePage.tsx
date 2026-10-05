@@ -1,6 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import type { PendingMarkCard } from "@tutor/contract";
 import { TEACHER_COMMENT_MAX } from "@tutor/contract";
+import { displayStemMd } from "@tutor/md-dsl";
 import { cn } from "cn";
 import {
   Check,
@@ -359,8 +360,9 @@ function PendingCard({
         ))}
       </div>
 
-      {/* 题干（快照原文）与选项 */}
-      <RichMarkdown source={card.stemMd} className="text-base" />
+      {/* 题干（快照原文）与选项——选项另由下方列表渲染，displayStemMd 剥掉
+          题干内嵌的选项任务列表避免显示两遍 */}
+      <RichMarkdown source={displayStemMd(card)} className="text-base" />
       {card.options !== undefined && (
         <ol className="flex flex-col gap-1.5" aria-label="选项">
           {card.options.map((option, index) => (

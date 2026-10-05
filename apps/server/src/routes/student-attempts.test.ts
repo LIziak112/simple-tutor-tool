@@ -9,7 +9,7 @@ import {
   type StudentAssignmentListData,
   studentPaperDataSchema,
 } from "@tutor/contract";
-import { publicStemMd } from "@tutor/md-dsl";
+import { studentStemMd } from "@tutor/md-dsl";
 import { and, eq } from "drizzle-orm";
 import type { Logger } from "pino";
 import pino from "pino";
@@ -19,6 +19,7 @@ import type { Db } from "../db/client";
 import { attempts, questions, responses, units } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
+import { assertNoStemLeak } from "../test/assert-no-stem-leak.ts";
 
 /**
  * 作答生命周期集成测试（T2.6 全部验收项，app.request() 直调路由 + 内存库）：
@@ -455,6 +456,7 @@ describe("学生侧 attempt 接口鉴权口径（T5：入口类查可见性 / �
     ).toBe(true);
     // 续作类取卷仍是草稿阶段：不得泄露答案/详解（AGENTS 第 3 条）
     assertNoLeak(body);
+    assertNoStemLeak(body);
   });
 
   it("续作类：作业软删后已建 draft 的学生 GET /attempts/:id/paper → 200（作答记录不随作业软删消失）", async () => {
@@ -476,7 +478,9 @@ describe("学生侧 attempt 接口鉴权口径（T5：入口类查可见性 / �
       },
     );
     expect(paper.status).toBe(200);
-    assertNoLeak(await paper.json());
+    const paperJsonBody = await paper.json();
+    assertNoLeak(paperJsonBody);
+    assertNoStemLeak(paperJsonBody);
   });
 
   it("摘要归一化：旧库回填的 assignment 来源 attempt（unitId 非空）→ startAttempt/详情摘要 unitId 恒 null", async () => {
@@ -854,14 +858,17 @@ describe("POST /api/student/attempts/:id/submit：判分与快照", () => {
       ((await edit.json()) as { data: { version: number } }).data.version,
     ).toBe(2);
 
-    // 结果视图：仍是旧题干（含 [[4]]）与旧参考答案
+    // 结果视图：仍是旧题干（$(-3)+7=$ 未被编辑后的 $(-3)+8=$ 取代）与旧参考答案；
+    // 题干为学生端投影形态——[[4]]/[[5]] 标记均不残留（旧答案经 answers 键断言）
     const { res, body } = await getAttempt(app, aCookie, attemptId);
     expect(res.status).toBe(200);
     const data = (body as { data: AttemptResultData }).data;
     const fill = data.units
       .flatMap((unit) => unit.questions)
       .find((q) => q.questionId === Q.fill);
-    expect(fill?.snapshot.stemMd).toContain("[[4]]");
+    expect(fill?.snapshot.stemMd).toContain("$(-3)+7=$");
+    expect(fill?.snapshot.stemMd).not.toContain("$(-3)+8=$");
+    expect(fill?.snapshot.stemMd).not.toContain("[[4]]");
     expect(fill?.snapshot.stemMd).not.toContain("[[5]]");
     expect(fill?.answers).toEqual({
       kind: "fill",
@@ -919,6 +926,7 @@ describe("GET /api/student/attempts/:id：草稿视图与结果视图", () => {
     expect(res.status).toBe(200);
     expect(attemptDraftOkSchema.safeParse(body).success).toBe(true);
     assertNoLeak(body);
+    assertNoStemLeak(body);
     const draft = (body as { data: AttemptDraftData }).data;
     // T2A.7：分组结构（样例单单元 → units 恰 1 组，组内 8 题按题序）
     expect(draft.units.length).toBe(1);
@@ -957,7 +965,7 @@ describe("GET /api/student/attempts/:id：草稿视图与结果视图", () => {
     // 交卷后允许下发参考答案（answers/answer）与详解（solutionMd）；
     // 提示内容（hint/hints 键）仍不得出现
     assertNoLeak(body, { allow: ["answers", "answer", "solutionMd"] });
-
+    assertNoStemLeak(body);
     // 逐条比对库里的提示文本：结果视图 JSON 不含任何一条
     const hintTexts = db
       .select({ hintsJson: questions.hintsJson })
@@ -969,10 +977,12 @@ describe("GET /api/student/attempts/:id：草稿视图与结果视图", () => {
     for (const hint of hintTexts) {
       expect(serialized).not.toContain(hint);
     }
-    // 详解与参考答案确实下发了（交卷后语义）
+    // 详解与参考答案确实下发了（交卷后语义）；题干为学生端投影——填空标记
+    // 脱敏为 [[]]、原始 [[4]] 不残留（答案经 answers 键下发，下方逐题断言）
     const data = (body as { data: AttemptResultData }).data;
     expect(JSON.stringify(data)).toContain("故选 B");
-    expect(JSON.stringify(data)).toContain("[[4]]"); // 原始题干含答案标记
+    expect(JSON.stringify(data)).toContain("[[]]");
+    expect(JSON.stringify(data)).not.toContain("[[4]]");
     const judge = data.units
       .flatMap((unit) => unit.questions)
       .find((q) => q.questionId === Q.judge);
@@ -1110,18 +1120,35 @@ describe("T2A.8 答案公布时机（after_due：截止前受限 / 截止后完�
     expect(qs.length).toBe(8);
     const rawStems = new Map(
       db
-        .select({ id: questions.id, stemMd: questions.stemMd })
+        .select({
+          id: questions.id,
+          stemMd: questions.stemMd,
+          optionsJson: questions.optionsJson,
+        })
         .from(questions)
         .all()
-        .map((row) => [row.id, row.stemMd] as const),
+        .map(
+          (row) =>
+            [
+              row.id,
+              {
+                stemMd: row.stemMd,
+                options:
+                  row.optionsJson === null
+                    ? undefined
+                    : (JSON.parse(row.optionsJson) as readonly unknown[]),
+              },
+            ] as const,
+        ),
     );
     for (const q of qs) {
       expect(q.answers).toBeNull();
       expect(q.solutionMd).toBeNull();
       expect(q.autoCorrect).toBeNull();
-      // 题干 = 公开化版（比对 publicStemMd(库内原文)，[[答案]] 标记不残留）
+      // 题干 = 学生端投影（比对 studentStemMd(库内原文)，[[答案]] 标记与
+      // 选项任务列表的 [x] 正确项标记都不残留）
       expect(q.snapshot.stemMd).toBe(
-        publicStemMd(rawStems.get(q.snapshot.id) ?? ""),
+        studentStemMd(rawStems.get(q.snapshot.id) ?? { stemMd: "" }),
       );
     }
     // 本人答案照常（已答 2 题）
@@ -1137,6 +1164,7 @@ describe("T2A.8 答案公布时机（after_due：截止前受限 / 截止后完�
     // 泄露矩阵：answer=本人答案放行；answers/solutionMd 键名放行（契约要求保留
     // 可空键、值恒 null 已逐字段断言）；详解/答案标记/提示文本绝不出现
     assertNoLeak(body, { allow: ["answer", "answers", "solutionMd"] });
+    assertNoStemLeak(body);
     const serialized = JSON.stringify(body);
     expect(serialized).not.toContain("故选 B"); // 详解
     expect(serialized).not.toContain("[[4]]"); // 含答案标记的原始题干
@@ -1210,7 +1238,9 @@ describe("T2A.8 答案公布时机（after_due：截止前受限 / 截止后完�
       .find((q) => q.questionId === Q.judge);
     expect(judge?.answers).toEqual({ kind: "judge", value: true });
     expect(judge?.autoCorrect).toBe(true);
-    expect(JSON.stringify(data)).toContain("[[正确]]"); // 原始题干恢复下发
+    // 完整形态恢复=答案/详解照常下发；题干仍为学生端投影（[[正确]] 恒不残留）
+    expect(JSON.stringify(data)).toContain("[[]]");
+    expect(JSON.stringify(data)).not.toContain("[[正确]]");
   });
 
   it("教师端 400：创建 after_due 无截止；after_due 下 PATCH 取消截止（VALIDATION_ERROR 中文缘由）", async () => {
@@ -1367,6 +1397,7 @@ describe("T3.5 D9 结果视图扩展（teacherMark/teacherComment/finalCorrect/s
     // 已交卷内容允许下发（AGENTS 第 3 条限制的是未交卷题目）；
     // 放行参考答案/详解键后无禁用键
     assertNoLeak(body, { allow: ["answer", "answers", "solutionMd"] });
+    assertNoStemLeak(body);
   });
 
   it("after_due 截止前：批注字段与汇总新字段全 null（教师已批也不泄露）；库里已算好，截止后恢复", async () => {
@@ -1422,6 +1453,7 @@ describe("T3.5 D9 结果视图扩展（teacherMark/teacherComment/finalCorrect/s
     // 泄露：教师评语文本绝不出现（批改进度不提前泄露）；
     // 放行答案/详解键后无禁用键
     assertNoLeak(body, { allow: ["answer", "answers", "solutionMd"] });
+    assertNoStemLeak(body);
     expect(JSON.stringify(body)).not.toContain("改判：符号看错了。");
     expect(JSON.stringify(body)).not.toContain("选项看串了");
 

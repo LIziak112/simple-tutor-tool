@@ -102,19 +102,15 @@ $0$ 既不是正数也不是负数；最小的正整数是 $1$。
           ],
           "options": [
             {
-              "correct": false,
               "text": "$-2$",
             },
             {
-              "correct": true,
               "text": "$0$",
             },
             {
-              "correct": false,
               "text": "$-1.6$",
             },
             {
-              "correct": false,
               "text": "$-\dfrac{7}{4}$",
             },
           ],

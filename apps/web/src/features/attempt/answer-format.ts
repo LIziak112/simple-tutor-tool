@@ -129,23 +129,6 @@ export function formatReferenceAnswers(answers: QuestionAnswers): string {
   }
 }
 
-/** 任务列表项行（`- [ ] 选项` / `- [x] 选项` / `1. [ ] 选项`；与 DSL 解析器同口径） */
-const TASK_ITEM_LINE_RE = /^\s*(?:[-*+]|\d+[.)])\s+\[[ xX]\]\s/;
-
-/**
- * 选择题题干去掉选项列表（显示侧）：DSL 把选项写成题干里的任务列表，
- * 题卡另有选项按钮/选项行，题干里再渲染一遍会重复，且 `[x]` 会显示成
- * 打勾的复选框。只剥任务列表项行，其余题干原样保留；非选择题原样返回。
- */
-export function stemWithoutOptionList(stemMd: string): string {
-  if (!stemMd.includes("[")) return stemMd;
-  return stemMd
-    .split("\n")
-    .filter((line) => !TASK_ITEM_LINE_RE.test(line))
-    .join("\n")
-    .trim();
-}
-
 /** 多空填充：把 values 扩到至少 length 长（缺项补空串），并写入第 index 项 */
 export function withBlankValue(
   values: readonly string[],

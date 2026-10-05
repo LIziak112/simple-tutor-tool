@@ -1,4 +1,5 @@
 import type { TeacherAttemptDetailQuestion } from "@tutor/contract";
+import { displayStemMd } from "@tutor/md-dsl";
 import { cn } from "cn";
 import { ChevronDown, Clock3, Lightbulb, PenLine } from "lucide-react";
 import { useState } from "react";
@@ -285,8 +286,10 @@ export function AttemptDetailQuestionCard({
         ))}
       </div>
 
-      {/* 题干：已交卷=快照原文（[[答案]] 渲染为空框）；draft=公开化题干 */}
-      <RichMarkdown source={question.stemMd} className="text-base" />
+      {/* 题干：已交卷=快照原文、draft=投影形态（[[答案]] 渲染为空框）；
+          选择题选项另由 DetailOptions 渲染——displayStemMd 剥掉题干内嵌的
+          选项任务列表，避免选项显示两遍（[x] 还会渲染成打勾框） */}
+      <RichMarkdown source={displayStemMd(question)} className="text-base" />
       <DetailOptions question={question} />
 
       {/* 手写笔迹（懒加载 + 点击放大） */}

@@ -192,10 +192,9 @@ function extractQuestion(
     scan.taskItems.length > 0 &&
     (attrs.type === "choice" || attrs.type === "multi")
   ) {
-    question.options = scan.taskItems.map((item) => ({
-      text: item.text,
-      correct: item.checked,
-    }));
+    // 选项纯文本：正确项的权威表示是 answers（choice.index/multi.indexes），
+    // options 不再冗余携带 correct（契约 optionSchema，2026-10 移除）
+    question.options = scan.taskItems.map((item) => ({ text: item.text }));
   }
   if (answers !== undefined) question.answers = answers;
   if (solutionMd !== undefined && solutionMd.length > 0)

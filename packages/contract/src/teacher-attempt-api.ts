@@ -157,8 +157,8 @@ export const teacherAttemptInkSchema = z.object({
 /**
  * 详情的逐题行（D7 全字段）：
  * - 题干：已交卷取 questionSnapshotJson 快照原文（含 [[答案]] 标记，教师端允许）；
- *   draft 取当前库题目并经 publicStemMd 公开化（与学生草稿视图同源——不随
- *   详情下发参考答案，题干标记里的答案同样不外露，D7）；
+ *   draft 取当前库题目并经 studentStemMd 投影（与学生草稿视图同源——不随
+ *   详情下发参考答案，题干标记里的答案与 [x] 正确项同样不外露，D7）；
  * - answer：学生答案（StudentAnswer 原样 JSON；未作为 null）；
  * - autoCorrect / finalCorrect / teacherMark / teacherComment：均 nullable，
  *   draft 整卷为 null（未交卷无判定，判定列显示「未交卷」，D5）；

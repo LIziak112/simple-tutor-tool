@@ -101,28 +101,18 @@ describe("parseDocument：练习样例（七种题型全覆盖）", () => {
     expect(byType("judge")?.solutionMd).toContain("正数与负数的分界点");
   });
 
-  it("选择题：[x] 为正确项，下标与选项对齐，选项保留 markdown 原文", () => {
+  it("选择题：[x] 为正确项（权威表示 answers.index），选项纯文本保留 markdown 原文", () => {
     const choice = byType("choice");
-    expect(choice?.options?.map((o) => o.correct)).toEqual([
-      false,
-      true,
-      false,
-      false,
-    ]);
     expect(choice?.answers).toEqual({ kind: "choice", index: 1 });
+    expect(choice?.options?.length).toBe(4);
     expect(choice?.options?.[0]?.text).toBe("$-5$");
     expect(choice?.options?.[2]?.text).toBe("$\\frac{1}{5}$");
   });
 
   it("多选题：全部 [x] 项下标收进 indexes", () => {
     const multi = byType("multi");
-    expect(multi?.options?.map((o) => o.correct)).toEqual([
-      true,
-      false,
-      true,
-      false,
-    ]);
     expect(multi?.answers).toEqual({ kind: "multi", indexes: [0, 2] });
+    expect(multi?.options?.length).toBe(4);
   });
 
   it("solve：:::answer 收进 answers.final，difficulty/考点属性解析", () => {
