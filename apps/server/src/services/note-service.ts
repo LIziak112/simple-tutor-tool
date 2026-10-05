@@ -228,9 +228,14 @@ export function parseNoteBodyBytes(bytes: Uint8Array): NoteDoc {
   const parsed = noteDocSchema.safeParse(parsedJson);
   if (!parsed.success) {
     const first = parsed.error.issues[0]?.message ?? "NoteDoc 结构不合法";
-    // 复杂度超预算（413）与形状错误（400）分级：契约 superRefine 的两类
-    // 点数上限消息均含「超上限」措辞（note.ts），坐标/结构错误不含
-    if (parsed.error.issues.some((issue) => issue.message.includes("超上限"))) {
+    // 复杂度超预算（413）与形状错误（400）分级：契约 superRefine 的限额
+    // issue 携带结构标记 params.limit===true（note.ts，措辞无关——勿退回
+    // 中文消息子串匹配）
+    if (
+      parsed.error.issues.some(
+        (issue) => (issue.params as { limit?: boolean } | undefined)?.limit === true,
+      )
+    ) {
       throw new HttpError(
         413,
         "NOTE_LIMIT_EXCEEDED",

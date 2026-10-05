@@ -109,6 +109,10 @@ export const noteDocSchema = z
           code: "custom",
           path: ["ink", "strokes", si, "points"],
           message: `单笔点数超上限（${stroke.points.length} > ${NOTE_MAX_POINTS_PER_STROKE}，暂定值）`,
+          // 结构化限额标记（T6R.4）：服务端据 params.limit 区分「超预算→413
+          // NOTE_LIMIT_EXCEEDED」与「形状错误→400」——不依赖中文消息子串匹配；
+          // 消息措辞变更不影响分级（契约测试锁定本标记存在）
+          params: { limit: true },
         });
       }
       totalPoints += stroke.points.length;
@@ -145,6 +149,8 @@ export const noteDocSchema = z
         code: "custom",
         path: ["ink", "strokes"],
         message: `全稿总点数超上限（${totalPoints} > ${NOTE_MAX_TOTAL_POINTS}，暂定值）`,
+        // 同上：结构化限额标记（服务端 413/400 分级依据，勿随措辞改动丢失）
+        params: { limit: true },
       });
     }
   });
