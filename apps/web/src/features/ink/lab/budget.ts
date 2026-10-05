@@ -1,3 +1,4 @@
+import type { InkDoc } from "../engine/types.ts";
 import { measureEncoding } from "./measure.ts";
 import { buildSyntheticAtramentDoc, totalPoints } from "./synthetic-strokes.ts";
 
@@ -53,7 +54,6 @@ export interface EvaluateBudgetRowOptions {
 export async function evaluateBudgetRow(
   opts: EvaluateBudgetRowOptions,
 ): Promise<BudgetRow> {
-  const limits = opts.limits ?? TENTATIVE_BUDGET_LIMITS;
   const doc = buildSyntheticAtramentDoc({
     seed: opts.seed,
     strokeCount: opts.strokeCount,
@@ -62,15 +62,24 @@ export async function evaluateBudgetRow(
       ? { paperHeightLogical: opts.paperHeightLogical }
       : {}),
   });
+  return evaluateBudgetRowForDoc(doc, opts.limits);
+}
+
+/** 对既有文档测字节与触线（面板复用：同一份文档既测字节又进引擎渲染） */
+export async function evaluateBudgetRowForDoc(
+  doc: InkDoc<"atrament">,
+  limits?: BudgetLimits,
+): Promise<BudgetRow> {
+  const l = limits ?? TENTATIVE_BUDGET_LIMITS;
   const m = await measureEncoding(JSON.stringify(doc));
   return {
-    strokes: opts.strokeCount,
+    strokes: doc.data.strokes.length,
     points: totalPoints(doc),
     rawBytes: m.rawBytes,
     gzipBytes: m.gzipBytes,
     gzipMs: m.gzipMs,
-    hitsGzipLimit: m.gzipBytes > limits.bodyGzipMaxBytes,
-    hitsDecompressedLimit: m.rawBytes > limits.bodyDecompressedMaxBytes,
+    hitsGzipLimit: m.gzipBytes > l.bodyGzipMaxBytes,
+    hitsDecompressedLimit: m.rawBytes > l.bodyDecompressedMaxBytes,
   };
 }
 

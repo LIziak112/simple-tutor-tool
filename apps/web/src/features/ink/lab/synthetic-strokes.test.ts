@@ -1,10 +1,7 @@
 import { inkDocSchema } from "@tutor/contract";
 import { describe, expect, it } from "vitest";
 import type { InkDoc } from "../engine/types.ts";
-import {
-  buildSyntheticAtramentDoc,
-  totalPoints,
-} from "./synthetic-strokes.ts";
+import { buildSyntheticAtramentDoc, totalPoints } from "./synthetic-strokes.ts";
 
 /**
  * 合成笔迹生成器测试（T6R.1，TDD 先行）：
@@ -57,7 +54,10 @@ describe("buildSyntheticAtramentDoc", () => {
 
   it("每个点满足取值范围：p∈[0,1]、t≥0、x∈[0,1000]、y∈[0,纸高]", () => {
     const paperHeight = 800;
-    const doc = buildSyntheticAtramentDoc({ ...BASE, paperHeightLogical: paperHeight });
+    const doc = buildSyntheticAtramentDoc({
+      ...BASE,
+      paperHeightLogical: paperHeight,
+    });
     for (const s of doc.data.strokes) {
       expect(s.points.length).toBeGreaterThanOrEqual(1);
       let prevT = -1;

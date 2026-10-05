@@ -230,7 +230,10 @@ function polylinePoints(
   let consumed = 0;
   for (let i = 0; i < count; i++) {
     const target = (total * i) / (count - 1);
-    while (seg < segLens.length - 1 && consumed + (segLens[seg] as number) < target) {
+    while (
+      seg < segLens.length - 1 &&
+      consumed + (segLens[seg] as number) < target
+    ) {
       consumed += segLens[seg] as number;
       seg++;
     }
@@ -331,7 +334,12 @@ function supsubStroke(
     const dy = (i % 2 === 0 ? 1 : -1) * (5 + rng() * 5);
     t += 5 + Math.floor(rng() * 6);
     points.push(
-      pt(x, clampY(baseY + dy, ctx.paperHeight), pressureBase + jitter(rng, 0.06), t),
+      pt(
+        x,
+        clampY(baseY + dy, ctx.paperHeight),
+        pressureBase + jitter(rng, 0.06),
+        t,
+      ),
     );
   }
   return {

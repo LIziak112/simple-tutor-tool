@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_BUDGET_RUNGS,
-  TENTATIVE_BUDGET_LIMITS,
   evaluateBudgetRow,
+  evaluateBudgetRowForDoc,
   firstCrossing,
+  TENTATIVE_BUDGET_LIMITS,
 } from "./budget.ts";
 import { buildSyntheticAtramentDoc, totalPoints } from "./synthetic-strokes.ts";
 
@@ -46,6 +47,22 @@ describe("evaluateBudgetRow", () => {
       seed: 20261005,
       limits: { bodyGzipMaxBytes: 10, bodyDecompressedMaxBytes: 20 },
     });
+    expect(row.hitsGzipLimit).toBe(true);
+    expect(row.hitsDecompressedLimit).toBe(true);
+  });
+
+  it("对既有文档测量（evaluateBudgetRowForDoc，面板复用路径）", async () => {
+    const doc = buildSyntheticAtramentDoc({
+      seed: 20261005,
+      strokeCount: 40,
+      pointsPerStroke: 24,
+    });
+    const row = await evaluateBudgetRowForDoc(doc, {
+      bodyGzipMaxBytes: 10,
+      bodyDecompressedMaxBytes: 10,
+    });
+    expect(row.strokes).toBe(40);
+    expect(row.points).toBe(totalPoints(doc));
     expect(row.hitsGzipLimit).toBe(true);
     expect(row.hitsDecompressedLimit).toBe(true);
   });
