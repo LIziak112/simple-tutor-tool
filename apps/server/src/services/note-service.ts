@@ -6,7 +6,7 @@ import {
   statSync,
   unlinkSync,
 } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { gunzipSync, gzipSync } from "node:zlib";
 import type { NoteUploadMeta } from "@tutor/contract";
 import {
@@ -18,7 +18,7 @@ import {
   noteDocSchema,
   noteIssueIsLimit,
 } from "@tutor/contract";
-import { and, eq, lt } from "drizzle-orm";
+import { and, eq, isNotNull, lt } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
   type NoteRow,
@@ -550,6 +550,12 @@ export interface NoteGcResult {
   sweptOrphanFiles: number;
   /** 超窗口但被保留集合（头指针/证据引用）挡下的版本数 */
   keptByReference: number;
+  /**
+   * 存量 bodyPath 形态异常（越出 blobs/notes 或文件名不合 v<rev>-<hash12>
+   * 模式）的版本行数。>0 时本轮**放弃孤儿文件清扫**（保守不删，见下），
+   * 计数暴露给运维排查——正常数据恒为 0。
+   */
+  malformedBodyPaths: number;
 }
 
 /**
@@ -560,7 +566,9 @@ export interface NoteGcResult {
  * 保留集合（绝不可删）：
  * - 所有 notes.currentVersionId（工作头/订正检查点头）；
  * - 所有 submission_evidence.version_id（提交原稿）；
- * - 安全窗口内创建的全部版本与临时文件（在途上传、丢回执重试窗口）。
+ * - 安全窗口内创建的全部版本与临时文件（在途上传、丢回执重试窗口——
+ *   后者即 mutationId 幂等窗口：版本行被回收后幂等记录随之消失，窗口外
+ *   重放按 CAS 冲突可诊断处理，见 note_versions.mutation_id 列注释）。
  * 「正在生成图片的版本」：note_images 尚无生成通道（T6R.6），届时由生成
  * 流程把在途版本纳入保留；当前实现把派生图行/文件随所属版本一并回收。
  *
@@ -584,19 +592,23 @@ export function gcNoteVersions(
     sweptTmp: 0,
     sweptOrphanFiles: 0,
     keptByReference: 0,
+    malformedBodyPaths: 0,
   };
 
-  // 保留集合
+  // 保留集合（isNotNull 在 SQL 层裁掉 NULL 头/无版本证据行，免空值入集合）
   const keep = new Set<string>();
   for (const row of db
     .select({ id: notes.currentVersionId })
     .from(notes)
+    .where(isNotNull(notes.currentVersionId))
     .all()) {
+    // isNotNull 已在 SQL 层裁 NULL；TS 侧守卫兜底（drizzle 不收窄字段类型）
     if (row.id !== null) keep.add(row.id);
   }
   for (const row of db
     .select({ id: submissionEvidence.versionId })
     .from(submissionEvidence)
+    .where(isNotNull(submissionEvidence.versionId))
     .all()) {
     if (row.id !== null) keep.add(row.id);
   }
@@ -652,14 +664,36 @@ export function gcNoteVersions(
   // 无行的图片文件不在此列：图片由 T6R.6 通道按自有协议产生，届时一并定。
   const notesRoot = resolve(dataDir, "blobs", "notes");
   if (existsSync(notesRoot)) {
-    const liveBodyRel = new Set(
-      db
-        .select({ p: noteVersions.bodyPath })
-        .from(noteVersions)
-        .all()
-        .map((row) => relative(notesRoot, resolve(dataDir, row.p))),
-    );
     const bodyFilePattern = /^v\d+-[0-9a-f]{12}\.json\.gz$/;
+    // live 匹配用**存储字符串集合**（快），但保留防御：存量 bodyPath 形态
+    // 异常（越出根/文件名不合模式）时，其对应文件无法可靠对账——本轮放弃
+    // 孤儿清扫（tmp 清扫不受影响），计数 malformedBodyPaths 暴露给运维。
+    // 两位审查角的折中：不做逐行 resolve 校验（多数派：纯集合足够），也不
+    // 无条件信任集合（少数派：异常数据宁可漏删不可误删）。
+    let liveBodyRelSet: Set<string> | null = null;
+    const liveBodyRel = (): Set<string> => {
+      if (liveBodyRelSet === null) {
+        liveBodyRelSet = new Set<string>();
+        for (const row of db
+          .select({ p: noteVersions.bodyPath })
+          .from(noteVersions)
+          .all()) {
+          const rel = relative(notesRoot, resolve(dataDir, row.p));
+          const base = rel.split(/[\\/]/).at(-1) ?? "";
+          if (
+            rel === "" ||
+            rel.startsWith("..") ||
+            isAbsolute(rel) ||
+            !bodyFilePattern.test(base)
+          ) {
+            result.malformedBodyPaths += 1;
+            continue;
+          }
+          liveBodyRelSet.add(rel);
+        }
+      }
+      return liveBodyRelSet;
+    };
     for (const entry of readdirSync(notesRoot, { withFileTypes: true })) {
       if (!entry.isDirectory()) continue;
       const dir = join(notesRoot, entry.name);
@@ -672,7 +706,8 @@ export function gcNoteVersions(
             result.sweptTmp += 1;
           } else if (
             bodyFilePattern.test(name) &&
-            !liveBodyRel.has(join(entry.name, name))
+            !liveBodyRel().has(join(entry.name, name)) &&
+            result.malformedBodyPaths === 0
           ) {
             unlinkSync(filePath);
             result.sweptOrphanFiles += 1;

@@ -8,7 +8,7 @@ import {
   utimesSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { gunzipSync, gzipSync } from "node:zlib";
 import type { NoteDoc, NoteDocInput } from "@tutor/contract";
 import {
@@ -1277,6 +1277,8 @@ describe("未引用版本延迟回收（GC 骨架）", () => {
       now: new Date("2026-10-06T00:00:00.000Z"),
     });
     expect(result.deletedVersionRows).toBe(1);
+    expect(result.deletedFiles).toBe(1);
+    expect(result.malformedBodyPaths).toBe(0);
     const rows = db.select().from(noteVersionsTable).all();
     expect(rows).toHaveLength(1);
     const keptRow = sole(rows, "保留的 head 版本行");
@@ -1326,6 +1328,8 @@ describe("未引用版本延迟回收（GC 骨架）", () => {
       now: new Date("2026-10-06T00:00:00.000Z"),
     });
     expect(result.deletedVersionRows).toBe(0);
+    // 两行都超窗口：v1 被证据引用、v2 是 head——keptByReference 计两笔
+    expect(result.keptByReference).toBe(2);
     expect(db.select().from(noteVersionsTable).all()).toHaveLength(2);
     expect(noteFiles(dataDir)).toHaveLength(2);
   });
@@ -1347,8 +1351,45 @@ describe("未引用版本延迟回收（GC 骨架）", () => {
     });
     const result = gcNoteVersions(db, dataDir, { now: new Date() });
     expect(result.deletedVersionRows).toBe(0);
+    // 窗口内非候选：不走保留集合判定（keptByReference 恒 0），仅靠时间挡下
+    expect(result.keptByReference).toBe(0);
     expect(db.select().from(noteVersionsTable).all()).toHaveLength(2);
     expect(noteFiles(dataDir)).toHaveLength(2);
+  });
+
+  it("存量 bodyPath 形态异常 → 放弃本轮孤儿清扫（保守不删），tmp 清扫不受影响", () => {
+    const { db, dataDir, studentId, attemptId } = makeWorld();
+    const r1 = save(db, dataDir, {
+      studentId,
+      attemptId,
+      questionId: "q1",
+      body: noteDoc(1),
+    });
+    ageVersion(db, r1.versionId);
+    // 构造超窗孤儿文件（崩溃残留形态）
+    const orphanRel = join(
+      "blobs",
+      "notes",
+      r1.noteId,
+      "v9-abcdef012345.json.gz",
+    );
+    writeFileSync(resolve(dataDir, orphanRel), "orphan");
+    utimesSync(
+      resolve(dataDir, orphanRel),
+      new Date(Date.now() - 48 * 3600 * 1000),
+      new Date(Date.now() - 48 * 3600 * 1000),
+    );
+    // 存量行 body_path 指向 notes 域外（形态异常）
+    db.$client
+      .prepare("UPDATE note_versions SET body_path = ? WHERE id = ?")
+      .run(join("blobs", "other", "v1.json.gz"), r1.versionId);
+
+    const result = gcNoteVersions(db, dataDir, { now: new Date() });
+    expect(result.malformedBodyPaths).toBe(1);
+    // 孤儿文件保守保留（宁可漏删不可误删）
+    expect(result.sweptOrphanFiles).toBe(0);
+    expect(existsSync(resolve(dataDir, orphanRel))).toBe(true);
+    // tmp 清扫不受形态异常影响（本测试无 tmp，下一测试覆盖）
   });
 
   it("删除版本时连带删其 note_images 行与图片文件", () => {
