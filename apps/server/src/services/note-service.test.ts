@@ -1199,6 +1199,182 @@ describe("故障注入：不破坏上一版本", () => {
   });
 });
 
+// ---------- 跨进程约束兜底（复审③） ----------
+
+describe("mutationId 唯一索引冲突的跨进程兜底", () => {
+  it("rename 后另一『进程』抢先提交同一 mutation（同 note 同 hash）→ 返回胜者回执、不清理文件", () => {
+    const { db, dataDir, studentId, attemptId } = makeWorld(["q1"]);
+    const r1 = save(db, dataDir, {
+      studentId,
+      attemptId,
+      questionId: "q1",
+      body: noteDoc(1),
+    });
+    const doc2 = noteDoc(2);
+    const hash2 = noteDocSha256(doc2);
+    const m = "99999999-9999-4999-8999-999999999999";
+    // 胜者行：同笔记、不同 revision（5）、同 mutation 同 hash——本请求事务内
+    // 的版本插入将撞 mutation_id 唯一索引
+    const winnerId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const receipt = saveNoteVersion(
+      db,
+      dataDir,
+      studentId,
+      attemptId,
+      "q1",
+      gzipJson(doc2),
+      { baseRevision: 1, mutationId: m },
+      {
+        afterRename: () => {
+          db.insert(noteVersionsTable)
+            .values({
+              id: winnerId,
+              noteId: r1.noteId,
+              revision: 5,
+              bodyPath: join(
+                "blobs",
+                "notes",
+                r1.noteId,
+                "v5-deadbeefcafe.json.gz",
+              ),
+              hash: hash2,
+              strokeCount: 2,
+              pointCount: 4,
+              paperWidth: 1000,
+              paperHeight: 800,
+              serverSavedAt: "2026-10-06T00:00:00.000Z",
+              renderVersion: 1,
+              mutationId: m,
+            })
+            .run();
+        },
+      },
+    );
+    // 返回胜者回执（revision=5、胜者 versionId/savedAt），不是本请求的 v2
+    expect(receipt).toEqual({
+      noteId: r1.noteId,
+      revision: 5,
+      versionId: winnerId,
+      hash: hash2,
+      savedAt: "2026-10-06T00:00:00.000Z",
+    });
+    // 本请求的事务已回滚：head 仍指向 v1；本请求落位的 v2 文件成为孤儿
+    // （胜者路径是 v5-…，不同路径，未被动过）
+    expect(db.select().from(notesTable).all()[0]?.currentRevision).toBe(1);
+    expect(noteFiles(dataDir).some((f) => f.includes("v2-"))).toBe(true);
+  });
+
+  it("胜者同 mutation 但不同 hash → 清理孤儿后 409 NOTE_MUTATION_MISMATCH", () => {
+    const { db, dataDir, studentId, attemptId } = makeWorld(["q1"]);
+    const r1 = save(db, dataDir, {
+      studentId,
+      attemptId,
+      questionId: "q1",
+      body: noteDoc(1),
+    });
+    const m = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const info = errInfo(
+      capture(() =>
+        saveNoteVersion(
+          db,
+          dataDir,
+          studentId,
+          attemptId,
+          "q1",
+          gzipJson(noteDoc(2)),
+          { baseRevision: 1, mutationId: m },
+          {
+            afterRename: () => {
+              db.insert(noteVersionsTable)
+                .values({
+                  id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+                  noteId: r1.noteId,
+                  revision: 9,
+                  bodyPath: join(
+                    "blobs",
+                    "notes",
+                    r1.noteId,
+                    "v9-1234567890ab.json.gz",
+                  ),
+                  hash: "d".repeat(64),
+                  strokeCount: 1,
+                  pointCount: 2,
+                  paperWidth: 1000,
+                  paperHeight: 800,
+                  serverSavedAt: "2026-10-06T00:00:00.000Z",
+                  renderVersion: 1,
+                  mutationId: m,
+                })
+                .run();
+            },
+          },
+        ),
+      ),
+    );
+    expect(info).toMatchObject({ status: 409, code: "NOTE_MUTATION_MISMATCH" });
+    // 本请求 v2 孤儿文件被清理（胜者路径 v9-… 不同名，不受影响）
+    expect(noteFiles(dataDir).some((f) => f.includes("v2-"))).toBe(false);
+  });
+});
+
+// ---------- 读路径防御（复审②） ----------
+
+describe("readNoteVersionDoc 读侧防御", () => {
+  it("落盘文件为高压缩比炸弹（解压超 32MiB）→ 404 NOTE_NOT_FOUND，不解出大 Buffer", () => {
+    const { db, dataDir, studentId, attemptId } = makeWorld(["q1"]);
+    const r1 = save(db, dataDir, {
+      studentId,
+      attemptId,
+      questionId: "q1",
+      body: noteDoc(1),
+    });
+    // 篡改正文文件为炸弹（模拟备份植入）
+    writeFileSync(
+      resolveNoteBodyPath(dataDir, noteBodyRelPath(r1.noteId, 1, r1.hash)),
+      gzipSync(Buffer.alloc(40 * 1024 * 1024)),
+    );
+    const info = errInfo(
+      capture(() => readNoteVersionDoc(db, dataDir, r1.versionId)),
+    );
+    expect(info).toMatchObject({ status: 404, code: "NOTE_NOT_FOUND" });
+  });
+
+  it("落盘文件 JSON 非法 → 500 NOTE_BODY_UNREADABLE（而非裸 INTERNAL）", () => {
+    const { db, dataDir, studentId, attemptId } = makeWorld(["q1"]);
+    const r1 = save(db, dataDir, {
+      studentId,
+      attemptId,
+      questionId: "q1",
+      body: noteDoc(1),
+    });
+    writeFileSync(
+      resolveNoteBodyPath(dataDir, noteBodyRelPath(r1.noteId, 1, r1.hash)),
+      gzipSync(Buffer.from("not-json{", "utf8")),
+    );
+    const info = errInfo(
+      capture(() => readNoteVersionDoc(db, dataDir, r1.versionId)),
+    );
+    expect(info).toMatchObject({ status: 500, code: "NOTE_BODY_UNREADABLE" });
+  });
+
+  it("bodyPath 越界 → HttpError(NOTE_BODY_PATH_INVALID) 原码重抛（不被读侧 catch 吞成 404）", () => {
+    const { db, dataDir, studentId, attemptId } = makeWorld(["q1"]);
+    const r1 = save(db, dataDir, {
+      studentId,
+      attemptId,
+      questionId: "q1",
+      body: noteDoc(1),
+    });
+    db.$client
+      .prepare("UPDATE note_versions SET body_path = ? WHERE id = ?")
+      .run(join("blobs", "notes-evil", "v1.json.gz"), r1.versionId);
+    const info = errInfo(
+      capture(() => readNoteVersionDoc(db, dataDir, r1.versionId)),
+    );
+    expect(info).toMatchObject({ status: 500, code: "NOTE_BODY_PATH_INVALID" });
+  });
+});
+
 // ---------- 服务重启 ----------
 
 describe("服务重启：新进程重开库后已确认正文可读且 hash 稳定", () => {

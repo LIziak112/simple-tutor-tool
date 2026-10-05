@@ -7,7 +7,7 @@ import {
   unlinkSync,
 } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { gunzipSync, gzipSync } from "node:zlib";
+import { gzipSync } from "node:zlib";
 import type { NoteUploadMeta } from "@tutor/contract";
 import {
   INK_LOGICAL_WIDTH,
@@ -22,6 +22,7 @@ import { and, eq, isNotNull, lt } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
   type NoteRow,
+  type NoteVersionRow,
   noteImages,
   notes,
   noteVersions,
@@ -292,6 +293,48 @@ function revisionConflict(db: Db, existing: NoteRow | undefined): HttpError {
   );
 }
 
+/** 版本行 → 回执（预检幂等命中与跨进程约束兜底共用一处组装） */
+function receiptOf(row: NoteVersionRow): NoteVersionReceipt {
+  return {
+    noteId: row.noteId,
+    revision: row.revision,
+    versionId: row.id,
+    hash: row.hash,
+    savedAt: row.serverSavedAt,
+  };
+}
+
+/** 删除本请求刚落位的孤儿正文文件（best-effort；失败留给 GC 兜底） */
+function cleanupOrphanFile(dataDir: string, relPath: string): void {
+  try {
+    unlinkSync(resolveNoteBodyPath(dataDir, relPath));
+  } catch {
+    // 文件未创建（写/rename 前失败）或已被删除——无需处理
+  }
+}
+
+/**
+ * SQLITE_CONSTRAINT 唯一索引冲突的表内定位（跨进程兜底判定用）：
+ * "mutation" = note_versions.mutation_id（幂等键竞争）；"revision" =
+ * (note_id, revision)（CAS 竞争）；null = 非目标冲突/非约束错误。
+ * 依据 better-sqlite3 的错误形态：code 为 SQLITE_CONSTRAINT 基码或其
+ * 扩展码（如 SQLITE_CONSTRAINT_UNIQUE，13.x 实测），message 含
+ * "UNIQUE constraint failed: <表.列>…"。
+ */
+function sqliteUniqueViolationOn(err: unknown): "mutation" | "revision" | null {
+  const e = err as { code?: string; message?: string };
+  if (!e?.code?.startsWith("SQLITE_CONSTRAINT")) return null;
+  const message = String(e.message ?? "");
+  if (message.includes("note_versions.mutation_id")) return "mutation";
+  if (
+    message.includes("note_versions.note_id") &&
+    message.includes("note_versions.revision")
+  ) {
+    return "revision";
+  }
+  return null;
+}
+
 // ---------- 上传主入口（服务层；路由壳见 routes/student.ts） ----------
 
 /**
@@ -364,13 +407,7 @@ export function saveNoteVersion(
   if (replay !== undefined) {
     if (replay.noteId === existing?.id && replay.hash === hash) {
       // 同一笔记 + 同一正文：原回执逐字段返回（savedAt 为行内原确认时间）
-      return {
-        noteId: replay.noteId,
-        revision: replay.revision,
-        versionId: replay.id,
-        hash: replay.hash,
-        savedAt: replay.serverSavedAt,
-      };
+      return receiptOf(replay);
     }
     throw new HttpError(
       409,
@@ -462,8 +499,11 @@ export function saveNoteVersion(
         .run();
       // 统一切头（两条路径同一语句）：where 带 currentRevision 守卫——
       // 首版行刚以 revision=0 插入、既有行 CAS 复核过 =baseRevision，两者
-      // 都等于 headRevision（预检口径），守卫语义一致
-      tx.update(notes)
+      // 都等于 headRevision（预检口径），守卫语义一致。RETURNING 受影响行
+      // 并校验命中（复审③闭合：单进程同步下恒命中；多进程下 CAS 落败时
+      // 0 行→500 回滚，不产生「版本行在、头指针旧」的半切状态）
+      const switched = tx
+        .update(notes)
         .set({
           currentRevision: newRevision,
           currentVersionId: versionId,
@@ -473,16 +513,61 @@ export function saveNoteVersion(
         .where(
           and(eq(notes.id, noteId), eq(notes.currentRevision, headRevision)),
         )
-        .run();
+        .returning({ id: notes.id })
+        .get();
+      if (switched === undefined) {
+        throw new HttpError(
+          500,
+          "INTERNAL",
+          "草稿头指针切换未命中（并发写竞争，本次写入已回滚）",
+        );
+      }
     });
   } catch (err) {
-    // 7. 失败清理：事务已回滚（或文件未落位），刚写的不可变文件无行引用，
-    //    删除它；失败留给 GC 兜底。绝不清碰其它版本的文件（路径含本请求的
-    //    revision+hash，唯一索引保证无已确认行占用同名路径）。
-    try {
-      unlinkSync(resolveNoteBodyPath(dataDir, relPath));
-    } catch {
-      // 文件未创建（写/rename 前失败）或已被删除——无需处理
+    // 7. 失败清理与跨进程兜底（better-sqlite3 同步单进程下兜底分支不可达，
+    //    为多进程化预留的纵深闭合，复审③）：
+    //    a) mutation_id 唯一索引冲突 = 另一进程已提交同一 mutation。胜者
+    //       (noteId, hash) 与本请求一致 → 按幂等语义返回**胜者的回执**，
+    //       且**不清理文件**（胜者与本请求同 note+hash 时路径必相同、字节
+    //       必相同；删了会砸掉胜者行的引用——revision 不同则路径不同，
+    //       本请求文件留作孤儿由 GC 回收）；不一致 → 清理后 409
+    //       NOTE_MUTATION_MISMATCH（与预检口径一致）。
+    //    b) (note_id, revision) 唯一索引冲突 = 另一进程用不同 mutation 抢先
+    //       切到同一 revision（CAS 竞争落败）→ 清理后 409
+    //       NOTE_REVISION_CONFLICT（重读 head 组摘要，客户端可诊断重试）。
+    //    其余错误：清理刚落位的孤儿文件（事务已回滚或文件未落位，无行引用
+    //    它；删除失败留给 GC 兜底——绝不清碰其它版本的文件，路径含本请求
+    //    的 revision+hash，唯一索引保证无已确认行占用同名路径）。
+    const violation = sqliteUniqueViolationOn(err);
+    if (violation === "mutation") {
+      const winner = db
+        .select()
+        .from(noteVersions)
+        .where(eq(noteVersions.mutationId, meta.mutationId))
+        .get();
+      if (
+        winner !== undefined &&
+        winner.noteId === noteId &&
+        winner.hash === hash
+      ) {
+        return receiptOf(winner);
+      }
+      cleanupOrphanFile(dataDir, relPath);
+      if (winner !== undefined) {
+        throw new HttpError(
+          409,
+          "NOTE_MUTATION_MISMATCH",
+          "同一 mutationId 已绑定其他正文变更（或另一份草稿），请生成新的 mutationId 重试",
+        );
+      }
+      throw err;
+    }
+    cleanupOrphanFile(dataDir, relPath);
+    if (violation === "revision") {
+      throw revisionConflict(
+        db,
+        db.select().from(notes).where(scratchWhere).get(),
+      );
     }
     throw err;
   }
@@ -508,14 +593,30 @@ export function readNoteVersionDoc(
   }
   let jsonText: string;
   try {
-    jsonText = gunzipSync(
+    // 读侧同样带解压上限（复审②：备份植入高压缩比炸弹的防线）；机制与
+    // 上传侧共用 lib/blob-io（gzip/原始 JSON 双兼容 + TextDecoder 免拷贝）
+    jsonText = parseGzipOrJsonBytes(
       readFileSync(resolveNoteBodyPath(dataDir, row.bodyPath)),
-    ).toString("utf8");
-  } catch {
-    // 文件缺失（备份/GC 边界）：按不存在口径，不泄漏磁盘细节
+      { maxDecompressed: NOTE_BODY_DECOMPRESSED_MAX_BYTES },
+    );
+  } catch (err) {
+    // 边界校验的 HttpError 保持自身码重抛（不被吞成 404）；文件缺失/
+    // 解压失败（含超上限）按不存在口径，不泄漏磁盘细节
+    if (err instanceof HttpError) throw err;
     throw new HttpError(404, "NOTE_NOT_FOUND", "笔记正文文件缺失");
   }
-  const parsed = noteDocSchema.safeParse(JSON.parse(jsonText) as unknown);
+  let parsedJson: unknown;
+  try {
+    parsedJson = JSON.parse(jsonText) as unknown;
+  } catch {
+    // JSON 非法（损坏/被篡改的落盘文件）：部署级损坏，500 而非裸 INTERNAL
+    throw new HttpError(
+      500,
+      "NOTE_BODY_UNREADABLE",
+      "笔记正文文件损坏，请联系老师处理",
+    );
+  }
+  const parsed = noteDocSchema.safeParse(parsedJson);
   if (!parsed.success) {
     throw new HttpError(
       500,
