@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { RichMarkdown } from "./RichMarkdown";
@@ -34,6 +36,35 @@ describe("RichMarkdown：公式渲染（KaTeX）", () => {
     const strut = container.querySelector(".strut");
     expect(strut).not.toBeNull();
     expect(strut?.getAttribute("style")).toContain("height");
+  });
+
+  it("KaTeX 渲染输出的字号类与所导入的 katex CSS 选择器一致（版本错配回归）", () => {
+    // rehype-katex 自带的 katex 生成 HTML（含 sizing/katex-sizing 等字号类），
+    // RichMarkdown 顶部 import 的 katex.min.css 提供对应选择器。两者若解析到
+    // 不同大版本的 katex 包（曾出现 0.16 渲染 + 0.18 CSS：0.18 把 .sizing 改名
+    // .katex-sizing），选择器对不上，上下标字号不缩小——jsdom 不应用 CSS，
+    // 只能显式比对「渲染输出的类名」与「CSS 里的选择器」两边口径一致。
+    const { container } = renderMd("$m_{30,30}$");
+    const subEl = Array.from(
+      container.querySelectorAll<HTMLElement>(".msupsub span"),
+    ).find(
+      (el) =>
+        el.className.includes("reset-size6") && el.className.includes("size3"),
+    );
+    expect(subEl, "下标内容应带 reset-size6 size3 字号类").toBeDefined();
+    const sizingToken = subEl?.className
+      .split(/\s+/)
+      .find((token) => token === "sizing" || token === "katex-sizing");
+    expect(sizingToken, "字号容器类应为 sizing 或 katex-sizing").toBeDefined();
+    // 从本文件解析 katex 包（与 RichMarkdown 的 css 导入同一实例）读 CSS
+    const cssPath = createRequire(import.meta.url).resolve(
+      "katex/dist/katex.min.css",
+    );
+    const css = readFileSync(cssPath, "utf-8");
+    expect(
+      css,
+      "导入的 katex CSS 应包含渲染输出字号类的选择器（渲染 JS 与 CSS 版本错配）",
+    ).toContain(`.katex .${sizingToken}.reset-size6.size3`);
   });
 });
 
