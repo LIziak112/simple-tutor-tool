@@ -687,6 +687,7 @@ describe("T2B.7 规模防线（D15）与文件形态", () => {
 
   it("同秒重名自动加序号 -2（publishToShared 注入同一 now）", () => {
     const dataDir = createTestDir();
+    // UTC 04:00 = 北京 12:00：文件名时间戳固定 Asia/Shanghai，期望值与运行时区无关
     const now = new Date("2026-09-30T04:00:00.000Z");
     const first = publishToShared(dataDir, {
       markdown: "# a",

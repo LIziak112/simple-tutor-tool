@@ -14,6 +14,7 @@ import { and, eq } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { lectures, units } from "../db/schema";
 import { HttpError } from "../lib/http-error";
+import { beijingExportStampOf } from "./export-csv";
 import {
   exportLectureMd,
   exportUnitMd,
@@ -145,18 +146,10 @@ export function readSharedMeta(
 
 // ---------- 发布（D16：复制快照） ----------
 
-/** 本地时间戳 yyyymmdd-HHmmss（D16 文件名段；序号兜底同秒冲突） */
-function formatTimestamp(date: Date): string {
-  const pad = (n: number, width = 2): string => String(n).padStart(width, "0");
-  return [
-    `${pad(date.getFullYear(), 4)}${pad(date.getMonth() + 1)}${pad(date.getDate())}`,
-    `${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`,
-  ].join("-");
-}
-
 /**
  * 写入共享目录（service 单点）：文件名 `<标题>-<登录名>-<时间戳>.md`，标题先过
- * safeFilename（D16）、登录名字符集 D2 已保证安全；同秒重名自动加序号 `-2`；
+ * safeFilename（D16）、登录名字符集 D2 已保证安全；时间戳固定 Asia/Shanghai
+ * （§0.3 显示口径，不随服务器时区变）；同秒重名自动加序号 `-2`；
  * 同目录写伴生 `<同名>.meta.json`。返回实际写入的文件名（供成功提示展示）。
  * now 可注入（测试同秒重名序号）。
  */
@@ -173,7 +166,7 @@ export function publishToShared(
   const dir = sharedDirOf(dataDir);
   mkdirSync(dir, { recursive: true });
   const now = input.now ?? new Date();
-  const base = `${safeFilename(input.title)}-${input.loginName}-${formatTimestamp(now)}`;
+  const base = `${safeFilename(input.title)}-${input.loginName}-${beijingExportStampOf(now)}`;
   const whitelist = scanSharedWhitelist(dataDir);
   // 同秒重名加序号 -2、-3…（D16）；从 2 起与「无序号」形态区分
   let sequence = 1;
