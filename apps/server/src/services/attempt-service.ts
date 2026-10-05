@@ -180,15 +180,17 @@ export interface FrozenResponseInsert {
 /**
  * 插入一行冻结 response（建卷/懒冻结缺行补插/wrong 组卷共用的唯一字面量处，
  * 事务内调用）。学生数据列全部为空白初值——答案/提示解锁/计数由学生后续
- * 作答写入；行 id 对外即 questionRevisionId。
+ * 作答写入；返回行 id（对外即该题的 questionRevisionId，T6R.4 起
+ * note-service 等消费方直接取用，不必再回查）。
  */
 export function insertFrozenResponse(
   tx: Tx,
   values: FrozenResponseInsert,
-): void {
+): string {
+  const id = randomUUID();
   tx.insert(responses)
     .values({
-      id: randomUUID(),
+      id,
       attemptId: values.attemptId,
       questionId: values.questionId,
       questionVersion: values.questionVersion,
@@ -206,6 +208,7 @@ export function insertFrozenResponse(
       hintsOpenedJson: null,
     })
     .run();
+  return id;
 }
 
 /**
@@ -895,7 +898,7 @@ export function requireAttemptQuestion(
   db: Db,
   attempt: Attempt,
   questionId: string,
-): void {
+): { id: string } {
   const hit = db
     .select({ id: responses.id })
     .from(responses)
@@ -914,6 +917,7 @@ export function requireAttemptQuestion(
       "题目不存在或不属于这次练习",
     );
   }
+  return hit;
 }
 
 /**

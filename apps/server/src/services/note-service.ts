@@ -25,7 +25,6 @@ import {
   noteImages,
   notes,
   noteVersions,
-  responses,
   submissionEvidence,
 } from "../db/schema";
 import {
@@ -337,30 +336,19 @@ export function saveNoteVersion(
       "这份作业已交卷，草稿已固定为原稿，不能再写入新版本",
     );
   }
-  requireAttemptQuestion(db, attempt, questionId);
-  const revisionRow = db
-    .select({ id: responses.id })
-    .from(responses)
-    .where(
-      and(
-        eq(responses.attemptId, attempt.id),
-        eq(responses.questionId, questionId),
-      ),
-    )
-    .get();
-  // requireAttemptQuestion 已保证快照非空的行存在；防御性兜底（fail closed）
-  if (revisionRow === undefined) {
-    throw new HttpError(
-      404,
-      "QUESTION_NOT_FOUND",
-      "题目不存在或不属于这次练习",
-    );
-  }
+  // 冻结集合校验即取题目版本引用（requireAttemptQuestion 返回行 id =
+  // questionRevisionId，不必再回查 responses）
+  const { id: questionRevisionId } = requireAttemptQuestion(
+    db,
+    attempt,
+    questionId,
+  );
 
-  // 2. 解析 + 规范化 hash（先验后写）
+  // 2. 解析 + 规范化 hash（先验后写；canonical 字符串只产一次——UTF-8 编码
+  //    成 Buffer 后 hash 与落盘共用，避免二次编码拷贝）
   const doc = parseNoteBodyBytes(bodyBytes);
-  const canonical = canonicalNoteJson(doc);
-  const hash = createHash("sha256").update(canonical, "utf8").digest("hex");
+  const canonicalBytes = Buffer.from(canonicalNoteJson(doc), "utf8");
+  const hash = createHash("sha256").update(canonicalBytes).digest("hex");
   const { strokeCount, pointCount, paperHeight } = noteMetrics(doc);
 
   const scratchWhere = and(
@@ -413,26 +401,27 @@ export function saveNoteVersion(
       noteId,
       newRevision,
       hash,
-      Buffer.from(canonical, "utf8"),
+      canonicalBytes,
       faults,
     );
-    // 6. 事务：CAS 复核 + scratch 先查后插 + 不可变版本行 + 切头
+    // 6. 事务：CAS 复核 + scratch 先查后插 + 不可变版本行 + 统一守卫切头
     db.transaction((tx) => {
       const row = tx.select().from(notes).where(scratchWhere).get();
       if (row === undefined) {
-        // 首版：先插 notes 行（头指针暂空，FK 要求版本行后切），
-        // 再插版本行，最后回填头指针——同一事务内完成，外部不可见中间态
+        // 首版：先插 revision=0 的空白 notes 行（FK 要求版本行先于头指针
+        // 存在），版本行插入后与既有笔记走**同一**守卫切头语句——中间态
+        // 只在本事务内可见（revision=0 ⇔ 头指针/确认时间空，与契约一致）
         if (meta.baseRevision !== 0) throw revisionConflict(db, undefined);
         tx.insert(notes)
           .values({
             id: noteId,
             attemptId: attempt.id,
             questionId,
-            questionRevisionId: revisionRow.id,
+            questionRevisionId,
             phase: "scratch",
-            currentRevision: newRevision,
+            currentRevision: 0,
             currentVersionId: null,
-            serverSavedAt: now,
+            serverSavedAt: null,
             updatedAt: now,
           })
           .run();
@@ -465,24 +454,20 @@ export function saveNoteVersion(
           mutationId: meta.mutationId,
         })
         .run();
-      if (existing === undefined) {
-        tx.update(notes)
-          .set({ currentVersionId: versionId })
-          .where(eq(notes.id, noteId))
-          .run();
-      } else {
-        tx.update(notes)
-          .set({
-            currentRevision: newRevision,
-            currentVersionId: versionId,
-            serverSavedAt: now,
-            updatedAt: now,
-          })
-          .where(
-            and(eq(notes.id, noteId), eq(notes.currentRevision, headRevision)),
-          )
-          .run();
-      }
+      // 统一切头（两条路径同一语句）：where 带 currentRevision 守卫——
+      // 首版行刚以 revision=0 插入、既有行 CAS 复核过 =baseRevision，两者
+      // 都等于 headRevision（预检口径），守卫语义一致
+      tx.update(notes)
+        .set({
+          currentRevision: newRevision,
+          currentVersionId: versionId,
+          serverSavedAt: now,
+          updatedAt: now,
+        })
+        .where(
+          and(eq(notes.id, noteId), eq(notes.currentRevision, headRevision)),
+        )
+        .run();
     });
   } catch (err) {
     // 7. 失败清理：事务已回滚（或文件未落位），刚写的不可变文件无行引用，
