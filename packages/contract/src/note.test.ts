@@ -53,6 +53,34 @@ const FULL_DOC = {
   background: "line",
 } as const;
 
+/** NoteVersionMeta 夹具工厂（两处元信息用例共享，差异字段 spread 覆盖） */
+const versionMeta = (
+  o: Partial<{
+    versionId: string;
+    noteId: string;
+    revision: number;
+    hash: string;
+    strokeCount: number;
+    pointCount: number;
+    paperWidth: number;
+    paperHeight: number;
+    serverSavedAt: string;
+    renderVersion: number;
+  }> = {},
+) => ({
+  versionId: "44444444-4444-4444-8444-444444444444",
+  noteId: "33333333-3333-4333-8333-333333333333",
+  revision: 1,
+  hash: "a".repeat(64),
+  strokeCount: 1,
+  pointCount: 10,
+  paperWidth: INK_LOGICAL_WIDTH,
+  paperHeight: 800,
+  serverSavedAt: "2026-10-06T02:00:00.000Z",
+  renderVersion: 1,
+  ...o,
+});
+
 describe("noteDocSchema：基本形状", () => {
   it("接受显式全字段的合法文档（y>1000 合法：纸张向下延伸）", () => {
     const parsed = noteDocSchema.parse(FULL_DOC);
@@ -223,27 +251,6 @@ describe("noteDocSchema：坐标与点数限额（暂定值，真机定标后修
     expect(noteDocSchema.safeParse(docWithPoints(exact)).success).toBe(true);
   });
 
-  it("noteVersionMeta.paperWidth 恒等于 INK_LOGICAL_WIDTH（literal 锚定，错值拒绝）", () => {
-    const version = {
-      versionId: "44444444-4444-4444-8444-444444444444",
-      noteId: "33333333-3333-4333-8333-333333333333",
-      revision: 1,
-      hash: "a".repeat(64),
-      strokeCount: 1,
-      pointCount: 10,
-      paperWidth: INK_LOGICAL_WIDTH,
-      paperHeight: 800,
-      serverSavedAt: "2026-10-06T02:00:00.000Z",
-      renderVersion: 1,
-    };
-    expect(noteVersionMetaSchema.parse(version).paperWidth).toBe(
-      INK_LOGICAL_WIDTH,
-    );
-    expect(
-      noteVersionMetaSchema.safeParse({ ...version, paperWidth: 999 }).success,
-    ).toBe(false);
-  });
-
   it("限额联动：NOTE_COORD_MAX_Y 与 NOTE_PAPER_HEIGHT_MAX 同源相等（防漂移）", () => {
     expect(NOTE_COORD_MAX_Y).toBe(NOTE_PAPER_HEIGHT_MAX);
   });
@@ -403,19 +410,24 @@ describe("元信息形状", () => {
     ).toBe(true);
   });
 
+  it("paperWidth 恒等于 INK_LOGICAL_WIDTH（literal 锚定，错值拒绝）", () => {
+    const version = versionMeta();
+    expect(noteVersionMetaSchema.parse(version).paperWidth).toBe(
+      INK_LOGICAL_WIDTH,
+    );
+    expect(
+      noteVersionMetaSchema.safeParse({ ...version, paperWidth: 999 }).success,
+    ).toBe(false);
+  });
+
   it("NoteVersion 元信息：字段齐全通过；hash 非 64 位 hex 拒绝", () => {
-    const version = {
-      versionId: "44444444-4444-4444-8444-444444444444",
+    const version = versionMeta({
       noteId: RECORD.noteId,
       revision: 3,
-      hash: "a".repeat(64),
       strokeCount: 12,
       pointCount: 2400,
-      paperWidth: INK_LOGICAL_WIDTH,
       paperHeight: 1200,
-      serverSavedAt: "2026-10-06T02:00:00.000Z",
-      renderVersion: 1,
-    };
+    });
     expect(noteVersionMetaSchema.parse(version).revision).toBe(3);
     expect(
       noteVersionMetaSchema.safeParse({ ...version, hash: "zz" }).success,

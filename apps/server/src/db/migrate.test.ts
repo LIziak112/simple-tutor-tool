@@ -66,6 +66,21 @@ describe("T6R.2 迁移：空库与带存量库", () => {
   /** T6R.2 前最后一个迁移的 tag（0021 创建题目草稿四表） */
   const PRE_T6R2_LAST_TAG = "0020_chubby_silver_fox";
 
+  /** 四表存在断言（空库/存量库两用例共用） */
+  function expectNoteTablesExist(db: ReturnType<typeof createDb>): void {
+    const tables = db.$client
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('notes','note_versions','note_images','submission_evidence') ORDER BY name",
+      )
+      .all() as Array<{ name: string }>;
+    expect(tables.map((r) => r.name)).toEqual([
+      "note_images",
+      "note_versions",
+      "notes",
+      "submission_evidence",
+    ]);
+  }
+
   /**
    * 在 T6R.2 之前的存量库上插入业务数据（attempts/responses/ink 等）。
    * 库本身由 makeMigrationsFolderUpTo(PRE_T6R2_LAST_TAG) 的截断迁移目录建出
@@ -76,7 +91,9 @@ describe("T6R.2 迁移：空库与带存量库", () => {
     attemptId: string;
     questionId: string;
   } {
-    // 存量夹具：教师 → 学生 → 课程 → 单元 → 题目 → 作业 → attempt → response → ink
+    // 存量夹具：教师 → 学生 → 课程 → 单元 → 题目 → 作业 → attempt → response → ink。
+    // units/questions 虽无外键依赖（0021 纯 CREATE 不触旧表），保留完整业务链
+    // 是为了让「带真实形态数据的库」更贴近存量库（边界库夹具，非断言消费）
     const now = new Date().toISOString();
     const teacherId = randomUUID();
     db.insert(teachers)
@@ -224,17 +241,7 @@ describe("T6R.2 迁移：空库与带存量库", () => {
   it("空库（全新文件库）迁移后四表存在且迁移记录与 journal 一致", () => {
     const db = createDb(join(dir, "fresh.db"));
     runMigrations(db);
-    const tables = db.$client
-      .prepare(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('notes','note_versions','note_images','submission_evidence') ORDER BY name",
-      )
-      .all() as Array<{ name: string }>;
-    expect(tables.map((r) => r.name)).toEqual([
-      "note_images",
-      "note_versions",
-      "notes",
-      "submission_evidence",
-    ]);
+    expectNoteTablesExist(db);
     const rows = db.$client
       .prepare("SELECT count(*) AS n FROM __drizzle_migrations")
       .get() as { n: number };
@@ -253,17 +260,7 @@ describe("T6R.2 迁移：空库与带存量库", () => {
     // 模拟旧库启动：补应用 0021（题目草稿四表）
     expect(() => runMigrations(db)).not.toThrow();
 
-    const tables = db.$client
-      .prepare(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('notes','note_versions','note_images','submission_evidence') ORDER BY name",
-      )
-      .all() as Array<{ name: string }>;
-    expect(tables.map((r) => r.name)).toEqual([
-      "note_images",
-      "note_versions",
-      "notes",
-      "submission_evidence",
-    ]);
+    expectNoteTablesExist(db);
 
     // 存量数据完好
     expect(

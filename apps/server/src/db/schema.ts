@@ -7,7 +7,10 @@ import type {
   NoteSubmissionEvidenceState,
   QuestionType,
 } from "@tutor/contract";
+import { sql } from "drizzle-orm";
 import {
+  type AnySQLiteColumn,
+  check,
   index,
   integer,
   primaryKey,
@@ -943,8 +946,15 @@ export const notes = sqliteTable(
     phase: text("phase").$type<NotePhase>().notNull().default("scratch"),
     /** 当前 head 的 revision 号；0 = 建行后尚未产生任何版本（预留中间态） */
     currentRevision: integer("current_revision").notNull().default(0),
-    /** 当前 head 版本（note_versions.id）；currentRevision=0 时为 NULL */
-    currentVersionId: text("current_version_id"),
+    /**
+     * 当前 head 版本（note_versions.id）；currentRevision=0 时为 NULL。
+     * 外键（T6R.2 code-review 裁决补加）：notes↔note_versions 循环引用在
+     * SQLite 运行时外键下成立——头指针初始 NULL，版本先插、同事务内再切头；
+     * GC 删除仍是 head 的版本会被 DB 拦截（防悬垂头指针）。
+     */
+    currentVersionId: text("current_version_id").references(
+      (): AnySQLiteColumn => noteVersions.id,
+    ),
     /** 最近一次服务端确认时间（UTC ISO）；从未确认为 NULL */
     serverSavedAt: text("server_saved_at"),
     /** 头指针最近更新时间：UTC ISO 字符串（四表中唯一可 UPDATE 的表） */
@@ -962,6 +972,12 @@ export const notes = sqliteTable(
       table.attemptId,
       table.questionId,
       table.phase,
+    ),
+    // DB 层值域防御（T6R.2 code-review）：$type 只约束 TS 不约束 SQLite——
+    // 坏枚举串进入不可变链（版本/证据行）会导致 API 投影 parse 失败整页 500
+    check(
+      "notes_phase_check",
+      sql`${table.phase} in ('scratch', 'correction', 'supplement')`,
     ),
   ],
 );
@@ -995,7 +1011,10 @@ export const noteVersions = sqliteTable(
     strokeCount: integer("stroke_count").notNull(),
     /** 总点数（全稿 points 之和；契约限额 NOTE_MAX_TOTAL_POINTS） */
     pointCount: integer("point_count").notNull(),
-    /** 纸张逻辑宽（恒 1000，冗余存储） */
+    /**
+     * 纸张逻辑宽（恒 = INK_LOGICAL_WIDTH=1000；契约 z.literal 同口径锚定，
+     * 冗余存储便于不解正文即知几何；DB 层 CHECK 兜底见表尾）
+     */
     paperWidth: integer("paper_width").notNull(),
     /** 纸张逻辑高（本版本正文的 paperHeightLogical） */
     paperHeight: integer("paper_height").notNull(),
@@ -1010,6 +1029,7 @@ export const noteVersions = sqliteTable(
       table.noteId,
       table.revision,
     ),
+    check("note_versions_paper_width_check", sql`${table.paperWidth} = 1000`),
   ],
 );
 
@@ -1036,7 +1056,12 @@ export const noteImages = sqliteTable(
     spec: text("spec").$type<NoteImageSpec>().notNull(),
     /** 页号/切片序（同版本同规格内从 0 递增） */
     pageIndex: integer("page_index").notNull(),
-    /** 裁剪区左上 x（整数逻辑坐标） */
+    /**
+     * 裁剪区左上 x（整数逻辑坐标）。映射锚点（契约 ↔ 表平铺）：
+     * 契约 crop.{x,y,width,height} ↔ crop_x/crop_y/crop_w/crop_h——注意
+     * width→cropW、height→cropH 是换名非机械 snake_case；边界校验
+     * （x+w≤1000、y+h≤3000）在契约 superRefine，DB 不加 CHECK（与 state 同口径）
+     */
     cropX: integer("crop_x").notNull(),
     /** 裁剪区左上 y（整数逻辑坐标） */
     cropY: integer("crop_y").notNull(),
@@ -1061,6 +1086,14 @@ export const noteImages = sqliteTable(
       table.noteVersionId,
       table.spec,
       table.pageIndex,
+    ),
+    check(
+      "note_images_spec_check",
+      sql`${table.spec} in ('thumbnail', 'analysis')`,
+    ),
+    check(
+      "note_images_state_check",
+      sql`${table.state} in ('pending', 'ready', 'failed', 'missing')`,
     ),
   ],
 );
@@ -1101,8 +1134,13 @@ export const submissionEvidence = sqliteTable(
       table.attemptId,
       table.questionId,
     ),
-    // GC 反查：版本被证据引用时不得回收（T6R.4；NULL 不进索引条目语义由查询侧处理）
+    // GC 反查：版本被证据引用时不得回收（T6R.4）。version_id 等值查询天然
+    // 不命中 NULL 行；SQLite 普通索引含 NULL 条目，勿据索引条目数做统计
     index("submission_evidence_version_idx").on(table.versionId),
+    check(
+      "submission_evidence_state_check",
+      sql`${table.state} in ('none', 'frozen', 'missing', 'legacy_unverified')`,
+    ),
   ],
 );
 

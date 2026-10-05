@@ -556,9 +556,10 @@ describe("notes / note_versions / note_images / submission_evidence 表（T6R.2 
   function seedNoteVersion(
     db: ReturnType<typeof createTestDb>,
     noteId: string,
-    o: { revision?: number; hash?: string } = {},
+    o: Partial<typeof noteVersions.$inferInsert> = {},
   ): typeof noteVersions.$inferInsert {
     const revision = o.revision ?? 1;
+    // renderVersion 不设基值：缺省由 DB DEFAULT 填（调用方可显式覆盖）
     const version = {
       id: randomUUID(),
       noteId,
@@ -570,7 +571,7 @@ describe("notes / note_versions / note_images / submission_evidence 表（T6R.2 
       paperWidth: 1000,
       paperHeight: 800,
       serverSavedAt: new Date().toISOString(),
-      renderVersion: 1,
+      ...o,
     };
     db.insert(noteVersions).values(version).run();
     return version;
@@ -622,37 +623,21 @@ describe("notes / note_versions / note_images / submission_evidence 表（T6R.2 
   it("note_versions：行可读写、renderVersion 默认 1；(noteId, revision) 唯一拒绝重复", () => {
     const db = createTestDb();
     const { attemptId, questionId } = seedNoteRefs(db);
-    const noteId = randomUUID();
-    db.insert(notes)
-      .values({
-        id: noteId,
-        attemptId,
-        questionId,
-        questionRevisionId: "rev-a",
-        updatedAt: new Date().toISOString(),
-      })
-      .run();
-    const version = {
-      id: randomUUID(),
-      noteId,
-      revision: 1,
-      bodyPath: `blobs/notes/${noteId}/v1.json.gz`,
-      hash: "a".repeat(64),
+    const noteId = seedNote(db, { attemptId, questionId });
+    // 插入省略 renderVersion——默认值路径真实被 exercise（勿显式传 1）
+    const version = seedNoteVersion(db, noteId, {
       strokeCount: 12,
       pointCount: 2400,
-      paperWidth: 1000,
       paperHeight: 1200,
       serverSavedAt: "2026-10-06T02:00:00.000Z",
-      renderVersion: 1,
-    };
-    db.insert(noteVersions).values(version).run();
+    });
     expect(
       db
         .select()
         .from(noteVersions)
         .where(eq(noteVersions.id, version.id))
         .get(),
-    ).toEqual(version);
+    ).toEqual({ ...version, renderVersion: 1 });
 
     // 同 (noteId, revision) 第二行 → 唯一索引拒绝
     expect(() =>

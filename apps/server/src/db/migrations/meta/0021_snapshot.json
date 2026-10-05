@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "170ff55c-1495-4faf-a60a-123f973c465c",
+  "id": "e6a26128-8e1a-4a7b-8976-ac1ad4e67eb0",
   "prevId": "243f367d-1e7f-46ae-94ff-6f82aba7872a",
   "tables": {
     "app_settings": {
@@ -1311,7 +1311,16 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "checkConstraints": {}
+      "checkConstraints": {
+        "note_images_spec_check": {
+          "name": "note_images_spec_check",
+          "value": "\"note_images\".\"spec\" in ('thumbnail', 'analysis')"
+        },
+        "note_images_state_check": {
+          "name": "note_images_state_check",
+          "value": "\"note_images\".\"state\" in ('pending', 'ready', 'failed', 'missing')"
+        }
+      }
     },
     "note_versions": {
       "name": "note_versions",
@@ -1422,7 +1431,12 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "checkConstraints": {}
+      "checkConstraints": {
+        "note_versions_paper_width_check": {
+          "name": "note_versions_paper_width_check",
+          "value": "\"note_versions\".\"paper_width\" = 1000"
+        }
+      }
     },
     "notes": {
       "name": "notes",
@@ -1517,11 +1531,29 @@
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
+        },
+        "notes_current_version_id_note_versions_id_fk": {
+          "name": "notes_current_version_id_note_versions_id_fk",
+          "tableFrom": "notes",
+          "tableTo": "note_versions",
+          "columnsFrom": [
+            "current_version_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "checkConstraints": {}
+      "checkConstraints": {
+        "notes_phase_check": {
+          "name": "notes_phase_check",
+          "value": "\"notes\".\"phase\" in ('scratch', 'correction', 'supplement')"
+        }
+      }
     },
     "question_knowledge": {
       "name": "question_knowledge",
@@ -2159,7 +2191,12 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "checkConstraints": {}
+      "checkConstraints": {
+        "submission_evidence_state_check": {
+          "name": "submission_evidence_state_check",
+          "value": "\"submission_evidence\".\"state\" in ('none', 'frozen', 'missing', 'legacy_unverified')"
+        }
+      }
     },
     "teachers": {
       "name": "teachers",

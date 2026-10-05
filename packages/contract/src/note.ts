@@ -99,41 +99,46 @@ export const noteDocSchema = z
   })
   .superRefine((doc, ctx) => {
     let totalPoints = 0;
-    doc.ink.strokes.forEach((stroke, strokeIndex) => {
+    // 索引 for 而非嵌套 forEach：每笔零闭包分配（30 万点上限的校验热路径）
+    for (let si = 0; si < doc.ink.strokes.length; si++) {
+      const stroke = doc.ink.strokes[si];
+      if (stroke === undefined) continue;
       if (stroke.points.length > NOTE_MAX_POINTS_PER_STROKE) {
         ctx.addIssue({
           code: "custom",
-          path: ["ink", "strokes", strokeIndex, "points"],
+          path: ["ink", "strokes", si, "points"],
           message: `单笔点数超上限（${stroke.points.length} > ${NOTE_MAX_POINTS_PER_STROKE}，暂定值）`,
         });
       }
       totalPoints += stroke.points.length;
-      stroke.points.forEach((point, pointIndex) => {
+      for (let pi = 0; pi < stroke.points.length; pi++) {
+        const point = stroke.points[pi];
+        if (point === undefined) continue;
         // path 数组只在失败分支内构造：合法全稿（上限 30 万点）不付逐点分配
         if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) {
           ctx.addIssue({
             code: "custom",
-            path: ["ink", "strokes", strokeIndex, "points", pointIndex],
+            path: ["ink", "strokes", si, "points", pi],
             message: "坐标必须是有限数（拒绝 NaN/Infinity）",
           });
-          return;
+          continue;
         }
         if (point.x < 0 || point.x > NOTE_COORD_MAX_X) {
           ctx.addIssue({
             code: "custom",
-            path: ["ink", "strokes", strokeIndex, "points", pointIndex, "x"],
+            path: ["ink", "strokes", si, "points", pi, "x"],
             message: `x 坐标越界（须 0≤x≤${NOTE_COORD_MAX_X}）`,
           });
         }
         if (point.y < 0 || point.y > NOTE_COORD_MAX_Y) {
           ctx.addIssue({
             code: "custom",
-            path: ["ink", "strokes", strokeIndex, "points", pointIndex, "y"],
+            path: ["ink", "strokes", si, "points", pi, "y"],
             message: `y 坐标越界（须 0≤y≤${NOTE_COORD_MAX_Y}）`,
           });
         }
-      });
-    });
+      }
+    }
     if (totalPoints > NOTE_MAX_TOTAL_POINTS) {
       ctx.addIssue({
         code: "custom",
@@ -165,7 +170,7 @@ export const noteImageStateSchema = z.enum([
   "missing",
 ]);
 
-/** 提交证据状态：none=确实空稿 / frozen=已固定版本 / missing=交卷时未能固定 / legacy_unverified=升级前进行中稿的降级标记 */
+/** 提交证据状态：none=确实空稿 / frozen=已固定版本 / missing=用户明确选择缺稿交卷（方案 §6.4：落 missing 必须经用户确认）/ legacy_unverified=升级前进行中稿的降级标记 */
 export const noteSubmissionEvidenceStateSchema = z.enum([
   "none",
   "frozen",
@@ -221,10 +226,7 @@ export const questionRevisionIdSchema = z
   .string()
   .min(1, "questionRevisionId 不能为空")
   .max(512)
-  .refine(
-    (v) => v === v.trim() && /\S/.test(v),
-    "questionRevisionId 不能含首尾空白或为纯空白",
-  );
+  .refine((v) => v === v.trim(), "questionRevisionId 不能含首尾空白或为纯空白");
 
 // ---------- 元信息形状（API 投影；磁盘路径等服务端内部字段不进契约） ----------
 
@@ -462,6 +464,13 @@ export const noteErrorCodeSchema = z.enum([
 // ---------- 推断类型导出 ----------
 
 export type NoteDoc = z.infer<typeof noteDocSchema>;
+/**
+ * NoteDoc 的输入类型：paperHeightLogical/background 可缺省（宽容读入旧
+ * InkDoc）。T6R.8 前端构造/写 IDB 时**必须**以此类型（而非输出类型）为
+ * 写入口径、读出后经 parse 物化默认值——直接 as NoteDoc 拼对象会绕过
+ * 默认值物化（paperHeightLogical 为 undefined 时布局计算 NaN）。
+ */
+export type NoteDocInput = z.input<typeof noteDocSchema>;
 export type NoteBackground = z.infer<typeof noteBackgroundSchema>;
 export type NoteLocalBodyState = z.infer<typeof noteLocalBodyStateSchema>;
 export type NoteServerBodyState = z.infer<typeof noteServerBodyStateSchema>;
