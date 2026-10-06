@@ -74,11 +74,20 @@ async function pendingMutationIdOf(
   return mutationId;
 }
 
-/** 受控后端：每笔 set 挂起至测试放行（验「事务完成才确认」与合并写） */
+/**
+ * 受控后端（复审⑭：包 memoryNoteBackend 只覆 set/get 为挂起式）：
+ * set/get 挂起至测试放行（验「事务完成才确认」、合并写与读取竞态窗口）；
+ * keys/落盘语义与内存后端一致。
+ */
 interface GatedCall {
   key: string;
   value: unknown;
   release: () => void;
+}
+
+interface GatedGet {
+  key: string;
+  release: (raw: unknown) => void;
 }
 
 function releaseCall(calls: GatedCall[], index: number): void {
@@ -100,29 +109,28 @@ function strokesOf(doc: unknown): number {
 }
 
 function gatedBackend() {
-  const store = new Map<string, unknown>();
-  const setCalls: Array<{
-    key: string;
-    value: unknown;
-    release: () => void;
-  }> = [];
+  const inner = memoryNoteBackend();
+  const setCalls: GatedCall[] = [];
+  const getCalls: GatedGet[] = [];
   const backend: NoteStoreBackend = {
-    get: async (key) => store.get(key),
-    keys: async (prefix) =>
-      Array.from(store.keys()).filter((k) => k.startsWith(prefix)),
+    keys: inner.keys,
     set: (key, value) =>
       new Promise<void>((resolve) => {
         setCalls.push({
           key,
           value,
           release: () => {
-            store.set(key, value);
+            void inner.set(key, value);
             resolve();
           },
         });
       }),
+    get: (key) =>
+      new Promise((resolve) => {
+        getCalls.push({ key, release: (raw) => resolve(raw) });
+      }),
   };
-  return { backend, setCalls };
+  return { backend, setCalls, getCalls, inner };
 }
 
 beforeEach(() => {
@@ -465,5 +473,66 @@ describe("note-store：四维总览派生（T6R.5 契约注释：前端合成）
     const record = await getNoteRecord(SESSION_A, SCOPE);
     expect(record?.pending).not.toBeNull();
     expect(record?.doc.ink.strokes.length).toBe(0);
+  });
+});
+
+describe("note-store：getNoteRecord 读取竞态（复审①）", () => {
+  it("get 在途期间的本地写入不被「后端无值」覆盖（IDB 无值分支）", async () => {
+    const { backend: gated, getCalls } = gatedBackend();
+    installNoteBackend(gated);
+    const pending = getNoteRecord(SESSION_A, SCOPE); // 挂起（后端将返回无记录）
+    await Promise.resolve(); // get 已登记
+    writeNoteDoc(SESSION_A, SCOPE, DOC_B); // 窗口内新写
+    const gate = getCalls[0];
+    if (gate === undefined) throw new Error("get 未挂起（测试前置失败）");
+    gate.release(undefined); // 后端：无记录
+    const record = await pending;
+    if (record === null) throw new Error("窗口内新写被丢");
+    expect(record.doc.ink.strokes.length).toBe(2); // B 保留
+  });
+
+  it("get 在途期间的本地写入不被后端旧值覆盖（IDB 有旧值分支）", async () => {
+    const { backend: gated, setCalls, getCalls, inner } = gatedBackend();
+    installNoteBackend(gated);
+    // 先落一份旧稿 A 进后端
+    writeNoteDoc(SESSION_A, SCOPE, DOC_A);
+    releaseCall(setCalls, 0);
+    await waitForLocalSaved(SESSION_A, SCOPE);
+    const oldRaw = await inner.get(noteKeyOf(SESSION_A, SCOPE));
+    installNoteBackend(gated); // 清内存缓存（后端保留 A）
+    const pending = getNoteRecord(SESSION_A, SCOPE);
+    await Promise.resolve();
+    writeNoteDoc(SESSION_A, SCOPE, DOC_B); // 窗口内新写
+    const gate = getCalls[0];
+    if (gate === undefined) throw new Error("get 未挂起（测试前置失败）");
+    gate.release(oldRaw); // 后端返回旧值 A
+    const record = await pending;
+    if (record === null) throw new Error("窗口内新写被丢");
+    expect(record.doc.ink.strokes.length).toBe(2); // B 胜出，旧值 A 不覆盖
+  });
+});
+
+describe("note-store：备份回退 load 守卫（复审②）", () => {
+  it("本地 rev5 全同步→服务端回退 rev2→重进 load：conflict 保留、doc 不被服务端稿覆盖", async () => {
+    writeNoteDoc(SESSION_A, SCOPE, DOC_B);
+    await applyUploadReceipt(
+      SESSION_A,
+      SCOPE,
+      await pendingMutationIdOf(SESSION_A, SCOPE),
+      receiptOf(5),
+    );
+    const baseHead = headOf();
+    if (baseHead.note === null) throw new Error("前置失败");
+    const rolledBackHead = headOf({
+      note: { ...baseHead.note, revision: 2 },
+    });
+    // 服务端回退后的稿内容是 A（rev2 时代的旧稿）
+    await applyServerLoad(SESSION_A, SCOPE, DOC_A, rolledBackHead);
+    const record = await recordOf(SESSION_A, SCOPE);
+    expect(record.conflict).not.toBeNull(); // 回退检测置冲突
+    expect(record.conflict?.current.revision).toBe(2);
+    expect(record.doc.ink.strokes.length).toBe(2); // 本地 B 稿保留，未被 A 覆盖
+    expect(record.baseRevision).toBe(5); // 不回拨（对齐留待裁决）
+    expect(deriveServerState(record, false)).toBe("conflict");
   });
 });

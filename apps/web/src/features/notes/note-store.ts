@@ -506,18 +506,24 @@ export async function getNoteRecord(
   scope: NoteScope,
 ): Promise<NoteLocalRecord | null> {
   const key = noteKeyOf(session, scope);
-  if (records.has(key)) return records.get(key) ?? null;
+  const cached = records.get(key);
+  if (cached !== undefined) return cached;
+  let raw: unknown;
   try {
-    const raw = await backend().get(key);
-    if (raw === undefined || raw === null) return null;
-    const revived = reviveRecord(raw);
-    if (revived === null) return null;
-    records.set(key, revived);
-    return revived;
+    raw = await backend().get(key);
   } catch (err) {
     console.warn("草稿本地记录读取失败（不影响作答）", err);
     return null;
   }
+  // 竞态窗口（复审①）：get 期间发生的本地写入已进内存缓存——后端旧值
+  // （或空值）不得覆盖窗口内的新写；无新写才落缓存
+  const written = records.get(key);
+  if (written !== undefined) return written;
+  if (raw === undefined || raw === null) return null;
+  const revived = reviveRecord(raw);
+  if (revived === null) return null;
+  records.set(key, revived);
+  return revived;
 }
 
 /** 同步窥视内存记录（调度器/诊断用；未载入返回 null，不触发后端读） */
@@ -598,8 +604,12 @@ export function writeNoteDoc(
   });
 }
 
-/** head 投影落记录（含代际回退检测，见文件头注释） */
-function applyHeadInfo(record: NoteLocalRecord, head: NoteHeadData): void {
+/**
+ * head 投影落记录（含代际回退检测，见文件头注释）。
+ * 返回 true = 检测到回退（已置 conflict）——调用方（applyLoadMutations）
+ * 必须就此止步，不得再覆盖 doc/pending（复审②）。
+ */
+function applyHeadInfo(record: NoteLocalRecord, head: NoteHeadData): boolean {
   record.lastHead = head;
   const headRevision = head.note?.revision ?? 0;
   if (headRevision < record.baseRevision) {
@@ -617,10 +627,11 @@ function applyHeadInfo(record: NoteLocalRecord, head: NoteHeadData): void {
       },
       localDoc: record.pending?.doc ?? record.doc,
     };
-    return;
+    return true;
   }
   record.baseRevision = headRevision;
   record.noteId = head.note?.noteId ?? record.noteId ?? null;
+  return false;
 }
 
 /**
@@ -673,7 +684,11 @@ function applyLoadMutations(
   serverDoc: NoteDoc,
   head: NoteHeadData | null | undefined,
 ): void {
-  if (head !== undefined && head !== null) applyHeadInfo(record, head);
+  // 守卫前置（复审②）：head 回退（备份恢复）已置 conflict——就地止步，
+  // 服务端稿不覆盖本地 doc、不动 pending/conflict，等用户裁决
+  if (head !== undefined && head !== null && applyHeadInfo(record, head)) {
+    return;
+  }
   if (
     record.pending !== null &&
     !noteDocsEqual(record.pending.doc, serverDoc)
