@@ -720,9 +720,10 @@ export function gcNoteVersions(
     if (row.id !== null) keep.add(row.id);
   }
 
-  // 超窗口候选（serverSavedAt 为定长 UTC ISO，字典序即时间序）
+  // 超窗口候选（serverSavedAt 为定长 UTC ISO，字典序即时间序；列投影只取
+  // 回收循环用到的两列——复审⑫）
   const candidates = db
-    .select()
+    .select({ id: noteVersions.id, bodyPath: noteVersions.bodyPath })
     .from(noteVersions)
     .where(lt(noteVersions.serverSavedAt, cutoff))
     .all();

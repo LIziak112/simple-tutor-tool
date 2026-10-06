@@ -566,6 +566,12 @@ describe("上传协议（CAS + 幂等）", () => {
         mutationId: "not-uuid",
       }).success,
     ).toBe(false);
+    expect(
+      noteUploadMetaSchema.safeParse({
+        baseRevision: 1_000_001,
+        mutationId: "66666666-6666-4666-8666-666666666666",
+      }).success,
+    ).toBe(false);
   });
 
   it("服务端回执：revision≥1、hash 为 64 位 hex、savedAt 非空", () => {

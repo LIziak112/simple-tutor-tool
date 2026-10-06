@@ -10,9 +10,9 @@ import { describe, expect, it } from "vitest";
 import type { Db } from "../db/client.ts";
 import { attempts, questions, students, units } from "../db/schema.ts";
 import { createTestDb, TEST_TEACHER_ID } from "../db/test-utils.ts";
-import { HttpError } from "../lib/http-error.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 import { assertNoStemLeak } from "../test/assert-no-stem-leak.ts";
+import { expectHttpError } from "../test/expect-http-error.ts";
 import { createAssignment, updateAssignment } from "./assignment-service.ts";
 import {
   answersReleased,
@@ -55,19 +55,6 @@ function captureError(fn: () => unknown): unknown {
     return err;
   }
   throw new Error("期望抛出异常但没有");
-}
-
-/** 断言 HttpError 的状态码与错误码 */
-function expectHttpError(
-  err: unknown,
-  status: number,
-  code: string,
-): asserts err is HttpError {
-  if (!(err instanceof HttpError)) {
-    throw new Error(`期望 HttpError，实际是 ${String(err)}`);
-  }
-  expect(err.status).toBe(status);
-  expect(err.code).toBe(code);
 }
 
 /** 详情 data 断言为结果视图（交卷后读取的口径；拿到草稿视图即测试失败） */

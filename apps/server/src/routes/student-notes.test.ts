@@ -1,15 +1,16 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
-import type { ApiErr, NoteDoc } from "@tutor/contract";
+import type { ApiErr } from "@tutor/contract";
 import {
   NOTE_BODY_GZIP_MAX_BYTES,
   noteVersionReceiptSchema,
 } from "@tutor/contract";
+import { and, eq } from "drizzle-orm";
 import type { Logger } from "pino";
 import pino from "pino";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client.ts";
 import {
@@ -19,6 +20,7 @@ import {
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { insertFrozenResponse } from "../services/attempt-service.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
+import { gzipJson, noteDoc } from "../test/note-fixtures.ts";
 import { submitAttemptRequest } from "../test/submit-revisions";
 
 /**
@@ -45,31 +47,6 @@ const PRACTICE_MD = readFileSync(
 const Q = { solve: "p4-q7", apply: "练习四-7" } as const;
 
 type App = ReturnType<typeof createApp>;
-
-/** 最小合法 NoteDoc（n 笔） */
-function noteDoc(strokes = 1, y = 20): NoteDoc {
-  return {
-    version: 1,
-    ink: {
-      width: 1000,
-      strokes: Array.from({ length: strokes }, (_, i) => ({
-        tool: "pen" as const,
-        color: "#1f2328",
-        weight: 4,
-        points: [
-          { x: 10 + i, y, p: 0.5, t: 0 },
-          { x: 30 + i, y: y + 5, p: 0.8, t: 25 },
-        ],
-      })),
-    },
-    paperHeightLogical: 800,
-    background: "grid",
-  };
-}
-
-function gzipDoc(doc: unknown): Uint8Array {
-  return new Uint8Array(gzipSync(Buffer.from(JSON.stringify(doc), "utf8")));
-}
 
 interface PutNoteOptions {
   baseRevision?: number;
@@ -107,18 +84,21 @@ function putNote(
   );
 }
 
-/** 全套前置：教师 + 导入样例 + 张三（被指派）/李四（未被指派）+ attempt */
-async function makeNotesApp(): Promise<{
-  app: App;
-  db: Db;
-  dataDir: string;
-  aCookie: string;
-  bCookie: string;
-  attemptId: string;
-}> {
-  const db = createTestDb();
-  const dataDir = createTestDir();
-  const app = createApp({
+// ---------- 共享世界（复审⑩：17 遍全栈世界收敛为一次 beforeAll 构建） ----------
+
+let app: App;
+let db: Db;
+let dataDir: string;
+let teacherCookie: string;
+let unitId: string;
+let aId: string;
+let aCookie: string;
+let bCookie: string;
+
+beforeAll(async () => {
+  db = createTestDb();
+  dataDir = createTestDir();
+  app = createApp({
     isProduction: false,
     logger: silentLogger,
     db,
@@ -130,7 +110,7 @@ async function makeNotesApp(): Promise<{
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ loginName: "teacher", password: TEACHER_PASSWORD }),
   });
-  const teacherCookie = `tutor_session=${extractSessionToken(setup)}`;
+  teacherCookie = `tutor_session=${extractSessionToken(setup)}`;
 
   const importRes = await app.request("/api/teacher/import/commit", {
     method: "POST",
@@ -138,13 +118,20 @@ async function makeNotesApp(): Promise<{
     body: JSON.stringify({ markdown: PRACTICE_MD, filename: "练习样例.md" }),
   });
   expect(importRes.status).toBe(200);
-  const unitId = (
+  const importedUnitId = (
     (await importRes.json()) as { data: { units: { id: string }[] } }
   ).data.units[0]?.id;
-  if (!unitId) throw new Error("样例导入未产出单元");
+  if (!importedUnitId) throw new Error("样例导入未产出单元");
+  unitId = importedUnitId;
 
-  const aId = await createStudent(app, teacherCookie, "张三");
+  aId = await createStudent(app, teacherCookie, "张三");
   await createStudent(app, teacherCookie, "李四");
+  aCookie = await loginStudent(app, "张三");
+  bCookie = await loginStudent(app, "李四");
+});
+
+/** 每测试取新 attempt：同单元布置新作业 → 开卷（笔记数据按 attempt 天然隔离） */
+async function freshAttempt(): Promise<string> {
   const createRes = await app.request("/api/teacher/assignments", {
     method: "POST",
     headers: { "content-type": "application/json", cookie: teacherCookie },
@@ -155,22 +142,37 @@ async function makeNotesApp(): Promise<{
     (await createRes.json()) as { data: { assignments: { id: string }[] } }
   ).data.assignments[0]?.id;
   if (assignmentId === undefined) throw new Error("布置作业响应缺少作业 id");
-
   const attemptRes = await app.request(
     `/api/student/assignments/${assignmentId}/attempt`,
-    { method: "POST", headers: { cookie: await loginStudent(app, "张三") } },
+    { method: "POST", headers: { cookie: aCookie } },
   );
   expect(attemptRes.status).toBe(200);
-  const attemptId = ((await attemptRes.json()) as { data: { id: string } }).data
-    .id;
-  return {
-    app,
-    db,
-    dataDir,
-    aCookie: await loginStudent(app, "张三"),
-    bCookie: await loginStudent(app, "李四"),
-    attemptId,
-  };
+  return ((await attemptRes.json()) as { data: { id: string } }).data.id;
+}
+
+/** 该 attempt 该题的 scratch 笔记行（共享世界里按 attempt 过滤断言用） */
+function noteRowOf(attemptId: string, questionId: string) {
+  return db
+    .select()
+    .from(notesTable)
+    .where(
+      and(
+        eq(notesTable.attemptId, attemptId),
+        eq(notesTable.questionId, questionId),
+      ),
+    )
+    .get();
+}
+
+/** 该 attempt 该题的版本行数（经 scratch 笔记行关联） */
+function versionCountOf(attemptId: string, questionId: string): number {
+  const row = noteRowOf(attemptId, questionId);
+  if (row === undefined) return 0;
+  return db
+    .select()
+    .from(noteVersionsTable)
+    .where(eq(noteVersionsTable.noteId, row.id))
+    .all().length;
 }
 
 function extractSessionToken(res: Response): string {
@@ -214,26 +216,26 @@ async function loginStudent(app: App, name: string): Promise<string> {
 
 describe("PUT /attempts/:id/notes/:qid 鉴权与状态门槛", () => {
   it("未登录 401", async () => {
-    const { app, attemptId } = await makeNotesApp();
+    const attemptId = await freshAttempt();
     const res = await putNote(
       app,
       undefined,
       attemptId,
       Q.solve,
-      gzipDoc(noteDoc()),
+      gzipJson(noteDoc()),
     );
     expect(res.status).toBe(401);
     expect(((await res.json()) as ApiErr).error).toBe("UNAUTHORIZED");
   });
 
   it("非本人 attempt 403；attempt 不存在 404；题目不在卷内 404", async () => {
-    const { app, aCookie, bCookie, attemptId } = await makeNotesApp();
+    const attemptId = await freshAttempt();
     expect(
-      (await putNote(app, bCookie, attemptId, Q.solve, gzipDoc(noteDoc())))
+      (await putNote(app, bCookie, attemptId, Q.solve, gzipJson(noteDoc())))
         .status,
     ).toBe(403);
     expect(
-      (await putNote(app, aCookie, randomUUID(), Q.solve, gzipDoc(noteDoc())))
+      (await putNote(app, aCookie, randomUUID(), Q.solve, gzipJson(noteDoc())))
         .status,
     ).toBe(404);
     expect(
@@ -243,14 +245,14 @@ describe("PUT /attempts/:id/notes/:qid 鉴权与状态门槛", () => {
           aCookie,
           attemptId,
           "not-in-paper",
-          gzipDoc(noteDoc()),
+          gzipJson(noteDoc()),
         )
       ).status,
     ).toBe(404);
   });
 
   it("已交卷 attempt：新写入 409 ALREADY_SUBMITTED；幂等重放仍返回原回执（复审①）", async () => {
-    const { app, aCookie, attemptId } = await makeNotesApp();
+    const attemptId = await freshAttempt();
     const m = randomUUID();
     const doc = noteDoc();
     const first = await putNote(
@@ -258,7 +260,7 @@ describe("PUT /attempts/:id/notes/:qid 鉴权与状态门槛", () => {
       aCookie,
       attemptId,
       Q.solve,
-      gzipDoc(doc),
+      gzipJson(doc),
       {
         mutationId: m,
       },
@@ -272,7 +274,7 @@ describe("PUT /attempts/:id/notes/:qid 鉴权与状态门槛", () => {
       aCookie,
       attemptId,
       Q.solve,
-      gzipDoc(noteDoc(2)),
+      gzipJson(noteDoc(2)),
       {
         baseRevision: 1,
       },
@@ -285,7 +287,7 @@ describe("PUT /attempts/:id/notes/:qid 鉴权与状态门槛", () => {
       aCookie,
       attemptId,
       Q.solve,
-      gzipDoc(doc),
+      gzipJson(doc),
       {
         mutationId: m,
       },
@@ -299,7 +301,7 @@ describe("PUT /attempts/:id/notes/:qid 鉴权与状态门槛", () => {
 
 describe("multipart 元信息校验 400", () => {
   it("非 multipart（JSON body）→ 400 VALIDATION_ERROR", async () => {
-    const { app, aCookie, attemptId } = await makeNotesApp();
+    const attemptId = await freshAttempt();
     const res = await app.request(
       `/api/student/attempts/${attemptId}/notes/${Q.solve}`,
       {
@@ -313,7 +315,7 @@ describe("multipart 元信息校验 400", () => {
   });
 
   it("body 文件缺失 / baseRevision 非数字 / mutationId 非 uuid → 400", async () => {
-    const { app, aCookie, attemptId } = await makeNotesApp();
+    const attemptId = await freshAttempt();
     const url = `/api/student/attempts/${attemptId}/notes/${Q.solve}`;
     const headers = { cookie: aCookie };
 
@@ -332,7 +334,7 @@ describe("multipart 元信息校验 400", () => {
     const form2 = new FormData();
     form2.append(
       "body",
-      new Blob([gzipDoc(noteDoc())], { type: "application/gzip" }),
+      new Blob([gzipJson(noteDoc())], { type: "application/gzip" }),
     );
     form2.append("baseRevision", "abc");
     form2.append("mutationId", randomUUID());
@@ -348,7 +350,7 @@ describe("multipart 元信息校验 400", () => {
       aCookie,
       attemptId,
       Q.solve,
-      gzipDoc(noteDoc()),
+      gzipJson(noteDoc()),
       { mutationId: "not-uuid" },
     );
     expect(res3.status).toBe(400);
@@ -356,7 +358,7 @@ describe("multipart 元信息校验 400", () => {
   });
 
   it("baseRevision 空串/纯空白/非十进制整数串 → 400（Number('') 的 0 缺口，T6R.4 复审③）", async () => {
-    const { app, db, aCookie, attemptId } = await makeNotesApp();
+    const attemptId = await freshAttempt();
     const url = `/api/student/attempts/${attemptId}/notes/${Q.solve}`;
     const headers = { cookie: aCookie };
     // 反例集合：空串（Number('')===0 会骗过 min(0)）、空白、科学计数、
@@ -365,7 +367,7 @@ describe("multipart 元信息校验 400", () => {
       const form = new FormData();
       form.append(
         "body",
-        new Blob([gzipDoc(noteDoc())], { type: "application/gzip" }),
+        new Blob([gzipJson(noteDoc())], { type: "application/gzip" }),
       );
       form.append("baseRevision", bad);
       form.append("mutationId", randomUUID());
@@ -381,7 +383,7 @@ describe("multipart 元信息校验 400", () => {
     const formOk = new FormData();
     formOk.append(
       "body",
-      new Blob([gzipDoc(noteDoc())], { type: "application/gzip" }),
+      new Blob([gzipJson(noteDoc())], { type: "application/gzip" }),
     );
     formOk.append("baseRevision", "000");
     formOk.append("mutationId", randomUUID());
@@ -391,7 +393,7 @@ describe("multipart 元信息校验 400", () => {
       body: formOk,
     });
     expect(resOk.status).toBe(200);
-    expect(db.select().from(notesTable).all()).toHaveLength(1);
+    expect(noteRowOf(attemptId, Q.solve)).toBeDefined();
   });
 });
 
@@ -399,14 +401,14 @@ describe("multipart 元信息校验 400", () => {
 
 describe("上传、CAS 与幂等（路由级）", () => {
   it("gzip 上传成功：回执过契约 schema、noteId 稳定、泄露检查通过", async () => {
-    const { app, db, aCookie, attemptId } = await makeNotesApp();
+    const attemptId = await freshAttempt();
     const m = randomUUID();
     const res1 = await putNote(
       app,
       aCookie,
       attemptId,
       Q.apply,
-      gzipDoc(noteDoc(1)),
+      gzipJson(noteDoc(1)),
       { mutationId: m },
     );
     expect(res1.status).toBe(200);
@@ -419,7 +421,7 @@ describe("上传、CAS 与幂等（路由级）", () => {
       aCookie,
       attemptId,
       Q.apply,
-      gzipDoc(noteDoc(2)),
+      gzipJson(noteDoc(2)),
       { baseRevision: 1 },
     );
     const body2 = (await res2.json()) as {
@@ -427,13 +429,12 @@ describe("上传、CAS 与幂等（路由级）", () => {
     };
     expect(body2.data.noteId).toBe((body1.data as { noteId: string }).noteId);
     expect(body2.data.revision).toBe(2);
-    // notes 表一行 scratch；版本两行
-    expect(db.select().from(notesTable).all()).toHaveLength(1);
-    expect(db.select().from(noteVersionsTable).all()).toHaveLength(2);
+    // notes 表一行 scratch；版本两行（共享世界按 attempt 过滤）
+    expect(versionCountOf(attemptId, Q.apply)).toBe(2);
   });
 
   it("原始 JSON 直传成功（老浏览器回退通道）", async () => {
-    const { app, aCookie, attemptId } = await makeNotesApp();
+    const attemptId = await freshAttempt();
     const res = await putNote(
       app,
       aCookie,
@@ -448,13 +449,13 @@ describe("上传、CAS 与幂等（路由级）", () => {
   });
 
   it("A/B 同 baseRevision：仅一个 200，另一个 409 NOTE_REVISION_CONFLICT 附 _current 摘要", async () => {
-    const { app, db, aCookie, attemptId } = await makeNotesApp();
+    const attemptId = await freshAttempt();
     const first = await putNote(
       app,
       aCookie,
       attemptId,
       Q.solve,
-      gzipDoc(noteDoc(1, 20)),
+      gzipJson(noteDoc(1, 20)),
     );
     expect(first.status).toBe(200);
     const firstData = (await first.json()) as {
@@ -471,7 +472,7 @@ describe("上传、CAS 与幂等（路由级）", () => {
       aCookie,
       attemptId,
       Q.solve,
-      gzipDoc(noteDoc(1, 99)),
+      gzipJson(noteDoc(1, 99)),
     );
     expect(second.status).toBe(409);
     const err = (await second.json()) as ApiErr & { _current?: unknown };
@@ -485,28 +486,28 @@ describe("上传、CAS 与幂等（路由级）", () => {
       serverSavedAt: firstData.data.savedAt,
     });
     // 输掉的请求没有留下任何版本行；错误响应同样过泄露检查
-    expect(db.select().from(noteVersionsTable).all()).toHaveLength(1);
+    expect(versionCountOf(attemptId, Q.solve)).toBe(1);
     assertNoLeak(err);
   });
 
   it("丢回执重试：同 mutationId 同正文 → 逐字段相同回执", async () => {
-    const { app, db, aCookie, attemptId } = await makeNotesApp();
+    const attemptId = await freshAttempt();
     const m = randomUUID();
     const doc = noteDoc(1);
-    const r1 = await putNote(app, aCookie, attemptId, Q.solve, gzipDoc(doc), {
+    const r1 = await putNote(app, aCookie, attemptId, Q.solve, gzipJson(doc), {
       mutationId: m,
     });
-    const r2 = await putNote(app, aCookie, attemptId, Q.solve, gzipDoc(doc), {
+    const r2 = await putNote(app, aCookie, attemptId, Q.solve, gzipJson(doc), {
       mutationId: m,
     });
     expect(await r1.json()).toEqual(await r2.json());
-    expect(db.select().from(noteVersionsTable).all()).toHaveLength(1);
+    expect(versionCountOf(attemptId, Q.solve)).toBe(1);
   });
 
   it("同 mutationId 不同正文 → 409 NOTE_MUTATION_MISMATCH", async () => {
-    const { app, db, aCookie, attemptId } = await makeNotesApp();
+    const attemptId = await freshAttempt();
     const m = randomUUID();
-    await putNote(app, aCookie, attemptId, Q.solve, gzipDoc(noteDoc(1)), {
+    await putNote(app, aCookie, attemptId, Q.solve, gzipJson(noteDoc(1)), {
       mutationId: m,
     });
     const res = await putNote(
@@ -514,22 +515,22 @@ describe("上传、CAS 与幂等（路由级）", () => {
       aCookie,
       attemptId,
       Q.solve,
-      gzipDoc(noteDoc(2)),
+      gzipJson(noteDoc(2)),
       {
         mutationId: m,
       },
     );
     expect(res.status).toBe(409);
     expect(((await res.json()) as ApiErr).error).toBe("NOTE_MUTATION_MISMATCH");
-    expect(db.select().from(noteVersionsTable).all()).toHaveLength(1);
+    expect(versionCountOf(attemptId, Q.solve)).toBe(1);
   });
 
   it("李四（非本人）带张三的 mutationId 写 → 403 在权限门口拦截，不触达幂等查重", async () => {
     // 跨学生/跨 attempt 的 mutation 重放拒绝在服务层测试覆盖（mutationId 全局
     // 查重 + 归属比对）；路由层这里锁定权限先于一切的顺序
-    const { app, db, aCookie, bCookie, attemptId } = await makeNotesApp();
+    const attemptId = await freshAttempt();
     const m = randomUUID();
-    await putNote(app, aCookie, attemptId, Q.solve, gzipDoc(noteDoc(1)), {
+    await putNote(app, aCookie, attemptId, Q.solve, gzipJson(noteDoc(1)), {
       mutationId: m,
     });
     const res = await putNote(
@@ -537,13 +538,13 @@ describe("上传、CAS 与幂等（路由级）", () => {
       bCookie,
       attemptId,
       Q.solve,
-      gzipDoc(noteDoc(1)),
+      gzipJson(noteDoc(1)),
       {
         mutationId: m,
       },
     );
     expect(res.status).toBe(403);
-    expect(db.select().from(notesTable).all()).toHaveLength(1);
+    expect(noteRowOf(attemptId, Q.solve)).toBeDefined();
   });
 });
 
@@ -551,7 +552,7 @@ describe("上传、CAS 与幂等（路由级）", () => {
 
 describe("DSL 特殊 questionId 与服务端字段不可覆盖", () => {
   it("中文/含点/Windows 保留名 id 上传成功，文件目录只有 noteId UUID 段", async () => {
-    const { app, db, dataDir, aCookie, attemptId } = await makeNotesApp();
+    const attemptId = await freshAttempt();
     // 直插冻结行扩展特殊 id（路由级真实链路：requireAttemptQuestion 校验后落盘）
     const specialIds = ["练习四.7 点号", "CON", "NUL", "a..b"];
     db.transaction((tx) => {
@@ -571,29 +572,35 @@ describe("DSL 特殊 questionId 与服务端字段不可覆盖", () => {
         aCookie,
         attemptId,
         qid,
-        gzipDoc(noteDoc(1)),
+        gzipJson(noteDoc(1)),
       );
       expect(res.status).toBe(200);
     }
+    // 共享世界里 blobs/notes 已有其它测试的目录——按本 attempt 的笔记行核：
+    // 4 行、目录名全是 UUID、各目录恰一个正文文件
     const root = join(dataDir, "blobs", "notes");
-    const dirs = readdirSync(root);
-    expect(dirs).toHaveLength(specialIds.length);
-    for (const d of dirs) {
-      expect(d).toMatch(
+    for (const qid of specialIds) {
+      const row = noteRowOf(attemptId, qid);
+      expect(row).toBeDefined();
+      if (row === undefined) continue;
+      expect(row.id).toMatch(
         /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
       );
+      const files = readdirSync(join(root, row.id));
+      expect(files).toHaveLength(1);
+      expect(files[0]).toMatch(/^v1-[0-9a-f]{12}\.json\.gz$/);
     }
   });
 
   it("客户端发送 noteId/serverSavedAt/phase/studentId 等字段被忽略：行值全由服务端定", async () => {
-    const { app, db, aCookie, attemptId } = await makeNotesApp();
+    const attemptId = await freshAttempt();
     const evilNoteId = "99999999-9999-4999-8999-999999999999";
     const res = await putNote(
       app,
       aCookie,
       attemptId,
       Q.solve,
-      gzipDoc(noteDoc(1)),
+      gzipJson(noteDoc(1)),
       {
         extra: {
           noteId: evilNoteId,
@@ -610,9 +617,7 @@ describe("DSL 特殊 questionId 与服务端字段不可覆盖", () => {
       data: { noteId: string; savedAt: string };
     };
     expect(receipt.data.noteId).not.toBe(evilNoteId);
-    const rows = db.select().from(notesTable).all();
-    expect(rows).toHaveLength(1);
-    const row = rows[0];
+    const row = noteRowOf(attemptId, Q.solve);
     if (row === undefined) throw new Error("缺少 notes 行");
     expect(row.id).toBe(receipt.data.noteId);
     expect(row.phase).toBe("scratch");
@@ -625,27 +630,27 @@ describe("DSL 特殊 questionId 与服务端字段不可覆盖", () => {
 
 describe("限额 413（入口预检 + service 精确校验）", () => {
   it("body 文件超 2MiB（body 总体在预检线内）→ 413 NOTE_LIMIT_EXCEEDED，不落盘", async () => {
-    const { app, db, dataDir, aCookie, attemptId } = await makeNotesApp();
+    const attemptId = await freshAttempt();
     // 2MiB + 1B，body 总体 < 预检线（2MiB+64KiB）→ 命中 service 精确校验
     const big = new Uint8Array(NOTE_BODY_GZIP_MAX_BYTES + 1).fill(0x61);
     const res = await putNote(app, aCookie, attemptId, Q.solve, big);
     expect(res.status).toBe(413);
     expect(((await res.json()) as ApiErr).error).toBe("NOTE_LIMIT_EXCEEDED");
-    expect(db.select().from(notesTable).all()).toHaveLength(0);
-    expect(existsSync(join(dataDir, "blobs", "notes"))).toBe(false);
+    expect(noteRowOf(attemptId, Q.solve)).toBeUndefined();
+    expect(versionCountOf(attemptId, Q.solve)).toBe(0);
   });
 
   it("超大 multipart body（content-length 超入口预检线）→ 413，不进解析", async () => {
-    const { app, db, aCookie, attemptId } = await makeNotesApp();
+    const attemptId = await freshAttempt();
     const big = new Uint8Array(3 * 1024 * 1024).fill(0x61);
     const res = await putNote(app, aCookie, attemptId, Q.solve, big);
     expect(res.status).toBe(413);
     expect(((await res.json()) as ApiErr).error).toBe("NOTE_LIMIT_EXCEEDED");
-    expect(db.select().from(notesTable).all()).toHaveLength(0);
+    expect(noteRowOf(attemptId, Q.solve)).toBeUndefined();
   });
 
   it("高压缩比 gzip 炸弹（解压超 32MiB）→ 413 NOTE_LIMIT_EXCEEDED", async () => {
-    const { app, db, aCookie, attemptId } = await makeNotesApp();
+    const attemptId = await freshAttempt();
     const bomb = gzipSync(Buffer.alloc(40 * 1024 * 1024));
     const res = await putNote(
       app,
@@ -656,6 +661,6 @@ describe("限额 413（入口预检 + service 精确校验）", () => {
     );
     expect(res.status).toBe(413);
     expect(((await res.json()) as ApiErr).error).toBe("NOTE_LIMIT_EXCEEDED");
-    expect(db.select().from(notesTable).all()).toHaveLength(0);
+    expect(noteRowOf(attemptId, Q.solve)).toBeUndefined();
   });
 });

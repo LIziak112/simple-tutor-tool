@@ -83,8 +83,22 @@ function parseJsonText<T>(text: string, schema: ZodType<T>): T {
   }
   const parsed = schema.safeParse(raw);
   if (!parsed.success) {
-    const first = parsed.error.issues[0]?.message ?? "格式不正确";
-    throw new HttpError(400, "VALIDATION_ERROR", `请求参数不合法：${first}`);
+    throw new HttpError(
+      400,
+      "VALIDATION_ERROR",
+      `请求参数不合法：${firstIssueMessage(parsed.error)}`,
+    );
   }
   return parsed.data;
+}
+
+/**
+ * 校验失败的第一条 issue 消息（缺省「格式不正确」）：契约 schema 的中文
+ * message 直接透出给 400 响应——路由层手工过 schema（multipart 字段/查询
+ * 参数）时统一用它，不各自手写 issues[0] 取值（复审⑫）。
+ */
+export function firstIssueMessage(error: {
+  issues: readonly { message?: string }[];
+}): string {
+  return error.issues[0]?.message ?? "格式不正确";
 }

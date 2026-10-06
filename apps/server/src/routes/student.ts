@@ -24,6 +24,7 @@ import {
 import type { Db } from "../db/client";
 import { pngResponse } from "../lib/binary-response";
 import {
+  firstIssueMessage,
   HttpError,
   parseJsonBody,
   parseJsonBodyOrEmpty,
@@ -348,7 +349,7 @@ export function createStudentRoutes(
             typeof form.mutationId === "string" ? form.mutationId : undefined,
         });
         if (!parsed.success) {
-          const first = parsed.error.issues[0]?.message ?? "格式不正确";
+          const first = firstIssueMessage(parsed.error);
           throw new HttpError(
             400,
             "VALIDATION_ERROR",
@@ -435,7 +436,7 @@ export function createStudentRoutes(
           offset: c.req.query("offset") ?? undefined,
         });
         if (!parsed.success) {
-          const first = parsed.error.issues[0]?.message ?? "格式不正确";
+          const first = firstIssueMessage(parsed.error);
           throw new HttpError(
             400,
             "VALIDATION_ERROR",
@@ -466,7 +467,7 @@ export function createStudentRoutes(
           includeResolved: c.req.query("includeResolved") ?? undefined,
         });
         if (!parsed.success) {
-          const first = parsed.error.issues[0]?.message ?? "格式不正确";
+          const first = firstIssueMessage(parsed.error);
           throw new HttpError(
             400,
             "VALIDATION_ERROR",

@@ -427,7 +427,9 @@ export const noteSubmissionEvidenceMetaSchema = z
  *   幂等重放不受 attempt 状态门槛约束（含已交卷，服务端裁决口径）。
  */
 export const noteUploadMetaSchema = z.object({
-  baseRevision: z.number().int().min(0),
+  // .max 防呆上限（复审⑫顺手）：revision 每次成功上传 +1，正常使用远达不到
+  // 六位数；超过即客户端异常值，及早 400 而不是进服务层比对
+  baseRevision: z.number().int().min(0).max(1_000_000),
   mutationId: z.uuid(),
 });
 

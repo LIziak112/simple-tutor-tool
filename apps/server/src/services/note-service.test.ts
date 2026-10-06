@@ -11,7 +11,7 @@ import {
 } from "node:fs";
 import { join, resolve } from "node:path";
 import { gunzipSync, gzipSync } from "node:zlib";
-import type { NoteDoc, NoteDocInput } from "@tutor/contract";
+import type { NoteDocInput } from "@tutor/contract";
 import {
   NOTE_BODY_GZIP_MAX_BYTES,
   NOTE_MAX_TOTAL_POINTS,
@@ -27,14 +27,10 @@ import {
   noteImages as noteImagesTable,
   notes as notesTable,
   noteVersions as noteVersionsTable,
-  students as studentsTable,
   submissionEvidence as submissionEvidenceTable,
 } from "../db/schema.ts";
-import {
-  createTestDb,
-  createTestDir,
-  TEST_TEACHER_ID,
-} from "../db/test-utils.ts";
+import { createTestDb, createTestDir } from "../db/test-utils.ts";
+import { gzipJson, makeStudent, noteDoc } from "../test/note-fixtures.ts";
 import { insertFrozenResponse, newDraftAttempt } from "./attempt-service.ts";
 import {
   canonicalNoteJson,
@@ -62,30 +58,6 @@ import {
  */
 
 // ---------- 夹具 ----------
-
-let studentSeq = 0;
-
-/** 直插学生行（归属测试教师；requireUsableAttempt 只需 studentId 匹配） */
-function makeStudent(db: Db): string {
-  const id = randomUUID();
-  studentSeq += 1;
-  db.insert(studentsTable)
-    .values({
-      id,
-      teacherId: TEST_TEACHER_ID,
-      displayName: `学生${studentSeq}`,
-      loginName: `stu-${id.slice(0, 8)}`,
-      passwordHash: null,
-      linkToken: `link-${id}`,
-      linkEnabled: true,
-      passwordEnabled: false,
-      note: null,
-      archivedAt: null,
-      createdAt: "2026-01-01T00:00:00.000Z",
-    })
-    .run();
-  return id;
-}
 
 /**
  * 直插已冻结 attempt + 逐题冻结 responses 行（questionRevisionId = 行 id）。
@@ -133,31 +105,6 @@ function makeFrozenAttempt(
     }
   });
   return { attemptId: attempt.id, revisionIds };
-}
-
-/** 最小合法 NoteDoc（n 笔，每笔 2 点，y 可区分不同稿） */
-function noteDoc(strokes = 1, y = 20): NoteDoc {
-  return {
-    version: 1,
-    ink: {
-      width: 1000,
-      strokes: Array.from({ length: strokes }, (_, i) => ({
-        tool: "pen" as const,
-        color: "#1f2328",
-        weight: 4,
-        points: [
-          { x: 10 + i, y, p: 0.5, t: 0 },
-          { x: 30 + i, y: y + 5, p: 0.8, t: 25 },
-        ],
-      })),
-    },
-    paperHeightLogical: 800,
-    background: "grid",
-  };
-}
-
-function gzipJson(value: unknown): Uint8Array {
-  return new Uint8Array(gzipSync(Buffer.from(JSON.stringify(value), "utf8")));
 }
 
 interface SaveArgs {
@@ -743,6 +690,14 @@ describe("CAS 与幂等（T6R.4 核心不变量）", () => {
     });
     expect(r2).toEqual(r1);
     expect(db.select().from(noteVersionsTable).all()).toHaveLength(1);
+    // savedAt 是行内原确认时间（复审⑫行级直查锁定——不是本次重放的新时钟）
+    const rowSavedAt = db
+      .select()
+      .from(noteVersionsTable)
+      .all()
+      .find((row) => row.revision === 1)?.serverSavedAt;
+    expect(rowSavedAt).toBe(r1.savedAt);
+    expect(r2.savedAt).toBe(rowSavedAt);
   });
 
   it("同 mutationId 不同正文 → 409 NOTE_MUTATION_MISMATCH，不落盘不落库", () => {
