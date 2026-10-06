@@ -769,7 +769,7 @@ describe("renderNoteImages：实例隔离", () => {
 // ---------- 渲染：产物元信息 ----------
 
 describe("renderNoteImages：产物与上传元信息对齐", () => {
-  it("长稿分析图逐页产出，尺寸/crop 可直接组装上传 meta；renderVersion 随产物声明", async () => {
+  it("长稿分析图逐页产出，尺寸/crop 可直接组装上传 meta；NOTE_RENDER_VERSION 常量锁定", async () => {
     const tall = docOf(
       [
         stroke([

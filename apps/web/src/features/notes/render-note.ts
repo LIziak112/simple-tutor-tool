@@ -54,6 +54,12 @@ import { INK_LOGICAL_WIDTH } from "@/features/ink/engine/types.ts";
  */
 export const NOTE_PAPER_GRID_SPACING_LOGICAL = 40;
 
+/**
+ * 格线/横线线宽（设备像素；1px 细线）。与间距/颜色同组的纸张背景常量集——
+ * T6R.7 屏幕端落地时随组评估上移 engine 层共用（复审⑦锚点）。
+ */
+export const NOTE_PAPER_LINE_WIDTH_PX = 1;
+
 /** 格线/横线颜色（画进 PNG 的实际描边色，非 CSS） */
 export const NOTE_PAPER_LINE_COLOR = "#cbd5e1";
 
