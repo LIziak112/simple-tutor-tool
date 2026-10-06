@@ -303,9 +303,11 @@ export function AttemptDetailQuestionCard({
       {/* 手写笔迹（懒加载 + 点击放大） */}
       <InkThumbnail question={question} />
 
-      {/* 草稿原稿查看入口（T6R.11）：非手写题（手写题没有草稿层，笔迹区
-          另见上方）；教师域链授权在服务端 evidence 读端点把门 */}
-      {!HANDWRITTEN_TYPES.has(question.type) && (
+      {/* 草稿原稿查看入口（T6R.11）：已交卷的非手写题——draft 交卷前证据行
+          定义性不存在（原稿=交卷事务固定的 SubmissionEvidence），不是文案
+          问题而是入口语义不成立；手写题没有草稿层（笔迹区另见上方）。
+          教师域链授权在服务端 evidence 读端点把门 */}
+      {!isDraft && !HANDWRITTEN_TYPES.has(question.type) && (
         <NoteOriginalView
           viewer="teacher"
           attemptId={attemptId}

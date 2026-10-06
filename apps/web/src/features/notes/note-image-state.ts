@@ -28,3 +28,14 @@ export function worstImageState(
   }
   return worst;
 }
+
+/**
+ * 是否存在损坏行（failed/missing 任一）：补图触发与查看档位「缺图」判定的
+ * **存在性谓词**——与排序无关（[missing,pending] 含损坏行即缺图，不能因
+ * pending 排序更高而漏判）。排序场景（note-store 档位）才用 worstImageState。
+ */
+export function hasBrokenRow(images: readonly NoteImageMeta[]): boolean {
+  return images.some(
+    (img) => img.state === "failed" || img.state === "missing",
+  );
+}

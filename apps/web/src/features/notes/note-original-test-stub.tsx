@@ -17,6 +17,7 @@ export function NoteOriginalTestStub(props: Record<string, unknown>) {
     "data-attempt": String(props.attemptId),
     "data-question": String(props.questionId),
     "data-round": String(props.roundLabel ?? ""),
+    "data-prefix": String(props.ariaPrefix ?? ""),
   });
 }
 

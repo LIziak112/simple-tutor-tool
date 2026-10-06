@@ -1,12 +1,10 @@
 import type { NoteHeadData } from "@tutor/contract";
 import { describe, expect, it } from "vitest";
-import { denseStroke, docOf } from "@/features/notes/note-fixtures";
 import {
   evidenceOf,
   headOf,
   imageMetaOf,
 } from "@/features/notes/note-test-utils";
-import { worstImageState } from "./note-image-state";
 import {
   ABSENT_TEXT,
   refreshImagesAggregate,
@@ -19,19 +17,15 @@ import {
  * - resolveAbsentReason 互斥口径：无行 → 未采集；非 frozen → 契约状态即原因；
  *   frozen → null（可渲染）——四态两两互斥，无「既是无稿又可渲染」的组合；
  * - ABSENT_TEXT 四文案两两不同（互斥可辨）且不为空；
- * - resolveReadyMeta：版本引用/保存次序/派生图三档映射（空稿短路、空槽位
- *   待图、failed/missing 归并缺图）；非 frozen → null；
+ * - resolveReadyMeta：版本引用/保存次序/派生图三档映射（空稿短路、查看语境
+ *   空槽位=缺图、hasBrokenRow 混合态不漏判）；非 frozen → null；
  * - refreshImagesAggregate：版本一致才重算，否则 null 维持原档。
- * worstImageState 原语的 severity 次序（note-store 既有口径）一并直测。
+ * worstImageState/hasBrokenRow 原语直测见 note-image-state.test。
  */
 
-const DOC_WITH_STROKES = docOf([
-  denseStroke([
-    [10, 10],
-    [200, 200],
-  ]),
-]);
-const EMPTY_DOC = docOf([]);
+/** 一笔正文（strokeCount=1）；空稿用 0 */
+const STROKES = 1;
+const NO_STROKES = 0;
 
 describe("resolveAbsentReason（互斥口径）", () => {
   it("无证据行 → not-collected（旧客户端/未采集，与 none 区分）", () => {
@@ -60,14 +54,11 @@ describe("ABSENT_TEXT（四文案互斥可辨）", () => {
 
 describe("resolveReadyMeta", () => {
   it("frozen + 工作头一致：versionId/recordedAt/保存次序齐全", () => {
-    const meta = resolveReadyMeta(
-      frozenHeadWith([imageMetaOf()]),
-      DOC_WITH_STROKES,
-    );
+    const meta = resolveReadyMeta(frozenHeadWith([imageMetaOf()]), STROKES);
     expect(meta).not.toBeNull();
     expect(meta?.versionId).toBe("33333333-3333-4333-8333-333333333301");
     expect(meta?.noteRevision).toBe(1);
-    expect(meta?.strokeCount).toBe(1);
+    expect(meta?.strokeCount).toBe(STROKES);
     expect(meta?.images).toBe("ready");
   });
 
@@ -82,53 +73,60 @@ describe("resolveReadyMeta", () => {
           };
     const meta = resolveReadyMeta(
       frozenHeadWith([imageMetaOf()], ahead),
-      DOC_WITH_STROKES,
+      STROKES,
     );
     expect(meta?.noteRevision).toBeNull();
   });
 
   it("非 frozen（或契约外缺 versionId）→ null（调用方按数据异常处理）", () => {
+    expect(resolveReadyMeta(headOf({ evidence: null }), STROKES)).toBeNull();
     expect(
-      resolveReadyMeta(headOf({ evidence: null }), DOC_WITH_STROKES),
-    ).toBeNull();
-    expect(
-      resolveReadyMeta(
-        headOf({ evidence: evidenceOf("missing") }),
-        DOC_WITH_STROKES,
-      ),
+      resolveReadyMeta(headOf({ evidence: evidenceOf("missing") }), STROKES),
     ).toBeNull();
     // frozen 但 versionId=null：契约 superRefine 保证不可达的防御分支
     const broken = headOf({
       evidence: { ...evidenceOf("frozen", "x"), versionId: null },
     });
-    expect(resolveReadyMeta(broken, DOC_WITH_STROKES)).toBeNull();
+    expect(resolveReadyMeta(broken, STROKES)).toBeNull();
   });
 
-  it("派生图三档：pending=待图；failed/missing 归并缺图；空稿短路 ready", () => {
+  it("派生图档位：pending=待图；failed/missing/混合损坏行=缺图；空稿短路 ready", () => {
     expect(
       resolveReadyMeta(
         frozenHeadWith([imageMetaOf({ state: "pending", hash: null })]),
-        DOC_WITH_STROKES,
+        STROKES,
       )?.images,
     ).toBe("pending");
     expect(
       resolveReadyMeta(
         frozenHeadWith([imageMetaOf({ state: "failed", hash: null })]),
-        DOC_WITH_STROKES,
+        STROKES,
       )?.images,
     ).toBe("failed");
     expect(
       resolveReadyMeta(
         frozenHeadWith([imageMetaOf({ state: "missing", hash: null })]),
-        DOC_WITH_STROKES,
+        STROKES,
       )?.images,
     ).toBe("failed");
-    // 有笔迹但无派生图行 → 待图（正文待图 ≠ 无稿）
-    expect(resolveReadyMeta(frozenHeadWith([]), DOC_WITH_STROKES)?.images).toBe(
-      "pending",
+    // 混合损坏态：[missing,pending] 含损坏行 → 缺图（不得因 pending 排序漏判）
+    expect(
+      resolveReadyMeta(
+        frozenHeadWith([
+          imageMetaOf({ state: "missing", hash: null }),
+          imageMetaOf({ state: "pending", hash: null, pageIndex: 1 }),
+        ]),
+        STROKES,
+      )?.images,
+    ).toBe("failed");
+  });
+
+  it("查看语境差异：有笔迹但无派生图行 → 缺图（重建入口）；note-store 草稿语境空数组→pending 不在此层", () => {
+    expect(resolveReadyMeta(frozenHeadWith([]), STROKES)?.images).toBe(
+      "failed",
     );
     // 空稿（0 笔）无笔迹可渲染 → 无提示
-    expect(resolveReadyMeta(frozenHeadWith([]), EMPTY_DOC)?.images).toBe(
+    expect(resolveReadyMeta(frozenHeadWith([]), NO_STROKES)?.images).toBe(
       "ready",
     );
   });
@@ -165,33 +163,6 @@ describe("refreshImagesAggregate（重建后档位刷新）", () => {
         1,
       ),
     ).toBeNull();
-  });
-});
-
-describe("worstImageState（severity 原语，note-store 既有口径）", () => {
-  it("空数组 → ready；全 ready → ready", () => {
-    expect(worstImageState([])).toBe("ready");
-    expect(
-      worstImageState([imageMetaOf(), imageMetaOf({ pageIndex: 1 })]),
-    ).toBe("ready");
-  });
-
-  it("取最差行：failed > pending > missing > ready", () => {
-    expect(
-      worstImageState([
-        imageMetaOf({ state: "missing", hash: null }),
-        imageMetaOf({ state: "pending", hash: null, pageIndex: 1 }),
-      ]),
-    ).toBe("pending");
-    expect(
-      worstImageState([
-        imageMetaOf({ state: "pending", hash: null }),
-        imageMetaOf({ state: "failed", hash: null, pageIndex: 1 }),
-      ]),
-    ).toBe("failed");
-    expect(
-      worstImageState([imageMetaOf({ state: "missing", hash: null })]),
-    ).toBe("missing");
   });
 });
 

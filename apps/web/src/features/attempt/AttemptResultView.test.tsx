@@ -693,17 +693,22 @@ describe("本次草稿原稿入口（T6R.11）", () => {
     }
   });
 
-  it("轮次标注按来源：作业=本次作业、课程=第 n 次课程练习、错题重练=第 n 次错题重练", () => {
+  it("轮次标注按来源：作业=本次作业、课程=第 n 次课程练习、错题重练=第 N 次组卷", () => {
     const assignmentView = renderView(); // DATA 作业来源
     expect(stubsOf()[0]?.round).toBe("本次作业");
     assignmentView.unmount();
 
+    // 夹具遵 attemptSummarySchema 来源不变式（superRefine）：course 的
+    // assignmentId=null 且 courseId/unitId 有值；wrong 三者恒 null
     const baseUnit = DATA.units[0];
     const courseData: AttemptResultData = {
       ...DATA,
       attempt: {
         ...DATA.attempt,
         sourceType: "course",
+        assignmentId: null,
+        courseId: "33333333-3333-4333-8333-333333333333",
+        unitId: "unit-a",
         attemptNo: 2,
       },
       units: baseUnit === undefined ? [] : [baseUnit],
@@ -717,10 +722,25 @@ describe("本次草稿原稿入口（T6R.11）", () => {
 
     const wrongData: AttemptResultData = {
       ...courseData,
-      attempt: { ...courseData.attempt, sourceType: "wrong", attemptNo: 3 },
+      attempt: {
+        ...courseData.attempt,
+        sourceType: "wrong",
+        assignmentId: null,
+        courseId: null,
+        unitId: null,
+        attemptNo: 3,
+      },
     };
     render(<AttemptResultView data={wrongData} onBackHome={vi.fn()} />);
-    expect(stubsOf()[0]?.round).toBe("第 3 次错题重练");
+    // wrong 的 attemptNo=该生错题重练组卷计数（含废弃 draft），非每题轮次——
+    // 文案不承诺「第 n 轮」
+    expect(stubsOf()[0]?.round).toBe("错题重练 · 第 3 次组卷");
+  });
+
+  it("ariaPrefix 接线：各题桩带自己的题号前缀", () => {
+    renderView();
+    const prefixes = stubsOf().map((stub) => stub.prefix);
+    expect(prefixes).toEqual(["第 1 题", "第 2 题", "第 3 题"]);
   });
 
   it("未公布（answersReleased=false）入口仍在——学生看自己的草稿不受答案公布 gate 限制", () => {

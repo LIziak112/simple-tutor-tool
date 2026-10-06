@@ -5,12 +5,11 @@
  * frozen → 可渲染（resolveAbsentReason 返回 null，versionId 由契约
  * superRefine 保证非空——防御分支仍保留，按数据异常处理）。
  */
-import type {
-  NoteDoc,
-  NoteHeadData,
-  NoteSubmissionEvidenceMeta,
-} from "@tutor/contract";
-import { worstImageState } from "@/features/notes/note-image-state";
+import type { NoteHeadData, NoteSubmissionEvidenceMeta } from "@tutor/contract";
+import {
+  hasBrokenRow,
+  worstImageState,
+} from "@/features/notes/note-image-state";
 
 /** 无稿原因：契约状态直接作枚举（不为 kebab 改名单独维护映射） */
 export type AbsentReason =
@@ -55,27 +54,33 @@ export interface NoteOriginalReadyMeta {
 export type NoteOriginalImagesLevel = "ready" | "pending" | "failed";
 
 /**
- * 查看侧的派生图档位映射（业务归并留本层，不进 worstImageState 原语）：
- * 空稿（0 笔）无笔迹可渲染 → ready（不提示）；有笔迹时空槽位/在途均按
- * 「正文待图」；failed/missing 归并为「缺图」（同一重建入口）。
+ * 查看侧的派生图档位映射（业务归并留本层，不进 note-image-state 原语）：
+ * - 空稿（0 笔）无笔迹可渲染 → ready（不提示）；
+ * - 有笔迹但无派生图行 → **failed（缺图）**：查看语境没有自动补图在跑，
+ *   空槽位就是「图从未生成/已丢」，给重建入口是诚实档位——与 note-store
+ *   草稿语境的空数组→pending（答题页后台补图进行中）刻意不同；
+ * - 存在损坏行（failed/missing，hasBrokenRow 存在性判定——[missing,pending]
+ *   这类混合态不得因排序漏判）→ failed；仅 pending 在途 → pending。
  */
 function imagesAggregateFor(
   images: NoteHeadData["images"],
   strokeCount: number,
 ): NoteOriginalImagesLevel {
   if (strokeCount === 0) return "ready";
-  if (images.length === 0) return "pending";
-  const worst = worstImageState(images);
-  return worst === "missing" ? "failed" : worst;
+  if (images.length === 0) return "failed";
+  if (hasBrokenRow(images)) return "failed";
+  return worstImageState(images) === "pending" ? "pending" : "ready";
 }
 
 /**
- * 证据头 + 正文 → 就绪元信息；证据行不是 frozen（或契约外形态缺 versionId）
- * 返回 null（调用方按数据异常处理——契约 superRefine 保证不可达的防御分支）。
+ * 证据头 + 正文笔迹数 → 就绪元信息；证据行不是 frozen（或契约外形态缺
+ * versionId）返回 null（调用方按数据异常处理——契约 superRefine 保证不可达
+ * 的防御分支）。签名取 strokeCount 而非 NoteDoc：重展开缓存不常驻正文
+ * （每卡数 MB），缓存的笔迹数即可支撑重算。
  */
 export function resolveReadyMeta(
   head: NoteHeadData,
-  doc: NoteDoc,
+  strokeCount: number,
 ): NoteOriginalReadyMeta | null {
   const evidence = head.evidence;
   if (evidence === null || evidence.state !== "frozen") return null;
@@ -88,8 +93,8 @@ export function resolveReadyMeta(
       head.note !== null && head.note.currentVersionId === versionId
         ? head.note.revision
         : null,
-    strokeCount: doc.ink.strokes.length,
-    images: imagesAggregateFor(head.images, doc.ink.strokes.length),
+    strokeCount,
+    images: imagesAggregateFor(head.images, strokeCount),
   };
 }
 

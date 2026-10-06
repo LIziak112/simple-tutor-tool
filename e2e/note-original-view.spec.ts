@@ -190,7 +190,8 @@ test.describe("双角色原稿查看与重练（T6R.11）", () => {
         timeout: 60_000,
       });
 
-      // 重练卷面板轮次标注 = 第 1 次错题重练
+      // 重练卷面板轮次标注 = 错题重练 · 第 1 次组卷（attemptNo 为该生错题
+      // 重练组卷计数，不承诺每题轮次）
       const reResultCard = studentPage.locator('article[aria-label="第 1 题"]');
       await reResultCard
         .getByRole("button", { name: "第 1 题查看草稿原稿" })
@@ -198,7 +199,7 @@ test.describe("双角色原稿查看与重练（T6R.11）", () => {
       await expect(
         reResultCard
           .locator('[data-slot="note-original-view"]')
-          .getByText("第 1 次错题重练"),
+          .getByText("错题重练 · 第 1 次组卷"),
       ).toBeVisible();
       await expect(
         reResultCard.locator('[data-slot="note-original-view"] img'),

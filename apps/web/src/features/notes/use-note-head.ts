@@ -24,7 +24,7 @@ import { type UseQueryResult, useQuery } from "@tanstack/react-query";
 import type { NoteHeadData, StudentMeData } from "@tutor/contract";
 import { useEffect, useSyncExternalStore } from "react";
 import { recoverNoteImages } from "@/features/notes/image-sync";
-import { worstImageState } from "@/features/notes/note-image-state";
+import { hasBrokenRow } from "@/features/notes/note-image-state";
 import {
   applyServerHead,
   applyServerLoad,
@@ -87,13 +87,9 @@ export async function applyNoteHeadSideEffects(
       before.noteId !== note.noteId ||
       before.baseRevision < note.revision);
   await applyServerHead(session, scope, head);
-  // 补图触发（正文拉取与否都该补：本地领先时图片照样该恢复）；行状态判定
-  // 走 worstImageState 原语（空数组 → ready，与原 some() 口径一致）
-  const worstImage = worstImageState(head.images);
-  if (
-    versionId !== null &&
-    (worstImage === "failed" || worstImage === "missing")
-  ) {
+  // 补图触发（正文拉取与否都该补：本地领先时图片照样该恢复）；损坏行
+  // 存在性谓词（[missing,pending] 混合态不漏判；空数组 → false 与原口径一致）
+  if (versionId !== null && hasBrokenRow(head.images)) {
     void recoverNoteImages({
       role: "student",
       versionId,
@@ -115,6 +111,22 @@ export async function applyNoteHeadSideEffects(
  * 答题页每题的笔记头接线（NoteLayer 内部调用）。返回 useQuery 句柄供
  * UI 刷新图片状态（补图重试成功后 refetch 更新 images 维度）。
  */
+/**
+ * 答题页接线（T6R.9）：进入答题页 bind 当前学生 + 部署实例（origin 取
+ * window.location.origin——同源即同实例）。离开答题页**不** reset——收起
+ * 题卡/路由切换后同步队列照常完成（方案 §6.1）；登出在 student-auth 统一
+ * resetNoteSession（切账号即旧会话失效、回执隔离）。
+ */
+export function useBindNoteSession(me: StudentMeData | undefined): void {
+  useEffect(() => {
+    if (me === undefined) return;
+    bindNoteSession({
+      origin: window.location.origin,
+      studentId: me.id,
+    });
+  }, [me]);
+}
+
 export function useNoteHead(
   attemptId: string,
   questionId: string,
@@ -148,20 +160,4 @@ export function useNoteHead(
     // ApiError（403/404/401 等）不重试：终态或需登录干预；网络错误重试 2 次
     retry: (count, err) => !(err instanceof ApiError) && count < 2,
   });
-}
-
-/**
- * 答题页接线（T6R.9）：进入答题页 bind 当前学生 + 部署实例（origin 取
- * window.location.origin——同源即同实例）。离开答题页**不** reset——收起
- * 题卡/路由切换后同步队列照常完成（方案 §6.1）；登出在 student-auth 统一
- * resetNoteSession（切账号即旧会话失效、回执隔离）。
- */
-export function useBindNoteSession(me: StudentMeData | undefined): void {
-  useEffect(() => {
-    if (me === undefined) return;
-    bindNoteSession({
-      origin: window.location.origin,
-      studentId: me.id,
-    });
-  }, [me]);
 }

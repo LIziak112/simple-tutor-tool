@@ -1,4 +1,5 @@
 import type {
+  AttemptSource,
   QuestionAnswers,
   QuestionType,
   StudentAnswer,
@@ -51,16 +52,20 @@ export function judgeLabelOf(value: boolean | string): string {
 }
 
 /**
- * 作答轮次标注（T6R.11 原稿查看面板共用）：课程练习/错题重练带次数
- * （重练同题后回看历史可分辨第几轮），作业为本次。学生结果视图与教师
- * 详情/待批卡同口径。
+ * 作答轮次标注（T6R.11 原稿查看面板共用）。**次数语义按来源不同**：
+ * - course：该课程练习的第 n 次（attemptNo 逐次递增，可分辨第几轮）；
+ * - wrong：attemptNo 是该生**全部错题重练的组卷计数**（含废弃 draft，见
+ *   wrong-practice 计数口径），不是该题/该卷的第几轮——文案用「第 N 次组卷」
+ *   不承诺每题轮次；
+ * - assignment：一人一卷恒 1 次，不做次数标注。
+ * 学生结果视图与教师详情/待批卡同口径。
  */
 export function attemptRoundLabel(
-  sourceType: "course" | "assignment" | "wrong",
+  sourceType: AttemptSource,
   attemptNo: number,
 ): string {
   if (sourceType === "course") return `第 ${attemptNo} 次课程练习`;
-  if (sourceType === "wrong") return `第 ${attemptNo} 次错题重练`;
+  if (sourceType === "wrong") return `错题重练 · 第 ${attemptNo} 次组卷`;
   return "本次作业";
 }
 

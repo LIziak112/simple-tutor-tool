@@ -526,3 +526,22 @@ describe("AttemptDetailPage 草稿原稿入口（T6R.11）", () => {
     expect(stubs[0]?.round).toBe("第 2 次课程练习");
   });
 });
+
+describe("AttemptDetailPage 草稿原稿入口（T6R.11）补充", () => {
+  it("draft（进行中）：证据行定义性不存在，不渲染原稿查看入口", async () => {
+    mockedDetail.mockResolvedValue(
+      makeDetail({ status: "draft", submittedAt: null }),
+    );
+    renderPage();
+    await screen.findByText("进行中：学生尚未交卷");
+    expect(screen.queryByTestId("note-original-stub")).toBeNull();
+  });
+
+  it("ariaPrefix 接线：各题桩带自己的题号前缀", async () => {
+    mockedDetail.mockResolvedValue(makeDetail());
+    renderPage();
+    await screen.findByRole("article", { name: "第 1 题" });
+    const prefixes = noteOriginalStubDatasets().map((stub) => stub.prefix);
+    expect(prefixes).toEqual(["第 1 题", "第 2 题", "第 3 题"]);
+  });
+});
