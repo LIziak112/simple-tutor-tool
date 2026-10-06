@@ -22,7 +22,11 @@ import {
   sessionCookieOptions,
 } from "../auth/session";
 import type { Db } from "../db/client";
-import { noStoreBinaryResponse, pngResponse } from "../lib/binary-response";
+import {
+  noStoreBinaryResponse,
+  pngResponse,
+  stripPngSuffix,
+} from "../lib/binary-response";
 import {
   formString,
   parseNoteImageUploadForm,
@@ -332,7 +336,7 @@ export function createStudentRoutes(
             c.var.student.id,
             c.req.param("id"),
             // questionId 本身可能含点（来自 DSL），只剥离末尾 .png
-            raw.slice(0, -".png".length),
+            stripPngSuffix(raw),
           );
           return pngResponse(png.bytes, png.etag);
         }
@@ -422,8 +426,8 @@ export function createStudentRoutes(
         });
       })
       // T6R.5 ③：版本文档直出（gzip 原字节；授权在 service 归属链，版本行
-      // 不存在 404、非本人 403）。no-store + attachment（下载语义），理由见
-      // lib/binary-response.noStoreBinaryResponse 注释
+      // 不存在 404、非本人 403）。no-store + attachment（下载语义）统一走
+      // lib/binary-response.noStoreBinaryResponse（缓存口径理由见其注释）
       .get("/note-versions/:versionId/document", (c) => {
         const versionId = c.req.param("versionId");
         const bytes = getStudentNoteDocument(
@@ -432,27 +436,18 @@ export function createStudentRoutes(
           c.var.student.id,
           versionId,
         );
-        return new Response(bytes, {
-          status: 200,
-          headers: {
-            "content-type": "application/gzip",
-            "cache-control": "no-store",
-            "content-disposition": `attachment; filename="note-${versionId}.json.gz"`,
-          },
+        return noStoreBinaryResponse(bytes, "application/gzip", {
+          attachmentFilename: `note-${versionId}.json.gz`,
         });
       })
       // T6R.5 ④：派生图 PNG 直出（.png 后缀可选——分流惯例见文件头说明）
       .get("/note-versions/:versionId/images/:file", (c) => {
-        const raw = c.req.param("file");
-        const imageId = raw.endsWith(".png")
-          ? raw.slice(0, -".png".length)
-          : raw;
         const bytes = getStudentNoteImagePng(
           db,
           dataDir,
           c.var.student.id,
           c.req.param("versionId"),
-          imageId,
+          stripPngSuffix(c.req.param("file")),
         );
         return noStoreBinaryResponse(bytes, "image/png");
       })

@@ -14,6 +14,7 @@ import {
   gzipResponse,
   noStoreBinaryResponse,
   pngResponse,
+  stripPngSuffix,
 } from "../lib/binary-response";
 import { parseNoteImageUploadForm } from "../lib/form-fields";
 import {
@@ -130,7 +131,7 @@ export function createTeacherRoutes(
             db,
             dataDir,
             c.var.teacher.id,
-            file.slice(0, -".png".length),
+            stripPngSuffix(file),
           );
           return pngResponse(png.bytes, png.etag);
         }
@@ -150,7 +151,7 @@ export function createTeacherRoutes(
       })
       // T6R.5 ⑦：教师读题目草稿版本文档（gzip 原字节直出；授权 = versionId→
       // note→attempt→student.teacherId 域链，域外 404 NOTE_NOT_FOUND 不暴露
-      // 存在性；no-store + attachment，理由见 lib/binary-response 注释）。
+      // 存在性；no-store + attachment 统一走 noStoreBinaryResponse）。
       .get("/note-versions/:versionId/document", (c) => {
         const versionId = c.req.param("versionId");
         const bytes = getTeacherNoteDocument(
@@ -159,28 +160,19 @@ export function createTeacherRoutes(
           c.var.teacher.id,
           versionId,
         );
-        return new Response(bytes, {
-          status: 200,
-          headers: {
-            "content-type": "application/gzip",
-            "cache-control": "no-store",
-            "content-disposition": `attachment; filename="note-${versionId}.json.gz"`,
-          },
+        return noStoreBinaryResponse(bytes, "application/gzip", {
+          attachmentFilename: `note-${versionId}.json.gz`,
         });
       })
       // T6R.5 ⑦：教师读派生图 PNG（.png 后缀可选，与学生端同款双 URL 形态；
       // 授权同上域链）
       .get("/note-versions/:versionId/images/:file", (c) => {
-        const raw = c.req.param("file");
-        const imageId = raw.endsWith(".png")
-          ? raw.slice(0, -".png".length)
-          : raw;
         const bytes = getTeacherNoteImagePng(
           db,
           dataDir,
           c.var.teacher.id,
           c.req.param("versionId"),
-          imageId,
+          stripPngSuffix(c.req.param("file")),
         );
         return noStoreBinaryResponse(bytes, "image/png");
       })

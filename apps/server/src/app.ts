@@ -86,6 +86,14 @@ export const NOTE_UPLOAD_BODY_LIMIT = NOTE_BODY_GZIP_MAX_BYTES + 64 * 1024;
 export const NOTE_IMAGE_UPLOAD_BODY_LIMIT =
   NOTE_IMAGE_PNG_MAX_BYTES + 64 * 1024;
 
+/** 补图上传两个入口（学生/教师）共用的预检守卫配置（复审⑦提常量） */
+const NOTE_IMAGE_UPLOAD_GUARD = {
+  method: "POST",
+  limit: NOTE_IMAGE_UPLOAD_BODY_LIMIT,
+  code: "NOTE_LIMIT_EXCEEDED",
+  message: "上传数据过大（超过派生图上传上限），请降低分辨率后重试",
+} as const;
+
 /**
  * content-length 入口预检中间件工厂（T6R.4 复审②：五段同构守卫收敛）。
  * 指定 method 的请求若 content-length 超过 limit，直接 413 {code}——不进入
@@ -213,24 +221,14 @@ export function createApp(options: CreateAppOptions) {
       }),
     )
     // T6R.5 补图上传（学生 ⑤ / 教师 ⑧ 同一限额：note-service 精确校验
-    // 单图 ≤2MiB + 版本聚合 ≤8MiB）
+    // 单图 ≤2MiB + 版本聚合 ≤8MiB）——两入口同配置，提常量双注册（复审⑦）
     .use(
       "/api/student/note-versions/:versionId/images",
-      guardBodyLimit({
-        method: "POST",
-        limit: NOTE_IMAGE_UPLOAD_BODY_LIMIT,
-        code: "NOTE_LIMIT_EXCEEDED",
-        message: "上传数据过大（超过派生图上传上限），请降低分辨率后重试",
-      }),
+      guardBodyLimit(NOTE_IMAGE_UPLOAD_GUARD),
     )
     .use(
       "/api/teacher/note-versions/:versionId/images",
-      guardBodyLimit({
-        method: "POST",
-        limit: NOTE_IMAGE_UPLOAD_BODY_LIMIT,
-        code: "NOTE_LIMIT_EXCEEDED",
-        message: "上传数据过大（超过派生图上传上限），请降低分辨率后重试",
-      }),
+      guardBodyLimit(NOTE_IMAGE_UPLOAD_GUARD),
     )
     // T2A.3 批量导入预览（preview-batch 单个 JSON 传全部文件，转义后 body
     // 约为 markdown 原文 1.5–2 倍，粗防线取 30MB=D20；精确限额在 content-service）
