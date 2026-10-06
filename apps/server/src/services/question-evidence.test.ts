@@ -1,8 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
-import type { Question, QuestionAnswers } from "@tutor/contract";
-import { questionSchema } from "@tutor/contract";
+import type { QuestionAnswers } from "@tutor/contract";
 import { stemMdLeaksAnswers } from "@tutor/md-dsl";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
@@ -12,8 +11,6 @@ import {
   attempts as attemptsTable,
   noteImages,
   type ResponseRow,
-  responses as responsesTable,
-  students as studentsTable,
 } from "../db/schema.ts";
 import {
   createTestDb,
@@ -21,9 +18,19 @@ import {
   TEST_TEACHER_ID,
 } from "../db/test-utils.ts";
 import { HttpError } from "../lib/http-error.ts";
-import { gzipJson, makeNotePng, noteDoc } from "../test/note-fixtures.ts";
+import {
+  frozenDraftAttempt,
+  snapshotJsonOf,
+  submitAttemptStatus,
+} from "../test/evidence-fixtures.ts";
+import {
+  gzipJson,
+  makeNotePng,
+  makeStudent,
+  noteDoc,
+} from "../test/note-fixtures.ts";
 import { insertEvidence } from "../test/note-world.ts";
-import { attemptResponseRows, newDraftAttempt } from "./attempt-service.ts";
+import { attemptResponseRows } from "./attempt-service.ts";
 import { saveMedia } from "./media-service.ts";
 import { attachNoteImage, saveNoteVersion } from "./note-service.ts";
 import {
@@ -52,108 +59,6 @@ import {
  */
 
 const TEACHER_B_ID = "teacher-b-t6r12-000001";
-
-/** 构造合法 Question 快照 JSON（questionSchema.parse 锁定合法性） */
-function snapshotJson(question: Partial<Question> & { id: string }): string {
-  return JSON.stringify(
-    questionSchema.parse({
-      type: "fill",
-      difficulty: 2,
-      knowledge: ["考点"],
-      stemMd: `题干 ${question.id}`,
-      hints: [],
-      sourceMd: `::::question{id="${question.id}"}\n:::\n`,
-      ...question,
-    }),
-  );
-}
-
-/** 直插学生行（指定教师域；列集同 note-fixtures.makeStudent） */
-function studentOf(db: Db, teacherId: string): string {
-  const id = randomUUID();
-  db.insert(studentsTable)
-    .values({
-      id,
-      teacherId,
-      displayName: `学生${id.slice(0, 4)}`,
-      loginName: `stu-${id.slice(0, 8)}`,
-      passwordHash: null,
-      linkToken: `link-${id}`,
-      linkEnabled: true,
-      passwordEnabled: false,
-      note: null,
-      archivedAt: null,
-      createdAt: "2026-01-01T00:00:00.000Z",
-    })
-    .run();
-  return id;
-}
-
-/**
- * 直插 attempt + 逐题冻结行（draft 状态——存稿后再交卷置位）。
- * questionSnapshotJson=null 的行直插 responses（升级遗留形态；正路写入器
- * insertFrozenResponse 不接受空快照，历史行只能这样造）。
- */
-function draftAttempt(
-  db: Db,
-  studentId: string,
-  questions: ReadonlyArray<{
-    questionId: string;
-    snapshotJson: string | null;
-  }>,
-): { attemptId: string; rowIds: string[] } {
-  const base = newDraftAttempt({
-    id: randomUUID(),
-    studentId,
-    sourceType: "assignment",
-    assignmentId: null,
-    courseId: null,
-    unitId: null,
-    attemptNo: 1,
-    startedAt: "2026-10-01T00:00:00.000Z",
-  });
-  const rowIds: string[] = [];
-  db.transaction((tx) => {
-    tx.insert(attemptsTable).values(base).run();
-    for (const q of questions) {
-      const rowId = randomUUID();
-      tx.insert(responsesTable)
-        .values({
-          id: rowId,
-          attemptId: base.id,
-          questionId: q.questionId,
-          questionVersion: 1,
-          questionSnapshotJson: q.snapshotJson,
-          unitId: null,
-          answerJson: null,
-          autoCorrect: null,
-          finalCorrect: null,
-          teacherMark: null,
-          teacherComment: null,
-          activeSec: null,
-          hintsUsed: 0,
-          changeCount: 0,
-          inkId: null,
-          hintsOpenedJson: null,
-        })
-        .run();
-      rowIds.push(rowId);
-    }
-  });
-  return { attemptId: base.id, rowIds };
-}
-
-/** 置为已交卷（含 responses 展示序） */
-function submit(
-  db: Db,
-  attemptId: string,
-  submittedAt = "2026-10-02T00:00:00.000Z",
-) {
-  db.update(attemptsTable)
-    .set({ status: "submitted", submittedAt })
-    .where(eq(attemptsTable.id, attemptId))
-    .run();
-}
 
 /** scope 条目：attempt + 展示序行（attemptResponseRows 按 rowid 序＝夹具插入序） */
 function scopeOf(
@@ -199,11 +104,11 @@ describe("T6R.12 快照一一配对（同 qid 多版本）", () => {
   it("两轮不同数值/选项/解析 → 两个 q 条目，各 response 行指向自己的版本", () => {
     const db = createTestDb();
     const dataDir = createTestDir();
-    const s1 = studentOf(db, TEST_TEACHER_ID);
-    const round1 = draftAttempt(db, s1, [
+    const s1 = makeStudent(db);
+    const round1 = frozenDraftAttempt(db, s1, [
       {
         questionId: "加法练习-1",
-        snapshotJson: snapshotJson({
+        snapshotJson: snapshotJsonOf({
           id: "加法练习-1",
           stemMd: "计算 $2+3=[[5]]$",
           answers: { kind: "fill", blanks: [["5"]] } satisfies QuestionAnswers,
@@ -211,11 +116,11 @@ describe("T6R.12 快照一一配对（同 qid 多版本）", () => {
         }),
       },
     ]);
-    submit(db, round1.attemptId, "2026-10-01T06:00:00.000Z");
-    const round2 = draftAttempt(db, s1, [
+    submitAttemptStatus(db, round1.attemptId, "2026-10-01T06:00:00.000Z");
+    const round2 = frozenDraftAttempt(db, s1, [
       {
         questionId: "加法练习-1",
-        snapshotJson: snapshotJson({
+        snapshotJson: snapshotJsonOf({
           id: "加法练习-1",
           type: "choice",
           stemMd: "12+13 = ？",
@@ -225,7 +130,7 @@ describe("T6R.12 快照一一配对（同 qid 多版本）", () => {
         }),
       },
     ]);
-    submit(db, round2.attemptId, "2026-10-03T06:00:00.000Z");
+    submitAttemptStatus(db, round2.attemptId, "2026-10-03T06:00:00.000Z");
 
     const result = assemble(
       db,
@@ -255,18 +160,21 @@ describe("T6R.12 快照一一配对（同 qid 多版本）", () => {
   it("同内容跨轮/跨 attempt 去重共享条目；缺失快照显式缺失不回填", () => {
     const db = createTestDb();
     const dataDir = createTestDir();
-    const s1 = studentOf(db, TEST_TEACHER_ID);
-    const sameJson = snapshotJson({ id: "稳定题-2", stemMd: "恒定题干 [[7]]" });
-    const a1 = draftAttempt(db, s1, [
+    const s1 = makeStudent(db);
+    const sameJson = snapshotJsonOf({
+      id: "稳定题-2",
+      stemMd: "恒定题干 [[7]]",
+    });
+    const a1 = frozenDraftAttempt(db, s1, [
       { questionId: "稳定题-2", snapshotJson: sameJson },
     ]);
-    submit(db, a1.attemptId, "2026-10-01T06:00:00.000Z");
-    const a2 = draftAttempt(db, s1, [
+    submitAttemptStatus(db, a1.attemptId, "2026-10-01T06:00:00.000Z");
+    const a2 = frozenDraftAttempt(db, s1, [
       { questionId: "稳定题-2", snapshotJson: sameJson },
       // 升级遗留行：无快照（questionSnapshotJson=null）
       { questionId: "旧题-3", snapshotJson: null },
     ]);
-    submit(db, a2.attemptId, "2026-10-04T06:00:00.000Z");
+    submitAttemptStatus(db, a2.attemptId, "2026-10-04T06:00:00.000Z");
 
     const result = assemble(
       db,
@@ -309,20 +217,20 @@ describe("T6R.12 同内容去重不串教师", () => {
   it("教师 A 的装配不含教师 B 域的任何数据（域过滤 + 独立条目实例）", () => {
     const db = createTestDb();
     const dataDir = createTestDir();
-    const sameJson = snapshotJson({
+    const sameJson = snapshotJsonOf({
       id: "共享考点题-9",
       stemMd: "同内容题干 [[3]]",
     });
-    const sA = studentOf(db, TEST_TEACHER_ID);
-    const sB = studentOf(db, TEACHER_B_ID);
-    const aA = draftAttempt(db, sA, [
+    const sA = makeStudent(db);
+    const sB = makeStudent(db, TEACHER_B_ID);
+    const aA = frozenDraftAttempt(db, sA, [
       { questionId: "共享考点题-9", snapshotJson: sameJson },
     ]);
-    submit(db, aA.attemptId);
-    const aB = draftAttempt(db, sB, [
+    submitAttemptStatus(db, aA.attemptId);
+    const aB = frozenDraftAttempt(db, sB, [
       { questionId: "共享考点题-9", snapshotJson: sameJson },
     ]);
-    submit(db, aB.attemptId);
+    submitAttemptStatus(db, aB.attemptId);
 
     const forA = assemble(db, dataDir, TEST_TEACHER_ID, [
       scopeOf(db, aA.attemptId),
@@ -368,14 +276,14 @@ describe("T6R.12 服务端泄露哨兵：学生角色投影后仍含答案标记
   function leakyWorld() {
     const db = createTestDb();
     const dataDir = createTestDir();
-    const s1 = studentOf(db, TEST_TEACHER_ID);
-    const a1 = draftAttempt(db, s1, [
+    const s1 = makeStudent(db);
+    const a1 = frozenDraftAttempt(db, s1, [
       {
         questionId: "恶意题-1",
-        snapshotJson: snapshotJson({ id: "恶意题-1", stemMd: leakyStem }),
+        snapshotJson: snapshotJsonOf({ id: "恶意题-1", stemMd: leakyStem }),
       },
     ]);
-    submit(db, a1.attemptId);
+    submitAttemptStatus(db, a1.attemptId);
     return { db, dataDir, attemptId: a1.attemptId };
   }
 
@@ -398,10 +306,16 @@ describe("T6R.12 服务端泄露哨兵：学生角色投影后仍含答案标记
 
   it("教师角色不受哨兵影响（同一快照照常装配；stem 层投影逻辑不变）", () => {
     const { db, dataDir, attemptId } = leakyWorld();
-    const result = assemble(db, dataDir, TEST_TEACHER_ID, [scopeOf(db, attemptId)], {
-      role: "teacher",
-      questionLevel: "stem",
-    });
+    const result = assemble(
+      db,
+      dataDir,
+      TEST_TEACHER_ID,
+      [scopeOf(db, attemptId)],
+      {
+        role: "teacher",
+        questionLevel: "stem",
+      },
+    );
     expect(result.revisions).toHaveLength(1);
     expect(result.revisions[0]?.material.stemMd).toContain("[x]");
   });
@@ -420,11 +334,11 @@ describe("T6R.12 角色投影先于素材装配", () => {
   function sentryWorld() {
     const db = createTestDb();
     const dataDir = createTestDir();
-    const s1 = studentOf(db, TEST_TEACHER_ID);
-    const a1 = draftAttempt(db, s1, [
+    const s1 = makeStudent(db);
+    const a1 = frozenDraftAttempt(db, s1, [
       {
         questionId: "哨兵题-1",
-        snapshotJson: snapshotJson({
+        snapshotJson: snapshotJsonOf({
           id: "哨兵题-1",
           type: "choice",
           stemMd: `下列正确的是（已知答案为 [[${SENTRY.answer}]] 属于填空写法）`,
@@ -435,7 +349,7 @@ describe("T6R.12 角色投影先于素材装配", () => {
         }),
       },
     ]);
-    submit(db, a1.attemptId);
+    submitAttemptStatus(db, a1.attemptId);
     return { db, dataDir, attemptId: a1.attemptId };
   }
 
@@ -515,11 +429,11 @@ describe("T6R.12 角色投影先于素材装配", () => {
       dataDir,
       makeNotePng(41, 41).slice() as Uint8Array<ArrayBuffer>,
     );
-    const s1 = studentOf(db, TEST_TEACHER_ID);
-    const a1 = draftAttempt(db, s1, [
+    const s1 = makeStudent(db);
+    const a1 = frozenDraftAttempt(db, s1, [
       {
         questionId: "图题-5",
-        snapshotJson: snapshotJson({
+        snapshotJson: snapshotJsonOf({
           id: "图题-5",
           stemMd: `看图作答：\n\n:::image{src="${stemImg.src}"}\n\n[[答案]]`,
           answers: {
@@ -530,7 +444,7 @@ describe("T6R.12 角色投影先于素材装配", () => {
         }),
       },
     ]);
-    submit(db, a1.attemptId);
+    submitAttemptStatus(db, a1.attemptId);
 
     const student = assemble(
       db,
@@ -567,24 +481,27 @@ describe("T6R.12 证据装配（submission_evidence + 分析图）", () => {
   function evidenceWorld() {
     const db = createTestDb();
     const dataDir = createTestDir();
-    const s1 = studentOf(db, TEST_TEACHER_ID);
-    const a1 = draftAttempt(db, s1, [
+    const s1 = makeStudent(db);
+    const a1 = frozenDraftAttempt(db, s1, [
       {
         questionId: "frozen-题",
-        snapshotJson: snapshotJson({ id: "frozen-题" }),
+        snapshotJson: snapshotJsonOf({ id: "frozen-题" }),
       },
       {
         questionId: "missing-题",
-        snapshotJson: snapshotJson({ id: "missing-题" }),
+        snapshotJson: snapshotJsonOf({ id: "missing-题" }),
       },
-      { questionId: "none-题", snapshotJson: snapshotJson({ id: "none-题" }) },
+      {
+        questionId: "none-题",
+        snapshotJson: snapshotJsonOf({ id: "none-题" }),
+      },
       {
         questionId: "legacy-题",
-        snapshotJson: snapshotJson({ id: "legacy-题" }),
+        snapshotJson: snapshotJsonOf({ id: "legacy-题" }),
       },
       {
         questionId: "未采集-题",
-        snapshotJson: snapshotJson({ id: "未采集-题" }),
+        snapshotJson: snapshotJsonOf({ id: "未采集-题" }),
       },
     ]);
     // frozen-题：draft 期存稿 + 两页分析图，随后交卷固定
@@ -642,7 +559,7 @@ describe("T6R.12 证据装配（submission_evidence + 分析图）", () => {
         pixelHeight: 160,
       },
     );
-    submit(db, a1.attemptId);
+    submitAttemptStatus(db, a1.attemptId);
     insertEvidence(db, a1.attemptId, "frozen-题", "frozen", receipt.versionId);
     insertEvidence(db, a1.attemptId, "missing-题", "missing", null);
     insertEvidence(db, a1.attemptId, "none-题", "none", null);
@@ -742,9 +659,9 @@ describe("T6R.12 证据装配（submission_evidence + 分析图）", () => {
   it("frozen 版本零分析图（未生成）→ 预测路径进缺失清单", () => {
     const db = createTestDb();
     const dataDir = createTestDir();
-    const s1 = studentOf(db, TEST_TEACHER_ID);
-    const a1 = draftAttempt(db, s1, [
-      { questionId: "零图题", snapshotJson: snapshotJson({ id: "零图题" }) },
+    const s1 = makeStudent(db);
+    const a1 = frozenDraftAttempt(db, s1, [
+      { questionId: "零图题", snapshotJson: snapshotJsonOf({ id: "零图题" }) },
     ]);
     const receipt = saveNoteVersion(
       db,
@@ -755,7 +672,7 @@ describe("T6R.12 证据装配（submission_evidence + 分析图）", () => {
       gzipJson(noteDoc(1, 10)),
       { baseRevision: 0, mutationId: randomUUID() },
     );
-    submit(db, a1.attemptId);
+    submitAttemptStatus(db, a1.attemptId);
     insertEvidence(db, a1.attemptId, "零图题", "frozen", receipt.versionId);
 
     const result = assemble(
@@ -815,17 +732,17 @@ describe("T6R.12 媒体引用保留（历史引用与缺失清单）", () => {
       makeNotePng(50, 50).slice() as Uint8Array<ArrayBuffer>,
     );
     const missingHash = `${"b".repeat(64)}.png`;
-    const s1 = studentOf(db, TEST_TEACHER_ID);
-    const a1 = draftAttempt(db, s1, [
+    const s1 = makeStudent(db);
+    const a1 = frozenDraftAttempt(db, s1, [
       {
         questionId: "媒体题-6",
-        snapshotJson: snapshotJson({
+        snapshotJson: snapshotJsonOf({
           id: "媒体题-6",
           stemMd: `:::image{src="${present.src}"}\n\n:::image{src="blobs/media/${missingHash}"}`,
         }),
       },
     ]);
-    submit(db, a1.attemptId);
+    submitAttemptStatus(db, a1.attemptId);
 
     const result = assemble(db, dataDir, TEST_TEACHER_ID, [
       scopeOf(db, a1.attemptId),

@@ -7,7 +7,6 @@ import {
   learningPackExportRequestSchema,
   learningPackSchema,
   learningPackV2Schema,
-  questionSchema,
 } from "@tutor/contract";
 import { and, eq } from "drizzle-orm";
 import { beforeAll, describe, expect, it } from "vitest";
@@ -16,10 +15,14 @@ import {
   attempts,
   lectures,
   noteImages as noteImagesTable,
-  responses as responsesTable,
 } from "../db/schema";
 import { createTestDb, createTestDir, TEST_TEACHER_ID } from "../db/test-utils";
 import { HttpError } from "../lib/http-error";
+import {
+  frozenDraftAttempt,
+  snapshotJsonOf,
+  submitAttemptStatus,
+} from "../test/evidence-fixtures";
 import {
   gzipJson,
   makeNotePng,
@@ -27,7 +30,7 @@ import {
   noteDoc,
 } from "../test/note-fixtures";
 import { insertEvidence } from "../test/note-world";
-import { newDraftAttempt, submitAttempt } from "./attempt-service";
+import { submitAttempt } from "./attempt-service";
 import {
   assembleLearningPack,
   buildLearningPackZip,
@@ -117,6 +120,16 @@ function unzipEntries(buffer: Uint8Array): Map<string, Buffer> {
   return out;
 }
 
+/** 解包结果 → pack.json 经 schema 校验的 pack 对象（v1/v2 样板收敛，复审 D14） */
+function packEntryOf<T>(
+  entries: Map<string, Buffer>,
+  schema: { parse: (value: unknown) => T },
+): T {
+  return schema.parse(
+    JSON.parse(entries.get("pack.json")?.toString("utf8") ?? "{}"),
+  );
+}
+
 /**
  * 请求体构造器（preview 与生成共用 schema；覆盖片段合并后整体再过一遍契约，
  * 输出类型即解析结果——缺省字段由 default 填充）。
@@ -204,9 +217,7 @@ describe("模块勾选组合：pack 结构与 zip 清单（D14/D19）", () => {
       },
     );
     const entries = unzipEntries(zip.bytes);
-    const pack: LearningPack = learningPackSchema.parse(
-      JSON.parse(entries.get("pack.json")?.toString("utf8") ?? "{}"),
-    );
+    const pack: LearningPack = packEntryOf(entries, learningPackSchema);
     expect(pack.content?.lectures).toHaveLength(2);
     expect(pack.content?.questions?.length).toBeGreaterThan(0);
     expect(pack.attempts?.responses?.length).toBeGreaterThan(0);
@@ -746,70 +757,6 @@ describe("T6R.12 LearningPack v2：快照关联、证据与 manifest", () => {
   /** 合法内容寻址形态但文件缺失的 src（64 位 hex） */
   const v2MissingMediaSrc = `blobs/media/${"e".repeat(64)}.png`;
 
-  /** 合法 Question 快照 JSON */
-  function v2Snapshot(question: Record<string, unknown>): string {
-    return JSON.stringify(
-      questionSchema.parse({
-        type: "fill",
-        difficulty: 2,
-        knowledge: ["v2考点"],
-        stemMd: "题干占位",
-        hints: [],
-        sourceMd: ":::question\n:::\n",
-        ...question,
-      }),
-    );
-  }
-
-  /** attempt 直插已交卷状态（不经 submitAttempt——证据行由夹具自管） */
-  function submitStatus(attemptId: string, submittedAt: string): void {
-    db.update(attempts)
-      .set({ status: "submitted", submittedAt })
-      .where(eq(attempts.id, attemptId))
-      .run();
-  }
-
-  /** 直插 draft attempt + 冻结行 */
-  function v2DraftAttempt(
-    studentId: string,
-    questions: ReadonlyArray<{ questionId: string; snapshotJson: string }>,
-  ): string {
-    const attempt = newDraftAttempt({
-      id: randomUUID(),
-      studentId,
-      sourceType: "assignment",
-      assignmentId: null,
-      courseId: null,
-      unitId: null,
-      attemptNo: 1,
-      startedAt: "2026-10-01T00:00:00.000Z",
-    });
-    db.insert(attempts).values(attempt).run();
-    for (const q of questions) {
-      db.insert(responsesTable)
-        .values({
-          id: randomUUID(),
-          attemptId: attempt.id,
-          questionId: q.questionId,
-          questionVersion: 1,
-          questionSnapshotJson: q.snapshotJson,
-          unitId: null,
-          answerJson: null,
-          autoCorrect: null,
-          finalCorrect: null,
-          teacherMark: null,
-          teacherComment: null,
-          activeSec: null,
-          hintsUsed: 0,
-          changeCount: 0,
-          inkId: null,
-          hintsOpenedJson: null,
-        })
-        .run();
-    }
-    return attempt.id;
-  }
-
   beforeAll(() => {
     v2Student = makeStudent(db);
     const v2MediaBytes = fakePng(60, 60);
@@ -844,17 +791,17 @@ describe("T6R.12 LearningPack v2：快照关联、证据与 manifest", () => {
       "",
       "计算 $2+3=[[5]]$",
     ].join("\n");
-    round1AttemptId = v2DraftAttempt(v2Student, [
+    round1AttemptId = frozenDraftAttempt(db, v2Student, [
       {
         questionId: "v2配对题-1",
-        snapshotJson: v2Snapshot({
+        snapshotJson: snapshotJsonOf({
           id: "v2配对题-1",
           stemMd: stemWithImages,
           answers: { kind: "fill", blanks: [["5"]] },
           solutionMd: "v2解析一",
         }),
       },
-    ]);
+    ]).attemptId;
     const receipt = saveNoteVersion(
       db,
       dataDir,
@@ -903,7 +850,7 @@ describe("T6R.12 LearningPack v2：快照关联、证据与 manifest", () => {
     if (page2Row === undefined) throw new Error("v2 夹具缺第二页分析图行");
     rmSync(join(dataDir, page2Row.path), { force: true });
     // 交卷（直插状态与证据行：round1 frozen；round2 交卷不采集）
-    submitStatus(round1AttemptId, "2026-10-02T00:00:00.000Z");
+    submitAttemptStatus(db, round1AttemptId, "2026-10-02T00:00:00.000Z");
     insertEvidence(
       db,
       round1AttemptId,
@@ -911,10 +858,10 @@ describe("T6R.12 LearningPack v2：快照关联、证据与 manifest", () => {
       "frozen",
       receipt.versionId,
     );
-    round2AttemptId = v2DraftAttempt(v2Student, [
+    round2AttemptId = frozenDraftAttempt(db, v2Student, [
       {
         questionId: "v2配对题-1",
-        snapshotJson: v2Snapshot({
+        snapshotJson: snapshotJsonOf({
           id: "v2配对题-1",
           type: "choice",
           stemMd: "12+13 = ？",
@@ -923,8 +870,8 @@ describe("T6R.12 LearningPack v2：快照关联、证据与 manifest", () => {
           solutionMd: "v2解析二",
         }),
       },
-    ]);
-    submitStatus(round2AttemptId, "2026-10-04T00:00:00.000Z");
+    ]).attemptId;
+    submitAttemptStatus(db, round2AttemptId, "2026-10-04T00:00:00.000Z");
   });
 
   /** v2 请求（默认题目 solution 层 + 逐题作答 + 证据） */
@@ -952,9 +899,7 @@ describe("T6R.12 LearningPack v2：快照关联、证据与 manifest", () => {
       { now: V2_NOW },
     );
     const entries = unzipEntries(zip.bytes);
-    const pack = learningPackV2Schema.parse(
-      JSON.parse(entries.get("pack.json")?.toString("utf8") ?? "{}"),
-    );
+    const pack = packEntryOf(entries, learningPackV2Schema);
 
     // —— meta：v2 + evidence 回显 ——
     expect(pack.meta.version).toBe(2);
@@ -1058,9 +1003,7 @@ describe("T6R.12 LearningPack v2：快照关联、证据与 manifest", () => {
       { now: V2_NOW },
     );
     const entries = unzipEntries(zip.bytes);
-    const pack = learningPackV2Schema.parse(
-      JSON.parse(entries.get("pack.json")?.toString("utf8") ?? "{}"),
-    );
+    const pack = packEntryOf(entries, learningPackV2Schema);
     expect(pack.content).toBeUndefined();
     expect(
       pack.manifest.contextNotes.some((note) =>
@@ -1143,12 +1086,12 @@ describe("T6R.12 LearningPack v2：快照关联、证据与 manifest", () => {
     );
     const entries = unzipEntries(zip.bytes);
     // zip：同 src 只有一个条目（archiver 重复 name 会产生双条目/覆盖歧义）
-    const sameSrcNames = [...entries.keys()].filter((name) => name === v2MediaSrc);
+    const sameSrcNames = [...entries.keys()].filter(
+      (name) => name === v2MediaSrc,
+    );
     expect(sameSrcNames).toHaveLength(1);
     // manifest：media 行唯一且携带题目 q 关联（讲义先行收录、题目并入去重）
-    const pack = learningPackV2Schema.parse(
-      JSON.parse(entries.get("pack.json")?.toString("utf8") ?? "{}"),
-    );
+    const pack = packEntryOf(entries, learningPackV2Schema);
     const mediaRows = pack.manifest.files.filter(
       (file) => file.kind === "media" && file.path === v2MediaSrc,
     );
