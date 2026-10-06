@@ -610,3 +610,41 @@ describe("note-store：clearNoteDeniedAccess（T6R.9 手动重试入口）", () 
     expect(await clearNoteDeniedAccess(SESSION_A, SCOPE)).toBe(false);
   });
 });
+
+describe("note-store：docVersion 正文版本令牌（T6R.9 复审②：自写自载守卫数据源）", () => {
+  it("record.doc 每次整体替换 +1；回执/被拒/冲突落地不动", async () => {
+    writeNoteDoc(SESSION_A, SCOPE, DOC_A);
+    const v1 = (await recordOf(SESSION_A, SCOPE)).docVersion;
+    expect(v1).toBeGreaterThan(0);
+    const rec1 = await recordOf(SESSION_A, SCOPE);
+    const mutationId = rec1.pending?.mutationId;
+    if (mutationId === undefined) throw new Error("测试前置失败");
+    await applyUploadReceipt(SESSION_A, SCOPE, mutationId, RECEIPT_1);
+    expect((await recordOf(SESSION_A, SCOPE)).docVersion).toBe(v1); // 回执不换正文
+    await applyUploadDenied(SESSION_A, SCOPE, "access", "x");
+    expect((await recordOf(SESSION_A, SCOPE)).docVersion).toBe(v1); // 终态不换正文
+    writeNoteDoc(SESSION_A, SCOPE, DOC_B);
+    expect((await recordOf(SESSION_A, SCOPE)).docVersion).toBe(v1 + 1);
+  });
+
+  it("服务端稿载入换正文 +1；视图暴露 docVersion", async () => {
+    // 无本地待传（fresh）→ 服务端稿成为工作稿
+    await applyServerLoad(SESSION_A, SCOPE, DOC_B);
+    const v1 = (await recordOf(SESSION_A, SCOPE)).docVersion;
+    expect(v1).toBe(1); // freshRecord(0) → 换稿 +1
+    expect(getNoteView(SESSION_A, SCOPE)?.docVersion).toBe(v1);
+    // 再载一次（内容不同）再 +1
+    await applyServerLoad(SESSION_A, SCOPE, DOC_A);
+    expect((await recordOf(SESSION_A, SCOPE)).docVersion).toBe(v1 + 1);
+  });
+
+  it("revive 持久副本保留令牌（重进不归零）", async () => {
+    const shared = memoryNoteBackend();
+    installNoteBackend(shared);
+    writeNoteDoc(SESSION_A, SCOPE, DOC_A);
+    await waitForLocalSaved(SESSION_A, SCOPE);
+    const before = (await recordOf(SESSION_A, SCOPE)).docVersion;
+    installNoteBackend(shared); // 模拟刷新：清内存
+    expect((await recordOf(SESSION_A, SCOPE)).docVersion).toBe(before);
+  });
+});

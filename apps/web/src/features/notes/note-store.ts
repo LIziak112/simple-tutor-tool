@@ -194,6 +194,13 @@ export interface NoteLocalRecord {
   localError: string | null;
   /** 最后本地编辑时间（epoch ms；恢复 load 不推进——加载恢复不算编辑） */
   editedAt: number;
+  /**
+   * 正文版本令牌（T6R.9 复审②）：record.doc 每次被整体替换时 +1
+   * （writeNoteDoc / applyServerLoad 换稿 / keepCloud 裁决），回执/被拒/
+   * 冲突落地等非正文变更不动。消费方（NoteLayer 自写自载守卫）比对令牌
+   * 替代逐笔迹元素引用比对——解除对 store 拷贝深度的隐式耦合。
+   */
+  docVersion: number;
 }
 
 function freshRecord(): NoteLocalRecord {
@@ -208,6 +215,7 @@ function freshRecord(): NoteLocalRecord {
     local: "saved",
     localError: null,
     editedAt: 0,
+    docVersion: 0,
   };
 }
 
@@ -230,6 +238,7 @@ function reviveRecord(raw: unknown): NoteLocalRecord | null {
     conflict: r.conflict ?? null,
     denied: r.denied ?? null,
     editedAt: typeof r.editedAt === "number" ? r.editedAt : 0,
+    docVersion: typeof r.docVersion === "number" ? r.docVersion : 0,
     // local/localError 持久副本恒归一化（见文件头），读取即 saved
     local: "saved",
     localError: null,
@@ -489,6 +498,8 @@ export interface NoteRecordView {
   conflict: NoteConflictInfo | null;
   denied: NoteDeniedInfo | null;
   overview: NoteStatusOverview;
+  /** 正文版本令牌（record.doc 替换次数；非正文变更不动——守卫比对用） */
+  docVersion: number;
 }
 
 /**
@@ -581,6 +592,7 @@ export function getNoteView(
     conflict: record.conflict,
     denied: record.denied,
     overview: deriveNoteStatusOverview(record, uploading),
+    docVersion: record.docVersion,
   };
   viewCache.set(key, {
     allGen,
@@ -615,6 +627,7 @@ export function writeNoteDoc(
       ink: { ...input.ink, strokes: [...input.ink.strokes] },
     };
     record.doc = doc;
+    record.docVersion += 1;
     record.pending = { mutationId: randomUuid(), doc };
     record.editedAt = Date.now();
     if (record.denied?.kind === "content") record.denied = null;
@@ -709,6 +722,7 @@ function applyLoadMutations(
   }
   record.pending = null; // 无待传或内容相等：以服务端稿为准，不回传
   record.doc = serverDoc;
+  record.docVersion += 1;
   record.conflict = null; // 云端即本地内容（或本地无分歧）：分歧消解
 }
 
@@ -818,6 +832,7 @@ export async function resolveNoteConflict(
       }
       record.pending = null;
       record.doc = choice.doc;
+      record.docVersion += 1;
       return;
     }
     // keep local：有摘要——pending 原样（同 id 重放，CAS 干净写）；
