@@ -593,10 +593,16 @@ function safeParseDoc(doc: NoteDocInput): NoteDoc | null {
   return result;
 }
 
-/** 读记录（内存优先；未载入时回源后端并缓存）。无记录返回 null */
+/**
+ * 读记录（内存优先；未载入时回源后端并缓存）。无记录返回 null。
+ * strictRead=true（T6R.10 交卷组装的权威路径）：后端读失败**抛错**而非
+ * 归并为 null——「读失败」与「确无记录」语义不同，静默归并会让交卷组装
+ * 在数据未知时仍产出声明。展示性消费方（快览）保持宽松（失败≈无记录）。
+ */
 export async function getNoteRecord(
   session: NoteSessionRef,
   scope: NoteScope,
+  options?: { strictRead?: boolean },
 ): Promise<NoteLocalRecord | null> {
   const key = noteKeyOf(session, scope);
   const cached = records.get(key);
@@ -605,6 +611,7 @@ export async function getNoteRecord(
   try {
     raw = await backend().get(key);
   } catch (err) {
+    if (options?.strictRead === true) throw err;
     console.warn("草稿本地记录读取失败（不影响作答）", err);
     return null;
   }

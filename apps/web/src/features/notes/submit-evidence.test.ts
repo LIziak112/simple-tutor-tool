@@ -17,6 +17,7 @@ import {
   applyUploadDenied,
   installNoteBackend,
   memoryNoteBackend,
+  type NoteStoreBackend,
   writeNoteDoc,
 } from "@/features/notes/note-store";
 import {
@@ -38,7 +39,10 @@ vi.mock("@/lib/api", async (importOriginal) => {
 });
 
 import { bindNoteSession, resetNoteSession } from "@/features/notes/note-sync";
-import { prepareSubmitEvidence } from "@/features/notes/submit-evidence";
+import {
+  prepareSubmitEvidence,
+  snapshotNoteOverview,
+} from "@/features/notes/submit-evidence";
 import {
   ApiError,
   fetchStudentNoteHeadApi,
@@ -291,5 +295,76 @@ describe("prepareSubmitEvidence：阻止性失败", () => {
     await expect(
       prepareSubmitEvidence({ attemptId: ATTEMPT, questionIds: QUESTIONS }),
     ).rejects.toBeInstanceOf(Error);
+  });
+
+  it("本地仓读失败（strictRead）→ 抛错阻止交卷；快览宽松归并无记录", async () => {
+    // get 恒失败的后端（内存底 + 读路径注入故障）；records 缓存为空 ⇒ 每题走 get
+    const mem = memoryNoteBackend();
+    const failingGet: NoteStoreBackend = {
+      get: async () => {
+        throw new Error("IDB 读取失败");
+      },
+      set: mem.set,
+      getAll: mem.getAll,
+    };
+    installNoteBackend(failingGet);
+    mockHeads({});
+    await expect(
+      prepareSubmitEvidence({ attemptId: ATTEMPT, questionIds: QUESTIONS }),
+    ).rejects.toThrow("IDB 读取失败");
+    // 展示性快览保持宽松：读失败≈无记录（全 none，不抛）
+    const statuses = await snapshotNoteOverview({
+      attemptId: ATTEMPT,
+      questionIds: QUESTIONS,
+    });
+    expect(statuses.map((st) => st.kind)).toEqual(["none", "none", "none"]);
+  });
+});
+
+describe("prepareSubmitEvidence：两批 problem 先后确认（并集语义，P0-1）", () => {
+  it("A 持续失败 + 期间 B 新增冲突 → 两次确认并集 allowMissing 后仍能交卷", async () => {
+    // 第一轮：A 题网络失败（唯一问题）
+    await writeLocal(Q1, DOC_A);
+    putMock.mockRejectedValue(new Error("网络不可用"));
+    mockHeads({});
+    const first = await prepareSubmitEvidence({
+      attemptId: ATTEMPT,
+      questionIds: QUESTIONS,
+    });
+    expect(first.problems.map((p) => p.questionId)).toEqual([Q1]);
+
+    // 用户确认第一批（AttemptSession 并集累积的 allowMissing）；
+    // 期间 B 题新写并落入冲突态（第二批 problem）
+    const confirmed = new Set([Q1]);
+    await writeLocal(Q2, DOC_A);
+    await applyUploadConflict(
+      SESSION_A,
+      { attemptId: ATTEMPT, questionId: Q2, phase: "scratch" },
+      null,
+      "同一上传标识已对应不同正文",
+    );
+    const second = await prepareSubmitEvidence({
+      attemptId: ATTEMPT,
+      questionIds: QUESTIONS,
+      allowMissing: confirmed,
+    });
+    // A 已按确认消费为 missing；B 是新的未决问题（不因覆盖式确认丢失 A，
+    // 也不静默吸收 B）
+    expect(second.declarations).toBeNull();
+    expect(second.problems.map((p) => p.questionId)).toEqual([Q2]);
+
+    // 用户确认第二批（并集 {A,B}）→ 第三轮完整交卷
+    for (const problem of second.problems) confirmed.add(problem.questionId);
+    const third = await prepareSubmitEvidence({
+      attemptId: ATTEMPT,
+      questionIds: QUESTIONS,
+      allowMissing: confirmed,
+    });
+    expect(third.problems).toEqual([]);
+    expect(third.declarations).toEqual([
+      { questionId: Q1, state: "missing" },
+      { questionId: Q2, state: "missing" },
+      { questionId: Q3, state: "none" },
+    ]);
   });
 });

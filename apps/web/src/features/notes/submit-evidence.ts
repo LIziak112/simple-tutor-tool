@@ -171,7 +171,8 @@ export async function prepareSubmitEvidence(input: {
       input.questionIds.map((questionId) =>
         session === null
           ? Promise.resolve<NoteLocalRecord | null>(null)
-          : getNoteRecord(session, scopeOf(questionId)),
+          : // strictRead：权威路径读失败抛错（≠无记录），由调用方进 error 相
+            getNoteRecord(session, scopeOf(questionId), { strictRead: true }),
       ),
     ),
     Promise.all(
@@ -188,7 +189,16 @@ export async function prepareSubmitEvidence(input: {
     const questionId = input.questionIds[i];
     const record = records[i] ?? null;
     const head = heads[i];
-    if (questionId === undefined || head === undefined) continue;
+    if (questionId === undefined || head === undefined) {
+      // 等长 map 一一对应产出，此分支理论不可达；若真发生绝不能静默跳过
+      // （会返回缺题的 declarations、伪装成可刷新解决的 409）——按问题
+      // 呈现阻止交卷
+      problems.push({
+        questionId: questionId ?? "",
+        reason: "内部数据异常，请重试",
+      });
+      continue;
+    }
     const verdict = classifyNote(record, head);
 
     if (verdict.kind === "problem") {

@@ -84,6 +84,7 @@ describe("SubmitConfirmDialog", () => {
         noteProblems={[
           { index: 3, reason: "草稿尚未保存完整（网络不稳定，正在重试）" },
         ]}
+        choiceMode
         onConfirm={onConfirm}
         onConfirmMissing={onConfirmMissing}
         onCancel={onCancel}
@@ -119,5 +120,55 @@ describe("SubmitConfirmDialog", () => {
     );
     expect(screen.getByText(/正在同步草稿/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "继续作答" })).toBeDisabled();
+  });
+
+  it("T6R.10 error 相携带最近一次 problems：清单与错误文案都可见，确认键为普通重试", () => {
+    render(
+      <SubmitConfirmDialog
+        open
+        unansweredCount={0}
+        submitting={false}
+        noteProblems={[
+          { index: 2, reason: "草稿尚未保存完整（网络不稳定，正在重试）" },
+        ]}
+        choiceMode={false}
+        notePrepError="草稿状态获取失败，请检查网络后重试"
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/第 2 题/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/草稿状态获取失败，请检查网络后重试/),
+    ).toBeInTheDocument();
+    // error 相不是明确选择分支：普通确认（重试）按钮存在、缺稿按钮不存在
+    expect(
+      screen.getByRole("button", { name: "确认交卷" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /提交答案，草稿未保存完整/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("T6R.10 busy 期间 Esc 与遮罩点按不关闭（关闭=取消=中止，准备中不可中断）", () => {
+    const onCancel = vi.fn();
+    render(
+      <SubmitConfirmDialog
+        open
+        unansweredCount={0}
+        submitting={false}
+        preparing
+        onConfirm={vi.fn()}
+        onCancel={onCancel}
+      />,
+    );
+    // Radix 弹层渲染在 body portal——从 document 取内容区
+    const content = document.querySelector(
+      "[data-slot='dialog-content']",
+    ) as HTMLElement | null;
+    expect(content).not.toBeNull();
+    fireEvent.keyDown(content, { key: "Escape", code: "Escape" });
+    fireEvent.pointerDown(content, { button: 0, detail: 1 });
+    expect(onCancel).not.toHaveBeenCalled();
   });
 });
