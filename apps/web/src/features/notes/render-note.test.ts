@@ -310,6 +310,21 @@ describe("planAnalysisCrop：纵向记录范围 + 网格对齐 + 边界钳制", 
     });
   });
 
+  it("笔迹整体低于纸高（旧稿 y 与纸高解耦的合法形态）→ 裁剪区仍合法（纸顶一格）", () => {
+    // 契约允许 y≤3000 与本稿 paperHeightLogical 解耦（旧答题区笔迹按默认
+    // 高度读入）；纸外笔迹按纸界裁剪，裁剪区必须保持合法形状
+    const below = docOf([
+      stroke([
+        [100, 2000],
+        [900, 2100],
+      ]),
+    ]);
+    const crop = planAnalysisCrop(below);
+    expect(crop.y).toBeGreaterThanOrEqual(0);
+    expect(crop.height).toBeGreaterThanOrEqual(1);
+    expect(crop.y + crop.height).toBeLessThanOrEqual(800);
+  });
+
   it("空稿 → 整纸（诚实呈现空纸，是否出图由调用方决定）", () => {
     const d = docOf([], { paperHeightLogical: 1200 });
     expect(planAnalysisCrop(d)).toEqual({

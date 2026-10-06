@@ -160,8 +160,13 @@ export function planAnalysisCrop(doc: NoteDoc): NoteCropRect {
   let y1 = Math.ceil((bbox.maxY + pad) / spacing) * spacing;
   if (y0 < 0) y0 = 0;
   if (y1 > doc.paperHeightLogical) y1 = doc.paperHeightLogical;
-  // 防御闭合：bbox 非空且 pad>0 时 y1>y0 恒成立，此处兜底极端舍入
-  if (y1 <= y0) y1 = Math.min(doc.paperHeightLogical, y0 + spacing);
+  if (y1 <= y0) {
+    // 防御闭合：笔迹整体在本稿纸高之外（契约允许 y≤3000 与纸高解耦——
+    // 旧答题区笔迹按默认高度读入的形态）或极端舍入时，取纸顶一格，保证
+    // 裁剪区合法（越界笔迹按纸界裁剪的策略本身不变，渲染出空纸顶部）
+    y0 = 0;
+    y1 = Math.min(doc.paperHeightLogical, spacing);
+  }
   return {
     x: 0,
     y: y0,
