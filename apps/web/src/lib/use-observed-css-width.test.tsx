@@ -1,7 +1,11 @@
 import { act, render, screen } from "@testing-library/react";
 import type React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { useObservedCssWidth } from "./use-observed-css-width";
+import { makeResizeObserverStub } from "@/features/notes/note-test-utils";
+import {
+  useObservedCssValue,
+  useObservedCssWidth,
+} from "./use-observed-css-width";
 
 /** 宽度观察原语测试（自 note-layout.test 上移 lib，T6R.9 复审⑩） */
 
@@ -21,17 +25,8 @@ describe("useObservedCssWidth", () => {
   });
 
   it("ResizeObserver 存在：观察容器并在回调时更新宽度", () => {
-    type Cb = (entries: { contentRect: { width: number } }[]) => void;
-    const observers: { cb: Cb }[] = [];
-    class StubRO {
-      constructor(cb: Cb) {
-        observers.push({ cb });
-      }
-      observe() {}
-      unobserve() {}
-      disconnect() {}
-    }
-    vi.stubGlobal("ResizeObserver", StubRO);
+    const stub = makeResizeObserverStub();
+    vi.stubGlobal("ResizeObserver", stub.cls);
     const ref = { current: null } as React.RefObject<HTMLDivElement | null>;
     function Probe() {
       const width = useObservedCssWidth(ref);
@@ -42,14 +37,37 @@ describe("useObservedCssWidth", () => {
       );
     }
     render(<Probe />);
-    expect(observers.length).toBe(1);
-    act(() => {
-      observers[0]?.cb([{ contentRect: { width: 1024 } }]);
-    });
+    act(() => stub.push(1024));
     expect(screen.getByTestId("probe").textContent).toBe("1024");
-    act(() => {
-      observers[0]?.cb([{ contentRect: { width: 700 } }]);
-    });
+    act(() => stub.push(700));
     expect(screen.getByTestId("probe").textContent).toBe("700");
+  });
+});
+
+describe("useObservedCssValue（投影与量化）", () => {
+  it("project 结论翻转才更新；enabled=false 不观察", () => {
+    const stub = makeResizeObserverStub();
+    vi.stubGlobal("ResizeObserver", stub.cls);
+    const ref = { current: null } as React.RefObject<HTMLDivElement | null>;
+    let enabled = true;
+    function Probe() {
+      const usable = useObservedCssValue(ref, (w) => w >= 900, { enabled });
+      return (
+        <div ref={ref} data-testid="v">
+          {String(usable)}
+        </div>
+      );
+    }
+    const { rerender } = render(<Probe />);
+    act(() => stub.push(1000));
+    expect(screen.getByTestId("v").textContent).toBe("true");
+    act(() => stub.push(1100)); // 同侧：值不变
+    expect(screen.getByTestId("v").textContent).toBe("true");
+    act(() => stub.push(500)); // 翻回
+    expect(screen.getByTestId("v").textContent).toBe("false");
+    enabled = false;
+    rerender(<Probe />); // 观察停用（effect 清理）
+    act(() => stub.push(2000));
+    expect(screen.getByTestId("v").textContent).toBe("false");
   });
 });

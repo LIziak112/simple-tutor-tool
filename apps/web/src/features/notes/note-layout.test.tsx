@@ -1,6 +1,7 @@
 import { act, render, screen } from "@testing-library/react";
 import type React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { makeResizeObserverStub } from "@/features/notes/note-test-utils";
 import {
   effectiveNoteLayout,
   getNoteLayoutPreference,
@@ -164,17 +165,9 @@ describe("设备偏好存储（防御式）", () => {
 
 describe("useNoteSideUsable：量化分栏观察（复审④）", () => {
   function probeHook(enabled: boolean) {
+    const stub = makeResizeObserverStub();
+    vi.stubGlobal("ResizeObserver", stub.cls);
     const ref = { current: null } as React.RefObject<HTMLDivElement | null>;
-    const observers: ((w: number) => void)[] = [];
-    class StubRO {
-      constructor(cb: (entries: { contentRect: { width: number } }[]) => void) {
-        observers.push((width: number) => cb([{ contentRect: { width } }]));
-      }
-      observe() {}
-      unobserve() {}
-      disconnect() {}
-    }
-    vi.stubGlobal("ResizeObserver", StubRO);
     function Probe() {
       const usable = useNoteSideUsable(ref, enabled);
       return (
@@ -184,12 +177,7 @@ describe("useNoteSideUsable：量化分栏观察（复审④）", () => {
       );
     }
     render(<Probe />);
-    return {
-      push: (w: number) =>
-        act(() => {
-          for (const cb of [...observers]) cb(w);
-        }),
-    };
+    return { push: (w: number) => act(() => stub.push(w)) };
   }
 
   it("跨阈值翻转才更新（同侧宽度连续变化不重渲染）", () => {

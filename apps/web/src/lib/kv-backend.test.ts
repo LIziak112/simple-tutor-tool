@@ -81,17 +81,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("idbKVBackend.keys（真 IDB 语义契约）", () => {
-  it("返回键数组（解包 IDBRequest）并保留字符串过滤", async () => {
-    // jsdom 无 IndexedDB 全局：IDBKeyRange.bound 桩为区间对象（keys 实现只透传给桩 getAllKeys）
-    vi.stubGlobal("IDBKeyRange", {
-      bound: (lower: unknown, upper: unknown) => ({ lower, upper }),
-    });
-    const backend = idbKVBackend("db", "store");
-    const keys = await backend.keys("a:");
-    expect(keys).toEqual(["a:1", "a:2"]); // 区间下推生效；非字符串键防御过滤；不再抛 filter 错
-  });
-
+describe("idbKVBackend 后端契约（真 IDB 语义）", () => {
   it("getAll：单事务取前缀键值对（bind/flush 扫描不逐键 get）", async () => {
     vi.stubGlobal("IDBKeyRange", {
       bound: (lower: unknown, upper: unknown) => ({ lower, upper }),

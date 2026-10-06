@@ -108,23 +108,32 @@ export interface ResizeObserverStub {
   cls: new (
     cb: (entries: { contentRect: { width: number } }[]) => void,
   ) => unknown;
+  /** 向全部**连接中**的实例推一次宽度（disconnect 后不再收到——真实语义） */
   push: (width: number) => void;
 }
 
 export function makeResizeObserverStub(): ResizeObserverStub {
-  const observers: ((w: number) => void)[] = [];
+  const observers: { cb: (w: number) => void; connected: boolean }[] = [];
   const cls = class {
     constructor(cb: (entries: { contentRect: { width: number } }[]) => void) {
-      observers.push((width: number) => cb([{ contentRect: { width } }]));
+      observers.push({
+        cb: (width: number) => cb([{ contentRect: { width } }]),
+        connected: true,
+      });
     }
     observe() {}
     unobserve() {}
-    disconnect() {}
+    disconnect() {
+      // 断开的实例不再收事件（useObservedCssValue 的 enabled=false 依赖此语义）
+      for (const entry of observers) entry.connected = false;
+    }
   };
   return {
     cls,
     push: (width: number) => {
-      for (const cb of [...observers]) cb(width);
+      for (const entry of [...observers]) {
+        if (entry.connected) entry.cb(width);
+      }
     },
   };
 }

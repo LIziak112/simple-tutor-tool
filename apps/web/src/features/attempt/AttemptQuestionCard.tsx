@@ -367,22 +367,19 @@ export function AttemptQuestionCard({
           onAnswer={plainAnswer}
         />
       )}
-      {(question.type === "solve" ||
-        question.type === "apply" ||
-        question.type === "find-error") &&
-        attemptId !== undefined && (
-          <HandwrittenControls
-            attemptId={attemptId}
-            questionId={question.id}
-            stemMd={question.stemMd}
-            answer={answer}
-            onAnswer={onAnswer}
-            registerController={registerInkController}
-            onInkStroke={onInkStroke}
-            onInkEdit={onInkEdit}
-            onInkFullscreen={onInkFullscreen}
-          />
-        )}
+      {HANDWRITTEN_TYPES.has(question.type) && attemptId !== undefined && (
+        <HandwrittenControls
+          attemptId={attemptId}
+          questionId={question.id}
+          stemMd={question.stemMd}
+          answer={answer}
+          onAnswer={onAnswer}
+          registerController={registerInkController}
+          onInkStroke={onInkStroke}
+          onInkEdit={onInkEdit}
+          onInkFullscreen={onInkFullscreen}
+        />
+      )}
 
       {/* 分步提示（T2.11）：hintCount>0 且提供解锁回调（页面持有已解锁状态） */}
       {question.hintCount > 0 &&

@@ -627,7 +627,9 @@ export function peekNoteRecord(
   return records.get(noteKeyOf(session, scope)) ?? null;
 }
 
-/** 读物化正文（NoteDocInput → noteDocSchema.parse 物化默认值） */
+/** 读物化正文（NoteDocInput → noteDocSchema.parse 物化默认值）。
+ * 仅供测试/诊断（复审⑮）：生产消费方走 getNoteView（标量物化零 parse）；
+ * flushNoteStore 已删——T6R.10 交卷等待随用随进（届时按需重建）。 */
 export async function getNoteDoc(
   session: NoteSessionRef,
   scope: NoteScope,
@@ -1071,16 +1073,6 @@ export async function listPendingNotes(
   } finally {
     inflightScan = null;
   }
-}
-
-/** 立即落盘某键的队列（交卷等待本地事务用，T6R.10；无待写即 no-op） */
-export async function flushNoteStore(
-  session: NoteSessionRef,
-  scope: NoteScope,
-): Promise<void> {
-  const key = noteKeyOf(session, scope);
-  await getNoteRecord(session, scope); // 确保已载入（flush 语义要求可读）
-  await queueOf(key).tail;
 }
 
 /** 仅测试使用：复位全部模块状态（生产不调用） */

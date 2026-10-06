@@ -46,15 +46,19 @@ import {
  * 订阅当前草稿会话（bind/unbind 经 note-store 的全量通知重取快照）。
  * NoteLayer/useNoteHead 共用：会话未绑定（standby）时一切笔记 UI 静默。
  */
+/** 订阅/快照模块常量（复审⑮）：无组件态，多消费方共享同一对函数 */
+const SUBSCRIBE_NOTE_SESSION = (listener: () => void): (() => void) =>
+  subscribeNoteStore(() => listener());
+const GET_NOTE_SESSION = (): NoteSessionRef | null => currentNoteSession();
+
 export function useNoteSessionRef(): NoteSessionRef | null {
   // 通知带 key、React 监听器无参——包一层；getSnapshot 返回模块单例引用，
   // 非会话变更的键级通知不会引发重渲染（引用相等）
-  const subscribe = useCallback(
-    (listener: () => void) => subscribeNoteStore(() => listener()),
-    [],
+  return useSyncExternalStore(
+    SUBSCRIBE_NOTE_SESSION,
+    GET_NOTE_SESSION,
+    GET_NOTE_SESSION,
   );
-  const getSnapshot = useCallback(() => currentNoteSession(), []);
-  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
 
 /** head 查询键（含学生 id：切账号不回放缓存的他人 head） */

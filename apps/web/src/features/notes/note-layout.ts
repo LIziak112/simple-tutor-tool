@@ -28,6 +28,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { NOTE_PAPER_GRID_SPACING_LOGICAL } from "@/features/ink/engine/paper-style";
 import { INK_LOGICAL_WIDTH } from "@/features/ink/engine/types";
 import { createExternalPrefStore } from "@/lib/create-external-pref-store";
+import { useObservedCssValue } from "@/lib/use-observed-css-width";
 
 // ---------- 布局计算（纯函数） ----------
 
@@ -174,32 +175,13 @@ export function useNoteLayoutPreference(): NoteLayoutPreference {
 }
 
 /**
- * 量化分栏判定（复审④）：观察容器宽度但**只在 noteSideUsable 结论翻转时**
- * setState——旋转/分屏拖动的逐帧回调不再引发整卡重渲染。enabled=false
- * （显式 side/below 偏好）不订阅观察（jsdom 回退读 offsetWidth 一次）。
+ * 量化分栏判定（复审④）：宽度观察 + noteSideUsable 投影的领域封装——
+ * 投影结论翻转才 setState（旋转/分屏拖动不逐帧重渲染）；显式偏好
+ * （enabled=false）不订阅观察。原语见 lib/use-observed-css-value。
  */
 export function useNoteSideUsable(
   ref: React.RefObject<HTMLElement | null>,
   enabled: boolean,
 ): boolean {
-  const [usable, setUsable] = useState(false);
-  const setRef = useRef(setUsable);
-  setRef.current = setUsable;
-  useEffect(() => {
-    if (!enabled) return;
-    const el = ref.current;
-    if (el === null) return;
-    if (typeof ResizeObserver === "undefined") {
-      setRef.current(noteSideUsable(el.offsetWidth));
-      return;
-    }
-    const ro = new ResizeObserver((entries) => {
-      const next = noteSideUsable(entries[0]?.contentRect.width ?? 0);
-      // 量化：同结论不 setState（引用相等直接返回旧值）
-      setUsable((prev) => (prev === next ? prev : next));
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [ref, enabled]);
-  return usable;
+  return useObservedCssValue(ref, noteSideUsable, { enabled });
 }
