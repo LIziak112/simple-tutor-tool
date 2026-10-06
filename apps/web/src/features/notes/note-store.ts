@@ -858,6 +858,46 @@ export function noteDocsEqual(local: NoteDocInput, server: NoteDoc): boolean {
 }
 
 /**
+ * 载入本地记录进内存缓存并通知（T6R.9 NoteLayer 挂载恢复路径）：刷新/
+ * 重进后内存缓存为空，本函数回源后端（getNoteRecord 已处理竞态窗口与
+ * 吞错）并通知该键——订阅方（useNoteRecord）从 null 转有值。无记录时同样
+ * 完成并通知一次（消费方以本 Promise 的完成区分「尚未加载」与「本地无
+ * 记录」，后者用默认空稿起笔）。已在内存：no-op 不通知（重挂载不冗余渲染）。
+ */
+export async function ensureNoteLoaded(
+  session: NoteSessionRef,
+  scope: NoteScope,
+): Promise<void> {
+  const key = noteKeyOf(session, scope);
+  if (records.has(key)) return;
+  await getNoteRecord(session, scope);
+  notify(key);
+}
+
+/**
+ * denied(access) 手动重试清除（T6R.9 UI「重试同步」按钮的 store 侧）：
+ * **定案：手动重试而非 applyServerLoad 成功自动清除**——denied(access)
+ * 含 ALREADY_SUBMITTED（交卷后迟到写），该形态下 head GET 是读投影放行的
+ * （T6R.5 落地口径），head 成功并不证明写权限恢复，自动清除会引发必然再被
+ * 拒的反复重传；手动按钮语义明确，失败再拒只是回到终态。content 形态不动
+ * （新内容自愈：writeNoteDoc 收到新 pending 即清）。清除后 pending 保留，
+ * 重传编排由调用方（note-sync.retryNoteUpload：clearTimers + due）负责。
+ * 返回是否实际清除（幂等：无 access 终态返回 false）。
+ */
+export async function clearNoteDeniedAccess(
+  session: NoteSessionRef,
+  scope: NoteScope,
+): Promise<boolean> {
+  let cleared = false;
+  await mutateLoaded(session, scope, null, (record) => {
+    if (record.denied?.kind !== "access") return;
+    record.denied = null;
+    cleared = true;
+  });
+  return cleared;
+}
+
+/**
  * 会话内待传清单（bind 扫描补传 + flush 追平用）。只返回 scope——记录
  * 活引用不泄出（复审⑩：调用方要细节走 peek/getNoteRecord，避免扫描期间
  * 的写入经旧引用旁路队列）。

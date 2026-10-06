@@ -12,8 +12,10 @@ import {
   applyUploadConflict,
   applyUploadDenied,
   applyUploadReceipt,
+  clearNoteDeniedAccess,
   deriveNoteStatusOverview,
   deriveServerState,
+  ensureNoteLoaded,
   getNoteDoc,
   getNoteRecord,
   getNoteView,
@@ -545,5 +547,66 @@ describe("note-store：writeNoteDoc 断引用（复审⑩ memo 纪律）", () =>
     const record = await recordOf(SESSION_A, SCOPE);
     expect(record.doc.ink.strokes.length).toBe(2); // 仓内不受影响
     expect(record.pending?.doc.ink.strokes.length).toBe(2);
+  });
+});
+
+describe("note-store：ensureNoteLoaded（T6R.9 NoteLayer 挂载恢复路径）", () => {
+  it("内存无记录时从后端载入并通知订阅者（视图 null → 有值）", async () => {
+    // 重装同一后端模拟「刷新重进」：写入落盘后清内存缓存
+    const shared = memoryNoteBackend();
+    installNoteBackend(shared);
+    writeNoteDoc(SESSION_A, SCOPE, DOC_A);
+    await waitForLocalSaved(SESSION_A, SCOPE);
+    installNoteBackend(shared); // 清内存（后端数据仍在）
+    expect(getNoteView(SESSION_A, SCOPE)).toBeNull();
+
+    const notified: string[] = [];
+    subscribeNoteStore((key) => notified.push(key));
+    await ensureNoteLoaded(SESSION_A, SCOPE);
+
+    const view = getNoteView(SESSION_A, SCOPE);
+    expect(view?.doc?.ink.strokes.length).toBe(1);
+    expect(notified).toContain(noteKeyOf(SESSION_A, SCOPE));
+  });
+
+  it("无记录也完成并通知（消费方区分「尚未加载」与「本地无记录」）", async () => {
+    const notified: string[] = [];
+    subscribeNoteStore((key) => notified.push(key));
+    await ensureNoteLoaded(SESSION_A, SCOPE);
+    expect(getNoteView(SESSION_A, SCOPE)).toBeNull();
+    expect(notified).toContain(noteKeyOf(SESSION_A, SCOPE));
+  });
+
+  it("已在内存：no-op 载入不重复通知", async () => {
+    writeNoteDoc(SESSION_A, SCOPE, DOC_A);
+    await waitForLocalSaved(SESSION_A, SCOPE); // 落盘完成的 saved 通知先走完
+    const notified: string[] = [];
+    subscribeNoteStore((key) => notified.push(key));
+    await ensureNoteLoaded(SESSION_A, SCOPE);
+    expect(notified).toEqual([]);
+  });
+});
+
+describe("note-store：clearNoteDeniedAccess（T6R.9 手动重试入口）", () => {
+  it("access 形态清除 denied、pending/正文保留；content 形态不动（新内容自愈路径）", async () => {
+    writeNoteDoc(SESSION_A, SCOPE, DOC_A);
+    await applyUploadDenied(SESSION_A, SCOPE, "access", "已无权限");
+    expect((await recordOf(SESSION_A, SCOPE)).denied?.kind).toBe("access");
+    const cleared = await clearNoteDeniedAccess(SESSION_A, SCOPE);
+    expect(cleared).toBe(true);
+    const record = await recordOf(SESSION_A, SCOPE);
+    expect(record.denied).toBeNull();
+    expect(record.pending).not.toBeNull(); // 待传保留：重试即补传
+    expect(record.doc.ink.strokes.length).toBe(1);
+
+    await applyUploadDenied(SESSION_A, SCOPE, "content", "内容超限");
+    const clearedContent = await clearNoteDeniedAccess(SESSION_A, SCOPE);
+    expect(clearedContent).toBe(false);
+    expect((await recordOf(SESSION_A, SCOPE)).denied?.kind).toBe("content");
+  });
+
+  it("无 denied 时幂等返回 false（重复点击重试）", async () => {
+    writeNoteDoc(SESSION_A, SCOPE, DOC_A);
+    expect(await clearNoteDeniedAccess(SESSION_A, SCOPE)).toBe(false);
   });
 });
