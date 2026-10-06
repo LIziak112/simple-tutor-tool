@@ -486,12 +486,30 @@ export function currentNoteSession(): NoteSessionRef | null {
   return currentSession;
 }
 
+/** flushNoteSync 的逐键结局（T6R.10 交卷判定口径） */
+export type NoteFlushOutcome =
+  | "synced" // 回执落地，无待传
+  | "conflict" // 冲突待裁决（本地稿保留）
+  | "denied" // 终态被拒（本地稿保留）
+  | "backoff" // 网络类失败，退避重试中
+  | "dirty"; // 尚有待传（理论上哨兵后仅出现在并发写入窗口）
+
+/** 结果摘要的键简：attempt:question:phase（同 flush 语境内可读定位） */
+function flushKeyOf(scope: NoteScope): string {
+  return `${scope.attemptId}:${scope.questionId}:${scope.phase}`;
+}
+
 /**
  * 立即补传当前会话全部待传（交卷前追平最终矢量/切后台尽力刷新用，
- * T6R.10/T6R.9 调用）。返回前会等待已入队的上传作业全部完成。
+ * T6R.10/T6R.9 调用）。等待已入队上传完成后返回**逐键结果摘要**
+ * （复审④）：T6R.10 据此判定可交卷 / 需用户处理冲突或被拒 / 退避重试。
+ * 不在本轮清单内、flush 期间新写入的键不出现在摘要里（下一轮覆盖）。
  */
-export async function flushNoteSync(): Promise<void> {
-  if (currentSession === null) return;
+export async function flushNoteSync(): Promise<
+  Record<string, NoteFlushOutcome>
+> {
+  const results: Record<string, NoteFlushOutcome> = {};
+  if (currentSession === null) return results;
   const pending = await listPendingNotes(currentSession);
   for (const scope of pending) {
     const key = noteKeyOf(currentSession, scope);
@@ -500,6 +518,25 @@ export async function flushNoteSync(): Promise<void> {
   }
   // 哨兵作业：串行队列中排在全部上传之后，跑完即「已追平到此刻」
   await uploadQueue.run(async () => undefined);
+  // 摘要取哨兵后的当前事实（denied/conflict 优先，退避中的键如实报）
+  for (const scope of pending) {
+    const record = peekNoteRecord(currentSession, scope);
+    if (record === null) continue;
+    const key = noteKeyOf(currentSession, scope);
+    const scheduler = schedulers.get(key);
+    const backoff = scheduler?.backoff ?? null;
+    results[flushKeyOf(scope)] =
+      record.denied !== null
+        ? "denied"
+        : record.conflict !== null
+          ? "conflict"
+          : record.pending === null
+            ? "synced"
+            : backoff !== null
+              ? "backoff"
+              : "dirty";
+  }
+  return results;
 }
 
 // ---------- 冲突裁决（T6R.9 UI 调用；两份副本的数据出口） ----------

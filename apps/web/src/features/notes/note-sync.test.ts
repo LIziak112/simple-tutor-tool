@@ -459,3 +459,32 @@ describe("note-sync：账号切换与登出隔离", () => {
     expect(putMock.mock.calls.length).toBe(1);
   });
 });
+
+describe("note-sync：flushNoteSync 结果摘要（复审④）", () => {
+  it("逐键如实返回 synced/denied/backoff（T6R.10 交卷判定口径）", async () => {
+    const scopeDenied = { ...SCOPE, questionId: "p1-q2" };
+    const scopeBackoff = { ...SCOPE, questionId: "p1-q3" };
+    putMock.mockImplementation(async (_a, qid: string) => {
+      if (qid === SCOPE.questionId) return receiptOf(1);
+      if (qid === scopeDenied.questionId)
+        throw new ApiError("FORBIDDEN", "已无权限访问该练习", 403);
+      throw new Error("网络中断");
+    });
+    writeNoteDoc(SESSION_A, SCOPE, DOC_A);
+    writeNoteDoc(SESSION_A, scopeDenied, DOC_A);
+    writeNoteDoc(SESSION_A, scopeBackoff, DOC_A);
+    const results = await flushNoteSync();
+    expect(results[`${SCOPE.attemptId}:${SCOPE.questionId}:scratch`]).toBe(
+      "synced",
+    );
+    expect(
+      results[`${SCOPE.attemptId}:${scopeDenied.questionId}:scratch`],
+    ).toBe("denied");
+    expect(
+      results[`${SCOPE.attemptId}:${scopeBackoff.questionId}:scratch`],
+    ).toBe("backoff");
+    // 本地稿在 denied/backoff 两键均保留
+    expect(peekNoteRecord(SESSION_A, scopeDenied)?.pending).not.toBeNull();
+    expect(peekNoteRecord(SESSION_A, scopeBackoff)?.pending).not.toBeNull();
+  });
+});
