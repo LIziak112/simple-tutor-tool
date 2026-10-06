@@ -14,12 +14,6 @@
  */
 
 import {
-  TALL_PAPER_HEIGHT,
-  denseStroke,
-  docOf,
-  stroke,
-} from "@/features/notes/note-fixtures.ts";
-import {
   NOTE_IMAGE_MAX_PIXEL_DIM,
   NOTE_IMAGE_PNG_MAX_BYTES,
   NOTE_RENDER_VERSION,
@@ -30,6 +24,12 @@ import {
   INK_HIGHLIGHTER,
   INK_PEN_COLORS,
 } from "@/features/ink/engine/types.ts";
+import {
+  denseStroke,
+  docOf,
+  stroke,
+  TALL_PAPER_HEIGHT,
+} from "@/features/notes/note-fixtures.ts";
 import {
   ANALYSIS_PIXEL_WIDTH,
   ANALYSIS_SLICE_HEIGHT_LOGICAL,
@@ -495,7 +495,13 @@ describe("renderNotePage：笔迹重放（复用引擎原语）", () => {
 
   it("变压感笔画（0.2→0.9 渐变）：命令流线宽随压感散布（覆盖压感路径，复审④）", async () => {
     const d = docOf([
-      denseStroke([[100, 380], [900, 420]], { pressureRamp: true }),
+      denseStroke(
+        [
+          [100, 380],
+          [900, 420],
+        ],
+        { pressureRamp: true },
+      ),
     ]);
     const canvas = await captureCanvas(d);
     const ctx = ctxOf(canvas);

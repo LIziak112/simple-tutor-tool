@@ -120,18 +120,13 @@ export interface RenderedNotePage extends NotePagePlan {
   blob: Blob;
 }
 
-/**
- * 全稿笔迹包围盒（**含每笔半线宽**：粗笔/荧光笔边缘不被裁切，任务验收项
- * 「最高笔迹包围盒含线宽不裁切」）。逐笔 strokeBounds(s, weight/2) 的并集
- * （点级折叠只在 engine/bounds.ts 一份）。空稿返回 null。
- */
-export function inkBBoxLogical(ink: NoteDoc["ink"]): StrokeBounds | null {
+/** 逐笔包围盒数组的并集（空数组/全空笔画返回 null） */
+function unionOfBoxes(boxes: Array<StrokeBounds | null>): StrokeBounds | null {
   let minX = Number.POSITIVE_INFINITY;
   let minY = Number.POSITIVE_INFINITY;
   let maxX = Number.NEGATIVE_INFINITY;
   let maxY = Number.NEGATIVE_INFINITY;
-  for (const s of ink.strokes) {
-    const b = strokeBounds(s, s.weight / 2);
+  for (const b of boxes) {
     if (b === null) continue;
     if (b.minX < minX) minX = b.minX;
     if (b.minY < minY) minY = b.minY;
@@ -143,21 +138,39 @@ export function inkBBoxLogical(ink: NoteDoc["ink"]): StrokeBounds | null {
 }
 
 /**
+ * 全稿笔迹包围盒（**含每笔半线宽**：粗笔/荧光笔边缘不被裁切，任务验收项
+ * 「最高笔迹包围盒含线宽不裁切」）。= 逐笔「含半线宽」缓存
+ * （paddedStrokeBoxesOf）的并集——点级折叠只在 engine/bounds.ts 一份，
+ * 渲染链与裁剪计划共用同一份缓存（复审⑧）。空稿返回 null。
+ */
+export function inkBBoxLogical(ink: NoteDoc["ink"]): StrokeBounds | null {
+  return unionOfBoxes(paddedStrokeBoxesOf(ink));
+}
+
+/**
  * 分析图裁剪区：横向恒整宽 0..1000（保留版面结构，两栏书写比例不失真），
  * 纵向取记录范围（包围盒含线宽）± 留白，再向网格间距对齐（切片顶恰在格线
  * 上，翻页视觉稳定），并钳制在纸内。空稿返回整纸（诚实呈现空纸，是否出图
  * 由调用方决定——确认空稿的交卷证据不产图）。
  */
-export function planAnalysisCrop(doc: NoteDoc): NoteCropRect {
+/** 整纸裁剪区（缩略图与空稿分析图共用，复审⑩小助手） */
+function wholePaperCrop(doc: NoteDoc): NoteCropRect {
+  return {
+    x: 0,
+    y: 0,
+    width: INK_LOGICAL_WIDTH,
+    height: doc.paperHeightLogical,
+  };
+}
+
+/** planAnalysisCrop 的私有路径：接受预算好的全稿包围盒（复审⑧） */
+function planAnalysisCropWithBBox(
+  doc: NoteDoc,
+  bbox: StrokeBounds | null,
+): NoteCropRect {
   const spacing = NOTE_PAPER_GRID_SPACING_LOGICAL;
-  const bbox = inkBBoxLogical(doc.ink);
   if (bbox === null) {
-    return {
-      x: 0,
-      y: 0,
-      width: INK_LOGICAL_WIDTH,
-      height: doc.paperHeightLogical,
-    };
+    return wholePaperCrop(doc);
   }
   const pad = ANALYSIS_CROP_PADDING_LOGICAL;
   // 向网格对齐：floor/ceil 到 spacing 的整数倍，再钳制 [0, paperHeight]
@@ -178,6 +191,10 @@ export function planAnalysisCrop(doc: NoteDoc): NoteCropRect {
     width: INK_LOGICAL_WIDTH,
     height: y1 - y0,
   };
+}
+
+export function planAnalysisCrop(doc: NoteDoc): NoteCropRect {
+  return planAnalysisCropWithBBox(doc, inkBBoxLogical(doc.ink));
 }
 
 /** 给定像素宽下允许的切片逻辑高上限（长边与总像素两约束取小） */
@@ -223,12 +240,7 @@ function pixelHeightOf(crop: NoteCropRect, pixelWidth: number): number {
 
 /** 缩略图计划：整纸、低分辨率（pageIndex 恒 0） */
 export function planThumbnailPage(doc: NoteDoc): NotePagePlan {
-  const crop: NoteCropRect = {
-    x: 0,
-    y: 0,
-    width: INK_LOGICAL_WIDTH,
-    height: doc.paperHeightLogical,
-  };
+  const crop = wholePaperCrop(doc);
   return {
     pageIndex: 0,
     crop,
@@ -237,9 +249,12 @@ export function planThumbnailPage(doc: NoteDoc): NotePagePlan {
   };
 }
 
-/** 分析图计划：记录范围裁剪 + 按需切片（pageIndex 从 0 递增） */
-export function planAnalysisPages(doc: NoteDoc): NotePagePlan[] {
-  return sliceCropRects(planAnalysisCrop(doc)).map((crop, i) => ({
+/** 分析页计划的私有路径：接受预算好的包围盒（复审⑧） */
+function planAnalysisPagesWithBBox(
+  doc: NoteDoc,
+  bbox: StrokeBounds | null,
+): NotePagePlan[] {
+  return sliceCropRects(planAnalysisCropWithBBox(doc, bbox)).map((crop, i) => ({
     pageIndex: i,
     crop,
     pixelWidth: ANALYSIS_PIXEL_WIDTH,
@@ -247,15 +262,9 @@ export function planAnalysisPages(doc: NoteDoc): NotePagePlan[] {
   }));
 }
 
-/** 一个版本的全套页面计划（缩略图 + 分析切片）；补图/重建按此对齐槽位 */
-export function planNoteImagePages(doc: NoteDoc): {
-  thumbnail: NotePagePlan;
-  analysis: NotePagePlan[];
-} {
-  return {
-    thumbnail: planThumbnailPage(doc),
-    analysis: planAnalysisPages(doc),
-  };
+/** 分析图计划：记录范围裁剪 + 按需切片（pageIndex 从 0 递增） */
+export function planAnalysisPages(doc: NoteDoc): NotePagePlan[] {
+  return planAnalysisPagesWithBBox(doc, inkBBoxLogical(doc.ink));
 }
 
 /** 渲染产物 → 上传元信息（字段集与 noteImageUploadMetaSchema 一一对应） */
@@ -278,11 +287,14 @@ export function noteImageUploadMetaOf(
 // ---------- 页面渲染（需要 DOM canvas） ----------
 
 /**
- * 每文档的「含半线宽」逐笔包围盒缓存：渲染入口（renderNoteImages /
- * syncNoteImages 的逐页遍历）算一次，逐页相交判定查表——多页长稿不随
- * 页数重复全稿点级折叠。空笔画槽位为 null。
+ * 每文档的「含半线宽」逐笔包围盒缓存：渲染入口算一次、逐页相交判定查表
+ * （多页长稿不随页数重复全稿点级折叠）；裁剪计划经 unionOfBoxes 复用同一
+ * 份（复审⑧折叠收敛）。空笔画槽位为 null。导出供同步链（image-sync）
+ * 在两条 forEach 链外计算一次共享。
  */
-function paddedStrokeBoxesOf(ink: NoteDoc["ink"]): Array<StrokeBounds | null> {
+export function paddedStrokeBoxesOf(
+  ink: NoteDoc["ink"],
+): Array<StrokeBounds | null> {
   return ink.strokes.map((s) => strokeBounds(s, s.weight / 2));
 }
 
@@ -445,20 +457,33 @@ export function yieldToMain(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+/** forEachRenderedNotePage 的可选注入（复审⑧/⑫） */
+export interface ForEachNotePageOptions {
+  /**
+   * 入口级包围盒缓存（paddedStrokeBoxesOf 产物，与 strokes 一一对应）。
+   * 同步链在缩略图/分析两条链外算一次共享传入；缺省在本次入口计算一次。
+   */
+  boxes?: Array<StrokeBounds | null>;
+}
+
 /**
  * 逐页遍历助手（逐页链路共用骨架，复审②收敛）：计划 + 入口级包围盒缓存 +
  * 页间让出 + 逐页渲染。visit 抛错则整链中止（已 visit 页的副作用保留——
- * 上传槽位幂等 upsert，重试整链重入安全）。
+ * 上传槽位幂等 upsert，重试整链重入安全）。缩略图链用整纸裁剪区（计划不
+ * 依赖包围盒；缓存仍用于页内笔画过滤），分析链经 unionOfBoxes 复用同一份
+ * 缓存做裁剪计划（复审⑧：一次折叠两链共享）。
  */
 export async function forEachRenderedNotePage(
   doc: NoteDoc,
   spec: NoteImageSpec,
   visit: (page: RenderedNotePage) => Promise<void>,
+  opts?: ForEachNotePageOptions,
 ): Promise<void> {
+  const boxes = opts?.boxes ?? paddedStrokeBoxesOf(doc.ink);
   const pages =
-    spec === "thumbnail" ? [planThumbnailPage(doc)] : planAnalysisPages(doc);
-  // 入口级缓存：全稿点级折叠只做一次（逐页相交判定查表，不随页数重复）
-  const boxes = paddedStrokeBoxesOf(doc.ink);
+    spec === "thumbnail"
+      ? [planThumbnailPage(doc)]
+      : planAnalysisPagesWithBBox(doc, unionOfBoxes(boxes));
   let first = true;
   for (const page of pages) {
     if (!first) await yieldToMain();
