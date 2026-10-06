@@ -4,7 +4,9 @@ import { resolve } from "node:path";
 import type {
   LearningPackEvidenceState,
   NoteCropRect,
+  NoteImageState,
   NotePhase,
+  Question,
   QuestionAnswers,
   QuestionType,
 } from "@tutor/contract";
@@ -191,18 +193,13 @@ function packRefOf(prefix: "q" | "e", seq: number): string {
   return `${prefix}${String(seq).padStart(3, "0")}`;
 }
 
-/** 证据阶段 → 文件名标签（scratch=original 原稿；correction/supplement 为 T6R.15 预留） */
+/** 证据阶段 → 文件名标签（scratch=original 原稿；correction/supplement 直用阶段名，T6R.15 预留） */
 export function evidenceImageFileName(
   ref: string,
   phase: NotePhase,
   pageIndex: number,
 ): string {
-  const label =
-    phase === "scratch"
-      ? "original"
-      : phase === "correction"
-        ? "correction"
-        : "supplement";
+  const label = phase === "scratch" ? "original" : phase;
   return `evidence/${ref}-${label}-${String(pageIndex + 1).padStart(2, "0")}.png`;
 }
 
@@ -259,13 +256,18 @@ export function materialOf(
   };
 }
 
-/** 证据图缺失原因（note_images.state 三态 + ready 行文件丢失） */
-function evidenceImageMissingReason(imageState: string): string {
-  if (imageState === "pending") return "分析图未生成（排队/生成中）";
-  if (imageState === "failed") return "分析图生成失败";
-  if (imageState === "missing") return "分析图文件缺失";
-  return "图片文件缺失（磁盘无此文件）";
-}
+/**
+ * 证据图缺失原因（note_images 非 ready 三态的对象映射；复审 B15——入参收窄
+ * Exclude 消死 fallback，值域演进时 TS 漏键即编译失败）
+ */
+const EVIDENCE_IMAGE_MISSING_REASONS: Record<
+  Exclude<NoteImageState, "ready">,
+  string
+> = {
+  pending: "分析图未生成（排队/生成中）",
+  failed: "分析图生成失败",
+  missing: "分析图文件缺失",
+};
 
 // ---------- 装配主入口 ----------
 
@@ -315,6 +317,49 @@ export function assembleQuestionEvidence(
     }
   }
 
+  // frozen 版本行与分析图行批量预取（复审 C9：两次 chunk 查询代替
+  // 每个冻结证据两次点查——O(题数×2) 点查 → 常数两次查询，与
+  // submissionEvidence 预取同款口径）
+  const versionRowById = new Map<string, NoteVersionRow>();
+  const analysisImageRowsByVersion = new Map<string, NoteImageRow[]>();
+  if (includeEvidence) {
+    const versionIds = [...evidenceRowByKey.values()]
+      .filter((row) => row.state === "frozen" && row.versionId !== null)
+      .map((row) => row.versionId as string);
+    for (const ids of chunk(versionIds)) {
+      for (const row of db
+        .select()
+        .from(noteVersions)
+        .where(inArray(noteVersions.id, ids))
+        .all()) {
+        versionRowById.set(row.id, row);
+      }
+      for (const image of db
+        .select()
+        .from(noteImages)
+        .where(
+          and(
+            inArray(noteImages.noteVersionId, ids),
+            eq(noteImages.spec, "analysis"),
+          ),
+        )
+        .orderBy(asc(noteImages.noteVersionId), asc(noteImages.pageIndex))
+        .all()) {
+        const list = analysisImageRowsByVersion.get(image.noteVersionId);
+        if (list === undefined)
+          analysisImageRowsByVersion.set(image.noteVersionId, [image]);
+        else list.push(image);
+      }
+    }
+  }
+
+  // 快照文本缓存（复审 C10：同原文 JSON 复用 parse+Zod+stringify+sha256——
+  // 同题多轮同内容是 CPU 大头；键数 ≤ 不同快照文本数，无界风险不存在）
+  const snapshotByText = new Map<
+    string,
+    { snapshot: Question | null; hash: string | null }
+  >();
+
   // —— 第一遍：q 条目分配（内容身份去重）+ e 条目装配 ——
   let qSeq = 0;
   let eSeq = 0;
@@ -322,9 +367,17 @@ export function assembleQuestionEvidence(
     let no = 0;
     for (const row of rows) {
       no += 1;
-      const snapshot = snapshotOfRow(row);
-      const snapshotHash =
-        snapshot === null ? null : sha256Hex(JSON.stringify(snapshot));
+      const cacheKey = row.questionSnapshotJson ?? "";
+      let parsed = snapshotByText.get(cacheKey);
+      if (parsed === undefined) {
+        const snapshot = snapshotOfRow(row);
+        parsed = {
+          snapshot,
+          hash: snapshot === null ? null : sha256Hex(JSON.stringify(snapshot)),
+        };
+        snapshotByText.set(cacheKey, parsed);
+      }
+      const { snapshot, hash: snapshotHash } = parsed;
       const key = questionRevisionKey(teacherId, snapshotHash, row.questionId);
       let revision = revisionByKey.get(key);
       if (revision === undefined) {
@@ -354,11 +407,7 @@ export function assembleQuestionEvidence(
         | undefined;
       const evidenceImages: EvidenceImageItem[] = [];
       if (evidenceRow?.state === "frozen" && evidenceRow.versionId !== null) {
-        const version = db
-          .select()
-          .from(noteVersions)
-          .where(eq(noteVersions.id, evidenceRow.versionId))
-          .get();
+        const version = versionRowById.get(evidenceRow.versionId);
         if (version !== undefined) {
           versionSummary = {
             versionId: version.id,
@@ -368,10 +417,9 @@ export function assembleQuestionEvidence(
             paperHeight: version.paperHeight,
           };
           const { images, missing } = analysisImagesOf(
-            db,
             dataDir,
             eRef,
-            version,
+            analysisImageRowsByVersion.get(version.id) ?? [],
           );
           evidenceImages.push(...images);
           missingEvidenceImages.push(...missing);
@@ -458,13 +506,14 @@ export function assembleQuestionEvidence(
 /**
  * frozen 版本的分析图装配：analysis 规格逐页登记（ready 附文件字节与绝对
  * 路径；其余状态/文件丢失进缺失清单）；缩略图（thumbnail）不进包；版本
- * 一张分析图都没有时以预测路径报「未生成」。纯读，结果由调用方合并。
+ * 一张分析图都没有时以预测路径报「未生成」。纯读（行已由 C9 预取传入），
+ * 结果由调用方合并。缺失登记单出口（复审 B15）：images 槽位与 manifest
+ * 清单同源同 reason。
  */
 function analysisImagesOf(
-  db: Db,
   dataDir: string,
   eRef: string,
-  version: NoteVersionRow,
+  imageRows: readonly NoteImageRow[],
 ): {
   images: EvidenceImageItem[];
   missing: Array<{ file: string; reason: string; evidenceRef: string }>;
@@ -473,17 +522,6 @@ function analysisImagesOf(
     [];
   const images: EvidenceImageItem[] = [];
   const notesRoot = resolve(dataDir, "blobs", "notes");
-  const imageRows: NoteImageRow[] = db
-    .select()
-    .from(noteImages)
-    .where(
-      and(
-        eq(noteImages.noteVersionId, version.id),
-        eq(noteImages.spec, "analysis"),
-      ),
-    )
-    .orderBy(asc(noteImages.pageIndex))
-    .all();
   for (const image of imageRows) {
     const file = evidenceImageFileName(eRef, "scratch", image.pageIndex);
     const crop: NoteCropRect = {
@@ -500,7 +538,11 @@ function analysisImagesOf(
       pixelWidth: image.pixelWidth,
       pixelHeight: image.pixelHeight,
     };
-    if (image.state === "ready") {
+    // 单一 reason 赋值点；ready 且文件在位直接 continue，其余一律走缺失出口
+    let reason: string;
+    if (image.state !== "ready") {
+      reason = EVIDENCE_IMAGE_MISSING_REASONS[image.state];
+    } else {
       const absPath = resolve(dataDir, image.path);
       if (absPath.startsWith(notesRoot)) {
         try {
@@ -508,19 +550,14 @@ function analysisImagesOf(
           images.push({ ...base, state: "ready", bytes, absPath });
           continue;
         } catch {
-          // 文件丢失：落入下方缺失登记
+          reason = "图片文件缺失（磁盘无此文件）";
         }
+      } else {
+        reason = "图片路径非法";
       }
-      const reason = absPath.startsWith(notesRoot)
-        ? "图片文件缺失（磁盘无此文件）"
-        : "图片路径非法";
-      images.push({ ...base, state: "missing", reason });
-      missing.push({ file, reason, evidenceRef: eRef });
-    } else {
-      const reason = evidenceImageMissingReason(image.state);
-      images.push({ ...base, state: "missing", reason });
-      missing.push({ file, reason, evidenceRef: eRef });
     }
+    images.push({ ...base, state: "missing", reason });
+    missing.push({ file, reason, evidenceRef: eRef });
   }
   if (imageRows.length === 0) {
     missing.push({
