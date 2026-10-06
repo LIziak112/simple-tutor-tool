@@ -162,11 +162,10 @@ describe("SubmitConfirmDialog", () => {
         onCancel={onCancel}
       />,
     );
-    // Radix 弹层渲染在 body portal——从 document 取内容区
-    const content = document.querySelector(
-      "[data-slot='dialog-content']",
-    ) as HTMLElement | null;
-    expect(content).not.toBeNull();
+    // Radix 弹层渲染在 body portal——从 document 取内容区（守卫窄化）
+    const content = document.querySelector("[data-slot='dialog-content']");
+    if (content === null)
+      throw new Error("dialog content 不存在（测试前置失败）");
     fireEvent.keyDown(content, { key: "Escape", code: "Escape" });
     fireEvent.pointerDown(content, { button: 0, detail: 1 });
     expect(onCancel).not.toHaveBeenCalled();

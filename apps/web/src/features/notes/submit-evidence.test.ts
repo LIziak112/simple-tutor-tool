@@ -38,7 +38,11 @@ vi.mock("@/lib/api", async (importOriginal) => {
   };
 });
 
-import { bindNoteSession, resetNoteSession } from "@/features/notes/note-sync";
+import {
+  bindNoteSession,
+  catchUpNotes,
+  resetNoteSession,
+} from "@/features/notes/note-sync";
 import {
   prepareSubmitEvidence,
   snapshotNoteOverview,
@@ -366,6 +370,35 @@ describe("prepareSubmitEvidence：两批 problem 先后确认（并集语义，P
       { questionId: Q1, state: "missing" },
       { questionId: Q2, state: "missing" },
       { questionId: Q3, state: "none" },
+    ]);
+  });
+});
+
+describe("snapshotNoteOverview：快览分类与权威方向一致（#13）", () => {
+  it("清空草稿同步成功后快览=will-freeze（权威会 frozen）；无记录题 none", async () => {
+    // 空稿写入并真实追平（上传回执落地 → pending 清空）
+    writeNoteDoc(
+      SESSION_A,
+      { attemptId: ATTEMPT, questionId: Q3, phase: "scratch" },
+      docOf([]),
+    );
+    await waitForLocalSaved(SESSION_A, {
+      attemptId: ATTEMPT,
+      questionId: Q3,
+      phase: "scratch",
+    });
+    putMock.mockResolvedValue(receiptOf(1));
+    await catchUpNotes(ATTEMPT);
+
+    const statuses = await snapshotNoteOverview({
+      attemptId: ATTEMPT,
+      questionIds: [Q2, Q3],
+    });
+    // Q2 无本地记录 → none（跨设备他端有稿时权威会 frozen——快览残余差异，
+    // 注释见 classifyNote）；Q3 已同步空稿 → will-freeze（交卷会 frozen 空版本）
+    expect(statuses.map((st) => [st.questionId, st.kind])).toEqual([
+      [Q2, "none"],
+      [Q3, "will-freeze"],
     ]);
   });
 });

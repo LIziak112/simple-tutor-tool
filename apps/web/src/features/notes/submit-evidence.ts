@@ -88,33 +88,44 @@ function noteProblemReason(
 ): string | null {
   switch (state) {
     case "conflict":
-      return "草稿与其他设备的版本冲突，需要先选择保留哪一份";
+      // 服务端权威中文为主体（NoteLayer 同源），前缀给交卷语境
+      return `草稿同步冲突：${record.conflict?.reason ?? "需要先选择保留哪一份"}`;
     case "denied":
-      return record.denied?.kind === "content"
-        ? "草稿超出保存限制，未能上传到服务器"
-        : "草稿同步被拒绝（可能已失去访问权），请刷新后重试";
+      return `草稿同步被拒：${record.denied?.reason ?? "请稍后重试"}`;
     case "uploading":
     case "dirty":
+      // 无服务端文案（本地调度态）——自造交卷语境文案
       return UNTRACKED_NOTE_REASON;
     case "synced":
       return null;
   }
 }
 
+/** head 已知时可固定的服务端版本引用（freeze 载荷由分类单点产出） */
+interface FreezableRef {
+  versionId: string;
+  revision: number;
+}
+
 /** 单题分类结果（两消费方共享：交卷组装传真实 head，弹层快览传 "unknown"） */
 type NoteVerdict =
   | { kind: "problem"; reason: string }
-  | { kind: "will-freeze" }
+  /** head 已知且服务端可固定——freeze 载荷随 verdict 单点产出（不变量：非空） */
+  | { kind: "will-freeze"; freeze: FreezableRef }
+  /** head 未知（快览）且本地有记录：乐观「待固定」——真实 freeze 待权威判定 */
+  | { kind: "will-freeze-local" }
   | { kind: "none" };
 
 /**
  * 单题分类（单一判定树，文案与防御口径单点共享）：
  * - record 派生态非 synced（conflict/denied/dirty）→ problem；
- * - head 已知且服务端有笔记行 → will-freeze（头指针空违反契约不变量按
- *   防御 problem）；head 已知却查无笔记行而本地有笔 → 防御 problem
- *   （不能静默 none）；
- * - head 未知（"unknown"，弹层快览）不做服务端事实比对：本地有笔按乐观
- *   「待固定」呈现——权威判定在确认交卷时重跑（真实 head）。
+ * - head 已知且服务端有笔记行 → will-freeze + freeze 载荷（头指针空违反
+ *   契约不变量按防御 problem）；head 已知却查无笔记行而本地有笔 → 防御
+ *   problem（不能静默 none）；
+ * - head 未知（"unknown"，弹层快览）不做服务端事实比对：有本地记录即按
+ *   乐观「待固定」呈现（已同步空稿交卷也会 frozen——与权威方向一致）；
+ *   无记录 → none。残余差异：跨设备他端有稿而本机无记录 → 快览 none、
+ *   权威 frozen——快览是引导提示，确认时以真实 head 重跑。
  */
 function classifyNote(
   record: NoteLocalRecord | null,
@@ -124,18 +135,24 @@ function classifyNote(
     const reason = noteProblemReason(record, deriveServerState(record, false));
     if (reason !== null) return { kind: "problem", reason };
   }
-  const note = head === "unknown" ? null : head.note;
+  if (head === "unknown") {
+    return record !== null ? { kind: "will-freeze-local" } : { kind: "none" };
+  }
+  const note = head.note;
   if (note !== null && note.revision > 0) {
     return note.currentVersionId !== null
-      ? { kind: "will-freeze" }
+      ? {
+          kind: "will-freeze",
+          freeze: {
+            versionId: note.currentVersionId,
+            revision: note.revision,
+          },
+        }
       : { kind: "problem", reason: HEAD_POINTER_BROKEN_REASON };
   }
-  const hasLocalStrokes = record !== null && record.doc.ink.strokes.length > 0;
-  if (head === "unknown") {
-    return hasLocalStrokes ? { kind: "will-freeze" } : { kind: "none" };
-  }
-  // head 已知且服务端无笔记行
-  return hasLocalStrokes
+  // head 已知且服务端无笔记行：本地有笔 = 内容从未到达服务端（防御）；
+  // 空记录无内容可丢 → none
+  return record !== null && record.doc.ink.strokes.length > 0
     ? { kind: "problem", reason: CONTENT_NEVER_LANDED_REASON }
     : { kind: "none" };
 }
@@ -200,23 +217,20 @@ export async function prepareSubmitEvidence(input: {
     }
 
     if (verdict.kind === "will-freeze") {
-      // head 非 "unknown"：classifyNote 已保证 note.revision>0 且
-      // currentVersionId 非空——此处收窄仅服务 TS，条件不成立即分类契约违约
-      const note = head.note;
-      if (
-        note !== null &&
-        note.currentVersionId !== null &&
-        note.revision > 0
-      ) {
-        declarations.push({
-          questionId,
-          state: "frozen",
-          versionId: note.currentVersionId,
-          revision: note.revision,
-        });
-        continue;
-      }
-      problems.push({ questionId, reason: HEAD_POINTER_BROKEN_REASON });
+      // freeze 载荷由 classifyNote 单点产出（不变量非空）——消费方不再重复
+      // 收窄 head.note（复审 #12：不变量单点化）
+      declarations.push({
+        questionId,
+        state: "frozen",
+        versionId: verdict.freeze.versionId,
+        revision: verdict.freeze.revision,
+      });
+      continue;
+    }
+    if (verdict.kind === "will-freeze-local") {
+      // prep 恒传真实 head（"unknown" 仅快览路径），运行时不可达；若发生
+      // 按内部异常呈现（绝不静默归入 none——同防御分支口径）
+      problems.push({ questionId, reason: "内部数据异常，请重试" });
       continue;
     }
 
@@ -248,9 +262,10 @@ export async function snapshotNoteOverview(input: {
       : await loadScratchRecords(session, input.attemptId);
   return input.questionIds.map((questionId) => {
     const verdict = classifyNote(records.get(questionId) ?? null, "unknown");
+    // will-freeze-local 在展示口径折叠为 will-freeze（快览只有三态）
     return {
       questionId,
-      kind: verdict.kind,
+      kind: verdict.kind === "will-freeze-local" ? "will-freeze" : verdict.kind,
       reason: verdict.kind === "problem" ? verdict.reason : null,
     };
   });
