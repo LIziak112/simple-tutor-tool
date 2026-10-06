@@ -4,17 +4,27 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   effectiveNoteLayout,
   getNoteLayoutPreference,
+  NOTE_LAYOUT_GAP_CSS_PX,
   NOTE_LAYOUT_STORAGE_KEY,
+  NOTE_MIN_PAPER_CSS_PX,
+  NOTE_MIN_QUESTION_CSS_PX,
+  NOTE_PAPER_SHARE,
+  NOTE_QUESTION_COLUMN_STYLE,
+  NOTE_QUESTION_SHARE,
   noteSideUsable,
   onNoteLayoutPreferenceChange,
   resetNoteLayoutForTest,
   setNoteLayoutPreference,
+  useNoteLayoutPreference,
+  useNoteSideUsable,
 } from "./note-layout";
 
 /**
- * 草稿层布局工具测试（T6R.9）：分栏阈值计算（纯函数）、设备偏好存储的
- * 防御式读写（localStorage 抛错/值损坏不白屏——任务清单失败测试之一）、
- * 偏好订阅与宽度观察 hook（jsdom 无 ResizeObserver 时的回退）。
+ * 草稿层布局工具测试（T6R.9）：分栏阈值计算（纯函数，量化布尔口径）、
+ * 设备偏好存储的防御式读写（localStorage 抛错/值损坏不白屏——任务清单
+ * 失败测试之一）、偏好订阅、量化分栏观察 hook（复审④）、渲染常量与阈值的
+ * 配对锁定（复审⑨）。宽度观察原语（useObservedCssWidth）测试在
+ * lib/use-observed-css-width.test。
  */
 
 function freshModule(): Promise<typeof import("./note-layout")> {
@@ -57,20 +67,38 @@ describe("noteSideUsable：两列最低可用宽度阈值（暂定值，真机�
     expect(noteSideUsable(0)).toBe(false);
     expect(noteSideUsable(-10)).toBe(false);
   });
+
+  it("阈值与常量配对锁定（复审⑨）：翻转点=常量反解，改值只改一处", () => {
+    const halfGap = NOTE_LAYOUT_GAP_CSS_PX / 2;
+    const byPaper = (NOTE_MIN_PAPER_CSS_PX + halfGap) / NOTE_PAPER_SHARE;
+    const byQuestion =
+      (NOTE_MIN_QUESTION_CSS_PX + halfGap) / NOTE_QUESTION_SHARE;
+    const threshold = Math.ceil(Math.max(byPaper, byQuestion));
+    expect(noteSideUsable(threshold - 1)).toBe(false);
+    expect(noteSideUsable(threshold)).toBe(true);
+  });
 });
 
-describe("effectiveNoteLayout：偏好 × 容器宽度", () => {
-  it("auto：宽容器 side、窄容器 below（窄容器从侧栏回退——任务清单失败测试）", () => {
-    expect(effectiveNoteLayout("auto", 1024)).toBe("side");
-    expect(effectiveNoteLayout("auto", 768)).toBe("below");
+describe("effectiveNoteLayout：偏好 × 量化布尔（复审④）", () => {
+  it("auto：宽容器（usable）side、窄容器 below（窄容器从侧栏回退——任务清单失败测试）", () => {
+    expect(effectiveNoteLayout("auto", true)).toBe("side");
+    expect(effectiveNoteLayout("auto", false)).toBe("below");
   });
 
   it("below：显式偏好恒 below", () => {
-    expect(effectiveNoteLayout("below", 1400)).toBe("below");
+    expect(effectiveNoteLayout("below", true)).toBe("below");
   });
 
   it("side：显式偏好恒 side（用户强制分栏，窄屏自担）", () => {
-    expect(effectiveNoteLayout("side", 500)).toBe("side");
+    expect(effectiveNoteLayout("side", false)).toBe("side");
+  });
+});
+
+describe("渲染常量（复审⑨：阈值与渲染同源）", () => {
+  it("题干列宽由占比常量派生", () => {
+    expect(NOTE_QUESTION_COLUMN_STYLE.width).toBe(
+      `${NOTE_QUESTION_SHARE * 100}%`,
+    );
   });
 });
 
@@ -119,54 +147,67 @@ describe("设备偏好存储（防御式）", () => {
     });
     expect(cb).toHaveBeenCalledTimes(1);
   });
+
+  it("useNoteLayoutPreference 经 useSyncExternalStore 订阅（切换即时同步）", () => {
+    function Probe() {
+      const pref = useNoteLayoutPreference();
+      return <p data-testid="pref">{pref}</p>;
+    }
+    render(<Probe />);
+    expect(screen.getByTestId("pref").textContent).toBe("auto");
+    act(() => {
+      setNoteLayoutPreference("side");
+    });
+    expect(screen.getByTestId("pref").textContent).toBe("side");
+  });
 });
 
-describe("useObservedCssWidth：宽度观察（ResizeObserver 缺席回退）", () => {
-  it("jsdom 无 ResizeObserver：挂载回退 offsetWidth 读数（0），不抛错", async () => {
-    const mod = await freshModule();
+describe("useNoteSideUsable：量化分栏观察（复审④）", () => {
+  function probeHook(enabled: boolean) {
     const ref = { current: null } as React.RefObject<HTMLDivElement | null>;
-    function Probe() {
-      const width = mod.useObservedCssWidth(ref);
-      return <div data-testid="probe">{width}</div>;
-    }
-    render(
-      <Probe />,
-      // 换新 document 保证 offsetWidth 初始 0 的读数稳定
-    );
-    expect(screen.getByTestId("probe").textContent).toBe("0");
-  });
-
-  it("ResizeObserver 存在：观察容器并在回调时更新宽度（侧栏→below 回退的驱动源）", async () => {
-    type Cb = (entries: { contentRect: { width: number } }[]) => void;
-    const observers: { cb: Cb }[] = [];
+    const observers: ((w: number) => void)[] = [];
     class StubRO {
-      constructor(cb: Cb) {
-        observers.push({ cb });
+      constructor(cb: (entries: { contentRect: { width: number } }[]) => void) {
+        observers.push((width: number) => cb([{ contentRect: { width } }]));
       }
       observe() {}
       unobserve() {}
       disconnect() {}
     }
     vi.stubGlobal("ResizeObserver", StubRO);
-    const mod = await freshModule();
-    const ref = { current: null } as React.RefObject<HTMLDivElement | null>;
     function Probe() {
-      const width = mod.useObservedCssWidth(ref);
+      const usable = useNoteSideUsable(ref, enabled);
       return (
-        <div ref={ref} data-testid="probe">
-          {width}
+        <div ref={ref} data-testid="usable">
+          {String(usable)}
         </div>
       );
     }
     render(<Probe />);
-    expect(observers.length).toBe(1);
-    act(() => {
-      observers[0]?.cb([{ contentRect: { width: 1024 } }]);
-    });
-    expect(screen.getByTestId("probe").textContent).toBe("1024");
-    act(() => {
-      observers[0]?.cb([{ contentRect: { width: 700 } }]);
-    });
-    expect(screen.getByTestId("probe").textContent).toBe("700");
+    return {
+      push: (w: number) =>
+        act(() => {
+          for (const cb of [...observers]) cb(w);
+        }),
+    };
+  }
+
+  it("跨阈值翻转才更新（同侧宽度连续变化不重渲染）", () => {
+    const probe = probeHook(true);
+    expect(screen.getByTestId("usable").textContent).toBe("false");
+    probe.push(700); // below 侧内的变化（初始即 false）
+    expect(screen.getByTestId("usable").textContent).toBe("false");
+    probe.push(1024); // 跨阈值 → true
+    expect(screen.getByTestId("usable").textContent).toBe("true");
+    probe.push(1100); // side 侧内的变化
+    expect(screen.getByTestId("usable").textContent).toBe("true");
+    probe.push(700); // 回落 → false（窄容器从侧栏回退 below）
+    expect(screen.getByTestId("usable").textContent).toBe("false");
+  });
+
+  it("enabled=false（显式偏好）不订阅观察", () => {
+    const probe = probeHook(false);
+    probe.push(1024);
+    expect(screen.getByTestId("usable").textContent).toBe("false");
   });
 });

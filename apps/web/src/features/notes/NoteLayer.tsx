@@ -87,7 +87,6 @@ import {
   type NoteLayoutPreference,
   setNoteLayoutPreference,
   useNoteLayoutPreference,
-  useObservedCssWidth,
 } from "@/features/notes/note-layout";
 import {
   ensureNoteLoaded,
@@ -106,6 +105,7 @@ import {
 } from "@/features/notes/paper-geometry";
 import { useNoteHead, useNoteSessionRef } from "@/features/notes/use-note-head";
 import { useNoteRecord } from "@/features/notes/use-note-record";
+import { useObservedCssWidth } from "@/lib/use-observed-css-width";
 
 /** 触控目标硬性尺寸（ui-conventions）：工具条按钮统一 h-11 */
 const TOOL_BUTTON_CLASS =
