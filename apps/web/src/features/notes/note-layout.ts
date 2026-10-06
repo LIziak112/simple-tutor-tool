@@ -24,7 +24,7 @@
  *   渲染——真机定标改常量时，阈值与渲染不再漂移（配对锁定测试见本文件）。
  */
 import type { CSSProperties } from "react";
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
 import { NOTE_PAPER_GRID_SPACING_LOGICAL } from "@/features/ink/engine/paper-style";
 import { INK_LOGICAL_WIDTH } from "@/features/ink/engine/types";
 import { createExternalPrefStore } from "@/lib/create-external-pref-store";

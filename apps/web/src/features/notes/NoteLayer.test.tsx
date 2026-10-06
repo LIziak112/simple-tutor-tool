@@ -858,7 +858,8 @@ describe("NoteLayer：状态面板栈与文案格（T6R.9 复审④⑨）", () =
         await vi.advanceTimersByTimeAsync(2100);
       });
       expect(screen.getByText(/同步中…/)).toBeInTheDocument();
-      releasePut?.();
+      // 闭包内赋值不参与收窄：显式拓宽后调用
+      (releasePut as (() => void) | null)?.();
       await act(async () => {
         await vi.advanceTimersByTimeAsync(0);
       });

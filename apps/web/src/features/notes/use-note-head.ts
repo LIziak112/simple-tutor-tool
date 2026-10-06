@@ -22,7 +22,7 @@
  */
 import { type UseQueryResult, useQuery } from "@tanstack/react-query";
 import type { NoteHeadData, StudentMeData } from "@tutor/contract";
-import { useCallback, useEffect, useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import { recoverNoteImages } from "@/features/notes/image-sync";
 import {
   applyServerHead,

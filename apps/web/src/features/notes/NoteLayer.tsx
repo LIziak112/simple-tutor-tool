@@ -43,13 +43,7 @@ import {
   Trash,
   Undo2,
 } from "lucide-react";
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -288,7 +282,8 @@ export function NoteLayer({
 
   // 外部正文变化 → 载入引擎（服务端播种/冲突裁决后）。比对版本令牌
   // （复审②）：视图 docVersion 与最近一次「引擎已持有」令牌相同 → 跳过；
-  // 不同 → 外部换稿，载入。挂载首帧登记令牌（initial 已带 store 当前内容）。
+  // 不同 → 外部换稿，载入。
+  // biome-ignore lint/correctness/useExhaustiveDependencies(engineTick): 触发器依赖——InkPad 换引擎不发数据变化，经 onEngineRebuild 计数驱动本 effect 重跑（体内不读取）
   useEffect(() => {
     if (!open || session === null) return;
     const engine = engineRef.current;
