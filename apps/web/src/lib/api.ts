@@ -1123,8 +1123,11 @@ export function teacherNoteImagePngUrl(
  * NOTE_LIMIT_EXCEEDED）或网络层中文 Error，由调用方（图片同步队列/补图恢复）
  * 决定重试策略。
  */
+/** 补图角色：学生补自己的图 / 教师按授权补学生版本（图片同步层共用） */
+export type NoteImageRole = "student" | "teacher";
+
 export function postNoteImageApi(
-  role: "student" | "teacher",
+  role: NoteImageRole,
   versionId: string,
   png: Blob,
   meta: NoteImageUploadMeta,

@@ -18,6 +18,10 @@
  *
  * 与后续任务的分工：本地排队/退避/状态机是 T6R.8（note-sync）的职责；答题页
  * 触发与状态展示是 T6R.9；本文件只提供可脱离组件调用的同步原语。
+ *
+ * 已知限制（复审⑦）：上传是**逐槽位 upsert**——renderVersion 递增且新切片
+ * 方案页数变少时，旧的高页码槽位会残留（不会被本链路清除）；「完整重建 =
+ * 替换整个槽位集」需要服务端槽位集替换语义，留后续任务裁定，不在本单扩。
  */
 import {
   type NoteDoc,
@@ -28,6 +32,7 @@ import {
 import {
   fetchStudentNoteDocumentApi,
   fetchTeacherNoteDocumentApi,
+  type NoteImageRole,
   postNoteImageApi,
 } from "@/lib/api";
 import {
@@ -96,8 +101,9 @@ let noteImageQueue = new SerialTaskQueue();
 
 /** syncNoteImages / recoverNoteImages 公共参数（角色 + 目标版本） */
 export interface NoteImageSyncParams {
-  /** 学生补自己的图 / 教师按授权补学生版本（方案 §7 教师重建） */
-  role: "student" | "teacher";
+  /** 学生补自己的图 / 教师按授权补学生版本（方案 §7 教师重建）；类型与
+   * 上传客户端同源（复审⑩：不在两处手写同一联合） */
+  role: NoteImageRole;
   /** 目标 NoteVersion（补图只挂既定版本，不改正文） */
   versionId: string;
 }
