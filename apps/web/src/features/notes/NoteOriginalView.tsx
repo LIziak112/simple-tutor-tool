@@ -222,9 +222,11 @@ export function NoteOriginalView({
   }, [revokeUrls]);
 
   /** 缺图重建：补图只挂既定版本（不重渲染正文——原稿确定性不变），成功后
-   * 仅刷新证据行的派生图状态 */
+   * 仅刷新证据行的派生图状态。epoch 守卫：重建期间收起/重开会 bump 代际，
+   * 迟到的状态刷新不得复活已被回收的 URL */
   const rebuild = useCallback(async () => {
     if (phase.kind !== "ready") return;
+    const epochAtStart = epochRef.current;
     setRebuilding(true);
     try {
       await recoverNoteImages({ role: viewer, versionId: phase.versionId });
@@ -232,6 +234,7 @@ export function NoteOriginalView({
         viewer === "student"
           ? await fetchStudentNoteEvidenceApi(attemptId, questionId)
           : await fetchTeacherNoteEvidenceApi(attemptId, questionId);
+      if (epochAtStart !== epochRef.current) return;
       if (phase.kind !== "ready") return;
       setPhase({
         ...phase,
