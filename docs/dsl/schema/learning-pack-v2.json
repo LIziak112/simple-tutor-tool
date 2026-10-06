@@ -774,9 +774,9 @@
           "state": {
             "type": "string",
             "enum": [
+              "none",
               "frozen",
               "missing",
-              "none",
               "legacy_unverified",
               "not_collected"
             ]

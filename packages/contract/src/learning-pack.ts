@@ -2,7 +2,11 @@ import { z } from "zod";
 import { analyticsLectureReadingMapSchema } from "./analytics-api.ts";
 import { attemptSourceSchema, attemptStatusSchema } from "./attempt.ts";
 import { questionAnswersSchema, questionTypeSchema } from "./content.ts";
-import { noteCropRectSchema, notePhaseSchema } from "./note.ts";
+import {
+  noteCropRectSchema,
+  notePhaseSchema,
+  noteSubmissionEvidenceStateSchema,
+} from "./note.ts";
 
 /**
  * AI 学情数据包契约（T4.3 起为权威定义，依据 Phase4 清单 §2 D14–D19 与架构
@@ -548,15 +552,12 @@ export const learningPackV2ResponseSchema = learningPackResponseSchema.extend({
 });
 
 /**
- * v2 证据状态（submission_evidence 行状态 + 无行的显式值）：
- * 前四值同 note.ts noteSubmissionEvidenceStateSchema；not_collected = 无证据行
+ * v2 证据状态：note.ts 的 submission_evidence 四值（经 schema.options 引用，
+ * 不手抄——值域演进单一来源）+ 无证据行的显式值 not_collected
  * （旧客户端兼容交卷未采集——与 none〔明确空稿〕区分，schema 注释同口径）。
  */
 export const learningPackEvidenceStateSchema = z.enum([
-  "frozen",
-  "missing",
-  "none",
-  "legacy_unverified",
+  ...noteSubmissionEvidenceStateSchema.options,
   "not_collected",
 ]);
 
