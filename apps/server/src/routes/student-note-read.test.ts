@@ -670,6 +670,16 @@ describe("补图上传校验", () => {
         })
       ).status,
     ).toBe(400);
+    // pageIndex 上限 999（复审轮②：槽位写入面封顶，防无界行集）
+    expect(
+      (
+        await app.request(`/api/student/note-versions/${versionId}/images`, {
+          method: "POST",
+          headers: { cookie: aCookie },
+          body: noteImageForm(makeNotePng(), { pageIndex: 1000 }),
+        })
+      ).status,
+    ).toBe(400);
   });
 
   it("PNG 魔数错误 / IHDR 尺寸与声明不符 → 400 NOTE_VALIDATION_FAILED", async () => {

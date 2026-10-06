@@ -372,8 +372,13 @@ export const noteImageMetaSchema = z
     noteVersionId: z.uuid(),
     /** 渲染规格 */
     spec: noteImageSpecSchema,
-    /** 页号/切片序（同版本同规格内从 0 递增；与 noteVersionId、spec 组成唯一槽位） */
-    pageIndex: z.number().int().min(0),
+    /**
+     * 页号/切片序（同版本同规格内从 0 递增；与 noteVersionId、spec 组成唯一槽位）。
+     * 上限 999（复审轮②）：槽位 upsert 的写入面由此封顶——head 投影的 images
+     * 行数 ≤ (规格数 × 1000)，DB 不会积出无界行集（上限链：上传 meta 与本
+     * 投影形状两处同值约束，999 之上的值在写入口即 400）。
+     */
+    pageIndex: z.number().int().min(0).max(999),
     /** 逻辑裁剪区 */
     crop: noteCropRectSchema,
     /** 像素宽 */
@@ -557,7 +562,8 @@ export const noteHeadDataSchema = z.object({
  */
 export const noteImageUploadMetaSchema = z.object({
   spec: noteImageSpecSchema,
-  pageIndex: z.number().int().min(0),
+  /** 页号上限 999 与 noteImageMetaSchema 同值（上限链见彼处注释） */
+  pageIndex: z.number().int().min(0).max(999),
   crop: noteCropRectSchema,
   pixelWidth: z.number().int().min(1).max(NOTE_IMAGE_MAX_PIXEL_DIM),
   pixelHeight: z.number().int().min(1).max(NOTE_IMAGE_MAX_PIXEL_DIM),
