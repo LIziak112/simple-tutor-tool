@@ -38,10 +38,8 @@ import {
   createProgrammaticAtrament,
   replayAtramentStroke,
 } from "@/features/ink/engine/atrament-adapter.ts";
-import {
-  type StrokeBounds,
-  strokeBounds,
-} from "@/features/ink/engine/bounds.ts";
+import type { StrokeBounds } from "@/features/ink/engine/bounds.ts";
+import { paddedStrokeBoxesOf } from "@/features/ink/engine/bounds.ts";
 import { canvasToPngBlob } from "@/features/ink/engine/canvas-png.ts";
 import {
   NOTE_PAPER_BG_COLOR,
@@ -51,15 +49,10 @@ import {
 } from "@/features/ink/engine/paper-style.ts";
 import { INK_LOGICAL_WIDTH } from "@/features/ink/engine/types.ts";
 
-// 纸张背景常量集自本文件上移至 engine/paper-style.ts（T6R.7：屏幕端 CSS 与
-// PNG 同源共用；上移不改值 ⇒ 像素输出不变，不递增 NOTE_RENDER_VERSION）。
-// 此处 re-export 维持既有导入路径兼容（render-note.test 等消费方不变）。
-export {
-  NOTE_PAPER_BG_COLOR,
-  NOTE_PAPER_GRID_SPACING_LOGICAL,
-  NOTE_PAPER_LINE_COLOR,
-  NOTE_PAPER_LINE_WIDTH_PX,
-} from "@/features/ink/engine/paper-style.ts";
+// paddedStrokeBoxesOf 已下沉 engine/bounds.ts（复审④，签名收窄为 strokes
+// 数组）；此处 re-export 维持既有导入路径兼容。纸张常量集的 re-export
+// 垫片已删（复审⑤）：公共出口唯一为 engine/paper-style，消费方直接改引。
+export { paddedStrokeBoxesOf } from "@/features/ink/engine/bounds.ts";
 
 // ---------- 渲染规格常量（全部暂定，真机定标后修订） ----------
 
@@ -150,7 +143,7 @@ function unionOfBoxes(boxes: Array<StrokeBounds | null>): StrokeBounds | null {
  * 渲染链与裁剪计划共用同一份缓存（复审⑧）。空稿返回 null。
  */
 export function inkBBoxLogical(ink: NoteDoc["ink"]): StrokeBounds | null {
-  return unionOfBoxes(paddedStrokeBoxesOf(ink));
+  return unionOfBoxes(paddedStrokeBoxesOf(ink.strokes));
 }
 
 /**
@@ -295,17 +288,9 @@ export function noteImageUploadMetaOf(
 
 // ---------- 页面渲染（需要 DOM canvas） ----------
 
-/**
- * 每文档的「含半线宽」逐笔包围盒缓存：渲染入口算一次、逐页相交判定查表
- * （多页长稿不随页数重复全稿点级折叠）；裁剪计划经 unionOfBoxes 复用同一
- * 份（复审⑧折叠收敛）。空笔画槽位为 null。导出供同步链（image-sync）
- * 在两条 forEach 链外计算一次共享。
- */
-export function paddedStrokeBoxesOf(
-  ink: NoteDoc["ink"],
-): Array<StrokeBounds | null> {
-  return ink.strokes.map((s) => strokeBounds(s, s.weight / 2));
-}
+// 「含半线宽」逐笔包围盒的实现在 engine/bounds.ts（paddedStrokeBoxesOf，
+// 复审④下沉）：渲染入口算一次、逐页相交判定查表（多页长稿不随页数重复
+// 全稿点级折叠）；本文件顶部 re-export 维持既有导入路径兼容。
 
 /** 笔迹包围盒与页裁剪区是否相交（页外笔画不重放，跨页笔画经重叠区覆盖） */
 function boxIntersectsCrop(bb: StrokeBounds, crop: NoteCropRect): boolean {
@@ -369,7 +354,11 @@ export async function renderNotePage(
   doc: NoteDoc,
   page: NotePagePlan,
 ): Promise<RenderedNotePage> {
-  return renderNotePageWithBoxes(doc, page, paddedStrokeBoxesOf(doc.ink));
+  return renderNotePageWithBoxes(
+    doc,
+    page,
+    paddedStrokeBoxesOf(doc.ink.strokes),
+  );
 }
 
 /** 渲染一页（携带入口级包围盒缓存；boxes 与 doc.ink.strokes 一一对应） */
@@ -498,7 +487,7 @@ export async function forEachRenderedNotePage(
   visit: (page: RenderedNotePage) => Promise<void>,
   opts?: ForEachNotePageOptions,
 ): Promise<void> {
-  const boxes = opts?.boxes ?? paddedStrokeBoxesOf(doc.ink);
+  const boxes = opts?.boxes ?? paddedStrokeBoxesOf(doc.ink.strokes);
   const renderPage = opts?.renderPage ?? renderNotePageWithBoxes;
   const pages =
     spec === "thumbnail"

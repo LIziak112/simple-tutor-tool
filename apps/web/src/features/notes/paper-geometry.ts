@@ -19,16 +19,13 @@
  * 直增，属旧作答链路兼容语义）。纯函数、无 DOM。
  */
 import { NOTE_PAPER_HEIGHT_MAX, type NoteDoc } from "@tutor/contract";
-import { strokeBounds } from "@/features/ink/engine/bounds.ts";
+import { paddedStrokeBoxesOf } from "@/features/ink/engine/bounds.ts";
+import { fromLogical, toLogical } from "@/features/ink/engine/normalize.ts";
 import {
   NOTE_PAPER_GRID_SPACING_LOGICAL,
   PAPER_GROW_STEP_CSS_PX,
   PAPER_GROW_TRIGGER_CSS_PX,
 } from "@/features/ink/engine/paper-style.ts";
-import {
-  fromLogical,
-  toLogical,
-} from "@/features/ink/engine/normalize.ts";
 import {
   INK_LOGICAL_WIDTH,
   type InkStroke,
@@ -102,13 +99,15 @@ export function grownPaperHeight(input: {
   );
 }
 
-/** 全部笔画的最低点（逻辑坐标，**含每笔半线宽**）；空稿返回 null */
+/**
+ * 全部笔画的最低点（逻辑坐标，**含每笔半线宽**）；空稿返回 null。
+ * 复用 paddedStrokeBoxesOf（engine/bounds，复审④）：半线宽折叠全仓一份。
+ */
 export function strokesBottomLogical(
   strokes: readonly InkStroke[],
 ): number | null {
   let bottom: number | null = null;
-  for (const s of strokes) {
-    const bb = strokeBounds(s, s.weight / 2);
+  for (const bb of paddedStrokeBoxesOf(strokes)) {
     if (bb && (bottom === null || bb.maxY > bottom)) bottom = bb.maxY;
   }
   return bottom;

@@ -33,3 +33,15 @@ export function strokeBounds(stroke: InkStroke, pad = 0): StrokeBounds | null {
   }
   return { minX, minY, maxX, maxY };
 }
+
+/**
+ * 逐笔「含半线宽」包围盒数组（pad=weight/2 特例的批量投影；空笔画槽位
+ * 为 null）。T6R.7 自 render-note 下沉（复审④）：纯投影与 strokeBounds
+ * 同居 engine 层，渲染器（render-note）、同步链（image-sync）与纸张几何
+ * （paper-geometry）共用同一份半线宽折叠。
+ */
+export function paddedStrokeBoxesOf(
+  strokes: readonly InkStroke[],
+): Array<StrokeBounds | null> {
+  return strokes.map((s) => strokeBounds(s, s.weight / 2));
+}

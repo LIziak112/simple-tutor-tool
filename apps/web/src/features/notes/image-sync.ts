@@ -29,6 +29,7 @@ import {
   type NoteImageSpec,
   noteDocSchema,
 } from "@tutor/contract";
+import { paddedStrokeBoxesOf } from "@/features/ink/engine/bounds.ts";
 import {
   fetchStudentNoteDocumentApi,
   fetchTeacherNoteDocumentApi,
@@ -38,7 +39,6 @@ import {
 import {
   forEachRenderedNotePage,
   noteImageUploadMetaOf,
-  paddedStrokeBoxesOf,
   type RenderedNotePage,
   yieldToMain,
 } from "./render-note.ts";
@@ -145,7 +145,7 @@ export function syncNoteImages(
     // 缩略图先行的上传顺序维持（AI 先见正文图的评估在 T6R.13）；
     // 逐页骨架（缓存/让出/中止语义）与 renderNoteImages 同源；两条链
     // 共享链外一份包围盒缓存（复审⑧），链交界补一次让出（复审⑬）
-    const boxes = paddedStrokeBoxesOf(doc.ink);
+    const boxes = paddedStrokeBoxesOf(doc.ink.strokes);
     await forEachRenderedNotePage(doc, "thumbnail", upload("thumbnail"), {
       boxes,
     });
