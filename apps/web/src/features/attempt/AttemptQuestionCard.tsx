@@ -6,8 +6,15 @@ import type {
 import { displayStemMd } from "@tutor/md-dsl";
 import { cn } from "cn";
 import { Check, X } from "lucide-react";
+import { useRef, useState } from "react";
 import { BlankAnswersProvider } from "@/features/markdown/BlankAnswersContext";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
+import { NoteLayer } from "@/features/notes/NoteLayer";
+import {
+  effectiveNoteLayout,
+  useNoteLayoutPreference,
+  useObservedCssWidth,
+} from "@/features/notes/note-layout";
 import {
   letterOf,
   QUESTION_TYPE_BADGE_CLASS,
@@ -26,9 +33,19 @@ import { HintPanel } from "./HintPanel";
  * 手写题（solve/apply/find-error）的作答控件在 HandwrittenControls（T2.8：
  * 展开手写区 + 全屏作答 + 最终答案/MathLive，含笔迹上传状态机）。
  * T2.11：hintCount>0 且提供解锁回调时渲染分步提示面板（HintPanel）。
+ * T6R.9：非手写题接入题卡草稿层（NoteLayer）——展开且容器够宽时题干 55%
+ * 与草稿 45% 侧栏分栏（方案 §4.3；阈值见 note-layout），窄容器/收起时
+ * 草稿在题干下方整宽（below）；布局切换只改外框，不新建笔记不改正文身份。
  * 触控目标全部 ≥44px（ui-conventions）；judge 题干尾部 [[]] 脱敏框剥掉
  * （对错由按钮作答，空框反而误导）。
  */
+
+/** 手写题型：作答 ink 走 HandwrittenControls，不接草稿层 */
+const HANDWRITTEN_TYPES = new Set<QuestionPublic["type"]>([
+  "solve",
+  "apply",
+  "find-error",
+]);
 
 /** 判断题题干尾部的空标记（studentStemMd 投影把 [[正确]] 脱敏成 [[]]） */
 function judgeStemOf(stemMd: string): string {
@@ -267,13 +284,27 @@ export function AttemptQuestionCard({
 }) {
   const plainAnswer = (next: StudentAnswer) => onAnswer(next);
 
-  return (
-    <article
-      className="flex flex-col gap-4 rounded-2xl border border-border bg-card p-4 text-card-foreground shadow-xs sm:p-5"
-      aria-label={`第 ${index + 1} 题`}
-    >
-      <QuestionMeta index={index} question={question} />
+  // T6R.9 草稿层：非手写题 + 作答语境（attemptId）；布局按题卡实测宽度
+  // （auto 档宽容器 side / 窄容器 below；显式偏好见 note-layout）
+  const articleRef = useRef<HTMLElement | null>(null);
+  const cardWidth = useObservedCssWidth(articleRef);
+  const layoutPref = useNoteLayoutPreference();
+  const layout = effectiveNoteLayout(layoutPref, cardWidth);
+  const [noteOpen, setNoteOpen] = useState(false);
+  const noteLayer =
+    attemptId !== undefined && !HANDWRITTEN_TYPES.has(question.type) ? (
+      <NoteLayer
+        attemptId={attemptId}
+        questionId={question.id}
+        open={noteOpen}
+        onOpenChange={setNoteOpen}
+        ariaPrefix={`第 ${index + 1} 题`}
+      />
+    ) : null;
 
+  /** 题干 + 作答控件 + 提示面板（侧栏分栏时的左列内容） */
+  const questionBody = (
+    <>
       {/* 题干：判断题剥掉尾部空标记；填空题空位内联输入 */}
       {question.type === "judge" ? (
         <RichMarkdown
@@ -360,6 +391,33 @@ export function AttemptQuestionCard({
             onUnlocked={onHintUnlocked}
           />
         )}
+    </>
+  );
+
+  // 侧栏分栏（方案 §4.3 初值 55/45；gap-6=24px 与 NOTE_LAYOUT_GAP_CSS_PX 同值）：
+  // 仅草稿展开且容器够宽时两列；收起/窄容器回到题干下方整宽（below）
+  const sideBySide = noteLayer !== null && noteOpen && layout === "side";
+
+  return (
+    <article
+      ref={articleRef}
+      className="flex flex-col gap-4 rounded-2xl border border-border bg-card p-4 text-card-foreground shadow-xs sm:p-5"
+      aria-label={`第 ${index + 1} 题`}
+    >
+      <QuestionMeta index={index} question={question} />
+      {sideBySide ? (
+        <div data-slot="note-side-columns" className="flex items-start gap-6">
+          <div className="flex w-[55%] min-w-0 flex-col gap-4">
+            {questionBody}
+          </div>
+          <div className="min-w-0 flex-1">{noteLayer}</div>
+        </div>
+      ) : (
+        <>
+          {questionBody}
+          {noteLayer}
+        </>
+      )}
     </article>
   );
 }

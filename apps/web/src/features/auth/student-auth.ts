@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { StudentLoginRequest, StudentMeData } from "@tutor/contract";
+import { resetNoteSession } from "@/features/notes/note-sync";
 import {
   fetchStudentAssignmentsApi,
   fetchStudentCoursesApi,
@@ -70,13 +71,18 @@ export function useLoginStudent() {
   });
 }
 
-/** 退出登录：成功后清空全部学生端查询缓存（me 失效后守卫导回登录页） */
+/**
+ * 退出登录：成功后清空全部学生端查询缓存（me 失效后守卫导回登录页），并
+ * resetNoteSession（T6R.9）——停旧草稿同步队列、中止在途上传、隔离回执；
+ * 本地未同步草稿保留（方案 §6.1：旧账号重新登录才可恢复）。
+ */
 export function useLogoutStudent() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: logoutStudentApi,
     onSuccess: () => {
       queryClient.removeQueries({ queryKey: ["student"] });
+      resetNoteSession();
     },
   });
 }

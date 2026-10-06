@@ -21,8 +21,8 @@
  * 的 server 维度来自同步队列视角（note-store 派生），不依赖 head。
  */
 import { type UseQueryResult, useQuery } from "@tanstack/react-query";
-import type { NoteHeadData } from "@tutor/contract";
-import { useCallback, useSyncExternalStore } from "react";
+import type { NoteHeadData, StudentMeData } from "@tutor/contract";
+import { useCallback, useEffect, useSyncExternalStore } from "react";
 import { recoverNoteImages } from "@/features/notes/image-sync";
 import {
   applyServerHead,
@@ -32,7 +32,10 @@ import {
   peekNoteRecord,
   subscribeNoteStore,
 } from "@/features/notes/note-store";
-import { currentNoteSession } from "@/features/notes/note-sync";
+import {
+  bindNoteSession,
+  currentNoteSession,
+} from "@/features/notes/note-sync";
 import {
   ApiError,
   fetchStudentNoteDocumentApi,
@@ -138,4 +141,20 @@ export function useNoteHead(
     // ApiError（403/404/401 等）不重试：终态或需登录干预；网络错误重试 2 次
     retry: (count, err) => !(err instanceof ApiError) && count < 2,
   });
+}
+
+/**
+ * 答题页接线（T6R.9）：进入答题页 bind 当前学生 + 部署实例（origin 取
+ * window.location.origin——同源即同实例）。离开答题页**不** reset——收起
+ * 题卡/路由切换后同步队列照常完成（方案 §6.1）；登出在 student-auth 统一
+ * resetNoteSession（切账号即旧会话失效、回执隔离）。
+ */
+export function useBindNoteSession(me: StudentMeData | undefined): void {
+  useEffect(() => {
+    if (me === undefined) return;
+    bindNoteSession({
+      origin: window.location.origin,
+      studentId: me.id,
+    });
+  }, [me]);
 }
