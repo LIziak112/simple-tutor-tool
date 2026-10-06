@@ -26,7 +26,7 @@ import {
   noteRevisionConflictCurrentSchema,
   noteSubmissionEvidenceMetaSchema,
 } from "@tutor/contract";
-import { and, asc, eq, isNotNull, lt, ne, or, sql } from "drizzle-orm";
+import { and, asc, eq, isNotNull, ne, or, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
   type NoteImageRow,
@@ -1140,9 +1140,11 @@ export interface NoteGcResult {
   /** 超窗口但被保留集合（头指针/证据引用）挡下的版本数 */
   keptByReference: number;
   /**
-   * 存量 bodyPath 形态异常（越出 blobs/notes 或文件名不合 v<rev>-<hash12>
-   * 模式）的版本行数。>0 时本轮**放弃孤儿文件清扫**（保守不删，见下），
-   * 计数暴露给运维排查——正常数据恒为 0。
+   * 存量路径形态异常（复审轮⑥起含正文与图片两类）：bodyPath 越出 blobs/notes
+   * 或文件名不合 v<rev>-<hash12>.json.gz 模式、imagePath 越出根或不合
+   * img-<uuid>.png 模式。>0 时本轮**放弃孤儿文件清扫**（保守不删，见下），
+   * 计数暴露给运维排查——正常数据恒为 0（字段名沿用 bodyPaths 兼容既有
+   * 观测面，语义已扩为两类）。
    */
   malformedBodyPaths: number;
 }
@@ -1157,9 +1159,10 @@ export interface NoteGcResult {
  * - 所有 submission_evidence.version_id（提交原稿）；
  * - 安全窗口内创建的全部版本与临时文件（在途上传、丢回执重试窗口——
  *   后者即 mutationId 幂等窗口：版本行被回收后幂等记录随之消失，窗口外
- *   重放按 CAS 冲突可诊断处理，见 note_versions.mutation_id 列注释）。
- * 「正在生成图片的版本」：note_images 尚无生成通道（T6R.6），届时由生成
- * 流程把在途版本纳入保留；当前实现把派生图行/文件随所属版本一并回收。
+ *   重放按 CAS 冲突可诊断处理，见 note_versions.mutation_id 列注释）；
+ * - 全部 note_images 行引用的图片文件（被行引用即活文件——行随所属版本
+ *   删除时才连带删文件；「正在生成图片的版本」的保留由图片行的存在性
+ *   天然承载：T6R.6 生成通道只要先落行或落 .tmp 就不会被误清）。
  *
  * 删除顺序：先事务删行（FK 拒绝=仍有引用→跳过下轮再试），后删文件
  * （行已删，文件删除失败只是占空间的孤儿，不产生悬垂引用——坏方向是
@@ -1202,23 +1205,43 @@ export function gcNoteVersions(
     if (row.id !== null) keep.add(row.id);
   }
 
-  // 超窗口候选（serverSavedAt 为定长 UTC ISO，字典序即时间序；列投影只取
-  // 回收循环用到的两列——复审⑫）
-  const candidates = db
-    .select({ id: noteVersions.id, bodyPath: noteVersions.bodyPath })
+  // 单次全表拉取（复审轮⑯：候选筛选与 live 对账同一份数据，消双全表扫描）；
+  // serverSavedAt 为定长 UTC ISO，字典序即时间序，内存过滤与 SQL lt 等价
+  const versionRows = db
+    .select({
+      id: noteVersions.id,
+      bodyPath: noteVersions.bodyPath,
+      savedAt: noteVersions.serverSavedAt,
+    })
     .from(noteVersions)
-    .where(lt(noteVersions.serverSavedAt, cutoff))
     .all();
-  for (const row of candidates) {
+  // 图片行单次全量拉取：候选版本的连带删除（消逐候选 N+1 查询）与
+  // 孤儿对账 live 集合同源（复审轮⑥：图片文件纳入孤儿清扫框架）
+  const imageRows = db
+    .select({
+      id: noteImages.id,
+      noteVersionId: noteImages.noteVersionId,
+      path: noteImages.path,
+    })
+    .from(noteImages)
+    .all();
+  const imagesByVersion = new Map<string, { id: string; path: string }[]>();
+  for (const img of imageRows) {
+    const list = imagesByVersion.get(img.noteVersionId);
+    if (list === undefined) {
+      imagesByVersion.set(img.noteVersionId, [img]);
+    } else {
+      list.push(img);
+    }
+  }
+
+  for (const row of versionRows) {
+    if (row.savedAt >= cutoff) continue; // 窗口内不动（在途/幂等窗口）
     if (keep.has(row.id)) {
       result.keptByReference += 1;
       continue;
     }
-    const images = db
-      .select()
-      .from(noteImages)
-      .where(eq(noteImages.noteVersionId, row.id))
-      .all();
+    const images = imagesByVersion.get(row.id) ?? [];
     try {
       db.transaction((tx) => {
         // 先删派生图行（FK 指向版本行），再删版本行
@@ -1246,49 +1269,59 @@ export function gcNoteVersions(
     }
   }
 
-  // 过期临时文件清扫（.tmp- 前缀 = writeNoteBodyFile 独有命名；窗口内
-  // 的一律不碰——那是可能仍在途的请求或崩溃现场），以及超窗口的
-  // **无行孤儿正文文件**清扫（「rename 完成、事务未提交」的崩溃残留：
-  // 文件名合 v<rev>-<hash12>.json.gz 模式但不在任何 note_versions.body_path
-  // 中；窗口内不碰——那可能是刚 rename、事务尚未提交的在途请求）。
-  // 无行的图片文件不在此列：图片由 T6R.6 通道按自有协议产生，届时一并定。
+  // 过期临时文件清扫（.tmp- 前缀 = writeFileAtomic 独有命名；窗口内
+  // 一律不碰——那是可能仍在途的请求或崩溃现场），以及超窗口的
+  // **无行孤儿文件**清扫（正文与图片同框架，复审轮⑥：rename/落位完成、
+  // 事务未提交或行已删文件未清的崩溃残留——文件名合模式但不在任何
+  // note_versions.body_path / note_images.path 中；窗口内不碰——那可能是
+  // 刚落位、事务尚未提交的在途请求）。
   const notesRoot = resolve(dataDir, "blobs", "notes");
   if (existsSync(notesRoot)) {
     const bodyFilePattern = /^v\d+-[0-9a-f]{12}\.json\.gz$/;
-    // live 匹配用**存储字符串集合**（快），但保留防御：存量 bodyPath 形态
-    // 异常（越出根/文件名不合模式）时，其对应文件无法可靠对账——本轮放弃
-    // 孤儿清扫（tmp 清扫不受影响），计数 malformedBodyPaths 暴露给运维。
-    // 两位审查角的折中：不做逐行 resolve 校验（多数派：纯集合足够），也不
-    // 无条件信任集合（少数派：异常数据宁可漏删不可误删）。
-    // 匹配双方一律 toLowerCase：NTFS 大小写不敏感，手工迁移/改目录名大小写
-    // 后磁盘目录名与 DB 路径可能仅大小写不同——不做归一会把活文件误判成
-    // 孤儿误删（复审④）。malformed 判定（basename 模式）保持大小写敏感：
-    // 非小写规范形态本就该按异常保守处理。
-    let liveBodyRelSet: Set<string> | null = null;
-    const liveBodyRel = (): Set<string> => {
-      if (liveBodyRelSet === null) {
-        liveBodyRelSet = new Set<string>();
-        for (const row of db
-          .select({ p: noteVersions.bodyPath })
-          .from(noteVersions)
-          .all()) {
-          const rel = relative(notesRoot, resolve(dataDir, row.p));
-          const base = rel.split(/[\\/]/).at(-1) ?? "";
-          // rel===""（路径恰为根本身）不必单列：basename 不合模式必兜住
-          if (
-            rel.startsWith("..") ||
-            isAbsolute(rel) ||
-            !bodyFilePattern.test(base)
-          ) {
-            result.malformedBodyPaths += 1;
-            continue;
-          }
-          // 键分隔符归一为 "/"：入库串用 "/"（复审⑦）而 path.relative 在
-          // Windows 产 "\"，扫描侧统一拼 "/"——两侧一致才能对账
-          liveBodyRelSet.add(rel.split(/[\\/]/).join("/").toLowerCase());
-        }
+    const imageFilePattern = /^img-[0-9a-f-]{36}\.png$/;
+    // live 对账集合（正文 + 图片两类行，均在上方单次拉取的数据上派生）。
+    // 保留防御：存量路径形态异常（越出根/文件名不合模式）时，其对应文件
+    // 无法可靠对账——本轮放弃孤儿清扫（tmp 清扫不受影响），计数
+    // malformedBodyPaths 暴露给运维。匹配双方一律 toLowerCase：NTFS 大小写
+    // 不敏感，手工迁移/改目录名大小写后磁盘目录名与 DB 路径可能仅大小写
+    // 不同——不做归一会把活文件误判成孤儿误删（复审④）。malformed 判定
+    // （basename 模式）保持大小写敏感：非小写规范形态本就该按异常保守处理。
+    const liveRel = (storedPath: string, pattern: RegExp): string | null => {
+      const rel = relative(notesRoot, resolve(dataDir, storedPath));
+      const base = rel.split(/[\\/]/).at(-1) ?? "";
+      // rel===""（路径恰为根本身）不必单列：basename 不合模式必兜住
+      if (rel.startsWith("..") || isAbsolute(rel) || !pattern.test(base)) {
+        return null;
       }
-      return liveBodyRelSet;
+      // 键分隔符归一为 "/"：入库串用 "/"（复审⑦）而 path.relative 在
+      // Windows 产 "\"，扫描侧统一拼 "/"——两侧一致才能对账
+      return rel.split(/[\\/]/).join("/").toLowerCase();
+    };
+    const liveSet = new Set<string>();
+    for (const row of versionRows) {
+      const key = liveRel(row.bodyPath, bodyFilePattern);
+      if (key === null) {
+        result.malformedBodyPaths += 1;
+      } else {
+        liveSet.add(key);
+      }
+    }
+    for (const img of imageRows) {
+      const key = liveRel(img.path, imageFilePattern);
+      if (key === null) {
+        result.malformedBodyPaths += 1;
+      } else {
+        liveSet.add(key);
+      }
+    }
+    // tmp 清扫的最小共用件（复审轮⑮：两扫描器共用）
+    const sweepTmpFile = (filePath: string): void => {
+      try {
+        unlinkSync(filePath);
+        result.sweptTmp += 1;
+      } catch {
+        // 恰好消失——跳过
+      }
     };
     // 单目录扫描：tmp 清扫全域通用；孤儿判定仅 notes 域启用（orphan 入参；
     // dirName 用于拼 live 集合的相对键 <noteId>/<文件名>）
@@ -1298,12 +1331,11 @@ export function gcNoteVersions(
         try {
           if (statSync(filePath).mtimeMs >= cutoffMs) continue; // 窗口内不动
           if (name.startsWith(".tmp-")) {
-            unlinkSync(filePath);
-            result.sweptTmp += 1;
+            sweepTmpFile(filePath);
           } else if (
             orphan &&
-            bodyFilePattern.test(name) &&
-            !liveBodyRel().has(`${dirName}/${name}`.toLowerCase()) &&
+            (bodyFilePattern.test(name) || imageFilePattern.test(name)) &&
+            !liveSet.has(`${dirName}/${name}`.toLowerCase()) &&
             result.malformedBodyPaths === 0
           ) {
             unlinkSync(filePath);
@@ -1323,13 +1355,11 @@ export function gcNoteVersions(
       for (const entry of readdirSync(root, { withFileTypes: true })) {
         if (entry.isDirectory()) {
           sweepDir(join(root, entry.name), entry.name, orphan);
-        } else if (
-          entry.name.startsWith(".tmp-") &&
-          statSync(join(root, entry.name)).mtimeMs < cutoffMs
-        ) {
+        } else if (entry.name.startsWith(".tmp-")) {
           try {
-            unlinkSync(join(root, entry.name));
-            result.sweptTmp += 1;
+            if (statSync(join(root, entry.name)).mtimeMs < cutoffMs) {
+              sweepTmpFile(join(root, entry.name));
+            }
           } catch {
             // 恰好消失——跳过
           }

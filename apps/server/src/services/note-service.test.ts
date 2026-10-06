@@ -1615,6 +1615,52 @@ describe("未引用版本延迟回收（GC 骨架）", () => {
     ).toBe(1);
   });
 
+  it("img 孤儿文件纳入清扫（复审轮⑥）：删行留文件→清；被行引用→不删", () => {
+    const { db, dataDir, studentId, attemptId } = makeWorld();
+    const r1 = save(db, dataDir, {
+      studentId,
+      attemptId,
+      questionId: "q1",
+      body: noteDoc(1),
+    });
+    const stale = new Date(Date.now() - 48 * 3600 * 1000);
+    const imgDir = join(dataDir, "blobs", "notes", r1.noteId);
+
+    // 1) 被行引用的 img 文件（head 版本目录下；行在→文件活）
+    const liveName = `img-${randomUUID()}.png`;
+    writeFileSync(join(imgDir, liveName), "live");
+    utimesSync(join(imgDir, liveName), stale, stale);
+    db.insert(noteImagesTable)
+      .values({
+        id: randomUUID(),
+        noteVersionId: r1.versionId,
+        spec: "analysis",
+        pageIndex: 0,
+        cropX: 0,
+        cropY: 0,
+        cropW: 1000,
+        cropH: 800,
+        pixelWidth: 320,
+        pixelHeight: 200,
+        path: ["blobs", "notes", r1.noteId, liveName].join("/"),
+        byteSize: 4,
+        hash: "e".repeat(64),
+        state: "ready",
+      })
+      .run();
+    // 2) 孤儿 img 文件（合模式命名、无任何行引用——行已删文件残留形态）
+    const orphanName = `img-${randomUUID()}.png`;
+    writeFileSync(join(imgDir, orphanName), "orphan");
+    utimesSync(join(imgDir, orphanName), stale, stale);
+
+    const result = gcNoteVersions(db, dataDir, { now: new Date() });
+    // head 版本与其图片行均在保留集合——不删；孤儿 img 被清
+    expect(result.malformedBodyPaths).toBe(0);
+    expect(result.sweptOrphanFiles).toBe(1);
+    expect(existsSync(join(imgDir, liveName))).toBe(true);
+    expect(existsSync(join(imgDir, orphanName))).toBe(false);
+  });
+
   it("存量 bodyPath 形态异常 → 放弃本轮孤儿清扫（保守不删），tmp 清扫不受影响", () => {
     const { db, dataDir, studentId, attemptId } = makeWorld();
     const r1 = save(db, dataDir, {
