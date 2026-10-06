@@ -23,7 +23,10 @@ import type {
   InkInputMode,
   InkToolConfig,
 } from "@/features/ink/engine/index.ts";
-import { NoteLayer } from "@/features/notes/NoteLayer";
+import {
+  NOTE_ENGINE_KEEPALIVE_MS,
+  NoteLayer,
+} from "@/features/notes/NoteLayer";
 import { stroke } from "@/features/notes/note-fixtures";
 import {
   getNoteRecord,
@@ -243,7 +246,7 @@ describe("NoteLayer：收起/展开形态", () => {
     await waitForEngine(); // 引擎挂载（localLoaded settle 后）
   });
 
-  it("开合不丢稿（挂载卸载往返）：写→收起→标记显示笔数→展开重挂载恢复", async () => {
+  it("开合不丢稿：写→收起（保活不卸载）→标记笔数→展开零重建（复审⑦）", async () => {
     renderLayer({ initialOpen: true });
     const first = await waitForEngine();
     emitStroke(first, [
@@ -253,18 +256,44 @@ describe("NoteLayer：收起/展开形态", () => {
     const record = await getNoteRecord(SESSION_A, SCOPE);
     expect(record?.doc.ink.strokes.length).toBe(1);
 
-    // 收起 → 引擎销毁（画布卸载），store 正文保留
+    // 收起 → 纸面隐藏保留（保活期内不销毁），store 正文保留
     fireEvent.click(screen.getByRole("button", { name: /收起/ }));
-    expect(mockDestroy).toHaveBeenCalled();
+    expect(mockDestroy).not.toHaveBeenCalled();
     expect(screen.getByText(/1 笔/)).toBeInTheDocument();
 
-    // 展开 → 重挂载，initial 带回全部笔迹
+    // 展开 → 零重建（同一引擎实例，不重放 initial）
     fireEvent.click(screen.getByRole("button", { name: /草稿纸/ }));
-    const second = await waitForEngine(2);
-    const initial = (second.opts as { initial?: InkDoc<"atrament"> }).initial;
-    expect(initial?.data.strokes.length).toBe(1);
-    // 挂载首帧不重复 load（initial 已带内容——指纹登记即止）
-    expect(second.load).not.toHaveBeenCalled();
+    await vi.waitFor(() =>
+      expect(screen.getByRole("toolbar")).toBeInTheDocument(),
+    );
+    expect(entries.length).toBe(1);
+  });
+
+  it("保活超时才卸载；重开重建且 initial 带回笔迹（自写自载令牌守卫复审②）", async () => {
+    vi.useFakeTimers();
+    try {
+      renderLayer({ initialOpen: true });
+      const first = await waitForEngine();
+      emitStroke(first, [
+        [10, 10],
+        [40, 40],
+      ]);
+      fireEvent.click(screen.getByRole("button", { name: /收起/ }));
+      expect(mockDestroy).not.toHaveBeenCalled();
+      act(() => {
+        vi.advanceTimersByTime(NOTE_ENGINE_KEEPALIVE_MS);
+      });
+      expect(mockDestroy).toHaveBeenCalledTimes(1); // 超时卸载释放画布
+
+      // 重开：重建引擎，initial 带回全部笔迹；挂载首帧只登记令牌不重复 load
+      fireEvent.click(screen.getByRole("button", { name: /草稿纸/ }));
+      const second = await waitForEngine(2);
+      const initial = (second.opts as { initial?: InkDoc<"atrament"> }).initial;
+      expect(initial?.data.strokes.length).toBe(1);
+      expect(second.load).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("外部播种到达（本地无记录）：引擎 load 载入服务端稿", async () => {

@@ -182,14 +182,12 @@ test.describe("答题页草稿层（T6R.9）", () => {
       // ④ 笔记上行全链路（T6R.4 服务端 CAS 首传）
       await notePut;
 
-      // ⑤ 收起：画布卸载（标记带笔数），选项保持
+      // ⑤ 收起：纸面隐藏保留（保活期内不卸载；标记带笔数），选项保持
       await choiceCard.getByRole("button", { name: /收起/ }).click();
       await expect(
         choiceCard.getByRole("button", { name: /草稿纸（已有 1 笔）/ }),
       ).toBeVisible();
-      await expect(choiceCard.locator('[data-slot="note-paper"]')).toHaveCount(
-        0,
-      );
+      await expect(choiceCard.locator('[data-slot="note-paper"]')).toBeHidden();
 
       // ⑥ 刷新 → 真 IDB 恢复：有笔迹自动展开、笔数回显、选项回显
       await studentPage.reload();
