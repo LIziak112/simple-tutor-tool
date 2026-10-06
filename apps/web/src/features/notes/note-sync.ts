@@ -93,6 +93,13 @@ const uploadQueue = new SerialTaskQueue();
 const queuedKeys = new Set<string>();
 /** 在途请求的中止器（账号切换/登出时 abort） */
 const controllers = new Map<string, AbortController>();
+/**
+ * gzip 字节缓存：按待传正文快照的对象引用 memo——退避重试复用同一
+ * pending.doc 引用（note-store 整体替换不就地改动），重复 gzip 直接命中；
+ * 新写入换新对象，旧缓存随引用失联自动失效（WeakMap 不阻回收）。
+ * 幂等要点同时成立：同引用 ⇒ 同字节 ⇒ 服务端同 hash。
+ */
+const gzipMemo = new WeakMap<object, Uint8Array<ArrayBuffer>>();
 
 interface DocScheduler {
   debounce: ReturnType<typeof setTimeout> | null;
@@ -214,8 +221,13 @@ async function runUpload(
   controllers.set(key, controller);
   setUploading(session, scope, true);
   try {
-    // 幂等要点：重试序列化同一 pending.doc 对象 ⇒ 相同字节 ⇒ 服务端同 hash
-    const bytes = await gzipOrRaw(JSON.stringify(doc));
+    // 同引用直接复用字节（退避重试不重复 gzip）；重试序列化同一对象 ⇒
+    // 相同字节 ⇒ 服务端同 hash（幂等）
+    let bytes = gzipMemo.get(doc);
+    if (bytes === undefined) {
+      bytes = await gzipOrRaw(JSON.stringify(doc));
+      gzipMemo.set(doc, bytes);
+    }
     if (stale()) return;
     const receipt = await putNoteDocumentApi(
       scope.attemptId,

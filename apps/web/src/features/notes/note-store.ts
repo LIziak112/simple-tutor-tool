@@ -311,7 +311,9 @@ export function installNoteBackend(backend: NoteStoreBackend): void {
   queues.clear();
   records.clear();
   viewCache.clear();
-  storeVersion++;
+  keyVersions.clear();
+  uploadingKeys.clear();
+  allGen++;
   backendGeneration++;
   activeBackend = backend;
 }
@@ -424,11 +426,17 @@ function mutate(
 // ---------- 通知与快照（useSyncExternalStore 数据源） ----------
 
 const listeners = new Set<(key: string) => void>();
-/** 全局版本号：任何记录变更 +1；视图缓存按版本失效 */
-let storeVersion = 0;
+/**
+ * 视图失效版本（复审④：通知不再全局放大）：
+ * - keyVersions 按键递增——只有变更键的视图缓存失效，他键快照引用稳定
+ *   （useSyncExternalStore 不因别的题重渲染）；
+ * - allGen 全局代际——bind/unbind 等视野整体变化时全部失效。
+ */
+const keyVersions = new Map<string, number>();
+let allGen = 0;
 const viewCache = new Map<
   string,
-  { version: number; view: NoteRecordView | null }
+  { allGen: number; keyVersion: number; view: NoteRecordView | null }
 >();
 /** 在途上传键集合（note-sync 维护；派生 uploading 用，纯会话内存态） */
 const uploadingKeys = new Set<string>();
@@ -442,13 +450,13 @@ export function subscribeNoteStore(cb: (key: string) => void): () => void {
 }
 
 function notify(key: string): void {
-  storeVersion++;
+  keyVersions.set(key, (keyVersions.get(key) ?? 0) + 1);
   for (const cb of [...listeners]) cb(key);
 }
 
 /** 通知全部监听者重取快照（会话绑定/解绑后视野变化时由 note-sync 调用） */
 export function notifyNoteStoreAll(): void {
-  storeVersion++;
+  allGen++;
   for (const cb of [...listeners]) cb("*");
 }
 
@@ -516,9 +524,21 @@ export interface NoteRecordView {
   overview: NoteStatusOverview;
 }
 
+/**
+ * 正文物化（NoteDocInput → parse 补默认值；非法返回 null）。按 doc 对象
+ * 引用 memo（复审④）：记录内 doc 整体替换不就地改动，local 翻转等
+ * 非正文变更触发的快照重建不再重复全文档 Zod 校验（30 万点上限的
+ * superRefine 是热路径）；引用替换自然失效。
+ */
+const parseMemo = new WeakMap<NoteDocInput, NoteDoc | null>();
+
 function safeParseDoc(doc: NoteDocInput): NoteDoc | null {
+  const cached = parseMemo.get(doc);
+  if (cached !== undefined) return cached;
   const parsed = noteDocSchema.safeParse(doc);
-  return parsed.success ? parsed.data : null;
+  const result = parsed.success ? parsed.data : null;
+  parseMemo.set(doc, result);
+  return result;
 }
 
 /** 读记录（内存优先；未载入时回源后端并缓存）。无记录返回 null */
@@ -566,8 +586,14 @@ export function getNoteView(
   const key = noteKeyOf(session, scope);
   const record = records.get(key);
   if (record === undefined) return null;
+  // 失效判定（复审④按键版本）：他键变更不碰本键缓存——快照引用稳定，
+  // useSyncExternalStore 不因别的笔记重渲染
   const cached = viewCache.get(key);
-  if (cached !== undefined && cached.version === storeVersion) {
+  if (
+    cached !== undefined &&
+    cached.allGen === allGen &&
+    cached.keyVersion === (keyVersions.get(key) ?? 0)
+  ) {
     return cached.view;
   }
   const uploading = uploadingKeys.has(key);
@@ -584,7 +610,11 @@ export function getNoteView(
     denied: record.denied,
     overview: deriveNoteStatusOverview(record, uploading),
   };
-  viewCache.set(key, { version: storeVersion, view });
+  viewCache.set(key, {
+    allGen,
+    keyVersion: keyVersions.get(key) ?? 0,
+    view,
+  });
   return view;
 }
 
@@ -899,5 +929,6 @@ export function resetNoteStoreForTest(): void {
   listeners.clear();
   uploadingKeys.clear();
   viewCache.clear();
-  storeVersion++;
+  keyVersions.clear();
+  allGen++;
 }

@@ -17,6 +17,7 @@ import {
   deriveServerState,
   getNoteDoc,
   getNoteRecord,
+  getNoteView,
   installNoteBackend,
   listPendingNotes,
   memoryNoteBackend,
@@ -424,6 +425,20 @@ describe("note-store：IDB 失败与订阅", () => {
     await applyUploadReceipt(SESSION_A, SCOPE, mutation, RECEIPT_1);
     const key = noteKeyOf(SESSION_A, SCOPE);
     expect(events.filter((k) => k === key).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("跨键隔离：A 键变更不影响 B 键快照引用（他键不重渲染）", async () => {
+    const scopeB = { ...SCOPE, questionId: "p1-q2" };
+    writeNoteDoc(SESSION_A, SCOPE, DOC_A);
+    writeNoteDoc(SESSION_A, scopeB, DOC_B);
+    const viewB1 = getNoteView(SESSION_A, scopeB);
+    expect(viewB1).not.toBeNull();
+    writeNoteDoc(SESSION_A, SCOPE, DOC_B); // 只有 A 键变更
+    const viewB2 = getNoteView(SESSION_A, scopeB);
+    expect(viewB2).toBe(viewB1); // 引用稳定：B 键缓存未失效
+    writeNoteDoc(SESSION_A, scopeB, DOC_A); // B 键自身变更
+    const viewB3 = getNoteView(SESSION_A, scopeB);
+    expect(viewB3).not.toBe(viewB2); // 本键快照按需重建
   });
 });
 
