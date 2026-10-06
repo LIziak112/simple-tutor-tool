@@ -54,6 +54,7 @@ function makeEngine(options: { pngFails?: boolean } = {}): InkEngine {
     redo: () => undefined,
     clear: () => undefined,
     setTool: () => undefined,
+    setInputMode: () => undefined,
     on: () => () => undefined,
     canUndo: () => false,
     canRedo: () => false,

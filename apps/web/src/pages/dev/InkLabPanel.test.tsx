@@ -52,6 +52,7 @@ vi.mock("@/features/ink/engine/index.ts", () => ({
       redo: () => undefined,
       clear: mockClear,
       setTool: (_tool: InkToolConfig) => undefined,
+      setInputMode: () => undefined,
       on:
         (
           _event: "change",
