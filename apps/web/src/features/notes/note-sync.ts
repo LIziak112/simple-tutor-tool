@@ -344,6 +344,10 @@ function handleRecordChanged(key: string): void {
 /** 恢复在线/可见：跳过一切计时器立即补传当前会话全部待传 */
 function triggerImmediateAll(): void {
   if (currentSession === null) return;
+  // 调度器（schedulers）覆盖会话内全部待传键：写入时经 store 通知入编，
+  // 重进时经 bind 的 listPendingNotes 扫描入编；其他标签页此后写入本会话
+  // IDB 键的场景由下一次 bind/写入通知兜底——不在此重扫（重扫会给刚
+  // due 的键重挂防抖，失败场景下绕过退避节奏）
   for (const key of [...schedulers.keys()]) {
     const parsed = parseNoteKey(key);
     if (parsed === null || !sameSession(currentSession, parsed.session)) {
@@ -361,8 +365,6 @@ function triggerImmediateAll(): void {
     clearTimers(key);
     due(key);
   }
-  // 计时器视角之外的脏记录（极端：计时器丢失）也兜底扫描一遍
-  void scanAndSchedule();
 }
 
 /** 扫描当前会话待传清单并逐键编排（bind 补传与 online 兜底共用） */

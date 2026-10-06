@@ -297,6 +297,8 @@ function idbNoteBackend(): NoteStoreBackend {
 }
 
 let activeBackend: NoteStoreBackend | null = null;
+/** 后端代际：install 递增——旧 drain 不得再改动记录状态（防热换后端时误标） */
+let backendGeneration = 0;
 
 /** 测试注入后端（生产不调用；同时清内存缓存与队列——旧缓存属旧后端） */
 export function installNoteBackend(backend: NoteStoreBackend): void {
@@ -307,6 +309,7 @@ export function installNoteBackend(backend: NoteStoreBackend): void {
   records.clear();
   viewCache.clear();
   storeVersion++;
+  backendGeneration++;
   activeBackend = backend;
 }
 
@@ -351,6 +354,7 @@ function errText(err: unknown): string {
  */
 async function drain(key: string): Promise<void> {
   const q = queueOf(key);
+  const gen = backendGeneration; // install 换后端后，本趟 drain 不再改记录
   q.writing = true;
   try {
     while (q.queued) {
@@ -360,6 +364,7 @@ async function drain(key: string): Promise<void> {
       try {
         await backend().set(key, persistedCopy(record));
       } catch (err) {
+        if (gen !== backendGeneration) continue; // 已换后端：结果作废
         const current = records.get(key);
         if (current !== undefined) {
           current.local = "failed";
@@ -370,6 +375,7 @@ async function drain(key: string): Promise<void> {
         // 无新写则循环自然退出，等下一次 writeNoteDoc 重新入队
         continue;
       }
+      if (gen !== backendGeneration) continue; // 已换后端：不标 saved
       const current = records.get(key);
       if (current !== undefined && !q.queued) {
         current.local = "saved";
