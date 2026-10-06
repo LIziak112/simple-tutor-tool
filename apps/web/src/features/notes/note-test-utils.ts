@@ -1,11 +1,11 @@
 /**
  * 草稿模块测试工具（T6R.8 复审⑪收敛）：note-store/note-sync/
  * use-note-record 三个测试文件共用的会话/定位/夹具/回执工厂与落盘等待。
- * 非测试运行时文件（同 note-fixtures 惯例）：不依赖 describe/it，只借
- * vitest 的 vi.waitFor；vi.mock 工厂仍留各测试文件（提升语义属用例本身）。
+ * 纯运行时依赖（contract + note-store），不依赖任何测试框架——vi.mock
+ * 工厂留在各测试文件（提升语义属用例本身）；waitForLocalSaved 为本地
+ * 轮询（note-store 测试不用假时钟，真定时器 10ms 步进）。
  */
 import type { NoteHeadData, NoteVersionReceipt } from "@tutor/contract";
-import { vi } from "vitest";
 import { docOf, stroke } from "@/features/notes/note-fixtures";
 import {
   getNoteRecord,
@@ -84,13 +84,15 @@ export function headOf(overrides: Partial<NoteHeadData> = {}): NoteHeadData {
 
 // ---------- 等待助手 ----------
 
-/** 等某键落盘完成（local=saved；串行队列 4 处样板收敛） */
+/** 等某键落盘完成（local=saved；本地轮询 10ms×100，不依赖测试框架） */
 export async function waitForLocalSaved(
   session: NoteSessionRef,
   scope: NoteScope,
 ): Promise<void> {
-  await vi.waitFor(async () => {
+  for (let i = 0; i < 100; i += 1) {
     const record = await getNoteRecord(session, scope);
-    if (record?.local !== "saved") throw new Error("not saved yet");
-  });
+    if (record?.local === "saved") return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("not saved yet（100×10ms 轮询超时，测试前置失败）");
 }

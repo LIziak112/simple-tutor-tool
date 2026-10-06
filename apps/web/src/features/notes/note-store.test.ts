@@ -341,8 +341,7 @@ describe("note-store：回执与状态派生", () => {
       hash: "c".repeat(64),
       serverSavedAt: "2026-10-06T02:00:00.000Z",
     };
-    const mutation = await pendingMutationIdOf(SESSION_A, SCOPE);
-    await applyUploadConflict(SESSION_A, SCOPE, mutation, current, "冲突");
+    await applyUploadConflict(SESSION_A, SCOPE, current, "冲突");
     const record = await recordOf(SESSION_A, SCOPE);
     expect(record.conflict?.current).toEqual(current);
     expect(record.conflict?.localDoc).toBeDefined(); // 本地副本在记录里
@@ -530,7 +529,7 @@ describe("note-store：备份回退 load 守卫（复审②）", () => {
     await applyServerLoad(SESSION_A, SCOPE, DOC_A, rolledBackHead);
     const record = await recordOf(SESSION_A, SCOPE);
     expect(record.conflict).not.toBeNull(); // 回退检测置冲突
-    expect(record.conflict?.current.revision).toBe(2);
+    expect(record.conflict?.current?.revision).toBe(2);
     expect(record.doc.ink.strokes.length).toBe(2); // 本地 B 稿保留，未被 A 覆盖
     expect(record.baseRevision).toBe(5); // 不回拨（对齐留待裁决）
     expect(deriveServerState(record, false)).toBe("conflict");

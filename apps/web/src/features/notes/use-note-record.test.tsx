@@ -39,7 +39,7 @@ const putMock = vi.mocked(putNoteDocumentApi);
 
 const RECEIPT = receiptOf(1);
 
-function renderProbe(
+function renderHook(
   attemptId = SCOPE.attemptId,
   questionId = SCOPE.questionId,
 ): { current: () => ReturnType<typeof useNoteRecord>; unmount: () => void } {
@@ -66,13 +66,13 @@ afterEach(() => {
 
 describe("useNoteRecord（T6R.8）", () => {
   it("会话未绑定 → standby（null）", () => {
-    const probe = renderProbe();
+    const probe = renderHook();
     expect(probe.current()).toBeNull();
     probe.unmount();
   });
 
   it("订阅写入→上传→回执：dirty→uploading→synced 重渲染；四维总览可见", async () => {
-    const probe = renderProbe();
+    const probe = renderHook();
     bindNoteSession(SESSION_A);
     expect(probe.current()).toBeNull(); // 记录尚未创建
     act(() => {
@@ -104,7 +104,7 @@ describe("useNoteRecord（T6R.8）", () => {
     act(() => {
       writeNoteDoc(SESSION_A, SCOPE, DOC_A);
     });
-    const probe = renderProbe();
+    const probe = renderHook();
     probe.unmount(); // 组件消失
     await act(async () => {
       await vi.advanceTimersByTimeAsync(NOTE_SYNC_DEBOUNCE_MS);
@@ -121,7 +121,7 @@ describe("useNoteRecord（T6R.8）", () => {
       writeNoteDoc(SESSION_A, SCOPE, DOC_A);
     });
     bindNoteSession(SESSION_B);
-    const probe = renderProbe();
+    const probe = renderHook();
     expect(probe.current()).toBeNull(); // B 名下无记录（键前缀隔离）
     probe.unmount();
   });

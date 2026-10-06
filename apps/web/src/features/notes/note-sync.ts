@@ -36,8 +36,9 @@
  * （方案 §6.2）；杀后台只恢复已落盘事务（真机验收口径，T6R.14）。
  */
 import type { NoteConflictSummary, NoteDocInput } from "@tutor/contract";
-import { noteConflictSummarySchema, noteDocSchema } from "@tutor/contract";
+import { noteConflictSummarySchema } from "@tutor/contract";
 import { gzipOrRaw } from "@/features/ink/gzip";
+import { parseNoteDocOrThrow } from "@/features/notes/note-fixtures";
 import {
   ApiError,
   fetchStudentNoteDocumentApi,
@@ -162,7 +163,9 @@ function clearTimer(timer: ReturnType<typeof setTimeout> | null): void {
   if (timer !== null) clearTimeout(timer);
 }
 
-/** 清某键全部计时器并结束脏周期（pending 清空/冲突/被拒/会话切换） */
+/** 清某键全部计时器并结束脏周期（pending 清空/冲突/被拒/会话切换）。
+ * 三计时器全空且非在途/排队时回收条目（复审⑭）：后续通知经 schedulerOf
+ * 重建，failures/lastMutationId 随之归零——终态键不长期占驻。 */
 function clearTimers(key: string): void {
   const s = schedulers.get(key);
   if (s === undefined) return;
@@ -173,6 +176,7 @@ function clearTimers(key: string): void {
   s.maxWait = null;
   s.backoff = null;
   s.dirtyPeriod = false;
+  if (!s.queued && !controllers.has(key)) schedulers.delete(key);
 }
 
 function sameSession(a: NoteSessionRef, b: NoteSessionRef): boolean {
@@ -235,7 +239,11 @@ function classifyPutError(err: unknown): PutVerdict {
       current: err.extra?._current ?? null,
     });
     if (parsed.success && parsed.data.current !== null) {
-      return { kind: "conflict", current: parsed.data.current, reason: message };
+      return {
+        kind: "conflict",
+        current: parsed.data.current,
+        reason: message,
+      };
     }
     return { kind: "retry" };
   }
@@ -318,7 +326,6 @@ async function runUpload(
       await applyUploadConflict(
         session,
         scope,
-        mutationId,
         verdict.current,
         verdict.reason,
       );
@@ -371,6 +378,13 @@ function due(key: string): void {
   const s = schedulerOf(key);
   if (s.queued) return;
   s.queued = true;
+  // 条目可能经 clearTimers 回收重建（复审⑭）——把即将上传的 pending 代际
+  // 登记为 lastMutationId：完成后的同内容通知不会误判为「新写」（否则
+  // 会清退避、挂防抖——flush/强刷触发的上传失败会被击穿）
+  const record = peekNoteRecord(inSession.session, inSession.scope);
+  if (s.lastMutationId === null && record?.pending != null) {
+    s.lastMutationId = record.pending.mutationId;
+  }
   const { session, scope } = inSession;
   const epoch = sessionEpoch;
   uploadQueue
@@ -620,17 +634,17 @@ export async function resolveNoteConflictKeepCloud(
   // 已是窗口内新写——快照必须先取）
   const expectedMutationId = record.pending?.mutationId;
   const raw = await fetchStudentNoteDocumentApi(versionId);
-  const parsed = noteDocSchema.safeParse(raw);
-  if (!parsed.success) {
-    throw new Error(
-      "云端草稿正文损坏或版本不兼容，无法保留云端，请选择保留本机内容",
-    );
-  }
+  const cloudDoc = parseNoteDocOrThrow(
+    raw,
+    "云端草稿正文",
+    "，无法保留云端，请选择保留本机内容",
+  );
   await resolveNoteConflict(session, scope, {
     keep: "cloud",
-    doc: parsed.data satisfies NoteDocInput,
-    // 拉取期间的窗口快照——pending 已换新则新写胜出（store 内守卫）
-    expectedMutationId,
+    doc: cloudDoc satisfies NoteDocInput,
+    // 拉取期间的窗口快照——pending 已换新则新写胜出（store 内守卫）；
+    // 条件展开适配 exactOptionalPropertyTypes（不传≠传 undefined）
+    ...(expectedMutationId !== undefined ? { expectedMutationId } : {}),
   });
 }
 

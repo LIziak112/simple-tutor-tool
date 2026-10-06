@@ -1201,7 +1201,9 @@ export function putNoteDocumentApi(
       {
         method: "PUT",
         body: form,
-        ...(signal !== undefined ? { signal } : {}),
+        // RequestInit.signal 类型为 AbortSignal | null（非 undefined——
+        // exactOptionalPropertyTypes 口径；复审⑭去冗余展开）
+        signal: signal ?? null,
       },
     ),
   );

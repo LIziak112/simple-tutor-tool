@@ -23,13 +23,9 @@
  * 方案页数变少时，旧的高页码槽位会残留（不会被本链路清除）；「完整重建 =
  * 替换整个槽位集」需要服务端槽位集替换语义，留后续任务裁定，不在本单扩。
  */
-import {
-  type NoteDoc,
-  type NoteImageMeta,
-  type NoteImageSpec,
-  noteDocSchema,
-} from "@tutor/contract";
+import type { NoteDoc, NoteImageMeta, NoteImageSpec } from "@tutor/contract";
 import { paddedStrokeBoxesOf } from "@/features/ink/engine/bounds.ts";
+import { parseNoteDocOrThrow } from "@/features/notes/note-fixtures";
 import {
   fetchStudentNoteDocumentApi,
   fetchTeacherNoteDocumentApi,
@@ -119,12 +115,10 @@ export async function recoverNoteImages(
     params.role === "student"
       ? await fetchStudentNoteDocumentApi(params.versionId)
       : await fetchTeacherNoteDocumentApi(params.versionId);
-  const parsed = noteDocSchema.safeParse(raw);
-  if (!parsed.success) {
-    const first = parsed.error.issues[0]?.message ?? "形状错误";
-    throw new Error(`草稿正文损坏或版本不兼容，无法重建派生图：${first}`);
-  }
-  return syncNoteImages({ ...params, doc: parsed.data });
+  // noteDocSchema 收窄（缺省高度/背景物化——不物化会 NaN，见契约
+  // NoteDocInput 注释；解析原语三处共用 note-fixtures.parseNoteDocOrThrow）
+  const doc = parseNoteDocOrThrow(raw, "草稿正文", "，无法重建派生图");
+  return syncNoteImages({ ...params, doc });
 }
 
 /** 队列状态快照（诊断/状态展示） */

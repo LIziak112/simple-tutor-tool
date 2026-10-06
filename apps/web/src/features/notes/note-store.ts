@@ -52,6 +52,7 @@ import type {
 } from "@tutor/contract";
 import { noteDocSchema } from "@tutor/contract";
 import { digestOf } from "@/features/attempt/draft-merge";
+import { parseNoteDocOrThrow } from "@/features/notes/note-fixtures";
 import {
   idbKVBackend,
   type KVStoreBackend,
@@ -263,10 +264,11 @@ let activeBackend: NoteStoreBackend | null = null;
 /** 后端代际：install 递增——旧 drain 不得再改动记录状态（防热换后端时误标） */
 let backendGeneration = 0;
 
-/** 测试注入后端（生产不调用；同时清内存缓存与队列——旧缓存属旧后端） */
-export function installNoteBackend(backend: NoteStoreBackend): void {
+/** 内存缓存整体复位（install/reset 共用，复审⑭抽取；逐 q 置 queued=false
+ * 保留：在途 drain 的 while 检查即刻失效，不再向旧后端写盘） */
+function clearCaches(): void {
   for (const q of queues.values()) {
-    q.queued = false; // 旧后端的待写全部作废（不在新后端重放）
+    q.queued = false;
   }
   queues.clear();
   records.clear();
@@ -274,6 +276,11 @@ export function installNoteBackend(backend: NoteStoreBackend): void {
   keyVersions.clear();
   uploadingKeys.clear();
   allGen++;
+}
+
+/** 测试注入后端（生产不调用；同时清内存缓存与队列——旧缓存属旧后端） */
+export function installNoteBackend(backend: NoteStoreBackend): void {
+  clearCaches();
   backendGeneration++;
   activeBackend = backend;
 }
@@ -350,6 +357,7 @@ async function drain(key: string): Promise<void> {
     }
   } finally {
     q.writing = false;
+    if (!q.queued) queues.delete(key); // 空条目回收（复审⑭）：下次写重建
   }
 }
 
@@ -646,23 +654,22 @@ function applyHeadInfo(record: NoteLocalRecord, head: NoteHeadData): boolean {
 /**
  * 载入既有记录后变更的公共前奏（复审⑧）：内存命中或回源后端；无记录时
  * 的策略由 create 决定——播种类传 freshRecord（head/load 落在新壳上），
- * 回执类传 null（记录已不存在的迟到回执直接丢弃，返回 false 表跳过）。
+ * 回执类传 null（记录已不存在的迟到回执直接丢弃）。
  */
 async function mutateLoaded(
   session: NoteSessionRef,
   scope: NoteScope,
   create: (() => NoteLocalRecord) | null,
   fn: (record: NoteLocalRecord) => void,
-): Promise<boolean> {
+): Promise<void> {
   const key = noteKeyOf(session, scope);
   const existing = records.get(key) ?? (await getNoteRecord(session, scope));
   if (existing === null) {
-    if (create === null) return false;
+    if (create === null) return;
     mutate(key, create, fn);
-    return true;
+    return;
   }
   mutate(key, () => existing, fn);
-  return true;
 }
 
 /**
@@ -678,13 +685,9 @@ export async function applyServerLoad(
   raw: unknown,
   head?: NoteHeadData | null,
 ): Promise<void> {
-  const parsed = noteDocSchema.safeParse(raw);
-  if (!parsed.success) {
-    const first = parsed.error.issues[0]?.message ?? "形状错误";
-    throw new Error(`草稿正文损坏或版本不兼容：${first}`);
-  }
+  const serverDoc = parseNoteDocOrThrow(raw);
   await mutateLoaded(session, scope, freshRecord, (record) =>
-    applyLoadMutations(record, parsed.data, head),
+    applyLoadMutations(record, serverDoc, head),
   );
 }
 
@@ -749,7 +752,6 @@ export async function applyUploadReceipt(
 export async function applyUploadConflict(
   session: NoteSessionRef,
   scope: NoteScope,
-  _mutationId: string,
   current: NoteRevisionConflictCurrent | null,
   reason: string,
 ): Promise<void> {
@@ -894,11 +896,6 @@ export async function flushNoteStore(
 
 /** 仅测试使用：复位全部模块状态（生产不调用） */
 export function resetNoteStoreForTest(): void {
-  records.clear();
-  queues.clear();
+  clearCaches();
   listeners.clear();
-  uploadingKeys.clear();
-  viewCache.clear();
-  keyVersions.clear();
-  allGen++;
 }

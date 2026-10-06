@@ -231,7 +231,9 @@ describe("note-sync：重试、退避与幂等", () => {
     // 重挂防抖）——t=6.9s 仍只有 3 次，第三次重试必须等到 t=9s
     await vi.advanceTimersByTimeAsync(1.9 * NOTE_SYNC_BACKOFF_BASE_MS);
     expect(putMock.mock.calls.length).toBe(3);
-    await vi.advanceTimersByTimeAsync(4 * NOTE_SYNC_BACKOFF_BASE_MS - 1.9 * NOTE_SYNC_BACKOFF_BASE_MS); // t=9s 成功
+    await vi.advanceTimersByTimeAsync(
+      4 * NOTE_SYNC_BACKOFF_BASE_MS - 1.9 * NOTE_SYNC_BACKOFF_BASE_MS,
+    ); // t=9s 成功
     expect(putMock.mock.calls.length).toBe(4);
     const ids = putMock.mock.calls.map((c) => c[3].mutationId);
     expect(new Set(ids).size).toBe(1); // 幂等：同 mutationId 重放
@@ -246,7 +248,12 @@ describe("note-sync：重试、退避与幂等", () => {
         SESSION_A,
         SCOPE,
         docOf(
-          Array.from({ length: i }, (_, k) => stroke([[0, 0], [10, k + 1]])),
+          Array.from({ length: i }, (_, k) =>
+            stroke([
+              [0, 0],
+              [10, k + 1],
+            ]),
+          ),
         ),
       );
       await vi.advanceTimersByTimeAsync(1500);

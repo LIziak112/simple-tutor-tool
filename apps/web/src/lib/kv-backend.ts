@@ -41,9 +41,11 @@ export function memoryKVBackend(): KVStoreBackend {
 }
 
 /**
- * 前缀区间：[prefix, prefix+U+FFFF]。上界字符用 String.fromCharCode
- * 显式构造——源码里放不可见字符（U+FFFF）易在评审中被误删；合法
- * JSON.stringify 键不含它，区间恰好覆盖全部前缀键。
+ * 前缀区间：[prefix, prefix+U+FFFF]。上界依据（复审⑭修正表述）：本仓键
+ * 是 JSON.stringify 的数组串，prefix 后只可能是 `,`（0x2C）或 `]`（0x5D）
+ * 等小于 U+FFFF 的后继字符——prefix+U+FFFF 恰好覆盖全部前缀键且不越入
+ * 下一段。上界字符用 String.fromCharCode 显式构造——源码里放不可见字符
+ * （U+FFFF）易在评审中被误删。
  */
 function prefixRange(prefix: string): IDBKeyRange {
   return IDBKeyRange.bound(prefix, prefix + String.fromCharCode(0xffff));
