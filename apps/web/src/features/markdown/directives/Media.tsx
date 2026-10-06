@@ -66,16 +66,19 @@ export function ImageDirective({ attrs }: DirectiveProps) {
 
 type GraphState = "loading" | "ready" | "error";
 
-/** 解析 range 属性（如 "-3,3"）为 x 轴区间；非法时交给 function-plot 自动选取 */
-function parseRange(
+/**
+ * 解析 range 属性（如 "-3,3"）为 x 轴区间；非法时返回 null（调用方交给
+ * function-plot 自动选取）。T6R.12 起导出共享：question-materials 的图表
+ * 静态化与组件渲染同一口径（搬家不抄数）。
+ */
+export function parseGraphRange(
   range: string | undefined,
-): { domain: [number, number] } | undefined {
-  if (!range) return undefined;
+): { domain: [number, number] } | null {
+  if (!range) return null;
   const parts = range.split(",").map((part) => Number.parseFloat(part.trim()));
-  if (parts.length !== 2 || parts.some((n) => !Number.isFinite(n)))
-    return undefined;
+  if (parts.length !== 2 || parts.some((n) => !Number.isFinite(n))) return null;
   const [min, max] = parts as [number, number];
-  if (min >= max) return undefined;
+  if (min >= max) return null;
   return { domain: [min, max] };
 }
 
@@ -108,7 +111,7 @@ export function GraphDirective({ attrs }: DirectiveProps) {
             data: [{ fn, graphType: "polyline" }],
           };
           // exactOptionalPropertyTypes：xAxis 仅在可解析出区间时携带
-          const xAxis = parseRange(range);
+          const xAxis = parseGraphRange(range);
           if (xAxis) options.xAxis = xAxis;
           functionPlot.default(options);
           if (!disposed) setState("ready");
