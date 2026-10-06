@@ -251,7 +251,7 @@ describe("renderReviewPackPrompt（共享 review.md 提示词基础）", () => {
   const base = {
     role: "student" as const,
     questionNo: 3,
-    evidenceState: "frozen",
+    evidenceState: "frozen" as const,
     released: true,
     answersIncluded: false,
     files: [

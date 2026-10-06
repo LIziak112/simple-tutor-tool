@@ -13,6 +13,10 @@ import {
   CSV_UTF8_BOM,
   exportCsv,
 } from "../services/export-csv";
+import {
+  buildReviewPackZip,
+  previewReviewPack,
+} from "../services/review-pack-service";
 import { listPendingMarks, markResponse } from "../services/mark-response";
 import { getTeacherNoteEvidence } from "../services/note-service";
 import {
@@ -48,7 +52,11 @@ import {
  * GET 无 JSON body：查询参数手工过契约 schema（数值字段经 coerce 解析字符串）。
  * 返回类型不显式标注 Hono：链式注册把路由签名累积进推断类型（AppType 前提）。
  */
-export function createTeacherAttemptRoutes(db: Db, publicUrl: string) {
+export function createTeacherAttemptRoutes(
+  db: Db,
+  publicUrl: string,
+  dataDir: string,
+) {
   return (
     new Hono<TeacherEnv>()
       .get("/attempts", (c) => {
@@ -100,6 +108,42 @@ export function createTeacherAttemptRoutes(db: Db, publicUrl: string) {
             c.req.param("id"),
             c.req.param("questionId"),
           ),
+        });
+      })
+      // T6R.13：教师单题完整导出预览（统一壳 + no-store；教师域文档——照常
+      // 携带参考答案/判定/评语与真实 id，服务层与 schema 锁定）
+      .post("/attempts/:id/questions/:questionId/review-pack/preview", (c) => {
+        return c.json(
+          {
+            ok: true,
+            data: previewReviewPack(
+              db,
+              dataDir,
+              { kind: "teacher", id: c.var.teacher.id },
+              c.req.param("id"),
+              c.req.param("questionId"),
+            ),
+          },
+          200,
+          { "cache-control": "no-store" },
+        );
+      })
+      // T6R.13：教师单题完整导出 zip 文件直出（同学情数据包口径）
+      .post("/attempts/:id/questions/:questionId/review-pack", async (c) => {
+        const zip = await buildReviewPackZip(
+          db,
+          dataDir,
+          { kind: "teacher", id: c.var.teacher.id },
+          c.req.param("id"),
+          c.req.param("questionId"),
+        );
+        return new Response(zip.bytes, {
+          status: 200,
+          headers: {
+            "content-type": "application/zip",
+            "cache-control": "no-store",
+            "content-disposition": `attachment; filename="${zip.filename}"`,
+          },
         });
       })
       .post("/responses/:id/mark", async (c) => {
