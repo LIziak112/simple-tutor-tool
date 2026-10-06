@@ -44,6 +44,7 @@ import {
   isNull,
   lte,
   ne,
+  sql,
 } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
@@ -458,6 +459,8 @@ export function assembleLearningPack(
       .select()
       .from(responses)
       .where(inArray(responses.attemptId, ids))
+      // rowid 序＝attemptResponseRows 同序（复审 C15：预取行喂展示序装配）
+      .orderBy(sql`rowid`)
       .all()) {
       const list = responsesByAttempt.get(row.attemptId);
       if (list === undefined) responsesByAttempt.set(row.attemptId, [row]);
@@ -475,15 +478,6 @@ export function assembleLearningPack(
       (a.submittedAt ?? "").localeCompare(b.submittedAt ?? "") ||
       a.id.localeCompare(b.id),
   );
-
-  /**
-   * 该 attempt 的逐题行序：frozenRowsInDisplayOrder 统一口径（T6R.3 冻结
-   * 行自身重建；懒冻结存量卷与升级前已交卷沿用题库 join 序——与学生结果
-   * 视图/教师详情同一实现，导出与学生看到的题序一致）。
-   * v1 与 v2 共用（v2 的证据装配 scope 也按此序）。
-   */
-  const orderedResponsesOf = (attempt: Attempt): ResponseRow[] =>
-    frozenRowsInDisplayOrder(db, attempt).map((entry) => entry.row);
 
   // —— ink 条目（勾选 ink 才装配；化名贯穿文件名 D16） ——
   const inkEntryByAttemptQuestion = new Map<string, string>();
@@ -563,19 +557,25 @@ export function assembleLearningPack(
   /** v2（T6R.12）：请求显式 packVersion=2 才走证据装配链；缺省 v1 零变化 */
   const isV2 = request.packVersion === 2;
   /**
-   * v2 展示序行缓存（复审 C11：证据 scope/逐题行/traces 三处共用，v2 冻结
-   * 行重建查询数减半；v1 空表退直算）。displayRowsOf 与 orderedResponsesOf
-   * 在 v1 完全等价。
+   * 展示序行缓存（frozenRowsInDisplayOrder 统一口径；复审 C11/C15/D23：
+   * 证据 scope/逐题行/traces 三处共用，预取行（rowid 序）直接喂入——
+   * 不再二次装载，v1 同样吃缓存；orderedResponsesOf 收编为单一入口）。
    */
   const displayRowsByAttempt = new Map<string, ResponseRow[]>(
-    isV2
-      ? orderedAttempts.map(
-          (attempt) => [attempt.id, orderedResponsesOf(attempt)] as const,
-        )
-      : [],
+    orderedAttempts.map(
+      (attempt) =>
+        [
+          attempt.id,
+          frozenRowsInDisplayOrder(
+            db,
+            attempt,
+            responsesByAttempt.get(attempt.id),
+          ).map((entry) => entry.row),
+        ] as const,
+    ),
   );
   const displayRowsOf = (attempt: Attempt): ResponseRow[] =>
-    displayRowsByAttempt.get(attempt.id) ?? orderedResponsesOf(attempt);
+    displayRowsByAttempt.get(attempt.id) ?? [];
 
   // —— attempts.responses / attempts.summaries / traces.questions 共用的逐题行序 ——
   const traceByAttempt = new Map<
@@ -888,7 +888,6 @@ export function assembleLearningPack(
     displayNameOf,
     responsesByAttempt,
     orderedAttempts,
-    orderedResponsesOf,
     displayRowsOf,
     inkEntries,
     inkEntryByAttemptQuestion,
@@ -925,9 +924,7 @@ interface PackCore {
   readonly displayNameOf: ReadonlyMap<string, string>;
   readonly responsesByAttempt: ReadonlyMap<string, ResponseRow[]>;
   readonly orderedAttempts: readonly Attempt[];
-  /** 该 attempt 的逐题展示序（frozenRowsInDisplayOrder 统一口径） */
-  readonly orderedResponsesOf: (attempt: Attempt) => ResponseRow[];
-  /** 同上，但 v2 走预建缓存（C11；v1 等价直算） */
+  /** 该 attempt 的逐题展示序（frozenRowsInDisplayOrder 统一口径；预取行喂给） */
   readonly displayRowsOf: (attempt: Attempt) => ResponseRow[];
   readonly inkEntries: ReadonlyArray<{
     entry: string;
@@ -1094,6 +1091,68 @@ function packSectionsOf<Q, R>(
   };
 }
 
+/**
+ * 逐题作答行公共底座（v1/v2 同构 15 字段，复审 D19：两处手写重复收敛；
+ * v2 在此之上 spread 快照关联三字段）。
+ */
+function responseBaseOf(
+  core: PackCore,
+  attempt: Attempt,
+  row: ResponseRow,
+  no: number,
+): LearningPackResponse {
+  const inkFile = core.inkEntryByAttemptQuestion.get(
+    `${attempt.id}:${row.questionId}`,
+  );
+  return {
+    attemptId: attempt.id,
+    studentId: attempt.studentId,
+    questionId: row.questionId,
+    no,
+    answerText: serializeStudentAnswer(answerOf(row.answerJson)),
+    autoCorrect: row.autoCorrect,
+    finalCorrect: row.finalCorrect,
+    teacherMark:
+      row.teacherMark === "correct" || row.teacherMark === "wrong"
+        ? row.teacherMark
+        : null,
+    teacherComment: row.teacherComment,
+    ...(inkFile !== undefined ? { inkFile } : {}),
+  };
+}
+
+/**
+ * 讲义切片 ::image 引用的落盘扫描（v1/v2 共用骨架，复审 D24）：
+ * v1 额外把题目 md 文本并入同一次提取（跨源去重与首见序是 v1 既有口径）并
+ * **忽略缺失**（静默跳过）；v2 只扫讲义、缺失显式返回（题目侧由证据装配
+ * 另行提供并去重合并）。
+ */
+function lectureMediaOf(
+  core: PackCore,
+  dataDir: string,
+  extraTexts: readonly string[] = [],
+): {
+  present: Array<{ entry: string; absPath: string; bytes: number }>;
+  missing: Array<{ src: string; reason: string }>;
+} {
+  const mdTexts: string[] = [];
+  for (const item of core.lectureItems) {
+    for (const section of item.sections) mdTexts.push(section.markdown);
+  }
+  mdTexts.push(...extraTexts);
+  const present: Array<{ entry: string; absPath: string; bytes: number }> = [];
+  const missing: Array<{ src: string; reason: string }> = [];
+  for (const src of extractMediaImageSrcs(mdTexts)) {
+    const stat = statMediaSrc(dataDir, src);
+    if ("absPath" in stat) {
+      present.push({ entry: src, absPath: stat.absPath, bytes: stat.bytes });
+    } else {
+      missing.push({ src, reason: stat.reason });
+    }
+  }
+  return { present, missing };
+}
+
 // ---------- v1 装配（缺省路径：形状与行为逐字节锁定） ----------
 
 function assembleV1(core: PackCore): LearningPackAssembly {
@@ -1111,19 +1170,30 @@ function assembleV1(core: PackCore): LearningPackAssembly {
         }
       }
     }
-    const metaOf = new Map(
-      db
+    // 元信息查询收窄（复审 C17）：只取卷内出现的 qid（inArray），不带 stemMd 列
+    const metaOf = new Map<
+      string,
+      { id: string; unitId: string; order: number }
+    >();
+    const latestIds = [...latestSnapshot.keys()];
+    if (latestIds.length > 0) {
+      for (const row of db
         .select({
           id: questions.id,
           unitId: questions.unitId,
           order: questions.order,
-          stemMd: questions.stemMd,
         })
         .from(questions)
-        .where(eq(questions.teacherId, teacherId))
-        .all()
-        .map((row) => [row.id, row] as const),
-    );
+        .where(
+          and(
+            eq(questions.teacherId, teacherId),
+            inArray(questions.id, latestIds),
+          ),
+        )
+        .all()) {
+        metaOf.set(row.id, row);
+      }
+    }
     for (const [questionId, { row }] of latestSnapshot) {
       const snapshot = snapshotOfRow(row);
       const meta = metaOf.get(questionId);
@@ -1165,33 +1235,17 @@ function assembleV1(core: PackCore): LearningPackAssembly {
   }
 
   // —— media 条目（::image 引用的图片打进 zip，条目名 = src 原相对路径） ——
-  // v1 扫描进入 pack 的全部 md 文本（讲义切片 + 题干与详解）；缺文件静默跳过
-  // （既有口径；v2 的缺失显式登记见 assembleV2）
-  const mediaEntries: Array<{ entry: string; absPath: string; bytes: number }> =
-    [];
-  {
-    const mdTexts: string[] = [];
-    for (const item of core.lectureItems) {
-      for (const section of item.sections) mdTexts.push(section.markdown);
-    }
-    if (m.questions !== undefined) {
-      for (const item of questionItems) {
-        mdTexts.push(item.stemMd);
-        if (item.solutionMd !== undefined) mdTexts.push(item.solutionMd);
-      }
-    }
-    for (const src of extractMediaImageSrcs(mdTexts)) {
-      const stat = statMediaSrc(dataDir, src);
-      if ("absPath" in stat) {
-        mediaEntries.push({
-          entry: src,
-          absPath: stat.absPath,
-          bytes: stat.bytes,
-        });
-      }
-      // 缺文件静默跳过（同 ink 缺文件口径）
+  // v1 扫描进入 pack 的全部 md 文本（讲义切片 + 题干与详解，同一提取内跨源
+  // 去重）；缺文件静默跳过（既有口径；v2 的缺失显式登记见 assembleV2）
+  const questionTexts: string[] = [];
+  if (m.questions !== undefined) {
+    for (const item of questionItems) {
+      questionTexts.push(item.stemMd);
+      if (item.solutionMd !== undefined) questionTexts.push(item.solutionMd);
     }
   }
+  // v1 忽略 missing（同 ink 缺文件口径，零变化）
+  const mediaEntries = lectureMediaOf(core, dataDir, questionTexts).present;
 
   // —— prompt.md（媒体装配后渲染：media 旗标按实际在场配图传入，复审 A9） ——
   const promptMd = renderPromptMdOf(core, mediaEntries.length > 0);
@@ -1201,26 +1255,9 @@ function assembleV1(core: PackCore): LearningPackAssembly {
   if (m.responses) {
     for (const attempt of core.orderedAttempts) {
       let no = 0;
-      for (const row of core.orderedResponsesOf(attempt)) {
+      for (const row of core.displayRowsOf(attempt)) {
         no += 1;
-        const inkFile = core.inkEntryByAttemptQuestion.get(
-          `${attempt.id}:${row.questionId}`,
-        );
-        responseRows.push({
-          attemptId: attempt.id,
-          studentId: attempt.studentId,
-          questionId: row.questionId,
-          no,
-          answerText: serializeStudentAnswer(answerOf(row.answerJson)),
-          autoCorrect: row.autoCorrect,
-          finalCorrect: row.finalCorrect,
-          teacherMark:
-            row.teacherMark === "correct" || row.teacherMark === "wrong"
-              ? row.teacherMark
-              : null,
-          teacherComment: row.teacherComment,
-          ...(inkFile !== undefined ? { inkFile } : {}),
-        });
+        responseRows.push(responseBaseOf(core, attempt, row, no));
       }
     }
   }
@@ -1234,9 +1271,9 @@ function assembleV1(core: PackCore): LearningPackAssembly {
       evidence: null,
     }),
   };
-  // 服务端自检：序列化往返必须通过自身 schema（测试同款断言，契约漂移即失败）
+  // 服务端自检：直接校验内存对象（复审 C16；序列化一致性由既有测试锁定）
+  learningPackSchema.parse(pack);
   const packJson = `${JSON.stringify(pack, null, 2)}\n`;
-  learningPackSchema.parse(JSON.parse(packJson));
 
   // —— schema.json（与 schema:export 产物逐字节一致，D19） ——
   const schemaJson = `${JSON.stringify(learningPackJsonSchema(), null, 2)}\n`;
@@ -1267,7 +1304,6 @@ function assembleV1(core: PackCore): LearningPackAssembly {
     mappingTxt: core.mappingTxt,
     inkEntries: core.inkEntries,
     mediaEntries,
-    evidenceEntries: [],
   });
 
   return {
@@ -1291,19 +1327,29 @@ function assembleV2(core: PackCore): LearningPackAssembly {
   const { db, dataDir, teacherId, request, m } = core;
   // evidenceAsm 在本函数内为 const（复审 B3：原 6 处判空/防御 throw 全消，
   // 仅保留行级映射不变量的两处快速失败）
+  /**
+   * 装配需求（复审 C18）：题目条目/证据条目/逐题配对键任一需要才装载行集；
+   * 全不需要（如仅讲义+汇总）时传空 scope——evidenceAsm 恒为 const 非空，
+   * 各 section 天然为空，无需下游判空。媒体清单只在题目模块勾选时装配
+   * （assembleMedia，「未选模块不夹带内容」）。
+   */
+  const needsAssembly = m.questions !== undefined || m.evidence || m.responses;
   const evidenceAsm = assembleQuestionEvidence(
     db,
     dataDir,
     teacherId,
-    core.orderedAttempts.map((attempt) => ({
-      attempt,
-      rows: core.displayRowsOf(attempt),
-    })),
+    needsAssembly
+      ? core.orderedAttempts.map((attempt) => ({
+          attempt,
+          rows: core.displayRowsOf(attempt),
+        }))
+      : [],
     {
       role: "teacher",
       // 题目模块未勾选时 material 不进包，层级取最小权限层
       ...(m.questions !== undefined ? { questionLevel: m.questions } : {}),
       includeEvidence: m.evidence,
+      ...(m.questions !== undefined ? { assembleMedia: true } : {}),
     },
   );
 
@@ -1400,23 +1446,14 @@ function assembleV2(core: PackCore): LearningPackAssembly {
     }
   };
   {
-    const mdTexts: string[] = [];
-    for (const item of core.lectureItems) {
-      for (const section of item.sections) mdTexts.push(section.markdown);
-    }
+    const lectureMedia = lectureMediaOf(core, dataDir);
     const seenEntry = new Set<string>();
-    for (const src of extractMediaImageSrcs(mdTexts)) {
-      const stat = statMediaSrc(dataDir, src);
-      if ("absPath" in stat) {
-        seenEntry.add(src);
-        mediaEntries.push({
-          entry: src,
-          absPath: stat.absPath,
-          bytes: stat.bytes,
-        });
-        continue;
-      }
-      upsertMissingMedia(src, stat.reason, []);
+    for (const item of lectureMedia.present) {
+      seenEntry.add(item.entry);
+      mediaEntries.push(item);
+    }
+    for (const miss of lectureMedia.missing) {
+      upsertMissingMedia(miss.src, miss.reason, []);
     }
     // v2 题目媒体：证据装配结果并入（refs 关联 q 条目），已被讲义收录的 src
     // 跳过；题目模块未勾选时不并入也不登记缺失——「未选模块不夹带内容」（§9.2）
@@ -1473,24 +1510,7 @@ function assembleV2(core: PackCore): LearningPackAssembly {
       let no = 0;
       for (const row of core.displayRowsOf(attempt)) {
         no += 1;
-        const inkFile = core.inkEntryByAttemptQuestion.get(
-          `${attempt.id}:${row.questionId}`,
-        );
-        const base: LearningPackResponse = {
-          attemptId: attempt.id,
-          studentId: attempt.studentId,
-          questionId: row.questionId,
-          no,
-          answerText: serializeStudentAnswer(answerOf(row.answerJson)),
-          autoCorrect: row.autoCorrect,
-          finalCorrect: row.finalCorrect,
-          teacherMark:
-            row.teacherMark === "correct" || row.teacherMark === "wrong"
-              ? row.teacherMark
-              : null,
-          teacherComment: row.teacherComment,
-          ...(inkFile !== undefined ? { inkFile } : {}),
-        };
+        const base = responseBaseOf(core, attempt, row, no);
         // 快照关联（scope 覆盖全部行，映射缺项即装配不变量破坏，快速失败）
         const questionRef = evidenceAsm.refByResponseRowId.get(row.id);
         if (questionRef === undefined) {
@@ -1512,7 +1532,7 @@ function assembleV2(core: PackCore): LearningPackAssembly {
           ...base,
           questionRef,
           snapshotHash: hashByRef.get(questionRef) ?? null,
-          ...(m.evidence && evidenceRef !== undefined ? { evidenceRef } : {}),
+          ...(m.evidence ? { evidenceRef } : {}),
         });
       }
     }
@@ -1579,7 +1599,7 @@ function assembleV2(core: PackCore): LearningPackAssembly {
   const contextNotes: string[] = [];
   if (m.questions === undefined && (m.responses || m.evidence)) {
     contextNotes.push(
-      "题目内容模块未勾选：题目上下文未提供（逐题作答行只有配对键 questionRef 与 snapshotHash，无题干/选项/答案）。",
+      "题目内容模块未勾选：题目上下文未提供（逐题作答行与证据条目只有配对键 questionRef 与 snapshotHash，无题干/选项/答案——evidence[].questionRef 同样悬空指向未收录的题目条目，复审 B14）。",
     );
   }
   const missingSnapshotCount = evidenceAsm.revisions.filter(
@@ -1681,9 +1701,9 @@ function assembleV2(core: PackCore): LearningPackAssembly {
 }
 
 /**
- * 文件清单组装（v1/v2 共用）：固定四文件 + 映射.txt（化名模式）+ ink/media/
- * evidence 附件（内容合计不含 zip 容器开销，D18 预检与 preview 共用）。
- * pack.json 自身字节数由调用方传入（渲染后实测）。
+ * v1 文件清单组装（v2 由 manifest.files 派生，不经此函数）：固定四文件 +
+ * 映射.txt（化名模式）+ ink/media 附件（内容合计不含 zip 容器开销，D18
+ * 预检与 preview 共用）。pack.json 自身字节数由调用方传入（渲染后实测）。
  */
 function packFilesOf(input: {
   readonly packJsonBytes: number;
@@ -1696,10 +1716,6 @@ function packFilesOf(input: {
     readonly bytes: number;
   }>;
   readonly mediaEntries: ReadonlyArray<{
-    readonly entry: string;
-    readonly bytes: number;
-  }>;
-  readonly evidenceEntries: ReadonlyArray<{
     readonly entry: string;
     readonly bytes: number;
   }>;
@@ -1729,9 +1745,6 @@ function packFilesOf(input: {
     files.push({ path: entry.entry, estimatedBytes: entry.bytes });
   }
   for (const entry of input.mediaEntries) {
-    files.push({ path: entry.entry, estimatedBytes: entry.bytes });
-  }
-  for (const entry of input.evidenceEntries) {
     files.push({ path: entry.entry, estimatedBytes: entry.bytes });
   }
   return files;

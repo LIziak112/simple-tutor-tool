@@ -1025,6 +1025,60 @@ describe("T6R.12 LearningPack v2：快照关联、证据与 manifest", () => {
     );
   });
 
+  it("v1 深比较回归锁（复审 B12）：materialOf/packHeaderOf 演进不静默改 v1", () => {
+    // 小夹具最小勾选（仅题目 answer 层）→ 构造期望对象逐字段深比较
+    // （非快照文件，避免脆性；快照文本/结构演进由显式期望承载）
+    const assembly = assembleLearningPack(
+      db,
+      dataDir,
+      TEST_TEACHER_ID,
+      makeV2Request({
+        packVersion: undefined,
+        modules: { questions: "answer" },
+      }),
+      { now: V2_NOW },
+    );
+    const expected = {
+      meta: {
+        version: 1,
+        generatedAt: "2026-10-05T04:00:00.000Z",
+        goal: "diagnose-weakness",
+        days: 30,
+        from: "2026-09-05T04:00:00.000Z",
+        to: "2026-10-05T04:00:00.000Z",
+        anonymized: true,
+        modules: {
+          lectures: false,
+          questions: "answer",
+          responses: false,
+          summaries: false,
+          ink: false,
+          traces: false,
+        },
+        note: "评语为教师原文（不改动），可能包含学生真实姓名；学习痕迹指标与阅读状态均为行为推断，仅供参考。",
+      },
+      students: [{ id: v2Student, name: "学生A", archived: false }],
+      // 同 qid 两轮 → v1 取最新（round2 choice「12+13」）；answer 层含
+      // options+answers、不含 solutionMd；本世界无题库行 → unitId/unitTitle null
+      content: {
+        questions: [
+          {
+            questionId: "v2配对题-1",
+            unitId: null,
+            unitTitle: null,
+            type: "choice",
+            difficulty: 2,
+            knowledge: ["考点"],
+            stemMd: "12+13 = ？",
+            options: ["25", "35"],
+            answers: { kind: "choice", index: 0 },
+          },
+        ],
+      },
+    };
+    expect(JSON.parse(assembly.packJson)).toEqual(expected);
+  });
+
   it("v1 请求（无 packVersion）形状锁定：version=1、无 manifest 键", () => {
     const assembly = assembleLearningPack(
       db,

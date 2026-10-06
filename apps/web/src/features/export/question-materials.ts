@@ -272,7 +272,7 @@ export function buildStaticQuestionMaterial(
   sections.push([lines.join("\n").trim(), ""].join("\n"));
   if (input.options !== undefined && input.options.length > 0) {
     const optionLines = input.options.map(
-      (text, index) => `${String.fromCharCode(65 + index)}. ${text}`,
+      (text, index) => `${optionLabelOf(index)}. ${text}`,
     );
     sections.push(["**选项**", "", ...optionLines, ""].join("\n"));
   }
@@ -286,6 +286,21 @@ export function buildStaticQuestionMaterial(
     graphFigures,
     interactionNotes,
   };
+}
+
+/**
+ * 选项字母（A…Z、AA 起——电子表格列号同款进位，与 learningPackAliasOf 同
+ * 口径，复审 D26：>26 个选项不越界到非字母字符）。
+ */
+function optionLabelOf(index: number): string {
+  let n = index + 1;
+  let letters = "";
+  while (n > 0) {
+    const rem = (n - 1) % 26;
+    letters = String.fromCharCode(65 + rem) + letters;
+    n = Math.floor((n - 1) / 26);
+  }
+  return letters;
 }
 
 // ---------- ::graph 图表静态化（显式失败语义，无 DOM 截图兜底） ----------

@@ -162,6 +162,11 @@ export interface QuestionEvidenceOptions {
   readonly questionLevel?: "stem" | "answer" | "solution";
   /** 是否装配证据（submission_evidence + 分析图）；默认 false */
   readonly includeEvidence?: boolean;
+  /**
+   * 是否装配媒体附件清单（::image 引用扫描＋落盘核对，复审 C18）：题目
+   * 模块未勾选时传 false——「未选模块不夹带内容」，也不为未选模块做扫描。
+   */
+  readonly assembleMedia?: boolean;
 }
 
 /** scope 条目：attempt + 该卷展示序 responses 行（frozenRowsInDisplayOrder 口径，调用方排序） */
@@ -479,7 +484,8 @@ export function assembleQuestionEvidence(
     }
   }
 
-  // —— 第二遍：媒体附件（只扫实际进包的投影文本；学生角色不扫解析） ——
+  // —— 第二遍：媒体附件（只扫实际进包的投影文本；学生角色不扫解析）。
+  // assembleMedia=false（题目模块未勾选）整体跳过——不为未选模块扫描（C18） ——
   const mediaOut: Array<{
     src: string;
     absPath: string;
@@ -491,7 +497,7 @@ export function assembleQuestionEvidence(
     reason: string;
     questionRefs: string[];
   }> = [];
-  {
+  if (options.assembleMedia === true) {
     // 解析（solutionMd）只在教师 solution 层进包——扫描范围与包内容严格一致
     const scanSolution = !studentRole && level === "solution";
     const srcRefs = new Map<string, string[]>();

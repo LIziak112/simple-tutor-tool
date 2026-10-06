@@ -77,7 +77,7 @@ function scopeOf(
   return { attempt, rows: attemptResponseRows(db, attemptId) };
 }
 
-/** 快捷装配薄壳（默认教师 answer 层、不含证据） */
+/** 快捷装配薄壳（默认教师 answer 层、不含证据；媒体装配默认开——用例主测媒体行为） */
 function assemble(
   db: Db,
   dataDir: string,
@@ -87,6 +87,7 @@ function assemble(
     role?: EvidenceRole;
     questionLevel?: "stem" | "answer" | "solution";
     includeEvidence?: boolean;
+    assembleMedia?: boolean;
   } = {},
 ) {
   return assembleQuestionEvidence(db, dataDir, teacherId, scopes, {
@@ -95,6 +96,7 @@ function assemble(
       ? { questionLevel: options.questionLevel }
       : {}),
     includeEvidence: options.includeEvidence ?? false,
+    assembleMedia: options.assembleMedia ?? true,
   });
 }
 

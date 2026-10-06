@@ -165,6 +165,30 @@ describe("buildStaticQuestionMaterial（静态题目素材）", () => {
     expect(material.markdown).toContain("y=`x`");
   });
 
+  it("叶子指令单行前提锁定（复审 B13）：graph 行编辑不吞紧随容器的插入点", () => {
+    // 行编辑逻辑假设 ::graph 的 position 单行（remark-directive 当前形态）；
+    // 若上游语法演进为多行叶子，替换区间可能吞掉紧随其后的 fold 插入点——
+    // 本用例以行为锁定该前提：fold 标记与内容必须原样在位
+    const stem = [
+      "看图后阅读：",
+      "",
+      '::graph{fn="x^2"}',
+      ":::fold{title=\"紧随图表\"}",
+      "折叠内容 intact。",
+      ":::",
+    ].join("\n");
+    const material = buildStaticQuestionMaterial({
+      role: "student",
+      stemMd: stem,
+    });
+    expect(material.graphFigures).toEqual([{ fn: "x^2" }]);
+    expect(material.markdown).toContain("折叠块「紧随图表」");
+    expect(material.markdown).toContain("折叠内容 intact。");
+    // fold 开栏行与闭栏行原样保留
+    expect(material.markdown).toContain(':::fold{title="紧随图表"}');
+    expect(material.markdown).toMatch(/:::\s*$/m);
+  });
+
   it("复杂交互缺状态明确标记：fold/steps 注静态导出标记，内容保留", () => {
     const stem = [
       "阅读材料：",
@@ -210,6 +234,19 @@ describe("buildStaticQuestionMaterial（静态题目素材）", () => {
         stemMd: "选择：\n\n- [x] 甲\n- [ ] 乙\n",
       }),
     ).toThrow(/答案标记/);
+  });
+
+  it("选项字母超 26 进位（AA 起，对齐 learningPackAliasOf 同款，复审 D26）", () => {
+    const many = Array.from({ length: 28 }, (_, i) => `选项${i + 1}`);
+    const material = buildStaticQuestionMaterial({
+      role: "student",
+      stemMd: "多选项题",
+      options: many,
+    });
+    expect(material.markdown).toContain("A. 选项1");
+    expect(material.markdown).toContain("Z. 选项26");
+    expect(material.markdown).toContain("AA. 选项27");
+    expect(material.markdown).toContain("AB. 选项28");
   });
 
   it("教师角色不做投影守卫（原文含 [[答案]] 是合法输入）", () => {
