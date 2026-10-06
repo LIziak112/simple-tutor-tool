@@ -14,11 +14,8 @@ import { firstIssueMessage, HttpError } from "./http-error";
  * 两处路由（student.ts / teacher.ts）共用一份，不各自手抄字段清单。
  */
 
-/** parseBody 的宽松字段形态（值可能是数组/其它 BodyData 变体，读取时收窄） */
-export type LooseFormBody = Record<
-  string,
-  string | File | (string | File)[] | unknown
->;
+/** parseBody 的宽松字段形态（值形态不定，读取处 typeof 收窄；复审轮⑬简化） */
+export type LooseFormBody = Record<string, unknown>;
 
 /** multipart 字符串字段严格十进制整数解析；非字符串/非严格形态返回 undefined */
 export function strictFormInt(

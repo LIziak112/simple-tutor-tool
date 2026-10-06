@@ -83,8 +83,7 @@ export const NOTE_UPLOAD_BODY_LIMIT = NOTE_BODY_GZIP_MAX_BYTES + 64 * 1024;
  * 取整 2MiB+64KiB。学生（⑤）与教师（⑧）两个入口同一限额；精确限额与
  * 版本聚合限额由 note-service.attachNoteImage 按实际字节校验。
  */
-export const NOTE_IMAGE_UPLOAD_BODY_LIMIT =
-  NOTE_IMAGE_PNG_MAX_BYTES + 64 * 1024;
+const NOTE_IMAGE_UPLOAD_BODY_LIMIT = NOTE_IMAGE_PNG_MAX_BYTES + 64 * 1024;
 
 /** 补图上传两个入口（学生/教师）共用的预检守卫配置（复审⑦提常量） */
 const NOTE_IMAGE_UPLOAD_GUARD = {

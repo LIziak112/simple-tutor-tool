@@ -1135,8 +1135,9 @@ export const noteImages = sqliteTable(
     /**
      * 图片文件字节数（写入时记 png.byteLength；T6R.5 复审③：聚合限额
      * 「同版本派生图合计 ≤8MiB」用 select sum(byte_size) 一条 SQL 判定，
-     * 不再逐行 statSync）。存量行（本表首个写通道即 T6R.5，无存量）与
-     * 异常行按默认 0 计——与「文件缺失按 0 计」的旧口径一致
+     * 不再逐行 statSync）。口径**更保守**：删除文件不释放额度（行才是账本，
+     * 文件缺失的行照常占额度——防「删文件绕限额」；重建槽位以行替换归还）。
+     * 存量行（本表首个写通道即 T6R.5，无存量）与异常行按默认 0 计
      */
     byteSize: integer("byte_size").notNull().default(0),
     /** 图片文件 sha-256（hex64）；未就绪为 NULL（仅 state='ready' 保证非空） */

@@ -29,7 +29,6 @@ import {
 import { and, asc, eq, isNotNull, lt, ne, or, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
-  type Attempt,
   type NoteImageRow,
   type NoteRow,
   type NoteVersionRow,
@@ -321,12 +320,21 @@ function receiptOf(row: NoteVersionRow): NoteVersionReceipt {
   };
 }
 
-/** 删除本请求刚落位的孤儿正文文件（best-effort；失败留给 GC 兜底） */
-function cleanupOrphanFile(dataDir: string, relPath: string): void {
+/**
+ * best-effort 删除 notes 域内文件（复审轮⑮参数化后缀，正文/图片三处共用）：
+ * 文件未创建（写/rename 前失败）或已被删除时静默；域外路径仍会被
+ * resolveNoteBlobPath 边界校验拦下（500 不吞）。
+ */
+function cleanupNoteFile(
+  dataDir: string,
+  relPath: string,
+  suffix: ".json.gz" | ".png",
+): void {
   try {
-    unlinkSync(resolveNoteBodyPath(dataDir, relPath));
-  } catch {
-    // 文件未创建（写/rename 前失败）或已被删除——无需处理
+    unlinkSync(resolveNoteBlobPath(dataDir, relPath, suffix));
+  } catch (err) {
+    if (err instanceof HttpError) throw err;
+    // 文件未落位或已被删——无需处理
   }
 }
 
@@ -569,7 +577,7 @@ export function saveNoteVersion(
       ) {
         return receiptOf(winner);
       }
-      cleanupOrphanFile(dataDir, relPath);
+      cleanupNoteFile(dataDir, relPath, ".json.gz");
       if (winner !== undefined) {
         throw new HttpError(
           409,
@@ -579,7 +587,7 @@ export function saveNoteVersion(
       }
       throw err;
     }
-    cleanupOrphanFile(dataDir, relPath);
+    cleanupNoteFile(dataDir, relPath, ".json.gz");
     if (violation === "revision") {
       throw revisionConflict(
         db,
@@ -594,7 +602,11 @@ export function saveNoteVersion(
 
 // ---------- 读取（完整性口径；T6R.5 读路由复用） ----------
 
-/** 已确认版本 → 正文文档 + 行内 hash + 按同一规范化规则重算的 hash */
+/**
+ * 已确认版本 → 正文文档 + 行内 hash + 按同一规范化规则重算的 hash。
+ * 消费方是测试/备份完整性与 hash 对账（复审轮⑰澄清：路由读走
+ * readNoteVersionGzip 原字节直出，不经本函数解析）。
+ */
 export function readNoteVersionDoc(
   db: Db,
   dataDir: string,
@@ -817,10 +829,10 @@ function requireStudentNoteVersion(
   db: Db,
   studentId: string,
   versionId: string,
-): { version: NoteVersionRow; note: NoteRow; attempt: Attempt } {
+): { version: NoteVersionRow; note: NoteRow } {
   const chain = requireNoteVersionChain(db, versionId);
-  const attempt = requireUsableAttempt(db, studentId, chain.note.attemptId);
-  return { ...chain, attempt };
+  requireUsableAttempt(db, studentId, chain.note.attemptId);
+  return chain;
 }
 
 /**
@@ -843,7 +855,7 @@ function requireTeacherNoteVersion(
 }
 
 /** ③⑦ 版本文档 gzip 原字节直出（不解析——消费在前端渲染器，坏文件属部署级问题） */
-export function readNoteVersionGzip(
+function readNoteVersionGzip(
   dataDir: string,
   version: NoteVersionRow,
 ): ArrayBuffer {
@@ -951,6 +963,11 @@ export type NoteImageActor =
   | { kind: "student"; id: string }
   | { kind: "teacher"; id: string };
 
+/** 补图限额错误（单图/聚合两级 413 同码不同文案——复审轮⑬收敛为一个构造点） */
+function noteImageLimitError(message: string): HttpError {
+  return new HttpError(413, "NOTE_LIMIT_EXCEEDED", message);
+}
+
 /** 派生图文件相对路径：blobs/notes/<noteId>/img-<imageId>.png（id 全服务端生成） */
 function noteImageRelPath(noteId: string, imageId: string): string {
   return ["blobs", "notes", noteId, `img-${imageId}.png`].join("/");
@@ -987,9 +1004,7 @@ export function attachNoteImage(
 
   // 2. 字节限额 + PNG 完整性（先廉价后昂贵的顺序）
   if (png.byteLength > NOTE_IMAGE_PNG_MAX_BYTES) {
-    throw new HttpError(
-      413,
-      "NOTE_LIMIT_EXCEEDED",
+    throw noteImageLimitError(
       `派生图超过 ${NOTE_IMAGE_PNG_MAX_BYTES / (1024 * 1024)}MiB 上传限额（暂定值），请降低分辨率后重试`,
     );
   }
@@ -1033,9 +1048,7 @@ export function attachNoteImage(
     .get();
   const othersBytes = sumRow?.othersBytes ?? 0;
   if (othersBytes + png.byteLength > NOTE_VERSION_IMAGES_MAX_BYTES) {
-    throw new HttpError(
-      413,
-      "NOTE_LIMIT_EXCEEDED",
+    throw noteImageLimitError(
       `该版本派生图合计超过 ${NOTE_VERSION_IMAGES_MAX_BYTES / (1024 * 1024)}MiB 限额（暂定值），请精简切片后重试`,
     );
   }
@@ -1054,8 +1067,9 @@ export function attachNoteImage(
     eq(noteImages.pageIndex, meta.pageIndex),
   );
   const old = db.select().from(noteImages).where(slotWhere).get();
+  let inserted: NoteImageRow | undefined;
   try {
-    const inserted = db.transaction((tx) => {
+    inserted = db.transaction((tx) => {
       if (old !== undefined) {
         tx.delete(noteImages).where(eq(noteImages.id, old.id)).run();
       }
@@ -1080,28 +1094,23 @@ export function attachNoteImage(
         .returning()
         .get();
     });
-    if (inserted === undefined) {
-      // RETURNING 未命中：better-sqlite3 同步驱动下不可达，防御性闭合
-      throw new HttpError(500, "INTERNAL", "补图落库未返回行（防御性拒绝）");
-    }
-    // 旧槽位文件 best-effort 回收（失败留孤儿文件，无行引用它）
-    if (old !== undefined) {
-      try {
-        unlinkSync(resolveNoteBlobPath(dataDir, old.path, ".png"));
-      } catch {
-        // 同上
-      }
-    }
-    return noteImageMetaOf(inserted);
   } catch (err) {
     // 事务失败：新文件成为孤儿（无行引用），清理后重抛
-    try {
-      unlinkSync(resolveNoteBlobPath(dataDir, relPath, ".png"));
-    } catch {
-      // 文件未落位或已被删——无需处理
-    }
+    cleanupNoteFile(dataDir, relPath, ".png");
     throw err;
   }
+  if (inserted === undefined) {
+    // RETURNING 未命中：better-sqlite3 同步驱动下不可达，防御性闭合
+    cleanupNoteFile(dataDir, relPath, ".png");
+    throw new HttpError(500, "INTERNAL", "补图落库未返回行（防御性拒绝）");
+  }
+  // 旧槽位文件 best-effort 回收（失败留孤儿文件，无行引用它）；
+  // 投影组装在事务提交之后（复审轮④：metaOf parse 失败不得落入删文件的
+  // catch 域——已提交的新文件不能被回滚性清理删掉）
+  if (old !== undefined) {
+    cleanupNoteFile(dataDir, old.path, ".png");
+  }
+  return noteImageMetaOf(inserted);
 }
 
 // ---------- GC 骨架（未引用版本延迟回收；自动调度接线在 T6R.14） ----------
