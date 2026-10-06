@@ -761,6 +761,9 @@ describe("atrament-adapter：触摸侧 stylus 识别（遍历触点，不默认 
     Object.defineProperty(evDirect, "changedTouches", {
       value: [{ touchType: "direct" }],
     });
+    Object.defineProperty(evDirect, "touches", {
+      value: [{ touchType: "direct" }],
+    });
     h.canvas.dispatchEvent(evDirect);
     expect(evDirect.defaultPrevented).toBe(false);
 
@@ -769,6 +772,9 @@ describe("atrament-adapter：触摸侧 stylus 识别（遍历触点，不默认 
       cancelable: true,
     });
     Object.defineProperty(evStylus, "changedTouches", {
+      value: [{ touchType: "direct" }, { touchType: "stylus" }],
+    });
+    Object.defineProperty(evStylus, "touches", {
       value: [{ touchType: "direct" }, { touchType: "stylus" }],
     });
     h.canvas.dispatchEvent(evStylus);

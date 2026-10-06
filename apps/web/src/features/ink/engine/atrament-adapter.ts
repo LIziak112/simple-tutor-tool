@@ -590,8 +590,10 @@ export function createAtramentSurface(
    * 落手掌后落（清单第 14 项）。
    */
   function anyStylusTouch(
-    touches: TouchList | Array<{ touchType?: string }>,
+    touches: TouchList | Array<{ touchType?: string }> | undefined,
   ): boolean {
+    // 防御：合成/不完整事件可能缺某一触点列表（真实 TouchEvent 恒两者皆有）
+    if (touches === undefined) return false;
     for (let i = 0; i < touches.length; i++) {
       const t = touches[i];
       if (t?.touchType === "stylus") return true;
