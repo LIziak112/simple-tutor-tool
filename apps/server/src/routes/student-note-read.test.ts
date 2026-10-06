@@ -1087,6 +1087,29 @@ describe("课程撤权与学生停用（冻结语义一致）", () => {
 
     const putAgain = await coursePutNote(attemptId, Q.apply);
     expect(putAgain.status).toBe(403);
+    // 撤权对补图同样是拒写（同一 requireUsableAttempt 门口）
+    const imageForm = new FormData();
+    imageForm.append("image", new Blob([makeNotePng()], { type: "image/png" }));
+    imageForm.append("spec", "analysis");
+    imageForm.append("pageIndex", "0");
+    imageForm.append("cropX", "0");
+    imageForm.append("cropY", "0");
+    imageForm.append("cropW", "1000");
+    imageForm.append("cropH", "800");
+    imageForm.append("pixelWidth", "320");
+    imageForm.append("pixelHeight", "200");
+    expect(
+      (
+        await courseApp.request(
+          `/api/student/note-versions/${versionId}/images`,
+          {
+            method: "POST",
+            headers: { cookie: memberCookie },
+            body: imageForm,
+          },
+        )
+      ).status,
+    ).toBe(403);
     expect(
       (
         await courseApp.request(
