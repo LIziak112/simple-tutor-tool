@@ -24,6 +24,7 @@ import { type UseQueryResult, useQuery } from "@tanstack/react-query";
 import type { NoteHeadData, StudentMeData } from "@tutor/contract";
 import { useEffect, useSyncExternalStore } from "react";
 import { recoverNoteImages } from "@/features/notes/image-sync";
+import { worstImageState } from "@/features/notes/note-image-state";
 import {
   applyServerHead,
   applyServerLoad,
@@ -86,10 +87,12 @@ export async function applyNoteHeadSideEffects(
       before.noteId !== note.noteId ||
       before.baseRevision < note.revision);
   await applyServerHead(session, scope, head);
-  // 补图触发（正文拉取与否都该补：本地领先时图片照样该恢复）
+  // 补图触发（正文拉取与否都该补：本地领先时图片照样该恢复）；行状态判定
+  // 走 worstImageState 原语（空数组 → ready，与原 some() 口径一致）
+  const worstImage = worstImageState(head.images);
   if (
     versionId !== null &&
-    head.images.some((img) => img.state === "failed" || img.state === "missing")
+    (worstImage === "failed" || worstImage === "missing")
   ) {
     void recoverNoteImages({
       role: "student",

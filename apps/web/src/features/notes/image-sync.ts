@@ -27,9 +27,8 @@ import type { NoteDoc, NoteImageMeta, NoteImageSpec } from "@tutor/contract";
 import { paddedStrokeBoxesOf } from "@/features/ink/engine/bounds.ts";
 import { parseNoteDocOrThrow } from "@/features/notes/note-fixtures";
 import {
-  fetchStudentNoteDocumentApi,
-  fetchTeacherNoteDocumentApi,
-  type NoteImageRole,
+  fetchNoteDocumentApi,
+  type NoteRole,
   postNoteImageApi,
 } from "@/lib/api";
 import {
@@ -54,7 +53,7 @@ let noteImageQueue = new SerialTaskQueue();
 export interface NoteImageSyncParams {
   /** 学生补自己的图 / 教师按授权补学生版本（方案 §7 教师重建）；类型与
    * 上传客户端同源（复审⑩：不在两处手写同一联合） */
-  role: NoteImageRole;
+  role: NoteRole;
   /** 目标 NoteVersion（补图只挂既定版本，不改正文） */
   versionId: string;
 }
@@ -111,10 +110,8 @@ export function syncNoteImages(
 export async function recoverNoteImages(
   params: NoteImageSyncParams,
 ): Promise<NoteImageMeta[]> {
-  const raw =
-    params.role === "student"
-      ? await fetchStudentNoteDocumentApi(params.versionId)
-      : await fetchTeacherNoteDocumentApi(params.versionId);
+  // 角色分派单点（T6R.11）：与原稿查看/补图上传同一份 NoteRole 派发
+  const raw = await fetchNoteDocumentApi(params.role, params.versionId);
   // noteDocSchema 收窄（缺省高度/背景物化——不物化会 NaN，见契约
   // NoteDocInput 注释；解析原语三处共用 note-fixtures.parseNoteDocOrThrow）
   const doc = parseNoteDocOrThrow(raw, "草稿正文", "，无法重建派生图");
