@@ -571,3 +571,101 @@ describe("note-sync：PUT 超时与中止身份（复审⑦⑬）", () => {
     expect(peekNoteRecord(SESSION_A, SCOPE)?.conflict).toBeNull();
   });
 });
+
+describe("note-sync：分诊矩阵（复审⑧⑪）——服务端错误码全集", () => {
+  it("逐码落到正确状态（conflict/denied 两类/retry）", async () => {
+    const cases: Array<{
+      name: string;
+      err: () => unknown;
+      want:
+        | "conflict"
+        | "conflict-no-current"
+        | "denied-access"
+        | "denied-content"
+        | "dirty";
+    }> = [
+      {
+        name: "409 REVISION_CONFLICT 带 _current",
+        err: () => conflictError(2),
+        want: "conflict",
+      },
+      {
+        name: "409 REVISION_CONFLICT 缺 _current（服务端契约违约→可诊断退避）",
+        err: () => new ApiError("NOTE_REVISION_CONFLICT", "冲突", 409),
+        want: "dirty",
+      },
+      {
+        name: "409 MUTATION_MISMATCH（无摘要）",
+        err: () => new ApiError("NOTE_MUTATION_MISMATCH", "异文重放", 409),
+        want: "conflict-no-current",
+      },
+      {
+        name: "409 ALREADY_SUBMITTED",
+        err: () => new ApiError("ALREADY_SUBMITTED", "已交卷", 409),
+        want: "denied-access",
+      },
+      {
+        name: "403 FORBIDDEN",
+        err: () => new ApiError("FORBIDDEN", "无权限", 403),
+        want: "denied-access",
+      },
+      {
+        name: "404 NOTE_NOT_FOUND",
+        err: () => new ApiError("NOTE_NOT_FOUND", "不存在", 404),
+        want: "denied-access",
+      },
+      {
+        name: "400 NOTE_VALIDATION_FAILED",
+        err: () => new ApiError("NOTE_VALIDATION_FAILED", "正文形状错误", 400),
+        want: "denied-content",
+      },
+      {
+        name: "400 VALIDATION_ERROR（统一壳元信息校验→内容拒）",
+        err: () => new ApiError("VALIDATION_ERROR", "元信息不合法", 400),
+        want: "denied-content",
+      },
+      {
+        name: "413 NOTE_LIMIT_EXCEEDED",
+        err: () => new ApiError("NOTE_LIMIT_EXCEEDED", "超预算", 413),
+        want: "denied-content",
+      },
+      {
+        name: "401 UNAUTHORIZED（会话过期→退避；重登录 bind 复活）",
+        err: () => new ApiError("UNAUTHORIZED", "未登录", 401),
+        want: "dirty",
+      },
+      {
+        name: "500 内部错误",
+        err: () => new ApiError("INTERNAL_ERROR", "内部错误", 500),
+        want: "dirty",
+      },
+    ];
+    for (const c of cases) {
+      installNoteBackend(memoryNoteBackend());
+      resetNoteSession();
+      putMock.mockReset().mockRejectedValue(c.err());
+      bindNoteSession(SESSION_A);
+      writeNoteDoc(SESSION_A, SCOPE, DOC_A);
+      await vi.advanceTimersByTimeAsync(NOTE_SYNC_DEBOUNCE_MS);
+      const record = peekNoteRecord(SESSION_A, SCOPE);
+      switch (c.want) {
+        case "conflict":
+          expect(record?.conflict?.current?.revision, c.name).toBe(2);
+          break;
+        case "conflict-no-current":
+          expect(record?.conflict?.current, c.name).toBeNull();
+          break;
+        case "denied-access":
+          expect(record?.denied?.kind, c.name).toBe("access");
+          break;
+        case "denied-content":
+          expect(record?.denied?.kind, c.name).toBe("content");
+          break;
+        default:
+          expect(record?.conflict, c.name).toBeNull();
+          expect(record?.denied, c.name).toBeNull();
+          expect(record?.pending, c.name).not.toBeNull();
+      }
+    }
+  });
+});

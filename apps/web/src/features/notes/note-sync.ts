@@ -35,14 +35,8 @@
  * 不承诺「最多丢 2 秒」：防抖/最大等待是调度参数不是丢失窗口上限
  * （方案 §6.2）；杀后台只恢复已落盘事务（真机验收口径，T6R.14）。
  */
-import type {
-  NoteDocInput,
-  NoteRevisionConflictCurrent,
-} from "@tutor/contract";
-import {
-  noteDocSchema,
-  noteRevisionConflictCurrentSchema,
-} from "@tutor/contract";
+import type { NoteConflictSummary, NoteDocInput } from "@tutor/contract";
+import { noteConflictSummarySchema, noteDocSchema } from "@tutor/contract";
 import { gzipOrRaw } from "@/features/ink/gzip";
 import {
   ApiError,
@@ -217,8 +211,8 @@ type PutVerdict =
   | { kind: "aborted" }
   | {
       kind: "conflict";
-      /** MISMATCH 时为 null（服务端状态未知，契约 noteConflictSummarySchema） */
-      current: NoteRevisionConflictCurrent | null;
+      /** MISMATCH 时为 null（服务端状态未知）；类型由契约壳推导（复审⑪） */
+      current: NoteConflictSummary["current"];
       reason: string;
     }
   | { kind: "denied"; deniedKind: "access" | "content"; reason: string }
@@ -234,17 +228,16 @@ function classifyPutError(err: unknown): PutVerdict {
   if (!(err instanceof ApiError)) return { kind: "retry" };
   const { status, code, message } = err;
   if (status === 409 && code === "NOTE_REVISION_CONFLICT") {
-    const parsed = noteRevisionConflictCurrentSchema.safeParse(
-      err.extra?._current,
-    );
-    if (parsed.success) {
-      return {
-        kind: "conflict",
-        current: parsed.data,
-        reason: message,
-      };
+    // 复审⑪：客户端形态由契约 noteConflictSummarySchema 真正管辖——
+    // 服务端壳外附加键 _current 适配为壳的 current（键名映射，形态校验
+    // 不变）；缺摘要是服务端契约违约，不当终态，退避重试可诊断
+    const parsed = noteConflictSummarySchema.safeParse({
+      current: err.extra?._current ?? null,
+    });
+    if (parsed.success && parsed.data.current !== null) {
+      return { kind: "conflict", current: parsed.data.current, reason: message };
     }
-    return { kind: "retry" }; // 摘要缺失/畸形：不当终态，退避重试可诊断
+    return { kind: "retry" };
   }
   if (status === 409 && code === "NOTE_MUTATION_MISMATCH") {
     return {
@@ -256,19 +249,26 @@ function classifyPutError(err: unknown): PutVerdict {
       reason: `${message}（同一上传标识已对应不同正文，请选择保留哪一份）`,
     };
   }
-  if (status === 409 && code === "ALREADY_SUBMITTED") {
+  // 访问权/可写权永久失去（复审⑧合并分支）：403/404（含 NOTE_NOT_FOUND
+  // 等）、409 ALREADY_SUBMITTED（交卷后迟到 PUT）——粘住，本地稿保留
+  if (status === 403 || status === 404 || code === "ALREADY_SUBMITTED") {
     return { kind: "denied", deniedKind: "access", reason: message };
   }
-  if (status === 403 || status === 404) {
-    return { kind: "denied", deniedKind: "access", reason: message };
-  }
+  // 内容被拒（该 pending 不可重试成功；新内容/修复后的新 pending 复活）：
+  // NOTE_VALIDATION_FAILED（正文形状）、NOTE_LIMIT_EXCEEDED（预算）、
+  // 400 VALIDATION_ERROR（统一壳的元信息校验——客户端组装缺陷，修复后
+  // 随新 pending 复活，不粘账号）
   if (
-    (status === 400 && code === "NOTE_VALIDATION_FAILED") ||
-    (status === 413 && code === "NOTE_LIMIT_EXCEEDED")
+    code === "NOTE_VALIDATION_FAILED" ||
+    code === "NOTE_LIMIT_EXCEEDED" ||
+    (status === 400 && code === "VALIDATION_ERROR")
   ) {
     return { kind: "denied", deniedKind: "content", reason: message };
   }
-  return { kind: "retry" }; // 含 401/5xx/429：可重试（退避），非终态
+  // 401 UNAUTHORIZED：会话过期——可重试退避（未登录期间低频重试）；复活
+  // 路径=重新登录后接入层 bindNoteSession 重扫本地待传（flush/在线事件
+  // 同径）。5xx/429：瞬时故障，退避。
+  return { kind: "retry" };
 }
 
 /**
