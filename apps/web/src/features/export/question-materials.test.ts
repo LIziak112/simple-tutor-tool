@@ -88,6 +88,83 @@ describe("buildStaticQuestionMaterial（静态题目素材）", () => {
     expect(material.markdown).not.toContain('::graph{fn="x+1"}\n');
   });
 
+  it("图表清单按文档序产出（复审 A1：两图收集与降序行编辑分离）", () => {
+    const stem = [
+      "观察两图：",
+      "",
+      '::graph{fn="x^2"}',
+      "",
+      '::graph{fn="sin(x)" range="-1,1"}',
+    ].join("\n");
+    const material = buildStaticQuestionMaterial({
+      role: "student",
+      stemMd: stem,
+    });
+    expect(material.graphFigures).toEqual([
+      { fn: "x^2" },
+      { fn: "sin(x)", range: "-1,1" },
+    ]);
+  });
+
+  it("::image 只认块级叶子指令：围栏内样例与行内夹带不收集（复审 A2）", () => {
+    const stem = [
+      "文档示例：",
+      "",
+      "```md",
+      '::image{src="fenced-sample.png"}',
+      "```",
+      "",
+      '行内夹带 ::image{src="inline-sample.png"} 不算指令',
+      "",
+      `::image{src="blobs/media/${H}.png"}`,
+    ].join("\n");
+    const material = buildStaticQuestionMaterial({
+      role: "student",
+      stemMd: stem,
+    });
+    expect(material.mediaSrcs).toEqual([`blobs/media/${H}.png`]);
+  });
+
+  it("嵌套容器标记行不逃逸：blockquote 与列表内的 fold 带宿主前缀（复审 A3）", () => {
+    const stem = [
+      "> 引用材料：",
+      ">",
+      '> :::fold{title="引用内折叠"}',
+      "> 折叠内容。",
+      "> :::",
+      "",
+      "- 列表项",
+      "  :::fold",
+      "  列表内折叠内容。",
+      "  :::",
+    ].join("\n");
+    const material = buildStaticQuestionMaterial({
+      role: "student",
+      stemMd: stem,
+    });
+    // 引用内标记行带 "> " 前缀（不逃逸出 blockquote）
+    expect(material.markdown).toContain(
+      "> 【交互内容静态导出】交互状态未记录。折叠块「引用内折叠」",
+    );
+    // 列表内标记行带缩进前缀（不逃逸出列表项）
+    expect(material.markdown).toMatch(
+      /^[ \t]+【交互内容静态导出】交互状态未记录。折叠块（默认收起/m,
+    );
+    // 宿主内容原样保留
+    expect(material.markdown).toContain("> 折叠内容。");
+    expect(material.markdown).toContain("列表内折叠内容。");
+  });
+
+  it("graph 原始指令含反引号时 code span 双反引号垫护（复审 A10）", () => {
+    const material = buildStaticQuestionMaterial({
+      role: "student",
+      stemMd: '::graph{fn="`x`"}',
+    });
+    expect(material.graphFigures).toEqual([{ fn: "`x`" }]);
+    expect(material.markdown).toContain('`` ::graph{fn="`x`"} ``');
+    expect(material.markdown).toContain("y=`x`");
+  });
+
   it("复杂交互缺状态明确标记：fold/steps 注静态导出标记，内容保留", () => {
     const stem = [
       "阅读材料：",

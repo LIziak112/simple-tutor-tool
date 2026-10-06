@@ -157,6 +157,38 @@ describe("T6R.12 快照一一配对（同 qid 多版本）", () => {
     expect(q1?.snapshotHash).not.toBe(q2?.snapshotHash);
   });
 
+  it("同内容不同键序 → 同一内容身份共享条目（canonical hash，复审 A7）", () => {
+    const db = createTestDb();
+    const dataDir = createTestDir();
+    const s1 = makeStudent(db);
+    const normal = JSON.parse(
+      snapshotJsonOf({ id: "键序题-8", stemMd: "恒定题干 [[9]]" }),
+    ) as Record<string, unknown>;
+    // 顶层键逆序手写序列化（模拟不同链路写入的键序差异；内容完全一致）
+    const reversed = `{${Object.entries(normal)
+      .reverse()
+      .map(([k, v]) => `${JSON.stringify(k)}:${JSON.stringify(v)}`)
+      .join(",")}}`;
+    const a1 = frozenDraftAttempt(db, s1, [
+      { questionId: "键序题-8", snapshotJson: JSON.stringify(normal) },
+    ]);
+    submitAttemptStatus(db, a1.attemptId, "2026-10-01T06:00:00.000Z");
+    const a2 = frozenDraftAttempt(db, s1, [
+      { questionId: "键序题-8", snapshotJson: reversed },
+    ]);
+    submitAttemptStatus(db, a2.attemptId, "2026-10-05T06:00:00.000Z");
+    const result = assemble(db, dataDir, TEST_TEACHER_ID, [
+      scopeOf(db, a1.attemptId),
+      scopeOf(db, a2.attemptId),
+    ]);
+    // 同内容（键序不同）→ 一个 q 条目，两行共享同一引用与 hash
+    expect(result.revisions).toHaveLength(1);
+    expect(result.refByResponseRowId.get(a1.rowIds[0] ?? "")).toBe(
+      result.refByResponseRowId.get(a2.rowIds[0] ?? ""),
+    );
+    expect(result.revisions[0]?.snapshotHash).toMatch(/^[0-9a-f]{64}$/);
+  });
+
   it("同内容跨轮/跨 attempt 去重共享条目；缺失快照显式缺失不回填", () => {
     const db = createTestDb();
     const dataDir = createTestDir();
@@ -654,6 +686,34 @@ describe("T6R.12 证据装配（submission_evidence + 分析图）", () => {
     );
     expect(deleted?.reason).toContain("文件缺失");
     expect(deleted?.evidenceRef).toBe(frozen?.ref);
+  });
+
+  it("frozen 证据行缺 versionId（手插/损坏形态）→ 显式进缺失清单不静默（复审 A5）", () => {
+    const db = createTestDb();
+    const dataDir = createTestDir();
+    const s1 = makeStudent(db);
+    const a1 = frozenDraftAttempt(db, s1, [
+      { questionId: "坏行题", snapshotJson: snapshotJsonOf({ id: "坏行题" }) },
+    ]);
+    submitAttemptStatus(db, a1.attemptId);
+    // 直插 frozen + versionId=NULL（DB check 不拦的形态；正路写入器不会产生）
+    insertEvidence(db, a1.attemptId, "坏行题", "frozen", null);
+    const result = assemble(
+      db,
+      dataDir,
+      TEST_TEACHER_ID,
+      [scopeOf(db, a1.attemptId)],
+      { includeEvidence: true },
+    );
+    const entry = result.evidence[0];
+    expect(entry?.state).toBe("frozen");
+    expect(entry?.version).toBeUndefined();
+    expect(entry?.images).toEqual([]);
+    expect(result.missingEvidenceImages).toHaveLength(1);
+    expect(result.missingEvidenceImages[0]?.reason).toBe(
+      "证据行缺少版本引用（数据异常）",
+    );
+    expect(result.missingEvidenceImages[0]?.evidenceRef).toBe(entry?.ref);
   });
 
   it("frozen 版本零分析图（未生成）→ 预测路径进缺失清单", () => {

@@ -776,6 +776,8 @@ describe("T6R.12 LearningPack v2：快照关联、证据与 manifest", () => {
           "",
           `::image{src="${v2MediaSrc}"}`,
           "",
+          `::image{src="${v2MissingMediaSrc}"}`,
+          "",
         ].join("\n"),
         order: 98,
         updatedAt: "2026-10-01T00:00:00.000Z",
@@ -1115,5 +1117,54 @@ describe("T6R.12 LearningPack v2：快照关联、证据与 manifest", () => {
     expect(
       preview.files.filter((file) => file.path === v2MediaSrc),
     ).toHaveLength(1);
+  });
+
+  it("缺失媒体同 src 双源：manifest 单行且合并题目 refs（复审 A6）", async () => {
+    const zip = await buildLearningPackZip(
+      db,
+      dataDir,
+      TEST_TEACHER_ID,
+      makeV2Request({
+        modules: {
+          lectures: [{ lectureId: v2LectureId, sectionIndexes: [0] }],
+          questions: "solution",
+          responses: true,
+          evidence: false,
+        },
+      }),
+      { now: V2_NOW },
+    );
+    const pack = packEntryOf(unzipEntries(zip.bytes), learningPackV2Schema);
+    // 讲义先行行（refs=[]）与题目侧缺失行同 src → 单行，refs 合并题目 q 关联
+    const missingRows = pack.manifest.missing.filter(
+      (row) => row.path === v2MissingMediaSrc,
+    );
+    expect(missingRows).toHaveLength(1);
+    expect(missingRows[0]?.kind).toBe("media");
+    expect(missingRows[0]?.refs).toEqual([pack.content?.questions?.[0]?.ref]);
+  });
+
+  it("questions 未勾选：manifest 媒体行 refs 恒空（题目侧关系不外泄，复审 A4）", async () => {
+    const zip = await buildLearningPackZip(
+      db,
+      dataDir,
+      TEST_TEACHER_ID,
+      makeV2Request({
+        modules: {
+          lectures: [{ lectureId: v2LectureId, sectionIndexes: [0] }],
+          responses: true,
+          evidence: false,
+        },
+      }),
+      { now: V2_NOW },
+    );
+    const pack = packEntryOf(unzipEntries(zip.bytes), learningPackV2Schema);
+    expect(pack.content?.questions).toBeUndefined(); // 题目模块未勾不夹带
+    const mediaRows = pack.manifest.files.filter(
+      (file) => file.kind === "media",
+    );
+    expect(mediaRows).toHaveLength(1); // 仅讲义在场图
+    expect(mediaRows[0]?.path).toBe(v2MediaSrc);
+    expect(mediaRows[0]?.refs).toEqual([]);
   });
 });

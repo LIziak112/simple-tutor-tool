@@ -493,8 +493,9 @@ const PACK_REF_QUESTION_RE = /^q\d{3,}$/;
 const PACK_REF_EVIDENCE_RE = /^e\d{3,}$/;
 
 /**
- * 快照内容身份（64 位小写 hex sha-256）：对 responses.questionSnapshotJson 的
- * 规范化序列化计算，由服务端（question-evidence）铸造。**去重键含教师域**
+ * 快照内容身份（64 位小写 hex sha-256）：对快照对象做**递归键序排序的
+ * 规范化序列化**（canonicalJsonOf）后计算，由服务端（question-evidence）
+ * 铸造——同内容不同键序的两份 JSON 得同一 hash（键序不参与内容身份）。**去重键含教师域**
  * ——同 hash 同内容在本包内共享一个条目，跨教师永不合并（同内容去重不串教师）；
  * 快照缺失（历史行无快照）为 null，条目 present=false 且 stemMd 为空串，
  ** 不回填当前题库内容**（T6R.3 起口径，T6R.12 细化为显式缺失标记）。
@@ -780,6 +781,12 @@ export interface LearningPackPromptInput {
    * v1 与 gen:spec 全模块示例的渲染结果不变。
    */
   readonly evidence?: boolean;
+  /**
+   * 包内是否实际携带 blobs/media/ 配图（复审 A9）：勾选时使用方法的交付
+   * 清单枚举配图目录；缺省不提及。由调用方按实际装配结果传入（讲义/题目
+   * 模块的 ::image 引用存在且文件在场才为 true）。
+   */
+  readonly media?: boolean;
   readonly anonymized: boolean;
   /** 教师自定义附加段（原样追加在「教师附加要求」） */
   readonly customPrompt?: string;
@@ -926,15 +933,15 @@ export function renderLearningPackPrompt(
 ): string {
   const goalLabel = LEARNING_PACK_GOAL_LABELS[input.goal];
   /** 使用方法行按是否含手写图片分两形态（D17：未勾手写不提笔迹） */
-  const usageLines = input.ink
-    ? [
-        "> 使用方法：把整个数据包（本文件 + pack.json + summary.md + schema.json + ink/ 图片",
-        "> 目录）一并交给 AI。",
-      ]
-    : [
-        "> 使用方法：把整个数据包（本文件 + pack.json + summary.md + schema.json）",
-        "> 一并交给 AI。",
-      ];
+  // 使用方法交付清单按勾选模块枚举（复审 A9：evidence 原稿图目录与
+  // blobs/media/ 配图目录此前遗漏——media 旗标由调用方按实际装配传入）
+  const deliverables = ["本文件", "pack.json", "summary.md", "schema.json"];
+  if (input.evidence) deliverables.push("evidence/ 图片目录");
+  if (input.ink) deliverables.push("ink/ 图片目录");
+  if (input.media) deliverables.push("blobs/media/ 配图目录");
+  const usageLines = [
+    `> 使用方法：把整个数据包（${deliverables.join(" + ")}）一并交给 AI。`,
+  ];
   const sections: string[] = [
     [
       `# 学情数据包分析任务：${goalLabel}`,

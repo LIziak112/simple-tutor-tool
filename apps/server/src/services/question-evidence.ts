@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import { statSync } from "node:fs";
-import { resolve } from "node:path";
 import type {
   LearningPackEvidenceState,
   NoteCropRect,
@@ -22,6 +21,7 @@ import {
   type ResponseRow,
   submissionEvidence,
 } from "../db/schema";
+import { resolveWithinRootOrNull } from "../lib/blob-io";
 import { chunk } from "../lib/chunk";
 import { HttpError } from "../lib/http-error";
 import { extractMediaImageSrcs, statMediaSrc } from "./media-service";
@@ -203,7 +203,26 @@ export function evidenceImageFileName(
   return `evidence/${ref}-${label}-${String(pageIndex + 1).padStart(2, "0")}.png`;
 }
 
-/** sha-256 hex（快照内容身份：对规范化序列化 JSON 计算） */
+/**
+ * 规范化序列化（复审 A7：递归键序排序）——快照内容身份的稳定形态：
+ * 同内容不同键序的两份 JSON 得同一 hash（冻结快照由不同链路/版本写入时
+ * 键序不保证一致，逐字 stringify 会把同内容误判为两个版本）。
+ */
+function canonicalJsonOf(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(canonicalJsonOf).join(",")}]`;
+  }
+  if (value !== null && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, v]) => v !== undefined)
+      .map(([k, v]) => `${JSON.stringify(k)}:${canonicalJsonOf(v)}`);
+    entries.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+    return `{${entries.join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
+
+/** sha-256 hex（快照内容身份：对 canonicalJsonOf 规范化形态计算） */
 function sha256Hex(text: string): string {
   return createHash("sha256").update(text, "utf8").digest("hex");
 }
@@ -373,7 +392,7 @@ export function assembleQuestionEvidence(
         const snapshot = snapshotOfRow(row);
         parsed = {
           snapshot,
-          hash: snapshot === null ? null : sha256Hex(JSON.stringify(snapshot)),
+          hash: snapshot === null ? null : sha256Hex(canonicalJsonOf(snapshot)),
         };
         snapshotByText.set(cacheKey, parsed);
       }
@@ -406,30 +425,40 @@ export function assembleQuestionEvidence(
         | NonNullable<QuestionEvidenceEntry["version"]>
         | undefined;
       const evidenceImages: EvidenceImageItem[] = [];
-      if (evidenceRow?.state === "frozen" && evidenceRow.versionId !== null) {
-        const version = versionRowById.get(evidenceRow.versionId);
-        if (version !== undefined) {
-          versionSummary = {
-            versionId: version.id,
-            savedAt: version.serverSavedAt,
-            strokeCount: version.strokeCount,
-            pointCount: version.pointCount,
-            paperHeight: version.paperHeight,
-          };
-          const { images, missing } = analysisImagesOf(
-            dataDir,
-            eRef,
-            analysisImageRowsByVersion.get(version.id) ?? [],
-          );
-          evidenceImages.push(...images);
-          missingEvidenceImages.push(...missing);
-        } else {
-          // FK 保证不可达的防御分支：版本行缺失按显式缺失报出，不吞
+      if (evidenceRow?.state === "frozen") {
+        if (evidenceRow.versionId === null) {
+          // 数据异常防御（复审 A5）：frozen 必带版本引用（DB check 不拦 NULL
+          // 的手插/损坏行）——显式进缺失清单，不静默无图无登记
           missingEvidenceImages.push({
             file: evidenceImageFileName(eRef, "scratch", 0),
-            reason: "被固定的版本行缺失（数据异常）",
+            reason: "证据行缺少版本引用（数据异常）",
             evidenceRef: eRef,
           });
+        } else {
+          const version = versionRowById.get(evidenceRow.versionId);
+          if (version !== undefined) {
+            versionSummary = {
+              versionId: version.id,
+              savedAt: version.serverSavedAt,
+              strokeCount: version.strokeCount,
+              pointCount: version.pointCount,
+              paperHeight: version.paperHeight,
+            };
+            const { images, missing } = analysisImagesOf(
+              dataDir,
+              eRef,
+              analysisImageRowsByVersion.get(version.id) ?? [],
+            );
+            evidenceImages.push(...images);
+            missingEvidenceImages.push(...missing);
+          } else {
+            // FK 保证不可达的防御分支：版本行缺失按显式缺失报出，不吞
+            missingEvidenceImages.push({
+              file: evidenceImageFileName(eRef, "scratch", 0),
+              reason: "被固定的版本行缺失（数据异常）",
+              evidenceRef: eRef,
+            });
+          }
         }
       }
       evidence.push({
@@ -521,7 +550,6 @@ function analysisImagesOf(
   const missing: Array<{ file: string; reason: string; evidenceRef: string }> =
     [];
   const images: EvidenceImageItem[] = [];
-  const notesRoot = resolve(dataDir, "blobs", "notes");
   for (const image of imageRows) {
     const file = evidenceImageFileName(eRef, "scratch", image.pageIndex);
     const crop: NoteCropRect = {
@@ -538,17 +566,26 @@ function analysisImagesOf(
       pixelWidth: image.pixelWidth,
       pixelHeight: image.pixelHeight,
     };
-    // 单一 reason 赋值点；ready 且文件在位直接 continue，其余一律走缺失出口
+    // 单一 reason 赋值点；ready 且文件在位直接 continue，其余一律走缺失出口。
+    // 边界判定走 resolveWithinRootOrNull（path.relative 强算法，复审 A8——
+    // startsWith 会被同前缀相邻目录骗过）；目录形态按文件缺失计
     let reason: string;
     if (image.state !== "ready") {
       reason = EVIDENCE_IMAGE_MISSING_REASONS[image.state];
     } else {
-      const absPath = resolve(dataDir, image.path);
-      if (absPath.startsWith(notesRoot)) {
+      const absPath = resolveWithinRootOrNull(
+        dataDir,
+        "blobs/notes",
+        image.path,
+      );
+      if (absPath !== null) {
         try {
-          const bytes = statSync(absPath).size;
-          images.push({ ...base, state: "ready", bytes, absPath });
-          continue;
+          const stat = statSync(absPath);
+          if (stat.isFile()) {
+            images.push({ ...base, state: "ready", bytes: stat.size, absPath });
+            continue;
+          }
+          reason = "图片文件缺失（磁盘无此文件）";
         } catch {
           reason = "图片文件缺失（磁盘无此文件）";
         }

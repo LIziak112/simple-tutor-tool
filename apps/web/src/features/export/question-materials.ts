@@ -1,13 +1,18 @@
 import { processor, stemMdLeaksAnswers } from "@tutor/md-dsl";
+import { DIRECTIVE_TYPES, type MdNode } from "../markdown/remark/mdast-interop";
+
+/** 指令节点类型具名（DIRECTIVE_TYPES = [容器, 叶子, 行内]，按下标取义） */
+const [CONTAINER_DIRECTIVE, LEAF_DIRECTIVE] = DIRECTIVE_TYPES;
+
 import { parseGraphRange } from "../markdown/graph-range";
-import { extractImageRefs } from "../markdown/image-refs";
 
 /**
  * 授权静态题目素材导出模块（T6R.12，方案 §9.3「题目视觉信息不能遗漏」）：
  * 把服务端**已按角色投影**的题目素材转成静态可导出形态——
  * - 完整选项（字母序列出，不带正误标记）、LaTeX 与表格原样保留；
- * - ::image 引用收集为媒体素材清单（extractImageRefs 共享；实际文件由
- *   服务端装配/下载链路提供）；
+ * - ::image 引用收集为媒体素材清单（同一 AST walk 的 leafDirective 分支，
+ *   复审 A2：围栏/行内夹带的样例天然不参与；实际文件由服务端装配/下载
+ *   链路提供）；
  * - ::graph 函数图像收集为待静态化图表（renderGraphFigurePng 按需渲染为
  *   PNG，失败显式返回原因，不伪造「当时画面」、不靠 DOM 截图兜底）；
  * - fold/steps 等交互容器标注「交互内容静态导出（交互状态未记录）」，
@@ -60,23 +65,9 @@ export const STATIC_INTERACTION_NOTE = "【交互内容静态导出】交互状�
 
 // ---------- AST 指令事件（md-dsl processor 与 remark-directive 同源） ----------
 
-/** mdast 节点的最小结构视图（不引 unist 类型包——web 无直接依赖） */
-interface MdNode {
-  readonly type: string;
-  readonly name?: unknown;
-  readonly attributes?: unknown;
-  readonly children?: readonly MdNode[];
-  readonly position?: {
-    readonly start?: { readonly line?: number };
-    readonly end?: { readonly line?: number };
-  };
-}
-
-/** 指令属性值（remark-directive 解析 {…} 而得；值恒为字符串或 null） */
+/** 指令属性值（remark-directive 解析 {…} 而得；值恒为字符串或 null/缺省） */
 function attrOf(node: MdNode, key: string): string | undefined {
-  const attrs = node.attributes;
-  if (typeof attrs !== "object" || attrs === null) return undefined;
-  const value = (attrs as Record<string, unknown>)[key];
+  const value = node.attributes?.[key];
   return typeof value === "string" ? value : undefined;
 }
 
@@ -90,15 +81,28 @@ type DirectiveEvent =
     }
   | { kind: "fold" | "steps"; openLine: number; title?: string };
 
-/** 深度优先收集指令事件（graph 叶子 + fold/steps 容器；其余节点只下钻） */
-function collectDirectiveEvents(root: MdNode): DirectiveEvent[] {
+/** AST walk 收集结果：行编辑事件（文档序）+ ::image src 清单（文档序去重） */
+interface DirectiveScan {
+  readonly events: readonly DirectiveEvent[];
+  readonly imageSrcs: readonly string[];
+}
+
+/**
+ * 深度优先收集（graph/fold/steps 事件 + image 引用；其余节点只下钻）。
+ * AST 遍历序即文档序（复审 A1：图表清单按文档序产出，与行编辑的降序
+ * 应用分离）；::image 只认 leafDirective（围栏内是 code 节点、行内夹带是
+ * textDirective——均天然排除，复审 A2）。
+ */
+function scanDirectives(root: MdNode): DirectiveScan {
   const events: DirectiveEvent[] = [];
+  const imageSrcs: string[] = [];
   const walk = (node: MdNode): void => {
     const name = typeof node.name === "string" ? node.name : "";
     const startLine = node.position?.start?.line;
-    if (startLine !== undefined) {
-      if (node.type === "leafDirective" && name === "graph") {
-        const fn = attrOf(node, "fn");
+    if (startLine !== undefined && typeof node.name === "string") {
+      if (node.type === LEAF_DIRECTIVE && name === "graph") {
+        // fn trim 与 GraphDirective 组件同口径（复审 A10）
+        const fn = attrOf(node, "fn")?.trim();
         if (fn !== undefined && fn.length > 0) {
           const range = attrOf(node, "range");
           events.push({
@@ -108,7 +112,12 @@ function collectDirectiveEvents(root: MdNode): DirectiveEvent[] {
             figure: range !== undefined ? { fn, range } : { fn },
           });
         }
-      } else if (node.type === "containerDirective") {
+      } else if (node.type === LEAF_DIRECTIVE && name === "image") {
+        const src = attrOf(node, "src")?.trim();
+        if (src !== undefined && src.length > 0 && !imageSrcs.includes(src)) {
+          imageSrcs.push(src);
+        }
+      } else if (node.type === CONTAINER_DIRECTIVE) {
         if (name === "fold" || name === "steps") {
           const title = attrOf(node, "title");
           events.push({
@@ -122,25 +131,59 @@ function collectDirectiveEvents(root: MdNode): DirectiveEvent[] {
     for (const child of node.children ?? []) walk(child);
   };
   walk(root);
-  return events;
+  return { events, imageSrcs };
 }
 
-/** 交互容器的静态标记行（fold 带 title 时点名） */
+/**
+ * 原文行的白名单前缀（复审 A3）：只取 `>` 与空白组成的引导段（blockquote
+ * 引用符/缩进），插入的标记行带上它——嵌套在引用块或列表内的容器标记
+ * 不逃逸出宿主块。
+ */
+function leadingPrefixOf(line: string): string {
+  return (/^[>\s]*/.exec(line) ?? [""])[0] ?? "";
+}
+
+/**
+ * 给整段插入行拼宿主前缀（复审 A3）：有宿主前缀（引用/缩进）→ prefix+内容
+ * （空行加去尾空白前缀保块连续）；无宿主（独立块级指令）→ "> " 引用样式
+ * 独立成块（与既有输出形态一致）。
+ */
+function prefixLines(prefix: string, lines: readonly string[]): string[] {
+  const blankPrefix = prefix.replace(/\s+$/, "");
+  return lines.map((line) => {
+    if (line.length === 0) return blankPrefix;
+    return prefix.length > 0 ? `${prefix}${line}` : `> ${line}`;
+  });
+}
+
+/**
+ * 交互容器的静态标记内容（fold 带 title 时点名）。**不带引用前缀**——引用
+ * 层级由宿主块决定（复审 A3：插入时 prefixLines 按宿主前缀拼装，无宿主时
+ * 以 "> " 引用样式独立成块）。
+ */
 function containerNoteLine(
   event: Extract<DirectiveEvent, { kind: "fold" | "steps" }>,
 ): string {
   return event.kind === "fold"
-    ? `> ${STATIC_INTERACTION_NOTE}折叠块${event.title ? `「${event.title}」` : ""}（默认收起，学生当时的展开状态未记录；内容完整保留在下方）。`
-    : `> ${STATIC_INTERACTION_NOTE}分步容器（学生当时展开到第几步未记录；全部步骤完整保留在下方）。`;
+    ? `${STATIC_INTERACTION_NOTE}折叠块${event.title ? `「${event.title}」` : ""}（默认收起，学生当时的展开状态未记录；内容完整保留在下方）。`
+    : `${STATIC_INTERACTION_NOTE}分步容器（学生当时展开到第几步未记录；全部步骤完整保留在下方）。`;
 }
 
-/** ::graph 原文行区间 → 静态说明块（原始指令保留为补充，不要求读者猜原始图形） */
+/** code span 包裹（复审 A10：原始指令含反引号时双反引号＋空格垫护） */
+function codeSpanOf(raw: string): string {
+  return raw.includes("`") ? `\`\` ${raw} \`\`` : `\`${raw}\``;
+}
+
+/**
+ * ::graph 原文行区间 → 静态说明内容（原始指令保留为补充，不要求读者猜
+ * 原始图形）。**不带引用前缀**——同 containerNoteLine，层级由宿主块决定。
+ */
 function graphNoteLines(figure: GraphFigureSpec, raw: string): string[] {
   return [
-    `> 【图表·静态导出】函数图像 y=${figure.fn}${
+    `【图表·静态导出】函数图像 y=${figure.fn}${
       figure.range ? `（x 区间 ${figure.range}）` : ""
     }；交互渲染状态未记录。`,
-    `> 原始指令（补充）：\`${raw}\``,
+    `原始指令（补充）：${codeSpanOf(raw)}`,
   ];
 }
 
@@ -165,18 +208,25 @@ export function buildStaticQuestionMaterial(
   }
 
   const lines = input.stemMd.split(/\r?\n/);
-  const events = collectDirectiveEvents(
-    processor.parse(input.stemMd) as MdNode,
+  const scan = scanDirectives(
+    processor.parse(input.stemMd) as unknown as MdNode,
   );
 
+  // 图表清单按文档序产出（复审 A1：AST 遍历序，与降序行编辑分离）
+  const graphFigures: GraphFigureSpec[] = scan.events
+    .filter(
+      (event): event is Extract<DirectiveEvent, { kind: "graph" }> =>
+        event.kind === "graph",
+    )
+    .map((event) => event.figure);
+
   // 行编辑（自底向上应用，前面的偏移不受影响）：
-  // - graph：替换 [startLine, endLine] 为说明块；
-  // - fold/steps：在 openLine 后插入标记行。
-  const graphFigures: GraphFigureSpec[] = [];
+  // - graph：替换 [startLine, endLine] 为说明块（带原行前缀，复审 A3）；
+  // - fold/steps：在 openLine 后插入标记行（带原行前缀）。
   const interactionNotes: string[] = [];
   let foldCount = 0;
   let stepsCount = 0;
-  const sorted = [...events].sort((a, b) => {
+  const sorted = [...scan.events].sort((a, b) => {
     const aLine = a.kind === "graph" ? a.startLine : a.openLine;
     const bLine = b.kind === "graph" ? b.startLine : b.openLine;
     return bLine - aLine;
@@ -187,19 +237,22 @@ export function buildStaticQuestionMaterial(
         .slice(event.startLine - 1, event.endLine)
         .join("\n")
         .trim();
-      graphFigures.push(event.figure);
+      const prefix = leadingPrefixOf(lines[event.startLine - 1] ?? "");
       lines.splice(
         event.startLine - 1,
         event.endLine - event.startLine + 1,
-        "",
-        ...graphNoteLines(event.figure, raw),
-        "",
+        ...prefixLines(prefix, ["", ...graphNoteLines(event.figure, raw), ""]),
       );
       continue;
     }
     if (event.kind === "fold") foldCount += 1;
     else stepsCount += 1;
-    lines.splice(event.openLine, 0, "", containerNoteLine(event), "");
+    const prefix = leadingPrefixOf(lines[event.openLine - 1] ?? "");
+    lines.splice(
+      event.openLine,
+      0,
+      ...prefixLines(prefix, ["", containerNoteLine(event), ""]),
+    );
   }
   if (foldCount > 0) {
     interactionNotes.push(`折叠块 ${foldCount} 处（展开状态未记录）`);
@@ -229,7 +282,7 @@ export function buildStaticQuestionMaterial(
 
   return {
     markdown: `${sections.join("\n").trimEnd()}\n`,
-    mediaSrcs: extractImageRefs([input.stemMd]),
+    mediaSrcs: scan.imageSrcs,
     graphFigures,
     interactionNotes,
   };

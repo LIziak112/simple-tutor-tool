@@ -12,6 +12,15 @@ export interface MdNode {
   name?: string;
   attributes?: Record<string, string | undefined>;
   children?: MdNode[];
+  /**
+   * 源位置（向后兼容的可选字段，T6R.12 复审 D20）：remark 解析产物恒携带，
+   * 静态素材导出（question-materials）按 start/end line 切原文行注入；
+   * 渲染注入路径不读它，故可选。
+   */
+  position?: {
+    readonly start?: { readonly line?: number };
+    readonly end?: { readonly line?: number };
+  };
   data?: {
     hName?: string;
     hProperties?: Record<string, string | number | boolean>;

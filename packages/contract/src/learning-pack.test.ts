@@ -285,6 +285,20 @@ describe("prompt 模板单一来源（D17）", () => {
     const without = renderLearningPackPrompt(base);
     expect(without).not.toContain("evidence/");
   });
+
+  it("使用方法交付清单按模块枚举：evidence 与 blobs/media/ 配图目录进入清单（复审 A9）", () => {
+    const md = renderLearningPackPrompt({
+      ...base,
+      evidence: true,
+      media: true,
+    });
+    expect(md).toContain("evidence/ 图片目录");
+    expect(md).toContain("blobs/media/ 配图目录");
+    expect(md).toContain("ink/ 图片目录");
+    const neither = renderLearningPackPrompt({ ...base, ink: false });
+    expect(neither).not.toContain("图片目录");
+    expect(neither).not.toContain("配图目录");
+  });
 });
 
 describe("JSON Schema 导出（D19）", () => {

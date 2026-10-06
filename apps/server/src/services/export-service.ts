@@ -10,7 +10,6 @@ import type {
   LearningPackLecture,
   LearningPackLectureTrace,
   LearningPackManifest,
-  LearningPackManifestMissing,
   LearningPackModules,
   LearningPackPreviewData,
   LearningPackPreviewFile,
@@ -858,22 +857,6 @@ export function assembleLearningPack(
     };
   }
 
-  // —— prompt.md（D17 单一来源渲染；v2 附 evidence 说明行） ——
-  const promptMd = renderLearningPackPrompt({
-    goal: request.goal,
-    lectures: m.lectures.length > 0,
-    questionLevel: m.questions ?? null,
-    responses: m.responses,
-    summaries: m.summaries,
-    ink: m.ink,
-    traces: m.traces,
-    ...(m.evidence ? { evidence: true } : {}),
-    anonymized,
-    ...(request.customPrompt !== undefined && request.customPrompt.length > 0
-      ? { customPrompt: request.customPrompt }
-      : {}),
-  });
-
   // —— 映射.txt（化名模式才生成；不进 pack.json，D16） ——
   const mappingTxt = anonymized
     ? [
@@ -914,7 +897,6 @@ export function assembleLearningPack(
     traceRows,
     lectureTraceRows,
     summarySection,
-    promptMd,
     mappingTxt,
   };
   if (isV2) {
@@ -958,8 +940,31 @@ interface PackCore {
   readonly traceRows: LearningPackQuestionTrace[];
   readonly lectureTraceRows: LearningPackLectureTrace[];
   readonly summarySection: LearningPackSummarySection | undefined;
-  readonly promptMd: string;
   readonly mappingTxt: string | null;
+}
+
+/**
+ * prompt.md 渲染（v1/v2 共用；复审 A9 移入版本侧——media 旗标依赖该版本的
+ * 媒体装配结果，交付清单按模块枚举 evidence/ink/blobs-media 目录）。
+ */
+function renderPromptMdOf(core: PackCore, mediaPresent: boolean): string {
+  const m = core.m;
+  return renderLearningPackPrompt({
+    goal: core.request.goal,
+    lectures: m.lectures.length > 0,
+    questionLevel: m.questions ?? null,
+    responses: m.responses,
+    summaries: m.summaries,
+    ink: m.ink,
+    traces: m.traces,
+    ...(m.evidence ? { evidence: true } : {}),
+    ...(mediaPresent ? { media: true } : {}),
+    anonymized: core.anonymized,
+    ...(core.request.customPrompt !== undefined &&
+    core.request.customPrompt.length > 0
+      ? { customPrompt: core.request.customPrompt }
+      : {}),
+  });
 }
 
 /** pack 头部（meta + students）：v1/v2 骨架同款，仅 version 与 evidence 回显差异 */
@@ -1188,6 +1193,9 @@ function assembleV1(core: PackCore): LearningPackAssembly {
     }
   }
 
+  // —— prompt.md（媒体装配后渲染：media 旗标按实际在场配图传入，复审 A9） ——
+  const promptMd = renderPromptMdOf(core, mediaEntries.length > 0);
+
   // —— attempts.responses（D15 全部历次；评语原文不改动 D16） ——
   const responseRows: LearningPackResponse[] = [];
   if (m.responses) {
@@ -1254,7 +1262,7 @@ function assembleV1(core: PackCore): LearningPackAssembly {
   const files = packFilesOf({
     packJsonBytes: Buffer.byteLength(packJson, "utf8"),
     summaryMd,
-    promptMd: core.promptMd,
+    promptMd,
     schemaJson,
     mappingTxt: core.mappingTxt,
     inkEntries: core.inkEntries,
@@ -1265,7 +1273,7 @@ function assembleV1(core: PackCore): LearningPackAssembly {
   return {
     packJson,
     summaryMd,
-    promptMd: core.promptMd,
+    promptMd,
     schemaJson,
     mappingTxt: core.mappingTxt,
     inkEntries: core.inkEntries,
@@ -1301,32 +1309,36 @@ function assembleV2(core: PackCore): LearningPackAssembly {
 
   // —— content.questions（快照一一配对；条目序 = 装配首见序即配对序，不排序） ——
   const questionItemsV2: LearningPackV2Question[] = [];
-  /** media src ↔ q 条目 双向关联（一次遍历同产两份，复审 B3：消双转置） */
+  /**
+   * media src ↔ q 条目 双向关联（一次遍历同产两份，复审 B3：消双转置）。
+   * **只在 questions 模块勾选时登记**（复审 A4）：题目条目与 manifest refs
+   * 都不携带未选模块的关系，refs 不悬空、不外泄。
+   */
   const mediaRefsBySrc = new Map<string, string[]>();
-  const mediaByRef = new Map<
-    string,
-    Array<{ src: string; present: boolean }>
-  >();
-  const registerQuestionMedia = (
-    src: string,
-    present: boolean,
-    refs: readonly string[],
-  ) => {
-    mediaRefsBySrc.set(src, [...refs]);
-    for (const ref of refs) {
-      const list = mediaByRef.get(ref);
-      if (list === undefined) mediaByRef.set(ref, [{ src, present }]);
-      else if (!list.some((item) => item.src === src))
-        list.push({ src, present });
-    }
-  };
-  for (const medium of evidenceAsm.media) {
-    registerQuestionMedia(medium.src, true, medium.questionRefs);
-  }
-  for (const miss of evidenceAsm.missingMedia) {
-    registerQuestionMedia(miss.src, false, miss.questionRefs);
-  }
   if (m.questions !== undefined) {
+    const mediaByRef = new Map<
+      string,
+      Array<{ src: string; present: boolean }>
+    >();
+    const registerQuestionMedia = (
+      src: string,
+      present: boolean,
+      refs: readonly string[],
+    ) => {
+      mediaRefsBySrc.set(src, [...refs]);
+      for (const ref of refs) {
+        const list = mediaByRef.get(ref);
+        if (list === undefined) mediaByRef.set(ref, [{ src, present }]);
+        else if (!list.some((item) => item.src === src))
+          list.push({ src, present });
+      }
+    };
+    for (const medium of evidenceAsm.media) {
+      registerQuestionMedia(medium.src, true, medium.questionRefs);
+    }
+    for (const miss of evidenceAsm.missingMedia) {
+      registerQuestionMedia(miss.src, false, miss.questionRefs);
+    }
     for (const revision of evidenceAsm.revisions) {
       questionItemsV2.push({
         ref: revision.ref,
@@ -1359,8 +1371,34 @@ function assembleV2(core: PackCore): LearningPackAssembly {
   // 防同图双 zip 条目/totalBytes 双计/manifest 重复行） ——
   const mediaEntries: Array<{ entry: string; absPath: string; bytes: number }> =
     [];
-  /** v2 manifest.missing 的 media 行（缺失显式登记，不静默跳过） */
-  const manifestMissingMedia: LearningPackManifestMissing[] = [];
+  /**
+   * v2 manifest.missing 的 media 行（缺失显式登记，不静默跳过）。
+   * Map 化按 path 去重（复审 A6）：讲义先行行与题目侧行同 src 时**合并 refs**
+   * （与在场分支对称——讲义无关联 refs=[]，题目侧并入时补上 q 条目关联）。
+   */
+  const missingMediaByPath = new Map<
+    string,
+    { path: string; kind: "media"; reason: string; refs: string[] }
+  >();
+  const upsertMissingMedia = (
+    src: string,
+    reason: string,
+    refs: readonly string[],
+  ) => {
+    const existing = missingMediaByPath.get(src);
+    if (existing === undefined) {
+      missingMediaByPath.set(src, {
+        path: src,
+        kind: "media",
+        reason,
+        refs: [...refs],
+      });
+      return;
+    }
+    for (const ref of refs) {
+      if (!existing.refs.includes(ref)) existing.refs.push(ref);
+    }
+  };
   {
     const mdTexts: string[] = [];
     for (const item of core.lectureItems) {
@@ -1378,12 +1416,7 @@ function assembleV2(core: PackCore): LearningPackAssembly {
         });
         continue;
       }
-      manifestMissingMedia.push({
-        path: src,
-        kind: "media",
-        reason: stat.reason,
-        refs: [],
-      });
+      upsertMissingMedia(src, stat.reason, []);
     }
     // v2 题目媒体：证据装配结果并入（refs 关联 q 条目），已被讲义收录的 src
     // 跳过；题目模块未勾选时不并入也不登记缺失——「未选模块不夹带内容」（§9.2）
@@ -1397,19 +1430,14 @@ function assembleV2(core: PackCore): LearningPackAssembly {
           bytes: medium.bytes,
         });
       }
-      const seenMissing = new Set(manifestMissingMedia.map((row) => row.path));
       for (const miss of evidenceAsm.missingMedia) {
-        if (seenMissing.has(miss.src)) continue;
-        seenMissing.add(miss.src);
-        manifestMissingMedia.push({
-          path: miss.src,
-          kind: "media",
-          reason: miss.reason,
-          refs: [...miss.questionRefs],
-        });
+        upsertMissingMedia(miss.src, miss.reason, miss.questionRefs);
       }
     }
   }
+
+  // —— prompt.md（媒体装配后渲染：media 旗标按实际在场配图传入，复审 A9） ——
+  const promptMd = renderPromptMdOf(core, mediaEntries.length > 0);
 
   // —— 证据图条目（evidence 模块勾选才装配；zip 写入与 preview 共用） ——
   const evidenceEntries: Array<{
@@ -1573,7 +1601,7 @@ function assembleV2(core: PackCore): LearningPackAssembly {
       {
         path: "prompt.md",
         kind: "prompt",
-        bytes: Buffer.byteLength(core.promptMd, "utf8"),
+        bytes: Buffer.byteLength(promptMd, "utf8"),
         refs: [],
       },
       {
@@ -1612,7 +1640,7 @@ function assembleV2(core: PackCore): LearningPackAssembly {
       })),
     ],
     missing: [
-      ...manifestMissingMedia,
+      ...missingMediaByPath.values(),
       ...evidenceAsm.missingEvidenceImages.map((miss) => ({
         path: miss.file,
         kind: "evidence-image" as const,
@@ -1640,7 +1668,7 @@ function assembleV2(core: PackCore): LearningPackAssembly {
   return {
     packJson,
     summaryMd,
-    promptMd: core.promptMd,
+    promptMd,
     schemaJson,
     mappingTxt: core.mappingTxt,
     inkEntries: core.inkEntries,
@@ -1993,7 +2021,7 @@ export function previewLearningPack(
     hint: overLimit
       ? `数据包预估 ${(assembly.totalBytes / (1024 * 1024)).toFixed(
           1,
-        )} MB，超过 ${Math.round(limitBytes / (1024 * 1024))} MB 上限。精简方向：减少学生人数、取消手写 PNG、或缩小时间范围后重试。`
+        )} MB，超过 ${Math.round(limitBytes / (1024 * 1024))} MB 上限。精简方向：减少学生人数、取消手写 PNG 或证据附件、或缩小时间范围后重试。`
       : null,
   };
 }
@@ -2033,7 +2061,7 @@ export async function buildLearningPackZip(
       "EXPORT_TOO_LARGE",
       `数据包预估 ${(assembly.totalBytes / (1024 * 1024)).toFixed(
         1,
-      )} MB，超过 ${Math.round(limitBytes / (1024 * 1024))} MB 上限。请减少学生人数、取消手写 PNG、或缩小时间范围后重试。`,
+      )} MB，超过 ${Math.round(limitBytes / (1024 * 1024))} MB 上限。请减少学生人数、取消手写 PNG 或证据附件、或缩小时间范围后重试。`,
     );
   }
 

@@ -118,16 +118,31 @@ export function writeFileAtomic(params: {
  * （ink 传 INK_UNREADABLE、note 传 NOTE_BODY_PATH_INVALID）；suffix 传
  * null/undefined 跳过后缀检查（白名单后缀是纵深防御，不是访问控制）。
  */
+/**
+ * resolveWithinRoot 的不抛错形态（T6R.12 复审 A8）：同 path.relative 强边界
+ * 算法，越界返回 null（调用方自行决定缺失文案，不炸）——statMediaSrc 的
+ * 媒体核对与 note 分析图落盘检查共用，startsWith 弱实现不再出现。
+ */
+export function resolveWithinRootOrNull(
+  dataDir: string,
+  rootRel: string,
+  relPath: string,
+): string | null {
+  const root = resolve(dataDir, rootRel);
+  const abs = resolve(dataDir, relPath);
+  const rel = relative(root, abs);
+  if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) return null;
+  return abs;
+}
+
 export function resolveWithinRoot(
   dataDir: string,
   rootRel: string,
   relPath: string,
   opts: { suffix?: string; violationCode: string },
 ): string {
-  const root = resolve(dataDir, rootRel);
-  const abs = resolve(dataDir, relPath);
-  const rel = relative(root, abs);
-  if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
+  const abs = resolveWithinRootOrNull(dataDir, rootRel, relPath);
+  if (abs === null) {
     throw new HttpError(
       500,
       opts.violationCode,
