@@ -23,8 +23,8 @@ import {
   type StudentAnswer,
   type StudentPaperData,
   type StudentPaperUnit,
-  studentAnswerSchema,
   type SubmitEvidenceDeclaration,
+  studentAnswerSchema,
 } from "@tutor/contract";
 import { grade } from "@tutor/grading";
 import { studentStemMd } from "@tutor/md-dsl";
@@ -1354,13 +1354,19 @@ function buildSubmissionEvidence(
   attemptId: string,
   graded: readonly GradedResponse[],
   declarations: readonly SubmitEvidenceDeclaration[] | undefined,
-): Array<{ questionId: string; state: NoteSubmissionEvidenceState; versionId: string | null }> {
+): Array<{
+  questionId: string;
+  state: NoteSubmissionEvidenceState;
+  versionId: string | null;
+}> {
   const noteRows = db
     .select()
     .from(notes)
     .where(and(eq(notes.attemptId, attemptId), eq(notes.phase, "scratch")))
     .all();
-  const noteByQuestion = new Map(noteRows.map((n) => [n.questionId, n] as const));
+  const noteByQuestion = new Map(
+    noteRows.map((n) => [n.questionId, n] as const),
+  );
 
   if (declarations === undefined) {
     // 旧客户端：有草稿 ⇒ 拒绝并要求刷新；无草稿 ⇒ 兼容交卷（未采集=无行）
@@ -1371,12 +1377,11 @@ function buildSubmissionEvidence(
   }
 
   // 新客户端：集合精确比对（长度相等 + 无重复 + 全部已知 ⇒ 恰好一致）
-  if (declarations.length !== graded.length) throw evidenceMismatch(
-    "笔记证据声明与试卷题目不一致，请刷新页面后重新交卷",
-  );
-  const expectedQuestions = new Set(
-    graded.map((g) => g.response.questionId),
-  );
+  if (declarations.length !== graded.length)
+    throw evidenceMismatch(
+      "笔记证据声明与试卷题目不一致，请刷新页面后重新交卷",
+    );
+  const expectedQuestions = new Set(graded.map((g) => g.response.questionId));
   const seen = new Set<string>();
   for (const decl of declarations) {
     if (seen.has(decl.questionId)) {
@@ -1414,7 +1419,11 @@ function buildSubmissionEvidence(
           "该题存在未固定的草稿，请返回处理后再交卷（或刷新页面查看最新草稿）",
         );
       }
-      return { questionId: decl.questionId, state: "none" as const, versionId: null };
+      return {
+        questionId: decl.questionId,
+        state: "none" as const,
+        versionId: null,
+      };
     }
     return {
       questionId: decl.questionId,

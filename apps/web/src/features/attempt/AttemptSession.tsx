@@ -25,13 +25,13 @@ import {
 } from "@/features/attempt/use-draft-sync";
 import type { InkUploadController } from "@/features/attempt/use-ink-upload";
 import { useStudentMe } from "@/features/auth/student-auth";
-import { useBindNoteSession } from "@/features/notes/use-note-head";
 import {
   prepareSubmitEvidence,
-  snapshotNoteOverview,
   type SubmitEvidencePrep,
   type SubmitEvidenceProblem,
+  snapshotNoteOverview,
 } from "@/features/notes/submit-evidence";
+import { useBindNoteSession } from "@/features/notes/use-note-head";
 import { startWrongPracticeApi } from "@/lib/api";
 import { createEventQueue } from "@/lib/event-queue";
 import { formatDueTime } from "@/lib/time";
@@ -239,7 +239,9 @@ function AnswerView({
   /** 笔迹 flush 进行中（交卷按钮/确认弹层的等待态） */
   const [inkFlushing, setInkFlushing] = useState(false);
   // T6R.10：草稿证据——弹层快览、追平组装进行中、未决问题（明确选择分支）
-  const [noteSummary, setNoteSummary] = useState<SubmitNoteSummary | null>(null);
+  const [noteSummary, setNoteSummary] = useState<SubmitNoteSummary | null>(
+    null,
+  );
   const [notePreparing, setNotePreparing] = useState(false);
   const [noteProblems, setNoteProblems] = useState<
     SubmitEvidenceProblem[] | null
@@ -280,7 +282,9 @@ function AnswerView({
     missingConfirmedRef.current = null;
     setConfirmOpen(true);
     void snapshotNoteOverview({ attemptId, questionIds }).then((statuses) => {
-      const willFreeze = statuses.filter((s) => s.kind === "will-freeze").length;
+      const willFreeze = statuses.filter(
+        (s) => s.kind === "will-freeze",
+      ).length;
       const problem = statuses.filter((s) => s.kind === "problem").length;
       // 完全没动过草稿时不展示该区（避免无信息噪音）
       setNoteSummary(
@@ -340,7 +344,9 @@ function AnswerView({
       // 阻止性失败（head 拉取失败等）：留在弹层如实提示，可重试
       setNotePreparing(false);
       setNotePrepError(
-        err instanceof Error ? err.message : "草稿状态获取失败，请检查网络后重试",
+        err instanceof Error
+          ? err.message
+          : "草稿状态获取失败，请检查网络后重试",
       );
       return;
     }

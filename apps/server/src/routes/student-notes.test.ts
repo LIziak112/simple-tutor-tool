@@ -19,10 +19,7 @@ import { insertFrozenResponse } from "../services/attempt-service.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 import { gzipJson, noteDoc, putNoteBodyForm } from "../test/note-fixtures.ts";
 import { freshNoteAttempt, noteRowOf } from "../test/note-world.ts";
-import {
-  submitAttemptRequest,
-  submitAttemptRequestWithEvidence,
-} from "../test/submit-revisions";
+import { submitAttemptRequestWithEvidence } from "../test/submit-revisions";
 
 /**
  * T6R.4 路由层测试：学生端 PUT /api/student/attempts/:id/notes/:qid

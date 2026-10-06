@@ -38,10 +38,7 @@ import {
   loginStudent,
   noteRowOf,
 } from "../test/note-world.ts";
-import {
-  submitAttemptRequest,
-  submitAttemptRequestWithEvidence,
-} from "../test/submit-revisions";
+import { submitAttemptRequestWithEvidence } from "../test/submit-revisions";
 
 /**
  * T6R.5 学生端读/图路由测试：

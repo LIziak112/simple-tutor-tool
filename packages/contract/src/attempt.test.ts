@@ -780,7 +780,12 @@ describe("attemptSubmitRequestSchema.evidence（T6R.10 提交事务固定原稿�
       revisions: [],
       evidence: [
         { questionId: "练习四-1", state: "none" },
-        { questionId: "练习四-2", state: "frozen", versionId: UUID, revision: 3 },
+        {
+          questionId: "练习四-2",
+          state: "frozen",
+          versionId: UUID,
+          revision: 3,
+        },
         { questionId: "练习四-3", state: "missing" },
       ],
     });
@@ -835,16 +840,19 @@ describe("attemptSubmitRequestSchema.evidence（T6R.10 提交事务固定原稿�
     expect(
       attemptSubmitRequestSchema.safeParse({
         revisions: [],
-        evidence: [
-          { questionId: "q1", state: "legacy_unverified" as never },
-        ],
+        evidence: [{ questionId: "q1", state: "legacy_unverified" as never }],
       }).success,
     ).toBe(false);
     expect(
       attemptSubmitRequestSchema.safeParse({
         revisions: [],
         evidence: [
-          { questionId: "q1", state: "frozen", versionId: "not-a-uuid", revision: 1 },
+          {
+            questionId: "q1",
+            state: "frozen",
+            versionId: "not-a-uuid",
+            revision: 1,
+          },
         ],
       }).success,
     ).toBe(false);

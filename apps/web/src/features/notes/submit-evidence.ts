@@ -18,13 +18,13 @@
  */
 import type { SubmitEvidenceDeclaration } from "@tutor/contract";
 import { fetchStudentNoteHeadApi } from "@/lib/api";
-import { currentNoteSession, flushNoteSync } from "./note-sync.ts";
 import {
   getNoteRecord,
-  settleNotePersistence,
   type NoteLocalRecord,
   type NoteScope,
+  settleNotePersistence,
 } from "./note-store.ts";
+import { currentNoteSession, flushNoteSync } from "./note-sync.ts";
 
 /** 逐题展示分类（SubmitConfirmDialog 草稿状态区） */
 export type SubmitNoteStatusKind =
@@ -114,27 +114,40 @@ export async function prepareSubmitEvidence(input: {
     ),
   );
 
-  // ④ 分类与声明
+  // ④ 分类与声明（questionIds 与 heads 等长——上方 map 一一对应产出）
   const statuses: SubmitNoteStatus[] = [];
   const declarations: SubmitEvidenceDeclaration[] = [];
   const problems: SubmitEvidenceProblem[] = [];
   let blocked = false;
 
   for (let i = 0; i < input.questionIds.length; i += 1) {
-    const questionId = input.questionIds[i]!;
-    const head = heads[i]!;
+    const questionId = input.questionIds[i];
+    const head = heads[i];
+    if (questionId === undefined || head === undefined) continue;
     const scope: NoteScope = {
       attemptId: input.attemptId,
       questionId,
       phase: "scratch",
     };
-    const record = session === null ? null : await getNoteRecord(session, scope);
-    const hasServerNote = head.note !== null && head.note.revision > 0;
+    const record =
+      session === null ? null : await getNoteRecord(session, scope);
+    const serverNote = head.note;
+    const serverRevision = serverNote?.revision ?? 0;
+    const serverVersionId = serverNote?.currentVersionId ?? null;
+    const hasServerNote = serverRevision > 0;
+    // revision≥1 ⇒ currentVersionId 非空（契约不变量）；空指针按数据不一致
+    // 的防御路径走问题分支，不做非空断言
+    const freezable =
+      hasServerNote && serverVersionId !== null
+        ? { versionId: serverVersionId, revision: serverRevision }
+        : null;
 
     // 未追平判定：记录态（conflict/denied/pending）∪ flush 摘要点名
-    const reason = problemReasonOf(record) ?? (flushedBad.has(questionId)
-      ? "草稿尚未保存完整（网络不稳定，正在重试）"
-      : null);
+    const reason =
+      problemReasonOf(record) ??
+      (flushedBad.has(questionId)
+        ? "草稿尚未保存完整（网络不稳定，正在重试）"
+        : null);
     // 防御：本地有笔、无待传、服务端却无笔记行（内容从未到达服务端的
     // 数据不一致态）——不能静默 none，按问题呈现等用户处理/明确选择
     const contentNeverLanded =
@@ -143,9 +156,16 @@ export async function prepareSubmitEvidence(input: {
       record.doc.ink.strokes.length > 0 &&
       !hasServerNote;
 
-    if (reason !== null || contentNeverLanded) {
+    if (
+      reason !== null ||
+      contentNeverLanded ||
+      (hasServerNote && freezable === null)
+    ) {
       const text =
-        reason ?? "草稿内容尚未保存到服务器（数据不一致，请重试同步）";
+        reason ??
+        (hasServerNote && freezable === null
+          ? "草稿服务端状态异常（头指针为空），请刷新后重试"
+          : "草稿内容尚未保存到服务器（数据不一致，请重试同步）");
       if (input.allowMissing?.has(questionId) === true) {
         // 用户已明确选择缺稿交卷：如实声明 missing（本地稿保留）
         statuses.push({ questionId, kind: "missing", reason: null });
@@ -158,13 +178,13 @@ export async function prepareSubmitEvidence(input: {
       continue;
     }
 
-    if (hasServerNote) {
+    if (freezable !== null) {
       statuses.push({ questionId, kind: "will-freeze", reason: null });
       declarations.push({
         questionId,
         state: "frozen",
-        versionId: head.note!.currentVersionId!,
-        revision: head.note!.revision,
+        versionId: freezable.versionId,
+        revision: freezable.revision,
       });
       continue;
     }

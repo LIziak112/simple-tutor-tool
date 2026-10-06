@@ -79,9 +79,12 @@ beforeAll(async () => {
     body: JSON.stringify({ markdown: PRACTICE_MD, filename: "练习样例.md" }),
   });
   expect(importRes.status).toBe(200);
-  unitId = (
+  const units = (
     (await importRes.json()) as { data: { units: { id: string }[] } }
-  ).data.units[0]!.id;
+  ).data.units;
+  const firstUnit = units[0];
+  if (firstUnit === undefined) throw new Error("样例导入未产出单元");
+  unitId = firstUnit.id;
   aId = await createStudent("张三");
   aCookie = await loginStudent(app, "张三", STUDENT_PASSWORD);
 });
@@ -105,8 +108,16 @@ async function createStudent(name: string): Promise<string> {
     }),
   });
   expect(res.status).toBe(201);
-  return ((await res.json()) as { data: { student: { id: string }[] } }).data
+  return ((await res.json()) as { data: { student: { id: string } } }).data
     .student.id;
+}
+
+/** 按下标取题目 id（越界即测试前置失败——比非空断言可诊断） */
+function qAt(ids: string[], index: number): string {
+  const id = ids[index];
+  if (id === undefined)
+    throw new Error(`题目下标 ${index} 越界（样例卷应有八题）`);
+  return id;
 }
 
 /** 每测试取新 attempt（笔记/证据按 attempt 天然隔离） */
@@ -200,7 +211,7 @@ describe("T6R.10 交卷固定原稿：frozen 主链", () => {
   it("有稿题 frozen 固定 head 版本、无稿题 none 落行、其余未采集语义=新客户端全覆盖", async () => {
     const attemptId = await freshAttempt();
     const ids = await questionIdsOf(attemptId);
-    const notedId = ids[0]!;
+    const notedId = qAt(ids, 0);
     const put1 = await putNote(attemptId, notedId, 2);
     expect(put1.status).toBe(200);
     const receipt1 = noteVersionReceiptSchema.parse(
@@ -229,16 +240,14 @@ describe("T6R.10 交卷固定原稿：frozen 主链", () => {
     const frozenRow = rows.find((r) => r.questionId === notedId);
     expect(frozenRow?.state).toBe("frozen");
     expect(frozenRow?.versionId).toBe(receipt1.versionId);
-    expect(rows.filter((r) => r.state === "none")).toHaveLength(
-      ids.length - 1,
-    );
+    expect(rows.filter((r) => r.state === "none")).toHaveLength(ids.length - 1);
     expect(attemptRowOf(attemptId)?.status).not.toBe("draft");
   });
 
   it("多版后固定最终 head：v1→v2 交卷固定 v2（不是 v1）", async () => {
     const attemptId = await freshAttempt();
     const ids = await questionIdsOf(attemptId);
-    const notedId = ids[1]!;
+    const notedId = qAt(ids, 1);
     await putNote(attemptId, notedId, 1);
     const put2 = await putNote(attemptId, notedId, 3, 1);
     expect(put2.status).toBe(200);
@@ -289,19 +298,21 @@ describe("T6R.10 证据声明拒绝分支（409 NOTE_EVIDENCE_MISMATCH）", () =
     const ids = await questionIdsOf(attemptId);
     // 另一 attempt 的合法版本（未授权引用）
     const otherAttempt = await freshAttempt();
-    const otherPut = await putNote(otherAttempt, ids[0]!, 1);
+    const otherPut = await putNote(otherAttempt, qAt(ids, 0), 1);
     const otherReceipt = noteVersionReceiptSchema.parse(
       (otherPut.body as { data: unknown }).data,
     );
 
     const res = await submitWith(attemptId, [
       {
-        questionId: ids[0]!,
+        questionId: qAt(ids, 0),
         state: "frozen",
         versionId: otherReceipt.versionId,
         revision: 1,
       },
-      ...ids.slice(1).map((questionId) => ({ questionId, state: "none" as const })),
+      ...ids
+        .slice(1)
+        .map((questionId) => ({ questionId, state: "none" as const })),
     ]);
     const err = await expectApiErr(res);
     expect(err.status).toBe(409);
@@ -314,7 +325,7 @@ describe("T6R.10 证据声明拒绝分支（409 NOTE_EVIDENCE_MISMATCH）", () =
   it("提交期间其他标签页改出新 head（revision 落后）→ 409，不静默固定旧版", async () => {
     const attemptId = await freshAttempt();
     const ids = await questionIdsOf(attemptId);
-    const notedId = ids[2]!;
+    const notedId = qAt(ids, 2);
     const put1 = await putNote(attemptId, notedId, 1);
     const receipt1 = noteVersionReceiptSchema.parse(
       (put1.body as { data: unknown }).data,
@@ -343,9 +354,12 @@ describe("T6R.10 证据声明拒绝分支（409 NOTE_EVIDENCE_MISMATCH）", () =
   it("none 声明与实际有稿矛盾 → 409（用户未确认不能静默 missing/none）", async () => {
     const attemptId = await freshAttempt();
     const ids = await questionIdsOf(attemptId);
-    await putNote(attemptId, ids[3]!, 1);
+    await putNote(attemptId, qAt(ids, 3), 1);
 
-    const res = await submitWith(attemptId, await allNoneDeclarations(attemptId));
+    const res = await submitWith(
+      attemptId,
+      await allNoneDeclarations(attemptId),
+    );
     const err = await expectApiErr(res);
     expect(err.status).toBe(409);
     expect(err.code).toBe("NOTE_EVIDENCE_MISMATCH");
@@ -357,7 +371,12 @@ describe("T6R.10 证据声明拒绝分支（409 NOTE_EVIDENCE_MISMATCH）", () =
     const ids = await questionIdsOf(attemptId);
     // 缺项（漏一题）
     const missing1 = await expectApiErr(
-      submitWith(attemptId, ids.slice(1).map((questionId) => ({ questionId, state: "none" as const }))),
+      submitWith(
+        attemptId,
+        ids
+          .slice(1)
+          .map((questionId) => ({ questionId, state: "none" as const })),
+      ),
     );
     expect(missing1.status).toBe(409);
     // 多出未知题目
@@ -371,9 +390,11 @@ describe("T6R.10 证据声明拒绝分支（409 NOTE_EVIDENCE_MISMATCH）", () =
     // 重复
     const dup = await expectApiErr(
       submitWith(attemptId, [
-        { questionId: ids[0]!, state: "none" },
-        { questionId: ids[0]!, state: "none" },
-        ...ids.slice(1).map((questionId) => ({ questionId, state: "none" as const })),
+        { questionId: qAt(ids, 0), state: "none" },
+        { questionId: qAt(ids, 0), state: "none" },
+        ...ids
+          .slice(1)
+          .map((questionId) => ({ questionId, state: "none" as const })),
       ]),
     );
     expect(dup.status).toBe(409);
@@ -383,8 +404,11 @@ describe("T6R.10 证据声明拒绝分支（409 NOTE_EVIDENCE_MISMATCH）", () =
   it("泄露：409 响应 assertNoLeak 通过（无答案/详解/提示/磁盘路径）", async () => {
     const attemptId = await freshAttempt();
     const ids = await questionIdsOf(attemptId);
-    await putNote(attemptId, ids[0]!, 1);
-    const res = await submitWith(attemptId, await allNoneDeclarations(attemptId));
+    await putNote(attemptId, qAt(ids, 0), 1);
+    const res = await submitWith(
+      attemptId,
+      await allNoneDeclarations(attemptId),
+    );
     const body = (await res.json()) as Record<string, unknown>;
     expect(res.status).toBe(409);
     assertNoLeak(body);
@@ -405,7 +429,7 @@ describe("T6R.10 旧客户端兼容分支", () => {
   it("缺 evidence 字段 + 检测到草稿 → 409 要求刷新（不能把已有草稿记 none）", async () => {
     const attemptId = await freshAttempt();
     const ids = await questionIdsOf(attemptId);
-    await putNote(attemptId, ids[4]!, 1);
+    await putNote(attemptId, qAt(ids, 4), 1);
     const err = await expectApiErr(submitWith(attemptId));
     expect(err.status).toBe(409);
     expect(err.code).toBe("NOTE_EVIDENCE_MISMATCH");
@@ -432,7 +456,7 @@ describe("T6R.10 幂等、回滚与 original 不可变", () => {
   it("交卷后迟到 PUT → 409 ALREADY_SUBMITTED；original 行与 head 不变", async () => {
     const attemptId = await freshAttempt();
     const ids = await questionIdsOf(attemptId);
-    const notedId = ids[5]!;
+    const notedId = qAt(ids, 5);
     const put1 = await putNote(attemptId, notedId, 1);
     const receipt1 = noteVersionReceiptSchema.parse(
       (put1.body as { data: unknown }).data,
@@ -467,7 +491,7 @@ describe("T6R.10 幂等、回滚与 original 不可变", () => {
   it("交卷后同 mutationId 幂等重放返回原回执（丢回执补传不误 409、不改 original）", async () => {
     const attemptId = await freshAttempt();
     const ids = await questionIdsOf(attemptId);
-    const notedId = ids[6]!;
+    const notedId = qAt(ids, 6);
     const mutationId = "44444444-4444-4444-8444-444444444444";
     const put1 = await putNote(attemptId, notedId, 1, 0, mutationId);
     expect(put1.status).toBe(200);
@@ -496,7 +520,8 @@ describe("T6R.10 幂等、回滚与 original 不可变", () => {
     expect(replayReceipt.versionId).toBe(receipt1.versionId);
     expect(noteRowOf(db, attemptId, notedId)?.currentRevision).toBe(1);
     expect(
-      evidenceRowsOf(attemptId).find((r) => r.questionId === notedId)?.versionId,
+      evidenceRowsOf(attemptId).find((r) => r.questionId === notedId)
+        ?.versionId,
     ).toBe(receipt1.versionId);
   });
 
@@ -504,9 +529,12 @@ describe("T6R.10 幂等、回滚与 original 不可变", () => {
     const attemptId = await freshAttempt();
     const ids = await questionIdsOf(attemptId);
     // 故障注入：预插一行同 (attempt, question) 证据行 → 交卷事务插入必撞唯一索引
-    insertEvidence(db, attemptId, ids[0]!, "none", null);
+    insertEvidence(db, attemptId, qAt(ids, 0), "none", null);
 
-    const res = await submitWith(attemptId, await allNoneDeclarations(attemptId));
+    const res = await submitWith(
+      attemptId,
+      await allNoneDeclarations(attemptId),
+    );
     expect(res.status).toBeGreaterThanOrEqual(500);
     expect(attemptRowOf(attemptId)?.status).toBe("draft");
     // 只剩注入的那一行：事务回滚没有写入任何新行/判分
@@ -516,7 +544,7 @@ describe("T6R.10 幂等、回滚与 original 不可变", () => {
   it("重练后旧卷原稿不变：同题新 attempt 的笔记与证据互不影响", async () => {
     const firstAttempt = await freshAttempt();
     const ids = await questionIdsOf(firstAttempt);
-    const notedId = ids[0]!;
+    const notedId = qAt(ids, 0);
     const put1 = await putNote(firstAttempt, notedId, 2);
     const receipt1 = noteVersionReceiptSchema.parse(
       (put1.body as { data: unknown }).data,

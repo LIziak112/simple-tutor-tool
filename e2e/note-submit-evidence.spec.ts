@@ -145,9 +145,7 @@ test.describe("交卷固定原稿（T6R.10）", () => {
 
       // 交卷：确认弹层 → 确认（追平草稿 + 证据声明随请求上行）
       await studentPage.getByRole("button", { name: "交卷" }).click();
-      await expect(
-        studentPage.getByText(/还有 1 题没有作答/),
-      ).toBeVisible();
+      await expect(studentPage.getByText(/还有 1 题没有作答/)).toBeVisible();
       await studentPage.getByRole("button", { name: "确认交卷" }).click();
       await expect(studentPage.getByText(/批改结果/)).toBeVisible({
         timeout: 30_000,
@@ -166,23 +164,22 @@ test.describe("交卷固定原稿（T6R.10）", () => {
       const originalVersionId = evidence1.versionId;
 
       // —— 第二轮：返回单元落地页 → 再做一次（同题）→ 再写草稿 → 再交卷 ——
-      await studentPage
-        .getByRole("link", { name: "返回单元练习" })
-        .click();
+      await studentPage.getByRole("link", { name: "返回单元练习" }).click();
       await studentPage.waitForURL(
         `**/s/courses/${courseId}/units/${encodeURIComponent(unitName)}`,
       );
       await studentPage.getByRole("button", { name: "再做一次" }).click();
-      await studentPage
-        .getByRole("button", { name: "开始新一次" })
-        .click();
+      await studentPage.getByRole("button", { name: "开始新一次" }).click();
       await studentPage.waitForURL("**/s/attempts/**");
       const attempt2 = studentPage.url().split("/").pop() ?? "";
       expect(attempt2).not.toBe("");
       expect(attempt2).not.toBe(attempt1);
 
       const card2 = studentPage.locator('article[aria-label="第 2 题"]');
-      await card2.getByRole("button", { name: /草稿纸/ }).first().click();
+      await card2
+        .getByRole("button", { name: /草稿纸/ })
+        .first()
+        .click();
       const canvas2 = card2.locator('[data-slot="note-paper"] canvas');
       await expect(canvas2).toBeVisible();
       // 新卷新空白（不继承第一轮草稿），写两笔

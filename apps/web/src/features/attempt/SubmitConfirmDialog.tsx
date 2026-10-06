@@ -89,10 +89,9 @@ export function SubmitConfirmDialog({
         {/* T6R.10 草稿状态区（本地快览；确认时以重新组装的权威判定为准） */}
         {noteSummary !== null && !choiceMode && (
           <p className="rounded-lg bg-muted px-3 py-2 text-xs leading-6 text-muted-foreground">
-            草稿：{noteSummary.willFreeze > 0 && (
-              <>
-                {noteSummary.willFreeze} 题草稿已同步，交卷时固定为原稿
-              </>
+            草稿：
+            {noteSummary.willFreeze > 0 && (
+              <>{noteSummary.willFreeze} 题草稿已同步，交卷时固定为原稿</>
             )}
             {noteSummary.willFreeze > 0 && noteSummary.problem > 0 && "；"}
             {noteSummary.problem > 0 && (
@@ -103,7 +102,8 @@ export function SubmitConfirmDialog({
             {(noteSummary.willFreeze > 0 || noteSummary.problem > 0) &&
               noteSummary.unwritten > 0 &&
               "；"}
-            {noteSummary.unwritten > 0 && `其余 ${noteSummary.unwritten} 题未写草稿`}
+            {noteSummary.unwritten > 0 &&
+              `其余 ${noteSummary.unwritten} 题未写草稿`}
             。
           </p>
         )}

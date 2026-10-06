@@ -20,10 +20,10 @@ import {
 } from "@/features/notes/note-store";
 import {
   DOC_A,
-  SESSION_A,
   headOf,
   receiptOf,
   SCOPE,
+  SESSION_A,
   waitForLocalSaved,
 } from "@/features/notes/note-test-utils";
 
@@ -89,9 +89,13 @@ function headAt(questionId: string): NoteHeadData {
 
 /** head mock：默认全空态，覆盖表定制 */
 function mockHeads(overrides: Record<string, NoteHeadData>): void {
-  headMock.mockImplementation(async (_attemptId: string, questionId: string) => {
-    return overrides[questionId] ?? { note: null, images: [], evidence: null };
-  });
+  headMock.mockImplementation(
+    async (_attemptId: string, questionId: string) => {
+      return (
+        overrides[questionId] ?? { note: null, images: [], evidence: null }
+      );
+    },
+  );
 }
 
 describe("prepareSubmitEvidence：正常固定", () => {
@@ -192,7 +196,9 @@ describe("prepareSubmitEvidence：失败呈现与明确选择", () => {
     });
     expect(prep.declarations).toBeNull();
     expect(prep.problems.map((p) => p.questionId)).toEqual([Q1]);
-    expect(prep.statuses.find((s) => s.questionId === Q1)?.kind).toBe("problem");
+    expect(prep.statuses.find((s) => s.questionId === Q1)?.kind).toBe(
+      "problem",
+    );
 
     // 用户明确选择「提交答案，草稿未保存完整」→ 重跑组装
     const confirmed = await prepareSubmitEvidence({
@@ -236,9 +242,9 @@ describe("prepareSubmitEvidence：失败呈现与明确选择", () => {
     });
     // 自愈后按服务端事实固定，不硬标 missing
     expect(confirmed.problems).toEqual([]);
-    expect(confirmed.declarations?.find((d) => d.questionId === Q1)?.state).toBe(
-      "frozen",
-    );
+    expect(
+      confirmed.declarations?.find((d) => d.questionId === Q1)?.state,
+    ).toBe("frozen");
   });
 
   it("冲突态（conflict）与内容被拒（denied.content）都列为问题", async () => {

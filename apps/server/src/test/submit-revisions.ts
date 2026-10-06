@@ -1,4 +1,8 @@
-import type { AttemptDetailData, AttemptDraftData, SubmitEvidenceDeclaration } from "@tutor/contract";
+import type {
+  AttemptDetailData,
+  AttemptDraftData,
+  SubmitEvidenceDeclaration,
+} from "@tutor/contract";
 import { attemptSubmitRequestSchema } from "@tutor/contract";
 import { and, eq } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
@@ -96,14 +100,24 @@ export async function submitAttemptRequestWithEvidence(
   const evidence: SubmitEvidenceDeclaration[] = revisions.map(
     ({ questionId }) => {
       const note = noteByQuestion.get(questionId);
-      return note !== undefined && note.currentRevision > 0
-        ? {
-            questionId,
-            state: "frozen" as const,
-            versionId: note.currentVersionId!,
-            revision: note.currentRevision,
-          }
-        : { questionId, state: "none" as const };
+      // currentRevision>0 时头指针必非空（schema 不变量）；空则测试世界已坏，
+      // 明确抛错比静默断言更可诊断
+      if (
+        note !== undefined &&
+        note.currentRevision > 0 &&
+        note.currentVersionId !== null
+      ) {
+        return {
+          questionId,
+          state: "frozen" as const,
+          versionId: note.currentVersionId,
+          revision: note.currentRevision,
+        };
+      }
+      if (note !== undefined && note.currentRevision > 0) {
+        throw new Error("笔记行 head 指针为空（数据不一致，测试世界已坏）");
+      }
+      return { questionId, state: "none" as const };
     },
   );
   return Promise.resolve(
