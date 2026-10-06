@@ -5,6 +5,7 @@
  * 像素级擦除）——更适合答题场景且天然可撤销（一个 remove 历史条目）。
  * 全部使用逻辑坐标（宽度 1000 基准），半径也是逻辑单位。
  */
+import { strokeBounds } from "./bounds.ts";
 import type { InkStroke } from "./types.ts";
 
 /** 点到线段的最短距离平方（避免开方，与半径平方比较） */
@@ -35,26 +36,6 @@ function distSqToSegment(
   return ex * ex + ey * ey;
 }
 
-/** 单笔的包围盒（逻辑坐标），用于先粗筛再精算 */
-function strokeBounds(stroke: InkStroke): {
-  minX: number;
-  minY: number;
-  maxX: number;
-  maxY: number;
-} {
-  let minX = Number.POSITIVE_INFINITY;
-  let minY = Number.POSITIVE_INFINITY;
-  let maxX = Number.NEGATIVE_INFINITY;
-  let maxY = Number.NEGATIVE_INFINITY;
-  for (const pt of stroke.points) {
-    if (pt.x < minX) minX = pt.x;
-    if (pt.y < minY) minY = pt.y;
-    if (pt.x > maxX) maxX = pt.x;
-    if (pt.y > maxY) maxY = pt.y;
-  }
-  return { minX, minY, maxX, maxY };
-}
-
 /** 一笔是否与检测圆相交（逻辑坐标；radius 为逻辑半径，需含笔宽的一半容差） */
 export function strokeHit(
   stroke: InkStroke,
@@ -65,6 +46,7 @@ export function strokeHit(
   if (stroke.points.length === 0) return false;
   // 粗筛：包围盒外扩 radius 后不含检测点则必不命中
   const b = strokeBounds(stroke);
+  if (b === null) return false;
   const pad = radius + stroke.weight / 2;
   if (
     x < b.minX - pad ||

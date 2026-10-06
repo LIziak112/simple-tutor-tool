@@ -33,6 +33,10 @@ import {
 } from "@tutor/contract";
 import Atrament from "atrament";
 import { replayAtramentStroke } from "@/features/ink/engine/atrament-adapter.ts";
+import {
+  type StrokeBounds,
+  strokeBounds,
+} from "@/features/ink/engine/bounds.ts";
 import { INK_LOGICAL_WIDTH } from "@/features/ink/engine/types.ts";
 
 // ---------- 渲染规格常量（全部暂定，真机定标后修订） ----------
@@ -107,31 +111,23 @@ export interface RenderedNotePage extends NotePagePlan {
   blob: Blob;
 }
 
-/** 单笔包围盒接口（含线宽后的取值范围） */
-interface BBox {
-  minX: number;
-  minY: number;
-  maxX: number;
-  maxY: number;
-}
-
 /**
  * 全稿笔迹包围盒（**含每笔半线宽**：粗笔/荧光笔边缘不被裁切，任务验收项
- * 「最高笔迹包围盒含线宽不裁切」）。空稿返回 null。
+ * 「最高笔迹包围盒含线宽不裁切」）。逐笔 strokeBounds(s, weight/2) 的并集
+ * （点级折叠只在 engine/bounds.ts 一份）。空稿返回 null。
  */
-export function inkBBoxLogical(ink: NoteDoc["ink"]): BBox | null {
+export function inkBBoxLogical(ink: NoteDoc["ink"]): StrokeBounds | null {
   let minX = Number.POSITIVE_INFINITY;
   let minY = Number.POSITIVE_INFINITY;
   let maxX = Number.NEGATIVE_INFINITY;
   let maxY = Number.NEGATIVE_INFINITY;
   for (const s of ink.strokes) {
-    const half = s.weight / 2;
-    for (const pt of s.points) {
-      if (pt.x - half < minX) minX = pt.x - half;
-      if (pt.y - half < minY) minY = pt.y - half;
-      if (pt.x + half > maxX) maxX = pt.x + half;
-      if (pt.y + half > maxY) maxY = pt.y + half;
-    }
+    const b = strokeBounds(s, s.weight / 2);
+    if (b === null) continue;
+    if (b.minX < minX) minX = b.minX;
+    if (b.minY < minY) minY = b.minY;
+    if (b.maxX > maxX) maxX = b.maxX;
+    if (b.maxY > maxY) maxY = b.maxY;
   }
   if (minX === Number.POSITIVE_INFINITY) return null;
   return { minX, minY, maxX, maxY };
@@ -272,30 +268,17 @@ export function noteImageUploadMetaOf(
 
 // ---------- 页面渲染（需要 DOM canvas） ----------
 
-/** 单笔包围盒（含半线宽；空笔画返回 null） */
-function strokeBBox(s: NoteDoc["ink"]["strokes"][number]): BBox | null {
-  if (s.points.length === 0) return null;
-  const half = s.weight / 2;
-  let minX = Number.POSITIVE_INFINITY;
-  let minY = Number.POSITIVE_INFINITY;
-  let maxX = Number.NEGATIVE_INFINITY;
-  let maxY = Number.NEGATIVE_INFINITY;
-  for (const pt of s.points) {
-    if (pt.x - half < minX) minX = pt.x - half;
-    if (pt.y - half < minY) minY = pt.y - half;
-    if (pt.x + half > maxX) maxX = pt.x + half;
-    if (pt.y + half > maxY) maxY = pt.y + half;
-  }
-  return { minX, minY, maxX, maxY };
+/**
+ * 每文档的「含半线宽」逐笔包围盒缓存：渲染入口（renderNoteImages /
+ * syncNoteImages 的逐页遍历）算一次，逐页相交判定查表——多页长稿不随
+ * 页数重复全稿点级折叠。空笔画槽位为 null。
+ */
+function paddedStrokeBoxesOf(ink: NoteDoc["ink"]): Array<StrokeBounds | null> {
+  return ink.strokes.map((s) => strokeBounds(s, s.weight / 2));
 }
 
 /** 笔迹包围盒与页裁剪区是否相交（页外笔画不重放，跨页笔画经重叠区覆盖） */
-function strokeIntersectsCrop(
-  s: NoteDoc["ink"]["strokes"][number],
-  crop: NoteCropRect,
-): boolean {
-  const bb = strokeBBox(s);
-  if (bb === null) return false;
+function boxIntersectsCrop(bb: StrokeBounds, crop: NoteCropRect): boolean {
   return (
     bb.minX <= crop.x + crop.width &&
     bb.maxX >= crop.x &&
@@ -360,12 +343,23 @@ function canvasToPngBlob(canvas: HTMLCanvasElement): Promise<Blob> {
 /**
  * 渲染一页：背景 + 笔迹 → PNG。独立于活编辑器与 React 生命周期（离屏画布
  * 自建自毁；「组件卸载不吞错」由本函数不依赖组件状态保证——错误原样抛出）。
+ * 单页入口：逐笔包围盒缓存在本调用内自算；多页渲染走 renderNoteImages
+ * （入口级缓存，逐页查表）。
  * @param doc 已物化默认值的 NoteDoc（调用方经 noteDocSchema.parse 收窄）
  * @param page 页面计划（planXxx 的产物；防御上限校验在此兜底）
  */
 export async function renderNotePage(
   doc: NoteDoc,
   page: NotePagePlan,
+): Promise<RenderedNotePage> {
+  return renderNotePageWithBoxes(doc, page, paddedStrokeBoxesOf(doc.ink));
+}
+
+/** 渲染一页（携带入口级包围盒缓存；boxes 与 doc.ink.strokes 一一对应） */
+async function renderNotePageWithBoxes(
+  doc: NoteDoc,
+  page: NotePagePlan,
+  boxes: Array<StrokeBounds | null>,
 ): Promise<RenderedNotePage> {
   const { crop, pixelWidth, pixelHeight } = page;
   if (
@@ -410,8 +404,11 @@ export async function renderNotePage(
     // 画布为准，E2E 面板有对应守卫检查）。cssWidth 传
     // INK_LOGICAL_WIDTH ⇒ css 坐标 == 逻辑坐标，atrament 再按
     // canvas.width/offsetWidth（= pixelWidth/crop.width）等比映射到设备像素
-    for (const s of doc.ink.strokes) {
-      if (!strokeIntersectsCrop(s, crop)) continue;
+    for (let si = 0; si < doc.ink.strokes.length; si++) {
+      const s = doc.ink.strokes[si];
+      const bb = boxes[si];
+      if (s === undefined || bb === null || bb === undefined) continue;
+      if (!boxIntersectsCrop(bb, crop)) continue;
       replayAtramentStroke(atrament, INK_LOGICAL_WIDTH, {
         tool: s.tool,
         color: s.color,
@@ -449,13 +446,15 @@ export async function renderNoteImages(
 ): Promise<RenderedNotePage[]> {
   const pages =
     spec === "thumbnail" ? [planThumbnailPage(doc)] : planAnalysisPages(doc);
+  // 入口级缓存：全稿点级折叠只做一次（逐页相交判定查表，不随页数重复）
+  const boxes = paddedStrokeBoxesOf(doc.ink);
   const out: RenderedNotePage[] = [];
   for (const page of pages) {
     if (out.length > 0) {
       // 页间让出：编码与重放都在主线程，多页长稿别一口气占满
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
-    out.push(await renderNotePage(doc, page));
+    out.push(await renderNotePageWithBoxes(doc, page, boxes));
   }
   return out;
 }
