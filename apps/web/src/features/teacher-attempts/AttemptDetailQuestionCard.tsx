@@ -5,9 +5,9 @@ import { ChevronDown, Clock3, Lightbulb, PenLine } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
-  HANDWRITTEN_TYPES,
   formatReferenceAnswers,
   formatStudentAnswer,
+  HANDWRITTEN_TYPES,
   letterOf,
   QUESTION_TYPE_BADGE_CLASS,
   QUESTION_TYPE_LABELS,
@@ -307,7 +307,7 @@ export function AttemptDetailQuestionCard({
           另见上方）；教师域链授权在服务端 evidence 读端点把门 */}
       {!HANDWRITTEN_TYPES.has(question.type) && (
         <NoteOriginalView
-          role="teacher"
+          viewer="teacher"
           attemptId={attemptId}
           questionId={question.questionId}
           ariaPrefix={`第 ${question.no} 题`}

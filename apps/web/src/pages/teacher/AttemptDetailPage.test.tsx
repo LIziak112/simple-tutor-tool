@@ -50,7 +50,7 @@ vi.mock("@/features/notes/NoteOriginalView", async () => {
     NoteOriginalView: (props: Record<string, unknown>) =>
       createElement("div", {
         "data-testid": "note-original-stub",
-        "data-role": String(props.role),
+        "data-role": String(props.viewer),
         "data-attempt": String(props.attemptId),
         "data-question": String(props.questionId),
         "data-round": String(props.roundLabel ?? ""),
@@ -516,7 +516,9 @@ describe("AttemptDetailPage 草稿原稿入口（T6R.11）", () => {
         hasStrokes: true,
       },
     });
-    mockedDetail.mockResolvedValue(makeDetail({ questions: [...makeDetail().questions, solve] }));
+    mockedDetail.mockResolvedValue(
+      makeDetail({ questions: [...makeDetail().questions, solve] }),
+    );
     renderPage();
     await screen.findByRole("article", { name: "第 4 题" });
     const stubs = screen

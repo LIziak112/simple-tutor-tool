@@ -16,7 +16,7 @@ vi.mock("@/features/notes/NoteOriginalView", async () => {
     NoteOriginalView: (props: Record<string, unknown>) =>
       createElement("div", {
         "data-testid": "note-original-stub",
-        "data-role": String(props.role),
+        "data-role": String(props.viewer),
         "data-attempt": String(props.attemptId),
         "data-question": String(props.questionId),
         "data-round": String(props.roundLabel ?? ""),

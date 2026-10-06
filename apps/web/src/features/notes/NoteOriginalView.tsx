@@ -35,8 +35,8 @@ import { Button } from "@/components/ui/button";
 import { recoverNoteImages } from "@/features/notes/image-sync";
 import { parseNoteDocOrThrow } from "@/features/notes/note-fixtures";
 import {
-  type RenderedNotePage,
   planAnalysisPages,
+  type RenderedNotePage,
   renderNotePage,
 } from "@/features/notes/render-note";
 import {
@@ -95,9 +95,7 @@ const ABSENT_TEXT: Record<AbsentReason, string> = {
 function imagesAggregateOf(images: NoteImageMeta[], strokeCount: number) {
   if (strokeCount === 0) return "ready" as const;
   if (images.length === 0) return "pending" as const;
-  if (
-    images.some((img) => img.state === "failed" || img.state === "missing")
-  ) {
+  if (images.some((img) => img.state === "failed" || img.state === "missing")) {
     return "failed" as const;
   }
   if (images.some((img) => img.state === "pending")) {
@@ -107,13 +105,13 @@ function imagesAggregateOf(images: NoteImageMeta[], strokeCount: number) {
 }
 
 export function NoteOriginalView({
-  role,
+  viewer,
   attemptId,
   questionId,
   ariaPrefix = "本题",
   roundLabel = null,
 }: {
-  role: NoteOriginalRole;
+  viewer: NoteOriginalRole;
   attemptId: string;
   questionId: string;
   /** 无障碍标签前缀（如「第 3 题」），拼入按钮与图片 alt */
@@ -150,7 +148,7 @@ export function NoteOriginalView({
     setPhase({ kind: "loading" });
     try {
       const head =
-        role === "student"
+        viewer === "student"
           ? await fetchStudentNoteEvidenceApi(attemptId, questionId)
           : await fetchTeacherNoteEvidenceApi(attemptId, questionId);
       if (epoch !== epochRef.current) return;
@@ -182,7 +180,7 @@ export function NoteOriginalView({
         return;
       }
       const raw =
-        role === "student"
+        viewer === "student"
           ? await fetchStudentNoteDocumentApi(versionId)
           : await fetchTeacherNoteDocumentApi(versionId);
       if (epoch !== epochRef.current) return;
@@ -215,7 +213,7 @@ export function NoteOriginalView({
         message: err instanceof Error ? err.message : "网络异常",
       });
     }
-  }, [attemptId, questionId, role, revokeUrls]);
+  }, [attemptId, questionId, viewer, revokeUrls]);
 
   const close = useCallback(() => {
     epochRef.current += 1; // 在途加载作废
@@ -229,9 +227,9 @@ export function NoteOriginalView({
     if (phase.kind !== "ready") return;
     setRebuilding(true);
     try {
-      await recoverNoteImages({ role, versionId: phase.versionId });
+      await recoverNoteImages({ role: viewer, versionId: phase.versionId });
       const head =
-        role === "student"
+        viewer === "student"
           ? await fetchStudentNoteEvidenceApi(attemptId, questionId)
           : await fetchTeacherNoteEvidenceApi(attemptId, questionId);
       if (phase.kind !== "ready") return;
@@ -248,7 +246,7 @@ export function NoteOriginalView({
     } finally {
       setRebuilding(false);
     }
-  }, [attemptId, phase, questionId, role]);
+  }, [attemptId, phase, questionId, viewer]);
 
   const label = `${ariaPrefix}草稿原稿`;
 
@@ -311,7 +309,10 @@ export function NoteOriginalView({
           className="flex flex-col items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2.5 text-sm"
         >
           <p className="flex items-center gap-1.5">
-            <CircleAlert aria-hidden className="size-4 shrink-0 text-destructive" />
+            <CircleAlert
+              aria-hidden
+              className="size-4 shrink-0 text-destructive"
+            />
             草稿原稿读取失败：{phase.message}
           </p>
           <Button

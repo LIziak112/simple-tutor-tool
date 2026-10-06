@@ -1,10 +1,15 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { NoteHeadData } from "@tutor/contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { docOf, denseStroke } from "@/features/notes/note-fixtures";
 import { recoverNoteImages } from "@/features/notes/image-sync";
+import { denseStroke, docOf } from "@/features/notes/note-fixtures";
+import {
+  evidenceOf,
+  headOf,
+  imageMetaOf,
+  SCOPE,
+} from "@/features/notes/note-test-utils";
 import type { NotePagePlan } from "@/features/notes/render-note";
-import { evidenceOf, headOf, imageMetaOf, SCOPE } from "@/features/notes/note-test-utils";
 import { NoteOriginalView } from "./NoteOriginalView";
 
 /**
@@ -35,11 +40,15 @@ vi.mock("@/lib/api", async (importOriginal) => {
 // 渲染骨架：保留真实纯几何计划（planAnalysisPages / 切片），只替换需要真
 // canvas 2d 上下文的 renderNotePage——jsdom 无 canvas，假产物记录收到的页计划
 vi.mock("@/features/notes/render-note", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/features/notes/render-note")>();
+  const actual =
+    await importOriginal<typeof import("@/features/notes/render-note")>();
   return {
     ...actual,
     renderNotePage: vi.fn(
-      async (_doc: unknown, page: NotePagePlan): Promise<NotePagePlan & { blob: Blob }> => ({
+      async (
+        _doc: unknown,
+        page: NotePagePlan,
+      ): Promise<NotePagePlan & { blob: Blob }> => ({
         ...page,
         blob: new Blob(["fake-png"], { type: "image/png" }),
       }),
@@ -51,6 +60,7 @@ vi.mock("@/features/notes/image-sync", () => ({
   recoverNoteImages: vi.fn(async () => []),
 }));
 
+import { renderNotePage } from "@/features/notes/render-note";
 import {
   fetchStudentNoteDocumentApi,
   fetchStudentNoteEvidenceApi,
@@ -58,7 +68,6 @@ import {
   fetchTeacherNoteDocumentApi,
   fetchTeacherNoteEvidenceApi,
 } from "@/lib/api";
-import { renderNotePage } from "@/features/notes/render-note";
 
 const evidenceMock = vi.mocked(fetchStudentNoteEvidenceApi);
 const teacherEvidenceMock = vi.mocked(fetchTeacherNoteEvidenceApi);
@@ -90,9 +99,7 @@ const TALL_DOC = docOf(
   { paperHeightLogical: 2400 },
 );
 
-const frozenHead = (
-  overrides: Partial<NoteHeadData> = {},
-): NoteHeadData =>
+const frozenHead = (overrides: Partial<NoteHeadData> = {}): NoteHeadData =>
   headOf({
     evidence: evidenceOf("frozen", "33333333-3333-4333-8333-333333333301"),
     images: [imageMetaOf()],
@@ -132,7 +139,7 @@ function renderView(
 ) {
   return render(
     <NoteOriginalView
-      role="student"
+      viewer="student"
       attemptId={SCOPE.attemptId}
       questionId={SCOPE.questionId}
       ariaPrefix="第 2 题"
@@ -162,7 +169,9 @@ describe("入口与加载态", () => {
     renderView();
     expect(evidenceMock).not.toHaveBeenCalled();
     evidenceMock.mockReturnValue(new Promise(() => {}));
-    fireEvent.click(screen.getByRole("button", { name: "第 2 题查看草稿原稿" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "第 2 题查看草稿原稿" }),
+    );
     expect(await screen.findByText("正在读取草稿原稿…")).toBeInTheDocument();
   });
 
@@ -208,18 +217,20 @@ describe("证据四态：无稿族文案互斥（先失败测试锁定口径）"
   ])("$name：只显文案，不读正文不渲染图片", async ({ head, text }) => {
     evidenceMock.mockResolvedValue(head);
     renderView();
-    fireEvent.click(screen.getByRole("button", { name: "第 2 题查看草稿原稿" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "第 2 题查看草稿原稿" }),
+    );
     expect(await screen.findByText(new RegExp(text))).toBeInTheDocument();
     expect(docMock).not.toHaveBeenCalled();
     expect(document.querySelector("img")).toBeNull();
   });
 
   it("missing ≠ 无稿：工作头存在也不回退渲染（不取最新草稿替代原稿）", async () => {
-    evidenceMock.mockResolvedValue(
-      headOf({ evidence: evidenceOf("missing") }),
-    );
+    evidenceMock.mockResolvedValue(headOf({ evidence: evidenceOf("missing") }));
     renderView();
-    fireEvent.click(screen.getByRole("button", { name: "第 2 题查看草稿原稿" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "第 2 题查看草稿原稿" }),
+    );
     await screen.findByText(/草稿未保存完整/);
     // 关键不变量：工作头正文（note.currentVersionId 指向的版本）绝不被当作原稿渲染
     expect(docMock).not.toHaveBeenCalled();
@@ -229,18 +240,22 @@ describe("证据四态：无稿族文案互斥（先失败测试锁定口径）"
 
 describe("不得按 qid 取最新草稿替代本次原稿（先失败测试）", () => {
   it("正文读取只认证据行 versionId，不用工作头 currentVersionId", async () => {
-    evidenceMock.mockResolvedValue(
-      frozenHead({
-        note: {
-          ...headOf().note!,
-          revision: 2,
-          currentVersionId: "33333333-3333-4333-8333-333333333399",
-        },
-      }),
-    );
+    // 工作头已到第 2 版（currentVersionId 指向新版本）——证据行仍固定第 1 版
+    const baseNote = headOf().note;
+    const aheadNote =
+      baseNote === null
+        ? null
+        : {
+            ...baseNote,
+            revision: 2,
+            currentVersionId: "33333333-3333-4333-8333-333333333399",
+          };
+    evidenceMock.mockResolvedValue(frozenHead({ note: aheadNote }));
     docMock.mockResolvedValue(SHORT_DOC);
     renderView();
-    fireEvent.click(screen.getByRole("button", { name: "第 2 题查看草稿原稿" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "第 2 题查看草稿原稿" }),
+    );
     await waitFor(() => {
       expect(screen.getByAltText(/草稿原稿/)).toBeInTheDocument();
     });
@@ -287,7 +302,9 @@ describe("读取错误：不能隐藏成无稿（先失败测试）", () => {
     evidenceMock.mockResolvedValue(frozenHead());
     docMock.mockRejectedValue(new Error("网络断开"));
     renderView();
-    fireEvent.click(screen.getByRole("button", { name: "第 2 题查看草稿原稿" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "第 2 题查看草稿原稿" }),
+    );
     expect(await screen.findByText(/草稿原稿读取失败/)).toBeInTheDocument();
     // 不落入无稿族文案（读不到 ≠ 没有）
     expect(screen.queryByText(/没有草稿/)).toBeNull();
@@ -304,7 +321,9 @@ describe("读取错误：不能隐藏成无稿（先失败测试）", () => {
   it("证据行读取失败 → 读取失败 + 重试（同样不当无稿）", async () => {
     evidenceMock.mockRejectedValue(new Error("网络断开"));
     renderView();
-    fireEvent.click(screen.getByRole("button", { name: "第 2 题查看草稿原稿" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "第 2 题查看草稿原稿" }),
+    );
     expect(await screen.findByText(/草稿原稿读取失败/)).toBeInTheDocument();
     expect(screen.queryByText(/没有草稿/)).toBeNull();
   });
@@ -327,7 +346,9 @@ describe("派生图状态：正文待图 / 缺图 + 重建", () => {
     evidenceMock.mockResolvedValue(failedHead);
     docMock.mockResolvedValue(SHORT_DOC);
     renderView();
-    fireEvent.click(screen.getByRole("button", { name: "第 2 题查看草稿原稿" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "第 2 题查看草稿原稿" }),
+    );
     await waitFor(() => {
       expect(screen.getByText(/AI 分析图片缺失/)).toBeInTheDocument();
     });
@@ -362,8 +383,10 @@ describe("教师角色分派", () => {
       }),
     );
     teacherDocMock.mockResolvedValue(SHORT_DOC);
-    renderView({ role: "teacher" });
-    fireEvent.click(screen.getByRole("button", { name: "第 2 题查看草稿原稿" }));
+    renderView({ viewer: "teacher" });
+    fireEvent.click(
+      screen.getByRole("button", { name: "第 2 题查看草稿原稿" }),
+    );
     await waitFor(() => {
       expect(screen.getByAltText(/草稿原稿/)).toBeInTheDocument();
     });
@@ -401,14 +424,20 @@ describe("object URL 生命周期（无堆积）", () => {
     evidenceMock.mockResolvedValue(frozenHead());
     docMock.mockResolvedValueOnce(SHORT_DOC);
     renderView();
-    fireEvent.click(screen.getByRole("button", { name: "第 2 题查看草稿原稿" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "第 2 题查看草稿原稿" }),
+    );
     await waitFor(() => {
       expect(screen.getByAltText(/草稿原稿/)).toBeInTheDocument();
     });
     // 收起再重开：上一轮 URL 已回收
-    fireEvent.click(screen.getByRole("button", { name: "收起第 2 题草稿原稿" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "收起第 2 题草稿原稿" }),
+    );
     docMock.mockResolvedValue(SHORT_DOC);
-    fireEvent.click(screen.getByRole("button", { name: "第 2 题查看草稿原稿" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "第 2 题查看草稿原稿" }),
+    );
     await waitFor(() => {
       expect(screen.getByAltText(/草稿原稿/)).toBeInTheDocument();
     });

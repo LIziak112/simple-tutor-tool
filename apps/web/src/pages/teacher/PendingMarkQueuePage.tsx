@@ -419,7 +419,7 @@ function PendingCard({
           教师域链授权在服务端 evidence 读端点把门；轮次标注按来源 */}
       {!HANDWRITTEN_TYPES.has(card.type) && (
         <NoteOriginalView
-          role="teacher"
+          viewer="teacher"
           attemptId={card.attemptId}
           questionId={card.questionId}
           ariaPrefix="本题"

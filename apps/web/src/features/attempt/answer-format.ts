@@ -20,9 +20,8 @@ export const QUESTION_TYPE_LABELS: Record<QuestionType, string> =
  * 不接草稿层/草稿原稿查看（原查看 AttemptQuestionCard 的本地副本——教师端
  * 详情/待批卡同样需要该判定，单一事实来源）。
  */
-export const HANDWRITTEN_TYPES: ReadonlySet<QuestionType> = new Set<
-  QuestionType
->(["solve", "apply", "find-error"]);
+export const HANDWRITTEN_TYPES: ReadonlySet<QuestionType> =
+  new Set<QuestionType>(["solve", "apply", "find-error"]);
 
 /** 题型徽章配色（按客观/主观两档区分，视觉分组） */
 export const QUESTION_TYPE_BADGE_CLASS: Record<QuestionType, string> = {

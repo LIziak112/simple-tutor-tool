@@ -142,7 +142,10 @@ test.describe("双角色原稿查看与重练（T6R.11）", () => {
       // 即判错进错题本，第 2/3 题正解为错即答对；单选三题均选 B 答对）
       for (let no = 1; no <= 6; no += 1) {
         const card = studentPage.locator(`article[aria-label="第 ${no} 题"]`);
-        await card.getByRole("button", { name: /草稿纸/ }).first().click();
+        await card
+          .getByRole("button", { name: /草稿纸/ })
+          .first()
+          .click();
         const canvas = card.locator('[data-slot="note-paper"] canvas');
         await expect(canvas).toBeVisible();
         await drawStrokeWithPointerEvents(canvas);
@@ -175,9 +178,7 @@ test.describe("双角色原稿查看与重练（T6R.11）", () => {
 
       // —— 结果页只读本次原稿：第 1 题面板（轮次标注 + 渲染页图）——
       const q1Card = studentPage.locator('article[aria-label="第 1 题"]');
-      await q1Card
-        .getByRole("button", { name: "第 1 题查看草稿原稿" })
-        .click();
+      await q1Card.getByRole("button", { name: "第 1 题查看草稿原稿" }).click();
       const q1Panel = q1Card.locator('[data-slot="note-original-view"]');
       await expect(q1Panel.getByText("第 1 次课程练习")).toBeVisible();
       await expect(q1Panel.getByText(/交卷时固定于/)).toBeVisible();
@@ -206,7 +207,10 @@ test.describe("双角色原稿查看与重练（T6R.11）", () => {
       expect(attempt2).not.toBe(attempt1);
 
       const reCard = studentPage.locator('article[aria-label="第 1 题"]');
-      await reCard.getByRole("button", { name: /草稿纸/ }).first().click();
+      await reCard
+        .getByRole("button", { name: /草稿纸/ })
+        .first()
+        .click();
       const reCanvas = reCard.locator('[data-slot="note-paper"] canvas');
       await expect(reCanvas).toBeVisible();
       await drawStrokeWithPointerEvents(reCanvas);

@@ -341,7 +341,7 @@ function ResultQuestionCard({
           形态都渲染；面板按证据行定位本次原稿（软删题历史可读） */}
       {!isHandwritten && (
         <NoteOriginalView
-          role="student"
+          viewer="student"
           attemptId={attemptId}
           questionId={question.questionId}
           ariaPrefix={`第 ${index + 1} 题`}
@@ -448,10 +448,7 @@ export function AttemptResultView({
   // T2A.8：答案是否已公布（on_submit / 课程练习 / 已到截止 = true）
   const released = data.answersReleased;
   // T6R.11：原稿查看面板的轮次标注（重练同题后回看历史，可分辨第几轮）
-  const roundLabel = attemptRoundLabel(
-    attempt.sourceType,
-    attempt.attemptNo,
-  );
+  const roundLabel = attemptRoundLabel(attempt.sourceType, attempt.attemptNo);
   // D9：大数字得分 = 最终得分优先，未批完回退自动判分（均 null = 全待批）
   const displayScore = summary.scoreFinal ?? attempt.scoreAuto;
   // T2A.7：逐题结果按单元分组；题号全卷连续（累计 index）。

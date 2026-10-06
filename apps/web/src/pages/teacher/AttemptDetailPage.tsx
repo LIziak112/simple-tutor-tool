@@ -2,7 +2,10 @@ import type { TeacherAttemptDetailData } from "@tutor/contract";
 import { ArrowLeft, Clock3 } from "lucide-react";
 import { useLocation, useNavigate, useParams } from "react-router";
 import { Button } from "@/components/ui/button";
-import { isAnswered, attemptRoundLabel } from "@/features/attempt/answer-format";
+import {
+  attemptRoundLabel,
+  isAnswered,
+} from "@/features/attempt/answer-format";
 import {
   AttemptDetailQuestionCard,
   formatActiveSec,
