@@ -3,6 +3,7 @@ import {
   addCourseMemberViaApi,
   attachLeakMonitor,
   createCourseViaApi,
+  drawStrokeWithPointerEvents,
   getStudentViaApi,
   setCourseItemVisible,
   teacherApiLogin,
@@ -47,42 +48,6 @@ function practiceMarkdown(unitName: string): string {
     "::::",
     "",
   ].join("\n");
-}
-
-/** 在指定画布上派发一笔合成指针笔画（pointerType=pen；同 ink-lifecycle 手法） */
-async function drawNoteStroke(
-  canvas: import("@playwright/test").Locator,
-): Promise<void> {
-  await canvas.evaluate((el) => {
-    const c = el as HTMLCanvasElement;
-    const rect = c.getBoundingClientRect();
-    const x = rect.left + rect.width * 0.3;
-    const y = rect.top + rect.height * 0.3;
-    const init = (type: string): PointerEventInit => ({
-      bubbles: true,
-      cancelable: true,
-      composed: true,
-      pointerId: 71,
-      pointerType: "pen",
-      isPrimary: true,
-      button: 0,
-      buttons: type === "pointerup" ? 0 : 1,
-      pressure: 0.5,
-      clientX: x,
-      clientY: y,
-    });
-    c.dispatchEvent(new PointerEvent("pointerdown", init("pointerdown")));
-    for (let i = 1; i <= 6; i++) {
-      c.dispatchEvent(
-        new PointerEvent("pointermove", {
-          ...init("pointermove"),
-          clientX: x + i * 10,
-          clientY: y + i * 4,
-        }),
-      );
-    }
-    c.dispatchEvent(new PointerEvent("pointerup", init("pointerup")));
-  });
 }
 
 test.describe("答题页草稿层（T6R.9）", () => {
@@ -168,7 +133,7 @@ test.describe("答题页草稿层（T6R.9）", () => {
           /\/api\/student\/attempts\/.+\/notes\//.test(req.url()),
         { timeout: 15_000 },
       );
-      await drawNoteStroke(noteCanvas);
+      await drawStrokeWithPointerEvents(noteCanvas);
 
       // ③ 选项操作（草稿展开的同时选项可正常作答）
       await choiceCard

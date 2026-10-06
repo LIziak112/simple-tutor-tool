@@ -526,7 +526,13 @@ async function drawStrokeWithMouse(page: Page, canvas: Locator): Promise<void> {
 }
 
 /** 兜底路径：页面内派发 PointerEvent（T2.8 记录的坑——个别环境 CDP 鼠标不落墨） */
-async function drawStrokeWithPointerEvents(canvas: Locator): Promise<void> {
+/**
+ * 在指定画布上派发一笔合成指针笔画（pointerType=pen）：note-layer 等新
+ * 用例的草稿书写入口（T6R.9 起导出复用；handwriteOneStroke 内部同款）。
+ */
+export async function drawStrokeWithPointerEvents(
+  canvas: Locator,
+): Promise<void> {
   await canvas.evaluate((el) => {
     const rect = el.getBoundingClientRect();
     const cx = rect.width / 2;

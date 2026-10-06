@@ -14,6 +14,7 @@ import type {
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { NOTE_QUESTION_SHARE } from "@/features/notes/note-layout";
+import { makeResizeObserverStub } from "@/features/notes/note-test-utils";
 import { openAttemptHintApi } from "@/lib/api";
 import { AttemptQuestionCard } from "./AttemptQuestionCard";
 
@@ -338,24 +339,11 @@ describe("分步提示面板（T2.11）", () => {
 });
 
 describe("题卡草稿层（T6R.9）", () => {
-  /** 桩 ResizeObserver：按需推送题卡宽度（分栏判定驱动源） */
+  /** 桩 ResizeObserver：按需推送题卡宽度（共享桩，分栏判定驱动源） */
   function stubCardWidth() {
-    const observers: ((w: number) => void)[] = [];
-    class StubRO {
-      constructor(cb: (entries: { contentRect: { width: number } }[]) => void) {
-        observers.push((width: number) => cb([{ contentRect: { width } }]));
-      }
-      observe() {}
-      unobserve() {}
-      disconnect() {}
-    }
-    vi.stubGlobal("ResizeObserver", StubRO);
-    return {
-      push: (w: number) =>
-        act(() => {
-          for (const cb of [...observers]) cb(w);
-        }),
-    };
+    const stub = makeResizeObserverStub();
+    vi.stubGlobal("ResizeObserver", stub.cls);
+    return { push: (w: number) => act(() => stub.push(w)) };
   }
 
   it("选择/判断/填空题渲染草稿层标记（默认收起）；手写题不渲染", () => {

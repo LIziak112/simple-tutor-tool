@@ -7,6 +7,7 @@ import {
   screen,
 } from "@testing-library/react";
 import type { NoteHeadData } from "@tutor/contract";
+import { useState } from "react";
 import {
   afterEach,
   beforeEach,
@@ -24,18 +25,32 @@ import type {
   InkToolConfig,
 } from "@/features/ink/engine/index.ts";
 import {
+  getSessionInputPreference,
+  resetSessionInputPreference,
+} from "@/features/ink/input-preference";
+import {
   NOTE_ENGINE_KEEPALIVE_MS,
   NoteLayer,
 } from "@/features/notes/NoteLayer";
 import { stroke } from "@/features/notes/note-fixtures";
 import {
+  applyServerLoad,
+  applyUploadConflict,
+  applyUploadDenied,
   getNoteRecord,
   installNoteBackend,
   memoryNoteBackend,
   peekNoteRecord,
+  writeNoteDoc,
 } from "@/features/notes/note-store";
 import { bindNoteSession, resetNoteSession } from "@/features/notes/note-sync";
-import { SCOPE, SESSION_A } from "@/features/notes/note-test-utils";
+import {
+  emptyAtramentDoc,
+  headOf,
+  makeResizeObserverStub,
+  SCOPE,
+  SESSION_A,
+} from "@/features/notes/note-test-utils";
 
 /**
  * NoteLayer（T6R.9）组件测试：开合不丢稿（挂载卸载往返）、多题不共用
@@ -85,15 +100,6 @@ const mockSetTool = vi.fn();
 const mockSetInputMode = vi.fn();
 let mockCanUndo = false;
 
-function emptyDoc(): InkDoc {
-  return {
-    engine: "atrament",
-    version: 1,
-    data: { width: 1000, strokes: [] },
-    updatedAt: 1,
-  };
-}
-
 function makeEngine(opts: unknown): InkEngine {
   // 先建 load/engine 再回填 entry（互相引用；类型经一次显式断言收口）
   const box: { entry: EngineEntry | null } = { entry: null };
@@ -101,7 +107,7 @@ function makeEngine(opts: unknown): InkEngine {
     box.entry?.emit?.(data, "load");
   });
   const engine: InkEngine = {
-    getData: () => emptyDoc(),
+    getData: () => emptyAtramentDoc(),
     // 真引擎 load 后发 change(reason="load")——外部同步 effect 依赖此语义
     load: load as unknown as InkEngine["load"],
     exportPng: () => Promise.reject(new Error("测试未使用")),
@@ -168,7 +174,7 @@ function renderLayer(
   } = props;
   const onOpenChange = vi.fn();
   function Harness() {
-    const [open, setOpen] = useStateWith(initialOpen);
+    const [open, setOpen] = useState(initialOpen);
     return (
       <NoteLayer
         attemptId={attemptId}
@@ -191,14 +197,6 @@ function renderLayer(
     </QueryClientProvider>,
   );
   return { ...utils, onOpenChange };
-}
-
-/** useState 的薄包装（harness 内联 hook 规则规避） */
-import { useState } from "react";
-
-function useStateWith(initial: boolean): [boolean, (v: boolean) => void] {
-  const [v, setV] = useState(initial);
-  return [v, setV];
 }
 
 beforeEach(async () => {
@@ -297,7 +295,6 @@ describe("NoteLayer：收起/展开形态", () => {
   });
 
   it("外部播种到达（本地无记录）：引擎 load 载入服务端稿", async () => {
-    const { applyServerLoad } = await import("@/features/notes/note-store");
     renderLayer({ initialOpen: true });
     const entry = await waitForEngine();
     // 引擎先以默认空稿挂载；服务端稿到达（head 播种路径）
@@ -348,31 +345,18 @@ describe("NoteLayer：多题隔离", () => {
 });
 
 describe("NoteLayer：纸高（逻辑口径，注记②定案）", () => {
-  /** 以固定宽度 600 触发宽度观察（scale=0.6；逻辑 800 底=CSS 480） */
-  async function stubWidth(w: number) {
-    const observers: ((w: number) => void)[] = [];
-    class StubRO {
-      constructor(cb: (entries: { contentRect: { width: number } }[]) => void) {
-        observers.push((width: number) => cb([{ contentRect: { width } }]));
-      }
-      observe() {}
-      unobserve() {}
-      disconnect() {}
-    }
-    vi.stubGlobal("ResizeObserver", StubRO);
-    return {
-      push: () =>
-        act(() => {
-          for (const cb of [...observers]) cb(w);
-        }),
-    };
+  /** 以固定宽度 600 触发宽度观察（共享桩；scale=0.6；逻辑 800 底=CSS 480） */
+  function stubWidth() {
+    const stub = makeResizeObserverStub();
+    vi.stubGlobal("ResizeObserver", stub.cls);
+    return { push: () => act(() => stub.push(600)) };
   }
 
   it("触底笔迹：逻辑纸高按 paper-geometry 增长并落库，笔迹坐标不变", async () => {
-    const ro = await stubWidth(600);
+    const ro = stubWidth();
     renderLayer({ initialOpen: true });
     const entry = await waitForEngine();
-    await ro.push();
+    ro.push();
     // 逻辑 y=780 距底（800）20 逻辑 ≈ CSS 12px < 72px 触发；步长 240/0.6=400
     emitStroke(entry, [
       [100, 700],
@@ -386,10 +370,10 @@ describe("NoteLayer：纸高（逻辑口径，注记②定案）", () => {
   });
 
   it("远离底部的笔迹不增高（防棘轮：load/普通笔不反复写高度）", async () => {
-    const ro = await stubWidth(600);
+    const ro = stubWidth();
     renderLayer({ initialOpen: true });
     const entry = await waitForEngine();
-    await ro.push();
+    ro.push();
     emitStroke(entry, [
       [10, 10],
       [10, 100],
@@ -468,8 +452,6 @@ describe("NoteLayer：工具条与操作", () => {
   });
 
   it("手指书写按钮切换会话偏好（store 与 InkPad 两侧共用）", async () => {
-    const { getSessionInputPreference, resetSessionInputPreference } =
-      await import("@/features/ink/input-preference");
     renderLayer({ initialOpen: true });
     await waitForEngine();
     const toggle = screen.getByRole("button", { name: /手指书写/ });
@@ -484,20 +466,15 @@ describe("NoteLayer：工具条与操作", () => {
 describe("NoteLayer：状态面板（四维）", () => {
   /** 与冲突摘要一致的服务端形态（rev3；notCreated 会与摘要矛盾触发回退守卫） */
   function rev3Head(): NoteHeadData {
-    return {
+    const base = headOf().note;
+    if (base === null) throw new Error("headOf 夹具缺 note（测试前置失败）");
+    return headOf({
       note: {
-        noteId: "22222222-2222-4222-8222-222222222222",
-        attemptId: SCOPE.attemptId,
-        questionId: SCOPE.questionId,
-        questionRevisionId: "qrev-1",
-        phase: "scratch",
+        ...base,
         revision: 3,
         currentVersionId: "33333333-3333-4333-8333-333333333303",
-        serverSavedAt: "2026-10-06T00:00:00.000Z",
       },
-      images: [],
-      evidence: null,
-    };
+    });
   }
   it("书写后可见等待同步；同步成功不再显示", async () => {
     renderLayer({ initialOpen: true });
@@ -510,8 +487,6 @@ describe("NoteLayer：状态面板（四维）", () => {
   });
 
   it("冲突面板：保留本机 → 裁决 + 立即补传", async () => {
-    const { applyUploadConflict } = await import("@/features/notes/note-store");
-    const { writeNoteDoc } = await import("@/features/notes/note-store");
     writeNoteDoc(SESSION_A, SCOPE, {
       version: 1,
       ink: {
@@ -547,9 +522,6 @@ describe("NoteLayer：状态面板（四维）", () => {
   });
 
   it("被拒面板（access）：重试同步按钮清终态并补传", async () => {
-    const { applyUploadDenied, writeNoteDoc } = await import(
-      "@/features/notes/note-store"
-    );
     writeNoteDoc(SESSION_A, SCOPE, {
       version: 1,
       ink: {

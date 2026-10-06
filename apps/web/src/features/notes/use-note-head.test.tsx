@@ -15,7 +15,7 @@ import {
   currentNoteSession,
   resetNoteSession,
 } from "@/features/notes/note-sync";
-import { SCOPE, SESSION_A } from "@/features/notes/note-test-utils";
+import { headOf, SCOPE, SESSION_A } from "@/features/notes/note-test-utils";
 import { useNoteHead } from "@/features/notes/use-note-head";
 
 /**
@@ -56,24 +56,9 @@ const SERVER_DOC = docOf([
   ]),
 ]);
 
-/** rev1 head（noteId 与 receipt 工厂一致） */
-function revHead(overrides: Partial<NoteHeadData> = {}): NoteHeadData {
-  return {
-    note: {
-      noteId: "22222222-2222-4222-8222-222222222222",
-      attemptId: SCOPE.attemptId,
-      questionId: SCOPE.questionId,
-      questionRevisionId: "qrev-1",
-      phase: "scratch",
-      revision: 1,
-      currentVersionId: "33333333-3333-4333-8333-333333333301",
-      serverSavedAt: "2026-10-06T00:00:00.000Z",
-    },
-    images: [],
-    evidence: null,
-    ...overrides,
-  };
-}
+/** rev1 head（共享 headOf 工厂；noteId 与 receipt 工厂一致） */
+const revHead = (overrides: Partial<NoteHeadData> = {}): NoteHeadData =>
+  headOf(overrides);
 
 function renderHeadHook(
   attemptId = SCOPE.attemptId,

@@ -96,3 +96,50 @@ export async function waitForLocalSaved(
   }
   throw new Error("not saved yet（100×10ms 轮询超时，测试前置失败）");
 }
+
+// ---------- 宽度观察桩与空稿夹具（组件测试共享，T6R.9 复审⑪） ----------
+
+/**
+ * ResizeObserver 桩（框架无关）：调用方 vi.stubGlobal("ResizeObserver",
+ * stub.cls)，随后 stub.push(width) 模拟容器宽度变化（需包在 act 里）。
+ * 多个观察者（多题卡/多草稿层）同推同一宽度。
+ */
+export interface ResizeObserverStub {
+  cls: new (
+    cb: (entries: { contentRect: { width: number } }[]) => void,
+  ) => unknown;
+  push: (width: number) => void;
+}
+
+export function makeResizeObserverStub(): ResizeObserverStub {
+  const observers: ((w: number) => void)[] = [];
+  const cls = class {
+    constructor(cb: (entries: { contentRect: { width: number } }[]) => void) {
+      observers.push((width: number) => cb([{ contentRect: { width } }]));
+    }
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
+  return {
+    cls,
+    push: (width: number) => {
+      for (const cb of [...observers]) cb(width);
+    },
+  };
+}
+
+/** 空 atrament 引擎文档（InkDoc 夹具；与 InkPad/NoteLayer 测试共用形态） */
+export function emptyAtramentDoc(): {
+  engine: "atrament";
+  version: 1;
+  data: { width: 1000; strokes: [] };
+  updatedAt: number;
+} {
+  return {
+    engine: "atrament",
+    version: 1,
+    data: { width: 1000, strokes: [] },
+    updatedAt: 1,
+  };
+}
