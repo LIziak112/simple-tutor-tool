@@ -26,7 +26,10 @@ import {
   questionSchema,
   unitSchema,
 } from "../src/content.ts";
-import { learningPackJsonSchema, learningPackV2JsonSchema } from "../src/learning-pack.ts";
+import {
+  learningPackJsonSchema,
+  learningPackV2JsonSchema,
+} from "../src/learning-pack.ts";
 
 /** 根对象：把每个顶层契约收进一个属性，生成一份自包含（$defs 内部 $ref）的 schema */
 const contentContractSchema = z.object({

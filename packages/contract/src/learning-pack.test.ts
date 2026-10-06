@@ -437,9 +437,7 @@ describe("LearningPack v2 schema（T6R.12：快照关联 + manifest）", () => {
         ],
       },
     });
-    expect(
-      noEvidence.attempts?.responses?.[0]?.evidenceRef,
-    ).toBeUndefined();
+    expect(noEvidence.attempts?.responses?.[0]?.evidenceRef).toBeUndefined();
   });
 
   it("v2 question 条目：ref/present/snapshotHash/media 引用；缺失快照 present=false", () => {

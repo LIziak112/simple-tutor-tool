@@ -614,7 +614,15 @@ export const learningPackEvidenceSchema = z.object({
 export const learningPackManifestFileSchema = z.object({
   /** zip 内路径（相对、可移植：无盘符/绝对路径/.. 段） */
   path: z.string().min(1),
-  kind: z.enum(["summary", "prompt", "schema", "mapping", "ink", "media", "evidence"]),
+  kind: z.enum([
+    "summary",
+    "prompt",
+    "schema",
+    "mapping",
+    "ink",
+    "media",
+    "evidence",
+  ]),
   bytes: z.number().int().min(0),
   /** 关联的包内编号（题目/证据条目；media 可关联多个 q 条目） */
   refs: z.array(z.string()).default([]),
