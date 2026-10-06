@@ -87,11 +87,10 @@ export function noteKeyOf(session: NoteSessionRef, scope: NoteScope): string {
 
 /** 会话前缀（去尾 ]）：listPendingNotes 扫描用 */
 function sessionPrefix(session: NoteSessionRef): string {
-  return JSON.stringify([
-    "note",
-    session.origin,
-    session.studentId,
-  ]).slice(0, -1);
+  return JSON.stringify(["note", session.origin, session.studentId]).slice(
+    0,
+    -1,
+  );
 }
 
 /** 键 → scope（JSON.parse 回读；形态不符返回 null——防御性，不用于常规路径） */
@@ -290,7 +289,8 @@ function idbNoteBackend(): NoteStoreBackend {
     keys: async (prefix) => {
       const all = await keys(store);
       return all.filter(
-        (key): key is string => typeof key === "string" && key.startsWith(prefix),
+        (key): key is string =>
+          typeof key === "string" && key.startsWith(prefix),
       );
     },
   };
@@ -617,17 +617,15 @@ export function writeNoteDoc(
 }
 
 /** head 投影落记录（含代际回退检测，见文件头注释） */
-function applyHeadInfo(
-  record: NoteLocalRecord,
-  head: NoteHeadData,
-): void {
+function applyHeadInfo(record: NoteLocalRecord, head: NoteHeadData): void {
   record.lastHead = head;
   const headRevision = head.note?.revision ?? 0;
   if (headRevision < record.baseRevision) {
     // 显式拒绝路径：同源备份恢复等导致服务端数据集回退——不自动重放
     // 旧队列（方案 §6.1）；置 conflict 等用户裁决
     record.conflict = {
-      reason: "服务端数据比本机已知版本更旧（可能恢复了备份），已停止自动同步，请确认保留哪一份",
+      reason:
+        "服务端数据比本机已知版本更旧（可能恢复了备份），已停止自动同步，请确认保留哪一份",
       current: {
         noteId: head.note?.noteId ?? null,
         revision: headRevision,
@@ -666,8 +664,10 @@ export async function applyServerLoad(
   if (existing === undefined) {
     const stored = await getNoteRecord(session, scope);
     if (stored !== null) {
-      mutate(key, () => stored, (record) =>
-        applyLoadMutations(record, parsed.data, head),
+      mutate(
+        key,
+        () => stored,
+        (record) => applyLoadMutations(record, parsed.data, head),
       );
       return;
     }
@@ -676,8 +676,10 @@ export async function applyServerLoad(
     );
     return;
   }
-  mutate(key, () => existing, (record) =>
-    applyLoadMutations(record, parsed.data, head),
+  mutate(
+    key,
+    () => existing,
+    (record) => applyLoadMutations(record, parsed.data, head),
   );
 }
 
@@ -687,7 +689,10 @@ function applyLoadMutations(
   head: NoteHeadData | null | undefined,
 ): void {
   if (head !== undefined && head !== null) applyHeadInfo(record, head);
-  if (record.pending !== null && !noteDocsEqual(record.pending.doc, serverDoc)) {
+  if (
+    record.pending !== null &&
+    !noteDocsEqual(record.pending.doc, serverDoc)
+  ) {
     return; // 本地有未同步且内容不同：保留（不覆盖未同步本地稿）
   }
   record.pending = null; // 无待传或内容相等：以服务端稿为准，不回传
@@ -707,7 +712,11 @@ export async function applyServerHead(
     mutate(key, freshRecord, (record) => applyHeadInfo(record, head));
     return;
   }
-  mutate(key, () => existing, (record) => applyHeadInfo(record, head));
+  mutate(
+    key,
+    () => existing,
+    (record) => applyHeadInfo(record, head),
+  );
 }
 
 /**
@@ -724,14 +733,18 @@ export async function applyUploadReceipt(
   const key = noteKeyOf(session, scope);
   const existing = records.get(key) ?? (await getNoteRecord(session, scope));
   if (existing === null) return; // 记录已不存在（异常态）：无处落地
-  mutate(key, () => existing, (record) => {
-    record.baseRevision = receipt.revision;
-    record.noteId = receipt.noteId;
-    record.lastReceipt = receipt;
-    if (record.pending?.mutationId === mutationId) {
-      record.pending = null;
-    }
-  });
+  mutate(
+    key,
+    () => existing,
+    (record) => {
+      record.baseRevision = receipt.revision;
+      record.noteId = receipt.noteId;
+      record.lastReceipt = receipt;
+      if (record.pending?.mutationId === mutationId) {
+        record.pending = null;
+      }
+    },
+  );
 }
 
 /**
@@ -749,13 +762,17 @@ export async function applyUploadConflict(
   const key = noteKeyOf(session, scope);
   const existing = records.get(key) ?? (await getNoteRecord(session, scope));
   if (existing === null) return;
-  mutate(key, () => existing, (record) => {
-    record.conflict = {
-      reason,
-      current,
-      localDoc: record.pending?.doc ?? record.doc,
-    };
-  });
+  mutate(
+    key,
+    () => existing,
+    (record) => {
+      record.conflict = {
+        reason,
+        current,
+        localDoc: record.pending?.doc ?? record.doc,
+      };
+    },
+  );
 }
 
 /** 被拒终态落地（403/404/ALREADY_SUBMITTED=access；400/413=content） */
@@ -768,9 +785,13 @@ export async function applyUploadDenied(
   const key = noteKeyOf(session, scope);
   const existing = records.get(key) ?? (await getNoteRecord(session, scope));
   if (existing === null) return;
-  mutate(key, () => existing, (record) => {
-    record.denied = { kind, reason };
-  });
+  mutate(
+    key,
+    () => existing,
+    (record) => {
+      record.denied = { kind, reason };
+    },
+  );
 }
 
 /**
@@ -789,16 +810,21 @@ export async function resolveNoteConflict(
   const existing = records.get(key) ?? (await getNoteRecord(session, scope));
   if (existing === null || existing.conflict === null) return;
   const conflict = existing.conflict;
-  mutate(key, () => existing, (record) => {
-    record.conflict = null;
-    record.baseRevision = conflict.current.revision;
-    if (conflict.current.noteId !== null) record.noteId = conflict.current.noteId;
-    if (choice.keep === "cloud") {
-      record.pending = null;
-      record.doc = choice.doc;
-    }
-    // keep local：pending 保留（mutationId 不变，幂等重放安全）
-  });
+  mutate(
+    key,
+    () => existing,
+    (record) => {
+      record.conflict = null;
+      record.baseRevision = conflict.current.revision;
+      if (conflict.current.noteId !== null)
+        record.noteId = conflict.current.noteId;
+      if (choice.keep === "cloud") {
+        record.pending = null;
+        record.doc = choice.doc;
+      }
+      // keep local：pending 保留（mutationId 不变，幂等重放安全）
+    },
+  );
 }
 
 /** 在途上传标记（note-sync 维护；派生 uploading 维度） */

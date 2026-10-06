@@ -15,13 +15,11 @@
 import type { NotePhase } from "@tutor/contract";
 import { useCallback, useSyncExternalStore } from "react";
 import {
-  currentNoteSession,
-} from "./note-sync.ts";
-import {
-  type NoteRecordView,
   getNoteView,
+  type NoteRecordView,
   subscribeNoteStore,
 } from "./note-store.ts";
+import { currentNoteSession } from "./note-sync.ts";
 
 /**
  * 订阅一份笔记的聚合视图（attempt + 题 + 阶段；首版 phase 缺省 scratch）。

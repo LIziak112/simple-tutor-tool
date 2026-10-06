@@ -39,21 +39,27 @@ import type {
   NoteDocInput,
   NoteRevisionConflictCurrent,
 } from "@tutor/contract";
-import { noteDocSchema, noteRevisionConflictCurrentSchema } from "@tutor/contract";
+import {
+  noteDocSchema,
+  noteRevisionConflictCurrentSchema,
+} from "@tutor/contract";
 import { gzipOrRaw } from "@/features/ink/gzip";
 import {
   ApiError,
   fetchStudentNoteDocumentApi,
   putNoteDocumentApi,
 } from "@/lib/api";
-import { SerialTaskQueue, type SerialTaskQueueStats } from "@/lib/serial-task-queue.ts";
+import {
+  SerialTaskQueue,
+  type SerialTaskQueueStats,
+} from "@/lib/serial-task-queue.ts";
 import {
   applyUploadConflict,
   applyUploadDenied,
   applyUploadReceipt,
-  getNoteRecord,
-  type NoteSessionRef,
+  listPendingNotes,
   type NoteScope,
+  type NoteSessionRef,
   noteKeyOf,
   notifyNoteStoreAll,
   parseNoteKey,
@@ -61,7 +67,6 @@ import {
   resolveNoteConflict,
   setUploading,
   subscribeNoteStore,
-  listPendingNotes,
 } from "./note-store.ts";
 
 // ---------- 调度常量（方案 §6.2 建议初值；非丢失窗口承诺） ----------
@@ -486,12 +491,16 @@ export async function resolveNoteConflictKeepCloud(
   const versionId = record?.conflict?.current.versionId;
   if (record?.conflict == null) return;
   if (versionId === null) {
-    throw new Error("云端没有可读取的版本（可能为空稿或数据回退），请选择保留本机内容");
+    throw new Error(
+      "云端没有可读取的版本（可能为空稿或数据回退），请选择保留本机内容",
+    );
   }
   const raw = await fetchStudentNoteDocumentApi(versionId);
   const parsed = noteDocSchema.safeParse(raw);
   if (!parsed.success) {
-    throw new Error("云端草稿正文损坏或版本不兼容，无法保留云端，请选择保留本机内容");
+    throw new Error(
+      "云端草稿正文损坏或版本不兼容，无法保留云端，请选择保留本机内容",
+    );
   }
   await resolveNoteConflict(session, scope, {
     keep: "cloud",

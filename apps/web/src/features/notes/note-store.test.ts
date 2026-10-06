@@ -1,10 +1,18 @@
 import type { NoteHeadData, NoteVersionReceipt } from "@tutor/contract";
 import { noteDocSchema } from "@tutor/contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { draftStore, installDraftBackend, memoryBackend } from "@/features/attempt/draft-store";
+import {
+  draftStore,
+  installDraftBackend,
+  memoryBackend,
+} from "@/features/attempt/draft-store";
 import { docOf, stroke } from "@/features/notes/note-fixtures";
 import {
-  type NoteStoreBackend,
+  applyServerHead,
+  applyServerLoad,
+  applyUploadConflict,
+  applyUploadDenied,
+  applyUploadReceipt,
   deriveNoteStatusOverview,
   deriveServerState,
   getNoteDoc,
@@ -12,12 +20,9 @@ import {
   installNoteBackend,
   listPendingNotes,
   memoryNoteBackend,
+  type NoteLocalRecord,
+  type NoteStoreBackend,
   noteKeyOf,
-  applyServerLoad,
-  applyServerHead,
-  applyUploadConflict,
-  applyUploadDenied,
-  applyUploadReceipt,
   resetNoteStoreForTest,
   setUploading,
   subscribeNoteStore,
@@ -35,10 +40,28 @@ import {
 
 const SESSION_A = { origin: "https://tutor.example", studentId: "student-a" };
 const SESSION_B = { origin: "https://tutor.example", studentId: "student-b" };
-const SCOPE = { attemptId: "att-1", questionId: "p1-q1", phase: "scratch" } as const;
+const SCOPE = {
+  attemptId: "att-1",
+  questionId: "p1-q1",
+  phase: "scratch",
+} as const;
 
-const DOC_A = docOf([stroke([[10, 10], [40, 40]])]);
-const DOC_B = docOf([stroke([[10, 10], [40, 40]]), stroke([[50, 50], [80, 80]])]);
+const DOC_A = docOf([
+  stroke([
+    [10, 10],
+    [40, 40],
+  ]),
+]);
+const DOC_B = docOf([
+  stroke([
+    [10, 10],
+    [40, 40],
+  ]),
+  stroke([
+    [50, 50],
+    [80, 80],
+  ]),
+]);
 const DOC_EMPTY = docOf([]);
 
 const RECEIPT_1: NoteVersionReceipt = {
@@ -67,7 +90,51 @@ function headOf(overrides: Partial<NoteHeadData> = {}): NoteHeadData {
   };
 }
 
+/** 取记录（缺失即测试前置失败） */
+async function recordOf(
+  session: typeof SESSION_A,
+  scope: typeof SCOPE,
+): Promise<NoteLocalRecord> {
+  const record = await getNoteRecord(session, scope);
+  if (record === null) throw new Error("记录不存在（测试前置失败）");
+  return record;
+}
+
+/** 取待传 mutationId（无待传即测试前置失败） */
+async function pendingMutationIdOf(
+  session: typeof SESSION_A,
+  scope: typeof SCOPE,
+): Promise<string> {
+  const mutationId = (await recordOf(session, scope)).pending?.mutationId;
+  if (mutationId === undefined) throw new Error("无待传版本（测试前置失败）");
+  return mutationId;
+}
+
 /** 受控后端：每笔 set 挂起至测试放行（验「事务完成才确认」与合并写） */
+interface GatedCall {
+  key: string;
+  value: unknown;
+  release: () => void;
+}
+
+function releaseCall(calls: GatedCall[], index: number): void {
+  const call = calls[index];
+  if (call === undefined)
+    throw new Error(`set 第 ${index} 笔不存在（测试前置失败）`);
+  call.release();
+}
+
+function callDoc(calls: GatedCall[], index: number): unknown {
+  const call = calls[index];
+  if (call === undefined)
+    throw new Error(`set 第 ${index} 笔不存在（测试前置失败）`);
+  return (call.value as { doc: unknown }).doc;
+}
+
+function strokesOf(doc: unknown): number {
+  return (doc as { ink: { strokes: unknown[] } }).ink.strokes.length;
+}
+
 function gatedBackend() {
   const store = new Map<string, unknown>();
   const setCalls: Array<{
@@ -109,7 +176,7 @@ describe("note-store：串行持久化队列（T6R.8）", () => {
     writeNoteDoc(SESSION_A, SCOPE, DOC_A);
     expect(setCalls.length).toBe(1);
     expect((await getNoteRecord(SESSION_A, SCOPE))?.local).toBe("saving");
-    setCalls[0]!.release();
+    releaseCall(setCalls, 0);
     await vi.waitFor(async () => {
       const r = await getNoteRecord(SESSION_A, SCOPE);
       if (r?.local !== "saved") throw new Error("not saved yet");
@@ -123,16 +190,14 @@ describe("note-store：串行持久化队列（T6R.8）", () => {
     writeNoteDoc(SESSION_A, SCOPE, DOC_B); // 事务②③在①期间到达
     writeNoteDoc(SESSION_A, SCOPE, DOC_EMPTY);
     expect(setCalls.length).toBe(1); // 串行：①未完成不启②
-    setCalls[0]!.release();
+    releaseCall(setCalls, 0);
     await vi.waitFor(() => expect(setCalls.length).toBe(2)); // B 与空稿合并成一笔
-    const firstDoc = (setCalls[0]!.value as { doc: unknown }).doc;
-    const secondDoc = (setCalls[1]!.value as { doc: unknown }).doc;
-    expect((firstDoc as { ink: { strokes: unknown[] } }).ink.strokes.length).toBe(1);
+    const firstDoc = callDoc(setCalls, 0);
+    const secondDoc = callDoc(setCalls, 1);
     // 合并后落的是最新（空稿），B 不单独成笔
-    expect(
-      (secondDoc as { ink: { strokes: unknown[] } }).ink.strokes.length,
-    ).toBe(0);
-    setCalls[1]!.release();
+    expect(strokesOf(firstDoc)).toBe(1);
+    expect(strokesOf(secondDoc)).toBe(0);
+    releaseCall(setCalls, 1);
     await vi.waitFor(async () => {
       const r = await getNoteRecord(SESSION_A, SCOPE);
       if (r?.local !== "saved") throw new Error("not saved yet");
@@ -189,7 +254,15 @@ describe("note-store：原子写与读出物化", () => {
     // 缺省 paperHeightLogical/background 的输入（旧 InkDoc 读入形态）
     writeNoteDoc(SESSION_A, SCOPE, {
       version: 1,
-      ink: { width: 1000, strokes: [stroke([[5, 5], [6, 6]])] },
+      ink: {
+        width: 1000,
+        strokes: [
+          stroke([
+            [5, 5],
+            [6, 6],
+          ]),
+        ],
+      },
     });
     const doc = await getNoteDoc(SESSION_A, SCOPE);
     expect(doc?.paperHeightLogical).toBe(800);
@@ -200,45 +273,45 @@ describe("note-store：原子写与读出物化", () => {
 describe("note-store：恢复 load 不算编辑", () => {
   it("applyServerLoad 播种服务端稿：无 pending、不推进 editedAt、派生 synced", async () => {
     writeNoteDoc(SESSION_A, SCOPE, DOC_A);
+    // 先确认本地写入（清 pending），再测 load
     await applyUploadReceipt(
       SESSION_A,
       SCOPE,
-      // 先确认本地写入（清 pending），再测 load
-      (await getNoteRecord(SESSION_A, SCOPE))!.pending!.mutationId,
+      await pendingMutationIdOf(SESSION_A, SCOPE),
       RECEIPT_1,
     );
-    const before = await getNoteRecord(SESSION_A, SCOPE);
-    const editedAtBefore = before?.editedAt;
+    const before = await recordOf(SESSION_A, SCOPE);
+    const editedAtBefore = before.editedAt;
     await applyServerLoad(SESSION_A, SCOPE, DOC_B, headOf());
-    const record = await getNoteRecord(SESSION_A, SCOPE);
-    expect(record?.pending).toBeNull();
-    expect(record?.editedAt).toBe(editedAtBefore);
-    expect(record?.baseRevision).toBe(1);
-    expect(deriveServerState(record!, false)).toBe("synced");
+    const record = await recordOf(SESSION_A, SCOPE);
+    expect(record.pending).toBeNull();
+    expect(record.editedAt).toBe(editedAtBefore);
+    expect(record.baseRevision).toBe(1);
+    expect(deriveServerState(record, false)).toBe("synced");
   });
 
   it("load 与本地待传内容相等 → 不回传（清 pending）；不等 → 保留本地待传", async () => {
     // 本地写了 B，未上传；服务端 head 的稿内容与 B 相同（上次上传成功但回执丢失的形态）
     writeNoteDoc(SESSION_A, SCOPE, DOC_B);
-    const pendingBefore = (await getNoteRecord(SESSION_A, SCOPE))!.pending;
+    const pendingBefore = (await recordOf(SESSION_A, SCOPE)).pending;
     await applyServerLoad(
       SESSION_A,
       SCOPE,
       noteDocSchema.parse(DOC_B),
       headOf(),
     );
-    const record = await getNoteRecord(SESSION_A, SCOPE);
-    expect(record?.pending).toBeNull();
-    expect(record?.baseRevision).toBe(1);
+    const record = await recordOf(SESSION_A, SCOPE);
+    expect(record.pending).toBeNull();
+    expect(record.baseRevision).toBe(1);
     // 相等比较基于物化后的内容：NoteDoc 与等价 NoteDocInput 判等
     expect(pendingBefore).not.toBeNull();
 
     // 不等：服务端另有内容，本地待传保留（不覆盖未同步本地稿）
     writeNoteDoc(SESSION_A, SCOPE, DOC_A);
     await applyServerLoad(SESSION_A, SCOPE, DOC_B, headOf());
-    const after = await getNoteRecord(SESSION_A, SCOPE);
-    expect(after?.pending).not.toBeNull();
-    expect(deriveServerState(after!, false)).toBe("dirty");
+    const after = await recordOf(SESSION_A, SCOPE);
+    expect(after.pending).not.toBeNull();
+    expect(deriveServerState(after, false)).toBe("dirty");
   });
 
   it("NoteDoc 相等比较：缺省与显式默认值物化后相等", async () => {
@@ -258,41 +331,39 @@ describe("note-store：恢复 load 不算编辑", () => {
 describe("note-store：回执与状态派生", () => {
   it("A 回执不清 B：mutationId 匹配才清 pending；不匹配仅推进 baseRevision", async () => {
     writeNoteDoc(SESSION_A, SCOPE, DOC_A);
-    const mutationA = (await getNoteRecord(SESSION_A, SCOPE))!.pending!
-      .mutationId;
+    const mutationA = await pendingMutationIdOf(SESSION_A, SCOPE);
     // A 在途期间写 B（pending 换成 B 的新 mutationId）
     writeNoteDoc(SESSION_A, SCOPE, DOC_B);
-    const mutationB = (await getNoteRecord(SESSION_A, SCOPE))!.pending!
-      .mutationId;
+    const mutationB = await pendingMutationIdOf(SESSION_A, SCOPE);
     expect(mutationB).not.toBe(mutationA);
     // A 的回执到达
     await applyUploadReceipt(SESSION_A, SCOPE, mutationA, RECEIPT_1);
-    const record = await getNoteRecord(SESSION_A, SCOPE);
-    expect(record?.pending?.mutationId).toBe(mutationB); // B 仍在
-    expect(record?.baseRevision).toBe(1); // head 信息已推进
-    expect(deriveServerState(record!, false)).toBe("dirty"); // B 未传
+    const record = await recordOf(SESSION_A, SCOPE);
+    expect(record.pending?.mutationId).toBe(mutationB); // B 仍在
+    expect(record.baseRevision).toBe(1); // head 信息已推进
+    expect(deriveServerState(record, false)).toBe("dirty"); // B 未传
     setUploading(SESSION_A, SCOPE, true);
-    expect(deriveServerState(record!, true)).toBe("uploading");
+    expect(deriveServerState(record, true)).toBe("uploading");
     setUploading(SESSION_A, SCOPE, false);
-    expect(deriveServerState(record!, false)).toBe("dirty");
+    expect(deriveServerState(record, false)).toBe("dirty");
   });
 
   it("denied(access) 粘住（新写不复活）；denied(content) 新写清除", async () => {
     writeNoteDoc(SESSION_A, SCOPE, DOC_A);
     await applyUploadDenied(SESSION_A, SCOPE, "access", "已无权限");
-    let record = await getNoteRecord(SESSION_A, SCOPE);
-    expect(deriveServerState(record!, false)).toBe("denied");
+    let record = await recordOf(SESSION_A, SCOPE);
+    expect(deriveServerState(record, false)).toBe("denied");
     writeNoteDoc(SESSION_A, SCOPE, DOC_B);
-    record = await getNoteRecord(SESSION_A, SCOPE);
-    expect(deriveServerState(record!, false)).toBe("denied");
+    record = await recordOf(SESSION_A, SCOPE);
+    expect(deriveServerState(record, false)).toBe("denied");
 
     await applyUploadDenied(SESSION_A, SCOPE, "content", "超出预算");
-    record = await getNoteRecord(SESSION_A, SCOPE);
-    expect(record?.denied?.kind).toBe("content");
+    record = await recordOf(SESSION_A, SCOPE);
+    expect(record.denied?.kind).toBe("content");
     writeNoteDoc(SESSION_A, SCOPE, DOC_A);
-    record = await getNoteRecord(SESSION_A, SCOPE);
-    expect(record?.denied).toBeNull();
-    expect(deriveServerState(record!, false)).toBe("dirty");
+    record = await recordOf(SESSION_A, SCOPE);
+    expect(record.denied).toBeNull();
+    expect(deriveServerState(record, false)).toBe("dirty");
   });
 
   it("conflict 保留两份副本（云端摘要 + 本地稿）且优先级高于 dirty", async () => {
@@ -304,14 +375,13 @@ describe("note-store：回执与状态派生", () => {
       hash: "c".repeat(64),
       serverSavedAt: "2026-10-06T02:00:00.000Z",
     };
-    const mutation = (await getNoteRecord(SESSION_A, SCOPE))!.pending!
-      .mutationId;
+    const mutation = await pendingMutationIdOf(SESSION_A, SCOPE);
     await applyUploadConflict(SESSION_A, SCOPE, mutation, current, "冲突");
-    const record = await getNoteRecord(SESSION_A, SCOPE);
-    expect(record?.conflict?.current).toEqual(current);
-    expect(record?.conflict?.localDoc).toBeDefined(); // 本地副本在记录里
-    expect(record?.doc).toBeDefined(); // 工作稿未被清
-    expect(deriveServerState(record!, false)).toBe("conflict");
+    const record = await recordOf(SESSION_A, SCOPE);
+    expect(record.conflict?.current).toEqual(current);
+    expect(record.conflict?.localDoc).toBeDefined(); // 本地副本在记录里
+    expect(record.doc).toBeDefined(); // 工作稿未被清
+    expect(deriveServerState(record, false)).toBe("conflict");
   });
 });
 
@@ -351,8 +421,7 @@ describe("note-store：IDB 失败与订阅", () => {
     const events: string[] = [];
     subscribeNoteStore((key) => events.push(key));
     writeNoteDoc(SESSION_A, SCOPE, DOC_A);
-    const mutation = (await getNoteRecord(SESSION_A, SCOPE))!.pending!
-      .mutationId;
+    const mutation = await pendingMutationIdOf(SESSION_A, SCOPE);
     await applyUploadReceipt(SESSION_A, SCOPE, mutation, RECEIPT_1);
     const key = noteKeyOf(SESSION_A, SCOPE);
     expect(events.filter((k) => k === key).length).toBeGreaterThanOrEqual(2);
@@ -378,7 +447,7 @@ describe("note-store：交卷 clearDraft 不删 notes（T6R.8 验证项）", () 
 describe("note-store：四维总览派生（T6R.5 契约注释：前端合成）", () => {
   it("images/evidence 从 lastHead 聚合；无 head 时图片待生成、证据未固定", async () => {
     writeNoteDoc(SESSION_A, SCOPE, DOC_A);
-    let record = (await getNoteRecord(SESSION_A, SCOPE))!;
+    let record = await recordOf(SESSION_A, SCOPE);
     await vi.waitFor(() => {
       if (record.local !== "saved") throw new Error("not saved yet");
     });
@@ -389,7 +458,7 @@ describe("note-store：四维总览派生（T6R.5 契约注释：前端合成）
     expect(overview.evidence).toBe("none"); // 无证据行
 
     await applyServerHead(SESSION_A, SCOPE, headOf());
-    record = (await getNoteRecord(SESSION_A, SCOPE))!;
+    record = await recordOf(SESSION_A, SCOPE);
     overview = deriveNoteStatusOverview(record, false);
     expect(overview.images).toBe("pending"); // head 有版本但无图：待生成
     expect(overview.evidence).toBe("none");
@@ -417,7 +486,7 @@ describe("note-store：四维总览派生（T6R.5 契约注释：前端合成）
         recordedAt: "2026-10-06T03:00:00.000Z",
       },
     });
-    record = (await getNoteRecord(SESSION_A, SCOPE))!;
+    record = await recordOf(SESSION_A, SCOPE);
     overview = deriveNoteStatusOverview(record, false);
     expect(overview.images).toBe("ready");
     expect(overview.evidence).toBe("frozen");

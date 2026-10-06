@@ -1,18 +1,18 @@
-import type { NoteVersionReceipt } from "@tutor/contract";
 import { act, render } from "@testing-library/react";
+import type { NoteVersionReceipt } from "@tutor/contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { docOf, stroke } from "@/features/notes/note-fixtures";
-import {
-  bindNoteSession,
-  NOTE_SYNC_DEBOUNCE_MS,
-  resetNoteSession,
-} from "@/features/notes/note-sync";
 import {
   installNoteBackend,
   memoryNoteBackend,
   peekNoteRecord,
   writeNoteDoc,
 } from "@/features/notes/note-store";
+import {
+  bindNoteSession,
+  NOTE_SYNC_DEBOUNCE_MS,
+  resetNoteSession,
+} from "@/features/notes/note-sync";
 import { useNoteRecord } from "@/features/notes/use-note-record";
 
 /**
@@ -34,9 +34,18 @@ const putMock = vi.mocked(putNoteDocumentApi);
 
 const SESSION = { origin: "https://tutor.example", studentId: "student-a" };
 const SESSION_B = { origin: "https://tutor.example", studentId: "student-b" };
-const SCOPE = { attemptId: "att-1", questionId: "p1-q1", phase: "scratch" } as const;
+const SCOPE = {
+  attemptId: "att-1",
+  questionId: "p1-q1",
+  phase: "scratch",
+} as const;
 
-const DOC_A = docOf([stroke([[10, 10], [40, 40]])]);
+const DOC_A = docOf([
+  stroke([
+    [10, 10],
+    [40, 40],
+  ]),
+]);
 
 const RECEIPT: NoteVersionReceipt = {
   noteId: "22222222-2222-4222-8222-222222222222",

@@ -1,6 +1,6 @@
+import { gunzipSync } from "node:zlib";
 import type { NoteVersionReceipt } from "@tutor/contract";
 import { noteDocSchema } from "@tutor/contract";
-import { gunzipSync } from "node:zlib";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { docOf, stroke } from "@/features/notes/note-fixtures";
 import {
@@ -29,7 +29,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
   };
 });
 
-import { ApiError, fetchStudentNoteDocumentApi, putNoteDocumentApi } from "@/lib/api";
+import { writeNoteDoc } from "@/features/notes/note-store";
 import {
   bindNoteSession,
   flushNoteSync,
@@ -40,16 +40,38 @@ import {
   resolveNoteConflictKeepCloud,
   resolveNoteConflictKeepLocal,
 } from "@/features/notes/note-sync";
-import { writeNoteDoc } from "@/features/notes/note-store";
+import {
+  ApiError,
+  fetchStudentNoteDocumentApi,
+  putNoteDocumentApi,
+} from "@/lib/api";
 
 const putMock = vi.mocked(putNoteDocumentApi);
 
 const SESSION = { origin: "https://tutor.example", studentId: "student-a" };
 const SESSION_B = { origin: "https://tutor.example", studentId: "student-b" };
-const SCOPE = { attemptId: "att-1", questionId: "p1-q1", phase: "scratch" } as const;
+const SCOPE = {
+  attemptId: "att-1",
+  questionId: "p1-q1",
+  phase: "scratch",
+} as const;
 
-const DOC_A = docOf([stroke([[10, 10], [40, 40]])]);
-const DOC_B = docOf([stroke([[10, 10], [40, 40]]), stroke([[50, 50], [80, 80]])]);
+const DOC_A = docOf([
+  stroke([
+    [10, 10],
+    [40, 40],
+  ]),
+]);
+const DOC_B = docOf([
+  stroke([
+    [10, 10],
+    [40, 40],
+  ]),
+  stroke([
+    [50, 50],
+    [80, 80],
+  ]),
+]);
 const DOC_EMPTY = docOf([]);
 
 function receiptOf(revision: number): NoteVersionReceipt {
@@ -65,8 +87,7 @@ function receiptOf(revision: number): NoteVersionReceipt {
 /** 解上传 body（gzip 魔数判断，兼容 jsdom 无压缩回退的原始 JSON） */
 async function bodyDoc(blob: Blob): Promise<{ ink: { strokes: unknown[] } }> {
   const buf = Buffer.from(await blob.arrayBuffer());
-  const raw =
-    buf[0] === 0x1f && buf[1] === 0x8b ? gunzipSync(buf) : buf;
+  const raw = buf[0] === 0x1f && buf[1] === 0x8b ? gunzipSync(buf) : buf;
   return JSON.parse(raw.toString("utf8")) as { ink: { strokes: unknown[] } };
 }
 
@@ -148,7 +169,12 @@ describe("note-sync：调度（防抖与最大等待）", () => {
         SESSION,
         SCOPE,
         docOf(
-          Array.from({ length: i }, (_, k) => stroke([[0, 0], [10, k + 1]])),
+          Array.from({ length: i }, (_, k) =>
+            stroke([
+              [0, 0],
+              [10, k + 1],
+            ]),
+          ),
         ),
       );
       await vi.advanceTimersByTimeAsync(1500);
@@ -160,7 +186,9 @@ describe("note-sync：调度（防抖与最大等待）", () => {
   });
 
   it("清空也同步：空稿作为新版本上传（覆盖语义，非取消同步）", async () => {
-    putMock.mockResolvedValueOnce(receiptOf(1)).mockResolvedValueOnce(receiptOf(2));
+    putMock
+      .mockResolvedValueOnce(receiptOf(1))
+      .mockResolvedValueOnce(receiptOf(2));
     writeNoteDoc(SESSION, SCOPE, DOC_A);
     await vi.advanceTimersByTimeAsync(NOTE_SYNC_DEBOUNCE_MS);
     expect((await bodyDoc(callOf(0).blob)).ink.strokes.length).toBe(1);
@@ -248,7 +276,9 @@ describe("note-sync：重试、退避与幂等", () => {
   });
 
   it("恢复在线/可见主动补传：不等退避计时器", async () => {
-    putMock.mockRejectedValueOnce(new Error("网络中断")).mockResolvedValue(receiptOf(1));
+    putMock
+      .mockRejectedValueOnce(new Error("网络中断"))
+      .mockResolvedValue(receiptOf(1));
     writeNoteDoc(SESSION, SCOPE, DOC_A);
     await vi.advanceTimersByTimeAsync(NOTE_SYNC_DEBOUNCE_MS); // 首传失败，退避 1s
     window.dispatchEvent(new Event("online"));
@@ -257,7 +287,9 @@ describe("note-sync：重试、退避与幂等", () => {
     expect(peekNoteRecord(SESSION, SCOPE)?.pending).toBeNull();
 
     // 可见恢复同机制
-    putMock.mockRejectedValueOnce(new Error("网络中断")).mockResolvedValue(receiptOf(2));
+    putMock
+      .mockRejectedValueOnce(new Error("网络中断"))
+      .mockResolvedValue(receiptOf(2));
     writeNoteDoc(SESSION, SCOPE, DOC_B);
     await vi.advanceTimersByTimeAsync(NOTE_SYNC_DEBOUNCE_MS);
     document.dispatchEvent(new Event("visibilitychange"));

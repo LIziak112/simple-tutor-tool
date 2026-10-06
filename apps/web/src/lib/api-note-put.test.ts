@@ -56,9 +56,7 @@ afterEach(() => {
 
 describe("putNoteDocumentApi（T6R.8）", () => {
   it("PUT multipart：body 文件 + baseRevision/mutationId 字段；成功壳回回执", async () => {
-    const calls = stubCapture(() =>
-      shellResponse({ ok: true, data: RECEIPT }),
-    );
+    const calls = stubCapture(() => shellResponse({ ok: true, data: RECEIPT }));
     const bytes = new TextEncoder().encode('{"version":1}');
     const receipt = await putNoteDocumentApi(
       ATTEMPT_ID,
@@ -116,9 +114,7 @@ describe("putNoteDocumentApi（T6R.8）", () => {
   });
 
   it("AbortSignal 透传给 fetch（账号切换中止旧会话在途）", async () => {
-    const calls = stubCapture(() =>
-      shellResponse({ ok: true, data: RECEIPT }),
-    );
+    const calls = stubCapture(() => shellResponse({ ok: true, data: RECEIPT }));
     const controller = new AbortController();
     await putNoteDocumentApi(
       ATTEMPT_ID,
