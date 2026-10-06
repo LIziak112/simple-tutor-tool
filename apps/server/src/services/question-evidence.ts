@@ -96,6 +96,11 @@ export interface EvidenceImageItem {
   readonly pixelWidth: number;
   readonly pixelHeight: number;
   readonly state: "ready" | "missing";
+  /**
+   * note_images 行 id（=契约 imageId；T6R.13 起携带——单题包预览的逐张下载
+   * URL 需要，不进 pack.json，仅服务端内部与预览 downloadUrl 组装用）
+   */
+  readonly imageId: string;
   /** ready：文件实测字节（zip 写入与大小预检用） */
   readonly bytes?: number;
   /** ready：绝对路径（zip 写入用；不进 pack.json） */
@@ -571,6 +576,7 @@ function analysisImagesOf(
       crop,
       pixelWidth: image.pixelWidth,
       pixelHeight: image.pixelHeight,
+      imageId: image.id,
     };
     // 单一 reason 赋值点；ready 且文件在位直接 continue，其余一律走缺失出口。
     // 边界判定走 resolveWithinRootOrNull（path.relative 强算法，复审 A8——
