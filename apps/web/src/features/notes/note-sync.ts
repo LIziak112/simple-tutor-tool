@@ -245,6 +245,7 @@ async function runUpload(
   epoch: number,
 ): Promise<void> {
   const stale = () => epoch !== sessionEpoch || !sameSessionSafe(session);
+  if (stale()) return; // 复审⑨：入口即早退——旧会话作业不做任何副作用
   const record = peekNoteRecord(session, scope);
   if (!uploadable(record)) return; // 无待传/被冲突或终态阻塞：空跑跳过
   const { mutationId, doc } = record.pending;
@@ -306,7 +307,15 @@ async function runUpload(
     }, delay);
   } finally {
     controllers.delete(key);
-    setUploading(session, scope, false); // 内存标记清理，跨会话键无害
+    // 复审⑥：本次上传窗口结束——重锚脏周期（下一轮内容变化经
+    // handleRecordChanged 锚定新的最大等待），持续书写不会只等一次强刷
+    const s = schedulers.get(key);
+    if (s !== undefined) {
+      clearTimer(s.maxWait);
+      s.maxWait = null;
+      s.dirtyPeriod = false;
+    }
+    setUploading(session, scope, false); // 通知触发完成后的重编排（③的新写路径）
   }
 }
 
@@ -336,9 +345,14 @@ function due(key: string): void {
 // ---------- 记录变更 → 计时器编排 ----------
 
 /**
- * store 通知入口：pending 存在且未被 conflict/denied 阻塞 → 重置防抖、
- * 脏周期起点锚定最大等待；否则清计时器。新 mutationId（新写入替换待传）
- * 重置退避计数——失败重试的节奏不惩罚新内容。
+ * store 通知入口（复审③重构）：
+ * - 不可传（无 pending/冲突/被拒）→ 清计时器；
+ * - **在途（controllers.has）→ 忽略**——完成路径（finally 的重锚 +
+ *   setUploading 通知）负责后续编排，在途通知不重置任何计时器；
+ * - **仅「pending 内容变化（新 mutationId）」武装/重置 2s 防抖**并锚定
+ *   最大等待（脏周期起点）——uploading 翻转、落盘完成（local saved）等
+ *   同内容通知一律不动计时器，否则防抖每 2s 重挂会击穿退避节奏；
+ * - 新 mutationId 重置退避计数——失败重试的节奏不惩罚新内容。
  */
 function handleRecordChanged(key: string): void {
   if (key === "*") return;
@@ -351,19 +365,21 @@ function handleRecordChanged(key: string): void {
     clearTimers(key);
     return;
   }
-  if (record.pending.mutationId !== s.lastMutationId) {
-    s.lastMutationId = record.pending.mutationId;
-    s.failures = 0;
-    clearTimer(s.backoff);
-    s.backoff = null;
-  }
-  // 停笔防抖：每次写入后移
+  if (controllers.has(key)) return; // 在途：完成路径接管
+  const mutationId = record.pending.mutationId;
+  if (mutationId === s.lastMutationId) return; // 非内容变化：不动计时器
+  s.lastMutationId = mutationId;
+  s.failures = 0;
+  clearTimer(s.backoff);
+  s.backoff = null;
+  // 停笔防抖：每次内容写入后移
   clearTimer(s.debounce);
   s.debounce = setTimeout(() => {
     s.debounce = null;
     due(key);
   }, NOTE_SYNC_DEBOUNCE_MS);
-  // 最大等待：自脏周期起点（pending 从无到有）起算一次，持续书写不推迟
+  // 最大等待：自脏周期起点起算一次，持续书写不推迟；上传完成（finally）
+  // 重锚下一窗口（复审⑥）
   if (!s.dirtyPeriod) {
     s.dirtyPeriod = true;
     s.maxWait = setTimeout(() => {

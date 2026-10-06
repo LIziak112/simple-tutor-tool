@@ -227,11 +227,33 @@ describe("note-sync：重试、退避与幂等", () => {
     expect(putMock.mock.calls.length).toBe(2);
     await vi.advanceTimersByTimeAsync(2 * NOTE_SYNC_BACKOFF_BASE_MS); // t=5s
     expect(putMock.mock.calls.length).toBe(3);
-    await vi.advanceTimersByTimeAsync(4 * NOTE_SYNC_BACKOFF_BASE_MS); // t=9s 成功
+    // 复审③：t=5s~9s 之间退避不得被防抖击穿（uploading 翻转等通知不再
+    // 重挂防抖）——t=6.9s 仍只有 3 次，第三次重试必须等到 t=9s
+    await vi.advanceTimersByTimeAsync(1.9 * NOTE_SYNC_BACKOFF_BASE_MS);
+    expect(putMock.mock.calls.length).toBe(3);
+    await vi.advanceTimersByTimeAsync(4 * NOTE_SYNC_BACKOFF_BASE_MS - 1.9 * NOTE_SYNC_BACKOFF_BASE_MS); // t=9s 成功
     expect(putMock.mock.calls.length).toBe(4);
     const ids = putMock.mock.calls.map((c) => c[3].mutationId);
     expect(new Set(ids).size).toBe(1); // 幂等：同 mutationId 重放
     expect(peekNoteRecord(SESSION_A, SCOPE)?.pending).toBeNull();
+  });
+
+  it("持续书写 25s 至少触发两次强制上传点（复审⑥：完成即重锚下一窗口）", async () => {
+    putMock.mockResolvedValue(receiptOf(99));
+    // 每 1.5s 写一笔，防抖恒被内容写入重置——唯一上传时机是最大等待
+    for (let i = 1; i <= 17; i++) {
+      writeNoteDoc(
+        SESSION_A,
+        SCOPE,
+        docOf(
+          Array.from({ length: i }, (_, k) => stroke([[0, 0], [10, k + 1]])),
+        ),
+      );
+      await vi.advanceTimersByTimeAsync(1500);
+    }
+    // t=25.5s：强刷点 t=10s 与重锚后的 t≈20.5s 各至少一次
+    expect(putMock.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(peekNoteRecord(SESSION_A, SCOPE)?.baseRevision).toBe(99); // 末次回执已落地
   });
 
   it("重进后补传：重载（内存清空、IDB 保留）发现 pending 自动续传", async () => {
