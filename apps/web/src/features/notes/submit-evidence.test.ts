@@ -298,16 +298,17 @@ describe("prepareSubmitEvidence：阻止性失败", () => {
   });
 
   it("本地仓读失败（strictRead）→ 抛错阻止交卷；快览宽松归并无记录", async () => {
-    // get 恒失败的后端（内存底 + 读路径注入故障）；records 缓存为空 ⇒ 每题走 get
+    // attempt 装载走 getAll（loadScratchRecords 前缀扫描）——对 getAll 注入故障；
+    // get/set 保持正常（catchUpNotes 的落盘队列不被波及）
     const mem = memoryNoteBackend();
-    const failingGet: NoteStoreBackend = {
-      get: async () => {
+    const failingScan: NoteStoreBackend = {
+      get: mem.get,
+      set: mem.set,
+      getAll: async () => {
         throw new Error("IDB 读取失败");
       },
-      set: mem.set,
-      getAll: mem.getAll,
     };
-    installNoteBackend(failingGet);
+    installNoteBackend(failingScan);
     mockHeads({});
     await expect(
       prepareSubmitEvidence({ attemptId: ATTEMPT, questionIds: QUESTIONS }),

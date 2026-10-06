@@ -303,12 +303,29 @@ describe("note-sync：重试、退避与幂等", () => {
     expect(putMock.mock.calls.length).toBe(4);
   });
 
-  it("flushNoteSync：防抖未到也立即补传（交卷/切后台入口，T6R.10 用）", async () => {
+  it("flushNoteSync：防抖未到也立即补传指定 attempt（交卷追平入口，T6R.10）", async () => {
     putMock.mockResolvedValue(receiptOf(1));
     writeNoteDoc(SESSION_A, SCOPE, DOC_A);
-    await flushNoteSync();
+    await flushNoteSync(SCOPE.attemptId);
     expect(putMock.mock.calls.length).toBe(1);
     expect(peekNoteRecord(SESSION_A, SCOPE)?.pending).toBeNull();
+  });
+
+  it("flushNoteSync 作用域收敛到 attempt：他卷待传不被波及（效率复审）", async () => {
+    putMock.mockResolvedValue(receiptOf(1));
+    const otherScope = {
+      ...SCOPE,
+      attemptId: "att-other",
+      questionId: "p1-q9",
+    };
+    writeNoteDoc(SESSION_A, SCOPE, DOC_A);
+    writeNoteDoc(SESSION_A, otherScope, DOC_A);
+    await flushNoteSync(SCOPE.attemptId);
+    // 只上传本卷待传；他卷保持 pending（bind 补传/下次本卷 flush 再处理）
+    expect(putMock.mock.calls.length).toBe(1);
+    expect(putMock.mock.calls[0]?.[1]).toBe(SCOPE.questionId);
+    expect(peekNoteRecord(SESSION_A, SCOPE)?.pending).toBeNull();
+    expect(peekNoteRecord(SESSION_A, otherScope)?.pending).not.toBeNull();
   });
 });
 
@@ -493,35 +510,6 @@ describe("note-sync：账号切换与登出隔离", () => {
     window.dispatchEvent(new Event("online"));
     await vi.advanceTimersByTimeAsync(1000);
     expect(putMock.mock.calls.length).toBe(1);
-  });
-});
-
-describe("note-sync：flushNoteSync 结果摘要（复审④）", () => {
-  it("逐键如实返回 synced/denied/backoff（T6R.10 交卷判定口径）", async () => {
-    const scopeDenied = { ...SCOPE, questionId: "p1-q2" };
-    const scopeBackoff = { ...SCOPE, questionId: "p1-q3" };
-    putMock.mockImplementation(async (_a, qid: string) => {
-      if (qid === SCOPE.questionId) return receiptOf(1);
-      if (qid === scopeDenied.questionId)
-        throw new ApiError("FORBIDDEN", "已无权限访问该练习", 403);
-      throw new Error("网络中断");
-    });
-    writeNoteDoc(SESSION_A, SCOPE, DOC_A);
-    writeNoteDoc(SESSION_A, scopeDenied, DOC_A);
-    writeNoteDoc(SESSION_A, scopeBackoff, DOC_A);
-    const results = await flushNoteSync();
-    expect(results[`${SCOPE.attemptId}:${SCOPE.questionId}:scratch`]).toBe(
-      "synced",
-    );
-    expect(
-      results[`${SCOPE.attemptId}:${scopeDenied.questionId}:scratch`],
-    ).toBe("denied");
-    expect(
-      results[`${SCOPE.attemptId}:${scopeBackoff.questionId}:scratch`],
-    ).toBe("backoff");
-    // 本地稿在 denied/backoff 两键均保留
-    expect(peekNoteRecord(SESSION_A, scopeDenied)?.pending).not.toBeNull();
-    expect(peekNoteRecord(SESSION_A, scopeBackoff)?.pending).not.toBeNull();
   });
 });
 

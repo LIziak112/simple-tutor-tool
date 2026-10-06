@@ -31,12 +31,10 @@ import type {
 import { fetchStudentNoteHeadApi } from "@/lib/api";
 import {
   deriveServerState,
-  getNoteRecord,
+  loadScratchRecords,
   type NoteLocalRecord,
-  type NoteScope,
-  settleNotePersistence,
 } from "./note-store.ts";
-import { currentNoteSession, flushNoteSync } from "./note-sync.ts";
+import { catchUpNotes, currentNoteSession } from "./note-sync.ts";
 
 /** 逐题展示分类（弹层快览/草稿状态区） */
 export type SubmitNoteStatusKind =
@@ -153,28 +151,18 @@ export async function prepareSubmitEvidence(input: {
   /** 用户已明确选择缺稿交卷的题目（「草稿未保存完整」确认后重跑传入） */
   allowMissing?: ReadonlySet<string>;
 }): Promise<SubmitEvidencePrep> {
-  // ① 冻结编辑（模态弹层覆盖）后等本地事务 → 追平矢量 → 回执落盘再等一次
-  await settleNotePersistence();
-  await flushNoteSync();
-  await settleNotePersistence();
+  // ① 冻结编辑（模态弹层覆盖）后追平本卷草稿（先排干本地落盘再上传再
+  //    排干——语义见 note-sync.catchUpNotes）
+  await catchUpNotes(input.attemptId);
 
-  // ② 本地记录与服务端 head 同窗并发读取，按索引汇合（head 全部成功才可
+  // ② 本卷记录（attempt 前缀单事务装载，strictRead 读失败抛错≠无记录）
+  //    与逐题服务端 head 同窗并发读取，按索引汇合（head 全部成功才可
   //    声明——任一失败整组 reject 抛给调用方）
   const session = currentNoteSession();
-  const scopeOf = (questionId: string): NoteScope => ({
-    attemptId: input.attemptId,
-    questionId,
-    phase: "scratch",
-  });
   const [records, heads] = await Promise.all([
-    Promise.all(
-      input.questionIds.map((questionId) =>
-        session === null
-          ? Promise.resolve<NoteLocalRecord | null>(null)
-          : // strictRead：权威路径读失败抛错（≠无记录），由调用方进 error 相
-            getNoteRecord(session, scopeOf(questionId), { strictRead: true }),
-      ),
-    ),
+    session === null
+      ? Promise.resolve(new Map<string, NoteLocalRecord>())
+      : loadScratchRecords(session, input.attemptId, { strictRead: true }),
     Promise.all(
       input.questionIds.map((questionId) =>
         fetchStudentNoteHeadApi(input.attemptId, questionId),
@@ -187,7 +175,7 @@ export async function prepareSubmitEvidence(input: {
   const problems: SubmitEvidenceProblem[] = [];
   for (let i = 0; i < input.questionIds.length; i += 1) {
     const questionId = input.questionIds[i];
-    const record = records[i] ?? null;
+    const record = records.get(questionId ?? "") ?? null;
     const head = heads[i];
     if (questionId === undefined || head === undefined) {
       // 等长 map 一一对应产出，此分支理论不可达；若真发生绝不能静默跳过
@@ -252,19 +240,14 @@ export async function snapshotNoteOverview(input: {
   questionIds: readonly string[];
 }): Promise<SubmitNoteStatus[]> {
   const session = currentNoteSession();
-  const records = await Promise.all(
-    input.questionIds.map((questionId) =>
-      session === null
-        ? Promise.resolve<NoteLocalRecord | null>(null)
-        : getNoteRecord(session, {
-            attemptId: input.attemptId,
-            questionId,
-            phase: "scratch",
-          }),
-    ),
-  );
-  return input.questionIds.map((questionId, i) => {
-    const verdict = classifyNote(records[i] ?? null, "unknown");
+  // attempt 前缀单事务装载（#9）：无草稿的卷只有一次空 getAll，不再逐题
+  // 空转 get；宽松口径（读失败≈无记录——展示性消费）
+  const records =
+    session === null
+      ? new Map<string, NoteLocalRecord>()
+      : await loadScratchRecords(session, input.attemptId);
+  return input.questionIds.map((questionId) => {
+    const verdict = classifyNote(records.get(questionId) ?? null, "unknown");
     return {
       questionId,
       kind: verdict.kind,
