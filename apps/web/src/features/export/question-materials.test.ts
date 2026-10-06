@@ -173,7 +173,7 @@ describe("buildStaticQuestionMaterial（静态题目素材）", () => {
       "看图后阅读：",
       "",
       '::graph{fn="x^2"}',
-      ":::fold{title=\"紧随图表\"}",
+      ':::fold{title="紧随图表"}',
       "折叠内容 intact。",
       ":::",
     ].join("\n");
