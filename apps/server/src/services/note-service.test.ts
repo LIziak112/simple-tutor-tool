@@ -1596,6 +1596,40 @@ describe("未引用版本延迟回收（GC 骨架）", () => {
     expect(noteFiles(dataDir)).toHaveLength(2);
   });
 
+  it("tmp 清扫跨域覆盖 blobs/ink 与 blobs/media（复审⑧），窗口内保留", () => {
+    const { db, dataDir, studentId, attemptId } = makeWorld();
+    save(db, dataDir, {
+      studentId,
+      attemptId,
+      questionId: "q1",
+      body: noteDoc(1),
+    });
+    const stale = new Date(Date.now() - 48 * 3600 * 1000);
+    // ink 子目录、media 根级散文件各放一个过期 tmp 与一个窗口内 tmp
+    const inkTmp = join(
+      dataDir,
+      "blobs",
+      "ink",
+      "att-1",
+      ".tmp-old-aaaa.json.gz",
+    );
+    mkdirSync(join(dataDir, "blobs", "ink", "att-1"), { recursive: true });
+    writeFileSync(inkTmp, "x");
+    utimesSync(inkTmp, stale, stale);
+    const mediaTmp = join(dataDir, "blobs", "media", ".tmp-old-bbbb");
+    mkdirSync(join(dataDir, "blobs", "media"), { recursive: true });
+    writeFileSync(mediaTmp, "x");
+    utimesSync(mediaTmp, stale, stale);
+    const freshMediaTmp = join(dataDir, "blobs", "media", ".tmp-fresh-cccc");
+    writeFileSync(freshMediaTmp, "y");
+
+    const result = gcNoteVersions(db, dataDir, { now: new Date() });
+    expect(result.sweptTmp).toBe(2);
+    expect(existsSync(inkTmp)).toBe(false);
+    expect(existsSync(mediaTmp)).toBe(false);
+    expect(existsSync(freshMediaTmp)).toBe(true);
+  });
+
   it("磁盘目录名与 DB 路径仅大小写不同（NTFS 手工迁移形态）→ 活文件不被误判孤儿（复审④）", () => {
     const { db, dataDir, studentId, attemptId } = makeWorld();
     const r1 = save(db, dataDir, {

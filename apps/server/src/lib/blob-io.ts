@@ -36,6 +36,10 @@ const utf8Decoder = new TextDecoder();
  * - 否则按原始 JSON 文本解码（TextDecoder.decode 非 fatal：非法 UTF-8 以
  *   U+FFFD 替换不抛错，与 Buffer.toString("utf8") 行为一致，坏数据交给
  *   调用方的 JSON.parse 拒绝）。
+ * - 已知宽容差异（复审⑨，有意保留）：TextDecoder 会**剥掉**开头的
+ *   U+FEFF BOM 而 Buffer.toString("utf8") 原样保留——带 BOM 的原始 JSON
+ *   上传在旧实现走 JSON.parse 抛错 400，现在能解析成功。方向是放宽而非
+ *   收紧（Windows 记事本类工具常带 BOM），ink 通道换用本函数后同样放宽。
  */
 export function parseGzipOrJsonBytes(
   bytes: Uint8Array,

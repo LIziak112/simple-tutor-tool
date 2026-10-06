@@ -133,7 +133,10 @@ export function noteBodyRelPath(
   revision: number,
   hash: string,
 ): string {
-  return join("blobs", "notes", noteId, noteBodyFileName(revision, hash));
+  // 入库串固定用 "/" 分隔（复审⑦）：join() 在 Windows 产反斜杠会让存储
+  // 路径形态跨平台漂移；读侧 path.resolve/relative 本就双兼容两种分隔符，
+  // 不需要迁移——本表未发布，无存量回填负担
+  return ["blobs", "notes", noteId, noteBodyFileName(revision, hash)].join("/");
 }
 
 /**
@@ -800,14 +803,16 @@ export function gcNoteVersions(
             result.malformedBodyPaths += 1;
             continue;
           }
-          liveBodyRelSet.add(rel.toLowerCase());
+          // 键分隔符归一为 "/"：入库串用 "/"（复审⑦）而 path.relative 在
+          // Windows 产 "\"，扫描侧统一拼 "/"——两侧一致才能对账
+          liveBodyRelSet.add(rel.split(/[\\/]/).join("/").toLowerCase());
         }
       }
       return liveBodyRelSet;
     };
-    for (const entry of readdirSync(notesRoot, { withFileTypes: true })) {
-      if (!entry.isDirectory()) continue;
-      const dir = join(notesRoot, entry.name);
+    // 单目录扫描：tmp 清扫全域通用；孤儿判定仅 notes 域启用（orphan 入参；
+    // dirName 用于拼 live 集合的相对键 <noteId>/<文件名>）
+    const sweepDir = (dir: string, dirName: string, orphan: boolean): void => {
       for (const name of readdirSync(dir)) {
         const filePath = join(dir, name);
         try {
@@ -816,8 +821,9 @@ export function gcNoteVersions(
             unlinkSync(filePath);
             result.sweptTmp += 1;
           } else if (
+            orphan &&
             bodyFilePattern.test(name) &&
-            !liveBodyRel().has(join(entry.name, name).toLowerCase()) &&
+            !liveBodyRel().has(`${dirName}/${name}`.toLowerCase()) &&
             result.malformedBodyPaths === 0
           ) {
             unlinkSync(filePath);
@@ -827,7 +833,32 @@ export function gcNoteVersions(
           // 文件恰好消失（在途请求刚 rename）——跳过
         }
       }
-    }
+    };
+    // .tmp- 前缀 = lib/blob-io.writeFileAtomic 的独有命名（ink/media/note
+    // 三通道共用，复审⑧起不再是 note 独有——ink/media 换用共享原语前的
+    // 旧固定名 `<名>.tmp` 后缀残留不在此列，无清扫通道）；media 的最终文件
+    // 直接在 blobs/media 根下（无子目录），故根级散文件也要扫 tmp
+    const sweepRoot = (root: string, orphan: boolean): void => {
+      if (!existsSync(root)) return;
+      for (const entry of readdirSync(root, { withFileTypes: true })) {
+        if (entry.isDirectory()) {
+          sweepDir(join(root, entry.name), entry.name, orphan);
+        } else if (
+          entry.name.startsWith(".tmp-") &&
+          statSync(join(root, entry.name)).mtimeMs < cutoffMs
+        ) {
+          try {
+            unlinkSync(join(root, entry.name));
+            result.sweptTmp += 1;
+          } catch {
+            // 恰好消失——跳过
+          }
+        }
+      }
+    };
+    sweepRoot(notesRoot, true);
+    sweepRoot(resolve(dataDir, "blobs", "ink"), false);
+    sweepRoot(resolve(dataDir, "blobs", "media"), false);
   }
   return result;
 }
