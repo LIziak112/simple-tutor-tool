@@ -129,17 +129,4 @@ export function makeResizeObserverStub(): ResizeObserverStub {
   };
 }
 
-/** 空 atrament 引擎文档（InkDoc 夹具；与 InkPad/NoteLayer 测试共用形态） */
-export function emptyAtramentDoc(): {
-  engine: "atrament";
-  version: 1;
-  data: { width: 1000; strokes: [] };
-  updatedAt: number;
-} {
-  return {
-    engine: "atrament",
-    version: 1,
-    data: { width: 1000, strokes: [] },
-    updatedAt: 1,
-  };
-}
+export { emptyAtramentDoc } from "@/features/ink/engine/index.ts";

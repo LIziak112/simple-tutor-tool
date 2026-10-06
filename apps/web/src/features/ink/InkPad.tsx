@@ -116,26 +116,64 @@ const COLOR_SWATCH: Record<InkPenColor, string> = {
   red: "#dc2626",
 };
 
-const COLOR_LABEL: Record<InkPenColor, string> = {
+export const COLOR_LABEL: Record<InkPenColor, string> = {
   black: "黑",
   blue: "蓝",
   red: "红",
 };
 
-const SIZE_LABEL: Record<InkPenSize, string> = {
+export const SIZE_LABEL: Record<InkPenSize, string> = {
   thin: "细",
   medium: "中",
   thick: "粗",
 };
 
-/** 工具按钮通用样式：高度 44px 起步（触控目标硬性尺寸） */
-const toolButtonClass =
+/** 工具按钮通用样式（导出共用，T6R.9 复审⑭）：高度 44px 起步（触控目标硬性尺寸） */
+export const toolButtonClass =
   "h-11 min-w-11 px-2.5 gap-1.5 rounded-lg border border-border text-sm font-medium select-none transition-colors";
 
 /** 非 session 档的常量订阅（不订阅任何源）与常量快照（恒 pen）——
  * useSyncExternalStore 不得条件调用（复审⑪），非 session 档用稳定常量 */
 const SUBSCRIBE_NOTHING = () => () => undefined;
 const SNAPSHOT_PEN = (): InkSessionInputPreference => "pen";
+
+/**
+ * 「手指书写」切换按钮（T6R.7 衔接注记①定案后的共用件，T6R.9 复审⑭）：
+ * InkPad 内置工具条与 NoteLayer 精简工具条同款——会话偏好 store 单源、
+ * 形态/文案/title 一处维护（含 44px 触控目标）。
+ */
+export function SessionPrefToggleButton({
+  disabled,
+  className,
+}: {
+  disabled?: boolean;
+  className?: string;
+}) {
+  const sessionPref = useSyncExternalStore(
+    onSessionInputPreferenceChange,
+    getSessionInputPreference,
+  );
+  return (
+    <Button
+      type="button"
+      variant={sessionPref === "finger" ? "secondary" : "ghost"}
+      aria-pressed={sessionPref === "finger"}
+      disabled={disabled}
+      onClick={() =>
+        setSessionInputPreference(sessionPref === "pen" ? "finger" : "pen")
+      }
+      className={className ?? toolButtonClass}
+      title={
+        sessionPref === "pen"
+          ? "手指书写（无笔设备：手指直接书写；本会话内所有草稿画布生效）"
+          : "切回笔写／手指滚动（本会话内所有草稿画布生效）"
+      }
+    >
+      <Pointer aria-hidden />
+      手指书写
+    </Button>
+  );
+}
 
 export function InkPad({
   engine = "atrament",
@@ -173,11 +211,23 @@ export function InkPad({
   /** 草稿只在挂载时恢复一次：initial 经 ref 取值，引用变化不重建引擎 */
   const initialRef = useRef(initial);
   /**
-   * 引擎挂载期选项（T6R.9）同样只在挂载时取值：background 是挂载期背景
-   * （NoteLayer 的背景随文档载入在挂载前已定）；height 提示同——受控纸高的
-   * **运行时**变化只经容器样式（下 style）生效，不重建引擎。
+   * 引擎挂载期选项（T6R.9）：ref 每渲染刷新为活值，但**只在引擎（重）建时
+   * 读取**——受控纸高的运行时变化只经容器样式（下 style）生效，不重建
+   * 引擎；背景例外：挂载后变化经重建键触发引擎重建（见下 effect，复审⑥
+   * 定案——重建比给引擎加 setBackground 命令便宜，undo 历史随重建清零
+   * 可接受：背景只随外部换稿变化，罕见路径；NoteLayer 侧经引擎换实例
+   * 检测重载正文）。
    */
   const mountOptsRef = useRef({ background, height: paperHeight });
+  mountOptsRef.current = { background, height: paperHeight };
+  /** 背景重建键：background 与已挂载值不同 → 引擎重建 */
+  const mountedBgRef = useRef(background);
+  useEffect(() => {
+    if (background !== mountedBgRef.current) {
+      mountedBgRef.current = background;
+      setRetryKey((k) => k + 1); // 复用重建通道（与懒加载失败重试同机制）
+    }
+  }, [background]);
   /** 受控纸高的运行时读取（自动加高守卫用）：变化不重建引擎 */
   const paperHeightRef = useRef(paperHeight);
   paperHeightRef.current = paperHeight;
@@ -380,26 +430,7 @@ export function InkPad({
 
           {/* 输入偏好切换（T6R.7，仅新草稿形态显示）：会话内共享，多画布同源 */}
           {inputMode === "session" && (
-            <Button
-              type="button"
-              variant={sessionPref === "finger" ? "secondary" : "ghost"}
-              aria-pressed={sessionPref === "finger"}
-              disabled={toolsDisabled}
-              onClick={() =>
-                setSessionInputPreference(
-                  sessionPref === "pen" ? "finger" : "pen",
-                )
-              }
-              className={toolButtonClass}
-              title={
-                sessionPref === "pen"
-                  ? "手指书写（无笔设备：手指直接书写；本会话内所有草稿画布生效）"
-                  : "切回笔写／手指滚动（本会话内所有草稿画布生效）"
-              }
-            >
-              <Pointer aria-hidden />
-              手指书写
-            </Button>
+            <SessionPrefToggleButton disabled={toolsDisabled} />
           )}
 
           {/* 颜色三选（黑/蓝/红）；荧光笔固定黄色，禁用切换 */}

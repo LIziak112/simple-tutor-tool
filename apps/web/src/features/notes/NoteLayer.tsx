@@ -39,7 +39,6 @@ import {
   MoreHorizontal,
   NotebookPen,
   PenLine,
-  Pointer,
   Redo2,
   Trash,
   Undo2,
@@ -75,12 +74,13 @@ import type {
   InkPenColor,
   InkPenSize,
 } from "@/features/ink/engine/index.ts";
-import { InkPad } from "@/features/ink/InkPad";
 import {
-  getSessionInputPreference,
-  onSessionInputPreferenceChange,
-  setSessionInputPreference,
-} from "@/features/ink/input-preference.ts";
+  COLOR_LABEL,
+  InkPad,
+  SessionPrefToggleButton,
+  SIZE_LABEL,
+  toolButtonClass,
+} from "@/features/ink/InkPad";
 import { recoverNoteImages } from "@/features/notes/image-sync";
 import { docOf } from "@/features/notes/note-fixtures";
 import {
@@ -107,10 +107,6 @@ import { useNoteHead, useNoteSessionRef } from "@/features/notes/use-note-head";
 import { useNoteRecord } from "@/features/notes/use-note-record";
 import { useObservedCssWidth } from "@/lib/use-observed-css-width";
 
-/** 触控目标硬性尺寸（ui-conventions）：工具条按钮统一 h-11 */
-const TOOL_BUTTON_CLASS =
-  "h-11 min-w-11 px-2.5 gap-1.5 rounded-lg border border-border text-sm font-medium select-none transition-colors";
-
 /** 宽度观察未就绪（jsdom/首帧/纸面隐藏）的纸高回退（暂定：与 InkPad 初始高同量级） */
 const NOTE_CSS_HEIGHT_FALLBACK = 320;
 
@@ -121,16 +117,6 @@ const NOTE_CSS_HEIGHT_FALLBACK = 320;
  */
 export const NOTE_ENGINE_KEEPALIVE_MS = 45_000;
 
-const PEN_COLOR_LABEL: Record<InkPenColor, string> = {
-  black: "黑",
-  blue: "蓝",
-  red: "红",
-};
-const PEN_SIZE_LABEL: Record<InkPenSize, string> = {
-  thin: "细",
-  medium: "中",
-  thick: "粗",
-};
 const LAYOUT_LABEL: Record<NoteLayoutPreference, string> = {
   auto: "自动（按宽度）",
   side: "左右分栏",
@@ -303,12 +289,6 @@ export function NoteLayer({
     );
   }, [tool, penColor, penSize, open]);
 
-  // ---- 会话输入偏好（注记①：按钮在本工具条；store 与 InkPad 两侧共用） ----
-  const sessionPref = useSyncExternalStore(
-    onSessionInputPreferenceChange,
-    getSessionInputPreference,
-  );
-
   // ---- 收起保活（复审⑦）：展开即清计时；收起计时到点才卸载纸面 ----
   const [paperAlive, setPaperAlive] = useState(false);
   const keepaliveRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -465,7 +445,7 @@ export function NoteLayer({
             variant={tool === "pen" ? "secondary" : "ghost"}
             aria-pressed={tool === "pen"}
             onClick={() => setTool("pen")}
-            className={TOOL_BUTTON_CLASS}
+            className={toolButtonClass}
             title="笔"
           >
             <PenLine aria-hidden />笔
@@ -475,7 +455,7 @@ export function NoteLayer({
             variant={tool === "eraser" ? "secondary" : "ghost"}
             aria-pressed={tool === "eraser"}
             onClick={() => setTool("eraser")}
-            className={TOOL_BUTTON_CLASS}
+            className={toolButtonClass}
             title="橡皮（整笔擦除）"
           >
             <Eraser aria-hidden />
@@ -486,32 +466,14 @@ export function NoteLayer({
             variant="ghost"
             disabled={!canUndo}
             onClick={() => engineRef.current?.undo()}
-            className={TOOL_BUTTON_CLASS}
+            className={toolButtonClass}
             title="撤销"
           >
             <Undo2 aria-hidden />
             撤销
           </Button>
-          {/* 手指书写（注记①定案：归属本工具条，一次点击可达） */}
-          <Button
-            type="button"
-            variant={sessionPref === "finger" ? "secondary" : "ghost"}
-            aria-pressed={sessionPref === "finger"}
-            onClick={() =>
-              setSessionInputPreference(
-                sessionPref === "pen" ? "finger" : "pen",
-              )
-            }
-            className={TOOL_BUTTON_CLASS}
-            title={
-              sessionPref === "pen"
-                ? "手指书写（无笔设备：手指直接书写；本会话内所有草稿画布生效）"
-                : "切回笔写／手指滚动（本会话内所有草稿画布生效）"
-            }
-          >
-            <Pointer aria-hidden />
-            手指书写
-          </Button>
+          {/* 手指书写（注记①定案：归属本工具条，一次点击可达；共用件） */}
+          <SessionPrefToggleButton className={toolButtonClass} />
 
           <div className="ml-auto">
             <DropdownMenu>
@@ -519,7 +481,7 @@ export function NoteLayer({
                 type="button"
                 aria-label={`更多操作（${label}）`}
                 title="更多（重做/颜色/粗细/清空/布局）"
-                className={`${TOOL_BUTTON_CLASS} border-transparent`}
+                className={`${toolButtonClass} border-transparent`}
               >
                 <MoreHorizontal aria-hidden />
                 更多
@@ -533,7 +495,7 @@ export function NoteLayer({
                   重做
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
-                {(Object.keys(PEN_COLOR_LABEL) as InkPenColor[]).map((c) => (
+                {(Object.keys(COLOR_LABEL) as InkPenColor[]).map((c) => (
                   <DropdownMenuItem
                     key={c}
                     aria-checked={penColor === c}
@@ -546,11 +508,11 @@ export function NoteLayer({
                       aria-hidden
                       className={penColor === c ? "visible" : "invisible"}
                     />
-                    颜色：{PEN_COLOR_LABEL[c]}
+                    颜色：{COLOR_LABEL[c]}
                   </DropdownMenuItem>
                 ))}
                 <DropdownMenuSeparator />
-                {(Object.keys(PEN_SIZE_LABEL) as InkPenSize[]).map((s) => (
+                {(Object.keys(SIZE_LABEL) as InkPenSize[]).map((s) => (
                   <DropdownMenuItem
                     key={s}
                     aria-checked={penSize === s}
@@ -563,7 +525,7 @@ export function NoteLayer({
                       aria-hidden
                       className={penSize === s ? "visible" : "invisible"}
                     />
-                    粗细：{PEN_SIZE_LABEL[s]}
+                    粗细：{SIZE_LABEL[s]}
                   </DropdownMenuItem>
                 ))}
                 <DropdownMenuSeparator />

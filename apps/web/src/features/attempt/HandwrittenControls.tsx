@@ -16,10 +16,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import type {
-  InkChangeReason,
-  InkDoc,
-  InkEngine,
+import {
+  emptyAtramentDoc,
+  type InkChangeReason,
+  type InkDoc,
+  type InkEngine,
 } from "@/features/ink/engine/index.ts";
 import { InkPad } from "@/features/ink/InkPad";
 import { fetchAttemptInkApi, studentInkPngUrl } from "@/lib/api";
@@ -53,16 +54,6 @@ import {
  *   挂载时「服务端笔迹 × 本地笔迹」合并（updatedAt 新者胜），本地较新或服务端
  *   拉取失败且有本地笔迹 → resync 补传；同步回调联动顶栏三态（DraftSyncContext）。
  */
-
-/** 空的 atrament 文档（「清空并改用页内手写」与无笔迹初始态共用） */
-function emptyAtramentDoc(): InkDoc {
-  return {
-    engine: "atrament",
-    version: 1,
-    data: { width: 1000, strokes: [] },
-    updatedAt: Date.now(),
-  };
-}
 
 /** 笔迹文档的当前笔画数（atrament=strokes；excalidraw=scene.elements，口径同 ink 表） */
 function inkStrokeCount(doc: InkDoc): number {

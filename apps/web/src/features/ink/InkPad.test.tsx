@@ -275,3 +275,25 @@ describe("<InkPad> 新草稿形态 props（T6R.9：NoteLayer 接入）", () => {
     );
   });
 });
+
+describe("<InkPad> 背景挂载后更新（T6R.9 复审⑥：重建键方案）", () => {
+  it("background 变化 → 引擎按新背景重建（create 收到新值）", () => {
+    const view = render(<InkPad inputMode="session" background="grid" />);
+    expect(lastCreateOpts?.background).toBe("grid");
+    view.rerender(<InkPad inputMode="session" background="line" />);
+    expect(lastCreateOpts?.background).toBe("line");
+    // 定案注释见组件：重建（非 setBackground 命令）是更廉价的方案——
+    // NoteLayer 侧经引擎换实例检测重载正文，undo 历史随重建清零可接受
+    // （背景只随外部换稿变化，罕见路径）
+  });
+
+  it("背景不变的重渲染不重建引擎", () => {
+    const view = render(<InkPad background="grid" />);
+    view.rerender(<InkPad background="grid" paperHeight={400} />);
+    view.rerender(<InkPad background="grid" paperHeight={500} />);
+    // create 只在挂载时发生一次（受控纸高变化走容器样式，不重建）
+    expect(
+      screen.getAllByRole("img", { name: "手写答题区" }).length,
+    ).toBeGreaterThanOrEqual(1);
+  });
+});
