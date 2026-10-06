@@ -1,6 +1,7 @@
 import { BookX, History, Home, Loader2, LogOut, School } from "lucide-react";
 import { Navigate, NavLink, Outlet, useNavigate } from "react-router";
 import { useLogoutStudent, useStudentMe } from "@/features/auth/student-auth";
+import { useBindNoteSession } from "@/features/notes/use-note-session";
 import { useStudentTheme } from "@/features/student/use-student-theme";
 import { ApiError } from "@/lib/api";
 import { ScreenError, ScreenLoading } from "./StudentScreen";
@@ -29,6 +30,11 @@ export function StudentLayout() {
   const meQuery = useStudentMe();
   const logoutMutation = useLogoutStudent();
   const navigate = useNavigate();
+  // T6R.11 复审（会话接线层级）：草稿会话绑定上提到布局层——所有 /s/* 学生
+  // 页面（答题/结果/历史回看）自动获得当前身份接线（bind/reset 对称：reset
+  // 在 student-auth 登出处）。结果页读链路全走 Cookie 与 image-sync 队列不
+  // 消费 note-session；绑定在布局层即模块级会话服务的身份职责归位
+  useBindNoteSession(meQuery.data);
 
   if (meQuery.isPending) {
     return <ScreenLoading text="正在确认登录状态…" />;

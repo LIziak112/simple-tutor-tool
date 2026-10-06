@@ -1,4 +1,5 @@
 import type {
+  AttemptSource,
   QuestionAnswers,
   QuestionType,
   StudentAnswer,
@@ -14,6 +15,14 @@ import { QUESTION_TYPE_LABELS as QUESTION_TYPE_LABELS_CONTRACT } from "@tutor/co
 /** 题型 → 中文标签（题卡徽章与结果视图共用；T3.4 起常量收归契约，前后端同一份） */
 export const QUESTION_TYPE_LABELS: Record<QuestionType, string> =
   QUESTION_TYPE_LABELS_CONTRACT;
+
+/**
+ * 手写题型集合（T6R.11 起收归本共享模块）：作答 ink 走 HandwrittenControls，
+ * 不接草稿层/草稿原稿查看（原查看 AttemptQuestionCard 的本地副本——教师端
+ * 详情/待批卡同样需要该判定，单一事实来源）。
+ */
+export const HANDWRITTEN_TYPES: ReadonlySet<QuestionType> =
+  new Set<QuestionType>(["solve", "apply", "find-error"]);
 
 /** 题型徽章配色（按客观/主观两档区分，视觉分组） */
 export const QUESTION_TYPE_BADGE_CLASS: Record<QuestionType, string> = {
@@ -40,6 +49,24 @@ export function letterOf(index: number): string {
 export function judgeLabelOf(value: boolean | string): string {
   if (typeof value === "boolean") return value ? "对" : "错";
   return value;
+}
+
+/**
+ * 作答轮次标注（T6R.11 原稿查看面板共用）。**次数语义按来源不同**：
+ * - course：该课程练习的第 n 次（attemptNo 逐次递增，可分辨第几轮）；
+ * - wrong：attemptNo 是该生**全部错题重练的组卷计数**（含废弃 draft，见
+ *   wrong-practice 计数口径），不是该题/该卷的第几轮——文案用「第 N 次组卷」
+ *   不承诺每题轮次；
+ * - assignment：一人一卷恒 1 次，不做次数标注。
+ * 学生结果视图与教师详情/待批卡同口径。
+ */
+export function attemptRoundLabel(
+  sourceType: AttemptSource,
+  attemptNo: number,
+): string {
+  if (sourceType === "course") return `第 ${attemptNo} 次课程练习`;
+  if (sourceType === "wrong") return `错题重练 · 第 ${attemptNo} 次组卷`;
+  return "本次作业";
 }
 
 /**

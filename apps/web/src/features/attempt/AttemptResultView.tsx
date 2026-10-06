@@ -15,11 +15,14 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { HintEntryList } from "@/features/attempt/HintPanel";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
+import { NoteOriginalView } from "@/features/notes/NoteOriginalView";
 import { studentInkPngUrl } from "@/lib/api";
 import { formatCnTime } from "@/lib/time";
 import {
+  attemptRoundLabel,
   formatReferenceAnswers,
   formatStudentAnswer,
+  HANDWRITTEN_TYPES,
   letterOf,
   QUESTION_TYPE_BADGE_CLASS,
   QUESTION_TYPE_LABELS,
@@ -245,12 +248,15 @@ function ResultQuestionCard({
   question,
   attemptId,
   released,
+  roundLabel,
   onSolutionToggle,
 }: {
   index: number;
   question: AttemptResultQuestion;
   attemptId: string;
   released: boolean;
+  /** 轮次标注（T6R.11 原稿查看面板显示所属轮次） */
+  roundLabel: string;
   /**
    * 详解折叠开合回调（T4.0b host=result 复盘埋点；缺省不报）。
    * @param action open=收起→展开、close=展开→收起
@@ -259,10 +265,8 @@ function ResultQuestionCard({
     | ((questionId: string, index: number, action: "open" | "close") => void)
     | undefined;
 }) {
-  const isHandwritten =
-    question.snapshot.type === "solve" ||
-    question.snapshot.type === "apply" ||
-    question.snapshot.type === "find-error";
+  // 手写题型判定走共享 HANDWRITTEN_TYPES（与答题卡/教师卡单一事实来源）
+  const isHandwritten = HANDWRITTEN_TYPES.has(question.snapshot.type);
   // D9：最终判定优先（交卷时 = autoCorrect，批注后以 teacherMark 为准）；
   // null = 待批（D3 后可自动判分题交卷即有 finalCorrect，null 即真待批）
   const verdict = question.finalCorrect ?? question.autoCorrect;
@@ -330,6 +334,19 @@ function ResultQuestionCard({
         className="text-base"
       />
       <ResultOptions question={question} />
+
+      {/* T6R.11：本次草稿原稿查看入口（非手写题——手写题没有草稿层，笔迹
+          缩略图另见下方）。学生看自己的草稿不受答案公布 gate 限制，两种
+          形态都渲染；面板按证据行定位本次原稿（软删题历史可读） */}
+      {!isHandwritten && (
+        <NoteOriginalView
+          viewer="student"
+          attemptId={attemptId}
+          questionId={question.questionId}
+          ariaPrefix={`第 ${index + 1} 题`}
+          roundLabel={roundLabel}
+        />
+      )}
 
       {/* 手写题：我的手写笔迹缩略图（T2.8；无笔迹时隐藏） */}
       {isHandwritten && (
@@ -429,6 +446,8 @@ export function AttemptResultView({
   const { attempt, summary } = data;
   // T2A.8：答案是否已公布（on_submit / 课程练习 / 已到截止 = true）
   const released = data.answersReleased;
+  // T6R.11：原稿查看面板的轮次标注（重练同题后回看历史，可分辨第几轮）
+  const roundLabel = attemptRoundLabel(attempt.sourceType, attempt.attemptNo);
   // D9：大数字得分 = 最终得分优先，未批完回退自动判分（均 null = 全待批）
   const displayScore = summary.scoreFinal ?? attempt.scoreAuto;
   // T2A.7：逐题结果按单元分组；题号全卷连续（累计 index）。
@@ -592,6 +611,7 @@ export function AttemptResultView({
                     question={question}
                     attemptId={attempt.id}
                     released={released}
+                    roundLabel={roundLabel}
                     onSolutionToggle={onSolutionToggle}
                   />
                 </li>

@@ -20,8 +20,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/api", () => ({
   postNoteImageApi: vi.fn(),
-  fetchStudentNoteDocumentApi: vi.fn(),
-  fetchTeacherNoteDocumentApi: vi.fn(),
+}));
+// T6R.11 起 recoverNoteImages 经 lib/note-endpoints 的角色分派器读正文
+vi.mock("@/lib/note-endpoints", () => ({
+  fetchNoteDocumentApi: vi.fn(),
 }));
 
 vi.mock("@/features/notes/render-note.ts", async (importOriginal) => {
@@ -43,11 +45,8 @@ import {
 } from "@/features/notes/image-sync.ts";
 import type { RenderedNotePage } from "@/features/notes/render-note.ts";
 import { forEachRenderedNotePage } from "@/features/notes/render-note.ts";
-import {
-  fetchStudentNoteDocumentApi,
-  fetchTeacherNoteDocumentApi,
-  postNoteImageApi,
-} from "@/lib/api";
+import { postNoteImageApi } from "@/lib/api";
+import { fetchNoteDocumentApi } from "@/lib/note-endpoints";
 import { SerialTaskQueue } from "@/lib/serial-task-queue.ts";
 
 const VERSION_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa0003";
@@ -89,8 +88,7 @@ function receiptOf(spec: string, pageIndex: number): NoteImageMeta {
 
 const mockedPost = vi.mocked(postNoteImageApi);
 const mockedForEach = vi.mocked(forEachRenderedNotePage);
-const mockedStudentDoc = vi.mocked(fetchStudentNoteDocumentApi);
-const mockedTeacherDoc = vi.mocked(fetchTeacherNoteDocumentApi);
+const mockedDoc = vi.mocked(fetchNoteDocumentApi);
 
 beforeEach(() => {
   resetNoteImageQueueForTest();
@@ -115,8 +113,7 @@ beforeEach(() => {
         }
       },
     );
-  mockedStudentDoc.mockReset();
-  mockedTeacherDoc.mockReset();
+  mockedDoc.mockReset();
 });
 
 afterEach(() => {
@@ -341,7 +338,7 @@ describe("syncNoteImages：失败不吞错、不毒化、可重试", () => {
 describe("recoverNoteImages：补图恢复入口", () => {
   it("学生：拉正文 → 收窄物化缺省 → 同步上传", async () => {
     // 服务端正文缺 paperHeightLogical/background（旧形状）：parse 物化默认
-    mockedStudentDoc.mockResolvedValue({
+    mockedDoc.mockResolvedValue({
       version: 1,
       ink: {
         width: 1000,
@@ -365,11 +362,11 @@ describe("recoverNoteImages：补图恢复入口", () => {
     // 单点笔迹：分析裁剪区单页 ⇒ 缩略图 + 1 页分析图
     expect(metas.map((m) => m.spec)).toEqual(["thumbnail", "analysis"]);
     // 拉取用的就是学生端读接口
-    expect(mockedStudentDoc).toHaveBeenCalledWith(VERSION_ID);
+    expect(mockedDoc).toHaveBeenCalledWith("student", VERSION_ID);
   });
 
   it("教师：走教师端读接口", async () => {
-    mockedTeacherDoc.mockResolvedValue({
+    mockedDoc.mockResolvedValue({
       version: 1,
       ink: { width: 1000, strokes: [] },
     });
@@ -377,11 +374,11 @@ describe("recoverNoteImages：补图恢复入口", () => {
       receiptOf(meta.spec, meta.pageIndex),
     );
     await recoverNoteImages({ role: "teacher", versionId: VERSION_ID });
-    expect(mockedTeacherDoc).toHaveBeenCalledWith(VERSION_ID);
+    expect(mockedDoc).toHaveBeenCalledWith("teacher", VERSION_ID);
   });
 
   it("正文非法 → 明确中文报错，不静默", async () => {
-    mockedStudentDoc.mockResolvedValue({ version: 2, ink: null });
+    mockedDoc.mockResolvedValue({ version: 2, ink: null });
     await expect(
       recoverNoteImages({ role: "student", versionId: VERSION_ID }),
     ).rejects.toThrow(/无法重建/);

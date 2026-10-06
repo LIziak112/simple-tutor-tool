@@ -12,6 +12,7 @@ import type {
 } from "@tutor/contract";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { noteOriginalStubDatasets } from "@/features/notes/note-original-test-stub";
 import {
   ApiError,
   downloadTeacherExportCsv,
@@ -40,6 +41,15 @@ vi.mock("@/lib/api", async (importOriginal) => {
     markResponseApi: vi.fn(),
     downloadTeacherExportCsv: vi.fn(),
   };
+});
+
+// T6R.11：原稿查看面板以桩替换（面板行为见 NoteOriginalView.test），此处
+// 桩组件与 dataset 读取器在 note-original-test-stub（共享件），此处只断言教师端接线
+vi.mock("@/features/notes/NoteOriginalView", async () => {
+  const { NoteOriginalTestStub } = await import(
+    "@/features/notes/note-original-test-stub"
+  );
+  return { NoteOriginalView: NoteOriginalTestStub };
 });
 
 const mockedDetail = vi.mocked(fetchTeacherAttemptDetailApi);
@@ -479,5 +489,59 @@ describe("AttemptDetailPage 改判/评语内联编辑（T3.2b，D3）", () => {
     expect(
       within(q2.querySelector("dl") as HTMLElement).getByText("未批改"),
     ).toBeInTheDocument();
+  });
+});
+
+// ---------- T6R.11：教师端草稿原稿查看入口 ----------
+
+describe("AttemptDetailPage 草稿原稿入口（T6R.11）", () => {
+  it("非手写题逐题渲染入口（教师角色 + attempt 定位 + 轮次标注）；手写题不渲染", async () => {
+    const solve = makeQuestion({
+      questionId: "q-solve",
+      no: 4,
+      type: "solve",
+      answer: null,
+      autoCorrect: null,
+      finalCorrect: null,
+      answers: undefined,
+      ink: {
+        inkId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        pngUrl: INK_URL,
+        hasStrokes: true,
+      },
+    });
+    mockedDetail.mockResolvedValue(
+      makeDetail({ questions: [...makeDetail().questions, solve] }),
+    );
+    renderPage();
+    await screen.findByRole("article", { name: "第 4 题" });
+    const stubs = noteOriginalStubDatasets();
+    // 前三题 judge（q1）+ judge（q2）+ judge（q3）非手写；solve 第 4 题不渲染
+    expect(stubs.map((s) => s.question)).toEqual(["q1", "q2", "q3"]);
+    for (const stub of stubs) {
+      expect(stub.role).toBe("teacher");
+      expect(stub.attempt).toBe(ATTEMPT_ID);
+    }
+    // makeDetail：course 来源 attemptNo=2
+    expect(stubs[0]?.round).toBe("第 2 次课程练习");
+  });
+});
+
+describe("AttemptDetailPage 草稿原稿入口（T6R.11）补充", () => {
+  it("draft（进行中）：证据行定义性不存在，不渲染原稿查看入口", async () => {
+    mockedDetail.mockResolvedValue(
+      makeDetail({ status: "draft", submittedAt: null }),
+    );
+    renderPage();
+    await screen.findByText("进行中：学生尚未交卷");
+    expect(screen.queryByTestId("note-original-stub")).toBeNull();
+  });
+
+  it("ariaPrefix 接线：各题桩带自己的题号前缀", async () => {
+    mockedDetail.mockResolvedValue(makeDetail());
+    renderPage();
+    await screen.findByRole("article", { name: "第 1 题" });
+    const prefixes = noteOriginalStubDatasets().map((stub) => stub.prefix);
+    expect(prefixes).toEqual(["第 1 题", "第 2 题", "第 3 题"]);
   });
 });

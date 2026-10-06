@@ -58,6 +58,7 @@ import {
 } from "@tutor/contract";
 import { digestOf } from "@/features/attempt/draft-merge";
 import { parseNoteDocOrThrow } from "@/features/notes/note-fixtures";
+import { worstImageState } from "@/features/notes/note-image-state";
 import {
   idbKVBackend,
   type KVStoreBackend,
@@ -516,17 +517,13 @@ export function deriveServerState(
 }
 
 /**
- * 派生图维度聚合（head 投影的 images 行）：
- * 有 failed → failed；有 pending → pending；有 missing → missing；
- * 全 ready → ready；无行 → pending（正文未同步或派生任务未跑——「图片待
- * 生成」，T6R.9 文案；补图通道见 image-sync.recoverNoteImages）。
+ * 派生图维度聚合（head 投影的 images 行）：最差行状态原语（note-image-state）
+ * + 空数组的本域档位（无行=「图片待生成」pending——正文未同步或派生任务
+ * 未跑，T6R.9 文案；补图通道见 image-sync.recoverNoteImages）。
  */
 function deriveImagesState(images: readonly NoteImageMeta[]) {
   if (images.length === 0) return "pending" as const;
-  if (images.some((img) => img.state === "failed")) return "failed" as const;
-  if (images.some((img) => img.state === "pending")) return "pending" as const;
-  if (images.some((img) => img.state === "missing")) return "missing" as const;
-  return "ready" as const;
+  return worstImageState(images);
 }
 
 /**
