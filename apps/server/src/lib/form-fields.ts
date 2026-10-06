@@ -48,10 +48,10 @@ const IMAGE_FORM_HINT =
  *   均 400 VALIDATION_ERROR）；
  * - PNG 字节本身的魔数/尺寸/限额校验在 note-service.attachNoteImage。
  */
-export function parseNoteImageUploadForm(form: LooseFormBody): {
-  png: File;
+export async function parseNoteImageUploadForm(form: LooseFormBody): Promise<{
+  pngBytes: Uint8Array;
   meta: NoteImageUploadMeta;
-} {
+}> {
   const image = form.image;
   if (!(image instanceof File)) {
     throw new HttpError(400, "VALIDATION_ERROR", IMAGE_FORM_HINT);
@@ -75,5 +75,7 @@ export function parseNoteImageUploadForm(form: LooseFormBody): {
       `补图元信息不合法：${firstIssueMessage(parsed.error)}`,
     );
   }
-  return { png: image, meta: parsed.data };
+  // 字节在解析层一次读出（复审轮⑮：两路由不再各自 arrayBuffer 转换）
+  const pngBytes = new Uint8Array(await image.arrayBuffer());
+  return { pngBytes, meta: parsed.data };
 }

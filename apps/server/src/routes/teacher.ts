@@ -180,7 +180,9 @@ export function createTeacherRoutes(
       // lib/form-fields；服务端校验归属链/versionId/规格/大小——不是教师
       // 编辑学生正文：不触碰 notes/note_versions/submission_evidence 行）
       .post("/note-versions/:versionId/images", async (c) => {
-        const { png, meta } = parseNoteImageUploadForm(await c.req.parseBody());
+        const { pngBytes, meta } = await parseNoteImageUploadForm(
+          await c.req.parseBody(),
+        );
         return c.json({
           ok: true,
           data: attachNoteImage(
@@ -188,7 +190,7 @@ export function createTeacherRoutes(
             dataDir,
             { kind: "teacher", id: c.var.teacher.id },
             c.req.param("versionId"),
-            new Uint8Array(await png.arrayBuffer()),
+            pngBytes,
             meta,
           ),
         });

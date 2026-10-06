@@ -455,7 +455,9 @@ export function createStudentRoutes(
       // lib/form-fields.parseNoteImageUploadForm；PNG 完整性/限额/槽位 upsert
       // 在 note-service.attachNoteImage）
       .post("/note-versions/:versionId/images", async (c) => {
-        const { png, meta } = parseNoteImageUploadForm(await c.req.parseBody());
+        const { pngBytes, meta } = await parseNoteImageUploadForm(
+          await c.req.parseBody(),
+        );
         return c.json({
           ok: true,
           data: attachNoteImage(
@@ -463,7 +465,7 @@ export function createStudentRoutes(
             dataDir,
             { kind: "student", id: c.var.student.id },
             c.req.param("versionId"),
-            new Uint8Array(await png.arrayBuffer()),
+            pngBytes,
             meta,
           ),
         });
