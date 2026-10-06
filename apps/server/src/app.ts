@@ -4,8 +4,9 @@ import {
   BACKUP_UPLOAD_BODY_LIMIT,
   IMPORT_BATCH_BODY_LIMIT,
   INK_MAX_UPLOAD_BYTES,
+  NOTE_BODY_GZIP_MAX_BYTES,
 } from "@tutor/contract";
-import { type Context, Hono } from "hono";
+import { type Context, Hono, type Next } from "hono";
 import type { Logger } from "pino";
 import pino from "pino";
 import { createRequireAnySession } from "./auth/require-any-session";
@@ -65,6 +66,44 @@ export interface CreateAppOptions {
  * 不落盘不缓冲（任务要点：超限尽早拒绝）。
  */
 export const INK_UPLOAD_BODY_LIMIT = INK_MAX_UPLOAD_BYTES + 64 * 1024;
+
+/**
+ * 草稿正文上传路由的 body 预检上限（T6R.4）：正文 gzip 后 ≤2MiB（契约
+ * NOTE_BODY_GZIP_MAX_BYTES）+ multipart boundary/头部编码开销余量，取整
+ * 2MiB+64KiB。超限在 parseBody（整包进内存）之前就拒绝（413
+ * NOTE_LIMIT_EXCEEDED，不落盘不缓冲）；精确限额由 note-service 按文件实际
+ * 字节校验（chunked 传输无 content-length 时兜底，与 ink 两级防线同款）。
+ */
+export const NOTE_UPLOAD_BODY_LIMIT = NOTE_BODY_GZIP_MAX_BYTES + 64 * 1024;
+
+/**
+ * content-length 入口预检中间件工厂（T6R.4 复审②：五段同构守卫收敛）。
+ * 指定 method 的请求若 content-length 超过 limit，直接 413 {code}——不进入
+ * parseBody（整包进内存）、不落盘不缓冲；精确限额由各 service 按文件实际
+ * 字节校验（chunked 传输无 content-length 时 Number("") 不 Finite，自然放行
+ * 给 service 兜底）。
+ */
+function guardBodyLimit(config: {
+  method: "PUT" | "POST";
+  limit: number;
+  code: string;
+  message: string;
+}) {
+  return async (c: Context, next: Next) => {
+    if (c.req.method === config.method) {
+      const length = Number(c.req.header("content-length") ?? "0");
+      if (Number.isFinite(length) && length > config.limit) {
+        const body: ApiErr = {
+          ok: false,
+          error: config.code,
+          message: config.message,
+        };
+        return c.json(body, 413);
+      }
+    }
+    return next();
+  };
+}
 
 /**
  * 图片上传路由的 body 预检上限（媒体管线第二单）：图片本身 ≤5MB（契约口径，
@@ -139,78 +178,61 @@ export function createApp(options: CreateAppOptions) {
       "/api/public",
       createPublicRoutes(options.db, options.publicUrl, options.specDir),
     )
-    // T2.8：笔迹上传（PUT multipart）的 body 大小防御——content-length 超限直接
-    // 413，不进入 parseBody（整包进内存）更不落盘；精确限额（两文件合计）在
-    // ink-service 里校验（chunked 传输无 content-length 时由它兜底）。
-    .use("/api/student/attempts/:id/ink/:questionId", async (c, next) => {
-      if (c.req.method === "PUT") {
-        const length = Number(c.req.header("content-length") ?? "0");
-        if (Number.isFinite(length) && length > INK_UPLOAD_BODY_LIMIT) {
-          const body: ApiErr = {
-            ok: false,
-            error: "INK_TOO_LARGE",
-            message: "上传数据过大（超过笔迹上传上限），请精简后重试",
-          };
-          return c.json(body, 413);
-        }
-      }
-      return next();
-    })
-    // T2A.3：批量导入预览（POST JSON）的 body 大小防御——content-length 超限直接
-    // 413 IMPORT_TOO_LARGE，不进入 parseBody（整包进内存）。preview-batch 以单个
-    // JSON 传全部文件内容，转义后 body 约为 markdown 原文 1.5–2 倍，故粗防线取
-    // 30MB（D20）；精确限额（≤50 文件 / 单文件 ≤1MB / 合计 ≤10MB，按原文 UTF-8
-    // 字节）由 content-service 在解析后校验（chunked 传输无 content-length 时兜底）。
-    .use("/api/teacher/import/preview-batch", async (c, next) => {
-      if (c.req.method === "POST") {
-        const length = Number(c.req.header("content-length") ?? "0");
-        if (Number.isFinite(length) && length > IMPORT_BATCH_BODY_LIMIT) {
-          const body: ApiErr = {
-            ok: false,
-            error: "IMPORT_TOO_LARGE",
-            message: "批量导入请求过大，请减少文件数量或分批导入",
-          };
-          return c.json(body, 413);
-        }
-      }
-      return next();
-    })
-    // T4.5：备份恢复上传（POST multipart zip）的 body 大小防御——content-length
-    // 超限直接 413 BACKUP_TOO_LARGE，不进入 parseBody（整包进内存）。精确限额
-    // （zip ≤256MB）由 teacher-backup 路由按文件实际大小兜底（chunked 时）。
-    .use("/api/teacher/backup/restore", async (c, next) => {
-      if (c.req.method === "POST") {
-        const length = Number(c.req.header("content-length") ?? "0");
-        if (Number.isFinite(length) && length > BACKUP_UPLOAD_BODY_LIMIT) {
-          const body: ApiErr = {
-            ok: false,
-            error: "BACKUP_TOO_LARGE",
-            message: "备份文件超过 256 MB 上限，请检查是否选错了文件",
-          };
-          return c.json(body, 413);
-        }
-      }
-      return next();
-    })
-    // 媒体管线第二单：图片上传（POST multipart）的 body 大小防御——content-length
-    // 超限直接 413 MEDIA_TOO_LARGE，不进入 parseBody（整包进内存）。粗防线取
-    // 6MB（MEDIA_UPLOAD_BODY_LIMIT，5MB 契约限额 + multipart 编码开销余量）；
-    // 精确的 5MB 限额由 media-service 按文件实际字节数校验（chunked 传输无
-    // content-length 时兜底）。
-    .use("/api/teacher/media", async (c, next) => {
-      if (c.req.method === "POST") {
-        const length = Number(c.req.header("content-length") ?? "0");
-        if (Number.isFinite(length) && length > MEDIA_UPLOAD_BODY_LIMIT) {
-          const body: ApiErr = {
-            ok: false,
-            error: "MEDIA_TOO_LARGE",
-            message: "图片超过 5MB 上传上限，请压缩后重试",
-          };
-          return c.json(body, 413);
-        }
-      }
-      return next();
-    })
+    // —— 上传接口的 content-length 入口预检（T6R.4 复审②收敛为 guardBodyLimit
+    //    工厂，五处一行注册）：超限在 parseBody（整包进内存）之前就 413，
+    //    不落盘不缓冲；精确限额由各 service 按文件实际字节校验（chunked
+    //    传输无 content-length 时兜底）。各路由粗防线取值与理由见常量注释。 ——
+    // T2.8 笔迹上传（ink-service 精确校验两文件合计 ≤2MB）
+    .use(
+      "/api/student/attempts/:id/ink/:questionId",
+      guardBodyLimit({
+        method: "PUT",
+        limit: INK_UPLOAD_BODY_LIMIT,
+        code: "INK_TOO_LARGE",
+        message: "上传数据过大（超过笔迹上传上限），请精简后重试",
+      }),
+    )
+    // T6R.4 草稿正文上传（note-service 精确校验 gzip 后 ≤2MiB）
+    .use(
+      "/api/student/attempts/:id/notes/:questionId",
+      guardBodyLimit({
+        method: "PUT",
+        limit: NOTE_UPLOAD_BODY_LIMIT,
+        code: "NOTE_LIMIT_EXCEEDED",
+        message: "上传数据过大（超过草稿上传上限），请精简后重试",
+      }),
+    )
+    // T2A.3 批量导入预览（preview-batch 单个 JSON 传全部文件，转义后 body
+    // 约为 markdown 原文 1.5–2 倍，粗防线取 30MB=D20；精确限额在 content-service）
+    .use(
+      "/api/teacher/import/preview-batch",
+      guardBodyLimit({
+        method: "POST",
+        limit: IMPORT_BATCH_BODY_LIMIT,
+        code: "IMPORT_TOO_LARGE",
+        message: "批量导入请求过大，请减少文件数量或分批导入",
+      }),
+    )
+    // T4.5 备份恢复上传（zip ≤256MB 由 teacher-backup 按实际大小兜底）
+    .use(
+      "/api/teacher/backup/restore",
+      guardBodyLimit({
+        method: "POST",
+        limit: BACKUP_UPLOAD_BODY_LIMIT,
+        code: "BACKUP_TOO_LARGE",
+        message: "备份文件超过 256 MB 上限，请检查是否选错了文件",
+      }),
+    )
+    // 媒体管线：图片上传（5MB 契约限额 + multipart 开销余量取整 6MB）
+    .use(
+      "/api/teacher/media",
+      guardBodyLimit({
+        method: "POST",
+        limit: MEDIA_UPLOAD_BODY_LIMIT,
+        code: "MEDIA_TOO_LARGE",
+        message: "图片超过 5MB 上传上限，请压缩后重试",
+      }),
+    )
     .route(
       "/api/teacher",
       createTeacherRoutes(

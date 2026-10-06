@@ -11,7 +11,7 @@ import {
   units,
 } from "../db/schema.ts";
 import { createTestDb, TEST_TEACHER_ID } from "../db/test-utils.ts";
-import { HttpError } from "../lib/http-error.ts";
+import { expectHttpError } from "../test/expect-http-error.ts";
 import {
   getStudentCourseDetail,
   getStudentLecture,
@@ -46,13 +46,6 @@ function captureError(fn: () => unknown): unknown {
 }
 
 /** 断言 HttpError 的 status 与 code */
-function expectHttpError(err: unknown, status: number, code: string): void {
-  expect(err).toBeInstanceOf(HttpError);
-  const httpErr = err as HttpError;
-  expect(httpErr.status).toBe(status);
-  expect(httpErr.code).toBe(code);
-}
-
 /** 插入一个课程目录条目（返回 id） */
 function insertItem(
   db: Db,

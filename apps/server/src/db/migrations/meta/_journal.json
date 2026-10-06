@@ -169,6 +169,13 @@
       "when": 1791230564277,
       "tag": "0023_youthful_felicia_hardy",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1791236264758,
+      "tag": "0024_clumsy_rockslide",
+      "breakpoints": true
     }
   ]
 }

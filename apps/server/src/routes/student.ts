@@ -5,6 +5,7 @@ import {
   attemptSubmitRequestSchema,
   hintOpenRequestSchema,
   lectureEventBatchRequestSchema,
+  noteUploadMetaSchema,
   studentLectureDetailQuerySchema,
   studentPasswordChangeRequestSchema,
   studentRecordsQuerySchema,
@@ -23,6 +24,7 @@ import {
 import type { Db } from "../db/client";
 import { pngResponse } from "../lib/binary-response";
 import {
+  firstIssueMessage,
   HttpError,
   parseJsonBody,
   parseJsonBodyOrEmpty,
@@ -45,6 +47,7 @@ import {
 } from "../services/event-service";
 import { openHint } from "../services/hint-service";
 import { getInkDoc, getStudentInkPng, saveInk } from "../services/ink-service";
+import { saveNoteVersion } from "../services/note-service";
 import {
   getStudentCourseDetail,
   getStudentLecture,
@@ -89,6 +92,10 @@ import { listWrongQuestions } from "../services/wrong-questions";
  *   strokes（gzip 后 InkDoc JSON）+ snapshot（PNG），合计 ≤2MB 超 413）；
  * - GET  /attempts/:id/ink/:questionId：取回该题矢量 InkDoc（无笔迹 404）；
  * - GET  /attempts/:id/ink/:questionId.png：本人笔迹 PNG 直出（结果页缩略图）；
+ * - PUT  /attempts/:id/notes/:questionId：题目草稿正文上传（T6R.4，multipart：
+ *   body 文件（gzip 或原始 JSON 的 NoteDoc）+ baseRevision/mutationId；CAS
+ *   409 NOTE_REVISION_CONFLICT 附 _current 摘要、mutationId 幂等回执、限额
+ *   413 NOTE_LIMIT_EXCEEDED；读/图/教师端路由在 T6R.5）；
  * - GET  /courses、GET /courses/:id：我的课程（可见讲义/单元计数，完成数 T2A.6 前恒 0）
  *   与课程可见目录（T2A.5，D5 过滤；D22——非成员/学生归档/课程归档 403
  *   COURSE_ACCESS_DENIED，课程不存在/条目不可见 404 NOT_FOUND 不暴露存在性）；
@@ -308,6 +315,60 @@ export function createStudentRoutes(
           ),
         });
       })
+      // T6R.4：题目草稿正文上传（方案 §8 形态；本任务唯一写入口——读/图/
+      // 教师端路由在 T6R.5）。multipart：body 文件（gzip 或原始 JSON 的
+      // NoteDoc）+ baseRevision/mutationId 字段（契约 noteUploadMetaSchema）。
+      // 本人+进行中 attempt+题目属冻结集合（service 内统一门口）；CAS 失败
+      // 409 附 _current 摘要、同 mutationId 重放同文原回执/异文 409（service
+      // 内实现）。响应 noteVersionReceipt；客户端多发的 noteId/serverSavedAt/
+      // phase 等字段一律忽略（归属与时间全由服务端定）。
+      .put("/attempts/:id/notes/:questionId", async (c) => {
+        const form = await c.req.parseBody();
+        const body = form.body;
+        // 正文必须是文件字段（multipart 文件；字符串字段说明客户端组装错误）
+        if (!(body instanceof File)) {
+          throw new HttpError(
+            400,
+            "VALIDATION_ERROR",
+            "请求需为 multipart/form-data，且包含 body 文件与 baseRevision、mutationId 字段",
+          );
+        }
+        // multipart 字段全是字符串：baseRevision 按严格十进制整数串转数
+        // （T6R.4 复审③——Number("")===0/Number("  ")===0 会骗过 min(0)，
+        // 空串与科学计数/十六进制/小数一律不转，交契约 schema 出 400；
+        // JSON 通道的 number 形态契约不变，此转换属 multipart 传输层）
+        const rawBase =
+          typeof form.baseRevision === "string" ? form.baseRevision : undefined;
+        const baseRevision =
+          rawBase !== undefined && /^\d+$/.test(rawBase)
+            ? Number(rawBase)
+            : undefined;
+        const parsed = noteUploadMetaSchema.safeParse({
+          baseRevision,
+          mutationId:
+            typeof form.mutationId === "string" ? form.mutationId : undefined,
+        });
+        if (!parsed.success) {
+          const first = firstIssueMessage(parsed.error);
+          throw new HttpError(
+            400,
+            "VALIDATION_ERROR",
+            `草稿上传元信息不合法：${first}`,
+          );
+        }
+        return c.json({
+          ok: true,
+          data: saveNoteVersion(
+            db,
+            dataDir,
+            c.var.student.id,
+            c.req.param("id"),
+            c.req.param("questionId"),
+            new Uint8Array(await body.arrayBuffer()),
+            parsed.data,
+          ),
+        });
+      })
       // T2A.5：我的课程与课程可见目录（D5，canStudentSeeItem 唯一判定；
       // 隐藏条目零信息；D22——非成员/归档 403，不存在/不可见 404）
       .get("/courses", (c) => {
@@ -375,7 +436,7 @@ export function createStudentRoutes(
           offset: c.req.query("offset") ?? undefined,
         });
         if (!parsed.success) {
-          const first = parsed.error.issues[0]?.message ?? "格式不正确";
+          const first = firstIssueMessage(parsed.error);
           throw new HttpError(
             400,
             "VALIDATION_ERROR",
@@ -406,7 +467,7 @@ export function createStudentRoutes(
           includeResolved: c.req.query("includeResolved") ?? undefined,
         });
         if (!parsed.success) {
-          const first = parsed.error.issues[0]?.message ?? "格式不正确";
+          const first = firstIssueMessage(parsed.error);
           throw new HttpError(
             400,
             "VALIDATION_ERROR",

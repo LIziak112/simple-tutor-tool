@@ -614,6 +614,27 @@ describe("notes / note_versions / note_images / submission_evidence 表（T6R.2 
     db.$client.close();
   });
 
+  it("note_versions.mutation_id 唯一索引（T6R.4）：同值拒绝、多 NULL 放行（幂等查重物理基础）", () => {
+    const db = createTestDb();
+    const { attemptId, questionId } = seedNoteRefs(db);
+    const noteId = seedNote(db, { attemptId, questionId });
+    const n1 = seedNoteVersion(db, noteId, {
+      mutationId: "11111111-1111-4111-8111-111111111111",
+    });
+    // 同 mutationId 第二行 → 唯一索引拒绝（跨笔记同值同样拒绝：全局唯一）
+    expect(() =>
+      seedNoteVersion(db, noteId, {
+        revision: 2,
+        mutationId: "11111111-1111-4111-8111-111111111111",
+      }),
+    ).toThrowError();
+    // 未带 mutationId（NULL）的多行互不冲突——SQLite 唯一索引允许多 NULL
+    expect(() => seedNoteVersion(db, noteId, { revision: 3 })).not.toThrow();
+    expect(() => seedNoteVersion(db, noteId, { revision: 4 })).not.toThrow();
+    expect(n1.revision).toBe(1);
+    db.$client.close();
+  });
+
   it("scratch 唯一性由服务层保证（与 attempts 先例同口径）：库里两行同键不炸——决策见 schema 注释", () => {
     const db = createTestDb();
     const { attemptId, questionId } = seedNoteRefs(db);
@@ -641,7 +662,7 @@ describe("notes / note_versions / note_images / submission_evidence 表（T6R.2 
         .from(noteVersions)
         .where(eq(noteVersions.id, version.id))
         .get(),
-    ).toEqual({ ...version, renderVersion: 1 });
+    ).toEqual({ ...version, renderVersion: 1, mutationId: null });
 
     // 同 (noteId, revision) 第二行 → 唯一索引拒绝
     expect(() =>

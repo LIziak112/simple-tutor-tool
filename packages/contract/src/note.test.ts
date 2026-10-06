@@ -13,6 +13,7 @@ import {
   noteDocSchema,
   noteErrorCodeSchema,
   noteImageMetaSchema,
+  noteIssueIsLimit,
   noteLocalBodyStateSchema,
   notePhaseSchema,
   noteRecordMetaSchema,
@@ -240,7 +241,7 @@ describe("noteDocSchema：坐标与点数限额（暂定值，真机定标后修
     ).toBe(false);
   });
 
-  it("单笔点数超上限拒绝；恰好等于上限合法", () => {
+  it("单笔点数超上限拒绝；恰好等于上限合法；限额 issue 携带结构标记 params.limit", () => {
     // p/t 缺省走 docWithPoints 默认分支（0.5/0）
     const exact = Array.from({ length: NOTE_MAX_POINTS_PER_STROKE }, () => ({
       x: 1,
@@ -249,18 +250,38 @@ describe("noteDocSchema：坐标与点数限额（暂定值，真机定标后修
     const over = [...exact, { x: 1, y: 1, p: 0.5, t: 0 }];
     expect(noteDocSchema.safeParse(docWithPoints(over)).success).toBe(false);
     expect(noteDocSchema.safeParse(docWithPoints(exact)).success).toBe(true);
+    // T6R.4：限额类 issue 带 params.limit===true（服务端 413/400 分级依据，
+    // 契约锁定——措辞可改、标记不可丢）
+    const overResult = noteDocSchema.safeParse(docWithPoints(over));
+    expect(overResult.success).toBe(false);
+    if (!overResult.success) {
+      expect(overResult.error.issues.length).toBeGreaterThan(0);
+      expect(overResult.error.issues.some(noteIssueIsLimit)).toBe(true);
+    }
+    // 对照：坐标越界（形状类）不带限额标记
+    const shapeResult = noteDocSchema.safeParse(
+      docWithPoints([{ x: -1, y: 1 }]),
+    );
+    expect(shapeResult.success).toBe(false);
+    if (!shapeResult.success) {
+      expect(shapeResult.error.issues.length).toBeGreaterThan(0);
+      expect(shapeResult.error.issues.some(noteIssueIsLimit)).toBe(false);
+    }
   });
 
   it("限额联动：NOTE_COORD_MAX_Y 与 NOTE_PAPER_HEIGHT_MAX 同源相等（防漂移）", () => {
     expect(NOTE_COORD_MAX_Y).toBe(NOTE_PAPER_HEIGHT_MAX);
   });
 
-  it("全稿总点数超上限拒绝（多笔累计口径）", () => {
+  it("全稿总点数超上限拒绝（多笔累计口径）；总量 issue 同样携带 params.limit", () => {
     // 151 笔 × 2000 点 = 302000 > 300000：单笔均不超限，靠总量拦截。
-    // 151 份笔画共享同一份只读点数组（safeParse 不改写输入）
+    // 151 份笔画共享同一份只读点数组（safeParse 不改写输入；点带全 p/t——
+    // 缺 p/t 会先被基础 schema 拒，走不到 superRefine 的总量检查）
     const pts = Array.from({ length: NOTE_MAX_POINTS_PER_STROKE }, () => ({
       x: 1,
       y: 1,
+      p: 0.5,
+      t: 0,
     }));
     const strokes = Array.from({ length: 151 }, () => ({
       tool: "pen",
@@ -268,12 +289,14 @@ describe("noteDocSchema：坐标与点数限额（暂定值，真机定标后修
       weight: 4,
       points: pts,
     }));
-    expect(
-      noteDocSchema.safeParse({
-        version: 1,
-        ink: { width: INK_LOGICAL_WIDTH, strokes },
-      }).success,
-    ).toBe(false);
+    const result = noteDocSchema.safeParse({
+      version: 1,
+      ink: { width: INK_LOGICAL_WIDTH, strokes },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.some(noteIssueIsLimit)).toBe(true);
+    }
   });
 });
 
@@ -541,6 +564,12 @@ describe("上传协议（CAS + 幂等）", () => {
       noteUploadMetaSchema.safeParse({
         baseRevision: 0,
         mutationId: "not-uuid",
+      }).success,
+    ).toBe(false);
+    expect(
+      noteUploadMetaSchema.safeParse({
+        baseRevision: 1_000_001,
+        mutationId: "66666666-6666-4666-8666-666666666666",
       }).success,
     ).toBe(false);
   });

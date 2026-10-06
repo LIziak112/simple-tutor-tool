@@ -1,3 +1,4 @@
+import type { ZodIssue } from "zod";
 import { z } from "zod";
 import { questionRevisionIdSchema } from "./attempt.ts";
 import { INK_LOGICAL_WIDTH, inkAtramentDataSchema } from "./ink.ts";
@@ -109,6 +110,10 @@ export const noteDocSchema = z
           code: "custom",
           path: ["ink", "strokes", si, "points"],
           message: `单笔点数超上限（${stroke.points.length} > ${NOTE_MAX_POINTS_PER_STROKE}，暂定值）`,
+          // 结构化限额标记（T6R.4）：服务端据 params.limit 区分「超预算→413
+          // NOTE_LIMIT_EXCEEDED」与「形状错误→400」——不依赖中文消息子串匹配；
+          // 消息措辞变更不影响分级（契约测试锁定本标记存在）
+          params: { limit: true },
         });
       }
       totalPoints += stroke.points.length;
@@ -145,6 +150,8 @@ export const noteDocSchema = z
         code: "custom",
         path: ["ink", "strokes"],
         message: `全稿总点数超上限（${totalPoints} > ${NOTE_MAX_TOTAL_POINTS}，暂定值）`,
+        // 同上：结构化限额标记（服务端 413/400 分级依据，勿随措辞改动丢失）
+        params: { limit: true },
       });
     }
   });
@@ -216,6 +223,16 @@ export const notePhaseSchema = z.enum(["scratch", "correction", "supplement"]);
 export const noteBodyHashSchema = z
   .string()
   .regex(/^[0-9a-f]{64}$/, "正文 hash 须为 64 位小写十六进制（sha-256）");
+
+/**
+ * issue 是否携带限额结构标记（noteDocSchema superRefine 的 params.limit===true，
+ * 见上方两类点数限额 addIssue）：服务端据它区分「超预算→413
+ * NOTE_LIMIT_EXCEEDED」与「形状错误→400」。集中一处类型断言（$ZodIssue
+ * 联合中仅 $ZodIssueCustom 声明 params，运行时透传可靠）。
+ */
+export function noteIssueIsLimit(issue: ZodIssue): boolean {
+  return (issue as { params?: { limit?: boolean } }).params?.limit === true;
+}
 
 // 题目版本引用 questionRevisionIdSchema：定义在 attempt.ts（T6R.3 收敛——
 // 铸造规则 = responses 行 id，属作答域；本文件 import 复用同一份，不重复定义）
@@ -404,11 +421,41 @@ export const noteSubmissionEvidenceMetaSchema = z
  * - baseRevision：客户端所见的当前 head revision（CAS 期望值；初版 0）；
  * - mutationId：本次变更的幂等键（客户端 crypto.randomUUID）——同 id 同正文
  *   重试返回原回执，同 id 不同正文拒绝（NOTE_MUTATION_MISMATCH）。
+ *   **幂等窗口 = GC 安全窗口**（暂定 24h，见 NOTE_GC_SAFETY_WINDOW_MS 的
+ *   服务端实现）：版本行被 GC 回收后幂等记录随之消失，窗口外的重放按
+ *   CAS 冲突（409 NOTE_REVISION_CONFLICT）可诊断处理，不误造新版本。
+ *   幂等重放不受 attempt 状态门槛约束（含已交卷，服务端裁决口径）。
  */
 export const noteUploadMetaSchema = z.object({
-  baseRevision: z.number().int().min(0),
+  // .max 防呆上限（复审⑫顺手）：revision 每次成功上传 +1，正常使用远达不到
+  // 六位数；超过即客户端异常值，及早 400 而不是进服务层比对
+  baseRevision: z.number().int().min(0).max(1_000_000),
   mutationId: z.uuid(),
 });
+
+/**
+ * NOTE_REVISION_CONFLICT 的当前版本摘要（服务端经 HttpError extra 以
+ * `_current` 键附加在 409 响应上，客户端据此提示「保留云端或将本地另存
+ * 一份」）：字段命名对齐 noteVersionMeta 的 versionId/serverSavedAt 视角。
+ * 无 head（revision=0，笔记尚未建立或从未确认）时 noteId/versionId/hash/
+ * serverSavedAt 为 null——五字段可空规则与服务端 revisionConflict 组装
+ * 一致（服务端组装经本 schema parse，漂移即编程错误）。
+ */
+export const noteRevisionConflictCurrentSchema = z.object({
+  /** 冲突笔记的 notes.id；无 head 时为 null */
+  noteId: z.uuid().nullable(),
+  /** 服务端当前 head revision（0 = 无版本） */
+  revision: z.number().int().min(0),
+  /** 当前 head 的 note_versions.id；无 head 时为 null */
+  versionId: z.uuid().nullable(),
+  /** 当前 head 的服务端正文 hash；无 head 时为 null */
+  hash: noteBodyHashSchema.nullable(),
+  /** 当前 head 的服务端确认时间（UTC ISO）；无 head 时为 null */
+  serverSavedAt: z.string().min(1).nullable(),
+});
+export type NoteRevisionConflictCurrent = z.infer<
+  typeof noteRevisionConflictCurrentSchema
+>;
 
 /**
  * 服务端回执：CAS 成功（或幂等命中）后返回。revision 从 1 起（回执只在
