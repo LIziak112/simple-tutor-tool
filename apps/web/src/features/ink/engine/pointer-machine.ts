@@ -218,6 +218,20 @@ export function observeStylusTouch(
 }
 
 /**
+ * pointermove 的**零分配守卫**（复审⑦，适配器热路径专用）：与
+ * advancePointerMachine(state, { kind: "pointermove", pointerId }) 的决策
+ * 严格等价——sample ⇔ activePointerId === pointerId，且该事件的两个分支
+ * 都不产生状态转移（返回原 state 对象）。守卫命中才走完整采样路径；
+ * 决策矩阵测试（advance 路径）不受影响，等价性由本注释与矩阵共同锁定。
+ */
+export function isSampleMove(
+  state: PointerMachineState,
+  pointerId: number,
+): boolean {
+  return state.activePointerId === pointerId;
+}
+
+/**
  * touch-action 策略（必须在手势开始前正确——pointerdown 之后修改不可靠，
  * W3C Pointer Events §8；适配器只在挂载/工具/模式/观测变化时设置）：
  * - scroll 工具：恒 pan-y（放行页面滚动，不书写）；

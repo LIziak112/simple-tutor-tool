@@ -64,6 +64,7 @@ import { NOTE_PAPER_BG_COLOR, paperBackgroundCss } from "./paper-style.ts";
 import {
   advancePointerMachine,
   createPointerMachineState,
+  isSampleMove,
   observeStylusTouch,
   type PointerFinishCause,
   type PointerMachineEvent,
@@ -227,15 +228,22 @@ export function createAtramentSurface(
 
   // ---- 工具函数 ----
 
-  /** 指针事件 → 相对 canvas 的 CSS 像素坐标（用 clientX 而非 offsetX：
-   *  coalesced 事件的 offsetX 在部分浏览器不可靠） */
-  function eventToCss(ev: { clientX: number; clientY: number }): {
+  /**
+   * 指针事件 → 相对 canvas 的 CSS 像素坐标（用 clientX 而非 offsetX：
+   *  coalesced 事件的 offsetX 在部分浏览器不可靠）。rect 可选注入（复审⑨）：
+   *  同一 pointermove 的 coalesced 批共用一次 getBoundingClientRect——批内
+   *  采样本属同一帧，共享 rect 与逐点取值语义一致且省去热路径重复布局查询。
+   */
+  function eventToCss(
+    ev: { clientX: number; clientY: number },
+    rect?: DOMRect | null,
+  ): {
     x: number;
     y: number;
   } {
-    const rect = canvas?.getBoundingClientRect();
-    if (!rect) return { x: 0, y: 0 };
-    return { x: ev.clientX - rect.left, y: ev.clientY - rect.top };
+    const r = rect ?? canvas?.getBoundingClientRect();
+    if (!r) return { x: 0, y: 0 };
+    return { x: ev.clientX - r.left, y: ev.clientY - r.top };
   }
 
   /** 压力规整：0/undefined 视为无压感（0.5） */
@@ -263,14 +271,31 @@ export function createAtramentSurface(
     canvas.style.backgroundImage = paperBackgroundCss(bg, cssWidth);
   }
 
-  /** canvas 尺寸随容器变化（DPR 上限 2）。会重置位图与 context 状态 */
+  /**
+   * canvas 尺寸随容器变化（DPR 上限 2）。会重置位图与 context 状态；
+   * 尺寸未变时短路（复审⑧）——避免无差别重置位图（width 赋值清空内容）
+   * 后再全量重绘。ResizeObserver 回调里 finishPointer 的收笔语义在该回调
+   * 最先执行，不受短路影响。
+   */
   function sizeCanvas(): void {
     if (!container || !canvas) return;
-    cssWidth = container.clientWidth || 300;
-    cssHeight = container.clientHeight || options.height || 200;
+    const nextW = container.clientWidth || 300;
+    const nextH = container.clientHeight || options.height || 200;
     const dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR);
-    canvas.width = Math.max(1, Math.round(cssWidth * dpr));
-    canvas.height = Math.max(1, Math.round(cssHeight * dpr));
+    const nextCanvasW = Math.max(1, Math.round(nextW * dpr));
+    const nextCanvasH = Math.max(1, Math.round(nextH * dpr));
+    if (
+      nextW === cssWidth &&
+      nextH === cssHeight &&
+      canvas.width === nextCanvasW &&
+      canvas.height === nextCanvasH
+    ) {
+      return;
+    }
+    cssWidth = nextW;
+    cssHeight = nextH;
+    canvas.width = nextCanvasW;
+    canvas.height = nextCanvasH;
     // 背景间距随宽度换算，重设时同步（resize 由 ResizeObserver 触发本函数）
     applyPaperBackground();
   }
@@ -425,15 +450,14 @@ export function createAtramentSurface(
       }
     }
 
-    // 只有活动指针的移动被采样（状态机决策；其余含第二指针一律忽略）
-    const r = advancePointerMachine(machine, {
-      kind: "pointermove",
-      pointerId: e.pointerId,
-    });
-    machine = r.state;
-    if (!r.decisions.some((d) => d.action === "sample")) return;
+    // 只有活动指针的移动被采样：零分配守卫（复审⑦，与状态机 pointermove
+    // 决策严格等价——该事件不产生状态转移，见 pointer-machine.isSampleMove）；
+    // 其余（第二指针/空闲期）一律忽略
+    if (!isSampleMove(machine, e.pointerId)) return;
 
-    // 高频采样：getCoalescedEvents 取全部中间采样点；不支持则回退单点
+    // 高频采样：getCoalescedEvents 取全部中间采样点；不支持则回退单点。
+    // rect 批前取一次（复审⑨）：coalesced 批属同一帧，共享坐标基准
+    const rect = canvas?.getBoundingClientRect();
     let coalesced: PointerEvent[] = [];
     if (typeof e.getCoalescedEvents === "function") {
       coalesced = e.getCoalescedEvents();
@@ -441,7 +465,7 @@ export function createAtramentSurface(
     const events = coalesced.length > 0 ? coalesced : [e];
 
     for (const ev of events) {
-      const { x, y } = eventToCss(ev);
+      const { x, y } = eventToCss(ev, rect);
       if (tool.type === "eraser") {
         const hits = eraseHit(
           store.getStrokes(),
