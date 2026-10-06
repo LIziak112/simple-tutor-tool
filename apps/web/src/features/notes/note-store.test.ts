@@ -1,4 +1,3 @@
-import type { NoteHeadData, NoteVersionReceipt } from "@tutor/contract";
 import { noteDocSchema } from "@tutor/contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -6,7 +5,7 @@ import {
   installDraftBackend,
   memoryBackend,
 } from "@/features/attempt/draft-store";
-import { docOf, stroke } from "@/features/notes/note-fixtures";
+import { stroke } from "@/features/notes/note-fixtures";
 import {
   applyServerHead,
   applyServerLoad,
@@ -22,6 +21,8 @@ import {
   listPendingNotes,
   memoryNoteBackend,
   type NoteLocalRecord,
+  type NoteScope,
+  type NoteSessionRef,
   type NoteStoreBackend,
   noteKeyOf,
   resetNoteStoreForTest,
@@ -29,6 +30,17 @@ import {
   subscribeNoteStore,
   writeNoteDoc,
 } from "@/features/notes/note-store";
+import {
+  DOC_A,
+  DOC_B,
+  DOC_EMPTY,
+  headOf,
+  receiptOf,
+  SCOPE,
+  SESSION_A,
+  SESSION_B,
+  waitForLocalSaved,
+} from "@/features/notes/note-test-utils";
 
 /**
  * 草稿本地仓（T6R.8）测试：独立 IDB 库 tutor-notes、键含部署实例/学生/
@@ -37,64 +49,15 @@ import {
  * 交卷 clearDraft 不删 notes、quota/IDB 失败准确显示、服务端状态派生。
  * jsdom 无 IDB：手写内存后端注入（仓库既有 draft-store/event-queue 惯例，
  * 不引 fake-indexeddb 新依赖——真实 IDB 行为由 E2E/真机覆盖，见任务报告）。
+ * 共用夹具/回执工厂在 note-test-utils（复审⑪）。
  */
 
-const SESSION_A = { origin: "https://tutor.example", studentId: "student-a" };
-const SESSION_B = { origin: "https://tutor.example", studentId: "student-b" };
-const SCOPE = {
-  attemptId: "att-1",
-  questionId: "p1-q1",
-  phase: "scratch",
-} as const;
-
-const DOC_A = docOf([
-  stroke([
-    [10, 10],
-    [40, 40],
-  ]),
-]);
-const DOC_B = docOf([
-  stroke([
-    [10, 10],
-    [40, 40],
-  ]),
-  stroke([
-    [50, 50],
-    [80, 80],
-  ]),
-]);
-const DOC_EMPTY = docOf([]);
-
-const RECEIPT_1: NoteVersionReceipt = {
-  noteId: "22222222-2222-4222-8222-222222222222",
-  revision: 1,
-  versionId: "33333333-3333-4333-8333-333333333333",
-  hash: "a".repeat(64),
-  savedAt: "2026-10-06T00:00:00.000Z",
-};
-
-function headOf(overrides: Partial<NoteHeadData> = {}): NoteHeadData {
-  return {
-    note: {
-      noteId: RECEIPT_1.noteId,
-      attemptId: SCOPE.attemptId,
-      questionId: SCOPE.questionId,
-      questionRevisionId: "qrev-1",
-      phase: "scratch",
-      revision: 1,
-      currentVersionId: RECEIPT_1.versionId,
-      serverSavedAt: RECEIPT_1.savedAt,
-    },
-    images: [],
-    evidence: null,
-    ...overrides,
-  };
-}
+const RECEIPT_1 = receiptOf(1);
 
 /** 取记录（缺失即测试前置失败） */
 async function recordOf(
-  session: typeof SESSION_A,
-  scope: typeof SCOPE,
+  session: NoteSessionRef,
+  scope: NoteScope,
 ): Promise<NoteLocalRecord> {
   const record = await getNoteRecord(session, scope);
   if (record === null) throw new Error("记录不存在（测试前置失败）");
@@ -103,8 +66,8 @@ async function recordOf(
 
 /** 取待传 mutationId（无待传即测试前置失败） */
 async function pendingMutationIdOf(
-  session: typeof SESSION_A,
-  scope: typeof SCOPE,
+  session: NoteSessionRef,
+  scope: NoteScope,
 ): Promise<string> {
   const mutationId = (await recordOf(session, scope)).pending?.mutationId;
   if (mutationId === undefined) throw new Error("无待传版本（测试前置失败）");
@@ -178,10 +141,7 @@ describe("note-store：串行持久化队列（T6R.8）", () => {
     expect(setCalls.length).toBe(1);
     expect((await getNoteRecord(SESSION_A, SCOPE))?.local).toBe("saving");
     releaseCall(setCalls, 0);
-    await vi.waitFor(async () => {
-      const r = await getNoteRecord(SESSION_A, SCOPE);
-      if (r?.local !== "saved") throw new Error("not saved yet");
-    });
+    await waitForLocalSaved(SESSION_A, SCOPE);
   });
 
   it("事务进行中的多笔写入合并为单笔落盘（最终 doc 为最新）", async () => {
@@ -199,10 +159,7 @@ describe("note-store：串行持久化队列（T6R.8）", () => {
     expect(strokesOf(firstDoc)).toBe(1);
     expect(strokesOf(secondDoc)).toBe(0);
     releaseCall(setCalls, 1);
-    await vi.waitFor(async () => {
-      const r = await getNoteRecord(SESSION_A, SCOPE);
-      if (r?.local !== "saved") throw new Error("not saved yet");
-    });
+    await waitForLocalSaved(SESSION_A, SCOPE);
   });
 });
 
@@ -411,10 +368,7 @@ describe("note-store：IDB 失败与订阅", () => {
     // 恢复：存储腾出空间后，新写入重新落盘成功
     fail = false;
     writeNoteDoc(SESSION_A, SCOPE, DOC_B);
-    await vi.waitFor(async () => {
-      const r = await getNoteRecord(SESSION_A, SCOPE);
-      if (r?.local !== "saved") throw new Error("not saved yet");
-    });
+    await waitForLocalSaved(SESSION_A, SCOPE);
   });
 
   it("订阅：写入与回执都触发通知（供 useSyncExternalStore）", async () => {
@@ -462,9 +416,8 @@ describe("note-store：四维总览派生（T6R.5 契约注释：前端合成）
   it("images/evidence 从 lastHead 聚合；无 head 时图片待生成、证据未固定", async () => {
     writeNoteDoc(SESSION_A, SCOPE, DOC_A);
     let record = await recordOf(SESSION_A, SCOPE);
-    await vi.waitFor(() => {
-      if (record.local !== "saved") throw new Error("not saved yet");
-    });
+    await waitForLocalSaved(SESSION_A, SCOPE);
+    record = await recordOf(SESSION_A, SCOPE);
     let overview = deriveNoteStatusOverview(record, false);
     expect(overview.local).toBe("saved");
     expect(overview.server).toBe("dirty");

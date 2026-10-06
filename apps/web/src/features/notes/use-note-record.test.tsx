@@ -1,7 +1,5 @@
 import { act, render } from "@testing-library/react";
-import type { NoteVersionReceipt } from "@tutor/contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { docOf, stroke } from "@/features/notes/note-fixtures";
 import {
   installNoteBackend,
   memoryNoteBackend,
@@ -13,12 +11,19 @@ import {
   NOTE_SYNC_DEBOUNCE_MS,
   resetNoteSession,
 } from "@/features/notes/note-sync";
+import {
+  DOC_A,
+  receiptOf,
+  SCOPE,
+  SESSION_A,
+  SESSION_B,
+} from "@/features/notes/note-test-utils";
 import { useNoteRecord } from "@/features/notes/use-note-record";
 
 /**
  * useNoteRecord 订阅测试（T6R.8）：未绑定会话 standby、写入→上传→回执的
  * 状态重渲染、卸载后作业仍完成（会话级服务，组件仅订阅）、切账号视图
- * 隔离。上传出网经 api mock 观察。
+ * 隔离。上传出网经 api mock 观察。共用夹具在 note-test-utils（复审⑪）。
  */
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -32,28 +37,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
 const { putNoteDocumentApi } = await import("@/lib/api");
 const putMock = vi.mocked(putNoteDocumentApi);
 
-const SESSION = { origin: "https://tutor.example", studentId: "student-a" };
-const SESSION_B = { origin: "https://tutor.example", studentId: "student-b" };
-const SCOPE = {
-  attemptId: "att-1",
-  questionId: "p1-q1",
-  phase: "scratch",
-} as const;
-
-const DOC_A = docOf([
-  stroke([
-    [10, 10],
-    [40, 40],
-  ]),
-]);
-
-const RECEIPT: NoteVersionReceipt = {
-  noteId: "22222222-2222-4222-8222-222222222222",
-  revision: 1,
-  versionId: "33333333-3333-4333-8333-333333333333",
-  hash: "a".repeat(64),
-  savedAt: "2026-10-06T00:00:00.000Z",
-};
+const RECEIPT = receiptOf(1);
 
 function renderProbe(
   attemptId = SCOPE.attemptId,
@@ -89,10 +73,10 @@ describe("useNoteRecord（T6R.8）", () => {
 
   it("订阅写入→上传→回执：dirty→uploading→synced 重渲染；四维总览可见", async () => {
     const probe = renderProbe();
-    bindNoteSession(SESSION);
+    bindNoteSession(SESSION_A);
     expect(probe.current()).toBeNull(); // 记录尚未创建
     act(() => {
-      writeNoteDoc(SESSION, SCOPE, DOC_A);
+      writeNoteDoc(SESSION_A, SCOPE, DOC_A);
     });
     let view = probe.current();
     expect(view?.doc?.ink.strokes.length).toBe(1);
@@ -111,14 +95,14 @@ describe("useNoteRecord（T6R.8）", () => {
     expect(view?.overview.server).toBe("synced");
     expect(view?.overview.local).toBe("saved");
     expect(view?.baseRevision).toBe(1);
-    expect(peekNoteRecord(SESSION, SCOPE)?.pending).toBeNull();
+    expect(peekNoteRecord(SESSION_A, SCOPE)?.pending).toBeNull();
     probe.unmount();
   });
 
   it("卸载后已授权作业仍完成（收起题卡/路由切换）", async () => {
-    bindNoteSession(SESSION);
+    bindNoteSession(SESSION_A);
     act(() => {
-      writeNoteDoc(SESSION, SCOPE, DOC_A);
+      writeNoteDoc(SESSION_A, SCOPE, DOC_A);
     });
     const probe = renderProbe();
     probe.unmount(); // 组件消失
@@ -126,15 +110,15 @@ describe("useNoteRecord（T6R.8）", () => {
       await vi.advanceTimersByTimeAsync(NOTE_SYNC_DEBOUNCE_MS);
     });
     expect(putMock.mock.calls.length).toBe(1); // 上传照常完成
-    const record = peekNoteRecord(SESSION, SCOPE);
+    const record = peekNoteRecord(SESSION_A, SCOPE);
     expect(record?.baseRevision).toBe(1);
     expect(record?.pending).toBeNull();
   });
 
   it("切账号：新会话视图不读旧账号记录", async () => {
-    bindNoteSession(SESSION);
+    bindNoteSession(SESSION_A);
     act(() => {
-      writeNoteDoc(SESSION, SCOPE, DOC_A);
+      writeNoteDoc(SESSION_A, SCOPE, DOC_A);
     });
     bindNoteSession(SESSION_B);
     const probe = renderProbe();

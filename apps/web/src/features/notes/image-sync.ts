@@ -49,15 +49,6 @@ import {
 
 // ---------- 串行队列 ----------
 
-/**
- * 队列瞬时状态（诊断/状态展示轮询用）。T6R.8 起 SerialTaskQueue 抽至
- * lib/serial-task-queue.ts 共享（图片队列与草稿同步队列单一实现）；本类型
- * 保留原名 re-export，image-sync 消费方（面板轮询/测试）不改导入路径。
- */
-export type NoteImageQueueStats = SerialTaskQueueStats;
-
-export { SerialTaskQueue };
-
 /** 图片派生全局队列（模块级单例：脱离组件生命周期，卸载不停摆） */
 let noteImageQueue = new SerialTaskQueue();
 
@@ -137,7 +128,7 @@ export async function recoverNoteImages(
 }
 
 /** 队列状态快照（诊断/状态展示） */
-export function noteImageQueueStats(): NoteImageQueueStats {
+export function noteImageQueueStats(): SerialTaskQueueStats {
   return noteImageQueue.stats();
 }
 

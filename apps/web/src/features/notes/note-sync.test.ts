@@ -9,15 +9,27 @@ import {
   memoryNoteBackend,
   type NoteStoreBackend,
   peekNoteRecord,
+  writeNoteDoc,
 } from "@/features/notes/note-store";
+import {
+  DOC_A,
+  DOC_B,
+  DOC_EMPTY,
+  receiptOf,
+  SCOPE,
+  SESSION_A,
+  SESSION_B,
+} from "@/features/notes/note-test-utils";
 
 /**
  * 会话同步队列（T6R.8，方案 §6.2）测试：2s 防抖+10s 最大等待、单文档单
  * 在途（A 回执不清 B）、退避与幂等重试（同 mutationId 重放）、重进补传、
- * 409 冲突保留两份（多标签页/跨设备同机制：服务端 head 已进）、403/404
- * 终态、413 内容拒、清空=空稿上传、恢复在线/可见补传、切账号隔离与中止。
+ * 409 冲突保留两份（多标签页/跨设备同机制：服务端 head 已进）与 MISMATCH
+ * 无摘要裁决、403/404 终态、413 内容拒、清空=空稿上传、恢复在线/可见补传、
+ * 切账号隔离与中止。
  * putNoteDocumentApi 以 vi.fn 替换（真实客户端组装已由 api-note-put.test
  * 覆盖）；可控时钟 vi.useFakeTimers；后端内存注入（重载模拟=重装同一后端）。
+ * 共用夹具/回执工厂在 note-test-utils（复审⑪）。
  */
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -29,7 +41,6 @@ vi.mock("@/lib/api", async (importOriginal) => {
   };
 });
 
-import { writeNoteDoc } from "@/features/notes/note-store";
 import {
   bindNoteSession,
   flushNoteSync,
@@ -47,42 +58,6 @@ import {
 } from "@/lib/api";
 
 const putMock = vi.mocked(putNoteDocumentApi);
-
-const SESSION = { origin: "https://tutor.example", studentId: "student-a" };
-const SESSION_B = { origin: "https://tutor.example", studentId: "student-b" };
-const SCOPE = {
-  attemptId: "att-1",
-  questionId: "p1-q1",
-  phase: "scratch",
-} as const;
-
-const DOC_A = docOf([
-  stroke([
-    [10, 10],
-    [40, 40],
-  ]),
-]);
-const DOC_B = docOf([
-  stroke([
-    [10, 10],
-    [40, 40],
-  ]),
-  stroke([
-    [50, 50],
-    [80, 80],
-  ]),
-]);
-const DOC_EMPTY = docOf([]);
-
-function receiptOf(revision: number): NoteVersionReceipt {
-  return {
-    noteId: "22222222-2222-4222-8222-222222222222",
-    revision,
-    versionId: `33333333-3333-4333-8333-3333333333${String(revision).padStart(2, "0")}`,
-    hash: `${"a".repeat(63)}${revision}`,
-    savedAt: "2026-10-06T00:00:00.000Z",
-  };
-}
 
 /** 解上传 body（gzip 魔数判断，兼容 jsdom 无压缩回退的原始 JSON） */
 async function bodyDoc(blob: Blob): Promise<{ ink: { strokes: unknown[] } }> {
@@ -139,7 +114,7 @@ beforeEach(() => {
   installNoteBackend(backend);
   resetNoteSession();
   putMock.mockReset();
-  bindNoteSession(SESSION);
+  bindNoteSession(SESSION_A);
 });
 
 afterEach(() => {
@@ -149,16 +124,16 @@ afterEach(() => {
 describe("note-sync：调度（防抖与最大等待）", () => {
   it("2s 停笔防抖：1999ms 不发、到 2s 发一次（baseRevision=0 起步）", async () => {
     putMock.mockResolvedValue(receiptOf(1));
-    writeNoteDoc(SESSION, SCOPE, DOC_A);
+    writeNoteDoc(SESSION_A, SCOPE, DOC_A);
     await vi.advanceTimersByTimeAsync(NOTE_SYNC_DEBOUNCE_MS - 1);
     expect(putMock).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
     expect(putMock.mock.calls.length).toBe(1);
     expect(callOf(0).meta.baseRevision).toBe(0);
-    const record = await getNoteRecord(SESSION, SCOPE);
+    const record = await getNoteRecord(SESSION_A, SCOPE);
     expect(record?.pending).toBeNull(); // 回执落地清 pending
     expect(record?.baseRevision).toBe(1);
-    expect(peekNoteRecord(SESSION, SCOPE)?.conflict).toBeNull();
+    expect(peekNoteRecord(SESSION_A, SCOPE)?.conflict).toBeNull();
   });
 
   it("持续书写仍触发最大等待：防抖一直被重置，10s 强制上传最新稿", async () => {
@@ -166,7 +141,7 @@ describe("note-sync：调度（防抖与最大等待）", () => {
     // 每 1.5s 写一笔（防抖恒被重置）；doc 逐笔累积笔画
     for (let i = 1; i <= 7; i++) {
       writeNoteDoc(
-        SESSION,
+        SESSION_A,
         SCOPE,
         docOf(
           Array.from({ length: i }, (_, k) =>
@@ -189,10 +164,10 @@ describe("note-sync：调度（防抖与最大等待）", () => {
     putMock
       .mockResolvedValueOnce(receiptOf(1))
       .mockResolvedValueOnce(receiptOf(2));
-    writeNoteDoc(SESSION, SCOPE, DOC_A);
+    writeNoteDoc(SESSION_A, SCOPE, DOC_A);
     await vi.advanceTimersByTimeAsync(NOTE_SYNC_DEBOUNCE_MS);
     expect((await bodyDoc(callOf(0).blob)).ink.strokes.length).toBe(1);
-    writeNoteDoc(SESSION, SCOPE, DOC_EMPTY);
+    writeNoteDoc(SESSION_A, SCOPE, DOC_EMPTY);
     await vi.advanceTimersByTimeAsync(NOTE_SYNC_DEBOUNCE_MS);
     expect(putMock.mock.calls.length).toBe(2);
     expect((await bodyDoc(callOf(1).blob)).ink.strokes.length).toBe(0);
@@ -203,15 +178,15 @@ describe("note-sync：调度（防抖与最大等待）", () => {
 describe("note-sync：单文档单在途（A 回执不清 B）", () => {
   it("A 在途时写 B：A 回执只确认 A，B 仍 dirty 随后带新 baseRevision 上传", async () => {
     const hang = deferredPut();
-    writeNoteDoc(SESSION, SCOPE, DOC_A);
+    writeNoteDoc(SESSION_A, SCOPE, DOC_A);
     await vi.advanceTimersByTimeAsync(NOTE_SYNC_DEBOUNCE_MS);
     expect(putMock.mock.calls.length).toBe(1);
     const mutationA = callOf(0).meta.mutationId;
     // A 在途期间写 B
-    writeNoteDoc(SESSION, SCOPE, DOC_B);
+    writeNoteDoc(SESSION_A, SCOPE, DOC_B);
     hang.resolve(receiptOf(1));
     await vi.advanceTimersByTimeAsync(0);
-    const record = peekNoteRecord(SESSION, SCOPE);
+    const record = peekNoteRecord(SESSION_A, SCOPE);
     expect(record?.baseRevision).toBe(1); // A 的 head 已推进
     expect(record?.pending?.mutationId).not.toBe(mutationA); // B 未被清
     // B 的防抖到期后上传：baseRevision=A 回执、mutationId=B 的新值
@@ -225,9 +200,9 @@ describe("note-sync：单文档单在途（A 回执不清 B）", () => {
   it("在途期间最大等待到期不并发第二个请求（全局串行队列兜底）", async () => {
     putMock.mockResolvedValue(receiptOf(2)); // 后续调用（B）正常回执
     const hang = deferredPut();
-    writeNoteDoc(SESSION, SCOPE, DOC_A);
+    writeNoteDoc(SESSION_A, SCOPE, DOC_A);
     await vi.advanceTimersByTimeAsync(NOTE_SYNC_DEBOUNCE_MS); // A 在途
-    writeNoteDoc(SESSION, SCOPE, DOC_B);
+    writeNoteDoc(SESSION_A, SCOPE, DOC_B);
     await vi.advanceTimersByTimeAsync(NOTE_SYNC_MAX_WAIT_MS); // 最大等待也到期
     expect(putMock.mock.calls.length).toBe(1); // 仍单在途
     hang.resolve(receiptOf(1));
@@ -243,7 +218,7 @@ describe("note-sync：重试、退避与幂等", () => {
       .mockRejectedValueOnce(new Error("连不上服务器"))
       .mockRejectedValueOnce(new Error("连不上服务器"))
       .mockResolvedValue(receiptOf(1));
-    writeNoteDoc(SESSION, SCOPE, DOC_A);
+    writeNoteDoc(SESSION_A, SCOPE, DOC_A);
     await vi.advanceTimersByTimeAsync(NOTE_SYNC_DEBOUNCE_MS); // t=2s 首传失败
     expect(putMock.mock.calls.length).toBe(1);
     await vi.advanceTimersByTimeAsync(NOTE_SYNC_BACKOFF_BASE_MS - 1); // t<3s
@@ -256,41 +231,42 @@ describe("note-sync：重试、退避与幂等", () => {
     expect(putMock.mock.calls.length).toBe(4);
     const ids = putMock.mock.calls.map((c) => c[3].mutationId);
     expect(new Set(ids).size).toBe(1); // 幂等：同 mutationId 重放
-    expect(peekNoteRecord(SESSION, SCOPE)?.pending).toBeNull();
+    expect(peekNoteRecord(SESSION_A, SCOPE)?.pending).toBeNull();
   });
 
   it("重进后补传：重载（内存清空、IDB 保留）发现 pending 自动续传", async () => {
-    writeNoteDoc(SESSION, SCOPE, DOC_A);
+    writeNoteDoc(SESSION_A, SCOPE, DOC_A);
     await vi.advanceTimersByTimeAsync(0); // 落盘
-    const mutationBefore = peekNoteRecord(SESSION, SCOPE)?.pending?.mutationId;
+    const mutationBefore = peekNoteRecord(SESSION_A, SCOPE)?.pending
+      ?.mutationId;
     putMock.mockResolvedValue(receiptOf(1));
     // 模拟重进：同一后端重装（清内存缓存，数据仍在），重绑会话触发扫描
     resetNoteSession();
     installNoteBackend(backend);
-    bindNoteSession(SESSION);
+    bindNoteSession(SESSION_A);
     expect(putMock).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(NOTE_SYNC_DEBOUNCE_MS);
     expect(putMock.mock.calls.length).toBe(1);
     expect(callOf(0).meta.mutationId).toBe(mutationBefore); // 落盘的幂等键续用
-    expect(peekNoteRecord(SESSION, SCOPE)?.baseRevision).toBe(1);
+    expect(peekNoteRecord(SESSION_A, SCOPE)?.baseRevision).toBe(1);
   });
 
   it("恢复在线/可见主动补传：不等退避计时器", async () => {
     putMock
       .mockRejectedValueOnce(new Error("网络中断"))
       .mockResolvedValue(receiptOf(1));
-    writeNoteDoc(SESSION, SCOPE, DOC_A);
+    writeNoteDoc(SESSION_A, SCOPE, DOC_A);
     await vi.advanceTimersByTimeAsync(NOTE_SYNC_DEBOUNCE_MS); // 首传失败，退避 1s
     window.dispatchEvent(new Event("online"));
     await vi.advanceTimersByTimeAsync(0);
     expect(putMock.mock.calls.length).toBe(2); // 在线即补传，未到退避点
-    expect(peekNoteRecord(SESSION, SCOPE)?.pending).toBeNull();
+    expect(peekNoteRecord(SESSION_A, SCOPE)?.pending).toBeNull();
 
     // 可见恢复同机制
     putMock
       .mockRejectedValueOnce(new Error("网络中断"))
       .mockResolvedValue(receiptOf(2));
-    writeNoteDoc(SESSION, SCOPE, DOC_B);
+    writeNoteDoc(SESSION_A, SCOPE, DOC_B);
     await vi.advanceTimersByTimeAsync(NOTE_SYNC_DEBOUNCE_MS);
     document.dispatchEvent(new Event("visibilitychange"));
     await vi.advanceTimersByTimeAsync(0);
@@ -299,20 +275,20 @@ describe("note-sync：重试、退避与幂等", () => {
 
   it("flushNoteSync：防抖未到也立即补传（交卷/切后台入口，T6R.10 用）", async () => {
     putMock.mockResolvedValue(receiptOf(1));
-    writeNoteDoc(SESSION, SCOPE, DOC_A);
+    writeNoteDoc(SESSION_A, SCOPE, DOC_A);
     await flushNoteSync();
     expect(putMock.mock.calls.length).toBe(1);
-    expect(peekNoteRecord(SESSION, SCOPE)?.pending).toBeNull();
+    expect(peekNoteRecord(SESSION_A, SCOPE)?.pending).toBeNull();
   });
 });
 
 describe("note-sync：冲突与终态", () => {
   it("409 NOTE_REVISION_CONFLICT → conflict 态保留两份副本、停止自动重试", async () => {
     putMock.mockRejectedValueOnce(conflictError(2));
-    writeNoteDoc(SESSION, SCOPE, DOC_B);
+    writeNoteDoc(SESSION_A, SCOPE, DOC_B);
     await vi.advanceTimersByTimeAsync(NOTE_SYNC_DEBOUNCE_MS);
     expect(putMock.mock.calls.length).toBe(1);
-    const record = peekNoteRecord(SESSION, SCOPE);
+    const record = peekNoteRecord(SESSION_A, SCOPE);
     expect(record?.conflict?.current?.revision).toBe(2);
     expect(record?.conflict?.localDoc).toBeDefined(); // 本地副本
     expect(record?.doc).toBeDefined(); // 工作稿仍在
@@ -325,9 +301,9 @@ describe("note-sync：冲突与终态", () => {
   it("多标签页/跨设备同机制：服务端 head 已进（rev1）→ 本地 base0 上传 409 保留两份", async () => {
     // 服务端已有他人（另一标签页/设备）的 rev1
     putMock.mockRejectedValueOnce(conflictError(1));
-    writeNoteDoc(SESSION, SCOPE, DOC_B); // 本地从 0 起步（未见过 rev1）
+    writeNoteDoc(SESSION_A, SCOPE, DOC_B); // 本地从 0 起步（未见过 rev1）
     await vi.advanceTimersByTimeAsync(NOTE_SYNC_DEBOUNCE_MS);
-    const record = peekNoteRecord(SESSION, SCOPE);
+    const record = peekNoteRecord(SESSION_A, SCOPE);
     expect(record?.conflict?.current?.revision).toBe(1);
     expect(record?.conflict?.localDoc).toEqual(DOC_B);
   });
@@ -336,12 +312,12 @@ describe("note-sync：冲突与终态", () => {
     putMock.mockRejectedValueOnce(
       new ApiError("FORBIDDEN", "已无权限访问该练习", 403),
     );
-    writeNoteDoc(SESSION, SCOPE, DOC_A);
+    writeNoteDoc(SESSION_A, SCOPE, DOC_A);
     await vi.advanceTimersByTimeAsync(NOTE_SYNC_DEBOUNCE_MS);
-    const record = peekNoteRecord(SESSION, SCOPE);
+    const record = peekNoteRecord(SESSION_A, SCOPE);
     expect(record?.denied?.kind).toBe("access");
     expect(record?.pending).not.toBeNull(); // 本地保留
-    writeNoteDoc(SESSION, SCOPE, DOC_B); // 权限终态粘住：新写也不自动上传
+    writeNoteDoc(SESSION_A, SCOPE, DOC_B); // 权限终态粘住：新写也不自动上传
     await vi.advanceTimersByTimeAsync(60_000);
     expect(putMock.mock.calls.length).toBe(1);
   });
@@ -350,9 +326,9 @@ describe("note-sync：冲突与终态", () => {
     putMock.mockRejectedValueOnce(
       new ApiError("ALREADY_SUBMITTED", "已交卷，原稿已固定", 409),
     );
-    writeNoteDoc(SESSION, SCOPE, DOC_A);
+    writeNoteDoc(SESSION_A, SCOPE, DOC_A);
     await vi.advanceTimersByTimeAsync(NOTE_SYNC_DEBOUNCE_MS);
-    expect(peekNoteRecord(SESSION, SCOPE)?.denied?.kind).toBe("access");
+    expect(peekNoteRecord(SESSION_A, SCOPE)?.denied?.kind).toBe("access");
   });
 
   it("413 NOTE_LIMIT_EXCEEDED → denied(content)：新内容重新可传", async () => {
@@ -361,51 +337,56 @@ describe("note-sync：冲突与终态", () => {
         new ApiError("NOTE_LIMIT_EXCEEDED", "草稿超出大小预算", 413),
       )
       .mockResolvedValue(receiptOf(1));
-    writeNoteDoc(SESSION, SCOPE, DOC_B);
+    writeNoteDoc(SESSION_A, SCOPE, DOC_B);
     await vi.advanceTimersByTimeAsync(NOTE_SYNC_DEBOUNCE_MS);
-    expect(peekNoteRecord(SESSION, SCOPE)?.denied?.kind).toBe("content");
+    expect(peekNoteRecord(SESSION_A, SCOPE)?.denied?.kind).toBe("content");
     // 用户擦掉部分笔画后新写：新 pending 复活自动上传
-    writeNoteDoc(SESSION, SCOPE, DOC_A);
+    writeNoteDoc(SESSION_A, SCOPE, DOC_A);
     await vi.advanceTimersByTimeAsync(NOTE_SYNC_DEBOUNCE_MS);
     expect(putMock.mock.calls.length).toBe(2);
-    expect(peekNoteRecord(SESSION, SCOPE)?.denied).toBeNull();
-    expect(peekNoteRecord(SESSION, SCOPE)?.pending).toBeNull();
+    expect(peekNoteRecord(SESSION_A, SCOPE)?.denied).toBeNull();
+    expect(peekNoteRecord(SESSION_A, SCOPE)?.pending).toBeNull();
   });
 
   it("冲突裁决 keepLocal：对齐云端 revision 后同 mutationId 重传成功", async () => {
     putMock
       .mockRejectedValueOnce(conflictError(2))
       .mockResolvedValue(receiptOf(3));
-    writeNoteDoc(SESSION, SCOPE, DOC_B);
+    writeNoteDoc(SESSION_A, SCOPE, DOC_B);
     await vi.advanceTimersByTimeAsync(NOTE_SYNC_DEBOUNCE_MS);
-    const mutation = peekNoteRecord(SESSION, SCOPE)?.pending?.mutationId;
-    await resolveNoteConflictKeepLocal(SESSION, SCOPE);
+    const mutation = peekNoteRecord(SESSION_A, SCOPE)?.pending?.mutationId;
+    await resolveNoteConflictKeepLocal(SESSION_A, SCOPE);
     await vi.advanceTimersByTimeAsync(0);
     expect(putMock.mock.calls.length).toBe(2);
     expect(callOf(1).meta.baseRevision).toBe(2); // 对齐云端摘要
     expect(callOf(1).meta.mutationId).toBe(mutation); // 幂等键复用（REVISION_CONFLICT：被拒未落库，重放是干净 CAS 写）
-    expect(peekNoteRecord(SESSION, SCOPE)?.conflict).toBeNull();
-    expect(peekNoteRecord(SESSION, SCOPE)?.pending).toBeNull();
+    expect(peekNoteRecord(SESSION_A, SCOPE)?.conflict).toBeNull();
+    expect(peekNoteRecord(SESSION_A, SCOPE)?.pending).toBeNull();
   });
 
   it("MISMATCH 冲突无云端摘要：keepLocal 重铸 mutationId 重传成功（不死循环）", async () => {
     putMock
       .mockRejectedValueOnce(
-        new ApiError("NOTE_MUTATION_MISMATCH", "同一上传标识已对应不同正文", 409),
+        new ApiError(
+          "NOTE_MUTATION_MISMATCH",
+          "同一上传标识已对应不同正文",
+          409,
+        ),
       )
       .mockResolvedValue(receiptOf(2));
-    writeNoteDoc(SESSION, SCOPE, DOC_B);
+    writeNoteDoc(SESSION_A, SCOPE, DOC_B);
     await vi.advanceTimersByTimeAsync(NOTE_SYNC_DEBOUNCE_MS);
-    const mutationBefore = peekNoteRecord(SESSION, SCOPE)?.pending?.mutationId;
-    const record = peekNoteRecord(SESSION, SCOPE);
+    const mutationBefore = peekNoteRecord(SESSION_A, SCOPE)?.pending
+      ?.mutationId;
+    const record = peekNoteRecord(SESSION_A, SCOPE);
     expect(record?.conflict?.current).toBeNull(); // 服务端状态未知：无摘要
-    await resolveNoteConflictKeepLocal(SESSION, SCOPE);
+    await resolveNoteConflictKeepLocal(SESSION_A, SCOPE);
     await vi.advanceTimersByTimeAsync(0);
     expect(putMock.mock.calls.length).toBe(2); // 重传成功，未循环回 MISMATCH
     expect(callOf(1).meta.mutationId).not.toBe(mutationBefore); // 幂等键已重铸
     expect(callOf(1).meta.baseRevision).toBe(0); // 无摘要可对齐：维持本地已知
-    expect(peekNoteRecord(SESSION, SCOPE)?.conflict).toBeNull();
-    expect(peekNoteRecord(SESSION, SCOPE)?.pending).toBeNull();
+    expect(peekNoteRecord(SESSION_A, SCOPE)?.conflict).toBeNull();
+    expect(peekNoteRecord(SESSION_A, SCOPE)?.pending).toBeNull();
   });
 
   it("冲突裁决 keepCloud：拉云端稿为工作稿、清 pending、不再上传", async () => {
@@ -413,10 +394,10 @@ describe("note-sync：冲突与终态", () => {
       noteDocSchema.parse(DOC_A),
     );
     putMock.mockRejectedValueOnce(conflictError(2));
-    writeNoteDoc(SESSION, SCOPE, DOC_B);
+    writeNoteDoc(SESSION_A, SCOPE, DOC_B);
     await vi.advanceTimersByTimeAsync(NOTE_SYNC_DEBOUNCE_MS);
-    await resolveNoteConflictKeepCloud(SESSION, SCOPE);
-    const record = peekNoteRecord(SESSION, SCOPE);
+    await resolveNoteConflictKeepCloud(SESSION_A, SCOPE);
+    const record = peekNoteRecord(SESSION_A, SCOPE);
     expect(record?.conflict).toBeNull();
     expect(record?.pending).toBeNull();
     expect(record?.doc).toEqual(DOC_A); // 云端稿成为工作稿
@@ -428,7 +409,7 @@ describe("note-sync：冲突与终态", () => {
 describe("note-sync：账号切换与登出隔离", () => {
   it("切账号：旧会话在途被中止、回执被忽略、新账号不读不续传旧数据", async () => {
     const hang = deferredPut();
-    writeNoteDoc(SESSION, SCOPE, DOC_A);
+    writeNoteDoc(SESSION_A, SCOPE, DOC_A);
     await vi.advanceTimersByTimeAsync(NOTE_SYNC_DEBOUNCE_MS);
     const signal = callOf(0).signal;
     // 切到账号 B：立即失效旧会话
@@ -437,7 +418,7 @@ describe("note-sync：账号切换与登出隔离", () => {
     hang.resolve(receiptOf(1)); // A 的迟到回执
     await vi.advanceTimersByTimeAsync(60_000);
     expect(putMock.mock.calls.length).toBe(1); // A 不再续传
-    const recordA = peekNoteRecord(SESSION, SCOPE);
+    const recordA = peekNoteRecord(SESSION_A, SCOPE);
     expect(recordA?.baseRevision).toBe(0); // 迟到回执未落地
     expect(recordA?.pending).not.toBeNull(); // 本地稿保留（不静默删）
     // 新账号读不到 A 的记录（键前缀隔离）
@@ -446,7 +427,7 @@ describe("note-sync：账号切换与登出隔离", () => {
 
   it("登出（resetNoteSession）：清监听与计时器，旧会话不再有任何上传", async () => {
     putMock.mockRejectedValue(new Error("网络中断"));
-    writeNoteDoc(SESSION, SCOPE, DOC_A);
+    writeNoteDoc(SESSION_A, SCOPE, DOC_A);
     await vi.advanceTimersByTimeAsync(NOTE_SYNC_DEBOUNCE_MS); // 首传失败
     resetNoteSession();
     await vi.advanceTimersByTimeAsync(120_000);

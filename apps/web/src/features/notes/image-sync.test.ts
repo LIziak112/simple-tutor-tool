@@ -39,7 +39,6 @@ import {
   noteImageQueueStats,
   recoverNoteImages,
   resetNoteImageQueueForTest,
-  SerialTaskQueue,
   syncNoteImages,
 } from "@/features/notes/image-sync.ts";
 import type { RenderedNotePage } from "@/features/notes/render-note.ts";
@@ -49,6 +48,7 @@ import {
   fetchTeacherNoteDocumentApi,
   postNoteImageApi,
 } from "@/lib/api";
+import { SerialTaskQueue } from "@/lib/serial-task-queue.ts";
 
 const VERSION_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa0003";
 

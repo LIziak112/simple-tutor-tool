@@ -64,8 +64,12 @@ export function idbKVBackend(
       // 区间外；防御性保留类型收窄）。回调内断言为解包后的值类型：
       // idb-keyval 运行时会 promisify 返回的 IDBRequest，但其 UseStore
       // 类型不表达该解包（本仓安装版本的类型联合按裸 Request 推断）
-      const all = await store("readonly", (objectStore) =>
-        objectStore.getAllKeys(prefixRange(prefix)) as unknown as IDBValidKey[],
+      const all = await store(
+        "readonly",
+        (objectStore) =>
+          objectStore.getAllKeys(
+            prefixRange(prefix),
+          ) as unknown as IDBValidKey[],
       );
       return all.filter((key): key is string => typeof key === "string");
     },

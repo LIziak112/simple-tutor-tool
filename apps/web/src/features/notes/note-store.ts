@@ -247,10 +247,7 @@ function persistedCopy(record: NoteLocalRecord): NoteLocalRecord {
  * 无删除路径：未同步内容不静默删除）。memory/idb 两实现与复制链治理见
  * lib/kv-backend.ts。
  */
-export type NoteStoreBackend = Pick<
-  KVStoreBackend,
-  "get" | "set" | "keys"
->;
+export type NoteStoreBackend = Pick<KVStoreBackend, "get" | "set" | "keys">;
 
 /** 内存后端（jsdom 自动回退与单测隔离/故障注入用；不持久） */
 export function memoryNoteBackend(): NoteStoreBackend {
