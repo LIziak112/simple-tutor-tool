@@ -1,7 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { gunzipSync } from "node:zlib";
 import {
   INK_MAX_UPLOAD_BYTES,
   type InkDoc,
@@ -215,17 +214,17 @@ export function saveInk(
   // upsert ink 行（幂等覆盖保留 id）
   const now = new Date().toISOString();
   const strokeCount = strokeCountOf(doc);
-  const existing = db
-    .select({ id: ink.id })
-    .from(ink)
-    .where(and(eq(ink.attemptId, attemptId), eq(ink.questionId, questionId)))
-    .get();
-  const inkId = existing?.id ?? randomUUID();
   const relStrokes = join("blobs", "ink", attemptId, `${base}.json.gz`);
   const relPng = join("blobs", "ink", attemptId, `${base}.png`);
-  db.insert(ink)
+  // 单语句 upsert + RETURNING（复审⑩，仓库首例）：INSERT..ON CONFLICT..
+  // RETURNING 返回受影响行的**实际值**（新插返回新行、冲突返回更新后的
+  // 既有行）——drizzle 0.45 的 better-sqlite3 驱动把 RETURNING 行走
+  // .get() 取首行，语义等价于 SQLite 原生 RETURNING；由此免掉前置点查，
+  // inkId 稳定性由 DB 行本身保证（冲突分支不更新 id 列）
+  const saved = db
+    .insert(ink)
     .values({
-      id: inkId,
+      id: randomUUID(),
       attemptId,
       questionId,
       strokesPath: relStrokes,
@@ -246,7 +245,13 @@ export function saveInk(
         updatedAt: now,
       },
     })
-    .run();
+    .returning({ id: ink.id })
+    .get();
+  if (saved === undefined) {
+    // 防御：upsert 必有受影响行（drizzle/SQLite 契约），不可达
+    throw new HttpError(500, "INTERNAL", "笔迹行写入失败");
+  }
+  const inkId = saved.id;
 
   return {
     questionId,
@@ -276,34 +281,30 @@ export function getInkDoc(
 ): InkDoc {
   requireUsableAttempt(db, studentId, attemptId);
   const row = requireInkRow(db, attemptId, questionId);
-  let raw: Uint8Array;
+  // 读侧换共享 parseGzipOrJsonBytes（复审⑩三得）：免 new Uint8Array 整包
+  // 拷贝、gzip/原始 JSON 双格式由机制层统一回退（替代手写二次 try）、
+  // 补上读侧解压上限（落盘文件被替换成高压缩炸弹时不解出大 Buffer）
+  let jsonText: string;
   try {
-    raw = new Uint8Array(
+    jsonText = parseGzipOrJsonBytes(
       readFileSync(inkFileAbs(dataDir, row.strokesPath, ".json.gz")),
+      { maxDecompressed: INK_MAX_STROKES_UNCOMPRESSED },
     );
-  } catch {
+  } catch (err) {
+    if (err instanceof HttpError) throw err; // 边界校验码原样重抛
     throw new HttpError(
       500,
       "INK_UNREADABLE",
       "笔迹文件读取失败，请联系老师处理",
     );
   }
-  let jsonText: string;
+  let parsedJson: unknown;
   try {
-    jsonText = gunzipSync(raw).toString("utf8");
+    parsedJson = JSON.parse(jsonText) as unknown;
   } catch {
-    // 兼容历史直传（未压缩）数据：再试原始 JSON
-    try {
-      jsonText = Buffer.from(raw).toString("utf8");
-    } catch {
-      throw new HttpError(
-        500,
-        "INK_UNREADABLE",
-        "笔迹文件损坏，请联系老师处理",
-      );
-    }
+    throw new HttpError(500, "INK_UNREADABLE", "笔迹文件损坏，请联系老师处理");
   }
-  const parsed = inkDocSchema.safeParse(JSON.parse(jsonText) as unknown);
+  const parsed = inkDocSchema.safeParse(parsedJson);
   if (!parsed.success) {
     throw new HttpError(500, "INK_UNREADABLE", "笔迹文件损坏，请联系老师处理");
   }
