@@ -8,7 +8,7 @@ import type {
   QuestionAnswers,
   QuestionType,
 } from "@tutor/contract";
-import { studentStemMd } from "@tutor/md-dsl";
+import { studentStemMd, stemMdLeaksAnswers } from "@tutor/md-dsl";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
@@ -20,6 +20,7 @@ import {
   type ResponseRow,
   submissionEvidence,
 } from "../db/schema";
+import { HttpError } from "../lib/http-error";
 import { extractMediaImageSrcs } from "./media-service";
 import { snapshotOfRow } from "./snapshot";
 
@@ -209,7 +210,14 @@ function sha256Hex(text: string): string {
   return createHash("sha256").update(text, "utf8").digest("hex");
 }
 
-/** 角色化素材：投影与层级切片都在这一处完成（学生角色结构性无答案字段） */
+/**
+ * 角色化素材：投影与层级切片都在这一处完成（学生角色结构性无答案字段）。
+ * **服务端泄露哨兵（编排者复审 A1）**：学生角色投影后仍命中
+ * stemMdLeaksAnswers（可触达形态：fill 题不带 options 字段但题干内嵌任务
+ * 列表——studentStemMd 只在有 options 时剥列表，`- [x]` 正确项标记原样
+ * 保留）→ 500 EXPORT_ASSEMBLY_BROKEN 拒绝装配。防未来学生端路由直返
+ * material 绕过投影不变量；前端 question-materials 的同款守卫是纵深防御。
+ */
 function materialOf(
   snapshot: ReturnType<typeof snapshotOfRow>,
   studentRole: boolean,
@@ -223,6 +231,13 @@ function materialOf(
   // 选项以纯文本数组另行携带）；教师 answer/solution 层保留快照原文
   const projectedStem =
     level === "stem" || studentRole ? studentStemMd(snapshot) : snapshot.stemMd;
+  if (studentRole && stemMdLeaksAnswers(projectedStem)) {
+    throw new HttpError(
+      500,
+      "EXPORT_ASSEMBLY_BROKEN",
+      "学生端题干投影后仍含答案标记（任务列表或非空 [[…]]），拒绝装配——请检查快照内容与投影链路",
+    );
+  }
   return {
     type: snapshot.type,
     difficulty: snapshot.difficulty,

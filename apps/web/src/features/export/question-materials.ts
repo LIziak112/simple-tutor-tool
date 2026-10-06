@@ -101,6 +101,9 @@ function graphNoteLines(figure: GraphFigureSpec, raw: string): string[] {
 export function buildStaticQuestionMaterial(
   input: StaticQuestionMaterialInput,
 ): StaticQuestionMaterial {
+  // 纵深防御（第二道防线）：权威哨兵在服务端 materialOf（question-evidence，
+  // 500 拒绝装配，编排者复审 A1）；此处兜底拦截「未经服务端装配直喂本模块」
+  // 的调用路径，抛错不静默降级。
   if (input.role === "student" && stemMdLeaksAnswers(input.stemMd)) {
     throw new Error(
       "题干含答案标记（[[答案]] 或选项任务列表），拒绝生成学生材料——上游角色投影缺失，请检查装配链路",

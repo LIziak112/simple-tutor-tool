@@ -20,6 +20,7 @@ import {
   createTestDir,
   TEST_TEACHER_ID,
 } from "../db/test-utils.ts";
+import { HttpError } from "../lib/http-error.ts";
 import { gzipJson, makeNotePng, noteDoc } from "../test/note-fixtures.ts";
 import { insertEvidence } from "../test/note-world.ts";
 import { attemptResponseRows, newDraftAttempt } from "./attempt-service.ts";
@@ -350,6 +351,59 @@ describe("T6R.12 同内容去重不串教师", () => {
     expect(dumpA).not.toContain(aB.attemptId);
     expect(dumpA).toContain(sA);
     expect(dumpA).toContain(aA.attemptId);
+  });
+});
+
+// ---------- 服务端泄露哨兵（materialOf 运行时守卫，编排者复审 A1） ----------
+
+describe("T6R.12 服务端泄露哨兵：学生角色投影后仍含答案标记 → 500 拒绝装配", () => {
+  /**
+   * 恶意/畸形快照：fill 题**不带 options 字段**但题干内嵌任务列表（DSL 层
+   * 非法、契约层宽容放行的形态）——studentStemMd 只在有 options 时剥任务
+   * 列表，投影后 `- [x]` 正确项标记原样保留 → 哨兵命中。
+   * 该守卫防未来学生端路由直返 material 绕过投影不变量（前端守卫只是纵深）。
+   */
+  const leakyStem = "选择：\n\n- [x] 正确项甲\n- [ ] 干扰项乙\n";
+
+  function leakyWorld() {
+    const db = createTestDb();
+    const dataDir = createTestDir();
+    const s1 = studentOf(db, TEST_TEACHER_ID);
+    const a1 = draftAttempt(db, s1, [
+      {
+        questionId: "恶意题-1",
+        snapshotJson: snapshotJson({ id: "恶意题-1", stemMd: leakyStem }),
+      },
+    ]);
+    submit(db, a1.attemptId);
+    return { db, dataDir, attemptId: a1.attemptId };
+  }
+
+  it("学生角色：投影后仍含答案标记 → 抛 500 EXPORT_ASSEMBLY_BROKEN，不出任何材料", () => {
+    const { db, dataDir, attemptId } = leakyWorld();
+    let caught: unknown;
+    try {
+      assemble(db, dataDir, TEST_TEACHER_ID, [scopeOf(db, attemptId)], {
+        role: "student",
+      });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(HttpError);
+    const httpErr = caught as HttpError;
+    expect(httpErr.status).toBe(500);
+    expect(httpErr.code).toBe("EXPORT_ASSEMBLY_BROKEN");
+    expect(httpErr.message).toContain("答案标记");
+  });
+
+  it("教师角色不受哨兵影响（同一快照照常装配；stem 层投影逻辑不变）", () => {
+    const { db, dataDir, attemptId } = leakyWorld();
+    const result = assemble(db, dataDir, TEST_TEACHER_ID, [scopeOf(db, attemptId)], {
+      role: "teacher",
+      questionLevel: "stem",
+    });
+    expect(result.revisions).toHaveLength(1);
+    expect(result.revisions[0]?.material.stemMd).toContain("[x]");
   });
 });
 
