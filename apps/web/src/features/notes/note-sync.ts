@@ -58,6 +58,8 @@ import {
   applyUploadDenied,
   applyUploadReceipt,
   listPendingNotes,
+  type NoteLocalRecord,
+  type NotePendingVersion,
   type NoteScope,
   type NoteSessionRef,
   noteKeyOf,
@@ -89,8 +91,6 @@ let unsubscribeStore: (() => void) | null = null;
 
 /** 全局串行上传队列（与图片派生队列同骨架；串行 ⇒ 单文档单在途） */
 const uploadQueue = new SerialTaskQueue();
-/** 已入队未开跑的键（防重复入队；开跑时移除） */
-const queuedKeys = new Set<string>();
 /** 在途请求的中止器（账号切换/登出时 abort） */
 const controllers = new Map<string, AbortController>();
 /**
@@ -110,6 +110,8 @@ interface DocScheduler {
   /** 脏周期进行中（pending 从无到有时置位；清空后复位）——最大等待锚点 */
   dirtyPeriod: boolean;
   lastMutationId: string | null;
+  /** 已入队未开跑（防重复入队；开跑时复位——与计时器同宿主，复审⑩） */
+  queued: boolean;
 }
 
 const schedulers = new Map<string, DocScheduler>();
@@ -124,6 +126,7 @@ function schedulerOf(key: string): DocScheduler {
       failures: 0,
       dirtyPeriod: false,
       lastMutationId: null,
+      queued: false,
     };
     schedulers.set(key, s);
   }
@@ -151,11 +154,41 @@ function sameSession(a: NoteSessionRef, b: NoteSessionRef): boolean {
   return a.origin === b.origin && a.studentId === b.studentId;
 }
 
+/** 记录是否可传（复审⑨：三处守卫共用谓词——动作留在调用点）。类型谓词
+ * 顺带收窄 pending 非空（runUpload 取快照不需再判空） */
+function uploadable(
+  record: NoteLocalRecord | null,
+): record is NoteLocalRecord & { pending: NotePendingVersion } {
+  return (
+    record !== null &&
+    record.pending !== null &&
+    record.conflict === null &&
+    record.denied === null
+  );
+}
+
+/** 键是否属于当前会话（是→返回解析出的 session+scope；否→null） */
+function keyInSession(
+  key: string,
+): { session: NoteSessionRef; scope: NoteScope } | null {
+  if (currentSession === null) return null;
+  const parsed = parseNoteKey(key);
+  if (parsed === null || !sameSession(currentSession, parsed.session)) {
+    return null;
+  }
+  return parsed;
+}
+
 // ---------- 上传执行 ----------
 
 /** 错误分诊：conflict（留两份待裁决）/ denied（终态）/ retry（退避） */
 type PutVerdict =
-  | { kind: "conflict"; current: NoteRevisionConflictCurrent; reason: string }
+  | {
+      kind: "conflict";
+      /** MISMATCH 时为 null（服务端状态未知，契约 noteConflictSummarySchema） */
+      current: NoteRevisionConflictCurrent | null;
+      reason: string;
+    }
   | { kind: "denied"; deniedKind: "access" | "content"; reason: string }
   | { kind: "retry" };
 
@@ -213,8 +246,7 @@ async function runUpload(
 ): Promise<void> {
   const stale = () => epoch !== sessionEpoch || !sameSessionSafe(session);
   const record = peekNoteRecord(session, scope);
-  if (record === null || record.pending === null) return;
-  if (record.conflict !== null || record.denied !== null) return;
+  if (!uploadable(record)) return; // 无待传/被冲突或终态阻塞：空跑跳过
   const { mutationId, doc } = record.pending;
   const baseRevision = record.baseRevision;
   const controller = new AbortController();
@@ -284,16 +316,16 @@ function sameSessionSafe(session: NoteSessionRef): boolean {
 
 /** 到期触发：全局串行队列尾追加一次上传（排队期间的重复 due 去重） */
 function due(key: string): void {
-  if (currentSession === null) return;
-  const parsed = parseNoteKey(key);
-  if (parsed === null || !sameSession(currentSession, parsed.session)) return;
-  if (queuedKeys.has(key)) return;
-  queuedKeys.add(key);
-  const { session, scope } = parsed;
+  const inSession = keyInSession(key);
+  if (inSession === null) return;
+  const s = schedulerOf(key);
+  if (s.queued) return;
+  s.queued = true;
+  const { session, scope } = inSession;
   const epoch = sessionEpoch;
   uploadQueue
     .run(() => {
-      queuedKeys.delete(key);
+      s.queued = false;
       return runUpload(key, session, scope, epoch);
     })
     .catch((err: unknown) => {
@@ -309,18 +341,13 @@ function due(key: string): void {
  * 重置退避计数——失败重试的节奏不惩罚新内容。
  */
 function handleRecordChanged(key: string): void {
-  if (key === "*" || currentSession === null) return;
-  const parsed = parseNoteKey(key);
-  if (parsed === null || !sameSession(currentSession, parsed.session)) return;
-  const { session, scope } = parsed;
+  if (key === "*") return;
+  const inSession = keyInSession(key);
+  if (inSession === null) return;
+  const { session, scope } = inSession;
   const record = peekNoteRecord(session, scope);
   const s = schedulerOf(key);
-  if (
-    record === null ||
-    record.pending === null ||
-    record.conflict !== null ||
-    record.denied !== null
-  ) {
+  if (!uploadable(record)) {
     clearTimers(key);
     return;
   }
@@ -350,23 +377,14 @@ function handleRecordChanged(key: string): void {
 
 /** 恢复在线/可见：跳过一切计时器立即补传当前会话全部待传 */
 function triggerImmediateAll(): void {
-  if (currentSession === null) return;
   // 调度器（schedulers）覆盖会话内全部待传键：写入时经 store 通知入编，
   // 重进时经 bind 的 listPendingNotes 扫描入编；其他标签页此后写入本会话
   // IDB 键的场景由下一次 bind/写入通知兜底——不在此重扫（重扫会给刚
   // due 的键重挂防抖，失败场景下绕过退避节奏）
   for (const key of [...schedulers.keys()]) {
-    const parsed = parseNoteKey(key);
-    if (parsed === null || !sameSession(currentSession, parsed.session)) {
-      continue;
-    }
-    const record = peekNoteRecord(parsed.session, parsed.scope);
-    if (
-      record === null ||
-      record.pending === null ||
-      record.conflict !== null ||
-      record.denied !== null
-    ) {
+    const inSession = keyInSession(key);
+    if (inSession === null) continue;
+    if (!uploadable(peekNoteRecord(inSession.session, inSession.scope))) {
       continue;
     }
     clearTimers(key);
@@ -401,8 +419,7 @@ function teardownSession(): void {
   for (const controller of controllers.values()) controller.abort();
   controllers.clear();
   for (const key of [...schedulers.keys()]) clearTimers(key);
-  schedulers.clear();
-  queuedKeys.clear();
+  schedulers.clear(); // queued 标记随之消亡（复审⑩：并入调度器宿主）
   unsubscribeStore?.();
   unsubscribeStore = null;
   if (typeof window !== "undefined") {

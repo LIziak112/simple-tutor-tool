@@ -313,7 +313,7 @@ describe("note-sync：冲突与终态", () => {
     await vi.advanceTimersByTimeAsync(NOTE_SYNC_DEBOUNCE_MS);
     expect(putMock.mock.calls.length).toBe(1);
     const record = peekNoteRecord(SESSION, SCOPE);
-    expect(record?.conflict?.current.revision).toBe(2);
+    expect(record?.conflict?.current?.revision).toBe(2);
     expect(record?.conflict?.localDoc).toBeDefined(); // 本地副本
     expect(record?.doc).toBeDefined(); // 工作稿仍在
     expect(record?.pending).not.toBeNull(); // 待传保留（裁决后复用）
@@ -328,7 +328,7 @@ describe("note-sync：冲突与终态", () => {
     writeNoteDoc(SESSION, SCOPE, DOC_B); // 本地从 0 起步（未见过 rev1）
     await vi.advanceTimersByTimeAsync(NOTE_SYNC_DEBOUNCE_MS);
     const record = peekNoteRecord(SESSION, SCOPE);
-    expect(record?.conflict?.current.revision).toBe(1);
+    expect(record?.conflict?.current?.revision).toBe(1);
     expect(record?.conflict?.localDoc).toEqual(DOC_B);
   });
 
