@@ -14,6 +14,7 @@ import {
   NOTE_BODY_DECOMPRESSED_MAX_BYTES,
   NOTE_BODY_GZIP_MAX_BYTES,
   NOTE_IMAGE_PNG_MAX_BYTES,
+  NOTE_RENDER_VERSION,
   NOTE_VERSION_IMAGES_MAX_BYTES,
   type NoteDoc,
   type NoteHeadData,
@@ -518,7 +519,8 @@ export function saveNoteVersion(
           paperWidth: INK_LOGICAL_WIDTH,
           paperHeight,
           serverSavedAt: now,
-          renderVersion: 1,
+          // 渲染器版本单一事实来源在契约（T6R.6 渲染器同口径引用）
+          renderVersion: NOTE_RENDER_VERSION,
           mutationId: meta.mutationId,
         })
         .run();
