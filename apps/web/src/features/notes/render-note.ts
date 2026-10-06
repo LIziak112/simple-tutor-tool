@@ -31,12 +31,15 @@ import {
   type NoteImageSpec,
   type NoteImageUploadMeta,
 } from "@tutor/contract";
-import Atrament from "atrament";
-import { replayAtramentStroke } from "@/features/ink/engine/atrament-adapter.ts";
+import {
+  createProgrammaticAtrament,
+  replayAtramentStroke,
+} from "@/features/ink/engine/atrament-adapter.ts";
 import {
   type StrokeBounds,
   strokeBounds,
 } from "@/features/ink/engine/bounds.ts";
+import { canvasToPngBlob } from "@/features/ink/engine/canvas-png.ts";
 import { INK_LOGICAL_WIDTH } from "@/features/ink/engine/types.ts";
 
 // ---------- 渲染规格常量（全部暂定，真机定标后修订） ----------
@@ -327,19 +330,6 @@ function paintPaperBackground(
   }
 }
 
-/** canvas.toBlob 包装：返回 null 时拒绝（不吞错），成功解析为 Blob */
-function canvasToPngBlob(canvas: HTMLCanvasElement): Promise<Blob> {
-  return new Promise<Blob>((resolve, reject) => {
-    canvas.toBlob((blob) => {
-      if (blob) resolve(blob);
-      else
-        reject(
-          new Error("PNG 编码失败：toBlob 返回空（画布不可用或内存不足）"),
-        );
-    }, "image/png");
-  });
-}
-
 /**
  * 渲染一页：背景 + 笔迹 → PNG。独立于活编辑器与 React 生命周期（离屏画布
  * 自建自毁；「组件卸载不吞错」由本函数不依赖组件状态保证——错误原样抛出）。
@@ -391,10 +381,9 @@ async function renderNotePageWithBoxes(
     if (!ctx) {
       throw new Error("渲染失败：无法创建 canvas 2d 上下文（当前环境不支持）");
     }
-    // 构造 atrament（配置画笔状态）后立即解绑其内部指针监听：只做程序化
-    // 重放，不接管输入（atrament-adapter / replay/draw 同款手法）
-    const atrament = new Atrament(canvas);
-    atrament.destroy();
+    // 程序化重放实例（唯一注释段见 engine/atrament-adapter
+    // .createProgrammaticAtrament）
+    const atrament = createProgrammaticAtrament(canvas);
 
     paintPaperBackground(ctx, doc.background, crop, pixelWidth, pixelHeight);
 

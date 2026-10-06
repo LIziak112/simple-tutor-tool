@@ -17,6 +17,7 @@ import type { InkDoc, InkEngineKind, InkToolConfig } from "./types.ts";
 
 export type { StrokeBounds } from "./bounds.ts";
 export { strokeBounds } from "./bounds.ts";
+export { canvasToPngBlob } from "./canvas-png.ts";
 export type { InkHistoryEntry } from "./history.ts";
 export { InkStore } from "./history.ts";
 export type {

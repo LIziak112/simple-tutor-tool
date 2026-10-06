@@ -26,6 +26,7 @@
  *    不落墨。
  */
 import Atrament from "atrament";
+import { canvasToPngBlob } from "./canvas-png.ts";
 import { buildAtramentDoc, parseAtramentDoc } from "./doc.ts";
 import { eraseHit } from "./erase.ts";
 import { InkStore } from "./history.ts";
@@ -80,6 +81,21 @@ export function replayAtramentStroke(
     prev = atrament.draw(at.x, at.y, prev.x, prev.y, pt.p);
   }
   atrament.endStroke(prev.x, prev.y);
+}
+
+/**
+ * 构造仅用于**程序化重放**的 Atrament 实例：构造即配置 canvas 2d 画笔状态
+ * （source-over / lineCap round / lineJoin round），随即 destroy() 解绑其
+ * 内部指针监听——后续只经 replayAtramentStroke / beginStroke/draw/endStroke
+ * 驱动绘制，不接管任何输入。适配器挂载路径（输入层自管）、笔迹回放
+ * （replay/draw）与草稿渲染器（notes/render-note）三处共用这一手法。
+ */
+export function createProgrammaticAtrament(
+  canvas: HTMLCanvasElement,
+): Atrament {
+  const atrament = new Atrament(canvas);
+  atrament.destroy();
+  return atrament;
 }
 
 export interface AtramentSurfaceOptions {
@@ -462,10 +478,9 @@ export function createAtramentSurface(
       ctx2d = canvas.getContext("2d");
       if (!ctx2d)
         throw new Error("无法创建 canvas 2d 上下文（当前环境不支持）");
-      // 构造 atrament（配置好 2d context 画笔状态）后立刻解绑其内部指针监听：
-      // 输入层完全由本文件接管（见文件头注释）
-      atrament = new Atrament(canvas);
-      atrament.destroy();
+      // 构造 atrament（配置好 2d context 画笔状态）后立刻解绑其内部指针
+      // 监听：输入层完全由本文件接管（见文件头与 createProgrammaticAtrament）
+      atrament = createProgrammaticAtrament(canvas);
 
       applyTouchAction();
 
@@ -515,12 +530,7 @@ export function createAtramentSurface(
       c.fillStyle = "#ffffff"; // 白底（老师/AI 查看统一白底）
       c.fillRect(0, 0, out.width, out.height);
       c.drawImage(canvas, 0, 0);
-      return new Promise<Blob>((resolve, reject) => {
-        out.toBlob((blob) => {
-          if (blob) resolve(blob);
-          else reject(new Error("导出 PNG 失败：toBlob 返回空"));
-        }, "image/png");
-      });
+      return canvasToPngBlob(out);
     },
 
     undo(): void {
