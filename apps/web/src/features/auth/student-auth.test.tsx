@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { expect, it, vi } from "vitest";
 import { resetNoteSession } from "@/features/notes/note-sync";
 import { useLogoutStudent } from "./student-auth";
 

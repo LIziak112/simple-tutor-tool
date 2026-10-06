@@ -40,7 +40,7 @@ vi.mock("idb-keyval", () => {
   const ALL_KEYS = ["a:1", 42, "a:2", "b:9"];
   return {
     // 按 idb-keyval 真实语义：customStore(mode, cb) = Promise<cb 的返回值>
-    createStore: () => (mode: string, cb: (os: unknown) => unknown) =>
+    createStore: () => (_mode: string, cb: (os: unknown) => unknown) =>
       Promise.resolve().then(() =>
         cb({
           // 模拟真 IDB 的 range 语义：只回 [lower, upper] 内的键

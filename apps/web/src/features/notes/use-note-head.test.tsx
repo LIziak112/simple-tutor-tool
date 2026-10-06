@@ -225,9 +225,10 @@ describe("useBindNoteSession（T6R.9 答题页接线）", () => {
     });
     const me: StudentMeData = {
       id: "11111111-1111-4111-8111-111111111111",
-      name: "小明",
-      teacherName: "老师",
-      loginName: null,
+      displayName: "小明",
+      loginName: "e2e-stu",
+      linkEnabled: true,
+      passwordEnabled: false,
     };
     function Probe({ me: m }: { me: StudentMeData | undefined }) {
       useBindNoteSession(m);

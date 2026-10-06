@@ -7,7 +7,15 @@ import {
   screen,
 } from "@testing-library/react";
 import type { NoteHeadData } from "@tutor/contract";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  type Mock,
+  vi,
+} from "vitest";
 import type {
   InkChangeReason,
   InkDoc,
@@ -21,7 +29,6 @@ import {
   getNoteRecord,
   installNoteBackend,
   memoryNoteBackend,
-  type NoteStoreBackend,
   peekNoteRecord,
 } from "@/features/notes/note-store";
 import { bindNoteSession, resetNoteSession } from "@/features/notes/note-sync";
@@ -63,7 +70,7 @@ interface EngineEntry {
   opts: unknown;
   emit: ((doc: InkDoc, reason: InkChangeReason) => void) | null;
   engine: InkEngine;
-  load: ReturnType<typeof vi.fn>;
+  load: Mock<(data: InkDoc) => void>;
 }
 
 const entries: EngineEntry[] = [];
@@ -85,19 +92,15 @@ function emptyDoc(): InkDoc {
 }
 
 function makeEngine(opts: unknown): InkEngine {
-  const entry = {
-    opts,
-    emit: null,
-    engine: null,
-    load: vi.fn(),
-  } as EngineEntry;
+  // 先建 load/engine 再回填 entry（互相引用；类型经一次显式断言收口）
+  const box: { entry: EngineEntry | null } = { entry: null };
+  const load = vi.fn((data: InkDoc) => {
+    box.entry?.emit?.(data, "load");
+  });
   const engine: InkEngine = {
     getData: () => emptyDoc(),
     // 真引擎 load 后发 change(reason="load")——外部同步 effect 依赖此语义
-    load: ((data: InkDoc) => {
-      entry.load(data);
-      entry.emit?.(data, "load");
-    }) as InkEngine["load"],
+    load: load as unknown as InkEngine["load"],
     exportPng: () => Promise.reject(new Error("测试未使用")),
     undo: mockUndo,
     redo: mockRedo,
@@ -114,7 +117,8 @@ function makeEngine(opts: unknown): InkEngine {
     canRedo: () => false,
     destroy: mockDestroy,
   };
-  entry.engine = engine;
+  const entry: EngineEntry = { opts, emit: null, engine, load };
+  box.entry = entry;
   entries.push(entry);
   return engine;
 }
@@ -257,7 +261,7 @@ describe("NoteLayer：收起/展开形态", () => {
     // 展开 → 重挂载，initial 带回全部笔迹
     fireEvent.click(screen.getByRole("button", { name: /草稿纸/ }));
     const second = await waitForEngine(2);
-    const initial = (second.opts as { initial?: InkDoc }).initial;
+    const initial = (second.opts as { initial?: InkDoc<"atrament"> }).initial;
     expect(initial?.data.strokes.length).toBe(1);
     // 挂载首帧不重复 load（initial 已带内容——指纹登记即止）
     expect(second.load).not.toHaveBeenCalled();
@@ -288,9 +292,10 @@ describe("NoteLayer：收起/展开形态", () => {
       );
     });
     expect(entry.load).toHaveBeenCalledTimes(1);
-    expect((entry.load.mock.calls[0]?.[0] as InkDoc).data.strokes.length).toBe(
-      1,
-    );
+    const loaded = entry.load.mock.calls[0]?.[0] as
+      | InkDoc<"atrament">
+      | undefined;
+    expect(loaded?.data.strokes.length ?? 0).toBe(1);
   });
 });
 

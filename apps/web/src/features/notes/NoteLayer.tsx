@@ -297,6 +297,7 @@ export function NoteLayer({
   }, [open, doc, session]);
 
   // 工具下发（挂载与切换时；InkPad 挂载后父 effect 晚于子 effect——引擎已就绪）
+  // biome-ignore lint/correctness/useExhaustiveDependencies(open): open 变化=画布重挂载（新引擎），需重发当前工具
   useEffect(() => {
     engineRef.current?.setTool(
       tool === "pen"
