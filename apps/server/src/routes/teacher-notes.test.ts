@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import type { ApiErr } from "@tutor/contract";
 import { noteHeadDataSchema, noteImageMetaSchema } from "@tutor/contract";
@@ -11,11 +10,20 @@ import { createTeacherSession } from "../auth/session.ts";
 import type { Db } from "../db/client.ts";
 import {
   noteVersions as noteVersionsTable,
-  submissionEvidence as submissionEvidenceTable,
   teachers as teachersTable,
 } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
-import { gzipJson, makeNotePng, noteDoc } from "../test/note-fixtures.ts";
+import {
+  makeNotePng,
+  noteImageForm,
+  putNoteVersion,
+} from "../test/note-fixtures.ts";
+import {
+  createStudent,
+  extractSessionToken,
+  insertEvidence,
+  loginStudent,
+} from "../test/note-world.ts";
 import { submitAttemptRequest } from "../test/submit-revisions";
 
 /**
@@ -29,7 +37,6 @@ import { submitAttemptRequest } from "../test/submit-revisions";
  */
 
 const silentLogger: Logger = pino({ enabled: false });
-const STUDENT_PASSWORD = "stu-pass-6";
 const TEACHER_B_ID = "teacher-b-note-0001";
 
 const PRACTICE_MD = readFileSync(
@@ -82,8 +89,8 @@ beforeAll(async () => {
     ((await importRes.json()) as { data: { units: { id: string }[] } }).data
       .units[0]?.id ?? "";
 
-  aStudentId = await createStudent("张三", teacherCookie);
-  aStudentCookie = await loginStudent("张三");
+  aStudentId = await createStudent(app, teacherCookie, "张三");
+  aStudentCookie = await loginStudent(app, "张三");
 
   // 乙：直插教师行 + 伪造会话（对齐 teacher-domain-isolation.test 夹具口径）
   db.insert(teachersTable)
@@ -109,8 +116,8 @@ beforeAll(async () => {
     ((await importB.json()) as { data: { units: { id: string }[] } }).data
       .units[0]?.id ?? "";
   // 乙自己的学生李四（乙域内建草稿用）
-  bStudentId = await createStudent("李四", teacherBCookie);
-  bStudentCookie = await loginStudent("李四");
+  bStudentId = await createStudent(app, teacherBCookie, "李四");
+  bStudentCookie = await loginStudent(app, "李四");
 });
 
 /** 布置作业给指定教师的学生并开卷（教师 cookie、其域内单元与学生 cookie 配对） */
@@ -140,130 +147,56 @@ async function freshAttempt(
   return ((await attemptRes.json()) as { data: { id: string } }).data.id;
 }
 
+/** 学生侧 PUT 草稿正文（组装收敛在 putNoteVersion），断言 200 取 versionId */
 async function putNote(
   studentCookie: string,
   attemptId: string,
   questionId: string,
 ): Promise<string> {
-  const form = new FormData();
-  form.append(
-    "body",
-    new Blob([gzipJson(noteDoc(1))], { type: "application/gzip" }),
-    "note.json.gz",
+  const { status, versionId } = await putNoteVersion(
+    app,
+    studentCookie,
+    attemptId,
+    questionId,
   );
-  form.append("baseRevision", "0");
-  form.append("mutationId", randomUUID());
-  const res = await app.request(
-    `/api/student/attempts/${attemptId}/notes/${questionId}`,
-    { method: "PUT", headers: { cookie: studentCookie }, body: form },
-  );
-  expect(res.status).toBe(200);
-  return ((await res.json()) as { data: { versionId: string } }).data.versionId;
+  expect(status).toBe(200);
+  if (versionId === undefined) throw new Error("上传成功但缺少 versionId");
+  return versionId;
 }
 
-/** 学生端补图 POST（multipart 形态与教师端一致） */
+/** 学生端补图 POST（multipart 组装收敛在 noteImageForm） */
 function studentPostImage(
   versionId: string,
   png: Uint8Array,
   cookie: string,
+  options: { pixelWidth?: number; pixelHeight?: number } = {},
 ): Promise<Response> {
-  const form = new FormData();
-  form.append("image", new Blob([png], { type: "image/png" }), "note.png");
-  form.append("spec", "analysis");
-  form.append("pageIndex", "0");
-  form.append("cropX", "0");
-  form.append("cropY", "0");
-  form.append("cropW", "1000");
-  form.append("cropH", "800");
-  form.append("pixelWidth", "320");
-  form.append("pixelHeight", "200");
   return Promise.resolve(
     app.request(`/api/student/note-versions/${versionId}/images`, {
       method: "POST",
       headers: { cookie },
-      body: form,
+      body: noteImageForm(png, options),
     }),
   );
 }
 
-/** 教师端补图 POST（⑧：教师为学生版本重建派生图）；pixel 声明与 PNG IHDR 一致 */
+/** 教师端补图 POST（⑧：教师为学生版本重建派生图；pixel 声明与 PNG IHDR 一致） */
 function teacherPostImage(
   versionId: string,
   png: Uint8Array,
   cookie: string = teacherCookie,
-  dims: { pixelWidth: number; pixelHeight: number } = {
-    pixelWidth: 320,
-    pixelHeight: 200,
-  },
+  options: { pixelWidth?: number; pixelHeight?: number } = {},
 ): Promise<Response> {
-  const form = new FormData();
-  form.append("image", new Blob([png], { type: "image/png" }), "note.png");
-  form.append("spec", "analysis");
-  form.append("pageIndex", "0");
-  form.append("cropX", "0");
-  form.append("cropY", "0");
-  form.append("cropW", "1000");
-  form.append("cropH", "800");
-  form.append("pixelWidth", String(dims.pixelWidth));
-  form.append("pixelHeight", String(dims.pixelHeight));
   return Promise.resolve(
     app.request(`/api/teacher/note-versions/${versionId}/images`, {
       method: "POST",
       headers: { cookie },
-      body: form,
+      body: noteImageForm(png, options),
     }),
   );
 }
 
-function insertEvidence(
-  attemptId: string,
-  questionId: string,
-  versionId: string,
-): void {
-  db.insert(submissionEvidenceTable)
-    .values({
-      id: randomUUID(),
-      attemptId,
-      questionId,
-      state: "frozen",
-      versionId,
-      recordedAt: new Date().toISOString(),
-    })
-    .run();
-}
-
-function extractSessionToken(res: Response): string {
-  const line = res.headers
-    .getSetCookie()
-    .find((c: string) => c.toLowerCase().startsWith("tutor_session="));
-  if (!line) throw new Error("响应中没有 tutor_session cookie");
-  return line.slice("tutor_session=".length).split(";")[0] ?? "";
-}
-
-async function createStudent(name: string, teacherC: string): Promise<string> {
-  const res = await app.request("/api/teacher/students", {
-    method: "POST",
-    headers: { "content-type": "application/json", cookie: teacherC },
-    body: JSON.stringify({
-      displayName: name,
-      loginName: name,
-      password: STUDENT_PASSWORD,
-    }),
-  });
-  expect(res.status).toBe(201);
-  return ((await res.json()) as { data: { student: { id: string } } }).data
-    .student.id;
-}
-
-async function loginStudent(name: string): Promise<string> {
-  const res = await app.request("/api/public/student/login", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ loginName: name, password: STUDENT_PASSWORD }),
-  });
-  expect(res.status).toBe(200);
-  return `tutor_session=${extractSessionToken(res)}`;
-}
+// 会话三件套与 insertEvidence（带 state 版）共享自 src/test/note-world.ts（复审⑧）
 
 // ---------- 域内读写 ----------
 
@@ -285,7 +218,7 @@ describe("教师域内：evidence / 版本 / 补图", () => {
       attemptId,
     );
     expect(submitRes.status).toBe(200);
-    insertEvidence(attemptId, Q.solve, versionId);
+    insertEvidence(db, attemptId, Q.solve, "frozen", versionId);
 
     const res = await app.request(
       `/api/teacher/attempts/${attemptId}/evidence/${Q.solve}`,

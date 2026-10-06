@@ -20,7 +20,7 @@ import {
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { insertFrozenResponse } from "../services/attempt-service.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
-import { gzipJson, noteDoc } from "../test/note-fixtures.ts";
+import { gzipJson, noteDoc, putNoteBodyForm } from "../test/note-fixtures.ts";
 import { submitAttemptRequest } from "../test/submit-revisions";
 
 /**
@@ -55,7 +55,7 @@ interface PutNoteOptions {
   extra?: Record<string, string>;
 }
 
-/** PUT 草稿正文（multipart：body 文件 + baseRevision/mutationId 字段） */
+/** PUT 草稿正文（multipart 组装收敛在 note-fixtures.putNoteBodyForm；extra 恶意字段本地附加） */
 function putNote(
   app: App,
   cookie: string | undefined,
@@ -64,14 +64,7 @@ function putNote(
   body: Uint8Array,
   options: PutNoteOptions = {},
 ): Promise<Response> {
-  const form = new FormData();
-  form.append(
-    "body",
-    new Blob([body], { type: "application/gzip" }),
-    "note.json.gz",
-  );
-  form.append("baseRevision", String(options.baseRevision ?? 0));
-  form.append("mutationId", options.mutationId ?? randomUUID());
+  const form = putNoteBodyForm(body, options);
   for (const [k, v] of Object.entries(options.extra ?? {})) {
     form.append(k, v);
   }

@@ -18,12 +18,23 @@ import type { Db } from "../db/client.ts";
 import {
   noteImages as noteImagesTable,
   notes as notesTable,
-  submissionEvidence as submissionEvidenceTable,
 } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { canonicalNoteJson } from "../services/note-service.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
-import { gzipJson, makeNotePng, noteDoc } from "../test/note-fixtures.ts";
+import {
+  makeNotePng,
+  noteDoc,
+  noteImageForm,
+  putNoteForm,
+  putNoteVersion,
+} from "../test/note-fixtures.ts";
+import {
+  createStudent,
+  extractSessionToken,
+  insertEvidence,
+  loginStudent,
+} from "../test/note-world.ts";
 import { submitAttemptRequest } from "../test/submit-revisions";
 
 /**
@@ -41,7 +52,6 @@ import { submitAttemptRequest } from "../test/submit-revisions";
  */
 
 const silentLogger: Logger = pino({ enabled: false });
-const STUDENT_PASSWORD = "stu-pass-6";
 
 const PRACTICE_MD = readFileSync(
   new URL("../../../../samples/v2/练习样例.md", import.meta.url),
@@ -124,79 +134,47 @@ interface PutNoteOptions {
   mutationId?: string;
 }
 
-/** PUT 草稿正文（T6R.4 写入口），返回回执里的 versionId（默认再取 revision） */
+/** PUT 草稿正文（T6R.4 写入口），断言 200 并返回回执里的 versionId */
 async function putNote(
   attemptId: string,
   questionId: string,
   strokes = 1,
   options: PutNoteOptions = {},
 ): Promise<string> {
-  const form = new FormData();
-  form.append(
-    "body",
-    new Blob([gzipJson(noteDoc(strokes))], { type: "application/gzip" }),
-    "note.json.gz",
+  const { status, versionId } = await putNoteVersion(
+    app,
+    aCookie,
+    attemptId,
+    questionId,
+    strokes,
+    options,
   );
-  form.append("baseRevision", String(options.baseRevision ?? 0));
-  form.append("mutationId", options.mutationId ?? randomUUID());
-  const res = await app.request(
-    `/api/student/attempts/${attemptId}/notes/${questionId}`,
-    { method: "PUT", headers: { cookie: aCookie }, body: form },
-  );
-  expect(res.status).toBe(200);
-  return ((await res.json()) as { data: { versionId: string } }).data.versionId;
+  expect(status).toBe(200);
+  if (versionId === undefined) throw new Error("上传成功但缺少 versionId");
+  return versionId;
 }
 
 interface PostImageOptions {
   spec?: string;
-  pageIndex?: number;
+  pageIndex?: number | string;
   pixelWidth?: number;
   pixelHeight?: number;
   cookie?: string;
 }
 
-/** POST 补派生图（multipart：image 文件 + 元信息字符串字段） */
+/** POST 补派生图（multipart 组装收敛在 noteImageForm） */
 function postImage(
   versionId: string,
   png: Uint8Array,
   options: PostImageOptions = {},
 ): Promise<Response> {
-  const form = new FormData();
-  form.append("image", new Blob([png], { type: "image/png" }), "note.png");
-  form.append("spec", options.spec ?? "analysis");
-  form.append("pageIndex", String(options.pageIndex ?? 0));
-  form.append("cropX", "0");
-  form.append("cropY", "0");
-  form.append("cropW", "1000");
-  form.append("cropH", "800");
-  form.append("pixelWidth", String(options.pixelWidth ?? 320));
-  form.append("pixelHeight", String(options.pixelHeight ?? 200));
   return Promise.resolve(
     app.request(`/api/student/note-versions/${versionId}/images`, {
       method: "POST",
       headers: { cookie: options.cookie ?? aCookie },
-      body: form,
+      body: noteImageForm(png, options),
     }),
   );
-}
-
-/** 直插提交证据行（交卷事务写入口在 T6R.10——本任务读侧按行存在性投影） */
-function insertEvidence(
-  attemptId: string,
-  questionId: string,
-  state: "none" | "frozen" | "missing" | "legacy_unverified",
-  versionId: string | null,
-): void {
-  db.insert(submissionEvidenceTable)
-    .values({
-      id: randomUUID(),
-      attemptId,
-      questionId,
-      state,
-      versionId,
-      recordedAt: new Date().toISOString(),
-    })
-    .run();
 }
 
 /** 该 attempt 该题的 scratch 笔记行 */
@@ -213,42 +191,7 @@ function noteRowOf(attemptId: string, questionId: string) {
     .get();
 }
 
-function extractSessionToken(res: Response): string {
-  const line = res.headers
-    .getSetCookie()
-    .find((c: string) => c.toLowerCase().startsWith("tutor_session="));
-  if (!line) throw new Error("响应中没有 tutor_session cookie");
-  return line.slice("tutor_session=".length).split(";")[0] ?? "";
-}
-
-async function createStudent(
-  app: App,
-  teacherCookie: string,
-  name: string,
-): Promise<string> {
-  const res = await app.request("/api/teacher/students", {
-    method: "POST",
-    headers: { "content-type": "application/json", cookie: teacherCookie },
-    body: JSON.stringify({
-      displayName: name,
-      loginName: name,
-      password: STUDENT_PASSWORD,
-    }),
-  });
-  expect(res.status).toBe(201);
-  return ((await res.json()) as { data: { student: { id: string } } }).data
-    .student.id;
-}
-
-async function loginStudent(app: App, name: string): Promise<string> {
-  const res = await app.request("/api/public/student/login", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ loginName: name, password: STUDENT_PASSWORD }),
-  });
-  expect(res.status).toBe(200);
-  return `tutor_session=${extractSessionToken(res)}`;
-}
+// 会话三件套与 insertEvidence 共享自 src/test/note-world.ts（复审⑧）
 
 // ---------- 鉴权矩阵 ----------
 
@@ -370,22 +313,14 @@ describe("读/图接口鉴权矩阵", () => {
 
   it("引用其他 attempt 的 versionId：张三补图/读李四笔记的版本 → 403/404", async () => {
     const bAttemptId = await freshAttempt([bId]);
-    const form = new FormData();
-    form.append(
-      "body",
-      new Blob([gzipJson(noteDoc(1))], { type: "application/gzip" }),
-      "note.json.gz",
+    const { status, versionId: bVersionId } = await putNoteVersion(
+      app,
+      bCookie,
+      bAttemptId,
+      Q.solve,
     );
-    form.append("baseRevision", "0");
-    form.append("mutationId", randomUUID());
-    const putRes = await app.request(
-      `/api/student/attempts/${bAttemptId}/notes/${Q.solve}`,
-      { method: "PUT", headers: { cookie: bCookie }, body: form },
-    );
-    expect(putRes.status).toBe(200);
-    const bVersionId = (
-      (await putRes.json()) as { data: { versionId: string } }
-    ).data.versionId;
+    expect(status).toBe(200);
+    if (bVersionId === undefined) throw new Error("缺少 versionId");
 
     // 张三引用李四的 versionId：读 403（attempt 归属门口）、补图 403
     expect(
@@ -419,26 +354,14 @@ describe("工作稿头与证据投影", () => {
 
   it("上传后 head 反映回执；补图后 images 聚合到当前 head 版本", async () => {
     const attemptId = await freshAttempt();
-    const form = new FormData();
-    form.append(
-      "body",
-      new Blob([gzipJson(noteDoc(2))], { type: "application/gzip" }),
-      "note.json.gz",
+    const { versionId } = await putNoteVersion(
+      app,
+      aCookie,
+      attemptId,
+      Q.apply,
+      2,
     );
-    form.append("baseRevision", "0");
-    form.append("mutationId", randomUUID());
-    const putRes = await app.request(
-      `/api/student/attempts/${attemptId}/notes/${Q.apply}`,
-      { method: "PUT", headers: { cookie: aCookie }, body: form },
-    );
-    const receipt = (await putRes.json()) as {
-      data: {
-        noteId: string;
-        versionId: string;
-        revision: number;
-        savedAt: string;
-      };
-    };
+    if (versionId === undefined) throw new Error("缺少 versionId");
 
     const headRes = await app.request(
       `/api/student/attempts/${attemptId}/notes/${Q.apply}`,
@@ -451,30 +374,22 @@ describe("工作稿头与证据投影", () => {
       };
     };
     expect(head.data.note?.revision).toBe(1);
-    expect(head.data.note?.currentVersionId).toBe(receipt.data.versionId);
+    expect(head.data.note?.currentVersionId).toBe(versionId);
     expect(head.data.images).toEqual([]);
     assertNoLeak(head);
 
     // 补两张图（analysis 两页切片）→ head.images 两条 ready
-    const img1 = await postImage(
-      receipt.data.versionId,
-      makeNotePng(1000, 800),
-      {
-        pageIndex: 0,
-        pixelWidth: 1000,
-        pixelHeight: 800,
-      },
-    );
+    const img1 = await postImage(versionId, makeNotePng(1000, 800), {
+      pageIndex: 0,
+      pixelWidth: 1000,
+      pixelHeight: 800,
+    });
     expect(img1.status).toBe(200);
-    const img2 = await postImage(
-      receipt.data.versionId,
-      makeNotePng(1000, 300),
-      {
-        pageIndex: 1,
-        pixelWidth: 1000,
-        pixelHeight: 300,
-      },
-    );
+    const img2 = await postImage(versionId, makeNotePng(1000, 300), {
+      pageIndex: 1,
+      pixelWidth: 1000,
+      pixelHeight: 300,
+    });
     expect(img2.status).toBe(200);
     for (const res of [img1, img2]) {
       const body = (await res.json()) as { data: unknown };
@@ -495,7 +410,7 @@ describe("工作稿头与证据投影", () => {
     const attemptId = await freshAttempt();
     const versionId = await putNote(attemptId, Q.solve);
     await postImage(versionId, makeNotePng());
-    insertEvidence(attemptId, Q.solve, "frozen", versionId);
+    insertEvidence(db, attemptId, Q.solve, "frozen", versionId);
 
     const res = await app.request(
       `/api/student/attempts/${attemptId}/evidence/${Q.solve}`,
@@ -621,17 +536,14 @@ describe("交卷后门槛（ALREADY_SUBMITTED 只拦新写）", () => {
     const submitRes = await submitAttemptRequest(app, aCookie, attemptId);
     expect(submitRes.status).toBe(200);
 
-    const form = new FormData();
-    form.append(
-      "body",
-      new Blob([gzipJson(noteDoc(9))], { type: "application/gzip" }),
-      "note.json.gz",
-    );
-    form.append("baseRevision", "1");
-    form.append("mutationId", randomUUID());
+    // 新 mutation 的新写入 → 409（原稿固定）
     const putRes = await app.request(
       `/api/student/attempts/${attemptId}/notes/${Q.solve}`,
-      { method: "PUT", headers: { cookie: aCookie }, body: form },
+      {
+        method: "PUT",
+        headers: { cookie: aCookie },
+        body: putNoteForm(9, { baseRevision: 1 }),
+      },
     );
     expect(putRes.status).toBe(409);
     expect(((await putRes.json()) as ApiErr).error).toBe("ALREADY_SUBMITTED");
@@ -700,41 +612,25 @@ describe("补图上传校验", () => {
     expect(noFileRes.status).toBe(400);
 
     // crop 越硬上限（multipart 字符串组装后契约拒绝）
-    const badCrop = new FormData();
-    badCrop.append("image", new Blob([makeNotePng()], { type: "image/png" }));
-    badCrop.append("spec", "analysis");
-    badCrop.append("pageIndex", "0");
-    badCrop.append("cropX", "0");
-    badCrop.append("cropY", "0");
-    badCrop.append("cropW", "1001");
-    badCrop.append("cropH", "800");
-    badCrop.append("pixelWidth", "320");
-    badCrop.append("pixelHeight", "200");
     const badCropRes = await app.request(
       `/api/student/note-versions/${versionId}/images`,
-      { method: "POST", headers: { cookie: aCookie }, body: badCrop },
+      {
+        method: "POST",
+        headers: { cookie: aCookie },
+        body: noteImageForm(makeNotePng(), { cropW: 1001 }),
+      },
     );
     expect(badCropRes.status).toBe(400);
     expect(((await badCropRes.json()) as ApiErr).error).toBe(
       "VALIDATION_ERROR",
     );
     // 非十进制整数串同拒（对齐 T6R.4 multipart 传输层口径）
-    const badIndex = new FormData();
-    badIndex.append("image", new Blob([makeNotePng()], { type: "image/png" }));
-    badIndex.append("spec", "analysis");
-    badIndex.append("pageIndex", "1e0");
-    badIndex.append("cropX", "0");
-    badIndex.append("cropY", "0");
-    badIndex.append("cropW", "1000");
-    badIndex.append("cropH", "800");
-    badIndex.append("pixelWidth", "320");
-    badIndex.append("pixelHeight", "200");
     expect(
       (
         await app.request(`/api/student/note-versions/${versionId}/images`, {
           method: "POST",
           headers: { cookie: aCookie },
-          body: badIndex,
+          body: noteImageForm(makeNotePng(), { pageIndex: "1e0" }),
         })
       ).status,
     ).toBe(400);
@@ -981,30 +877,12 @@ describe("课程撤权与学生停用（冻结语义一致）", () => {
       },
     );
     expect(patched.status).toBe(200);
-    const student = await courseApp.request("/api/teacher/students", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        cookie: courseTeacherCookie,
-      },
-      body: JSON.stringify({
-        displayName: "成员",
-        loginName: "member-stu",
-        password: STUDENT_PASSWORD,
-      }),
-    });
-    memberStudentId = (
-      (await student.json()) as { data: { student: { id: string } } }
-    ).data.student.id;
-    const login = await courseApp.request("/api/public/student/login", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        loginName: "member-stu",
-        password: STUDENT_PASSWORD,
-      }),
-    });
-    memberCookie = `tutor_session=${extractSessionToken(login)}`;
+    memberStudentId = await createStudent(
+      courseApp,
+      courseTeacherCookie,
+      "member-stu",
+    );
+    memberCookie = await loginStudent(courseApp, "member-stu");
     const added = await courseApp.request(
       `/api/teacher/courses/${courseId}/members`,
       {
@@ -1029,26 +907,12 @@ describe("课程撤权与学生停用（冻结语义一致）", () => {
     return ((await res.json()) as { data: { id: string } }).data.id;
   }
 
-  async function coursePutNote(
+  /** 课程世界的成员 PUT 草稿（组装收敛在 putNoteVersion） */
+  function coursePutNote(
     attemptId: string,
     questionId: string,
   ): Promise<{ status: number; versionId?: string }> {
-    const form = new FormData();
-    form.append(
-      "body",
-      new Blob([gzipJson(noteDoc(1))], { type: "application/gzip" }),
-      "note.json.gz",
-    );
-    form.append("baseRevision", "0");
-    form.append("mutationId", randomUUID());
-    const res = await courseApp.request(
-      `/api/student/attempts/${attemptId}/notes/${questionId}`,
-      { method: "PUT", headers: { cookie: memberCookie }, body: form },
-    );
-    if (res.status !== 200) return { status: res.status };
-    const versionId = ((await res.json()) as { data: { versionId: string } })
-      .data.versionId;
-    return { status: res.status, versionId };
+    return putNoteVersion(courseApp, memberCookie, attemptId, questionId);
   }
 
   /** 加回成员（上一用例可能已移出；幂等——已在册时服务端按集合处理） */
@@ -1132,16 +996,6 @@ describe("课程撤权与学生停用（冻结语义一致）", () => {
     const putAgain = await coursePutNote(attemptId, Q.apply);
     expect(putAgain.status).toBe(403);
     // 撤权对补图同样是拒写（同一 requireUsableAttempt 门口）
-    const imageForm = new FormData();
-    imageForm.append("image", new Blob([makeNotePng()], { type: "image/png" }));
-    imageForm.append("spec", "analysis");
-    imageForm.append("pageIndex", "0");
-    imageForm.append("cropX", "0");
-    imageForm.append("cropY", "0");
-    imageForm.append("cropW", "1000");
-    imageForm.append("cropH", "800");
-    imageForm.append("pixelWidth", "320");
-    imageForm.append("pixelHeight", "200");
     expect(
       (
         await courseApp.request(
@@ -1149,7 +1003,7 @@ describe("课程撤权与学生停用（冻结语义一致）", () => {
           {
             method: "POST",
             headers: { cookie: memberCookie },
-            body: imageForm,
+            body: noteImageForm(makeNotePng()),
           },
         )
       ).status,
@@ -1223,7 +1077,7 @@ describe("软删题的历史证据可读（不查询当前题库存活）", () =
     await postImage(versionId, makeNotePng());
     const submitRes = await submitAttemptRequest(app, aCookie, attemptId);
     expect(submitRes.status).toBe(200);
-    insertEvidence(attemptId, Q.solve, "frozen", versionId);
+    insertEvidence(db, attemptId, Q.solve, "frozen", versionId);
 
     const deleted = await app.request(`/api/teacher/questions/${Q.solve}`, {
       method: "DELETE",

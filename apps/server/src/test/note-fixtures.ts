@@ -6,11 +6,13 @@ import { students as studentsTable } from "../db/schema.ts";
 import { TEST_TEACHER_ID } from "../db/test-utils.ts";
 
 /**
- * 题目草稿（T6R.4/T6R.5）测试共享夹具（复审⑫收敛）：
+ * 题目草稿（T6R.4/T6R.5）测试共享夹具（复审⑫收敛；⑧补路由层请求组装）：
  * - noteDoc：最小合法 NoteDoc（n 笔，y 可区分不同稿）；
  * - gzipJson：gzip 打包任意 JSON（NoteDocInput 直传通道）；
  * - makeNotePng：最小合法 PNG（魔数 + IHDR，padding 撑大小）；
- * - makeStudent：直插学生行（归属测试教师；服务层测试用）。
+ * - makeStudent：直插学生行（归属测试教师；服务层测试用）；
+ * - putNoteForm / putNoteVersion / noteImageForm：路由层 multipart 组装
+ *   （五处手写 FormData 归一，字段集漂移即测试漂移）。
  * 服务层测试（note-service.test）与路由测试（student-notes/student-note-read/
  * teacher-notes.test）共用，避免多份漂移。
  */
@@ -84,4 +86,97 @@ export function makeStudent(db: Db): string {
     })
     .run();
   return id;
+}
+
+// ---------- 路由层请求组装（T6R.5 复审⑧：五处手写 FormData 归一） ----------
+
+/** app.request 的最小形态（createApp 返回值满足；测试注入用） */
+export type TestApp = {
+  request: (path: string, init?: RequestInit) => Promise<Response> | Response;
+};
+
+export interface PutNoteOptions {
+  baseRevision?: number;
+  mutationId?: string;
+}
+
+/** PUT 草稿正文的 multipart FormData（body 字节原样上传——自定义字节用例用） */
+export function putNoteBodyForm(
+  body: Uint8Array,
+  options: PutNoteOptions = {},
+): FormData {
+  const form = new FormData();
+  form.append(
+    "body",
+    new Blob([body], { type: "application/gzip" }),
+    "note.json.gz",
+  );
+  form.append("baseRevision", String(options.baseRevision ?? 0));
+  form.append("mutationId", options.mutationId ?? randomUUID());
+  return form;
+}
+
+/** PUT 草稿正文的 multipart FormData（noteDoc(strokes) gzip 打包；常用路径） */
+export function putNoteForm(
+  strokes = 1,
+  options: PutNoteOptions = {},
+): FormData {
+  return putNoteBodyForm(gzipJson(noteDoc(strokes)), options);
+}
+
+/**
+ * PUT 一版草稿正文并取回 versionId（路由层测试高频路径）。
+ * 非 200 时不抛（调用方按需断言状态码），versionId 为 undefined。
+ */
+export async function putNoteVersion(
+  app: TestApp,
+  cookie: string | undefined,
+  attemptId: string,
+  questionId: string,
+  strokes = 1,
+  options: PutNoteOptions = {},
+): Promise<{ status: number; versionId?: string }> {
+  const res = await app.request(
+    `/api/student/attempts/${attemptId}/notes/${questionId}`,
+    {
+      method: "PUT",
+      headers: cookie === undefined ? {} : { cookie },
+      body: putNoteForm(strokes, options),
+    },
+  );
+  if (res.status !== 200) return { status: res.status };
+  const data = (await res.json()) as { data: { versionId: string } };
+  return { status: res.status, versionId: data.data.versionId };
+}
+
+export interface NoteImageFormOptions {
+  spec?: string;
+  pageIndex?: number | string;
+  cropX?: number | string;
+  cropY?: number | string;
+  cropW?: number | string;
+  cropH?: number | string;
+  pixelWidth?: number | string;
+  pixelHeight?: number | string;
+}
+
+/**
+ * POST 补图的 multipart FormData（image 文件 + 八个元信息字段；字段值可传
+ * 字符串以构造非法形态用例，如 pageIndex: "1e0"）。
+ */
+export function noteImageForm(
+  png: Uint8Array,
+  options: NoteImageFormOptions = {},
+): FormData {
+  const form = new FormData();
+  form.append("image", new Blob([png], { type: "image/png" }), "note.png");
+  form.append("spec", options.spec ?? "analysis");
+  form.append("pageIndex", String(options.pageIndex ?? 0));
+  form.append("cropX", String(options.cropX ?? 0));
+  form.append("cropY", String(options.cropY ?? 0));
+  form.append("cropW", String(options.cropW ?? 1000));
+  form.append("cropH", String(options.cropH ?? 800));
+  form.append("pixelWidth", String(options.pixelWidth ?? 320));
+  form.append("pixelHeight", String(options.pixelHeight ?? 200));
+  return form;
 }
