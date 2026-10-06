@@ -149,6 +149,8 @@ function packRequestDefaults() {
       summaries: true,
       ink: false,
       traces: true,
+      // v2 专属模块（T6R.12）：MCP 旧调用保持 v1 默认（不装配证据附件）
+      evidence: false,
     },
   };
 }
