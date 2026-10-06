@@ -17,6 +17,7 @@ import { createApp } from "../app.ts";
 import type { Db } from "../db/client.ts";
 import { noteImages as noteImagesTable } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
+import { insertFrozenResponse } from "../services/attempt-service.ts";
 import { canonicalNoteJson } from "../services/note-service.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 import {
@@ -582,6 +583,142 @@ describe("交卷后门槛（ALREADY_SUBMITTED 只拦新写）", () => {
       ).status,
     ).toBe(200);
   });
+
+  it("graded 列（复审轮⑦）：教师批完待批→graded；PUT 409、五读放行", async () => {
+    const attemptId = await freshAttempt();
+    const versionId = await putNote(attemptId, Q.solve);
+    const imageRes = await postImage(versionId, makeNotePng());
+    const imageId = ((await imageRes.json()) as { data: { imageId: string } })
+      .data.imageId;
+    const submitRes = await submitAttemptRequest(app, aCookie, attemptId);
+    expect(submitRes.status).toBe(200);
+    // 教师批完全部待批 → 全 finalCorrect 非空 → attempt 进入 graded
+    const pending = await app.request(
+      `/api/teacher/pending-marks?studentId=${aId}`,
+      { headers: { cookie: teacherCookie } },
+    );
+    expect(pending.status).toBe(200);
+    const marks = (
+      (await pending.json()) as { data: { marks: { responseId: string }[] } }
+    ).data.marks;
+    expect(marks.length).toBeGreaterThan(0);
+    for (const mark of marks) {
+      const res = await app.request(
+        `/api/teacher/responses/${mark.responseId}/mark`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            cookie: teacherCookie,
+          },
+          body: JSON.stringify({ mark: "correct", comment: null }),
+        },
+      );
+      expect(res.status).toBe(200);
+    }
+    const detail = await app.request(`/api/student/attempts/${attemptId}`, {
+      headers: { cookie: aCookie },
+    });
+    const detailBody = (await detail.json()) as {
+      data: { attempt: { status: string } };
+    };
+    expect(detailBody.data.attempt.status).toBe("graded");
+
+    // graded 状态：写仍拒（原稿固定）、五读全放行
+    const putRes = await app.request(
+      `/api/student/attempts/${attemptId}/notes/${Q.solve}`,
+      {
+        method: "PUT",
+        headers: { cookie: aCookie },
+        body: putNoteForm(2, { baseRevision: 1 }),
+      },
+    );
+    expect(putRes.status).toBe(409);
+    expect(((await putRes.json()) as ApiErr).error).toBe("ALREADY_SUBMITTED");
+    for (const path of [
+      `/api/student/attempts/${attemptId}/notes/${Q.solve}`,
+      `/api/student/attempts/${attemptId}/evidence/${Q.solve}`,
+      `/api/student/note-versions/${versionId}/document`,
+      `/api/student/note-versions/${versionId}/images/${imageId}`,
+    ]) {
+      expect(
+        (await app.request(path, { headers: { cookie: aCookie } })).status,
+        path,
+      ).toBe(200);
+    }
+    expect(
+      (
+        await postImage(versionId, makeNotePng(500, 400), {
+          pixelWidth: 500,
+          pixelHeight: 400,
+        })
+      ).status,
+    ).toBe(200);
+  });
+});
+
+// ---------- 鉴权矩阵补充（复审轮⑪⑫） ----------
+
+describe("版本/图片错配与遗留行", () => {
+  it("imageId 跨版本错配（⑪）：真 imageId + 错 versionId → 404", async () => {
+    const attemptA = await freshAttempt();
+    const attemptB = await freshAttempt();
+    const versionA = await putNote(attemptA, Q.solve);
+    const versionB = await putNote(attemptB, Q.solve);
+    const imageRes = await postImage(versionA, makeNotePng());
+    const imageId = ((await imageRes.json()) as { data: { imageId: string } })
+      .data.imageId;
+
+    // imageId 真实存在，但挂在另一版本下 → 按不存在口径 404（不暴露跨版本存在性）
+    expect(
+      (
+        await app.request(
+          `/api/student/note-versions/${versionB}/images/${imageId}`,
+          { headers: { cookie: aCookie } },
+        )
+      ).status,
+    ).toBe(404);
+    // 正确配对（对照）200
+    expect(
+      (
+        await app.request(
+          `/api/student/note-versions/${versionA}/images/${imageId}`,
+          { headers: { cookie: aCookie } },
+        )
+      ).status,
+    ).toBe(200);
+  });
+
+  it("遗留空快照 responses 行（⑫）：evidence 宽口径空投影 / head 严口径 404", async () => {
+    const attemptId = await freshAttempt();
+    // 直插升级前遗留形态：responses 行在、快照为空（qid 不在单元内，懒冻结
+    // 不会为它回填快照）
+    db.transaction((tx) => {
+      insertFrozenResponse(tx, {
+        attemptId,
+        questionId: "legacy-empty-snapshot",
+        questionVersion: 1,
+        questionSnapshotJson: null,
+        unitId: null,
+      });
+    });
+    // 严口径（写通道同门）：快照缺失不算可用题 → 404
+    const headRes = await app.request(
+      `/api/student/attempts/${attemptId}/notes/legacy-empty-snapshot`,
+      { headers: { cookie: aCookie } },
+    );
+    expect(headRes.status).toBe(404);
+    expect(((await headRes.json()) as ApiErr).error).toBe("QUESTION_NOT_FOUND");
+    // 宽口径（历史读取）：行在 → 空投影 200（不 404、不回填当前题库）
+    const evidenceRes = await app.request(
+      `/api/student/attempts/${attemptId}/evidence/legacy-empty-snapshot`,
+      { headers: { cookie: aCookie } },
+    );
+    expect(evidenceRes.status).toBe(200);
+    const body = (await evidenceRes.json()) as { data: unknown };
+    expect(body.data).toEqual({ note: null, images: [], evidence: null });
+    assertNoLeak(body);
+  });
 });
 
 // ---------- 补图上传校验（⑤） ----------
@@ -1005,6 +1142,20 @@ describe("课程撤权与学生停用（冻结语义一致）", () => {
         )
       ).status,
     ).toBe(200);
+    // 撤权×已交卷×补图写通道（复审轮⑧）：补图是恢复通道——requireUsableAttempt
+    // 对已交卷不再复检课程可见性，放行（实现语义用测试锁定）
+    expect(
+      (
+        await courseApp.request(
+          `/api/student/note-versions/${versionId}/images`,
+          {
+            method: "POST",
+            headers: { cookie: memberCookie },
+            body: noteImageForm(makeNotePng()),
+          },
+        )
+      ).status,
+    ).toBe(200);
   });
 
   it("进行中卷：移出成员后写/读全部 403（撤权拒写保持既有策略，读亦随 detail 口径）", async () => {
@@ -1087,6 +1238,146 @@ describe("课程撤权与学生停用（冻结语义一致）", () => {
       });
       expect(res.status, path).toBe(401);
     }
+  });
+
+  /** note 五路由（PUT/GET head/GET evidence/GET document/POST 补图）逐一请求 */
+  async function noteRoutesAssertions(
+    attemptId: string,
+    versionId: string,
+    expectStatus: (status: number, label: string) => void,
+  ): Promise<void> {
+    expectStatus((await coursePutNote(attemptId, Q.apply)).status, "PUT notes");
+    for (const path of [
+      `/api/student/attempts/${attemptId}/notes/${Q.solve}`,
+      `/api/student/attempts/${attemptId}/evidence/${Q.solve}`,
+      `/api/student/note-versions/${versionId}/document`,
+    ]) {
+      expectStatus(
+        (await courseApp.request(path, { headers: { cookie: memberCookie } }))
+          .status,
+        `GET ${path}`,
+      );
+    }
+    expectStatus(
+      (
+        await courseApp.request(
+          `/api/student/note-versions/${versionId}/images`,
+          {
+            method: "POST",
+            headers: { cookie: memberCookie },
+            body: noteImageForm(makeNotePng()),
+          },
+        )
+      ).status,
+      "POST images",
+    );
+  }
+
+  /** 撤销学生归档（上一用例归档了成员；⑨ 系列用例复用同一学生） */
+  async function unarchiveMember(): Promise<void> {
+    const res = await courseApp.request(
+      `/api/teacher/students/${memberStudentId}`,
+      {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+          cookie: courseTeacherCookie,
+        },
+        body: JSON.stringify({ archived: false }),
+      },
+    );
+    expect(res.status).toBe(200);
+  }
+
+  /** 共享课程世界的进行中 attempt 已有两题笔记——直插新冻结行为本用例腾题槽 */
+  function seedCourseQuestion(attemptId: string, qid: string): void {
+    courseDb.transaction((tx) => {
+      insertFrozenResponse(tx, {
+        attemptId,
+        questionId: qid,
+        questionVersion: 1,
+        questionSnapshotJson: JSON.stringify({ id: qid }),
+        unitId: null,
+      });
+    });
+  }
+
+  it("撤权形态二（复审轮⑨）：条目隐藏 → note 五路由 404 NOT_FOUND", async () => {
+    await unarchiveMember();
+    await readdMember();
+    const attemptId = await startCourseAttempt();
+    seedCourseQuestion(attemptId, "revocation-form2-q");
+    const { versionId } = await coursePutNote(attemptId, "revocation-form2-q");
+    expect(versionId).toBeDefined();
+    // 隐藏课程条目（D5 可见性——course draft 读写在可见性门被 404 拦）
+    const detail = await courseApp.request(`/api/teacher/courses/${courseId}`, {
+      headers: { cookie: courseTeacherCookie },
+    });
+    const item = (
+      (await detail.json()) as {
+        data: { items: { id: string; refId: string | null }[] };
+      }
+    ).data.items.find((entry) => entry.refId === courseUnitId);
+    if (!item) throw new Error("课程目录中未找到单元条目");
+    const hidden = await courseApp.request(
+      `/api/teacher/course-items/${item.id}`,
+      {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+          cookie: courseTeacherCookie,
+        },
+        body: JSON.stringify({ visible: false }),
+      },
+    );
+    expect(hidden.status).toBe(200);
+
+    await noteRoutesAssertions(attemptId, versionId, (status, label) => {
+      expect(status, label).toBe(404);
+    });
+  });
+
+  it("撤权形态三（复审轮⑨）：课程归档 → note 五路由 403 COURSE_ACCESS_DENIED", async () => {
+    await readdMember();
+    // 条目恢复可见（上一用例隐藏了它）
+    const detail = await courseApp.request(`/api/teacher/courses/${courseId}`, {
+      headers: { cookie: courseTeacherCookie },
+    });
+    const item = (
+      (await detail.json()) as {
+        data: { items: { id: string; refId: string | null }[] };
+      }
+    ).data.items.find((entry) => entry.refId === courseUnitId);
+    if (!item) throw new Error("课程目录中未找到单元条目");
+    await courseApp.request(`/api/teacher/course-items/${item.id}`, {
+      method: "PATCH",
+      headers: {
+        "content-type": "application/json",
+        cookie: courseTeacherCookie,
+      },
+      body: JSON.stringify({ visible: true }),
+    });
+    const attemptId = await startCourseAttempt();
+    seedCourseQuestion(attemptId, "revocation-form3-q");
+    const { versionId } = await coursePutNote(attemptId, "revocation-form3-q");
+    expect(versionId).toBeDefined();
+    // 归档课程（D22——成员仍在但课程整体不可用 → 403）
+    const archivedCourse = await courseApp.request(
+      `/api/teacher/courses/${courseId}`,
+      {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+          cookie: courseTeacherCookie,
+        },
+        body: JSON.stringify({ archived: true }),
+      },
+    );
+    expect(archivedCourse.status).toBe(200);
+
+    await noteRoutesAssertions(attemptId, versionId, (status, label) => {
+      expect(status, label).toBe(403);
+    });
   });
 });
 

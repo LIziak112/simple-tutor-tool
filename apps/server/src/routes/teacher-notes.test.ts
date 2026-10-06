@@ -382,3 +382,43 @@ describe("域外 404 与身份矩阵", () => {
     ).toBe(401);
   });
 });
+
+// ---------- 软删题历史证据（放最后：软删影响甲域题目行，后续用例不再用该题） ----------
+
+describe("教师⑥软删题历史证据（复审轮⑩）", () => {
+  it("交卷+证据行后软删题目 → 教师 evidence 照常返回冻结证据", async () => {
+    const attemptId = await freshAttempt(
+      teacherCookie,
+      aStudentId,
+      aStudentCookie,
+    );
+    const versionId = await putNote(aStudentCookie, attemptId, Q.solve);
+    expect(
+      (await studentPostImage(versionId, makeNotePng(), aStudentCookie)).status,
+    ).toBe(200);
+    const submitRes = await submitAttemptRequest(
+      app,
+      aStudentCookie,
+      attemptId,
+    );
+    expect(submitRes.status).toBe(200);
+    insertEvidence(db, attemptId, Q.solve, "frozen", versionId);
+
+    const deleted = await app.request(`/api/teacher/questions/${Q.solve}`, {
+      method: "DELETE",
+      headers: { cookie: teacherCookie },
+    });
+    expect(deleted.status).toBe(200);
+
+    const res = await app.request(
+      `/api/teacher/attempts/${attemptId}/evidence/${Q.solve}`,
+      { headers: { cookie: teacherCookie } },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      data: { evidence: { state: string } | null; images: unknown[] };
+    };
+    expect(body.data.evidence?.state).toBe("frozen");
+    expect(body.data.images).toHaveLength(1);
+  });
+});
