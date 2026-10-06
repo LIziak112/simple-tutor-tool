@@ -10,12 +10,23 @@ import {
 } from "../auth/session";
 import type { Db, DbHandle } from "../db/client";
 import { staticDbHandle } from "../db/client";
-import { gzipResponse, pngResponse } from "../lib/binary-response";
+import {
+  gzipResponse,
+  noStoreBinaryResponse,
+  pngResponse,
+  stripPngSuffix,
+} from "../lib/binary-response";
+import { parseNoteImageUploadForm } from "../lib/form-fields";
 import {
   getTeacherInkMeta,
   getTeacherInkPng,
   getTeacherInkStrokes,
 } from "../services/ink-service";
+import {
+  attachNoteImage,
+  getTeacherNoteDocument,
+  getTeacherNoteImagePng,
+} from "../services/note-service";
 import { createContentRoutes } from "./content";
 import { createCourseRoutes } from "./courses";
 import { createImportRoutes } from "./import";
@@ -120,7 +131,7 @@ export function createTeacherRoutes(
             db,
             dataDir,
             c.var.teacher.id,
-            file.slice(0, -".png".length),
+            stripPngSuffix(file),
           );
           return pngResponse(png.bytes, png.etag);
         }
@@ -136,6 +147,52 @@ export function createTeacherRoutes(
         return c.json({
           ok: true,
           data: getTeacherInkMeta(db, c.var.teacher.id, file),
+        });
+      })
+      // T6R.5 ⑦：教师读题目草稿版本文档（gzip 原字节直出；授权 = versionId→
+      // note→attempt→student.teacherId 域链，域外 404 NOTE_NOT_FOUND 不暴露
+      // 存在性；no-store + attachment 统一走 noStoreBinaryResponse）。
+      .get("/note-versions/:versionId/document", (c) => {
+        const versionId = c.req.param("versionId");
+        const bytes = getTeacherNoteDocument(
+          db,
+          dataDir,
+          c.var.teacher.id,
+          versionId,
+        );
+        return noStoreBinaryResponse(bytes, "application/gzip", {
+          attachmentFilename: `note-${versionId}.json.gz`,
+        });
+      })
+      // T6R.5 ⑦：教师读派生图 PNG（.png 后缀可选，与学生端同款双 URL 形态；
+      // 授权同上域链）
+      .get("/note-versions/:versionId/images/:file", (c) => {
+        const bytes = getTeacherNoteImagePng(
+          db,
+          dataDir,
+          c.var.teacher.id,
+          c.req.param("versionId"),
+          stripPngSuffix(c.req.param("file")),
+        );
+        return noStoreBinaryResponse(bytes, "image/png");
+      })
+      // T6R.5 ⑧：教师为学生版本重建派生图（multipart 字段集与学生端共用
+      // lib/form-fields；服务端校验归属链/versionId/规格/大小——不是教师
+      // 编辑学生正文：不触碰 notes/note_versions/submission_evidence 行）
+      .post("/note-versions/:versionId/images", async (c) => {
+        const { pngBytes, meta } = await parseNoteImageUploadForm(
+          await c.req.parseBody(),
+        );
+        return c.json({
+          ok: true,
+          data: attachNoteImage(
+            db,
+            dataDir,
+            { kind: "teacher", id: c.var.teacher.id },
+            c.req.param("versionId"),
+            pngBytes,
+            meta,
+          ),
         });
       })
       // 媒体管线第二单：图片上传（multipart 字段 file；类型/限额/内容寻址落盘

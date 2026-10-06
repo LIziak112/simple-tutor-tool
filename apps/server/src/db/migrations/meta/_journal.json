@@ -176,6 +176,13 @@
       "when": 1791236264758,
       "tag": "0024_clumsy_rockslide",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1791252110257,
+      "tag": "0025_secret_shiva",
+      "breakpoints": true
     }
   ]
 }

@@ -8,38 +8,54 @@ import {
 } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { gzipSync } from "node:zlib";
-import type { NoteUploadMeta } from "@tutor/contract";
+import type { NoteImageUploadMeta, NoteUploadMeta } from "@tutor/contract";
 import {
   INK_LOGICAL_WIDTH,
   NOTE_BODY_DECOMPRESSED_MAX_BYTES,
   NOTE_BODY_GZIP_MAX_BYTES,
+  NOTE_IMAGE_PNG_MAX_BYTES,
+  NOTE_VERSION_IMAGES_MAX_BYTES,
   type NoteDoc,
+  type NoteHeadData,
+  type NoteImageMeta,
   type NoteVersionReceipt,
   noteDocSchema,
+  noteImageMetaSchema,
   noteIssueIsLimit,
+  noteRecordMetaSchema,
   noteRevisionConflictCurrentSchema,
+  noteSubmissionEvidenceMetaSchema,
 } from "@tutor/contract";
-import { and, eq, isNotNull, lt } from "drizzle-orm";
+import { and, asc, eq, isNotNull, ne, or, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
+  type NoteImageRow,
   type NoteRow,
   type NoteVersionRow,
   noteImages,
   notes,
   noteVersions,
+  type SubmissionEvidenceRow,
   submissionEvidence,
 } from "../db/schema";
 import {
   type AtomicFileFaults,
   parseGzipOrJsonBytes,
+  readFileBytes,
   resolveWithinRoot,
   writeFileAtomic,
 } from "../lib/blob-io";
 import { HttpError } from "../lib/http-error";
+import { pngIntact } from "../lib/png";
 import {
   requireAttemptQuestion,
+  requireAttemptQuestionRow,
   requireUsableAttempt,
 } from "./attempt-service";
+import {
+  findTeacherAttempt,
+  requireTeacherAttempt,
+} from "./teacher-attempt-service";
 
 /**
  * NoteService（T6R.4）——题目草稿的不可变版本存储：正文上传、服务端规范化
@@ -304,12 +320,21 @@ function receiptOf(row: NoteVersionRow): NoteVersionReceipt {
   };
 }
 
-/** 删除本请求刚落位的孤儿正文文件（best-effort；失败留给 GC 兜底） */
-function cleanupOrphanFile(dataDir: string, relPath: string): void {
+/**
+ * best-effort 删除 notes 域内文件（复审轮⑮参数化后缀，正文/图片三处共用）：
+ * 文件未创建（写/rename 前失败）或已被删除时静默；域外路径仍会被
+ * resolveNoteBlobPath 边界校验拦下（500 不吞）。
+ */
+function cleanupNoteFile(
+  dataDir: string,
+  relPath: string,
+  suffix: ".json.gz" | ".png",
+): void {
   try {
-    unlinkSync(resolveNoteBodyPath(dataDir, relPath));
-  } catch {
-    // 文件未创建（写/rename 前失败）或已被删除——无需处理
+    unlinkSync(resolveNoteBlobPath(dataDir, relPath, suffix));
+  } catch (err) {
+    if (err instanceof HttpError) throw err;
+    // 文件未落位或已被删——无需处理
   }
 }
 
@@ -552,7 +577,7 @@ export function saveNoteVersion(
       ) {
         return receiptOf(winner);
       }
-      cleanupOrphanFile(dataDir, relPath);
+      cleanupNoteFile(dataDir, relPath, ".json.gz");
       if (winner !== undefined) {
         throw new HttpError(
           409,
@@ -562,7 +587,7 @@ export function saveNoteVersion(
       }
       throw err;
     }
-    cleanupOrphanFile(dataDir, relPath);
+    cleanupNoteFile(dataDir, relPath, ".json.gz");
     if (violation === "revision") {
       throw revisionConflict(
         db,
@@ -577,7 +602,11 @@ export function saveNoteVersion(
 
 // ---------- 读取（完整性口径；T6R.5 读路由复用） ----------
 
-/** 已确认版本 → 正文文档 + 行内 hash + 按同一规范化规则重算的 hash */
+/**
+ * 已确认版本 → 正文文档 + 行内 hash + 按同一规范化规则重算的 hash。
+ * 消费方是测试/备份完整性与 hash 对账（复审轮⑰澄清：路由读走
+ * readNoteVersionGzip 原字节直出，不经本函数解析）。
+ */
 export function readNoteVersionDoc(
   db: Db,
   dataDir: string,
@@ -631,6 +660,459 @@ export function readNoteVersionDoc(
   };
 }
 
+// ---------- T6R.5：读侧投影、版本文档/图片直出与补图（方案 §8 路由表） ----------
+
+/** 行 → 契约元信息投影（parse 兜底：行形态与契约漂移即编程错误当场暴露） */
+function noteRecordMetaOf(row: NoteRow) {
+  return noteRecordMetaSchema.parse({
+    noteId: row.id,
+    attemptId: row.attemptId,
+    questionId: row.questionId,
+    questionRevisionId: row.questionRevisionId,
+    phase: row.phase,
+    revision: row.currentRevision,
+    currentVersionId: row.currentVersionId,
+    serverSavedAt: row.serverSavedAt,
+  });
+}
+
+function noteImageMetaOf(row: NoteImageRow) {
+  return noteImageMetaSchema.parse({
+    imageId: row.id,
+    noteVersionId: row.noteVersionId,
+    spec: row.spec,
+    pageIndex: row.pageIndex,
+    crop: { x: row.cropX, y: row.cropY, width: row.cropW, height: row.cropH },
+    pixelWidth: row.pixelWidth,
+    pixelHeight: row.pixelHeight,
+    state: row.state,
+    hash: row.hash,
+  });
+}
+
+function noteEvidenceMetaOf(row: SubmissionEvidenceRow) {
+  return noteSubmissionEvidenceMetaSchema.parse({
+    attemptId: row.attemptId,
+    questionId: row.questionId,
+    state: row.state,
+    versionId: row.versionId,
+    recordedAt: row.recordedAt,
+  });
+}
+
+/**
+ * 头投影组装（①②⑥共用）：
+ * - note：该 attempt 该题的 scratch 行（correction/supplement 是 T6R.15 的
+ *   独立 NoteRecord，不进本投影）；无行 → null（契约显式空态 notCreated）；
+ * - 生效版本：证据行存在即以其 versionId 为准（frozen→原稿版本；missing/
+ *   none→null→images 恒空——**不回退工作头**，T6R.10 落写；仅无证据行
+ *   （未交卷/旧客户端未采集）才取工作头 currentVersionId）；
+ * - evidence：证据行（交卷事务写入）；无行 → null（未交卷或旧客户端未采集）。
+ */
+function noteHeadOf(
+  db: Db,
+  attemptId: string,
+  questionId: string,
+): NoteHeadData {
+  const note = db
+    .select()
+    .from(notes)
+    .where(
+      and(
+        eq(notes.attemptId, attemptId),
+        eq(notes.questionId, questionId),
+        eq(notes.phase, "scratch"),
+      ),
+    )
+    .get();
+  const evidence = db
+    .select()
+    .from(submissionEvidence)
+    .where(
+      and(
+        eq(submissionEvidence.attemptId, attemptId),
+        eq(submissionEvidence.questionId, questionId),
+      ),
+    )
+    .get();
+  // 生效版本（复审轮①）：证据行**存在**即以其声明为准——missing/none 的
+  // versionId=null → images 恒空（交卷后不再回退工作头，防止「缺稿交卷却
+  // 显示出工作稿图片」的口径漂移）；仅**无证据行**（未交卷）才看工作头。
+  const operativeVersionId =
+    evidence !== undefined
+      ? evidence.versionId
+      : (note?.currentVersionId ?? null);
+  const imageRows = operativeVersionId
+    ? db
+        .select()
+        .from(noteImages)
+        .where(eq(noteImages.noteVersionId, operativeVersionId))
+        .orderBy(asc(noteImages.spec), asc(noteImages.pageIndex))
+        .all()
+    : [];
+  return {
+    note: note === undefined ? null : noteRecordMetaOf(note),
+    images: imageRows.map(noteImageMetaOf),
+    evidence: evidence === undefined ? null : noteEvidenceMetaOf(evidence),
+  };
+}
+
+/** ① GET /api/student/attempts/:id/notes/:qid：工作稿头（本人 + attempt 可用 + 冻结集合严格口径） */
+export function getStudentNoteHead(
+  db: Db,
+  studentId: string,
+  attemptId: string,
+  questionId: string,
+): NoteHeadData {
+  const attempt = requireUsableAttempt(db, studentId, attemptId);
+  requireAttemptQuestion(db, attempt, questionId);
+  return noteHeadOf(db, attempt.id, questionId);
+}
+
+/** ② GET /api/student/attempts/:id/evidence/:qid：只读证据（本人历史权限，宽松题目口径） */
+export function getStudentNoteEvidence(
+  db: Db,
+  studentId: string,
+  attemptId: string,
+  questionId: string,
+): NoteHeadData {
+  const attempt = requireUsableAttempt(db, studentId, attemptId);
+  requireAttemptQuestionRow(db, attempt.id, questionId);
+  return noteHeadOf(db, attempt.id, questionId);
+}
+
+/** ⑥ GET /api/teacher/attempts/:id/evidence/:qid：域内只读证据（域外统一 404） */
+export function getTeacherNoteEvidence(
+  db: Db,
+  teacherId: string,
+  attemptId: string,
+  questionId: string,
+): NoteHeadData {
+  const { attempt } = requireTeacherAttempt(db, teacherId, attemptId);
+  requireAttemptQuestionRow(db, attempt.id, questionId);
+  return noteHeadOf(db, attempt.id, questionId);
+}
+
+// ---------- 版本归属链（versionId/imageId 读侧授权，T6R.4 遗留验收） ----------
+
+/** versionId → 版本行 + 笔记行（不存在 → 404 NOTE_NOT_FOUND，不暴露存在性） */
+function requireNoteVersionChain(
+  db: Db,
+  versionId: string,
+): { version: NoteVersionRow; note: NoteRow } {
+  const version = db
+    .select()
+    .from(noteVersions)
+    .where(eq(noteVersions.id, versionId))
+    .get();
+  if (version === undefined) {
+    throw new HttpError(404, "NOTE_NOT_FOUND", "笔记版本不存在");
+  }
+  const note = db
+    .select()
+    .from(notes)
+    .where(eq(notes.id, version.noteId))
+    .get();
+  if (note === undefined) {
+    // 版本行在而笔记行缺（FK 保证不可达的防御分支）
+    throw new HttpError(404, "NOTE_NOT_FOUND", "笔记版本不存在");
+  }
+  return { version, note };
+}
+
+/**
+ * 学生读授权：note → attempt → requireUsableAttempt（本人 403/404 按既有
+ * 惯例；course 来源 draft 复检可见性——撤权拒读拒写与 detail 口径一致，
+ * 已交卷照常走历史权限）。
+ */
+function requireStudentNoteVersion(
+  db: Db,
+  studentId: string,
+  versionId: string,
+): { version: NoteVersionRow; note: NoteRow } {
+  const chain = requireNoteVersionChain(db, versionId);
+  requireUsableAttempt(db, studentId, chain.note.attemptId);
+  return chain;
+}
+
+/**
+ * 教师域授权：note → attempt → student.teacherId（域外 404 NOTE_NOT_FOUND，
+ * 不暴露存在性）。判定原语复用 teacher-attempt-service 的 findTeacherAttempt
+ * （与教师作答接口同口径）；与 requireTeacherAttempt 保持两个薄抛层不直接
+ * 合并——错误码区分是有意的（evidence 域外 ATTEMPT_NOT_FOUND vs 版本资源
+ * NOTE_NOT_FOUND，复审确认保持）。
+ */
+function requireTeacherNoteVersion(
+  db: Db,
+  teacherId: string,
+  versionId: string,
+): { version: NoteVersionRow; note: NoteRow } {
+  const chain = requireNoteVersionChain(db, versionId);
+  if (findTeacherAttempt(db, teacherId, chain.note.attemptId) === null) {
+    throw new HttpError(404, "NOTE_NOT_FOUND", "笔记版本不存在");
+  }
+  return chain;
+}
+
+/** ③⑦ 版本文档 gzip 原字节直出（不解析——消费在前端渲染器，坏文件属部署级问题） */
+function readNoteVersionGzip(
+  dataDir: string,
+  version: NoteVersionRow,
+): ArrayBuffer {
+  try {
+    return readFileBytes(resolveNoteBodyPath(dataDir, version.bodyPath));
+  } catch (err) {
+    // 边界校验 HttpError 保持自身码重抛；文件缺失按不存在口径（不泄漏磁盘细节）
+    if (err instanceof HttpError) throw err;
+    throw new HttpError(404, "NOTE_NOT_FOUND", "笔记正文文件缺失");
+  }
+}
+
+/** 学生端 ③：GET /api/student/note-versions/:id/document */
+export function getStudentNoteDocument(
+  db: Db,
+  dataDir: string,
+  studentId: string,
+  versionId: string,
+): ArrayBuffer {
+  return readNoteVersionGzip(
+    dataDir,
+    requireStudentNoteVersion(db, studentId, versionId).version,
+  );
+}
+
+/** 教师端 ⑦：GET /api/teacher/note-versions/:id/document */
+export function getTeacherNoteDocument(
+  db: Db,
+  dataDir: string,
+  teacherId: string,
+  versionId: string,
+): ArrayBuffer {
+  return readNoteVersionGzip(
+    dataDir,
+    requireTeacherNoteVersion(db, teacherId, versionId).version,
+  );
+}
+
+/**
+ * (versionId, imageId) → 图片行（行不存在 → 404 NOTE_NOT_FOUND）。
+ * **授权由调用方先行完成**（requireStudentNoteVersion /
+ * requireTeacherNoteVersion——先授权后查资源，权限失败不泄露行存在性；
+ * T6R.5 复审②：本函数退化为纯行查找，不再自带归属链）。
+ */
+function requireNoteImageRow(
+  db: Db,
+  version: NoteVersionRow,
+  imageId: string,
+): NoteImageRow {
+  const image = db
+    .select()
+    .from(noteImages)
+    .where(
+      and(eq(noteImages.id, imageId), eq(noteImages.noteVersionId, version.id)),
+    )
+    .get();
+  if (image === undefined) {
+    throw new HttpError(404, "NOTE_NOT_FOUND", "笔记图片不存在");
+  }
+  return image;
+}
+
+/** 图片文件字节（权限已由调用方经归属链校验；行/文件不在或未就绪 → 404） */
+function readNoteImagePng(dataDir: string, image: NoteImageRow): ArrayBuffer {
+  if (image.state !== "ready") {
+    // pending/failed/missing 均无可用文件（契约：仅 ready 保证 hash/path 可用）
+    throw new HttpError(404, "NOTE_NOT_FOUND", "笔记图片不存在");
+  }
+  try {
+    return readFileBytes(resolveNoteBlobPath(dataDir, image.path, ".png"));
+  } catch (err) {
+    if (err instanceof HttpError) throw err;
+    throw new HttpError(404, "NOTE_NOT_FOUND", "笔记图片不存在");
+  }
+}
+
+/** 学生端 ④：GET /api/student/note-versions/:id/images/:imageId(.png) */
+export function getStudentNoteImagePng(
+  db: Db,
+  dataDir: string,
+  studentId: string,
+  versionId: string,
+  imageId: string,
+): ArrayBuffer {
+  const { version } = requireStudentNoteVersion(db, studentId, versionId);
+  return readNoteImagePng(dataDir, requireNoteImageRow(db, version, imageId));
+}
+
+/** 教师端 ⑦：GET /api/teacher/note-versions/:id/images/:imageId(.png) */
+export function getTeacherNoteImagePng(
+  db: Db,
+  dataDir: string,
+  teacherId: string,
+  versionId: string,
+  imageId: string,
+): ArrayBuffer {
+  const { version } = requireTeacherNoteVersion(db, teacherId, versionId);
+  return readNoteImagePng(dataDir, requireNoteImageRow(db, version, imageId));
+}
+
+// ---------- ⑤⑧ 补图上传（学生自产 / 教师重建；只能挂既定版本） ----------
+
+/** 补图行为者：学生（本人 + attempt 可用）或教师（域链），授权语义见各分支 */
+export type NoteImageActor =
+  | { kind: "student"; id: string }
+  | { kind: "teacher"; id: string };
+
+/** 补图限额错误（单图/聚合两级 413 同码不同文案——复审轮⑬收敛为一个构造点） */
+function noteImageLimitError(message: string): HttpError {
+  return new HttpError(413, "NOTE_LIMIT_EXCEEDED", message);
+}
+
+/** 派生图文件相对路径：blobs/notes/<noteId>/img-<imageId>.png（id 全服务端生成） */
+function noteImageRelPath(noteId: string, imageId: string): string {
+  return ["blobs", "notes", noteId, `img-${imageId}.png`].join("/");
+}
+
+/**
+ * 为既定版本补一张派生图（⑤学生自产 / ⑧教师重建共用）：
+ * 1. versionId 归属链授权（学生 requireUsableAttempt——交卷后仍放行〔补图是
+ *    恢复通道，不是新写正文〕，课程撤权 draft 拒绝；教师域链 404）；
+ * 2. 单图字节限额（413）→ PNG 魔数与 IHDR 实际尺寸 = 声明尺寸（400，方案 §8
+ *    「尺寸／规格／版本必须匹配」）；
+ * 3. 同版本派生图聚合限额（**跨 spec 全槽位合计**——其余槽位 sum(byte_size)
+ *    + 本次 ≤ 8MiB → 413；复审①：eq(spec) 只算同 spec 会跨规格漏算）；
+ * 4. 写新文件（唯一 tmp → rename 不可变路径）→ 事务内删旧槽位行 + 插新行
+ *    （(noteVersionId, spec, pageIndex) 唯一槽位 upsert，行 id 换新）→
+ *    best-effort 删旧文件（失败留孤儿，无行引用）；
+ * 5. 不触碰 note_versions / notes / submission_evidence 任何行——补图不能
+ *    改正文与提交引用。
+ */
+export function attachNoteImage(
+  db: Db,
+  dataDir: string,
+  actor: NoteImageActor,
+  versionId: string,
+  png: Uint8Array,
+  meta: NoteImageUploadMeta,
+): NoteImageMeta {
+  // 1. 归属链授权
+  const chain =
+    actor.kind === "student"
+      ? requireStudentNoteVersion(db, actor.id, versionId)
+      : requireTeacherNoteVersion(db, actor.id, versionId);
+  const { version, note } = chain;
+
+  // 2. 字节限额 + PNG 完整性（先廉价后昂贵的顺序）
+  if (png.byteLength > NOTE_IMAGE_PNG_MAX_BYTES) {
+    throw noteImageLimitError(
+      `派生图超过 ${NOTE_IMAGE_PNG_MAX_BYTES / (1024 * 1024)}MiB 上传限额（暂定值），请降低分辨率后重试`,
+    );
+  }
+  // 完整性口径 pngIntact（复审轮③）：魔数 + IHDR（长度恒 13）+ 尾部 IEND
+  // 哨兵——截断/私造头部的文件在此被拒，比 ink 快照的 pngSize 宽松口径严一档
+  const actual = pngIntact(png);
+  if (actual === null) {
+    throw new HttpError(
+      400,
+      "NOTE_VALIDATION_FAILED",
+      "图片不是完整合法的 PNG 文档（魔数/IHDR/IEND 校验未通过）",
+    );
+  }
+  if (actual.width !== meta.pixelWidth || actual.height !== meta.pixelHeight) {
+    throw new HttpError(
+      400,
+      "NOTE_VALIDATION_FAILED",
+      "图片实际尺寸与声明的像素宽高不一致",
+    );
+  }
+
+  // 3. 聚合限额：同版本其余槽位现有文件合计 + 本次上传（复审①③：合计是
+  //    **全版本跨 spec** 口径——槽位排除谓词（spec/pageIndex 任一不等即计入）
+  //    下推 SQL，sum(byte_size) 一条聚合查询，不逐行取回、不 statSync）
+  const sumRow = db
+    .select({
+      othersBytes: sql<number>`coalesce(sum(${noteImages.byteSize}), 0)`,
+    })
+    .from(noteImages)
+    .where(
+      and(
+        eq(noteImages.noteVersionId, version.id),
+        // 排除正被替换的目标槽位 (spec, pageIndex)——同 pageIndex 不同 spec
+        // 是不同槽位，必须计入（ne(pageIndex) 单条件会把它们漏掉）
+        or(
+          ne(noteImages.spec, meta.spec),
+          ne(noteImages.pageIndex, meta.pageIndex),
+        ),
+      ),
+    )
+    .get();
+  const othersBytes = sumRow?.othersBytes ?? 0;
+  if (othersBytes + png.byteLength > NOTE_VERSION_IMAGES_MAX_BYTES) {
+    throw noteImageLimitError(
+      `该版本派生图合计超过 ${NOTE_VERSION_IMAGES_MAX_BYTES / (1024 * 1024)}MiB 限额（暂定值），请精简切片后重试`,
+    );
+  }
+
+  // 4. 落位 + 槽位 upsert
+  const imageId = randomUUID();
+  const relPath = noteImageRelPath(note.id, imageId);
+  const hash = createHash("sha256").update(png).digest("hex");
+  writeFileAtomic({
+    finalPath: resolveNoteBlobPath(dataDir, relPath, ".png"),
+    bytes: png,
+  });
+  const slotWhere = and(
+    eq(noteImages.noteVersionId, version.id),
+    eq(noteImages.spec, meta.spec),
+    eq(noteImages.pageIndex, meta.pageIndex),
+  );
+  const old = db.select().from(noteImages).where(slotWhere).get();
+  let inserted: NoteImageRow | undefined;
+  try {
+    inserted = db.transaction((tx) => {
+      if (old !== undefined) {
+        tx.delete(noteImages).where(eq(noteImages.id, old.id)).run();
+      }
+      return tx
+        .insert(noteImages)
+        .values({
+          id: imageId,
+          noteVersionId: version.id,
+          spec: meta.spec,
+          pageIndex: meta.pageIndex,
+          cropX: meta.crop.x,
+          cropY: meta.crop.y,
+          cropW: meta.crop.width,
+          cropH: meta.crop.height,
+          pixelWidth: meta.pixelWidth,
+          pixelHeight: meta.pixelHeight,
+          path: relPath,
+          byteSize: png.byteLength,
+          hash,
+          state: "ready",
+        })
+        .returning()
+        .get();
+    });
+  } catch (err) {
+    // 事务失败：新文件成为孤儿（无行引用），清理后重抛
+    cleanupNoteFile(dataDir, relPath, ".png");
+    throw err;
+  }
+  if (inserted === undefined) {
+    // RETURNING 未命中：better-sqlite3 同步驱动下不可达，防御性闭合
+    cleanupNoteFile(dataDir, relPath, ".png");
+    throw new HttpError(500, "INTERNAL", "补图落库未返回行（防御性拒绝）");
+  }
+  // 旧槽位文件 best-effort 回收（失败留孤儿文件，无行引用它）；
+  // 投影组装在事务提交之后（复审轮④：metaOf parse 失败不得落入删文件的
+  // catch 域——已提交的新文件不能被回滚性清理删掉）
+  if (old !== undefined) {
+    cleanupNoteFile(dataDir, old.path, ".png");
+  }
+  return noteImageMetaOf(inserted);
+}
+
 // ---------- GC 骨架（未引用版本延迟回收；自动调度接线在 T6R.14） ----------
 
 /** 安全窗口（毫秒）：版本/临时文件创建后至少保留这么久才可回收（暂定值） */
@@ -658,9 +1140,11 @@ export interface NoteGcResult {
   /** 超窗口但被保留集合（头指针/证据引用）挡下的版本数 */
   keptByReference: number;
   /**
-   * 存量 bodyPath 形态异常（越出 blobs/notes 或文件名不合 v<rev>-<hash12>
-   * 模式）的版本行数。>0 时本轮**放弃孤儿文件清扫**（保守不删，见下），
-   * 计数暴露给运维排查——正常数据恒为 0。
+   * 存量路径形态异常（复审轮⑥起含正文与图片两类）：bodyPath 越出 blobs/notes
+   * 或文件名不合 v<rev>-<hash12>.json.gz 模式、imagePath 越出根或不合
+   * img-<uuid>.png 模式。>0 时本轮**放弃孤儿文件清扫**（保守不删，见下），
+   * 计数暴露给运维排查——正常数据恒为 0（字段名沿用 bodyPaths 兼容既有
+   * 观测面，语义已扩为两类）。
    */
   malformedBodyPaths: number;
 }
@@ -675,9 +1159,10 @@ export interface NoteGcResult {
  * - 所有 submission_evidence.version_id（提交原稿）；
  * - 安全窗口内创建的全部版本与临时文件（在途上传、丢回执重试窗口——
  *   后者即 mutationId 幂等窗口：版本行被回收后幂等记录随之消失，窗口外
- *   重放按 CAS 冲突可诊断处理，见 note_versions.mutation_id 列注释）。
- * 「正在生成图片的版本」：note_images 尚无生成通道（T6R.6），届时由生成
- * 流程把在途版本纳入保留；当前实现把派生图行/文件随所属版本一并回收。
+ *   重放按 CAS 冲突可诊断处理，见 note_versions.mutation_id 列注释）；
+ * - 全部 note_images 行引用的图片文件（被行引用即活文件——行随所属版本
+ *   删除时才连带删文件；「正在生成图片的版本」的保留由图片行的存在性
+ *   天然承载：T6R.6 生成通道只要先落行或落 .tmp 就不会被误清）。
  *
  * 删除顺序：先事务删行（FK 拒绝=仍有引用→跳过下轮再试），后删文件
  * （行已删，文件删除失败只是占空间的孤儿，不产生悬垂引用——坏方向是
@@ -720,23 +1205,43 @@ export function gcNoteVersions(
     if (row.id !== null) keep.add(row.id);
   }
 
-  // 超窗口候选（serverSavedAt 为定长 UTC ISO，字典序即时间序；列投影只取
-  // 回收循环用到的两列——复审⑫）
-  const candidates = db
-    .select({ id: noteVersions.id, bodyPath: noteVersions.bodyPath })
+  // 单次全表拉取（复审轮⑯：候选筛选与 live 对账同一份数据，消双全表扫描）；
+  // serverSavedAt 为定长 UTC ISO，字典序即时间序，内存过滤与 SQL lt 等价
+  const versionRows = db
+    .select({
+      id: noteVersions.id,
+      bodyPath: noteVersions.bodyPath,
+      savedAt: noteVersions.serverSavedAt,
+    })
     .from(noteVersions)
-    .where(lt(noteVersions.serverSavedAt, cutoff))
     .all();
-  for (const row of candidates) {
+  // 图片行单次全量拉取：候选版本的连带删除（消逐候选 N+1 查询）与
+  // 孤儿对账 live 集合同源（复审轮⑥：图片文件纳入孤儿清扫框架）
+  const imageRows = db
+    .select({
+      id: noteImages.id,
+      noteVersionId: noteImages.noteVersionId,
+      path: noteImages.path,
+    })
+    .from(noteImages)
+    .all();
+  const imagesByVersion = new Map<string, { id: string; path: string }[]>();
+  for (const img of imageRows) {
+    const list = imagesByVersion.get(img.noteVersionId);
+    if (list === undefined) {
+      imagesByVersion.set(img.noteVersionId, [img]);
+    } else {
+      list.push(img);
+    }
+  }
+
+  for (const row of versionRows) {
+    if (row.savedAt >= cutoff) continue; // 窗口内不动（在途/幂等窗口）
     if (keep.has(row.id)) {
       result.keptByReference += 1;
       continue;
     }
-    const images = db
-      .select()
-      .from(noteImages)
-      .where(eq(noteImages.noteVersionId, row.id))
-      .all();
+    const images = imagesByVersion.get(row.id) ?? [];
     try {
       db.transaction((tx) => {
         // 先删派生图行（FK 指向版本行），再删版本行
@@ -764,49 +1269,59 @@ export function gcNoteVersions(
     }
   }
 
-  // 过期临时文件清扫（.tmp- 前缀 = writeNoteBodyFile 独有命名；窗口内
-  // 的一律不碰——那是可能仍在途的请求或崩溃现场），以及超窗口的
-  // **无行孤儿正文文件**清扫（「rename 完成、事务未提交」的崩溃残留：
-  // 文件名合 v<rev>-<hash12>.json.gz 模式但不在任何 note_versions.body_path
-  // 中；窗口内不碰——那可能是刚 rename、事务尚未提交的在途请求）。
-  // 无行的图片文件不在此列：图片由 T6R.6 通道按自有协议产生，届时一并定。
+  // 过期临时文件清扫（.tmp- 前缀 = writeFileAtomic 独有命名；窗口内
+  // 一律不碰——那是可能仍在途的请求或崩溃现场），以及超窗口的
+  // **无行孤儿文件**清扫（正文与图片同框架，复审轮⑥：rename/落位完成、
+  // 事务未提交或行已删文件未清的崩溃残留——文件名合模式但不在任何
+  // note_versions.body_path / note_images.path 中；窗口内不碰——那可能是
+  // 刚落位、事务尚未提交的在途请求）。
   const notesRoot = resolve(dataDir, "blobs", "notes");
   if (existsSync(notesRoot)) {
     const bodyFilePattern = /^v\d+-[0-9a-f]{12}\.json\.gz$/;
-    // live 匹配用**存储字符串集合**（快），但保留防御：存量 bodyPath 形态
-    // 异常（越出根/文件名不合模式）时，其对应文件无法可靠对账——本轮放弃
-    // 孤儿清扫（tmp 清扫不受影响），计数 malformedBodyPaths 暴露给运维。
-    // 两位审查角的折中：不做逐行 resolve 校验（多数派：纯集合足够），也不
-    // 无条件信任集合（少数派：异常数据宁可漏删不可误删）。
-    // 匹配双方一律 toLowerCase：NTFS 大小写不敏感，手工迁移/改目录名大小写
-    // 后磁盘目录名与 DB 路径可能仅大小写不同——不做归一会把活文件误判成
-    // 孤儿误删（复审④）。malformed 判定（basename 模式）保持大小写敏感：
-    // 非小写规范形态本就该按异常保守处理。
-    let liveBodyRelSet: Set<string> | null = null;
-    const liveBodyRel = (): Set<string> => {
-      if (liveBodyRelSet === null) {
-        liveBodyRelSet = new Set<string>();
-        for (const row of db
-          .select({ p: noteVersions.bodyPath })
-          .from(noteVersions)
-          .all()) {
-          const rel = relative(notesRoot, resolve(dataDir, row.p));
-          const base = rel.split(/[\\/]/).at(-1) ?? "";
-          // rel===""（路径恰为根本身）不必单列：basename 不合模式必兜住
-          if (
-            rel.startsWith("..") ||
-            isAbsolute(rel) ||
-            !bodyFilePattern.test(base)
-          ) {
-            result.malformedBodyPaths += 1;
-            continue;
-          }
-          // 键分隔符归一为 "/"：入库串用 "/"（复审⑦）而 path.relative 在
-          // Windows 产 "\"，扫描侧统一拼 "/"——两侧一致才能对账
-          liveBodyRelSet.add(rel.split(/[\\/]/).join("/").toLowerCase());
-        }
+    const imageFilePattern = /^img-[0-9a-f-]{36}\.png$/;
+    // live 对账集合（正文 + 图片两类行，均在上方单次拉取的数据上派生）。
+    // 保留防御：存量路径形态异常（越出根/文件名不合模式）时，其对应文件
+    // 无法可靠对账——本轮放弃孤儿清扫（tmp 清扫不受影响），计数
+    // malformedBodyPaths 暴露给运维。匹配双方一律 toLowerCase：NTFS 大小写
+    // 不敏感，手工迁移/改目录名大小写后磁盘目录名与 DB 路径可能仅大小写
+    // 不同——不做归一会把活文件误判成孤儿误删（复审④）。malformed 判定
+    // （basename 模式）保持大小写敏感：非小写规范形态本就该按异常保守处理。
+    const liveRel = (storedPath: string, pattern: RegExp): string | null => {
+      const rel = relative(notesRoot, resolve(dataDir, storedPath));
+      const base = rel.split(/[\\/]/).at(-1) ?? "";
+      // rel===""（路径恰为根本身）不必单列：basename 不合模式必兜住
+      if (rel.startsWith("..") || isAbsolute(rel) || !pattern.test(base)) {
+        return null;
       }
-      return liveBodyRelSet;
+      // 键分隔符归一为 "/"：入库串用 "/"（复审⑦）而 path.relative 在
+      // Windows 产 "\"，扫描侧统一拼 "/"——两侧一致才能对账
+      return rel.split(/[\\/]/).join("/").toLowerCase();
+    };
+    const liveSet = new Set<string>();
+    for (const row of versionRows) {
+      const key = liveRel(row.bodyPath, bodyFilePattern);
+      if (key === null) {
+        result.malformedBodyPaths += 1;
+      } else {
+        liveSet.add(key);
+      }
+    }
+    for (const img of imageRows) {
+      const key = liveRel(img.path, imageFilePattern);
+      if (key === null) {
+        result.malformedBodyPaths += 1;
+      } else {
+        liveSet.add(key);
+      }
+    }
+    // tmp 清扫的最小共用件（复审轮⑮：两扫描器共用）
+    const sweepTmpFile = (filePath: string): void => {
+      try {
+        unlinkSync(filePath);
+        result.sweptTmp += 1;
+      } catch {
+        // 恰好消失——跳过
+      }
     };
     // 单目录扫描：tmp 清扫全域通用；孤儿判定仅 notes 域启用（orphan 入参；
     // dirName 用于拼 live 集合的相对键 <noteId>/<文件名>）
@@ -816,12 +1331,11 @@ export function gcNoteVersions(
         try {
           if (statSync(filePath).mtimeMs >= cutoffMs) continue; // 窗口内不动
           if (name.startsWith(".tmp-")) {
-            unlinkSync(filePath);
-            result.sweptTmp += 1;
+            sweepTmpFile(filePath);
           } else if (
             orphan &&
-            bodyFilePattern.test(name) &&
-            !liveBodyRel().has(`${dirName}/${name}`.toLowerCase()) &&
+            (bodyFilePattern.test(name) || imageFilePattern.test(name)) &&
+            !liveSet.has(`${dirName}/${name}`.toLowerCase()) &&
             result.malformedBodyPaths === 0
           ) {
             unlinkSync(filePath);
@@ -841,13 +1355,11 @@ export function gcNoteVersions(
       for (const entry of readdirSync(root, { withFileTypes: true })) {
         if (entry.isDirectory()) {
           sweepDir(join(root, entry.name), entry.name, orphan);
-        } else if (
-          entry.name.startsWith(".tmp-") &&
-          statSync(join(root, entry.name)).mtimeMs < cutoffMs
-        ) {
+        } else if (entry.name.startsWith(".tmp-")) {
           try {
-            unlinkSync(join(root, entry.name));
-            result.sweptTmp += 1;
+            if (statSync(join(root, entry.name)).mtimeMs < cutoffMs) {
+              sweepTmpFile(join(root, entry.name));
+            }
           } catch {
             // 恰好消失——跳过
           }

@@ -7,20 +7,18 @@ import {
   NOTE_BODY_GZIP_MAX_BYTES,
   noteVersionReceiptSchema,
 } from "@tutor/contract";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import type { Logger } from "pino";
 import pino from "pino";
 import { beforeAll, describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client.ts";
-import {
-  notes as notesTable,
-  noteVersions as noteVersionsTable,
-} from "../db/schema.ts";
+import { noteVersions as noteVersionsTable } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { insertFrozenResponse } from "../services/attempt-service.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
-import { gzipJson, noteDoc } from "../test/note-fixtures.ts";
+import { gzipJson, noteDoc, putNoteBodyForm } from "../test/note-fixtures.ts";
+import { freshNoteAttempt, noteRowOf } from "../test/note-world.ts";
 import { submitAttemptRequest } from "../test/submit-revisions";
 
 /**
@@ -55,7 +53,7 @@ interface PutNoteOptions {
   extra?: Record<string, string>;
 }
 
-/** PUT 草稿正文（multipart：body 文件 + baseRevision/mutationId 字段） */
+/** PUT 草稿正文（multipart 组装收敛在 note-fixtures.putNoteBodyForm；extra 恶意字段本地附加） */
 function putNote(
   app: App,
   cookie: string | undefined,
@@ -64,14 +62,7 @@ function putNote(
   body: Uint8Array,
   options: PutNoteOptions = {},
 ): Promise<Response> {
-  const form = new FormData();
-  form.append(
-    "body",
-    new Blob([body], { type: "application/gzip" }),
-    "note.json.gz",
-  );
-  form.append("baseRevision", String(options.baseRevision ?? 0));
-  form.append("mutationId", options.mutationId ?? randomUUID());
+  const form = putNoteBodyForm(body, options);
   for (const [k, v] of Object.entries(options.extra ?? {})) {
     form.append(k, v);
   }
@@ -130,43 +121,16 @@ beforeAll(async () => {
   bCookie = await loginStudent(app, "李四");
 });
 
-/** 每测试取新 attempt：同单元布置新作业 → 开卷（笔记数据按 attempt 天然隔离） */
-async function freshAttempt(): Promise<string> {
-  const createRes = await app.request("/api/teacher/assignments", {
-    method: "POST",
-    headers: { "content-type": "application/json", cookie: teacherCookie },
-    body: JSON.stringify({ unitIds: [unitId], studentIds: [aId] }),
-  });
-  expect(createRes.status).toBe(201);
-  const assignmentId = (
-    (await createRes.json()) as { data: { assignments: { id: string }[] } }
-  ).data.assignments[0]?.id;
-  if (assignmentId === undefined) throw new Error("布置作业响应缺少作业 id");
-  const attemptRes = await app.request(
-    `/api/student/assignments/${assignmentId}/attempt`,
-    { method: "POST", headers: { cookie: aCookie } },
-  );
-  expect(attemptRes.status).toBe(200);
-  return ((await attemptRes.json()) as { data: { id: string } }).data.id;
+/** 每测试取新 attempt：同单元布置新作业 → 开卷（组装收敛在 note-world.freshNoteAttempt） */
+function freshAttempt(): Promise<string> {
+  return freshNoteAttempt(app, teacherCookie, unitId, [aId], aCookie);
 }
 
-/** 该 attempt 该题的 scratch 笔记行（共享世界里按 attempt 过滤断言用） */
-function noteRowOf(attemptId: string, questionId: string) {
-  return db
-    .select()
-    .from(notesTable)
-    .where(
-      and(
-        eq(notesTable.attemptId, attemptId),
-        eq(notesTable.questionId, questionId),
-      ),
-    )
-    .get();
-}
+/** 该 attempt 该题的 scratch 笔记行（共享自 note-world——按 attempt 过滤断言用） */
 
 /** 该 attempt 该题的版本行数（经 scratch 笔记行关联） */
 function versionCountOf(attemptId: string, questionId: string): number {
-  const row = noteRowOf(attemptId, questionId);
+  const row = noteRowOf(db, attemptId, questionId);
   if (row === undefined) return 0;
   return db
     .select()
@@ -393,7 +357,7 @@ describe("multipart 元信息校验 400", () => {
       body: formOk,
     });
     expect(resOk.status).toBe(200);
-    expect(noteRowOf(attemptId, Q.solve)).toBeDefined();
+    expect(noteRowOf(db, attemptId, Q.solve)).toBeDefined();
   });
 });
 
@@ -544,7 +508,7 @@ describe("上传、CAS 与幂等（路由级）", () => {
       },
     );
     expect(res.status).toBe(403);
-    expect(noteRowOf(attemptId, Q.solve)).toBeDefined();
+    expect(noteRowOf(db, attemptId, Q.solve)).toBeDefined();
   });
 });
 
@@ -580,7 +544,7 @@ describe("DSL 特殊 questionId 与服务端字段不可覆盖", () => {
     // 4 行、目录名全是 UUID、各目录恰一个正文文件
     const root = join(dataDir, "blobs", "notes");
     for (const qid of specialIds) {
-      const row = noteRowOf(attemptId, qid);
+      const row = noteRowOf(db, attemptId, qid);
       expect(row).toBeDefined();
       if (row === undefined) continue;
       expect(row.id).toMatch(
@@ -617,7 +581,7 @@ describe("DSL 特殊 questionId 与服务端字段不可覆盖", () => {
       data: { noteId: string; savedAt: string };
     };
     expect(receipt.data.noteId).not.toBe(evilNoteId);
-    const row = noteRowOf(attemptId, Q.solve);
+    const row = noteRowOf(db, attemptId, Q.solve);
     if (row === undefined) throw new Error("缺少 notes 行");
     expect(row.id).toBe(receipt.data.noteId);
     expect(row.phase).toBe("scratch");
@@ -636,7 +600,7 @@ describe("限额 413（入口预检 + service 精确校验）", () => {
     const res = await putNote(app, aCookie, attemptId, Q.solve, big);
     expect(res.status).toBe(413);
     expect(((await res.json()) as ApiErr).error).toBe("NOTE_LIMIT_EXCEEDED");
-    expect(noteRowOf(attemptId, Q.solve)).toBeUndefined();
+    expect(noteRowOf(db, attemptId, Q.solve)).toBeUndefined();
     expect(versionCountOf(attemptId, Q.solve)).toBe(0);
   });
 
@@ -646,7 +610,7 @@ describe("限额 413（入口预检 + service 精确校验）", () => {
     const res = await putNote(app, aCookie, attemptId, Q.solve, big);
     expect(res.status).toBe(413);
     expect(((await res.json()) as ApiErr).error).toBe("NOTE_LIMIT_EXCEEDED");
-    expect(noteRowOf(attemptId, Q.solve)).toBeUndefined();
+    expect(noteRowOf(db, attemptId, Q.solve)).toBeUndefined();
   });
 
   it("高压缩比 gzip 炸弹（解压超 32MiB）→ 413 NOTE_LIMIT_EXCEEDED", async () => {
@@ -661,6 +625,6 @@ describe("限额 413（入口预检 + service 精确校验）", () => {
     );
     expect(res.status).toBe(413);
     expect(((await res.json()) as ApiErr).error).toBe("NOTE_LIMIT_EXCEEDED");
-    expect(noteRowOf(attemptId, Q.solve)).toBeUndefined();
+    expect(noteRowOf(db, attemptId, Q.solve)).toBeUndefined();
   });
 });

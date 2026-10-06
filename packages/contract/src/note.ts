@@ -64,6 +64,28 @@ export const NOTE_PAPER_HEIGHT_MAX = 3000;
  */
 export const NOTE_COORD_MAX_Y = NOTE_PAPER_HEIGHT_MAX;
 
+/**
+ * 单张派生图 PNG 最大字节数（方案 §7 起点值：每分析图片 ≤2MiB）。
+ * **暂定，真机定标后修订**。与 NOTE_BODY_GZIP_MAX_BYTES（正文 gzip 限额）
+ * 语义不同、独立命名——正文与图片是两条独立预算线。
+ */
+export const NOTE_IMAGE_PNG_MAX_BYTES = 2 * 1024 * 1024;
+
+/**
+ * 同一版本全部派生图合计最大字节数（方案 §7 起点值：每版本派生图合计 ≤8MiB）。
+ * upsert 槽位重建时按「其余槽位现有文件 + 本次上传」口径计算。
+ * **暂定，真机定标后修订**。
+ */
+export const NOTE_VERSION_IMAGES_MAX_BYTES = 8 * 1024 * 1024;
+
+/**
+ * 派生图像素宽/高的防御上限（防「IHDR 声明巨幅尺寸 + 极小文件」的解码炸弹：
+ * 上传只按字节限额，渲染端解码时才按声明尺寸分配位图）。取 4096：分析图
+ * 逻辑宽约 1000–1500（方案 §7），留足切片与缩放余量。
+ * **暂定，真机定标后修订**。
+ */
+export const NOTE_IMAGE_MAX_PIXEL_DIM = 4096;
+
 // ---------- NoteDoc v1 ----------
 
 /**
@@ -350,8 +372,13 @@ export const noteImageMetaSchema = z
     noteVersionId: z.uuid(),
     /** 渲染规格 */
     spec: noteImageSpecSchema,
-    /** 页号/切片序（同版本同规格内从 0 递增；与 noteVersionId、spec 组成唯一槽位） */
-    pageIndex: z.number().int().min(0),
+    /**
+     * 页号/切片序（同版本同规格内从 0 递增；与 noteVersionId、spec 组成唯一槽位）。
+     * 上限 999（复审轮②）：槽位 upsert 的写入面由此封顶——head 投影的 images
+     * 行数 ≤ (规格数 × 1000)，DB 不会积出无界行集（上限链：上传 meta 与本
+     * 投影形状两处同值约束，999 之上的值在写入口即 400）。
+     */
+    pageIndex: z.number().int().min(0).max(999),
     /** 逻辑裁剪区 */
     crop: noteCropRectSchema,
     /** 像素宽 */
@@ -500,6 +527,48 @@ export const noteErrorCodeSchema = z.enum([
   "VALIDATION_ERROR",
 ]);
 
+// ---------- T6R.5 路由形状（方案 §8 路由表的成功响应壳与补图请求体） ----------
+
+/**
+ * 笔记头投影（GET /api/student/attempts/:id/notes/:qid 与 .../evidence/:qid、
+ * GET /api/teacher/attempts/:id/evidence/:qid 的 data 形状）：
+ * - note：scratch 工作稿头元信息；**null = 显式空态（notCreated）**——该题
+ *   尚未建立笔记，客户端以 baseRevision=0 起步（不用「revision=0 形状」的
+ *   假行：noteId 由服务端首传时铸造，空态下不存在可回传的 id）；
+ * - images：**当前生效版本**的派生图列表（交卷冻结后 = submission_evidence
+ *   指向的原稿版本；未冻结 = notes 头指针版本；两者皆无 = 空数组）。按
+ *   spec 升序、pageIndex 升序排列；
+ * - evidence：交卷证据行；null = 尚未交卷或旧客户端未采集（无行即无声明，
+ *   与 state='none'〔明确空稿〕区分，见 submission_evidence 表注释）。
+ *
+ * 四维状态总览（noteStatusOverviewSchema）不在本响应内：local 维度是客户端
+ * IDB 事务状态、server 维度是客户端同步队列视角（dirty/uploading/…），
+ * 服务端只权威给出本投影的原始事实，四维由前端（T6R.8/9）合成。
+ */
+export const noteHeadDataSchema = z.object({
+  note: noteRecordMetaSchema.nullable(),
+  images: z.array(noteImageMetaSchema),
+  evidence: noteSubmissionEvidenceMetaSchema.nullable(),
+});
+
+/**
+ * 补图上传元信息（POST /api/student|teacher/note-versions/:id/images 的
+ * multipart 字段集，路由层把字符串字段组装成本形状后经本 schema 校验）：
+ * - spec/pageIndex/crop/pixelWidth/pixelHeight 即 noteImageMeta 的对应字段
+ *   （imageId/noteVersionId/state/hash 由服务端定，客户端不可指定）；
+ * - 像素宽/高受防御上限 NOTE_IMAGE_MAX_PIXEL_DIM 约束（解码炸弹防线）；
+ * - 服务端另校验 PNG 魔数与 IHDR 实际尺寸 = 声明尺寸（方案 §8「尺寸／规格
+ *   ／版本必须匹配」），不在本 schema 内。
+ */
+export const noteImageUploadMetaSchema = z.object({
+  spec: noteImageSpecSchema,
+  /** 页号上限 999 与 noteImageMetaSchema 同值（上限链见彼处注释） */
+  pageIndex: z.number().int().min(0).max(999),
+  crop: noteCropRectSchema,
+  pixelWidth: z.number().int().min(1).max(NOTE_IMAGE_MAX_PIXEL_DIM),
+  pixelHeight: z.number().int().min(1).max(NOTE_IMAGE_MAX_PIXEL_DIM),
+});
+
 // ---------- 推断类型导出 ----------
 
 export type NoteDoc = z.infer<typeof noteDocSchema>;
@@ -530,13 +599,16 @@ export type NoteSubmissionEvidenceMeta = z.infer<
 export type NoteUploadMeta = z.infer<typeof noteUploadMetaSchema>;
 export type NoteVersionReceipt = z.infer<typeof noteVersionReceiptSchema>;
 export type NoteErrorCode = z.infer<typeof noteErrorCodeSchema>;
+export type NoteHeadData = z.infer<typeof noteHeadDataSchema>;
+export type NoteImageUploadMeta = z.infer<typeof noteImageUploadMetaSchema>;
 
 // ---------- 与后续任务的关系 ----------
 
 /**
  * - T6R.3 落地 questionRevisionId 的铸造与全来源冻结；
  * - T6R.4 按本协议实现不可变版本存储/CAS/幂等（hash 规范化规则以服务端实现为准）；
- * - T6R.5 的路由壳（成功响应壳/请求体）在届时按需扩展，本文件不预定义；
+ * - T6R.5 已落地的路由形状见上方「T6R.5 路由形状」段（noteHeadData /
+ *   noteImageUploadMeta），后续读/图扩展继续在此追加；
  * - 前端 IDB 记录（T6R.8）使用 NoteDoc 作为共享正文契约、本地状态独立定义，
  *   不重复手写 API 类型（Phase6 清单 T6R.2 验收项）。
  */

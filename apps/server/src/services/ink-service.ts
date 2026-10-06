@@ -13,10 +13,12 @@ import type { Db } from "../db/client";
 import { attempts, type InkRow, ink, students } from "../db/schema";
 import {
   parseGzipOrJsonBytes,
+  readFileBytes,
   resolveWithinRoot,
   writeFileAtomic,
 } from "../lib/blob-io";
 import { HttpError } from "../lib/http-error";
+import { pngSize } from "../lib/png";
 import {
   requireAttemptQuestion,
   requireUsableAttempt,
@@ -57,9 +59,6 @@ export function safeInkFileName(questionId: string): string {
   return `q-${createHash("sha256").update(questionId).digest("hex").slice(0, 40)}`;
 }
 
-/** PNG 魔数（\x89PNG\r\n\x1a\n） */
-const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-
 /**
  * 相对路径（DATA_DIR 内）→ 绝对路径，并校验不越出 blobs/ink 根（纵深防御）。
  * 边界算法在 lib/blob-io.resolveWithinRoot（path.relative 强判定——T6R.4 复审
@@ -76,17 +75,6 @@ function inkFileAbs(
     ...(suffix ? { suffix } : {}),
     violationCode: "INK_UNREADABLE",
   });
-}
-
-/** 解析 PNG 尺寸（IHDR 固定偏移：大端 u32 宽/高）；非法 PNG 返回 null */
-export function pngSize(
-  bytes: Uint8Array,
-): { width: number; height: number } | null {
-  if (bytes.length < 24) return null;
-  const buf = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  if (!buf.subarray(0, 8).equals(PNG_MAGIC)) return null;
-  if (buf.toString("latin1", 12, 16) !== "IHDR") return null;
-  return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
 }
 
 /**
@@ -336,14 +324,8 @@ export function getStudentInkPng(
   return readInkPng(db, dataDir, attemptId, questionId);
 }
 
-/** 读取落盘文件为独立 ArrayBuffer（Buffer 视图 → 拷贝；运行时类型即 ArrayBuffer） */
-function readFileBytes(filePath: string): ArrayBuffer {
-  const buf = readFileSync(filePath);
-  return buf.buffer.slice(
-    buf.byteOffset,
-    buf.byteOffset + buf.byteLength,
-  ) as ArrayBuffer;
-}
+// readFileBytes（T6R.5 复审⑥）与 pngSize 均已上提共享原语：
+// lib/blob-io.readFileBytes / lib/png.pngSize
 
 /** ink 行 + 文件 → PNG 字节（权限已由调用方校验） */
 function readInkPng(

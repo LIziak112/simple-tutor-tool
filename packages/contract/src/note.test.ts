@@ -5,14 +5,19 @@ import {
   NOTE_BODY_GZIP_MAX_BYTES,
   NOTE_COORD_MAX_X,
   NOTE_COORD_MAX_Y,
+  NOTE_IMAGE_MAX_PIXEL_DIM,
+  NOTE_IMAGE_PNG_MAX_BYTES,
   NOTE_MAX_POINTS_PER_STROKE,
   NOTE_MAX_TOTAL_POINTS,
   NOTE_PAPER_HEIGHT_DEFAULT,
   NOTE_PAPER_HEIGHT_MAX,
+  NOTE_VERSION_IMAGES_MAX_BYTES,
   noteBodyHashSchema,
   noteDocSchema,
   noteErrorCodeSchema,
+  noteHeadDataSchema,
   noteImageMetaSchema,
+  noteImageUploadMetaSchema,
   noteIssueIsLimit,
   noteLocalBodyStateSchema,
   notePhaseSchema,
@@ -627,5 +632,160 @@ describe("错误码与限额常量", () => {
     expect(NOTE_COORD_MAX_Y).toBe(3000);
     expect(NOTE_PAPER_HEIGHT_DEFAULT).toBe(800);
     expect(NOTE_PAPER_HEIGHT_MAX).toBe(3000);
+  });
+});
+
+// ---------- T6R.5：读/图路由的响应与请求形状 ----------
+
+describe("T6R.5 路由形状：noteHeadData / noteImageUploadMeta", () => {
+  /** 最小合法 noteImageMeta（head 投影 images 数组元素） */
+  const imageMeta = (
+    o: Partial<{
+      imageId: string;
+      pageIndex: number;
+      state: "ready" | "pending";
+      hash: string | null;
+    }> = {},
+  ) => ({
+    imageId: "55555555-5555-4555-8555-555555555555",
+    noteVersionId: "44444444-4444-4444-8444-444444444444",
+    spec: "analysis",
+    pageIndex: 0,
+    crop: { x: 0, y: 0, width: 1000, height: 800 },
+    pixelWidth: 1000,
+    pixelHeight: 800,
+    state: "ready",
+    hash: "b".repeat(64),
+    ...o,
+  });
+
+  it("空态（notCreated）：note=null + images=[] + evidence=null 合法——显式空态标记", () => {
+    const parsed = noteHeadDataSchema.parse({
+      note: null,
+      images: [],
+      evidence: null,
+    });
+    expect(parsed.note).toBeNull();
+    expect(parsed.evidence).toBeNull();
+  });
+
+  it("完整头投影合法：note + 该版本派生图 + 交卷证据", () => {
+    const parsed = noteHeadDataSchema.parse({
+      note: {
+        noteId: "33333333-3333-4333-8333-333333333333",
+        attemptId: "22222222-2222-4222-8222-222222222222",
+        questionId: "p4-q7",
+        questionRevisionId: "resp-1",
+        phase: "scratch",
+        revision: 2,
+        currentVersionId: "44444444-4444-4444-8444-444444444444",
+        serverSavedAt: "2026-10-06T02:00:00.000Z",
+      },
+      images: [
+        imageMeta(),
+        imageMeta({
+          imageId: "66666666-6666-4666-8666-666666666666",
+          pageIndex: 1,
+        }),
+      ],
+      evidence: {
+        attemptId: "22222222-2222-4222-8222-222222222222",
+        questionId: "p4-q7",
+        state: "frozen",
+        versionId: "44444444-4444-4444-8444-444444444444",
+        recordedAt: "2026-10-06T03:00:00.000Z",
+      },
+    });
+    expect(parsed.images).toHaveLength(2);
+    expect(parsed.evidence?.state).toBe("frozen");
+  });
+
+  it("note 非空时形状仍受 noteRecordMeta 约束（revision=0 带版本 id 拒绝）", () => {
+    expect(
+      noteHeadDataSchema.safeParse({
+        note: {
+          noteId: "33333333-3333-4333-8333-333333333333",
+          attemptId: "22222222-2222-4222-8222-222222222222",
+          questionId: "p4-q7",
+          questionRevisionId: "resp-1",
+          phase: "scratch",
+          revision: 0,
+          currentVersionId: "44444444-4444-4444-8444-444444444444",
+          serverSavedAt: "2026-10-06T02:00:00.000Z",
+        },
+        images: [],
+        evidence: null,
+      }).success,
+    ).toBe(false);
+  });
+
+  it("补图上传元信息：合法形状通过；crop 越硬上限 / 像素维超上限 / 非整数拒绝", () => {
+    const valid = {
+      spec: "thumbnail",
+      pageIndex: 0,
+      crop: { x: 0, y: 760, width: 1000, height: 40 },
+      pixelWidth: 500,
+      pixelHeight: 20,
+    };
+    expect(noteImageUploadMetaSchema.parse(valid).spec).toBe("thumbnail");
+    // crop 越硬上限（y+height>3000）
+    expect(
+      noteImageUploadMetaSchema.safeParse({
+        ...valid,
+        crop: { x: 0, y: 0, width: 1000, height: 3001 },
+      }).success,
+    ).toBe(false);
+    // 像素维超防御上限
+    expect(
+      noteImageUploadMetaSchema.safeParse({
+        ...valid,
+        pixelWidth: NOTE_IMAGE_MAX_PIXEL_DIM + 1,
+      }).success,
+    ).toBe(false);
+    // 非整数 / 负 pageIndex / 未知 spec
+    expect(
+      noteImageUploadMetaSchema.safeParse({ ...valid, pageIndex: 1.5 }).success,
+    ).toBe(false);
+    expect(
+      noteImageUploadMetaSchema.safeParse({ ...valid, pageIndex: -1 }).success,
+    ).toBe(false);
+    expect(
+      noteImageUploadMetaSchema.safeParse({ ...valid, spec: "huge" }).success,
+    ).toBe(false);
+  });
+
+  it("pageIndex 上限 999（复审轮②）：上传 meta 与投影形状两处同值拒绝", () => {
+    const valid = {
+      spec: "analysis",
+      pageIndex: 0,
+      crop: { x: 0, y: 0, width: 1000, height: 800 },
+      pixelWidth: 320,
+      pixelHeight: 200,
+    };
+    expect(
+      noteImageUploadMetaSchema.safeParse({ ...valid, pageIndex: 999 }).success,
+    ).toBe(true);
+    // 1000 与巨值（Number.isInteger(1e24)===true——靠 max 拦，不靠 int）
+    expect(
+      noteImageUploadMetaSchema.safeParse({ ...valid, pageIndex: 1000 })
+        .success,
+    ).toBe(false);
+    expect(
+      noteImageUploadMetaSchema.safeParse({ ...valid, pageIndex: 1e24 })
+        .success,
+    ).toBe(false);
+    // 投影形状同值约束（DB 层不该出现超限行——出现即投影 parse 失败当场暴露）
+    expect(
+      noteImageMetaSchema.safeParse(imageMeta({ pageIndex: 1000 })).success,
+    ).toBe(false);
+    expect(
+      noteImageMetaSchema.parse(imageMeta({ pageIndex: 999 })).pageIndex,
+    ).toBe(999);
+  });
+
+  it("图片限额常量锁定暂定值（真机定标后修订须改这里与注释）", () => {
+    expect(NOTE_IMAGE_PNG_MAX_BYTES).toBe(2 * 1024 * 1024);
+    expect(NOTE_VERSION_IMAGES_MAX_BYTES).toBe(8 * 1024 * 1024);
+    expect(NOTE_IMAGE_MAX_PIXEL_DIM).toBe(4096);
   });
 });

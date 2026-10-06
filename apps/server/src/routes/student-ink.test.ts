@@ -13,6 +13,7 @@ import { ink as inkTable } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { safeInkFileName } from "../services/ink-service.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
+import { makeNotePng as makePng } from "../test/note-fixtures.ts";
 import { submitAttemptRequest } from "../test/submit-revisions";
 
 /**
@@ -41,16 +42,7 @@ const Q = {
 
 type App = ReturnType<typeof createApp>;
 
-/** 最小合法 PNG（魔数 + IHDR 头 + 指定宽高；服务端只校验魔数/IHDR/尺寸） */
-function makePng(width = 320, height = 200): Uint8Array {
-  const buf = Buffer.alloc(64);
-  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(buf, 0);
-  buf.writeUInt32BE(13, 8); // IHDR 数据长度
-  buf.write("IHDR", 12, "latin1");
-  buf.writeUInt32BE(width, 16);
-  buf.writeUInt32BE(height, 20);
-  return new Uint8Array(buf);
-}
+// 最小合法 PNG 收编为共享夹具 note-fixtures.makeNotePng（T6R.5 复审⑧）
 
 /** 构造 atrament InkDoc（n 笔） */
 function atramentDoc(strokes = 2, updatedAt = 1727392800000): InkDoc {

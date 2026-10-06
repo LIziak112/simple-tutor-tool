@@ -73,6 +73,7 @@ import {
   type MarkRequest,
   type MarkResponseData,
   type MediaUploadResult,
+  type NoteHeadData,
   type PendingMarkListData,
   type PublicConfigData,
   type QuestionDetail,
@@ -928,56 +929,185 @@ export function studentInkPngUrl(
 
 // ---------- T3.3：笔迹回放矢量数据（教师端，D12） ----------
 
+/** fetchGzipJson 的分路文案（调用方各自措辞，共用流程见 helper 注释） */
+interface GzipJsonMessages {
+  network: string;
+  unsupported: string;
+  decompress: string;
+  corrupt: string;
+}
+
 /**
- * 教师按 inkId 取笔迹矢量文档（回放用）：
- * fetch `/api/teacher/ink/{inkId}.json.gz`（同源相对路径自动带会话 Cookie，
- * 与 putAttemptInkApi 的原生 fetch 同口径），成功时用 DecompressionStream
- * 解压 → 文本 → JSON.parse。
- *
- * 返回类型刻意为 unknown 且本层不做 Zod 校验：这是文件直出接口（gzip 原字节，
- * 不走 { ok, data } 统一壳），解出的文档形态由 <InkReplay> 按 engine 分派时
- * 收窄并校验（下一单接入）。
- *
- * 失败：网络错误抛中文 Error；非 200 抛 ApiError——404 INK_NOT_FOUND 即
- * 行不存在/域不匹配/文件缺失，调用方据此降级为 PNG 快照 + 「无回放数据」提示。
+ * 私有共用（T6R.5 复审⑤收敛）：fetch gzip 直出接口 → DecompressionStream
+ * 解压 → JSON.parse。坑位集中一处：
+ * - 不用 Blob 流——jsdom 的 Blob 流与 Node 全局流互操作不可靠；
+ *   Response/DecompressionStream 在浏览器与测试环境同为原生；
+ * - 直接 pipe 响应体流（不经 arrayBuffer 整包绕路）——fetch 返回的 Response
+ *   流可 pipeThrough，全真链路由 api-teacher-ink.test 验证；
+ * - 返回类型刻意为 unknown 且本层不做 Zod 校验：文件直出接口（gzip 原字节，
+ *   不走 { ok, data } 统一壳），文档形态由消费方（<InkReplay> 按 engine
+ *   分派 / T6R.6 渲染器按 noteDocSchema）收窄校验。
  */
-export async function fetchTeacherInkStrokesApi(
-  inkId: string,
+async function fetchGzipJson(
+  path: string,
+  msg: GzipJsonMessages,
 ): Promise<unknown> {
   let res: Response;
   try {
-    res = await fetch(`/api/teacher/ink/${encodeURIComponent(inkId)}.json.gz`);
+    res = await fetch(path);
   } catch {
-    throw new Error(
-      "连不上服务器，请确认后端已启动（pnpm --filter server dev）后重试",
-    );
+    throw new Error(msg.network);
   }
   if (!res.ok) {
     await throwShellError(res);
   }
   if (typeof DecompressionStream === "undefined") {
-    // 上传侧（gzipOrRaw）有原始 JSON 回退；回放只在支持解压的浏览器提供
-    throw new Error("当前浏览器不支持笔迹回放（缺少 DecompressionStream）");
+    // 上传侧（gzipOrRaw）有原始 JSON 回退；解压消费只在支持的环境提供
+    throw new Error(msg.unsupported);
   }
-  // 解压：走 Response 的字节流（不用 Blob——jsdom 环境的 Blob 流与 Node 全局
-  // 流互操作不可靠，Response/DecompressionStream 在浏览器与测试环境同为原生）
+  // 无字节流按传输层异常归因（浏览器保证 2xx 响应有 body——复审轮⑤）
+  if (res.body === null) {
+    throw new Error(msg.network);
+  }
   let text: string;
   try {
-    const src = new Response(new Uint8Array(await res.arrayBuffer()));
-    if (src.body === null) {
-      throw new Error("响应没有可读的字节流");
-    }
     text = await new Response(
-      src.body.pipeThrough(new DecompressionStream("gzip")),
+      res.body.pipeThrough(new DecompressionStream("gzip")),
     ).text();
-  } catch {
-    throw new Error("笔迹矢量数据解压失败（文件可能损坏），请刷新重试");
+  } catch (err) {
+    // 读流阶段失败的归因启发式（复审轮⑤）：gzip 坏块与网络中断在这里同为
+    // 异常、无可靠类型区分——按错误文案归类：已知网络类字样 → 网络错误
+    // 文案；其余（含各实现的解压错误）→ 解压失败文案。
+    const detail = err instanceof Error ? err.message : String(err);
+    if (/terminated|aborted|network|fetch failed/i.test(detail)) {
+      throw new Error(msg.network);
+    }
+    throw new Error(msg.decompress);
   }
   try {
     return JSON.parse(text) as unknown;
   } catch {
-    throw new Error("笔迹矢量数据损坏（不是合法的 JSON），请反馈老师处理");
+    throw new Error(msg.corrupt);
   }
+}
+
+/**
+ * 教师按 inkId 取笔迹矢量文档（回放用）：fetch `/api/teacher/ink/{inkId}.json.gz`
+ * （同源相对路径自动带会话 Cookie，与 putAttemptInkApi 的原生 fetch 同口径）。
+ * 失败：网络错误抛中文 Error；非 200 抛 ApiError——404 INK_NOT_FOUND 即
+ * 行不存在/域不匹配/文件缺失，调用方据此降级为 PNG 快照 + 「无回放数据」提示。
+ */
+export function fetchTeacherInkStrokesApi(inkId: string): Promise<unknown> {
+  return fetchGzipJson(
+    `/api/teacher/ink/${encodeURIComponent(inkId)}.json.gz`,
+    {
+      network:
+        "连不上服务器，请确认后端已启动（pnpm --filter server dev）后重试",
+      unsupported: "当前浏览器不支持笔迹回放（缺少 DecompressionStream）",
+      decompress: "笔迹矢量数据解压失败（文件可能损坏），请刷新重试",
+      corrupt: "笔迹矢量数据损坏（不是合法的 JSON），请反馈老师处理",
+    },
+  );
+}
+
+// ---------- T6R.5：题目草稿读接口（学生端 + 教师端 evidence） ----------
+
+/**
+ * 本次工作稿头（T6R.5 ①）：noteRecordMeta + 生效版本派生图 + 证据行。
+ * 无笔记时服务端返回显式空态（note=null / images=[] / evidence=null），
+ * 客户端以 baseRevision=0 起步——不是 404，无需判空捕获。
+ */
+export function fetchStudentNoteHeadApi(
+  attemptId: string,
+  questionId: string,
+): Promise<NoteHeadData> {
+  return callApi(() =>
+    api.api.student.attempts[":id"].notes[":questionId"].$get({
+      param: { id: attemptId, questionId },
+    }),
+  );
+}
+
+/**
+ * 本次只读证据与图片状态（T6R.5 ②）：本人历史权限（已交卷可读、软删题
+ * 历史证据可读）。结果页原稿查看（T6R.11）与草稿期图片状态轮询共用。
+ */
+export function fetchStudentNoteEvidenceApi(
+  attemptId: string,
+  questionId: string,
+): Promise<NoteHeadData> {
+  return callApi(() =>
+    api.api.student.attempts[":id"].evidence[":questionId"].$get({
+      param: { id: attemptId, questionId },
+    }),
+  );
+}
+
+/** 教师域内只读证据（T6R.5 ⑥；域外 404，批改/详情页原稿查看用） */
+export function fetchTeacherNoteEvidenceApi(
+  attemptId: string,
+  questionId: string,
+): Promise<NoteHeadData> {
+  return callApi(() =>
+    api.api.teacher.attempts[":id"].evidence[":questionId"].$get({
+      param: { id: attemptId, questionId },
+    }),
+  );
+}
+
+/**
+ * 学生读自己的版本文档（T6R.5 ③）：fetch 直出接口（gzip 原字节 +
+ * attachment，不走 { ok, data } 统一壳），解压与解析共用 fetchGzipJson
+ * （坑位注释见彼处）。返回类型刻意为 unknown：文档形态由 T6R.6 渲染器
+ * 消费时按 noteDocSchema 收窄。失败：404 NOTE_NOT_FOUND（不存在/非本人/
+ * 文件缺失）抛 ApiError。
+ */
+
+/** 笔记版本文档的分路文案（学生/教师两薄导出共用一份——复审轮⑬） */
+const NOTE_DOC_MESSAGES: GzipJsonMessages = {
+  network: "连不上服务器，请确认网络后重试",
+  unsupported: "当前浏览器不支持读取草稿正文（缺少 DecompressionStream）",
+  decompress: "草稿正文解压失败（文件可能损坏），请刷新重试",
+  corrupt: "草稿正文损坏（不是合法的 JSON），请反馈老师处理",
+};
+
+export function fetchStudentNoteDocumentApi(
+  versionId: string,
+): Promise<unknown> {
+  return fetchGzipJson(
+    `/api/student/note-versions/${encodeURIComponent(versionId)}/document`,
+    NOTE_DOC_MESSAGES,
+  );
+}
+
+/** 教师域内读学生版本文档（T6R.5 ⑦；域外 404），口径同学生端版本文档 */
+export function fetchTeacherNoteDocumentApi(
+  versionId: string,
+): Promise<unknown> {
+  return fetchGzipJson(
+    `/api/teacher/note-versions/${encodeURIComponent(versionId)}/document`,
+    NOTE_DOC_MESSAGES,
+  );
+}
+
+/**
+ * 学生端派生图 PNG 的 URL（T6R.5 ④；<img src> 直出，同源请求自动带会话
+ * Cookie，404 由 <img> 的 onerror 兜底）。带 .png 后缀（与 ink PNG 的
+ * URL 形态惯例一致；服务端两种形态同一资源）。
+ */
+export function studentNoteImagePngUrl(
+  versionId: string,
+  imageId: string,
+): string {
+  return `/api/student/note-versions/${encodeURIComponent(versionId)}/images/${encodeURIComponent(imageId)}.png`;
+}
+
+/** 教师端派生图 PNG 的 URL（T6R.5 ⑦），形态同学生端 */
+export function teacherNoteImagePngUrl(
+  versionId: string,
+  imageId: string,
+): string {
+  return `/api/teacher/note-versions/${encodeURIComponent(versionId)}/images/${encodeURIComponent(imageId)}.png`;
 }
 
 // ---------- 图片上传（POST /api/teacher/media：导入页随行图片流程在用） ----------

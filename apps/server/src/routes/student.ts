@@ -22,7 +22,16 @@ import {
   sessionCookieOptions,
 } from "../auth/session";
 import type { Db } from "../db/client";
-import { pngResponse } from "../lib/binary-response";
+import {
+  noStoreBinaryResponse,
+  pngResponse,
+  stripPngSuffix,
+} from "../lib/binary-response";
+import {
+  formString,
+  parseNoteImageUploadForm,
+  strictFormInt,
+} from "../lib/form-fields";
 import {
   firstIssueMessage,
   HttpError,
@@ -47,7 +56,14 @@ import {
 } from "../services/event-service";
 import { openHint } from "../services/hint-service";
 import { getInkDoc, getStudentInkPng, saveInk } from "../services/ink-service";
-import { saveNoteVersion } from "../services/note-service";
+import {
+  attachNoteImage,
+  getStudentNoteDocument,
+  getStudentNoteEvidence,
+  getStudentNoteHead,
+  getStudentNoteImagePng,
+  saveNoteVersion,
+} from "../services/note-service";
 import {
   getStudentCourseDetail,
   getStudentLecture,
@@ -95,7 +111,23 @@ import { listWrongQuestions } from "../services/wrong-questions";
  * - PUT  /attempts/:id/notes/:questionId：题目草稿正文上传（T6R.4，multipart：
  *   body 文件（gzip 或原始 JSON 的 NoteDoc）+ baseRevision/mutationId；CAS
  *   409 NOTE_REVISION_CONFLICT 附 _current 摘要、mutationId 幂等回执、限额
- *   413 NOTE_LIMIT_EXCEEDED；读/图/教师端路由在 T6R.5）；
+ *   413 NOTE_LIMIT_EXCEEDED）；
+ * - GET  /attempts/:id/notes/:questionId：本次工作稿头（T6R.5 ①，noteRecordMeta
+ *   + 生效版本派生图 + 证据行；无笔记 → 显式空态 note=null，客户端按
+ *   baseRevision=0 起步；本人 + attempt 可用 + 题目属冻结集合）；
+ * - GET  /attempts/:id/evidence/:questionId：本次只读证据与图片状态（T6R.5 ②，
+ *   本人历史权限——已交卷可读、软删题历史证据可读、不查询当前题库存活）；
+ * - GET  /note-versions/:versionId/document：读正文（T6R.5 ③，gzip 原字节直出
+ *   application/gzip + attachment 下载语义 + no-store；仅经 versionId→note→
+ *   attempt→本人归属链授权，不暴露磁盘路径）；
+ * - GET  /note-versions/:versionId/images/:imageId(.png)：派生图 PNG 直出
+ *   （T6R.5 ④，image/png + no-store；参照 ink 的 .png 后缀分流惯例——后缀
+ *   可选，同一资源双 URL 形态，无元数据 JSON 变体）；
+ * - POST /note-versions/:versionId/images：为自己的已固定版本补派生图
+ *   （T6R.5 ⑤，multipart：image PNG + spec/pageIndex/cropX/Y/W/H/pixel 尺寸；
+ *   槽位 (versionId,spec,pageIndex) upsert、hash 服务端算、单图 2MiB/聚合
+ *   8MiB 限额、PNG 魔数与 IHDR 尺寸须与声明一致；只能挂既定版本不能改正文；
+ *   交卷后仍放行〔补图是恢复通道〕）；
  * - GET  /courses、GET /courses/:id：我的课程（可见讲义/单元计数，完成数 T2A.6 前恒 0）
  *   与课程可见目录（T2A.5，D5 过滤；D22——非成员/学生归档/课程归档 403
  *   COURSE_ACCESS_DENIED，课程不存在/条目不可见 404 NOT_FOUND 不暴露存在性）；
@@ -120,18 +152,22 @@ import { listWrongQuestions } from "../services/wrong-questions";
  * 路径段带后缀说明：Hono 的 path 参数会吞掉整个 segment（含 .png 后缀），
  * 因此 ink 的取回路由注册一个 /attempts/:id/ink/:questionId，handler 内按
  * .png 后缀分流 JSON（矢量文档）与 PNG（快照直出）——对外 URL 形态与任务
- * 约定一致（GET …/ink/:questionId 与 GET …/ink/:questionId.png）。
+ * 约定一致（GET …/ink/:questionId 与 GET …/ink/:questionId.png）。T6R.5 的
+ * note-versions 图片路由同款注册 /images/:file：该资源只有 PNG 一种形态
+ * （元数据经头投影接口下发），后缀可选——带不带 .png 都直出 PNG。
  *
  * 学生端接口永不返回答案/详解等教师侧内容（AGENTS.md 第 3 条）：/assignments
  * 只含单元公开元信息（标题/topic/题数）；/assignments/:id/paper 与草稿视图的
  * 每道题经 questionPublicSchema 输出过滤且题干已公开化（[[答案]] → [[]]）；
  * /attempts/:id 的结果视图在交卷后允许携带参考答案与详解（规则 3 限制的是
  * 「未交卷题目」）；提示内容只经 /attempts/:id/hints 按需逐条下发（T2.11），
- * 两个视图仅回显已解锁条目。泄露测试见
+ * 两个视图仅回显已解锁条目。T6R.5 的 notes/evidence/补图接口只含笔记元信息、
+ * 图片状态与学生自产附件（题干内容不在本批接口）。泄露测试见
  * routes/assignments.test.ts、routes/student-lectures.test.ts、
  * routes/student-paper.test.ts 与 routes/student-attempts.test.ts
  * （通用工具 src/test/assert-no-leak.ts；T2.8 ink 接口见 routes/student-ink.test.ts；
- * T2.11 提示接口与全学生端泄露矩阵见 routes/student-hints.test.ts）。
+ * T2.11 提示接口与全学生端泄露矩阵见 routes/student-hints.test.ts；
+ * T6R.5 草稿接口见 routes/student-notes.test.ts 与 routes/student-note-read.test.ts）。
  * 返回类型不显式标注 Hono：链式注册把路由签名累积进推断类型（AppType / hc 前提）。
  */
 export function createStudentRoutes(
@@ -300,7 +336,7 @@ export function createStudentRoutes(
             c.var.student.id,
             c.req.param("id"),
             // questionId 本身可能含点（来自 DSL），只剥离末尾 .png
-            raw.slice(0, -".png".length),
+            stripPngSuffix(raw),
           );
           return pngResponse(png.bytes, png.etag);
         }
@@ -315,13 +351,13 @@ export function createStudentRoutes(
           ),
         });
       })
-      // T6R.4：题目草稿正文上传（方案 §8 形态；本任务唯一写入口——读/图/
-      // 教师端路由在 T6R.5）。multipart：body 文件（gzip 或原始 JSON 的
-      // NoteDoc）+ baseRevision/mutationId 字段（契约 noteUploadMetaSchema）。
-      // 本人+进行中 attempt+题目属冻结集合（service 内统一门口）；CAS 失败
-      // 409 附 _current 摘要、同 mutationId 重放同文原回执/异文 409（service
-      // 内实现）。响应 noteVersionReceipt；客户端多发的 noteId/serverSavedAt/
-      // phase 等字段一律忽略（归属与时间全由服务端定）。
+      // T6R.4：题目草稿正文上传（方案 §8 形态）。multipart：body 文件（gzip
+      // 或原始 JSON 的 NoteDoc）+ baseRevision/mutationId 字段（契约
+      // noteUploadMetaSchema）。本人+进行中 attempt+题目属冻结集合（service
+      // 内统一门口）；CAS 失败 409 附 _current 摘要、同 mutationId 重放同文
+      // 原回执/异文 409（service 内实现）。响应 noteVersionReceipt；客户端
+      // 多发的 noteId/serverSavedAt/phase 等字段一律忽略（归属与时间全由
+      // 服务端定）。
       .put("/attempts/:id/notes/:questionId", async (c) => {
         const form = await c.req.parseBody();
         const body = form.body;
@@ -334,19 +370,11 @@ export function createStudentRoutes(
           );
         }
         // multipart 字段全是字符串：baseRevision 按严格十进制整数串转数
-        // （T6R.4 复审③——Number("")===0/Number("  ")===0 会骗过 min(0)，
-        // 空串与科学计数/十六进制/小数一律不转，交契约 schema 出 400；
-        // JSON 通道的 number 形态契约不变，此转换属 multipart 传输层）
-        const rawBase =
-          typeof form.baseRevision === "string" ? form.baseRevision : undefined;
-        const baseRevision =
-          rawBase !== undefined && /^\d+$/.test(rawBase)
-            ? Number(rawBase)
-            : undefined;
+        // （T6R.4 复审③——空串与科学计数/十六进制/小数一律不转，交契约
+        // schema 出 400；JSON 通道的 number 形态契约不变，此转换属传输层）
         const parsed = noteUploadMetaSchema.safeParse({
-          baseRevision,
-          mutationId:
-            typeof form.mutationId === "string" ? form.mutationId : undefined,
+          baseRevision: strictFormInt(form, "baseRevision"),
+          mutationId: formString(form, "mutationId"),
         });
         if (!parsed.success) {
           const first = firstIssueMessage(parsed.error);
@@ -366,6 +394,79 @@ export function createStudentRoutes(
             c.req.param("questionId"),
             new Uint8Array(await body.arrayBuffer()),
             parsed.data,
+          ),
+        });
+      })
+      // T6R.5 ①：本次工作稿头（noteRecordMeta + 生效版本派生图 + 证据行）。
+      // 本人且 attempt 可继续作答（requireUsableAttempt）+ 题目属冻结集合
+      // （严格口径，与写通道同一门口）；无笔记 → 显式空态 note=null。
+      .get("/attempts/:id/notes/:questionId", (c) => {
+        return c.json({
+          ok: true,
+          data: getStudentNoteHead(
+            db,
+            c.var.student.id,
+            c.req.param("id"),
+            c.req.param("questionId"),
+          ),
+        });
+      })
+      // T6R.5 ②：本次只读证据与图片状态。本人历史权限（已交卷可读、软删题
+      // 历史证据可读——题目成员资格按 attempt 自有 responses 行宽判定，不查
+      // 当前题库存活）；课程撤权的进行中稿与 detail 同口径 403。
+      .get("/attempts/:id/evidence/:questionId", (c) => {
+        return c.json({
+          ok: true,
+          data: getStudentNoteEvidence(
+            db,
+            c.var.student.id,
+            c.req.param("id"),
+            c.req.param("questionId"),
+          ),
+        });
+      })
+      // T6R.5 ③：版本文档直出（gzip 原字节；授权在 service 归属链，版本行
+      // 不存在 404、非本人 403）。no-store + attachment（下载语义）统一走
+      // lib/binary-response.noStoreBinaryResponse（缓存口径理由见其注释）
+      .get("/note-versions/:versionId/document", (c) => {
+        const versionId = c.req.param("versionId");
+        const bytes = getStudentNoteDocument(
+          db,
+          dataDir,
+          c.var.student.id,
+          versionId,
+        );
+        return noStoreBinaryResponse(bytes, "application/gzip", {
+          attachmentFilename: `note-${versionId}.json.gz`,
+        });
+      })
+      // T6R.5 ④：派生图 PNG 直出（.png 后缀可选——分流惯例见文件头说明）
+      .get("/note-versions/:versionId/images/:file", (c) => {
+        const bytes = getStudentNoteImagePng(
+          db,
+          dataDir,
+          c.var.student.id,
+          c.req.param("versionId"),
+          stripPngSuffix(c.req.param("file")),
+        );
+        return noStoreBinaryResponse(bytes, "image/png");
+      })
+      // T6R.5 ⑤：为自己的已固定版本补派生图（multipart 字段集与教师端共用
+      // lib/form-fields.parseNoteImageUploadForm；PNG 完整性/限额/槽位 upsert
+      // 在 note-service.attachNoteImage）
+      .post("/note-versions/:versionId/images", async (c) => {
+        const { pngBytes, meta } = await parseNoteImageUploadForm(
+          await c.req.parseBody(),
+        );
+        return c.json({
+          ok: true,
+          data: attachNoteImage(
+            db,
+            dataDir,
+            { kind: "student", id: c.var.student.id },
+            c.req.param("versionId"),
+            pngBytes,
+            meta,
           ),
         });
       })

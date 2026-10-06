@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
+  readFileSync,
   renameSync,
   unlinkSync,
   writeFileSync,
@@ -17,7 +18,8 @@ import { HttpError } from "./http-error";
  * - writeFileAtomic：唯一临时文件 + rename 原子落位 + 失败清理
  *   （note 版语义为准；ink/media 原固定 tmp 名实现换用，顺带修并发短板）；
  * - resolveWithinRoot：path.relative 目录边界校验（强算法唯一实现，
- *   ink 旧 startsWith 弱实现一并换用——同前缀相邻目录不再可能骗过）。
+ *   ink 旧 startsWith 弱实现一并换用——同前缀相邻目录不再可能骗过）；
+ * - readFileBytes：落盘文件 → 独立 ArrayBuffer（读侧三服务的共享口径）。
  */
 
 // ---------- gzip / 原始 JSON 兼容解析 ----------
@@ -136,4 +138,21 @@ export function resolveWithinRoot(
     throw new HttpError(500, opts.violationCode, "文件路径后缀非法");
   }
   return abs;
+}
+
+// ---------- 读侧共享原语 ----------
+
+/**
+ * 读取落盘文件为**独立 ArrayBuffer**（T6R.5 复审⑥上提：ink/note/media 三份
+ * 逐字副本收一）。Buffer 视图 → 拷贝是刻意的：server 与 web 两侧 tsconfig
+ * 都会检查消费方（Response BodyInit 对独立 ArrayBuffer 类型友好，共享底层
+ * 缓冲区的 Buffer 视图不行）；文件不存在等 IO 错误原样抛出，由调用方
+ * 映射各自的 404/口径。
+ */
+export function readFileBytes(filePath: string): ArrayBuffer {
+  const buf = readFileSync(filePath);
+  return buf.buffer.slice(
+    buf.byteOffset,
+    buf.byteOffset + buf.byteLength,
+  ) as ArrayBuffer;
 }

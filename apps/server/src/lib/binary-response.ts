@@ -39,3 +39,39 @@ export function pngResponse(bytes: ArrayBuffer, etag: string): Response {
 export function gzipResponse(bytes: ArrayBuffer, etag: string): Response {
   return binaryFileResponse(bytes, "application/gzip", etag);
 }
+
+/**
+ * 笔记版本文档/派生图直出（T6R.5）：Cache-Control: no-store——这些字节按
+ * 归属链授权下发（versionId/imageId 是账号私有数据），共享设备上切换账号后
+ * 浏览器缓存不得回放另一账号仍可见的内容（版本内容虽不可变，但「授权」会
+ * 随账号变化，immutable/短缓存两个前提都不成立；与 ink 的 private,max-age=60
+ * 和 /blobs/media 的内容寻址长缓存是三种不同口径）。no-store 下不会有条件
+ * 请求，ETag 无意义不设。
+ */
+export function noStoreBinaryResponse(
+  bytes: ArrayBuffer,
+  contentType: string,
+  options: {
+    /** 附件下载语义：给定时设置 content-disposition: attachment（文档直出用） */
+    attachmentFilename?: string;
+  } = {},
+): Response {
+  const headers: Record<string, string> = {
+    "content-type": contentType,
+    "cache-control": "no-store",
+  };
+  if (options.attachmentFilename !== undefined) {
+    headers["content-disposition"] =
+      `attachment; filename="${options.attachmentFilename}"`;
+  }
+  return new Response(bytes, { status: 200, headers });
+}
+
+/**
+ * 剥离路径段末尾的 .png 后缀（T6R.5 复审⑦收敛）：ink 与 note 图片路由的
+ * 「.png 可选后缀、同一资源双 URL 形态」分流惯例共用。questionId/imageId
+ * 本身可能含点（来自 DSL/uuid），只剥末尾固定后缀。
+ */
+export function stripPngSuffix(raw: string): string {
+  return raw.endsWith(".png") ? raw.slice(0, -".png".length) : raw;
+}

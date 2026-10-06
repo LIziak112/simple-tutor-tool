@@ -304,12 +304,17 @@ export function listTeacherAttempts(
 
 // ---------- GET /api/teacher/attempts/:id ----------
 
-/** attempt 行（经学生归属链）：不存在或非本人学生的作答 → 404（不暴露存在性） */
-function requireTeacherAttempt(
+/**
+ * attempt → 学生归属链查行（**不抛**；null = 不存在或域外，不区分——不暴露
+ * 存在性）。T6R.5 复审②从 requireTeacherAttempt 拆出：note-service 教师端
+ * 版本/图片授权需要同一归属判定但错误码不同（NOTE_NOT_FOUND），共用本原语
+ * + 各自错误码的薄抛层，保证域判定口径永不漂移。
+ */
+export function findTeacherAttempt(
   db: Db,
   teacherId: string,
   attemptId: string,
-): { attempt: Attempt; studentName: string } {
+): { attempt: Attempt; studentName: string } | null {
   const row = db
     .select({
       attempt: attempts,
@@ -321,9 +326,26 @@ function requireTeacherAttempt(
     .where(eq(attempts.id, attemptId))
     .get();
   if (row === undefined || row.ownerTeacherId !== teacherId) {
-    throw new HttpError(404, "ATTEMPT_NOT_FOUND", "作答记录不存在");
+    return null;
   }
   return { attempt: row.attempt, studentName: row.studentName };
+}
+
+/**
+ * attempt 行（经学生归属链）：不存在或非本人学生的作答 → 404（不暴露存在性）。
+ * 判定原语在 findTeacherAttempt；本函数是 ATTEMPT_NOT_FOUND 口径的薄抛层
+ * （note-service 以 NOTE_NOT_FOUND 口径复用同一原语）。
+ */
+export function requireTeacherAttempt(
+  db: Db,
+  teacherId: string,
+  attemptId: string,
+): { attempt: Attempt; studentName: string } {
+  const row = findTeacherAttempt(db, teacherId, attemptId);
+  if (row === null) {
+    throw new HttpError(404, "ATTEMPT_NOT_FOUND", "作答记录不存在");
+  }
+  return row;
 }
 
 // 快照解析统一走 services/snapshot.ts 的 snapshotOfRow（T6R.3 全服务端唯一
