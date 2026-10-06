@@ -68,6 +68,9 @@ export interface SubmitEvidencePrep {
   problems: SubmitEvidenceProblem[];
 }
 
+/** 逐题 head 拉取超时（对齐 note-sync PUT 的 30s 桥接口径） */
+const NOTE_HEAD_TIMEOUT_MS = 30_000;
+
 /** 待传未追平的通用文案（dirty/uploading 共用；原文两处字面量收敛） */
 const UNTRACKED_NOTE_REASON = "草稿尚未保存完整（网络不稳定，正在重试）";
 /** revision≥1 ⇒ currentVersionId 非空是契约不变量，违反时的防御文案 */
@@ -182,7 +185,13 @@ export async function prepareSubmitEvidence(input: {
       : loadScratchRecords(session, input.attemptId, { strictRead: true }),
     Promise.all(
       input.questionIds.map((questionId) =>
-        fetchStudentNoteHeadApi(input.attemptId, questionId),
+        // 逐题超时（对齐 note-sync PUT 30s 桥接口径）：批量端点是 T6R.14
+        // 待办，本分支先保证单请求不无限挂起
+        fetchStudentNoteHeadApi(
+          input.attemptId,
+          questionId,
+          AbortSignal.timeout(NOTE_HEAD_TIMEOUT_MS),
+        ),
       ),
     ),
   ]);

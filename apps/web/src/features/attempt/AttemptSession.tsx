@@ -5,7 +5,7 @@ import type {
   AttemptResultData,
   HintOpenedEntry,
 } from "@tutor/contract";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { Button } from "@/components/ui/button";
 import { AttemptBottomBar } from "@/features/attempt/AttemptBottomBar";
@@ -268,22 +268,38 @@ function AnswerView({
 
   // T2A.7：题目按单元分组下发；答题页平铺渲染、题号全卷连续（累计 index）。
   // 多单元时渲染节标题（单元标题），单单元不显示节头（避免与课程练习标题重复）。
-  const flatQuestions = data.units.flatMap((unit) => unit.questions);
+  // 派生数组 useMemo（效率复审 #10）：confirmSubmit/openSubmitDialog 的
+  // useCallback 依赖因此稳定（原先每渲染新数组零收益地失效缓存）
+  const flatQuestions = useMemo(
+    () => data.units.flatMap((unit) => unit.questions),
+    [data],
+  );
   const showUnitHeaders = data.units.length > 1;
-  const questionIds = flatQuestions.map((question) => question.id);
+  const questionIds = useMemo(
+    () => flatQuestions.map((question) => question.id),
+    [flatQuestions],
+  );
   const total = flatQuestions.length;
   const answered = answers === null ? 0 : answeredCount(questionIds);
   const unanswered = total - answered;
 
   // T6R.3：交卷回传的题目版本集合（建卷冻结时下发的 questionRevisionId 原样
   // 回传，服务端与冻结集合比对——本页数据即学生看到的卷，天然一致）
-  const submitRevisions = flatQuestions.map((question) => ({
-    questionId: question.id,
-    questionRevisionId: question.questionRevisionId,
-  }));
+  const submitRevisions = useMemo(
+    () =>
+      flatQuestions.map((question) => ({
+        questionId: question.id,
+        questionRevisionId: question.questionRevisionId,
+      })),
+    [flatQuestions],
+  );
   /** 题号映射（1 起序号——明确选择分支按「第 n 题」呈现问题） */
-  const questionIndexById = new Map(
-    flatQuestions.map((question, i) => [question.id, i + 1] as const),
+  const questionIndexById = useMemo(
+    () =>
+      new Map(
+        flatQuestions.map((question, i) => [question.id, i + 1] as const),
+      ),
+    [flatQuestions],
   );
 
   /**

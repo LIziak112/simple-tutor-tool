@@ -1037,11 +1037,22 @@ export function fetchTeacherInkStrokesApi(inkId: string): Promise<unknown> {
 export function fetchStudentNoteHeadApi(
   attemptId: string,
   questionId: string,
+  /** 逐题超时等中止信号（T6R.10 交卷组装 30s——对齐 PUT 口径）；
+   *  有 signal 时走原语 fetch（hc RPC 路由推断不出 signal，同 putNoteDocumentApi） */
+  signal?: AbortSignal,
 ): Promise<NoteHeadData> {
+  if (signal === undefined) {
+    return callApi(() =>
+      api.api.student.attempts[":id"].notes[":questionId"].$get({
+        param: { id: attemptId, questionId },
+      }),
+    );
+  }
   return callApi(() =>
-    api.api.student.attempts[":id"].notes[":questionId"].$get({
-      param: { id: attemptId, questionId },
-    }),
+    fetch(
+      `/api/student/attempts/${encodeURIComponent(attemptId)}/notes/${encodeURIComponent(questionId)}`,
+      { signal },
+    ),
   );
 }
 
