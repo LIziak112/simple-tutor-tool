@@ -536,3 +536,15 @@ describe("note-store：备份回退 load 守卫（复审②）", () => {
     expect(deriveServerState(record, false)).toBe("conflict");
   });
 });
+
+describe("note-store：writeNoteDoc 断引用（复审⑩ memo 纪律）", () => {
+  it("调用方就地改动原对象不影响仓内记录（顶层与 strokes 数组均断引用）", async () => {
+    const input = { ...DOC_B }; // 调用方持有的对象
+    writeNoteDoc(SESSION_A, SCOPE, input);
+    // 就地改原对象顶层与数组（模拟外部可变引用）
+    input.ink = { ...input.ink, strokes: [] };
+    const record = await recordOf(SESSION_A, SCOPE);
+    expect(record.doc.ink.strokes.length).toBe(2); // 仓内不受影响
+    expect(record.pending?.doc.ink.strokes.length).toBe(2);
+  });
+});

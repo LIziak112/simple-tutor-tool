@@ -593,10 +593,19 @@ export function getNoteView(
 export function writeNoteDoc(
   session: NoteSessionRef,
   scope: NoteScope,
-  doc: NoteDocInput,
+  input: NoteDocInput,
 ): void {
   const key = noteKeyOf(session, scope);
   mutate(key, freshRecord, (record) => {
+    // 复审⑩ memo 纪律：入仓即断外部引用——浅展两级（doc、ink）+ strokes
+    // 数组换新引用。gzip/parse 的 WeakMap memo 以对象引用为键，调用方若
+    // 就地改动原对象（改 doc.ink / strokes.push）会毒化缓存与幂等字节；
+    // 断引用后顶层与数组层不可达原对象。拷贝深度边界：stroke 元素对象仍
+    // 共享（引擎侧不得就地改单个笔画的 points——契约层数据本应不可变）
+    const doc: NoteDocInput = {
+      ...input,
+      ink: { ...input.ink, strokes: [...input.ink.strokes] },
+    };
     record.doc = doc;
     record.pending = { mutationId: randomUuid(), doc };
     record.editedAt = Date.now();
@@ -834,18 +843,16 @@ export function setUploading(
 }
 
 /**
- * NoteDoc 相等比较（恢复 load 不回传无变化版本的依据）：两侧都经
- * noteDocSchema 物化（缺省高度/背景补默认）后按规范化 JSON 比较；
- * 任一侧形态非法判不等（不吞错——非法稿继续走上传由服务端裁决）。
+ * NoteDoc 相等比较（恢复 load 不回传无变化版本的依据，复审⑫）：
+ * local（pending 侧 NoteDocInput）经 safeParseDoc 物化（parseMemo 命中则
+ * 零成本）；server 侧已物化（NoteDoc）不再重复 parse；两侧 digestOf
+ * （draft-merge 的 stableStringify，键序无关）比较。任一侧形态非法判
+ * 不等（不吞错——非法稿继续走上传由服务端裁决）。
  */
-export function noteDocsEqual(a: NoteDocInput, b: NoteDocInput): boolean {
-  const pa = noteDocSchema.safeParse(a);
-  const pb = noteDocSchema.safeParse(b);
-  if (!pa.success || !pb.success) return false;
-  // digestOf（draft-merge 的 stableStringify）：键序无关的稳定序列化，
-  // 消除对 zod parse 输出键序的隐含依赖（跨 feature import 有先例：
-  // image-sync 取 features/ink/engine/bounds）
-  return digestOf(pa.data) === digestOf(pb.data);
+export function noteDocsEqual(local: NoteDocInput, server: NoteDoc): boolean {
+  const parsedLocal = safeParseDoc(local);
+  if (parsedLocal === null) return false;
+  return digestOf(parsedLocal) === digestOf(server);
 }
 
 /**
