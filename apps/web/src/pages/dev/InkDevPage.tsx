@@ -9,6 +9,7 @@ import type {
 import { InkPad } from "@/features/ink/InkPad.tsx";
 import { totalPoints } from "@/features/ink/lab/synthetic-strokes.ts";
 import { InkLabPanel } from "./InkLabPanel.tsx";
+import { NoteRenderVerifyPanel } from "./NoteRenderVerifyPanel.tsx";
 
 /**
  * /dev/ink 手写开发页（T2.7，架构 §5.4「Phase 2 第一步先做真机试验」的实验场）。
@@ -78,6 +79,19 @@ export default function InkDevPage() {
             （报告见 docs/审查报告/Phase6-手写真机验证.md）。
           </p>
           <InkLabPanel />
+        </section>
+
+        <section aria-labelledby="ink-sec-render">
+          <h2 id="ink-sec-render" className="mb-1 text-base font-semibold">
+            ④ T6R.6 渲染验证（真实解码 PNG 内容检查）
+          </h2>
+          <p className="mb-3 text-xs text-muted-foreground">
+            独立渲染器的浏览器侧闸门：真实 canvas 渲染并解码自产 PNG，
+            逐项检查背景入图、轻点/荧光笔/擦除保真、长稿切片与确定性
+            （字节级双渲一致）。🧑 长稿小字可读性与翻页观感仍需 iPad
+            真机确认，本面板只证像素正确。
+          </p>
+          <NoteRenderVerifyPanel />
         </section>
 
         <section aria-labelledby="ink-sec-checklist">

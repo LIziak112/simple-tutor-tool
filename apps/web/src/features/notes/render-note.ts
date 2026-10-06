@@ -399,7 +399,10 @@ export async function renderNotePage(
 
     paintPaperBackground(ctx, doc.background, crop, pixelWidth, pixelHeight);
 
-    // 重放笔迹：页内相交的笔画平移到页原点后按引擎原语绘制。cssWidth 传
+    // 重放笔迹：页内相交的笔画平移到页原点后按引擎原语绘制。注意引擎
+    // 原语的既有语义：零长笔画（孤立单点 = 零长二次曲线）不落墨、稀疏
+    // 点笔画的绘制终点按平滑追赶滞后——渲染器如实复现（图文一致以实时
+    // 画布为准，E2E 面板有对应守卫检查）。cssWidth 传
     // INK_LOGICAL_WIDTH ⇒ css 坐标 == 逻辑坐标，atrament 再按
     // canvas.width/offsetWidth（= pixelWidth/crop.width）等比映射到设备像素
     for (const s of doc.ink.strokes) {
