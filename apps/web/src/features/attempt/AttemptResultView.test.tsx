@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import type { AttemptResultData } from "@tutor/contract";
 import { describe, expect, it, vi } from "vitest";
+import { noteOriginalStubDatasets } from "@/features/notes/note-original-test-stub";
 import { AttemptResultView } from "./AttemptResultView";
 
 /**
@@ -11,17 +12,10 @@ import { AttemptResultView } from "./AttemptResultView";
 // T6R.11：原稿查看面板以桩替换（面板自身行为见 NoteOriginalView.test），
 // 这里只断言接线——哪些题渲染入口、角色/attempt/题目/轮次标注怎么传
 vi.mock("@/features/notes/NoteOriginalView", async () => {
-  const { createElement } = await import("react");
-  return {
-    NoteOriginalView: (props: Record<string, unknown>) =>
-      createElement("div", {
-        "data-testid": "note-original-stub",
-        "data-role": String(props.viewer),
-        "data-attempt": String(props.attemptId),
-        "data-question": String(props.questionId),
-        "data-round": String(props.roundLabel ?? ""),
-      }),
-  };
+  const { NoteOriginalTestStub } = await import(
+    "@/features/notes/note-original-test-stub"
+  );
+  return { NoteOriginalView: NoteOriginalTestStub };
 });
 
 const DATA: AttemptResultData = {
@@ -682,8 +676,7 @@ describe("详解折叠开合回调（T4.0b）", () => {
 // ---------- T6R.11：结果页「查看本次草稿原稿」入口 ----------
 
 describe("本次草稿原稿入口（T6R.11）", () => {
-  const stubsOf = () =>
-    screen.getAllByTestId("note-original-stub").map((el) => el.dataset);
+  const stubsOf = noteOriginalStubDatasets;
 
   it("非手写题逐题渲染入口（学生角色 + 本 attempt 定位 + 题目 id）；手写题不渲染", () => {
     renderView();

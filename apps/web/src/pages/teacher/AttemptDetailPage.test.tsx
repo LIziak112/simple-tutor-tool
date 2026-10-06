@@ -12,6 +12,7 @@ import type {
 } from "@tutor/contract";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { noteOriginalStubDatasets } from "@/features/notes/note-original-test-stub";
 import {
   ApiError,
   downloadTeacherExportCsv,
@@ -43,19 +44,12 @@ vi.mock("@/lib/api", async (importOriginal) => {
 });
 
 // T6R.11：原稿查看面板以桩替换（面板行为见 NoteOriginalView.test），此处
-// 只断言教师端接线——哪些题渲染、attempt/轮次标注怎么传
+// 桩组件与 dataset 读取器在 note-original-test-stub（共享件），此处只断言教师端接线
 vi.mock("@/features/notes/NoteOriginalView", async () => {
-  const { createElement } = await import("react");
-  return {
-    NoteOriginalView: (props: Record<string, unknown>) =>
-      createElement("div", {
-        "data-testid": "note-original-stub",
-        "data-role": String(props.viewer),
-        "data-attempt": String(props.attemptId),
-        "data-question": String(props.questionId),
-        "data-round": String(props.roundLabel ?? ""),
-      }),
-  };
+  const { NoteOriginalTestStub } = await import(
+    "@/features/notes/note-original-test-stub"
+  );
+  return { NoteOriginalView: NoteOriginalTestStub };
 });
 
 const mockedDetail = vi.mocked(fetchTeacherAttemptDetailApi);
@@ -521,9 +515,7 @@ describe("AttemptDetailPage 草稿原稿入口（T6R.11）", () => {
     );
     renderPage();
     await screen.findByRole("article", { name: "第 4 题" });
-    const stubs = screen
-      .getAllByTestId("note-original-stub")
-      .map((el) => el.dataset);
+    const stubs = noteOriginalStubDatasets();
     // 前三题 judge（q1）+ judge（q2）+ judge（q3）非手写；solve 第 4 题不渲染
     expect(stubs.map((s) => s.question)).toEqual(["q1", "q2", "q3"]);
     for (const stub of stubs) {

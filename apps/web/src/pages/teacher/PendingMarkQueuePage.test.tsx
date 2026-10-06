@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { PendingMarkCard, PendingMarkListData } from "@tutor/contract";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { noteOriginalStubDatasets } from "@/features/notes/note-original-test-stub";
 import {
   fetchAssignmentsApi,
   fetchPendingMarksApi,
@@ -31,19 +32,12 @@ vi.mock("@/lib/api", async (importOriginal) => {
 });
 
 // T6R.11：原稿查看面板以桩替换（面板行为见 NoteOriginalView.test），此处
-// 只断言待批卡接线——非手写待批题（如人工批改的填空）渲染入口
+// 桩组件与 dataset 读取器在 note-original-test-stub（共享件），此处只断言待批卡接线
 vi.mock("@/features/notes/NoteOriginalView", async () => {
-  const { createElement } = await import("react");
-  return {
-    NoteOriginalView: (props: Record<string, unknown>) =>
-      createElement("div", {
-        "data-testid": "note-original-stub",
-        "data-role": String(props.viewer),
-        "data-attempt": String(props.attemptId),
-        "data-question": String(props.questionId),
-        "data-round": String(props.roundLabel ?? ""),
-      }),
-  };
+  const { NoteOriginalTestStub } = await import(
+    "@/features/notes/note-original-test-stub"
+  );
+  return { NoteOriginalView: NoteOriginalTestStub };
 });
 
 const mockedMarks = vi.mocked(fetchPendingMarksApi);
@@ -334,9 +328,7 @@ describe("待批卡草稿原稿入口（T6R.11）", () => {
     // 只有一张卡在屏（当前卡 solve 手写）→ J 键翻到第 2 张
     fireEvent.keyDown(window, { key: "j" });
     await screen.findByText("第 2 / 2 张");
-    const stubs = screen
-      .getAllByTestId("note-original-stub")
-      .map((el) => el.dataset);
+    const stubs = noteOriginalStubDatasets();
     expect(stubs).toHaveLength(1);
     expect(stubs[0]?.role).toBe("teacher");
     expect(stubs[0]?.attempt).toBe("99999999-9999-4999-8999-999999999991");
