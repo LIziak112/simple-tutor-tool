@@ -427,8 +427,8 @@ describe("派生图状态：正文待图 / 缺图 + 重建", () => {
     // 重建挂起（可控 deferred）→ 收起 → 重开（缓存命中，仍缺图）
     let resolveRecover: () => void = () => {};
     recoverMock.mockReturnValueOnce(
-      new Promise<void>((resolve) => {
-        resolveRecover = resolve;
+      new Promise<never[]>((resolve) => {
+        resolveRecover = () => resolve([]);
       }),
     );
     fireEvent.click(screen.getByRole("button", { name: "重建分析图片" }));

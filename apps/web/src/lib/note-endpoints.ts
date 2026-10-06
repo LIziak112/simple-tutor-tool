@@ -8,7 +8,8 @@
  * import 经 mock 注册表解析，note-endpoints.test 得以 mock 四个底层函数
  * 直测两角色的端点互斥。
  */
-import type { NoteHeadData, NoteRole } from "./api";
+import type { NoteHeadData } from "@tutor/contract";
+import type { NoteRole } from "./api";
 import {
   fetchStudentNoteDocumentApi,
   fetchStudentNoteEvidenceApi,
