@@ -69,7 +69,7 @@ describe("登录成功路径的草稿会话接线（T6R.9 复审①）", () => {
     linkMock.mockResolvedValue(ME_B);
     const hooks = renderAuthHooks();
     await act(async () => {
-      await hooks.linkLogin.current.mutateAsync({ token: "t" });
+      await hooks.linkLogin.current.mutateAsync("t");
     });
     await waitFor(() => expect(hooks.linkLogin.current.isSuccess).toBe(true));
     expect(currentNoteSession()).toBeNull(); // 旧会话 epoch 已失效
@@ -80,7 +80,7 @@ describe("登录成功路径的草稿会话接线（T6R.9 复审①）", () => {
     linkMock.mockResolvedValue(ME_A);
     const hooks = renderAuthHooks();
     await act(async () => {
-      await hooks.linkLogin.current.mutateAsync({ token: "t" });
+      await hooks.linkLogin.current.mutateAsync("t");
     });
     await waitFor(() => expect(hooks.linkLogin.current.isSuccess).toBe(true));
     expect(currentNoteSession()).toEqual({
