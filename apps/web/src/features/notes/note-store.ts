@@ -773,12 +773,21 @@ export async function applyUploadDenied(
  * - keep local（无云端摘要，MISMATCH 来源）：同 id 异文重放必然再
  *   MISMATCH——**重铸 mutationId** 后按本地已知 baseRevision 重传；
  * - keep cloud：以云端稿（调用方先 fetchStudentNoteDocumentApi 拉取并
- *   parse 后传入）为工作稿，清 pending（云端内容即最终内容）。
+ *   parse 后传入）为工作稿，清 pending（云端内容即最终内容）；
+ *   expectedMutationId=裁决发起时 pending 的幂等键（复审⑤）：拉取在途
+ *   期间用户又写了（pending 已换新）→ **新写胜出**——云端稿不覆盖正文、
+ *   新 pending 保留继续上传（head 已对齐，新写作为新版本 CAS 写入）。
  */
 export async function resolveNoteConflict(
   session: NoteSessionRef,
   scope: NoteScope,
-  choice: { keep: "local" } | { keep: "cloud"; doc: NoteDocInput },
+  choice:
+    | { keep: "local" }
+    | {
+        keep: "cloud";
+        doc: NoteDocInput;
+        expectedMutationId?: string;
+      },
 ): Promise<void> {
   await mutateLoaded(session, scope, null, (record) => {
     const conflict = record.conflict;
@@ -790,6 +799,12 @@ export async function resolveNoteConflict(
         record.noteId = conflict.current.noteId;
     }
     if (choice.keep === "cloud") {
+      if (
+        choice.expectedMutationId !== undefined &&
+        record.pending?.mutationId !== choice.expectedMutationId
+      ) {
+        return; // fetch 窗口内有新写：新写胜出，云端稿不覆盖（复审⑤）
+      }
       record.pending = null;
       record.doc = choice.doc;
       return;

@@ -575,6 +575,9 @@ export async function resolveNoteConflictKeepCloud(
       "云端没有可读取的版本（可能为空稿、数据回退或服务端状态未知），请选择保留本机内容",
     );
   }
+  // 复审⑤：fetch 前快照 pending 幂等键（record 是活引用，await 后读到的
+  // 已是窗口内新写——快照必须先取）
+  const expectedMutationId = record.pending?.mutationId;
   const raw = await fetchStudentNoteDocumentApi(versionId);
   const parsed = noteDocSchema.safeParse(raw);
   if (!parsed.success) {
@@ -585,6 +588,8 @@ export async function resolveNoteConflictKeepCloud(
   await resolveNoteConflict(session, scope, {
     keep: "cloud",
     doc: parsed.data satisfies NoteDocInput,
+    // 拉取期间的窗口快照——pending 已换新则新写胜出（store 内守卫）
+    expectedMutationId,
   });
 }
 
