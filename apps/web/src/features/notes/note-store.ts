@@ -51,6 +51,7 @@ import type {
   NoteVersionReceipt,
 } from "@tutor/contract";
 import { noteDocSchema } from "@tutor/contract";
+import { digestOf } from "@/features/attempt/draft-merge";
 import {
   idbKVBackend,
   type KVStoreBackend,
@@ -873,7 +874,10 @@ export function noteDocsEqual(a: NoteDocInput, b: NoteDocInput): boolean {
   const pa = noteDocSchema.safeParse(a);
   const pb = noteDocSchema.safeParse(b);
   if (!pa.success || !pb.success) return false;
-  return JSON.stringify(pa.data) === JSON.stringify(pb.data);
+  // digestOf（draft-merge 的 stableStringify）：键序无关的稳定序列化，
+  // 消除对 zod parse 输出键序的隐含依赖（跨 feature import 有先例：
+  // image-sync 取 features/ink/engine/bounds）
+  return digestOf(pa.data) === digestOf(pb.data);
 }
 
 /** 会话内待传清单（bind 扫描补传 + 诊断）。返回 scope + 记录引用 */
