@@ -1,8 +1,6 @@
-import type { NoteDoc } from "@tutor/contract";
 import { describe, expect, it } from "vitest";
 import { NOTE_PAPER_GRID_SPACING_LOGICAL } from "@/features/ink/engine/paper-style.ts";
 import type { InkStroke } from "@/features/ink/engine/types.ts";
-import { INK_LOGICAL_WIDTH } from "@/features/ink/engine/types.ts";
 import {
   clampedShrinkPaperHeight,
   cssHeightToLogical,
@@ -11,7 +9,6 @@ import {
   PAPER_GROW_STEP_CSS_PX,
   PAPER_GROW_TRIGGER_CSS_PX,
   paperCssHeight,
-  paperHeightOnLoad,
   paperScale,
   strokesBottomLogical,
 } from "./paper-geometry.ts";
@@ -155,27 +152,8 @@ describe("paper-geometry：缩小钳制（包围盒含线宽 + 留白）", () =>
   });
 });
 
-describe("paper-geometry：load 高度权威（不触发 dirty/编辑计数）", () => {
-  it("载入文档直接采用正文持久化高度（已物化默认值），不做增长/收缩重算", () => {
-    const doc = {
-      version: 1,
-      ink: {
-        width: INK_LOGICAL_WIDTH,
-        strokes: [
-          stroke([
-            [0, 1100],
-            [100, 1150],
-          ]),
-        ],
-      },
-      paperHeightLogical: 1200,
-      background: "grid",
-    } as NoteDoc;
-    // 即使最后一笔贴近底部（自动加高口径下会触发），load 也不重算高度——
-    // 高度由正文持久化值权威给出，load 不触发 dirty/编辑计数
-    expect(paperHeightOnLoad(doc)).toBe(1200);
-    // 高度低于笔画包围盒的防御口径：保持正文值（渲染层按纸界裁剪的策略不变，
-    // 契约允许 y≤3000 与纸高解耦）；钳制只发生在用户主动拖高/缩小时
-    expect(paperHeightOnLoad({ ...doc, paperHeightLogical: 600 })).toBe(600);
-  });
-});
+// load 高度权威（复审⑥）：恒等函数已删——T6R.9 NoteLayer 载入时直接读
+// doc.paperHeightLogical（经 noteDocSchema.parse 物化默认值），不调用本
+// 模块重算；约定见 paper-geometry.ts 模块头「load 高度权威」条目。
+// 「load 不触发 dirty/编辑计数」的行为锚点在 atrament-adapter.test
+// （load 全程 reason=load）与 InkChangeReason 契约（surface.ts）。

@@ -12,13 +12,16 @@
  *   **增长量换算成逻辑单位**（240 CSS px → 240/scale）；拖高同样换算；
  * - 缩小（用户拖高/回收）不得低于全部笔画包围盒（**含半线宽**，复用
  *   engine/bounds 的 strokeBounds——与渲染器同一份点级折叠）+ 一格留白；
- * - **load 高度权威**：载入文档直接采用正文持久化高度，不做增长/收缩
- *   重算——load 不触发 dirty/编辑计数（高度变化只由用户操作/书写产生）。
+ * - **load 高度权威**（T6R.9 消费点约定，本模块不提供恒等函数）：载入文档
+ *   直接读 doc.paperHeightLogical（调用方经 noteDocSchema.parse 物化默认
+ *   值），不做增长/收缩重算——load 不触发 dirty/编辑计数，高度变化只由
+ *   书写（自动加高）或用户拖高产生；正文高度低于笔画包围盒时保持正文值
+ *   （契约允许 y 与纸高解耦，渲染层按纸界裁剪），钳制只在用户主动操作时。
  *
  * 供 T6R.9 的 NoteLayer 使用；**不改 InkPad 旧自动加高行为**（其按 CSS px
  * 直增，属旧作答链路兼容语义）。纯函数、无 DOM。
  */
-import { NOTE_PAPER_HEIGHT_MAX, type NoteDoc } from "@tutor/contract";
+import { NOTE_PAPER_HEIGHT_MAX } from "@tutor/contract";
 import { paddedStrokeBoxesOf } from "@/features/ink/engine/bounds.ts";
 import { fromLogical, toLogical } from "@/features/ink/engine/normalize.ts";
 import {
@@ -129,17 +132,4 @@ export function clampedShrinkPaperHeight(
     NOTE_PAPER_HEIGHT_MAX,
     Math.max(min, Math.max(1, Math.round(proposed))),
   );
-}
-
-/**
- * load 高度权威：直接采用正文持久化高度（调用方经 noteDocSchema.parse
- * 物化默认值后传入）。不做增长/收缩重算——**load 不触发 dirty/编辑计数**，
- * 高度变化只由书写（自动加高）或用户拖高产生。正文高度低于笔画包围盒时
- * 保持正文值（契约允许 y 与纸高解耦；渲染层按纸界裁剪的策略不变，钳制
- * 只发生在用户主动操作时）。
- */
-export function paperHeightOnLoad(
-  doc: Pick<NoteDoc, "paperHeightLogical">,
-): number {
-  return doc.paperHeightLogical;
 }
