@@ -26,6 +26,10 @@ import {
   PAPER_GROW_TRIGGER_CSS_PX,
 } from "@/features/ink/engine/paper-style.ts";
 import {
+  fromLogical,
+  toLogical,
+} from "@/features/ink/engine/normalize.ts";
+import {
   INK_LOGICAL_WIDTH,
   type InkStroke,
 } from "@/features/ink/engine/types.ts";
@@ -43,25 +47,34 @@ export {
  */
 export const NOTE_PAPER_SHRINK_MARGIN_LOGICAL = NOTE_PAPER_GRID_SPACING_LOGICAL;
 
-/** 显示比例：scale = paperCssWidth / 1000（方案 §4.3） */
+/** 显示比例：scale = paperCssWidth / 1000（方案 §4.3；比例本身，点位换算用 normalize） */
 export function paperScale(cssWidth: number): number {
   return cssWidth / INK_LOGICAL_WIDTH;
 }
 
-/** CSS 纸高 = paperHeightLogical × scale（最小 1，防零高画布） */
+/**
+ * CSS 纸高 = paperHeightLogical × scale（最小 1，防零高画布）。换算复用
+ * engine/normalize 的 fromLogical（复审②：逻辑↔CSS 的比例式只有一份），
+ * 本函数只保留取整/防零壳。
+ */
 export function paperCssHeight(
   paperHeightLogical: number,
   cssWidth: number,
 ): number {
-  return Math.max(1, Math.round(paperHeightLogical * paperScale(cssWidth)));
+  return Math.max(1, Math.round(fromLogical(cssWidth, paperHeightLogical)));
 }
 
-/** 拖高换算：CSS 高 → 逻辑高（paperCssHeight 的逆运算，最小 1） */
+/**
+ * 拖高换算：CSS 高 → 逻辑高（paperCssHeight 的逆运算，最小 1）。复用
+ * normalize 的 toLogical（round2 保精度）再取整到逻辑整数——与
+ * paperCssHeight 的直取整在 .495/.505 级病态边界可能有 ±1 差异，锁定值
+ * 见测试；拖高是冷路径，精度损失无感。
+ */
 export function cssHeightToLogical(
   cssHeight: number,
   cssWidth: number,
 ): number {
-  return Math.max(1, Math.round(cssHeight / paperScale(cssWidth)));
+  return Math.max(1, Math.round(toLogical(cssWidth, cssHeight)));
 }
 
 /**
