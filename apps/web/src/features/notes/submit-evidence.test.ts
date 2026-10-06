@@ -1,7 +1,8 @@
 /**
- * T6R.10 交卷证据声明组装（submit-evidence）测试：消费 flushNoteSync 摘要
- * + 逐题服务端 head，产出每题 none/frozen/missing 声明与未决问题清单。
- * 覆盖：正常固定（本地已同步/跨设备仅有服务端稿）、失败呈现（backoff/
+ * T6R.10 交卷证据声明组装（submit-evidence）测试：追平后的当下 record
+ * 状态（deriveServerState 单点判定）+ 逐题服务端 head，产出每题
+ * none/frozen/missing 声明与未决问题清单。
+ * 覆盖：正常固定（本地已同步/跨设备仅有服务端稿）、失败呈现（dirty 退避/
  * conflict/denied(content)→问题清单、声明为 null）、用户明确选择 missing
  * 后仅问题题标 missing、问题自愈不硬标、head 拉取失败抛错阻止交卷、
  * 本地有笔无服务端稿（防御）不静默 none、空稿 none。
@@ -78,22 +79,19 @@ async function writeLocal(questionId: string, doc = DOC_A): Promise<void> {
   });
 }
 
-/** head mock：默认全空态，覆盖表定制 */
+/** rev1 head 投影换题号（headOf 夹具恒带 note——不带即夹具坏了，前置失败） */
 function headAt(questionId: string): NoteHeadData {
   const base = headOf();
-  return {
-    ...base,
-    note: base.note === null ? null : { ...base.note, questionId },
-  };
+  const note = base.note;
+  if (note === null) throw new Error("headOf 夹具应带 note");
+  return { ...base, note: { ...note, questionId } };
 }
 
-/** head mock：默认全空态，覆盖表定制 */
+/** head mock：默认空态（显式 notCreated 投影），覆盖表定制 */
 function mockHeads(overrides: Record<string, NoteHeadData>): void {
   headMock.mockImplementation(
     async (_attemptId: string, questionId: string) => {
-      return (
-        overrides[questionId] ?? { note: null, images: [], evidence: null }
-      );
+      return overrides[questionId] ?? headOf({ note: null });
     },
   );
 }
@@ -103,11 +101,14 @@ describe("prepareSubmitEvidence：正常固定", () => {
     // 本地有笔；上传成功（回执 rev1）。head 显示他处已存到 rev2 → 按 head 声明
     await writeLocal(Q1, DOC_A);
     putMock.mockResolvedValue(receiptOf(1));
+    const base1 = headAt(Q1);
+    const note1 = base1.note;
+    if (note1 === null) throw new Error("headAt 应带 note");
     mockHeads({
       [Q1]: {
-        ...headAt(Q1),
+        ...base1,
         note: {
-          ...headAt(Q1).note!,
+          ...note1,
           revision: 2,
           currentVersionId: receiptOf(2).versionId,
         },
@@ -129,11 +130,6 @@ describe("prepareSubmitEvidence：正常固定", () => {
       },
       { questionId: Q2, state: "none" },
       { questionId: Q3, state: "none" },
-    ]);
-    expect(prep.statuses.map((s) => [s.questionId, s.kind])).toEqual([
-      [Q1, "will-freeze"],
-      [Q2, "none"],
-      [Q3, "none"],
     ]);
   });
 
@@ -196,9 +192,7 @@ describe("prepareSubmitEvidence：失败呈现与明确选择", () => {
     });
     expect(prep.declarations).toBeNull();
     expect(prep.problems.map((p) => p.questionId)).toEqual([Q1]);
-    expect(prep.statuses.find((s) => s.questionId === Q1)?.kind).toBe(
-      "problem",
-    );
+    expect(prep.problems[0]?.reason).toContain("尚未保存完整");
 
     // 用户明确选择「提交答案，草稿未保存完整」→ 重跑组装
     const confirmed = await prepareSubmitEvidence({

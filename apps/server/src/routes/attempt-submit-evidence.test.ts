@@ -1,5 +1,9 @@
 import { readFileSync } from "node:fs";
-import type { ApiErr, SubmitEvidenceDeclaration } from "@tutor/contract";
+import type {
+  ApiErr,
+  NoteVersionReceipt,
+  SubmitEvidenceDeclaration,
+} from "@tutor/contract";
 import { noteVersionReceiptSchema } from "@tutor/contract";
 import { eq } from "drizzle-orm";
 import type { Logger } from "pino";
@@ -205,6 +209,33 @@ async function expectApiErr(res: PromiseLike<Response> | Response) {
   return { status: resolved.status, code: body.error, body };
 }
 
+/** PUT 回执解析（非 200 即测试前置失败——比逐处手写 parse 收敛） */
+function receiptOfPut(put: {
+  status: number;
+  body: unknown;
+}): NoteVersionReceipt {
+  expect(put.status).toBe(200);
+  return noteVersionReceiptSchema.parse((put.body as { data: unknown }).data);
+}
+
+/** 全卷声明组装（成功路径高频形态）：notedId 按回执冻结、其余题 none */
+async function declarationsWithFrozen(
+  ids: readonly string[],
+  notedId: string,
+  receipt: NoteVersionReceipt,
+): Promise<SubmitEvidenceDeclaration[]> {
+  return ids.map((questionId) =>
+    questionId === notedId
+      ? {
+          questionId,
+          state: "frozen" as const,
+          versionId: receipt.versionId,
+          revision: receipt.revision,
+        }
+      : { questionId, state: "none" as const },
+  );
+}
+
 // ---------- 冻结原稿主链 ----------
 
 describe("T6R.10 交卷固定原稿：frozen 主链", () => {
@@ -213,25 +244,14 @@ describe("T6R.10 交卷固定原稿：frozen 主链", () => {
     const ids = await questionIdsOf(attemptId);
     const notedId = qAt(ids, 0);
     const put1 = await putNote(attemptId, notedId, 2);
-    expect(put1.status).toBe(200);
-    const receipt1 = noteVersionReceiptSchema.parse(
-      (put1.body as { data: unknown }).data,
-    );
+    const receipt1 = receiptOfPut(put1);
     const head = noteRowOf(db, attemptId, notedId);
     expect(head?.currentRevision).toBe(1);
 
-    const evidence: SubmitEvidenceDeclaration[] = [
-      {
-        questionId: notedId,
-        state: "frozen",
-        versionId: receipt1.versionId,
-        revision: 1,
-      },
-      ...ids
-        .filter((id) => id !== notedId)
-        .map((questionId) => ({ questionId, state: "none" as const })),
-    ];
-    const res = await submitWith(attemptId, evidence);
+    const res = await submitWith(
+      attemptId,
+      await declarationsWithFrozen(ids, notedId, receipt1),
+    );
     expect(res.status).toBe(200);
 
     // 逐题落行：frozen 指向 head 版本；none 显式空稿；attempt 已交
@@ -250,23 +270,12 @@ describe("T6R.10 交卷固定原稿：frozen 主链", () => {
     const notedId = qAt(ids, 1);
     await putNote(attemptId, notedId, 1);
     const put2 = await putNote(attemptId, notedId, 3, 1);
-    expect(put2.status).toBe(200);
-    const receipt2 = noteVersionReceiptSchema.parse(
-      (put2.body as { data: unknown }).data,
-    );
+    const receipt2 = receiptOfPut(put2);
 
-    const evidence: SubmitEvidenceDeclaration[] = [
-      {
-        questionId: notedId,
-        state: "frozen",
-        versionId: receipt2.versionId,
-        revision: 2,
-      },
-      ...ids
-        .filter((id) => id !== notedId)
-        .map((questionId) => ({ questionId, state: "none" as const })),
-    ];
-    const res = await submitWith(attemptId, evidence);
+    const res = await submitWith(
+      attemptId,
+      await declarationsWithFrozen(ids, notedId, receipt2),
+    );
     expect(res.status).toBe(200);
     const frozenRow = evidenceRowsOf(attemptId).find(
       (r) => r.questionId === notedId,
@@ -299,9 +308,7 @@ describe("T6R.10 证据声明拒绝分支（409 NOTE_EVIDENCE_MISMATCH）", () =
     // 另一 attempt 的合法版本（未授权引用）
     const otherAttempt = await freshAttempt();
     const otherPut = await putNote(otherAttempt, qAt(ids, 0), 1);
-    const otherReceipt = noteVersionReceiptSchema.parse(
-      (otherPut.body as { data: unknown }).data,
-    );
+    const otherReceipt = receiptOfPut(otherPut);
 
     const res = await submitWith(attemptId, [
       {
@@ -327,24 +334,15 @@ describe("T6R.10 证据声明拒绝分支（409 NOTE_EVIDENCE_MISMATCH）", () =
     const ids = await questionIdsOf(attemptId);
     const notedId = qAt(ids, 2);
     const put1 = await putNote(attemptId, notedId, 1);
-    const receipt1 = noteVersionReceiptSchema.parse(
-      (put1.body as { data: unknown }).data,
-    );
-    // 「其他标签页」再存两版：head 前进到 3
+    const receipt1 = receiptOfPut(put1);
+    // 「其他标签页」再存两版：head 前进到 3（声明仍按旧回执 v1 组装）
     await putNote(attemptId, notedId, 2, 1);
     await putNote(attemptId, notedId, 2, 2);
 
-    const res = await submitWith(attemptId, [
-      {
-        questionId: notedId,
-        state: "frozen",
-        versionId: receipt1.versionId,
-        revision: 1,
-      },
-      ...ids
-        .filter((id) => id !== notedId)
-        .map((questionId) => ({ questionId, state: "none" as const })),
-    ]);
+    const res = await submitWith(
+      attemptId,
+      await declarationsWithFrozen(ids, notedId, receipt1),
+    );
     const err = await expectApiErr(res);
     expect(err.status).toBe(409);
     expect(err.code).toBe("NOTE_EVIDENCE_MISMATCH");
@@ -458,20 +456,11 @@ describe("T6R.10 幂等、回滚与 original 不可变", () => {
     const ids = await questionIdsOf(attemptId);
     const notedId = qAt(ids, 5);
     const put1 = await putNote(attemptId, notedId, 1);
-    const receipt1 = noteVersionReceiptSchema.parse(
-      (put1.body as { data: unknown }).data,
+    const receipt1 = receiptOfPut(put1);
+    const res = await submitWith(
+      attemptId,
+      await declarationsWithFrozen(ids, notedId, receipt1),
     );
-    const res = await submitWith(attemptId, [
-      {
-        questionId: notedId,
-        state: "frozen",
-        versionId: receipt1.versionId,
-        revision: 1,
-      },
-      ...ids
-        .filter((id) => id !== notedId)
-        .map((questionId) => ({ questionId, state: "none" as const })),
-    ]);
     expect(res.status).toBe(200);
 
     // 迟到 PUT（新版本）：被交卷终态拒绝（putNote 返回 {status, body}，错误码在 body.error）
@@ -494,29 +483,16 @@ describe("T6R.10 幂等、回滚与 original 不可变", () => {
     const notedId = qAt(ids, 6);
     const mutationId = "44444444-4444-4444-8444-444444444444";
     const put1 = await putNote(attemptId, notedId, 1, 0, mutationId);
-    expect(put1.status).toBe(200);
-    const receipt1 = noteVersionReceiptSchema.parse(
-      (put1.body as { data: unknown }).data,
+    const receipt1 = receiptOfPut(put1);
+    const res = await submitWith(
+      attemptId,
+      await declarationsWithFrozen(ids, notedId, receipt1),
     );
-    const res = await submitWith(attemptId, [
-      {
-        questionId: notedId,
-        state: "frozen",
-        versionId: receipt1.versionId,
-        revision: 1,
-      },
-      ...ids
-        .filter((id) => id !== notedId)
-        .map((questionId) => ({ questionId, state: "none" as const })),
-    ]);
     expect(res.status).toBe(200);
 
     // 迟到重放（同 mutationId 同正文）：返回原回执，head/证据行不动
     const replay = await putNote(attemptId, notedId, 1, 0, mutationId);
-    expect(replay.status).toBe(200);
-    const replayReceipt = noteVersionReceiptSchema.parse(
-      (replay.body as { data: unknown }).data,
-    );
+    const replayReceipt = receiptOfPut(replay);
     expect(replayReceipt.versionId).toBe(receipt1.versionId);
     expect(noteRowOf(db, attemptId, notedId)?.currentRevision).toBe(1);
     expect(
@@ -546,20 +522,11 @@ describe("T6R.10 幂等、回滚与 original 不可变", () => {
     const ids = await questionIdsOf(firstAttempt);
     const notedId = qAt(ids, 0);
     const put1 = await putNote(firstAttempt, notedId, 2);
-    const receipt1 = noteVersionReceiptSchema.parse(
-      (put1.body as { data: unknown }).data,
+    const receipt1 = receiptOfPut(put1);
+    const res1 = await submitWith(
+      firstAttempt,
+      await declarationsWithFrozen(ids, notedId, receipt1),
     );
-    const res1 = await submitWith(firstAttempt, [
-      {
-        questionId: notedId,
-        state: "frozen",
-        versionId: receipt1.versionId,
-        revision: 1,
-      },
-      ...ids
-        .filter((id) => id !== notedId)
-        .map((questionId) => ({ questionId, state: "none" as const })),
-    ]);
     expect(res1.status).toBe(200);
     const firstRow = evidenceRowsOf(firstAttempt).find(
       (r) => r.questionId === notedId,
@@ -568,20 +535,11 @@ describe("T6R.10 幂等、回滚与 original 不可变", () => {
     // 新卷同题写新草稿并交卷
     const secondAttempt = await freshAttempt();
     const put2 = await putNote(secondAttempt, notedId, 5);
-    const receipt2 = noteVersionReceiptSchema.parse(
-      (put2.body as { data: unknown }).data,
+    const receipt2 = receiptOfPut(put2);
+    const res2 = await submitWith(
+      secondAttempt,
+      await declarationsWithFrozen(ids, notedId, receipt2),
     );
-    const res2 = await submitWith(secondAttempt, [
-      {
-        questionId: notedId,
-        state: "frozen",
-        versionId: receipt2.versionId,
-        revision: 1,
-      },
-      ...ids
-        .filter((id) => id !== notedId)
-        .map((questionId) => ({ questionId, state: "none" as const })),
-    ]);
     expect(res2.status).toBe(200);
 
     // 旧卷 evidence 行与 head 原样（订正/重练/清空都不动 original）

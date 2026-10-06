@@ -1307,22 +1307,41 @@ function revisionStale(): HttpError {
 }
 
 /**
- * 交卷回传版本验证（T6R.3）：与参与判分的冻结集合精确比对——条数不符
- * （缺项/多项）、questionRevisionId 错版、重复项都视为陈旧页面提交，
+ * 交卷回传集合与冻结题目集合的精确比对（T6R.3/T6R.10 共用）：条数不符
+ * （缺项/多项）、重复项、集合外题目都视为陈旧页面提交。长度相等 + 无
+ * 重复 + 全部 ∈ 冻结集合 ⇒ 恰好一致（同一 attempt 的 responses 题目 id
+ * 天然无重复）。错误经工厂差异化（revisions → QUESTION_REVISION_STALE；
+ * evidence → NOTE_EVIDENCE_MISMATCH）。
+ */
+function assertExactQuestionSet<T extends { questionId: string }>(
+  graded: readonly GradedResponse[],
+  items: readonly T[],
+  reject: () => HttpError,
+): void {
+  if (items.length !== graded.length) throw reject();
+  const expected = new Set(graded.map((g) => g.response.questionId));
+  const seen = new Set<string>();
+  for (const item of items) {
+    if (seen.has(item.questionId)) throw reject();
+    seen.add(item.questionId);
+    if (!expected.has(item.questionId)) throw reject();
+  }
+}
+
+/**
+ * 交卷回传版本验证（T6R.3）：与参与判分的冻结集合精确比对——集合形状经
+ * assertExactQuestionSet，再逐题比对 questionRevisionId（错版即陈旧），
  * 409 QUESTION_REVISION_STALE 可诊断拒绝（不静默配上新快照，方案 §5.1）。
  */
 function validateSubmitRevisions(
   graded: readonly GradedResponse[],
   clientRevisions: readonly AttemptSubmitRevision[],
 ): void {
-  if (clientRevisions.length !== graded.length) throw revisionStale();
+  assertExactQuestionSet(graded, clientRevisions, revisionStale);
   const expectedByQuestion = new Map(
     graded.map((g) => [g.response.questionId, g.response.id] as const),
   );
-  const seen = new Set<string>();
   for (const entry of clientRevisions) {
-    if (seen.has(entry.questionId)) throw revisionStale();
-    seen.add(entry.questionId);
     if (expectedByQuestion.get(entry.questionId) !== entry.questionRevisionId) {
       throw revisionStale();
     }
@@ -1376,24 +1395,10 @@ function buildSubmissionEvidence(
     return [];
   }
 
-  // 新客户端：集合精确比对（长度相等 + 无重复 + 全部已知 ⇒ 恰好一致）
-  if (declarations.length !== graded.length)
-    throw evidenceMismatch(
-      "笔记证据声明与试卷题目不一致，请刷新页面后重新交卷",
-    );
-  const expectedQuestions = new Set(graded.map((g) => g.response.questionId));
-  const seen = new Set<string>();
-  for (const decl of declarations) {
-    if (seen.has(decl.questionId)) {
-      throw evidenceMismatch("笔记证据声明包含重复题目，请重新交卷");
-    }
-    seen.add(decl.questionId);
-    if (!expectedQuestions.has(decl.questionId)) {
-      throw evidenceMismatch(
-        "笔记证据声明包含试卷外的题目，请刷新页面后重新交卷",
-      );
-    }
-  }
+  // 新客户端：集合精确比对（口径同 validateSubmitRevisions，错误码经工厂差异化）
+  assertExactQuestionSet(graded, declarations, () =>
+    evidenceMismatch("笔记证据声明与试卷题目不一致，请刷新页面后重新交卷"),
+  );
 
   return declarations.map((decl) => {
     const note = noteByQuestion.get(decl.questionId);

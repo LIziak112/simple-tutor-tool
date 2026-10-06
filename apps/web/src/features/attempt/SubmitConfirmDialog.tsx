@@ -60,7 +60,7 @@ export function SubmitConfirmDialog({
   preparing?: boolean;
   /** 草稿计数快览（null=不展示该区——如会话未绑定） */
   noteSummary?: SubmitNoteSummary | null;
-  /** 未追平草稿清单（非 null 进入明确选择分支；此时无普通确认按钮） */
+  /** 未追平草稿清单（非 null 进入明确选择分支；**非 null 时必非空**——调用方只在 problems 非空时置该分支） */
   noteProblems?: SubmitNoteProblemView[] | null;
   /** 追平/组装的阻止性错误（head 拉取失败等；重试点确认即重试） */
   notePrepError?: string | null;
@@ -108,8 +108,10 @@ export function SubmitConfirmDialog({
           </p>
         )}
 
-        {/* T6R.10 明确选择分支：未追平草稿如实呈现，缺稿交卷必须明确选择 */}
-        {choiceMode && noteProblems.length > 0 && (
+        {/* T6R.10 明确选择分支：未追平草稿如实呈现，缺稿交卷必须明确选择。
+            noteProblems 非 null 时必非空——调用方（AttemptSession）只在
+            problems.length>0 时置 choice（不变量，见 NotePrepPhase 注释） */}
+        {choiceMode && (
           <div
             role="alert"
             className="rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2.5 text-sm leading-6"
@@ -158,7 +160,7 @@ export function SubmitConfirmDialog({
               variant="destructive"
               className="min-h-11"
               onClick={onConfirmMissing}
-              disabled={busy || noteProblems.length === 0}
+              disabled={busy}
             >
               {busy ? "正在交卷…" : "提交答案，草稿未保存完整"}
             </Button>

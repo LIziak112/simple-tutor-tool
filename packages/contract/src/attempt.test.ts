@@ -769,6 +769,12 @@ describe("attemptSubmitRequestSchema（T6R.3 交卷回传题目版本）", () =>
 describe("attemptSubmitRequestSchema.evidence（T6R.10 提交事务固定原稿）", () => {
   const UUID = "33333333-3333-4333-8333-333333333333";
 
+  /** 单条声明数组的拒绝断言（收敛 safeParse 包裹样板） */
+  const rejectsEvidence = (evidence: unknown) =>
+    expect(
+      attemptSubmitRequestSchema.safeParse({ revisions: [], evidence }).success,
+    ).toBe(false);
+
   it("缺省 evidence = 旧客户端（合法：服务端据此走兼容分支）", () => {
     expect(attemptSubmitRequestSchema.parse({ revisions: [] })).toEqual({
       revisions: [],
@@ -797,80 +803,39 @@ describe("attemptSubmitRequestSchema.evidence（T6R.10 提交事务固定原稿�
   });
 
   it("拒绝：frozen 缺 versionId 或 revision<1；none/missing 携带版本引用", () => {
-    expect(
-      attemptSubmitRequestSchema.safeParse({
-        revisions: [],
-        evidence: [{ questionId: "q1", state: "frozen", revision: 1 }],
-      }).success,
-    ).toBe(false);
-    expect(
-      attemptSubmitRequestSchema.safeParse({
-        revisions: [],
-        evidence: [{ questionId: "q1", state: "frozen", versionId: UUID }],
-      }).success,
-    ).toBe(false);
-    expect(
-      attemptSubmitRequestSchema.safeParse({
-        revisions: [],
-        evidence: [
-          {
-            questionId: "q1",
-            state: "frozen",
-            versionId: UUID,
-            revision: 0,
-          },
-        ],
-      }).success,
-    ).toBe(false);
-    expect(
-      attemptSubmitRequestSchema.safeParse({
-        revisions: [],
-        evidence: [{ questionId: "q1", state: "none", versionId: UUID }],
-      }).success,
-    ).toBe(false);
-    expect(
-      attemptSubmitRequestSchema.safeParse({
-        revisions: [],
-        evidence: [{ questionId: "q1", state: "missing", revision: 2 }],
-      }).success,
-    ).toBe(false);
+    rejectsEvidence([{ questionId: "q1", state: "frozen", revision: 1 }]);
+    rejectsEvidence([{ questionId: "q1", state: "frozen", versionId: UUID }]);
+    rejectsEvidence([
+      {
+        questionId: "q1",
+        state: "frozen",
+        versionId: UUID,
+        revision: 0,
+      },
+    ]);
+    rejectsEvidence([{ questionId: "q1", state: "none", versionId: UUID }]);
+    rejectsEvidence([{ questionId: "q1", state: "missing", revision: 2 }]);
   });
 
   it("拒绝：legacy_unverified 不可由客户端声明；坏 uuid / 空 questionId / 超 500 条", () => {
-    expect(
-      attemptSubmitRequestSchema.safeParse({
-        revisions: [],
-        evidence: [{ questionId: "q1", state: "legacy_unverified" as never }],
-      }).success,
-    ).toBe(false);
-    expect(
-      attemptSubmitRequestSchema.safeParse({
-        revisions: [],
-        evidence: [
-          {
-            questionId: "q1",
-            state: "frozen",
-            versionId: "not-a-uuid",
-            revision: 1,
-          },
-        ],
-      }).success,
-    ).toBe(false);
-    expect(
-      attemptSubmitRequestSchema.safeParse({
-        revisions: [],
-        evidence: [{ questionId: "", state: "none" }],
-      }).success,
-    ).toBe(false);
-    expect(
-      attemptSubmitRequestSchema.safeParse({
-        revisions: [],
-        evidence: Array.from({ length: 501 }, (_, i) => ({
-          questionId: `q${i}`,
-          state: "none" as const,
-        })),
-      }).success,
-    ).toBe(false);
+    rejectsEvidence([
+      { questionId: "q1", state: "legacy_unverified" as never },
+    ]);
+    rejectsEvidence([
+      {
+        questionId: "q1",
+        state: "frozen",
+        versionId: "not-a-uuid",
+        revision: 1,
+      },
+    ]);
+    rejectsEvidence([{ questionId: "", state: "none" }]);
+    rejectsEvidence(
+      Array.from({ length: 501 }, (_, i) => ({
+        questionId: `q${i}`,
+        state: "none" as const,
+      })),
+    );
   });
 });
 
