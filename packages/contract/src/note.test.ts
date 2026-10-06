@@ -767,16 +767,20 @@ describe("T6R.5 路由形状：noteHeadData / noteImageUploadMeta", () => {
     ).toBe(true);
     // 1000 与巨值（Number.isInteger(1e24)===true——靠 max 拦，不靠 int）
     expect(
-      noteImageUploadMetaSchema.safeParse({ ...valid, pageIndex: 1000 }).success,
+      noteImageUploadMetaSchema.safeParse({ ...valid, pageIndex: 1000 })
+        .success,
     ).toBe(false);
     expect(
-      noteImageUploadMetaSchema.safeParse({ ...valid, pageIndex: 1e24 }).success,
+      noteImageUploadMetaSchema.safeParse({ ...valid, pageIndex: 1e24 })
+        .success,
     ).toBe(false);
     // 投影形状同值约束（DB 层不该出现超限行——出现即投影 parse 失败当场暴露）
     expect(
       noteImageMetaSchema.safeParse(imageMeta({ pageIndex: 1000 })).success,
     ).toBe(false);
-    expect(noteImageMetaSchema.parse(imageMeta({ pageIndex: 999 })).pageIndex).toBe(999);
+    expect(
+      noteImageMetaSchema.parse(imageMeta({ pageIndex: 999 })).pageIndex,
+    ).toBe(999);
   });
 
   it("图片限额常量锁定暂定值（真机定标后修订须改这里与注释）", () => {
