@@ -31,6 +31,10 @@ import {
   type InkToolType,
 } from "./engine/index.ts";
 import {
+  PAPER_GROW_STEP_CSS_PX,
+  PAPER_GROW_TRIGGER_CSS_PX,
+} from "./engine/paper-style.ts";
+import {
   getSessionInputPreference,
   type InkSessionInputPreference,
   onSessionInputPreferenceChange,
@@ -76,11 +80,6 @@ export interface InkPadProps {
 
 /** 输入模式接入形态：auto=旧行为；session=会话共享偏好（新草稿） */
 export type InkPadInputMode = "auto" | "session";
-
-/** 自动加高：最后一笔距底部不足该值时加高一步 */
-const GROW_THRESHOLD_PX = 72;
-/** 每次加高的步长 */
-const GROW_STEP_PX = 240;
 
 /** 颜色按钮的色块（黑/蓝/红） */
 const COLOR_SWATCH: Record<InkPenColor, string> = {
@@ -193,8 +192,9 @@ export function InkPad({
           if (last && last.points.length > 0) {
             const maxY = Math.max(...last.points.map((p) => p.y));
             const px = (maxY / 1000) * container.clientWidth;
-            if (px > container.clientHeight - GROW_THRESHOLD_PX) {
-              setHeight((h) => h + GROW_STEP_PX);
+            // 加高 UX 常量与 paper-geometry 同源（engine/paper-style，复审①）
+            if (px > container.clientHeight - PAPER_GROW_TRIGGER_CSS_PX) {
+              setHeight((h) => h + PAPER_GROW_STEP_CSS_PX);
             }
           }
         }

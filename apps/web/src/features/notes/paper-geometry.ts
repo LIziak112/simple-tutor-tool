@@ -21,18 +21,27 @@
 import { NOTE_PAPER_HEIGHT_MAX, type NoteDoc } from "@tutor/contract";
 import { strokeBounds } from "@/features/ink/engine/bounds.ts";
 import {
+  NOTE_PAPER_GRID_SPACING_LOGICAL,
+  PAPER_GROW_STEP_CSS_PX,
+  PAPER_GROW_TRIGGER_CSS_PX,
+} from "@/features/ink/engine/paper-style.ts";
+import {
   INK_LOGICAL_WIDTH,
   type InkStroke,
 } from "@/features/ink/engine/types.ts";
 
-/** 自动加高触发：最后一笔距纸底不足该 CSS px 值时增高（沿用旧体验，方案 §4.3） */
-export const PAPER_GROW_TRIGGER_CSS_PX = 72;
+// 加高 UX 常量与 InkPad 同源（engine/paper-style，复审①）：旧作答链路
+// （CSS px 直增）与新草稿链路（换算逻辑单位）共用同一组数值。
+export {
+  PAPER_GROW_STEP_CSS_PX,
+  PAPER_GROW_TRIGGER_CSS_PX,
+} from "@/features/ink/engine/paper-style.ts";
 
-/** 自动加高的步长（CSS px 口径；落库前经 cssHeightToLogical 换算） */
-export const PAPER_GROW_STEP_CSS_PX = 240;
-
-/** 缩小下限留白（逻辑单位）：笔画包围盒（含线宽）之外再留一格线距 */
-export const NOTE_PAPER_SHRINK_MARGIN_LOGICAL = 40;
+/**
+ * 缩小下限留白（逻辑单位）：**派生自格线间距**（一格留白，复审③）——
+ * 纸面节奏（格距）调整时留白随之同步，不另立数值。
+ */
+export const NOTE_PAPER_SHRINK_MARGIN_LOGICAL = NOTE_PAPER_GRID_SPACING_LOGICAL;
 
 /** 显示比例：scale = paperCssWidth / 1000（方案 §4.3） */
 export function paperScale(cssWidth: number): number {

@@ -1,5 +1,6 @@
 import type { NoteDoc } from "@tutor/contract";
 import { describe, expect, it } from "vitest";
+import { NOTE_PAPER_GRID_SPACING_LOGICAL } from "@/features/ink/engine/paper-style.ts";
 import type { InkStroke } from "@/features/ink/engine/types.ts";
 import { INK_LOGICAL_WIDTH } from "@/features/ink/engine/types.ts";
 import {
@@ -56,10 +57,13 @@ describe("paper-geometry：比例与 CSS 高度派生", () => {
     expect(cssHeightToLogical(0.4, 500)).toBe(1); // 最小 1
   });
 
-  it("常量口径：触发 72 CSS px、步长 240 CSS px（与旧 InkPad 体验一致），留白一格线距", () => {
+  it("常量口径：触发 72/步长 240 CSS px（与旧 InkPad 同源，经 engine/paper-style）；留白派生自格距", () => {
     expect(PAPER_GROW_TRIGGER_CSS_PX).toBe(72);
     expect(PAPER_GROW_STEP_CSS_PX).toBe(240);
-    expect(NOTE_PAPER_SHRINK_MARGIN_LOGICAL).toBe(40);
+    // 复审③：留白不再立数值，恒等于一格线距（格距定标时留白随之同步）
+    expect(NOTE_PAPER_SHRINK_MARGIN_LOGICAL).toBe(
+      NOTE_PAPER_GRID_SPACING_LOGICAL,
+    );
   });
 });
 
