@@ -794,20 +794,47 @@ export function choiceJudgePracticeMarkdown(unitName: string): string {
 
 /**
  * 进入练习三连（课程 → 练习 → 开始练习），完成后页面处于 /s/attempts/**；
- * 返回 attemptId（取自 URL 尾段）。
+ * 返回 attemptId（取自 URL 尾段）。questionCount 为练习题数（默认 2——
+ * choiceJudgePracticeMarkdown 的两题；其他题数的练习显式传入以拼对链接名）。
  */
 export async function openChoicePractice(
   page: import("@playwright/test").Page,
   courseId: string,
   courseName: string,
   unitName: string,
+  questionCount = 2,
 ): Promise<string> {
   await page.getByRole("link", { name: `打开课程 ${courseName}` }).click();
   await page.waitForURL(`**/s/courses/${courseId}`);
   await page
-    .getByRole("link", { name: `打开练习 ${unitName}（2 题）` })
+    .getByRole("link", { name: `打开练习 ${unitName}（${questionCount} 题）` })
     .click();
   await page.getByRole("button", { name: "开始练习" }).click();
   await page.waitForURL("**/s/attempts/**");
   return page.url().split("/").pop() ?? "";
+}
+
+/**
+ * 教师端读某 attempt 某题的证据行（state + versionId；T6R.10/T6R.11 spec
+ * 共用——重练前后对照原稿引用不变）。evidence 为空即交卷事务未固定原稿，
+ * 按失败抛出。
+ */
+export async function teacherEvidenceOf(
+  request: import("@playwright/test").APIRequestContext,
+  attemptId: string,
+  questionId: string,
+): Promise<{ state: string; versionId: string | null }> {
+  const res = await request.get(
+    `/api/teacher/attempts/${attemptId}/evidence/${encodeURIComponent(questionId)}`,
+  );
+  if (!res.ok()) {
+    throw new Error(`教师证据读取失败：HTTP ${res.status()}`);
+  }
+  const body = (await res.json()) as {
+    data: { evidence: { state: string; versionId: string | null } | null };
+  };
+  if (body.data.evidence === null) {
+    throw new Error("证据行为空（交卷事务未固定原稿）");
+  }
+  return body.data.evidence;
 }

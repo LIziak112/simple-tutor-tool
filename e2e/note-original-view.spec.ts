@@ -3,12 +3,15 @@ import {
   addCourseMemberViaApi,
   attachLeakMonitor,
   createCourseViaApi,
+  createStudentViaApi,
   drawStrokeWithPointerEvents,
   getStudentViaApi,
+  openChoicePractice,
   setCourseItemVisible,
   TEACHER_LOGIN_NAME,
   TEACHER_PASSWORD,
   teacherApiLogin,
+  teacherEvidenceOf,
   uniqueSuffix,
 } from "./helpers";
 
@@ -49,7 +52,7 @@ function sixObjectiveQuestionsMarkdown(unitName: string): string {
       `$(-${i})+${i + 4}=$ 的计算结果是（　）`,
       "",
       "- [ ] $-4$",
-      `- [x] $${4}$`,
+      `- [x] $4$`,
       "- [ ] $0$",
       "",
       ":::solution",
@@ -60,27 +63,6 @@ function sixObjectiveQuestionsMarkdown(unitName: string): string {
     );
   }
   return lines.join("\n");
-}
-
-/** 教师端读某 attempt 某题的证据行（重练前后对照原稿引用不变） */
-async function teacherEvidenceOf(
-  request: import("@playwright/test").APIRequestContext,
-  attemptId: string,
-  questionId: string,
-): Promise<{ state: string; versionId: string | null }> {
-  const res = await request.get(
-    `/api/teacher/attempts/${attemptId}/evidence/${encodeURIComponent(questionId)}`,
-  );
-  if (!res.ok()) {
-    throw new Error(`教师证据读取失败：HTTP ${res.status()}`);
-  }
-  const body = (await res.json()) as {
-    data: { evidence: { state: string; versionId: string | null } | null };
-  };
-  if (body.data.evidence === null) {
-    throw new Error("证据行为空（交卷事务未固定原稿）");
-  }
-  return body.data.evidence;
 }
 
 test.describe("双角色原稿查看与重练（T6R.11）", () => {
@@ -110,9 +92,7 @@ test.describe("双角色原稿查看与重练（T6R.11）", () => {
     await setCourseItemVisible(request, courseId, unitName, true);
 
     const loginName = `e2e-orig2-${suffix}`;
-    await request.post("/api/teacher/students", {
-      data: { displayName: `e2e双角色生${suffix}`, loginName },
-    });
+    await createStudentViaApi(request, `e2e双角色生${suffix}`, loginName);
     const student = await getStudentViaApi(request, loginName);
     await addCourseMemberViaApi(request, courseId, student.id);
 
@@ -126,16 +106,13 @@ test.describe("双角色原稿查看与重练（T6R.11）", () => {
       await studentPage.waitForURL("**/s/home");
 
       // —— 第一轮：课程练习（第 1 次）——
-      await studentPage
-        .getByRole("link", { name: `打开课程 ${courseName}` })
-        .click();
-      await studentPage.waitForURL(`**/s/courses/${courseId}`);
-      await studentPage
-        .getByRole("link", { name: `打开练习 ${unitName}（6 题）` })
-        .click();
-      await studentPage.getByRole("button", { name: "开始练习" }).click();
-      await studentPage.waitForURL("**/s/attempts/**");
-      attempt1 = studentPage.url().split("/").pop() ?? "";
+      attempt1 = await openChoicePractice(
+        studentPage,
+        courseId,
+        courseName,
+        unitName,
+        6,
+      );
       expect(attempt1).not.toBe("");
 
       // 每题：开草稿纸写一笔 + 作答（判断三题全答「错」——第 1 题正解为对
@@ -149,24 +126,13 @@ test.describe("双角色原稿查看与重练（T6R.11）", () => {
         const canvas = card.locator('[data-slot="note-paper"] canvas');
         await expect(canvas).toBeVisible();
         await drawStrokeWithPointerEvents(canvas);
-        const answerLabel = no <= 3 ? "错" : null;
-        if (answerLabel !== null) {
-          await card
-            .getByRole("radio", { name: answerLabel, exact: true })
-            .locator("xpath=ancestor::label[1]")
-            .click();
-          await expect(
-            card.getByRole("radio", { name: answerLabel, exact: true }),
-          ).toBeChecked();
-        } else {
-          await card
-            .getByRole("radio", { name: "选项 B" })
-            .locator("xpath=ancestor::label[1]")
-            .click();
-          await expect(
-            card.getByRole("radio", { name: "选项 B" }),
-          ).toBeChecked();
-        }
+        const answerName = no <= 3 ? "错" : "选项 B";
+        const radio = card.getByRole("radio", {
+          name: answerName,
+          exact: true,
+        });
+        await radio.locator("xpath=ancestor::label[1]").click();
+        await expect(radio).toBeChecked();
       }
 
       // 交卷（证据声明随请求上行，服务端事务固定原稿）

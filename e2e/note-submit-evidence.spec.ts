@@ -9,6 +9,7 @@ import {
   openChoicePractice,
   setCourseItemVisible,
   teacherApiLogin,
+  teacherEvidenceOf,
   uniqueSuffix,
 } from "./helpers";
 
@@ -19,27 +20,6 @@ import {
  * 新稿不碰 original）。教师端 evidence 读接口核验冻结事实（不重复
  * 服务层矩阵——单测见 attempt-submit-evidence.test）。
  */
-
-/** 教师端读某 attempt 某题的证据行（state + versionId） */
-async function teacherEvidenceOf(
-  request: import("@playwright/test").APIRequestContext,
-  attemptId: string,
-  questionId: string,
-): Promise<{ state: string; versionId: string | null }> {
-  const res = await request.get(
-    `/api/teacher/attempts/${attemptId}/evidence/${encodeURIComponent(questionId)}`,
-  );
-  if (!res.ok()) {
-    throw new Error(`教师证据读取失败：HTTP ${res.status()}`);
-  }
-  const body = (await res.json()) as {
-    data: { evidence: { state: string; versionId: string | null } | null };
-  };
-  if (body.data.evidence === null) {
-    throw new Error("证据行为空（交卷事务未固定原稿）");
-  }
-  return body.data.evidence;
-}
 
 test.describe("交卷固定原稿（T6R.10）", () => {
   test("交卷 → 证据固定 → 同题重练 → 原稿不变（全链）", async ({
