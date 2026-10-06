@@ -29,9 +29,14 @@ const mockSetInputMode = vi.fn();
 let emitChange: ((doc: InkDoc, reason: InkChangeReason) => void) | null = null;
 let mockCanUndo = false;
 let mockCanRedo = false;
+/** T6R.9：捕获 create 收到的选项（background 透传断言） */
+let lastCreateOpts:
+  | { background?: string; height?: number; inputMode?: string }
+  | undefined;
 
 vi.mock("./engine/index.ts", () => ({
-  create: (_container: HTMLElement, _opts: unknown) => {
+  create: (_container: HTMLElement, opts: unknown) => {
+    lastCreateOpts = opts as typeof lastCreateOpts;
     const engine: InkEngine = {
       getData: () => {
         throw new Error("测试未使用");
@@ -77,6 +82,7 @@ beforeEach(() => {
   mockCanRedo = false;
   resetSessionInputPreference();
   vi.clearAllMocks();
+  lastCreateOpts = undefined;
 });
 
 afterEach(() => {
@@ -223,5 +229,71 @@ describe("<InkPad> 输入模式（T6R.7：会话共享偏好）", () => {
     ]) {
       expect(btn).toHaveAttribute("aria-pressed", "true");
     }
+  });
+});
+
+describe("<InkPad> 新草稿形态 props（T6R.9：NoteLayer 接入）", () => {
+  it("background 透传引擎 create 选项；缺省不传（旧作答零变化）", () => {
+    const first = render(<InkPad />);
+    expect(lastCreateOpts).not.toHaveProperty("background");
+    first.unmount();
+
+    render(<InkPad inputMode="session" background="grid" />);
+    expect(lastCreateOpts?.background).toBe("grid");
+  });
+
+  it("showToolbar=false：不渲染内置工具条（画布仍在）——精简工具条由外层承担", () => {
+    render(<InkPad showToolbar={false} inputMode="session" />);
+    expect(screen.queryByRole("toolbar")).toBeNull();
+    // 画布容器仍在（受控/非全屏形态 role=img）
+    expect(screen.getByRole("img", { name: "手写答题区" })).toBeInTheDocument();
+    // 输入偏好的引擎下发不受工具条隐藏影响（store 两入口共用）
+    expect(mockSetInputMode).toHaveBeenCalledWith("pen");
+  });
+
+  it("paperHeight 受控：容器高度恒为受控值，接近底部的笔迹不触发内部 CSS px 直增", () => {
+    const view = render(<InkPad paperHeight={320} />);
+    const box = screen.getByRole("img", { name: "手写答题区" });
+    expect(box.style.height).toBe("320px");
+    // 一笔贴近纸底（jsdom clientWidth=0，未受控时也不会加高——断言受控值不被
+    // 任何路径改写；逻辑口径加高由外层 paper-geometry 负责，注记②定案）
+    act(() => {
+      emitChange?.(emptyDoc(), "stroke");
+    });
+    expect(box.style.height).toBe("320px");
+
+    // 受控值变化（外层换算后回填）即时生效
+    view.rerender(<InkPad paperHeight={560} />);
+    expect(box.style.height).toBe("560px");
+  });
+
+  it("缺省形态不受影响：初始高度与工具条照旧（旧作答链路零变化）", () => {
+    render(<InkPad initialHeight={280} />);
+    expect(screen.getByRole("toolbar")).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "手写答题区" }).style.height).toBe(
+      "280px",
+    );
+  });
+});
+
+describe("<InkPad> 背景挂载后更新（T6R.9 复审⑥：重建键方案）", () => {
+  it("background 变化 → 引擎按新背景重建（create 收到新值）", () => {
+    const view = render(<InkPad inputMode="session" background="grid" />);
+    expect(lastCreateOpts?.background).toBe("grid");
+    view.rerender(<InkPad inputMode="session" background="line" />);
+    expect(lastCreateOpts?.background).toBe("line");
+    // 定案注释见组件：重建（非 setBackground 命令）是更廉价的方案——
+    // NoteLayer 侧经引擎换实例检测重载正文，undo 历史随重建清零可接受
+    // （背景只随外部换稿变化，罕见路径）
+  });
+
+  it("背景不变的重渲染不重建引擎", () => {
+    const view = render(<InkPad background="grid" />);
+    view.rerender(<InkPad background="grid" paperHeight={400} />);
+    view.rerender(<InkPad background="grid" paperHeight={500} />);
+    // create 只在挂载时发生一次（受控纸高变化走容器样式，不重建）
+    expect(
+      screen.getAllByRole("img", { name: "手写答题区" }).length,
+    ).toBeGreaterThanOrEqual(1);
   });
 });

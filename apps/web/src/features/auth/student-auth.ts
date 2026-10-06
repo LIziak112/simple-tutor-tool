@@ -1,6 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { StudentLoginRequest, StudentMeData } from "@tutor/contract";
 import {
+  currentNoteSession,
+  resetNoteSession,
+} from "@/features/notes/note-sync";
+import {
   fetchStudentAssignmentsApi,
   fetchStudentCoursesApi,
   fetchStudentLecturesApi,
@@ -36,6 +40,14 @@ export function useStudentMe() {
 function useApplyStudentAuthed() {
   const queryClient = useQueryClient();
   return (student: StudentMeData) => {
+    // T6R.9 复审①：登录身份与当前草稿绑定不同 → 立即停旧会话。否则换账号后
+    // 旧待传继续跑，会用**新会话 Cookie** 上传——attempt 归属由服务端从会话
+    // 推导，旧账号的草稿必 403，被误打成 denied(access) 终态。同账号重登
+    // （专属链接重进）不 reset，队列照常；本地未同步内容保留（方案 §6.1）
+    const bound = currentNoteSession();
+    if (bound !== null && bound.studentId !== student.id) {
+      resetNoteSession();
+    }
     queryClient.setQueryData(studentMeKey, student);
     void queryClient.prefetchQuery({
       queryKey: ["student", "assignments"],
@@ -70,13 +82,18 @@ export function useLoginStudent() {
   });
 }
 
-/** 退出登录：成功后清空全部学生端查询缓存（me 失效后守卫导回登录页） */
+/**
+ * 退出登录：成功后清空全部学生端查询缓存（me 失效后守卫导回登录页），并
+ * resetNoteSession（T6R.9）——停旧草稿同步队列、中止在途上传、隔离回执；
+ * 本地未同步草稿保留（方案 §6.1：旧账号重新登录才可恢复）。
+ */
 export function useLogoutStudent() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: logoutStudentApi,
     onSuccess: () => {
       queryClient.removeQueries({ queryKey: ["student"] });
+      resetNoteSession();
     },
   });
 }

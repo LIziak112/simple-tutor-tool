@@ -96,3 +96,46 @@ export async function waitForLocalSaved(
   }
   throw new Error("not saved yet（100×10ms 轮询超时，测试前置失败）");
 }
+
+// ---------- 宽度观察桩与空稿夹具（组件测试共享，T6R.9 复审⑪） ----------
+
+/**
+ * ResizeObserver 桩（框架无关）：调用方 vi.stubGlobal("ResizeObserver",
+ * stub.cls)，随后 stub.push(width) 模拟容器宽度变化（需包在 act 里）。
+ * 多个观察者（多题卡/多草稿层）同推同一宽度。
+ */
+export interface ResizeObserverStub {
+  cls: new (
+    cb: (entries: { contentRect: { width: number } }[]) => void,
+  ) => unknown;
+  /** 向全部**连接中**的实例推一次宽度（disconnect 后不再收到——真实语义） */
+  push: (width: number) => void;
+}
+
+export function makeResizeObserverStub(): ResizeObserverStub {
+  const observers: { cb: (w: number) => void; connected: boolean }[] = [];
+  const cls = class {
+    constructor(cb: (entries: { contentRect: { width: number } }[]) => void) {
+      observers.push({
+        cb: (width: number) => cb([{ contentRect: { width } }]),
+        connected: true,
+      });
+    }
+    observe() {}
+    unobserve() {}
+    disconnect() {
+      // 断开的实例不再收事件（useObservedCssValue 的 enabled=false 依赖此语义）
+      for (const entry of observers) entry.connected = false;
+    }
+  };
+  return {
+    cls,
+    push: (width: number) => {
+      for (const entry of [...observers]) {
+        if (entry.connected) entry.cb(width);
+      }
+    },
+  };
+}
+
+export { emptyAtramentDoc } from "@/features/ink/engine/index.ts";

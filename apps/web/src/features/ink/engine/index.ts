@@ -21,6 +21,20 @@ import type {
   InkToolConfig,
 } from "./types.ts";
 
+/**
+ * 空 atrament 文档工厂（T6R.9 复审⑭收敛）：HandwrittenControls（清空改
+ * 页内手写/无笔迹初始态）与 note 测试夹具共用一份——updatedAt 取当下
+ * （mergeInkDocs 的新者胜口径依赖它）。
+ */
+export function emptyAtramentDoc(): InkDoc<"atrament"> {
+  return {
+    engine: "atrament",
+    version: 1,
+    data: { width: 1000, strokes: [] },
+    updatedAt: Date.now(),
+  };
+}
+
 export type { InkHistoryEntry } from "./history.ts";
 export { InkStore } from "./history.ts";
 export type {

@@ -50,6 +50,7 @@ import {
   resetNoteSession,
   resolveNoteConflictKeepCloud,
   resolveNoteConflictKeepLocal,
+  retryNoteUpload,
 } from "@/features/notes/note-sync";
 import {
   ApiError,
@@ -674,5 +675,36 @@ describe("note-sync：分诊矩阵（复审⑧⑪）——服务端错误码全�
           expect(record?.pending, c.name).not.toBeNull();
       }
     }
+  });
+});
+
+describe("retryNoteUpload（T6R.9 denied(access) 手动重试入口）", () => {
+  it("清除 access 终态并立即补传当前 pending（不等地防抖）", async () => {
+    putMock.mockRejectedValueOnce(
+      new ApiError("FORBIDDEN", "已无权限访问该练习", 403),
+    );
+    putMock.mockResolvedValueOnce(receiptOf(2));
+    bindNoteSession(SESSION_A);
+    writeNoteDoc(SESSION_A, SCOPE, DOC_A);
+    await vi.advanceTimersByTimeAsync(NOTE_SYNC_DEBOUNCE_MS);
+    expect(putMock.mock.calls.length).toBe(1);
+    expect(peekNoteRecord(SESSION_A, SCOPE)?.denied?.kind).toBe("access");
+
+    await retryNoteUpload(SESSION_A, SCOPE);
+
+    await vi.waitFor(() => expect(putMock.mock.calls.length).toBe(2));
+    const record = peekNoteRecord(SESSION_A, SCOPE);
+    expect(record?.denied).toBeNull();
+    expect(record?.baseRevision).toBe(2); // 补传回执落地
+    expect(record?.pending).toBeNull();
+  });
+
+  it("无 access 终态时幂等：不触发上传（重复点击安全）", async () => {
+    bindNoteSession(SESSION_A);
+    writeNoteDoc(SESSION_A, SCOPE, DOC_A);
+    await vi.advanceTimersByTimeAsync(NOTE_SYNC_DEBOUNCE_MS);
+    const calls = putMock.mock.calls.length;
+    await retryNoteUpload(SESSION_A, SCOPE);
+    expect(putMock.mock.calls.length).toBe(calls);
   });
 });

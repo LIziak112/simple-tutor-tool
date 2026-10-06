@@ -715,6 +715,12 @@ export function createAtramentSurface(
     },
 
     load(data: InkDoc): void {
+      // 在途笔先按已收采样收笔（layoutchange 语义，T6R.9 复审②）：一笔
+      // 不跨正文替换——在途笔/橡皮 pendingErase 都对**旧正文**提交（下标
+      // 有效、采样完整），随后 replace/redraw 换新；收笔后同一手势的后续
+      // 事件由状态机丢弃（不粘笔）。若不先收笔：live 缓冲像素被 redraw
+      // 清掉且 replace 后按下标提交的 erase 会删错新稿笔画。
+      finishPointer({ kind: "layoutchange" });
       withReason("load", () =>
         store.replace(parseAtramentDoc(data), data.updatedAt),
       );

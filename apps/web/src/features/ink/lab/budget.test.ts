@@ -127,9 +127,13 @@ describe("常量", () => {
 
   it("默认阶梯为递增笔数", () => {
     for (let i = 1; i < DEFAULT_BUDGET_RUNGS.length; i++) {
-      expect(DEFAULT_BUDGET_RUNGS[i]!).toBeGreaterThan(
-        DEFAULT_BUDGET_RUNGS[i - 1]!,
-      );
+      // 数组索引访问的收窄（基线 lint error 解堵：noNonNullAssertion）
+      const rung = DEFAULT_BUDGET_RUNGS[i];
+      const prev = DEFAULT_BUDGET_RUNGS[i - 1];
+      if (rung === undefined || prev === undefined) {
+        throw new Error("阶梯常量形状非法（测试前置失败）");
+      }
+      expect(rung).toBeGreaterThan(prev);
     }
   });
 });

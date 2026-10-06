@@ -5,15 +5,17 @@ import {
   installDraftBackend,
   memoryBackend,
 } from "@/features/attempt/draft-store";
-import { stroke } from "@/features/notes/note-fixtures";
+import { docOf, stroke } from "@/features/notes/note-fixtures";
 import {
   applyServerHead,
   applyServerLoad,
   applyUploadConflict,
   applyUploadDenied,
   applyUploadReceipt,
+  clearNoteDeniedAccess,
   deriveNoteStatusOverview,
   deriveServerState,
+  ensureNoteLoaded,
   getNoteDoc,
   getNoteRecord,
   getNoteView,
@@ -113,7 +115,7 @@ function gatedBackend() {
   const setCalls: GatedCall[] = [];
   const getCalls: GatedGet[] = [];
   const backend: NoteStoreBackend = {
-    keys: inner.keys,
+    getAll: inner.getAll,
     set: (key, value) =>
       new Promise<void>((resolve) => {
         setCalls.push({
@@ -356,7 +358,7 @@ describe("note-store：IDB 失败与订阅", () => {
     const inner = memoryNoteBackend();
     const flaky: NoteStoreBackend = {
       get: inner.get,
-      keys: inner.keys,
+      getAll: inner.getAll,
       set: (key, value) => {
         if (fail) return Promise.reject(new Error("QuotaExceededError"));
         return inner.set(key, value);
@@ -537,13 +539,322 @@ describe("note-store：备份回退 load 守卫（复审②）", () => {
 });
 
 describe("note-store：writeNoteDoc 断引用（复审⑩ memo 纪律）", () => {
-  it("调用方就地改动原对象不影响仓内记录（顶层与 strokes 数组均断引用）", async () => {
-    const input = { ...DOC_B }; // 调用方持有的对象
+  it("断引用纪律已让位于热路径零拷贝（复审⑬）：入参即仓内对象，交出后不得再改", async () => {
+    // 旧断引用拷贝已删（书写热路径零拷贝）；本例锁定新契约——同引用入仓
+    const input = { ...DOC_B };
     writeNoteDoc(SESSION_A, SCOPE, input);
-    // 就地改原对象顶层与数组（模拟外部可变引用）
-    input.ink = { ...input.ink, strokes: [] };
     const record = await recordOf(SESSION_A, SCOPE);
-    expect(record.doc.ink.strokes.length).toBe(2); // 仓内不受影响
-    expect(record.pending?.doc.ink.strokes.length).toBe(2);
+    expect(record.doc).toBe(input);
+    expect(record.pending?.doc).toBe(input);
+  });
+});
+
+describe("note-store：ensureNoteLoaded（T6R.9 NoteLayer 挂载恢复路径）", () => {
+  it("内存无记录时从后端载入并通知订阅者（视图 null → 有值）", async () => {
+    // 重装同一后端模拟「刷新重进」：写入落盘后清内存缓存
+    const shared = memoryNoteBackend();
+    installNoteBackend(shared);
+    writeNoteDoc(SESSION_A, SCOPE, DOC_A);
+    await waitForLocalSaved(SESSION_A, SCOPE);
+    installNoteBackend(shared); // 清内存（后端数据仍在）
+    expect(getNoteView(SESSION_A, SCOPE)).toBeNull();
+
+    const notified: string[] = [];
+    subscribeNoteStore((key) => notified.push(key));
+    await ensureNoteLoaded(SESSION_A, SCOPE);
+
+    const view = getNoteView(SESSION_A, SCOPE);
+    expect(view?.doc?.ink.strokes.length).toBe(1);
+    expect(notified).toContain(noteKeyOf(SESSION_A, SCOPE));
+  });
+
+  it("无记录也完成并通知（消费方区分「尚未加载」与「本地无记录」）", async () => {
+    const notified: string[] = [];
+    subscribeNoteStore((key) => notified.push(key));
+    await ensureNoteLoaded(SESSION_A, SCOPE);
+    expect(getNoteView(SESSION_A, SCOPE)).toBeNull();
+    expect(notified).toContain(noteKeyOf(SESSION_A, SCOPE));
+  });
+
+  it("已在内存：no-op 载入不重复通知", async () => {
+    writeNoteDoc(SESSION_A, SCOPE, DOC_A);
+    await waitForLocalSaved(SESSION_A, SCOPE); // 落盘完成的 saved 通知先走完
+    const notified: string[] = [];
+    subscribeNoteStore((key) => notified.push(key));
+    await ensureNoteLoaded(SESSION_A, SCOPE);
+    expect(notified).toEqual([]);
+  });
+});
+
+describe("note-store：clearNoteDeniedAccess（T6R.9 手动重试入口）", () => {
+  it("access 形态清除 denied、pending/正文保留；content 形态不动（新内容自愈路径）", async () => {
+    writeNoteDoc(SESSION_A, SCOPE, DOC_A);
+    await applyUploadDenied(SESSION_A, SCOPE, "access", "已无权限");
+    expect((await recordOf(SESSION_A, SCOPE)).denied?.kind).toBe("access");
+    const cleared = await clearNoteDeniedAccess(SESSION_A, SCOPE);
+    expect(cleared).toBe(true);
+    const record = await recordOf(SESSION_A, SCOPE);
+    expect(record.denied).toBeNull();
+    expect(record.pending).not.toBeNull(); // 待传保留：重试即补传
+    expect(record.doc.ink.strokes.length).toBe(1);
+
+    await applyUploadDenied(SESSION_A, SCOPE, "content", "内容超限");
+    const clearedContent = await clearNoteDeniedAccess(SESSION_A, SCOPE);
+    expect(clearedContent).toBe(false);
+    expect((await recordOf(SESSION_A, SCOPE)).denied?.kind).toBe("content");
+  });
+
+  it("无 denied 时幂等返回 false（重复点击重试）", async () => {
+    writeNoteDoc(SESSION_A, SCOPE, DOC_A);
+    expect(await clearNoteDeniedAccess(SESSION_A, SCOPE)).toBe(false);
+  });
+});
+
+describe("note-store：docVersion 正文版本令牌（T6R.9 复审②：自写自载守卫数据源）", () => {
+  it("record.doc 每次整体替换 +1；回执/被拒/冲突落地不动", async () => {
+    writeNoteDoc(SESSION_A, SCOPE, DOC_A);
+    const v1 = (await recordOf(SESSION_A, SCOPE)).docVersion;
+    expect(v1).toBeGreaterThan(0);
+    const rec1 = await recordOf(SESSION_A, SCOPE);
+    const mutationId = rec1.pending?.mutationId;
+    if (mutationId === undefined) throw new Error("测试前置失败");
+    await applyUploadReceipt(SESSION_A, SCOPE, mutationId, RECEIPT_1);
+    expect((await recordOf(SESSION_A, SCOPE)).docVersion).toBe(v1); // 回执不换正文
+    await applyUploadDenied(SESSION_A, SCOPE, "access", "x");
+    expect((await recordOf(SESSION_A, SCOPE)).docVersion).toBe(v1); // 终态不换正文
+    writeNoteDoc(SESSION_A, SCOPE, DOC_B);
+    expect((await recordOf(SESSION_A, SCOPE)).docVersion).toBe(v1 + 1);
+  });
+
+  it("服务端稿载入换正文 +1；视图暴露 docVersion", async () => {
+    // 无本地待传（fresh）→ 服务端稿成为工作稿
+    await applyServerLoad(SESSION_A, SCOPE, DOC_B);
+    const v1 = (await recordOf(SESSION_A, SCOPE)).docVersion;
+    expect(v1).toBe(1); // freshRecord(0) → 换稿 +1
+    expect(getNoteView(SESSION_A, SCOPE)?.docVersion).toBe(v1);
+    // 再载一次（内容不同）再 +1
+    await applyServerLoad(SESSION_A, SCOPE, DOC_A);
+    expect((await recordOf(SESSION_A, SCOPE)).docVersion).toBe(v1 + 1);
+  });
+
+  it("revive 持久副本保留令牌（重进不归零）", async () => {
+    const shared = memoryNoteBackend();
+    installNoteBackend(shared);
+    writeNoteDoc(SESSION_A, SCOPE, DOC_A);
+    await waitForLocalSaved(SESSION_A, SCOPE);
+    const before = (await recordOf(SESSION_A, SCOPE)).docVersion;
+    installNoteBackend(shared); // 模拟刷新：清内存
+    expect((await recordOf(SESSION_A, SCOPE)).docVersion).toBe(before);
+  });
+});
+
+describe("note-store：写路径增量维护与视图标量物化（T6R.9 复审⑤）", () => {
+  it("写入与视图重建不触发全稿 Zod parse；载入边界仍 parse", async () => {
+    const spy = vi.spyOn(noteDocSchema, "safeParse");
+    writeNoteDoc(SESSION_A, SCOPE, DOC_A);
+    writeNoteDoc(SESSION_A, SCOPE, DOC_B);
+    const view = getNoteView(SESSION_A, SCOPE);
+    expect(view?.doc?.ink.strokes.length).toBe(2);
+    expect(spy).not.toHaveBeenCalled(); // 千笔书写下视图重建零全稿 parse
+    spy.mockRestore();
+    // 载入边界（applyServerLoad → parseNoteDocOrThrow）保留全量收窄
+    const spy2 = vi.spyOn(noteDocSchema, "safeParse");
+    await applyServerLoad(SESSION_B, SCOPE, DOC_A);
+    expect(spy2.mock.calls.length).toBeGreaterThanOrEqual(1);
+    spy2.mockRestore();
+  });
+
+  it("视图物化补标量默认（缺省纸高/背景的写入不 NaN）", () => {
+    writeNoteDoc(SESSION_A, SCOPE, {
+      version: 1,
+      ink: { width: 1000, strokes: [] },
+    });
+    const view = getNoteView(SESSION_A, SCOPE);
+    expect(view?.doc?.paperHeightLogical).toBe(800);
+    expect(view?.doc?.background).toBe("grid");
+  });
+
+  it("超限笔只告警不阻断书写（服务端 413 为预算权威）", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fatStroke = {
+      tool: "pen" as const,
+      color: "#1f2328",
+      weight: 4,
+      points: Array.from({ length: 2001 }, (_, i) => ({
+        x: i,
+        y: 0,
+        p: 0.5,
+        t: 0,
+      })),
+    };
+    writeNoteDoc(SESSION_A, SCOPE, {
+      version: 1,
+      ink: { width: 1000, strokes: [fatStroke] },
+    });
+    expect(warn).toHaveBeenCalled();
+    // 内容保留本机（不静默丢笔），由服务端按预算裁决
+    expect(getNoteView(SESSION_A, SCOPE)?.doc?.ink.strokes.length).toBe(1);
+    warn.mockRestore();
+  });
+});
+
+describe("note-store：reviveRecord 坏形防御（T6R.9 复审③）", () => {
+  /** 直接向后端塞坏形记录（模拟历史损坏/异版本写入） */
+  async function seedCorrupt(backend: NoteStoreBackend): Promise<void> {
+    await backend.set(noteKeyOf(SESSION_A, SCOPE), {
+      doc: { version: 1, ink: { width: 1000, strokes: "not-an-array" } },
+      pending: null,
+      baseRevision: 5,
+    });
+  }
+
+  it("挂载路径：坏形弃壳返 null，不抛错；下次写入重建干净记录", async () => {
+    const shared = memoryNoteBackend();
+    await seedCorrupt(shared);
+    installNoteBackend(shared);
+    expect(await getNoteRecord(SESSION_A, SCOPE)).toBeNull(); // 不抛、不当存在
+    writeNoteDoc(SESSION_A, SCOPE, DOC_A); // 重建
+    const record = await recordOf(SESSION_A, SCOPE);
+    expect(record.baseRevision).toBe(0); // 坏壳的 baseRevision 未被采信
+    expect(record.doc.ink.strokes.length).toBe(1);
+  });
+
+  it("strokes 元素缺 points 数组同样弃壳", async () => {
+    const shared = memoryNoteBackend();
+    await shared.set(noteKeyOf(SESSION_A, SCOPE), {
+      doc: { version: 1, ink: { width: 1000, strokes: [{ tool: "pen" }] } },
+    });
+    installNoteBackend(shared);
+    expect(await getNoteRecord(SESSION_A, SCOPE)).toBeNull();
+  });
+
+  it("bind 扫描路径：坏形不抛、不进待传清单（getAll 原料直入 revive）", async () => {
+    const shared = memoryNoteBackend();
+    await seedCorrupt(shared);
+    installNoteBackend(shared);
+    await expect(listPendingNotes(SESSION_A)).resolves.toEqual([]);
+  });
+});
+
+describe("note-store：回执推进 lastHead（T6R.9 复审⑦：新版本 images=[]→pending）", () => {
+  it("rev1 图片 ready 的 head 后上传 rev2：images 维度随回执转 pending", async () => {
+    await applyServerHead(SESSION_A, SCOPE, headOf());
+    // rev1 有一张 ready 图（最小形状）
+    await applyServerHead(SESSION_A, SCOPE, {
+      note: headOf().note,
+      images: [
+        {
+          imageId: "55555555-5555-4555-8555-555555555555",
+          noteVersionId: headOf().note?.currentVersionId ?? "",
+          spec: "thumbnail",
+          pageIndex: 0,
+          crop: { x: 0, y: 0, width: 1000, height: 800 },
+          pixelWidth: 500,
+          pixelHeight: 400,
+          state: "ready",
+          hash: `${"b".repeat(64)}`,
+        },
+      ],
+      evidence: null,
+    });
+    expect(
+      deriveNoteStatusOverview(await recordOf(SESSION_A, SCOPE), false).images,
+    ).toBe("ready");
+    writeNoteDoc(SESSION_A, SCOPE, DOC_B);
+    const mutationId = (await recordOf(SESSION_A, SCOPE)).pending?.mutationId;
+    if (mutationId === undefined) throw new Error("测试前置失败");
+    await applyUploadReceipt(SESSION_A, SCOPE, mutationId, receiptOf(2));
+    // 回执落地：新版本尚无派生图 →「上传成功≠图片就绪」如实转 pending
+    expect(
+      deriveNoteStatusOverview(await recordOf(SESSION_A, SCOPE), false).images,
+    ).toBe("pending");
+    const head = (await recordOf(SESSION_A, SCOPE)).lastHead;
+    expect(head?.note?.revision).toBe(2);
+    expect(head?.note?.currentVersionId).toBe(receiptOf(2).versionId);
+  });
+});
+
+describe("note-store：replaceDoc 单点与热路径（T6R.9 复审⑩⑫⑬）", () => {
+  it("writeNoteDoc 返回新 docVersion（消二次 peek）", () => {
+    const v1 = writeNoteDoc(SESSION_A, SCOPE, DOC_A);
+    const v2 = writeNoteDoc(SESSION_A, SCOPE, DOC_B);
+    expect(typeof v1).toBe("number");
+    expect(v2).toBe(v1 + 1);
+  });
+
+  it("等长换稿也全量重算 totalPoints（undo/redo/erase/replace 等非追加形态）", async () => {
+    writeNoteDoc(
+      SESSION_A,
+      SCOPE,
+      docOf([
+        stroke([
+          [0, 0],
+          [1, 1],
+        ]),
+      ]),
+    ); // 1 笔 2 点
+    expect((await recordOf(SESSION_A, SCOPE)).totalPoints).toBe(2);
+    // 等长替换（同笔数——引擎不产生，防御口径）：重算而非沿用增量
+    writeNoteDoc(SESSION_A, SCOPE, DOC_A); // 1 笔 2 点（等长）
+    expect((await recordOf(SESSION_A, SCOPE)).totalPoints).toBe(2);
+    // 追加：增量路径
+    writeNoteDoc(SESSION_A, SCOPE, DOC_B); // 2 笔 4 点
+    expect((await recordOf(SESSION_A, SCOPE)).totalPoints).toBe(4);
+    // 清空（减笔）：重算归零
+    writeNoteDoc(SESSION_A, SCOPE, DOC_EMPTY);
+    expect((await recordOf(SESSION_A, SCOPE)).totalPoints).toBe(0);
+  });
+
+  it("物化与 Zod parse 锁步（materializeDoc 输出 ≡ parse 物化，复审⑪）", () => {
+    const bare = {
+      version: 1,
+      ink: { width: 1000, strokes: DOC_A.ink.strokes },
+    } as const;
+    writeNoteDoc(SESSION_A, SCOPE, bare);
+    expect(getNoteView(SESSION_A, SCOPE)?.doc).toEqual(
+      noteDocSchema.parse(bare),
+    );
+    writeNoteDoc(SESSION_A, SCOPE, DOC_B);
+    expect(getNoteView(SESSION_A, SCOPE)?.doc).toEqual(
+      noteDocSchema.parse({
+        version: 1,
+        ink: DOC_B.ink,
+        paperHeightLogical: DOC_B.paperHeightLogical,
+        background: DOC_B.background,
+      }),
+    );
+  });
+
+  it("writeNoteDoc 不再拷贝数组层：入参对象即仓内对象（交出后不得再改）", async () => {
+    const input = { ...DOC_A };
+    writeNoteDoc(SESSION_A, SCOPE, input);
+    const record = await recordOf(SESSION_A, SCOPE);
+    expect(record.doc).toBe(input); // 同一引用（热路径零拷贝）
+  });
+});
+
+describe("note-store：bind 扫描与 ensureNoteLoaded 共享（T6R.9 复审⑬消双读）", () => {
+  it("扫描在途时 ensureNoteLoaded 等待共享结果，不走逐键 get", async () => {
+    const shared = memoryNoteBackend();
+    installNoteBackend(shared);
+    writeNoteDoc(SESSION_A, SCOPE, DOC_A);
+    await waitForLocalSaved(SESSION_A, SCOPE);
+    installNoteBackend(shared); // 模拟刷新：清内存、后端留数据
+
+    let gets = 0;
+    const counting: NoteStoreBackend = {
+      get: (key) => {
+        gets += 1;
+        return shared.get(key);
+      },
+      set: shared.set,
+      getAll: shared.getAll,
+    };
+    installNoteBackend(counting);
+    const scan = listPendingNotes(SESSION_A); // 不 await——bind 扫描在途
+    await ensureNoteLoaded(SESSION_A, SCOPE); // 同 tick 竞争的挂载恢复
+    await scan;
+    expect(gets).toBe(0); // 键值对来自扫描的 getAll，零逐键 get
+    expect(getNoteView(SESSION_A, SCOPE)?.doc?.ink.strokes.length).toBe(1);
   });
 });

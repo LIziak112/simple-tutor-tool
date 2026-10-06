@@ -50,7 +50,12 @@ import type {
   NoteStatusOverview,
   NoteVersionReceipt,
 } from "@tutor/contract";
-import { noteDocSchema } from "@tutor/contract";
+import {
+  NOTE_MAX_POINTS_PER_STROKE,
+  NOTE_MAX_TOTAL_POINTS,
+  NOTE_PAPER_HEIGHT_DEFAULT,
+  noteDocSchema,
+} from "@tutor/contract";
 import { digestOf } from "@/features/attempt/draft-merge";
 import { parseNoteDocOrThrow } from "@/features/notes/note-fixtures";
 import {
@@ -194,6 +199,25 @@ export interface NoteLocalRecord {
   localError: string | null;
   /** 最后本地编辑时间（epoch ms；恢复 load 不推进——加载恢复不算编辑） */
   editedAt: number;
+  /**
+   * 正文版本令牌（T6R.9 复审②）：record.doc 每次被整体替换时 +1
+   * （writeNoteDoc / applyServerLoad 换稿 / keepCloud 裁决），回执/被拒/
+   * 冲突落地等非正文变更不动。消费方（NoteLayer 自写自载守卫）比对令牌
+   * 替代逐笔迹元素引用比对——解除对 store 拷贝深度的隐式耦合。
+   */
+  docVersion: number;
+  /**
+   * 全稿累计点数（T6R.9 复审⑤）：写入时增量维护（追加笔 O(新笔)、
+   * 减笔冷路径重算）——配合视图标量物化，书写热路径不再全稿 parse/重扫。
+   */
+  totalPoints: number;
+}
+
+/** 全稿点数求和（revive/减笔冷路径；追加笔走增量不经过这里） */
+function countPoints(strokes: readonly { points: unknown[] }[]): number {
+  let total = 0;
+  for (const stroke of strokes) total += stroke.points.length;
+  return total;
 }
 
 function freshRecord(): NoteLocalRecord {
@@ -208,14 +232,41 @@ function freshRecord(): NoteLocalRecord {
     local: "saved",
     localError: null,
     editedAt: 0,
+    docVersion: 0,
+    totalPoints: 0,
   };
+}
+
+/** ink/strokes 形态校验（T6R.9 复审③）：坏形（历史损坏/异版本写入）弃壳
+ * 返 null 重建空稿——曾在挂载/bind 扫描（getAll 原料直入）路径抛错击穿
+ * 整个恢复链；只查结构不查数值（坐标/点数由写入与服务端边界管辖）。 */
+function inkShapeOk(ink: unknown): boolean {
+  if (typeof ink !== "object" || ink === null) return false;
+  const strokes = (ink as { strokes?: unknown }).strokes;
+  if (!Array.isArray(strokes)) return false;
+  for (const stroke of strokes) {
+    if (
+      typeof stroke !== "object" ||
+      stroke === null ||
+      !Array.isArray((stroke as { points?: unknown }).points)
+    ) {
+      return false;
+    }
+  }
+  return true;
 }
 
 /** 读取旧记录的防御性归一（前向兼容：缺字段补默认，形态错则弃重建空稿壳） */
 function reviveRecord(raw: unknown): NoteLocalRecord | null {
   if (typeof raw !== "object" || raw === null) return null;
   const r = raw as Partial<NoteLocalRecord>;
-  if (r.doc === undefined || typeof r.doc !== "object") return null;
+  if (
+    r.doc === undefined ||
+    typeof r.doc !== "object" ||
+    !inkShapeOk((r.doc as { ink?: unknown }).ink)
+  ) {
+    return null;
+  }
   const base = freshRecord();
   return {
     ...base,
@@ -230,6 +281,8 @@ function reviveRecord(raw: unknown): NoteLocalRecord | null {
     conflict: r.conflict ?? null,
     denied: r.denied ?? null,
     editedAt: typeof r.editedAt === "number" ? r.editedAt : 0,
+    docVersion: typeof r.docVersion === "number" ? r.docVersion : 0,
+    totalPoints: countPoints(r.doc.ink.strokes),
     // local/localError 持久副本恒归一化（见文件头），读取即 saved
     local: "saved",
     localError: null,
@@ -241,6 +294,16 @@ function persistedCopy(record: NoteLocalRecord): NoteLocalRecord {
   return { ...record, local: "saved", localError: null };
 }
 
+/**
+ * 正文替换单点（T6R.9 复审⑩）：record.doc 赋值与 docVersion 递增只在
+ * 这里发生（writeNoteDoc / applyServerLoad 换稿 / keepCloud 裁决三处调用）
+ * ——版本令牌与正文替换永不脱钩。
+ */
+function replaceDoc(record: NoteLocalRecord, doc: NoteDocInput): void {
+  record.doc = doc;
+  record.docVersion += 1;
+}
+
 // ---------- 后端注入 ----------
 
 /**
@@ -248,7 +311,7 @@ function persistedCopy(record: NoteLocalRecord): NoteLocalRecord {
  * 无删除路径：未同步内容不静默删除）。memory/idb 两实现与复制链治理见
  * lib/kv-backend.ts。
  */
-export type NoteStoreBackend = Pick<KVStoreBackend, "get" | "set" | "keys">;
+export type NoteStoreBackend = Pick<KVStoreBackend, "get" | "set" | "getAll">;
 
 /** 内存后端（jsdom 自动回退与单测隔离/故障注入用；不持久） */
 export function memoryNoteBackend(): NoteStoreBackend {
@@ -489,6 +552,8 @@ export interface NoteRecordView {
   conflict: NoteConflictInfo | null;
   denied: NoteDeniedInfo | null;
   overview: NoteStatusOverview;
+  /** 正文版本令牌（record.doc 替换次数；非正文变更不动——守卫比对用） */
+  docVersion: number;
 }
 
 /**
@@ -496,8 +561,28 @@ export interface NoteRecordView {
  * 引用 memo（复审④）：记录内 doc 整体替换不就地改动，local 翻转等
  * 非正文变更触发的快照重建不再重复全文档 Zod 校验（30 万点上限的
  * superRefine 是热路径）；引用替换自然失效。
+ * T6R.9 复审⑤：**仅载入/比较边界消费**（getNoteDoc、noteDocsEqual——
+ * 冷路径）；getNoteView 改标量补默认（materializeDoc，零 parse）。
  */
 const parseMemo = new WeakMap<NoteDocInput, NoteDoc | null>();
+
+/**
+ * 视图标量物化（复审⑤）：写路径结构由引擎产出保证（增量校验见
+ * writeNoteDoc），视图只补两个标量默认值——书写热路径（每笔 → 视图重建）
+ * 不再触发全稿 Zod parse；全量收窄只保留在载入（applyServerLoad）与
+ * 上传边界（服务端校验）。
+ */
+function materializeDoc(doc: NoteDocInput): NoteDoc {
+  return {
+    version: 1,
+    ink: doc.ink,
+    paperHeightLogical:
+      typeof doc.paperHeightLogical === "number"
+        ? doc.paperHeightLogical
+        : NOTE_PAPER_HEIGHT_DEFAULT,
+    background: doc.background ?? "grid",
+  };
+}
 
 function safeParseDoc(doc: NoteDocInput): NoteDoc | null {
   const cached = parseMemo.get(doc);
@@ -542,7 +627,9 @@ export function peekNoteRecord(
   return records.get(noteKeyOf(session, scope)) ?? null;
 }
 
-/** 读物化正文（NoteDocInput → noteDocSchema.parse 物化默认值） */
+/** 读物化正文（NoteDocInput → noteDocSchema.parse 物化默认值）。
+ * 仅供测试/诊断（复审⑮）：生产消费方走 getNoteView（标量物化零 parse）；
+ * flushNoteStore 已删——T6R.10 交卷等待随用随进（届时按需重建）。 */
 export async function getNoteDoc(
   session: NoteSessionRef,
   scope: NoteScope,
@@ -571,7 +658,7 @@ export function getNoteView(
   }
   const uploading = uploadingKeys.has(key);
   const view: NoteRecordView = {
-    doc: safeParseDoc(record.doc),
+    doc: materializeDoc(record.doc),
     local: record.local,
     localError: record.localError,
     server: deriveServerState(record, uploading),
@@ -581,6 +668,7 @@ export function getNoteView(
     conflict: record.conflict,
     denied: record.denied,
     overview: deriveNoteStatusOverview(record, uploading),
+    docVersion: record.docVersion,
   };
   viewCache.set(key, {
     allGen,
@@ -602,23 +690,44 @@ export function writeNoteDoc(
   session: NoteSessionRef,
   scope: NoteScope,
   input: NoteDocInput,
-): void {
+): number {
   const key = noteKeyOf(session, scope);
   mutate(key, freshRecord, (record) => {
-    // 复审⑩ memo 纪律：入仓即断外部引用——浅展两级（doc、ink）+ strokes
-    // 数组换新引用。gzip/parse 的 WeakMap memo 以对象引用为键，调用方若
-    // 就地改动原对象（改 doc.ink / strokes.push）会毒化缓存与幂等字节；
-    // 断引用后顶层与数组层不可达原对象。拷贝深度边界：stroke 元素对象仍
-    // 共享（引擎侧不得就地改单个笔画的 points——契约层数据本应不可变）
-    const doc: NoteDocInput = {
-      ...input,
-      ink: { ...input.ink, strokes: [...input.ink.strokes] },
-    };
-    record.doc = doc;
-    record.pending = { mutationId: randomUuid(), doc };
+    // 增量点数维护（复审⑤）：引擎每次给全稿，但形态只有「尾部追加」
+    // 「笔数减少（撤销/擦除/清空）」「等长（信任存量——撤销/重做的子集
+    // 形态）」三种。追加笔逐笔校验单笔上限（超限告警不阻断——服务端 413
+    // 是预算权威，方案 §7「矢量超限保留本机」）；减笔冷路径重算。
+    const prevStrokes = record.doc.ink.strokes;
+    const nextStrokes = input.ink.strokes;
+    if (nextStrokes.length > prevStrokes.length) {
+      for (let i = prevStrokes.length; i < nextStrokes.length; i++) {
+        const added = nextStrokes[i];
+        if (
+          added === undefined ||
+          added.points.length > NOTE_MAX_POINTS_PER_STROKE
+        ) {
+          console.warn("草稿新笔超单笔点数上限（保留本机，同步由服务端裁决）");
+        } else {
+          record.totalPoints += added.points.length;
+        }
+      }
+      if (record.totalPoints > NOTE_MAX_TOTAL_POINTS) {
+        console.warn("草稿累计点数超全稿预算（保留本机，同步由服务端裁决）");
+      }
+    } else {
+      // 非追加形态（undo/redo/erase/clear/**等长替换**——复审⑫）：全量重算，
+      // 不依赖追加分支的增量假设
+      record.totalPoints = countPoints(nextStrokes);
+    }
+    // 热路径零拷贝（复审⑬）：入参对象即仓内对象——**入参交出后调用方不得
+    // 再改**（引擎每次变更整体换新数组，契约层笔迹不可变；gzip/parse 的
+    // WeakMap memo 亦以引用为键，同引用同字节反而保幂等）
+    replaceDoc(record, input);
+    record.pending = { mutationId: randomUuid(), doc: input };
     record.editedAt = Date.now();
     if (record.denied?.kind === "content") record.denied = null;
   });
+  return records.get(key)?.docVersion ?? 0;
 }
 
 /**
@@ -708,7 +817,7 @@ function applyLoadMutations(
     return; // 本地有未同步且内容不同：保留（不覆盖未同步本地稿）
   }
   record.pending = null; // 无待传或内容相等：以服务端稿为准，不回传
-  record.doc = serverDoc;
+  replaceDoc(record, serverDoc);
   record.conflict = null; // 云端即本地内容（或本地无分歧）：分歧消解
 }
 
@@ -741,6 +850,23 @@ export async function applyUploadReceipt(
     if (record.pending?.mutationId === mutationId) {
       record.pending = null;
     }
+    // 回执推进 lastHead（复审⑦）：新版本尚无派生图（images=[]），images
+    // 维度随回执转 pending——「上传成功≠图片就绪」如实呈现；note 元信息以
+    // 旧 head 为底合并（attemptId 等归属字段回执不含，下一次 head 拉取
+    // 全覆盖），从未拉过 head 则 note 维持 null（overview 只消费 images）
+    record.lastHead = {
+      note:
+        record.lastHead?.note !== null && record.lastHead?.note !== undefined
+          ? {
+              ...record.lastHead.note,
+              revision: receipt.revision,
+              currentVersionId: receipt.versionId,
+              serverSavedAt: receipt.savedAt,
+            }
+          : null,
+      images: [],
+      evidence: record.lastHead?.evidence ?? null,
+    };
   });
 }
 
@@ -817,7 +943,7 @@ export async function resolveNoteConflict(
         return; // fetch 窗口内有新写：新写胜出，云端稿不覆盖（复审⑤）
       }
       record.pending = null;
-      record.doc = choice.doc;
+      replaceDoc(record, choice.doc);
       return;
     }
     // keep local：有摘要——pending 原样（同 id 重放，CAS 干净写）；
@@ -858,40 +984,95 @@ export function noteDocsEqual(local: NoteDocInput, server: NoteDoc): boolean {
 }
 
 /**
- * 会话内待传清单（bind 扫描补传 + flush 追平用）。只返回 scope——记录
- * 活引用不泄出（复审⑩：调用方要细节走 peek/getNoteRecord，避免扫描期间
- * 的写入经旧引用旁路队列）。
+ * 载入本地记录进内存缓存并通知（T6R.9 NoteLayer 挂载恢复路径）：刷新/
+ * 重进后内存缓存为空，本函数回源后端（getNoteRecord 已处理竞态窗口与
+ * 吞错）并通知该键——订阅方（useNoteRecord）从 null 转有值。无记录时同样
+ * 完成并通知一次（消费方以本 Promise 的完成区分「尚未加载」与「本地无
+ * 记录」，后者用默认空稿起笔）。已在内存：no-op 不通知（重挂载不冗余渲染）。
  */
-export async function listPendingNotes(
-  session: NoteSessionRef,
-): Promise<NoteScope[]> {
-  const out: NoteScope[] = [];
-  let keysOfSession: string[];
-  try {
-    keysOfSession = await backend().keys(sessionPrefix(session));
-  } catch (err) {
-    console.warn("草稿本地仓扫描失败（无法补传待传版本）", err);
-    return out;
-  }
-  for (const key of keysOfSession) {
-    const scope = parseNoteKey(key)?.scope;
-    if (scope === undefined) continue;
-    const record = await getNoteRecord(session, scope);
-    if (record !== null && record.pending !== null) {
-      out.push(scope);
-    }
-  }
-  return out;
-}
-
-/** 立即落盘某键的队列（交卷等待本地事务用，T6R.10；无待写即 no-op） */
-export async function flushNoteStore(
+export async function ensureNoteLoaded(
   session: NoteSessionRef,
   scope: NoteScope,
 ): Promise<void> {
   const key = noteKeyOf(session, scope);
-  await getNoteRecord(session, scope); // 确保已载入（flush 语义要求可读）
-  await queueOf(key).tail;
+  if (records.has(key)) return;
+  // bind 扫描在途：等它把整会话键值对灌进缓存再判（复审⑬ 消双读；
+  // 扫描内部已吞错，不会拒绝）
+  if (inflightScan !== null) {
+    await inflightScan;
+    if (records.has(key)) return;
+  }
+  await getNoteRecord(session, scope);
+  notify(key);
+}
+
+/**
+ * denied(access) 手动重试清除（T6R.9 UI「重试同步」按钮的 store 侧）：
+ * **定案：手动重试而非 applyServerLoad 成功自动清除**——denied(access)
+ * 含 ALREADY_SUBMITTED（交卷后迟到写），该形态下 head GET 是读投影放行的
+ * （T6R.5 落地口径），head 成功并不证明写权限恢复，自动清除会引发必然再被
+ * 拒的反复重传；手动按钮语义明确，失败再拒只是回到终态。content 形态不动
+ * （新内容自愈：writeNoteDoc 收到新 pending 即清）。清除后 pending 保留，
+ * 重传编排由调用方（note-sync.retryNoteUpload：clearTimers + due）负责。
+ * 返回是否实际清除（幂等：无 access 终态返回 false）。
+ */
+export async function clearNoteDeniedAccess(
+  session: NoteSessionRef,
+  scope: NoteScope,
+): Promise<boolean> {
+  let cleared = false;
+  await mutateLoaded(session, scope, null, (record) => {
+    if (record.denied?.kind !== "access") return;
+    record.denied = null;
+    cleared = true;
+  });
+  return cleared;
+}
+
+/**
+ * 会话内待传清单（bind 扫描补传 + flush 追平用）。只返回 scope——记录
+ * 活引用不泄出（复审⑩：调用方要细节走 peek/getNoteRecord，避免扫描期间
+ * 的写入经旧引用旁路队列）。
+ * T6R.9 复审⑧：单事务 getAll 取前缀键值对（不再 keys 后逐键 get 的串行
+ * 往返）；载入缓存与 getNoteRecord 同口径——窗口内新写以内存为准。
+ */
+/** 在途会话扫描（bind 发起）：ensureNoteLoaded 等待它灌完缓存（复审⑬
+ * 消 getAll+get 双读——扫描本身整会话 getAll，挂载恢复随之免费） */
+let inflightScan: Promise<unknown> | null = null;
+
+export async function listPendingNotes(
+  session: NoteSessionRef,
+): Promise<NoteScope[]> {
+  const scan = (async () => {
+    const out: NoteScope[] = [];
+    let pairs: Array<[string, unknown]>;
+    try {
+      pairs = await backend().getAll(sessionPrefix(session));
+    } catch (err) {
+      console.warn("草稿本地仓扫描失败（无法补传待传版本）", err);
+      return out;
+    }
+    for (const [key, raw] of pairs) {
+      const scope = parseNoteKey(key)?.scope;
+      if (scope === undefined) continue;
+      if (!records.has(key)) {
+        // 竞态口径同 getNoteRecord：读期间发生的本地写入已进内存——不覆盖
+        const revived = reviveRecord(raw);
+        if (revived !== null) records.set(key, revived);
+      }
+      const record = records.get(key);
+      if (record !== undefined && record.pending !== null) {
+        out.push(scope);
+      }
+    }
+    return out;
+  })();
+  inflightScan = scan;
+  try {
+    return await scan;
+  } finally {
+    inflightScan = null;
+  }
 }
 
 /** 仅测试使用：复位全部模块状态（生产不调用） */

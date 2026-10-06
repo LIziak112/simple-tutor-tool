@@ -15,13 +15,22 @@
  */
 import { createStore, del, get, set } from "idb-keyval";
 
-/** 键值存取完整面（新消费方按需 Pick 收窄） */
+/**
+ * 键值存取完整面（新消费方按需 Pick 收窄）。keys 已随 getAll 落地删除
+ * （T6R.9 复审⑮：无消费方的死面）；del 暂无消费方但**保留**——草稿域
+ * 「不静默删除未同步内容」的口径随时可能需要显式删除原语，届时迁移
+ * draft-store/event-queue 时共用。
+ */
 export interface KVStoreBackend {
   get(key: string): Promise<unknown>;
   set(key: string, value: unknown): Promise<void>;
   del(key: string): Promise<void>;
-  /** 列出以 prefix 开头的全部键（乱序允许；IDB 侧已下推 range） */
-  keys(prefix: string): Promise<string[]>;
+  /**
+   * 一次列出 prefix 前缀的键值对（T6R.9 复审⑧：bind/flush 扫描单事务取
+   * 全量，替代逐键 get 的串行往返）。键值同序（对象存储按键排序遍历）；
+   * 非字符串键丢弃（防御口径）。
+   */
+  getAll(prefix: string): Promise<Array<[string, unknown]>>;
 }
 
 /** 内存实现（jsdom 自动回退、单测隔离与故障注入用；不持久） */
@@ -35,8 +44,8 @@ export function memoryKVBackend(): KVStoreBackend {
     del: async (key) => {
       map.delete(key);
     },
-    keys: async (prefix) =>
-      Array.from(map.keys()).filter((key) => key.startsWith(prefix)),
+    getAll: async (prefix) =>
+      Array.from(map.entries()).filter(([key]) => key.startsWith(prefix)),
   };
 }
 
@@ -61,19 +70,27 @@ export function idbKVBackend(
     get: (key) => get(key, store),
     set: (key, value) => set(key, value, store),
     del: (key) => del(key, store),
-    keys: async (prefix) => {
-      // getAllKeys 带 range：过滤下推到 IDB 层（非字符串键天然落在字符串
-      // 区间外；防御性保留类型收窄）。回调内断言为解包后的值类型：
-      // idb-keyval 运行时会 promisify 返回的 IDBRequest，但其 UseStore
-      // 类型不表达该解包（本仓安装版本的类型联合按裸 Request 推断）
-      const all = await store(
-        "readonly",
-        (objectStore) =>
-          objectStore.getAllKeys(
-            prefixRange(prefix),
-          ) as unknown as IDBValidKey[],
+    getAll: async (prefix) => {
+      // 同一事务内 getAllKeys + getAll（同一 range 同序）；回调返回 Promise
+      // 的口径与 keys 同（customStore 只 resolve 回调返回值）
+      const range = prefixRange(prefix);
+      const request = <T>(r: IDBRequest<T>) =>
+        new Promise<T>((resolve, reject) => {
+          r.onsuccess = () => resolve(r.result);
+          r.onerror = () => reject(r.error);
+        });
+      const [rawKeys, values] = await store("readonly", (objectStore) =>
+        Promise.all([
+          request(objectStore.getAllKeys(range)),
+          request(objectStore.getAll(range)),
+        ]),
       );
-      return all.filter((key): key is string => typeof key === "string");
+      const pairs: Array<[string, unknown]> = [];
+      for (let i = 0; i < rawKeys.length; i++) {
+        const key = rawKeys[i];
+        if (typeof key === "string") pairs.push([key, values[i] ?? null]);
+      }
+      return pairs;
     },
   };
 }

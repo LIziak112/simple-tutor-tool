@@ -1,4 +1,11 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import type {
   HintOpenedEntry,
   QuestionPublic,
@@ -6,6 +13,8 @@ import type {
 } from "@tutor/contract";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
+import { NOTE_QUESTION_SHARE } from "@/features/notes/note-layout";
+import { makeResizeObserverStub } from "@/features/notes/note-test-utils";
 import { openAttemptHintApi } from "@/lib/api";
 import { AttemptQuestionCard } from "./AttemptQuestionCard";
 
@@ -96,7 +105,15 @@ function renderStatefulCard(
       />
     );
   }
-  const utils = render(<Harness />);
+  // T6R.9：草稿层经 react-query 拉 head——测试 harness 提供独立 client
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const utils = render(
+    <QueryClientProvider client={client}>
+      <Harness />
+    </QueryClientProvider>,
+  );
   return { ...utils, onAnswer };
 }
 
@@ -318,5 +335,101 @@ describe("分步提示面板（T2.11）", () => {
   it("未提供 onHintUnlocked（如结果视图外的纯展示场景）不渲染提示面板", () => {
     renderStatefulCard(baseQuestion({ type: "choice", hintCount: 2 }));
     expect(screen.queryByRole("button", { name: /给我一点提示/ })).toBeNull();
+  });
+});
+
+describe("题卡草稿层（T6R.9）", () => {
+  /** 桩 ResizeObserver：按需推送题卡宽度（共享桩，分栏判定驱动源） */
+  function stubCardWidth() {
+    const stub = makeResizeObserverStub();
+    vi.stubGlobal("ResizeObserver", stub.cls);
+    return { push: (w: number) => act(() => stub.push(w)) };
+  }
+
+  it("选择/判断/填空题渲染草稿层标记（默认收起）；手写题不渲染", () => {
+    const choice = renderStatefulCard(
+      baseQuestion({ type: "choice", options: ["$1$", "$2$"] }),
+      { attemptId: "att-1" },
+    );
+    expect(screen.getByRole("button", { name: /草稿纸/ })).toBeInTheDocument();
+    choice.unmount();
+
+    const solve = renderStatefulCard(baseQuestion({ type: "solve" }), {
+      attemptId: "att-1",
+    });
+    expect(screen.queryByRole("button", { name: /草稿纸/ })).toBeNull();
+    solve.unmount();
+  });
+
+  it("无 attemptId 不渲染草稿层（预览等场景）", () => {
+    renderStatefulCard(baseQuestion({ type: "judge" }));
+    expect(screen.queryByRole("button", { name: /草稿纸/ })).toBeNull();
+  });
+
+  it("宽容器展开走侧栏分栏（55/45 两列）；窄容器回退 below（任务清单失败测试）", async () => {
+    const ro = stubCardWidth();
+    renderStatefulCard(
+      baseQuestion({ type: "choice", options: ["$1$", "$2$"] }),
+      { attemptId: "att-1" },
+    );
+    await ro.push(1024); // 宽题卡：两列达标
+    fireEvent.click(screen.getByRole("button", { name: /草稿纸/ }));
+    const row = document.querySelector('[data-slot="note-body-row"]');
+    expect(row?.getAttribute("data-layout")).toBe("side");
+    // 列宽由常量渲染（复审⑨）：55% 与阈值同源
+    expect((row?.firstElementChild as HTMLElement)?.style.width).toBe(
+      `${NOTE_QUESTION_SHARE * 100}%`,
+    );
+
+    // 收窄到竖屏宽度：auto 回退 below（复审③：恒定树只切样式不换结构）
+    await ro.push(700);
+    expect(row?.getAttribute("data-layout")).toBe("below");
+    // 草稿区仍在（below 形态，题干下方整宽）
+    expect(document.querySelector('[data-slot="note-layer"]')).not.toBeNull();
+  });
+
+  it("窄容器直接展开也走 below；草稿展开不遮挡填空输入（可继续作答）", async () => {
+    const ro = stubCardWidth();
+    const fill = baseQuestion({
+      type: "fill",
+      stemMd: "计算：$1+1=$ [[]]。",
+    });
+    const { onAnswer } = renderStatefulCard(fill, { attemptId: "att-1" });
+    await ro.push(700);
+    fireEvent.click(screen.getByRole("button", { name: /草稿纸/ }));
+    expect(
+      document
+        .querySelector('[data-slot="note-body-row"]')
+        ?.getAttribute("data-layout"),
+    ).toBe("below");
+    // 展开草稿后填空输入仍可用（工具条常规文档流，不覆盖输入）
+    const input = screen.getByLabelText("第1空");
+    fireEvent.change(input, { target: { value: "2" } });
+    expect(onAnswer).toHaveBeenLastCalledWith(
+      { kind: "fill", values: ["2"] },
+      true,
+    );
+  });
+
+  it("side 布局开合不重挂题干子树（填空输入保持焦点——复审③）", async () => {
+    const ro = stubCardWidth();
+    const fill = baseQuestion({
+      type: "fill",
+      stemMd: "计算：$1+1=$ [[]]。",
+    });
+    renderStatefulCard(fill, { attemptId: "att-1" });
+    await ro.push(1024); // auto → side
+    const input = screen.getByLabelText("第1空");
+    input.focus();
+    expect(document.activeElement).toBe(input);
+    // 展开草稿（below 分支 → side 分支）：同一棵子树只切样式，输入不失焦
+    fireEvent.click(screen.getByRole("button", { name: /草稿纸/ }));
+    expect(
+      document
+        .querySelector('[data-slot="note-body-row"]')
+        ?.getAttribute("data-layout"),
+    ).toBe("side");
+    expect(document.activeElement).toBe(input);
+    expect(input).toHaveValue("");
   });
 });
