@@ -34,8 +34,8 @@
  * > dirty > synced），派生而非存储避免字段间不一致；uploading 是会话内存
  * 态（note-sync 经 setUploading 维护），重进后 pending≠null 自然回 dirty。
  *
- * 后端注入（仓库惯例，同 draft-store/event-queue）：jsdom 无 indexedDB 时
- * 自动退化内存实现；单测注入干净内存后端或故障后端（quota 注入）。
+ * 后端注入（lib/kv-backend 共享实现，复审⑥）：jsdom 无 indexedDB 时自动
+ * 退化内存实现；单测注入干净内存后端或故障后端（quota 注入）。
  * 真实 IDB 事务语义由 E2E/真机覆盖（本仓单测聚焦队列与状态机）。
  */
 import type {
@@ -51,7 +51,11 @@ import type {
   NoteVersionReceipt,
 } from "@tutor/contract";
 import { noteDocSchema } from "@tutor/contract";
-import { createStore, get, keys, set } from "idb-keyval";
+import {
+  idbKVBackend,
+  type KVStoreBackend,
+  memoryKVBackend,
+} from "@/lib/kv-backend";
 import { randomUuid } from "@/lib/uuid";
 
 // ---------- 会话与键 ----------
@@ -262,41 +266,24 @@ function persistedCopy(record: NoteLocalRecord): NoteLocalRecord {
 
 // ---------- 后端注入 ----------
 
-/** 底层键值存取最小面（同 draft-store KVBackend 惯例 + keys 前缀扫描） */
-export interface NoteStoreBackend {
-  get(key: string): Promise<unknown>;
-  set(key: string, value: unknown): Promise<void>;
-  /** 列出以 prefix 开头的全部键（乱序允许） */
-  keys(prefix: string): Promise<string[]>;
-}
+/**
+ * 本模块的最小后端面（复审⑥：自 lib/kv-backend 落库，Pick 收窄——note
+ * 无删除路径：未同步内容不静默删除）。memory/idb 两实现与复制链治理见
+ * lib/kv-backend.ts。
+ */
+export type NoteStoreBackend = Pick<
+  KVStoreBackend,
+  "get" | "set" | "keys"
+>;
 
 /** 内存后端（jsdom 自动回退与单测隔离/故障注入用；不持久） */
 export function memoryNoteBackend(): NoteStoreBackend {
-  const map = new Map<string, unknown>();
-  return {
-    get: async (key) => map.get(key),
-    set: async (key, value) => {
-      map.set(key, value);
-    },
-    keys: async (prefix) =>
-      Array.from(map.keys()).filter((key) => key.startsWith(prefix)),
-  };
+  return memoryKVBackend();
 }
 
-/** idb-keyval 后端（生产默认；专用库 tutor-notes 隔离其他 IDB 数据） */
+/** idb 后端（生产默认；专用库 tutor-notes 隔离其他 IDB 数据；keys 已下推 range） */
 function idbNoteBackend(): NoteStoreBackend {
-  const store = createStore(NOTE_IDB_DB, NOTE_IDB_STORE);
-  return {
-    get: (key) => get(key, store),
-    set: (key, value) => set(key, value, store),
-    keys: async (prefix) => {
-      const all = await keys(store);
-      return all.filter(
-        (key): key is string =>
-          typeof key === "string" && key.startsWith(prefix),
-      );
-    },
-  };
+  return idbKVBackend(NOTE_IDB_DB, NOTE_IDB_STORE);
 }
 
 let activeBackend: NoteStoreBackend | null = null;
