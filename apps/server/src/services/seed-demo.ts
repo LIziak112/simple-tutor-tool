@@ -563,6 +563,11 @@ export async function seedDemoData(
     }
     events.push({ type: "submit", clientTs: submitMs });
     appendAttemptEvents(db, studentId, attemptId, events);
+    // T6R.10 口径：不带 evidence 声明 = 旧客户端——演示种子不写笔记，走
+    // 「确无草稿」兼容分支正常交卷。若未来种子数据写入草稿（notes 行），
+    // 此调用会 409 NOTE_EVIDENCE_MISMATCH 且「请刷新页面」文案对脚本是
+    // 误导——届时必须按新客户端口径组装声明（参照 test/submit-revisions
+    // 的 submitAttemptRequestWithEvidence）
     submitAttempt(db, studentId, attemptId, submitAtIso);
   };
 

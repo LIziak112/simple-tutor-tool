@@ -5,7 +5,7 @@ import type {
   AttemptResultData,
   HintOpenedEntry,
 } from "@tutor/contract";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { Button } from "@/components/ui/button";
 import { AttemptBottomBar } from "@/features/attempt/AttemptBottomBar";
@@ -13,7 +13,10 @@ import { AttemptQuestionCard } from "@/features/attempt/AttemptQuestionCard";
 import { AttemptResultView } from "@/features/attempt/AttemptResultView";
 import { DraftStatusBar } from "@/features/attempt/DraftStatusBar";
 import { draftStore } from "@/features/attempt/draft-store";
-import { SubmitConfirmDialog } from "@/features/attempt/SubmitConfirmDialog";
+import {
+  SubmitConfirmDialog,
+  type SubmitNoteSummary,
+} from "@/features/attempt/SubmitConfirmDialog";
 import { useAttemptAnswers } from "@/features/attempt/use-attempt-answers";
 import { useAttemptEvents } from "@/features/attempt/use-attempt-events";
 import {
@@ -22,6 +25,12 @@ import {
 } from "@/features/attempt/use-draft-sync";
 import type { InkUploadController } from "@/features/attempt/use-ink-upload";
 import { useStudentMe } from "@/features/auth/student-auth";
+import {
+  prepareSubmitEvidence,
+  type SubmitEvidencePrep,
+  type SubmitEvidenceProblem,
+  snapshotNoteOverview,
+} from "@/features/notes/submit-evidence";
 import { useBindNoteSession } from "@/features/notes/use-note-head";
 import { startWrongPracticeApi } from "@/lib/api";
 import { createEventQueue } from "@/lib/event-queue";
@@ -64,6 +73,21 @@ function sourceLabel(data: AttemptDetailData): string {
   }
   return data.courseName !== null ? `作业 · ${data.courseName}` : "作业";
 }
+
+/**
+ * 交卷准备阶段（T6R.10，验收修复 A-4）：单一判别联合替代原先三个独立
+ * state（preparing/problems/error）——阶段迁移一次 set 完成，弹层各分支
+ * （等待文案/明确选择/阻止性错误）据此渲染，不存在中间组合态。
+ */
+type NotePrepPhase =
+  | { kind: "idle" }
+  | { kind: "preparing" }
+  /** 阻止性错误（head 拉取失败等）；problems=进入 error 前的最近一次清单
+   *  （choice 快照，可 null）——错误文案与问题列表都可见；进 error 时清空
+   *  缺稿确认集（下轮普通确认重新权威判定，缺稿题重新显式确认） */
+  | { kind: "error"; message: string; problems: SubmitEvidenceProblem[] | null }
+  /** 明确选择分支（problems 必非空：由 declarations=null ⇔ problems.length>0 推导） */
+  | { kind: "choice"; problems: SubmitEvidenceProblem[] };
 
 export function AttemptSession({
   data,
@@ -227,58 +251,205 @@ function AnswerView({
   );
   /** 笔迹上传失败提示（交卷 flush 失败时展示，重试交卷消除） */
   const [inkFlushError, setInkFlushError] = useState(false);
-  /** 笔迹 flush 进行中（交卷按钮/确认弹层的等待态） */
-  const [inkFlushing, setInkFlushing] = useState(false);
+  // T6R.10：草稿证据准备阶段——单一判别联合（preparing/error/choice 一次
+  // set 完成迁移，弹层各分支据此渲染；ink flush 进行中并入 preparing）
+  const [notePrep, setNotePrep] = useState<NotePrepPhase>({ kind: "idle" });
+  /** 弹层打开时的草稿计数快览（本地态；详见 snapshotNoteOverview） */
+  const [noteSummary, setNoteSummary] = useState<SubmitNoteSummary | null>(
+    null,
+  );
+  /** 快览代际（防旧 open 的迟到 then 覆盖新一轮弹层数据） */
+  const summarySeqRef = useRef(0);
+  /** 交卷准备中止标志：弹层关闭（=取消）置位，confirmSubmit 各 await 段后检查 */
+  const submitAbortedRef = useRef(false);
+  /** 用户已确认缺稿交卷的题（「草稿未保存完整」明确选择后重跑组装传入） */
+  const missingConfirmedRef = useRef<Set<string> | null>(null);
   const submit = useSubmitAttempt(attemptId);
 
   // T2A.7：题目按单元分组下发；答题页平铺渲染、题号全卷连续（累计 index）。
   // 多单元时渲染节标题（单元标题），单单元不显示节头（避免与课程练习标题重复）。
-  const flatQuestions = data.units.flatMap((unit) => unit.questions);
+  // 派生数组 useMemo（效率复审 #10）：confirmSubmit/openSubmitDialog 的
+  // useCallback 依赖因此稳定（原先每渲染新数组零收益地失效缓存）
+  const flatQuestions = useMemo(
+    () => data.units.flatMap((unit) => unit.questions),
+    [data],
+  );
   const showUnitHeaders = data.units.length > 1;
-  const questionIds = flatQuestions.map((question) => question.id);
+  const questionIds = useMemo(
+    () => flatQuestions.map((question) => question.id),
+    [flatQuestions],
+  );
   const total = flatQuestions.length;
   const answered = answers === null ? 0 : answeredCount(questionIds);
   const unanswered = total - answered;
 
   // T6R.3：交卷回传的题目版本集合（建卷冻结时下发的 questionRevisionId 原样
   // 回传，服务端与冻结集合比对——本页数据即学生看到的卷，天然一致）
-  const submitRevisions = flatQuestions.map((question) => ({
-    questionId: question.id,
-    questionRevisionId: question.questionRevisionId,
-  }));
+  const submitRevisions = useMemo(
+    () =>
+      flatQuestions.map((question) => ({
+        questionId: question.id,
+        questionRevisionId: question.questionRevisionId,
+      })),
+    [flatQuestions],
+  );
+  /** 题号映射（1 起序号——明确选择分支按「第 n 题」呈现问题） */
+  const questionIndexById = useMemo(
+    () =>
+      new Map(
+        flatQuestions.map((question, i) => [question.id, i + 1] as const),
+      ),
+    [flatQuestions],
+  );
 
   /**
-   * 交卷（T2.8 口径）：先把每道手写题的最新笔迹 flush 上传（Promise.all），
-   * 任一失败 → 阻止交卷并提示重试（「交卷时确保每道手写题最新笔迹已上传」）；
-   * 全部成功后先收尾学习痕迹（T2.10：blur 当前聚焦 + submit 事件 + 事件队列
-   * flush——保证服务端交卷计算时事件序列已入库），再调 submit（服务端判分，
-   * T6R.3 起携带题目版本集合——旧标签页陈旧提交被 409 QUESTION_REVISION_STALE
-   * 可诊断拒绝，底栏提示刷新页面后重交），成功后清本地草稿（T2.9）。失败时
-   * 关闭确认弹层让底栏提示可见（重新点「交卷」即可重试 flush）。
+   * 打开交卷弹层：重置明确选择分支并取草稿本地快览（无网络，纯内存态——
+   * 确认时以 prepareSubmitEvidence 的权威判定为准）。
    */
-  const confirmSubmit = async () => {
-    setInkFlushing(true);
+  const openSubmitDialog = useCallback(() => {
+    setNotePrep({ kind: "idle" });
+    missingConfirmedRef.current = null;
+    submitAbortedRef.current = false;
+    setNoteSummary(null); // 上一轮的快览不带入新弹层
+    setConfirmOpen(true);
+    // 快照代际守卫：仅最新一次 open 的 then 可 set（旧 open 的迟到快照作废）
+    const seq = ++summarySeqRef.current;
+    void snapshotNoteOverview({ attemptId, questionIds }).then((statuses) => {
+      if (seq !== summarySeqRef.current) return;
+      const willFreeze = statuses.filter(
+        (s) => s.kind === "will-freeze",
+      ).length;
+      const problem = statuses.filter((s) => s.kind === "problem").length;
+      // 完全没动过草稿时不展示该区（避免无信息噪音）
+      setNoteSummary(
+        willFreeze + problem > 0
+          ? {
+              willFreeze,
+              problem,
+              unwritten: statuses.length - willFreeze - problem,
+            }
+          : null,
+      );
+    });
+  }, [attemptId, questionIds]);
+
+  /**
+   * 关闭交卷弹层 = 取消 = 中止准备链：置 abort 标志（confirmSubmit 各
+   * await 段后检查）并复位准备阶段。busy 期间 Radix 关闭路径已被弹层
+   * 封堵（Esc/遮罩/×），此处是唯一的正常关闭入口（继续作答按钮）与
+   * 防御纵深（未来新增的关闭路径同样被 abort 拦下）。
+   */
+  const closeSubmitDialog = useCallback(() => {
+    submitAbortedRef.current = true;
+    setNotePrep({ kind: "idle" });
+    setConfirmOpen(false);
+  }, []);
+
+  /**
+   * 交卷（T2.8 口径 + T6R.10 证据固定，方案 §6.4 六步）：
+   * 1. 模态弹层已冻结编辑界面（当前真实笔段随指针抬起自然结束，链路无
+   *    用户输入竞态）；
+   * 2. 两条独立网络链**并行**：每道手写题的最新笔迹 flush（Promise.all，
+   *    任一失败 → 阻止交卷并提示重试——「交卷时确保每道手写题最新笔迹已
+   *    上传」的既有强制上传约束不因草稿链路放宽）+ prepareSubmitEvidence
+   *    （等本地落盘事务 → flushNoteSync 追平矢量 → 逐题拉服务端 head →
+   *    组装 none/frozen/missing 声明；PNG 不阻塞，后台补图）；
+   * 3. 有未决问题 → 弹层切「草稿未保存完整」明确选择分支，交卷被阻止；
+   * 4. 交卷请求携带 revisions + evidence（服务端同一事务固定原稿）；
+   *    成功后清本地草稿（T2.9；交卷 clearDraft 不删 notes）。
+   * 失败时关闭确认弹层让底栏提示可见（重新点「交卷」即可重试整条链）；
+   * 响应丢失重试撞 409 ALREADY_SUBMITTED 由 useSubmitAttempt 失效详情
+   * 切结果视图（不自动重交）。
+   */
+  const confirmSubmit = useCallback(async () => {
     setInkFlushError(false);
-    const results = await Promise.all(
+    setNotePrep({ kind: "preparing" });
+    // 两条独立网络链并行（模态弹层已冻结编辑，无用户输入竞态）：
+    // 手写题笔迹 flush（既有硬约束，失败阻止交卷）+ 草稿追平与证据组装。
+    // ink flush 契约永不 reject（失败以 false 返回）——单一 rejection 源
+    // 是 prep；prep 失败时丢弃 ink 结果无害（对称于 ink 失败弃 prep：
+    // 两者的副作用都只是把数据追平上传，本来就要做）
+    const inkPromise = Promise.all(
       [...inkControllers.current.values()].map((controller) =>
         controller.flush(),
       ),
     );
-    setInkFlushing(false);
-    if (!results.every(Boolean)) {
+    let prep: SubmitEvidencePrep;
+    try {
+      prep = await prepareSubmitEvidence({
+        attemptId,
+        questionIds,
+        ...(missingConfirmedRef.current !== null
+          ? { allowMissing: missingConfirmedRef.current }
+          : {}),
+      });
+    } catch (err) {
+      // 弹层已关（中止）：错误相也不落地（onClose 已复位 idle）
+      if (submitAbortedRef.current) return;
+      // 阻止性失败（head 拉取失败等）：如实提示 + 保留最近一次 problems
+      // 清单（进入 error 前的 choice 快照），并清空缺稿确认集——下轮普通
+      // 确认重新权威判定，缺稿题重新显式确认
+      missingConfirmedRef.current = null;
+      setNotePrep((prev) => ({
+        kind: "error",
+        message:
+          err instanceof Error
+            ? err.message
+            : "草稿状态获取失败，请检查网络后重试",
+        problems: prev.kind === "choice" ? prev.problems : null,
+      }));
+      return;
+    }
+    if (submitAbortedRef.current) return; // 弹层已关：状态已由 close 复位
+    const inkResults = await inkPromise;
+    if (submitAbortedRef.current) return;
+    // ink 失败早退阻止交卷（prep 结果弃用——副作用无害）
+    if (!inkResults.every(Boolean)) {
       setInkFlushError(true);
       setConfirmOpen(false);
+      setNotePrep({ kind: "idle" });
+      return;
+    }
+    if (prep.declarations === null) {
+      // 有未追平草稿：明确选择分支（不静默 missing，不提供普通确认）。
+      // problems 必非空——declarations=null 由 problems.length>0 推导（不变量）
+      setNotePrep({ kind: "choice", problems: prep.problems });
       return;
     }
     // T2.10：submit 前收尾事件（尽力 flush；失败不阻塞交卷，宽松口径兜底迟到事件）
     await attemptEvents.finalizeSubmit();
-    submit.mutate(submitRevisions, {
-      onSuccess: () => {
-        void draftStore.clearDraft(attemptId);
+    if (submitAbortedRef.current) return;
+    // 两阶段 busy 分离：准备完毕、进入提交——不再显示「正在同步草稿」
+    setNotePrep({ kind: "idle" });
+    submit.mutate(
+      { revisions: submitRevisions, evidence: prep.declarations },
+      {
+        onSuccess: () => {
+          void draftStore.clearDraft(attemptId);
+        },
+        onSettled: () => {
+          setConfirmOpen(false);
+          setNotePrep({ kind: "idle" });
+        },
       },
-      onSettled: () => setConfirmOpen(false),
-    });
-  };
+    );
+  }, [attemptEvents, attemptId, questionIds, submit, submitRevisions]);
+
+  /**
+   * 缺稿交卷的明确确认（T6R.10）：用户选择「提交答案，草稿未保存完整」后
+   * 登记确认题集并重跑组装——期间自愈的题按事实 frozen，仍失败的题如实
+   * 标 missing（本地稿保留，之后找回只能作为补充材料）。
+   */
+  const confirmMissingSubmit = useCallback(() => {
+    if (notePrep.kind !== "choice") return;
+    // 并集累积（P0-1）：两批 problem 先后出现（A 持续未愈 + B 新增冲突）
+    // 各自确认一次后，两题都必须按用户明示的 missing 提交——覆盖式赋值
+    // 会丢掉第一批确认
+    const confirmed = new Set(missingConfirmedRef.current ?? []);
+    for (const problem of notePrep.problems) confirmed.add(problem.questionId);
+    missingConfirmedRef.current = confirmed;
+    void confirmSubmit();
+  }, [confirmSubmit, notePrep]);
 
   // 交卷失败：网络等错误留中文提示；QUESTION_REVISION_STALE（旧标签页/陈旧
   // 页面）由服务端中文 message 直接提示刷新重交（T6R.3）
@@ -406,15 +577,36 @@ function AnswerView({
           saveFailed={saveFailed}
           inkFlushError={inkFlushError}
           submitError={submitError}
-          onOpenSubmit={() => setConfirmOpen(true)}
+          onOpenSubmit={openSubmitDialog}
         />
 
         <SubmitConfirmDialog
           open={confirmOpen}
           unansweredCount={unanswered}
-          submitting={submit.isPending || inkFlushing}
+          submitting={submit.isPending}
+          preparing={notePrep.kind === "preparing"}
+          noteSummary={noteSummary}
+          noteProblems={
+            notePrep.kind === "choice" || notePrep.kind === "error"
+              ? (notePrep.problems
+                  ?.map((problem) => {
+                    const index = questionIndexById.get(problem.questionId);
+                    // 题号必然在同卷集合内；防御 miss 过滤该条（不渲染「第 0 题」）
+                    return index === undefined
+                      ? null
+                      : { index, reason: problem.reason };
+                  })
+                  .filter(
+                    (view): view is { index: number; reason: string } =>
+                      view !== null,
+                  ) ?? null)
+              : null
+          }
+          choiceMode={notePrep.kind === "choice"}
+          notePrepError={notePrep.kind === "error" ? notePrep.message : null}
           onConfirm={() => void confirmSubmit()}
-          onCancel={() => setConfirmOpen(false)}
+          onConfirmMissing={confirmMissingSubmit}
+          onCancel={closeSubmitDialog}
         />
       </div>
     </DraftSyncContext.Provider>

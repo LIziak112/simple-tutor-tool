@@ -30,8 +30,12 @@ const DialogOverlay = ({
 const DialogContent = ({
   className,
   children,
+  /** 关闭钮禁用（T6R.10 交卷准备中）：× 退化为非交互占位（不可点/不可聚焦），防准备中途关闭打断流程 */
+  closeDisabled = false,
   ...props
-}: React.ComponentProps<typeof DialogPrimitive.Content>) => (
+}: React.ComponentProps<typeof DialogPrimitive.Content> & {
+  closeDisabled?: boolean;
+}) => (
   <DialogPortal>
     <DialogOverlay />
     <DialogPrimitive.Content
@@ -51,14 +55,26 @@ const DialogContent = ({
       {children}
       {/* 关闭钮触控目标 ≥44px（size-11，Opus 实测③-3）；图标中心保持
           在 padding 网格原位（top-2.5 + 22px = 原 top-4 + 16px = 32px），
-          仅扩大热区，视觉位置不变 */}
-      <DialogPrimitive.Close
-        data-slot="dialog-close"
-        aria-label="关闭弹层"
-        className="absolute top-2.5 right-2.5 flex size-11 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
-      >
-        <X aria-hidden className="size-4" />
-      </DialogPrimitive.Close>
+          仅扩大热区，视觉位置不变。closeDisabled 时以非交互占位替换
+          （Radix Close 无 disabled 语义——span 占位杜绝点击与键盘激活，
+          关闭=取消=中止的语义由调用方统一） */}
+      {closeDisabled ? (
+        <span
+          data-slot="dialog-close"
+          aria-hidden
+          className="absolute top-2.5 right-2.5 flex size-11 items-center justify-center rounded-md text-muted-foreground opacity-50"
+        >
+          <X aria-hidden className="size-4" />
+        </span>
+      ) : (
+        <DialogPrimitive.Close
+          data-slot="dialog-close"
+          aria-label="关闭弹层"
+          className="absolute top-2.5 right-2.5 flex size-11 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
+        >
+          <X aria-hidden className="size-4" />
+        </DialogPrimitive.Close>
+      )}
     </DialogPrimitive.Content>
   </DialogPortal>
 );

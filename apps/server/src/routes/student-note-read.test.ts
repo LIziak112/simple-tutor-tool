@@ -38,7 +38,7 @@ import {
   loginStudent,
   noteRowOf,
 } from "../test/note-world.ts";
-import { submitAttemptRequest } from "../test/submit-revisions";
+import { submitAttemptRequestWithEvidence } from "../test/submit-revisions";
 
 /**
  * T6R.5 学生端读/图路由测试：
@@ -433,10 +433,17 @@ describe("工作稿头与证据投影", () => {
     expect(noneBody.data.images).toEqual([]);
   });
 
-  it("交卷（无证据行）后 evidence 仍为 null 空态；head/版本读照常", async () => {
+  it("交卷（新客户端带声明）后 evidence 为冻结行；head/版本读照常", async () => {
     const attemptId = await freshAttempt();
     const versionId = await putNote(attemptId, Q.solve);
-    const submitRes = await submitAttemptRequest(app, aCookie, attemptId);
+    // T6R.10：有笔记的卷必须以新客户端（evidence 声明）交卷——旧式缺字段
+    // 提交被 409 NOTE_EVIDENCE_MISMATCH 拒绝（兼容规则，见 attempt-submit-evidence）
+    const submitRes = await submitAttemptRequestWithEvidence(
+      app,
+      aCookie,
+      db,
+      attemptId,
+    );
     expect(submitRes.status).toBe(200);
 
     const evidenceRes = await app.request(
@@ -444,8 +451,11 @@ describe("工作稿头与证据投影", () => {
       { headers: { cookie: aCookie } },
     );
     expect(evidenceRes.status).toBe(200);
-    const body = (await evidenceRes.json()) as { data: { evidence: unknown } };
-    expect(body.data.evidence).toBeNull();
+    const body = (await evidenceRes.json()) as {
+      data: { evidence: { state: string; versionId: string | null } | null };
+    };
+    expect(body.data.evidence?.state).toBe("frozen");
+    expect(body.data.evidence?.versionId).toBe(versionId);
     assertNoLeak(body);
     expect(
       (
@@ -534,7 +544,12 @@ describe("交卷后门槛（ALREADY_SUBMITTED 只拦新写）", () => {
   it("PUT 新版本 409；GET head/evidence/document 放行；POST 补图放行（恢复通道）", async () => {
     const attemptId = await freshAttempt();
     const versionId = await putNote(attemptId, Q.solve);
-    const submitRes = await submitAttemptRequest(app, aCookie, attemptId);
+    const submitRes = await submitAttemptRequestWithEvidence(
+      app,
+      aCookie,
+      db,
+      attemptId,
+    );
     expect(submitRes.status).toBe(200);
 
     // 新 mutation 的新写入 → 409（原稿固定）
@@ -590,7 +605,12 @@ describe("交卷后门槛（ALREADY_SUBMITTED 只拦新写）", () => {
     const imageRes = await postImage(versionId, makeNotePng());
     const imageId = ((await imageRes.json()) as { data: { imageId: string } })
       .data.imageId;
-    const submitRes = await submitAttemptRequest(app, aCookie, attemptId);
+    const submitRes = await submitAttemptRequestWithEvidence(
+      app,
+      aCookie,
+      db,
+      attemptId,
+    );
     expect(submitRes.status).toBe(200);
     // 教师批完全部待批 → 全 finalCorrect 非空 → attempt 进入 graded
     const pending = await app.request(
@@ -1118,9 +1138,10 @@ describe("课程撤权与学生停用（冻结语义一致）", () => {
     const attemptId = await startCourseAttempt();
     const { versionId } = await coursePutNote(attemptId, Q.solve);
     expect(versionId).toBeDefined();
-    const submitRes = await submitAttemptRequest(
+    const submitRes = await submitAttemptRequestWithEvidence(
       courseApp,
       memberCookie,
+      courseDb,
       attemptId,
     );
     expect(submitRes.status).toBe(200);
@@ -1397,9 +1418,14 @@ describe("软删题的历史证据可读（不查询当前题库存活）", () =
     const attemptId = await freshAttempt();
     const versionId = await putNote(attemptId, Q.solve);
     await postImage(versionId, makeNotePng());
-    const submitRes = await submitAttemptRequest(app, aCookie, attemptId);
+    // T6R.10：交卷事务自带证据行（frozen→versionId），不再手工 insertEvidence
+    const submitRes = await submitAttemptRequestWithEvidence(
+      app,
+      aCookie,
+      db,
+      attemptId,
+    );
     expect(submitRes.status).toBe(200);
-    insertEvidence(db, attemptId, Q.solve, "frozen", versionId);
 
     const deleted = await app.request(`/api/teacher/questions/${Q.solve}`, {
       method: "DELETE",

@@ -616,6 +616,7 @@ describe("错误码与限额常量", () => {
       "NOTE_LIMIT_EXCEEDED",
       "NOTE_REVISION_CONFLICT",
       "NOTE_MUTATION_MISMATCH",
+      "NOTE_EVIDENCE_MISMATCH",
     ] as const) {
       expect(noteErrorCodeSchema.parse(code)).toBe(code);
     }

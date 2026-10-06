@@ -22,10 +22,9 @@ import {
   createStudent,
   extractSessionToken,
   freshNoteAttempt,
-  insertEvidence,
   loginStudent,
 } from "../test/note-world.ts";
-import { submitAttemptRequest } from "../test/submit-revisions";
+import { submitAttemptRequestWithEvidence } from "../test/submit-revisions";
 
 /**
  * T6R.5 教师端 evidence/版本读与补图路由测试（方案 §8 表后三行）：
@@ -165,7 +164,7 @@ function teacherPostImage(
   return postNoteImage(app, "teacher", versionId, png, cookie, options);
 }
 
-// 会话三件套与 insertEvidence（带 state 版）共享自 src/test/note-world.ts（复审⑧）
+// 会话三件套共享自 src/test/note-world.ts（复审⑧；T6R.10 起证据行由交卷事务写入）
 
 // ---------- 域内读写 ----------
 
@@ -181,13 +180,14 @@ describe("教师域内：evidence / 版本 / 补图", () => {
     expect(
       (await studentPostImage(versionId, makeNotePng(), aStudentCookie)).status,
     ).toBe(200);
-    const submitRes = await submitAttemptRequest(
+    const submitRes = await submitAttemptRequestWithEvidence(
       app,
       aStudentCookie,
+      db,
       attemptId,
     );
     expect(submitRes.status).toBe(200);
-    insertEvidence(db, attemptId, Q.solve, "frozen", versionId);
+    // T6R.10：交卷事务自带 frozen 证据行（原手工 insertEvidence 移除）
 
     const res = await app.request(
       `/api/teacher/attempts/${attemptId}/evidence/${Q.solve}`,
@@ -396,13 +396,14 @@ describe("教师⑥软删题历史证据（复审轮⑩）", () => {
     expect(
       (await studentPostImage(versionId, makeNotePng(), aStudentCookie)).status,
     ).toBe(200);
-    const submitRes = await submitAttemptRequest(
+    const submitRes = await submitAttemptRequestWithEvidence(
       app,
       aStudentCookie,
+      db,
       attemptId,
     );
     expect(submitRes.status).toBe(200);
-    insertEvidence(db, attemptId, Q.solve, "frozen", versionId);
+    // T6R.10：交卷事务自带 frozen 证据行（原手工 insertEvidence 移除）
 
     const deleted = await app.request(`/api/teacher/questions/${Q.solve}`, {
       method: "DELETE",

@@ -63,6 +63,7 @@ import {
   parseNoteKey,
   peekNoteRecord,
   resolveNoteConflict,
+  settleNotePersistence,
   setUploading,
   subscribeNoteStore,
 } from "./note-store.ts";
@@ -542,31 +543,19 @@ export function currentNoteSession(): NoteSessionRef | null {
   return currentSession;
 }
 
-/** flushNoteSync 的逐键结局（T6R.10 交卷判定口径） */
-export type NoteFlushOutcome =
-  | "synced" // 回执落地，无待传
-  | "conflict" // 冲突待裁决（本地稿保留）
-  | "denied" // 终态被拒（本地稿保留）
-  | "backoff" // 网络类失败，退避重试中
-  | "dirty"; // 尚有待传（理论上哨兵后仅出现在并发写入窗口）
-
-/** 结果摘要的键简：attempt:question:phase（同 flush 语境内可读定位） */
-function flushKeyOf(scope: NoteScope): string {
-  return `${scope.attemptId}:${scope.questionId}:${scope.phase}`;
-}
-
 /**
- * 立即补传当前会话全部待传（交卷前追平最终矢量/切后台尽力刷新用，
- * T6R.10/T6R.9 调用）。等待已入队上传完成后返回**逐键结果摘要**
- * （复审④）：T6R.10 据此判定可交卷 / 需用户处理冲突或被拒 / 退避重试。
- * 不在本轮清单内、flush 期间新写入的键不出现在摘要里（下一轮覆盖）。
+ * 立即补传指定 attempt 的全部待传（交卷前追平最终矢量，T6R.10）。
+ * 作用域收敛到 attempt（效率复审）：原实现扫描全会话待传——每条 value 是
+ * 完整笔迹 doc 的 clone+revive，只判 pending，历史草稿会随时间无界增长；
+ * 交卷只关心本卷（键五元组第 4 元前缀）。
+ * 等待已入队上传完成后返回。**不返回逐键摘要**——判定唯一权威是追平后的
+ * record 状态（submit-evidence 经 deriveServerState 消费；摘要的各失败
+ * 形态在同时刻 record 上必有对应非空字段，且采样时点早于消费存在假问题
+ * 竞态，复审已裁撤）。
  */
-export async function flushNoteSync(): Promise<
-  Record<string, NoteFlushOutcome>
-> {
-  const results: Record<string, NoteFlushOutcome> = {};
-  if (currentSession === null) return results;
-  const pending = await listPendingNotes(currentSession);
+export async function flushNoteSync(attemptId: string): Promise<void> {
+  if (currentSession === null) return;
+  const pending = await listPendingNotes(currentSession, attemptId);
   for (const scope of pending) {
     const key = noteKeyOf(currentSession, scope);
     clearTimers(key);
@@ -574,25 +563,19 @@ export async function flushNoteSync(): Promise<
   }
   // 哨兵作业：串行队列中排在全部上传之后，跑完即「已追平到此刻」
   await uploadQueue.run(async () => undefined);
-  // 摘要取哨兵后的当前事实（denied/conflict 优先，退避中的键如实报）
-  for (const scope of pending) {
-    const record = peekNoteRecord(currentSession, scope);
-    if (record === null) continue;
-    const key = noteKeyOf(currentSession, scope);
-    const scheduler = schedulers.get(key);
-    const backoff = scheduler?.backoff ?? null;
-    results[flushKeyOf(scope)] =
-      record.denied !== null
-        ? "denied"
-        : record.conflict !== null
-          ? "conflict"
-          : record.pending === null
-            ? "synced"
-            : backoff !== null
-              ? "backoff"
-              : "dirty";
-  }
-  return results;
+}
+
+/**
+ * 追平指定 attempt 的本地草稿（T6R.10 交卷准备第一步，submit-evidence
+ * 唯一调用方）：**先排干本地落盘队列再 flush**——正在排队的写入尚未落
+ * 后端，直接 flush 会扫不到最新 pending；flush 后再排干一次（上传回执
+ * 的落盘）。本函数只保证「此刻的待传都已尽力上传并等待结果落地到
+ * record」；可判定性由消费方读 record 状态保证。
+ */
+export async function catchUpNotes(attemptId: string): Promise<void> {
+  await settleNotePersistence();
+  await flushNoteSync(attemptId);
+  await settleNotePersistence();
 }
 
 // ---------- 冲突裁决（T6R.9 UI 调用；两份副本的数据出口） ----------

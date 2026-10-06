@@ -2,9 +2,11 @@ import { devices, expect, test } from "@playwright/test";
 import {
   addCourseMemberViaApi,
   attachLeakMonitor,
+  choiceJudgePracticeMarkdown,
   createCourseViaApi,
   drawStrokeWithPointerEvents,
   getStudentViaApi,
+  openChoicePractice,
   setCourseItemVisible,
   teacherApiLogin,
   uniqueSuffix,
@@ -17,38 +19,6 @@ import {
  * （2s 防抖 + 全链路 T6R.4 服务端）。jsdom 层的行为断言见 NoteLayer.test。
  * 观感项（横竖屏/分屏/工具条触控目标）🧑 留 iPad 真机。
  */
-
-/** 判断 + 单选两题小练习（均可自动判分；单选承载草稿场景） */
-function practiceMarkdown(unitName: string): string {
-  return [
-    "---",
-    "kind: practice",
-    `unit: ${unitName}`,
-    "topic: 正数与负数",
-    "---",
-    "",
-    '::::question{type=judge difficulty=1 knowledge="有理数的概念"}',
-    "$1$ 是正数。[[正确]]",
-    "",
-    ":::solution",
-    "$1$ 大于 $0$，是正数。",
-    ":::",
-    "::::",
-    "",
-    '::::question{type=choice difficulty=1 knowledge="有理数加法"}',
-    "$(-3)+7=$ 的计算结果是（　）",
-    "",
-    "- [ ] $-10$",
-    "- [x] $4$",
-    "- [ ] $-4$",
-    "",
-    ":::solution",
-    "$(-3)+7=4$，故选 B。",
-    ":::",
-    "::::",
-    "",
-  ].join("\n");
-}
 
 test.describe("答题页草稿层（T6R.9）", () => {
   test("开草稿 → 写 → 选项操作 → 收起 → 刷新 → 恢复（真 IDB）", async ({
@@ -65,7 +35,7 @@ test.describe("答题页草稿层（T6R.9）", () => {
     const courseId = await createCourseViaApi(request, courseName);
     const importRes = await request.post("/api/teacher/import/commit", {
       data: {
-        markdown: practiceMarkdown(unitName),
+        markdown: choiceJudgePracticeMarkdown(unitName),
         filename: `${unitName}.md`,
         courseId,
       },
@@ -102,16 +72,8 @@ test.describe("答题页草稿层（T6R.9）", () => {
       await studentPage.goto(`/s/${student.linkToken}`);
       await studentPage.waitForURL("**/s/home");
 
-      // 进入练习（课程 → 单元 → 开始练习）
-      await studentPage
-        .getByRole("link", { name: `打开课程 ${courseName}` })
-        .click();
-      await studentPage.waitForURL(`**/s/courses/${courseId}`);
-      await studentPage
-        .getByRole("link", { name: `打开练习 ${unitName}（2 题）` })
-        .click();
-      await studentPage.getByRole("button", { name: "开始练习" }).click();
-      await studentPage.waitForURL("**/s/attempts/**");
+      // 进入练习（课程 → 单元 → 开始练习——共享件三连，attemptId 本用例不用）
+      await openChoicePractice(studentPage, courseId, courseName, unitName);
 
       const choiceCard = studentPage.locator('article[aria-label="第 2 题"]');
 

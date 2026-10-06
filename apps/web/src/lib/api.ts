@@ -810,14 +810,22 @@ export function saveAttemptAnswerApi(
  * 服务端与冻结集合精确比对——旧标签页/陈旧页面的提交抛 409
  * QUESTION_REVISION_STALE（提示刷新页面后重交）；重复交卷抛 409
  * ALREADY_SUBMITTED。
+ * T6R.10：evidence 为每题笔记证据声明（none/frozen/missing + 预期 revision），
+ * 服务端同一事务固定原稿（submission_evidence）；**缺省 = 旧客户端**——
+ * 有草稿的卷会被 409 NOTE_EVIDENCE_MISMATCH 拒绝并要求刷新。
  */
 export function submitAttemptApi(
   attemptId: string,
   revisions: AttemptSubmitRequest["revisions"],
+  evidence?: AttemptSubmitRequest["evidence"],
 ): Promise<AttemptDetailData> {
   const args = {
     param: { id: attemptId },
-    json: { revisions: [...revisions] },
+    json: {
+      revisions: [...revisions],
+      // 条件展开适配 exactOptionalPropertyTypes：不传 ≠ 传 undefined
+      ...(evidence !== undefined ? { evidence: [...evidence] } : {}),
+    },
   };
   return callApi(() => api.api.student.attempts[":id"].submit.$post(args));
 }
@@ -1029,11 +1037,22 @@ export function fetchTeacherInkStrokesApi(inkId: string): Promise<unknown> {
 export function fetchStudentNoteHeadApi(
   attemptId: string,
   questionId: string,
+  /** 逐题超时等中止信号（T6R.10 交卷组装 30s——对齐 PUT 口径）；
+   *  有 signal 时走原语 fetch（hc RPC 路由推断不出 signal，同 putNoteDocumentApi） */
+  signal?: AbortSignal,
 ): Promise<NoteHeadData> {
+  if (signal === undefined) {
+    return callApi(() =>
+      api.api.student.attempts[":id"].notes[":questionId"].$get({
+        param: { id: attemptId, questionId },
+      }),
+    );
+  }
   return callApi(() =>
-    api.api.student.attempts[":id"].notes[":questionId"].$get({
-      param: { id: attemptId, questionId },
-    }),
+    fetch(
+      `/api/student/attempts/${encodeURIComponent(attemptId)}/notes/${encodeURIComponent(questionId)}`,
+      { signal },
+    ),
   );
 }
 

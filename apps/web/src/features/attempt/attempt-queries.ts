@@ -1,10 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { AttemptSubmitRevision, StudentAnswer } from "@tutor/contract";
+import type {
+  AttemptSubmitRevision,
+  StudentAnswer,
+  SubmitEvidenceDeclaration,
+} from "@tutor/contract";
 import {
   studentAssignmentsKey,
   studentCoursesKey,
 } from "@/features/student/student-queries";
 import {
+  ApiError,
   fetchAttemptApi,
   fetchStudentUnitLandingApi,
   saveAttemptAnswerApi,
@@ -73,17 +78,24 @@ export function useStartCourseAttempt(courseId: string, unitId: string) {
 /**
  * 交卷：mutation 入参 = 页面渲染的题目版本集合（T6R.3 建卷冻结下发过
  * questionRevisionId，交卷原样回传验证——旧标签页陈旧提交被 409
- * QUESTION_REVISION_STALE 可诊断拒绝，提示刷新后重交）。成功后失效
+ * QUESTION_REVISION_STALE 可诊断拒绝，提示刷新后重交）+ 每题笔记证据声明
+ * （T6R.10：none/frozen/missing，服务端同一事务固定原稿）。成功后失效
  * attempt 详情、作业列表（首页状态徽章联动）与课程侧数据（T2A.6：目录单元
  * 状态、单元落地页、首页课程卡片进度）；错题本与我的记录同步失效——交卷即
  * 产生新的已判定轮次（2026-10 重练后回错题本立即可见新轮次，不受 15s
  * staleTime 影响看到旧聚合）。
+ * T6R.10 响应丢失口径：提交实际上已成功但回执丢失时，重试收到 409
+ * ALREADY_SUBMITTED——同样失效 attempt 详情（详情重取即切结果视图，
+ * 不把用户困在答题页），错误文案由服务端中文 message 承载。
  */
 export function useSubmitAttempt(attemptId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (revisions: AttemptSubmitRevision[]) =>
-      submitAttemptApi(attemptId, revisions),
+    mutationFn: (input: {
+      revisions: AttemptSubmitRevision[];
+      /** 每题笔记证据声明（T6R.10）；旧客户端语义不适用于本前端，恒携带 */
+      evidence: SubmitEvidenceDeclaration[];
+    }) => submitAttemptApi(attemptId, input.revisions, input.evidence),
     onSuccess: () => {
       void queryClient.invalidateQueries({
         queryKey: studentAttemptKey(attemptId),
@@ -96,6 +108,15 @@ export function useSubmitAttempt(attemptId: string) {
         queryKey: ["student", "wrong-questions"],
       });
       void queryClient.invalidateQueries({ queryKey: ["student", "records"] });
+    },
+    onError: (err) => {
+      // 响应丢失后的重试撞 409 ALREADY_SUBMITTED：交卷实际已成功——失效
+      // 详情让视图切到结果页（方案 §6.4 第 4 步：绝不自动重交产生不同引用）
+      if (err instanceof ApiError && err.code === "ALREADY_SUBMITTED") {
+        void queryClient.invalidateQueries({
+          queryKey: studentAttemptKey(attemptId),
+        });
+      }
     },
   });
 }

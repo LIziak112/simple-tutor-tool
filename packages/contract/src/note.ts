@@ -538,6 +538,11 @@ export const noteVersionReceiptSchema = z.object({
  * - NOTE_MUTATION_MISMATCH：同 mutationId 重放但正文不同（409；**不附
  *   _current 摘要**——服务端状态未知，客户端 keep-local 须重铸 mutationId，
  *   见 noteConflictSummarySchema）；
+ * - NOTE_EVIDENCE_MISMATCH：交卷证据声明与服务端事实不符（409，T6R.10）——
+ *   frozen 的 versionId/revision 与实际 head 不一致（其他标签页改出新
+ *   head）、none 声明但实际有笔记行、声明集合与冻结题目集合不一致、
+ *   旧客户端（缺 evidence 字段）但检测到草稿存在；前端据此提示刷新或
+ *   重走交卷流程，不静默固定不一致旧版本；
  * - ATTEMPT_NOT_FOUND / QUESTION_NOT_FOUND / FORBIDDEN / ALREADY_SUBMITTED /
  *   UNAUTHORIZED / VALIDATION_ERROR：与 attempt 模块同义（404/404/403/409/401/400；
  *   ALREADY_SUBMITTED 覆盖「交卷后写已冻结原稿」——交卷后只可新建订正）。
@@ -548,6 +553,7 @@ export const noteErrorCodeSchema = z.enum([
   "NOTE_LIMIT_EXCEEDED",
   "NOTE_REVISION_CONFLICT",
   "NOTE_MUTATION_MISMATCH",
+  "NOTE_EVIDENCE_MISMATCH",
   "ATTEMPT_NOT_FOUND",
   "QUESTION_NOT_FOUND",
   "FORBIDDEN",

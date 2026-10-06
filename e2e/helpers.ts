@@ -757,3 +757,57 @@ function checkLeakBody(
     }
   }
 }
+
+// ---------- T6R.9/T6R.10 草稿 E2E 共用件（第 13 份拷贝收敛） ----------
+
+/** 判断 + 单选两题小练习（均可自动判分；单选承载草稿场景——两 spec 逐字同稿） */
+export function choiceJudgePracticeMarkdown(unitName: string): string {
+  return [
+    "---",
+    "kind: practice",
+    `unit: ${unitName}`,
+    "topic: 正数与负数",
+    "---",
+    "",
+    '::::question{type=judge difficulty=1 knowledge="有理数的概念"}',
+    "$1$ 是正数。[[正确]]",
+    "",
+    ":::solution",
+    "$1$ 大于 $0$，是正数。",
+    ":::",
+    "::::",
+    "",
+    '::::question{type=choice difficulty=1 knowledge="有理数加法"}',
+    "$(-3)+7=$ 的计算结果是（　）",
+    "",
+    "- [ ] $-10$",
+    "- [x] $4$",
+    "- [ ] $-4$",
+    "",
+    ":::solution",
+    "$(-3)+7=4$，故选 B。",
+    ":::",
+    "::::",
+    "",
+  ].join("\n");
+}
+
+/**
+ * 进入练习三连（课程 → 练习 → 开始练习），完成后页面处于 /s/attempts/**；
+ * 返回 attemptId（取自 URL 尾段）。
+ */
+export async function openChoicePractice(
+  page: import("@playwright/test").Page,
+  courseId: string,
+  courseName: string,
+  unitName: string,
+): Promise<string> {
+  await page.getByRole("link", { name: `打开课程 ${courseName}` }).click();
+  await page.waitForURL(`**/s/courses/${courseId}`);
+  await page
+    .getByRole("link", { name: `打开练习 ${unitName}（2 题）` })
+    .click();
+  await page.getByRole("button", { name: "开始练习" }).click();
+  await page.waitForURL("**/s/attempts/**");
+  return page.url().split("/").pop() ?? "";
+}

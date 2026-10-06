@@ -97,12 +97,22 @@ export function noteKeyOf(session: NoteSessionRef, scope: NoteScope): string {
   ]);
 }
 
-/** 会话前缀（去尾 ]）：listPendingNotes 扫描用 */
+/** 会话前缀（去尾 ]）：listPendingNotes 全会话扫描（bind 补传）用 */
 function sessionPrefix(session: NoteSessionRef): string {
   return JSON.stringify(["note", session.origin, session.studentId]).slice(
     0,
     -1,
   );
+}
+
+/** attempt 前缀（去尾 ]，键五元组的第 4 元）：attempt 作用域扫描用 */
+function attemptPrefix(session: NoteSessionRef, attemptId: string): string {
+  return JSON.stringify([
+    "note",
+    session.origin,
+    session.studentId,
+    attemptId,
+  ]).slice(0, -1);
 }
 
 // 键 → scope 由 parseNoteKey(key)?.scope 派生（复审⑧：不维护第二份解析）
@@ -593,10 +603,16 @@ function safeParseDoc(doc: NoteDocInput): NoteDoc | null {
   return result;
 }
 
-/** 读记录（内存优先；未载入时回源后端并缓存）。无记录返回 null */
+/**
+ * 读记录（内存优先；未载入时回源后端并缓存）。无记录返回 null。
+ * strictRead=true（T6R.10 交卷组装的权威路径）：后端读失败**抛错**而非
+ * 归并为 null——「读失败」与「确无记录」语义不同，静默归并会让交卷组装
+ * 在数据未知时仍产出声明。展示性消费方（快览）保持宽松（失败≈无记录）。
+ */
 export async function getNoteRecord(
   session: NoteSessionRef,
   scope: NoteScope,
+  options?: { strictRead?: boolean },
 ): Promise<NoteLocalRecord | null> {
   const key = noteKeyOf(session, scope);
   const cached = records.get(key);
@@ -605,6 +621,7 @@ export async function getNoteRecord(
   try {
     raw = await backend().get(key);
   } catch (err) {
+    if (options?.strictRead === true) throw err;
     console.warn("草稿本地记录读取失败（不影响作答）", err);
     return null;
   }
@@ -1042,12 +1059,19 @@ let inflightScan: Promise<unknown> | null = null;
 
 export async function listPendingNotes(
   session: NoteSessionRef,
+  /** 作用域收敛（T6R.10 效率复审）：给定时只扫该 attempt（键第 4 元前缀）——
+   * 交卷追平不因历史草稿无界增长；缺省 = 全会话（bind 补传口径） */
+  attemptId?: string,
 ): Promise<NoteScope[]> {
   const scan = (async () => {
     const out: NoteScope[] = [];
     let pairs: Array<[string, unknown]>;
     try {
-      pairs = await backend().getAll(sessionPrefix(session));
+      pairs = await backend().getAll(
+        attemptId === undefined
+          ? sessionPrefix(session)
+          : attemptPrefix(session, attemptId),
+      );
     } catch (err) {
       console.warn("草稿本地仓扫描失败（无法补传待传版本）", err);
       return out;
@@ -1075,8 +1099,58 @@ export async function listPendingNotes(
   }
 }
 
+/**
+ * attempt 作用域的本地记录装载（T6R.10 效率复审 #9/#18）：单事务 getAll
+ * 前缀扫描（一次 IO 取全卷记录，替代逐题 get 的 N 次往返），返回
+ * questionId → record（phase 恒 scratch）；未命中的题不在 Map——消费方
+ * `map.get(qid) ?? null` 判「无记录」。内存缓存优先口径同 listPendingNotes
+ * （窗口内新写以内存为准）。
+ * strictRead 同 getNoteRecord：权威路径（交卷组装）读失败**抛错**，
+ * 展示路径（弹层快览）归并为空 Map。
+ */
+export async function loadScratchRecords(
+  session: NoteSessionRef,
+  attemptId: string,
+  options?: { strictRead?: boolean },
+): Promise<Map<string, NoteLocalRecord>> {
+  let pairs: Array<[string, unknown]>;
+  try {
+    pairs = await backend().getAll(attemptPrefix(session, attemptId));
+  } catch (err) {
+    if (options?.strictRead === true) throw err;
+    console.warn("草稿本地仓 attempt 扫描失败（不影响作答）", err);
+    return new Map();
+  }
+  const out = new Map<string, NoteLocalRecord>();
+  for (const [key, raw] of pairs) {
+    const parsed = parseNoteKey(key);
+    if (parsed === null || parsed.scope.phase !== "scratch") continue;
+    if (!records.has(key)) {
+      const revived = reviveRecord(raw);
+      if (revived !== null) records.set(key, revived);
+    }
+    const record = records.get(key);
+    if (record !== undefined) out.set(parsed.scope.questionId, record);
+  }
+  return out;
+}
+
 /** 仅测试使用：复位全部模块状态（生产不调用） */
 export function resetNoteStoreForTest(): void {
   clearCaches();
   listeners.clear();
+}
+
+/**
+ * 等待当前全部本地落盘事务完成（T6R.10 交卷第一步「等本地事务」——
+ * flushNoteStore 已删，此为随用随进的等待原语）：收集此刻各键串行队列的
+ * 尾部 Promise 一并 await。调用之后的新写入属新一轮（交卷确认弹层为模态
+ * 覆盖层，冻结了编辑界面，正常流不会再有新写）；落盘失败（local=failed）
+ * 不抛错——失败态由记录状态承载，交卷分类按「服务端是否已确认」判定，
+ * 本地副本丢失风险按方案 §6.4 以本地稿保留 + supplement 语义兜底。
+ */
+export function settleNotePersistence(): Promise<void> {
+  const tails: Array<Promise<void>> = [];
+  for (const queue of queues.values()) tails.push(queue.tail);
+  return Promise.all(tails).then(() => undefined);
 }

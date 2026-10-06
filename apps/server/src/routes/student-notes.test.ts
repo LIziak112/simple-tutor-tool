@@ -19,7 +19,7 @@ import { insertFrozenResponse } from "../services/attempt-service.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 import { gzipJson, noteDoc, putNoteBodyForm } from "../test/note-fixtures.ts";
 import { freshNoteAttempt, noteRowOf } from "../test/note-world.ts";
-import { submitAttemptRequest } from "../test/submit-revisions";
+import { submitAttemptRequestWithEvidence } from "../test/submit-revisions";
 
 /**
  * T6R.4 路由层测试：学生端 PUT /api/student/attempts/:id/notes/:qid
@@ -230,7 +230,13 @@ describe("PUT /attempts/:id/notes/:qid 鉴权与状态门槛", () => {
       },
     );
     expect(first.status).toBe(200);
-    const submitRes = await submitAttemptRequest(app, aCookie, attemptId);
+    // T6R.10：有笔记的卷以新客户端声明交卷（旧式缺字段提交已被兼容规则拒绝）
+    const submitRes = await submitAttemptRequestWithEvidence(
+      app,
+      aCookie,
+      db,
+      attemptId,
+    );
     expect(submitRes.status).toBe(200);
     // 新 mutation 的新写入 → 409（原稿固定）
     const res = await putNote(
