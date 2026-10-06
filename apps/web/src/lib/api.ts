@@ -73,7 +73,10 @@ import {
   type MarkRequest,
   type MarkResponseData,
   type MediaUploadResult,
+  NOTE_IMAGE_FORM_FIELDS,
   type NoteHeadData,
+  type NoteImageMeta,
+  type NoteImageUploadMeta,
   type PendingMarkListData,
   type PublicConfigData,
   type QuestionDetail,
@@ -1108,6 +1111,52 @@ export function teacherNoteImagePngUrl(
   imageId: string,
 ): string {
   return `/api/teacher/note-versions/${encodeURIComponent(versionId)}/images/${encodeURIComponent(imageId)}.png`;
+}
+
+/**
+ * 补图上传（T6R.6；POST /api/{student|teacher}/note-versions/:id/images）：
+ * 渲染产物 PNG + 上传元信息 → 服务端槽位幂等 upsert，返回 NoteImageMeta 回执。
+ * multipart 字段集与服务端 lib/form-fields.parseNoteImageUploadForm 一一对应
+ * （image 文件 + spec/pageIndex/cropX/cropY/cropW/cropH/pixelWidth/pixelHeight
+ * 八个字符串字段——strictFormInt 只认严格十进制串，客户端统一 String() 发送）。
+ * hc RPC 对 multipart 路由推断不出 form 入参——与 postTeacherMediaApi 同口径
+ * 用原生 fetch（同源相对路径自动带会话 Cookie）。失败抛 ApiError（如 413
+ * NOTE_LIMIT_EXCEEDED）或网络层中文 Error，由调用方（图片同步队列/补图恢复）
+ * 决定重试策略。
+ */
+/** 补图角色：学生补自己的图 / 教师按授权补学生版本（图片同步层共用） */
+export type NoteImageRole = "student" | "teacher";
+
+export function postNoteImageApi(
+  role: NoteImageRole,
+  versionId: string,
+  png: Blob,
+  meta: NoteImageUploadMeta,
+): Promise<NoteImageMeta> {
+  const form = new FormData();
+  const F = NOTE_IMAGE_FORM_FIELDS;
+  form.append(
+    F.image,
+    png,
+    `note-${versionId}-${meta.spec}-p${meta.pageIndex}.png`,
+  );
+  form.append(F.spec, meta.spec);
+  form.append(F.pageIndex, String(meta.pageIndex));
+  form.append(F.cropX, String(meta.crop.x));
+  form.append(F.cropY, String(meta.crop.y));
+  form.append(F.cropW, String(meta.crop.width));
+  form.append(F.cropH, String(meta.crop.height));
+  form.append(F.pixelWidth, String(meta.pixelWidth));
+  form.append(F.pixelHeight, String(meta.pixelHeight));
+  return callApi(() =>
+    fetch(
+      `/api/${role}/note-versions/${encodeURIComponent(versionId)}/images`,
+      {
+        method: "POST",
+        body: form,
+      },
+    ),
+  );
 }
 
 // ---------- 图片上传（POST /api/teacher/media：导入页随行图片流程在用） ----------

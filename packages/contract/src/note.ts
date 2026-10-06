@@ -86,6 +86,16 @@ export const NOTE_VERSION_IMAGES_MAX_BYTES = 8 * 1024 * 1024;
  */
 export const NOTE_IMAGE_MAX_PIXEL_DIM = 4096;
 
+/**
+ * 当前渲染器版本（T6R.6 独立渲染器建立）：服务端把它铸在 note_versions 行上，
+ * 前端渲染器（apps/web/src/features/notes/render-note.ts）以此为确定性口径——
+ * 同一文档 + 规格 + renderVersion ⇒ 输出内容与坐标一致（不承诺跨平台字节一致，
+ * 方案 §7）。**递增时机 = 渲染行为发生会影响像素输出的变更**（背景画法/颜色、
+ * 切片几何或重叠值、绘制原语版本、分析图/缩略图像素宽等）；纯重构不改像素
+ * 输出时不递增。递增时旧版本派生图不自动重生成，补图链路按需重建。
+ */
+export const NOTE_RENDER_VERSION = 1;
+
 // ---------- NoteDoc v1 ----------
 
 /**
@@ -568,6 +578,26 @@ export const noteImageUploadMetaSchema = z.object({
   pixelWidth: z.number().int().min(1).max(NOTE_IMAGE_MAX_PIXEL_DIM),
   pixelHeight: z.number().int().min(1).max(NOTE_IMAGE_MAX_PIXEL_DIM),
 });
+
+// ---------- multipart 字段名单一来源（T6R.6 复审⑪） ----------
+
+/**
+ * 补图上传 multipart 字段名：服务端路由层（apps/server/src/lib/form-fields.
+ * parseNoteImageUploadForm）与 web 客户端（api.postNoteImageApi）共用这一张
+ * 表，两端不各自手抄字符串（搬家不抄数；字段值变更=接口变更，须两端同改
+ * 并补泄露/行为测试）。image 为文件字段，其余八项为元信息字符串字段。
+ */
+export const NOTE_IMAGE_FORM_FIELDS = {
+  image: "image",
+  spec: "spec",
+  pageIndex: "pageIndex",
+  cropX: "cropX",
+  cropY: "cropY",
+  cropW: "cropW",
+  cropH: "cropH",
+  pixelWidth: "pixelWidth",
+  pixelHeight: "pixelHeight",
+} as const;
 
 // ---------- 推断类型导出 ----------
 

@@ -5,12 +5,14 @@ import {
   NOTE_BODY_GZIP_MAX_BYTES,
   NOTE_COORD_MAX_X,
   NOTE_COORD_MAX_Y,
+  NOTE_IMAGE_FORM_FIELDS,
   NOTE_IMAGE_MAX_PIXEL_DIM,
   NOTE_IMAGE_PNG_MAX_BYTES,
   NOTE_MAX_POINTS_PER_STROKE,
   NOTE_MAX_TOTAL_POINTS,
   NOTE_PAPER_HEIGHT_DEFAULT,
   NOTE_PAPER_HEIGHT_MAX,
+  NOTE_RENDER_VERSION,
   NOTE_VERSION_IMAGES_MAX_BYTES,
   noteBodyHashSchema,
   noteDocSchema,
@@ -787,5 +789,24 @@ describe("T6R.5 路由形状：noteHeadData / noteImageUploadMeta", () => {
     expect(NOTE_IMAGE_PNG_MAX_BYTES).toBe(2 * 1024 * 1024);
     expect(NOTE_VERSION_IMAGES_MAX_BYTES).toBe(8 * 1024 * 1024);
     expect(NOTE_IMAGE_MAX_PIXEL_DIM).toBe(4096);
+  });
+
+  it("渲染版本常量锁定当前值（渲染行为变更时递增，须改这里与注释）", () => {
+    // T6R.6 渲染器建立时的初值；递增时机见 note.ts NOTE_RENDER_VERSION 注释
+    expect(NOTE_RENDER_VERSION).toBe(1);
+  });
+
+  it("补图 multipart 字段名锁定（服务端/客户端单一来源，改值=接口变更）", () => {
+    expect(NOTE_IMAGE_FORM_FIELDS).toEqual({
+      image: "image",
+      spec: "spec",
+      pageIndex: "pageIndex",
+      cropX: "cropX",
+      cropY: "cropY",
+      cropW: "cropW",
+      cropH: "cropH",
+      pixelWidth: "pixelWidth",
+      pixelHeight: "pixelHeight",
+    });
   });
 });

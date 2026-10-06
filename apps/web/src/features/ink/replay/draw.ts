@@ -9,8 +9,10 @@
  * jsdom 无 canvas 2d context，本模块刻意保持薄且不写单测；时间轴与截断逻辑
  * 在 model.ts 纯函数层已测。组件测试以 vi.mock 替换本模块。
  */
-import Atrament from "atrament";
-import { replayAtramentStroke } from "../engine/atrament-adapter.ts";
+import {
+  createProgrammaticAtrament,
+  replayAtramentStroke,
+} from "../engine/atrament-adapter.ts";
 import type { InkStroke } from "../engine/index.ts";
 
 /** devicePixelRatio 上限 2（与 atrament-adapter 同口径，控制内存） */
@@ -60,10 +62,9 @@ export function createAtramentReplayCanvas(
     canvas.remove();
     throw new Error("无法创建 canvas 2d 上下文（当前环境不支持回放）");
   }
-  // 与 atrament-adapter 同款手法：构造即配置好 2d 画笔状态，随即解绑其内部
-  // 指针监听（回放只读不写，输入层不接管）
-  const atrament = new Atrament(canvas);
-  atrament.destroy();
+  // 程序化重放实例（构造即配置画笔状态并解绑输入监听，见
+  // engine/atrament-adapter.createProgrammaticAtrament 的唯一注释段）
+  const atrament = createProgrammaticAtrament(canvas);
   // 收窄后的 context 引用（const + 早退后声明箭头函数，类型收窄才能进闭包）
   const ctx2d = ctx;
 
