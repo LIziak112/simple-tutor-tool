@@ -43,28 +43,25 @@ import {
   strokeBounds,
 } from "@/features/ink/engine/bounds.ts";
 import { canvasToPngBlob } from "@/features/ink/engine/canvas-png.ts";
+import {
+  NOTE_PAPER_BG_COLOR,
+  NOTE_PAPER_GRID_SPACING_LOGICAL,
+  NOTE_PAPER_LINE_COLOR,
+  NOTE_PAPER_LINE_WIDTH_PX,
+} from "@/features/ink/engine/paper-style.ts";
 import { INK_LOGICAL_WIDTH } from "@/features/ink/engine/types.ts";
 
+// 纸张背景常量集自本文件上移至 engine/paper-style.ts（T6R.7：屏幕端 CSS 与
+// PNG 同源共用；上移不改值 ⇒ 像素输出不变，不递增 NOTE_RENDER_VERSION）。
+// 此处 re-export 维持既有导入路径兼容（render-note.test 等消费方不变）。
+export {
+  NOTE_PAPER_BG_COLOR,
+  NOTE_PAPER_GRID_SPACING_LOGICAL,
+  NOTE_PAPER_LINE_COLOR,
+  NOTE_PAPER_LINE_WIDTH_PX,
+} from "@/features/ink/engine/paper-style.ts";
+
 // ---------- 渲染规格常量（全部暂定，真机定标后修订） ----------
-
-/**
- * 纸张格线/横线间距（逻辑单位）。屏幕（T6R.7）、PNG、历史回看共用同一间距
- * （方案 §4.3）；导出供屏幕端画法复用，不得在别处另写数值。T6R.7 落地时
- * 评估上移 engine 层共用（届时搬家不抄数）。
- */
-export const NOTE_PAPER_GRID_SPACING_LOGICAL = 40;
-
-/**
- * 格线/横线线宽（设备像素；1px 细线）。与间距/颜色同组的纸张背景常量集——
- * T6R.7 屏幕端落地时随组评估上移 engine 层共用（复审⑦锚点）。
- */
-export const NOTE_PAPER_LINE_WIDTH_PX = 1;
-
-/** 格线/横线颜色（画进 PNG 的实际描边色，非 CSS） */
-export const NOTE_PAPER_LINE_COLOR = "#cbd5e1";
-
-/** PNG 底色：渲染统一白底（教师/AI 查看口径，同旧 exportPng） */
-export const NOTE_PAPER_BG_COLOR = "#ffffff";
 
 /**
  * 分析图像素宽（= 逻辑宽 1000 的 1:1 像素）。方案 §7：先以约 1000 试验，
@@ -335,7 +332,7 @@ function paintPaperBackground(
   const spacing = NOTE_PAPER_GRID_SPACING_LOGICAL;
   const scale = pixelWidth / crop.width;
   ctx.strokeStyle = NOTE_PAPER_LINE_COLOR;
-  ctx.lineWidth = 1;
+  ctx.lineWidth = NOTE_PAPER_LINE_WIDTH_PX;
   const firstAfter = (edge: number): number =>
     Math.floor(edge / spacing) * spacing + spacing;
   // 横线（line/grid 共有）
