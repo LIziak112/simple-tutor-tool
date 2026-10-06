@@ -13,8 +13,24 @@ import { expect, test } from "@playwright/test";
  * （10 项；面板增删检查须同步本文件）。
  */
 
-/** 面板检查链的项数（与 NoteRenderVerifyPanel.runChecks 一一对应） */
-const EXPECTED_CHECK_COUNT = 10;
+/**
+ * 面板检查链点名名单（与 NoteRenderVerifyPanel.runChecks 的检查名逐项
+ * 对应）；项数即期望行数——增删检查只改这一份名单（复审⑥：计数单轨）。
+ */
+const NAMED_CHECKS = [
+  "背景 white",
+  "背景 grid",
+  "背景 line",
+  "轻划",
+  "零长笔画",
+  "荧光笔",
+  "擦除",
+  "长稿切片",
+  "确定性",
+  "缩略图",
+] as const;
+
+const EXPECTED_CHECK_COUNT = NAMED_CHECKS.length;
 
 test("渲染验证面板：全部检查通过（真实解码 PNG）", async ({ page }) => {
   await page.goto("/dev/ink");

@@ -21,10 +21,14 @@ import {
  * - 像素分类容差：线色（#cbd5e1）判据 = 与线色欧氏距离 ≤60 且非纯白；
  *   墨迹 = 与纯白距离 >60；纯白 = 与纯白距离 ≤10。坐标断言 ±2px（AA 与
  *   取整）——不用大幅容差放过缺笔。
- * - 确定性：同文档同规格双渲染，PNG 字节与像素逐位相等（容差 0）。
+ * - 确定性：同文档同规格双渲染，PNG 字节逐位相等（容差 0；字节一致
+ *   蕴含像素一致，不重复解码比对）。
  * - 🧑 待真机确认：长稿小字可读性、片高 1400/重叠 40 的翻页观感——本面板
  *   只能验证像素正确，不能替代 iPad 真机阅读体验。
  */
+
+/** 长稿夹具的纸高（切片/确定性检查共用；与 render-note.test 同值） */
+const TALL_PAPER_HEIGHT = 3000;
 
 /** 单条检查结论 */
 interface Verdict {
@@ -165,6 +169,14 @@ async function bytesEqual(a: Blob, b: Blob): Promise<boolean> {
 
 // ---------- 检查链 ----------
 
+/** 渲染单页规格并解码为像素数据（单页检查的共用样板） */
+async function renderPng(
+  doc: ReturnType<typeof docOf>,
+  spec: "thumbnail" | "analysis",
+): Promise<ImageData> {
+  return decodeToImageData(firstPage(await renderNoteImages(doc, spec)).blob);
+}
+
 /** 取单页渲染产物（这些检查的分析图都恰为单页；否则视为检查失败） */
 function firstPage(
   pages: Awaited<ReturnType<typeof renderNoteImages>>,
@@ -208,11 +220,10 @@ async function runChecks(): Promise<Verdict[]> {
   const inkY = (logical: number) => logical - 320; // 逻辑 → 页内像素（s=1）
 
   await check("背景 white：整页白底 + 墨迹，无格线色像素", async () => {
-    const pages = await renderNoteImages(
+    const img = await renderPng(
       docOf(bgStroke, { background: "white" }),
       "analysis",
     );
-    const img = await decodeToImageData(firstPage(pages).blob);
     // 四角纯白（留 8px 边距避开裁剪边缘 AA）
     const corners: Array<[number, number]> = [
       [8, 8],
@@ -247,11 +258,10 @@ async function runChecks(): Promise<Verdict[]> {
   await check(
     "背景 grid：格线实际入图（竖线 x=360、横线 y=360 可采样）",
     async () => {
-      const pages = await renderNoteImages(
+      const img = await renderPng(
         docOf(bgStroke, { background: "grid" }),
         "analysis",
       );
-      const img = await decodeToImageData(firstPage(pages).blob);
       // 竖线：逻辑 x=360 → 页内 x=360；横线：逻辑 y=360 → 页内 y=40
       if (!anyPixelIn(img, 360, 100, isLine, 1))
         fail("竖线位置 (360,100) 未见格线色");
@@ -265,11 +275,10 @@ async function runChecks(): Promise<Verdict[]> {
   );
 
   await check("背景 line：只有横线（竖线位置无格线色）", async () => {
-    const pages = await renderNoteImages(
+    const img = await renderPng(
       docOf(bgStroke, { background: "line" }),
       "analysis",
     );
-    const img = await decodeToImageData(firstPage(pages).blob);
     if (!anyPixelIn(img, 500, inkY(360), isLine, 1)) fail("横线缺失");
     if (anyPixelIn(img, 360, 100, isLine, 1)) fail("line 背景出现竖线");
     return "仅横线";
@@ -277,7 +286,7 @@ async function runChecks(): Promise<Verdict[]> {
 
   await check("轻划（密集微笔）落墨：点位有墨迹", async () => {
     // 两点相距 6 逻辑单位的微笔（真实轻点的形态）：crop y=[320,480]
-    const pages = await renderNoteImages(
+    const img = await renderPng(
       docOf([
         denseStroke([
           [497, 399],
@@ -286,7 +295,6 @@ async function runChecks(): Promise<Verdict[]> {
       ]),
       "analysis",
     );
-    const img = await decodeToImageData(firstPage(pages).blob);
     if (!anyPixelIn(img, 500, inkY(400), isInk, 3))
       fail("微笔未见墨迹（轻点丢失）");
     return "微笔墨迹在位";
@@ -298,11 +306,10 @@ async function runChecks(): Promise<Verdict[]> {
       // 引擎原语现状：单点 = 零长二次曲线，Chromium/WebKit 均不落墨；实时
       // 书写画布同样不显示（图文一致）。若未来引擎改为画圆点，此处会失败
       // ——按契约口径递增 NOTE_RENDER_VERSION 后同步本检查。
-      const pages = await renderNoteImages(
+      const img = await renderPng(
         docOf([pageStroke([[500, 400]])]),
         "analysis",
       );
-      const img = await decodeToImageData(firstPage(pages).blob);
       let inkPixels = 0;
       for (let i = 0; i < img.data.length; i += 4) {
         const rgb: [number, number, number] = [
@@ -355,10 +362,8 @@ async function runChecks(): Promise<Verdict[]> {
         color: INK_PEN_COLORS.red,
       },
     );
-    const withRed = await renderNoteImages(docOf([black, red]), "analysis");
-    const erased = await renderNoteImages(docOf([black]), "analysis");
-    const imgA = await decodeToImageData(firstPage(withRed).blob);
-    const imgB = await decodeToImageData(firstPage(erased).blob);
+    const imgA = await renderPng(docOf([black, red]), "analysis");
+    const imgB = await renderPng(docOf([black]), "analysis");
     if (!anyPixelIn(imgA, 720, inkY(400), isRedInk, 3))
       fail("红笔笔画在原文档中缺失（夹具异常）");
     if (anyPixelIn(imgB, 720, inkY(400), isRedInk, 3))
@@ -375,7 +380,7 @@ async function runChecks(): Promise<Verdict[]> {
           [900, 2950],
         ]),
       ],
-      { paperHeightLogical: 3000 },
+      { paperHeightLogical: TALL_PAPER_HEIGHT },
     );
     const pages = await renderNoteImages(tall, "analysis");
     if (pages.length !== 3) fail(`期望 3 页，得到 ${pages.length}`);
@@ -410,7 +415,7 @@ async function runChecks(): Promise<Verdict[]> {
           [900, 2950],
         ]),
       ],
-      { paperHeightLogical: 3000 },
+      { paperHeightLogical: TALL_PAPER_HEIGHT },
     );
     const [a, b] = await Promise.all([
       renderNoteImages(tall, "analysis"),
@@ -423,22 +428,14 @@ async function runChecks(): Promise<Verdict[]> {
       if (!pa || !pb) throw new Error(`第 ${i} 页缺失`);
       if (!(await bytesEqual(pa.blob, pb.blob)))
         fail(`第 ${i} 页两次渲染字节不一致`);
-      const ia = await decodeToImageData(pa.blob);
-      const ib = await decodeToImageData(pb.blob);
-      if (ia.width !== ib.width || ia.height !== ib.height) fail("尺寸不一致");
-      for (let k = 0; k < ia.data.length; k++) {
-        if (ia.data[k] !== ib.data[k]) {
-          fail(`第 ${i} 页像素位 ${k} 不一致（确定性破坏）`);
-        }
-      }
     }
-    return "全页字节与像素逐位一致";
+    // 字节逐位一致是比像素一致更强的断言（蕴含像素/尺寸一致），不再重复
+    // 双解码像素循环（复审⑤：死代码删除，保留更强的一侧）
+    return "全页字节逐位一致（蕴含像素一致）";
   });
 
   await check("缩略图：整纸低分辨率单页", async () => {
-    const pages = await renderNoteImages(docOf(bgStroke), "thumbnail");
-    if (pages.length !== 1) fail(`期望单页，得到 ${pages.length}`);
-    const img = await decodeToImageData(firstPage(pages).blob);
+    const img = await renderPng(docOf(bgStroke), "thumbnail");
     if (img.width !== 480 || img.height !== 384)
       fail(`缩略图尺寸异常：${img.width}×${img.height}`);
     if (!anyPixelIn(img, 240, 192, isInk, 4)) fail("缩略图未见墨迹");

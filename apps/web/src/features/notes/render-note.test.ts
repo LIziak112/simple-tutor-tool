@@ -46,6 +46,9 @@ import {
 
 // ---------- 文档与笔画工厂 ----------
 
+/** 长稿夹具纸高（契约上限值；与面板 NoteRenderVerifyPanel 同值） */
+const TALL_PAPER_HEIGHT = 3000;
+
 /** 单点（轻点）或折线笔画（契约形状；color 用引擎真实色板值保证保真） */
 function stroke(
   points: Array<[number, number]>,
@@ -412,7 +415,7 @@ describe("页面计划：像素尺寸与页号", () => {
         ]),
       ],
       {
-        paperHeightLogical: 3000,
+        paperHeightLogical: TALL_PAPER_HEIGHT,
       },
     );
     const pages = planAnalysisPages(tall);
@@ -422,7 +425,7 @@ describe("页面计划：像素尺寸与页号", () => {
       expect(p.pixelWidth).toBe(1000);
       expect(p.pixelHeight).toBe(p.crop.height);
       expect(p.crop.x + p.crop.width).toBeLessThanOrEqual(1000);
-      expect(p.crop.y + p.crop.height).toBeLessThanOrEqual(3000);
+      expect(p.crop.y + p.crop.height).toBeLessThanOrEqual(TALL_PAPER_HEIGHT);
     }
   });
 });
@@ -709,7 +712,7 @@ describe("renderNoteImages：产物与上传元信息对齐", () => {
         ]),
       ],
       {
-        paperHeightLogical: 3000,
+        paperHeightLogical: TALL_PAPER_HEIGHT,
       },
     );
     const pages = await renderNoteImages(tall, "analysis");
@@ -769,7 +772,6 @@ function ctxOf(canvas: HTMLCanvasElement): RecordingContext {
   return ctx;
 }
 
-/** 路径是否轴向对齐线段：横线 = y 恒定（x 变化），竖线 = x 恒定 */
 /** 展开路径全部坐标（x0,y0,x1,y1,…） */
 function pathCoords(path: PathOp[]): number[] {
   const out: number[] = [];
@@ -779,6 +781,7 @@ function pathCoords(path: PathOp[]): number[] {
   return out;
 }
 
+/** 路径是否轴向对齐线段：横线 = y 恒定（x 变化），竖线 = x 恒定 */
 function isAxisAligned(s: StrokeCall, axis: "h" | "v"): boolean {
   const pts = pathCoords(s.path);
   if (pts.length < 2) return false;
