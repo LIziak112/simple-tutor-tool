@@ -31,7 +31,7 @@ import {
   learningPackV2Schema,
   renderLearningPackPrompt,
 } from "@tutor/contract";
-import { analyzeLectureStructure, studentStemMd } from "@tutor/md-dsl";
+import { analyzeLectureStructure } from "@tutor/md-dsl";
 import { ZipArchive } from "archiver";
 import {
   and,
@@ -69,6 +69,7 @@ import { serializeStudentAnswer } from "./mark-response";
 import { extractMediaImageSrcs } from "./media-service";
 import {
   assembleQuestionEvidence,
+  materialOf,
   type QuestionEvidenceAssembly,
 } from "./question-evidence";
 import { snapshotOfRow } from "./snapshot";
@@ -686,34 +687,23 @@ export function assembleLearningPack(
       const snapshot = snapshotOfRow(row);
       const meta = metaOf.get(questionId);
       // T6R.3：快照缺失按**显式缺失**处理（空题干），不拿当前题库兜底——
-      // 历史题目缺失不伪造当时内容；缺失清单标记由 T6R.12 细化
-      const stemMd = snapshot?.stemMd ?? "";
+      // 历史题目缺失不伪造当时内容；缺失清单标记由 T6R.12 细化。
+      // 投影/层级切片经 materialOf 单点（复审 B2，与 v2 同一实现；教师角色
+      // 不触发学生哨兵）：stem 层 studentStemMd 投影（D14 不给答案）、
+      // answer 层 +answers、solution 层 +solutionMd、缺失空题干
+      const material = materialOf(snapshot, false, m.questions);
       const item: LearningPackQuestion = {
         questionId,
         unitId: meta?.unitId ?? null,
         unitTitle: null, // 下方统一回填
-        type: snapshot?.type ?? "fill",
-        difficulty: snapshot?.difficulty ?? 2,
-        knowledge: snapshot?.knowledge ?? [],
-        stemMd:
-          m.questions === "stem"
-            ? // 「仅题干」层经 studentStemMd 学生端投影：[[答案]] 脱敏 + 选项列表
-              // 剥除（options 文本数组另行携带），不给答案（D14）；快照缺失
-              // 时同样空串（不取当前题库）
-              snapshot !== null
-              ? studentStemMd(snapshot)
-              : ""
-            : stemMd,
+        type: material.type,
+        difficulty: material.difficulty,
+        knowledge: [...material.knowledge],
+        stemMd: material.stemMd,
       };
-      if (snapshot?.options !== undefined) {
-        item.options = snapshot.options.map((option) => option.text);
-      }
-      if (m.questions !== "stem" && snapshot?.answers !== undefined) {
-        item.answers = snapshot.answers;
-      }
-      if (m.questions === "solution" && snapshot?.solutionMd !== undefined) {
-        item.solutionMd = snapshot.solutionMd;
-      }
+      if (material.options !== undefined) item.options = [...material.options];
+      if (material.answers !== undefined) item.answers = material.answers;
+      if (material.solutionMd !== undefined) item.solutionMd = material.solutionMd;
       questionItems.push(item);
     }
     // 单元标题统一回填（域内 units 表，含软删——历史统计不消失）+ 排序（单元内题序）

@@ -212,13 +212,14 @@ function sha256Hex(text: string): string {
 
 /**
  * 角色化素材：投影与层级切片都在这一处完成（学生角色结构性无答案字段）。
+ * 导出供 export-service v1 题目装配复用（v1/v2 同一投影单点，复审 B2）。
  * **服务端泄露哨兵（编排者复审 A1）**：学生角色投影后仍命中
  * stemMdLeaksAnswers（可触达形态：fill 题不带 options 字段但题干内嵌任务
  * 列表——studentStemMd 只在有 options 时剥列表，`- [x]` 正确项标记原样
  * 保留）→ 500 EXPORT_ASSEMBLY_BROKEN 拒绝装配。防未来学生端路由直返
  * material 绕过投影不变量；前端 question-materials 的同款守卫是纵深防御。
  */
-function materialOf(
+export function materialOf(
   snapshot: ReturnType<typeof snapshotOfRow>,
   studentRole: boolean,
   level: "stem" | "answer" | "solution",
