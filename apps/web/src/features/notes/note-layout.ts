@@ -58,7 +58,8 @@ export function noteSideUsable(containerCssWidth: number): boolean {
   const halfGap = NOTE_LAYOUT_GAP_CSS_PX / 2;
   return (
     containerCssWidth * NOTE_PAPER_SHARE - halfGap >= NOTE_MIN_PAPER_CSS_PX &&
-    containerCssWidth * NOTE_QUESTION_SHARE - halfGap >= NOTE_MIN_QUESTION_CSS_PX
+    containerCssWidth * NOTE_QUESTION_SHARE - halfGap >=
+      NOTE_MIN_QUESTION_CSS_PX
   );
 }
 
@@ -80,11 +81,7 @@ export function effectiveNoteLayout(
 /** 偏好持久化键（设备级，与部署实例同源隔离由 origin 天然保证） */
 export const NOTE_LAYOUT_STORAGE_KEY = "tutor-note-layout";
 
-const LAYOUT_PREFS: readonly NoteLayoutPreference[] = [
-  "auto",
-  "side",
-  "below",
-];
+const LAYOUT_PREFS: readonly NoteLayoutPreference[] = ["auto", "side", "below"];
 
 /** 读存储并收窄（非法/缺失回退 auto）；localStorage 抛错同样回退 */
 function readStored(): NoteLayoutPreference {

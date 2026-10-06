@@ -152,7 +152,11 @@ describe("useObservedCssWidth：宽度观察（ResizeObserver 缺席回退）", 
     const ref = { current: null } as React.RefObject<HTMLDivElement | null>;
     function Probe() {
       const width = mod.useObservedCssWidth(ref);
-      return <div ref={ref} data-testid="probe">{width}</div>;
+      return (
+        <div ref={ref} data-testid="probe">
+          {width}
+        </div>
+      );
     }
     render(<Probe />);
     expect(observers.length).toBe(1);
