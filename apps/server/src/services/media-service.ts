@@ -112,6 +112,31 @@ export function missingMediaImageSrcs(
 }
 
 /**
+ * 单个 ::image src 的落盘核对（T6R.12 复审 B8 单点）：
+ * - 在场 → { absPath, bytes }（absPath 限 blobs/media/ 内，供 zip 打包）；
+ * - 不在场 → { reason }（中文面向教师可读；**文案为 pack manifest 缺失清单
+ *   的既定口径，调用方原样透传，不改写**）。
+ * question-evidence 与 export-service 的「越界/缺失」二分循环共用本函数，
+ * 两处 reason 逐字一致由实现单点保证。
+ */
+export type MediaSrcStat =
+  | { readonly absPath: string; readonly bytes: number }
+  | { readonly reason: string };
+
+export function statMediaSrc(dataDir: string, src: string): MediaSrcStat {
+  const absPath = resolve(dataDir, ...src.split("/"));
+  // 严格契约形态无穿越空间；越界（理论不可达）按缺失计，不炸
+  if (!absPath.startsWith(resolve(dataDir, "blobs", "media"))) {
+    return { reason: "媒体路径非法" };
+  }
+  try {
+    return { absPath, bytes: statSync(absPath).size };
+  } catch {
+    return { reason: "图片文件缺失（未上传或已清理）" };
+  }
+}
+
+/**
  * 魔数检测：命中白名单返回规范化扩展名（JPEG → jpg），其余 null。
  * 只看文件头字节，不看上传方声明的 MIME/文件名（两者都可伪造）。
  */

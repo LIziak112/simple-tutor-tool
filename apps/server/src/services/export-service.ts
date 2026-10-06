@@ -61,12 +61,13 @@ import {
   students,
   units,
 } from "../db/schema";
+import { chunk } from "../lib/chunk";
 import { HttpError } from "../lib/http-error";
 import { answerOf, frozenRowsInDisplayOrder } from "./attempt-service";
 import { beijingDateTimeOf, beijingExportStampOf } from "./export-csv";
 import { lectureReadingMapFor } from "./lecture-insights";
 import { serializeStudentAnswer } from "./mark-response";
-import { extractMediaImageSrcs } from "./media-service";
+import { extractMediaImageSrcs, statMediaSrc } from "./media-service";
 import {
   assembleQuestionEvidence,
   materialOf,
@@ -199,15 +200,6 @@ function requireOwnedLecture(
 }
 
 // ---------- 通用工具 ----------
-
-/** inArray 分块迭代（SQLite 变量上限防御，与 analytics-service 同款） */
-function chunk<T>(items: readonly T[], size = 500): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < items.length; i += size) {
-    out.push(items.slice(i, i + size));
-  }
-  return out;
-}
 
 /** zip 条目名里必须替换掉的不安全字符（路径分隔符与 Windows 保留字符） */
 const ZIP_UNSAFE_CHARS = '\\/:*?"<>|';
@@ -703,7 +695,8 @@ export function assembleLearningPack(
       };
       if (material.options !== undefined) item.options = [...material.options];
       if (material.answers !== undefined) item.answers = material.answers;
-      if (material.solutionMd !== undefined) item.solutionMd = material.solutionMd;
+      if (material.solutionMd !== undefined)
+        item.solutionMd = material.solutionMd;
       questionItems.push(item);
     }
     // 单元标题统一回填（域内 units 表，含软删——历史统计不消失）+ 排序（单元内题序）
@@ -744,37 +737,27 @@ export function assembleLearningPack(
         if (item.solutionMd !== undefined) mdTexts.push(item.solutionMd);
       }
     }
-    const mediaRoot = resolve(dataDir, "blobs", "media");
+    // 落盘核对单点：statMediaSrc（越界/缺失二分与 question-evidence 同源，
+    // 复审 B8）；v1 静默跳过（既有口径），v2 进缺失清单
     for (const src of extractMediaImageSrcs(mdTexts)) {
-      const absPath = resolve(dataDir, ...src.split("/"));
-      // 理论不可达（扫描正则已限定单段内容寻址形态，无穿越空间）：路径必须
-      // 落在 blobs/media/ 内；v1 越界/缺文件静默跳过（既有口径），v2 进缺失清单
-      if (!absPath.startsWith(mediaRoot)) {
-        if (isV2) {
-          manifestMissingMedia.push({
-            path: src,
-            kind: "media",
-            reason: "媒体路径非法",
-            refs: [],
-          });
-        }
+      const stat = statMediaSrc(dataDir, src);
+      if ("absPath" in stat) {
+        mediaEntries.push({
+          entry: src,
+          absPath: stat.absPath,
+          bytes: stat.bytes,
+        });
         continue;
       }
-      let bytes: number;
-      try {
-        bytes = statSync(absPath).size;
-      } catch {
-        if (isV2) {
-          manifestMissingMedia.push({
-            path: src,
-            kind: "media",
-            reason: "图片文件缺失（未上传或已清理）",
-            refs: [],
-          });
-        }
-        continue; // v1：图片文件缺失静默跳过（同 ink 缺文件口径）
+      if (isV2) {
+        manifestMissingMedia.push({
+          path: src,
+          kind: "media",
+          reason: stat.reason,
+          refs: [],
+        });
       }
-      mediaEntries.push({ entry: src, absPath, bytes });
+      // v1：缺文件静默跳过（同 ink 缺文件口径）
     }
     // v2 题目媒体：证据装配结果直接并入（refs 关联 q 条目）；题目模块未勾选时
     // 不并入也不登记缺失——「未选模块不夹带内容」（方案 §9.2）

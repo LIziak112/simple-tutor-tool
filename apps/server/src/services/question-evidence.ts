@@ -8,7 +8,7 @@ import type {
   QuestionAnswers,
   QuestionType,
 } from "@tutor/contract";
-import { studentStemMd, stemMdLeaksAnswers } from "@tutor/md-dsl";
+import { stemMdLeaksAnswers, studentStemMd } from "@tutor/md-dsl";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
@@ -20,8 +20,9 @@ import {
   type ResponseRow,
   submissionEvidence,
 } from "../db/schema";
+import { chunk } from "../lib/chunk";
 import { HttpError } from "../lib/http-error";
-import { extractMediaImageSrcs } from "./media-service";
+import { extractMediaImageSrcs, statMediaSrc } from "./media-service";
 import { snapshotOfRow } from "./snapshot";
 
 /**
@@ -258,15 +259,6 @@ export function materialOf(
   };
 }
 
-/** inArray 分块（SQLite 变量上限防御，与 export-service 同款） */
-function chunk<T>(items: readonly T[], size = 500): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < items.length; i += size) {
-    out.push(items.slice(i, i + size));
-  }
-  return out;
-}
-
 /** 证据图缺失原因（note_images.state 三态 + ready 行文件丢失） */
 function evidenceImageMissingReason(imageState: string): string {
   if (imageState === "pending") return "分析图未生成（排队/生成中）";
@@ -435,27 +427,19 @@ export function assembleQuestionEvidence(
         else if (!refs.includes(revision.ref)) refs.push(revision.ref);
       }
     }
-    const mediaRoot = resolve(dataDir, "blobs", "media");
+    // 落盘核对单点：statMediaSrc（越界/缺失二分与文案与 export-service 同源，
+    // 复审 B8）
     for (const [src, questionRefs] of srcRefs) {
-      const absPath = resolve(dataDir, ...src.split("/"));
-      // 严格契约形态无穿越空间；越界按缺失处理（与 export-service 同口径）
-      if (!absPath.startsWith(mediaRoot)) {
-        missingMediaOut.push({
+      const stat = statMediaSrc(dataDir, src);
+      if ("absPath" in stat) {
+        mediaOut.push({
           src,
-          reason: "媒体路径非法",
+          absPath: stat.absPath,
+          bytes: stat.bytes,
           questionRefs,
         });
-        continue;
-      }
-      try {
-        const bytes = statSync(absPath).size;
-        mediaOut.push({ src, absPath, bytes, questionRefs });
-      } catch {
-        missingMediaOut.push({
-          src,
-          reason: "图片文件缺失（未上传或已清理）",
-          questionRefs,
-        });
+      } else {
+        missingMediaOut.push({ src, reason: stat.reason, questionRefs });
       }
     }
   }
