@@ -22,6 +22,7 @@ import {
   attemptRoundLabel,
   formatReferenceAnswers,
   formatStudentAnswer,
+  HANDWRITTEN_TYPES,
   letterOf,
   QUESTION_TYPE_BADGE_CLASS,
   QUESTION_TYPE_LABELS,
@@ -264,10 +265,8 @@ function ResultQuestionCard({
     | ((questionId: string, index: number, action: "open" | "close") => void)
     | undefined;
 }) {
-  const isHandwritten =
-    question.snapshot.type === "solve" ||
-    question.snapshot.type === "apply" ||
-    question.snapshot.type === "find-error";
+  // 手写题型判定走共享 HANDWRITTEN_TYPES（与答题卡/教师卡单一事实来源）
+  const isHandwritten = HANDWRITTEN_TYPES.has(question.snapshot.type);
   // D9：最终判定优先（交卷时 = autoCorrect，批注后以 teacherMark 为准）；
   // null = 待批（D3 后可自动判分题交卷即有 finalCorrect，null 即真待批）
   const verdict = question.finalCorrect ?? question.autoCorrect;

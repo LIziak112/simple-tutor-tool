@@ -24,14 +24,12 @@ import {
   useDraftSync,
 } from "@/features/attempt/use-draft-sync";
 import type { InkUploadController } from "@/features/attempt/use-ink-upload";
-import { useStudentMe } from "@/features/auth/student-auth";
 import {
   prepareSubmitEvidence,
   type SubmitEvidencePrep,
   type SubmitEvidenceProblem,
   snapshotNoteOverview,
 } from "@/features/notes/submit-evidence";
-import { useBindNoteSession } from "@/features/notes/use-note-head";
 import { startWrongPracticeApi } from "@/lib/api";
 import { createEventQueue } from "@/lib/event-queue";
 import { formatDueTime } from "@/lib/time";
@@ -124,11 +122,6 @@ function AttemptResultWithDraftCleanup({
 }) {
   const attemptId = data.attempt.id;
   const navigate = useNavigate();
-  // T6R.9 遗留 watch item（T6R.11 收口）：结果视图同样接线草稿会话——不经
-  // 答题页直达结果页（历史回看/换账号登录）时，模块级会话服务持有当前学生
-  // 身份（登出/切账号的 reset 在 student-auth 统一执行，幂等绑定无害）
-  const me = useStudentMe();
-  useBindNoteSession(me.data);
   useEffect(() => {
     void draftStore.clearDraft(attemptId);
   }, [attemptId]);
@@ -198,11 +191,8 @@ function AnswerView({
   /** 手写题的笔迹上传 controller（mount 注册、unmount 注销；交卷前逐题 flush，
    *  草稿同步循环也会逐题 sync——先声明再传给 useDraftSync） */
   const inkControllers = useRef(new Map<string, InkUploadController>());
-  // T6R.9：草稿会话绑定——进入答题页 bind 当前学生 + 部署实例（me 已由
-  // /s/* 布局守卫加载，缓存直取）。离开答题页不 reset：收起题卡/路由切换后
-  // 同步队列照常完成；登出在 student-auth 统一 reset
-  const me = useStudentMe();
-  useBindNoteSession(me.data);
+  // T6R.9 草稿会话绑定已上提 StudentLayout（T6R.11 复审）：离开答题页不
+  // reset——收起题卡/路由切换后同步队列照常完成；登出在 student-auth 统一 reset
   const registerInkController = useCallback(
     (questionId: string, controller: InkUploadController | null) => {
       if (controller === null) inkControllers.current.delete(questionId);
