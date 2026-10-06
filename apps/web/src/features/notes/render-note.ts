@@ -211,9 +211,12 @@ export function analysisSliceHeightMax(pixelWidth: number): number {
  * - 相邻页重叠恰 ANALYSIS_SLICE_OVERLAP_LOGICAL（笔迹跨页完整可读）；
  * - 末页覆盖到裁剪区底部，且除首末页外每页高度恒为片高上限。
  */
-export function sliceCropRects(crop: NoteCropRect): NoteCropRect[] {
-  const maxH = analysisSliceHeightMax(ANALYSIS_PIXEL_WIDTH);
-  const overlap = ANALYSIS_SLICE_OVERLAP_LOGICAL;
+export function sliceCropRects(
+  crop: NoteCropRect,
+  limits: { maxH?: number; overlap?: number } = {},
+): NoteCropRect[] {
+  const maxH = limits.maxH ?? analysisSliceHeightMax(ANALYSIS_PIXEL_WIDTH);
+  const overlap = limits.overlap ?? ANALYSIS_SLICE_OVERLAP_LOGICAL;
   if (overlap >= maxH) {
     throw new Error(
       `切片参数非法：重叠（${overlap}）必须小于片高（${maxH}），否则切片不推进`,
@@ -464,6 +467,16 @@ export interface ForEachNotePageOptions {
    * 同步链在缩略图/分析两条链外算一次共享传入；缺省在本次入口计算一次。
    */
   boxes?: Array<StrokeBounds | null>;
+  /**
+   * 渲染单页的注入点（缺省真渲染 renderNotePageWithBoxes）：jsdom 无
+   * canvas，测试真骨架（计划顺序/让出/中止语义）时替换假渲染产物；
+   * 生产路径不传。
+   */
+  renderPage?: (
+    doc: NoteDoc,
+    page: NotePagePlan,
+    boxes: Array<StrokeBounds | null>,
+  ) => Promise<RenderedNotePage>;
 }
 
 /**
@@ -480,6 +493,7 @@ export async function forEachRenderedNotePage(
   opts?: ForEachNotePageOptions,
 ): Promise<void> {
   const boxes = opts?.boxes ?? paddedStrokeBoxesOf(doc.ink);
+  const renderPage = opts?.renderPage ?? renderNotePageWithBoxes;
   const pages =
     spec === "thumbnail"
       ? [planThumbnailPage(doc)]
@@ -488,7 +502,7 @@ export async function forEachRenderedNotePage(
   for (const page of pages) {
     if (!first) await yieldToMain();
     first = false;
-    await visit(await renderNotePageWithBoxes(doc, page, boxes));
+    await visit(await renderPage(doc, page, boxes));
   }
 }
 

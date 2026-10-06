@@ -25,25 +25,13 @@ vi.mock("@/lib/api", () => ({
 }));
 
 vi.mock("@/features/notes/render-note.ts", async (importOriginal) => {
+  // forEachRenderedNotePage 的假实现只在 beforeEach 单份注入（复审⑩：
+  // 工厂内重复实现是死代码——mockReset 后必然被 beforeEach 覆盖）
   const actual =
     await importOriginal<typeof import("@/features/notes/render-note.ts")>();
   return {
     ...actual,
-    forEachRenderedNotePage: vi.fn(
-      async (
-        doc: NoteDoc,
-        spec: "thumbnail" | "analysis",
-        visit: (page: RenderedNotePage) => Promise<void>,
-      ): Promise<void> => {
-        const pages =
-          spec === "thumbnail"
-            ? [actual.planThumbnailPage(doc)]
-            : actual.planAnalysisPages(doc);
-        for (const page of pages) {
-          await visit({ ...page, blob: new Blob([new Uint8Array([1])]) });
-        }
-      },
-    ),
+    forEachRenderedNotePage: vi.fn(),
   };
 });
 
@@ -269,6 +257,70 @@ describe("syncNoteImages：失败不吞错、不毒化、可重试", () => {
     await expect(
       syncNoteImages({ role: "student", versionId: VERSION_ID, doc }),
     ).rejects.toThrow(/toBlob 返回空/);
+  });
+
+  it("真骨架多页中止：分析第 2 页上传失败 → 第 3 页不再渲染/上传；重试补齐（复审⑫）", async () => {
+    const actual = await vi.importActual<
+      typeof import("@/features/notes/render-note.ts")
+    >("@/features/notes/render-note.ts");
+    // 真遍历骨架 + 假渲染（jsdom 无 canvas；被测=计划顺序/中止/共享缓存语义）
+    let renderedCount = 0;
+    mockedForEach.mockImplementation(async (doc, spec, visit, opts) =>
+      actual.forEachRenderedNotePage(doc, spec, visit, {
+        ...(opts?.boxes ? { boxes: opts.boxes } : {}),
+        renderPage: async (_doc2, page) => {
+          renderedCount += 1;
+          return { ...page, blob: new Blob([new Uint8Array([1])]) };
+        },
+      }),
+    );
+    // 长稿：分析图 3 页 + 缩略图 = 4 槽位
+    const tall = noteDocSchema.parse({
+      version: 1,
+      ink: {
+        width: 1000,
+        strokes: [
+          {
+            tool: "pen",
+            color: "#1f2328",
+            weight: 4,
+            points: [
+              { x: 100, y: 60, p: 0.5, t: 0 },
+              { x: 500, y: 1500, p: 0.5, t: 40 },
+              { x: 900, y: 2950, p: 0.5, t: 80 },
+            ],
+          },
+        ],
+      },
+      paperHeightLogical: 3000,
+    });
+    // 上传：缩略图 ✓ → 分析 p0 ✓ → 分析 p1 ✗（第 3 个上传调用失败）
+    mockedPost
+      .mockResolvedValueOnce(receiptOf("thumbnail", 0))
+      .mockResolvedValueOnce(receiptOf("analysis", 0))
+      .mockRejectedValueOnce(new Error("p1 上传失败"));
+    await expect(
+      syncNoteImages({ role: "student", versionId: VERSION_ID, doc: tall }),
+    ).rejects.toThrow("p1 上传失败");
+    // 中止：分析 p2 不再渲染/上传（渲染 3 次 = 缩略图 + p0 + p1；上传 3 次）
+    expect(renderedCount).toBe(3);
+    expect(mockedPost.mock.calls.length).toBe(3);
+    // 已传槽位保留、重试整链重入补齐全部 4 槽位（幂等 upsert）
+    mockedPost.mockImplementation(async (_role, _vid, _png, meta) =>
+      receiptOf(meta.spec, meta.pageIndex),
+    );
+    const metas = await syncNoteImages({
+      role: "student",
+      versionId: VERSION_ID,
+      doc: tall,
+    });
+    expect(metas.map((m) => [m.spec, m.pageIndex])).toEqual([
+      ["thumbnail", 0],
+      ["analysis", 0],
+      ["analysis", 1],
+      ["analysis", 2],
+    ]);
+    expect(renderedCount).toBe(7); // 3 + 重试 4
   });
 
   it("失败后重试整链重入成功（幂等 upsert 语义由服务端保证）", async () => {

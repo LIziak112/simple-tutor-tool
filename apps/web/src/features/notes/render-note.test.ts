@@ -346,6 +346,19 @@ describe("sliceCropRects：切片顺序/重叠/末页", () => {
     }
   });
 
+  it("守卫：重叠 ≥ 片高上限 → 拒绝（参数化注入，复审⑫）", () => {
+    expect(() => sliceCropRects(full(300), { maxH: 40, overlap: 40 })).toThrow(
+      /重叠.*必须小于片高/,
+    );
+    expect(() => sliceCropRects(full(300), { maxH: 40, overlap: 41 })).toThrow(
+      /重叠.*必须小于片高/,
+    );
+    // 重叠小于片高即合法推进（步进 = maxH-overlap）
+    expect(sliceCropRects(full(100), { maxH: 60, overlap: 20 })).toHaveLength(
+      2,
+    );
+  });
+
   it("非零起点裁剪区同样按重叠推进", () => {
     const pages = sliceCropRects({ x: 0, y: 720, width: 1000, height: 2280 });
     // y=720: [720,2120]；推进 2120-40=2080: [2080,3000]（触底收尾）
@@ -377,6 +390,26 @@ describe("页面计划：像素尺寸与页号", () => {
       pixelWidth: THUMBNAIL_PIXEL_WIDTH,
       pixelHeight: 384,
     });
+  });
+
+  it("纸高 1 的极矮纸：像素高钳制到 ≥1（复审⑫）", () => {
+    const tiny = docOf([], { paperHeightLogical: 1 });
+    const thumb = planThumbnailPage(tiny);
+    expect(thumb.pixelHeight).toBe(1); // round(1×480/1000)=0 → 钳制 1
+    expect(planAnalysisPages(tiny)[0]?.pixelHeight).toBe(1);
+  });
+
+  it("笔迹压在纸顶 y=0：半线宽上探为负，y0 钳制 0 且高度合法（复审⑫）", () => {
+    const d = docOf([
+      stroke([
+        [100, 0],
+        [900, 20],
+      ]),
+    ]);
+    const crop = planAnalysisCrop(d);
+    expect(crop.y).toBe(0);
+    expect(crop.height).toBeGreaterThanOrEqual(1);
+    expect(crop.y + crop.height).toBeLessThanOrEqual(800);
   });
 
   it("分析图：pageIndex 从 0 递增；比例 1:1（像素高=逻辑高）；长稿多页", () => {
