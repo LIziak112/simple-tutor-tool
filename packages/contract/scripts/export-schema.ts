@@ -70,9 +70,15 @@ async function writeSchema(
 ): Promise<void> {
   const text = `${JSON.stringify(schema, null, 2)}\n`;
   await writeFile(join(outDir, filename), text, "utf8");
-  console.log(`已导出${label}到 ${join(outDir, filename)}（${text.length} 字符）`);
+  console.log(
+    `已导出${label}到 ${join(outDir, filename)}（${text.length} 字符）`,
+  );
 }
-await writeSchema("learning-pack.json", "学情数据包契约", learningPackJsonSchema());
+await writeSchema(
+  "learning-pack.json",
+  "学情数据包契约",
+  learningPackJsonSchema(),
+);
 await writeSchema(
   "learning-pack-v2.json",
   "学情数据包 v2 契约",
