@@ -698,3 +698,41 @@ describe("note-store：写路径增量维护与视图标量物化（T6R.9 复审
     warn.mockRestore();
   });
 });
+
+describe("note-store：reviveRecord 坏形防御（T6R.9 复审③）", () => {
+  /** 直接向后端塞坏形记录（模拟历史损坏/异版本写入） */
+  async function seedCorrupt(backend: NoteStoreBackend): Promise<void> {
+    await backend.set(noteKeyOf(SESSION_A, SCOPE), {
+      doc: { version: 1, ink: { width: 1000, strokes: "not-an-array" } },
+      pending: null,
+      baseRevision: 5,
+    });
+  }
+
+  it("挂载路径：坏形弃壳返 null，不抛错；下次写入重建干净记录", async () => {
+    const shared = memoryNoteBackend();
+    await seedCorrupt(shared);
+    installNoteBackend(shared);
+    expect(await getNoteRecord(SESSION_A, SCOPE)).toBeNull(); // 不抛、不当存在
+    writeNoteDoc(SESSION_A, SCOPE, DOC_A); // 重建
+    const record = await recordOf(SESSION_A, SCOPE);
+    expect(record.baseRevision).toBe(0); // 坏壳的 baseRevision 未被采信
+    expect(record.doc.ink.strokes.length).toBe(1);
+  });
+
+  it("strokes 元素缺 points 数组同样弃壳", async () => {
+    const shared = memoryNoteBackend();
+    await shared.set(noteKeyOf(SESSION_A, SCOPE), {
+      doc: { version: 1, ink: { width: 1000, strokes: [{ tool: "pen" }] } },
+    });
+    installNoteBackend(shared);
+    expect(await getNoteRecord(SESSION_A, SCOPE)).toBeNull();
+  });
+
+  it("bind 扫描路径：坏形不抛、不进待传清单（getAll 原料直入 revive）", async () => {
+    const shared = memoryNoteBackend();
+    await seedCorrupt(shared);
+    installNoteBackend(shared);
+    await expect(listPendingNotes(SESSION_A)).resolves.toEqual([]);
+  });
+});

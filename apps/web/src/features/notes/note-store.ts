@@ -237,11 +237,36 @@ function freshRecord(): NoteLocalRecord {
   };
 }
 
+/** ink/strokes 形态校验（T6R.9 复审③）：坏形（历史损坏/异版本写入）弃壳
+ * 返 null 重建空稿——曾在挂载/bind 扫描（getAll 原料直入）路径抛错击穿
+ * 整个恢复链；只查结构不查数值（坐标/点数由写入与服务端边界管辖）。 */
+function inkShapeOk(ink: unknown): boolean {
+  if (typeof ink !== "object" || ink === null) return false;
+  const strokes = (ink as { strokes?: unknown }).strokes;
+  if (!Array.isArray(strokes)) return false;
+  for (const stroke of strokes) {
+    if (
+      typeof stroke !== "object" ||
+      stroke === null ||
+      !Array.isArray((stroke as { points?: unknown }).points)
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
 /** 读取旧记录的防御性归一（前向兼容：缺字段补默认，形态错则弃重建空稿壳） */
 function reviveRecord(raw: unknown): NoteLocalRecord | null {
   if (typeof raw !== "object" || raw === null) return null;
   const r = raw as Partial<NoteLocalRecord>;
-  if (r.doc === undefined || typeof r.doc !== "object") return null;
+  if (
+    r.doc === undefined ||
+    typeof r.doc !== "object" ||
+    !inkShapeOk((r.doc as { ink?: unknown }).ink)
+  ) {
+    return null;
+  }
   const base = freshRecord();
   return {
     ...base,
