@@ -1,0 +1,661 @@
+/**
+ * 会话级草稿同步队列（T6R.8，方案 §6.2「服务端并发」的客户端侧）：
+ * 每份笔记的待传版本经「2s 停笔防抖 + 10s 最大等待」调度后进入全局串行
+ * 上传队列（复用 lib/serial-task-queue 的 SerialTaskQueue——与图片派生
+ * 队列同骨架，不重写；全局串行 ⇒ 同一文档天然单在途）。
+ *
+ * 单文档语义（方案 §6.2）：上传固定 pending 的不可变快照（mutationId +
+ * 正文整体替换）；**A 的回执只确认 A**——A 在途期间写入 B 会把 pending
+ * 换成 B 的新 mutationId，A 回执落地时 mutationId 不匹配则只推进
+ * baseRevision、不清 B（B 仍 dirty，随后带新 baseRevision 上传）。
+ *
+ * 重试与幂等：网络/服务端失败按退避重试（1s 起倍增、上限 60s），重试
+ * **复用同一 mutationId 与同一正文快照**——服务端幂等命中返回原回执
+ * （丢回执重试安全，含跨页面重载：pending 连同 mutationId 已原子落盘）。
+ *
+ * 终态（停止自动重试、本地稿保留）：
+ * - denied(access)：403/404（访问权失去）与 409 ALREADY_SUBMITTED
+ *   （交卷后迟到 PUT）——粘住，新写也不复活；
+ * - denied(content)：400 NOTE_VALIDATION_FAILED / 413 NOTE_LIMIT_EXCEEDED
+ *   ——内容被拒，新内容（新 pending）重新可传（方案 §7「矢量超限保留本机」）；
+ * - conflict：409 NOTE_REVISION_CONFLICT（附 _current 摘要；多标签页/跨
+ *   设备 head 已进同机制）与 NOTE_MUTATION_MISMATCH——保留两份副本
+ *   （云端摘要 + 本地稿），等用户裁决（resolve 入口在本模块，UI 在 T6R.9）。
+ *
+ * 会话生命周期（方案 §6.1）：模块级单例，组件只订阅（收起题卡/路由切换
+ * 后作业照常完成，参照 image-sync 单例形态）；bindNoteSession 绑定
+ * {origin, studentId} 并扫描本地待传补传（重进恢复）；切账号/登出
+ * 立即使旧会话失效——epoch 代际号守卫一切异步续体（迟到回执丢弃）、
+ * 中止在途请求（AbortController）、清除计时器与监听；新账号按键前缀
+ * 隔离，不读、不展示、不续传旧账号数据（未同步内容不静默删除）。
+ *
+ * 恢复在线（window online）与可见（visibilitychange→visible）主动补传：
+ * 跳过退避计时器立即 due——iPad 后台计时不可靠，靠事件驱动恢复。
+ *
+ * 不承诺「最多丢 2 秒」：防抖/最大等待是调度参数不是丢失窗口上限
+ * （方案 §6.2）；杀后台只恢复已落盘事务（真机验收口径，T6R.14）。
+ */
+import type { NoteConflictSummary, NoteDocInput } from "@tutor/contract";
+import { noteConflictSummarySchema } from "@tutor/contract";
+import { gzipOrRaw } from "@/features/ink/gzip";
+import { parseNoteDocOrThrow } from "@/features/notes/note-fixtures";
+import {
+  ApiError,
+  fetchStudentNoteDocumentApi,
+  putNoteDocumentApi,
+} from "@/lib/api";
+import {
+  SerialTaskQueue,
+  type SerialTaskQueueStats,
+} from "@/lib/serial-task-queue.ts";
+import {
+  applyUploadConflict,
+  applyUploadDenied,
+  applyUploadReceipt,
+  listPendingNotes,
+  type NoteLocalRecord,
+  type NotePendingVersion,
+  type NoteScope,
+  type NoteSessionRef,
+  noteKeyOf,
+  notifyNoteStoreAll,
+  parseNoteKey,
+  peekNoteRecord,
+  resolveNoteConflict,
+  setUploading,
+  subscribeNoteStore,
+} from "./note-store.ts";
+
+// ---------- 调度常量（方案 §6.2 建议初值；非丢失窗口承诺） ----------
+
+/** 停笔防抖（毫秒）：最后一次写入后静默该时长才上传 */
+export const NOTE_SYNC_DEBOUNCE_MS = 2000;
+/** 最大等待（毫秒）：自脏周期起点（pending 从无到有）起算的强制上传点 */
+export const NOTE_SYNC_MAX_WAIT_MS = 10_000;
+/** 退避初值（毫秒），指数倍增 */
+export const NOTE_SYNC_BACKOFF_BASE_MS = 1000;
+/** 退避上限（毫秒） */
+export const NOTE_SYNC_BACKOFF_MAX_MS = 60_000;
+/**
+ * 单次 PUT 超时（毫秒，复审⑦）：上传走**全局串行队列**——一个请求挂死
+ * 整个会话的上传停摆；30s 覆盖弱网/大稿（gzip 后 ≤2MiB）仍留足余量。
+ * 超时按网络错误退避重试（同 mutationId 幂等重放安全）。AbortSignal.any
+ * 需 Safari 17.4+（本仓支持 16.4+），故手动桥接两会话信号。
+ */
+export const NOTE_SYNC_PUT_TIMEOUT_MS = 30_000;
+
+/**
+ * PUT 信号桥（复审⑦/⑬）：超时与会话中止汇入一个 AbortController。
+ * 超时 reason 用普通 Error（fetch 以 reason 拒绝 → callApi 落通用网络
+ * 文案 → 退避重试）；会话中止走默认 AbortError（身份保留 → 分诊丢弃）。
+ */
+function bridgePutSignal(sessionSignal: AbortSignal): {
+  signal: AbortSignal;
+  finish: () => void;
+} {
+  const controller = new AbortController();
+  const timer = setTimeout(() => {
+    controller.abort(new Error("草稿上传超时（30s）"));
+  }, NOTE_SYNC_PUT_TIMEOUT_MS);
+  const onSessionAbort = () => controller.abort();
+  sessionSignal.addEventListener("abort", onSessionAbort, { once: true });
+  return {
+    signal: controller.signal,
+    finish: () => {
+      clearTimeout(timer);
+      sessionSignal.removeEventListener("abort", onSessionAbort);
+    },
+  };
+}
+
+// ---------- 会话状态（模块级单例） ----------
+
+let currentSession: NoteSessionRef | null = null;
+/** 会话代际号：bind/reset 递增；一切异步续体据此丢弃旧会话结果 */
+let sessionEpoch = 0;
+let unsubscribeStore: (() => void) | null = null;
+
+/** 全局串行上传队列（与图片派生队列同骨架；串行 ⇒ 单文档单在途） */
+const uploadQueue = new SerialTaskQueue();
+/** 在途请求的中止器（账号切换/登出时 abort） */
+const controllers = new Map<string, AbortController>();
+/**
+ * gzip 字节缓存：按待传正文快照的对象引用 memo——退避重试复用同一
+ * pending.doc 引用（note-store 整体替换不就地改动），重复 gzip 直接命中；
+ * 新写入换新对象，旧缓存随引用失联自动失效（WeakMap 不阻回收）。
+ * 幂等要点同时成立：同引用 ⇒ 同字节 ⇒ 服务端同 hash。
+ */
+const gzipMemo = new WeakMap<object, Uint8Array<ArrayBuffer>>();
+
+interface DocScheduler {
+  debounce: ReturnType<typeof setTimeout> | null;
+  maxWait: ReturnType<typeof setTimeout> | null;
+  backoff: ReturnType<typeof setTimeout> | null;
+  /** 连续失败计数（退避指数）；新待传版本（新 mutationId）清零 */
+  failures: number;
+  /** 脏周期进行中（pending 从无到有时置位；清空后复位）——最大等待锚点 */
+  dirtyPeriod: boolean;
+  lastMutationId: string | null;
+  /** 已入队未开跑（防重复入队；开跑时复位——与计时器同宿主，复审⑩） */
+  queued: boolean;
+}
+
+const schedulers = new Map<string, DocScheduler>();
+
+function schedulerOf(key: string): DocScheduler {
+  let s = schedulers.get(key);
+  if (s === undefined) {
+    s = {
+      debounce: null,
+      maxWait: null,
+      backoff: null,
+      failures: 0,
+      dirtyPeriod: false,
+      lastMutationId: null,
+      queued: false,
+    };
+    schedulers.set(key, s);
+  }
+  return s;
+}
+
+function clearTimer(timer: ReturnType<typeof setTimeout> | null): void {
+  if (timer !== null) clearTimeout(timer);
+}
+
+/** 清某键全部计时器并结束脏周期（pending 清空/冲突/被拒/会话切换）。
+ * 三计时器全空且非在途/排队时回收条目（复审⑭）：后续通知经 schedulerOf
+ * 重建，failures/lastMutationId 随之归零——终态键不长期占驻。 */
+function clearTimers(key: string): void {
+  const s = schedulers.get(key);
+  if (s === undefined) return;
+  clearTimer(s.debounce);
+  clearTimer(s.maxWait);
+  clearTimer(s.backoff);
+  s.debounce = null;
+  s.maxWait = null;
+  s.backoff = null;
+  s.dirtyPeriod = false;
+  if (!s.queued && !controllers.has(key)) schedulers.delete(key);
+}
+
+function sameSession(a: NoteSessionRef, b: NoteSessionRef): boolean {
+  return a.origin === b.origin && a.studentId === b.studentId;
+}
+
+/** 记录是否可传（复审⑨：三处守卫共用谓词——动作留在调用点）。类型谓词
+ * 顺带收窄 pending 非空（runUpload 取快照不需再判空） */
+function uploadable(
+  record: NoteLocalRecord | null,
+): record is NoteLocalRecord & { pending: NotePendingVersion } {
+  return (
+    record !== null &&
+    record.pending !== null &&
+    record.conflict === null &&
+    record.denied === null
+  );
+}
+
+/** 键是否属于当前会话（是→返回解析出的 session+scope；否→null） */
+function keyInSession(
+  key: string,
+): { session: NoteSessionRef; scope: NoteScope } | null {
+  if (currentSession === null) return null;
+  const parsed = parseNoteKey(key);
+  if (parsed === null || !sameSession(currentSession, parsed.session)) {
+    return null;
+  }
+  return parsed;
+}
+
+// ---------- 上传执行 ----------
+
+/** 错误分诊：aborted（会话中止丢弃）/ conflict（留两份待裁决）/ denied（终态）/ retry（退避） */
+type PutVerdict =
+  | { kind: "aborted" }
+  | {
+      kind: "conflict";
+      /** MISMATCH 时为 null（服务端状态未知）；类型由契约壳推导（复审⑪） */
+      current: NoteConflictSummary["current"];
+      reason: string;
+    }
+  | { kind: "denied"; deniedKind: "access" | "content"; reason: string }
+  | { kind: "retry" };
+
+function classifyPutError(err: unknown): PutVerdict {
+  // 复审⑬：AbortError=主动中止（会话切换）——丢弃不重试不落状态。
+  // epoch 守卫已兜底大部分时序，这里把「身份」变成机制而非巧合；
+  // 超时中止以普通 Error 为 reason，不会落进本分支（走退避）
+  if (err instanceof Error && err.name === "AbortError") {
+    return { kind: "aborted" };
+  }
+  if (!(err instanceof ApiError)) return { kind: "retry" };
+  const { status, code, message } = err;
+  if (status === 409 && code === "NOTE_REVISION_CONFLICT") {
+    // 复审⑪：客户端形态由契约 noteConflictSummarySchema 真正管辖——
+    // 服务端壳外附加键 _current 适配为壳的 current（键名映射，形态校验
+    // 不变）；缺摘要是服务端契约违约，不当终态，退避重试可诊断
+    const parsed = noteConflictSummarySchema.safeParse({
+      current: err.extra?._current ?? null,
+    });
+    if (parsed.success && parsed.data.current !== null) {
+      return {
+        kind: "conflict",
+        current: parsed.data.current,
+        reason: message,
+      };
+    }
+    return { kind: "retry" };
+  }
+  if (status === 409 && code === "NOTE_MUTATION_MISMATCH") {
+    return {
+      kind: "conflict",
+      // 服务端状态未知（同 id 已对应不同正文）：无 _current 摘要可对齐
+      // （契约 noteConflictSummarySchema 的 null 形态）；keep-local 时
+      // store 会重铸 mutationId——同 id 异文重放必然再 MISMATCH
+      current: null,
+      reason: `${message}（同一上传标识已对应不同正文，请选择保留哪一份）`,
+    };
+  }
+  // 访问权/可写权永久失去（复审⑧合并分支）：403/404（含 NOTE_NOT_FOUND
+  // 等）、409 ALREADY_SUBMITTED（交卷后迟到 PUT）——粘住，本地稿保留
+  if (status === 403 || status === 404 || code === "ALREADY_SUBMITTED") {
+    return { kind: "denied", deniedKind: "access", reason: message };
+  }
+  // 内容被拒（该 pending 不可重试成功；新内容/修复后的新 pending 复活）：
+  // NOTE_VALIDATION_FAILED（正文形状）、NOTE_LIMIT_EXCEEDED（预算）、
+  // 400 VALIDATION_ERROR（统一壳的元信息校验——客户端组装缺陷，修复后
+  // 随新 pending 复活，不粘账号）
+  if (
+    code === "NOTE_VALIDATION_FAILED" ||
+    code === "NOTE_LIMIT_EXCEEDED" ||
+    (status === 400 && code === "VALIDATION_ERROR")
+  ) {
+    return { kind: "denied", deniedKind: "content", reason: message };
+  }
+  // 401 UNAUTHORIZED：会话过期——可重试退避（未登录期间低频重试）；复活
+  // 路径=重新登录后接入层 bindNoteSession 重扫本地待传（flush/在线事件
+  // 同径）。5xx/429：瞬时故障，退避。
+  return { kind: "retry" };
+}
+
+/**
+ * 单次上传作业：读当前 pending（入队后开跑前的最新值——排队期间的更新
+ * 自然并入；已被回执清空则空跑跳过）。全程 epoch 守卫：旧会话的续体
+ * （gzip 完成、回执/错误到达）一律丢弃，不落地任何状态。
+ */
+async function runUpload(
+  key: string,
+  session: NoteSessionRef,
+  scope: NoteScope,
+  epoch: number,
+): Promise<void> {
+  const stale = () => epoch !== sessionEpoch || !sameSessionSafe(session);
+  if (stale()) return; // 复审⑨：入口即早退——旧会话作业不做任何副作用
+  const record = peekNoteRecord(session, scope);
+  if (!uploadable(record)) return; // 无待传/被冲突或终态阻塞：空跑跳过
+  const { mutationId, doc } = record.pending;
+  const baseRevision = record.baseRevision;
+  const controller = new AbortController();
+  controllers.set(key, controller);
+  setUploading(session, scope, true);
+  const put = bridgePutSignal(controller.signal);
+  try {
+    // 同引用直接复用字节（退避重试不重复 gzip）；重试序列化同一对象 ⇒
+    // 相同字节 ⇒ 服务端同 hash（幂等）
+    let bytes = gzipMemo.get(doc);
+    if (bytes === undefined) {
+      bytes = await gzipOrRaw(JSON.stringify(doc));
+      gzipMemo.set(doc, bytes);
+    }
+    if (stale()) return;
+    const receipt = await putNoteDocumentApi(
+      scope.attemptId,
+      scope.questionId,
+      new Blob([bytes], { type: "application/gzip" }),
+      { baseRevision, mutationId },
+      put.signal,
+    );
+    if (stale()) return; // 迟到回执丢弃（不推进旧记录）
+    await applyUploadReceipt(session, scope, mutationId, receipt);
+  } catch (err) {
+    if (stale()) return;
+    const verdict = classifyPutError(err);
+    if (verdict.kind === "aborted") return; // 主动中止：丢弃（复审⑬）
+    if (verdict.kind === "conflict") {
+      await applyUploadConflict(
+        session,
+        scope,
+        verdict.current,
+        verdict.reason,
+      );
+      return; // 计时器由 store 通知路径清理（conflict 阻塞再调度）
+    }
+    if (verdict.kind === "denied") {
+      await applyUploadDenied(
+        session,
+        scope,
+        verdict.deniedKind,
+        verdict.reason,
+      );
+      return;
+    }
+    // 退避重试（网络/服务端瞬时故障；同 mutationId 幂等重放）
+    const s = schedulerOf(key);
+    s.failures += 1;
+    const delay = Math.min(
+      NOTE_SYNC_BACKOFF_BASE_MS * 2 ** (s.failures - 1),
+      NOTE_SYNC_BACKOFF_MAX_MS,
+    );
+    clearTimer(s.backoff);
+    s.backoff = setTimeout(() => {
+      s.backoff = null;
+      due(key);
+    }, delay);
+  } finally {
+    put.finish(); // 超时计时器与监听随作业结束拆除
+    controllers.delete(key);
+    // 复审⑥：本次上传窗口结束——重锚脏周期（下一轮内容变化经
+    // handleRecordChanged 锚定新的最大等待），持续书写不会只等一次强刷
+    const s = schedulers.get(key);
+    if (s !== undefined) {
+      clearTimer(s.maxWait);
+      s.maxWait = null;
+      s.dirtyPeriod = false;
+    }
+    setUploading(session, scope, false); // 通知触发完成后的重编排（③的新写路径）
+  }
+}
+
+function sameSessionSafe(session: NoteSessionRef): boolean {
+  return currentSession !== null && sameSession(currentSession, session);
+}
+
+/** 到期触发：全局串行队列尾追加一次上传（排队期间的重复 due 去重） */
+function due(key: string): void {
+  const inSession = keyInSession(key);
+  if (inSession === null) return;
+  const s = schedulerOf(key);
+  if (s.queued) return;
+  s.queued = true;
+  // 条目可能经 clearTimers 回收重建（复审⑭）——把即将上传的 pending 代际
+  // 登记为 lastMutationId：完成后的同内容通知不会误判为「新写」（否则
+  // 会清退避、挂防抖——flush/强刷触发的上传失败会被击穿）
+  const record = peekNoteRecord(inSession.session, inSession.scope);
+  if (s.lastMutationId === null && record?.pending != null) {
+    s.lastMutationId = record.pending.mutationId;
+  }
+  const { session, scope } = inSession;
+  const epoch = sessionEpoch;
+  uploadQueue
+    .run(() => {
+      s.queued = false;
+      return runUpload(key, session, scope, epoch);
+    })
+    .catch((err: unknown) => {
+      console.warn("草稿上传作业异常", err); // runUpload 理论不抛；兜底不静默
+    });
+}
+
+// ---------- 记录变更 → 计时器编排 ----------
+
+/**
+ * store 通知入口（复审③重构）：
+ * - 不可传（无 pending/冲突/被拒）→ 清计时器；
+ * - **在途（controllers.has）→ 忽略**——完成路径（finally 的重锚 +
+ *   setUploading 通知）负责后续编排，在途通知不重置任何计时器；
+ * - **仅「pending 内容变化（新 mutationId）」武装/重置 2s 防抖**并锚定
+ *   最大等待（脏周期起点）——uploading 翻转、落盘完成（local saved）等
+ *   同内容通知一律不动计时器，否则防抖每 2s 重挂会击穿退避节奏；
+ * - 新 mutationId 重置退避计数——失败重试的节奏不惩罚新内容。
+ */
+function handleRecordChanged(key: string): void {
+  if (key === "*") return;
+  const inSession = keyInSession(key);
+  if (inSession === null) return;
+  const { session, scope } = inSession;
+  const record = peekNoteRecord(session, scope);
+  const s = schedulerOf(key);
+  if (!uploadable(record)) {
+    clearTimers(key);
+    return;
+  }
+  if (controllers.has(key)) return; // 在途：完成路径接管
+  const mutationId = record.pending.mutationId;
+  if (mutationId === s.lastMutationId) return; // 非内容变化：不动计时器
+  s.lastMutationId = mutationId;
+  s.failures = 0;
+  clearTimer(s.backoff);
+  s.backoff = null;
+  // 停笔防抖：每次内容写入后移
+  clearTimer(s.debounce);
+  s.debounce = setTimeout(() => {
+    s.debounce = null;
+    due(key);
+  }, NOTE_SYNC_DEBOUNCE_MS);
+  // 最大等待：自脏周期起点起算一次，持续书写不推迟；上传完成（finally）
+  // 重锚下一窗口（复审⑥）
+  if (!s.dirtyPeriod) {
+    s.dirtyPeriod = true;
+    s.maxWait = setTimeout(() => {
+      s.maxWait = null;
+      clearTimer(s.backoff); // 强制冲刷优于退避等待
+      s.backoff = null;
+      due(key);
+    }, NOTE_SYNC_MAX_WAIT_MS);
+  }
+}
+
+/** 恢复在线/可见：跳过一切计时器立即补传当前会话全部待传 */
+function triggerImmediateAll(): void {
+  // 调度器（schedulers）覆盖会话内全部待传键：写入时经 store 通知入编，
+  // 重进时经 bind 的 listPendingNotes 扫描入编；其他标签页此后写入本会话
+  // IDB 键的场景由下一次 bind/写入通知兜底——不在此重扫（重扫会给刚
+  // due 的键重挂防抖，失败场景下绕过退避节奏）
+  for (const key of [...schedulers.keys()]) {
+    const inSession = keyInSession(key);
+    if (inSession === null) continue;
+    if (!uploadable(peekNoteRecord(inSession.session, inSession.scope))) {
+      continue;
+    }
+    clearTimers(key);
+    due(key);
+  }
+}
+
+/** 扫描当前会话待传清单并逐键编排（bind 补传与 online 兜底共用） */
+async function scanAndSchedule(): Promise<void> {
+  if (currentSession === null) return;
+  const pending = await listPendingNotes(currentSession);
+  for (const scope of pending) {
+    handleRecordChanged(noteKeyOf(currentSession, scope));
+  }
+}
+
+// ---------- 环境监听 ----------
+
+function onOnline(): void {
+  triggerImmediateAll();
+}
+
+function onVisibility(): void {
+  if (typeof document === "undefined") return;
+  if (document.visibilityState === "visible") triggerImmediateAll();
+}
+
+// ---------- 会话绑定/解绑 ----------
+
+function teardownSession(): void {
+  sessionEpoch += 1;
+  for (const controller of controllers.values()) controller.abort();
+  controllers.clear();
+  for (const key of [...schedulers.keys()]) clearTimers(key);
+  schedulers.clear(); // queued 标记随之消亡（复审⑩：并入调度器宿主）
+  unsubscribeStore?.();
+  unsubscribeStore = null;
+  if (typeof window !== "undefined") {
+    window.removeEventListener("online", onOnline);
+  }
+  if (typeof document !== "undefined") {
+    document.removeEventListener("visibilitychange", onVisibility);
+  }
+}
+
+/**
+ * 绑定会话（登录/进入学生端时由接入层调用，T6R.9 接线；生产 origin 传
+ * window.location.origin）。重复绑定同一会话为 no-op；切换会话即旧会话
+ * 全部失效（中止在途、清计时器、丢迟到回执）。绑定后扫描本地待传——
+ * 重进/重载场景的补传入口。
+ */
+export function bindNoteSession(session: NoteSessionRef): void {
+  if (currentSession !== null && sameSession(currentSession, session)) return;
+  teardownSession();
+  currentSession = session;
+  unsubscribeStore = subscribeNoteStore(handleRecordChanged);
+  if (typeof window !== "undefined") {
+    window.addEventListener("online", onOnline);
+  }
+  if (typeof document !== "undefined") {
+    document.addEventListener("visibilitychange", onVisibility);
+  }
+  void scanAndSchedule();
+  notifyNoteStoreAll(); // 钩子从 standby 转有数据
+}
+
+/**
+ * 登出/显式失效会话：同切换的中止与清理，但不绑新会话。本地未同步内容
+ * **不删除**（方案 §6.1：旧账号重新登录才可恢复）。
+ */
+export function resetNoteSession(): void {
+  if (currentSession === null && unsubscribeStore === null) {
+    sessionEpoch += 1; // 未绑定也无监听：仅推进代际使一切续体过期
+    return;
+  }
+  teardownSession();
+  currentSession = null;
+  notifyNoteStoreAll();
+}
+
+/** 当前绑定会话（钩子 standby 判定用） */
+export function currentNoteSession(): NoteSessionRef | null {
+  return currentSession;
+}
+
+/** flushNoteSync 的逐键结局（T6R.10 交卷判定口径） */
+export type NoteFlushOutcome =
+  | "synced" // 回执落地，无待传
+  | "conflict" // 冲突待裁决（本地稿保留）
+  | "denied" // 终态被拒（本地稿保留）
+  | "backoff" // 网络类失败，退避重试中
+  | "dirty"; // 尚有待传（理论上哨兵后仅出现在并发写入窗口）
+
+/** 结果摘要的键简：attempt:question:phase（同 flush 语境内可读定位） */
+function flushKeyOf(scope: NoteScope): string {
+  return `${scope.attemptId}:${scope.questionId}:${scope.phase}`;
+}
+
+/**
+ * 立即补传当前会话全部待传（交卷前追平最终矢量/切后台尽力刷新用，
+ * T6R.10/T6R.9 调用）。等待已入队上传完成后返回**逐键结果摘要**
+ * （复审④）：T6R.10 据此判定可交卷 / 需用户处理冲突或被拒 / 退避重试。
+ * 不在本轮清单内、flush 期间新写入的键不出现在摘要里（下一轮覆盖）。
+ */
+export async function flushNoteSync(): Promise<
+  Record<string, NoteFlushOutcome>
+> {
+  const results: Record<string, NoteFlushOutcome> = {};
+  if (currentSession === null) return results;
+  const pending = await listPendingNotes(currentSession);
+  for (const scope of pending) {
+    const key = noteKeyOf(currentSession, scope);
+    clearTimers(key);
+    due(key);
+  }
+  // 哨兵作业：串行队列中排在全部上传之后，跑完即「已追平到此刻」
+  await uploadQueue.run(async () => undefined);
+  // 摘要取哨兵后的当前事实（denied/conflict 优先，退避中的键如实报）
+  for (const scope of pending) {
+    const record = peekNoteRecord(currentSession, scope);
+    if (record === null) continue;
+    const key = noteKeyOf(currentSession, scope);
+    const scheduler = schedulers.get(key);
+    const backoff = scheduler?.backoff ?? null;
+    results[flushKeyOf(scope)] =
+      record.denied !== null
+        ? "denied"
+        : record.conflict !== null
+          ? "conflict"
+          : record.pending === null
+            ? "synced"
+            : backoff !== null
+              ? "backoff"
+              : "dirty";
+  }
+  return results;
+}
+
+// ---------- 冲突裁决（T6R.9 UI 调用；两份副本的数据出口） ----------
+
+/**
+ * 保留本地：有云端摘要（REVISION_CONFLICT）时对齐冲突摘要里的云端
+ * revision、pending 原样（同 mutationId 重放——被拒从未落库，干净 CAS
+ * 写）；无摘要（MISMATCH）时 store 重铸 mutationId。随后立即上传。
+ */
+export async function resolveNoteConflictKeepLocal(
+  session: NoteSessionRef,
+  scope: NoteScope,
+): Promise<void> {
+  await resolveNoteConflict(session, scope, { keep: "local" });
+  if (sameSessionSafe(session)) {
+    const key = noteKeyOf(session, scope);
+    clearTimers(key);
+    due(key);
+  }
+}
+
+/**
+ * 保留云端：按冲突摘要拉取云端正文（物化后）为工作稿，清 pending——
+ * 云端内容即最终内容，不再上传。云端无版本可读（空态/数据回退/MISMATCH
+ * 无摘要）时明确报错，不静默丢本地。
+ */
+export async function resolveNoteConflictKeepCloud(
+  session: NoteSessionRef,
+  scope: NoteScope,
+): Promise<void> {
+  const record = peekNoteRecord(session, scope);
+  if (record?.conflict == null) return;
+  const versionId = record.conflict.current?.versionId;
+  if (versionId === null || versionId === undefined) {
+    throw new Error(
+      "云端没有可读取的版本（可能为空稿、数据回退或服务端状态未知），请选择保留本机内容",
+    );
+  }
+  // 复审⑤：fetch 前快照 pending 幂等键（record 是活引用，await 后读到的
+  // 已是窗口内新写——快照必须先取）
+  const expectedMutationId = record.pending?.mutationId;
+  const raw = await fetchStudentNoteDocumentApi(versionId);
+  const cloudDoc = parseNoteDocOrThrow(
+    raw,
+    "云端草稿正文",
+    "，无法保留云端，请选择保留本机内容",
+  );
+  await resolveNoteConflict(session, scope, {
+    keep: "cloud",
+    doc: cloudDoc satisfies NoteDocInput,
+    // 拉取期间的窗口快照——pending 已换新则新写胜出（store 内守卫）；
+    // 条件展开适配 exactOptionalPropertyTypes（不传≠传 undefined）
+    ...(expectedMutationId !== undefined ? { expectedMutationId } : {}),
+  });
+}
+
+// ---------- 诊断 ----------
+
+/** 上传队列瞬时状态（诊断/状态展示轮询用） */
+export function noteSyncQueueStats(): SerialTaskQueueStats {
+  return uploadQueue.stats();
+}
+
+/** 当前会话已编排（有计时器或待传）的键数（诊断用） */
+export function noteSyncScheduledCount(): number {
+  return schedulers.size;
+}

@@ -16,6 +16,25 @@ import {
   INK_PEN_COLORS,
 } from "@/features/ink/engine/types.ts";
 
+/**
+ * 严格解析并物化 NoteDoc（缺省高度/背景补默认；读入口径同生产）。
+ * 形态非法时抛中文错误（首条 issue 消息），不静默跳过——note-store 播种、
+ * note-sync keepCloud、image-sync 补图恢复三处共用（T6R.8 复审⑭收敛）。
+ * @param subject 错误文案主语（如「云端草稿正文」）；hint 追加指引尾注
+ */
+export function parseNoteDocOrThrow(
+  raw: unknown,
+  subject = "草稿正文",
+  hint = "",
+): NoteDoc {
+  const parsed = noteDocSchema.safeParse(raw);
+  if (!parsed.success) {
+    const first = parsed.error.issues[0]?.message ?? "形状错误";
+    throw new Error(`${subject}损坏或版本不兼容：${first}${hint}`);
+  }
+  return parsed.data;
+}
+
 /** 长稿夹具纸高：直接取契约上限值（单一来源，不另写 3000 字面量） */
 export const TALL_PAPER_HEIGHT = NOTE_PAPER_HEIGHT_MAX;
 

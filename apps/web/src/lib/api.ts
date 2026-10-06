@@ -77,6 +77,8 @@ import {
   type NoteHeadData,
   type NoteImageMeta,
   type NoteImageUploadMeta,
+  type NoteUploadMeta,
+  type NoteVersionReceipt,
   type PendingMarkListData,
   type PublicConfigData,
   type QuestionDetail,
@@ -185,7 +187,11 @@ async function callApi<TData>(fn: () => Promise<Response>): Promise<TData> {
   let res: Response;
   try {
     res = await fn();
-  } catch {
+  } catch (err) {
+    // 中止身份保留（T6R.8 复审⑬）：AbortError 原样上抛——调用方（note-sync）
+    // 据此区分「会话切换主动中止（丢弃）」与网络错误（退避）；其余失败
+    // 归并中文网络文案
+    if (err instanceof Error && err.name === "AbortError") throw err;
     throw new Error(
       "连不上服务器，请确认后端已启动（pnpm --filter server dev）后重试",
     );
@@ -1154,6 +1160,50 @@ export function postNoteImageApi(
       {
         method: "POST",
         body: form,
+      },
+    ),
+  );
+}
+
+// ---------- T6R.8：草稿正文上传（PUT notes，note-sync 队列消费） ----------
+
+/**
+ * 草稿正文上传（T6R.8；PUT /api/student/attempts/:id/notes/:qid，服务端
+ * T6R.4 落地）：multipart = body 文件（gzip 后或原始 JSON 的 NoteDoc）+
+ * baseRevision/mutationId 十进制串字段（与服务端 parseBody + strictFormInt
+ * 口径对应；契约 noteUploadMetaSchema）。返回 noteVersionReceipt（CAS 成功
+ * 或幂等命中）。
+ *
+ * 失败形态（note-sync 据此分流）：
+ * - 409 NOTE_REVISION_CONFLICT：extra._current 携带当前版本摘要
+ *   （noteRevisionConflictCurrentSchema）——保留本地、进 conflict 态；
+ * - 403/404 / 409 ALREADY_SUBMITTED：访问权终态（denied，停自动重试）；
+ * - 400 NOTE_VALIDATION_FAILED / 413 NOTE_LIMIT_EXCEEDED：内容被拒
+ *   （保留本地，pending 终态、新内容重新可传）；
+ * - 网络错误抛中文 Error。
+ * hc RPC 对 multipart 路由推断不出 form 入参——原生 fetch 同口径
+ * （postNoteImageApi）；signal 供 note-sync 账号切换中止旧会话在途请求。
+ */
+export function putNoteDocumentApi(
+  attemptId: string,
+  questionId: string,
+  body: Blob,
+  meta: NoteUploadMeta,
+  signal?: AbortSignal,
+): Promise<NoteVersionReceipt> {
+  const form = new FormData();
+  form.append("body", body, "body.json.gz");
+  form.append("baseRevision", String(meta.baseRevision));
+  form.append("mutationId", meta.mutationId);
+  return callApi(() =>
+    fetch(
+      `/api/student/attempts/${encodeURIComponent(attemptId)}/notes/${encodeURIComponent(questionId)}`,
+      {
+        method: "PUT",
+        body: form,
+        // RequestInit.signal 类型为 AbortSignal | null（非 undefined——
+        // exactOptionalPropertyTypes 口径；复审⑭去冗余展开）
+        signal: signal ?? null,
       },
     ),
   );

@@ -23,19 +23,19 @@
  * 方案页数变少时，旧的高页码槽位会残留（不会被本链路清除）；「完整重建 =
  * 替换整个槽位集」需要服务端槽位集替换语义，留后续任务裁定，不在本单扩。
  */
-import {
-  type NoteDoc,
-  type NoteImageMeta,
-  type NoteImageSpec,
-  noteDocSchema,
-} from "@tutor/contract";
+import type { NoteDoc, NoteImageMeta, NoteImageSpec } from "@tutor/contract";
 import { paddedStrokeBoxesOf } from "@/features/ink/engine/bounds.ts";
+import { parseNoteDocOrThrow } from "@/features/notes/note-fixtures";
 import {
   fetchStudentNoteDocumentApi,
   fetchTeacherNoteDocumentApi,
   type NoteImageRole,
   postNoteImageApi,
 } from "@/lib/api";
+import {
+  SerialTaskQueue,
+  type SerialTaskQueueStats,
+} from "@/lib/serial-task-queue.ts";
 import {
   forEachRenderedNotePage,
   noteImageUploadMetaOf,
@@ -44,62 +44,6 @@ import {
 } from "./render-note.ts";
 
 // ---------- 串行队列 ----------
-
-/** 队列瞬时状态（诊断/状态展示轮询用） */
-export interface NoteImageQueueStats {
-  /** 在途作业数（0 或 1——串行约束） */
-  active: number;
-  /** 排队等待数 */
-  queued: number;
-  /** 最近一次作业失败的错误文案；null = 无失败记录 */
-  lastError: string | null;
-}
-
-/**
- * 串行异步任务队列：任务按入队顺序逐个执行（前一任务的成败都不阻塞后一
- * 任务——失败不毒化）。内部链吞掉 rejection 只记录文案；对调用方返回的
- * Promise 保持原始拒绝（不吞错）。导出供测试与未来多队列场景构造独立实例；
- * 运行时图片派生走下方模块级单例。
- */
-export class SerialTaskQueue {
-  #tail: Promise<unknown> = Promise.resolve();
-  #active = 0;
-  #queued = 0;
-  #lastError: string | null = null;
-
-  run<T>(task: () => Promise<T>): Promise<T> {
-    this.#queued += 1;
-    const start = (): Promise<T> => {
-      this.#queued -= 1;
-      this.#active += 1;
-      // Promise.resolve().then(task)：task 同步抛错也走 rejection 路径，
-      // .finally 必然执行——#active 不因同步 throw 泄漏（复审①）
-      return Promise.resolve()
-        .then(task)
-        .finally(() => {
-          this.#active -= 1;
-        });
-    };
-    // #tail 永远 resolve（吞掉前一个的失败）⇒ 后续任务照常执行
-    const result = this.#tail.then(start, start);
-    this.#tail = result.then(
-      () => undefined,
-      (err: unknown) => {
-        this.#lastError = err instanceof Error ? err.message : String(err);
-        return undefined;
-      },
-    );
-    return result;
-  }
-
-  stats(): NoteImageQueueStats {
-    return {
-      active: this.#active,
-      queued: this.#queued,
-      lastError: this.#lastError,
-    };
-  }
-}
 
 /** 图片派生全局队列（模块级单例：脱离组件生命周期，卸载不停摆） */
 let noteImageQueue = new SerialTaskQueue();
@@ -171,16 +115,14 @@ export async function recoverNoteImages(
     params.role === "student"
       ? await fetchStudentNoteDocumentApi(params.versionId)
       : await fetchTeacherNoteDocumentApi(params.versionId);
-  const parsed = noteDocSchema.safeParse(raw);
-  if (!parsed.success) {
-    const first = parsed.error.issues[0]?.message ?? "形状错误";
-    throw new Error(`草稿正文损坏或版本不兼容，无法重建派生图：${first}`);
-  }
-  return syncNoteImages({ ...params, doc: parsed.data });
+  // noteDocSchema 收窄（缺省高度/背景物化——不物化会 NaN，见契约
+  // NoteDocInput 注释；解析原语三处共用 note-fixtures.parseNoteDocOrThrow）
+  const doc = parseNoteDocOrThrow(raw, "草稿正文", "，无法重建派生图");
+  return syncNoteImages({ ...params, doc });
 }
 
 /** 队列状态快照（诊断/状态展示） */
-export function noteImageQueueStats(): NoteImageQueueStats {
+export function noteImageQueueStats(): SerialTaskQueueStats {
   return noteImageQueue.stats();
 }
 

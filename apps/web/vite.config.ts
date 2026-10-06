@@ -8,6 +8,9 @@ import { VitePWA } from "vite-plugin-pwa";
 import { pwaManifest } from "./src/lib/pwa-manifest";
 
 // Vite 配置：React + Tailwind v4（无 tailwind.config，样式全在 src/index.css）
+// 注意：web 测试从**仓库根**跑（根 vitest.config.ts 的 projects 定义
+// web=jsdom 环境；本文件不含 test 段）——在 apps/web 下直接跑 vitest 会
+// 缺 jsdom 环境与 @ 别名（T6R.8 复审⑮注记）。
 
 /** Excalidraw 静态资源的对外 URL 前缀（适配器设置 window.EXCALIDRAW_ASSET_PATH） */
 const EXCALIDRAW_ASSET_PREFIX = "/excalidraw-assets/";
