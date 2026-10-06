@@ -51,6 +51,7 @@ import {
   noteImageQueueStats,
   recoverNoteImages,
   resetNoteImageQueueForTest,
+  SerialTaskQueue,
   syncNoteImages,
 } from "@/features/notes/image-sync.ts";
 import type { RenderedNotePage } from "@/features/notes/render-note.ts";
@@ -218,6 +219,24 @@ describe("syncNoteImages：串行与全套槽位", () => {
     expect(order.length).toBe(4);
     // 第二个作业的上传全部在第一个之后
     expect(order.at(-1)).toBe("upload-4");
+  });
+});
+
+describe("SerialTaskQueue：同步抛错不泄漏 active（复审①）", () => {
+  it("task() 同步 throw → 拒绝、active 归零、lastError 记录、队列不毒化", async () => {
+    const queue = new SerialTaskQueue();
+    const boom = new Error("同步炸");
+    const task = (): Promise<never> => {
+      throw boom;
+    };
+    await expect(queue.run(task)).rejects.toThrow("同步炸");
+    const stats = queue.stats();
+    expect(stats.active).toBe(0);
+    expect(stats.queued).toBe(0);
+    expect(stats.lastError).toContain("同步炸");
+    // 不毒化：下一个任务照常执行
+    await expect(queue.run(async () => "ok" as const)).resolves.toBe("ok");
+    expect(queue.stats().active).toBe(0);
   });
 });
 

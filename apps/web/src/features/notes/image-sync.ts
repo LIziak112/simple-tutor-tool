@@ -56,9 +56,10 @@ export interface NoteImageQueueStats {
 /**
  * 串行异步任务队列：任务按入队顺序逐个执行（前一任务的成败都不阻塞后一
  * 任务——失败不毒化）。内部链吞掉 rejection 只记录文案；对调用方返回的
- * Promise 保持原始拒绝（不吞错）。
+ * Promise 保持原始拒绝（不吞错）。导出供测试与未来多队列场景构造独立实例；
+ * 运行时图片派生走下方模块级单例。
  */
-class SerialTaskQueue {
+export class SerialTaskQueue {
   #tail: Promise<unknown> = Promise.resolve();
   #active = 0;
   #queued = 0;
@@ -69,9 +70,13 @@ class SerialTaskQueue {
     const start = (): Promise<T> => {
       this.#queued -= 1;
       this.#active += 1;
-      return task().finally(() => {
-        this.#active -= 1;
-      });
+      // Promise.resolve().then(task)：task 同步抛错也走 rejection 路径，
+      // .finally 必然执行——#active 不因同步 throw 泄漏（复审①）
+      return Promise.resolve()
+        .then(task)
+        .finally(() => {
+          this.#active -= 1;
+        });
     };
     // #tail 永远 resolve（吞掉前一个的失败）⇒ 后续任务照常执行
     const result = this.#tail.then(start, start);

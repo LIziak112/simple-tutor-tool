@@ -356,14 +356,24 @@ async function renderNotePageWithBoxes(
   boxes: Array<StrokeBounds | null>,
 ): Promise<RenderedNotePage> {
   const { crop, pixelWidth, pixelHeight } = page;
+  // 入口防御（复审②）：坐标换算以 css==逻辑（crop.width=1000）为前提，非整宽
+  // 裁剪区会得到错误缩放；NaN/Infinity 像素维（比较运算对 NaN 恒 false，
+  // 会静默通过）与超防御上限一并在此拒绝
+  if (crop.width !== INK_LOGICAL_WIDTH) {
+    throw new Error(
+      `裁剪区宽度必须等于逻辑纸宽 ${INK_LOGICAL_WIDTH}（当前 ${crop.width}）：渲染器仅支持整宽页`,
+    );
+  }
   if (
+    !Number.isFinite(pixelWidth) ||
+    !Number.isFinite(pixelHeight) ||
     pixelWidth < 1 ||
     pixelHeight < 1 ||
     pixelWidth > NOTE_IMAGE_MAX_PIXEL_DIM ||
     pixelHeight > NOTE_IMAGE_MAX_PIXEL_DIM
   ) {
     throw new Error(
-      `像素维超出防御上限（${pixelWidth}×${pixelHeight}，上限 ${NOTE_IMAGE_MAX_PIXEL_DIM}）：拒绝渲染`,
+      `像素维不合法（${pixelWidth}×${pixelHeight}，NaN/Infinity 或超出防御上限 ${NOTE_IMAGE_MAX_PIXEL_DIM}）：拒绝渲染`,
     );
   }
   if (typeof document === "undefined") {

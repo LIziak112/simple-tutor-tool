@@ -72,7 +72,8 @@ export function replayAtramentStroke(
   if (!first) return;
   const start = fromLogicalPoint(cssWidth, first.x, first.y);
   atrament.beginStroke(start.x, start.y);
-  // 先画起点（轻点也留下墨点；与实时书写路径一致）
+  // 先画起点（与实时书写路径一致；单点即零长二次曲线，各引擎不栅格化
+  // 出墨点——命令照发，像素语义与实时画布一致）
   let prev = atrament.draw(start.x, start.y, start.x, start.y, first.p);
   for (let i = 1; i < s.points.length; i++) {
     const pt = s.points[i];

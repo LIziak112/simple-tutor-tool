@@ -488,7 +488,7 @@ describe("renderNotePage：背景实际绘制进 PNG（白底/格线/横线）",
 // ---------- 渲染：笔迹保真 ----------
 
 describe("renderNotePage：笔迹重放（复用引擎原语）", () => {
-  it("黑笔画与荧光笔各按真实颜色重放；轻点（单点）也落墨", async () => {
+  it("黑笔画与荧光笔各按真实颜色重放；轻点（单点）发出绘制命令（复审③口径）", async () => {
     const d = docOf([
       stroke([
         [100, 100],
@@ -515,7 +515,8 @@ describe("renderNotePage：笔迹重放（复用引擎原语）", () => {
     const styles = new Set(inkStrokes.map((s) => s.style));
     expect(styles.has(INK_PEN_COLORS.black)).toBe(true);
     expect(styles.has(INK_HIGHLIGHTER.color)).toBe(true);
-    // 轻点也产生提交（atrament 对单点 draw(x,y,x,y) 画出墨点）
+    // 轻点产生提交：零长二次曲线引擎不栅格化（像素级零墨，E2E 有守卫），
+    // 本层断言的是命令流发出——与实时画布同一绘制调用序列
     expect(inkStrokes.length).toBeGreaterThanOrEqual(3);
   });
 
@@ -622,7 +623,41 @@ describe("renderNotePage：错误路径不吞错且清理画布", () => {
         pixelWidth: NOTE_IMAGE_MAX_PIXEL_DIM + 1,
         pixelHeight: 100,
       }),
-    ).rejects.toThrow(/像素维超出防御上限/);
+    ).rejects.toThrow(/像素维不合法/);
+  });
+
+  it("裁剪区非整宽 → 拒绝（坐标换算以 css==逻辑为前提，复审②）", async () => {
+    const d = docOf([
+      stroke([
+        [10, 10],
+        [200, 30],
+      ]),
+    ]);
+    await expect(
+      renderNotePage(d, {
+        pageIndex: 0,
+        crop: { x: 0, y: 0, width: 999, height: 800 },
+        pixelWidth: 999,
+        pixelHeight: 800,
+      }),
+    ).rejects.toThrow(/必须等于逻辑纸宽 1000/);
+  });
+
+  it("像素维为 NaN → 拒绝（NaN 比较恒 false 不能静默过，复审②）", async () => {
+    const d = docOf([
+      stroke([
+        [10, 10],
+        [200, 30],
+      ]),
+    ]);
+    await expect(
+      renderNotePage(d, {
+        pageIndex: 0,
+        crop: { x: 0, y: 0, width: 1000, height: 800 },
+        pixelWidth: Number.NaN,
+        pixelHeight: Number.NaN,
+      }),
+    ).rejects.toThrow(/像素维不合法/);
   });
 
   it("无法取得 2d 上下文 → 明确报错", async () => {
