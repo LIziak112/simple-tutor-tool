@@ -378,7 +378,7 @@ function triggerImmediateAll(): void {
 async function scanAndSchedule(): Promise<void> {
   if (currentSession === null) return;
   const pending = await listPendingNotes(currentSession);
-  for (const { scope } of pending) {
+  for (const scope of pending) {
     handleRecordChanged(noteKeyOf(currentSession, scope));
   }
 }
@@ -460,7 +460,7 @@ export function currentNoteSession(): NoteSessionRef | null {
 export async function flushNoteSync(): Promise<void> {
   if (currentSession === null) return;
   const pending = await listPendingNotes(currentSession);
-  for (const { scope } of pending) {
+  for (const scope of pending) {
     const key = noteKeyOf(currentSession, scope);
     clearTimers(key);
     due(key);

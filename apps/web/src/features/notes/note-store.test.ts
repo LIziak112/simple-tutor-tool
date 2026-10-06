@@ -224,11 +224,11 @@ describe("note-store：键与隔离", () => {
     expect(await getNoteRecord(SESSION_A, SCOPE)).not.toBeNull();
     // B 会话读不到 A 的记录（键前缀不同即隔离）
     expect(await getNoteRecord(SESSION_B, SCOPE)).toBeNull();
-    // 前缀扫描也只列出本会话
+    // 前缀扫描也只列出本会话（返回收窄为 scope 数组，不泄记录活引用）
     expect(await listPendingNotes(SESSION_B)).toEqual([]);
     const pendingA = await listPendingNotes(SESSION_A);
     expect(pendingA.length).toBe(1);
-    expect(pendingA[0]?.scope).toEqual(SCOPE);
+    expect(pendingA[0]).toEqual(SCOPE);
   });
 });
 

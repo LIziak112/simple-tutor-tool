@@ -99,29 +99,7 @@ function sessionPrefix(session: NoteSessionRef): string {
   );
 }
 
-/** 键 → scope（JSON.parse 回读；形态不符返回 null——防御性，不用于常规路径） */
-function scopeOfKey(key: string): NoteScope | null {
-  try {
-    const parts = JSON.parse(key) as unknown[];
-    if (
-      Array.isArray(parts) &&
-      parts.length === 6 &&
-      parts[0] === "note" &&
-      typeof parts[3] === "string" &&
-      typeof parts[4] === "string" &&
-      typeof parts[5] === "string"
-    ) {
-      return {
-        attemptId: parts[3],
-        questionId: parts[4],
-        phase: parts[5] as NotePhase,
-      };
-    }
-  } catch {
-    // 非本模块键：忽略
-  }
-  return null;
-}
+// 键 → scope 由 parseNoteKey(key)?.scope 派生（复审⑧：不维护第二份解析）
 
 /** 键 → 会话 + scope（note-sync 订阅回调里从键反查归属用） */
 export function parseNoteKey(
@@ -202,9 +180,8 @@ export interface NoteLocalRecord {
   baseRevision: number;
   /** 服务端笔记 id（首传回执铸造后记录） */
   noteId: string | null;
-  /** 最近一次确认回执 */
-  lastReceipt: NoteVersionReceipt | null;
-  /** 最近一次 head 投影（images/evidence 维度合成来源，T6R.5 拉取） */
+  /** 最近一次 head 投影（images/evidence 维度合成来源，T6R.5 拉取；回执
+   * 的时间/版本细节需要时从这里取——复审⑩ 删除 lastReceipt 死字段） */
   lastHead: NoteHeadData | null;
   /** 冲突副本（非 null 时停止自动上传，等用户裁决） */
   conflict: NoteConflictInfo | null;
@@ -224,7 +201,6 @@ function freshRecord(): NoteLocalRecord {
     pending: null,
     baseRevision: 0,
     noteId: null,
-    lastReceipt: null,
     lastHead: null,
     conflict: null,
     denied: null,
@@ -249,7 +225,6 @@ function reviveRecord(raw: unknown): NoteLocalRecord | null {
         : null,
     baseRevision: typeof r.baseRevision === "number" ? r.baseRevision : 0,
     noteId: typeof r.noteId === "string" ? r.noteId : null,
-    lastReceipt: r.lastReceipt ?? null,
     lastHead: r.lastHead ?? null,
     conflict: r.conflict ?? null,
     denied: r.denied ?? null,
@@ -504,7 +479,6 @@ export interface NoteRecordView {
   server: NoteServerBodyState;
   baseRevision: number;
   noteId: string | null;
-  lastReceipt: NoteVersionReceipt | null;
   /** 待传版本的 mutationId（诊断/在途对账；无待传为 null） */
   pendingMutationId: string | null;
   conflict: NoteConflictInfo | null;
@@ -592,7 +566,6 @@ export function getNoteView(
     server: deriveServerState(record, uploading),
     baseRevision: record.baseRevision,
     noteId: record.noteId,
-    lastReceipt: record.lastReceipt,
     pendingMutationId: record.pending?.mutationId ?? null,
     conflict: record.conflict,
     denied: record.denied,
@@ -654,6 +627,28 @@ function applyHeadInfo(record: NoteLocalRecord, head: NoteHeadData): void {
 }
 
 /**
+ * 载入既有记录后变更的公共前奏（复审⑧）：内存命中或回源后端；无记录时
+ * 的策略由 create 决定——播种类传 freshRecord（head/load 落在新壳上），
+ * 回执类传 null（记录已不存在的迟到回执直接丢弃，返回 false 表跳过）。
+ */
+async function mutateLoaded(
+  session: NoteSessionRef,
+  scope: NoteScope,
+  create: (() => NoteLocalRecord) | null,
+  fn: (record: NoteLocalRecord) => void,
+): Promise<boolean> {
+  const key = noteKeyOf(session, scope);
+  const existing = records.get(key) ?? (await getNoteRecord(session, scope));
+  if (existing === null) {
+    if (create === null) return false;
+    mutate(key, create, fn);
+    return true;
+  }
+  mutate(key, () => existing, fn);
+  return true;
+}
+
+/**
  * 服务端稿载入（重进/播种）：**加载恢复不算编辑**——不推进 editedAt、
  * 不生成新 pending。与本地待传内容经物化比较（noteDocsEqual）：
  * 相等（上次上传成功但回执丢失的形态）→ 清 pending 不回传；不等 →
@@ -671,27 +666,8 @@ export async function applyServerLoad(
     const first = parsed.error.issues[0]?.message ?? "形状错误";
     throw new Error(`草稿正文损坏或版本不兼容：${first}`);
   }
-  const key = noteKeyOf(session, scope);
-  const existing = records.get(key);
-  if (existing === undefined) {
-    const stored = await getNoteRecord(session, scope);
-    if (stored !== null) {
-      mutate(
-        key,
-        () => stored,
-        (record) => applyLoadMutations(record, parsed.data, head),
-      );
-      return;
-    }
-    mutate(key, freshRecord, (record) =>
-      applyLoadMutations(record, parsed.data, head),
-    );
-    return;
-  }
-  mutate(
-    key,
-    () => existing,
-    (record) => applyLoadMutations(record, parsed.data, head),
+  await mutateLoaded(session, scope, freshRecord, (record) =>
+    applyLoadMutations(record, parsed.data, head),
   );
 }
 
@@ -718,21 +694,13 @@ export async function applyServerHead(
   scope: NoteScope,
   head: NoteHeadData,
 ): Promise<void> {
-  const key = noteKeyOf(session, scope);
-  const existing = records.get(key) ?? (await getNoteRecord(session, scope));
-  if (existing === null) {
-    mutate(key, freshRecord, (record) => applyHeadInfo(record, head));
-    return;
-  }
-  mutate(
-    key,
-    () => existing,
-    (record) => applyHeadInfo(record, head),
+  await mutateLoaded(session, scope, freshRecord, (record) =>
+    applyHeadInfo(record, head),
   );
 }
 
 /**
- * 上传回执落地：head 信息推进（baseRevision/noteId/lastReceipt）；
+ * 上传回执落地：head 信息推进（baseRevision/noteId）；
  **mutationId 匹配才清 pending**——A 的回执不清 B（B 在 A 在途期间写入，
  * pending 已换成 B 的新 mutationId），B 仍 dirty 等下一轮上传。
  */
@@ -742,21 +710,14 @@ export async function applyUploadReceipt(
   mutationId: string,
   receipt: NoteVersionReceipt,
 ): Promise<void> {
-  const key = noteKeyOf(session, scope);
-  const existing = records.get(key) ?? (await getNoteRecord(session, scope));
-  if (existing === null) return; // 记录已不存在（异常态）：无处落地
-  mutate(
-    key,
-    () => existing,
-    (record) => {
-      record.baseRevision = receipt.revision;
-      record.noteId = receipt.noteId;
-      record.lastReceipt = receipt;
-      if (record.pending?.mutationId === mutationId) {
-        record.pending = null;
-      }
-    },
-  );
+  // 记录已不存在的迟到回执直接丢弃（mutateLoaded 返回 false）
+  await mutateLoaded(session, scope, null, (record) => {
+    record.baseRevision = receipt.revision;
+    record.noteId = receipt.noteId;
+    if (record.pending?.mutationId === mutationId) {
+      record.pending = null;
+    }
+  });
 }
 
 /**
@@ -771,20 +732,13 @@ export async function applyUploadConflict(
   current: NoteRevisionConflictCurrent | null,
   reason: string,
 ): Promise<void> {
-  const key = noteKeyOf(session, scope);
-  const existing = records.get(key) ?? (await getNoteRecord(session, scope));
-  if (existing === null) return;
-  mutate(
-    key,
-    () => existing,
-    (record) => {
-      record.conflict = {
-        reason,
-        current,
-        localDoc: record.pending?.doc ?? record.doc,
-      };
-    },
-  );
+  await mutateLoaded(session, scope, null, (record) => {
+    record.conflict = {
+      reason,
+      current,
+      localDoc: record.pending?.doc ?? record.doc,
+    };
+  });
 }
 
 /** 被拒终态落地（403/404/ALREADY_SUBMITTED=access；400/413=content） */
@@ -794,16 +748,9 @@ export async function applyUploadDenied(
   kind: "access" | "content",
   reason: string,
 ): Promise<void> {
-  const key = noteKeyOf(session, scope);
-  const existing = records.get(key) ?? (await getNoteRecord(session, scope));
-  if (existing === null) return;
-  mutate(
-    key,
-    () => existing,
-    (record) => {
-      record.denied = { kind, reason };
-    },
-  );
+  await mutateLoaded(session, scope, null, (record) => {
+    record.denied = { kind, reason };
+  });
 }
 
 /**
@@ -821,35 +768,29 @@ export async function resolveNoteConflict(
   scope: NoteScope,
   choice: { keep: "local" } | { keep: "cloud"; doc: NoteDocInput },
 ): Promise<void> {
-  const key = noteKeyOf(session, scope);
-  const existing = records.get(key) ?? (await getNoteRecord(session, scope));
-  if (existing === null || existing.conflict === null) return;
-  const conflict = existing.conflict;
-  mutate(
-    key,
-    () => existing,
-    (record) => {
-      record.conflict = null;
-      if (conflict.current !== null) {
-        record.baseRevision = conflict.current.revision;
-        if (conflict.current.noteId !== null)
-          record.noteId = conflict.current.noteId;
-      }
-      if (choice.keep === "cloud") {
-        record.pending = null;
-        record.doc = choice.doc;
-        return;
-      }
-      // keep local：有摘要——pending 原样（同 id 重放，CAS 干净写）；
-      // 无摘要（MISMATCH）——重铸幂等键，正文快照不变
-      if (conflict.current === null && record.pending !== null) {
-        record.pending = {
-          mutationId: randomUuid(),
-          doc: record.pending.doc,
-        };
-      }
-    },
-  );
+  await mutateLoaded(session, scope, null, (record) => {
+    const conflict = record.conflict;
+    if (conflict === null) return; // 无分歧（重复裁决/迟到）：幂等跳过
+    record.conflict = null;
+    if (conflict.current !== null) {
+      record.baseRevision = conflict.current.revision;
+      if (conflict.current.noteId !== null)
+        record.noteId = conflict.current.noteId;
+    }
+    if (choice.keep === "cloud") {
+      record.pending = null;
+      record.doc = choice.doc;
+      return;
+    }
+    // keep local：有摘要——pending 原样（同 id 重放，CAS 干净写）；
+    // 无摘要（MISMATCH）——重铸幂等键，正文快照不变
+    if (conflict.current === null && record.pending !== null) {
+      record.pending = {
+        mutationId: randomUuid(),
+        doc: record.pending.doc,
+      };
+    }
+  });
 }
 
 /** 在途上传标记（note-sync 维护；派生 uploading 维度） */
@@ -880,11 +821,15 @@ export function noteDocsEqual(a: NoteDocInput, b: NoteDocInput): boolean {
   return digestOf(pa.data) === digestOf(pb.data);
 }
 
-/** 会话内待传清单（bind 扫描补传 + 诊断）。返回 scope + 记录引用 */
+/**
+ * 会话内待传清单（bind 扫描补传 + flush 追平用）。只返回 scope——记录
+ * 活引用不泄出（复审⑩：调用方要细节走 peek/getNoteRecord，避免扫描期间
+ * 的写入经旧引用旁路队列）。
+ */
 export async function listPendingNotes(
   session: NoteSessionRef,
-): Promise<Array<{ scope: NoteScope; record: NoteLocalRecord }>> {
-  const out: Array<{ scope: NoteScope; record: NoteLocalRecord }> = [];
+): Promise<NoteScope[]> {
+  const out: NoteScope[] = [];
   let keysOfSession: string[];
   try {
     keysOfSession = await backend().keys(sessionPrefix(session));
@@ -893,11 +838,11 @@ export async function listPendingNotes(
     return out;
   }
   for (const key of keysOfSession) {
-    const scope = scopeOfKey(key);
-    if (scope === null) continue;
+    const scope = parseNoteKey(key)?.scope;
+    if (scope === undefined) continue;
     const record = await getNoteRecord(session, scope);
     if (record !== null && record.pending !== null) {
-      out.push({ scope, record });
+      out.push(scope);
     }
   }
   return out;
