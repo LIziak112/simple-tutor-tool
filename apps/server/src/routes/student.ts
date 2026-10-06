@@ -232,6 +232,8 @@ export function createStudentRoutes(
         // T6R.3：交卷回传每题 questionRevisionId 验证题目版本（与冻结集合精确
         // 比对）；不带请求体按空集合传入——非空卷自然 409 QUESTION_REVISION_STALE
         // （旧标签页/陈旧页面可诊断提示刷新，不静默接受）
+        // T6R.10：body.evidence 为笔记证据声明（可选——缺省=旧客户端，服务层
+        // 据此走兼容分支：有草稿拒绝要求刷新、无草稿按未采集交卷）
         const body = await parseJsonBodyOrEmpty(c, attemptSubmitRequestSchema);
         return c.json({
           ok: true,
@@ -241,6 +243,7 @@ export function createStudentRoutes(
             c.req.param("id"),
             new Date(),
             body?.revisions ?? [],
+            body?.evidence,
           ),
         });
       })

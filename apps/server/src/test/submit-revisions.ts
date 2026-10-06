@@ -1,5 +1,8 @@
-import type { AttemptDetailData, AttemptDraftData } from "@tutor/contract";
+import type { AttemptDetailData, AttemptDraftData, SubmitEvidenceDeclaration } from "@tutor/contract";
 import { attemptSubmitRequestSchema } from "@tutor/contract";
+import { and, eq } from "drizzle-orm";
+import type { Db } from "../db/client.ts";
+import { notes as notesTable } from "../db/schema.ts";
 
 /**
  * T6R.3 交卷回传辅助（路由测试共用）：取 attempt 详情，收集草稿视图每题
@@ -56,6 +59,58 @@ export async function submitAttemptRequest(
       method: "POST",
       headers: cookie === undefined ? {} : { cookie },
       body: JSON.stringify({ revisions }),
+    }),
+  );
+}
+
+/**
+ * T6R.10 新客户端交卷（带笔记证据声明）：按服务端实际 head 组装——有稿题
+ * frozen(currentVersionId, currentRevision)、无稿题 none。模拟真实前端
+ * 「flush 后拉 head 再声明」的权威口径（notes 行只可能经本人 attempt 的写
+ * 通道产生，DB 直查等价于逐题 GET head）。
+ * 旧式 submitAttemptRequest（缺 evidence 字段）现在只适用于「无笔记」卷
+ * ——有笔记的卷按 T6R.10 兼容规则被 409 NOTE_EVIDENCE_MISMATCH 拒绝。
+ */
+export async function submitAttemptRequestWithEvidence(
+  app: {
+    request: (path: string, init?: RequestInit) => Promise<Response> | Response;
+  },
+  cookie: string | undefined,
+  db: Db,
+  attemptId: string,
+): Promise<Response> {
+  const revisions = await fetchSubmitRevisions(app, cookie, attemptId);
+  const noteByQuestion = new Map(
+    db
+      .select()
+      .from(notesTable)
+      .where(
+        and(
+          eq(notesTable.attemptId, attemptId),
+          eq(notesTable.phase, "scratch"),
+        ),
+      )
+      .all()
+      .map((row) => [row.questionId, row] as const),
+  );
+  const evidence: SubmitEvidenceDeclaration[] = revisions.map(
+    ({ questionId }) => {
+      const note = noteByQuestion.get(questionId);
+      return note !== undefined && note.currentRevision > 0
+        ? {
+            questionId,
+            state: "frozen" as const,
+            versionId: note.currentVersionId!,
+            revision: note.currentRevision,
+          }
+        : { questionId, state: "none" as const };
+    },
+  );
+  return Promise.resolve(
+    app.request(`/api/student/attempts/${attemptId}/submit`, {
+      method: "POST",
+      headers: cookie === undefined ? {} : { cookie },
+      body: JSON.stringify({ revisions, evidence }),
     }),
   );
 }

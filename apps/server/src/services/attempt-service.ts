@@ -13,6 +13,7 @@ import {
   type AttemptSubmitRevision,
   attemptQuestionPublicSchema,
   type HintOpenedEntry,
+  type NoteSubmissionEvidenceState,
   optionSchema,
   type Question,
   type QuestionAnswers,
@@ -23,6 +24,7 @@ import {
   type StudentPaperData,
   type StudentPaperUnit,
   studentAnswerSchema,
+  type SubmitEvidenceDeclaration,
 } from "@tutor/contract";
 import { grade } from "@tutor/grading";
 import { studentStemMd } from "@tutor/md-dsl";
@@ -46,11 +48,13 @@ import {
   attempts,
   type Course,
   courses,
+  notes,
   type Question as QuestionRow,
   questions,
   type ResponseRow,
   responses,
   students,
+  submissionEvidence,
   type Unit,
   units,
 } from "../db/schema";
@@ -1326,6 +1330,106 @@ function validateSubmitRevisions(
 }
 
 /**
+ * 交卷要写的逐题证据行（T6R.10，方案 §6.4）——验证纯读、先于事务，
+ * 写入与判分同事务（见 submitAttempt）。
+ *
+ * 声明语义（契约 submitEvidenceDeclarationSchema）：
+ * - frozen：versionId/revision 与服务端实际 head **精确比对**（归属已由
+ *   attemptId+questionId 圈定——notes 行只能经本人 attempt 的写通道产生）；
+ *   其他标签页/设备改出新 head ⇒ 409 拒绝这次冻结，不静默固定旧版；
+ * - none：实际存在草稿（scratch 行 head revision>0）时矛盾 ⇒ 409——
+ *   用户未确认不能静默 missing/none；
+ * - missing：用户已明确选择「提交答案，草稿未保存完整」（确认动作在
+ *   客户端交卷流程承担），服务端如实记录、不叠加上传状态校验。
+ *
+ * 旧客户端（缺 evidence 字段）：检测到草稿存在 ⇒ 409 要求刷新（不能把
+ * 已有草稿记 none）；确无草稿按兼容规则交卷——**不落证据行**（= 未采集，
+ * 与 state='none'〔明确空稿〕区分，schema 注释同口径）。
+ *
+ * 新客户端：声明集合必须与冻结题目集合精确一致（缺项/多项/未知/重复
+ * 同 409，口径同 validateSubmitRevisions）。
+ */
+function buildSubmissionEvidence(
+  db: Db,
+  attemptId: string,
+  graded: readonly GradedResponse[],
+  declarations: readonly SubmitEvidenceDeclaration[] | undefined,
+): Array<{ questionId: string; state: NoteSubmissionEvidenceState; versionId: string | null }> {
+  const noteRows = db
+    .select()
+    .from(notes)
+    .where(and(eq(notes.attemptId, attemptId), eq(notes.phase, "scratch")))
+    .all();
+  const noteByQuestion = new Map(noteRows.map((n) => [n.questionId, n] as const));
+
+  if (declarations === undefined) {
+    // 旧客户端：有草稿 ⇒ 拒绝并要求刷新；无草稿 ⇒ 兼容交卷（未采集=无行）
+    if (noteRows.some((n) => n.currentRevision > 0)) {
+      throw evidenceMismatch("这份练习有尚未固定的草稿，请刷新页面后重新交卷");
+    }
+    return [];
+  }
+
+  // 新客户端：集合精确比对（长度相等 + 无重复 + 全部已知 ⇒ 恰好一致）
+  if (declarations.length !== graded.length) throw evidenceMismatch(
+    "笔记证据声明与试卷题目不一致，请刷新页面后重新交卷",
+  );
+  const expectedQuestions = new Set(
+    graded.map((g) => g.response.questionId),
+  );
+  const seen = new Set<string>();
+  for (const decl of declarations) {
+    if (seen.has(decl.questionId)) {
+      throw evidenceMismatch("笔记证据声明包含重复题目，请重新交卷");
+    }
+    seen.add(decl.questionId);
+    if (!expectedQuestions.has(decl.questionId)) {
+      throw evidenceMismatch(
+        "笔记证据声明包含试卷外的题目，请刷新页面后重新交卷",
+      );
+    }
+  }
+
+  return declarations.map((decl) => {
+    const note = noteByQuestion.get(decl.questionId);
+    if (decl.state === "frozen") {
+      if (
+        note === undefined ||
+        note.currentVersionId !== decl.versionId ||
+        note.currentRevision !== decl.revision
+      ) {
+        throw evidenceMismatch(
+          "草稿状态已变化（可能其他设备刚保存了新版本），请重新交卷",
+        );
+      }
+      return {
+        questionId: decl.questionId,
+        state: "frozen" as const,
+        versionId: decl.versionId,
+      };
+    }
+    if (decl.state === "none") {
+      if (note !== undefined && note.currentRevision > 0) {
+        throw evidenceMismatch(
+          "该题存在未固定的草稿，请返回处理后再交卷（或刷新页面查看最新草稿）",
+        );
+      }
+      return { questionId: decl.questionId, state: "none" as const, versionId: null };
+    }
+    return {
+      questionId: decl.questionId,
+      state: "missing" as const,
+      versionId: null,
+    };
+  });
+}
+
+/** 证据声明验证失败的统一拒绝（T6R.10，409；前端据此刷新/重走交卷流程） */
+function evidenceMismatch(message: string): HttpError {
+  return new HttpError(409, "NOTE_EVIDENCE_MISMATCH", message);
+}
+
+/**
  * D2/D3 口径的 attempt 级最终得分与状态（T3.2a）：
  * - status=graded 当且仅当全部 finalCorrect 均非 null（此时必写 scoreFinal）；
  * - scoreFinal = round（finalCorrect 为 true 的题数 ÷ 全部题数 × 100）；
@@ -1385,6 +1489,7 @@ export function submitAttempt(
   attemptId: string,
   now: Date | string = new Date(),
   clientRevisions?: readonly AttemptSubmitRevision[],
+  evidenceDeclarations?: readonly SubmitEvidenceDeclaration[],
 ): AttemptResultData {
   const attempt = requireUsableAttempt(db, studentId, attemptId);
   if (attempt.status !== "draft") {
@@ -1418,6 +1523,14 @@ export function submitAttempt(
   if (clientRevisions !== undefined) {
     validateSubmitRevisions(graded, clientRevisions);
   }
+  // T6R.10：笔记证据声明验证（纯读、先于事务；写入与判分同事务）——
+  // 任一项验证失败零落行，attempt 保持 draft 可恢复
+  const evidenceRows = buildSubmissionEvidence(
+    db,
+    attemptId,
+    graded,
+    evidenceDeclarations,
+  );
 
   const scoreAuto = scoreAutoOf(graded);
   // D3：交卷时 teacherMark 必空 → finalCorrect = autoCorrect；D2 据此定 status/scoreFinal
@@ -1440,6 +1553,20 @@ export function submitAttempt(
           ),
         })
         .where(eq(responses.id, g.response.id))
+        .run();
+    }
+    // T6R.10：同一事务写 submission_evidence（方案 §6.4 第 3 步）——
+    // 原稿引用与成绩/状态同生共死，任一失败整体回滚；写入后不能换原稿
+    for (const row of evidenceRows) {
+      tx.insert(submissionEvidence)
+        .values({
+          id: randomUUID(),
+          attemptId,
+          questionId: row.questionId,
+          state: row.state,
+          versionId: row.versionId,
+          recordedAt: nowIso,
+        })
         .run();
     }
     tx.update(attempts)
