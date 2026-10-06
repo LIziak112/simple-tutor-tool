@@ -54,6 +54,17 @@ export interface InkDocDataByEngine {
 /** 工具类型：笔 / 荧光笔 / 整笔橡皮 / 滚动模式（无笔设备的回退开关，§5.4.1 输入层第 3 条） */
 export type InkToolType = "pen" | "highlighter" | "eraser" | "scroll";
 
+/**
+ * 输入模式（T6R.7，方案 §4.1）：
+ * - auto：旧行为（缺省）——自动探测：见过笔后手指不再落墨（penOnly 防手掌），
+ *   未见笔时手指/鼠标直接书写。旧手写作答组件零变化地停留在此档；
+ * - pen：新草稿缺省「笔写／手指滚动」——手指恒不落墨（=页面滚动），笔与鼠标书写；
+ * - finger：工具菜单「手指书写」切换——手指直接书写（无手掌防误触语义）。
+ * 模式切换只影响**新落下**的指针，在途笔画不被打断。不以 UA 推断设备，
+ * 由调用方（会话输入偏好/用户操作）决定。
+ */
+export type InkInputMode = "auto" | "pen" | "finger";
+
 /** 笔粗细档位（§5.4.1 绘制层第 3 条：笔 2–3 档粗细） */
 export type InkPenSize = "thin" | "medium" | "thick";
 
