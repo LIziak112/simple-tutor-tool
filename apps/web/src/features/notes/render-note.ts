@@ -97,7 +97,9 @@ export const ANALYSIS_SLICE_MAX_PIXELS = 1_400_000;
 
 /**
  * 分析图裁剪留白（逻辑单位）：记录范围包围盒（已含线宽）外再留的边距，
- * 随后向网格间距对齐。48 > 荧光笔最大半线宽 8 + 一格余量。
+ * 随后向网格间距对齐。压感口径：atrament 压感上限（pressureHigh=2）下
+ * 线宽最大 2×weight，荧光笔（weight 16）最大半线宽 16——留白 48 > 16 +
+ * 一格余量，压满感笔画的边缘仍不贴裁剪边。
  */
 export const ANALYSIS_CROP_PADDING_LOGICAL = 48;
 

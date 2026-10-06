@@ -1,13 +1,18 @@
-import { type NoteDocInput, noteDocSchema } from "@tutor/contract";
+import type { NoteDoc } from "@tutor/contract";
 import { Play } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { INK_PEN_COLORS } from "@/features/ink/engine/types.ts";
 import {
-  INK_HIGHLIGHTER,
-  INK_PEN_COLORS,
-} from "@/features/ink/engine/types.ts";
+  denseStroke,
+  docOf,
+  HIGHLIGHTER_STROKE_OPTIONS,
+  stroke,
+  TALL_PAPER_HEIGHT,
+} from "@/features/notes/note-fixtures.ts";
 import {
   ANALYSIS_SLICE_OVERLAP_LOGICAL,
+  type RenderedNotePage,
   renderNoteImages,
 } from "@/features/notes/render-note.ts";
 
@@ -27,69 +32,11 @@ import {
  *   只能验证像素正确，不能替代 iPad 真机阅读体验。
  */
 
-/** 长稿夹具的纸高（切片/确定性检查共用；与 render-note.test 同值） */
-const TALL_PAPER_HEIGHT = 3000;
-
 /** 单条检查结论 */
 interface Verdict {
   name: string;
   pass: boolean;
   detail: string;
-}
-
-// ---------- 文档工厂（页面内确定性夹具） ----------
-
-function pageStroke(
-  points: Array<[number, number]>,
-  o: { color?: string; weight?: number; tool?: "pen" | "highlighter" } = {},
-): NoteDocInput["ink"]["strokes"][number] {
-  return {
-    tool: o.tool ?? "pen",
-    color: o.color ?? INK_PEN_COLORS.black,
-    weight: o.weight ?? 4,
-    points: points.map(([x, y]) => ({ x, y, p: 0.5, t: 0 })),
-  };
-}
-
-/**
- * 密集折线笔画：沿顶点每 ~5 逻辑单位插一个点。真实书写/回放的点距也是
- * 这个量级——atrament 平滑对每点只前进 ~17% 距离，2-3 点的稀疏笔画绘制
- * 终点会大幅滞后（这是引擎原语的既有语义，渲染器如实复现），检查夹具
- * 必须用密集点才能断言完整笔迹。
- */
-function denseStroke(
-  vertices: Array<[number, number]>,
-  o: { color?: string; weight?: number; tool?: "pen" | "highlighter" } = {},
-): NoteDocInput["ink"]["strokes"][number] {
-  const pts: Array<[number, number]> = [];
-  for (let i = 0; i + 1 < vertices.length; i++) {
-    const [x1, y1] = vertices[i] as [number, number];
-    const [x2, y2] = vertices[i + 1] as [number, number];
-    const steps = Math.max(1, Math.ceil(Math.hypot(x2 - x1, y2 - y1) / 5));
-    for (let k = 0; k < steps; k++) {
-      pts.push([x1 + ((x2 - x1) * k) / steps, y1 + ((y2 - y1) * k) / steps]);
-    }
-  }
-  const last = vertices[vertices.length - 1] as [number, number];
-  pts.push(last);
-  return pageStroke(pts, o);
-}
-
-function docOf(
-  strokes: NoteDocInput["ink"]["strokes"],
-  o: {
-    background?: NoteDocInput["background"];
-    paperHeightLogical?: number;
-  } = {},
-) {
-  return noteDocSchema.parse({
-    version: 1,
-    ink: { width: 1000, strokes },
-    ...(o.background !== undefined ? { background: o.background } : {}),
-    ...(o.paperHeightLogical !== undefined
-      ? { paperHeightLogical: o.paperHeightLogical }
-      : {}),
-  });
 }
 
 // ---------- 像素工具（真实解码） ----------
@@ -171,16 +118,14 @@ async function bytesEqual(a: Blob, b: Blob): Promise<boolean> {
 
 /** 渲染单页规格并解码为像素数据（单页检查的共用样板） */
 async function renderPng(
-  doc: ReturnType<typeof docOf>,
+  doc: NoteDoc,
   spec: "thumbnail" | "analysis",
 ): Promise<ImageData> {
   return decodeToImageData(firstPage(await renderNoteImages(doc, spec)).blob);
 }
 
 /** 取单页渲染产物（这些检查的分析图都恰为单页；否则视为检查失败） */
-function firstPage(
-  pages: Awaited<ReturnType<typeof renderNoteImages>>,
-): Awaited<ReturnType<typeof renderNoteImages>>[number] {
+function firstPage(pages: RenderedNotePage[]): RenderedNotePage {
   if (pages.length !== 1) {
     throw new Error(`期望单页，得到 ${pages.length}`);
   }
@@ -306,10 +251,7 @@ async function runChecks(): Promise<Verdict[]> {
       // 引擎原语现状：单点 = 零长二次曲线，Chromium/WebKit 均不落墨；实时
       // 书写画布同样不显示（图文一致）。若未来引擎改为画圆点，此处会失败
       // ——按契约口径递增 NOTE_RENDER_VERSION 后同步本检查。
-      const img = await renderPng(
-        docOf([pageStroke([[500, 400]])]),
-        "analysis",
-      );
+      const img = await renderPng(docOf([stroke([[500, 400]])]), "analysis");
       let inkPixels = 0;
       for (let i = 0; i < img.data.length; i += 4) {
         const rgb: [number, number, number] = [
@@ -333,11 +275,7 @@ async function runChecks(): Promise<Verdict[]> {
             [150, 390],
             [850, 410],
           ],
-          {
-            tool: "highlighter",
-            color: INK_HIGHLIGHTER.color,
-            weight: INK_HIGHLIGHTER.weight,
-          },
+          HIGHLIGHTER_STROKE_OPTIONS,
         ),
       ]),
       "analysis",

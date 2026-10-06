@@ -14,12 +14,16 @@
  */
 
 import {
+  TALL_PAPER_HEIGHT,
+  denseStroke,
+  docOf,
+  stroke,
+} from "@/features/notes/note-fixtures.ts";
+import {
   NOTE_IMAGE_MAX_PIXEL_DIM,
   NOTE_IMAGE_PNG_MAX_BYTES,
   NOTE_RENDER_VERSION,
   type NoteDoc,
-  type NoteDocInput,
-  noteDocSchema,
 } from "@tutor/contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -44,38 +48,7 @@ import {
   THUMBNAIL_PIXEL_WIDTH,
 } from "@/features/notes/render-note.ts";
 
-// ---------- 文档与笔画工厂 ----------
-
-/** 长稿夹具纸高（契约上限值；与面板 NoteRenderVerifyPanel 同值） */
-const TALL_PAPER_HEIGHT = 3000;
-
-/** 单点（轻点）或折线笔画（契约形状；color 用引擎真实色板值保证保真） */
-function stroke(
-  points: Array<[number, number]>,
-  o: { color?: string; weight?: number; tool?: "pen" | "highlighter" } = {},
-) {
-  return {
-    tool: o.tool ?? "pen",
-    color: o.color ?? INK_PEN_COLORS.black,
-    weight: o.weight ?? 4,
-    points: points.map(([x, y]) => ({ x, y, p: 0.5, t: 0 })),
-  };
-}
-
-/** 解析为物化默认值的 NoteDoc（读入口径同生产：parse 物化缺省） */
-function docOf(
-  strokes: NoteDocInput["ink"]["strokes"],
-  o: { paperHeightLogical?: number; background?: NoteDoc["background"] } = {},
-): NoteDoc {
-  return noteDocSchema.parse({
-    version: 1,
-    ink: { width: 1000, strokes },
-    ...(o.paperHeightLogical !== undefined
-      ? { paperHeightLogical: o.paperHeightLogical }
-      : {}),
-    ...(o.background !== undefined ? { background: o.background } : {}),
-  });
-}
+// ---------- 共享夹具（note-fixtures，与 /dev/ink 验证面板同源） ----------
 
 // ---------- 录制式 2d 上下文桩 ----------
 
@@ -518,6 +491,25 @@ describe("renderNotePage：笔迹重放（复用引擎原语）", () => {
     // 轻点产生提交：零长二次曲线引擎不栅格化（像素级零墨，E2E 有守卫），
     // 本层断言的是命令流发出——与实时画布同一绘制调用序列
     expect(inkStrokes.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("变压感笔画（0.2→0.9 渐变）：命令流线宽随压感散布（覆盖压感路径，复审④）", async () => {
+    const d = docOf([
+      denseStroke([[100, 380], [900, 420]], { pressureRamp: true }),
+    ]);
+    const canvas = await captureCanvas(d);
+    const ctx = ctxOf(canvas);
+    const ink = ctx.strokeCalls.filter(
+      (sc) => sc.style === INK_PEN_COLORS.black,
+    );
+    expect(ink.length).toBeGreaterThan(3);
+    const widths = ink.map((sc) => sc.lineWidth);
+    const min = Math.min(...widths);
+    const max = Math.max(...widths);
+    // atrament 压感映射：p<0.5 收窄（低至 0.6×weight 量级）、p>0.5 展宽
+    // （上限 2×weight）。缩略图 0.48 缩放下理论散布约 2.7（weight 4），
+    // 断言散布 > 1.5（留 AA 舍入余量，不锁具体映射曲线）
+    expect(max - min).toBeGreaterThan(1.5);
   });
 
   it("擦除后图文一致：擦掉红笔的文档不再重放红色", async () => {
