@@ -17,7 +17,13 @@ import {
 
 const VERSION_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa0001";
 
-function gzResponse(bytes: Uint8Array, status = 200): Response {
+/** gzip 字节拷贝为独立 Uint8Array<ArrayBuffer>（Response BodyInit 类型口径，
+ * 同 api-teacher-ink.test 的 gzBytes） */
+function gzBytes(text: string): Uint8Array<ArrayBuffer> {
+  return new Uint8Array(gzipSync(Buffer.from(text, "utf8")));
+}
+
+function gzResponse(bytes: Uint8Array<ArrayBuffer>, status = 200): Response {
   return new Response(bytes, { status });
 }
 
@@ -33,7 +39,7 @@ describe("fetchStudent/TeacherNoteDocumentApi（T6R.5）", () => {
       "fetch",
       vi.fn(async (path: string | URL | Request) => {
         calls.push(String(path));
-        return gzResponse(gzipSync(Buffer.from(JSON.stringify(doc), "utf8")));
+        return gzResponse(gzBytes(JSON.stringify(doc)));
       }),
     );
     await expect(fetchStudentNoteDocumentApi(VERSION_ID)).resolves.toEqual(doc);

@@ -698,10 +698,17 @@ describe("版本/图片错配与遗留行", () => {
         attemptId,
         questionId: "legacy-empty-snapshot",
         questionVersion: 1,
-        questionSnapshotJson: null,
+        questionSnapshotJson: JSON.stringify({ id: "legacy-empty-snapshot" }),
         unitId: null,
       });
     });
+    // 置空快照（insertFrozenResponse 的插入类型只收 string——遗留形态用
+    // 原生 UPDATE 构造，与 note-service.test 的 $client 模式同口径）
+    db.$client
+      .prepare(
+        "UPDATE responses SET question_snapshot_json = NULL WHERE attempt_id = ? AND question_id = ?",
+      )
+      .run(attemptId, "legacy-empty-snapshot");
     // 严口径（写通道同门）：快照缺失不算可用题 → 404
     const headRes = await app.request(
       `/api/student/attempts/${attemptId}/notes/legacy-empty-snapshot`,
@@ -1331,6 +1338,7 @@ describe("课程撤权与学生停用（冻结语义一致）", () => {
       },
     );
     expect(hidden.status).toBe(200);
+    if (versionId === undefined) throw new Error("缺少 versionId");
 
     await noteRoutesAssertions(attemptId, versionId, (status, label) => {
       expect(status, label).toBe(404);
@@ -1374,6 +1382,7 @@ describe("课程撤权与学生停用（冻结语义一致）", () => {
       },
     );
     expect(archivedCourse.status).toBe(200);
+    if (versionId === undefined) throw new Error("缺少 versionId");
 
     await noteRoutesAssertions(attemptId, versionId, (status, label) => {
       expect(status, label).toBe(403);
