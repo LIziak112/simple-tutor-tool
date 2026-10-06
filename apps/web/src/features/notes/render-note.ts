@@ -435,6 +435,33 @@ async function renderNotePageWithBoxes(
   }
 }
 
+/** 页间让出主线程（渲染与上传链共用；编码与重放都在主线程，多页不一口气占满） */
+export function yieldToMain(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+/**
+ * 逐页遍历助手（逐页链路共用骨架，复审②收敛）：计划 + 入口级包围盒缓存 +
+ * 页间让出 + 逐页渲染。visit 抛错则整链中止（已 visit 页的副作用保留——
+ * 上传槽位幂等 upsert，重试整链重入安全）。
+ */
+export async function forEachRenderedNotePage(
+  doc: NoteDoc,
+  spec: NoteImageSpec,
+  visit: (page: RenderedNotePage) => Promise<void>,
+): Promise<void> {
+  const pages =
+    spec === "thumbnail" ? [planThumbnailPage(doc)] : planAnalysisPages(doc);
+  // 入口级缓存：全稿点级折叠只做一次（逐页相交判定查表，不随页数重复）
+  const boxes = paddedStrokeBoxesOf(doc.ink);
+  let first = true;
+  for (const page of pages) {
+    if (!first) await yieldToMain();
+    first = false;
+    await visit(await renderNotePageWithBoxes(doc, page, boxes));
+  }
+}
+
 /**
  * 按规格渲染全套页面（缩略图一页 / 分析图按需多页）。逐页渲染并在页间让出
  * 事件循环（长稿多页不阻塞交互）；错误原样上抛（不吞错），已渲染页随异常
@@ -444,17 +471,9 @@ export async function renderNoteImages(
   doc: NoteDoc,
   spec: NoteImageSpec,
 ): Promise<RenderedNotePage[]> {
-  const pages =
-    spec === "thumbnail" ? [planThumbnailPage(doc)] : planAnalysisPages(doc);
-  // 入口级缓存：全稿点级折叠只做一次（逐页相交判定查表，不随页数重复）
-  const boxes = paddedStrokeBoxesOf(doc.ink);
   const out: RenderedNotePage[] = [];
-  for (const page of pages) {
-    if (out.length > 0) {
-      // 页间让出：编码与重放都在主线程，多页长稿别一口气占满
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    }
-    out.push(await renderNotePageWithBoxes(doc, page, boxes));
-  }
+  await forEachRenderedNotePage(doc, spec, async (page) => {
+    out.push(page);
+  });
   return out;
 }

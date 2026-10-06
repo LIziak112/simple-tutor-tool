@@ -12,8 +12,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  *   作业照常完成；
  * - 恢复入口 recoverNoteImages：拉正文 → noteDocSchema 收窄（缺省物化）→
  *   同步；非法正文明确报错不静默。
- * renderNotePage 以 vi.mock 替换（真 canvas 路径在 render-note.test 与 E2E
- * 覆盖）；纯几何计划函数保留真实实现（断言上传槽位与计划一致）。
+ * 逐页遍历骨架 forEachRenderedNotePage 以 vi.mock 替换：用**真实**计划
+ * 函数产页计划（槽位/裁剪几何断言仍验真实现），visit 注入假渲染产物
+ * （真 canvas 渲染路径在 render-note.test 与 E2E 覆盖；本文件测队列、
+ * 上传编排与恢复链路）。
  */
 
 vi.mock("@/lib/api", () => ({
@@ -27,11 +29,20 @@ vi.mock("@/features/notes/render-note.ts", async (importOriginal) => {
     await importOriginal<typeof import("@/features/notes/render-note.ts")>();
   return {
     ...actual,
-    renderNotePage: vi.fn(
-      async (_doc: NoteDoc, page: NotePagePlan): Promise<RenderedNotePage> => ({
-        ...page,
-        blob: new Blob([new Uint8Array([1])]),
-      }),
+    forEachRenderedNotePage: vi.fn(
+      async (
+        doc: NoteDoc,
+        spec: "thumbnail" | "analysis",
+        visit: (page: RenderedNotePage) => Promise<void>,
+      ): Promise<void> => {
+        const pages =
+          spec === "thumbnail"
+            ? [actual.planThumbnailPage(doc)]
+            : actual.planAnalysisPages(doc);
+        for (const page of pages) {
+          await visit({ ...page, blob: new Blob([new Uint8Array([1])]) });
+        }
+      },
     ),
   };
 });
@@ -42,11 +53,8 @@ import {
   resetNoteImageQueueForTest,
   syncNoteImages,
 } from "@/features/notes/image-sync.ts";
-import type {
-  NotePagePlan,
-  RenderedNotePage,
-} from "@/features/notes/render-note.ts";
-import { renderNotePage } from "@/features/notes/render-note.ts";
+import type { RenderedNotePage } from "@/features/notes/render-note.ts";
+import { forEachRenderedNotePage } from "@/features/notes/render-note.ts";
 import {
   fetchStudentNoteDocumentApi,
   fetchTeacherNoteDocumentApi,
@@ -91,19 +99,33 @@ function receiptOf(spec: string, pageIndex: number): NoteImageMeta {
 }
 
 const mockedPost = vi.mocked(postNoteImageApi);
-const mockedRender = vi.mocked(renderNotePage);
+const mockedForEach = vi.mocked(forEachRenderedNotePage);
 const mockedStudentDoc = vi.mocked(fetchStudentNoteDocumentApi);
 const mockedTeacherDoc = vi.mocked(fetchTeacherNoteDocumentApi);
 
 beforeEach(() => {
   resetNoteImageQueueForTest();
   mockedPost.mockReset();
-  mockedRender.mockReset().mockImplementation(
-    async (_doc: NoteDoc, page: NotePagePlan): Promise<RenderedNotePage> => ({
-      ...page,
-      blob: new Blob([new Uint8Array([1])]),
-    }),
-  );
+  mockedForEach
+    .mockReset()
+    .mockImplementation(
+      async (
+        doc: NoteDoc,
+        spec: "thumbnail" | "analysis",
+        visit: (page: RenderedNotePage) => Promise<void>,
+      ): Promise<void> => {
+        const actual = await vi.importActual<
+          typeof import("@/features/notes/render-note.ts")
+        >("@/features/notes/render-note.ts");
+        const pages =
+          spec === "thumbnail"
+            ? [actual.planThumbnailPage(doc)]
+            : actual.planAnalysisPages(doc);
+        for (const page of pages) {
+          await visit({ ...page, blob: new Blob([new Uint8Array([1])]) });
+        }
+      },
+    );
   mockedStudentDoc.mockReset();
   mockedTeacherDoc.mockReset();
 });
@@ -186,12 +208,13 @@ describe("syncNoteImages：串行与全套槽位", () => {
     });
     // 等到第一个作业的首个上传真正挂起
     await vi.waitFor(() => expect(gate.release).not.toBeNull());
-    // 第二个作业未开始渲染（队列串行：同时最多一份在途）
-    expect(mockedRender.mock.calls.length).toBe(1);
+    // 第二个作业未开始渲染（队列串行：同时最多一份在途）——第一个作业
+    // 的缩略图 forEach 在途（挂在其首个上传上），分析图 forEach 未开跑
+    expect(mockedForEach.mock.calls.length).toBe(1);
     gate.release?.();
     await Promise.all([first, second]);
-    // 两个作业各 2 页（缩略图 + 单页分析图）：渲染/上传各 4 次
-    expect(mockedRender.mock.calls.length).toBe(4);
+    // 两个作业各 2 次逐页遍历（缩略图 + 单页分析图）：上传 4 次
+    expect(mockedForEach.mock.calls.length).toBe(4);
     expect(order.length).toBe(4);
     // 第二个作业的上传全部在第一个之后
     expect(order.at(-1)).toBe("upload-4");
@@ -221,7 +244,7 @@ describe("syncNoteImages：失败不吞错、不毒化、可重试", () => {
 
   it("渲染失败（toBlob null 等）→ 原样上抛", async () => {
     const doc = sampleDoc();
-    mockedRender.mockRejectedValueOnce(
+    mockedForEach.mockRejectedValueOnce(
       new Error("PNG 编码失败：toBlob 返回空（画布不可用或内存不足）"),
     );
     await expect(

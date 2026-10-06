@@ -31,10 +31,9 @@ import {
   postNoteImageApi,
 } from "@/lib/api";
 import {
-  type NotePagePlan,
+  forEachRenderedNotePage,
   noteImageUploadMetaOf,
-  planNoteImagePages,
-  renderNotePage,
+  type RenderedNotePage,
 } from "./render-note.ts";
 
 // ---------- 串行队列 ----------
@@ -93,11 +92,6 @@ class SerialTaskQueue {
 /** 图片派生全局队列（模块级单例：脱离组件生命周期，卸载不停摆） */
 let noteImageQueue = new SerialTaskQueue();
 
-/** 页间让出主线程（长稿多页不一口气占满交互） */
-function yieldToMain(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 0));
-}
-
 // ---------- 同步原语 ----------
 
 /** syncNoteImages / recoverNoteImages 公共参数（角色 + 目标版本） */
@@ -121,27 +115,24 @@ export function syncNoteImages(
   params: NoteImageSyncParams & { doc: NoteDoc },
 ): Promise<NoteImageMeta[]> {
   const { role, versionId, doc } = params;
-  const plan = planNoteImagePages(doc);
-  const jobs: Array<{ spec: NoteImageSpec; page: NotePagePlan }> = [
-    { spec: "thumbnail", page: plan.thumbnail },
-    ...plan.analysis.map((page) => ({ spec: "analysis" as const, page })),
-  ];
   return noteImageQueue.run(async () => {
     const metas: NoteImageMeta[] = [];
-    let first = true;
-    for (const { spec, page } of jobs) {
-      if (!first) await yieldToMain();
-      first = false;
-      const rendered = await renderNotePage(doc, page);
-      metas.push(
-        await postNoteImageApi(
-          role,
-          versionId,
-          rendered.blob,
-          noteImageUploadMetaOf(spec, rendered),
-        ),
-      );
-    }
+    const upload =
+      (spec: NoteImageSpec) =>
+      async (page: RenderedNotePage): Promise<void> => {
+        metas.push(
+          await postNoteImageApi(
+            role,
+            versionId,
+            page.blob,
+            noteImageUploadMetaOf(spec, page),
+          ),
+        );
+      };
+    // 缩略图先行的上传顺序维持（AI 先见正文图的评估在 T6R.13）；
+    // 逐页骨架（缓存/让出/中止语义）与 renderNoteImages 同源
+    await forEachRenderedNotePage(doc, "thumbnail", upload("thumbnail"));
+    await forEachRenderedNotePage(doc, "analysis", upload("analysis"));
     return metas;
   });
 }
