@@ -49,6 +49,8 @@ export async function fetchSubmitRevisions(
  * fetchSubmitRevisions + POST body 样板）：自动取详情里的题目版本集合并随
  * 请求体回传（与前端同流程）；详情取不到（未登录/无权限/不存在）按空集合
  * 提交——这些用例的交卷预期同样是 4xx，空 body 不改变断言结果。
+ * evidence（可选，T6R.10）：缺省 = 旧客户端口径（无笔记卷专用——有笔记
+ * 的卷会被 409 NOTE_EVIDENCE_MISMATCH 拒绝）。
  */
 export async function submitAttemptRequest(
   app: {
@@ -56,13 +58,18 @@ export async function submitAttemptRequest(
   },
   cookie: string | undefined,
   attemptId: string,
+  evidence?: readonly SubmitEvidenceDeclaration[],
 ): Promise<Response> {
   const revisions = await fetchSubmitRevisions(app, cookie, attemptId);
+  const json =
+    evidence === undefined
+      ? { revisions }
+      : { revisions, evidence: [...evidence] };
   return Promise.resolve(
     app.request(`/api/student/attempts/${attemptId}/submit`, {
       method: "POST",
       headers: cookie === undefined ? {} : { cookie },
-      body: JSON.stringify({ revisions }),
+      body: JSON.stringify(json),
     }),
   );
 }
@@ -100,13 +107,12 @@ export async function submitAttemptRequestWithEvidence(
   const evidence: SubmitEvidenceDeclaration[] = revisions.map(
     ({ questionId }) => {
       const note = noteByQuestion.get(questionId);
-      // currentRevision>0 时头指针必非空（schema 不变量）；空则测试世界已坏，
-      // 明确抛错比静默断言更可诊断
-      if (
-        note !== undefined &&
-        note.currentRevision > 0 &&
-        note.currentVersionId !== null
-      ) {
+      if (note !== undefined && note.currentRevision > 0) {
+        // currentRevision>0 时头指针必非空（schema 不变量）；空则测试世界
+        // 已坏，明确抛错比静默断言更可诊断
+        if (note.currentVersionId === null) {
+          throw new Error("笔记行 head 指针为空（数据不一致，测试世界已坏）");
+        }
         return {
           questionId,
           state: "frozen" as const,
@@ -114,17 +120,8 @@ export async function submitAttemptRequestWithEvidence(
           revision: note.currentRevision,
         };
       }
-      if (note !== undefined && note.currentRevision > 0) {
-        throw new Error("笔记行 head 指针为空（数据不一致，测试世界已坏）");
-      }
       return { questionId, state: "none" as const };
     },
   );
-  return Promise.resolve(
-    app.request(`/api/student/attempts/${attemptId}/submit`, {
-      method: "POST",
-      headers: cookie === undefined ? {} : { cookie },
-      body: JSON.stringify({ revisions, evidence }),
-    }),
-  );
+  return submitAttemptRequest(app, cookie, attemptId, evidence);
 }

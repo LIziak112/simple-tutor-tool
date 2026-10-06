@@ -87,12 +87,16 @@ async function writeLocal(questionId: string, doc = DOC_A): Promise<void> {
   });
 }
 
-/** rev1 head 投影换题号（headOf 夹具恒带 note——不带即夹具坏了，前置失败） */
-function headAt(questionId: string): NoteHeadData {
+/** rev1 head 投影换题号（headOf 夹具恒带 note——不带即夹具坏了，前置失败；
+ *  note 覆盖项按需传入，调用方不再二次判空） */
+function headAt(
+  questionId: string,
+  noteOverride: Partial<NonNullable<NoteHeadData["note"]>> = {},
+): NoteHeadData {
   const base = headOf();
   const note = base.note;
   if (note === null) throw new Error("headOf 夹具应带 note");
-  return { ...base, note: { ...note, questionId } };
+  return { ...base, note: { ...note, questionId, ...noteOverride } };
 }
 
 /** head mock：默认空态（显式 notCreated 投影），覆盖表定制 */
@@ -109,18 +113,11 @@ describe("prepareSubmitEvidence：正常固定", () => {
     // 本地有笔；上传成功（回执 rev1）。head 显示他处已存到 rev2 → 按 head 声明
     await writeLocal(Q1, DOC_A);
     putMock.mockResolvedValue(receiptOf(1));
-    const base1 = headAt(Q1);
-    const note1 = base1.note;
-    if (note1 === null) throw new Error("headAt 应带 note");
     mockHeads({
-      [Q1]: {
-        ...base1,
-        note: {
-          ...note1,
-          revision: 2,
-          currentVersionId: receiptOf(2).versionId,
-        },
-      },
+      [Q1]: headAt(Q1, {
+        revision: 2,
+        currentVersionId: receiptOf(2).versionId,
+      }),
     });
 
     const prep = await prepareSubmitEvidence({

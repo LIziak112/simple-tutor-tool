@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { gzipSync } from "node:zlib";
-import type { NoteDoc } from "@tutor/contract";
+import type { NoteDoc, NoteVersionReceipt } from "@tutor/contract";
+import { noteVersionReceiptSchema } from "@tutor/contract";
 import type { Db } from "../db/client.ts";
 import { students as studentsTable } from "../db/schema.ts";
 import { TEST_TEACHER_ID } from "../db/test-utils.ts";
@@ -151,6 +152,34 @@ export async function putNoteVersion(
   if (res.status !== 200) return { status: res.status };
   const data = (await res.json()) as { data: { versionId: string } };
   return { status: res.status, versionId: data.data.versionId };
+}
+
+/**
+ * PUT 一版草稿正文并返回**完整回执**（T6R.10 证据测试用——frozen 声明需要
+ * versionId+revision；非 200 即测试前置失败，明确抛错）。
+ */
+export async function putNoteReceipt(
+  app: TestApp,
+  cookie: string | undefined,
+  attemptId: string,
+  questionId: string,
+  strokes = 1,
+  options: PutNoteOptions = {},
+): Promise<NoteVersionReceipt> {
+  const res = await app.request(
+    `/api/student/attempts/${attemptId}/notes/${questionId}`,
+    {
+      method: "PUT",
+      headers: cookie === undefined ? {} : { cookie },
+      body: putNoteForm(strokes, options),
+    },
+  );
+  if (res.status !== 200) {
+    throw new Error(`putNoteReceipt：HTTP ${res.status}（测试前置失败）`);
+  }
+  return noteVersionReceiptSchema.parse(
+    ((await res.json()) as { data: unknown }).data,
+  );
 }
 
 /**

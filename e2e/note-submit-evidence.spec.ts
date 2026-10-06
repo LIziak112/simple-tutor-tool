@@ -2,9 +2,11 @@ import { devices, expect, test } from "@playwright/test";
 import {
   addCourseMemberViaApi,
   attachLeakMonitor,
+  choiceJudgePracticeMarkdown,
   createCourseViaApi,
   drawStrokeWithPointerEvents,
   getStudentViaApi,
+  openChoicePractice,
   setCourseItemVisible,
   teacherApiLogin,
   uniqueSuffix,
@@ -17,38 +19,6 @@ import {
  * 新稿不碰 original）。教师端 evidence 读接口核验冻结事实（不重复
  * 服务层矩阵——单测见 attempt-submit-evidence.test）。
  */
-
-/** 判断 + 单选两题小练习（均可自动判分；单选承载草稿场景） */
-function practiceMarkdown(unitName: string): string {
-  return [
-    "---",
-    "kind: practice",
-    `unit: ${unitName}`,
-    "topic: 正数与负数",
-    "---",
-    "",
-    '::::question{type=judge difficulty=1 knowledge="有理数的概念"}',
-    "$1$ 是正数。[[正确]]",
-    "",
-    ":::solution",
-    "$1$ 大于 $0$，是正数。",
-    ":::",
-    "::::",
-    "",
-    '::::question{type=choice difficulty=1 knowledge="有理数加法"}',
-    "$(-3)+7=$ 的计算结果是（　）",
-    "",
-    "- [ ] $-10$",
-    "- [x] $4$",
-    "- [ ] $-4$",
-    "",
-    ":::solution",
-    "$(-3)+7=4$，故选 B。",
-    ":::",
-    "::::",
-    "",
-  ].join("\n");
-}
 
 /** 教师端读某 attempt 某题的证据行（state + versionId） */
 async function teacherEvidenceOf(
@@ -86,7 +56,7 @@ test.describe("交卷固定原稿（T6R.10）", () => {
     const courseId = await createCourseViaApi(request, courseName);
     const importRes = await request.post("/api/teacher/import/commit", {
       data: {
-        markdown: practiceMarkdown(unitName),
+        markdown: choiceJudgePracticeMarkdown(unitName),
         filename: `${unitName}.md`,
         courseId,
       },
@@ -110,18 +80,8 @@ test.describe("交卷固定原稿（T6R.10）", () => {
       await studentPage.goto(`/s/${student.linkToken}`);
       await studentPage.waitForURL("**/s/home");
 
-      const openPractice = async (): Promise<string> => {
-        await studentPage
-          .getByRole("link", { name: `打开课程 ${courseName}` })
-          .click();
-        await studentPage.waitForURL(`**/s/courses/${courseId}`);
-        await studentPage
-          .getByRole("link", { name: `打开练习 ${unitName}（2 题）` })
-          .click();
-        await studentPage.getByRole("button", { name: "开始练习" }).click();
-        await studentPage.waitForURL("**/s/attempts/**");
-        return studentPage.url().split("/").pop() ?? "";
-      };
+      const openPractice = (): Promise<string> =>
+        openChoicePractice(studentPage, courseId, courseName, unitName);
 
       // —— 第一轮：写草稿 + 作答 + 交卷 ——
       const attempt1 = await openPractice();

@@ -4,7 +4,6 @@ import type {
   NoteVersionReceipt,
   SubmitEvidenceDeclaration,
 } from "@tutor/contract";
-import { noteVersionReceiptSchema } from "@tutor/contract";
 import { eq } from "drizzle-orm";
 import type { Logger } from "pino";
 import pino from "pino";
@@ -17,14 +16,21 @@ import {
 } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
-import { gzipJson, noteDoc, putNoteBodyForm } from "../test/note-fixtures.ts";
 import {
+  gzipJson,
+  noteDoc,
+  putNoteBodyForm,
+  putNoteReceipt,
+} from "../test/note-fixtures.ts";
+import {
+  createStudent,
+  extractSessionToken,
   freshNoteAttempt,
   insertEvidence,
   loginStudent,
   noteRowOf,
 } from "../test/note-world.ts";
-import { fetchSubmitRevisions } from "../test/submit-revisions.ts";
+import { submitAttemptRequest } from "../test/submit-revisions.ts";
 
 /**
  * T6R.10 提交事务固定原稿（路由层测试）：交卷请求携带每题笔记证据声明
@@ -76,7 +82,7 @@ beforeAll(async () => {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ loginName: "teacher", password: TEACHER_PASSWORD }),
   });
-  teacherCookie = cookieOf(setup);
+  teacherCookie = `tutor_session=${extractSessionToken(setup)}`;
   const importRes = await app.request("/api/teacher/import/commit", {
     method: "POST",
     headers: { "content-type": "application/json", cookie: teacherCookie },
@@ -89,31 +95,13 @@ beforeAll(async () => {
   const firstUnit = units[0];
   if (firstUnit === undefined) throw new Error("样例导入未产出单元");
   unitId = firstUnit.id;
-  aId = await createStudent("张三");
+  aId = await makeStudent("张三");
   aCookie = await loginStudent(app, "张三", STUDENT_PASSWORD);
 });
 
-function cookieOf(res: Response): string {
-  const line = res.headers
-    .getSetCookie()
-    .find((c: string) => c.toLowerCase().startsWith("tutor_session="));
-  if (!line) throw new Error("响应中没有 tutor_session cookie");
-  return `tutor_session=${line.slice("tutor_session=".length).split(";")[0]}`;
-}
-
-async function createStudent(name: string): Promise<string> {
-  const res = await app.request("/api/teacher/students", {
-    method: "POST",
-    headers: { "content-type": "application/json", cookie: teacherCookie },
-    body: JSON.stringify({
-      displayName: name,
-      loginName: name,
-      password: STUDENT_PASSWORD,
-    }),
-  });
-  expect(res.status).toBe(201);
-  return ((await res.json()) as { data: { student: { id: string } } }).data
-    .student.id;
+/** 建 student（note-world 共享件——含密码口径）；本地仅薄壳绑定教师 cookie */
+function makeStudent(name: string): Promise<string> {
+  return createStudent(app, teacherCookie, name, STUDENT_PASSWORD);
 }
 
 /** 按下标取题目 id（越界即测试前置失败——比非空断言可诊断） */
@@ -160,22 +148,13 @@ async function putNote(
   return { status: res.status, body: await res.json().catch(() => null) };
 }
 
-/** 交卷（携带 evidence；revisions 自动取详情同既有流程） */
-async function submitWith(
+/** 交卷（携带 evidence；revisions/evidence 组装收敛在 submitAttemptRequest） */
+function submitWith(
   attemptId: string,
   evidence?: SubmitEvidenceDeclaration[],
 ): Promise<Response> {
-  const revisions = await fetchSubmitRevisions(app, aCookie, attemptId);
-  const json =
-    evidence === undefined
-      ? { revisions }
-      : { revisions, evidence: [...evidence] };
   return Promise.resolve(
-    app.request(`/api/student/attempts/${attemptId}/submit`, {
-      method: "POST",
-      headers: { cookie: aCookie },
-      body: JSON.stringify(json),
-    }),
+    submitAttemptRequest(app, aCookie, attemptId, evidence),
   );
 }
 
@@ -209,21 +188,12 @@ async function expectApiErr(res: PromiseLike<Response> | Response) {
   return { status: resolved.status, code: body.error, body };
 }
 
-/** PUT 回执解析（非 200 即测试前置失败——比逐处手写 parse 收敛） */
-function receiptOfPut(put: {
-  status: number;
-  body: unknown;
-}): NoteVersionReceipt {
-  expect(put.status).toBe(200);
-  return noteVersionReceiptSchema.parse((put.body as { data: unknown }).data);
-}
-
 /** 全卷声明组装（成功路径高频形态）：notedId 按回执冻结、其余题 none */
-async function declarationsWithFrozen(
+function declarationsWithFrozen(
   ids: readonly string[],
   notedId: string,
   receipt: NoteVersionReceipt,
-): Promise<SubmitEvidenceDeclaration[]> {
+): SubmitEvidenceDeclaration[] {
   return ids.map((questionId) =>
     questionId === notedId
       ? {
@@ -243,14 +213,13 @@ describe("T6R.10 交卷固定原稿：frozen 主链", () => {
     const attemptId = await freshAttempt();
     const ids = await questionIdsOf(attemptId);
     const notedId = qAt(ids, 0);
-    const put1 = await putNote(attemptId, notedId, 2);
-    const receipt1 = receiptOfPut(put1);
+    const receipt1 = await putNoteReceipt(app, aCookie, attemptId, notedId, 2);
     const head = noteRowOf(db, attemptId, notedId);
     expect(head?.currentRevision).toBe(1);
 
     const res = await submitWith(
       attemptId,
-      await declarationsWithFrozen(ids, notedId, receipt1),
+      declarationsWithFrozen(ids, notedId, receipt1),
     );
     expect(res.status).toBe(200);
 
@@ -269,12 +238,13 @@ describe("T6R.10 交卷固定原稿：frozen 主链", () => {
     const ids = await questionIdsOf(attemptId);
     const notedId = qAt(ids, 1);
     await putNote(attemptId, notedId, 1);
-    const put2 = await putNote(attemptId, notedId, 3, 1);
-    const receipt2 = receiptOfPut(put2);
+    const receipt2 = await putNoteReceipt(app, aCookie, attemptId, notedId, 3, {
+      baseRevision: 1,
+    });
 
     const res = await submitWith(
       attemptId,
-      await declarationsWithFrozen(ids, notedId, receipt2),
+      declarationsWithFrozen(ids, notedId, receipt2),
     );
     expect(res.status).toBe(200);
     const frozenRow = evidenceRowsOf(attemptId).find(
@@ -307,8 +277,12 @@ describe("T6R.10 证据声明拒绝分支（409 NOTE_EVIDENCE_MISMATCH）", () =
     const ids = await questionIdsOf(attemptId);
     // 另一 attempt 的合法版本（未授权引用）
     const otherAttempt = await freshAttempt();
-    const otherPut = await putNote(otherAttempt, qAt(ids, 0), 1);
-    const otherReceipt = receiptOfPut(otherPut);
+    const otherReceipt = await putNoteReceipt(
+      app,
+      aCookie,
+      otherAttempt,
+      qAt(ids, 0),
+    );
 
     const res = await submitWith(attemptId, [
       {
@@ -333,15 +307,14 @@ describe("T6R.10 证据声明拒绝分支（409 NOTE_EVIDENCE_MISMATCH）", () =
     const attemptId = await freshAttempt();
     const ids = await questionIdsOf(attemptId);
     const notedId = qAt(ids, 2);
-    const put1 = await putNote(attemptId, notedId, 1);
-    const receipt1 = receiptOfPut(put1);
+    const receipt1 = await putNoteReceipt(app, aCookie, attemptId, notedId);
     // 「其他标签页」再存两版：head 前进到 3（声明仍按旧回执 v1 组装）
     await putNote(attemptId, notedId, 2, 1);
     await putNote(attemptId, notedId, 2, 2);
 
     const res = await submitWith(
       attemptId,
-      await declarationsWithFrozen(ids, notedId, receipt1),
+      declarationsWithFrozen(ids, notedId, receipt1),
     );
     const err = await expectApiErr(res);
     expect(err.status).toBe(409);
@@ -455,11 +428,10 @@ describe("T6R.10 幂等、回滚与 original 不可变", () => {
     const attemptId = await freshAttempt();
     const ids = await questionIdsOf(attemptId);
     const notedId = qAt(ids, 5);
-    const put1 = await putNote(attemptId, notedId, 1);
-    const receipt1 = receiptOfPut(put1);
+    const receipt1 = await putNoteReceipt(app, aCookie, attemptId, notedId);
     const res = await submitWith(
       attemptId,
-      await declarationsWithFrozen(ids, notedId, receipt1),
+      declarationsWithFrozen(ids, notedId, receipt1),
     );
     expect(res.status).toBe(200);
 
@@ -482,17 +454,24 @@ describe("T6R.10 幂等、回滚与 original 不可变", () => {
     const ids = await questionIdsOf(attemptId);
     const notedId = qAt(ids, 6);
     const mutationId = "44444444-4444-4444-8444-444444444444";
-    const put1 = await putNote(attemptId, notedId, 1, 0, mutationId);
-    const receipt1 = receiptOfPut(put1);
+    const receipt1 = await putNoteReceipt(app, aCookie, attemptId, notedId, 1, {
+      mutationId,
+    });
     const res = await submitWith(
       attemptId,
-      await declarationsWithFrozen(ids, notedId, receipt1),
+      declarationsWithFrozen(ids, notedId, receipt1),
     );
     expect(res.status).toBe(200);
 
     // 迟到重放（同 mutationId 同正文）：返回原回执，head/证据行不动
-    const replay = await putNote(attemptId, notedId, 1, 0, mutationId);
-    const replayReceipt = receiptOfPut(replay);
+    const replayReceipt = await putNoteReceipt(
+      app,
+      aCookie,
+      attemptId,
+      notedId,
+      1,
+      { mutationId },
+    );
     expect(replayReceipt.versionId).toBe(receipt1.versionId);
     expect(noteRowOf(db, attemptId, notedId)?.currentRevision).toBe(1);
     expect(
@@ -521,11 +500,16 @@ describe("T6R.10 幂等、回滚与 original 不可变", () => {
     const firstAttempt = await freshAttempt();
     const ids = await questionIdsOf(firstAttempt);
     const notedId = qAt(ids, 0);
-    const put1 = await putNote(firstAttempt, notedId, 2);
-    const receipt1 = receiptOfPut(put1);
+    const receipt1 = await putNoteReceipt(
+      app,
+      aCookie,
+      firstAttempt,
+      notedId,
+      2,
+    );
     const res1 = await submitWith(
       firstAttempt,
-      await declarationsWithFrozen(ids, notedId, receipt1),
+      declarationsWithFrozen(ids, notedId, receipt1),
     );
     expect(res1.status).toBe(200);
     const firstRow = evidenceRowsOf(firstAttempt).find(
@@ -534,11 +518,16 @@ describe("T6R.10 幂等、回滚与 original 不可变", () => {
 
     // 新卷同题写新草稿并交卷
     const secondAttempt = await freshAttempt();
-    const put2 = await putNote(secondAttempt, notedId, 5);
-    const receipt2 = receiptOfPut(put2);
+    const receipt2 = await putNoteReceipt(
+      app,
+      aCookie,
+      secondAttempt,
+      notedId,
+      5,
+    );
     const res2 = await submitWith(
       secondAttempt,
-      await declarationsWithFrozen(ids, notedId, receipt2),
+      declarationsWithFrozen(ids, notedId, receipt2),
     );
     expect(res2.status).toBe(200);
 
