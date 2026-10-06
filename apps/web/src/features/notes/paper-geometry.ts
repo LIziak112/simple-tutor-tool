@@ -17,6 +17,11 @@
  *   值），不做增长/收缩重算——load 不触发 dirty/编辑计数，高度变化只由
  *   书写（自动加高）或用户拖高产生；正文高度低于笔画包围盒时保持正文值
  *   （契约允许 y 与纸高解耦，渲染层按纸界裁剪），钳制只在用户主动操作时。
+ *   **T6R.9 写回前须与存量 paperHeightLogical 比相等**（防棘轮：相等不落
+ *   库，避免 resize/重挂载把同一高度反复写成新版本触发无谓同步）。
+ * - 零宽/负宽护栏（复审⑤）：容器未布局（clientWidth=0）或异常负值时，
+ *   换算函数**优雅降级**（不抛错）：grow 返回原高、css→logical 返回最小
+ *   高 1——布局稳定后下一轮调用自然回到正常口径。
  *
  * 供 T6R.9 的 NoteLayer 使用；**不改 InkPad 旧自动加高行为**（其按 CSS px
  * 直增，属旧作答链路兼容语义）。纯函数、无 DOM。
@@ -68,12 +73,14 @@ export function paperCssHeight(
  * 拖高换算：CSS 高 → 逻辑高（paperCssHeight 的逆运算，最小 1）。复用
  * normalize 的 toLogical（round2 保精度）再取整到逻辑整数——与
  * paperCssHeight 的直取整在 .495/.505 级病态边界可能有 ±1 差异，锁定值
- * 见测试；拖高是冷路径，精度损失无感。
+ * 见测试；拖高是冷路径，精度损失无感。零宽/负宽护栏（复审⑤）：scale 无效
+ * 时返回最小高 1（优雅降级，布局稳定后下一轮恢复）。
  */
 export function cssHeightToLogical(
   cssHeight: number,
   cssWidth: number,
 ): number {
+  if (cssWidth <= 0) return 1;
   return Math.max(1, Math.round(toLogical(cssWidth, cssHeight)));
 }
 
@@ -81,7 +88,9 @@ export function cssHeightToLogical(
  * 自动加高：最后一笔最低点距纸底不足 PAPER_GROW_TRIGGER_CSS_PX（CSS 口径）
  * 时，增高一步（PAPER_GROW_STEP_CSS_PX 换算成逻辑单位），封顶
  * NOTE_PAPER_HEIGHT_MAX。无需增高或已到顶返回 null（调用方不落库 ⇒ 不触发
- * dirty）。@param strokeMaxYLogical 建议传含半线宽的包围盒底
+ * dirty）。零宽/负宽护栏（复审⑤）：容器未布局（cssWidth≤0）时**返回原高
+ * （视为无需增长）**——不在无效比例下做增长决策，布局稳定后下一轮再判。
+ * @param strokeMaxYLogical 建议传含半线宽的包围盒底
  * （strokesBottomLogical / strokeBounds），粗笔贴近底边同样触发。
  */
 export function grownPaperHeight(input: {
@@ -91,11 +100,11 @@ export function grownPaperHeight(input: {
 }): number | null {
   const { paperHeightLogical, cssWidth, strokeMaxYLogical } = input;
   if (paperHeightLogical >= NOTE_PAPER_HEIGHT_MAX) return null;
-  const scale = paperScale(cssWidth);
-  const cssBottom = paperHeightLogical * scale;
-  const strokeBottomCss = strokeMaxYLogical * scale;
+  if (cssWidth <= 0) return paperHeightLogical;
+  const cssBottom = fromLogical(cssWidth, paperHeightLogical);
+  const strokeBottomCss = fromLogical(cssWidth, strokeMaxYLogical);
   if (strokeBottomCss <= cssBottom - PAPER_GROW_TRIGGER_CSS_PX) return null;
-  const growLogical = PAPER_GROW_STEP_CSS_PX / scale;
+  const growLogical = PAPER_GROW_STEP_CSS_PX / paperScale(cssWidth);
   return Math.min(
     NOTE_PAPER_HEIGHT_MAX,
     Math.round(paperHeightLogical + growLogical),

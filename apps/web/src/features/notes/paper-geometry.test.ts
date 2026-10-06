@@ -99,6 +99,25 @@ describe("paper-geometry：自动加高（触发与增长量均换算逻辑单�
       }),
     ).toBeNull();
   });
+
+  it("零宽/负宽护栏（复审⑤）：grow 返回原高、css→logical 返回 1（优雅降级不抛错）", () => {
+    expect(
+      grownPaperHeight({
+        paperHeightLogical: 800,
+        cssWidth: 0,
+        strokeMaxYLogical: 799,
+      }),
+    ).toBe(800);
+    expect(
+      grownPaperHeight({
+        paperHeightLogical: 800,
+        cssWidth: -30,
+        strokeMaxYLogical: 799,
+      }),
+    ).toBe(800);
+    expect(cssHeightToLogical(400, 0)).toBe(1);
+    expect(cssHeightToLogical(400, -5)).toBe(1);
+  });
 });
 
 describe("paper-geometry：缩小钳制（包围盒含线宽 + 留白）", () => {

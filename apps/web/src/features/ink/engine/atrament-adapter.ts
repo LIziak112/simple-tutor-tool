@@ -703,7 +703,11 @@ export function createAtramentSurface(
       out.height = canvas.height;
       const c = out.getContext("2d");
       if (!c) throw new Error("导出失败：无法创建画布上下文");
-      c.fillStyle = "#ffffff"; // 白底（老师/AI 查看统一白底）
+      // **恒白底**（复审⑥定案）：这是旧手写作答通道的导出口径（教师/AI
+      // 查看统一白底），不随 background 可选配置变——格线/横线背景的派生
+      // 图走 render-note 渲染器（背景入图）。新草稿（T6R.9）是否复用本
+      // 导出届时裁决；旧作答链行为不变的最稳口径就是固定白底。
+      c.fillStyle = NOTE_PAPER_BG_COLOR;
       c.fillRect(0, 0, out.width, out.height);
       c.drawImage(canvas, 0, 0);
       return canvasToPngBlob(out);
