@@ -3,10 +3,11 @@ import { statSync } from "node:fs";
 import { resolve } from "node:path";
 import type {
   LearningPackEvidenceState,
+  NoteCropRect,
+  NotePhase,
   QuestionAnswers,
   QuestionType,
 } from "@tutor/contract";
-import type { NoteCropRect, NotePhase } from "@tutor/contract";
 import { studentStemMd } from "@tutor/md-dsl";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import type { Db } from "../db/client";
@@ -14,9 +15,9 @@ import {
   type Attempt,
   type NoteImageRow,
   type NoteVersionRow,
-  type ResponseRow,
   noteImages,
   noteVersions,
+  type ResponseRow,
   submissionEvidence,
 } from "../db/schema";
 import { extractMediaImageSrcs } from "./media-service";
@@ -221,9 +222,7 @@ function materialOf(
   // stem 层与学生角色：题干经 studentStemMd（[[答案]]→[[]] 脱敏 + 选项列表剥除，
   // 选项以纯文本数组另行携带）；教师 answer/solution 层保留快照原文
   const projectedStem =
-    level === "stem" || studentRole
-      ? studentStemMd(snapshot)
-      : snapshot.stemMd;
+    level === "stem" || studentRole ? studentStemMd(snapshot) : snapshot.stemMd;
   return {
     type: snapshot.type,
     difficulty: snapshot.difficulty,
@@ -232,9 +231,7 @@ function materialOf(
     ...(snapshot.options !== undefined
       ? { options: snapshot.options.map((option) => option.text) }
       : {}),
-    ...(!studentRole &&
-    level !== "stem" &&
-    snapshot.answers !== undefined
+    ...(!studentRole && level !== "stem" && snapshot.answers !== undefined
       ? { answers: snapshot.answers }
       : {}),
     ...(!studentRole &&
@@ -278,9 +275,7 @@ export function assembleQuestionEvidence(
 ): QuestionEvidenceAssembly {
   const studentRole = options.role === "student";
   // 学生角色忽略层级（恒最小权限）；教师缺省 stem
-  const level = studentRole
-    ? "stem"
-    : (options.questionLevel ?? "stem");
+  const level = studentRole ? "stem" : (options.questionLevel ?? "stem");
 
   const revisions: QuestionRevisionEntry[] = [];
   const revisionByKey = new Map<string, QuestionRevisionEntry>();
@@ -342,7 +337,9 @@ export function assembleQuestionEvidence(
       if (!includeEvidence) continue;
       eSeq += 1;
       const eRef = packRefOf("e", eSeq);
-      const evidenceRow = evidenceRowByKey.get(`${attempt.id}:${row.questionId}`);
+      const evidenceRow = evidenceRowByKey.get(
+        `${attempt.id}:${row.questionId}`,
+      );
       // frozen 的版本摘要与分析图先算后装（保持条目一次性构造，无中途突变）
       let versionSummary:
         | NonNullable<QuestionEvidenceEntry["version"]>

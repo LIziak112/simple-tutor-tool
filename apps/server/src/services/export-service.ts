@@ -4,9 +4,12 @@ import { resolve } from "node:path";
 import type {
   LearningPack,
   LearningPackAttemptSummary,
+  LearningPackEvidence,
   LearningPackExportRequest,
   LearningPackLecture,
   LearningPackLectureTrace,
+  LearningPackManifest,
+  LearningPackManifestMissing,
   LearningPackPreviewData,
   LearningPackPreviewFile,
   LearningPackQuestion,
@@ -14,6 +17,9 @@ import type {
   LearningPackResponse,
   LearningPackStudentSummary,
   LearningPackSummarySection,
+  LearningPackV2,
+  LearningPackV2Question,
+  LearningPackV2Response,
 } from "@tutor/contract";
 import {
   LEARNING_PACK_GOAL_LABELS,
@@ -21,6 +27,8 @@ import {
   learningPackAliasOf,
   learningPackJsonSchema,
   learningPackSchema,
+  learningPackV2JsonSchema,
+  learningPackV2Schema,
   renderLearningPackPrompt,
 } from "@tutor/contract";
 import { analyzeLectureStructure, studentStemMd } from "@tutor/md-dsl";
@@ -59,6 +67,10 @@ import { beijingDateTimeOf, beijingExportStampOf } from "./export-csv";
 import { lectureReadingMapFor } from "./lecture-insights";
 import { serializeStudentAnswer } from "./mark-response";
 import { extractMediaImageSrcs } from "./media-service";
+import {
+  assembleQuestionEvidence,
+  type QuestionEvidenceAssembly,
+} from "./question-evidence";
 import { snapshotOfRow } from "./snapshot";
 import { sourceOf } from "./teacher-attempt-service";
 import { type TraceEvent, traceEventsFromRows } from "./trace-intervals";
@@ -253,6 +265,37 @@ function sectionRangesOf(markdown: string): Array<[number, number]> {
 // extractMediaImageSrcs 已抽取到 media-service 共享（导出打包与导入存在性
 // 核对同源，见该函数注释），此处经 import 引用。
 
+/**
+ * 题目条目的单元标题统一回填（v1/v2 共用）：域内 units 表查标题（含软删——
+ * 历史统计不消失），查不到回退 unitId 本身。原位修改 unitTitle 字段。
+ */
+function backfillUnitTitles<
+  T extends { unitId: string | null; unitTitle: string | null },
+>(db: Db, teacherId: string, items: T[]): void {
+  const unitIds = [
+    ...new Set(
+      items
+        .map((item) => item.unitId)
+        .filter((id): id is string => id !== null),
+    ),
+  ];
+  const titleById = new Map<string, string>();
+  if (unitIds.length > 0) {
+    for (const row of db
+      .select({ id: units.id, title: units.title })
+      .from(units)
+      .where(and(eq(units.teacherId, teacherId), inArray(units.id, unitIds)))
+      .all()) {
+      titleById.set(row.id, row.title);
+    }
+  }
+  for (const item of items) {
+    if (item.unitId !== null) {
+      item.unitTitle = titleById.get(item.unitId) ?? item.unitId;
+    }
+  }
+}
+
 // ---------- 装配 ----------
 
 /** 装配结果：pack 各文件内容 + ink 清单（zip 写入与 preview 共用） */
@@ -274,12 +317,22 @@ export interface LearningPackAssembly {
   /**
    * media 条目（媒体管线第三单）：进入 pack 的 md 中 ::image 引用的图片。
    * zip 路径即契约 src 相对路径（blobs/media/<hash>.<ext>，zip 内含子目录
-   * 条目）；缺文件已跳过（同 ink 口径）。
+   * 条目）；缺文件已跳过（v1 同 ink 口径；v2 进 manifest.missing）。
    */
   readonly mediaEntries: ReadonlyArray<{
     readonly entry: string;
     readonly absPath: string;
     readonly bytes: number;
+  }>;
+  /**
+   * v2 证据图条目（T6R.12；evidence 模块勾选才非空）：zip 路径
+   * evidence/<编号>-<阶段>-<页号>.png；ref 为证据条目编号（manifest 关联用）。
+   */
+  readonly evidenceEntries: ReadonlyArray<{
+    readonly entry: string;
+    readonly absPath: string;
+    readonly bytes: number;
+    readonly ref: string;
   }>;
   /** 文件清单（路径 + 预估字节数；D18 preview 与预检共用） */
   readonly files: readonly LearningPackPreviewFile[];
@@ -433,6 +486,18 @@ export function assembleLearningPack(
       a.id.localeCompare(b.id),
   );
 
+  /**
+   * 该 attempt 的逐题行序：frozenRowsInDisplayOrder 统一口径（T6R.3 冻结
+   * 行自身重建；懒冻结存量卷与升级前已交卷沿用题库 join 序——与学生结果
+   * 视图/教师详情同一实现，导出与学生看到的题序一致）。
+   * v1 与 v2 共用（v2 的证据装配 scope 也按此序）。
+   */
+  const orderedResponsesOf = (attempt: Attempt): ResponseRow[] =>
+    frozenRowsInDisplayOrder(db, attempt).map((entry) => entry.row);
+
+  /** v2（T6R.12）：请求显式 packVersion=2 才走证据装配链；缺省 v1 零变化 */
+  const isV2 = request.packVersion === 2;
+
   // —— ink 条目（勾选 ink 才装配；化名贯穿文件名 D16） ——
   const inkEntryByAttemptQuestion = new Map<string, string>();
   const inkEntries: Array<{ entry: string; absPath: string; bytes: number }> =
@@ -508,9 +573,91 @@ export function assembleLearningPack(
     },
   );
 
-  // —— content.questions（快照优先；stem 层题干公开化不给答案 D14） ——
+  // —— content.questions ——
+  // v1（缺省）：同 qid 取最新一次提交的快照（既有口径，形状锁定不改）；
+  // v2（T6R.12）：共享证据装配——每条 response 行取**自己的**快照，按内容
+  // 身份去重分配 q 条目（同 qid 多版本一一配对），条目序 = 装配首见序。
   const questionItems: LearningPackQuestion[] = [];
-  if (m.questions !== undefined) {
+  const questionItemsV2: LearningPackV2Question[] = [];
+  /** v2 证据装配结果（isV2 才非 null；题目条目/证据/媒体三处消费） */
+  let evidenceAsm: QuestionEvidenceAssembly | null = null;
+  /** v2 展示序行缓存（scope 与逐题行共用，避免重复冻结行重建） */
+  const orderedRowsByAttemptId = new Map<string, ResponseRow[]>(
+    isV2
+      ? orderedAttempts.map(
+          (attempt) => [attempt.id, orderedResponsesOf(attempt)] as const,
+        )
+      : [],
+  );
+  if (isV2) {
+    evidenceAsm = assembleQuestionEvidence(
+      db,
+      dataDir,
+      teacherId,
+      orderedAttempts.map((attempt) => ({
+        attempt,
+        rows: orderedRowsByAttemptId.get(attempt.id) ?? [],
+      })),
+      {
+        role: "teacher",
+        // 题目模块未勾选时 material 不进包，层级取最小权限层
+        ...(m.questions !== undefined ? { questionLevel: m.questions } : {}),
+        includeEvidence: m.evidence,
+      },
+    );
+    if (m.questions !== undefined && evidenceAsm !== null) {
+      // 题目条目级媒体清单（在场 + 缺失都随条目登记，供 content.questions.media）
+      const mediaByRef = new Map<
+        string,
+        Array<{ src: string; present: boolean }>
+      >();
+      const pushMedia = (
+        src: string,
+        present: boolean,
+        refs: readonly string[],
+      ) => {
+        for (const ref of refs) {
+          const list = mediaByRef.get(ref);
+          const item = { src, present };
+          if (list === undefined) mediaByRef.set(ref, [item]);
+          else if (!list.some((entry) => entry.src === src)) list.push(item);
+        }
+      };
+      for (const medium of evidenceAsm.media) {
+        pushMedia(medium.src, true, medium.questionRefs);
+      }
+      for (const miss of evidenceAsm.missingMedia) {
+        pushMedia(miss.src, false, miss.questionRefs);
+      }
+      for (const revision of evidenceAsm.revisions) {
+        questionItemsV2.push({
+          ref: revision.ref,
+          questionId: revision.questionId,
+          unitId: revision.unitId,
+          unitTitle: null, // 下方统一回填
+          type: revision.material.type,
+          difficulty: revision.material.difficulty,
+          knowledge: [...revision.material.knowledge],
+          stemMd: revision.material.stemMd,
+          present: revision.present,
+          snapshotHash: revision.snapshotHash,
+          media: mediaByRef.get(revision.ref) ?? [],
+          ...(revision.material.options !== undefined
+            ? { options: [...revision.material.options] }
+            : {}),
+          ...(revision.material.answers !== undefined
+            ? { answers: revision.material.answers }
+            : {}),
+          ...(revision.material.solutionMd !== undefined
+            ? { solutionMd: revision.material.solutionMd }
+            : {}),
+        });
+      }
+      // 单元标题统一回填（域内 units 表，含软删——历史统计不消失）；
+      // 不另排序——装配首见序即配对序（q 编号顺序）
+      backfillUnitTitles(db, teacherId, questionItemsV2);
+    }
+  } else if (m.questions !== undefined) {
     // 最新一次提交的快照为准（题目视角同口径）；当前库元信息提供排序与单元归属
     const latestSnapshot = new Map<string, { row: ResponseRow; at: string }>();
     for (const attempt of orderedAttempts) {
@@ -570,28 +717,7 @@ export function assembleLearningPack(
       questionItems.push(item);
     }
     // 单元标题统一回填（域内 units 表，含软删——历史统计不消失）+ 排序（单元内题序）
-    const unitIds = [
-      ...new Set(
-        questionItems
-          .map((item) => item.unitId)
-          .filter((id): id is string => id !== null),
-      ),
-    ];
-    const titleById = new Map<string, string>();
-    if (unitIds.length > 0) {
-      for (const row of db
-        .select({ id: units.id, title: units.title })
-        .from(units)
-        .where(and(eq(units.teacherId, teacherId), inArray(units.id, unitIds)))
-        .all()) {
-        titleById.set(row.id, row.title);
-      }
-    }
-    for (const item of questionItems) {
-      if (item.unitId !== null) {
-        item.unitTitle = titleById.get(item.unitId) ?? item.unitId;
-      }
-    }
+    backfillUnitTitles(db, teacherId, questionItems);
     questionItems.sort((a, b) => {
       const metaA = metaOf.get(a.questionId);
       const metaB = metaOf.get(b.questionId);
@@ -608,17 +734,21 @@ export function assembleLearningPack(
     });
   }
 
-  // —— media 条目（媒体管线第三单：::image 引用的图片打进 zip，条目名 = src 原相对路径） ——
+  // —— media 条目（::image 引用的图片打进 zip，条目名 = src 原相对路径） ——
   const mediaEntries: Array<{ entry: string; absPath: string; bytes: number }> =
     [];
+  /** v2 manifest.missing 的 media 行（缺失显式登记，不静默跳过；T6R.12） */
+  const manifestMissingMedia: LearningPackManifestMissing[] = [];
   {
     // 扫描**进入 pack 的全部 md 文本**（讲义切片全文、题干与详解——按勾选
-    // 模块实际收录的文本扫，未勾选模块的 md 不进包也不带图）
+    // 模块实际收录的文本扫，未勾选模块的 md 不进包也不带图）。
+    // v2 的题目媒体来自证据装配（question-evidence 已扫投影文本并登记缺失），
+    // 此处只扫讲义切片。
     const mdTexts: string[] = [];
     for (const item of lectureItems) {
       for (const section of item.sections) mdTexts.push(section.markdown);
     }
-    if (m.questions !== undefined) {
+    if (!isV2 && m.questions !== undefined) {
       for (const item of questionItems) {
         mdTexts.push(item.stemMd);
         if (item.solutionMd !== undefined) mdTexts.push(item.solutionMd);
@@ -628,15 +758,74 @@ export function assembleLearningPack(
     for (const src of extractMediaImageSrcs(mdTexts)) {
       const absPath = resolve(dataDir, ...src.split("/"));
       // 理论不可达（扫描正则已限定单段内容寻址形态，无穿越空间）：路径必须
-      // 落在 blobs/media/ 内，越界按缺文件跳过（不炸，与缺文件同口径）
-      if (!absPath.startsWith(mediaRoot)) continue;
+      // 落在 blobs/media/ 内；v1 越界/缺文件静默跳过（既有口径），v2 进缺失清单
+      if (!absPath.startsWith(mediaRoot)) {
+        if (isV2) {
+          manifestMissingMedia.push({
+            path: src,
+            kind: "media",
+            reason: "媒体路径非法",
+            refs: [],
+          });
+        }
+        continue;
+      }
       let bytes: number;
       try {
         bytes = statSync(absPath).size;
       } catch {
-        continue; // 图片文件缺失（未上传过/已清理）：跳过该条目（同 ink 缺文件口径）
+        if (isV2) {
+          manifestMissingMedia.push({
+            path: src,
+            kind: "media",
+            reason: "图片文件缺失（未上传或已清理）",
+            refs: [],
+          });
+        }
+        continue; // v1：图片文件缺失静默跳过（同 ink 缺文件口径）
       }
       mediaEntries.push({ entry: src, absPath, bytes });
+    }
+    // v2 题目媒体：证据装配结果直接并入（refs 关联 q 条目）；题目模块未勾选时
+    // 不并入也不登记缺失——「未选模块不夹带内容」（方案 §9.2）
+    if (isV2 && m.questions !== undefined && evidenceAsm !== null) {
+      for (const medium of evidenceAsm.media) {
+        mediaEntries.push({
+          entry: medium.src,
+          absPath: medium.absPath,
+          bytes: medium.bytes,
+        });
+      }
+      for (const miss of evidenceAsm.missingMedia) {
+        manifestMissingMedia.push({
+          path: miss.src,
+          kind: "media",
+          reason: miss.reason,
+          refs: [...miss.questionRefs],
+        });
+      }
+    }
+  }
+
+  // —— v2 证据图条目（evidence 模块勾选才装配；zip 写入与 preview 共用） ——
+  const evidenceEntries: Array<{
+    entry: string;
+    absPath: string;
+    bytes: number;
+    ref: string;
+  }> = [];
+  if (isV2 && m.evidence && evidenceAsm !== null) {
+    for (const evidenceEntry of evidenceAsm.evidence) {
+      for (const image of evidenceEntry.images) {
+        if (image.state === "ready" && image.absPath !== undefined) {
+          evidenceEntries.push({
+            entry: image.file,
+            absPath: image.absPath,
+            bytes: image.bytes ?? 0,
+            ref: evidenceEntry.ref,
+          });
+        }
+      }
     }
   }
 
@@ -706,23 +895,31 @@ export function assembleLearningPack(
     }
   }
 
-  /** 该 attempt 的逐题行序：frozenRowsInDisplayOrder 统一口径（T6R.3 冻结
-   * 行自身重建；懒冻结存量卷与升级前已交卷沿用题库 join 序——与学生结果
-   * 视图/教师详情同一实现，导出与学生看到的题序一致） */
-  const orderedResponsesOf = (attempt: Attempt): ResponseRow[] =>
-    frozenRowsInDisplayOrder(db, attempt).map((entry) => entry.row);
-
   // —— attempts.responses（D15 全部历次；评语原文不改动 D16） ——
+  // v2 行额外携带快照关联三字段（questionRef/snapshotHash/evidenceRef，T6R.12）
   const responseRows: LearningPackResponse[] = [];
+  const responseRowsV2: LearningPackV2Response[] = [];
   if (m.responses) {
+    /** v2：ref → snapshotHash（条目内容身份） */
+    const hashByRef =
+      evidenceAsm !== null
+        ? new Map(
+            evidenceAsm.revisions.map(
+              (rev) => [rev.ref, rev.snapshotHash] as const,
+            ),
+          )
+        : new Map<string, string | null>();
     for (const attempt of orderedAttempts) {
       let no = 0;
-      for (const row of orderedResponsesOf(attempt)) {
+      const rows = isV2
+        ? (orderedRowsByAttemptId.get(attempt.id) ?? [])
+        : orderedResponsesOf(attempt);
+      for (const row of rows) {
         no += 1;
         const inkFile = inkEntryByAttemptQuestion.get(
           `${attempt.id}:${row.questionId}`,
         );
-        responseRows.push({
+        const base: LearningPackResponse = {
           attemptId: attempt.id,
           studentId: attempt.studentId,
           questionId: row.questionId,
@@ -736,8 +933,69 @@ export function assembleLearningPack(
               : null,
           teacherComment: row.teacherComment,
           ...(inkFile !== undefined ? { inkFile } : {}),
+        };
+        if (!isV2) {
+          responseRows.push(base);
+          continue;
+        }
+        // v2：快照关联（scope 覆盖全部行，映射缺项即装配不变量破坏，快速失败）
+        if (evidenceAsm === null) {
+          throw new HttpError(
+            500,
+            "EXPORT_ASSEMBLY_BROKEN",
+            "v2 装配缺少证据装配结果",
+          );
+        }
+        const questionRef = evidenceAsm.refByResponseRowId.get(row.id);
+        if (questionRef === undefined) {
+          throw new HttpError(
+            500,
+            "EXPORT_ASSEMBLY_BROKEN",
+            "v2 装配缺少该行的题目版本引用",
+          );
+        }
+        const evidenceRef = evidenceAsm.evidenceRefByResponseRowId.get(row.id);
+        if (m.evidence && evidenceRef === undefined) {
+          throw new HttpError(
+            500,
+            "EXPORT_ASSEMBLY_BROKEN",
+            "v2 装配缺少该行的证据引用",
+          );
+        }
+        responseRowsV2.push({
+          ...base,
+          questionRef,
+          snapshotHash: hashByRef.get(questionRef) ?? null,
+          ...(m.evidence && evidenceRef !== undefined ? { evidenceRef } : {}),
         });
       }
+    }
+  }
+
+  // —— v2 evidence section（evidence 模块勾选才装配；快照配对的证据条目） ——
+  const evidenceSection: LearningPackEvidence[] = [];
+  if (isV2 && m.evidence && evidenceAsm !== null) {
+    for (const entry of evidenceAsm.evidence) {
+      evidenceSection.push({
+        ref: entry.ref,
+        attemptId: entry.attemptId,
+        studentId: entry.studentId,
+        questionId: entry.questionId,
+        questionRef: entry.questionRef,
+        no: entry.no,
+        phase: entry.phase,
+        state: entry.state,
+        ...(entry.version !== undefined ? { version: entry.version } : {}),
+        images: entry.images.map((image) => ({
+          file: image.file,
+          spec: image.spec,
+          pageIndex: image.pageIndex,
+          crop: { ...image.crop },
+          pixelWidth: image.pixelWidth,
+          pixelHeight: image.pixelHeight,
+          state: image.state,
+        })),
+      });
     }
   }
 
@@ -955,62 +1213,7 @@ export function assembleLearningPack(
     };
   }
 
-  // —— pack.json（未勾选的 section 不出现，D19） ——
-  const pack: LearningPack = {
-    meta: {
-      version: 1,
-      generatedAt: nowIso,
-      goal: request.goal,
-      days: request.scope.days,
-      from: fromIso,
-      to: nowIso,
-      anonymized,
-      modules: {
-        lectures: m.lectures.length > 0,
-        questions: m.questions ?? null,
-        responses: m.responses,
-        summaries: m.summaries,
-        ink: m.ink,
-        traces: m.traces,
-      },
-      note: "评语为教师原文（不改动），可能包含学生真实姓名；学习痕迹指标与阅读状态均为行为推断，仅供参考。",
-    },
-    students: roster.map((student) => ({
-      id: student.id,
-      name: displayNameOf.get(student.id) ?? student.displayName,
-      archived: student.archived,
-    })),
-    ...(m.lectures.length > 0 || m.questions !== undefined
-      ? {
-          content: {
-            ...(m.lectures.length > 0 ? { lectures: lectureItems } : {}),
-            ...(m.questions !== undefined ? { questions: questionItems } : {}),
-          },
-        }
-      : {}),
-    ...(m.responses || m.summaries
-      ? {
-          attempts: {
-            ...(m.responses ? { responses: responseRows } : {}),
-            ...(m.summaries ? { summaries: summaryRows } : {}),
-          },
-        }
-      : {}),
-    ...(m.traces
-      ? {
-          traces: {
-            questions: traceRows,
-            lectures: lectureTraceRows,
-          },
-        }
-      : {}),
-    ...(summarySection !== undefined ? { summary: summarySection } : {}),
-  };
-  // 服务端自检：序列化往返必须通过自身 schema（测试同款断言，契约漂移即失败）
-  const packJson = `${JSON.stringify(pack, null, 2)}\n`;
-  learningPackSchema.parse(JSON.parse(packJson));
-
-  // —— prompt.md（D17 单一来源渲染） ——
+  // —— prompt.md（D17 单一来源渲染；v2 附 evidence 说明行） ——
   const promptMd = renderLearningPackPrompt({
     goal: request.goal,
     lectures: m.lectures.length > 0,
@@ -1019,14 +1222,19 @@ export function assembleLearningPack(
     summaries: m.summaries,
     ink: m.ink,
     traces: m.traces,
+    ...(m.evidence ? { evidence: true } : {}),
     anonymized,
     ...(request.customPrompt !== undefined && request.customPrompt.length > 0
       ? { customPrompt: request.customPrompt }
       : {}),
   });
 
-  // —— schema.json（与 schema:export 产物逐字节一致，D19） ——
-  const schemaJson = `${JSON.stringify(learningPackJsonSchema(), null, 2)}\n`;
+  // —— schema.json（与 schema:export 产物逐字节一致，D19；v2 用 v2 schema） ——
+  const schemaJson = `${JSON.stringify(
+    isV2 ? learningPackV2JsonSchema() : learningPackJsonSchema(),
+    null,
+    2,
+  )}\n`;
 
   // —— 映射.txt（化名模式才生成；不进 pack.json，D16） ——
   const mappingTxt = anonymized
@@ -1044,62 +1252,356 @@ export function assembleLearningPack(
       ].join("\n")
     : null;
 
-  // —— summary.md（人类可读；只统计勾选模块，D19） ——
+  // —— pack.json（未勾选的 section 不出现，D19） ——
+  if (!isV2) {
+    const pack: LearningPack = {
+      meta: {
+        version: 1,
+        generatedAt: nowIso,
+        goal: request.goal,
+        days: request.scope.days,
+        from: fromIso,
+        to: nowIso,
+        anonymized,
+        modules: {
+          lectures: m.lectures.length > 0,
+          questions: m.questions ?? null,
+          responses: m.responses,
+          summaries: m.summaries,
+          ink: m.ink,
+          traces: m.traces,
+        },
+        note: "评语为教师原文（不改动），可能包含学生真实姓名；学习痕迹指标与阅读状态均为行为推断，仅供参考。",
+      },
+      students: roster.map((student) => ({
+        id: student.id,
+        name: displayNameOf.get(student.id) ?? student.displayName,
+        archived: student.archived,
+      })),
+      ...(m.lectures.length > 0 || m.questions !== undefined
+        ? {
+            content: {
+              ...(m.lectures.length > 0 ? { lectures: lectureItems } : {}),
+              ...(m.questions !== undefined
+                ? { questions: questionItems }
+                : {}),
+            },
+          }
+        : {}),
+      ...(m.responses || m.summaries
+        ? {
+            attempts: {
+              ...(m.responses ? { responses: responseRows } : {}),
+              ...(m.summaries ? { summaries: summaryRows } : {}),
+            },
+          }
+        : {}),
+      ...(m.traces
+        ? {
+            traces: {
+              questions: traceRows,
+              lectures: lectureTraceRows,
+            },
+          }
+        : {}),
+      ...(summarySection !== undefined ? { summary: summarySection } : {}),
+    };
+    // 服务端自检：序列化往返必须通过自身 schema（测试同款断言，契约漂移即失败）
+    const packJsonV1 = `${JSON.stringify(pack, null, 2)}\n`;
+    learningPackSchema.parse(JSON.parse(packJsonV1));
+
+    // —— summary.md（人类可读；只统计勾选模块，D19） ——
+    const summaryMdV1 = renderSummaryMd({
+      request,
+      pack,
+      lectureItems,
+      questionItems,
+      summaryRows,
+      responseRows,
+      traceRows,
+      lectureTraceRows,
+      inkEntries,
+      mediaEntries,
+      evidenceEntries: [],
+      displayNameOf,
+      nowIso,
+    });
+
+    // —— 文件清单与合计（D18 预检与 preview 共用；不含 zip 容器开销） ——
+    const filesV1 = packFilesOf({
+      packJsonBytes: Buffer.byteLength(packJsonV1, "utf8"),
+      summaryMd: summaryMdV1,
+      promptMd,
+      schemaJson,
+      mappingTxt,
+      inkEntries,
+      mediaEntries,
+      evidenceEntries: [],
+    });
+
+    return {
+      packJson: packJsonV1,
+      summaryMd: summaryMdV1,
+      promptMd,
+      schemaJson,
+      mappingTxt,
+      inkEntries,
+      mediaEntries,
+      evidenceEntries: [],
+      files: filesV1,
+      totalBytes: filesV1.reduce((sum, file) => sum + file.estimatedBytes, 0),
+      displayNameOf,
+    };
+  }
+
+  // —— v2 pack（T6R.12）：manifest 恒出现；先建草稿渲染 summary，再定稿 ——
+  if (evidenceAsm === null) {
+    throw new HttpError(
+      500,
+      "EXPORT_ASSEMBLY_BROKEN",
+      "v2 装配缺少证据装配结果",
+    );
+  }
+  const packDraft: Omit<LearningPackV2, "manifest"> = {
+    meta: {
+      version: 2,
+      generatedAt: nowIso,
+      goal: request.goal,
+      days: request.scope.days,
+      from: fromIso,
+      to: nowIso,
+      anonymized,
+      modules: {
+        lectures: m.lectures.length > 0,
+        questions: m.questions ?? null,
+        responses: m.responses,
+        summaries: m.summaries,
+        ink: m.ink,
+        traces: m.traces,
+        evidence: m.evidence,
+      },
+      note: "评语为教师原文（不改动），可能包含学生真实姓名；学习痕迹指标与阅读状态均为行为推断，仅供参考。",
+    },
+    students: roster.map((student) => ({
+      id: student.id,
+      name: displayNameOf.get(student.id) ?? student.displayName,
+      archived: student.archived,
+    })),
+    ...(m.lectures.length > 0 || m.questions !== undefined
+      ? {
+          content: {
+            ...(m.lectures.length > 0 ? { lectures: lectureItems } : {}),
+            ...(m.questions !== undefined
+              ? { questions: questionItemsV2 }
+              : {}),
+          },
+        }
+      : {}),
+    ...(m.responses || m.summaries
+      ? {
+          attempts: {
+            ...(m.responses ? { responses: responseRowsV2 } : {}),
+            ...(m.summaries ? { summaries: summaryRows } : {}),
+          },
+        }
+      : {}),
+    ...(m.evidence ? { evidence: evidenceSection } : {}),
+    ...(m.traces
+      ? {
+          traces: {
+            questions: traceRows,
+            lectures: lectureTraceRows,
+          },
+        }
+      : {}),
+    ...(summarySection !== undefined ? { summary: summarySection } : {}),
+  };
+
+  // —— summary.md（人类可读；v2 附手写原稿清单） ——
   const summaryMd = renderSummaryMd({
     request,
-    pack,
+    pack: packDraft,
     lectureItems,
-    questionItems,
+    questionItems: questionItemsV2,
     summaryRows,
-    responseRows,
+    responseRows: responseRowsV2,
     traceRows,
     lectureTraceRows,
     inkEntries,
     mediaEntries,
+    evidenceEntries,
     displayNameOf,
     nowIso,
   });
 
-  // —— 文件清单与合计（D18 预检与 preview 共用；不含 zip 容器开销） ——
-  const files: LearningPackPreviewFile[] = [
-    { path: "pack.json", estimatedBytes: Buffer.byteLength(packJson, "utf8") },
-    {
-      path: "summary.md",
-      estimatedBytes: Buffer.byteLength(summaryMd, "utf8"),
-    },
-    { path: "prompt.md", estimatedBytes: Buffer.byteLength(promptMd, "utf8") },
-    {
-      path: "schema.json",
-      estimatedBytes: Buffer.byteLength(schemaJson, "utf8"),
-    },
-  ];
-  if (mappingTxt !== null) {
-    files.push({
-      path: "映射.txt",
-      estimatedBytes: Buffer.byteLength(mappingTxt, "utf8"),
-    });
+  // —— manifest（pack.json 同时为 zip 清单：files + missing + 口径说明） ——
+  /** media src → 关联 q 条目（题目媒体；讲义媒体无关联） */
+  const mediaRefsBySrc = new Map<string, string[]>();
+  for (const medium of evidenceAsm.media) {
+    mediaRefsBySrc.set(medium.src, [...medium.questionRefs]);
   }
-  for (const entry of inkEntries) {
-    files.push({ path: entry.entry, estimatedBytes: entry.bytes });
+  const contextNotes: string[] = [];
+  if (m.questions === undefined && (m.responses || m.evidence)) {
+    contextNotes.push(
+      "题目内容模块未勾选：题目上下文未提供（逐题作答行只有配对键 questionRef 与 snapshotHash，无题干/选项/答案）。",
+    );
   }
-  // media 条目（::image 引用的图片）：preview 清单与大小预检与 ink 同口径
-  for (const entry of mediaEntries) {
-    files.push({ path: entry.entry, estimatedBytes: entry.bytes });
+  const missingSnapshotCount = evidenceAsm.revisions.filter(
+    (revision) => !revision.present,
+  ).length;
+  if (missingSnapshotCount > 0) {
+    contextNotes.push(
+      `${missingSnapshotCount} 个题目版本的历史快照缺失（题目已删除或升级遗留），对应作答无题干内容，不回填当前题库。`,
+    );
   }
-  const totalBytes = files.reduce((sum, file) => sum + file.estimatedBytes, 0);
+  const manifest: LearningPackManifest = {
+    files: [
+      {
+        path: "summary.md",
+        kind: "summary",
+        bytes: Buffer.byteLength(summaryMd, "utf8"),
+        refs: [],
+      },
+      {
+        path: "prompt.md",
+        kind: "prompt",
+        bytes: Buffer.byteLength(promptMd, "utf8"),
+        refs: [],
+      },
+      {
+        path: "schema.json",
+        kind: "schema",
+        bytes: Buffer.byteLength(schemaJson, "utf8"),
+        refs: [],
+      },
+      ...(mappingTxt !== null
+        ? [
+            {
+              path: "映射.txt",
+              kind: "mapping" as const,
+              bytes: Buffer.byteLength(mappingTxt, "utf8"),
+              refs: [],
+            },
+          ]
+        : []),
+      ...inkEntries.map((entry) => ({
+        path: entry.entry,
+        kind: "ink" as const,
+        bytes: entry.bytes,
+        refs: [],
+      })),
+      ...mediaEntries.map((entry) => ({
+        path: entry.entry,
+        kind: "media" as const,
+        bytes: entry.bytes,
+        refs: mediaRefsBySrc.get(entry.entry) ?? [],
+      })),
+      ...evidenceEntries.map((entry) => ({
+        path: entry.entry,
+        kind: "evidence" as const,
+        bytes: entry.bytes,
+        refs: [entry.ref],
+      })),
+    ],
+    missing: [
+      ...manifestMissingMedia,
+      ...evidenceAsm.missingEvidenceImages.map((miss) => ({
+        path: miss.file,
+        kind: "evidence-image" as const,
+        reason: miss.reason,
+        refs: [miss.evidenceRef],
+      })),
+    ],
+    contextNotes,
+  };
 
-  return {
-    packJson,
+  const packV2: LearningPackV2 = { ...packDraft, manifest };
+  // 服务端自检：序列化往返必须通过 v2 schema（契约漂移即失败）
+  const packJsonV2 = `${JSON.stringify(packV2, null, 2)}\n`;
+  learningPackV2Schema.parse(JSON.parse(packJsonV2));
+
+  // —— 文件清单与合计（D18 预检与 preview 共用；不含 zip 容器开销） ——
+  const files = packFilesOf({
+    packJsonBytes: Buffer.byteLength(packJsonV2, "utf8"),
     summaryMd,
     promptMd,
     schemaJson,
     mappingTxt,
     inkEntries,
     mediaEntries,
+    evidenceEntries,
+  });
+
+  return {
+    packJson: packJsonV2,
+    summaryMd,
+    promptMd,
+    schemaJson,
+    mappingTxt,
+    inkEntries,
+    mediaEntries,
+    evidenceEntries,
     files,
-    totalBytes,
+    totalBytes: files.reduce((sum, file) => sum + file.estimatedBytes, 0),
     displayNameOf,
   };
+}
+
+/**
+ * 文件清单组装（v1/v2 共用）：固定四文件 + 映射.txt（化名模式）+ ink/media/
+ * evidence 附件（内容合计不含 zip 容器开销，D18 预检与 preview 共用）。
+ * pack.json 自身字节数由调用方传入（渲染后实测）。
+ */
+function packFilesOf(input: {
+  readonly packJsonBytes: number;
+  readonly summaryMd: string;
+  readonly promptMd: string;
+  readonly schemaJson: string;
+  readonly mappingTxt: string | null;
+  readonly inkEntries: ReadonlyArray<{
+    readonly entry: string;
+    readonly bytes: number;
+  }>;
+  readonly mediaEntries: ReadonlyArray<{
+    readonly entry: string;
+    readonly bytes: number;
+  }>;
+  readonly evidenceEntries: ReadonlyArray<{
+    readonly entry: string;
+    readonly bytes: number;
+  }>;
+}): LearningPackPreviewFile[] {
+  const files: LearningPackPreviewFile[] = [
+    { path: "pack.json", estimatedBytes: input.packJsonBytes },
+    {
+      path: "summary.md",
+      estimatedBytes: Buffer.byteLength(input.summaryMd, "utf8"),
+    },
+    {
+      path: "prompt.md",
+      estimatedBytes: Buffer.byteLength(input.promptMd, "utf8"),
+    },
+    {
+      path: "schema.json",
+      estimatedBytes: Buffer.byteLength(input.schemaJson, "utf8"),
+    },
+  ];
+  if (input.mappingTxt !== null) {
+    files.push({
+      path: "映射.txt",
+      estimatedBytes: Buffer.byteLength(input.mappingTxt, "utf8"),
+    });
+  }
+  for (const entry of input.inkEntries) {
+    files.push({ path: entry.entry, estimatedBytes: entry.bytes });
+  }
+  for (const entry of input.mediaEntries) {
+    files.push({ path: entry.entry, estimatedBytes: entry.bytes });
+  }
+  for (const entry of input.evidenceEntries) {
+    files.push({ path: entry.entry, estimatedBytes: entry.bytes });
+  }
+  return files;
 }
 
 // ---------- summary.md 渲染 ----------
@@ -1107,16 +1609,37 @@ export function assembleLearningPack(
 /** summary.md 渲染输入（装配结果的各部分 + 展示上下文） */
 interface SummaryMdInput {
   readonly request: LearningPackExportRequest;
-  readonly pack: LearningPack;
-  readonly lectureItems: readonly LearningPackLecture[];
-  readonly questionItems: readonly LearningPackQuestion[];
+  /**
+   * pack（v1/v2 皆可）：summary 只读匿名化标志与学生名单，结构化子集
+   * 避免 v1/v2 两套 meta 类型互相不适配。
+   */
+  readonly pack: {
+    readonly meta: { readonly anonymized: boolean };
+    readonly students: ReadonlyArray<{
+      readonly name: string;
+      readonly archived: boolean;
+    }>;
+  };
+  /** 题目条目（v1/v2 形状皆可——只消费数量） */
+  readonly questionItems: readonly object[];
+  /** 讲义条目（讲义表：title 与小节数量） */
+  readonly lectureItems: ReadonlyArray<{
+    readonly title: string;
+    readonly outline: readonly object[];
+    readonly sections: ReadonlyArray<{ readonly headingIndex: number }>;
+  }>;
   readonly summaryRows: readonly LearningPackAttemptSummary[];
-  readonly responseRows: readonly LearningPackResponse[];
+  /** 逐题行（v1/v2 形状皆可——只消费 finalCorrect） */
+  readonly responseRows: ReadonlyArray<{
+    readonly finalCorrect: boolean | null;
+  }>;
   readonly traceRows: readonly LearningPackQuestionTrace[];
   readonly lectureTraceRows: readonly LearningPackLectureTrace[];
   readonly inkEntries: ReadonlyArray<{ readonly entry: string }>;
   /** ::image 引用的图片条目（媒体管线第三单；无图为空数组，section 不出现） */
   readonly mediaEntries: ReadonlyArray<{ readonly entry: string }>;
+  /** v2 证据图条目（T6R.12；空数组 = 未勾选或无图，section 不出现） */
+  readonly evidenceEntries: ReadonlyArray<{ readonly entry: string }>;
   readonly displayNameOf: ReadonlyMap<string, string>;
   readonly nowIso: string;
 }
@@ -1312,6 +1835,16 @@ function renderSummaryMd(input: SummaryMdInput): string {
     lines.push("");
   }
 
+  // v2 逐题手写原稿（evidence 模块勾选且有图才出现）
+  if (input.evidenceEntries.length > 0) {
+    lines.push(`## 手写原稿（${input.evidenceEntries.length} 张）`);
+    lines.push("");
+    for (const entry of input.evidenceEntries) {
+      lines.push(`- ${entry.entry}`);
+    }
+    lines.push("");
+  }
+
   // 讲义/题目里的 ::image 配图（有图才出现；无图响应形状与现状一致）
   if (input.mediaEntries.length > 0) {
     lines.push(`## 讲义配图（${input.mediaEntries.length} 张）`);
@@ -1425,6 +1958,11 @@ export async function buildLearningPackZip(
   }
   // media 条目：条目名含子目录（blobs/media/…），archiver 按路径写目录条目
   for (const entry of assembly.mediaEntries) {
+    archive.file(entry.absPath, { name: entry.entry });
+  }
+  // v2 证据图条目（T6R.12）：evidence/<编号>-<阶段>-<页号>.png；缺失文件
+  // 不在清单（manifest.missing 显式登记），不产生悬垂 zip 条目
+  for (const entry of assembly.evidenceEntries) {
     archive.file(entry.absPath, { name: entry.entry });
   }
   await archive.finalize();

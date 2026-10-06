@@ -15,15 +15,19 @@ import {
   responses as responsesTable,
   students as studentsTable,
 } from "../db/schema.ts";
-import { createTestDb, createTestDir, TEST_TEACHER_ID } from "../db/test-utils.ts";
+import {
+  createTestDb,
+  createTestDir,
+  TEST_TEACHER_ID,
+} from "../db/test-utils.ts";
 import { gzipJson, makeNotePng, noteDoc } from "../test/note-fixtures.ts";
 import { insertEvidence } from "../test/note-world.ts";
 import { attemptResponseRows, newDraftAttempt } from "./attempt-service.ts";
 import { saveMedia } from "./media-service.ts";
 import { attachNoteImage, saveNoteVersion } from "./note-service.ts";
 import {
-  type EvidenceRole,
   assembleQuestionEvidence,
+  type EvidenceRole,
   evidenceImageFileName,
   questionRevisionKey,
 } from "./question-evidence.ts";
@@ -49,9 +53,7 @@ import {
 const TEACHER_B_ID = "teacher-b-t6r12-000001";
 
 /** 构造合法 Question 快照 JSON（questionSchema.parse 锁定合法性） */
-function snapshotJson(
-  question: Partial<Question> & { id: string },
-): string {
+function snapshotJson(question: Partial<Question> & { id: string }): string {
   return JSON.stringify(
     questionSchema.parse({
       type: "fill",
@@ -141,7 +143,11 @@ function draftAttempt(
 }
 
 /** 置为已交卷（含 responses 展示序） */
-function submit(db: Db, attemptId: string, submittedAt = "2026-10-02T00:00:00.000Z") {
+function submit(
+  db: Db,
+  attemptId: string,
+  submittedAt = "2026-10-02T00:00:00.000Z",
+) {
   db.update(attemptsTable)
     .set({ status: "submitted", submittedAt })
     .where(eq(attemptsTable.id, attemptId))
@@ -149,7 +155,10 @@ function submit(db: Db, attemptId: string, submittedAt = "2026-10-02T00:00:00.00
 }
 
 /** scope 条目：attempt + 展示序行（attemptResponseRows 按 rowid 序＝夹具插入序） */
-function scopeOf(db: Db, attemptId: string): {
+function scopeOf(
+  db: Db,
+  attemptId: string,
+): {
   attempt: Attempt;
   rows: ResponseRow[];
 } {
@@ -276,7 +285,9 @@ describe("T6R.12 快照一一配对（同 qid 多版本）", () => {
     expect(missing?.snapshotHash).toBeNull();
     // 两条 a2 行分别指向正确条目（同内容复用 + 缺失独立）
     expect(result.refByResponseRowId.get(a2.rowIds[0] ?? "")).toBe(stable?.ref);
-    expect(result.refByResponseRowId.get(a2.rowIds[1] ?? "")).toBe(missing?.ref);
+    expect(result.refByResponseRowId.get(a2.rowIds[1] ?? "")).toBe(
+      missing?.ref,
+    );
   });
 });
 
@@ -297,7 +308,10 @@ describe("T6R.12 同内容去重不串教师", () => {
   it("教师 A 的装配不含教师 B 域的任何数据（域过滤 + 独立条目实例）", () => {
     const db = createTestDb();
     const dataDir = createTestDir();
-    const sameJson = snapshotJson({ id: "共享考点题-9", stemMd: "同内容题干 [[3]]" });
+    const sameJson = snapshotJson({
+      id: "共享考点题-9",
+      stemMd: "同内容题干 [[3]]",
+    });
     const sA = studentOf(db, TEST_TEACHER_ID);
     const sB = studentOf(db, TEACHER_B_ID);
     const aA = draftAttempt(db, sA, [
@@ -404,17 +418,31 @@ describe("T6R.12 角色投影先于素材装配", () => {
 
   it("教师层级：stem 层同样学生端投影；answer/solution 层保留原文", () => {
     const { db, dataDir, attemptId } = sentryWorld();
-    const stem = assemble(db, dataDir, TEST_TEACHER_ID, [scopeOf(db, attemptId)], {
-      questionLevel: "stem",
-    });
+    const stem = assemble(
+      db,
+      dataDir,
+      TEST_TEACHER_ID,
+      [scopeOf(db, attemptId)],
+      {
+        questionLevel: "stem",
+      },
+    );
     expect(stem.revisions[0]?.material.stemMd).not.toContain(SENTRY.answer);
     expect(JSON.stringify(stem)).not.toContain(SENTRY.solution);
 
-    const solution = assemble(db, dataDir, TEST_TEACHER_ID, [scopeOf(db, attemptId)], {
-      questionLevel: "solution",
-    });
+    const solution = assemble(
+      db,
+      dataDir,
+      TEST_TEACHER_ID,
+      [scopeOf(db, attemptId)],
+      {
+        questionLevel: "solution",
+      },
+    );
     expect(solution.revisions[0]?.material.stemMd).toContain(SENTRY.answer);
-    expect(solution.revisions[0]?.material.solutionMd).toContain(SENTRY.solution);
+    expect(solution.revisions[0]?.material.solutionMd).toContain(
+      SENTRY.solution,
+    );
     expect(solution.revisions[0]?.material.answers).toEqual({
       kind: "choice",
       index: 1,
@@ -440,23 +468,38 @@ describe("T6R.12 角色投影先于素材装配", () => {
         snapshotJson: snapshotJson({
           id: "图题-5",
           stemMd: `看图作答：\n\n:::image{src="${stemImg.src}"}\n\n[[答案]]`,
-          answers: { kind: "fill", blanks: [["答案"]] } satisfies QuestionAnswers,
+          answers: {
+            kind: "fill",
+            blanks: [["答案"]],
+          } satisfies QuestionAnswers,
           solutionMd: `:::image{src="${solutionImg.src}"}\n\n解析配图`,
         }),
       },
     ]);
     submit(db, a1.attemptId);
 
-    const student = assemble(db, dataDir, TEST_TEACHER_ID, [scopeOf(db, a1.attemptId)], {
-      role: "student",
-      questionLevel: "solution", // 学生角色忽略层级——解析图仍不得进入
-    });
+    const student = assemble(
+      db,
+      dataDir,
+      TEST_TEACHER_ID,
+      [scopeOf(db, a1.attemptId)],
+      {
+        role: "student",
+        questionLevel: "solution", // 学生角色忽略层级——解析图仍不得进入
+      },
+    );
     expect(student.media.map((m) => m.src)).toEqual([stemImg.src]);
     expect(JSON.stringify(student)).not.toContain(solutionImg.src);
 
-    const teacher = assemble(db, dataDir, TEST_TEACHER_ID, [scopeOf(db, a1.attemptId)], {
-      questionLevel: "solution",
-    });
+    const teacher = assemble(
+      db,
+      dataDir,
+      TEST_TEACHER_ID,
+      [scopeOf(db, a1.attemptId)],
+      {
+        questionLevel: "solution",
+      },
+    );
     expect(teacher.media.map((m) => m.src).sort()).toEqual(
       [stemImg.src, solutionImg.src].sort(),
     );
@@ -472,11 +515,23 @@ describe("T6R.12 证据装配（submission_evidence + 分析图）", () => {
     const dataDir = createTestDir();
     const s1 = studentOf(db, TEST_TEACHER_ID);
     const a1 = draftAttempt(db, s1, [
-      { questionId: "frozen-题", snapshotJson: snapshotJson({ id: "frozen-题" }) },
-      { questionId: "missing-题", snapshotJson: snapshotJson({ id: "missing-题" }) },
+      {
+        questionId: "frozen-题",
+        snapshotJson: snapshotJson({ id: "frozen-题" }),
+      },
+      {
+        questionId: "missing-题",
+        snapshotJson: snapshotJson({ id: "missing-题" }),
+      },
       { questionId: "none-题", snapshotJson: snapshotJson({ id: "none-题" }) },
-      { questionId: "legacy-题", snapshotJson: snapshotJson({ id: "legacy-题" }) },
-      { questionId: "未采集-题", snapshotJson: snapshotJson({ id: "未采集-题" }) },
+      {
+        questionId: "legacy-题",
+        snapshotJson: snapshotJson({ id: "legacy-题" }),
+      },
+      {
+        questionId: "未采集-题",
+        snapshotJson: snapshotJson({ id: "未采集-题" }),
+      },
     ]);
     // frozen-题：draft 期存稿 + 两页分析图，随后交卷固定
     const receipt = saveNoteVersion(
@@ -490,28 +545,49 @@ describe("T6R.12 证据装配（submission_evidence + 分析图）", () => {
     );
     const png1 = makeNotePng(1000, 800);
     const png2 = makeNotePng(1000, 640);
-    attachNoteImage(db, dataDir, { kind: "student", id: s1 }, receipt.versionId, png1, {
-      spec: "analysis",
-      pageIndex: 0,
-      crop: { x: 0, y: 0, width: 1000, height: 800 },
-      pixelWidth: 1000,
-      pixelHeight: 800,
-    });
-    attachNoteImage(db, dataDir, { kind: "student", id: s1 }, receipt.versionId, png2, {
-      spec: "analysis",
-      pageIndex: 1,
-      crop: { x: 0, y: 760, width: 1000, height: 640 },
-      pixelWidth: 1000,
-      pixelHeight: 640,
-    });
+    attachNoteImage(
+      db,
+      dataDir,
+      { kind: "student", id: s1 },
+      receipt.versionId,
+      png1,
+      {
+        spec: "analysis",
+        pageIndex: 0,
+        crop: { x: 0, y: 0, width: 1000, height: 800 },
+        pixelWidth: 1000,
+        pixelHeight: 800,
+      },
+    );
+    attachNoteImage(
+      db,
+      dataDir,
+      { kind: "student", id: s1 },
+      receipt.versionId,
+      png2,
+      {
+        spec: "analysis",
+        pageIndex: 1,
+        crop: { x: 0, y: 760, width: 1000, height: 640 },
+        pixelWidth: 1000,
+        pixelHeight: 640,
+      },
+    );
     // 缩略图：不进证据包（只有 analysis 规格参与装配）
-    attachNoteImage(db, dataDir, { kind: "student", id: s1 }, receipt.versionId, makeNotePng(200, 160), {
-      spec: "thumbnail",
-      pageIndex: 0,
-      crop: { x: 0, y: 0, width: 1000, height: 800 },
-      pixelWidth: 200,
-      pixelHeight: 160,
-    });
+    attachNoteImage(
+      db,
+      dataDir,
+      { kind: "student", id: s1 },
+      receipt.versionId,
+      makeNotePng(200, 160),
+      {
+        spec: "thumbnail",
+        pageIndex: 0,
+        crop: { x: 0, y: 0, width: 1000, height: 800 },
+        pixelWidth: 200,
+        pixelHeight: 160,
+      },
+    );
     submit(db, a1.attemptId);
     insertEvidence(db, a1.attemptId, "frozen-题", "frozen", receipt.versionId);
     insertEvidence(db, a1.attemptId, "missing-题", "missing", null);
@@ -569,7 +645,9 @@ describe("T6R.12 证据装配（submission_evidence + 分析图）", () => {
       expect(result.evidenceRefByResponseRowId.get(rowId)).toBeDefined();
     }
     const frozenRowId = world.rowIds[0] ?? "";
-    expect(result.evidenceRefByResponseRowId.get(frozenRowId)).toBe(frozen?.ref);
+    expect(result.evidenceRefByResponseRowId.get(frozenRowId)).toBe(
+      frozen?.ref,
+    );
     // 证据条目回指题目条目
     expect(frozen?.questionRef).toBe(
       result.refByResponseRowId.get(frozenRowId ?? ""),
@@ -626,9 +704,15 @@ describe("T6R.12 证据装配（submission_evidence + 分析图）", () => {
     submit(db, a1.attemptId);
     insertEvidence(db, a1.attemptId, "零图题", "frozen", receipt.versionId);
 
-    const result = assemble(db, dataDir, TEST_TEACHER_ID, [scopeOf(db, a1.attemptId)], {
-      includeEvidence: true,
-    });
+    const result = assemble(
+      db,
+      dataDir,
+      TEST_TEACHER_ID,
+      [scopeOf(db, a1.attemptId)],
+      {
+        includeEvidence: true,
+      },
+    );
     const zero = result.evidence[0];
     expect(zero?.state).toBe("frozen");
     expect(zero?.version?.versionId).toBe(receipt.versionId);
@@ -655,7 +739,9 @@ describe("T6R.12 证据装配（submission_evidence + 分析图）", () => {
     ];
     expect(allFiles.length).toBeGreaterThan(0);
     for (const file of allFiles) {
-      expect(file).toMatch(/^evidence\/e\d{3,}-(original|correction|supplement)-\d{2}\.png$/);
+      expect(file).toMatch(
+        /^evidence\/e\d{3,}-(original|correction|supplement)-\d{2}\.png$/,
+      );
       expect(file).not.toContain(world.s1);
       expect(file).not.toContain(world.attemptId);
       expect(file).not.toContain(world.versionId);
@@ -670,7 +756,10 @@ describe("T6R.12 媒体引用保留（历史引用与缺失清单）", () => {
   it("历史快照引用的媒体随包登记；缺失文件进缺失清单并带题号关联", () => {
     const db = createTestDb();
     const dataDir = createTestDir();
-    const present = saveMedia(dataDir, makeNotePng(50, 50).slice() as Uint8Array<ArrayBuffer>);
+    const present = saveMedia(
+      dataDir,
+      makeNotePng(50, 50).slice() as Uint8Array<ArrayBuffer>,
+    );
     const missingHash = `${"b".repeat(64)}.png`;
     const s1 = studentOf(db, TEST_TEACHER_ID);
     const a1 = draftAttempt(db, s1, [
@@ -684,7 +773,9 @@ describe("T6R.12 媒体引用保留（历史引用与缺失清单）", () => {
     ]);
     submit(db, a1.attemptId);
 
-    const result = assemble(db, dataDir, TEST_TEACHER_ID, [scopeOf(db, a1.attemptId)]);
+    const result = assemble(db, dataDir, TEST_TEACHER_ID, [
+      scopeOf(db, a1.attemptId),
+    ]);
     expect(result.media).toHaveLength(1);
     expect(result.media[0]?.src).toBe(present.src);
     expect(result.media[0]?.bytes).toBeGreaterThan(0);

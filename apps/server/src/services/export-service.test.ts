@@ -1,18 +1,33 @@
-import { readFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { inflateRawSync } from "node:zlib";
 import type { LearningPack, LearningPackExportRequest } from "@tutor/contract";
 import {
   learningPackExportRequestSchema,
   learningPackSchema,
+  learningPackV2Schema,
+  questionSchema,
 } from "@tutor/contract";
 import { and, eq } from "drizzle-orm";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { Db } from "../db/client";
-import { attempts, lectures } from "../db/schema";
+import {
+  attempts,
+  lectures,
+  noteImages as noteImagesTable,
+  responses as responsesTable,
+} from "../db/schema";
 import { createTestDb, createTestDir, TEST_TEACHER_ID } from "../db/test-utils";
 import { HttpError } from "../lib/http-error";
-import { submitAttempt } from "./attempt-service";
+import {
+  gzipJson,
+  makeNotePng,
+  makeStudent,
+  noteDoc,
+} from "../test/note-fixtures";
+import { insertEvidence } from "../test/note-world";
+import { newDraftAttempt, submitAttempt } from "./attempt-service";
 import {
   assembleLearningPack,
   buildLearningPackZip,
@@ -20,6 +35,7 @@ import {
 } from "./export-service";
 import { saveInk } from "./ink-service";
 import { saveMedia } from "./media-service";
+import { attachNoteImage, saveNoteVersion } from "./note-service";
 import { type SeedDemoResult, seedDemoData } from "./seed-demo";
 
 /**
@@ -710,3 +726,379 @@ describe("::image 配图进学习包（媒体管线第三单）", () => {
   });
 });
 // extractMediaImageSrcs 的纯函数单测随函数本体迁至 media-service.test.ts
+
+// ---------- T6R.12：LearningPack v2（证据装配、快照关联与 manifest） ----------
+
+describe("T6R.12 LearningPack v2：快照关联、证据与 manifest", () => {
+  /**
+   * 独立小世界（复用文件级 db/dataDir，scope 只圈本世界学生，与种子数据隔离）：
+   * - 同 qid 两轮不同内容（round1 fill「2+3」/ round2 choice「12+13」）；
+   * - round1：frozen 证据两页分析图（第二页文件删除）+ 题干两处 ::image
+   *   （一在场一缺失）；
+   * - round2：无证据行（not_collected）。
+   */
+  const V2_NOW = "2026-10-05T04:00:00.000Z";
+  let v2Student: string;
+  let round1AttemptId: string;
+  let round2AttemptId: string;
+  let frozenVersionId: string;
+  let v2MediaSrc: string;
+  /** 合法内容寻址形态但文件缺失的 src（64 位 hex） */
+  const v2MissingMediaSrc = `blobs/media/${"e".repeat(64)}.png`;
+
+  /** 合法 Question 快照 JSON */
+  function v2Snapshot(question: Record<string, unknown>): string {
+    return JSON.stringify(
+      questionSchema.parse({
+        type: "fill",
+        difficulty: 2,
+        knowledge: ["v2考点"],
+        stemMd: "题干占位",
+        hints: [],
+        sourceMd: ":::question\n:::\n",
+        ...question,
+      }),
+    );
+  }
+
+  /** attempt 直插已交卷状态（不经 submitAttempt——证据行由夹具自管） */
+  function submitStatus(attemptId: string, submittedAt: string): void {
+    db.update(attempts)
+      .set({ status: "submitted", submittedAt })
+      .where(eq(attempts.id, attemptId))
+      .run();
+  }
+
+  /** 直插 draft attempt + 冻结行 */
+  function v2DraftAttempt(
+    studentId: string,
+    questions: ReadonlyArray<{ questionId: string; snapshotJson: string }>,
+  ): string {
+    const attempt = newDraftAttempt({
+      id: randomUUID(),
+      studentId,
+      sourceType: "assignment",
+      assignmentId: null,
+      courseId: null,
+      unitId: null,
+      attemptNo: 1,
+      startedAt: "2026-10-01T00:00:00.000Z",
+    });
+    db.insert(attempts).values(attempt).run();
+    for (const q of questions) {
+      db.insert(responsesTable)
+        .values({
+          id: randomUUID(),
+          attemptId: attempt.id,
+          questionId: q.questionId,
+          questionVersion: 1,
+          questionSnapshotJson: q.snapshotJson,
+          unitId: null,
+          answerJson: null,
+          autoCorrect: null,
+          finalCorrect: null,
+          teacherMark: null,
+          teacherComment: null,
+          activeSec: null,
+          hintsUsed: 0,
+          changeCount: 0,
+          inkId: null,
+          hintsOpenedJson: null,
+        })
+        .run();
+    }
+    return attempt.id;
+  }
+
+  beforeAll(() => {
+    v2Student = makeStudent(db);
+    const v2MediaBytes = fakePng(60, 60);
+    v2MediaSrc = saveMedia(dataDir, v2MediaBytes).src;
+    const stemWithImages = [
+      "看图计算：",
+      "",
+      `::image{src="${v2MediaSrc}"}`,
+      "",
+      `::image{src="${v2MissingMediaSrc}"}`,
+      "",
+      "计算 $2+3=[[5]]$",
+    ].join("\n");
+    round1AttemptId = v2DraftAttempt(v2Student, [
+      {
+        questionId: "v2配对题-1",
+        snapshotJson: v2Snapshot({
+          id: "v2配对题-1",
+          stemMd: stemWithImages,
+          answers: { kind: "fill", blanks: [["5"]] },
+          solutionMd: "v2解析一",
+        }),
+      },
+    ]);
+    const receipt = saveNoteVersion(
+      db,
+      dataDir,
+      v2Student,
+      round1AttemptId,
+      "v2配对题-1",
+      gzipJson(noteDoc(2, 30)),
+      { baseRevision: 0, mutationId: randomUUID() },
+    );
+    frozenVersionId = receipt.versionId;
+    const page1 = attachNoteImage(
+      db,
+      dataDir,
+      { kind: "student", id: v2Student },
+      receipt.versionId,
+      makeNotePng(1000, 800),
+      {
+        spec: "analysis",
+        pageIndex: 0,
+        crop: { x: 0, y: 0, width: 1000, height: 800 },
+        pixelWidth: 1000,
+        pixelHeight: 800,
+      },
+    );
+    void page1;
+    const page2 = attachNoteImage(
+      db,
+      dataDir,
+      { kind: "student", id: v2Student },
+      receipt.versionId,
+      makeNotePng(1000, 640),
+      {
+        spec: "analysis",
+        pageIndex: 1,
+        crop: { x: 0, y: 760, width: 1000, height: 640 },
+        pixelWidth: 1000,
+        pixelHeight: 640,
+      },
+    );
+    // 删除第二页文件（磁盘缺失 → manifest.missing）
+    const page2Row = db
+      .select()
+      .from(noteImagesTable)
+      .where(eq(noteImagesTable.id, page2.imageId))
+      .get();
+    if (page2Row === undefined) throw new Error("v2 夹具缺第二页分析图行");
+    rmSync(join(dataDir, page2Row.path), { force: true });
+    // 交卷（直插状态与证据行：round1 frozen；round2 交卷不采集）
+    submitStatus(round1AttemptId, "2026-10-02T00:00:00.000Z");
+    insertEvidence(
+      db,
+      round1AttemptId,
+      "v2配对题-1",
+      "frozen",
+      receipt.versionId,
+    );
+    round2AttemptId = v2DraftAttempt(v2Student, [
+      {
+        questionId: "v2配对题-1",
+        snapshotJson: v2Snapshot({
+          id: "v2配对题-1",
+          type: "choice",
+          stemMd: "12+13 = ？",
+          options: [{ text: "25" }, { text: "35" }],
+          answers: { kind: "choice", index: 0 },
+          solutionMd: "v2解析二",
+        }),
+      },
+    ]);
+    submitStatus(round2AttemptId, "2026-10-04T00:00:00.000Z");
+  });
+
+  /** v2 请求（默认题目 solution 层 + 逐题作答 + 证据） */
+  function makeV2Request(
+    overrides: Record<string, unknown> = {},
+  ): LearningPackExportRequest {
+    return learningPackExportRequestSchema.parse({
+      packVersion: 2,
+      scope: { studentIds: [v2Student] },
+      modules: { questions: "solution", responses: true, evidence: true },
+      goal: "diagnose-weakness",
+      ...overrides,
+    });
+  }
+
+  it("v2 全链：pack 过 v2 schema、同 qid 两轮一一配对、manifest 与 zip 一致、引用全部可解析或显式缺失", async () => {
+    const zip = await buildLearningPackZip(
+      db,
+      dataDir,
+      TEST_TEACHER_ID,
+      makeV2Request(),
+      { now: V2_NOW },
+    );
+    const entries = unzipEntries(zip.bytes);
+    const pack = learningPackV2Schema.parse(
+      JSON.parse(entries.get("pack.json")?.toString("utf8") ?? "{}"),
+    );
+
+    // —— meta：v2 + evidence 回显 ——
+    expect(pack.meta.version).toBe(2);
+    expect(pack.meta.modules.evidence).toBe(true);
+
+    // —— 快照一一配对：同 qid 两条目，各轮 response 指向自己的版本 ——
+    const questions = pack.content?.questions ?? [];
+    expect(questions).toHaveLength(2);
+    expect(questions[0]?.questionId).toBe("v2配对题-1");
+    expect(questions[0]?.stemMd).toContain("2+3");
+    expect(questions[1]?.stemMd).toContain("12+13");
+    expect(questions[1]?.options).toEqual(["25", "35"]);
+    const responses = pack.attempts?.responses ?? [];
+    expect(responses).toHaveLength(2);
+    expect(responses[0]?.attemptId).toBe(round1AttemptId);
+    expect(responses[0]?.questionRef).toBe(questions[0]?.ref);
+    expect(responses[0]?.snapshotHash).toBe(questions[0]?.snapshotHash);
+    expect(responses[1]?.attemptId).toBe(round2AttemptId);
+    expect(responses[1]?.questionRef).toBe(questions[1]?.ref);
+
+    // —— 证据：round1 frozen（两页一在场一缺失）+ round2 not_collected ——
+    const evidence = pack.evidence ?? [];
+    expect(evidence).toHaveLength(2);
+    expect(responses[0]?.evidenceRef).toBe(evidence[0]?.ref);
+    expect(responses[1]?.evidenceRef).toBe(evidence[1]?.ref);
+    expect(evidence[0]?.state).toBe("frozen");
+    expect(evidence[0]?.version?.versionId).toBe(frozenVersionId);
+    expect(evidence[0]?.images).toHaveLength(2);
+    expect(evidence[0]?.images[0]?.state).toBe("ready");
+    expect(evidence[0]?.images[1]?.state).toBe("missing");
+    expect(evidence[1]?.state).toBe("not_collected");
+
+    // —— manifest：files 全在 zip、missing 不在 zip、refs 全可解析 ——
+    const manifest = pack.manifest;
+    for (const file of manifest.files) {
+      expect(entries.has(file.path)).toBe(true);
+    }
+    for (const miss of manifest.missing) {
+      expect(entries.has(miss.path)).toBe(false);
+    }
+    const qRefs = new Set(questions.map((q) => q.ref));
+    const eRefs = new Set(evidence.map((e) => e.ref));
+    for (const response of responses) {
+      expect(qRefs.has(response.questionRef)).toBe(true);
+      if (response.evidenceRef !== undefined) {
+        expect(eRefs.has(response.evidenceRef)).toBe(true);
+      }
+    }
+    for (const item of [...manifest.files, ...manifest.missing]) {
+      for (const ref of item.refs) {
+        expect(qRefs.has(ref) || eRefs.has(ref)).toBe(true);
+      }
+    }
+    // 媒体：在场图进 files（refs 指向 round1 的 q 条目），缺失图进 missing
+    const mediaFile = manifest.files.find((f) => f.path === v2MediaSrc);
+    expect(mediaFile?.kind).toBe("media");
+    expect(mediaFile?.refs).toEqual([questions[0]?.ref]);
+    const missingMedia = manifest.missing.find(
+      (m) => m.path === v2MissingMediaSrc,
+    );
+    expect(missingMedia?.kind).toBe("media");
+    expect(missingMedia?.reason.length).toBeGreaterThan(0);
+    // 删除的第二页分析图进 missing（evidence-image）
+    expect(
+      manifest.missing.some(
+        (m) =>
+          m.kind === "evidence-image" &&
+          m.path === "evidence/e001-original-02.png" &&
+          m.refs.includes(evidence[0]?.ref ?? ""),
+      ),
+    ).toBe(true);
+
+    // —— zip 条目可移植（相对路径、无盘符/.. 段） ——
+    for (const name of entries.keys()) {
+      expect(name.startsWith("/")).toBe(false);
+      expect(name.includes("..")).toBe(false);
+      expect(name.includes(":")).toBe(false);
+    }
+
+    // —— 固定文件在场；prompt 提及 evidence ——
+    for (const fixed of [
+      "pack.json",
+      "summary.md",
+      "prompt.md",
+      "schema.json",
+      "映射.txt",
+    ]) {
+      expect(entries.has(fixed)).toBe(true);
+    }
+    expect(entries.get("prompt.md")?.toString("utf8")).toContain("evidence/");
+    // 在场证据图条目存在
+    expect(entries.has("evidence/e001-original-01.png")).toBe(true);
+  });
+
+  it("只选证据不选题目：manifest 标明上下文未提供，不夹带题目媒体", async () => {
+    const zip = await buildLearningPackZip(
+      db,
+      dataDir,
+      TEST_TEACHER_ID,
+      makeV2Request({ modules: { responses: true, evidence: true } }),
+      { now: V2_NOW },
+    );
+    const entries = unzipEntries(zip.bytes);
+    const pack = learningPackV2Schema.parse(
+      JSON.parse(entries.get("pack.json")?.toString("utf8") ?? "{}"),
+    );
+    expect(pack.content).toBeUndefined();
+    expect(
+      pack.manifest.contextNotes.some((note) =>
+        note.includes("题目上下文未提供"),
+      ),
+    ).toBe(true);
+    // 题目媒体未选不夹带（无论在场缺失），证据图照常
+    expect(
+      [...entries.keys()].some((name) => name.startsWith("blobs/media/")),
+    ).toBe(false);
+    expect(pack.manifest.missing.some((m) => m.kind === "media")).toBe(false);
+    expect(pack.manifest.files.some((f) => f.kind === "media")).toBe(false);
+    expect(entries.has("evidence/e001-original-01.png")).toBe(true);
+    // responses 仍带配对键（snapshotHash 恒在场）
+    expect(pack.attempts?.responses?.[0]?.snapshotHash).toMatch(
+      /^[0-9a-f]{64}$/,
+    );
+  });
+
+  it("v1 请求（无 packVersion）形状锁定：version=1、无 manifest 键", () => {
+    const assembly = assembleLearningPack(
+      db,
+      dataDir,
+      TEST_TEACHER_ID,
+      makeRequest(),
+      { now: SEED_NOW },
+    );
+    const pack = JSON.parse(assembly.packJson);
+    expect(pack.meta.version).toBe(1);
+    expect("manifest" in pack).toBe(false);
+    expect(learningPackSchema.parse(pack)).toBeTruthy();
+  });
+
+  it("v2 schema.json 与 pnpm schema:export 产物逐字节一致", () => {
+    const assembly = assembleLearningPack(
+      db,
+      dataDir,
+      TEST_TEACHER_ID,
+      makeV2Request(),
+      { now: V2_NOW },
+    );
+    const exported = readFileSync(
+      new URL(
+        "../../../../docs/dsl/schema/learning-pack-v2.json",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+    expect(assembly.schemaJson).toBe(exported);
+  });
+
+  it("preview v2：files 清单含 evidence 条目与题目媒体", () => {
+    const preview = previewLearningPack(
+      db,
+      dataDir,
+      TEST_TEACHER_ID,
+      makeV2Request(),
+      { now: V2_NOW },
+    );
+    const paths = preview.files.map((file) => file.path);
+    expect(paths).toContain("evidence/e001-original-01.png");
+    expect(paths).toContain(v2MediaSrc);
+    expect(preview.totalEstimatedBytes).toBeGreaterThan(0);
+  });
+});
