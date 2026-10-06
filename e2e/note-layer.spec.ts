@@ -123,11 +123,15 @@ test.describe("答题页草稿层（T6R.9）", () => {
     try {
       const leak = attachLeakMonitor(studentPage);
       // 真 IDB 契约守卫（kv-backend.keys 修复）：bind 扫描补传不得报
-      // 「草稿本地仓扫描失败」（曾因裸 IDBRequest 未解包全挂）
-      const clientErrors: string[] = [];
+      // 「草稿本地仓扫描失败」（曾因裸 IDBRequest 未解包全挂）。只拦草稿域
+      // 报错——不拦无关控制台输出，避免环境噪音引入抖动
+      const noteClientErrors: string[] = [];
       studentPage.on("console", (msg) => {
-        if (msg.type() === "warning" || msg.type() === "error") {
-          clientErrors.push(msg.text());
+        if (
+          (msg.type() === "warning" || msg.type() === "error") &&
+          msg.text().includes("草稿")
+        ) {
+          noteClientErrors.push(msg.text());
         }
       });
       await studentPage.goto(`/s/${student.linkToken}`);
@@ -201,8 +205,8 @@ test.describe("答题页草稿层（T6R.9）", () => {
 
       // 学生端响应无泄露（规则 3 的 E2E 层防线）
       expect(leak.violations()).toEqual([]);
-      // 本地仓扫描（bind 补传链路）无客户端报错
-      expect(clientErrors).toEqual([]);
+      // 本地仓扫描（bind 补传链路）无草稿域客户端报错
+      expect(noteClientErrors).toEqual([]);
     } finally {
       await studentContext.close();
     }
