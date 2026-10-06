@@ -62,6 +62,12 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  // 夹具统一清理（复审⑧）：销毁 surface（解绑 window/document 监听）并移除
+  // 容器（不留悬挂 DOM），单个测试无需自理
+  for (const h of activeHarnesses.splice(0)) {
+    h.surface.destroy();
+    h.container.remove();
+  }
   getContextSpy.mockRestore();
   vi.unstubAllGlobals();
 });
@@ -70,6 +76,12 @@ afterEach(() => {
 
 const CSS_W = 300;
 const CSS_H = 200;
+
+/** 本文件挂载的全部夹具（afterEach 统一 destroy + 移除容器，复审⑧） */
+const activeHarnesses: Array<{
+  surface: ReturnType<typeof createAtramentSurface>;
+  container: HTMLDivElement;
+}> = [];
 
 interface Harness {
   container: HTMLDivElement;
@@ -115,7 +127,7 @@ function mountSurface(
       strokes: (doc as InkDoc<"atrament">).data.strokes.length,
     });
   });
-  return {
+  const harness: Harness = {
     container,
     canvas,
     surface,
@@ -128,6 +140,9 @@ function mountSurface(
       last.callback([], last);
     },
   };
+  // 统一登记，afterEach 集中销毁+移除（复审⑧：测试自弃不留悬挂监听）
+  activeHarnesses.push(harness);
+  return harness;
 }
 
 function pointer(

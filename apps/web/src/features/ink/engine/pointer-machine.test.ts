@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   advancePointerMachine,
   createPointerMachineState,
+  isSampleMove,
   observeStylusTouch,
   type PointerMachineState,
   touchActionForInput,
@@ -279,6 +280,50 @@ describe("pointer-machine：pointerdown 门控", () => {
 });
 
 describe("pointer-machine：采样与收笔", () => {
+  it("isSampleMove 与 advance(pointermove) 严格等价（状态×id 网格 property，复审⑦）", () => {
+    const states: PointerMachineState[] = [
+      createPointerMachineState("auto"),
+      { ...createPointerMachineState("auto"), penObserved: true },
+      createPointerMachineState("pen"),
+      createPointerMachineState("finger"),
+      withActive(createPointerMachineState("auto"), 5, "pen"),
+      withActive(createPointerMachineState("auto"), 5, "touch"),
+      withActive(createPointerMachineState("pen"), 7, "pen"),
+      withActive(createPointerMachineState("finger"), 9, "touch"),
+      withActive(createPointerMachineState("finger"), 9, "mouse"),
+    ];
+    for (const state of states) {
+      for (const pointerId of [-1, 0, 5, 7, 9, 11]) {
+        const r = advancePointerMachine(state, {
+          kind: "pointermove",
+          pointerId,
+        });
+        // 守卫 ⇔ 决策含 sample；且 pointermove 不产生状态转移（同引用）
+        expect(isSampleMove(state, pointerId)).toBe(
+          r.decisions.some((d) => d.action === "sample"),
+        );
+        expect(r.state).toBe(state);
+      }
+    }
+  });
+
+  it("鼠标任何模式恒可写：finger×mouse 与 auto+penObserved×mouse 两格（复审⑦补口）", () => {
+    for (const state of [
+      createPointerMachineState("finger"),
+      { ...createPointerMachineState("auto"), penObserved: true },
+    ]) {
+      expect(
+        advancePointerMachine(state, {
+          kind: "pointerdown",
+          pointerId: 1,
+          pointerType: "mouse",
+          button: 0,
+          inBounds: true,
+        }).decisions,
+      ).toEqual([{ action: "start", pointerId: 1 }]);
+    }
+  });
+
   it("只有活动指针的 move 采样；他人 move 与空闲期 move 均忽略", () => {
     const state = withActive(createPointerMachineState("pen"), 4, "pen");
     expect(
