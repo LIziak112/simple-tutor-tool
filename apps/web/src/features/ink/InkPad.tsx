@@ -104,6 +104,12 @@ export interface InkPadProps {
    * 起步 + 内部自动加高，手写作答链路语义不变）。
    */
   paperHeight?: number;
+  /**
+   * 引擎（重）建完成通知（T6R.9 复审①⑥）：挂载与背景重建键换引擎后回调
+   * 一次——消费方（NoteLayer）据此重跑外部同步 effect（新引擎 initial 可能
+   * 陈旧，需按 store 现值重载正文）。
+   */
+  onEngineRebuild?: (() => void) | undefined;
 }
 
 /** 输入模式接入形态：auto=旧行为；session=会话共享偏好（新草稿） */
@@ -187,6 +193,7 @@ export function InkPad({
   background,
   showToolbar = true,
   paperHeight,
+  onEngineRebuild,
 }: InkPadProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   /** 内部引擎实例引用（engineRef prop 为对外透出） */
@@ -196,6 +203,8 @@ export function InkPad({
   useEffect(() => {
     onDocChangeRef.current = onDocChange;
   }, [onDocChange]);
+  const onEngineRebuildRef = useRef(onEngineRebuild);
+  onEngineRebuildRef.current = onEngineRebuild;
 
   const [toolType, setToolType] = useState<InkToolType>("pen");
   const [penColor, setPenColor] = useState<InkPenColor>("black");
@@ -312,6 +321,7 @@ export function InkPad({
       setLoadError(err instanceof Error ? err.message : "手写引擎初始化失败");
     }
 
+    if (!disposed) onEngineRebuildRef.current?.();
     return () => {
       disposed = true;
       off?.();

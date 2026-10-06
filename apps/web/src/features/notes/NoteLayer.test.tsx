@@ -32,7 +32,8 @@ import {
   NOTE_ENGINE_KEEPALIVE_MS,
   NoteLayer,
 } from "@/features/notes/NoteLayer";
-import { stroke } from "@/features/notes/note-fixtures";
+import { docOf, stroke } from "@/features/notes/note-fixtures";
+import type { NoteStoreBackend } from "@/features/notes/note-store";
 import {
   applyServerLoad,
   applyUploadConflict,
@@ -77,10 +78,15 @@ vi.mock("@/features/ink/engine/index.ts", () => ({
   create: (_container: HTMLElement, opts: unknown) => makeEngine(opts),
 }));
 
-import { fetchStudentNoteHeadApi, putNoteDocumentApi } from "@/lib/api";
+import {
+  fetchStudentNoteDocumentApi,
+  fetchStudentNoteHeadApi,
+  putNoteDocumentApi,
+} from "@/lib/api";
 
 const putMock = vi.mocked(putNoteDocumentApi);
 const headMock = vi.mocked(fetchStudentNoteHeadApi);
+const docMock = vi.mocked(fetchStudentNoteDocumentApi);
 
 // ---------- 引擎 mock（每实例登记，供测试派发 change / 断言调用） ----------
 
@@ -283,12 +289,17 @@ describe("NoteLayer：收起/展开形态", () => {
       });
       expect(mockDestroy).toHaveBeenCalledTimes(1); // 超时卸载释放画布
 
-      // 重开：重建引擎，initial 带回全部笔迹；挂载首帧只登记令牌不重复 load
+      // 重开：重建引擎，initial 带回全部笔迹；引擎换实例分支无条件 load
+      // （复审①⑥——新引擎 initial 可能陈旧，幂等重载保证引擎=store）
       fireEvent.click(screen.getByRole("button", { name: /草稿纸/ }));
       const second = await waitForEngine(2);
       const initial = (second.opts as { initial?: InkDoc<"atrament"> }).initial;
       expect(initial?.data.strokes.length).toBe(1);
-      expect(second.load).not.toHaveBeenCalled();
+      expect(second.load).toHaveBeenCalledTimes(1);
+      const reloaded = second.load.mock.calls[0]?.[0] as
+        | InkDoc<"atrament">
+        | undefined;
+      expect(reloaded?.data.strokes.length).toBe(1);
     } finally {
       vi.useRealTimers();
     }
@@ -317,8 +328,9 @@ describe("NoteLayer：收起/展开形态", () => {
         null,
       );
     });
-    expect(entry.load).toHaveBeenCalledTimes(1);
-    const loaded = entry.load.mock.calls[0]?.[0] as
+    // 挂载登记 load（空稿，复审①）+ 播种到达 load = 2 次；末次为服务端稿
+    expect(entry.load).toHaveBeenCalledTimes(2);
+    const loaded = entry.load.mock.calls[1]?.[0] as
       | InkDoc<"atrament">
       | undefined;
     expect(loaded?.data.strokes.length ?? 0).toBe(1);
@@ -463,19 +475,20 @@ describe("NoteLayer：工具条与操作", () => {
   });
 });
 
+/** 与冲突摘要一致的服务端形态（rev3；notCreated 会与摘要矛盾触发回退守卫） */
+function rev3Head(): NoteHeadData {
+  const base = headOf().note;
+  if (base === null) throw new Error("headOf 夹具缺 note（测试前置失败）");
+  return headOf({
+    note: {
+      ...base,
+      revision: 3,
+      currentVersionId: "33333333-3333-4333-8333-333333333303",
+    },
+  });
+}
+
 describe("NoteLayer：状态面板（四维）", () => {
-  /** 与冲突摘要一致的服务端形态（rev3；notCreated 会与摘要矛盾触发回退守卫） */
-  function rev3Head(): NoteHeadData {
-    const base = headOf().note;
-    if (base === null) throw new Error("headOf 夹具缺 note（测试前置失败）");
-    return headOf({
-      note: {
-        ...base,
-        revision: 3,
-        currentVersionId: "33333333-3333-4333-8333-333333333303",
-      },
-    });
-  }
   it("书写后可见等待同步；同步成功不再显示", async () => {
     renderLayer({ initialOpen: true });
     const entry = await waitForEngine();
@@ -543,5 +556,343 @@ describe("NoteLayer：状态面板（四维）", () => {
       expect(screen.queryByText("草稿已停止同步")).toBeNull();
     });
     await vi.waitFor(() => expect(putMock).toHaveBeenCalled());
+  });
+});
+
+describe("NoteLayer：登记/换引擎窗口与窄窗（T6R.9 复审①⑥⑧）", () => {
+  it("播种换背景（line）：引擎按新背景重建并无条件载入服务端稿（登记吞稿窗口已关）", async () => {
+    renderLayer({ initialOpen: true });
+    await waitForEngine();
+    await act(async () => {
+      await applyServerLoad(
+        SESSION_A,
+        SCOPE,
+        {
+          version: 1,
+          ink: {
+            width: 1000,
+            strokes: [
+              stroke([
+                [7, 7],
+                [8, 8],
+              ]),
+            ],
+          },
+          background: "line",
+        },
+        null,
+      );
+    });
+    // 背景变化触发引擎重建（InkPad 重建键）；新引擎 initial 陈旧——
+    // 换实例分支无条件 load 当前稿
+    await vi.waitFor(() => {
+      if (entries.length < 2) throw new Error("引擎未重建");
+    });
+    const rebuilt = entries[1];
+    if (rebuilt === undefined) throw new Error("重建引擎缺失");
+    expect((rebuilt.opts as { background?: string }).background).toBe("line");
+    await vi.waitFor(() => {
+      expect(rebuilt.load).toHaveBeenCalledTimes(1);
+    });
+    const loaded = rebuilt.load.mock.calls[0]?.[0] as
+      | InkDoc<"atrament">
+      | undefined;
+    expect(loaded?.data.strokes.length).toBe(1);
+  });
+
+  it("手动收起后播种到达不自动重展开（复审⑧）", async () => {
+    renderLayer({ initialOpen: true });
+    await waitForEngine();
+    fireEvent.click(screen.getByRole("button", { name: /收起/ }));
+    await act(async () => {
+      await applyServerLoad(
+        SESSION_A,
+        SCOPE,
+        {
+          version: 1,
+          ink: {
+            width: 1000,
+            strokes: [
+              stroke([
+                [1, 1],
+                [2, 2],
+              ]),
+            ],
+          },
+        },
+        null,
+      );
+    });
+    // 仍是收起态（标记按钮在场、无工具条），笔数回显
+    expect(
+      screen.getByRole("button", { name: /草稿纸（已有 1 笔）/ }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("toolbar")).toBeNull();
+  });
+});
+
+describe("NoteLayer：状态面板栈与文案格（T6R.9 复审④⑨）", () => {
+  it("本机落盘失败与冲突并存：两面板都可见且裁决按钮可点（不再互相遮蔽）", async () => {
+    writeNoteDoc(SESSION_A, SCOPE, {
+      version: 1,
+      ink: {
+        width: 1000,
+        strokes: [
+          stroke([
+            [1, 1],
+            [2, 2],
+          ]),
+        ],
+      },
+    });
+    // 制造落盘失败：后端 set 恒拒（记录已在内存，新写入走故障后端）
+    const inner = memoryNoteBackend();
+    const failSet: NoteStoreBackend = {
+      get: inner.get,
+      getAll: inner.getAll,
+      set: () => Promise.reject(new Error("QuotaExceededError")),
+    };
+    installNoteBackend(failSet);
+    writeNoteDoc(SESSION_A, SCOPE, {
+      version: 1,
+      ink: {
+        width: 1000,
+        strokes: [
+          stroke([
+            [3, 3],
+            [4, 4],
+          ]),
+        ],
+      },
+    });
+    await applyUploadConflict(
+      SESSION_A,
+      SCOPE,
+      {
+        noteId: "22222222-2222-4222-8222-222222222222",
+        revision: 3,
+        versionId: "33333333-3333-4333-8333-333333333303",
+        hash: null,
+        serverSavedAt: null,
+      },
+      "服务端已有新版本",
+    );
+    headMock.mockResolvedValue(rev3Head());
+    renderLayer({ initialOpen: true });
+    await vi.waitFor(() => {
+      expect(screen.getByText("草稿内容冲突")).toBeInTheDocument();
+    });
+    expect(screen.getByText(/本机保存失败/)).toBeInTheDocument(); // 并存可见
+    fireEvent.click(screen.getByRole("button", { name: "保留本机内容" }));
+    await vi.waitFor(() => {
+      expect(screen.queryByText("草稿内容冲突")).toBeNull();
+    });
+  });
+
+  it("keepCloud 成功链：面板消失 + 引擎载入云端稿", async () => {
+    writeNoteDoc(SESSION_A, SCOPE, {
+      version: 1,
+      ink: {
+        width: 1000,
+        strokes: [
+          stroke([
+            [1, 1],
+            [2, 2],
+          ]),
+        ],
+      },
+    });
+    await applyUploadConflict(
+      SESSION_A,
+      SCOPE,
+      {
+        noteId: "22222222-2222-4222-8222-222222222222",
+        revision: 1,
+        versionId: "33333333-3333-4333-8333-333333333301",
+        hash: null,
+        serverSavedAt: null,
+      },
+      "服务端已有新版本",
+    );
+    const cloud = docOf([
+      stroke([
+        [5, 5],
+        [6, 6],
+      ]),
+      stroke([
+        [7, 7],
+        [8, 8],
+      ]),
+    ]);
+    docMock.mockResolvedValue(cloud);
+    headMock.mockResolvedValue(rev3Head());
+    renderLayer({ initialOpen: true });
+    const entry = await waitForEngine();
+    fireEvent.click(screen.getByRole("button", { name: "保留服务端内容" }));
+    await vi.waitFor(() => {
+      expect(screen.queryByText("草稿内容冲突")).toBeNull();
+    });
+    await vi.waitFor(() => {
+      const calls = entry.load.mock.calls;
+      const last = calls[calls.length - 1]?.[0] as
+        | InkDoc<"atrament">
+        | undefined;
+      expect(last?.data.strokes.length).toBe(2);
+    });
+  });
+
+  it("keepCloud 失败：错误文案可见（面板保留可重试）", async () => {
+    writeNoteDoc(SESSION_A, SCOPE, {
+      version: 1,
+      ink: {
+        width: 1000,
+        strokes: [
+          stroke([
+            [1, 1],
+            [2, 2],
+          ]),
+        ],
+      },
+    });
+    await applyUploadConflict(
+      SESSION_A,
+      SCOPE,
+      {
+        noteId: "22222222-2222-4222-8222-222222222222",
+        revision: 1,
+        versionId: "33333333-3333-4333-8333-333333333301",
+        hash: null,
+        serverSavedAt: null,
+      },
+      "服务端已有新版本",
+    );
+    docMock.mockRejectedValue(
+      new Error("云端草稿正文损坏或版本不兼容：形状错误"),
+    );
+    headMock.mockResolvedValue(rev3Head());
+    renderLayer({ initialOpen: true });
+    fireEvent.click(screen.getByRole("button", { name: "保留服务端内容" }));
+    await vi.waitFor(() => {
+      expect(screen.getByText(/云端草稿正文损坏/)).toBeInTheDocument();
+    });
+    expect(screen.getByText("草稿内容冲突")).toBeInTheDocument(); // 面板保留
+  });
+
+  it("denied(content) 新内容复活：继续书写后自动重传", async () => {
+    vi.useFakeTimers();
+    try {
+      writeNoteDoc(SESSION_A, SCOPE, {
+        version: 1,
+        ink: {
+          width: 1000,
+          strokes: [
+            stroke([
+              [1, 1],
+              [2, 2],
+            ]),
+          ],
+        },
+      });
+      await applyUploadDenied(SESSION_A, SCOPE, "content", "草稿超出大小预算");
+      renderLayer({ initialOpen: true });
+      expect(screen.getByText("草稿内容被拒")).toBeInTheDocument();
+      const entry = await waitForEngine();
+      putMock.mockClear();
+      emitStroke(entry, [
+        [10, 10],
+        [20, 20],
+      ]);
+      await vi.waitFor(() => {
+        expect(screen.queryByText("草稿内容被拒")).toBeNull();
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2100); // 2s 停笔防抖到期即补传
+      });
+      await vi.waitFor(() => expect(putMock).toHaveBeenCalled());
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("saving 文案：落盘挂起时显示本机保存中…", async () => {
+    const inner = memoryNoteBackend();
+    installNoteBackend({
+      get: inner.get,
+      getAll: inner.getAll,
+      set: () => new Promise(() => undefined), // 挂起式：事务不完成
+    });
+    renderLayer({ initialOpen: true });
+    const entry = await waitForEngine();
+    emitStroke(entry, [
+      [1, 1],
+      [2, 2],
+    ]);
+    expect(screen.getByText(/本机保存中…/)).toBeInTheDocument();
+  });
+
+  it("uploading 文案：上传在途显示同步中…（假时钟）", async () => {
+    vi.useFakeTimers();
+    try {
+      let releasePut: (() => void) | null = null;
+      putMock.mockReset().mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            releasePut = () =>
+              resolve({
+                noteId: "22222222-2222-4222-8222-222222222222",
+                revision: 1,
+                versionId: "33333333-3333-4333-8333-333333333301",
+                hash: "a".repeat(64),
+                savedAt: "2026-10-06T00:00:00.000Z",
+              });
+          }),
+      );
+      renderLayer({ initialOpen: true });
+      const entry = await waitForEngine();
+      emitStroke(entry, [
+        [1, 1],
+        [2, 2],
+      ]);
+      expect(screen.getByText(/等待同步/)).toBeInTheDocument();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2100);
+      });
+      expect(screen.getByText(/同步中…/)).toBeInTheDocument();
+      releasePut?.();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      await vi.waitFor(() => {
+        expect(screen.queryByText(/同步中…/)).toBeNull();
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("空稿（0 笔）synced 不显示图片提示；有笔后显示（复审⑨定案）", async () => {
+    vi.useFakeTimers();
+    try {
+      headMock.mockResolvedValue(headOf());
+      docMock.mockResolvedValue(docOf([]));
+      renderLayer({ initialOpen: true });
+      await vi.waitFor(() => {
+        expect(screen.queryByText(/图片待生成/)).toBeNull(); // 空稿不提示
+      });
+      const entry = await waitForEngine();
+      emitStroke(entry, [
+        [1, 1],
+        [2, 2],
+      ]);
+      expect(screen.queryByText(/图片待生成/)).toBeNull(); // dirty 期不显示
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2100); // 防抖到期上传→回执→synced
+      });
+      await vi.waitFor(() => {
+        expect(screen.getByText(/图片待生成/)).toBeInTheDocument(); // 回执后如实显示
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

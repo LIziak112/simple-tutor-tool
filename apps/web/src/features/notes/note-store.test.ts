@@ -757,15 +757,17 @@ describe("note-store：回执推进 lastHead（T6R.9 复审⑦：新版本 image
       ],
       evidence: null,
     });
-    expect(deriveNoteStatusOverview(await recordOf(SESSION_A, SCOPE), false).images)
-      .toBe("ready");
+    expect(
+      deriveNoteStatusOverview(await recordOf(SESSION_A, SCOPE), false).images,
+    ).toBe("ready");
     writeNoteDoc(SESSION_A, SCOPE, DOC_B);
     const mutationId = (await recordOf(SESSION_A, SCOPE)).pending?.mutationId;
     if (mutationId === undefined) throw new Error("测试前置失败");
     await applyUploadReceipt(SESSION_A, SCOPE, mutationId, receiptOf(2));
     // 回执落地：新版本尚无派生图 →「上传成功≠图片就绪」如实转 pending
-    expect(deriveNoteStatusOverview(await recordOf(SESSION_A, SCOPE), false).images)
-      .toBe("pending");
+    expect(
+      deriveNoteStatusOverview(await recordOf(SESSION_A, SCOPE), false).images,
+    ).toBe("pending");
     const head = (await recordOf(SESSION_A, SCOPE)).lastHead;
     expect(head?.note?.revision).toBe(2);
     expect(head?.note?.currentVersionId).toBe(receiptOf(2).versionId);
@@ -781,7 +783,16 @@ describe("note-store：replaceDoc 单点与热路径（T6R.9 复审⑩⑫⑬）"
   });
 
   it("等长换稿也全量重算 totalPoints（undo/redo/erase/replace 等非追加形态）", async () => {
-    writeNoteDoc(SESSION_A, SCOPE, docOf([stroke([[0, 0], [1, 1]])])); // 1 笔 2 点
+    writeNoteDoc(
+      SESSION_A,
+      SCOPE,
+      docOf([
+        stroke([
+          [0, 0],
+          [1, 1],
+        ]),
+      ]),
+    ); // 1 笔 2 点
     expect((await recordOf(SESSION_A, SCOPE)).totalPoints).toBe(2);
     // 等长替换（同笔数——引擎不产生，防御口径）：重算而非沿用增量
     writeNoteDoc(SESSION_A, SCOPE, DOC_A); // 1 笔 2 点（等长）
@@ -795,9 +806,14 @@ describe("note-store：replaceDoc 单点与热路径（T6R.9 复审⑩⑫⑬）"
   });
 
   it("物化与 Zod parse 锁步（materializeDoc 输出 ≡ parse 物化，复审⑪）", () => {
-    const bare = { version: 1, ink: { width: 1000, strokes: DOC_A.ink.strokes } } as const;
+    const bare = {
+      version: 1,
+      ink: { width: 1000, strokes: DOC_A.ink.strokes },
+    } as const;
     writeNoteDoc(SESSION_A, SCOPE, bare);
-    expect(getNoteView(SESSION_A, SCOPE)?.doc).toEqual(noteDocSchema.parse(bare));
+    expect(getNoteView(SESSION_A, SCOPE)?.doc).toEqual(
+      noteDocSchema.parse(bare),
+    );
     writeNoteDoc(SESSION_A, SCOPE, DOC_B);
     expect(getNoteView(SESSION_A, SCOPE)?.doc).toEqual(
       noteDocSchema.parse({
