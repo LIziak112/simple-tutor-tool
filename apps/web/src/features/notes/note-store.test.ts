@@ -648,3 +648,53 @@ describe("note-store：docVersion 正文版本令牌（T6R.9 复审②：自写�
     expect((await recordOf(SESSION_A, SCOPE)).docVersion).toBe(before);
   });
 });
+
+describe("note-store：写路径增量维护与视图标量物化（T6R.9 复审⑤）", () => {
+  it("写入与视图重建不触发全稿 Zod parse；载入边界仍 parse", async () => {
+    const spy = vi.spyOn(noteDocSchema, "safeParse");
+    writeNoteDoc(SESSION_A, SCOPE, DOC_A);
+    writeNoteDoc(SESSION_A, SCOPE, DOC_B);
+    const view = getNoteView(SESSION_A, SCOPE);
+    expect(view?.doc?.ink.strokes.length).toBe(2);
+    expect(spy).not.toHaveBeenCalled(); // 千笔书写下视图重建零全稿 parse
+    spy.mockRestore();
+    // 载入边界（applyServerLoad → parseNoteDocOrThrow）保留全量收窄
+    const spy2 = vi.spyOn(noteDocSchema, "safeParse");
+    await applyServerLoad(SESSION_B, SCOPE, DOC_A);
+    expect(spy2.mock.calls.length).toBeGreaterThanOrEqual(1);
+    spy2.mockRestore();
+  });
+
+  it("视图物化补标量默认（缺省纸高/背景的写入不 NaN）", () => {
+    writeNoteDoc(SESSION_A, SCOPE, {
+      version: 1,
+      ink: { width: 1000, strokes: [] },
+    });
+    const view = getNoteView(SESSION_A, SCOPE);
+    expect(view?.doc?.paperHeightLogical).toBe(800);
+    expect(view?.doc?.background).toBe("grid");
+  });
+
+  it("超限笔只告警不阻断书写（服务端 413 为预算权威）", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fatStroke = {
+      tool: "pen" as const,
+      color: "#1f2328",
+      weight: 4,
+      points: Array.from({ length: 2001 }, (_, i) => ({
+        x: i,
+        y: 0,
+        p: 0.5,
+        t: 0,
+      })),
+    };
+    writeNoteDoc(SESSION_A, SCOPE, {
+      version: 1,
+      ink: { width: 1000, strokes: [fatStroke] },
+    });
+    expect(warn).toHaveBeenCalled();
+    // 内容保留本机（不静默丢笔），由服务端按预算裁决
+    expect(getNoteView(SESSION_A, SCOPE)?.doc?.ink.strokes.length).toBe(1);
+    warn.mockRestore();
+  });
+});

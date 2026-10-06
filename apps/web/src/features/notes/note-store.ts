@@ -50,7 +50,12 @@ import type {
   NoteStatusOverview,
   NoteVersionReceipt,
 } from "@tutor/contract";
-import { noteDocSchema } from "@tutor/contract";
+import {
+  NOTE_MAX_POINTS_PER_STROKE,
+  NOTE_MAX_TOTAL_POINTS,
+  NOTE_PAPER_HEIGHT_DEFAULT,
+  noteDocSchema,
+} from "@tutor/contract";
 import { digestOf } from "@/features/attempt/draft-merge";
 import { parseNoteDocOrThrow } from "@/features/notes/note-fixtures";
 import {
@@ -201,6 +206,18 @@ export interface NoteLocalRecord {
    * 替代逐笔迹元素引用比对——解除对 store 拷贝深度的隐式耦合。
    */
   docVersion: number;
+  /**
+   * 全稿累计点数（T6R.9 复审⑤）：写入时增量维护（追加笔 O(新笔)、
+   * 减笔冷路径重算）——配合视图标量物化，书写热路径不再全稿 parse/重扫。
+   */
+  totalPoints: number;
+}
+
+/** 全稿点数求和（revive/减笔冷路径；追加笔走增量不经过这里） */
+function countPoints(strokes: readonly { points: unknown[] }[]): number {
+  let total = 0;
+  for (const stroke of strokes) total += stroke.points.length;
+  return total;
 }
 
 function freshRecord(): NoteLocalRecord {
@@ -216,6 +233,7 @@ function freshRecord(): NoteLocalRecord {
     localError: null,
     editedAt: 0,
     docVersion: 0,
+    totalPoints: 0,
   };
 }
 
@@ -239,6 +257,7 @@ function reviveRecord(raw: unknown): NoteLocalRecord | null {
     denied: r.denied ?? null,
     editedAt: typeof r.editedAt === "number" ? r.editedAt : 0,
     docVersion: typeof r.docVersion === "number" ? r.docVersion : 0,
+    totalPoints: countPoints(r.doc.ink.strokes),
     // local/localError 持久副本恒归一化（见文件头），读取即 saved
     local: "saved",
     localError: null,
@@ -507,8 +526,28 @@ export interface NoteRecordView {
  * 引用 memo（复审④）：记录内 doc 整体替换不就地改动，local 翻转等
  * 非正文变更触发的快照重建不再重复全文档 Zod 校验（30 万点上限的
  * superRefine 是热路径）；引用替换自然失效。
+ * T6R.9 复审⑤：**仅载入/比较边界消费**（getNoteDoc、noteDocsEqual——
+ * 冷路径）；getNoteView 改标量补默认（materializeDoc，零 parse）。
  */
 const parseMemo = new WeakMap<NoteDocInput, NoteDoc | null>();
+
+/**
+ * 视图标量物化（复审⑤）：写路径结构由引擎产出保证（增量校验见
+ * writeNoteDoc），视图只补两个标量默认值——书写热路径（每笔 → 视图重建）
+ * 不再触发全稿 Zod parse；全量收窄只保留在载入（applyServerLoad）与
+ * 上传边界（服务端校验）。
+ */
+function materializeDoc(doc: NoteDocInput): NoteDoc {
+  return {
+    version: 1,
+    ink: doc.ink,
+    paperHeightLogical:
+      typeof doc.paperHeightLogical === "number"
+        ? doc.paperHeightLogical
+        : NOTE_PAPER_HEIGHT_DEFAULT,
+    background: doc.background ?? "grid",
+  };
+}
 
 function safeParseDoc(doc: NoteDocInput): NoteDoc | null {
   const cached = parseMemo.get(doc);
@@ -582,7 +621,7 @@ export function getNoteView(
   }
   const uploading = uploadingKeys.has(key);
   const view: NoteRecordView = {
-    doc: safeParseDoc(record.doc),
+    doc: materializeDoc(record.doc),
     local: record.local,
     localError: record.localError,
     server: deriveServerState(record, uploading),
@@ -617,6 +656,30 @@ export function writeNoteDoc(
 ): void {
   const key = noteKeyOf(session, scope);
   mutate(key, freshRecord, (record) => {
+    // 增量点数维护（复审⑤）：引擎每次给全稿，但形态只有「尾部追加」
+    // 「笔数减少（撤销/擦除/清空）」「等长（信任存量——撤销/重做的子集
+    // 形态）」三种。追加笔逐笔校验单笔上限（超限告警不阻断——服务端 413
+    // 是预算权威，方案 §7「矢量超限保留本机」）；减笔冷路径重算。
+    const prevStrokes = record.doc.ink.strokes;
+    const nextStrokes = input.ink.strokes;
+    if (nextStrokes.length > prevStrokes.length) {
+      for (let i = prevStrokes.length; i < nextStrokes.length; i++) {
+        const added = nextStrokes[i];
+        if (
+          added === undefined ||
+          added.points.length > NOTE_MAX_POINTS_PER_STROKE
+        ) {
+          console.warn("草稿新笔超单笔点数上限（保留本机，同步由服务端裁决）");
+        } else {
+          record.totalPoints += added.points.length;
+        }
+      }
+      if (record.totalPoints > NOTE_MAX_TOTAL_POINTS) {
+        console.warn("草稿累计点数超全稿预算（保留本机，同步由服务端裁决）");
+      }
+    } else if (nextStrokes.length < prevStrokes.length) {
+      record.totalPoints = countPoints(nextStrokes);
+    }
     // 复审⑩ memo 纪律：入仓即断外部引用——浅展两级（doc、ink）+ strokes
     // 数组换新引用。gzip/parse 的 WeakMap memo 以对象引用为键，调用方若
     // 就地改动原对象（改 doc.ink / strokes.push）会毒化缓存与幂等字节；
