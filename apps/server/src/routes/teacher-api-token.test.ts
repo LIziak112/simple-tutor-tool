@@ -134,8 +134,12 @@ describe("GET/POST /api/teacher/api-token（T4.6 D22）", () => {
     });
     const token = ((await created.json()) as { data: { token: string } }).data
       .token;
-    // 错 token（同长度随机串）
-    expect(authenticateApiToken(db, `${token.slice(0, -1)}0`)).toBeNull();
+    // 错 token（同长度随机串；末位翻转保证与原 token 必不同——原样拼接 "0"
+    // 在随机 token 恰以 "0" 结尾时会构造出相同串导致鉴权通过，既有随机脆弱）
+    const last = token.slice(0, -1);
+    expect(
+      authenticateApiToken(db, `${last}${token.endsWith("0") ? "1" : "0"}`),
+    ).toBeNull();
     // 乙教师生成 token 后被禁用 → token 立即失效（requireTeacher 同口径）
     db.insert(teachers)
       .values({
