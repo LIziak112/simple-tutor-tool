@@ -432,6 +432,42 @@ describe("工作稿头与证据投影", () => {
     assertNoLeak(body);
   });
 
+  it("missing 证据行：两投影 images 恒空、不回退工作头（复审轮①）", async () => {
+    const attemptId = await freshAttempt();
+    const versionId = await putNote(attemptId, Q.solve);
+    // 工作头版本挂着一张图——missing 证据行存在时不得把它当生效版本展示
+    expect((await postImage(versionId, makeNotePng())).status).toBe(200);
+    insertEvidence(db, attemptId, Q.solve, "missing", null);
+
+    for (const path of ["notes", "evidence"]) {
+      const res = await app.request(
+        `/api/student/attempts/${attemptId}/${path}/${Q.solve}`,
+        { headers: { cookie: aCookie } },
+      );
+      expect(res.status, path).toBe(200);
+      const body = (await res.json()) as {
+        data: { evidence: { state: string } | null; images: unknown[] };
+      };
+      expect(body.data.evidence?.state).toBe("missing");
+      expect(body.data.images).toEqual([]);
+      assertNoLeak(body);
+    }
+    // none 同理：显式空稿声明后 images 恒空（新 attempt 无既有证据行）
+    const noneAttempt = await freshAttempt();
+    const noneVersion = await putNote(noneAttempt, Q.solve);
+    expect((await postImage(noneVersion, makeNotePng())).status).toBe(200);
+    insertEvidence(db, noneAttempt, Q.solve, "none", null);
+    const noneRes = await app.request(
+      `/api/student/attempts/${noneAttempt}/evidence/${Q.solve}`,
+      { headers: { cookie: aCookie } },
+    );
+    const noneBody = (await noneRes.json()) as {
+      data: { evidence: { state: string } | null; images: unknown[] };
+    };
+    expect(noneBody.data.evidence?.state).toBe("none");
+    expect(noneBody.data.images).toEqual([]);
+  });
+
   it("交卷（无证据行）后 evidence 仍为 null 空态；head/版本读照常", async () => {
     const attemptId = await freshAttempt();
     const versionId = await putNote(attemptId, Q.solve);

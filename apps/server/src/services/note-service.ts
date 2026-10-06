@@ -692,8 +692,9 @@ function noteEvidenceMetaOf(row: SubmissionEvidenceRow) {
  * 头投影组装（①②⑥共用）：
  * - note：该 attempt 该题的 scratch 行（correction/supplement 是 T6R.15 的
  *   独立 NoteRecord，不进本投影）；无行 → null（契约显式空态 notCreated）；
- * - 生效版本：submission_evidence 指向的原稿版本优先（交卷冻结后即原稿，
- *   T6R.10 落写；未冻结/无证据行 → 工作头指针），images 聚合到该版本；
+ * - 生效版本：证据行存在即以其 versionId 为准（frozen→原稿版本；missing/
+ *   none→null→images 恒空——**不回退工作头**，T6R.10 落写；仅无证据行
+ *   （未交卷/旧客户端未采集）才取工作头 currentVersionId）；
  * - evidence：证据行（交卷事务写入）；无行 → null（未交卷或旧客户端未采集）。
  */
 function noteHeadOf(
@@ -722,8 +723,13 @@ function noteHeadOf(
       ),
     )
     .get();
+  // 生效版本（复审轮①）：证据行**存在**即以其声明为准——missing/none 的
+  // versionId=null → images 恒空（交卷后不再回退工作头，防止「缺稿交卷却
+  // 显示出工作稿图片」的口径漂移）；仅**无证据行**（未交卷）才看工作头。
   const operativeVersionId =
-    evidence?.versionId ?? note?.currentVersionId ?? null;
+    evidence !== undefined
+      ? evidence.versionId
+      : (note?.currentVersionId ?? null);
   const imageRows = operativeVersionId
     ? db
         .select()
