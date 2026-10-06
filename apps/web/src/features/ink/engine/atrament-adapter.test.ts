@@ -1,3 +1,4 @@
+import type { NoteBackground } from "@tutor/contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createAtramentSurface } from "./atrament-adapter.ts";
 import type { InkDoc, InkInputMode } from "./types.ts";
@@ -81,7 +82,11 @@ interface Harness {
 }
 
 function mountSurface(
-  opts: { inputMode?: InkInputMode; initial?: InkDoc } = {},
+  opts: {
+    inputMode?: InkInputMode;
+    background?: NoteBackground;
+    initial?: InkDoc;
+  } = {},
 ): Harness {
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -95,9 +100,10 @@ function mountSurface(
     configurable: true,
     get: () => h,
   });
-  const surface = createAtramentSurface(
-    opts.inputMode ? { inputMode: opts.inputMode } : {},
-  );
+  const surface = createAtramentSurface({
+    ...(opts.inputMode ? { inputMode: opts.inputMode } : {}),
+    ...(opts.background ? { background: opts.background } : {}),
+  });
   if (opts.initial) surface.mount(container, opts.initial);
   else surface.mount(container);
   const canvas = container.querySelector("canvas[data-slot=ink-canvas]");
@@ -160,6 +166,24 @@ function lostCapture(canvas: HTMLCanvasElement, pointerId: number): void {
       pointerType: "pen",
     }),
   );
+}
+
+/**
+ * pointerdown 参数构造（复审⑬：内联字面量统一收口；坐标默认 (20,20)、
+ * pointerId 默认 1，与 pointer() 的缺省一致）
+ */
+function pd(
+  pointerType: string,
+  pointerId = 1,
+  clientX = 20,
+  clientY = 20,
+): {
+  pointerType: string;
+  pointerId: number;
+  clientX: number;
+  clientY: number;
+} {
+  return { pointerType, pointerId, clientX, clientY };
 }
 
 /** 派发 touchstart/touchmove（jsdom 无 TouchEvent 构造器，用可赋值 Event 模拟触点表） */
@@ -242,24 +266,14 @@ describe("atrament-adapter：auto 模式（旧行为兼容）", () => {
     expect(strokesOf(h)).toHaveLength(1);
 
     // 手掌（touch id=5）先落、笔随后落下：手掌笔段被丢弃（不入库），笔接管
-    pointer(h.canvas, "pointerdown", {
-      pointerType: "touch",
-      pointerId: 5,
-      clientX: 40,
-      clientY: 40,
-    });
+    pointer(h.canvas, "pointerdown", pd("touch", 5, 40, 40));
     pointer(h.canvas, "pointermove", {
       pointerType: "touch",
       pointerId: 5,
       clientX: 60,
       clientY: 40,
     });
-    pointer(h.canvas, "pointerdown", {
-      pointerType: "pen",
-      pointerId: 9,
-      clientX: 80,
-      clientY: 80,
-    });
+    pointer(h.canvas, "pointerdown", pd("pen", 9, 80, 80));
     pointer(h.canvas, "pointermove", {
       pointerType: "pen",
       pointerId: 9,
@@ -300,11 +314,7 @@ describe("atrament-adapter：auto 模式（旧行为兼容）", () => {
   it("touch-action：未见笔 none（手指书写）→ 见过笔 pan-y（旧语义）", () => {
     const h = mountSurface();
     expect(h.canvas.style.touchAction).toBe("none");
-    pointer(h.canvas, "pointerdown", {
-      pointerType: "pen",
-      clientX: 20,
-      clientY: 20,
-    });
+    pointer(h.canvas, "pointerdown", pd("pen", 1, 20, 20));
     pointer(h.canvas, "pointerup", {
       pointerType: "pen",
       clientX: 20,
@@ -359,12 +369,7 @@ describe("atrament-adapter：pen 输入模式（新草稿缺省：笔写/手指�
     const h = mountSurface({ inputMode: "finger" });
     expect(h.canvas.style.touchAction).toBe("none");
 
-    pointer(h.canvas, "pointerdown", {
-      pointerType: "touch",
-      pointerId: 1,
-      clientX: 20,
-      clientY: 20,
-    });
+    pointer(h.canvas, "pointerdown", pd("touch", 1, 20, 20));
     pointer(h.canvas, "pointermove", {
       pointerType: "touch",
       pointerId: 1,
@@ -372,12 +377,7 @@ describe("atrament-adapter：pen 输入模式（新草稿缺省：笔写/手指�
       clientY: 20,
     });
     // 手指书写中笔轻点：不接管、不丢弃
-    pointer(h.canvas, "pointerdown", {
-      pointerType: "pen",
-      pointerId: 2,
-      clientX: 90,
-      clientY: 90,
-    });
+    pointer(h.canvas, "pointerdown", pd("pen", 2, 90, 90));
     pointer(h.canvas, "pointerup", {
       pointerType: "pen",
       pointerId: 2,
@@ -405,12 +405,7 @@ describe("atrament-adapter：pen 输入模式（新草稿缺省：笔写/手指�
 describe("atrament-adapter：多指与多画布", () => {
   it("auto 模式多指：第二手指不接管活动手指（不再覆盖在途笔段）", () => {
     const h = mountSurface();
-    pointer(h.canvas, "pointerdown", {
-      pointerType: "touch",
-      pointerId: 1,
-      clientX: 20,
-      clientY: 20,
-    });
+    pointer(h.canvas, "pointerdown", pd("touch", 1, 20, 20));
     pointer(h.canvas, "pointermove", {
       pointerType: "touch",
       pointerId: 1,
@@ -418,12 +413,7 @@ describe("atrament-adapter：多指与多画布", () => {
       clientY: 20,
     });
     // 第二手指落下并移动：全部忽略
-    pointer(h.canvas, "pointerdown", {
-      pointerType: "touch",
-      pointerId: 2,
-      clientX: 80,
-      clientY: 80,
-    });
+    pointer(h.canvas, "pointerdown", pd("touch", 2, 80, 80));
     pointer(h.canvas, "pointermove", {
       pointerType: "touch",
       pointerId: 2,
@@ -482,11 +472,7 @@ describe("atrament-adapter：多指与多画布", () => {
 describe("atrament-adapter：取消/失焦/丢捕获（只保留已收真实采样）", () => {
   it("pointercancel：按已收点收笔、不补造终点；后续事件不粘笔；新手势正常", () => {
     const h = mountSurface();
-    pointer(h.canvas, "pointerdown", {
-      pointerType: "pen",
-      clientX: 20,
-      clientY: 20,
-    });
+    pointer(h.canvas, "pointerdown", pd("pen", 1, 20, 20));
     pointer(h.canvas, "pointermove", {
       pointerType: "pen",
       clientX: 60,
@@ -526,11 +512,7 @@ describe("atrament-adapter：取消/失焦/丢捕获（只保留已收真实采�
 
   it("lostpointercapture：活动笔段收笔；随后的 pointerup 不双收", () => {
     const h = mountSurface();
-    pointer(h.canvas, "pointerdown", {
-      pointerType: "pen",
-      clientX: 20,
-      clientY: 20,
-    });
+    pointer(h.canvas, "pointerdown", pd("pen", 1, 20, 20));
     pointer(h.canvas, "pointermove", {
       pointerType: "pen",
       clientX: 60,
@@ -549,11 +531,7 @@ describe("atrament-adapter：取消/失焦/丢捕获（只保留已收真实采�
 
   it("窗口失焦：在途笔段按已收采样收笔（不依赖未必送达的 pointerup）", () => {
     const h = mountSurface();
-    pointer(h.canvas, "pointerdown", {
-      pointerType: "pen",
-      clientX: 20,
-      clientY: 20,
-    });
+    pointer(h.canvas, "pointerdown", pd("pen", 1, 20, 20));
     pointer(h.canvas, "pointermove", {
       pointerType: "pen",
       clientX: 60,
@@ -569,11 +547,7 @@ describe("atrament-adapter：取消/失焦/丢捕获（只保留已收真实采�
 describe("atrament-adapter：布局变化（旋转/resize）不混用两个坐标变换", () => {
   it("一笔在途时 resize：先按已收点收笔（旧宽度基准），resize 后同手势的 move 不追加", () => {
     const h = mountSurface();
-    pointer(h.canvas, "pointerdown", {
-      pointerType: "pen",
-      clientX: 50,
-      clientY: 50,
-    });
+    pointer(h.canvas, "pointerdown", pd("pen", 1, 50, 50));
     pointer(h.canvas, "pointermove", {
       pointerType: "pen",
       clientX: 100,
@@ -726,11 +700,7 @@ describe("atrament-adapter：回归（撤销/重做/橡皮/鼠标/load）", () =
 
     // 橡皮：点在笔画真实采样点上（(20,20) → 逻辑 66.67,66.67）整笔擦除
     h.surface.setTool({ type: "eraser" });
-    pointer(h.canvas, "pointerdown", {
-      pointerType: "mouse",
-      clientX: 20,
-      clientY: 20,
-    });
+    pointer(h.canvas, "pointerdown", pd("mouse", 1, 20, 20));
     pointer(h.canvas, "pointerup", {
       pointerType: "mouse",
       clientX: 20,
@@ -764,28 +734,14 @@ describe("atrament-adapter：屏幕端纸张背景（可选配置，缺省零变
   });
 
   it("grid 背景：canvas 背景与 PNG 同源常量，间距随宽度换算并在 resize 后更新", () => {
-    const container = document.createElement("div");
-    document.body.appendChild(container);
-    Object.defineProperty(container, "clientWidth", {
-      configurable: true,
-      get: () => 300,
-    });
-    Object.defineProperty(container, "clientHeight", {
-      configurable: true,
-      get: () => 200,
-    });
-    const surface = createAtramentSurface({ background: "grid" });
-    surface.mount(container);
-    const canvas = container.querySelector("canvas[data-slot=ink-canvas]");
-    if (!(canvas instanceof HTMLCanvasElement)) throw new Error("画布未挂载");
+    const h = mountSurface({ background: "grid" });
     // 300 宽 → 间距 12px、线带 [11px,12px)（jsdom 归一化：颜色转 rgb、
     // 默认方向 to bottom 被省略——完整字符串口径由 paper-style.test 锁定）
-    expect(canvas.style.backgroundColor).toBe("rgb(255, 255, 255)");
-    expect(canvas.style.backgroundImage).toContain("transparent 11px");
-    expect(canvas.style.backgroundImage).toContain("to right");
+    expect(h.canvas.style.backgroundColor).toBe("rgb(255, 255, 255)");
+    expect(h.canvas.style.backgroundImage).toContain("transparent 11px");
+    expect(h.canvas.style.backgroundImage).toContain("to right");
     expect(
-      canvas.style.backgroundImage.split("repeating-linear-gradient"),
+      h.canvas.style.backgroundImage.split("repeating-linear-gradient"),
     ).toHaveLength(3); // 竖线 + 横线两条渐变
-    surface.destroy();
   });
 });

@@ -119,7 +119,8 @@ export function strokesBottomLogical(
 /**
  * 缩小钳制：用户拖高/收缩后的目标纸高不得低于全部笔画包围盒底（含半线宽）
  * + 留白，也不超过 NOTE_PAPER_HEIGHT_MAX。空稿下限 1（无笔迹约束）。
- * 高于下限的值原样返回（取整）。
+ * 高于下限的值原样返回（取整）。min 本身 ≥1（复审⑭：内层 max(1,·) 死守卫
+ * 已删——外层 Math.max(min, ·) 已保证下限）。
  */
 export function clampedShrinkPaperHeight(
   proposed: number,
@@ -128,8 +129,5 @@ export function clampedShrinkPaperHeight(
   const bottom = strokesBottomLogical(strokes);
   const min =
     bottom === null ? 1 : Math.ceil(bottom + NOTE_PAPER_SHRINK_MARGIN_LOGICAL);
-  return Math.min(
-    NOTE_PAPER_HEIGHT_MAX,
-    Math.max(min, Math.max(1, Math.round(proposed))),
-  );
+  return Math.min(NOTE_PAPER_HEIGHT_MAX, Math.max(min, Math.round(proposed)));
 }
