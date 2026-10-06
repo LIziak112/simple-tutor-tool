@@ -47,20 +47,24 @@ export function gzipJson(value: unknown, level?: number): Uint8Array {
 }
 
 /**
- * 最小合法 PNG（魔数 + IHDR 声明宽高；服务端校验魔数/IHDR/尺寸声明一致，
- * 不解码像素数据）。padding 可撑大文件测字节限额。
+ * 最小合法 PNG（魔数 + IHDR 声明宽高 + 尾部 IEND 块；不解码像素数据）。
+ * padding 撑大文件测字节限额；总长恒 ≥76（24 头 + 12 IEND + 40 余量），
+ * IEND 写在缓冲末 12 字节——padding 之后仍是完整文件。
  */
 export function makeNotePng(
   width = 320,
   height = 200,
   padding = 0,
 ): Uint8Array {
-  const buf = Buffer.alloc(64 + padding);
+  const buf = Buffer.alloc(Math.max(76, 64 + padding));
   Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(buf, 0);
   buf.writeUInt32BE(13, 8);
   buf.write("IHDR", 12, "latin1");
   buf.writeUInt32BE(width, 16);
   buf.writeUInt32BE(height, 20);
+  // 尾部 IEND 块（长度 0 + 标签 + CRC 置零——服务端只验哨兵不验 CRC）
+  buf.writeUInt32BE(0, buf.length - 12);
+  buf.write("IEND", buf.length - 8, "latin1");
   return new Uint8Array(buf);
 }
 

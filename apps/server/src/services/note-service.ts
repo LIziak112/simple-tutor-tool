@@ -47,7 +47,7 @@ import {
   writeFileAtomic,
 } from "../lib/blob-io";
 import { HttpError } from "../lib/http-error";
-import { pngSize } from "../lib/png";
+import { pngIntact } from "../lib/png";
 import {
   requireAttemptQuestion,
   requireAttemptQuestionRow,
@@ -993,12 +993,14 @@ export function attachNoteImage(
       `派生图超过 ${NOTE_IMAGE_PNG_MAX_BYTES / (1024 * 1024)}MiB 上传限额（暂定值），请降低分辨率后重试`,
     );
   }
-  const actual = pngSize(png);
+  // 完整性口径 pngIntact（复审轮③）：魔数 + IHDR（长度恒 13）+ 尾部 IEND
+  // 哨兵——截断/私造头部的文件在此被拒，比 ink 快照的 pngSize 宽松口径严一档
+  const actual = pngIntact(png);
   if (actual === null) {
     throw new HttpError(
       400,
       "NOTE_VALIDATION_FAILED",
-      "图片不是合法的 PNG 文档",
+      "图片不是完整合法的 PNG 文档（魔数/IHDR/IEND 校验未通过）",
     );
   }
   if (actual.width !== meta.pixelWidth || actual.height !== meta.pixelHeight) {

@@ -701,7 +701,19 @@ describe("补图上传校验", () => {
     expect(((await res2.json()) as ApiErr).error).toBe(
       "NOTE_VALIDATION_FAILED",
     );
-    // 成功后无残留行（两败一空）
+    // 截断文件（丢尾部 IEND 块）与私造 IHDR 长度 → 完整性拒绝（复审轮③）
+    const full = makeNotePng();
+    const truncated = full.slice(0, full.length - 4);
+    const res3 = await postImage(versionId, truncated);
+    expect(res3.status).toBe(400);
+    expect(((await res3.json()) as ApiErr).error).toBe(
+      "NOTE_VALIDATION_FAILED",
+    );
+    const fakeLen = new Uint8Array(makeNotePng());
+    fakeLen.set([0, 0, 0, 12], 8); // IHDR 长度字段私造为 12
+    const res4 = await postImage(versionId, fakeLen);
+    expect(res4.status).toBe(400);
+    // 成功后无残留行（四败一空）
     expect(
       db
         .select()
