@@ -294,6 +294,16 @@ function persistedCopy(record: NoteLocalRecord): NoteLocalRecord {
   return { ...record, local: "saved", localError: null };
 }
 
+/**
+ * 正文替换单点（T6R.9 复审⑩）：record.doc 赋值与 docVersion 递增只在
+ * 这里发生（writeNoteDoc / applyServerLoad 换稿 / keepCloud 裁决三处调用）
+ * ——版本令牌与正文替换永不脱钩。
+ */
+function replaceDoc(record: NoteLocalRecord, doc: NoteDocInput): void {
+  record.doc = doc;
+  record.docVersion += 1;
+}
+
 // ---------- 后端注入 ----------
 
 /**
@@ -678,7 +688,7 @@ export function writeNoteDoc(
   session: NoteSessionRef,
   scope: NoteScope,
   input: NoteDocInput,
-): void {
+): number {
   const key = noteKeyOf(session, scope);
   mutate(key, freshRecord, (record) => {
     // 增量点数维护（复审⑤）：引擎每次给全稿，但形态只有「尾部追加」
@@ -702,24 +712,20 @@ export function writeNoteDoc(
       if (record.totalPoints > NOTE_MAX_TOTAL_POINTS) {
         console.warn("草稿累计点数超全稿预算（保留本机，同步由服务端裁决）");
       }
-    } else if (nextStrokes.length < prevStrokes.length) {
+    } else {
+      // 非追加形态（undo/redo/erase/clear/**等长替换**——复审⑫）：全量重算，
+      // 不依赖追加分支的增量假设
       record.totalPoints = countPoints(nextStrokes);
     }
-    // 复审⑩ memo 纪律：入仓即断外部引用——浅展两级（doc、ink）+ strokes
-    // 数组换新引用。gzip/parse 的 WeakMap memo 以对象引用为键，调用方若
-    // 就地改动原对象（改 doc.ink / strokes.push）会毒化缓存与幂等字节；
-    // 断引用后顶层与数组层不可达原对象。拷贝深度边界：stroke 元素对象仍
-    // 共享（引擎侧不得就地改单个笔画的 points——契约层数据本应不可变）
-    const doc: NoteDocInput = {
-      ...input,
-      ink: { ...input.ink, strokes: [...input.ink.strokes] },
-    };
-    record.doc = doc;
-    record.docVersion += 1;
-    record.pending = { mutationId: randomUuid(), doc };
+    // 热路径零拷贝（复审⑬）：入参对象即仓内对象——**入参交出后调用方不得
+    // 再改**（引擎每次变更整体换新数组，契约层笔迹不可变；gzip/parse 的
+    // WeakMap memo 亦以引用为键，同引用同字节反而保幂等）
+    replaceDoc(record, input);
+    record.pending = { mutationId: randomUuid(), doc: input };
     record.editedAt = Date.now();
     if (record.denied?.kind === "content") record.denied = null;
   });
+  return records.get(key)?.docVersion ?? 0;
 }
 
 /**
@@ -809,8 +815,7 @@ function applyLoadMutations(
     return; // 本地有未同步且内容不同：保留（不覆盖未同步本地稿）
   }
   record.pending = null; // 无待传或内容相等：以服务端稿为准，不回传
-  record.doc = serverDoc;
-  record.docVersion += 1;
+  replaceDoc(record, serverDoc);
   record.conflict = null; // 云端即本地内容（或本地无分歧）：分歧消解
 }
 
@@ -843,6 +848,23 @@ export async function applyUploadReceipt(
     if (record.pending?.mutationId === mutationId) {
       record.pending = null;
     }
+    // 回执推进 lastHead（复审⑦）：新版本尚无派生图（images=[]），images
+    // 维度随回执转 pending——「上传成功≠图片就绪」如实呈现；note 元信息以
+    // 旧 head 为底合并（attemptId 等归属字段回执不含，下一次 head 拉取
+    // 全覆盖），从未拉过 head 则 note 维持 null（overview 只消费 images）
+    record.lastHead = {
+      note:
+        record.lastHead?.note !== null && record.lastHead?.note !== undefined
+          ? {
+              ...record.lastHead.note,
+              revision: receipt.revision,
+              currentVersionId: receipt.versionId,
+              serverSavedAt: receipt.savedAt,
+            }
+          : null,
+      images: [],
+      evidence: record.lastHead?.evidence ?? null,
+    };
   });
 }
 
@@ -919,8 +941,7 @@ export async function resolveNoteConflict(
         return; // fetch 窗口内有新写：新写胜出，云端稿不覆盖（复审⑤）
       }
       record.pending = null;
-      record.doc = choice.doc;
-      record.docVersion += 1;
+      replaceDoc(record, choice.doc);
       return;
     }
     // keep local：有摘要——pending 原样（同 id 重放，CAS 干净写）；

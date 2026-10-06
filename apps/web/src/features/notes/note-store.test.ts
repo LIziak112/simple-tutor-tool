@@ -539,14 +539,13 @@ describe("note-store：备份回退 load 守卫（复审②）", () => {
 });
 
 describe("note-store：writeNoteDoc 断引用（复审⑩ memo 纪律）", () => {
-  it("调用方就地改动原对象不影响仓内记录（顶层与 strokes 数组均断引用）", async () => {
-    const input = { ...DOC_B }; // 调用方持有的对象
+  it("断引用纪律已让位于热路径零拷贝（复审⑬）：入参即仓内对象，交出后不得再改", async () => {
+    // 旧断引用拷贝已删（书写热路径零拷贝）；本例锁定新契约——同引用入仓
+    const input = { ...DOC_B };
     writeNoteDoc(SESSION_A, SCOPE, input);
-    // 就地改原对象顶层与数组（模拟外部可变引用）
-    input.ink = { ...input.ink, strokes: [] };
     const record = await recordOf(SESSION_A, SCOPE);
-    expect(record.doc.ink.strokes.length).toBe(2); // 仓内不受影响
-    expect(record.pending?.doc.ink.strokes.length).toBe(2);
+    expect(record.doc).toBe(input);
+    expect(record.pending?.doc).toBe(input);
   });
 });
 
@@ -734,5 +733,86 @@ describe("note-store：reviveRecord 坏形防御（T6R.9 复审③）", () => {
     await seedCorrupt(shared);
     installNoteBackend(shared);
     await expect(listPendingNotes(SESSION_A)).resolves.toEqual([]);
+  });
+});
+
+describe("note-store：回执推进 lastHead（T6R.9 复审⑦：新版本 images=[]→pending）", () => {
+  it("rev1 图片 ready 的 head 后上传 rev2：images 维度随回执转 pending", async () => {
+    await applyServerHead(SESSION_A, SCOPE, headOf());
+    // rev1 有一张 ready 图（最小形状）
+    await applyServerHead(SESSION_A, SCOPE, {
+      note: headOf().note,
+      images: [
+        {
+          imageId: "55555555-5555-4555-8555-555555555555",
+          noteVersionId: headOf().note?.currentVersionId ?? "",
+          spec: "thumbnail",
+          pageIndex: 0,
+          crop: { x: 0, y: 0, width: 1000, height: 800 },
+          pixelWidth: 500,
+          pixelHeight: 400,
+          state: "ready",
+          hash: `${"b".repeat(64)}`,
+        },
+      ],
+      evidence: null,
+    });
+    expect(deriveNoteStatusOverview(await recordOf(SESSION_A, SCOPE), false).images)
+      .toBe("ready");
+    writeNoteDoc(SESSION_A, SCOPE, DOC_B);
+    const mutationId = (await recordOf(SESSION_A, SCOPE)).pending?.mutationId;
+    if (mutationId === undefined) throw new Error("测试前置失败");
+    await applyUploadReceipt(SESSION_A, SCOPE, mutationId, receiptOf(2));
+    // 回执落地：新版本尚无派生图 →「上传成功≠图片就绪」如实转 pending
+    expect(deriveNoteStatusOverview(await recordOf(SESSION_A, SCOPE), false).images)
+      .toBe("pending");
+    const head = (await recordOf(SESSION_A, SCOPE)).lastHead;
+    expect(head?.note?.revision).toBe(2);
+    expect(head?.note?.currentVersionId).toBe(receiptOf(2).versionId);
+  });
+});
+
+describe("note-store：replaceDoc 单点与热路径（T6R.9 复审⑩⑫⑬）", () => {
+  it("writeNoteDoc 返回新 docVersion（消二次 peek）", () => {
+    const v1 = writeNoteDoc(SESSION_A, SCOPE, DOC_A);
+    const v2 = writeNoteDoc(SESSION_A, SCOPE, DOC_B);
+    expect(typeof v1).toBe("number");
+    expect(v2).toBe(v1 + 1);
+  });
+
+  it("等长换稿也全量重算 totalPoints（undo/redo/erase/replace 等非追加形态）", async () => {
+    writeNoteDoc(SESSION_A, SCOPE, docOf([stroke([[0, 0], [1, 1]])])); // 1 笔 2 点
+    expect((await recordOf(SESSION_A, SCOPE)).totalPoints).toBe(2);
+    // 等长替换（同笔数——引擎不产生，防御口径）：重算而非沿用增量
+    writeNoteDoc(SESSION_A, SCOPE, DOC_A); // 1 笔 2 点（等长）
+    expect((await recordOf(SESSION_A, SCOPE)).totalPoints).toBe(2);
+    // 追加：增量路径
+    writeNoteDoc(SESSION_A, SCOPE, DOC_B); // 2 笔 4 点
+    expect((await recordOf(SESSION_A, SCOPE)).totalPoints).toBe(4);
+    // 清空（减笔）：重算归零
+    writeNoteDoc(SESSION_A, SCOPE, DOC_EMPTY);
+    expect((await recordOf(SESSION_A, SCOPE)).totalPoints).toBe(0);
+  });
+
+  it("物化与 Zod parse 锁步（materializeDoc 输出 ≡ parse 物化，复审⑪）", () => {
+    const bare = { version: 1, ink: { width: 1000, strokes: DOC_A.ink.strokes } } as const;
+    writeNoteDoc(SESSION_A, SCOPE, bare);
+    expect(getNoteView(SESSION_A, SCOPE)?.doc).toEqual(noteDocSchema.parse(bare));
+    writeNoteDoc(SESSION_A, SCOPE, DOC_B);
+    expect(getNoteView(SESSION_A, SCOPE)?.doc).toEqual(
+      noteDocSchema.parse({
+        version: 1,
+        ink: DOC_B.ink,
+        paperHeightLogical: DOC_B.paperHeightLogical,
+        background: DOC_B.background,
+      }),
+    );
+  });
+
+  it("writeNoteDoc 不再拷贝数组层：入参对象即仓内对象（交出后不得再改）", async () => {
+    const input = { ...DOC_A };
+    writeNoteDoc(SESSION_A, SCOPE, input);
+    const record = await recordOf(SESSION_A, SCOPE);
+    expect(record.doc).toBe(input); // 同一引用（热路径零拷贝）
   });
 });
