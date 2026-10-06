@@ -994,6 +994,12 @@ export async function ensureNoteLoaded(
 ): Promise<void> {
   const key = noteKeyOf(session, scope);
   if (records.has(key)) return;
+  // bind 扫描在途：等它把整会话键值对灌进缓存再判（复审⑬ 消双读；
+  // 扫描内部已吞错，不会拒绝）
+  if (inflightScan !== null) {
+    await inflightScan;
+    if (records.has(key)) return;
+  }
   await getNoteRecord(session, scope);
   notify(key);
 }
@@ -1028,31 +1034,43 @@ export async function clearNoteDeniedAccess(
  * T6R.9 复审⑧：单事务 getAll 取前缀键值对（不再 keys 后逐键 get 的串行
  * 往返）；载入缓存与 getNoteRecord 同口径——窗口内新写以内存为准。
  */
+/** 在途会话扫描（bind 发起）：ensureNoteLoaded 等待它灌完缓存（复审⑬
+ * 消 getAll+get 双读——扫描本身整会话 getAll，挂载恢复随之免费） */
+let inflightScan: Promise<unknown> | null = null;
+
 export async function listPendingNotes(
   session: NoteSessionRef,
 ): Promise<NoteScope[]> {
-  const out: NoteScope[] = [];
-  let pairs: Array<[string, unknown]>;
-  try {
-    pairs = await backend().getAll(sessionPrefix(session));
-  } catch (err) {
-    console.warn("草稿本地仓扫描失败（无法补传待传版本）", err);
+  const scan = (async () => {
+    const out: NoteScope[] = [];
+    let pairs: Array<[string, unknown]>;
+    try {
+      pairs = await backend().getAll(sessionPrefix(session));
+    } catch (err) {
+      console.warn("草稿本地仓扫描失败（无法补传待传版本）", err);
+      return out;
+    }
+    for (const [key, raw] of pairs) {
+      const scope = parseNoteKey(key)?.scope;
+      if (scope === undefined) continue;
+      if (!records.has(key)) {
+        // 竞态口径同 getNoteRecord：读期间发生的本地写入已进内存——不覆盖
+        const revived = reviveRecord(raw);
+        if (revived !== null) records.set(key, revived);
+      }
+      const record = records.get(key);
+      if (record !== undefined && record.pending !== null) {
+        out.push(scope);
+      }
+    }
     return out;
+  })();
+  inflightScan = scan;
+  try {
+    return await scan;
+  } finally {
+    inflightScan = null;
   }
-  for (const [key, raw] of pairs) {
-    const scope = parseNoteKey(key)?.scope;
-    if (scope === undefined) continue;
-    if (!records.has(key)) {
-      // 竞态口径同 getNoteRecord：读期间发生的本地写入已进内存——不覆盖
-      const revived = reviveRecord(raw);
-      if (revived !== null) records.set(key, revived);
-    }
-    const record = records.get(key);
-    if (record !== undefined && record.pending !== null) {
-      out.push(scope);
-    }
-  }
-  return out;
 }
 
 /** 立即落盘某键的队列（交卷等待本地事务用，T6R.10；无待写即 no-op） */

@@ -816,3 +816,29 @@ describe("note-store：replaceDoc 单点与热路径（T6R.9 复审⑩⑫⑬）"
     expect(record.doc).toBe(input); // 同一引用（热路径零拷贝）
   });
 });
+
+describe("note-store：bind 扫描与 ensureNoteLoaded 共享（T6R.9 复审⑬消双读）", () => {
+  it("扫描在途时 ensureNoteLoaded 等待共享结果，不走逐键 get", async () => {
+    const shared = memoryNoteBackend();
+    installNoteBackend(shared);
+    writeNoteDoc(SESSION_A, SCOPE, DOC_A);
+    await waitForLocalSaved(SESSION_A, SCOPE);
+    installNoteBackend(shared); // 模拟刷新：清内存、后端留数据
+
+    let gets = 0;
+    const counting: NoteStoreBackend = {
+      get: (key) => {
+        gets += 1;
+        return shared.get(key);
+      },
+      set: shared.set,
+      getAll: shared.getAll,
+    };
+    installNoteBackend(counting);
+    const scan = listPendingNotes(SESSION_A); // 不 await——bind 扫描在途
+    await ensureNoteLoaded(SESSION_A, SCOPE); // 同 tick 竞争的挂载恢复
+    await scan;
+    expect(gets).toBe(0); // 键值对来自扫描的 getAll，零逐键 get
+    expect(getNoteView(SESSION_A, SCOPE)?.doc?.ink.strokes.length).toBe(1);
+  });
+});
