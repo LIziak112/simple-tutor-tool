@@ -63,15 +63,19 @@ export function idbKVBackend(
     del: (key) => del(key, store),
     keys: async (prefix) => {
       // getAllKeys 带 range：过滤下推到 IDB 层（非字符串键天然落在字符串
-      // 区间外；防御性保留类型收窄）。回调内断言为解包后的值类型：
-      // idb-keyval 运行时会 promisify 返回的 IDBRequest，但其 UseStore
-      // 类型不表达该解包（本仓安装版本的类型联合按裸 Request 推断）
+      // 区间外；防御性保留类型收窄）。**回调必须返回 Promise**：idb-keyval
+      // 的 customStore 只把回调返回值作为 resolve 结果（其 get/keys 均在
+      // 回调内显式 promisifyRequest）——直接返回裸 IDBRequest 会 resolve
+      // 成 Request 对象，真 IDB 下 all.filter 抛错、bind 扫描补传全挂
+      // （T6R.9 修复；jsdom 内存后端曾掩盖，note-layer E2E 控制台守卫覆盖）
       const all = await store(
         "readonly",
         (objectStore) =>
-          objectStore.getAllKeys(
-            prefixRange(prefix),
-          ) as unknown as IDBValidKey[],
+          new Promise<IDBValidKey[]>((resolve, reject) => {
+            const request = objectStore.getAllKeys(prefixRange(prefix));
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+          }),
       );
       return all.filter((key): key is string => typeof key === "string");
     },
