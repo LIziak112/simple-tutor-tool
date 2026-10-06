@@ -851,6 +851,47 @@ describe("atrament-adapter：回归（撤销/重做/橡皮/鼠标/load）", () =
     expect(h.events.at(-1)?.reason).toBe("erase");
   });
 
+  it("load 在途笔先按已收采样收笔再换正文（在途笔提交不丢、不粘笔——复审②）", () => {
+    const h = mountSurface({ initial: oneStrokeDoc() });
+    pointer(h.canvas, "pointerdown", pd("pen", 1, 20, 20));
+    pointer(h.canvas, "pointermove", {
+      pointerType: "pen",
+      clientX: 60,
+      clientY: 20,
+    });
+    h.events.length = 0;
+    h.surface.load(oneStrokeDoc());
+    // 顺序：先提交在途笔（旧正文 1+1），再换正文（1 笔新稿）
+    expect(h.events.map((e) => e.reason)).toEqual(["stroke", "load"]);
+    expect(h.events[0]?.strokes).toBe(2);
+    expect(h.events[1]?.strokes).toBe(1);
+    // 收笔后同一手势后续事件忽略（不粘笔）
+    pointer(h.canvas, "pointermove", {
+      pointerType: "pen",
+      clientX: 80,
+      clientY: 20,
+    });
+    pointer(h.canvas, "pointerup", {
+      pointerType: "pen",
+      clientX: 80,
+      clientY: 20,
+    });
+    expect(h.events.filter((e) => e.reason === "stroke")).toHaveLength(1);
+  });
+
+  it("load 时橡皮的 pendingErase 先按旧下标提交再换正文（不删错新稿——复审②）", () => {
+    const h = mountSurface({ initial: oneStrokeDoc() });
+    // 橡皮点到既有笔画采样点上（(20,20) → 逻辑 66.67,66.67，口径同回归用例）
+    h.surface.setTool({ type: "eraser" });
+    pointer(h.canvas, "pointerdown", pd("mouse", 1, 20, 20));
+    h.events.length = 0;
+    h.surface.load(oneStrokeDoc());
+    // 先按旧下标提交 erase（旧正文 1→0），再换正文（1 笔新稿）——
+    // 若 replace 先行，陈旧下标会误删新稿笔画
+    expect(h.events.map((e) => e.reason)).toEqual(["erase", "load"]);
+    expect(h.events[1]?.strokes).toBe(1);
+  });
+
   it("load 全程 reason=load（不触发编辑计数口径）；书写后仍为 stroke", () => {
     // 初始恢复发生在 mount 内部（早于 onChange 注册，与旧语义一致——不通知）
     const h = mountSurface({ initial: oneStrokeDoc() });
