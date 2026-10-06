@@ -6,25 +6,49 @@
  * - 绘制：atrament 库（官方"Programmatic drawing"接口 beginStroke/draw/endStroke）；
  * - 输入层：本文件完全接管指针/触摸事件（见下），不使用 atrament 内置的
  *   事件绑定——构造后立即 destroy() 解绑其监听（保留 canvas 2d context 上
- *   已配置好的画笔状态），从而能精确实现 §5.4.1 输入层全部要求：
+ *   已配置好的画笔状态），从而能精确实现 §5.4.1 输入层全部要求；
+ * - 指针生命周期策略（T6R.7）：纯状态机 pointer-machine.ts 给出决策
+ *   （第二指针/取消/失焦/布局变化的处理矩阵见其测试），本文件负责把决策
+ *   落到 DOM（capture/atrament 绘制/store 提交/touch-action/背景样式）。
  *
- * 输入层实现说明（无法在 jsdom 单测，须 iPad 真机按 §7.1 清单验证）：
+ * 输入层实现说明（决策矩阵已在 pointer-machine.test.ts jsdom 锁定；手感
+ * 与系统手势须 iPad 真机按清单验证）：
  * 1. Pointer Events 统一处理笔/手指/鼠标；pointerType==='pen' 识别 Apple
  *    Pencil，pressure 读压感（0 值规整为 0.5，即"无压感"）。
  * 2. getCoalescedEvents() 高频采样逐点入墨（笔迹顺滑）；不支持时自动回退
  *    为单个 pointermove 事件，不报错。
- * 3. "笔写字、手指滚动"：canvas 监听 touchstart（passive:false），仅当
- *    touch.touchType==='stylus' 才 preventDefault() 进入书写（阻断该触摸的
- *    原生滚动）；手指触摸不拦截——canvas 置 touch-action: pan-y，页面原生
- *    滚动。一旦观测到笔（pointer 或 stylus 触摸）即进入 pen-only 模式，
- *    手指永远不落墨（防手掌误触）；无笔设备回退为手指/鼠标直接书写
- *    （touch-action: none），并提供"滚动模式"工具开关。
- * 4. 防误触：CSS user-select/-webkit-touch-callout 关闭，拦截
+ * 3. 输入模式（T6R.7，方案 §4.1）：auto=旧行为（见过笔后手指不落墨的
+ *    自动探测，旧作答组件缺省且零变化）；pen=新草稿缺省「笔写／手指滚动」；
+ *    finger=工具菜单「手指书写」切换。touch-action 与手指语义随模式切换，
+ *    且只在**手势开始前**设置（pointerdown 后修改不可靠，W3C Pointer
+ *    Events §8）。不以 UA 推断设备。
+ * 4. "笔写字、手指滚动"的触摸侧：touchstart/touchmove 遍历 changedTouches
+ *    核对 touchType（不默认 touches[0] 是笔——手掌先落、笔第二个落下的
+ *    场景同样识别 stylus）；仅含 stylus 的事件 preventDefault()（阻断该
+ *    触摸引发的原生滚动），手指（direct）触摸不拦截——canvas 置
+ *    touch-action: pan-y，页面原生滚动。
+ * 5. 指针生命周期：第二指针不接管活动笔（auto 模式「笔取代手掌」例外，
+ *    丢弃手掌笔段）；pointercancel/lostpointercapture/窗口失焦/布局变化
+ *    （旋转、resize、自动加高）一律按**已收到的真实采样**收笔——不补造
+ *    终点、不粘笔、一笔中途不混用两个坐标变换（resize 后同一手势的后续
+ *    采样丢弃，直到新的 pointerdown）。
+ * 6. 防误触：CSS user-select/-webkit-touch-callout 关闭，拦截
  *    contextmenu/selectstart（防长按放大镜与菜单）；容器 touch-action
  *    manipulation 级别由 InkPad 页面负责（防双击缩放）。
- * 5. Apple Pencil 悬停：pointermove 且 buttons===0 时显示笔尖预览圈，
+ * 7. Apple Pencil 悬停：pointermove 且 buttons===0 时显示笔尖预览圈，
  *    不落墨。
+ * 8. 屏幕端纸张背景（T6R.7）：可选配置 background（缺省 white=不设置任何
+ *    背景样式，旧作答组件零变化）；格线/横线经 engine/paper-style 与 PNG
+ *    渲染同源常量生成 CSS 背景，resize 时随宽度换算重设。
+ *
+ * 🧑 真机待确认点（T6R.1 清单第 3/4/8/9 项，自动化无法替代）：
+ * - HTTP 与 HTTPS 分别：首次落笔（手指滚/笔写）、手掌先落与笔先落；
+ * - 手指滚动页面与点选选项（pen 模式下手势不被画布吞掉）；
+ * - Apple Pencil Scribble 输入框抢占（不应把字符漏画进画布）；
+ * - 书写中途旋转设备（先收笔再换坐标变换的手感）；
+ * - 系统手势边缘滑动触发 pointercancel（收笔不粘笔）。
  */
+import type { NoteBackground } from "@tutor/contract";
 import Atrament from "atrament";
 import { canvasToPngBlob } from "./canvas-png.ts";
 import { buildAtramentDoc, parseAtramentDoc } from "./doc.ts";
@@ -36,10 +60,21 @@ import {
   toLogical,
   toLogicalPoint,
 } from "./normalize.ts";
+import { NOTE_PAPER_BG_COLOR, paperBackgroundCss } from "./paper-style.ts";
+import {
+  advancePointerMachine,
+  createPointerMachineState,
+  observeStylusTouch,
+  type PointerFinishCause,
+  type PointerMachineEvent,
+  type PointerMachineState,
+  touchActionForInput,
+} from "./pointer-machine.ts";
 import type { InkChangeReason, ToolAwareSurface } from "./surface.ts";
 import {
   INK_ERASE_RADIUS,
   type InkDoc,
+  type InkInputMode,
   type InkPenColor,
   type InkPenSize,
   type InkStroke,
@@ -50,10 +85,6 @@ import {
 
 /** devicePixelRatio 上限 2：控制内存（长答题区 + 高分屏，§5.4.1 绘制层第 2 条） */
 const MAX_DPR = 2;
-
-/** 手指滚动放行、笔书写时的 touch-action；笔直接书写时改为 none */
-const TOUCH_ACTION_PAN_Y = "pan-y";
-const TOUCH_ACTION_NONE = "none";
 
 /**
  * 按逻辑坐标在 Atrament 实例上重放一笔（atrament 官方程序化绘制流程）。
@@ -102,6 +133,17 @@ export function createProgrammaticAtrament(
 export interface AtramentSurfaceOptions {
   /** 初始高度提示（CSS 像素）。容器高度最终由外部（InkPad）控制 */
   height?: number;
+  /**
+   * 输入模式（T6R.7，方案 §4.1）：缺省 auto=旧行为（自动探测，旧作答
+   * 组件零变化）；pen=笔写／手指滚动（新草稿缺省）；finger=手指书写。
+   * 只影响**新落下**的指针，切换不打断在途笔画。
+   */
+  inputMode?: InkInputMode;
+  /**
+   * 纸张背景（T6R.7）：缺省 white=不设置任何背景样式（旧作答组件零变化）。
+   * grid/line 经 engine/paper-style 与 PNG 渲染同源常量生成 CSS 背景。
+   */
+  background?: NoteBackground;
 }
 
 /**
@@ -133,12 +175,15 @@ export function createAtramentSurface(
     size: "medium",
   };
 
-  /** 见过笔之后为 true：手指不再落墨（Apple Pencil 防手掌误触） */
-  let penOnly = false;
+  /**
+   * 指针生命周期状态机（T6R.7）：活动指针/输入模式/auto 模式的笔观测
+   * （penOnly）都在这里——单一事实来源，决策矩阵见 pointer-machine.ts。
+   * drawingPointerId/penOnly 等旧散置状态由此收敛。
+   */
+  let machine: PointerMachineState = createPointerMachineState(
+    options.inputMode ?? "auto",
+  );
 
-  /** 正在书写的指针 id（同时只允许一个指针落墨；null=空闲） */
-  let drawingPointerId: number | null = null;
-  let drawingPointerType: string = "";
   /** 当前一笔的归一化点序列与计时起点 */
   let livePoints: InkStrokePoint[] = [];
   let liveStartStamp = 0;
@@ -198,14 +243,24 @@ export function createAtramentSurface(
     return ev.pressure > 0 ? ev.pressure : 0.5;
   }
 
-  /** 按当前模式刷新 touch-action（笔/滚动模式放行纵向滚动） */
+  /** 按当前模式刷新 touch-action（手势开始前设置的口径，见 pointer-machine） */
   function applyTouchAction(): void {
-    const mode =
-      tool.type === "scroll" || penOnly
-        ? TOUCH_ACTION_PAN_Y
-        : TOUCH_ACTION_NONE;
+    const mode = touchActionForInput(
+      machine.mode,
+      machine.penObserved,
+      tool.type === "scroll",
+    );
     if (canvas) canvas.style.touchAction = mode;
     if (container) container.style.touchAction = mode;
+  }
+
+  /** 屏幕端纸张背景（可选配置）：white/缺省不设置任何样式（旧组件零变化） */
+  function applyPaperBackground(): void {
+    if (!canvas) return;
+    const bg = options.background;
+    if (!bg || bg === "white") return;
+    canvas.style.backgroundColor = NOTE_PAPER_BG_COLOR;
+    canvas.style.backgroundImage = paperBackgroundCss(bg, cssWidth);
   }
 
   /** canvas 尺寸随容器变化（DPR 上限 2）。会重置位图与 context 状态 */
@@ -216,6 +271,8 @@ export function createAtramentSurface(
     const dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR);
     canvas.width = Math.max(1, Math.round(cssWidth * dpr));
     canvas.height = Math.max(1, Math.round(cssHeight * dpr));
+    // 背景间距随宽度换算，重设时同步（resize 由 ResizeObserver 触发本函数）
+    applyPaperBackground();
   }
 
   /** 重置 2d context 画笔状态（canvas.width 赋值会清掉 lineCap 等） */
@@ -248,48 +305,86 @@ export function createAtramentSurface(
     });
   }
 
-  /** 丢弃当前正在书写的笔画（用于手掌先落笔、笔随后落下的场景） */
+  /** 丢弃当前正在书写的笔画（auto 模式手掌先落、笔随后落下的场景；活动指针已由状态机清除） */
   function abortLiveStroke(): void {
-    if (drawingPointerId === null) return;
     if (livePrev && atrament) {
       atrament.endStroke(livePrev.x, livePrev.y);
     }
-    drawingPointerId = null;
     livePoints = [];
     livePrev = null;
     pendingErase = new Set();
     redraw(); // 抹掉手掌已画的部分
   }
 
+  /**
+   * 收笔：按**已收到的真实采样**提交（T6R.7，方案 §4.1「取消时只保存已收到
+   * 的真实采样，不补造终点」）。up/cancel/lostpointercapture/blur/布局变化
+   * 共用本路径——终点一律用 atrament 已处理的上一坐标（livePrev），不使用
+   * 事件自带坐标补造终点（cancel 事件的坐标可能是 (0,0) 或宿位值）。
+   * @param cause 收笔触发源（仅注释/日志口径，行为相同）
+   */
+  function commitLiveStroke(cause: PointerFinishCause): void {
+    void cause;
+    if (tool.type === "eraser") {
+      // 一次拖动的全部命中合并为一个历史条目（撤销=全部恢复）
+      if (pendingErase.size > 0) {
+        withReason("erase", () => store.commitErase([...pendingErase]));
+      }
+      pendingErase = new Set();
+      redraw();
+    } else if (livePoints.length > 0 && liveBrush) {
+      if (atrament && livePrev) {
+        atrament.endStroke(livePrev.x, livePrev.y);
+      }
+      const brush = liveBrush;
+      const points = livePoints;
+      withReason("stroke", () =>
+        store.commitAdd([
+          {
+            tool: liveTool,
+            color: brush.color,
+            weight: brush.weight, // 逻辑单位（规格本身按宽度 1000 定义）
+            points,
+          },
+        ]),
+      );
+    }
+    livePoints = [];
+    livePrev = null;
+  }
+
   // ---- 事件处理 ----
 
   function onPointerDown(e: PointerEvent): void {
-    // 滚动模式：完全不拦截，页面原生滚动
+    // 滚动模式：完全不拦截，页面原生滚动（工具门控先于状态机）
     if (tool.type === "scroll") return;
-    // pen-only 模式下手指不落墨（防手掌误触）；页面照常滚动
-    if (e.pointerType === "touch" && penOnly) return;
-    // 仅主键（右键等不写）
-    if (e.button > 0) return;
-
-    if (e.pointerType === "pen") {
-      // 首次观测到笔 → 进入 pen-only；若手掌（touch）正落墨，丢弃那一笔
-      penOnly = true;
-      if (drawingPointerId !== null && drawingPointerType === "touch") {
-        abortLiveStroke();
-      }
-      applyTouchAction();
-    }
 
     const { x, y } = eventToCss(e);
-    if (x < 0 || y < 0 || x > cssWidth || y > cssHeight) return;
+    const inBounds = x >= 0 && y >= 0 && x <= cssWidth && y <= cssHeight;
+    // 状态机决策：模式门控（手指/笔/鼠标）、第二指针不接管、auto 模式
+    // 「笔取代手掌」的丢弃、越界不开始（但笔观测副作用仍生效——旧行为）
+    const r = advancePointerMachine(machine, {
+      kind: "pointerdown",
+      pointerId: e.pointerId,
+      pointerType: e.pointerType,
+      button: e.button,
+      inBounds,
+    });
+    machine = r.state;
+    let started = false;
+    for (const d of r.decisions) {
+      if (d.action === "discard") abortLiveStroke();
+      if (d.action === "start") started = true;
+    }
+    // auto 模式笔观测可能翻转 touch-action（手势开始前设置的口径）
+    applyTouchAction();
+    if (!started) return;
 
     try {
       canvas?.setPointerCapture(e.pointerId);
     } catch {
       // 个别浏览器在 canvas 未聚焦时可能抛错，忽略（pointerup 仍会冒泡到 canvas/document）
     }
-    drawingPointerId = e.pointerId;
-    drawingPointerType = e.pointerType;
     liveStartStamp = e.timeStamp;
 
     if (tool.type === "eraser") {
@@ -321,7 +416,7 @@ export function createAtramentSurface(
 
   function onPointerMove(e: PointerEvent): void {
     // 悬停预览圈：Apple Pencil 悬停（buttons===0）显示笔尖位置，不落墨
-    if (hoverDot && drawingPointerId === null) {
+    if (hoverDot && machine.activePointerId === null) {
       if (e.pointerType === "pen" && e.buttons === 0) {
         const { x, y } = eventToCss(e);
         hoverDot.style.display = "block";
@@ -330,7 +425,13 @@ export function createAtramentSurface(
       }
     }
 
-    if (drawingPointerId === null || e.pointerId !== drawingPointerId) return;
+    // 只有活动指针的移动被采样（状态机决策；其余含第二指针一律忽略）
+    const r = advancePointerMachine(machine, {
+      kind: "pointermove",
+      pointerId: e.pointerId,
+    });
+    machine = r.state;
+    if (!r.decisions.some((d) => d.action === "sample")) return;
 
     // 高频采样：getCoalescedEvents 取全部中间采样点；不支持则回退单点
     let coalesced: PointerEvent[] = [];
@@ -371,59 +472,71 @@ export function createAtramentSurface(
     }
   }
 
-  function onPointerFinish(e: PointerEvent): void {
-    if (drawingPointerId === null || e.pointerId !== drawingPointerId) return;
-    const { x, y } = eventToCss(e);
-
-    if (tool.type === "eraser") {
-      // 一次拖动的全部命中合并为一个历史条目（撤销=全部恢复）
-      if (pendingErase.size > 0) {
-        withReason("erase", () => store.commitErase([...pendingErase]));
-      }
-      pendingErase = new Set();
-      redraw();
-    } else if (livePoints.length > 0 && liveBrush) {
-      if (atrament) {
-        const last = livePrev ?? { x, y };
-        atrament.endStroke(last.x, last.y);
-      }
-      const brush = liveBrush;
-      const points = livePoints;
-      withReason("stroke", () =>
-        store.commitAdd([
-          {
-            tool: liveTool,
-            color: brush.color,
-            weight: brush.weight, // 逻辑单位（规格本身按宽度 1000 定义）
-            points,
-          },
-        ]),
-      );
+  /**
+   * 收尾事件公共路径：up/cancel/lostpointercapture/blur/布局变化都经状态机
+   * （只有活动指针自己的事件收笔；收笔后同一手势的后续事件全部忽略），
+   * 决策 commit 时按已收真实采样提交（不补造终点）。
+   */
+  function finishPointer(event: PointerMachineEvent): void {
+    const r = advancePointerMachine(machine, event);
+    machine = r.state;
+    for (const d of r.decisions) {
+      if (d.action === "commit") commitLiveStroke(d.cause);
     }
-    drawingPointerId = null;
-    drawingPointerType = "";
-    livePoints = [];
-    livePrev = null;
+  }
+
+  function onPointerUp(e: PointerEvent): void {
+    finishPointer({ kind: "pointerup", pointerId: e.pointerId });
+  }
+
+  function onPointerCancel(e: PointerEvent): void {
+    finishPointer({ kind: "pointercancel", pointerId: e.pointerId });
+  }
+
+  function onLostPointerCapture(e: PointerEvent): void {
+    finishPointer({ kind: "lostpointercapture", pointerId: e.pointerId });
   }
 
   /**
-   * "笔写字、手指滚动"的触摸侧（§5.4.1 输入层第 3 条）：
-   * 仅笔（stylus）触摸被 preventDefault——阻断该触摸引发的原生滚动，让随后的
-   * pointer 事件完整送达本层书写；手指（direct）触摸不拦截，配合
-   * touch-action: pan-y 由浏览器原生滚动页面。
+   * 窗口失焦：在途笔段按已收采样收笔。推演：失焦期间浏览器可能不再送达
+   * pointermove/pointerup（或送 pointercancel），若保持"书写中"状态，重聚焦
+   * 后同一手势的后续采样会以**新的布局/坐标基准**续写同一笔——正是方案
+   * §4.1 禁止的「一笔混用两个坐标变换」；且停留态会把下一个无关手势误判
+   * 为续写。按「取消时只保存已收到的真实采样」口径收笔是无损且可预期的
+   * 选择（真机清单第 10 项复核）。
    */
-  function onTouchStart(e: TouchEvent): void {
-    const t = e.touches[0];
-    if (t && t.touchType === "stylus") {
-      penOnly = true;
-      applyTouchAction();
-      e.preventDefault();
+  function onWindowBlur(): void {
+    finishPointer({ kind: "blur" });
+  }
+
+  /**
+   * "笔写字、手指滚动"的触摸侧（§5.4.1 输入层第 3 条，T6R.7 改为遍历）：
+   * **遍历 changedTouches 核对输入**，不默认 touches[0] 是笔——手掌先落
+   * （direct）、笔第二个落下的场景里 touches[0] 是手掌，旧写法会漏拦笔触摸。
+   * 仅当本事件的触点含 stylus 时 preventDefault——阻断该触摸引发的原生
+   * 滚动，让随后的 pointer 事件完整送达本层书写；手指（direct）触摸不
+   * 拦截，配合 touch-action: pan-y 由浏览器原生滚动页面。
+   * 🧑 真机复核：stylus 拦截在 HTTP/HTTPS 下行为一致（清单第 1 项）。
+   */
+  function anyStylusTouch(
+    touches: TouchList | Array<{ touchType?: string }>,
+  ): boolean {
+    for (let i = 0; i < touches.length; i++) {
+      const t = touches[i];
+      if (t?.touchType === "stylus") return true;
     }
+    return false;
+  }
+
+  function onTouchStart(e: TouchEvent): void {
+    if (!anyStylusTouch(e.changedTouches)) return;
+    machine = observeStylusTouch(machine);
+    applyTouchAction();
+    e.preventDefault();
   }
 
   function onTouchMove(e: TouchEvent): void {
-    const t = e.touches[0];
-    if (t && t.touchType === "stylus") e.preventDefault();
+    if (anyStylusTouch(e.changedTouches)) e.preventDefault();
   }
 
   function onContextMenu(e: Event): void {
@@ -494,16 +607,24 @@ export function createAtramentSurface(
 
       canvas.addEventListener("pointerdown", onPointerDown);
       canvas.addEventListener("pointermove", onPointerMove);
-      canvas.addEventListener("pointerup", onPointerFinish);
-      canvas.addEventListener("pointercancel", onPointerFinish);
+      canvas.addEventListener("pointerup", onPointerUp);
+      canvas.addEventListener("pointercancel", onPointerCancel);
+      // 指针捕获丢失（元素/画布被移动、浏览器接管手势等）：按已收采样收笔
+      canvas.addEventListener("lostpointercapture", onLostPointerCapture);
       canvas.addEventListener("pointerleave", onPointerLeave);
       canvas.addEventListener("touchstart", onTouchStart, { passive: false });
       canvas.addEventListener("touchmove", onTouchMove, { passive: false });
       canvas.addEventListener("contextmenu", onContextMenu);
       canvas.addEventListener("selectstart", onSelectStart);
+      // 窗口失焦（切后台/锁屏/系统弹窗）：按已收采样收笔（见 onWindowBlur 注释）
+      window.addEventListener("blur", onWindowBlur);
 
-      // 尺寸变化（旋转、自动加高、窗口缩放）：重设画布并全量重绘（归一化坐标保证比例正确）
+      // 尺寸变化（旋转、自动加高、窗口缩放）：在途一笔先按已收点收笔——
+      // 一笔中途不混用两个坐标变换（方案 §4.1；收笔后同一手势的后续采样
+      // 丢弃直到新 pointerdown），然后重设画布并全量重绘（归一化坐标保证
+      // 比例正确）。🧑 真机复核：书写中途旋转（清单第 9 项）
       observer = new ResizeObserver(() => {
+        finishPointer({ kind: "layoutchange" });
         sizeCanvas();
         redraw();
       });
@@ -556,6 +677,12 @@ export function createAtramentSurface(
       applyTouchAction();
     },
 
+    setInputMode(mode: InkInputMode): void {
+      // 只影响新落下的指针（不打断在途笔画）；touch-action 随模式切换
+      machine = { ...machine, mode };
+      applyTouchAction();
+    },
+
     canUndo(): boolean {
       return store.canUndo();
     },
@@ -575,11 +702,13 @@ export function createAtramentSurface(
       observer?.disconnect();
       observer = null;
       changeListeners.clear();
+      window.removeEventListener("blur", onWindowBlur);
       if (canvas) {
         canvas.removeEventListener("pointerdown", onPointerDown);
         canvas.removeEventListener("pointermove", onPointerMove);
-        canvas.removeEventListener("pointerup", onPointerFinish);
-        canvas.removeEventListener("pointercancel", onPointerFinish);
+        canvas.removeEventListener("pointerup", onPointerUp);
+        canvas.removeEventListener("pointercancel", onPointerCancel);
+        canvas.removeEventListener("lostpointercapture", onLostPointerCapture);
         canvas.removeEventListener("pointerleave", onPointerLeave);
         canvas.removeEventListener("touchstart", onTouchStart);
         canvas.removeEventListener("touchmove", onTouchMove);

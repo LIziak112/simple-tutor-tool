@@ -47,10 +47,13 @@ export function paperBackgroundCss(
   if (!(spacingCss > NOTE_PAPER_LINE_WIDTH_PX)) return "none";
   const w = NOTE_PAPER_LINE_WIDTH_PX;
   const color = NOTE_PAPER_LINE_COLOR;
-  // 线带 [S-w, S)：与 PNG「线落在格线整数倍上」同一节奏（首线在 S 而非 0，
-  // 与渲染器 firstAfter 语义一致——纸顶边缘不画线）
-  const band = (dir: "bottom" | "right"): string =>
-    `repeating-linear-gradient(to ${dir}, transparent 0, transparent calc(${spacingCss}px - ${w}px), ${color} calc(${spacingCss}px - ${w}px), ${color} ${spacingCss}px)`;
+  // 线带 [S-w, S)：停靠点直接输出换算后的数值（含小数 px），不用 calc()——
+  // 与 PNG「线落在格线整数倍上」同一节奏（首线在 S 而非 0，与渲染器
+  // firstAfter 语义一致——纸顶边缘不画线）
+  const band = (dir: "bottom" | "right"): string => {
+    const start = spacingCss - w;
+    return `repeating-linear-gradient(to ${dir}, transparent 0, transparent ${start}px, ${color} ${start}px, ${color} ${spacingCss}px)`;
+  };
   if (background === "line") return band("bottom");
   return `${band("right")}, ${band("bottom")}`;
 }

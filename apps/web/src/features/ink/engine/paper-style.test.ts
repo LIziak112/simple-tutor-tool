@@ -31,7 +31,7 @@ describe("paper-style：paperBackgroundCss（屏幕端背景）", () => {
     const css = paperBackgroundCss("line", 500);
     // 500 宽 → S = 20px；线带宽 1px，落在 [S-1, S)
     expect(css).toContain("repeating-linear-gradient(to bottom");
-    expect(css).toContain("transparent calc(20px - 1px)");
+    expect(css).toContain("transparent 19px");
     expect(css).toContain(`${NOTE_PAPER_LINE_COLOR} 20px`);
     expect(css).not.toContain("to right");
   });
@@ -41,7 +41,7 @@ describe("paper-style：paperBackgroundCss（屏幕端背景）", () => {
     expect(css).toContain("repeating-linear-gradient(to bottom");
     expect(css).toContain("repeating-linear-gradient(to right");
     // 1000 宽 → S 恰 40px（1:1）
-    expect(css).toContain("transparent calc(40px - 1px)");
+    expect(css).toContain("transparent 39px");
   });
 
   it("间距小于线宽（极窄容器/零宽）时退化为 none，不生成非法渐变", () => {

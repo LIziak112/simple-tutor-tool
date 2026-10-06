@@ -3,8 +3,8 @@ import {
   advancePointerMachine,
   createPointerMachineState,
   observeStylusTouch,
-  touchActionForInput,
   type PointerMachineState,
+  touchActionForInput,
 } from "./pointer-machine.ts";
 
 /** 从 state 快速构造活动指针 */
@@ -13,7 +13,11 @@ function withActive(
   pointerId: number,
   pointerType: string,
 ): PointerMachineState {
-  return { ...state, activePointerId: pointerId, activePointerType: pointerType };
+  return {
+    ...state,
+    activePointerId: pointerId,
+    activePointerType: pointerType,
+  };
 }
 
 /**
@@ -52,7 +56,10 @@ describe("pointer-machine：pointerdown 门控", () => {
       button: 0,
       inBounds: true,
     });
-    expect(r.decisions).toEqual([{ action: "discard" }, { action: "start", pointerId: 2 }]);
+    expect(r.decisions).toEqual([
+      { action: "discard" },
+      { action: "start", pointerId: 2 },
+    ]);
     expect(r.state).toMatchObject({ activePointerId: 2, penObserved: true });
 
     // 此后手指不再落墨（pen-only 防手掌误触）
@@ -68,7 +75,7 @@ describe("pointer-machine：pointerdown 门控", () => {
   });
 
   it("pen 模式：手指恒不落墨（=滚动），首次手指即 none；鼠标与笔可写", () => {
-    let state = createPointerMachineState("pen");
+    const state = createPointerMachineState("pen");
     let r = advancePointerMachine(state, {
       kind: "pointerdown",
       pointerId: 1,
@@ -148,7 +155,11 @@ describe("pointer-machine：pointerdown 门控", () => {
     ).toEqual([{ action: "none" }]);
 
     // 鼠标在途（auto）：任何第二指针（含笔）不接管——只有「笔取代手掌」例外
-    const mouseActive = withActive(createPointerMachineState("auto"), 9, "mouse");
+    const mouseActive = withActive(
+      createPointerMachineState("auto"),
+      9,
+      "mouse",
+    );
     expect(
       advancePointerMachine(mouseActive, {
         kind: "pointerdown",
@@ -208,10 +219,12 @@ describe("pointer-machine：采样与收笔", () => {
   it("只有活动指针的 move 采样；他人 move 与空闲期 move 均忽略", () => {
     const state = withActive(createPointerMachineState("pen"), 4, "pen");
     expect(
-      advancePointerMachine(state, { kind: "pointermove", pointerId: 4 }).decisions,
+      advancePointerMachine(state, { kind: "pointermove", pointerId: 4 })
+        .decisions,
     ).toEqual([{ action: "sample", pointerId: 4 }]);
     expect(
-      advancePointerMachine(state, { kind: "pointermove", pointerId: 5 }).decisions,
+      advancePointerMachine(state, { kind: "pointermove", pointerId: 5 })
+        .decisions,
     ).toEqual([{ action: "none" }]);
     expect(
       advancePointerMachine(createPointerMachineState("pen"), {
@@ -224,22 +237,31 @@ describe("pointer-machine：采样与收笔", () => {
   it("pointerup：活动指针收笔（up），非活动指针 none（不粘笔）", () => {
     const state = withActive(createPointerMachineState("auto"), 1, "pen");
     const r = advancePointerMachine(state, { kind: "pointerup", pointerId: 1 });
-    expect(r.decisions).toEqual([{ action: "commit", pointerId: 1, cause: "up" }]);
+    expect(r.decisions).toEqual([
+      { action: "commit", pointerId: 1, cause: "up" },
+    ]);
     expect(r.state.activePointerId).toBeNull();
     // 收笔后的同指针 up/move：none
     expect(
-      advancePointerMachine(r.state, { kind: "pointerup", pointerId: 1 }).decisions,
+      advancePointerMachine(r.state, { kind: "pointerup", pointerId: 1 })
+        .decisions,
     ).toEqual([{ action: "none" }]);
     expect(
-      advancePointerMachine(state, { kind: "pointerup", pointerId: 2 }).decisions,
+      advancePointerMachine(state, { kind: "pointerup", pointerId: 2 })
+        .decisions,
     ).toEqual([{ action: "none" }]);
     expect(state.activePointerId).toBe(1);
   });
 
   it("pointercancel：按真实已收采样收笔（cause=cancel），不伪造终点；后续同指针事件全 none", () => {
-    let state = withActive(createPointerMachineState("pen"), 3, "pen");
-    const r = advancePointerMachine(state, { kind: "pointercancel", pointerId: 3 });
-    expect(r.decisions).toEqual([{ action: "commit", pointerId: 3, cause: "cancel" }]);
+    const state = withActive(createPointerMachineState("pen"), 3, "pen");
+    const r = advancePointerMachine(state, {
+      kind: "pointercancel",
+      pointerId: 3,
+    });
+    expect(r.decisions).toEqual([
+      { action: "commit", pointerId: 3, cause: "cancel" },
+    ]);
     expect(r.state.activePointerId).toBeNull();
     // 取消后同一手势的 move/up 到来：不粘笔、不再延伸
     for (const ev of [
@@ -281,8 +303,9 @@ describe("pointer-machine：采样与收笔", () => {
       { action: "commit", pointerId: 1, cause: "blur" },
     ]);
     expect(
-      advancePointerMachine(createPointerMachineState("finger"), { kind: "blur" })
-        .decisions,
+      advancePointerMachine(createPointerMachineState("finger"), {
+        kind: "blur",
+      }).decisions,
     ).toEqual([{ action: "none" }]);
   });
 
@@ -295,11 +318,13 @@ describe("pointer-machine：采样与收笔", () => {
     expect(r.state.activePointerId).toBeNull();
     // 同一物理手势 resize 后的 move：丢弃（新坐标不混入旧笔画）
     expect(
-      advancePointerMachine(r.state, { kind: "pointermove", pointerId: 5 }).decisions,
+      advancePointerMachine(r.state, { kind: "pointermove", pointerId: 5 })
+        .decisions,
     ).toEqual([{ action: "none" }]);
     expect(
-      advancePointerMachine(createPointerMachineState("pen"), { kind: "layoutchange" })
-        .decisions,
+      advancePointerMachine(createPointerMachineState("pen"), {
+        kind: "layoutchange",
+      }).decisions,
     ).toEqual([{ action: "none" }]);
   });
 });
@@ -309,7 +334,9 @@ describe("pointer-machine：stylus 触摸观测与 touch-action 策略", () => {
     const auto = observeStylusTouch(createPointerMachineState("auto"));
     expect(auto.penObserved).toBe(true);
     expect(observeStylusTouch(auto).penObserved).toBe(true); // 幂等
-    expect(observeStylusTouch(createPointerMachineState("pen")).penObserved).toBe(false);
+    expect(
+      observeStylusTouch(createPointerMachineState("pen")).penObserved,
+    ).toBe(false);
     expect(
       observeStylusTouch(createPointerMachineState("finger")).penObserved,
     ).toBe(false);

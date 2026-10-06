@@ -10,10 +10,16 @@
  * - excalidraw：全屏作答（mount 时才动态 import，独立 chunk 不进主包）。
  * 状态/历史在纯数据层（history.ts），引擎与适配器只是转发。
  */
+import type { NoteBackground } from "@tutor/contract";
 import { createAtramentSurface } from "./atrament-adapter.ts";
 import { createExcalidrawSurface } from "./excalidraw-adapter.ts";
 import type { InkChangeReason, ToolAwareSurface } from "./surface.ts";
-import type { InkDoc, InkEngineKind, InkToolConfig } from "./types.ts";
+import type {
+  InkDoc,
+  InkEngineKind,
+  InkInputMode,
+  InkToolConfig,
+} from "./types.ts";
 
 export type { InkHistoryEntry } from "./history.ts";
 export { InkStore } from "./history.ts";
@@ -31,6 +37,15 @@ export interface InkEngineOptions {
   initial?: InkDoc;
   /** atrament 初始高度提示（CSS 像素；容器高度由外部样式控制） */
   height?: number;
+  /**
+   * 输入模式（T6R.7，仅 atrament 生效）：缺省 auto=旧行为（自动探测，
+   * 旧作答组件零变化）；pen=笔写／手指滚动；finger=手指书写。
+   */
+  inputMode?: InkInputMode;
+  /**
+   * 纸张背景（T6R.7，仅 atrament 生效）：缺省 white=不设置任何背景样式。
+   */
+  background?: NoteBackground;
   /** 引擎就绪回调（excalidraw 懒加载完成后触发；atrament 同步就绪） */
   onReady?: () => void;
   /** 懒加载失败回调（用于展示错误态与重试） */
@@ -46,6 +61,11 @@ export interface InkEngine {
   redo(): void;
   clear(): void;
   setTool(tool: InkToolConfig): void;
+  /**
+   * 输入模式（T6R.7，可选能力）：仅 atrament 引擎提供；excalidraw 引擎
+   * 无此方法（用 ?. 调用安全降级）。运行时切换只影响新落下的指针。
+   */
+  setInputMode?(mode: InkInputMode): void;
   /**
    * 每次状态变化触发（reason：stroke/erase/undo/redo/clear/load，§5.0-C14）；
    * 返回取消订阅函数。老回调（只收 doc）仍可注册——reason 缺省语义见 surface.ts。
@@ -75,9 +95,15 @@ export function create(
           ...(opts.onReady ? { onReady: opts.onReady } : {}),
           ...(opts.onError ? { onError: opts.onError } : {}),
         })
-      : createAtramentSurface(
-          opts.height !== undefined ? { height: opts.height } : {},
-        );
+      : createAtramentSurface({
+          ...(opts.height !== undefined ? { height: opts.height } : {}),
+          ...(opts.inputMode !== undefined
+            ? { inputMode: opts.inputMode }
+            : {}),
+          ...(opts.background !== undefined
+            ? { background: opts.background }
+            : {}),
+        });
 
   surface.mount(container, opts.initial);
   if (opts.engine !== "excalidraw") opts.onReady?.(); // atrament 同步就绪
@@ -90,6 +116,12 @@ export function create(
     redo: () => surface.redo(),
     clear: () => surface.clear(),
     setTool: (tool) => surface.setTool(tool),
+    // 可选能力透传：excalidraw 适配器未实现时引擎上不存在该方法（?. 降级）
+    ...(surface.setInputMode
+      ? {
+          setInputMode: (mode: InkInputMode) => surface.setInputMode?.(mode),
+        }
+      : {}),
     on: (event, cb) =>
       event === "change"
         ? surface.onChange(cb)

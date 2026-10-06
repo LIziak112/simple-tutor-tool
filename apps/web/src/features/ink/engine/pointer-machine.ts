@@ -154,7 +154,11 @@ function onPointerDown(
 
   decisions.push({ action: "start", pointerId: ev.pointerId });
   return {
-    state: { ...next, activePointerId: ev.pointerId, activePointerType: ev.pointerType },
+    state: {
+      ...next,
+      activePointerId: ev.pointerId,
+      activePointerType: ev.pointerType,
+    },
     decisions,
   };
 }
@@ -204,7 +208,9 @@ export function advancePointerMachine(
  * auto 模式置 penObserved（与指针侧 onPointerDown 的笔观测同一状态）。
  * pen/finger 模式无状态变化（模式已决定手指语义）。
  */
-export function observeStylusTouch(state: PointerMachineState): PointerMachineState {
+export function observeStylusTouch(
+  state: PointerMachineState,
+): PointerMachineState {
   if (state.mode === "auto" && !state.penObserved) {
     return { ...state, penObserved: true };
   }
