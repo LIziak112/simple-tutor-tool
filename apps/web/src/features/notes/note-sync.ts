@@ -171,15 +171,10 @@ function classifyPutError(err: unknown): PutVerdict {
   if (status === 409 && code === "NOTE_MUTATION_MISMATCH") {
     return {
       kind: "conflict",
-      // 服务端拒绝同 id 异文重放：本地与服务端版本分歧，交用户裁决；
-      // 无 _current 摘要，以本地已知 baseRevision 合成（字段可空规则一致）
-      current: {
-        noteId: null,
-        revision: 0,
-        versionId: null,
-        hash: null,
-        serverSavedAt: null,
-      },
+      // 服务端状态未知（同 id 已对应不同正文）：无 _current 摘要可对齐
+      // （契约 noteConflictSummarySchema 的 null 形态）；keep-local 时
+      // store 会重铸 mutationId——同 id 异文重放必然再 MISMATCH
+      current: null,
       reason: `${message}（同一上传标识已对应不同正文，请选择保留哪一份）`,
     };
   }
@@ -465,8 +460,9 @@ export async function flushNoteSync(): Promise<void> {
 // ---------- 冲突裁决（T6R.9 UI 调用；两份副本的数据出口） ----------
 
 /**
- * 保留本地：baseRevision 对齐冲突摘要里的云端 revision，pending 原样
- * （同 mutationId 幂等重放），立即上传——CAS 通过后本地成为云端新版本。
+ * 保留本地：有云端摘要（REVISION_CONFLICT）时对齐冲突摘要里的云端
+ * revision、pending 原样（同 mutationId 重放——被拒从未落库，干净 CAS
+ * 写）；无摘要（MISMATCH）时 store 重铸 mutationId。随后立即上传。
  */
 export async function resolveNoteConflictKeepLocal(
   session: NoteSessionRef,
@@ -482,8 +478,8 @@ export async function resolveNoteConflictKeepLocal(
 
 /**
  * 保留云端：按冲突摘要拉取云端正文（物化后）为工作稿，清 pending——
- * 云端内容即最终内容，不再上传。云端无版本可读（空态/数据回退）时
- * 明确报错，不静默丢本地。
+ * 云端内容即最终内容，不再上传。云端无版本可读（空态/数据回退/MISMATCH
+ * 无摘要）时明确报错，不静默丢本地。
  */
 export async function resolveNoteConflictKeepCloud(
   session: NoteSessionRef,
@@ -491,10 +487,10 @@ export async function resolveNoteConflictKeepCloud(
 ): Promise<void> {
   const record = peekNoteRecord(session, scope);
   if (record?.conflict == null) return;
-  const versionId = record.conflict.current.versionId;
-  if (versionId === null) {
+  const versionId = record.conflict.current?.versionId;
+  if (versionId === null || versionId === undefined) {
     throw new Error(
-      "云端没有可读取的版本（可能为空稿或数据回退），请选择保留本机内容",
+      "云端没有可读取的版本（可能为空稿、数据回退或服务端状态未知），请选择保留本机内容",
     );
   }
   const raw = await fetchStudentNoteDocumentApi(versionId);

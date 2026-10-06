@@ -52,6 +52,7 @@ import type {
 } from "@tutor/contract";
 import { noteDocSchema } from "@tutor/contract";
 import { createStore, get, keys, set } from "idb-keyval";
+import { randomUuid } from "@/lib/uuid";
 
 // ---------- 会话与键 ----------
 
@@ -161,14 +162,16 @@ export interface NotePendingVersion {
 /**
  * 冲突副本（方案 §6.2：保留本地副本，用户选择保留云端或将本地作为另一份
  * 恢复稿；禁止自动按时间覆盖或拼接笔画）：current=云端摘要（409 _current
- * 或代际回退检测），localDoc=分歧时刻的本地正文，doc 字段仍是当前工作稿
- * （用户可继续写；裁决入口在 note-sync 的 resolve 函数）。
+ * 或代际回退检测；**null=服务端状态未知**——NOTE_MUTATION_MISMATCH 不附
+ * 摘要，keep-local 须重铸 mutationId，见契约 noteConflictSummarySchema），
+ * localDoc=分歧时刻的本地正文，doc 字段仍是当前工作稿（用户可继续写；
+ * 裁决入口在 note-sync 的 resolve 函数）。
  */
 export interface NoteConflictInfo {
   /** 给用户看的原因文案 */
   reason: string;
-  /** 服务端当前 head 摘要（noteRevisionConflictCurrentSchema 形态） */
-  current: NoteRevisionConflictCurrent;
+  /** 服务端当前 head 摘要；null=服务端状态未知（MISMATCH 来源） */
+  current: NoteRevisionConflictCurrent | null;
   /** 分歧时刻的本地正文副本 */
   localDoc: NoteDocInput;
 }
@@ -585,21 +588,6 @@ export function getNoteView(
   return view;
 }
 
-/** UUID v4（crypto 优先；极老环境拼形态退化——契约 mutationId 须 UUID） */
-function uuid4(): string {
-  if (
-    typeof crypto !== "undefined" &&
-    typeof crypto.randomUUID === "function"
-  ) {
-    return crypto.randomUUID();
-  }
-  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (ch) => {
-    const r = (Math.random() * 16) | 0;
-    const v = ch === "x" ? r : (r & 0x3) | 0x8;
-    return v.toString(16);
-  });
-}
-
 /**
  * 本地写入（每笔/撤销/重做/清空/纸高变化统一入口）：正文整体替换 + 生成
  * 新待传版本（fresh mutationId——旧的未传版本描述整体作废；上传失败重试
@@ -616,7 +604,7 @@ export function writeNoteDoc(
   const key = noteKeyOf(session, scope);
   mutate(key, freshRecord, (record) => {
     record.doc = doc;
-    record.pending = { mutationId: uuid4(), doc };
+    record.pending = { mutationId: randomUuid(), doc };
     record.editedAt = Date.now();
     if (record.denied?.kind === "content") record.denied = null;
   });
@@ -755,14 +743,14 @@ export async function applyUploadReceipt(
 
 /**
  * 冲突落地（409 NOTE_REVISION_CONFLICT / NOTE_MUTATION_MISMATCH）：
- * 保留两份副本（云端摘要 current + 本地稿 localDoc），pending 保留
- * （resolveKeepLocal 复用同 mutationId 重传，服务端从未见过它）。
+ * 保留两份副本（云端摘要 current——MISMATCH 时为 null〔服务端状态未知〕
+ * + 本地稿 localDoc），pending 保留（裁决入口复用或重铸）。
  */
 export async function applyUploadConflict(
   session: NoteSessionRef,
   scope: NoteScope,
   _mutationId: string,
-  current: NoteRevisionConflictCurrent,
+  current: NoteRevisionConflictCurrent | null,
   reason: string,
 ): Promise<void> {
   const key = noteKeyOf(session, scope);
@@ -802,8 +790,11 @@ export async function applyUploadDenied(
 
 /**
  * 冲突裁决（T6R.9 UI 调用；两份副本的数据出口）：
- * - keep local：baseRevision 对齐云端摘要，pending 原样保留——上传以
- *   同 mutationId 重放，CAS 通过后成为云端新版本（本地胜出为新版本）；
+ * - keep local（有云端摘要，REVISION_CONFLICT 来源）：baseRevision 对齐
+ *   摘要，pending 原样——同 mutationId 重放是干净的 CAS 写（该次上传被拒
+ *   从未落库，幂等重放安全）；
+ * - keep local（无云端摘要，MISMATCH 来源）：同 id 异文重放必然再
+ *   MISMATCH——**重铸 mutationId** 后按本地已知 baseRevision 重传；
  * - keep cloud：以云端稿（调用方先 fetchStudentNoteDocumentApi 拉取并
  *   parse 后传入）为工作稿，清 pending（云端内容即最终内容）。
  */
@@ -821,14 +812,24 @@ export async function resolveNoteConflict(
     () => existing,
     (record) => {
       record.conflict = null;
-      record.baseRevision = conflict.current.revision;
-      if (conflict.current.noteId !== null)
-        record.noteId = conflict.current.noteId;
+      if (conflict.current !== null) {
+        record.baseRevision = conflict.current.revision;
+        if (conflict.current.noteId !== null)
+          record.noteId = conflict.current.noteId;
+      }
       if (choice.keep === "cloud") {
         record.pending = null;
         record.doc = choice.doc;
+        return;
       }
-      // keep local：pending 保留（mutationId 不变，幂等重放安全）
+      // keep local：有摘要——pending 原样（同 id 重放，CAS 干净写）；
+      // 无摘要（MISMATCH）——重铸幂等键，正文快照不变
+      if (conflict.current === null && record.pending !== null) {
+        record.pending = {
+          mutationId: randomUuid(),
+          doc: record.pending.doc,
+        };
+      }
     },
   );
 }

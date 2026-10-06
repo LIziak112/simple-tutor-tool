@@ -495,6 +495,23 @@ export type NoteRevisionConflictCurrent = z.infer<
 >;
 
 /**
+ * 409 冲突响应附带的服务端摘要壳（T6R.8 客户端冲突分诊用）：
+ * - NOTE_REVISION_CONFLICT → current 非空：服务端 head 摘要，客户端
+ *   keep-local 据此对齐 baseRevision 后**同 mutationId 重放**（该次上传
+ *   被拒从未落库，同 id 同正文重试是干净的 CAS 写，幂等重放安全）；
+ * - NOTE_MUTATION_MISMATCH → current 为 null：**服务端状态未知**——同
+ *   mutationId 已对应不同正文（跨笔记重放/异常数据），服务端不提供可
+ *   对齐的 head；客户端 keep-local 必须**重铸 mutationId**（同 id 异文
+ *   重放必然再 MISMATCH，死循环）。
+ * 服务端 REVISION_CONFLICT 组装路径仍经 noteRevisionConflictCurrentSchema
+ * .parse 自校验（MISMATCH 响应不携带 _current，见 noteErrorCodeSchema）。
+ */
+export const noteConflictSummarySchema = z.object({
+  current: noteRevisionConflictCurrentSchema.nullable(),
+});
+export type NoteConflictSummary = z.infer<typeof noteConflictSummarySchema>;
+
+/**
  * 服务端回执：CAS 成功（或幂等命中）后返回。revision 从 1 起（回执只在
  * 版本产生后存在）；hash 为服务端规范化正文 sha-256（客户端不自行计算）。
  */
@@ -518,7 +535,9 @@ export const noteVersionReceiptSchema = z.object({
  * - NOTE_LIMIT_EXCEEDED：超预算——字节（gzip/解压）或复杂度（总点数/单笔点数）（413）；
  * - NOTE_REVISION_CONFLICT：baseRevision 与服务端 head 不一致（409，附当前版本
  *   摘要；保留本地副本由用户选择，禁止自动覆盖或拼接笔画）；
- * - NOTE_MUTATION_MISMATCH：同 mutationId 重放但正文不同（409）；
+ * - NOTE_MUTATION_MISMATCH：同 mutationId 重放但正文不同（409；**不附
+ *   _current 摘要**——服务端状态未知，客户端 keep-local 须重铸 mutationId，
+ *   见 noteConflictSummarySchema）；
  * - ATTEMPT_NOT_FOUND / QUESTION_NOT_FOUND / FORBIDDEN / ALREADY_SUBMITTED /
  *   UNAUTHORIZED / VALIDATION_ERROR：与 attempt 模块同义（404/404/403/409/401/400；
  *   ALREADY_SUBMITTED 覆盖「交卷后写已冻结原稿」——交卷后只可新建订正）。

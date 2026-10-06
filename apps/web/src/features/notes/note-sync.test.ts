@@ -383,7 +383,27 @@ describe("note-sync：冲突与终态", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(putMock.mock.calls.length).toBe(2);
     expect(callOf(1).meta.baseRevision).toBe(2); // 对齐云端摘要
-    expect(callOf(1).meta.mutationId).toBe(mutation); // 幂等键复用
+    expect(callOf(1).meta.mutationId).toBe(mutation); // 幂等键复用（REVISION_CONFLICT：被拒未落库，重放是干净 CAS 写）
+    expect(peekNoteRecord(SESSION, SCOPE)?.conflict).toBeNull();
+    expect(peekNoteRecord(SESSION, SCOPE)?.pending).toBeNull();
+  });
+
+  it("MISMATCH 冲突无云端摘要：keepLocal 重铸 mutationId 重传成功（不死循环）", async () => {
+    putMock
+      .mockRejectedValueOnce(
+        new ApiError("NOTE_MUTATION_MISMATCH", "同一上传标识已对应不同正文", 409),
+      )
+      .mockResolvedValue(receiptOf(2));
+    writeNoteDoc(SESSION, SCOPE, DOC_B);
+    await vi.advanceTimersByTimeAsync(NOTE_SYNC_DEBOUNCE_MS);
+    const mutationBefore = peekNoteRecord(SESSION, SCOPE)?.pending?.mutationId;
+    const record = peekNoteRecord(SESSION, SCOPE);
+    expect(record?.conflict?.current).toBeNull(); // 服务端状态未知：无摘要
+    await resolveNoteConflictKeepLocal(SESSION, SCOPE);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(putMock.mock.calls.length).toBe(2); // 重传成功，未循环回 MISMATCH
+    expect(callOf(1).meta.mutationId).not.toBe(mutationBefore); // 幂等键已重铸
+    expect(callOf(1).meta.baseRevision).toBe(0); // 无摘要可对齐：维持本地已知
     expect(peekNoteRecord(SESSION, SCOPE)?.conflict).toBeNull();
     expect(peekNoteRecord(SESSION, SCOPE)?.pending).toBeNull();
   });
