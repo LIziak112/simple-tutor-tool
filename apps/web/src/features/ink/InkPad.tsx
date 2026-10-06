@@ -10,7 +10,13 @@ import {
   Trash,
   Undo2,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -30,6 +36,7 @@ import {
   type InkPenSize,
   type InkToolType,
 } from "./engine/index.ts";
+import { fromLogical } from "./engine/normalize.ts";
 import {
   PAPER_GROW_STEP_CSS_PX,
   PAPER_GROW_TRIGGER_CSS_PX,
@@ -104,6 +111,11 @@ const SIZE_LABEL: Record<InkPenSize, string> = {
 const toolButtonClass =
   "h-11 min-w-11 px-2.5 gap-1.5 rounded-lg border border-border text-sm font-medium select-none transition-colors";
 
+/** 非 session 档的常量订阅（不订阅任何源）与常量快照（恒 pen）——
+ * useSyncExternalStore 不得条件调用（复审⑪），非 session 档用稳定常量 */
+const SUBSCRIBE_NOTHING = () => () => undefined;
+const SNAPSHOT_PEN = (): InkSessionInputPreference => "pen";
+
 export function InkPad({
   engine = "atrament",
   initial,
@@ -136,18 +148,18 @@ export function InkPad({
   const [retryKey, setRetryKey] = useState(0);
   /** 草稿只在挂载时恢复一次：initial 经 ref 取值，引用变化不重建引擎 */
   const initialRef = useRef(initial);
-  /** 会话共享输入偏好（仅 inputMode="session" 使用；多画布同源） */
-  const [sessionPref, setSessionPref] = useState<InkSessionInputPreference>(
-    () => (inputMode === "session" ? getSessionInputPreference() : "pen"),
+  /**
+   * 会话共享输入偏好（T6R.7，多画布同源）：session 档订阅会话 store——
+   * 任一画布切换即时同步（跨题/重挂载不重新探测）；非 session 档用常量
+   * 订阅+快照（不订阅、不因他人切换重渲染）。useSyncExternalStore 形态
+   * 免去手工 subscribe/对齐 effect（复审⑪）。
+   */
+  const sessionPref = useSyncExternalStore(
+    inputMode === "session"
+      ? onSessionInputPreferenceChange
+      : SUBSCRIBE_NOTHING,
+    inputMode === "session" ? getSessionInputPreference : SNAPSHOT_PEN,
   );
-
-  // 会话输入偏好订阅（T6R.7）：挂载间隙的变更先对齐一次，之后任一画布切换
-  // 即时同步到本画布（跨题/重挂载不重新探测——input-preference 会话级状态）
-  useEffect(() => {
-    if (inputMode !== "session") return;
-    setSessionPref(getSessionInputPreference());
-    return onSessionInputPreferenceChange(setSessionPref);
-  }, [inputMode]);
 
   // 引擎创建/销毁（依赖 retryKey 重建）
   // biome-ignore lint/correctness/useExhaustiveDependencies(retryKey): 重试键仅用于强制重建引擎，effect 体内不读取
@@ -190,8 +202,13 @@ export function InkPad({
           const strokes = (doc as InkDoc<"atrament">).data.strokes;
           const last = strokes[strokes.length - 1];
           if (last && last.points.length > 0) {
-            const maxY = Math.max(...last.points.map((p) => p.y));
-            const px = (maxY / 1000) * container.clientWidth;
+            // 单趟取 maxY（spread+Math.max 在超长笔画下有调用栈上限险，
+            // 复审⑪）；逻辑→CSS 换算复用 normalize.fromLogical（不手写 /1000）
+            let maxY = Number.NEGATIVE_INFINITY;
+            for (const p of last.points) {
+              if (p.y > maxY) maxY = p.y;
+            }
+            const px = fromLogical(container.clientWidth, maxY);
             // 加高 UX 常量与 paper-geometry 同源（engine/paper-style，复审①）
             if (px > container.clientHeight - PAPER_GROW_TRIGGER_CSS_PX) {
               setHeight((h) => h + PAPER_GROW_STEP_CSS_PX);

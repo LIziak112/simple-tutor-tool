@@ -14,6 +14,7 @@
  * 输出的值必须递增 NOTE_RENDER_VERSION（见 packages/contract/src/note.ts）。
  */
 import type { NoteBackground } from "@tutor/contract";
+import { fromLogical } from "./normalize.ts";
 import { INK_LOGICAL_WIDTH } from "./types.ts";
 
 /** 纸张格线/横线间距（逻辑单位）。屏幕、PNG、历史回看共用（方案 §4.3） */
@@ -52,8 +53,8 @@ export function paperBackgroundCss(
   cssWidth: number,
 ): string {
   if (background === "white") return "none";
-  const spacingCss =
-    (NOTE_PAPER_GRID_SPACING_LOGICAL * cssWidth) / INK_LOGICAL_WIDTH;
+  // 间距换算复用 normalize.fromLogical（复审⑪：逻辑↔CSS 比例式单一来源）
+  const spacingCss = fromLogical(cssWidth, NOTE_PAPER_GRID_SPACING_LOGICAL);
   if (!(spacingCss > NOTE_PAPER_LINE_WIDTH_PX)) return "none";
   const w = NOTE_PAPER_LINE_WIDTH_PX;
   const color = NOTE_PAPER_LINE_COLOR;
