@@ -762,7 +762,9 @@ describe("T6R.5 路由形状：noteHeadData / noteImageUploadMeta", () => {
       pixelWidth: 320,
       pixelHeight: 200,
     };
-    expect(noteImageUploadMetaSchema.parse({ ...valid, pageIndex: 999 }).success).toBe(true);
+    expect(
+      noteImageUploadMetaSchema.safeParse({ ...valid, pageIndex: 999 }).success,
+    ).toBe(true);
     // 1000 与巨值（Number.isInteger(1e24)===true——靠 max 拦，不靠 int）
     expect(
       noteImageUploadMetaSchema.safeParse({ ...valid, pageIndex: 1000 }).success,
