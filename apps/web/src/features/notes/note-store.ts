@@ -118,6 +118,37 @@ function scopeOfKey(key: string): NoteScope | null {
   return null;
 }
 
+/** 键 → 会话 + scope（note-sync 订阅回调里从键反查归属用） */
+export function parseNoteKey(
+  key: string,
+): { session: NoteSessionRef; scope: NoteScope } | null {
+  try {
+    const parts = JSON.parse(key) as unknown[];
+    if (
+      Array.isArray(parts) &&
+      parts.length === 6 &&
+      parts[0] === "note" &&
+      typeof parts[1] === "string" &&
+      typeof parts[2] === "string" &&
+      typeof parts[3] === "string" &&
+      typeof parts[4] === "string" &&
+      typeof parts[5] === "string"
+    ) {
+      return {
+        session: { origin: parts[1], studentId: parts[2] },
+        scope: {
+          attemptId: parts[3],
+          questionId: parts[4],
+          phase: parts[5] as NotePhase,
+        },
+      };
+    }
+  } catch {
+    // 非本模块键：忽略
+  }
+  return null;
+}
+
 // ---------- 记录形态 ----------
 
 /** 待传版本描述：与正文同一记录原子写；重试复用同一 mutationId（幂等重放） */
@@ -499,6 +530,14 @@ export async function getNoteRecord(
     console.warn("草稿本地记录读取失败（不影响作答）", err);
     return null;
   }
+}
+
+/** 同步窥视内存记录（调度器/诊断用；未载入返回 null，不触发后端读） */
+export function peekNoteRecord(
+  session: NoteSessionRef,
+  scope: NoteScope,
+): NoteLocalRecord | null {
+  return records.get(noteKeyOf(session, scope)) ?? null;
 }
 
 /** 读物化正文（NoteDocInput → noteDocSchema.parse 物化默认值） */
