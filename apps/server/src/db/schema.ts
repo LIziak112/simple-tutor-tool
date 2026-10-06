@@ -1132,6 +1132,13 @@ export const noteImages = sqliteTable(
     pixelHeight: integer("pixel_height").notNull(),
     /** 图片文件相对路径（DATA_DIR 内；不可变文件，重建 = 新路径） */
     path: text("path").notNull(),
+    /**
+     * 图片文件字节数（写入时记 png.byteLength；T6R.5 复审③：聚合限额
+     * 「同版本派生图合计 ≤8MiB」用 select sum(byte_size) 一条 SQL 判定，
+     * 不再逐行 statSync）。存量行（本表首个写通道即 T6R.5，无存量）与
+     * 异常行按默认 0 计——与「文件缺失按 0 计」的旧口径一致
+     */
+    byteSize: integer("byte_size").notNull().default(0),
     /** 图片文件 sha-256（hex64）；未就绪为 NULL（仅 state='ready' 保证非空） */
     hash: text("hash"),
     /** 图片状态：pending=排队/生成中 / ready=可用 / failed=生成失败 / missing=文件缺失 */

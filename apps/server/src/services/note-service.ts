@@ -26,7 +26,7 @@ import {
   noteRevisionConflictCurrentSchema,
   noteSubmissionEvidenceMetaSchema,
 } from "@tutor/contract";
-import { and, asc, eq, isNotNull, lt } from "drizzle-orm";
+import { and, asc, eq, isNotNull, lt, ne, or, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
   type Attempt,
@@ -1002,7 +1002,8 @@ function noteImageRelPath(noteId: string, imageId: string): string {
  *    恢复通道，不是新写正文〕，课程撤权 draft 拒绝；教师域链 404）；
  * 2. 单图字节限额（413）→ PNG 魔数与 IHDR 实际尺寸 = 声明尺寸（400，方案 §8
  *    「尺寸／规格／版本必须匹配」）；
- * 3. 同版本派生图聚合限额（其余槽位现有文件 + 本次 ≤ 8MiB → 413）；
+ * 3. 同版本派生图聚合限额（**跨 spec 全槽位合计**——其余槽位 sum(byte_size)
+ *    + 本次 ≤ 8MiB → 413；复审①：eq(spec) 只算同 spec 会跨规格漏算）；
  * 4. 写新文件（唯一 tmp → rename 不可变路径）→ 事务内删旧槽位行 + 插新行
  *    （(noteVersionId, spec, pageIndex) 唯一槽位 upsert，行 id 换新）→
  *    best-effort 删旧文件（失败留孤儿，无行引用）；
@@ -1048,33 +1049,24 @@ export function attachNoteImage(
     );
   }
 
-  // 3. 聚合限额：其余槽位现有文件合计 + 本次上传
-  const slotWhere = and(
-    eq(noteImages.noteVersionId, version.id),
-    eq(noteImages.spec, meta.spec),
-    eq(noteImages.pageIndex, meta.pageIndex),
-  );
-  const others = db
-    .select()
+  // 3. 聚合限额：同版本其余槽位现有文件合计 + 本次上传（复审①③：合计是
+  //    **全版本跨 spec** 口径——槽位排除谓词（spec/pageIndex 任一不等即计入）
+  //    下推 SQL，sum(byte_size) 一条聚合查询，不逐行取回、不 statSync）
+  const sumRow = db
+    .select({
+      othersBytes: sql<number>`coalesce(sum(${noteImages.byteSize}), 0)`,
+    })
     .from(noteImages)
     .where(
       and(
         eq(noteImages.noteVersionId, version.id),
-        eq(noteImages.spec, meta.spec),
+        // 排除正被替换的目标槽位 (spec, pageIndex)——同 pageIndex 不同 spec
+        // 是不同槽位，必须计入（ne(pageIndex) 单条件会把它们漏掉）
+        or(ne(noteImages.spec, meta.spec), ne(noteImages.pageIndex, meta.pageIndex)),
       ),
     )
-    .all()
-    .filter((row) => row.pageIndex !== meta.pageIndex);
-  let othersBytes = 0;
-  for (const row of others) {
-    try {
-      othersBytes += statSync(
-        resolveNoteBlobPath(dataDir, row.path, ".png"),
-      ).size;
-    } catch {
-      // 文件缺失的行（损坏/被清）：按 0 计——它的槽位本来就待重建
-    }
-  }
+    .get();
+  const othersBytes = sumRow?.othersBytes ?? 0;
   if (othersBytes + png.byteLength > NOTE_VERSION_IMAGES_MAX_BYTES) {
     throw new HttpError(
       413,
@@ -1091,13 +1083,19 @@ export function attachNoteImage(
     finalPath: resolveNoteBlobPath(dataDir, relPath, ".png"),
     bytes: png,
   });
+  const slotWhere = and(
+    eq(noteImages.noteVersionId, version.id),
+    eq(noteImages.spec, meta.spec),
+    eq(noteImages.pageIndex, meta.pageIndex),
+  );
   const old = db.select().from(noteImages).where(slotWhere).get();
   try {
-    db.transaction((tx) => {
+    const inserted = db.transaction((tx) => {
       if (old !== undefined) {
         tx.delete(noteImages).where(eq(noteImages.id, old.id)).run();
       }
-      tx.insert(noteImages)
+      return tx
+        .insert(noteImages)
         .values({
           id: imageId,
           noteVersionId: version.id,
@@ -1110,11 +1108,26 @@ export function attachNoteImage(
           pixelWidth: meta.pixelWidth,
           pixelHeight: meta.pixelHeight,
           path: relPath,
+          byteSize: png.byteLength,
           hash,
           state: "ready",
         })
-        .run();
+        .returning()
+        .get();
     });
+    if (inserted === undefined) {
+      // RETURNING 未命中：better-sqlite3 同步驱动下不可达，防御性闭合
+      throw new HttpError(500, "INTERNAL", "补图落库未返回行（防御性拒绝）");
+    }
+    // 旧槽位文件 best-effort 回收（失败留孤儿文件，无行引用它）
+    if (old !== undefined) {
+      try {
+        unlinkSync(resolveNoteBlobPath(dataDir, old.path, ".png"));
+      } catch {
+        // 同上
+      }
+    }
+    return noteImageMetaOf(inserted);
   } catch (err) {
     // 事务失败：新文件成为孤儿（无行引用），清理后重抛
     try {
@@ -1124,25 +1137,6 @@ export function attachNoteImage(
     }
     throw err;
   }
-  // 旧槽位文件 best-effort 回收（失败留孤儿文件，无行引用它）
-  if (old !== undefined) {
-    try {
-      unlinkSync(resolveNoteBlobPath(dataDir, old.path, ".png"));
-    } catch {
-      // 同上
-    }
-  }
-  return noteImageMetaSchema.parse({
-    imageId,
-    noteVersionId: version.id,
-    spec: meta.spec,
-    pageIndex: meta.pageIndex,
-    crop: meta.crop,
-    pixelWidth: meta.pixelWidth,
-    pixelHeight: meta.pixelHeight,
-    state: "ready",
-    hash,
-  });
 }
 
 // ---------- GC 骨架（未引用版本延迟回收；自动调度接线在 T6R.14） ----------

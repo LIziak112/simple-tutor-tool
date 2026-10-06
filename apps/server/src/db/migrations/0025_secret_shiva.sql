@@ -1,0 +1,1 @@
+ALTER TABLE `note_images` ADD `byte_size` integer DEFAULT 0 NOT NULL;

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
 import type { ApiErr } from "@tutor/contract";
@@ -789,35 +789,39 @@ describe("补图上传校验", () => {
     ).toHaveLength(0);
   });
 
-  it("同版本派生图合计超 8MiB → 413；槽位 upsert 替换后旧文件回收", async () => {
+  it("同版本派生图合计超 8MiB（跨 spec 全槽位）→ 413；槽位 upsert 替换后旧文件回收", async () => {
     const attemptId = await freshAttempt();
     const versionId = await putNote(attemptId, Q.solve);
     const noteRow = noteRowOf(attemptId, Q.solve);
     if (noteRow === undefined) throw new Error("缺少 notes 行");
     const noteRoot = join(dataDir, "blobs", "notes", noteRow.id);
 
-    // 直插 3 个占位槽位行 + 真实大文件（合计 8.1MiB > 8MiB 聚合线）
-    const bigFile = Buffer.alloc(Math.ceil(NOTE_VERSION_IMAGES_MAX_BYTES / 3));
-    for (let slot = 0; slot < 3; slot++) {
-      const fileName = `img-seed-${slot}.png`;
-      writeFileSync(join(noteRoot, fileName), bigFile);
+    /** 直插一个 ready 槽位行（byteSize 记账——聚合限额按列求和，不依赖文件） */
+    const seedSlot = (spec: string, pageIndex: number, byteSize: number) => {
       db.insert(noteImagesTable)
         .values({
           id: randomUUID(),
           noteVersionId: versionId,
-          spec: "analysis",
-          pageIndex: slot + 1, // 占 1..3，留 0 号槽给本测试上传
+          spec: spec as "analysis" | "thumbnail",
+          pageIndex,
           cropX: 0,
           cropY: 0,
           cropW: 1000,
           cropH: 800,
           pixelWidth: 320,
           pixelHeight: 200,
-          path: `blobs/notes/${noteRow.id}/${fileName}`,
+          path: `blobs/notes/${noteRow.id}/img-seed-${spec}-${pageIndex}.png`,
+          byteSize,
           hash: "c".repeat(64),
           state: "ready",
         })
         .run();
+    };
+
+    // 直插 3 个 analysis 占位槽（各 ~2.7MiB，合计 > 8MiB 聚合线）
+    const seedSize = Math.ceil(NOTE_VERSION_IMAGES_MAX_BYTES / 3);
+    for (let slot = 1; slot <= 3; slot++) {
+      seedSlot("analysis", slot, seedSize);
     }
     const overRes = await postImage(versionId, makeNotePng());
     expect(overRes.status).toBe(413);
@@ -859,6 +863,46 @@ describe("补图上传校验", () => {
       /^img-[0-9a-f-]{36}\.png$/.test(f),
     );
     expect(files).toHaveLength(1);
+  });
+
+  it("聚合限额跨 spec 计（复审①回归）：thumbnail 已满额时 analysis 也 413", async () => {
+    const attemptId = await freshAttempt();
+    const versionId = await putNote(attemptId, Q.solve);
+    const noteRow = noteRowOf(attemptId, Q.solve);
+    if (noteRow === undefined) throw new Error("缺少 notes 行");
+
+    // thumbnail 0 号槽占满 8MiB（旧实现的 eq(spec) 漏算它——只统计同 spec 时
+    // 本次 analysis 上传会被放行，绕过「同版本合计」契约口径）
+    db.insert(noteImagesTable)
+      .values({
+        id: randomUUID(),
+        noteVersionId: versionId,
+        spec: "thumbnail",
+        pageIndex: 0,
+        cropX: 0,
+        cropY: 0,
+        cropW: 1000,
+        cropH: 800,
+        pixelWidth: 320,
+        pixelHeight: 200,
+        path: `blobs/notes/${noteRow.id}/img-seed-thumb.png`,
+        byteSize: NOTE_VERSION_IMAGES_MAX_BYTES,
+        hash: "d".repeat(64),
+        state: "ready",
+      })
+      .run();
+    // 传 analysis（不同 spec、不同槽位）：thumbnail 占的额度必须计入 → 413
+    // （旧实现的 eq(spec) 漏算它——只统计同 spec 时本次上传被放行，绕过合计口径）
+    const crossSpec = await postImage(versionId, makeNotePng());
+    expect(crossSpec.status).toBe(413);
+    expect(((await crossSpec.json()) as ApiErr).error).toBe(
+      "NOTE_LIMIT_EXCEEDED",
+    );
+    // 替换 thumbnail 自身槽位：排除目标槽位后其余为 0 → 放行（口径正交性）
+    const replaceOwn = await postImage(versionId, makeNotePng(), {
+      spec: "thumbnail",
+    });
+    expect(replaceOwn.status).toBe(200);
   });
 });
 
