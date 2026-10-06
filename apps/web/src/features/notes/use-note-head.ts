@@ -68,30 +68,32 @@ export async function applyNoteHeadSideEffects(
   head: NoteHeadData,
 ): Promise<void> {
   const note = head.note;
+  const versionId = note?.currentVersionId ?? null;
   // 「服务端领先」判定取 head 应用**前**的快照（applyServerHead 会把
   // baseRevision/noteId 对齐——之后判就永远不领先了）
   const before = peekNoteRecord(session, scope);
   const serverAhead =
-    note?.currentVersionId != null &&
+    versionId !== null &&
+    note !== null &&
     (before === null ||
       before.noteId !== note.noteId ||
       before.baseRevision < note.revision);
   await applyServerHead(session, scope, head);
   // 补图触发（正文拉取与否都该补：本地领先时图片照样该恢复）
   if (
-    note?.currentVersionId != null &&
+    versionId !== null &&
     head.images.some((img) => img.state === "failed" || img.state === "missing")
   ) {
     void recoverNoteImages({
       role: "student",
-      versionId: note.currentVersionId,
+      versionId,
     }).catch((err: unknown) => {
       console.warn("草稿补图恢复失败（可用状态栏的重试入口再试）", err);
     });
   }
   if (!serverAhead) return; // 本地领先/已追平：省请求，上传自然覆盖
   try {
-    const raw = await fetchStudentNoteDocumentApi(note.currentVersionId);
+    const raw = await fetchStudentNoteDocumentApi(versionId);
     await applyServerLoad(session, scope, raw, head);
   } catch (err) {
     // 正文拉取失败不阻塞：本地稿（若有）继续可用，下一轮 head 重试播种
