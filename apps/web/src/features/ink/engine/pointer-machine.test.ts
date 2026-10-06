@@ -105,7 +105,7 @@ describe("pointer-machine：pointerdown 门控", () => {
     expect(r.decisions).toEqual([{ action: "start", pointerId: 5 }]);
   });
 
-  it("finger 模式：手指可写；笔落下不丢弃活动手指笔段（第二指针不接管）", () => {
+  it("finger 模式：手指可写；笔落下先收笔手指笔段再接管（自愈，不丢弃已收点）", () => {
     let state = createPointerMachineState("finger");
     let r = advancePointerMachine(state, {
       kind: "pointerdown",
@@ -117,7 +117,8 @@ describe("pointer-machine：pointerdown 门控", () => {
     expect(r.decisions).toEqual([{ action: "start", pointerId: 1 }]);
     state = r.state;
 
-    // 手指书写中笔轻点：不接管、不丢弃（finger 模式没有手掌丢弃语义）
+    // 手指书写中笔轻点：finger 模式没有手掌丢弃语义——按自愈收笔（保留
+    // 手指笔段已收点）后笔接管
     r = advancePointerMachine(state, {
       kind: "pointerdown",
       pointerId: 2,
@@ -125,12 +126,14 @@ describe("pointer-machine：pointerdown 门控", () => {
       button: 0,
       inBounds: true,
     });
-    expect(r.decisions).toEqual([{ action: "none" }]);
-    expect(r.state.activePointerId).toBe(1);
+    expect(r.decisions).toEqual([
+      { action: "commit", pointerId: 1, cause: "superseded" },
+      { action: "start", pointerId: 2 },
+    ]);
   });
 
-  it("第二指针不接管活动指针：auto 手指/手指、pen 模式笔/笔、鼠标在途时新指针", () => {
-    // auto 模式未见过笔：第一手指活动，第二手指被忽略（不再覆盖活动指针）
+  it("第二指针/同 id 重按＝收尾丢失自愈：先 commit(superseded) 再 start 新笔（复审①）", () => {
+    // auto 模式未见过笔：第一手指在途，第二手指落下 → 在途笔收笔 + 新笔开始
     const auto = withActive(createPointerMachineState("auto"), 1, "touch");
     expect(
       advancePointerMachine(auto, {
@@ -140,21 +143,27 @@ describe("pointer-machine：pointerdown 门控", () => {
         button: 0,
         inBounds: true,
       }).decisions,
-    ).toEqual([{ action: "none" }]);
+    ).toEqual([
+      { action: "commit", pointerId: 1, cause: "superseded" },
+      { action: "start", pointerId: 2 },
+    ]);
 
-    // pen 模式：活动笔书写中第二支笔落下 → 忽略
+    // pen 模式：活动笔书写中第二支笔落下 → 同样自愈接管（Scribble 抢占形态）
     const penState = withActive(createPointerMachineState("pen"), 7, "pen");
-    expect(
-      advancePointerMachine(penState, {
-        kind: "pointerdown",
-        pointerId: 8,
-        pointerType: "pen",
-        button: 0,
-        inBounds: true,
-      }).decisions,
-    ).toEqual([{ action: "none" }]);
+    const r = advancePointerMachine(penState, {
+      kind: "pointerdown",
+      pointerId: 8,
+      pointerType: "pen",
+      button: 0,
+      inBounds: true,
+    });
+    expect(r.decisions).toEqual([
+      { action: "commit", pointerId: 7, cause: "superseded" },
+      { action: "start", pointerId: 8 },
+    ]);
+    expect(r.state.activePointerId).toBe(8);
 
-    // 鼠标在途（auto）：任何第二指针（含笔）不接管——只有「笔取代手掌」例外
+    // 鼠标在途（auto）时笔落下：自愈收笔鼠标笔段后笔接管（不再忽略）
     const mouseActive = withActive(
       createPointerMachineState("auto"),
       9,
@@ -168,8 +177,73 @@ describe("pointer-machine：pointerdown 门控", () => {
         button: 0,
         inBounds: true,
       }).decisions,
-    ).toEqual([{ action: "none" }]);
-    expect(mouseActive.activePointerId).toBe(9);
+    ).toEqual([
+      { action: "commit", pointerId: 9, cause: "superseded" },
+      { action: "start", pointerId: 10 },
+    ]);
+  });
+
+  it("同 id 重复 down＝重开（commit + start，语义定案）；capture 丢失后新 down 恢复书写（角D）", () => {
+    // 同 id 重复 down：旧版「覆盖重开」语义的统一定案＝收笔已收点后重开
+    const same = withActive(createPointerMachineState("auto"), 1, "pen");
+    expect(
+      advancePointerMachine(same, {
+        kind: "pointerdown",
+        pointerId: 1,
+        pointerType: "pen",
+        button: 0,
+        inBounds: true,
+      }).decisions,
+    ).toEqual([
+      { action: "commit", pointerId: 1, cause: "superseded" },
+      { action: "start", pointerId: 1 },
+    ]);
+
+    // capture 丢失（up/cancel/lostcapture 全部未达）后鼠标再 down：不锁死，
+    // 恢复后的正常序列（move 采样、up 收笔）照常工作
+    const recovered = advancePointerMachine(
+      withActive(createPointerMachineState("auto"), 3, "pen"),
+      {
+        kind: "pointerdown",
+        pointerId: 99,
+        pointerType: "mouse",
+        button: 0,
+        inBounds: true,
+      },
+    );
+    expect(recovered.decisions).toEqual([
+      { action: "commit", pointerId: 3, cause: "superseded" },
+      { action: "start", pointerId: 99 },
+    ]);
+    expect(
+      advancePointerMachine(recovered.state, {
+        kind: "pointermove",
+        pointerId: 99,
+      }).decisions,
+    ).toEqual([{ action: "sample", pointerId: 99 }]);
+    expect(
+      advancePointerMachine(recovered.state, {
+        kind: "pointerup",
+        pointerId: 99,
+      }).decisions,
+    ).toEqual([{ action: "commit", pointerId: 99, cause: "up" }]);
+  });
+
+  it("自愈越界变体：在途笔被收笔（superseded）但越界新笔不开始（解锁≠必写）", () => {
+    const r = advancePointerMachine(
+      withActive(createPointerMachineState("pen"), 4, "pen"),
+      {
+        kind: "pointerdown",
+        pointerId: 5,
+        pointerType: "pen",
+        button: 0,
+        inBounds: false,
+      },
+    );
+    expect(r.decisions).toEqual([
+      { action: "commit", pointerId: 4, cause: "superseded" },
+    ]);
+    expect(r.state.activePointerId).toBeNull();
   });
 
   it("非主键（右键等）不写；越界指针不开始，但 auto 模式笔的观测副作用仍生效", () => {
@@ -200,19 +274,8 @@ describe("pointer-machine：pointerdown 门控", () => {
     expect(r2.state.penObserved).toBe(false);
   });
 
-  it("同一 pointerId 重复 pointerdown（异常序列）不重入", () => {
-    const state = withActive(createPointerMachineState("auto"), 1, "pen");
-    const r = advancePointerMachine(state, {
-      kind: "pointerdown",
-      pointerId: 1,
-      pointerType: "pen",
-      button: 0,
-      inBounds: true,
-    });
-    // 活动指针重按：视为延续，不产生新 start
-    expect(r.decisions).toEqual([{ action: "none" }]);
-    expect(r.state.activePointerId).toBe(1);
-  });
+  // 同 id 重复 down 的语义已并入「第二指针/同 id 重按＝收尾丢失自愈」用例
+  //（复审①定案：重开＝commit(superseded)+start），不再单列。
 });
 
 describe("pointer-machine：采样与收笔", () => {

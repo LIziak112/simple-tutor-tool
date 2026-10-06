@@ -365,7 +365,7 @@ describe("atrament-adapter：pen 输入模式（新草稿缺省：笔写/手指�
     expect(h.canvas.style.touchAction).toBe("pan-y");
   });
 
-  it("finger 模式：手指直接书写（touch-action none），在途手指笔段不被笔接管", () => {
+  it("finger 模式：手指直接书写（touch-action none）；书写中笔落下＝自愈收笔接管（复审①）", () => {
     const h = mountSurface({ inputMode: "finger" });
     expect(h.canvas.style.touchAction).toBe("none");
 
@@ -376,14 +376,17 @@ describe("atrament-adapter：pen 输入模式（新草稿缺省：笔写/手指�
       clientX: 60,
       clientY: 20,
     });
-    // 手指书写中笔轻点：不接管、不丢弃
+    // 手指书写中笔轻点：手指笔段按已收点收笔（不丢弃），笔接管
     pointer(h.canvas, "pointerdown", pd("pen", 2, 90, 90));
+    expect(strokesOf(h)).toHaveLength(1); // 手指笔段已收笔（2 点）
+    expect(strokesOf(h)[0]?.points).toHaveLength(2);
     pointer(h.canvas, "pointerup", {
       pointerType: "pen",
       pointerId: 2,
       clientX: 90,
       clientY: 90,
     });
+    // 手指的迟到事件（move/up）：已非活动指针，全部忽略
     pointer(h.canvas, "pointermove", {
       pointerType: "touch",
       pointerId: 1,
@@ -397,13 +400,13 @@ describe("atrament-adapter：pen 输入模式（新草稿缺省：笔写/手指�
       clientY: 20,
     });
 
-    expect(strokesOf(h)).toHaveLength(1);
-    expect(strokesOf(h)[0]?.points).toHaveLength(3); // 手指笔段完整：20,60,100 三点
+    expect(strokesOf(h)).toHaveLength(2); // 手指一笔 + 笔轻点一笔
+    expect(strokesOf(h)[0]?.points).toHaveLength(2); // 手指笔段保持 2 点（迟到点不混入）
   });
 });
 
 describe("atrament-adapter：多指与多画布", () => {
-  it("auto 模式多指：第二手指不接管活动手指（不再覆盖在途笔段）", () => {
+  it("auto 模式多指：第二手指落下＝自愈收笔接管（在途笔保留已收点，复审①）", () => {
     const h = mountSurface();
     pointer(h.canvas, "pointerdown", pd("touch", 1, 20, 20));
     pointer(h.canvas, "pointermove", {
@@ -412,15 +415,17 @@ describe("atrament-adapter：多指与多画布", () => {
       clientX: 50,
       clientY: 20,
     });
-    // 第二手指落下并移动：全部忽略
+    // 第二手指落下：第一手指笔段按已收点收笔，第二手指接管
     pointer(h.canvas, "pointerdown", pd("touch", 2, 80, 80));
+    expect(strokesOf(h)).toHaveLength(1);
+    expect(strokesOf(h)[0]?.points).toHaveLength(2);
     pointer(h.canvas, "pointermove", {
       pointerType: "touch",
       pointerId: 2,
       clientX: 90,
       clientY: 90,
     });
-    // 第一手指继续并收笔
+    // 第一手指的迟到事件：已非活动指针，全部忽略（不粘笔、不混入）
     pointer(h.canvas, "pointermove", {
       pointerType: "touch",
       pointerId: 1,
@@ -433,7 +438,6 @@ describe("atrament-adapter：多指与多画布", () => {
       clientX: 100,
       clientY: 20,
     });
-    // 第二手指迟到 up：无效
     pointer(h.canvas, "pointerup", {
       pointerType: "touch",
       pointerId: 2,
@@ -441,8 +445,8 @@ describe("atrament-adapter：多指与多画布", () => {
       clientY: 90,
     });
 
-    expect(strokesOf(h)).toHaveLength(1);
-    expect(strokesOf(h)[0]?.points).toHaveLength(3); // 只有手指 1 的三点
+    expect(strokesOf(h)).toHaveLength(2); // 手指 1 一笔（2 点）+ 手指 2 一笔
+    expect(strokesOf(h)[0]?.points).toHaveLength(2);
   });
 
   it("两个画布并存：状态机/笔迹互不串（A 写不影响 B）", () => {
@@ -541,6 +545,35 @@ describe("atrament-adapter：取消/失焦/丢捕获（只保留已收真实采�
     expect(strokesOf(h)).toHaveLength(1);
     expect(strokesOf(h)[0]?.points).toHaveLength(2);
     expect(h.events.at(-1)?.reason).toBe("stroke");
+  });
+
+  it("收尾丢失自愈（复审①）：up 不发后鼠标再 down——在途笔按已收点提交且书写恢复", () => {
+    const h = mountSurface();
+    // capture 丢失形态：pen down + 1 move 后 up/cancel 全部未达
+    pointer(h.canvas, "pointerdown", pd("pen", 1, 20, 20));
+    pointer(h.canvas, "pointermove", {
+      pointerType: "pen",
+      clientX: 60,
+      clientY: 20,
+    });
+    // 鼠标再 down：自愈收笔（superseded）+ 新笔开始，书写恢复
+    pointer(h.canvas, "pointerdown", pd("mouse", 2, 20, 100));
+    expect(strokesOf(h)).toHaveLength(1); // 在途笔已按已收点提交（2 点）
+    expect(strokesOf(h)[0]?.points).toHaveLength(2);
+    pointer(h.canvas, "pointermove", {
+      pointerType: "mouse",
+      pointerId: 2,
+      clientX: 80,
+      clientY: 100,
+    });
+    pointer(h.canvas, "pointerup", {
+      pointerType: "mouse",
+      pointerId: 2,
+      clientX: 80,
+      clientY: 100,
+    });
+    expect(strokesOf(h)).toHaveLength(2);
+    expect(strokesOf(h)[1]?.points).toHaveLength(2); // 新笔正常书写
   });
 });
 

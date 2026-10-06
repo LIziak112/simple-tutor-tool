@@ -6,8 +6,11 @@
  * 适配器（atrament-adapter.ts）——本文件不碰 DOM，可完整单测。
  *
  * 状态机语义（与方案 §4.1 逐条对应）：
- * - 只接受当前活动指针：第二指针永不接管（唯一例外＝auto 模式笔取代手掌
- *   先落的笔段，属既有防误触语义，discard 后 start）；
+ * - 活动指针在途时的移动/收尾事件只认活动指针自己（他人一律忽略）；
+ *   新 pointerdown 到达＝上一手势收尾丢失/畸形序列 → **自愈**：先按已收
+ *   采样收笔（superseded）再开新笔，状态机永不锁死（旧版「down 覆盖」
+ *   兜底的恢复，复审①）；唯一例外＝auto 模式笔取代手掌先落的笔段（既有
+ *   防误触语义：discard 后 start，在途手掌笔段被丢弃）；
  * - pointercancel / lostpointercapture / 窗口失焦 / 布局变化：按**已收到的
  *   真实采样**收笔（cause 区分触发源），不补造终点、不粘笔——收笔后同一
  *   物理手势的后续事件一律忽略，直到新的 pointerdown；
@@ -17,22 +20,26 @@
  *   见过笔后手指不落墨）、pen=手指恒滚动、finger=手指直接书写；鼠标任何
  *   模式恒可写；不以 UA 推断。
  *
- * 决策为何包含 cause：适配器对 up/cancel/lostcapture/blur/layoutchange 的
- * 执行体相同（commit 已收采样），但 cause 保留在决策里供日志/测试断言——
- * 事件→行为矩阵的可审计口径。
+ * 决策为何包含 cause：适配器对各收笔触发源的执行体相同（commit 已收采样），
+ * 但 cause 保留在决策里供日志/测试断言——事件→行为矩阵的可审计口径。
  */
 import type { InkInputMode } from "./types.ts";
 
 /** 指针设备类型（PointerEvent.pointerType 的透传：pen/touch/mouse/未来值） */
 export type PointerDeviceType = string;
 
-/** 收笔触发源：up=正常抬笔；cancel/lostcapture/blur/layoutchange=外部打断 */
+/**
+ * 收笔触发源：up=正常抬笔；cancel/lostcapture/blur/layoutchange=外部打断；
+ * superseded=活动指针仍在途时新 pointerdown 到达（收尾丢失的自愈收笔，
+ * 复审①——在途笔按已收采样提交，新笔接管）
+ */
 export type PointerFinishCause =
   | "up"
   | "cancel"
   | "lostpointercapture"
   | "blur"
-  | "layoutchange";
+  | "layoutchange"
+  | "superseded";
 
 /** 输入事件（适配器把 DOM 事件折算成这里的纯数据） */
 export type PointerMachineEvent =
@@ -131,23 +138,28 @@ function onPointerDown(
 
   const decisions: PointerDecision[] = [];
   if (state.activePointerId !== null) {
-    if (ev.pointerId === state.activePointerId) {
-      // 异常序列：活动指针重复 pointerdown（正常 DOM 序列不会发生）——
-      // 视为延续，不重入、不产生第二个 start
-      return none(next);
-    }
-    // 第二指针：唯一允许的接管场景 = auto 模式笔取代手掌先落的笔段（防误触）
+    // 活动指针仍在途时收到 pointerdown（同 id 或异 id）＝上一个手势的收尾
+    // 事件丢失/畸形序列（capture 丢失、Scribble 抢占、浏览器吞 up 等）——
+    // **自愈兜底**（复审①，恢复旧版「down 覆盖」的解锁语义）：先按已收
+    // 真实采样收笔（superseded；旧版直接丢弃在途段，本版保留其已收点），
+    // 再开始新笔——状态机永不因丢事件锁死。同 id 重复 down 的语义随此
+    // 统一定案＝**重开**（commit + start），不再视为延续。
     const replacingPalm =
       state.mode === "auto" && isPen && state.activePointerType === "touch";
-    if (!replacingPalm) {
-      // 显式忽略：不接管活动指针（方案 §4.1「只接受当前活动指针」）
-      return none(next);
-    }
-    decisions.push({ action: "discard" });
+    decisions.push(
+      replacingPalm
+        ? // 手掌先落、笔取代：丢弃手掌笔段（防误触语义，优先于自愈）
+          { action: "discard" }
+        : {
+            action: "commit",
+            pointerId: state.activePointerId,
+            cause: "superseded",
+          },
+    );
     next = { ...next, activePointerId: null, activePointerType: null };
   }
 
-  // 越界：不开始（penObserved / 手掌丢弃的副作用已生效，与旧行为一致）
+  // 越界：不开始（penObserved / 收笔或丢弃的副作用已生效，与旧行为一致）
   if (!ev.inBounds) {
     return { state: next, decisions };
   }

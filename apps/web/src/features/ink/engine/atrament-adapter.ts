@@ -396,7 +396,10 @@ export function createAtramentSurface(
     machine = r.state;
     let started = false;
     for (const d of r.decisions) {
+      // discard＝丢弃手掌笔段（防误触）；commit＝superseded 自愈收笔（在途
+      // 笔按已收点提交后新指针接管，复审①）——先执行收尾决策再 start
       if (d.action === "discard") abortLiveStroke();
+      if (d.action === "commit") commitLiveStroke();
       if (d.action === "start") started = true;
     }
     // auto 模式笔观测可能翻转 touch-action（手势开始前设置的口径）
