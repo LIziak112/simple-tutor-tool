@@ -759,9 +759,12 @@ describe("attemptSubmitRequestSchema（T6R.3 交卷回传题目版本）", () =>
     ).toBe(false);
   });
 
-  it("错误码集合包含 QUESTION_REVISION_STALE（陈旧题目版本提交，409）", () => {
+  it("错误码集合包含 QUESTION_REVISION_STALE（陈旧题目版本提交，409）与 NOTE_EVIDENCE_MISMATCH（交卷证据声明不符，409——T6R.10）", () => {
     expect(
       attemptErrorCodeSchema.safeParse("QUESTION_REVISION_STALE").success,
+    ).toBe(true);
+    expect(
+      attemptErrorCodeSchema.safeParse("NOTE_EVIDENCE_MISMATCH").success,
     ).toBe(true);
   });
 });

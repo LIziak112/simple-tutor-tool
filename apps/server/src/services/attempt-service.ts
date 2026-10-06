@@ -1430,6 +1430,11 @@ function buildSubmissionEvidence(
         versionId: null,
       };
     }
+    // missing（复审接受项）：到达此分支时服务端可能已有该题矢量（客户端
+    // 分类窗口的竞态——声明组装后、提交落地前他处上传成功）。按用户明示
+    // 选择如实记录 missing，**不自动升格 frozen**：本地可能还有更新的未传
+    // 内容，升格会把陈旧 head 伪装成原稿；已落地内容经 T6R.15 supplement
+    // 找回，不冒称原稿
     return {
       questionId: decl.questionId,
       state: "missing" as const,

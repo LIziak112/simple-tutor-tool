@@ -595,6 +595,11 @@ export const attemptDetailDataSchema = z
  * - QUESTION_REVISION_STALE：交卷回传的题目版本集合与本次冻结集合不一致
  *   （缺项 / questionRevisionId 错版 / 多出未知题目 / 未带请求体的非空卷；
  *   409，T6R.3）——旧标签页或陈旧页面的提交被可诊断拒绝，前端提示刷新后重交；
+ * - NOTE_EVIDENCE_MISMATCH：交卷笔记证据声明与服务端事实不符（409，T6R.10，
+ *   镜像 note.ts 同码注释）——frozen 的 versionId/revision 与实际 head 不一致
+ *   （其他标签页/设备改出新 head）、none 声明但实际有笔记行、声明集合与冻结
+ *   题目集合不一致、旧客户端（缺 evidence 字段）但检测到草稿存在；前端据此
+ *   重走交卷流程或提示刷新，不静默固定不一致旧版本；
  * - QUESTION_NOT_FOUND：题目不存在、已软删或不在该次作答的单元集合内（404，
  *   T2A.7 起多单元作业为集合包含判断）；
  * - HINT_INDEX_OUT_OF_RANGE：提示序号越界（<0 或 ≥该题提示总数，含无提示题；
@@ -613,6 +618,7 @@ export const attemptErrorCodeSchema = z.enum([
   "ATTEMPT_NOT_FOUND",
   "ALREADY_SUBMITTED",
   "QUESTION_REVISION_STALE",
+  "NOTE_EVIDENCE_MISMATCH",
   "QUESTION_NOT_FOUND",
   "HINT_INDEX_OUT_OF_RANGE",
   "FORBIDDEN",
