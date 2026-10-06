@@ -66,9 +66,14 @@ const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
  * ①换掉旧 startsWith 弱实现：同前缀相邻目录不再可能骗过）；suffix 传空串
  * 表示不做后缀检查（旧签名兼容口径）。
  */
-function inkFileAbs(dataDir: string, relPath: string, suffix: string): string {
+function inkFileAbs(
+  dataDir: string,
+  relPath: string,
+  suffix: string | undefined,
+): string {
   return resolveWithinRoot(dataDir, join("blobs", "ink"), relPath, {
-    suffix: suffix === "" ? null : suffix,
+    // 空/未传 = 不做后缀检查（旧签名兼容口径；真值判定同时收窄类型）
+    ...(suffix ? { suffix } : {}),
     violationCode: "INK_UNREADABLE",
   });
 }

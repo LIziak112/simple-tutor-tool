@@ -156,10 +156,10 @@ export function resolveNoteBodyPath(dataDir: string, relPath: string): string {
 function resolveNoteBlobPath(
   dataDir: string,
   relPath: string,
-  suffix: string | null,
+  suffix: string | undefined,
 ): string {
   return resolveWithinRoot(dataDir, join("blobs", "notes"), relPath, {
-    suffix,
+    ...(suffix ? { suffix } : {}),
     violationCode: "NOTE_BODY_PATH_INVALID",
   });
 }
@@ -235,16 +235,14 @@ export function parseNoteBodyBytes(bytes: Uint8Array): NoteDoc {
 
 // ---------- 不可变文件写入（唯一临时文件 → rename） ----------
 
-/** 测试故障注入钩子（生产恒不传；三个中断点语义见 lib/blob-io.AtomicFileFaults） */
-export type NoteWriteFaults = AtomicFileFaults;
-
 /**
  * 规范化正文字节 → gzip → 唯一临时文件 → rename 到不可变路径。
- * 机制（唯一 tmp 名/失败清理/故障钩子）在 lib/blob-io.writeFileAtomic；
- * 本函数只补 note 域两件事：按 (noteId, revision, hash) 定不可变路径 +
- * 目录边界校验。亦导出供测试直接构造「rename 前/后中断」的崩溃现场。
- * rename 目标与已确认版本同名的场景只可能是「上次崩溃留下的未引用孤儿」
- * （同 hash 必同字节），覆盖无害。
+ * 机制（唯一 tmp 名/失败清理/故障钩子 AtomicFileFaults）在
+ * lib/blob-io.writeFileAtomic；本函数只补 note 域两件事：按
+ * (noteId, revision, hash) 定不可变路径 + 目录边界校验。亦导出供测试
+ * 直接构造「rename 前/后中断」的崩溃现场。rename 目标与已确认版本同名
+ * 的场景只可能是「上次崩溃留下的未引用孤儿」（同 hash 必同字节），
+ * 覆盖无害。
  */
 export function writeNoteBodyFile(
   dataDir: string,
@@ -252,8 +250,8 @@ export function writeNoteBodyFile(
   revision: number,
   hash: string,
   canonicalBytes: Uint8Array,
-  faults?: NoteWriteFaults,
-): { relPath: string; absPath: string } {
+  faults?: AtomicFileFaults,
+): void {
   const relPath = noteBodyRelPath(noteId, revision, hash);
   const absPath = resolveNoteBodyPath(dataDir, relPath);
   writeFileAtomic({
@@ -261,7 +259,6 @@ export function writeNoteBodyFile(
     bytes: gzipSync(canonicalBytes),
     ...(faults !== undefined ? { faults } : {}),
   });
-  return { relPath, absPath };
 }
 
 // ---------- CAS 冲突错误构造 ----------
@@ -374,7 +371,7 @@ export function saveNoteVersion(
   questionId: string,
   bodyBytes: Uint8Array,
   meta: NoteUploadMeta,
-  faults?: NoteWriteFaults,
+  faults?: AtomicFileFaults,
 ): NoteVersionReceipt {
   // 1. 权限与冻结集合（T6R.3 统一门口；「冻结内容不冻结权限」——课程撤权
   //    等照常在 requireUsableAttempt 拦截）
@@ -794,8 +791,8 @@ export function gcNoteVersions(
           .all()) {
           const rel = relative(notesRoot, resolve(dataDir, row.p));
           const base = rel.split(/[\\/]/).at(-1) ?? "";
+          // rel===""（路径恰为根本身）不必单列：basename 不合模式必兜住
           if (
-            rel === "" ||
             rel.startsWith("..") ||
             isAbsolute(rel) ||
             !bodyFilePattern.test(base)

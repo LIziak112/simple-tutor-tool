@@ -210,7 +210,7 @@ export function createApp(options: CreateAppOptions) {
         method: "POST",
         limit: IMPORT_BATCH_BODY_LIMIT,
         code: "IMPORT_TOO_LARGE",
-        message: "批量导入请求过大，请减少文件数量或分批上传",
+        message: "批量导入请求过大，请减少文件数量或分批导入",
       }),
     )
     // T4.5 备份恢复上传（zip ≤256MB 由 teacher-backup 按实际大小兜底）

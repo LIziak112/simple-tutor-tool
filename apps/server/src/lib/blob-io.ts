@@ -57,13 +57,13 @@ export function parseGzipOrJsonBytes(
 
 // ---------- 原子写（唯一临时文件 → rename） ----------
 
-/** 原子写故障注入钩子（测试专用；见 note-service.saveNoteVersion 的用法） */
+/** 原子写故障注入钩子（测试专用，生产恒不传；调用方示例见 note-service） */
 export interface AtomicFileFaults {
   /** 临时文件写之前触发（模拟磁盘写失败/此刻崩溃） */
   beforeTmpWrite?: () => void;
-  /** 临时文件写完、rename 之前触发（捕获 tmp 名/模拟 rename 前中断） */
+  /** 临时文件写完、rename 之前触发（测试可捕获 tmp 名；模拟此刻中断） */
   beforeRename?: () => void;
-  /** rename 落位后触发（模拟调用方后续步骤失败/此刻崩溃） */
+  /** rename 落位后触发（模拟调用方后续步骤〔如 DB 事务〕失败/此刻崩溃） */
   afterRename?: () => void;
 }
 
@@ -80,14 +80,12 @@ export function writeFileAtomic(params: {
   /** 最终路径（绝对路径；临时文件写在其所在目录） */
   finalPath: string;
   bytes: Uint8Array;
-  /** 临时文件名（basename）；缺省 `.tmp-<uuid>`（并发唯一） */
-  tmpName?: string;
   /** 测试故障注入钩子（生产恒不传） */
   faults?: AtomicFileFaults;
 }): void {
   const dir = dirname(params.finalPath);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  const tmpPath = join(dir, params.tmpName ?? `.tmp-${randomUUID()}`);
+  const tmpPath = join(dir, `.tmp-${randomUUID()}`);
   params.faults?.beforeTmpWrite?.();
   try {
     writeFileSync(tmpPath, params.bytes);
@@ -122,17 +120,20 @@ export function resolveWithinRoot(
   dataDir: string,
   rootRel: string,
   relPath: string,
-  opts: { suffix?: string | null; violationCode?: string } = {},
+  opts: { suffix?: string; violationCode: string },
 ): string {
-  const code = opts.violationCode ?? "BLOB_PATH_INVALID";
   const root = resolve(dataDir, rootRel);
   const abs = resolve(dataDir, relPath);
   const rel = relative(root, abs);
   if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
-    throw new HttpError(500, code, "文件路径越界（不在允许的 blobs 目录内）");
+    throw new HttpError(
+      500,
+      opts.violationCode,
+      "文件路径越界（不在允许的 blobs 目录内）",
+    );
   }
-  if (opts.suffix != null && !abs.endsWith(opts.suffix)) {
-    throw new HttpError(500, code, "文件路径后缀非法");
+  if (opts.suffix !== undefined && !abs.endsWith(opts.suffix)) {
+    throw new HttpError(500, opts.violationCode, "文件路径后缀非法");
   }
   return abs;
 }
