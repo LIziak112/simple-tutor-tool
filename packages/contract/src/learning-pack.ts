@@ -624,6 +624,10 @@ export const learningPackManifestFileSchema = z.object({
     "ink",
     "media",
     "evidence",
+    // T6R.13 新增（只增不改）：单题 review-pack 的题目文字附件
+    // （questions/qNNN/stem.md）——v2 学情数据包不产出该 kind，旧消费方
+    // 遇未知 kind 按 manifest 通用口径忽略即可
+    "question",
   ]),
   bytes: z.number().int().min(0),
   /** 关联的包内编号（题目/证据条目；media 可关联多个 q 条目） */
