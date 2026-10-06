@@ -881,9 +881,14 @@ describe("atrament-adapter：回归（撤销/重做/橡皮/鼠标/load）", () =
 
   it("load 时橡皮的 pendingErase 先按旧下标提交再换正文（不删错新稿——复审②）", () => {
     const h = mountSurface({ initial: oneStrokeDoc() });
-    // 橡皮点到既有笔画采样点上（(20,20) → 逻辑 66.67,66.67，口径同回归用例）
+    // 橡皮拖过既有笔画采样点（逻辑 100→200 @y100 = CSS (30,30)→(60,30)）
     h.surface.setTool({ type: "eraser" });
-    pointer(h.canvas, "pointerdown", pd("mouse", 1, 20, 20));
+    pointer(h.canvas, "pointerdown", pd("mouse", 1, 30, 30));
+    pointer(h.canvas, "pointermove", {
+      pointerType: "mouse",
+      clientX: 60,
+      clientY: 30,
+    });
     h.events.length = 0;
     h.surface.load(oneStrokeDoc());
     // 先按旧下标提交 erase（旧正文 1→0），再换正文（1 笔新稿）——
