@@ -52,6 +52,7 @@ import {
   applyUploadConflict,
   applyUploadDenied,
   applyUploadReceipt,
+  clearNoteDeniedAccess,
   listPendingNotes,
   type NoteLocalRecord,
   type NotePendingVersion,
@@ -595,6 +596,25 @@ export async function flushNoteSync(): Promise<
 }
 
 // ---------- 冲突裁决（T6R.9 UI 调用；两份副本的数据出口） ----------
+
+/**
+ * denied(access) 手动重试（T6R.9 UI「重试同步」按钮；定案理由见
+ * note-store.clearNoteDeniedAccess）：清 access 终态 → 立即补传当前 pending
+ * （clearTimers + due，不等地防抖——用户主动重试即时反馈）。无 access
+ * 终态时幂等不动作（重复点击安全）；补传再被拒只是回到终态。
+ */
+export async function retryNoteUpload(
+  session: NoteSessionRef,
+  scope: NoteScope,
+): Promise<void> {
+  const cleared = await clearNoteDeniedAccess(session, scope);
+  if (!cleared) return;
+  if (sameSessionSafe(session)) {
+    const key = noteKeyOf(session, scope);
+    clearTimers(key);
+    due(key);
+  }
+}
 
 /**
  * 保留本地：有云端摘要（REVISION_CONFLICT）时对齐冲突摘要里的云端
