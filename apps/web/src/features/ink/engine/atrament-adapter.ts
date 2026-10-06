@@ -257,6 +257,9 @@ export function createAtramentSurface(
     return ev.pressure > 0 ? ev.pressure : 0.5;
   }
 
+  /** 上次设置的 touch-action（同值整函数跳过——pointermove 高频路径不触发） */
+  let lastTouchAction: "pan-y" | "none" | null = null;
+
   /** 按当前模式刷新 touch-action（手势开始前设置的口径，见 pointer-machine） */
   function applyTouchAction(): void {
     const mode = touchActionForInput(
@@ -264,6 +267,8 @@ export function createAtramentSurface(
       machine.penObserved,
       tool.type === "scroll",
     );
+    if (mode === lastTouchAction) return;
+    lastTouchAction = mode;
     if (canvas) canvas.style.touchAction = mode;
     if (container) container.style.touchAction = mode;
   }
@@ -280,11 +285,12 @@ export function createAtramentSurface(
   /**
    * canvas 尺寸随容器变化（DPR 上限 2）。会重置位图与 context 状态；
    * 尺寸未变时短路（复审⑧）——避免无差别重置位图（width 赋值清空内容）
-   * 后再全量重绘。ResizeObserver 回调里 finishPointer 的收笔语义在该回调
-   * 最先执行，不受短路影响。
+   * 后再全量重绘。**返回是否重设了位图**（复审⑩）：调用方据此决定是否
+   * 需要重绘；finishPointer 的收笔语义在 ResizeObserver 回调最先执行，
+   * 不受短路影响。
    */
-  function sizeCanvas(): void {
-    if (!container || !canvas) return;
+  function sizeCanvas(): boolean {
+    if (!container || !canvas) return false;
     const nextW = container.clientWidth || 300;
     const nextH = container.clientHeight || options.height || 200;
     const dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR);
@@ -296,7 +302,7 @@ export function createAtramentSurface(
       canvas.width === nextCanvasW &&
       canvas.height === nextCanvasH
     ) {
-      return;
+      return false;
     }
     cssWidth = nextW;
     cssHeight = nextH;
@@ -304,6 +310,7 @@ export function createAtramentSurface(
     canvas.height = nextCanvasH;
     // 背景间距随宽度换算，重设时同步（resize 由 ResizeObserver 触发本函数）
     applyPaperBackground();
+    return true;
   }
 
   /** 重置 2d context 画笔状态（canvas.width 赋值会清掉 lineCap 等） */
@@ -688,11 +695,11 @@ export function createAtramentSurface(
       // 尺寸变化（旋转、自动加高、窗口缩放）：在途一笔先按已收点收笔——
       // 一笔中途不混用两个坐标变换（方案 §4.1；收笔后同一手势的后续采样
       // 丢弃直到新 pointerdown），然后重设画布并全量重绘（归一化坐标保证
-      // 比例正确）。🧑 真机复核：书写中途旋转（清单第 9 项）
+      // 比例正确；尺寸未变时跳过重绘，复审⑩）。🧑 真机复核：书写中途旋转
+      // （清单第 9 项）
       observer = new ResizeObserver(() => {
         finishPointer({ kind: "layoutchange" });
-        sizeCanvas();
-        redraw();
+        if (sizeCanvas()) redraw();
       });
       observer.observe(el);
     },
