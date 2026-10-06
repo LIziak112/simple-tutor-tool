@@ -26,7 +26,7 @@ import {
   questionSchema,
   unitSchema,
 } from "../src/content.ts";
-import { learningPackJsonSchema } from "../src/learning-pack.ts";
+import { learningPackJsonSchema, learningPackV2JsonSchema } from "../src/learning-pack.ts";
 
 /** 根对象：把每个顶层契约收进一个属性，生成一份自包含（$defs 内部 $ref）的 schema */
 const contentContractSchema = z.object({
@@ -63,4 +63,14 @@ const packContent = `${JSON.stringify(packSchema, null, 2)}\n`;
 await writeFile(join(outDir, "learning-pack.json"), packContent, "utf8");
 console.log(
   `已导出学情数据包契约到 ${join(outDir, "learning-pack.json")}（${packContent.length} 字符）`,
+);
+
+// 学情数据包 v2（T6R.12 证据装配）：learningPackV2JsonSchema() 同一模式——
+// v2 zip 内 schema.json 与本文件逐字节一致；v1/v2 两个文件分开导出，
+// 既有 v1 消费方（zip、dsl-kit 校验材料）零变化
+const packV2Schema = learningPackV2JsonSchema();
+const packV2Content = `${JSON.stringify(packV2Schema, null, 2)}\n`;
+await writeFile(join(outDir, "learning-pack-v2.json"), packV2Content, "utf8");
+console.log(
+  `已导出学情数据包 v2 契约到 ${join(outDir, "learning-pack-v2.json")}（${packV2Content.length} 字符）`,
 );
