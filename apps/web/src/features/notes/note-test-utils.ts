@@ -5,7 +5,12 @@
  * 工厂留在各测试文件（提升语义属用例本身）；waitForLocalSaved 为本地
  * 轮询（note-store 测试不用假时钟，真定时器 10ms 步进）。
  */
-import type { NoteHeadData, NoteVersionReceipt } from "@tutor/contract";
+import type {
+  NoteHeadData,
+  NoteImageMeta,
+  NoteSubmissionEvidenceMeta,
+  NoteVersionReceipt,
+} from "@tutor/contract";
 import { docOf, stroke } from "@/features/notes/note-fixtures";
 import {
   getNoteRecord,
@@ -78,6 +83,42 @@ export function headOf(overrides: Partial<NoteHeadData> = {}): NoteHeadData {
     },
     images: [],
     evidence: null,
+    ...overrides,
+  };
+}
+
+/**
+ * 证据行工厂（T6R.11 原稿查看测试）：frozen 须带 versionId（契约
+ * superRefine 口径），其余状态 versionId 恒 null——工厂如实镜像，不替调用方
+ * 拼非法组合。
+ */
+export function evidenceOf(
+  state: "none" | "frozen" | "missing" | "legacy_unverified",
+  versionId: string | null = null,
+): NoteSubmissionEvidenceMeta {
+  return {
+    attemptId: SCOPE.attemptId,
+    questionId: SCOPE.questionId,
+    state,
+    versionId,
+    recordedAt: "2026-10-06T01:00:00.000Z",
+  };
+}
+
+/** 派生图元信息工厂（T6R.11 图片状态用；缺省 analysis 第 0 页 ready） */
+export function imageMetaOf(
+  overrides: Partial<NoteImageMeta> = {},
+): NoteImageMeta {
+  return {
+    imageId: "44444444-4444-4444-8444-444444444441",
+    noteVersionId: receiptOf(1).versionId,
+    spec: "analysis",
+    pageIndex: 0,
+    crop: { x: 0, y: 0, width: 1000, height: 800 },
+    pixelWidth: 1000,
+    pixelHeight: 800,
+    state: "ready",
+    hash: `${"b".repeat(64)}`,
     ...overrides,
   };
 }
