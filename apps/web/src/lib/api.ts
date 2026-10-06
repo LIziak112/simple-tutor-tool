@@ -965,15 +965,23 @@ async function fetchGzipJson(
     // 上传侧（gzipOrRaw）有原始 JSON 回退；解压消费只在支持的环境提供
     throw new Error(msg.unsupported);
   }
+  // 无字节流按传输层异常归因（浏览器保证 2xx 响应有 body——复审轮⑤）
+  if (res.body === null) {
+    throw new Error(msg.network);
+  }
   let text: string;
   try {
-    if (res.body === null) {
-      throw new Error("响应没有可读的字节流");
-    }
     text = await new Response(
       res.body.pipeThrough(new DecompressionStream("gzip")),
     ).text();
-  } catch {
+  } catch (err) {
+    // 读流阶段失败的归因启发式（复审轮⑤）：gzip 坏块与网络中断在这里同为
+    // 异常、无可靠类型区分——按错误文案归类：已知网络类字样 → 网络错误
+    // 文案；其余（含各实现的解压错误）→ 解压失败文案。
+    const detail = err instanceof Error ? err.message : String(err);
+    if (/terminated|aborted|network|fetch failed/i.test(detail)) {
+      throw new Error(msg.network);
+    }
     throw new Error(msg.decompress);
   }
   try {
@@ -1054,17 +1062,21 @@ export function fetchTeacherNoteEvidenceApi(
  * 消费时按 noteDocSchema 收窄。失败：404 NOTE_NOT_FOUND（不存在/非本人/
  * 文件缺失）抛 ApiError。
  */
+
+/** 笔记版本文档的分路文案（学生/教师两薄导出共用一份——复审轮⑬） */
+const NOTE_DOC_MESSAGES: GzipJsonMessages = {
+  network: "连不上服务器，请确认网络后重试",
+  unsupported: "当前浏览器不支持读取草稿正文（缺少 DecompressionStream）",
+  decompress: "草稿正文解压失败（文件可能损坏），请刷新重试",
+  corrupt: "草稿正文损坏（不是合法的 JSON），请反馈老师处理",
+};
+
 export function fetchStudentNoteDocumentApi(
   versionId: string,
 ): Promise<unknown> {
   return fetchGzipJson(
     `/api/student/note-versions/${encodeURIComponent(versionId)}/document`,
-    {
-      network: "连不上服务器，请确认网络后重试",
-      unsupported: "当前浏览器不支持读取草稿正文（缺少 DecompressionStream）",
-      decompress: "草稿正文解压失败（文件可能损坏），请刷新重试",
-      corrupt: "草稿正文损坏（不是合法的 JSON），请反馈老师处理",
-    },
+    NOTE_DOC_MESSAGES,
   );
 }
 
@@ -1074,12 +1086,7 @@ export function fetchTeacherNoteDocumentApi(
 ): Promise<unknown> {
   return fetchGzipJson(
     `/api/teacher/note-versions/${encodeURIComponent(versionId)}/document`,
-    {
-      network: "连不上服务器，请确认网络后重试",
-      unsupported: "当前浏览器不支持读取草稿正文（缺少 DecompressionStream）",
-      decompress: "草稿正文解压失败（文件可能损坏），请刷新重试",
-      corrupt: "草稿正文损坏（不是合法的 JSON），请反馈老师处理",
-    },
+    NOTE_DOC_MESSAGES,
   );
 }
 
