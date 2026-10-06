@@ -154,6 +154,8 @@ function DetailBody({ data }: { data: TeacherAttemptDetailData }) {
   const answeredCount = data.questions.filter(
     (question) => question.answer !== null && isAnswered(question.answer),
   ).length;
+  // 轮次标注 data 级常量（循环外算一次）
+  const roundLabel = attemptRoundLabel(data.sourceType, data.attemptNo);
 
   // 单元节标题：题目按单元连续编排，遇 unitTitle 变化即起新节；单单元不显示节头
   // （与学生端结果视图一致）。
@@ -203,7 +205,7 @@ function DetailBody({ data }: { data: TeacherAttemptDetailData }) {
                 question={question}
                 isDraft={isDraft}
                 attemptId={data.attemptId}
-                roundLabel={attemptRoundLabel(data.sourceType, data.attemptNo)}
+                roundLabel={roundLabel}
               />
             </li>
           );

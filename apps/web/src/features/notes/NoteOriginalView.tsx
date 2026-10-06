@@ -8,22 +8,22 @@
  *   宽松口径——软删题历史可读），frozen 才读 evidence.versionId 的版本文档；
  *   绝不按 qid 取最新工作稿替代本次原稿（工作稿头端点①严格口径也不调）；
  * - **只读**：不 PUT、不触碰 note/note_versions/submission_evidence 任何状态；
- *   唯一写动作是缺图时的补图恢复通道（syncNoteImages——挂既定版本的派生图
- *   槽位，不改正文与提交引用）；
+ *   唯一写动作是缺图时的补图恢复通道（recoverNoteImages——挂既定版本的
+ *   派生图槽位，不改正文与提交引用）；
  * - **渲染复用确定性骨架**（renderNoteImages：整逻辑宽 1000 切片 + 入口级
  *   包围盒缓存 + 页间让出 + 离屏画布渲完即移除），绝不复用 NoteLayer 编辑
  *   状态机/IDB 写通道——布局/视口变化只做等比缩放，不裁切笔迹；
  * - 四态互斥（方案 §5.3）：无稿族文案见 note-original-phase 的 ABSENT_TEXT、
- *   正文待图（派生图 pending——不影响查看）、缺图（failed/missing → 重建）、
- *   读取错误（→ 重试）。读取失败绝不隐藏成无稿文案；
+ *   正文待图（派生图 pending——不影响查看）、缺图（含「有正文无派生图行」
+ *   的查看语境档位，→ 重建）、读取错误（→ 重试）。读取失败绝不隐藏成无稿；
  * - 判定与文案在纯函数层 note-original-phase.ts（互斥口径有独立单测），
  *   本组件只做 IO 与状态迁移；
- * - object URL 生命周期：重开/重试/收起/卸载即 revoke；epoch 代际守卫拦
- *   迟到结果（含重建期间收起/重开）。重展开缓存：收起不清缓存（blob 仍在），
- *   重开仍拉证据头（便宜且验证版本），versionId 相同则免下载免渲染直接就绪。
+ * - object URL 生命周期：landReady 单点维护（map 建 URL → urlsRef 赋值 →
+ *   setPhase），重开/重试/收起/卸载即 revoke；epoch 代际守卫拦迟到结果。
+ *   重展开缓存只存 {versionId, pages, strokeCount}（不常驻 NoteDoc，省每卡
+ *   数 MB），重开仍拉证据头验证版本，同版本免下载免渲染。
  */
 
-import type { NoteDoc } from "@tutor/contract";
 import {
   CircleAlert,
   LoaderCircle,
@@ -33,11 +33,12 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { recoverNoteImages, syncNoteImages } from "@/features/notes/image-sync";
+import { recoverNoteImages } from "@/features/notes/image-sync";
 import { parseNoteDocOrThrow } from "@/features/notes/note-fixtures";
 import {
   ABSENT_TEXT,
   type AbsentReason,
+  type NoteOriginalReadyMeta,
   refreshImagesAggregate,
   resolveAbsentReason,
   resolveReadyMeta,
@@ -46,11 +47,11 @@ import {
   type RenderedNotePage,
   renderNoteImages,
 } from "@/features/notes/render-note";
+import type { NoteRole } from "@/lib/api";
 import {
   fetchNoteDocumentApi,
   fetchNoteEvidenceApi,
-  type NoteRole,
-} from "@/lib/api";
+} from "@/lib/note-endpoints";
 import { formatCnTime } from "@/lib/time";
 
 /** 面板阶段（单一判别联合：一次 set 完成迁移，无中间组合态） */
@@ -62,27 +63,13 @@ type OriginalPhase =
   | { kind: "error"; message: string }
   /** 无稿族：四态文案互斥（见 note-original-phase 的 ABSENT_TEXT） */
   | { kind: "absent"; reason: AbsentReason }
-  | {
-      kind: "ready";
-      /** 渲染页的 object URL（生命周期由组件管理） */
-      urls: string[];
-      /** 生效版本（证据行 versionId；补图挂它） */
-      versionId: string;
-      /** 证据行记录时间（交卷事务固定时刻） */
-      recordedAt: string;
-      /** 正文保存次序（工作头与证据版本一致时可得；否则 null 不显示） */
-      noteRevision: number | null;
-      /** 正文笔迹数（空稿不显示派生图状态——note-original-phase 口径） */
-      strokeCount: number;
-      /** 派生图查看档位（三档；ready=无提示） */
-      images: "ready" | "pending" | "failed";
-    };
+  | ({ kind: "ready"; urls: string[] } & NoteOriginalReadyMeta);
 
 /** 重展开缓存：收起不清（blob 仍在内存），重开同版本免下载免渲染 */
 interface OriginalCache {
   versionId: string;
-  doc: NoteDoc;
   pages: RenderedNotePage[];
+  strokeCount: number;
 }
 
 export function NoteOriginalView({
@@ -98,22 +85,33 @@ export function NoteOriginalView({
   questionId: string;
   /** 无障碍标签前缀（如「第 3 题」），拼入按钮与图片 alt */
   ariaPrefix?: string;
-  /** 轮次标注（如「第 2 次课程练习」）；null 不显示 */
+  /** 轮次标注（attemptRoundLabel 产物）；null 不显示 */
   roundLabel?: string | null;
 }) {
   const [phase, setPhase] = useState<OriginalPhase>({ kind: "closed" });
   const [rebuilding, setRebuilding] = useState(false);
+  const [rebuildError, setRebuildError] = useState<string | null>(null);
   /** 加载代际：卸载/重试/收起后迟到的异步结果不再落地 */
   const epochRef = useRef(0);
   /** 在役 object URL（替换/收起/卸载时成批 revoke） */
   const urlsRef = useRef<string[]>([]);
-  /** 最近一次就绪的正文与渲染页（重展开缓存；卸载清空） */
+  /** 最近一次就绪的渲染页与笔迹数（重展开缓存；卸载清空） */
   const cacheRef = useRef<OriginalCache | null>(null);
 
   const revokeUrls = useCallback(() => {
     for (const url of urlsRef.current) URL.revokeObjectURL(url);
     urlsRef.current = [];
   }, []);
+
+  /** 就绪落地单点：URL 不变量（创建→登记→setPhase）只此一处维护 */
+  const landReady = useCallback(
+    (meta: NoteOriginalReadyMeta, pages: RenderedNotePage[]) => {
+      const urls = pages.map((page) => URL.createObjectURL(page.blob));
+      urlsRef.current = urls;
+      setPhase({ kind: "ready", urls, ...meta });
+    },
+    [],
+  );
 
   // 卸载回收：URL revoke 走同一原语；epoch 自增拦在途结果；缓存随组件释放
   useEffect(
@@ -125,13 +123,35 @@ export function NoteOriginalView({
     [revokeUrls],
   );
 
+  // 定位变化守卫（当前挂载全键控不可达，防御未来原位导航复用实例）：
+  // attemptId/questionId/viewer 变化即回到折叠态并弃缓存（旧定位的渲染页
+  // 与 URL 不能带入新题）
+  const scopeRef = useRef({ attemptId, questionId, viewer });
+  useEffect(() => {
+    const prev = scopeRef.current;
+    if (
+      prev.attemptId === attemptId &&
+      prev.questionId === questionId &&
+      prev.viewer === viewer
+    ) {
+      return;
+    }
+    scopeRef.current = { attemptId, questionId, viewer };
+    epochRef.current += 1;
+    cacheRef.current = null;
+    revokeUrls();
+    setRebuildError(null);
+    setRebuilding(false);
+    setPhase({ kind: "closed" });
+  }, [attemptId, questionId, viewer, revokeUrls]);
+
   const load = useCallback(async () => {
     const epoch = epochRef.current + 1;
     epochRef.current = epoch;
     revokeUrls();
     setPhase({ kind: "loading" });
     try {
-      // 证据头恒拉（便宜且验证版本归属）；无稿判定/就绪元信息在纯函数层
+      // 证据头恒拉（便宜且验证版本归属）；无稿判定在纯函数层
       const head = await fetchNoteEvidenceApi(viewer, attemptId, questionId);
       if (epoch !== epochRef.current) return;
       const absent = resolveAbsentReason(head.evidence);
@@ -139,26 +159,18 @@ export function NoteOriginalView({
         setPhase({ kind: "absent", reason: absent });
         return;
       }
-      const cached = cacheRef.current;
-      if (cached !== null && head.evidence?.versionId === cached.versionId) {
-        // 缓存命中：同版本免下载免渲染（blob 在缓存内未回收，URL 重建）
-        const meta = resolveReadyMeta(head, cached.doc);
-        if (meta !== null) {
-          const urls = cached.pages.map((page) =>
-            URL.createObjectURL(page.blob),
-          );
-          urlsRef.current = urls;
-          setPhase({ kind: "ready", urls, ...meta });
-          return;
-        }
-      }
+      // frozen：契约 superRefine 保证 versionId 非空；空属数据异常（唯一
+      // 防御点——landReady 内不再重复）
       const versionId = head.evidence?.versionId ?? null;
       if (versionId === null) {
-        // 契约 superRefine 保证 frozen 恒带 versionId；防御分支按损坏处理
-        setPhase({
-          kind: "error",
-          message: "证据行缺少版本引用（数据异常）",
-        });
+        setPhase({ kind: "error", message: "证据行缺少版本引用（数据异常）" });
+        return;
+      }
+      const cached = cacheRef.current;
+      if (cached !== null && cached.versionId === versionId) {
+        // 缓存命中：同版本免下载免渲染（blob 在缓存内未回收，URL 重建）
+        const meta = resolveReadyMeta(head, cached.strokeCount);
+        if (meta !== null) landReady(meta, cached.pages);
         return;
       }
       const raw = await fetchNoteDocumentApi(viewer, versionId);
@@ -170,18 +182,14 @@ export function NoteOriginalView({
       // 保证 URL 不落地，无泄漏），不加 abort 机制
       const pages = await renderNoteImages(doc, "analysis");
       if (epoch !== epochRef.current) return;
-      cacheRef.current = { versionId, doc, pages };
-      const meta = resolveReadyMeta(head, doc);
-      if (meta === null) {
-        setPhase({
-          kind: "error",
-          message: "证据行缺少版本引用（数据异常）",
-        });
-        return;
-      }
-      const urls = pages.map((page) => URL.createObjectURL(page.blob));
-      urlsRef.current = urls;
-      setPhase({ kind: "ready", urls, ...meta });
+      cacheRef.current = {
+        versionId,
+        pages,
+        strokeCount: doc.ink.strokes.length,
+      };
+      const meta = resolveReadyMeta(head, doc.ink.strokes.length);
+      if (meta === null) return; // 契约外形态已在上方 versionId 防御点排除——理论不可达
+      landReady(meta, pages);
     } catch (err) {
       if (epoch !== epochRef.current) return;
       setPhase({
@@ -189,7 +197,7 @@ export function NoteOriginalView({
         message: err instanceof Error ? err.message : "网络异常",
       });
     }
-  }, [attemptId, questionId, viewer, revokeUrls]);
+  }, [attemptId, questionId, viewer, revokeUrls, landReady]);
 
   const close = useCallback(() => {
     epochRef.current += 1; // 在途加载作废（缓存保留供重展开）
@@ -198,33 +206,29 @@ export function NoteOriginalView({
   }, [revokeUrls]);
 
   /**
-   * 缺图重建：补图只挂既定版本（不重渲染正文——原稿确定性不变），成功后
-   * 仅刷新证据头的派生图档位。正文优先取重展开缓存（免二次下载）；缓存不
-   * 命中（理论不可达——ready 阶段必经 load 建缓存）退回 recoverNoteImages。
-   * epoch 守卫：重建期间收起/重开会 bump 代际，迟到的刷新不得复活已回收 URL
+   * 缺图重建：recoverNoteImages 自拉正文→渲染→上传，只挂既定版本（不改
+   * 正文与提交引用；槽位幂等 upsert）。收起/卸载后上传继续执行是**设计
+   * 行为**——补图是恢复通道不是编辑，幂等 upsert 重入安全，UI 落地由函数式
+   * phase 判据拦截（不复活已回收 URL）。守卫不用代际比较：重建期间收起
+   * 重开（同版本）后，迟到的档位刷新仍应生效——函数式判据
+   * （ready 且 versionId 一致）既拦越权落地又不丢合法刷新。
    */
   const rebuild = useCallback(async () => {
     if (phase.kind !== "ready") return;
-    const epochAtStart = epochRef.current;
     const { versionId, strokeCount } = phase;
     setRebuilding(true);
+    setRebuildError(null);
     try {
-      const cached = cacheRef.current;
-      if (cached !== null && cached.versionId === versionId) {
-        await syncNoteImages({ role: viewer, versionId, doc: cached.doc });
-      } else {
-        await recoverNoteImages({ role: viewer, versionId });
-      }
+      await recoverNoteImages({ role: viewer, versionId });
       const head = await fetchNoteEvidenceApi(viewer, attemptId, questionId);
-      if (epochAtStart !== epochRef.current) return;
-      const refreshed = refreshImagesAggregate(head, versionId, strokeCount);
-      if (refreshed !== null) {
-        setPhase((prev) =>
-          prev.kind === "ready" ? { ...prev, images: refreshed } : prev,
-        );
-      }
+      setPhase((prev) => {
+        if (prev.kind !== "ready" || prev.versionId !== versionId) return prev;
+        const refreshed = refreshImagesAggregate(head, versionId, strokeCount);
+        return refreshed === null ? prev : { ...prev, images: refreshed };
+      });
     } catch (err) {
-      console.warn("重建分析图片失败（可再点重试）", err);
+      console.warn("重建分析图片失败", err);
+      setRebuildError("重建失败，请重试");
     } finally {
       setRebuilding(false);
     }
@@ -345,19 +349,26 @@ export function NoteOriginalView({
           {phase.images === "failed" && (
             <div
               role="status"
-              className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"
+              className="flex flex-col items-start gap-1.5 text-xs text-muted-foreground"
             >
-              <TriangleAlert aria-hidden className="size-3.5 shrink-0" />
-              <span>AI 分析图片缺失（原稿查看不受影响）。</span>
-              <Button
-                type="button"
-                variant="outline"
-                className="h-11"
-                disabled={rebuilding}
-                onClick={() => void rebuild()}
-              >
-                {rebuilding ? "重建中…" : "重建分析图片"}
-              </Button>
+              <div className="flex flex-wrap items-center gap-2">
+                <TriangleAlert aria-hidden className="size-3.5 shrink-0" />
+                <span>AI 分析图片缺失（原稿查看不受影响）。</span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-11"
+                  disabled={rebuilding}
+                  onClick={() => void rebuild()}
+                >
+                  {rebuilding ? "重建中…" : "重建分析图片"}
+                </Button>
+              </div>
+              {rebuildError !== null && (
+                <p role="alert" className="text-destructive">
+                  {rebuildError}
+                </p>
+              )}
             </div>
           )}
         </>

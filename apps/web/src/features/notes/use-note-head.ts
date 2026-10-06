@@ -21,8 +21,8 @@
  * 的 server 维度来自同步队列视角（note-store 派生），不依赖 head。
  */
 import { type UseQueryResult, useQuery } from "@tanstack/react-query";
-import type { NoteHeadData, StudentMeData } from "@tutor/contract";
-import { useEffect, useSyncExternalStore } from "react";
+import type { NoteHeadData } from "@tutor/contract";
+import { useSyncExternalStore } from "react";
 import { recoverNoteImages } from "@/features/notes/image-sync";
 import { hasBrokenRow } from "@/features/notes/note-image-state";
 import {
@@ -33,10 +33,7 @@ import {
   peekNoteRecord,
   subscribeNoteStore,
 } from "@/features/notes/note-store";
-import {
-  bindNoteSession,
-  currentNoteSession,
-} from "@/features/notes/note-sync";
+import { currentNoteSession } from "@/features/notes/note-sync";
 import {
   ApiError,
   fetchStudentNoteDocumentApi,
@@ -111,22 +108,6 @@ export async function applyNoteHeadSideEffects(
  * 答题页每题的笔记头接线（NoteLayer 内部调用）。返回 useQuery 句柄供
  * UI 刷新图片状态（补图重试成功后 refetch 更新 images 维度）。
  */
-/**
- * 答题页接线（T6R.9）：进入答题页 bind 当前学生 + 部署实例（origin 取
- * window.location.origin——同源即同实例）。离开答题页**不** reset——收起
- * 题卡/路由切换后同步队列照常完成（方案 §6.1）；登出在 student-auth 统一
- * resetNoteSession（切账号即旧会话失效、回执隔离）。
- */
-export function useBindNoteSession(me: StudentMeData | undefined): void {
-  useEffect(() => {
-    if (me === undefined) return;
-    bindNoteSession({
-      origin: window.location.origin,
-      studentId: me.id,
-    });
-  }, [me]);
-}
-
 export function useNoteHead(
   attemptId: string,
   questionId: string,

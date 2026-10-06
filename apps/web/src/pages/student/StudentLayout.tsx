@@ -1,7 +1,7 @@
 import { BookX, History, Home, Loader2, LogOut, School } from "lucide-react";
 import { Navigate, NavLink, Outlet, useNavigate } from "react-router";
 import { useLogoutStudent, useStudentMe } from "@/features/auth/student-auth";
-import { useBindNoteSession } from "@/features/notes/use-note-head";
+import { useBindNoteSession } from "@/features/notes/use-note-session";
 import { useStudentTheme } from "@/features/student/use-student-theme";
 import { ApiError } from "@/lib/api";
 import { ScreenError, ScreenLoading } from "./StudentScreen";

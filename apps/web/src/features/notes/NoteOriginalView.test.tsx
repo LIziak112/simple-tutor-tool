@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { NoteDoc, NoteHeadData } from "@tutor/contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { recoverNoteImages, syncNoteImages } from "@/features/notes/image-sync";
+import { recoverNoteImages } from "@/features/notes/image-sync";
 import { denseStroke, docOf } from "@/features/notes/note-fixtures";
 import {
   evidenceOf,
@@ -19,21 +19,23 @@ import { NoteOriginalView } from "./NoteOriginalView";
  *   版本文档并按分析切片确定性渲染（复用 renderNoteImages 骨架，不裁切跨
  *   布局长稿）；判定/文案的纯函数口径见 note-original-phase.test；
  * - 读文档失败 → 读取错误 + 重试（不能隐藏成无稿）；派生图 failed/missing
- *   → 缺图 + 重建（缓存正文走 syncNoteImages，免二次下载）；
+ *   → 缺图 + 重建（recoverNoteImages 自拉正文重建，失败可见可重试）；
  * - 重展开缓存：同版本免下载免渲染，URL 仍按次回收；卸载全回收。
  * API 出网与 canvas 渲染全 mock（renderNoteImages 换假产物但切片几何用真
  * planAnalysisPages——「跨布局不裁切」断言走真实几何）。
  */
 
-// 角色分派器（fetchNoteEvidenceApi/fetchNoteDocumentApi）在 api.ts 模块内
-// 调用各 per-role 函数——mock 内部函数拦不住分派器，直接 mock 分派器本身；
-// per-role 端点的正确性由服务端测试 + E2E（真实分派全链）覆盖
+// 分派器在 lib/note-endpoints（独立模块=可测接缝，直测见 note-endpoints.test）
+// 与 image-sync 一样经其 mock 拦截；工作稿头端点（严格口径）仍从 api.ts mock
+// 以断言绝不调用
+vi.mock("@/lib/note-endpoints", () => ({
+  fetchNoteEvidenceApi: vi.fn(),
+  fetchNoteDocumentApi: vi.fn(),
+}));
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
   return {
     ...actual,
-    fetchNoteEvidenceApi: vi.fn(),
-    fetchNoteDocumentApi: vi.fn(),
     fetchStudentNoteHeadApi: vi.fn(),
   };
 });
@@ -59,24 +61,22 @@ vi.mock("@/features/notes/render-note", async (importOriginal) => {
 
 vi.mock("@/features/notes/image-sync", () => ({
   recoverNoteImages: vi.fn(async () => []),
-  syncNoteImages: vi.fn(async () => []),
 }));
 
 import {
   planAnalysisPages,
   renderNoteImages,
 } from "@/features/notes/render-note";
+import { fetchStudentNoteHeadApi } from "@/lib/api";
 import {
   fetchNoteDocumentApi,
   fetchNoteEvidenceApi,
-  fetchStudentNoteHeadApi,
-} from "@/lib/api";
+} from "@/lib/note-endpoints";
 
 const evidenceMock = vi.mocked(fetchNoteEvidenceApi);
 const headMock = vi.mocked(fetchStudentNoteHeadApi);
 const docMock = vi.mocked(fetchNoteDocumentApi);
 const renderMock = vi.mocked(renderNoteImages);
-const syncMock = vi.mocked(syncNoteImages);
 const recoverMock = vi.mocked(recoverNoteImages);
 
 /** 一笔小稿（1 页内；正文可被 fetchDocumentMock 返回） */
@@ -187,10 +187,12 @@ describe("入口与加载态", () => {
     expect(await screen.findByText("正在读取草稿原稿…")).toBeInTheDocument();
   });
 
-  it("frozen：读证据行指定的 versionId 正文并渲染图片页", async () => {
+  it("frozen：读证据行指定的 versionId 正文并按 analysis 规格渲染图片页", async () => {
     await openPanel();
     // 文档按证据行 versionId 读取（不是工作头/题目 id）
     expect(docMock).toHaveBeenCalledWith("student", EVIDENCE_VERSION_ID);
+    // 渲染规格锁定 analysis（误改 thumbnail——低清整纸缩略图——不得全绿）
+    expect(renderMock).toHaveBeenCalledWith(expect.anything(), "analysis");
     expect(screen.getByAltText("第 2 题草稿原稿 第 1 页")).toBeInTheDocument();
   });
 
@@ -349,7 +351,7 @@ describe("派生图状态：正文待图 / 缺图 + 重建", () => {
     expect(screen.queryByRole("button", { name: /重建/ })).toBeNull();
   });
 
-  it("图片 failed：显示缺图 + 重建按钮；重建用缓存正文走 syncNoteImages 并刷新状态", async () => {
+  it("图片 failed：显示缺图 + 重建按钮；重建走 recoverNoteImages 并刷新状态", async () => {
     const failedHead = frozenHead({
       images: [imageMetaOf({ state: "failed", hash: null })],
     });
@@ -363,21 +365,86 @@ describe("派生图状态：正文待图 / 缺图 + 重建", () => {
       expect(screen.getByText(/AI 分析图片缺失/)).toBeInTheDocument();
     });
 
-    // 重建成功 → 第二次 head 全 ready → 缺图提示消失；正文走缓存（syncNoteImages
-    // 带缓存的 doc），不二次下载、不退回 recoverNoteImages
+    // 重建成功 → 第二次 head 全 ready → 缺图提示消失
     evidenceMock.mockResolvedValue(frozenHead());
-    syncMock.mockResolvedValueOnce([]);
+    recoverMock.mockResolvedValueOnce([]);
     fireEvent.click(screen.getByRole("button", { name: "重建分析图片" }));
     await waitFor(() => {
-      expect(syncMock).toHaveBeenCalledTimes(1);
+      expect(recoverMock).toHaveBeenCalledWith({
+        role: "student",
+        versionId: EVIDENCE_VERSION_ID,
+      });
     });
-    expect(syncMock).toHaveBeenCalledWith({
-      role: "student",
-      versionId: EVIDENCE_VERSION_ID,
-      doc: SHORT_DOC,
+    expect(docMock).toHaveBeenCalledTimes(1); // 仅首次打开下载过（重建自拉正文在 mock 内）
+    await waitFor(() => {
+      expect(screen.queryByText(/AI 分析图片缺失/)).toBeNull();
     });
-    expect(recoverMock).not.toHaveBeenCalled();
-    expect(docMock).toHaveBeenCalledTimes(1); // 仅首次打开下载过
+  });
+
+  it("重建失败：按钮旁显示中文错误，重试成功后清除", async () => {
+    evidenceMock.mockResolvedValue(
+      frozenHead({ images: [imageMetaOf({ state: "failed", hash: null })] }),
+    );
+    docMock.mockResolvedValue(SHORT_DOC);
+    renderView();
+    fireEvent.click(
+      screen.getByRole("button", { name: "第 2 题查看草稿原稿" }),
+    );
+    await waitFor(() => {
+      expect(screen.getByText(/AI 分析图片缺失/)).toBeInTheDocument();
+    });
+
+    recoverMock.mockRejectedValueOnce(new Error("上传失败"));
+    fireEvent.click(screen.getByRole("button", { name: "重建分析图片" }));
+    expect(await screen.findByText("重建失败，请重试")).toBeInTheDocument();
+    // 缺图档位仍在（重建未成功）
+
+    recoverMock.mockResolvedValueOnce([]);
+    evidenceMock.mockResolvedValue(frozenHead());
+    fireEvent.click(screen.getByRole("button", { name: "重建分析图片" }));
+    await waitFor(() => {
+      expect(screen.queryByText("重建失败，请重试")).toBeNull();
+    });
+    await waitFor(() => {
+      expect(screen.queryByText(/AI 分析图片缺失/)).toBeNull();
+    });
+  });
+
+  it("重建期间收起重开（同版本）：迟到的档位刷新仍生效（函数式判据，不做全代际比较）", async () => {
+    const failedHead = frozenHead({
+      images: [imageMetaOf({ state: "failed", hash: null })],
+    });
+    evidenceMock.mockResolvedValue(failedHead); // 打开与重开两次都拿到 failed 头
+    docMock.mockResolvedValue(SHORT_DOC);
+    renderView();
+    fireEvent.click(
+      screen.getByRole("button", { name: "第 2 题查看草稿原稿" }),
+    );
+    await waitFor(() => {
+      expect(screen.getByText(/AI 分析图片缺失/)).toBeInTheDocument();
+    });
+
+    // 重建挂起（可控 deferred）→ 收起 → 重开（缓存命中，仍缺图）
+    let resolveRecover: () => void = () => {};
+    recoverMock.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        resolveRecover = resolve;
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "重建分析图片" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "收起第 2 题草稿原稿" }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "第 2 题查看草稿原稿" }),
+    );
+    await waitFor(() => {
+      expect(screen.getByText(/AI 分析图片缺失/)).toBeInTheDocument();
+    });
+
+    // 重建完成：refetch 拿 ready 头 → 刷新落在重开后的 ready 面板上
+    evidenceMock.mockResolvedValue(frozenHead());
+    resolveRecover();
     await waitFor(() => {
       expect(screen.queryByText(/AI 分析图片缺失/)).toBeNull();
     });
@@ -387,6 +454,16 @@ describe("派生图状态：正文待图 / 缺图 + 重建", () => {
     await openPanel({ head: frozenHead({ images: [] }), doc: docOf([]) });
     expect(screen.getByAltText(/草稿原稿/)).toBeInTheDocument();
     expect(screen.queryByText(/AI 分析图片/)).toBeNull();
+  });
+
+  it("有笔迹但无派生图行：查看语境按缺图档位给重建入口（非「待生成」）", async () => {
+    await openPanel({ head: frozenHead({ images: [] }), doc: SHORT_DOC });
+    expect(screen.getByAltText(/草稿原稿/)).toBeInTheDocument();
+    expect(screen.getByText(/AI 分析图片缺失/)).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "重建分析图片" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/AI 分析图片待生成/)).toBeNull();
   });
 });
 
@@ -444,15 +521,37 @@ describe("教师角色分派", () => {
     );
     expect(docMock).toHaveBeenCalledWith("teacher", EVIDENCE_VERSION_ID);
 
-    syncMock.mockResolvedValueOnce([]);
+    recoverMock.mockResolvedValueOnce([]);
     fireEvent.click(screen.getByRole("button", { name: "重建分析图片" }));
     await waitFor(() => {
-      expect(syncMock).toHaveBeenCalledWith({
+      expect(recoverMock).toHaveBeenCalledWith({
         role: "teacher",
         versionId: EVIDENCE_VERSION_ID,
-        doc: SHORT_DOC,
       });
     });
+  });
+});
+
+describe("定位变化守卫（防御未来原位导航复用实例）", () => {
+  it("questionId 变化：面板回折叠态、缓存弃用（旧渲染页不带入新题）", async () => {
+    const view = await openPanel();
+    evidenceMock.mockResolvedValue(frozenHead());
+    view.rerender(
+      <NoteOriginalView
+        viewer="student"
+        attemptId={SCOPE.attemptId}
+        questionId="another-q"
+        ariaPrefix="第 2 题"
+        roundLabel="第 1 次课程练习"
+      />,
+    );
+    // 回折叠态：只剩入口按钮（无面板、无图片）
+    expect(
+      screen.getByRole("button", { name: "第 2 题查看草稿原稿" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByAltText(/草稿原稿/)).toBeNull();
+    // 旧 URL 已回收
+    expect(revokedCount).toBe(1);
   });
 });
 

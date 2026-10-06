@@ -422,7 +422,6 @@ function PendingCard({
           viewer="teacher"
           attemptId={card.attemptId}
           questionId={card.questionId}
-          ariaPrefix="本题"
           roundLabel={attemptRoundLabel(card.sourceType, card.attemptNo)}
         />
       )}

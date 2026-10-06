@@ -26,11 +26,8 @@
 import type { NoteDoc, NoteImageMeta, NoteImageSpec } from "@tutor/contract";
 import { paddedStrokeBoxesOf } from "@/features/ink/engine/bounds.ts";
 import { parseNoteDocOrThrow } from "@/features/notes/note-fixtures";
-import {
-  fetchNoteDocumentApi,
-  type NoteRole,
-  postNoteImageApi,
-} from "@/lib/api";
+import { type NoteRole, postNoteImageApi } from "@/lib/api";
+import { fetchNoteDocumentApi } from "@/lib/note-endpoints";
 import {
   SerialTaskQueue,
   type SerialTaskQueueStats,

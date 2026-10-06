@@ -1118,32 +1118,6 @@ export function fetchTeacherNoteDocumentApi(
   );
 }
 
-// ---------- T6R.11：note 域读端点的角色单点分派（对齐 postNoteImageApi 先例） ----------
-
-/**
- * 只读证据头的角色分派（学生②本人历史权限 / 教师⑥域链，宽口径端点）：
- * 原稿查看等双角色消费方经此单点取对端实现，不在调用方手写三元。
- */
-export function fetchNoteEvidenceApi(
-  role: NoteRole,
-  attemptId: string,
-  questionId: string,
-): Promise<NoteHeadData> {
-  return role === "student"
-    ? fetchStudentNoteEvidenceApi(attemptId, questionId)
-    : fetchTeacherNoteEvidenceApi(attemptId, questionId);
-}
-
-/** 版本文档的角色分派（学生③/教师⑦ gzip 直出同口径） */
-export function fetchNoteDocumentApi(
-  role: NoteRole,
-  versionId: string,
-): Promise<unknown> {
-  return role === "student"
-    ? fetchStudentNoteDocumentApi(versionId)
-    : fetchTeacherNoteDocumentApi(versionId);
-}
-
 /**
  * 学生端派生图 PNG 的 URL（T6R.5 ④；<img src> 直出，同源请求自动带会话
  * Cookie，404 由 <img> 的 onerror 兜底）。带 .png 后缀（与 ink PNG 的

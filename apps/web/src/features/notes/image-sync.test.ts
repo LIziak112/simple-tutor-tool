@@ -20,7 +20,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/api", () => ({
   postNoteImageApi: vi.fn(),
-  // T6R.11 起 recoverNoteImages 经角色分派器 fetchNoteDocumentApi 读正文
+}));
+// T6R.11 起 recoverNoteImages 经 lib/note-endpoints 的角色分派器读正文
+vi.mock("@/lib/note-endpoints", () => ({
   fetchNoteDocumentApi: vi.fn(),
 }));
 
@@ -43,7 +45,8 @@ import {
 } from "@/features/notes/image-sync.ts";
 import type { RenderedNotePage } from "@/features/notes/render-note.ts";
 import { forEachRenderedNotePage } from "@/features/notes/render-note.ts";
-import { fetchNoteDocumentApi, postNoteImageApi } from "@/lib/api";
+import { postNoteImageApi } from "@/lib/api";
+import { fetchNoteDocumentApi } from "@/lib/note-endpoints";
 import { SerialTaskQueue } from "@/lib/serial-task-queue.ts";
 
 const VERSION_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa0003";
