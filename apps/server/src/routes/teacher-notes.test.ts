@@ -15,12 +15,13 @@ import {
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import {
   makeNotePng,
-  noteImageForm,
-  putNoteVersion,
+  postNoteImage,
+  putNoteOk,
 } from "../test/note-fixtures.ts";
 import {
   createStudent,
   extractSessionToken,
+  freshNoteAttempt,
   insertEvidence,
   loginStudent,
 } from "../test/note-world.ts";
@@ -120,64 +121,38 @@ beforeAll(async () => {
   bStudentCookie = await loginStudent(app, "李四");
 });
 
-/** 布置作业给指定教师的学生并开卷（教师 cookie、其域内单元与学生 cookie 配对） */
-async function freshAttempt(
+/** 布置作业给指定教师的学生并开卷（教师域内单元选择 + 组装收敛在 freshNoteAttempt） */
+function freshAttempt(
   teacherC: string,
   studentId: string,
   studentCookie: string,
 ): Promise<string> {
-  const createRes = await app.request("/api/teacher/assignments", {
-    method: "POST",
-    headers: { "content-type": "application/json", cookie: teacherC },
-    body: JSON.stringify({
-      unitIds: [teacherC === teacherCookie ? unitId : bUnitId],
-      studentIds: [studentId],
-    }),
-  });
-  expect(createRes.status).toBe(201);
-  const assignmentId = (
-    (await createRes.json()) as { data: { assignments: { id: string }[] } }
-  ).data.assignments[0]?.id;
-  if (assignmentId === undefined) throw new Error("布置作业响应缺少作业 id");
-  const attemptRes = await app.request(
-    `/api/student/assignments/${assignmentId}/attempt`,
-    { method: "POST", headers: { cookie: studentCookie } },
+  return freshNoteAttempt(
+    app,
+    teacherC,
+    teacherC === teacherCookie ? unitId : bUnitId,
+    [studentId],
+    studentCookie,
   );
-  expect(attemptRes.status).toBe(200);
-  return ((await attemptRes.json()) as { data: { id: string } }).data.id;
 }
 
-/** 学生侧 PUT 草稿正文（组装收敛在 putNoteVersion），断言 200 取 versionId */
-async function putNote(
+/** 学生侧 PUT 草稿正文（组装收敛在 putNoteOk） */
+function putNote(
   studentCookie: string,
   attemptId: string,
   questionId: string,
 ): Promise<string> {
-  const { status, versionId } = await putNoteVersion(
-    app,
-    studentCookie,
-    attemptId,
-    questionId,
-  );
-  expect(status).toBe(200);
-  if (versionId === undefined) throw new Error("上传成功但缺少 versionId");
-  return versionId;
+  return putNoteOk(app, studentCookie, attemptId, questionId);
 }
 
-/** 学生端补图 POST（multipart 组装收敛在 noteImageForm） */
+/** 学生端补图 POST（学生路由前缀；收敛在 postNoteImage） */
 function studentPostImage(
   versionId: string,
   png: Uint8Array,
   cookie: string,
   options: { pixelWidth?: number; pixelHeight?: number } = {},
 ): Promise<Response> {
-  return Promise.resolve(
-    app.request(`/api/student/note-versions/${versionId}/images`, {
-      method: "POST",
-      headers: { cookie },
-      body: noteImageForm(png, options),
-    }),
-  );
+  return postNoteImage(app, "student", versionId, png, cookie, options);
 }
 
 /** 教师端补图 POST（⑧：教师为学生版本重建派生图；pixel 声明与 PNG IHDR 一致） */
@@ -187,13 +162,7 @@ function teacherPostImage(
   cookie: string = teacherCookie,
   options: { pixelWidth?: number; pixelHeight?: number } = {},
 ): Promise<Response> {
-  return Promise.resolve(
-    app.request(`/api/teacher/note-versions/${versionId}/images`, {
-      method: "POST",
-      headers: { cookie },
-      body: noteImageForm(png, options),
-    }),
-  );
+  return postNoteImage(app, "teacher", versionId, png, cookie, options);
 }
 
 // 会话三件套与 insertEvidence（带 state 版）共享自 src/test/note-world.ts（复审⑧）

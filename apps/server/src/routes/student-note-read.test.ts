@@ -15,10 +15,7 @@ import pino from "pino";
 import { beforeAll, describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client.ts";
-import {
-  noteImages as noteImagesTable,
-  notes as notesTable,
-} from "../db/schema.ts";
+import { noteImages as noteImagesTable } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { canonicalNoteJson } from "../services/note-service.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
@@ -26,14 +23,19 @@ import {
   makeNotePng,
   noteDoc,
   noteImageForm,
+  type PutNoteOptions,
+  postNoteImage,
   putNoteForm,
+  putNoteOk,
   putNoteVersion,
 } from "../test/note-fixtures.ts";
 import {
   createStudent,
   extractSessionToken,
+  freshNoteAttempt,
   insertEvidence,
   loginStudent,
+  noteRowOf,
 } from "../test/note-world.ts";
 import { submitAttemptRequest } from "../test/submit-revisions";
 
@@ -108,50 +110,25 @@ beforeAll(async () => {
   bCookie = await loginStudent(app, "李四");
 });
 
-/** 每测试取新 attempt（默认张三；可换学生，跨学生引用测试用） */
-async function freshAttempt(studentIds: string[] = [aId]): Promise<string> {
-  const createRes = await app.request("/api/teacher/assignments", {
-    method: "POST",
-    headers: { "content-type": "application/json", cookie: teacherCookie },
-    body: JSON.stringify({ unitIds: [unitId], studentIds }),
-  });
-  expect(createRes.status).toBe(201);
-  const assignmentId = (
-    (await createRes.json()) as { data: { assignments: { id: string }[] } }
-  ).data.assignments[0]?.id;
-  if (assignmentId === undefined) throw new Error("布置作业响应缺少作业 id");
-  const cookie = studentIds[0] === bId ? bCookie : aCookie;
-  const attemptRes = await app.request(
-    `/api/student/assignments/${assignmentId}/attempt`,
-    { method: "POST", headers: { cookie } },
+/** 每测试取新 attempt（默认张三；可换学生，跨学生引用测试用——组装在 freshNoteAttempt） */
+function freshAttempt(studentIds: string[] = [aId]): Promise<string> {
+  return freshNoteAttempt(
+    app,
+    teacherCookie,
+    unitId,
+    studentIds,
+    studentIds[0] === bId ? bCookie : aCookie,
   );
-  expect(attemptRes.status).toBe(200);
-  return ((await attemptRes.json()) as { data: { id: string } }).data.id;
 }
 
-interface PutNoteOptions {
-  baseRevision?: number;
-  mutationId?: string;
-}
-
-/** PUT 草稿正文（T6R.4 写入口），断言 200 并返回回执里的 versionId */
-async function putNote(
+/** PUT 草稿正文（张三），断言 200 取 versionId（收敛在 putNoteOk） */
+function putNote(
   attemptId: string,
   questionId: string,
   strokes = 1,
   options: PutNoteOptions = {},
 ): Promise<string> {
-  const { status, versionId } = await putNoteVersion(
-    app,
-    aCookie,
-    attemptId,
-    questionId,
-    strokes,
-    options,
-  );
-  expect(status).toBe(200);
-  if (versionId === undefined) throw new Error("上传成功但缺少 versionId");
-  return versionId;
+  return putNoteOk(app, aCookie, attemptId, questionId, strokes, options);
 }
 
 interface PostImageOptions {
@@ -162,36 +139,23 @@ interface PostImageOptions {
   cookie?: string;
 }
 
-/** POST 补派生图（multipart 组装收敛在 noteImageForm） */
+/** POST 补派生图（学生端；组装收敛在 postNoteImage/noteImageForm） */
 function postImage(
   versionId: string,
   png: Uint8Array,
   options: PostImageOptions = {},
 ): Promise<Response> {
-  return Promise.resolve(
-    app.request(`/api/student/note-versions/${versionId}/images`, {
-      method: "POST",
-      headers: { cookie: options.cookie ?? aCookie },
-      body: noteImageForm(png, options),
-    }),
+  return postNoteImage(
+    app,
+    "student",
+    versionId,
+    png,
+    options.cookie ?? aCookie,
+    options,
   );
 }
 
-/** 该 attempt 该题的 scratch 笔记行 */
-function noteRowOf(attemptId: string, questionId: string) {
-  return db
-    .select()
-    .from(notesTable)
-    .where(
-      and(
-        eq(notesTable.attemptId, attemptId),
-        eq(notesTable.questionId, questionId),
-      ),
-    )
-    .get();
-}
-
-// 会话三件套与 insertEvidence 共享自 src/test/note-world.ts（复审⑧）
+// noteRowOf / 会话三件套 / insertEvidence 共享自 src/test/note-world.ts（复审⑧⑭）
 
 // ---------- 鉴权矩阵 ----------
 
@@ -541,7 +505,7 @@ describe("版本文档与图片字节直出", () => {
     const imageId = ((await imageRes.json()) as { data: { imageId: string } })
       .data.imageId;
 
-    const noteRow = noteRowOf(attemptId, Q.solve);
+    const noteRow = noteRowOf(db, attemptId, Q.solve);
     if (noteRow === undefined) throw new Error("缺少 notes 行");
     const noteRoot = join(dataDir, "blobs", "notes", noteRow.id);
     for (const name of readdirSync(noteRoot)) {
@@ -746,7 +710,7 @@ describe("补图上传校验", () => {
   it("同版本派生图合计超 8MiB（跨 spec 全槽位）→ 413；槽位 upsert 替换后旧文件回收", async () => {
     const attemptId = await freshAttempt();
     const versionId = await putNote(attemptId, Q.solve);
-    const noteRow = noteRowOf(attemptId, Q.solve);
+    const noteRow = noteRowOf(db, attemptId, Q.solve);
     if (noteRow === undefined) throw new Error("缺少 notes 行");
     const noteRoot = join(dataDir, "blobs", "notes", noteRow.id);
 
@@ -822,7 +786,7 @@ describe("补图上传校验", () => {
   it("聚合限额跨 spec 计（复审①回归）：thumbnail 已满额时 analysis 也 413", async () => {
     const attemptId = await freshAttempt();
     const versionId = await putNote(attemptId, Q.solve);
-    const noteRow = noteRowOf(attemptId, Q.solve);
+    const noteRow = noteRowOf(db, attemptId, Q.solve);
     if (noteRow === undefined) throw new Error("缺少 notes 行");
 
     // thumbnail 0 号槽占满 8MiB（旧实现的 eq(spec) 漏算它——只统计同 spec 时

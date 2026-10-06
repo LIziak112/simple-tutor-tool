@@ -153,6 +153,52 @@ export async function putNoteVersion(
   return { status: res.status, versionId: data.data.versionId };
 }
 
+/**
+ * PUT 一版草稿正文，断言 200 并返回回执里的 versionId（两路由测试文件的
+ * 高频断言路径归一——复审轮⑭）。
+ */
+export async function putNoteOk(
+  app: TestApp,
+  cookie: string | undefined,
+  attemptId: string,
+  questionId: string,
+  strokes = 1,
+  options: PutNoteOptions = {},
+): Promise<string> {
+  const { status, versionId } = await putNoteVersion(
+    app,
+    cookie,
+    attemptId,
+    questionId,
+    strokes,
+    options,
+  );
+  if (status !== 200) throw new Error(`PUT 草稿失败：${status}`);
+  if (versionId === undefined) throw new Error("上传成功但缺少 versionId");
+  return versionId;
+}
+
+/**
+ * POST 补图（学生 ⑤ / 教师 ⑧ 同形态；prefix 决定路由前缀——三胞胎归一，
+ * 复审轮⑭）。multipart 组装在 noteImageForm。
+ */
+export function postNoteImage(
+  app: TestApp,
+  prefix: "student" | "teacher",
+  versionId: string,
+  png: Uint8Array,
+  cookie: string,
+  options: NoteImageFormOptions = {},
+): Promise<Response> {
+  return Promise.resolve(
+    app.request(`/api/${prefix}/note-versions/${versionId}/images`, {
+      method: "POST",
+      headers: { cookie },
+      body: noteImageForm(png, options),
+    }),
+  );
+}
+
 export interface NoteImageFormOptions {
   spec?: string;
   pageIndex?: number | string;
