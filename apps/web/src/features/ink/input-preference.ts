@@ -44,11 +44,7 @@ export function onSessionInputPreferenceChange(
   };
 }
 
-/** 恢复默认（测试隔离专用；生产代码不得调用） */
+/** 恢复默认（测试隔离专用；生产代码不得调用）。委托 set——同值幂等语义复用 */
 export function resetSessionInputPreference(): void {
-  const prev = current;
-  current = "pen";
-  if (prev !== "pen") {
-    for (const cb of [...listeners]) cb("pen");
-  }
+  setSessionInputPreference("pen");
 }

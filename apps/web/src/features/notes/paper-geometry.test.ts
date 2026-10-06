@@ -1,13 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { NOTE_PAPER_GRID_SPACING_LOGICAL } from "@/features/ink/engine/paper-style.ts";
+import {
+  NOTE_PAPER_GRID_SPACING_LOGICAL,
+  PAPER_GROW_STEP_CSS_PX,
+  PAPER_GROW_TRIGGER_CSS_PX,
+} from "@/features/ink/engine/paper-style.ts";
 import type { InkStroke } from "@/features/ink/engine/types.ts";
 import {
   clampedShrinkPaperHeight,
   cssHeightToLogical,
   grownPaperHeight,
   NOTE_PAPER_SHRINK_MARGIN_LOGICAL,
-  PAPER_GROW_STEP_CSS_PX,
-  PAPER_GROW_TRIGGER_CSS_PX,
   paperCssHeight,
   paperScale,
   strokesBottomLogical,

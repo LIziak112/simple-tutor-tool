@@ -38,8 +38,11 @@ import {
   createProgrammaticAtrament,
   replayAtramentStroke,
 } from "@/features/ink/engine/atrament-adapter.ts";
-import type { StrokeBounds } from "@/features/ink/engine/bounds.ts";
-import { paddedStrokeBoxesOf } from "@/features/ink/engine/bounds.ts";
+import {
+  paddedStrokeBoxesOf,
+  type StrokeBounds,
+  unionOfBoxes,
+} from "@/features/ink/engine/bounds.ts";
 import { canvasToPngBlob } from "@/features/ink/engine/canvas-png.ts";
 import {
   NOTE_PAPER_BG_COLOR,
@@ -49,10 +52,9 @@ import {
 } from "@/features/ink/engine/paper-style.ts";
 import { INK_LOGICAL_WIDTH } from "@/features/ink/engine/types.ts";
 
-// paddedStrokeBoxesOf 已下沉 engine/bounds.ts（复审④，签名收窄为 strokes
-// 数组）；此处 re-export 维持既有导入路径兼容。纸张常量集的 re-export
-// 垫片已删（复审⑤）：公共出口唯一为 engine/paper-style，消费方直接改引。
-export { paddedStrokeBoxesOf } from "@/features/ink/engine/bounds.ts";
+// paddedStrokeBoxesOf / unionOfBoxes 已下沉 engine/bounds.ts（复审④⑫，
+// 签名收窄为 strokes 数组）；re-export 垫片已删（复审⑬）——公共出口唯一为
+// engine/bounds 与 engine/paper-style，消费方直接改引。
 
 // ---------- 渲染规格常量（全部暂定，真机定标后修订） ----------
 
@@ -119,22 +121,7 @@ export interface RenderedNotePage extends NotePagePlan {
   blob: Blob;
 }
 
-/** 逐笔包围盒数组的并集（空数组/全空笔画返回 null） */
-function unionOfBoxes(boxes: Array<StrokeBounds | null>): StrokeBounds | null {
-  let minX = Number.POSITIVE_INFINITY;
-  let minY = Number.POSITIVE_INFINITY;
-  let maxX = Number.NEGATIVE_INFINITY;
-  let maxY = Number.NEGATIVE_INFINITY;
-  for (const b of boxes) {
-    if (b === null) continue;
-    if (b.minX < minX) minX = b.minX;
-    if (b.minY < minY) minY = b.minY;
-    if (b.maxX > maxX) maxX = b.maxX;
-    if (b.maxY > maxY) maxY = b.maxY;
-  }
-  if (minX === Number.POSITIVE_INFINITY) return null;
-  return { minX, minY, maxX, maxY };
-}
+/** 逐笔包围盒数组的并集实现已下沉 engine/bounds.ts（unionOfBoxes，复审⑫） */
 
 /**
  * 全稿笔迹包围盒（**含每笔半线宽**：粗笔/荧光笔边缘不被裁切，任务验收项

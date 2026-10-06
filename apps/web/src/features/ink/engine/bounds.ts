@@ -45,3 +45,26 @@ export function paddedStrokeBoxesOf(
 ): Array<StrokeBounds | null> {
   return strokes.map((s) => strokeBounds(s, s.weight / 2));
 }
+
+/**
+ * 包围盒数组的并集（空数组/全空槽位返回 null）。T6R.7 自 render-note
+ * 下沉（复审⑫）：「多盒并集」是几何原语，与逐盒投影同居 engine/bounds——
+ * 渲染器的全稿包围盒与纸张几何的极值折叠共用同一份。
+ */
+export function unionOfBoxes(
+  boxes: Array<StrokeBounds | null>,
+): StrokeBounds | null {
+  let minX = Number.POSITIVE_INFINITY;
+  let minY = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let maxY = Number.NEGATIVE_INFINITY;
+  for (const b of boxes) {
+    if (b === null) continue;
+    if (b.minX < minX) minX = b.minX;
+    if (b.minY < minY) minY = b.minY;
+    if (b.maxX > maxX) maxX = b.maxX;
+    if (b.maxY > maxY) maxY = b.maxY;
+  }
+  if (minX === Number.POSITIVE_INFINITY) return null;
+  return { minX, minY, maxX, maxY };
+}

@@ -27,7 +27,7 @@
  * 直增，属旧作答链路兼容语义）。纯函数、无 DOM。
  */
 import { NOTE_PAPER_HEIGHT_MAX } from "@tutor/contract";
-import { paddedStrokeBoxesOf } from "@/features/ink/engine/bounds.ts";
+import { strokeBounds } from "@/features/ink/engine/bounds.ts";
 import { fromLogical, toLogical } from "@/features/ink/engine/normalize.ts";
 import {
   NOTE_PAPER_GRID_SPACING_LOGICAL,
@@ -40,11 +40,8 @@ import {
 } from "@/features/ink/engine/types.ts";
 
 // 加高 UX 常量与 InkPad 同源（engine/paper-style，复审①）：旧作答链路
-// （CSS px 直增）与新草稿链路（换算逻辑单位）共用同一组数值。
-export {
-  PAPER_GROW_STEP_CSS_PX,
-  PAPER_GROW_TRIGGER_CSS_PX,
-} from "@/features/ink/engine/paper-style.ts";
+// （CSS px 直增）与新草稿链路（换算逻辑单位）共用同一组数值；公共出口
+// 唯一为 engine/paper-style（re-export 垫片已删，复审⑬——消费方直引）。
 
 /**
  * 缩小下限留白（逻辑单位）：**派生自格线间距**（一格留白，复审③）——
@@ -113,13 +110,16 @@ export function grownPaperHeight(input: {
 
 /**
  * 全部笔画的最低点（逻辑坐标，**含每笔半线宽**）；空稿返回 null。
- * 复用 paddedStrokeBoxesOf（engine/bounds，复审④）：半线宽折叠全仓一份。
+ * 单趟 maxY 折叠（零分配，复审⑫）：等价于 paddedStrokeBoxesOf 逐盒并集
+ * 的 maxY（unionOfBoxes(boxes).maxY），只是不物化整盒数组——折叠核心仍
+ * 是 engine/bounds 的 strokeBounds（半线宽口径全仓一份）。
  */
 export function strokesBottomLogical(
   strokes: readonly InkStroke[],
 ): number | null {
   let bottom: number | null = null;
-  for (const bb of paddedStrokeBoxesOf(strokes)) {
+  for (const s of strokes) {
+    const bb = strokeBounds(s, s.weight / 2);
     if (bb && (bottom === null || bb.maxY > bottom)) bottom = bb.maxY;
   }
   return bottom;

@@ -462,14 +462,18 @@ export function createAtramentSurface(
   }
 
   function onPointerMove(e: PointerEvent): void {
-    // 悬停预览圈：Apple Pencil 悬停（buttons===0）显示笔尖位置，不落墨
-    if (hoverDot && machine.activePointerId === null) {
-      if (e.pointerType === "pen" && e.buttons === 0) {
-        const { x, y } = eventToCss(e);
-        hoverDot.style.display = "block";
-        hoverDot.style.left = `${x}px`;
-        hoverDot.style.top = `${y}px`;
-      }
+    // 悬停预览圈：Apple Pencil 悬停（buttons===0）且无活动笔时显示笔尖位置，
+    // 不落墨（双条件合并，复审⑬）
+    if (
+      hoverDot &&
+      machine.activePointerId === null &&
+      e.pointerType === "pen" &&
+      e.buttons === 0
+    ) {
+      const { x, y } = eventToCss(e);
+      hoverDot.style.display = "block";
+      hoverDot.style.left = `${x}px`;
+      hoverDot.style.top = `${y}px`;
     }
 
     // 只有活动指针的移动被采样：零分配守卫（复审⑦，与状态机 pointermove
