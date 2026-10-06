@@ -12,8 +12,12 @@ import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { NoteLayer } from "@/features/notes/NoteLayer";
 import {
   effectiveNoteLayout,
+  NOTE_PAPER_COLUMN_STYLE,
+  NOTE_QUESTION_COLUMN_STYLE,
+  NOTE_SIDE_ROW_STYLE,
+  NOTE_STACK_ROW_STYLE,
   useNoteLayoutPreference,
-  useObservedCssWidth,
+  useNoteSideUsable,
 } from "@/features/notes/note-layout";
 import {
   letterOf,
@@ -284,12 +288,13 @@ export function AttemptQuestionCard({
 }) {
   const plainAnswer = (next: StudentAnswer) => onAnswer(next);
 
-  // T6R.9 草稿层：非手写题 + 作答语境（attemptId）；布局按题卡实测宽度
-  // （auto 档宽容器 side / 窄容器 below；显式偏好见 note-layout）
+  // T6R.9 草稿层：非手写题 + 作答语境（attemptId）。布局按题卡**量化分栏
+  // 结论**（复审④：ResizeObserver 回调只在跨阈值翻转时 setState——旋转/
+  // 分屏拖动不再每帧整卡重渲染；显式偏好不订阅观察）
   const articleRef = useRef<HTMLElement | null>(null);
-  const cardWidth = useObservedCssWidth(articleRef);
   const layoutPref = useNoteLayoutPreference();
-  const layout = effectiveNoteLayout(layoutPref, cardWidth);
+  const sideUsable = useNoteSideUsable(articleRef, layoutPref === "auto");
+  const layout = effectiveNoteLayout(layoutPref, sideUsable);
   const [noteOpen, setNoteOpen] = useState(false);
   const noteLayer =
     attemptId !== undefined && !HANDWRITTEN_TYPES.has(question.type) ? (
@@ -394,8 +399,11 @@ export function AttemptQuestionCard({
     </>
   );
 
-  // 侧栏分栏（方案 §4.3 初值 55/45；gap-6=24px 与 NOTE_LAYOUT_GAP_CSS_PX 同值）：
-  // 仅草稿展开且容器够宽时两列；收起/窄容器回到题干下方整宽（below）
+  // 侧栏分栏（方案 §4.3 初值 55/45，常量渲染见 note-layout 导出——复审⑨）：
+  // 仅草稿展开且容器够宽时两列；收起/窄容器回到题干下方整宽（below）。
+  // 双列容器**恒定渲染**、sideBySide 只切 data-layout 与样式（复审③）：
+  // 开合/布局切换不重建题干子树（RichMarkdown 重解析、输入焦点、草稿
+  // 引擎全保留）
   const sideBySide = noteLayer !== null && noteOpen && layout === "side";
 
   return (
@@ -405,19 +413,25 @@ export function AttemptQuestionCard({
       aria-label={`第 ${index + 1} 题`}
     >
       <QuestionMeta index={index} question={question} />
-      {sideBySide ? (
-        <div data-slot="note-side-columns" className="flex items-start gap-6">
-          <div className="flex w-[55%] min-w-0 flex-col gap-4">
-            {questionBody}
-          </div>
-          <div className="min-w-0 flex-1">{noteLayer}</div>
-        </div>
-      ) : (
-        <>
+      <div
+        data-slot="note-body-row"
+        data-layout={sideBySide ? "side" : "below"}
+        className="flex"
+        style={sideBySide ? NOTE_SIDE_ROW_STYLE : NOTE_STACK_ROW_STYLE}
+      >
+        <div
+          className="flex min-w-0 flex-col gap-4"
+          style={sideBySide ? NOTE_QUESTION_COLUMN_STYLE : undefined}
+        >
           {questionBody}
+        </div>
+        <div
+          className="min-w-0"
+          style={sideBySide ? NOTE_PAPER_COLUMN_STYLE : undefined}
+        >
           {noteLayer}
-        </>
-      )}
+        </div>
+      </div>
     </article>
   );
 }
