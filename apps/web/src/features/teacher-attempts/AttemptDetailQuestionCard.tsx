@@ -5,6 +5,7 @@ import { ChevronDown, Clock3, Lightbulb, PenLine } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
+  HANDWRITTEN_TYPES,
   formatReferenceAnswers,
   formatStudentAnswer,
   letterOf,
@@ -12,6 +13,7 @@ import {
   QUESTION_TYPE_LABELS,
 } from "@/features/attempt/answer-format";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
+import { NoteOriginalView } from "@/features/notes/NoteOriginalView";
 import { AttemptQuestionMarkEditor } from "./AttemptQuestionMarkEditor";
 import { InkLightbox, type InkViewTab, InkViewTabs } from "./InkLightbox";
 import { InkReplayPane } from "./InkReplayPane";
@@ -249,10 +251,16 @@ function VerdictSection({
 export function AttemptDetailQuestionCard({
   question,
   isDraft,
+  attemptId,
+  roundLabel,
 }: {
   question: TeacherAttemptDetailQuestion;
   /** draft（进行中）：判定区统一「未交卷」，不渲染参考答案与详解（D5） */
   isDraft: boolean;
+  /** 所属 attempt（T6R.11 原稿查看按 (attemptId, questionId) 定位证据行） */
+  attemptId: string;
+  /** 轮次标注（T6R.11 原稿查看面板显示所属轮次） */
+  roundLabel: string;
 }) {
   return (
     <article
@@ -294,6 +302,18 @@ export function AttemptDetailQuestionCard({
 
       {/* 手写笔迹（懒加载 + 点击放大） */}
       <InkThumbnail question={question} />
+
+      {/* 草稿原稿查看入口（T6R.11）：非手写题（手写题没有草稿层，笔迹区
+          另见上方）；教师域链授权在服务端 evidence 读端点把门 */}
+      {!HANDWRITTEN_TYPES.has(question.type) && (
+        <NoteOriginalView
+          role="teacher"
+          attemptId={attemptId}
+          questionId={question.questionId}
+          ariaPrefix={`第 ${question.no} 题`}
+          roundLabel={roundLabel}
+        />
+      )}
 
       {/* 学生答案 + 参考答案（draft 无参考答案对比，D5） */}
       <div className="flex flex-col gap-1.5 rounded-lg bg-muted/40 px-4 py-3 text-sm sm:flex-row sm:gap-6">

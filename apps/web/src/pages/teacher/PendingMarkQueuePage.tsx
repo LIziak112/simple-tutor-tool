@@ -18,13 +18,16 @@ import { Link, useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
 import { useTeacherAssignments } from "@/features/assignments/assignment-queries";
 import {
+  attemptRoundLabel,
   formatReferenceAnswers,
+  HANDWRITTEN_TYPES,
   letterOf,
   QUESTION_TYPE_BADGE_CLASS,
   QUESTION_TYPE_LABELS,
 } from "@/features/attempt/answer-format";
 import { useTeacherCourses } from "@/features/courses/course-queries";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
+import { NoteOriginalView } from "@/features/notes/NoteOriginalView";
 import { useStudents } from "@/features/students/student-queries";
 import { formatActiveSec } from "@/features/teacher-attempts/AttemptDetailQuestionCard";
 import { sourceContextOf } from "@/features/teacher-attempts/attempt-views";
@@ -411,6 +414,18 @@ function PendingCard({
 
       {/* 手写笔迹（懒加载 + 点击放大） */}
       <QueueInkThumbnail card={card} onZoomChange={onZoomChange} />
+
+      {/* 草稿原稿查看入口（T6R.11）：非手写待批题（如人工批改的填空）——
+          教师域链授权在服务端 evidence 读端点把门；轮次标注按来源 */}
+      {!HANDWRITTEN_TYPES.has(card.type) && (
+        <NoteOriginalView
+          role="teacher"
+          attemptId={card.attemptId}
+          questionId={card.questionId}
+          ariaPrefix="本题"
+          roundLabel={attemptRoundLabel(card.sourceType, card.attemptNo)}
+        />
+      )}
 
       {/* 学习行为统计 */}
       <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">

@@ -2,7 +2,7 @@ import type { TeacherAttemptDetailData } from "@tutor/contract";
 import { ArrowLeft, Clock3 } from "lucide-react";
 import { useLocation, useNavigate, useParams } from "react-router";
 import { Button } from "@/components/ui/button";
-import { isAnswered } from "@/features/attempt/answer-format";
+import { isAnswered, attemptRoundLabel } from "@/features/attempt/answer-format";
 import {
   AttemptDetailQuestionCard,
   formatActiveSec,
@@ -199,6 +199,8 @@ function DetailBody({ data }: { data: TeacherAttemptDetailData }) {
               <AttemptDetailQuestionCard
                 question={question}
                 isDraft={isDraft}
+                attemptId={data.attemptId}
+                roundLabel={attemptRoundLabel(data.sourceType, data.attemptNo)}
               />
             </li>
           );

@@ -30,6 +30,22 @@ vi.mock("@/lib/api", async (importOriginal) => {
   };
 });
 
+// T6R.11：原稿查看面板以桩替换（面板行为见 NoteOriginalView.test），此处
+// 只断言待批卡接线——非手写待批题（如人工批改的填空）渲染入口
+vi.mock("@/features/notes/NoteOriginalView", async () => {
+  const { createElement } = await import("react");
+  return {
+    NoteOriginalView: (props: Record<string, unknown>) =>
+      createElement("div", {
+        "data-testid": "note-original-stub",
+        "data-role": String(props.role),
+        "data-attempt": String(props.attemptId),
+        "data-question": String(props.questionId),
+        "data-round": String(props.roundLabel ?? ""),
+      }),
+  };
+});
+
 const mockedMarks = vi.mocked(fetchPendingMarksApi);
 const mockedMark = vi.mocked(markResponseApi);
 const mockedStudents = vi.mocked(fetchStudentsApi);
@@ -294,5 +310,38 @@ describe("PendingMarkQueuePage 三态与空态", () => {
     mockedMarks.mockResolvedValue({ marks: [] } as PendingMarkListData);
     fireEvent.click(screen.getByRole("button", { name: "重试" }));
     expect(await screen.findByText("没有待批题")).toBeInTheDocument();
+  });
+});
+
+// ---------- T6R.11：待批卡草稿原稿查看入口 ----------
+
+describe("待批卡草稿原稿入口（T6R.11）", () => {
+  it("非手写待批题（fill 人工批改）渲染教师原稿入口（attempt 定位 + 轮次标注）；手写题不渲染", async () => {
+    const fillCard = makeCard({
+      responseId: "88888888-8888-4888-8888-888888888882",
+      questionId: "unit-有理数-3",
+      type: "fill",
+      answerText: "1/2",
+      answers: null,
+      ink: null,
+      attemptNo: 2,
+    });
+    mockedMarks.mockResolvedValue({
+      marks: [makeCard(), fillCard],
+    } as PendingMarkListData);
+    renderPage();
+    await screen.findByText("第 1 / 2 张");
+    // 只有一张卡在屏（当前卡 solve 手写）→ J 键翻到第 2 张
+    fireEvent.keyDown(window, { key: "j" });
+    await screen.findByText("第 2 / 2 张");
+    const stubs = screen
+      .getAllByTestId("note-original-stub")
+      .map((el) => el.dataset);
+    expect(stubs).toHaveLength(1);
+    expect(stubs[0]?.role).toBe("teacher");
+    expect(stubs[0]?.attempt).toBe("99999999-9999-4999-8999-999999999991");
+    expect(stubs[0]?.question).toBe("unit-有理数-3");
+    // course 来源 attemptNo=2
+    expect(stubs[0]?.round).toBe("第 2 次课程练习");
   });
 });

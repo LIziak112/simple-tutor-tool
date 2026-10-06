@@ -8,6 +8,22 @@ import { AttemptResultView } from "./AttemptResultView";
  * 逐题 ✓/✗/待批图标、本人答案 vs 参考答案、详解默认折叠、返回首页。
  */
 
+// T6R.11：原稿查看面板以桩替换（面板自身行为见 NoteOriginalView.test），
+// 这里只断言接线——哪些题渲染入口、角色/attempt/题目/轮次标注怎么传
+vi.mock("@/features/notes/NoteOriginalView", async () => {
+  const { createElement } = await import("react");
+  return {
+    NoteOriginalView: (props: Record<string, unknown>) =>
+      createElement("div", {
+        "data-testid": "note-original-stub",
+        "data-role": String(props.role),
+        "data-attempt": String(props.attemptId),
+        "data-question": String(props.questionId),
+        "data-round": String(props.roundLabel ?? ""),
+      }),
+  };
+});
+
 const DATA: AttemptResultData = {
   attempt: {
     id: "55555555-5555-4555-8555-555555555555",
@@ -660,5 +676,64 @@ describe("详解折叠开合回调（T4.0b）", () => {
       [DATA.units[0]?.questions[0]?.questionId, 0, "open"],
       [DATA.units[0]?.questions[0]?.questionId, 0, "close"],
     ]);
+  });
+});
+
+// ---------- T6R.11：结果页「查看本次草稿原稿」入口 ----------
+
+describe("本次草稿原稿入口（T6R.11）", () => {
+  const stubsOf = () =>
+    screen.getAllByTestId("note-original-stub").map((el) => el.dataset);
+
+  it("非手写题逐题渲染入口（学生角色 + 本 attempt 定位 + 题目 id）；手写题不渲染", () => {
+    renderView();
+    const stubs = stubsOf();
+    // DATA 四题：判断/单选/填空非手写（有草稿层），solve 手写（不渲染）
+    expect(stubs.map((s) => s.question)).toEqual([
+      "练习四-1",
+      "练习四-2",
+      "练习四-4",
+    ]);
+    for (const stub of stubs) {
+      expect(stub.role).toBe("student");
+      expect(stub.attempt).toBe(DATA.attempt.id);
+    }
+  });
+
+  it("轮次标注按来源：作业=本次作业、课程=第 n 次课程练习、错题重练=第 n 次错题重练", () => {
+    const assignmentView = renderView(); // DATA 作业来源
+    expect(stubsOf()[0]?.round).toBe("本次作业");
+    assignmentView.unmount();
+
+    const baseUnit = DATA.units[0];
+    const courseData: AttemptResultData = {
+      ...DATA,
+      attempt: {
+        ...DATA.attempt,
+        sourceType: "course",
+        attemptNo: 2,
+      },
+      units: baseUnit === undefined ? [] : [baseUnit],
+      courseName: "初一上",
+    };
+    const { unmount } = render(
+      <AttemptResultView data={courseData} onBackHome={vi.fn()} />,
+    );
+    expect(stubsOf()[0]?.round).toBe("第 2 次课程练习");
+    unmount();
+
+    const wrongData: AttemptResultData = {
+      ...courseData,
+      attempt: { ...courseData.attempt, sourceType: "wrong", attemptNo: 3 },
+    };
+    render(<AttemptResultView data={wrongData} onBackHome={vi.fn()} />);
+    expect(stubsOf()[0]?.round).toBe("第 3 次错题重练");
+  });
+
+  it("未公布（answersReleased=false）入口仍在——学生看自己的草稿不受答案公布 gate 限制", () => {
+    const unreleased: AttemptResultData = { ...DATA, answersReleased: false };
+    render(<AttemptResultView data={unreleased} onBackHome={vi.fn()} />);
+    // 三个非手写题照常渲染入口（不含手写题）
+    expect(stubsOf()).toHaveLength(3);
   });
 });

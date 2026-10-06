@@ -20,6 +20,7 @@ import {
   useNoteSideUsable,
 } from "@/features/notes/note-layout";
 import {
+  HANDWRITTEN_TYPES,
   letterOf,
   QUESTION_TYPE_BADGE_CLASS,
   QUESTION_TYPE_LABELS,
@@ -43,13 +44,6 @@ import { HintPanel } from "./HintPanel";
  * 触控目标全部 ≥44px（ui-conventions）；judge 题干尾部 [[]] 脱敏框剥掉
  * （对错由按钮作答，空框反而误导）。
  */
-
-/** 手写题型：作答 ink 走 HandwrittenControls，不接草稿层 */
-const HANDWRITTEN_TYPES = new Set<QuestionPublic["type"]>([
-  "solve",
-  "apply",
-  "find-error",
-]);
 
 /** 判断题题干尾部的空标记（studentStemMd 投影把 [[正确]] 脱敏成 [[]]） */
 function judgeStemOf(stemMd: string): string {

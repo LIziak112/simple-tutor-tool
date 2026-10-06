@@ -124,6 +124,11 @@ function AttemptResultWithDraftCleanup({
 }) {
   const attemptId = data.attempt.id;
   const navigate = useNavigate();
+  // T6R.9 遗留 watch item（T6R.11 收口）：结果视图同样接线草稿会话——不经
+  // 答题页直达结果页（历史回看/换账号登录）时，模块级会话服务持有当前学生
+  // 身份（登出/切账号的 reset 在 student-auth 统一执行，幂等绑定无害）
+  const me = useStudentMe();
+  useBindNoteSession(me.data);
   useEffect(() => {
     void draftStore.clearDraft(attemptId);
   }, [attemptId]);

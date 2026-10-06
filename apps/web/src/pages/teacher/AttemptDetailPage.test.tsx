@@ -42,6 +42,22 @@ vi.mock("@/lib/api", async (importOriginal) => {
   };
 });
 
+// T6R.11：原稿查看面板以桩替换（面板行为见 NoteOriginalView.test），此处
+// 只断言教师端接线——哪些题渲染、attempt/轮次标注怎么传
+vi.mock("@/features/notes/NoteOriginalView", async () => {
+  const { createElement } = await import("react");
+  return {
+    NoteOriginalView: (props: Record<string, unknown>) =>
+      createElement("div", {
+        "data-testid": "note-original-stub",
+        "data-role": String(props.role),
+        "data-attempt": String(props.attemptId),
+        "data-question": String(props.questionId),
+        "data-round": String(props.roundLabel ?? ""),
+      }),
+  };
+});
+
 const mockedDetail = vi.mocked(fetchTeacherAttemptDetailApi);
 const mockedMark = vi.mocked(markResponseApi);
 const mockedDownload = vi.mocked(downloadTeacherExportCsv);
@@ -479,5 +495,40 @@ describe("AttemptDetailPage 改判/评语内联编辑（T3.2b，D3）", () => {
     expect(
       within(q2.querySelector("dl") as HTMLElement).getByText("未批改"),
     ).toBeInTheDocument();
+  });
+});
+
+// ---------- T6R.11：教师端草稿原稿查看入口 ----------
+
+describe("AttemptDetailPage 草稿原稿入口（T6R.11）", () => {
+  it("非手写题逐题渲染入口（教师角色 + attempt 定位 + 轮次标注）；手写题不渲染", async () => {
+    const solve = makeQuestion({
+      questionId: "q-solve",
+      no: 4,
+      type: "solve",
+      answer: null,
+      autoCorrect: null,
+      finalCorrect: null,
+      answers: undefined,
+      ink: {
+        inkId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        pngUrl: INK_URL,
+        hasStrokes: true,
+      },
+    });
+    mockedDetail.mockResolvedValue(makeDetail({ questions: [...makeDetail().questions, solve] }));
+    renderPage();
+    await screen.findByRole("article", { name: "第 4 题" });
+    const stubs = screen
+      .getAllByTestId("note-original-stub")
+      .map((el) => el.dataset);
+    // 前三题 judge（q1）+ judge（q2）+ judge（q3）非手写；solve 第 4 题不渲染
+    expect(stubs.map((s) => s.question)).toEqual(["q1", "q2", "q3"]);
+    for (const stub of stubs) {
+      expect(stub.role).toBe("teacher");
+      expect(stub.attempt).toBe(ATTEMPT_ID);
+    }
+    // makeDetail：course 来源 attemptNo=2
+    expect(stubs[0]?.round).toBe("第 2 次课程练习");
   });
 });

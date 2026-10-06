@@ -15,6 +15,15 @@ import { QUESTION_TYPE_LABELS as QUESTION_TYPE_LABELS_CONTRACT } from "@tutor/co
 export const QUESTION_TYPE_LABELS: Record<QuestionType, string> =
   QUESTION_TYPE_LABELS_CONTRACT;
 
+/**
+ * 手写题型集合（T6R.11 起收归本共享模块）：作答 ink 走 HandwrittenControls，
+ * 不接草稿层/草稿原稿查看（原查看 AttemptQuestionCard 的本地副本——教师端
+ * 详情/待批卡同样需要该判定，单一事实来源）。
+ */
+export const HANDWRITTEN_TYPES: ReadonlySet<QuestionType> = new Set<
+  QuestionType
+>(["solve", "apply", "find-error"]);
+
 /** 题型徽章配色（按客观/主观两档区分，视觉分组） */
 export const QUESTION_TYPE_BADGE_CLASS: Record<QuestionType, string> = {
   judge: "bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-300",
@@ -40,6 +49,20 @@ export function letterOf(index: number): string {
 export function judgeLabelOf(value: boolean | string): string {
   if (typeof value === "boolean") return value ? "对" : "错";
   return value;
+}
+
+/**
+ * 作答轮次标注（T6R.11 原稿查看面板共用）：课程练习/错题重练带次数
+ * （重练同题后回看历史可分辨第几轮），作业为本次。学生结果视图与教师
+ * 详情/待批卡同口径。
+ */
+export function attemptRoundLabel(
+  sourceType: "course" | "assignment" | "wrong",
+  attemptNo: number,
+): string {
+  if (sourceType === "course") return `第 ${attemptNo} 次课程练习`;
+  if (sourceType === "wrong") return `第 ${attemptNo} 次错题重练`;
+  return "本次作业";
 }
 
 /**
