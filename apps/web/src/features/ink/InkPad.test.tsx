@@ -5,13 +5,19 @@ import type {
   InkChangeReason,
   InkDoc,
   InkEngine,
+  InkInputMode,
   InkToolConfig,
 } from "./engine/index.ts";
+import {
+  getSessionInputPreference,
+  resetSessionInputPreference,
+} from "./input-preference.ts";
 
 /**
  * <InkPad> 工具栏交互测试。
  * jsdom 没有 canvas 2d context，无法实例化真实适配器——引擎模块整体 mock
- * （真实引擎的纯数据层单测见 engine/*.test.ts；输入层须 iPad 真机验证）。
+ * （真实引擎的纯数据层单测见 engine/*.test.ts；输入层接线见
+ * atrament-adapter.test.ts，手感须 iPad 真机验证）。
  */
 
 const mockSetTool = vi.fn();
@@ -19,6 +25,7 @@ const mockUndo = vi.fn();
 const mockRedo = vi.fn();
 const mockClear = vi.fn();
 const mockDestroy = vi.fn();
+const mockSetInputMode = vi.fn();
 let emitChange: ((doc: InkDoc, reason: InkChangeReason) => void) | null = null;
 let mockCanUndo = false;
 let mockCanRedo = false;
@@ -35,6 +42,7 @@ vi.mock("./engine/index.ts", () => ({
       redo: mockRedo,
       clear: mockClear,
       setTool: (tool: InkToolConfig) => mockSetTool(tool),
+      setInputMode: (mode: InkInputMode) => mockSetInputMode(mode),
       on: (
         event: string,
         cb: (doc: InkDoc, reason: InkChangeReason) => void,
@@ -67,11 +75,13 @@ beforeEach(() => {
   emitChange = null;
   mockCanUndo = false;
   mockCanRedo = false;
+  resetSessionInputPreference();
   vi.clearAllMocks();
 });
 
 afterEach(() => {
   cleanup();
+  resetSessionInputPreference();
 });
 
 describe("<InkPad> 工具栏", () => {
@@ -155,5 +165,63 @@ describe("<InkPad> 工具栏", () => {
     expect(onDocChange).toHaveBeenCalledTimes(1);
     unmount();
     expect(mockDestroy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("<InkPad> 输入模式（T6R.7：会话共享偏好）", () => {
+  it("缺省不显示「手指书写」切换，也不向引擎下发 setInputMode（旧作答零变化）", () => {
+    render(<InkPad />);
+    expect(
+      screen.queryByRole("button", { name: /手指书写/ }),
+    ).not.toBeInTheDocument();
+    expect(mockSetInputMode).not.toHaveBeenCalled();
+  });
+
+  it('inputMode="session"：挂载即下发会话偏好（默认 pen）并显示切换按钮；点击切换 finger', () => {
+    render(<InkPad inputMode="session" />);
+    expect(mockSetInputMode).toHaveBeenLastCalledWith("pen");
+    const toggle = screen.getByRole("button", { name: /手指书写/ });
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+
+    fireEvent.click(toggle);
+    expect(getSessionInputPreference()).toBe("finger");
+    expect(mockSetInputMode).toHaveBeenLastCalledWith("finger");
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+
+    // 再点切回 pen
+    fireEvent.click(toggle);
+    expect(getSessionInputPreference()).toBe("pen");
+    expect(mockSetInputMode).toHaveBeenLastCalledWith("pen");
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("跨挂载偏好保持：会话已是 finger 时，新画布挂载直接下发 finger（不重新探测）", () => {
+    const first = render(<InkPad inputMode="session" />);
+    fireEvent.click(screen.getByRole("button", { name: /手指书写/ }));
+    first.unmount();
+
+    mockSetInputMode.mockClear();
+    render(<InkPad inputMode="session" />);
+    // 新挂载的画布（模拟跨题换画布）直接得到 finger，无需再次切换
+    expect(mockSetInputMode).toHaveBeenCalledWith("finger");
+    expect(mockSetInputMode).not.toHaveBeenCalledWith("pen");
+  });
+
+  it("多画布并存：一个画布切换，另一个已挂载画布经订阅即时同步", () => {
+    render(<InkPad inputMode="session" />);
+    const second = render(<InkPad inputMode="session" />);
+    mockSetInputMode.mockClear();
+
+    // 在第二个画布上切换手指书写
+    fireEvent.click(
+      second.getAllByRole("button", { name: /手指书写/ })[0] as HTMLElement,
+    );
+    expect(mockSetInputMode).toHaveBeenCalledWith("finger");
+    // 两个画布的按钮都反映 finger（同一会话状态）
+    for (const btn of [
+      ...screen.getAllByRole("button", { name: /手指书写/ }),
+    ]) {
+      expect(btn).toHaveAttribute("aria-pressed", "true");
+    }
   });
 });

@@ -5,6 +5,7 @@ import {
   Highlighter,
   LoaderCircle,
   PenLine,
+  Pointer,
   Redo2,
   Trash,
   Undo2,
@@ -29,6 +30,12 @@ import {
   type InkPenSize,
   type InkToolType,
 } from "./engine/index.ts";
+import {
+  getSessionInputPreference,
+  type InkSessionInputPreference,
+  onSessionInputPreferenceChange,
+  setSessionInputPreference,
+} from "./input-preference.ts";
 
 /**
  * <InkPad>：手写引擎的 React 外壳（T2.7，架构 §5.4.1 "组件拆为两层"）。
@@ -38,6 +45,10 @@ import {
  * - 每笔结束（含撤销/重做/清空/load）经 onDocChange 上抛 InkDoc 与变化原因
  *   （reason，T4.0b ink_edit_batch 分型；缺省 "stroke"，老回调忽略零影响）；
  * - 自动加高（§5.4.1 绘制层第 4 条）：最后一笔接近答题区底部时自动增高；
+ * - 输入模式（T6R.7，方案 §4.1）：inputMode 缺省 "auto"=旧行为（自动探测，
+ *   手写作答零变化）；"session"=新草稿——订阅会话共享偏好（笔写／手指滚动
+ *   ⇄ 手指书写），工具栏出现「手指书写」切换，多画布经 input-preference
+ *   共享同一状态；
  * - 工具栏触控目标不小于 44px（ui-conventions iPad 硬性要求）。
  */
 export interface InkPadProps {
@@ -55,7 +66,16 @@ export interface InkPadProps {
   onDocChange?: ((doc: InkDoc, reason: InkChangeReason) => void) | undefined;
   /** 引擎实例透出（开发页/草稿保存等需要命令式访问 getData/load/exportPng） */
   engineRef?: React.RefObject<InkEngine | null> | undefined;
+  /**
+   * 输入模式（T6R.7）：缺省 "auto"=旧行为（自动探测，手写作答零变化）；
+   * "session"=新草稿——使用会话共享输入偏好并显示「手指书写」切换
+   * （T6R.9 的 NoteLayer 传入；旧作答组件不传）。
+   */
+  inputMode?: InkPadInputMode;
 }
+
+/** 输入模式接入形态：auto=旧行为；session=会话共享偏好（新草稿） */
+export type InkPadInputMode = "auto" | "session";
 
 /** 自动加高：最后一笔距底部不足该值时加高一步 */
 const GROW_THRESHOLD_PX = 72;
@@ -93,6 +113,7 @@ export function InkPad({
   label = "手写答题区",
   onDocChange,
   engineRef,
+  inputMode = "auto",
 }: InkPadProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   /** 内部引擎实例引用（engineRef prop 为对外透出） */
@@ -116,6 +137,18 @@ export function InkPad({
   const [retryKey, setRetryKey] = useState(0);
   /** 草稿只在挂载时恢复一次：initial 经 ref 取值，引用变化不重建引擎 */
   const initialRef = useRef(initial);
+  /** 会话共享输入偏好（仅 inputMode="session" 使用；多画布同源） */
+  const [sessionPref, setSessionPref] = useState<InkSessionInputPreference>(
+    () => (inputMode === "session" ? getSessionInputPreference() : "pen"),
+  );
+
+  // 会话输入偏好订阅（T6R.7）：挂载间隙的变更先对齐一次，之后任一画布切换
+  // 即时同步到本画布（跨题/重挂载不重新探测——input-preference 会话级状态）
+  useEffect(() => {
+    if (inputMode !== "session") return;
+    setSessionPref(getSessionInputPreference());
+    return onSessionInputPreferenceChange(setSessionPref);
+  }, [inputMode]);
 
   // 引擎创建/销毁（依赖 retryKey 重建）
   // biome-ignore lint/correctness/useExhaustiveDependencies(retryKey): 重试键仅用于强制重建引擎，effect 体内不读取
@@ -179,6 +212,16 @@ export function InkPad({
     };
     // initial 经 initialRef 取值；engineRef 为父组件持有的稳定 ref 对象
   }, [engine, retryKey, engineRef]);
+
+  // 会话偏好 → 引擎（T6R.7）。声明在引擎创建 effect **之后**：挂载时引擎已
+  // 就绪、当前偏好即刻下发（否则首帧 localEngineRef 为 null，pen 值又不再
+  // 变化会导致永不重发）。引擎重建（retryKey）后同样重发；excalidraw 无此
+  // 能力时 setInputMode 不存在，?. 安全降级。
+  // biome-ignore lint/correctness/useExhaustiveDependencies(retryKey): 重试键变化=引擎重建，需重发输入模式，effect 体内不读取
+  useEffect(() => {
+    if (inputMode !== "session") return;
+    localEngineRef.current?.setInputMode?.(sessionPref);
+  }, [inputMode, sessionPref, retryKey]);
 
   // 工具/颜色/粗细变化 → 下发引擎
   useEffect(() => {
@@ -272,6 +315,30 @@ export function InkPad({
           <Hand aria-hidden />
           {engine === "atrament" ? "滚动" : "选择"}
         </Button>
+
+        {/* 输入偏好切换（T6R.7，仅新草稿形态显示）：会话内共享，多画布同源 */}
+        {inputMode === "session" && (
+          <Button
+            type="button"
+            variant={sessionPref === "finger" ? "secondary" : "ghost"}
+            aria-pressed={sessionPref === "finger"}
+            disabled={toolsDisabled}
+            onClick={() =>
+              setSessionInputPreference(
+                sessionPref === "pen" ? "finger" : "pen",
+              )
+            }
+            className={`${toolButtonClass} h-11`}
+            title={
+              sessionPref === "pen"
+                ? "手指书写（无笔设备：手指直接书写；本会话内所有草稿画布生效）"
+                : "切回笔写／手指滚动（本会话内所有草稿画布生效）"
+            }
+          >
+            <Pointer aria-hidden />
+            手指书写
+          </Button>
+        )}
 
         {/* 颜色三选（黑/蓝/红）；荧光笔固定黄色，禁用切换 */}
         {(toolType === "pen" || toolType === "highlighter") && (
