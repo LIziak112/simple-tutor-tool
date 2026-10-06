@@ -5,7 +5,7 @@ import {
   installDraftBackend,
   memoryBackend,
 } from "@/features/attempt/draft-store";
-import { stroke } from "@/features/notes/note-fixtures";
+import { docOf, stroke } from "@/features/notes/note-fixtures";
 import {
   applyServerHead,
   applyServerLoad,
