@@ -814,6 +814,27 @@ describe("T6R.12 LearningPack v2：快照关联、证据与 manifest", () => {
     v2Student = makeStudent(db);
     const v2MediaBytes = fakePng(60, 60);
     v2MediaSrc = saveMedia(dataDir, v2MediaBytes).src;
+    // 引用同一张图（v2MediaSrc）的讲义（C12：同图双源去重夹具）
+    db.insert(lectures)
+      .values({
+        id: v2LectureId,
+        teacherId: TEST_TEACHER_ID,
+        courseId: null,
+        folderId: null,
+        title: "v2 配图讲义",
+        markdown: [
+          "# v2 配图讲义",
+          "",
+          "## 插图节",
+          "",
+          `::image{src="${v2MediaSrc}"}`,
+          "",
+        ].join("\n"),
+        order: 98,
+        updatedAt: "2026-10-01T00:00:00.000Z",
+        deletedAt: null,
+      })
+      .run();
     const stemWithImages = [
       "看图计算：",
       "",
@@ -918,6 +939,9 @@ describe("T6R.12 LearningPack v2：快照关联、证据与 manifest", () => {
       ...overrides,
     });
   }
+
+  /** v2 配图讲义 id（与题目引用同一张图，C12 夹具） */
+  const v2LectureId = "1f9e2c3d-4b5a-6c7e-8f90-abcdefabcdef";
 
   it("v2 全链：pack 过 v2 schema、同 qid 两轮一一配对、manifest 与 zip 一致、引用全部可解析或显式缺失", async () => {
     const zip = await buildLearningPackZip(
@@ -1100,5 +1124,53 @@ describe("T6R.12 LearningPack v2：快照关联、证据与 manifest", () => {
     expect(paths).toContain("evidence/e001-original-01.png");
     expect(paths).toContain(v2MediaSrc);
     expect(preview.totalEstimatedBytes).toBeGreaterThan(0);
+  });
+
+  it("同图双源去重（C12）：讲义与题目引用同一 src → zip 单条目/manifest 单行/字节单计", async () => {
+    const zip = await buildLearningPackZip(
+      db,
+      dataDir,
+      TEST_TEACHER_ID,
+      makeV2Request({
+        modules: {
+          lectures: [{ lectureId: v2LectureId, sectionIndexes: [0] }],
+          questions: "solution",
+          responses: true,
+          evidence: false,
+        },
+      }),
+      { now: V2_NOW },
+    );
+    const entries = unzipEntries(zip.bytes);
+    // zip：同 src 只有一个条目（archiver 重复 name 会产生双条目/覆盖歧义）
+    const sameSrcNames = [...entries.keys()].filter((name) => name === v2MediaSrc);
+    expect(sameSrcNames).toHaveLength(1);
+    // manifest：media 行唯一且携带题目 q 关联（讲义先行收录、题目并入去重）
+    const pack = learningPackV2Schema.parse(
+      JSON.parse(entries.get("pack.json")?.toString("utf8") ?? "{}"),
+    );
+    const mediaRows = pack.manifest.files.filter(
+      (file) => file.kind === "media" && file.path === v2MediaSrc,
+    );
+    expect(mediaRows).toHaveLength(1);
+    expect(mediaRows[0]?.refs).toEqual([pack.content?.questions?.[0]?.ref]);
+    // preview/预检清单同样单计
+    const preview = previewLearningPack(
+      db,
+      dataDir,
+      TEST_TEACHER_ID,
+      makeV2Request({
+        modules: {
+          lectures: [{ lectureId: v2LectureId, sectionIndexes: [0] }],
+          questions: "solution",
+          responses: true,
+          evidence: false,
+        },
+      }),
+      { now: V2_NOW },
+    );
+    expect(
+      preview.files.filter((file) => file.path === v2MediaSrc),
+    ).toHaveLength(1);
   });
 });
