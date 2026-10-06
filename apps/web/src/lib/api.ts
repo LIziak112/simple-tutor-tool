@@ -73,6 +73,7 @@ import {
   type MarkRequest,
   type MarkResponseData,
   type MediaUploadResult,
+  NOTE_IMAGE_FORM_FIELDS,
   type NoteHeadData,
   type NoteImageMeta,
   type NoteImageUploadMeta,
@@ -1133,19 +1134,20 @@ export function postNoteImageApi(
   meta: NoteImageUploadMeta,
 ): Promise<NoteImageMeta> {
   const form = new FormData();
+  const F = NOTE_IMAGE_FORM_FIELDS;
   form.append(
-    "image",
+    F.image,
     png,
     `note-${versionId}-${meta.spec}-p${meta.pageIndex}.png`,
   );
-  form.append("spec", meta.spec);
-  form.append("pageIndex", String(meta.pageIndex));
-  form.append("cropX", String(meta.crop.x));
-  form.append("cropY", String(meta.crop.y));
-  form.append("cropW", String(meta.crop.width));
-  form.append("cropH", String(meta.crop.height));
-  form.append("pixelWidth", String(meta.pixelWidth));
-  form.append("pixelHeight", String(meta.pixelHeight));
+  form.append(F.spec, meta.spec);
+  form.append(F.pageIndex, String(meta.pageIndex));
+  form.append(F.cropX, String(meta.crop.x));
+  form.append(F.cropY, String(meta.crop.y));
+  form.append(F.cropW, String(meta.crop.width));
+  form.append(F.cropH, String(meta.crop.height));
+  form.append(F.pixelWidth, String(meta.pixelWidth));
+  form.append(F.pixelHeight, String(meta.pixelHeight));
   return callApi(() =>
     fetch(
       `/api/${role}/note-versions/${encodeURIComponent(versionId)}/images`,

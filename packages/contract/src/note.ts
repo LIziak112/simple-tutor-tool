@@ -579,6 +579,26 @@ export const noteImageUploadMetaSchema = z.object({
   pixelHeight: z.number().int().min(1).max(NOTE_IMAGE_MAX_PIXEL_DIM),
 });
 
+// ---------- multipart 字段名单一来源（T6R.6 复审⑪） ----------
+
+/**
+ * 补图上传 multipart 字段名：服务端路由层（apps/server/src/lib/form-fields.
+ * parseNoteImageUploadForm）与 web 客户端（api.postNoteImageApi）共用这一张
+ * 表，两端不各自手抄字符串（搬家不抄数；字段值变更=接口变更，须两端同改
+ * 并补泄露/行为测试）。image 为文件字段，其余八项为元信息字符串字段。
+ */
+export const NOTE_IMAGE_FORM_FIELDS = {
+  image: "image",
+  spec: "spec",
+  pageIndex: "pageIndex",
+  cropX: "cropX",
+  cropY: "cropY",
+  cropW: "cropW",
+  cropH: "cropH",
+  pixelWidth: "pixelWidth",
+  pixelHeight: "pixelHeight",
+} as const;
+
 // ---------- 推断类型导出 ----------
 
 export type NoteDoc = z.infer<typeof noteDocSchema>;

@@ -1,5 +1,8 @@
 import type { NoteImageUploadMeta } from "@tutor/contract";
-import { noteImageUploadMetaSchema } from "@tutor/contract";
+import {
+  NOTE_IMAGE_FORM_FIELDS,
+  noteImageUploadMetaSchema,
+} from "@tutor/contract";
 import { firstIssueMessage, HttpError } from "./http-error";
 
 /**
@@ -52,21 +55,24 @@ export async function parseNoteImageUploadForm(form: LooseFormBody): Promise<{
   pngBytes: Uint8Array;
   meta: NoteImageUploadMeta;
 }> {
-  const image = form.image;
+  const image = form[NOTE_IMAGE_FORM_FIELDS.image];
   if (!(image instanceof File)) {
     throw new HttpError(400, "VALIDATION_ERROR", IMAGE_FORM_HINT);
   }
+  // 字段名走契约单一来源（NOTE_IMAGE_FORM_FIELDS）——与 web 客户端
+  // postNoteImageApi 同一张表，两端不各自手抄字符串（T6R.6 复审⑪）
+  const F = NOTE_IMAGE_FORM_FIELDS;
   const parsed = noteImageUploadMetaSchema.safeParse({
-    spec: formString(form, "spec"),
-    pageIndex: strictFormInt(form, "pageIndex"),
+    spec: formString(form, F.spec),
+    pageIndex: strictFormInt(form, F.pageIndex),
     crop: {
-      x: strictFormInt(form, "cropX"),
-      y: strictFormInt(form, "cropY"),
-      width: strictFormInt(form, "cropW"),
-      height: strictFormInt(form, "cropH"),
+      x: strictFormInt(form, F.cropX),
+      y: strictFormInt(form, F.cropY),
+      width: strictFormInt(form, F.cropW),
+      height: strictFormInt(form, F.cropH),
     },
-    pixelWidth: strictFormInt(form, "pixelWidth"),
-    pixelHeight: strictFormInt(form, "pixelHeight"),
+    pixelWidth: strictFormInt(form, F.pixelWidth),
+    pixelHeight: strictFormInt(form, F.pixelHeight),
   });
   if (!parsed.success) {
     throw new HttpError(
