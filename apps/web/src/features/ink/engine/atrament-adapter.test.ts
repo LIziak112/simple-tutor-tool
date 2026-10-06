@@ -186,15 +186,23 @@ function pd(
   return { pointerType, pointerId, clientX, clientY };
 }
 
-/** 派发 touchstart/touchmove（jsdom 无 TouchEvent 构造器，用可赋值 Event 模拟触点表） */
+/**
+ * 派发 touchstart/touchmove（jsdom 无 TouchEvent 构造器，用可赋值 Event
+ * 模拟触点表）。allTouches 缺省＝changedTouches（单指场景）；笔在屏手掌
+ * 后落场景传并集（复审②）。
+ */
 function touch(
   canvas: HTMLCanvasElement,
   type: "touchstart" | "touchmove",
   touchTypes: string[],
+  allTouches: string[] = touchTypes,
 ): void {
   const ev = new Event(type, { bubbles: true, cancelable: true });
   Object.defineProperty(ev, "changedTouches", {
     value: touchTypes.map((touchType) => ({ touchType })),
+  });
+  Object.defineProperty(ev, "touches", {
+    value: allTouches.map((touchType) => ({ touchType })),
   });
   canvas.dispatchEvent(ev);
 }
@@ -575,6 +583,46 @@ describe("atrament-adapter：取消/失焦/丢捕获（只保留已收真实采�
     expect(strokesOf(h)).toHaveLength(2);
     expect(strokesOf(h)[1]?.points).toHaveLength(2); // 新笔正常书写
   });
+
+  it("落笔工具快照（复审③）：在途中途切橡皮后 blur 收笔——仍按落笔工具提交整笔", () => {
+    const h = mountSurface();
+    pointer(h.canvas, "pointerdown", pd("pen", 1, 20, 20));
+    pointer(h.canvas, "pointermove", {
+      pointerType: "pen",
+      clientX: 60,
+      clientY: 20,
+    });
+    // 笔未抬起时工具条切到橡皮（旧分派读当前工具会误走橡皮分支丢笔迹）
+    h.surface.setTool({ type: "eraser" });
+    window.dispatchEvent(new Event("blur"));
+    expect(strokesOf(h)).toHaveLength(1); // 笔迹未被丢弃
+    expect(strokesOf(h)[0]?.tool).toBe("pen"); // 按落笔工具提交
+    expect(strokesOf(h)[0]?.points).toHaveLength(2);
+    expect(h.events.at(-1)?.reason).toBe("stroke");
+  });
+
+  it("页面隐藏（visibilitychange）兜底（复审④）：与 blur 同口径收笔且幂等", () => {
+    const h = mountSurface();
+    pointer(h.canvas, "pointerdown", pd("pen", 1, 20, 20));
+    pointer(h.canvas, "pointermove", {
+      pointerType: "pen",
+      clientX: 60,
+      clientY: 20,
+    });
+    // 遮蔽原型 getter 模拟「页面进入隐藏」，finally 里移除遮蔽还原
+    Object.defineProperty(document, "hidden", {
+      configurable: true,
+      get: () => true,
+    });
+    try {
+      document.dispatchEvent(new Event("visibilitychange"));
+    } finally {
+      Reflect.deleteProperty(document, "hidden");
+    }
+    expect(strokesOf(h)).toHaveLength(1);
+    expect(strokesOf(h)[0]?.points).toHaveLength(2);
+    expect(h.events.filter((e) => e.reason === "stroke")).toHaveLength(1); // 不双提交
+  });
 });
 
 describe("atrament-adapter：布局变化（旋转/resize）不混用两个坐标变换", () => {
@@ -628,10 +676,20 @@ describe("atrament-adapter：布局变化（旋转/resize）不混用两个坐�
 describe("atrament-adapter：触摸侧 stylus 识别（遍历触点，不默认 touches[0]）", () => {
   it("手掌先落（direct）不 preventDefault；笔第二个落下（changedTouches 含 stylus）preventDefault 并进入 pen-only", () => {
     const h = mountSurface();
-    touch(h.canvas, "touchstart", ["direct"]);
-    // 直接触摸不拦截（页面照常滚动）
-    // （jsdom Event 的 defaultPrevented 依赖 cancelable + preventDefault 调用）
     // 手掌先落场景：changedTouches 只有 direct → 不拦截
+    const palmFirst = new Event("touchstart", {
+      bubbles: true,
+      cancelable: true,
+    });
+    Object.defineProperty(palmFirst, "changedTouches", {
+      value: [{ touchType: "direct" }],
+    });
+    Object.defineProperty(palmFirst, "touches", {
+      value: [{ touchType: "direct" }],
+    });
+    h.canvas.dispatchEvent(palmFirst);
+    expect(palmFirst.defaultPrevented).toBe(false);
+
     // 笔随后落下：该 touchstart 的 changedTouches 含 stylus → 拦截 + pen-only
     touch(h.canvas, "touchstart", ["stylus"]);
     expect(h.canvas.style.touchAction).toBe("pan-y"); // pen-only 已生效
@@ -650,7 +708,36 @@ describe("atrament-adapter：触摸侧 stylus 识别（遍历触点，不默认 
     expect(strokesOf(h)).toHaveLength(0);
   });
 
-  it("touchmove 仅在 changedTouches 含 stylus 时 preventDefault", () => {
+  it("笔先落手掌后落（复审②）：changedTouches 只含 direct 但 touches 含 stylus → 拦截", () => {
+    const h = mountSurface();
+    // 笔先落书写（pointer 事件路径进入 pen-only，touch-action 已 pan-y）
+    pointer(h.canvas, "pointerdown", pd("pen", 1, 20, 20));
+    // 手掌后落：新触点是 direct，但屏上仍有笔（touches 含 stylus）——
+    // 并集口径须拦截（否则手掌触摸可引发原生滚动破坏笔迹）
+    touch(h.canvas, "touchstart", ["direct"], ["stylus", "direct"]);
+    // 上面的 touch 助手不回传事件对象，直接再验一次同形态 touchmove
+    const ev = new Event("touchmove", { bubbles: true, cancelable: true });
+    Object.defineProperty(ev, "changedTouches", {
+      value: [{ touchType: "direct" }],
+    });
+    Object.defineProperty(ev, "touches", {
+      value: [{ touchType: "stylus" }, { touchType: "direct" }],
+    });
+    h.canvas.dispatchEvent(ev);
+    expect(ev.defaultPrevented).toBe(true);
+    // 纯 direct（无笔在屏）不拦截
+    const evPure = new Event("touchmove", { bubbles: true, cancelable: true });
+    Object.defineProperty(evPure, "changedTouches", {
+      value: [{ touchType: "direct" }],
+    });
+    Object.defineProperty(evPure, "touches", {
+      value: [{ touchType: "direct" }],
+    });
+    h.canvas.dispatchEvent(evPure);
+    expect(evPure.defaultPrevented).toBe(false);
+  });
+
+  it("touchmove 仅在触点含 stylus 时 preventDefault", () => {
     const h = mountSurface();
     const evDirect = new Event("touchmove", {
       bubbles: true,

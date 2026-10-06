@@ -189,6 +189,12 @@ export function createAtramentSurface(
   let liveStartStamp = 0;
   let liveTool: "pen" | "highlighter" = "pen";
   let liveBrush: { color: string; weight: number } | null = null;
+  /**
+   * 落笔时的工具快照（复审③）：一笔生命周期内的 move 采样与收笔提交都按
+   * **落笔时**的工具分派——工具条在笔未抬起时切换不影响在途笔画（避免
+   * 「中途切橡皮→收笔误走橡皮分支→笔迹被静默丢弃」）。
+   */
+  let liveStrokeIsErase = false;
   /** 上一次 draw() 返回的已处理坐标（atrament 平滑过滤后的位置） */
   let livePrev: { x: number; y: number } | null = null;
   /** 橡皮拖动中待删除的笔画下标集合（一次拖动合并为一个历史条目） */
@@ -336,24 +342,26 @@ export function createAtramentSurface(
     }
     livePoints = [];
     livePrev = null;
+    liveStrokeIsErase = false;
     pendingErase = new Set();
     redraw(); // 抹掉手掌已画的部分
   }
 
   /**
    * 收笔：按**已收到的真实采样**提交（T6R.7，方案 §4.1「取消时只保存已收到
-   * 的真实采样，不补造终点」）。up/cancel/lostpointercapture/blur/布局变化
-   * 共用本路径（触发源 cause 保留在状态机决策对象里，供矩阵测试断言）——
-   * 终点一律用 atrament 已处理的上一坐标（livePrev），不使用事件自带坐标
-   * 补造终点（cancel 事件的坐标可能是 (0,0) 或宿位值）。
+   * 的真实采样，不补造终点」）。up/cancel/lostcapture/blur/layoutchange/
+   * superseded 共用本路径（触发源 cause 保留在状态机决策对象里，供矩阵测试
+   * 断言）——终点一律用 atrament 已处理的上一坐标（livePrev），不使用事件
+   * 自带坐标补造终点（cancel 事件的坐标可能是 (0,0) 或宿位值）。分派按
+   * **落笔快照** liveStrokeIsErase（复审③）：工具条中途切换不改变在途笔画
+   * 的提交归属。
    */
   function commitLiveStroke(): void {
-    if (tool.type === "eraser") {
+    if (liveStrokeIsErase) {
       // 一次拖动的全部命中合并为一个历史条目（撤销=全部恢复）
       if (pendingErase.size > 0) {
         withReason("erase", () => store.commitErase([...pendingErase]));
       }
-      pendingErase = new Set();
       redraw();
     } else if (livePoints.length > 0 && liveBrush) {
       if (atrament && livePrev) {
@@ -374,6 +382,8 @@ export function createAtramentSurface(
     }
     livePoints = [];
     livePrev = null;
+    liveStrokeIsErase = false;
+    pendingErase = new Set();
   }
 
   // ---- 事件处理 ----
@@ -412,8 +422,10 @@ export function createAtramentSurface(
       // 个别浏览器在 canvas 未聚焦时可能抛错，忽略（pointerup 仍会冒泡到 canvas/document）
     }
     liveStartStamp = e.timeStamp;
+    // 落笔快照（复审③）：本笔的 move 采样与收笔提交都按此刻的工具分派
+    liveStrokeIsErase = tool.type === "eraser";
 
-    if (tool.type === "eraser") {
+    if (liveStrokeIsErase) {
       pendingErase = new Set(
         eraseHit(
           store.getStrokes(),
@@ -467,7 +479,7 @@ export function createAtramentSurface(
 
     for (const ev of events) {
       const { x, y } = eventToCss(ev, rect);
-      if (tool.type === "eraser") {
+      if (liveStrokeIsErase) {
         const hits = eraseHit(
           store.getStrokes(),
           toLogical(cssWidth, x),
@@ -535,13 +547,24 @@ export function createAtramentSurface(
   }
 
   /**
+   * 页面隐藏（切后台/锁屏）兜底（复审④）：与 blur 同口径（cause=blur）——
+   * 部分环境 blur 不触发而 visibilitychange 触发（反之亦然），两监听并存；
+   * 状态机对已收笔状态幂等（重复收笔=none），不会双提交。
+   */
+  function onVisibilityChange(): void {
+    if (document.hidden) finishPointer({ kind: "blur" });
+  }
+
+  /**
    * "笔写字、手指滚动"的触摸侧（§5.4.1 输入层第 3 条，T6R.7 改为遍历）：
-   * **遍历 changedTouches 核对输入**，不默认 touches[0] 是笔——手掌先落
-   * （direct）、笔第二个落下的场景里 touches[0] 是手掌，旧写法会漏拦笔触摸。
-   * 仅当本事件的触点含 stylus 时 preventDefault——阻断该触摸引发的原生
-   * 滚动，让随后的 pointer 事件完整送达本层书写；手指（direct）触摸不
-   * 拦截，配合 touch-action: pan-y 由浏览器原生滚动页面。
-   * 🧑 真机复核：stylus 拦截在 HTTP/HTTPS 下行为一致（清单第 1 项）。
+   * **遍历触点核对 touchType**，不默认 touches[0] 是笔。拦截条件＝新旧并集
+   * （复审②）：changedTouches 含 stylus（笔这一触点新落下——手掌先落、笔
+   * 第二个落下的场景里 changedTouches 才含笔）**或** e.touches 含 stylus
+   * （笔已在屏书写、手掌后落——该触摸事件同样可能引发原生滚动/缩放破坏
+   * 笔迹，须拦截）。纯 direct 触摸不拦截，配合 touch-action: pan-y 由
+   * 浏览器原生滚动页面。
+   * 🧑 真机复核：stylus 拦截在 HTTP/HTTPS 下行为一致（清单第 1 项）；笔先
+   * 落手掌后落（清单第 14 项）。
    */
   function anyStylusTouch(
     touches: TouchList | Array<{ touchType?: string }>,
@@ -554,14 +577,18 @@ export function createAtramentSurface(
   }
 
   function onTouchStart(e: TouchEvent): void {
-    if (!anyStylusTouch(e.changedTouches)) return;
+    if (!anyStylusTouch(e.changedTouches) && !anyStylusTouch(e.touches)) {
+      return;
+    }
     machine = observeStylusTouch(machine);
     applyTouchAction();
     e.preventDefault();
   }
 
   function onTouchMove(e: TouchEvent): void {
-    if (anyStylusTouch(e.changedTouches)) e.preventDefault();
+    if (anyStylusTouch(e.changedTouches) || anyStylusTouch(e.touches)) {
+      e.preventDefault();
+    }
   }
 
   function onContextMenu(e: Event): void {
@@ -641,8 +668,10 @@ export function createAtramentSurface(
       canvas.addEventListener("touchmove", onTouchMove, { passive: false });
       canvas.addEventListener("contextmenu", onContextMenu);
       canvas.addEventListener("selectstart", onSelectStart);
-      // 窗口失焦（切后台/锁屏/系统弹窗）：按已收采样收笔（见 onWindowBlur 注释）
+      // 窗口失焦/页面隐藏（切后台/锁屏/系统弹窗）：按已收采样收笔（两监听
+      // 并存兜底，状态机幂等不双提交，见 onVisibilityChange 注释）
       window.addEventListener("blur", onWindowBlur);
+      document.addEventListener("visibilitychange", onVisibilityChange);
 
       // 尺寸变化（旋转、自动加高、窗口缩放）：在途一笔先按已收点收笔——
       // 一笔中途不混用两个坐标变换（方案 §4.1；收笔后同一手势的后续采样
@@ -728,6 +757,7 @@ export function createAtramentSurface(
       observer = null;
       changeListeners.clear();
       window.removeEventListener("blur", onWindowBlur);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
       if (canvas) {
         canvas.removeEventListener("pointerdown", onPointerDown);
         canvas.removeEventListener("pointermove", onPointerMove);
