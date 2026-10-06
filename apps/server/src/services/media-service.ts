@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { MediaUploadResult } from "@tutor/contract";
 import { mediaUploadResultSchema } from "@tutor/contract";
-import { writeFileAtomic } from "../lib/blob-io";
+import { readFileBytes, writeFileAtomic } from "../lib/blob-io";
 import { HttpError } from "../lib/http-error";
 
 /**
@@ -235,12 +235,9 @@ export function readMediaBlob(
     return null;
   }
   try {
-    const buf = readFileSync(join(dataDir, "blobs", "media", filename));
     return {
-      bytes: buf.buffer.slice(
-        buf.byteOffset,
-        buf.byteOffset + buf.byteLength,
-      ) as ArrayBuffer,
+      // readFileBytes（T6R.5 复审⑥）：Buffer 视图 → 独立 ArrayBuffer 的共享口径
+      bytes: readFileBytes(join(dataDir, "blobs", "media", filename)),
       contentType,
     };
   } catch {

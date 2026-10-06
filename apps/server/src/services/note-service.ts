@@ -42,16 +42,17 @@ import {
 import {
   type AtomicFileFaults,
   parseGzipOrJsonBytes,
+  readFileBytes,
   resolveWithinRoot,
   writeFileAtomic,
 } from "../lib/blob-io";
 import { HttpError } from "../lib/http-error";
+import { pngSize } from "../lib/png";
 import {
   requireAttemptQuestion,
   requireAttemptQuestionRow,
   requireUsableAttempt,
 } from "./attempt-service";
-import { pngSize } from "./ink-service";
 import {
   findTeacherAttempt,
   requireTeacherAttempt,
@@ -833,15 +834,6 @@ function requireTeacherNoteVersion(
     throw new HttpError(404, "NOTE_NOT_FOUND", "笔记版本不存在");
   }
   return chain;
-}
-
-/** 读取落盘文件为独立 ArrayBuffer（Buffer 视图 → 拷贝，Response BodyInit 友好） */
-function readFileBytes(filePath: string): ArrayBuffer {
-  const buf = readFileSync(filePath);
-  return buf.buffer.slice(
-    buf.byteOffset,
-    buf.byteOffset + buf.byteLength,
-  ) as ArrayBuffer;
 }
 
 /** ③⑦ 版本文档 gzip 原字节直出（不解析——消费在前端渲染器，坏文件属部署级问题） */
