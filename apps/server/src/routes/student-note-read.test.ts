@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
 import type { ApiErr } from "@tutor/contract";
@@ -16,8 +16,8 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client.ts";
 import {
-  notes as notesTable,
   noteImages as noteImagesTable,
+  notes as notesTable,
   submissionEvidence as submissionEvidenceTable,
 } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
@@ -88,9 +88,9 @@ beforeAll(async () => {
     body: JSON.stringify({ markdown: PRACTICE_MD, filename: "练习样例.md" }),
   });
   expect(importRes.status).toBe(200);
-  unitId = (
-    (await importRes.json()) as { data: { units: { id: string }[] } }
-  ).data.units[0]?.id ?? "";
+  unitId =
+    ((await importRes.json()) as { data: { units: { id: string }[] } }).data
+      .units[0]?.id ?? "";
 
   aId = await createStudent(app, teacherCookie, "张三");
   bId = await createStudent(app, teacherCookie, "李四");
@@ -258,9 +258,8 @@ describe("读/图接口鉴权矩阵", () => {
     const versionId = await putNote(attemptId, Q.solve);
     const imageRes = await postImage(versionId, makeNotePng());
     expect(imageRes.status).toBe(200);
-    const imageId = (
-      (await imageRes.json()) as { data: { imageId: string } }
-    ).data.imageId;
+    const imageId = ((await imageRes.json()) as { data: { imageId: string } })
+      .data.imageId;
     const targets = [
       `/api/student/attempts/${attemptId}/notes/${Q.solve}`,
       `/api/student/attempts/${attemptId}/evidence/${Q.solve}`,
@@ -282,15 +281,17 @@ describe("读/图接口鉴权矩阵", () => {
     const attemptId = await freshAttempt();
     const versionId = await putNote(attemptId, Q.solve);
     const imageRes = await postImage(versionId, makeNotePng());
-    const imageId = (
-      (await imageRes.json()) as { data: { imageId: string } }
-    ).data.imageId;
+    const imageId = ((await imageRes.json()) as { data: { imageId: string } })
+      .data.imageId;
 
     expect(
       (
-        await app.request(`/api/student/attempts/${attemptId}/notes/${Q.solve}`, {
-          headers: { cookie: bCookie },
-        })
+        await app.request(
+          `/api/student/attempts/${attemptId}/notes/${Q.solve}`,
+          {
+            headers: { cookie: bCookie },
+          },
+        )
       ).status,
     ).toBe(403);
     expect(
@@ -318,9 +319,7 @@ describe("读/图接口鉴权矩阵", () => {
       ).status,
     ).toBe(403);
     expect(
-      (
-        await postImage(versionId, makeNotePng(), { cookie: bCookie })
-      ).status,
+      (await postImage(versionId, makeNotePng(), { cookie: bCookie })).status,
     ).toBe(403);
   });
 
@@ -328,9 +327,12 @@ describe("读/图接口鉴权矩阵", () => {
     await freshAttempt();
     expect(
       (
-        await app.request(`/api/student/attempts/${randomUUID()}/notes/${Q.solve}`, {
-          headers: { cookie: aCookie },
-        })
+        await app.request(
+          `/api/student/attempts/${randomUUID()}/notes/${Q.solve}`,
+          {
+            headers: { cookie: aCookie },
+          },
+        )
       ).status,
     ).toBe(404);
     const attemptId = await freshAttempt();
@@ -355,9 +357,12 @@ describe("读/图接口鉴权矩阵", () => {
     ).toBe(404);
     expect(
       (
-        await app.request(`/api/student/note-versions/${ghost}/images/${ghost}`, {
-          headers: { cookie: aCookie },
-        })
+        await app.request(
+          `/api/student/note-versions/${ghost}/images/${ghost}`,
+          {
+            headers: { cookie: aCookie },
+          },
+        )
       ).status,
     ).toBe(404);
     expect((await postImage(ghost, makeNotePng())).status).toBe(404);
@@ -390,9 +395,7 @@ describe("读/图接口鉴权矩阵", () => {
         })
       ).status,
     ).toBe(403);
-    expect(
-      (await postImage(bVersionId, makeNotePng())).status,
-    ).toBe(403);
+    expect((await postImage(bVersionId, makeNotePng())).status).toBe(403);
   });
 });
 
@@ -429,7 +432,12 @@ describe("工作稿头与证据投影", () => {
       { method: "PUT", headers: { cookie: aCookie }, body: form },
     );
     const receipt = (await putRes.json()) as {
-      data: { noteId: string; versionId: string; revision: number; savedAt: string };
+      data: {
+        noteId: string;
+        versionId: string;
+        revision: number;
+        savedAt: string;
+      };
     };
 
     const headRes = await app.request(
@@ -437,7 +445,10 @@ describe("工作稿头与证据投影", () => {
       { headers: { cookie: aCookie } },
     );
     const head = (await headRes.json()) as {
-      data: { note: { revision: number; currentVersionId: string } | null; images: unknown[] };
+      data: {
+        note: { revision: number; currentVersionId: string } | null;
+        images: unknown[];
+      };
     };
     expect(head.data.note?.revision).toBe(1);
     expect(head.data.note?.currentVersionId).toBe(receipt.data.versionId);
@@ -445,17 +456,25 @@ describe("工作稿头与证据投影", () => {
     assertNoLeak(head);
 
     // 补两张图（analysis 两页切片）→ head.images 两条 ready
-    const img1 = await postImage(receipt.data.versionId, makeNotePng(1000, 800), {
-      pageIndex: 0,
-      pixelWidth: 1000,
-      pixelHeight: 800,
-    });
+    const img1 = await postImage(
+      receipt.data.versionId,
+      makeNotePng(1000, 800),
+      {
+        pageIndex: 0,
+        pixelWidth: 1000,
+        pixelHeight: 800,
+      },
+    );
     expect(img1.status).toBe(200);
-    const img2 = await postImage(receipt.data.versionId, makeNotePng(1000, 300), {
-      pageIndex: 1,
-      pixelWidth: 1000,
-      pixelHeight: 300,
-    });
+    const img2 = await postImage(
+      receipt.data.versionId,
+      makeNotePng(1000, 300),
+      {
+        pageIndex: 1,
+        pixelWidth: 1000,
+        pixelHeight: 300,
+      },
+    );
     expect(img2.status).toBe(200);
     for (const res of [img1, img2]) {
       const body = (await res.json()) as { data: unknown };
@@ -547,9 +566,8 @@ describe("版本文档与图片字节直出", () => {
     const versionId = await putNote(attemptId, Q.solve);
     const png = makeNotePng(320, 200);
     const imageRes = await postImage(versionId, png);
-    const imageId = (
-      (await imageRes.json()) as { data: { imageId: string } }
-    ).data.imageId;
+    const imageId = ((await imageRes.json()) as { data: { imageId: string } })
+      .data.imageId;
 
     for (const file of [imageId, `${imageId}.png`]) {
       const res = await app.request(
@@ -569,9 +587,8 @@ describe("版本文档与图片字节直出", () => {
     const attemptId = await freshAttempt();
     const versionId = await putNote(attemptId, Q.solve);
     const imageRes = await postImage(versionId, makeNotePng());
-    const imageId = (
-      (await imageRes.json()) as { data: { imageId: string } }
-    ).data.imageId;
+    const imageId = ((await imageRes.json()) as { data: { imageId: string } })
+      .data.imageId;
 
     const noteRow = noteRowOf(attemptId, Q.solve);
     if (noteRow === undefined) throw new Error("缺少 notes 行");
@@ -621,9 +638,12 @@ describe("交卷后门槛（ALREADY_SUBMITTED 只拦新写）", () => {
 
     expect(
       (
-        await app.request(`/api/student/attempts/${attemptId}/notes/${Q.solve}`, {
-          headers: { cookie: aCookie },
-        })
+        await app.request(
+          `/api/student/attempts/${attemptId}/notes/${Q.solve}`,
+          {
+            headers: { cookie: aCookie },
+          },
+        )
       ).status,
     ).toBe(200);
     expect(
@@ -642,10 +662,12 @@ describe("交卷后门槛（ALREADY_SUBMITTED 只拦新写）", () => {
       ).status,
     ).toBe(200);
     expect(
-      (await postImage(versionId, makeNotePng(500, 400), {
-        pixelWidth: 500,
-        pixelHeight: 400,
-      })).status,
+      (
+        await postImage(versionId, makeNotePng(500, 400), {
+          pixelWidth: 500,
+          pixelHeight: 400,
+        })
+      ).status,
     ).toBe(200);
   });
 });
@@ -693,7 +715,9 @@ describe("补图上传校验", () => {
       { method: "POST", headers: { cookie: aCookie }, body: badCrop },
     );
     expect(badCropRes.status).toBe(400);
-    expect(((await badCropRes.json()) as ApiErr).error).toBe("VALIDATION_ERROR");
+    expect(((await badCropRes.json()) as ApiErr).error).toBe(
+      "VALIDATION_ERROR",
+    );
     // 非十进制整数串同拒（对齐 T6R.4 multipart 传输层口径）
     const badIndex = new FormData();
     badIndex.append("image", new Blob([makeNotePng()], { type: "image/png" }));
@@ -723,14 +747,18 @@ describe("补图上传校验", () => {
     const notPng = new TextEncoder().encode("not a png at all");
     const res1 = await postImage(versionId, notPng);
     expect(res1.status).toBe(400);
-    expect(((await res1.json()) as ApiErr).error).toBe("NOTE_VALIDATION_FAILED");
+    expect(((await res1.json()) as ApiErr).error).toBe(
+      "NOTE_VALIDATION_FAILED",
+    );
 
     // IHDR 声明 320×200，元信息声称 999×200 → 尺寸不匹配
     const res2 = await postImage(versionId, makeNotePng(), {
       pixelWidth: 999,
     });
     expect(res2.status).toBe(400);
-    expect(((await res2.json()) as ApiErr).error).toBe("NOTE_VALIDATION_FAILED");
+    expect(((await res2.json()) as ApiErr).error).toBe(
+      "NOTE_VALIDATION_FAILED",
+    );
     // 成功后无残留行（两败一空）
     expect(
       db
@@ -793,7 +821,9 @@ describe("补图上传校验", () => {
     }
     const overRes = await postImage(versionId, makeNotePng());
     expect(overRes.status).toBe(413);
-    expect(((await overRes.json()) as ApiErr).error).toBe("NOTE_LIMIT_EXCEEDED");
+    expect(((await overRes.json()) as ApiErr).error).toBe(
+      "NOTE_LIMIT_EXCEEDED",
+    );
 
     // 槽位 upsert：替换种子槽位 1（其余两个种子 5.4MiB + 小图 ≤ 8MiB 通过）→
     // 同 (spec, pageIndex) 再传 → 行数不变、imageId 换新、旧文件删除
@@ -855,18 +885,27 @@ describe("课程撤权与学生停用（冻结语义一致）", () => {
     const setup = await courseApp.request("/api/public/teacher/setup", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ loginName: "teacher", password: "teacher-pass-8" }),
+      body: JSON.stringify({
+        loginName: "teacher",
+        password: "teacher-pass-8",
+      }),
     });
     courseTeacherCookie = `tutor_session=${extractSessionToken(setup)}`;
     const created = await courseApp.request("/api/teacher/courses", {
       method: "POST",
-      headers: { "content-type": "application/json", cookie: courseTeacherCookie },
+      headers: {
+        "content-type": "application/json",
+        cookie: courseTeacherCookie,
+      },
       body: JSON.stringify({ title: "初一上" }),
     });
     courseId = ((await created.json()) as { data: { id: string } }).data.id;
     const imported = await courseApp.request("/api/teacher/import/commit", {
       method: "POST",
-      headers: { "content-type": "application/json", cookie: courseTeacherCookie },
+      headers: {
+        "content-type": "application/json",
+        cookie: courseTeacherCookie,
+      },
       body: JSON.stringify({
         markdown: PRACTICE_MD,
         filename: "练习样例.md",
@@ -890,14 +929,20 @@ describe("课程撤权与学生停用（冻结语义一致）", () => {
       `/api/teacher/course-items/${item.id}`,
       {
         method: "PATCH",
-        headers: { "content-type": "application/json", cookie: courseTeacherCookie },
+        headers: {
+          "content-type": "application/json",
+          cookie: courseTeacherCookie,
+        },
         body: JSON.stringify({ visible: true }),
       },
     );
     expect(patched.status).toBe(200);
     const student = await courseApp.request("/api/teacher/students", {
       method: "POST",
-      headers: { "content-type": "application/json", cookie: courseTeacherCookie },
+      headers: {
+        "content-type": "application/json",
+        cookie: courseTeacherCookie,
+      },
       body: JSON.stringify({
         displayName: "成员",
         loginName: "member-stu",
@@ -910,14 +955,20 @@ describe("课程撤权与学生停用（冻结语义一致）", () => {
     const login = await courseApp.request("/api/public/student/login", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ loginName: "member-stu", password: STUDENT_PASSWORD }),
+      body: JSON.stringify({
+        loginName: "member-stu",
+        password: STUDENT_PASSWORD,
+      }),
     });
     memberCookie = `tutor_session=${extractSessionToken(login)}`;
     const added = await courseApp.request(
       `/api/teacher/courses/${courseId}/members`,
       {
         method: "POST",
-        headers: { "content-type": "application/json", cookie: courseTeacherCookie },
+        headers: {
+          "content-type": "application/json",
+          cookie: courseTeacherCookie,
+        },
         body: JSON.stringify({ studentIds: [memberStudentId] }),
       },
     );
@@ -951,9 +1002,8 @@ describe("课程撤权与学生停用（冻结语义一致）", () => {
       { method: "PUT", headers: { cookie: memberCookie }, body: form },
     );
     if (res.status !== 200) return { status: res.status };
-    const versionId = (
-      (await res.json()) as { data: { versionId: string } }
-    ).data.versionId;
+    const versionId = ((await res.json()) as { data: { versionId: string } })
+      .data.versionId;
     return { status: res.status, versionId };
   }
 
@@ -963,7 +1013,10 @@ describe("课程撤权与学生停用（冻结语义一致）", () => {
       `/api/teacher/courses/${courseId}/members`,
       {
         method: "POST",
-        headers: { "content-type": "application/json", cookie: courseTeacherCookie },
+        headers: {
+          "content-type": "application/json",
+          cookie: courseTeacherCookie,
+        },
         body: JSON.stringify({ studentIds: [memberStudentId] }),
       },
     );
@@ -976,7 +1029,10 @@ describe("课程撤权与学生停用（冻结语义一致）", () => {
       `/api/teacher/courses/${courseId}/members`,
       {
         method: "DELETE",
-        headers: { "content-type": "application/json", cookie: courseTeacherCookie },
+        headers: {
+          "content-type": "application/json",
+          cookie: courseTeacherCookie,
+        },
         body: JSON.stringify({ studentIds: [memberStudentId] }),
       },
     );
@@ -988,7 +1044,11 @@ describe("课程撤权与学生停用（冻结语义一致）", () => {
     const attemptId = await startCourseAttempt();
     const { versionId } = await coursePutNote(attemptId, Q.solve);
     expect(versionId).toBeDefined();
-    const submitRes = await submitAttemptRequest(courseApp, memberCookie, attemptId);
+    const submitRes = await submitAttemptRequest(
+      courseApp,
+      memberCookie,
+      attemptId,
+    );
     expect(submitRes.status).toBe(200);
 
     await removeMember();
@@ -1065,7 +1125,10 @@ describe("课程撤权与学生停用（冻结语义一致）", () => {
       `/api/teacher/students/${memberStudentId}`,
       {
         method: "PATCH",
-        headers: { "content-type": "application/json", cookie: courseTeacherCookie },
+        headers: {
+          "content-type": "application/json",
+          cookie: courseTeacherCookie,
+        },
         body: JSON.stringify({ archived: true }),
       },
     );
@@ -1114,9 +1177,12 @@ describe("软删题的历史证据可读（不查询当前题库存活）", () =
     assertNoLeak(body);
     expect(
       (
-        await app.request(`/api/student/attempts/${attemptId}/notes/${Q.solve}`, {
-          headers: { cookie: aCookie },
-        })
+        await app.request(
+          `/api/student/attempts/${attemptId}/notes/${Q.solve}`,
+          {
+            headers: { cookie: aCookie },
+          },
+        )
       ).status,
     ).toBe(200);
     expect(

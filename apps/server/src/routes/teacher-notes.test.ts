@@ -6,8 +6,8 @@ import { eq } from "drizzle-orm";
 import type { Logger } from "pino";
 import pino from "pino";
 import { beforeAll, describe, expect, it } from "vitest";
-import { createTeacherSession } from "../auth/session.ts";
 import { createApp } from "../app.ts";
+import { createTeacherSession } from "../auth/session.ts";
 import type { Db } from "../db/client.ts";
 import {
   noteVersions as noteVersionsTable,
@@ -277,11 +277,13 @@ describe("教师域内：evidence / 版本 / 补图", () => {
     const versionId = await putNote(aStudentCookie, attemptId, Q.solve);
     // 学生先补一张图（教师端看到的是同一版本的图集）
     expect(
-      (
-        await studentPostImage(versionId, makeNotePng(), aStudentCookie)
-      ).status,
+      (await studentPostImage(versionId, makeNotePng(), aStudentCookie)).status,
     ).toBe(200);
-    const submitRes = await submitAttemptRequest(app, aStudentCookie, attemptId);
+    const submitRes = await submitAttemptRequest(
+      app,
+      aStudentCookie,
+      attemptId,
+    );
     expect(submitRes.status).toBe(200);
     insertEvidence(attemptId, Q.solve, versionId);
 
@@ -309,12 +311,10 @@ describe("教师域内：evidence / 版本 / 补图", () => {
     );
     const versionId = await putNote(aStudentCookie, attemptId, Q.solve);
     const png = makeNotePng(480, 320);
-    const imageRes = await teacherPostImage(
-      versionId,
-      png,
-      teacherCookie,
-      { pixelWidth: 480, pixelHeight: 320 },
-    );
+    const imageRes = await teacherPostImage(versionId, png, teacherCookie, {
+      pixelWidth: 480,
+      pixelHeight: 320,
+    });
     expect(imageRes.status).toBe(200);
     const imageBody = (await imageRes.json()) as { data: unknown };
     expect(noteImageMetaSchema.safeParse(imageBody.data).success).toBe(true);
@@ -384,9 +384,8 @@ describe("域外 404 与身份矩阵", () => {
     );
     const versionId = await putNote(aStudentCookie, attemptId, Q.solve);
     const imageRes = await teacherPostImage(versionId, makeNotePng());
-    const imageId = (
-      (await imageRes.json()) as { data: { imageId: string } }
-    ).data.imageId;
+    const imageId = ((await imageRes.json()) as { data: { imageId: string } })
+      .data.imageId;
 
     const evidence = await app.request(
       `/api/teacher/attempts/${attemptId}/evidence/${Q.solve}`,
@@ -437,7 +436,9 @@ describe("域外 404 与身份矩阵", () => {
         )
       ).status,
     ).toBe(404);
-    expect((await teacherPostImage(bVersionId, makeNotePng())).status).toBe(404);
+    expect((await teacherPostImage(bVersionId, makeNotePng())).status).toBe(
+      404,
+    );
     // 教师乙读本域（对照）：200
     expect(
       (
@@ -464,9 +465,8 @@ describe("域外 404 与身份矩阵", () => {
       ).status,
     ).toBe(401);
     expect(
-      (
-        await app.request(`/api/teacher/note-versions/${versionId}/document`)
-      ).status,
+      (await app.request(`/api/teacher/note-versions/${versionId}/document`))
+        .status,
     ).toBe(401);
     expect(
       (

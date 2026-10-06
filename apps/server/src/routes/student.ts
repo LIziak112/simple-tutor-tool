@@ -24,12 +24,16 @@ import {
 import type { Db } from "../db/client";
 import { noStoreBinaryResponse, pngResponse } from "../lib/binary-response";
 import {
+  formString,
+  parseNoteImageUploadForm,
+  strictFormInt,
+} from "../lib/form-fields";
+import {
   firstIssueMessage,
   HttpError,
   parseJsonBody,
   parseJsonBodyOrEmpty,
 } from "../lib/http-error";
-import { parseNoteImageUploadForm, formString, strictFormInt } from "../lib/form-fields";
 import {
   getStudentAssignmentPaper,
   listStudentAssignments,

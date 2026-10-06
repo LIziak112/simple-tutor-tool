@@ -681,7 +681,13 @@ describe("T6R.5 路由形状：noteHeadData / noteImageUploadMeta", () => {
         currentVersionId: "44444444-4444-4444-8444-444444444444",
         serverSavedAt: "2026-10-06T02:00:00.000Z",
       },
-      images: [imageMeta(), imageMeta({ imageId: "66666666-6666-4666-8666-666666666666", pageIndex: 1 })],
+      images: [
+        imageMeta(),
+        imageMeta({
+          imageId: "66666666-6666-4666-8666-666666666666",
+          pageIndex: 1,
+        }),
+      ],
       evidence: {
         attemptId: "22222222-2222-4222-8222-222222222222",
         questionId: "p4-q7",

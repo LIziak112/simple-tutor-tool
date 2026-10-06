@@ -38,9 +38,9 @@ import {
   notes,
   noteVersions,
   responses,
+  type SubmissionEvidenceRow,
   students,
   submissionEvidence,
-  type SubmissionEvidenceRow,
 } from "../db/schema";
 import {
   type AtomicFileFaults,
@@ -694,7 +694,11 @@ function noteEvidenceMetaOf(row: SubmissionEvidenceRow) {
  *   T6R.10 落写；未冻结/无证据行 → 工作头指针），images 聚合到该版本；
  * - evidence：证据行（交卷事务写入）；无行 → null（未交卷或旧客户端未采集）。
  */
-function noteHeadOf(db: Db, attemptId: string, questionId: string): NoteHeadData {
+function noteHeadOf(
+  db: Db,
+  attemptId: string,
+  questionId: string,
+): NoteHeadData {
   const note = db
     .select()
     .from(notes)
@@ -716,7 +720,8 @@ function noteHeadOf(db: Db, attemptId: string, questionId: string): NoteHeadData
       ),
     )
     .get();
-  const operativeVersionId = evidence?.versionId ?? note?.currentVersionId ?? null;
+  const operativeVersionId =
+    evidence?.versionId ?? note?.currentVersionId ?? null;
   const imageRows = operativeVersionId
     ? db
         .select()
@@ -747,7 +752,10 @@ function requireAttemptQuestionRow(
     .select({ id: responses.id })
     .from(responses)
     .where(
-      and(eq(responses.attemptId, attemptId), eq(responses.questionId, questionId)),
+      and(
+        eq(responses.attemptId, attemptId),
+        eq(responses.questionId, questionId),
+      ),
     )
     .get();
   if (hit === undefined) {
@@ -810,7 +818,11 @@ function requireNoteVersionChain(
   if (version === undefined) {
     throw new HttpError(404, "NOTE_NOT_FOUND", "笔记版本不存在");
   }
-  const note = db.select().from(notes).where(eq(notes.id, version.noteId)).get();
+  const note = db
+    .select()
+    .from(notes)
+    .where(eq(notes.id, version.noteId))
+    .get();
   if (note === undefined) {
     // 版本行在而笔记行缺（FK 保证不可达的防御分支）
     throw new HttpError(404, "NOTE_NOT_FOUND", "笔记版本不存在");

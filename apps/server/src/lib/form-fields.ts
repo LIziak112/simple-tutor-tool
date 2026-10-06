@@ -1,6 +1,6 @@
 import type { NoteImageUploadMeta } from "@tutor/contract";
 import { noteImageUploadMetaSchema } from "@tutor/contract";
-import { HttpError, firstIssueMessage } from "./http-error";
+import { firstIssueMessage, HttpError } from "./http-error";
 
 /**
  * multipart 表单字段的共享解析（T6R.4/T6R.5）：
@@ -21,14 +21,20 @@ export type LooseFormBody = Record<
 >;
 
 /** multipart 字符串字段严格十进制整数解析；非字符串/非严格形态返回 undefined */
-export function strictFormInt(form: LooseFormBody, key: string): number | undefined {
+export function strictFormInt(
+  form: LooseFormBody,
+  key: string,
+): number | undefined {
   const raw = form[key];
   if (typeof raw !== "string") return undefined;
   return /^\d+$/.test(raw) ? Number(raw) : undefined;
 }
 
 /** multipart 字符串字段原样读取（非字符串字段返回 undefined） */
-export function formString(form: LooseFormBody, key: string): string | undefined {
+export function formString(
+  form: LooseFormBody,
+  key: string,
+): string | undefined {
   const raw = form[key];
   return typeof raw === "string" ? raw : undefined;
 }

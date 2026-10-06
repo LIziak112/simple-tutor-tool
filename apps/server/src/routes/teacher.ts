@@ -10,7 +10,11 @@ import {
 } from "../auth/session";
 import type { Db, DbHandle } from "../db/client";
 import { staticDbHandle } from "../db/client";
-import { noStoreBinaryResponse, gzipResponse, pngResponse } from "../lib/binary-response";
+import {
+  gzipResponse,
+  noStoreBinaryResponse,
+  pngResponse,
+} from "../lib/binary-response";
 import { parseNoteImageUploadForm } from "../lib/form-fields";
 import {
   getTeacherInkMeta,
