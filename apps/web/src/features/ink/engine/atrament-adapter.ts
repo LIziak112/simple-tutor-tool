@@ -50,6 +50,7 @@
  */
 import type { NoteBackground } from "@tutor/contract";
 import Atrament from "atrament";
+import { type StrokeBounds, strokeBounds } from "./bounds.ts";
 import { canvasToPngBlob } from "./canvas-png.ts";
 import { buildAtramentDoc, parseAtramentDoc } from "./doc.ts";
 import { eraseHit } from "./erase.ts";
@@ -330,7 +331,8 @@ export function createAtramentSurface(
     c.clearRect(0, 0, canvas.width, canvas.height);
     c.restore();
     resetContext();
-    store.getStrokes().forEach((s, i) => {
+    // 只读视图同步重放（peekStrokes：重放期间无提交，零拷贝安全，复审⑨）
+    store.peekStrokes().forEach((s, i) => {
       if (!pendingErase.has(i)) replayStroke(s);
     });
   }
@@ -428,7 +430,7 @@ export function createAtramentSurface(
     if (liveStrokeIsErase) {
       pendingErase = new Set(
         eraseHit(
-          store.getStrokes(),
+          store.peekStrokes(),
           toLogical(cssWidth, x),
           toLogical(cssWidth, y),
           INK_ERASE_RADIUS,
@@ -477,14 +479,24 @@ export function createAtramentSurface(
     }
     const events = coalesced.length > 0 ? coalesced : [e];
 
+    // 橡皮热路径快照（复审⑨）：只读零拷贝视图 + 逐笔包围盒每 move 只算
+    // 一次，批内 coalesced 采样点共享（仅同步消费，见 InkStore.peekStrokes）
+    let eraseView: readonly InkStroke[] | null = null;
+    let eraseBoxes: Array<StrokeBounds | null> | null = null;
+    if (liveStrokeIsErase) {
+      eraseView = store.peekStrokes();
+      eraseBoxes = eraseView.map((s) => strokeBounds(s));
+    }
+
     for (const ev of events) {
       const { x, y } = eventToCss(ev, rect);
-      if (liveStrokeIsErase) {
+      if (eraseView && eraseBoxes) {
         const hits = eraseHit(
-          store.getStrokes(),
+          eraseView,
           toLogical(cssWidth, x),
           toLogical(cssWidth, y),
           INK_ERASE_RADIUS,
+          eraseBoxes,
         );
         let changed = false;
         for (const h of hits) {
