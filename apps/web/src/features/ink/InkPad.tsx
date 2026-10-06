@@ -215,12 +215,12 @@ export function InkPad({
 
   // 会话偏好 → 引擎（T6R.7）。声明在引擎创建 effect **之后**：挂载时引擎已
   // 就绪、当前偏好即刻下发（否则首帧 localEngineRef 为 null，pen 值又不再
-  // 变化会导致永不重发）。引擎重建（retryKey）后同样重发；excalidraw 无此
-  // 能力时 setInputMode 不存在，?. 安全降级。
+  // 变化会导致永不重发）。引擎重建（retryKey）后同样重发；excalidraw 引擎
+  // 的 setInputMode 为安全 no-op（守卫在引擎包装层，复审⑩）。
   // biome-ignore lint/correctness/useExhaustiveDependencies(retryKey): 重试键变化=引擎重建，需重发输入模式，effect 体内不读取
   useEffect(() => {
     if (inputMode !== "session") return;
-    localEngineRef.current?.setInputMode?.(sessionPref);
+    localEngineRef.current?.setInputMode(sessionPref);
   }, [inputMode, sessionPref, retryKey]);
 
   // 工具/颜色/粗细变化 → 下发引擎

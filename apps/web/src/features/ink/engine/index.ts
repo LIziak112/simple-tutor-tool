@@ -62,10 +62,11 @@ export interface InkEngine {
   clear(): void;
   setTool(tool: InkToolConfig): void;
   /**
-   * 输入模式（T6R.7，可选能力）：仅 atrament 引擎提供；excalidraw 引擎
-   * 无此方法（用 ?. 调用安全降级）。运行时切换只影响新落下的指针。
+   * 输入模式（T6R.7）：恒存在——守卫收敛在引擎包装层（复审⑩），内部按
+   * surface 是否实现降级；excalidraw 引擎调用为安全 no-op（全屏作答无
+   * 此概念）。运行时切换只影响新落下的指针。
    */
-  setInputMode?(mode: InkInputMode): void;
+  setInputMode(mode: InkInputMode): void;
   /**
    * 每次状态变化触发（reason：stroke/erase/undo/redo/clear/load，§5.0-C14）；
    * 返回取消订阅函数。老回调（只收 doc）仍可注册——reason 缺省语义见 surface.ts。
@@ -116,12 +117,9 @@ export function create(
     redo: () => surface.redo(),
     clear: () => surface.clear(),
     setTool: (tool) => surface.setTool(tool),
-    // 可选能力透传：excalidraw 适配器未实现时引擎上不存在该方法（?. 降级）
-    ...(surface.setInputMode
-      ? {
-          setInputMode: (mode: InkInputMode) => surface.setInputMode?.(mode),
-        }
-      : {}),
+    // 守卫收敛于此（复审⑩）：surface 未实现（excalidraw）时安全 no-op，
+    // 调用方（InkPad 等）无需 ?. 链
+    setInputMode: (mode: InkInputMode) => surface.setInputMode?.(mode),
     on: (event, cb) =>
       event === "change"
         ? surface.onChange(cb)

@@ -66,7 +66,6 @@ import {
   createPointerMachineState,
   isSampleMove,
   observeStylusTouch,
-  type PointerFinishCause,
   type PointerMachineEvent,
   type PointerMachineState,
   touchActionForInput,
@@ -344,12 +343,11 @@ export function createAtramentSurface(
   /**
    * 收笔：按**已收到的真实采样**提交（T6R.7，方案 §4.1「取消时只保存已收到
    * 的真实采样，不补造终点」）。up/cancel/lostpointercapture/blur/布局变化
-   * 共用本路径——终点一律用 atrament 已处理的上一坐标（livePrev），不使用
-   * 事件自带坐标补造终点（cancel 事件的坐标可能是 (0,0) 或宿位值）。
-   * @param cause 收笔触发源（仅注释/日志口径，行为相同）
+   * 共用本路径（触发源 cause 保留在状态机决策对象里，供矩阵测试断言）——
+   * 终点一律用 atrament 已处理的上一坐标（livePrev），不使用事件自带坐标
+   * 补造终点（cancel 事件的坐标可能是 (0,0) 或宿位值）。
    */
-  function commitLiveStroke(cause: PointerFinishCause): void {
-    void cause;
+  function commitLiveStroke(): void {
     if (tool.type === "eraser") {
       // 一次拖动的全部命中合并为一个历史条目（撤销=全部恢复）
       if (pendingErase.size > 0) {
@@ -505,7 +503,7 @@ export function createAtramentSurface(
     const r = advancePointerMachine(machine, event);
     machine = r.state;
     for (const d of r.decisions) {
-      if (d.action === "commit") commitLiveStroke(d.cause);
+      if (d.action === "commit") commitLiveStroke();
     }
   }
 
