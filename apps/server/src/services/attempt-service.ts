@@ -921,6 +921,38 @@ export function requireAttemptQuestion(
 }
 
 /**
+ * 题目成员资格的**宽松**口径（T6R.5 复审④上移至此，与上方严格口径同处可
+ * 对照）：只要求该 attempt 的 responses 行存在——不查 questions 当前存活
+ * （软删题历史证据可读），也不要求快照非空（升级前遗留卷的响应行仍可定位，
+ * 历史读取方返回空投影而非 404；证据/笔记行本就只可能由新代码写入，遗留卷
+ * 恒为空态）。消费方：note-service 的 evidence 读（学生 ② / 教师 ⑥）——
+ * 历史只读场景；写通道（笔记上传/工作稿头）仍走严格 requireAttemptQuestion。
+ */
+export function requireAttemptQuestionRow(
+  db: Db,
+  attemptId: string,
+  questionId: string,
+): void {
+  const hit = db
+    .select({ id: responses.id })
+    .from(responses)
+    .where(
+      and(
+        eq(responses.attemptId, attemptId),
+        eq(responses.questionId, questionId),
+      ),
+    )
+    .get();
+  if (hit === undefined) {
+    throw new HttpError(
+      404,
+      "QUESTION_NOT_FOUND",
+      "题目不存在或不属于这次练习",
+    );
+  }
+}
+
+/**
  * 入口类可见性校验（POST /assignments/:id/attempt 开卷用）：作业不存在/已
  * 软删 → 404；未被指派**或在册判定含 removedAt IS NULL**（被移出名单的学生
  * 立即不可见，D13）→ 403。与 T2.4 旧取卷接口（assignment-service 的

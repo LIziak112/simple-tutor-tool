@@ -36,7 +36,6 @@ import {
   noteImages,
   notes,
   noteVersions,
-  responses,
   type SubmissionEvidenceRow,
   submissionEvidence,
 } from "../db/schema";
@@ -49,6 +48,7 @@ import {
 import { HttpError } from "../lib/http-error";
 import {
   requireAttemptQuestion,
+  requireAttemptQuestionRow,
   requireUsableAttempt,
 } from "./attempt-service";
 import { pngSize } from "./ink-service";
@@ -736,36 +736,6 @@ function noteHeadOf(
     images: imageRows.map(noteImageMetaOf),
     evidence: evidence === undefined ? null : noteEvidenceMetaOf(evidence),
   };
-}
-
-/**
- * evidence 读取的题目成员资格（宽松口径，区别于写侧 requireAttemptQuestion）：
- * 只要求该 attempt 的 responses 行存在——不查 questions 当前存活（软删题历史
- * 证据可读），也不要求快照非空（升级前遗留卷的响应行仍可定位，返回空投影
- * 而非 404；证据/笔记行本就只可能由新代码写入，遗留卷恒为空态）。
- */
-function requireAttemptQuestionRow(
-  db: Db,
-  attemptId: string,
-  questionId: string,
-): void {
-  const hit = db
-    .select({ id: responses.id })
-    .from(responses)
-    .where(
-      and(
-        eq(responses.attemptId, attemptId),
-        eq(responses.questionId, questionId),
-      ),
-    )
-    .get();
-  if (hit === undefined) {
-    throw new HttpError(
-      404,
-      "QUESTION_NOT_FOUND",
-      "题目不存在或不属于这次练习",
-    );
-  }
 }
 
 /** ① GET /api/student/attempts/:id/notes/:qid：工作稿头（本人 + attempt 可用 + 冻结集合严格口径） */
