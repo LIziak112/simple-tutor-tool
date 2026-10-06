@@ -115,7 +115,7 @@ function gatedBackend() {
   const setCalls: GatedCall[] = [];
   const getCalls: GatedGet[] = [];
   const backend: NoteStoreBackend = {
-    keys: inner.keys,
+    getAll: inner.getAll,
     set: (key, value) =>
       new Promise<void>((resolve) => {
         setCalls.push({

@@ -38,18 +38,31 @@ function fakeRequest<T>(result: T): {
 
 vi.mock("idb-keyval", () => {
   const ALL_KEYS = ["a:1", 42, "a:2", "b:9"];
+  // 键值对存（getAll/getAllKeys 同序——真对象存储按键排序遍历）
+  const VALUES: Record<string, string> = {
+    "a:1": "v1",
+    "a:2": "v2",
+    "b:9": "v9",
+  };
+  const inRange = (k: string, range: { lower: string; upper: string }) =>
+    k >= range.lower && k <= range.upper;
   return {
     // 按 idb-keyval 真实语义：customStore(mode, cb) = Promise<cb 的返回值>
     createStore: () => (_mode: string, cb: (os: unknown) => unknown) =>
       Promise.resolve().then(() =>
         cb({
-          // 模拟真 IDB 的 range 语义：只回 [lower, upper] 内的键
+          // 模拟真 IDB 的 range 语义：只回 [lower, upper] 内的键/值对
           getAllKeys: (range: { lower: string; upper: string }) =>
             fakeRequest(
               ALL_KEYS.filter(
-                (k) =>
-                  typeof k === "string" && k >= range.lower && k <= range.upper,
+                (k) => typeof k === "string" && inRange(k, range),
               ),
+            ),
+          getAll: (range: { lower: string; upper: string }) =>
+            fakeRequest(
+              ALL_KEYS.filter(
+                (k) => typeof k === "string" && inRange(k, range),
+              ).map((k) => VALUES[k] ?? null),
             ),
           get: (key: string) => fakeRequest(`value-of-${key}`),
           put: () => fakeRequest(undefined),
@@ -77,5 +90,17 @@ describe("idbKVBackend.keys（真 IDB 语义契约）", () => {
     const backend = idbKVBackend("db", "store");
     const keys = await backend.keys("a:");
     expect(keys).toEqual(["a:1", "a:2"]); // 区间下推生效；非字符串键防御过滤；不再抛 filter 错
+  });
+
+  it("getAll：单事务取前缀键值对（bind/flush 扫描不逐键 get）", async () => {
+    vi.stubGlobal("IDBKeyRange", {
+      bound: (lower: unknown, upper: unknown) => ({ lower, upper }),
+    });
+    const backend = idbKVBackend("db", "store");
+    const pairs = await backend.getAll("a:");
+    expect(pairs).toEqual([
+      ["a:1", "v1"],
+      ["a:2", "v2"],
+    ]);
   });
 });

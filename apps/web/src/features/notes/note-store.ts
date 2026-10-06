@@ -276,7 +276,7 @@ function persistedCopy(record: NoteLocalRecord): NoteLocalRecord {
  * 无删除路径：未同步内容不静默删除）。memory/idb 两实现与复制链治理见
  * lib/kv-backend.ts。
  */
-export type NoteStoreBackend = Pick<KVStoreBackend, "get" | "set" | "keys">;
+export type NoteStoreBackend = Pick<KVStoreBackend, "get" | "set" | "getAll">;
 
 /** 内存后端（jsdom 自动回退与单测隔离/故障注入用；不持久） */
 export function memoryNoteBackend(): NoteStoreBackend {
@@ -979,23 +979,30 @@ export async function clearNoteDeniedAccess(
  * 会话内待传清单（bind 扫描补传 + flush 追平用）。只返回 scope——记录
  * 活引用不泄出（复审⑩：调用方要细节走 peek/getNoteRecord，避免扫描期间
  * 的写入经旧引用旁路队列）。
+ * T6R.9 复审⑧：单事务 getAll 取前缀键值对（不再 keys 后逐键 get 的串行
+ * 往返）；载入缓存与 getNoteRecord 同口径——窗口内新写以内存为准。
  */
 export async function listPendingNotes(
   session: NoteSessionRef,
 ): Promise<NoteScope[]> {
   const out: NoteScope[] = [];
-  let keysOfSession: string[];
+  let pairs: Array<[string, unknown]>;
   try {
-    keysOfSession = await backend().keys(sessionPrefix(session));
+    pairs = await backend().getAll(sessionPrefix(session));
   } catch (err) {
     console.warn("草稿本地仓扫描失败（无法补传待传版本）", err);
     return out;
   }
-  for (const key of keysOfSession) {
+  for (const [key, raw] of pairs) {
     const scope = parseNoteKey(key)?.scope;
     if (scope === undefined) continue;
-    const record = await getNoteRecord(session, scope);
-    if (record !== null && record.pending !== null) {
+    if (!records.has(key)) {
+      // 竞态口径同 getNoteRecord：读期间发生的本地写入已进内存——不覆盖
+      const revived = reviveRecord(raw);
+      if (revived !== null) records.set(key, revived);
+    }
+    const record = records.get(key);
+    if (record !== undefined && record.pending !== null) {
       out.push(scope);
     }
   }

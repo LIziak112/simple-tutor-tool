@@ -22,6 +22,12 @@ export interface KVStoreBackend {
   del(key: string): Promise<void>;
   /** 列出以 prefix 开头的全部键（乱序允许；IDB 侧已下推 range） */
   keys(prefix: string): Promise<string[]>;
+  /**
+   * 一次列出 prefix 前缀的键值对（T6R.9 复审⑧：bind/flush 扫描单事务取
+   * 全量，替代 keys 后逐键 get 的串行往返）。键值同序（对象存储按键排序
+   * 遍历）；非字符串键丢弃（与 keys 的防御口径一致）。
+   */
+  getAll(prefix: string): Promise<Array<[string, unknown]>>;
 }
 
 /** 内存实现（jsdom 自动回退、单测隔离与故障注入用；不持久） */
@@ -37,6 +43,8 @@ export function memoryKVBackend(): KVStoreBackend {
     },
     keys: async (prefix) =>
       Array.from(map.keys()).filter((key) => key.startsWith(prefix)),
+    getAll: async (prefix) =>
+      Array.from(map.entries()).filter(([key]) => key.startsWith(prefix)),
   };
 }
 
@@ -78,6 +86,28 @@ export function idbKVBackend(
           }),
       );
       return all.filter((key): key is string => typeof key === "string");
+    },
+    getAll: async (prefix) => {
+      // 同一事务内 getAllKeys + getAll（同一 range 同序）；回调返回 Promise
+      // 的口径与 keys 同（customStore 只 resolve 回调返回值）
+      const range = prefixRange(prefix);
+      const request = <T>(r: IDBRequest<T>) =>
+        new Promise<T>((resolve, reject) => {
+          r.onsuccess = () => resolve(r.result);
+          r.onerror = () => reject(r.error);
+        });
+      const [rawKeys, values] = await store("readonly", (objectStore) =>
+        Promise.all([
+          request(objectStore.getAllKeys(range)),
+          request(objectStore.getAll(range)),
+        ]),
+      );
+      const pairs: Array<[string, unknown]> = [];
+      for (let i = 0; i < rawKeys.length; i++) {
+        const key = rawKeys[i];
+        if (typeof key === "string") pairs.push([key, values[i] ?? null]);
+      }
+      return pairs;
     },
   };
 }
