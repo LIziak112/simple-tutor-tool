@@ -1,17 +1,24 @@
-import { stemMdLeaksAnswers } from "@tutor/md-dsl";
-import { parseGraphRange } from "../markdown/directives/Media";
+import { processor, stemMdLeaksAnswers } from "@tutor/md-dsl";
+import { parseGraphRange } from "../markdown/graph-range";
+import { extractImageRefs } from "../markdown/image-refs";
 
 /**
  * 授权静态题目素材导出模块（T6R.12，方案 §9.3「题目视觉信息不能遗漏」）：
  * 把服务端**已按角色投影**的题目素材转成静态可导出形态——
  * - 完整选项（字母序列出，不带正误标记）、LaTeX 与表格原样保留；
- * - ::image 引用收集为媒体素材清单（实际文件由服务端装配/下载链路提供）；
+ * - ::image 引用收集为媒体素材清单（extractImageRefs 共享；实际文件由
+ *   服务端装配/下载链路提供）；
  * - ::graph 函数图像收集为待静态化图表（renderGraphFigurePng 按需渲染为
  *   PNG，失败显式返回原因，不伪造「当时画面」、不靠 DOM 截图兜底）；
  * - fold/steps 等交互容器标注「交互内容静态导出（交互状态未记录）」，
  *   内容本身保留——不能声称导出的是学生当时看到的画面；
  * - 学生角色守卫：题干仍含答案标记（上游投影缺失）时拒绝生成并抛错
- *   （授权投影先于素材装配的最后防线，绝不静默降级出材料）。
+ *   （服务端 materialOf 哨兵为第一道防线，本守卫是前端纵深防御）。
+ *
+ * 指令识别走 md-dsl processor 的 AST（ContainerDirective/LeafDirective 按
+ * name/attributes 取值、position 切原文行注入，复审 B4）：代码围栏内的指令
+ * 样例是 code 节点、天然不参与；接受面与 remark-directive 实际语法一致
+ * （:: 两冒号为叶子、:::+ 为容器），不再手写正则近似。
  *
  * 消费方：单题完整导出（T6R.13）与静态合成图（T6R.19）。
  */
@@ -51,43 +58,89 @@ export interface StaticQuestionMaterial {
 /** 交互内容静态导出的固定标记（对外文案单一来源；不称「截图」） */
 export const STATIC_INTERACTION_NOTE = "【交互内容静态导出】交互状态未记录。";
 
-// ---------- 行级识别（与 remark-directive 语法对齐的最小扫描器） ----------
+// ---------- AST 指令事件（md-dsl processor 与 remark-directive 同源） ----------
 
-/** 容器开栏：3+ 冒号 + 指令名（::::steps / :::fold{title="…"} 等） */
-const CONTAINER_OPEN_RE = /^(\s*)(:{3,})\s*([A-Za-z][A-Za-z0-9_-]*)/;
-/** 容器闭栏：整行只有 3+ 冒号 */
-const CONTAINER_CLOSE_RE = /^(\s*)(:{3,})\s*$/;
-/** 叶子指令：::image / ::graph（宽容 2–3 冒号写法；仅整行形态才是指令） */
-const IMAGE_LEAF_RE = /^(\s*):{2,3}image\{(.*)\}\s*$/;
-const GRAPH_LEAF_RE = /^(\s*):{2,3}graph\{(.*)\}\s*$/;
-/** 围栏代码块（内部行不扫描——代码里的指令样例是字面文本） */
-const CODE_FENCE_RE = /^(\s*)(`{3,}|~{3,})/;
+/** mdast 节点的最小结构视图（不引 unist 类型包——web 无直接依赖） */
+interface MdNode {
+  readonly type: string;
+  readonly name?: unknown;
+  readonly attributes?: unknown;
+  readonly children?: readonly MdNode[];
+  readonly position?: {
+    readonly start?: { readonly line?: number };
+    readonly end?: { readonly line?: number };
+  };
+}
 
-/** 从指令属性行取字符串属性值（src/fn/range/title；值内不含引号） */
-function attrOf(attrsText: string, name: string): string | undefined {
-  const match = new RegExp(`${name}="([^"]*)"`).exec(attrsText);
-  return match?.[1];
+/** 指令属性值（remark-directive 解析 {…} 而得；值恒为字符串或 null） */
+function attrOf(node: MdNode, key: string): string | undefined {
+  const attrs = node.attributes;
+  if (typeof attrs !== "object" || attrs === null) return undefined;
+  const value = (attrs as Record<string, unknown>)[key];
+  return typeof value === "string" ? value : undefined;
+}
+
+/** AST 指令事件：graph=替换行区间；fold/steps=开栏行后插入标记 */
+type DirectiveEvent =
+  | {
+      kind: "graph";
+      startLine: number;
+      endLine: number;
+      figure: GraphFigureSpec;
+    }
+  | { kind: "fold" | "steps"; openLine: number; title?: string };
+
+/** 深度优先收集指令事件（graph 叶子 + fold/steps 容器；其余节点只下钻） */
+function collectDirectiveEvents(root: MdNode): DirectiveEvent[] {
+  const events: DirectiveEvent[] = [];
+  const walk = (node: MdNode): void => {
+    const name = typeof node.name === "string" ? node.name : "";
+    const startLine = node.position?.start?.line;
+    if (startLine !== undefined) {
+      if (node.type === "leafDirective" && name === "graph") {
+        const fn = attrOf(node, "fn");
+        if (fn !== undefined && fn.length > 0) {
+          const range = attrOf(node, "range");
+          events.push({
+            kind: "graph",
+            startLine,
+            endLine: node.position?.end?.line ?? startLine,
+            figure: range !== undefined ? { fn, range } : { fn },
+          });
+        }
+      } else if (node.type === "containerDirective") {
+        if (name === "fold" || name === "steps") {
+          const title = attrOf(node, "title");
+          events.push({
+            kind: name,
+            openLine: startLine,
+            ...(title !== undefined ? { title } : {}),
+          });
+        }
+      }
+    }
+    for (const child of node.children ?? []) walk(child);
+  };
+  walk(root);
+  return events;
 }
 
 /** 交互容器的静态标记行（fold 带 title 时点名） */
-function containerNoteLine(name: string, attrsText: string): string | null {
-  if (name === "fold") {
-    const title = attrOf(attrsText, "title");
-    return `> ${STATIC_INTERACTION_NOTE}折叠块${title ? `「${title}」` : ""}（默认收起，学生当时的展开状态未记录；内容完整保留在下方）。`;
-  }
-  if (name === "steps") {
-    return `> ${STATIC_INTERACTION_NOTE}分步容器（学生当时展开到第几步未记录；全部步骤完整保留在下方）。`;
-  }
-  return null;
+function containerNoteLine(
+  event: Extract<DirectiveEvent, { kind: "fold" | "steps" }>,
+): string {
+  return event.kind === "fold"
+    ? `> ${STATIC_INTERACTION_NOTE}折叠块${event.title ? `「${event.title}」` : ""}（默认收起，学生当时的展开状态未记录；内容完整保留在下方）。`
+    : `> ${STATIC_INTERACTION_NOTE}分步容器（学生当时展开到第几步未记录；全部步骤完整保留在下方）。`;
 }
 
-/** ::graph 行 → 静态说明块（原始指令保留为补充，不要求读者猜原始图形） */
+/** ::graph 原文行区间 → 静态说明块（原始指令保留为补充，不要求读者猜原始图形） */
 function graphNoteLines(figure: GraphFigureSpec, raw: string): string[] {
   return [
     `> 【图表·静态导出】函数图像 y=${figure.fn}${
       figure.range ? `（x 区间 ${figure.range}）` : ""
     }；交互渲染状态未记录。`,
-    `> 原始指令（补充）：\`${raw.trim()}\``,
+    `> 原始指令（补充）：\`${raw}\``,
   ];
 }
 
@@ -96,14 +149,15 @@ function graphNoteLines(figure: GraphFigureSpec, raw: string): string[] {
 /**
  * 生成静态题目素材（纯函数，无 DOM 依赖）：
  * 输入必须是服务端按角色投影后的文本；学生角色带答案守卫（抛错拒绝）。
- * 交互容器只加标记不改内容；::graph 行替换为参数化说明块。
+ * AST 定位 + 原文行编辑：graph 行区间替换为参数化说明块；fold/steps
+ * 开栏行后插入静态标记；非指令行（含 LaTeX/表格/代码块）逐字保留。
  */
 export function buildStaticQuestionMaterial(
   input: StaticQuestionMaterialInput,
 ): StaticQuestionMaterial {
   // 纵深防御（第二道防线）：权威哨兵在服务端 materialOf（question-evidence，
-  // 500 拒绝装配，编排者复审 A1）；此处兜底拦截「未经服务端装配直喂本模块」
-  // 的调用路径，抛错不静默降级。
+  // 500 拒绝装配，复审 A1）；此处兜底拦截「未经服务端装配直喂本模块」的
+  // 调用路径，抛错不静默降级。
   if (input.role === "student" && stemMdLeaksAnswers(input.stemMd)) {
     throw new Error(
       "题干含答案标记（[[答案]] 或选项任务列表），拒绝生成学生材料——上游角色投影缺失，请检查装配链路",
@@ -111,97 +165,42 @@ export function buildStaticQuestionMaterial(
   }
 
   const lines = input.stemMd.split(/\r?\n/);
-  const out: string[] = [];
-  const mediaSrcs: string[] = [];
+  const events = collectDirectiveEvents(
+    processor.parse(input.stemMd) as MdNode,
+  );
+
+  // 行编辑（自底向上应用，前面的偏移不受影响）：
+  // - graph：替换 [startLine, endLine] 为说明块；
+  // - fold/steps：在 openLine 后插入标记行。
   const graphFigures: GraphFigureSpec[] = [];
   const interactionNotes: string[] = [];
-  /** 打开的容器栏（闭栏按长度匹配弹出；代码块内不跟踪） */
-  const openFences: number[] = [];
-  let codeFence: string | null = null;
   let foldCount = 0;
   let stepsCount = 0;
-
-  for (const line of lines) {
-    // 代码围栏开关（围栏内一切指令按字面保留）
-    const fenceMatch = CODE_FENCE_RE.exec(line);
-    if (fenceMatch !== null) {
-      const marker = fenceMatch[2]?.[0] ?? "`";
-      if (codeFence === null) codeFence = marker;
-      else if (marker === codeFence) codeFence = null;
-      out.push(line);
+  const sorted = [...events].sort((a, b) => {
+    const aLine = a.kind === "graph" ? a.startLine : a.openLine;
+    const bLine = b.kind === "graph" ? b.startLine : b.openLine;
+    return bLine - aLine;
+  });
+  for (const event of sorted) {
+    if (event.kind === "graph") {
+      const raw = lines
+        .slice(event.startLine - 1, event.endLine)
+        .join("\n")
+        .trim();
+      graphFigures.push(event.figure);
+      lines.splice(
+        event.startLine - 1,
+        event.endLine - event.startLine + 1,
+        "",
+        ...graphNoteLines(event.figure, raw),
+        "",
+      );
       continue;
     }
-    if (codeFence !== null) {
-      out.push(line);
-      continue;
-    }
-
-    // 容器闭栏：与最近开栏长度匹配时弹出（内层短栏不误吞外层）
-    const closeMatch = CONTAINER_CLOSE_RE.exec(line);
-    if (closeMatch !== null) {
-      const length = closeMatch[2]?.length ?? 3;
-      while (openFences.length > 0 && (openFences.at(-1) ?? 0) <= length) {
-        openFences.pop();
-      }
-      out.push(line);
-      continue;
-    }
-
-    // 容器开栏：fold/steps 注静态标记行
-    const openMatch = CONTAINER_OPEN_RE.exec(line);
-    if (openMatch !== null) {
-      const name = openMatch[3] ?? "";
-      const attrsText = line
-        .slice(openMatch[0].length)
-        .trim()
-        .replace(/^\{/, "")
-        .replace(/\}$/, "");
-      const note = containerNoteLine(name, attrsText);
-      if (note !== null) {
-        out.push(line);
-        out.push("");
-        out.push(note);
-        out.push("");
-        if (name === "fold") foldCount += 1;
-        else stepsCount += 1;
-      } else {
-        out.push(line);
-      }
-      openFences.push(openMatch[2]?.length ?? 3);
-      continue;
-    }
-
-    // 叶子：::image 收集引用（原行保留）
-    const imageMatch = IMAGE_LEAF_RE.exec(line);
-    if (imageMatch !== null) {
-      const src = attrOf(imageMatch[2] ?? "", "src");
-      if (src !== undefined && src.length > 0 && !mediaSrcs.includes(src)) {
-        mediaSrcs.push(src);
-      }
-      out.push(line);
-      continue;
-    }
-
-    // 叶子：::graph 收集参数并替换为静态说明块
-    const graphMatch = GRAPH_LEAF_RE.exec(line);
-    if (graphMatch !== null) {
-      const attrsText = graphMatch[2] ?? "";
-      const fn = attrOf(attrsText, "fn");
-      if (fn !== undefined && fn.length > 0) {
-        const range = attrOf(attrsText, "range");
-        const figure: GraphFigureSpec =
-          range !== undefined ? { fn, range } : { fn };
-        graphFigures.push(figure);
-        out.push("");
-        out.push(...graphNoteLines(figure, line.trim()));
-        out.push("");
-        continue;
-      }
-    }
-
-    out.push(line);
+    if (event.kind === "fold") foldCount += 1;
+    else stepsCount += 1;
+    lines.splice(event.openLine, 0, "", containerNoteLine(event), "");
   }
-
   if (foldCount > 0) {
     interactionNotes.push(`折叠块 ${foldCount} 处（展开状态未记录）`);
   }
@@ -217,7 +216,7 @@ export function buildStaticQuestionMaterial(
   if (input.questionNo !== undefined) {
     sections.push([`### 题目 ${input.questionNo}`, ""].join("\n"));
   }
-  sections.push([out.join("\n").trim(), ""].join("\n"));
+  sections.push([lines.join("\n").trim(), ""].join("\n"));
   if (input.options !== undefined && input.options.length > 0) {
     const optionLines = input.options.map(
       (text, index) => `${String.fromCharCode(65 + index)}. ${text}`,
@@ -230,7 +229,7 @@ export function buildStaticQuestionMaterial(
 
   return {
     markdown: `${sections.join("\n").trimEnd()}\n`,
-    mediaSrcs,
+    mediaSrcs: extractImageRefs([input.stemMd]),
     graphFigures,
     interactionNotes,
   };

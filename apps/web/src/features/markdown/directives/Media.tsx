@@ -1,6 +1,7 @@
 import type { FunctionPlotOptions } from "function-plot";
 import { ImageOff, RefreshCw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { parseGraphRange } from "../graph-range";
 import type { DirectiveProps } from "./types";
 
 /**
@@ -65,22 +66,6 @@ export function ImageDirective({ attrs }: DirectiveProps) {
 }
 
 type GraphState = "loading" | "ready" | "error";
-
-/**
- * 解析 range 属性（如 "-3,3"）为 x 轴区间；非法时返回 null（调用方交给
- * function-plot 自动选取）。T6R.12 起导出共享：question-materials 的图表
- * 静态化与组件渲染同一口径（搬家不抄数）。
- */
-export function parseGraphRange(
-  range: string | undefined,
-): { domain: [number, number] } | null {
-  if (!range) return null;
-  const parts = range.split(",").map((part) => Number.parseFloat(part.trim()));
-  if (parts.length !== 2 || parts.some((n) => !Number.isFinite(n))) return null;
-  const [min, max] = parts as [number, number];
-  if (min >= max) return null;
-  return { domain: [min, max] };
-}
 
 /** ::graph 函数图像：function-plot 动态加载渲染 */
 export function GraphDirective({ attrs }: DirectiveProps) {

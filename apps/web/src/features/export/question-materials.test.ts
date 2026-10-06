@@ -66,6 +66,28 @@ describe("buildStaticQuestionMaterial（静态题目素材）", () => {
     expect(material.interactionNotes.length).toBeGreaterThan(0);
   });
 
+  it("代码围栏内的指令样例按字面保留（AST 语义锁定：code 节点不参与指令识别）", () => {
+    const stem = [
+      "说明如下：",
+      "",
+      "```md",
+      '::graph{fn="x^2"}',
+      ":::fold",
+      "```",
+      "",
+      '::graph{fn="x+1"}',
+    ].join("\n");
+    const material = buildStaticQuestionMaterial({
+      role: "student",
+      stemMd: stem,
+    });
+    // 围栏内不收集、不替换；围栏外照常
+    expect(material.graphFigures).toEqual([{ fn: "x+1" }]);
+    expect(material.markdown).toContain('::graph{fn="x^2"}');
+    expect(material.markdown).toContain(":::fold");
+    expect(material.markdown).not.toContain('::graph{fn="x+1"}\n');
+  });
+
   it("复杂交互缺状态明确标记：fold/steps 注静态导出标记，内容保留", () => {
     const stem = [
       "阅读材料：",
