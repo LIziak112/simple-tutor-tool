@@ -187,7 +187,11 @@ async function callApi<TData>(fn: () => Promise<Response>): Promise<TData> {
   let res: Response;
   try {
     res = await fn();
-  } catch {
+  } catch (err) {
+    // 中止身份保留（T6R.8 复审⑬）：AbortError 原样上抛——调用方（note-sync）
+    // 据此区分「会话切换主动中止（丢弃）」与网络错误（退避）；其余失败
+    // 归并中文网络文案
+    if (err instanceof Error && err.name === "AbortError") throw err;
     throw new Error(
       "连不上服务器，请确认后端已启动（pnpm --filter server dev）后重试",
     );

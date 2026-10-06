@@ -516,3 +516,58 @@ describe("note-sync：flushNoteSync 结果摘要（复审④）", () => {
     expect(peekNoteRecord(SESSION_A, scopeBackoff)?.pending).not.toBeNull();
   });
 });
+
+describe("note-sync：PUT 超时与中止身份（复审⑦⑬）", () => {
+  it("单次 PUT 30s 超时→按网络错误退避重试（同 mutationId 幂等）", async () => {
+    // 模拟真实 fetch：收到 abort 以 signal.reason 拒绝（超时 reason 是普通
+    // Error，经分诊走退避；jsdom 无 reason 支持时兜底普通 Error 同效）
+    putMock
+      .mockImplementationOnce(
+        (_a, _q, _b, _m, signal) =>
+          new Promise((_resolve, reject) => {
+            signal?.addEventListener("abort", () => {
+              const reason = (signal as AbortSignal & { reason?: unknown })
+                .reason;
+              reject(
+                reason instanceof Error
+                  ? reason
+                  : new Error("aborted without reason"),
+              );
+            });
+          }),
+      )
+      .mockResolvedValue(receiptOf(1));
+    writeNoteDoc(SESSION_A, SCOPE, DOC_A);
+    await vi.advanceTimersByTimeAsync(NOTE_SYNC_DEBOUNCE_MS); // 首传在途
+    expect(putMock.mock.calls.length).toBe(1);
+    await vi.advanceTimersByTimeAsync(30_000 - 1); // 超时前不动作
+    expect(putMock.mock.calls.length).toBe(1);
+    // t=32s：超时中止释放串行队列——期间（t=10s）最大等待已把强刷重试
+    // 排进队列（复审⑥），挂死请求一释放立即重试并成功
+    await vi.advanceTimersByTimeAsync(1);
+    expect(putMock.mock.calls.length).toBe(2);
+    expect(callOf(1).meta.mutationId).toBe(callOf(0).meta.mutationId); // 幂等重放
+    expect(peekNoteRecord(SESSION_A, SCOPE)?.pending).toBeNull();
+    await vi.advanceTimersByTimeAsync(60_000); // 成功后无更多重试
+    expect(putMock.mock.calls.length).toBe(2);
+  });
+
+  it("AbortError（主动中止）→丢弃：不重试、不落任何状态", async () => {
+    putMock.mockRejectedValueOnce(
+      Object.assign(new Error("The operation was aborted"), {
+        name: "AbortError",
+      }),
+    );
+    writeNoteDoc(SESSION_A, SCOPE, DOC_A);
+    await vi.advanceTimersByTimeAsync(NOTE_SYNC_DEBOUNCE_MS);
+    expect(putMock.mock.calls.length).toBe(1);
+    const record = peekNoteRecord(SESSION_A, SCOPE);
+    await vi.advanceTimersByTimeAsync(60_000); // 无退避、无任何重试
+    expect(putMock.mock.calls.length).toBe(1);
+    expect(peekNoteRecord(SESSION_A, SCOPE)?.pending?.mutationId).toBe(
+      record?.pending?.mutationId, // 状态原样
+    );
+    expect(peekNoteRecord(SESSION_A, SCOPE)?.denied).toBeNull();
+    expect(peekNoteRecord(SESSION_A, SCOPE)?.conflict).toBeNull();
+  });
+});

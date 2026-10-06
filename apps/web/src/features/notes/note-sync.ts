@@ -81,6 +81,37 @@ export const NOTE_SYNC_MAX_WAIT_MS = 10_000;
 export const NOTE_SYNC_BACKOFF_BASE_MS = 1000;
 /** 退避上限（毫秒） */
 export const NOTE_SYNC_BACKOFF_MAX_MS = 60_000;
+/**
+ * 单次 PUT 超时（毫秒，复审⑦）：上传走**全局串行队列**——一个请求挂死
+ * 整个会话的上传停摆；30s 覆盖弱网/大稿（gzip 后 ≤2MiB）仍留足余量。
+ * 超时按网络错误退避重试（同 mutationId 幂等重放安全）。AbortSignal.any
+ * 需 Safari 17.4+（本仓支持 16.4+），故手动桥接两会话信号。
+ */
+export const NOTE_SYNC_PUT_TIMEOUT_MS = 30_000;
+
+/**
+ * PUT 信号桥（复审⑦/⑬）：超时与会话中止汇入一个 AbortController。
+ * 超时 reason 用普通 Error（fetch 以 reason 拒绝 → callApi 落通用网络
+ * 文案 → 退避重试）；会话中止走默认 AbortError（身份保留 → 分诊丢弃）。
+ */
+function bridgePutSignal(sessionSignal: AbortSignal): {
+  signal: AbortSignal;
+  finish: () => void;
+} {
+  const controller = new AbortController();
+  const timer = setTimeout(() => {
+    controller.abort(new Error("草稿上传超时（30s）"));
+  }, NOTE_SYNC_PUT_TIMEOUT_MS);
+  const onSessionAbort = () => controller.abort();
+  sessionSignal.addEventListener("abort", onSessionAbort, { once: true });
+  return {
+    signal: controller.signal,
+    finish: () => {
+      clearTimeout(timer);
+      sessionSignal.removeEventListener("abort", onSessionAbort);
+    },
+  };
+}
 
 // ---------- 会话状态（模块级单例） ----------
 
@@ -181,8 +212,9 @@ function keyInSession(
 
 // ---------- 上传执行 ----------
 
-/** 错误分诊：conflict（留两份待裁决）/ denied（终态）/ retry（退避） */
+/** 错误分诊：aborted（会话中止丢弃）/ conflict（留两份待裁决）/ denied（终态）/ retry（退避） */
 type PutVerdict =
+  | { kind: "aborted" }
   | {
       kind: "conflict";
       /** MISMATCH 时为 null（服务端状态未知，契约 noteConflictSummarySchema） */
@@ -193,6 +225,12 @@ type PutVerdict =
   | { kind: "retry" };
 
 function classifyPutError(err: unknown): PutVerdict {
+  // 复审⑬：AbortError=主动中止（会话切换）——丢弃不重试不落状态。
+  // epoch 守卫已兜底大部分时序，这里把「身份」变成机制而非巧合；
+  // 超时中止以普通 Error 为 reason，不会落进本分支（走退避）
+  if (err instanceof Error && err.name === "AbortError") {
+    return { kind: "aborted" };
+  }
   if (!(err instanceof ApiError)) return { kind: "retry" };
   const { status, code, message } = err;
   if (status === 409 && code === "NOTE_REVISION_CONFLICT") {
@@ -253,6 +291,7 @@ async function runUpload(
   const controller = new AbortController();
   controllers.set(key, controller);
   setUploading(session, scope, true);
+  const put = bridgePutSignal(controller.signal);
   try {
     // 同引用直接复用字节（退避重试不重复 gzip）；重试序列化同一对象 ⇒
     // 相同字节 ⇒ 服务端同 hash（幂等）
@@ -267,13 +306,14 @@ async function runUpload(
       scope.questionId,
       new Blob([bytes], { type: "application/gzip" }),
       { baseRevision, mutationId },
-      controller.signal,
+      put.signal,
     );
     if (stale()) return; // 迟到回执丢弃（不推进旧记录）
     await applyUploadReceipt(session, scope, mutationId, receipt);
   } catch (err) {
     if (stale()) return;
     const verdict = classifyPutError(err);
+    if (verdict.kind === "aborted") return; // 主动中止：丢弃（复审⑬）
     if (verdict.kind === "conflict") {
       await applyUploadConflict(
         session,
@@ -306,6 +346,7 @@ async function runUpload(
       due(key);
     }, delay);
   } finally {
+    put.finish(); // 超时计时器与监听随作业结束拆除
     controllers.delete(key);
     // 复审⑥：本次上传窗口结束——重锚脏周期（下一轮内容变化经
     // handleRecordChanged 锚定新的最大等待），持续书写不会只等一次强刷

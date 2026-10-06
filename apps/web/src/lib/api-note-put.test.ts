@@ -126,3 +126,24 @@ describe("putNoteDocumentApi（T6R.8）", () => {
     expect(calls[0]?.init.signal).toBe(controller.signal);
   });
 });
+
+describe("putNoteDocumentApi：中止身份保留（T6R.8 复审⑬）", () => {
+  it("fetch 以 AbortError 拒绝时原样上抛（不被网络文案吞掉身份）", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw Object.assign(new Error("The operation was aborted"), {
+          name: "AbortError",
+        });
+      }),
+    );
+    const err = await putNoteDocumentApi(
+      ATTEMPT_ID,
+      QUESTION_ID,
+      new Blob(["{}"]),
+      { baseRevision: 0, mutationId: "44444444-4444-4444-8444-444444444444" },
+    ).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).name).toBe("AbortError");
+  });
+});
