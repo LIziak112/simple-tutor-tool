@@ -218,6 +218,8 @@ export function ExportWizard({
       summaries,
       ink,
       traces,
+      // v2 专属模块（T6R.12）：向导暂为 v1 入口（v2 批量 UI 属 T6R.16）
+      evidence: false,
     };
     return {
       scope: {

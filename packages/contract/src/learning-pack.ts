@@ -2,6 +2,11 @@ import { z } from "zod";
 import { analyticsLectureReadingMapSchema } from "./analytics-api.ts";
 import { attemptSourceSchema, attemptStatusSchema } from "./attempt.ts";
 import { questionAnswersSchema, questionTypeSchema } from "./content.ts";
+import {
+  noteCropRectSchema,
+  notePhaseSchema,
+  noteSubmissionEvidenceStateSchema,
+} from "./note.ts";
 
 /**
  * AI 学情数据包契约（T4.3 起为权威定义，依据 Phase4 清单 §2 D14–D19 与架构
@@ -113,6 +118,13 @@ export const learningPackModulesSchema = z.object({
   summaries: z.boolean().default(false),
   ink: z.boolean().default(false),
   traces: z.boolean().default(false),
+  /**
+   * v2 证据模块（T6R.12）：逐题装配 submission_evidence 原稿声明与 note_images
+   * 分析图附件（evidence/*.png）。**v2 专属**——勾选时 packVersion 必须为 2 且
+   * responses 必须同时勾选（证据引用挂在逐题作答行上，见请求 superRefine）；
+   * 缺省 false，v1 请求形状不变（v1 兼容，方案 §9.2）。
+   */
+  evidence: z.boolean().default(false),
 });
 
 /**
@@ -157,10 +169,19 @@ export const learningPackPrivacySchema = z.object({
 /**
  * 导出请求（preview 与生成接口共用请求体）。
  * superRefine：至少勾选一个内容模块（讲义/题目/逐题作答/汇总/痕迹任一；
- * ink 只是附件开关，单独勾选不构成有效数据包）。
+ * ink 与 evidence 只是附件开关，单独勾选不构成有效数据包）。
+ *
+ * v2（T6R.12，方案 §9.2「LearningPack 兼容」）：
+ * - packVersion 显式 2 = v2 证据装配（逐题快照关联 + evidence + manifest）；
+ *   **缺省仍为 v1**（既有调用方与 v1 pack 形状零变化）；1 必须以缺省表达
+ *   （literal 2 only，防「1 与缺省」双写漂移）；
+ * - evidence 模块依赖：勾选 evidence 必须同时 packVersion=2 且 responses=true
+ *   （证据引用挂在逐题作答行上，无 responses 行则 evidenceRef 无处安放）。
  */
 export const learningPackExportRequestSchema = z
   .object({
+    /** 包结构版本：缺省 = v1（兼容锁定）；显式 2 = v2 证据装配（T6R.12） */
+    packVersion: z.literal(2).optional(),
     scope: learningPackScopeSchema,
     modules: learningPackModulesSchema,
     goal: learningPackGoalSchema,
@@ -185,8 +206,26 @@ export const learningPackExportRequestSchema = z
         code: "custom",
         path: ["modules"],
         message:
-          "至少勾选一个内容模块（讲义 / 题目 / 逐题作答 / 作答汇总 / 学习痕迹；手写 PNG 只是附件开关）",
+          "至少勾选一个内容模块（讲义 / 题目 / 逐题作答 / 作答汇总 / 学习痕迹；手写 PNG 与证据附件只是附件开关）",
       });
+    }
+    if (m.evidence) {
+      if (request.packVersion !== 2) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["modules", "evidence"],
+          message:
+            "证据附件（evidence）是 v2 专属模块，勾选时请求必须显式携带 packVersion=2",
+        });
+      }
+      if (!m.responses) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["modules", "evidence"],
+          message:
+            "证据附件（evidence）挂在逐题作答行上，勾选证据必须同时勾选逐题作答（responses）",
+        });
+      }
     }
   });
 
@@ -442,6 +481,216 @@ export const learningPackSchema = z.object({
   summary: learningPackSummarySectionSchema.optional(),
 });
 
+// ---------- LearningPack v2（T6R.12：证据装配、快照关联与 manifest） ----------
+
+/**
+ * 包内对象编号（对外身份，方案 §9.1「对外使用包内编号」）：q001…（题目版本
+ * 条目）、e001…（证据条目）。**zip 文件名只使用编号与化名，不含真实学生/
+ * attempt/version id**；pack.json 内保留 attemptId/studentId/questionId（与
+ * v1 一致——化名口径只约束称呼与文件名，id 是教师域内的定位键）。
+ */
+const PACK_REF_QUESTION_RE = /^q\d{3,}$/;
+const PACK_REF_EVIDENCE_RE = /^e\d{3,}$/;
+
+/**
+ * 快照内容身份（64 位小写 hex sha-256）：对快照对象做**递归键序排序的
+ * 规范化序列化**（canonicalJsonOf）后计算，由服务端（question-evidence）
+ * 铸造——同内容不同键序的两份 JSON 得同一 hash（键序不参与内容身份）。**去重键含教师域**
+ * ——同 hash 同内容在本包内共享一个条目，跨教师永不合并（同内容去重不串教师）；
+ * 快照缺失（历史行无快照）为 null，条目 present=false 且 stemMd 为空串，
+ ** 不回填当前题库内容**（T6R.3 起口径，T6R.12 细化为显式缺失标记）。
+ */
+const learningPackSnapshotHashSchema = z
+  .string()
+  .regex(/^[0-9a-f]{64}$/, "快照内容 hash 须为 64 位小写十六进制（sha-256）");
+
+/**
+ * v2 题目条目：以「内容身份」为键（同内容多轮共享一条，不同内容即使同 qid
+ * 也各占一条——修复 v1「同 qid 取最新快照」导致旧答案配新题目的缺陷，D6.x）。
+ * - ref：包内编号 q001…（content.questions 的定位键，responses 经 questionRef
+ *   引用，一一配对）；
+ * - present=false：该轮作答的历史快照缺失（题目软删/升级遗留），stemMd 为空串
+ *   且无 answers/solutionMd/media——缺失即显式缺失；
+ * - media：该题（已按角色投影后的文本）引用的 ::image 图片与是否随包附上
+ *   （present=false 的条目进 manifest.missing，不静默消失）。
+ */
+export const learningPackV2QuestionSchema = learningPackQuestionSchema.extend({
+  ref: z.string().regex(PACK_REF_QUESTION_RE, "题目条目编号形如 q001"),
+  /** 交卷快照是否存在（false = 历史缺失，不回填当前题库） */
+  present: z.boolean(),
+  /** 快照内容身份（缺失为 null） */
+  snapshotHash: learningPackSnapshotHashSchema.nullable(),
+  /** 该题引用的媒体图片（含缺失标记；缺省空数组） */
+  media: z
+    .array(
+      z.object({
+        /** ::image src（即 zip 内路径，内容寻址 blobs/media/…） */
+        src: z.string().min(1),
+        /** 文件是否随包附上（false 进 manifest.missing） */
+        present: z.boolean(),
+      }),
+    )
+    .default([]),
+});
+
+/**
+ * v2 逐题作答行：v1 字段（answerText/判定/评语/inkFile）+ 快照关联三字段——
+ * - questionRef：指向 content.questions 的条目编号（**本行自己的交卷快照**，
+ *   不是该 qid 的最新版）；questions 模块未勾选时 content 缺席，snapshotHash
+ *   仍标识内容身份（manifest.contextNotes 注明题目上下文未提供）；
+ * - evidenceRef：指向 evidence 条目（仅 evidence 模块勾选且该行有证据时出现；
+ *   模块未勾时不得出现悬垂引用）。
+ */
+export const learningPackV2ResponseSchema = learningPackResponseSchema.extend({
+  questionRef: z.string().regex(PACK_REF_QUESTION_RE, "题目条目编号形如 q001"),
+  /** 本行交卷快照的内容身份（历史缺失为 null） */
+  snapshotHash: learningPackSnapshotHashSchema.nullable(),
+  /** 证据条目编号（evidence 模块勾选才出现） */
+  evidenceRef: z
+    .string()
+    .regex(PACK_REF_EVIDENCE_RE, "证据条目编号形如 e001")
+    .optional(),
+});
+
+/**
+ * v2 证据状态：note.ts 的 submission_evidence 四值（经 schema.options 引用，
+ * 不手抄——值域演进单一来源）+ 无证据行的显式值 not_collected
+ * （旧客户端兼容交卷未采集——与 none〔明确空稿〕区分，schema 注释同口径）。
+ */
+export const learningPackEvidenceStateSchema = z.enum([
+  ...noteSubmissionEvidenceStateSchema.options,
+  "not_collected",
+]);
+
+/**
+ * 证据条目的图片行（zip 内 evidence/… 文件或显式缺失）：只带 analysis 规格
+ * （AI 分析读分析图；缩略图低分辨率不进包）。state 只有两值：ready=文件已
+ * 附在 zip；missing=未生成/生成失败/文件丢失（进 manifest.missing，附原因）。
+ */
+export const learningPackEvidenceImageSchema = z.object({
+  /** zip 内路径（evidence/<证据编号>-<阶段>-<页号>.png；不含真实 id） */
+  file: z.string().min(1),
+  spec: z.literal("analysis"),
+  /** 页号/切片序（同版本 analysis 规格内从 0 递增） */
+  pageIndex: z.number().int().min(0),
+  /** 逻辑裁剪区（切片范围，note.ts 同形状） */
+  crop: noteCropRectSchema,
+  pixelWidth: z.number().int().min(1),
+  pixelHeight: z.number().int().min(1),
+  state: z.enum(["ready", "missing"]),
+});
+
+/**
+ * v2 证据条目（方案 §9.1：证据携带 phase、保存时间、图片尺寸／裁剪范围、
+ * 缺失原因）：一次作答一道题一条（submission_evidence 行或 not_collected）。
+ * phase 首版恒 scratch（原稿）；correction/supplement 由 T6R.15 产生，届时
+ * 同一 response 可挂多条证据（本契约预留数组承载，编号独立递增）。
+ */
+export const learningPackEvidenceSchema = z.object({
+  ref: z.string().regex(PACK_REF_EVIDENCE_RE, "证据条目编号形如 e001"),
+  attemptId: z.uuid(),
+  studentId: z.uuid(),
+  questionId: z.string().min(1),
+  /** 关联的题目条目编号（快照配对） */
+  questionRef: z.string().regex(PACK_REF_QUESTION_RE, "题目条目编号形如 q001"),
+  /** 全卷连续题号（与该行 response.no 一致） */
+  no: z.number().int().min(1),
+  phase: notePhaseSchema,
+  state: learningPackEvidenceStateSchema,
+  /** 被固定版本摘要（仅 state='frozen' 携带；版本行缺失时 undefined + missing 原因） */
+  version: z
+    .object({
+      versionId: z.uuid(),
+      /** 服务端确认时间（UTC ISO） */
+      savedAt: z.string().min(1),
+      strokeCount: z.number().int().min(0),
+      pointCount: z.number().int().min(0),
+      paperHeight: z.number().int().min(1),
+    })
+    .optional(),
+  /** 分析图清单（含缺失标记；缺省空数组） */
+  images: z.array(learningPackEvidenceImageSchema).default([]),
+});
+
+/** manifest 文件清单行（zip 内全部附件；pack.json 自身不列——自引尺寸无意义） */
+export const learningPackManifestFileSchema = z.object({
+  /** zip 内路径（相对、可移植：无盘符/绝对路径/.. 段） */
+  path: z.string().min(1),
+  kind: z.enum([
+    "summary",
+    "prompt",
+    "schema",
+    "mapping",
+    "ink",
+    "media",
+    "evidence",
+  ]),
+  bytes: z.number().int().min(0),
+  /** 关联的包内编号（题目/证据条目；media 可关联多个 q 条目） */
+  refs: z.array(z.string()).default([]),
+});
+
+/** manifest 缺失清单行：引用了但拿不到的文件，附原因与关联编号（不静默跳过） */
+export const learningPackManifestMissingSchema = z.object({
+  /** 本应在 zip 内的路径 */
+  path: z.string().min(1),
+  kind: z.enum(["media", "evidence-image"]),
+  /** 缺失原因（中文，面向教师可读） */
+  reason: z.string().min(1),
+  refs: z.array(z.string()).default([]),
+});
+
+/**
+ * v2 manifest（pack.json 同时为清单，方案 §9.1「manifest 职责」）：
+ * - files：zip 内全部附件（summary/prompt/schema/映射/ink/media/evidence）；
+ * - missing：引用但缺失的文件（媒体未上传/已清理、证据图未生成/文件丢失）；
+ * - contextNotes：装配口径说明（如「题目内容模块未勾选：题目上下文未提供」
+ *   ——只选证据不选题目时不自动夹带题目内容，方案 §9.2）。
+ */
+export const learningPackManifestSchema = z.object({
+  files: z.array(learningPackManifestFileSchema),
+  missing: z.array(learningPackManifestMissingSchema),
+  contextNotes: z.array(z.string()).default([]),
+});
+
+/** v2 meta：version 字面量 2 + modules 回显多一档 evidence */
+export const learningPackV2MetaSchema = learningPackMetaSchema.extend({
+  version: z.literal(2),
+  modules: learningPackMetaSchema.shape.modules.extend({
+    evidence: z.boolean(),
+  }),
+});
+
+/** v2 content section：题目条目换 v2 形状（ref/present/snapshotHash/media） */
+export const learningPackV2ContentSchema = learningPackContentSchema.extend({
+  questions: z.array(learningPackV2QuestionSchema).optional(),
+});
+
+/** v2 attempts section：逐题作答行换 v2 形状（快照关联三字段） */
+export const learningPackAttemptsV2SectionSchema =
+  learningPackAttemptsSectionSchema.extend({
+    responses: z.array(learningPackV2ResponseSchema).optional(),
+  });
+
+/**
+ * pack.json v2 根对象（T6R.12）。与 v1 的差异：
+ * - meta.version=2、modules.evidence 回显；
+ * - content.questions / attempts.responses 为 v2 形状（快照关联）；
+ * - evidence section（勾选 evidence 才出现）；
+ * - **manifest 恒出现**（pack.json 同时为 zip 清单：files + missing + 口径说明）。
+ * v1 pack（version=1、无 manifest）不进本 schema——两版本显式区分（§9.2）。
+ */
+export const learningPackV2Schema = z.object({
+  meta: learningPackV2MetaSchema,
+  students: z.array(learningPackStudentSchema),
+  content: learningPackV2ContentSchema.optional(),
+  attempts: learningPackAttemptsV2SectionSchema.optional(),
+  evidence: z.array(learningPackEvidenceSchema).optional(),
+  manifest: learningPackManifestSchema,
+  traces: learningPackTracesSectionSchema.optional(),
+  summary: learningPackSummarySectionSchema.optional(),
+});
+
 // ---------- preview 响应 ----------
 
 /** 预览文件清单行（路径 + 预估字节数；按内容字节合计，不含 zip 容器开销） */
@@ -499,6 +748,20 @@ export function learningPackJsonSchema(): Record<string, unknown> {
   };
 }
 
+/**
+ * 生成 LearningPack v2 的 JSON Schema（docs/dsl/schema/learning-pack-v2.json
+ * 的内容；v2 zip 内 schema.json 与该文件逐字节一致——export-schema 脚本与
+ * export-service 共用本函数，v1/v2 两处永不漂移）。
+ */
+export function learningPackV2JsonSchema(): Record<string, unknown> {
+  return {
+    title: "simple-tutor-tool 学情数据包（LearningPack v2）",
+    description:
+      "AI 学情数据包 pack.json（v2 证据装配，T6R.12）的权威 JSON Schema：每条逐题作答经 questionRef/snapshotHash 关联其交卷时的题目快照（同 qid 多版本一一配对）；evidence 携带逐题原稿声明与分析图附件；manifest 为 zip 文件清单与缺失清单（所有引用可解析或显式缺失）。教师评语为原文（可能含学生真实姓名）；traces 只含派生指标与阅读地图（原始事件不出库）。",
+    ...z.toJSONSchema(learningPackV2Schema),
+  };
+}
+
 // ---------- prompt.md 模板（D17：单一来源，gen:spec 与 export-service 共用） ----------
 
 /** prompt 拼装输入：按勾选模块与隐私开关决定数据说明段落 */
@@ -512,6 +775,18 @@ export interface LearningPackPromptInput {
   readonly summaries: boolean;
   readonly ink: boolean;
   readonly traces: boolean;
+  /**
+   * v2 证据模块（T6R.12）是否勾选：勾选时数据说明提及 evidence/*.png 原稿
+   * 图片（多模态模型结合图片分析书写过程）；缺省（undefined）不提及——
+   * v1 与 gen:spec 全模块示例的渲染结果不变。
+   */
+  readonly evidence?: boolean;
+  /**
+   * 包内是否实际携带 blobs/media/ 配图（复审 A9）：勾选时使用方法的交付
+   * 清单枚举配图目录；缺省不提及。由调用方按实际装配结果传入（讲义/题目
+   * 模块的 ::image 引用存在且文件在场才为 true）。
+   */
+  readonly media?: boolean;
   readonly anonymized: boolean;
   /** 教师自定义附加段（原样追加在「教师附加要求」） */
   readonly customPrompt?: string;
@@ -658,15 +933,15 @@ export function renderLearningPackPrompt(
 ): string {
   const goalLabel = LEARNING_PACK_GOAL_LABELS[input.goal];
   /** 使用方法行按是否含手写图片分两形态（D17：未勾手写不提笔迹） */
-  const usageLines = input.ink
-    ? [
-        "> 使用方法：把整个数据包（本文件 + pack.json + summary.md + schema.json + ink/ 图片",
-        "> 目录）一并交给 AI。",
-      ]
-    : [
-        "> 使用方法：把整个数据包（本文件 + pack.json + summary.md + schema.json）",
-        "> 一并交给 AI。",
-      ];
+  // 使用方法交付清单按勾选模块枚举（复审 A9：evidence 原稿图目录与
+  // blobs/media/ 配图目录此前遗漏——media 旗标由调用方按实际装配传入）
+  const deliverables = ["本文件", "pack.json", "summary.md", "schema.json"];
+  if (input.evidence) deliverables.push("evidence/ 图片目录");
+  if (input.ink) deliverables.push("ink/ 图片目录");
+  if (input.media) deliverables.push("blobs/media/ 配图目录");
+  const usageLines = [
+    `> 使用方法：把整个数据包（${deliverables.join(" + ")}）一并交给 AI。`,
+  ];
   const sections: string[] = [
     [
       `# 学情数据包分析任务：${goalLabel}`,
@@ -758,6 +1033,11 @@ export function renderLearningPackPrompt(
       "- ink/*.png：手写过程图片（文件名含学生称呼、题目 id 与作答片段号）；如你是多模态模型请结合图片分析书写过程与步骤规范性。",
     );
   }
+  if (input.evidence) {
+    dataLines.push(
+      "- evidence/*.png：逐题手写原稿图片（v2 证据装配，按作答逐题配对、按切片分页；缺图在 manifest.missing 标明原因）；如你是多模态模型请结合图片核对书写过程。",
+    );
+  }
   dataLines.push("");
   sections.push(dataLines.join("\n"));
 
@@ -836,3 +1116,30 @@ export type LearningPackPreviewData = z.infer<
   typeof learningPackPreviewDataSchema
 >;
 export type LearningPackErrorCode = z.infer<typeof learningPackErrorCodeSchema>;
+// ---------- v2（T6R.12） ----------
+export type LearningPackV2Meta = z.infer<typeof learningPackV2MetaSchema>;
+export type LearningPackV2Question = z.infer<
+  typeof learningPackV2QuestionSchema
+>;
+export type LearningPackV2Content = z.infer<typeof learningPackV2ContentSchema>;
+export type LearningPackV2Response = z.infer<
+  typeof learningPackV2ResponseSchema
+>;
+export type LearningPackAttemptsV2Section = z.infer<
+  typeof learningPackAttemptsV2SectionSchema
+>;
+export type LearningPackEvidenceState = z.infer<
+  typeof learningPackEvidenceStateSchema
+>;
+export type LearningPackEvidenceImage = z.infer<
+  typeof learningPackEvidenceImageSchema
+>;
+export type LearningPackEvidence = z.infer<typeof learningPackEvidenceSchema>;
+export type LearningPackManifestFile = z.infer<
+  typeof learningPackManifestFileSchema
+>;
+export type LearningPackManifestMissing = z.infer<
+  typeof learningPackManifestMissingSchema
+>;
+export type LearningPackManifest = z.infer<typeof learningPackManifestSchema>;
+export type LearningPackV2 = z.infer<typeof learningPackV2Schema>;

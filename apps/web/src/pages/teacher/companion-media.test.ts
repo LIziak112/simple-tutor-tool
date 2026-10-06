@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { extractImageRefs } from "@/features/markdown/image-refs";
 import {
   basenameOf,
   type CompanionCandidate,
-  extractImageRefs,
   isExternalSrc,
   pairImageRefs,
   rewriteImageSrcs,

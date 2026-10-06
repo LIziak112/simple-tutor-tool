@@ -18,6 +18,7 @@ const REQUEST: LearningPackExportRequest = {
     summaries: false,
     ink: false,
     traces: false,
+    evidence: false,
   },
   goal: "diagnose-weakness",
   privacy: { anonymize: true },

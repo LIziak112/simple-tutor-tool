@@ -1,0 +1,1578 @@
+{
+  "title": "simple-tutor-tool 学情数据包（LearningPack v2）",
+  "description": "AI 学情数据包 pack.json（v2 证据装配，T6R.12）的权威 JSON Schema：每条逐题作答经 questionRef/snapshotHash 关联其交卷时的题目快照（同 qid 多版本一一配对）；evidence 携带逐题原稿声明与分析图附件；manifest 为 zip 文件清单与缺失清单（所有引用可解析或显式缺失）。教师评语为原文（可能含学生真实姓名）；traces 只含派生指标与阅读地图（原始事件不出库）。",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "meta": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "number",
+          "const": 2
+        },
+        "generatedAt": {
+          "type": "string",
+          "minLength": 1
+        },
+        "goal": {
+          "type": "string",
+          "enum": [
+            "diagnose-weakness",
+            "lesson-prep",
+            "variant-practice",
+            "period-summary"
+          ]
+        },
+        "days": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "string",
+              "const": "all"
+            }
+          ]
+        },
+        "from": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "to": {
+          "type": "string",
+          "minLength": 1
+        },
+        "anonymized": {
+          "type": "boolean"
+        },
+        "modules": {
+          "type": "object",
+          "properties": {
+            "lectures": {
+              "type": "boolean"
+            },
+            "questions": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "stem",
+                    "answer",
+                    "solution"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "responses": {
+              "type": "boolean"
+            },
+            "summaries": {
+              "type": "boolean"
+            },
+            "ink": {
+              "type": "boolean"
+            },
+            "traces": {
+              "type": "boolean"
+            },
+            "evidence": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "lectures",
+            "questions",
+            "responses",
+            "summaries",
+            "ink",
+            "traces",
+            "evidence"
+          ],
+          "additionalProperties": false
+        },
+        "note": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "version",
+        "generatedAt",
+        "goal",
+        "days",
+        "from",
+        "to",
+        "anonymized",
+        "modules",
+        "note"
+      ],
+      "additionalProperties": false
+    },
+    "students": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "archived": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "archived"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "content": {
+      "type": "object",
+      "properties": {
+        "lectures": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "lectureId": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1
+              },
+              "outline": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "level": {
+                      "anyOf": [
+                        {
+                          "type": "number",
+                          "const": 2
+                        },
+                        {
+                          "type": "number",
+                          "const": 3
+                        }
+                      ]
+                    },
+                    "text": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "level",
+                    "text"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "sections": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "headingIndex": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "markdown": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "headingIndex",
+                    "markdown"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "lectureId",
+              "title",
+              "outline",
+              "sections"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "questions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "questionId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "unitId": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "unitTitle": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "judge",
+                  "choice",
+                  "multi",
+                  "fill",
+                  "solve",
+                  "apply",
+                  "find-error"
+                ]
+              },
+              "difficulty": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 5
+              },
+              "knowledge": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "stemMd": {
+                "type": "string"
+              },
+              "options": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "answers": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "fill"
+                      },
+                      "blanks": {
+                        "type": "array",
+                        "items": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        }
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "blanks"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "choice"
+                      },
+                      "index": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "index"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "multi"
+                      },
+                      "indexes": {
+                        "minItems": 1,
+                        "type": "array",
+                        "items": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        }
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "indexes"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "judge"
+                      },
+                      "value": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "value"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "final"
+                      },
+                      "answer": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "answer"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              "solutionMd": {
+                "type": "string"
+              },
+              "ref": {
+                "type": "string",
+                "pattern": "^q\\d{3,}$"
+              },
+              "present": {
+                "type": "boolean"
+              },
+              "snapshotHash": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "media": {
+                "default": [],
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "src": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "present": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "src",
+                    "present"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "questionId",
+              "unitId",
+              "unitTitle",
+              "type",
+              "difficulty",
+              "knowledge",
+              "stemMd",
+              "ref",
+              "present",
+              "snapshotHash",
+              "media"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "attempts": {
+      "type": "object",
+      "properties": {
+        "responses": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "attemptId": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "studentId": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "questionId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "no": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "answerText": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "autoCorrect": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              },
+              "finalCorrect": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              },
+              "teacherMark": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "correct",
+                      "wrong"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "teacherComment": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "inkFile": {
+                "type": "string"
+              },
+              "questionRef": {
+                "type": "string",
+                "pattern": "^q\\d{3,}$"
+              },
+              "snapshotHash": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "evidenceRef": {
+                "type": "string",
+                "pattern": "^e\\d{3,}$"
+              }
+            },
+            "required": [
+              "attemptId",
+              "studentId",
+              "questionId",
+              "no",
+              "answerText",
+              "autoCorrect",
+              "finalCorrect",
+              "teacherMark",
+              "teacherComment",
+              "questionRef",
+              "snapshotHash"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "summaries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "attemptId": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "studentId": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "sourceType": {
+                "type": "string",
+                "enum": [
+                  "assignment",
+                  "course",
+                  "wrong"
+                ]
+              },
+              "assignmentId": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "assignmentTitle": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "courseId": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "courseName": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "unitId": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "unitTitle": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "attemptNo": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "isFirst": {
+                "type": "boolean"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "draft",
+                  "submitted",
+                  "graded"
+                ]
+              },
+              "startedAt": {
+                "type": "string",
+                "minLength": 1
+              },
+              "submittedAt": {
+                "type": "string",
+                "minLength": 1
+              },
+              "scoreAuto": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "scoreFinal": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 100
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "questionCount": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "correctCount": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "wrongCount": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "pendingCount": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "attemptId",
+              "studentId",
+              "sourceType",
+              "assignmentId",
+              "assignmentTitle",
+              "courseId",
+              "courseName",
+              "unitId",
+              "unitTitle",
+              "attemptNo",
+              "isFirst",
+              "status",
+              "startedAt",
+              "submittedAt",
+              "scoreAuto",
+              "scoreFinal",
+              "questionCount",
+              "correctCount",
+              "wrongCount",
+              "pendingCount"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "ref": {
+            "type": "string",
+            "pattern": "^e\\d{3,}$"
+          },
+          "attemptId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "studentId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "questionId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "questionRef": {
+            "type": "string",
+            "pattern": "^q\\d{3,}$"
+          },
+          "no": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "phase": {
+            "type": "string",
+            "enum": [
+              "scratch",
+              "correction",
+              "supplement"
+            ]
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "none",
+              "frozen",
+              "missing",
+              "legacy_unverified",
+              "not_collected"
+            ]
+          },
+          "version": {
+            "type": "object",
+            "properties": {
+              "versionId": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "savedAt": {
+                "type": "string",
+                "minLength": 1
+              },
+              "strokeCount": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "pointCount": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "paperHeight": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "versionId",
+              "savedAt",
+              "strokeCount",
+              "pointCount",
+              "paperHeight"
+            ],
+            "additionalProperties": false
+          },
+          "images": {
+            "default": [],
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "file": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "spec": {
+                  "type": "string",
+                  "const": "analysis"
+                },
+                "pageIndex": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "crop": {
+                  "type": "object",
+                  "properties": {
+                    "x": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "y": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "width": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    },
+                    "height": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "x",
+                    "y",
+                    "width",
+                    "height"
+                  ],
+                  "additionalProperties": false
+                },
+                "pixelWidth": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                },
+                "pixelHeight": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 9007199254740991
+                },
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "ready",
+                    "missing"
+                  ]
+                }
+              },
+              "required": [
+                "file",
+                "spec",
+                "pageIndex",
+                "crop",
+                "pixelWidth",
+                "pixelHeight",
+                "state"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "ref",
+          "attemptId",
+          "studentId",
+          "questionId",
+          "questionRef",
+          "no",
+          "phase",
+          "state",
+          "images"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "manifest": {
+      "type": "object",
+      "properties": {
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "summary",
+                  "prompt",
+                  "schema",
+                  "mapping",
+                  "ink",
+                  "media",
+                  "evidence"
+                ]
+              },
+              "bytes": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "refs": {
+                "default": [],
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "path",
+              "kind",
+              "bytes",
+              "refs"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "missing": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "media",
+                  "evidence-image"
+                ]
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1
+              },
+              "refs": {
+                "default": [],
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "path",
+              "kind",
+              "reason",
+              "refs"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "contextNotes": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "files",
+        "missing",
+        "contextNotes"
+      ],
+      "additionalProperties": false
+    },
+    "traces": {
+      "type": "object",
+      "properties": {
+        "questions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "attemptId": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "studentId": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "questionId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "activeSec": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "hintsUsed": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "changeCount": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "timeToFirstHintSec": {
+                "anyOf": [
+                  {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "hintDwellSec": {
+                "type": "number",
+                "minimum": 0
+              },
+              "inkEditCount": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "fullscreenUsed": {
+                "type": "boolean"
+              },
+              "offlineShare": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "reviewedSolution": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "attemptId",
+              "studentId",
+              "questionId",
+              "activeSec",
+              "hintsUsed",
+              "changeCount",
+              "timeToFirstHintSec",
+              "hintDwellSec",
+              "inkEditCount",
+              "fullscreenUsed",
+              "offlineShare",
+              "reviewedSolution"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "lectures": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "studentId": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "lectureId": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1
+              },
+              "map": {
+                "type": "object",
+                "properties": {
+                  "sections": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "headingIndex": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "level": {
+                          "anyOf": [
+                            {
+                              "type": "number",
+                              "const": 2
+                            },
+                            {
+                              "type": "number",
+                              "const": 3
+                            }
+                          ]
+                        },
+                        "text": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "reached": {
+                          "type": "boolean"
+                        },
+                        "rawDwellSec": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "dwellSec": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "expectedSec": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 9007199254740991
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "not-reached",
+                            "skimmed",
+                            "partial",
+                            "read",
+                            "deep"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "headingIndex",
+                        "level",
+                        "text",
+                        "reached",
+                        "rawDwellSec",
+                        "dwellSec",
+                        "expectedSec",
+                        "status"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "folds": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "docIndex": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "name": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "hostHeadingIndex": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "opened": {
+                          "type": "boolean"
+                        },
+                        "openCount": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "firstOpenOffsetSec": {
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "rawDwellSec": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "dwellSec": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "expectedSec": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 9007199254740991
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "not-opened",
+                            "opened-unread",
+                            "read"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "docIndex",
+                        "name",
+                        "hostHeadingIndex",
+                        "opened",
+                        "openCount",
+                        "firstOpenOffsetSec",
+                        "rawDwellSec",
+                        "dwellSec",
+                        "expectedSec",
+                        "status"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "steps": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "docIndex": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "hostHeadingIndex": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "revealedCount": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "total": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "paceSec": {
+                          "type": "array",
+                          "items": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "not-started",
+                            "rush-skipped",
+                            "step-by-step",
+                            "incomplete"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "docIndex",
+                        "hostHeadingIndex",
+                        "revealedCount",
+                        "total",
+                        "paceSec",
+                        "status"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "summary": {
+                    "type": "object",
+                    "properties": {
+                      "readSec": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "totalVisibleSec": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "sectionCoverage": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1
+                      },
+                      "foldOpenRate": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1
+                      },
+                      "hintOpenCount": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "solutionOpenCount": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "stepsRushContainerCount": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "stepsTotalContainers": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "stepsOverallMedianPaceSec": {
+                        "type": [
+                          "number",
+                          "null"
+                        ]
+                      },
+                      "degradedEventCount": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "readSec",
+                      "totalVisibleSec",
+                      "sectionCoverage",
+                      "foldOpenRate",
+                      "hintOpenCount",
+                      "solutionOpenCount",
+                      "stepsRushContainerCount",
+                      "stepsTotalContainers",
+                      "stepsOverallMedianPaceSec",
+                      "degradedEventCount"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "sections",
+                  "folds",
+                  "steps",
+                  "summary"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "studentId",
+              "lectureId",
+              "title",
+              "map"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "summary": {
+      "type": "object",
+      "properties": {
+        "students": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "studentId": {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "attemptCount": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "judgedCount": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "correctCount": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "pendingCount": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "correctRate": {
+                "anyOf": [
+                  {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "activeSecTotal": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "offlineShare": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              }
+            },
+            "required": [
+              "studentId",
+              "name",
+              "attemptCount",
+              "judgedCount",
+              "correctCount",
+              "pendingCount",
+              "correctRate",
+              "activeSecTotal",
+              "offlineShare"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "overall": {
+          "type": "object",
+          "properties": {
+            "studentCount": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "attemptCount": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "questionCount": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "judgedCount": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "correctCount": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "pendingCount": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "correctRate": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "activeSecTotal": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "offlineShare": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          },
+          "required": [
+            "studentCount",
+            "attemptCount",
+            "questionCount",
+            "judgedCount",
+            "correctCount",
+            "pendingCount",
+            "correctRate",
+            "activeSecTotal",
+            "offlineShare"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "students",
+        "overall"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "meta",
+    "students",
+    "manifest"
+  ],
+  "additionalProperties": false
+}

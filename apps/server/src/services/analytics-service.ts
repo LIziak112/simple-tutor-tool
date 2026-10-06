@@ -47,6 +47,7 @@ import {
   students,
   units,
 } from "../db/schema";
+import { chunk } from "../lib/chunk";
 import { HttpError } from "../lib/http-error";
 import { answerOf } from "./attempt-service";
 import { loadResourceContext } from "./course-service";
@@ -156,15 +157,6 @@ function knowledgeOfResponse(
     }
   }
   return fallback.get(row.questionId) ?? [];
-}
-
-/** inArray 分块迭代（SQLite 变量上限防御；500 与 pending-mark 同款） */
-function chunk<T>(items: readonly T[], size = 500): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < items.length; i += size) {
-    out.push(items.slice(i, i + size));
-  }
-  return out;
 }
 
 /** 组内最近一次已交卷（无则 undefined） */

@@ -71,14 +71,21 @@ export function makeNotePng(
 
 let studentSeq = 0;
 
-/** 直插学生行（归属测试教师；requireUsableAttempt 只需 studentId 匹配） */
-export function makeStudent(db: Db): string {
+/**
+ * 直插学生行（缺省归属测试教师；teacherId 可选指定他域——T6R.12 复审 D14
+ * 起 question-evidence/export-service 域隔离夹具共用，不再各自持本地副本）。
+ * requireUsableAttempt 只需 studentId 匹配。
+ */
+export function makeStudent(
+  db: Db,
+  teacherId: string = TEST_TEACHER_ID,
+): string {
   const id = randomUUID();
   studentSeq += 1;
   db.insert(studentsTable)
     .values({
       id,
-      teacherId: TEST_TEACHER_ID,
+      teacherId,
       displayName: `学生${studentSeq}`,
       loginName: `stu-${id.slice(0, 8)}`,
       passwordHash: null,

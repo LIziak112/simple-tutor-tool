@@ -64,24 +64,8 @@ export function isExternalSrc(src: string): boolean {
   return /^[a-z][a-z0-9+.-]{1,}:/i.test(src) || src.startsWith("//");
 }
 
-/**
- * 从 md 文本提取 ::image 引用的 src（任意文件名形态，去重保序）。
- * 正则与指令语法同构：`::image{…src="值"…}`，属性行内（不跨行）、双引号值；
- * 与服务端 extractMediaImageSrcs 的差异见文件头注释。
- */
-export function extractImageRefs(markdowns: readonly string[]): string[] {
-  // 字面量求值即新对象（同服务端口径：避免共享 /g 实例跨调用串 lastIndex）
-  const pattern = /::image\{[^}\n]*?\bsrc="([^"\n}]+)"/g;
-  const seen = new Set<string>();
-  for (const md of markdowns) {
-    for (const match of md.matchAll(pattern)) {
-      const src = match[1];
-      if (src !== undefined) seen.add(src);
-    }
-  }
-  // Set 保插入序：同图多处引用只收集一次，顺序稳定可测
-  return [...seen];
-}
+// ::image 引用提取（任意文件名形态）已迁 features/markdown/image-refs 共享
+// （T6R.12 复审 B4：导入随行配对与静态素材导出共用，消反向依赖）
 
 /**
  * 配对规则（顺序即优先级，见「导入与图片随行」约定）：

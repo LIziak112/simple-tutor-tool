@@ -8,6 +8,8 @@ import {
   learningPackJsonSchema,
   learningPackPreviewDataSchema,
   learningPackSchema,
+  learningPackV2JsonSchema,
+  learningPackV2Schema,
   renderLearningPackPrompt,
 } from "./learning-pack.ts";
 
@@ -276,6 +278,27 @@ describe("prompt 模板单一来源（D17）", () => {
     expect(md).toContain("## 教师附加要求");
     expect(md).toContain("重点看异号加法的符号处理。");
   });
+
+  it("v2 证据模块：勾选时提及 evidence 原稿图片，未勾不出现（T6R.12）", () => {
+    const withEvidence = renderLearningPackPrompt({ ...base, evidence: true });
+    expect(withEvidence).toContain("evidence/");
+    const without = renderLearningPackPrompt(base);
+    expect(without).not.toContain("evidence/");
+  });
+
+  it("使用方法交付清单按模块枚举：evidence 与 blobs/media/ 配图目录进入清单（复审 A9）", () => {
+    const md = renderLearningPackPrompt({
+      ...base,
+      evidence: true,
+      media: true,
+    });
+    expect(md).toContain("evidence/ 图片目录");
+    expect(md).toContain("blobs/media/ 配图目录");
+    expect(md).toContain("ink/ 图片目录");
+    const neither = renderLearningPackPrompt({ ...base, ink: false });
+    expect(neither).not.toContain("图片目录");
+    expect(neither).not.toContain("配图目录");
+  });
 });
 
 describe("JSON Schema 导出（D19）", () => {
@@ -291,6 +314,328 @@ describe("JSON Schema 导出（D19）", () => {
       '"traces"',
       '"summary"',
     ]) {
+      expect(text).toContain(key);
+    }
+  });
+});
+
+// ---------- T6R.12：v2 证据装配契约（快照关联 + evidence + manifest） ----------
+
+describe("v2 导出请求（T6R.12：packVersion 与 evidence 模块依赖）", () => {
+  it("packVersion 缺省 = v1 兼容；evidence 缺省 false（缺省不改变 v1 请求形状）", () => {
+    const parsed = learningPackExportRequestSchema.parse(MIN_REQUEST);
+    expect(parsed.packVersion).toBeUndefined();
+    expect(parsed.modules.evidence).toBe(false);
+  });
+
+  it("显式 packVersion=2 合法；evidence 勾选在 v2 + responses 勾选时通过", () => {
+    const parsed = learningPackExportRequestSchema.parse({
+      ...MIN_REQUEST,
+      packVersion: 2,
+      modules: { responses: true, evidence: true },
+    });
+    expect(parsed.packVersion).toBe(2);
+    expect(parsed.modules.evidence).toBe(true);
+  });
+
+  it("选模块依赖：evidence 勾选但 responses 未勾 → 拒绝", () => {
+    const result = learningPackExportRequestSchema.safeParse({
+      ...MIN_REQUEST,
+      packVersion: 2,
+      modules: { evidence: true },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("evidence 是 v2 专属模块：v1 请求勾选 evidence → 拒绝", () => {
+    const result = learningPackExportRequestSchema.safeParse({
+      ...MIN_REQUEST,
+      modules: { questions: "stem", evidence: true },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("packVersion 只认 2（1 必须以缺省表达，防止双写漂移）", () => {
+    expect(
+      learningPackExportRequestSchema.safeParse({
+        ...MIN_REQUEST,
+        packVersion: 1,
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe("LearningPack v2 schema（T6R.12：快照关联 + manifest）", () => {
+  /** v2 骨架：meta（version=2 + modules.evidence 回显）+ 一名学生 + 最小 manifest */
+  const MIN_V2_PACK = {
+    meta: {
+      version: 2,
+      generatedAt: "2026-10-05T00:00:00.000Z",
+      goal: "diagnose-weakness",
+      days: 30,
+      from: "2026-09-05T00:00:00.000Z",
+      to: "2026-10-05T00:00:00.000Z",
+      anonymized: true,
+      modules: {
+        lectures: false,
+        questions: null,
+        responses: true,
+        summaries: false,
+        ink: false,
+        traces: false,
+        evidence: true,
+      },
+      note: "评语为教师原文，可能包含学生真实姓名。",
+    },
+    students: [
+      {
+        id: "0b7e0f4e-1c2d-4e3a-9f10-112233445566",
+        name: "学生A",
+        archived: false,
+      },
+    ],
+    manifest: { files: [], missing: [], contextNotes: [] },
+  } as const;
+
+  it("最小 v2 pack：manifest 恒出现，evidence/content section 可缺席", () => {
+    const pack = learningPackV2Schema.parse(MIN_V2_PACK);
+    expect(pack.manifest.files).toEqual([]);
+  });
+
+  it("v2 responses 行带 questionRef/snapshotHash/evidenceRef（快照一一配对）", () => {
+    const pack = learningPackV2Schema.parse({
+      ...MIN_V2_PACK,
+      attempts: {
+        responses: [
+          {
+            attemptId: "2d902b60-3e4f-4a5b-9a32-334455667788",
+            studentId: "0b7e0f4e-1c2d-4e3a-9f10-112233445566",
+            questionId: "有理数随堂练习-3",
+            no: 3,
+            answerText: "5",
+            autoCorrect: false,
+            finalCorrect: false,
+            teacherMark: null,
+            teacherComment: null,
+            questionRef: "q001",
+            snapshotHash:
+              "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+            evidenceRef: "e001",
+          },
+        ],
+      },
+    });
+    expect(pack.attempts?.responses?.[0]?.questionRef).toBe("q001");
+    // evidenceRef 缺席合法（evidence 模块未勾选时不得出现悬垂引用）
+    const noEvidence = learningPackV2Schema.parse({
+      ...MIN_V2_PACK,
+      meta: {
+        ...MIN_V2_PACK.meta,
+        modules: { ...MIN_V2_PACK.meta.modules, evidence: false },
+      },
+      attempts: {
+        responses: [
+          {
+            attemptId: "2d902b60-3e4f-4a5b-9a32-334455667788",
+            studentId: "0b7e0f4e-1c2d-4e3a-9f10-112233445566",
+            questionId: "有理数随堂练习-3",
+            no: 3,
+            answerText: null,
+            autoCorrect: null,
+            finalCorrect: null,
+            teacherMark: null,
+            teacherComment: null,
+            questionRef: "q001",
+            snapshotHash: null,
+          },
+        ],
+      },
+    });
+    expect(noEvidence.attempts?.responses?.[0]?.evidenceRef).toBeUndefined();
+  });
+
+  it("v2 question 条目：ref/present/snapshotHash/media 引用；缺失快照 present=false", () => {
+    const pack = learningPackV2Schema.parse({
+      ...MIN_V2_PACK,
+      meta: {
+        ...MIN_V2_PACK.meta,
+        modules: { ...MIN_V2_PACK.meta.modules, questions: "solution" },
+      },
+      content: {
+        questions: [
+          {
+            ref: "q001",
+            questionId: "有理数随堂练习-3",
+            unitId: "有理数随堂练习",
+            unitTitle: "有理数随堂练习",
+            type: "fill",
+            difficulty: 2,
+            knowledge: ["有理数加法"],
+            stemMd: "计算 $(-3)+5=[[-2]]$",
+            present: true,
+            snapshotHash:
+              "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
+            media: [
+              {
+                src: "blobs/media/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef.png",
+                present: true,
+              },
+            ],
+          },
+          {
+            ref: "q002",
+            questionId: "已删除的旧题-7",
+            unitId: null,
+            unitTitle: null,
+            type: "fill",
+            difficulty: 2,
+            knowledge: [],
+            stemMd: "",
+            present: false,
+            snapshotHash: null,
+            media: [],
+          },
+        ],
+      },
+    });
+    expect(pack.content?.questions?.[0]?.present).toBe(true);
+    expect(pack.content?.questions?.[1]?.stemMd).toBe("");
+    expect(pack.content?.questions?.[1]?.snapshotHash).toBeNull();
+  });
+
+  it("evidence 条目：五态 + frozen 携带 version 与图片清单（裁剪区/像素/状态）", () => {
+    const pack = learningPackV2Schema.parse({
+      ...MIN_V2_PACK,
+      evidence: [
+        {
+          ref: "e001",
+          attemptId: "2d902b60-3e4f-4a5b-9a32-334455667788",
+          studentId: "0b7e0f4e-1c2d-4e3a-9f10-112233445566",
+          questionId: "有理数随堂练习-3",
+          questionRef: "q001",
+          no: 3,
+          phase: "scratch",
+          state: "frozen",
+          version: {
+            versionId: "3f0177d0-5e60-4f71-8a54-4455667788aa",
+            savedAt: "2026-10-04T10:00:00.000Z",
+            strokeCount: 12,
+            pointCount: 240,
+            paperHeight: 800,
+          },
+          images: [
+            {
+              file: "evidence/e001-original-01.png",
+              spec: "analysis",
+              pageIndex: 0,
+              crop: { x: 0, y: 0, width: 1000, height: 800 },
+              pixelWidth: 1000,
+              pixelHeight: 800,
+              state: "ready",
+            },
+            {
+              file: "evidence/e001-original-02.png",
+              spec: "analysis",
+              pageIndex: 1,
+              crop: { x: 0, y: 760, width: 1000, height: 800 },
+              pixelWidth: 1000,
+              pixelHeight: 800,
+              state: "missing",
+            },
+          ],
+        },
+        {
+          ref: "e002",
+          attemptId: "2d902b60-3e4f-4a5b-9a32-334455667788",
+          studentId: "0b7e0f4e-1c2d-4e3a-9f10-112233445566",
+          questionId: "有理数随堂练习-4",
+          questionRef: "q002",
+          no: 4,
+          phase: "scratch",
+          state: "not_collected",
+          images: [],
+        },
+      ],
+    });
+    expect(pack.evidence?.[0]?.state).toBe("frozen");
+    expect(pack.evidence?.[0]?.images?.[1]?.state).toBe("missing");
+    expect(pack.evidence?.[1]?.state).toBe("not_collected");
+  });
+
+  it("manifest：files/missing/contextNotes；missing 必带 reason 与关联 refs", () => {
+    const pack = learningPackV2Schema.parse({
+      ...MIN_V2_PACK,
+      manifest: {
+        files: [
+          { path: "summary.md", kind: "summary", bytes: 800, refs: [] },
+          {
+            path: "blobs/media/0123.png",
+            kind: "media",
+            bytes: 4096,
+            refs: ["q001"],
+          },
+          {
+            path: "evidence/e001-original-01.png",
+            kind: "evidence",
+            bytes: 12_000,
+            refs: ["e001"],
+          },
+        ],
+        missing: [
+          {
+            path: "evidence/e001-original-02.png",
+            kind: "evidence-image",
+            reason: "图片文件缺失",
+            refs: ["e001"],
+          },
+        ],
+        contextNotes: ["题目内容模块未勾选：题目上下文未提供。"],
+      },
+    });
+    expect(pack.manifest.missing[0]?.refs).toEqual(["e001"]);
+    expect(
+      learningPackV2Schema.safeParse({
+        ...MIN_V2_PACK,
+        manifest: { files: [], missing: [{ path: "x.png", kind: "media" }] },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("v1 形状不进 v2 schema：version=1 且无 manifest → 拒绝（两版本显式区分）", () => {
+    const v1Like = {
+      meta: {
+        version: 1,
+        generatedAt: "2026-10-05T00:00:00.000Z",
+        goal: "diagnose-weakness",
+        days: 30,
+        from: null,
+        to: "2026-10-05T00:00:00.000Z",
+        anonymized: true,
+        modules: {
+          lectures: false,
+          questions: null,
+          responses: false,
+          summaries: false,
+          ink: false,
+          traces: false,
+        },
+        note: "x",
+      },
+      students: [],
+    } as const;
+    // v1 pack 仍过 v1 schema（兼容锁定）
+    expect(learningPackSchema.parse(v1Like)).toBeTruthy();
+    // 但过不了 v2 schema（version 字面量 + manifest 必填）
+    expect(learningPackV2Schema.safeParse(v1Like).success).toBe(false);
+  });
+});
+
+describe("v2 JSON Schema 导出（T6R.12）", () => {
+  it("learningPackV2JsonSchema 可序列化且包含 evidence 与 manifest", () => {
+    const schema = learningPackV2JsonSchema();
+    const text = JSON.stringify(schema);
+    expect(schema.title).toContain("v2");
+    for (const key of ['"evidence"', '"manifest"', '"questionRef"']) {
       expect(text).toContain(key);
     }
   });

@@ -26,7 +26,10 @@ import {
   questionSchema,
   unitSchema,
 } from "../src/content.ts";
-import { learningPackJsonSchema } from "../src/learning-pack.ts";
+import {
+  learningPackJsonSchema,
+  learningPackV2JsonSchema,
+} from "../src/learning-pack.ts";
 
 /** 根对象：把每个顶层契约收进一个属性，生成一份自包含（$defs 内部 $ref）的 schema */
 const contentContractSchema = z.object({
@@ -56,11 +59,28 @@ console.log(
   `已导出 ${typeCount} 个顶层契约到 ${join(outDir, "content.json")}（${content.length} 字符）`,
 );
 
-// 学情数据包契约（T4.3，D19）：learningPackJsonSchema() 与 export-service 共用，
-// 保证 docs 产物与 zip 内 schema.json 永不漂移
-const packSchema = learningPackJsonSchema();
-const packContent = `${JSON.stringify(packSchema, null, 2)}\n`;
-await writeFile(join(outDir, "learning-pack.json"), packContent, "utf8");
-console.log(
-  `已导出学情数据包契约到 ${join(outDir, "learning-pack.json")}（${packContent.length} 字符）`,
+// 学情数据包契约 v1/v2（T4.3 D19 + T6R.12）：learningPack(V2)JsonSchema() 与
+// export-service 共用，保证 docs 产物与 zip 内 schema.json 永不漂移；两个文件
+// 分开导出，既有 v1 消费方（zip、dsl-kit 校验材料）零变化
+/** 写一个 schema 产物（固定四行模式收敛，复审 D17） */
+async function writeSchema(
+  filename: string,
+  label: string,
+  schema: Record<string, unknown>,
+): Promise<void> {
+  const text = `${JSON.stringify(schema, null, 2)}\n`;
+  await writeFile(join(outDir, filename), text, "utf8");
+  console.log(
+    `已导出${label}到 ${join(outDir, filename)}（${text.length} 字符）`,
+  );
+}
+await writeSchema(
+  "learning-pack.json",
+  "学情数据包契约",
+  learningPackJsonSchema(),
+);
+await writeSchema(
+  "learning-pack-v2.json",
+  "学情数据包 v2 契约",
+  learningPackV2JsonSchema(),
 );

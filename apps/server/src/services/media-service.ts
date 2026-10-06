@@ -1,9 +1,13 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, statSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import type { MediaUploadResult } from "@tutor/contract";
 import { mediaUploadResultSchema } from "@tutor/contract";
-import { readFileBytes, writeFileAtomic } from "../lib/blob-io";
+import {
+  readFileBytes,
+  resolveWithinRootOrNull,
+  writeFileAtomic,
+} from "../lib/blob-io";
 import { HttpError } from "../lib/http-error";
 
 /**
@@ -87,9 +91,9 @@ export function extractMediaImageSrcs(markdowns: readonly string[]): string[] {
 
 /**
  * 导入图片存在性核对（IMAGE_SRC_NOT_FOUND 的数据源）：对 md 文本的严格形态
- * ::image 引用逐一 stat DATA_DIR/<src>，返回缺失的 src（不存在或不是普通
- * 文件），顺序与提取顺序一致（提取侧已按文档内去重）。旧式 blobs/fig-1.png
- * 等非严格形态引用不参与核对——无内容寻址文件名可定位，维持现状不告警。
+ * ::image 引用逐一核对落盘状态（statMediaSrc 单点），返回缺失的 src，
+ * 顺序与提取顺序一致（提取侧已按文档内去重）。旧式 blobs/fig-1.png 等
+ * 非严格形态引用不参与核对——无内容寻址文件名可定位，维持现状不告警。
  * 供 content-service 在导入预览/提交组装 warning issues 使用（warning 不阻断
  * 提交：保留「先导 md 后补图」的工作流）。
  */
@@ -99,16 +103,39 @@ export function missingMediaImageSrcs(
 ): string[] {
   const missing: string[] = [];
   for (const src of extractMediaImageSrcs(markdowns)) {
-    // 严格形态已限定单段内容寻址路径，无穿越空间；stat().isFile() 比
-    // existsSync 稳（同名目录不算文件存在）
-    try {
-      if (statSync(resolve(dataDir, ...src.split("/"))).isFile()) continue;
-    } catch {
-      // 文件不存在：落入缺失清单
-    }
-    missing.push(src);
+    if ("reason" in statMediaSrc(dataDir, src)) missing.push(src);
   }
   return missing;
+}
+
+/**
+ * 单个 ::image src 的落盘核对（T6R.12 复审 B8 单点、A8 边界与 isFile 收紧）：
+ * - 在场（限 blobs/media/ 内且是普通文件）→ { absPath, bytes }（供 zip 打包）；
+ * - 不在场（越界/不存在/目录形态）→ { reason }（中文面向教师可读；**文案为
+ *   pack manifest 缺失清单的既定口径，调用方原样透传，不改写**）。
+ * question-evidence 与 export-service 的「越界/缺失」二分循环共用本函数，
+ * 两处 reason 逐字一致由实现单点保证；边界判定走 blob-io 的
+ * resolveWithinRootOrNull（path.relative 强算法，同前缀相邻目录不可骗过）。
+ */
+export type MediaSrcStat =
+  | { readonly absPath: string; readonly bytes: number }
+  | { readonly reason: string };
+
+export function statMediaSrc(dataDir: string, src: string): MediaSrcStat {
+  const absPath = resolveWithinRootOrNull(dataDir, "blobs/media", src);
+  if (absPath === null) {
+    return { reason: "媒体路径非法" };
+  }
+  try {
+    const stat = statSync(absPath);
+    // 目录形态按缺失计（与 missingMediaImageSrcs 的 stat().isFile() 口径统一）
+    if (!stat.isFile()) {
+      return { reason: "图片文件缺失（未上传或已清理）" };
+    }
+    return { absPath, bytes: stat.size };
+  } catch {
+    return { reason: "图片文件缺失（未上传或已清理）" };
+  }
 }
 
 /**

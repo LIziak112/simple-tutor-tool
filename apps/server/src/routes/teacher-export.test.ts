@@ -148,6 +148,56 @@ describe("POST /api/teacher/export/learning-pack*（T4.3 路由层）", () => {
     expect(body.message).toContain("至少勾选一个内容模块");
   });
 
+  it("v2 路由（T6R.12 复审 B11）：packVersion+evidence 透传成功；两条模块依赖拒绝", async () => {
+    const { app, cookieA, seed } = await makeEnv();
+    // 成功路径：显式 v2 + evidence → 200（服务层 v2 装配透传，manifest 恒在）
+    const okRes = await post(
+      app,
+      "/api/teacher/export/learning-pack/preview",
+      requestBody(seed, {
+        packVersion: 2,
+        modules: {
+          questions: "solution",
+          responses: true,
+          summaries: false,
+          traces: false,
+          evidence: true,
+        },
+      }),
+      cookieA,
+    );
+    expect(okRes.status).toBe(200);
+    const parsed = learningPackPreviewOkSchema.parse(await okRes.json());
+    expect(parsed.data.files.map((file) => file.path)).toContain("pack.json");
+    // 拒绝①：evidence 勾选但 packVersion 缺省（v1 请求）
+    const noV2 = await post(
+      app,
+      "/api/teacher/export/learning-pack/preview",
+      requestBody(seed, {
+        modules: { questions: "stem", responses: true, evidence: true },
+      }),
+      cookieA,
+    );
+    expect(noV2.status).toBe(400);
+    const err1 = (await noV2.json()) as ApiErr;
+    expect(err1.error).toBe("VALIDATION_ERROR");
+    expect(err1.message).toContain("packVersion=2");
+    // 拒绝②：evidence 勾选但 responses 未勾（经真实路由 parseJsonBody）
+    const noResponses = await post(
+      app,
+      "/api/teacher/export/learning-pack/preview",
+      requestBody(seed, {
+        packVersion: 2,
+        modules: { questions: "stem", evidence: true },
+      }),
+      cookieA,
+    );
+    expect(noResponses.status).toBe(400);
+    const err2 = (await noResponses.json()) as ApiErr;
+    expect(err2.error).toBe("VALIDATION_ERROR");
+    expect(err2.message).toContain("responses");
+  });
+
   it("preview：统一壳 + 文件清单（含映射.txt，不含 ink）", async () => {
     const { app, cookieA, seed } = await makeEnv();
     const res = await post(

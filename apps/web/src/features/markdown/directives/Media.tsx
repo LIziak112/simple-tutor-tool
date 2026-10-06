@@ -1,6 +1,7 @@
 import type { FunctionPlotOptions } from "function-plot";
 import { ImageOff, RefreshCw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { parseGraphRange } from "../graph-range";
 import type { DirectiveProps } from "./types";
 
 /**
@@ -66,19 +67,6 @@ export function ImageDirective({ attrs }: DirectiveProps) {
 
 type GraphState = "loading" | "ready" | "error";
 
-/** 解析 range 属性（如 "-3,3"）为 x 轴区间；非法时交给 function-plot 自动选取 */
-function parseRange(
-  range: string | undefined,
-): { domain: [number, number] } | undefined {
-  if (!range) return undefined;
-  const parts = range.split(",").map((part) => Number.parseFloat(part.trim()));
-  if (parts.length !== 2 || parts.some((n) => !Number.isFinite(n)))
-    return undefined;
-  const [min, max] = parts as [number, number];
-  if (min >= max) return undefined;
-  return { domain: [min, max] };
-}
-
 /** ::graph 函数图像：function-plot 动态加载渲染 */
 export function GraphDirective({ attrs }: DirectiveProps) {
   const fn = attrs.fn?.trim() ?? "";
@@ -108,7 +96,7 @@ export function GraphDirective({ attrs }: DirectiveProps) {
             data: [{ fn, graphType: "polyline" }],
           };
           // exactOptionalPropertyTypes：xAxis 仅在可解析出区间时携带
-          const xAxis = parseRange(range);
+          const xAxis = parseGraphRange(range);
           if (xAxis) options.xAxis = xAxis;
           functionPlot.default(options);
           if (!disposed) setState("ready");
