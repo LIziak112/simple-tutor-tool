@@ -30,7 +30,6 @@ import { and, asc, eq, isNotNull, lt, ne, or, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
   type Attempt,
-  attempts,
   type NoteImageRow,
   type NoteRow,
   type NoteVersionRow,
@@ -39,7 +38,6 @@ import {
   noteVersions,
   responses,
   type SubmissionEvidenceRow,
-  students,
   submissionEvidence,
 } from "../db/schema";
 import {
@@ -54,7 +52,10 @@ import {
   requireUsableAttempt,
 } from "./attempt-service";
 import { pngSize } from "./ink-service";
-import { requireTeacherAttempt } from "./teacher-attempt-service";
+import {
+  findTeacherAttempt,
+  requireTeacherAttempt,
+} from "./teacher-attempt-service";
 
 /**
  * NoteService（T6R.4）——题目草稿的不可变版本存储：正文上传、服务端规范化
@@ -845,20 +846,20 @@ function requireStudentNoteVersion(
   return { ...chain, attempt };
 }
 
-/** 教师域授权：note → attempt → student.teacherId（域外 404 NOTE_NOT_FOUND，不暴露存在性） */
+/**
+ * 教师域授权：note → attempt → student.teacherId（域外 404 NOTE_NOT_FOUND，
+ * 不暴露存在性）。判定原语复用 teacher-attempt-service 的 findTeacherAttempt
+ * （与教师作答接口同口径）；与 requireTeacherAttempt 保持两个薄抛层不直接
+ * 合并——错误码区分是有意的（evidence 域外 ATTEMPT_NOT_FOUND vs 版本资源
+ * NOTE_NOT_FOUND，复审确认保持）。
+ */
 function requireTeacherNoteVersion(
   db: Db,
   teacherId: string,
   versionId: string,
 ): { version: NoteVersionRow; note: NoteRow } {
   const chain = requireNoteVersionChain(db, versionId);
-  const row = db
-    .select({ ownerTeacherId: students.teacherId })
-    .from(attempts)
-    .innerJoin(students, eq(attempts.studentId, students.id))
-    .where(eq(attempts.id, chain.note.attemptId))
-    .get();
-  if (row === undefined || row.ownerTeacherId !== teacherId) {
+  if (findTeacherAttempt(db, teacherId, chain.note.attemptId) === null) {
     throw new HttpError(404, "NOTE_NOT_FOUND", "笔记版本不存在");
   }
   return chain;
@@ -913,27 +914,28 @@ export function getTeacherNoteDocument(
   );
 }
 
-/** imageId → 图片行 + 归属链（行不存在 → 404 NOTE_NOT_FOUND） */
-function requireNoteImageChain(
+/**
+ * (versionId, imageId) → 图片行（行不存在 → 404 NOTE_NOT_FOUND）。
+ * **授权由调用方先行完成**（requireStudentNoteVersion /
+ * requireTeacherNoteVersion——先授权后查资源，权限失败不泄露行存在性；
+ * T6R.5 复审②：本函数退化为纯行查找，不再自带归属链）。
+ */
+function requireNoteImageRow(
   db: Db,
-  versionId: string,
+  version: NoteVersionRow,
   imageId: string,
-): { image: NoteImageRow; note: NoteRow } {
-  const chain = requireNoteVersionChain(db, versionId);
+): NoteImageRow {
   const image = db
     .select()
     .from(noteImages)
     .where(
-      and(
-        eq(noteImages.id, imageId),
-        eq(noteImages.noteVersionId, chain.version.id),
-      ),
+      and(eq(noteImages.id, imageId), eq(noteImages.noteVersionId, version.id)),
     )
     .get();
   if (image === undefined) {
     throw new HttpError(404, "NOTE_NOT_FOUND", "笔记图片不存在");
   }
-  return { image, note: chain.note };
+  return image;
 }
 
 /** 图片文件字节（权限已由调用方经归属链校验；行/文件不在或未就绪 → 404） */
@@ -958,9 +960,8 @@ export function getStudentNoteImagePng(
   versionId: string,
   imageId: string,
 ): ArrayBuffer {
-  const { image, note } = requireNoteImageChain(db, versionId, imageId);
-  requireUsableAttempt(db, studentId, note.attemptId);
-  return readNoteImagePng(dataDir, image);
+  const { version } = requireStudentNoteVersion(db, studentId, versionId);
+  return readNoteImagePng(dataDir, requireNoteImageRow(db, version, imageId));
 }
 
 /** 教师端 ⑦：GET /api/teacher/note-versions/:id/images/:imageId(.png) */
@@ -971,17 +972,8 @@ export function getTeacherNoteImagePng(
   versionId: string,
   imageId: string,
 ): ArrayBuffer {
-  const { image, note } = requireNoteImageChain(db, versionId, imageId);
-  const row = db
-    .select({ ownerTeacherId: students.teacherId })
-    .from(attempts)
-    .innerJoin(students, eq(attempts.studentId, students.id))
-    .where(eq(attempts.id, note.attemptId))
-    .get();
-  if (row === undefined || row.ownerTeacherId !== teacherId) {
-    throw new HttpError(404, "NOTE_NOT_FOUND", "笔记图片不存在");
-  }
-  return readNoteImagePng(dataDir, image);
+  const { version } = requireTeacherNoteVersion(db, teacherId, versionId);
+  return readNoteImagePng(dataDir, requireNoteImageRow(db, version, imageId));
 }
 
 // ---------- ⑤⑧ 补图上传（学生自产 / 教师重建；只能挂既定版本） ----------
@@ -1062,7 +1054,10 @@ export function attachNoteImage(
         eq(noteImages.noteVersionId, version.id),
         // 排除正被替换的目标槽位 (spec, pageIndex)——同 pageIndex 不同 spec
         // 是不同槽位，必须计入（ne(pageIndex) 单条件会把它们漏掉）
-        or(ne(noteImages.spec, meta.spec), ne(noteImages.pageIndex, meta.pageIndex)),
+        or(
+          ne(noteImages.spec, meta.spec),
+          ne(noteImages.pageIndex, meta.pageIndex),
+        ),
       ),
     )
     .get();
