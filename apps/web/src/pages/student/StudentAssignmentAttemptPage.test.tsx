@@ -101,6 +101,13 @@ vi.mock("@/lib/api", async (importOriginal) => {
     fetchAttemptApi: vi.fn(),
     saveAttemptAnswerApi: vi.fn(),
     submitAttemptApi: vi.fn(),
+    // T6R.10：交卷前逐题拉草稿 head（默认空态——本文件不涉及笔记内容，
+    // 证据声明组装为全 none）
+    fetchStudentNoteHeadApi: vi.fn(async () => ({
+      note: null,
+      images: [],
+      evidence: null,
+    })),
     // T2.8：笔迹取回（默认无历史笔迹）与上传（成功回执）
     fetchAttemptInkApi: vi.fn(async () => null),
     putAttemptInkApi: vi.fn(async () => ({
@@ -335,11 +342,19 @@ describe("StudentAssignmentAttemptPage：草稿作答流程", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "确认交卷" }));
     await waitFor(() =>
-      // T6R.3：交卷回传建卷下发的题目版本集合（questionRevisionId）
-      expect(mockedSubmit).toHaveBeenCalledWith(ATTEMPT_ID, [
-        { questionId: "练习四-1", questionRevisionId: "rev-练习四-1" },
-        { questionId: "练习四-4", questionRevisionId: "rev-练习四-4" },
-      ]),
+      // T6R.3：交卷回传建卷下发的题目版本集合（questionRevisionId）；
+      // T6R.10：携带每题笔记证据声明（本文件无笔记 → 全 none）
+      expect(mockedSubmit).toHaveBeenCalledWith(
+        ATTEMPT_ID,
+        [
+          { questionId: "练习四-1", questionRevisionId: "rev-练习四-1" },
+          { questionId: "练习四-4", questionRevisionId: "rev-练习四-4" },
+        ],
+        [
+          { questionId: "练习四-1", state: "none" },
+          { questionId: "练习四-4", state: "none" },
+        ],
+      ),
     );
     // 详情已失效重取 → 结果视图
     expect(await screen.findByText(/批改结果/)).toBeInTheDocument();

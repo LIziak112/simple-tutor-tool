@@ -13,7 +13,10 @@ import { AttemptQuestionCard } from "@/features/attempt/AttemptQuestionCard";
 import { AttemptResultView } from "@/features/attempt/AttemptResultView";
 import { DraftStatusBar } from "@/features/attempt/DraftStatusBar";
 import { draftStore } from "@/features/attempt/draft-store";
-import { SubmitConfirmDialog } from "@/features/attempt/SubmitConfirmDialog";
+import {
+  SubmitConfirmDialog,
+  type SubmitNoteSummary,
+} from "@/features/attempt/SubmitConfirmDialog";
 import { useAttemptAnswers } from "@/features/attempt/use-attempt-answers";
 import { useAttemptEvents } from "@/features/attempt/use-attempt-events";
 import {
@@ -23,6 +26,12 @@ import {
 import type { InkUploadController } from "@/features/attempt/use-ink-upload";
 import { useStudentMe } from "@/features/auth/student-auth";
 import { useBindNoteSession } from "@/features/notes/use-note-head";
+import {
+  prepareSubmitEvidence,
+  snapshotNoteOverview,
+  type SubmitEvidencePrep,
+  type SubmitEvidenceProblem,
+} from "@/features/notes/submit-evidence";
 import { startWrongPracticeApi } from "@/lib/api";
 import { createEventQueue } from "@/lib/event-queue";
 import { formatDueTime } from "@/lib/time";
@@ -229,6 +238,16 @@ function AnswerView({
   const [inkFlushError, setInkFlushError] = useState(false);
   /** 笔迹 flush 进行中（交卷按钮/确认弹层的等待态） */
   const [inkFlushing, setInkFlushing] = useState(false);
+  // T6R.10：草稿证据——弹层快览、追平组装进行中、未决问题（明确选择分支）
+  const [noteSummary, setNoteSummary] = useState<SubmitNoteSummary | null>(null);
+  const [notePreparing, setNotePreparing] = useState(false);
+  const [noteProblems, setNoteProblems] = useState<
+    SubmitEvidenceProblem[] | null
+  >(null);
+  /** 追平/组装的阻止性错误（head 拉取失败等；重试点确认即重试） */
+  const [notePrepError, setNotePrepError] = useState<string | null>(null);
+  /** 用户已确认缺稿交卷的题（「草稿未保存完整」明确选择后重跑组装传入） */
+  const missingConfirmedRef = useRef<Set<string> | null>(null);
   const submit = useSubmitAttempt(attemptId);
 
   // T2A.7：题目按单元分组下发；答题页平铺渲染、题号全卷连续（累计 index）。
@@ -246,17 +265,53 @@ function AnswerView({
     questionId: question.id,
     questionRevisionId: question.questionRevisionId,
   }));
+  /** 题号映射（1 起序号——明确选择分支按「第 n 题」呈现问题） */
+  const questionIndexById = new Map(
+    flatQuestions.map((question, i) => [question.id, i + 1] as const),
+  );
 
   /**
-   * 交卷（T2.8 口径）：先把每道手写题的最新笔迹 flush 上传（Promise.all），
-   * 任一失败 → 阻止交卷并提示重试（「交卷时确保每道手写题最新笔迹已上传」）；
-   * 全部成功后先收尾学习痕迹（T2.10：blur 当前聚焦 + submit 事件 + 事件队列
-   * flush——保证服务端交卷计算时事件序列已入库），再调 submit（服务端判分，
-   * T6R.3 起携带题目版本集合——旧标签页陈旧提交被 409 QUESTION_REVISION_STALE
-   * 可诊断拒绝，底栏提示刷新页面后重交），成功后清本地草稿（T2.9）。失败时
-   * 关闭确认弹层让底栏提示可见（重新点「交卷」即可重试 flush）。
+   * 打开交卷弹层：重置明确选择分支并取草稿本地快览（无网络，纯内存态——
+   * 确认时以 prepareSubmitEvidence 的权威判定为准）。
    */
-  const confirmSubmit = async () => {
+  const openSubmitDialog = useCallback(() => {
+    setNoteProblems(null);
+    setNotePrepError(null);
+    missingConfirmedRef.current = null;
+    setConfirmOpen(true);
+    void snapshotNoteOverview({ attemptId, questionIds }).then((statuses) => {
+      const willFreeze = statuses.filter((s) => s.kind === "will-freeze").length;
+      const problem = statuses.filter((s) => s.kind === "problem").length;
+      // 完全没动过草稿时不展示该区（避免无信息噪音）
+      setNoteSummary(
+        willFreeze + problem > 0
+          ? {
+              willFreeze,
+              problem,
+              unwritten: statuses.length - willFreeze - problem,
+            }
+          : null,
+      );
+    });
+  }, [attemptId, questionIds]);
+
+  /**
+   * 交卷（T2.8 口径 + T6R.10 证据固定，方案 §6.4 六步）：
+   * 1. 模态弹层已冻结编辑界面（当前真实笔段随指针抬起自然结束）；
+   * 2. 先把每道手写题的最新笔迹 flush 上传（Promise.all），任一失败 →
+   *    阻止交卷并提示重试（「交卷时确保每道手写题最新笔迹已上传」——
+   *    既有强制上传约束不因草稿链路放宽）；
+   * 3. prepareSubmitEvidence：等待本地落盘事务 → flushNoteSync 追平最终
+   *    矢量并消费结果摘要 → 逐题拉服务端 head → 组装 none/frozen/missing
+   *    声明（PNG 不阻塞，后台补图）；有未决问题 → 弹层切「草稿未保存
+   *    完整」明确选择分支，交卷被阻止；
+   * 4. 交卷请求携带 revisions + evidence（服务端同一事务固定原稿）；
+   *    成功后清本地草稿（T2.9；交卷 clearDraft 不删 notes）。
+   * 失败时关闭确认弹层让底栏提示可见（重新点「交卷」即可重试整条链）；
+   * 响应丢失重试撞 409 ALREADY_SUBMITTED 由 useSubmitAttempt 失效详情
+   * 切结果视图（不自动重交）。
+   */
+  const confirmSubmit = useCallback(async () => {
     setInkFlushing(true);
     setInkFlushError(false);
     const results = await Promise.all(
@@ -270,15 +325,57 @@ function AnswerView({
       setConfirmOpen(false);
       return;
     }
+    setNotePreparing(true);
+    setNotePrepError(null);
+    let prep: SubmitEvidencePrep;
+    try {
+      prep = await prepareSubmitEvidence({
+        attemptId,
+        questionIds,
+        ...(missingConfirmedRef.current !== null
+          ? { allowMissing: missingConfirmedRef.current }
+          : {}),
+      });
+    } catch (err) {
+      // 阻止性失败（head 拉取失败等）：留在弹层如实提示，可重试
+      setNotePreparing(false);
+      setNotePrepError(
+        err instanceof Error ? err.message : "草稿状态获取失败，请检查网络后重试",
+      );
+      return;
+    }
+    setNotePreparing(false);
+    if (prep.declarations === null) {
+      // 有未追平草稿：明确选择分支（不静默 missing，不提供普通确认）
+      setNoteProblems(prep.problems);
+      return;
+    }
+    setNoteProblems(null);
     // T2.10：submit 前收尾事件（尽力 flush；失败不阻塞交卷，宽松口径兜底迟到事件）
     await attemptEvents.finalizeSubmit();
-    submit.mutate(submitRevisions, {
-      onSuccess: () => {
-        void draftStore.clearDraft(attemptId);
+    submit.mutate(
+      { revisions: submitRevisions, evidence: prep.declarations },
+      {
+        onSuccess: () => {
+          void draftStore.clearDraft(attemptId);
+        },
+        onSettled: () => setConfirmOpen(false),
       },
-      onSettled: () => setConfirmOpen(false),
-    });
-  };
+    );
+  }, [attemptEvents, attemptId, questionIds, submit, submitRevisions]);
+
+  /**
+   * 缺稿交卷的明确确认（T6R.10）：用户选择「提交答案，草稿未保存完整」后
+   * 登记确认题集并重跑组装——期间自愈的题按事实 frozen，仍失败的题如实
+   * 标 missing（本地稿保留，之后找回只能作为补充材料）。
+   */
+  const confirmMissingSubmit = useCallback(() => {
+    if (noteProblems === null) return;
+    missingConfirmedRef.current = new Set(
+      noteProblems.map((problem) => problem.questionId),
+    );
+    void confirmSubmit();
+  }, [confirmSubmit, noteProblems]);
 
   // 交卷失败：网络等错误留中文提示；QUESTION_REVISION_STALE（旧标签页/陈旧
   // 页面）由服务端中文 message 直接提示刷新重交（T6R.3）
@@ -406,14 +503,26 @@ function AnswerView({
           saveFailed={saveFailed}
           inkFlushError={inkFlushError}
           submitError={submitError}
-          onOpenSubmit={() => setConfirmOpen(true)}
+          onOpenSubmit={openSubmitDialog}
         />
 
         <SubmitConfirmDialog
           open={confirmOpen}
           unansweredCount={unanswered}
           submitting={submit.isPending || inkFlushing}
+          preparing={notePreparing}
+          noteSummary={noteSummary}
+          noteProblems={
+            noteProblems === null
+              ? null
+              : noteProblems.map((problem) => ({
+                  index: questionIndexById.get(problem.questionId) ?? 0,
+                  reason: problem.reason,
+                }))
+          }
+          notePrepError={notePrepError}
           onConfirm={() => void confirmSubmit()}
+          onConfirmMissing={confirmMissingSubmit}
           onCancel={() => setConfirmOpen(false)}
         />
       </div>

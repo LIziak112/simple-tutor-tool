@@ -55,4 +55,69 @@ describe("SubmitConfirmDialog", () => {
     expect(screen.getByRole("button", { name: "正在交卷…" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "继续作答" })).toBeDisabled();
   });
+
+  it("T6R.10 草稿状态区：已同步待固定/未保存完整/未写计数如实展示", () => {
+    render(
+      <SubmitConfirmDialog
+        open
+        unansweredCount={0}
+        submitting={false}
+        noteSummary={{ willFreeze: 2, problem: 1, unwritten: 5 }}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/2 题草稿已同步/)).toBeInTheDocument();
+    expect(screen.getByText(/1 题草稿未保存完整/)).toBeInTheDocument();
+    expect(screen.getByText(/其余 5 题未写草稿/)).toBeInTheDocument();
+  });
+
+  it("T6R.10 有未保存草稿时进入明确选择分支：列问题、只有缺稿确认与继续作答两个出口", () => {
+    const onConfirm = vi.fn();
+    const onConfirmMissing = vi.fn();
+    const onCancel = vi.fn();
+    render(
+      <SubmitConfirmDialog
+        open
+        unansweredCount={0}
+        submitting={false}
+        noteProblems={[
+          { index: 3, reason: "草稿尚未保存完整（网络不稳定，正在重试）" },
+        ]}
+        onConfirm={onConfirm}
+        onConfirmMissing={onConfirmMissing}
+        onCancel={onCancel}
+      />,
+    );
+    expect(screen.getByText(/第 3 题/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/草稿尚未保存完整（网络不稳定，正在重试）/),
+    ).toBeInTheDocument();
+    // 普通确认按钮不存在——缺稿交卷必须走明确选择
+    expect(
+      screen.queryByRole("button", { name: "确认交卷" }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: /提交答案，草稿未保存完整/ }),
+    );
+    expect(onConfirmMissing).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "继续作答" }));
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
+  it("T6R.10 准备中（追平草稿/组装声明）：显示同步文案且按钮禁用", () => {
+    render(
+      <SubmitConfirmDialog
+        open
+        unansweredCount={0}
+        submitting={false}
+        preparing
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/正在同步草稿/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "继续作答" })).toBeDisabled();
+  });
 });

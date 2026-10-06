@@ -1080,3 +1080,17 @@ export function resetNoteStoreForTest(): void {
   clearCaches();
   listeners.clear();
 }
+
+/**
+ * 等待当前全部本地落盘事务完成（T6R.10 交卷第一步「等本地事务」——
+ * flushNoteStore 已删，此为随用随进的等待原语）：收集此刻各键串行队列的
+ * 尾部 Promise 一并 await。调用之后的新写入属新一轮（交卷确认弹层为模态
+ * 覆盖层，冻结了编辑界面，正常流不会再有新写）；落盘失败（local=failed）
+ * 不抛错——失败态由记录状态承载，交卷分类按「服务端是否已确认」判定，
+ * 本地副本丢失风险按方案 §6.4 以本地稿保留 + supplement 语义兜底。
+ */
+export function settleNotePersistence(): Promise<void> {
+  const tails: Array<Promise<void>> = [];
+  for (const queue of queues.values()) tails.push(queue.tail);
+  return Promise.all(tails).then(() => undefined);
+}
