@@ -8,26 +8,39 @@ import {
 } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { gzipSync } from "node:zlib";
-import type { NoteUploadMeta } from "@tutor/contract";
+import type { NoteImageUploadMeta, NoteUploadMeta } from "@tutor/contract";
 import {
   INK_LOGICAL_WIDTH,
   NOTE_BODY_DECOMPRESSED_MAX_BYTES,
   NOTE_BODY_GZIP_MAX_BYTES,
+  NOTE_IMAGE_PNG_MAX_BYTES,
+  NOTE_VERSION_IMAGES_MAX_BYTES,
   type NoteDoc,
+  type NoteHeadData,
+  type NoteImageMeta,
   type NoteVersionReceipt,
   noteDocSchema,
+  noteImageMetaSchema,
   noteIssueIsLimit,
+  noteRecordMetaSchema,
   noteRevisionConflictCurrentSchema,
+  noteSubmissionEvidenceMetaSchema,
 } from "@tutor/contract";
-import { and, eq, isNotNull, lt } from "drizzle-orm";
+import { and, asc, eq, isNotNull, lt } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
+  type Attempt,
+  attempts,
+  type NoteImageRow,
   type NoteRow,
   type NoteVersionRow,
   noteImages,
   notes,
   noteVersions,
+  responses,
+  students,
   submissionEvidence,
+  type SubmissionEvidenceRow,
 } from "../db/schema";
 import {
   type AtomicFileFaults,
@@ -40,6 +53,8 @@ import {
   requireAttemptQuestion,
   requireUsableAttempt,
 } from "./attempt-service";
+import { pngSize } from "./ink-service";
+import { requireTeacherAttempt } from "./teacher-attempt-service";
 
 /**
  * NoteService（T6R.4）——题目草稿的不可变版本存储：正文上传、服务端规范化
@@ -629,6 +644,493 @@ export function readNoteVersionDoc(
     rowHash: row.hash,
     recomputedHash: noteDocSha256(parsed.data),
   };
+}
+
+// ---------- T6R.5：读侧投影、版本文档/图片直出与补图（方案 §8 路由表） ----------
+
+/** 行 → 契约元信息投影（parse 兜底：行形态与契约漂移即编程错误当场暴露） */
+function noteRecordMetaOf(row: NoteRow) {
+  return noteRecordMetaSchema.parse({
+    noteId: row.id,
+    attemptId: row.attemptId,
+    questionId: row.questionId,
+    questionRevisionId: row.questionRevisionId,
+    phase: row.phase,
+    revision: row.currentRevision,
+    currentVersionId: row.currentVersionId,
+    serverSavedAt: row.serverSavedAt,
+  });
+}
+
+function noteImageMetaOf(row: NoteImageRow) {
+  return noteImageMetaSchema.parse({
+    imageId: row.id,
+    noteVersionId: row.noteVersionId,
+    spec: row.spec,
+    pageIndex: row.pageIndex,
+    crop: { x: row.cropX, y: row.cropY, width: row.cropW, height: row.cropH },
+    pixelWidth: row.pixelWidth,
+    pixelHeight: row.pixelHeight,
+    state: row.state,
+    hash: row.hash,
+  });
+}
+
+function noteEvidenceMetaOf(row: SubmissionEvidenceRow) {
+  return noteSubmissionEvidenceMetaSchema.parse({
+    attemptId: row.attemptId,
+    questionId: row.questionId,
+    state: row.state,
+    versionId: row.versionId,
+    recordedAt: row.recordedAt,
+  });
+}
+
+/**
+ * 头投影组装（①②⑥共用）：
+ * - note：该 attempt 该题的 scratch 行（correction/supplement 是 T6R.15 的
+ *   独立 NoteRecord，不进本投影）；无行 → null（契约显式空态 notCreated）；
+ * - 生效版本：submission_evidence 指向的原稿版本优先（交卷冻结后即原稿，
+ *   T6R.10 落写；未冻结/无证据行 → 工作头指针），images 聚合到该版本；
+ * - evidence：证据行（交卷事务写入）；无行 → null（未交卷或旧客户端未采集）。
+ */
+function noteHeadOf(db: Db, attemptId: string, questionId: string): NoteHeadData {
+  const note = db
+    .select()
+    .from(notes)
+    .where(
+      and(
+        eq(notes.attemptId, attemptId),
+        eq(notes.questionId, questionId),
+        eq(notes.phase, "scratch"),
+      ),
+    )
+    .get();
+  const evidence = db
+    .select()
+    .from(submissionEvidence)
+    .where(
+      and(
+        eq(submissionEvidence.attemptId, attemptId),
+        eq(submissionEvidence.questionId, questionId),
+      ),
+    )
+    .get();
+  const operativeVersionId = evidence?.versionId ?? note?.currentVersionId ?? null;
+  const imageRows = operativeVersionId
+    ? db
+        .select()
+        .from(noteImages)
+        .where(eq(noteImages.noteVersionId, operativeVersionId))
+        .orderBy(asc(noteImages.spec), asc(noteImages.pageIndex))
+        .all()
+    : [];
+  return {
+    note: note === undefined ? null : noteRecordMetaOf(note),
+    images: imageRows.map(noteImageMetaOf),
+    evidence: evidence === undefined ? null : noteEvidenceMetaOf(evidence),
+  };
+}
+
+/**
+ * evidence 读取的题目成员资格（宽松口径，区别于写侧 requireAttemptQuestion）：
+ * 只要求该 attempt 的 responses 行存在——不查 questions 当前存活（软删题历史
+ * 证据可读），也不要求快照非空（升级前遗留卷的响应行仍可定位，返回空投影
+ * 而非 404；证据/笔记行本就只可能由新代码写入，遗留卷恒为空态）。
+ */
+function requireAttemptQuestionRow(
+  db: Db,
+  attemptId: string,
+  questionId: string,
+): void {
+  const hit = db
+    .select({ id: responses.id })
+    .from(responses)
+    .where(
+      and(eq(responses.attemptId, attemptId), eq(responses.questionId, questionId)),
+    )
+    .get();
+  if (hit === undefined) {
+    throw new HttpError(
+      404,
+      "QUESTION_NOT_FOUND",
+      "题目不存在或不属于这次练习",
+    );
+  }
+}
+
+/** ① GET /api/student/attempts/:id/notes/:qid：工作稿头（本人 + attempt 可用 + 冻结集合严格口径） */
+export function getStudentNoteHead(
+  db: Db,
+  studentId: string,
+  attemptId: string,
+  questionId: string,
+): NoteHeadData {
+  const attempt = requireUsableAttempt(db, studentId, attemptId);
+  requireAttemptQuestion(db, attempt, questionId);
+  return noteHeadOf(db, attempt.id, questionId);
+}
+
+/** ② GET /api/student/attempts/:id/evidence/:qid：只读证据（本人历史权限，宽松题目口径） */
+export function getStudentNoteEvidence(
+  db: Db,
+  studentId: string,
+  attemptId: string,
+  questionId: string,
+): NoteHeadData {
+  const attempt = requireUsableAttempt(db, studentId, attemptId);
+  requireAttemptQuestionRow(db, attempt.id, questionId);
+  return noteHeadOf(db, attempt.id, questionId);
+}
+
+/** ⑥ GET /api/teacher/attempts/:id/evidence/:qid：域内只读证据（域外统一 404） */
+export function getTeacherNoteEvidence(
+  db: Db,
+  teacherId: string,
+  attemptId: string,
+  questionId: string,
+): NoteHeadData {
+  const { attempt } = requireTeacherAttempt(db, teacherId, attemptId);
+  requireAttemptQuestionRow(db, attempt.id, questionId);
+  return noteHeadOf(db, attempt.id, questionId);
+}
+
+// ---------- 版本归属链（versionId/imageId 读侧授权，T6R.4 遗留验收） ----------
+
+/** versionId → 版本行 + 笔记行（不存在 → 404 NOTE_NOT_FOUND，不暴露存在性） */
+function requireNoteVersionChain(
+  db: Db,
+  versionId: string,
+): { version: NoteVersionRow; note: NoteRow } {
+  const version = db
+    .select()
+    .from(noteVersions)
+    .where(eq(noteVersions.id, versionId))
+    .get();
+  if (version === undefined) {
+    throw new HttpError(404, "NOTE_NOT_FOUND", "笔记版本不存在");
+  }
+  const note = db.select().from(notes).where(eq(notes.id, version.noteId)).get();
+  if (note === undefined) {
+    // 版本行在而笔记行缺（FK 保证不可达的防御分支）
+    throw new HttpError(404, "NOTE_NOT_FOUND", "笔记版本不存在");
+  }
+  return { version, note };
+}
+
+/**
+ * 学生读授权：note → attempt → requireUsableAttempt（本人 403/404 按既有
+ * 惯例；course 来源 draft 复检可见性——撤权拒读拒写与 detail 口径一致，
+ * 已交卷照常走历史权限）。
+ */
+function requireStudentNoteVersion(
+  db: Db,
+  studentId: string,
+  versionId: string,
+): { version: NoteVersionRow; note: NoteRow; attempt: Attempt } {
+  const chain = requireNoteVersionChain(db, versionId);
+  const attempt = requireUsableAttempt(db, studentId, chain.note.attemptId);
+  return { ...chain, attempt };
+}
+
+/** 教师域授权：note → attempt → student.teacherId（域外 404 NOTE_NOT_FOUND，不暴露存在性） */
+function requireTeacherNoteVersion(
+  db: Db,
+  teacherId: string,
+  versionId: string,
+): { version: NoteVersionRow; note: NoteRow } {
+  const chain = requireNoteVersionChain(db, versionId);
+  const row = db
+    .select({ ownerTeacherId: students.teacherId })
+    .from(attempts)
+    .innerJoin(students, eq(attempts.studentId, students.id))
+    .where(eq(attempts.id, chain.note.attemptId))
+    .get();
+  if (row === undefined || row.ownerTeacherId !== teacherId) {
+    throw new HttpError(404, "NOTE_NOT_FOUND", "笔记版本不存在");
+  }
+  return chain;
+}
+
+/** 读取落盘文件为独立 ArrayBuffer（Buffer 视图 → 拷贝，Response BodyInit 友好） */
+function readFileBytes(filePath: string): ArrayBuffer {
+  const buf = readFileSync(filePath);
+  return buf.buffer.slice(
+    buf.byteOffset,
+    buf.byteOffset + buf.byteLength,
+  ) as ArrayBuffer;
+}
+
+/** ③⑦ 版本文档 gzip 原字节直出（不解析——消费在前端渲染器，坏文件属部署级问题） */
+export function readNoteVersionGzip(
+  dataDir: string,
+  version: NoteVersionRow,
+): ArrayBuffer {
+  try {
+    return readFileBytes(resolveNoteBodyPath(dataDir, version.bodyPath));
+  } catch (err) {
+    // 边界校验 HttpError 保持自身码重抛；文件缺失按不存在口径（不泄漏磁盘细节）
+    if (err instanceof HttpError) throw err;
+    throw new HttpError(404, "NOTE_NOT_FOUND", "笔记正文文件缺失");
+  }
+}
+
+/** 学生端 ③：GET /api/student/note-versions/:id/document */
+export function getStudentNoteDocument(
+  db: Db,
+  dataDir: string,
+  studentId: string,
+  versionId: string,
+): ArrayBuffer {
+  return readNoteVersionGzip(
+    dataDir,
+    requireStudentNoteVersion(db, studentId, versionId).version,
+  );
+}
+
+/** 教师端 ⑦：GET /api/teacher/note-versions/:id/document */
+export function getTeacherNoteDocument(
+  db: Db,
+  dataDir: string,
+  teacherId: string,
+  versionId: string,
+): ArrayBuffer {
+  return readNoteVersionGzip(
+    dataDir,
+    requireTeacherNoteVersion(db, teacherId, versionId).version,
+  );
+}
+
+/** imageId → 图片行 + 归属链（行不存在 → 404 NOTE_NOT_FOUND） */
+function requireNoteImageChain(
+  db: Db,
+  versionId: string,
+  imageId: string,
+): { image: NoteImageRow; note: NoteRow } {
+  const chain = requireNoteVersionChain(db, versionId);
+  const image = db
+    .select()
+    .from(noteImages)
+    .where(
+      and(
+        eq(noteImages.id, imageId),
+        eq(noteImages.noteVersionId, chain.version.id),
+      ),
+    )
+    .get();
+  if (image === undefined) {
+    throw new HttpError(404, "NOTE_NOT_FOUND", "笔记图片不存在");
+  }
+  return { image, note: chain.note };
+}
+
+/** 图片文件字节（权限已由调用方经归属链校验；行/文件不在或未就绪 → 404） */
+function readNoteImagePng(dataDir: string, image: NoteImageRow): ArrayBuffer {
+  if (image.state !== "ready") {
+    // pending/failed/missing 均无可用文件（契约：仅 ready 保证 hash/path 可用）
+    throw new HttpError(404, "NOTE_NOT_FOUND", "笔记图片不存在");
+  }
+  try {
+    return readFileBytes(resolveNoteBlobPath(dataDir, image.path, ".png"));
+  } catch (err) {
+    if (err instanceof HttpError) throw err;
+    throw new HttpError(404, "NOTE_NOT_FOUND", "笔记图片不存在");
+  }
+}
+
+/** 学生端 ④：GET /api/student/note-versions/:id/images/:imageId(.png) */
+export function getStudentNoteImagePng(
+  db: Db,
+  dataDir: string,
+  studentId: string,
+  versionId: string,
+  imageId: string,
+): ArrayBuffer {
+  const { image, note } = requireNoteImageChain(db, versionId, imageId);
+  requireUsableAttempt(db, studentId, note.attemptId);
+  return readNoteImagePng(dataDir, image);
+}
+
+/** 教师端 ⑦：GET /api/teacher/note-versions/:id/images/:imageId(.png) */
+export function getTeacherNoteImagePng(
+  db: Db,
+  dataDir: string,
+  teacherId: string,
+  versionId: string,
+  imageId: string,
+): ArrayBuffer {
+  const { image, note } = requireNoteImageChain(db, versionId, imageId);
+  const row = db
+    .select({ ownerTeacherId: students.teacherId })
+    .from(attempts)
+    .innerJoin(students, eq(attempts.studentId, students.id))
+    .where(eq(attempts.id, note.attemptId))
+    .get();
+  if (row === undefined || row.ownerTeacherId !== teacherId) {
+    throw new HttpError(404, "NOTE_NOT_FOUND", "笔记图片不存在");
+  }
+  return readNoteImagePng(dataDir, image);
+}
+
+// ---------- ⑤⑧ 补图上传（学生自产 / 教师重建；只能挂既定版本） ----------
+
+/** 补图行为者：学生（本人 + attempt 可用）或教师（域链），授权语义见各分支 */
+export type NoteImageActor =
+  | { kind: "student"; id: string }
+  | { kind: "teacher"; id: string };
+
+/** 派生图文件相对路径：blobs/notes/<noteId>/img-<imageId>.png（id 全服务端生成） */
+function noteImageRelPath(noteId: string, imageId: string): string {
+  return ["blobs", "notes", noteId, `img-${imageId}.png`].join("/");
+}
+
+/**
+ * 为既定版本补一张派生图（⑤学生自产 / ⑧教师重建共用）：
+ * 1. versionId 归属链授权（学生 requireUsableAttempt——交卷后仍放行〔补图是
+ *    恢复通道，不是新写正文〕，课程撤权 draft 拒绝；教师域链 404）；
+ * 2. 单图字节限额（413）→ PNG 魔数与 IHDR 实际尺寸 = 声明尺寸（400，方案 §8
+ *    「尺寸／规格／版本必须匹配」）；
+ * 3. 同版本派生图聚合限额（其余槽位现有文件 + 本次 ≤ 8MiB → 413）；
+ * 4. 写新文件（唯一 tmp → rename 不可变路径）→ 事务内删旧槽位行 + 插新行
+ *    （(noteVersionId, spec, pageIndex) 唯一槽位 upsert，行 id 换新）→
+ *    best-effort 删旧文件（失败留孤儿，无行引用）；
+ * 5. 不触碰 note_versions / notes / submission_evidence 任何行——补图不能
+ *    改正文与提交引用。
+ */
+export function attachNoteImage(
+  db: Db,
+  dataDir: string,
+  actor: NoteImageActor,
+  versionId: string,
+  png: Uint8Array,
+  meta: NoteImageUploadMeta,
+): NoteImageMeta {
+  // 1. 归属链授权
+  const chain =
+    actor.kind === "student"
+      ? requireStudentNoteVersion(db, actor.id, versionId)
+      : requireTeacherNoteVersion(db, actor.id, versionId);
+  const { version, note } = chain;
+
+  // 2. 字节限额 + PNG 完整性（先廉价后昂贵的顺序）
+  if (png.byteLength > NOTE_IMAGE_PNG_MAX_BYTES) {
+    throw new HttpError(
+      413,
+      "NOTE_LIMIT_EXCEEDED",
+      `派生图超过 ${NOTE_IMAGE_PNG_MAX_BYTES / (1024 * 1024)}MiB 上传限额（暂定值），请降低分辨率后重试`,
+    );
+  }
+  const actual = pngSize(png);
+  if (actual === null) {
+    throw new HttpError(
+      400,
+      "NOTE_VALIDATION_FAILED",
+      "图片不是合法的 PNG 文档",
+    );
+  }
+  if (actual.width !== meta.pixelWidth || actual.height !== meta.pixelHeight) {
+    throw new HttpError(
+      400,
+      "NOTE_VALIDATION_FAILED",
+      "图片实际尺寸与声明的像素宽高不一致",
+    );
+  }
+
+  // 3. 聚合限额：其余槽位现有文件合计 + 本次上传
+  const slotWhere = and(
+    eq(noteImages.noteVersionId, version.id),
+    eq(noteImages.spec, meta.spec),
+    eq(noteImages.pageIndex, meta.pageIndex),
+  );
+  const others = db
+    .select()
+    .from(noteImages)
+    .where(
+      and(
+        eq(noteImages.noteVersionId, version.id),
+        eq(noteImages.spec, meta.spec),
+      ),
+    )
+    .all()
+    .filter((row) => row.pageIndex !== meta.pageIndex);
+  let othersBytes = 0;
+  for (const row of others) {
+    try {
+      othersBytes += statSync(
+        resolveNoteBlobPath(dataDir, row.path, ".png"),
+      ).size;
+    } catch {
+      // 文件缺失的行（损坏/被清）：按 0 计——它的槽位本来就待重建
+    }
+  }
+  if (othersBytes + png.byteLength > NOTE_VERSION_IMAGES_MAX_BYTES) {
+    throw new HttpError(
+      413,
+      "NOTE_LIMIT_EXCEEDED",
+      `该版本派生图合计超过 ${NOTE_VERSION_IMAGES_MAX_BYTES / (1024 * 1024)}MiB 限额（暂定值），请精简切片后重试`,
+    );
+  }
+
+  // 4. 落位 + 槽位 upsert
+  const imageId = randomUUID();
+  const relPath = noteImageRelPath(note.id, imageId);
+  const hash = createHash("sha256").update(png).digest("hex");
+  writeFileAtomic({
+    finalPath: resolveNoteBlobPath(dataDir, relPath, ".png"),
+    bytes: png,
+  });
+  const old = db.select().from(noteImages).where(slotWhere).get();
+  try {
+    db.transaction((tx) => {
+      if (old !== undefined) {
+        tx.delete(noteImages).where(eq(noteImages.id, old.id)).run();
+      }
+      tx.insert(noteImages)
+        .values({
+          id: imageId,
+          noteVersionId: version.id,
+          spec: meta.spec,
+          pageIndex: meta.pageIndex,
+          cropX: meta.crop.x,
+          cropY: meta.crop.y,
+          cropW: meta.crop.width,
+          cropH: meta.crop.height,
+          pixelWidth: meta.pixelWidth,
+          pixelHeight: meta.pixelHeight,
+          path: relPath,
+          hash,
+          state: "ready",
+        })
+        .run();
+    });
+  } catch (err) {
+    // 事务失败：新文件成为孤儿（无行引用），清理后重抛
+    try {
+      unlinkSync(resolveNoteBlobPath(dataDir, relPath, ".png"));
+    } catch {
+      // 文件未落位或已被删——无需处理
+    }
+    throw err;
+  }
+  // 旧槽位文件 best-effort 回收（失败留孤儿文件，无行引用它）
+  if (old !== undefined) {
+    try {
+      unlinkSync(resolveNoteBlobPath(dataDir, old.path, ".png"));
+    } catch {
+      // 同上
+    }
+  }
+  return noteImageMetaSchema.parse({
+    imageId,
+    noteVersionId: version.id,
+    spec: meta.spec,
+    pageIndex: meta.pageIndex,
+    crop: meta.crop,
+    pixelWidth: meta.pixelWidth,
+    pixelHeight: meta.pixelHeight,
+    state: "ready",
+    hash,
+  });
 }
 
 // ---------- GC 骨架（未引用版本延迟回收；自动调度接线在 T6R.14） ----------

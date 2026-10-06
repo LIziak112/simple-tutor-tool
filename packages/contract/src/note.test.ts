@@ -639,7 +639,14 @@ describe("错误码与限额常量", () => {
 
 describe("T6R.5 路由形状：noteHeadData / noteImageUploadMeta", () => {
   /** 最小合法 noteImageMeta（head 投影 images 数组元素） */
-  const imageMeta = (o: Partial<{ imageId: string; state: "ready" | "pending"; hash: string | null }> = {}) => ({
+  const imageMeta = (
+    o: Partial<{
+      imageId: string;
+      pageIndex: number;
+      state: "ready" | "pending";
+      hash: string | null;
+    }> = {},
+  ) => ({
     imageId: "55555555-5555-4555-8555-555555555555",
     noteVersionId: "44444444-4444-4444-8444-444444444444",
     spec: "analysis",

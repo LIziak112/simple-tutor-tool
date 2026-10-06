@@ -14,6 +14,7 @@ import {
   exportCsv,
 } from "../services/export-csv";
 import { listPendingMarks, markResponse } from "../services/mark-response";
+import { getTeacherNoteEvidence } from "../services/note-service";
 import {
   getTeacherAttemptDetail,
   listTeacherAttempts,
@@ -28,6 +29,9 @@ import {
  *   业务与域过滤在 teacher-attempt-service（attempt → student → teacherId）。
  * - GET /attempts/:id：作答详情（D7 全字段；draft 亦可用，D5——判定列语义
  *   「未交卷」）。非本人学生的 attempt → 404 ATTEMPT_NOT_FOUND（T2B 域口径）。
+ * - GET /attempts/:id/evidence/:qid（T6R.5 ⑥）：域内只读证据与图片状态
+ *   （题目草稿 note 头投影，业务在 note-service.getTeacherNoteEvidence）；
+ *   域外统一 404；题目按 attempt 冻结行宽判定，不查当前题库存活。
  * - POST /responses/:id/mark（T3.2b，D3）：批注单题（判定 + 评语一次提交）。
  *   请求体 markRequestSchema（comment ≤2000 契约校验 + trim 空串归一 null）；
  *   draft attempt → 409 NOT_SUBMITTED；非本人教师 → 404 RESPONSE_NOT_FOUND；
@@ -80,6 +84,21 @@ export function createTeacherAttemptRoutes(db: Db, publicUrl: string) {
             db,
             c.var.teacher.id,
             c.req.param("id"),
+          ),
+        });
+      })
+      // T6R.5 ⑥：域内只读证据与图片状态（note 头投影：scratch 头 + 生效版本
+      // 派生图 + submission_evidence 行）。归属链 attempt→student→teacherId
+      // （requireTeacherAttempt 统一口径）；域外/不存在统一 404 不暴露存在性；
+      // 题目成员资格按 attempt 自有 responses 行宽判定（软删题历史证据可读）。
+      .get("/attempts/:id/evidence/:questionId", (c) => {
+        return c.json({
+          ok: true,
+          data: getTeacherNoteEvidence(
+            db,
+            c.var.teacher.id,
+            c.req.param("id"),
+            c.req.param("questionId"),
           ),
         });
       })

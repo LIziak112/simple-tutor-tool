@@ -73,6 +73,7 @@ import {
   type MarkRequest,
   type MarkResponseData,
   type MediaUploadResult,
+  type NoteHeadData,
   type PendingMarkListData,
   type PublicConfigData,
   type QuestionDetail,
@@ -978,6 +979,107 @@ export async function fetchTeacherInkStrokesApi(
   } catch {
     throw new Error("笔迹矢量数据损坏（不是合法的 JSON），请反馈老师处理");
   }
+}
+
+// ---------- T6R.5：题目草稿读接口（学生端 + 教师端 evidence） ----------
+
+/**
+ * 本次工作稿头（T6R.5 ①）：noteRecordMeta + 生效版本派生图 + 证据行。
+ * 无笔记时服务端返回显式空态（note=null / images=[] / evidence=null），
+ * 客户端以 baseRevision=0 起步——不是 404，无需判空捕获。
+ */
+export function fetchStudentNoteHeadApi(
+  attemptId: string,
+  questionId: string,
+): Promise<NoteHeadData> {
+  return callApi(() =>
+    api.api.student.attempts[":id"].notes[":questionId"].$get({
+      param: { id: attemptId, questionId },
+    }),
+  );
+}
+
+/**
+ * 本次只读证据与图片状态（T6R.5 ②）：本人历史权限（已交卷可读、软删题
+ * 历史证据可读）。结果页原稿查看（T6R.11）与草稿期图片状态轮询共用。
+ */
+export function fetchStudentNoteEvidenceApi(
+  attemptId: string,
+  questionId: string,
+): Promise<NoteHeadData> {
+  return callApi(() =>
+    api.api.student.attempts[":id"].evidence[":questionId"].$get({
+      param: { id: attemptId, questionId },
+    }),
+  );
+}
+
+/** 教师域内只读证据（T6R.5 ⑥；域外 404，批改/详情页原稿查看用） */
+export function fetchTeacherNoteEvidenceApi(
+  attemptId: string,
+  questionId: string,
+): Promise<NoteHeadData> {
+  return callApi(() =>
+    api.api.teacher.attempts[":id"].evidence[":questionId"].$get({
+      param: { id: attemptId, questionId },
+    }),
+  );
+}
+
+/**
+ * 版本文档读取（T6R.5 ③⑦；role 决定学生/教师路由）：fetch 直出接口
+ * （gzip 原字节 + attachment，不走 { ok, data } 统一壳），成功时
+ * DecompressionStream 解压 → JSON.parse。返回类型刻意为 unknown：文档形态
+ * 由 T6R.6 渲染器消费时按 noteDocSchema 收窄（与笔迹回放同口径）。
+ * 失败：404 NOTE_NOT_FOUND（不存在/非本人/域外/文件缺失）抛 ApiError。
+ */
+export async function fetchNoteVersionDocumentApi(
+  versionId: string,
+  role: "student" | "teacher",
+): Promise<unknown> {
+  let res: Response;
+  const path = `/api/${role}/note-versions/${encodeURIComponent(versionId)}/document`;
+  try {
+    res = await fetch(path);
+  } catch {
+    throw new Error("连不上服务器，请确认网络后重试");
+  }
+  if (!res.ok) {
+    await throwShellError(res);
+  }
+  if (typeof DecompressionStream === "undefined") {
+    throw new Error("当前浏览器不支持读取草稿正文（缺少 DecompressionStream）");
+  }
+  let text: string;
+  try {
+    const src = new Response(new Uint8Array(await res.arrayBuffer()));
+    if (src.body === null) {
+      throw new Error("响应没有可读的字节流");
+    }
+    text = await new Response(
+      src.body.pipeThrough(new DecompressionStream("gzip")),
+    ).text();
+  } catch {
+    throw new Error("草稿正文解压失败（文件可能损坏），请刷新重试");
+  }
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    throw new Error("草稿正文损坏（不是合法的 JSON），请反馈老师处理");
+  }
+}
+
+/**
+ * 派生图 PNG 的 URL（T6R.5 ④⑦；<img src> 直出，同源请求自动带会话
+ * Cookie，404 由 <img> 的 onerror 兜底）。带 .png 后缀（与 ink PNG 的
+ * URL 形态惯例一致；服务端两种形态同一资源）。
+ */
+export function noteImagePngUrl(
+  versionId: string,
+  imageId: string,
+  role: "student" | "teacher",
+): string {
+  return `/api/${role}/note-versions/${encodeURIComponent(versionId)}/images/${encodeURIComponent(imageId)}.png`;
 }
 
 // ---------- 图片上传（POST /api/teacher/media：导入页随行图片流程在用） ----------

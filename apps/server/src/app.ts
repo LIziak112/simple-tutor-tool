@@ -5,6 +5,7 @@ import {
   IMPORT_BATCH_BODY_LIMIT,
   INK_MAX_UPLOAD_BYTES,
   NOTE_BODY_GZIP_MAX_BYTES,
+  NOTE_IMAGE_PNG_MAX_BYTES,
 } from "@tutor/contract";
 import { type Context, Hono, type Next } from "hono";
 import type { Logger } from "pino";
@@ -75,6 +76,15 @@ export const INK_UPLOAD_BODY_LIMIT = INK_MAX_UPLOAD_BYTES + 64 * 1024;
  * 字节校验（chunked 传输无 content-length 时兜底，与 ink 两级防线同款）。
  */
 export const NOTE_UPLOAD_BODY_LIMIT = NOTE_BODY_GZIP_MAX_BYTES + 64 * 1024;
+
+/**
+ * 补图上传路由的 body 预检上限（T6R.5）：单图 PNG ≤2MiB（契约
+ * NOTE_IMAGE_PNG_MAX_BYTES）+ multipart boundary/头部/元信息字段开销余量，
+ * 取整 2MiB+64KiB。学生（⑤）与教师（⑧）两个入口同一限额；精确限额与
+ * 版本聚合限额由 note-service.attachNoteImage 按实际字节校验。
+ */
+export const NOTE_IMAGE_UPLOAD_BODY_LIMIT =
+  NOTE_IMAGE_PNG_MAX_BYTES + 64 * 1024;
 
 /**
  * content-length 入口预检中间件工厂（T6R.4 复审②：五段同构守卫收敛）。
@@ -200,6 +210,26 @@ export function createApp(options: CreateAppOptions) {
         limit: NOTE_UPLOAD_BODY_LIMIT,
         code: "NOTE_LIMIT_EXCEEDED",
         message: "上传数据过大（超过草稿上传上限），请精简后重试",
+      }),
+    )
+    // T6R.5 补图上传（学生 ⑤ / 教师 ⑧ 同一限额：note-service 精确校验
+    // 单图 ≤2MiB + 版本聚合 ≤8MiB）
+    .use(
+      "/api/student/note-versions/:versionId/images",
+      guardBodyLimit({
+        method: "POST",
+        limit: NOTE_IMAGE_UPLOAD_BODY_LIMIT,
+        code: "NOTE_LIMIT_EXCEEDED",
+        message: "上传数据过大（超过派生图上传上限），请降低分辨率后重试",
+      }),
+    )
+    .use(
+      "/api/teacher/note-versions/:versionId/images",
+      guardBodyLimit({
+        method: "POST",
+        limit: NOTE_IMAGE_UPLOAD_BODY_LIMIT,
+        code: "NOTE_LIMIT_EXCEEDED",
+        message: "上传数据过大（超过派生图上传上限），请降低分辨率后重试",
       }),
     )
     // T2A.3 批量导入预览（preview-batch 单个 JSON 传全部文件，转义后 body

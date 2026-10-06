@@ -304,8 +304,12 @@ export function listTeacherAttempts(
 
 // ---------- GET /api/teacher/attempts/:id ----------
 
-/** attempt 行（经学生归属链）：不存在或非本人学生的作答 → 404（不暴露存在性） */
-function requireTeacherAttempt(
+/**
+ * attempt 行（经学生归属链）：不存在或非本人学生的作答 → 404（不暴露存在性）。
+ * T6R.5 起导出：note-service 教师端 evidence 读（⑥）复用同一归属门口，
+ * 保证各教师接口的域判定口径永不漂移。
+ */
+export function requireTeacherAttempt(
   db: Db,
   teacherId: string,
   attemptId: string,
