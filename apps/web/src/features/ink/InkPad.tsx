@@ -5,11 +5,18 @@ import {
   Highlighter,
   LoaderCircle,
   PenLine,
+  Pointer,
   Redo2,
   Trash,
   Undo2,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -29,6 +36,17 @@ import {
   type InkPenSize,
   type InkToolType,
 } from "./engine/index.ts";
+import { fromLogical } from "./engine/normalize.ts";
+import {
+  PAPER_GROW_STEP_CSS_PX,
+  PAPER_GROW_TRIGGER_CSS_PX,
+} from "./engine/paper-style.ts";
+import {
+  getSessionInputPreference,
+  type InkSessionInputPreference,
+  onSessionInputPreferenceChange,
+  setSessionInputPreference,
+} from "./input-preference.ts";
 
 /**
  * <InkPad>：手写引擎的 React 外壳（T2.7，架构 §5.4.1 "组件拆为两层"）。
@@ -38,6 +56,10 @@ import {
  * - 每笔结束（含撤销/重做/清空/load）经 onDocChange 上抛 InkDoc 与变化原因
  *   （reason，T4.0b ink_edit_batch 分型；缺省 "stroke"，老回调忽略零影响）；
  * - 自动加高（§5.4.1 绘制层第 4 条）：最后一笔接近答题区底部时自动增高；
+ * - 输入模式（T6R.7，方案 §4.1）：inputMode 缺省 "auto"=旧行为（自动探测，
+ *   手写作答零变化）；"session"=新草稿——订阅会话共享偏好（笔写／手指滚动
+ *   ⇄ 手指书写），工具栏出现「手指书写」切换，多画布经 input-preference
+ *   共享同一状态；
  * - 工具栏触控目标不小于 44px（ui-conventions iPad 硬性要求）。
  */
 export interface InkPadProps {
@@ -55,12 +77,16 @@ export interface InkPadProps {
   onDocChange?: ((doc: InkDoc, reason: InkChangeReason) => void) | undefined;
   /** 引擎实例透出（开发页/草稿保存等需要命令式访问 getData/load/exportPng） */
   engineRef?: React.RefObject<InkEngine | null> | undefined;
+  /**
+   * 输入模式（T6R.7）：缺省 "auto"=旧行为（自动探测，手写作答零变化）；
+   * "session"=新草稿——使用会话共享输入偏好并显示「手指书写」切换
+   * （T6R.9 的 NoteLayer 传入；旧作答组件不传）。
+   */
+  inputMode?: InkPadInputMode;
 }
 
-/** 自动加高：最后一笔距底部不足该值时加高一步 */
-const GROW_THRESHOLD_PX = 72;
-/** 每次加高的步长 */
-const GROW_STEP_PX = 240;
+/** 输入模式接入形态：auto=旧行为；session=会话共享偏好（新草稿） */
+export type InkPadInputMode = "auto" | "session";
 
 /** 颜色按钮的色块（黑/蓝/红） */
 const COLOR_SWATCH: Record<InkPenColor, string> = {
@@ -85,6 +111,11 @@ const SIZE_LABEL: Record<InkPenSize, string> = {
 const toolButtonClass =
   "h-11 min-w-11 px-2.5 gap-1.5 rounded-lg border border-border text-sm font-medium select-none transition-colors";
 
+/** 非 session 档的常量订阅（不订阅任何源）与常量快照（恒 pen）——
+ * useSyncExternalStore 不得条件调用（复审⑪），非 session 档用稳定常量 */
+const SUBSCRIBE_NOTHING = () => () => undefined;
+const SNAPSHOT_PEN = (): InkSessionInputPreference => "pen";
+
 export function InkPad({
   engine = "atrament",
   initial,
@@ -93,6 +124,7 @@ export function InkPad({
   label = "手写答题区",
   onDocChange,
   engineRef,
+  inputMode = "auto",
 }: InkPadProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   /** 内部引擎实例引用（engineRef prop 为对外透出） */
@@ -116,6 +148,18 @@ export function InkPad({
   const [retryKey, setRetryKey] = useState(0);
   /** 草稿只在挂载时恢复一次：initial 经 ref 取值，引用变化不重建引擎 */
   const initialRef = useRef(initial);
+  /**
+   * 会话共享输入偏好（T6R.7，多画布同源）：session 档订阅会话 store——
+   * 任一画布切换即时同步（跨题/重挂载不重新探测）；非 session 档用常量
+   * 订阅+快照（不订阅、不因他人切换重渲染）。useSyncExternalStore 形态
+   * 免去手工 subscribe/对齐 effect（复审⑪）。
+   */
+  const sessionPref = useSyncExternalStore(
+    inputMode === "session"
+      ? onSessionInputPreferenceChange
+      : SUBSCRIBE_NOTHING,
+    inputMode === "session" ? getSessionInputPreference : SNAPSHOT_PEN,
+  );
 
   // 引擎创建/销毁（依赖 retryKey 重建）
   // biome-ignore lint/correctness/useExhaustiveDependencies(retryKey): 重试键仅用于强制重建引擎，effect 体内不读取
@@ -158,10 +202,16 @@ export function InkPad({
           const strokes = (doc as InkDoc<"atrament">).data.strokes;
           const last = strokes[strokes.length - 1];
           if (last && last.points.length > 0) {
-            const maxY = Math.max(...last.points.map((p) => p.y));
-            const px = (maxY / 1000) * container.clientWidth;
-            if (px > container.clientHeight - GROW_THRESHOLD_PX) {
-              setHeight((h) => h + GROW_STEP_PX);
+            // 单趟取 maxY（spread+Math.max 在超长笔画下有调用栈上限险，
+            // 复审⑪）；逻辑→CSS 换算复用 normalize.fromLogical（不手写 /1000）
+            let maxY = Number.NEGATIVE_INFINITY;
+            for (const p of last.points) {
+              if (p.y > maxY) maxY = p.y;
+            }
+            const px = fromLogical(container.clientWidth, maxY);
+            // 加高 UX 常量与 paper-geometry 同源（engine/paper-style，复审①）
+            if (px > container.clientHeight - PAPER_GROW_TRIGGER_CSS_PX) {
+              setHeight((h) => h + PAPER_GROW_STEP_CSS_PX);
             }
           }
         }
@@ -179,6 +229,16 @@ export function InkPad({
     };
     // initial 经 initialRef 取值；engineRef 为父组件持有的稳定 ref 对象
   }, [engine, retryKey, engineRef]);
+
+  // 会话偏好 → 引擎（T6R.7）。声明在引擎创建 effect **之后**：挂载时引擎已
+  // 就绪、当前偏好即刻下发（否则首帧 localEngineRef 为 null，pen 值又不再
+  // 变化会导致永不重发）。引擎重建（retryKey）后同样重发；excalidraw 引擎
+  // 的 setInputMode 为安全 no-op（守卫在引擎包装层，复审⑩）。
+  // biome-ignore lint/correctness/useExhaustiveDependencies(retryKey): 重试键变化=引擎重建，需重发输入模式，effect 体内不读取
+  useEffect(() => {
+    if (inputMode !== "session") return;
+    localEngineRef.current?.setInputMode(sessionPref);
+  }, [inputMode, sessionPref, retryKey]);
 
   // 工具/颜色/粗细变化 → 下发引擎
   useEffect(() => {
@@ -272,6 +332,30 @@ export function InkPad({
           <Hand aria-hidden />
           {engine === "atrament" ? "滚动" : "选择"}
         </Button>
+
+        {/* 输入偏好切换（T6R.7，仅新草稿形态显示）：会话内共享，多画布同源 */}
+        {inputMode === "session" && (
+          <Button
+            type="button"
+            variant={sessionPref === "finger" ? "secondary" : "ghost"}
+            aria-pressed={sessionPref === "finger"}
+            disabled={toolsDisabled}
+            onClick={() =>
+              setSessionInputPreference(
+                sessionPref === "pen" ? "finger" : "pen",
+              )
+            }
+            className={toolButtonClass}
+            title={
+              sessionPref === "pen"
+                ? "手指书写（无笔设备：手指直接书写；本会话内所有草稿画布生效）"
+                : "切回笔写／手指滚动（本会话内所有草稿画布生效）"
+            }
+          >
+            <Pointer aria-hidden />
+            手指书写
+          </Button>
+        )}
 
         {/* 颜色三选（黑/蓝/红）；荧光笔固定黄色，禁用切换 */}
         {(toolType === "pen" || toolType === "highlighter") && (

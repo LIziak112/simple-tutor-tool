@@ -56,6 +56,16 @@ export class InkStore {
     return clone(this.#strokes);
   }
 
+  /**
+   * 当前笔画的**只读零拷贝视图**（T6R.7 复审⑨：橡皮命中/重绘等同步热路径
+   * 专用——getStrokes 的深拷贝在每个 coalesced 采样点上不可负担）。
+   * **仅同步消费**：同一事件处理内读取；随后的提交会原地追加或更换内部
+   * 数组，跨异步/跨事件持有请用 getStrokes() 的副本。
+   */
+  peekStrokes(): readonly InkStroke[] {
+    return this.#strokes;
+  }
+
   /** 最后变更时间（epoch 毫秒） */
   getUpdatedAt(): number {
     return this.#updatedAt;

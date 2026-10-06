@@ -21,6 +21,10 @@ import {
 } from "@tutor/contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  NOTE_PAPER_GRID_SPACING_LOGICAL,
+  NOTE_PAPER_LINE_COLOR,
+} from "@/features/ink/engine/paper-style.ts";
+import {
   INK_HIGHLIGHTER,
   INK_PEN_COLORS,
 } from "@/features/ink/engine/types.ts";
@@ -37,8 +41,6 @@ import {
   ANALYSIS_SLICE_OVERLAP_LOGICAL,
   analysisSliceHeightMax,
   inkBBoxLogical,
-  NOTE_PAPER_GRID_SPACING_LOGICAL,
-  NOTE_PAPER_LINE_COLOR,
   planAnalysisCrop,
   planAnalysisPages,
   planThumbnailPage,
