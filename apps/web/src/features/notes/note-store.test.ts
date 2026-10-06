@@ -391,7 +391,6 @@ describe("note-store：IDB 失败与订阅", () => {
     const inner = memoryNoteBackend();
     const flaky: NoteStoreBackend = {
       get: inner.get,
-      del: inner.del,
       keys: inner.keys,
       set: (key, value) => {
         if (fail) return Promise.reject(new Error("QuotaExceededError"));

@@ -488,8 +488,8 @@ export async function resolveNoteConflictKeepCloud(
   scope: NoteScope,
 ): Promise<void> {
   const record = peekNoteRecord(session, scope);
-  const versionId = record?.conflict?.current.versionId;
   if (record?.conflict == null) return;
+  const versionId = record.conflict.current.versionId;
   if (versionId === null) {
     throw new Error(
       "云端没有可读取的版本（可能为空稿或数据回退），请选择保留本机内容",
