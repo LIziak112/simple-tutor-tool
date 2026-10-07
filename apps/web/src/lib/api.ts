@@ -87,6 +87,8 @@ import {
   type ReorderRequest,
   type ReportDetail,
   type ReportListData,
+  type ReviewPackPreviewData,
+  type ReviewPackRole,
   type SharedFileList,
   type SharedImportRequest,
   type SharedPreviewData,
@@ -251,6 +253,39 @@ async function throwShellError(res: Response): Promise<never> {
     );
   }
   throw new Error(`服务器响应异常（HTTP ${res.status}），请稍后重试`);
+}
+
+/**
+ * 触发浏览器保存 blob（a[download] 短挂载；object URL 用后即撤）。
+ * api.ts 内全部文件直出下载（CSV/MD/学情包/单题包/逐张图片/备份）共用，
+ * 不再各自手抄 anchor 七行。
+ */
+function saveBlobAs(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  try {
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = filename;
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+  } finally {
+    // revoke 延迟到下一轮宏任务（/code-review 角A）：Safari/WebKit 在同轮
+    // 事件里 revoke 会导致下载拿到空 blob（iPad 支持面的已知怪癖）
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
+}
+
+/**
+ * Content-Disposition → 下载文件名（filename="…" 形态；取不到回退 fallback）。
+ * 中文文件名的 filename*=UTF-8'' 形态另见 downloadExportMd（唯一特例，不并）。
+ */
+function filenameFromDisposition(res: Response, fallback: string): string {
+  const disposition = res.headers.get("content-disposition") ?? "";
+  // 负向断言排除 filename*= 形态（RFC 5987 编码形态只有 downloadExportMd
+  // 那一处理——它的 `*=UTF-8''` 前缀会被本正则误捕，这里不受理）
+  const matched = /filename(?!\*)="?([^";]+)"?/i.exec(disposition)?.[1];
+  return matched !== undefined && matched.length > 0 ? matched : fallback;
 }
 
 /** 查询是否已设置教师（首启判断，无登录要求） */
@@ -1471,18 +1506,7 @@ export async function downloadExportMd(
   // 优先 filename*=UTF-8''（中文标题），回退整个头文本
   const star = /filename\*=UTF-8''([^;]+)/i.exec(disposition)?.[1];
   const filename = star !== undefined ? decodeURIComponent(star) : `${id}.md`;
-  const blob = await res.blob();
-  const url = URL.createObjectURL(blob);
-  try {
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = filename;
-    document.body.append(anchor);
-    anchor.click();
-    anchor.remove();
-  } finally {
-    URL.revokeObjectURL(url);
-  }
+  saveBlobAs(await res.blob(), filename);
 }
 
 // ---------- T2B.6：管理端（/api/admin/*，requireAdmin；D19 管理员无业务数据权限） ----------
@@ -1770,22 +1794,8 @@ export async function downloadTeacherExportCsv(
     // 文件接口的错误仍是统一 JSON 壳
     await throwShellError(res);
   }
-  const disposition = res.headers.get("content-disposition") ?? "";
-  const matched = /filename="?([^";]+)"?/i.exec(disposition)?.[1];
-  const filename =
-    matched !== undefined && matched.length > 0 ? matched : "tutor-export.csv";
-  const blob = await res.blob();
-  const url = URL.createObjectURL(blob);
-  try {
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = filename;
-    document.body.append(anchor);
-    anchor.click();
-    anchor.remove();
-  } finally {
-    URL.revokeObjectURL(url);
-  }
+  const filename = filenameFromDisposition(res, "tutor-export.csv");
+  saveBlobAs(await res.blob(), filename);
 }
 
 // ---------- T3.5：学生端「我的记录」与错题本（D9–D11） ----------
@@ -1964,23 +1974,83 @@ export async function downloadLearningPackApi(
     // 文件接口的错误仍是统一 JSON 壳
     await throwShellError(res);
   }
-  const disposition = res.headers.get("content-disposition") ?? "";
-  const matched = /filename="?([^";]+)"?/i.exec(disposition)?.[1];
-  const filename =
-    matched !== undefined && matched.length > 0 ? matched : "learning-pack.zip";
-  const blob = await res.blob();
-  const url = URL.createObjectURL(blob);
-  try {
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = filename;
-    document.body.append(anchor);
-    anchor.click();
-    anchor.remove();
-  } finally {
-    URL.revokeObjectURL(url);
-  }
+  const filename = filenameFromDisposition(res, "learning-pack.zip");
+  saveBlobAs(await res.blob(), filename);
   return filename;
+}
+
+// ---------- T6R.13：单题完整导出（review-pack，契约 review-pack.ts） ----------
+
+/** review-pack 请求角色：契约单一来源（reviewPackSchema 的 role 字面量联合） */
+export type { ReviewPackRole };
+
+/** 单题包预览（POST …/review-pack/preview 统一壳；附件清单 + 缺失 + reviewMd） */
+export function fetchReviewPackPreviewApi(
+  role: ReviewPackRole,
+  attemptId: string,
+  questionId: string,
+): Promise<ReviewPackPreviewData> {
+  return callApi(() =>
+    role === "student"
+      ? api.api.student.attempts[":id"].questions[":questionId"][
+          "review-pack"
+        ].preview.$post({ param: { id: attemptId, questionId } })
+      : api.api.teacher.attempts[":id"].questions[":questionId"][
+          "review-pack"
+        ].preview.$post({ param: { id: attemptId, questionId } }),
+  );
+}
+
+/**
+ * 下载单题包 zip（POST …/review-pack 文件直出；同 downloadLearningPackApi
+ * 模式：同构 fetch 拿 blob 触发浏览器下载，文件名取 Content-Disposition，
+ * 回退固定名）。网络失败给中文提示；服务端统一壳错误经 throwShellError 抛
+ * ApiError。**每次点击都重新请求**（响应 no-store，不跨账号缓存复用）。
+ */
+export async function downloadReviewPackApi(
+  role: ReviewPackRole,
+  attemptId: string,
+  questionId: string,
+): Promise<string> {
+  let res: Response;
+  try {
+    res = await fetch(
+      `/api/${role}/attempts/${encodeURIComponent(attemptId)}/questions/${encodeURIComponent(questionId)}/review-pack`,
+      { method: "POST" },
+    );
+  } catch {
+    throw new Error("连不上服务器，请检查网络后重试");
+  }
+  if (!res.ok) {
+    await throwShellError(res);
+  }
+  const filename = filenameFromDisposition(res, "review-pack.zip");
+  saveBlobAs(await res.blob(), filename);
+  return filename;
+}
+
+/**
+ * 逐张下载真实图片（媒体配图 / 证据分析图；url 来自预览 attachments 的
+ * downloadUrl——学生/教师各自已授权的直出端点或公开 /blobs 路径）。
+ * 会话过期（401/403）与网络失败都显式抛中文错误，**不静默声称下载成功**。
+ */
+export async function downloadAttachmentApi(
+  url: string,
+  filename: string,
+): Promise<void> {
+  let res: Response;
+  try {
+    res = await fetch(url);
+  } catch {
+    throw new Error("连不上服务器，请检查网络后重试");
+  }
+  if (res.status === 401 || res.status === 403) {
+    throw new Error("没有权限读取这张图片（登录可能已过期，请刷新页面后重试）");
+  }
+  if (!res.ok) {
+    throw new Error(`图片下载失败（HTTP ${res.status}）`);
+  }
+  saveBlobAs(await res.blob(), filename);
 }
 
 // ---------- 备份与恢复（T4.5，D20/D21 口径见契约 backup-api.ts） ----------
@@ -2061,22 +2131,8 @@ export async function downloadBackupApi(): Promise<string> {
     // 文件接口的错误仍是统一 JSON 壳
     await throwShellError(res);
   }
-  const disposition = res.headers.get("content-disposition") ?? "";
-  const matched = /filename="?([^";]+)"?/i.exec(disposition)?.[1];
-  const filename =
-    matched !== undefined && matched.length > 0 ? matched : "tutor-backup.zip";
-  const blob = await res.blob();
-  const url = URL.createObjectURL(blob);
-  try {
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = filename;
-    document.body.append(anchor);
-    anchor.click();
-    anchor.remove();
-  } finally {
-    URL.revokeObjectURL(url);
-  }
+  const filename = filenameFromDisposition(res, "tutor-backup.zip");
+  saveBlobAs(await res.blob(), filename);
   return filename;
 }
 

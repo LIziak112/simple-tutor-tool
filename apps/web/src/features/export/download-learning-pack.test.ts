@@ -84,6 +84,26 @@ describe("downloadLearningPackApi", () => {
     expect(anchor?.download).toBe("learning-pack-20260101-120000.zip");
   });
 
+  it("Content-Disposition 只有 filename*= 形态时回退固定文件名（不误捕编码形态）", async () => {
+    const { createObjectURL } = stubObjectURL();
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(new Uint8Array([0x50, 0x4b]), {
+        status: 200,
+        headers: {
+          "content-type": "application/zip",
+          "content-disposition":
+            "attachment; filename*=UTF-8''%E4%B8%AD%E6%96%87.zip",
+        },
+      }),
+    );
+    const filename = await downloadLearningPackApi(REQUEST);
+    // 本接口不实现 RFC 5987 解码——只有 filename* 时不取（唯一中文特例在
+    // downloadExportMd），回退固定名
+    expect(filename).toBe("learning-pack.zip");
+    fetchMock.mockRestore();
+    void createObjectURL;
+  });
+
   it("响应缺 Content-Disposition 时回退固定文件名", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(zipResponse(null)));
     stubObjectURL();

@@ -47,24 +47,42 @@ export function gzipResponse(bytes: ArrayBuffer, etag: string): Response {
  * 随账号变化，immutable/短缓存两个前提都不成立；与 ink 的 private,max-age=60
  * 和 /blobs/media 的内容寻址长缓存是三种不同口径）。no-store 下不会有条件
  * 请求，ETag 无意义不设。
+ *
+ * bytes 兼容 Uint8Array<ArrayBuffer>（T6R.13 起 zip 文件直出共用：导出/
+ * 备份/单题包的下载内容随批改与图片状态变化，同样禁缓存；Response BodyInit
+ * 对独立 ArrayBuffer 底座的 Uint8Array 直接接受）。
  */
 export function noStoreBinaryResponse(
-  bytes: ArrayBuffer,
+  bytes: ArrayBuffer | Uint8Array<ArrayBuffer>,
   contentType: string,
   options: {
     /** 附件下载语义：给定时设置 content-disposition: attachment（文档直出用） */
     attachmentFilename?: string;
   } = {},
 ): Response {
+  return new Response(bytes, {
+    status: 200,
+    headers: noStoreAttachmentHeaders(contentType, options.attachmentFilename),
+  });
+}
+
+/**
+ * no-store 附件三件套响应头（T6R.13 收敛）：bytes 直出（上函数）与流式
+ * 直出（备份下载的 Readable.toWeb 形态）共用同一套头，不再各自手抄三行。
+ */
+export function noStoreAttachmentHeaders(
+  contentType: string,
+  attachmentFilename?: string,
+): Record<string, string> {
   const headers: Record<string, string> = {
     "content-type": contentType,
     "cache-control": "no-store",
   };
-  if (options.attachmentFilename !== undefined) {
+  if (attachmentFilename !== undefined) {
     headers["content-disposition"] =
-      `attachment; filename="${options.attachmentFilename}"`;
+      `attachment; filename="${attachmentFilename}"`;
   }
-  return new Response(bytes, { status: 200, headers });
+  return headers;
 }
 
 /**

@@ -12,6 +12,7 @@ import type {
 } from "@tutor/contract";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { reviewPackStubDatasets } from "@/features/export/review-pack-test-stub";
 import { noteOriginalStubDatasets } from "@/features/notes/note-original-test-stub";
 import {
   ApiError,
@@ -50,6 +51,15 @@ vi.mock("@/features/notes/NoteOriginalView", async () => {
     "@/features/notes/note-original-test-stub"
   );
   return { NoteOriginalView: NoteOriginalTestStub };
+});
+
+// T6R.13：单题完整导出面板以桩替换（面板行为见 review-pack-panel.test），
+// 此处只断言教师端接线——每题一个入口、教师角色、attempt/题目定位
+vi.mock("@/features/export/review-pack-panel", async () => {
+  const { ReviewPackTestStub } = await import(
+    "@/features/export/review-pack-test-stub"
+  );
+  return { ReviewPackPanel: ReviewPackTestStub };
 });
 
 const mockedDetail = vi.mocked(fetchTeacherAttemptDetailApi);
@@ -481,9 +491,10 @@ describe("AttemptDetailPage 改判/评语内联编辑（T3.2b，D3）", () => {
     const q2 = await screen.findByRole("article", { name: "第 2 题" });
     fireEvent.click(within(q2).getByRole("button", { name: "判错" }));
     fireEvent.click(within(q2).getByRole("button", { name: "保存判定与评语" }));
-    const editor = q2.lastElementChild as HTMLElement;
+    // T6R.13 起题卡尾部另有复习包入口，不再用 lastElementChild 定位编辑器——
+    // 就地错误提示是 q2 内唯一的 role=alert
     await waitFor(() =>
-      expect(within(editor).getByRole("alert")).toHaveTextContent("网络中断"),
+      expect(within(q2).getByRole("alert")).toHaveTextContent("网络中断"),
     );
     // 判定区（服务端数据）不受影响：教师判定仍「未批改」
     expect(
@@ -543,5 +554,30 @@ describe("AttemptDetailPage 草稿原稿入口（T6R.11）补充", () => {
     await screen.findByRole("article", { name: "第 1 题" });
     const prefixes = noteOriginalStubDatasets().map((stub) => stub.prefix);
     expect(prefixes).toEqual(["第 1 题", "第 2 题", "第 3 题"]);
+  });
+});
+
+describe("AttemptDetailPage 单题完整导出入口（T6R.13）", () => {
+  it("逐题渲染 AI 复习包入口：教师角色、attempt 定位、题号接线（含手写题）", async () => {
+    mockedDetail.mockResolvedValue(makeDetail());
+    renderPage();
+    await screen.findByRole("article", { name: "第 1 题" });
+    const stubs = reviewPackStubDatasets();
+    // makeDetail 三题（judge/choice/fill）全部渲染
+    expect(stubs.map((s) => s.question)).toEqual(["q1", "q2", "q3"]);
+    for (const stub of stubs) {
+      expect(stub.role).toBe("teacher");
+      expect(stub.attempt).toBe(ATTEMPT_ID);
+    }
+    expect(stubs.map((s) => s.no)).toEqual(["1", "2", "3"]);
+  });
+
+  it("draft（进行中）也渲染入口（证据按 not_collected 呈现）", async () => {
+    mockedDetail.mockResolvedValue(
+      makeDetail({ status: "draft", submittedAt: null }),
+    );
+    renderPage();
+    await screen.findByText("进行中：学生尚未交卷");
+    expect(reviewPackStubDatasets()).toHaveLength(3);
   });
 });

@@ -2,6 +2,7 @@ import { learningPackExportRequestSchema } from "@tutor/contract";
 import { Hono } from "hono";
 import type { TeacherEnv } from "../auth/require-teacher";
 import type { Db } from "../db/client";
+import { noStoreBinaryResponse } from "../lib/binary-response";
 import { parseJsonBody } from "../lib/http-error";
 import {
   buildLearningPackZip,
@@ -44,13 +45,8 @@ export function createTeacherExportRoutes(db: Db, dataDir: string) {
           c.var.teacher.id,
           req,
         );
-        return new Response(zip.bytes, {
-          status: 200,
-          headers: {
-            "content-type": "application/zip",
-            "cache-control": "no-store",
-            "content-disposition": `attachment; filename="${zip.filename}"`,
-          },
+        return noStoreBinaryResponse(zip.bytes, "application/zip", {
+          attachmentFilename: zip.filename,
         });
       })
   );

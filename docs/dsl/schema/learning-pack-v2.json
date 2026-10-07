@@ -935,7 +935,8 @@
                   "mapping",
                   "ink",
                   "media",
-                  "evidence"
+                  "evidence",
+                  "question"
                 ]
               },
               "bytes": {
@@ -973,7 +974,8 @@
                 "type": "string",
                 "enum": [
                   "media",
-                  "evidence-image"
+                  "evidence-image",
+                  "ink"
                 ]
               },
               "reason": {

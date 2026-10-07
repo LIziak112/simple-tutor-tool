@@ -38,3 +38,15 @@ export {
   studentStemMd,
 } from "./v2/public-stem.ts";
 export { processor } from "./v2/shared.ts";
+// 静态题目素材（T6R.12 前端建立，T6R.13 移入本包）：服务端单题 review-pack
+// 与浏览器侧静态合成图共用的纯函数模块（DOM 渲染留在 apps/web）。
+export type {
+  GraphFigureSpec,
+  QuestionMaterialRole,
+  StaticQuestionMaterial,
+  StaticQuestionMaterialInput,
+} from "./v2/static-material.ts";
+export {
+  buildStaticQuestionMaterial,
+  STATIC_INTERACTION_NOTE,
+} from "./v2/static-material.ts";

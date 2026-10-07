@@ -65,7 +65,7 @@ export function safeInkFileName(questionId: string): string {
  * ①换掉旧 startsWith 弱实现：同前缀相邻目录不再可能骗过）；suffix 传空串
  * 表示不做后缀检查（旧签名兼容口径）。
  */
-function inkFileAbs(
+export function inkFileAbs(
   dataDir: string,
   relPath: string,
   suffix: string | undefined,

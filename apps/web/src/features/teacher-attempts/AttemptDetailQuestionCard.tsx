@@ -12,6 +12,7 @@ import {
   QUESTION_TYPE_BADGE_CLASS,
   QUESTION_TYPE_LABELS,
 } from "@/features/attempt/answer-format";
+import { ReviewPackPanel } from "@/features/export/review-pack-panel";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { NoteOriginalView } from "@/features/notes/NoteOriginalView";
 import { AttemptQuestionMarkEditor } from "./AttemptQuestionMarkEditor";
@@ -366,6 +367,15 @@ export function AttemptDetailQuestionCard({
       {question.solutionMd !== undefined &&
         question.solutionMd !== null &&
         !isDraft && <SolutionFold solutionMd={question.solutionMd} />}
+
+      {/* T6R.13：单题完整导出入口（教师域文档——携带参考答案/判定/评语与
+          真实 id；draft 也可导出当前作答，证据按 not_collected 呈现） */}
+      <ReviewPackPanel
+        viewer="teacher"
+        attemptId={attemptId}
+        questionId={question.questionId}
+        questionNo={question.no}
+      />
     </article>
   );
 }

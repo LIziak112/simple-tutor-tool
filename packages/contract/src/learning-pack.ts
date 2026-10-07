@@ -1,7 +1,11 @@
 import { z } from "zod";
 import { analyticsLectureReadingMapSchema } from "./analytics-api.ts";
 import { attemptSourceSchema, attemptStatusSchema } from "./attempt.ts";
-import { questionAnswersSchema, questionTypeSchema } from "./content.ts";
+import {
+  lettersOf,
+  questionAnswersSchema,
+  questionTypeSchema,
+} from "./content.ts";
 import {
   noteCropRectSchema,
   notePhaseSchema,
@@ -489,8 +493,8 @@ export const learningPackSchema = z.object({
  * attempt/version id**；pack.json 内保留 attemptId/studentId/questionId（与
  * v1 一致——化名口径只约束称呼与文件名，id 是教师域内的定位键）。
  */
-const PACK_REF_QUESTION_RE = /^q\d{3,}$/;
-const PACK_REF_EVIDENCE_RE = /^e\d{3,}$/;
+export const PACK_REF_QUESTION_RE = /^q\d{3,}$/;
+export const PACK_REF_EVIDENCE_RE = /^e\d{3,}$/;
 
 /**
  * 快照内容身份（64 位小写 hex sha-256）：对快照对象做**递归键序排序的
@@ -500,9 +504,22 @@ const PACK_REF_EVIDENCE_RE = /^e\d{3,}$/;
  * 快照缺失（历史行无快照）为 null，条目 present=false 且 stemMd 为空串，
  ** 不回填当前题库内容**（T6R.3 起口径，T6R.12 细化为显式缺失标记）。
  */
-const learningPackSnapshotHashSchema = z
+export const learningPackSnapshotHashSchema = z
   .string()
   .regex(/^[0-9a-f]{64}$/, "快照内容 hash 须为 64 位小写十六进制（sha-256）");
+
+/**
+ * 被固定版本摘要（学习包 v2 与单题 review-pack 共用形状；review-pack 教师
+ * 域携带同一 schema，学生域由 reviewPackSchema superRefine 整体拒绝）。
+ */
+export const learningPackEvidenceVersionSchema = z.object({
+  versionId: z.uuid(),
+  /** 服务端确认时间（UTC ISO） */
+  savedAt: z.string().min(1),
+  strokeCount: z.number().int().min(0),
+  pointCount: z.number().int().min(0),
+  paperHeight: z.number().int().min(1),
+});
 
 /**
  * v2 题目条目：以「内容身份」为键（同内容多轮共享一条，不同内容即使同 qid
@@ -598,16 +615,7 @@ export const learningPackEvidenceSchema = z.object({
   phase: notePhaseSchema,
   state: learningPackEvidenceStateSchema,
   /** 被固定版本摘要（仅 state='frozen' 携带；版本行缺失时 undefined + missing 原因） */
-  version: z
-    .object({
-      versionId: z.uuid(),
-      /** 服务端确认时间（UTC ISO） */
-      savedAt: z.string().min(1),
-      strokeCount: z.number().int().min(0),
-      pointCount: z.number().int().min(0),
-      paperHeight: z.number().int().min(1),
-    })
-    .optional(),
+  version: learningPackEvidenceVersionSchema.optional(),
   /** 分析图清单（含缺失标记；缺省空数组） */
   images: z.array(learningPackEvidenceImageSchema).default([]),
 });
@@ -624,6 +632,10 @@ export const learningPackManifestFileSchema = z.object({
     "ink",
     "media",
     "evidence",
+    // T6R.13 新增（只增不改）：单题 review-pack 的题目文字附件
+    // （questions/qNNN/stem.md）——v2 学情数据包不产出该 kind，旧消费方
+    // 遇未知 kind 按 manifest 通用口径忽略即可
+    "question",
   ]),
   bytes: z.number().int().min(0),
   /** 关联的包内编号（题目/证据条目；media 可关联多个 q 条目） */
@@ -634,7 +646,12 @@ export const learningPackManifestFileSchema = z.object({
 export const learningPackManifestMissingSchema = z.object({
   /** 本应在 zip 内的路径 */
   path: z.string().min(1),
-  kind: z.enum(["media", "evidence-image"]),
+  kind: z.enum([
+    "media",
+    "evidence-image",
+    // T6R.13 新增（只增不改）：手写题笔迹快照文件缺失（行在文件没）
+    "ink",
+  ]),
   /** 缺失原因（中文，面向教师可读） */
   reason: z.string().min(1),
   refs: z.array(z.string()).default([]),
@@ -909,17 +926,9 @@ const GOAL_SECTIONS: Record<
   },
 };
 
-/** 化名编号（学生A…学生Z、学生AA…；D16 名单顺序编号） */
+/** 化名编号（学生A…学生Z、学生AA…；D16 名单顺序编号）——字母算法在 content.ts */
 export function learningPackAliasOf(index: number): string {
-  // 1→A … 26→Z、27→AA（电子表格列号同款进制；0 起入参 +1）
-  let n = index + 1;
-  let letters = "";
-  while (n > 0) {
-    const rem = (n - 1) % 26;
-    letters = String.fromCharCode(65 + rem) + letters;
-    n = Math.floor((n - 1) / 26);
-  }
-  return `学生${letters}`;
+  return `学生${lettersOf(index)}`;
 }
 
 /**

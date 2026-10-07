@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import type { AttemptResultData } from "@tutor/contract";
 import { describe, expect, it, vi } from "vitest";
+import { reviewPackStubDatasets } from "@/features/export/review-pack-test-stub";
 import { noteOriginalStubDatasets } from "@/features/notes/note-original-test-stub";
 import { AttemptResultView } from "./AttemptResultView";
 
@@ -16,6 +17,15 @@ vi.mock("@/features/notes/NoteOriginalView", async () => {
     "@/features/notes/note-original-test-stub"
   );
   return { NoteOriginalView: NoteOriginalTestStub };
+});
+
+// T6R.13：单题完整导出面板以桩替换（面板行为见 review-pack-panel.test），
+// 这里只断言接线——每题一个入口、学生角色、attempt/题目/题号定位
+vi.mock("@/features/export/review-pack-panel", async () => {
+  const { ReviewPackTestStub } = await import(
+    "@/features/export/review-pack-test-stub"
+  );
+  return { ReviewPackPanel: ReviewPackTestStub };
 });
 
 const DATA: AttemptResultData = {
@@ -691,6 +701,27 @@ describe("本次草稿原稿入口（T6R.11）", () => {
       expect(stub.role).toBe("student");
       expect(stub.attempt).toBe(DATA.attempt.id);
     }
+  });
+
+  // ---------- T6R.13：单题完整导出入口（每题一个，含手写题） ----------
+
+  it("逐题渲染 AI 复习包入口：全部题型、学生角色、attempt/题目/全卷题号定位", () => {
+    renderView();
+    const stubs = reviewPackStubDatasets();
+    // DATA 四题全渲染（手写题也有复习包——原稿走笔迹/证据链）
+    expect(stubs).toHaveLength(4);
+    expect(stubs.map((s) => s.question)).toEqual([
+      "练习四-1",
+      "练习四-2",
+      "练习四-4",
+      "p4-q7",
+    ]);
+    for (const stub of stubs) {
+      expect(stub.role).toBe("student");
+      expect(stub.attempt).toBe(DATA.attempt.id);
+    }
+    // 全卷连续题号（渲染序）
+    expect(stubs.map((s) => s.no)).toEqual(["1", "2", "3", "4"]);
   });
 
   it("轮次标注按来源：作业=本次作业、课程=第 n 次课程练习、错题重练=第 N 次组卷", () => {

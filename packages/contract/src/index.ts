@@ -43,6 +43,9 @@ export * from "./media-api.ts";
 export * from "./note.ts";
 /** 运行时公开配置契约（T2.12 起为权威定义）：GET /api/public/config 的 pwaEnabled/publicUrl */
 export * from "./public-config.ts";
+/** 单题完整导出契约（T6R.13 起为权威定义）：review-pack 双角色 pack.json/预览/
+ *  review.md 提示词单一来源；学生包 id 剥离与答案剔除为 schema 级不变量 */
+export * from "./review-pack.ts";
 /** 共享发布 API 契约（T2B.7 起为权威定义）：DATA_DIR/shared 目录的发布/列表/预览/导入/删除 */
 export * from "./shared-api.ts";
 /** DSL 规范文件契约（T1.13 起为权威定义）：/api/public/spec 文件名枚举与 Content-Type */

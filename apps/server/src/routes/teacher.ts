@@ -208,7 +208,9 @@ export function createTeacherRoutes(
       .route("/", createAssignmentTeacherRoutes(db))
       // T3.1：教师端作答数据页（列表 + 详情，业务在 teacher-attempt-service）
       // T3.4：/export/csv CSV 导出（业务在 export-csv；publicUrl 供笔迹绝对链接）
-      .route("/", createTeacherAttemptRoutes(db, publicUrl))
+      // T6R.13：/attempts/:id/questions/:qid/review-pack 单题完整导出（业务在
+      // review-pack-service；dataDir 供媒体/证据图装配）
+      .route("/", createTeacherAttemptRoutes(db, publicUrl, dataDir))
       // T4.1：学情分析（总览/学生画像/题目视角，业务在 analytics-service；
       // 查询参数 courseId/days/focusDays，口径见契约 analytics-api.ts 的 D1–D7 注释）
       .route("/", createTeacherAnalyticsRoutes(db))

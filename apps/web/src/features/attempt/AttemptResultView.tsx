@@ -14,6 +14,7 @@ import {
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { HintEntryList } from "@/features/attempt/HintPanel";
+import { ReviewPackPanel } from "@/features/export/review-pack-panel";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { NoteOriginalView } from "@/features/notes/NoteOriginalView";
 import { studentInkPngUrl } from "@/lib/api";
@@ -408,6 +409,15 @@ function ResultQuestionCard({
           }
         />
       )}
+
+      {/* T6R.13：单题完整导出入口（AI 复习包——题干投影 + 本人答案 + 手写
+          原稿图；学生包不含参考答案/判定，任何公布态都可导出） */}
+      <ReviewPackPanel
+        viewer="student"
+        attemptId={attemptId}
+        questionId={question.questionId}
+        questionNo={index + 1}
+      />
     </article>
   );
 }

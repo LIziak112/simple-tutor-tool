@@ -65,6 +65,10 @@ import {
   saveNoteVersion,
 } from "../services/note-service";
 import {
+  buildReviewPackZip,
+  previewReviewPack,
+} from "../services/review-pack-service";
+import {
   getStudentCourseDetail,
   getStudentLecture,
   getStudentUnitLanding,
@@ -426,6 +430,41 @@ export function createStudentRoutes(
             c.req.param("id"),
             c.req.param("questionId"),
           ),
+        });
+      })
+      // T6R.13：单题完整导出预览（统一壳；附件清单 + 缺失 + reviewMd 全文）。
+      // 学生角色投影与 id 剥离在 review-pack-service（materialOf 学生角色 +
+      // reviewPackSchema superRefine 双层保证）；导出内容随批改/图片状态
+      // 变化，no-store 禁缓存（跨账号缓存防线）
+      .post("/attempts/:id/questions/:questionId/review-pack/preview", (c) => {
+        return c.json(
+          {
+            ok: true,
+            data: previewReviewPack(
+              db,
+              dataDir,
+              { kind: "student", id: c.var.student.id },
+              c.req.param("id"),
+              c.req.param("questionId"),
+            ),
+          },
+          200,
+          { "cache-control": "no-store" },
+        );
+      })
+      // T6R.13：单题完整导出 zip 文件直出（application/zip + attachment +
+      // no-store，处理方式同学情数据包；文件名 review-pack-q<N>-<时间戳>.zip
+      // 不含真实 id）。空请求体（无参数——一题包默认取当前 attempt 的该题）
+      .post("/attempts/:id/questions/:questionId/review-pack", async (c) => {
+        const zip = await buildReviewPackZip(
+          db,
+          dataDir,
+          { kind: "student", id: c.var.student.id },
+          c.req.param("id"),
+          c.req.param("questionId"),
+        );
+        return noStoreBinaryResponse(zip.bytes, "application/zip", {
+          attachmentFilename: zip.filename,
         });
       })
       // T6R.5 ③：版本文档直出（gzip 原字节；授权在 service 归属链，版本行

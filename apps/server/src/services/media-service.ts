@@ -74,14 +74,20 @@ export const MEDIA_BLOB_URL_TAIL_PATTERN = new RegExp(
  * 旧式 blobs/fig-1.png 等无内容寻址文件可寻的引用静默跳过。
  */
 export function extractMediaImageSrcs(markdowns: readonly string[]): string[] {
-  // 字面量求值即新对象（非模块级共享）：/g 正则被 matchAll 提前中止会留下
+  // 引号形态与渲染端接受面对齐（/code-review 角A）：remark-directive 属性
+  // 语法双引号/单引号/无引号三形态都合法——src 值是内容寻址安全字符
+  // （hex+扩展名），无引号形态以空白/`}` 结束不吞尾随字符。
+  // 每次求值即新 RegExp（非模块级共享）：/g 正则被 matchAll 提前中止会留下
   // 非零 lastIndex，共享实例会跨调用串状态
-  const pattern =
-    /::image\{[^}\n]*?\bsrc="(blobs\/media\/[0-9a-f]{64}\.(?:png|jpe?g|webp|gif))"/g;
+  const SRC_SHAPE = "blobs\\/media\\/[0-9a-f]{64}\\.(?:png|jpe?g|webp|gif)";
+  const pattern = new RegExp(
+    `::image\\{[^}\\n]*?\\bsrc=(?:"(${SRC_SHAPE})"|'(${SRC_SHAPE})'|(${SRC_SHAPE})(?=[\\s}]))`,
+    "g",
+  );
   const seen = new Set<string>();
   for (const md of markdowns) {
     for (const match of md.matchAll(pattern)) {
-      const src = match[1];
+      const src = match[1] ?? match[2] ?? match[3];
       if (src !== undefined) seen.add(src);
     }
   }

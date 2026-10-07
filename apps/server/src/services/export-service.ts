@@ -70,7 +70,12 @@ import { beijingDateTimeOf, beijingExportStampOf } from "./export-csv";
 import { lectureReadingMapFor } from "./lecture-insights";
 import { serializeStudentAnswer } from "./mark-response";
 import { extractMediaImageSrcs, statMediaSrc } from "./media-service";
-import { assembleQuestionEvidence, materialOf } from "./question-evidence";
+import {
+  assembleQuestionEvidence,
+  evidenceMissingRowsOf,
+  materialOf,
+  readyEvidenceImagesOf,
+} from "./question-evidence";
 import { snapshotOfRow } from "./snapshot";
 import { sourceOf } from "./teacher-attempt-service";
 import { type TraceEvent, traceEventsFromRows } from "./trace-intervals";
@@ -1477,6 +1482,8 @@ function assembleV2(core: PackCore): LearningPackAssembly {
   const promptMd = renderPromptMdOf(core, mediaEntries.length > 0);
 
   // —— 证据图条目（evidence 模块勾选才装配；zip 写入与 preview 共用） ——
+  // ready 分析图条目（T6R.13 /code-review D27：遍历收敛在 question-evidence
+  // 共享件，与 review-pack 同一实现）
   const evidenceEntries: Array<{
     entry: string;
     absPath: string;
@@ -1485,16 +1492,7 @@ function assembleV2(core: PackCore): LearningPackAssembly {
   }> = [];
   if (m.evidence) {
     for (const evidenceEntry of evidenceAsm.evidence) {
-      for (const image of evidenceEntry.images) {
-        if (image.state === "ready" && image.absPath !== undefined) {
-          evidenceEntries.push({
-            entry: image.file,
-            absPath: image.absPath,
-            bytes: image.bytes ?? 0,
-            ref: evidenceEntry.ref,
-          });
-        }
-      }
+      evidenceEntries.push(...readyEvidenceImagesOf(evidenceEntry));
     }
   }
 
@@ -1661,12 +1659,7 @@ function assembleV2(core: PackCore): LearningPackAssembly {
     ],
     missing: [
       ...missingMediaByPath.values(),
-      ...evidenceAsm.missingEvidenceImages.map((miss) => ({
-        path: miss.file,
-        kind: "evidence-image" as const,
-        reason: miss.reason,
-        refs: [miss.evidenceRef],
-      })),
+      ...evidenceMissingRowsOf(evidenceAsm),
     ],
     contextNotes,
   };
