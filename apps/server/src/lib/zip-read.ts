@@ -109,6 +109,17 @@ export function isSafeZipEntryName(name: string): boolean {
  * - 逐条校验签名、方法、大小与 CRC32，任一不符抛 ZipReadError；
  * - 顺序按中央目录出现顺序（稳定）。
  */
+/**
+ * Map 形态快捷读取（服务端测试断言与 e2e 共用——条目名 → 内容；
+ * 与 readZipEntries 同一实现单点，CRC/ZIP64 校验齐全）。
+ * 零外部依赖（仅 node:zlib）——e2e 跨包相对 import 的前提。
+ */
+export function readZipEntriesMap(buffer: Buffer): Map<string, Buffer> {
+  return new Map(
+    readZipEntries(buffer).map((entry) => [entry.name, entry.data] as const),
+  );
+}
+
 export function readZipEntries(buffer: Buffer): ZipEntry[] {
   const eocd = findEocd(buffer);
   const entryCount = u16(buffer, eocd + 10);

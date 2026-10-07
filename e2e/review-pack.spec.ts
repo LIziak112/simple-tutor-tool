@@ -10,6 +10,7 @@ import {
   openChoicePractice,
   setCourseItemVisible,
   teacherApiLogin,
+  teacherEvidenceOf,
   uniqueSuffix,
   unzipEntries,
 } from "./helpers";
@@ -104,11 +105,13 @@ test.describe("单题完整导出（T6R.13：下载并实际解包）", () => {
       });
       await expect(rebuildButton).toBeVisible({ timeout: 15_000 });
       await rebuildButton.click();
-      const versionId = await waitForReadyAnalysisImages(
+      const evidenceReady = await teacherEvidenceOf(
         request,
         attemptId,
         choiceQuestionId,
+        { pollUntil: { analysisReady: true } },
       );
+      const versionId = evidenceReady.versionId ?? "";
 
       // —— 结果页：第 2 题 AI 复习包 → 预览 → 下载完整包 ——
       await choiceCard
@@ -194,6 +197,12 @@ test.describe("单题完整导出（T6R.13：下载并实际解包）", () => {
       )}/review-pack`,
     );
     expect(teacherRes.ok()).toBe(true);
+    // 教师链同款头三件套（no-store/attachment——与学生链同一防线）
+    expect(teacherRes.headers()["content-type"]).toContain("application/zip");
+    expect(teacherRes.headers()["cache-control"]).toBe("no-store");
+    expect(teacherRes.headers()["content-disposition"] ?? "").toContain(
+      "attachment",
+    );
     const teacherPack = unzipEntries(Buffer.from(await teacherRes.body()));
     const teacherPackJson =
       teacherPack.get("pack.json")?.toString("utf8") ?? "";
@@ -206,50 +215,3 @@ test.describe("单题完整导出（T6R.13：下载并实际解包）", () => {
     expect(teacherStem).toContain("故选 B");
   });
 });
-
-/** 轮询教师 evidence 读端点直到分析图全部 ready，返回 versionId */
-async function waitForReadyAnalysisImages(
-  request: import("@playwright/test").APIRequestContext,
-  attemptId: string,
-  questionId: string,
-): Promise<string> {
-  const deadline = Date.now() + 60_000;
-  let delayMs = 500;
-  let lastStatus = 0;
-  for (;;) {
-    const res = await request.get(
-      `/api/teacher/attempts/${attemptId}/evidence/${encodeURIComponent(questionId)}`,
-    );
-    // 非 2xx 不立即弃测：交卷事务/补图刚落地的窗口内可能瞬时 404/409，
-    // deadline 内计入下一轮重试（只记状态，超时再连状态一起报）
-    if (res.ok()) {
-      const body = (await res.json()) as {
-        data: {
-          evidence: { state: string; versionId: string | null } | null;
-          images: Array<{ spec: string; state: string }>;
-        };
-      };
-      const evidence = body.data.evidence;
-      if (
-        evidence !== null &&
-        evidence.state === "frozen" &&
-        evidence.versionId !== null &&
-        body.data.images.some((image) => image.spec === "analysis") &&
-        body.data.images
-          .filter((image) => image.spec === "analysis")
-          .every((image) => image.state === "ready")
-      ) {
-        return evidence.versionId;
-      }
-    } else {
-      lastStatus = res.status();
-    }
-    if (Date.now() > deadline) {
-      throw new Error(
-        `等待分析图就绪超时（60 秒；最后一次证据读取 HTTP ${lastStatus || 200}）`,
-      );
-    }
-    await new Promise((resolve) => setTimeout(resolve, delayMs));
-    delayMs = Math.min(delayMs * 2, 2000);
-  }
-}

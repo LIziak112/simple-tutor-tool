@@ -27,11 +27,8 @@ import {
   REVIEW_SENTINELS,
   type ReviewPackWorldOptions,
 } from "../test/review-pack-world.ts";
-import {
-  packEntryOf,
-  packLeakTextOf,
-  zipEntriesOf,
-} from "../test/zip-assert.ts";
+import { readZipEntriesMap } from "../lib/zip-read.ts";
+import { packEntryOf, packLeakTextOf } from "../test/zip-assert.ts";
 import { saveMedia } from "./media-service.ts";
 import {
   assembleReviewPack,
@@ -78,8 +75,6 @@ function studentOf(id: string): ReviewPackPrincipal {
 const makeWorld = (db: Db, dataDir: string, options: ReviewPackWorldOptions) =>
   makeReviewPackWorld(db, dataDir, { questionId: QUESTION_ID, ...options });
 
-/** zip 条目 Map（共享件） */
-const entriesOf = zipEntriesOf;
 
 describe("T6R.13 双角色一键一题包（服务层）", () => {
   it("教师包全链：zip 结构完整、pack.json 过 schema、携带答案/判定/评语/真实 id", async () => {
@@ -99,7 +94,7 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
       },
     );
     expect(zip.filename).toMatch(/^review-pack-q1-\d{8}-\d{6}\.zip$/);
-    const entries = entriesOf(zip.bytes);
+    const entries = readZipEntriesMap(Buffer.from(zip.bytes));
     for (const fixed of [
       "review.md",
       "pack.json",
@@ -148,7 +143,7 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
       QUESTION_ID,
       { now: NOW },
     );
-    const entries = entriesOf(zip.bytes);
+    const entries = readZipEntriesMap(Buffer.from(zip.bytes));
     const pack = JSON.parse(entries.get("pack.json")?.toString("utf8") ?? "{}");
 
     // —— 键级：pack.json 无教师域键（schema superRefine 已拒，这里锁深扫） ——
@@ -233,7 +228,7 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
       QUESTION_ID,
       { now: NOW },
     );
-    const entries = entriesOf(zip.bytes);
+    const entries = readZipEntriesMap(Buffer.from(zip.bytes));
     expect(entries.has(media.src)).toBe(true);
     const pack = packEntryOf(entries, reviewPackSchema);
     expect(pack.response.answerText).toBe("是");
@@ -274,7 +269,7 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
       QUESTION_ID,
       { now: NOW },
     );
-    expect(entriesOf(zip.bytes).has(media.src)).toBe(false);
+    expect(readZipEntriesMap(Buffer.from(zip.bytes)).has(media.src)).toBe(false);
   });
 
   it("丢分析图：文件删除/未生成 → 显式缺失 + review.md「不完整」，不静默消失", async () => {
@@ -334,7 +329,7 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
       QUESTION_ID,
       { now: NOW },
     );
-    const entries = entriesOf(zip.bytes);
+    const entries = readZipEntriesMap(Buffer.from(zip.bytes));
     expect(entries.has("evidence/e001-original-01.png")).toBe(false);
     const pack = packEntryOf(entries, reviewPackSchema);
     expect(pack.manifest.missing).toHaveLength(1);
@@ -412,7 +407,7 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
       QUESTION_ID,
       { now: NOW },
     );
-    expect(entriesOf(zip.bytes).has("evidence/e001-original-01.png")).toBe(
+    expect(readZipEntriesMap(Buffer.from(zip.bytes)).has("evidence/e001-original-01.png")).toBe(
       false,
     );
   });
@@ -511,7 +506,7 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
       QUESTION_ID,
       { now: NOW },
     );
-    const entries = entriesOf(zip.bytes);
+    const entries = readZipEntriesMap(Buffer.from(zip.bytes));
     expect(new Set(preview.files.map((f) => f.path))).toEqual(
       new Set(entries.keys()),
     );
@@ -561,7 +556,7 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
       ),
       "utf8",
     );
-    expect(entriesOf(zip.bytes).get("schema.json")?.toString("utf8")).toBe(
+    expect(readZipEntriesMap(Buffer.from(zip.bytes)).get("schema.json")?.toString("utf8")).toBe(
       artifact,
     );
   });
@@ -603,7 +598,7 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
       QUESTION_ID,
       { now: NOW },
     );
-    const entries = entriesOf(zip.bytes);
+    const entries = readZipEntriesMap(Buffer.from(zip.bytes));
     const stem = entries.get("questions/q001/stem.md")?.toString("utf8") ?? "";
     expect(stem).toContain("【图表·静态导出】");
     expect(stem).toContain("x^2");
@@ -629,7 +624,7 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
       world.questionId,
       { now: NOW },
     );
-    const entries = entriesOf(zip.bytes);
+    const entries = readZipEntriesMap(Buffer.from(zip.bytes));
     // 笔迹图进包且可解码
     const ink = entries.get("ink/original.png");
     expect(ink).toBeDefined();
@@ -717,7 +712,7 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
       { now: NOW },
     );
     const rawText =
-      entriesOf(zip.bytes).get("pack.json")?.toString("utf8") ?? "";
+      readZipEntriesMap(Buffer.from(zip.bytes)).get("pack.json")?.toString("utf8") ?? "";
     const parsed = JSON.parse(rawText) as Record<string, unknown>;
     // 回归锁：即使装配层未来塞入未声明键（superRefine 对其失明），parse 的
     // strip 语义保证它不进 zip——此处单测 strip 行为并锁「zip 文本无未声明键」
@@ -801,7 +796,7 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
         now: NOW,
       },
     );
-    const stem = entriesOf(zip.bytes)
+    const stem = readZipEntriesMap(Buffer.from(zip.bytes))
       .get("questions/q001/stem.md")
       ?.toString("utf8");
     expect(stem).toContain("判定");

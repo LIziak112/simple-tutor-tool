@@ -288,6 +288,22 @@ describe("extractMediaImageSrcs（::image 引用提取纯函数，自 export-ser
     expect(extractMediaImageSrcs([md])).toEqual([]);
   });
 
+  it("单引号与无引号 src 形态同样提取（与渲染端 remark-directive 接受面一致）", () => {
+    const md = [
+      `::image{src='blobs/media/${H1}.png'}`,
+      `::image{src=blobs/media/${H2}.jpg}`,
+      `::image{alt="前缀" src=blobs/media/${H1}.png title="尾随属性"}`,
+    ].join("\n\n");
+    expect(extractMediaImageSrcs([md])).toEqual([
+      `blobs/media/${H1}.png`,
+      `blobs/media/${H2}.jpg`,
+    ]);
+    // 无引号形态以空白/} 结束：不吞尾随字符、花括号闭合不受影响
+    expect(
+      extractMediaImageSrcs([`::image{src=blobs/media/${H1}.png}`]),
+    ).toEqual([`blobs/media/${H1}.png`]);
+  });
+
   it("跨多段文本收集且不重复；题干/详解形态的题目 md 同样命中", () => {
     const stem = `题干：观察下图。::image{src="blobs/media/${H1}.webp"}`;
     const solution = `详解：如图。::image{src="blobs/media/${H2}.gif"}`;

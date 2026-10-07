@@ -828,35 +828,74 @@ export async function teacherEvidenceOf(
   request: import("@playwright/test").APIRequestContext,
   attemptId: string,
   questionId: string,
-): Promise<{ state: string; versionId: string | null }> {
-  const res = await request.get(
-    `/api/teacher/attempts/${attemptId}/evidence/${encodeURIComponent(questionId)}`,
-  );
-  if (!res.ok()) {
-    throw new Error(`教师证据读取失败：HTTP ${res.status()}`);
+  options: {
+    pollUntil?: { analysisReady: boolean; timeoutMs?: number };
+  } = {},
+): Promise<{
+  state: string;
+  versionId: string | null;
+  images: Array<{ spec: string; state: string }>;
+}> {
+  // 轮询语义（/code-review C28/C9）：缺省不轮询（既有调用方零变化）；
+  // pollUntil 时非 2xx 不立即弃测（交卷/补图落地窗口的瞬时 404/409 计入
+  // 下一轮，超时把最终观测一起报），间隔 500ms 起步渐进 2s
+  const deadline = Date.now() + (options.pollUntil?.timeoutMs ?? 60_000);
+  let delayMs = 500;
+  let lastStatus = 0;
+  for (;;) {
+    const res = await request.get(
+      `/api/teacher/attempts/${attemptId}/evidence/${encodeURIComponent(questionId)}`,
+    );
+    if (res.ok()) {
+      lastStatus = 0;
+      const body = (await res.json()) as {
+        data: {
+          evidence: { state: string; versionId: string | null } | null;
+          images: Array<{ spec: string; state: string }>;
+        };
+      };
+      const evidence = body.data.evidence;
+      if (options.pollUntil === undefined) {
+        if (evidence === null) {
+          throw new Error("证据行为空（交卷事务未固定原稿）");
+        }
+        return { ...evidence, images: body.data.images };
+      }
+      if (
+        evidence !== null &&
+        evidence.state === "frozen" &&
+        evidence.versionId !== null &&
+        body.data.images.some((image) => image.spec === "analysis") &&
+        body.data.images
+          .filter((image) => image.spec === "analysis")
+          .every((image) => image.state === "ready")
+      ) {
+        return { ...evidence, images: body.data.images };
+      }
+    } else {
+      lastStatus = res.status();
+    }
+    if (Date.now() > deadline) {
+      throw new Error(
+        `等待证据就绪超时${lastStatus ? `（最后一次读取 HTTP ${lastStatus}）` : "（证据行未就绪）"}`,
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    delayMs = Math.min(delayMs * 2, 2000);
   }
-  const body = (await res.json()) as {
-    data: { evidence: { state: string; versionId: string | null } | null };
-  };
-  if (body.data.evidence === null) {
-    throw new Error("证据行为空（交卷事务未固定原稿）");
-  }
-  return body.data.evidence;
 }
 
 // ---------- T6R.13：zip 解包与 PNG 校验共享件 ----------
 
 import { pngSize } from "../apps/server/src/lib/png";
 // 跨包复用服务端生产实现（相对 import；二者零依赖、e2e tsconfig 直接过检）：
-// zip-read 的中央目录解包（含条目名安全校验）与 png 的魔数+IHDR 尺寸解析
-// 都比本地弱化副本（无 CRC/ZIP64 的手写版）强。
-import { readZipEntries } from "../apps/server/src/lib/zip-read";
+// zip-read 的中央目录解包（CRC/ZIP64 校验齐全、条目名安全校验）与 png 的
+// 魔数+IHDR 尺寸解析——与生产同一实现单点，不再有本地弱化副本。
+import { readZipEntriesMap } from "../apps/server/src/lib/zip-read";
 
-/** 解包 zip → 条目名 → 内容 Map（服务端生产读取器单一实现） */
+/** 解包 zip → 条目名 → 内容 Map（readZipEntriesMap 的 e2e 侧别名） */
 export function unzipEntries(buffer: Buffer): Map<string, Buffer> {
-  return new Map(
-    readZipEntries(buffer).map((entry) => [entry.name, entry.data]),
-  );
+  return readZipEntriesMap(buffer);
 }
 
 /** PNG 可解码校验：魔数 + IHDR 宽高 > 0（图为真实渲染器产物）+ 非平凡字节量 */

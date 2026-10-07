@@ -13,7 +13,8 @@ import {
   loginStudent,
 } from "../test/note-world.ts";
 import { makeReviewPackWorld } from "../test/review-pack-world.ts";
-import { packLeakTextOf, zipEntriesOf } from "../test/zip-assert.ts";
+import { readZipEntriesMap } from "../lib/zip-read.ts";
+import { packLeakTextOf } from "../test/zip-assert.ts";
 
 /**
  * T6R.13 学生单题 review-pack 路由测试（新增学生端响应——泄露测试必写）：
@@ -163,7 +164,7 @@ describe("学生单题 review-pack 路由", () => {
 
     // —— 路由层全文件扫描（独立于装配层测试的第二道） ——
     const entries = [
-      ...zipEntriesOf(new Uint8Array(await res.arrayBuffer())).entries(),
+      ...readZipEntriesMap(Buffer.from(await res.arrayBuffer())).entries(),
     ];
     expect(entries.length).toBeGreaterThanOrEqual(5);
     for (const [name, data] of entries) {

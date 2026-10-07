@@ -269,7 +269,9 @@ function saveBlobAs(blob: Blob, filename: string): void {
     anchor.click();
     anchor.remove();
   } finally {
-    URL.revokeObjectURL(url);
+    // revoke 延迟到下一轮宏任务（/code-review 角A）：Safari/WebKit 在同轮
+    // 事件里 revoke 会导致下载拿到空 blob（iPad 支持面的已知怪癖）
+    setTimeout(() => URL.revokeObjectURL(url), 0);
   }
 }
 
@@ -279,7 +281,9 @@ function saveBlobAs(blob: Blob, filename: string): void {
  */
 function filenameFromDisposition(res: Response, fallback: string): string {
   const disposition = res.headers.get("content-disposition") ?? "";
-  const matched = /filename="?([^";]+)"?/i.exec(disposition)?.[1];
+  // 负向断言排除 filename*= 形态（RFC 5987 编码形态只有 downloadExportMd
+  // 那一处理——它的 `*=UTF-8''` 前缀会被本正则误捕，这里不受理）
+  const matched = /filename(?!\*)="?([^";]+)"?/i.exec(disposition)?.[1];
   return matched !== undefined && matched.length > 0 ? matched : fallback;
 }
 

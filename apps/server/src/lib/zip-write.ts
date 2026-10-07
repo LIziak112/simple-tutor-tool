@@ -52,6 +52,11 @@ export async function zipBufferOf(
     archive.on("end", () => resolve());
     archive.on("error", (err: Error) => reject(err));
   });
+  // end 之后再冒的 error 只落已 settle 的 done（无声丢失）——独立监听留痕
+  // 服务端日志（/code-review 角D；与 done 的 reject 不互斥，双记无害）
+  archive.on("error", (err: Error) => {
+    console.error("zipBufferOf: archiver error（可能发生在 end 之后）", err);
+  });
   let warning: Error | null = null;
   if (options.warningAsError !== false) {
     archive.on("warning", (err: Error) => {

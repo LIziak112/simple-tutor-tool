@@ -8,7 +8,7 @@ import type { Db } from "../db/client.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { createStudent, extractSessionToken } from "../test/note-world.ts";
 import { makeReviewPackWorld } from "../test/review-pack-world.ts";
-import { zipEntriesOf } from "../test/zip-assert.ts";
+import { readZipEntriesMap } from "../lib/zip-read.ts";
 
 /**
  * T6R.13 教师单题 review-pack 路由测试：
@@ -107,7 +107,7 @@ describe("教师单题 review-pack 路由", () => {
       "attachment",
     );
     const entries = [
-      ...zipEntriesOf(new Uint8Array(await res.arrayBuffer())).entries(),
+      ...readZipEntriesMap(Buffer.from(await res.arrayBuffer())).entries(),
     ];
     const packJson =
       entries.find(([name]) => name === "pack.json")?.[1].toString("utf8") ??
