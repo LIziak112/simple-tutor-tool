@@ -7,6 +7,7 @@ import {
   questionTypeSchema,
 } from "./content.ts";
 import {
+  NOTE_ANALYSIS_SLICE_OVERLAP_LOGICAL,
   type NotePhase,
   noteCropRectSchema,
   notePhaseSchema,
@@ -493,8 +494,14 @@ export const learningPackQuestionTraceSchema = z.object({
   fullscreenUsed: z.boolean(),
   /** 离线作答占比 ∈ [0,1] */
   offlineShare: z.number().min(0).max(1),
-  /** 交卷后是否回看了解析 */
-  reviewedSolution: z.boolean(),
+  /**
+   * 交卷后是否回看了解析（T6R.17 三态）：
+   * - null=事件未采集/未知（旧客户端或事件丢失——该 attempt 事件流为空）；
+   * - false=有事件记录但交卷后未见解析回看（已知未回看）；
+   * - true=已知回看。
+   * hintsUsed 是 responses 权威列（服务端计数），无未知态，不改。
+   */
+  reviewedSolution: z.boolean().nullable(),
 });
 
 /** 讲义阅读地图条目（T4.0 §4.4.4：逐项地图直接进 pack.json；行为推断） */
@@ -1104,7 +1111,7 @@ const GOAL_SECTIONS: Record<
     task: (deps) => {
       const lines = [
         "请基于数据包中的逐题作答行（及包内证据图片，如已附），对学生逐题进行书写过程评析：",
-        "1. 逐题核对附件图片是否真的可见——未收录或不可辨认的题明确写「证据不足」，不凭空推断书写过程；",
+        "1. 逐题核对附件图片是否真的可见——未收录或不可辨认的题明确写「证据不足，不能确定书写过程」，不凭空推断书写过程；",
         "2. 转写图片中可辨认的解题步骤，并列出疑点（模糊、涂改、跳步、只写结果无过程等）；",
         `3. 引用图号${
           deps.evidence
@@ -1115,6 +1122,13 @@ const GOAL_SECTIONS: Record<
         "5. 每题给一个最小提示（不直接给答案），并配一道验证题，供下次课确认是否真正掌握；",
         "6. 列出需要教师确认的事项（笔迹辨认、判定口径、时间窗边界等）。",
       ];
+      // 辅助信息纪律（T6R.17）：已知事件才记录——null=未知、false≠独立完成。
+      // 只进本模板（deps.traces 分支），旧四模板字节锁不受影响。
+      if (deps.traces) {
+        lines.push(
+          `${lines.length}. traces 的提示使用（hintsUsed）与交卷后解析回看（reviewedSolution）只反映已记录事件：null=未采集/未知（缺记录处明确写未知），false=有事件流、确无交卷后回看（已知未回看）——但都不能据此推断学生完全独立完成；`,
+        );
+      }
       if (deps.evidence) {
         lines.push(
           // 首元素是无编号引言行，第 N 条编号 = length（引言占 1 位）
@@ -1122,8 +1136,13 @@ const GOAL_SECTIONS: Record<
         );
       }
       if (deps.ink) {
+        // 闸门修正（审查 CR P2-2）：「与证据原稿图互为旁证」只在 evidence
+        // 并存时说——ink 勾而 evidence 未勾（手调 API 极端组合）时包内没有
+        // 证据图，提示词不得指向不存在的材料
         lines.push(
-          `${lines.length}. ink/ 手写过程图片与证据原稿图互为旁证，注意区分「过程规范性」与「答案正确性」。`,
+          deps.evidence
+            ? `${lines.length}. ink/ 手写过程图片与证据原稿图互为旁证，注意区分「过程规范性」与「答案正确性」。`
+            : `${lines.length}. ink/ 手写过程图片供分析书写过程与步骤规范性，注意区分「过程规范性」与「答案正确性」。`,
         );
       }
       return lines;
@@ -1268,6 +1287,13 @@ export function renderLearningPackPrompt(
             .join(
               "、",
             )}；按作答逐题配对、按切片分页；缺图在 manifest.missing 标明原因）；如你是多模态模型请结合图片核对书写过程。`,
+    );
+    // 页间重叠说明（T6R.17）：重叠区常量引 note.ts 单源（阶段细化/未细化两种
+    // 变体都加；evidence 未勾不出现——旧四模板与既有句原文一字不动）。
+    dataLines.push(
+      // 闸门修正（审查 P2-1）：不用「（约一格）」做参照——重叠区与格距
+      // 语义独立（note.ts 注释明示不得派生），锚定格距会误导定标联动
+      `- 证据图片按切片分页：长稿相邻页有 ${NOTE_ANALYSIS_SLICE_OVERLAP_LOGICAL} 逻辑单位重叠区，用于保证跨页笔迹完整可读；重叠区内的笔迹会在相邻两页各出现一次，属同一段内容——转写与引用时不要重复计数或编号。`,
     );
   }
   dataLines.push("");

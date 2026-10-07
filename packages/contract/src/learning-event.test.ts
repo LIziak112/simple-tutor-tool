@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import {
   attemptEventBatchRequestSchema,
   attemptEventSchema,
@@ -463,5 +464,79 @@ describe("T4.0a 交互族（directive_interact / ink_edit_batch / ink_fullscreen
       lectureId: "lec-1",
       viewId: "v",
     });
+  });
+});
+
+// ---------- T6R.17：事件 payload 字段白名单守护（辅助信息纪律） ----------
+
+describe("learningEventSchema：payload 字段白名单守护（T6R.17 辅助信息纪律）", () => {
+  /**
+   * 纪律出处（T6R.17 辅助信息纪律，承接 learning-event.ts 文件头安全口径
+   * 与 AGENTS.md 第 3 条）：事件只存必要计数/引用——id / 序号 / 计数 / 布尔 /
+   * 枚举 / 学生自报答案值；不记录额外笔画内容（笔迹本体走 T2.8 multipart
+   * 通道）、不携带题目侧内容（答案/详解/提示正文）。
+   *
+   * 本测试遍历 learningEventSchema 全部分支的 payload 字段名，白名单外一律
+   * 失败。Zod 对未知输入键是「剥离不报错」，管不住 schema 自身将来新增字段
+   * 夹带内容——必须在契约层用白名单锁死：新增事件想加字段，先过这道闸。
+   */
+  it("全部事件分支的 payload 字段名都在白名单内", () => {
+    const whitelist = new Set([
+      // 通用
+      "type",
+      "clientTs",
+      // 身份引用（id / 注册表枚举名，非内容）
+      "questionId",
+      "lectureId",
+      "attemptId",
+      "viewId",
+      "name",
+      "host",
+      "action",
+      // directive = lecture_expand 被展开的指令注册表主名（T2.10 既有事件，
+      // 与 directive_interact 的 name 同语义：枚举引用非内容）——白名单必收
+      "directive",
+      // 序号
+      "index",
+      "headingIndex",
+      "step",
+      // 计数
+      "strokes",
+      "erase",
+      "undo",
+      "redo",
+      "clear",
+      // 布尔
+      "on",
+      // 学生自报答案值（from/to 是学生自己的输入，非标准答案）
+      "from",
+      "to",
+      // 讲义版本定位（ISO 时间戳，可选；只做事件与讲义版本的比对锚点）
+      "lectureUpdatedAt",
+    ]);
+    const violations: string[] = [];
+    // net/idle 等两 scope 共用分支在 attempt/lecture 联合各出现一次，按引用去重
+    const branches = [...new Set(learningEventSchema.options)];
+    for (const branch of branches) {
+      // 每个分支都是扁平 z.object（payload 不嵌套对象——嵌套的内容载体无处安放）
+      let label = "(未知 type)";
+      const typeSchema = branch.shape.type;
+      if (typeSchema instanceof z.ZodLiteral) {
+        for (const v of typeSchema.values) {
+          label = `type=${String(v)}`;
+          break;
+        }
+      }
+      for (const key of Object.keys(branch.shape)) {
+        if (!whitelist.has(key)) {
+          violations.push(`${label} 的 payload 字段 "${key}" 不在白名单`);
+        }
+      }
+    }
+    // 守护自检：分支数须与现行 22 种事件的 schema 分支数一致（directive_interact
+    // 按 host/action 拆 4 分支、net/idle 两 scope 共用同一 schema）——新增事件
+    // 此数必然 +1，白名单须同步审视，这正是守护点
+    expect(branches.length).toBe(25);
+    expect(violations).toEqual([]);
   });
 });

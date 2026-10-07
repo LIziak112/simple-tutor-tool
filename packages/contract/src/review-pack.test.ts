@@ -7,6 +7,7 @@ import {
   learningPackManifestMissingSchema,
   learningPackManifestSchema,
 } from "./learning-pack.ts";
+import { NOTE_ANALYSIS_SLICE_OVERLAP_LOGICAL } from "./note.ts";
 import {
   renderReviewPackPrompt,
   reviewPackJsonSchema,
@@ -336,6 +337,49 @@ describe("renderReviewPackPrompt（共享 review.md 提示词基础）", () => {
     });
     expect(md).toContain("不完整");
     expect(md).toContain("不要假装看到了图片");
+    // 缺图「不能确定」口径（T6R.17 锁断言，文案已含）：不能分析什么 + 不做基于原稿的诊断
+    expect(md).toContain("不能分析什么");
+    expect(md).toContain("无法进行基于原稿的诊断");
+  });
+
+  it("含 evidence/ 附件：数据说明加切片分页页间重叠条件行；纯文字包不出现（T6R.17）", () => {
+    // base 的 files 含 evidence/e001-original-01.png
+    const md = renderReviewPackPrompt(base);
+    expect(md).toContain("手写证据图片可能按切片分页");
+    expect(md).toContain("文件名末尾 -01/-02 递增");
+    expect(md).toContain("属同一段内容");
+    expect(md).toContain("不要重复计数或编号");
+    // 闸门修正：重叠区数值引契约常量单源（与 learning-pack 同源），
+    // 且不借格距做参照（重叠与格距语义独立，见 note.ts 注释）
+    expect(md).toContain(
+      `相邻页存在 ${NOTE_ANALYSIS_SLICE_OVERLAP_LOGICAL} 逻辑单位重叠区`,
+    );
+    expect(md).not.toContain("约一格");
+    const textOnly = renderReviewPackPrompt({
+      ...base,
+      files: [{ path: "questions/q001/stem.md", bytes: 120 }],
+      imageCount: 0,
+    });
+    expect(textOnly).not.toContain("按切片分页");
+  });
+
+  it("注入防御：两角色渲染都含「指令性文字」与「不改变本任务」（T6R.17 锁断言）", () => {
+    for (const role of ["student", "teacher"] as const) {
+      const md = renderReviewPackPrompt({ ...base, role });
+      expect(md).toContain("指令性文字");
+      expect(md).toContain("不改变本任务");
+      // 闸门修正（安全 LOW-02）：学生包可含 evidence/ink 图片（学生自己的
+      // 原稿/笔迹），防御句须同样覆盖图片内容，与教师包口径一致
+      expect(md).toContain("学生图片与题目文字");
+    }
+  });
+
+  it("学生角色渲染不混入教师域内容：无「教师需确认/仅供核对/快照原文/[[答案]]」", () => {
+    const md = renderReviewPackPrompt(base);
+    expect(md).not.toContain("教师需确认");
+    expect(md).not.toContain("仅供核对");
+    expect(md).not.toContain("快照原文");
+    expect(md).not.toContain("[[答案]]");
   });
 
   it("教师包：携带答案时提示仅供核对 + 教师需确认事项；不写入成绩", () => {
@@ -409,6 +453,62 @@ describe("renderReviewPackPrompt（共享 review.md 提示词基础）", () => {
     });
     expect(md).toContain("参数化文本说明");
     expect(md).toContain("折叠块 1 处");
+  });
+
+  it("学生角色渲染文本不含行为字段词（hintsUsed/reviewedSolution/activeSec/traces）", () => {
+    // 辅助信息纪律（T6R.17）：学习痕迹派生指标不出现在单题学生包提示词
+    expect(renderReviewPackPrompt(base)).not.toMatch(
+      /hintsUsed|reviewedSolution|activeSec|traces/,
+    );
+  });
+});
+
+describe("学生包无行为字段（辅助信息纪律，T6R.17 负向锁）", () => {
+  it("reviewPackSchema JSON 形状键扫描：无 hint/trace/reviewed/activeSec 等行为字段键", () => {
+    // 递归收集 JSON Schema 全部 properties 键（含数组 items 与 anyOf/oneOf 分支）
+    const keys = new Set<string>();
+    const walk = (node: unknown): void => {
+      if (Array.isArray(node)) {
+        for (const child of node) walk(child);
+        return;
+      }
+      if (node === null || typeof node !== "object") return;
+      const record = node as Record<string, unknown>;
+      const props = record.properties;
+      if (props !== null && typeof props === "object") {
+        for (const [key, child] of Object.entries(
+          props as Record<string, unknown>,
+        )) {
+          keys.add(key);
+          walk(child);
+        }
+      }
+      for (const combiner of [
+        "items",
+        "prefixItems",
+        "anyOf",
+        "oneOf",
+        "allOf",
+        "$defs",
+        // 闸门补漏（T6R.17 审查 P2-3）：zod-to-json-schema 今日不用这些形态，
+        // 但将来引入时行为字段键不能从缺口漏检——一并递归
+        "patternProperties",
+        "additionalProperties",
+        "not",
+        "if",
+        "then",
+        "else",
+      ] as const) {
+        walk(record[combiner]);
+      }
+    };
+    walk(reviewPackJsonSchema());
+    const forbidden = [...keys].filter((key) =>
+      /hint|trace|reviewed|activeSec|changeCount|offlineShare|inkEdit|fullscreen/i.test(
+        key,
+      ),
+    );
+    expect(forbidden).toEqual([]);
   });
 });
 

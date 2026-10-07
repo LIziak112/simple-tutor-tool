@@ -572,6 +572,10 @@ test.describe("learning-pack-v2 批量学情包 v2 全链（T6R.16）", () => {
     expect(promptText).toContain("原稿、订正、补充稿分别分析");
     expect(promptText).toContain("订正正确不等于独立掌握");
     expect(promptText).toContain("teacherComment");
+    // T6R.17：evidence 数据说明的切片分页页间重叠说明 bullet（evidence 开启即有，
+    // 与阶段细化与否无关）——重叠区语义 + 不重复计数/编号指令
+    expect(promptText).toContain("重叠区");
+    expect(promptText).toContain("不要重复计数或编号");
   });
 
   test("对照：不开证据组下载的仍是 v1 包（meta.version=1、无 manifest、无 evidence/）", async ({
