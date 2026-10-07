@@ -18,7 +18,11 @@ import {
   learningPackV2Schema,
   renderLearningPackPrompt,
 } from "./learning-pack.ts";
-import { NOTE_PHASE_LABELS, NOTE_PHASE_ORDER } from "./note.ts";
+import {
+  NOTE_ANALYSIS_SLICE_OVERLAP_LOGICAL,
+  NOTE_PHASE_LABELS,
+  NOTE_PHASE_ORDER,
+} from "./note.ts";
 
 /**
  * AI 学情数据包契约自测（T4.3）：锁定请求校验（模块勾选建模、隐私缺省、
@@ -1213,6 +1217,34 @@ describe("renderLearningPackPrompt：per-question-review 与阶段细化（T6R.1
     expect(
       renderLearningPackPrompt({ ...base, evidence: true, evidencePhases: [] }),
     ).toContain("逐题手写原稿图片");
+  });
+
+  it("evidence 数据说明增切片分页页间重叠说明（引契约常量单源）；未勾不出现（T6R.17）", () => {
+    // 阶段细化/未细化两种变体都加——加在 evidence 行之后的新 bullet
+    for (const md of [
+      renderLearningPackPrompt({ ...base, evidence: true }),
+      renderLearningPackPrompt({
+        ...base,
+        evidence: true,
+        evidencePhases: ["scratch", "correction", "supplement"],
+      }),
+    ]) {
+      expect(md).toContain("证据图片按切片分页");
+      expect(md).toContain(
+        `相邻页有 ${NOTE_ANALYSIS_SLICE_OVERLAP_LOGICAL} 逻辑单位（约一格）重叠区`,
+      );
+      expect(md).toContain("属同一段内容");
+      expect(md).toContain("不要重复计数或编号");
+    }
+    const noEvidence = renderLearningPackPrompt(base);
+    expect(noEvidence).not.toContain("重叠区");
+    expect(noEvidence).not.toContain("重复计数");
+  });
+
+  it("缺图表述强化：未收录或不可辨认明确写「证据不足，不能确定书写过程」（T6R.17）", () => {
+    expect(renderLearningPackPrompt(base)).toContain(
+      "证据不足，不能确定书写过程",
+    );
   });
 
   it("旧四目标在无 evidence 输入下渲染与基线逐字节一致（防回归锁）", () => {

@@ -7,6 +7,7 @@ import {
   questionTypeSchema,
 } from "./content.ts";
 import {
+  NOTE_ANALYSIS_SLICE_OVERLAP_LOGICAL,
   type NotePhase,
   noteCropRectSchema,
   notePhaseSchema,
@@ -1110,7 +1111,7 @@ const GOAL_SECTIONS: Record<
     task: (deps) => {
       const lines = [
         "请基于数据包中的逐题作答行（及包内证据图片，如已附），对学生逐题进行书写过程评析：",
-        "1. 逐题核对附件图片是否真的可见——未收录或不可辨认的题明确写「证据不足」，不凭空推断书写过程；",
+        "1. 逐题核对附件图片是否真的可见——未收录或不可辨认的题明确写「证据不足，不能确定书写过程」，不凭空推断书写过程；",
         "2. 转写图片中可辨认的解题步骤，并列出疑点（模糊、涂改、跳步、只写结果无过程等）；",
         `3. 引用图号${
           deps.evidence
@@ -1281,6 +1282,11 @@ export function renderLearningPackPrompt(
             .join(
               "、",
             )}；按作答逐题配对、按切片分页；缺图在 manifest.missing 标明原因）；如你是多模态模型请结合图片核对书写过程。`,
+    );
+    // 页间重叠说明（T6R.17）：重叠区常量引 note.ts 单源（阶段细化/未细化两种
+    // 变体都加；evidence 未勾不出现——旧四模板与既有句原文一字不动）。
+    dataLines.push(
+      `- 证据图片按切片分页：长稿相邻页有 ${NOTE_ANALYSIS_SLICE_OVERLAP_LOGICAL} 逻辑单位（约一格）重叠区，用于保证跨页笔迹完整可读；重叠区内的笔迹会在相邻两页各出现一次，属同一段内容——转写与引用时不要重复计数或编号。`,
     );
   }
   dataLines.push("");
