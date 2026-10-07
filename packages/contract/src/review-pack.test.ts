@@ -3,14 +3,17 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
+  formatQuestionAnswers,
   learningPackManifestMissingSchema,
   learningPackManifestSchema,
+  lettersOf,
 } from "./learning-pack.ts";
 import {
   renderReviewPackPrompt,
   reviewPackJsonSchema,
   reviewPackPreviewDataSchema,
   reviewPackSchema,
+  sizeTextOf,
 } from "./review-pack.ts";
 
 /**
@@ -322,6 +325,46 @@ describe("renderReviewPackPrompt（共享 review.md 提示词基础）", () => {
     });
     expect(md).toContain("参数化文本说明");
     expect(md).toContain("折叠块 1 处");
+  });
+});
+
+describe("共享序列化件（lettersOf / formatQuestionAnswers / sizeTextOf）", () => {
+  it("lettersOf：A…Z、AA 进位（化名/选项字母/单题包参考答案同一算法）", () => {
+    expect(lettersOf(0)).toBe("A");
+    expect(lettersOf(25)).toBe("Z");
+    expect(lettersOf(26)).toBe("AA");
+    expect(lettersOf(51)).toBe("AZ");
+    expect(lettersOf(52)).toBe("BA");
+  });
+
+  it("formatQuestionAnswers plain 形态（服务端单题包用——裸 LaTeX 不包 $）", () => {
+    expect(formatQuestionAnswers({ kind: "judge", value: true })).toBe("对");
+    expect(formatQuestionAnswers({ kind: "choice", index: 1 })).toBe("B");
+    expect(formatQuestionAnswers({ kind: "multi", indexes: [2, 0] })).toBe(
+      "AC",
+    );
+    expect(
+      formatQuestionAnswers({
+        kind: "fill",
+        blanks: [["-\frac{5}{4}", "-1.25"], ["对"]],
+      }),
+    ).toBe("-\frac{5}{4} 或 -1.25；对");
+    expect(formatQuestionAnswers({ kind: "final", answer: "x=1" })).toBe("x=1");
+  });
+
+  it("formatQuestionAnswers 注入 mathify（显示侧包 $ 启发式）", () => {
+    expect(
+      formatQuestionAnswers(
+        { kind: "final", answer: "-\frac{5}{4}" },
+        { mathify: (text) => `$${text}$` },
+      ),
+    ).toBe("$-\frac{5}{4}$");
+  });
+
+  it("sizeTextOf：B/KB/MB 三档", () => {
+    expect(sizeTextOf(512)).toBe("512 B");
+    expect(sizeTextOf(2048)).toBe("2 KB");
+    expect(sizeTextOf(1.5 * 1024 * 1024)).toBe("1.5 MB");
   });
 });
 

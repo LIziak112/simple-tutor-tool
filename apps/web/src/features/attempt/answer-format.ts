@@ -4,7 +4,11 @@ import type {
   QuestionType,
   StudentAnswer,
 } from "@tutor/contract";
-import { QUESTION_TYPE_LABELS as QUESTION_TYPE_LABELS_CONTRACT } from "@tutor/contract";
+import {
+  formatQuestionAnswers,
+  lettersOf,
+  QUESTION_TYPE_LABELS as QUESTION_TYPE_LABELS_CONTRACT,
+} from "@tutor/contract";
 
 /**
  * 作答展示的纯函数集（T2.6 答题页/结果视图共用）：
@@ -40,7 +44,9 @@ export const QUESTION_TYPE_BADGE_CLASS: Record<QuestionType, string> = {
 
 /** 选项下标 → 字母（0→A、1→B…；与 DSL「字母按顺序自动编为 A/B/C/D」一致） */
 export function letterOf(index: number): string {
-  return String.fromCharCode("A".charCodeAt(0) + index);
+  // 算法复用 contract lettersOf（0–25 与旧实现逐字等价；>25 由越界到
+  // [\]^… 修正为 AA 进位——与化名编号/单题包参考答案同一实现）
+  return lettersOf(index);
 }
 
 /**
@@ -137,23 +143,9 @@ export function mathifyAnswerText(text: string): string {
  * 均以 RichMarkdown 渲染）。
  */
 export function formatReferenceAnswers(answers: QuestionAnswers): string {
-  switch (answers.kind) {
-    case "judge":
-      return answers.value ? "对" : "错";
-    case "choice":
-      return letterOf(answers.index);
-    case "multi":
-      return [...answers.indexes]
-        .sort((a, b) => a - b)
-        .map(letterOf)
-        .join("");
-    case "fill":
-      return answers.blanks
-        .map((b) => b.map(mathifyAnswerText).join(" 或 "))
-        .join("；");
-    case "final":
-      return mathifyAnswerText(answers.answer);
-  }
+  // 序列化核心在 contract formatQuestionAnswers（QuestionAnswers 的家）；
+  // 显示侧唯一差异 = mathifyAnswerText 的裸 LaTeX 包 $ 启发式，经参数注入
+  return formatQuestionAnswers(answers, { mathify: mathifyAnswerText });
 }
 
 /** 多空填充：把 values 扩到至少 length 长（缺项补空串），并写入第 index 项 */

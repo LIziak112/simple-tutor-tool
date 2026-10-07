@@ -1,6 +1,7 @@
 import {
   REVIEW_PACK_EVIDENCE_STATE_LABELS,
   type ReviewPackPreviewData,
+  sizeTextOf,
 } from "@tutor/contract";
 import { cn } from "cn";
 import {
@@ -46,13 +47,6 @@ const KIND_LABELS: Record<string, string> = {
   media: "配图",
   evidence: "手写原稿图",
 };
-
-/** 字节数的用户可读形态 */
-function sizeTextOf(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
 
 /** 逐张附件的行内任务状态 */
 interface AttachmentJob {

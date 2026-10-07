@@ -2,11 +2,16 @@ import { z } from "zod";
 import { questionAnswersSchema, questionTypeSchema } from "./content.ts";
 import {
   LEARNING_PACK_MAX_BYTES,
+  learningPackEvidenceImageSchema,
   learningPackEvidenceStateSchema,
+  learningPackEvidenceVersionSchema,
   learningPackManifestMissingSchema,
   learningPackManifestSchema,
+  learningPackSnapshotHashSchema,
+  PACK_REF_EVIDENCE_RE,
+  PACK_REF_QUESTION_RE,
 } from "./learning-pack.ts";
-import { noteCropRectSchema, notePhaseSchema } from "./note.ts";
+import { notePhaseSchema } from "./note.ts";
 
 /**
  * 单题完整导出（review-pack）契约（T6R.13，方案 §8/§9.1）：
@@ -40,12 +45,8 @@ export const REVIEW_PACK_MAX_BYTES = LEARNING_PACK_MAX_BYTES;
 
 // ---------- pack.json（zip 内主文件） ----------
 
-/** 包内对象编号（q001/e001；单题包各恒 1 条，仍用编号形态与 v2 包对齐） */
-const PACK_REF_QUESTION_RE = /^q\d{3,}$/;
-const PACK_REF_EVIDENCE_RE = /^e\d{3,}$/;
-
-/** 快照内容 hash（64 位小写 hex；同 learning-pack v2 口径，内容身份非定位键） */
-const SNAPSHOT_HASH_RE = /^[0-9a-f]{64}$/;
+// 包内编号正则与快照 hash schema 复用 learning-pack v2 出口（单一来源；
+// review-pack 不再自带副本——错误文案随之对齐 v2 口径）。
 
 /**
  * 题目条目：已按角色投影的素材（学生角色经 studentStemMd + 哨兵；选项为
@@ -59,10 +60,7 @@ export const reviewPackQuestionSchema = z.object({
   /** 交卷快照是否存在（false=历史缺失，stemMd 为空不回填） */
   present: z.boolean(),
   /** 快照内容身份（缺失为 null；内容 hash，非定位键） */
-  snapshotHash: z
-    .string()
-    .regex(SNAPSHOT_HASH_RE, "快照内容 hash 须为 64 位小写十六进制")
-    .nullable(),
+  snapshotHash: learningPackSnapshotHashSchema.nullable(),
   type: questionTypeSchema,
   difficulty: z.number().int().min(1).max(5),
   knowledge: z.array(z.string().min(1)),
@@ -96,16 +94,12 @@ export const reviewPackResponseSchema = z.object({
   teacherComment: z.string().nullable().optional(),
 });
 
-/** 证据条目的图片行（与 learning-pack v2 同形状：ready=随包附上/missing=进缺失清单） */
-export const reviewPackEvidenceImageSchema = z.object({
-  /** zip 内路径（evidence/<编号>-<阶段>-<页号>.png；不含真实 id） */
-  file: z.string().min(1),
-  pageIndex: z.number().int().min(0),
-  crop: noteCropRectSchema,
-  pixelWidth: z.number().int().min(1),
-  pixelHeight: z.number().int().min(1),
-  state: z.enum(["ready", "missing"]),
-});
+/**
+ * 证据条目的图片行：复用 learning-pack v2 形状（omit spec——单题包只出
+ * analysis 规格，字段恒定不再单列；ready=随包附上/missing=进缺失清单）。
+ */
+export const reviewPackEvidenceImageSchema =
+  learningPackEvidenceImageSchema.omit({ spec: true });
 
 /** 证据条目：本次作答本题的手写原稿声明（phase 首版恒 scratch） */
 export const reviewPackEvidenceSchema = z.object({
@@ -117,16 +111,8 @@ export const reviewPackEvidenceSchema = z.object({
   attemptId: z.uuid().optional(),
   studentId: z.uuid().optional(),
   questionId: z.string().min(1).optional(),
-  /** 被固定版本摘要（仅教师包；学生包剥离 versionId 等定位键） */
-  version: z
-    .object({
-      versionId: z.uuid(),
-      savedAt: z.string().min(1),
-      strokeCount: z.number().int().min(0),
-      pointCount: z.number().int().min(0),
-      paperHeight: z.number().int().min(1),
-    })
-    .optional(),
+  /** 被固定版本摘要（仅教师包；学生包剥离 versionId 等定位键）——形状与 v2 学习包共享 */
+  version: learningPackEvidenceVersionSchema.optional(),
 });
 
 /**
@@ -255,13 +241,17 @@ export const reviewPackErrorCodeSchema = z.enum([
  * zip 内 schema.json 与该文件逐字节一致——export-schema 脚本与
  * review-pack-service 共用本函数，两处永不漂移）。
  */
+/** zod→JSON Schema 转换结果缓存（纯函数、无输入——每请求重算纯浪费） */
+let reviewPackJsonSchemaCache: Record<string, unknown> | null = null;
+
 export function reviewPackJsonSchema(): Record<string, unknown> {
-  return {
+  reviewPackJsonSchemaCache ??= {
     title: "simple-tutor-tool 单题复习包（review-pack）",
     description:
       "单题完整导出 pack.json 的权威 JSON Schema（T6R.13）。学生包不携带真实 attemptId/studentId/questionId/versionId 等定位键，也不含参考答案/判定/评语/解析（schema superRefine 结构性强制）；教师包为教师域文档，照常携带。manifest 复用学情数据包 v2 的清单形状（files + missing + contextNotes），所有引用可解析或显式缺失。",
     ...z.toJSONSchema(reviewPackSchema),
   };
+  return reviewPackJsonSchemaCache;
 }
 
 // ---------- review.md 提示词模板（共享基础，单一来源） ----------
@@ -305,8 +295,8 @@ export const REVIEW_PACK_EVIDENCE_STATE_LABELS: Record<
   not_collected: "未采集草稿（旧版本客户端交卷）",
 };
 
-/** 字节数的用户可读形态（KB/MB；附件清单用） */
-function sizeTextOf(bytes: number): string {
+/** 字节数的用户可读形态（KB/MB；review.md 附件清单与前端面板共用单一实现） */
+export function sizeTextOf(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;

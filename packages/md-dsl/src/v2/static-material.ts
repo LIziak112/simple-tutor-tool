@@ -1,3 +1,4 @@
+import { lettersOf } from "@tutor/contract";
 import { stemMdLeaksAnswers } from "./public-stem.ts";
 import { processor } from "./shared.ts";
 
@@ -303,16 +304,9 @@ export function buildStaticQuestionMaterial(
 }
 
 /**
- * 选项字母（A…Z、AA 起——电子表格列号同款进位，与 learningPackAliasOf 同
- * 口径：>26 个选项不越界到非字母字符）。
+ * 选项字母（A…Z、AA 起）：算法复用 contract lettersOf（化名/选项字母/
+ * 参考答案序列化同一实现——电子表格列号同款进位，>26 个选项不越界）。
  */
 function optionLabelOf(index: number): string {
-  let n = index + 1;
-  let letters = "";
-  while (n > 0) {
-    const rem = (n - 1) % 26;
-    letters = String.fromCharCode(65 + rem) + letters;
-    n = Math.floor((n - 1) / 26);
-  }
-  return letters;
+  return lettersOf(index);
 }

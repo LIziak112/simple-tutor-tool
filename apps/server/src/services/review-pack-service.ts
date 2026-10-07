@@ -1,13 +1,13 @@
 import type {
   LearningPackManifest,
   LearningPackManifestMissing,
-  QuestionAnswers,
   ReviewPack,
   ReviewPackAttachment,
   ReviewPackPreviewData,
   ReviewPackPreviewFile,
 } from "@tutor/contract";
 import {
+  formatQuestionAnswers,
   REVIEW_PACK_MAX_BYTES,
   renderReviewPackPrompt,
   reviewPackJsonSchema,
@@ -186,41 +186,6 @@ function releasedOf(
 
 // ---------- 教师侧文本辅助（题面附加节） ----------
 
-/** 选项字母（A…Z、AA 起；与序列化侧同口径的本地实现——QuestionAnswers 用） */
-function letterOf(index: number): string {
-  let n = index + 1;
-  let letters = "";
-  while (n > 0) {
-    const rem = (n - 1) % 26;
-    letters = String.fromCharCode(65 + rem) + letters;
-    n = Math.floor((n - 1) / 26);
-  }
-  return letters;
-}
-
-/**
- * 参考答案 → 文本（教师 stem.md「参考答案」节；与显示侧
- * formatReferenceAnswers 语义一致但**不包 $**——裸 LaTeX 原样保留对 AI 更友好，
- * mathify 是渲染管线专属行为，不在服务端复刻）。
- */
-function reviewAnswersText(answers: QuestionAnswers): string {
-  switch (answers.kind) {
-    case "judge":
-      return answers.value ? "对" : "错";
-    case "choice":
-      return letterOf(answers.index);
-    case "multi":
-      return [...answers.indexes]
-        .sort((a, b) => a - b)
-        .map(letterOf)
-        .join("");
-    case "fill":
-      return answers.blanks.map((blank) => blank.join(" 或 ")).join("；");
-    case "final":
-      return answers.answer;
-  }
-}
-
 // ---------- 装配 ----------
 
 /**
@@ -292,7 +257,11 @@ export function assembleReviewPack(
   const stemSections = [staticMaterial.markdown.trimEnd()];
   if (teacherRole) {
     if (material.answers !== undefined) {
-      stemSections.push(`**参考答案**：${reviewAnswersText(material.answers)}`);
+      // plain 形态（不注 mathify）：裸 LaTeX 原样保留对 AI 更友好，渲染管线
+      // 的包 $ 启发式是显示侧行为（contract formatQuestionAnswers 参数化）
+      stemSections.push(
+        `**参考答案**：${formatQuestionAnswers(material.answers)}`,
+      );
     }
     if (material.solutionMd !== undefined) {
       stemSections.push(`**详解**\n\n${material.solutionMd}`);
