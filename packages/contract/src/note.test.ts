@@ -14,8 +14,11 @@ import {
   NOTE_MAX_TOTAL_POINTS,
   NOTE_PAPER_HEIGHT_DEFAULT,
   NOTE_PAPER_HEIGHT_MAX,
+  NOTE_REFLECTION_MAX_LENGTH,
   NOTE_RENDER_VERSION,
   NOTE_VERSION_IMAGES_MAX_BYTES,
+  correctionCreateRequestSchema,
+  correctionSealRequestSchema,
   noteBodyHashSchema,
   noteDocSchema,
   noteErrorCodeSchema,
@@ -885,5 +888,281 @@ describe("T6R.14 批量头投影：noteHeadsRequest / noteHeadsData", () => {
     // 空 heads 合法？——请求 ≥1 条且服务端逐条回显，空数组只会是服务端 bug：
     // 契约不禁止（min(0)），由服务端实现测试锁定「逐条回显」不变量
     expect(noteHeadsDataSchema.parse({ heads: [] }).heads).toEqual([]);
+  });
+});
+
+// ---------- T6R.15：订正检查点与补充稿（契约先行失败测试） ----------
+
+describe("T6R.15 noteRecordMeta：封存与反思字段（仅 correction 行可携带）", () => {
+  /** 合法订正行基座（revision≥1 带版本指针） */
+  const RECORD = {
+    noteId: "11111111-1111-4111-8111-111111111111",
+    attemptId: "22222222-2222-4222-8222-222222222222",
+    questionId: "练习四-7",
+    questionRevisionId: "33333333-3333-4333-8333-333333333333",
+    phase: "correction",
+    revision: 2,
+    currentVersionId: "44444444-4444-4444-8444-444444444444",
+    serverSavedAt: "2026-10-06T02:00:00.000Z",
+  } as const;
+
+  it("合法订正形态通过：sealedAt（UTC ISO）+ stuckAt/errorCause 各一段反思", () => {
+    const parsed = noteRecordMetaSchema.parse({
+      ...RECORD,
+      sealedAt: "2026-10-07T01:00:00.000Z",
+      stuckAt: "第二问的辅助线没想到",
+      errorCause: "把内错角看成了同位角",
+    });
+    expect(parsed.sealedAt).toBe("2026-10-07T01:00:00.000Z");
+  });
+
+  it("旧形状向后兼容：三字段全缺 / 全 null 照常通过（scratch 工作稿零变化）", () => {
+    const scratch = { ...RECORD, phase: "scratch" };
+    expect(noteRecordMetaSchema.safeParse(scratch).success).toBe(true);
+    expect(
+      noteRecordMetaSchema.safeParse({
+        ...scratch,
+        sealedAt: null,
+        stuckAt: null,
+        errorCause: null,
+      }).success,
+    ).toBe(true);
+  });
+
+  it("sealedAt 非 null 但 phase≠correction 拒（scratch/supplement 各一）", () => {
+    for (const phase of ["scratch", "supplement"] as const) {
+      expect(
+        noteRecordMetaSchema.safeParse({
+          ...RECORD,
+          phase,
+          sealedAt: "2026-10-07T01:00:00.000Z",
+        }).success,
+      ).toBe(false);
+    }
+  });
+
+  it("stuckAt/errorCause 非 null 但 phase≠correction 拒；null 合法", () => {
+    expect(
+      noteRecordMetaSchema.safeParse({
+        ...RECORD,
+        phase: "scratch",
+        stuckAt: "卡在哪里",
+      }).success,
+    ).toBe(false);
+    expect(
+      noteRecordMetaSchema.safeParse({
+        ...RECORD,
+        phase: "supplement",
+        errorCause: "我的错因",
+      }).success,
+    ).toBe(false);
+    expect(
+      noteRecordMetaSchema.safeParse({
+        ...RECORD,
+        phase: "scratch",
+        stuckAt: null,
+        errorCause: null,
+      }).success,
+    ).toBe(true);
+  });
+
+  it("反思字段超 500 字拒；恰好 500 合法；sealedAt 空串拒；常量锁定 500", () => {
+    expect(
+      noteRecordMetaSchema.safeParse({
+        ...RECORD,
+        stuckAt: "卡".repeat(NOTE_REFLECTION_MAX_LENGTH + 1),
+      }).success,
+    ).toBe(false);
+    expect(
+      noteRecordMetaSchema.safeParse({
+        ...RECORD,
+        stuckAt: "卡".repeat(NOTE_REFLECTION_MAX_LENGTH),
+        errorCause: "错".repeat(NOTE_REFLECTION_MAX_LENGTH),
+      }).success,
+    ).toBe(true);
+    expect(
+      noteRecordMetaSchema.safeParse({ ...RECORD, sealedAt: "" }).success,
+    ).toBe(false);
+    // 单源口径：修订上限须改常量与这里（先例：NOTE_HEADS_MAX_QUESTIONS）
+    expect(NOTE_REFLECTION_MAX_LENGTH).toBe(500);
+  });
+});
+
+describe("T6R.15 noteHeadData：corrections/supplements 两数组必填", () => {
+  /** 未封存订正行（revision=1 起步的最小形态） */
+  const OPEN_CORRECTION = {
+    noteId: "99999999-9999-4999-8999-999999999999",
+    attemptId: "22222222-2222-4222-8222-222222222222",
+    questionId: "p4-q7",
+    questionRevisionId: "resp-1",
+    phase: "correction",
+    revision: 1,
+    currentVersionId: "44444444-4444-4444-8444-444444444444",
+    serverSavedAt: "2026-10-06T02:00:00.000Z",
+  };
+
+  it("缺 corrections 或 supplements 拒（服务端恒返回数组，空为 []）", () => {
+    const base = { note: null, images: [], evidence: null };
+    expect(noteHeadDataSchema.safeParse(base).success).toBe(false);
+    expect(
+      noteHeadDataSchema.safeParse({ ...base, corrections: [] }).success,
+    ).toBe(false);
+    expect(
+      noteHeadDataSchema.safeParse({ ...base, supplements: [] }).success,
+    ).toBe(false);
+    expect(
+      noteHeadDataSchema.safeParse({
+        ...base,
+        corrections: [],
+        supplements: [],
+      }).success,
+    ).toBe(true);
+  });
+
+  it("corrections 携带合法订正行通过；数组内 phase 耦合同样生效（坏行整体拒）", () => {
+    const sealed = {
+      ...OPEN_CORRECTION,
+      sealedAt: "2026-10-07T01:00:00.000Z",
+      stuckAt: "卡点",
+      errorCause: "错因",
+    };
+    const parsed = noteHeadDataSchema.parse({
+      note: null,
+      images: [],
+      evidence: null,
+      corrections: [sealed, OPEN_CORRECTION],
+      supplements: [],
+    });
+    expect(parsed.corrections).toHaveLength(2);
+    // scratch 行带 sealedAt 进 corrections → 经数组元素 superRefine 拒绝
+    expect(
+      noteHeadDataSchema.safeParse({
+        note: null,
+        images: [],
+        evidence: null,
+        corrections: [
+          { ...OPEN_CORRECTION, phase: "scratch", sealedAt: "2026-10-07T01:00:00.000Z" },
+        ],
+        supplements: [],
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe("T6R.15 订正请求形状：correctionCreate / correctionSeal", () => {
+  it("create：copyFromOriginal 必填 boolean（显式选择复制或空白）；缺字段/字符串形态拒", () => {
+    expect(
+      correctionCreateRequestSchema.parse({ copyFromOriginal: true })
+        .copyFromOriginal,
+    ).toBe(true);
+    expect(
+      correctionCreateRequestSchema.parse({ copyFromOriginal: false })
+        .copyFromOriginal,
+    ).toBe(false);
+    expect(correctionCreateRequestSchema.safeParse({}).success).toBe(false);
+    expect(
+      correctionCreateRequestSchema.safeParse({ copyFromOriginal: "true" })
+        .success,
+    ).toBe(false);
+  });
+
+  it("seal：baseRevision 为 1..1_000_000 整数（0/负/小数/超上限拒，缺字段拒）", () => {
+    expect(
+      correctionSealRequestSchema.parse({ baseRevision: 1 }).baseRevision,
+    ).toBe(1);
+    expect(
+      correctionSealRequestSchema.safeParse({ baseRevision: 0 }).success,
+    ).toBe(false);
+    expect(
+      correctionSealRequestSchema.safeParse({ baseRevision: -1 }).success,
+    ).toBe(false);
+    expect(
+      correctionSealRequestSchema.safeParse({ baseRevision: 1.5 }).success,
+    ).toBe(false);
+    expect(
+      correctionSealRequestSchema.safeParse({ baseRevision: 1_000_001 })
+        .success,
+    ).toBe(false);
+    // 防线上限本身合法（与上传 meta 同口径）
+    expect(
+      correctionSealRequestSchema.safeParse({ baseRevision: 1_000_000 })
+        .success,
+    ).toBe(true);
+    expect(correctionSealRequestSchema.safeParse({}).success).toBe(false);
+  });
+
+  it("seal：反思字段可选、空串合法、恰好 500 合法、超上限拒", () => {
+    expect(
+      correctionSealRequestSchema.safeParse({
+        baseRevision: 2,
+        stuckAt: "",
+        errorCause: "",
+      }).success,
+    ).toBe(true);
+    expect(
+      correctionSealRequestSchema.safeParse({
+        baseRevision: 2,
+        stuckAt: "a".repeat(NOTE_REFLECTION_MAX_LENGTH),
+        errorCause: "b".repeat(NOTE_REFLECTION_MAX_LENGTH),
+      }).success,
+    ).toBe(true);
+    expect(
+      correctionSealRequestSchema.safeParse({
+        baseRevision: 2,
+        stuckAt: "a".repeat(NOTE_REFLECTION_MAX_LENGTH + 1),
+      }).success,
+    ).toBe(false);
+    expect(
+      correctionSealRequestSchema.safeParse({
+        baseRevision: 2,
+        errorCause: "b".repeat(NOTE_REFLECTION_MAX_LENGTH + 1),
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe("T6R.15 错误码：订正三新码", () => {
+  it("NOTE_CORRECTION_SEALED / NOTE_ORIGINAL_UNAVAILABLE / NOTE_CORRECTION_OPEN_EXISTS 在列", () => {
+    for (const code of [
+      "NOTE_CORRECTION_SEALED",
+      "NOTE_ORIGINAL_UNAVAILABLE",
+      "NOTE_CORRECTION_OPEN_EXISTS",
+    ] as const) {
+      expect(noteErrorCodeSchema.parse(code)).toBe(code);
+    }
+    // 近形错码 / 小写形态拒（枚举严格）
+    expect(noteErrorCodeSchema.safeParse("NOTE_CORRECTION_SEAL").success).toBe(
+      false,
+    );
+    expect(
+      noteErrorCodeSchema.safeParse("note_correction_sealed").success,
+    ).toBe(false);
+  });
+});
+
+describe("T6R.15 上传 meta：phase 字段（缺省 scratch 向后兼容）", () => {
+  const MUTATION_ID = "66666666-6666-4666-8666-666666666666";
+
+  it("不传 phase 通过且等于 scratch（旧客户端零变化）；三值显式合法；非法值拒", () => {
+    expect(
+      noteUploadMetaSchema.parse({ baseRevision: 0, mutationId: MUTATION_ID })
+        .phase,
+    ).toBe("scratch");
+    for (const phase of ["scratch", "correction", "supplement"] as const) {
+      expect(
+        noteUploadMetaSchema.parse({
+          baseRevision: 0,
+          mutationId: MUTATION_ID,
+          phase,
+        }).phase,
+      ).toBe(phase);
+    }
+    expect(
+      noteUploadMetaSchema.safeParse({
+        baseRevision: 0,
+        mutationId: MUTATION_ID,
+        phase: "original",
+      }).success,
+    ).toBe(false);
   });
 });
