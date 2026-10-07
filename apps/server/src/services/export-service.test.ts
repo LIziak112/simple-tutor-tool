@@ -2074,7 +2074,7 @@ describe("T6R.16 多阶段证据与固定选择（evidencePhases/asOf/preview）
     ).toBe(true);
   });
 
-  it("F13②：traces 事件按 asOf 钉定——晚于 asOf 的解析回看不计入 reviewedSolution（放最后：本用例向共享库插事件行）", () => {
+  it("F13②：traces 事件按 asOf 钉定——晚于 asOf 的解析回看不计入；过滤后流空=未知（T6R.17 三态。放最后：本用例向共享库插事件行）", () => {
     // 手插一行晚于 P_NOW 的解析回看事件（serverTs=P_LATE > asOf=P_NOW；
     // clientTs 取交卷后——reviewedSolution 只认交卷后的 solution open）
     db.insert(eventsTable)
@@ -2114,7 +2114,13 @@ describe("T6R.16 多阶段证据与固定选择（evidencePhases/asOf/preview）
       evidencePhases: ["scratch"],
       traces: true,
     } as const;
-    // asOf=P_NOW：该事件 serverTs=P_LATE 晚于 asOf，被过滤——未回看
+    // asOf=P_NOW：该事件 serverTs=P_LATE 晚于 asOf 被过滤。夹具审计（T6R.17）：
+    // phaseA2 除本用例手插的这行外**没有任何 events 行**（frozenDraftAttempt/
+    // submitAttemptStatus 直插 attempts/responses，不经事件流）——过滤后事件流
+    // 为空 → 三态语义下是「未知 null」而非「已知未回看 false」。旧断言 false
+    // （?? false 缺省）把「未记录」谎报成「已知未回看」，按辅助信息纪律
+    // （题目草稿功能方案 §9.4：只记录已知事件、未知明确标未知、不从未记录
+    // 推断独立完成）修正为 null——语义变化理由即此，非夹具巧合。
     expect(
       traceOf(
         phaseRequest({
@@ -2124,7 +2130,7 @@ describe("T6R.16 多阶段证据与固定选择（evidencePhases/asOf/preview）
         }),
         P_LATE,
       )?.reviewedSolution,
-    ).toBe(false);
+    ).toBe(null);
     // 无 asOf（now=P_LATE）：事件在场——已回看
     expect(
       traceOf(
@@ -2135,6 +2141,156 @@ describe("T6R.16 多阶段证据与固定选择（evidencePhases/asOf/preview）
         P_LATE,
       )?.reviewedSolution,
     ).toBe(true);
+  });
+});
+
+// ---------- T6R.17：reviewedSolution 三态派生（过滤后事件流为空=未知） ----------
+
+describe("reviewedSolution 三态派生（T6R.17：过滤后事件流为空=未知）", () => {
+  /**
+   * 独立小世界（不碰共享种子世界与 T6R.16 相世界）：一名学生 + 两个已交卷
+   * attempt。夹具事实：frozenDraftAttempt/submitAttemptStatus 直插
+   * attempts/responses 行、不产生任何 events 行——事件流完全由本 describe
+   * 显式手插，零事件/有事件两条路径都可精确控制：
+   * - attemptZero：零 events 行（旧客户端未采集/事件丢失形态）；
+   * - attemptFlow：两行事件——question_focus（流内可判定指标的最小事件）
+   *   + 交卷后解析回看 directive_interact{host:result, solution, open}。
+   * 语义出处：题目草稿功能方案 §9.4 辅助信息纪律——只记录已知事件、未知
+   * 明确标未知、不从未记录推断独立完成；契约侧（T6R.17 单1）已把
+   * learningPackQuestionTraceSchema.reviewedSolution 改为 boolean|null。
+   * v1 口径：v1 请求（无 packVersion）与 v2 走同一 traces 装配，零事件
+   * attempt 同样输出 null——诚实数据 widening（AI 读 JSON 宽容），非破坏；
+   * v1 逐字节/deep-compare 锁未断言过 reviewedSolution（全仓 grep 已核）。
+   */
+  const SUB = "2026-10-05T00:00:00.000Z";
+  const FOCUS_TS = "2026-10-05T00:01:00.000Z";
+  /** 卡在 focus 与回看之间：过滤掉回看、保留 focus（流非空 → 可判定 false） */
+  const AS_OF_MID = "2026-10-06T00:00:00.000Z";
+  const REVIEW_TS = "2026-10-07T00:00:00.000Z";
+  /** now 恒晚于全部事件与 asOf（装配时间窗的安全侧，照 F13② 同款口径） */
+  const NOW_LATE = "2026-10-08T00:00:00.000Z";
+
+  let worldDb: Db;
+  let worldDir: string;
+  let studentId: string;
+  let attemptZero: string;
+  let attemptFlow: string;
+
+  beforeAll(() => {
+    worldDb = createTestDb();
+    worldDir = createTestDir();
+    studentId = makeStudent(worldDb);
+    // —— attemptZero：不插任何 events 行（零事件 attempt） ——
+    attemptZero = frozenDraftAttempt(worldDb, studentId, [
+      {
+        questionId: "Z1",
+        snapshotJson: snapshotJsonOf({ id: "Z1", stemMd: "计算 1+1=[[2]]" }),
+      },
+    ]).attemptId;
+    submitAttemptStatus(worldDb, attemptZero, SUB);
+    // —— attemptFlow：一行 question_focus + 一行交卷后解析回看 ——
+    attemptFlow = frozenDraftAttempt(worldDb, studentId, [
+      {
+        questionId: "F1",
+        snapshotJson: snapshotJsonOf({ id: "F1", stemMd: "计算 2+2=[[4]]" }),
+      },
+    ]).attemptId;
+    submitAttemptStatus(worldDb, attemptFlow, SUB);
+    worldDb
+      .insert(eventsTable)
+      .values([
+        {
+          id: randomUUID(),
+          attemptId: attemptFlow,
+          questionId: "F1",
+          studentId,
+          lectureId: null,
+          type: "question_focus",
+          clientTs: Date.parse(FOCUS_TS),
+          serverTs: FOCUS_TS,
+          // questionId 须进 payload：TraceEvent 投影只读 payloadJson 摊平字段
+          payloadJson: JSON.stringify({ questionId: "F1" }),
+        },
+        {
+          id: randomUUID(),
+          attemptId: attemptFlow,
+          questionId: "F1",
+          studentId,
+          lectureId: null,
+          type: "directive_interact",
+          clientTs: Date.parse(REVIEW_TS) + 1000,
+          serverTs: REVIEW_TS,
+          payloadJson: JSON.stringify({
+            host: "result",
+            directive: "solution",
+            action: "open",
+            questionId: "F1",
+          }),
+        },
+      ])
+      .run();
+  });
+
+  /** traces-only 请求下该 attempt 的 trace 行（v2；traces 单独勾选即可过 superRefine） */
+  function traceRowOf(
+    attemptId: string,
+    overrides: Record<string, unknown> = {},
+  ) {
+    const request = learningPackExportRequestSchema.parse({
+      packVersion: 2,
+      scope: { studentIds: [studentId], days: "all" },
+      modules: { traces: true },
+      goal: "diagnose-weakness",
+      ...overrides,
+    });
+    const pack = learningPackV2Schema.parse(
+      JSON.parse(
+        assembleLearningPack(worldDb, worldDir, TEST_TEACHER_ID, request, {
+          now: NOW_LATE,
+        }).packJson,
+      ),
+    );
+    const row = pack.traces?.questions?.find(
+      (entry) => entry.attemptId === attemptId,
+    );
+    if (row === undefined) throw new Error("traces 行缺失");
+    return row;
+  }
+
+  it("零事件 attempt → null（未知）：v2 与 v1 同口径（v1 无 packVersion 走同一装配，诚实 widening 非破坏）", () => {
+    expect(traceRowOf(attemptZero).reviewedSolution).toBeNull();
+    // v1（无 packVersion；learningPackSchema 与 v2 共用同一 trace 行 schema）
+    const v1Request = learningPackExportRequestSchema.parse({
+      scope: { studentIds: [studentId], days: "all" },
+      modules: { traces: true },
+      goal: "diagnose-weakness",
+    });
+    const v1Pack = learningPackSchema.parse(
+      JSON.parse(
+        assembleLearningPack(worldDb, worldDir, TEST_TEACHER_ID, v1Request, {
+          now: NOW_LATE,
+        }).packJson,
+      ),
+    );
+    const v1Row = v1Pack.traces?.questions?.find(
+      (entry) => entry.attemptId === attemptZero,
+    );
+    if (v1Row === undefined) throw new Error("v1 traces 行缺失");
+    expect(v1Row.reviewedSolution).toBeNull();
+  });
+
+  it("有事件流但无交卷后解析回看 → false（已知未回看；asOf 过滤掉回看、流内仍留 focus）", () => {
+    expect(traceRowOf(attemptFlow, { asOf: AS_OF_MID }).reviewedSolution).toBe(
+      false,
+    );
+  });
+
+  it("asOf 早于该 attempt 全部事件 → null（过滤后事件行为空即未知——asOf 语义：过滤后为空=未采集）", () => {
+    expect(traceRowOf(attemptFlow, { asOf: SUB }).reviewedSolution).toBeNull();
+  });
+
+  it("流内含交卷后解析回看 → true（已知回看；F13② 第二断言同语义，本独立世界自证）", () => {
+    expect(traceRowOf(attemptFlow).reviewedSolution).toBe(true);
   });
 });
 

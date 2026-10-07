@@ -640,6 +640,12 @@ export function assembleLearningPack(
     string,
     Record<string, ReturnType<typeof computeAttemptTraceMetrics>[string]>
   >();
+  /**
+   * 该 attempt 过滤后事件行非空的记录（T6R.17 reviewedSolution 三态的
+   * 「已知/未知」分界）。asOf 过滤发生在本块 SQL 的 lte 上——attempt 在
+   * 结果集中缺席即「过滤后为空」，事件未采集/丢失无从判定回看与否。
+   */
+  const attemptHasEvents = new Set<string>();
   const needTraces = m.traces;
   const needSummary = m.responses || m.summaries || m.traces;
   const offlineAgg = new Map<string, { active: number; offline: number }>();
@@ -688,15 +694,15 @@ export function assembleLearningPack(
         else list.push(projected);
       }
       for (const attemptId of ids) {
+        const rawRows = rawRowsByAttempt.get(attemptId) ?? [];
+        if (rawRows.length > 0) attemptHasEvents.add(attemptId);
         const activeSecByQuestion: Record<string, number> = {};
         for (const response of responsesByAttempt.get(attemptId) ?? []) {
           if (response.activeSec !== null && response.activeSec > 0) {
             activeSecByQuestion[response.questionId] = response.activeSec;
           }
         }
-        const trace: TraceEvent[] = traceEventsFromRows(
-          rawRowsByAttempt.get(attemptId) ?? [],
-        );
+        const trace: TraceEvent[] = traceEventsFromRows(rawRows);
         const metrics = computeAttemptTraceMetrics(trace, activeSecByQuestion);
         traceByAttempt.set(attemptId, metrics);
         // 离线占比聚合（activeSec 加权；与学情页 buildOffline 同口径）
@@ -768,7 +774,18 @@ export function assembleLearningPack(
           inkEditCount: metric?.inkEditCount ?? 0,
           fullscreenUsed: metric?.fullscreenUsed ?? false,
           offlineShare: metric?.offlineShare ?? 0,
-          reviewedSolution: metric?.reviewedSolution ?? false,
+          // T6R.17 reviewedSolution 三态（题目草稿功能方案 §9.4 辅助信息纪律：
+          // 只记录已知事件、未知明确标未知、不从未记录推断独立完成）：
+          // - 流内有该题指标 → metric.reviewedSolution（true/false 照旧）；
+          // - 该题无指标但 attempt 过滤后事件行非空 → false（有事件流可查、
+          //   确无交卷后解析回看——已知未回看）；
+          // - attempt 过滤后事件行为空（旧客户端未采集/事件丢失，或 asOf 早于
+          //   全部事件）→ null（未知）。v1/v2 共用此口径：v1 对零事件 attempt
+          //   由 false 修正为 null，属诚实数据 widening（AI 读 JSON 宽容），
+          //   非破坏。
+          reviewedSolution:
+            metric?.reviewedSolution ??
+            (attemptHasEvents.has(attempt.id) ? false : null),
         });
       }
     }
