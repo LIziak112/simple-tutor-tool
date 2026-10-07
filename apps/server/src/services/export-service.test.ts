@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { readFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { inflateRawSync } from "node:zlib";
 import type { LearningPack, LearningPackExportRequest } from "@tutor/contract";
 import {
@@ -13,6 +13,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import type { Db } from "../db/client";
 import {
   attempts,
+  ink,
   lectures,
   noteImages as noteImagesTable,
 } from "../db/schema";
@@ -1220,5 +1221,111 @@ describe("T6R.12 LearningPack v2：快照关联、证据与 manifest", () => {
     expect(mediaRows).toHaveLength(1); // 仅讲义在场图
     expect(mediaRows[0]?.path).toBe(v2MediaSrc);
     expect(mediaRows[0]?.refs).toEqual([]);
+  });
+});
+
+// ---------- ink 路径目录边界（T6R.14 收敛：resolveWithinRootOrNull 强算法） ----------
+
+describe("ink 路径目录边界（T6R.14：同前缀相邻目录/向上逃逸/绝对路径拒绝）", () => {
+  /**
+   * 独立小世界（不碰共享种子世界——ink 行数被多处测试锁死精确值）：
+   * 一名学生 + 一道已交卷题 + 一行 ink（pngPath 由用例注入）。
+   * 旧实现 export-service 内联 `abs.startsWith(inkRoot)`（T6R.12 安全审查
+   * 留档「既有」）：blobs/inkfoo 这类**同前缀相邻目录**能骗过字符串前缀
+   * 比对——换成 lib/blob-io 的 path.relative 强边界后必须整批拒绝。
+   */
+  function makeInkWorld(
+    pngPath: string,
+    fileRel?: string,
+  ): {
+    db: Db;
+    dataDir: string;
+    studentId: string;
+  } {
+    const worldDb = createTestDb();
+    const worldDir = createTestDir();
+    const worldStudent = makeStudent(worldDb);
+    const { attemptId } = frozenDraftAttempt(worldDb, worldStudent, [
+      {
+        questionId: "q-boundary",
+        snapshotJson: snapshotJsonOf({ id: "q-boundary" }),
+      },
+    ]);
+    submitAttemptStatus(worldDb, attemptId);
+    worldDb
+      .insert(ink)
+      .values({
+        id: randomUUID(),
+        attemptId,
+        questionId: "q-boundary",
+        strokesPath: join("blobs", "ink", attemptId, "q-boundary.json.gz"),
+        pngPath,
+        width: 10,
+        height: 10,
+        strokeCount: 1,
+        updatedAt: "2026-10-01T00:00:00.000Z",
+      })
+      .run();
+    // 越界路径物理落文件：证明拒绝的是目录边界而非文件缺失（statSync 可达）
+    if (fileRel !== undefined) {
+      mkdirSync(dirname(resolve(worldDir, fileRel)), { recursive: true });
+      writeFileSync(resolve(worldDir, fileRel), "png-bytes");
+    }
+    return { db: worldDb, dataDir: worldDir, studentId: worldStudent };
+  }
+
+  async function assembleErrorOf(
+    world: ReturnType<typeof makeInkWorld>,
+  ): Promise<unknown> {
+    try {
+      assembleLearningPack(
+        world.db,
+        world.dataDir,
+        TEST_TEACHER_ID,
+        learningPackExportRequestSchema.parse({
+          scope: { studentIds: [world.studentId] },
+          // ink 是附件开关，须伴一个内容模块（summaries 最轻）才过契约
+          modules: { ink: true, summaries: true },
+          goal: "diagnose-weakness",
+        }),
+      );
+      return null; // 未抛错
+    } catch (err: unknown) {
+      return err;
+    } finally {
+      world.db.$client.close();
+    }
+  }
+
+  it("同前缀相邻目录（blobs/inkfoo）越界：500 INK_UNREADABLE（startsWith 弱校验的缺口）", async () => {
+    const world = makeInkWorld(
+      "blobs/inkfoo/evil.png",
+      join("blobs", "inkfoo", "evil.png"),
+    );
+    const err = await assembleErrorOf(world);
+    expect(err).toBeInstanceOf(HttpError);
+    expect((err as HttpError).status).toBe(500);
+    expect((err as HttpError).code).toBe("INK_UNREADABLE");
+  });
+
+  it(".. 向上逃逸出 blobs/ink：500 INK_UNREADABLE（既有行为的回归守卫）", async () => {
+    const world = makeInkWorld(
+      "blobs/ink/../../secret.png",
+      join("blobs", "..", "secret.png"),
+    );
+    const err = await assembleErrorOf(world);
+    expect(err).toBeInstanceOf(HttpError);
+    expect((err as HttpError).code).toBe("INK_UNREADABLE");
+  });
+
+  it("绝对路径（UNC 形态）整体替换 base：500 INK_UNREADABLE（回归守卫）", async () => {
+    // Windows 下 resolve() 对绝对路径直接替换 base——relative 判定产绝对
+    // 结果 → 越界；字符串 startsWith 同样拦不住（它不是 dataDir 内路径）。
+    // UNC 前缀用 join 构造（\\\\evil\share\x.png），避开字面量转义噪音
+    const uncPath = ["", "", "evil", "share", "x.png"].join("\\");
+    const world = makeInkWorld(uncPath);
+    const err = await assembleErrorOf(world);
+    expect(err).toBeInstanceOf(HttpError);
+    expect((err as HttpError).code).toBe("INK_UNREADABLE");
   });
 });

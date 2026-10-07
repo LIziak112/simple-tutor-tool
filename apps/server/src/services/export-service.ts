@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { statSync } from "node:fs";
-import { resolve } from "node:path";
+import { join } from "node:path";
 import type {
   LearningPack,
   LearningPackAttemptSummary,
@@ -63,6 +63,7 @@ import {
   students,
   units,
 } from "../db/schema";
+import { resolveWithinRootOrNull } from "../lib/blob-io";
 import { chunk } from "../lib/chunk";
 import { HttpError } from "../lib/http-error";
 import { answerOf, frozenRowsInDisplayOrder } from "./attempt-service";
@@ -489,7 +490,6 @@ export function assembleLearningPack(
   const inkEntries: Array<{ entry: string; absPath: string; bytes: number }> =
     [];
   if (m.ink) {
-    const inkRoot = resolve(dataDir, "blobs", "ink");
     const studentIdOfAttempt = new Map(
       scopeAttempts.map((attempt) => [attempt.id, attempt.studentId] as const),
     );
@@ -509,8 +509,16 @@ export function assembleLearningPack(
         if (inkEntries.some((item) => item.entry === entry)) {
           entry = `ink/${name}-${zipSafeQuestionName(row.questionId)}-${row.attemptId}.png`;
         }
-        const absPath = resolve(dataDir, row.pngPath);
-        if (!absPath.startsWith(inkRoot)) {
+        // 目录边界（T6R.14 收敛，T6R.12 安全审查留档「既有」）：旧内联
+        // `abs.startsWith(inkRoot)` 会被同前缀相邻目录（blobs/inkfoo）骗过，
+        // 换 lib/blob-io 的 path.relative 强算法（note/media 同款，单一实现）；
+        // 错误码口径不变（500 INK_UNREADABLE）
+        const absPath = resolveWithinRootOrNull(
+          dataDir,
+          join("blobs", "ink"),
+          row.pngPath,
+        );
+        if (absPath === null) {
           throw new HttpError(500, "INK_UNREADABLE", "笔迹文件路径非法");
         }
         let bytes: number;
