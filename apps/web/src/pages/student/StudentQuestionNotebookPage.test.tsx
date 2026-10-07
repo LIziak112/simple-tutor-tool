@@ -1,7 +1,7 @@
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import type { NotebookRound, StudentNotebookData } from "@tutor/contract";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fetchStudentNotebookApi } from "@/lib/api";
+import { ApiError, fetchStudentNotebookApi } from "@/lib/api";
 import { renderWithStudentRoutes } from "@/test/student-routes";
 import StudentQuestionNotebookPage from "./StudentQuestionNotebookPage";
 
@@ -81,18 +81,23 @@ describe("StudentQuestionNotebookPage：三态", () => {
   it("加载中显示骨架（不白屏）", async () => {
     notebookMock.mockReturnValue(new Promise(() => {}));
     renderPage();
-    expect(await screen.findByLabelText("正在加载题目笔记本")).toBeInTheDocument();
+    expect(
+      await screen.findByLabelText("正在加载题目笔记本"),
+    ).toBeInTheDocument();
   });
 
   it("错误态：中文错误 + 重试", async () => {
-    notebookMock.mockRejectedValue(new Error("网络断开"));
+    // ApiError（终态类）不重试——普通网络错误按生产语义退避，等不及断言
+    notebookMock.mockRejectedValue(
+      new ApiError("UNAUTHORIZED", "登录已过期，请重新登录", 401),
+    );
     renderPage();
     expect(await screen.findByText("笔记本加载失败")).toBeInTheDocument();
-    expect(screen.getByText(/网络断开/)).toBeInTheDocument();
+    expect(screen.getByText(/登录已过期/)).toBeInTheDocument();
     notebookMock.mockResolvedValue(notebookOf([round({ roundOrdinal: 1 })]));
     fireEvent.click(screen.getByRole("button", { name: "重试" }));
     await waitFor(() => {
-      expect(screen.getByText("第 1 次")).toBeInTheDocument();
+      expect(screen.getAllByText("第 1 次").length).toBeGreaterThanOrEqual(1);
     });
   });
 
@@ -100,9 +105,10 @@ describe("StudentQuestionNotebookPage：三态", () => {
     notebookMock.mockResolvedValue(notebookOf([]));
     renderPage();
     expect(await screen.findByText("这道题还没有历史记录")).toBeInTheDocument();
-    expect(
-      screen.getByRole("link", { name: "返回首页" }),
-    ).toHaveAttribute("href", "/s/home");
+    expect(screen.getByRole("link", { name: "返回首页" })).toHaveAttribute(
+      "href",
+      "/s/home",
+    );
   });
 });
 
@@ -162,7 +168,9 @@ describe("StudentQuestionNotebookPage：轮次导航与每轮内容", () => {
     notebookMock.mockResolvedValue(notebookOf(TWO_ROUNDS));
     renderPage();
     // 默认第 2 轮（最新）
-    expect(await screen.findByText("第 2 次")).toBeInTheDocument();
+    expect(
+      (await screen.findAllByText("第 2 次")).length,
+    ).toBeGreaterThanOrEqual(2); // 轮次徽标 + 导航按钮
     expect(screen.getByText("错题重练 · 第 3 次")).toBeInTheDocument();
     expect(screen.getByText(/交卷时间：2026年10月7日/)).toBeInTheDocument();
     // 题目版本徽标：null 不显示（第 2 轮 questionVersion=null）
@@ -182,7 +190,7 @@ describe("StudentQuestionNotebookPage：轮次导航与每轮内容", () => {
   it("上一轮导航到第 1 轮：题目版本徽标 v2 显示、原稿区切换 attemptId", async () => {
     notebookMock.mockResolvedValue(notebookOf(TWO_ROUNDS));
     renderPage();
-    await screen.findByText("第 2 次");
+    await screen.findAllByText("第 2 次");
     fireEvent.click(screen.getByRole("button", { name: "上一轮" }));
     await waitFor(() => {
       expect(screen.getByText("题目 v2")).toBeInTheDocument();
@@ -197,7 +205,7 @@ describe("StudentQuestionNotebookPage：轮次导航与每轮内容", () => {
   it("轮次边界：第一轮「上一轮」禁用、最后一轮「下一轮」禁用；轮次列表可跳转", async () => {
     notebookMock.mockResolvedValue(notebookOf(TWO_ROUNDS));
     renderPage();
-    await screen.findByText("第 2 次");
+    await screen.findAllByText("第 2 次");
     expect(screen.getByRole("button", { name: "下一轮" })).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "上一轮" }));
     await waitFor(() => {
@@ -213,29 +221,33 @@ describe("StudentQuestionNotebookPage：轮次导航与每轮内容", () => {
   it("订正列表：已封存行反思分栏 + 查看入口；未封存行「编辑中」", async () => {
     notebookMock.mockResolvedValue(notebookOf(TWO_ROUNDS));
     renderPage();
-    await screen.findByText("第 2 次");
+    await screen.findAllByText("第 2 次");
     expect(screen.getByText("第二问不会代入")).toBeInTheDocument();
     expect(screen.getAllByText("我卡在哪里：")).toHaveLength(1);
     expect(screen.getByText("编辑中")).toBeInTheDocument();
+    // 已封存订正 + 未封存订正（revision≥1 可查看）；补充稿另列（见下用例）
     const stubs = [
-      ...document.querySelectorAll('[data-testid="note-version-stub"]'),
+      ...document.querySelectorAll(
+        '[data-testid="note-version-stub"][data-openlabel="查看订正"]',
+      ),
     ];
-    expect(stubs).toHaveLength(2); // 已封存订正 + 未封存订正（revision≥1 可查看）
+    expect(stubs).toHaveLength(2);
     expect(stubs[0]?.getAttribute("data-version")).toBe(
       "33333333-3333-4333-8333-333333333321",
     );
-    expect(stubs[1]?.getAttribute("data-openlabel")).toBe("查看订正");
   });
 
   it("补充稿列表：说明文案 + 徽标 + 查看入口（标题「补充稿」）", async () => {
     notebookMock.mockResolvedValue(notebookOf(TWO_ROUNDS));
     renderPage();
-    await screen.findByText("第 2 次");
+    await screen.findAllByText("第 2 次");
     expect(
       screen.getByText(/交卷后找回的材料，不能证明交卷前已固定/),
     ).toBeInTheDocument();
     expect(screen.getAllByText("补充稿").length).toBeGreaterThanOrEqual(1);
-    const stub = document.querySelector('[data-testid="note-version-stub"][data-title="补充稿"]');
+    const stub = document.querySelector(
+      '[data-testid="note-version-stub"][data-title="补充稿"]',
+    );
     expect(stub?.getAttribute("data-version")).toBe(
       "33333333-3333-4333-8333-333333333331",
     );
@@ -246,7 +258,7 @@ describe("StudentQuestionNotebookPage：轮次导航与每轮内容", () => {
       notebookOf([round({ roundOrdinal: 1, sourceLabel: "周末加练" })]),
     );
     renderPage();
-    await screen.findByText("第 1 次");
+    await screen.findAllByText("第 1 次");
     expect(screen.getByText("这一轮没有订正。")).toBeInTheDocument();
     expect(screen.getByText("这一轮没有补充稿。")).toBeInTheDocument();
   });

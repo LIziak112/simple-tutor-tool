@@ -391,6 +391,9 @@ const studentRoutes = (() => {
   const StudentWrongQuestionsPage = lazy(
     () => import("./pages/student/StudentWrongQuestionsPage"),
   );
+  const StudentQuestionNotebookPage = lazy(
+    () => import("./pages/student/StudentQuestionNotebookPage"),
+  );
 
   const pageFallback = (
     <p className="p-8 text-sm text-muted-foreground">页面加载中…</p>
@@ -509,6 +512,16 @@ const studentRoutes = (() => {
           // 旧路径重定向（书签/历史链接不 404）
           path="records/wrong"
           element={<Navigate to="/s/wrong" replace />}
+        />
+        <Route
+          // T6R.15：题目笔记本（按题聚合跨来源已交卷轮次——原稿/订正/补充稿
+          // 历史对照；结果页题卡「本题历史」链接的落点）
+          path="notebook/:questionId"
+          element={
+            <Suspense fallback={pageFallback}>
+              <StudentQuestionNotebookPage />
+            </Suspense>
+          }
         />
       </Route>
     </>
