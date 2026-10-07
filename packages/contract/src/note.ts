@@ -423,6 +423,23 @@ export const noteVersionMetaSchema = z.object({
   renderVersion: z.number().int().min(1),
 });
 
+/**
+ * 分析图切片相邻页重叠区（逻辑单位）。方案 §7 建议初值 40。T6R.17 自
+ * apps/web/src/features/notes/render-note.ts 上移为契约单源（搬家不抄数）：
+ * 渲染切片与提示词侧（T6R.17 页间说明，后续单引用）共享此定义，杜绝两处
+ * 手写数字漂移。
+ *
+ * 语义独立、不派生（复审③评估）：重叠区管辖跨页笔迹可读性、格线间距
+ * NOTE_PAPER_GRID_SPACING_LOGICAL 管辖纸面节奏——本常量与格距数值相等纯属
+ * 暂定巧合；若挂上格距，将来格距单独定标会静默改变切片行为（影响像素输出
+ * ⇒ 须递增 NOTE_RENDER_VERSION）。两者确需联动时显式同改并递增版本。
+ *
+ * 提示词侧（learning-pack/review-pack 模板，后续单引用）不得把重叠区当
+ * 重复演算内容：重叠只保证跨页笔迹完整可读，重叠区笔迹是同一段内容，
+ * AI 转写与编号不重复计算。
+ */
+export const NOTE_ANALYSIS_SLICE_OVERLAP_LOGICAL = 40;
+
 /** 派生图规格：thumbnail=缩略图（低分辨率）/ analysis=分析图（约 1000 逻辑宽，可切片） */
 export const noteImageSpecSchema = z.enum(["thumbnail", "analysis"]);
 
