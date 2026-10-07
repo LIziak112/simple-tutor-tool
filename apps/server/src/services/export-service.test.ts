@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { inflateRawSync } from "node:zlib";
 import type { LearningPack, LearningPackExportRequest } from "@tutor/contract";
 import {
   learningPackExportRequestSchema,
@@ -16,6 +15,7 @@ import {
   ink,
   lectures,
   noteImages as noteImagesTable,
+  responses as responsesTable,
 } from "../db/schema";
 import { createTestDb, createTestDir, TEST_TEACHER_ID } from "../db/test-utils";
 import { HttpError } from "../lib/http-error";
@@ -30,7 +30,12 @@ import {
   makeStudent,
   noteDoc,
 } from "../test/note-fixtures";
-import { insertEvidence } from "../test/note-world";
+import {
+  insertEvidence,
+  setNoteSealedAt,
+  setVersionSavedAt,
+} from "../test/note-world";
+import { unzipEntries } from "../test/unzip";
 import { submitAttempt } from "./attempt-service";
 import {
   assembleLearningPack,
@@ -39,7 +44,12 @@ import {
 } from "./export-service";
 import { saveInk } from "./ink-service";
 import { saveMedia } from "./media-service";
-import { attachNoteImage, saveNoteVersion } from "./note-service";
+import {
+  attachNoteImage,
+  createCorrection,
+  saveNoteVersion,
+  sealCorrection,
+} from "./note-service";
 import { type SeedDemoResult, seedDemoData } from "./seed-demo";
 
 /**
@@ -84,41 +94,6 @@ function fakePng(width = 320, height = 200): Uint8Array {
   buf.writeUInt32BE(width, 16);
   buf.writeUInt32BE(height, 20);
   return new Uint8Array(buf);
-}
-
-/**
- * 测试内嵌的最小 zip 解包器（central directory 权威口径；不引入新依赖——
- * 技术栈清单无解压库，EOCD → CD → local header → inflateRaw）。
- */
-function unzipEntries(buffer: Uint8Array): Map<string, Buffer> {
-  const buf = Buffer.from(buffer);
-  const eocd = buf.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
-  if (eocd < 0) throw new Error("测试夹具：zip 缺少 EOCD");
-  const count = buf.readUInt16LE(eocd + 10);
-  let cursor = buf.readUInt32LE(eocd + 16);
-  const out = new Map<string, Buffer>();
-  for (let i = 0; i < count; i += 1) {
-    if (buf.readUInt32LE(cursor) !== 0x02014b50) {
-      throw new Error("测试夹具：central directory 签名错误");
-    }
-    const method = buf.readUInt16LE(cursor + 10);
-    const compSize = buf.readUInt32LE(cursor + 20);
-    const nameLen = buf.readUInt16LE(cursor + 28);
-    const extraLen = buf.readUInt16LE(cursor + 30);
-    const commentLen = buf.readUInt16LE(cursor + 32);
-    const localOffset = buf.readUInt32LE(cursor + 42);
-    const name = buf.toString("utf8", cursor + 46, cursor + 46 + nameLen);
-    if (buf.readUInt32LE(localOffset) !== 0x04034b50) {
-      throw new Error(`测试夹具：${name} 的 local header 签名错误`);
-    }
-    const lNameLen = buf.readUInt16LE(localOffset + 26);
-    const lExtraLen = buf.readUInt16LE(localOffset + 28);
-    const dataStart = localOffset + 30 + lNameLen + lExtraLen;
-    const data = buf.subarray(dataStart, dataStart + compSize);
-    out.set(name, method === 8 ? inflateRawSync(data) : Buffer.from(data));
-    cursor += 46 + nameLen + extraLen + commentLen;
-  }
-  return out;
 }
 
 /** 解包结果 → pack.json 经 schema 校验的 pack 对象（v1/v2 样板收敛，复审 D14） */
@@ -784,6 +759,8 @@ describe("T6R.12 LearningPack v2：快照关联、证据与 manifest", () => {
    * - round2：无证据行（not_collected）。
    */
   const V2_NOW = "2026-10-05T04:00:00.000Z";
+  /** round1 已封存订正的封存时间（回拨；≤ V2_NOW） */
+  const V2_SEAL = "2026-10-03T00:00:00.000Z";
   let v2Student: string;
   let round1AttemptId: string;
   let round2AttemptId: string;
@@ -909,16 +886,54 @@ describe("T6R.12 LearningPack v2：快照关联、证据与 manifest", () => {
       },
     ]).attemptId;
     submitAttemptStatus(db, round2AttemptId, "2026-10-04T00:00:00.000Z");
+    // T6R.16：round1 追加一份已封存订正（复制原稿 + 一页分析图 + 反思两列，
+    // 封存时间回拨）——让全链测试的 evidenceRefs 成为多元素数组（多阶段）
+    const corrHead = createCorrection(
+      db,
+      dataDir,
+      v2Student,
+      round1AttemptId,
+      "v2配对题-1",
+      { copyFromOriginal: true },
+    );
+    const corr = corrHead.corrections[corrHead.corrections.length - 1];
+    if (corr === undefined || corr.currentVersionId === null) {
+      throw new Error("v2 夹具缺少订正 seeded 版本");
+    }
+    attachNoteImage(
+      db,
+      dataDir,
+      { kind: "student", id: v2Student },
+      corr.currentVersionId,
+      makeNotePng(1000, 800),
+      {
+        spec: "analysis",
+        pageIndex: 0,
+        crop: { x: 0, y: 0, width: 1000, height: 800 },
+        pixelWidth: 1000,
+        pixelHeight: 800,
+      },
+    );
+    sealCorrection(db, v2Student, round1AttemptId, "v2配对题-1", {
+      baseRevision: 1,
+      stuckAt: "去括号变号遗漏",
+    });
+    setNoteSealedAt(db, corr.noteId, V2_SEAL);
   });
 
-  /** v2 请求（默认题目 solution 层 + 逐题作答 + 证据） */
+  /** v2 请求（默认题目 solution 层 + 逐题作答 + 证据；含订正阶段→evidenceRefs 多元素） */
   function makeV2Request(
     overrides: Record<string, unknown> = {},
   ): LearningPackExportRequest {
     return learningPackExportRequestSchema.parse({
       packVersion: 2,
       scope: { studentIds: [v2Student] },
-      modules: { questions: "solution", responses: true, evidence: true },
+      modules: {
+        questions: "solution",
+        responses: true,
+        evidence: true,
+        evidencePhases: ["scratch", "correction"],
+      },
       goal: "diagnose-weakness",
       ...overrides,
     });
@@ -957,18 +972,34 @@ describe("T6R.12 LearningPack v2：快照关联、证据与 manifest", () => {
     expect(responses[1]?.attemptId).toBe(round2AttemptId);
     expect(responses[1]?.questionRef).toBe(questions[1]?.ref);
 
-    // —— 证据：round1 frozen（两页一在场一缺失）+ round2 not_collected ——
+    // —— 证据：round1 scratch（两页一在场一缺失）+ 封存订正；round2 not_collected ——
     const evidence = pack.evidence ?? [];
-    expect(evidence).toHaveLength(2);
-    // T6R.16：evidenceRef 单值 → evidenceRefs 数组（单1 过渡为单元素数组）
-    expect(responses[0]?.evidenceRefs).toEqual([evidence[0]?.ref]);
-    expect(responses[1]?.evidenceRefs).toEqual([evidence[1]?.ref]);
+    expect(evidence).toHaveLength(3);
+    // T6R.16 多阶段：round1 行挂 scratch+correction 两条引用（固定产出序）；
+    // round2 行无订正 → 单元素
+    expect(responses[0]?.evidenceRefs).toEqual([
+      evidence[0]?.ref,
+      evidence[1]?.ref,
+    ]);
+    expect(responses[1]?.evidenceRefs).toEqual([evidence[2]?.ref]);
     expect(evidence[0]?.state).toBe("frozen");
     expect(evidence[0]?.version?.versionId).toBe(frozenVersionId);
     expect(evidence[0]?.images).toHaveLength(2);
     expect(evidence[0]?.images[0]?.state).toBe("ready");
     expect(evidence[0]?.images[1]?.state).toBe("missing");
-    expect(evidence[1]?.state).toBe("not_collected");
+    // 订正条目：封存列 + 反思两列入包（errorCause 缺省归一 null 直传）
+    expect(evidence[1]?.phase).toBe("correction");
+    expect(evidence[1]?.sealedAt).toBe(V2_SEAL);
+    expect(evidence[1]?.stuckAt).toBe("去括号变号遗漏");
+    expect(evidence[1]?.errorCause).toBeNull();
+    expect(evidence[1]?.images).toHaveLength(1);
+    expect(evidence[1]?.images[0]?.state).toBe("ready");
+    expect(evidence[1]?.images[0]?.file).toBe(
+      "evidence/e002-correction-01.png",
+    );
+    expect(evidence[2]?.state).toBe("not_collected");
+    // meta 回显装配端规范化阶段（去重 + 规范序）
+    expect(pack.meta.modules.evidencePhases).toEqual(["scratch", "correction"]);
 
     // —— manifest：files 全在 zip、missing 不在 zip、refs 全可解析 ——
     const manifest = pack.manifest;
@@ -1028,8 +1059,9 @@ describe("T6R.12 LearningPack v2：快照关联、证据与 manifest", () => {
       expect(entries.has(fixed)).toBe(true);
     }
     expect(entries.get("prompt.md")?.toString("utf8")).toContain("evidence/");
-    // 在场证据图条目存在
+    // 在场证据图条目存在（scratch 原稿 + 订正分标签命名）
     expect(entries.has("evidence/e001-original-01.png")).toBe(true);
+    expect(entries.has("evidence/e002-correction-01.png")).toBe(true);
   });
 
   it("只选证据不选题目：manifest 标明上下文未提供，不夹带题目媒体", async () => {
@@ -1256,6 +1288,670 @@ describe("T6R.12 LearningPack v2：快照关联、证据与 manifest", () => {
     expect(mediaRows).toHaveLength(1); // 仅讲义在场图
     expect(mediaRows[0]?.path).toBe(v2MediaSrc);
     expect(mediaRows[0]?.refs).toEqual([]);
+  });
+});
+
+// ---------- T6R.16：多阶段证据与固定选择（evidencePhases / asOf / preview） ----------
+
+describe("T6R.16 多阶段证据与固定选择（evidencePhases/asOf/preview）", () => {
+  /**
+   * 多阶段世界（独立学生圈，不碰种子与 v2 配对世界）：
+   * - 学生A 两轮 + 学生B 一轮，题 P1 两份内容——内容甲（A 第 1 轮与 B 轮同一份
+   *   快照 JSON → 同内容共享 q 条目）、内容乙（A 第 2 轮 → 新 q 条目）；
+   * - A 第 1 轮挂三阶段：scratch（两页分析图）+ 已封存订正#1（一页图、反思两列）
+   *   + 补充稿两版本（v1@SUPP_1 一页图 / v2@SUPP_2 零图——P_NOW 钉 v2 时的
+   *   缺失登记素材）；
+   * - 对错混合：A1 错 / B 对 / A2 待批（教师可导错题也可含答对题，D10）。
+   * 里程碑全部 ≤ P_NOW（「预览时刻」已存在的写入）；预览后的变化（订正#2 /
+   * 第 3 轮交卷 / 补充稿 v3）只在最后一个固定选择用例内追加并回拨到 > P_NOW
+   * （该用例改变共享 DB，故放最后）。
+   */
+  const P_NOW = "2026-10-06T00:00:00.000Z";
+  const P_LATE = "2026-10-07T00:00:00.000Z";
+  const SUB_A1 = "2026-10-01T00:00:00.000Z";
+  const SUB_B1 = "2026-10-02T00:00:00.000Z";
+  const SEAL_1 = "2026-10-03T02:00:00.000Z";
+  const SUPP_1 = "2026-10-03T03:00:00.000Z";
+  const SUB_A2 = "2026-10-04T00:00:00.000Z";
+  const SUPP_2 = "2026-10-05T00:00:00.000Z";
+  // 预览后变化的里程碑（> P_NOW；固定选择用例内使用）
+  const SEAL_2 = "2026-10-06T12:00:00.000Z";
+  const SUB_A3 = "2026-10-06T12:30:00.000Z";
+  const SUPP_3 = "2026-10-06T13:00:00.000Z";
+
+  let phaseStudentA: string;
+  let phaseStudentB: string;
+  /** 学生A 第 1 轮（内容甲，三阶段证据） */
+  let phaseA1: string;
+  /** 学生B（内容甲，scratch） */
+  let phaseB1: string;
+  /** 学生A 第 2 轮（内容乙，scratch） */
+  let phaseA2: string;
+  let phaseA1RowId: string;
+  let phaseScratchVersionId: string;
+
+  /** 分析图上传元信息（一页 1000×800） */
+  const pageMeta = (pageIndex: number) => ({
+    spec: "analysis" as const,
+    pageIndex,
+    crop: { x: 0, y: 0, width: 1000, height: 800 },
+    pixelWidth: 1000,
+    pixelHeight: 800,
+  });
+
+  beforeAll(() => {
+    phaseStudentA = makeStudent(db);
+    phaseStudentB = makeStudent(db);
+    const snapshotAlpha = snapshotJsonOf({
+      id: "P1",
+      stemMd: "计算 2+3=[[5]]",
+      answers: { kind: "fill", blanks: [["5"]] },
+      solutionMd: "内容甲解析",
+    });
+    // —— A1：内容甲 + 三阶段 ——
+    const a1 = frozenDraftAttempt(db, phaseStudentA, [
+      { questionId: "P1", snapshotJson: snapshotAlpha },
+    ]);
+    phaseA1 = a1.attemptId;
+    phaseA1RowId = a1.rowIds[0] ?? "";
+    const scratch = saveNoteVersion(
+      db,
+      dataDir,
+      phaseStudentA,
+      phaseA1,
+      "P1",
+      gzipJson(noteDoc(1, 20)),
+      { baseRevision: 0, mutationId: randomUUID() },
+    );
+    phaseScratchVersionId = scratch.versionId;
+    attachNoteImage(
+      db,
+      dataDir,
+      { kind: "student", id: phaseStudentA },
+      scratch.versionId,
+      makeNotePng(1000, 800),
+      pageMeta(0),
+    );
+    const scratchPage2 = attachNoteImage(
+      db,
+      dataDir,
+      { kind: "student", id: phaseStudentA },
+      scratch.versionId,
+      makeNotePng(1000, 800),
+      pageMeta(1),
+    );
+    // 删除第二页文件（磁盘缺失 → preview missing 行 + manifest.missing 素材）
+    const scratchPage2Row = db
+      .select()
+      .from(noteImagesTable)
+      .where(eq(noteImagesTable.id, scratchPage2.imageId))
+      .get();
+    if (scratchPage2Row === undefined) {
+      throw new Error("阶段夹具缺 scratch 第二页分析图行");
+    }
+    rmSync(join(dataDir, scratchPage2Row.path), { force: true });
+    submitAttemptStatus(db, phaseA1, SUB_A1);
+    insertEvidence(db, phaseA1, "P1", "frozen", scratch.versionId);
+    // 订正#1：复制原稿 + 一页图 + 封存回拨 SEAL_1
+    const corrHead = createCorrection(
+      db,
+      dataDir,
+      phaseStudentA,
+      phaseA1,
+      "P1",
+      { copyFromOriginal: true },
+    );
+    const corr = corrHead.corrections[corrHead.corrections.length - 1];
+    if (corr === undefined || corr.currentVersionId === null) {
+      throw new Error("阶段夹具缺少订正 seeded 版本");
+    }
+    attachNoteImage(
+      db,
+      dataDir,
+      { kind: "student", id: phaseStudentA },
+      corr.currentVersionId,
+      makeNotePng(1000, 800),
+      pageMeta(0),
+    );
+    sealCorrection(db, phaseStudentA, phaseA1, "P1", {
+      baseRevision: 1,
+      stuckAt: "移项符号",
+      errorCause: "去括号变号遗漏",
+    });
+    setNoteSealedAt(db, corr.noteId, SEAL_1);
+    // 补充稿 v1@SUPP_1（一页图）→ v2@SUPP_2（零图 → P_NOW 钉 v2 的缺失素材）
+    const supp1 = saveNoteVersion(
+      db,
+      dataDir,
+      phaseStudentA,
+      phaseA1,
+      "P1",
+      gzipJson(noteDoc(2, 40)),
+      { baseRevision: 0, mutationId: randomUUID(), phase: "supplement" },
+    );
+    attachNoteImage(
+      db,
+      dataDir,
+      { kind: "student", id: phaseStudentA },
+      supp1.versionId,
+      makeNotePng(1000, 800),
+      pageMeta(0),
+    );
+    setVersionSavedAt(db, supp1.versionId, SUPP_1);
+    const supp2 = saveNoteVersion(
+      db,
+      dataDir,
+      phaseStudentA,
+      phaseA1,
+      "P1",
+      gzipJson(noteDoc(3, 60)),
+      { baseRevision: 1, mutationId: randomUUID(), phase: "supplement" },
+    );
+    setVersionSavedAt(db, supp2.versionId, SUPP_2);
+    // —— B1：内容甲（同一份快照 JSON）+ scratch 一页 ——
+    const b1 = frozenDraftAttempt(db, phaseStudentB, [
+      { questionId: "P1", snapshotJson: snapshotAlpha },
+    ]);
+    phaseB1 = b1.attemptId;
+    const scratchB = saveNoteVersion(
+      db,
+      dataDir,
+      phaseStudentB,
+      phaseB1,
+      "P1",
+      gzipJson(noteDoc(1, 20)),
+      { baseRevision: 0, mutationId: randomUUID() },
+    );
+    attachNoteImage(
+      db,
+      dataDir,
+      { kind: "student", id: phaseStudentB },
+      scratchB.versionId,
+      makeNotePng(1000, 800),
+      pageMeta(0),
+    );
+    submitAttemptStatus(db, phaseB1, SUB_B1);
+    insertEvidence(db, phaseB1, "P1", "frozen", scratchB.versionId);
+    // —— A2：内容乙（新快照）+ scratch 一页 ——
+    const a2 = frozenDraftAttempt(db, phaseStudentA, [
+      {
+        questionId: "P1",
+        snapshotJson: snapshotJsonOf({
+          id: "P1",
+          stemMd: "计算 12+13=[[25]]",
+          answers: { kind: "fill", blanks: [["25"]] },
+        }),
+      },
+    ]);
+    phaseA2 = a2.attemptId;
+    const scratchA2 = saveNoteVersion(
+      db,
+      dataDir,
+      phaseStudentA,
+      phaseA2,
+      "P1",
+      gzipJson(noteDoc(1, 20)),
+      { baseRevision: 0, mutationId: randomUUID() },
+    );
+    attachNoteImage(
+      db,
+      dataDir,
+      { kind: "student", id: phaseStudentA },
+      scratchA2.versionId,
+      makeNotePng(1000, 800),
+      pageMeta(0),
+    );
+    submitAttemptStatus(db, phaseA2, SUB_A2);
+    insertEvidence(db, phaseA2, "P1", "frozen", scratchA2.versionId);
+    // 对错混合：A1 错 / B 对 / A2 待批（finalCorrect 保持 null）
+    db.update(responsesTable)
+      .set({ finalCorrect: false })
+      .where(eq(responsesTable.id, phaseA1RowId))
+      .run();
+    db.update(responsesTable)
+      .set({ finalCorrect: true })
+      .where(
+        and(
+          eq(responsesTable.attemptId, phaseB1),
+          eq(responsesTable.questionId, "P1"),
+        ),
+      )
+      .run();
+  });
+
+  /** 本世界 v2 请求（三阶段全选；覆盖片段合并后仍整体过契约） */
+  function phaseRequest(
+    overrides: Record<string, unknown> = {},
+  ): LearningPackExportRequest {
+    return learningPackExportRequestSchema.parse({
+      packVersion: 2,
+      scope: { studentIds: [phaseStudentA, phaseStudentB], days: "all" },
+      modules: {
+        questions: "solution",
+        responses: true,
+        evidence: true,
+        evidencePhases: ["scratch", "correction", "supplement"],
+      },
+      goal: "per-question-review",
+      ...overrides,
+    });
+  }
+
+  it("多学生×多轮×多题版本配对与多阶段产出序；对错混合都在包；封存列/反思/钉定版本入包", () => {
+    const assembly = assembleLearningPack(
+      db,
+      dataDir,
+      TEST_TEACHER_ID,
+      phaseRequest(),
+      { now: P_NOW },
+    );
+    const pack = learningPackV2Schema.parse(JSON.parse(assembly.packJson));
+    // 两份内容 → 两个 q 条目；A1 与 B1 同内容共享 q001（snapshotHash 相同），
+    // A2 新内容 q002（多学生×多轮×多题版本一一配对）
+    const questions = pack.content?.questions ?? [];
+    expect(questions).toHaveLength(2);
+    const responses = pack.attempts?.responses ?? [];
+    expect(responses).toHaveLength(3);
+    const byAttempt = new Map(responses.map((row) => [row.attemptId, row]));
+    const qOfA1 = byAttempt.get(phaseA1)?.questionRef;
+    expect(qOfA1).toBe(questions[0]?.ref);
+    expect(byAttempt.get(phaseB1)?.questionRef).toBe(qOfA1);
+    expect(byAttempt.get(phaseB1)?.snapshotHash).toBe(
+      byAttempt.get(phaseA1)?.snapshotHash,
+    );
+    expect(byAttempt.get(phaseA2)?.questionRef).toBe(questions[1]?.ref);
+    // 多阶段产出序：A1 行挂 scratch+correction+supplement；A2/B1 各一条 scratch
+    expect(byAttempt.get(phaseA1)?.evidenceRefs).toEqual([
+      "e001",
+      "e002",
+      "e003",
+    ]);
+    expect(byAttempt.get(phaseA2)?.evidenceRefs).toEqual(["e004"]);
+    expect(byAttempt.get(phaseB1)?.evidenceRefs).toEqual(["e005"]);
+    const evidence = pack.evidence ?? [];
+    expect(evidence.map((entry) => [entry.phase, entry.ref])).toEqual([
+      ["scratch", "e001"],
+      ["correction", "e002"],
+      ["supplement", "e003"],
+      ["scratch", "e004"],
+      ["scratch", "e005"],
+    ]);
+    // 订正封存列与反思两列；scratch/supplement 不带这三键
+    expect(evidence[1]?.sealedAt).toBe(SEAL_1);
+    expect(evidence[1]?.stuckAt).toBe("移项符号");
+    expect(evidence[1]?.errorCause).toBe("去括号变号遗漏");
+    expect(evidence[0]?.sealedAt).toBeUndefined();
+    expect(evidence[2]?.sealedAt).toBeUndefined();
+    expect(evidence[2]?.stuckAt).toBeUndefined();
+    // 补充稿在 P_NOW 钉 v2（SUPP_2 最新 ≤ now；零图 → 缺失登记 supplement 标签）
+    expect(evidence[2]?.version?.savedAt).toBe(SUPP_2);
+    expect(pack.manifest.missing).toContainEqual({
+      path: "evidence/e003-supplement-01.png",
+      kind: "evidence-image",
+      reason: "该版本尚无分析图（未生成）",
+      refs: ["e003"],
+    });
+    // 对错混合：错 / 对 / 待批都在包（教师可导错题也可含答对题）
+    expect(byAttempt.get(phaseA1)?.finalCorrect).toBe(false);
+    expect(byAttempt.get(phaseB1)?.finalCorrect).toBe(true);
+    expect(byAttempt.get(phaseA2)?.finalCorrect).toBeNull();
+    // meta 回显规范序 + 逐题评析目标 + prompt 阶段细化 + contextNotes 口径
+    expect(pack.meta.modules.evidencePhases).toEqual([
+      "scratch",
+      "correction",
+      "supplement",
+    ]);
+    expect(pack.meta.goal).toBe("per-question-review");
+    expect(assembly.summaryMd).toContain("任务目标：逐题评析");
+    expect(assembly.promptMd).toContain("本次收录阶段");
+    expect(assembly.promptMd).toContain("订正（correction）");
+    expect(
+      pack.manifest.contextNotes.some((note) =>
+        note.includes("订正证据只收录已封存检查点"),
+      ),
+    ).toBe(true);
+    expect(
+      pack.manifest.contextNotes.some((note) => note.includes("补充稿")),
+    ).toBe(true);
+    expect(
+      pack.manifest.contextNotes.some((note) =>
+        note.includes("原稿阶段未勾选"),
+      ),
+    ).toBe(false);
+  });
+
+  it("evidencePhases 回显规范化：乱序请求 → meta 回显规范序，prompt 三阶段细化", () => {
+    // 契约 max(3) 锁长度、装配端负责去重与规范序——此处验证乱序重排（去重的
+    // 单元覆盖在 question-evidence.test 的 normalizeEvidencePhases 用例）
+    const assembly = assembleLearningPack(
+      db,
+      dataDir,
+      TEST_TEACHER_ID,
+      phaseRequest({
+        modules: {
+          questions: "solution",
+          responses: true,
+          evidence: true,
+          evidencePhases: ["supplement", "correction", "scratch"],
+        },
+      }),
+      { now: P_NOW },
+    );
+    const pack = learningPackV2Schema.parse(JSON.parse(assembly.packJson));
+    expect(pack.meta.modules.evidencePhases).toEqual([
+      "scratch",
+      "correction",
+      "supplement",
+    ]);
+    expect(assembly.promptMd).toContain("本次收录阶段");
+    expect(assembly.promptMd).toContain("补充稿（supplement）");
+  });
+
+  it("只勾订正阶段：未选阶段零条目零文件；原稿未勾选的 contextNote 出现", () => {
+    const assembly = assembleLearningPack(
+      db,
+      dataDir,
+      TEST_TEACHER_ID,
+      phaseRequest({
+        modules: {
+          questions: "solution",
+          responses: true,
+          evidence: true,
+          evidencePhases: ["correction"],
+        },
+      }),
+      { now: P_NOW },
+    );
+    const pack = learningPackV2Schema.parse(JSON.parse(assembly.packJson));
+    const evidence = pack.evidence ?? [];
+    // 只有 A1 的订正#1（B/A2 无订正行；scratch/supplement 零条目）
+    expect(evidence.map((entry) => entry.phase)).toEqual(["correction"]);
+    const byAttempt = new Map(
+      (pack.attempts?.responses ?? []).map((row) => [row.attemptId, row]),
+    );
+    expect(byAttempt.get(phaseA1)?.evidenceRefs).toEqual(["e001"]);
+    expect(byAttempt.get(phaseA2)?.evidenceRefs).toBeUndefined();
+    expect(byAttempt.get(phaseB1)?.evidenceRefs).toBeUndefined();
+    // 零 scratch/supplement 文件（唯一证据图 = 订正一页）
+    expect(
+      assembly.files
+        .filter((file) => file.path.startsWith("evidence/"))
+        .map((file) => file.path),
+    ).toEqual(["evidence/e001-correction-01.png"]);
+    // contextNotes：订正说明 + 原稿未勾选说明；补充稿未勾不谈
+    expect(
+      pack.manifest.contextNotes.some((note) =>
+        note.includes("订正证据只收录已封存检查点"),
+      ),
+    ).toBe(true);
+    expect(
+      pack.manifest.contextNotes.some((note) =>
+        note.includes("原稿阶段未勾选"),
+      ),
+    ).toBe(true);
+    expect(
+      pack.manifest.contextNotes.some(
+        (note) => note.includes("找回稿") || note.includes("交卷前已固定"),
+      ),
+    ).toBe(false);
+  });
+
+  it("asOf 贯穿：窗口/收录/meta.to 以 asOf 为准；generatedAt 仍真实 now；preview 回传 asOf", () => {
+    // asOf 优先于 options.now：窗口 [asOf-3d, asOf] 只含 A2；meta.to=asOf
+    const pack = learningPackV2Schema.parse(
+      JSON.parse(
+        assembleLearningPack(
+          db,
+          dataDir,
+          TEST_TEACHER_ID,
+          phaseRequest({
+            scope: { studentIds: [phaseStudentA, phaseStudentB], days: 3 },
+            asOf: P_NOW,
+          }),
+          { now: P_LATE },
+        ).packJson,
+      ),
+    );
+    expect(pack.meta.to).toBe(P_NOW);
+    expect(pack.meta.from).toBe("2026-10-03T00:00:00.000Z");
+    expect(pack.meta.generatedAt).toBe(P_LATE);
+    const responses = pack.attempts?.responses ?? [];
+    expect(responses).toHaveLength(1);
+    expect(responses[0]?.attemptId).toBe(phaseA2);
+    // preview：显式 asOf 原样回传；缺省 = 装配时刻（nowIso）
+    const preview = previewLearningPack(
+      db,
+      dataDir,
+      TEST_TEACHER_ID,
+      phaseRequest({
+        scope: { studentIds: [phaseStudentA, phaseStudentB], days: 3 },
+        asOf: P_NOW,
+      }),
+      { now: P_LATE },
+    );
+    expect(preview.asOf).toBe(P_NOW);
+    const previewDefault = previewLearningPack(
+      db,
+      dataDir,
+      TEST_TEACHER_ID,
+      phaseRequest(),
+      { now: P_NOW },
+    );
+    expect(previewDefault.asOf).toBe(P_NOW);
+  });
+
+  it("preview 真实图片清单：ready 带 downloadUrl/bytes，missing 带 reason；v1 恒空数组", () => {
+    const preview = previewLearningPack(
+      db,
+      dataDir,
+      TEST_TEACHER_ID,
+      phaseRequest(),
+      { now: P_NOW },
+    );
+    expect(preview.asOf).toBe(P_NOW);
+    const images = preview.evidenceImages;
+    // ready 4 行（e001 第一页 + e002 订正 + e004/e005 原稿；e001 第二页文件
+    // 已删除）+ missing 1 行（e001-original-02：磁盘缺失）。零图补充稿（e003）
+    // 的「未生成」只在 manifest.missing（preview 行从 entry.images 展开）
+    expect(images.filter((image) => image.state === "ready")).toHaveLength(4);
+    expect(images.filter((image) => image.state === "missing")).toHaveLength(1);
+    for (const image of images) {
+      if (image.state === "ready") {
+        expect(image.bytes).toBeGreaterThan(0);
+        expect(image.downloadUrl).toMatch(
+          /^\/api\/teacher\/note-versions\/[^/]+\/images\/[^/]+\.png$/,
+        );
+        expect(image.reason).toBeUndefined();
+      } else {
+        expect(image.bytes).toBe(0);
+        expect(image.downloadUrl).toBeUndefined();
+        expect(image.reason).toBe("图片文件缺失（磁盘无此文件）");
+        expect(image.file).toBe("evidence/e001-original-02.png");
+      }
+    }
+    // 阶段标签与文件名对应；downloadUrl 含被钉定版本 id（scratch 原稿）
+    expect(
+      images
+        .filter((image) => image.phase === "correction")
+        .map((image) => image.file),
+    ).toEqual(["evidence/e002-correction-01.png"]);
+    // 零图补充稿（e003）无 preview 行——「未生成」只登记在 manifest.missing
+    expect(images.filter((image) => image.phase === "supplement")).toEqual([]);
+    const scratchPage1 = images.find(
+      (image) => image.file === "evidence/e001-original-01.png",
+    );
+    expect(scratchPage1?.downloadUrl).toContain(phaseScratchVersionId);
+    // v1（未勾 evidence）恒空数组
+    const v1Preview = previewLearningPack(
+      db,
+      dataDir,
+      TEST_TEACHER_ID,
+      makeRequest(),
+      { now: P_NOW },
+    );
+    expect(v1Preview.evidenceImages).toEqual([]);
+  });
+
+  it("文件名不碰撞：多轮×多阶段×多页 zip 条目与 manifest 行一一对应且唯一", async () => {
+    const zip = await buildLearningPackZip(
+      db,
+      dataDir,
+      TEST_TEACHER_ID,
+      phaseRequest(),
+      { now: P_NOW },
+    );
+    const entries = unzipEntries(zip.bytes);
+    const pack = packEntryOf(entries, learningPackV2Schema);
+    const evidenceRows = pack.manifest.files.filter(
+      (file) => file.kind === "evidence",
+    );
+    // ready 4 条（e001 第二页已删除、e003 零图——均走 manifest.missing）
+    expect(evidenceRows).toHaveLength(4);
+    // manifest 行路径两两唯一
+    expect(new Set(evidenceRows.map((file) => file.path)).size).toBe(4);
+    // zip 条目与 manifest 一一对应（unzipEntries 的 Map 键去重后仍相等 =
+    // 中央目录无重名条目）
+    const zipEvidence = [...entries.keys()].filter((name) =>
+      name.startsWith("evidence/"),
+    );
+    expect(zipEvidence.sort()).toEqual(
+      evidenceRows.map((file) => file.path).sort(),
+    );
+  });
+
+  it("超限：maxBytes 注入 → preview overLimit 与精简提示；生成 413 EXPORT_TOO_LARGE（文案逐字锁定）", async () => {
+    const options = { now: P_NOW, maxBytes: 1024 };
+    const preview = previewLearningPack(
+      db,
+      dataDir,
+      TEST_TEACHER_ID,
+      phaseRequest(),
+      options,
+    );
+    expect(preview.overLimit).toBe(true);
+    expect(preview.limitBytes).toBe(1024);
+    expect(preview.hint).toMatch(
+      /^数据包预估 [\d.]+ MB，超过 0 MB 上限。精简方向：减少学生人数、取消手写 PNG 或证据附件、或缩小时间范围后重试。$/,
+    );
+    try {
+      await buildLearningPackZip(
+        db,
+        dataDir,
+        TEST_TEACHER_ID,
+        phaseRequest(),
+        options,
+      );
+      throw new Error("应当 413");
+    } catch (err) {
+      expect(err).toBeInstanceOf(HttpError);
+      const httpErr = err as HttpError;
+      expect(httpErr.status).toBe(413);
+      expect(httpErr.code).toBe("EXPORT_TOO_LARGE");
+      expect(httpErr.message).toMatch(
+        /^数据包预估 [\d.]+ MB，超过 0 MB 上限。请减少学生人数、取消手写 PNG 或证据附件、或缩小时间范围后重试。$/,
+      );
+    }
+  });
+
+  it("固定选择：preview 后封存新订正/新交卷/补充稿再编辑 → download asOf 与预览时刻一致；无 asOf 反映最新", async () => {
+    // ① 预览时刻（P_NOW）的选择
+    const before = assembleLearningPack(
+      db,
+      dataDir,
+      TEST_TEACHER_ID,
+      phaseRequest(),
+      { now: P_NOW },
+    );
+    expect(before.asOfIso).toBe(P_NOW);
+    // ② 其间发生：新订正封存（零图）/ 第 3 轮交卷 / 补充稿 v3（里程碑 > P_NOW）
+    const corr2Head = createCorrection(
+      db,
+      dataDir,
+      phaseStudentA,
+      phaseA1,
+      "P1",
+      { copyFromOriginal: true },
+    );
+    const corr2 = corr2Head.corrections[corr2Head.corrections.length - 1];
+    if (corr2 === undefined) throw new Error("订正#2 创建失败");
+    sealCorrection(db, phaseStudentA, phaseA1, "P1", {
+      baseRevision: 1,
+      stuckAt: "第二轮订正",
+    });
+    setNoteSealedAt(db, corr2.noteId, SEAL_2);
+    const a3 = frozenDraftAttempt(db, phaseStudentA, [
+      { questionId: "P1", snapshotJson: snapshotJsonOf({ id: "P1" }) },
+    ]);
+    const scratchA3 = saveNoteVersion(
+      db,
+      dataDir,
+      phaseStudentA,
+      a3.attemptId,
+      "P1",
+      gzipJson(noteDoc(1, 20)),
+      { baseRevision: 0, mutationId: randomUUID() },
+    );
+    submitAttemptStatus(db, a3.attemptId, SUB_A3);
+    insertEvidence(db, a3.attemptId, "P1", "frozen", scratchA3.versionId);
+    const supp3 = saveNoteVersion(
+      db,
+      dataDir,
+      phaseStudentA,
+      phaseA1,
+      "P1",
+      gzipJson(noteDoc(4, 80)),
+      { baseRevision: 2, mutationId: randomUUID(), phase: "supplement" },
+    );
+    setVersionSavedAt(db, supp3.versionId, SUPP_3);
+    // ③ download 带 asOf=P_NOW（生成时刻 now=P_LATE）：选择与预览时刻一致
+    const zip = await buildLearningPackZip(
+      db,
+      dataDir,
+      TEST_TEACHER_ID,
+      phaseRequest({ asOf: P_NOW }),
+      { now: P_LATE },
+    );
+    const entries = unzipEntries(zip.bytes);
+    const pinned = learningPackV2Schema.parse(
+      JSON.parse(entries.get("pack.json")?.toString("utf8") ?? "{}"),
+    );
+    const beforePack = learningPackV2Schema.parse(JSON.parse(before.packJson));
+    expect(pinned.meta.to).toBe(P_NOW);
+    expect(pinned.meta.generatedAt).toBe(P_LATE); // 真实生成时刻语义
+    expect(pinned.attempts?.responses).toEqual(beforePack.attempts?.responses);
+    expect(pinned.evidence).toEqual(beforePack.evidence);
+    expect(pinned.content?.questions).toEqual(beforePack.content?.questions);
+    expect(pinned.manifest.files).toEqual(beforePack.manifest.files);
+    expect(pinned.manifest.missing).toEqual(beforePack.manifest.missing);
+    // ④ 无 asOf（now=P_LATE）：反映最新（新订正 / 第 3 轮 / 补充稿钉 v3）
+    const latest = assembleLearningPack(
+      db,
+      dataDir,
+      TEST_TEACHER_ID,
+      phaseRequest(),
+      { now: P_LATE },
+    );
+    const latestPack = learningPackV2Schema.parse(JSON.parse(latest.packJson));
+    expect(latestPack.attempts?.responses).toHaveLength(4);
+    const corr2Entry = latestPack.evidence?.find(
+      (entry) => entry.sealedAt === SEAL_2,
+    );
+    expect(corr2Entry?.stuckAt).toBe("第二轮订正");
+    expect(
+      latestPack.evidence?.find((entry) => entry.phase === "supplement")
+        ?.version?.savedAt,
+    ).toBe(SUPP_3);
+    // 订正#2 零分析图 → 缺失登记带 correction 标签与原因
+    expect(corr2Entry?.ref).toBeDefined();
+    expect(
+      latestPack.manifest.missing.some(
+        (miss) =>
+          miss.kind === "evidence-image" &&
+          miss.path ===
+            `evidence/${corr2Entry?.ref ?? "e000"}-correction-01.png` &&
+          miss.reason === "该版本尚无分析图（未生成）",
+      ),
+    ).toBe(true);
   });
 });
 

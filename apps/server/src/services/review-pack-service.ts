@@ -35,6 +35,7 @@ import {
   requireUsableAttempt,
 } from "./attempt-service";
 import { beijingExportStampOf } from "./export-csv";
+import { resolveNowDate } from "./export-service";
 import { inkFileAbs } from "./ink-service.ts";
 import { serializeStudentAnswer } from "./mark-response";
 import {
@@ -235,12 +236,8 @@ export function assembleReviewPack(
   questionId: string,
   options: ReviewPackServiceOptions = {},
 ): ReviewPackAssembly {
-  const nowDate =
-    options.now === undefined
-      ? new Date()
-      : typeof options.now === "string"
-        ? new Date(Date.parse(options.now))
-        : options.now;
+  // T6R.16 挂账①：now 解析三处收敛（export-service.resolveNowDate 单点）
+  const nowDate = resolveNowDate(options.now);
   const nowIso = nowDate.toISOString();
   const role = principal.kind;
   const teacherRole = role === "teacher";
