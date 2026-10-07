@@ -795,31 +795,29 @@ function noteEvidenceMetaOf(row: SubmissionEvidenceRow) {
  * - corrections：全部订正行——已封存按 sealedAt 升序在前（同刻 attempt 内
  *   id 升序兜底稳定），未封存行殿后（serverSavedAt 升序兜底）；
  * - supplements：全部补充稿行（serverSavedAt 升序，id 兜底）。
- * evidenceRow 可由调用方预取传入（noteHeadOf 的生效版本判定同用该行，免双查）。
+ * 闸门修复 F7：evidence 只此一处查询——noteHeadOf 的生效版本判定消费本
+ * 函数返回的 evidence 投影（noteEvidenceMetaOf 含 versionId，判定信息齐全），
+ * 不再自查 evidence 后经可选参数回传（undefined 歧义 + draft 态双查）。
  */
 function noteCollectionsOf(
   db: Db,
   attemptId: string,
   questionId: string,
-  evidenceRow?: SubmissionEvidenceRow,
 ): {
   evidence: NoteSubmissionEvidenceMeta | null;
   corrections: NoteRecordMeta[];
   supplements: NoteRecordMeta[];
 } {
-  const evidence =
-    evidenceRow !== undefined
-      ? evidenceRow
-      : db
-          .select()
-          .from(submissionEvidence)
-          .where(
-            and(
-              eq(submissionEvidence.attemptId, attemptId),
-              eq(submissionEvidence.questionId, questionId),
-            ),
-          )
-          .get();
+  const evidence = db
+    .select()
+    .from(submissionEvidence)
+    .where(
+      and(
+        eq(submissionEvidence.attemptId, attemptId),
+        eq(submissionEvidence.questionId, questionId),
+      ),
+    )
+    .get();
   const correctionRows = db
     .select()
     .from(notes)
@@ -881,7 +879,8 @@ function noteCollectionsOf(
  *   none→null→images 恒空——**不回退工作头**，T6R.10 落写；仅无证据行
  *   （未交卷/旧客户端未采集）才取工作头 currentVersionId）；
  * - evidence / corrections / supplements：noteCollectionsOf 单点组装（证据行
- *   + 订正/补充集合，T6R.15 服务层单落地聚合）。
+ *   + 订正/补充集合，T6R.15 服务层单落地聚合）——evidence 取其返回投影做
+ *   生效版本判定（闸门修复 F7：不在本函数重复查询证据行）。
  */
 function noteHeadOf(
   db: Db,
@@ -899,22 +898,17 @@ function noteHeadOf(
       ),
     )
     .get();
-  const evidence = db
-    .select()
-    .from(submissionEvidence)
-    .where(
-      and(
-        eq(submissionEvidence.attemptId, attemptId),
-        eq(submissionEvidence.questionId, questionId),
-      ),
-    )
-    .get();
+  const {
+    evidence: evidenceMeta,
+    corrections,
+    supplements,
+  } = noteCollectionsOf(db, attemptId, questionId);
   // 生效版本（复审轮①）：证据行**存在**即以其声明为准——missing/none 的
   // versionId=null → images 恒空（交卷后不再回退工作头，防止「缺稿交卷却
   // 显示出工作稿图片」的口径漂移）；仅**无证据行**（未交卷）才看工作头。
   const operativeVersionId =
-    evidence !== undefined
-      ? evidence.versionId
+    evidenceMeta !== null
+      ? evidenceMeta.versionId
       : (note?.currentVersionId ?? null);
   const imageRows = operativeVersionId
     ? db
@@ -924,11 +918,6 @@ function noteHeadOf(
         .orderBy(asc(noteImages.spec), asc(noteImages.pageIndex))
         .all()
     : [];
-  const {
-    evidence: evidenceMeta,
-    corrections,
-    supplements,
-  } = noteCollectionsOf(db, attemptId, questionId, evidence);
   return {
     note: note === undefined ? null : noteRecordMetaOf(note),
     images: imageRows.map(noteImageMetaOf),
@@ -1244,13 +1233,20 @@ export function sealCorrection(
     throw revisionConflict(db, open);
   }
   const now = new Date().toISOString();
+  /** seal 反思归一（闸门修复 F5）：trim 后为空 → null——空串/纯空格不落库，
+   * 与 null 同态（本仓 UI 只送 trim 非空文本，此处对其他客户端统一口径；
+   * 正常文本存 trim 后原样） */
+  const normalizeReflection = (value: string | undefined): string | null => {
+    const trimmed = value?.trim() ?? "";
+    return trimmed === "" ? null : trimmed;
+  };
   const switched = db.transaction((tx) =>
     tx
       .update(notes)
       .set({
         sealedAt: now,
-        reflectionStuckAt: req.stuckAt ?? null,
-        reflectionErrorCause: req.errorCause ?? null,
+        reflectionStuckAt: normalizeReflection(req.stuckAt),
+        reflectionErrorCause: normalizeReflection(req.errorCause),
         updatedAt: now,
       })
       .where(

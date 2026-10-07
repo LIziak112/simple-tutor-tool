@@ -2399,6 +2399,21 @@ describe("T6R.15 sealCorrection（保存订正 = 检查点）", () => {
     expect(corr.errorCause).toBeNull();
   });
 
+  it("seal 反思空串/纯空格 → 归一为 null（闸门修复 F5，库列与投影同口径）", () => {
+    const { db, studentId, attemptId } = correctionWithVersion();
+    const head = sealCorrection(db, studentId, attemptId, "q1", {
+      baseRevision: 1,
+      stuckAt: "   ",
+      errorCause: "",
+    });
+    const corr = sole(head.corrections, "已封存订正行");
+    expect(corr.stuckAt).toBeNull();
+    expect(corr.errorCause).toBeNull();
+    const row = sole(phaseRows(db, attemptId, "q1", "correction"), "订正行");
+    expect(row.reflectionStuckAt).toBeNull();
+    expect(row.reflectionErrorCause).toBeNull();
+  });
+
   it("seal CAS：baseRevision 不符 → 409 附 _current；无未封存行 → 404；空行（revision 0）→ 409 附 revision 0 摘要", () => {
     const { db, dataDir, studentId, attemptId } = submittedWorld();
     // 无任何订正行 → 404
