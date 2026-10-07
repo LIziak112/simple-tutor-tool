@@ -93,7 +93,10 @@ test.describe("题目草稿核心全链（T6R.14）", () => {
 
       // —— 写稿：第 2 题草稿纸一笔 + 选 B ——
       const choiceCard = studentPage.locator('article[aria-label="第 2 题"]');
-      await choiceCard.getByRole("button", { name: /草稿纸/ }).first().click();
+      await choiceCard
+        .getByRole("button", { name: /草稿纸/ })
+        .first()
+        .click();
       const noteCanvas = choiceCard.locator('[data-slot="note-paper"] canvas');
       await expect(noteCanvas).toBeVisible();
       await drawStrokeWithPointerEvents(noteCanvas);
@@ -124,9 +127,14 @@ test.describe("题目草稿核心全链（T6R.14）", () => {
       });
       await expect(rebuildButton).toBeVisible({ timeout: 15_000 });
       await rebuildButton.click();
-      const evidence = await teacherEvidenceOf(request, attempt1, choiceQuestionId, {
-        pollUntil: { analysisReady: true },
-      });
+      const evidence = await teacherEvidenceOf(
+        request,
+        attempt1,
+        choiceQuestionId,
+        {
+          pollUntil: { analysisReady: true },
+        },
+      );
       const versionId = evidence.versionId ?? "";
       expect(versionId).not.toBe("");
 
@@ -202,9 +210,7 @@ test.describe("题目草稿核心全链（T6R.14）", () => {
       await expect(studentPage.getByText("附件清单")).toBeVisible({
         timeout: 15_000,
       });
-      await expect(
-        studentPage.getByText(/材料不完整/),
-      ).toHaveCount(0);
+      await expect(studentPage.getByText(/材料不完整/)).toHaveCount(0);
       const [oldDownload] = await Promise.all([
         studentPage.waitForEvent("download", { timeout: 60_000 }),
         oldCard.getByRole("button", { name: /下载完整包/ }).click(),
