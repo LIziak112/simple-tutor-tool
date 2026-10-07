@@ -653,7 +653,11 @@ export const correctionSealRequestSchema = z.object({
  * - NOTE_ORIGINAL_UNAVAILABLE：请求复制原稿但提交证据非 frozen（409，
  *   T6R.15 D3）——missing/none/无证据行，无可复制的原稿正文；
  * - NOTE_CORRECTION_OPEN_EXISTS：已存在未封存订正记录时又请求创建（409，
- *   T6R.15 D1「未封存至多一行」）——应继续编辑既有未封存行。
+ *   T6R.15 D1「未封存至多一行」）——应继续编辑既有未封存行；
+ * - NOTE_NOT_SUBMITTED：attempt 尚未交卷就写订正/补充稿（409，T6R.15，
+ *   D3 措辞修正——原计划误写 ALREADY_SUBMITTED，语义相反不可复用）：correction
+ *   与 supplement 只能写在已交卷（status 非 draft）的作答上，draft 上创建/
+ *   上传/封存一律本码拒绝；「已交卷后写 scratch 原稿」仍走 ALREADY_SUBMITTED。
  */
 export const noteErrorCodeSchema = z.enum([
   "NOTE_NOT_FOUND",
@@ -665,6 +669,7 @@ export const noteErrorCodeSchema = z.enum([
   "NOTE_CORRECTION_SEALED",
   "NOTE_ORIGINAL_UNAVAILABLE",
   "NOTE_CORRECTION_OPEN_EXISTS",
+  "NOTE_NOT_SUBMITTED",
   "ATTEMPT_NOT_FOUND",
   "QUESTION_NOT_FOUND",
   "FORBIDDEN",
