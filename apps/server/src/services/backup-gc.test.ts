@@ -16,20 +16,26 @@ import { runMigrations } from "../db/migrate";
 import {
   attempts as attemptsTable,
   noteVersions as noteVersionsTable,
-  students as studentsTable,
   submissionEvidence as submissionEvidenceTable,
 } from "../db/schema";
 import { TEST_TEACHER_ID } from "../db/test-utils";
 import {
   BACKUP_TEST_PASSWORD,
   insertBackupTeacher,
+  writeCorruptSnapshot,
   zipToBackupBuffer,
 } from "../test/backup-fixtures";
-import { gzipJson, makeNotePng, noteDoc } from "../test/note-fixtures";
+import {
+  gzipJson,
+  makeNotePng,
+  makeStudent,
+  noteDoc,
+} from "../test/note-fixtures";
 import { insertFrozenResponse, newDraftAttempt } from "./attempt-service";
 import {
   BACKUP_DIR_NAME,
   buildBackupZip,
+  collectBackupReferencedPaths,
   createSnapshot,
   restoreFromBackup,
 } from "./backup-service";
@@ -85,22 +91,7 @@ async function makeWorld(tag: string): Promise<World> {
   });
   const db = handle.db;
   await insertBackupTeacher(db, PASSWORD);
-  const studentId = randomUUID();
-  db.insert(studentsTable)
-    .values({
-      id: studentId,
-      teacherId: TEST_TEACHER_ID,
-      loginName: `stu-${tag}`,
-      displayName: "学生",
-      passwordHash: null,
-      linkToken: `link-${randomUUID()}`,
-      linkEnabled: true,
-      passwordEnabled: false,
-      note: null,
-      archivedAt: null,
-      createdAt: "2026-10-01T00:00:00.000Z",
-    })
-    .run();
+  const studentId = makeStudent(db);
   const attempt = newDraftAttempt({
     id: randomUUID(),
     studentId,
@@ -332,11 +323,7 @@ describe("GC 备份引用保留清单（方案 §6.3：备份引用也进保留�
     worlds.push(w);
     const { receipt, pngBytes } = saveVersionWithImageAndEvidence(w);
     // 备份快照在 GC 前拍（模拟「备份下载进行中」的时点状态）
-    const snapName = createSnapshot(
-      w.dataDir,
-      w.db,
-      new Date("2026-10-03T00:00:00.000Z"),
-    );
+    createSnapshot(w.dataDir, w.db, new Date("2026-10-03T00:00:00.000Z"));
     ageAllVersions(w.db);
     const result = gcNoteVersions(w.db, w.dataDir, {
       now: new Date("2026-10-06T00:00:00.000Z"),
@@ -346,21 +333,12 @@ describe("GC 备份引用保留清单（方案 §6.3：备份引用也进保留�
     expect(result.sweptOrphanFiles).toBe(0);
 
     // 引用完整性（方案 §6.3「恢复后做引用完整性检查，缺文件显式列出」——
-    // 这里在 GC 后对快照做同款检查）：快照内每个行路径的文件都在磁盘
-    const snapDb = createDb(join(w.dataDir, BACKUP_DIR_NAME, snapName));
-    try {
-      const bodyPaths = snapDb.$client
-        .prepare("SELECT body_path AS p FROM note_versions")
-        .all() as Array<{ p: string }>;
-      const imagePaths = snapDb.$client
-        .prepare("SELECT path AS p FROM note_images")
-        .all() as Array<{ p: string }>;
-      expect(bodyPaths.length).toBeGreaterThan(0);
-      for (const row of [...bodyPaths, ...imagePaths]) {
-        expect(existsSync(resolve(w.dataDir, row.p)), row.p).toBe(true);
-      }
-    } finally {
-      snapDb.$client.close();
+    // 这里在 GC 后对快照做同款检查）：扫描件收集全部引用路径（C12：复用
+    // collectBackupReferencedPaths，免手工开快照），逐条断言文件在磁盘
+    const referenced = collectBackupReferencedPaths(w.dataDir);
+    expect(referenced.paths.length).toBeGreaterThan(0);
+    for (const storedPath of referenced.paths) {
+      expect(existsSync(resolve(w.dataDir, storedPath)), storedPath).toBe(true);
     }
 
     // 导出消费方（教师单题复习包预览）不缺材料：证据图在场、缺失清单为空
@@ -400,12 +378,8 @@ describe("GC 备份引用保留清单（方案 §6.3：备份引用也进保留�
     worlds.push(w);
     saveTwoVersions(w);
     ageAllVersions(w.db);
-    // 损坏快照（随机字节，命名合快照模式）
-    mkdirSync(join(w.dataDir, BACKUP_DIR_NAME), { recursive: true });
-    writeFileSync(
-      join(w.dataDir, BACKUP_DIR_NAME, "tutor-20261003-000000.db"),
-      Buffer.alloc(512, 0x5a),
-    );
+    // 损坏快照（随机字节，命名合快照模式；共享夹具 C14）
+    writeCorruptSnapshot(w.dataDir, "tutor-20261003-000000.db");
     // 超窗孤儿正文文件（若孤儿清扫照跑会被删——保守口径下必须保留）
     const headRow = w.db.select().from(noteVersionsTable).all().at(-1) as {
       id: string;
