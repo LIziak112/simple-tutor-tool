@@ -17,6 +17,9 @@ deploy/
 # 本机调试采集工件（含学生专属链接令牌，不入库）
 .claude/phase3-capture/
 
+# 个人笔记库（Obsidian，本地资料；biome useIgnoreFile=true 依赖本清单排除 .obsidian）
+note/
+
 # 库内数据修复用的源文件副本（随数据库修复同步，不进 git）
 /练习六 乘法与倒数.公式修复.md
 
