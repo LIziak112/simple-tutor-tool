@@ -21,8 +21,8 @@
  * 的 server 维度来自同步队列视角（note-store 派生），不依赖 head。
  *
  * 批量合批（T6R.14）：逐题 GET 在二十题卷上是 N 个请求，queryFn 的网络段
- * 经 lib/api 的 fetchStudentNoteHeadCoalesced 在宏任务边界合并为一次批量
- * POST（传输层关注点在 api 侧）；副作用与重试语义不变。
+ * 经 lib/note-head-batch 的 fetchStudentNoteHeadCoalesced 在宏任务边界合并
+ * 为一次批量 POST（合批协调器在传输层小模块）；副作用与重试语义不变。
  */
 import { type UseQueryResult, useQuery } from "@tanstack/react-query";
 import type { NoteHeadData } from "@tutor/contract";
@@ -125,7 +125,7 @@ export function useNoteHead(
         throw new Error("草稿会话未绑定（不应发生：enabled 已守卫）");
       }
       // T6R.14：经传输层合批拉取（同 tick 多题合并为一次 POST；分发回各题
-      // 后副作用照旧在本 queryFn 内跑；协调器本体在 lib/api）
+      // 后副作用照旧在本 queryFn 内跑；协调器本体在 lib/note-head-batch）
       const head = await fetchStudentNoteHeadCoalesced(attemptId, questionId);
       await applyNoteHeadSideEffects(
         session,
