@@ -493,8 +493,14 @@ export const learningPackQuestionTraceSchema = z.object({
   fullscreenUsed: z.boolean(),
   /** 离线作答占比 ∈ [0,1] */
   offlineShare: z.number().min(0).max(1),
-  /** 交卷后是否回看了解析 */
-  reviewedSolution: z.boolean(),
+  /**
+   * 交卷后是否回看了解析（T6R.17 三态）：
+   * - null=事件未采集/未知（旧客户端或事件丢失——该 attempt 事件流为空）；
+   * - false=有事件记录但交卷后未见解析回看（已知未回看）；
+   * - true=已知回看。
+   * hintsUsed 是 responses 权威列（服务端计数），无未知态，不改。
+   */
+  reviewedSolution: z.boolean().nullable(),
 });
 
 /** 讲义阅读地图条目（T4.0 §4.4.4：逐项地图直接进 pack.json；行为推断） */

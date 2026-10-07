@@ -12,6 +12,7 @@ import {
   learningPackGoalSchema,
   learningPackJsonSchema,
   learningPackPreviewDataSchema,
+  learningPackQuestionTraceSchema,
   learningPackSchema,
   learningPackV2JsonSchema,
   learningPackV2Schema,
@@ -188,6 +189,53 @@ describe("LearningPack schema（D19 模块化）", () => {
     expect(learningPackErrorCodeSchema.safeParse("TOO_BIG").success).toBe(
       false,
     );
+  });
+});
+
+describe("learningPackQuestionTraceSchema.reviewedSolution 三态（T6R.17）", () => {
+  /** 最小合法 trace 行（reviewedSolution 三态逐个替换） */
+  const TRACE_ROW = {
+    attemptId: "2d902b60-3e4f-4a5b-9a32-334455667788",
+    studentId: "0b7e0f4e-1c2d-4e3a-9f10-112233445566",
+    questionId: "有理数随堂练习-3",
+    activeSec: 60,
+    hintsUsed: 0,
+    changeCount: 1,
+    timeToFirstHintSec: null,
+    hintDwellSec: 0,
+    inkEditCount: 0,
+    fullscreenUsed: false,
+    offlineShare: 0,
+  } as const;
+
+  it("null=事件未采集/未知（旧客户端或事件丢失——该 attempt 事件流为空）parse 通过", () => {
+    expect(
+      learningPackQuestionTraceSchema.parse({
+        ...TRACE_ROW,
+        reviewedSolution: null,
+      }).reviewedSolution,
+    ).toBe(null);
+  });
+
+  it("false=有事件记录但交卷后未见解析回看（已知未回看）parse 通过", () => {
+    expect(
+      learningPackQuestionTraceSchema.parse({
+        ...TRACE_ROW,
+        reviewedSolution: false,
+      }).reviewedSolution,
+    ).toBe(false);
+  });
+
+  it("true=已知回看 parse 通过；缺 reviewedSolution 字段仍拒绝（三态必填不缺省）", () => {
+    expect(
+      learningPackQuestionTraceSchema.parse({
+        ...TRACE_ROW,
+        reviewedSolution: true,
+      }).reviewedSolution,
+    ).toBe(true);
+    expect(
+      learningPackQuestionTraceSchema.safeParse(TRACE_ROW).success,
+    ).toBe(false);
   });
 });
 
