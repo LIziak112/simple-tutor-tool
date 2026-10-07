@@ -43,7 +43,9 @@ interface CapturedCall {
 }
 
 /** 捕获型 fetch stub：统一按回调出响应 */
-function stubCapture(respond: (call: CapturedCall) => Response): CapturedCall[] {
+function stubCapture(
+  respond: (call: CapturedCall) => Response,
+): CapturedCall[] {
   const calls: CapturedCall[] = [];
   vi.stubGlobal(
     "fetch",
