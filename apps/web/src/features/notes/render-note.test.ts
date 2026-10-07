@@ -410,12 +410,7 @@ describe("sliceCropRects：重叠不重复编号语义锁（T6R.17 契约级守�
 
   it("默认片高/契约重叠下多组高度：严格递增起点 + ceil 页数 + 重叠恰 40 + 末页触底", () => {
     // 1401=刚超限两页；1500/2760=中段推进；3000=既有 3 页场景的通式复核
-    for (const h of [
-      ANALYSIS_SLICE_HEIGHT_LOGICAL + 1,
-      1500,
-      2760,
-      3000,
-    ]) {
+    for (const h of [ANALYSIS_SLICE_HEIGHT_LOGICAL + 1, 1500, 2760, 3000]) {
       expectMultiPageSemantics(
         h,
         ANALYSIS_SLICE_HEIGHT_LOGICAL,
