@@ -1,6 +1,9 @@
 import type { ZodIssue } from "zod";
 import { z } from "zod";
-import { questionRevisionIdSchema } from "./attempt.ts";
+import {
+  ATTEMPT_SUBMIT_MAX_QUESTIONS,
+  questionRevisionIdSchema,
+} from "./attempt.ts";
 import { INK_LOGICAL_WIDTH, inkAtramentDataSchema } from "./ink.ts";
 
 /**
@@ -609,13 +612,14 @@ export const noteImageUploadMetaSchema = z.object({
 // ---------- 批量头投影（T6R.14：一次返回多题头） ----------
 
 /**
- * 一批头投影的题目数上限（T6R.14）。与学习事件批量上报（≤200 条/次）同
- * 量级：常规试卷几十题，200 留足余量。**服务端校验常量**（请求体 schema
- * max 用；客户端不分块——现实中不存在 >200 题的卷，超限即 400
- * VALIDATION_ERROR 整批可诊断，客户端不做旁路处理）。修订须同步契约
- * 测试锁定值。
+ * 一批头投影的题目数上限（T6R.14）：**= 交卷上限 ATTEMPT_SUBMIT_MAX_QUESTIONS
+ * （500）**——C1 一致性红线：批量头须覆盖交卷可构造的每卷题数（错题本
+ * 「重练全部」与跨单元大卷可构造 201+ 题），否则该类卷在答题页整页 400、
+ * 交卷被永久阻断；>500 的卷交卷本身 400，两处失败口径一致。**服务端校验
+ * 常量**（请求体 schema max 用；客户端不分块，不做旁路处理）。修订须改
+ * attempt.ts 单源并同步契约一致性测试。
  */
-export const NOTE_HEADS_MAX_QUESTIONS = 200;
+export const NOTE_HEADS_MAX_QUESTIONS = ATTEMPT_SUBMIT_MAX_QUESTIONS;
 
 /**
  * 批量头请求体（POST /api/student/attempts/:id/note-heads 的 JSON body）：

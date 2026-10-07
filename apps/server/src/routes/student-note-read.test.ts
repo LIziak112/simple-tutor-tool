@@ -539,11 +539,11 @@ describe("POST /attempts/:id/note-heads 批量头投影", () => {
     ]);
   });
 
-  it("请求体校验 400：空数组 / 超 200 条 / 非数组 / 缺字段", async () => {
+  it("请求体校验 400：空数组 / 超 500 条（上限同源交卷上限，C1）/ 非数组 / 缺字段", async () => {
     const attemptId = await freshAttempt();
     for (const body of [
       { questionIds: [] },
-      { questionIds: Array.from({ length: 201 }, (_, i) => `q${i}`) },
+      { questionIds: Array.from({ length: 501 }, (_, i) => `q${i}`) },
       { questionIds: "p4-q7" },
       {},
     ]) {

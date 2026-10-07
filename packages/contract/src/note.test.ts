@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { ATTEMPT_SUBMIT_MAX_QUESTIONS } from "./attempt.ts";
 import { INK_LOGICAL_WIDTH } from "./ink.ts";
 import {
   NOTE_BODY_DECOMPRESSED_MAX_BYTES,
@@ -853,8 +854,12 @@ describe("T6R.14 批量头投影：noteHeadsRequest / noteHeadsData", () => {
     expect(noteHeadsRequestSchema.safeParse({}).success).toBe(false);
   });
 
-  it("上限常量锁定 200（与学习事件批量同量级；修订须改这里与注释）", () => {
-    expect(NOTE_HEADS_MAX_QUESTIONS).toBe(200);
+  it("上限常量锁定 = 交卷上限（C1 一致性红线：批量头须覆盖交卷可构造的每卷题数）", () => {
+    // 红线：批量头 .max() 若小于交卷契约的 revisions/evidence .max()（500），
+    // 「>批量上限 但 ≤交卷上限」的卷（错题本重练全部/跨单元大卷可构造）
+    // 会在答题页整页 400——交卷被永久阻断。两常量必须同源相等。
+    expect(NOTE_HEADS_MAX_QUESTIONS).toBe(ATTEMPT_SUBMIT_MAX_QUESTIONS);
+    expect(NOTE_HEADS_MAX_QUESTIONS).toBe(500);
   });
 
   it("响应 data：heads 数组按请求序回显 questionId + 头投影；元素缺头拒绝", () => {
