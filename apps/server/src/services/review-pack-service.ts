@@ -37,7 +37,11 @@ import {
 import { beijingExportStampOf } from "./export-csv";
 import { inkFileAbs } from "./ink-service.ts";
 import { serializeStudentAnswer } from "./mark-response";
-import { assembleQuestionEvidence } from "./question-evidence";
+import {
+  assembleQuestionEvidence,
+  evidenceMissingRowsOf,
+  readyEvidenceImagesOf,
+} from "./question-evidence";
 import { requireTeacherAttempt } from "./teacher-attempt-service";
 
 /**
@@ -320,17 +324,8 @@ export function assembleReviewPack(
     absPath: medium.absPath,
     bytes: medium.bytes,
   }));
-  const evidenceEntries = [];
-  for (const image of evidenceEntry.images) {
-    if (image.state === "ready" && image.absPath !== undefined) {
-      evidenceEntries.push({
-        entry: image.file,
-        absPath: image.absPath,
-        bytes: image.bytes ?? 0,
-        ref: eRef,
-      });
-    }
-  }
+  // ready/missing 投影走 question-evidence 共享件（与 v2 学习包同一遍历）
+  const evidenceEntries = readyEvidenceImagesOf(evidenceEntry);
   const missing: LearningPackManifestMissing[] = [
     ...asm.missingMedia.map((miss) => ({
       path: miss.src,
@@ -338,12 +333,7 @@ export function assembleReviewPack(
       reason: miss.reason,
       refs: [...miss.questionRefs],
     })),
-    ...asm.missingEvidenceImages.map((miss) => ({
-      path: miss.file,
-      kind: "evidence-image" as const,
-      reason: miss.reason,
-      refs: [miss.evidenceRef],
-    })),
+    ...evidenceMissingRowsOf(asm),
   ];
 
   // —— 手写题笔迹（/code-review A1，方案 §9.3/D6.3）：作答即笔迹——学生
@@ -739,7 +729,8 @@ export async function zipReviewPack(
         archive.file(ink.absPath, { name: ink.entry, store: true });
       }
     });
-    return new Uint8Array(buffer);
+    // Buffer<ArrayBuffer> 即 Uint8Array<ArrayBuffer>——直接返回免整包拷贝
+    return buffer;
   } catch (err) {
     // 原始错误只进服务端日志——err.message 可能含磁盘绝对路径，不下发响应
     console.error("review-pack zip 写入失败", err);

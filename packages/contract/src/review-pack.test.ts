@@ -2,11 +2,10 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { formatQuestionAnswers, lettersOf } from "./content.ts";
 import {
-  formatQuestionAnswers,
   learningPackManifestMissingSchema,
   learningPackManifestSchema,
-  lettersOf,
 } from "./learning-pack.ts";
 import {
   renderReviewPackPrompt,

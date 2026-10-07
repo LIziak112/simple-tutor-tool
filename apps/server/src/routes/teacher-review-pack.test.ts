@@ -6,9 +6,9 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
+import { readZipEntriesMap } from "../lib/zip-read.ts";
 import { createStudent, extractSessionToken } from "../test/note-world.ts";
 import { makeReviewPackWorld } from "../test/review-pack-world.ts";
-import { readZipEntriesMap } from "../lib/zip-read.ts";
 
 /**
  * T6R.13 教师单题 review-pack 路由测试：

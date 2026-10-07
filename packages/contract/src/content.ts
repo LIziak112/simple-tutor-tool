@@ -45,6 +45,53 @@ export const HANDWRITTEN_QUESTION_TYPES: readonly QuestionType[] = [
   "find-error",
 ];
 
+/** 化名编号（学生A/学生B…，按名单顺序编号）：字母列号核心算法单一来源 */
+export function lettersOf(index: number): string {
+  // 0→A … 25→Z、26→AA（电子表格列号同款进制）
+  let n = index + 1;
+  let letters = "";
+  while (n > 0) {
+    const rem = (n - 1) % 26;
+    letters = String.fromCharCode(65 + rem) + letters;
+    n = Math.floor((n - 1) / 26);
+  }
+  return letters;
+}
+
+/**
+ * 参考答案 → 文本序列化（QuestionAnswers 的家在 content.ts，单一来源）：
+ * - judge→对/错、choice→字母、multi→字母串、fill→逐空等价答案「或」连接、
+ *   空与空「；」分隔、final→原文；
+ * - mathify 可注入显示侧的 LaTeX 包裹启发式（web 结果页 formatReferenceAnswers
+ *   传 mathifyAnswerText；服务端单题包 review-pack 不传——裸 LaTeX 对 AI 更
+ *   友好，渲染管线行为不复刻进契约）。
+ */
+export function formatQuestionAnswers(
+  answers: QuestionAnswers,
+  options: {
+    readonly mathify?: (text: string) => string;
+  } = {},
+): string {
+  const mathify = options.mathify ?? ((text: string) => text);
+  switch (answers.kind) {
+    case "judge":
+      return answers.value ? "对" : "错";
+    case "choice":
+      return lettersOf(answers.index);
+    case "multi":
+      return [...answers.indexes]
+        .sort((a, b) => a - b)
+        .map((index) => lettersOf(index))
+        .join("");
+    case "fill":
+      return answers.blanks
+        .map((blank) => blank.map(mathify).join(" 或 "))
+        .join("；");
+    case "final":
+      return mathify(answers.answer);
+  }
+}
+
 /** 文档类型：练习 / 讲义 / 混合（frontmatter kind） */
 export const documentKindSchema = z.enum(["practice", "lecture", "mixed"]);
 

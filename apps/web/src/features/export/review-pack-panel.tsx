@@ -359,6 +359,7 @@ ${preview.questionMd}`}
                   <ul className="flex flex-col gap-1.5">
                     {preview.attachments.map((attachment) => {
                       const job = attachmentJobs[attachment.path];
+                      const downloadUrl = attachment.downloadUrl;
                       return (
                         <li
                           key={attachment.path}
@@ -371,7 +372,7 @@ ${preview.questionMd}`}
                               : ""}
                           </span>
                           {attachment.state === "ready" &&
-                            attachment.downloadUrl !== undefined && (
+                            downloadUrl !== undefined && (
                               <Button
                                 variant="outline"
                                 className="min-h-11 h-11 px-3"
@@ -379,7 +380,7 @@ ${preview.questionMd}`}
                                 onClick={() =>
                                   void handleDownloadAttachment(
                                     attachment.path,
-                                    attachment.downloadUrl as string,
+                                    downloadUrl,
                                   )
                                 }
                               >

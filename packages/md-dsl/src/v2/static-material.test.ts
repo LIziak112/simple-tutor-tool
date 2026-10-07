@@ -242,6 +242,22 @@ describe("buildStaticQuestionMaterial（静态题目素材）", () => {
     expect(material.markdown).toContain("AB. 选项28");
   });
 
+  it("options 提供时剥内嵌选项任务列表（教师选择题不双重呈现）；[[答案]] 保留", () => {
+    const material = buildStaticQuestionMaterial({
+      role: "teacher",
+      stemMd:
+        "选择正确的一项：\n\n- [ ] 甲\n- [x] 乙\n- [ ] 丙\n\n理由见 [[答案]]。",
+      options: ["甲", "乙", "丙"],
+    });
+    // 内嵌任务列表已剥（否则与尾部「选项」节双重呈现，[x] 还带正误标记）
+    expect(material.markdown).not.toContain("- [x]");
+    expect(material.markdown).not.toContain("- [ ]");
+    expect(material.markdown).toContain("A. 甲");
+    expect(material.markdown).toContain("B. 乙");
+    // [[答案]] 标记是教师域合法内容，不受剥除影响
+    expect(material.markdown).toContain("[[答案]]");
+  });
+
   it("教师角色不做投影守卫（原文含 [[答案]] 是合法输入）", () => {
     const material = buildStaticQuestionMaterial({
       role: "teacher",

@@ -88,6 +88,7 @@ import {
   type ReportDetail,
   type ReportListData,
   type ReviewPackPreviewData,
+  type ReviewPackRole,
   type SharedFileList,
   type SharedImportRequest,
   type SharedPreviewData,
@@ -1980,8 +1981,8 @@ export async function downloadLearningPackApi(
 
 // ---------- T6R.13：单题完整导出（review-pack，契约 review-pack.ts） ----------
 
-/** review-pack 请求角色（学生本人 / 教师域——与后端 principal 对应） */
-export type ReviewPackRole = "student" | "teacher";
+/** review-pack 请求角色：契约单一来源（reviewPackSchema 的 role 字面量联合） */
+export type { ReviewPackRole };
 
 /** 单题包预览（POST …/review-pack/preview 统一壳；附件清单 + 缺失 + reviewMd） */
 export function fetchReviewPackPreviewApi(

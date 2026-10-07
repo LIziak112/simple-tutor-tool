@@ -25,11 +25,10 @@ export type ZipArchiveWriter = Omit<ZipArchive, "file"> & {
 
 /** zip 写入选项 */
 export interface ZipBufferOptions {
-  /** zlib 压缩级别（缺省 6；条目级 store 不受影响） */
-  readonly level?: number;
   /**
    * 文件条目读不到时 archiver 的 warning 是否视为错误（缺省 true——缺文件
-   * 显式失败，不产静默缺件 zip）；false = archiver 原生宽松语义。
+   * 显式失败，不产静默缺件 zip）；false = archiver 原生宽松语义（v1 学情包
+   * 既有口径，迁移留 T6R.16）——警告仍 console.warn 留痕，不无声吞掉。
    */
   readonly warningAsError?: boolean;
 }
@@ -42,10 +41,10 @@ export interface ZipBufferOptions {
 export async function zipBufferOf(
   build: (archive: ZipArchiveWriter) => void,
   options: ZipBufferOptions = {},
-): Promise<Buffer> {
-  const archive = new ZipArchive({
-    ...(options.level !== undefined ? { zlib: { level: options.level } } : {}),
-  });
+): Promise<Buffer<ArrayBuffer>> {
+  // zlib 用 archiver 缺省档（level 6）——此前可注入的 level 是死参，删；
+  // 已压缩条目请对条目传 store: true
+  const archive = new ZipArchive();
   const chunks: Buffer[] = [];
   archive.on("data", (chunk: Buffer) => chunks.push(chunk));
   const done = new Promise<void>((resolve, reject) => {
@@ -58,11 +57,17 @@ export async function zipBufferOf(
     console.error("zipBufferOf: archiver error（可能发生在 end 之后）", err);
   });
   let warning: Error | null = null;
-  if (options.warningAsError !== false) {
-    archive.on("warning", (err: Error) => {
-      warning ??= err;
-    });
-  }
+  archive.on("warning", (err: Error) => {
+    if (options.warningAsError === false) {
+      // 宽松口径也留服务端日志，不无声吞
+      console.warn(
+        "zipBufferOf: archiver warning（宽松口径，条目被跳过）",
+        err,
+      );
+      return;
+    }
+    warning ??= err;
+  });
   // @types 的 file() 参数面窄于运行时（见 ZipArchiveWriter 注释）——单点断言
   build(archive as unknown as ZipArchiveWriter);
   await archive.finalize();
@@ -70,5 +75,7 @@ export async function zipBufferOf(
   if (warning !== null) {
     throw warning;
   }
-  return Buffer.concat(chunks);
+  // Buffer.concat 产物即独立 ArrayBuffer 底座（fresh 分配）——断言收窄类型
+  // 后调用方可直接以 Uint8Array<ArrayBuffer> 返回，免一次整包 memcpy
+  return Buffer.concat(chunks) as Buffer<ArrayBuffer>;
 }

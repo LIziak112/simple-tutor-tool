@@ -6,6 +6,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
+import { readZipEntriesMap } from "../lib/zip-read.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 import {
   createStudent,
@@ -13,7 +14,6 @@ import {
   loginStudent,
 } from "../test/note-world.ts";
 import { makeReviewPackWorld } from "../test/review-pack-world.ts";
-import { readZipEntriesMap } from "../lib/zip-read.ts";
 import { packLeakTextOf } from "../test/zip-assert.ts";
 
 /**

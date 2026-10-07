@@ -1,5 +1,5 @@
 import { lettersOf } from "@tutor/contract";
-import { stemMdLeaksAnswers } from "./public-stem.ts";
+import { stemMdLeaksAnswers, stripOptionListMd } from "./public-stem.ts";
 import { processor } from "./shared.ts";
 
 /**
@@ -222,9 +222,16 @@ export function buildStaticQuestionMaterial(
     );
   }
 
-  const lines = input.stemMd.split(/\r?\n/);
+  // options 提供时剥内嵌选项任务列表（学生角色的 studentStemMd 已剥、幂等；
+  // 教师角色原文含 `- [x]` 任务列表——尾部已按「选项」节重排，内嵌形态
+  // 不再保留，避免双重呈现。[[答案]] 标记不受影响，保留给教师）
+  const stemMd =
+    input.options !== undefined && input.options.length > 0
+      ? stripOptionListMd(input.stemMd)
+      : input.stemMd;
+  const lines = stemMd.split(/\r?\n/);
   const scan = scanDirectives(
-    processor.parse(input.stemMd) as unknown as StaticMdNode,
+    processor.parse(stemMd) as unknown as StaticMdNode,
   );
 
   // 图表清单按文档序产出（AST 遍历序，与降序行编辑分离）

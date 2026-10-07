@@ -16,6 +16,7 @@ import {
   createTestDir,
   TEST_TEACHER_ID,
 } from "../db/test-utils.ts";
+import { readZipEntriesMap } from "../lib/zip-read.ts";
 import {
   frozenDraftAttempt,
   snapshotJsonOf,
@@ -27,7 +28,6 @@ import {
   REVIEW_SENTINELS,
   type ReviewPackWorldOptions,
 } from "../test/review-pack-world.ts";
-import { readZipEntriesMap } from "../lib/zip-read.ts";
 import { packEntryOf, packLeakTextOf } from "../test/zip-assert.ts";
 import { saveMedia } from "./media-service.ts";
 import {
@@ -74,7 +74,6 @@ function studentOf(id: string): ReviewPackPrincipal {
 /** 世界薄壳：共享件（apps/server/src/test/review-pack-world.ts），默认题号即 QUESTION_ID */
 const makeWorld = (db: Db, dataDir: string, options: ReviewPackWorldOptions) =>
   makeReviewPackWorld(db, dataDir, { questionId: QUESTION_ID, ...options });
-
 
 describe("T6R.13 双角色一键一题包（服务层）", () => {
   it("教师包全链：zip 结构完整、pack.json 过 schema、携带答案/判定/评语/真实 id", async () => {
@@ -269,7 +268,9 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
       QUESTION_ID,
       { now: NOW },
     );
-    expect(readZipEntriesMap(Buffer.from(zip.bytes)).has(media.src)).toBe(false);
+    expect(readZipEntriesMap(Buffer.from(zip.bytes)).has(media.src)).toBe(
+      false,
+    );
   });
 
   it("丢分析图：文件删除/未生成 → 显式缺失 + review.md「不完整」，不静默消失", async () => {
@@ -407,9 +408,11 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
       QUESTION_ID,
       { now: NOW },
     );
-    expect(readZipEntriesMap(Buffer.from(zip.bytes)).has("evidence/e001-original-01.png")).toBe(
-      false,
-    );
+    expect(
+      readZipEntriesMap(Buffer.from(zip.bytes)).has(
+        "evidence/e001-original-01.png",
+      ),
+    ).toBe(false);
   });
 
   it("draft（未交卷）attempt 也可导出：快照行已冻结，证据 not_collected", async () => {
@@ -556,9 +559,11 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
       ),
       "utf8",
     );
-    expect(readZipEntriesMap(Buffer.from(zip.bytes)).get("schema.json")?.toString("utf8")).toBe(
-      artifact,
-    );
+    expect(
+      readZipEntriesMap(Buffer.from(zip.bytes))
+        .get("schema.json")
+        ?.toString("utf8"),
+    ).toBe(artifact);
   });
 
   it("注入小上限：413 EXPORT_TOO_LARGE（防御口径）", async () => {
@@ -712,7 +717,9 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
       { now: NOW },
     );
     const rawText =
-      readZipEntriesMap(Buffer.from(zip.bytes)).get("pack.json")?.toString("utf8") ?? "";
+      readZipEntriesMap(Buffer.from(zip.bytes))
+        .get("pack.json")
+        ?.toString("utf8") ?? "";
     const parsed = JSON.parse(rawText) as Record<string, unknown>;
     // 回归锁：即使装配层未来塞入未声明键（superRefine 对其失明），parse 的
     // strip 语义保证它不进 zip——此处单测 strip 行为并锁「zip 文本无未声明键」

@@ -298,6 +298,55 @@ const EVIDENCE_IMAGE_MISSING_REASONS: Record<
   missing: "分析图文件缺失",
 };
 
+// ---------- 证据条目投影（T6R.13 /code-review D27：review-pack 与
+// export-service v2 的 evidence 侧收敛——同一条目不再两处手写同一遍历） ----------
+
+/** 证据条目 → ready 分析图条目（zip 写入形态：file 绝对路径/字节/所属 ref） */
+export function readyEvidenceImagesOf(
+  entry: QuestionEvidenceEntry,
+): ReadonlyArray<{
+  readonly entry: string;
+  readonly absPath: string;
+  readonly bytes: number;
+  readonly ref: string;
+}> {
+  const out: Array<{
+    entry: string;
+    absPath: string;
+    bytes: number;
+    ref: string;
+  }> = [];
+  for (const image of entry.images) {
+    if (image.state === "ready" && image.absPath !== undefined) {
+      out.push({
+        entry: image.file,
+        absPath: image.absPath,
+        bytes: image.bytes ?? 0,
+        ref: entry.ref,
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * 装配结果 → manifest.missing 的 evidence-image 行（媒体侧不在内——
+ * review-pack 与 v2 学习包的媒体缺失来源不同，各自组装）。
+ */
+export function evidenceMissingRowsOf(asm: QuestionEvidenceAssembly): Array<{
+  path: string;
+  kind: "evidence-image";
+  reason: string;
+  refs: string[];
+}> {
+  return asm.missingEvidenceImages.map((miss) => ({
+    path: miss.file,
+    kind: "evidence-image" as const,
+    reason: miss.reason,
+    refs: [miss.evidenceRef],
+  }));
+}
+
 // ---------- 装配主入口 ----------
 
 /**

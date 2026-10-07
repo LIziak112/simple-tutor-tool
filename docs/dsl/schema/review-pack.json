@@ -26,29 +26,6 @@
     "question": {
       "type": "object",
       "properties": {
-        "ref": {
-          "type": "string",
-          "pattern": "^q\\d{3,}$"
-        },
-        "no": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 9007199254740991
-        },
-        "present": {
-          "type": "boolean"
-        },
-        "snapshotHash": {
-          "anyOf": [
-            {
-              "type": "string",
-              "pattern": "^[0-9a-f]{64}$"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
         "type": {
           "type": "string",
           "enum": [
@@ -81,10 +58,6 @@
           "items": {
             "type": "string"
           }
-        },
-        "questionId": {
-          "type": "string",
-          "minLength": 1
         },
         "answers": {
           "oneOf": [
@@ -192,17 +165,44 @@
         },
         "solutionMd": {
           "type": "string"
+        },
+        "ref": {
+          "type": "string",
+          "pattern": "^q\\d{3,}$"
+        },
+        "present": {
+          "type": "boolean"
+        },
+        "snapshotHash": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "no": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "questionId": {
+          "type": "string",
+          "minLength": 1
         }
       },
       "required": [
-        "ref",
-        "no",
-        "present",
-        "snapshotHash",
         "type",
         "difficulty",
         "knowledge",
-        "stemMd"
+        "stemMd",
+        "ref",
+        "present",
+        "snapshotHash",
+        "no"
       ],
       "additionalProperties": false
     },

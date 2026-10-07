@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { questionAnswersSchema, questionTypeSchema } from "./content.ts";
 import {
   LEARNING_PACK_MAX_BYTES,
   learningPackEvidenceImageSchema,
@@ -7,9 +6,8 @@ import {
   learningPackEvidenceVersionSchema,
   learningPackManifestMissingSchema,
   learningPackManifestSchema,
-  learningPackSnapshotHashSchema,
+  learningPackV2QuestionSchema,
   PACK_REF_EVIDENCE_RE,
-  PACK_REF_QUESTION_RE,
 } from "./learning-pack.ts";
 import { notePhaseSchema } from "./note.ts";
 
@@ -53,26 +51,21 @@ export const REVIEW_PACK_MAX_BYTES = LEARNING_PACK_MAX_BYTES;
  * 纯文本）。教师域键（questionId/answers/solutionMd）只出现在教师包——
  * 学生包由 superRefine 结构性拒绝。
  */
-export const reviewPackQuestionSchema = z.object({
-  ref: z.string().regex(PACK_REF_QUESTION_RE, "题目条目编号形如 q001"),
-  /** 卷内题号（该次作答全卷连续 1 起） */
-  no: z.number().int().min(1),
-  /** 交卷快照是否存在（false=历史缺失，stemMd 为空不回填） */
-  present: z.boolean(),
-  /** 快照内容身份（缺失为 null；内容 hash，非定位键） */
-  snapshotHash: learningPackSnapshotHashSchema.nullable(),
-  type: questionTypeSchema,
-  difficulty: z.number().int().min(1).max(5),
-  knowledge: z.array(z.string().min(1)),
-  /** 题干（学生角色=学生端投影；教师角色=快照原文） */
-  stemMd: z.string(),
-  /** 选项纯文本（choice/multi；无正误信息） */
-  options: z.array(z.string()).optional(),
-  // —— 教师域键（学生包必须缺席，见 superRefine） ——
-  questionId: z.string().min(1).optional(),
-  answers: questionAnswersSchema.optional(),
-  solutionMd: z.string().optional(),
-});
+export const reviewPackQuestionSchema = learningPackV2QuestionSchema
+  .omit({
+    // v2 独有：媒体清单/单元展示/必填 questionId（单题包 questionId 为教师域
+    // 可选键——学生包由 superRefine 拒绝携带）
+    media: true,
+    unitId: true,
+    unitTitle: true,
+    questionId: true,
+  })
+  .extend({
+    /** 卷内题号（该次作答全卷连续 1 起；v2 无此字段） */
+    no: z.number().int().min(1),
+    // —— 教师域键（学生包必须缺席，见 superRefine） ——
+    questionId: z.string().min(1).optional(),
+  });
 
 /**
  * 作答条目：学生自己的答案（两角色都携带——学生答案不是秘密）。
