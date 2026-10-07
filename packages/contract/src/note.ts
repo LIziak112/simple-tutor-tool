@@ -610,8 +610,10 @@ export const noteImageUploadMetaSchema = z.object({
 
 /**
  * 一批头投影的题目数上限（T6R.14）。与学习事件批量上报（≤200 条/次）同
- * 量级：常规试卷几十题，200 留足余量；超上限 400 VALIDATION_ERROR。
- * 服务端与客户端共用本常量，修订须同步两侧与契约测试锁定值。
+ * 量级：常规试卷几十题，200 留足余量。**服务端校验常量**（请求体 schema
+ * max 用；客户端不分块——现实中不存在 >200 题的卷，超限即 400
+ * VALIDATION_ERROR 整批可诊断，客户端不做旁路处理）。修订须同步契约
+ * 测试锁定值。
  */
 export const NOTE_HEADS_MAX_QUESTIONS = 200;
 
