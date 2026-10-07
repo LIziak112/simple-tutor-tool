@@ -2096,17 +2096,20 @@ export async function buildLearningPackZip(
           name: "映射.txt",
         });
       }
+      // 图片条目（ink/media/evidence，全为 PNG）store 直存——PNG 已压缩，
+      // deflate 纯耗 CPU（lib/zip-write 文档与 review-pack 同款口径）；
+      // 文本条目照常压缩
       for (const entry of assembly.inkEntries) {
-        archive.file(entry.absPath, { name: entry.entry });
+        archive.file(entry.absPath, { name: entry.entry, store: true });
       }
       // media 条目：条目名含子目录（blobs/media/…），archiver 按路径写目录条目
       for (const entry of assembly.mediaEntries) {
-        archive.file(entry.absPath, { name: entry.entry });
+        archive.file(entry.absPath, { name: entry.entry, store: true });
       }
       // v2 证据图条目（T6R.12）：evidence/<编号>-<阶段>-<页号>.png；缺失文件
       // 不在清单（manifest.missing 显式登记），不产生悬垂 zip 条目
       for (const entry of assembly.evidenceEntries) {
-        archive.file(entry.absPath, { name: entry.entry });
+        archive.file(entry.absPath, { name: entry.entry, store: true });
       }
     },
     { warningAsError: false },
