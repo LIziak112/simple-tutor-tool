@@ -15,6 +15,7 @@ import {
   BACKUP_SNAPSHOT_NAME_PATTERN,
 } from "@tutor/contract";
 import { ZipArchive } from "archiver";
+import Database from "better-sqlite3";
 import { eq } from "drizzle-orm";
 import type { Logger } from "pino";
 import { verifyPassword } from "../auth/password";
@@ -139,6 +140,62 @@ export function listSnapshots(dataDir: string): BackupSnapshot[] {
       };
     })
     .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+}
+
+/**
+ * 收集现存备份快照引用的 blobs 存储路径（T6R.14 GC 备份引用保留清单的
+ * 扫描件，唯一消费方 note-service.gcNoteVersions）：逐个只读打开 backups/
+ * 快照，取 note_versions.body_path 与 note_images.path 的**原始存储路径**
+ * （相对 DATA_DIR；notes 域内的对账键归一〔越界判定/小写〕是 notes 侧
+ * 单一实现，本函数不复制）。
+ * - 枚举经 listSnapshots（快照命名模式单一来源）；
+ * - 旧快照可能没有 notes 表族（T6R.2 之前的库）——按零引用处理，不视为损坏；
+ * - 单个快照打开/读取失败（损坏/非 SQLite）→ unreadable 计一并**丢弃该
+ *   快照已读的半截路径**（中途出错不可信），其余快照继续；
+ * - 无 backups 目录 → 零引用零计数（GC 既有 worlds 不受影响）。
+ */
+export function collectBackupReferencedPaths(dataDir: string): {
+  paths: string[];
+  unreadable: number;
+} {
+  const paths: string[] = [];
+  let unreadable = 0;
+  for (const snapshot of listSnapshots(dataDir)) {
+    let collected: string[] | null;
+    try {
+      const snapshotDb = new Database(
+        join(backupsDirOf(dataDir), snapshot.filename),
+        { readonly: true },
+      );
+      try {
+        const tableExists = (table: string): boolean =>
+          snapshotDb
+            .prepare(
+              "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+            )
+            .get(table) !== undefined;
+        collected = [];
+        // note_versions / note_images 两表同构读取（列名各自的原始路径列）
+        for (const [table, column] of [
+          ["note_versions", "body_path"],
+          ["note_images", "path"],
+        ] as const) {
+          if (!tableExists(table)) continue;
+          const rows = snapshotDb
+            .prepare(`SELECT ${column} AS p FROM ${table}`)
+            .all() as Array<{ p: string }>;
+          for (const row of rows) collected.push(row.p);
+        }
+      } finally {
+        snapshotDb.close();
+      }
+    } catch (err) {
+      unreadable += 1;
+      continue; // 丢弃半读路径（中途出错不可信）
+    }
+    paths.push(...(collected as string[]));
+  }
+  return { paths, unreadable };
 }
 
 /** 从快照文件名解析时点（北京时间戳 → UTC ISO）；非快照命名返回 null */

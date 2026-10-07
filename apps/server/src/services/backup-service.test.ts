@@ -23,6 +23,7 @@ import { readZipEntries } from "../lib/zip-read";
 import {
   BACKUP_DIR_NAME,
   buildBackupZip,
+  collectBackupReferencedPaths,
   createSnapshot,
   listSnapshots,
   restoreFromBackup,
@@ -466,6 +467,62 @@ describe("恢复的拒绝路径（原数据无损）", () => {
     expect(readFileSync(join(dataDir, "shared", "共享练习.md"), "utf8")).toBe(
       "共享内容 v1",
     );
+  });
+});
+
+describe("collectBackupReferencedPaths（T6R.14 GC 备份引用保留清单扫描件）", () => {
+  it("快照引用的 note_versions/note_images 原始路径全收集；坏快照计 unreadable 且不炸", () => {
+    const fixture = makeFixtureSync();
+    fixtures.push(fixture);
+    const { dataDir, handle } = fixture;
+    // 无快照：零引用零计数
+    expect(collectBackupReferencedPaths(dataDir)).toEqual({
+      paths: [],
+      unreadable: 0,
+    });
+
+    // 快照（空 notes 表族——表存在无行）后放一个损坏快照
+    createSnapshot(dataDir, handle.db, new Date("2026-10-01T00:00:00.000Z"));
+    writeFileSync(
+      join(dataDir, BACKUP_DIR_NAME, "tutor-20261002-000000.db"),
+      Buffer.alloc(256, 0x5a),
+    );
+    const result = collectBackupReferencedPaths(dataDir);
+    expect(result.unreadable).toBe(1);
+    expect(result.paths).toEqual([]); // 空表族 → 零引用（不视为损坏）
+
+    // 直造一份含 note_versions/note_images 行的快照文件（扫描器只消费这两
+    // 表——构造合法测试缝；真实 VACUUM INTO 快照链路由 backup-gc.test 覆盖）
+    const crafted = join(dataDir, BACKUP_DIR_NAME, "tutor-20261003-000000.db");
+    const craftedDb = createDb(crafted);
+    craftedDb.$client
+      .prepare(
+        "CREATE TABLE note_versions (id TEXT PRIMARY KEY, body_path TEXT NOT NULL)",
+      )
+      .run();
+    craftedDb.$client
+      .prepare(
+        "CREATE TABLE note_images (id TEXT PRIMARY KEY, path TEXT NOT NULL)",
+      )
+      .run();
+    craftedDb.$client
+      .prepare(
+        "INSERT INTO note_versions VALUES ('v-1','blobs/notes/n-1/v1-abc01234567.json.gz')",
+      )
+      .run();
+    craftedDb.$client
+      .prepare(
+        "INSERT INTO note_images VALUES ('i-1','blobs/notes/n-1/img-i-1.png')",
+      )
+      .run();
+    craftedDb.$client.close();
+
+    const withRows = collectBackupReferencedPaths(dataDir);
+    expect(withRows.unreadable).toBe(1); // 坏快照仍在
+    expect(withRows.paths).toEqual([
+      "blobs/notes/n-1/v1-abc01234567.json.gz",
+      "blobs/notes/n-1/img-i-1.png",
+    ]);
   });
 });
 

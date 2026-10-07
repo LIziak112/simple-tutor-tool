@@ -10,7 +10,6 @@ import { isAbsolute, join, relative, resolve } from "node:path";
 import { gzipSync } from "node:zlib";
 import type { NoteImageUploadMeta, NoteUploadMeta } from "@tutor/contract";
 import {
-  BACKUP_SNAPSHOT_NAME_PATTERN,
   INK_LOGICAL_WIDTH,
   NOTE_BODY_DECOMPRESSED_MAX_BYTES,
   NOTE_BODY_GZIP_MAX_BYTES,
@@ -29,7 +28,6 @@ import {
   noteRevisionConflictCurrentSchema,
   noteSubmissionEvidenceMetaSchema,
 } from "@tutor/contract";
-import Database from "better-sqlite3";
 import { and, asc, eq, inArray, isNotNull, ne, or, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
@@ -57,7 +55,7 @@ import {
   requireAttemptQuestionRow,
   requireUsableAttempt,
 } from "./attempt-service";
-import { BACKUP_DIR_NAME } from "./backup-service";
+import { collectBackupReferencedPaths } from "./backup-service";
 import {
   findTeacherAttempt,
   requireTeacherAttempt,
@@ -1281,55 +1279,17 @@ export function gcNoteVersions(
   };
 
   /**
-   * 备份引用保留清单（T6R.14）：现扫 backups/ 快照（只读），把快照内
-   * note_versions.body_path / note_images.path 引用的文件键并入
-   * backupKeepKeys。快照损坏/非 SQLite → 计入 unreadableBackupDbs 并触发
-   * 本轮保守模式（版本删除与孤儿清扫全停）。旧快照可能没有 notes 表族
-   * （T6R.2 之前的库）——按零引用处理，不视为损坏。
+   * 备份引用保留清单（T6R.14）：快照扫描件在 backup-service.
+   * collectBackupReferencedPaths（快照枚举/只读/坏件计数在其侧单测），
+   * 这里只做 notes 域内的键归一并入保留集合。不可读快照计数触发本轮
+   * 保守模式（版本删除与孤儿清扫全停）。
    */
   const backupKeepKeys = new Set<string>();
-  const backupsDir = join(dataDir, BACKUP_DIR_NAME);
-  if (existsSync(backupsDir)) {
-    for (const name of readdirSync(backupsDir)) {
-      if (!BACKUP_SNAPSHOT_NAME_PATTERN.test(name)) continue;
-      let keys: string[] | null;
-      try {
-        const snapshot = new Database(join(backupsDir, name), {
-          readonly: true,
-        });
-        try {
-          const tableExists = (table: string): boolean =>
-            snapshot
-              .prepare(
-                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
-              )
-              .get(table) !== undefined;
-          keys = [];
-          if (tableExists("note_versions")) {
-            for (const row of snapshot
-              .prepare("SELECT body_path AS p FROM note_versions")
-              .all() as Array<{ p: string }>) {
-              const key = relKeyOf(row.p);
-              if (key !== null) keys.push(key);
-            }
-          }
-          if (tableExists("note_images")) {
-            for (const row of snapshot
-              .prepare("SELECT path AS p FROM note_images")
-              .all() as Array<{ p: string }>) {
-              const key = relKeyOf(row.p);
-              if (key !== null) keys.push(key);
-            }
-          }
-        } finally {
-          snapshot.close();
-        }
-      } catch {
-        result.unreadableBackupDbs += 1;
-        continue;
-      }
-      for (const key of keys) backupKeepKeys.add(key);
-    }
+  const backupReferenced = collectBackupReferencedPaths(dataDir);
+  result.unreadableBackupDbs = backupReferenced.unreadable;
+  for (const storedPath of backupReferenced.paths) {
+    const key = relKeyOf(storedPath);
+    if (key !== null) backupKeepKeys.add(key);
   }
   // 保守模式：存在不可读快照时不删任何版本、不清任何孤儿（tmp 清扫不受影响）
   const conservative = result.unreadableBackupDbs > 0;
