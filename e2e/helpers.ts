@@ -1,7 +1,12 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { APIRequestContext, Locator, Page } from "@playwright/test";
+import {
+  type APIRequestContext,
+  expect,
+  type Locator,
+  type Page,
+} from "@playwright/test";
 
 /**
  * E2E 公共工具（T2.13）：教师 API 会话、内容准备、学生链接查询、
@@ -837,4 +842,28 @@ export async function teacherEvidenceOf(
     throw new Error("证据行为空（交卷事务未固定原稿）");
   }
   return body.data.evidence;
+}
+
+// ---------- T6R.13：zip 解包与 PNG 校验共享件 ----------
+
+import { pngSize } from "../apps/server/src/lib/png";
+// 跨包复用服务端生产实现（相对 import；二者零依赖、e2e tsconfig 直接过检）：
+// zip-read 的中央目录解包（含条目名安全校验）与 png 的魔数+IHDR 尺寸解析
+// 都比本地弱化副本（无 CRC/ZIP64 的手写版）强。
+import { readZipEntries } from "../apps/server/src/lib/zip-read";
+
+/** 解包 zip → 条目名 → 内容 Map（服务端生产读取器单一实现） */
+export function unzipEntries(buffer: Buffer): Map<string, Buffer> {
+  return new Map(
+    readZipEntries(buffer).map((entry) => [entry.name, entry.data]),
+  );
+}
+
+/** PNG 可解码校验：魔数 + IHDR 宽高 > 0（图为真实渲染器产物）+ 非平凡字节量 */
+export function expectDecodablePng(entry: Buffer, name: string): void {
+  const size = pngSize(entry);
+  expect(size, `${name} 应是可解码 PNG（魔数 + IHDR）`).not.toBeNull();
+  expect(size?.width, `${name} 宽`).toBeGreaterThan(0);
+  expect(size?.height, `${name} 高`).toBeGreaterThan(0);
+  expect(entry.length, `${name} 字节量`).toBeGreaterThan(100);
 }

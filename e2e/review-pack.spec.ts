@@ -1,4 +1,3 @@
-import { inflateRawSync } from "node:zlib";
 import { devices, expect, test } from "@playwright/test";
 import {
   addCourseMemberViaApi,
@@ -6,11 +5,13 @@ import {
   choiceJudgePracticeMarkdown,
   createCourseViaApi,
   drawStrokeWithPointerEvents,
+  expectDecodablePng,
   getStudentViaApi,
   openChoicePractice,
   setCourseItemVisible,
   teacherApiLogin,
   uniqueSuffix,
+  unzipEntries,
 } from "./helpers";
 
 /**
@@ -23,48 +24,6 @@ import {
  * - 教师链（API 下载）：教师域包照常携带参考答案；
  * - 学生端全程挂泄露监控（attachLeakMonitor）。
  */
-
-/** 本地最小 zip 解包（EOCD → 中央目录 → inflateRaw；条目名安全校验） */
-function unzipEntries(buffer: Buffer): Map<string, Buffer> {
-  const eocd = buffer.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
-  if (eocd < 0) throw new Error("E2E 夹具：zip 缺少 EOCD");
-  const count = buffer.readUInt16LE(eocd + 10);
-  let cursor = buffer.readUInt32LE(eocd + 16);
-  const out = new Map<string, Buffer>();
-  for (let i = 0; i < count; i += 1) {
-    if (buffer.readUInt32LE(cursor) !== 0x02014b50) {
-      throw new Error("E2E 夹具：central directory 签名错误");
-    }
-    const method = buffer.readUInt16LE(cursor + 10);
-    const compSize = buffer.readUInt32LE(cursor + 20);
-    const nameLen = buffer.readUInt16LE(cursor + 28);
-    const extraLen = buffer.readUInt16LE(cursor + 30);
-    const commentLen = buffer.readUInt16LE(cursor + 32);
-    const localOffset = buffer.readUInt32LE(cursor + 42);
-    const name = buffer.toString("utf8", cursor + 46, cursor + 46 + nameLen);
-    const lNameLen = buffer.readUInt16LE(localOffset + 26);
-    const lExtraLen = buffer.readUInt16LE(localOffset + 28);
-    const dataStart = localOffset + 30 + lNameLen + lExtraLen;
-    const data = buffer.subarray(dataStart, dataStart + compSize);
-    out.set(name, method === 8 ? inflateRawSync(data) : Buffer.from(data));
-    cursor += 46 + nameLen + extraLen + commentLen;
-  }
-  return out;
-}
-
-/** PNG 可解码校验：魔数 + IHDR 宽高 > 0（分析图为真实渲染器产物） */
-function expectDecodablePng(entry: Buffer, name: string): void {
-  expect(entry.subarray(0, 8).toString("latin1"), `${name} PNG 魔数`).toBe(
-    "\u0089PNG\r\n\u001a\n",
-  );
-  expect(entry.toString("latin1", 12, 16), `${name} IHDR 块`).toBe("IHDR");
-  const width = entry.readUInt32BE(16);
-  const height = entry.readUInt32BE(20);
-  expect(width, `${name} 宽`).toBeGreaterThan(0);
-  expect(height, `${name} 高`).toBeGreaterThan(0);
-  // 可见内容底线：非平凡字节量（纯空白 PNG 也远大于头部长度）
-  expect(entry.length, `${name} 字节量`).toBeGreaterThan(100);
-}
 
 test.describe("单题完整导出（T6R.13：下载并实际解包）", () => {
   test("学生草稿题 → 结果页 AI 复习包 → 下载解包校验；教师域包携答案", async ({
@@ -255,34 +214,42 @@ async function waitForReadyAnalysisImages(
   questionId: string,
 ): Promise<string> {
   const deadline = Date.now() + 60_000;
+  let delayMs = 500;
+  let lastStatus = 0;
   for (;;) {
     const res = await request.get(
       `/api/teacher/attempts/${attemptId}/evidence/${encodeURIComponent(questionId)}`,
     );
-    if (!res.ok()) {
-      throw new Error(`教师证据读取失败：HTTP ${res.status()}`);
-    }
-    const body = (await res.json()) as {
-      data: {
-        evidence: { state: string; versionId: string | null } | null;
-        images: Array<{ spec: string; state: string }>;
+    // 非 2xx 不立即弃测：交卷事务/补图刚落地的窗口内可能瞬时 404/409，
+    // deadline 内计入下一轮重试（只记状态，超时再连状态一起报）
+    if (res.ok()) {
+      const body = (await res.json()) as {
+        data: {
+          evidence: { state: string; versionId: string | null } | null;
+          images: Array<{ spec: string; state: string }>;
+        };
       };
-    };
-    const evidence = body.data.evidence;
-    if (
-      evidence !== null &&
-      evidence.state === "frozen" &&
-      evidence.versionId !== null &&
-      body.data.images.some((image) => image.spec === "analysis") &&
-      body.data.images
-        .filter((image) => image.spec === "analysis")
-        .every((image) => image.state === "ready")
-    ) {
-      return evidence.versionId;
+      const evidence = body.data.evidence;
+      if (
+        evidence !== null &&
+        evidence.state === "frozen" &&
+        evidence.versionId !== null &&
+        body.data.images.some((image) => image.spec === "analysis") &&
+        body.data.images
+          .filter((image) => image.spec === "analysis")
+          .every((image) => image.state === "ready")
+      ) {
+        return evidence.versionId;
+      }
+    } else {
+      lastStatus = res.status();
     }
     if (Date.now() > deadline) {
-      throw new Error("等待分析图就绪超时（60 秒）");
+      throw new Error(
+        `等待分析图就绪超时（60 秒；最后一次证据读取 HTTP ${lastStatus || 200}）`,
+      );
     }
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    delayMs = Math.min(delayMs * 2, 2000);
   }
 }
