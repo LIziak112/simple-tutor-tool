@@ -1,8 +1,10 @@
+import { randomUUID } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { crc32 } from "node:zlib";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { TextContent } from "@modelcontextprotocol/sdk/types.js";
 import type { ApiErr, ReportListData } from "@tutor/contract";
@@ -26,7 +28,28 @@ import {
   createTestDir,
   TEST_TEACHER_ID,
 } from "../db/test-utils.ts";
+import { assembleLearningPack } from "../services/export-service.ts";
+import {
+  attachNoteImage,
+  createCorrection,
+  saveNoteVersion,
+  sealCorrection,
+} from "../services/note-service.ts";
 import { seedDemoData } from "../services/seed-demo.ts";
+import {
+  frozenDraftAttempt,
+  snapshotJsonOf,
+  submitAttemptStatus,
+} from "../test/evidence-fixtures.ts";
+import {
+  gzipJson,
+  makeNotePng,
+  makeStudent,
+  noteDoc,
+} from "../test/note-fixtures.ts";
+import { insertEvidence, setNoteSealedAt } from "../test/note-world.ts";
+import type { PackToolInput } from "./server.ts";
+import { createMcpServer, mcpLearningPackRequestOf } from "./server.ts";
 
 /**
  * T4.6 MCP Server 测试（验收逐条）：
@@ -1341,6 +1364,263 @@ describe("MCP import_zip（AI 侧 zip 打包上传导入）", () => {
     expect(
       env.db.select().from(units).where(eq(units.id, "mcp-坏文档")).all(),
     ).toHaveLength(0);
+    await client.close();
+  });
+});
+
+// ---------- T6R.16：get_student_learning_pack v2 参数与 UI 等价 ----------
+
+describe("MCP get_student_learning_pack v2 与 UI 等价（T6R.16）", () => {
+  /**
+   * v2 证据世界（env 的种子之外独立学生）：一道已交卷题挂三阶段——
+   * scratch（一页分析图）+ 已封存订正（一页图、封存回拨、反思两列）+ 补充稿 v1。
+   */
+  const MCP_SEAL = "2026-10-02T00:00:00.000Z";
+
+  function makeV2World(db: Db, dataDir: string): { studentId: string } {
+    const student = makeStudent(db);
+    const { attemptId } = frozenDraftAttempt(db, student, [
+      {
+        questionId: "mcp-v2-1",
+        snapshotJson: snapshotJsonOf({ id: "mcp-v2-1" }),
+      },
+    ]);
+    const scratch = saveNoteVersion(
+      db,
+      dataDir,
+      student,
+      attemptId,
+      "mcp-v2-1",
+      gzipJson(noteDoc(1, 20)),
+      { baseRevision: 0, mutationId: randomUUID() },
+    );
+    attachNoteImage(
+      db,
+      dataDir,
+      { kind: "student", id: student },
+      scratch.versionId,
+      makeNotePng(1000, 800),
+      {
+        spec: "analysis",
+        pageIndex: 0,
+        crop: { x: 0, y: 0, width: 1000, height: 800 },
+        pixelWidth: 1000,
+        pixelHeight: 800,
+      },
+    );
+    submitAttemptStatus(db, attemptId);
+    insertEvidence(db, attemptId, "mcp-v2-1", "frozen", scratch.versionId);
+    const corrHead = createCorrection(
+      db,
+      dataDir,
+      student,
+      attemptId,
+      "mcp-v2-1",
+      {
+        copyFromOriginal: true,
+      },
+    );
+    const corr = corrHead.corrections[corrHead.corrections.length - 1];
+    if (corr === undefined || corr.currentVersionId === null) {
+      throw new Error("MCP v2 夹具缺少订正 seeded 版本");
+    }
+    attachNoteImage(
+      db,
+      dataDir,
+      { kind: "student", id: student },
+      corr.currentVersionId,
+      makeNotePng(1000, 800),
+      {
+        spec: "analysis",
+        pageIndex: 0,
+        crop: { x: 0, y: 0, width: 1000, height: 800 },
+        pixelWidth: 1000,
+        pixelHeight: 800,
+      },
+    );
+    sealCorrection(db, student, attemptId, "mcp-v2-1", {
+      baseRevision: 1,
+      stuckAt: "审题不清",
+      errorCause: "漏了负号",
+    });
+    setNoteSealedAt(db, corr.noteId, MCP_SEAL);
+    saveNoteVersion(
+      db,
+      dataDir,
+      student,
+      attemptId,
+      "mcp-v2-1",
+      gzipJson(noteDoc(2, 30)),
+      { baseRevision: 0, mutationId: randomUUID(), phase: "supplement" },
+    );
+    return { studentId: student };
+  }
+
+  it("packVersion=2 + evidencePhases 产出 v2 包：meta.version=2、evidence 含 correction（封存列与反思入包）", async () => {
+    const env = await makeEnv();
+    const w = makeV2World(env.db, env.dataDir);
+    const client = await connectClient(env, env.tokenA);
+    const result = await client.callTool({
+      name: "get_student_learning_pack",
+      arguments: {
+        studentId: w.studentId,
+        days: "all",
+        packVersion: 2,
+        modules: {
+          evidence: true,
+          evidencePhases: ["correction", "scratch", "supplement"],
+        },
+      },
+    });
+    expect(result.isError).toBeFalsy();
+    const pack = JSON.parse(textOf(result)) as {
+      meta: {
+        version: number;
+        modules: {
+          evidence: boolean;
+          evidencePhases: string[];
+        };
+      };
+      evidence: Array<{
+        phase: string;
+        sealedAt?: string;
+        stuckAt?: string | null;
+        errorCause?: string | null;
+      }>;
+      attempts: { responses: Array<{ evidenceRefs?: string[] }> };
+    };
+    expect(pack.meta.version).toBe(2);
+    expect(pack.meta.modules.evidence).toBe(true);
+    // 乱序入参 → meta 回显装配端规范序
+    expect(pack.meta.modules.evidencePhases).toEqual([
+      "scratch",
+      "correction",
+      "supplement",
+    ]);
+    expect(pack.evidence.map((entry) => entry.phase)).toEqual([
+      "scratch",
+      "correction",
+      "supplement",
+    ]);
+    const corr = pack.evidence.find((entry) => entry.phase === "correction");
+    expect(corr?.sealedAt).toBe(MCP_SEAL);
+    expect(corr?.stuckAt).toBe("审题不清");
+    expect(corr?.errorCause).toBe("漏了负号");
+    expect(pack.attempts.responses[0]?.evidenceRefs).toHaveLength(3);
+    await client.close();
+  });
+
+  it("MCP 与 UI 等价：同 now 注入下工具返回的 packJson 与 assembleLearningPack 逐字节相等", async () => {
+    const env = await makeEnv();
+    const w = makeV2World(env.db, env.dataDir);
+    const EQUIV_NOW = "2026-10-10T00:00:00.000Z";
+    // 直建 server 实例注入 now（app 挂载链不注入）；InMemoryTransport 走真实
+    // 协议编解码——工具产物与 UI 形状请求的装配产物逐字节对比
+    const server = createMcpServer({
+      db: env.db,
+      dataDir: env.dataDir,
+      teacherId: TEST_TEACHER_ID,
+      now: EQUIV_NOW,
+    });
+    const client = new Client({ name: "equiv-test", version: "1.0.0" });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    // v2 多阶段形状（等价 UI 形状 = 入参经 mcpLearningPackRequestOf 构造的请求）
+    const v2Args: PackToolInput = {
+      studentId: w.studentId,
+      days: "all",
+      packVersion: 2,
+      modules: {
+        evidence: true,
+        evidencePhases: ["correction", "scratch", "supplement"],
+      },
+    };
+    const v2Result = await client.callTool({
+      name: "get_student_learning_pack",
+      arguments: v2Args,
+    });
+    expect(v2Result.isError).toBeFalsy();
+    const v2Ui = assembleLearningPack(
+      env.db,
+      env.dataDir,
+      TEST_TEACHER_ID,
+      mcpLearningPackRequestOf(v2Args),
+      { now: EQUIV_NOW },
+    );
+    expect(textOf(v2Result)).toBe(v2Ui.packJson);
+    // 默认形状（v1）同样逐字节相等
+    const v1Args = { studentId: w.studentId, days: "all" as const };
+    const v1Result = await client.callTool({
+      name: "get_student_learning_pack",
+      arguments: v1Args,
+    });
+    expect(v1Result.isError).toBeFalsy();
+    const v1Ui = assembleLearningPack(
+      env.db,
+      env.dataDir,
+      TEST_TEACHER_ID,
+      mcpLearningPackRequestOf(v1Args),
+      { now: EQUIV_NOW },
+    );
+    expect(textOf(v1Result)).toBe(v1Ui.packJson);
+    await client.close();
+    await server.close();
+  });
+
+  it("白名单外字段被剥离不生效；契约拒绝转 400 VALIDATION_ERROR（ZodError 坑位）", async () => {
+    const env = await makeEnv();
+    const w = makeV2World(env.db, env.dataDir);
+    const client = await connectClient(env, env.tokenA);
+    // ① 契约拒绝：evidence 勾选但 packVersion 缺省 → 结构化 400（非 INTERNAL）
+    const noV2 = await client.callTool({
+      name: "get_student_learning_pack",
+      arguments: {
+        studentId: w.studentId,
+        days: "all",
+        modules: { evidence: true },
+      },
+    });
+    expect(noV2.isError).toBe(true);
+    const noV2Data = JSON.parse(textOf(noV2)) as {
+      error: string;
+      message: string;
+    };
+    expect(noV2Data.error).toBe("VALIDATION_ERROR");
+    expect(noV2Data.message).toContain("packVersion=2");
+    // ② 契约拒绝：evidencePhases 含 correction 但 evidence 未勾
+    const noEvidence = await client.callTool({
+      name: "get_student_learning_pack",
+      arguments: {
+        studentId: w.studentId,
+        days: "all",
+        packVersion: 2,
+        modules: { evidencePhases: ["correction"] },
+      },
+    });
+    expect(noEvidence.isError).toBe(true);
+    expect(JSON.parse(textOf(noEvidence)).message).toContain("证据附件");
+    // ③ 白名单外字段（modules.lectures/ink 与未知键）被剥离：默认集照常产出 v1 包
+    const ok = await client.callTool({
+      name: "get_student_learning_pack",
+      arguments: {
+        studentId: w.studentId,
+        days: "all",
+        modules: {
+          lectures: [{ lectureId: "x", sectionIndexes: [0] }],
+          ink: true,
+        },
+        bogus: true,
+      },
+    });
+    expect(ok.isError).toBeFalsy();
+    const pack = JSON.parse(textOf(ok)) as {
+      meta: { version: number; modules: { lectures: boolean; ink: boolean } };
+    };
+    expect(pack.meta.version).toBe(1);
+    expect(pack.meta.modules.lectures).toBe(false); // 白名单外覆盖被剥离
+    expect(pack.meta.modules.ink).toBe(false);
     await client.close();
   });
 });
