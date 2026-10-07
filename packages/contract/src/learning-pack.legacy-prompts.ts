@@ -15,3 +15,20 @@ export const LEGACY_PROMPT_FIXTURES: Readonly<Record<string, string>> = {
   "period-summary":
     "# 学情数据包分析任务：阶段总结（家长沟通）\n\n> 本文件由 simple-tutor-tool 按「学情分析提示词模板」生成（模板单一来源：\n> packages/contract/src/learning-pack.ts，人读版见 docs/dsl/学情分析提示词.md）。\n> 使用方法：把整个数据包（本文件 + pack.json + summary.md + schema.json + ink/ 图片目录）一并交给 AI。\n\n## 角色\n\n你是一对一辅导老师的学情分析助手。数据包里是老师长期积累的真实作答与学习痕迹数据，\n请基于数据说话，区分「证据充分」与「证据不足」，不编造数据包之外的信息。\n\n## 任务目标：阶段总结（家长沟通）\n\n请基于数据包，写一份面向家长的阶段性学习总结（教师审阅后转发）：\n1. 语气客观、具体、鼓励为主，避免「粗心」「不认真」这类空泛评价，用数据说话；\n2. 覆盖：本阶段学了什么（讲义/考点范围）、掌握情况（正确率趋势、历次进步）、薄弱环节、学习状态（用时、提示使用、讲义阅读等行为信号——仅描述不武断）；\n3. 给家长 2–3 条可操作的家庭配合建议；\n4. 篇幅 400–800 字，分小节，方便家长快速阅读。\n\n## 数据说明（按本次包内实际内容）\n\n- pack.json：结构化数据（schema.json 是它的 JSON Schema，字段含义以 schema 与本节说明为准）。\n- students：学生名单。已化名——学生以「学生A/学生B…」称呼（化名与真实姓名的对照只存在老师本地的 映射.txt，不在包内）。\n- content.lectures：讲义条目——title、outline（H2/H3 目录）；勾选了全文的小节另含 sections（headingIndex 对应 outline 里的目录序号）。\n- content.questions：题目（取作答时的快照，题干 + 参考答案 + 详解）。\n- attempts.responses：逐题作答行——answerText（学生答案）、autoCorrect/finalCorrect（自动/最终判定，null=待批）、teacherComment（**教师评语原文，可能包含学生真实姓名**，属老师写给自己的批注，分析时可作参考）、no（该次作答内全卷连续题号）。\n- attempts.summaries：历次作答汇总——sourceType（assignment=作业/course=课程练习/wrong=错题重练）、attemptNo 与 isFirst（**收录全部历次**，重做进步可从历次对比看出）、得分（scoreAuto 自动判分 / scoreFinal 最终得分）与判定计数。\n- traces.questions：每题过程指标——有效用时/提示数/改答次数来自作答记录；开提示前思考时长、提示停留、手写反复度、离线作答占比、是否回看解析为**行为推断信号，仅供参照、不下结论**。\n- traces.lectures：讲义阅读地图——逐节停留判定（未到达/掠过/部分/已读/细读）与折叠块、分步容器的交互记录，同样是时间代理的行为推断。\n- summary：统计摘要（按学生汇总正确率〔待批不计入分母〕、有效用时、离线占比）。\n- summary.md：人类可读的统计摘要（与 pack.json 同源，AI 读表格更方便）。\n- ink/*.png：手写过程图片（文件名含学生称呼、题目 id 与作答片段号）；如你是多模态模型请结合图片分析书写过程与步骤规范性。\n\n## 输出要求\n\n- 用中文输出 Markdown：标题（如「XX 同学 X 月学习小结」）→ 学习内容 → 掌握情况 → 薄弱环节 → 给家长的建议；\n- 涉及学生的称呼沿用数据包中的称呼（如为化名则用化名，教师转发前自行替换）；\n- 数据引用要准确（正确率、题数、进步对比），不夸大不回避。\n\n",
 };
+
+/**
+ * media:true 形态的逐字节回归锁夹具（T6R.16 闸门 F14）：与上面基线的唯一
+ * 差异是「使用方法」交付清单多枚举 blobs/media/ 配图目录（复审 A9 的
+ * deliverables 拼装，全模块示例含 ink）。从冻结基线字面量派生——派生式
+ * 本身即锁定「media 只改交付清单一行」这一形状约束。
+ */
+export const LEGACY_PROMPT_MEDIA_FIXTURES: Readonly<Record<string, string>> =
+  Object.fromEntries(
+    Object.entries(LEGACY_PROMPT_FIXTURES).map(([goal, md]) => [
+      goal,
+      md.replaceAll(
+        "ink/ 图片目录）一并交给 AI。",
+        "ink/ 图片目录 + blobs/media/ 配图目录）一并交给 AI。",
+      ),
+    ]),
+  );

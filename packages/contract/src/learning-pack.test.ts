@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { LEGACY_PROMPT_FIXTURES } from "./learning-pack.legacy-prompts.ts";
+import {
+  LEGACY_PROMPT_FIXTURES,
+  LEGACY_PROMPT_MEDIA_FIXTURES,
+} from "./learning-pack.legacy-prompts.ts";
 import {
   LEARNING_PACK_GOAL_LABELS,
   LEARNING_PACK_MAX_BYTES,
@@ -14,6 +17,7 @@ import {
   learningPackV2Schema,
   renderLearningPackPrompt,
 } from "./learning-pack.ts";
+import { NOTE_PHASE_LABELS, NOTE_PHASE_ORDER } from "./note.ts";
 
 /**
  * AI 学情数据包契约自测（T4.3）：锁定请求校验（模块勾选建模、隐私缺省、
@@ -756,6 +760,27 @@ describe("modules.evidencePhases（T6R.16 v2 证据阶段）", () => {
   });
 });
 
+describe("NOTE_PHASE_ORDER 与 NOTE_PHASE_LABELS（T6R.16 闸门 F8：阶段序与中文标签契约单源）", () => {
+  it("规范序锁定 scratch → correction → supplement（服务端规范化与前端渲染共用此源）", () => {
+    expect([...NOTE_PHASE_ORDER]).toEqual([
+      "scratch",
+      "correction",
+      "supplement",
+    ]);
+  });
+
+  it("中文标签三键齐备且值锁定（缩略图徽标与模块回显共用此源）", () => {
+    expect(NOTE_PHASE_ORDER.every((phase) => phase in NOTE_PHASE_LABELS)).toBe(
+      true,
+    );
+    expect(NOTE_PHASE_LABELS).toEqual({
+      scratch: "原稿",
+      correction: "订正",
+      supplement: "补充稿",
+    });
+  });
+});
+
 describe("request.asOf（T6R.16 固定选择）", () => {
   it("毫秒精度 UTC ISO 通过并回显；v1 亦可携带（显式 opt-in）", () => {
     const parsed = learningPackExportRequestSchema.parse({
@@ -782,6 +807,35 @@ describe("request.asOf（T6R.16 固定选择）", () => {
           .success,
       ).toBe(false);
     }
+  });
+
+  it("正则过但日历非法拒绝（F5：畸形时刻不再落到服务端 500，契约层 400）", () => {
+    // 形状符合 AS_OF_ISO_RE（四位年-两位月…毫秒 Z）但 Date.parse = NaN：
+    // 13 月 / 45 日 / 99 时的畸形串。修前只有 regex 一道闸（500 风险），
+    // 修后 refine 在契约层拒绝（400 VALIDATION_ERROR）。
+    for (const asOf of [
+      "2026-13-01T00:00:00.000Z",
+      "2026-10-45T00:00:00.000Z",
+      "2026-10-01T99:99:99.999Z",
+    ]) {
+      const result = learningPackExportRequestSchema.safeParse({
+        ...MIN_REQUEST,
+        asOf,
+      });
+      expect(result.success, asOf).toBe(false);
+      if (!result.success) {
+        expect(
+          result.error.issues.some((issue) => issue.message.includes("日历")),
+        ).toBe(true);
+      }
+    }
+    // 边界对照：合法日历（含闰年 2 月 29 日）仍通过
+    expect(
+      learningPackExportRequestSchema.safeParse({
+        ...MIN_REQUEST,
+        asOf: "2024-02-29T23:59:59.999Z",
+      }).success,
+    ).toBe(true);
   });
 });
 
@@ -1098,6 +1152,19 @@ describe("renderLearningPackPrompt：per-question-review 与阶段细化（T6R.1
     ] as const) {
       expect(renderLearningPackPrompt({ ...base, goal })).toBe(
         LEGACY_PROMPT_FIXTURES[goal],
+      );
+    }
+  });
+
+  it("旧四目标在 media:true 输入下渲染与基线逐字节一致（F14：media 形态回归锁）", () => {
+    for (const goal of [
+      "diagnose-weakness",
+      "lesson-prep",
+      "variant-practice",
+      "period-summary",
+    ] as const) {
+      expect(renderLearningPackPrompt({ ...base, goal, media: true })).toBe(
+        LEGACY_PROMPT_MEDIA_FIXTURES[goal],
       );
     }
   });

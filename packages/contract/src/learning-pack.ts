@@ -249,6 +249,12 @@ export const learningPackExportRequestSchema = z
         AS_OF_ISO_RE,
         "asOf 必须是毫秒精度 UTC ISO 时间（如 2026-10-07T01:02:03.456Z）",
       )
+      // 日历合法性（闸门 F5）：形状合法但 Date.parse=NaN 的畸形串（2026-13-45
+      // 或 99 时）在此拒绝（400），不再落到服务端装配的 Date.parse NaN → 500
+      .refine(
+        (value) => !Number.isNaN(Date.parse(value)),
+        "asOf 不是合法的日历时间（月/日/时分秒超出真实历法范围）",
+      )
       .optional(),
   })
   .superRefine((request, ctx) => {
