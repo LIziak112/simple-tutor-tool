@@ -1152,6 +1152,24 @@ describe("T6R.15 错误码：订正三新码", () => {
       noteErrorCodeSchema.safeParse("note_correction_sealed").success,
     ).toBe(false);
   });
+
+  it("NOTE_NOT_SUBMITTED 在列：draft attempt 上写 correction/supplement 的 409 专用码（D3 措辞修正）", () => {
+    // 计划 D3 原写 ALREADY_SUBMITTED，语义相反（那是「已交卷后写原稿」的码）；
+    // 「未交卷就想写订正/补充稿」需要自己的码 NOTE_NOT_SUBMITTED
+    expect(noteErrorCodeSchema.parse("NOTE_NOT_SUBMITTED")).toBe(
+      "NOTE_NOT_SUBMITTED",
+    );
+    // 近形 / 小写 / 缺词形态拒（枚举严格）
+    expect(noteErrorCodeSchema.safeParse("NOTE_NOT_SUBMIT").success).toBe(
+      false,
+    );
+    expect(noteErrorCodeSchema.safeParse("note_not_submitted").success).toBe(
+      false,
+    );
+    expect(
+      noteErrorCodeSchema.safeParse("ATTEMPT_NOT_SUBMITTED").success,
+    ).toBe(false);
+  });
 });
 
 describe("T6R.15 上传 meta：phase 字段（缺省 scratch 向后兼容）", () => {
