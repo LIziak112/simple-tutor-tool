@@ -3,6 +3,7 @@ import { BACKUP_MAX_UPLOAD_BYTES } from "@tutor/contract";
 import { Hono } from "hono";
 import type { TeacherEnv } from "../auth/require-teacher";
 import type { Db, DbHandle } from "../db/client";
+import { noStoreAttachmentHeaders } from "../lib/binary-response";
 import { HttpError } from "../lib/http-error";
 import {
   buildBackupZip,
@@ -47,11 +48,7 @@ export function createTeacherBackupRoutes(
           Readable.toWeb(zip.stream) as unknown as ReadableStream<Uint8Array>,
           {
             status: 200,
-            headers: {
-              "content-type": "application/zip",
-              "cache-control": "no-store",
-              "content-disposition": `attachment; filename="${zip.filename}"`,
-            },
+            headers: noStoreAttachmentHeaders("application/zip", zip.filename),
           },
         );
       })

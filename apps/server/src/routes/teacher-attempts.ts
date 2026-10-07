@@ -7,6 +7,7 @@ import {
 import { Hono } from "hono";
 import type { TeacherEnv } from "../auth/require-teacher";
 import type { Db } from "../db/client";
+import { noStoreBinaryResponse } from "../lib/binary-response";
 import { HttpError, parseJsonBody } from "../lib/http-error";
 import {
   beijingExportStampOf,
@@ -137,13 +138,8 @@ export function createTeacherAttemptRoutes(
           c.req.param("id"),
           c.req.param("questionId"),
         );
-        return new Response(zip.bytes, {
-          status: 200,
-          headers: {
-            "content-type": "application/zip",
-            "cache-control": "no-store",
-            "content-disposition": `attachment; filename="${zip.filename}"`,
-          },
+        return noStoreBinaryResponse(zip.bytes, "application/zip", {
+          attachmentFilename: zip.filename,
         });
       })
       .post("/responses/:id/mark", async (c) => {

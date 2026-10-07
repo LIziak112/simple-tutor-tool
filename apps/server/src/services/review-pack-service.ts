@@ -15,11 +15,11 @@ import {
   reviewPackSchema,
 } from "@tutor/contract";
 import { buildStaticQuestionMaterial } from "@tutor/md-dsl";
-import { ZipArchive } from "archiver";
 import { eq } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { type Attempt, assignments, type ResponseRow } from "../db/schema";
 import { HttpError } from "../lib/http-error";
+import { zipBufferOf } from "../lib/zip-write.ts";
 import {
   answerOf,
   answersReleased,
@@ -101,6 +101,8 @@ export interface ReviewPackAssembly {
   /** 逐张图片附件（下载入口 + 缺失标记） */
   readonly attachments: readonly ReviewPackAttachment[];
   readonly preview: ReviewPackPreviewData;
+  /** 装配时刻（可注入）——pack.generatedAt 与 zip 文件名时间戳同源 */
+  readonly nowDate: Date;
   readonly totalBytes: number;
 }
 
@@ -342,8 +344,9 @@ export function assembleReviewPack(
   const schemaJson = `${JSON.stringify(reviewPackJsonSchema(), null, 2)}\n`;
 
   // —— review.md（共享提示词基础；附件清单不含 review.md/pack.json 自身） ——
+  const questionMdBytes = Buffer.byteLength(questionMd, "utf8");
   const promptFiles = [
-    { path: questionEntry, bytes: Buffer.byteLength(questionMd, "utf8") },
+    { path: questionEntry, bytes: questionMdBytes },
     ...mediaEntries.map((medium) => ({
       path: medium.entry,
       bytes: medium.bytes,
@@ -403,7 +406,7 @@ export function assembleReviewPack(
       {
         path: questionEntry,
         kind: "question",
-        bytes: promptFiles[0]?.bytes ?? 0,
+        bytes: questionMdBytes,
         refs: [qRef],
       },
       ...mediaEntries.map((medium) => ({
@@ -594,6 +597,7 @@ export function assembleReviewPack(
     missing,
     attachments,
     preview,
+    nowDate,
     totalBytes: files.reduce((sum, file) => sum + file.bytes, 0),
   };
 }
@@ -620,52 +624,38 @@ export function previewReviewPack(
 // ---------- zip 写入（与装配分离——「生成期间状态变化」显式失败缝） ----------
 
 /**
- * 把装配结果写成 zip（内存 Buffer）。**装配与写入分离**：装配阶段 stat 过的
- * 文件在写入阶段消失（GC/并发删除）时，archiver 报错 → 显式 500
+ * 把装配结果写成 zip（内存字节）。**装配与写入分离**：装配阶段 stat 过的
+ * 文件在写入阶段消失（GC/并发删除）时，archiver 发 warning（静默跳过条目
+ * 的坑位见 lib/zip-write.ts）→ 经 zipBufferOf 当错误抛出 → 显式 500
  * EXPORT_ASSEMBLY_BROKEN——绝不产出与 manifest 不符的静默缺件 zip；调用方
  * （路由）可让用户重试，重试将按当前状态重新装配并把该文件列入缺失清单。
+ * 图片条目 store 直存（PNG 已压缩，deflate 纯耗 CPU）；文本条目照常压缩。
  */
 export async function zipReviewPack(
   assembly: ReviewPackAssembly,
 ): Promise<Uint8Array<ArrayBuffer>> {
-  const archive = new ZipArchive({ zlib: { level: 6 } });
-  const chunks: Buffer[] = [];
-  archive.on("data", (chunk: Buffer) => chunks.push(chunk));
-  const done = new Promise<void>((resolve, reject) => {
-    archive.on("end", () => resolve());
-    archive.on("error", (err: Error) => reject(err));
-  });
-  // archiver 对消失的文件只发 warning 并**静默跳过条目**（core.js 的 lstat
-  // 错误路径 emit("warning") + _entriesCount--）——这里必须把 warning 当
-  // 装配破坏处理，否则会产出与 manifest 不符的缺件 zip（测试锁定的行为）
-  let writeBroken: Error | null = null;
-  archive.on("warning", (err: Error) => {
-    writeBroken ??= err;
-  });
   try {
-    archive.append(Buffer.from(assembly.reviewMd, "utf8"), {
-      name: "review.md",
+    const buffer = await zipBufferOf((archive) => {
+      archive.append(Buffer.from(assembly.reviewMd, "utf8"), {
+        name: "review.md",
+      });
+      archive.append(Buffer.from(assembly.packJson, "utf8"), {
+        name: "pack.json",
+      });
+      archive.append(Buffer.from(assembly.schemaJson, "utf8"), {
+        name: "schema.json",
+      });
+      archive.append(Buffer.from(assembly.questionMd, "utf8"), {
+        name: assembly.questionEntry,
+      });
+      for (const entry of assembly.mediaEntries) {
+        archive.file(entry.absPath, { name: entry.entry, store: true });
+      }
+      for (const entry of assembly.evidenceEntries) {
+        archive.file(entry.absPath, { name: entry.entry, store: true });
+      }
     });
-    archive.append(Buffer.from(assembly.packJson, "utf8"), {
-      name: "pack.json",
-    });
-    archive.append(Buffer.from(assembly.schemaJson, "utf8"), {
-      name: "schema.json",
-    });
-    archive.append(Buffer.from(assembly.questionMd, "utf8"), {
-      name: assembly.questionEntry,
-    });
-    for (const entry of assembly.mediaEntries) {
-      archive.file(entry.absPath, { name: entry.entry });
-    }
-    for (const entry of assembly.evidenceEntries) {
-      archive.file(entry.absPath, { name: entry.entry });
-    }
-    await archive.finalize();
-    await done;
-    if (writeBroken !== null) {
-      throw writeBroken;
-    }
+    return new Uint8Array(buffer);
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     throw new HttpError(
@@ -674,7 +664,6 @@ export async function zipReviewPack(
       `单题包写入失败（生成期间文件状态可能已变化）：${detail}。请重试；重试将按当前状态重新装配并标记缺失文件。`,
     );
   }
-  return new Uint8Array(Buffer.concat(chunks));
 }
 
 /**
@@ -708,14 +697,10 @@ export async function buildReviewPackZip(
     );
   }
   const bytes = await zipReviewPack(assembly);
-  const nowDate =
-    options.now === undefined
-      ? new Date()
-      : typeof options.now === "string"
-        ? new Date(Date.parse(options.now))
-        : options.now;
+  // 命名时刻与装配时刻同源（assembly.nowDate）——预览与下载、pack.json 的
+  // generatedAt 与文件名时间戳不因两次解析漂移
   return {
     bytes,
-    filename: `review-pack-q${assembly.preview.questionNo}-${beijingExportStampOf(nowDate)}.zip`,
+    filename: `review-pack-q${assembly.preview.questionNo}-${beijingExportStampOf(assembly.nowDate)}.zip`,
   };
 }

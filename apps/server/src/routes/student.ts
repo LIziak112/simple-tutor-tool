@@ -463,13 +463,8 @@ export function createStudentRoutes(
           c.req.param("id"),
           c.req.param("questionId"),
         );
-        return new Response(zip.bytes, {
-          status: 200,
-          headers: {
-            "content-type": "application/zip",
-            "cache-control": "no-store",
-            "content-disposition": `attachment; filename="${zip.filename}"`,
-          },
+        return noStoreBinaryResponse(zip.bytes, "application/zip", {
+          attachmentFilename: zip.filename,
         });
       })
       // T6R.5 ③：版本文档直出（gzip 原字节；授权在 service 归属链，版本行
