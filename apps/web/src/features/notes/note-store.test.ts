@@ -323,14 +323,20 @@ describe("note-store：回执与状态派生", () => {
     const mutationOld = await pendingMutationIdOf(SESSION_A, SCOPE);
     // 模拟 clear→seed 对齐到新行（noteId 变化、baseRevision 2——CorrectionSection
     // 创建新订正后的形态；pending 保留=新行待传内容）
-    const newRowNote = {
-      ...headOf().note,
-      noteId: "99999999-9999-4999-8999-999999999901",
-      revision: 2,
-      currentVersionId: "33333333-3333-4333-8333-333333333302",
-    };
-    if (newRowNote === null) throw new Error("夹具缺 note（测试前置失败）");
-    await applyServerHead(SESSION_A, SCOPE, headOf({ note: newRowNote }));
+    const baseNote = headOf().note;
+    if (baseNote === null) throw new Error("夹具缺 note（测试前置失败）");
+    await applyServerHead(
+      SESSION_A,
+      SCOPE,
+      headOf({
+        note: {
+          ...baseNote,
+          noteId: "99999999-9999-4999-8999-999999999901",
+          revision: 2,
+          currentVersionId: "33333333-3333-4333-8333-333333333302",
+        },
+      }),
+    );
     const aligned = await recordOf(SESSION_A, SCOPE);
     expect(aligned.noteId).toBe("99999999-9999-4999-8999-999999999901");
     expect(aligned.baseRevision).toBe(2);
