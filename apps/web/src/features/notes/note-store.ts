@@ -1011,6 +1011,35 @@ export function setUploading(
 }
 
 /**
+ * 新开订正行的本地重置（T6R.15 D2/D3，CorrectionSection 创建新订正成功后
+ * 调用）：本地记录从「对旧封存行的续写」切换为「新行的空白起步」——
+ * pending/doc/conflict/denied/baseRevision/noteId/lastHead 全清，防止旧封存
+ * 行的 stale 状态（未传完的 pending、CAS 冲突、被拒终态、旧正文）灌进
+ * 新行（否则首传会带旧 baseRevision 撞 CAS、编辑器载入旧稿）。
+ * docVersion 照常递增（replaceDoc 单点）——消费方（use-note-editor 自写
+ * 自载守卫）感知外部换稿并重载引擎。无残留记录时幂等 no-op（不建壳——
+ * 新行的首拉播种/首笔书写自然建壳）。与 resetCorrectionSealed（SEALED
+ * 自动重试的**保留正文**重置）互补：本函数是「弃旧稿开新行」的用户显式
+ * 动作，正文回到空稿。
+ */
+export async function clearCorrectionRecord(
+  session: NoteSessionRef,
+  scope: NoteScope,
+): Promise<void> {
+  await mutateLoaded(session, scope, null, (record) => {
+    replaceDoc(record, freshRecord().doc);
+    record.pending = null;
+    record.baseRevision = 0;
+    record.noteId = null;
+    record.lastHead = null;
+    record.conflict = null;
+    record.denied = null;
+    record.editedAt = 0;
+    record.totalPoints = 0;
+  });
+}
+
+/**
  * NoteDoc 相等比较（恢复 load 不回传无变化版本的依据，复审⑫）：
  * local（pending 侧 NoteDocInput）经 safeParseDoc 物化（parseMemo 命中则
  * 零成本）；server 侧已物化（NoteDoc）不再重复 parse；两侧 digestOf
