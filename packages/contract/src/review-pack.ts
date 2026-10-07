@@ -456,6 +456,13 @@ export function renderReviewPackPrompt(input: ReviewPackPromptInput): string {
       `- evidence.state=${input.evidenceState}（${REVIEW_PACK_EVIDENCE_STATE_LABELS[input.evidenceState]}）。`,
     );
   }
+  // 切片分页页间重叠说明（T6R.17）：包内实际携带 evidence/ 附件才出现——
+  // 纯文字包/仅 ink 笔迹包不提及（重叠常量语义见 note.ts 单源注释）。
+  if (input.files.some((file) => file.path.startsWith("evidence/"))) {
+    dataLines.push(
+      "- 手写证据图片可能按切片分页（文件名末尾 -01/-02 递增）：相邻页存在小段重叠区（约一格）以保证跨页笔迹完整可读；重叠区笔迹属同一段内容，转写与引用不要重复计数或编号。",
+    );
+  }
   if (!input.questionPresent) {
     dataLines.push(
       "- 题目内容缺失：本题历史快照缺失（题目已删除或升级遗留），题干为空、不回填当前题库内容。",
