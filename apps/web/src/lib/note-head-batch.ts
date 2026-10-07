@@ -44,29 +44,28 @@ export function resetNoteHeadBatchForTest(): void {
   headBatches.clear();
 }
 
-/** 统一 flush：取走该 attempt 全部待批项，一次批量请求并按 id 分发 */
+/**
+ * 统一 flush：取走该 attempt 全部待批项，一次批量请求并按请求序分发。
+ * 缺条校验已由 fetchStudentNoteHeadsApi 收口（C10：返回数组与 questionIds
+ * 请求序严格对齐是它的返回契约），此处直接按索引映射 resolve——重复题目
+ * 由去重后的 questionIds 定位，同一 head 分发回全部同题等待方。
+ */
 function flushHeadBatch(attemptId: string): void {
   const batch = headBatches.get(attemptId);
   headBatches.delete(attemptId);
-  if (batch === undefined || batch.items.length === 0) return;
+  if (batch === undefined) return; // entry 与 timer 同置同清：无批即无排程
   const items = batch.items;
   const questionIds = [...new Set(items.map((item) => item.questionId))];
   fetchStudentNoteHeadsApi(attemptId, questionIds)
     .then((heads) => {
       const headById = new Map<string, NoteHeadData>();
       questionIds.forEach((questionId, index) => {
-        const head = heads[index];
-        if (head !== undefined) headById.set(questionId, head);
+        // 不变量：返回数组与请求序严格对齐（fetchStudentNoteHeadsApi 契约），
+        // 索引必有对应元素
+        headById.set(questionId, heads[index] as NoteHeadData);
       });
       for (const item of items) {
-        const head = headById.get(item.questionId);
-        if (head === undefined) {
-          item.reject(
-            new Error("批量头响应缺少该题（服务端契约违约，请重试）"),
-          );
-        } else {
-          item.resolve(head);
-        }
+        item.resolve(headById.get(item.questionId) as NoteHeadData);
       }
     })
     .catch((err: unknown) => {
