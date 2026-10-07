@@ -783,6 +783,12 @@ export function assembleLearningPack(
           //   全部事件）→ null（未知）。v1/v2 共用此口径：v1 对零事件 attempt
           //   由 false 修正为 null，属诚实数据 widening（AI 读 JSON 宽容），
           //   非破坏。
+          // 能力代际边界（T6R.17 审查留档）：T4.0a 之前交卷的历史 attempt
+          // 事件流非空（focus/answer_change/hint_open 等 T2.10 事件）但当时
+          // 尚无 directive_interact{host:result} 采集能力——其 false 严格说
+          // 更接近「未知」。现行按「流空与否」划界（行为不劣于旧 ?? false，
+          // 且无法从行内反推客户端能力版本）；如需按事件能力代际细化，
+          // 属后续任务决策，不在此处暗改。
           reviewedSolution:
             metric?.reviewedSolution ??
             (attemptHasEvents.has(attempt.id) ? false : null),

@@ -1,5 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+// 闸门修正（T6R.17 审查）：题型全集从契约单源派生，不手抄枚举（规则 1 契约优先）
+import { questionTypeSchema } from "@tutor/contract";
 import { analyzeImport } from "./content-service";
 
 /**
@@ -18,16 +20,8 @@ const FIXTURE_MD = readFileSync(
   "utf8",
 );
 
-/** 解析器认可的题型全集（与 md-dsl 未知题型 issue 的合法值清单一致） */
-const LEGAL_TYPES = new Set([
-  "judge",
-  "choice",
-  "multi",
-  "fill",
-  "solve",
-  "apply",
-  "find-error",
-]);
+/** 解析器认可的题型全集（契约 questionTypeSchema 单源派生，勿手抄） */
+const LEGAL_TYPES = new Set<string>(questionTypeSchema.options);
 
 /** 8 类样本的题干标注序号（与样本卷题序一一对应） */
 const SAMPLE_MARKS = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧"] as const;
@@ -74,7 +68,7 @@ describe("ai-review-samples.md 样本卷守护（T6R.17）", () => {
     });
   });
 
-  it("样本⑥带两条提示（「已有提示」场景），全部题带详解", () => {
+  it("样本⑥带两条提示（多提示场景；「已有提示」痕迹由样本⑤操作制造），全部题带详解", () => {
     expect(questions[5]?.hints).toHaveLength(2);
     for (const question of questions) {
       expect(question.solutionMd).toBeDefined();
