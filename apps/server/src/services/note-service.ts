@@ -10,6 +10,7 @@ import { isAbsolute, join, relative, resolve } from "node:path";
 import { gzipSync } from "node:zlib";
 import type { NoteImageUploadMeta, NoteUploadMeta } from "@tutor/contract";
 import {
+  BACKUP_SNAPSHOT_NAME_PATTERN,
   INK_LOGICAL_WIDTH,
   NOTE_BODY_DECOMPRESSED_MAX_BYTES,
   NOTE_BODY_GZIP_MAX_BYTES,
@@ -28,6 +29,7 @@ import {
   noteRevisionConflictCurrentSchema,
   noteSubmissionEvidenceMetaSchema,
 } from "@tutor/contract";
+import Database from "better-sqlite3";
 import { and, asc, eq, isNotNull, ne, or, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
@@ -54,6 +56,7 @@ import {
   requireAttemptQuestionRow,
   requireUsableAttempt,
 } from "./attempt-service";
+import { BACKUP_DIR_NAME } from "./backup-service";
 import {
   findTeacherAttempt,
   requireTeacherAttempt,
@@ -1151,7 +1154,7 @@ export function attachNoteImage(
   return noteImageMetaOf(inserted);
 }
 
-// ---------- GC 骨架（未引用版本延迟回收；自动调度接线在 T6R.14） ----------
+// ---------- GC（未引用版本延迟回收 + 备份引用保留清单；自动调度本批未接线） ----------
 
 /** 安全窗口（毫秒）：版本/临时文件创建后至少保留这么久才可回收（暂定值） */
 export const NOTE_GC_SAFETY_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -1178,6 +1181,18 @@ export interface NoteGcResult {
   /** 超窗口但被保留集合（头指针/证据引用）挡下的版本数 */
   keptByReference: number;
   /**
+   * 超窗口但被**备份引用保留清单**挡下的版本数（T6R.14：backups/ 快照 db
+   * 引用的版本——当前库已无引用，删除会破坏该备份的恢复完整性）。
+   */
+  keptByBackup: number;
+  /**
+   * 不可读的备份快照数（损坏/非 SQLite 文件）。>0 时本轮**放弃版本删除与
+   * 孤儿清扫**（不可读备份可能引用任何 blobs/notes 文件，保守不删）——
+   * 正常部署恒为 0；持续 >0 需运维处理坏快照（轮转按 mtime 删除，
+   * 坏文件不会自愈）。
+   */
+  unreadableBackupDbs: number;
+  /**
    * 存量路径形态异常（复审轮⑥起含正文与图片两类）：bodyPath 越出 blobs/notes
    * 或文件名不合 v<rev>-<hash12>.json.gz 模式、imagePath 越出根或不合
    * img-<uuid>.png 模式。>0 时本轮**放弃孤儿文件清扫**（保守不删，见下），
@@ -1188,9 +1203,9 @@ export interface NoteGcResult {
 }
 
 /**
- * 未引用版本延迟回收（方案 §6.3；本任务只提供函数与测试，**未接入任何
- * 自动调度**——备份引用保留清单在 T6R.14 落地前不开启自动 GC，不以节省
- * 空间破坏备份可恢复性）。
+ * 未引用版本延迟回收（方案 §6.3；备份引用保留清单已随 T6R.14 落地——见
+ * 保留集合说明。**自动调度仍未接线**：A 批次保持保守，回收由运维显式调用
+ * 或后续批次在保留清单验证充分后接线，不以节省空间破坏可恢复性）。
  *
  * 保留集合（绝不可删）：
  * - 所有 notes.currentVersionId（工作头/订正检查点头）；
@@ -1200,7 +1215,15 @@ export interface NoteGcResult {
  *   重放按 CAS 冲突可诊断处理，见 note_versions.mutation_id 列注释）；
  * - 全部 note_images 行引用的图片文件（被行引用即活文件——行随所属版本
  *   删除时才连带删文件；「正在生成图片的版本」的保留由图片行的存在性
- *   天然承载：T6R.6 生成通道只要先落行或落 .tmp 就不会被误清）。
+ *   天然承载：T6R.6 生成通道只要先落行或落 .tmp 就不会被误清）；
+ * - **备份引用保留清单**（T6R.14，方案 §6.3「保留中的数据库备份引用也要
+ *   纳入保留集合」）：backups/ 下的快照 db 是整库时点拷贝，其
+ *   note_versions/note_images 行指向的 blobs/notes 文件与当前库共享磁盘，
+ *   回收会把「备份可恢复」变成「备份恢复出缺图」。每次 GC 现扫现存快照
+ *   （只读打开逐个取 body_path/path），引用路径并入保留集合；快照按 14 份
+ *   轮转删除后引用自然释放，下一轮 GC 即可回收。快照损坏不可读时**保守
+ *   放弃本轮版本删除与孤儿清扫**（不可读备份可能引用任何文件——宁可漏删
+ *   不可误删，与存量路径形态异常的既有口径一致；tmp 清扫不受影响）。
  *
  * 删除顺序：先事务删行（FK 拒绝=仍有引用→跳过下轮再试），后删文件
  * （行已删，文件删除失败只是占空间的孤儿，不产生悬垂引用——坏方向是
@@ -1222,8 +1245,77 @@ export function gcNoteVersions(
     sweptTmp: 0,
     sweptOrphanFiles: 0,
     keptByReference: 0,
+    keptByBackup: 0,
+    unreadableBackupDbs: 0,
     malformedBodyPaths: 0,
   };
+  const notesRoot = resolve(dataDir, "blobs", "notes");
+  /**
+   * 存储路径 → notes 域内对账键（相对根、"/" 分隔、小写；越出根或恰为
+   * 根本身 → null）。备份保留清单与版本删除判定共用同一归一；与孤儿清扫
+   * liveRel 的差异仅在后者额外要求 basename 合模式（malformed 语义保留在
+   * liveRel 侧，本函数不做形态判定）。小写归一与 liveRel 同口径（NTFS
+   * 大小写不敏感，复审④）。
+   */
+  const relKeyOf = (storedPath: string): string | null => {
+    const rel = relative(notesRoot, resolve(dataDir, storedPath));
+    if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) return null;
+    return rel.split(/[\\/]/).join("/").toLowerCase();
+  };
+
+  /**
+   * 备份引用保留清单（T6R.14）：现扫 backups/ 快照（只读），把快照内
+   * note_versions.body_path / note_images.path 引用的文件键并入
+   * backupKeepKeys。快照损坏/非 SQLite → 计入 unreadableBackupDbs 并触发
+   * 本轮保守模式（版本删除与孤儿清扫全停）。旧快照可能没有 notes 表族
+   * （T6R.2 之前的库）——按零引用处理，不视为损坏。
+   */
+  const backupKeepKeys = new Set<string>();
+  const backupsDir = join(dataDir, BACKUP_DIR_NAME);
+  if (existsSync(backupsDir)) {
+    for (const name of readdirSync(backupsDir)) {
+      if (!BACKUP_SNAPSHOT_NAME_PATTERN.test(name)) continue;
+      let keys: string[] | null;
+      try {
+        const snapshot = new Database(join(backupsDir, name), {
+          readonly: true,
+        });
+        try {
+          const tableExists = (table: string): boolean =>
+            snapshot
+              .prepare(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+              )
+              .get(table) !== undefined;
+          keys = [];
+          if (tableExists("note_versions")) {
+            for (const row of snapshot
+              .prepare("SELECT body_path AS p FROM note_versions")
+              .all() as Array<{ p: string }>) {
+              const key = relKeyOf(row.p);
+              if (key !== null) keys.push(key);
+            }
+          }
+          if (tableExists("note_images")) {
+            for (const row of snapshot
+              .prepare("SELECT path AS p FROM note_images")
+              .all() as Array<{ p: string }>) {
+              const key = relKeyOf(row.p);
+              if (key !== null) keys.push(key);
+            }
+          }
+        } finally {
+          snapshot.close();
+        }
+      } catch {
+        result.unreadableBackupDbs += 1;
+        continue;
+      }
+      for (const key of keys) backupKeepKeys.add(key);
+    }
+  }
+  // 保守模式：存在不可读快照时不删任何版本、不清任何孤儿（tmp 清扫不受影响）
+  const conservative = result.unreadableBackupDbs > 0;
 
   // 保留集合（isNotNull 在 SQL 层裁掉 NULL 头/无版本证据行，免空值入集合）
   const keep = new Set<string>();
@@ -1279,6 +1371,14 @@ export function gcNoteVersions(
       result.keptByReference += 1;
       continue;
     }
+    if (conservative) continue; // 不可读快照在场：本轮不删（宁可漏删不可误删）
+    // 备份引用保留清单：当前库无引用、但某快照引用的版本——删了会让该备份
+    // 恢复出缺正文（方案 §6.3「保留中的数据库备份引用也要纳入保留集合」）
+    const bodyKey = relKeyOf(row.bodyPath);
+    if (bodyKey !== null && backupKeepKeys.has(bodyKey)) {
+      result.keptByBackup += 1;
+      continue;
+    }
     const images = imagesByVersion.get(row.id) ?? [];
     try {
       db.transaction((tx) => {
@@ -1313,7 +1413,6 @@ export function gcNoteVersions(
   // 事务未提交或行已删文件未清的崩溃残留——文件名合模式但不在任何
   // note_versions.body_path / note_images.path 中；窗口内不碰——那可能是
   // 刚落位、事务尚未提交的在途请求）。
-  const notesRoot = resolve(dataDir, "blobs", "notes");
   if (existsSync(notesRoot)) {
     const bodyFilePattern = /^v\d+-[0-9a-f]{12}\.json\.gz$/;
     const imageFilePattern = /^img-[0-9a-f-]{36}\.png$/;
@@ -1352,6 +1451,10 @@ export function gcNoteVersions(
         liveSet.add(key);
       }
     }
+    // 备份引用的文件并入 live 集合（T6R.14）：行已随当前库变化，但快照仍
+    // 引用的文件不是孤儿。保守模式（存在不可读快照）下整个孤儿清扫本就
+    // 放弃——此并入与之独立成立。
+    for (const key of backupKeepKeys) liveSet.add(key);
     // tmp 清扫的最小共用件（复审轮⑮：两扫描器共用）
     const sweepTmpFile = (filePath: string): void => {
       try {
@@ -1372,6 +1475,7 @@ export function gcNoteVersions(
             sweepTmpFile(filePath);
           } else if (
             orphan &&
+            !conservative && // 不可读快照在场：孤儿判定不可靠，本轮不清
             (bodyFilePattern.test(name) || imageFilePattern.test(name)) &&
             !liveSet.has(`${dirName}/${name}`.toLowerCase()) &&
             result.malformedBodyPaths === 0
