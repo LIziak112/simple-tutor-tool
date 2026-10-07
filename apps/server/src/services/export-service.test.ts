@@ -248,6 +248,40 @@ describe("模块勾选组合：pack 结构与 zip 清单（D14/D19）", () => {
     expect(zip.filename).toMatch(/^learning-pack-\d{8}-\d{6}\.zip$/);
   });
 
+  it("勾选 ink 但快照文件已缺失：zip 宽松构建（条目缺席、不抛错）——v1 既有口径锁定（T6R.14 迁移护栏）", async () => {
+    // ink 行在而 PNG 文件被外部删除（部署级损坏）：archiver 对读不到的文件
+    // 只 emit warning 并跳过条目——v1 学情包是宽松语义（warning 非致命），
+    // T6R.14 管道迁移到 lib/zip-write.zipBufferOf 时以 warningAsError:false
+    // 保持。此测试在迁移前后都必须绿（行为锁，非驱动性红测试）。
+    const row = db
+      .select()
+      .from(ink)
+      .where(
+        and(
+          eq(ink.attemptId, inkedAttemptId),
+          eq(ink.questionId, seed.questions.u1q5),
+        ),
+      )
+      .get();
+    if (row === undefined) throw new Error("夹具缺少 ink 行");
+    const abs = resolve(dataDir, row.pngPath);
+    const bytes = readFileSync(abs);
+    try {
+      rmSync(abs);
+      const zip = await buildLearningPackZip(
+        db,
+        dataDir,
+        TEST_TEACHER_ID,
+        makeRequest(),
+        { now: SEED_NOW },
+      );
+      const names = [...unzipEntries(zip.bytes).keys()];
+      expect(names.filter((name) => name.startsWith("ink/"))).toEqual([]);
+    } finally {
+      writeFileSync(abs, bytes);
+    }
+  });
+
   it("仅题目+汇总：content.questions 与 attempts.summaries 出现，responses/traces 缺席", async () => {
     const assembly = assembleLearningPack(
       db,

@@ -33,7 +33,6 @@ import {
   renderLearningPackPrompt,
 } from "@tutor/contract";
 import { analyzeLectureStructure } from "@tutor/md-dsl";
-import { ZipArchive } from "archiver";
 import {
   and,
   asc,
@@ -66,6 +65,7 @@ import {
 import { resolveWithinRootOrNull } from "../lib/blob-io";
 import { chunk } from "../lib/chunk";
 import { HttpError } from "../lib/http-error";
+import { zipBufferOf } from "../lib/zip-write";
 import { answerOf, frozenRowsInDisplayOrder } from "./attempt-service";
 import { beijingDateTimeOf, beijingExportStampOf } from "./export-csv";
 import { lectureReadingMapFor } from "./lecture-insights";
@@ -2049,7 +2049,8 @@ export interface LearningPackZip {
 
 /**
  * POST /api/teacher/export/learning-pack：装配 + 50MB 预检（超限 413
- * EXPORT_TOO_LARGE，中文说明含精简方向，D18）+ archiver 打包。
+ * EXPORT_TOO_LARGE，中文说明含精简方向，D18）+ zip 打包（T6R.14 起走
+ * lib/zip-write.zipBufferOf 共享单点，与 review-pack 同管道）。
  * zip 结构（顶层）：pack.json / summary.md / prompt.md / schema.json /
  * 映射.txt（化名模式）/ ink/*.png（勾选）/ blobs/media/<hash>.<ext>
  * （md 中 ::image 引用的图片，条目名即契约 src 相对路径）。
@@ -2079,42 +2080,43 @@ export async function buildLearningPackZip(
     );
   }
 
-  // archiver v8 类 API：new ZipArchive（技术栈清单内依赖，原生 ESM）
-  const archive = new ZipArchive({ zlib: { level: 6 } });
-  const chunks: Buffer[] = [];
-  archive.on("data", (chunk: Buffer) => chunks.push(chunk));
-  const done = new Promise<void>((resolve, reject) => {
-    archive.on("end", () => resolve());
-    archive.on("error", (err: Error) => reject(err));
-  });
-  archive.append(Buffer.from(assembly.packJson, "utf8"), { name: "pack.json" });
-  archive.append(Buffer.from(assembly.summaryMd, "utf8"), {
-    name: "summary.md",
-  });
-  archive.append(Buffer.from(assembly.promptMd, "utf8"), { name: "prompt.md" });
-  archive.append(Buffer.from(assembly.schemaJson, "utf8"), {
-    name: "schema.json",
-  });
-  if (assembly.mappingTxt !== null) {
-    archive.append(Buffer.from(assembly.mappingTxt, "utf8"), {
-      name: "映射.txt",
-    });
-  }
-  for (const entry of assembly.inkEntries) {
-    archive.file(entry.absPath, { name: entry.entry });
-  }
-  // media 条目：条目名含子目录（blobs/media/…），archiver 按路径写目录条目
-  for (const entry of assembly.mediaEntries) {
-    archive.file(entry.absPath, { name: entry.entry });
-  }
-  // v2 证据图条目（T6R.12）：evidence/<编号>-<阶段>-<页号>.png；缺失文件
-  // 不在清单（manifest.missing 显式登记），不产生悬垂 zip 条目
-  for (const entry of assembly.evidenceEntries) {
-    archive.file(entry.absPath, { name: entry.entry });
-  }
-  await archive.finalize();
-  await done;
-  const bytes = Buffer.concat(chunks);
+  // 宽松口径（warningAsError:false）= v1 学情包既有语义：读不到的附件
+  // （ink/media 文件被外部删除等部署级损坏）跳过条目不致命，包照常产出
+  //（warning 留服务端日志）；LEARNING_PACK_MAX_BYTES 记账在装配预检处执行
+  const bytes = await zipBufferOf(
+    (archive) => {
+      archive.append(Buffer.from(assembly.packJson, "utf8"), {
+        name: "pack.json",
+      });
+      archive.append(Buffer.from(assembly.summaryMd, "utf8"), {
+        name: "summary.md",
+      });
+      archive.append(Buffer.from(assembly.promptMd, "utf8"), {
+        name: "prompt.md",
+      });
+      archive.append(Buffer.from(assembly.schemaJson, "utf8"), {
+        name: "schema.json",
+      });
+      if (assembly.mappingTxt !== null) {
+        archive.append(Buffer.from(assembly.mappingTxt, "utf8"), {
+          name: "映射.txt",
+        });
+      }
+      for (const entry of assembly.inkEntries) {
+        archive.file(entry.absPath, { name: entry.entry });
+      }
+      // media 条目：条目名含子目录（blobs/media/…），archiver 按路径写目录条目
+      for (const entry of assembly.mediaEntries) {
+        archive.file(entry.absPath, { name: entry.entry });
+      }
+      // v2 证据图条目（T6R.12）：evidence/<编号>-<阶段>-<页号>.png；缺失文件
+      // 不在清单（manifest.missing 显式登记），不产生悬垂 zip 条目
+      for (const entry of assembly.evidenceEntries) {
+        archive.file(entry.absPath, { name: entry.entry });
+      }
+    },
+    { warningAsError: false },
+  );
   const nowDate =
     options.now !== undefined
       ? new Date(
@@ -2124,7 +2126,7 @@ export async function buildLearningPackZip(
         )
       : new Date();
   return {
-    bytes: new Uint8Array(bytes),
+    bytes,
     filename: `learning-pack-${beijingExportStampOf(nowDate)}.zip`,
   };
 }
