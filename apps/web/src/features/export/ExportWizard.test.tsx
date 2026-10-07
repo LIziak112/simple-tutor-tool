@@ -14,7 +14,10 @@ import type {
   StudentListData,
   TeacherAssignmentListData,
 } from "@tutor/contract";
-import { NOTE_PHASE_LABELS } from "@tutor/contract";
+import {
+  learningPackExportRequestSchema,
+  NOTE_PHASE_LABELS,
+} from "@tutor/contract";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -50,6 +53,20 @@ vi.mock("@/lib/api", async (importOriginal) => {
     previewLearningPackApi: vi.fn(),
     downloadLearningPackApi: vi.fn(),
   };
+});
+
+// 闸门 F1③ 测试注入点：只把 learningPackExportRequestSchema.parse 包成
+// vi.fn（委托原实现）——Object.create(原实例) 原型委派（zod4 的 _zod 内部态
+// 是不可枚举自有属性，Object.assign 拷贝会丢，safeParse 会崩），parse 以自有
+// 属性遮蔽，其余导出原样透传
+vi.mock("@tutor/contract", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@tutor/contract")>();
+  const original = actual.learningPackExportRequestSchema;
+  const wrapped = Object.create(original) as typeof original;
+  wrapped.parse = vi.fn((...args: Parameters<typeof original.parse>) =>
+    original.parse(...args),
+  ) as typeof original.parse;
+  return { ...actual, learningPackExportRequestSchema: wrapped };
 });
 
 const mockedStudents = vi.mocked(fetchStudentsApi);
@@ -229,7 +246,7 @@ const PREVIEW_OK: LearningPackPreviewData = {
   limitBytes: 52_428_800,
   overLimit: false,
   hint: null,
-  // T6R.16：preview 新增装配时刻与证据图清单（单1 过渡：清单恒空）
+  // 装配时刻与证据图清单（基线夹具：证据清单为空）
   asOf: "2026-10-07T01:02:03.456Z",
   evidenceImages: [],
 };
@@ -860,9 +877,9 @@ describe("ExportWizard 逐题评析联动（T6R.16 B）", () => {
     fireEvent.click(reviewRadio);
     expect(reviewRadio).toBeChecked();
 
-    // aria-live 提示出现
+    // aria-live 提示出现（闸门 F1② 文案：同时提及证据与逐题作答两动作）
     expect(
-      screen.getByText(/逐题评析需要 v2 证据附件，已自动开启/),
+      screen.getByText(/逐题评析需要 v2 证据附件与逐题作答，已自动开启并勾选/),
     ).toBeInTheDocument();
 
     // 回到第二步查看证据主开关已被自动开启
@@ -892,6 +909,125 @@ describe("ExportWizard 逐题评析联动（T6R.16 B）", () => {
     expect(evidenceToggle).toBeChecked();
     expect(
       screen.getByText(/逐题评析依赖证据附件，请先改选其他任务目标/),
+    ).toBeInTheDocument();
+  });
+});
+
+// ---------- 闸门修复（F1/F9/F10：证据联动崩溃三连与缩略图健壮性） ----------
+
+describe("ExportWizard 证据联动防御（闸门 F1/F9/F10）", () => {
+  /** 走到第⑤步（1 名学生 + 作答汇总），等 preview 首次调用完成 */
+  async function goToPreview(): Promise<void> {
+    await pickStudentAndGoStep2();
+    fireEvent.click(screen.getByRole("checkbox", { name: /作答汇总/ }));
+    fireEvent.click(nextButton());
+    fireEvent.click(nextButton());
+    fireEvent.click(nextButton());
+    await waitFor(() => {
+      expect(mockedPreview).toHaveBeenCalledTimes(1);
+    });
+  }
+
+  it("F1①：勾证据且有其他内容模块但未勾逐题作答 → 下一步仍禁用；补勾后恢复", async () => {
+    await pickStudentAndGoStep2();
+    fireEvent.click(screen.getByRole("checkbox", { name: /作答汇总/ }));
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: /手写原稿与订正图片/ }),
+    );
+    expect(nextButton()).toBeDisabled();
+    // 补勾逐题作答（证据附件的挂载模块）后恢复
+    fireEvent.click(screen.getByRole("checkbox", { name: /逐题答案/ }));
+    expect(nextButton()).toBeEnabled();
+  });
+
+  it("F1②：选逐题评析时未勾逐题作答 → 自动开证据并勾选逐题作答，回②步核对", async () => {
+    await pickStudentAndGoStep2();
+    // 不勾逐题作答、不开证据，靠作答汇总进③
+    fireEvent.click(screen.getByRole("checkbox", { name: /作答汇总/ }));
+    fireEvent.click(nextButton());
+    await screen.findByText(/任务目标/);
+    fireEvent.click(screen.getByRole("radio", { name: /逐题评析/ }));
+    expect(
+      screen.getByText(/逐题评析需要 v2 证据附件与逐题作答，已自动开启并勾选/),
+    ).toBeInTheDocument();
+    // 回②步：逐题作答与证据主开关都已自动勾上
+    fireEvent.click(screen.getByRole("button", { name: "上一步" }));
+    expect(screen.getByRole("checkbox", { name: /逐题答案/ })).toBeChecked();
+    expect(
+      screen.getByRole("checkbox", { name: /手写原稿与订正图片/ }),
+    ).toBeChecked();
+  });
+
+  it("F1③：buildRequest 契约 parse 抛错 → 预览错误态中文提示，重试恢复", async () => {
+    // 用真实解析失败构造 ZodError（mock 只在本次注入 throw）
+    const broken = learningPackExportRequestSchema.safeParse({
+      goal: "diagnose-weakness",
+    });
+    if (broken.success) {
+      throw new Error("夹具应当构造出解析失败");
+    }
+    vi.mocked(learningPackExportRequestSchema.parse).mockImplementationOnce(
+      () => {
+        throw broken.error;
+      },
+    );
+
+    await pickStudentAndGoStep2();
+    fireEvent.click(screen.getByRole("checkbox", { name: /作答汇总/ }));
+    fireEvent.click(nextButton());
+    fireEvent.click(nextButton());
+    fireEvent.click(nextButton());
+
+    // 组装失败不冒泡成渲染崩溃：错误态中文提示（含 ZodError 首条 issue）
+    expect(await screen.findByText("预览加载失败")).toBeInTheDocument();
+    expect(screen.getByText(/请求组装失败：/)).toBeInTheDocument();
+    // 重试（默认实现 = 原始 parse）恢复成功
+    fireEvent.click(screen.getByRole("button", { name: "重新预览" }));
+    await screen.findByText("包内文件清单");
+  });
+
+  it("F9：ready 行 downloadUrl 非同源白名单 → 按缺失分支渲染（不外链外域）", async () => {
+    mockedPreview.mockResolvedValueOnce({
+      ...PREVIEW_OK,
+      evidenceImages: [
+        {
+          file: "evidence/e001-original-01.png",
+          ref: "e001",
+          phase: "scratch",
+          pageIndex: 0,
+          state: "ready",
+          bytes: 102_400,
+          downloadUrl: "https://evil.example.com/e001.png",
+        },
+      ],
+    });
+    await goToPreview();
+    await screen.findByText(/手写证据图片/);
+    // 外域 URL 不进 <img>/<a>，走缺失分支（reason 缺省文案）
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
+    expect(screen.getByText(/缺失：图片未生成或丢失/)).toBeInTheDocument();
+  });
+
+  it("F10：缩略图上限 60——61 条只渲染 60 个，其余提示下载数据包查看", async () => {
+    mockedPreview.mockResolvedValueOnce({
+      ...PREVIEW_OK,
+      evidenceImages: Array.from({ length: 61 }, (_, i) => ({
+        file: `evidence/e${String(i + 1).padStart(3, "0")}-original-01.png`,
+        ref: `e${String(i + 1).padStart(3, "0")}`,
+        phase: "scratch" as const,
+        pageIndex: 0,
+        state: "ready" as const,
+        bytes: 100,
+        downloadUrl: `/api/teacher/note-versions/v-${i + 1}/images/img-${i + 1}.png`,
+      })),
+    });
+    await goToPreview();
+    // 标题计数仍用全长
+    expect(await screen.findByText(/手写证据图片（共 61 项）/)).toBeVisible();
+    expect(screen.getAllByRole("img")).toHaveLength(60);
+    expect(
+      screen.getByText(/其余 1 项请在下载数据包后查看/),
     ).toBeInTheDocument();
   });
 });

@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router";
+import { z } from "zod";
 import { ErrorRetry } from "@/components/ErrorRetry";
 import { Button } from "@/components/ui/button";
 import {
@@ -74,6 +75,21 @@ const DAYS_OPTIONS = [
 ] as const;
 
 type DaysValue = (typeof DAYS_OPTIONS)[number]["value"];
+
+/** preview 缩略图直出白名单（闸门 F9）：downloadUrl 只信同源教师端 note-versions 端点 */
+const EVIDENCE_DOWNLOAD_URL_PREFIX = "/api/teacher/note-versions/";
+
+/** 缩略图渲染上限（闸门 F10）：超出提示下载数据包查看；标题计数仍用全长 */
+const EVIDENCE_THUMB_LIMIT = 60;
+
+/** buildRequest 组装失败的中文提示（闸门 F1③：ZodError 首条 issue；防原始
+ * JSON 错误串直接怼给教师） */
+function requestBuildErrorTextOf(err: unknown): string {
+  if (err instanceof z.ZodError) {
+    return `请求组装失败：${err.issues[0]?.message ?? "参数不合法"}`;
+  }
+  return err instanceof Error ? err.message : "请求组装失败，请稍后重试";
+}
 
 /** 五模板卡片（标题用契约 LEARNING_PACK_GOAL_LABELS 单一来源；描述与
  * docs/dsl/学情分析提示词.md 的模板要点一致） */
@@ -175,6 +191,11 @@ export function ExportWizard({
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const [downloadedFile, setDownloadedFile] = useState<string | null>(null);
 
+  /** 预览请求组装失败（闸门 F1③：buildRequest 抛错不冒泡成渲染崩溃） */
+  const [previewBuildError, setPreviewBuildError] = useState<string | null>(
+    null,
+  );
+
   // ---------- 离开守卫 ----------
   const [confirmExit, setConfirmExit] = useState(false);
   /** 下载成功后向导视为完成：退出不再确认 */
@@ -223,9 +244,13 @@ export function ExportWizard({
   /**
    * 构造**输入形状**对象后经契约 schema.parse 填默认（缺省单源：evidence/
    * evidencePhases/days 等默认只在契约定义，前端不硬编码第二份——与服务端
-   * MCP packRequestDefaults 同款口径，T6R.16 挂账④）。
+   * MCP packRequestDefaults 同款口径，T6R.16 挂账④）。asOf（闸门 F7）作为
+   * 可选参数一并进 parse——下载侧把 preview 回传的 asOf 经此传入，不再在
+   * parse 之后浅拷贝拼装。
    */
-  function buildRequest(): LearningPackExportRequest {
+  function buildRequest(
+    options: { asOf?: string } = {},
+  ): LearningPackExportRequest {
     // 规范序常量引契约单源（闸门 F8：NOTE_PHASE_ORDER，勿手写副本）
     const normalizedPhases = NOTE_PHASE_ORDER.filter((p) =>
       evidencePhases.includes(p),
@@ -262,6 +287,7 @@ export function ExportWizard({
       ...(customPrompt.trim().length > 0
         ? { customPrompt: customPrompt.trim() }
         : {}),
+      ...(options.asOf !== undefined ? { asOf: options.asOf } : {}),
     });
   }
 
@@ -277,13 +303,21 @@ export function ExportWizard({
     step === 1
       ? studentIds.length === 0
       : step === 2
-        ? !hasContentModule
+        ? // 闸门 F1①：证据附件挂在逐题作答行上（契约 superRefine 同式）——
+          // 开证据但未勾逐题作答时禁用下一步，防走完向导才被服务端 400 打回
+          !hasContentModule || (evidenceEnabled && !responses)
         : false;
 
   /** 进入第⑤步：重新发起预览（改前步后再进自动刷新，D14⑤） */
   function goToPreview(): void {
     previewMutation.reset();
-    previewMutation.mutate(buildRequest());
+    setPreviewBuildError(null);
+    try {
+      previewMutation.mutate(buildRequest());
+    } catch (err) {
+      // 闸门 F1③：组装失败转预览错误态（ErrorRetry 形态，可重试）
+      setPreviewBuildError(requestBuildErrorTextOf(err));
+    }
     setStep(5);
   }
 
@@ -300,16 +334,22 @@ export function ExportWizard({
     setDownloading(true);
     setDownloadError(null);
     try {
-      const request = buildRequest();
-      const asOf = previewMutation.data?.asOf;
-      const filename = await downloadLearningPackApi({
-        ...request,
-        ...(asOf !== undefined ? { asOf } : {}),
-      });
+      // 闸门 F7：asOf 随 buildRequest 一起过契约 parse（钉住 preview 的选择）
+      const request = buildRequest(
+        previewMutation.data?.asOf !== undefined
+          ? { asOf: previewMutation.data.asOf }
+          : {},
+      );
+      const filename = await downloadLearningPackApi(request);
       setDownloadedFile(filename);
     } catch (err) {
+      // 闸门 F1③：ZodError 转中文（原始 JSON 错误串不给教师看）
       setDownloadError(
-        err instanceof Error ? err.message : "下载失败，请稍后重试",
+        err instanceof z.ZodError
+          ? requestBuildErrorTextOf(err)
+          : err instanceof Error
+            ? err.message
+            : "下载失败，请稍后重试",
       );
     } finally {
       setDownloading(false);
@@ -344,12 +384,23 @@ export function ExportWizard({
   function handleGoalChange(newGoal: LearningPackGoal): void {
     setGoal(newGoal);
     if (newGoal === "per-question-review") {
-      if (!evidenceEnabled) {
+      // 闸门 F1②：逐题评析同时需要证据附件（v2）与逐题作答（附件挂载行），
+      // 两项各自缺一补一；均已在位时不提示（e2e 断言证据已开场景无此提示）
+      const autoEvidence = !evidenceEnabled;
+      const autoResponses = !responses;
+      if (autoEvidence) {
         setEvidenceEnabled(true);
         if (evidencePhases.length === 0) {
           setEvidencePhases(["scratch"]);
         }
-        setGoalAutoMessage("逐题评析需要 v2 证据附件，已自动开启");
+      }
+      if (autoResponses) {
+        setResponses(true);
+      }
+      if (autoEvidence || autoResponses) {
+        setGoalAutoMessage(
+          "逐题评析需要 v2 证据附件与逐题作答，已自动开启并勾选",
+        );
       }
     } else {
       setGoalAutoMessage(null);
@@ -507,6 +558,7 @@ export function ExportWizard({
       {step === 5 && (
         <StepPreview
           previewMutation={previewMutation}
+          previewBuildError={previewBuildError}
           studentCount={studentIds.length}
           courseName={courseName}
           assignmentTitle={assignmentTitle}
@@ -523,10 +575,7 @@ export function ExportWizard({
           downloading={downloading}
           downloadedFile={downloadedFile}
           downloadError={downloadError}
-          onRetryPreview={() => {
-            previewMutation.reset();
-            previewMutation.mutate(buildRequest());
-          }}
+          onRetryPreview={goToPreview}
           onDownload={() => void handleDownload()}
           onFinish={() => navigate("/t/insights")}
         />
@@ -1513,6 +1562,7 @@ function StepPrivacy({
 
 function StepPreview({
   previewMutation,
+  previewBuildError,
   studentCount,
   courseName,
   assignmentTitle,
@@ -1525,6 +1575,8 @@ function StepPreview({
   onFinish,
 }: {
   previewMutation: ReturnType<typeof useLearningPackPreview>;
+  /** 组装失败提示（闸门 F1③：与请求失败同为 ErrorRetry 形态，可重试） */
+  previewBuildError: string | null;
   studentCount: number;
   courseName: string | null;
   assignmentTitle: string | null;
@@ -1538,6 +1590,11 @@ function StepPreview({
 }) {
   const data: LearningPackPreviewData | undefined = previewMutation.data;
   const overLimit = data?.overLimit === true;
+  // 闸门 F10：缩略图只渲染前 60 项（清单计数仍用全长）
+  const shownEvidenceImages =
+    data?.evidenceImages.slice(0, EVIDENCE_THUMB_LIMIT) ?? [];
+  const hiddenEvidenceCount =
+    (data?.evidenceImages.length ?? 0) - shownEvidenceImages.length;
 
   return (
     <section aria-label="第⑤步 预览与下载" className="flex flex-col gap-4">
@@ -1567,6 +1624,16 @@ function StepPreview({
               ? previewMutation.error.message
               : "网络异常，请稍后重试"
           }
+          retryLabel="重新预览"
+          onRetry={onRetryPreview}
+        />
+      )}
+
+      {previewBuildError !== null && (
+        <ErrorRetry
+          className="flex flex-col items-start gap-2 rounded-xl border border-border bg-card p-4"
+          title="预览加载失败"
+          message={previewBuildError}
           retryLabel="重新预览"
           onRetry={onRetryPreview}
         />
@@ -1618,7 +1685,7 @@ function StepPreview({
                 aria-label="手写证据图片预览"
                 className="flex max-h-72 flex-col gap-2 overflow-y-auto rounded-lg border border-border p-2"
               >
-                {data.evidenceImages.map((img) => (
+                {shownEvidenceImages.map((img) => (
                   <li
                     key={`${img.ref}-${img.file}`}
                     className="flex flex-wrap items-center justify-between gap-3 rounded-md bg-muted/40 p-2 text-xs"
@@ -1638,7 +1705,10 @@ function StepPreview({
                       </span>
                     </div>
 
-                    {img.state === "ready" && img.downloadUrl ? (
+                    {img.state === "ready" &&
+                    img.downloadUrl?.startsWith(
+                      EVIDENCE_DOWNLOAD_URL_PREFIX,
+                    ) ? (
                       <div className="flex items-center gap-2">
                         <span className="text-muted-foreground">
                           {sizeTextOf(img.bytes)}
@@ -1670,6 +1740,11 @@ function StepPreview({
                   </li>
                 ))}
               </ul>
+              {hiddenEvidenceCount > 0 && (
+                <p className="text-xs text-muted-foreground">
+                  其余 {hiddenEvidenceCount} 项请在下载数据包后查看
+                </p>
+              )}
             </div>
           )}
 
