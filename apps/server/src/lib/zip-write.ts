@@ -8,7 +8,8 @@ import { ZipArchive, type ZipEntryData } from "archiver";
  * 只 emit `warning` 并**静默跳过条目**（core.js 的 lstat 错误路径 emit
  * ("warning") + _entriesCount--）——默认把 warning 当错误抛出，杜绝产出与
  * 调用方清单不符的缺件 zip；`warningAsError:false` 恢复 archiver 原生宽松
- * 语义（v1 学情包既有口径，迁移留 T6R.16，不在本分支动 v1 行为）。
+ * 语义（v1 学情包既有口径——已由 T6R.14 迁入本共享件，
+ * buildLearningPackZip 以 warningAsError:false 锁定该宽松口径）。
  *
  * 已压缩内容（PNG 等）请对条目传 `store: true`（仅存储不 deflate——
  * level 压缩对已压缩字节纯耗 CPU）。
@@ -28,7 +29,8 @@ export interface ZipBufferOptions {
   /**
    * 文件条目读不到时 archiver 的 warning 是否视为错误（缺省 true——缺文件
    * 显式失败，不产静默缺件 zip）；false = archiver 原生宽松语义（v1 学情包
-   * 既有口径，迁移留 T6R.16）——警告仍 console.warn 留痕，不无声吞掉。
+   * 既有口径，已由 T6R.14 随 buildLearningPackZip 迁入锁定）——警告仍
+   * console.warn 留痕，不无声吞掉。
    */
   readonly warningAsError?: boolean;
 }

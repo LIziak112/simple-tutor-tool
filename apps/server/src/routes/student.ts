@@ -5,6 +5,7 @@ import {
   attemptSubmitRequestSchema,
   hintOpenRequestSchema,
   lectureEventBatchRequestSchema,
+  noteHeadsRequestSchema,
   noteUploadMetaSchema,
   studentLectureDetailQuerySchema,
   studentPasswordChangeRequestSchema,
@@ -61,6 +62,7 @@ import {
   getStudentNoteDocument,
   getStudentNoteEvidence,
   getStudentNoteHead,
+  getStudentNoteHeads,
   getStudentNoteImagePng,
   saveNoteVersion,
 } from "../services/note-service";
@@ -119,6 +121,8 @@ import { listWrongQuestions } from "../services/wrong-questions";
  * - GET  /attempts/:id/notes/:questionId：本次工作稿头（T6R.5 ①，noteRecordMeta
  *   + 生效版本派生图 + 证据行；无笔记 → 显式空态 note=null，客户端按
  *   baseRevision=0 起步；本人 + attempt 可用 + 题目属冻结集合）；
+ * - POST /attempts/:id/note-heads：批量头投影（T6R.14 ①′，一次返回多题头，
+ *   门口/投影与单题完全一致；答题页逐题挂载与交卷组装共用）；
  * - GET  /attempts/:id/evidence/:questionId：本次只读证据与图片状态（T6R.5 ②，
  *   本人历史权限——已交卷可读、软删题历史证据可读、不查询当前题库存活）；
  * - GET  /note-versions/:versionId/document：读正文（T6R.5 ③，gzip 原字节直出
@@ -415,6 +419,24 @@ export function createStudentRoutes(
             c.var.student.id,
             c.req.param("id"),
             c.req.param("questionId"),
+          ),
+        });
+      })
+      // T6R.14 ①′：批量头投影（一次返回多题头；答题页逐题挂载与交卷组装
+      // 共用，N 逐题 GET → 1 POST）。门口与单题 head 完全一致（attempt 可用
+      // + 逐题冻结集合严格口径，任一不在集合整批 404）；响应顺序 = 请求去重
+      // 保序；零泄露口径同单题（只含版本指针/计数/图片元信息，无正文与图片
+      // 字节）。路径用 note-heads（与 evidence 兄弟词一致）——不与
+      // notes/:questionId 同层混排，hc 类型路由可正常推断 json 入参。
+      .post("/attempts/:id/note-heads", async (c) => {
+        const body = await parseJsonBody(c, noteHeadsRequestSchema);
+        return c.json({
+          ok: true,
+          data: getStudentNoteHeads(
+            db,
+            c.var.student.id,
+            c.req.param("id"),
+            body.questionIds,
           ),
         });
       })

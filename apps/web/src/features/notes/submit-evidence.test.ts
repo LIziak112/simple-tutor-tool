@@ -1,12 +1,12 @@
 /**
  * T6R.10 交卷证据声明组装（submit-evidence）测试：追平后的当下 record
- * 状态（deriveServerState 单点判定）+ 逐题服务端 head，产出每题
- * none/frozen/missing 声明与未决问题清单。
+ * 状态（deriveServerState 单点判定）+ 整卷服务端 head（T6R.14 起一次批量
+ * POST），产出每题 none/frozen/missing 声明与未决问题清单。
  * 覆盖：正常固定（本地已同步/跨设备仅有服务端稿）、失败呈现（dirty 退避/
  * conflict/denied(content)→问题清单、声明为 null）、用户明确选择 missing
  * 后仅问题题标 missing、问题自愈不硬标、head 拉取失败抛错阻止交卷、
  * 本地有笔无服务端稿（防御）不静默 none、空稿 none。
- * fetchStudentNoteHeadApi 以 vi.fn 替换；putNoteDocumentApi 同（flush 真实
+ * fetchStudentNoteHeadsApi 以 vi.fn 替换；putNoteDocumentApi 同（flush 真实
  * 执行）；内存后端注入；复用 note-test-utils 夹具。
  */
 import type { NoteHeadData } from "@tutor/contract";
@@ -23,6 +23,7 @@ import {
 import {
   DOC_A,
   headOf,
+  noteHeadsMockResponse,
   receiptOf,
   SCOPE,
   SESSION_A,
@@ -34,7 +35,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
   return {
     ...actual,
     putNoteDocumentApi: vi.fn(),
-    fetchStudentNoteHeadApi: vi.fn(),
+    fetchStudentNoteHeadsApi: vi.fn(),
   };
 });
 
@@ -49,12 +50,12 @@ import {
 } from "@/features/notes/submit-evidence";
 import {
   ApiError,
-  fetchStudentNoteHeadApi,
+  fetchStudentNoteHeadsApi,
   putNoteDocumentApi,
 } from "@/lib/api";
 
 const putMock = vi.mocked(putNoteDocumentApi);
-const headMock = vi.mocked(fetchStudentNoteHeadApi);
+const headsMock = vi.mocked(fetchStudentNoteHeadsApi);
 
 const ATTEMPT = SCOPE.attemptId;
 const Q1 = SCOPE.questionId;
@@ -66,7 +67,7 @@ beforeEach(() => {
   installNoteBackend(memoryNoteBackend());
   bindNoteSession(SESSION_A);
   putMock.mockReset();
-  headMock.mockReset();
+  headsMock.mockReset();
 });
 
 afterEach(async () => {
@@ -99,13 +100,11 @@ function headAt(
   return { ...base, note: { ...note, questionId, ...noteOverride } };
 }
 
-/** head mock：默认空态（显式 notCreated 投影），覆盖表定制 */
+/** head mock：默认空态（显式 notCreated 投影），覆盖表定制——共享工厂
+ * noteHeadsMockResponse（W5 收敛）逐条回显；此卷空态 = headOf({note:null})
+ * 形状（note 行显式 null），与共享工厂缺省一致 */
 function mockHeads(overrides: Record<string, NoteHeadData>): void {
-  headMock.mockImplementation(
-    async (_attemptId: string, questionId: string) => {
-      return overrides[questionId] ?? headOf({ note: null });
-    },
-  );
+  headsMock.mockImplementation(noteHeadsMockResponse(overrides));
 }
 
 describe("prepareSubmitEvidence：正常固定", () => {
@@ -292,7 +291,7 @@ describe("prepareSubmitEvidence：失败呈现与明确选择", () => {
 
 describe("prepareSubmitEvidence：阻止性失败", () => {
   it("head 拉取失败（网络/权限）→ 抛错阻止交卷（不能在状态未知下声明）", async () => {
-    headMock.mockRejectedValue(new ApiError("INTERNAL", "服务异常", 500, {}));
+    headsMock.mockRejectedValue(new ApiError("INTERNAL", "服务异常", 500, {}));
     await expect(
       prepareSubmitEvidence({ attemptId: ATTEMPT, questionIds: QUESTIONS }),
     ).rejects.toBeInstanceOf(Error);

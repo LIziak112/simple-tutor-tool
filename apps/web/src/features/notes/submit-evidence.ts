@@ -28,7 +28,7 @@ import type {
   NoteServerBodyState,
   SubmitEvidenceDeclaration,
 } from "@tutor/contract";
-import { fetchStudentNoteHeadApi } from "@/lib/api";
+import { fetchStudentNoteHeadsApi } from "@/lib/api";
 import {
   deriveServerState,
   loadScratchRecords,
@@ -68,7 +68,8 @@ export interface SubmitEvidencePrep {
   problems: SubmitEvidenceProblem[];
 }
 
-/** 逐题 head 拉取超时（对齐 note-sync PUT 的 30s 桥接口径） */
+/** 单次批量头拉取超时（对齐 note-sync PUT 的 30s 桥接口径；T6R.14 起一次
+ * POST 拉全卷头，超时作用于整批而非逐题） */
 const NOTE_HEAD_TIMEOUT_MS = 30_000;
 
 /** 待传未追平的通用文案（dirty/uploading 共用；原文两处字面量收敛） */
@@ -176,23 +177,21 @@ export async function prepareSubmitEvidence(input: {
   await catchUpNotes(input.attemptId);
 
   // ② 本卷记录（attempt 前缀单事务装载，strictRead 读失败抛错≠无记录）
-  //    与逐题服务端 head 同窗并发读取，按索引汇合（head 全部成功才可
-  //    声明——任一失败整组 reject 抛给调用方）
+  //    与整卷服务端 head 同窗并发读取（T6R.14：一次批量 POST，N 逐题 GET
+  //    收敛；head 全部成功才可声明——任一失败整组 reject 抛给调用方）
   const session = currentNoteSession();
   const [records, heads] = await Promise.all([
     session === null
       ? Promise.resolve(new Map<string, NoteLocalRecord>())
       : loadScratchRecords(session, input.attemptId, { strictRead: true }),
-    Promise.all(
-      input.questionIds.map((questionId) =>
-        // 逐题超时（对齐 note-sync PUT 30s 桥接口径）：批量端点是 T6R.14
-        // 待办，本分支先保证单请求不无限挂起
-        fetchStudentNoteHeadApi(
-          input.attemptId,
-          questionId,
-          AbortSignal.timeout(NOTE_HEAD_TIMEOUT_MS),
-        ),
-      ),
+    // 整批超时（对齐 note-sync PUT 30s 桥接口径）；signal 经 hc
+    // ClientRequestOptions.init 透传（C6 单分支）。
+    // 返回值已由 api 收口为按请求序对齐的 head 数组（缺条在 api 层统一抛
+    // 契约违错误——整组 reject 阻止交卷，不产出缺题声明）
+    fetchStudentNoteHeadsApi(
+      input.attemptId,
+      input.questionIds,
+      AbortSignal.timeout(NOTE_HEAD_TIMEOUT_MS),
     ),
   ]);
 

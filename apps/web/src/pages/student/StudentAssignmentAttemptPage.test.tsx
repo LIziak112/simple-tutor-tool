@@ -12,6 +12,7 @@ import {
   installDraftBackend,
   memoryBackend,
 } from "@/features/attempt/draft-store";
+import { noteHeadsMockResponse } from "@/features/notes/note-test-utils";
 import {
   fetchAttemptApi,
   openAttemptHintApi,
@@ -22,6 +23,7 @@ import {
   submitAttemptApi,
 } from "@/lib/api";
 import { installEventStore, memoryEventStore } from "@/lib/event-queue";
+import { resetNoteHeadBatchForTest } from "@/lib/note-head-batch";
 import { renderWithStudentRoutes } from "@/test/student-routes";
 import StudentAssignmentAttemptPage from "./StudentAssignmentAttemptPage";
 
@@ -101,13 +103,9 @@ vi.mock("@/lib/api", async (importOriginal) => {
     fetchAttemptApi: vi.fn(),
     saveAttemptAnswerApi: vi.fn(),
     submitAttemptApi: vi.fn(),
-    // T6R.10：交卷前逐题拉草稿 head（默认空态——本文件不涉及笔记内容，
-    // 证据声明组装为全 none）
-    fetchStudentNoteHeadApi: vi.fn(async () => ({
-      note: null,
-      images: [],
-      evidence: null,
-    })),
+    // T6R.10：交卷前拉整卷草稿头（T6R.14 批量端点；默认空态——本文件不涉
+    // 及笔记内容，证据声明组装为全 none；共享工厂按请求 id 逐条回显，W5）
+    fetchStudentNoteHeadsApi: vi.fn(noteHeadsMockResponse()),
     // T2.8：笔迹取回（默认无历史笔迹）与上传（成功回执）
     fetchAttemptInkApi: vi.fn(async () => null),
     putAttemptInkApi: vi.fn(async () => ({
@@ -268,6 +266,7 @@ function renderPage() {
 }
 
 beforeEach(() => {
+  resetNoteHeadBatchForTest();
   mockedStart.mockReset();
   mockedFetch.mockReset();
   mockedSave.mockReset();

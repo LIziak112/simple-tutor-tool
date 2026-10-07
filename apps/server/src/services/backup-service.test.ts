@@ -12,7 +12,6 @@ import { join } from "node:path";
 import { eq } from "drizzle-orm";
 import pino from "pino";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { hashPassword } from "../auth/password";
 import { runBackfills } from "../db/backfill";
 import { createDb, createDbHandle, type DbHandle } from "../db/client";
 import { runMigrations } from "../db/migrate";
@@ -21,8 +20,16 @@ import { TEST_TEACHER_ID } from "../db/test-utils";
 import { HttpError } from "../lib/http-error";
 import { readZipEntries } from "../lib/zip-read";
 import {
+  BACKUP_TEST_PASSWORD,
+  insertBackupTeacher,
+  writeCorruptSnapshot,
+  writeTruncatedSnapshot,
+  zipToBackupBuffer,
+} from "../test/backup-fixtures";
+import {
   BACKUP_DIR_NAME,
   buildBackupZip,
+  collectBackupReferencedPaths,
   createSnapshot,
   listSnapshots,
   restoreFromBackup,
@@ -43,21 +50,7 @@ import {
  *   不复用最长落后 24h 的旧快照；下载本身新增一份快照）。
  */
 
-const PASSWORD = "backup-pass-123";
-
-/** 备份 zip 流收整为 Buffer（与下载链路同流，测试内消费） */
-async function zipToBuffer(
-  zip: Awaited<ReturnType<typeof buildBackupZip>>,
-): Promise<Buffer> {
-  const chunks: Buffer[] = [];
-  zip.stream.on("data", (chunk: Buffer) => chunks.push(chunk));
-  const done = new Promise<void>((resolve, reject) => {
-    zip.stream.on("end", () => resolve());
-    zip.stream.on("error", (err: Error) => reject(err));
-  });
-  await done;
-  return Buffer.concat(chunks);
-}
+const PASSWORD = BACKUP_TEST_PASSWORD;
 
 interface Fixture {
   dataDir: string;
@@ -82,18 +75,7 @@ async function makeFixture(): Promise<Fixture> {
     runMigrations(fresh);
     runBackfills(fresh);
   });
-  handle.db
-    .insert(teachers)
-    .values({
-      id: TEST_TEACHER_ID,
-      loginName: "teacher",
-      isAdmin: true,
-      disabledAt: null,
-      passwordHash: await hashPassword(PASSWORD),
-      apiToken: null,
-      createdAt: "2026-01-01T00:00:00.000Z",
-    })
-    .run();
+  await insertBackupTeacher(handle.db, PASSWORD);
   handle.db
     .insert(students)
     .values({
@@ -145,7 +127,7 @@ describe("备份 → 改数据 → 恢复（验收核心往返）", () => {
     // 备份（zip 内含全部内容；下载恒先拍一份「当前时刻」快照——注入固定
     // 时点便于断言 zip 内 db 不是下面这行先拍的旧快照）
     createSnapshot(dataDir, handle.db, new Date("2026-10-01T03:00:00.000Z"));
-    const zip = await zipToBuffer(
+    const zip = await zipToBackupBuffer(
       buildBackupZip(dataDir, handle.db, new Date("2026-10-01T04:00:00.000Z")),
     );
 
@@ -243,7 +225,9 @@ describe("备份 → 改数据 → 恢复（验收核心往返）", () => {
     fixtures.push(fixture);
     const { dataDir, handle } = fixture;
 
-    const zipBuffer = await zipToBuffer(buildBackupZip(dataDir, handle.db));
+    const zipBuffer = await zipToBackupBuffer(
+      buildBackupZip(dataDir, handle.db),
+    );
     const entries = readZipEntries(zipBuffer);
     const names = entries.map((entry) => entry.name);
 
@@ -284,7 +268,9 @@ describe("备份 → 改数据 → 恢复（验收核心往返）", () => {
       })
       .run();
 
-    const zipBuffer = await zipToBuffer(buildBackupZip(dataDir, handle.db));
+    const zipBuffer = await zipToBackupBuffer(
+      buildBackupZip(dataDir, handle.db),
+    );
 
     // 下载本身新增一份快照（恒拍，不再只在零快照时补拍）
     expect(listSnapshots(dataDir).length).toBe(beforeDownload + 1);
@@ -327,7 +313,7 @@ describe("恢复的拒绝路径（原数据无损）", () => {
     fixtures.push(fixture);
     const { dataDir, handle } = fixture;
     createSnapshot(dataDir, handle.db);
-    const zip = await zipToBuffer(buildBackupZip(dataDir, handle.db));
+    const zip = await zipToBackupBuffer(buildBackupZip(dataDir, handle.db));
 
     const err = await restoreFromBackup(
       dataDir,
@@ -401,7 +387,9 @@ describe("恢复的拒绝路径（原数据无损）", () => {
     expect((err1 as HttpError).message).toContain("数据库文件");
 
     // 未知顶层：readZipEntries 会因名字安全通过、白名单拒绝 backups/ 覆写
-    const validZip = await zipToBuffer(buildBackupZip(dataDir, handle.db));
+    const validZip = await zipToBackupBuffer(
+      buildBackupZip(dataDir, handle.db),
+    );
     const entries = readZipEntries(validZip); // 借真实备份结构改造
     const rebuilt = await pack([
       ...entries.map((entry) => ({ name: entry.name, data: entry.data })),
@@ -427,7 +415,9 @@ describe("恢复的拒绝路径（原数据无损）", () => {
 
     // 真实备份 + 篡改 db 条目为非 SQLite 字节
     createSnapshot(dataDir, handle.db);
-    const zipBuffer = await zipToBuffer(buildBackupZip(dataDir, handle.db));
+    const zipBuffer = await zipToBackupBuffer(
+      buildBackupZip(dataDir, handle.db),
+    );
     const entries = readZipEntries(zipBuffer);
     const { ZipArchive } = await import("archiver");
     const archive = new ZipArchive({ zlib: { level: 0 } });
@@ -466,6 +456,64 @@ describe("恢复的拒绝路径（原数据无损）", () => {
     expect(readFileSync(join(dataDir, "shared", "共享练习.md"), "utf8")).toBe(
       "共享内容 v1",
     );
+  });
+});
+
+describe("collectBackupReferencedPaths（T6R.14 GC 备份引用保留清单扫描件）", () => {
+  it("快照引用的 note_versions/note_images 原始路径全收集；坏快照计 unreadable 且不炸", () => {
+    const fixture = makeFixtureSync();
+    fixtures.push(fixture);
+    const { dataDir, handle } = fixture;
+    // 无快照：零引用零计数
+    expect(collectBackupReferencedPaths(dataDir)).toEqual({
+      paths: [],
+      unreadable: 0,
+    });
+
+    // 快照（空 notes 表族——表存在无行）后放三个损坏快照：随机字节 /
+    // **0 字节** / **仅 16 字节页头**（C3：后两类会被 SQLite 当合法空库
+    // 打开成功、sqlite_master 无行——盲区：unreadable=0 绕过保守模式且
+    // 运维不可见；契约 = master 完全无表计入 unreadable）
+    createSnapshot(dataDir, handle.db, new Date("2026-10-01T00:00:00.000Z"));
+    writeCorruptSnapshot(dataDir, "tutor-20261002-000000.db");
+    writeTruncatedSnapshot(dataDir, "tutor-20261002-000001.db", 0);
+    writeTruncatedSnapshot(dataDir, "tutor-20261002-000002.db", 16);
+    const result = collectBackupReferencedPaths(dataDir);
+    expect(result.unreadable).toBe(3);
+    expect(result.paths).toEqual([]); // 空表族 → 零引用（不视为损坏）
+
+    // 直造一份含 note_versions/note_images 行的快照文件（扫描器只消费这两
+    // 表——构造合法测试缝；真实 VACUUM INTO 快照链路由 backup-gc.test 覆盖）
+    const crafted = join(dataDir, BACKUP_DIR_NAME, "tutor-20261003-000000.db");
+    const craftedDb = createDb(crafted);
+    craftedDb.$client
+      .prepare(
+        "CREATE TABLE note_versions (id TEXT PRIMARY KEY, body_path TEXT NOT NULL)",
+      )
+      .run();
+    craftedDb.$client
+      .prepare(
+        "CREATE TABLE note_images (id TEXT PRIMARY KEY, path TEXT NOT NULL)",
+      )
+      .run();
+    craftedDb.$client
+      .prepare(
+        "INSERT INTO note_versions VALUES ('v-1','blobs/notes/n-1/v1-abc01234567.json.gz')",
+      )
+      .run();
+    craftedDb.$client
+      .prepare(
+        "INSERT INTO note_images VALUES ('i-1','blobs/notes/n-1/img-i-1.png')",
+      )
+      .run();
+    craftedDb.$client.close();
+
+    const withRows = collectBackupReferencedPaths(dataDir);
+    expect(withRows.unreadable).toBe(3); // 三件坏快照仍在（轮转不自愈）
+    expect(withRows.paths).toEqual([
+      "blobs/notes/n-1/v1-abc01234567.json.gz",
+      "blobs/notes/n-1/img-i-1.png",
+    ]);
   });
 });
 

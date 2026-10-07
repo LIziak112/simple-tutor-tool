@@ -58,6 +58,25 @@ export const DOC_EMPTY = docOf([]);
 
 // ---------- 回执与 head 投影工厂 ----------
 
+/**
+ * 批量头响应工厂（T6R.14，四个测试文件共享——W5 收敛四份手写变体）：
+ * 返回按请求序对齐的 head 数组（对齐 fetchStudentNoteHeadsApi 的返回契约
+ * ——W1 起客户端已把服务端逐条回显收口为按请求序数组），覆盖表定制、
+ * 缺省空态（notCreated）。
+ */
+export function noteHeadsMockResponse(
+  overrides: Record<string, NoteHeadData> = {},
+): (
+  attemptId: string,
+  questionIds: readonly string[],
+) => Promise<NoteHeadData[]> {
+  return async (_attemptId, questionIds) =>
+    questionIds.map(
+      (questionId) =>
+        overrides[questionId] ?? { note: null, images: [], evidence: null },
+    );
+}
+
 export function receiptOf(revision: number): NoteVersionReceipt {
   return {
     noteId: "22222222-2222-4222-8222-222222222222",

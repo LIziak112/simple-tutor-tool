@@ -75,6 +75,7 @@ import {
   type MediaUploadResult,
   NOTE_IMAGE_FORM_FIELDS,
   type NoteHeadData,
+  type NoteHeadsData,
   type NoteImageMeta,
   type NoteImageUploadMeta,
   type NoteUploadMeta,
@@ -1065,30 +1066,44 @@ export function fetchTeacherInkStrokesApi(inkId: string): Promise<unknown> {
 // ---------- T6R.5：题目草稿读接口（学生端 + 教师端 evidence） ----------
 
 /**
- * 本次工作稿头（T6R.5 ①）：noteRecordMeta + 生效版本派生图 + 证据行。
- * 无笔记时服务端返回显式空态（note=null / images=[] / evidence=null），
- * 客户端以 baseRevision=0 起步——不是 404，无需判空捕获。
+ * 批量工作稿头（T6R.14）：一次返回多题头投影——答题页逐题挂载的 head 拉
+ * 取与交卷组装（submit-evidence）共用，N 逐题 GET 收敛为 1 POST。
+ * 返回**按 questionIds 请求序对齐**的 head 数组：服务端逐条回显是契约
+ * 不变量，缺条在此统一抛契约违错误（消费方无需各自判缺）。任一题目不在
+ * 该 attempt 冻结集合 → 404 QUESTION_NOT_FOUND 整批失败（与单题同门口）。
+ * signal（交卷组装的整批超时/中止）经 hc ClientRequestOptions.init 透传
+ * （hono 4.13.9：init 为标准 RequestInit、展开优先级最高，client.js 把它
+ * 排在展开序最后——覆盖默认 fetch init 的 signal 位），单分支不再需要
+ * 原语 fetch 兜底（C6）。
  */
-export function fetchStudentNoteHeadApi(
+export async function fetchStudentNoteHeadsApi(
   attemptId: string,
-  questionId: string,
-  /** 逐题超时等中止信号（T6R.10 交卷组装 30s——对齐 PUT 口径）；
-   *  有 signal 时走原语 fetch（hc RPC 路由推断不出 signal，同 putNoteDocumentApi） */
+  questionIds: readonly string[],
   signal?: AbortSignal,
-): Promise<NoteHeadData> {
-  if (signal === undefined) {
-    return callApi(() =>
-      api.api.student.attempts[":id"].notes[":questionId"].$get({
-        param: { id: attemptId, questionId },
-      }),
-    );
-  }
-  return callApi(() =>
-    fetch(
-      `/api/student/attempts/${encodeURIComponent(attemptId)}/notes/${encodeURIComponent(questionId)}`,
-      { signal },
-    ),
+): Promise<NoteHeadData[]> {
+  // json 以独立变量传入（同 postAttemptEventsApi）：内联字面量会触发 TS
+  // 对请求选项联合的过剩属性检查而误报 json 不存在
+  const args = {
+    param: { id: attemptId },
+    json: { questionIds: [...questionIds] },
+  };
+  const data: NoteHeadsData = await callApi(() =>
+    signal === undefined
+      ? api.api.student.attempts[":id"]["note-heads"].$post(args)
+      : api.api.student.attempts[":id"]["note-heads"].$post(args, {
+          init: { signal },
+        }),
   );
+  const headById = new Map(
+    data.heads.map((entry) => [entry.questionId, entry.head] as const),
+  );
+  return questionIds.map((questionId) => {
+    const head = headById.get(questionId);
+    if (head === undefined) {
+      throw new Error("批量头响应缺少该题（服务端契约违约，请重试）");
+    }
+    return head;
+  });
 }
 
 /**

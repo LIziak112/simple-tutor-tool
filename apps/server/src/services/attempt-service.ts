@@ -36,6 +36,7 @@ import {
   inArray,
   isNotNull,
   isNull,
+  type SQL,
   sql,
 } from "drizzle-orm";
 import type { Db } from "../db/client";
@@ -906,13 +907,7 @@ export function requireAttemptQuestion(
   const hit = db
     .select({ id: responses.id })
     .from(responses)
-    .where(
-      and(
-        eq(responses.attemptId, attempt.id),
-        eq(responses.questionId, questionId),
-        isNotNull(responses.questionSnapshotJson),
-      ),
-    )
+    .where(buildAttemptQuestionWhere(attempt.id, questionId))
     .get();
   if (hit === undefined) {
     throw new HttpError(
@@ -922,6 +917,52 @@ export function requireAttemptQuestion(
     );
   }
   return hit;
+}
+
+/** 严格口径的 WHERE 单源（单题/批量两兄弟共用；C8）——三条件：
+ * attempt 归属 + 题目成员 + 快照非空（语义见 requireAttemptQuestion 注释） */
+function buildAttemptQuestionWhere(attemptId: string, questionId: string): SQL {
+  return and(
+    eq(responses.attemptId, attemptId),
+    eq(responses.questionId, questionId),
+    isNotNull(responses.questionSnapshotJson),
+  ) as SQL;
+}
+
+/**
+ * 严格口径的**批量**兄弟（C8，唯一消费方 note-service.getStudentNoteHeads）：
+ * 一次 inArray 判定全部题目（替代 N 次点查），任一题目不在冻结集合 → 按
+ * 请求序取首个缺失者抛**同码同文案** 404（可观察行为与逐题门口完全一致）。
+ * questionIds 由调用方去重保序。
+ */
+export function requireAttemptQuestions(
+  db: Db,
+  attempt: Attempt,
+  questionIds: readonly string[],
+): void {
+  const hitIds = new Set(
+    db
+      .select({ id: responses.questionId })
+      .from(responses)
+      .where(
+        and(
+          eq(responses.attemptId, attempt.id),
+          inArray(responses.questionId, [...questionIds]),
+          isNotNull(responses.questionSnapshotJson),
+        ),
+      )
+      .all()
+      .map((row) => row.id),
+  );
+  for (const questionId of questionIds) {
+    if (!hitIds.has(questionId)) {
+      throw new HttpError(
+        404,
+        "QUESTION_NOT_FOUND",
+        "题目不存在或不属于这次练习",
+      );
+    }
+  }
 }
 
 /**

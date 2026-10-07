@@ -7,6 +7,7 @@ import {
   NOTE_IMAGE_PNG_MAX_BYTES,
   NOTE_VERSION_IMAGES_MAX_BYTES,
   noteHeadDataSchema,
+  noteHeadsDataSchema,
   noteImageMetaSchema,
 } from "@tutor/contract";
 import { and, eq } from "drizzle-orm";
@@ -464,6 +465,116 @@ describe("工作稿头与证据投影", () => {
         })
       ).status,
     ).toBe(200);
+  });
+});
+
+// ---------- 批量头投影（T6R.14） ----------
+
+describe("POST /attempts/:id/note-heads 批量头投影", () => {
+  /** POST 批量头（cookie 可换学生；body 原样 JSON 串） */
+  function postHeads(
+    attemptId: string,
+    questionIds: readonly string[],
+    cookie: string = aCookie,
+  ): Promise<Response> {
+    return Promise.resolve(
+      app.request(`/api/student/attempts/${attemptId}/note-heads`, {
+        method: "POST",
+        headers: { "content-type": "application/json", cookie },
+        body: JSON.stringify({ questionIds: [...questionIds] }),
+      }),
+    );
+  }
+
+  it("多题一次返回：顺序与请求一致、逐条等于单题 head 投影；过契约与泄露检查", async () => {
+    const attemptId = await freshAttempt();
+    const versionId = await putNote(attemptId, Q.apply);
+    expect((await postImage(versionId, makeNotePng())).status).toBe(200);
+
+    const batchRes = await postHeads(attemptId, [Q.solve, Q.apply]);
+    expect(batchRes.status).toBe(200);
+    const body = (await batchRes.json()) as {
+      data: {
+        heads: Array<{
+          questionId: string;
+          head: {
+            note: { currentVersionId: string } | null;
+            images: unknown[];
+          };
+        }>;
+      };
+    };
+    expect(noteHeadsDataSchema.safeParse(body.data).success).toBe(true);
+    expect(body.data.heads.map((entry) => entry.questionId)).toEqual([
+      Q.solve,
+      Q.apply,
+    ]);
+    // 逐条等于单题 GET（同一投影函数；中文 id 原样回显）
+    for (const entry of body.data.heads) {
+      const single = (await (
+        await app.request(
+          `/api/student/attempts/${attemptId}/notes/${entry.questionId}`,
+          { headers: { cookie: aCookie } },
+        )
+      ).json()) as { data: unknown };
+      expect(entry.head).toEqual(single.data);
+      assertNoLeak({ data: entry.head });
+    }
+    // 有笔记那题：note 行 + 派生图都进批量响应
+    const applyEntry = body.data.heads.find((e) => e.questionId === Q.apply);
+    expect(applyEntry?.head.note?.currentVersionId).toBe(versionId);
+    expect(applyEntry?.head.images).toHaveLength(1);
+  });
+
+  it("重复 questionId 去重保序：同题只答一次", async () => {
+    const attemptId = await freshAttempt();
+    const res = await postHeads(attemptId, [Q.solve, Q.apply, Q.solve]);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      data: { heads: { questionId: string }[] };
+    };
+    expect(body.data.heads.map((entry) => entry.questionId)).toEqual([
+      Q.solve,
+      Q.apply,
+    ]);
+  });
+
+  it("请求体校验 400：空数组 / 超 500 条（上限同源交卷上限，C1）/ 非数组 / 缺字段", async () => {
+    const attemptId = await freshAttempt();
+    for (const body of [
+      { questionIds: [] },
+      { questionIds: Array.from({ length: 501 }, (_, i) => `q${i}`) },
+      { questionIds: "p4-q7" },
+      {},
+    ]) {
+      const res = await app.request(
+        `/api/student/attempts/${attemptId}/note-heads`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json", cookie: aCookie },
+          body: JSON.stringify(body),
+        },
+      );
+      expect(res.status, JSON.stringify(body).slice(0, 40)).toBe(400);
+      assertNoLeak(await res.json());
+    }
+  });
+
+  it("鉴权与门槛与单题同门口：未登录 401；非本人 attempt 403；attempt 不存在 404；任一题目不在冻结集合 → 整批 404 QUESTION_NOT_FOUND", async () => {
+    const attemptId = await freshAttempt();
+    expect((await postHeads(attemptId, [Q.solve], "no-cookie")).status).toBe(
+      401,
+    );
+    expect((await postHeads(attemptId, [Q.solve], bCookie)).status).toBe(403);
+    expect((await postHeads(randomUUID(), [Q.solve])).status).toBe(404);
+    // 一坏全拒（严格口径，不静默剔除——契约注释同源）
+    const notFoundRes = await postHeads(attemptId, [Q.solve, "不在卷内的题"]);
+    expect(notFoundRes.status).toBe(404);
+    const errBody = (await notFoundRes.json()) as {
+      ok: false;
+      error: string;
+    };
+    expect(errBody.error).toBe("QUESTION_NOT_FOUND");
   });
 });
 

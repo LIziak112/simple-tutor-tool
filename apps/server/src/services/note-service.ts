@@ -18,6 +18,7 @@ import {
   NOTE_VERSION_IMAGES_MAX_BYTES,
   type NoteDoc,
   type NoteHeadData,
+  type NoteHeadsData,
   type NoteImageMeta,
   type NoteVersionReceipt,
   noteDocSchema,
@@ -51,8 +52,10 @@ import { pngIntact } from "../lib/png";
 import {
   requireAttemptQuestion,
   requireAttemptQuestionRow,
+  requireAttemptQuestions,
   requireUsableAttempt,
 } from "./attempt-service";
+import { collectBackupReferencedPaths } from "./backup-service";
 import {
   findTeacherAttempt,
   requireTeacherAttempt,
@@ -771,6 +774,34 @@ export function getStudentNoteHead(
   return noteHeadOf(db, attempt.id, questionId);
 }
 
+/**
+ * ①′ POST /api/student/attempts/:id/note-heads：批量头投影（T6R.14）。
+ * 门口与单题 head 完全一致（requireUsableAttempt + 冻结集合严格口径——
+ * requireAttemptQuestion 的 WHERE 三条件一次 inArray 批量判定，任一题目
+ * 不在集合 → 404 QUESTION_NOT_FOUND 同码同文案整批拒绝，不静默剔除）；
+ * questionIds 去重保序，响应顺序与请求一致。
+ * 每条复用同一 noteHeadOf 投影（零泄露口径同单题：只含版本指针/计数/图片
+ * 元信息，无正文与图片字节）。
+ */
+export function getStudentNoteHeads(
+  db: Db,
+  studentId: string,
+  attemptId: string,
+  questionIds: readonly string[],
+): NoteHeadsData {
+  const attempt = requireUsableAttempt(db, studentId, attemptId);
+  const uniqueIds = [...new Set(questionIds)];
+  // 整批过题目门口（任一不在冻结集合即 404，不做半批响应）——批量兄弟
+  // requireAttemptQuestions（与单题共享严格口径语义，C8）
+  requireAttemptQuestions(db, attempt, uniqueIds);
+  return {
+    heads: uniqueIds.map((questionId) => ({
+      questionId,
+      head: noteHeadOf(db, attempt.id, questionId),
+    })),
+  };
+}
+
 /** ② GET /api/student/attempts/:id/evidence/:qid：只读证据（本人历史权限，宽松题目口径） */
 export function getStudentNoteEvidence(
   db: Db,
@@ -1115,7 +1146,7 @@ export function attachNoteImage(
   return noteImageMetaOf(inserted);
 }
 
-// ---------- GC 骨架（未引用版本延迟回收；自动调度接线在 T6R.14） ----------
+// ---------- GC（未引用版本延迟回收 + 备份引用保留清单；自动调度本批未接线） ----------
 
 /** 安全窗口（毫秒）：版本/临时文件创建后至少保留这么久才可回收（暂定值） */
 export const NOTE_GC_SAFETY_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -1142,6 +1173,18 @@ export interface NoteGcResult {
   /** 超窗口但被保留集合（头指针/证据引用）挡下的版本数 */
   keptByReference: number;
   /**
+   * 超窗口但被**备份引用保留清单**挡下的版本数（T6R.14：backups/ 快照 db
+   * 引用的版本——当前库已无引用，删除会破坏该备份的恢复完整性）。
+   */
+  keptByBackup: number;
+  /**
+   * 不可读的备份快照数（损坏/非 SQLite 文件）。>0 时本轮**放弃版本删除与
+   * 孤儿清扫**（不可读备份可能引用任何 blobs/notes 文件，保守不删）——
+   * 正常部署恒为 0；持续 >0 需运维处理坏快照（轮转按 mtime 删除，
+   * 坏文件不会自愈）。
+   */
+  unreadableBackupDbs: number;
+  /**
    * 存量路径形态异常（复审轮⑥起含正文与图片两类）：bodyPath 越出 blobs/notes
    * 或文件名不合 v<rev>-<hash12>.json.gz 模式、imagePath 越出根或不合
    * img-<uuid>.png 模式。>0 时本轮**放弃孤儿文件清扫**（保守不删，见下），
@@ -1152,9 +1195,9 @@ export interface NoteGcResult {
 }
 
 /**
- * 未引用版本延迟回收（方案 §6.3；本任务只提供函数与测试，**未接入任何
- * 自动调度**——备份引用保留清单在 T6R.14 落地前不开启自动 GC，不以节省
- * 空间破坏备份可恢复性）。
+ * 未引用版本延迟回收（方案 §6.3；备份引用保留清单已随 T6R.14 落地——见
+ * 保留集合说明。**自动调度仍未接线**：A 批次保持保守，回收由运维显式调用
+ * 或后续批次在保留清单验证充分后接线，不以节省空间破坏可恢复性）。
  *
  * 保留集合（绝不可删）：
  * - 所有 notes.currentVersionId（工作头/订正检查点头）；
@@ -1164,7 +1207,15 @@ export interface NoteGcResult {
  *   重放按 CAS 冲突可诊断处理，见 note_versions.mutation_id 列注释）；
  * - 全部 note_images 行引用的图片文件（被行引用即活文件——行随所属版本
  *   删除时才连带删文件；「正在生成图片的版本」的保留由图片行的存在性
- *   天然承载：T6R.6 生成通道只要先落行或落 .tmp 就不会被误清）。
+ *   天然承载：T6R.6 生成通道只要先落行或落 .tmp 就不会被误清）；
+ * - **备份引用保留清单**（T6R.14，方案 §6.3「保留中的数据库备份引用也要
+ *   纳入保留集合」）：backups/ 下的快照 db 是整库时点拷贝，其
+ *   note_versions/note_images 行指向的 blobs/notes 文件与当前库共享磁盘，
+ *   回收会把「备份可恢复」变成「备份恢复出缺图」。每次 GC 现扫现存快照
+ *   （只读打开逐个取 body_path/path），引用路径并入保留集合；快照按 14 份
+ *   轮转删除后引用自然释放，下一轮 GC 即可回收。快照损坏不可读时**保守
+ *   放弃本轮版本删除与孤儿清扫**（不可读备份可能引用任何文件——宁可漏删
+ *   不可误删，与存量路径形态异常的既有口径一致；tmp 清扫不受影响）。
  *
  * 删除顺序：先事务删行（FK 拒绝=仍有引用→跳过下轮再试），后删文件
  * （行已删，文件删除失败只是占空间的孤儿，不产生悬垂引用——坏方向是
@@ -1186,8 +1237,47 @@ export function gcNoteVersions(
     sweptTmp: 0,
     sweptOrphanFiles: 0,
     keptByReference: 0,
+    keptByBackup: 0,
+    unreadableBackupDbs: 0,
     malformedBodyPaths: 0,
   };
+  const notesRoot = resolve(dataDir, "blobs", "notes");
+  /**
+   * relative + 越界判定的共同核（T4：relKeyOf/liveRel 共用）——返回原始
+   * path.relative 结果（null = 越出根或恰为根本身）；分隔符/大小写归一与
+   * 形态判定由两侧各自完成（见各自注释）。
+   */
+  const relWithinOf = (storedPath: string): string | null => {
+    const rel = relative(notesRoot, resolve(dataDir, storedPath));
+    if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) return null;
+    return rel;
+  };
+  /**
+   * 存储路径 → notes 域内对账键（"/" 分隔、小写；越界 → null）。备份保留
+   * 清单与版本删除判定共用同一归一（NTFS 大小写不敏感，复审④）；与孤儿
+   * 清扫 liveRel 的差异仅在后者额外要求 basename 合模式（malformed 语义
+   * 保留在 liveRel 侧，本函数不做形态判定）。
+   */
+  const relKeyOf = (storedPath: string): string | null => {
+    const rel = relWithinOf(storedPath);
+    return rel === null ? null : rel.split(/[\\/]/).join("/").toLowerCase();
+  };
+
+  /**
+   * 备份引用保留清单（T6R.14）：快照扫描件在 backup-service.
+   * collectBackupReferencedPaths（快照枚举/只读/坏件计数在其侧单测），
+   * 这里只做 notes 域内的键归一并入保留集合。不可读快照计数触发本轮
+   * 保守模式（版本删除与孤儿清扫全停）。
+   */
+  const backupKeepKeys = new Set<string>();
+  const backupReferenced = collectBackupReferencedPaths(dataDir);
+  result.unreadableBackupDbs = backupReferenced.unreadable;
+  for (const storedPath of backupReferenced.paths) {
+    const key = relKeyOf(storedPath);
+    if (key !== null) backupKeepKeys.add(key);
+  }
+  // 保守模式：存在不可读快照时不删任何版本、不清任何孤儿（tmp 清扫不受影响）
+  const conservative = result.unreadableBackupDbs > 0;
 
   // 保留集合（isNotNull 在 SQL 层裁掉 NULL 头/无版本证据行，免空值入集合）
   const keep = new Set<string>();
@@ -1243,7 +1333,23 @@ export function gcNoteVersions(
       result.keptByReference += 1;
       continue;
     }
+    if (conservative) continue; // 不可读快照在场：本轮不删（宁可漏删不可误删）
     const images = imagesByVersion.get(row.id) ?? [];
+    // 备份引用保留清单：当前库无引用、但某快照引用的版本——删了会让该备份
+    // 恢复出缺正文（方案 §6.3「保留中的数据库备份引用也要纳入保留集合」）。
+    // C4：判定**同时看正文键与图片键**——bodyPath 形态异常（relKeyOf=null）
+    // 的版本只查正文键会漏判，连带 unlink 掉快照引用的图片；任一键命中
+    // 即整版本保守跳过（行与文件都不动）。
+    const bodyKey = relKeyOf(row.bodyPath);
+    const bodyKept = bodyKey !== null && backupKeepKeys.has(bodyKey);
+    const imageKept = images.some((img) => {
+      const key = relKeyOf(img.path);
+      return key !== null && backupKeepKeys.has(key);
+    });
+    if (bodyKept || imageKept) {
+      result.keptByBackup += 1;
+      continue;
+    }
     try {
       db.transaction((tx) => {
         // 先删派生图行（FK 指向版本行），再删版本行
@@ -1277,7 +1383,6 @@ export function gcNoteVersions(
   // 事务未提交或行已删文件未清的崩溃残留——文件名合模式但不在任何
   // note_versions.body_path / note_images.path 中；窗口内不碰——那可能是
   // 刚落位、事务尚未提交的在途请求）。
-  const notesRoot = resolve(dataDir, "blobs", "notes");
   if (existsSync(notesRoot)) {
     const bodyFilePattern = /^v\d+-[0-9a-f]{12}\.json\.gz$/;
     const imageFilePattern = /^img-[0-9a-f-]{36}\.png$/;
@@ -1289,12 +1394,12 @@ export function gcNoteVersions(
     // 不同——不做归一会把活文件误判成孤儿误删（复审④）。malformed 判定
     // （basename 模式）保持大小写敏感：非小写规范形态本就该按异常保守处理。
     const liveRel = (storedPath: string, pattern: RegExp): string | null => {
-      const rel = relative(notesRoot, resolve(dataDir, storedPath));
+      // 越界/根本身判定走共同核（T4）；basename 模式判定保持大小写敏感
+      // （malformed 语义：非小写规范形态本就该按异常保守处理，复审④）
+      const rel = relWithinOf(storedPath);
+      if (rel === null) return null;
       const base = rel.split(/[\\/]/).at(-1) ?? "";
-      // rel===""（路径恰为根本身）不必单列：basename 不合模式必兜住
-      if (rel.startsWith("..") || isAbsolute(rel) || !pattern.test(base)) {
-        return null;
-      }
+      if (!pattern.test(base)) return null;
       // 键分隔符归一为 "/"：入库串用 "/"（复审⑦）而 path.relative 在
       // Windows 产 "\"，扫描侧统一拼 "/"——两侧一致才能对账
       return rel.split(/[\\/]/).join("/").toLowerCase();
@@ -1316,6 +1421,10 @@ export function gcNoteVersions(
         liveSet.add(key);
       }
     }
+    // 备份引用的文件并入 live 集合（T6R.14）：行已随当前库变化，但快照仍
+    // 引用的文件不是孤儿。保守模式（存在不可读快照）下整个孤儿清扫本就
+    // 放弃——此并入与之独立成立。
+    for (const key of backupKeepKeys) liveSet.add(key);
     // tmp 清扫的最小共用件（复审轮⑮：两扫描器共用）
     const sweepTmpFile = (filePath: string): void => {
       try {
@@ -1336,6 +1445,7 @@ export function gcNoteVersions(
             sweepTmpFile(filePath);
           } else if (
             orphan &&
+            !conservative && // 不可读快照在场：孤儿判定不可靠，本轮不清
             (bodyFilePattern.test(name) || imageFilePattern.test(name)) &&
             !liveSet.has(`${dirName}/${name}`.toLowerCase()) &&
             result.malformedBodyPaths === 0

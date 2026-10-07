@@ -438,7 +438,8 @@ export const attemptAnswerSaveDataSchema = z.object({
  * 服务端与本次冻结集合逐一比对——旧标签页/陈旧页面的提交（缺项、错版、多项）
  * 被 409 QUESTION_REVISION_STALE 可诊断拒绝（前端提示刷新后重交），不静默接受。
  * 空 revisions 合法（空卷交卷；服务端把不带请求体同样按空集合处理，非空卷
- * 由此自然落入 409）；上限 500 为防御性边界（单卷题数远低于此）。
+ * 由此自然落入 409）；上限 500 为防御性边界（单卷题数远低于此；常量
+ * ATTEMPT_SUBMIT_MAX_QUESTIONS 与批量头共享，见彼处注释）。
  */
 export const attemptSubmitRevisionSchema = z.object({
   questionId: z.string().min(1),
@@ -505,9 +506,19 @@ export const submitEvidenceDeclarationSchema = z
     }
   });
 
+/**
+ * 单卷题数的防御性上限（交卷 revisions/evidence 与批量头 note-heads 共用
+ * 同一常量——C1 一致性红线：批量头上限若小于交卷上限，「>批量上限 但
+ * ≤交卷上限」的卷会在答题页整页 400、交卷被永久阻断。修订须两侧同步，
+ * 契约一致性测试锁定相等）。
+ */
+export const ATTEMPT_SUBMIT_MAX_QUESTIONS = 500;
+
 /** 交卷请求体（revisions = 取卷/草稿视图下发过的全部题目版本引用） */
 export const attemptSubmitRequestSchema = z.object({
-  revisions: z.array(attemptSubmitRevisionSchema).max(500),
+  revisions: z
+    .array(attemptSubmitRevisionSchema)
+    .max(ATTEMPT_SUBMIT_MAX_QUESTIONS),
   /**
    * 每题笔记证据声明（T6R.10，方案 §6.4 第 3 步——交卷事务固定原稿）。
    * **缺省 = 旧客户端**：服务端检测到该 attempt 存在草稿（notes 表有
@@ -518,7 +529,10 @@ export const attemptSubmitRequestSchema = z.object({
    * 精确比对（缺项/多项/未知题目同样 409），逐项验证归属与并发状态后
    **同一事务**写 submission_evidence 与成绩/状态——原稿引用写入后不能换。
    */
-  evidence: z.array(submitEvidenceDeclarationSchema).max(500).optional(),
+  evidence: z
+    .array(submitEvidenceDeclarationSchema)
+    .max(ATTEMPT_SUBMIT_MAX_QUESTIONS)
+    .optional(),
 });
 
 /**

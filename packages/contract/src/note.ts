@@ -1,6 +1,9 @@
 import type { ZodIssue } from "zod";
 import { z } from "zod";
-import { questionRevisionIdSchema } from "./attempt.ts";
+import {
+  ATTEMPT_SUBMIT_MAX_QUESTIONS,
+  questionRevisionIdSchema,
+} from "./attempt.ts";
 import { INK_LOGICAL_WIDTH, inkAtramentDataSchema } from "./ink.ts";
 
 /**
@@ -563,6 +566,8 @@ export const noteErrorCodeSchema = z.enum([
 ]);
 
 // ---------- T6R.5 路由形状（方案 §8 路由表的成功响应壳与补图请求体） ----------
+// （T6R.14 补批量头投影：见下方「批量头投影」段——一次返回多题头，答题页
+// 与交卷组装不再逐题 GET）
 
 /**
  * 笔记头投影（GET /api/student/attempts/:id/notes/:qid 与 .../evidence/:qid、
@@ -602,6 +607,46 @@ export const noteImageUploadMetaSchema = z.object({
   crop: noteCropRectSchema,
   pixelWidth: z.number().int().min(1).max(NOTE_IMAGE_MAX_PIXEL_DIM),
   pixelHeight: z.number().int().min(1).max(NOTE_IMAGE_MAX_PIXEL_DIM),
+});
+
+// ---------- 批量头投影（T6R.14：一次返回多题头） ----------
+
+/**
+ * 一批头投影的题目数上限（T6R.14）：**= 交卷上限 ATTEMPT_SUBMIT_MAX_QUESTIONS
+ * （500）**——C1 一致性红线：批量头须覆盖交卷可构造的每卷题数（错题本
+ * 「重练全部」与跨单元大卷可构造 201+ 题），否则该类卷在答题页整页 400、
+ * 交卷被永久阻断；>500 的卷交卷本身 400，两处失败口径一致。**服务端校验
+ * 常量**（请求体 schema max 用；客户端不分块，不做旁路处理）。修订须改
+ * attempt.ts 单源并同步契约一致性测试。
+ */
+export const NOTE_HEADS_MAX_QUESTIONS = ATTEMPT_SUBMIT_MAX_QUESTIONS;
+
+/**
+ * 批量头请求体（POST /api/student/attempts/:id/note-heads 的 JSON body）：
+ * questionIds 为该 attempt 冻结集合内的题目 id 列表（1..500 条，上限单源
+ * NOTE_HEADS_MAX_QUESTIONS；空批与超上限 400）。顺序即响应回显顺序（去重后）。
+ */
+export const noteHeadsRequestSchema = z.object({
+  questionIds: z.array(z.string().min(1)).min(1).max(NOTE_HEADS_MAX_QUESTIONS),
+});
+
+/**
+ * 批量头响应单条：题目 id + 头投影（同 noteHeadData 的零泄露口径——只含
+ * 版本指针/计数/图片元信息，不含正文与图片字节；AGENTS.md 第 3 条）。
+ */
+export const noteHeadEntrySchema = z.object({
+  questionId: z.string().min(1),
+  head: noteHeadDataSchema,
+});
+
+/**
+ * 批量头响应 data：heads 与请求（去重后）一一对应、顺序一致。服务端对不在
+ * 该 attempt 冻结集合内的题目整体 404 QUESTION_NOT_FOUND（严格口径与单题
+ * head 同一门口，不做静默剔除——客户端请求列表来自试卷数据，出现未知 id
+ * 即客户端 bug 或探测，显式失败可诊断）。
+ */
+export const noteHeadsDataSchema = z.object({
+  heads: z.array(noteHeadEntrySchema),
 });
 
 // ---------- multipart 字段名单一来源（T6R.6 复审⑪） ----------
@@ -656,6 +701,8 @@ export type NoteVersionReceipt = z.infer<typeof noteVersionReceiptSchema>;
 export type NoteErrorCode = z.infer<typeof noteErrorCodeSchema>;
 export type NoteHeadData = z.infer<typeof noteHeadDataSchema>;
 export type NoteImageUploadMeta = z.infer<typeof noteImageUploadMetaSchema>;
+export type NoteHeadsRequest = z.infer<typeof noteHeadsRequestSchema>;
+export type NoteHeadsData = z.infer<typeof noteHeadsDataSchema>;
 
 // ---------- 与后续任务的关系 ----------
 

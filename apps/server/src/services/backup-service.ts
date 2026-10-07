@@ -15,11 +15,12 @@ import {
   BACKUP_SNAPSHOT_NAME_PATTERN,
 } from "@tutor/contract";
 import { ZipArchive } from "archiver";
+import Database from "better-sqlite3";
 import { eq } from "drizzle-orm";
 import type { Logger } from "pino";
 import { verifyPassword } from "../auth/password";
 import type { Db, DbHandle } from "../db/client";
-import { teachers } from "../db/schema";
+import { NOTE_BACKUP_REF_COLUMNS, teachers } from "../db/schema";
 import { HttpError } from "../lib/http-error";
 import { readZipEntries, type ZipEntry, ZipReadError } from "../lib/zip-read";
 import { beijingExportStampOf } from "./export-csv";
@@ -139,6 +140,76 @@ export function listSnapshots(dataDir: string): BackupSnapshot[] {
       };
     })
     .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+}
+
+/**
+ * 收集现存备份快照引用的 blobs 存储路径（T6R.14 GC 备份引用保留清单的
+ * 扫描件，唯一消费方 note-service.gcNoteVersions）：逐个只读打开 backups/
+ * 快照，取 note_versions.body_path 与 note_images.path 的**原始存储路径**
+ * （相对 DATA_DIR；notes 域内的对账键归一〔越界判定/小写〕是 notes 侧
+ * 单一实现，本函数不复制）。
+ * - 枚举经 listSnapshots（快照命名模式单一来源）；
+ * - 旧快照可能没有 notes 表族（T6R.2 之前的库）——按零引用处理，不视为损坏；
+ * - 单个快照打开/读取失败（损坏/非 SQLite）→ unreadable 计一并**丢弃该
+ *   快照已读的半截路径**（中途出错不可信），其余快照继续；
+ * - 无 backups 目录 → 零引用零计数（GC 既有 worlds 不受影响）。
+ */
+export function collectBackupReferencedPaths(dataDir: string): {
+  paths: string[];
+  unreadable: number;
+} {
+  const paths: string[] = [];
+  let unreadable = 0;
+  for (const snapshot of listSnapshots(dataDir)) {
+    let collected: string[] | null;
+    try {
+      const snapshotDb = new Database(
+        join(backupsDirOf(dataDir), snapshot.filename),
+        { readonly: true },
+      );
+      try {
+        const tableNames = snapshotDb
+          .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+          .all() as Array<{ name: string }>;
+        // C3 盲区封堵：0 字节/仅头页文件会被 SQLite 当**合法空库**打开成功、
+        // sqlite_master 无行——不计 unreadable 就绕过保守模式且运维不可见。
+        // 真快照（VACUUM INTO）恒有表（至少 __drizzle_migrations 等），旧快照
+        // 也有 users 等业务表——「master 完全无表」只可能是截断/损坏，计入
+        // unreadable 触发保守模式。「旧快照无 notes 表族」不受伤（其 master
+        // 非空，按零引用处理的口径不变）。
+        if (tableNames.length === 0) {
+          throw new Error("快照不含任何表（截断/空库，按不可读处理）");
+        }
+        const tableExists = (table: string): boolean =>
+          tableNames.some((row) => row.name === table);
+        collected = [];
+        // (表,列) 对由 db/schema NOTE_BACKUP_REF_COLUMNS 单源（C9）——
+        // 与 notes 表定义同文件保证表名同步；列名漂移则 SELECT 抛错走
+        // unreadable 保守 fail-safe
+        for (const [table, column] of NOTE_BACKUP_REF_COLUMNS) {
+          if (!tableExists(table)) continue;
+          const rows = snapshotDb
+            .prepare(`SELECT ${column} AS p FROM ${table}`)
+            .all() as Array<{ p: string }>;
+          for (const row of rows) collected.push(row.p);
+        }
+      } finally {
+        snapshotDb.close();
+      }
+    } catch {
+      unreadable += 1;
+      continue; // 丢弃半读路径（中途出错不可信）
+    }
+    // 逐条 push（C2）：`paths.push(...collected)` 是**函数实参展开**，参数
+    // 个数有引擎上限（Node 24 实测单快照 ≥~12.45 万行即 RangeError）——且
+    // 本语句在 per-snapshot try 之外，整轮 GC 崩且无计数。for 循环无此
+    // 上限；单快照引用行数级别如此已属部署级异常量，不做造假测试
+    // （代码审查级修复）。
+    for (const collectedPath of collected as string[]) {
+      paths.push(collectedPath);
+    }
+  }
+  return { paths, unreadable };
 }
 
 /** 从快照文件名解析时点（北京时间戳 → UTC ISO）；非快照命名返回 null */

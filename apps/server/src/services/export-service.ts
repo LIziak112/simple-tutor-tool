@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import { statSync } from "node:fs";
-import { resolve } from "node:path";
 import type {
   LearningPack,
   LearningPackAttemptSummary,
@@ -33,7 +32,6 @@ import {
   renderLearningPackPrompt,
 } from "@tutor/contract";
 import { analyzeLectureStructure } from "@tutor/md-dsl";
-import { ZipArchive } from "archiver";
 import {
   and,
   asc,
@@ -65,8 +63,10 @@ import {
 } from "../db/schema";
 import { chunk } from "../lib/chunk";
 import { HttpError } from "../lib/http-error";
+import { zipBufferOf } from "../lib/zip-write";
 import { answerOf, frozenRowsInDisplayOrder } from "./attempt-service";
 import { beijingDateTimeOf, beijingExportStampOf } from "./export-csv";
+import { inkFileAbs } from "./ink-service";
 import { lectureReadingMapFor } from "./lecture-insights";
 import { serializeStudentAnswer } from "./mark-response";
 import { extractMediaImageSrcs, statMediaSrc } from "./media-service";
@@ -489,7 +489,6 @@ export function assembleLearningPack(
   const inkEntries: Array<{ entry: string; absPath: string; bytes: number }> =
     [];
   if (m.ink) {
-    const inkRoot = resolve(dataDir, "blobs", "ink");
     const studentIdOfAttempt = new Map(
       scopeAttempts.map((attempt) => [attempt.id, attempt.studentId] as const),
     );
@@ -509,10 +508,15 @@ export function assembleLearningPack(
         if (inkEntries.some((item) => item.entry === entry)) {
           entry = `ink/${name}-${zipSafeQuestionName(row.questionId)}-${row.attemptId}.png`;
         }
-        const absPath = resolve(dataDir, row.pngPath);
-        if (!absPath.startsWith(inkRoot)) {
-          throw new HttpError(500, "INK_UNREADABLE", "笔迹文件路径非法");
-        }
+        // 目录边界（T6R.14 收敛，T6R.12 安全审查留档「既有」）：旧内联
+        // `abs.startsWith(inkRoot)` 会被同前缀相邻目录（blobs/inkfoo）骗过，
+        // 换 ink-service 既有薄壳 inkFileAbs（lib/blob-io 的 path.relative
+        // 强算法 + blobs/ink 根 + 同错误码 INK_UNREADABLE；review-pack 的
+        // ink 装配同构场景即走它）。不传后缀 = 保持旧语义精确等价（无后缀
+        // 白名单检查）。pngPath 恰为根/越界的腐坏态（DB 被手改等）从旧
+        // 「静默跳条目」收紧为 fail-fast 500——逐字节比对测试会暴露缺条目，
+        // 有意为之（2e88f36 安全收敛本意，角 A/B/E 复审定谳非缺陷）。
+        const absPath = inkFileAbs(dataDir, row.pngPath, undefined);
         let bytes: number;
         try {
           bytes = statSync(absPath).size;
@@ -2041,7 +2045,8 @@ export interface LearningPackZip {
 
 /**
  * POST /api/teacher/export/learning-pack：装配 + 50MB 预检（超限 413
- * EXPORT_TOO_LARGE，中文说明含精简方向，D18）+ archiver 打包。
+ * EXPORT_TOO_LARGE，中文说明含精简方向，D18）+ zip 打包（T6R.14 起走
+ * lib/zip-write.zipBufferOf 共享单点，与 review-pack 同管道）。
  * zip 结构（顶层）：pack.json / summary.md / prompt.md / schema.json /
  * 映射.txt（化名模式）/ ink/*.png（勾选）/ blobs/media/<hash>.<ext>
  * （md 中 ::image 引用的图片，条目名即契约 src 相对路径）。
@@ -2071,42 +2076,46 @@ export async function buildLearningPackZip(
     );
   }
 
-  // archiver v8 类 API：new ZipArchive（技术栈清单内依赖，原生 ESM）
-  const archive = new ZipArchive({ zlib: { level: 6 } });
-  const chunks: Buffer[] = [];
-  archive.on("data", (chunk: Buffer) => chunks.push(chunk));
-  const done = new Promise<void>((resolve, reject) => {
-    archive.on("end", () => resolve());
-    archive.on("error", (err: Error) => reject(err));
-  });
-  archive.append(Buffer.from(assembly.packJson, "utf8"), { name: "pack.json" });
-  archive.append(Buffer.from(assembly.summaryMd, "utf8"), {
-    name: "summary.md",
-  });
-  archive.append(Buffer.from(assembly.promptMd, "utf8"), { name: "prompt.md" });
-  archive.append(Buffer.from(assembly.schemaJson, "utf8"), {
-    name: "schema.json",
-  });
-  if (assembly.mappingTxt !== null) {
-    archive.append(Buffer.from(assembly.mappingTxt, "utf8"), {
-      name: "映射.txt",
-    });
-  }
-  for (const entry of assembly.inkEntries) {
-    archive.file(entry.absPath, { name: entry.entry });
-  }
-  // media 条目：条目名含子目录（blobs/media/…），archiver 按路径写目录条目
-  for (const entry of assembly.mediaEntries) {
-    archive.file(entry.absPath, { name: entry.entry });
-  }
-  // v2 证据图条目（T6R.12）：evidence/<编号>-<阶段>-<页号>.png；缺失文件
-  // 不在清单（manifest.missing 显式登记），不产生悬垂 zip 条目
-  for (const entry of assembly.evidenceEntries) {
-    archive.file(entry.absPath, { name: entry.entry });
-  }
-  await archive.finalize();
-  await done;
-  const bytes = Buffer.concat(chunks);
+  // 宽松口径（warningAsError:false）= v1 学情包既有语义：读不到的附件
+  // （ink/media 文件被外部删除等部署级损坏）跳过条目不致命，包照常产出
+  //（warning 留服务端日志）；LEARNING_PACK_MAX_BYTES 记账在装配预检处执行
+  const bytes = await zipBufferOf(
+    (archive) => {
+      archive.append(Buffer.from(assembly.packJson, "utf8"), {
+        name: "pack.json",
+      });
+      archive.append(Buffer.from(assembly.summaryMd, "utf8"), {
+        name: "summary.md",
+      });
+      archive.append(Buffer.from(assembly.promptMd, "utf8"), {
+        name: "prompt.md",
+      });
+      archive.append(Buffer.from(assembly.schemaJson, "utf8"), {
+        name: "schema.json",
+      });
+      if (assembly.mappingTxt !== null) {
+        archive.append(Buffer.from(assembly.mappingTxt, "utf8"), {
+          name: "映射.txt",
+        });
+      }
+      // 图片条目（ink/media/evidence，全为 PNG）store 直存——PNG 已压缩，
+      // deflate 纯耗 CPU（lib/zip-write 文档与 review-pack 同款口径）；
+      // 文本条目照常压缩
+      for (const entry of assembly.inkEntries) {
+        archive.file(entry.absPath, { name: entry.entry, store: true });
+      }
+      // media 条目：条目名含子目录（blobs/media/…），archiver 按路径写目录条目
+      for (const entry of assembly.mediaEntries) {
+        archive.file(entry.absPath, { name: entry.entry, store: true });
+      }
+      // v2 证据图条目（T6R.12）：evidence/<编号>-<阶段>-<页号>.png；缺失文件
+      // 不在清单（manifest.missing 显式登记），不产生悬垂 zip 条目
+      for (const entry of assembly.evidenceEntries) {
+        archive.file(entry.absPath, { name: entry.entry, store: true });
+      }
+    },
+    { warningAsError: false },
+  );
   const nowDate =
     options.now !== undefined
       ? new Date(
@@ -2116,7 +2125,7 @@ export async function buildLearningPackZip(
         )
       : new Date();
   return {
-    bytes: new Uint8Array(bytes),
+    bytes,
     filename: `learning-pack-${beijingExportStampOf(nowDate)}.zip`,
   };
 }

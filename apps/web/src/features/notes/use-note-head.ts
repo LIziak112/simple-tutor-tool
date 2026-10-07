@@ -1,6 +1,6 @@
 /**
- * 笔记头拉取与恢复接线（T6R.9，方案 §8「GET notes 工作稿头」）：
- * 答题页每道可草稿题挂一次本 hook——
+ * 笔记头拉取与恢复接线（T6R.9，方案 §8「GET notes 工作稿头」；T6R.14 起拉取
+ * 经批量端点合批）：答题页每道可草稿题挂一次本 hook——
  *
  * - head 拉取成功 → applyServerHead（baseRevision/noteId/lastHead 对齐 +
  *   同源备份回退检测，T6R.8 语义）；notCreated 显式空态（note=null）以
@@ -19,6 +19,10 @@
  * 重放副作用；失败重试由 react-query 退避（ApiError 不重试——权限/终态类
  * 错误重试无意义，网络错误重试 2 次）。head 失败不阻塞本地作答——四维状态
  * 的 server 维度来自同步队列视角（note-store 派生），不依赖 head。
+ *
+ * 批量合批（T6R.14）：逐题 GET 在二十题卷上是 N 个请求，queryFn 的网络段
+ * 经 lib/note-head-batch 的 fetchStudentNoteHeadCoalesced 在宏任务边界合并
+ * 为一次批量 POST（合批协调器在传输层小模块）；副作用与重试语义不变。
  */
 import { type UseQueryResult, useQuery } from "@tanstack/react-query";
 import type { NoteHeadData } from "@tutor/contract";
@@ -34,11 +38,8 @@ import {
   subscribeNoteStore,
 } from "@/features/notes/note-store";
 import { currentNoteSession } from "@/features/notes/note-sync";
-import {
-  ApiError,
-  fetchStudentNoteDocumentApi,
-  fetchStudentNoteHeadApi,
-} from "@/lib/api";
+import { ApiError, fetchStudentNoteDocumentApi } from "@/lib/api";
+import { fetchStudentNoteHeadCoalesced } from "@/lib/note-head-batch";
 
 /**
  * 订阅当前草稿会话（bind/unbind 经 note-store 的全量通知重取快照）。
@@ -123,7 +124,9 @@ export function useNoteHead(
       if (session === null) {
         throw new Error("草稿会话未绑定（不应发生：enabled 已守卫）");
       }
-      const head = await fetchStudentNoteHeadApi(attemptId, questionId);
+      // T6R.14：经传输层合批拉取（同 tick 多题合并为一次 POST；分发回各题
+      // 后副作用照旧在本 queryFn 内跑；协调器本体在 lib/note-head-batch）
+      const head = await fetchStudentNoteHeadCoalesced(attemptId, questionId);
       await applyNoteHeadSideEffects(
         session,
         {

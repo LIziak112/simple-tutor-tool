@@ -1027,6 +1027,19 @@ export const notes = sqliteTable(
 );
 
 /**
+ * 备份快照引用列清单（T6R.14 /simplify C9 单源）：GC 备份引用保留清单
+ * （backup-service.collectBackupReferencedPaths）从快照 db 读取的
+ * (表, 路径列) 对。**消费方 backup-service 与 notes 表定义在此同源**——
+ * 表改名靠本常量同步；失败语义不对称的原因：列名改了 SELECT 抛错 →
+ * unreadable 计数触发保守 fail-safe（宁可不删），表名改了则静默按
+ * 「表不存在」零引用——后者只能靠本常量与表定义同文件保证同步。
+ */
+export const NOTE_BACKUP_REF_COLUMNS = [
+  ["note_versions", "body_path"],
+  ["note_images", "path"],
+] as const;
+
+/**
  * 笔记版本表（T6R.2，方案 §5.2/§6.3）——不可变正文：行只 INSERT 不 UPDATE，
  * 头指针切换在事务里改 notes；未引用版本由 GC 在安全窗口后回收（T6R.4）。
  * - (noteId, revision) 唯一：同一笔记内版本号从 1 递增（CAS 语义的基础）；

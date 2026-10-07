@@ -32,6 +32,7 @@ import {
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { gzipJson, makeStudent, noteDoc } from "../test/note-fixtures.ts";
 import { insertFrozenResponse, newDraftAttempt } from "./attempt-service.ts";
+import { createSnapshot } from "./backup-service.ts";
 import {
   canonicalNoteJson,
   gcNoteVersions,
@@ -1694,6 +1695,70 @@ describe("未引用版本延迟回收（GC 骨架）", () => {
     expect(result.sweptOrphanFiles).toBe(0);
     expect(existsSync(resolve(dataDir, orphanRel))).toBe(true);
     // tmp 清扫不受形态异常影响（本测试无 tmp，下一测试覆盖）
+  });
+
+  it("备份引用的图片挡下 bodyPath 形态异常版本的删除（C4：图片键也进删除判定）", () => {
+    const { db, dataDir, studentId, attemptId } = makeWorld();
+    const r1 = save(db, dataDir, {
+      studentId,
+      attemptId,
+      questionId: "q1",
+      body: noteDoc(1),
+    });
+    save(db, dataDir, {
+      studentId,
+      attemptId,
+      questionId: "q1",
+      body: noteDoc(2),
+      baseRevision: 1,
+    });
+    // v1 挂一张派生图（直插行 + 落文件）
+    const imgRel = join("blobs", "notes", r1.noteId, "img-c4.png");
+    const imgAbs = resolve(dataDir, imgRel);
+    writeFileSync(imgAbs, "png-c4");
+    db.insert(noteImagesTable)
+      .values({
+        id: randomUUID(),
+        noteVersionId: r1.versionId,
+        spec: "analysis",
+        pageIndex: 0,
+        cropX: 0,
+        cropY: 0,
+        cropW: 1000,
+        cropH: 800,
+        pixelWidth: 320,
+        pixelHeight: 200,
+        path: imgRel,
+        hash: null,
+        state: "ready",
+      })
+      .run();
+    // v1 bodyPath 改成形态异常（越出根）——relKeyOf=null，body 键判定失效；
+    // 但图片路径合法且被快照引用
+    db.$client
+      .prepare("UPDATE note_versions SET body_path = ? WHERE id = ?")
+      .run(join("blobs", "other", "v1.json.gz"), r1.versionId);
+    const snapName = createSnapshot(
+      dataDir,
+      db,
+      new Date("2026-10-03T00:00:00.000Z"),
+    );
+    expect(snapName).toMatch(/\.db$/);
+    ageVersion(db, r1.versionId);
+    // head 版本同样推到窗外（两版本都必须超窗才会进入删除判定）
+    const allVersions = db.select().from(noteVersionsTable).all();
+    for (const version of allVersions) {
+      ageVersion(db, version.id);
+    }
+
+    const result = gcNoteVersions(db, dataDir, {
+      now: new Date("2026-10-06T00:00:00.000Z"),
+    });
+    // C4：body 键判定虽失效，该版本任一图片键命中备份保留集合同样保守跳过
+    // ——否则快照引用的图片被连带 unlink，备份恢复出缺图
+    expect(result.deletedVersionRows).toBe(0);
+    expect(result.keptByBackup).toBe(1);
+    expect(existsSync(imgAbs)).toBe(true);
   });
 
   it("删除版本时连带删其 note_images 行与图片文件", () => {
