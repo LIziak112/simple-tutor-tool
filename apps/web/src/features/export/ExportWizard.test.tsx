@@ -318,10 +318,16 @@ describe("ExportWizard 五步流转", () => {
     expect(payload?.scope).toEqual({ studentIds: [S1, S2], days: 30 });
     expect(payload?.goal).toBe("diagnose-weakness");
     expect(payload?.privacy).toEqual({ anonymize: true });
-    // 文件清单渲染（路径 + 合计）
+    // v1 默认请求语义零变化：不开证据组时不请求 packVersion=2、evidence 关、
+    // 阶段缺省 scratch（buildRequest 经契约 schema.parse 填默认——显式携带
+    // 与缺省对服务端同 schema 等价，无 v2 泄漏）
+    expect(payload).not.toHaveProperty("packVersion");
+    expect(payload?.modules?.evidence).toBe(false);
+    expect(payload?.modules?.evidencePhases).toEqual(["scratch"]);
+    // 文件清单渲染（路径 + 合计，使用 sizeTextOf）
     expect(screen.getByText("pack.json")).toBeInTheDocument();
     expect(screen.getByText("映射.txt")).toBeInTheDocument();
-    expect(screen.getByText(/51.1 KB/)).toBeInTheDocument();
+    expect(screen.getByText(/51 KB/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /生成并下载/ })).toBeEnabled();
   });
 
@@ -595,6 +601,8 @@ describe("ExportWizard 预览与下载", () => {
     await waitFor(() => {
       expect(mockedDownload).toHaveBeenCalledTimes(1);
     });
+    const downloadPayload = mockedDownload.mock.calls[0]?.[0];
+    expect(downloadPayload?.asOf).toBe(PREVIEW_OK.asOf);
 
     resolveDownload("learning-pack-20260101-120000.zip");
     expect(await screen.findByText(/已生成并开始下载/)).toBeInTheDocument();
@@ -733,5 +741,283 @@ describe("ExportWizard 未完成离开确认", () => {
     fireEvent.click(screen.getByRole("button", { name: "取消" }));
     await waitFor(() => expect(locationPath).toBe("/t/insights"));
     expect(screen.queryByText("放弃未保存的内容？")).not.toBeInTheDocument();
+  });
+});
+
+// ---------- T6R.16 新增特性测试 ----------
+
+describe("ExportWizard 手写证据分组（T6R.16 A）", () => {
+  it("默认主开关关闭且不显示阶段选择；开启后显示三个阶段且默认勾选原稿", async () => {
+    await pickStudentAndGoStep2();
+
+    const evidenceToggle = screen.getByRole("checkbox", {
+      name: /手写原稿与订正图片（v2 数据包）/,
+    });
+    expect(evidenceToggle).not.toBeChecked();
+    expect(screen.queryByText("选择收录阶段")).not.toBeInTheDocument();
+
+    // 开启主开关
+    fireEvent.click(evidenceToggle);
+    expect(evidenceToggle).toBeChecked();
+    expect(screen.getByText(/选择收录阶段/)).toBeInTheDocument();
+
+    // 默认原稿勾选
+    const scratchCheckbox = screen.getByRole("checkbox", { name: /^原稿/ });
+    const correctionCheckbox = screen.getByRole("checkbox", { name: /^订正/ });
+    const supplementCheckbox = screen.getByRole("checkbox", {
+      name: /^补充稿/,
+    });
+    expect(scratchCheckbox).toBeChecked();
+    expect(correctionCheckbox).not.toBeChecked();
+    expect(supplementCheckbox).not.toBeChecked();
+
+    // 体积与手写真实姓名提示
+    expect(
+      screen.getByText(/证据图片体积较大（上限 50MB）/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/手写图片可能包含真实姓名/)).toBeInTheDocument();
+  });
+
+  it("开启证据并勾选三阶段后，payload 携带 packVersion: 2 / evidence: true / 规范序 evidencePhases", async () => {
+    await pickStudentAndGoStep2();
+    // 勾选逐题作答以满足契约要求
+    fireEvent.click(screen.getByRole("checkbox", { name: /逐题答案/ }));
+
+    // 开启证据
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: /手写原稿与订正图片/ }),
+    );
+    // 勾选补充稿再勾选订正（乱序操作）
+    fireEvent.click(screen.getByRole("checkbox", { name: /^补充稿/ }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /^订正/ }));
+
+    fireEvent.click(nextButton());
+    fireEvent.click(nextButton());
+    fireEvent.click(nextButton());
+    await screen.findByText("包内文件清单");
+    await waitFor(() => expect(mockedPreview).toHaveBeenCalledTimes(1));
+
+    const payload = mockedPreview.mock.calls[0]?.[0];
+    expect(payload?.packVersion).toBe(2);
+    expect(payload?.modules.evidence).toBe(true);
+    // 规范序：scratch → correction → supplement
+    expect(payload?.modules.evidencePhases).toEqual([
+      "scratch",
+      "correction",
+      "supplement",
+    ]);
+  });
+
+  it("保证至少一门阶段勾选：尝试取消唯一的勾选阶段被阻止", async () => {
+    await pickStudentAndGoStep2();
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: /手写原稿与订正图片/ }),
+    );
+
+    const scratchCheckbox = screen.getByRole("checkbox", { name: /^原稿/ });
+    expect(scratchCheckbox).toBeChecked();
+    // 尝试取消原稿（当前唯一已选项）
+    fireEvent.click(scratchCheckbox);
+    // 仍保持勾选
+    expect(scratchCheckbox).toBeChecked();
+  });
+
+  it("勾选证据但未勾逐题作答时行内提示；证据只是附件开关不单独构成有效模块", async () => {
+    await renderWizard();
+    fireEvent.click(screen.getByRole("checkbox", { name: /陈小明/ }));
+    fireEvent.click(nextButton());
+    await screen.findByText(/讲义（候选集为资源库全部讲义/);
+
+    // 未勾选任何内容模块，仅勾选证据
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: /手写原稿与订正图片/ }),
+    );
+    // 提示需要同时勾选逐题作答
+    expect(
+      screen.getByText(/证据附件挂在逐题作答行上，需同时勾选/),
+    ).toBeInTheDocument();
+    // 证据不算内容模块，下一步保持禁用
+    expect(nextButton()).toBeDisabled();
+  });
+});
+
+describe("ExportWizard 逐题评析联动（T6R.16 B）", () => {
+  it("选中逐题评析时自动开启证据主开关（原稿默认勾），并显示 aria-live 提示", async () => {
+    await pickStudentAndGoStep2();
+    fireEvent.click(screen.getByRole("checkbox", { name: /逐题答案/ }));
+    // 确认此时证据主开关未开
+    const evidenceToggle = screen.getByRole("checkbox", {
+      name: /手写原稿与订正图片/,
+    });
+    expect(evidenceToggle).not.toBeChecked();
+
+    fireEvent.click(nextButton());
+    await screen.findByText(/任务目标/);
+
+    // 选中第五张卡「逐题评析」
+    const reviewRadio = screen.getByRole("radio", { name: /逐题评析/ });
+    fireEvent.click(reviewRadio);
+    expect(reviewRadio).toBeChecked();
+
+    // aria-live 提示出现
+    expect(
+      screen.getByText(/逐题评析需要 v2 证据附件，已自动开启/),
+    ).toBeInTheDocument();
+
+    // 回到第二步查看证据主开关已被自动开启
+    fireEvent.click(screen.getByRole("button", { name: "上一步" }));
+    expect(
+      screen.getByRole("checkbox", { name: /手写原稿与订正图片/ }),
+    ).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /^原稿/ })).toBeChecked();
+  });
+
+  it("目标为逐题评析时试图关闭证据主开关 → 阻止并提示", async () => {
+    await pickStudentAndGoStep2();
+    fireEvent.click(screen.getByRole("checkbox", { name: /逐题答案/ }));
+    fireEvent.click(nextButton());
+    await screen.findByText(/任务目标/);
+    fireEvent.click(screen.getByRole("radio", { name: /逐题评析/ }));
+
+    // 回到第二步试图关闭证据主开关
+    fireEvent.click(screen.getByRole("button", { name: "上一步" }));
+    const evidenceToggle = screen.getByRole("checkbox", {
+      name: /手写原稿与订正图片/,
+    });
+    expect(evidenceToggle).toBeChecked();
+
+    fireEvent.click(evidenceToggle);
+    // 阻止关闭：仍为勾选状态
+    expect(evidenceToggle).toBeChecked();
+    expect(
+      screen.getByText(/逐题评析依赖证据附件，请先改选其他任务目标/),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("ExportWizard 隐私与预览增强（T6R.16 C/D）", () => {
+  it("第④步包含手写笔迹脱敏文案提示", async () => {
+    await pickStudentAndGoStep2();
+    fireEvent.click(screen.getByRole("checkbox", { name: /作答汇总/ }));
+    fireEvent.click(nextButton());
+    fireEvent.click(nextButton());
+    await screen.findByText(/化名导出（默认开启）/);
+
+    expect(
+      screen.getByText(
+        /化名不等于图像脱敏——手写笔迹中可能出现真实姓名，请导出前在第⑤步预览图片确认。/,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("第⑤步包含不自动发送给 AI 服务的明示文案", async () => {
+    await pickStudentAndGoStep2();
+    fireEvent.click(screen.getByRole("checkbox", { name: /作答汇总/ }));
+    fireEvent.click(nextButton());
+    fireEvent.click(nextButton());
+    fireEvent.click(nextButton());
+    await screen.findByText("包内文件清单");
+
+    expect(
+      screen.getByText(
+        "本系统不会自动把数据包发送给任何 AI 服务，需你自行交给对话客户端。",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("第⑤步渲染 ready 与 missing 证据缩略图", async () => {
+    mockedPreview.mockResolvedValueOnce({
+      ...PREVIEW_OK,
+      evidenceImages: [
+        {
+          file: "evidence/e001-original-01.png",
+          ref: "e001",
+          phase: "scratch",
+          pageIndex: 0,
+          state: "ready",
+          bytes: 102_400,
+          downloadUrl: "/api/teacher/note-versions/v1/images/img1.png",
+        },
+        {
+          file: "evidence/e002-correction-01.png",
+          ref: "e002",
+          phase: "correction",
+          pageIndex: 0,
+          state: "missing",
+          bytes: 0,
+          reason: "草稿未生成分析图",
+        },
+      ],
+    });
+
+    await pickStudentAndGoStep2();
+    fireEvent.click(screen.getByRole("checkbox", { name: /作答汇总/ }));
+    fireEvent.click(nextButton());
+    fireEvent.click(nextButton());
+    fireEvent.click(nextButton());
+
+    await screen.findByText(/手写证据图片/);
+    // ready 项显示图片、懒加载、链接、尺寸
+    const img = screen.getByRole("img", {
+      name: "evidence/e001-original-01.png",
+    });
+    expect(img).toHaveAttribute("loading", "lazy");
+    expect(img).toHaveAttribute(
+      "src",
+      "/api/teacher/note-versions/v1/images/img1.png",
+    );
+    expect(screen.getByText("100 KB")).toBeInTheDocument();
+
+    // missing 项显示缺失原因且无 img
+    expect(screen.getByText(/缺失：草稿未生成分析图/)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("img", { name: "evidence/e002-correction-01.png" }),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe("ExportWizard ErrorRetry 错误重试（T6R.16 E）", () => {
+  it("学生名单失败时通过 ErrorRetry 重试", async () => {
+    mockedStudents.mockRejectedValueOnce(new Error("学生列表网络错误"));
+    render(
+      <QueryClientProvider client={makeQueryClient()}>
+        <MemoryRouter>
+          <ExportWizard initialStudentId={null} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(screen.getByText("学生列表网络错误")).toBeInTheDocument();
+    mockedStudents.mockResolvedValueOnce(STUDENTS);
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+    await screen.findByText("陈小明");
+  });
+
+  it("讲义列表失败时通过 ErrorRetry 重试", async () => {
+    mockedLectures.mockRejectedValueOnce(new Error("讲义列表网络错误"));
+    await renderWizard();
+    fireEvent.click(screen.getByRole("checkbox", { name: /陈小明/ }));
+    fireEvent.click(nextButton());
+
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(screen.getByText("讲义列表网络错误")).toBeInTheDocument();
+    mockedLectures.mockResolvedValueOnce(LECTURES);
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+    await screen.findByText("有理数讲义");
+  });
+
+  it("讲义大纲加载失败时通过 ErrorRetry 重试", async () => {
+    mockedLectureDetail.mockRejectedValueOnce(new Error("大纲解析失败"));
+    await pickStudentAndGoStep2();
+    fireEvent.click(
+      screen.getByRole("button", { name: "展开 有理数讲义 的小节目录" }),
+    );
+
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(screen.getByText("大纲解析失败")).toBeInTheDocument();
+    mockedLectureDetail.mockResolvedValueOnce(LECTURE_1_DETAIL);
+    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+    await screen.findByText("第一节 概念");
   });
 });
