@@ -7,6 +7,8 @@ import {
   type LearningPackGoal,
   type LearningPackPreviewData,
   learningPackExportRequestSchema,
+  NOTE_PHASE_LABELS,
+  NOTE_PHASE_ORDER,
   type NotePhase,
   sizeTextOf,
 } from "@tutor/contract";
@@ -113,13 +115,6 @@ const QUESTION_LEVEL_OPTIONS = [
   { value: "answer", label: "题干 + 参考答案" },
   { value: "solution", label: "题干 + 参考答案 + 解析" },
 ] as const;
-
-/** 证据阶段规范序（scratch → correction → supplement） */
-const ORDERED_EVIDENCE_PHASES: readonly NotePhase[] = [
-  "scratch",
-  "correction",
-  "supplement",
-];
 
 function arraysEqual(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((v, i) => v === b[i]);
@@ -231,7 +226,8 @@ export function ExportWizard({
    * MCP packRequestDefaults 同款口径，T6R.16 挂账④）。
    */
   function buildRequest(): LearningPackExportRequest {
-    const normalizedPhases = ORDERED_EVIDENCE_PHASES.filter((p) =>
+    // 规范序常量引契约单源（闸门 F8：NOTE_PHASE_ORDER，勿手写副本）
+    const normalizedPhases = NOTE_PHASE_ORDER.filter((p) =>
       evidencePhases.includes(p),
     );
     return learningPackExportRequestSchema.parse({
@@ -607,13 +603,9 @@ function moduleSummaryText(modules: {
   if (modules.traces) parts.push("学习痕迹");
   if (modules.ink) parts.push("手写 PNG");
   if (modules.evidence) {
-    const phaseLabels: Record<NotePhase, string> = {
-      scratch: "原稿",
-      correction: "订正",
-      supplement: "补充稿",
-    };
+    // 阶段中文标签引契约单源（闸门 F8：NOTE_PHASE_LABELS）
     const phaseNames = (modules.evidencePhases ?? ["scratch"]).map(
-      (p) => phaseLabels[p] ?? p,
+      (p) => NOTE_PHASE_LABELS[p],
     );
     parts.push(`手写证据（${phaseNames.join("/")}）`);
   }
@@ -1636,11 +1628,7 @@ function StepPreview({
                         {img.ref}
                       </span>
                       <span className="rounded bg-primary/10 px-1.5 py-0.5 text-xs text-primary">
-                        {img.phase === "scratch"
-                          ? "原稿"
-                          : img.phase === "correction"
-                            ? "订正"
-                            : "补充稿"}
+                        {NOTE_PHASE_LABELS[img.phase]}
                       </span>
                       <span className="text-muted-foreground">
                         第 {img.pageIndex + 1} 页

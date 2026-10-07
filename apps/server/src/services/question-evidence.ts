@@ -9,6 +9,7 @@ import type {
   QuestionAnswers,
   QuestionType,
 } from "@tutor/contract";
+import { NOTE_PHASE_ORDER } from "@tutor/contract";
 import { stemMdLeaksAnswers, studentStemMd } from "@tutor/md-dsl";
 import { and, asc, eq, inArray, isNotNull, lte } from "drizzle-orm";
 import type { Db } from "../db/client";
@@ -218,18 +219,12 @@ export interface QuestionEvidenceScopeItem {
 
 // ---------- 纯函数（可测的身份与命名口径） ----------
 
-/** 证据阶段规范序（scratch < correction < supplement；T6R.16 装配端唯一规范序来源） */
-const NOTE_PHASE_ORDER: readonly NotePhase[] = [
-  "scratch",
-  "correction",
-  "supplement",
-];
-
 /**
  * 证据阶段规范化（T6R.16）：去重 + 按规范序重排（契约 min(1)/max(3) 只锁
  * 非空与长度上限，不重排调用方输入——本函数是服务端唯一规范序执行点）。
- * 缺省（undefined）= ["scratch"]。导出供 export-service 的 meta.modules
- * 回显与 prompt evidencePhases 使用（同一规范序，勿在他处手写排序）。
+ * 缺省（undefined）= ["scratch"]。规范序常量 NOTE_PHASE_ORDER 引契约单源
+ * （T6R.16 闸门 F8：前端向导与本装配端共用同一份，勿再手写副本）。导出供
+ * export-service 的 meta.modules 回显与 prompt evidencePhases 使用。
  */
 export function normalizeEvidencePhases(
   phases: readonly NotePhase[] | undefined,

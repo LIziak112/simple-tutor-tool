@@ -14,6 +14,7 @@ import type {
   StudentListData,
   TeacherAssignmentListData,
 } from "@tutor/contract";
+import { NOTE_PHASE_LABELS } from "@tutor/contract";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -973,6 +974,10 @@ describe("ExportWizard 隐私与预览增强（T6R.16 C/D）", () => {
     expect(
       screen.queryByRole("img", { name: "evidence/e002-correction-01.png" }),
     ).not.toBeInTheDocument();
+
+    // 阶段徽标文案引契约单源（闸门 F8：NOTE_PHASE_LABELS，勿再手写副本）
+    expect(screen.getByText(NOTE_PHASE_LABELS.scratch)).toBeInTheDocument();
+    expect(screen.getByText(NOTE_PHASE_LABELS.correction)).toBeInTheDocument();
   });
 });
 
