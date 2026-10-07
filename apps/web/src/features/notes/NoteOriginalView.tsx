@@ -18,10 +18,10 @@
  *   的查看语境档位，→ 重建）、读取错误（→ 重试）。读取失败绝不隐藏成无稿；
  * - 判定与文案在纯函数层 note-original-phase.ts（互斥口径有独立单测），
  *   本组件只做 IO 与状态迁移；
- * - object URL 生命周期：landReady 单点维护（map 建 URL → urlsRef 赋值 →
- *   setPhase），重开/重试/收起/卸载即 revoke；epoch 代际守卫拦迟到结果。
- *   重展开缓存只存 {versionId, pages, strokeCount}（不常驻 NoteDoc，省每卡
- *   数 MB），重开仍拉证据头验证版本，同版本免下载免渲染。
+ * - T6R.15（D）：「按 versionId 取正文→确定性渲染→展开」核心抽至
+ *   use-note-version-view（与 NoteVersionView 共用）——重展开缓存、epoch
+ *   守卫、object URL 生命周期随核搬家，本组件保留证据行定位/无稿判定/
+ *   就绪元信息/缺图重建的编排。
  */
 
 import {
@@ -34,7 +34,6 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { recoverNoteImages } from "@/features/notes/image-sync";
-import { parseNoteDocOrThrow } from "@/features/notes/note-fixtures";
 import {
   ABSENT_TEXT,
   type AbsentReason,
@@ -43,16 +42,10 @@ import {
   resolveAbsentReason,
   resolveReadyMeta,
 } from "@/features/notes/note-original-phase";
-import {
-  type RenderedNotePage,
-  renderNoteImages,
-} from "@/features/notes/render-note";
 import type { NoteRole } from "@/lib/api";
-import {
-  fetchNoteDocumentApi,
-  fetchNoteEvidenceApi,
-} from "@/lib/note-endpoints";
+import { fetchNoteEvidenceApi } from "@/lib/note-endpoints";
 import { formatCnTime } from "@/lib/time";
+import { useNoteVersionBody } from "./use-note-version-view";
 
 /** 面板阶段（单一判别联合：一次 set 完成迁移，无中间组合态） */
 type OriginalPhase =
@@ -64,13 +57,6 @@ type OriginalPhase =
   /** 无稿族：四态文案互斥（见 note-original-phase 的 ABSENT_TEXT） */
   | { kind: "absent"; reason: AbsentReason }
   | ({ kind: "ready"; urls: string[] } & NoteOriginalReadyMeta);
-
-/** 重展开缓存：收起不清（blob 仍在内存），重开同版本免下载免渲染 */
-interface OriginalCache {
-  versionId: string;
-  pages: RenderedNotePage[];
-  strokeCount: number;
-}
 
 export function NoteOriginalView({
   viewer,
@@ -89,39 +75,21 @@ export function NoteOriginalView({
   roundLabel?: string | null;
 }) {
   const [phase, setPhase] = useState<OriginalPhase>({ kind: "closed" });
+  /** 正文渲染核（T6R.15 抽共享）：按 versionId 取正文→渲染→URL 落地 */
+  const body = useNoteVersionBody(viewer);
+  const { openBody, closeBody, resetBody } = body;
+  /** 证据行段的加载代际：卸载/重试/收起后迟到的 head 结果不再落地 */
+  const epochRef = useRef(0);
   const [rebuilding, setRebuilding] = useState(false);
   const [rebuildError, setRebuildError] = useState<string | null>(null);
-  /** 加载代际：卸载/重试/收起后迟到的异步结果不再落地 */
-  const epochRef = useRef(0);
-  /** 在役 object URL（替换/收起/卸载时成批 revoke） */
-  const urlsRef = useRef<string[]>([]);
-  /** 最近一次就绪的渲染页与笔迹数（重展开缓存；卸载清空） */
-  const cacheRef = useRef<OriginalCache | null>(null);
 
-  const revokeUrls = useCallback(() => {
-    for (const url of urlsRef.current) URL.revokeObjectURL(url);
-    urlsRef.current = [];
-  }, []);
-
-  /** 就绪落地单点：URL 不变量（创建→登记→setPhase）只此一处维护 */
-  const landReady = useCallback(
-    (meta: NoteOriginalReadyMeta, pages: RenderedNotePage[]) => {
-      const urls = pages.map((page) => URL.createObjectURL(page.blob));
-      urlsRef.current = urls;
-      setPhase({ kind: "ready", urls, ...meta });
-    },
-    [],
-  );
-
-  // 卸载回收：URL revoke 走同一原语；epoch 自增拦在途结果；缓存随组件释放
-  useEffect(
-    () => () => {
+  // 卸载回收：正文核（URL/缓存/在途 epoch）由 useNoteVersionBody 自理；本
+  // 组件只拦自己证据行段的迟到结果（phase 随组件卸载消亡）
+  useEffect(() => {
+    return () => {
       epochRef.current += 1;
-      cacheRef.current = null;
-      revokeUrls();
-    },
-    [revokeUrls],
-  );
+    };
+  }, []);
 
   // 定位变化守卫（当前挂载全键控不可达，防御未来原位导航复用实例）：
   // attemptId/questionId/viewer 变化即回到折叠态并弃缓存（旧定位的渲染页
@@ -138,17 +106,15 @@ export function NoteOriginalView({
     }
     scopeRef.current = { attemptId, questionId, viewer };
     epochRef.current += 1;
-    cacheRef.current = null;
-    revokeUrls();
+    resetBody();
     setRebuildError(null);
     setRebuilding(false);
     setPhase({ kind: "closed" });
-  }, [attemptId, questionId, viewer, revokeUrls]);
+  }, [attemptId, questionId, viewer, resetBody]);
 
   const load = useCallback(async () => {
     const epoch = epochRef.current + 1;
     epochRef.current = epoch;
-    revokeUrls();
     setPhase({ kind: "loading" });
     try {
       // 证据头恒拉（便宜且验证版本归属）；无稿判定在纯函数层
@@ -160,36 +126,20 @@ export function NoteOriginalView({
         return;
       }
       // frozen：契约 superRefine 保证 versionId 非空；空属数据异常（唯一
-      // 防御点——landReady 内不再重复）
+      // 防御点——就绪元信息层不再重复）
       const versionId = head.evidence?.versionId ?? null;
       if (versionId === null) {
         setPhase({ kind: "error", message: "证据行缺少版本引用（数据异常）" });
         return;
       }
-      const cached = cacheRef.current;
-      if (cached !== null && cached.versionId === versionId) {
-        // 缓存命中：同版本免下载免渲染（blob 在缓存内未回收，URL 重建）
-        const meta = resolveReadyMeta(head, cached.strokeCount);
-        if (meta !== null) landReady(meta, cached.pages);
-        return;
-      }
-      const raw = await fetchNoteDocumentApi(viewer, versionId);
+      // 正文段（含缓存命中/epoch 守卫/URL 生命周期）在共享核；stale 返回
+      // null（期间被 close/reset 超越），失败抛错进本组件错误态
+      const ready = await openBody(versionId);
+      if (ready === null) return;
       if (epoch !== epochRef.current) return;
-      const doc = parseNoteDocOrThrow(raw, "草稿原稿正文", "，无法查看");
-      // 确定性渲染走渲染骨架共用入口（renderNoteImages：入口级包围盒缓存 +
-      // 页间显式 yieldToMain + 离屏画布渲完即移除）。取舍（复审裁决）：load 是
-      // 单个 await，中途收起不中断渲染——有界浪费（离屏渲完即弃、epoch 守卫
-      // 保证 URL 不落地，无泄漏），不加 abort 机制
-      const pages = await renderNoteImages(doc, "analysis");
-      if (epoch !== epochRef.current) return;
-      cacheRef.current = {
-        versionId,
-        pages,
-        strokeCount: doc.ink.strokes.length,
-      };
-      const meta = resolveReadyMeta(head, doc.ink.strokes.length);
+      const meta = resolveReadyMeta(head, ready.strokeCount);
       if (meta === null) return; // 契约外形态已在上方 versionId 防御点排除——理论不可达
-      landReady(meta, pages);
+      setPhase({ kind: "ready", urls: ready.urls, ...meta });
     } catch (err) {
       if (epoch !== epochRef.current) return;
       setPhase({
@@ -197,13 +147,13 @@ export function NoteOriginalView({
         message: err instanceof Error ? err.message : "网络异常",
       });
     }
-  }, [attemptId, questionId, viewer, revokeUrls, landReady]);
+  }, [attemptId, questionId, viewer, openBody]);
 
   const close = useCallback(() => {
     epochRef.current += 1; // 在途加载作废（缓存保留供重展开）
-    revokeUrls();
+    closeBody();
     setPhase({ kind: "closed" });
-  }, [revokeUrls]);
+  }, [closeBody]);
 
   /**
    * 缺图重建：recoverNoteImages 自拉正文→渲染→上传，只挂既定版本（不改
