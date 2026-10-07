@@ -28,7 +28,7 @@ import {
   noteRevisionConflictCurrentSchema,
   noteSubmissionEvidenceMetaSchema,
 } from "@tutor/contract";
-import { and, asc, eq, inArray, isNotNull, ne, or, sql } from "drizzle-orm";
+import { and, asc, eq, isNotNull, ne, or, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
   type NoteImageRow,
@@ -37,7 +37,6 @@ import {
   noteImages,
   notes,
   noteVersions,
-  responses,
   type SubmissionEvidenceRow,
   submissionEvidence,
 } from "../db/schema";
@@ -53,6 +52,7 @@ import { pngIntact } from "../lib/png";
 import {
   requireAttemptQuestion,
   requireAttemptQuestionRow,
+  requireAttemptQuestions,
   requireUsableAttempt,
 } from "./attempt-service";
 import { collectBackupReferencedPaths } from "./backup-service";
@@ -791,32 +791,9 @@ export function getStudentNoteHeads(
 ): NoteHeadsData {
   const attempt = requireUsableAttempt(db, studentId, attemptId);
   const uniqueIds = [...new Set(questionIds)];
-  // 整批过题目门口（任一不在冻结集合即 404，不做半批响应）：一次 inArray
-  // 收敛 requireAttemptQuestion 的 N 次点查（同一 WHERE 三条件），缺失者按
-  // 请求序取首个——抛错与逐题门口完全一致（同码同文案）
-  const hitIds = new Set(
-    db
-      .select({ id: responses.questionId })
-      .from(responses)
-      .where(
-        and(
-          eq(responses.attemptId, attempt.id),
-          inArray(responses.questionId, uniqueIds),
-          isNotNull(responses.questionSnapshotJson),
-        ),
-      )
-      .all()
-      .map((row) => row.id),
-  );
-  for (const questionId of uniqueIds) {
-    if (!hitIds.has(questionId)) {
-      throw new HttpError(
-        404,
-        "QUESTION_NOT_FOUND",
-        "题目不存在或不属于这次练习",
-      );
-    }
-  }
+  // 整批过题目门口（任一不在冻结集合即 404，不做半批响应）——批量兄弟
+  // requireAttemptQuestions（与单题共享严格口径语义，C8）
+  requireAttemptQuestions(db, attempt, uniqueIds);
   return {
     heads: uniqueIds.map((questionId) => ({
       questionId,
