@@ -49,6 +49,7 @@ import {
   emptyAtramentDoc,
   headOf,
   makeResizeObserverStub,
+  noteHeadsMockResponse,
   SCOPE,
   SESSION_A,
 } from "@/features/notes/note-test-utils";
@@ -88,23 +89,8 @@ const putMock = vi.mocked(putNoteDocumentApi);
 const headsMock = vi.mocked(fetchStudentNoteHeadsApi);
 const docMock = vi.mocked(fetchStudentNoteDocumentApi);
 
-/**
- * 批量头 mock（T6R.14 形状）：按请求 id 逐条回显空态 head；单项覆盖用
- * `mockHeadsOnce({ [questionId]: head })` 形态的实现替换。
- */
-function headsResponseOf(overrides: Record<string, NoteHeadData> = {}): (
-  attemptId: string,
-  questionIds: readonly string[],
-) => Promise<{
-  heads: { questionId: string; head: NoteHeadData }[];
-}> {
-  return async (_attemptId, questionIds) => ({
-    heads: questionIds.map((questionId) => ({
-      questionId,
-      head: overrides[questionId] ?? { note: null, images: [], evidence: null },
-    })),
-  });
-}
+// 批量头 mock 用共享工厂 noteHeadsMockResponse（W5 收敛四份手写变体）：
+// 按请求 id 逐条回显、覆盖表定制、缺省空态（见各 mockImplementation 调用点）
 
 // ---------- 引擎 mock（每实例登记，供测试派发 change / 断言调用） ----------
 
@@ -226,7 +212,7 @@ function renderLayer(
 beforeEach(async () => {
   installNoteBackend(memoryNoteBackend());
   resetNoteSession();
-  headsMock.mockImplementation(headsResponseOf());
+  headsMock.mockImplementation(noteHeadsMockResponse());
   putMock.mockReset().mockResolvedValue({
     noteId: "22222222-2222-4222-8222-222222222222",
     revision: 1,
@@ -539,7 +525,7 @@ describe("NoteLayer：状态面板（四维）", () => {
       "服务端已有新版本",
     );
     headsMock.mockImplementation(
-      headsResponseOf({ [SCOPE.questionId]: rev3Head() }),
+      noteHeadsMockResponse({ [SCOPE.questionId]: rev3Head() }),
     );
     renderLayer({ initialOpen: true });
     expect(screen.getByText("草稿内容冲突")).toBeInTheDocument();
@@ -565,7 +551,7 @@ describe("NoteLayer：状态面板（四维）", () => {
     });
     await applyUploadDenied(SESSION_A, SCOPE, "access", "已无权限访问该练习");
     headsMock.mockImplementation(
-      headsResponseOf({ [SCOPE.questionId]: rev3Head() }),
+      noteHeadsMockResponse({ [SCOPE.questionId]: rev3Head() }),
     );
     renderLayer({ initialOpen: true });
     expect(screen.getByText("草稿已停止同步")).toBeInTheDocument();
@@ -696,7 +682,7 @@ describe("NoteLayer：状态面板栈与文案格（T6R.9 复审④⑨）", () =
       "服务端已有新版本",
     );
     headsMock.mockImplementation(
-      headsResponseOf({ [SCOPE.questionId]: rev3Head() }),
+      noteHeadsMockResponse({ [SCOPE.questionId]: rev3Head() }),
     );
     renderLayer({ initialOpen: true });
     await vi.waitFor(() => {
@@ -746,7 +732,7 @@ describe("NoteLayer：状态面板栈与文案格（T6R.9 复审④⑨）", () =
     ]);
     docMock.mockResolvedValue(cloud);
     headsMock.mockImplementation(
-      headsResponseOf({ [SCOPE.questionId]: rev3Head() }),
+      noteHeadsMockResponse({ [SCOPE.questionId]: rev3Head() }),
     );
     renderLayer({ initialOpen: true });
     const entry = await waitForEngine();
@@ -792,7 +778,7 @@ describe("NoteLayer：状态面板栈与文案格（T6R.9 复审④⑨）", () =
       new Error("云端草稿正文损坏或版本不兼容：形状错误"),
     );
     headsMock.mockImplementation(
-      headsResponseOf({ [SCOPE.questionId]: rev3Head() }),
+      noteHeadsMockResponse({ [SCOPE.questionId]: rev3Head() }),
     );
     renderLayer({ initialOpen: true });
     fireEvent.click(screen.getByRole("button", { name: "保留服务端内容" }));
@@ -899,7 +885,7 @@ describe("NoteLayer：状态面板栈与文案格（T6R.9 复审④⑨）", () =
     vi.useFakeTimers();
     try {
       headsMock.mockImplementation(
-        headsResponseOf({ [SCOPE.questionId]: headOf() }),
+        noteHeadsMockResponse({ [SCOPE.questionId]: headOf() }),
       );
       docMock.mockResolvedValue(docOf([]));
       renderLayer({ initialOpen: true });

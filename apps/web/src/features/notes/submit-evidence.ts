@@ -184,26 +184,15 @@ export async function prepareSubmitEvidence(input: {
     session === null
       ? Promise.resolve(new Map<string, NoteLocalRecord>())
       : loadScratchRecords(session, input.attemptId, { strictRead: true }),
+    // 整批超时（对齐 note-sync PUT 30s 桥接口径）；signal 走原语 fetch
+    //（hc RPC 路由推断不出 signal，同单题版 fetchStudentNoteHeadApi）。
+    // 返回值已由 api 收口为按请求序对齐的 head 数组（缺条在 api 层统一抛
+    // 契约违错误——整组 reject 阻止交卷，不产出缺题声明）
     fetchStudentNoteHeadsApi(
       input.attemptId,
       input.questionIds,
-      // 整批超时（对齐 note-sync PUT 30s 桥接口径）；signal 走原语 fetch
-      //（hc RPC 路由推断不出 signal，同单题版 fetchStudentNoteHeadApi）
       AbortSignal.timeout(NOTE_HEAD_TIMEOUT_MS),
-    ).then((data) => {
-      // 按请求序展开（服务端逐条回显是契约不变量；缺条=服务端违约，整组
-      // reject 阻止交卷，不产出缺题声明）
-      const byId = new Map(
-        data.heads.map((entry) => [entry.questionId, entry.head] as const),
-      );
-      return input.questionIds.map((questionId) => {
-        const head = byId.get(questionId);
-        if (head === undefined) {
-          throw new Error("批量头响应缺少该题（服务端契约违约，请重试）");
-        }
-        return head;
-      });
-    }),
+    ),
   ]);
 
   // ③ 分类与声明

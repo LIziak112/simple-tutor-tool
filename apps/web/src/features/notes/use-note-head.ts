@@ -106,16 +106,20 @@ function flushHeadBatch(attemptId: string): void {
   pendingHeads.delete(attemptId);
   if (batch.length === 0) return;
   const questionIds = [...new Set(batch.map((item) => item.questionId))];
+  // 缺条校验已在 fetchStudentNoteHeadsApi 收口（W1）：返回数组与 questionIds
+  // 请求序对齐，此处只做分发
   fetchStudentNoteHeadsApi(attemptId, questionIds)
-    .then((data) => {
-      const byId = new Map(
-        data.heads.map((entry) => [entry.questionId, entry.head] as const),
-      );
+    .then((heads) => {
+      const headById = new Map<string, NoteHeadData>();
+      questionIds.forEach((questionId, index) => {
+        const head = heads[index];
+        if (head !== undefined) headById.set(questionId, head);
+      });
       for (const item of batch) {
-        const head = byId.get(item.questionId);
+        const head = headById.get(item.questionId);
         if (head === undefined) {
           item.reject(
-            new Error("批量头响应缺少该题（服务端契约违约，请刷新重试）"),
+            new Error("批量头响应缺少该题（服务端契约违约，请重试）"),
           );
         } else {
           item.resolve(head);

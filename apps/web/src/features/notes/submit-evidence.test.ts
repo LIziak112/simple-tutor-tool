@@ -23,6 +23,7 @@ import {
 import {
   DOC_A,
   headOf,
+  noteHeadsMockResponse,
   receiptOf,
   SCOPE,
   SESSION_A,
@@ -99,17 +100,11 @@ function headAt(
   return { ...base, note: { ...note, questionId, ...noteOverride } };
 }
 
-/** head mock：默认空态（显式 notCreated 投影），覆盖表定制——批量响应按
- * 请求序逐条回显（T6R.14 形状） */
+/** head mock：默认空态（显式 notCreated 投影），覆盖表定制——共享工厂
+ * noteHeadsMockResponse（W5 收敛）逐条回显；此卷空态 = headOf({note:null})
+ * 形状（note 行显式 null），与共享工厂缺省一致 */
 function mockHeads(overrides: Record<string, NoteHeadData>): void {
-  headsMock.mockImplementation(
-    async (_attemptId: string, questionIds: readonly string[]) => ({
-      heads: questionIds.map((questionId) => ({
-        questionId,
-        head: overrides[questionId] ?? headOf({ note: null }),
-      })),
-    }),
-  );
+  headsMock.mockImplementation(noteHeadsMockResponse(overrides));
 }
 
 describe("prepareSubmitEvidence：正常固定", () => {

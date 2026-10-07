@@ -11,7 +11,12 @@ import {
   writeNoteDoc,
 } from "@/features/notes/note-store";
 import { bindNoteSession, resetNoteSession } from "@/features/notes/note-sync";
-import { headOf, SCOPE, SESSION_A } from "@/features/notes/note-test-utils";
+import {
+  headOf,
+  noteHeadsMockResponse,
+  SCOPE,
+  SESSION_A,
+} from "@/features/notes/note-test-utils";
 import {
   resetNoteHeadBatchForTest,
   useNoteHead,
@@ -58,11 +63,6 @@ const SERVER_DOC = docOf([
 /** rev1 head（共享 headOf 工厂；noteId 与 receipt 工厂一致） */
 const revHead = (overrides: Partial<NoteHeadData> = {}): NoteHeadData =>
   headOf(overrides);
-
-/** 批量响应工厂：按 questionId 顺序包一批 head（headsMock 的返回形状） */
-const headsDataOf = (
-  ...entries: Array<[questionId: string, head: NoteHeadData]>
-) => ({ heads: entries.map(([questionId, head]) => ({ questionId, head })) });
 
 function renderHeadHook(
   attemptId = SCOPE.attemptId,
@@ -120,12 +120,7 @@ afterEach(() => {
 
 describe("useNoteHead（T6R.9 接线；T6R.14 起经批量端点拉取）", () => {
   it("会话未绑定不拉取；绑定后拉 head 并应用（notCreated 空态不拉正文）", async () => {
-    headsMock.mockResolvedValue(
-      headsDataOf([
-        SCOPE.questionId,
-        { note: null, images: [], evidence: null },
-      ]),
-    );
+    headsMock.mockImplementation(noteHeadsMockResponse());
     renderHeadHook();
     // 初始（bind 前的渲染帧）不应发请求——bind 后由 enabled 触发
     await act(async () => {
@@ -141,7 +136,9 @@ describe("useNoteHead（T6R.9 接线；T6R.14 起经批量端点拉取）", () =
   });
 
   it("本地无记录而服务端有版本：拉正文播种（工作稿=服务端稿）", async () => {
-    headsMock.mockResolvedValue(headsDataOf([SCOPE.questionId, revHead()]));
+    headsMock.mockImplementation(
+      noteHeadsMockResponse({ [SCOPE.questionId]: revHead() }),
+    );
     docMock.mockResolvedValue(SERVER_DOC);
     bindNoteSession(SESSION_A);
     renderHeadHook();
@@ -155,7 +152,9 @@ describe("useNoteHead（T6R.9 接线；T6R.14 起经批量端点拉取）", () =
 
   it("本地未同步稿领先（同 base 有 pending）：不拉正文、不覆盖本地", async () => {
     const head1 = revHead();
-    headsMock.mockResolvedValue(headsDataOf([SCOPE.questionId, head1]));
+    headsMock.mockImplementation(
+      noteHeadsMockResponse({ [SCOPE.questionId]: head1 }),
+    );
     bindNoteSession(SESSION_A);
     // 先把本地记录对齐到 rev1（模拟上一轮已同步），再写新 pending：
     // 服务端仍停 rev1 —— 本地领先，无需拉正文
@@ -179,10 +178,9 @@ describe("useNoteHead（T6R.9 接线；T6R.14 起经批量端点拉取）", () =
   });
 
   it("head 显示图片 failed/missing：触发补图恢复（学生重新进入）", async () => {
-    headsMock.mockResolvedValue(
-      headsDataOf([
-        SCOPE.questionId,
-        revHead({
+    headsMock.mockImplementation(
+      noteHeadsMockResponse({
+        [SCOPE.questionId]: revHead({
           images: [
             {
               imageId: "img-1",
@@ -197,7 +195,7 @@ describe("useNoteHead（T6R.9 接线；T6R.14 起经批量端点拉取）", () =
             },
           ],
         }),
-      ]),
+      }),
     );
     docMock.mockResolvedValue(SERVER_DOC);
     bindNoteSession(SESSION_A);
@@ -237,15 +235,9 @@ describe("useNoteHead（T6R.9 接线；T6R.14 起经批量端点拉取）", () =
 
   it("同 attempt 多题同 tick 挂载：合为一次批量请求（T6R.14 收敛）", async () => {
     const head1 = revHead();
-    const head2: NoteHeadData = { note: null, images: [], evidence: null };
-    headsMock.mockImplementation(async (_attemptId, questionIds) =>
-      headsDataOf(
-        ...questionIds.map((questionId): [string, NoteHeadData] => [
-          questionId,
-          questionId === SCOPE.questionId ? head1 : head2,
-        ]),
-      ),
-    );
+    headsMock.mockImplementation(
+      noteHeadsMockResponse({ [SCOPE.questionId]: head1 }),
+    ); // p1-q2 的 head 即共享工厂的空态缺省
     docMock.mockResolvedValue(SERVER_DOC);
     bindNoteSession(SESSION_A);
     renderHeadHooks([

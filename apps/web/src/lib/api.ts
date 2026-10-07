@@ -1095,38 +1095,49 @@ export function fetchStudentNoteHeadApi(
 /**
  * 批量工作稿头（T6R.14）：一次返回多题头投影——答题页逐题挂载的 head 拉
  * 取与交卷组装（submit-evidence）共用，N 逐题 GET 收敛为 1 POST。
- * questionIds 顺序即响应回显顺序（服务端去重保序）；任一题目不在该 attempt
- * 冻结集合 → 404 QUESTION_NOT_FOUND 整批失败（与单题同门口）。
+ * 返回**按 questionIds 请求序对齐**的 head 数组：服务端逐条回显是契约
+ * 不变量，缺条在此统一抛契约违错误（消费方无需各自判缺）。任一题目不在
+ * 该 attempt 冻结集合 → 404 QUESTION_NOT_FOUND 整批失败（与单题同门口）。
  * 无 signal 时走 hc RPC 类型客户端；交卷组装的整批超时传 signal 时走原语
  * fetch（hc 推断不出 signal，同单题版 fetchStudentNoteHeadApi 双分支形态）。
  */
-export function fetchStudentNoteHeadsApi(
+export async function fetchStudentNoteHeadsApi(
   attemptId: string,
   questionIds: readonly string[],
   signal?: AbortSignal,
-): Promise<NoteHeadsData> {
-  if (signal === undefined) {
-    // json 以独立变量传入（同 postAttemptEventsApi）：内联字面量会触发 TS
-    // 对请求选项联合的过剩属性检查而误报 json 不存在
-    const args = {
-      param: { id: attemptId },
-      json: { questionIds: [...questionIds] },
-    };
-    return callApi(() =>
-      api.api.student.attempts[":id"]["note-heads"].$post(args),
-    );
-  }
-  return callApi(() =>
-    fetch(
-      `/api/student/attempts/${encodeURIComponent(attemptId)}/note-heads`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ questionIds: [...questionIds] }),
-        signal,
-      },
-    ),
+): Promise<NoteHeadData[]> {
+  const data: NoteHeadsData =
+    signal === undefined
+      ? // json 以独立变量传入（同 postAttemptEventsApi）：内联字面量会触发
+        // TS 对请求选项联合的过剩属性检查而误报 json 不存在
+        await callApi(() => {
+          const args = {
+            param: { id: attemptId },
+            json: { questionIds: [...questionIds] },
+          };
+          return api.api.student.attempts[":id"]["note-heads"].$post(args);
+        })
+      : await callApi(() =>
+          fetch(
+            `/api/student/attempts/${encodeURIComponent(attemptId)}/note-heads`,
+            {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ questionIds: [...questionIds] }),
+              signal,
+            },
+          ),
+        );
+  const headById = new Map(
+    data.heads.map((entry) => [entry.questionId, entry.head] as const),
   );
+  return questionIds.map((questionId) => {
+    const head = headById.get(questionId);
+    if (head === undefined) {
+      throw new Error("批量头响应缺少该题（服务端契约违约，请重试）");
+    }
+    return head;
+  });
 }
 
 /**
