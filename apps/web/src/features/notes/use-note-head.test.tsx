@@ -62,22 +62,12 @@ const SERVER_DOC = docOf([
 const revHead = (overrides: Partial<NoteHeadData> = {}): NoteHeadData =>
   headOf(overrides);
 
+/** 单题挂载 = 多题挂载的单元素特例（W4：渲染骨架单点） */
 function renderHeadHook(
   attemptId = SCOPE.attemptId,
   questionId = SCOPE.questionId,
 ) {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
-  function Probe() {
-    useNoteHead(attemptId, questionId);
-    return null;
-  }
-  return render(
-    <QueryClientProvider client={client}>
-      <Probe />
-    </QueryClientProvider>,
-  );
+  return renderHeadHooks([[attemptId, questionId]]);
 }
 
 /** 同 attempt 多题同时挂载（批量合批用例） */
