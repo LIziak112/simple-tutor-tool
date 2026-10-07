@@ -1119,7 +1119,10 @@
                 "maximum": 1
               },
               "reviewedSolution": {
-                "type": "boolean"
+                "type": [
+                  "boolean",
+                  "null"
+                ]
               }
             },
             "required": [
