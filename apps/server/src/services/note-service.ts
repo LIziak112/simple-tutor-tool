@@ -18,6 +18,7 @@ import {
   NOTE_VERSION_IMAGES_MAX_BYTES,
   type NoteDoc,
   type NoteHeadData,
+  type NoteHeadsData,
   type NoteImageMeta,
   type NoteVersionReceipt,
   noteDocSchema,
@@ -769,6 +770,41 @@ export function getStudentNoteHead(
   const attempt = requireUsableAttempt(db, studentId, attemptId);
   requireAttemptQuestion(db, attempt, questionId);
   return noteHeadOf(db, attempt.id, questionId);
+}
+
+/**
+ * ①′ POST /api/student/attempts/:id/notes/heads：批量头投影（T6R.14）。
+ * 门口与单题 head 完全一致（requireUsableAttempt + 逐题 requireAttemptQuestion
+ * 严格口径——任一题目不在冻结集合 → 404 QUESTION_NOT_FOUND 整批拒绝，不静默
+ * 剔除）；questionIds 去重保序（重复请求只答一次），响应顺序与请求一致。
+ * 每条复用同一 noteHeadOf 投影（零泄露口径同单题：只含版本指针/计数/图片
+ * 元信息，无正文与图片字节）。
+ */
+export function getStudentNoteHeads(
+  db: Db,
+  studentId: string,
+  attemptId: string,
+  questionIds: readonly string[],
+): NoteHeadsData {
+  const attempt = requireUsableAttempt(db, studentId, attemptId);
+  const seen = new Set<string>();
+  const uniqueIds: string[] = [];
+  for (const questionId of questionIds) {
+    if (!seen.has(questionId)) {
+      seen.add(questionId);
+      uniqueIds.push(questionId);
+    }
+  }
+  // 先整批过题目门口（任一不在冻结集合即 404，不做半批响应）
+  for (const questionId of uniqueIds) {
+    requireAttemptQuestion(db, attempt, questionId);
+  }
+  return {
+    heads: uniqueIds.map((questionId) => ({
+      questionId,
+      head: noteHeadOf(db, attempt.id, questionId),
+    })),
+  };
 }
 
 /** ② GET /api/student/attempts/:id/evidence/:qid：只读证据（本人历史权限，宽松题目口径） */

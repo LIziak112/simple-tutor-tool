@@ -64,7 +64,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
   return {
     ...actual,
-    fetchStudentNoteHeadApi: vi.fn(),
+    fetchStudentNoteHeadsApi: vi.fn(),
     fetchStudentNoteDocumentApi: vi.fn(),
     putNoteDocumentApi: vi.fn(),
   };
@@ -80,13 +80,31 @@ vi.mock("@/features/ink/engine/index.ts", () => ({
 
 import {
   fetchStudentNoteDocumentApi,
-  fetchStudentNoteHeadApi,
+  fetchStudentNoteHeadsApi,
   putNoteDocumentApi,
 } from "@/lib/api";
 
 const putMock = vi.mocked(putNoteDocumentApi);
-const headMock = vi.mocked(fetchStudentNoteHeadApi);
+const headsMock = vi.mocked(fetchStudentNoteHeadsApi);
 const docMock = vi.mocked(fetchStudentNoteDocumentApi);
+
+/**
+ * 批量头 mock（T6R.14 形状）：按请求 id 逐条回显空态 head；单项覆盖用
+ * `mockHeadsOnce({ [questionId]: head })` 形态的实现替换。
+ */
+function headsResponseOf(overrides: Record<string, NoteHeadData> = {}): (
+  attemptId: string,
+  questionIds: readonly string[],
+) => Promise<{
+  heads: { questionId: string; head: NoteHeadData }[];
+}> {
+  return async (_attemptId, questionIds) => ({
+    heads: questionIds.map((questionId) => ({
+      questionId,
+      head: overrides[questionId] ?? { note: null, images: [], evidence: null },
+    })),
+  });
+}
 
 // ---------- 引擎 mock（每实例登记，供测试派发 change / 断言调用） ----------
 
@@ -208,11 +226,7 @@ function renderLayer(
 beforeEach(async () => {
   installNoteBackend(memoryNoteBackend());
   resetNoteSession();
-  headMock.mockResolvedValue({
-    note: null,
-    images: [],
-    evidence: null,
-  } as NoteHeadData);
+  headsMock.mockImplementation(headsResponseOf());
   putMock.mockReset().mockResolvedValue({
     noteId: "22222222-2222-4222-8222-222222222222",
     revision: 1,
@@ -524,7 +538,9 @@ describe("NoteLayer：状态面板（四维）", () => {
       },
       "服务端已有新版本",
     );
-    headMock.mockResolvedValue(rev3Head());
+    headsMock.mockImplementation(
+      headsResponseOf({ [SCOPE.questionId]: rev3Head() }),
+    );
     renderLayer({ initialOpen: true });
     expect(screen.getByText("草稿内容冲突")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "保留本机内容" }));
@@ -548,7 +564,9 @@ describe("NoteLayer：状态面板（四维）", () => {
       },
     });
     await applyUploadDenied(SESSION_A, SCOPE, "access", "已无权限访问该练习");
-    headMock.mockResolvedValue(rev3Head());
+    headsMock.mockImplementation(
+      headsResponseOf({ [SCOPE.questionId]: rev3Head() }),
+    );
     renderLayer({ initialOpen: true });
     expect(screen.getByText("草稿已停止同步")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "重试同步" }));
@@ -677,7 +695,9 @@ describe("NoteLayer：状态面板栈与文案格（T6R.9 复审④⑨）", () =
       },
       "服务端已有新版本",
     );
-    headMock.mockResolvedValue(rev3Head());
+    headsMock.mockImplementation(
+      headsResponseOf({ [SCOPE.questionId]: rev3Head() }),
+    );
     renderLayer({ initialOpen: true });
     await vi.waitFor(() => {
       expect(screen.getByText("草稿内容冲突")).toBeInTheDocument();
@@ -725,7 +745,9 @@ describe("NoteLayer：状态面板栈与文案格（T6R.9 复审④⑨）", () =
       ]),
     ]);
     docMock.mockResolvedValue(cloud);
-    headMock.mockResolvedValue(rev3Head());
+    headsMock.mockImplementation(
+      headsResponseOf({ [SCOPE.questionId]: rev3Head() }),
+    );
     renderLayer({ initialOpen: true });
     const entry = await waitForEngine();
     fireEvent.click(screen.getByRole("button", { name: "保留服务端内容" }));
@@ -769,7 +791,9 @@ describe("NoteLayer：状态面板栈与文案格（T6R.9 复审④⑨）", () =
     docMock.mockRejectedValue(
       new Error("云端草稿正文损坏或版本不兼容：形状错误"),
     );
-    headMock.mockResolvedValue(rev3Head());
+    headsMock.mockImplementation(
+      headsResponseOf({ [SCOPE.questionId]: rev3Head() }),
+    );
     renderLayer({ initialOpen: true });
     fireEvent.click(screen.getByRole("button", { name: "保留服务端内容" }));
     await vi.waitFor(() => {
@@ -874,7 +898,9 @@ describe("NoteLayer：状态面板栈与文案格（T6R.9 复审④⑨）", () =
   it("空稿（0 笔）synced 不显示图片提示；有笔后显示（复审⑨定案）", async () => {
     vi.useFakeTimers();
     try {
-      headMock.mockResolvedValue(headOf());
+      headsMock.mockImplementation(
+        headsResponseOf({ [SCOPE.questionId]: headOf() }),
+      );
       docMock.mockResolvedValue(docOf([]));
       renderLayer({ initialOpen: true });
       await vi.waitFor(() => {

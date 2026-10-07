@@ -101,13 +101,16 @@ vi.mock("@/lib/api", async (importOriginal) => {
     fetchAttemptApi: vi.fn(),
     saveAttemptAnswerApi: vi.fn(),
     submitAttemptApi: vi.fn(),
-    // T6R.10：交卷前逐题拉草稿 head（默认空态——本文件不涉及笔记内容，
-    // 证据声明组装为全 none）
-    fetchStudentNoteHeadApi: vi.fn(async () => ({
-      note: null,
-      images: [],
-      evidence: null,
-    })),
+    // T6R.10：交卷前拉整卷草稿头（T6R.14 批量端点；默认空态——本文件不涉
+    // 及笔记内容，证据声明组装为全 none；按请求 id 逐条回显）
+    fetchStudentNoteHeadsApi: vi.fn(
+      async (_attemptId: string, questionIds: readonly string[]) => ({
+        heads: questionIds.map((questionId) => ({
+          questionId,
+          head: { note: null, images: [], evidence: null },
+        })),
+      }),
+    ),
     // T2.8：笔迹取回（默认无历史笔迹）与上传（成功回执）
     fetchAttemptInkApi: vi.fn(async () => null),
     putAttemptInkApi: vi.fn(async () => ({

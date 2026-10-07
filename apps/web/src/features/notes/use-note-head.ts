@@ -1,6 +1,6 @@
 /**
- * 笔记头拉取与恢复接线（T6R.9，方案 §8「GET notes 工作稿头」）：
- * 答题页每道可草稿题挂一次本 hook——
+ * 笔记头拉取与恢复接线（T6R.9，方案 §8「GET notes 工作稿头」；T6R.14 起拉取
+ * 经批量端点合批）：答题页每道可草稿题挂一次本 hook——
  *
  * - head 拉取成功 → applyServerHead（baseRevision/noteId/lastHead 对齐 +
  *   同源备份回退检测，T6R.8 语义）；notCreated 显式空态（note=null）以
@@ -19,6 +19,10 @@
  * 重放副作用；失败重试由 react-query 退避（ApiError 不重试——权限/终态类
  * 错误重试无意义，网络错误重试 2 次）。head 失败不阻塞本地作答——四维状态
  * 的 server 维度来自同步队列视角（note-store 派生），不依赖 head。
+ *
+ * 批量合批（T6R.14）：逐题 GET 在二十题卷上是 N 个请求，queryFn 的网络段经
+ * enqueueHeadFetch 在宏任务边界合并为一次批量 POST（见下方协调器注释）；
+ * 副作用与重试语义不变。
  */
 import { type UseQueryResult, useQuery } from "@tanstack/react-query";
 import type { NoteHeadData } from "@tutor/contract";
@@ -37,7 +41,7 @@ import { currentNoteSession } from "@/features/notes/note-sync";
 import {
   ApiError,
   fetchStudentNoteDocumentApi,
-  fetchStudentNoteHeadApi,
+  fetchStudentNoteHeadsApi,
 } from "@/lib/api";
 
 /**
@@ -65,6 +69,85 @@ export const studentNoteHeadKey = (
   attemptId: string,
   questionId: string,
 ) => ["student", studentId, "note-head", attemptId, questionId] as const;
+
+// ---------- 批量头拉取协调（T6R.14：N 题同 tick 挂载 → 1 次批量 POST） ----------
+
+/**
+ * 答题页每道可草稿题各挂一个 useNoteHead（各自 queryKey、各自副作用），逐题
+ * GET 在二十题卷上是 N 个请求——这里做**请求级合批**：queryFn 的拉取经
+ * enqueueHeadFetch 进同 attempt 的待批队列，宏任务边界（setTimeout 0）统一
+ * flush 成一次 fetchStudentNoteHeadsApi，按 questionId 把结果分发回各题。
+ * - 各题副作用（applyServerHead/条件拉正文/补图）仍在自己 queryFn 内跑：
+ *   缓存命中不重放、失败重试语义（ApiError 不重试）与逐题 queryKey 全部不变；
+ * - 批内一题结果缺失按服务端契约违约拒绝该题（服务端逐条回显是契约不变量）；
+ *   批量请求整体失败 → 全批 reject（各题 query 独立按既有 retry 策略恢复）；
+ * - 跨 attempt 各自成批；同题重复消费方由 react-query queryKey 去重，队列内
+ *   再兜底按 id 去重请求列表。
+ */
+interface PendingHeadRequest {
+  readonly questionId: string;
+  readonly resolve: (head: NoteHeadData) => void;
+  readonly reject: (err: unknown) => void;
+}
+
+const pendingHeads = new Map<string, PendingHeadRequest[]>();
+const flushTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+/** 测试出口：丢弃在途批与计时器（用例间防串扰；生产不调用） */
+export function resetNoteHeadBatchForTest(): void {
+  for (const timer of flushTimers.values()) clearTimeout(timer);
+  flushTimers.clear();
+  pendingHeads.clear();
+}
+
+/** 统一 flush：取走该 attempt 全部待批项，一次批量请求并按 id 分发 */
+function flushHeadBatch(attemptId: string): void {
+  const batch = pendingHeads.get(attemptId) ?? [];
+  pendingHeads.delete(attemptId);
+  if (batch.length === 0) return;
+  const questionIds = [...new Set(batch.map((item) => item.questionId))];
+  fetchStudentNoteHeadsApi(attemptId, questionIds)
+    .then((data) => {
+      const byId = new Map(
+        data.heads.map((entry) => [entry.questionId, entry.head] as const),
+      );
+      for (const item of batch) {
+        const head = byId.get(item.questionId);
+        if (head === undefined) {
+          item.reject(
+            new Error("批量头响应缺少该题（服务端契约违约，请刷新重试）"),
+          );
+        } else {
+          item.resolve(head);
+        }
+      }
+    })
+    .catch((err: unknown) => {
+      for (const item of batch) item.reject(err);
+    });
+}
+
+/** queryFn 的拉取入口：入队 + 首入队者挂宏任务计时器（同 tick 的后来者并批） */
+function enqueueHeadFetch(
+  attemptId: string,
+  questionId: string,
+): Promise<NoteHeadData> {
+  const pending = pendingHeads.get(attemptId) ?? [];
+  pendingHeads.set(attemptId, pending);
+  const promise = new Promise<NoteHeadData>((resolve, reject) => {
+    pending.push({ questionId, resolve, reject });
+  });
+  if (!flushTimers.has(attemptId)) {
+    flushTimers.set(
+      attemptId,
+      setTimeout(() => {
+        flushTimers.delete(attemptId);
+        flushHeadBatch(attemptId);
+      }, 0),
+    );
+  }
+  return promise;
+}
 
 /** head 应用与条件恢复（queryFn 内执行；导出供测试直调） */
 export async function applyNoteHeadSideEffects(
@@ -123,7 +206,9 @@ export function useNoteHead(
       if (session === null) {
         throw new Error("草稿会话未绑定（不应发生：enabled 已守卫）");
       }
-      const head = await fetchStudentNoteHeadApi(attemptId, questionId);
+      // T6R.14：经批量协调拉取（同 tick 多题合并为一次 POST；分发回各题后
+      // 副作用照旧在本 queryFn 内跑）
+      const head = await enqueueHeadFetch(attemptId, questionId);
       await applyNoteHeadSideEffects(
         session,
         {

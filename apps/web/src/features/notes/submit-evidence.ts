@@ -28,7 +28,7 @@ import type {
   NoteServerBodyState,
   SubmitEvidenceDeclaration,
 } from "@tutor/contract";
-import { fetchStudentNoteHeadApi } from "@/lib/api";
+import { fetchStudentNoteHeadsApi } from "@/lib/api";
 import {
   deriveServerState,
   loadScratchRecords,
@@ -68,7 +68,8 @@ export interface SubmitEvidencePrep {
   problems: SubmitEvidenceProblem[];
 }
 
-/** 逐题 head 拉取超时（对齐 note-sync PUT 的 30s 桥接口径） */
+/** 单次批量头拉取超时（对齐 note-sync PUT 的 30s 桥接口径；T6R.14 起一次
+ * POST 拉全卷头，超时作用于整批而非逐题） */
 const NOTE_HEAD_TIMEOUT_MS = 30_000;
 
 /** 待传未追平的通用文案（dirty/uploading 共用；原文两处字面量收敛） */
@@ -176,24 +177,33 @@ export async function prepareSubmitEvidence(input: {
   await catchUpNotes(input.attemptId);
 
   // ② 本卷记录（attempt 前缀单事务装载，strictRead 读失败抛错≠无记录）
-  //    与逐题服务端 head 同窗并发读取，按索引汇合（head 全部成功才可
-  //    声明——任一失败整组 reject 抛给调用方）
+  //    与整卷服务端 head 同窗并发读取（T6R.14：一次批量 POST，N 逐题 GET
+  //    收敛；head 全部成功才可声明——任一失败整组 reject 抛给调用方）
   const session = currentNoteSession();
   const [records, heads] = await Promise.all([
     session === null
       ? Promise.resolve(new Map<string, NoteLocalRecord>())
       : loadScratchRecords(session, input.attemptId, { strictRead: true }),
-    Promise.all(
-      input.questionIds.map((questionId) =>
-        // 逐题超时（对齐 note-sync PUT 30s 桥接口径）：批量端点是 T6R.14
-        // 待办，本分支先保证单请求不无限挂起
-        fetchStudentNoteHeadApi(
-          input.attemptId,
-          questionId,
-          AbortSignal.timeout(NOTE_HEAD_TIMEOUT_MS),
-        ),
-      ),
-    ),
+    fetchStudentNoteHeadsApi(
+      input.attemptId,
+      input.questionIds,
+      // 整批超时（对齐 note-sync PUT 30s 桥接口径）；signal 走原语 fetch
+      //（hc RPC 路由推断不出 signal，同单题版 fetchStudentNoteHeadApi）
+      AbortSignal.timeout(NOTE_HEAD_TIMEOUT_MS),
+    ).then((data) => {
+      // 按请求序展开（服务端逐条回显是契约不变量；缺条=服务端违约，整组
+      // reject 阻止交卷，不产出缺题声明）
+      const byId = new Map(
+        data.heads.map((entry) => [entry.questionId, entry.head] as const),
+      );
+      return input.questionIds.map((questionId) => {
+        const head = byId.get(questionId);
+        if (head === undefined) {
+          throw new Error("批量头响应缺少该题（服务端契约违约，请重试）");
+        }
+        return head;
+      });
+    }),
   ]);
 
   // ③ 分类与声明

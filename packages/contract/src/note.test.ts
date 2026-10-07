@@ -5,6 +5,7 @@ import {
   NOTE_BODY_GZIP_MAX_BYTES,
   NOTE_COORD_MAX_X,
   NOTE_COORD_MAX_Y,
+  NOTE_HEADS_MAX_QUESTIONS,
   NOTE_IMAGE_FORM_FIELDS,
   NOTE_IMAGE_MAX_PIXEL_DIM,
   NOTE_IMAGE_PNG_MAX_BYTES,
@@ -18,6 +19,8 @@ import {
   noteDocSchema,
   noteErrorCodeSchema,
   noteHeadDataSchema,
+  noteHeadsDataSchema,
+  noteHeadsRequestSchema,
   noteImageMetaSchema,
   noteImageUploadMetaSchema,
   noteIssueIsLimit,
@@ -809,5 +812,73 @@ describe("T6R.5 路由形状：noteHeadData / noteImageUploadMeta", () => {
       pixelWidth: "pixelWidth",
       pixelHeight: "pixelHeight",
     });
+  });
+});
+
+describe("T6R.14 批量头投影：noteHeadsRequest / noteHeadsData", () => {
+  /** 最小合法头投影（空态形态；完整形态已在 T6R.5 用例锁定） */
+  const emptyHead = { note: null, images: [], evidence: null };
+
+  it("请求体：questionIds 非空字符串数组，1..NOTE_HEADS_MAX_QUESTIONS 条", () => {
+    expect(
+      noteHeadsRequestSchema.parse({ questionIds: ["q1"] }).questionIds,
+    ).toEqual(["q1"]);
+    // 空数组拒绝（无意义的空批）
+    expect(noteHeadsRequestSchema.safeParse({ questionIds: [] }).success).toBe(
+      false,
+    );
+    // 超上限拒绝（与上限常量同源锁定）
+    expect(
+      noteHeadsRequestSchema.safeParse({
+        questionIds: Array.from(
+          { length: NOTE_HEADS_MAX_QUESTIONS + 1 },
+          (_, i) => `q${i}`,
+        ),
+      }).success,
+    ).toBe(false);
+    // 恰好上限合法
+    expect(
+      noteHeadsRequestSchema.safeParse({
+        questionIds: Array.from(
+          { length: NOTE_HEADS_MAX_QUESTIONS },
+          (_, i) => `q${i}`,
+        ),
+      }).success,
+    ).toBe(true);
+    // 空串 id 拒绝
+    expect(
+      noteHeadsRequestSchema.safeParse({ questionIds: [""] }).success,
+    ).toBe(false);
+    // 缺字段拒绝
+    expect(noteHeadsRequestSchema.safeParse({}).success).toBe(false);
+  });
+
+  it("上限常量锁定 200（与学习事件批量同量级；修订须改这里与注释）", () => {
+    expect(NOTE_HEADS_MAX_QUESTIONS).toBe(200);
+  });
+
+  it("响应 data：heads 数组按请求序回显 questionId + 头投影；元素缺头拒绝", () => {
+    const parsed = noteHeadsDataSchema.parse({
+      heads: [
+        { questionId: "p4-q7", head: emptyHead },
+        { questionId: "p4-q8", head: emptyHead },
+      ],
+    });
+    expect(parsed.heads.map((entry) => entry.questionId)).toEqual([
+      "p4-q7",
+      "p4-q8",
+    ]);
+    // head 缺失/形状非法 → 整体拒绝（客户端按条消费，坏条不能混进来）
+    expect(
+      noteHeadsDataSchema.safeParse({ heads: [{ questionId: "q1" }] }).success,
+    ).toBe(false);
+    expect(
+      noteHeadsDataSchema.safeParse({
+        heads: [{ questionId: "q1", head: { note: null } }],
+      }).success,
+    ).toBe(false);
+    // 空 heads 合法？——请求 ≥1 条且服务端逐条回显，空数组只会是服务端 bug：
+    // 契约不禁止（min(0)），由服务端实现测试锁定「逐条回显」不变量
+    expect(noteHeadsDataSchema.parse({ heads: [] }).heads).toEqual([]);
   });
 });
