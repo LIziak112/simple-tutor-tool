@@ -175,11 +175,15 @@ export interface QuestionEvidenceAssembly {
     readonly reason: string;
     readonly questionRefs: readonly string[];
   }>;
-  /** 证据图缺失清单（未生成/失败/文件删除；进 manifest.missing） */
+  /** 证据图缺失清单（未生成/失败/文件删除；进 manifest.missing 与 preview 清单） */
   readonly missingEvidenceImages: ReadonlyArray<{
     readonly file: string;
     readonly reason: string;
     readonly evidenceRef: string;
+    /** 缺失行所属证据阶段（闸门 F3：preview 清单需要阶段标签） */
+    readonly phase: NotePhase;
+    /** 缺失行页号（闸门 F3：零图/缺版本防御分支为 0，逐图行为真实页号） */
+    readonly pageIndex: number;
   }>;
 }
 
@@ -352,7 +356,8 @@ const EVIDENCE_IMAGE_MISSING_REASONS: Record<
 // ---------- 证据条目投影（T6R.13 /code-review D27：review-pack 与
 // export-service v2 的 evidence 侧收敛——同一条目不再两处手写同一遍历） ----------
 
-/** 证据条目 → ready 分析图条目（zip 写入形态：file 绝对路径/字节/所属 ref） */
+/** 证据条目 → ready 分析图条目（zip 写入形态：file 绝对路径/字节/所属 ref；
+ * phase 闸门 F4 起随行携带——summary 标题的阶段感知消费） */
 export function readyEvidenceImagesOf(
   entry: QuestionEvidenceEntry,
 ): ReadonlyArray<{
@@ -360,12 +365,14 @@ export function readyEvidenceImagesOf(
   readonly absPath: string;
   readonly bytes: number;
   readonly ref: string;
+  readonly phase: NotePhase;
 }> {
   const out: Array<{
     entry: string;
     absPath: string;
     bytes: number;
     ref: string;
+    phase: NotePhase;
   }> = [];
   for (const image of entry.images) {
     if (image.state === "ready" && image.absPath !== undefined) {
@@ -374,6 +381,7 @@ export function readyEvidenceImagesOf(
         absPath: image.absPath,
         bytes: image.bytes ?? 0,
         ref: entry.ref,
+        phase: entry.phase,
       });
     }
   }
@@ -432,6 +440,8 @@ export function assembleQuestionEvidence(
     file: string;
     reason: string;
     evidenceRef: string;
+    phase: NotePhase;
+    pageIndex: number;
   }> = [];
 
   // 证据行批量预取（(attemptId, questionId) 唯一）
@@ -831,7 +841,13 @@ function versionEvidenceOf(
 ): {
   version: NonNullable<QuestionEvidenceEntry["version"]> | undefined;
   images: EvidenceImageItem[];
-  missing: Array<{ file: string; reason: string; evidenceRef: string }>;
+  missing: Array<{
+    file: string;
+    reason: string;
+    evidenceRef: string;
+    phase: NotePhase;
+    pageIndex: number;
+  }>;
 } {
   if (versionId === null) {
     return {
@@ -842,6 +858,8 @@ function versionEvidenceOf(
           file: evidenceImageFileName(eRef, phase, 0),
           reason: "证据行缺少版本引用（数据异常）",
           evidenceRef: eRef,
+          phase,
+          pageIndex: 0,
         },
       ],
     };
@@ -856,6 +874,8 @@ function versionEvidenceOf(
           file: evidenceImageFileName(eRef, phase, 0),
           reason: "被固定的版本行缺失（数据异常）",
           evidenceRef: eRef,
+          phase,
+          pageIndex: 0,
         },
       ],
     };
@@ -894,10 +914,21 @@ function analysisImagesOf(
   imageRows: readonly NoteImageRow[],
 ): {
   images: EvidenceImageItem[];
-  missing: Array<{ file: string; reason: string; evidenceRef: string }>;
+  missing: Array<{
+    file: string;
+    reason: string;
+    evidenceRef: string;
+    phase: NotePhase;
+    pageIndex: number;
+  }>;
 } {
-  const missing: Array<{ file: string; reason: string; evidenceRef: string }> =
-    [];
+  const missing: Array<{
+    file: string;
+    reason: string;
+    evidenceRef: string;
+    phase: NotePhase;
+    pageIndex: number;
+  }> = [];
   const images: EvidenceImageItem[] = [];
   for (const image of imageRows) {
     const file = evidenceImageFileName(eRef, phase, image.pageIndex);
@@ -944,13 +975,21 @@ function analysisImagesOf(
       }
     }
     images.push({ ...base, state: "missing", reason });
-    missing.push({ file, reason, evidenceRef: eRef });
+    missing.push({
+      file,
+      reason,
+      evidenceRef: eRef,
+      phase,
+      pageIndex: image.pageIndex,
+    });
   }
   if (imageRows.length === 0) {
     missing.push({
       file: evidenceImageFileName(eRef, phase, 0),
       reason: "该版本尚无分析图（未生成）",
       evidenceRef: eRef,
+      phase,
+      pageIndex: 0,
     });
   }
   return { images, missing };

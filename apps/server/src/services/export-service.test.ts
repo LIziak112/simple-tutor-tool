@@ -12,6 +12,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import type { Db } from "../db/client";
 import {
   attempts,
+  events as eventsTable,
   ink,
   lectures,
   noteImages as noteImagesTable,
@@ -1595,6 +1596,10 @@ describe("T6R.16 多阶段证据与固定选择（evidencePhases/asOf/preview）
     expect(byAttempt.get(phaseA1)?.finalCorrect).toBe(false);
     expect(byAttempt.get(phaseB1)?.finalCorrect).toBe(true);
     expect(byAttempt.get(phaseA2)?.finalCorrect).toBeNull();
+    // 闸门 F4：多阶段世界的 summary 标题按阶段感知（correction/supplement
+    // 在场 → 「手写证据」，纯 scratch 才是「手写原稿」）
+    expect(assembly.summaryMd).toContain("## 手写证据（4 张）");
+    expect(assembly.summaryMd).not.toContain("## 手写原稿（");
     // meta 回显规范序 + 逐题评析目标 + prompt 阶段细化 + contextNotes 口径
     expect(pack.meta.modules.evidencePhases).toEqual([
       "scratch",
@@ -1694,6 +1699,28 @@ describe("T6R.16 多阶段证据与固定选择（evidencePhases/asOf/preview）
         (note) => note.includes("找回稿") || note.includes("交卷前已固定"),
       ),
     ).toBe(false);
+    // 闸门 F4：只勾订正 = 多阶段（非纯 scratch）→ 「手写证据（1 张）」
+    expect(assembly.summaryMd).toContain("## 手写证据（1 张）");
+  });
+
+  it("F4：只勾原稿阶段 summary 标题零漂移（「手写原稿（3 张）」）", () => {
+    const assembly = assembleLearningPack(
+      db,
+      dataDir,
+      TEST_TEACHER_ID,
+      phaseRequest({
+        modules: {
+          questions: "solution",
+          responses: true,
+          evidence: true,
+          evidencePhases: ["scratch"],
+        },
+      }),
+      { now: P_NOW },
+    );
+    // 纯 scratch：e001 第一页 + e004 + e005（e001 第二页已删为缺失，不计标题）
+    expect(assembly.summaryMd).toContain("## 手写原稿（3 张）");
+    expect(assembly.summaryMd).not.toContain("## 手写证据（");
   });
 
   it("asOf 贯穿：窗口/收录/meta.to 以 asOf 为准；generatedAt 仍真实 now；preview 回传 asOf", () => {
@@ -1740,6 +1767,66 @@ describe("T6R.16 多阶段证据与固定选择（evidencePhases/asOf/preview）
     expect(previewDefault.asOf).toBe(P_NOW);
   });
 
+  it("F13①：asOf+traces → contextNotes 声明阅读地图未按 asOf 钉定；无 asOf 或未勾 traces 无此条", () => {
+    const tracesModules = {
+      questions: "solution",
+      responses: true,
+      evidence: true,
+      evidencePhases: ["scratch", "correction", "supplement"],
+      traces: true,
+    } as const;
+    const withNote = learningPackV2Schema.parse(
+      JSON.parse(
+        assembleLearningPack(
+          db,
+          dataDir,
+          TEST_TEACHER_ID,
+          phaseRequest({ modules: tracesModules, asOf: P_NOW }),
+          { now: P_LATE },
+        ).packJson,
+      ),
+    );
+    expect(
+      withNote.manifest.contextNotes.some((note) =>
+        note.includes("学习痕迹中的讲义阅读地图按生成时刻计算"),
+      ),
+    ).toBe(true);
+    // 无 asOf（缺省 = 生成时刻，无钉定语义）→ 无此条
+    const noAsOf = learningPackV2Schema.parse(
+      JSON.parse(
+        assembleLearningPack(
+          db,
+          dataDir,
+          TEST_TEACHER_ID,
+          phaseRequest({ modules: tracesModules }),
+          { now: P_NOW },
+        ).packJson,
+      ),
+    );
+    expect(
+      noAsOf.manifest.contextNotes.some((note) =>
+        note.includes("学习痕迹中的讲义阅读地图"),
+      ),
+    ).toBe(false);
+    // 有 asOf 但未勾 traces → 无此条
+    const noTraces = learningPackV2Schema.parse(
+      JSON.parse(
+        assembleLearningPack(
+          db,
+          dataDir,
+          TEST_TEACHER_ID,
+          phaseRequest({ asOf: P_NOW }),
+          { now: P_LATE },
+        ).packJson,
+      ),
+    );
+    expect(
+      noTraces.manifest.contextNotes.some((note) =>
+        note.includes("学习痕迹中的讲义阅读地图"),
+      ),
+    ).toBe(false);
+  });
+
   it("preview 真实图片清单：ready 带 downloadUrl/bytes，missing 带 reason；v1 恒空数组", () => {
     const preview = previewLearningPack(
       db,
@@ -1751,10 +1838,20 @@ describe("T6R.16 多阶段证据与固定选择（evidencePhases/asOf/preview）
     expect(preview.asOf).toBe(P_NOW);
     const images = preview.evidenceImages;
     // ready 4 行（e001 第一页 + e002 订正 + e004/e005 原稿；e001 第二页文件
-    // 已删除）+ missing 1 行（e001-original-02：磁盘缺失）。零图补充稿（e003）
-    // 的「未生成」只在 manifest.missing（preview 行从 entry.images 展开）
+    // 已删除）+ missing 2 行（e001-original-02 磁盘缺失；e003-supplement-01
+    // 零图「未生成」——闸门 F3：无 images 行的缺失也进 preview 清单，此前只
+    // 在 manifest.missing）
     expect(images.filter((image) => image.state === "ready")).toHaveLength(4);
-    expect(images.filter((image) => image.state === "missing")).toHaveLength(1);
+    expect(images.filter((image) => image.state === "missing")).toHaveLength(2);
+    // 闸门 F3：并入缺失行后按 ref+pageIndex 去重排序的完整序
+    expect(images.map((image) => `${image.file}:${image.state}`)).toEqual([
+      "evidence/e001-original-01.png:ready",
+      "evidence/e001-original-02.png:missing",
+      "evidence/e002-correction-01.png:ready",
+      "evidence/e003-supplement-01.png:missing",
+      "evidence/e004-original-01.png:ready",
+      "evidence/e005-original-01.png:ready",
+    ]);
     for (const image of images) {
       if (image.state === "ready") {
         expect(image.bytes).toBeGreaterThan(0);
@@ -1765,22 +1862,45 @@ describe("T6R.16 多阶段证据与固定选择（evidencePhases/asOf/preview）
       } else {
         expect(image.bytes).toBe(0);
         expect(image.downloadUrl).toBeUndefined();
-        expect(image.reason).toBe("图片文件缺失（磁盘无此文件）");
-        expect(image.file).toBe("evidence/e001-original-02.png");
+        expect(image.reason).toBeTruthy();
       }
     }
+    expect(
+      images.find((image) => image.file === "evidence/e001-original-02.png")
+        ?.reason,
+    ).toBe("图片文件缺失（磁盘无此文件）");
+    expect(
+      images.find((image) => image.file === "evidence/e003-supplement-01.png")
+        ?.reason,
+    ).toBe("该版本尚无分析图（未生成）");
     // 阶段标签与文件名对应；downloadUrl 含被钉定版本 id（scratch 原稿）
     expect(
       images
         .filter((image) => image.phase === "correction")
         .map((image) => image.file),
     ).toEqual(["evidence/e002-correction-01.png"]);
-    // 零图补充稿（e003）无 preview 行——「未生成」只登记在 manifest.missing
-    expect(images.filter((image) => image.phase === "supplement")).toEqual([]);
+    // 零图补充稿（e003）的 preview 行 = missing（不再恒空）
+    expect(
+      images
+        .filter((image) => image.phase === "supplement")
+        .map((image) => image.file),
+    ).toEqual(["evidence/e003-supplement-01.png"]);
     const scratchPage1 = images.find(
       (image) => image.file === "evidence/e001-original-01.png",
     );
     expect(scratchPage1?.downloadUrl).toContain(phaseScratchVersionId);
+    // 闸门 F3：preview 清单扩充不动 pack.json——e003 证据条目 images 仍 []
+    // （zip 形状不变，缺失仍只登记 manifest.missing）
+    const packOfPreview = learningPackV2Schema.parse(
+      JSON.parse(
+        assembleLearningPack(db, dataDir, TEST_TEACHER_ID, phaseRequest(), {
+          now: P_NOW,
+        }).packJson,
+      ),
+    );
+    expect(
+      packOfPreview.evidence?.find((entry) => entry.ref === "e003")?.images,
+    ).toEqual([]);
     // v1（未勾 evidence）恒空数组
     const v1Preview = previewLearningPack(
       db,
@@ -1951,6 +2071,69 @@ describe("T6R.16 多阶段证据与固定选择（evidencePhases/asOf/preview）
             `evidence/${corr2Entry?.ref ?? "e000"}-correction-01.png` &&
           miss.reason === "该版本尚无分析图（未生成）",
       ),
+    ).toBe(true);
+  });
+
+  it("F13②：traces 事件按 asOf 钉定——晚于 asOf 的解析回看不计入 reviewedSolution（放最后：本用例向共享库插事件行）", () => {
+    // 手插一行晚于 P_NOW 的解析回看事件（serverTs=P_LATE > asOf=P_NOW；
+    // clientTs 取交卷后——reviewedSolution 只认交卷后的 solution open）
+    db.insert(eventsTable)
+      .values({
+        id: randomUUID(),
+        attemptId: phaseA2,
+        questionId: "P1",
+        studentId: phaseStudentA,
+        lectureId: null,
+        type: "directive_interact",
+        clientTs: Date.parse(SUB_A2) + 1000,
+        serverTs: P_LATE,
+        payloadJson: JSON.stringify({
+          host: "result",
+          directive: "solution",
+          action: "open",
+          questionId: "P1",
+        }),
+      })
+      .run();
+    const traceOf = (request: LearningPackExportRequest, now: string) => {
+      const pack = learningPackV2Schema.parse(
+        JSON.parse(
+          assembleLearningPack(db, dataDir, TEST_TEACHER_ID, request, {
+            now,
+          }).packJson,
+        ),
+      );
+      return pack.traces?.questions?.find(
+        (row) => row.attemptId === phaseA2 && row.questionId === "P1",
+      );
+    };
+    const tracesModules = {
+      questions: "stem",
+      responses: true,
+      evidence: true,
+      evidencePhases: ["scratch"],
+      traces: true,
+    } as const;
+    // asOf=P_NOW：该事件 serverTs=P_LATE 晚于 asOf，被过滤——未回看
+    expect(
+      traceOf(
+        phaseRequest({
+          scope: { studentIds: [phaseStudentA], days: "all" },
+          modules: tracesModules,
+          asOf: P_NOW,
+        }),
+        P_LATE,
+      )?.reviewedSolution,
+    ).toBe(false);
+    // 无 asOf（now=P_LATE）：事件在场——已回看
+    expect(
+      traceOf(
+        phaseRequest({
+          scope: { studentIds: [phaseStudentA], days: "all" },
+          modules: tracesModules,
+        }),
+        P_LATE,
+      )?.reviewedSolution,
     ).toBe(true);
   });
 });

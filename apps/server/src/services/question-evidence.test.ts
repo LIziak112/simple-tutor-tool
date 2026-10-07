@@ -1173,10 +1173,13 @@ describe("T6R.16 多阶段证据装配", () => {
     );
     const corr2 = all.evidence.find((entry) => entry.sealedAt === T2);
     expect(corr2?.ref).toBeDefined();
+    // 闸门 F3：缺失行携带 phase/pageIndex（preview 清单消费；零图行页号 0）
     expect(all.missingEvidenceImages).toContainEqual({
       file: `evidence/${corr2?.ref ?? "e000"}-correction-01.png`,
       reason: "该版本尚无分析图（未生成）",
       evidenceRef: corr2?.ref ?? "",
+      phase: "correction",
+      pageIndex: 0,
     });
   });
 

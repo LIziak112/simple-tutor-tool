@@ -21,6 +21,7 @@ import type {
   LearningPackV2,
   LearningPackV2Question,
   LearningPackV2Response,
+  NotePhase,
 } from "@tutor/contract";
 import {
   LEARNING_PACK_GOAL_LABELS,
@@ -351,13 +352,15 @@ export interface LearningPackAssembly {
   }>;
   /**
    * v2 证据图条目（T6R.12；evidence 模块勾选才非空）：zip 路径
-   * evidence/<编号>-<阶段>-<页号>.png；ref 为证据条目编号（manifest 关联用）。
+   * evidence/<编号>-<阶段>-<页号>.png；ref 为证据条目编号（manifest 关联用）；
+   * phase 闸门 F4 起随行携带（summary 标题阶段感知）。
    */
   readonly evidenceEntries: ReadonlyArray<{
     readonly entry: string;
     readonly absPath: string;
     readonly bytes: number;
     readonly ref: string;
+    readonly phase: NotePhase;
   }>;
   /** 文件清单（路径 + 预估字节数；D18 preview 与预检共用） */
   readonly files: readonly LearningPackPreviewFile[];
@@ -661,7 +664,16 @@ export function assembleLearningPack(
           payloadJson: events.payloadJson,
         })
         .from(events)
-        .where(inArray(events.attemptId, ids))
+        .where(
+          // 闸门 F13：asOf 钉定贯穿事件流（该查询同时喂 traces.questions 与
+          // summary 的 offlineShare——一致钉定；缺省不过滤零漂移）
+          and(
+            inArray(events.attemptId, ids),
+            request.asOf !== undefined
+              ? lte(events.serverTs, asOfIso)
+              : undefined,
+          ),
+        )
         .all()) {
         if (row.attemptId === null) continue;
         const projected = {
@@ -953,6 +965,8 @@ export function assembleLearningPack(
     lectureTraceRows,
     summarySection,
     mappingTxt,
+    // 闸门 F6：单次规范化（v1 也算——evidence 恒 false 不消费，成本可忽略）
+    normalizedEvidencePhases: normalizeEvidencePhases(m.evidencePhases),
   };
   if (isV2) {
     return assembleV2(core);
@@ -997,6 +1011,12 @@ interface PackCore {
   readonly lectureTraceRows: LearningPackLectureTrace[];
   readonly summarySection: LearningPackSummarySection | undefined;
   readonly mappingTxt: string | null;
+  /**
+   * 证据阶段规范序（闸门 F6：assembleLearningPack 单次规范化，三处消费点
+   * ——prompt 渲染 / meta 回显 / contextNotes——统一读此值，勿再各自调用
+   * normalizeEvidencePhases 重复收敛）
+   */
+  readonly normalizedEvidencePhases: readonly NotePhase[];
 }
 
 /**
@@ -1014,11 +1034,11 @@ function renderPromptMdOf(core: PackCore, mediaPresent: boolean): string {
     ink: m.ink,
     traces: m.traces,
     // T6R.16：evidence 勾选时传装配端规范化后的阶段序列（契约
-    // LearningPackPromptInput.evidencePhases；勿在别处手写排序）
+    // LearningPackPromptInput.evidencePhases；闸门 F6：读 core 单次规范化值）
     ...(m.evidence
       ? {
           evidence: true,
-          evidencePhases: normalizeEvidencePhases(m.evidencePhases),
+          evidencePhases: core.normalizedEvidencePhases,
         }
       : {}),
     ...(mediaPresent ? { media: true } : {}),
@@ -1076,14 +1096,14 @@ function packHeaderOf<V extends 1 | 2>(
   };
   // 条件类型的联合窄化是 TS 已知局限：此处单一断言收敛（值域由两处调用点
   // 的字面量 version 保证，无 any）
-  // T6R.16：v2 回显装配端规范化后的阶段序列（normalizeEvidencePhases 单点
-  // 规范序——请求乱序/重复时 meta 回显仍为 scratch→correction→supplement）
+  // T6R.16：v2 回显装配端规范化后的阶段序列（闸门 F6：读 core 单次规范化值
+  // ——请求乱序/重复时 meta 回显仍为 scratch→correction→supplement）
   const modules = (
     version === 2
       ? {
           ...base,
           evidence: evidenceEcho,
-          evidencePhases: normalizeEvidencePhases(m.evidencePhases),
+          evidencePhases: core.normalizedEvidencePhases,
         }
       : { ...base }
   ) as PackHeaderOf<V>["meta"]["modules"];
@@ -1563,12 +1583,13 @@ function assembleV2(core: PackCore): LearningPackAssembly {
 
   // —— 证据图条目（evidence 模块勾选才装配；zip 写入与 preview 共用） ——
   // ready 分析图条目（T6R.13 /code-review D27：遍历收敛在 question-evidence
-  // 共享件，与 review-pack 同一实现）
+  // 共享件，与 review-pack 同一实现；phase 闸门 F4 起随行携带）
   const evidenceEntries: Array<{
     entry: string;
     absPath: string;
     bytes: number;
     ref: string;
+    phase: NotePhase;
   }> = [];
   // preview 证据图清单（T6R.16 真实图片预览）：ready 附教师端 note-versions
   // 图片直出 URL（downloadUrl 拼法与 review-pack 619-621 同款：/:file 路由
@@ -1576,10 +1597,13 @@ function assembleV2(core: PackCore): LearningPackAssembly {
   // manifest.missing 同源同 reason）
   const evidenceImages: LearningPackPreviewEvidenceImage[] = [];
   if (m.evidence) {
+    // 闸门 F3：preview 清单去重键（ref:pageIndex）——entry.images 展开行先登记
+    const seenPreviewKeys = new Set<string>();
     for (const evidenceEntry of evidenceAsm.evidence) {
       evidenceEntries.push(...readyEvidenceImagesOf(evidenceEntry));
       const versionId = evidenceEntry.version?.versionId;
       for (const image of evidenceEntry.images) {
+        seenPreviewKeys.add(`${evidenceEntry.ref}:${image.pageIndex}`);
         evidenceImages.push({
           file: image.file,
           ref: evidenceEntry.ref,
@@ -1600,6 +1624,26 @@ function assembleV2(core: PackCore): LearningPackAssembly {
         });
       }
     }
+    // 闸门 F3：零图/缺版本等「无 images 行」的缺失此前只在 manifest.missing，
+    // preview 清单看不见——并入（带 phase/pageIndex/reason），按 ref+pageIndex
+    // 去重后统一排序（pack.json / zip 形状不变）
+    for (const miss of evidenceAsm.missingEvidenceImages) {
+      const key = `${miss.evidenceRef}:${miss.pageIndex}`;
+      if (seenPreviewKeys.has(key)) continue;
+      seenPreviewKeys.add(key);
+      evidenceImages.push({
+        file: miss.file,
+        ref: miss.evidenceRef,
+        phase: miss.phase,
+        pageIndex: miss.pageIndex,
+        state: "missing",
+        bytes: 0,
+        reason: miss.reason,
+      });
+    }
+    evidenceImages.sort(
+      (a, b) => a.ref.localeCompare(b.ref) || a.pageIndex - b.pageIndex,
+    );
   }
 
   // —— attempts.responses（v2 行携带快照关联三字段，T6R.12） ——
@@ -1722,9 +1766,10 @@ function assembleV2(core: PackCore): LearningPackAssembly {
       `${missingSnapshotCount} 个题目版本的历史快照缺失（题目已删除或升级遗留），对应作答无题干内容，不回填当前题库。`,
     );
   }
-  // T6R.16 多阶段口径说明（evidence 勾选才谈；阶段以装配端规范化序列判断）
+  // T6R.16 多阶段口径说明（evidence 勾选才谈；阶段以装配端规范化序列判断；
+  // 闸门 F6：读 core 单次规范化值）
   if (m.evidence) {
-    const phases = normalizeEvidencePhases(m.evidencePhases);
+    const phases = core.normalizedEvidencePhases;
     if (phases.includes("correction")) {
       contextNotes.push(
         "订正证据只收录已封存检查点（含封存反思两列：卡点与错因），进行中的订正不收录。",
@@ -1738,6 +1783,13 @@ function assembleV2(core: PackCore): LearningPackAssembly {
     if (!phases.includes("scratch")) {
       contextNotes.push("原稿阶段未勾选：包内不含交卷原稿证据。");
     }
+  }
+  // 闸门 F13：asOf 钉定了题指标与证据，但讲义阅读地图走 lectureReadingMapFor
+  // （与学情页共用，无 asOf 参数）按生成时刻计算——显式声明口径而非静默偏差
+  if (request.asOf !== undefined && m.traces) {
+    contextNotes.push(
+      "学习痕迹中的讲义阅读地图按生成时刻计算，未按预览时刻（asOf）钉定。",
+    );
   }
   const manifest: LearningPackManifest = {
     files: [
@@ -1911,8 +1963,15 @@ interface SummaryMdInput {
   readonly inkEntries: ReadonlyArray<{ readonly entry: string }>;
   /** ::image 引用的图片条目（媒体管线第三单；无图为空数组，section 不出现） */
   readonly mediaEntries: ReadonlyArray<{ readonly entry: string }>;
-  /** v2 证据图条目（T6R.12；空数组 = 未勾选或无图，section 不出现） */
-  readonly evidenceEntries: ReadonlyArray<{ readonly entry: string }>;
+  /**
+   * v2 证据图条目（T6R.12；空数组 = 未勾选或无图，section 不出现）。phase
+   * 闸门 F4：标题按阶段感知（correction/supplement 在场 →「手写证据」，
+   * 纯 scratch 保持「手写原稿」零漂移）
+   */
+  readonly evidenceEntries: ReadonlyArray<{
+    readonly entry: string;
+    readonly phase: NotePhase;
+  }>;
   readonly displayNameOf: ReadonlyMap<string, string>;
   readonly nowIso: string;
 }
@@ -2108,9 +2167,15 @@ function renderSummaryMd(input: SummaryMdInput): string {
     lines.push("");
   }
 
-  // v2 逐题手写原稿（evidence 模块勾选且有图才出现）
+  // v2 逐题手写证据图（evidence 模块勾选且有图才出现；闸门 F4：标题按阶段
+  // 感知——correction/supplement 在场称「手写证据」，纯 scratch 保持原口径）
   if (input.evidenceEntries.length > 0) {
-    lines.push(`## 手写原稿（${input.evidenceEntries.length} 张）`);
+    const multiPhase = input.evidenceEntries.some(
+      (entry) => entry.phase === "correction" || entry.phase === "supplement",
+    );
+    lines.push(
+      `## ${multiPhase ? "手写证据" : "手写原稿"}（${input.evidenceEntries.length} 张）`,
+    );
     lines.push("");
     for (const entry of input.evidenceEntries) {
       lines.push(`- ${entry.entry}`);
