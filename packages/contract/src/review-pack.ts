@@ -175,6 +175,7 @@ export const reviewPackPreviewFileSchema = z.object({
     "question-md",
     "media",
     "evidence",
+    "ink",
   ]),
   bytes: z.number().int().min(0),
   refs: z.array(z.string()).default([]),
@@ -183,7 +184,7 @@ export const reviewPackPreviewFileSchema = z.object({
 /** 逐张图片附件行（真实图片单独下载用；missing 附原因） */
 export const reviewPackAttachmentSchema = z.object({
   path: z.string().min(1),
-  kind: z.enum(["media", "evidence"]),
+  kind: z.enum(["media", "evidence", "ink"]),
   state: z.enum(["ready", "missing"]),
   /** ready：实测字节；missing：0 */
   bytes: z.number().int().min(0),
@@ -199,6 +200,8 @@ export const reviewPackPreviewDataSchema = z.object({
   questionNo: z.number().int().min(1),
   /** 交卷快照是否存在（false=题目已删/升级遗留，stemMd 为空） */
   questionPresent: z.boolean(),
+  /** 手写作答题（solve/apply/find-error）：作答即笔迹、无草稿层属正常（文案分叉用） */
+  handwritten: z.boolean(),
   evidenceState: learningPackEvidenceStateSchema,
   /** 学生视角答案公布态（教师恒 true；未公布时前端提示「无判定属正常」） */
   released: z.boolean(),
@@ -209,8 +212,10 @@ export const reviewPackPreviewDataSchema = z.object({
   files: z.array(reviewPackPreviewFileSchema),
   missing: z.array(learningPackManifestMissingSchema),
   attachments: z.array(reviewPackAttachmentSchema),
-  /** review.md 全文（复制文字用；与 zip 内文件逐字节一致） */
+  /** review.md 全文（复制文字载荷的上半；与 zip 内文件逐字节一致） */
   reviewMd: z.string(),
+  /** questions/qNNN/stem.md 全文（复制文字载荷的下半——题面+学生答案〔教师包含参考答案/判定〕） */
+  questionMd: z.string(),
 });
 
 // ---------- 错误码 ----------
@@ -248,7 +253,7 @@ export function reviewPackJsonSchema(): Record<string, unknown> {
   reviewPackJsonSchemaCache ??= {
     title: "simple-tutor-tool 单题复习包（review-pack）",
     description:
-      "单题完整导出 pack.json 的权威 JSON Schema（T6R.13）。学生包不携带真实 attemptId/studentId/questionId/versionId 等定位键，也不含参考答案/判定/评语/解析（schema superRefine 结构性强制）；教师包为教师域文档，照常携带。manifest 复用学情数据包 v2 的清单形状（files + missing + contextNotes），所有引用可解析或显式缺失。",
+      "单题完整导出 pack.json 的权威 JSON Schema（T6R.13）。学生包不携带真实 attemptId/studentId/questionId/versionId 等定位键，也不含参考答案/判定/评语/解析——该不变量由服务端 Zod superRefine 在生成侧强制（本 JSON Schema 不含这条跨字段约束，只描述字段形状）；教师包为教师域文档，照常携带。manifest 复用学情数据包 v2 的清单形状（files + missing + contextNotes），所有引用可解析或显式缺失。",
     ...z.toJSONSchema(reviewPackSchema),
   };
   return reviewPackJsonSchemaCache;
@@ -260,6 +265,10 @@ export function reviewPackJsonSchema(): Record<string, unknown> {
 export interface ReviewPackPromptInput {
   readonly role: "student" | "teacher";
   readonly questionNo: number;
+  /** 交卷快照是否存在（false=历史缺失：题干为空、不回填——数据说明标注） */
+  readonly questionPresent: boolean;
+  /** 手写作答题（solve/apply/find-error）：作答即笔迹、无草稿层属正常 */
+  readonly handwritten: boolean;
   readonly evidenceState: z.infer<typeof learningPackEvidenceStateSchema>;
   /** 学生视角答案公布态（教师恒 true；未公布时数据说明注明） */
   readonly released: boolean;
@@ -338,9 +347,14 @@ export function renderReviewPackPrompt(input: ReviewPackPromptInput): string {
       "> 包内有真实图片：需要作为附件上传给支持看图的 AI，不是所有 AI 客户端都能读取压缩包内的图片。",
       "> **复制文字给 AI 时不含任何图片**——只有本文件与题目文字；图片请用工具里的「逐张下载」取得后作为附件上传。",
     );
-  } else {
+  } else if (input.missing.length === 0) {
     usageLines.push(
       "> 本包为纯文字材料（无图片附件），可直接整份复制文字交给 AI。",
+    );
+  } else {
+    // 无图片但有缺失（含缺图）时不得宣称「可整份复制」——材料不完整
+    usageLines.push(
+      "> 本包当前没有图片附件，但存在缺失文件（见下方缺失清单）——请先补齐后再交给 AI。",
     );
   }
   sections.push([...usageLines, ""].join("\n"));
@@ -414,13 +428,11 @@ export function renderReviewPackPrompt(input: ReviewPackPromptInput): string {
   // 数据说明（按实际内容；学生包无答案节）
   const dataLines = ["## 数据说明（按本次包内实际内容）", ""];
   dataLines.push(
-    "- pack.json：结构化清单（schema.json 是它的 JSON Schema）。question=题目（学生端投影，含完整选项与题干）；response=本次作答（answerText 为学生自己的答案）；evidence=手写原稿声明；manifest=文件清单与缺失清单。",
+    input.role === "teacher"
+      ? "- pack.json：结构化清单（schema.json 是它的 JSON Schema）。question=题目（**教师域：快照原文**，含 [[答案]] 标记与参考答案节，附题目 id/详解）；response=本次作答（answerText 学生答案 + 对错判定与教师评语）；evidence=手写原稿声明（含版本摘要）；manifest=文件清单与缺失清单。"
+      : "- pack.json：结构化清单（schema.json 是它的 JSON Schema）。question=题目（学生端投影，含完整选项与题干，无答案标记）；response=本次作答（answerText 为学生自己的答案）；evidence=手写原稿声明；manifest=文件清单与缺失清单。",
   );
-  if (input.role === "teacher") {
-    dataLines.push(
-      "- 教师域补充：question 含题目 id/参考答案/详解（answer 层原文）；response 含对错判定与教师评语；evidence 含版本摘要。",
-    );
-  } else {
+  if (input.role !== "teacher") {
     dataLines.push(
       "- 学生包刻意不含参考答案、判定与评语（无论答案是否公布）——分析只基于学生自己的作答。",
     );
@@ -430,9 +442,20 @@ export function renderReviewPackPrompt(input: ReviewPackPromptInput): string {
       "- 本次作答的答案尚未公布（老师设置的公布时间未到）：包内没有对错判定属正常现象，不要据此推断对错。",
     );
   }
-  dataLines.push(
-    `- evidence.state=${input.evidenceState}（${REVIEW_PACK_EVIDENCE_STATE_LABELS[input.evidenceState]}）。`,
-  );
+  if (input.handwritten) {
+    dataLines.push(
+      "- 本题是手写作答题：作答即笔迹（没有草稿层属正常，不是「未采集」）；笔迹原图见附件清单的 ink/ 条目。",
+    );
+  } else {
+    dataLines.push(
+      `- evidence.state=${input.evidenceState}（${REVIEW_PACK_EVIDENCE_STATE_LABELS[input.evidenceState]}）。`,
+    );
+  }
+  if (!input.questionPresent) {
+    dataLines.push(
+      "- 题目内容缺失：本题历史快照缺失（题目已删除或升级遗留），题干为空、不回填当前题库内容。",
+    );
+  }
   if (input.graphFigureCount > 0) {
     dataLines.push(
       `- 题中有 ${input.graphFigureCount} 处函数图表：以参数化文本说明导出（函数解析式与区间），未附静态图；请按解析式理解图像形态。`,

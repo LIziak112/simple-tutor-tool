@@ -1,3 +1,4 @@
+import { statSync } from "node:fs";
 import type {
   LearningPackManifest,
   LearningPackManifestMissing,
@@ -8,6 +9,7 @@ import type {
 } from "@tutor/contract";
 import {
   formatQuestionAnswers,
+  HANDWRITTEN_QUESTION_TYPES,
   REVIEW_PACK_MAX_BYTES,
   renderReviewPackPrompt,
   reviewPackJsonSchema,
@@ -15,9 +17,14 @@ import {
   reviewPackSchema,
 } from "@tutor/contract";
 import { buildStaticQuestionMaterial } from "@tutor/md-dsl";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { Db } from "../db/client";
-import { type Attempt, assignments, type ResponseRow } from "../db/schema";
+import {
+  type Attempt,
+  assignments,
+  ink as inkTable,
+  type ResponseRow,
+} from "../db/schema";
 import { HttpError } from "../lib/http-error";
 import { zipBufferOf } from "../lib/zip-write.ts";
 import {
@@ -28,6 +35,7 @@ import {
   requireUsableAttempt,
 } from "./attempt-service";
 import { beijingExportStampOf } from "./export-csv";
+import { inkFileAbs } from "./ink-service.ts";
 import { serializeStudentAnswer } from "./mark-response";
 import { assembleQuestionEvidence } from "./question-evidence";
 import { requireTeacherAttempt } from "./teacher-attempt-service";
@@ -94,6 +102,12 @@ export interface ReviewPackAssembly {
     readonly bytes: number;
     readonly ref: string;
   }>;
+  /** 手写题笔迹快照（ready 状态、文件在场；entry 恒 ink/original.png） */
+  readonly inkEntries: ReadonlyArray<{
+    readonly entry: string;
+    readonly absPath: string;
+    readonly bytes: number;
+  }>;
   readonly manifest: LearningPackManifest;
   /** 文件清单（含 pack.json 实测；预览与预检共用） */
   readonly files: readonly ReviewPackPreviewFile[];
@@ -115,11 +129,23 @@ export interface ReviewPackZip {
 
 // ---------- 授权与定位 ----------
 
+/** 手写题笔迹缺失行（「行在文件没」——文件被删/读不到，显式登记不静默） */
+function inkMissingRow(qRef: string): LearningPackManifestMissing {
+  return {
+    path: "ink/original.png",
+    kind: "ink",
+    reason: "笔迹快照文件缺失（磁盘无此文件）",
+    refs: [qRef],
+  };
+}
+
 /**
  * 定位单题行：学生走 requireUsableAttempt（本人 + 来源访问权 + 懒冻结，
  * 403/404 既有口径）；教师走 requireTeacherAttempt（域外统一 404）。
- * 题目按 attempt 自有冻结行宽判定（软删题历史可导），展示序与题号走
- * frozenRowsInDisplayOrder（与学情数据包逐题行同口径）。
+ * 题目按 attempt 自有冻结行宽判定（软删题历史可导），展示序走
+ * frozenRowsInDisplayOrder；**题号与结果视图/教师详情同口径——快照缺失
+ * （questionSnapshotJson=null）的行不计数**（两个视图都跳过缺失行编号，
+ * /code-review 角A/C 双证）。
  */
 function requireReviewScope(
   db: Db,
@@ -152,7 +178,10 @@ function requireReviewScope(
   let no = 0;
   let row: ResponseRow | undefined;
   for (const entry of frozenRowsInDisplayOrder(db, attempt)) {
-    no += 1;
+    // 快照缺失行不计数（两视图同口径）；目标行本身缺失时取「下一可用位」
+    if (entry.row.questionSnapshotJson !== null) {
+      no += 1;
+    }
     if (entry.row.questionId === questionId) {
       row = entry.row;
       break;
@@ -189,7 +218,8 @@ function releasedOf(
 // ---------- 装配 ----------
 
 /**
- * 装配单题包（preview 与 zip 的共用核心；纯读，不写任何数据）。
+ * 装配单题包（preview 与 zip 的共用核心；本函数自身纯读——但学生路径经
+ * requireUsableAttempt 的**懒冻结**可能升级遗留 draft 卷（T6R.3 既有副作用））。
  * 输出经 reviewPackSchema / reviewPackPreviewDataSchema 服务端自检——
  * 学生包的 id 剥离与答案剔除在装配层与 schema 层双重锁定。
  */
@@ -266,10 +296,17 @@ export function assembleReviewPack(
     if (material.solutionMd !== undefined) {
       stemSections.push(`**详解**\n\n${material.solutionMd}`);
     }
-    const verdict = row.finalCorrect ?? row.autoCorrect;
-    stemSections.push(
-      `**判定**：${verdict === null ? "待批" : verdict ? "对" : "错"}`,
-    );
+    // draft 未交卷无判定（与教师详情页 D5 口径一致——不显示「待批」误导）
+    const judged = row.finalCorrect ?? row.autoCorrect;
+    const verdictText =
+      attempt.status === "draft"
+        ? "未交卷"
+        : judged === null
+          ? "待批"
+          : judged
+            ? "对"
+            : "错";
+    stemSections.push(`**判定**：${verdictText}`);
     if (row.teacherComment !== null) {
       stemSections.push(`**老师评语**：${row.teacherComment}`);
     }
@@ -309,6 +346,51 @@ export function assembleReviewPack(
     })),
   ];
 
+  // —— 手写题笔迹（/code-review A1，方案 §9.3/D6.3）：作答即笔迹——学生
+  // ink 快照 PNG 作为 response 侧附件进包（manifest kind=ink；文件名化名
+  // ink/original.png，不含真实 attempt/ink id）。无 ink 行不登记缺失——
+  // 学生可能只填了 final 文本答案，无引用即无缺；行在文件没则显式缺失。
+  const handwritten = HANDWRITTEN_QUESTION_TYPES.includes(material.type);
+  const inkEntryName = "ink/original.png";
+  const inkEntries: Array<{ entry: string; absPath: string; bytes: number }> =
+    [];
+  let inkDownloadUrl: string | undefined;
+  if (handwritten) {
+    const inkRow = db
+      .select()
+      .from(inkTable)
+      .where(
+        and(
+          eq(inkTable.attemptId, attempt.id),
+          eq(inkTable.questionId, row.questionId),
+        ),
+      )
+      .get();
+    if (inkRow !== undefined) {
+      // 越界校验与后缀检查复用 ink-service 同一出口；stat 失败（文件删除）
+      // 按「行在文件没」显式缺失，不静默
+      try {
+        const absPath = inkFileAbs(dataDir, inkRow.pngPath, ".png");
+        const stat = statSync(absPath);
+        if (stat.isFile()) {
+          inkEntries.push({
+            entry: inkEntryName,
+            absPath,
+            bytes: stat.size,
+          });
+          inkDownloadUrl =
+            principal.kind === "student"
+              ? `/api/student/attempts/${encodeURIComponent(attempt.id)}/ink/${encodeURIComponent(row.questionId)}.png`
+              : `/api/teacher/ink/${encodeURIComponent(inkRow.id)}.png`;
+        } else {
+          missing.push(inkMissingRow(qRef));
+        }
+      } catch {
+        missing.push(inkMissingRow(qRef));
+      }
+    }
+  }
+
   // —— 固定文件 ——
   const schemaJson = `${JSON.stringify(reviewPackJsonSchema(), null, 2)}\n`;
 
@@ -324,10 +406,13 @@ export function assembleReviewPack(
       path: image.entry,
       bytes: image.bytes,
     })),
+    ...inkEntries.map((ink) => ({ path: ink.entry, bytes: ink.bytes })),
   ];
   const reviewMd = renderReviewPackPrompt({
     role,
     questionNo: no,
+    questionPresent: revision.present,
+    handwritten,
     evidenceState: evidenceEntry.state,
     released,
     answersIncluded: teacherRole,
@@ -336,7 +421,8 @@ export function assembleReviewPack(
       path: miss.path,
       reason: miss.reason,
     })),
-    imageCount: mediaEntries.length + evidenceEntries.length,
+    imageCount:
+      mediaEntries.length + evidenceEntries.length + inkEntries.length,
     graphFigureCount: staticMaterial.graphFigures.length,
     interactionNotes: staticMaterial.interactionNotes,
   });
@@ -389,6 +475,12 @@ export function assembleReviewPack(
         kind: "evidence" as const,
         bytes: image.bytes,
         refs: [image.ref],
+      })),
+      ...inkEntries.map((ink) => ({
+        path: ink.entry,
+        kind: "ink" as const,
+        bytes: ink.bytes,
+        refs: [qRef],
       })),
     ],
     missing,
@@ -464,13 +556,17 @@ export function assembleReviewPack(
     },
     manifest,
   };
-  reviewPackSchema.parse(packDraft);
-  const packJson = `${JSON.stringify(packDraft, null, 2)}\n`;
+  // 序列化用 **parse 返回值**（/code-review 角A）：zod strip 模式下直接
+  // stringify 原对象会让未声明键（superRefine 看不见的潜在教师域字段）原样
+  // 进 zip——parse→stringify 双保险：schema 层拒绝学生域禁携键，strip 层
+  // 剥掉未声明键
+  const packParsed = reviewPackSchema.parse(packDraft);
+  const packJson = `${JSON.stringify(packParsed, null, 2)}\n`;
 
   // —— 预览文件清单（zip 条目全集 = manifest.files + pack.json） ——
-  /** manifest kind → 预览分类（review-pack 的 manifest 只产右表五种 kind） */
+  /** manifest kind → 预览分类（review-pack 的 manifest 只产右表六种 kind） */
   const PREVIEW_KIND_OF: Record<
-    "prompt" | "schema" | "question" | "media" | "evidence",
+    "prompt" | "schema" | "question" | "media" | "evidence" | "ink",
     ReviewPackPreviewFile["kind"]
   > = {
     prompt: "review",
@@ -478,6 +574,7 @@ export function assembleReviewPack(
     question: "question-md",
     media: "media",
     evidence: "evidence",
+    ink: "ink",
   };
   const files: ReviewPackPreviewFile[] = [
     {
@@ -502,7 +599,8 @@ export function assembleReviewPack(
       kind: "media",
       state: "ready",
       bytes: medium.bytes,
-      // 媒体经公开 /blobs 伺服（内容寻址，src 前加 / 即 URL——媒体管线口径）
+      // 媒体经 /blobs 伺服（需会话——app.ts requireAnySession；内容寻址，
+      // src 前加 / 即 URL——媒体管线口径）
       downloadUrl: `/${medium.entry}`,
     });
   }
@@ -539,10 +637,22 @@ export function assembleReviewPack(
     }
   }
 
+  // 手写题笔迹附件（ready 附角色化 downloadUrl；缺失行已在 missing 里）
+  if (inkEntries.length > 0 && inkDownloadUrl !== undefined) {
+    attachments.push({
+      path: inkEntryName,
+      kind: "ink",
+      state: "ready",
+      bytes: inkEntries[0]?.bytes ?? 0,
+      downloadUrl: inkDownloadUrl,
+    });
+  }
+
   const preview: ReviewPackPreviewData = reviewPackPreviewDataSchema.parse({
     role,
     questionNo: no,
     questionPresent: revision.present,
+    handwritten,
     evidenceState: evidenceEntry.state,
     released,
     answersIncluded: teacherRole,
@@ -551,6 +661,7 @@ export function assembleReviewPack(
     missing,
     attachments,
     reviewMd,
+    questionMd,
   });
 
   return {
@@ -561,6 +672,7 @@ export function assembleReviewPack(
     questionEntry,
     mediaEntries,
     evidenceEntries,
+    inkEntries,
     manifest,
     files,
     missing,
@@ -623,14 +735,18 @@ export async function zipReviewPack(
       for (const entry of assembly.evidenceEntries) {
         archive.file(entry.absPath, { name: entry.entry, store: true });
       }
+      for (const ink of assembly.inkEntries) {
+        archive.file(ink.absPath, { name: ink.entry, store: true });
+      }
     });
     return new Uint8Array(buffer);
   } catch (err) {
-    const detail = err instanceof Error ? err.message : String(err);
+    // 原始错误只进服务端日志——err.message 可能含磁盘绝对路径，不下发响应
+    console.error("review-pack zip 写入失败", err);
     throw new HttpError(
       500,
       "EXPORT_ASSEMBLY_BROKEN",
-      `单题包写入失败（生成期间文件状态可能已变化）：${detail}。请重试；重试将按当前状态重新装配并标记缺失文件。`,
+      "单题包写入失败（生成期间文件状态可能已变化）。请重试；重试将按当前状态重新装配并标记缺失文件。",
     );
   }
 }

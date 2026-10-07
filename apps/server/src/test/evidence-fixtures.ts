@@ -37,14 +37,20 @@ export function snapshotJsonOf(
   );
 }
 
-/** 直插 draft attempt + 冻结行；返回 attempt id 与行 id 序（= 插入序 = 展示序） */
+/**
+ * 直插 draft attempt + 冻结行；返回 attempt id 与行 id 序（= 插入序 = 展示序）。
+ * unitId 缺省 null（遗留行形态）；传值即「建卷即冻结」形态——走
+ * frozenRowsInDisplayOrder 的 useFrozenOrder 主路径（T6R.13 /code-review C19）。
+ */
 export function frozenDraftAttempt(
   db: Db,
   studentId: string,
   questions: ReadonlyArray<{
     questionId: string;
     snapshotJson: string | null;
+    unitId?: string;
   }>,
+  options: { attemptUnitId?: string } = {},
 ): { attemptId: string; rowIds: string[] } {
   const attempt = newDraftAttempt({
     id: randomUUID(),
@@ -52,7 +58,7 @@ export function frozenDraftAttempt(
     sourceType: "assignment",
     assignmentId: null,
     courseId: null,
-    unitId: null,
+    unitId: options.attemptUnitId ?? null,
     attemptNo: 1,
     startedAt: "2026-10-01T00:00:00.000Z",
   });
@@ -67,7 +73,7 @@ export function frozenDraftAttempt(
         questionId: question.questionId,
         questionVersion: 1,
         questionSnapshotJson: question.snapshotJson,
-        unitId: null,
+        unitId: question.unitId ?? null,
         answerJson: null,
         autoCorrect: null,
         finalCorrect: null,

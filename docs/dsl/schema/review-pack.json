@@ -1,6 +1,6 @@
 {
   "title": "simple-tutor-tool 单题复习包（review-pack）",
-  "description": "单题完整导出 pack.json 的权威 JSON Schema（T6R.13）。学生包不携带真实 attemptId/studentId/questionId/versionId 等定位键，也不含参考答案/判定/评语/解析（schema superRefine 结构性强制）；教师包为教师域文档，照常携带。manifest 复用学情数据包 v2 的清单形状（files + missing + contextNotes），所有引用可解析或显式缺失。",
+  "description": "单题完整导出 pack.json 的权威 JSON Schema（T6R.13）。学生包不携带真实 attemptId/studentId/questionId/versionId 等定位键，也不含参考答案/判定/评语/解析——该不变量由服务端 Zod superRefine 在生成侧强制（本 JSON Schema 不含这条跨字段约束，只描述字段形状）；教师包为教师域文档，照常携带。manifest 复用学情数据包 v2 的清单形状（files + missing + contextNotes），所有引用可解析或显式缺失。",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "properties": {
@@ -490,7 +490,8 @@
                 "type": "string",
                 "enum": [
                   "media",
-                  "evidence-image"
+                  "evidence-image",
+                  "ink"
                 ]
               },
               "reason": {

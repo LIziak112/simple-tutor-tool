@@ -19,6 +19,7 @@ import {
 import {
   frozenDraftAttempt,
   snapshotJsonOf,
+  submitAttemptStatus,
 } from "../test/evidence-fixtures.ts";
 import { makeNotePng, makeStudent } from "../test/note-fixtures.ts";
 import {
@@ -26,7 +27,11 @@ import {
   REVIEW_SENTINELS,
   type ReviewPackWorldOptions,
 } from "../test/review-pack-world.ts";
-import { packEntryOf, zipEntriesOf } from "../test/zip-assert.ts";
+import {
+  packEntryOf,
+  packLeakTextOf,
+  zipEntriesOf,
+} from "../test/zip-assert.ts";
 import { saveMedia } from "./media-service.ts";
 import {
   assembleReviewPack,
@@ -167,16 +172,10 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
     }
 
     // —— 内容级：全部文本文件不含答案/解析/提示/评语哨兵与真实 id ——
-    // snapshotHash 是 64 位 hex 内容身份（契约允许学生包携带），与十进制
-    // 答案哨兵可能子串相撞——扫描前剥除该字段（它不是内容本身）
-    const textOf = (name: string, data: Buffer): string => {
-      if (name !== "pack.json") return data.toString("utf8");
-      const parsed = JSON.parse(data.toString("utf8")) as {
-        question?: { snapshotHash?: unknown };
-      };
-      delete parsed.question?.snapshotHash;
-      return JSON.stringify(parsed);
-    };
+    // pack.json 走共享件（只扫字符串值 + 剥 snapshotHash——数字计数与
+    // hex 内容身份都可能与十进制哨兵子串相撞，是假阳性不是泄露）
+    const textOf = (name: string, data: Buffer): string =>
+      name === "pack.json" ? packLeakTextOf(data) : data.toString("utf8");
     const textEntries = [...entries.entries()].filter(([name]) =>
       /\.(md|json)$/.test(name),
     );
@@ -323,6 +322,8 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
     await expect(zipReviewPack(assembly)).rejects.toMatchObject({
       status: 500,
       code: "EXPORT_ASSEMBLY_BROKEN",
+      // /code-review 角A：错误文案不下发 err.message（可能含磁盘绝对路径）
+      message: expect.not.stringContaining(dataDir),
     });
     // 重新完整请求：按当前状态重装配 → 缺失显式、zip 可用、complete=false
     const zip = await buildReviewPackZip(
@@ -609,6 +610,172 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
     expect(entries.get("review.md")?.toString("utf8")).toContain(
       "参数化文本说明",
     );
+  });
+
+  it("手写题笔迹进包（/code-review A1）：ink/original.png 进 zip + manifest kind=ink + 文案不误导", async () => {
+    const db = createTestDb();
+    const dataDir = createTestDir();
+    const s1 = makeStudent(db);
+    const world = makeWorld(db, dataDir, {
+      studentId: s1,
+      handwritten: true,
+      withNote: false,
+    });
+    const zip = await buildReviewPackZip(
+      db,
+      dataDir,
+      studentOf(s1),
+      world.attemptId,
+      world.questionId,
+      { now: NOW },
+    );
+    const entries = entriesOf(zip.bytes);
+    // 笔迹图进包且可解码
+    const ink = entries.get("ink/original.png");
+    expect(ink).toBeDefined();
+    expect(ink?.subarray(0, 4)).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    const pack = packEntryOf(entries, reviewPackSchema);
+    const inkRow = pack.manifest.files.find((file) => file.kind === "ink");
+    expect(inkRow?.path).toBe("ink/original.png");
+    expect(inkRow?.refs).toEqual(["q001"]);
+    // 手写题无草稿属正常：文案不得出现「未采集」误导
+    const review = entries.get("review.md")?.toString("utf8") ?? "";
+    expect(review).toContain("手写作答题");
+    expect(review).toContain("没有草稿层属正常");
+    expect(review).not.toContain("未采集草稿");
+    // 预览附件：kind=ink + 学生本人 ink 直出端点
+    const preview = previewReviewPack(
+      db,
+      dataDir,
+      studentOf(s1),
+      world.attemptId,
+      world.questionId,
+      { now: NOW },
+    );
+    expect(preview.handwritten).toBe(true);
+    const inkAttachment = preview.attachments.find(
+      (item) => item.kind === "ink",
+    );
+    expect(inkAttachment?.downloadUrl).toBe(
+      `/api/student/attempts/${world.attemptId}/ink/${encodeURIComponent(world.questionId)}.png`,
+    );
+    // 教师预览：ink 直出走教师域端点（/api/teacher/ink/<inkId>.png）
+    const teacherPreview = previewReviewPack(
+      db,
+      dataDir,
+      TEACHER,
+      world.attemptId,
+      world.questionId,
+      { now: NOW },
+    );
+    expect(
+      teacherPreview.attachments.find((item) => item.kind === "ink")
+        ?.downloadUrl,
+    ).toMatch(/^\/api\/teacher\/ink\/[0-9a-f-]+\.png$/);
+    // 手写无草稿不构成缺失：complete=true
+    expect(preview.complete).toBe(true);
+  });
+
+  it("手写题笔迹文件丢失：manifest.missing kind=ink 显式登记、complete=false", async () => {
+    const db = createTestDb();
+    const dataDir = createTestDir();
+    const s1 = makeStudent(db);
+    const world = makeWorld(db, dataDir, {
+      studentId: s1,
+      handwritten: true,
+      withNote: false,
+    });
+    // 删掉 ink PNG（行在文件没）
+    rmSync(world.inkPath ?? "", { recursive: true, force: true });
+    const preview = previewReviewPack(
+      db,
+      dataDir,
+      studentOf(s1),
+      world.attemptId,
+      world.questionId,
+      { now: NOW },
+    );
+    expect(preview.complete).toBe(false);
+    expect(
+      preview.missing.some(
+        (miss) => miss.kind === "ink" && miss.path === "ink/original.png",
+      ),
+    ).toBe(true);
+  });
+
+  it("pack.json 序列化经 parse 返回值：未声明键不进 zip（/code-review 角A）", async () => {
+    const db = createTestDb();
+    const dataDir = createTestDir();
+    const s1 = makeStudent(db);
+    const world = makeWorld(db, dataDir, { studentId: s1 });
+    const zip = await buildReviewPackZip(
+      db,
+      dataDir,
+      studentOf(s1),
+      world.attemptId,
+      world.questionId,
+      { now: NOW },
+    );
+    const rawText =
+      entriesOf(zip.bytes).get("pack.json")?.toString("utf8") ?? "";
+    const parsed = JSON.parse(rawText) as Record<string, unknown>;
+    // 回归锁：即使装配层未来塞入未声明键（superRefine 对其失明），parse 的
+    // strip 语义保证它不进 zip——此处单测 strip 行为并锁「zip 文本无未声明键」
+    const stripped = reviewPackSchema.parse({
+      ...parsed,
+      question: {
+        ...(parsed.question as Record<string, unknown>),
+        evilUndeclared: "教师域键",
+      },
+    }) as Record<string, unknown>;
+    expect(JSON.stringify(stripped).includes("evilUndeclared")).toBe(false);
+    expect(JSON.stringify(reviewPackSchema.parse(parsed))).toBe(
+      JSON.stringify(parsed),
+    );
+  });
+
+  it("题号与结果视图同口径：快照缺失行不计数（缺失行在前时目标题号前移）", async () => {
+    const db = createTestDb();
+    const dataDir = createTestDir();
+    const s1 = makeStudent(db);
+    // 第一行快照缺失（结果视图跳过不计号），第二行是目标
+    const { attemptId } = frozenDraftAttempt(db, s1, [
+      { questionId: "已删题-0", snapshotJson: null },
+      {
+        questionId: "在卷题-1",
+        snapshotJson: snapshotJsonOf({ id: "在卷题-1" }),
+      },
+    ]);
+    submitAttemptStatus(db, attemptId);
+    const preview = previewReviewPack(
+      db,
+      dataDir,
+      studentOf(s1),
+      attemptId,
+      "在卷题-1",
+      { now: NOW },
+    );
+    expect(preview.questionNo).toBe(1);
+  });
+
+  it("建卷即冻结形态（unitId 注入 → useFrozenOrder 主路径）题号照常", async () => {
+    const db = createTestDb();
+    const dataDir = createTestDir();
+    const s1 = makeStudent(db);
+    const world = makeWorld(db, dataDir, {
+      studentId: s1,
+      unitId: "unit-frozen-1",
+    });
+    const preview = previewReviewPack(
+      db,
+      dataDir,
+      studentOf(s1),
+      world.attemptId,
+      world.questionId,
+      { now: NOW },
+    );
+    expect(preview.questionNo).toBe(1);
+    expect(preview.evidenceState).toBe("frozen");
   });
 
   it("教师 stem.md：判定/评语分节呈现（评语哨兵进教师包是合法的）", async () => {

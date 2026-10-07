@@ -22,3 +22,34 @@ export function packEntryOf<T>(
     JSON.parse(entries.get("pack.json")?.toString("utf8") ?? "{}"),
   );
 }
+
+/**
+ * pack.json 泄露扫描文本（/code-review C20 收敛共享）：
+ * - 只取**字符串值**（数字不承载答案文本——manifest 的 bytes 计数与十进制
+ *   哨兵可能子串相撞，是假阳性不是泄露）；
+ * - 剥除 question.snapshotHash（64 位 hex 内容身份，契约允许学生包携带，
+ *   与十进制哨兵同样可能相撞——它不是内容本身）。
+ * 返回拼接文本供 toContain 断言。
+ */
+export function packLeakTextOf(data: Buffer): string {
+  const parsed = JSON.parse(data.toString("utf8")) as {
+    question?: { snapshotHash?: unknown };
+  };
+  delete parsed.question?.snapshotHash;
+  const strings: string[] = [];
+  const walk = (node: unknown): void => {
+    if (typeof node === "string") {
+      strings.push(node);
+      return;
+    }
+    if (Array.isArray(node)) {
+      for (const item of node) walk(item);
+      return;
+    }
+    if (typeof node === "object" && node !== null) {
+      for (const value of Object.values(node)) walk(value);
+    }
+  };
+  walk(parsed);
+  return strings.join("\n");
+}

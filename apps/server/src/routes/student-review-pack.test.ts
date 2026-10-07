@@ -13,7 +13,7 @@ import {
   loginStudent,
 } from "../test/note-world.ts";
 import { makeReviewPackWorld } from "../test/review-pack-world.ts";
-import { zipEntriesOf } from "../test/zip-assert.ts";
+import { packLeakTextOf, zipEntriesOf } from "../test/zip-assert.ts";
 
 /**
  * T6R.13 学生单题 review-pack 路由测试（新增学生端响应——泄露测试必写）：
@@ -174,18 +174,9 @@ describe("学生单题 review-pack 路由", () => {
       expect(name.startsWith("/")).toBe(false);
       expect(name.includes("..")).toBe(false);
       if (/\.(md|json)$/.test(name)) {
-        // snapshotHash 是 hex 内容身份（契约允许学生包携带），与十进制答案
-        // 哨兵可能子串相撞——扫描前剥除（它不是内容本身）
+        // pack.json 走共享件（字符串值 + 剥 snapshotHash——见 zip-assert 注释）
         const text =
-          name === "pack.json"
-            ? (() => {
-                const parsed = JSON.parse(data.toString("utf8")) as {
-                  question?: { snapshotHash?: unknown };
-                };
-                delete parsed.question?.snapshotHash;
-                return JSON.stringify(parsed);
-              })()
-            : data.toString("utf8");
+          name === "pack.json" ? packLeakTextOf(data) : data.toString("utf8");
         expect(text, `${name} 泄露答案哨兵`).not.toContain(SECRET_ANSWER);
         expect(text, `${name} 泄露解析哨兵`).not.toContain(SECRET_SOLUTION);
         expect(text, `${name} 泄露提示哨兵`).not.toContain(SECRET_HINT);

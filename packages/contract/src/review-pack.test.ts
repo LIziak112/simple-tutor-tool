@@ -214,11 +214,13 @@ describe("reviewPackPreviewDataSchema（预览响应）", () => {
       role: "student",
       questionNo: 3,
       questionPresent: true,
+      handwritten: false,
       evidenceState: "frozen",
       released: true,
       answersIncluded: false,
       complete: false,
       files: [{ path: "review.md", kind: "review", bytes: 900, refs: [] }],
+      // 手写题笔迹附件（T6R.13 /code-review A1）：kind=ink 进 preview 附件行
       missing: [
         {
           path: "evidence/e001-original-02.png",
@@ -244,8 +246,37 @@ describe("reviewPackPreviewDataSchema（预览响应）", () => {
         },
       ],
       reviewMd: "# 单题复习包",
+      questionMd: "### 题目 3\n\n题干\n",
     });
     expect(data.complete).toBe(false);
+    // ink 附件 kind 合法（手写题笔迹快照）
+    expect(
+      reviewPackPreviewDataSchema.safeParse({
+        role: "student",
+        questionNo: 3,
+        questionPresent: true,
+        handwritten: true,
+        evidenceState: "not_collected",
+        released: true,
+        answersIncluded: false,
+        complete: true,
+        files: [
+          { path: "ink/original.png", kind: "ink", bytes: 900, refs: [] },
+        ],
+        missing: [],
+        attachments: [
+          {
+            path: "ink/original.png",
+            kind: "ink",
+            state: "ready",
+            bytes: 900,
+            downloadUrl: "/api/student/attempts/a/ink/q.png",
+          },
+        ],
+        reviewMd: "# 单题复习包",
+        questionMd: "题干",
+      }).success,
+    ).toBe(true);
     expect(data.attachments[0]?.downloadUrl).toContain("/api/student/");
   });
 });
@@ -254,6 +285,8 @@ describe("renderReviewPackPrompt（共享 review.md 提示词基础）", () => {
   const base = {
     role: "student" as const,
     questionNo: 3,
+    questionPresent: true,
+    handwritten: false,
     evidenceState: "frozen" as const,
     released: true,
     answersIncluded: false,
@@ -306,6 +339,44 @@ describe("renderReviewPackPrompt（共享 review.md 提示词基础）", () => {
   it("未公布（released=false）：注明无判定属正常，不推断对错", () => {
     const md = renderReviewPackPrompt({ ...base, released: false });
     expect(md).toContain("尚未公布");
+  });
+
+  it("手写题：无草稿层属正常文案、点名 ink/ 附件；不显示「未采集」误导", () => {
+    const md = renderReviewPackPrompt({ ...base, handwritten: true });
+    expect(md).toContain("手写作答题");
+    expect(md).toContain("没有草稿层属正常");
+    expect(md).toContain("ink/");
+    expect(md).not.toContain("未采集草稿");
+  });
+
+  it("questionPresent=false：数据说明标注题目内容缺失、不回填", () => {
+    const md = renderReviewPackPrompt({ ...base, questionPresent: false });
+    expect(md).toContain("题目内容缺失");
+    expect(md).toContain("不回填");
+  });
+
+  it("无图但有缺失：不宣称「可整份复制」", () => {
+    const md = renderReviewPackPrompt({
+      ...base,
+      files: [{ path: "questions/q001/stem.md", bytes: 120 }],
+      imageCount: 0,
+      missing: [
+        { path: "evidence/e001-original-01.png", reason: "分析图生成失败" },
+      ],
+    });
+    expect(md).not.toContain("可直接整份复制");
+    expect(md).toContain("请先补齐");
+  });
+
+  it("教师包数据说明：题目行明示快照原文（含 [[答案]] 标记与参考答案节）", () => {
+    const md = renderReviewPackPrompt({
+      ...base,
+      role: "teacher",
+      answersIncluded: true,
+    });
+    expect(md).toContain("快照原文");
+    expect(md).toContain("[[答案]] 标记");
+    expect(md).not.toContain("学生端投影，含完整选项与题干，无答案标记");
   });
 
   it("纯文字包（无图片）：不出现图片上传指引", () => {

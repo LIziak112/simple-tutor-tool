@@ -1,9 +1,14 @@
 import { randomUUID } from "node:crypto";
-import { join } from "node:path";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { QuestionAnswers } from "@tutor/contract";
 import { eq } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
-import { noteImages, responses as responsesTable } from "../db/schema.ts";
+import {
+  ink as inkTable,
+  noteImages,
+  responses as responsesTable,
+} from "../db/schema.ts";
 import { attachNoteImage, saveNoteVersion } from "../services/note-service.ts";
 import {
   frozenDraftAttempt,
@@ -43,6 +48,13 @@ export interface ReviewPackWorldOptions {
   pendingAnalysisRow?: boolean;
   /** 教师批注（评语哨兵 + 判错——学生包绝不携带） */
   mark?: boolean;
+  /**
+   * 手写题形态（/code-review A1）：题快照 type=solve + ink 行与 PNG 落盘
+   * （缺省 fill 草稿题形态）。answer 哨兵进 answer.answer（final 文本）
+   */
+  handwritten?: boolean;
+  /** attempt/行的 unitId（建卷即冻结形态——useFrozenOrder 主路径，C19） */
+  unitId?: string;
   /** 哨兵文案覆盖（路由测试沿用各自历史文案时注入） */
   sentinels?: Partial<Record<keyof typeof REVIEW_SENTINELS, string>>;
 }
@@ -53,6 +65,8 @@ export interface ReviewPackWorld {
   readonly versionId: string | null;
   /** ready 分析图的盘上绝对路径（withNote=false 为 null） */
   readonly analysisPath: string | null;
+  /** 手写题形态：ink 落盘目录（删文件做缺失用例用；非手写缺省 undefined） */
+  readonly inkPath?: string;
 }
 
 /** 世界构建（六步序列；夹具直插口径同 evidence-fixtures/note-world 注释） */
@@ -63,24 +77,59 @@ export function makeReviewPackWorld(
 ): ReviewPackWorld {
   const questionId = options.questionId ?? "复习题-1";
   const sentinel = { ...REVIEW_SENTINELS, ...options.sentinels };
+  const handwritten = options.handwritten === true;
   const stemMd =
     options.stemMd ??
-    `计算 $(-3)+7-(-2)$ 的结果，填在括号里：[[${sentinel.answer}]]`;
-  const { attemptId } = frozenDraftAttempt(db, options.studentId, [
-    {
-      questionId,
-      snapshotJson: snapshotJsonOf({
-        id: questionId,
-        stemMd,
-        answers: {
-          kind: "fill",
-          blanks: [[sentinel.answer]],
-        } satisfies QuestionAnswers,
-        solutionMd: sentinel.solution,
-        hints: [sentinel.hint],
-      }),
-    },
-  ]);
+    (handwritten
+      ? `解方程并写出过程：$x-${sentinel.answer}=0$`
+      : `计算 $(-3)+7-(-2)$ 的结果，填在括号里：[[${sentinel.answer}]]`);
+  const { attemptId } = frozenDraftAttempt(
+    db,
+    options.studentId,
+    [
+      {
+        questionId,
+        snapshotJson: snapshotJsonOf({
+          id: questionId,
+          type: handwritten ? "solve" : "fill",
+          stemMd,
+          ...(handwritten
+            ? { answers: { kind: "final", answer: sentinel.answer } }
+            : {
+                answers: {
+                  kind: "fill",
+                  blanks: [[sentinel.answer]],
+                } satisfies QuestionAnswers,
+              }),
+          solutionMd: sentinel.solution,
+          hints: [sentinel.hint],
+        }),
+        ...(options.unitId !== undefined ? { unitId: options.unitId } : {}),
+      },
+    ],
+    options.unitId !== undefined ? { attemptUnitId: options.unitId } : {},
+  );
+  if (handwritten) {
+    // ink 行 + PNG 落盘（pngPath 相对 DATA_DIR）
+    const inkId = randomUUID();
+    const pngPath = `blobs/ink/${attemptId}/original-${inkId.slice(0, 8)}.png`;
+    const absPng = join(dataDir, pngPath);
+    mkdirSync(dirname(absPng), { recursive: true });
+    writeFileSync(absPng, makeNotePng(1000, 640));
+    db.insert(inkTable)
+      .values({
+        id: inkId,
+        attemptId,
+        questionId,
+        strokesPath: `blobs/ink/${attemptId}/strokes-${inkId.slice(0, 8)}.json.gz`,
+        pngPath,
+        width: 1000,
+        height: 640,
+        strokeCount: 3,
+        updatedAt: "2026-10-06T00:00:00.000Z",
+      })
+      .run();
+  }
   let versionId: string | null = null;
   let analysisPath: string | null = null;
   if (options.withNote !== false) {
@@ -144,5 +193,13 @@ export function makeReviewPackWorld(
       .where(eq(responsesTable.attemptId, attemptId))
       .run();
   }
-  return { attemptId, questionId, versionId, analysisPath };
+  return {
+    attemptId,
+    questionId,
+    versionId,
+    analysisPath,
+    ...(handwritten
+      ? { inkPath: join(dataDir, "blobs", "ink", attemptId) }
+      : {}),
+  };
 }

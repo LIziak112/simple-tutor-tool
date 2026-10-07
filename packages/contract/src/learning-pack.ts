@@ -646,7 +646,12 @@ export const learningPackManifestFileSchema = z.object({
 export const learningPackManifestMissingSchema = z.object({
   /** 本应在 zip 内的路径 */
   path: z.string().min(1),
-  kind: z.enum(["media", "evidence-image"]),
+  kind: z.enum([
+    "media",
+    "evidence-image",
+    // T6R.13 新增（只增不改）：手写题笔迹快照文件缺失（行在文件没）
+    "ink",
+  ]),
   /** 缺失原因（中文，面向教师可读） */
   reason: z.string().min(1),
   refs: z.array(z.string()).default([]),
