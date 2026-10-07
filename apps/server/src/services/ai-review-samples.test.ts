@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
 // 闸门修正（T6R.17 审查）：题型全集从契约单源派生，不手抄枚举（规则 1 契约优先）
 import { questionTypeSchema } from "@tutor/contract";
+import { describe, expect, it } from "vitest";
 import { analyzeImport } from "./content-service";
 
 /**

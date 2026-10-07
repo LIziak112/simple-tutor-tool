@@ -1173,7 +1173,9 @@ describe("renderLearningPackPrompt：per-question-review 与阶段细化（T6R.1
     expect(withTraces).toContain("缺记录处明确写未知");
     // 闸门 P1-1：false 必须明示「已知未回看」——与三态派生语义一致，
     // 不得弱化成「只说明无记录」（否则 AI 侧把 false 与 null 混同为未知）
-    expect(withTraces).toContain("false=有事件流、确无交卷后回看（已知未回看）");
+    expect(withTraces).toContain(
+      "false=有事件流、确无交卷后回看（已知未回看）",
+    );
     expect(withTraces).not.toContain("false 只说明无记录");
     // 未勾 traces：无纪律句、无行为字段词，三稿句回到 7（ink 顺延 8）
     const noTraces = renderLearningPackPrompt({
