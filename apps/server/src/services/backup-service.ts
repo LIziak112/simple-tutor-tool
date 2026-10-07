@@ -193,7 +193,14 @@ export function collectBackupReferencedPaths(dataDir: string): {
       unreadable += 1;
       continue; // 丢弃半读路径（中途出错不可信）
     }
-    paths.push(...(collected as string[]));
+    // 逐条 push（C2）：`paths.push(...collected)` 是**函数实参展开**，参数
+    // 个数有引擎上限（Node 24 实测单快照 ≥~12.45 万行即 RangeError）——且
+    // 本语句在 per-snapshot try 之外，整轮 GC 崩且无计数。for 循环无此
+    // 上限；单快照引用行数级别如此已属部署级异常量，不做造假测试
+    // （代码审查级修复）。
+    for (const collectedPath of collected as string[]) {
+      paths.push(collectedPath);
+    }
   }
   return { paths, unreadable };
 }
