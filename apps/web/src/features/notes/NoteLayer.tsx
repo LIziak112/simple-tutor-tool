@@ -10,8 +10,10 @@
  *   归属本工具条，T6R.7 衔接注记①定案；会话偏好 store 两侧共用不变）
  *   + 纸面（InkPad 隐藏工具条形态）+ 四维状态区。
  *   T6R.15：工具条与引擎接线核心抽至 NoteToolbar / useNoteEditor（订正
- *   编辑器 CorrectionPanel 共用），本组件保留答题页形态编排（自动展开/
- *   保活/布局 preference/答题页 head 接线）。
+ *   编辑器 CorrectionPanel 共用），冲突/被拒动作接线抽至 useNoteSyncActions
+ *   （闸门修复 F4；CorrectionPanel/CorrectionSection 补充稿块共用），本组件
+ *   保留答题页形态编排（自动展开/保活/布局 preference/答题页 head 接线/
+ *   补图重试）。
  *
  * 纸高（方案 §4.3 / T6R.7 衔接注记②定案）：逻辑高持久化在 NoteDoc，
  * CSS 高 = paperCssHeight(逻辑高, 纸宽) 每次换算；自动加高统一走
@@ -52,16 +54,12 @@ import {
   useNoteLayoutPreference,
 } from "@/features/notes/note-layout";
 import {
-  resolveNoteConflictKeepCloud,
-  resolveNoteConflictKeepLocal,
-  retryNoteUpload,
-} from "@/features/notes/note-sync";
-import {
   EMPTY_NOTE_DOC,
   inkDocOf,
   useNoteEditor,
 } from "@/features/notes/use-note-editor";
 import { useNoteHead, useNoteSessionRef } from "@/features/notes/use-note-head";
+import { useNoteSyncActions } from "@/features/notes/use-note-sync-actions";
 
 /**
  * 收起后的引擎保活时长（复审⑦暂定 45s，区间 30-60s）：收起题卡高频发生在
@@ -139,37 +137,16 @@ export function NoteLayer({
     return () => clearTimeout(timer);
   }, [open]);
 
-  // ---- 冲突裁决 / 被拒重试 / 补图重试 ----
-  const [resolveError, setResolveError] = useState<string | null>(null);
+  // ---- 冲突裁决 / 被拒重试（共享 hook useNoteSyncActions，scope 定在
+  // scratch；图片维度逻辑留本组件）/ 补图重试 ----
+  const { resolveError, keepLocal, keepCloud, retryDenied } =
+    useNoteSyncActions(session, {
+      attemptId,
+      questionId,
+      phase: "scratch",
+    });
   const [imageRetrying, setImageRetrying] = useState(false);
   const [clearOpen, setClearOpen] = useState(false);
-  const scopeRef = useRef({ attemptId, questionId, phase: "scratch" as const });
-  scopeRef.current = { attemptId, questionId, phase: "scratch" as const };
-
-  const keepLocal = useCallback(() => {
-    if (session === null) return;
-    setResolveError(null);
-    void resolveNoteConflictKeepLocal(session, scopeRef.current).catch(
-      (err: unknown) => {
-        setResolveError(err instanceof Error ? err.message : "操作失败");
-      },
-    );
-  }, [session]);
-
-  const keepCloud = useCallback(() => {
-    if (session === null) return;
-    setResolveError(null);
-    void resolveNoteConflictKeepCloud(session, scopeRef.current).catch(
-      (err: unknown) => {
-        setResolveError(err instanceof Error ? err.message : "操作失败");
-      },
-    );
-  }, [session]);
-
-  const retryDenied = useCallback(() => {
-    if (session === null) return;
-    void retryNoteUpload(session, scopeRef.current);
-  }, [session]);
 
   /** 正文 synced 且图片 failed/missing 的手动补图入口（重进入已自动触发
    * 过）。先 refetch head 再取版本补图（复审⑮）：以服务端当下生效版本为

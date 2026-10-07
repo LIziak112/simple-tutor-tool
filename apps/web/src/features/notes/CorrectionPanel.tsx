@@ -26,18 +26,14 @@ import { InkPad } from "@/features/ink/InkPad";
 import { NoteStatusArea } from "@/features/notes/NoteStatusArea";
 import { NoteToolbar } from "@/features/notes/NoteToolbar";
 import { getNoteRecord } from "@/features/notes/note-store";
-import {
-  catchUpNotes,
-  resolveNoteConflictKeepCloud,
-  resolveNoteConflictKeepLocal,
-  retryNoteUpload,
-} from "@/features/notes/note-sync";
+import { catchUpNotes } from "@/features/notes/note-sync";
 import {
   EMPTY_NOTE_DOC,
   inkDocOf,
   useNoteEditor,
 } from "@/features/notes/use-note-editor";
 import { useNoteSessionRef } from "@/features/notes/use-note-head";
+import { useNoteSyncActions } from "@/features/notes/use-note-sync-actions";
 import { sealCorrectionApi } from "@/lib/api";
 
 /** 反思输入按契约上限截断（jsdom 程序赋值绕过 maxLength，双保险） */
@@ -75,36 +71,16 @@ export function CorrectionPanel({
   const doc = view?.doc ?? null;
   const strokeCount = doc?.ink.strokes.length ?? 0;
 
-  // ---- 冲突裁决 / 被拒重试（共享原语，scope 定在 correction） ----
+  // ---- 冲突裁决 / 被拒重试（共享 hook useNoteSyncActions，scope 定在
+  // correction）；seal 的 CAS 基线读取仍用本组件的 scopeRef ----
   const scopeRef = useRef({
     attemptId,
     questionId,
     phase: "correction" as const,
   });
   scopeRef.current = { attemptId, questionId, phase: "correction" as const };
-  const [resolveError, setResolveError] = useState<string | null>(null);
-  const keepLocal = useCallback(() => {
-    if (session === null) return;
-    setResolveError(null);
-    void resolveNoteConflictKeepLocal(session, scopeRef.current).catch(
-      (err: unknown) => {
-        setResolveError(err instanceof Error ? err.message : "操作失败");
-      },
-    );
-  }, [session]);
-  const keepCloud = useCallback(() => {
-    if (session === null) return;
-    setResolveError(null);
-    void resolveNoteConflictKeepCloud(session, scopeRef.current).catch(
-      (err: unknown) => {
-        setResolveError(err instanceof Error ? err.message : "操作失败");
-      },
-    );
-  }, [session]);
-  const retryDenied = useCallback(() => {
-    if (session === null) return;
-    void retryNoteUpload(session, scopeRef.current);
-  }, [session]);
+  const { resolveError, keepLocal, keepCloud, retryDenied } =
+    useNoteSyncActions(session, scopeRef.current);
 
   // ---- 清空二次确认（清空=空稿作为新正文版本保存，覆盖语义同草稿纸） ----
   const [clearOpen, setClearOpen] = useState(false);
