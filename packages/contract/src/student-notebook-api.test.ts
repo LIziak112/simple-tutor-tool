@@ -124,9 +124,9 @@ describe("studentNotebookData：轮次聚合形状", () => {
       studentNotebookDataSchema.safeParse({ questionId: "", rounds: [] })
         .success,
     ).toBe(false);
-    expect(studentNotebookDataSchema.safeParse({ questionId: "q" }).success).toBe(
-      false,
-    );
+    expect(
+      studentNotebookDataSchema.safeParse({ questionId: "q" }).success,
+    ).toBe(false);
     expect(
       studentNotebookDataSchema.safeParse({
         questionId: "q",
@@ -180,7 +180,11 @@ describe("notebookRound：字段约束", () => {
       notebookRoundSchema.safeParse({
         ...ROUND_BASE,
         corrections: [
-          { ...OPEN_CORRECTION, phase: "scratch", sealedAt: "2026-10-07T01:00:00.000Z" },
+          {
+            ...OPEN_CORRECTION,
+            phase: "scratch",
+            sealedAt: "2026-10-07T01:00:00.000Z",
+          },
         ],
       }).success,
     ).toBe(false);
@@ -196,7 +200,10 @@ describe("notebookRound：字段约束", () => {
 
 describe("notebook 零答案负向断言（AGENTS.md 第 3 条）", () => {
   /** 深收集 schema 全部键名：对象进 shape、数组取 element、可空/可选剥壳 */
-  function collectKeys(schema: z.ZodType, acc: Set<string> = new Set()): Set<string> {
+  function collectKeys(
+    schema: z.core.$ZodType,
+    acc: Set<string> = new Set(),
+  ): Set<string> {
     if (schema instanceof z.ZodObject) {
       for (const [key, child] of Object.entries(schema.shape)) {
         acc.add(key);

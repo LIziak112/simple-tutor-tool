@@ -8,7 +8,7 @@ import {
 } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { gzipSync } from "node:zlib";
-import type { NoteImageUploadMeta, NoteUploadMeta } from "@tutor/contract";
+import type { NoteImageUploadMeta, NoteUploadMetaInput } from "@tutor/contract";
 import {
   INK_LOGICAL_WIDTH,
   NOTE_BODY_DECOMPRESSED_MAX_BYTES,
@@ -399,7 +399,9 @@ export function saveNoteVersion(
   attemptId: string,
   questionId: string,
   bodyBytes: Uint8Array,
-  meta: NoteUploadMeta,
+  // T6R.15：入参用输入类型（phase 可缺省 = scratch，与契约缺省同语义——
+  // 路由传入 parse 后的输出形态同样兼容；三 phase 分派在 T6R.15 服务层单落地）
+  meta: NoteUploadMetaInput,
   faults?: AtomicFileFaults,
 ): NoteVersionReceipt {
   // 1. 权限与冻结集合（T6R.3 统一门口；「冻结内容不冻结权限」——课程撤权
@@ -759,6 +761,11 @@ function noteHeadOf(
     note: note === undefined ? null : noteRecordMetaOf(note),
     images: imageRows.map(noteImageMetaOf),
     evidence: evidence === undefined ? null : noteEvidenceMetaOf(evidence),
+    // T6R.15 契约先行：corrections/supplements 恒空数组占位——订正/补充稿行
+    // 的聚合投影属服务层单（noteHeadOf 扩展）；当前尚无任何写通道能产生
+    // 该两 phase 的行，空数组即数据库的真实事实，非降级
+    corrections: [],
+    supplements: [],
   };
 }
 

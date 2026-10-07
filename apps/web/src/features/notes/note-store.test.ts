@@ -756,6 +756,8 @@ describe("note-store：回执推进 lastHead（T6R.9 复审⑦：新版本 image
         },
       ],
       evidence: null,
+      corrections: [],
+      supplements: [],
     });
     expect(
       deriveNoteStatusOverview(await recordOf(SESSION_A, SCOPE), false).images,

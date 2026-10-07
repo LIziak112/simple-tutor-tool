@@ -73,7 +73,13 @@ export function noteHeadsMockResponse(
   return async (_attemptId, questionIds) =>
     questionIds.map(
       (questionId) =>
-        overrides[questionId] ?? { note: null, images: [], evidence: null },
+        overrides[questionId] ?? {
+          note: null,
+          images: [],
+          evidence: null,
+          corrections: [],
+          supplements: [],
+        },
     );
 }
 
@@ -102,6 +108,9 @@ export function headOf(overrides: Partial<NoteHeadData> = {}): NoteHeadData {
     },
     images: [],
     evidence: null,
+    // T6R.15 契约先行：head 投影恒带两数组（服务端空为 []；夹具同形态）
+    corrections: [],
+    supplements: [],
     ...overrides,
   };
 }

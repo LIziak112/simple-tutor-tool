@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { ATTEMPT_SUBMIT_MAX_QUESTIONS } from "./attempt.ts";
 import { INK_LOGICAL_WIDTH } from "./ink.ts";
 import {
+  correctionCreateRequestSchema,
+  correctionSealRequestSchema,
   NOTE_BODY_DECOMPRESSED_MAX_BYTES,
   NOTE_BODY_GZIP_MAX_BYTES,
   NOTE_COORD_MAX_X,
@@ -17,8 +19,6 @@ import {
   NOTE_REFLECTION_MAX_LENGTH,
   NOTE_RENDER_VERSION,
   NOTE_VERSION_IMAGES_MAX_BYTES,
-  correctionCreateRequestSchema,
-  correctionSealRequestSchema,
   noteBodyHashSchema,
   noteDocSchema,
   noteErrorCodeSchema,
@@ -674,6 +674,8 @@ describe("T6R.5 路由形状：noteHeadData / noteImageUploadMeta", () => {
       note: null,
       images: [],
       evidence: null,
+      corrections: [],
+      supplements: [],
     });
     expect(parsed.note).toBeNull();
     expect(parsed.evidence).toBeNull();
@@ -705,6 +707,8 @@ describe("T6R.5 路由形状：noteHeadData / noteImageUploadMeta", () => {
         versionId: "44444444-4444-4444-8444-444444444444",
         recordedAt: "2026-10-06T03:00:00.000Z",
       },
+      corrections: [],
+      supplements: [],
     });
     expect(parsed.images).toHaveLength(2);
     expect(parsed.evidence?.state).toBe("frozen");
@@ -820,8 +824,14 @@ describe("T6R.5 路由形状：noteHeadData / noteImageUploadMeta", () => {
 });
 
 describe("T6R.14 批量头投影：noteHeadsRequest / noteHeadsData", () => {
-  /** 最小合法头投影（空态形态；完整形态已在 T6R.5 用例锁定） */
-  const emptyHead = { note: null, images: [], evidence: null };
+  /** 最小合法头投影（空态形态；完整形态已在 T6R.5 用例锁定）——T6R.15 起含 corrections/supplements 空数组 */
+  const emptyHead = {
+    note: null,
+    images: [],
+    evidence: null,
+    corrections: [],
+    supplements: [],
+  };
 
   it("请求体：questionIds 非空字符串数组，1..NOTE_HEADS_MAX_QUESTIONS 条", () => {
     expect(
@@ -1041,7 +1051,11 @@ describe("T6R.15 noteHeadData：corrections/supplements 两数组必填", () => 
         images: [],
         evidence: null,
         corrections: [
-          { ...OPEN_CORRECTION, phase: "scratch", sealedAt: "2026-10-07T01:00:00.000Z" },
+          {
+            ...OPEN_CORRECTION,
+            phase: "scratch",
+            sealedAt: "2026-10-07T01:00:00.000Z",
+          },
         ],
         supplements: [],
       }).success,

@@ -880,6 +880,10 @@ export async function applyUploadReceipt(
           : null,
       images: [],
       evidence: record.lastHead?.evidence ?? null,
+      // T6R.15：回执不改变订正/补充稿集合——沿用旧 head 值（从未拉过 head
+      // 则空数组），下一次 head 拉取全覆盖（同 note/evidence 合并口径）
+      corrections: record.lastHead?.corrections ?? [],
+      supplements: record.lastHead?.supplements ?? [],
     };
   });
 }

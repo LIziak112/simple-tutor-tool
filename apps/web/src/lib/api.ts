@@ -78,7 +78,7 @@ import {
   type NoteHeadsData,
   type NoteImageMeta,
   type NoteImageUploadMeta,
-  type NoteUploadMeta,
+  type NoteUploadMetaInput,
   type NoteVersionReceipt,
   type PendingMarkListData,
   type PublicConfigData,
@@ -1242,7 +1242,8 @@ export function postNoteImageApi(
  * 草稿正文上传（T6R.8；PUT /api/student/attempts/:id/notes/:qid，服务端
  * T6R.4 落地）：multipart = body 文件（gzip 后或原始 JSON 的 NoteDoc）+
  * baseRevision/mutationId 十进制串字段（与服务端 parseBody + strictFormInt
- * 口径对应；契约 noteUploadMetaSchema）。返回 noteVersionReceipt（CAS 成功
+ * 口径对应；契约 noteUploadMetaSchema）+ 可选 phase 字符串字段（T6R.15，
+ * 缺省 scratch——不传即不发）。返回 noteVersionReceipt（CAS 成功
  * 或幂等命中）。
  *
  * 失败形态（note-sync 据此分流）：
@@ -1259,13 +1260,19 @@ export function putNoteDocumentApi(
   attemptId: string,
   questionId: string,
   body: Blob,
-  meta: NoteUploadMeta,
+  meta: NoteUploadMetaInput,
   signal?: AbortSignal,
 ): Promise<NoteVersionReceipt> {
   const form = new FormData();
   form.append("body", body, "body.json.gz");
   form.append("baseRevision", String(meta.baseRevision));
   form.append("mutationId", meta.mutationId);
+  // T6R.15：phase 可选新字段（契约缺省 scratch）——不传即不发该字段，
+  // 服务端按缺省处理，旧链路 wire 形态零变化；订正/补充稿同步（T6R.15
+  // 前端单）传入时如实上送
+  if (meta.phase !== undefined) {
+    form.append("phase", meta.phase);
+  }
   return callApi(() =>
     fetch(
       `/api/student/attempts/${encodeURIComponent(attemptId)}/notes/${encodeURIComponent(questionId)}`,
