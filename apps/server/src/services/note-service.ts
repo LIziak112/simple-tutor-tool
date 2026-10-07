@@ -1357,14 +1357,22 @@ export function gcNoteVersions(
       continue;
     }
     if (conservative) continue; // 不可读快照在场：本轮不删（宁可漏删不可误删）
+    const images = imagesByVersion.get(row.id) ?? [];
     // 备份引用保留清单：当前库无引用、但某快照引用的版本——删了会让该备份
-    // 恢复出缺正文（方案 §6.3「保留中的数据库备份引用也要纳入保留集合」）
+    // 恢复出缺正文（方案 §6.3「保留中的数据库备份引用也要纳入保留集合」）。
+    // C4：判定**同时看正文键与图片键**——bodyPath 形态异常（relKeyOf=null）
+    // 的版本只查正文键会漏判，连带 unlink 掉快照引用的图片；任一键命中
+    // 即整版本保守跳过（行与文件都不动）。
     const bodyKey = relKeyOf(row.bodyPath);
-    if (bodyKey !== null && backupKeepKeys.has(bodyKey)) {
+    const bodyKept = bodyKey !== null && backupKeepKeys.has(bodyKey);
+    const imageKept = images.some((img) => {
+      const key = relKeyOf(img.path);
+      return key !== null && backupKeepKeys.has(key);
+    });
+    if (bodyKept || imageKept) {
       result.keptByBackup += 1;
       continue;
     }
-    const images = imagesByVersion.get(row.id) ?? [];
     try {
       db.transaction((tx) => {
         // 先删派生图行（FK 指向版本行），再删版本行
