@@ -105,6 +105,8 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
     }
     const pack = packEntryOf(entries, reviewPackSchema);
     expect(pack.role).toBe("teacher");
+    // F1 对照：教师域照常携带快照内容 hash（去重/身份用途不受影响）
+    expect(pack.question.snapshotHash).toMatch(/^[0-9a-f]{64}$/);
     expect(pack.question.answers).toEqual({
       kind: "fill",
       blanks: [[SECRET_ANSWER_TEXT]],
@@ -153,6 +155,9 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
       '"attemptId"',
       '"studentId"',
       '"versionId"',
+      // /security-review F1：快照内容 hash 是离线答案验证 oracle——学生包
+      // 整体缺席（键级断言）
+      '"snapshotHash"',
       '"answers"',
       '"solutionMd"',
       '"autoCorrect"',

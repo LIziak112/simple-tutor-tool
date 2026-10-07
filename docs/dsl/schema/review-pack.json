@@ -201,7 +201,6 @@
         "stemMd",
         "ref",
         "present",
-        "snapshotHash",
         "no"
       ],
       "additionalProperties": false

@@ -39,8 +39,8 @@ const STUDENT_PACK = {
     ref: "q001",
     no: 3,
     present: true,
-    snapshotHash:
-      "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    // snapshotHash 不携带（/security-review F1：内容 hash 是离线答案验证
+    // oracle——学生包禁携；教师域可选、TEACHER_PACK 样本携带）
     type: "fill",
     difficulty: 2,
     knowledge: ["有理数"],
@@ -90,6 +90,8 @@ const TEACHER_PACK = {
   question: {
     ...STUDENT_PACK.question,
     questionId: "加法练习-1",
+    snapshotHash:
+      "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
     answers: { kind: "fill", blanks: [["5"]] },
     solutionMd: "解析：2+3=5",
   },
@@ -126,10 +128,13 @@ describe("reviewPackSchema（pack.json，双角色）", () => {
     expect(parsed.evidence).not.toHaveProperty("version");
   });
 
-  it("教师包合法样本通过：真实 id/答案/判定/评语齐全（教师域文档化设计）", () => {
+  it("教师包合法样本通过：真实 id/答案/判定/评语/快照 hash 齐全（教师域文档化设计）", () => {
     const parsed = reviewPackSchema.parse(TEACHER_PACK);
     expect(parsed.role).toBe("teacher");
     expect(parsed.question.questionId).toBe("加法练习-1");
+    expect(parsed.question.snapshotHash).toBe(
+      "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    );
     expect(parsed.response.teacherComment).toBe("过程规范");
     expect(parsed.evidence.version?.versionId).toBe(
       "33333333-3333-4333-8333-333333333333",
@@ -141,6 +146,15 @@ describe("reviewPackSchema（pack.json，双角色）", () => {
       {
         ...STUDENT_PACK,
         question: { ...STUDENT_PACK.question, questionId: "加法练习-1" },
+      },
+      // /security-review F1：学生包携带 snapshotHash（离线答案验证 oracle）→ 拒绝
+      {
+        ...STUDENT_PACK,
+        question: {
+          ...STUDENT_PACK.question,
+          snapshotHash:
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        },
       },
       {
         ...STUDENT_PACK,

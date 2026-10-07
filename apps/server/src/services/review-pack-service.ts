@@ -487,7 +487,6 @@ export function assembleReviewPack(
       ref: qRef,
       no,
       present: revision.present,
-      snapshotHash: revision.snapshotHash,
       type: material.type,
       difficulty: material.difficulty,
       knowledge: [...material.knowledge],
@@ -497,6 +496,11 @@ export function assembleReviewPack(
         : {}),
       // —— 教师域键（学生包 schema superRefine 拒绝携带） ——
       ...(teacherRole ? { questionId: row.questionId } : {}),
+      // /security-review F1：snapshotHash 覆盖完整快照（含答案原文与
+      // 选项正误标记），规范化算法随仓库公开——学生可枚举候选答案离线
+      // 碰撞比对恢复正确答案、绕过公布 gate。学生包不携带；教师域照常
+      // 保留（去重/内容身份用途不受影响）
+      ...(teacherRole ? { snapshotHash: revision.snapshotHash } : {}),
       ...(teacherRole && material.answers !== undefined
         ? { answers: material.answers }
         : {}),

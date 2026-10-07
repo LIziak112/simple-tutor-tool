@@ -6,6 +6,7 @@ import {
   learningPackEvidenceVersionSchema,
   learningPackManifestMissingSchema,
   learningPackManifestSchema,
+  learningPackSnapshotHashSchema,
   learningPackV2QuestionSchema,
   PACK_REF_EVIDENCE_RE,
 } from "./learning-pack.ts";
@@ -65,6 +66,15 @@ export const reviewPackQuestionSchema = learningPackV2QuestionSchema
     no: z.number().int().min(1),
     // —— 教师域键（学生包必须缺席，见 superRefine） ——
     questionId: z.string().min(1).optional(),
+    /**
+     * 快照内容 hash——**教师域可选键**（/security-review F1）：hash 覆盖
+     * 完整快照（含 [[答案]] 原文/选项正误标记/answers/solutionMd/sourceMd），
+     * 规范化算法随本开源仓库公开且确定——学生拿已知字段枚举候选答案即可
+     * 离线碰撞比对恢复正确答案，绕过公布 gate。v2 基类里它是必填，此处
+     * extend 覆写为可选并由 superRefine 对学生包禁携（教师域去重/身份用途
+     * 照常保留）。
+     */
+    snapshotHash: learningPackSnapshotHashSchema.nullable().optional(),
   });
 
 /**
@@ -132,6 +142,8 @@ export const reviewPackSchema = z
     if (pack.role !== "student") return;
     const forbidden: ReadonlyArray<readonly [string, unknown]> = [
       ["question.questionId", pack.question.questionId],
+      // /security-review F1：内容 hash 是离线答案验证 oracle——学生包禁携
+      ["question.snapshotHash", pack.question.snapshotHash],
       ["question.answers", pack.question.answers],
       ["question.solutionMd", pack.question.solutionMd],
       ["response.attemptId", pack.response.attemptId],
