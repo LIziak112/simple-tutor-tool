@@ -960,8 +960,9 @@ describe("T6R.12 LearningPack v2：快照关联、证据与 manifest", () => {
     // —— 证据：round1 frozen（两页一在场一缺失）+ round2 not_collected ——
     const evidence = pack.evidence ?? [];
     expect(evidence).toHaveLength(2);
-    expect(responses[0]?.evidenceRef).toBe(evidence[0]?.ref);
-    expect(responses[1]?.evidenceRef).toBe(evidence[1]?.ref);
+    // T6R.16：evidenceRef 单值 → evidenceRefs 数组（单1 过渡为单元素数组）
+    expect(responses[0]?.evidenceRefs).toEqual([evidence[0]?.ref]);
+    expect(responses[1]?.evidenceRefs).toEqual([evidence[1]?.ref]);
     expect(evidence[0]?.state).toBe("frozen");
     expect(evidence[0]?.version?.versionId).toBe(frozenVersionId);
     expect(evidence[0]?.images).toHaveLength(2);
@@ -981,8 +982,8 @@ describe("T6R.12 LearningPack v2：快照关联、证据与 manifest", () => {
     const eRefs = new Set(evidence.map((e) => e.ref));
     for (const response of responses) {
       expect(qRefs.has(response.questionRef)).toBe(true);
-      if (response.evidenceRef !== undefined) {
-        expect(eRefs.has(response.evidenceRef)).toBe(true);
+      for (const ref of response.evidenceRefs ?? []) {
+        expect(eRefs.has(ref)).toBe(true);
       }
     }
     for (const item of [...manifest.files, ...manifest.missing]) {

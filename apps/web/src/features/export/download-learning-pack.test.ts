@@ -19,6 +19,8 @@ const REQUEST: LearningPackExportRequest = {
     ink: false,
     traces: false,
     evidence: false,
+    // T6R.16：契约新档缺省（evidence=false 时被忽略）
+    evidencePhases: ["scratch"],
   },
   goal: "diagnose-weakness",
   privacy: { anonymize: true },

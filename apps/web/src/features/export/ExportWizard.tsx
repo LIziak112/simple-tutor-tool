@@ -220,6 +220,9 @@ export function ExportWizard({
       traces,
       // v2 专属模块（T6R.12）：向导暂为 v1 入口（v2 批量 UI 属 T6R.16）
       evidence: false,
+      // T6R.16 单1 过渡：契约新档（evidence=false 时被忽略，显式写缺省零
+      // 漂移）；单3 的 v2 组将接入真实阶段选择。
+      evidencePhases: ["scratch"],
     };
     return {
       scope: {

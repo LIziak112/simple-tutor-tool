@@ -228,6 +228,9 @@ const PREVIEW_OK: LearningPackPreviewData = {
   limitBytes: 52_428_800,
   overLimit: false,
   hint: null,
+  // T6R.16：preview 新增装配时刻与证据图清单（单1 过渡：清单恒空）
+  asOf: "2026-10-07T01:02:03.456Z",
+  evidenceImages: [],
 };
 
 function makeQueryClient(): QueryClient {

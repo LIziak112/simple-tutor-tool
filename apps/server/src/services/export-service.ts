@@ -336,6 +336,12 @@ export interface LearningPackAssembly {
   readonly totalBytes: number;
   /** studentId → 化名（真名模式为 displayName；ink 命名与测试断言用） */
   readonly displayNameOf: ReadonlyMap<string, string>;
+  /**
+   * 本次装配采用的时刻（UTC ISO，毫秒精度；T6R.16 单1 过渡字段）：preview
+   * 响应的 asOf 数据源（固定选择回传口径）。单2 将以 request.asOf 贯穿后
+   * 保持同语义。
+   */
+  readonly nowIso: string;
 }
 
 /**
@@ -974,7 +980,7 @@ function renderPromptMdOf(core: PackCore, mediaPresent: boolean): string {
 }
 
 /** pack 头部（meta + students）：v1/v2 骨架同款，仅 version 与 evidence 回显差异 */
-/** 模块回显形态：v2 恒含 evidence，v1 无该键（与两版 meta.modules 契约一致） */
+/** 模块回显形态：v2 恒含 evidence 与 evidencePhases，v1 无该两键（与两版 meta.modules 契约一致） */
 interface PackHeaderModules {
   lectures: boolean;
   questions: "stem" | "answer" | "solution" | null;
@@ -993,7 +999,10 @@ type PackHeaderOf<V extends 1 | 2> = {
     to: string;
     anonymized: boolean;
     modules: V extends 2
-      ? PackHeaderModules & { evidence: boolean }
+      ? PackHeaderModules & {
+          evidence: boolean;
+          evidencePhases: LearningPackModules["evidencePhases"];
+        }
       : PackHeaderModules;
     note: string;
   };
@@ -1016,8 +1025,16 @@ function packHeaderOf<V extends 1 | 2>(
   };
   // 条件类型的联合窄化是 TS 已知局限：此处单一断言收敛（值域由两处调用点
   // 的字面量 version 保证，无 any）
+  // T6R.16 单1 过渡：v2 回显 evidencePhases（请求经契约 parse 后恒有该
+  // 字段，缺省 ["scratch"]）；单2 将改为回显装配端规范化后的阶段序列。
   const modules = (
-    version === 2 ? { ...base, evidence: evidenceEcho } : { ...base }
+    version === 2
+      ? {
+          ...base,
+          evidence: evidenceEcho,
+          evidencePhases: [...m.evidencePhases],
+        }
+      : { ...base }
   ) as PackHeaderOf<V>["meta"]["modules"];
   return {
     meta: {
@@ -1327,6 +1344,7 @@ function assembleV1(core: PackCore): LearningPackAssembly {
     files,
     totalBytes: files.reduce((sum, file) => sum + file.estimatedBytes, 0),
     displayNameOf: core.displayNameOf,
+    nowIso: core.nowIso,
   };
 }
 
@@ -1530,11 +1548,16 @@ function assembleV2(core: PackCore): LearningPackAssembly {
             "v2 装配缺少该行的证据引用",
           );
         }
+        // T6R.16 单1 过渡：契约为 evidenceRefs 数组（固定序 scratch→
+        // correction→supplement）。当前装配只有 scratch 原稿单值引用，包成
+        // 单元素数组；单2 的多阶段装配将替换为逐阶段收集。
+        const evidenceRefs =
+          m.evidence && evidenceRef !== undefined ? [evidenceRef] : undefined;
         responseRowsV2.push({
           ...base,
           questionRef,
           snapshotHash: hashByRef.get(questionRef) ?? null,
-          ...(m.evidence ? { evidenceRef } : {}),
+          ...(evidenceRefs !== undefined ? { evidenceRefs } : {}),
         });
       }
     }
@@ -1694,6 +1717,7 @@ function assembleV2(core: PackCore): LearningPackAssembly {
     files,
     totalBytes: files.reduce((sum, file) => sum + file.estimatedBytes, 0),
     displayNameOf: core.displayNameOf,
+    nowIso: core.nowIso,
   };
 }
 
@@ -2028,6 +2052,10 @@ export function previewLearningPack(
     totalEstimatedBytes: assembly.totalBytes,
     limitBytes,
     overLimit,
+    // T6R.16 单1 过渡：asOf=本次装配时刻（固定选择回传口径）；evidenceImages
+    // 恒空数组（真实图片预览清单由单2 的多阶段装配填充）。
+    asOf: assembly.nowIso,
+    evidenceImages: [],
     hint: overLimit
       ? `数据包预估 ${(assembly.totalBytes / (1024 * 1024)).toFixed(
           1,

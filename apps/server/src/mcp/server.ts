@@ -151,6 +151,9 @@ function packRequestDefaults() {
       traces: true,
       // v2 专属模块（T6R.12）：MCP 旧调用保持 v1 默认（不装配证据附件）
       evidence: false,
+      // T6R.16 单1 过渡：契约 modules.evidencePhases 有缺省值，此处显式写
+      // 缺省（evidence=false 时本字段被忽略）；单2 将开放 MCP 覆盖参数。
+      evidencePhases: ["scratch" as const],
     },
   };
 }
