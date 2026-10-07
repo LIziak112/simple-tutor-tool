@@ -317,6 +317,31 @@ describe("note-store：回执与状态派生", () => {
     expect(deriveServerState(record, false)).toBe("dirty");
   });
 
+  it("迟到回执 noteId 守卫（闸门修复 F6）：新行对齐后旧行回执到达 → 整笔丢弃，基线不被拉回旧值", async () => {
+    // 旧行在途：写入生成 pending（mutationId 与旧回执对应）
+    writeNoteDoc(SESSION_A, SCOPE, DOC_A);
+    const mutationOld = await pendingMutationIdOf(SESSION_A, SCOPE);
+    // 模拟 clear→seed 对齐到新行（noteId 变化、baseRevision 2——CorrectionSection
+    // 创建新订正后的形态；pending 保留=新行待传内容）
+    const newRowNote = {
+      ...headOf().note,
+      noteId: "99999999-9999-4999-8999-999999999901",
+      revision: 2,
+      currentVersionId: "33333333-3333-4333-8333-333333333302",
+    };
+    if (newRowNote === null) throw new Error("夹具缺 note（测试前置失败）");
+    await applyServerHead(SESSION_A, SCOPE, headOf({ note: newRowNote }));
+    const aligned = await recordOf(SESSION_A, SCOPE);
+    expect(aligned.noteId).toBe("99999999-9999-4999-8999-999999999901");
+    expect(aligned.baseRevision).toBe(2);
+    // 旧行的成功回执迟到：不得把基线/noteId 拉回旧行值、不得清新行的 pending
+    await applyUploadReceipt(SESSION_A, SCOPE, mutationOld, RECEIPT_1);
+    const after = await recordOf(SESSION_A, SCOPE);
+    expect(after.noteId).toBe("99999999-9999-4999-8999-999999999901");
+    expect(after.baseRevision).toBe(2);
+    expect(after.pending?.mutationId).toBe(mutationOld); // 待传不被旧回执误清
+  });
+
   it("denied(access) 粘住（新写不复活）；denied(content) 新写清除", async () => {
     writeNoteDoc(SESSION_A, SCOPE, DOC_A);
     await applyUploadDenied(SESSION_A, SCOPE, "access", "已无权限");

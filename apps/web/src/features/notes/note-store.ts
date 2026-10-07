@@ -848,8 +848,13 @@ export async function applyServerHead(
 
 /**
  * 上传回执落地：head 信息推进（baseRevision/noteId）；
- **mutationId 匹配才清 pending**——A 的回执不清 B（B 在 A 在途期间写入，
+ * **mutationId 匹配才清 pending**——A 的回执不清 B（B 在 A 在途期间写入，
  * pending 已换成 B 的新 mutationId），B 仍 dirty 等下一轮上传。
+ * 迟到回执守卫（闸门修复 F6）：本地 noteId 已指向**另一行**（clear→seed
+ * 新行后，旧 PUT 的成功回执才到达）时整笔丢弃——不把基线拉回旧行值
+ * （否则新行首传带旧 base 撞 409，多一次可自愈冲突）、不误清新行 pending、
+ * 不把旧行回执合并进新行 lastHead。noteId 为空（行未铸 id）或一致时照旧
+ * 推进（幂等语义保留）。
  */
 export async function applyUploadReceipt(
   session: NoteSessionRef,
@@ -859,6 +864,7 @@ export async function applyUploadReceipt(
 ): Promise<void> {
   // 记录已不存在的迟到回执直接丢弃（mutateLoaded 返回 false）
   await mutateLoaded(session, scope, null, (record) => {
+    if (record.noteId !== null && record.noteId !== receipt.noteId) return;
     record.baseRevision = receipt.revision;
     record.noteId = receipt.noteId;
     if (record.pending?.mutationId === mutationId) {
