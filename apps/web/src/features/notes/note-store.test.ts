@@ -13,6 +13,7 @@ import {
   applyUploadDenied,
   applyUploadReceipt,
   clearNoteDeniedAccess,
+  clearCorrectionRecord,
   deriveNoteStatusOverview,
   deriveServerState,
   ensureNoteLoaded,
@@ -858,5 +859,84 @@ describe("note-store：bind 扫描与 ensureNoteLoaded 共享（T6R.9 复审⑬�
     await scan;
     expect(gets).toBe(0); // 键值对来自扫描的 getAll，零逐键 get
     expect(getNoteView(SESSION_A, SCOPE)?.doc?.ink.strokes.length).toBe(1);
+  });
+});
+
+describe("note-store：clearCorrectionRecord（T6R.15 新开订正行的本地重置）", () => {
+  /** correction 作用域（clearCorrectionRecord 的目标 phase） */
+  const CORRECTION_SCOPE: NoteScope = { ...SCOPE, phase: "correction" };
+
+  it("清旧封存行残留：pending/doc/conflict/denied/baseRevision/noteId/lastHead 全清，docVersion 递增", async () => {
+    // 造残留：旧封存行上继续写出的 pending + 冲突 + 被拒（同时非空时以
+    // conflict 优先呈现在 UI，但 store 里三字段可并存——清除须全清）
+    const sealedRowHead = headOf({
+      note: {
+        noteId: "88888888-8888-4888-8888-888888888888",
+        attemptId: SCOPE.attemptId,
+        questionId: SCOPE.questionId,
+        questionRevisionId: "qrev-1",
+        phase: "correction",
+        revision: 3,
+        currentVersionId: receiptOf(3).versionId,
+        serverSavedAt: "2026-10-06T02:00:00.000Z",
+        sealedAt: "2026-10-06T03:00:00.000Z",
+        stuckAt: null,
+        errorCause: null,
+      },
+    });
+    await applyServerHead(SESSION_A, CORRECTION_SCOPE, sealedRowHead);
+    writeNoteDoc(SESSION_A, CORRECTION_SCOPE, DOC_B);
+    await applyUploadConflict(SESSION_A, CORRECTION_SCOPE, null, "已被封存");
+    await applyUploadDenied(SESSION_A, CORRECTION_SCOPE, "access", "终态残留");
+    const before = await recordOf(SESSION_A, CORRECTION_SCOPE);
+    const beforeVersion = before.docVersion;
+
+    await clearCorrectionRecord(SESSION_A, CORRECTION_SCOPE);
+
+    const after = await recordOf(SESSION_A, CORRECTION_SCOPE);
+    expect(after.pending).toBeNull();
+    // 空稿（与 freshRecord 同形——NoteDocInput 形态，默认值读出时物化）
+    expect(after.doc).toEqual({ version: 1, ink: { width: 1000, strokes: [] } });
+    expect(after.conflict).toBeNull();
+    expect(after.denied).toBeNull();
+    expect(after.baseRevision).toBe(0);
+    expect(after.noteId).toBeNull();
+    expect(after.lastHead).toBeNull();
+    expect(after.editedAt).toBe(0);
+    expect(after.totalPoints).toBe(0);
+    expect(after.docVersion).toBe(beforeVersion + 1); // 引擎守卫感知换稿
+  });
+
+  it("无残留记录时幂等 no-op：不建壳、不通知落盘", async () => {
+    const key = noteKeyOf(SESSION_A, CORRECTION_SCOPE);
+    let sets = 0;
+    const counting: NoteStoreBackend = {
+      get: memoryNoteBackend().get,
+      set: (k, v) => {
+        if (k === key) sets += 1;
+        return Promise.resolve();
+      },
+      getAll: memoryNoteBackend().getAll,
+    };
+    installNoteBackend(counting);
+    await clearCorrectionRecord(SESSION_A, CORRECTION_SCOPE);
+    expect(sets).toBe(0);
+    expect(await getNoteRecord(SESSION_A, CORRECTION_SCOPE)).toBeNull();
+  });
+
+  it("清除后落盘：刷新（清内存重挂同一后端）读到空壳，不回读旧残留", async () => {
+    const shared = memoryNoteBackend();
+    installNoteBackend(shared);
+    writeNoteDoc(SESSION_A, CORRECTION_SCOPE, DOC_A);
+    await waitForLocalSaved(SESSION_A, CORRECTION_SCOPE);
+
+    await clearCorrectionRecord(SESSION_A, CORRECTION_SCOPE);
+    await waitForLocalSaved(SESSION_A, CORRECTION_SCOPE);
+    installNoteBackend(shared); // 模拟刷新：清内存、后端留数据
+
+    const revived = await recordOf(SESSION_A, CORRECTION_SCOPE);
+    expect(revived.doc.ink.strokes).toEqual([]);
+    expect(revived.baseRevision).toBe(0);
+    expect(revived.pending).toBeNull();
   });
 });
