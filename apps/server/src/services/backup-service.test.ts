@@ -12,7 +12,6 @@ import { join } from "node:path";
 import { eq } from "drizzle-orm";
 import pino from "pino";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { hashPassword } from "../auth/password";
 import { runBackfills } from "../db/backfill";
 import { createDb, createDbHandle, type DbHandle } from "../db/client";
 import { runMigrations } from "../db/migrate";
@@ -20,6 +19,11 @@ import { students, teachers } from "../db/schema";
 import { TEST_TEACHER_ID } from "../db/test-utils";
 import { HttpError } from "../lib/http-error";
 import { readZipEntries } from "../lib/zip-read";
+import {
+  BACKUP_TEST_PASSWORD,
+  insertBackupTeacher,
+  zipToBackupBuffer,
+} from "../test/backup-fixtures";
 import {
   BACKUP_DIR_NAME,
   buildBackupZip,
@@ -44,21 +48,7 @@ import {
  *   不复用最长落后 24h 的旧快照；下载本身新增一份快照）。
  */
 
-const PASSWORD = "backup-pass-123";
-
-/** 备份 zip 流收整为 Buffer（与下载链路同流，测试内消费） */
-async function zipToBuffer(
-  zip: Awaited<ReturnType<typeof buildBackupZip>>,
-): Promise<Buffer> {
-  const chunks: Buffer[] = [];
-  zip.stream.on("data", (chunk: Buffer) => chunks.push(chunk));
-  const done = new Promise<void>((resolve, reject) => {
-    zip.stream.on("end", () => resolve());
-    zip.stream.on("error", (err: Error) => reject(err));
-  });
-  await done;
-  return Buffer.concat(chunks);
-}
+const PASSWORD = BACKUP_TEST_PASSWORD;
 
 interface Fixture {
   dataDir: string;
@@ -83,18 +73,7 @@ async function makeFixture(): Promise<Fixture> {
     runMigrations(fresh);
     runBackfills(fresh);
   });
-  handle.db
-    .insert(teachers)
-    .values({
-      id: TEST_TEACHER_ID,
-      loginName: "teacher",
-      isAdmin: true,
-      disabledAt: null,
-      passwordHash: await hashPassword(PASSWORD),
-      apiToken: null,
-      createdAt: "2026-01-01T00:00:00.000Z",
-    })
-    .run();
+  await insertBackupTeacher(handle.db, PASSWORD);
   handle.db
     .insert(students)
     .values({
@@ -146,7 +125,7 @@ describe("备份 → 改数据 → 恢复（验收核心往返）", () => {
     // 备份（zip 内含全部内容；下载恒先拍一份「当前时刻」快照——注入固定
     // 时点便于断言 zip 内 db 不是下面这行先拍的旧快照）
     createSnapshot(dataDir, handle.db, new Date("2026-10-01T03:00:00.000Z"));
-    const zip = await zipToBuffer(
+    const zip = await zipToBackupBuffer(
       buildBackupZip(dataDir, handle.db, new Date("2026-10-01T04:00:00.000Z")),
     );
 
@@ -244,7 +223,9 @@ describe("备份 → 改数据 → 恢复（验收核心往返）", () => {
     fixtures.push(fixture);
     const { dataDir, handle } = fixture;
 
-    const zipBuffer = await zipToBuffer(buildBackupZip(dataDir, handle.db));
+    const zipBuffer = await zipToBackupBuffer(
+      buildBackupZip(dataDir, handle.db),
+    );
     const entries = readZipEntries(zipBuffer);
     const names = entries.map((entry) => entry.name);
 
@@ -285,7 +266,9 @@ describe("备份 → 改数据 → 恢复（验收核心往返）", () => {
       })
       .run();
 
-    const zipBuffer = await zipToBuffer(buildBackupZip(dataDir, handle.db));
+    const zipBuffer = await zipToBackupBuffer(
+      buildBackupZip(dataDir, handle.db),
+    );
 
     // 下载本身新增一份快照（恒拍，不再只在零快照时补拍）
     expect(listSnapshots(dataDir).length).toBe(beforeDownload + 1);
@@ -328,7 +311,7 @@ describe("恢复的拒绝路径（原数据无损）", () => {
     fixtures.push(fixture);
     const { dataDir, handle } = fixture;
     createSnapshot(dataDir, handle.db);
-    const zip = await zipToBuffer(buildBackupZip(dataDir, handle.db));
+    const zip = await zipToBackupBuffer(buildBackupZip(dataDir, handle.db));
 
     const err = await restoreFromBackup(
       dataDir,
@@ -402,7 +385,9 @@ describe("恢复的拒绝路径（原数据无损）", () => {
     expect((err1 as HttpError).message).toContain("数据库文件");
 
     // 未知顶层：readZipEntries 会因名字安全通过、白名单拒绝 backups/ 覆写
-    const validZip = await zipToBuffer(buildBackupZip(dataDir, handle.db));
+    const validZip = await zipToBackupBuffer(
+      buildBackupZip(dataDir, handle.db),
+    );
     const entries = readZipEntries(validZip); // 借真实备份结构改造
     const rebuilt = await pack([
       ...entries.map((entry) => ({ name: entry.name, data: entry.data })),
@@ -428,7 +413,9 @@ describe("恢复的拒绝路径（原数据无损）", () => {
 
     // 真实备份 + 篡改 db 条目为非 SQLite 字节
     createSnapshot(dataDir, handle.db);
-    const zipBuffer = await zipToBuffer(buildBackupZip(dataDir, handle.db));
+    const zipBuffer = await zipToBackupBuffer(
+      buildBackupZip(dataDir, handle.db),
+    );
     const entries = readZipEntries(zipBuffer);
     const { ZipArchive } = await import("archiver");
     const archive = new ZipArchive({ zlib: { level: 0 } });

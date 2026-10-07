@@ -10,7 +10,6 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import type { NoteImageUploadMeta } from "@tutor/contract";
 import { afterEach, describe, expect, it } from "vitest";
-import { hashPassword } from "../auth/password";
 import { runBackfills } from "../db/backfill";
 import { createDb, createDbHandle, type Db, type DbHandle } from "../db/client";
 import { runMigrations } from "../db/migrate";
@@ -19,9 +18,13 @@ import {
   noteVersions as noteVersionsTable,
   students as studentsTable,
   submissionEvidence as submissionEvidenceTable,
-  teachers as teachersTable,
 } from "../db/schema";
 import { TEST_TEACHER_ID } from "../db/test-utils";
+import {
+  BACKUP_TEST_PASSWORD,
+  insertBackupTeacher,
+  zipToBackupBuffer,
+} from "../test/backup-fixtures";
 import { gzipJson, makeNotePng, noteDoc } from "../test/note-fixtures";
 import { insertFrozenResponse, newDraftAttempt } from "./attempt-service";
 import {
@@ -53,22 +56,16 @@ import { previewReviewPack } from "./review-pack-service";
  * 真实文件库 + 真实快照（VACUUM INTO）+ 真实 zip 打包/恢复，不经 mock。
  */
 
-const PASSWORD = "backup-pass-123";
 const QUESTION_ID = "q-evidence-1";
-
-/** 备份 zip 流收整为 Buffer（backup-service.test 同款） */
-async function zipToBuffer(
-  zip: Awaited<ReturnType<typeof buildBackupZip>>,
-): Promise<Buffer> {
-  const chunks: Buffer[] = [];
-  zip.stream.on("data", (chunk: Buffer) => chunks.push(chunk));
-  const done = new Promise<void>((resolve, reject) => {
-    zip.stream.on("end", () => resolve());
-    zip.stream.on("error", (err: Error) => reject(err));
-  });
-  await done;
-  return Buffer.concat(chunks);
-}
+const PASSWORD = BACKUP_TEST_PASSWORD;
+/** 分析图派生规格（两用例共用：320×200 像素、全页裁剪） */
+const EVIDENCE_IMAGE_META: NoteImageUploadMeta = {
+  spec: "analysis",
+  pageIndex: 0,
+  crop: { x: 0, y: 0, width: 1000, height: 800 },
+  pixelWidth: 320,
+  pixelHeight: 200,
+};
 
 interface World {
   dataDir: string;
@@ -87,17 +84,7 @@ async function makeWorld(tag: string): Promise<World> {
     runBackfills(fresh);
   });
   const db = handle.db;
-  db.insert(teachersTable)
-    .values({
-      id: TEST_TEACHER_ID,
-      loginName: "teacher",
-      isAdmin: true,
-      disabledAt: null,
-      passwordHash: await hashPassword(PASSWORD),
-      apiToken: null,
-      createdAt: "2026-10-01T00:00:00.000Z",
-    })
-    .run();
+  await insertBackupTeacher(db, PASSWORD);
   const studentId = randomUUID();
   db.insert(studentsTable)
     .values({
@@ -180,6 +167,46 @@ function saveTwoVersions(w: Draft): {
   return { v1, v2 };
 }
 
+/**
+ * 存 v1 正文 + 挂 analysis 派生图 + 插冻结证据行（恢复链/GC 并存两用例的
+ * 公共前奏，T1 收敛）；返回回执与 PNG 字节供全链断言复用。
+ */
+function saveVersionWithImageAndEvidence(w: Draft): {
+  receipt: ReturnType<typeof saveNoteVersion>;
+  pngBytes: Uint8Array;
+} {
+  const receipt = saveNoteVersion(
+    w.db,
+    w.dataDir,
+    w.studentId,
+    w.attemptId,
+    QUESTION_ID,
+    gzipJson(noteDoc(1)),
+    { baseRevision: 0, mutationId: randomUUID() },
+  );
+  const pngBytes = makeNotePng(320, 200);
+  attachNoteImage(
+    w.db,
+    w.dataDir,
+    { kind: "student", id: w.studentId },
+    receipt.versionId,
+    pngBytes,
+    EVIDENCE_IMAGE_META,
+  );
+  w.db
+    .insert(submissionEvidenceTable)
+    .values({
+      id: randomUUID(),
+      attemptId: w.attemptId,
+      questionId: QUESTION_ID,
+      state: "frozen",
+      versionId: receipt.versionId,
+      recordedAt: "2026-10-02T00:00:00.000Z",
+    })
+    .run();
+  return { receipt, pngBytes };
+}
+
 /** 全部版本 server_saved_at 改到过去（安全窗口流逝；直改 SQL 与 GC 测试同款） */
 function ageAllVersions(db: Db): void {
   db.$client
@@ -200,45 +227,12 @@ describe("备份恢复：证据链完整恢复（T6R.14 验收核心）", () => 
   it("下载备份 → 干净实例恢复 → 证据行→版本文档→PNG 直出全链可读", async () => {
     const source = await makeWorld("src");
     worlds.push(source);
-    const receipt = saveNoteVersion(
-      source.db,
-      source.dataDir,
-      source.studentId,
-      source.attemptId,
-      QUESTION_ID,
-      gzipJson(noteDoc(1)),
-      { baseRevision: 0, mutationId: randomUUID() },
-    );
-    const imageMeta: NoteImageUploadMeta = {
-      spec: "analysis",
-      pageIndex: 0,
-      crop: { x: 0, y: 0, width: 1000, height: 800 },
-      pixelWidth: 320,
-      pixelHeight: 200,
-    };
-    const pngBytes = makeNotePng(320, 200);
-    attachNoteImage(
-      source.db,
-      source.dataDir,
-      { kind: "student", id: source.studentId },
-      receipt.versionId,
-      pngBytes,
-      imageMeta,
-    );
-    source.db
-      .insert(submissionEvidenceTable)
-      .values({
-        id: randomUUID(),
-        attemptId: source.attemptId,
-        questionId: QUESTION_ID,
-        state: "frozen",
-        versionId: receipt.versionId,
-        recordedAt: "2026-10-02T00:00:00.000Z",
-      })
-      .run();
+    const { receipt, pngBytes } = saveVersionWithImageAndEvidence(source);
 
     // 备份下载（恒先拍当前时刻快照 + blobs + secret.key）
-    const zip = await zipToBuffer(buildBackupZip(source.dataDir, source.db));
+    const zip = await zipToBackupBuffer(
+      buildBackupZip(source.dataDir, source.db),
+    );
 
     // 干净实例（独立 DATA_DIR + 新库）：恢复前密码校验对当前库执行 →
     // 预置同 id 同密码教师行（makeWorld 已插）
@@ -336,41 +330,7 @@ describe("GC 备份引用保留清单（方案 §6.3：备份引用也进保留�
   it("证据原稿在 GC 后完整：引用零缺失、导出预览不缺图、PNG 可直出（导出/备份与 GC 并存）", async () => {
     const w = await makeWorld("evid");
     worlds.push(w);
-    const receipt = saveNoteVersion(
-      w.db,
-      w.dataDir,
-      w.studentId,
-      w.attemptId,
-      QUESTION_ID,
-      gzipJson(noteDoc(1)),
-      { baseRevision: 0, mutationId: randomUUID() },
-    );
-    const pngBytes = makeNotePng(320, 200);
-    const image = attachNoteImage(
-      w.db,
-      w.dataDir,
-      { kind: "student", id: w.studentId },
-      receipt.versionId,
-      pngBytes,
-      {
-        spec: "analysis",
-        pageIndex: 0,
-        crop: { x: 0, y: 0, width: 1000, height: 800 },
-        pixelWidth: 320,
-        pixelHeight: 200,
-      },
-    );
-    w.db
-      .insert(submissionEvidenceTable)
-      .values({
-        id: randomUUID(),
-        attemptId: w.attemptId,
-        questionId: QUESTION_ID,
-        state: "frozen",
-        versionId: receipt.versionId,
-        recordedAt: "2026-10-02T00:00:00.000Z",
-      })
-      .run();
+    const { receipt, pngBytes } = saveVersionWithImageAndEvidence(w);
     // 备份快照在 GC 前拍（模拟「备份下载进行中」的时点状态）
     const snapName = createSnapshot(
       w.dataDir,
@@ -415,13 +375,22 @@ describe("GC 备份引用保留清单（方案 §6.3：备份引用也进保留�
     expect(
       preview.files.some((file) => file.path.startsWith("evidence/")),
     ).toBe(true);
-    // PNG 直出字节一致（查看通道全链）
+    // PNG 直出字节一致（查看通道全链）——imageId 从证据投影取（head 版本
+    // 的生效图片），与恢复链用例同口径
+    const evidenceHead = getStudentNoteEvidence(
+      w.db,
+      w.studentId,
+      w.attemptId,
+      QUESTION_ID,
+    );
+    const imageId = evidenceHead.images[0]?.imageId;
+    expect(imageId).toBeDefined();
     const live = getStudentNoteImagePng(
       w.db,
       w.dataDir,
       w.studentId,
       receipt.versionId,
-      image.imageId,
+      imageId as string,
     );
     expect(Buffer.from(live).equals(Buffer.from(pngBytes))).toBe(true);
   });
