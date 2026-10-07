@@ -189,7 +189,7 @@ export function collectBackupReferencedPaths(dataDir: string): {
       } finally {
         snapshotDb.close();
       }
-    } catch (err) {
+    } catch {
       unreadable += 1;
       continue; // 丢弃半读路径（中途出错不可信）
     }
