@@ -513,7 +513,9 @@ export function assembleLearningPack(
         // 换 ink-service 既有薄壳 inkFileAbs（lib/blob-io 的 path.relative
         // 强算法 + blobs/ink 根 + 同错误码 INK_UNREADABLE；review-pack 的
         // ink 装配同构场景即走它）。不传后缀 = 保持旧语义精确等价（无后缀
-        // 白名单检查）。
+        // 白名单检查）。pngPath 恰为根/越界的腐坏态（DB 被手改等）从旧
+        // 「静默跳条目」收紧为 fail-fast 500——逐字节比对测试会暴露缺条目，
+        // 有意为之（2e88f36 安全收敛本意，角 A/B/E 复审定谳非缺陷）。
         const absPath = inkFileAbs(dataDir, row.pngPath, undefined);
         let bytes: number;
         try {
