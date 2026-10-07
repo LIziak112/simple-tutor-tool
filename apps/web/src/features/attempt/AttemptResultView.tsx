@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { HintEntryList } from "@/features/attempt/HintPanel";
 import { ReviewPackPanel } from "@/features/export/review-pack-panel";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
+import { CorrectionSection } from "@/features/notes/CorrectionSection";
 import { NoteOriginalView } from "@/features/notes/NoteOriginalView";
 import { studentInkPngUrl } from "@/lib/api";
 import { formatCnTime } from "@/lib/time";
@@ -353,6 +354,15 @@ function ResultQuestionCard({
       {isHandwritten && (
         <InkThumbnail attemptId={attemptId} questionId={question.questionId} />
       )}
+
+      {/* T6R.15：订正区（所有题型——订正是学生自有材料，不依赖草稿层，
+          手写题也有订正入口；含「本题历史」链接与 D8 找回入口）。学生
+          自有材料不受答案公布 gate 限制，两种形态都渲染 */}
+      <CorrectionSection
+        attemptId={attemptId}
+        questionId={question.questionId}
+        ariaPrefix={`第 ${index + 1} 题`}
+      />
 
       {/* 做题时看过的提示（T2.11 回看；没解锁过则整块隐藏。
           未公布时照常回看——只含学生自己请求过的条目，不构成泄露） */}
