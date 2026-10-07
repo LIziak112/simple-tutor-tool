@@ -32,7 +32,11 @@ interface HeadBatch {
 
 const headBatches = new Map<string, HeadBatch>();
 
-/** 测试出口：清空在途批（防用例间串扰；生产不调用） */
+/**
+ * 测试出口：清空在途批（防用例间串扰；生产不调用）。不 settle 在途
+ * promise——测试弃掉 QueryClient 即弃掉等待方；假时钟丢弃待触 timer 后
+ * 不 reset 会让 batch.timer 指向废弃句柄、同 attemptId 永不排程（C5）。
+ */
 export function resetNoteHeadBatchForTest(): void {
   for (const batch of headBatches.values()) {
     if (batch.timer !== null) clearTimeout(batch.timer);

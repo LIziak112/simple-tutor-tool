@@ -84,6 +84,7 @@ import {
   fetchStudentNoteHeadsApi,
   putNoteDocumentApi,
 } from "@/lib/api";
+import { resetNoteHeadBatchForTest } from "@/lib/note-head-batch";
 
 const putMock = vi.mocked(putNoteDocumentApi);
 const headsMock = vi.mocked(fetchStudentNoteHeadsApi);
@@ -210,6 +211,7 @@ function renderLayer(
 }
 
 beforeEach(async () => {
+  resetNoteHeadBatchForTest();
   installNoteBackend(memoryNoteBackend());
   resetNoteSession();
   headsMock.mockImplementation(noteHeadsMockResponse());

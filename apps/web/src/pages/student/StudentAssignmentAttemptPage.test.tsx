@@ -23,6 +23,7 @@ import {
   submitAttemptApi,
 } from "@/lib/api";
 import { installEventStore, memoryEventStore } from "@/lib/event-queue";
+import { resetNoteHeadBatchForTest } from "@/lib/note-head-batch";
 import { renderWithStudentRoutes } from "@/test/student-routes";
 import StudentAssignmentAttemptPage from "./StudentAssignmentAttemptPage";
 
@@ -265,6 +266,7 @@ function renderPage() {
 }
 
 beforeEach(() => {
+  resetNoteHeadBatchForTest();
   mockedStart.mockReset();
   mockedFetch.mockReset();
   mockedSave.mockReset();
