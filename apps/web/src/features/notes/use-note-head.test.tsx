@@ -17,10 +17,7 @@ import {
   SCOPE,
   SESSION_A,
 } from "@/features/notes/note-test-utils";
-import {
-  resetNoteHeadBatchForTest,
-  useNoteHead,
-} from "@/features/notes/use-note-head";
+import { useNoteHead } from "@/features/notes/use-note-head";
 
 /**
  * useNoteHead（T6R.9）：答题页每题的笔记头拉取接线——head 应用进 store
@@ -48,6 +45,7 @@ import {
   fetchStudentNoteDocumentApi,
   fetchStudentNoteHeadsApi,
 } from "@/lib/api";
+import { resetNoteHeadBatchForTest } from "@/lib/note-head-batch";
 
 const headsMock = vi.mocked(fetchStudentNoteHeadsApi);
 const docMock = vi.mocked(fetchStudentNoteDocumentApi);

@@ -20,9 +20,9 @@
  * 错误重试无意义，网络错误重试 2 次）。head 失败不阻塞本地作答——四维状态
  * 的 server 维度来自同步队列视角（note-store 派生），不依赖 head。
  *
- * 批量合批（T6R.14）：逐题 GET 在二十题卷上是 N 个请求，queryFn 的网络段经
- * enqueueHeadFetch 在宏任务边界合并为一次批量 POST（见下方协调器注释）；
- * 副作用与重试语义不变。
+ * 批量合批（T6R.14）：逐题 GET 在二十题卷上是 N 个请求，queryFn 的网络段
+ * 经 lib/api 的 fetchStudentNoteHeadCoalesced 在宏任务边界合并为一次批量
+ * POST（传输层关注点在 api 侧）；副作用与重试语义不变。
  */
 import { type UseQueryResult, useQuery } from "@tanstack/react-query";
 import type { NoteHeadData } from "@tutor/contract";
@@ -38,11 +38,8 @@ import {
   subscribeNoteStore,
 } from "@/features/notes/note-store";
 import { currentNoteSession } from "@/features/notes/note-sync";
-import {
-  ApiError,
-  fetchStudentNoteDocumentApi,
-  fetchStudentNoteHeadsApi,
-} from "@/lib/api";
+import { ApiError, fetchStudentNoteDocumentApi } from "@/lib/api";
+import { fetchStudentNoteHeadCoalesced } from "@/lib/note-head-batch";
 
 /**
  * 订阅当前草稿会话（bind/unbind 经 note-store 的全量通知重取快照）。
@@ -69,89 +66,6 @@ export const studentNoteHeadKey = (
   attemptId: string,
   questionId: string,
 ) => ["student", studentId, "note-head", attemptId, questionId] as const;
-
-// ---------- 批量头拉取协调（T6R.14：N 题同 tick 挂载 → 1 次批量 POST） ----------
-
-/**
- * 答题页每道可草稿题各挂一个 useNoteHead（各自 queryKey、各自副作用），逐题
- * GET 在二十题卷上是 N 个请求——这里做**请求级合批**：queryFn 的拉取经
- * enqueueHeadFetch 进同 attempt 的待批队列，宏任务边界（setTimeout 0）统一
- * flush 成一次 fetchStudentNoteHeadsApi，按 questionId 把结果分发回各题。
- * - 各题副作用（applyServerHead/条件拉正文/补图）仍在自己 queryFn 内跑：
- *   缓存命中不重放、失败重试语义（ApiError 不重试）与逐题 queryKey 全部不变；
- * - 批内一题结果缺失按服务端契约违约拒绝该题（服务端逐条回显是契约不变量）；
- *   批量请求整体失败 → 全批 reject（各题 query 独立按既有 retry 策略恢复）；
- * - 跨 attempt 各自成批；同题重复消费方由 react-query queryKey 去重，队列内
- *   再兜底按 id 去重请求列表。
- */
-interface PendingHeadRequest {
-  readonly questionId: string;
-  readonly resolve: (head: NoteHeadData) => void;
-  readonly reject: (err: unknown) => void;
-}
-
-const pendingHeads = new Map<string, PendingHeadRequest[]>();
-const flushTimers = new Map<string, ReturnType<typeof setTimeout>>();
-
-/** 测试出口：丢弃在途批与计时器（用例间防串扰；生产不调用） */
-export function resetNoteHeadBatchForTest(): void {
-  for (const timer of flushTimers.values()) clearTimeout(timer);
-  flushTimers.clear();
-  pendingHeads.clear();
-}
-
-/** 统一 flush：取走该 attempt 全部待批项，一次批量请求并按 id 分发 */
-function flushHeadBatch(attemptId: string): void {
-  const batch = pendingHeads.get(attemptId) ?? [];
-  pendingHeads.delete(attemptId);
-  if (batch.length === 0) return;
-  const questionIds = [...new Set(batch.map((item) => item.questionId))];
-  // 缺条校验已在 fetchStudentNoteHeadsApi 收口（W1）：返回数组与 questionIds
-  // 请求序对齐，此处只做分发
-  fetchStudentNoteHeadsApi(attemptId, questionIds)
-    .then((heads) => {
-      const headById = new Map<string, NoteHeadData>();
-      questionIds.forEach((questionId, index) => {
-        const head = heads[index];
-        if (head !== undefined) headById.set(questionId, head);
-      });
-      for (const item of batch) {
-        const head = headById.get(item.questionId);
-        if (head === undefined) {
-          item.reject(
-            new Error("批量头响应缺少该题（服务端契约违约，请重试）"),
-          );
-        } else {
-          item.resolve(head);
-        }
-      }
-    })
-    .catch((err: unknown) => {
-      for (const item of batch) item.reject(err);
-    });
-}
-
-/** queryFn 的拉取入口：入队 + 首入队者挂宏任务计时器（同 tick 的后来者并批） */
-function enqueueHeadFetch(
-  attemptId: string,
-  questionId: string,
-): Promise<NoteHeadData> {
-  const pending = pendingHeads.get(attemptId) ?? [];
-  pendingHeads.set(attemptId, pending);
-  const promise = new Promise<NoteHeadData>((resolve, reject) => {
-    pending.push({ questionId, resolve, reject });
-  });
-  if (!flushTimers.has(attemptId)) {
-    flushTimers.set(
-      attemptId,
-      setTimeout(() => {
-        flushTimers.delete(attemptId);
-        flushHeadBatch(attemptId);
-      }, 0),
-    );
-  }
-  return promise;
-}
 
 /** head 应用与条件恢复（queryFn 内执行；导出供测试直调） */
 export async function applyNoteHeadSideEffects(
@@ -210,9 +124,9 @@ export function useNoteHead(
       if (session === null) {
         throw new Error("草稿会话未绑定（不应发生：enabled 已守卫）");
       }
-      // T6R.14：经批量协调拉取（同 tick 多题合并为一次 POST；分发回各题后
-      // 副作用照旧在本 queryFn 内跑）
-      const head = await enqueueHeadFetch(attemptId, questionId);
+      // T6R.14：经传输层合批拉取（同 tick 多题合并为一次 POST；分发回各题
+      // 后副作用照旧在本 queryFn 内跑；协调器本体在 lib/api）
+      const head = await fetchStudentNoteHeadCoalesced(attemptId, questionId);
       await applyNoteHeadSideEffects(
         session,
         {
