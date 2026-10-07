@@ -1121,6 +1121,13 @@ const GOAL_SECTIONS: Record<
         "5. 每题给一个最小提示（不直接给答案），并配一道验证题，供下次课确认是否真正掌握；",
         "6. 列出需要教师确认的事项（笔迹辨认、判定口径、时间窗边界等）。",
       ];
+      // 辅助信息纪律（T6R.17）：已知事件才记录——null=未知、false≠独立完成。
+      // 只进本模板（deps.traces 分支），旧四模板字节锁不受影响。
+      if (deps.traces) {
+        lines.push(
+          `${lines.length}. traces 的提示使用（hintsUsed）与交卷后解析回看（reviewedSolution）只反映已记录事件：null=未采集/未知，false 只说明无记录——不能据此推断学生完全独立完成，缺记录处明确写未知；`,
+        );
+      }
       if (deps.evidence) {
         lines.push(
           // 首元素是无编号引言行，第 N 条编号 = length（引言占 1 位）

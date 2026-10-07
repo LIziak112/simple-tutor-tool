@@ -1150,12 +1150,36 @@ describe("renderLearningPackPrompt：per-question-review 与阶段细化（T6R.1
     const withEvidence = renderLearningPackPrompt({ ...base, evidence: true });
     expect(withEvidence).toContain("订正正确不等于独立掌握");
     expect(withEvidence).toContain("同题重做正确也不等于迁移成功");
-    // 编号连续：6 条基础步骤后，evidence 分支接 7（ink 同时勾选接 8）
-    expect(withEvidence).toContain("7. 原稿、订正、补充稿分别分析");
-    expect(withEvidence).toContain("8. ink/ 手写过程图片");
+    // 编号连续：6 条基础步骤后，traces 纪律句接 7（T6R.17），
+    // evidence 分支顺延 8（ink 同时勾选再顺延 9）
+    expect(withEvidence).toContain("7. traces 的提示使用（hintsUsed）");
+    expect(withEvidence).toContain("8. 原稿、订正、补充稿分别分析");
+    expect(withEvidence).toContain("9. ink/ 手写过程图片");
     const without = renderLearningPackPrompt(base);
     expect(without).not.toContain("订正正确不等于独立掌握");
     expect(without).not.toContain("evidence/");
+  });
+
+  it("traces 依赖分支：辅助信息纪律句只在勾选 traces 时出现（未勾三稿句保持 7）", () => {
+    // base 含 traces:true → 纪律句编号 7，覆盖 hintsUsed/reviewedSolution 三态语义
+    const withTraces = renderLearningPackPrompt({ ...base, evidence: true });
+    expect(withTraces).toContain("7. traces 的提示使用（hintsUsed）");
+    expect(withTraces).toContain("null=未采集/未知");
+    expect(withTraces).toContain("不能据此推断学生完全独立完成");
+    expect(withTraces).toContain("缺记录处明确写未知");
+    // 未勾 traces：无纪律句、无行为字段词，三稿句回到 7（ink 顺延 8）
+    const noTraces = renderLearningPackPrompt({
+      ...base,
+      evidence: true,
+      traces: false,
+    });
+    expect(noTraces).not.toContain("hintsUsed");
+    expect(noTraces).not.toContain("reviewedSolution");
+    expect(noTraces).toContain("7. 原稿、订正、补充稿分别分析");
+    expect(noTraces).toContain("8. ink/ 手写过程图片");
+    expect(renderLearningPackPrompt({ ...base, traces: false })).not.toContain(
+      "只反映已记录事件",
+    );
   });
 
   it("ink 依赖分支：勾选时任务段提及笔迹图片旁证（互为旁证句）", () => {
@@ -1165,9 +1189,9 @@ describe("renderLearningPackPrompt：per-question-review 与阶段细化（T6R.1
       evidence: true,
       ink: false,
     });
-    // evidence 勾而 ink 不勾：三稿句仍是 7，且无第 8 条
-    expect(evidenceOnly).toContain("7. 原稿、订正、补充稿分别分析");
-    expect(evidenceOnly).not.toContain("8. ");
+    // evidence 勾而 ink 不勾（traces 勾）：三稿句顺延 8，且无第 9 条
+    expect(evidenceOnly).toContain("8. 原稿、订正、补充稿分别分析");
+    expect(evidenceOnly).not.toContain("9. ");
     expect(renderLearningPackPrompt({ ...base, ink: false })).not.toContain(
       "互为旁证",
     );
