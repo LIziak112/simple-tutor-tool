@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import { statSync } from "node:fs";
-import { join } from "node:path";
 import type {
   LearningPack,
   LearningPackAttemptSummary,
@@ -62,12 +61,12 @@ import {
   students,
   units,
 } from "../db/schema";
-import { resolveWithinRootOrNull } from "../lib/blob-io";
 import { chunk } from "../lib/chunk";
 import { HttpError } from "../lib/http-error";
 import { zipBufferOf } from "../lib/zip-write";
 import { answerOf, frozenRowsInDisplayOrder } from "./attempt-service";
 import { beijingDateTimeOf, beijingExportStampOf } from "./export-csv";
+import { inkFileAbs } from "./ink-service";
 import { lectureReadingMapFor } from "./lecture-insights";
 import { serializeStudentAnswer } from "./mark-response";
 import { extractMediaImageSrcs, statMediaSrc } from "./media-service";
@@ -511,16 +510,11 @@ export function assembleLearningPack(
         }
         // 目录边界（T6R.14 收敛，T6R.12 安全审查留档「既有」）：旧内联
         // `abs.startsWith(inkRoot)` 会被同前缀相邻目录（blobs/inkfoo）骗过，
-        // 换 lib/blob-io 的 path.relative 强算法（note/media 同款，单一实现）；
-        // 错误码口径不变（500 INK_UNREADABLE）
-        const absPath = resolveWithinRootOrNull(
-          dataDir,
-          join("blobs", "ink"),
-          row.pngPath,
-        );
-        if (absPath === null) {
-          throw new HttpError(500, "INK_UNREADABLE", "笔迹文件路径非法");
-        }
+        // 换 ink-service 既有薄壳 inkFileAbs（lib/blob-io 的 path.relative
+        // 强算法 + blobs/ink 根 + 同错误码 INK_UNREADABLE；review-pack 的
+        // ink 装配同构场景即走它）。不传后缀 = 保持旧语义精确等价（无后缀
+        // 白名单检查）。
+        const absPath = inkFileAbs(dataDir, row.pngPath, undefined);
         let bytes: number;
         try {
           bytes = statSync(absPath).size;
