@@ -1126,7 +1126,7 @@ const GOAL_SECTIONS: Record<
       // 只进本模板（deps.traces 分支），旧四模板字节锁不受影响。
       if (deps.traces) {
         lines.push(
-          `${lines.length}. traces 的提示使用（hintsUsed）与交卷后解析回看（reviewedSolution）只反映已记录事件：null=未采集/未知，false 只说明无记录——不能据此推断学生完全独立完成，缺记录处明确写未知；`,
+          `${lines.length}. traces 的提示使用（hintsUsed）与交卷后解析回看（reviewedSolution）只反映已记录事件：null=未采集/未知（缺记录处明确写未知），false=有事件流、确无交卷后回看（已知未回看）——但都不能据此推断学生完全独立完成；`,
         );
       }
       if (deps.evidence) {
@@ -1136,8 +1136,13 @@ const GOAL_SECTIONS: Record<
         );
       }
       if (deps.ink) {
+        // 闸门修正（审查 CR P2-2）：「与证据原稿图互为旁证」只在 evidence
+        // 并存时说——ink 勾而 evidence 未勾（手调 API 极端组合）时包内没有
+        // 证据图，提示词不得指向不存在的材料
         lines.push(
-          `${lines.length}. ink/ 手写过程图片与证据原稿图互为旁证，注意区分「过程规范性」与「答案正确性」。`,
+          deps.evidence
+            ? `${lines.length}. ink/ 手写过程图片与证据原稿图互为旁证，注意区分「过程规范性」与「答案正确性」。`
+            : `${lines.length}. ink/ 手写过程图片供分析书写过程与步骤规范性，注意区分「过程规范性」与「答案正确性」。`,
         );
       }
       return lines;
@@ -1286,7 +1291,9 @@ export function renderLearningPackPrompt(
     // 页间重叠说明（T6R.17）：重叠区常量引 note.ts 单源（阶段细化/未细化两种
     // 变体都加；evidence 未勾不出现——旧四模板与既有句原文一字不动）。
     dataLines.push(
-      `- 证据图片按切片分页：长稿相邻页有 ${NOTE_ANALYSIS_SLICE_OVERLAP_LOGICAL} 逻辑单位（约一格）重叠区，用于保证跨页笔迹完整可读；重叠区内的笔迹会在相邻两页各出现一次，属同一段内容——转写与引用时不要重复计数或编号。`,
+      // 闸门修正（审查 P2-1）：不用「（约一格）」做参照——重叠区与格距
+      // 语义独立（note.ts 注释明示不得派生），锚定格距会误导定标联动
+      `- 证据图片按切片分页：长稿相邻页有 ${NOTE_ANALYSIS_SLICE_OVERLAP_LOGICAL} 逻辑单位重叠区，用于保证跨页笔迹完整可读；重叠区内的笔迹会在相邻两页各出现一次，属同一段内容——转写与引用时不要重复计数或编号。`,
     );
   }
   dataLines.push("");

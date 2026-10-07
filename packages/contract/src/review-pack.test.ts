@@ -7,6 +7,7 @@ import {
   learningPackManifestMissingSchema,
   learningPackManifestSchema,
 } from "./learning-pack.ts";
+import { NOTE_ANALYSIS_SLICE_OVERLAP_LOGICAL } from "./note.ts";
 import {
   renderReviewPackPrompt,
   reviewPackJsonSchema,
@@ -348,6 +349,12 @@ describe("renderReviewPackPrompt（共享 review.md 提示词基础）", () => {
     expect(md).toContain("文件名末尾 -01/-02 递增");
     expect(md).toContain("属同一段内容");
     expect(md).toContain("不要重复计数或编号");
+    // 闸门修正：重叠区数值引契约常量单源（与 learning-pack 同源），
+    // 且不借格距做参照（重叠与格距语义独立，见 note.ts 注释）
+    expect(md).toContain(
+      `相邻页存在 ${NOTE_ANALYSIS_SLICE_OVERLAP_LOGICAL} 逻辑单位重叠区`,
+    );
+    expect(md).not.toContain("约一格");
     const textOnly = renderReviewPackPrompt({
       ...base,
       files: [{ path: "questions/q001/stem.md", bytes: 120 }],
@@ -361,6 +368,9 @@ describe("renderReviewPackPrompt（共享 review.md 提示词基础）", () => {
       const md = renderReviewPackPrompt({ ...base, role });
       expect(md).toContain("指令性文字");
       expect(md).toContain("不改变本任务");
+      // 闸门修正（安全 LOW-02）：学生包可含 evidence/ink 图片（学生自己的
+      // 原稿/笔迹），防御句须同样覆盖图片内容，与教师包口径一致
+      expect(md).toContain("学生图片与题目文字");
     }
   });
 
@@ -480,6 +490,14 @@ describe("学生包无行为字段（辅助信息纪律，T6R.17 负向锁）", 
         "oneOf",
         "allOf",
         "$defs",
+        // 闸门补漏（T6R.17 审查 P2-3）：zod-to-json-schema 今日不用这些形态，
+        // 但将来引入时行为字段键不能从缺口漏检——一并递归
+        "patternProperties",
+        "additionalProperties",
+        "not",
+        "if",
+        "then",
+        "else",
       ] as const) {
         walk(record[combiner]);
       }

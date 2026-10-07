@@ -1171,6 +1171,10 @@ describe("renderLearningPackPrompt：per-question-review 与阶段细化（T6R.1
     expect(withTraces).toContain("null=未采集/未知");
     expect(withTraces).toContain("不能据此推断学生完全独立完成");
     expect(withTraces).toContain("缺记录处明确写未知");
+    // 闸门 P1-1：false 必须明示「已知未回看」——与三态派生语义一致，
+    // 不得弱化成「只说明无记录」（否则 AI 侧把 false 与 null 混同为未知）
+    expect(withTraces).toContain("false=有事件流、确无交卷后回看（已知未回看）");
+    expect(withTraces).not.toContain("false 只说明无记录");
     // 未勾 traces：无纪律句、无行为字段词，三稿句回到 7（ink 顺延 8）
     const noTraces = renderLearningPackPrompt({
       ...base,
@@ -1186,8 +1190,17 @@ describe("renderLearningPackPrompt：per-question-review 与阶段细化（T6R.1
     );
   });
 
-  it("ink 依赖分支：勾选时任务段提及笔迹图片旁证（互为旁证句）", () => {
-    expect(renderLearningPackPrompt(base)).toContain("互为旁证");
+  it("ink 依赖分支：勾选时任务段提及笔迹图片；与证据图并存时才说「互为旁证」（闸门修正）", () => {
+    // evidence 并存（向导联动勾选的常态）：互为旁证句
+    expect(renderLearningPackPrompt({ ...base, evidence: true })).toContain(
+      "互为旁证",
+    );
+    // ink 勾而 evidence 未勾（手调 API 极端组合）：不提「证据原稿图」，
+    // 改说笔迹图供分析（提示词不得指向包里不存在的材料）
+    const inkOnly = renderLearningPackPrompt(base);
+    expect(inkOnly).toContain("ink/ 手写过程图片");
+    expect(inkOnly).not.toContain("互为旁证");
+    expect(inkOnly).not.toContain("证据原稿图");
     const evidenceOnly = renderLearningPackPrompt({
       ...base,
       evidence: true,
@@ -1197,7 +1210,7 @@ describe("renderLearningPackPrompt：per-question-review 与阶段细化（T6R.1
     expect(evidenceOnly).toContain("8. 原稿、订正、补充稿分别分析");
     expect(evidenceOnly).not.toContain("9. ");
     expect(renderLearningPackPrompt({ ...base, ink: false })).not.toContain(
-      "互为旁证",
+      "ink/ 手写过程图片",
     );
   });
 
@@ -1231,8 +1244,11 @@ describe("renderLearningPackPrompt：per-question-review 与阶段细化（T6R.1
     ]) {
       expect(md).toContain("证据图片按切片分页");
       expect(md).toContain(
-        `相邻页有 ${NOTE_ANALYSIS_SLICE_OVERLAP_LOGICAL} 逻辑单位（约一格）重叠区`,
+        `相邻页有 ${NOTE_ANALYSIS_SLICE_OVERLAP_LOGICAL} 逻辑单位重叠区`,
       );
+      // 闸门修正：重叠区与格距语义独立（note.ts 注释明示不得派生），
+      // 提示词不得用「（约一格）」把重叠锚定到格距
+      expect(md).not.toContain("约一格");
       expect(md).toContain("属同一段内容");
       expect(md).toContain("不要重复计数或编号");
     }
