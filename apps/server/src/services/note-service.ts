@@ -30,7 +30,7 @@ import {
   noteSubmissionEvidenceMetaSchema,
 } from "@tutor/contract";
 import Database from "better-sqlite3";
-import { and, asc, eq, isNotNull, ne, or, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, ne, or, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
   type NoteImageRow,
@@ -39,6 +39,7 @@ import {
   noteImages,
   notes,
   noteVersions,
+  responses,
   type SubmissionEvidenceRow,
   submissionEvidence,
 } from "../db/schema";
@@ -776,10 +777,11 @@ export function getStudentNoteHead(
 }
 
 /**
- * ①′ POST /api/student/attempts/:id/notes/heads：批量头投影（T6R.14）。
- * 门口与单题 head 完全一致（requireUsableAttempt + 逐题 requireAttemptQuestion
- * 严格口径——任一题目不在冻结集合 → 404 QUESTION_NOT_FOUND 整批拒绝，不静默
- * 剔除）；questionIds 去重保序（重复请求只答一次），响应顺序与请求一致。
+ * ①′ POST /api/student/attempts/:id/note-heads：批量头投影（T6R.14）。
+ * 门口与单题 head 完全一致（requireUsableAttempt + 冻结集合严格口径——
+ * requireAttemptQuestion 的 WHERE 三条件一次 inArray 批量判定，任一题目
+ * 不在集合 → 404 QUESTION_NOT_FOUND 同码同文案整批拒绝，不静默剔除）；
+ * questionIds 去重保序，响应顺序与请求一致。
  * 每条复用同一 noteHeadOf 投影（零泄露口径同单题：只含版本指针/计数/图片
  * 元信息，无正文与图片字节）。
  */
@@ -790,17 +792,32 @@ export function getStudentNoteHeads(
   questionIds: readonly string[],
 ): NoteHeadsData {
   const attempt = requireUsableAttempt(db, studentId, attemptId);
-  const seen = new Set<string>();
-  const uniqueIds: string[] = [];
-  for (const questionId of questionIds) {
-    if (!seen.has(questionId)) {
-      seen.add(questionId);
-      uniqueIds.push(questionId);
-    }
-  }
-  // 先整批过题目门口（任一不在冻结集合即 404，不做半批响应）
+  const uniqueIds = [...new Set(questionIds)];
+  // 整批过题目门口（任一不在冻结集合即 404，不做半批响应）：一次 inArray
+  // 收敛 requireAttemptQuestion 的 N 次点查（同一 WHERE 三条件），缺失者按
+  // 请求序取首个——抛错与逐题门口完全一致（同码同文案）
+  const hitIds = new Set(
+    db
+      .select({ id: responses.questionId })
+      .from(responses)
+      .where(
+        and(
+          eq(responses.attemptId, attempt.id),
+          inArray(responses.questionId, uniqueIds),
+          isNotNull(responses.questionSnapshotJson),
+        ),
+      )
+      .all()
+      .map((row) => row.id),
+  );
   for (const questionId of uniqueIds) {
-    requireAttemptQuestion(db, attempt, questionId);
+    if (!hitIds.has(questionId)) {
+      throw new HttpError(
+        404,
+        "QUESTION_NOT_FOUND",
+        "题目不存在或不属于这次练习",
+      );
+    }
   }
   return {
     heads: uniqueIds.map((questionId) => ({
