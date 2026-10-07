@@ -1,13 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import type { ApiErr, SubmitEvidenceDeclaration } from "@tutor/contract";
-import {
-  noteHeadDataSchema,
-  studentNotebookOkSchema,
-} from "@tutor/contract";
+import { noteHeadDataSchema, studentNotebookOkSchema } from "@tutor/contract";
+import { and, eq } from "drizzle-orm";
 import type { Logger } from "pino";
 import pino from "pino";
-import { and, eq } from "drizzle-orm";
 import { beforeAll, describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import { createTeacherSession } from "../auth/session.ts";
@@ -264,9 +261,9 @@ describe("门口矩阵（401/403/404/未交卷）", () => {
       (await putNotePhase(attemptId, Q.solve, 1, { phase: "correction" }, ""))
         .status,
     ).toBe(401);
-    expect((await createCorrectionReq(attemptId, Q.solve, false, "")).status).toBe(
-      401,
-    );
+    expect(
+      (await createCorrectionReq(attemptId, Q.solve, false, "")).status,
+    ).toBe(401);
     expect(
       (await sealReq(attemptId, Q.solve, { baseRevision: 1 }, "")).status,
     ).toBe(401);
@@ -276,8 +273,15 @@ describe("门口矩阵（401/403/404/未交卷）", () => {
   it("他人 attempt 403；域外 attempt 404；题不在卷 404", async () => {
     const attemptId = await freshAttempt();
     expect(
-      (await putNotePhase(attemptId, Q.solve, 1, { phase: "correction" }, bCookie))
-        .status,
+      (
+        await putNotePhase(
+          attemptId,
+          Q.solve,
+          1,
+          { phase: "correction" },
+          bCookie,
+        )
+      ).status,
     ).toBe(403);
     expect(
       (await createCorrectionReq(attemptId, Q.solve, false, bCookie)).status,
@@ -286,15 +290,16 @@ describe("门口矩阵（401/403/404/未交卷）", () => {
       (await sealReq(attemptId, Q.solve, { baseRevision: 1 }, bCookie)).status,
     ).toBe(403);
     const ghost = randomUUID();
-    expect(
-      (await createCorrectionReq(ghost, Q.solve, false)).status,
-    ).toBe(404);
+    expect((await createCorrectionReq(ghost, Q.solve, false)).status).toBe(404);
     expect((await sealReq(ghost, Q.solve, { baseRevision: 1 })).status).toBe(
       404,
     );
     expect(
-      (await putNotePhase(attemptId, "not-in-paper", 1, { phase: "correction" }))
-        .status,
+      (
+        await putNotePhase(attemptId, "not-in-paper", 1, {
+          phase: "correction",
+        })
+      ).status,
     ).toBe(404);
     expect(
       (await createCorrectionReq(attemptId, "not-in-paper", false)).status,
@@ -377,7 +382,9 @@ describe("corrections 创建 / seal 语义", () => {
     const res = await createCorrectionReq(attemptId, Q.solve, true);
     expect(res.status).toBe(201);
     const body = (await res.json()) as {
-      data: { corrections: { revision: number; currentVersionId: string | null }[] };
+      data: {
+        corrections: { revision: number; currentVersionId: string | null }[];
+      };
     };
     const corr = body.data.corrections[0];
     expect(corr?.revision).toBe(1);
@@ -420,7 +427,12 @@ describe("corrections 创建 / seal 语义", () => {
     const evidence2: SubmitEvidenceDeclaration[] = revisions2.map(
       ({ questionId }) => ({ questionId, state: "none" as const }),
     );
-    const submit2 = await submitAttemptRequest(app, aCookie, attempt2, evidence2);
+    const submit2 = await submitAttemptRequest(
+      app,
+      aCookie,
+      attempt2,
+      evidence2,
+    );
     expect(submit2.status).toBe(200);
     const res2 = await createCorrectionReq(attempt2, Q.solve, true);
     expect(res2.status).toBe(409);
@@ -450,7 +462,9 @@ describe("corrections 创建 / seal 语义", () => {
     });
     expect(seal.status).toBe(200);
     const sealBody = (await seal.json()) as {
-      data: { corrections: { sealedAt: string | null; stuckAt: string | null }[] };
+      data: {
+        corrections: { sealedAt: string | null; stuckAt: string | null }[];
+      };
     };
     const corr = sealBody.data.corrections[0];
     expect(corr?.sealedAt).not.toBeNull();
@@ -480,7 +494,9 @@ describe("corrections 创建 / seal 语义", () => {
     });
     const stale = await sealReq(attemptId, Q.solve, { baseRevision: 1 });
     expect(stale.status).toBe(409);
-    const err = (await stale.json()) as ApiErr & { _current?: { revision: number } };
+    const err = (await stale.json()) as ApiErr & {
+      _current?: { revision: number };
+    };
     expect(err.error).toBe("NOTE_REVISION_CONFLICT");
     expect(err._current?.revision).toBe(2);
   });
@@ -588,9 +604,9 @@ describe("并发订正冲突可恢复", () => {
       baseRevision: 1,
     });
     expect(third.status).toBe(200);
-    expect(((await third.json()) as { data: { revision: number } }).data.revision).toBe(
-      2,
-    );
+    expect(
+      ((await third.json()) as { data: { revision: number } }).data.revision,
+    ).toBe(2);
   });
 });
 
@@ -617,11 +633,13 @@ describe("来源题软删仍按历史权限", () => {
     expect(seal.status).toBe(200);
     const notebook = await notebookReq(Q.solve);
     expect(notebook.status).toBe(200);
-    const data = ((await notebook.json()) as {
-      data: { rounds: { corrections: unknown[] }[] };
-    }).data;
-    expect(data.rounds.length).toBeGreaterThanOrEqual(1);
-    expect(data.rounds[0]?.corrections).toHaveLength(1);
+    const data = (
+      (await notebook.json()) as {
+        data: { rounds: { attemptId: string; corrections: unknown[] }[] };
+      }
+    ).data;
+    const round = data.rounds.find((r) => r.attemptId === attemptId);
+    expect(round?.corrections).toHaveLength(1);
     // 还原软删，避免污染共享世界的其他用例
     db.$client
       .prepare("UPDATE questions SET deleted_at = NULL WHERE id = ?")
@@ -642,18 +660,32 @@ describe("看解析后材料始终标订正", () => {
       { headers: { cookie: aCookie } },
     );
     expect(evidenceRes.status).toBe(200);
-    const head = ((await evidenceRes.json()) as {
-      data: { corrections: { phase: string; currentVersionId: string | null }[]; evidence: { versionId: string | null } | null };
-    }).data;
+    const head = (
+      (await evidenceRes.json()) as {
+        data: {
+          corrections: { phase: string; currentVersionId: string | null }[];
+          evidence: { versionId: string | null } | null;
+        };
+      }
+    ).data;
     expect(head.corrections).toHaveLength(1);
     expect(head.corrections[0]?.phase).toBe("correction");
     // 原稿位仍是 frozen 原稿（订正行结构上进不了 evidence）
     expect(head.evidence).toMatchObject({ state: "frozen", versionId });
     // notebook 该轮 corrections 在列
-    const notebook = ((await (await notebookReq(Q.solve)).json()) as {
-      data: { rounds: { corrections: unknown[]; evidence: { versionId: string | null } | null }[] };
-    }).data;
-    const round = notebook.rounds.find((r) => r.evidence?.versionId === versionId);
+    const notebook = (
+      (await (await notebookReq(Q.solve)).json()) as {
+        data: {
+          rounds: {
+            corrections: unknown[];
+            evidence: { versionId: string | null } | null;
+          }[];
+        };
+      }
+    ).data;
+    const round = notebook.rounds.find(
+      (r) => r.evidence?.versionId === versionId,
+    );
     expect(round?.corrections).toHaveLength(1);
   });
 });
@@ -669,7 +701,12 @@ describe("找回稿不能升级成原稿", () => {
     const evidence: SubmitEvidenceDeclaration[] = revisions.map(
       ({ questionId }) => ({ questionId, state: "missing" as const }),
     );
-    const submit = await submitAttemptRequest(app, aCookie, attemptId, evidence);
+    const submit = await submitAttemptRequest(
+      app,
+      aCookie,
+      attemptId,
+      evidence,
+    );
     expect(submit.status).toBe(200);
     // 交卷后找回：supplement PUT 成功
     const sup = await putNotePhase(attemptId, Q.apply, 1, {
@@ -693,9 +730,15 @@ describe("找回稿不能升级成原稿", () => {
       `/api/student/attempts/${attemptId}/evidence/${Q.apply}`,
       { headers: { cookie: aCookie } },
     );
-    const head = ((await evidenceRes.json()) as {
-      data: { images: unknown[]; evidence: { state: string } | null; supplements: unknown[] };
-    }).data;
+    const head = (
+      (await evidenceRes.json()) as {
+        data: {
+          images: unknown[];
+          evidence: { state: string } | null;
+          supplements: unknown[];
+        };
+      }
+    ).data;
     expect(head.images).toEqual([]);
     expect(head.evidence).toMatchObject({ state: "missing" });
     expect(head.supplements).toHaveLength(1);
@@ -744,17 +787,24 @@ describe("题目笔记本 GET /notebook/questions/:qid", () => {
         evidence: { versionId: string | null } | null;
       }[];
     };
-    expect(data.rounds.map((r) => r.attemptId)).toEqual([
-      attempt1,
-      attempt2,
-    ]);
-    expect(data.rounds.map((r) => r.roundOrdinal)).toEqual([1, 2]);
-    expect(data.rounds[0]?.sourceType).toBe("assignment");
-    expect(typeof data.rounds[0]?.sourceLabel).toBe("string");
-    expect(data.rounds[0]?.sourceLabel.length).toBeGreaterThan(0);
-    expect(data.rounds[0]?.corrections).toHaveLength(1);
-    expect(data.rounds[0]?.supplements).toEqual([]);
-    expect(data.rounds[1]?.supplements).toHaveLength(1);
+    // 共享世界里前序用例已为同题交过卷（freshAttempt 各自独立）——这里断言
+    // 两轮均在列、roundOrdinal 全表从 1 连续递增、逐轮材料正确；跨轮次的
+    // submittedAt 排序与轮次号语义在服务层测试用显式时间锁定（路由层两次
+    // 交卷可能同毫秒，attemptId 兜底序对这两轮不构成可断言的顺序）
+    expect(data.rounds.length).toBeGreaterThanOrEqual(2);
+    expect(data.rounds.map((r) => r.roundOrdinal)).toEqual(
+      data.rounds.map((_, i) => i + 1),
+    );
+    const round1 = data.rounds.find((r) => r.attemptId === attempt1);
+    const round2 = data.rounds.find((r) => r.attemptId === attempt2);
+    expect(round1).toBeDefined();
+    expect(round2).toBeDefined();
+    expect(round1?.sourceType).toBe("assignment");
+    expect(typeof round1?.sourceLabel).toBe("string");
+    expect(round1?.sourceLabel.length).toBeGreaterThan(0);
+    expect(round1?.corrections).toHaveLength(1);
+    expect(round1?.supplements).toEqual([]);
+    expect(round2?.supplements).toHaveLength(1);
     // 深检查：响应串里没有任何题目侧内容（题干文本/答案/详解/提示关键词）
     const raw = JSON.stringify(body);
     for (const forbidden of ["题干占位", "solution", "answer", "hint"]) {
@@ -765,9 +815,9 @@ describe("题目笔记本 GET /notebook/questions/:qid", () => {
   it("无轮次题目 → 200 rounds=[]（不探测存在性）", async () => {
     const res = await notebookReq("never-appeared-qid");
     expect(res.status).toBe(200);
-    expect(((await res.json()) as { data: { rounds: unknown[] } }).data.rounds).toEqual(
-      [],
-    );
+    expect(
+      ((await res.json()) as { data: { rounds: unknown[] } }).data.rounds,
+    ).toEqual([]);
   });
 });
 
@@ -786,18 +836,22 @@ describe("教师侧 evidence 含 corrections/supplements；跨教师 404", () =>
       { headers: { cookie: teacherCookie } },
     );
     expect(ok.status).toBe(200);
-    const head = ((await ok.json()) as {
-      data: { corrections: unknown[]; supplements: unknown[] };
-    }).data;
+    const head = (
+      (await ok.json()) as {
+        data: { corrections: unknown[]; supplements: unknown[] };
+      }
+    ).data;
     expect(head.corrections).toHaveLength(1);
     expect(head.supplements).toHaveLength(0);
     const okApply = await app.request(
       `/api/teacher/attempts/${attemptId}/evidence/${Q.apply}`,
       { headers: { cookie: teacherCookie } },
     );
-    const headApply = ((await okApply.json()) as {
-      data: { supplements: unknown[] };
-    }).data;
+    const headApply = (
+      (await okApply.json()) as {
+        data: { supplements: unknown[] };
+      }
+    ).data;
     expect(headApply.supplements).toHaveLength(1);
 
     const denied = await app.request(

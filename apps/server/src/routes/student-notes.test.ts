@@ -562,9 +562,13 @@ describe("DSL 特殊 questionId 与服务端字段不可覆盖", () => {
     }
   });
 
-  it("客户端发送 noteId/serverSavedAt/phase/studentId 等字段被忽略：行值全由服务端定", async () => {
+  it("客户端发送 noteId/serverSavedAt/studentId 等字段被忽略：行值全由服务端定", async () => {
     const attemptId = await freshAttempt();
     const evilNoteId = "99999999-9999-4999-8999-999999999999";
+    // phase 不在恶意字段清单里：T6R.15（D5）起是 PUT 的真实可选字段（本
+    // attempt 为 draft，phase=correction 会正确 409 NOTE_NOT_SUBMITTED——
+    // 语义见 student-corrections.test.ts 的门口矩阵），这里只测服务端字段
+    // 不可覆盖
     const res = await putNote(
       app,
       aCookie,
@@ -575,7 +579,6 @@ describe("DSL 特殊 questionId 与服务端字段不可覆盖", () => {
         extra: {
           noteId: evilNoteId,
           serverSavedAt: "1999-01-01T00:00:00.000Z",
-          phase: "correction",
           studentId: "someone-else",
           teacherId: "someone-else",
           currentVersionId: evilNoteId,
