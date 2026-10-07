@@ -14,6 +14,7 @@
  */
 
 import {
+  NOTE_ANALYSIS_SLICE_OVERLAP_LOGICAL,
   NOTE_IMAGE_MAX_PIXEL_DIM,
   NOTE_IMAGE_PNG_MAX_BYTES,
   NOTE_RENDER_VERSION,
@@ -38,7 +39,6 @@ import {
   ANALYSIS_PIXEL_WIDTH,
   ANALYSIS_SLICE_HEIGHT_LOGICAL,
   ANALYSIS_SLICE_MAX_PIXELS,
-  ANALYSIS_SLICE_OVERLAP_LOGICAL,
   analysisSliceHeightMax,
   inkBBoxLogical,
   planAnalysisCrop,
@@ -344,7 +344,9 @@ describe("sliceCropRects：切片顺序/重叠/末页", () => {
       const prev = pages[i - 1];
       const cur = pages[i];
       if (!prev || !cur) throw new Error("unreachable");
-      expect(prev.y + prev.height - cur.y).toBe(ANALYSIS_SLICE_OVERLAP_LOGICAL);
+      expect(prev.y + prev.height - cur.y).toBe(
+        NOTE_ANALYSIS_SLICE_OVERLAP_LOGICAL,
+      );
     }
   });
 
@@ -368,6 +370,64 @@ describe("sliceCropRects：切片顺序/重叠/末页", () => {
       [720, 1400],
       [2080, 920],
     ]);
+  });
+});
+
+// ---------- T6R.17：切片重叠不重复编号语义锁 ----------
+
+describe("sliceCropRects：重叠不重复编号语义锁（T6R.17 契约级守护）", () => {
+  /**
+   * 多页切片的全量语义断言（不锁具体坐标值，锁不变量）：
+   * - 页数 = ceil 语义：净步进 step=maxH-overlap，n = ceil((h-maxH)/step)+1；
+   * - 页起点严格递增（无重复编号页——重叠区笔迹同段内容，编号不重复计算）；
+   * - 相邻页源区重叠恰 overlap（跨页笔迹完整可读的几何前提）；
+   * - 末页覆盖到裁剪区底部（无漏段）。
+   */
+  function expectMultiPageSemantics(
+    h: number,
+    maxH: number,
+    overlap: number,
+  ): void {
+    const crop = { x: 0, y: 0, width: 1000, height: h };
+    const pages = sliceCropRects(crop, { maxH, overlap });
+    const step = maxH - overlap;
+    expect(step).toBeGreaterThan(0);
+    expect(pages.length).toBe(Math.ceil((h - maxH) / step) + 1);
+    pages.forEach((cur, i) => {
+      if (i === 0) {
+        expect(cur.y).toBe(crop.y);
+        return;
+      }
+      const prev = pages[i - 1];
+      if (!prev) throw new Error("unreachable");
+      expect(cur.y).toBeGreaterThan(prev.y);
+      expect(prev.y + prev.height - cur.y).toBe(overlap);
+    });
+    const last = pages[pages.length - 1];
+    if (!last) throw new Error("unreachable");
+    expect(last.y + last.height).toBe(crop.y + crop.height);
+  }
+
+  it("默认片高/契约重叠下多组高度：严格递增起点 + ceil 页数 + 重叠恰 40 + 末页触底", () => {
+    // 1401=刚超限两页；1500/2760=中段推进；3000=既有 3 页场景的通式复核
+    for (const h of [
+      ANALYSIS_SLICE_HEIGHT_LOGICAL + 1,
+      1500,
+      2760,
+      3000,
+    ]) {
+      expectMultiPageSemantics(
+        h,
+        ANALYSIS_SLICE_HEIGHT_LOGICAL,
+        NOTE_ANALYSIS_SLICE_OVERLAP_LOGICAL,
+      );
+    }
+  });
+
+  it("自定义极限参数（maxH=60/overlap=20）：步进越小语义不变，防参数特化", () => {
+    for (const h of [61, 100, 160, 300]) {
+      expectMultiPageSemantics(h, 60, 20);
+    }
   });
 });
 

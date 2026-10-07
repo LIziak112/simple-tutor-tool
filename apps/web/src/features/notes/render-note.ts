@@ -27,6 +27,7 @@
  */
 
 import {
+  NOTE_ANALYSIS_SLICE_OVERLAP_LOGICAL,
   NOTE_IMAGE_MAX_PIXEL_DIM,
   NOTE_IMAGE_PNG_MAX_BYTES,
   type NoteCropRect,
@@ -78,15 +79,11 @@ export const THUMBNAIL_PIXEL_WIDTH = 480;
  */
 export const ANALYSIS_SLICE_HEIGHT_LOGICAL = 1400;
 
-/**
- * 分析图切片重叠区（逻辑单位）。方案 §7 建议初值 40（数值恰与格线间距
- * NOTE_PAPER_GRID_SPACING_LOGICAL 相等）。**语义独立、不派生**（复审③评估）：
- * 重叠区管辖跨页笔迹可读性、格距管辖纸面节奏——若挂上格距，将来格距单独
- * 定标会静默改变切片行为（影响像素输出 ⇒ renderVersion）；两者确需联动时
- * 显式同改并递增版本。**模型提示词侧不得把重叠区当重复演算内容**（T6R.17
- * 提示词任务引用本常量生成页间说明）；重叠只保证跨页笔迹完整可读。
- */
-export const ANALYSIS_SLICE_OVERLAP_LOGICAL = 40;
+// 切片重叠常量已上移契约单源（T6R.17，搬家不抄数）：NOTE_ANALYSIS_SLICE_
+// OVERLAP_LOGICAL 见 packages/contract/src/note.ts（noteImageSpecSchema 附近
+// 派生图规格常量区），本文件经 import 取值，不留 re-export 垫片（先例：bounds
+// 下沉 engine/bounds.ts）。语义注释（与格距独立不派生、提示词侧不当重复演算
+// 内容）随迁契约。
 
 /**
  * 分析图单页总像素上限（长边限制之外的独立约束，方案 §7「每片长边与总像素
@@ -194,7 +191,7 @@ export function analysisSliceHeightMax(pixelWidth: number): number {
 /**
  * 把裁剪区按片高与重叠切成有序页区（纯函数，方案 §7 切片记录顺序/重叠）：
  * - 顺序即阅读顺序（pageIndex 由调用方按序赋 0 起）；
- * - 相邻页重叠恰 ANALYSIS_SLICE_OVERLAP_LOGICAL（笔迹跨页完整可读）；
+ * - 相邻页重叠恰 NOTE_ANALYSIS_SLICE_OVERLAP_LOGICAL（笔迹跨页完整可读）；
  * - 末页覆盖到裁剪区底部，且除首末页外每页高度恒为片高上限。
  */
 export function sliceCropRects(
@@ -202,7 +199,7 @@ export function sliceCropRects(
   limits: { maxH?: number; overlap?: number } = {},
 ): NoteCropRect[] {
   const maxH = limits.maxH ?? analysisSliceHeightMax(ANALYSIS_PIXEL_WIDTH);
-  const overlap = limits.overlap ?? ANALYSIS_SLICE_OVERLAP_LOGICAL;
+  const overlap = limits.overlap ?? NOTE_ANALYSIS_SLICE_OVERLAP_LOGICAL;
   if (overlap >= maxH) {
     throw new Error(
       `切片参数非法：重叠（${overlap}）必须小于片高（${maxH}），否则切片不推进`,
