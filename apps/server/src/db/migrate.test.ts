@@ -287,3 +287,115 @@ describe("T6R.2 迁移：空库与带存量库", () => {
     db.$client.close();
   });
 });
+
+describe("T6R.15 迁移：notes 封存与反思列（空库与存量库兼容）", () => {
+  /** T6R.15 前最后一个迁移 tag（0025） */
+  const PRE_T6R15_LAST_TAG = "0025_secret_shiva";
+  /** 本次新增的 notes 三列（订正检查点封存 + 两段反思文本） */
+  const NEW_COLUMNS = [
+    "sealed_at",
+    "reflection_stuck_at",
+    "reflection_error_cause",
+  ] as const;
+
+  function noteColumnNames(db: ReturnType<typeof createDb>): string[] {
+    return (
+      db.$client.prepare("PRAGMA table_info(notes)").all() as Array<{
+        name: string;
+      }>
+    ).map((col) => col.name);
+  }
+
+  /**
+   * 在 0025 边界库上种入一条 notes 行（含归属链 teachers→students→attempts，
+   * 原生 SQL 直插——与 T6R.2 用例同口径贴近存量升级形态；wrong 来源的
+   * attempt 三外键全可空，夹具最小）。
+   */
+  function seedNotesRow(db: ReturnType<typeof createDb>): string {
+    const now = new Date().toISOString();
+    const teacherId = randomUUID();
+    db.$client
+      .prepare(
+        "INSERT INTO teachers (id, login_name, is_admin, created_at) VALUES (?, 'teacher15', 1, ?)",
+      )
+      .run(teacherId, now);
+    const studentId = randomUUID();
+    db.$client
+      .prepare(
+        "INSERT INTO students (id, teacher_id, display_name, login_name, link_token, created_at) VALUES (?, ?, '李四', '李四', ?, ?)",
+      )
+      .run(studentId, teacherId, `link-${randomUUID()}`, now);
+    const attemptId = randomUUID();
+    db.$client
+      .prepare(
+        "INSERT INTO attempts (id, student_id, source_type, attempt_no, status, started_at) VALUES (?, ?, 'wrong', 1, 'submitted', ?)",
+      )
+      .run(attemptId, studentId, now);
+    const noteId = randomUUID();
+    db.$client
+      .prepare(
+        "INSERT INTO notes (id, attempt_id, question_id, question_revision_id, phase, current_revision, current_version_id, server_saved_at, updated_at) VALUES (?, ?, 'q-15', 'qrev-15', 'scratch', 0, NULL, NULL, ?)",
+      )
+      .run(noteId, attemptId, now);
+    return noteId;
+  }
+
+  it("空库（全新文件库）迁移后 notes 含三新列，迁移记录与 journal 一致", () => {
+    const db = createDb(join(dir, "fresh15.db"));
+    runMigrations(db);
+    const names = noteColumnNames(db);
+    for (const col of NEW_COLUMNS) {
+      expect(names, `notes 应含新列 ${col}`).toContain(col);
+    }
+    const rows = db.$client
+      .prepare("SELECT count(*) AS n FROM __drizzle_migrations")
+      .get() as { n: number };
+    expect(rows.n).toBe(countJournalEntries());
+    db.$client.close();
+  });
+
+  it("带 notes 存量行的库迁移：存量行完好、三新列为 NULL、可写入封存形态、幂等", () => {
+    const db = createDb(join(dir, "legacy15.db"));
+    // 截断迁移目录建出 T6R.15 前的旧结构（真实 0000–0025 迁移链）
+    migrate(db, {
+      migrationsFolder: makeMigrationsFolderUpTo(PRE_T6R15_LAST_TAG),
+    });
+    const noteId = seedNotesRow(db);
+    // 锁定边界：0025 的 notes 确实没有三新列（升级路径真实存在）
+    const before = noteColumnNames(db);
+    for (const col of NEW_COLUMNS) {
+      expect(before).not.toContain(col);
+    }
+
+    // 模拟旧库启动：补应用 T6R.15 迁移
+    expect(() => runMigrations(db)).not.toThrow();
+
+    // 存量行完好，三新列补 NULL
+    const row = db.$client
+      .prepare("SELECT * FROM notes WHERE id = ?")
+      .get(noteId) as Record<string, unknown>;
+    expect(row.question_id).toBe("q-15");
+    expect(row.phase).toBe("scratch");
+    for (const col of NEW_COLUMNS) {
+      expect(row[col]).toBeNull();
+    }
+    // 新列可写（订正封存形态落列）
+    db.$client
+      .prepare(
+        "UPDATE notes SET sealed_at = ?, reflection_stuck_at = ?, reflection_error_cause = ? WHERE id = ?",
+      )
+      .run("2026-10-07T01:00:00.000Z", "卡点", "错因", noteId);
+    const updated = db.$client
+      .prepare(
+        "SELECT sealed_at, reflection_stuck_at, reflection_error_cause FROM notes WHERE id = ?",
+      )
+      .get(noteId) as Record<string, string | null>;
+    expect(updated.sealed_at).toBe("2026-10-07T01:00:00.000Z");
+    expect(updated.reflection_stuck_at).toBe("卡点");
+    expect(updated.reflection_error_cause).toBe("错因");
+    // 外键完整性干净；再次迁移幂等
+    expect(db.$client.pragma("foreign_key_check")).toHaveLength(0);
+    expect(() => runMigrations(db)).not.toThrow();
+    db.$client.close();
+  });
+});
