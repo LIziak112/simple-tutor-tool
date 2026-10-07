@@ -5,6 +5,8 @@ import {
   ANALYTICS_FOCUS_DAYS_DEFAULT,
   type LearningPackExportRequest,
   learningPackExportRequestSchema,
+  learningPackGoalSchema,
+  notePhaseSchema,
 } from "@tutor/contract";
 import { z } from "zod";
 import type { Db } from "../db/client";
@@ -139,12 +141,11 @@ const packModulesOverrideSchema = z
     traces: z.boolean().optional(),
     /** v2 证据附件（T6R.16 开放入参；勾选需同时 packVersion=2 与 responses——契约 superRefine 终校验） */
     evidence: z.boolean().optional(),
-    /** v2 证据收录阶段：scratch=交卷原稿 / correction=已封存订正 / supplement=补充稿（1-3 个） */
-    evidencePhases: z
-      .array(z.enum(["scratch", "correction", "supplement"]))
-      .min(1)
-      .max(3)
-      .optional(),
+    /**
+     * v2 证据收录阶段：scratch=交卷原稿 / correction=已封存订正 / supplement=补充稿（1-3 个）。
+     * 闸门 F2 单源：值域直接引契约 notePhaseSchema，不再手写枚举（契约扩值即同步）。
+     */
+    evidencePhases: z.array(notePhaseSchema).min(1).max(3).optional(),
   })
   .optional();
 
@@ -178,14 +179,11 @@ export const packToolInputSchema = z.object({
     .union([z.number().int().min(1).max(3650), z.literal("all")])
     .optional()
     .describe("时间范围天数（按交卷时间）；缺省 30，'all' 为全部"),
-  goal: z
-    .enum([
-      "diagnose-weakness",
-      "lesson-prep",
-      "variant-practice",
-      "period-summary",
-      "per-question-review",
-    ])
+  /**
+   * 任务目标：闸门 F2 单源——枚举直接引契约 learningPackGoalSchema（描述文案
+   * 保持不变；optional/describe 均返回新实例，不污染契约 schema 的元信息）。
+   */
+  goal: learningPackGoalSchema
     .optional()
     .describe(
       "任务目标（决定 pack 内 prompt 模板；缺省 diagnose-weakness；per-question-review 逐题评析为 v2 专属）",

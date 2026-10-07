@@ -8,11 +8,13 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { TextContent } from "@modelcontextprotocol/sdk/types.js";
 import type { ApiErr, ReportListData } from "@tutor/contract";
+import { learningPackGoalSchema, notePhaseSchema } from "@tutor/contract";
 import { ZipArchive } from "archiver";
 import { eq } from "drizzle-orm";
 import type { Logger } from "pino";
 import pino from "pino";
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client.ts";
 import {
@@ -49,7 +51,11 @@ import {
 } from "../test/note-fixtures.ts";
 import { insertEvidence, setNoteSealedAt } from "../test/note-world.ts";
 import type { PackToolInput } from "./server.ts";
-import { createMcpServer, mcpLearningPackRequestOf } from "./server.ts";
+import {
+  createMcpServer,
+  mcpLearningPackRequestOf,
+  packToolInputSchema,
+} from "./server.ts";
 
 /**
  * T4.6 MCP Server 测试（验收逐条）：
@@ -1622,5 +1628,58 @@ describe("MCP get_student_learning_pack v2 与 UI 等价（T6R.16）", () => {
     expect(pack.meta.modules.lectures).toBe(false); // 白名单外覆盖被剥离
     expect(pack.meta.modules.ink).toBe(false);
     await client.close();
+  });
+
+  it("入参枚举与契约单源一致（闸门 F2）：goal/evidencePhases 值域随契约走", () => {
+    // 单源化是等价重构，本用例是值域锁：正反两向对比 options 集合——契约
+    // 新增目标/阶段后工具入参必须同步接受；回退为手写枚举漏改时在此爆破。
+    for (const goal of learningPackGoalSchema.options) {
+      expect(packToolInputSchema.safeParse({ goal }).success, goal).toBe(true);
+    }
+    expect(packToolInputSchema.safeParse({ goal: "写周报" }).success).toBe(
+      false,
+    );
+    for (const phase of notePhaseSchema.options) {
+      expect(
+        packToolInputSchema.safeParse({
+          modules: { evidence: true, evidencePhases: [phase] },
+        }).success,
+        phase,
+      ).toBe(true);
+    }
+    expect(
+      packToolInputSchema.safeParse({
+        modules: { evidencePhases: ["original"] },
+      }).success,
+    ).toBe(false);
+    // min(1)/max(3) 与契约同款口径
+    expect(
+      packToolInputSchema.safeParse({ modules: { evidencePhases: [] } })
+        .success,
+    ).toBe(false);
+    expect(
+      packToolInputSchema.safeParse({
+        modules: {
+          evidencePhases: ["scratch", "correction", "supplement", "scratch"],
+        },
+      }).success,
+    ).toBe(false);
+    // 直连 options 集合对比：工具入参 JSON Schema 的 enum 与契约枚举逐项相等
+    // （z.toJSONSchema 的返回类型不携带字面量键序，取子字段前经 unknown 收窄——
+    // 运行时形状由上一段 parse 断言先行覆盖）
+    const toolJson = z.toJSONSchema(packToolInputSchema) as unknown as {
+      properties: {
+        goal: { enum: string[] };
+        modules: {
+          properties: { evidencePhases: { items: { enum: string[] } } };
+        };
+      };
+    };
+    expect(toolJson.properties.goal.enum).toEqual([
+      ...learningPackGoalSchema.options,
+    ]);
+    expect(
+      toolJson.properties.modules.properties.evidencePhases.items.enum,
+    ).toEqual([...notePhaseSchema.options]);
   });
 });
