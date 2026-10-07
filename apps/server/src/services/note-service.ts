@@ -1266,16 +1266,24 @@ export function gcNoteVersions(
   };
   const notesRoot = resolve(dataDir, "blobs", "notes");
   /**
-   * 存储路径 → notes 域内对账键（相对根、"/" 分隔、小写；越出根或恰为
-   * 根本身 → null）。备份保留清单与版本删除判定共用同一归一；与孤儿清扫
-   * liveRel 的差异仅在后者额外要求 basename 合模式（malformed 语义保留在
-   * liveRel 侧，本函数不做形态判定）。小写归一与 liveRel 同口径（NTFS
-   * 大小写不敏感，复审④）。
+   * relative + 越界判定的共同核（T4：relKeyOf/liveRel 共用）——返回原始
+   * path.relative 结果（null = 越出根或恰为根本身）；分隔符/大小写归一与
+   * 形态判定由两侧各自完成（见各自注释）。
    */
-  const relKeyOf = (storedPath: string): string | null => {
+  const relWithinOf = (storedPath: string): string | null => {
     const rel = relative(notesRoot, resolve(dataDir, storedPath));
     if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) return null;
-    return rel.split(/[\\/]/).join("/").toLowerCase();
+    return rel;
+  };
+  /**
+   * 存储路径 → notes 域内对账键（"/" 分隔、小写；越界 → null）。备份保留
+   * 清单与版本删除判定共用同一归一（NTFS 大小写不敏感，复审④）；与孤儿
+   * 清扫 liveRel 的差异仅在后者额外要求 basename 合模式（malformed 语义
+   * 保留在 liveRel 侧，本函数不做形态判定）。
+   */
+  const relKeyOf = (storedPath: string): string | null => {
+    const rel = relWithinOf(storedPath);
+    return rel === null ? null : rel.split(/[\\/]/).join("/").toLowerCase();
   };
 
   /**
@@ -1401,12 +1409,12 @@ export function gcNoteVersions(
     // 不同——不做归一会把活文件误判成孤儿误删（复审④）。malformed 判定
     // （basename 模式）保持大小写敏感：非小写规范形态本就该按异常保守处理。
     const liveRel = (storedPath: string, pattern: RegExp): string | null => {
-      const rel = relative(notesRoot, resolve(dataDir, storedPath));
+      // 越界/根本身判定走共同核（T4）；basename 模式判定保持大小写敏感
+      // （malformed 语义：非小写规范形态本就该按异常保守处理，复审④）
+      const rel = relWithinOf(storedPath);
+      if (rel === null) return null;
       const base = rel.split(/[\\/]/).at(-1) ?? "";
-      // rel===""（路径恰为根本身）不必单列：basename 不合模式必兜住
-      if (rel.startsWith("..") || isAbsolute(rel) || !pattern.test(base)) {
-        return null;
-      }
+      if (!pattern.test(base)) return null;
       // 键分隔符归一为 "/"：入库串用 "/"（复审⑦）而 path.relative 在
       // Windows 产 "\"，扫描侧统一拼 "/"——两侧一致才能对账
       return rel.split(/[\\/]/).join("/").toLowerCase();
