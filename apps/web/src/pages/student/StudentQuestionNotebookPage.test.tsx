@@ -262,4 +262,32 @@ describe("StudentQuestionNotebookPage：轮次导航与每轮内容", () => {
     expect(screen.getByText("这一轮没有订正。")).toBeInTheDocument();
     expect(screen.getByText("这一轮没有补充稿。")).toBeInTheDocument();
   });
+
+  it("防御性空时间（闸门修复 F11）：serverSavedAt null 的合法契约行不渲染垃圾串", async () => {
+    // revision=0 + serverSavedAt null 是契约合法形态（superRefine 锁定的
+    // 空白行）；服务端正常流程不会送出，纯防御——此前 formatCnTime("") 会
+    // 渲染「保存于 Invalid Date」
+    notebookMock.mockResolvedValue(
+      notebookOf([
+        round({
+          roundOrdinal: 1,
+          supplements: [
+            {
+              noteId: "99999999-9999-4999-8999-999999999902",
+              attemptId: "att-round-1",
+              questionId: QUESTION_ID,
+              questionRevisionId: "qrev-1",
+              phase: "supplement",
+              revision: 0,
+              currentVersionId: null,
+              serverSavedAt: null,
+            },
+          ],
+        }),
+      ]),
+    );
+    renderPage();
+    await screen.findAllByText("第 1 次");
+    expect(screen.queryByText(/Invalid Date/)).toBeNull();
+  });
 });

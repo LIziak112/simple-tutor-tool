@@ -27,7 +27,7 @@ import { submitAttemptRequestWithEvidence } from "../test/submit-revisions";
  * 覆盖：鉴权矩阵（401/403/404/409 已交卷）、multipart 元信息校验 400、
  * A/B 同 baseRevision 仅一个成功、丢回执重试逐字段原回执、同 mutationId
  * 不同正文 409、DSL 特殊 questionId（含 Windows 保留名）不进文件路径、
- * 客户端多余字段（noteId/serverSavedAt/phase）被忽略、限额 413 两级防线、
+ * 客户端多余字段（noteId/serverSavedAt）被忽略、限额 413 两级防线、
  * assertNoLeak（成功与错误响应）。
  * 夹具用 samples/v2/练习样例.md（题目 id：p4-q7 / 练习四-7）。
  */

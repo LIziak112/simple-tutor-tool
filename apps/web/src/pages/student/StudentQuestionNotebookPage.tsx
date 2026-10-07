@@ -4,6 +4,10 @@ import { BookOpen, ChevronLeft, ChevronRight, History } from "lucide-react";
 import { useState } from "react";
 import { Link, useParams } from "react-router";
 import { Button } from "@/components/ui/button";
+import {
+  ReflectionColumns,
+  sealedCorrectionsOf,
+} from "@/features/notes/correction-display";
 import { NoteOriginalView } from "@/features/notes/NoteOriginalView";
 import { NoteVersionView } from "@/features/notes/NoteVersionView";
 import {
@@ -27,6 +31,15 @@ import { formatCnTime } from "@/lib/time";
 /** 笔记本查询键 */
 export const studentNotebookKey = (questionId: string) =>
   ["student", "notebook", questionId] as const;
+
+/**
+ * 防御性时间格式化（闸门修复 F11）：契约 nullable 路径（补充稿/未封存行的
+ * serverSavedAt、封存行的 sealedAt）真出现 null/空串时渲染空串而非
+ * 「Invalid Date」垃圾串——服务端正常流程保证不可达，纯防御。
+ */
+function safeCnTime(utcIso: string | null | undefined): string {
+  return utcIso == null || utcIso === "" ? "" : formatCnTime(utcIso);
+}
 
 export default function StudentQuestionNotebookPage() {
   const { questionId = "" } = useParams();
@@ -176,12 +189,9 @@ function RoundCard({
   round: NotebookRound;
   questionId: string;
 }) {
-  const sealed = round.corrections.filter(
-    (row) => row.sealedAt !== null && row.sealedAt !== undefined,
-  );
-  const openRows = round.corrections.filter(
-    (row) => row.sealedAt === null || row.sealedAt === undefined,
-  );
+  // 已封存段经共享谓词收窄（sealedAt: string，闸门修复 F12）；未封存行殿后
+  const sealed = sealedCorrectionsOf(round.corrections);
+  const openRows = round.corrections.filter((row) => row.sealedAt == null);
   return (
     <article
       className="flex flex-col gap-4 rounded-2xl border border-border bg-card p-4 text-card-foreground shadow-xs sm:p-5"
@@ -240,27 +250,16 @@ function RoundCard({
                 className="flex flex-col gap-2 rounded-lg border border-border px-3 py-2.5"
               >
                 <p className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                  <span>封存于 {formatCnTime(row.sealedAt ?? "")}</span>
+                  <span>封存于 {safeCnTime(row.sealedAt)}</span>
                 </p>
-                {row.stuckAt !== null && row.stuckAt !== "" && (
-                  <p className="text-sm">
-                    <span className="text-muted-foreground">我卡在哪里：</span>
-                    {row.stuckAt}
-                  </p>
-                )}
-                {row.errorCause !== null && row.errorCause !== "" && (
-                  <p className="text-sm">
-                    <span className="text-muted-foreground">我的错因：</span>
-                    {row.errorCause}
-                  </p>
-                )}
+                <ReflectionColumns row={row} />
                 <NoteVersionView
                   viewer="student"
                   versionId={row.currentVersionId}
                   title="订正"
                   openLabel="查看订正"
                   savedAtLabel="封存于"
-                  savedAt={row.sealedAt ?? ""}
+                  savedAt={row.sealedAt}
                   revision={row.revision}
                   ariaPrefix={`第 ${round.roundOrdinal} 轮`}
                 />
@@ -314,7 +313,7 @@ function RoundCard({
                   <span className="rounded-full bg-muted px-2 py-0.5 font-medium text-foreground">
                     补充稿
                   </span>
-                  <span>保存于 {formatCnTime(row.serverSavedAt ?? "")}</span>
+                  <span>保存于 {safeCnTime(row.serverSavedAt)}</span>
                 </p>
                 <NoteVersionView
                   viewer="student"

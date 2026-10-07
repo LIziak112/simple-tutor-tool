@@ -53,7 +53,7 @@ export const notebookRoundSchema = z.object({
   sourceType: attemptSourceSchema,
   /**
    * 该轮来源标题（服务端口径：作业 = 作业标题；课程练习 = 「单元标题 ·
-   * 第 n 次」；错题重练 = 「错题重练」——与 wrongQuestionRoundSchema.
+   * 第 n 次」；错题重练 = 「错题重练 · 第 n 次」——与 wrongQuestionRoundSchema.
    * sourceTitle 同一计算函数，无教师侧敏感键）
    */
   sourceLabel: z.string().min(1),

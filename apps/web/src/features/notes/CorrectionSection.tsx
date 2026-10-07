@@ -21,7 +21,7 @@
  */
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import type { NoteHeadData, NoteRecordMeta } from "@tutor/contract";
+import type { NoteHeadData } from "@tutor/contract";
 import {
   ChevronDown,
   ClipboardEdit,
@@ -42,6 +42,10 @@ import {
 } from "@/components/ui/dialog";
 import { CorrectionPanel } from "@/features/notes/CorrectionPanel";
 import {
+  ReflectionColumns,
+  sealedCorrectionsOf,
+} from "@/features/notes/correction-display";
+import {
   correctionHeadKey,
   hasRecoverableScratch,
   openCorrectionOf,
@@ -60,9 +64,6 @@ import { useNoteSyncActions } from "@/features/notes/use-note-sync-actions";
 import { ApiError, createCorrectionApi } from "@/lib/api";
 import { fetchNoteEvidenceApi } from "@/lib/note-endpoints";
 import { formatCnTime } from "@/lib/time";
-
-/** 已封存行类型收窄（sealedAt 非空） */
-type SealedCorrection = NoteRecordMeta & { sealedAt: string };
 
 /** D8 找回入口的证据状态集合（原稿未固定族） */
 const RECOVERABLE_EVIDENCE: ReadonlySet<string> = new Set([
@@ -111,10 +112,7 @@ export function CorrectionSection({
   });
   const head = headQuery.data ?? null;
   const openRow = head === null ? null : openCorrectionOf(head);
-  const sealedRows: SealedCorrection[] =
-    head?.corrections.filter(
-      (row): row is SealedCorrection => row.sealedAt != null,
-    ) ?? [];
+  const sealedRows = sealedCorrectionsOf(head?.corrections ?? []);
 
   // ---- D8：本地 scratch 是否有未同步内容（展开后异步复核；head 刷新不
   // 改变本地 scratch 记录，无需随其重判） ----
@@ -336,22 +334,7 @@ export function CorrectionSection({
                         </span>
                         <span>封存于 {formatCnTime(row.sealedAt)}</span>
                       </p>
-                      {row.stuckAt !== null && row.stuckAt !== "" && (
-                        <p className="text-sm">
-                          <span className="text-muted-foreground">
-                            我卡在哪里：
-                          </span>
-                          {row.stuckAt}
-                        </p>
-                      )}
-                      {row.errorCause !== null && row.errorCause !== "" && (
-                        <p className="text-sm">
-                          <span className="text-muted-foreground">
-                            我的错因：
-                          </span>
-                          {row.errorCause}
-                        </p>
-                      )}
+                      <ReflectionColumns row={row} />
                       <NoteVersionView
                         viewer="student"
                         versionId={row.currentVersionId}

@@ -50,6 +50,12 @@ export interface NoteToolbarProps {
   onClearRequest: () => void;
   /** 清空菜单项文案（NoteLayer「清空草稿纸」/ CorrectionPanel「清空订正」） */
   clearLabel?: string;
+  /**
+   * 「更多」触发器的悬停提示（闸门修复 F10 参数化）：菜单段随场景不同——
+   * NoteLayer 经 menuExtras 注入布局段（传「…/清空/布局」），CorrectionPanel
+   * 无布局项用缺省（不谎报不存在的菜单段）
+   */
+  moreTitle?: string;
   /** 「更多」菜单的追加段（场景特有——NoteLayer 的布局 preference 等）；
    * 渲染在清空项之前，自带分隔条 */
   menuExtras?: ReactNode;
@@ -69,6 +75,7 @@ export function NoteToolbar({
   onRedo,
   onClearRequest,
   clearLabel = "清空",
+  moreTitle = "更多（重做/颜色/粗细/清空）",
   menuExtras,
 }: NoteToolbarProps) {
   return (
@@ -117,7 +124,7 @@ export function NoteToolbar({
           <DropdownMenuTrigger
             type="button"
             aria-label={`更多操作（${label}）`}
-            title="更多（重做/颜色/粗细/清空）"
+            title={moreTitle}
             className={`${toolButtonClass} border-transparent`}
           >
             <MoreHorizontal aria-hidden />

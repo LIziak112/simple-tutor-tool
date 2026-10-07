@@ -530,6 +530,14 @@ describe("CorrectionPanel：保存订正（seal 检查点）", () => {
     await waitForEngine();
   }
 
+  it("「更多」title 不含布局段（闸门修复 F10：订正工具条无布局项不谎报）", async () => {
+    await openPanelWithSeededRow();
+    expect(screen.getByRole("button", { name: /更多/ })).toHaveAttribute(
+      "title",
+      "更多（重做/颜色/粗细/清空）",
+    );
+  });
+
   it("确认提示与反思输入；超限按 500 字截断（契约常量单源）", async () => {
     await openPanelWithSeededRow();
     fireEvent.click(screen.getByRole("button", { name: "保存订正" }));
