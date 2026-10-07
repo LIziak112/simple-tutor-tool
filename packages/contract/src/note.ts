@@ -623,8 +623,8 @@ export const NOTE_HEADS_MAX_QUESTIONS = ATTEMPT_SUBMIT_MAX_QUESTIONS;
 
 /**
  * 批量头请求体（POST /api/student/attempts/:id/note-heads 的 JSON body）：
- * questionIds 为该 attempt 冻结集合内的题目 id 列表（1..200 条；空批与超上限
- * 400）。顺序即响应回显顺序（去重后）。
+ * questionIds 为该 attempt 冻结集合内的题目 id 列表（1..500 条，上限单源
+ * NOTE_HEADS_MAX_QUESTIONS；空批与超上限 400）。顺序即响应回显顺序（去重后）。
  */
 export const noteHeadsRequestSchema = z.object({
   questionIds: z.array(z.string().min(1)).min(1).max(NOTE_HEADS_MAX_QUESTIONS),
