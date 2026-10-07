@@ -184,8 +184,8 @@ export async function prepareSubmitEvidence(input: {
     session === null
       ? Promise.resolve(new Map<string, NoteLocalRecord>())
       : loadScratchRecords(session, input.attemptId, { strictRead: true }),
-    // 整批超时（对齐 note-sync PUT 30s 桥接口径）；signal 走原语 fetch
-    //（hc RPC 路由推断不出 signal，同单题版 fetchStudentNoteHeadApi）。
+    // 整批超时（对齐 note-sync PUT 30s 桥接口径）；signal 经 hc
+    // ClientRequestOptions.init 透传（C6 单分支）。
     // 返回值已由 api 收口为按请求序对齐的 head 数组（缺条在 api 层统一抛
     // 契约违错误——整组 reject 阻止交卷，不产出缺题声明）
     fetchStudentNoteHeadsApi(

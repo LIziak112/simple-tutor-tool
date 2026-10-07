@@ -36,7 +36,6 @@ vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
   return {
     ...actual,
-    fetchStudentNoteHeadApi: vi.fn(),
   };
 });
 
@@ -67,14 +66,12 @@ import {
   planAnalysisPages,
   renderNoteImages,
 } from "@/features/notes/render-note";
-import { fetchStudentNoteHeadApi } from "@/lib/api";
 import {
   fetchNoteDocumentApi,
   fetchNoteEvidenceApi,
 } from "@/lib/note-endpoints";
 
 const evidenceMock = vi.mocked(fetchNoteEvidenceApi);
-const headMock = vi.mocked(fetchStudentNoteHeadApi);
 const docMock = vi.mocked(fetchNoteDocumentApi);
 const renderMock = vi.mocked(renderNoteImages);
 const recoverMock = vi.mocked(recoverNoteImages);
@@ -273,14 +270,13 @@ describe("不得按 qid 取最新草稿替代本次原稿（先失败测试）",
     expect(docMock).not.toHaveBeenCalledWith("student", AHEAD_VERSION_ID);
   });
 
-  it("只走 evidence 读端点（宽松口径，软删题历史可读），绝不调工作稿头端点", async () => {
+  it("只走 evidence 读端点（宽松口径，软删题历史可读）", async () => {
     await openPanel();
     expect(evidenceMock).toHaveBeenCalledWith(
       "student",
       SCOPE.attemptId,
       SCOPE.questionId,
     );
-    expect(headMock).not.toHaveBeenCalled();
   });
 });
 
