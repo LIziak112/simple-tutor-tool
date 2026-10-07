@@ -975,6 +975,28 @@ export async function resolveNoteConflict(
   });
 }
 
+/**
+ * SEALED 分诊的「新开一行」重置（T6R.15 D2，note-sync 自动重试路径调用）：
+ * 本地记录从「对既有订正行的续写」切换为「新行的首次上传」——baseRevision
+ * 归零、noteId 清空（新行 id 由首传回执重新铸造）、pending **重铸幂等键**
+ * （旧 mutationId 已对应一次被拒上传，复用会撞服务端幂等记录——与 MISMATCH
+ * 裁决的重铸同口径）；正文快照不动（同内容作为新行首版本上传）。lastHead
+ * 保留（指旧行投影，下一次 head 拉取全覆盖）；conflict/denied 不在此清除
+ * （自动重试仍失败由调用方落 conflict 终态）。
+ */
+export async function resetCorrectionSealed(
+  session: NoteSessionRef,
+  scope: NoteScope,
+): Promise<void> {
+  await mutateLoaded(session, scope, null, (record) => {
+    record.baseRevision = 0;
+    record.noteId = null;
+    if (record.pending !== null) {
+      record.pending = { mutationId: randomUuid(), doc: record.pending.doc };
+    }
+  });
+}
+
 /** 在途上传标记（note-sync 维护；派生 uploading 维度） */
 export function setUploading(
   session: NoteSessionRef,

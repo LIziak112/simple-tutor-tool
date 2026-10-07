@@ -35,7 +35,11 @@
  * 不承诺「最多丢 2 秒」：防抖/最大等待是调度参数不是丢失窗口上限
  * （方案 §6.2）；杀后台只恢复已落盘事务（真机验收口径，T6R.14）。
  */
-import type { NoteConflictSummary, NoteDocInput } from "@tutor/contract";
+import type {
+  NoteConflictSummary,
+  NoteDocInput,
+  NoteVersionReceipt,
+} from "@tutor/contract";
 import { noteConflictSummarySchema } from "@tutor/contract";
 import { gzipOrRaw } from "@/features/ink/gzip";
 import { parseNoteDocOrThrow } from "@/features/notes/note-fixtures";
@@ -62,6 +66,7 @@ import {
   notifyNoteStoreAll,
   parseNoteKey,
   peekNoteRecord,
+  resetCorrectionSealed,
   resolveNoteConflict,
   settleNotePersistence,
   setUploading,
@@ -212,9 +217,15 @@ function keyInSession(
 
 // ---------- 上传执行 ----------
 
-/** 错误分诊：aborted（会话中止丢弃）/ conflict（留两份待裁决）/ denied（终态）/ retry（退避） */
+/** 错误分诊：aborted（会话中止丢弃）/ sealed（订正封存→新开一行重试一次）/
+ * conflict（留两份待裁决）/ denied（终态）/ retry（退避） */
 type PutVerdict =
   | { kind: "aborted" }
+  | {
+      /** T6R.15 D2：409 NOTE_CORRECTION_SEALED——本地按新开一行重置后自动重试 */
+      kind: "sealed";
+      reason: string;
+    }
   | {
       kind: "conflict";
       /** MISMATCH 时为 null（服务端状态未知）；类型由契约壳推导（复审⑪） */
@@ -259,6 +270,21 @@ function classifyPutError(err: unknown): PutVerdict {
       reason: `${message}（同一上传标识已对应不同正文，请选择保留哪一份）`,
     };
   }
+  // T6R.15 D2：409 NOTE_CORRECTION_SEALED——目标订正行已被封存（再编辑=
+  // 新开一行）。runUpload 对 correction scope 自动「新开一行」重置后重试一次
+  if (status === 409 && code === "NOTE_CORRECTION_SEALED") {
+    return { kind: "sealed", reason: message };
+  }
+  // T6R.15：409 NOTE_NOT_SUBMITTED——draft attempt 上写订正/补充稿。语义是
+  // 「尚未交卷，不可写」，与 ALREADY_SUBMITTED（交卷后写 scratch）互补；归
+  // denied(access) 终态（本地保留、停传），文案点明交卷前置条件
+  if (status === 409 && code === "NOTE_NOT_SUBMITTED") {
+    return {
+      kind: "denied",
+      deniedKind: "access",
+      reason: `${message}（订正与补充稿要在交卷后才能保存，本机内容已保留）`,
+    };
+  }
   // 访问权/可写权永久失去（复审⑧合并分支）：403/404（含 NOTE_NOT_FOUND
   // 等）、409 ALREADY_SUBMITTED（交卷后迟到 PUT）——粘住，本地稿保留
   if (status === 403 || status === 404 || code === "ALREADY_SUBMITTED") {
@@ -285,6 +311,10 @@ function classifyPutError(err: unknown): PutVerdict {
  * 单次上传作业：读当前 pending（入队后开跑前的最新值——排队期间的更新
  * 自然并入；已被回执清空则空跑跳过）。全程 epoch 守卫：旧会话的续体
  * （gzip 完成、回执/错误到达）一律丢弃，不落地任何状态。
+ * T6R.15：最多两轮上传——第一轮撞 NOTE_CORRECTION_SEALED 时按「新开一行」
+ * 重置（baseRevision=0 + 重铸幂等键，resetCorrectionSealed）后同正文自动
+ * 重试一次；第二轮仍 SEALED（新行又被封存的异常形态）落 conflict 终态可
+ * 人工恢复，不无限循环自动重开。
  */
 async function runUpload(
   key: string,
@@ -294,66 +324,97 @@ async function runUpload(
 ): Promise<void> {
   const stale = () => epoch !== sessionEpoch || !sameSessionSafe(session);
   if (stale()) return; // 复审⑨：入口即早退——旧会话作业不做任何副作用
-  const record = peekNoteRecord(session, scope);
-  if (!uploadable(record)) return; // 无待传/被冲突或终态阻塞：空跑跳过
-  const { mutationId, doc } = record.pending;
-  const baseRevision = record.baseRevision;
+  if (!uploadable(peekNoteRecord(session, scope))) return; // 无待传/被冲突或终态阻塞：空跑跳过
   const controller = new AbortController();
   controllers.set(key, controller);
   setUploading(session, scope, true);
   const put = bridgePutSignal(controller.signal);
   try {
-    // 同引用直接复用字节（退避重试不重复 gzip）；重试序列化同一对象 ⇒
-    // 相同字节 ⇒ 服务端同 hash（幂等）
-    let bytes = gzipMemo.get(doc);
-    if (bytes === undefined) {
-      bytes = await gzipOrRaw(JSON.stringify(doc));
-      gzipMemo.set(doc, bytes);
-    }
-    if (stale()) return;
-    const receipt = await putNoteDocumentApi(
-      scope.attemptId,
-      scope.questionId,
-      new Blob([bytes], { type: "application/gzip" }),
-      { baseRevision, mutationId },
-      put.signal,
-    );
-    if (stale()) return; // 迟到回执丢弃（不推进旧记录）
-    await applyUploadReceipt(session, scope, mutationId, receipt);
-  } catch (err) {
-    if (stale()) return;
-    const verdict = classifyPutError(err);
-    if (verdict.kind === "aborted") return; // 主动中止：丢弃（复审⑬）
-    if (verdict.kind === "conflict") {
-      await applyUploadConflict(
-        session,
-        scope,
-        verdict.current,
-        verdict.reason,
-      );
-      return; // 计时器由 store 通知路径清理（conflict 阻塞再调度）
-    }
-    if (verdict.kind === "denied") {
-      await applyUploadDenied(
-        session,
-        scope,
-        verdict.deniedKind,
-        verdict.reason,
-      );
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const record = peekNoteRecord(session, scope);
+      if (!uploadable(record)) return; // SEALED 重置期间被回执/终态清空：空跑退出
+      const { mutationId, doc } = record.pending;
+      const baseRevision = record.baseRevision;
+      let receipt: NoteVersionReceipt;
+      try {
+        // 同引用直接复用字节（退避重试不重复 gzip；SEALED 重置保留正文
+        // 引用——同字节同 hash，重试序列化同对象）；重试序列化同一对象 ⇒
+        // 相同字节 ⇒ 服务端同 hash（幂等）
+        let bytes = gzipMemo.get(doc);
+        if (bytes === undefined) {
+          bytes = await gzipOrRaw(JSON.stringify(doc));
+          gzipMemo.set(doc, bytes);
+        }
+        if (stale()) return;
+        receipt = await putNoteDocumentApi(
+          scope.attemptId,
+          scope.questionId,
+          new Blob([bytes], { type: "application/gzip" }),
+          {
+            baseRevision,
+            mutationId,
+            // T6R.15（D5）：phase 随 scope 上送；scratch 不发该字段（旧链路
+            // wire 形态零变化，服务端缺省即 scratch）
+            ...(scope.phase !== "scratch" ? { phase: scope.phase } : {}),
+          },
+          put.signal,
+        );
+      } catch (err) {
+        if (stale()) return;
+        const verdict = classifyPutError(err);
+        if (verdict.kind === "aborted") return; // 主动中止：丢弃（复审⑬）
+        if (verdict.kind === "sealed") {
+          if (attempt === 0 && scope.phase === "correction") {
+            // 新开一行自动重试（D2 裁决路径——重置即「keep-local 新行」）
+            await resetCorrectionSealed(session, scope);
+            if (stale()) return;
+            continue;
+          }
+          // 第二轮仍 SEALED / 非 correction scope 的封存拒绝：conflict 可恢复
+          await applyUploadConflict(
+            session,
+            scope,
+            null,
+            `${verdict.reason}（已停止自动同步；请刷新后从「继续编辑」重新打开）`,
+          );
+          return;
+        }
+        if (verdict.kind === "conflict") {
+          await applyUploadConflict(
+            session,
+            scope,
+            verdict.current,
+            verdict.reason,
+          );
+          return; // 计时器由 store 通知路径清理（conflict 阻塞再调度）
+        }
+        if (verdict.kind === "denied") {
+          await applyUploadDenied(
+            session,
+            scope,
+            verdict.deniedKind,
+            verdict.reason,
+          );
+          return;
+        }
+        // 退避重试（网络/服务端瞬时故障；同 mutationId 幂等重放）
+        const s = schedulerOf(key);
+        s.failures += 1;
+        const delay = Math.min(
+          NOTE_SYNC_BACKOFF_BASE_MS * 2 ** (s.failures - 1),
+          NOTE_SYNC_BACKOFF_MAX_MS,
+        );
+        clearTimer(s.backoff);
+        s.backoff = setTimeout(() => {
+          s.backoff = null;
+          due(key);
+        }, delay);
+        return;
+      }
+      if (stale()) return; // 迟到回执丢弃（不推进旧记录）
+      await applyUploadReceipt(session, scope, mutationId, receipt);
       return;
     }
-    // 退避重试（网络/服务端瞬时故障；同 mutationId 幂等重放）
-    const s = schedulerOf(key);
-    s.failures += 1;
-    const delay = Math.min(
-      NOTE_SYNC_BACKOFF_BASE_MS * 2 ** (s.failures - 1),
-      NOTE_SYNC_BACKOFF_MAX_MS,
-    );
-    clearTimer(s.backoff);
-    s.backoff = setTimeout(() => {
-      s.backoff = null;
-      due(key);
-    }, delay);
   } finally {
     put.finish(); // 超时计时器与监听随作业结束拆除
     controllers.delete(key);
