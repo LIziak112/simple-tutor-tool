@@ -500,7 +500,7 @@ test.describe("订正、补充稿与历史对照（T6R.15）", () => {
       const supplementUpload = waitForNoteUpload(studentPage, 20_000);
       await recoverButton.click();
       await studentPage.getByRole("button", { name: "确认找回" }).click();
-      await expect(card.getByText(/已作为补充稿开始同步/)).toBeVisible();
+      await expect(card.getByText(/已加入补充稿同步队列/)).toBeVisible();
       // 放行笔记上传：补充稿重试成功（首个 2xx 的 notes PUT——scratch 重试
       // 撞 ALREADY_SUBMITTED 为非 2xx，不会误中）
       await studentPage.unroute(NOTES_UPLOAD_PATTERN);

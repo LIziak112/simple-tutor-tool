@@ -31,6 +31,7 @@ import type {
 } from "@/features/ink/engine/index.ts";
 import { stroke } from "@/features/notes/note-fixtures";
 import {
+  applyUploadConflict,
   applyUploadDenied,
   getNoteRecord,
   installNoteBackend,
@@ -652,6 +653,94 @@ describe("CorrectionPanel：保存订正（seal 检查点）", () => {
   });
 });
 
+describe("CorrectionSection：补充稿同步状态（闸门修复 F3）", () => {
+  /** 补充稿上传成功回执（noteId 对齐 SUPPLEMENT_SCOPE 的新行） */
+  const SUPPLEMENT_RECEIPT = {
+    noteId: "99999999-9999-4999-8999-999999999901",
+    revision: 1,
+    versionId: "33333333-3333-4333-8333-3333333333s1",
+    hash: `${"b".repeat(63)}1`,
+    savedAt: "2026-10-07T04:00:00.000Z",
+  };
+
+  /** 本地已有未同步补充稿（找回后的形态：pending 待传） */
+  async function supplementWithPending(): Promise<void> {
+    writeNoteDoc(SESSION_A, SUPPLEMENT_SCOPE, DOC_A);
+  }
+
+  it("无本地 supplement 记录 → 不渲染「补充稿同步状态」区块", async () => {
+    await expandAndWait(headFixture());
+    expect(screen.queryByText("补充稿同步状态")).toBeNull();
+  });
+
+  it("已全同步（无异常）→ 区块不制造噪音", async () => {
+    await supplementWithPending();
+    const record = await getNoteRecord(SESSION_A, SUPPLEMENT_SCOPE);
+    if (record === null) throw new Error("测试前置失败");
+    record.pending = null;
+    record.baseRevision = 1;
+    record.noteId = SUPPLEMENT_RECEIPT.noteId;
+    await expandAndWait(headFixture());
+    expect(screen.queryByText("补充稿同步状态")).toBeNull();
+  });
+
+  it("conflict 终态（双端都找回）：显示状态块与两裁决按钮；保留本机 → 恢复上传（phase=supplement）", async () => {
+    await supplementWithPending();
+    await applyUploadConflict(
+      SESSION_A,
+      SUPPLEMENT_SCOPE,
+      {
+        noteId: SUPPLEMENT_RECEIPT.noteId,
+        revision: 2,
+        versionId: "33333333-3333-4333-8333-3333333333s2",
+        hash: null,
+        serverSavedAt: null,
+      },
+      "服务端已有这份题的补充稿",
+    );
+    putMock.mockResolvedValue(SUPPLEMENT_RECEIPT);
+    await expandAndWait(headFixture());
+    expect(screen.getByText("补充稿同步状态")).toBeInTheDocument();
+    expect(screen.getByText("补充稿内容冲突")).toBeInTheDocument();
+    expect(screen.getByText(/服务端已有这份题的补充稿/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "保留本机内容" }));
+    await vi.waitFor(() => {
+      expect(screen.queryByText("补充稿内容冲突")).toBeNull();
+    });
+    await vi.waitFor(() => {
+      const put = putMock.mock.calls.find((c) => {
+        const meta = c[3] as { phase?: string } | undefined;
+        return meta?.phase === "supplement";
+      });
+      expect(put).toBeDefined();
+    });
+  });
+
+  it("denied(access) 终态：重试同步入口清终态并补传", async () => {
+    await supplementWithPending();
+    await applyUploadDenied(
+      SESSION_A,
+      SUPPLEMENT_SCOPE,
+      "access",
+      "已无权限访问该练习",
+    );
+    putMock.mockResolvedValue(SUPPLEMENT_RECEIPT);
+    await expandAndWait(headFixture());
+    expect(screen.getByText("补充稿已停止同步")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "重试同步" }));
+    await vi.waitFor(() => {
+      expect(screen.queryByText("补充稿已停止同步")).toBeNull();
+    });
+    await vi.waitFor(() => {
+      const put = putMock.mock.calls.find((c) => {
+        const meta = c[3] as { phase?: string } | undefined;
+        return meta?.phase === "supplement";
+      });
+      expect(put).toBeDefined();
+    });
+  });
+});
+
 describe("CorrectionSection：找回草稿为补充稿（D8）", () => {
   it("evidence∈{missing,none,legacy_unverified} 且 scratch 有未同步内容 → 破坏性次级按钮 + 确认文案 + 本地复制（scratch 保留）", async () => {
     writeNoteDoc(SESSION_A, SCRATCH_SCOPE, DOC_A); // 未同步内容（pending）
@@ -662,7 +751,7 @@ describe("CorrectionSection：找回草稿为补充稿（D8）", () => {
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "确认找回" }));
     await vi.waitFor(() => {
-      expect(screen.getByText(/已作为补充稿开始同步/)).toBeInTheDocument();
+      expect(screen.getByText(/已加入补充稿同步队列/)).toBeInTheDocument();
     });
     const supplement = await getNoteRecord(SESSION_A, SUPPLEMENT_SCOPE);
     expect(supplement?.doc.ink.strokes.length).toBe(DOC_A.ink.strokes.length);

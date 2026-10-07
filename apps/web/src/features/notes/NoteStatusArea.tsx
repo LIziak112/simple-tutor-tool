@@ -1,10 +1,11 @@
 /**
- * 草稿/订正编辑器的四维状态区（T6R.15 单3 从 NoteLayer 抽出）：本地正文
+ * 草稿/订正/补充稿的同步状态区（T6R.15 单3 从 NoteLayer 抽出）：本地正文
  * （saving/saved/failed）、服务端正文（dirty/uploading/synced；conflict/
- * denied 走面板）、派生图片（仅 scratch 语境——订正行不在任何 head 图片
- * 投影里，查看走本地确定性渲染，无服务端图片语义）、本机落盘失败提示。
- * NoteLayer（答题页草稿纸）与 CorrectionPanel（订正编辑器）共用——名词经
- * label 参数化（「草稿」/「订正」），图片维度经 images 开关。
+ * denied 走面板）、派生图片（仅 scratch 语境——订正/补充稿行不在任何 head
+ * 图片投影里，查看走本地确定性渲染，无服务端图片语义）、本机落盘失败提示。
+ * NoteLayer（答题页草稿纸）、CorrectionPanel（订正编辑器）与
+ * CorrectionSection 的「补充稿同步状态」块（闸门修复 F3）共用——名词经
+ * label 参数化（「草稿」/「订正」/「补充稿」），图片维度经 images 开关。
  *
  * **完整面板栈**（NoteLayer 复审④，随迁）：各维度并列展示、按
  * denied > conflict > images > 本机失败提示的优先级排序——本机落盘失败
@@ -23,7 +24,7 @@ export interface NoteStatusAreaProps {
   view: NoteRecordView | null;
   /** 本地记录装载完成（区分「尚未加载」与「无记录」） */
   localLoaded: boolean;
-  /** 名词（「草稿」/「订正」）——拼进各面板标题与状态文案 */
+  /** 名词（「草稿」/「订正」/「补充稿」）——拼进各面板标题与状态文案 */
   label: string;
   /**
    * 是否展示派生图片维度与补图重试：scratch（NoteLayer）true；correction

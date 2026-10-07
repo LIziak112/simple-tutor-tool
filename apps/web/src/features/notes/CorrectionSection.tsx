@@ -13,7 +13,10 @@
  *   显示「编辑中」继续编辑入口；
  * - 「找回草稿为补充稿」（D8）：evidence∈{missing,none,legacy_unverified}
  *   且本地 scratch 有未同步内容 → 破坏性次级按钮 + 确认文案 → 本地复制到
- *   phase='supplement' 新记录并触发同步（scratch 本地记录保留不动）；
+ *   phase='supplement' 新记录并触发同步（scratch 本地记录保留不动）；展开态
+ *   另有「补充稿同步状态」小区块（闸门修复 F3：仅本地存在 supplement 记录
+ *   且非干净态时渲染——conflict 裁决 / denied 重试 / 等待同步的诚实出口，
+ *   不再让「已开始同步」在静默停传时成为假话）；
  * - 「本题历史」链接携 questionId 跳题目笔记本（/s/notebook/:questionId）。
  */
 
@@ -45,12 +48,15 @@ import {
   recoverScratchAsSupplement,
   seedOpenCorrection,
 } from "@/features/notes/correction-record";
+import { NoteStatusArea } from "@/features/notes/NoteStatusArea";
 import { NoteVersionView } from "@/features/notes/NoteVersionView";
 import {
   clearCorrectionRecord,
   getNoteRecord,
 } from "@/features/notes/note-store";
 import { useNoteSessionRef } from "@/features/notes/use-note-head";
+import { useNoteRecord } from "@/features/notes/use-note-record";
+import { useNoteSyncActions } from "@/features/notes/use-note-sync-actions";
 import { ApiError, createCorrectionApi } from "@/lib/api";
 import { fetchNoteEvidenceApi } from "@/lib/note-endpoints";
 import { formatCnTime } from "@/lib/time";
@@ -134,6 +140,19 @@ export function CorrectionSection({
     head?.evidence !== undefined &&
     RECOVERABLE_EVIDENCE.has(head.evidence.state) &&
     scratchRecoverable;
+
+  // ---- F3：补充稿同步状态（本地存在 supplement 记录且非干净态才渲染——
+  // D8 找回后双端二次找回撞 409 的 conflict 终态、denied(access) 停传，
+  // 此前全应用无任何 UI 消费者，内容静默困在本机） ----
+  const supplementView = useNoteRecord(attemptId, questionId, "supplement");
+  const supplementActions = useNoteSyncActions(session, {
+    attemptId,
+    questionId,
+    phase: "supplement",
+  });
+  const supplementNeedsUI =
+    supplementView !== null &&
+    (supplementView.server !== "synced" || supplementView.local === "failed");
 
   // ---- 添加订正（Dialog 二选一） ----
   const [createOpen, setCreateOpen] = useState(false);
@@ -368,9 +387,28 @@ export function CorrectionSection({
               )}
               {recovered && (
                 <p role="status" className="text-xs text-muted-foreground">
-                  已作为补充稿开始同步，可在「本题历史」查看；它不能证明交卷前
-                  已固定。
+                  已加入补充稿同步队列（同步异常时在此处处理）；补充稿不能证明
+                  交卷前已固定，可在「本题历史」查看。
                 </p>
+              )}
+
+              {/* 补充稿同步状态（闸门修复 F3）：conflict 给「保留本机/保留
+                  云端」裁决、denied(access) 给「重试同步」，复用共享
+                  NoteStatusArea（图片维度关——补充稿不在任何 head 图片投影） */}
+              {supplementNeedsUI && (
+                <div className="flex flex-col gap-1.5">
+                  <p className="text-sm font-medium">补充稿同步状态</p>
+                  <NoteStatusArea
+                    view={supplementView}
+                    localLoaded
+                    label="补充稿"
+                    images={false}
+                    resolveError={supplementActions.resolveError}
+                    onKeepLocal={supplementActions.keepLocal}
+                    onKeepCloud={supplementActions.keepCloud}
+                    onRetryDenied={supplementActions.retryDenied}
+                  />
+                </div>
               )}
             </div>
           )}
