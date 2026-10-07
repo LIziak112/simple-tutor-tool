@@ -278,13 +278,14 @@ test.describe("主流程：布置作业 → 学生作答与交卷 → 结果与�
       await expect(r4.getByText("待批改", { exact: true })).toBeVisible();
 
       // 手写题笔迹缩略图：学生本人 PNG 直出，naturalWidth>0 才算真的画出来了
+      // （toBeVisible 不等图片加载完成——单次 evaluate 会踩解码竞态，
+      // expect.poll 轮询到解码完成为止）
       const r6 = studentPage.locator('article[aria-label="第 6 题"]');
       const inkImg = r6.locator('img[alt*="手写笔迹"]');
       await expect(inkImg).toBeVisible();
-      const naturalWidth = await inkImg.evaluate(
-        (el: HTMLImageElement) => el.naturalWidth,
-      );
-      expect(naturalWidth).toBeGreaterThan(0);
+      await expect
+        .poll(() => inkImg.evaluate((el: HTMLImageElement) => el.naturalWidth))
+        .toBeGreaterThan(0);
 
       // —— 泄露检查：交卷前所有 /api/student/* 响应无禁用键、无提示/详解原文 ——
       await studentPage.waitForTimeout(800); // 等最后一批响应体读完
