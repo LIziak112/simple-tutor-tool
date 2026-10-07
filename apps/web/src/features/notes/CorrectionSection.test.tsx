@@ -487,6 +487,26 @@ describe("CorrectionSection：已封存订正列表与继续编辑", () => {
       expect(last?.data.strokes.length).toBe(1);
     });
   });
+
+  it("收起订正区（open=false）→ 编辑器一并收起，不再挂载（闸门修复 F2）", async () => {
+    docMock.mockResolvedValue({
+      version: 1,
+      ink: { width: 1000, strokes: [] },
+    });
+    await expandAndWait(headFixture({ corrections: [openRow()] }));
+    fireEvent.click(screen.getByRole("button", { name: "继续编辑订正" }));
+    await waitForEngine();
+    expect(screen.queryByRole("toolbar")).not.toBeNull(); // 编辑器在文档中
+    // 收起订正区 → 编辑器（InkPad 引擎 + 工具条）随区块一起卸载
+    fireEvent.click(screen.getByRole("button", { name: "第 1 题订正" }));
+    expect(screen.queryByRole("toolbar")).toBeNull();
+    expect(document.querySelector('[data-slot="correction-panel"]')).toBeNull();
+    // 重新展开：未封存的编辑会话随之恢复（编辑器重新挂载）
+    fireEvent.click(screen.getByRole("button", { name: "第 1 题订正" }));
+    await vi.waitFor(() => {
+      expect(screen.queryByRole("toolbar")).not.toBeNull();
+    });
+  });
 });
 
 describe("CorrectionPanel：保存订正（seal 检查点）", () => {

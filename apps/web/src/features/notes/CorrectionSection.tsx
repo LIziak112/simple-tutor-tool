@@ -374,18 +374,19 @@ export function CorrectionSection({
               )}
             </div>
           )}
-        </div>
-      )}
 
-      {/* 编辑器（订正区展开态内嵌） */}
-      {panelOpen && (
-        <CorrectionPanel
-          attemptId={attemptId}
-          questionId={questionId}
-          ariaPrefix={ariaPrefix}
-          onClose={() => setPanelOpen(false)}
-          onSealed={onSealed}
-        />
+          {/* 编辑器（订正区展开态内嵌；闸门修复 F2：随区块收起一并卸载——
+              收起即收起编辑器，不用 setPanelOpen(false) 方案以免丢视口） */}
+          {panelOpen && (
+            <CorrectionPanel
+              attemptId={attemptId}
+              questionId={questionId}
+              ariaPrefix={ariaPrefix}
+              onClose={() => setPanelOpen(false)}
+              onSealed={onSealed}
+            />
+          )}
+        </div>
       )}
 
       {/* 添加订正：二选一（默认空白；复制原稿仅 frozen 可选） */}
