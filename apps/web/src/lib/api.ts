@@ -254,6 +254,35 @@ async function throwShellError(res: Response): Promise<never> {
   throw new Error(`服务器响应异常（HTTP ${res.status}），请稍后重试`);
 }
 
+/**
+ * 触发浏览器保存 blob（a[download] 短挂载；object URL 用后即撤）。
+ * api.ts 内全部文件直出下载（CSV/MD/学情包/单题包/逐张图片/备份）共用，
+ * 不再各自手抄 anchor 七行。
+ */
+function saveBlobAs(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  try {
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = filename;
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+/**
+ * Content-Disposition → 下载文件名（filename="…" 形态；取不到回退 fallback）。
+ * 中文文件名的 filename*=UTF-8'' 形态另见 downloadExportMd（唯一特例，不并）。
+ */
+function filenameFromDisposition(res: Response, fallback: string): string {
+  const disposition = res.headers.get("content-disposition") ?? "";
+  const matched = /filename="?([^";]+)"?/i.exec(disposition)?.[1];
+  return matched !== undefined && matched.length > 0 ? matched : fallback;
+}
+
 /** 查询是否已设置教师（首启判断，无登录要求） */
 export function fetchTeacherStatus(): Promise<TeacherStatusData> {
   return callApi(() => api.api.public.teacher.status.$get());
@@ -1472,18 +1501,7 @@ export async function downloadExportMd(
   // 优先 filename*=UTF-8''（中文标题），回退整个头文本
   const star = /filename\*=UTF-8''([^;]+)/i.exec(disposition)?.[1];
   const filename = star !== undefined ? decodeURIComponent(star) : `${id}.md`;
-  const blob = await res.blob();
-  const url = URL.createObjectURL(blob);
-  try {
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = filename;
-    document.body.append(anchor);
-    anchor.click();
-    anchor.remove();
-  } finally {
-    URL.revokeObjectURL(url);
-  }
+  saveBlobAs(await res.blob(), filename);
 }
 
 // ---------- T2B.6：管理端（/api/admin/*，requireAdmin；D19 管理员无业务数据权限） ----------
@@ -1771,22 +1789,8 @@ export async function downloadTeacherExportCsv(
     // 文件接口的错误仍是统一 JSON 壳
     await throwShellError(res);
   }
-  const disposition = res.headers.get("content-disposition") ?? "";
-  const matched = /filename="?([^";]+)"?/i.exec(disposition)?.[1];
-  const filename =
-    matched !== undefined && matched.length > 0 ? matched : "tutor-export.csv";
-  const blob = await res.blob();
-  const url = URL.createObjectURL(blob);
-  try {
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = filename;
-    document.body.append(anchor);
-    anchor.click();
-    anchor.remove();
-  } finally {
-    URL.revokeObjectURL(url);
-  }
+  const filename = filenameFromDisposition(res, "tutor-export.csv");
+  saveBlobAs(await res.blob(), filename);
 }
 
 // ---------- T3.5：学生端「我的记录」与错题本（D9–D11） ----------
@@ -1965,22 +1969,8 @@ export async function downloadLearningPackApi(
     // 文件接口的错误仍是统一 JSON 壳
     await throwShellError(res);
   }
-  const disposition = res.headers.get("content-disposition") ?? "";
-  const matched = /filename="?([^";]+)"?/i.exec(disposition)?.[1];
-  const filename =
-    matched !== undefined && matched.length > 0 ? matched : "learning-pack.zip";
-  const blob = await res.blob();
-  const url = URL.createObjectURL(blob);
-  try {
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = filename;
-    document.body.append(anchor);
-    anchor.click();
-    anchor.remove();
-  } finally {
-    URL.revokeObjectURL(url);
-  }
+  const filename = filenameFromDisposition(res, "learning-pack.zip");
+  saveBlobAs(await res.blob(), filename);
   return filename;
 }
 
@@ -2029,22 +2019,8 @@ export async function downloadReviewPackApi(
   if (!res.ok) {
     await throwShellError(res);
   }
-  const disposition = res.headers.get("content-disposition") ?? "";
-  const matched = /filename="?([^";]+)"?/i.exec(disposition)?.[1];
-  const filename =
-    matched !== undefined && matched.length > 0 ? matched : "review-pack.zip";
-  const blob = await res.blob();
-  const url = URL.createObjectURL(blob);
-  try {
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = filename;
-    document.body.append(anchor);
-    anchor.click();
-    anchor.remove();
-  } finally {
-    URL.revokeObjectURL(url);
-  }
+  const filename = filenameFromDisposition(res, "review-pack.zip");
+  saveBlobAs(await res.blob(), filename);
   return filename;
 }
 
@@ -2069,18 +2045,7 @@ export async function downloadAttachmentApi(
   if (!res.ok) {
     throw new Error(`图片下载失败（HTTP ${res.status}）`);
   }
-  const blob = await res.blob();
-  const objectUrl = URL.createObjectURL(blob);
-  try {
-    const anchor = document.createElement("a");
-    anchor.href = objectUrl;
-    anchor.download = filename;
-    document.body.append(anchor);
-    anchor.click();
-    anchor.remove();
-  } finally {
-    URL.revokeObjectURL(objectUrl);
-  }
+  saveBlobAs(await res.blob(), filename);
 }
 
 // ---------- 备份与恢复（T4.5，D20/D21 口径见契约 backup-api.ts） ----------
@@ -2161,22 +2126,8 @@ export async function downloadBackupApi(): Promise<string> {
     // 文件接口的错误仍是统一 JSON 壳
     await throwShellError(res);
   }
-  const disposition = res.headers.get("content-disposition") ?? "";
-  const matched = /filename="?([^";]+)"?/i.exec(disposition)?.[1];
-  const filename =
-    matched !== undefined && matched.length > 0 ? matched : "tutor-backup.zip";
-  const blob = await res.blob();
-  const url = URL.createObjectURL(blob);
-  try {
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = filename;
-    document.body.append(anchor);
-    anchor.click();
-    anchor.remove();
-  } finally {
-    URL.revokeObjectURL(url);
-  }
+  const filename = filenameFromDisposition(res, "tutor-backup.zip");
+  saveBlobAs(await res.blob(), filename);
   return filename;
 }
 
