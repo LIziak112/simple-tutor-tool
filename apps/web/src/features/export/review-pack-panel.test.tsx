@@ -44,6 +44,7 @@ const PREVIEW: ReviewPackPreviewData = {
   role: "student",
   questionNo: 3,
   questionPresent: true,
+  handwritten: false,
   evidenceState: "frozen",
   released: true,
   answersIncluded: false,
@@ -89,6 +90,7 @@ const PREVIEW: ReviewPackPreviewData = {
     },
   ],
   reviewMd: "# 单题复习包（第 3 题）\n\n复制文字给 AI 时不含任何图片。",
+  questionMd: "### 题目 3\n\n已知 $x+1=4$，求 $x$。\n\n**学生答案**：3\n",
 };
 
 const COMPLETE_PREVIEW: ReviewPackPreviewData = {
@@ -203,7 +205,7 @@ describe("ReviewPackPanel（T6R.13）", () => {
     });
   });
 
-  it("复制成功：提示已复制且注明图片需另行处理；无手工选中块", async () => {
+  it("复制成功：载荷 = review.md + 题目正文（含题干与学生答案）；无手工选中块", async () => {
     await openPanel();
     vi.mocked(copyText).mockResolvedValueOnce(true);
     await fireEvent.click(
@@ -212,6 +214,11 @@ describe("ReviewPackPanel（T6R.13）", () => {
     await waitFor(() => {
       expect(screen.getByText(/已复制/)).toBeVisible();
     });
+    // 载荷与「只有本文件与题目文字」宣称一致：两段都进剪贴板
+    const payload = vi.mocked(copyText).mock.calls[0]?.[0] ?? "";
+    expect(payload).toContain("# 单题复习包（第 3 题）");
+    expect(payload).toContain("已知 $x+1=4$");
+    expect(payload).toContain("**学生答案**：3");
     expect(screen.queryByRole("textbox")).toBeNull();
   });
 
@@ -228,6 +235,9 @@ describe("ReviewPackPanel（T6R.13）", () => {
     expect(
       (screen.getByRole("textbox") as HTMLTextAreaElement).value,
     ).toContain("复制文字给 AI 时不含任何图片");
+    expect(
+      (screen.getByRole("textbox") as HTMLTextAreaElement).value,
+    ).toContain("已知 $x+1=4$");
     expect(screen.getByText(/手动选择|长按|拖选/)).toBeVisible();
   });
 
@@ -263,6 +273,73 @@ describe("ReviewPackPanel（T6R.13）", () => {
     expect(missingItem).not.toBeNull();
     expect(missingItem?.querySelector("button")).toBeNull();
     expect(missingItem).toHaveTextContent("分析图生成失败");
+  });
+
+  it("慢预览期间收起重开：旧响应不覆盖新数据（异步纪元）", async () => {
+    let resolveFirst: (value: ReviewPackPreviewData) => void = () => {};
+    const first = new Promise<ReviewPackPreviewData>((resolve) => {
+      resolveFirst = resolve;
+    });
+    vi.mocked(fetchReviewPackPreviewApi)
+      .mockReturnValueOnce(first)
+      .mockResolvedValueOnce(COMPLETE_PREVIEW);
+    render(
+      <ReviewPackPanel
+        viewer="student"
+        attemptId="attempt-1"
+        questionId="q-1"
+        questionNo={3}
+      />,
+    );
+    // 第一次打开（慢预览在途）→ 收起 → 重开（快预览先到）
+    await fireEvent.click(screen.getByRole("button", { name: /AI 复习包/ }));
+    await fireEvent.click(screen.getByRole("button", { name: /AI 复习包/ }));
+    await fireEvent.click(screen.getByRole("button", { name: /AI 复习包/ }));
+    await waitFor(() => {
+      expect(screen.getByText("附件清单")).toBeVisible();
+    });
+    // 慢响应此刻才落地：纪元已过期，不得把 missing 形态覆盖重开的 complete 形态
+    resolveFirst(PREVIEW);
+    await waitFor(() => {
+      expect(vi.mocked(fetchReviewPackPreviewApi)).toHaveBeenCalledTimes(2);
+    });
+    expect(screen.queryByText(/材料不完整/)).toBeNull();
+  });
+
+  it("重开后无幽灵「已复制」态；旧复制结果不落新会话", async () => {
+    await openPanel();
+    vi.mocked(copyText).mockResolvedValueOnce(true);
+    await fireEvent.click(
+      screen.getByRole("button", { name: /复制文字（不含图片）/ }),
+    );
+    await waitFor(() => {
+      expect(screen.getByText(/已复制/)).toBeVisible();
+    });
+    // 收起重开：已复制态清空（新会话不得带旧状态）
+    await fireEvent.click(screen.getByRole("button", { name: /AI 复习包/ }));
+    await fireEvent.click(screen.getByRole("button", { name: /AI 复习包/ }));
+    await waitFor(() => {
+      expect(screen.getByText("附件清单")).toBeVisible();
+    });
+    expect(screen.queryByText(/已复制文字/)).toBeNull();
+    expect(screen.queryByRole("textbox")).toBeNull();
+  });
+
+  it("题目缺失呈现：状态行明示历史快照缺失、不回填", async () => {
+    await openPanel({ ...PREVIEW, questionPresent: false });
+    expect(screen.getByText(/题目内容缺失/)).toBeVisible();
+    expect(screen.getByText(/不回填/)).toBeVisible();
+  });
+
+  it("手写题状态行：笔迹即作答、无「未采集」误导", async () => {
+    await openPanel({
+      ...COMPLETE_PREVIEW,
+      handwritten: true,
+      evidenceState: "not_collected",
+    });
+    expect(screen.getByText(/手写作答/)).toBeVisible();
+    expect(screen.getByText(/没有草稿层属正常/)).toBeVisible();
+    expect(screen.queryByText(/未采集/)).toBeNull();
   });
 
   it("每次打开重新请求预览（no-store，不沿用上一次结果）", async () => {

@@ -10,7 +10,7 @@ import {
   RotateCcw,
   TriangleAlert,
 } from "lucide-react";
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   downloadAttachmentApi,
@@ -45,6 +45,7 @@ const KIND_LABELS: Record<string, string> = {
   "question-md": "题目文字",
   media: "配图",
   evidence: "手写原稿图",
+  ink: "手写笔迹",
 };
 
 /** 逐张附件的行内任务状态 */
@@ -79,28 +80,46 @@ export function ReviewPackPanel({
     Record<string, AttachmentJob>
   >({});
 
+  /**
+   * 异步会话纪元（/code-review 角D）：open/close 各自增——慢预览在途期间
+   * 收起重开时，旧请求的落点先比对纪元，过期即丢弃（防旧数据覆盖新数据、
+   * 防 spinner 与旧预览并存）。
+   */
+  const requestSeq = useRef(0);
+
   const loadPreview = useCallback(async () => {
+    const seq = ++requestSeq.current;
     setPreviewLoading(true);
     setPreviewError(null);
     try {
-      setPreview(
-        await fetchReviewPackPreviewApi(viewer, attemptId, questionId),
+      const data = await fetchReviewPackPreviewApi(
+        viewer,
+        attemptId,
+        questionId,
       );
+      if (requestSeq.current !== seq) return; // 过期响应丢弃
+      setPreview(data);
     } catch (err) {
+      if (requestSeq.current !== seq) return;
       setPreview(null);
       setPreviewError(
         err instanceof Error ? err.message : "预览加载失败，请稍后重试",
       );
     } finally {
-      setPreviewLoading(false);
+      if (requestSeq.current === seq) {
+        setPreviewLoading(false);
+      }
     }
   }, [viewer, attemptId, questionId]);
 
   const handleOpen = useCallback(() => {
     const next = !open;
     setOpen(next);
+    // 收起也自增纪元：在途请求全部作废（重开时 loadPreview 再取新号）
+    requestSeq.current += 1;
     if (next) {
-      // 每次打开重新请求（服务端 no-store；内容随批改/图片状态变化）
+      // 每次打开重新请求（服务端 no-store；旧预览与幽灵状态一并清空）
+      setPreview(null);
       setCopyState("idle");
       setZipError(null);
       setDownloadedName(null);
@@ -126,7 +145,14 @@ export function ReviewPackPanel({
 
   const handleCopyText = useCallback(async () => {
     if (preview === null) return;
-    const ok = await copyText(preview.reviewMd);
+    const seq = requestSeq.current;
+    // 载荷 = review.md + 题目正文（stem.md 内容）——与 review.md 里
+    // 「复制文字只含本文件与题目文字」的宣称一致（/code-review 补漏）
+    const payload = `${preview.reviewMd}
+---
+${preview.questionMd}`;
+    const ok = await copyText(payload);
+    if (requestSeq.current !== seq) return; // 面板已重开，状态作废
     // 复制语义红线：失败绝不显示「已复制」，转手工选中文本块
     setCopyState(ok ? "copied" : "manual");
   }, [preview]);
@@ -198,14 +224,22 @@ export function ReviewPackPanel({
 
           {preview !== null && (
             <>
-              {/* 状态行 */}
+              {/* 状态行（手写题无草稿属正常；题目缺失显式呈现） */}
               <p className="text-sm text-muted-foreground">
-                第 {preview.questionNo} 题 · 手写原稿：
-                {REVIEW_PACK_EVIDENCE_STATE_LABELS[preview.evidenceState]}
+                第 {preview.questionNo} 题 ·{" "}
+                {preview.handwritten
+                  ? "手写作答（笔迹即作答，没有草稿层属正常）"
+                  : `手写原稿：${REVIEW_PACK_EVIDENCE_STATE_LABELS[preview.evidenceState]}`}
                 {viewer === "student" &&
                   " · 本包不含参考答案与对错判定（分析只基于你自己的作答）"}
                 {!preview.released && " · 答案尚未公布（无判定属正常）"}
               </p>
+              {!preview.questionPresent && (
+                <p className="flex items-center gap-1.5 text-sm text-amber-700 dark:text-amber-400">
+                  <TriangleAlert aria-hidden className="size-4 shrink-0" />
+                  题目内容缺失（历史快照缺失，不回填当前题库）——包内题干为空。
+                </p>
+              )}
 
               {/* 缺失警示：不自动声称可诊断 */}
               {!preview.complete && (
@@ -308,7 +342,9 @@ export function ReviewPackPanel({
                     readOnly
                     rows={8}
                     className="min-h-11 w-full rounded-lg border border-border bg-background p-2 font-mono text-xs"
-                    value={preview.reviewMd}
+                    value={`${preview.reviewMd}
+---
+${preview.questionMd}`}
                     onFocus={(event) => event.currentTarget.select()}
                   />
                 </div>
