@@ -266,15 +266,49 @@ describe("seedOpenCorrection：未封存行对齐与条件播种", () => {
     expect(record?.doc.ink.strokes.length).toBe(DOC_B.ink.strokes.length);
   });
 
-  it("正文拉取失败不抛错（本地稿不受影响，head 对齐保留）", async () => {
-    docMock.mockRejectedValue(new Error("网络断开"));
+  it("正文拉取失败不抛错且对齐不落地（基线原样）；第二次 seed 重判 serverAhead 重试成功（闸门修复 F1）", async () => {
+    docMock.mockRejectedValueOnce(new Error("网络断开"));
     const head = headWithCorrection(correctionRow());
     await expect(
       seedOpenCorrection(SESSION_A, SCOPE.attemptId, SCOPE.questionId, head),
     ).resolves.toBeUndefined();
+    // 失败窗口：head 对齐**不落地**（不建壳/基线不动）——serverAhead 判定
+    // 未被钳断，本地空稿不会以对齐后的基线无感知覆盖服务端订正内容
+    expect(await getNoteRecord(SESSION_A, CORRECTION_SCOPE)).toBeNull();
+    // 下一次 head 重拉（同一 head 重放即等价）：serverAhead 仍成立 → 重试播种
+    docMock.mockResolvedValueOnce(DOC_B);
+    await seedOpenCorrection(
+      SESSION_A,
+      SCOPE.attemptId,
+      SCOPE.questionId,
+      head,
+    );
     const record = await getNoteRecord(SESSION_A, CORRECTION_SCOPE);
-    expect(record?.baseRevision).toBe(2); // head 段已落地
-    expect(record?.doc.ink.strokes).toEqual([]); // 正文段未播种
+    expect(record?.baseRevision).toBe(2);
+    expect(record?.noteId).toBe("88888888-8888-4888-8888-888888888801");
+    expect(record?.doc.ink.strokes.length).toBe(DOC_B.ink.strokes.length);
+    expect(record?.pending).toBeNull();
+  });
+
+  it("本地已有记录时拉取失败 → 基线/noteId 保持原值（不被对齐钳断）", async () => {
+    // 本地对旧行有残留（base 1/noteId 旧值，clear 前的形态）
+    writeNoteDoc(SESSION_A, CORRECTION_SCOPE, DOC_A);
+    const before = peekNoteRecord(SESSION_A, CORRECTION_SCOPE);
+    if (before === null) throw new Error("测试前置失败");
+    before.pending = null;
+    before.baseRevision = 1;
+    before.noteId = "88888888-8888-4888-8888-888888888805";
+    docMock.mockRejectedValueOnce(new Error("网络断开"));
+    await seedOpenCorrection(
+      SESSION_A,
+      SCOPE.attemptId,
+      SCOPE.questionId,
+      headWithCorrection(correctionRow()),
+    );
+    const after = peekNoteRecord(SESSION_A, CORRECTION_SCOPE);
+    expect(after?.baseRevision).toBe(1); // 未被服务端 revision 2 对齐
+    expect(after?.noteId).toBe("88888888-8888-4888-8888-888888888805");
+    expect(after?.doc.ink.strokes.length).toBe(DOC_A.ink.strokes.length);
   });
 });
 

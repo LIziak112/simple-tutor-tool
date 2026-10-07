@@ -4,9 +4,10 @@
  * - openCorrectionOf：head.corrections 里找未封存行（sealedAt==null；
  *   D1「未封存至多一行」，服务层保证）；
  * - seedOpenCorrection：把未封存行对齐进本地 correction 记录（合成
- *   {note:row, images:[]} 走 applyServerHead/applyServerLoad——订正行不在
- *   工作稿头端点的 note 位，但记录形态同构；serverAhead 口径照 use-note-head：
- *   本地无记录/noteId 变化/服务端 revision 领先才拉正文播种，本地领先省请求）；
+ *   {note:row, images:[]} 走播种共享核 note-seed——订正行不在工作稿头端点
+ *   的 note 位，但记录形态同构；serverAhead 口径与失败重试语义同 scratch
+ *   母本：本地无记录/noteId 变化/服务端 revision 领先才拉正文播种，本地
+ *   领先省请求；拉取失败不动本地状态、下次 head 重拉自然重试）；
  * - recoverScratchAsSupplement（D8「找回草稿为补充稿」）：本地 scratch 的
  *   未同步内容复制到 phase='supplement' 新记录并触发同步（writeNoteDoc 生成
  *   pending → note-store 通知 → 会话队列按 phase 上送）；scratch 本地记录
@@ -15,16 +16,13 @@
  */
 
 import type { NoteHeadData, NoteRecordMeta } from "@tutor/contract";
+import { seedRecordFromServerHead } from "@/features/notes/note-seed";
 import {
-  applyServerHead,
-  applyServerLoad,
   getNoteRecord,
   type NoteLocalRecord,
   type NoteSessionRef,
-  peekNoteRecord,
   writeNoteDoc,
 } from "@/features/notes/note-store";
-import { fetchStudentNoteDocumentApi } from "@/lib/api";
 
 /** correction 头查询键（含学生 id：切账号不回放缓存的他人头；口径照 studentNoteHeadKey） */
 export function correctionHeadKey(
@@ -58,8 +56,10 @@ export function hasRecoverableScratch(
 
 /**
  * 未封存订正行对齐 + 条件播种（CorrectionSection 展开 head / 创建订正
- * 成功后调用）。正文拉取失败不抛错（本地稿不受影响，下一次 head 重试播种
- * ——口径同 use-note-head 的 applyNoteHeadSideEffects）。
+ * 成功后调用）。走播种共享核 note-seed.seedRecordFromServerHead（闸门修复
+ * F1：scratch 母本同一实现）：服务端领先时先 fetch 正文成功才落对齐，失败
+ * 不动本地状态——下一次 head 重拉时 serverAhead 仍成立、播种自然重试（本地
+ * 空稿不会以被钳断的基线无感知覆盖服务端订正内容）。
  */
 export async function seedOpenCorrection(
   session: NoteSessionRef,
@@ -70,17 +70,9 @@ export async function seedOpenCorrection(
   const row = openCorrectionOf(head);
   if (row === null) return;
   const scope = { attemptId, questionId, phase: "correction" as const };
-  // 「服务端领先」判定取 head 应用前的快照（口径照 use-note-head：之后判
-  // 就永远不领先了）
-  const before = peekNoteRecord(session, scope);
-  const serverAhead =
-    row.currentVersionId !== null &&
-    (before === null ||
-      before.noteId !== row.noteId ||
-      before.baseRevision < row.revision);
   // 订正行不在工作稿头端点的 note 位——合成同构头投影（images/evidence/
   // 集合与本行无关，空态；lastHead 只被 overview.images 消费，订正语境恒
-  // 空数组=图片维度不提示）
+  // 空数组=图片维度不提示；补图不触发：订正行不在任何 head 图片投影里）
   const syntheticHead: NoteHeadData = {
     note: row,
     images: [],
@@ -88,17 +80,7 @@ export async function seedOpenCorrection(
     corrections: [],
     supplements: [],
   };
-  await applyServerHead(session, scope, syntheticHead);
-  if (!serverAhead) return;
-  // revision=0 空白新行无版本可读（currentVersionId null 已被 serverAhead 拦下，
-  // 此处防御性复核）
-  if (row.currentVersionId === null) return;
-  try {
-    const raw = await fetchStudentNoteDocumentApi(row.currentVersionId);
-    await applyServerLoad(session, scope, raw, syntheticHead);
-  } catch (err) {
-    console.warn("订正正文拉取失败（本地稿不受影响）", err);
-  }
+  await seedRecordFromServerHead(session, scope, syntheticHead);
 }
 
 /** D8 找回结果：copied=已复制到补充稿并触发同步 / nothing=无可找回内容 */
