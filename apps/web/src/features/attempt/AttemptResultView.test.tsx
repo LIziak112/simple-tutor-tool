@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import type { AttemptResultData } from "@tutor/contract";
 import { describe, expect, it, vi } from "vitest";
 import { reviewPackStubDatasets } from "@/features/export/review-pack-test-stub";
+import { correctionStubDatasets } from "@/features/notes/correction-test-stub";
 import { noteOriginalStubDatasets } from "@/features/notes/note-original-test-stub";
 import { AttemptResultView } from "./AttemptResultView";
 
@@ -17,6 +18,15 @@ vi.mock("@/features/notes/NoteOriginalView", async () => {
     "@/features/notes/note-original-test-stub"
   );
   return { NoteOriginalView: NoteOriginalTestStub };
+});
+
+// T6R.15：订正区以桩替换（行为见 CorrectionSection.test）——所有题型都
+// 渲染订正入口（手写题没有草稿层也有订正）；只断言接线定位
+vi.mock("@/features/notes/CorrectionSection", async () => {
+  const { CorrectionTestStub } = await import(
+    "@/features/notes/correction-test-stub"
+  );
+  return { CorrectionSection: CorrectionTestStub };
 });
 
 // T6R.13：单题完整导出面板以桩替换（面板行为见 review-pack-panel.test），
@@ -779,5 +789,37 @@ describe("本次草稿原稿入口（T6R.11）", () => {
     render(<AttemptResultView data={unreleased} onBackHome={vi.fn()} />);
     // 三个非手写题照常渲染入口（不含手写题）
     expect(stubsOf()).toHaveLength(3);
+  });
+});
+
+// ---------- T6R.15：结果页订正区入口 ----------
+
+describe("订正区入口（T6R.15）", () => {
+  it("所有题型逐题渲染订正区（含手写题）+ 本 attempt/题目定位 + 题号前缀", () => {
+    renderView();
+    const stubs = correctionStubDatasets();
+    // DATA 四题全渲染（订正不依赖草稿层——手写题也有订正入口）
+    expect(stubs).toHaveLength(4);
+    expect(stubs.map((s) => s.question)).toEqual([
+      "练习四-1",
+      "练习四-2",
+      "练习四-4",
+      "p4-q7",
+    ]);
+    for (const stub of stubs) {
+      expect(stub.attempt).toBe(DATA.attempt.id);
+    }
+    expect(stubs.map((s) => s.prefix)).toEqual([
+      "第 1 题",
+      "第 2 题",
+      "第 3 题",
+      "第 4 题",
+    ]);
+  });
+
+  it("未公布（answersReleased=false）订正入口仍在（学生自有材料不受 gate 限制）", () => {
+    const unreleased: AttemptResultData = { ...DATA, answersReleased: false };
+    render(<AttemptResultView data={unreleased} onBackHome={vi.fn()} />);
+    expect(correctionStubDatasets()).toHaveLength(4);
   });
 });
