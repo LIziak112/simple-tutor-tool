@@ -1,6 +1,14 @@
 import type { NoteHeadData, NoteRecordMeta } from "@tutor/contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  correctionHeadKey,
+  hasRecoverableScratch,
+  openCorrectionOf,
+  type RecoverOutcome,
+  recoverScratchAsSupplement,
+  seedOpenCorrection,
+} from "@/features/notes/correction-record";
+import {
   clearCorrectionRecord,
   getNoteRecord,
   installNoteBackend,
@@ -9,14 +17,6 @@ import {
   resetNoteStoreForTest,
   writeNoteDoc,
 } from "@/features/notes/note-store";
-import {
-  correctionHeadKey,
-  type RecoverOutcome,
-  hasRecoverableScratch,
-  openCorrectionOf,
-  recoverScratchAsSupplement,
-  seedOpenCorrection,
-} from "@/features/notes/correction-record";
 import {
   DOC_A,
   DOC_B,
@@ -50,7 +50,9 @@ import { fetchStudentNoteDocumentApi } from "@/lib/api";
 const docMock = vi.mocked(fetchStudentNoteDocumentApi);
 
 /** 订正行工厂（未封存缺省；sealedAt 传非空即封存行） */
-function correctionRow(overrides: Partial<NoteRecordMeta> = {}): NoteRecordMeta {
+function correctionRow(
+  overrides: Partial<NoteRecordMeta> = {},
+): NoteRecordMeta {
   return {
     noteId: "88888888-8888-4888-8888-888888888801",
     attemptId: SCOPE.attemptId,
@@ -167,7 +169,12 @@ describe("seedOpenCorrection：未封存行对齐与条件播种", () => {
     const sealedHead = headWithCorrection(
       correctionRow({ sealedAt: "2026-10-07T02:00:00.000Z" }),
     );
-    await seedOpenCorrection(SESSION_A, SCOPE.attemptId, SCOPE.questionId, sealedHead);
+    await seedOpenCorrection(
+      SESSION_A,
+      SCOPE.attemptId,
+      SCOPE.questionId,
+      sealedHead,
+    );
     expect(await getNoteRecord(SESSION_A, CORRECTION_SCOPE)).toBeNull();
     expect(docMock).not.toHaveBeenCalled();
   });
@@ -175,7 +182,12 @@ describe("seedOpenCorrection：未封存行对齐与条件播种", () => {
   it("本地无记录 → 对齐 baseRevision/noteId 并拉正文播种（pending 清空）", async () => {
     docMock.mockResolvedValue(DOC_B);
     const head = headWithCorrection(correctionRow());
-    await seedOpenCorrection(SESSION_A, SCOPE.attemptId, SCOPE.questionId, head);
+    await seedOpenCorrection(
+      SESSION_A,
+      SCOPE.attemptId,
+      SCOPE.questionId,
+      head,
+    );
     const record = await getNoteRecord(SESSION_A, CORRECTION_SCOPE);
     expect(record?.baseRevision).toBe(2);
     expect(record?.noteId).toBe("88888888-8888-4888-8888-888888888801");
@@ -188,9 +200,18 @@ describe("seedOpenCorrection：未封存行对齐与条件播种", () => {
 
   it("revision=0 空白新行 → 只对齐 head 不拉正文（无版本可读）", async () => {
     const head = headWithCorrection(
-      correctionRow({ revision: 0, currentVersionId: null, serverSavedAt: null }),
+      correctionRow({
+        revision: 0,
+        currentVersionId: null,
+        serverSavedAt: null,
+      }),
     );
-    await seedOpenCorrection(SESSION_A, SCOPE.attemptId, SCOPE.questionId, head);
+    await seedOpenCorrection(
+      SESSION_A,
+      SCOPE.attemptId,
+      SCOPE.questionId,
+      head,
+    );
     const record = await getNoteRecord(SESSION_A, CORRECTION_SCOPE);
     expect(record?.baseRevision).toBe(0);
     expect(record?.noteId).toBe("88888888-8888-4888-8888-888888888801");
@@ -209,7 +230,12 @@ describe("seedOpenCorrection：未封存行对齐与条件播种", () => {
     expect(withPending?.pending).not.toBeNull();
 
     docMock.mockClear();
-    await seedOpenCorrection(SESSION_A, SCOPE.attemptId, SCOPE.questionId, head);
+    await seedOpenCorrection(
+      SESSION_A,
+      SCOPE.attemptId,
+      SCOPE.questionId,
+      head,
+    );
     expect(docMock).not.toHaveBeenCalled();
     const after = peekNoteRecord(SESSION_A, CORRECTION_SCOPE);
     expect(after?.pending).not.toBeNull(); // 未同步本地稿不被覆盖

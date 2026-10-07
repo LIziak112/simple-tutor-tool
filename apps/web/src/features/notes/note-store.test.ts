@@ -12,8 +12,8 @@ import {
   applyUploadConflict,
   applyUploadDenied,
   applyUploadReceipt,
-  clearNoteDeniedAccess,
   clearCorrectionRecord,
+  clearNoteDeniedAccess,
   deriveNoteStatusOverview,
   deriveServerState,
   ensureNoteLoaded,
@@ -896,7 +896,10 @@ describe("note-store：clearCorrectionRecord（T6R.15 新开订正行的本地�
     const after = await recordOf(SESSION_A, CORRECTION_SCOPE);
     expect(after.pending).toBeNull();
     // 空稿（与 freshRecord 同形——NoteDocInput 形态，默认值读出时物化）
-    expect(after.doc).toEqual({ version: 1, ink: { width: 1000, strokes: [] } });
+    expect(after.doc).toEqual({
+      version: 1,
+      ink: { width: 1000, strokes: [] },
+    });
     expect(after.conflict).toBeNull();
     expect(after.denied).toBeNull();
     expect(after.baseRevision).toBe(0);

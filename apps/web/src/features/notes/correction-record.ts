@@ -14,10 +14,7 @@
  *   材料只能作补充（结构性进不了 submission_evidence，服务端 D4 保证）。
  */
 
-import type {
-  NoteHeadData,
-  NoteRecordMeta,
-} from "@tutor/contract";
+import type { NoteHeadData, NoteRecordMeta } from "@tutor/contract";
 import {
   applyServerHead,
   applyServerLoad,
