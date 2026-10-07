@@ -912,7 +912,7 @@ describe("note-store：clearCorrectionRecord（T6R.15 新开订正行的本地�
     let sets = 0;
     const counting: NoteStoreBackend = {
       get: memoryNoteBackend().get,
-      set: (k, v) => {
+      set: (k) => {
         if (k === key) sets += 1;
         return Promise.resolve();
       },

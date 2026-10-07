@@ -47,13 +47,13 @@ export function openCorrectionOf(head: NoteHeadData): NoteRecordMeta | null {
 }
 
 /**
- * D8 找回判定（纯函数）：本地 scratch 记录是否有「未同步内容」——
- * 有笔迹且（有待传版本 或 从未上送过版本）。已全同步的内容服务端工作稿
- * 已持有（找回不产生新信息），空稿没有可找回的内容。
+ * D8 找回判定（纯函数，兼类型谓词）：本地 scratch 记录是否有「未同步
+ * 内容」——有笔迹且（有待传版本 或 从未上送过版本）。已全同步的内容
+ * 服务端工作稿已持有（找回不产生新信息），空稿没有可找回的内容。
  */
 export function hasRecoverableScratch(
   record: NoteLocalRecord | null,
-): boolean {
+): record is NoteLocalRecord {
   if (record === null) return false;
   if (record.doc.ink.strokes.length === 0) return false;
   return record.pending !== null || record.noteId === null;

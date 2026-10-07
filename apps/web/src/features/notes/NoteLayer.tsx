@@ -44,6 +44,7 @@ import {
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { InkPad } from "@/features/ink/InkPad";
 import { recoverNoteImages } from "@/features/notes/image-sync";
+import { NoteStatusArea } from "@/features/notes/NoteStatusArea";
 import { NoteToolbar } from "@/features/notes/NoteToolbar";
 import {
   type NoteLayoutPreference,
@@ -328,11 +329,15 @@ export function NoteLayer({
         ) : null}
       </div>
 
-      {/* 四维状态区 + 冲突/被拒/补图面板（方案 §5.3：正交、可理解、可操作） */}
+      {/* 四维状态区 + 冲突/被拒/补图面板（方案 §5.3：正交、可理解、可操作）。
+          T6R.15：抽至共享 NoteStatusArea（CorrectionPanel 复用），本组件按
+          草稿语境接线（label=草稿、图片维度开） */}
       {open && (
         <NoteStatusArea
           view={view}
           localLoaded={editor.localLoaded}
+          label="草稿"
+          images
           resolveError={resolveError}
           onKeepLocal={keepLocal}
           onKeepCloud={keepCloud}
@@ -375,157 +380,6 @@ export function NoteLayer({
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
-  );
-}
-
-/**
- * 四维状态区（方案 §5.3「状态必须正交」）：本地正文（saving/saved/failed）、
- * 服务端正文（dirty/uploading/synced；conflict/denied 走面板）、派生图片
- * （pending/failed/missing——仅正文已同步时提及，「图片待生成」≠「未保存」；
- * failed/missing 的判定内聚于此，复审⑩）。证据维度（evidence）草稿期恒
- * none，交卷固定后由 T6R.10 展示。
- *
- * **完整面板栈**（复审④）：各维度并列展示、按 denied > conflict > images >
- * 本机失败提示的优先级排序——本机落盘失败不再提前 return 遮蔽同步面板
- * （两件事同时成立时都得能看见、能操作）。
- *
- * **空稿（0 笔）不显示任何图片提示**（复审⑨定案）：无笔迹可渲染，派生图
- * 是无意义空白——不生成也不提示，避免空稿常态噪音；有笔后按四维口径
- * 如实显示。
- */
-function NoteStatusArea({
-  view,
-  localLoaded,
-  resolveError,
-  onKeepLocal,
-  onKeepCloud,
-  onRetryDenied,
-  imageRetrying,
-  onRetryImages,
-}: {
-  view: ReturnType<typeof useNoteEditor>["view"];
-  localLoaded: boolean;
-  resolveError: string | null;
-  onKeepLocal: () => void;
-  onKeepCloud: () => void;
-  onRetryDenied: () => void;
-  imageRetrying: boolean;
-  onRetryImages: () => void;
-}) {
-  if (view === null) {
-    return localLoaded ? null : (
-      <p role="status" className="text-xs text-muted-foreground">
-        草稿状态加载中…
-      </p>
-    );
-  }
-  const parts: string[] = [];
-  // 本地维度（IDB 事务）
-  if (view.local === "saving") parts.push("本机保存中…");
-  // 服务端维度（同步队列视角；conflict/denied 走面板，不与文案混排）
-  if (view.server === "uploading") parts.push("同步中…");
-  else if (view.server === "dirty") parts.push("等待同步");
-  // 图片维度（仅正文已同步且有笔迹时提示——派生任务不阻塞作答与交卷）
-  const strokeCount = view.doc?.ink.strokes.length ?? 0;
-  const imagesInformative = view.server === "synced" && strokeCount > 0;
-  if (imagesInformative && view.overview.images === "pending") {
-    parts.push("图片待生成");
-  }
-  const imagesFailed =
-    imagesInformative &&
-    (view.overview.images === "failed" || view.overview.images === "missing");
-
-  return (
-    <div className="flex flex-col gap-1.5">
-      {parts.length > 0 && (
-        <p role="status" className="text-xs text-muted-foreground">
-          {parts.join(" · ")}
-        </p>
-      )}
-      {view.denied !== null && (
-        <div
-          role="alert"
-          className="flex flex-col gap-2 rounded-lg border border-border bg-muted/60 px-3 py-2.5 text-xs"
-        >
-          <p className="font-medium">
-            {view.denied.kind === "access" ? "草稿已停止同步" : "草稿内容被拒"}
-          </p>
-          <p className="break-words text-muted-foreground">
-            {view.denied.reason}
-            {view.denied.kind === "content"
-              ? "。继续书写产生新内容后会自动重试上传。"
-              : "。本机草稿已保留，若权限恢复可重试同步。"}
-          </p>
-          {view.denied.kind === "access" && (
-            <Button
-              type="button"
-              variant="outline"
-              className="h-11 self-start"
-              onClick={onRetryDenied}
-            >
-              重试同步
-            </Button>
-          )}
-        </div>
-      )}
-      {view.conflict !== null && (
-        <div
-          role="alert"
-          className="flex flex-col gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2.5 text-xs text-amber-900"
-        >
-          <p className="font-medium">草稿内容冲突</p>
-          <p className="break-words">{view.conflict.reason}</p>
-          <p className="text-amber-700">
-            本机与服务端各保留了一份草稿，请选择保留哪一份（未被保留的一份仍
-            可在导出材料中找回）。
-          </p>
-          {resolveError !== null && (
-            <p className="text-destructive">{resolveError}</p>
-          )}
-          <div className="flex flex-wrap gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              className="h-11"
-              onClick={onKeepLocal}
-            >
-              保留本机内容
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              className="h-11"
-              onClick={onKeepCloud}
-            >
-              保留服务端内容
-            </Button>
-          </div>
-        </div>
-      )}
-      {view.local === "failed" && (
-        <p role="alert" className="text-xs text-destructive">
-          本机保存失败：{view.localError ?? "存储不可用"}。可继续书写（内容暂存
-          内存）；请检查设备存储空间，空间恢复后新笔迹会重新落盘。
-        </p>
-      )}
-      {imagesFailed && (
-        <div
-          role="status"
-          className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"
-        >
-          <span>草稿图片未生成完整（正文已保存，不影响作答与交卷）。</span>
-          <Button
-            type="button"
-            variant="outline"
-            className="h-11"
-            disabled={imageRetrying}
-            onClick={onRetryImages}
-          >
-            {imageRetrying ? "生成中…" : "重新生成图片"}
-          </Button>
-        </div>
-      )}
     </div>
   );
 }
