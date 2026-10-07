@@ -24,11 +24,13 @@ import {
  * 批量 LearningPack v2 与 MCP E2E（T6R.16 单4，验收链「教师可导错题也可含
  * 答对题」+「实际解包引用一致」）：
  * 用例一串起 建卷作答（判断答对 + 单选写稿答错）→ 交卷冻结 → 重建分析图 →
- * 订正封存（复制原稿 + 反思两列）→ 教师导出向导 v2（②证据组主开关 + 勾订正
- * 阶段 → ③逐题评析〔已开不回退〕→ ⑤预览证据缩略图 + 文件清单 evidence/）→
- * 下载解包（pack.json v2 结构断言：evidencePhases 回显 / 订正条目带封存列与
- * 反思 / responses 行 evidenceRefs 指向存在条目 / 对错混合行都在 / 映射.txt /
- * prompt.md 逐题评析与三阶段文案 / manifest 与 zip 条目一一对应）。
+ * 订正封存（复制原稿 + 反思两列）→ 补订正分析图（闸门 F12：笔记头取版本 id
+ * + 学生端补图接口）→ 教师导出向导 v2（②证据组主开关 + 勾订正
+ * 阶段 → ③逐题评析〔已开不回退〕→ ⑤预览证据缩略图〔含订正 ready 行与
+ * downloadUrl 直出〕+ 文件清单 evidence/）→ 下载解包（pack.json v2 结构
+ * 断言：evidencePhases 回显 / 订正条目带封存列与反思 / responses 行
+ * evidenceRefs 指向存在条目 / 对错混合行都在 / 订正图就绪无缺失登记 /
+ * 映射.txt / prompt.md 逐题评析与三阶段文案 / manifest 与 zip 条目一一对应）。
  * 用例二对照锁 UI v1/v2 分叉：不开证据组（只勾逐题作答）下载的 zip 仍是 v1
  * （meta.version=1、pack.json 无 manifest、zip 无 evidence/ 条目）。
  *
@@ -103,6 +105,24 @@ async function teacherUiLogin(page: Page): Promise<void> {
   await page.fill("#login-password", TEACHER_PASSWORD);
   await page.getByRole("button", { name: "登录", exact: true }).click();
   await page.waitForURL("**/t/library");
+}
+
+/**
+ * 最小合法 PNG（闸门 F12：spec 内自造，勿引 server 内部件）：魔数 + IHDR
+ * （长度 13 + 宽高）+ 尾部 IEND 哨兵——attachNoteImage 的 pngIntact 只校验
+ * 这三样；padding ~200 使总长 >100（expectDecodablePng 的长度门槛）。
+ */
+function makeCorrectionPng(): Buffer {
+  const total = 64 + 200;
+  const buf = Buffer.alloc(total);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(buf, 0);
+  buf.writeUInt32BE(13, 8); // IHDR 块长度恒 13
+  buf.write("IHDR", 12, "latin1");
+  buf.writeUInt32BE(1000, 16); // 宽
+  buf.writeUInt32BE(800, 20); // 高
+  buf.writeUInt32BE(0, total - 12); // IEND 块长度 0
+  buf.write("IEND", total - 8, "latin1");
+  return buf;
 }
 
 test.describe("learning-pack-v2 批量学情包 v2 全链（T6R.16）", () => {
@@ -251,6 +271,50 @@ test.describe("learning-pack-v2 批量学情包 v2 全链（T6R.16）", () => {
         resultChoiceCard.getByText("第二步符号处理卡住了"),
       ).toBeVisible();
 
+      // —— 补订正分析图（闸门 F12：订正图片进包闭环） ——
+      // 取订正版本 id（笔记头 GET；page.request 带学生会话 cookie）
+      const headRes = await studentPage.request.get(
+        `/api/student/attempts/${attemptId}/notes/${choiceQuestionId}`,
+      );
+      if (!headRes.ok()) {
+        throw new Error(`读取笔记头失败：HTTP ${headRes.status()}`);
+      }
+      const headData = (await headRes.json()) as {
+        data: {
+          corrections: Array<{ currentVersionId: string | null }>;
+        };
+      };
+      const correctionVersionId =
+        headData.data.corrections.at(-1)?.currentVersionId;
+      if (correctionVersionId === null || correctionVersionId === undefined) {
+        throw new Error("笔记头缺少订正版本 id");
+      }
+      // 为已封存订正版本补 analysis 图（requireUsableAttempt=ensureAttemptFrozen，
+      // 已交卷即可，无 sealed 阻断）
+      const attachRes = await studentPage.request.post(
+        `/api/student/note-versions/${correctionVersionId}/images`,
+        {
+          multipart: {
+            image: {
+              name: "note.png",
+              mimeType: "image/png",
+              buffer: makeCorrectionPng(),
+            },
+            spec: "analysis",
+            pageIndex: "0",
+            cropX: "0",
+            cropY: "0",
+            cropW: "1000",
+            cropH: "800",
+            pixelWidth: "1000",
+            pixelHeight: "800",
+          },
+        },
+      );
+      if (!attachRes.ok()) {
+        throw new Error(`订正补图失败：HTTP ${attachRes.status()}`);
+      }
+
       // 学生端全程无泄露
       await studentPage.waitForTimeout(800);
       expect(leak.violations()).toEqual([]);
@@ -322,7 +386,15 @@ test.describe("learning-pack-v2 批量学情包 v2 全链（T6R.16）", () => {
 
     // ④ 隐私：默认化名
     await expect(page.getByText("化名导出（默认开启）")).toBeVisible();
+    // 闸门 F12：拦截 preview 响应（④→⑤ 触发），取订正图 downloadUrl 直出校验
+    const previewResponsePromise = page.waitForResponse(
+      (res) =>
+        /\/api\/teacher\/export\/learning-pack\/preview/.test(res.url()) &&
+        res.request().method() === "POST" &&
+        res.ok(),
+    );
     await page.getByRole("button", { name: "下一步" }).click();
+    const previewResponse = await previewResponsePromise;
 
     // ⑤ 预览：文件清单 + 模块回显（手写证据（原稿/订正））+ 证据缩略图区
     await expect(page.getByRole("list", { name: "文件清单" })).toBeVisible({
@@ -332,18 +404,47 @@ test.describe("learning-pack-v2 批量学情包 v2 全链（T6R.16）", () => {
       page.getByRole("list", { name: "文件清单" }).getByText("pack.json"),
     ).toBeVisible();
     await expect(
-      page.getByRole("list", { name: "文件清单" }).getByText(/evidence\//),
+      page
+        .getByRole("list", { name: "文件清单" })
+        .getByText(/evidence\//)
+        .first(),
     ).toBeVisible();
     await expect(page.getByText("手写证据（原稿/订正）")).toBeVisible();
     await expect(
       page.getByRole("heading", { name: /手写证据图片（共 \d+ 项）/ }),
     ).toBeVisible();
-    // 懒加载缩略图（WebKit 不判可视，只断元素在场）
+    // 懒加载缩略图（WebKit 不判可视，只断元素在场）；补图后原稿 + 订正 ≥2 张
     const thumbImages = page
       .getByRole("list", { name: "手写证据图片预览" })
       .locator('img[loading="lazy"]');
-    expect(await thumbImages.count()).toBeGreaterThanOrEqual(1);
+    expect(await thumbImages.count()).toBeGreaterThanOrEqual(2);
+    // 订正分析图缩略图在场（懒加载不判加载，元素在即可）
+    await expect(
+      page.getByRole("img", { name: /-correction-01\.png$/ }),
+    ).toBeAttached();
     await expect(page.getByText(/超过 50 MB 上限/)).toHaveCount(0);
+
+    // preview 直出：订正行 ready 且 downloadUrl 教师端可取（比浏览器 img 断言稳）
+    const previewData = (await previewResponse.json()) as {
+      data: {
+        evidenceImages: Array<{
+          file: string;
+          phase: string;
+          state: string;
+          downloadUrl?: string;
+        }>;
+      };
+    };
+    const correctionPreviewRow = previewData.data.evidenceImages.find(
+      (row) => row.phase === "correction",
+    );
+    expect(correctionPreviewRow?.state).toBe("ready");
+    expect(correctionPreviewRow?.file).toMatch(/-correction-01\.png$/);
+    expect(correctionPreviewRow?.downloadUrl).toBeTruthy();
+    const directRes = await request.get(
+      correctionPreviewRow?.downloadUrl ?? "",
+    );
+    expect(directRes.status()).toBe(200);
 
     // —— 生成并下载：拦截 download → zip 魔数 → 内存解包 ——
     const [download] = await Promise.all([
@@ -432,10 +533,20 @@ test.describe("learning-pack-v2 批量学情包 v2 全链（T6R.16）", () => {
       expectDecodablePng(entries.get(name) as Buffer, name);
     }
 
-    // 订正分析图未生成的显式缺失登记（不静默跳过）
+    // 闸门 F12：订正分析图已补——zip 内该条目在场且可解码
+    const correctionEntryName = `evidence/${correction.ref}-correction-01.png`;
+    expect(entries.has(correctionEntryName)).toBe(true);
+    expectDecodablePng(
+      entries.get(correctionEntryName) as Buffer,
+      correctionEntryName,
+    );
+
+    // 补图后：manifest.missing 不再有该订正的缺失行（显式缺失登记翻转为就绪）
     expect(
       pack.manifest.missing.some((row) => row.refs.includes(correction.ref)),
-    ).toBe(true);
+    ).toBe(false);
+    expect(correction.images.length).toBe(1);
+    expect(correction.images[0]?.state).toBe("ready");
 
     // 口径说明：订正只收已封存检查点
     expect(pack.manifest.contextNotes.join("\n")).toContain(
