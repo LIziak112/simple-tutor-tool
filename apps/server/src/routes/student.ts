@@ -65,6 +65,10 @@ import {
   saveNoteVersion,
 } from "../services/note-service";
 import {
+  buildReviewPackZip,
+  previewReviewPack,
+} from "../services/review-pack-service";
+import {
   getStudentCourseDetail,
   getStudentLecture,
   getStudentUnitLanding,
@@ -73,10 +77,6 @@ import {
 } from "../services/student-course-service";
 import { listStudentRecords } from "../services/student-records";
 import { changeStudentPassword } from "../services/student-service";
-import {
-  buildReviewPackZip,
-  previewReviewPack,
-} from "../services/review-pack-service";
 import { startWrongPractice } from "../services/wrong-practice";
 import { listWrongQuestions } from "../services/wrong-questions";
 

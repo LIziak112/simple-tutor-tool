@@ -37,8 +37,8 @@ import {
   assembleReviewPack,
   buildReviewPackZip,
   previewReviewPack,
-  zipReviewPack,
   type ReviewPackPrincipal,
+  zipReviewPack,
 } from "./review-pack-service.ts";
 
 /**
@@ -191,9 +191,16 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
     const world = await makeWorld(db, dataDir, { studentId: s1 });
     markByTeacher(db, world.attemptId);
 
-    const zip = await buildReviewPackZip(db, dataDir, TEACHER, world.attemptId, QUESTION_ID, {
-      now: NOW,
-    });
+    const zip = await buildReviewPackZip(
+      db,
+      dataDir,
+      TEACHER,
+      world.attemptId,
+      QUESTION_ID,
+      {
+        now: NOW,
+      },
+    );
     expect(zip.filename).toMatch(/^review-pack-q1-\d{8}-\d{6}\.zip$/);
     const entries = entriesOf(zip.bytes);
     for (const fixed of [
@@ -221,9 +228,10 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
     expect(pack.evidence.version?.versionId).toBe(world.versionId);
     // manifest：files 全在 zip
     for (const file of pack.manifest.files) {
-      expect(entries.has(file.path), `manifest 条目不在 zip：${file.path}`).toBe(
-        true,
-      );
+      expect(
+        entries.has(file.path),
+        `manifest 条目不在 zip：${file.path}`,
+      ).toBe(true);
     }
     // 教师题面含参考答案节
     const stem = entries.get("questions/q001/stem.md")?.toString("utf8") ?? "";
@@ -281,7 +289,9 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
       expect(text, `${name} 泄露提示哨兵`).not.toContain(SECRET_HINT);
       expect(text, `${name} 泄露评语哨兵`).not.toContain(SECRET_COMMENT);
       expect(text, `${name} 泄露 attemptId`).not.toContain(world.attemptId);
-      expect(text, `${name} 泄露 versionId`).not.toContain(world.versionId ?? "");
+      expect(text, `${name} 泄露 versionId`).not.toContain(
+        world.versionId ?? "",
+      );
       expect(text, `${name} 泄露 questionId`).not.toContain(QUESTION_ID);
     }
     // 填空脱敏：题面是 [[]] 空框不是 [[42]]
@@ -484,7 +494,10 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
     const db = createTestDb();
     const dataDir = createTestDir();
     const s1 = makeStudent(db);
-    const world = await makeWorld(db, dataDir, { studentId: s1, withNote: false });
+    const world = await makeWorld(db, dataDir, {
+      studentId: s1,
+      withNote: false,
+    });
     const preview = previewReviewPack(
       db,
       dataDir,
@@ -513,7 +526,10 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
     const dataDir = createTestDir();
     const s1 = makeStudent(db);
     const { attemptId } = frozenDraftAttempt(db, s1, [
-      { questionId: QUESTION_ID, snapshotJson: snapshotJsonOf({ id: QUESTION_ID }) },
+      {
+        questionId: QUESTION_ID,
+        snapshotJson: snapshotJsonOf({ id: QUESTION_ID }),
+      },
     ]);
     const preview = previewReviewPack(
       db,
@@ -534,17 +550,31 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
     const s2 = makeStudent(db);
     const world = await makeWorld(db, dataDir, { studentId: s1 });
     try {
-      previewReviewPack(db, dataDir, studentOf(s1), world.attemptId, "不存在的题", {
-        now: NOW,
-      });
+      previewReviewPack(
+        db,
+        dataDir,
+        studentOf(s1),
+        world.attemptId,
+        "不存在的题",
+        {
+          now: NOW,
+        },
+      );
       expect.unreachable("应抛 404");
     } catch (err) {
       expect(err).toMatchObject({ status: 404, code: "QUESTION_NOT_FOUND" });
     }
     try {
-      previewReviewPack(db, dataDir, studentOf(s2), world.attemptId, QUESTION_ID, {
-        now: NOW,
-      });
+      previewReviewPack(
+        db,
+        dataDir,
+        studentOf(s2),
+        world.attemptId,
+        QUESTION_ID,
+        {
+          now: NOW,
+        },
+      );
       expect.unreachable("应抛 403");
     } catch (err) {
       expect(err).toMatchObject({ status: 403, code: "FORBIDDEN" });
@@ -610,7 +640,9 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
     const teacherEvidence = teacherPreview.attachments.find(
       (a) => a.kind === "evidence" && a.state === "ready",
     );
-    expect(teacherEvidence?.downloadUrl).toContain("/api/teacher/note-versions/");
+    expect(teacherEvidence?.downloadUrl).toContain(
+      "/api/teacher/note-versions/",
+    );
   });
 
   it("schema.json 与 pnpm schema:export 产物逐字节一致", async () => {
@@ -644,10 +676,17 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
     const s1 = makeStudent(db);
     const world = await makeWorld(db, dataDir, { studentId: s1 });
     await expect(
-      buildReviewPackZip(db, dataDir, studentOf(s1), world.attemptId, QUESTION_ID, {
-        now: NOW,
-        maxBytes: 10,
-      }),
+      buildReviewPackZip(
+        db,
+        dataDir,
+        studentOf(s1),
+        world.attemptId,
+        QUESTION_ID,
+        {
+          now: NOW,
+          maxBytes: 10,
+        },
+      ),
     ).rejects.toMatchObject({ status: 413, code: "EXPORT_TOO_LARGE" });
   });
 
@@ -658,7 +697,7 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
     const world = await makeWorld(db, dataDir, {
       studentId: s1,
       stemMd:
-        "观察函数图像后填空：\n\n::graph{fn=\"x^2\" range=\"-2,2\"}\n\n开口方向：[[向上]]",
+        '观察函数图像后填空：\n\n::graph{fn="x^2" range="-2,2"}\n\n开口方向：[[向上]]',
     });
     const zip = await buildReviewPackZip(
       db,
@@ -683,12 +722,23 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
     const s1 = makeStudent(db);
     const world = await makeWorld(db, dataDir, { studentId: s1 });
     db.update(responsesTable)
-      .set({ teacherComment: SECRET_COMMENT, finalCorrect: true, autoCorrect: true })
+      .set({
+        teacherComment: SECRET_COMMENT,
+        finalCorrect: true,
+        autoCorrect: true,
+      })
       .where(eq(responsesTable.attemptId, world.attemptId))
       .run();
-    const zip = await buildReviewPackZip(db, dataDir, TEACHER, world.attemptId, QUESTION_ID, {
-      now: NOW,
-    });
+    const zip = await buildReviewPackZip(
+      db,
+      dataDir,
+      TEACHER,
+      world.attemptId,
+      QUESTION_ID,
+      {
+        now: NOW,
+      },
+    );
     const stem = entriesOf(zip.bytes)
       .get("questions/q001/stem.md")
       ?.toString("utf8");

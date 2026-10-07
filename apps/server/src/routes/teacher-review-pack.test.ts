@@ -8,6 +8,7 @@ import { createApp } from "../app.ts";
 import type { Db } from "../db/client.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { readZipEntries } from "../lib/zip-read.ts";
+import { attachNoteImage, saveNoteVersion } from "../services/note-service.ts";
 import {
   frozenDraftAttempt,
   snapshotJsonOf,
@@ -19,7 +20,6 @@ import {
   extractSessionToken,
   insertEvidence,
 } from "../test/note-world.ts";
-import { attachNoteImage, saveNoteVersion } from "../services/note-service.ts";
 
 /**
  * T6R.13 教师单题 review-pack 路由测试：
@@ -140,17 +140,20 @@ describe("教师单题 review-pack 路由", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("application/zip");
     expect(res.headers.get("cache-control")).toBe("no-store");
-    expect(res.headers.get("content-disposition") ?? "").toContain("attachment");
+    expect(res.headers.get("content-disposition") ?? "").toContain(
+      "attachment",
+    );
     const entries = readZipEntries(Buffer.from(await res.arrayBuffer()));
     const packJson =
-      entries.find((entry) => entry.name === "pack.json")?.data.toString("utf8") ??
-      "";
+      entries
+        .find((entry) => entry.name === "pack.json")
+        ?.data.toString("utf8") ?? "";
     expect(packJson).toContain(SECRET_ANSWER);
     expect(packJson).toContain(attemptId);
     const stem =
-      entries.find((entry) => entry.name === "questions/q001/stem.md")?.data.toString(
-        "utf8",
-      ) ?? "";
+      entries
+        .find((entry) => entry.name === "questions/q001/stem.md")
+        ?.data.toString("utf8") ?? "";
     expect(stem).toContain("参考答案");
     expect(stem).toContain("教师域解析");
   });

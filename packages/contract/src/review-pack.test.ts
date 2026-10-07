@@ -329,7 +329,16 @@ describe("reviewPackJsonSchema（schema:export 单一来源）", () => {
   it("与 docs/dsl/schema/review-pack.json 产物逐字节一致", () => {
     const scriptDir = dirname(fileURLToPath(import.meta.url));
     const artifact = readFileSync(
-      join(scriptDir, "..", "..", "..", "docs", "dsl", "schema", "review-pack.json"),
+      join(
+        scriptDir,
+        "..",
+        "..",
+        "..",
+        "docs",
+        "dsl",
+        "schema",
+        "review-pack.json",
+      ),
       "utf8",
     );
     expect(`${JSON.stringify(reviewPackJsonSchema(), null, 2)}\n`).toBe(

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { ApiErr, ReviewPackPreviewData } from "@tutor/contract";
 import { reviewPackPreviewDataSchema } from "@tutor/contract";
+import { eq } from "drizzle-orm";
 import type { Logger } from "pino";
 import pino from "pino";
 import { beforeAll, describe, expect, it } from "vitest";
@@ -8,8 +9,9 @@ import { createApp } from "../app.ts";
 import type { Db } from "../db/client.ts";
 import { responses as responsesTable } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
-import { eq } from "drizzle-orm";
 import { readZipEntries } from "../lib/zip-read.ts";
+import { attachNoteImage, saveNoteVersion } from "../services/note-service.ts";
+import { assertNoLeak } from "../test/assert-no-leak.ts";
 import {
   frozenDraftAttempt,
   snapshotJsonOf,
@@ -22,8 +24,6 @@ import {
   insertEvidence,
   loginStudent,
 } from "../test/note-world.ts";
-import { assertNoLeak } from "../test/assert-no-leak.ts";
-import { attachNoteImage, saveNoteVersion } from "../services/note-service.ts";
 
 /**
  * T6R.13 学生单题 review-pack 路由测试（新增学生端响应——泄露测试必写）：
@@ -98,13 +98,20 @@ beforeAll(async () => {
     { baseRevision: 0, mutationId: randomUUID() },
   );
   versionId = receipt.versionId;
-  attachNoteImage(db, dataDir, { kind: "student", id: aId }, versionId, makeNotePng(1000, 800), {
-    spec: "analysis",
-    pageIndex: 0,
-    crop: { x: 0, y: 0, width: 1000, height: 800 },
-    pixelWidth: 1000,
-    pixelHeight: 800,
-  });
+  attachNoteImage(
+    db,
+    dataDir,
+    { kind: "student", id: aId },
+    versionId,
+    makeNotePng(1000, 800),
+    {
+      spec: "analysis",
+      pageIndex: 0,
+      crop: { x: 0, y: 0, width: 1000, height: 800 },
+      pixelWidth: 1000,
+      pixelHeight: 800,
+    },
+  );
   submitAttemptStatus(db, attemptId);
   insertEvidence(db, attemptId, QUESTION_ID, "frozen", versionId);
   // 教师批注（评语哨兵——学生包绝不携带）
@@ -139,10 +146,13 @@ describe("学生单题 review-pack 路由", () => {
       headers: { cookie: bCookie },
     });
     expect(forbidden.status).toBe(403);
-    const notFound = await app.request(previewUrl("00000000-0000-4000-8000-000000000000"), {
-      method: "POST",
-      headers: { cookie: aCookie },
-    });
+    const notFound = await app.request(
+      previewUrl("00000000-0000-4000-8000-000000000000"),
+      {
+        method: "POST",
+        headers: { cookie: aCookie },
+      },
+    );
     expect(notFound.status).toBe(404);
     const noQuestion = await app.request(
       `/api/student/attempts/${attemptId}/questions/不存在的题/review-pack/preview`,
@@ -205,12 +215,18 @@ describe("学生单题 review-pack 路由", () => {
       if (/\.(md|json)$/.test(entry.name)) {
         const text = entry.data.toString("utf8");
         expect(text, `${entry.name} 泄露答案哨兵`).not.toContain(SECRET_ANSWER);
-        expect(text, `${entry.name} 泄露解析哨兵`).not.toContain(SECRET_SOLUTION);
+        expect(text, `${entry.name} 泄露解析哨兵`).not.toContain(
+          SECRET_SOLUTION,
+        );
         expect(text, `${entry.name} 泄露提示哨兵`).not.toContain(SECRET_HINT);
-        expect(text, `${entry.name} 泄露评语哨兵`).not.toContain(SECRET_COMMENT);
+        expect(text, `${entry.name} 泄露评语哨兵`).not.toContain(
+          SECRET_COMMENT,
+        );
         expect(text, `${entry.name} 泄露 attemptId`).not.toContain(attemptId);
         expect(text, `${entry.name} 泄露 versionId`).not.toContain(versionId);
-        expect(text, `${entry.name} 泄露 questionId`).not.toContain(QUESTION_ID);
+        expect(text, `${entry.name} 泄露 questionId`).not.toContain(
+          QUESTION_ID,
+        );
       }
     }
     // 固定文件在场；PNG 魔数
@@ -225,7 +241,9 @@ describe("学生单题 review-pack 路由", () => {
       expect(names.has(fixed), `zip 缺 ${fixed}`).toBe(true);
     }
     const png = entries.find((entry) => entry.name.endsWith(".png"));
-    expect(png?.data.subarray(0, 4)).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    expect(png?.data.subarray(0, 4)).toEqual(
+      Buffer.from([0x89, 0x50, 0x4e, 0x47]),
+    );
     // 题面是脱敏空框（学生投影）
     expect(
       entries
@@ -239,7 +257,10 @@ describe("学生单题 review-pack 路由", () => {
       method: "POST",
       headers: { cookie: aCookie },
     });
-    const body = (await res.json()) as { ok: true; data: ReviewPackPreviewData };
+    const body = (await res.json()) as {
+      ok: true;
+      data: ReviewPackPreviewData;
+    };
     const evidence = body.data.attachments.find(
       (item) => item.kind === "evidence" && item.state === "ready",
     );

@@ -87,6 +87,7 @@ import {
   type ReorderRequest,
   type ReportDetail,
   type ReportListData,
+  type ReviewPackPreviewData,
   type SharedFileList,
   type SharedImportRequest,
   type SharedPreviewData,
@@ -1981,6 +1982,105 @@ export async function downloadLearningPackApi(
     URL.revokeObjectURL(url);
   }
   return filename;
+}
+
+// ---------- T6R.13：单题完整导出（review-pack，契约 review-pack.ts） ----------
+
+/** review-pack 请求角色（学生本人 / 教师域——与后端 principal 对应） */
+export type ReviewPackRole = "student" | "teacher";
+
+/** 单题包预览（POST …/review-pack/preview 统一壳；附件清单 + 缺失 + reviewMd） */
+export function fetchReviewPackPreviewApi(
+  role: ReviewPackRole,
+  attemptId: string,
+  questionId: string,
+): Promise<ReviewPackPreviewData> {
+  return callApi(() =>
+    role === "student"
+      ? api.api.student.attempts[":id"].questions[":questionId"][
+          "review-pack"
+        ].preview.$post({ param: { id: attemptId, questionId } })
+      : api.api.teacher.attempts[":id"].questions[":questionId"][
+          "review-pack"
+        ].preview.$post({ param: { id: attemptId, questionId } }),
+  );
+}
+
+/**
+ * 下载单题包 zip（POST …/review-pack 文件直出；同 downloadLearningPackApi
+ * 模式：同构 fetch 拿 blob 触发浏览器下载，文件名取 Content-Disposition，
+ * 回退固定名）。网络失败给中文提示；服务端统一壳错误经 throwShellError 抛
+ * ApiError。**每次点击都重新请求**（响应 no-store，不跨账号缓存复用）。
+ */
+export async function downloadReviewPackApi(
+  role: ReviewPackRole,
+  attemptId: string,
+  questionId: string,
+): Promise<string> {
+  let res: Response;
+  try {
+    res = await fetch(
+      `/api/${role}/attempts/${encodeURIComponent(attemptId)}/questions/${encodeURIComponent(questionId)}/review-pack`,
+      { method: "POST" },
+    );
+  } catch {
+    throw new Error("连不上服务器，请检查网络后重试");
+  }
+  if (!res.ok) {
+    await throwShellError(res);
+  }
+  const disposition = res.headers.get("content-disposition") ?? "";
+  const matched = /filename="?([^";]+)"?/i.exec(disposition)?.[1];
+  const filename =
+    matched !== undefined && matched.length > 0 ? matched : "review-pack.zip";
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  try {
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = filename;
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+  return filename;
+}
+
+/**
+ * 逐张下载真实图片（媒体配图 / 证据分析图；url 来自预览 attachments 的
+ * downloadUrl——学生/教师各自已授权的直出端点或公开 /blobs 路径）。
+ * 会话过期（401/403）与网络失败都显式抛中文错误，**不静默声称下载成功**。
+ */
+export async function downloadAttachmentApi(
+  url: string,
+  filename: string,
+): Promise<void> {
+  let res: Response;
+  try {
+    res = await fetch(url);
+  } catch {
+    throw new Error("连不上服务器，请检查网络后重试");
+  }
+  if (res.status === 401 || res.status === 403) {
+    throw new Error("没有权限读取这张图片（登录可能已过期，请刷新页面后重试）");
+  }
+  if (!res.ok) {
+    throw new Error(`图片下载失败（HTTP ${res.status}）`);
+  }
+  const blob = await res.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  try {
+    const anchor = document.createElement("a");
+    anchor.href = objectUrl;
+    anchor.download = filename;
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
 }
 
 // ---------- 备份与恢复（T4.5，D20/D21 口径见契约 backup-api.ts） ----------

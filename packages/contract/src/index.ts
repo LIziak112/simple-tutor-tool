@@ -32,9 +32,6 @@ export * from "./learning-event.ts";
 export * from "./learning-pack.ts";
 /** 资源库 API 契约（T2A.2 起为权威定义）：资源库页面与单元管理的请求/响应、错误码 */
 export * from "./library-api.ts";
-/** 单题完整导出契约（T6R.13 起为权威定义）：review-pack 双角色 pack.json/预览/
- *  review.md 提示词单一来源；学生包 id 剥离与答案剔除为 schema 级不变量 */
-export * from "./review-pack.ts";
 /** MCP 教师侧配套契约（T4.6 起为权威定义，依据 Phase4 清单 §2 D22/D24）：apiToken
  *  查看/生成重置、reports 列表/删除、save_report 写入参数；/mcp 端点本身无契约变化 */
 export * from "./mcp-api.ts";
@@ -46,6 +43,9 @@ export * from "./media-api.ts";
 export * from "./note.ts";
 /** 运行时公开配置契约（T2.12 起为权威定义）：GET /api/public/config 的 pwaEnabled/publicUrl */
 export * from "./public-config.ts";
+/** 单题完整导出契约（T6R.13 起为权威定义）：review-pack 双角色 pack.json/预览/
+ *  review.md 提示词单一来源；学生包 id 剥离与答案剔除为 schema 级不变量 */
+export * from "./review-pack.ts";
 /** 共享发布 API 契约（T2B.7 起为权威定义）：DATA_DIR/shared 目录的发布/列表/预览/导入/删除 */
 export * from "./shared-api.ts";
 /** DSL 规范文件契约（T1.13 起为权威定义）：/api/public/spec 文件名枚举与 Content-Type */

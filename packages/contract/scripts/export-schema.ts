@@ -87,8 +87,4 @@ await writeSchema(
 );
 // 单题复习包（T6R.13）：reviewPackJsonSchema() 与 review-pack-service 共用，
 // zip 内 schema.json 与本文件逐字节一致（同一模式）
-await writeSchema(
-  "review-pack.json",
-  "单题复习包契约",
-  reviewPackJsonSchema(),
-);
+await writeSchema("review-pack.json", "单题复习包契约", reviewPackJsonSchema());

@@ -349,7 +349,9 @@ export function renderReviewPackPrompt(input: ReviewPackPromptInput): string {
       "> **复制文字给 AI 时不含任何图片**——只有本文件与题目文字；图片请用工具里的「逐张下载」取得后作为附件上传。",
     );
   } else {
-    usageLines.push("> 本包为纯文字材料（无图片附件），可直接整份复制文字交给 AI。");
+    usageLines.push(
+      "> 本包为纯文字材料（无图片附件），可直接整份复制文字交给 AI。",
+    );
   }
   sections.push([...usageLines, ""].join("\n"));
 
@@ -404,9 +406,7 @@ export function renderReviewPackPrompt(input: ReviewPackPromptInput): string {
     "",
     "在场：",
     ...(input.files.length > 0
-      ? input.files.map(
-          (file) => `- ${file.path}（${sizeTextOf(file.bytes)}）`,
-        )
+      ? input.files.map((file) => `- ${file.path}（${sizeTextOf(file.bytes)}）`)
       : ["- （无附件文件）"]),
   ];
   if (input.missing.length > 0) {
@@ -477,11 +477,7 @@ export type ReviewPackEvidenceImage = z.infer<
 >;
 export type ReviewPackEvidence = z.infer<typeof reviewPackEvidenceSchema>;
 export type ReviewPack = z.infer<typeof reviewPackSchema>;
-export type ReviewPackPreviewFile = z.infer<
-  typeof reviewPackPreviewFileSchema
->;
+export type ReviewPackPreviewFile = z.infer<typeof reviewPackPreviewFileSchema>;
 export type ReviewPackAttachment = z.infer<typeof reviewPackAttachmentSchema>;
-export type ReviewPackPreviewData = z.infer<
-  typeof reviewPackPreviewDataSchema
->;
+export type ReviewPackPreviewData = z.infer<typeof reviewPackPreviewDataSchema>;
 export type ReviewPackErrorCode = z.infer<typeof reviewPackErrorCodeSchema>;

@@ -8,8 +8,8 @@ import type {
   ReviewPackPreviewFile,
 } from "@tutor/contract";
 import {
-  renderReviewPackPrompt,
   REVIEW_PACK_MAX_BYTES,
+  renderReviewPackPrompt,
   reviewPackJsonSchema,
   reviewPackPreviewDataSchema,
   reviewPackSchema,
@@ -18,7 +18,7 @@ import { buildStaticQuestionMaterial } from "@tutor/md-dsl";
 import { ZipArchive } from "archiver";
 import { eq } from "drizzle-orm";
 import type { Db } from "../db/client";
-import { type Attempt, type ResponseRow, assignments } from "../db/schema";
+import { type Attempt, assignments, type ResponseRow } from "../db/schema";
 import { HttpError } from "../lib/http-error";
 import {
   answerOf,
@@ -213,9 +213,7 @@ function reviewAnswersText(answers: QuestionAnswers): string {
         .map(letterOf)
         .join("");
     case "fill":
-      return answers.blanks
-        .map((blank) => blank.join(" 或 "))
-        .join("；");
+      return answers.blanks.map((blank) => blank.join(" 或 ")).join("；");
     case "final":
       return answers.answer;
   }
@@ -285,9 +283,7 @@ export function assembleReviewPack(
   const staticMaterial = buildStaticQuestionMaterial({
     role,
     stemMd: material.stemMd,
-    ...(material.options !== undefined
-      ? { options: material.options }
-      : {}),
+    ...(material.options !== undefined ? { options: material.options } : {}),
     ...(answerText !== null ? { answerText } : {}),
     questionNo: no,
   });
@@ -404,7 +400,12 @@ export function assembleReviewPack(
         bytes: Buffer.byteLength(schemaJson, "utf8"),
         refs: [],
       },
-      { path: questionEntry, kind: "question", bytes: promptFiles[0]?.bytes ?? 0, refs: [qRef] },
+      {
+        path: questionEntry,
+        kind: "question",
+        bytes: promptFiles[0]?.bytes ?? 0,
+        refs: [qRef],
+      },
       ...mediaEntries.map((medium) => ({
         path: medium.entry,
         kind: "media" as const,
