@@ -1166,9 +1166,9 @@ describe("T6R.15 错误码：订正三新码", () => {
     expect(noteErrorCodeSchema.safeParse("note_not_submitted").success).toBe(
       false,
     );
-    expect(
-      noteErrorCodeSchema.safeParse("ATTEMPT_NOT_SUBMITTED").success,
-    ).toBe(false);
+    expect(noteErrorCodeSchema.safeParse("ATTEMPT_NOT_SUBMITTED").success).toBe(
+      false,
+    );
   });
 });
 
