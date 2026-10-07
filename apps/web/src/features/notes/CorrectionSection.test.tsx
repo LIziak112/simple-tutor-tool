@@ -81,11 +81,11 @@ vi.mock("@/features/ink/engine/index.ts", () => ({
 }));
 
 import {
+  ApiError,
   createCorrectionApi,
   fetchStudentNoteDocumentApi,
   putNoteDocumentApi,
   sealCorrectionApi,
-  ApiError,
 } from "@/lib/api";
 import { fetchNoteEvidenceApi } from "@/lib/note-endpoints";
 import { CorrectionSection } from "./CorrectionSection";
@@ -119,7 +119,12 @@ function makeEngine(opts: unknown): InkEngine {
     box.entry?.emit?.(data, "load");
   });
   const engine: InkEngine = {
-    getData: () => ({ engine: "atrament", version: 1, data: { width: 1000, strokes: [] }, updatedAt: 0 }),
+    getData: () => ({
+      engine: "atrament",
+      version: 1,
+      data: { width: 1000, strokes: [] },
+      updatedAt: 0,
+    }),
     load: load as unknown as InkEngine["load"],
     exportPng: () => Promise.reject(new Error("测试未使用")),
     undo: mockUndo,
@@ -172,9 +177,18 @@ async function waitForEngine(count = 1): Promise<EngineEntry> {
 
 // ---------- 夹具 ----------
 
-const CORRECTION_SCOPE = { ...{ attemptId: "att-1", questionId: "p1-q1" }, phase: "correction" as const };
-const SCRATCH_SCOPE = { ...{ attemptId: "att-1", questionId: "p1-q1" }, phase: "scratch" as const };
-const SUPPLEMENT_SCOPE = { ...{ attemptId: "att-1", questionId: "p1-q1" }, phase: "supplement" as const };
+const CORRECTION_SCOPE = {
+  ...{ attemptId: "att-1", questionId: "p1-q1" },
+  phase: "correction" as const,
+};
+const SCRATCH_SCOPE = {
+  ...{ attemptId: "att-1", questionId: "p1-q1" },
+  phase: "scratch" as const,
+};
+const SUPPLEMENT_SCOPE = {
+  ...{ attemptId: "att-1", questionId: "p1-q1" },
+  phase: "supplement" as const,
+};
 const SESSION_A = { origin: "https://tutor.example", studentId: "student-a" };
 
 function headFixture(
@@ -199,7 +213,8 @@ function evidenceFixture(
     attemptId: "att-1",
     questionId: "p1-q1",
     state,
-    versionId: state === "frozen" ? "33333333-3333-4333-8333-3333333333aa" : null,
+    versionId:
+      state === "frozen" ? "33333333-3333-4333-8333-3333333333aa" : null,
     recordedAt: "2026-10-07T00:30:00.000Z",
   };
 }
@@ -250,7 +265,9 @@ const RECEIPT_2 = {
 
 // ---------- harness ----------
 
-function renderSection(props: Partial<Parameters<typeof CorrectionSection>[0]> = {}) {
+function renderSection(
+  props: Partial<Parameters<typeof CorrectionSection>[0]> = {},
+) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
@@ -268,7 +285,7 @@ function renderSection(props: Partial<Parameters<typeof CorrectionSection>[0]> =
   );
 }
 
-/** 展开订正区并等头就绪 */
+/** 展开订正区并等头就绪（加载态消失 = queryFn 已 settle） */
 async function expandAndWait(head: NoteHeadData) {
   evidenceMock.mockResolvedValue(head);
   renderSection();
@@ -276,6 +293,11 @@ async function expandAndWait(head: NoteHeadData) {
   fireEvent.click(screen.getByRole("button", { name: "第 1 题订正" }));
   await vi.waitFor(() => {
     expect(evidenceMock).toHaveBeenCalledWith("student", "att-1", "p1-q1");
+  });
+  await vi.waitFor(() => {
+    if (screen.queryByLabelText("正在读取订正信息") !== null) {
+      throw new Error("头仍在加载（超时重试中）");
+    }
   });
 }
 
@@ -310,39 +332,44 @@ describe("CorrectionSection：折叠/展开与三态", () => {
   });
 
   it("头加载失败 → 错误面板 + 重试（不吞错）", async () => {
-    evidenceMock.mockRejectedValue(new Error("网络断开"));
+    // ApiError（终态类）不重试——普通网络错误按生产语义退避重试，等不及断言
+    evidenceMock.mockRejectedValue(
+      new ApiError("NOTE_NOT_FOUND", "找不到这道题的笔记信息", 404),
+    );
     renderSection();
     fireEvent.click(screen.getByRole("button", { name: "第 1 题订正" }));
     expect(await screen.findByText(/订正信息读取失败/)).toBeInTheDocument();
+    expect(screen.getByText(/找不到这道题的笔记信息/)).toBeInTheDocument();
     evidenceMock.mockResolvedValue(headFixture());
     fireEvent.click(screen.getByRole("button", { name: "重试" }));
     await vi.waitFor(() => {
-      expect(screen.getByRole("button", { name: "添加订正" })).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "添加订正" }),
+      ).toBeInTheDocument();
     });
   });
 
   it("「本题历史」链接携 questionId 跳笔记本", async () => {
     await expandAndWait(headFixture());
-    expect(screen.getByRole("link", { name: "第 1 题本题历史" })).toHaveAttribute(
-      "href",
-      "/s/notebook/p1-q1",
-    );
+    expect(
+      screen.getByRole("link", { name: "第 1 题本题历史" }),
+    ).toHaveAttribute("href", "/s/notebook/p1-q1");
   });
 });
 
 describe("CorrectionSection：添加订正（两选项与禁用态）", () => {
   it("无订正：显示「添加订正」与空态说明", async () => {
     await expandAndWait(headFixture());
-    expect(screen.getByRole("button", { name: "添加订正" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "添加订正" }),
+    ).toBeInTheDocument();
     expect(screen.getByText(/还没有保存过的订正/)).toBeInTheDocument();
   });
 
   it("Dialog 二选一：默认空白可用；证据非 frozen 时「复制原稿」禁用并说明", async () => {
     await expandAndWait(headFixture({ evidence: evidenceFixture("missing") }));
     fireEvent.click(screen.getByRole("button", { name: "添加订正" }));
-    expect(
-      screen.getByRole("button", { name: "空白订正" }),
-    ).toBeEnabled();
+    expect(screen.getByRole("button", { name: "空白订正" })).toBeEnabled();
     const copy = screen.getByRole("button", { name: "复制原稿开始订正" });
     expect(copy).toBeDisabled();
     expect(screen.getByText(/本次交卷没有可复制的原稿/)).toBeInTheDocument();
@@ -416,11 +443,11 @@ describe("CorrectionSection：已封存订正列表与继续编辑", () => {
         ],
       }),
     );
-    expect(screen.getByText(/封存于 2026年10月7日/)).toBeInTheDocument();
-    expect(screen.getByText("我卡在哪里：第二问不会代入")).toBeInTheDocument();
-    expect(screen.getByText("我的错因：抄错符号")).toBeInTheDocument();
-    // 无反思字段的行不显示对应分栏（第 1 行无错因、第 2 行无卡点）
-    expect(screen.queryByText(/我卡在哪里：抄错/)).toBeNull();
+    expect(screen.getAllByText(/封存于 2026年10月7日/)).toHaveLength(2);
+    expect(screen.getAllByText("我卡在哪里：")).toHaveLength(1);
+    expect(screen.getByText("第二问不会代入")).toBeInTheDocument();
+    expect(screen.getAllByText("我的错因：")).toHaveLength(1);
+    expect(screen.getByText("抄错符号")).toBeInTheDocument();
     const stubs = [
       ...document.querySelectorAll('[data-testid="note-version-stub"]'),
     ];
@@ -486,12 +513,12 @@ describe("CorrectionPanel：保存订正（seal 检查点）", () => {
     await openPanelWithSeededRow();
     fireEvent.click(screen.getByRole("button", { name: "保存订正" }));
     expect(
-      screen.getByText(/保存后这份订正定格，再修改会新开一份/),
-    ).toBeInTheDocument();
+      screen.getAllByText(/保存后这份订正定格，再修改会新开一份/).length,
+    ).toBeGreaterThanOrEqual(1);
     const stuck = screen.getByLabelText("我卡在哪里");
     fireEvent.change(stuck, { target: { value: "卡".repeat(600) } });
     expect(stuck).toHaveValue("卡".repeat(500));
-    expect(screen.getByText("最多 500 字")).toBeInTheDocument();
+    expect(screen.getAllByText("最多 500 字")).toHaveLength(2);
   });
 
   it("无新书写：追平后按 baseRevision=1 封存并携带反思；成功后面板收起、列表刷新", async () => {
@@ -513,7 +540,7 @@ describe("CorrectionPanel：保存订正（seal 检查点）", () => {
     });
     // 成功：编辑器收起、封存列表出现（含反思）
     await vi.waitFor(() => {
-      expect(screen.getByText("我卡在哪里：第二问不会代入")).toBeInTheDocument();
+      expect(screen.getByText("第二问不会代入")).toBeInTheDocument();
     });
     expect(screen.queryByRole("toolbar")).toBeNull();
   });
@@ -527,9 +554,7 @@ describe("CorrectionPanel：保存订正（seal 检查点）", () => {
       [40, 40],
     ]);
     putMock.mockResolvedValue(RECEIPT_2);
-    sealMock.mockResolvedValue(
-      headFixture({ corrections: [sealedRow(1)] }),
-    );
+    sealMock.mockResolvedValue(headFixture({ corrections: [sealedRow(1)] }));
     fireEvent.click(screen.getByRole("button", { name: "保存订正" }));
     fireEvent.click(screen.getByRole("button", { name: "确认保存" }));
     await vi.waitFor(() => {
@@ -600,7 +625,10 @@ describe("CorrectionPanel：保存订正（seal 检查点）", () => {
     });
     const puts = correctionPuts();
     expect(puts).toHaveLength(2);
-    expect(puts[1]?.[3]).toMatchObject({ phase: "correction", baseRevision: 0 });
+    expect(puts[1]?.[3]).toMatchObject({
+      phase: "correction",
+      baseRevision: 0,
+    });
   });
 });
 
@@ -633,11 +661,18 @@ describe("CorrectionSection：找回草稿为补充稿（D8）", () => {
     await expandAndWait(headFixture({ evidence: evidenceFixture("frozen") }));
     expect(
       screen.queryByRole("button", { name: "找回草稿为补充稿" }),
-    ).toBeNull();
-    record.pending = { mutationId: "m-1", doc: DOC_A }; // 恢复未同步（供 frozen 分支复检）
-    await expandAndWait(headFixture({ evidence: evidenceFixture("frozen") }));
+    ).toBeNull(); // frozen：原稿已固定，无找回语义
+    record.pending = { mutationId: "m-1", doc: DOC_A }; // 恢复未同步内容
+    // 重新展开（同一挂载收起再展开，头缓存命中不重拉；本地 scratch 重判）
+    fireEvent.click(screen.getByRole("button", { name: "第 1 题订正" })); // 收起
+    fireEvent.click(screen.getByRole("button", { name: "第 1 题订正" })); // 再展开
+    await vi.waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: "添加订正" }),
+      ).toBeInTheDocument();
+    });
     expect(
       screen.queryByRole("button", { name: "找回草稿为补充稿" }),
-    ).toBeNull(); // frozen：原稿已固定，无找回语义
+    ).toBeNull(); // frozen 仍不显示（证据状态是入口的第一道门）
   });
 });
