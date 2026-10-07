@@ -1540,24 +1540,19 @@ function assembleV2(core: PackCore): LearningPackAssembly {
             "v2 装配缺少该行的题目版本引用",
           );
         }
-        const evidenceRef = evidenceAsm.evidenceRefByResponseRowId.get(row.id);
-        if (m.evidence && evidenceRef === undefined) {
-          throw new HttpError(
-            500,
-            "EXPORT_ASSEMBLY_BROKEN",
-            "v2 装配缺少该行的证据引用",
-          );
-        }
-        // T6R.16 单1 过渡：契约为 evidenceRefs 数组（固定序 scratch→
-        // correction→supplement）。当前装配只有 scratch 原稿单值引用，包成
-        // 单元素数组；单2 的多阶段装配将替换为逐阶段收集。
-        const evidenceRefs =
-          m.evidence && evidenceRef !== undefined ? [evidenceRef] : undefined;
+        // T6R.16 多阶段：行证据引用数组（固定阶段序 scratch→correction→
+        // supplement；未选阶段或该行无所选阶段条目时无键——不产悬垂引用，
+        // 也不以空数组占位）
+        const evidenceRefs = evidenceAsm.evidenceRefsByResponseRowId.get(
+          row.id,
+        );
         responseRowsV2.push({
           ...base,
           questionRef,
           snapshotHash: hashByRef.get(questionRef) ?? null,
-          ...(evidenceRefs !== undefined ? { evidenceRefs } : {}),
+          ...(evidenceRefs !== undefined
+            ? { evidenceRefs: [...evidenceRefs] }
+            : {}),
         });
       }
     }

@@ -10,13 +10,15 @@ import type {
   QuestionType,
 } from "@tutor/contract";
 import { stemMdLeaksAnswers, studentStemMd } from "@tutor/md-dsl";
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, lte } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
   type Attempt,
   type NoteImageRow,
+  type NoteRow,
   type NoteVersionRow,
   noteImages,
+  notes,
   noteVersions,
   type ResponseRow,
   submissionEvidence,
@@ -49,7 +51,11 @@ import { snapshotOfRow } from "./snapshot";
  * - **证据**：submission_evidence 行如实呈现（frozen/missing/none/
  *   legacy_unverified；无行 = not_collected）；frozen 附版本摘要与 analysis
  *   规格分析图（缩略图低分辨率不进包）；未生成/失败/文件删除一律进缺失
- *   清单并带原因，不静默消失；
+ *   清单并带原因，不静默消失。T6R.16 多阶段：evidencePhases 选中才产出
+ *   对应阶段条目——订正只收已封存检查点（sealedAt ≤ asOf、版本 = 封存时
+ *   currentVersionId、携带反思两列）、补充稿按 serverSavedAt ≤ asOf 的最新
+ *   版本钉定（无 ≤asOf 版本的行跳过），三阶段共用去重/规范序（scratch →
+ *   correction → supplement，normalizeEvidencePhases 单点）；
  * - **文件名不含真实 id**：证据图路径只有包内编号（evidence/e001-original-01.png）。
  */
 
@@ -109,7 +115,7 @@ export interface EvidenceImageItem {
   readonly reason?: string;
 }
 
-/** 证据条目（e001…）：一次作答一道题一条 */
+/** 证据条目（e001…）：一次作答一道题一条（多阶段下同 response 行可挂多条，T6R.16） */
 export interface QuestionEvidenceEntry {
   readonly ref: string;
   readonly attemptId: string;
@@ -119,6 +125,18 @@ export interface QuestionEvidenceEntry {
   readonly no: number;
   readonly phase: NotePhase;
   readonly state: LearningPackEvidenceState;
+  /**
+   * 订正检查点封存时间（T6R.16）：仅 phase='correction' 且已封存的条目携带
+   * （装配只收已封存行，恒非 undefined）；scratch/supplement 恒不携带。
+   */
+  readonly sealedAt?: string;
+  /**
+   * 封存反思「我卡在哪里」（T6R.15 列 reflectionStuckAt，null 直传——未填写
+   * 已在服务层归一）：仅 correction 条目携带（可能为 null）。
+   */
+  readonly stuckAt?: string | null;
+  /** 封存反思「我的错因」（同 stuckAt 口径） */
+  readonly errorCause?: string | null;
   readonly version?:
     | {
         readonly versionId: string;
@@ -137,8 +155,12 @@ export interface QuestionEvidenceAssembly {
   /** responses 行 id（= questionRevisionId）→ q 条目编号 */
   readonly refByResponseRowId: ReadonlyMap<string, string>;
   readonly evidence: readonly QuestionEvidenceEntry[];
-  /** responses 行 id → e 条目编号（includeEvidence=false 时为空 Map） */
-  readonly evidenceRefByResponseRowId: ReadonlyMap<string, string>;
+  /**
+   * responses 行 id → e 条目编号列表（T6R.16 多阶段：单值改数组；固定顺序 =
+   * 阶段产出序 scratch → correction（sealedAt 升序）→ supplement
+   * （serverSavedAt 升序）；includeEvidence=false 或该行无所选阶段条目时无键）
+   */
+  readonly evidenceRefsByResponseRowId: ReadonlyMap<string, readonly string[]>;
   /** 已落盘的媒体附件（zip 写入；questionRefs = 引用它的 q 条目） */
   readonly media: ReadonlyArray<{
     readonly src: string;
@@ -168,6 +190,20 @@ export interface QuestionEvidenceOptions {
   /** 是否装配证据（submission_evidence + 分析图）；默认 false */
   readonly includeEvidence?: boolean;
   /**
+   * 证据收录阶段（T6R.16 多阶段）：缺省 ["scratch"]（T6R.12 行为零漂移）。
+   * **去重与规范序（scratch → correction → supplement）在本装配端统一执行**
+   * （契约不重排调用方输入）；导出 normalizeEvidencePhases 供 meta 回显与
+   * prompt 渲染使用同一规范序。
+   */
+  readonly evidencePhases?: readonly NotePhase[];
+  /**
+   * 装配时刻上界（T6R.16 固定选择）：订正只收 sealedAt ≤ asOf 的封存行、
+   * 补充稿取该 note 下 serverSavedAt ≤ asOf 的最新版本（currentVersionId 可能
+   * 晚于 asOf，不能直接用）。缺省 = 无上界（全部已封存行 / 头版本）——
+   * 本服务不取系统时间，调用方（export-service）负责把 asOf/now 归一后传入。
+   */
+  readonly asOf?: string;
+  /**
    * 是否装配媒体附件清单（::image 引用扫描＋落盘核对，复审 C18）：题目
    * 模块未勾选时传 false——「未选模块不夹带内容」，也不为未选模块做扫描。
    */
@@ -181,6 +217,26 @@ export interface QuestionEvidenceScopeItem {
 }
 
 // ---------- 纯函数（可测的身份与命名口径） ----------
+
+/** 证据阶段规范序（scratch < correction < supplement；T6R.16 装配端唯一规范序来源） */
+const NOTE_PHASE_ORDER: readonly NotePhase[] = [
+  "scratch",
+  "correction",
+  "supplement",
+];
+
+/**
+ * 证据阶段规范化（T6R.16）：去重 + 按规范序重排（契约 min(1)/max(3) 只锁
+ * 非空与长度上限，不重排调用方输入——本函数是服务端唯一规范序执行点）。
+ * 缺省（undefined）= ["scratch"]。导出供 export-service 的 meta.modules
+ * 回显与 prompt evidencePhases 使用（同一规范序，勿在他处手写排序）。
+ */
+export function normalizeEvidencePhases(
+  phases: readonly NotePhase[] | undefined,
+): NotePhase[] {
+  const requested = phases ?? ["scratch"];
+  return NOTE_PHASE_ORDER.filter((phase) => requested.includes(phase));
+}
 
 /**
  * 题目版本去重键：**教师域 + 内容身份**。同 hash 同内容在本包内共享条目、
@@ -364,13 +420,19 @@ export function assembleQuestionEvidence(
   const studentRole = options.role === "student";
   // 学生角色忽略层级（恒最小权限）；教师缺省 stem
   const level = studentRole ? "stem" : (options.questionLevel ?? "stem");
+  // T6R.16 多阶段：装配端统一规范化（去重 + 规范序），未选阶段零条目零文件
+  const evidencePhases = normalizeEvidencePhases(options.evidencePhases);
+  const wantScratch = evidencePhases.includes("scratch");
+  const wantCorrection = evidencePhases.includes("correction");
+  const wantSupplement = evidencePhases.includes("supplement");
+  const asOf = options.asOf;
 
   const revisions: QuestionRevisionEntry[] = [];
   const revisionByKey = new Map<string, QuestionRevisionEntry>();
   const refByResponseRowId = new Map<string, string>();
 
   const evidence: QuestionEvidenceEntry[] = [];
-  const evidenceRefByResponseRowId = new Map<string, string>();
+  const evidenceRefsByResponseRowId = new Map<string, readonly string[]>();
   const missingEvidenceImages: Array<{
     file: string;
     reason: string;
@@ -383,7 +445,7 @@ export function assembleQuestionEvidence(
     typeof submissionEvidence.$inferSelect
   >();
   const includeEvidence = options.includeEvidence === true;
-  if (includeEvidence && scope.length > 0) {
+  if (includeEvidence && wantScratch && scope.length > 0) {
     for (const ids of chunk(scope.map((item) => item.attempt.id))) {
       for (const row of db
         .select()
@@ -395,15 +457,118 @@ export function assembleQuestionEvidence(
     }
   }
 
+  // 订正/补充稿行批量预取（T6R.16 多阶段；chunk 同款，勿逐行点查）：
+  // - 订正只取**已封存**行（sealedAt 非空且 ≤ asOf；未封存进行中行不收录），
+  //   sealedAt 升序、同刻 id 升序（SQL 排序即产出序）；
+  // - 补充稿按行收录（serverSavedAt 升序，NULL 头行排前但必被版本钉定跳过），
+  //   版本另在下方钉定。
+  const correctionRowsByKey = new Map<string, NoteRow[]>();
+  const supplementRowsByKey = new Map<string, NoteRow[]>();
+  const pushNoteRow = (target: Map<string, NoteRow[]>, row: NoteRow): void => {
+    const key = `${row.attemptId}:${row.questionId}`;
+    const list = target.get(key);
+    if (list === undefined) target.set(key, [row]);
+    else list.push(row);
+  };
+  if (
+    includeEvidence &&
+    (wantCorrection || wantSupplement) &&
+    scope.length > 0
+  ) {
+    for (const ids of chunk(scope.map((item) => item.attempt.id))) {
+      if (wantCorrection) {
+        for (const row of db
+          .select()
+          .from(notes)
+          .where(
+            and(
+              inArray(notes.attemptId, ids),
+              eq(notes.phase, "correction"),
+              isNotNull(notes.sealedAt),
+              asOf !== undefined ? lte(notes.sealedAt, asOf) : undefined,
+            ),
+          )
+          .orderBy(asc(notes.sealedAt), asc(notes.id))
+          .all()) {
+          pushNoteRow(correctionRowsByKey, row);
+        }
+      }
+      if (wantSupplement) {
+        for (const row of db
+          .select()
+          .from(notes)
+          .where(
+            and(inArray(notes.attemptId, ids), eq(notes.phase, "supplement")),
+          )
+          .orderBy(asc(notes.serverSavedAt), asc(notes.id))
+          .all()) {
+          pushNoteRow(supplementRowsByKey, row);
+        }
+      }
+    }
+  }
+
+  // 补充稿版本钉定（T6R.16 固定选择）：每 note 取 serverSavedAt ≤ asOf 的最新
+  // note_version（currentVersionId 可能晚于 asOf，不能直接用）；无 ≤asOf 版本
+  // 的 note 在行产出时跳过（退化态）。批量预取候选版本后在内存取每 note 最新。
+  const supplementVersionIdByNoteId = new Map<string, string>();
+  if (includeEvidence && wantSupplement) {
+    const supplementNoteIds = [
+      ...new Set([...supplementRowsByKey.values()].flat().map((row) => row.id)),
+    ];
+    const latestByNoteId = new Map<string, NoteVersionRow>();
+    for (const ids of chunk(supplementNoteIds)) {
+      for (const row of db
+        .select()
+        .from(noteVersions)
+        .where(
+          and(
+            inArray(noteVersions.noteId, ids),
+            asOf !== undefined
+              ? lte(noteVersions.serverSavedAt, asOf)
+              : undefined,
+          ),
+        )
+        .all()) {
+        const prev = latestByNoteId.get(row.noteId);
+        if (
+          prev === undefined ||
+          row.serverSavedAt > prev.serverSavedAt ||
+          (row.serverSavedAt === prev.serverSavedAt &&
+            row.revision > prev.revision)
+        ) {
+          latestByNoteId.set(row.noteId, row);
+        }
+      }
+    }
+    for (const [noteId, row] of latestByNoteId) {
+      supplementVersionIdByNoteId.set(noteId, row.id);
+    }
+  }
+
   // frozen 版本行与分析图行批量预取（复审 C9：两次 chunk 查询代替
-  // 每个冻结证据两次点查——O(题数×2) 点查 → 常数两次查询，与
-  // submissionEvidence 预取同款口径）
+  // 每个冻结证据两次点查——O(题数×2) 点查 → 常数两次查询；T6R.16 起版本
+  // 候选扩到三阶段：scratch frozen 版本 + 订正 currentVersionId（封存后
+  // 不可变）+ 补充稿钉定版本）
   const versionRowById = new Map<string, NoteVersionRow>();
   const analysisImageRowsByVersion = new Map<string, NoteImageRow[]>();
   if (includeEvidence) {
-    const versionIds = [...evidenceRowByKey.values()]
+    const scratchVersionIds = [...evidenceRowByKey.values()]
       .filter((row) => row.state === "frozen" && row.versionId !== null)
       .map((row) => row.versionId as string);
+    const correctionVersionIds = wantCorrection
+      ? [...correctionRowsByKey.values()]
+          .flat()
+          .map((row) => row.currentVersionId)
+          .filter((id): id is string => id !== null)
+      : [];
+    const versionIds = [
+      ...new Set([
+        ...(wantScratch ? scratchVersionIds : []),
+        ...correctionVersionIds,
+        ...supplementVersionIdByNoteId.values(),
+      ]),
+    ];
     for (const ids of chunk(versionIds)) {
       for (const row of db
         .select()
@@ -474,67 +639,129 @@ export function assembleQuestionEvidence(
       refByResponseRowId.set(row.id, revision.ref);
 
       if (!includeEvidence) continue;
-      eSeq += 1;
-      const eRef = packRefOf("e", eSeq);
-      const evidenceRow = evidenceRowByKey.get(
-        `${attempt.id}:${row.questionId}`,
-      );
-      // frozen 的版本摘要与分析图先算后装（保持条目一次性构造，无中途突变）
-      let versionSummary:
-        | NonNullable<QuestionEvidenceEntry["version"]>
-        | undefined;
-      const evidenceImages: EvidenceImageItem[] = [];
-      if (evidenceRow?.state === "frozen") {
-        if (evidenceRow.versionId === null) {
-          // 数据异常防御（复审 A5）：frozen 必带版本引用（DB check 不拦 NULL
-          // 的手插/损坏行）——显式进缺失清单，不静默无图无登记
-          missingEvidenceImages.push({
-            file: evidenceImageFileName(eRef, "scratch", 0),
-            reason: "证据行缺少版本引用（数据异常）",
-            evidenceRef: eRef,
+      // T6R.16 多阶段：按规范序逐阶段产出证据条目（scratch → correction →
+      // supplement；eSeq 全阶段统一递增），行引用按产出序收集成数组。
+      // 未选阶段零条目零文件零缺失登记（无旁路附件）。
+      const phaseRefs: string[] = [];
+      if (wantScratch) {
+        eSeq += 1;
+        const eRef = packRefOf("e", eSeq);
+        const evidenceRow = evidenceRowByKey.get(
+          `${attempt.id}:${row.questionId}`,
+        );
+        // frozen 的版本摘要与分析图先算后装（保持条目一次性构造，无中途突变）
+        let versionSummary:
+          | NonNullable<QuestionEvidenceEntry["version"]>
+          | undefined;
+        const evidenceImages: EvidenceImageItem[] = [];
+        if (evidenceRow?.state === "frozen") {
+          const pinned = versionEvidenceOf(
+            dataDir,
+            eRef,
+            "scratch",
+            evidenceRow.versionId,
+            versionRowById,
+            analysisImageRowsByVersion,
+          );
+          versionSummary = pinned.version;
+          evidenceImages.push(...pinned.images);
+          missingEvidenceImages.push(...pinned.missing);
+        }
+        evidence.push({
+          ref: eRef,
+          attemptId: attempt.id,
+          studentId: attempt.studentId,
+          questionId: row.questionId,
+          questionRef: revision.ref,
+          no,
+          // 交卷原稿阶段（submission_evidence 行如实呈现；correction/
+          // supplement 是独立 NoteRecord，不进 submission_evidence）
+          phase: "scratch",
+          state: evidenceRow?.state ?? "not_collected",
+          ...(versionSummary !== undefined ? { version: versionSummary } : {}),
+          images: evidenceImages,
+        });
+        phaseRefs.push(eRef);
+      }
+      if (wantCorrection) {
+        // 已封存订正检查点（sealedAt 升序、同刻 id 升序——预取排序即产出序）：
+        // version=该行 currentVersionId（封存后不可变，固定选择可行的保证），
+        // 携带封存时间与两列反思（null 直传）；未封存进行中行不收录。
+        for (const note of correctionRowsByKey.get(
+          `${attempt.id}:${row.questionId}`,
+        ) ?? []) {
+          eSeq += 1;
+          const eRef = packRefOf("e", eSeq);
+          const pinned = versionEvidenceOf(
+            dataDir,
+            eRef,
+            "correction",
+            note.currentVersionId,
+            versionRowById,
+            analysisImageRowsByVersion,
+          );
+          evidence.push({
+            ref: eRef,
+            attemptId: attempt.id,
+            studentId: attempt.studentId,
+            questionId: row.questionId,
+            questionRef: revision.ref,
+            no,
+            phase: "correction",
+            // 订正条目恒 frozen（版本在场；版本行缺失的防御态见 version 缺席
+            // + 缺失清单，契约口径）
+            state: "frozen",
+            ...(note.sealedAt !== null ? { sealedAt: note.sealedAt } : {}),
+            stuckAt: note.reflectionStuckAt,
+            errorCause: note.reflectionErrorCause,
+            ...(pinned.version !== undefined
+              ? { version: pinned.version }
+              : {}),
+            images: pinned.images,
           });
-        } else {
-          const version = versionRowById.get(evidenceRow.versionId);
-          if (version !== undefined) {
-            versionSummary = {
-              versionId: version.id,
-              savedAt: version.serverSavedAt,
-              strokeCount: version.strokeCount,
-              pointCount: version.pointCount,
-              paperHeight: version.paperHeight,
-            };
-            const { images, missing } = analysisImagesOf(
-              dataDir,
-              eRef,
-              analysisImageRowsByVersion.get(version.id) ?? [],
-            );
-            evidenceImages.push(...images);
-            missingEvidenceImages.push(...missing);
-          } else {
-            // FK 保证不可达的防御分支：版本行缺失按显式缺失报出，不吞
-            missingEvidenceImages.push({
-              file: evidenceImageFileName(eRef, "scratch", 0),
-              reason: "被固定的版本行缺失（数据异常）",
-              evidenceRef: eRef,
-            });
-          }
+          missingEvidenceImages.push(...pinned.missing);
+          phaseRefs.push(eRef);
         }
       }
-      evidence.push({
-        ref: eRef,
-        attemptId: attempt.id,
-        studentId: attempt.studentId,
-        questionId: row.questionId,
-        questionRef: revision.ref,
-        no,
-        // 交卷证据当前只可能来自 scratch 工作稿（correction/supplement 由
-        // T6R.15 另起记录，届时以独立证据条目扩展）
-        phase: "scratch",
-        state: evidenceRow?.state ?? "not_collected",
-        ...(versionSummary !== undefined ? { version: versionSummary } : {}),
-        images: evidenceImages,
-      });
-      evidenceRefByResponseRowId.set(row.id, eRef);
+      if (wantSupplement) {
+        // 补充稿按行收录：版本取 serverSavedAt ≤ asOf 的最新 note_version
+        // （asOf 钉定可变正文）；无 ≤asOf 版本的行跳过（退化态）。
+        for (const note of supplementRowsByKey.get(
+          `${attempt.id}:${row.questionId}`,
+        ) ?? []) {
+          const pinnedVersionId = supplementVersionIdByNoteId.get(note.id);
+          if (pinnedVersionId === undefined) continue;
+          eSeq += 1;
+          const eRef = packRefOf("e", eSeq);
+          const pinned = versionEvidenceOf(
+            dataDir,
+            eRef,
+            "supplement",
+            pinnedVersionId,
+            versionRowById,
+            analysisImageRowsByVersion,
+          );
+          evidence.push({
+            ref: eRef,
+            attemptId: attempt.id,
+            studentId: attempt.studentId,
+            questionId: row.questionId,
+            questionRef: revision.ref,
+            no,
+            phase: "supplement",
+            state: "frozen",
+            ...(pinned.version !== undefined
+              ? { version: pinned.version }
+              : {}),
+            images: pinned.images,
+          });
+          missingEvidenceImages.push(...pinned.missing);
+          phaseRefs.push(eRef);
+        }
+      }
+      if (phaseRefs.length > 0) {
+        evidenceRefsByResponseRowId.set(row.id, phaseRefs);
+      }
     }
   }
 
@@ -585,10 +812,75 @@ export function assembleQuestionEvidence(
     revisions,
     refByResponseRowId,
     evidence,
-    evidenceRefByResponseRowId,
+    evidenceRefsByResponseRowId,
     media: mediaOut,
     missingMedia: missingMediaOut,
     missingEvidenceImages,
+  };
+}
+
+/**
+ * 版本摘要 + 分析图装配（T6R.16 三阶段共用收敛）：版本行在场才装摘要与
+ * analysis 规格分析图；两个防御分支——版本引用缺失（frozen 行 versionId
+ * NULL 的手插/损坏形态，复审 A5）与版本行缺失（FK 保证不可达）——显式进
+ * 缺失清单（预测路径带真实 phase），不静默吞。结果由调用方合并进条目与
+ * 缺失登记（保持条目一次性构造，无中途突变）。
+ */
+function versionEvidenceOf(
+  dataDir: string,
+  eRef: string,
+  phase: NotePhase,
+  versionId: string | null,
+  versionRowById: ReadonlyMap<string, NoteVersionRow>,
+  analysisImageRowsByVersion: ReadonlyMap<string, readonly NoteImageRow[]>,
+): {
+  version: NonNullable<QuestionEvidenceEntry["version"]> | undefined;
+  images: EvidenceImageItem[];
+  missing: Array<{ file: string; reason: string; evidenceRef: string }>;
+} {
+  if (versionId === null) {
+    return {
+      version: undefined,
+      images: [],
+      missing: [
+        {
+          file: evidenceImageFileName(eRef, phase, 0),
+          reason: "证据行缺少版本引用（数据异常）",
+          evidenceRef: eRef,
+        },
+      ],
+    };
+  }
+  const version = versionRowById.get(versionId);
+  if (version === undefined) {
+    return {
+      version: undefined,
+      images: [],
+      missing: [
+        {
+          file: evidenceImageFileName(eRef, phase, 0),
+          reason: "被固定的版本行缺失（数据异常）",
+          evidenceRef: eRef,
+        },
+      ],
+    };
+  }
+  const { images, missing } = analysisImagesOf(
+    dataDir,
+    eRef,
+    phase,
+    analysisImageRowsByVersion.get(version.id) ?? [],
+  );
+  return {
+    version: {
+      versionId: version.id,
+      savedAt: version.serverSavedAt,
+      strokeCount: version.strokeCount,
+      pointCount: version.pointCount,
+      paperHeight: version.paperHeight,
+    },
+    images,
+    missing,
   };
 }
 
@@ -597,11 +889,13 @@ export function assembleQuestionEvidence(
  * 路径；其余状态/文件丢失进缺失清单）；缩略图（thumbnail）不进包；版本
  * 一张分析图都没有时以预测路径报「未生成」。纯读（行已由 C9 预取传入），
  * 结果由调用方合并。缺失登记单出口（复审 B15）：images 槽位与 manifest
- * 清单同源同 reason。
+ * 清单同源同 reason。文件名按条目真实 phase 分标签（T6R.16：
+ * scratch=original / correction / supplement）。
  */
 function analysisImagesOf(
   dataDir: string,
   eRef: string,
+  phase: NotePhase,
   imageRows: readonly NoteImageRow[],
 ): {
   images: EvidenceImageItem[];
@@ -611,7 +905,7 @@ function analysisImagesOf(
     [];
   const images: EvidenceImageItem[] = [];
   for (const image of imageRows) {
-    const file = evidenceImageFileName(eRef, "scratch", image.pageIndex);
+    const file = evidenceImageFileName(eRef, phase, image.pageIndex);
     const crop: NoteCropRect = {
       x: image.cropX,
       y: image.cropY,
@@ -659,7 +953,7 @@ function analysisImagesOf(
   }
   if (imageRows.length === 0) {
     missing.push({
-      file: evidenceImageFileName(eRef, "scratch", 0),
+      file: evidenceImageFileName(eRef, phase, 0),
       reason: "该版本尚无分析图（未生成）",
       evidenceRef: eRef,
     });

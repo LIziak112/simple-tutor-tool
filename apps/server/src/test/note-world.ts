@@ -4,6 +4,7 @@ import { and, eq } from "drizzle-orm";
 import type { Db } from "../db/client.ts";
 import {
   notes as notesTable,
+  noteVersions as noteVersionsTable,
   submissionEvidence as submissionEvidenceTable,
 } from "../db/schema.ts";
 import type { TestApp } from "./note-fixtures.ts";
@@ -14,7 +15,10 @@ import type { TestApp } from "./note-fixtures.ts";
  * - insertEvidence：直插提交证据行（带 state 版——交卷事务写入口在 T6R.10，
  *   读侧测试按行存在性投影）；
  * - freshNoteAttempt：布置作业 + 开卷（三份 freshAttempt 手写归一）；
- * - noteRowOf：该 attempt 该题的 scratch 笔记行（两路由测试文件共用）。
+ * - noteRowOf：该 attempt 该题的 scratch 笔记行（两路由测试文件共用）；
+ * - setVersionSavedAt / setNoteSealedAt（T6R.16）：asOf 钉定测试的确定性
+ *   时间夹具——生产链路这两列不可变/随 seal 铸成，服务写入走真实 now，
+ *   测试按需回拨到相对 asOf 的时刻（同 submitAttemptStatus 直改口径）。
  */
 
 export function extractSessionToken(res: Response): string {
@@ -126,5 +130,37 @@ export function insertEvidence(
       versionId,
       recordedAt: new Date().toISOString(),
     })
+    .run();
+}
+
+/**
+ * 直改版本行的服务端确认时间（T6R.16 asOf 钉定测试夹具）：生产链路
+ * note_versions 不可变且 serverSavedAt 取真实 now，测试回拨到相对 asOf 的
+ * 时刻以构造「asOf 后新版本不进包」等确定性场景。
+ */
+export function setVersionSavedAt(
+  db: Db,
+  versionId: string,
+  serverSavedAt: string,
+): void {
+  db.update(noteVersionsTable)
+    .set({ serverSavedAt })
+    .where(eq(noteVersionsTable.id, versionId))
+    .run();
+}
+
+/**
+ * 直改订正行的封存时间（T6R.16 asOf 截止测试夹具）：sealCorrection 写真实
+ * now，测试回拨构造 sealedAt ≤ / > asOf 两分支；updatedAt 一并同步（行
+ * 一致性口径，装配不消费该列）。
+ */
+export function setNoteSealedAt(
+  db: Db,
+  noteId: string,
+  sealedAt: string,
+): void {
+  db.update(notesTable)
+    .set({ sealedAt, updatedAt: sealedAt })
+    .where(eq(notesTable.id, noteId))
     .run();
 }
