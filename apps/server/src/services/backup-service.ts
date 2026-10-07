@@ -20,7 +20,7 @@ import { eq } from "drizzle-orm";
 import type { Logger } from "pino";
 import { verifyPassword } from "../auth/password";
 import type { Db, DbHandle } from "../db/client";
-import { teachers } from "../db/schema";
+import { NOTE_BACKUP_REF_COLUMNS, teachers } from "../db/schema";
 import { HttpError } from "../lib/http-error";
 import { readZipEntries, type ZipEntry, ZipReadError } from "../lib/zip-read";
 import { beijingExportStampOf } from "./export-csv";
@@ -183,11 +183,10 @@ export function collectBackupReferencedPaths(dataDir: string): {
         const tableExists = (table: string): boolean =>
           tableNames.some((row) => row.name === table);
         collected = [];
-        // note_versions / note_images 两表同构读取（列名各自的原始路径列）
-        for (const [table, column] of [
-          ["note_versions", "body_path"],
-          ["note_images", "path"],
-        ] as const) {
+        // (表,列) 对由 db/schema NOTE_BACKUP_REF_COLUMNS 单源（C9）——
+        // 与 notes 表定义同文件保证表名同步；列名漂移则 SELECT 抛错走
+        // unreadable 保守 fail-safe
+        for (const [table, column] of NOTE_BACKUP_REF_COLUMNS) {
           if (!tableExists(table)) continue;
           const rows = snapshotDb
             .prepare(`SELECT ${column} AS p FROM ${table}`)
