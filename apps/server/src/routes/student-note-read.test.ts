@@ -470,7 +470,7 @@ describe("工作稿头与证据投影", () => {
 
 // ---------- 批量头投影（T6R.14） ----------
 
-describe("POST /attempts/:id/notes/heads 批量头投影", () => {
+describe("POST /attempts/:id/note-heads 批量头投影", () => {
   /** POST 批量头（cookie 可换学生；body 原样 JSON 串） */
   function postHeads(
     attemptId: string,
@@ -478,7 +478,7 @@ describe("POST /attempts/:id/notes/heads 批量头投影", () => {
     cookie: string = aCookie,
   ): Promise<Response> {
     return Promise.resolve(
-      app.request(`/api/student/attempts/${attemptId}/notes/heads`, {
+      app.request(`/api/student/attempts/${attemptId}/note-heads`, {
         method: "POST",
         headers: { "content-type": "application/json", cookie },
         body: JSON.stringify({ questionIds: [...questionIds] }),
@@ -548,7 +548,7 @@ describe("POST /attempts/:id/notes/heads 批量头投影", () => {
       {},
     ]) {
       const res = await app.request(
-        `/api/student/attempts/${attemptId}/notes/heads`,
+        `/api/student/attempts/${attemptId}/note-heads`,
         {
           method: "POST",
           headers: { "content-type": "application/json", cookie: aCookie },

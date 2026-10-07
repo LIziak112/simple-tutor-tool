@@ -1097,23 +1097,33 @@ export function fetchStudentNoteHeadApi(
  * 取与交卷组装（submit-evidence）共用，N 逐题 GET 收敛为 1 POST。
  * questionIds 顺序即响应回显顺序（服务端去重保序）；任一题目不在该 attempt
  * 冻结集合 → 404 QUESTION_NOT_FOUND 整批失败（与单题同门口）。
- * 走原语 fetch（同单题版的 signal 分支）：该路径在 hc 类型路由里与同层参数
- * 段 :questionId 混排时 json 入参类型退化（Hono 类型路由器限制），裸 fetch
- * + 契约类型不损失运行时安全（响应壳/错误码由 callApi 统一处理）。
+ * 无 signal 时走 hc RPC 类型客户端；交卷组装的整批超时传 signal 时走原语
+ * fetch（hc 推断不出 signal，同单题版 fetchStudentNoteHeadApi 双分支形态）。
  */
 export function fetchStudentNoteHeadsApi(
   attemptId: string,
   questionIds: readonly string[],
   signal?: AbortSignal,
 ): Promise<NoteHeadsData> {
+  if (signal === undefined) {
+    // json 以独立变量传入（同 postAttemptEventsApi）：内联字面量会触发 TS
+    // 对请求选项联合的过剩属性检查而误报 json 不存在
+    const args = {
+      param: { id: attemptId },
+      json: { questionIds: [...questionIds] },
+    };
+    return callApi(() =>
+      api.api.student.attempts[":id"]["note-heads"].$post(args),
+    );
+  }
   return callApi(() =>
     fetch(
-      `/api/student/attempts/${encodeURIComponent(attemptId)}/notes/heads`,
+      `/api/student/attempts/${encodeURIComponent(attemptId)}/note-heads`,
       {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ questionIds: [...questionIds] }),
-        ...(signal !== undefined ? { signal } : {}),
+        signal,
       },
     ),
   );
