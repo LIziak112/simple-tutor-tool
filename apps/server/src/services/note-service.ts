@@ -8,7 +8,15 @@ import {
 } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { gzipSync } from "node:zlib";
-import type { NoteImageUploadMeta, NoteUploadMetaInput } from "@tutor/contract";
+import type {
+  CorrectionCreateRequest,
+  CorrectionSealRequest,
+  NoteImageUploadMeta,
+  NoteRecordMeta,
+  NoteSubmissionEvidenceMeta,
+  NoteUploadMetaInput,
+  StudentNotebookData,
+} from "@tutor/contract";
 import {
   INK_LOGICAL_WIDTH,
   NOTE_BODY_DECOMPRESSED_MAX_BYTES,
@@ -16,6 +24,7 @@ import {
   NOTE_IMAGE_PNG_MAX_BYTES,
   NOTE_RENDER_VERSION,
   NOTE_VERSION_IMAGES_MAX_BYTES,
+  type NotebookRound,
   type NoteDoc,
   type NoteHeadData,
   type NoteHeadsData,
@@ -28,15 +37,17 @@ import {
   noteRevisionConflictCurrentSchema,
   noteSubmissionEvidenceMetaSchema,
 } from "@tutor/contract";
-import { and, asc, eq, isNotNull, ne, or, sql } from "drizzle-orm";
+import { and, asc, eq, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
+  attempts,
   type NoteImageRow,
   type NoteRow,
   type NoteVersionRow,
   noteImages,
   notes,
   noteVersions,
+  responses,
   type SubmissionEvidenceRow,
   submissionEvidence,
 } from "../db/schema";
@@ -56,10 +67,13 @@ import {
   requireUsableAttempt,
 } from "./attempt-service";
 import { collectBackupReferencedPaths } from "./backup-service";
+import { studentTeacherIdOf } from "./student-course-service";
 import {
   findTeacherAttempt,
   requireTeacherAttempt,
+  sourceOf,
 } from "./teacher-attempt-service";
+import { roundSourceTitle } from "./wrong-questions";
 
 /**
  * NoteService（T6R.4）——题目草稿的不可变版本存储：正文上传、服务端规范化
@@ -369,23 +383,34 @@ function sqliteUniqueViolationOn(err: unknown): "mutation" | "revision" | null {
 /**
  * 上传一版草稿正文，返回版本回执（契约 noteVersionReceiptSchema）。
  *
+ * T6R.15 三 phase 分派（meta.phase 缺省 scratch，旧客户端零变化）：
+ * - scratch：本次工作稿。draft 可写、交卷后新写 409 ALREADY_SUBMITTED（原稿
+ *   冻结）；题目门口走**严格** requireAttemptQuestion（快照非空）；
+ * - correction：订正稿。必须已交卷（draft → 409 NOTE_NOT_SUBMITTED）；目标行
+ *   = 该 (attempt,question) 的**未封存** correction 行（D1 未封存至多一行）；
+ *   已封存行的写入 409 NOTE_CORRECTION_SEALED；题目门口走**宽松**
+ *   requireAttemptQuestionRow（软删题历史材料照常可写）；
+ * - supplement：交卷后找回的补充稿。门口同 correction（必须已交卷、宽松题目
+ *   口径）；每 (attempt,question) 单行先查后插 + CAS，无封存语义。
+ *
  * 顺序（方案 §6.2/§6.3；幂等检查先于冲突判断与状态门槛——已成功但丢回执
  * 的请求不能被误判成 409）：
- * 1. requireUsableAttempt（本人 + 来源访问权 + 懒冻结）→
- *    requireAttemptQuestion（题目属冻结集合，快照非空）；
+ * 1. requireUsableAttempt（本人 + 来源访问权 + 懒冻结）→ 题目门口（按 phase
+ *    严格/宽松分派，见上）；；
  * 2. 解析限额 + 规范化 hash；
- * 3. 幂等查重（**前置于 draft 校验**——复审①裁决：mutationId+归属+hash
- *    匹配的重放在**任何 attempt 状态**（含已交卷）都返回原回执，丢回执的
- *    客户端在交卷后补传重试不被 409 挡；只有非重放才走 409）：
- *    mutationId 全局命中且（同一 scratch 笔记 + 同正文 hash）→ 返回原回执
- *    （逐字段，savedAt 用行内原值）；命中但笔记不同或正文不同 →
- *    409 NOTE_MUTATION_MISMATCH（跨学生/跨 attempt 重放同走此拒绝，绝不
- *    把他人回执发回、也绝不在别人的笔记下关联版本）；
- * 4. draft 校验（非重放写入）：已交卷 → 409 ALREADY_SUBMITTED；
- * 5. CAS 预检：baseRevision ≠ 当前 head → 409 附 _current 摘要；
+ * 3. 幂等查重（**前置于状态门槛**——复审①裁决：mutationId+归属+hash 匹配的
+ *    重放在**任何 attempt 状态**（含已交卷）都返回原回执，丢回执的客户端在
+ *    交卷后补传重试不被 409 挡；只有非重放才走 409）：
+ *    mutationId 全局命中且（同一 **phase 目标行** + 同正文 hash）→ 返回原回执
+ *    （逐字段，savedAt 用行内原值）；命中但目标行不同（跨笔记/跨 phase）或
+ *    正文不同 → 409 NOTE_MUTATION_MISMATCH（绝不把他人回执发回、也绝不在
+ *    别的笔记下关联版本）；
+ * 4. 状态门槛（非重放写入，按 phase 分派，见函数头上方）；
+ * 5. CAS 预检：baseRevision ≠ 当前 head → 409 附 _current 摘要（correction
+ *    在「无未封存行 + baseRevision>0」时先区分 SEALED/裸冲突，见实现内注释）；
  * 6. 文件落位（唯一 tmp → rename 不可变路径）；
- * 7. 事务：CAS 复核 → scratch 先查后插（同 attempt 同题唯一，沿用服务层
- *    保证口径）→ 插 note_versions 不可变行 → 切 notes 头指针；
+ * 7. 事务：CAS 复核 → 目标行先查后插（同 attempt 同题同 phase 定位，沿用
+ *    服务层保证口径）→ 插 note_versions 不可变行 → 切 notes 头指针；
  * 8. 事务失败：删除刚落位的孤儿文件（事务已回滚，无行引用它；删除失败
  *    留给 GC 兜底），再抛原错误。
  *
@@ -400,20 +425,20 @@ export function saveNoteVersion(
   questionId: string,
   bodyBytes: Uint8Array,
   // T6R.15：入参用输入类型（phase 可缺省 = scratch，与契约缺省同语义——
-  // 路由传入 parse 后的输出形态同样兼容；三 phase 分派在 T6R.15 服务层单落地）
+  // 路由传入 parse 后的输出形态同样兼容）
   meta: NoteUploadMetaInput,
   faults?: AtomicFileFaults,
 ): NoteVersionReceipt {
   // 1. 权限与冻结集合（T6R.3 统一门口；「冻结内容不冻结权限」——课程撤权
-  //    等照常在 requireUsableAttempt 拦截）
+  //    等照常在 requireUsableAttempt 拦截）。题目门口按 phase 分派：scratch
+  //    严格（快照非空——requireAttemptQuestion 返回行 id 即 questionRevisionId）；
+  //    correction/supplement 宽松（软删/历史缺失题的订正与补充照常可写）
   const attempt = requireUsableAttempt(db, studentId, attemptId);
-  // 冻结集合校验即取题目版本引用（requireAttemptQuestion 返回行 id =
-  // questionRevisionId，不必再回查 responses）
-  const { id: questionRevisionId } = requireAttemptQuestion(
-    db,
-    attempt,
-    questionId,
-  );
+  const phase = meta.phase ?? "scratch";
+  const { id: questionRevisionId } =
+    phase === "scratch"
+      ? requireAttemptQuestion(db, attempt, questionId)
+      : requireAttemptQuestionRow(db, attempt.id, questionId);
 
   // 2. 解析 + 规范化 hash（先验后写；canonical 字符串只产一次——UTF-8 编码
   //    成 Buffer 后 hash 与落盘共用，避免二次编码拷贝）
@@ -422,14 +447,22 @@ export function saveNoteVersion(
   const hash = createHash("sha256").update(canonicalBytes).digest("hex");
   const { strokeCount, pointCount, paperHeight } = noteMetrics(doc);
 
-  const scratchWhere = and(
+  // T6R.15：目标行定位 WHERE（scratchWhere 泛化为 phaseWhere）——scratch/
+  // supplement 每 (attempt,question) 单行；correction 取**未封存**行（D1：
+  // 已封存行永不再接受写入，再编辑 = 新开一行）
+  const phaseWhere = and(
     eq(notes.attemptId, attempt.id),
     eq(notes.questionId, questionId),
-    eq(notes.phase, "scratch"),
+    eq(notes.phase, phase),
+    phase === "correction" ? isNull(notes.sealedAt) : undefined,
   );
 
-  // 3. 幂等查重（先于冲突判断与 draft 状态门槛，见函数头注释）
-  const existing = db.select().from(notes).where(scratchWhere).get();
+  // 3. 幂等查重（先于冲突判断与状态门槛，见函数头注释）。判定目标行 = 该
+  //    phase 的定位行——跨 phase 重放（scratch 的 mutationId 打订正等）与
+  //    跨笔记重放同走 MISMATCH；封存后行的丢回执重试（目标行已不在定位集）
+  //    亦 MISMATCH——客户端重铸 mutationId 后的新上传自然落到 SEALED/新行
+  //    分支，可诊断且不产生错误状态
+  const existing = db.select().from(notes).where(phaseWhere).get();
   const replay = db
     .select()
     .from(noteVersions)
@@ -447,22 +480,65 @@ export function saveNoteVersion(
     );
   }
 
-  // 4. draft 校验（非重放的新写入才受交卷门槛约束）
-  if (attempt.status !== "draft") {
-    throw new HttpError(
-      409,
-      "ALREADY_SUBMITTED",
-      "这份作业已交卷，草稿已固定为原稿，不能再写入新版本",
-    );
+  // 4. 状态门槛（非重放的新写入才受交卷门槛约束）
+  if (phase === "scratch") {
+    if (attempt.status !== "draft") {
+      throw new HttpError(
+        409,
+        "ALREADY_SUBMITTED",
+        "这份作业已交卷，草稿已固定为原稿，不能再写入新版本",
+      );
+    }
+  } else {
+    // correction/supplement：只能写在已交卷（status 非 draft——含 submitted 与
+    // graded）的作答上；draft → NOTE_NOT_SUBMITTED（D3 措辞修正的新码）
+    if (attempt.status === "draft") {
+      throw new HttpError(
+        409,
+        "NOTE_NOT_SUBMITTED",
+        "这份作业尚未交卷，订正与补充稿只能在交卷后写入",
+      );
+    }
+    // correction 专属分派（D1/D2）：无未封存行且 baseRevision>0——存在已封存
+    // 行 → 409 NOTE_CORRECTION_SEALED（旧行已封存，客户端应新开一份，比裸
+    // CAS 冲突更可诊断）；无任何 correction 行 → 现有 revisionConflict 口径
+    // （revision 0 摘要，与 scratch「凭空 baseRevision>0」同诊断）
+    if (
+      phase === "correction" &&
+      existing === undefined &&
+      meta.baseRevision > 0
+    ) {
+      if (
+        db
+          .select({ id: notes.id })
+          .from(notes)
+          .where(
+            and(
+              eq(notes.attemptId, attempt.id),
+              eq(notes.questionId, questionId),
+              eq(notes.phase, "correction"),
+              isNotNull(notes.sealedAt),
+            ),
+          )
+          .get() !== undefined
+      ) {
+        throw new HttpError(
+          409,
+          "NOTE_CORRECTION_SEALED",
+          "该题的上一份订正已保存（封存），再编辑请新开一份订正",
+        );
+      }
+      throw revisionConflict(db, undefined);
+    }
   }
 
-  // 4. CAS 预检（快失败：绝大多数冲突在这里挡掉，不写文件）
+  // 5. CAS 预检（快失败：绝大多数冲突在这里挡掉，不写文件）
   const headRevision = existing?.currentRevision ?? 0;
   if (meta.baseRevision !== headRevision) {
     throw revisionConflict(db, existing);
   }
 
-  // 5. 文件落位（路径三段全服务端生成；questionId 永不进路径）
+  // 6. 文件落位（路径三段全服务端生成；questionId 永不进路径）
   const noteId = existing?.id ?? randomUUID();
   const newRevision = headRevision + 1;
   const relPath = noteBodyRelPath(noteId, newRevision, hash);
@@ -478,9 +554,9 @@ export function saveNoteVersion(
       canonicalBytes,
       faults,
     );
-    // 6. 事务：CAS 复核 + scratch 先查后插 + 不可变版本行 + 统一守卫切头
+    // 7. 事务：CAS 复核 + 目标行先查后插 + 不可变版本行 + 统一守卫切头
     db.transaction((tx) => {
-      const row = tx.select().from(notes).where(scratchWhere).get();
+      const row = tx.select().from(notes).where(phaseWhere).get();
       if (row === undefined) {
         // 首版：先插 revision=0 的空白 notes 行（FK 要求版本行先于头指针
         // 存在），版本行插入后与既有笔记走**同一**守卫切头语句——中间态
@@ -492,7 +568,7 @@ export function saveNoteVersion(
             attemptId: attempt.id,
             questionId,
             questionRevisionId,
-            phase: "scratch",
+            phase,
             currentRevision: 0,
             currentVersionId: null,
             serverSavedAt: null,
@@ -556,7 +632,7 @@ export function saveNoteVersion(
       }
     });
   } catch (err) {
-    // 7. 失败清理与跨进程兜底（better-sqlite3 同步单进程下兜底分支不可达，
+    // 8. 失败清理与跨进程兜底（better-sqlite3 同步单进程下兜底分支不可达，
     //    为多进程化预留的纵深闭合，复审③）：
     //    a) mutation_id 唯一索引冲突 = 另一进程已提交同一 mutation。胜者
     //       (noteId, hash) 与本请求一致 → 按幂等语义返回**胜者的回执**，
@@ -598,7 +674,7 @@ export function saveNoteVersion(
     if (violation === "revision") {
       throw revisionConflict(
         db,
-        db.select().from(notes).where(scratchWhere).get(),
+        db.select().from(notes).where(phaseWhere).get(),
       );
     }
     throw err;
@@ -680,6 +756,11 @@ function noteRecordMetaOf(row: NoteRow) {
     revision: row.currentRevision,
     currentVersionId: row.currentVersionId,
     serverSavedAt: row.serverSavedAt,
+    // T6R.15（D2/D6/D10）：封存与反思三字段随行投影（非 correction 行恒
+    // null；correction 已封存行携带 seal 时刻与冻结反思）
+    sealedAt: row.sealedAt,
+    stuckAt: row.reflectionStuckAt,
+    errorCause: row.reflectionErrorCause,
   });
 }
 
@@ -708,13 +789,99 @@ function noteEvidenceMetaOf(row: SubmissionEvidenceRow) {
 }
 
 /**
+ * (attempt,question) 的证据行 + corrections/supplements 投影（T6R.15 D6）：
+ * noteHeadOf（学生/教师 evidence、单题/批量头）与题目笔记本聚合共用同一组装
+ * ——同一 (attempt,question) 的材料集合只此一份实现，不复制粘贴。
+ * - corrections：全部订正行——已封存按 sealedAt 升序在前（同刻 attempt 内
+ *   id 升序兜底稳定），未封存行殿后（serverSavedAt 升序兜底）；
+ * - supplements：全部补充稿行（serverSavedAt 升序，id 兜底）。
+ * evidenceRow 可由调用方预取传入（noteHeadOf 的生效版本判定同用该行，免双查）。
+ */
+function noteCollectionsOf(
+  db: Db,
+  attemptId: string,
+  questionId: string,
+  evidenceRow?: SubmissionEvidenceRow,
+): {
+  evidence: NoteSubmissionEvidenceMeta | null;
+  corrections: NoteRecordMeta[];
+  supplements: NoteRecordMeta[];
+} {
+  const evidence =
+    evidenceRow !== undefined
+      ? evidenceRow
+      : db
+          .select()
+          .from(submissionEvidence)
+          .where(
+            and(
+              eq(submissionEvidence.attemptId, attemptId),
+              eq(submissionEvidence.questionId, questionId),
+            ),
+          )
+          .get();
+  const correctionRows = db
+    .select()
+    .from(notes)
+    .where(
+      and(
+        eq(notes.attemptId, attemptId),
+        eq(notes.questionId, questionId),
+        eq(notes.phase, "correction"),
+      ),
+    )
+    .all();
+  const corrections = [
+    // 已封存在前（sealedAt 升序——检查点时间线）；未封存最后（正在编辑的
+    // 那份行恰至多一行，D1）
+    ...correctionRows
+      .filter((row) => row.sealedAt !== null)
+      .sort(
+        (a, b) =>
+          (a.sealedAt ?? "").localeCompare(b.sealedAt ?? "") ||
+          a.id.localeCompare(b.id),
+      ),
+    ...correctionRows
+      .filter((row) => row.sealedAt === null)
+      .sort(
+        (a, b) =>
+          (a.serverSavedAt ?? "").localeCompare(b.serverSavedAt ?? "") ||
+          a.id.localeCompare(b.id),
+      ),
+  ].map(noteRecordMetaOf);
+  const supplements = db
+    .select()
+    .from(notes)
+    .where(
+      and(
+        eq(notes.attemptId, attemptId),
+        eq(notes.questionId, questionId),
+        eq(notes.phase, "supplement"),
+      ),
+    )
+    .all()
+    .sort(
+      (a, b) =>
+        (a.serverSavedAt ?? "").localeCompare(b.serverSavedAt ?? "") ||
+        a.id.localeCompare(b.id),
+    )
+    .map(noteRecordMetaOf);
+  return {
+    evidence: evidence === undefined ? null : noteEvidenceMetaOf(evidence),
+    corrections,
+    supplements,
+  };
+}
+
+/**
  * 头投影组装（①②⑥共用）：
  * - note：该 attempt 该题的 scratch 行（correction/supplement 是 T6R.15 的
  *   独立 NoteRecord，不进本投影）；无行 → null（契约显式空态 notCreated）；
  * - 生效版本：证据行存在即以其 versionId 为准（frozen→原稿版本；missing/
  *   none→null→images 恒空——**不回退工作头**，T6R.10 落写；仅无证据行
  *   （未交卷/旧客户端未采集）才取工作头 currentVersionId）；
- * - evidence：证据行（交卷事务写入）；无行 → null（未交卷或旧客户端未采集）。
+ * - evidence / corrections / supplements：noteCollectionsOf 单点组装（证据行
+ *   + 订正/补充集合，T6R.15 服务层单落地聚合）。
  */
 function noteHeadOf(
   db: Db,
@@ -757,15 +924,17 @@ function noteHeadOf(
         .orderBy(asc(noteImages.spec), asc(noteImages.pageIndex))
         .all()
     : [];
+  const {
+    evidence: evidenceMeta,
+    corrections,
+    supplements,
+  } = noteCollectionsOf(db, attemptId, questionId, evidence);
   return {
     note: note === undefined ? null : noteRecordMetaOf(note),
     images: imageRows.map(noteImageMetaOf),
-    evidence: evidence === undefined ? null : noteEvidenceMetaOf(evidence),
-    // T6R.15 契约先行：corrections/supplements 恒空数组占位——订正/补充稿行
-    // 的聚合投影属服务层单（noteHeadOf 扩展）；当前尚无任何写通道能产生
-    // 该两 phase 的行，空数组即数据库的真实事实，非降级
-    corrections: [],
-    supplements: [],
+    evidence: evidenceMeta,
+    corrections,
+    supplements,
   };
 }
 
@@ -831,6 +1000,348 @@ export function getTeacherNoteEvidence(
   const { attempt } = requireTeacherAttempt(db, teacherId, attemptId);
   requireAttemptQuestionRow(db, attempt.id, questionId);
   return noteHeadOf(db, attempt.id, questionId);
+}
+
+// ---------- T6R.15：订正检查点（创建与封存，D1/D2/D3） ----------
+
+/**
+ * 创建订正记录（POST /api/student/attempts/:id/notes/:qid/corrections，D3）：
+ * 1. 门口：requireUsableAttempt（本人 + 来源访问权 + 懒冻结）+
+ *    requireAttemptQuestionRow（宽松口径——软删/历史缺失题的订正照常可创建）
+ *    + attempt 已交卷（draft → 409 NOTE_NOT_SUBMITTED）；
+ * 2. D1「未封存至多一行」：已存在未封存行 → 409 NOTE_CORRECTION_OPEN_EXISTS
+ *    （应继续编辑既有行，不另起）；
+ * 3. copyFromOriginal=true：读提交证据固定的原稿正文（evidence 行须 state=
+ *    'frozen' 且 versionId 非空，否则 409 NOTE_ORIGINAL_UNAVAILABLE——
+ *    missing/none/无行都无可复制的原稿）→ canonicalNoteJson 重规范化（同
+ *    hash 口径，复制件与原稿同 hash）→ 唯一 tmp→rename 落**新行自己的**
+ *    不可变文件 → 事务插 notes 行（currentRevision=1、head=新版本、
+ *    sealed_at NULL）+ note_versions 行（mutationId 服务端 randomUUID——
+ *    服务端发起的复制无客户端幂等键，铸随机值占全局唯一索引）；
+ *    false → 只插 revision=0 空白行（客户端以 baseRevision=0 上传正文）；
+ * 4. 事务内先查后插复核未封存行（与 scratch 同口径，不建 partial unique
+ *    index——单进程同步下防并发纵深）；
+ * 5. 响应 noteHeadData（noteHeadOf 单点组装，corrections 含新行）。
+ * 原稿证据行与原稿版本行全程只读（原稿身份由交卷事务唯一铸成，D9——订正
+ * 是学生自有材料，correction/supplement 结构上进不了 submission_evidence）。
+ */
+export function createCorrection(
+  db: Db,
+  dataDir: string,
+  studentId: string,
+  attemptId: string,
+  questionId: string,
+  req: CorrectionCreateRequest,
+): NoteHeadData {
+  const attempt = requireUsableAttempt(db, studentId, attemptId);
+  const { id: questionRevisionId } = requireAttemptQuestionRow(
+    db,
+    attempt.id,
+    questionId,
+  );
+  if (attempt.status === "draft") {
+    throw new HttpError(
+      409,
+      "NOTE_NOT_SUBMITTED",
+      "这份作业尚未交卷，订正只能在交卷后创建",
+    );
+  }
+  const openWhere = and(
+    eq(notes.attemptId, attempt.id),
+    eq(notes.questionId, questionId),
+    eq(notes.phase, "correction"),
+    isNull(notes.sealedAt),
+  );
+  if (
+    db.select({ id: notes.id }).from(notes).where(openWhere).get() !== undefined
+  ) {
+    throw new HttpError(
+      409,
+      "NOTE_CORRECTION_OPEN_EXISTS",
+      "该题已有一份进行中的订正，请继续编辑它（保存后再新开一份）",
+    );
+  }
+  const now = new Date().toISOString();
+  const noteId = randomUUID();
+  // 复制原稿：读 evidence.versionId 正文（复用读路径原语）→ 重规范化铸首版本
+  let seeded:
+    | {
+        versionId: string;
+        hash: string;
+        relPath: string;
+        canonicalBytes: Buffer;
+        strokeCount: number;
+        pointCount: number;
+        paperHeight: number;
+      }
+    | undefined;
+  if (req.copyFromOriginal) {
+    const evidence = db
+      .select()
+      .from(submissionEvidence)
+      .where(
+        and(
+          eq(submissionEvidence.attemptId, attempt.id),
+          eq(submissionEvidence.questionId, questionId),
+        ),
+      )
+      .get();
+    if (
+      evidence === undefined ||
+      evidence.state !== "frozen" ||
+      evidence.versionId === null
+    ) {
+      throw new HttpError(
+        409,
+        "NOTE_ORIGINAL_UNAVAILABLE",
+        "没有可复制的原稿（交卷时未固定笔迹），请新建空白订正",
+      );
+    }
+    const { doc } = readNoteVersionDoc(db, dataDir, evidence.versionId);
+    const canonicalBytes = Buffer.from(canonicalNoteJson(doc), "utf8");
+    const hash = createHash("sha256").update(canonicalBytes).digest("hex");
+    const { strokeCount, pointCount, paperHeight } = noteMetrics(doc);
+    seeded = {
+      versionId: randomUUID(),
+      hash,
+      relPath: noteBodyRelPath(noteId, 1, hash),
+      canonicalBytes,
+      strokeCount,
+      pointCount,
+      paperHeight,
+    };
+  }
+  try {
+    if (seeded !== undefined) {
+      writeNoteBodyFile(dataDir, noteId, 1, seeded.hash, seeded.canonicalBytes);
+    }
+    db.transaction((tx) => {
+      // D1 先查后插（事务内复核；单进程同步下不可达，多进程纵深防御）
+      if (
+        tx.select({ id: notes.id }).from(notes).where(openWhere).get() !==
+        undefined
+      ) {
+        throw new HttpError(
+          409,
+          "NOTE_CORRECTION_OPEN_EXISTS",
+          "该题已有一份进行中的订正，请继续编辑它（保存后再新开一份）",
+        );
+      }
+      // 插行骨架与 saveNoteVersion 同款（FK 要求版本行先于头指针存在）：
+      // 先插 revision=0 空白行 → 插复制首版本行 → 统一守卫切头；中间态只在
+      // 本事务内可见（revision=0 ⇔ 头指针/确认时间空，与契约一致）
+      tx.insert(notes)
+        .values({
+          id: noteId,
+          attemptId: attempt.id,
+          questionId,
+          questionRevisionId,
+          phase: "correction",
+          currentRevision: 0,
+          currentVersionId: null,
+          serverSavedAt: null,
+          sealedAt: null,
+          updatedAt: now,
+        })
+        .run();
+      if (seeded !== undefined) {
+        tx.insert(noteVersions)
+          .values({
+            id: seeded.versionId,
+            noteId,
+            revision: 1,
+            bodyPath: seeded.relPath,
+            hash: seeded.hash,
+            strokeCount: seeded.strokeCount,
+            pointCount: seeded.pointCount,
+            paperWidth: INK_LOGICAL_WIDTH,
+            paperHeight: seeded.paperHeight,
+            serverSavedAt: now,
+            renderVersion: NOTE_RENDER_VERSION,
+            mutationId: randomUUID(),
+          })
+          .run();
+        const switched = tx
+          .update(notes)
+          .set({
+            currentRevision: 1,
+            currentVersionId: seeded.versionId,
+            serverSavedAt: now,
+            updatedAt: now,
+          })
+          .where(and(eq(notes.id, noteId), eq(notes.currentRevision, 0)))
+          .returning({ id: notes.id })
+          .get();
+        if (switched === undefined) {
+          throw new HttpError(
+            500,
+            "INTERNAL",
+            "订正头指针切换未命中（并发写竞争，本次创建已回滚）",
+          );
+        }
+      }
+    });
+  } catch (err) {
+    // 事务失败：复制文件成孤儿（无行引用），清理后重抛
+    if (seeded !== undefined) {
+      cleanupNoteFile(dataDir, seeded.relPath, ".json.gz");
+    }
+    throw err;
+  }
+  return noteHeadOf(db, attempt.id, questionId);
+}
+
+/**
+ * 封存订正（POST …/corrections/seal，D2「保存订正」= 检查点）：
+ * - 门口同 createCorrection（本人 + 宽松题目口径 + 已交卷：draft → 409
+ *   NOTE_NOT_SUBMITTED）；
+ * - 无未封存行 → 404 NOTE_NOT_FOUND（已全部封存或从未创建——中文文案说明
+ *   无可保存订正，客户端据此引导新开或刷新）；
+ * - CAS：req.baseRevision === currentRevision（契约已锁 ≥1；空白行 revision 0
+ *   必不匹配 → 409 附 revision 0 摘要，可诊断「先上传正文再保存」）；
+ * - 事务置 sealed_at=now + 两反思列（stuckAt/errorCause，缺省 null；D10 随
+ *   seal 落列**冻结**——封存后行不再接受写入，反思不可改）；where 带
+ *   「未封存 + currentRevision」双守卫（多进程纵深防御），未命中按 CAS
+ *   冲突口径重抛；
+ * - 响应 noteHeadData（封存行进入 corrections 的已封存段）。
+ */
+export function sealCorrection(
+  db: Db,
+  studentId: string,
+  attemptId: string,
+  questionId: string,
+  req: CorrectionSealRequest,
+): NoteHeadData {
+  const attempt = requireUsableAttempt(db, studentId, attemptId);
+  requireAttemptQuestionRow(db, attempt.id, questionId);
+  if (attempt.status === "draft") {
+    throw new HttpError(
+      409,
+      "NOTE_NOT_SUBMITTED",
+      "这份作业尚未交卷，不能保存订正",
+    );
+  }
+  const open = db
+    .select()
+    .from(notes)
+    .where(
+      and(
+        eq(notes.attemptId, attempt.id),
+        eq(notes.questionId, questionId),
+        eq(notes.phase, "correction"),
+        isNull(notes.sealedAt),
+      ),
+    )
+    .get();
+  if (open === undefined) {
+    throw new HttpError(
+      404,
+      "NOTE_NOT_FOUND",
+      "该题当前没有进行中的订正可保存（未封存的订正不存在，可能已保存过）",
+    );
+  }
+  if (req.baseRevision !== open.currentRevision) {
+    throw revisionConflict(db, open);
+  }
+  const now = new Date().toISOString();
+  const switched = db.transaction((tx) =>
+    tx
+      .update(notes)
+      .set({
+        sealedAt: now,
+        reflectionStuckAt: req.stuckAt ?? null,
+        reflectionErrorCause: req.errorCause ?? null,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(notes.id, open.id),
+          eq(notes.currentRevision, req.baseRevision),
+          isNull(notes.sealedAt),
+        ),
+      )
+      .returning({ id: notes.id })
+      .get(),
+  );
+  if (switched === undefined) {
+    // 守卫未命中 = 另一并发封存/写入抢先（单进程同步下不可达的纵深分支）：
+    // 按冲突口径重读组摘要，可诊断重试
+    throw revisionConflict(
+      db,
+      db.select().from(notes).where(eq(notes.id, open.id)).get(),
+    );
+  }
+  return noteHeadOf(db, attempt.id, questionId);
+}
+
+// ---------- T6R.15：题目笔记本聚合（D7——查询聚合，不建全局表） ----------
+
+/**
+ * 学生本人某题的跨来源历史轮次（GET /api/student/notebook/questions/:qid）：
+ * - rounds = 该生该题全部**已交卷** attempt（status 非 draft，含 submitted 与
+ *   graded；join responses 定题目成员——responses 行在即该卷含此题，wrong/
+ *   course/assignment 三来源同口径），按 submittedAt 升序（同刻 attemptId
+ *   升序兜底稳定，与错题本 rounds 同口径），roundOrdinal 从 1 递增；
+ * - 每轮 sourceType/sourceLabel：复用 teacher-attempt-service.sourceOf +
+ *   wrong-questions.roundSourceTitle 同一计算函数（作业 = 作业标题；课程
+ *   练习 = 「单元标题 · 第 n 次」；错题重练 = 「错题重练 · 第 n 次」——
+ *   AGENTS 第 1 条同一概念同一份定义，不复制粘贴逻辑）；
+ * - questionVersion：responses.question_version 列（建卷冻结时的 questions.
+ *   version 数字；契约注记口径为「冻结快照里的题目 version」——快照 JSON
+ *   本身不含 version 字段，冻结版本号在 responses 行列上）。0（升级遗留
+ *   未冻结语义）→ null，**绝不回填当前题库**；
+ * - evidence/corrections/supplements：noteCollectionsOf 单点投影（与头投影
+ *   同口径；该载荷零答案零题干，AGENTS 第 3 条——题目侧只有版本号数字）；
+ * - 无轮次 → rounds=[]（不探测题目存在性——空数组即「没有历史」）。
+ */
+export function getStudentQuestionNotebook(
+  db: Db,
+  studentId: string,
+  questionId: string,
+): StudentNotebookData {
+  const rows = db
+    .select({
+      attempt: attempts,
+      questionVersion: responses.questionVersion,
+    })
+    .from(attempts)
+    .innerJoin(
+      responses,
+      and(
+        eq(responses.attemptId, attempts.id),
+        eq(responses.questionId, questionId),
+      ),
+    )
+    .where(and(eq(attempts.studentId, studentId), ne(attempts.status, "draft")))
+    .orderBy(asc(attempts.submittedAt), asc(attempts.id))
+    .all();
+  if (rows.length === 0) {
+    return { questionId, rounds: [] };
+  }
+  // 来源上下文的教师域（sourceOf 需域内查标题；D9 异常行 null → 空串域
+  // 查询，与 student-records 同兜底口径）
+  const teacherId = studentTeacherIdOf(db, studentId);
+  const rounds: NotebookRound[] = rows.map((row, index) => {
+    const source = sourceOf(db, row.attempt, teacherId ?? "");
+    const { evidence, corrections, supplements } = noteCollectionsOf(
+      db,
+      row.attempt.id,
+      questionId,
+    );
+    return {
+      attemptId: row.attempt.id,
+      sourceType: source.sourceType,
+      sourceLabel: roundSourceTitle(source),
+      // 非 draft 行 submittedAt 恒非空；防御回退 startedAt（契约 min(1)）
+      submittedAt: row.attempt.submittedAt ?? row.attempt.startedAt,
+      roundOrdinal: index + 1,
+      questionVersion: row.questionVersion >= 1 ? row.questionVersion : null,
+      evidence,
+      corrections,
+      supplements,
+    };
+  });
+  return { questionId, rounds };
 }
 
 // ---------- 版本归属链（versionId/imageId 读侧授权，T6R.4 遗留验收） ----------

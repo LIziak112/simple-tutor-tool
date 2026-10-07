@@ -19,22 +19,22 @@ import {
   noteHeadDataSchema,
   noteVersionReceiptSchema,
 } from "@tutor/contract";
-import { describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
+import { describe, expect, it } from "vitest";
 import { createDb, type Db } from "../db/client.ts";
 import { runMigrations } from "../db/migrate.ts";
 import {
   type Attempt,
-  attempts as attemptsTable,
   assignments as assignmentsTable,
+  attempts as attemptsTable,
   noteImages as noteImagesTable,
   notes as notesTable,
   noteVersions as noteVersionsTable,
   submissionEvidence as submissionEvidenceTable,
 } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
-import { insertEvidence } from "../test/note-world.ts";
 import { gzipJson, makeStudent, noteDoc } from "../test/note-fixtures.ts";
+import { insertEvidence } from "../test/note-world.ts";
 import { insertFrozenResponse, newDraftAttempt } from "./attempt-service.ts";
 import { createSnapshot } from "./backup-service.ts";
 import {
@@ -2264,7 +2264,10 @@ describe("T6R.15 createCorrection（订正创建）", () => {
     // 原稿文件仍在（订正清空绝不触碰原稿）
     expect(
       existsSync(
-        resolveNoteBodyPath(dataDir, noteBodyRelPath(orig.noteId, 1, orig.hash)),
+        resolveNoteBodyPath(
+          dataDir,
+          noteBodyRelPath(orig.noteId, 1, orig.hash),
+        ),
       ),
     ).toBe(true);
   });
@@ -2402,7 +2405,10 @@ describe("T6R.15 sealCorrection（保存订正 = 检查点）", () => {
     const none = capture(() =>
       sealCorrection(db, studentId, attemptId, "q1", { baseRevision: 1 }),
     );
-    expect(errInfo(none)).toMatchObject({ status: 404, code: "NOTE_NOT_FOUND" });
+    expect(errInfo(none)).toMatchObject({
+      status: 404,
+      code: "NOTE_NOT_FOUND",
+    });
     // 空白行（revision 0）：契约锁 baseRevision≥1，CAS 必不匹配 → 409 revision 0
     createCorrection(db, dataDir, studentId, attemptId, "q1", {
       copyFromOriginal: false,
@@ -2528,7 +2534,6 @@ describe("T6R.15 找回稿不能升级成原稿（D4 结构保证）", () => {
 describe("T6R.15 题目笔记本聚合（getStudentQuestionNotebook）", () => {
   it("跨来源轮次：仅已交卷 attempt 进 rounds，按 submittedAt 升序 roundOrdinal 1..n；draft 不进", () => {
     const db = createTestDb();
-    const dataDir = createTestDir();
     const studentId = makeStudent(db);
     // 轮 1：assignment 来源（带真实作业标题）
     const assignmentId = randomUUID();
@@ -2624,7 +2629,9 @@ describe("T6R.15 题目笔记本聚合（getStudentQuestionNotebook）", () => {
       submittedAt: "2026-10-05T00:00:00.000Z",
     });
     const again = getStudentQuestionNotebook(db, studentId, "q1");
-    const legacyRound = again.rounds.find((r) => r.attemptId === legacy.attemptId);
+    const legacyRound = again.rounds.find(
+      (r) => r.attemptId === legacy.attemptId,
+    );
     expect(legacyRound?.questionVersion).toBeNull();
   });
 
@@ -2673,7 +2680,10 @@ describe("T6R.15 GC 回归（D11：封存头/补充稿头不被回收）", () =>
     expect(result.keptByReference).toBe(2);
     expect(
       existsSync(
-        resolveNoteBodyPath(dataDir, noteBodyRelPath(corr.noteId, 1, corr.hash)),
+        resolveNoteBodyPath(
+          dataDir,
+          noteBodyRelPath(corr.noteId, 1, corr.hash),
+        ),
       ),
     ).toBe(true);
     expect(
