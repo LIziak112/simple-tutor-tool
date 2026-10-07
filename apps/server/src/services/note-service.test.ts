@@ -11,18 +11,21 @@ import {
 } from "node:fs";
 import { join, resolve } from "node:path";
 import { gunzipSync, gzipSync } from "node:zlib";
-import type { NoteDocInput } from "@tutor/contract";
+import type { NoteDocInput, NotePhase } from "@tutor/contract";
 import {
   NOTE_BODY_GZIP_MAX_BYTES,
   NOTE_MAX_TOTAL_POINTS,
   noteDocSchema,
+  noteHeadDataSchema,
   noteVersionReceiptSchema,
 } from "@tutor/contract";
+import { and, eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { createDb, type Db } from "../db/client.ts";
 import { runMigrations } from "../db/migrate.ts";
 import {
   type Attempt,
+  assignments as assignmentsTable,
   attempts as attemptsTable,
   noteImages as noteImagesTable,
   notes as notesTable,
@@ -31,16 +34,21 @@ import {
 } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { gzipJson, makeStudent, noteDoc } from "../test/note-fixtures.ts";
+import { insertEvidence } from "../test/note-world.ts";
 import { insertFrozenResponse, newDraftAttempt } from "./attempt-service.ts";
 import { createSnapshot } from "./backup-service.ts";
 import {
   canonicalNoteJson,
+  createCorrection,
   gcNoteVersions,
+  getStudentNoteHead,
+  getStudentQuestionNotebook,
   noteBodyRelPath,
   noteDocSha256,
   readNoteVersionDoc,
   resolveNoteBodyPath,
   saveNoteVersion,
+  sealCorrection,
   writeNoteBodyFile,
 } from "./note-service.ts";
 
@@ -63,21 +71,31 @@ import {
 /**
  * 直插已冻结 attempt + 逐题冻结 responses 行（questionRevisionId = 行 id）。
  * assignment 来源（归属即权限）+ frozenAt 置位，避免懒冻结分支干扰。
+ * overrides 供 T6R.15 笔记本测试改来源/时间（多轮排序、sourceType 分派）。
  */
 function makeFrozenAttempt(
   db: Db,
   studentId: string,
   questionIds: readonly string[],
   status: "draft" | "submitted" = "draft",
+  overrides: {
+    sourceType?: "assignment" | "course" | "wrong";
+    assignmentId?: string | null;
+    courseId?: string | null;
+    unitId?: string | null;
+    attemptNo?: number;
+    submittedAt?: string;
+    questionVersion?: number;
+  } = {},
 ): { attemptId: string; revisionIds: Map<string, string> } {
   const base = newDraftAttempt({
     id: randomUUID(),
     studentId,
-    sourceType: "assignment",
-    assignmentId: null,
-    courseId: null,
-    unitId: null,
-    attemptNo: 1,
+    sourceType: overrides.sourceType ?? "assignment",
+    assignmentId: overrides.assignmentId ?? null,
+    courseId: overrides.courseId ?? null,
+    unitId: overrides.unitId ?? null,
+    attemptNo: overrides.attemptNo ?? 1,
     startedAt: "2026-10-01T00:00:00.000Z",
   });
   const attempt: Attempt =
@@ -85,7 +103,7 @@ function makeFrozenAttempt(
       ? {
           ...base,
           status: "submitted",
-          submittedAt: "2026-10-01T01:00:00.000Z",
+          submittedAt: overrides.submittedAt ?? "2026-10-01T01:00:00.000Z",
         }
       : base;
   const revisionIds = new Map<string, string>();
@@ -98,7 +116,7 @@ function makeFrozenAttempt(
         insertFrozenResponse(tx, {
           attemptId: attempt.id,
           questionId: qid,
-          questionVersion: 1,
+          questionVersion: overrides.questionVersion ?? 1,
           questionSnapshotJson: JSON.stringify({ id: qid, stem: "占位" }),
           unitId: null,
         }),
@@ -115,6 +133,8 @@ interface SaveArgs {
   body: Uint8Array | NoteDocInput;
   baseRevision?: number;
   mutationId?: string;
+  /** T6R.15：笔记阶段（缺省 scratch——与契约缺省同语义） */
+  phase?: NotePhase;
 }
 
 /** 直调服务（默认 gzip 打包 NoteDocInput；body 传字节则原样使用） */
@@ -131,6 +151,7 @@ function save(db: Db, dataDir: string, args: SaveArgs) {
     {
       baseRevision: args.baseRevision ?? 0,
       mutationId: args.mutationId ?? randomUUID(),
+      ...(args.phase !== undefined ? { phase: args.phase } : {}),
     },
   );
 }
@@ -1807,5 +1828,883 @@ describe("未引用版本延迟回收（GC 骨架）", () => {
     expect(db.select().from(noteImagesTable).all()).toHaveLength(0);
     expect(existsSync(imgAbs)).toBe(false);
     expect(noteFiles(dataDir)).toHaveLength(1); // 只剩 v2
+  });
+});
+
+// ---------- T6R.15：correction / supplement（订正与补充稿） ----------
+
+/** 已交卷世界（correction/supplement 的默认前置：status=submitted） */
+function submittedWorld(
+  questionIds: readonly string[] = ["q1"],
+): ReturnType<typeof makeWorld> {
+  const db = createTestDb();
+  const dataDir = createTestDir();
+  const studentId = makeStudent(db);
+  const { attemptId, revisionIds } = makeFrozenAttempt(
+    db,
+    studentId,
+    questionIds,
+    "submitted",
+  );
+  return { db, dataDir, studentId, attemptId, revisionIds };
+}
+
+/** 该 (attempt,question) 某 phase 的 notes 行（phase 过滤版 noteRowOf） */
+function phaseRows(
+  db: Db,
+  attemptId: string,
+  questionId: string,
+  phase: NotePhase,
+) {
+  return db
+    .select()
+    .from(notesTable)
+    .where(
+      and(
+        eq(notesTable.attemptId, attemptId),
+        eq(notesTable.questionId, questionId),
+        eq(notesTable.phase, phase),
+      ),
+    )
+    .all();
+}
+
+describe("T6R.15 saveNoteVersion：三 phase 分派", () => {
+  it("scratch 零回归：缺省 phase 走既有链路——draft 可写、交卷后新写 ALREADY_SUBMITTED、丢回执重放原回执", () => {
+    const { db, dataDir, studentId, attemptId } = makeWorld(["q1"]);
+    const m = randomUUID();
+    const r1 = save(db, dataDir, {
+      studentId,
+      attemptId,
+      questionId: "q1",
+      body: noteDoc(1),
+      mutationId: m,
+    });
+    expect(r1.revision).toBe(1);
+    // 交卷（直改行状态——服务层测试不走 submitAttempt）
+    db.update(attemptsTable)
+      .set({ status: "submitted", submittedAt: "2026-10-01T01:00:00.000Z" })
+      .where(eq(attemptsTable.id, attemptId))
+      .run();
+    const rejected = capture(() =>
+      save(db, dataDir, {
+        studentId,
+        attemptId,
+        questionId: "q1",
+        body: noteDoc(2),
+        baseRevision: 1,
+      }),
+    );
+    expect(errInfo(rejected)).toMatchObject({
+      status: 409,
+      code: "ALREADY_SUBMITTED",
+    });
+    // 幂等重放不受交卷门槛约束（既有裁决，复审①）
+    const replay = save(db, dataDir, {
+      studentId,
+      attemptId,
+      questionId: "q1",
+      body: noteDoc(1),
+      mutationId: m,
+    });
+    expect(replay).toEqual(r1);
+  });
+
+  it("draft attempt：PUT correction / supplement → 409 NOTE_NOT_SUBMITTED（D3 措辞修正的新码）", () => {
+    const { db, dataDir, studentId, attemptId } = makeWorld(["q1"]);
+    for (const phase of ["correction", "supplement"] as const) {
+      const err = capture(() =>
+        save(db, dataDir, {
+          studentId,
+          attemptId,
+          questionId: "q1",
+          body: noteDoc(1),
+          phase,
+        }),
+      );
+      expect(errInfo(err)).toMatchObject({
+        status: 409,
+        code: "NOTE_NOT_SUBMITTED",
+      });
+    }
+    expect(phaseRows(db, attemptId, "q1", "correction")).toHaveLength(0);
+    expect(phaseRows(db, attemptId, "q1", "supplement")).toHaveLength(0);
+  });
+
+  it("已交卷：PUT correction 建行（revision 1、sealed_at 空），续写 CAS 递增", () => {
+    const { db, dataDir, studentId, attemptId } = submittedWorld();
+    const r1 = save(db, dataDir, {
+      studentId,
+      attemptId,
+      questionId: "q1",
+      body: noteDoc(1),
+      phase: "correction",
+    });
+    expect(r1.revision).toBe(1);
+    const rows = phaseRows(db, attemptId, "q1", "correction");
+    expect(sole(rows, "correction 行")).toMatchObject({
+      id: r1.noteId,
+      phase: "correction",
+      sealedAt: null,
+      currentRevision: 1,
+    });
+    const r2 = save(db, dataDir, {
+      studentId,
+      attemptId,
+      questionId: "q1",
+      body: noteDoc(2),
+      baseRevision: 1,
+      phase: "correction",
+    });
+    expect(r2.revision).toBe(2);
+    expect(r2.noteId).toBe(r1.noteId);
+    expect(phaseRows(db, attemptId, "q1", "correction")).toHaveLength(1);
+  });
+
+  it("已交卷：PUT supplement 建行并 CAS 续写；每 (attempt,question) 单行、无封存语义", () => {
+    const { db, dataDir, studentId, attemptId } = submittedWorld();
+    const r1 = save(db, dataDir, {
+      studentId,
+      attemptId,
+      questionId: "q1",
+      body: noteDoc(1),
+      phase: "supplement",
+    });
+    const r2 = save(db, dataDir, {
+      studentId,
+      attemptId,
+      questionId: "q1",
+      body: noteDoc(2),
+      baseRevision: 1,
+      phase: "supplement",
+    });
+    expect(r2.revision).toBe(2);
+    const rows = phaseRows(db, attemptId, "q1", "supplement");
+    expect(sole(rows, "supplement 行")).toMatchObject({
+      id: r1.noteId,
+      phase: "supplement",
+      sealedAt: null,
+    });
+  });
+
+  it("correction 幂等：丢回执重试原回执；他 phase 的 mutationId 重放 → 跨 phase MISMATCH", () => {
+    const { db, dataDir, studentId, attemptId } = submittedWorld();
+    const m = randomUUID();
+    const r1 = save(db, dataDir, {
+      studentId,
+      attemptId,
+      questionId: "q1",
+      body: noteDoc(1),
+      phase: "correction",
+      mutationId: m,
+    });
+    const replay = save(db, dataDir, {
+      studentId,
+      attemptId,
+      questionId: "q1",
+      body: noteDoc(1),
+      phase: "correction",
+      mutationId: m,
+    });
+    expect(replay).toEqual(r1);
+    // 跨 phase 重放：拿 correction 的 mutationId 打 supplement → MISMATCH
+    const cross = capture(() =>
+      save(db, dataDir, {
+        studentId,
+        attemptId,
+        questionId: "q1",
+        body: noteDoc(1),
+        phase: "supplement",
+        mutationId: m,
+      }),
+    );
+    expect(errInfo(cross)).toMatchObject({
+      status: 409,
+      code: "NOTE_MUTATION_MISMATCH",
+    });
+  });
+
+  it("correction CAS 冲突：同 baseRevision 两写一胜一败（409 附 _current），对齐后重试成功（两份内容先后落版本）", () => {
+    const { db, dataDir, studentId, attemptId } = submittedWorld();
+    const first = save(db, dataDir, {
+      studentId,
+      attemptId,
+      questionId: "q1",
+      body: noteDoc(1),
+      phase: "correction",
+    });
+    const second = capture(() =>
+      save(db, dataDir, {
+        studentId,
+        attemptId,
+        questionId: "q1",
+        body: noteDoc(2),
+        phase: "correction",
+      }),
+    );
+    const info = errInfo(second);
+    expect(info).toMatchObject({ status: 409, code: "NOTE_REVISION_CONFLICT" });
+    expect(info.extra?._current).toMatchObject({
+      noteId: first.noteId,
+      revision: 1,
+      versionId: first.versionId,
+    });
+    // 客户端对齐 baseRevision=1 后重试成功（第二份内容落为 v2）
+    const third = save(db, dataDir, {
+      studentId,
+      attemptId,
+      questionId: "q1",
+      body: noteDoc(2),
+      baseRevision: 1,
+      phase: "correction",
+    });
+    expect(third.revision).toBe(2);
+  });
+
+  it("宽松题目口径：快照空行（软删/历史缺失题）correction/supplement 可写", () => {
+    const { db, dataDir, studentId, attemptId } = submittedWorld();
+    db.$client
+      .prepare(
+        "UPDATE responses SET question_snapshot_json = NULL WHERE attempt_id = ?",
+      )
+      .run(attemptId);
+    const r = save(db, dataDir, {
+      studentId,
+      attemptId,
+      questionId: "q1",
+      body: noteDoc(1),
+      phase: "correction",
+    });
+    expect(r.revision).toBe(1);
+    const sup = save(db, dataDir, {
+      studentId,
+      attemptId,
+      questionId: "q1",
+      body: noteDoc(1),
+      phase: "supplement",
+    });
+    expect(sup.revision).toBe(1);
+  });
+
+  it("对已封存行 PUT（baseRevision>0）→ 409 NOTE_CORRECTION_SEALED；baseRevision=0 新开未封存行（D1/D2）", () => {
+    const { db, dataDir, studentId, attemptId } = submittedWorld();
+    const r1 = save(db, dataDir, {
+      studentId,
+      attemptId,
+      questionId: "q1",
+      body: noteDoc(1),
+      phase: "correction",
+    });
+    // 封存（直接落列——封存链路 sealCorrection 另测）
+    db.update(notesTable)
+      .set({ sealedAt: "2026-10-02T00:00:00.000Z" })
+      .where(eq(notesTable.id, r1.noteId))
+      .run();
+    const sealedPut = capture(() =>
+      save(db, dataDir, {
+        studentId,
+        attemptId,
+        questionId: "q1",
+        body: noteDoc(2),
+        baseRevision: 1,
+        phase: "correction",
+      }),
+    );
+    expect(errInfo(sealedPut)).toMatchObject({
+      status: 409,
+      code: "NOTE_CORRECTION_SEALED",
+    });
+    // 再编辑 = 新开一行：baseRevision=0 走先查后插
+    const r2 = save(db, dataDir, {
+      studentId,
+      attemptId,
+      questionId: "q1",
+      body: noteDoc(3),
+      phase: "correction",
+    });
+    expect(r2.noteId).not.toBe(r1.noteId);
+    const rows = phaseRows(db, attemptId, "q1", "correction");
+    expect(rows).toHaveLength(2);
+    expect(rows.filter((row) => row.sealedAt === null)).toHaveLength(1);
+  });
+
+  it("无任何 correction 行且 baseRevision>0 → 409 NOTE_REVISION_CONFLICT（revision 0 摘要）", () => {
+    const { db, dataDir, studentId, attemptId } = submittedWorld();
+    const err = capture(() =>
+      save(db, dataDir, {
+        studentId,
+        attemptId,
+        questionId: "q1",
+        body: noteDoc(1),
+        baseRevision: 2,
+        phase: "correction",
+      }),
+    );
+    const info = errInfo(err);
+    expect(info).toMatchObject({ status: 409, code: "NOTE_REVISION_CONFLICT" });
+    expect(info.extra?._current).toMatchObject({ revision: 0, noteId: null });
+  });
+});
+
+describe("T6R.15 createCorrection（订正创建）", () => {
+  it("空白创建（copyFromOriginal=false）：revision 0 空行；头投影 corrections 含新行、note 位仍 null", () => {
+    const { db, dataDir, studentId, attemptId } = submittedWorld();
+    const head = createCorrection(db, dataDir, studentId, attemptId, "q1", {
+      copyFromOriginal: false,
+    });
+    expect(noteHeadDataSchema.safeParse(head).success).toBe(true);
+    expect(head.note).toBeNull();
+    const corr = sole(head.corrections, "新建订正行");
+    expect(corr).toMatchObject({
+      attemptId,
+      questionId: "q1",
+      phase: "correction",
+      revision: 0,
+      currentVersionId: null,
+      serverSavedAt: null,
+      sealedAt: null,
+    });
+  });
+
+  it("复制原稿（frozen 证据）：首版本与原稿同 doc 同 hash、行 revision=1；原稿证据行与版本行不动", () => {
+    const { db, dataDir, studentId, attemptId } = makeWorld(["q1"]);
+    const orig = save(db, dataDir, {
+      studentId,
+      attemptId,
+      questionId: "q1",
+      body: noteDoc(2, 33),
+    });
+    db.update(attemptsTable)
+      .set({ status: "submitted", submittedAt: "2026-10-01T01:00:00.000Z" })
+      .where(eq(attemptsTable.id, attemptId))
+      .run();
+    insertEvidence(db, attemptId, "q1", "frozen", orig.versionId);
+
+    const head = createCorrection(db, dataDir, studentId, attemptId, "q1", {
+      copyFromOriginal: true,
+    });
+    const corr = sole(head.corrections, "复制原稿的订正行");
+    expect(corr.revision).toBe(1);
+    expect(corr.currentVersionId).not.toBeNull();
+    // 复制正文 = 原稿正文（同 hash 同 doc），且是新行（不共用版本行）
+    const corrVersionId = corr.currentVersionId ?? "";
+    expect(corrVersionId).not.toBe(orig.versionId);
+    const copyDoc = readNoteVersionDoc(db, dataDir, corrVersionId);
+    expect(copyDoc.doc).toEqual(noteDoc(2, 33));
+    const origRow = sole(
+      db
+        .select()
+        .from(noteVersionsTable)
+        .where(eq(noteVersionsTable.id, orig.versionId))
+        .all(),
+      "原稿版本行",
+    );
+    const corrRow = sole(
+      db
+        .select()
+        .from(noteVersionsTable)
+        .where(eq(noteVersionsTable.id, corrVersionId))
+        .all(),
+      "订正首版本行",
+    );
+    expect(corrRow.hash).toBe(origRow.hash);
+    // 证据行指向不变（原稿身份由交卷事务唯一铸成）
+    expect(head.evidence).toMatchObject({
+      state: "frozen",
+      versionId: orig.versionId,
+    });
+  });
+
+  it("订正清空不改 original：复制原稿后上传空稿（strokes=[]），证据 versionId 与原稿文件不变", () => {
+    const { db, dataDir, studentId, attemptId } = makeWorld(["q1"]);
+    const orig = save(db, dataDir, {
+      studentId,
+      attemptId,
+      questionId: "q1",
+      body: noteDoc(2, 33),
+    });
+    db.update(attemptsTable)
+      .set({ status: "submitted", submittedAt: "2026-10-01T01:00:00.000Z" })
+      .where(eq(attemptsTable.id, attemptId))
+      .run();
+    insertEvidence(db, attemptId, "q1", "frozen", orig.versionId);
+    const head = createCorrection(db, dataDir, studentId, attemptId, "q1", {
+      copyFromOriginal: true,
+    });
+    const corr = sole(head.corrections, "订正行");
+    // 上传空稿到订正行（清空订正）
+    const cleared = save(db, dataDir, {
+      studentId,
+      attemptId,
+      questionId: "q1",
+      body: noteDoc(0),
+      baseRevision: 1,
+      phase: "correction",
+    });
+    expect(cleared.revision).toBe(2);
+    expect(cleared.noteId).toBe(corr.noteId);
+    // 证据行原样：frozen + 原稿 versionId（原稿图片/正文随 versionId 挂在证据上）
+    const evidenceRow = sole(
+      db
+        .select()
+        .from(submissionEvidenceTable)
+        .where(
+          and(
+            eq(submissionEvidenceTable.attemptId, attemptId),
+            eq(submissionEvidenceTable.questionId, "q1"),
+          ),
+        )
+        .all(),
+      "证据行",
+    );
+    expect(evidenceRow).toMatchObject({
+      state: "frozen",
+      versionId: orig.versionId,
+    });
+    // 原稿文件仍在（订正清空绝不触碰原稿）
+    expect(
+      existsSync(
+        resolveNoteBodyPath(
+          dataDir,
+          noteBodyRelPath(orig.noteId, 1, orig.hash),
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it("copyFromOriginal 但证据 missing / none / 无行 → 409 NOTE_ORIGINAL_UNAVAILABLE", () => {
+    const { db, dataDir, studentId, attemptId } = submittedWorld();
+    for (const state of ["missing", "none"] as const) {
+      insertEvidence(db, attemptId, "q1", state, null);
+      const err = capture(() =>
+        createCorrection(db, dataDir, studentId, attemptId, "q1", {
+          copyFromOriginal: true,
+        }),
+      );
+      expect(errInfo(err)).toMatchObject({
+        status: 409,
+        code: "NOTE_ORIGINAL_UNAVAILABLE",
+      });
+      db.delete(submissionEvidenceTable)
+        .where(eq(submissionEvidenceTable.attemptId, attemptId))
+        .run();
+    }
+    // 无证据行同拒
+    const noRow = capture(() =>
+      createCorrection(db, dataDir, studentId, attemptId, "q1", {
+        copyFromOriginal: true,
+      }),
+    );
+    expect(errInfo(noRow)).toMatchObject({
+      status: 409,
+      code: "NOTE_ORIGINAL_UNAVAILABLE",
+    });
+    // 对照：空白创建不受证据状态影响
+    const blank = createCorrection(db, dataDir, studentId, attemptId, "q1", {
+      copyFromOriginal: false,
+    });
+    expect(blank.corrections).toHaveLength(1);
+  });
+
+  it("已存在未封存行 → 409 NOTE_CORRECTION_OPEN_EXISTS；draft attempt → 409 NOTE_NOT_SUBMITTED", () => {
+    const { db, dataDir, studentId, attemptId } = submittedWorld();
+    createCorrection(db, dataDir, studentId, attemptId, "q1", {
+      copyFromOriginal: false,
+    });
+    const dup = capture(() =>
+      createCorrection(db, dataDir, studentId, attemptId, "q1", {
+        copyFromOriginal: false,
+      }),
+    );
+    expect(errInfo(dup)).toMatchObject({
+      status: 409,
+      code: "NOTE_CORRECTION_OPEN_EXISTS",
+    });
+    // draft：门口先于一切业务分支
+    const draftWorld = makeWorld(["q1"]);
+    const draftErr = capture(() =>
+      createCorrection(
+        draftWorld.db,
+        draftWorld.dataDir,
+        draftWorld.studentId,
+        draftWorld.attemptId,
+        "q1",
+        { copyFromOriginal: false },
+      ),
+    );
+    expect(errInfo(draftErr)).toMatchObject({
+      status: 409,
+      code: "NOTE_NOT_SUBMITTED",
+    });
+  });
+});
+
+describe("T6R.15 sealCorrection（保存订正 = 检查点）", () => {
+  function correctionWithVersion(): ReturnType<typeof submittedWorld> & {
+    receipt: ReturnType<typeof save>;
+  } {
+    const world = submittedWorld();
+    const receipt = save(world.db, world.dataDir, {
+      studentId: world.studentId,
+      attemptId: world.attemptId,
+      questionId: "q1",
+      body: noteDoc(1),
+      phase: "correction",
+    });
+    return { ...world, receipt };
+  }
+
+  it("seal 成功：sealedAt 与两反思列落库、头投影带三字段、封存后 PUT → SEALED", () => {
+    const { db, dataDir, studentId, attemptId, receipt } =
+      correctionWithVersion();
+    expect(receipt.revision).toBe(1);
+    const head = sealCorrection(db, studentId, attemptId, "q1", {
+      baseRevision: 1,
+      stuckAt: "第二步的变形没看出来",
+      errorCause: "移项忘变号",
+    });
+    expect(noteHeadDataSchema.safeParse(head).success).toBe(true);
+    const corr = sole(head.corrections, "已封存订正行");
+    expect(corr.sealedAt).not.toBeNull();
+    expect(corr.stuckAt).toBe("第二步的变形没看出来");
+    expect(corr.errorCause).toBe("移项忘变号");
+    const row = sole(phaseRows(db, attemptId, "q1", "correction"), "订正行");
+    expect(row.sealedAt).toBe(corr.sealedAt);
+    expect(row.reflectionStuckAt).toBe("第二步的变形没看出来");
+    expect(row.reflectionErrorCause).toBe("移项忘变号");
+    // 封存后行永不再接受写入
+    const put = capture(() =>
+      save(db, dataDir, {
+        studentId,
+        attemptId,
+        questionId: "q1",
+        body: noteDoc(2),
+        baseRevision: 1,
+        phase: "correction",
+      }),
+    );
+    expect(errInfo(put)).toMatchObject({
+      status: 409,
+      code: "NOTE_CORRECTION_SEALED",
+    });
+  });
+
+  it("seal 反思缺省 → 两列 null（反思可选）", () => {
+    const { db, studentId, attemptId } = correctionWithVersion();
+    const head = sealCorrection(db, studentId, attemptId, "q1", {
+      baseRevision: 1,
+    });
+    const corr = sole(head.corrections, "已封存订正行");
+    expect(corr.stuckAt).toBeNull();
+    expect(corr.errorCause).toBeNull();
+  });
+
+  it("seal 反思空串/纯空格 → 归一为 null（闸门修复 F5，库列与投影同口径）", () => {
+    const { db, studentId, attemptId } = correctionWithVersion();
+    const head = sealCorrection(db, studentId, attemptId, "q1", {
+      baseRevision: 1,
+      stuckAt: "   ",
+      errorCause: "",
+    });
+    const corr = sole(head.corrections, "已封存订正行");
+    expect(corr.stuckAt).toBeNull();
+    expect(corr.errorCause).toBeNull();
+    const row = sole(phaseRows(db, attemptId, "q1", "correction"), "订正行");
+    expect(row.reflectionStuckAt).toBeNull();
+    expect(row.reflectionErrorCause).toBeNull();
+  });
+
+  it("seal CAS：baseRevision 不符 → 409 附 _current；无未封存行 → 404；空行（revision 0）→ 409 附 revision 0 摘要", () => {
+    const { db, dataDir, studentId, attemptId } = submittedWorld();
+    // 无任何订正行 → 404
+    const none = capture(() =>
+      sealCorrection(db, studentId, attemptId, "q1", { baseRevision: 1 }),
+    );
+    expect(errInfo(none)).toMatchObject({
+      status: 404,
+      code: "NOTE_NOT_FOUND",
+    });
+    // 空白行（revision 0）：契约锁 baseRevision≥1，CAS 必不匹配 → 409 revision 0
+    createCorrection(db, dataDir, studentId, attemptId, "q1", {
+      copyFromOriginal: false,
+    });
+    const empty = capture(() =>
+      sealCorrection(db, studentId, attemptId, "q1", { baseRevision: 1 }),
+    );
+    const emptyInfo = errInfo(empty);
+    expect(emptyInfo).toMatchObject({
+      status: 409,
+      code: "NOTE_REVISION_CONFLICT",
+    });
+    expect(emptyInfo.extra?._current).toMatchObject({ revision: 0 });
+    // 有版本后 baseRevision 落后 → 409 附当前摘要
+    save(db, dataDir, {
+      studentId,
+      attemptId,
+      questionId: "q1",
+      body: noteDoc(1),
+      phase: "correction",
+    });
+    save(db, dataDir, {
+      studentId,
+      attemptId,
+      questionId: "q1",
+      body: noteDoc(2),
+      baseRevision: 1,
+      phase: "correction",
+    });
+    const stale = capture(() =>
+      sealCorrection(db, studentId, attemptId, "q1", { baseRevision: 1 }),
+    );
+    const staleInfo = errInfo(stale);
+    expect(staleInfo).toMatchObject({
+      status: 409,
+      code: "NOTE_REVISION_CONFLICT",
+    });
+    expect(staleInfo.extra?._current).toMatchObject({ revision: 2 });
+  });
+
+  it("seal 后再编辑新开一行：两行 corrections 投影已封存在前、未封存在后", () => {
+    const { db, dataDir, studentId, attemptId } = submittedWorld();
+    createCorrection(db, dataDir, studentId, attemptId, "q1", {
+      copyFromOriginal: false,
+    });
+    const r1 = save(db, dataDir, {
+      studentId,
+      attemptId,
+      questionId: "q1",
+      body: noteDoc(1),
+      phase: "correction",
+    });
+    sealCorrection(db, studentId, attemptId, "q1", {
+      baseRevision: 1,
+      errorCause: "第一轮的错因",
+    });
+    const r2 = save(db, dataDir, {
+      studentId,
+      attemptId,
+      questionId: "q1",
+      body: noteDoc(2),
+      phase: "correction",
+    });
+    expect(r2.noteId).not.toBe(r1.noteId);
+    expect(phaseRows(db, attemptId, "q1", "correction")).toHaveLength(2);
+    // 已封存在前（sealedAt 升序）、未封存最后（头投影公开读直取）
+    const head = getStudentNoteHead(db, studentId, attemptId, "q1");
+    expect(head.corrections.map((corr) => corr.sealedAt === null)).toEqual([
+      false,
+      true,
+    ]);
+  });
+
+  it("draft attempt：seal → 409 NOTE_NOT_SUBMITTED", () => {
+    const { db, studentId, attemptId } = makeWorld(["q1"]);
+    const err = capture(() =>
+      sealCorrection(db, studentId, attemptId, "q1", { baseRevision: 1 }),
+    );
+    expect(errInfo(err)).toMatchObject({
+      status: 409,
+      code: "NOTE_NOT_SUBMITTED",
+    });
+  });
+});
+
+describe("T6R.15 找回稿不能升级成原稿（D4 结构保证）", () => {
+  it("missing 交卷后 supplement PUT 成功：证据行不变（state 仍 missing、versionId null）", () => {
+    const { db, dataDir, studentId, attemptId } = makeWorld(["q1"]);
+    // 交卷前有一份 scratch（声明 missing 交卷的典型场景：本地有稿但选择缺稿交卷）
+    save(db, dataDir, {
+      studentId,
+      attemptId,
+      questionId: "q1",
+      body: noteDoc(1),
+    });
+    db.update(attemptsTable)
+      .set({ status: "submitted", submittedAt: "2026-10-01T01:00:00.000Z" })
+      .where(eq(attemptsTable.id, attemptId))
+      .run();
+    insertEvidence(db, attemptId, "q1", "missing", null);
+    // 交卷后找回：同一内容作为 supplement 落行
+    const sup = save(db, dataDir, {
+      studentId,
+      attemptId,
+      questionId: "q1",
+      body: noteDoc(1),
+      phase: "supplement",
+    });
+    expect(sup.revision).toBe(1);
+    // 证据行原样 missing / null——supplement 结构上进不了 submission_evidence
+    const evidenceRow = sole(
+      db
+        .select()
+        .from(submissionEvidenceTable)
+        .where(eq(submissionEvidenceTable.attemptId, attemptId))
+        .all(),
+      "证据行",
+    );
+    expect(evidenceRow).toMatchObject({ state: "missing", versionId: null });
+  });
+});
+
+describe("T6R.15 题目笔记本聚合（getStudentQuestionNotebook）", () => {
+  it("跨来源轮次：仅已交卷 attempt 进 rounds，按 submittedAt 升序 roundOrdinal 1..n；draft 不进", () => {
+    const db = createTestDb();
+    const studentId = makeStudent(db);
+    // 轮 1：assignment 来源（带真实作业标题）
+    const assignmentId = randomUUID();
+    db.insert(assignmentsTable)
+      .values({
+        id: assignmentId,
+        teacherId: null,
+        unitId: null,
+        courseId: null,
+        title: "国庆假期练习卷",
+        createdAt: "2026-09-30T00:00:00.000Z",
+      })
+      .run();
+    const round1 = makeFrozenAttempt(db, studentId, ["q1"], "submitted", {
+      assignmentId,
+      submittedAt: "2026-10-01T01:00:00.000Z",
+    });
+    // 轮 2：wrong 来源（错题重练第 2 次）
+    const round2 = makeFrozenAttempt(db, studentId, ["q1"], "submitted", {
+      sourceType: "wrong",
+      attemptNo: 2,
+      submittedAt: "2026-10-03T02:00:00.000Z",
+    });
+    // draft：不进 rounds
+    makeFrozenAttempt(db, studentId, ["q1"], "draft");
+
+    const data = getStudentQuestionNotebook(db, studentId, "q1");
+    expect(data.rounds).toHaveLength(2);
+    const first = data.rounds[0];
+    const second = data.rounds[1];
+    expect(first?.attemptId).toBe(round1.attemptId);
+    expect(first?.roundOrdinal).toBe(1);
+    expect(first?.sourceType).toBe("assignment");
+    expect(first?.sourceLabel).toBe("国庆假期练习卷");
+    expect(first?.submittedAt).toBe("2026-10-01T01:00:00.000Z");
+    expect(second?.attemptId).toBe(round2.attemptId);
+    expect(second?.roundOrdinal).toBe(2);
+    expect(second?.sourceType).toBe("wrong");
+    expect(second?.sourceLabel).toBe("错题重练 · 第 2 次");
+    // 每轮默认空集合 + 无证据行 null
+    expect(first?.evidence).toBeNull();
+    expect(first?.corrections).toEqual([]);
+    expect(first?.supplements).toEqual([]);
+  });
+
+  it("每轮投影：evidence/corrections/supplements/questionVersion（冻结版本 0 → null，绝不回填题库）", () => {
+    const db = createTestDb();
+    const dataDir = createTestDir();
+    const studentId = makeStudent(db);
+    const round = makeFrozenAttempt(db, studentId, ["q1"], "submitted", {
+      questionVersion: 3,
+    });
+    insertEvidence(db, round.attemptId, "q1", "none", null);
+    // 该轮一份订正（封存带反思）+ 一份补充稿
+    const corrReceipt = saveNoteVersion(
+      db,
+      dataDir,
+      studentId,
+      round.attemptId,
+      "q1",
+      gzipJson(noteDoc(1)),
+      { baseRevision: 0, mutationId: randomUUID(), phase: "correction" },
+    );
+    sealCorrection(db, studentId, round.attemptId, "q1", {
+      baseRevision: 1,
+      stuckAt: "卡在分类讨论",
+    });
+    saveNoteVersion(
+      db,
+      dataDir,
+      studentId,
+      round.attemptId,
+      "q1",
+      gzipJson(noteDoc(1)),
+      { baseRevision: 0, mutationId: randomUUID(), phase: "supplement" },
+    );
+
+    const data = getStudentQuestionNotebook(db, studentId, "q1");
+    const only = sole(data.rounds, "唯一轮次");
+    expect(only.questionVersion).toBe(3);
+    expect(only.evidence).toMatchObject({ state: "none", versionId: null });
+    expect(only.corrections).toHaveLength(1);
+    expect(only.corrections[0]).toMatchObject({
+      noteId: corrReceipt.noteId,
+      sealedAt: expect.any(String),
+      stuckAt: "卡在分类讨论",
+    });
+    expect(only.supplements).toHaveLength(1);
+
+    // 版本号 0（升级遗留未冻结语义）→ null；绝不查当前题库回填
+    const legacy = makeFrozenAttempt(db, studentId, ["q1"], "submitted", {
+      questionVersion: 0,
+      submittedAt: "2026-10-05T00:00:00.000Z",
+    });
+    const again = getStudentQuestionNotebook(db, studentId, "q1");
+    const legacyRound = again.rounds.find(
+      (r) => r.attemptId === legacy.attemptId,
+    );
+    expect(legacyRound?.questionVersion).toBeNull();
+  });
+
+  it("无轮次 → rounds=[]；跨学生隔离（他人 attempt 不进本人笔记本）", () => {
+    const db = createTestDb();
+    const mine = makeStudent(db);
+    const other = makeStudent(db);
+    makeFrozenAttempt(db, other, ["q1"], "submitted");
+    const data = getStudentQuestionNotebook(db, mine, "q1");
+    expect(data).toEqual({ questionId: "q1", rounds: [] });
+    // 题目从未出现过的 id 同样空数组（不探测存在性）
+    expect(getStudentQuestionNotebook(db, mine, "never-seen").rounds).toEqual(
+      [],
+    );
+  });
+});
+
+describe("T6R.15 GC 回归（D11：封存头/补充稿头不被回收）", () => {
+  it("封存订正头与补充稿头超安全窗口后仍 keptByReference", () => {
+    const { db, dataDir, studentId, attemptId } = submittedWorld();
+    const corr = save(db, dataDir, {
+      studentId,
+      attemptId,
+      questionId: "q1",
+      body: noteDoc(1),
+      phase: "correction",
+    });
+    sealCorrection(db, studentId, attemptId, "q1", { baseRevision: 1 });
+    const sup = save(db, dataDir, {
+      studentId,
+      attemptId,
+      questionId: "q1",
+      body: noteDoc(1),
+      phase: "supplement",
+    });
+    db.$client
+      .prepare(
+        "UPDATE note_versions SET server_saved_at = '2026-01-01T00:00:00.000Z'",
+      )
+      .run();
+    const result = gcNoteVersions(db, dataDir, {
+      now: new Date("2026-10-06T00:00:00.000Z"),
+    });
+    expect(result.deletedVersionRows).toBe(0);
+    // 两头指针都在保留集合（notes.currentVersionId 全量收录，D11 零逻辑新增）
+    expect(result.keptByReference).toBe(2);
+    expect(
+      existsSync(
+        resolveNoteBodyPath(
+          dataDir,
+          noteBodyRelPath(corr.noteId, 1, corr.hash),
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      existsSync(
+        resolveNoteBodyPath(dataDir, noteBodyRelPath(sup.noteId, 1, sup.hash)),
+      ),
+    ).toBe(true);
   });
 });

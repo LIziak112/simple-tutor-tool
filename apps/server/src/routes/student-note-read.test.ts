@@ -313,7 +313,13 @@ describe("工作稿头与证据投影", () => {
       expect(res.status, path).toBe(200);
       const body = (await res.json()) as { data: unknown };
       expect(noteHeadDataSchema.safeParse(body.data).success).toBe(true);
-      expect(body.data).toEqual({ note: null, images: [], evidence: null });
+      expect(body.data).toEqual({
+        note: null,
+        images: [],
+        evidence: null,
+        corrections: [],
+        supplements: [],
+      });
       assertNoLeak(body);
     }
   });
@@ -854,7 +860,13 @@ describe("版本/图片错配与遗留行", () => {
     );
     expect(evidenceRes.status).toBe(200);
     const body = (await evidenceRes.json()) as { data: unknown };
-    expect(body.data).toEqual({ note: null, images: [], evidence: null });
+    expect(body.data).toEqual({
+      note: null,
+      images: [],
+      evidence: null,
+      corrections: [],
+      supplements: [],
+    });
     assertNoLeak(body);
   });
 });

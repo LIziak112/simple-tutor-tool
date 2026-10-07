@@ -90,6 +90,15 @@ export const NOTE_VERSION_IMAGES_MAX_BYTES = 8 * 1024 * 1024;
 export const NOTE_IMAGE_MAX_PIXEL_DIM = 4096;
 
 /**
+ * 订正反思字段（「我卡在哪里」stuckAt / 「我的错因」errorCause）最大长度
+ * （T6R.15，方案 §5.2「保存订正」表单的两段自由文本）。取 500 字：seal 表单
+ * 各半页内的手写要点足够。修订以本常量为单源——服务端校验与本测试锁定值
+ * 都引用它，不在别处手写数字（先例：NOTE_HEADS_MAX_QUESTIONS 的 200→500
+ * 单源口径，efa4343 留档：契约常量是唯一权威，文档跟随常量）。
+ */
+export const NOTE_REFLECTION_MAX_LENGTH = 500;
+
+/**
  * 当前渲染器版本（T6R.6 独立渲染器建立）：服务端把它铸在 note_versions 行上，
  * 前端渲染器（apps/web/src/features/notes/render-note.ts）以此为确定性口径——
  * 同一文档 + 规格 + renderVersion ⇒ 输出内容与坐标一致（不承诺跨平台字节一致，
@@ -296,6 +305,25 @@ export const noteRecordMetaSchema = z
     currentVersionId: z.uuid().nullable(),
     /** 最近一次服务端确认时间（UTC ISO）；从未确认为 null */
     serverSavedAt: z.string().min(1).nullable(),
+    /**
+     * 订正检查点封存时间（T6R.15，D2「保存订正」= seal）：UTC ISO；
+     * null/缺省 = 未封存。sealedAt 非空后该行不再接受写入（PUT → 409
+     * NOTE_CORRECTION_SEALED，再编辑 = 新开一行）；仅 phase='correction'
+     * 行可非空（下方 superRefine 锁定）。
+     */
+    sealedAt: z.string().min(1).nullable().optional(),
+    /**
+     * 反思文本「我卡在哪里」（T6R.15，≤NOTE_REFLECTION_MAX_LENGTH）：
+     * 随 seal 落列冻结（D10，封存后不可改）；仅 phase='correction' 行可
+     * 携带非空值（superRefine 锁定）。null/缺省 = 未填写或非订正行。
+     */
+    stuckAt: z.string().max(NOTE_REFLECTION_MAX_LENGTH).nullable().optional(),
+    /** 反思文本「我的错因」（T6R.15，≤NOTE_REFLECTION_MAX_LENGTH）：同 stuckAt */
+    errorCause: z
+      .string()
+      .max(NOTE_REFLECTION_MAX_LENGTH)
+      .nullable()
+      .optional(),
   })
   .superRefine((record, ctx) => {
     if (record.revision === 0) {
@@ -316,6 +344,36 @@ export const noteRecordMetaSchema = z
             "状态不一致：revision≥1 时 currentVersionId 与 serverSavedAt 必须非空",
         });
       }
+    }
+    // T6R.15（D2/D6）：封存与反思字段是订正检查点语义，仅 correction 行可
+    // 携带非空值——其他 phase 的投影出现非空即拼装错误，契约级拒绝
+    const hasSealed = record.sealedAt !== null && record.sealedAt !== undefined;
+    if (hasSealed && record.phase !== "correction") {
+      ctx.addIssue({
+        code: "custom",
+        path: ["sealedAt"],
+        message:
+          "状态不一致：sealedAt 非 null 仅允许 phase='correction'（订正检查点）",
+      });
+    }
+    const hasStuck = record.stuckAt !== null && record.stuckAt !== undefined;
+    if (hasStuck && record.phase !== "correction") {
+      ctx.addIssue({
+        code: "custom",
+        path: ["stuckAt"],
+        message:
+          "状态不一致：stuckAt 非 null 仅允许 phase='correction'（订正反思）",
+      });
+    }
+    const hasCause =
+      record.errorCause !== null && record.errorCause !== undefined;
+    if (hasCause && record.phase !== "correction") {
+      ctx.addIssue({
+        code: "custom",
+        path: ["errorCause"],
+        message:
+          "状态不一致：errorCause 非 null 仅允许 phase='correction'（订正反思）",
+      });
     }
   });
 
@@ -471,6 +529,14 @@ export const noteUploadMetaSchema = z.object({
   // 六位数；超过即客户端异常值，及早 400 而不是进服务层比对
   baseRevision: z.number().int().min(0).max(1_000_000),
   mutationId: z.uuid(),
+  /**
+   * 笔记阶段（T6R.15，D5）：PUT multipart 的字符串字段（路由层组装进本
+   * schema 校验）。缺省 "scratch"——旧客户端不发送本字段时**行为与首版
+   * 完全一致**（scratch 工作稿链路零变化）；correction/supplement 的业务
+   * 门槛（attempt 已交卷、未封存行定位、每 (attempt,question) 唯一性等）
+   * 在服务层（T6R.15 服务层单）执行，契约只锁值域与缺省。
+   */
+  phase: notePhaseSchema.default("scratch"),
 });
 
 /**
@@ -531,6 +597,39 @@ export const noteVersionReceiptSchema = z.object({
   savedAt: z.string().min(1),
 });
 
+// ---------- T6R.15：订正检查点（创建与封存请求形状） ----------
+
+/**
+ * 创建订正请求体（POST /api/student/attempts/:id/notes/:qid/corrections，
+ * D3）：copyFromOriginal **必填**——首版本来源的显式选择（避免静默复制）：
+ * - false：默认空白订正（新行 revision 从 0 起步，客户端以 baseRevision=0
+ *   上传正文）；
+ * - true：服务端复制提交证据固定的原稿正文铸为首版本（同 canonical/hash
+ *   口径；服务端发起、无 mutationId）；提交证据非 frozen（missing/none/
+ *   无行）→ 409 NOTE_ORIGINAL_UNAVAILABLE（无可复制的原稿）。
+ * 已存在未封存订正行时创建 → 409 NOTE_CORRECTION_OPEN_EXISTS（D1「未封存
+ * 至多一行」，应继续编辑既有行）。
+ * 成功响应 data **复用 noteHeadDataSchema**（不另造壳）：创建即头投影含新行。
+ */
+export const correctionCreateRequestSchema = z.object({
+  copyFromOriginal: z.boolean(),
+});
+
+/**
+ * 封存订正请求体（POST …/corrections/seal，D2「保存订正」= 检查点）：
+ * - baseRevision：CAS 期望值（≥1——被封存的行必有至少一个版本；上限与
+ *   上传 meta 同防线值）；
+ * - stuckAt / errorCause：可选反思文本（「我卡在哪里」/「我的错因」，各
+ *   ≤NOTE_REFLECTION_MAX_LENGTH），随 seal 落列冻结（D10，封存后不可改）。
+ * 对已封存行再 seal → 409 NOTE_CORRECTION_SEALED（再编辑 = 新开一行）。
+ * 成功响应 data 复用 noteHeadDataSchema。
+ */
+export const correctionSealRequestSchema = z.object({
+  baseRevision: z.number().int().min(1).max(1_000_000),
+  stuckAt: z.string().max(NOTE_REFLECTION_MAX_LENGTH).optional(),
+  errorCause: z.string().max(NOTE_REFLECTION_MAX_LENGTH).optional(),
+});
+
 /**
  * note 模块错误码（UPPER_SNAKE_CODE 固定子集，风格对齐 attempt.ts/ink.ts）：
  * - NOTE_NOT_FOUND：笔记/版本/图片不存在或不属于本人（404；域内不暴露存在性）；
@@ -548,7 +647,17 @@ export const noteVersionReceiptSchema = z.object({
  *   重走交卷流程，不静默固定不一致旧版本；
  * - ATTEMPT_NOT_FOUND / QUESTION_NOT_FOUND / FORBIDDEN / ALREADY_SUBMITTED /
  *   UNAUTHORIZED / VALIDATION_ERROR：与 attempt 模块同义（404/404/403/409/401/400；
- *   ALREADY_SUBMITTED 覆盖「交卷后写已冻结原稿」——交卷后只可新建订正）。
+ *   ALREADY_SUBMITTED 覆盖「交卷后写已冻结原稿」——交卷后只可新建订正）；
+ * - NOTE_CORRECTION_SEALED：对已封存订正记录写入（409，T6R.15 D2）——
+ *   客户端收到后应**新开一份订正**（再编辑 = 新行），不覆盖既有检查点；
+ * - NOTE_ORIGINAL_UNAVAILABLE：请求复制原稿但提交证据非 frozen（409，
+ *   T6R.15 D3）——missing/none/无证据行，无可复制的原稿正文；
+ * - NOTE_CORRECTION_OPEN_EXISTS：已存在未封存订正记录时又请求创建（409，
+ *   T6R.15 D1「未封存至多一行」）——应继续编辑既有未封存行；
+ * - NOTE_NOT_SUBMITTED：attempt 尚未交卷就写订正/补充稿（409，T6R.15，
+ *   D3 措辞修正——原计划误写 ALREADY_SUBMITTED，语义相反不可复用）：correction
+ *   与 supplement 只能写在已交卷（status 非 draft）的作答上，draft 上创建/
+ *   上传/封存一律本码拒绝；「已交卷后写 scratch 原稿」仍走 ALREADY_SUBMITTED。
  */
 export const noteErrorCodeSchema = z.enum([
   "NOTE_NOT_FOUND",
@@ -557,6 +666,10 @@ export const noteErrorCodeSchema = z.enum([
   "NOTE_REVISION_CONFLICT",
   "NOTE_MUTATION_MISMATCH",
   "NOTE_EVIDENCE_MISMATCH",
+  "NOTE_CORRECTION_SEALED",
+  "NOTE_ORIGINAL_UNAVAILABLE",
+  "NOTE_CORRECTION_OPEN_EXISTS",
+  "NOTE_NOT_SUBMITTED",
   "ATTEMPT_NOT_FOUND",
   "QUESTION_NOT_FOUND",
   "FORBIDDEN",
@@ -579,7 +692,12 @@ export const noteErrorCodeSchema = z.enum([
  *   指向的原稿版本；未冻结 = notes 头指针版本；两者皆无 = 空数组）。按
  *   spec 升序、pageIndex 升序排列；
  * - evidence：交卷证据行；null = 尚未交卷或旧客户端未采集（无行即无声明，
- *   与 state='none'〔明确空稿〕区分，见 submission_evidence 表注释）。
+ *   与 state='none'〔明确空稿〕区分，见 submission_evidence 表注释）；
+ * - corrections（T6R.15，D6）：该 attempt 该题的全部订正记录（phase=
+ *   'correction' 行，含已封存与未封存）；
+ * - supplements（T6R.15）：交卷后找回的补充稿（phase='supplement' 行）。
+ *   两数组**服务端恒返回**（空为 []）；correction/supplement 是独立
+ *   NoteRecord，均不进 note 工作稿位（note 字段恒指 scratch 行）。
  *
  * 四维状态总览（noteStatusOverviewSchema）不在本响应内：local 维度是客户端
  * IDB 事务状态、server 维度是客户端同步队列视角（dirty/uploading/…），
@@ -589,6 +707,10 @@ export const noteHeadDataSchema = z.object({
   note: noteRecordMetaSchema.nullable(),
   images: z.array(noteImageMetaSchema),
   evidence: noteSubmissionEvidenceMetaSchema.nullable(),
+  /** 订正记录（含已封存与未封存；T6R.15 服务层单落地聚合，空为 []） */
+  corrections: z.array(noteRecordMetaSchema),
+  /** 补充稿（交卷后找回；不进 note 工作稿位；空为 []） */
+  supplements: z.array(noteRecordMetaSchema),
 });
 
 /**
@@ -697,7 +819,17 @@ export type NoteSubmissionEvidenceMeta = z.infer<
   typeof noteSubmissionEvidenceMetaSchema
 >;
 export type NoteUploadMeta = z.infer<typeof noteUploadMetaSchema>;
+/**
+ * NoteUploadMeta 的输入类型（T6R.15）：phase 可缺省（缺省 = scratch，旧
+ * 客户端零变化）。客户端组装上传参数（api.putNoteDocumentApi）以此类型为
+ * 入参口径——phase 是 T6R.15 起的可选新字段，不强制存量调用方填写。
+ */
+export type NoteUploadMetaInput = z.input<typeof noteUploadMetaSchema>;
 export type NoteVersionReceipt = z.infer<typeof noteVersionReceiptSchema>;
+export type CorrectionCreateRequest = z.infer<
+  typeof correctionCreateRequestSchema
+>;
+export type CorrectionSealRequest = z.infer<typeof correctionSealRequestSchema>;
 export type NoteErrorCode = z.infer<typeof noteErrorCodeSchema>;
 export type NoteHeadData = z.infer<typeof noteHeadDataSchema>;
 export type NoteImageUploadMeta = z.infer<typeof noteImageUploadMetaSchema>;

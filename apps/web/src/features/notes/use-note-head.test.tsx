@@ -17,7 +17,10 @@ import {
   SCOPE,
   SESSION_A,
 } from "@/features/notes/note-test-utils";
-import { useNoteHead } from "@/features/notes/use-note-head";
+import {
+  applyNoteHeadSideEffects,
+  useNoteHead,
+} from "@/features/notes/use-note-head";
 
 /**
  * useNoteHead（T6R.9）：答题页每题的笔记头拉取接线——head 应用进 store
@@ -270,5 +273,38 @@ describe("useNoteHead（T6R.9 接线；T6R.14 起经批量端点拉取）", () =
       peekNoteRecord(SESSION_A, { ...SCOPE, questionId: "p1-q2" })?.lastHead ??
         null,
     ).toBeNull();
+  });
+});
+
+describe("applyNoteHeadSideEffects：播种失败窗口（闸门修复 F1，scratch 母本同修）", () => {
+  it("服务端领先且正文拉取失败 → head 对齐不落地（不建壳），重放 head 重试播种成功", async () => {
+    docMock.mockRejectedValueOnce(new Error("网络断开"));
+    await applyNoteHeadSideEffects(SESSION_A, SCOPE, revHead());
+    // 失败窗口：对齐未落地——serverAhead 判定未被钳断，下次 head 重拉重判
+    expect(peekNoteRecord(SESSION_A, SCOPE)).toBeNull();
+    docMock.mockResolvedValueOnce(SERVER_DOC);
+    await applyNoteHeadSideEffects(SESSION_A, SCOPE, revHead());
+    const record = peekNoteRecord(SESSION_A, SCOPE);
+    expect(record?.baseRevision).toBe(1);
+    expect(record?.doc.ink.strokes.length).toBe(1);
+    expect(record?.pending).toBeNull();
+  });
+
+  it("本地领先（同 base 有 pending）→ 不拉正文，仅对齐 head", async () => {
+    writeNoteDoc(
+      SESSION_A,
+      SCOPE,
+      docOf([
+        stroke([
+          [1, 1],
+          [2, 2],
+        ]),
+      ]),
+    );
+    await applyServerHead(SESSION_A, SCOPE, revHead());
+    docMock.mockClear();
+    await applyNoteHeadSideEffects(SESSION_A, SCOPE, revHead());
+    expect(docMock).not.toHaveBeenCalled();
+    expect(peekNoteRecord(SESSION_A, SCOPE)?.pending).not.toBeNull();
   });
 });

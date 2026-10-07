@@ -7,41 +7,31 @@
  *   提示）；纸面隐藏保留（复审⑦：收起后引擎保活 NOTE_ENGINE_KEEPALIVE_MS，
  *   重开零重建；超时才卸载）；
  * - **展开**：精简工具条（笔/橡皮/撤销/手指书写/更多——「手指书写」按钮
- *   归属本工具条，T6R.7 衔接注记①定案：本形态下 InkPad 内置工具条不渲染，
- *   按钮在彼处不可达，且无笔设备的切换是首要高频动作，不藏进「更多」；
- *   会话偏好 store 两侧共用不变）+ 纸面（InkPad 隐藏工具条形态）+ 四维
- *   状态区。
+ *   归属本工具条，T6R.7 衔接注记①定案；会话偏好 store 两侧共用不变）
+ *   + 纸面（InkPad 隐藏工具条形态）+ 四维状态区。
+ *   T6R.15：工具条与引擎接线核心抽至 NoteToolbar / useNoteEditor（订正
+ *   编辑器 CorrectionPanel 共用），冲突/被拒动作接线抽至 useNoteSyncActions
+ *   （闸门修复 F4；CorrectionPanel/CorrectionSection 补充稿块共用），本组件
+ *   保留答题页形态编排（自动展开/保活/布局 preference/答题页 head 接线/
+ *   补图重试）。
  *
  * 纸高（方案 §4.3 / T6R.7 衔接注记②定案）：逻辑高持久化在 NoteDoc，
  * CSS 高 = paperCssHeight(逻辑高, 纸宽) 每次换算；自动加高统一走
- * paper-geometry 逻辑口径（触发 72 CSS px 经换算判定、步长 240/scale 逻辑
- * 单位；InkPad 内置 CSS px 直增在本形态被禁用）；load 不触发 dirty
- * （reason 过滤）；grownPaperHeight 返回 null 即不落库（防棘轮）。触底
- * 包围盒增量维护（复审⑥：每笔 max(prev, 新笔底)，全稿重扫只在载入/挂载
- * 冷路径）。
+ * paper-geometry 逻辑口径（use-note-editor 内）；load 不触发 dirty
+ * （reason 过滤）；触底包围盒增量维护（复审⑥）。
  *
  * 自写自载守卫（复审②）：比对 note-store 的**正文版本令牌 docVersion**
- * （record.doc 整体替换次数）——我们写入后记下当前令牌，视图令牌相同即
- * 引擎已持有最新内容（跳过 load）；不同即外部换稿（服务端播种/冲突裁决）
- * → 载入引擎。不依赖 store 拷贝深度的任何隐式约定。
+ * ——见 use-note-editor（随核心搬家）。
  *
  * 多题隔离：正文键含 questionId（note-store 五元键），各题各自一份；布局
  * 切换只改外框宽度——逻辑坐标笔画恒在纸内，不新建笔记、不改正文身份。
  */
-import type { NoteDoc } from "@tutor/contract";
-import { NOTE_PAPER_HEIGHT_DEFAULT } from "@tutor/contract";
 import {
   Check,
   ChevronDown,
   CircleAlert,
-  Eraser,
   LoaderCircle,
-  MoreHorizontal,
   NotebookPen,
-  PenLine,
-  Redo2,
-  Trash,
-  Undo2,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -53,62 +43,23 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { strokeBounds } from "@/features/ink/engine/bounds.ts";
-import type {
-  InkChangeReason,
-  InkDoc,
-  InkEngine,
-  InkPenColor,
-  InkPenSize,
-} from "@/features/ink/engine/index.ts";
-import {
-  COLOR_LABEL,
-  InkPad,
-  SessionPrefToggleButton,
-  SIZE_LABEL,
-  toolButtonClass,
-} from "@/features/ink/InkPad";
+import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import { InkPad } from "@/features/ink/InkPad";
 import { recoverNoteImages } from "@/features/notes/image-sync";
-import { docOf } from "@/features/notes/note-fixtures";
+import { NoteStatusArea } from "@/features/notes/NoteStatusArea";
+import { NoteToolbar } from "@/features/notes/NoteToolbar";
 import {
   type NoteLayoutPreference,
   setNoteLayoutPreference,
   useNoteLayoutPreference,
 } from "@/features/notes/note-layout";
 import {
-  ensureNoteLoaded,
-  peekNoteRecord,
-  writeNoteDoc,
-} from "@/features/notes/note-store";
-import {
-  resolveNoteConflictKeepCloud,
-  resolveNoteConflictKeepLocal,
-  retryNoteUpload,
-} from "@/features/notes/note-sync";
-import {
-  grownPaperHeight,
-  paperCssHeight,
-  strokesBottomLogical,
-} from "@/features/notes/paper-geometry";
+  EMPTY_NOTE_DOC,
+  inkDocOf,
+  useNoteEditor,
+} from "@/features/notes/use-note-editor";
 import { useNoteHead, useNoteSessionRef } from "@/features/notes/use-note-head";
-import { useNoteRecord } from "@/features/notes/use-note-record";
-import { useObservedCssWidth } from "@/lib/use-observed-css-width";
-
-/** 宽度观察未就绪（jsdom/首帧）的纸高回退（暂定：与 InkPad 初始高同量级） */
-const NOTE_CSS_HEIGHT_FALLBACK = 320;
-/**
- * 纸高 CSS 量化档（复审⑬**廉价版**，暂定 16px）：拖动/旋转的连续宽度变化
- * 只在跨档时改变容器高度——削减引擎 resize 重放次数。完整版（容器
- * aspectRatio 由宽度全派生、零显式高度）待真机验证后切换。
- */
-const NOTE_CSS_HEIGHT_QUANTUM = 16;
+import { useNoteSyncActions } from "@/features/notes/use-note-sync-actions";
 
 /**
  * 收起后的引擎保活时长（复审⑦暂定 45s，区间 30-60s）：收起题卡高频发生在
@@ -122,14 +73,6 @@ const LAYOUT_LABEL: Record<NoteLayoutPreference, string> = {
   side: "左右分栏",
   below: "上下排列",
 };
-
-/** 空稿默认形态（未建记录时的起笔口径；首次书写才真正建记录） */
-const EMPTY_NOTE_DOC: NoteDoc = docOf([]);
-
-/** NoteDoc.ink → 引擎 InkDoc（atrament；updatedAt 无语义位补 0） */
-function inkDocOf(doc: NoteDoc): InkDoc {
-  return { engine: "atrament", version: 1, data: doc.ink, updatedAt: 0 };
-}
 
 export interface NoteLayerProps {
   attemptId: string;
@@ -149,26 +92,16 @@ export function NoteLayer({
   ariaPrefix = "本题",
 }: NoteLayerProps) {
   const session = useNoteSessionRef();
-  const view = useNoteRecord(attemptId, questionId);
+  const editor = useNoteEditor({
+    session,
+    attemptId,
+    questionId,
+    phase: "scratch",
+    active: open,
+  });
+  const { view } = editor;
   const headQuery = useNoteHead(attemptId, questionId);
   const layoutPref = useNoteLayoutPreference();
-
-  // ---- 本地载入（刷新/重进的恢复路径；区分「尚未加载」与「无记录」） ----
-  const [localLoaded, setLocalLoaded] = useState(false);
-  useEffect(() => {
-    if (session === null) return;
-    let cancelled = false;
-    void ensureNoteLoaded(session, {
-      attemptId,
-      questionId,
-      phase: "scratch",
-    }).then(() => {
-      if (!cancelled) setLocalLoaded(true);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [session, attemptId, questionId]);
 
   const doc = view?.doc ?? null;
   const strokeCount = doc?.ink.strokes.length ?? 0;
@@ -189,139 +122,6 @@ export function NoteLayer({
     [onOpenChange],
   );
 
-  // ---- 纸面几何（逻辑高持久化、CSS 高换算；宽度经 ResizeObserver） ----
-  const paperWrapRef = useRef<HTMLDivElement | null>(null);
-  const cssWidth = useObservedCssWidth(paperWrapRef);
-  const cssHeight =
-    cssWidth > 0
-      ? Math.max(
-          1,
-          Math.round(
-            paperCssHeight(
-              doc?.paperHeightLogical ?? NOTE_PAPER_HEIGHT_DEFAULT,
-              cssWidth,
-            ) / NOTE_CSS_HEIGHT_QUANTUM,
-          ) * NOTE_CSS_HEIGHT_QUANTUM,
-        )
-      : NOTE_CSS_HEIGHT_FALLBACK;
-  const cssWidthRef = useRef(cssWidth);
-  cssWidthRef.current = cssWidth;
-
-  // ---- 引擎接线（纸面隐藏保留保活；卸载只发生在保活超时/组件卸载） ----
-  const engineRef = useRef<InkEngine | null>(null);
-  /** 引擎（重）建通知计数（复审①⑥）：InkPad 换引擎（背景重建键等）不发
-   * 数据变化——经 onEngineRebuild 驱动本 effect 重跑，按实例变化重载正文 */
-  const [engineTick, setEngineTick] = useState(0);
-  /** 最近经手过的引擎实例（复审①⑥：保活卸载重挂/背景重建键换引擎后，
-   * 即使版本令牌未变也须重载正文——新引擎 initial 可能陈旧） */
-  const lastEngineRef = useRef<InkEngine | null>(null);
-  /** 自写自载守卫令牌（复审②）：最近一次「引擎已持有」的正文版本 */
-  const lastWriteVersionRef = useRef<number | null>(null);
-  /** 触底包围盒底（逻辑，含半线宽；复审⑥：每笔增量，载入/挂载重算） */
-  const bottomLogicalRef = useRef<number | null>(null);
-  const [canUndo, setCanUndo] = useState(false);
-  const [canRedo, setCanRedo] = useState(false);
-  const [tool, setTool] = useState<"pen" | "eraser">("pen");
-  const [penColor, setPenColor] = useState<InkPenColor>("black");
-  const [penSize, setPenSize] = useState<InkPenSize>("medium");
-  const [clearOpen, setClearOpen] = useState(false);
-
-  // 本地写入 + 逻辑口径自动加高（注记②定案；load 不写回——reason 过滤）
-  const scopeRef = useRef({ attemptId, questionId, phase: "scratch" as const });
-  scopeRef.current = { attemptId, questionId, phase: "scratch" };
-  const handleDocChange = useCallback(
-    (inkDoc: InkDoc, reason: InkChangeReason) => {
-      if (inkDoc.engine !== "atrament" || session === null) return;
-      // load 不写回（paper-geometry 口径：载入恢复不算编辑、不触发 dirty）
-      if (reason === "load") return;
-      const strokes = inkDoc.data.strokes;
-      // 笔画被移除（清空/整笔擦除——复审⑫）：增量包围盒底作废置空，
-      // 下一笔重算（undo/redo 不复位：纸高本就只增不减，偏高无害）
-      if (reason === "clear" || reason === "erase") {
-        bottomLogicalRef.current = null;
-      }
-      // 写前 peek 补纸高/背景（复审②：不再持有引擎侧快照——store 是唯一真相）
-      const record = peekNoteRecord(session, scopeRef.current);
-      let logical = record?.doc.paperHeightLogical ?? NOTE_PAPER_HEIGHT_DEFAULT;
-      const background = record?.doc.background ?? "grid";
-      if (reason === "stroke") {
-        // 触底加高：统一 paper-geometry 逻辑口径。包围盒增量（复审⑥）——
-        // 只看新笔（含半线宽），与既有底取 max；全稿重扫只在载入/挂载
-        const last = strokes[strokes.length - 1];
-        if (last !== undefined) {
-          const bb = strokeBounds(last, last.weight / 2);
-          if (bb !== null) {
-            bottomLogicalRef.current = Math.max(
-              bottomLogicalRef.current ?? 0,
-              bb.maxY,
-            );
-          }
-        }
-        if (bottomLogicalRef.current !== null) {
-          const grown = grownPaperHeight({
-            paperHeightLogical: logical,
-            cssWidth: cssWidthRef.current,
-            strokeMaxYLogical: bottomLogicalRef.current,
-          });
-          if (grown !== null) logical = grown; // null=无需增高 ⇒ 不落库（防棘轮）
-        }
-      }
-      // writeNoteDoc 返回新 docVersion（复审⑬：消二次 peek）——同令牌的
-      // 视图变化即自写
-      lastWriteVersionRef.current = writeNoteDoc(session, scopeRef.current, {
-        version: 1,
-        ink: inkDoc.data,
-        paperHeightLogical: logical,
-        background,
-      });
-      setCanUndo(engineRef.current?.canUndo() ?? false);
-      setCanRedo(engineRef.current?.canRedo() ?? false);
-    },
-    [session],
-  );
-
-  // 外部正文变化 → 载入引擎（服务端播种/冲突裁决后）。比对版本令牌
-  // （复审②）：视图 docVersion 与最近一次「引擎已持有」令牌相同 → 跳过；
-  // 不同 → 外部换稿，载入。
-  // biome-ignore lint/correctness/useExhaustiveDependencies(engineTick): 触发器依赖——InkPad 换引擎不发数据变化，经 onEngineRebuild 计数驱动本 effect 重跑（体内不读取）
-  useEffect(() => {
-    if (!open || session === null) return;
-    const engine = engineRef.current;
-    if (engine === null) return;
-    const engineChanged = lastEngineRef.current !== engine;
-    lastEngineRef.current = engine;
-    const version = view?.docVersion ?? 0;
-    const target = view?.doc ?? EMPTY_NOTE_DOC;
-    // 首帧登记与引擎换实例（保活卸载重挂/背景重建键）**无条件 load**
-    // （复审①⑥，幂等——同内容只重绘）：登记分支若只记令牌不载入，「挂载
-    // 周期内播种到达」会登记播种令牌而引擎仍持旧稿，首笔即覆盖服务端稿；
-    // 重建出的新引擎 initial 也可能陈旧（InkPad 的 initial 仅首挂载取值）
-    if (lastWriteVersionRef.current === null || engineChanged) {
-      engine.load(inkDocOf(target));
-      lastWriteVersionRef.current = version;
-      bottomLogicalRef.current = strokesBottomLogical(target.ink.strokes);
-      setCanUndo(engine.canUndo());
-      setCanRedo(engine.canRedo());
-      return;
-    }
-    if (version === lastWriteVersionRef.current) return; // 最新变化是我们自己的写
-    engine.load(inkDocOf(target));
-    lastWriteVersionRef.current = version;
-    bottomLogicalRef.current = strokesBottomLogical(target.ink.strokes);
-    setCanUndo(engine.canUndo());
-    setCanRedo(engine.canRedo());
-  }, [open, view, session, engineTick]);
-
-  // 工具下发（挂载与切换时；InkPad 挂载后父 effect 晚于子 effect——引擎已就绪）
-  // biome-ignore lint/correctness/useExhaustiveDependencies(open): open 变化=纸面隐藏/显示切换，需重发当前工具
-  useEffect(() => {
-    engineRef.current?.setTool(
-      tool === "pen"
-        ? { type: "pen", color: penColor, size: penSize }
-        : { type: "eraser" },
-    );
-  }, [tool, penColor, penSize, open]);
-
   // ---- 收起保活（复审⑦）：展开即清计时；收起计时到点才卸载纸面 ----
   const [paperAlive, setPaperAlive] = useState(false);
   useEffect(() => {
@@ -337,34 +137,16 @@ export function NoteLayer({
     return () => clearTimeout(timer);
   }, [open]);
 
-  // ---- 冲突裁决 / 被拒重试 / 补图重试 ----
-  const [resolveError, setResolveError] = useState<string | null>(null);
+  // ---- 冲突裁决 / 被拒重试（共享 hook useNoteSyncActions，scope 定在
+  // scratch；图片维度逻辑留本组件）/ 补图重试 ----
+  const { resolveError, keepLocal, keepCloud, retryDenied } =
+    useNoteSyncActions(session, {
+      attemptId,
+      questionId,
+      phase: "scratch",
+    });
   const [imageRetrying, setImageRetrying] = useState(false);
-
-  const keepLocal = useCallback(() => {
-    if (session === null) return;
-    setResolveError(null);
-    void resolveNoteConflictKeepLocal(session, scopeRef.current).catch(
-      (err: unknown) => {
-        setResolveError(err instanceof Error ? err.message : "操作失败");
-      },
-    );
-  }, [session]);
-
-  const keepCloud = useCallback(() => {
-    if (session === null) return;
-    setResolveError(null);
-    void resolveNoteConflictKeepCloud(session, scopeRef.current).catch(
-      (err: unknown) => {
-        setResolveError(err instanceof Error ? err.message : "操作失败");
-      },
-    );
-  }, [session]);
-
-  const retryDenied = useCallback(() => {
-    if (session === null) return;
-    void retryNoteUpload(session, scopeRef.current);
-  }, [session]);
+  const [clearOpen, setClearOpen] = useState(false);
 
   /** 正文 synced 且图片 failed/missing 的手动补图入口（重进入已自动触发
    * 过）。先 refetch head 再取版本补图（复审⑮）：以服务端当下生效版本为
@@ -451,127 +233,37 @@ export function NoteLayer({
         </div>
       )}
       {open && (
-        <div
-          role="toolbar"
-          aria-label={`${label}工具栏`}
-          className="flex flex-wrap items-center gap-1.5"
-        >
-          <Button
-            type="button"
-            variant={tool === "pen" ? "secondary" : "ghost"}
-            aria-pressed={tool === "pen"}
-            onClick={() => setTool("pen")}
-            className={toolButtonClass}
-            title="笔"
-          >
-            <PenLine aria-hidden />笔
-          </Button>
-          <Button
-            type="button"
-            variant={tool === "eraser" ? "secondary" : "ghost"}
-            aria-pressed={tool === "eraser"}
-            onClick={() => setTool("eraser")}
-            className={toolButtonClass}
-            title="橡皮（整笔擦除）"
-          >
-            <Eraser aria-hidden />
-            橡皮
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            disabled={!canUndo}
-            onClick={() => engineRef.current?.undo()}
-            className={toolButtonClass}
-            title="撤销"
-          >
-            <Undo2 aria-hidden />
-            撤销
-          </Button>
-          {/* 手指书写（注记①定案：归属本工具条，一次点击可达；共用件） */}
-          <SessionPrefToggleButton className={toolButtonClass} />
-
-          <div className="ml-auto">
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                type="button"
-                aria-label={`更多操作（${label}）`}
-                title="更多（重做/颜色/粗细/清空/布局）"
-                className={`${toolButtonClass} border-transparent`}
+        <NoteToolbar
+          label={label}
+          tool={editor.tool}
+          onToolChange={editor.setTool}
+          penColor={editor.penColor}
+          onPenColorChange={editor.setPenColor}
+          penSize={editor.penSize}
+          onPenSizeChange={editor.setPenSize}
+          canUndo={editor.canUndo}
+          canRedo={editor.canRedo}
+          onUndo={() => editor.engineRef.current?.undo()}
+          onRedo={() => editor.engineRef.current?.redo()}
+          onClearRequest={() => setClearOpen(true)}
+          clearLabel="清空草稿纸"
+          moreTitle="更多（重做/颜色/粗细/清空/布局）"
+          menuExtras={(Object.keys(LAYOUT_LABEL) as NoteLayoutPreference[]).map(
+            (p) => (
+              <DropdownMenuItem
+                key={p}
+                aria-checked={layoutPref === p}
+                onSelect={() => setNoteLayoutPreference(p)}
               >
-                <MoreHorizontal aria-hidden />
-                更多
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem
-                  disabled={!canRedo}
-                  onSelect={() => engineRef.current?.redo()}
-                >
-                  <Redo2 aria-hidden />
-                  重做
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                {(Object.keys(COLOR_LABEL) as InkPenColor[]).map((c) => (
-                  <DropdownMenuItem
-                    key={c}
-                    aria-checked={penColor === c}
-                    onSelect={() => {
-                      setPenColor(c);
-                      setTool("pen");
-                    }}
-                  >
-                    <Check
-                      aria-hidden
-                      className={penColor === c ? "visible" : "invisible"}
-                    />
-                    颜色：{COLOR_LABEL[c]}
-                  </DropdownMenuItem>
-                ))}
-                <DropdownMenuSeparator />
-                {(Object.keys(SIZE_LABEL) as InkPenSize[]).map((s) => (
-                  <DropdownMenuItem
-                    key={s}
-                    aria-checked={penSize === s}
-                    onSelect={() => {
-                      setPenSize(s);
-                      setTool("pen");
-                    }}
-                  >
-                    <Check
-                      aria-hidden
-                      className={penSize === s ? "visible" : "invisible"}
-                    />
-                    粗细：{SIZE_LABEL[s]}
-                  </DropdownMenuItem>
-                ))}
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  variant="destructive"
-                  onSelect={() => setClearOpen(true)}
-                >
-                  <Trash aria-hidden />
-                  清空草稿纸
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                {(Object.keys(LAYOUT_LABEL) as NoteLayoutPreference[]).map(
-                  (p) => (
-                    <DropdownMenuItem
-                      key={p}
-                      aria-checked={layoutPref === p}
-                      onSelect={() => setNoteLayoutPreference(p)}
-                    >
-                      <Check
-                        aria-hidden
-                        className={layoutPref === p ? "visible" : "invisible"}
-                      />
-                      布局：{LAYOUT_LABEL[p]}
-                    </DropdownMenuItem>
-                  ),
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        </div>
+                <Check
+                  aria-hidden
+                  className={layoutPref === p ? "visible" : "invisible"}
+                />
+                布局：{LAYOUT_LABEL[p]}
+              </DropdownMenuItem>
+            ),
+          )}
+        />
       )}
 
       {/* 纸面（位置与宽度恒定；保活期后卸载；不在未恢复的纸面上起笔）。
@@ -580,7 +272,7 @@ export function NoteLayer({
           重放/闪烁。（jsdom 测试桩不模拟 0 宽报告——该差异不进单测口径，
           真实行为由 E2E/真机覆盖。） */}
       <div
-        ref={paperWrapRef}
+        ref={editor.paperWrapRef}
         data-slot="note-paper"
         className="w-full"
         style={
@@ -590,18 +282,18 @@ export function NoteLayer({
         }
       >
         {paperReady ? (
-          localLoaded ? (
+          editor.localLoaded ? (
             <InkPad
               engine="atrament"
               showToolbar={false}
               inputMode="session"
               label={label}
-              engineRef={engineRef}
+              engineRef={editor.engineRef}
               background={doc?.background ?? "grid"}
-              paperHeight={cssHeight}
+              paperHeight={editor.cssHeight}
               initial={inkDocOf(doc ?? EMPTY_NOTE_DOC)}
-              onDocChange={handleDocChange}
-              onEngineRebuild={() => setEngineTick((t) => t + 1)}
+              onDocChange={editor.handleDocChange}
+              onEngineRebuild={editor.onEngineRebuild}
             />
           ) : (
             <div
@@ -615,11 +307,15 @@ export function NoteLayer({
         ) : null}
       </div>
 
-      {/* 四维状态区 + 冲突/被拒/补图面板（方案 §5.3：正交、可理解、可操作） */}
+      {/* 四维状态区 + 冲突/被拒/补图面板（方案 §5.3：正交、可理解、可操作）。
+          T6R.15：抽至共享 NoteStatusArea（CorrectionPanel 复用），本组件按
+          草稿语境接线（label=草稿、图片维度开） */}
       {open && (
         <NoteStatusArea
           view={view}
-          localLoaded={localLoaded}
+          localLoaded={editor.localLoaded}
+          label="草稿"
+          images
           resolveError={resolveError}
           onKeepLocal={keepLocal}
           onKeepCloud={keepCloud}
@@ -653,7 +349,7 @@ export function NoteLayer({
               variant="destructive"
               className="h-11"
               onClick={() => {
-                engineRef.current?.clear();
+                editor.engineRef.current?.clear();
                 setClearOpen(false);
               }}
             >
@@ -662,164 +358,6 @@ export function NoteLayer({
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
-  );
-}
-
-/**
- * 四维状态区（方案 §5.3「状态必须正交」）：本地正文（saving/saved/failed）、
- * 服务端正文（dirty/uploading/synced；conflict/denied 走面板）、派生图片
- * （pending/failed/missing——仅正文已同步时提及，「图片待生成」≠「未保存」；
- * failed/missing 的判定内聚于此，复审⑩）。证据维度（evidence）草稿期恒
- * none，交卷固定后由 T6R.10 展示。
- */
-/**
- * 四维状态区（方案 §5.3「状态必须正交」）：本地正文（saving/saved/failed）、
- * 服务端正文（dirty/uploading/synced；conflict/denied 走面板）、派生图片
- * （pending/failed/missing——仅正文已同步时提及，「图片待生成」≠「未保存」；
- * failed/missing 的判定内聚于此，复审⑩）。证据维度（evidence）草稿期恒
- * none，交卷固定后由 T6R.10 展示。
- *
- * **完整面板栈**（复审④）：各维度并列展示、按 denied > conflict > images >
- * 本机失败提示的优先级排序——本机落盘失败不再提前 return 遮蔽同步面板
- * （两件事同时成立时都得能看见、能操作）。
- *
- * **空稿（0 笔）不显示任何图片提示**（复审⑨定案）：无笔迹可渲染，派生图
- * 是无意义空白——不生成也不提示，避免空稿常态噪音；有笔后按四维口径
- * 如实显示。
- */
-function NoteStatusArea({
-  view,
-  localLoaded,
-  resolveError,
-  onKeepLocal,
-  onKeepCloud,
-  onRetryDenied,
-  imageRetrying,
-  onRetryImages,
-}: {
-  view: ReturnType<typeof useNoteRecord>;
-  localLoaded: boolean;
-  resolveError: string | null;
-  onKeepLocal: () => void;
-  onKeepCloud: () => void;
-  onRetryDenied: () => void;
-  imageRetrying: boolean;
-  onRetryImages: () => void;
-}) {
-  if (view === null) {
-    return localLoaded ? null : (
-      <p role="status" className="text-xs text-muted-foreground">
-        草稿状态加载中…
-      </p>
-    );
-  }
-  const parts: string[] = [];
-  // 本地维度（IDB 事务）
-  if (view.local === "saving") parts.push("本机保存中…");
-  // 服务端维度（同步队列视角；conflict/denied 走面板，不与文案混排）
-  if (view.server === "uploading") parts.push("同步中…");
-  else if (view.server === "dirty") parts.push("等待同步");
-  // 图片维度（仅正文已同步且有笔迹时提示——派生任务不阻塞作答与交卷）
-  const strokeCount = view.doc?.ink.strokes.length ?? 0;
-  const imagesInformative = view.server === "synced" && strokeCount > 0;
-  if (imagesInformative && view.overview.images === "pending") {
-    parts.push("图片待生成");
-  }
-  const imagesFailed =
-    imagesInformative &&
-    (view.overview.images === "failed" || view.overview.images === "missing");
-
-  return (
-    <div className="flex flex-col gap-1.5">
-      {parts.length > 0 && (
-        <p role="status" className="text-xs text-muted-foreground">
-          {parts.join(" · ")}
-        </p>
-      )}
-      {view.denied !== null && (
-        <div
-          role="alert"
-          className="flex flex-col gap-2 rounded-lg border border-border bg-muted/60 px-3 py-2.5 text-xs"
-        >
-          <p className="font-medium">
-            {view.denied.kind === "access" ? "草稿已停止同步" : "草稿内容被拒"}
-          </p>
-          <p className="break-words text-muted-foreground">
-            {view.denied.reason}
-            {view.denied.kind === "content"
-              ? "。继续书写产生新内容后会自动重试上传。"
-              : "。本机草稿已保留，若权限恢复可重试同步。"}
-          </p>
-          {view.denied.kind === "access" && (
-            <Button
-              type="button"
-              variant="outline"
-              className="h-11 self-start"
-              onClick={onRetryDenied}
-            >
-              重试同步
-            </Button>
-          )}
-        </div>
-      )}
-      {view.conflict !== null && (
-        <div
-          role="alert"
-          className="flex flex-col gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2.5 text-xs text-amber-900"
-        >
-          <p className="font-medium">草稿内容冲突</p>
-          <p className="break-words">{view.conflict.reason}</p>
-          <p className="text-amber-700">
-            本机与服务端各保留了一份草稿，请选择保留哪一份（未被保留的一份仍
-            可在导出材料中找回）。
-          </p>
-          {resolveError !== null && (
-            <p className="text-destructive">{resolveError}</p>
-          )}
-          <div className="flex flex-wrap gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              className="h-11"
-              onClick={onKeepLocal}
-            >
-              保留本机内容
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              className="h-11"
-              onClick={onKeepCloud}
-            >
-              保留服务端内容
-            </Button>
-          </div>
-        </div>
-      )}
-      {view.local === "failed" && (
-        <p role="alert" className="text-xs text-destructive">
-          本机保存失败：{view.localError ?? "存储不可用"}。可继续书写（内容暂存
-          内存）；请检查设备存储空间，空间恢复后新笔迹会重新落盘。
-        </p>
-      )}
-      {imagesFailed && (
-        <div
-          role="status"
-          className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"
-        >
-          <span>草稿图片未生成完整（正文已保存，不影响作答与交卷）。</span>
-          <Button
-            type="button"
-            variant="outline"
-            className="h-11"
-            disabled={imageRetrying}
-            onClick={onRetryImages}
-          >
-            {imageRetrying ? "生成中…" : "重新生成图片"}
-          </Button>
-        </div>
-      )}
     </div>
   );
 }

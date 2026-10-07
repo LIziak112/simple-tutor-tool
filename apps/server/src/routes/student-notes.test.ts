@@ -27,7 +27,7 @@ import { submitAttemptRequestWithEvidence } from "../test/submit-revisions";
  * 覆盖：鉴权矩阵（401/403/404/409 已交卷）、multipart 元信息校验 400、
  * A/B 同 baseRevision 仅一个成功、丢回执重试逐字段原回执、同 mutationId
  * 不同正文 409、DSL 特殊 questionId（含 Windows 保留名）不进文件路径、
- * 客户端多余字段（noteId/serverSavedAt/phase）被忽略、限额 413 两级防线、
+ * 客户端多余字段（noteId/serverSavedAt）被忽略、限额 413 两级防线、
  * assertNoLeak（成功与错误响应）。
  * 夹具用 samples/v2/练习样例.md（题目 id：p4-q7 / 练习四-7）。
  */
@@ -562,9 +562,13 @@ describe("DSL 特殊 questionId 与服务端字段不可覆盖", () => {
     }
   });
 
-  it("客户端发送 noteId/serverSavedAt/phase/studentId 等字段被忽略：行值全由服务端定", async () => {
+  it("客户端发送 noteId/serverSavedAt/studentId 等字段被忽略：行值全由服务端定", async () => {
     const attemptId = await freshAttempt();
     const evilNoteId = "99999999-9999-4999-8999-999999999999";
+    // phase 不在恶意字段清单里：T6R.15（D5）起是 PUT 的真实可选字段（本
+    // attempt 为 draft，phase=correction 会正确 409 NOTE_NOT_SUBMITTED——
+    // 语义见 student-corrections.test.ts 的门口矩阵），这里只测服务端字段
+    // 不可覆盖
     const res = await putNote(
       app,
       aCookie,
@@ -575,7 +579,6 @@ describe("DSL 特殊 questionId 与服务端字段不可覆盖", () => {
         extra: {
           noteId: evilNoteId,
           serverSavedAt: "1999-01-01T00:00:00.000Z",
-          phase: "correction",
           studentId: "someone-else",
           teacherId: "someone-else",
           currentVersionId: evilNoteId,

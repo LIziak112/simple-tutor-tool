@@ -848,8 +848,13 @@ export async function applyServerHead(
 
 /**
  * 上传回执落地：head 信息推进（baseRevision/noteId）；
- **mutationId 匹配才清 pending**——A 的回执不清 B（B 在 A 在途期间写入，
+ * **mutationId 匹配才清 pending**——A 的回执不清 B（B 在 A 在途期间写入，
  * pending 已换成 B 的新 mutationId），B 仍 dirty 等下一轮上传。
+ * 迟到回执守卫（闸门修复 F6）：本地 noteId 已指向**另一行**（clear→seed
+ * 新行后，旧 PUT 的成功回执才到达）时整笔丢弃——不把基线拉回旧行值
+ * （否则新行首传带旧 base 撞 409，多一次可自愈冲突）、不误清新行 pending、
+ * 不把旧行回执合并进新行 lastHead。noteId 为空（行未铸 id）或一致时照旧
+ * 推进（幂等语义保留）。
  */
 export async function applyUploadReceipt(
   session: NoteSessionRef,
@@ -859,6 +864,7 @@ export async function applyUploadReceipt(
 ): Promise<void> {
   // 记录已不存在的迟到回执直接丢弃（mutateLoaded 返回 false）
   await mutateLoaded(session, scope, null, (record) => {
+    if (record.noteId !== null && record.noteId !== receipt.noteId) return;
     record.baseRevision = receipt.revision;
     record.noteId = receipt.noteId;
     if (record.pending?.mutationId === mutationId) {
@@ -880,6 +886,10 @@ export async function applyUploadReceipt(
           : null,
       images: [],
       evidence: record.lastHead?.evidence ?? null,
+      // T6R.15：回执不改变订正/补充稿集合——沿用旧 head 值（从未拉过 head
+      // 则空数组），下一次 head 拉取全覆盖（同 note/evidence 合并口径）
+      corrections: record.lastHead?.corrections ?? [],
+      supplements: record.lastHead?.supplements ?? [],
     };
   });
 }
@@ -971,6 +981,28 @@ export async function resolveNoteConflict(
   });
 }
 
+/**
+ * SEALED 分诊的「新开一行」重置（T6R.15 D2，note-sync 自动重试路径调用）：
+ * 本地记录从「对既有订正行的续写」切换为「新行的首次上传」——baseRevision
+ * 归零、noteId 清空（新行 id 由首传回执重新铸造）、pending **重铸幂等键**
+ * （旧 mutationId 已对应一次被拒上传，复用会撞服务端幂等记录——与 MISMATCH
+ * 裁决的重铸同口径）；正文快照不动（同内容作为新行首版本上传）。lastHead
+ * 保留（指旧行投影，下一次 head 拉取全覆盖）；conflict/denied 不在此清除
+ * （自动重试仍失败由调用方落 conflict 终态）。
+ */
+export async function resetCorrectionSealed(
+  session: NoteSessionRef,
+  scope: NoteScope,
+): Promise<void> {
+  await mutateLoaded(session, scope, null, (record) => {
+    record.baseRevision = 0;
+    record.noteId = null;
+    if (record.pending !== null) {
+      record.pending = { mutationId: randomUuid(), doc: record.pending.doc };
+    }
+  });
+}
+
 /** 在途上传标记（note-sync 维护；派生 uploading 维度） */
 export function setUploading(
   session: NoteSessionRef,
@@ -982,6 +1014,35 @@ export function setUploading(
   if (on) uploadingKeys.add(key);
   else uploadingKeys.delete(key);
   if (had !== on) notify(key);
+}
+
+/**
+ * 新开订正行的本地重置（T6R.15 D2/D3，CorrectionSection 创建新订正成功后
+ * 调用）：本地记录从「对旧封存行的续写」切换为「新行的空白起步」——
+ * pending/doc/conflict/denied/baseRevision/noteId/lastHead 全清，防止旧封存
+ * 行的 stale 状态（未传完的 pending、CAS 冲突、被拒终态、旧正文）灌进
+ * 新行（否则首传会带旧 baseRevision 撞 CAS、编辑器载入旧稿）。
+ * docVersion 照常递增（replaceDoc 单点）——消费方（use-note-editor 自写
+ * 自载守卫）感知外部换稿并重载引擎。无残留记录时幂等 no-op（不建壳——
+ * 新行的首拉播种/首笔书写自然建壳）。与 resetCorrectionSealed（SEALED
+ * 自动重试的**保留正文**重置）互补：本函数是「弃旧稿开新行」的用户显式
+ * 动作，正文回到空稿。
+ */
+export async function clearCorrectionRecord(
+  session: NoteSessionRef,
+  scope: NoteScope,
+): Promise<void> {
+  await mutateLoaded(session, scope, null, (record) => {
+    replaceDoc(record, freshRecord().doc);
+    record.pending = null;
+    record.baseRevision = 0;
+    record.noteId = null;
+    record.lastHead = null;
+    record.conflict = null;
+    record.denied = null;
+    record.editedAt = 0;
+    record.totalPoints = 0;
+  });
 }
 
 /**

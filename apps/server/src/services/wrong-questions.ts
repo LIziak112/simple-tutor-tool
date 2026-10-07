@@ -422,8 +422,10 @@ export function listWrongQuestions(
  * 第 n 次」；错题重练=「错题重练 · 第 n 次」（2026-10，重练交卷后自动成为
  * 新一轮）。与前端 records-views.recordTitleOf 同口径（展示约定在
  * teacherAttemptSourceSchema 注释；跨端小格式化函数不进契约包，注释互指）。
+ * T6R.15 起导出：note-service.getStudentQuestionNotebook 的 sourceLabel 与
+ * 本函数同一实现（同一概念同一份定义，不复制粘贴）。
  */
-function roundSourceTitle(source: TeacherAttemptSource): string {
+export function roundSourceTitle(source: TeacherAttemptSource): string {
   if (source.sourceType === "assignment") {
     return source.assignmentTitle ?? "（作业已删除）";
   }

@@ -475,6 +475,15 @@ describe("NoteLayer：工具条与操作", () => {
     expect(mockSetInputMode).toHaveBeenCalledWith("finger");
     resetSessionInputPreference();
   });
+
+  it("「更多」title 提示含布局段（闸门修复 F10：NoteToolbar 抽取时丢失回归）", async () => {
+    renderLayer({ initialOpen: true });
+    await waitForEngine();
+    expect(screen.getByRole("button", { name: /更多/ })).toHaveAttribute(
+      "title",
+      "更多（重做/颜色/粗细/清空/布局）",
+    );
+  });
 });
 
 /** 与冲突摘要一致的服务端形态（rev3；notCreated 会与摘要矛盾触发回退守卫） */

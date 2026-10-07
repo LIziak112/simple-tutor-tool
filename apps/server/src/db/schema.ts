@@ -1001,6 +1001,26 @@ export const notes = sqliteTable(
     ),
     /** 最近一次服务端确认时间（UTC ISO）；从未确认为 NULL */
     serverSavedAt: text("server_saved_at"),
+    /**
+     * 订正检查点封存时间（T6R.15，D2「保存订正」= seal 检查点）：UTC ISO；
+     * NULL = 未封存。非空 = 该订正行已封存，此后行不再接受写入（PUT →
+     * 409 NOTE_CORRECTION_SEALED，再编辑 = 新开一行）；未封存的 correction
+     * 行每 (attempt, question) 至多一行（D1，服务层事务内先查后插——同
+     * scratch 口径不建 partial unique index）。仅 phase='correction' 行
+     * 会有值（服务层保证；契约 noteRecordMetaSchema superRefine 锁定投影形态）。
+     */
+    sealedAt: text("sealed_at"),
+    /**
+     * 反思「我卡在哪里」（T6R.15，D10）：≤500 字（契约
+     * NOTE_REFLECTION_MAX_LENGTH 单源）；随 seal 落列**冻结**——封存后行
+     * 不再接受写入，反思字段随之不可改。
+     */
+    reflectionStuckAt: text("reflection_stuck_at"),
+    /**
+     * 反思「我的错因」（T6R.15，D10）：≤500 字；随 seal 落列冻结（同
+     * reflectionStuckAt，checkpoint 语义天然只读）。
+     */
+    reflectionErrorCause: text("reflection_error_cause"),
     /** 头指针最近更新时间：UTC ISO 字符串（四表中唯一可 UPDATE 的表） */
     updatedAt: text("updated_at").notNull(),
   },

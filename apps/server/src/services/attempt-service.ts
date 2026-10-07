@@ -970,14 +970,16 @@ export function requireAttemptQuestions(
  * 对照）：只要求该 attempt 的 responses 行存在——不查 questions 当前存活
  * （软删题历史证据可读），也不要求快照非空（升级前遗留卷的响应行仍可定位，
  * 历史读取方返回空投影而非 404；证据/笔记行本就只可能由新代码写入，遗留卷
- * 恒为空态）。消费方：note-service 的 evidence 读（学生 ② / 教师 ⑥）——
- * 历史只读场景；写通道（笔记上传/工作稿头）仍走严格 requireAttemptQuestion。
+ * 恒为空态）。消费方：note-service 的 evidence 读（学生 ② / 教师 ⑥）与
+ * T6R.15 的 correction/supplement 写通道（订正/补充是历史材料，软删题照常
+ * 可写——门口返回行 id 兼作 notes.questionRevisionId）；scratch 写通道
+ * （笔记上传/工作稿头）仍走严格 requireAttemptQuestion。
  */
 export function requireAttemptQuestionRow(
   db: Db,
   attemptId: string,
   questionId: string,
-): void {
+): { id: string } {
   const hit = db
     .select({ id: responses.id })
     .from(responses)
@@ -995,6 +997,7 @@ export function requireAttemptQuestionRow(
       "题目不存在或不属于这次练习",
     );
   }
+  return hit;
 }
 
 /**

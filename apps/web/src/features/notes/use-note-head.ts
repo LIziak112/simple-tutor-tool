@@ -2,13 +2,13 @@
  * 笔记头拉取与恢复接线（T6R.9，方案 §8「GET notes 工作稿头」；T6R.14 起拉取
  * 经批量端点合批）：答题页每道可草稿题挂一次本 hook——
  *
- * - head 拉取成功 → applyServerHead（baseRevision/noteId/lastHead 对齐 +
- *   同源备份回退检测，T6R.8 语义）；notCreated 显式空态（note=null）以
- *   baseRevision=0 起步，不拉正文；
- * - **条件拉正文**：本地无记录 / note 归属变更 / 服务端 revision 领先时才
- *   GET 版本文档并 applyServerLoad 播种（工作稿=服务端稿；本地未同步稿
- *   经 noteDocsEqual 比较保留，不会被覆盖）。本地同 base 且有 pending
- *   （本地领先）不拉——省请求，上传自然追平；
+ * - head 拉取成功 → 播种共享核（note-seed.seedRecordFromServerHead，
+ *   闸门修复 F1 抽取）：notCreated 显式空态（note=null）以 baseRevision=0
+ *   起步不拉正文；**条件拉正文**（本地无记录 / note 归属变更 / 服务端
+ *   revision 领先时才 GET 版本文档并 applyServerLoad 播种；**先 fetch 成功
+ *   才落 head 对齐**，失败不动本地状态、下次 head 重拉重试——工作稿=服务端
+ *   稿；本地未同步稿经 noteDocsEqual 比较保留，不会被覆盖）。本地同 base
+ *   且有 pending（本地领先）不拉——省请求，上传自然追平；
  * - **补图触发**（T6R.6「学生重新进入时触发」）：head 的 images 含
  *   failed/missing → recoverNoteImages 重建补传（不 await：补图不阻塞
  *   head 应用；确定性渲染 + 槽位幂等 upsert，重入安全）。UI 侧的
@@ -27,18 +27,14 @@
 import { type UseQueryResult, useQuery } from "@tanstack/react-query";
 import type { NoteHeadData } from "@tutor/contract";
 import { useSyncExternalStore } from "react";
-import { recoverNoteImages } from "@/features/notes/image-sync";
-import { hasBrokenRow } from "@/features/notes/note-image-state";
+import { seedRecordFromServerHead } from "@/features/notes/note-seed";
 import {
-  applyServerHead,
-  applyServerLoad,
   type NoteScope,
   type NoteSessionRef,
-  peekNoteRecord,
   subscribeNoteStore,
 } from "@/features/notes/note-store";
 import { currentNoteSession } from "@/features/notes/note-sync";
-import { ApiError, fetchStudentNoteDocumentApi } from "@/lib/api";
+import { ApiError } from "@/lib/api";
 import { fetchStudentNoteHeadCoalesced } from "@/lib/note-head-batch";
 
 /**
@@ -67,42 +63,14 @@ export const studentNoteHeadKey = (
   questionId: string,
 ) => ["student", studentId, "note-head", attemptId, questionId] as const;
 
-/** head 应用与条件恢复（queryFn 内执行；导出供测试直调） */
+/** head 应用与条件恢复（queryFn 内执行；导出供测试直调）——播种共享核的
+ * scratch 接线（真实 head + 补图触发；时序与失败重试语义见 note-seed） */
 export async function applyNoteHeadSideEffects(
   session: NoteSessionRef,
   scope: NoteScope,
   head: NoteHeadData,
 ): Promise<void> {
-  const note = head.note;
-  const versionId = note?.currentVersionId ?? null;
-  // 「服务端领先」判定取 head 应用**前**的快照（applyServerHead 会把
-  // baseRevision/noteId 对齐——之后判就永远不领先了）
-  const before = peekNoteRecord(session, scope);
-  const serverAhead =
-    versionId !== null &&
-    note !== null &&
-    (before === null ||
-      before.noteId !== note.noteId ||
-      before.baseRevision < note.revision);
-  await applyServerHead(session, scope, head);
-  // 补图触发（正文拉取与否都该补：本地领先时图片照样该恢复）；损坏行
-  // 存在性谓词（[missing,pending] 混合态不漏判；空数组 → false 与原口径一致）
-  if (versionId !== null && hasBrokenRow(head.images)) {
-    void recoverNoteImages({
-      role: "student",
-      versionId,
-    }).catch((err: unknown) => {
-      console.warn("草稿补图恢复失败（可用状态栏的重试入口再试）", err);
-    });
-  }
-  if (!serverAhead) return; // 本地领先/已追平：省请求，上传自然覆盖
-  try {
-    const raw = await fetchStudentNoteDocumentApi(versionId);
-    await applyServerLoad(session, scope, raw, head);
-  } catch (err) {
-    // 正文拉取失败不阻塞：本地稿（若有）继续可用，下一轮 head 重试播种
-    console.warn("草稿正文拉取失败（本地稿不受影响）", err);
-  }
+  await seedRecordFromServerHead(session, scope, head, { recoverImages: true });
 }
 
 /**

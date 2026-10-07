@@ -31,9 +31,13 @@ const teacherEvidence = vi.mocked(fetchTeacherNoteEvidenceApi);
 const studentDoc = vi.mocked(fetchStudentNoteDocumentApi);
 const teacherDoc = vi.mocked(fetchTeacherNoteDocumentApi);
 
-const HEAD = { note: null, images: [], evidence: null } as Awaited<
-  ReturnType<typeof studentEvidence>
->;
+const HEAD = {
+  note: null,
+  images: [],
+  evidence: null,
+  corrections: [],
+  supplements: [],
+} as Awaited<ReturnType<typeof studentEvidence>>;
 
 describe("fetchNoteEvidenceApi（角色单点分派）", () => {
   it("student → 只调学生证据端点", async () => {

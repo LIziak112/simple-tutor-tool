@@ -79,6 +79,8 @@ describe("putNoteDocumentApi（T6R.8）", () => {
     // 字段一律十进制字符串（strictFormInt 不认其他形态）
     expect(fd.get("baseRevision")).toBe("0");
     expect(fd.get("mutationId")).toBe("44444444-4444-4444-8444-444444444444");
+    // T6R.15：不传 phase 即不发该字段（旧链路 wire 形态零变化；服务端缺省 scratch）
+    expect(fd.get("phase")).toBeNull();
   });
 
   it("409 冲突壳 → ApiError 且 extra._current 携带服务端摘要", async () => {

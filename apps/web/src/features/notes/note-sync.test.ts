@@ -4,6 +4,7 @@ import { noteDocSchema } from "@tutor/contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { docOf, stroke } from "@/features/notes/note-fixtures";
 import {
+  applyUploadReceipt,
   getNoteRecord,
   installNoteBackend,
   memoryNoteBackend,
@@ -694,5 +695,97 @@ describe("retryNoteUpload（T6R.9 denied(access) 手动重试入口）", () => {
     const calls = putMock.mock.calls.length;
     await retryNoteUpload(SESSION_A, SCOPE);
     expect(putMock.mock.calls.length).toBe(calls);
+  });
+});
+
+describe("note-sync：T6R.15 三 phase 上送与订正分诊", () => {
+  /** 订正 scope（五元键第 6 元 phase='correction'） */
+  const CORR_SCOPE = { ...SCOPE, phase: "correction" as const };
+  /** 补充稿 scope */
+  const SUPP_SCOPE = { ...SCOPE, phase: "supplement" as const };
+
+  it("correction/supplement 上传带 phase 字段；scratch 不带（wire 零变化）", async () => {
+    putMock.mockResolvedValue(receiptOf(1));
+    writeNoteDoc(SESSION_A, CORR_SCOPE, DOC_A);
+    writeNoteDoc(SESSION_A, SUPP_SCOPE, DOC_B);
+    writeNoteDoc(SESSION_A, SCOPE, DOC_A);
+    await vi.advanceTimersByTimeAsync(NOTE_SYNC_DEBOUNCE_MS);
+    expect(putMock.mock.calls.length).toBe(3);
+    expect(callOf(0).meta.phase).toBe("correction");
+    expect(callOf(1).meta.phase).toBe("supplement");
+    // scratch 不发 phase 字段（服务端缺省 scratch；旧链路 wire 形态零变化）
+    expect(callOf(2).meta.phase).toBeUndefined();
+  });
+
+  it("409 NOTE_CORRECTION_SEALED：重置为新开一行（baseRevision=0+重铸幂等键）后自动重试一次成功", async () => {
+    // 既有未封存行 rev1（本地已确认）→ 写新内容 → 上传撞 SEALED（行已被封存）
+    writeNoteDoc(SESSION_A, CORR_SCOPE, DOC_B);
+    await applyUploadReceipt(
+      SESSION_A,
+      CORR_SCOPE,
+      peekNoteRecord(SESSION_A, CORR_SCOPE)?.pending?.mutationId ?? "",
+      receiptOf(1),
+    );
+    writeNoteDoc(SESSION_A, CORR_SCOPE, DOC_A); // 新待传（撞封存的这次上传）
+    const sealedMutation = peekNoteRecord(SESSION_A, CORR_SCOPE)?.pending
+      ?.mutationId;
+    putMock
+      .mockRejectedValueOnce(
+        new ApiError(
+          "NOTE_CORRECTION_SEALED",
+          "这份订正已保存定格，再修改需新开一份",
+          409,
+        ),
+      )
+      .mockResolvedValueOnce(receiptOf(1));
+    await vi.advanceTimersByTimeAsync(NOTE_SYNC_DEBOUNCE_MS);
+    // 原上传 + 自动重试各一次（重试在同一作业内完成，无需再推进计时器）
+    expect(putMock.mock.calls.length).toBe(2);
+    // 第一次：对既有行（baseRevision=1、原幂等键）
+    expect(callOf(0).meta.baseRevision).toBe(1);
+    expect(callOf(0).meta.mutationId).toBe(sealedMutation);
+    expect(callOf(0).meta.phase).toBe("correction");
+    // 自动重试一次：新开一行（baseRevision=0、重铸幂等键、正文原样）
+    expect(callOf(1).meta.baseRevision).toBe(0);
+    expect(callOf(1).meta.mutationId).not.toBe(sealedMutation);
+    expect(callOf(1).meta.phase).toBe("correction");
+    expect((await bodyDoc(callOf(1).blob)).ink.strokes.length).toBe(1); // DOC_A
+    const record = peekNoteRecord(SESSION_A, CORR_SCOPE);
+    expect(record?.pending).toBeNull(); // 重试回执落地
+    expect(record?.baseRevision).toBe(1);
+    expect(record?.conflict).toBeNull();
+    expect(record?.denied).toBeNull();
+  });
+
+  it("SEALED 自动重试仍失败：进 conflict 态可人工恢复（不再循环自动重开）", async () => {
+    writeNoteDoc(SESSION_A, CORR_SCOPE, DOC_A);
+    const sealedErr = new ApiError(
+      "NOTE_CORRECTION_SEALED",
+      "这份订正已保存定格，再修改需新开一份",
+      409,
+    );
+    putMock.mockRejectedValue(sealedErr);
+    await vi.advanceTimersByTimeAsync(NOTE_SYNC_DEBOUNCE_MS);
+    expect(putMock.mock.calls.length).toBe(2); // 原上传 + 自动重试各一次
+    const record = peekNoteRecord(SESSION_A, CORR_SCOPE);
+    expect(record?.conflict).not.toBeNull();
+    expect(record?.conflict?.current).toBeNull(); // SEALED 无 _current 摘要
+    expect(record?.pending).not.toBeNull(); // 本地内容保留待裁决
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(putMock.mock.calls.length).toBe(2); // conflict 阻塞自动重试
+  });
+
+  it("409 NOTE_NOT_SUBMITTED：denied(access) 终态（本地保留、文案区分交卷语义）", async () => {
+    putMock.mockRejectedValueOnce(
+      new ApiError("NOTE_NOT_SUBMITTED", "尚未交卷，不能写订正或补充稿", 409),
+    );
+    writeNoteDoc(SESSION_A, CORR_SCOPE, DOC_A);
+    await vi.advanceTimersByTimeAsync(NOTE_SYNC_DEBOUNCE_MS);
+    const record = peekNoteRecord(SESSION_A, CORR_SCOPE);
+    expect(record?.denied?.kind).toBe("access");
+    expect(record?.denied?.reason).toContain("交卷");
+    expect(record?.pending).not.toBeNull(); // 本地内容保留
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(putMock.mock.calls.length).toBe(1); // 终态停传
   });
 });

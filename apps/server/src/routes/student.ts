@@ -3,6 +3,8 @@ import {
   attemptAnswerSaveRequestSchema,
   attemptEventBatchRequestSchema,
   attemptSubmitRequestSchema,
+  correctionCreateRequestSchema,
+  correctionSealRequestSchema,
   hintOpenRequestSchema,
   lectureEventBatchRequestSchema,
   noteHeadsRequestSchema,
@@ -59,12 +61,15 @@ import { openHint } from "../services/hint-service";
 import { getInkDoc, getStudentInkPng, saveInk } from "../services/ink-service";
 import {
   attachNoteImage,
+  createCorrection,
   getStudentNoteDocument,
   getStudentNoteEvidence,
   getStudentNoteHead,
   getStudentNoteHeads,
   getStudentNoteImagePng,
+  getStudentQuestionNotebook,
   saveNoteVersion,
+  sealCorrection,
 } from "../services/note-service";
 import {
   buildReviewPackZip,
@@ -117,7 +122,9 @@ import { listWrongQuestions } from "../services/wrong-questions";
  * - PUT  /attempts/:id/notes/:questionId：题目草稿正文上传（T6R.4，multipart：
  *   body 文件（gzip 或原始 JSON 的 NoteDoc）+ baseRevision/mutationId；CAS
  *   409 NOTE_REVISION_CONFLICT 附 _current 摘要、mutationId 幂等回执、限额
- *   413 NOTE_LIMIT_EXCEEDED）；
+ *   413 NOTE_LIMIT_EXCEEDED；T6R.15 起增可选 phase 字段——correction 订正稿 /
+ *   supplement 补充稿只能在已交卷后写入，draft → 409 NOTE_NOT_SUBMITTED，
+ *   已封存订正行 → 409 NOTE_CORRECTION_SEALED，三 phase 分派在 service）；
  * - GET  /attempts/:id/notes/:questionId：本次工作稿头（T6R.5 ①，noteRecordMeta
  *   + 生效版本派生图 + 证据行；无笔记 → 显式空态 note=null，客户端按
  *   baseRevision=0 起步；本人 + attempt 可用 + 题目属冻结集合）；
@@ -136,6 +143,15 @@ import { listWrongQuestions } from "../services/wrong-questions";
  *   槽位 (versionId,spec,pageIndex) upsert、hash 服务端算、单图 2MiB/聚合
  *   8MiB 限额、PNG 魔数与 IHDR 尺寸须与声明一致；只能挂既定版本不能改正文；
  *   交卷后仍放行〔补图是恢复通道〕）；
+ * - POST /attempts/:id/notes/:qid/corrections：创建订正（T6R.15 D3，JSON：
+ *   copyFromOriginal 必填——true 服务端复制 frozen 原稿铸首版本、否则空白行；
+ *   201 + noteHeadData；已交卷门、D1 未封存至多一行、原稿非 frozen → 409）；
+ * - POST /attempts/:id/notes/:qid/corrections/seal：保存订正 = 封存检查点
+ *   （T6R.15 D2，JSON：baseRevision CAS + 可选反思两字段 ≤500 字；封存后
+ *   行不再接受写入，再编辑 = 新开一行）；
+ * - GET  /notebook/questions/:questionId：题目笔记本（T6R.15 D7）——本人该题
+ *   跨来源（作业+课程练习+错题重练）已交卷轮次聚合；零答案零题干（题目侧
+ *   只有 questionVersion 版本号数字）；无轮次 200 空数组不探测存在性；
  * - GET  /courses、GET /courses/:id：我的课程（可见讲义/单元计数，完成数 T2A.6 前恒 0）
  *   与课程可见目录（T2A.5，D5 过滤；D22——非成员/学生归档/课程归档 403
  *   COURSE_ACCESS_DENIED，课程不存在/条目不可见 404 NOT_FOUND 不暴露存在性）；
@@ -367,8 +383,11 @@ export function createStudentRoutes(
       // noteUploadMetaSchema）。本人+进行中 attempt+题目属冻结集合（service
       // 内统一门口）；CAS 失败 409 附 _current 摘要、同 mutationId 重放同文
       // 原回执/异文 409（service 内实现）。响应 noteVersionReceipt；客户端
-      // 多发的 noteId/serverSavedAt/phase 等字段一律忽略（归属与时间全由
-      // 服务端定）。
+      // 多发的 noteId/serverSavedAt 等字段一律忽略（归属与时间全由服务端定）。
+      // T6R.15（D5）：multipart 增可选 phase 字段（formString——缺省 scratch
+      // 向后兼容；非法值被契约 notePhaseSchema 出 400）。correction/supplement
+      // 的业务门槛（已交卷、未封存行定位、每 (attempt,question) 唯一性）在
+      // service.saveNoteVersion 三 phase 分派内执行。
       .put("/attempts/:id/notes/:questionId", async (c) => {
         const form = await c.req.parseBody();
         const body = form.body;
@@ -386,6 +405,7 @@ export function createStudentRoutes(
         const parsed = noteUploadMetaSchema.safeParse({
           baseRevision: strictFormInt(form, "baseRevision"),
           mutationId: formString(form, "mutationId"),
+          phase: formString(form, "phase"),
         });
         if (!parsed.success) {
           const first = firstIssueMessage(parsed.error);
@@ -405,6 +425,45 @@ export function createStudentRoutes(
             c.req.param("questionId"),
             new Uint8Array(await body.arrayBuffer()),
             parsed.data,
+          ),
+        });
+      })
+      // T6R.15 D3：创建订正（POST …/notes/:qid/corrections，JSON body
+      // correctionCreateRequestSchema——copyFromOriginal 必填）。service
+      // createCorrection 内统一门口（本人 + 宽松题目口径 + 已交卷 +
+      // D1 未封存行复核 + 原稿可用性）；201 创建语义（新 note 行落库），
+      // 响应 data 复用 noteHeadData（头投影含新行，契约同形）。
+      .post("/attempts/:id/notes/:questionId/corrections", async (c) => {
+        const body = await parseJsonBody(c, correctionCreateRequestSchema);
+        return c.json(
+          {
+            ok: true,
+            data: createCorrection(
+              db,
+              dataDir,
+              c.var.student.id,
+              c.req.param("id"),
+              c.req.param("questionId"),
+              body,
+            ),
+          },
+          201,
+        );
+      })
+      // T6R.15 D2：「保存订正」= seal 检查点（POST …/corrections/seal，JSON
+      // body correctionSealRequestSchema——baseRevision CAS 期望值 + 可选
+      // 反思两字段）。service sealCorrection 内统一门口与 CAS；响应 data
+      // 复用 noteHeadData（封存行进入 corrections 已封存段）。
+      .post("/attempts/:id/notes/:questionId/corrections/seal", async (c) => {
+        const body = await parseJsonBody(c, correctionSealRequestSchema);
+        return c.json({
+          ok: true,
+          data: sealCorrection(
+            db,
+            c.var.student.id,
+            c.req.param("id"),
+            c.req.param("questionId"),
+            body,
           ),
         });
       })
@@ -582,6 +641,21 @@ export function createStudentRoutes(
         return c.json({
           ok: true,
           data: listStudentLectures(db, c.var.student.id),
+        });
+      })
+      // T6R.15 D7：题目笔记本——本人该题的跨来源已交卷轮次聚合（GET
+      // /notebook/questions/:qid，聚合查询不建全局表）。service
+      // getStudentQuestionNotebook 内 join responses 定题目成员、按 submittedAt
+      // 升序编轮；零答案零题干（题目侧只有 questionVersion 版本号数字，
+      // AGENTS 第 3 条）；无轮次 200 空数组（不探测题目存在性）。
+      .get("/notebook/questions/:questionId", (c) => {
+        return c.json({
+          ok: true,
+          data: getStudentQuestionNotebook(
+            db,
+            c.var.student.id,
+            c.req.param("questionId"),
+          ),
         });
       })
       // T3.5（D10）：我的记录——本人全部作答的时间倒序索引（作业 + 课程练习
