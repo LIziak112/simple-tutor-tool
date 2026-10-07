@@ -1,7 +1,8 @@
 /**
  * gen:spec 脚本入口（T1.7）：从指令注册表 + lint 规则清单生成
  * docs/dsl/规范.md 与 docs/dsl/提示词模板.md；T4.3 起追加第三个输出
- * docs/dsl/学情分析提示词.md（四种任务目标的完整提示词模板，人读版）；
+ * docs/dsl/学情分析提示词.md（五种任务目标的完整提示词模板，人读版；
+ * T6R.16 增第五目标 per-question-review 逐题评析）；
  * dsl-kit 起（一站式分发包）另把规范三件套 + content.json 同步拷贝进
  * 仓库根 dsl-kit/（README.md / SKILL.md 手写维护，不经本脚本）。
  * 运行：根目录 `pnpm gen:spec`（本脚本与 contract 的 export-schema 串联，
@@ -31,7 +32,7 @@ import {
 const directives = listDirectives();
 const rules = LINT_RULES;
 
-/** 学情分析提示词.md（人读版）：按全模块示例渲染四模板 + 拼装规则说明 */
+/** 学情分析提示词.md（人读版）：按全模块示例渲染五模板 + 拼装规则说明 */
 function renderLearningPackPromptDoc(): string {
   const ALL_MODULES = {
     lectures: true,
@@ -41,6 +42,14 @@ function renderLearningPackPromptDoc(): string {
     ink: true,
     traces: true,
     anonymized: true,
+  };
+  // T6R.16：per-question-review（逐题评析）单独用含 evidence+evidencePhases
+  // 的 v2 示例输入渲染（它是 v2 专属目标，文档示例展示证据阶段的说明行）；
+  // 四个旧模板的示例输入保持现状不变（渲染字节级回归锁在 contract 测试）。
+  const V2_REVIEW_MODULES = {
+    ...ALL_MODULES,
+    evidence: true,
+    evidencePhases: ["scratch", "correction", "supplement"] as const,
   };
   const goals = Object.keys(LEARNING_PACK_GOAL_LABELS) as Array<
     keyof typeof LEARNING_PACK_GOAL_LABELS
@@ -52,7 +61,7 @@ function renderLearningPackPromptDoc(): string {
       "> 本文件由 `pnpm gen:spec` 自动生成，请勿手改；模板单一来源在",
       "> `packages/contract/src/learning-pack.ts`（renderLearningPackPrompt）——",
       "> 教师端「导出给 AI」数据包（T4.3）zip 内的 prompt.md 由同一函数按实际勾选",
-      "> 模块拼装，与本文件永不漂移。下列四个模板按**全模块勾选 + 化名**的示例渲染；",
+      "> 模块拼装，与本文件永不漂移。前四个模板按**全模块勾选 + 化名**的示例渲染；",
       "> 实际导出时未勾选的模块（如手写 PNG、讲义）对应说明句不会出现。",
       "",
       "## 用法",
@@ -61,9 +70,11 @@ function renderLearningPackPromptDoc(): string {
       "   prompt.md / schema.json / 映射.txt〔化名模式〕/ ink/*.png〔勾选〕）；",
       "2. 把整包交给任意 AI 对话（或多模态模型读 ink 图片），prompt.md 已按任务",
       "   目标与勾选模块拼装完毕，无需再手动粘模板；",
-      "3. 四种任务目标：诊断薄弱点 / 备下节课讲解建议 / 生成变式练习（输出内容",
-      "   DSL v2，可直接回到导入流程）/ 阶段总结（家长沟通）；教师附加要求在向导",
-      "   第③步填写，追加在 prompt.md 的「教师附加要求」段。",
+      "3. 五种任务目标：诊断薄弱点 / 备下节课讲解建议 / 生成变式练习（输出内容",
+      "   DSL v2，可直接回到导入流程）/ 阶段总结（家长沟通）/ 逐题评析（v2 专属，",
+      "   需显式选择 v2 数据包并勾选证据附件——结合逐题手写原稿/订正/补充稿图片",
+      "   分析书写过程，示例渲染见第五个模板）；教师附加要求在向导第③步填写，",
+      "   追加在 prompt.md 的「教师附加要求」段。",
       "",
     ].join("\n"),
   ];
@@ -71,7 +82,12 @@ function renderLearningPackPromptDoc(): string {
     sections.push(
       `## 模板：${LEARNING_PACK_GOAL_LABELS[goal]}（goal=${goal}）\n`,
     );
-    sections.push(renderLearningPackPrompt({ ...ALL_MODULES, goal }));
+    sections.push(
+      renderLearningPackPrompt({
+        ...(goal === "per-question-review" ? V2_REVIEW_MODULES : ALL_MODULES),
+        goal,
+      }),
+    );
   }
   return `${sections.join("\n")}\n`;
 }

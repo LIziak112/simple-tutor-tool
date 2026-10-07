@@ -9,6 +9,7 @@ import type { Db } from "../db/client";
 import { teachers } from "../db/schema";
 import { createTestDb, createTestDir, TEST_TEACHER_ID } from "../db/test-utils";
 import { type SeedDemoResult, seedDemoData } from "../services/seed-demo";
+import { unzipEntries } from "../test/unzip";
 
 /**
  * T4.3 学情数据包导出路由测试（app.request() 直调 + 内存库 + 种子数据）：
@@ -169,6 +170,12 @@ describe("POST /api/teacher/export/learning-pack*（T4.3 路由层）", () => {
     expect(okRes.status).toBe(200);
     const parsed = learningPackPreviewOkSchema.parse(await okRes.json());
     expect(parsed.data.files.map((file) => file.path)).toContain("pack.json");
+    // T6R.16：preview 透传 asOf（毫秒精度 UTC ISO）与 evidenceImages 清单
+    // （种子世界无证据 → 空数组；形状由 learningPackPreviewOkSchema 锁定）
+    expect(parsed.data.asOf).toMatch(
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/,
+    );
+    expect(parsed.data.evidenceImages).toEqual([]);
     // 拒绝①：evidence 勾选但 packVersion 缺省（v1 请求）
     const noV2 = await post(
       app,
@@ -196,6 +203,34 @@ describe("POST /api/teacher/export/learning-pack*（T4.3 路由层）", () => {
     const err2 = (await noResponses.json()) as ApiErr;
     expect(err2.error).toBe("VALIDATION_ERROR");
     expect(err2.message).toContain("responses");
+  });
+
+  it("asOf 固定选择透传（T6R.16）：preview 回传 asOf；download 带 asOf 钉住收录范围", async () => {
+    const { app, cookieA, seed } = await makeEnv();
+    // asOf 早于全部种子交卷时间：preview 原样回传；download 收录范围为空
+    const early = "2020-01-01T00:00:00.000Z";
+    const prev = await post(
+      app,
+      "/api/teacher/export/learning-pack/preview",
+      requestBody(seed, { asOf: early, modules: { summaries: true } }),
+      cookieA,
+    );
+    expect(prev.status).toBe(200);
+    const parsed = learningPackPreviewOkSchema.parse(await prev.json());
+    expect(parsed.data.asOf).toBe(early);
+    expect(parsed.data.evidenceImages).toEqual([]);
+    const zipRes = await post(
+      app,
+      "/api/teacher/export/learning-pack",
+      requestBody(seed, { asOf: early, modules: { summaries: true } }),
+      cookieA,
+    );
+    expect(zipRes.status).toBe(200);
+    // 解包断言：meta.to=asOf（窗口上界回显）；作答汇总为空（窗口外零收录）
+    const entries = unzipEntries(new Uint8Array(await zipRes.arrayBuffer()));
+    const pack = JSON.parse(entries.get("pack.json")?.toString("utf8") ?? "{}");
+    expect(pack.meta.to).toBe(early);
+    expect(pack.attempts.summaries).toEqual([]);
   });
 
   it("preview：统一壳 + 文件清单（含映射.txt，不含 ink）", async () => {

@@ -11,6 +11,7 @@ import type {
   LearningPackManifest,
   LearningPackModules,
   LearningPackPreviewData,
+  LearningPackPreviewEvidenceImage,
   LearningPackPreviewFile,
   LearningPackQuestion,
   LearningPackQuestionTrace,
@@ -20,6 +21,7 @@ import type {
   LearningPackV2,
   LearningPackV2Question,
   LearningPackV2Response,
+  NotePhase,
 } from "@tutor/contract";
 import {
   LEARNING_PACK_GOAL_LABELS,
@@ -74,6 +76,7 @@ import {
   assembleQuestionEvidence,
   evidenceMissingRowsOf,
   materialOf,
+  normalizeEvidencePhases,
   readyEvidenceImagesOf,
 } from "./question-evidence";
 import { snapshotOfRow } from "./snapshot";
@@ -117,6 +120,33 @@ export interface LearningPackServiceOptions {
   readonly now?: Date | string;
   /** 覆盖大小上限（默认 LEARNING_PACK_MAX_BYTES；测试注入小值触发超限） */
   readonly maxBytes?: number;
+}
+
+/**
+ * now 注入解析（T6R.16 挂账①：assembleLearningPack / buildLearningPackZip
+ * 下载文件名 / review-pack-service 三处收敛的单一实现）：string 走 Date.parse，
+ * Date 原样，缺省当前时刻。导出供 review-pack-service 复用（单向依赖，无环）。
+ */
+export function resolveNowDate(now: Date | string | undefined): Date {
+  if (typeof now === "string") return new Date(Date.parse(now));
+  return now ?? new Date();
+}
+
+/**
+ * 超限文案（D18；T6R.16 挂账①：preview hint 与生成 413 两处收敛单一来源）：
+ * 两处仅引导语差一个词（「精简方向：减少…」/「请减少…」），lead 参数保持
+ * 两种既有文案逐字不变。
+ */
+function overLimitMessageOf(
+  totalBytes: number,
+  limitBytes: number,
+  lead: "hint" | "generate",
+): string {
+  return `数据包预估 ${(totalBytes / (1024 * 1024)).toFixed(1)} MB，超过 ${Math.round(
+    limitBytes / (1024 * 1024),
+  )} MB 上限。${
+    lead === "hint" ? "精简方向：减少" : "请减少"
+  }学生人数、取消手写 PNG 或证据附件、或缩小时间范围后重试。`;
 }
 
 // ---------- 范围校验（D7：域内逐个校验，404 不暴露存在性） ----------
@@ -322,13 +352,15 @@ export interface LearningPackAssembly {
   }>;
   /**
    * v2 证据图条目（T6R.12；evidence 模块勾选才非空）：zip 路径
-   * evidence/<编号>-<阶段>-<页号>.png；ref 为证据条目编号（manifest 关联用）。
+   * evidence/<编号>-<阶段>-<页号>.png；ref 为证据条目编号（manifest 关联用）；
+   * phase 闸门 F4 起随行携带（summary 标题阶段感知）。
    */
   readonly evidenceEntries: ReadonlyArray<{
     readonly entry: string;
     readonly absPath: string;
     readonly bytes: number;
     readonly ref: string;
+    readonly phase: NotePhase;
   }>;
   /** 文件清单（路径 + 预估字节数；D18 preview 与预检共用） */
   readonly files: readonly LearningPackPreviewFile[];
@@ -336,6 +368,19 @@ export interface LearningPackAssembly {
   readonly totalBytes: number;
   /** studentId → 化名（真名模式为 displayName；ink 命名与测试断言用） */
   readonly displayNameOf: ReadonlyMap<string, string>;
+  /** 真实生成时刻（generatedAt / 映射.txt / summary.md / zip 文件名口径） */
+  readonly nowIso: string;
+  /**
+   * 固定选择的装配时刻（T6R.16）：request.asOf 优先、缺省=nowIso。preview
+   * 响应的 asOf 数据源（回传口径）——向导把它回传给生成接口即钉住本次选择。
+   */
+  readonly asOfIso: string;
+  /**
+   * preview 证据图清单（T6R.16 真实图片预览）：ready 行携带教师端
+   * note-versions 图片直出 URL，missing 行携带中文原因；v1 / 未勾 evidence
+   * 恒空数组。与生成 zip 的 evidence/ 条目一一对应（missing 行除外）。
+   */
+  readonly evidenceImages: readonly LearningPackPreviewEvidenceImage[];
 }
 
 /**
@@ -352,15 +397,19 @@ export function assembleLearningPack(
   request: LearningPackExportRequest,
   options: LearningPackServiceOptions = {},
 ): LearningPackAssembly {
-  const nowMs =
-    typeof options.now === "string"
-      ? Date.parse(options.now)
-      : (options.now ?? new Date()).getTime();
+  const nowMs = resolveNowDate(options.now).getTime();
   const nowIso = new Date(nowMs).toISOString();
+  // T6R.16 固定选择：request.asOf 优先于 options.now——时间窗上界、attempt
+  // 收录（submittedAt≤asOf）、订正封存截止、补充稿版本钉定全部以 asOf 为准；
+  // meta.to 回显 asOf。generatedAt / 映射.txt 导出时间 / summary.md 生成时间 /
+  // zip 文件名仍用 nowIso（真实生成时刻语义——下载的是「现在」生成的包，
+  // 钉住的是「asOf 时刻」的数据）。缺省（无 request.asOf）行为零变化。
+  const asOfIso = request.asOf !== undefined ? request.asOf : nowIso;
+  const asOfMs = request.asOf !== undefined ? Date.parse(request.asOf) : nowMs;
   const fromIso =
     request.scope.days === "all"
       ? null
-      : new Date(nowMs - request.scope.days * DAY_MS).toISOString();
+      : new Date(asOfMs - request.scope.days * DAY_MS).toISOString();
   const m = request.modules;
 
   // —— 1. 域校验（先验后取，404 不暴露存在性） ——
@@ -391,7 +440,7 @@ export function assembleLearningPack(
     eq(students.teacherId, teacherId),
     ne(attempts.status, "draft"), // D15：历次=已交卷历次，draft 不收录
     isNotNull(attempts.submittedAt),
-    lte(attempts.submittedAt, nowIso),
+    lte(attempts.submittedAt, asOfIso), // T6R.16：asOf 贯穿（缺省=nowIso 零变化）
     fromIso !== null ? gte(attempts.submittedAt, fromIso) : undefined,
     request.scope.studentIds !== undefined
       ? inArray(attempts.studentId, [...seenStudentIds])
@@ -615,7 +664,16 @@ export function assembleLearningPack(
           payloadJson: events.payloadJson,
         })
         .from(events)
-        .where(inArray(events.attemptId, ids))
+        .where(
+          // 闸门 F13：asOf 钉定贯穿事件流（该查询同时喂 traces.questions 与
+          // summary 的 offlineShare——一致钉定；缺省不过滤零漂移）
+          and(
+            inArray(events.attemptId, ids),
+            request.asOf !== undefined
+              ? lte(events.serverTs, asOfIso)
+              : undefined,
+          ),
+        )
         .all()) {
         if (row.attemptId === null) continue;
         const projected = {
@@ -891,6 +949,7 @@ export function assembleLearningPack(
     request,
     m,
     nowIso,
+    asOfIso,
     fromIso,
     anonymized,
     roster,
@@ -906,6 +965,8 @@ export function assembleLearningPack(
     lectureTraceRows,
     summarySection,
     mappingTxt,
+    // 闸门 F6：单次规范化（v1 也算——evidence 恒 false 不消费，成本可忽略）
+    normalizedEvidencePhases: normalizeEvidencePhases(m.evidencePhases),
   };
   if (isV2) {
     return assembleV2(core);
@@ -922,7 +983,10 @@ interface PackCore {
   readonly teacherId: string;
   readonly request: LearningPackExportRequest;
   readonly m: LearningPackModules;
+  /** 真实生成时刻（generatedAt / 映射.txt / summary.md；T6R.16 与 asOf 区分） */
   readonly nowIso: string;
+  /** 固定选择的装配时刻（request.asOf 优先，缺省=nowIso；meta.to 与证据钉定用） */
+  readonly asOfIso: string;
   readonly fromIso: string | null;
   readonly anonymized: boolean;
   readonly roster: ReadonlyArray<{
@@ -947,6 +1011,12 @@ interface PackCore {
   readonly lectureTraceRows: LearningPackLectureTrace[];
   readonly summarySection: LearningPackSummarySection | undefined;
   readonly mappingTxt: string | null;
+  /**
+   * 证据阶段规范序（闸门 F6：assembleLearningPack 单次规范化，三处消费点
+   * ——prompt 渲染 / meta 回显 / contextNotes——统一读此值，勿再各自调用
+   * normalizeEvidencePhases 重复收敛）
+   */
+  readonly normalizedEvidencePhases: readonly NotePhase[];
 }
 
 /**
@@ -963,7 +1033,14 @@ function renderPromptMdOf(core: PackCore, mediaPresent: boolean): string {
     summaries: m.summaries,
     ink: m.ink,
     traces: m.traces,
-    ...(m.evidence ? { evidence: true } : {}),
+    // T6R.16：evidence 勾选时传装配端规范化后的阶段序列（契约
+    // LearningPackPromptInput.evidencePhases；闸门 F6：读 core 单次规范化值）
+    ...(m.evidence
+      ? {
+          evidence: true,
+          evidencePhases: core.normalizedEvidencePhases,
+        }
+      : {}),
     ...(mediaPresent ? { media: true } : {}),
     anonymized: core.anonymized,
     ...(core.request.customPrompt !== undefined &&
@@ -974,7 +1051,7 @@ function renderPromptMdOf(core: PackCore, mediaPresent: boolean): string {
 }
 
 /** pack 头部（meta + students）：v1/v2 骨架同款，仅 version 与 evidence 回显差异 */
-/** 模块回显形态：v2 恒含 evidence，v1 无该键（与两版 meta.modules 契约一致） */
+/** 模块回显形态：v2 恒含 evidence 与 evidencePhases，v1 无该两键（与两版 meta.modules 契约一致） */
 interface PackHeaderModules {
   lectures: boolean;
   questions: "stem" | "answer" | "solution" | null;
@@ -993,7 +1070,10 @@ type PackHeaderOf<V extends 1 | 2> = {
     to: string;
     anonymized: boolean;
     modules: V extends 2
-      ? PackHeaderModules & { evidence: boolean }
+      ? PackHeaderModules & {
+          evidence: boolean;
+          evidencePhases: LearningPackModules["evidencePhases"];
+        }
       : PackHeaderModules;
     note: string;
   };
@@ -1016,8 +1096,16 @@ function packHeaderOf<V extends 1 | 2>(
   };
   // 条件类型的联合窄化是 TS 已知局限：此处单一断言收敛（值域由两处调用点
   // 的字面量 version 保证，无 any）
+  // T6R.16：v2 回显装配端规范化后的阶段序列（闸门 F6：读 core 单次规范化值
+  // ——请求乱序/重复时 meta 回显仍为 scratch→correction→supplement）
   const modules = (
-    version === 2 ? { ...base, evidence: evidenceEcho } : { ...base }
+    version === 2
+      ? {
+          ...base,
+          evidence: evidenceEcho,
+          evidencePhases: core.normalizedEvidencePhases,
+        }
+      : { ...base }
   ) as PackHeaderOf<V>["meta"]["modules"];
   return {
     meta: {
@@ -1026,7 +1114,8 @@ function packHeaderOf<V extends 1 | 2>(
       goal: core.request.goal,
       days: core.request.scope.days,
       from: core.fromIso,
-      to: core.nowIso,
+      // T6R.16 固定选择：窗口上界回显 asOf（缺省=nowIso，行为不变）
+      to: core.asOfIso,
       anonymized: core.anonymized,
       modules,
       note: "评语为教师原文（不改动），可能包含学生真实姓名；学习痕迹指标与阅读状态均为行为推断，仅供参考。",
@@ -1327,6 +1416,9 @@ function assembleV1(core: PackCore): LearningPackAssembly {
     files,
     totalBytes: files.reduce((sum, file) => sum + file.estimatedBytes, 0),
     displayNameOf: core.displayNameOf,
+    nowIso: core.nowIso,
+    asOfIso: core.asOfIso,
+    evidenceImages: [],
   };
 }
 
@@ -1359,6 +1451,10 @@ function assembleV2(core: PackCore): LearningPackAssembly {
       ...(m.questions !== undefined ? { questionLevel: m.questions } : {}),
       includeEvidence: m.evidence,
       ...(m.questions !== undefined ? { assembleMedia: true } : {}),
+      // T6R.16 多阶段：evidencePhases 只在 evidence 勾选时传入（装配端统一
+      // 规范化去重+规范序）；asOf 贯穿（订正封存截止 / 补充稿版本钉定）
+      ...(m.evidence ? { evidencePhases: m.evidencePhases } : {}),
+      ...(request.asOf !== undefined ? { asOf: request.asOf } : {}),
     },
   );
 
@@ -1487,17 +1583,67 @@ function assembleV2(core: PackCore): LearningPackAssembly {
 
   // —— 证据图条目（evidence 模块勾选才装配；zip 写入与 preview 共用） ——
   // ready 分析图条目（T6R.13 /code-review D27：遍历收敛在 question-evidence
-  // 共享件，与 review-pack 同一实现）
+  // 共享件，与 review-pack 同一实现；phase 闸门 F4 起随行携带）
   const evidenceEntries: Array<{
     entry: string;
     absPath: string;
     bytes: number;
     ref: string;
+    phase: NotePhase;
   }> = [];
+  // preview 证据图清单（T6R.16 真实图片预览）：ready 附教师端 note-versions
+  // 图片直出 URL（downloadUrl 拼法与 review-pack 619-621 同款：/:file 路由
+  // 参数即 <imageId>.png 经 stripPngSuffix），missing 附中文原因（与
+  // manifest.missing 同源同 reason）
+  const evidenceImages: LearningPackPreviewEvidenceImage[] = [];
   if (m.evidence) {
+    // 闸门 F3：preview 清单去重键（ref:pageIndex）——entry.images 展开行先登记
+    const seenPreviewKeys = new Set<string>();
     for (const evidenceEntry of evidenceAsm.evidence) {
       evidenceEntries.push(...readyEvidenceImagesOf(evidenceEntry));
+      const versionId = evidenceEntry.version?.versionId;
+      for (const image of evidenceEntry.images) {
+        seenPreviewKeys.add(`${evidenceEntry.ref}:${image.pageIndex}`);
+        evidenceImages.push({
+          file: image.file,
+          ref: evidenceEntry.ref,
+          phase: evidenceEntry.phase,
+          pageIndex: image.pageIndex,
+          state: image.state,
+          bytes: image.state === "ready" ? (image.bytes ?? 0) : 0,
+          ...(image.state === "ready" && versionId !== undefined
+            ? {
+                downloadUrl: `/api/teacher/note-versions/${encodeURIComponent(
+                  versionId,
+                )}/images/${encodeURIComponent(image.imageId)}.png`,
+              }
+            : {}),
+          ...(image.state === "missing" && image.reason !== undefined
+            ? { reason: image.reason }
+            : {}),
+        });
+      }
     }
+    // 闸门 F3：零图/缺版本等「无 images 行」的缺失此前只在 manifest.missing，
+    // preview 清单看不见——并入（带 phase/pageIndex/reason），按 ref+pageIndex
+    // 去重后统一排序（pack.json / zip 形状不变）
+    for (const miss of evidenceAsm.missingEvidenceImages) {
+      const key = `${miss.evidenceRef}:${miss.pageIndex}`;
+      if (seenPreviewKeys.has(key)) continue;
+      seenPreviewKeys.add(key);
+      evidenceImages.push({
+        file: miss.file,
+        ref: miss.evidenceRef,
+        phase: miss.phase,
+        pageIndex: miss.pageIndex,
+        state: "missing",
+        bytes: 0,
+        reason: miss.reason,
+      });
+    }
+    evidenceImages.sort(
+      (a, b) => a.ref.localeCompare(b.ref) || a.pageIndex - b.pageIndex,
+    );
   }
 
   // —— attempts.responses（v2 行携带快照关联三字段，T6R.12） ——
@@ -1522,19 +1668,19 @@ function assembleV2(core: PackCore): LearningPackAssembly {
             "v2 装配缺少该行的题目版本引用",
           );
         }
-        const evidenceRef = evidenceAsm.evidenceRefByResponseRowId.get(row.id);
-        if (m.evidence && evidenceRef === undefined) {
-          throw new HttpError(
-            500,
-            "EXPORT_ASSEMBLY_BROKEN",
-            "v2 装配缺少该行的证据引用",
-          );
-        }
+        // T6R.16 多阶段：行证据引用数组（固定阶段序 scratch→correction→
+        // supplement；未选阶段或该行无所选阶段条目时无键——不产悬垂引用，
+        // 也不以空数组占位）
+        const evidenceRefs = evidenceAsm.evidenceRefsByResponseRowId.get(
+          row.id,
+        );
         responseRowsV2.push({
           ...base,
           questionRef,
           snapshotHash: hashByRef.get(questionRef) ?? null,
-          ...(m.evidence ? { evidenceRef } : {}),
+          ...(evidenceRefs !== undefined
+            ? { evidenceRefs: [...evidenceRefs] }
+            : {}),
         });
       }
     }
@@ -1553,6 +1699,14 @@ function assembleV2(core: PackCore): LearningPackAssembly {
         no: entry.no,
         phase: entry.phase,
         state: entry.state,
+        // T6R.15 封存列（T6R.16 入包）：correction 条目恒带三键（stuckAt/
+        // errorCause 可为 null——未填写已在服务层归一）；scratch/supplement
+        // 不带（装配端不设键，条件展开防 undefined 显式赋值）
+        ...(entry.sealedAt !== undefined ? { sealedAt: entry.sealedAt } : {}),
+        ...(entry.stuckAt !== undefined ? { stuckAt: entry.stuckAt } : {}),
+        ...(entry.errorCause !== undefined
+          ? { errorCause: entry.errorCause }
+          : {}),
         ...(entry.version !== undefined ? { version: entry.version } : {}),
         images: entry.images.map((image) => ({
           file: image.file,
@@ -1610,6 +1764,31 @@ function assembleV2(core: PackCore): LearningPackAssembly {
   if (missingSnapshotCount > 0) {
     contextNotes.push(
       `${missingSnapshotCount} 个题目版本的历史快照缺失（题目已删除或升级遗留），对应作答无题干内容，不回填当前题库。`,
+    );
+  }
+  // T6R.16 多阶段口径说明（evidence 勾选才谈；阶段以装配端规范化序列判断；
+  // 闸门 F6：读 core 单次规范化值）
+  if (m.evidence) {
+    const phases = core.normalizedEvidencePhases;
+    if (phases.includes("correction")) {
+      contextNotes.push(
+        "订正证据只收录已封存检查点（含封存反思两列：卡点与错因），进行中的订正不收录。",
+      );
+    }
+    if (phases.includes("supplement")) {
+      contextNotes.push(
+        "补充稿是交卷后的找回稿：按装配时刻（asOf）钉定的最新版本收录，不能证明该内容在交卷前已固定。",
+      );
+    }
+    if (!phases.includes("scratch")) {
+      contextNotes.push("原稿阶段未勾选：包内不含交卷原稿证据。");
+    }
+  }
+  // 闸门 F13：asOf 钉定了题指标与证据，但讲义阅读地图走 lectureReadingMapFor
+  // （与学情页共用，无 asOf 参数）按生成时刻计算——显式声明口径而非静默偏差
+  if (request.asOf !== undefined && m.traces) {
+    contextNotes.push(
+      "学习痕迹中的讲义阅读地图按生成时刻计算，未按预览时刻（asOf）钉定。",
     );
   }
   const manifest: LearningPackManifest = {
@@ -1694,6 +1873,9 @@ function assembleV2(core: PackCore): LearningPackAssembly {
     files,
     totalBytes: files.reduce((sum, file) => sum + file.estimatedBytes, 0),
     displayNameOf: core.displayNameOf,
+    nowIso: core.nowIso,
+    asOfIso: core.asOfIso,
+    evidenceImages,
   };
 }
 
@@ -1781,8 +1963,15 @@ interface SummaryMdInput {
   readonly inkEntries: ReadonlyArray<{ readonly entry: string }>;
   /** ::image 引用的图片条目（媒体管线第三单；无图为空数组，section 不出现） */
   readonly mediaEntries: ReadonlyArray<{ readonly entry: string }>;
-  /** v2 证据图条目（T6R.12；空数组 = 未勾选或无图，section 不出现） */
-  readonly evidenceEntries: ReadonlyArray<{ readonly entry: string }>;
+  /**
+   * v2 证据图条目（T6R.12；空数组 = 未勾选或无图，section 不出现）。phase
+   * 闸门 F4：标题按阶段感知（correction/supplement 在场 →「手写证据」，
+   * 纯 scratch 保持「手写原稿」零漂移）
+   */
+  readonly evidenceEntries: ReadonlyArray<{
+    readonly entry: string;
+    readonly phase: NotePhase;
+  }>;
   readonly displayNameOf: ReadonlyMap<string, string>;
   readonly nowIso: string;
 }
@@ -1978,9 +2167,15 @@ function renderSummaryMd(input: SummaryMdInput): string {
     lines.push("");
   }
 
-  // v2 逐题手写原稿（evidence 模块勾选且有图才出现）
+  // v2 逐题手写证据图（evidence 模块勾选且有图才出现；闸门 F4：标题按阶段
+  // 感知——correction/supplement 在场称「手写证据」，纯 scratch 保持原口径）
   if (input.evidenceEntries.length > 0) {
-    lines.push(`## 手写原稿（${input.evidenceEntries.length} 张）`);
+    const multiPhase = input.evidenceEntries.some(
+      (entry) => entry.phase === "correction" || entry.phase === "supplement",
+    );
+    lines.push(
+      `## ${multiPhase ? "手写证据" : "手写原稿"}（${input.evidenceEntries.length} 张）`,
+    );
     lines.push("");
     for (const entry of input.evidenceEntries) {
       lines.push(`- ${entry.entry}`);
@@ -2028,10 +2223,14 @@ export function previewLearningPack(
     totalEstimatedBytes: assembly.totalBytes,
     limitBytes,
     overLimit,
+    // T6R.16 固定选择：回传本次装配时刻（request.asOf 优先、缺省=nowIso），
+    // 向导把它回传给生成接口即「钉住」本次预览的选择
+    asOf: assembly.asOfIso,
+    // T6R.16 真实图片预览：与生成 zip 的 evidence/ 条目一一对应（ready 行可
+    // 经教师端 note-versions 图片端点直出缩略图；v1 / 未勾 evidence 恒空）
+    evidenceImages: [...assembly.evidenceImages],
     hint: overLimit
-      ? `数据包预估 ${(assembly.totalBytes / (1024 * 1024)).toFixed(
-          1,
-        )} MB，超过 ${Math.round(limitBytes / (1024 * 1024))} MB 上限。精简方向：减少学生人数、取消手写 PNG 或证据附件、或缩小时间范围后重试。`
+      ? overLimitMessageOf(assembly.totalBytes, limitBytes, "hint")
       : null,
   };
 }
@@ -2070,9 +2269,7 @@ export async function buildLearningPackZip(
     throw new HttpError(
       413,
       "EXPORT_TOO_LARGE",
-      `数据包预估 ${(assembly.totalBytes / (1024 * 1024)).toFixed(
-        1,
-      )} MB，超过 ${Math.round(limitBytes / (1024 * 1024))} MB 上限。请减少学生人数、取消手写 PNG 或证据附件、或缩小时间范围后重试。`,
+      overLimitMessageOf(assembly.totalBytes, limitBytes, "generate"),
     );
   }
 
@@ -2116,14 +2313,9 @@ export async function buildLearningPackZip(
     },
     { warningAsError: false },
   );
-  const nowDate =
-    options.now !== undefined
-      ? new Date(
-          typeof options.now === "string"
-            ? Date.parse(options.now)
-            : options.now,
-        )
-      : new Date();
+  // 下载文件名的时刻 = 真实生成时刻（T6R.16：与包内数据的 asOf 钉定无关——
+  // 固定选择只钉数据窗口，不伪造下载时间戳）
+  const nowDate = resolveNowDate(options.now);
   return {
     bytes,
     filename: `learning-pack-${beijingExportStampOf(nowDate)}.zip`,

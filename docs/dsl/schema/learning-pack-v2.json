@@ -1,6 +1,6 @@
 {
   "title": "simple-tutor-tool 学情数据包（LearningPack v2）",
-  "description": "AI 学情数据包 pack.json（v2 证据装配，T6R.12）的权威 JSON Schema：每条逐题作答经 questionRef/snapshotHash 关联其交卷时的题目快照（同 qid 多版本一一配对）；evidence 携带逐题原稿声明与分析图附件；manifest 为 zip 文件清单与缺失清单（所有引用可解析或显式缺失）。教师评语为原文（可能含学生真实姓名）；traces 只含派生指标与阅读地图（原始事件不出库）。",
+  "description": "AI 学情数据包 pack.json（v2 证据装配，T6R.12；T6R.16 起证据多阶段）的权威 JSON Schema：每条逐题作答经 questionRef/snapshotHash 关联其交卷时的题目快照（同 qid 多版本一一配对），evidenceRefs 数组引用该行的多阶段证据条目（scratch/correction/supplement）；evidence 携带逐题证据声明与分析图附件（订正条目含封存时间与反思）；manifest 为 zip 文件清单与缺失清单（所有引用可解析或显式缺失）。教师评语为原文（可能含学生真实姓名）；traces 只含派生指标与阅读地图（原始事件不出库）。",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "properties": {
@@ -21,7 +21,8 @@
             "diagnose-weakness",
             "lesson-prep",
             "variant-practice",
-            "period-summary"
+            "period-summary",
+            "per-question-review"
           ]
         },
         "days": {
@@ -85,6 +86,17 @@
             },
             "evidence": {
               "type": "boolean"
+            },
+            "evidencePhases": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "scratch",
+                  "correction",
+                  "supplement"
+                ]
+              }
             }
           },
           "required": [
@@ -94,7 +106,8 @@
             "summaries",
             "ink",
             "traces",
-            "evidence"
+            "evidence",
+            "evidencePhases"
           ],
           "additionalProperties": false
         },
@@ -532,9 +545,12 @@
                   }
                 ]
               },
-              "evidenceRef": {
-                "type": "string",
-                "pattern": "^e\\d{3,}$"
+              "evidenceRefs": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^e\\d{3,}$"
+                }
               }
             },
             "required": [
@@ -779,6 +795,22 @@
               "missing",
               "legacy_unverified",
               "not_collected"
+            ]
+          },
+          "sealedAt": {
+            "type": "string",
+            "minLength": 1
+          },
+          "stuckAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "errorCause": {
+            "type": [
+              "string",
+              "null"
             ]
           },
           "version": {

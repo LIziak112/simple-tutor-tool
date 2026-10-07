@@ -1,10 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
+  LEGACY_PROMPT_FIXTURES,
+  LEGACY_PROMPT_MEDIA_FIXTURES,
+} from "./learning-pack.legacy-prompts.ts";
+import {
   LEARNING_PACK_GOAL_LABELS,
   LEARNING_PACK_MAX_BYTES,
   learningPackAliasOf,
   learningPackErrorCodeSchema,
   learningPackExportRequestSchema,
+  learningPackGoalSchema,
   learningPackJsonSchema,
   learningPackPreviewDataSchema,
   learningPackSchema,
@@ -12,12 +17,16 @@ import {
   learningPackV2Schema,
   renderLearningPackPrompt,
 } from "./learning-pack.ts";
+import { NOTE_PHASE_LABELS, NOTE_PHASE_ORDER } from "./note.ts";
 
 /**
  * AI 学情数据包契约自测（T4.3）：锁定请求校验（模块勾选建模、隐私缺省、
  * 至少一个内容模块）、pack 结构（section 可缺席）、preview 形态、化名编号、
  * JSON Schema 可导出（z.toJSONSchema 不抛错）、prompt 模板按模块拼装
- * （D17：未勾手写不提笔迹、未勾讲义不讲阅读、四模板关键段、自定义段追加）。
+ * （D17：未勾手写不提笔迹、未勾讲义不讲阅读、模板关键段、自定义段追加）。
+ * T6R.16 追加：per-question-review 目标、modules.evidencePhases、request.asOf、
+ * evidenceRefs 数组、证据条目封存列、preview asOf/evidenceImages 与旧四模板
+ * 逐字节渲染回归锁。
  */
 
 /** 最小合法请求体（仅勾题目题干层） */
@@ -193,6 +202,8 @@ describe("preview 响应 schema", () => {
       limitBytes: LEARNING_PACK_MAX_BYTES,
       overLimit: false,
       hint: null,
+      // T6R.16：preview 响应新增必填 asOf（装配时刻）
+      asOf: "2026-10-07T01:02:03.456Z",
     });
     expect(parsed.files).toHaveLength(2);
   });
@@ -321,6 +332,39 @@ describe("JSON Schema 导出（D19）", () => {
 
 // ---------- T6R.12：v2 证据装配契约（快照关联 + evidence + manifest） ----------
 
+/** v2 骨架：meta（version=2 + modules.evidence 回显）+ 一名学生 + 最小 manifest */
+const MIN_V2_PACK = {
+  meta: {
+    version: 2,
+    generatedAt: "2026-10-05T00:00:00.000Z",
+    goal: "diagnose-weakness",
+    days: 30,
+    from: "2026-09-05T00:00:00.000Z",
+    to: "2026-10-05T00:00:00.000Z",
+    anonymized: true,
+    modules: {
+      lectures: false,
+      questions: null,
+      responses: true,
+      summaries: false,
+      ink: false,
+      traces: false,
+      evidence: true,
+      // T6R.16：v2 meta 回显实际装配的证据阶段
+      evidencePhases: ["scratch"],
+    },
+    note: "评语为教师原文，可能包含学生真实姓名。",
+  },
+  students: [
+    {
+      id: "0b7e0f4e-1c2d-4e3a-9f10-112233445566",
+      name: "学生A",
+      archived: false,
+    },
+  ],
+  manifest: { files: [], missing: [], contextNotes: [] },
+} as const;
+
 describe("v2 导出请求（T6R.12：packVersion 与 evidence 模块依赖）", () => {
   it("packVersion 缺省 = v1 兼容；evidence 缺省 false（缺省不改变 v1 请求形状）", () => {
     const parsed = learningPackExportRequestSchema.parse(MIN_REQUEST);
@@ -366,43 +410,12 @@ describe("v2 导出请求（T6R.12：packVersion 与 evidence 模块依赖）", 
 });
 
 describe("LearningPack v2 schema（T6R.12：快照关联 + manifest）", () => {
-  /** v2 骨架：meta（version=2 + modules.evidence 回显）+ 一名学生 + 最小 manifest */
-  const MIN_V2_PACK = {
-    meta: {
-      version: 2,
-      generatedAt: "2026-10-05T00:00:00.000Z",
-      goal: "diagnose-weakness",
-      days: 30,
-      from: "2026-09-05T00:00:00.000Z",
-      to: "2026-10-05T00:00:00.000Z",
-      anonymized: true,
-      modules: {
-        lectures: false,
-        questions: null,
-        responses: true,
-        summaries: false,
-        ink: false,
-        traces: false,
-        evidence: true,
-      },
-      note: "评语为教师原文，可能包含学生真实姓名。",
-    },
-    students: [
-      {
-        id: "0b7e0f4e-1c2d-4e3a-9f10-112233445566",
-        name: "学生A",
-        archived: false,
-      },
-    ],
-    manifest: { files: [], missing: [], contextNotes: [] },
-  } as const;
-
   it("最小 v2 pack：manifest 恒出现，evidence/content section 可缺席", () => {
     const pack = learningPackV2Schema.parse(MIN_V2_PACK);
     expect(pack.manifest.files).toEqual([]);
   });
 
-  it("v2 responses 行带 questionRef/snapshotHash/evidenceRef（快照一一配对）", () => {
+  it("v2 responses 行带 questionRef/snapshotHash/evidenceRefs（快照一一配对）", () => {
     const pack = learningPackV2Schema.parse({
       ...MIN_V2_PACK,
       attempts: {
@@ -420,13 +433,13 @@ describe("LearningPack v2 schema（T6R.12：快照关联 + manifest）", () => {
             questionRef: "q001",
             snapshotHash:
               "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2",
-            evidenceRef: "e001",
+            evidenceRefs: ["e001"],
           },
         ],
       },
     });
     expect(pack.attempts?.responses?.[0]?.questionRef).toBe("q001");
-    // evidenceRef 缺席合法（evidence 模块未勾选时不得出现悬垂引用）
+    // evidenceRefs 缺席合法（evidence 模块未勾选时不得出现悬垂引用）
     const noEvidence = learningPackV2Schema.parse({
       ...MIN_V2_PACK,
       meta: {
@@ -451,7 +464,7 @@ describe("LearningPack v2 schema（T6R.12：快照关联 + manifest）", () => {
         ],
       },
     });
-    expect(noEvidence.attempts?.responses?.[0]?.evidenceRef).toBeUndefined();
+    expect(noEvidence.attempts?.responses?.[0]?.evidenceRefs).toBeUndefined();
   });
 
   it("v2 question 条目：ref/present/snapshotHash/media 引用；缺失快照 present=false", () => {
@@ -637,6 +650,522 @@ describe("v2 JSON Schema 导出（T6R.12）", () => {
     expect(schema.title).toContain("v2");
     for (const key of ['"evidence"', '"manifest"', '"questionRef"']) {
       expect(text).toContain(key);
+    }
+  });
+});
+
+// ---------- T6R.16：批量 v2 契约（evidencePhases / asOf / 逐题评析 / evidenceRefs / preview 扩展） ----------
+
+describe("任务目标 per-question-review（T6R.16 逐题评析，v2 专属）", () => {
+  it("枚举与中文标签收录新目标", () => {
+    expect(learningPackGoalSchema.parse("per-question-review")).toBe(
+      "per-question-review",
+    );
+    expect(LEARNING_PACK_GOAL_LABELS["per-question-review"]).toBe("逐题评析");
+  });
+
+  it("v2 专属：未显式携带 packVersion=2 → 拒绝（中文报错）", () => {
+    const result = learningPackExportRequestSchema.safeParse({
+      ...MIN_REQUEST,
+      goal: "per-question-review",
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(
+        result.error.issues.some((issue) =>
+          issue.message.includes("逐题评析是 v2 专属任务目标"),
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it("goal=per-question-review + packVersion=2 通过", () => {
+    const parsed = learningPackExportRequestSchema.parse({
+      ...MIN_REQUEST,
+      packVersion: 2,
+      goal: "per-question-review",
+    });
+    expect(parsed.goal).toBe("per-question-review");
+  });
+});
+
+describe("modules.evidencePhases（T6R.16 v2 证据阶段）", () => {
+  it('缺省 ["scratch"]：旧请求 parse 后 modules 全形状 deep equal（零漂移锁）', () => {
+    const parsed = learningPackExportRequestSchema.parse(MIN_REQUEST);
+    expect(parsed.modules).toEqual({
+      lectures: [],
+      questions: "stem",
+      responses: false,
+      summaries: false,
+      ink: false,
+      traces: false,
+      evidence: false,
+      evidencePhases: ["scratch"],
+    });
+  });
+
+  it("min(1)/max(3)/值域：空数组、四元素、非法 phase 拒绝", () => {
+    const attempt = (evidencePhases: string[]) =>
+      learningPackExportRequestSchema.safeParse({
+        ...MIN_REQUEST,
+        packVersion: 2,
+        modules: { responses: true, evidence: true, evidencePhases },
+      });
+    expect(attempt([]).success).toBe(false);
+    expect(
+      attempt(["scratch", "correction", "supplement", "scratch"]).success,
+    ).toBe(false);
+    expect(attempt(["original"]).success).toBe(false);
+    expect(attempt(["scratch", "correction", "supplement"]).success).toBe(true);
+  });
+
+  it("v2 + evidence + responses 下勾选 correction/supplement 通过并保序回显", () => {
+    const parsed = learningPackExportRequestSchema.parse({
+      ...MIN_REQUEST,
+      packVersion: 2,
+      modules: {
+        responses: true,
+        evidence: true,
+        evidencePhases: ["scratch", "correction"],
+      },
+    });
+    expect(parsed.modules.evidencePhases).toEqual(["scratch", "correction"]);
+  });
+
+  it("含 correction/supplement 但 evidence 未勾 → 拒绝（独立中文报错，防静默忽略）", () => {
+    const result = learningPackExportRequestSchema.safeParse({
+      ...MIN_REQUEST,
+      packVersion: 2,
+      modules: { responses: true, evidencePhases: ["scratch", "supplement"] },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(
+        result.error.issues.some((issue) =>
+          issue.message.includes(
+            "勾选订正/补充阶段需同时勾选证据附件与逐题作答",
+          ),
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it('显式 ["scratch"] 不触发新报错：v1 请求合法（默认零漂移）', () => {
+    expect(
+      learningPackExportRequestSchema.safeParse({
+        ...MIN_REQUEST,
+        modules: { questions: "stem", evidencePhases: ["scratch"] },
+      }).success,
+    ).toBe(true);
+  });
+});
+
+describe("NOTE_PHASE_ORDER 与 NOTE_PHASE_LABELS（T6R.16 闸门 F8：阶段序与中文标签契约单源）", () => {
+  it("规范序锁定 scratch → correction → supplement（服务端规范化与前端渲染共用此源）", () => {
+    expect([...NOTE_PHASE_ORDER]).toEqual([
+      "scratch",
+      "correction",
+      "supplement",
+    ]);
+  });
+
+  it("中文标签三键齐备且值锁定（缩略图徽标与模块回显共用此源）", () => {
+    expect(NOTE_PHASE_ORDER.every((phase) => phase in NOTE_PHASE_LABELS)).toBe(
+      true,
+    );
+    expect(NOTE_PHASE_LABELS).toEqual({
+      scratch: "原稿",
+      correction: "订正",
+      supplement: "补充稿",
+    });
+  });
+});
+
+describe("request.asOf（T6R.16 固定选择）", () => {
+  it("毫秒精度 UTC ISO 通过并回显；v1 亦可携带（显式 opt-in）", () => {
+    const parsed = learningPackExportRequestSchema.parse({
+      ...MIN_REQUEST,
+      asOf: "2026-10-07T01:02:03.456Z",
+    });
+    expect(parsed.asOf).toBe("2026-10-07T01:02:03.456Z");
+    const v2 = learningPackExportRequestSchema.parse({
+      ...MIN_REQUEST,
+      packVersion: 2,
+      asOf: "2026-10-07T01:02:03.456Z",
+    });
+    expect(v2.asOf).toBe("2026-10-07T01:02:03.456Z");
+  });
+
+  it("非毫秒精度 / 带时区偏移 / 非时间串拒绝", () => {
+    for (const asOf of [
+      "2026-10-07T01:02:03Z",
+      "2026-10-07T01:02:03.456+08:00",
+      "不是时间",
+    ]) {
+      expect(
+        learningPackExportRequestSchema.safeParse({ ...MIN_REQUEST, asOf })
+          .success,
+      ).toBe(false);
+    }
+  });
+
+  it("正则过但日历非法拒绝（F5：畸形时刻不再落到服务端 500，契约层 400）", () => {
+    // 形状符合 AS_OF_ISO_RE（四位年-两位月…毫秒 Z）但 Date.parse = NaN：
+    // 13 月 / 45 日 / 99 时的畸形串。修前只有 regex 一道闸（500 风险），
+    // 修后 refine 在契约层拒绝（400 VALIDATION_ERROR）。
+    for (const asOf of [
+      "2026-13-01T00:00:00.000Z",
+      "2026-10-45T00:00:00.000Z",
+      "2026-10-01T99:99:99.999Z",
+    ]) {
+      const result = learningPackExportRequestSchema.safeParse({
+        ...MIN_REQUEST,
+        asOf,
+      });
+      expect(result.success, asOf).toBe(false);
+      if (!result.success) {
+        expect(
+          result.error.issues.some((issue) => issue.message.includes("日历")),
+        ).toBe(true);
+      }
+    }
+    // 边界对照：合法日历（含闰年 2 月 29 日）仍通过
+    expect(
+      learningPackExportRequestSchema.safeParse({
+        ...MIN_REQUEST,
+        asOf: "2024-02-29T23:59:59.999Z",
+      }).success,
+    ).toBe(true);
+  });
+});
+
+describe("v2 responses 行 evidenceRefs（T6R.16 单值→数组重塑）", () => {
+  /** 最小 v2 作答行（快照缺失形态） */
+  const MIN_ROW = {
+    attemptId: "2d902b60-3e4f-4a5b-9a32-334455667788",
+    studentId: "0b7e0f4e-1c2d-4e3a-9f10-112233445566",
+    questionId: "有理数随堂练习-3",
+    no: 3,
+    answerText: null,
+    autoCorrect: null,
+    finalCorrect: null,
+    teacherMark: null,
+    teacherComment: null,
+    questionRef: "q001",
+    snapshotHash: null,
+  } as const;
+
+  it("多条证据编号通过（多阶段挂同一作答行）；编号形状非法拒绝", () => {
+    const pack = learningPackV2Schema.parse({
+      ...MIN_V2_PACK,
+      attempts: {
+        responses: [
+          {
+            ...MIN_ROW,
+            evidenceRefs: ["e001", "e002", "e003"],
+          },
+        ],
+      },
+    });
+    expect(pack.attempts?.responses?.[0]?.evidenceRefs).toEqual([
+      "e001",
+      "e002",
+      "e003",
+    ]);
+    expect(
+      learningPackV2Schema.safeParse({
+        ...MIN_V2_PACK,
+        attempts: {
+          responses: [{ ...MIN_ROW, evidenceRefs: ["e001", "x1"] }],
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      learningPackV2Schema.safeParse({
+        ...MIN_V2_PACK,
+        attempts: {
+          responses: [{ ...MIN_ROW, evidenceRefs: [] }],
+        },
+      }).success,
+    ).toBe(true);
+  });
+
+  it("旧单值 evidenceRef 键不再是契约形状（parse 后被剥离）", () => {
+    const pack = learningPackV2Schema.parse({
+      ...MIN_V2_PACK,
+      attempts: {
+        responses: [{ ...MIN_ROW, evidenceRef: "e001" }],
+      },
+    });
+    const row = pack.attempts?.responses?.[0];
+    expect(row).not.toHaveProperty("evidenceRef");
+  });
+});
+
+describe("v2 证据条目新列（T6R.16 只增：sealedAt/stuckAt/errorCause）", () => {
+  const BASE_ENTRY = {
+    ref: "e001",
+    attemptId: "2d902b60-3e4f-4a5b-9a32-334455667788",
+    studentId: "0b7e0f4e-1c2d-4e3a-9f10-112233445566",
+    questionId: "有理数随堂练习-3",
+    questionRef: "q001",
+    no: 3,
+    phase: "correction",
+    state: "frozen",
+  } as const;
+
+  it("已封存订正携带 sealedAt 与反思（null 合法——空串已归一）", () => {
+    const pack = learningPackV2Schema.parse({
+      ...MIN_V2_PACK,
+      evidence: [
+        {
+          ...BASE_ENTRY,
+          sealedAt: "2026-10-06T08:00:00.000Z",
+          stuckAt: null,
+          errorCause: "异号加法符号规则记混",
+        },
+      ],
+    });
+    expect(pack.evidence?.[0]?.sealedAt).toBe("2026-10-06T08:00:00.000Z");
+    expect(pack.evidence?.[0]?.stuckAt).toBeNull();
+    expect(pack.evidence?.[0]?.errorCause).toBe("异号加法符号规则记混");
+  });
+
+  it("三列全部缺省合法（scratch 阶段恒不携带）", () => {
+    const pack = learningPackV2Schema.parse({
+      ...MIN_V2_PACK,
+      evidence: [{ ...BASE_ENTRY, phase: "scratch", images: [] }],
+    });
+    expect(pack.evidence?.[0]?.sealedAt).toBeUndefined();
+    expect(pack.evidence?.[0]?.stuckAt).toBeUndefined();
+    expect(pack.evidence?.[0]?.errorCause).toBeUndefined();
+  });
+
+  it("sealedAt 空串拒绝", () => {
+    expect(
+      learningPackV2Schema.safeParse({
+        ...MIN_V2_PACK,
+        evidence: [{ ...BASE_ENTRY, sealedAt: "" }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("v2 meta.modules.evidencePhases 回显实际装配阶段；缺失拒绝", () => {
+    const pack = learningPackV2Schema.parse({
+      ...MIN_V2_PACK,
+      meta: {
+        ...MIN_V2_PACK.meta,
+        modules: {
+          ...MIN_V2_PACK.meta.modules,
+          evidencePhases: ["scratch", "correction"],
+        },
+      },
+    });
+    expect(pack.meta.modules.evidencePhases).toEqual(["scratch", "correction"]);
+    const { evidencePhases: _omit, ...modulesWithoutPhases } =
+      MIN_V2_PACK.meta.modules;
+    expect(
+      learningPackV2Schema.safeParse({
+        ...MIN_V2_PACK,
+        meta: { ...MIN_V2_PACK.meta, modules: modulesWithoutPhases },
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe("preview 扩展（T6R.16：asOf + evidenceImages 真实图片预览）", () => {
+  const BASE_PREVIEW = {
+    files: [],
+    totalEstimatedBytes: 0,
+    limitBytes: LEARNING_PACK_MAX_BYTES,
+    overLimit: false,
+    hint: null,
+  } as const;
+
+  it("asOf 必填：缺失拒绝；evidenceImages 缺省空数组（v1/未勾 evidence 恒空）", () => {
+    expect(learningPackPreviewDataSchema.safeParse(BASE_PREVIEW).success).toBe(
+      false,
+    );
+    const parsed = learningPackPreviewDataSchema.parse({
+      ...BASE_PREVIEW,
+      asOf: "2026-10-07T01:02:03.456Z",
+    });
+    expect(parsed.asOf).toBe("2026-10-07T01:02:03.456Z");
+    expect(parsed.evidenceImages).toEqual([]);
+  });
+
+  it("行形状：ready 带 downloadUrl、missing 带 reason；非法编号/页号/空 URL 拒绝", () => {
+    const parsed = learningPackPreviewDataSchema.parse({
+      ...BASE_PREVIEW,
+      asOf: "2026-10-07T01:02:03.456Z",
+      evidenceImages: [
+        {
+          file: "evidence/e001-original-01.png",
+          ref: "e001",
+          phase: "scratch",
+          pageIndex: 0,
+          state: "ready",
+          bytes: 12_000,
+          downloadUrl:
+            "/api/teacher/note-versions/3f0177d0-5e60-4f71-8a54-4455667788aa/images/img-1.png",
+        },
+        {
+          file: "evidence/e002-correction-01.png",
+          ref: "e002",
+          phase: "correction",
+          pageIndex: 0,
+          state: "missing",
+          bytes: 0,
+          reason: "分析图未生成",
+        },
+      ],
+    });
+    expect(parsed.evidenceImages).toHaveLength(2);
+    expect(parsed.evidenceImages[0]?.downloadUrl).toContain(
+      "/api/teacher/note-versions/",
+    );
+    const bad = (evidenceImages: Array<Record<string, unknown>>): boolean =>
+      learningPackPreviewDataSchema.safeParse({
+        ...BASE_PREVIEW,
+        asOf: "2026-10-07T01:02:03.456Z",
+        evidenceImages,
+      }).success;
+    expect(
+      bad([
+        {
+          file: "x",
+          ref: "x1",
+          phase: "scratch",
+          pageIndex: 0,
+          state: "ready",
+          bytes: 1,
+        },
+      ]),
+    ).toBe(false);
+    expect(
+      bad([
+        {
+          file: "x",
+          ref: "e001",
+          phase: "scratch",
+          pageIndex: -1,
+          state: "ready",
+          bytes: 1,
+        },
+      ]),
+    ).toBe(false);
+    expect(
+      bad([
+        {
+          file: "x",
+          ref: "e001",
+          phase: "scratch",
+          pageIndex: 0,
+          state: "ready",
+          bytes: 1,
+          downloadUrl: "",
+        },
+      ]),
+    ).toBe(false);
+  });
+});
+
+describe("renderLearningPackPrompt：per-question-review 与阶段细化（T6R.16）", () => {
+  const base = {
+    goal: "per-question-review",
+    lectures: true,
+    questionLevel: "solution",
+    responses: true,
+    summaries: true,
+    ink: true,
+    traces: true,
+    anonymized: true,
+  } as const;
+
+  it("新目标渲染含 §9.4 七步关键句与输出要求", () => {
+    const md = renderLearningPackPrompt({ ...base, evidence: true });
+    expect(md).toContain("# 学情数据包分析任务：逐题评析");
+    for (const key of [
+      "核对附件图片",
+      "最早可确定的错误",
+      "连带错误",
+      "证据不足",
+      "验证题",
+      "需要教师确认的事项",
+      "不直接写入成绩",
+    ]) {
+      expect(md).toContain(key);
+    }
+  });
+
+  it("evidence 依赖分支：原稿/订正/补充稿分别分析句出现；未勾不出现", () => {
+    const withEvidence = renderLearningPackPrompt({ ...base, evidence: true });
+    expect(withEvidence).toContain("订正正确不等于独立掌握");
+    expect(withEvidence).toContain("同题重做正确也不等于迁移成功");
+    // 编号连续：6 条基础步骤后，evidence 分支接 7（ink 同时勾选接 8）
+    expect(withEvidence).toContain("7. 原稿、订正、补充稿分别分析");
+    expect(withEvidence).toContain("8. ink/ 手写过程图片");
+    const without = renderLearningPackPrompt(base);
+    expect(without).not.toContain("订正正确不等于独立掌握");
+    expect(without).not.toContain("evidence/");
+  });
+
+  it("ink 依赖分支：勾选时任务段提及笔迹图片旁证（互为旁证句）", () => {
+    expect(renderLearningPackPrompt(base)).toContain("互为旁证");
+    const evidenceOnly = renderLearningPackPrompt({
+      ...base,
+      evidence: true,
+      ink: false,
+    });
+    // evidence 勾而 ink 不勾：三稿句仍是 7，且无第 8 条
+    expect(evidenceOnly).toContain("7. 原稿、订正、补充稿分别分析");
+    expect(evidenceOnly).not.toContain("8. ");
+    expect(renderLearningPackPrompt({ ...base, ink: false })).not.toContain(
+      "互为旁证",
+    );
+  });
+
+  it("evidencePhases 传入时数据说明行按阶段细化（含文件名标签）；未传保持原句", () => {
+    const refined = renderLearningPackPrompt({
+      ...base,
+      evidence: true,
+      evidencePhases: ["scratch", "correction", "supplement"],
+    });
+    expect(refined).toContain("原稿（original）");
+    expect(refined).toContain("订正（correction）");
+    expect(refined).toContain("补充稿（supplement）");
+    const legacy = renderLearningPackPrompt({ ...base, evidence: true });
+    expect(legacy).toContain("逐题手写原稿图片");
+    expect(legacy).not.toContain("（original）");
+    // 空数组视同未传（防御：不渲染空阶段清单）
+    expect(
+      renderLearningPackPrompt({ ...base, evidence: true, evidencePhases: [] }),
+    ).toContain("逐题手写原稿图片");
+  });
+
+  it("旧四目标在无 evidence 输入下渲染与基线逐字节一致（防回归锁）", () => {
+    for (const goal of [
+      "diagnose-weakness",
+      "lesson-prep",
+      "variant-practice",
+      "period-summary",
+    ] as const) {
+      expect(renderLearningPackPrompt({ ...base, goal })).toBe(
+        LEGACY_PROMPT_FIXTURES[goal],
+      );
+    }
+  });
+
+  it("旧四目标在 media:true 输入下渲染与基线逐字节一致（F14：media 形态回归锁）", () => {
+    for (const goal of [
+      "diagnose-weakness",
+      "lesson-prep",
+      "variant-practice",
+      "period-summary",
+    ] as const) {
+      expect(renderLearningPackPrompt({ ...base, goal, media: true })).toBe(
+        LEGACY_PROMPT_MEDIA_FIXTURES[goal],
+      );
     }
   });
 });

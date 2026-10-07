@@ -3,11 +3,14 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import {
   ANALYTICS_DAYS_DEFAULT,
   ANALYTICS_FOCUS_DAYS_DEFAULT,
-  LEARNING_PACK_DAYS_DEFAULT,
+  type LearningPackExportRequest,
+  learningPackExportRequestSchema,
+  learningPackGoalSchema,
+  notePhaseSchema,
 } from "@tutor/contract";
 import { z } from "zod";
 import type { Db } from "../db/client";
-import { HttpError } from "../lib/http-error";
+import { firstIssueMessage, HttpError } from "../lib/http-error";
 import { getAnalyticsQuestions } from "../services/analytics-service";
 import { listTeacherAssignments } from "../services/assignment-service";
 import {
@@ -125,7 +128,7 @@ function guard<Args>(
 
 // ---------- D14 模块勾选（get_student_learning_pack 参数对齐） ----------
 
-/** AI 可覆盖的内容模块（与 learningPackModulesSchema 的可覆盖子集对齐） */
+/** AI 可覆盖的内容模块（与 learningPackModulesSchema 的可覆盖子集对齐；T6R.16 增 evidence/evidencePhases） */
 const packModulesOverrideSchema = z
   .object({
     /** 题目三层：stem=仅题干 / answer=+参考答案 / solution=+解析（默认 solution） */
@@ -136,6 +139,13 @@ const packModulesOverrideSchema = z
     summaries: z.boolean().optional(),
     /** 每题派生指标与讲义阅读地图（默认开） */
     traces: z.boolean().optional(),
+    /** v2 证据附件（T6R.16 开放入参；勾选需同时 packVersion=2 与 responses——契约 superRefine 终校验） */
+    evidence: z.boolean().optional(),
+    /**
+     * v2 证据收录阶段：scratch=交卷原稿 / correction=已封存订正 / supplement=补充稿（1-3 个）。
+     * 闸门 F2 单源：值域直接引契约 notePhaseSchema，不再手写枚举（契约扩值即同步）。
+     */
+    evidencePhases: z.array(notePhaseSchema).min(1).max(3).optional(),
   })
   .optional();
 
@@ -149,10 +159,117 @@ function packRequestDefaults() {
       summaries: true,
       ink: false,
       traces: true,
-      // v2 专属模块（T6R.12）：MCP 旧调用保持 v1 默认（不装配证据附件）
-      evidence: false,
     },
   };
+}
+
+/**
+ * get_student_learning_pack 入参 schema（T6R.16 导出：等价测试复用请求构造
+ * 与入参类型；registerTool 的 inputSchema 即本对象的 shape）。
+ */
+export const packToolInputSchema = z.object({
+  studentId: z
+    .string()
+    .uuid()
+    .optional()
+    .describe("聚焦单个学生（缺省 = 范围内全部学生）"),
+  courseId: z.string().uuid().optional().describe("按课程筛选"),
+  assignmentId: z.string().uuid().optional().describe("按作业筛选"),
+  days: z
+    .union([z.number().int().min(1).max(3650), z.literal("all")])
+    .optional()
+    .describe("时间范围天数（按交卷时间）；缺省 30，'all' 为全部"),
+  /**
+   * 任务目标：闸门 F2 单源——枚举直接引契约 learningPackGoalSchema（描述文案
+   * 保持不变；optional/describe 均返回新实例，不污染契约 schema 的元信息）。
+   */
+  goal: learningPackGoalSchema
+    .optional()
+    .describe(
+      "任务目标（决定 pack 内 prompt 模板；缺省 diagnose-weakness；per-question-review 逐题评析为 v2 专属）",
+    ),
+  anonymize: z
+    .boolean()
+    .optional()
+    .describe("是否化名（学生A/学生B…）；默认 false（教师本人域调用）"),
+  modules: packModulesOverrideSchema.describe(
+    "内容模块覆盖（缺省全开：题目三层全量+作答+痕迹；v2 证据附件经 evidence 与 evidencePhases 勾选）",
+  ),
+  packVersion: z
+    .literal(2)
+    .optional()
+    .describe(
+      "包结构版本：缺省 v1；显式 2 = v2 证据装配（勾选 evidence 前必须携带）",
+    ),
+});
+
+/** get_student_learning_pack 入参类型（等价测试构造同一请求用） */
+export type PackToolInput = z.infer<typeof packToolInputSchema>;
+
+/**
+ * get_student_learning_pack 的 MCP 入参 → 契约导出请求（T6R.16 挂账④ 单源化）：
+ * 默认模块集（派单定稿）+ AI 覆盖浅合并后，**整体经 learningPackExportRequestSchema.parse**
+ * ——modules.evidence/evidencePhases 与 scope.days 的缺省由契约 default 单源填充
+ * （此处不再硬编码 evidence:false；days 省略即契约 default 30，与
+ * LEARNING_PACK_DAYS_DEFAULT 同值）；privacy.anonymize **显式传 false**
+ * （契约缺省 true，MCP 既有语义是教师本人域不化名）。导出供 MCP↔UI 等价测试
+ * 构造同一请求（逐字节对比的前提是同一构造函数）。
+ * 契约 superRefine 不通过（如 evidence 未配 packVersion=2）→ 400
+ * VALIDATION_ERROR：ZodError 不裸抛（guard 会落 INTERNAL），转 HttpError 走
+ * 结构化错误（消息口径复用 lib/http-error 的 parseJsonBody 共享段）。
+ */
+export function mcpLearningPackRequestOf(
+  args: PackToolInput,
+): LearningPackExportRequest {
+  const base = packRequestDefaults();
+  const input = {
+    ...(args.packVersion !== undefined
+      ? { packVersion: args.packVersion }
+      : {}),
+    scope: {
+      ...(args.studentId !== undefined ? { studentIds: [args.studentId] } : {}),
+      ...(args.courseId !== undefined ? { courseId: args.courseId } : {}),
+      ...(args.assignmentId !== undefined
+        ? { assignmentId: args.assignmentId }
+        : {}),
+      ...(args.days !== undefined ? { days: args.days } : {}),
+    },
+    modules: {
+      ...base.modules,
+      ...(args.modules?.questions !== undefined
+        ? { questions: args.modules.questions }
+        : {}),
+      ...(args.modules?.responses !== undefined
+        ? { responses: args.modules.responses }
+        : {}),
+      ...(args.modules?.summaries !== undefined
+        ? { summaries: args.modules.summaries }
+        : {}),
+      ...(args.modules?.traces !== undefined
+        ? { traces: args.modules.traces }
+        : {}),
+      ...(args.modules?.evidence !== undefined
+        ? { evidence: args.modules.evidence }
+        : {}),
+      ...(args.modules?.evidencePhases !== undefined
+        ? { evidencePhases: [...args.modules.evidencePhases] }
+        : {}),
+    },
+    goal: args.goal ?? "diagnose-weakness",
+    privacy: { anonymize: args.anonymize ?? false },
+  };
+  try {
+    return learningPackExportRequestSchema.parse(input);
+  } catch (err) {
+    if (err instanceof z.ZodError) {
+      throw new HttpError(
+        400,
+        "VALIDATION_ERROR",
+        `请求参数不合法：${firstIssueMessage(err)}`,
+      );
+    }
+    throw err;
+  }
 }
 
 // ---------- 工具注册 ----------
@@ -417,89 +534,24 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
     "get_student_learning_pack",
     {
       description:
-        "获取学情数据包（pack.json 全文）。默认包含：题目三层全量（题干+答案+解析）、全部历次作答与汇总、学习痕迹派生指标；默认不化名（MCP 为教师本人域调用）。可按模块覆盖勾选。范围内的学生/课程/作业不存在或不属于本教师时返回结构化错误。",
-      inputSchema: {
-        studentId: z
-          .string()
-          .uuid()
-          .optional()
-          .describe("聚焦单个学生（缺省 = 范围内全部学生）"),
-        courseId: z.string().uuid().optional().describe("按课程筛选"),
-        assignmentId: z.string().uuid().optional().describe("按作业筛选"),
-        days: z
-          .union([z.number().int().min(1).max(3650), z.literal("all")])
-          .optional()
-          .describe("时间范围天数（按交卷时间）；缺省 30，'all' 为全部"),
-        goal: z
-          .enum([
-            "diagnose-weakness",
-            "lesson-prep",
-            "variant-practice",
-            "period-summary",
-          ])
-          .optional()
-          .describe(
-            "任务目标（决定 pack 内 prompt 模板；缺省 diagnose-weakness）",
-          ),
-        anonymize: z
-          .boolean()
-          .optional()
-          .describe("是否化名（学生A/学生B…）；默认 false（教师本人域调用）"),
-        modules: packModulesOverrideSchema.describe(
-          "内容模块覆盖（缺省全开：题目三层全量+作答+痕迹）",
-        ),
-      },
+        "获取学情数据包（pack.json 全文）。默认包含：题目三层全量（题干+答案+解析）、全部历次作答与汇总、学习痕迹派生指标；默认不化名（MCP 为教师本人域调用）。可按模块覆盖勾选；显式 packVersion=2 开启 v2 证据装配（evidence 附件 + evidencePhases 阶段选择：scratch 原稿/correction 已封存订正/supplement 补充稿）。范围内的学生/课程/作业不存在或不属于本教师时返回结构化错误。",
+      inputSchema: packToolInputSchema.shape,
       annotations: { readOnlyHint: true },
     },
-    guard(
-      ({
-        studentId,
-        courseId,
-        assignmentId,
-        days,
-        goal,
-        anonymize,
-        modules,
-      }) => {
-        const options: LearningPackServiceOptions =
-          deps.now !== undefined ? { now: deps.now } : {};
-        // 默认模块集（派单定稿）+ AI 覆盖浅合并；请求整体经契约 schema 终校验
-        const base = packRequestDefaults();
-        const assembly = assembleLearningPack(
-          db,
-          dataDir,
-          teacherId,
-          {
-            scope: {
-              ...(studentId !== undefined ? { studentIds: [studentId] } : {}),
-              ...(courseId !== undefined ? { courseId } : {}),
-              ...(assignmentId !== undefined ? { assignmentId } : {}),
-              days: days ?? LEARNING_PACK_DAYS_DEFAULT,
-            },
-            modules: {
-              ...base.modules,
-              ...(modules?.questions !== undefined
-                ? { questions: modules.questions }
-                : {}),
-              ...(modules?.responses !== undefined
-                ? { responses: modules.responses }
-                : {}),
-              ...(modules?.summaries !== undefined
-                ? { summaries: modules.summaries }
-                : {}),
-              ...(modules?.traces !== undefined
-                ? { traces: modules.traces }
-                : {}),
-            },
-            goal: goal ?? "diagnose-weakness",
-            privacy: { anonymize: anonymize ?? false },
-          },
-          options,
-        );
-        // 返回 pack.json 原文（JSON 文本，供 AI 直接阅读；不再二次包一层 JSON）
-        return textContent(assembly.packJson);
-      },
-    ),
+    guard((args) => {
+      const options: LearningPackServiceOptions =
+        deps.now !== undefined ? { now: deps.now } : {};
+      // MCP 入参 → 契约请求（默认集+浅合并+契约 parse 单源；T6R.16 挂账④）
+      const assembly = assembleLearningPack(
+        db,
+        dataDir,
+        teacherId,
+        mcpLearningPackRequestOf(args),
+        options,
+      );
+      // 返回 pack.json 原文（JSON 文本，供 AI 直接阅读；不再二次包一层 JSON）
+      return textContent(assembly.packJson);
+    }),
   );
 
   // 10. get_question_stats：复用 T4.1 questions 接口口径

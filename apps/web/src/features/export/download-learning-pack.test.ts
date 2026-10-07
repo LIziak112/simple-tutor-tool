@@ -19,6 +19,8 @@ const REQUEST: LearningPackExportRequest = {
     ink: false,
     traces: false,
     evidence: false,
+    // T6R.16：契约新档缺省（evidence=false 时被忽略）
+    evidencePhases: ["scratch"],
   },
   goal: "diagnose-weakness",
   privacy: { anonymize: true },
@@ -148,5 +150,29 @@ describe("downloadLearningPackApi", () => {
     await expect(downloadLearningPackApi(REQUEST)).rejects.toThrow(
       "连不上服务器",
     );
+  });
+
+  it("携带 asOf 与 packVersion 时如实上送 JSON 请求体", async () => {
+    const fetchSpy = vi
+      .fn()
+      .mockResolvedValue(zipResponse("learning-pack-20261007-010203.zip"));
+    vi.stubGlobal("fetch", fetchSpy);
+    stubObjectURL();
+
+    const requestWithAsOf: LearningPackExportRequest = {
+      ...REQUEST,
+      packVersion: 2,
+      asOf: "2026-10-07T01:02:03.456Z",
+      modules: {
+        ...REQUEST.modules,
+        evidence: true,
+        evidencePhases: ["scratch", "correction"],
+      },
+    };
+    await downloadLearningPackApi(requestWithAsOf);
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const [, init] = fetchSpy.mock.calls[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual(requestWithAsOf);
   });
 });

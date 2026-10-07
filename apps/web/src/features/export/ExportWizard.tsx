@@ -5,8 +5,12 @@ import {
   LEARNING_PACK_MAX_LECTURES,
   type LearningPackExportRequest,
   type LearningPackGoal,
-  type LearningPackModules,
   type LearningPackPreviewData,
+  learningPackExportRequestSchema,
+  NOTE_PHASE_LABELS,
+  NOTE_PHASE_ORDER,
+  type NotePhase,
+  sizeTextOf,
 } from "@tutor/contract";
 import {
   ChevronDown,
@@ -19,6 +23,8 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router";
+import { z } from "zod";
+import { ErrorRetry } from "@/components/ErrorRetry";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -46,18 +52,16 @@ import { useLearningPackPreview, useLectureOutline } from "./export-queries";
  * - ② 内容模块：分组卡片——讲义（资源库候选集，逐篇展开 H2/H3 目录勾选
  *   小节，空勾选 = 仅大纲）、题目三层（不含 / 仅题干 / +参考答案 / +解析，
  *   单选升级式）、逐题作答、作答汇总、手写 PNG（默认关）、学习痕迹；
- *   历次口径为固定说明（D15，非开关）；
- * - ③ 任务目标：四模板卡片（文案与 docs/dsl/学情分析提示词.md 同源）+
- *   自定义附加段（customPrompt，追加在 prompt.md「教师附加要求」）；
+ *   手写证据（v2 数据包，T6R.16 新增）；历次口径为固定说明（D15，非开关）；
+ * - ③ 任务目标：五模板卡片（文案与 docs/dsl/学情分析提示词.md 同源；T6R.16
+ *   新增「逐题评析」）+ 自定义附加段（customPrompt，追加在 prompt.md「教师附加要求」）；
  * - ④ 隐私：化名默认开；「包含真实姓名」开关需二次确认（确认即
  *   privacy.anonymize=false，D16）；
- * - ⑤ 预览：preview 接口文件清单 + 预估大小；overLimit → 禁用下载并给
- *   精简方向（减学生 / 减 ink / 缩时间，D18）；「生成并下载」POST zip 流
- *   经 fetch blob 触发浏览器下载（文件名取 Content-Disposition）。
- * 步骤可回退且保留状态；改前步后再进⑤自动重新预览；未完成离开需确认
- * （页内退出二次确认 + beforeunload 兜底；react-router 声明式路由下侧边栏
- * 直达导航无法拦截，见任务报告——刷新/关闭已由 beforeunload 覆盖）。
- * 下载成功后视为完成，退出不再确认。三态齐全，触控目标 ≥44px。
+ * - ⑤ 预览：preview 接口文件清单 + 预估大小 + 证据图缩略；overLimit → 禁用下载
+ *   并给精简方向（减学生 / 减 ink / 缩时间，D18）；「生成并下载」POST zip 流
+ *   （回传 asOf 固定选择）。
+ * 步骤可回退且保留状态；改前步后再进⑤自动重新预览；未完成离开需确认。
+ * 三态齐全，触控目标 ≥44px。
  */
 
 const STEP_LABELS = ["① 范围", "② 内容", "③ 目标", "④ 隐私", "⑤ 预览"] as const;
@@ -72,7 +76,22 @@ const DAYS_OPTIONS = [
 
 type DaysValue = (typeof DAYS_OPTIONS)[number]["value"];
 
-/** 四模板卡片（标题用契约 LEARNING_PACK_GOAL_LABELS 单一来源；描述与
+/** preview 缩略图直出白名单（闸门 F9）：downloadUrl 只信同源教师端 note-versions 端点 */
+const EVIDENCE_DOWNLOAD_URL_PREFIX = "/api/teacher/note-versions/";
+
+/** 缩略图渲染上限（闸门 F10）：超出提示下载数据包查看；标题计数仍用全长 */
+const EVIDENCE_THUMB_LIMIT = 60;
+
+/** buildRequest 组装失败的中文提示（闸门 F1③：ZodError 首条 issue；防原始
+ * JSON 错误串直接怼给教师） */
+function requestBuildErrorTextOf(err: unknown): string {
+  if (err instanceof z.ZodError) {
+    return `请求组装失败：${err.issues[0]?.message ?? "参数不合法"}`;
+  }
+  return err instanceof Error ? err.message : "请求组装失败，请稍后重试";
+}
+
+/** 五模板卡片（标题用契约 LEARNING_PACK_GOAL_LABELS 单一来源；描述与
  * docs/dsl/学情分析提示词.md 的模板要点一致） */
 const GOAL_OPTIONS: ReadonlyArray<{
   value: LearningPackGoal;
@@ -98,6 +117,11 @@ const GOAL_OPTIONS: ReadonlyArray<{
     description:
       "面向家长的阶段性学习总结（教师审阅后转发），用数据说话并给家庭配合建议",
   },
+  {
+    value: "per-question-review",
+    description:
+      "逐题核对图片与步骤、指出最早可确定错误、区分事实与假设、给最小提示与验证题（v2：需勾选证据附件）",
+  },
 ];
 
 /** 题目三层选项（不含 / 递进三层；文案对齐 prompt 模板的数据说明） */
@@ -107,13 +131,6 @@ const QUESTION_LEVEL_OPTIONS = [
   { value: "answer", label: "题干 + 参考答案" },
   { value: "solution", label: "题干 + 参考答案 + 解析" },
 ] as const;
-
-/** 字节数人性化（预览清单 / 合计 / 上限共用） */
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
 
 function arraysEqual(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((v, i) => v === b[i]);
@@ -159,10 +176,25 @@ export function ExportWizard({
   /** 化名开关（D16 默认开；关闭 =「包含真实姓名」，需二次确认） */
   const [anonymize, setAnonymize] = useState(true);
 
+  // ---------- 手写证据（v2 数据包，T6R.16 新增） ----------
+  const [evidenceEnabled, setEvidenceEnabled] = useState(false);
+  const [evidencePhases, setEvidencePhases] = useState<NotePhase[]>([
+    "scratch",
+  ]);
+  const [goalAutoMessage, setGoalAutoMessage] = useState<string | null>(null);
+  const [evidenceBlockedMessage, setEvidenceBlockedMessage] = useState<
+    string | null
+  >(null);
+
   // ---------- 下载态（⑤；防重复点击） ----------
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const [downloadedFile, setDownloadedFile] = useState<string | null>(null);
+
+  /** 预览请求组装失败（闸门 F1③：buildRequest 抛错不冒泡成渲染崩溃） */
+  const [previewBuildError, setPreviewBuildError] = useState<string | null>(
+    null,
+  );
 
   // ---------- 离开守卫 ----------
   const [confirmExit, setConfirmExit] = useState(false);
@@ -180,6 +212,8 @@ export function ExportWizard({
     summaries ||
     ink ||
     traces ||
+    evidenceEnabled ||
+    !arraysEqual(evidencePhases, ["scratch"]) ||
     goal !== "diagnose-weakness" ||
     customPrompt.trim().length > 0 ||
     !anonymize;
@@ -207,37 +241,57 @@ export function ExportWizard({
   }
 
   // ---------- 请求组装（与契约 learning-pack.ts 一一对应） ----------
-  function buildRequest(): LearningPackExportRequest {
-    const modules: LearningPackModules = {
-      lectures: [...lecturePicks.entries()].map(([lectureId, sections]) => ({
-        lectureId,
-        sectionIndexes: [...sections].sort((a, b) => a - b),
-      })),
-      ...(questionLevel !== null ? { questions: questionLevel } : {}),
-      responses,
-      summaries,
-      ink,
-      traces,
-      // v2 专属模块（T6R.12）：向导暂为 v1 入口（v2 批量 UI 属 T6R.16）
-      evidence: false,
-    };
-    return {
+  /**
+   * 构造**输入形状**对象后经契约 schema.parse 填默认（缺省单源：evidence/
+   * evidencePhases/days 等默认只在契约定义，前端不硬编码第二份——与服务端
+   * MCP packRequestDefaults 同款口径，T6R.16 挂账④）。asOf（闸门 F7）作为
+   * 可选参数一并进 parse——下载侧把 preview 回传的 asOf 经此传入，不再在
+   * parse 之后浅拷贝拼装。
+   */
+  function buildRequest(
+    options: { asOf?: string } = {},
+  ): LearningPackExportRequest {
+    // 规范序常量引契约单源（闸门 F8：NOTE_PHASE_ORDER，勿手写副本）
+    const normalizedPhases = NOTE_PHASE_ORDER.filter((p) =>
+      evidencePhases.includes(p),
+    );
+    return learningPackExportRequestSchema.parse({
+      ...(evidenceEnabled || goal === "per-question-review"
+        ? { packVersion: 2 }
+        : {}),
       scope: {
         ...(studentIds.length > 0 ? { studentIds } : {}),
         ...(courseId !== "" ? { courseId } : {}),
         ...(assignmentId !== "" ? { assignmentId } : {}),
         days,
       },
-      modules,
+      modules: {
+        lectures: [...lecturePicks.entries()].map(([lectureId, sections]) => ({
+          lectureId,
+          sectionIndexes: [...sections].sort((a, b) => a - b),
+        })),
+        ...(questionLevel !== null ? { questions: questionLevel } : {}),
+        responses,
+        summaries,
+        ink,
+        traces,
+        ...(evidenceEnabled
+          ? {
+              evidence: true,
+              evidencePhases: normalizedPhases,
+            }
+          : {}),
+      },
       goal,
       privacy: { anonymize },
       ...(customPrompt.trim().length > 0
         ? { customPrompt: customPrompt.trim() }
         : {}),
-    };
+      ...(options.asOf !== undefined ? { asOf: options.asOf } : {}),
+    });
   }
 
-  /** 至少一个内容模块（与契约 superRefine 同式：ink 只是附件开关不算） */
+  /** 至少一个内容模块（与契约 superRefine 同式：ink 与 evidence 只是附件开关不算） */
   const hasContentModule =
     lecturePicks.size > 0 ||
     questionLevel !== null ||
@@ -249,13 +303,21 @@ export function ExportWizard({
     step === 1
       ? studentIds.length === 0
       : step === 2
-        ? !hasContentModule
+        ? // 闸门 F1①：证据附件挂在逐题作答行上（契约 superRefine 同式）——
+          // 开证据但未勾逐题作答时禁用下一步，防走完向导才被服务端 400 打回
+          !hasContentModule || (evidenceEnabled && !responses)
         : false;
 
   /** 进入第⑤步：重新发起预览（改前步后再进自动刷新，D14⑤） */
   function goToPreview(): void {
     previewMutation.reset();
-    previewMutation.mutate(buildRequest());
+    setPreviewBuildError(null);
+    try {
+      previewMutation.mutate(buildRequest());
+    } catch (err) {
+      // 闸门 F1③：组装失败转预览错误态（ErrorRetry 形态，可重试）
+      setPreviewBuildError(requestBuildErrorTextOf(err));
+    }
     setStep(5);
   }
 
@@ -272,14 +334,77 @@ export function ExportWizard({
     setDownloading(true);
     setDownloadError(null);
     try {
-      const filename = await downloadLearningPackApi(buildRequest());
+      // 闸门 F7：asOf 随 buildRequest 一起过契约 parse（钉住 preview 的选择）
+      const request = buildRequest(
+        previewMutation.data?.asOf !== undefined
+          ? { asOf: previewMutation.data.asOf }
+          : {},
+      );
+      const filename = await downloadLearningPackApi(request);
       setDownloadedFile(filename);
     } catch (err) {
+      // 闸门 F1③：ZodError 转中文（原始 JSON 错误串不给教师看）
       setDownloadError(
-        err instanceof Error ? err.message : "下载失败，请稍后重试",
+        err instanceof z.ZodError
+          ? requestBuildErrorTextOf(err)
+          : err instanceof Error
+            ? err.message
+            : "下载失败，请稍后重试",
       );
     } finally {
       setDownloading(false);
+    }
+  }
+
+  function handleEvidenceToggle(checked: boolean): void {
+    if (!checked && goal === "per-question-review") {
+      setEvidenceBlockedMessage("逐题评析依赖证据附件，请先改选其他任务目标");
+      return;
+    }
+    setEvidenceBlockedMessage(null);
+    setEvidenceEnabled(checked);
+    if (checked && evidencePhases.length === 0) {
+      setEvidencePhases(["scratch"]);
+    }
+  }
+
+  function handleTogglePhase(phase: NotePhase, checked: boolean): void {
+    if (checked) {
+      setEvidencePhases((prev) =>
+        prev.includes(phase) ? prev : [...prev, phase],
+      );
+    } else {
+      if (evidencePhases.length <= 1 && evidencePhases.includes(phase)) {
+        return;
+      }
+      setEvidencePhases((prev) => prev.filter((p) => p !== phase));
+    }
+  }
+
+  function handleGoalChange(newGoal: LearningPackGoal): void {
+    setGoal(newGoal);
+    if (newGoal === "per-question-review") {
+      // 闸门 F1②：逐题评析同时需要证据附件（v2）与逐题作答（附件挂载行），
+      // 两项各自缺一补一；均已在位时不提示（e2e 断言证据已开场景无此提示）
+      const autoEvidence = !evidenceEnabled;
+      const autoResponses = !responses;
+      if (autoEvidence) {
+        setEvidenceEnabled(true);
+        if (evidencePhases.length === 0) {
+          setEvidencePhases(["scratch"]);
+        }
+      }
+      if (autoResponses) {
+        setResponses(true);
+      }
+      if (autoEvidence || autoResponses) {
+        setGoalAutoMessage(
+          "逐题评析需要 v2 证据附件与逐题作答，已自动开启并勾选",
+        );
+      }
+    } else {
+      setGoalAutoMessage(null);
+      setEvidenceBlockedMessage(null);
     }
   }
 
@@ -400,6 +525,9 @@ export function ExportWizard({
           summaries={summaries}
           ink={ink}
           traces={traces}
+          evidenceEnabled={evidenceEnabled}
+          evidencePhases={evidencePhases}
+          evidenceBlockedMessage={evidenceBlockedMessage}
           onToggleLecture={toggleLecture}
           onToggleSection={toggleSection}
           onSetAllSections={setAllSections}
@@ -408,6 +536,8 @@ export function ExportWizard({
           onSummariesChange={setSummaries}
           onInkChange={setInk}
           onTracesChange={setTraces}
+          onEvidenceToggle={handleEvidenceToggle}
+          onTogglePhase={handleTogglePhase}
         />
       )}
 
@@ -415,7 +545,8 @@ export function ExportWizard({
         <StepGoal
           goal={goal}
           customPrompt={customPrompt}
-          onGoalChange={setGoal}
+          goalAutoMessage={goalAutoMessage}
+          onGoalChange={handleGoalChange}
           onCustomPromptChange={setCustomPrompt}
         />
       )}
@@ -427,6 +558,7 @@ export function ExportWizard({
       {step === 5 && (
         <StepPreview
           previewMutation={previewMutation}
+          previewBuildError={previewBuildError}
           studentCount={studentIds.length}
           courseName={courseName}
           assignmentTitle={assignmentTitle}
@@ -437,14 +569,13 @@ export function ExportWizard({
             summaries,
             ink,
             traces,
+            evidence: evidenceEnabled,
+            evidencePhases,
           })}
           downloading={downloading}
           downloadedFile={downloadedFile}
           downloadError={downloadError}
-          onRetryPreview={() => {
-            previewMutation.reset();
-            previewMutation.mutate(buildRequest());
-          }}
+          onRetryPreview={goToPreview}
           onDownload={() => void handleDownload()}
           onFinish={() => navigate("/t/insights")}
         />
@@ -502,6 +633,8 @@ function moduleSummaryText(modules: {
   summaries: boolean;
   ink: boolean;
   traces: boolean;
+  evidence?: boolean;
+  evidencePhases?: readonly NotePhase[];
 }): string {
   const parts: string[] = [];
   if (modules.lectures > 0) parts.push(`讲义 ${modules.lectures} 篇`);
@@ -518,6 +651,13 @@ function moduleSummaryText(modules: {
   if (modules.summaries) parts.push("作答汇总");
   if (modules.traces) parts.push("学习痕迹");
   if (modules.ink) parts.push("手写 PNG");
+  if (modules.evidence) {
+    // 阶段中文标签引契约单源（闸门 F8：NOTE_PHASE_LABELS）
+    const phaseNames = (modules.evidencePhases ?? ["scratch"]).map(
+      (p) => NOTE_PHASE_LABELS[p],
+    );
+    parts.push(`手写证据（${phaseNames.join("/")}）`);
+  }
   return parts.length > 0 ? parts.join(" · ") : "（未勾选任何内容模块）";
 }
 
@@ -572,20 +712,14 @@ function StepScope({
             正在加载学生名单…
           </p>
         ) : studentsQuery.isError ? (
-          <div role="alert" className="flex flex-col items-start gap-2">
-            <p className="text-sm text-destructive">
-              {studentsQuery.error instanceof Error
+          <ErrorRetry
+            message={
+              studentsQuery.error instanceof Error
                 ? studentsQuery.error.message
-                : "学生名单加载失败，请稍后重试"}
-            </p>
-            <Button
-              variant="outline"
-              className="min-h-11"
-              onClick={() => void studentsQuery.refetch()}
-            >
-              重试
-            </Button>
-          </div>
+                : "学生名单加载失败，请稍后重试"
+            }
+            onRetry={() => void studentsQuery.refetch()}
+          />
         ) : (
           <>
             <div className="relative">
@@ -743,6 +877,9 @@ function StepModules({
   summaries,
   ink,
   traces,
+  evidenceEnabled,
+  evidencePhases,
+  evidenceBlockedMessage,
   onToggleLecture,
   onToggleSection,
   onSetAllSections,
@@ -751,6 +888,8 @@ function StepModules({
   onSummariesChange,
   onInkChange,
   onTracesChange,
+  onEvidenceToggle,
+  onTogglePhase,
 }: {
   lecturesQuery: ReturnType<typeof useLibraryLectures>;
   lecturePicks: ReadonlyMap<string, Set<number>>;
@@ -759,6 +898,9 @@ function StepModules({
   summaries: boolean;
   ink: boolean;
   traces: boolean;
+  evidenceEnabled: boolean;
+  evidencePhases: readonly NotePhase[];
+  evidenceBlockedMessage: string | null;
   onToggleLecture: (lectureId: string, picked: boolean) => void;
   onToggleSection: (lectureId: string, index: number, checked: boolean) => void;
   onSetAllSections: (
@@ -771,6 +913,8 @@ function StepModules({
   onSummariesChange: (checked: boolean) => void;
   onInkChange: (checked: boolean) => void;
   onTracesChange: (checked: boolean) => void;
+  onEvidenceToggle: (checked: boolean) => void;
+  onTogglePhase: (phase: NotePhase, checked: boolean) => void;
 }) {
   const lectures = lecturesQuery.data?.lectures ?? [];
   const atLectureLimit = lecturePicks.size >= LEARNING_PACK_MAX_LECTURES;
@@ -799,20 +943,14 @@ function StepModules({
               正在加载讲义列表…
             </p>
           ) : lecturesQuery.isError ? (
-            <div role="alert" className="flex flex-col items-start gap-2">
-              <p className="text-sm text-destructive">
-                {lecturesQuery.error instanceof Error
+            <ErrorRetry
+              message={
+                lecturesQuery.error instanceof Error
                   ? lecturesQuery.error.message
-                  : "讲义列表加载失败，请稍后重试"}
-              </p>
-              <Button
-                variant="outline"
-                className="min-h-11"
-                onClick={() => void lecturesQuery.refetch()}
-              >
-                重试
-              </Button>
-            </div>
+                  : "讲义列表加载失败，请稍后重试"
+              }
+              onRetry={() => void lecturesQuery.refetch()}
+            />
           ) : lectures.length === 0 ? (
             <p className="rounded-lg border border-dashed border-border px-3 py-4 text-center text-sm text-muted-foreground">
               资源库还没有讲义，可不勾选本项。
@@ -945,6 +1083,116 @@ function StepModules({
         </label>
       </fieldset>
 
+      {/* 分组四：手写证据（v2 数据包） */}
+      <fieldset className="flex flex-col gap-2 rounded-xl border border-border p-3">
+        <legend className="px-1 text-sm font-medium">
+          手写证据（v2 数据包）
+        </legend>
+        <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-md px-3 py-2 text-sm outline-none select-none hover:bg-muted focus-visible:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50">
+          <input
+            type="checkbox"
+            className="size-5 accent-primary"
+            checked={evidenceEnabled}
+            onChange={(e) => onEvidenceToggle(e.target.checked)}
+          />
+          <span className="flex flex-col">
+            <span>手写原稿与订正图片（v2 数据包）</span>
+            <span className="text-xs text-muted-foreground">
+              按题收录学生手写原稿、封存订正与补充稿的真实切片图片附件（面向多模态
+              AI 模型）
+            </span>
+          </span>
+        </label>
+
+        {evidenceBlockedMessage && (
+          <p
+            role="alert"
+            className="flex items-center gap-1.5 text-xs text-destructive"
+          >
+            <TriangleAlert aria-hidden className="size-3.5 shrink-0" />
+            {evidenceBlockedMessage}
+          </p>
+        )}
+
+        {evidenceEnabled && (
+          <div className="ml-8 flex flex-col gap-2 pt-1">
+            <p className="text-xs font-medium text-foreground">
+              选择收录阶段（至少勾选一门）：
+            </p>
+            <div className="flex flex-col gap-1.5">
+              <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-md px-3 py-2 text-sm outline-none select-none hover:bg-muted focus-visible:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50">
+                <input
+                  type="checkbox"
+                  className="size-5 accent-primary"
+                  checked={evidencePhases.includes("scratch")}
+                  onChange={(e) => onTogglePhase("scratch", e.target.checked)}
+                />
+                <span className="flex flex-col">
+                  <span>原稿</span>
+                  <span className="text-xs text-muted-foreground">
+                    交卷时的原始草稿证据（默认收录）
+                  </span>
+                </span>
+              </label>
+              <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-md px-3 py-2 text-sm outline-none select-none hover:bg-muted focus-visible:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50">
+                <input
+                  type="checkbox"
+                  className="size-5 accent-primary"
+                  checked={evidencePhases.includes("correction")}
+                  onChange={(e) =>
+                    onTogglePhase("correction", e.target.checked)
+                  }
+                />
+                <span className="flex flex-col">
+                  <span>订正</span>
+                  <span className="text-xs text-muted-foreground">
+                    只收录已封存的订正检查点，含学生反思
+                  </span>
+                </span>
+              </label>
+              <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-md px-3 py-2 text-sm outline-none select-none hover:bg-muted focus-visible:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50">
+                <input
+                  type="checkbox"
+                  className="size-5 accent-primary"
+                  checked={evidencePhases.includes("supplement")}
+                  onChange={(e) =>
+                    onTogglePhase("supplement", e.target.checked)
+                  }
+                />
+                <span className="flex flex-col">
+                  <span>补充稿</span>
+                  <span className="text-xs text-muted-foreground">
+                    找回的补充材料，不能证明交卷前已固定
+                  </span>
+                </span>
+              </label>
+            </div>
+
+            <p
+              role="note"
+              className="flex items-start gap-1.5 rounded-lg border border-amber-300/60 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300"
+            >
+              <TriangleAlert aria-hidden className="mt-0.5 size-3.5 shrink-0" />
+              证据图片体积较大（上限 50MB）；化名只作用于文字称呼，
+              <b>手写图片可能包含真实姓名</b>，导出前请在第⑤步预览确认。
+            </p>
+
+            {!responses && (
+              <p
+                role="note"
+                className="flex items-start gap-1.5 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive"
+              >
+                <TriangleAlert
+                  aria-hidden
+                  className="mt-0.5 size-3.5 shrink-0"
+                />
+                证据附件挂在逐题作答行上，需同时勾选「逐题答案与对错判定、教师评语」。
+              </p>
+            )}
+          </div>
+        )}
+      </fieldset>
+
       {/* 历次口径：D15 固定行为，说明性展示（非开关） */}
       <div className="flex items-start gap-2 rounded-xl border border-border bg-muted/30 px-3 py-2.5 text-xs text-muted-foreground">
         <FileArchive aria-hidden className="mt-0.5 size-4 shrink-0" />
@@ -1063,23 +1311,15 @@ function LectureRow({
               正在加载目录…
             </p>
           ) : outlineQuery.isError ? (
-            <div
-              role="alert"
+            <ErrorRetry
               className="flex flex-col items-start gap-2 px-2 py-2"
-            >
-              <p className="text-sm text-destructive">
-                {outlineQuery.error instanceof Error
+              message={
+                outlineQuery.error instanceof Error
                   ? outlineQuery.error.message
-                  : "目录加载失败，请稍后重试"}
-              </p>
-              <Button
-                variant="outline"
-                className="min-h-11"
-                onClick={() => void outlineQuery.refetch()}
-              >
-                重试
-              </Button>
-            </div>
+                  : "目录加载失败，请稍后重试"
+              }
+              onRetry={() => void outlineQuery.refetch()}
+            />
           ) : outline.length === 0 ? (
             <p className="px-2 py-2 text-sm text-muted-foreground">
               这篇讲义没有 H2/H3 小节，导出时只有标题与大纲。
@@ -1140,11 +1380,13 @@ function LectureRow({
 function StepGoal({
   goal,
   customPrompt,
+  goalAutoMessage,
   onGoalChange,
   onCustomPromptChange,
 }: {
   goal: LearningPackGoal;
   customPrompt: string;
+  goalAutoMessage: string | null;
   onGoalChange: (goal: LearningPackGoal) => void;
   onCustomPromptChange: (prompt: string) => void;
 }) {
@@ -1182,6 +1424,14 @@ function StepGoal({
             </label>
           ))}
         </div>
+        {goalAutoMessage && (
+          <p
+            aria-live="polite"
+            className="rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-primary"
+          >
+            {goalAutoMessage}
+          </p>
+        )}
         <p className="text-xs text-muted-foreground">
           模板会按第②步勾选的模块自动拼装（如未勾手写过程，提示词中不会提
           笔迹）；全文见「学情分析提示词」文档。
@@ -1235,7 +1485,8 @@ function StepPrivacy({
         <p className="text-sm text-muted-foreground">
           学生在数据包中以「学生A、学生B…」称呼（按第①步勾选顺序编号），
           化名与真实姓名的对照只写进 zip 里的 映射.txt，仅保存在老师本地、
-          不交给 AI。
+          不交给
+          AI。化名不等于图像脱敏——手写笔迹中可能出现真实姓名，请导出前在第⑤步预览图片确认。
         </p>
       </div>
 
@@ -1311,6 +1562,7 @@ function StepPrivacy({
 
 function StepPreview({
   previewMutation,
+  previewBuildError,
   studentCount,
   courseName,
   assignmentTitle,
@@ -1323,6 +1575,8 @@ function StepPreview({
   onFinish,
 }: {
   previewMutation: ReturnType<typeof useLearningPackPreview>;
+  /** 组装失败提示（闸门 F1③：与请求失败同为 ErrorRetry 形态，可重试） */
+  previewBuildError: string | null;
   studentCount: number;
   courseName: string | null;
   assignmentTitle: string | null;
@@ -1336,6 +1590,11 @@ function StepPreview({
 }) {
   const data: LearningPackPreviewData | undefined = previewMutation.data;
   const overLimit = data?.overLimit === true;
+  // 闸门 F10：缩略图只渲染前 60 项（清单计数仍用全长）
+  const shownEvidenceImages =
+    data?.evidenceImages.slice(0, EVIDENCE_THUMB_LIMIT) ?? [];
+  const hiddenEvidenceCount =
+    (data?.evidenceImages.length ?? 0) - shownEvidenceImages.length;
 
   return (
     <section aria-label="第⑤步 预览与下载" className="flex flex-col gap-4">
@@ -1357,24 +1616,27 @@ function StepPreview({
       )}
 
       {previewMutation.isError && (
-        <div
-          role="alert"
+        <ErrorRetry
           className="flex flex-col items-start gap-2 rounded-xl border border-border bg-card p-4"
-        >
-          <p className="text-sm font-medium text-destructive">预览加载失败</p>
-          <p className="text-sm text-muted-foreground">
-            {previewMutation.error instanceof Error
+          title="预览加载失败"
+          message={
+            previewMutation.error instanceof Error
               ? previewMutation.error.message
-              : "网络异常，请稍后重试"}
-          </p>
-          <Button
-            variant="outline"
-            className="min-h-11"
-            onClick={onRetryPreview}
-          >
-            重新预览
-          </Button>
-        </div>
+              : "网络异常，请稍后重试"
+          }
+          retryLabel="重新预览"
+          onRetry={onRetryPreview}
+        />
+      )}
+
+      {previewBuildError !== null && (
+        <ErrorRetry
+          className="flex flex-col items-start gap-2 rounded-xl border border-border bg-card p-4"
+          title="预览加载失败"
+          message={previewBuildError}
+          retryLabel="重新预览"
+          onRetry={onRetryPreview}
+        />
       )}
 
       {data !== undefined && (
@@ -1383,10 +1645,10 @@ function StepPreview({
             <div className="flex flex-wrap items-baseline justify-between gap-2">
               <h2 className="text-sm font-medium">包内文件清单</h2>
               <p className="text-sm">
-                合计 <b>{formatBytes(data.totalEstimatedBytes)}</b>
+                合计 <b>{sizeTextOf(data.totalEstimatedBytes)}</b>
                 <span className="text-muted-foreground">
                   {" "}
-                  / 上限 {formatBytes(data.limitBytes)}
+                  / 上限 {sizeTextOf(data.limitBytes)}
                 </span>
               </p>
             </div>
@@ -1401,12 +1663,90 @@ function StepPreview({
                 >
                   <span className="min-w-0 break-all">{file.path}</span>
                   <span className="shrink-0 text-muted-foreground">
-                    {formatBytes(file.estimatedBytes)}
+                    {sizeTextOf(file.estimatedBytes)}
                   </span>
                 </li>
               ))}
             </ul>
           </div>
+
+          {/* evidenceImages 缩略图区（有行才渲染） */}
+          {data.evidenceImages && data.evidenceImages.length > 0 && (
+            <div className="flex flex-col gap-2 rounded-xl border border-border p-3">
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <h2 className="text-sm font-medium">
+                  手写证据图片（共 {data.evidenceImages.length} 项）
+                </h2>
+                <p className="text-xs text-muted-foreground">
+                  点击图片可在新标签页查看原图；手写笔迹可能含真实姓名
+                </p>
+              </div>
+              <ul
+                aria-label="手写证据图片预览"
+                className="flex max-h-72 flex-col gap-2 overflow-y-auto rounded-lg border border-border p-2"
+              >
+                {shownEvidenceImages.map((img) => (
+                  <li
+                    key={`${img.ref}-${img.file}`}
+                    className="flex flex-wrap items-center justify-between gap-3 rounded-md bg-muted/40 p-2 text-xs"
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-mono font-medium text-foreground">
+                        {img.ref}
+                      </span>
+                      <span className="rounded bg-primary/10 px-1.5 py-0.5 text-xs text-primary">
+                        {NOTE_PHASE_LABELS[img.phase]}
+                      </span>
+                      <span className="text-muted-foreground">
+                        第 {img.pageIndex + 1} 页
+                      </span>
+                      <span className="font-mono text-muted-foreground break-all">
+                        {img.file}
+                      </span>
+                    </div>
+
+                    {img.state === "ready" &&
+                    img.downloadUrl?.startsWith(
+                      EVIDENCE_DOWNLOAD_URL_PREFIX,
+                    ) ? (
+                      <div className="flex items-center gap-2">
+                        <span className="text-muted-foreground">
+                          {sizeTextOf(img.bytes)}
+                        </span>
+                        <a
+                          href={img.downloadUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="group relative block overflow-hidden rounded border border-border focus-visible:ring-2 focus-visible:ring-ring"
+                          aria-label={`查看原图：${img.file}`}
+                        >
+                          <img
+                            src={img.downloadUrl}
+                            alt={img.file}
+                            loading="lazy"
+                            className="h-24 w-auto max-w-40 object-contain transition-transform group-hover:scale-105"
+                          />
+                        </a>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-1.5 text-amber-700 dark:text-amber-400">
+                        <TriangleAlert
+                          aria-hidden
+                          className="size-4 shrink-0"
+                        />
+                        <span>缺失：{img.reason ?? "图片未生成或丢失"}</span>
+                      </div>
+                    )}
+                  </li>
+                ))}
+              </ul>
+              {hiddenEvidenceCount > 0 && (
+                <p className="text-xs text-muted-foreground">
+                  其余 {hiddenEvidenceCount} 项请在下载数据包后查看
+                </p>
+              )}
+            </div>
+          )}
 
           {overLimit ? (
             <div
@@ -1434,6 +1774,10 @@ function StepPreview({
               任务目标拼装完毕。
             </p>
           )}
+
+          <p className="text-xs text-muted-foreground">
+            本系统不会自动把数据包发送给任何 AI 服务，需你自行交给对话客户端。
+          </p>
 
           {downloadError !== null && (
             <p role="alert" className="text-sm text-destructive">

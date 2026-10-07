@@ -29,14 +29,24 @@ import {
   makeStudent,
   noteDoc,
 } from "../test/note-fixtures.ts";
-import { insertEvidence } from "../test/note-world.ts";
+import {
+  insertEvidence,
+  setNoteSealedAt,
+  setVersionSavedAt,
+} from "../test/note-world.ts";
 import { attemptResponseRows } from "./attempt-service.ts";
 import { saveMedia } from "./media-service.ts";
-import { attachNoteImage, saveNoteVersion } from "./note-service.ts";
+import {
+  attachNoteImage,
+  createCorrection,
+  saveNoteVersion,
+  sealCorrection,
+} from "./note-service.ts";
 import {
   assembleQuestionEvidence,
   type EvidenceRole,
   evidenceImageFileName,
+  normalizeEvidencePhases,
   questionRevisionKey,
 } from "./question-evidence.ts";
 
@@ -87,6 +97,8 @@ function assemble(
     role?: EvidenceRole;
     questionLevel?: "stem" | "answer" | "solution";
     includeEvidence?: boolean;
+    evidencePhases?: readonly ("scratch" | "correction" | "supplement")[];
+    asOf?: string;
     assembleMedia?: boolean;
   } = {},
 ) {
@@ -96,6 +108,10 @@ function assemble(
       ? { questionLevel: options.questionLevel }
       : {}),
     includeEvidence: options.includeEvidence ?? false,
+    ...(options.evidencePhases !== undefined
+      ? { evidencePhases: options.evidencePhases }
+      : {}),
+    ...(options.asOf !== undefined ? { asOf: options.asOf } : {}),
     assembleMedia: options.assembleMedia ?? true,
   });
 }
@@ -645,14 +661,15 @@ describe("T6R.12 证据装配（submission_evidence + 分析图）", () => {
     // 非 frozen 无版本摘要与图片
     expect(missing?.version).toBeUndefined();
     expect(missing?.images).toEqual([]);
-    // 每行 response 的证据引用（includeEvidence 时恒有 eRef）
+    // 每行 response 的证据引用（includeEvidence 时恒有 eRef——默认阶段只含
+    // scratch，数组单元素；多阶段见 T6R.16 describe）
     for (const rowId of world.rowIds) {
-      expect(result.evidenceRefByResponseRowId.get(rowId)).toBeDefined();
+      expect(result.evidenceRefsByResponseRowId.get(rowId)).toBeDefined();
     }
     const frozenRowId = world.rowIds[0] ?? "";
-    expect(result.evidenceRefByResponseRowId.get(frozenRowId)).toBe(
+    expect(result.evidenceRefsByResponseRowId.get(frozenRowId)).toEqual([
       frozen?.ref,
-    );
+    ]);
     // 证据条目回指题目条目
     expect(frozen?.questionRef).toBe(
       result.refByResponseRowId.get(frozenRowId ?? ""),
@@ -780,6 +797,428 @@ describe("T6R.12 证据装配（submission_evidence + 分析图）", () => {
       expect(file).not.toContain(world.versionId);
       expect(file).not.toContain("frozen-题");
     }
+  });
+});
+
+// ---------- T6R.16 多阶段证据装配（correction/supplement/asOf） ----------
+
+describe("T6R.16 多阶段证据装配", () => {
+  /**
+   * 多阶段世界：一 attempt 一题——
+   * - scratch：frozen 原稿（一页分析图）；
+   * - correction#1：copyFromOriginal 创建、封存于 T1（反思 stuckAt=文本 /
+   *   errorCause 缺省→null）+ 一页分析图；
+   * - correction#2：封存于 T2（> T1；零分析图 → 缺失登记带 correction 标签）；
+   * - correction#3：未封存（进行中，任何 asOf 下都不得收录）；
+   * - supplement：单 note 两版本 v1@S1（一页分析图）/ v2@S2（asOf 钉定素材）。
+   */
+  const T1 = "2026-10-03T02:00:00.000Z";
+  const T2 = "2026-10-03T06:00:00.000Z";
+  const S1 = "2026-10-03T03:00:00.000Z";
+  const S2 = "2026-10-04T03:00:00.000Z";
+  /** 覆盖全部封存与版本的时刻（> T2、> S2） */
+  const AS_OF_ALL = "2026-10-05T00:00:00.000Z";
+  /** T1 与 S1 之后、T2 与 S2 之前（订正只收 #1、补充稿钉 v1） */
+  const AS_OF_MID = "2026-10-03T03:30:00.000Z";
+
+  function multiPhaseWorld() {
+    const db = createTestDb();
+    const dataDir = createTestDir();
+    const s1 = makeStudent(db);
+    const a1 = frozenDraftAttempt(db, s1, [
+      {
+        questionId: "多阶段题-1",
+        snapshotJson: snapshotJsonOf({ id: "多阶段题-1" }),
+      },
+    ]);
+    // scratch 原稿：draft 期存稿 + 一页分析图，交卷固定
+    const scratchReceipt = saveNoteVersion(
+      db,
+      dataDir,
+      s1,
+      a1.attemptId,
+      "多阶段题-1",
+      gzipJson(noteDoc(1, 20)),
+      { baseRevision: 0, mutationId: randomUUID() },
+    );
+    attachNoteImage(
+      db,
+      dataDir,
+      { kind: "student", id: s1 },
+      scratchReceipt.versionId,
+      makeNotePng(1000, 800),
+      {
+        spec: "analysis",
+        pageIndex: 0,
+        crop: { x: 0, y: 0, width: 1000, height: 800 },
+        pixelWidth: 1000,
+        pixelHeight: 800,
+      },
+    );
+    submitAttemptStatus(db, a1.attemptId);
+    insertEvidence(
+      db,
+      a1.attemptId,
+      "多阶段题-1",
+      "frozen",
+      scratchReceipt.versionId,
+    );
+    // correction#1：复制原稿 + 一页分析图 + 封存（sealedAt 回拨 T1）
+    const c1Head = createCorrection(
+      db,
+      dataDir,
+      s1,
+      a1.attemptId,
+      "多阶段题-1",
+      {
+        copyFromOriginal: true,
+      },
+    );
+    const c1 = c1Head.corrections[c1Head.corrections.length - 1];
+    if (c1 === undefined || c1.currentVersionId === null) {
+      throw new Error("夹具 correction#1 缺少 seeded 版本");
+    }
+    attachNoteImage(
+      db,
+      dataDir,
+      { kind: "student", id: s1 },
+      c1.currentVersionId,
+      makeNotePng(1000, 800),
+      {
+        spec: "analysis",
+        pageIndex: 0,
+        crop: { x: 0, y: 0, width: 1000, height: 800 },
+        pixelWidth: 1000,
+        pixelHeight: 800,
+      },
+    );
+    sealCorrection(db, s1, a1.attemptId, "多阶段题-1", {
+      baseRevision: 1,
+      stuckAt: "移项时符号处理",
+    });
+    setNoteSealedAt(db, c1.noteId, T1);
+    // correction#2：零分析图，封存后回拨 T2
+    const c2Head = createCorrection(
+      db,
+      dataDir,
+      s1,
+      a1.attemptId,
+      "多阶段题-1",
+      {
+        copyFromOriginal: true,
+      },
+    );
+    const c2 = c2Head.corrections[c2Head.corrections.length - 1];
+    if (c2 === undefined) throw new Error("夹具 correction#2 创建失败");
+    sealCorrection(db, s1, a1.attemptId, "多阶段题-1", {
+      baseRevision: 1,
+      stuckAt: "第二份反思",
+      errorCause: "分配律用错",
+    });
+    setNoteSealedAt(db, c2.noteId, T2);
+    // correction#3：未封存（进行中——不得收录）
+    createCorrection(db, dataDir, s1, a1.attemptId, "多阶段题-1", {
+      copyFromOriginal: false,
+    });
+    // supplement：v1@S1（一页分析图）→ v2@S2（asOf 钉定素材）
+    const suppV1 = saveNoteVersion(
+      db,
+      dataDir,
+      s1,
+      a1.attemptId,
+      "多阶段题-1",
+      gzipJson(noteDoc(2, 40)),
+      { baseRevision: 0, mutationId: randomUUID(), phase: "supplement" },
+    );
+    attachNoteImage(
+      db,
+      dataDir,
+      { kind: "student", id: s1 },
+      suppV1.versionId,
+      makeNotePng(1000, 800),
+      {
+        spec: "analysis",
+        pageIndex: 0,
+        crop: { x: 0, y: 0, width: 1000, height: 800 },
+        pixelWidth: 1000,
+        pixelHeight: 800,
+      },
+    );
+    setVersionSavedAt(db, suppV1.versionId, S1);
+    const suppV2 = saveNoteVersion(
+      db,
+      dataDir,
+      s1,
+      a1.attemptId,
+      "多阶段题-1",
+      gzipJson(noteDoc(3, 60)),
+      { baseRevision: 1, mutationId: randomUUID(), phase: "supplement" },
+    );
+    setVersionSavedAt(db, suppV2.versionId, S2);
+    return {
+      db,
+      dataDir,
+      s1,
+      attemptId: a1.attemptId,
+      rowIds: a1.rowIds,
+      scratchVersionId: scratchReceipt.versionId,
+      c1VersionId: c1.currentVersionId,
+      c2NoteId: c2.noteId,
+      suppV1: suppV1.versionId,
+      suppV2: suppV2.versionId,
+    };
+  }
+
+  it("normalizeEvidencePhases：去重 + 规范序（scratch→correction→supplement）；缺省 scratch", () => {
+    expect(normalizeEvidencePhases(undefined)).toEqual(["scratch"]);
+    expect(
+      normalizeEvidencePhases([
+        "supplement",
+        "scratch",
+        "correction",
+        "scratch",
+      ]),
+    ).toEqual(["scratch", "correction", "supplement"]);
+    expect(normalizeEvidencePhases(["correction"])).toEqual(["correction"]);
+  });
+
+  it("多阶段装配序与编号：scratch→correction(sealedAt 升序)→supplement；eSeq 统一递增；三阶段同 questionRef", () => {
+    const world = multiPhaseWorld();
+    const result = assemble(
+      world.db,
+      world.dataDir,
+      TEST_TEACHER_ID,
+      [scopeOf(world.db, world.attemptId)],
+      {
+        includeEvidence: true,
+        evidencePhases: ["scratch", "correction", "supplement"],
+        asOf: AS_OF_ALL,
+      },
+    );
+    // 4 条：scratch + 2 份已封存订正（未封存 #3 不在）+ 1 份补充稿
+    expect(result.evidence.map((entry) => entry.phase)).toEqual([
+      "scratch",
+      "correction",
+      "correction",
+      "supplement",
+    ]);
+    expect(result.evidence.map((entry) => entry.ref)).toEqual([
+      "e001",
+      "e002",
+      "e003",
+      "e004",
+    ]);
+    // 三阶段同题同 ref（配对该行 revision.ref）
+    const qRef = result.refByResponseRowId.get(world.rowIds[0] ?? "");
+    for (const entry of result.evidence) {
+      expect(entry.questionRef).toBe(qRef);
+      expect(entry.no).toBe(1);
+    }
+    // 行引用数组按产出序
+    expect(
+      result.evidenceRefsByResponseRowId.get(world.rowIds[0] ?? ""),
+    ).toEqual(["e001", "e002", "e003", "e004"]);
+    // scratch 保持既有语义（frozen + 版本摘要）
+    expect(result.evidence[0]?.state).toBe("frozen");
+    expect(result.evidence[0]?.version?.versionId).toBe(world.scratchVersionId);
+    // 补充稿在 AS_OF_ALL 钉到 v2（> S2 已被覆盖）
+    expect(result.evidence[3]?.version?.versionId).toBe(world.suppV2);
+  });
+
+  it("订正只收已封存且 sealedAt≤asOf：asOf 中点只含 #1；未封存行任何时刻都不出现", () => {
+    const world = multiPhaseWorld();
+    const result = assemble(
+      world.db,
+      world.dataDir,
+      TEST_TEACHER_ID,
+      [scopeOf(world.db, world.attemptId)],
+      {
+        includeEvidence: true,
+        evidencePhases: ["scratch", "correction", "supplement"],
+        asOf: AS_OF_MID,
+      },
+    );
+    const corrections = result.evidence.filter(
+      (entry) => entry.phase === "correction",
+    );
+    // T1≤MID 在、T2>MID 出局、#3 未封存永不出局名单
+    expect(corrections).toHaveLength(1);
+    expect(corrections[0]?.sealedAt).toBe(T1);
+    expect(corrections[0]?.version?.versionId).toBe(world.c1VersionId);
+    // 未封存 #3（revision=0 无版本）若被误收会产生「缺少版本引用」缺失行
+    expect(
+      result.missingEvidenceImages.some(
+        (miss) => miss.reason === "证据行缺少版本引用（数据异常）",
+      ),
+    ).toBe(false);
+  });
+
+  it("supplement 版本钉定：asOf 后的新版本不进（v1）；晚于全部时刻钉 v2", () => {
+    const world = multiPhaseWorld();
+    const mid = assemble(
+      world.db,
+      world.dataDir,
+      TEST_TEACHER_ID,
+      [scopeOf(world.db, world.attemptId)],
+      {
+        includeEvidence: true,
+        evidencePhases: ["scratch", "supplement"],
+        asOf: AS_OF_MID,
+      },
+    );
+    const midSupp = mid.evidence.find((entry) => entry.phase === "supplement");
+    expect(midSupp?.version?.versionId).toBe(world.suppV1);
+    expect(midSupp?.version?.savedAt).toBe(S1);
+    const all = assemble(
+      world.db,
+      world.dataDir,
+      TEST_TEACHER_ID,
+      [scopeOf(world.db, world.attemptId)],
+      {
+        includeEvidence: true,
+        evidencePhases: ["scratch", "supplement"],
+        asOf: AS_OF_ALL,
+      },
+    );
+    expect(
+      all.evidence.find((entry) => entry.phase === "supplement")?.version
+        ?.versionId,
+    ).toBe(world.suppV2);
+  });
+
+  it("无 ≤asOf 版本的 supplement 行跳过（早于 S1 的 asOf）", () => {
+    const world = multiPhaseWorld();
+    const result = assemble(
+      world.db,
+      world.dataDir,
+      TEST_TEACHER_ID,
+      [scopeOf(world.db, world.attemptId)],
+      {
+        includeEvidence: true,
+        evidencePhases: ["scratch", "supplement"],
+        asOf: "2026-10-02T00:00:00.000Z",
+      },
+    );
+    expect(result.evidence.map((entry) => entry.phase)).toEqual(["scratch"]);
+    // 补充稿零条目零文件零缺失登记
+    expect(result.evidence.some((entry) => entry.phase === "supplement")).toBe(
+      false,
+    );
+    expect(
+      result.missingEvidenceImages.some((miss) =>
+        miss.file.includes("supplement"),
+      ),
+    ).toBe(false);
+  });
+
+  it("封存列入包：订正条目带 sealedAt/stuckAt/errorCause（null 直传）；scratch 恒不携带", () => {
+    const world = multiPhaseWorld();
+    const result = assemble(
+      world.db,
+      world.dataDir,
+      TEST_TEACHER_ID,
+      [scopeOf(world.db, world.attemptId)],
+      {
+        includeEvidence: true,
+        evidencePhases: ["scratch", "correction", "supplement"],
+        asOf: AS_OF_ALL,
+      },
+    );
+    const [scratch, corr1, corr2, supplement] = result.evidence;
+    expect(scratch?.sealedAt).toBeUndefined();
+    expect(scratch?.stuckAt).toBeUndefined();
+    expect(scratch?.errorCause).toBeUndefined();
+    expect(corr1?.sealedAt).toBe(T1);
+    expect(corr1?.stuckAt).toBe("移项时符号处理");
+    expect(corr1?.errorCause).toBeNull(); // 缺省反思归一 null 直传
+    expect(corr2?.sealedAt).toBe(T2);
+    expect(corr2?.stuckAt).toBe("第二份反思");
+    expect(corr2?.errorCause).toBe("分配律用错");
+    expect(supplement?.sealedAt).toBeUndefined();
+    // 订正/补充稿条目 state='frozen'（版本在场）
+    expect(corr1?.state).toBe("frozen");
+    expect(supplement?.state).toBe("frozen");
+  });
+
+  it("analysisImagesOf 按阶段命名：correction/supplement 文件名分标签；零图订正缺失行同标签", () => {
+    const world = multiPhaseWorld();
+    const result = assemble(
+      world.db,
+      world.dataDir,
+      TEST_TEACHER_ID,
+      [scopeOf(world.db, world.attemptId)],
+      {
+        includeEvidence: true,
+        evidencePhases: ["scratch", "correction", "supplement"],
+        asOf: AS_OF_MID,
+      },
+    );
+    // MID：scratch=e001、corr#1=e002（一页图）、supplement 钉 v1=e003（一页图）
+    const corr1 = result.evidence[1];
+    expect(corr1?.images[0]?.file).toBe("evidence/e002-correction-01.png");
+    expect(corr1?.images[0]?.state).toBe("ready");
+    const supp = result.evidence[2];
+    expect(supp?.images[0]?.file).toBe("evidence/e003-supplement-01.png");
+    // AS_OF_ALL 下 corr#2（零分析图）的缺失登记带 correction 标签
+    const all = assemble(
+      world.db,
+      world.dataDir,
+      TEST_TEACHER_ID,
+      [scopeOf(world.db, world.attemptId)],
+      {
+        includeEvidence: true,
+        evidencePhases: ["scratch", "correction"],
+        asOf: AS_OF_ALL,
+      },
+    );
+    const corr2 = all.evidence.find((entry) => entry.sealedAt === T2);
+    expect(corr2?.ref).toBeDefined();
+    // 闸门 F3：缺失行携带 phase/pageIndex（preview 清单消费；零图行页号 0）
+    expect(all.missingEvidenceImages).toContainEqual({
+      file: `evidence/${corr2?.ref ?? "e000"}-correction-01.png`,
+      reason: "该版本尚无分析图（未生成）",
+      evidenceRef: corr2?.ref ?? "",
+      phase: "correction",
+      pageIndex: 0,
+    });
+  });
+
+  it("未选阶段零条目零文件零 missing 行（只选 correction：无 scratch/supplement 任何痕迹）", () => {
+    const world = multiPhaseWorld();
+    const result = assemble(
+      world.db,
+      world.dataDir,
+      TEST_TEACHER_ID,
+      [scopeOf(world.db, world.attemptId)],
+      {
+        includeEvidence: true,
+        evidencePhases: ["correction"],
+        asOf: AS_OF_ALL,
+      },
+    );
+    // 只有 2 份已封存订正；frozen 原稿证据行存在也不产出 scratch 条目
+    expect(result.evidence.map((entry) => entry.phase)).toEqual([
+      "correction",
+      "correction",
+    ]);
+    expect(result.evidence.map((entry) => entry.ref)).toEqual(["e001", "e002"]);
+    expect(
+      result.evidenceRefsByResponseRowId.get(world.rowIds[0] ?? ""),
+    ).toEqual(["e001", "e002"]);
+    // 零 scratch 文件：所有图文件与缺失登记都带 correction 标签
+    const allFiles = [
+      ...result.evidence.flatMap((entry) =>
+        entry.images.map((image) => image.file),
+      ),
+      ...result.missingEvidenceImages.map((miss) => miss.file),
+    ];
+    expect(allFiles.length).toBeGreaterThan(0);
+    for (const file of allFiles) {
+      expect(file).toMatch(/^evidence\/e\d{3,}-correction-\d{2}\.png$/);
+    }
+    // corr#1 有一页 ready 图；corr#2 零图 → 唯一缺失行
+    expect(result.evidence[0]?.images).toHaveLength(1);
+    expect(result.missingEvidenceImages).toHaveLength(1);
   });
 });
 

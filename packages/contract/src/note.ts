@@ -257,6 +257,28 @@ export const noteStatusOverviewSchema = z.object({
  */
 export const notePhaseSchema = z.enum(["scratch", "correction", "supplement"]);
 
+/**
+ * 证据阶段规范序（T6R.16 闸门 F8 单源）：scratch → correction → supplement。
+ * 服务端装配端规范化（question-evidence.normalizeEvidencePhases）与前端
+ * 向导的阶段排序**共用此常量**——值域或顺序演进只改这里，勿在他处手写副本。
+ */
+export const NOTE_PHASE_ORDER: readonly NotePhase[] = [
+  "scratch",
+  "correction",
+  "supplement",
+];
+
+/**
+ * 证据阶段中文标签（T6R.16 闸门 F8 单源）：向导缩略图徽标、模块回显与
+ * summary 文案的统一称呼。zip 文件名标签（original/correction/supplement）
+ * 是另一套口径（evidenceImageFileName），不在本表。
+ */
+export const NOTE_PHASE_LABELS: Record<NotePhase, string> = {
+  scratch: "原稿",
+  correction: "订正",
+  supplement: "补充稿",
+};
+
 // ---------- 公共形状 ----------
 
 /**

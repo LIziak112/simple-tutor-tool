@@ -1,5 +1,10 @@
 import { expect, test } from "@playwright/test";
-import { createStudentViaApi, teacherApiLogin, uniqueSuffix } from "./helpers";
+import {
+  createStudentViaApi,
+  getStudentViaApi,
+  teacherApiLogin,
+  uniqueSuffix,
+} from "./helpers";
 
 /**
  * T4.7 MCP 工具冒烟 E2E：服务级已有 SDK 客户端协议测试（mcp.test.ts 15 条），
@@ -124,5 +129,81 @@ test.describe("MCP 工具冒烟（T4.7：initialize / tools/list / list_students
       .map((item) => item.text)
       .join("\n");
     expect(text).toContain(studentName);
+  });
+
+  test("get_student_learning_pack v2（T6R.16）：packVersion=2 + evidence/evidencePhases 覆盖 → pack.json 为 v2 证据装配骨架", async ({
+    request,
+  }) => {
+    test.setTimeout(60_000);
+
+    // 教师生成 token + 造一名学生（本用例只验链路与结构键，不造作答数据——
+    // MCP↔UI 产出等价与多阶段装配细节由服务端 mcp.test.ts/export-service.test.ts
+    // 锁定，这里断言真实 HTTP 链路上 v2 参数可用且返回 pack.json 骨架）
+    await teacherApiLogin(request);
+    const suffix = uniqueSuffix();
+    const loginName = `e2e-mcpv2-${suffix}`;
+    await createStudentViaApi(request, `e2e-mcpv2生${suffix}`, loginName);
+    const student = await getStudentViaApi(request, loginName);
+    const tokenRes = await request.post("/api/teacher/api-token");
+    expect(tokenRes.ok()).toBe(true);
+    const token = ((await tokenRes.json()) as { data: { token: string } }).data
+      .token;
+
+    const init = rpc(
+      "initialize",
+      {
+        protocolVersion: "2025-06-18",
+        capabilities: {},
+        clientInfo: { name: "t6r16-e2e-smoke", version: "1.0.0" },
+      },
+      1,
+    );
+    const initRes = await postRpc(request, init, token);
+    expect(initRes.status).toBe(200);
+    expect(initRes.json.error).toBeUndefined();
+
+    // tools/call：显式 v2 + 逐题评析目标 + 证据两阶段覆盖（契约 superRefine
+    // 要求的 packVersion=2 / evidence / responses〔MCP 默认集已开〕全部满足）
+    const callRes = await postRpc(
+      request,
+      rpc(
+        "tools/call",
+        {
+          name: "get_student_learning_pack",
+          arguments: {
+            studentId: student.id,
+            packVersion: 2,
+            goal: "per-question-review",
+            modules: {
+              evidence: true,
+              evidencePhases: ["scratch", "correction"],
+            },
+          },
+        },
+        2,
+      ),
+      token,
+    );
+    expect(callRes.status).toBe(200);
+    expect(callRes.json.error).toBeUndefined();
+    const callResult = callRes.json.result as {
+      content: { type: string; text: string }[];
+    };
+    const text = callResult.content
+      .filter((item) => item.type === "text")
+      .map((item) => item.text)
+      .join("\n");
+
+    // pack.json（2 空格缩进）骨架：v2 元数据、目标回显、证据阶段回显、
+    // evidence section 与 manifest 在场；无作答数据时证据条目为空数组
+    expect(text).toContain('"version": 2');
+    expect(text).toContain('"goal": "per-question-review"');
+    expect(text).toContain('"evidencePhases"');
+    expect(text).toContain('"scratch"');
+    expect(text).toContain('"correction"');
+    expect(text).toContain('"evidence": []');
+    expect(text).toContain('"manifest"');
+    // 勾订正阶段的装配口径说明随包下发
+    expect(text).toContain("订正证据只收录已封存检查点");
   });
 });
