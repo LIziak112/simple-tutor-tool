@@ -237,9 +237,9 @@ describe("learningPackQuestionTraceSchema.reviewedSolution 三态（T6R.17）", 
         reviewedSolution: true,
       }).reviewedSolution,
     ).toBe(true);
-    expect(
-      learningPackQuestionTraceSchema.safeParse(TRACE_ROW).success,
-    ).toBe(false);
+    expect(learningPackQuestionTraceSchema.safeParse(TRACE_ROW).success).toBe(
+      false,
+    );
   });
 });
 
