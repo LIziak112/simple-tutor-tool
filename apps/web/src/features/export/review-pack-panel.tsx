@@ -3,7 +3,6 @@ import {
   type ReviewPackPreviewData,
   sizeTextOf,
 } from "@tutor/contract";
-import { cn } from "cn";
 import {
   CircleAlert,
   FileArchive,
@@ -65,7 +64,6 @@ export function ReviewPackPanel({
   questionId: string;
   questionNo: number;
 }) {
-  const role = viewer;
   const [open, setOpen] = useState(false);
   const [preview, setPreview] = useState<ReviewPackPreviewData | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
@@ -85,7 +83,9 @@ export function ReviewPackPanel({
     setPreviewLoading(true);
     setPreviewError(null);
     try {
-      setPreview(await fetchReviewPackPreviewApi(role, attemptId, questionId));
+      setPreview(
+        await fetchReviewPackPreviewApi(viewer, attemptId, questionId),
+      );
     } catch (err) {
       setPreview(null);
       setPreviewError(
@@ -94,7 +94,7 @@ export function ReviewPackPanel({
     } finally {
       setPreviewLoading(false);
     }
-  }, [role, attemptId, questionId]);
+  }, [viewer, attemptId, questionId]);
 
   const handleOpen = useCallback(() => {
     const next = !open;
@@ -115,14 +115,14 @@ export function ReviewPackPanel({
     setDownloadedName(null);
     try {
       setDownloadedName(
-        await downloadReviewPackApi(role, attemptId, questionId),
+        await downloadReviewPackApi(viewer, attemptId, questionId),
       );
     } catch (err) {
       setZipError(err instanceof Error ? err.message : "下载失败，请稍后重试");
     } finally {
       setZipLoading(false);
     }
-  }, [role, attemptId, questionId]);
+  }, [viewer, attemptId, questionId]);
 
   const handleCopyText = useCallback(async () => {
     if (preview === null) return;
@@ -202,7 +202,7 @@ export function ReviewPackPanel({
               <p className="text-sm text-muted-foreground">
                 第 {preview.questionNo} 题 · 手写原稿：
                 {REVIEW_PACK_EVIDENCE_STATE_LABELS[preview.evidenceState]}
-                {role === "student" &&
+                {viewer === "student" &&
                   " · 本包不含参考答案与对错判定（分析只基于你自己的作答）"}
                 {!preview.released && " · 答案尚未公布（无判定属正常）"}
               </p>
@@ -364,10 +364,7 @@ export function ReviewPackPanel({
                               </span>
                             )}
                           {job?.error !== null && job?.error !== undefined && (
-                            <span
-                              role="alert"
-                              className={cn("text-destructive")}
-                            >
+                            <span role="alert" className="text-destructive">
                               {job.error}
                             </span>
                           )}
