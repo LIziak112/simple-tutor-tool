@@ -168,12 +168,20 @@ export function collectBackupReferencedPaths(dataDir: string): {
         { readonly: true },
       );
       try {
+        const tableNames = snapshotDb
+          .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+          .all() as Array<{ name: string }>;
+        // C3 盲区封堵：0 字节/仅头页文件会被 SQLite 当**合法空库**打开成功、
+        // sqlite_master 无行——不计 unreadable 就绕过保守模式且运维不可见。
+        // 真快照（VACUUM INTO）恒有表（至少 __drizzle_migrations 等），旧快照
+        // 也有 users 等业务表——「master 完全无表」只可能是截断/损坏，计入
+        // unreadable 触发保守模式。「旧快照无 notes 表族」不受伤（其 master
+        // 非空，按零引用处理的口径不变）。
+        if (tableNames.length === 0) {
+          throw new Error("快照不含任何表（截断/空库，按不可读处理）");
+        }
         const tableExists = (table: string): boolean =>
-          snapshotDb
-            .prepare(
-              "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
-            )
-            .get(table) !== undefined;
+          tableNames.some((row) => row.name === table);
         collected = [];
         // note_versions / note_images 两表同构读取（列名各自的原始路径列）
         for (const [table, column] of [

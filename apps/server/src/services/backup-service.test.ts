@@ -22,6 +22,8 @@ import { readZipEntries } from "../lib/zip-read";
 import {
   BACKUP_TEST_PASSWORD,
   insertBackupTeacher,
+  writeCorruptSnapshot,
+  writeTruncatedSnapshot,
   zipToBackupBuffer,
 } from "../test/backup-fixtures";
 import {
@@ -468,14 +470,16 @@ describe("collectBackupReferencedPaths（T6R.14 GC 备份引用保留清单扫�
       unreadable: 0,
     });
 
-    // 快照（空 notes 表族——表存在无行）后放一个损坏快照
+    // 快照（空 notes 表族——表存在无行）后放三个损坏快照：随机字节 /
+    // **0 字节** / **仅 16 字节页头**（C3：后两类会被 SQLite 当合法空库
+    // 打开成功、sqlite_master 无行——盲区：unreadable=0 绕过保守模式且
+    // 运维不可见；契约 = master 完全无表计入 unreadable）
     createSnapshot(dataDir, handle.db, new Date("2026-10-01T00:00:00.000Z"));
-    writeFileSync(
-      join(dataDir, BACKUP_DIR_NAME, "tutor-20261002-000000.db"),
-      Buffer.alloc(256, 0x5a),
-    );
+    writeCorruptSnapshot(dataDir, "tutor-20261002-000000.db");
+    writeTruncatedSnapshot(dataDir, "tutor-20261002-000001.db", 0);
+    writeTruncatedSnapshot(dataDir, "tutor-20261002-000002.db", 16);
     const result = collectBackupReferencedPaths(dataDir);
-    expect(result.unreadable).toBe(1);
+    expect(result.unreadable).toBe(3);
     expect(result.paths).toEqual([]); // 空表族 → 零引用（不视为损坏）
 
     // 直造一份含 note_versions/note_images 行的快照文件（扫描器只消费这两
@@ -505,7 +509,7 @@ describe("collectBackupReferencedPaths（T6R.14 GC 备份引用保留清单扫�
     craftedDb.$client.close();
 
     const withRows = collectBackupReferencedPaths(dataDir);
-    expect(withRows.unreadable).toBe(1); // 坏快照仍在
+    expect(withRows.unreadable).toBe(3); // 三件坏快照仍在（轮转不自愈）
     expect(withRows.paths).toEqual([
       "blobs/notes/n-1/v1-abc01234567.json.gz",
       "blobs/notes/n-1/img-i-1.png",

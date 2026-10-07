@@ -45,3 +45,32 @@ export async function insertBackupTeacher(
     })
     .run();
 }
+
+// ---------- 损坏/截断快照夹具（C14 收敛两测试文件的手写三行块） ----------
+
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { BACKUP_DIR_NAME } from "../services/backup-service";
+
+/** 随机字节假快照（SQLite 打开即「file is not a database」） */
+export function writeCorruptSnapshot(dataDir: string, filename: string): void {
+  writeFileSync(
+    join(dataDir, BACKUP_DIR_NAME, filename),
+    Buffer.alloc(256, 0x5a),
+  );
+}
+
+/**
+ * 截断快照：0 字节（空文件）或仅头页前缀（SQLite 打开成功、sqlite_master
+ * 无行——C3 盲区夹具；size=0 即空文件）。
+ */
+export function writeTruncatedSnapshot(
+  dataDir: string,
+  filename: string,
+  size: number,
+): void {
+  writeFileSync(
+    join(dataDir, BACKUP_DIR_NAME, filename),
+    Buffer.alloc(size, 0),
+  );
+}
