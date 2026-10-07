@@ -42,6 +42,8 @@ import {
   type CourseProgressData,
   type CourseStudentViewData,
   type CourseUpdateRequest,
+  type CorrectionCreateRequest,
+  type CorrectionSealRequest,
   type HintOpenData,
   type ImportBatchData,
   type ImportCommitData,
@@ -109,6 +111,7 @@ import {
   type StudentRecordsData,
   type StudentResetLinkData,
   type StudentResetPasswordData,
+  type StudentNotebookData,
   type StudentSummary,
   type StudentUnitLandingData,
   type StudentUpdateRequest,
@@ -1284,6 +1287,66 @@ export function putNoteDocumentApi(
         signal: signal ?? null,
       },
     ),
+  );
+}
+
+// ---------- T6R.15：订正创建/封存与题目笔记本（学生端，hc JSON 路由） ----------
+
+/**
+ * 创建订正（T6R.15 D3；POST /api/student/attempts/:id/notes/:qid/corrections，
+ * JSON body correctionCreateRequestSchema——copyFromOriginal 必填）：false=空白
+ * 新稿（行 revision 从 0 起步）、true=服务端复制提交证据固定的原稿正文铸首
+ * 版本（原稿非 frozen → 409 NOTE_ORIGINAL_UNAVAILABLE）。已存在未封存行 →
+ * 409 NOTE_CORRECTION_OPEN_EXISTS；draft attempt → 409 NOTE_NOT_SUBMITTED。
+ * 成功 201（创建语义），响应 data 复用 noteHeadData（头投影含新行）。
+ */
+export function createCorrectionApi(
+  attemptId: string,
+  questionId: string,
+  body: CorrectionCreateRequest,
+): Promise<NoteHeadData> {
+  const args = { param: { id: attemptId, questionId }, json: body };
+  return callApi(() =>
+    api.api.student.attempts[":id"].notes[":questionId"].corrections.$post(
+      args,
+    ),
+  );
+}
+
+/**
+ * 封存订正＝「保存订正」检查点（T6R.15 D2；POST …/corrections/seal，JSON body
+ * correctionSealRequestSchema）：baseRevision 为 CAS 期望值（客户端先追平同步
+ * 再取本地 baseRevision），stuckAt/errorCause 可选反思文本（≤500 字，随 seal
+ * 落列冻结）。409 NOTE_REVISION_CONFLICT 附 extra._current（并发写/他端已
+ * 封存）——UI 据此提示刷新重试；对已封存行再 seal → 409 NOTE_CORRECTION_SEALED
+ * （再编辑=新开一行）。成功响应 data 复用 noteHeadData。
+ */
+export function sealCorrectionApi(
+  attemptId: string,
+  questionId: string,
+  body: CorrectionSealRequest,
+): Promise<NoteHeadData> {
+  const args = { param: { id: attemptId, questionId }, json: body };
+  return callApi(() =>
+    api.api.student.attempts[":id"].notes[":questionId"].corrections.seal.$post(
+      args,
+    ),
+  );
+}
+
+/**
+ * 题目笔记本聚合（T6R.15 D7；GET /api/student/notebook/questions/:qid）：
+ * 本人该题的跨来源已交卷轮次（作业 + 课程练习 + 错题重练；draft 不进）。
+ * 无轮次 → rounds=[] 照常 200（空态不探测题目存在性）。零答案零解析零题干
+ * 正文（AGENTS 第 3 条，契约 studentNotebookDataSchema 注释）。
+ */
+export function fetchStudentNotebookApi(
+  questionId: string,
+): Promise<StudentNotebookData> {
+  return callApi(() =>
+    api.api.student.notebook.questions[":questionId"].$get({
+      param: { questionId },
+    }),
   );
 }
 
