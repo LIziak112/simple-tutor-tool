@@ -46,7 +46,13 @@ describe("ai-review-samples.md 样本卷守护（T6R.17）", () => {
   });
 
   it("每题 type 合法，且与设计分布一致（solve×3、choice×3、apply、judge）", () => {
-    expect(questions.map((question) => question.type)).toEqual([
+    const types = questions.map((question) => question.type);
+    for (const type of types) {
+      expect(LEGAL_TYPES.has(type), `题型 ${type} 不在解析器合法值清单内`).toBe(
+        true,
+      );
+    }
+    expect(types).toEqual([
       "solve",
       "apply",
       "choice",
