@@ -1,29 +1,19 @@
-import { randomUUID } from "node:crypto";
 import type { ApiErr, ReviewPackPreviewData } from "@tutor/contract";
 import { reviewPackPreviewDataSchema } from "@tutor/contract";
-import { eq } from "drizzle-orm";
 import type { Logger } from "pino";
 import pino from "pino";
 import { beforeAll, describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client.ts";
-import { responses as responsesTable } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
-import { readZipEntries } from "../lib/zip-read.ts";
-import { attachNoteImage, saveNoteVersion } from "../services/note-service.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
-import {
-  frozenDraftAttempt,
-  snapshotJsonOf,
-  submitAttemptStatus,
-} from "../test/evidence-fixtures.ts";
-import { gzipJson, makeNotePng, noteDoc } from "../test/note-fixtures.ts";
 import {
   createStudent,
   extractSessionToken,
-  insertEvidence,
   loginStudent,
 } from "../test/note-world.ts";
+import { makeReviewPackWorld } from "../test/review-pack-world.ts";
+import { zipEntriesOf } from "../test/zip-assert.ts";
 
 /**
  * T6R.13 学生单题 review-pack 路由测试（新增学生端响应——泄露测试必写）：
@@ -74,53 +64,22 @@ beforeAll(async () => {
   aCookie = await loginStudent(app, "路由张三");
   bCookie = await loginStudent(app, "路由李四");
 
-  // —— 世界：一题 fill（答案/解析/提示哨兵）+ 草稿分析图 + frozen 证据 ——
-  const world = frozenDraftAttempt(db, aId, [
-    {
-      questionId: QUESTION_ID,
-      snapshotJson: snapshotJsonOf({
-        id: QUESTION_ID,
-        stemMd: `计算填空：$\\frac{1}{2}+\\frac{1}{2}=$ [[${SECRET_ANSWER}]]`,
-        answers: { kind: "fill", blanks: [[SECRET_ANSWER]] },
-        solutionMd: SECRET_SOLUTION,
-        hints: [SECRET_HINT],
-      }),
+  // —— 世界：一题 fill（答案/解析/提示哨兵）+ 草稿分析图 + frozen 证据 +
+  //    教师批注（评语哨兵——学生包绝不携带）——共享世界件单点构建 ——
+  const world = makeReviewPackWorld(db, dataDir, {
+    studentId: aId,
+    questionId: QUESTION_ID,
+    stemMd: `计算填空：$\\frac{1}{2}+\\frac{1}{2}=$ [[${SECRET_ANSWER}]]`,
+    mark: true,
+    sentinels: {
+      answer: SECRET_ANSWER,
+      solution: SECRET_SOLUTION,
+      hint: SECRET_HINT,
+      comment: SECRET_COMMENT,
     },
-  ]);
+  });
   attemptId = world.attemptId;
-  const receipt = saveNoteVersion(
-    db,
-    dataDir,
-    aId,
-    attemptId,
-    QUESTION_ID,
-    gzipJson(noteDoc(2, 30)),
-    { baseRevision: 0, mutationId: randomUUID() },
-  );
-  versionId = receipt.versionId;
-  attachNoteImage(
-    db,
-    dataDir,
-    { kind: "student", id: aId },
-    versionId,
-    makeNotePng(1000, 800),
-    {
-      spec: "analysis",
-      pageIndex: 0,
-      crop: { x: 0, y: 0, width: 1000, height: 800 },
-      pixelWidth: 1000,
-      pixelHeight: 800,
-    },
-  );
-  submitAttemptStatus(db, attemptId);
-  insertEvidence(db, attemptId, QUESTION_ID, "frozen", versionId);
-  // 教师批注（评语哨兵——学生包绝不携带）
-  db.update(responsesTable)
-    .set({ teacherComment: SECRET_COMMENT, finalCorrect: false })
-    .where(eq(responsesTable.attemptId, attemptId))
-    .run();
-  // bCookie 供跨账号用例
-  void bCookie;
+  versionId = world.versionId ?? "";
 });
 
 function previewUrl(attempt = attemptId): string {
@@ -203,34 +162,41 @@ describe("学生单题 review-pack 路由", () => {
     expect(disposition).not.toContain(versionId);
 
     // —— 路由层全文件扫描（独立于装配层测试的第二道） ——
-    const entries = readZipEntries(Buffer.from(await res.arrayBuffer()));
+    const entries = [
+      ...zipEntriesOf(new Uint8Array(await res.arrayBuffer())).entries(),
+    ];
     expect(entries.length).toBeGreaterThanOrEqual(5);
-    for (const entry of entries) {
+    for (const [name, data] of entries) {
       // 条目名不含真实 id
-      expect(entry.name).not.toContain(attemptId);
-      expect(entry.name).not.toContain(versionId);
-      expect(entry.name).not.toContain(QUESTION_ID);
-      expect(entry.name.startsWith("/")).toBe(false);
-      expect(entry.name.includes("..")).toBe(false);
-      if (/\.(md|json)$/.test(entry.name)) {
-        const text = entry.data.toString("utf8");
-        expect(text, `${entry.name} 泄露答案哨兵`).not.toContain(SECRET_ANSWER);
-        expect(text, `${entry.name} 泄露解析哨兵`).not.toContain(
-          SECRET_SOLUTION,
-        );
-        expect(text, `${entry.name} 泄露提示哨兵`).not.toContain(SECRET_HINT);
-        expect(text, `${entry.name} 泄露评语哨兵`).not.toContain(
-          SECRET_COMMENT,
-        );
-        expect(text, `${entry.name} 泄露 attemptId`).not.toContain(attemptId);
-        expect(text, `${entry.name} 泄露 versionId`).not.toContain(versionId);
-        expect(text, `${entry.name} 泄露 questionId`).not.toContain(
-          QUESTION_ID,
-        );
+      expect(name).not.toContain(attemptId);
+      expect(name).not.toContain(versionId);
+      expect(name).not.toContain(QUESTION_ID);
+      expect(name.startsWith("/")).toBe(false);
+      expect(name.includes("..")).toBe(false);
+      if (/\.(md|json)$/.test(name)) {
+        // snapshotHash 是 hex 内容身份（契约允许学生包携带），与十进制答案
+        // 哨兵可能子串相撞——扫描前剥除（它不是内容本身）
+        const text =
+          name === "pack.json"
+            ? (() => {
+                const parsed = JSON.parse(data.toString("utf8")) as {
+                  question?: { snapshotHash?: unknown };
+                };
+                delete parsed.question?.snapshotHash;
+                return JSON.stringify(parsed);
+              })()
+            : data.toString("utf8");
+        expect(text, `${name} 泄露答案哨兵`).not.toContain(SECRET_ANSWER);
+        expect(text, `${name} 泄露解析哨兵`).not.toContain(SECRET_SOLUTION);
+        expect(text, `${name} 泄露提示哨兵`).not.toContain(SECRET_HINT);
+        expect(text, `${name} 泄露评语哨兵`).not.toContain(SECRET_COMMENT);
+        expect(text, `${name} 泄露 attemptId`).not.toContain(attemptId);
+        expect(text, `${name} 泄露 versionId`).not.toContain(versionId);
+        expect(text, `${name} 泄露 questionId`).not.toContain(QUESTION_ID);
       }
     }
     // 固定文件在场；PNG 魔数
-    const names = new Set(entries.map((entry) => entry.name));
+    const names = new Set(entries.map(([name]) => name));
     for (const fixed of [
       "review.md",
       "pack.json",
@@ -240,15 +206,13 @@ describe("学生单题 review-pack 路由", () => {
     ]) {
       expect(names.has(fixed), `zip 缺 ${fixed}`).toBe(true);
     }
-    const png = entries.find((entry) => entry.name.endsWith(".png"));
-    expect(png?.data.subarray(0, 4)).toEqual(
-      Buffer.from([0x89, 0x50, 0x4e, 0x47]),
-    );
+    const png = entries.find(([name]) => name.endsWith(".png"))?.[1];
+    expect(png?.subarray(0, 4)).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
     // 题面是脱敏空框（学生投影）
     expect(
       entries
-        .find((entry) => entry.name === "questions/q001/stem.md")
-        ?.data.toString("utf8"),
+        .find(([name]) => name === "questions/q001/stem.md")?.[1]
+        .toString("utf8"),
     ).toContain("[[]]");
   });
 

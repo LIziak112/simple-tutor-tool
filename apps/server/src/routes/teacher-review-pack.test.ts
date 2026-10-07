@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import type { ApiErr } from "@tutor/contract";
 import { reviewPackPreviewDataSchema } from "@tutor/contract";
 import type { Logger } from "pino";
@@ -7,19 +6,9 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
-import { readZipEntries } from "../lib/zip-read.ts";
-import { attachNoteImage, saveNoteVersion } from "../services/note-service.ts";
-import {
-  frozenDraftAttempt,
-  snapshotJsonOf,
-  submitAttemptStatus,
-} from "../test/evidence-fixtures.ts";
-import { gzipJson, makeNotePng, noteDoc } from "../test/note-fixtures.ts";
-import {
-  createStudent,
-  extractSessionToken,
-  insertEvidence,
-} from "../test/note-world.ts";
+import { createStudent, extractSessionToken } from "../test/note-world.ts";
+import { makeReviewPackWorld } from "../test/review-pack-world.ts";
+import { zipEntriesOf } from "../test/zip-assert.ts";
 
 /**
  * T6R.13 教师单题 review-pack 路由测试：
@@ -58,43 +47,17 @@ beforeAll(async () => {
   teacherCookie = `tutor_session=${extractSessionToken(setup)}`;
   const studentId = await createStudent(app, teacherCookie, "教师路由生");
 
-  const world = frozenDraftAttempt(db, studentId, [
-    {
-      questionId: QUESTION_ID,
-      snapshotJson: snapshotJsonOf({
-        id: QUESTION_ID,
-        stemMd: `计算：[[${SECRET_ANSWER}]]`,
-        answers: { kind: "fill", blanks: [[SECRET_ANSWER]] },
-        solutionMd: "教师域解析（教师包应携带）",
-      }),
-    },
-  ]);
-  attemptId = world.attemptId;
-  const receipt = saveNoteVersion(
-    db,
-    dataDir,
+  // 世界：一题 fill + 草稿分析图 + frozen 证据——共享世界件单点构建
+  const world = makeReviewPackWorld(db, dataDir, {
     studentId,
-    attemptId,
-    QUESTION_ID,
-    gzipJson(noteDoc(2, 30)),
-    { baseRevision: 0, mutationId: randomUUID() },
-  );
-  attachNoteImage(
-    db,
-    dataDir,
-    { kind: "student", id: studentId },
-    receipt.versionId,
-    makeNotePng(1000, 800),
-    {
-      spec: "analysis",
-      pageIndex: 0,
-      crop: { x: 0, y: 0, width: 1000, height: 800 },
-      pixelWidth: 1000,
-      pixelHeight: 800,
+    questionId: QUESTION_ID,
+    stemMd: `计算：[[${SECRET_ANSWER}]]`,
+    sentinels: {
+      answer: SECRET_ANSWER,
+      solution: "教师域解析（教师包应携带）",
     },
-  );
-  submitAttemptStatus(db, attemptId);
-  insertEvidence(db, attemptId, QUESTION_ID, "frozen", receipt.versionId);
+  });
+  attemptId = world.attemptId;
 });
 
 function previewUrl(attempt = attemptId): string {
@@ -143,17 +106,18 @@ describe("教师单题 review-pack 路由", () => {
     expect(res.headers.get("content-disposition") ?? "").toContain(
       "attachment",
     );
-    const entries = readZipEntries(Buffer.from(await res.arrayBuffer()));
+    const entries = [
+      ...zipEntriesOf(new Uint8Array(await res.arrayBuffer())).entries(),
+    ];
     const packJson =
-      entries
-        .find((entry) => entry.name === "pack.json")
-        ?.data.toString("utf8") ?? "";
+      entries.find(([name]) => name === "pack.json")?.[1].toString("utf8") ??
+      "";
     expect(packJson).toContain(SECRET_ANSWER);
     expect(packJson).toContain(attemptId);
     const stem =
       entries
-        .find((entry) => entry.name === "questions/q001/stem.md")
-        ?.data.toString("utf8") ?? "";
+        .find(([name]) => name === "questions/q001/stem.md")?.[1]
+        .toString("utf8") ?? "";
     expect(stem).toContain("参考答案");
     expect(stem).toContain("教师域解析");
   });

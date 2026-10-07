@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { QuestionAnswers } from "@tutor/contract";
 import { reviewPackSchema } from "@tutor/contract";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
@@ -10,7 +9,6 @@ import type { Db } from "../db/client.ts";
 import {
   assignments,
   attempts as attemptsTable,
-  noteImages,
   responses as responsesTable,
 } from "../db/schema.ts";
 import {
@@ -18,21 +16,18 @@ import {
   createTestDir,
   TEST_TEACHER_ID,
 } from "../db/test-utils.ts";
-import { readZipEntries } from "../lib/zip-read.ts";
 import {
   frozenDraftAttempt,
   snapshotJsonOf,
-  submitAttemptStatus,
 } from "../test/evidence-fixtures.ts";
+import { makeNotePng, makeStudent } from "../test/note-fixtures.ts";
 import {
-  gzipJson,
-  makeNotePng,
-  makeStudent,
-  noteDoc,
-} from "../test/note-fixtures.ts";
-import { insertEvidence } from "../test/note-world.ts";
+  makeReviewPackWorld,
+  REVIEW_SENTINELS,
+  type ReviewPackWorldOptions,
+} from "../test/review-pack-world.ts";
+import { packEntryOf, zipEntriesOf } from "../test/zip-assert.ts";
 import { saveMedia } from "./media-service.ts";
-import { attachNoteImage, saveNoteVersion } from "./note-service.ts";
 import {
   assembleReviewPack,
   buildReviewPackZip,
@@ -61,11 +56,11 @@ const TEACHER: ReviewPackPrincipal = { kind: "teacher", id: TEST_TEACHER_ID };
 
 const NOW = "2026-10-07T08:00:00.000Z";
 
-/** 泄露哨兵常量（题库侧秘密内容，学生包任何文件不得出现） */
-const SECRET_ANSWER_TEXT = "42";
-const SECRET_SOLUTION = "解析哨兵：先算括号内再取相反数";
-const SECRET_HINT = "提示哨兵：从数轴方向入手";
-const SECRET_COMMENT = "评语哨兵：过程跳步需当面确认";
+/** 泄露哨兵（题库侧秘密内容，学生包任何文件不得出现）——文案单一来源在共享世界件 */
+const SECRET_ANSWER_TEXT = REVIEW_SENTINELS.answer;
+const SECRET_SOLUTION = REVIEW_SENTINELS.solution;
+const SECRET_HINT = REVIEW_SENTINELS.hint;
+const SECRET_COMMENT = REVIEW_SENTINELS.comment;
 
 const QUESTION_ID = "复习题-1";
 
@@ -74,122 +69,19 @@ function studentOf(id: string): ReviewPackPrincipal {
   return { kind: "student", id };
 }
 
-/** 世界夹具：一题 fill（带答案/解析/提示）+ 一页 ready 分析图 + frozen 证据 */
-async function makeWorld(
-  db: Db,
-  dataDir: string,
-  options: {
-    studentId: string;
-    stemMd?: string;
-    withNote?: boolean;
-    pendingAnalysisRow?: boolean;
-  },
-): Promise<{
-  attemptId: string;
-  versionId: string | null;
-  /** ready 分析图行（含盘上路径），删除文件做缺失用例用 */
-  analysisPath: string | null;
-}> {
-  const stemMd =
-    options.stemMd ??
-    `计算 $(-3)+7-(-2)$ 的结果，填在括号里：[[${SECRET_ANSWER_TEXT}]]`;
-  const { attemptId } = frozenDraftAttempt(db, options.studentId, [
-    {
-      questionId: QUESTION_ID,
-      snapshotJson: snapshotJsonOf({
-        id: QUESTION_ID,
-        stemMd,
-        answers: {
-          kind: "fill",
-          blanks: [[SECRET_ANSWER_TEXT]],
-        } satisfies QuestionAnswers,
-        solutionMd: SECRET_SOLUTION,
-        hints: [SECRET_HINT],
-      }),
-    },
-  ]);
-  let versionId: string | null = null;
-  let analysisPath: string | null = null;
-  if (options.withNote !== false) {
-    const receipt = saveNoteVersion(
-      db,
-      dataDir,
-      options.studentId,
-      attemptId,
-      QUESTION_ID,
-      gzipJson(noteDoc(3, 40)),
-      { baseRevision: 0, mutationId: randomUUID() },
-    );
-    versionId = receipt.versionId;
-    attachNoteImage(
-      db,
-      dataDir,
-      { kind: "student", id: options.studentId },
-      receipt.versionId,
-      makeNotePng(1000, 800),
-      {
-        spec: "analysis",
-        pageIndex: 0,
-        crop: { x: 0, y: 0, width: 1000, height: 800 },
-        pixelWidth: 1000,
-        pixelHeight: 800,
-      },
-    );
-    const row = db
-      .select()
-      .from(noteImages)
-      .where(eq(noteImages.noteVersionId, receipt.versionId))
-      .get();
-    // noteImages.path 相对 DATA_DIR（已含 blobs/notes 前缀；root 只做包含校验）
-    analysisPath = row === undefined ? null : join(dataDir, row.path);
-    if (options.pendingAnalysisRow) {
-      // 直插 pending 态分析图行（未生成）：显式缺失原因
-      db.insert(noteImages)
-        .values({
-          id: randomUUID(),
-          noteVersionId: receipt.versionId,
-          spec: "analysis",
-          pageIndex: 1,
-          cropX: 0,
-          cropY: 760,
-          cropW: 1000,
-          cropH: 640,
-          pixelWidth: 1000,
-          pixelHeight: 640,
-          path: "pending/未生成.png",
-          state: "pending",
-        })
-        .run();
-    }
-  }
-  submitAttemptStatus(db, attemptId);
-  if (options.withNote !== false) {
-    insertEvidence(db, attemptId, QUESTION_ID, "frozen", versionId);
-  }
-  return { attemptId, versionId, analysisPath };
-}
+/** 世界薄壳：共享件（apps/server/src/test/review-pack-world.ts），默认题号即 QUESTION_ID */
+const makeWorld = (db: Db, dataDir: string, options: ReviewPackWorldOptions) =>
+  makeReviewPackWorld(db, dataDir, { questionId: QUESTION_ID, ...options });
 
-/** 教师批注夹具（评语 + 判定哨兵进 responses 行） */
-function markByTeacher(db: Db, attemptId: string): void {
-  db.update(responsesTable)
-    .set({ teacherComment: SECRET_COMMENT, finalCorrect: false })
-    .where(eq(responsesTable.attemptId, attemptId))
-    .run();
-}
-
-function entriesOf(bytes: Uint8Array): Map<string, Buffer> {
-  return new Map(
-    readZipEntries(Buffer.from(bytes)).map((entry) => [entry.name, entry.data]),
-  );
-}
+/** zip 条目 Map（共享件） */
+const entriesOf = zipEntriesOf;
 
 describe("T6R.13 双角色一键一题包（服务层）", () => {
   it("教师包全链：zip 结构完整、pack.json 过 schema、携带答案/判定/评语/真实 id", async () => {
     const db = createTestDb();
     const dataDir = createTestDir();
     const s1 = makeStudent(db);
-    const world = await makeWorld(db, dataDir, { studentId: s1 });
-    markByTeacher(db, world.attemptId);
+    const world = makeWorld(db, dataDir, { studentId: s1, mark: true });
 
     const zip = await buildReviewPackZip(
       db,
@@ -212,9 +104,7 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
     ]) {
       expect(entries.has(fixed), `zip 缺 ${fixed}`).toBe(true);
     }
-    const pack = reviewPackSchema.parse(
-      JSON.parse(entries.get("pack.json")?.toString("utf8") ?? "{}"),
-    );
+    const pack = packEntryOf(entries, reviewPackSchema);
     expect(pack.role).toBe("teacher");
     expect(pack.question.answers).toEqual({
       kind: "fill",
@@ -243,8 +133,7 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
     const db = createTestDb();
     const dataDir = createTestDir();
     const s1 = makeStudent(db);
-    const world = await makeWorld(db, dataDir, { studentId: s1 });
-    markByTeacher(db, world.attemptId);
+    const world = makeWorld(db, dataDir, { studentId: s1, mark: true });
 
     const zip = await buildReviewPackZip(
       db,
@@ -278,12 +167,22 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
     }
 
     // —— 内容级：全部文本文件不含答案/解析/提示/评语哨兵与真实 id ——
+    // snapshotHash 是 64 位 hex 内容身份（契约允许学生包携带），与十进制
+    // 答案哨兵可能子串相撞——扫描前剥除该字段（它不是内容本身）
+    const textOf = (name: string, data: Buffer): string => {
+      if (name !== "pack.json") return data.toString("utf8");
+      const parsed = JSON.parse(data.toString("utf8")) as {
+        question?: { snapshotHash?: unknown };
+      };
+      delete parsed.question?.snapshotHash;
+      return JSON.stringify(parsed);
+    };
     const textEntries = [...entries.entries()].filter(([name]) =>
       /\.(md|json)$/.test(name),
     );
     expect(textEntries.length).toBeGreaterThanOrEqual(3);
     for (const [name, data] of textEntries) {
-      const text = data.toString("utf8");
+      const text = textOf(name, data);
       expect(text, `${name} 泄露答案哨兵`).not.toContain(SECRET_ANSWER_TEXT);
       expect(text, `${name} 泄露解析哨兵`).not.toContain(SECRET_SOLUTION);
       expect(text, `${name} 泄露提示哨兵`).not.toContain(SECRET_HINT);
@@ -319,7 +218,7 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
       dataDir,
       makeNotePng(40, 40).slice() as Uint8Array<ArrayBuffer>,
     );
-    const world = await makeWorld(db, dataDir, {
+    const world = makeWorld(db, dataDir, {
       studentId: s1,
       stemMd: `看图回答：\n\n::image{src="${media.src}"}\n\n图中等式成立吗：[[是]]`,
     });
@@ -337,9 +236,7 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
     );
     const entries = entriesOf(zip.bytes);
     expect(entries.has(media.src)).toBe(true);
-    const pack = reviewPackSchema.parse(
-      JSON.parse(entries.get("pack.json")?.toString("utf8") ?? "{}"),
-    );
+    const pack = packEntryOf(entries, reviewPackSchema);
     expect(pack.response.answerText).toBe("是");
     const stem = entries.get("questions/q001/stem.md")?.toString("utf8") ?? "";
     expect(stem).toContain("**学生答案**：是");
@@ -353,7 +250,7 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
       dataDir,
       makeNotePng(40, 40).slice() as Uint8Array<ArrayBuffer>,
     );
-    const world = await makeWorld(db, dataDir, {
+    const world = makeWorld(db, dataDir, {
       studentId: s1,
       stemMd: `看图回答：::image{src="${media.src}"} [[图]]`,
     });
@@ -385,7 +282,7 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
     const db = createTestDb();
     const dataDir = createTestDir();
     const s1 = makeStudent(db);
-    const world = await makeWorld(db, dataDir, {
+    const world = makeWorld(db, dataDir, {
       studentId: s1,
       pendingAnalysisRow: true,
     });
@@ -412,7 +309,7 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
     const db = createTestDb();
     const dataDir = createTestDir();
     const s1 = makeStudent(db);
-    const world = await makeWorld(db, dataDir, { studentId: s1 });
+    const world = makeWorld(db, dataDir, { studentId: s1 });
     const assembly = assembleReviewPack(
       db,
       dataDir,
@@ -438,9 +335,7 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
     );
     const entries = entriesOf(zip.bytes);
     expect(entries.has("evidence/e001-original-01.png")).toBe(false);
-    const pack = reviewPackSchema.parse(
-      JSON.parse(entries.get("pack.json")?.toString("utf8") ?? "{}"),
-    );
+    const pack = packEntryOf(entries, reviewPackSchema);
     expect(pack.manifest.missing).toHaveLength(1);
   });
 
@@ -460,7 +355,7 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
         createdAt: "2026-10-01T00:00:00.000Z",
       })
       .run();
-    const world = await makeWorld(db, dataDir, { studentId: s1 });
+    const world = makeWorld(db, dataDir, { studentId: s1 });
     db.update(attemptsTable)
       .set({ assignmentId })
       .where(eq(attemptsTable.id, world.attemptId))
@@ -494,7 +389,7 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
     const db = createTestDb();
     const dataDir = createTestDir();
     const s1 = makeStudent(db);
-    const world = await makeWorld(db, dataDir, {
+    const world = makeWorld(db, dataDir, {
       studentId: s1,
       withNote: false,
     });
@@ -548,7 +443,7 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
     const dataDir = createTestDir();
     const s1 = makeStudent(db);
     const s2 = makeStudent(db);
-    const world = await makeWorld(db, dataDir, { studentId: s1 });
+    const world = makeWorld(db, dataDir, { studentId: s1 });
     try {
       previewReviewPack(
         db,
@@ -598,7 +493,7 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
     const db = createTestDb();
     const dataDir = createTestDir();
     const s1 = makeStudent(db);
-    const world = await makeWorld(db, dataDir, { studentId: s1 });
+    const world = makeWorld(db, dataDir, { studentId: s1 });
     const preview = previewReviewPack(
       db,
       dataDir,
@@ -649,7 +544,7 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
     const db = createTestDb();
     const dataDir = createTestDir();
     const s1 = makeStudent(db);
-    const world = await makeWorld(db, dataDir, { studentId: s1 });
+    const world = makeWorld(db, dataDir, { studentId: s1 });
     const zip = await buildReviewPackZip(
       db,
       dataDir,
@@ -674,7 +569,7 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
     const db = createTestDb();
     const dataDir = createTestDir();
     const s1 = makeStudent(db);
-    const world = await makeWorld(db, dataDir, { studentId: s1 });
+    const world = makeWorld(db, dataDir, { studentId: s1 });
     await expect(
       buildReviewPackZip(
         db,
@@ -694,7 +589,7 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
     const db = createTestDb();
     const dataDir = createTestDir();
     const s1 = makeStudent(db);
-    const world = await makeWorld(db, dataDir, {
+    const world = makeWorld(db, dataDir, {
       studentId: s1,
       stemMd:
         '观察函数图像后填空：\n\n::graph{fn="x^2" range="-2,2"}\n\n开口方向：[[向上]]',
@@ -720,7 +615,7 @@ describe("T6R.13 双角色一键一题包（服务层）", () => {
     const db = createTestDb();
     const dataDir = createTestDir();
     const s1 = makeStudent(db);
-    const world = await makeWorld(db, dataDir, { studentId: s1 });
+    const world = makeWorld(db, dataDir, { studentId: s1 });
     db.update(responsesTable)
       .set({
         teacherComment: SECRET_COMMENT,
