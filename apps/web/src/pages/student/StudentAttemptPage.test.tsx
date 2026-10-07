@@ -1,7 +1,14 @@
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import type { AttemptDraftData, AttemptResultData } from "@tutor/contract";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiError, fetchAttemptApi, startWrongPracticeApi } from "@/lib/api";
+import {
+  ApiError,
+  createCorrectionApi,
+  fetchAttemptApi,
+  fetchStudentNotebookApi,
+  sealCorrectionApi,
+  startWrongPracticeApi,
+} from "@/lib/api";
 import { renderWithStudentRoutes } from "@/test/student-routes";
 import StudentAttemptPage from "./StudentAttemptPage";
 
@@ -18,11 +25,20 @@ vi.mock("@/lib/api", async (importOriginal) => {
     ...actual,
     fetchAttemptApi: vi.fn(),
     startWrongPracticeApi: vi.fn(),
+    // T6R.15 泄露断言（F）：答题/草稿渲染不得发起订正与笔记本请求——
+    // 重练页不自动展示历史答案；一并 mock 批量头避免 jsdom 真出网噪音
+    createCorrectionApi: vi.fn(),
+    sealCorrectionApi: vi.fn(),
+    fetchStudentNotebookApi: vi.fn(),
+    fetchStudentNoteHeadsApi: vi.fn(),
   };
 });
 
 const mockedFetch = vi.mocked(fetchAttemptApi);
 const mockedPractice = vi.mocked(startWrongPracticeApi);
+const mockedCreateCorrection = vi.mocked(createCorrectionApi);
+const mockedSealCorrection = vi.mocked(sealCorrectionApi);
+const mockedNotebook = vi.mocked(fetchStudentNotebookApi);
 
 const COURSE_ID = "12121212-1212-4121-8121-121212121212";
 const ATTEMPT_ID = "55555555-5555-4555-8555-555555555555";
@@ -78,6 +94,33 @@ function renderPage() {
 beforeEach(() => {
   mockedFetch.mockReset();
   mockedPractice.mockReset();
+});
+
+// ---------- T6R.15（F）：答题/草稿渲染零订正与笔记本请求（泄露断言） ----------
+
+describe("草稿渲染不发起订正/笔记本请求（T6R.15 F）", () => {
+  it("draft 渲染 settle 后零 corrections/notebook 请求与查询（重练不自动展示历史答案）", async () => {
+    mockedFetch.mockResolvedValue(COURSE_DRAFT);
+    const { client } = renderPage();
+    expect(
+      await screen.findByRole("button", { name: "交卷" }),
+    ).toBeInTheDocument();
+    // 等异步余波（草稿层挂载/批量头守卫）settle 后再断言
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "交卷" })).toBeInTheDocument();
+    });
+    expect(mockedCreateCorrection).not.toHaveBeenCalled();
+    expect(mockedSealCorrection).not.toHaveBeenCalled();
+    expect(mockedNotebook).not.toHaveBeenCalled();
+    // 查询缓存里也不存在 notebook/correction 域的条目
+    const keys = client
+      .getQueryCache()
+      .getAll()
+      .map((q) => JSON.stringify(q.queryKey));
+    expect(
+      keys.filter((k) => k.includes("notebook") || k.includes("correction")),
+    ).toEqual([]);
+  });
 });
 
 describe("StudentAttemptPage（/s/attempts/:attemptId，T2A.6）", () => {
