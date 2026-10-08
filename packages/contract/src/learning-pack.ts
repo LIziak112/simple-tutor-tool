@@ -742,6 +742,10 @@ export const learningPackManifestFileSchema = z.object({
     // （questions/qNNN/stem.md）——v2 学情数据包不产出该 kind，旧消费方
     // 遇未知 kind 按 manifest 通用口径忽略即可
     "question",
+    // T6R.20 新增（只增不改）：题干标注成对附件（annotation/aNNN-base.png 与
+    // annotation/aNNN-strokes.json，二者原子成对——底图缺失时整体进缺失清单，
+    // 不导出孤立的圈）；旧消费方遇未知 kind 按 manifest 通用口径忽略即可
+    "annotation",
   ]),
   bytes: z.number().int().min(0),
   /** 关联的包内编号（题目/证据条目；media 可关联多个 q 条目） */
@@ -757,6 +761,9 @@ export const learningPackManifestMissingSchema = z.object({
     "evidence-image",
     // T6R.13 新增（只增不改）：手写题笔迹快照文件缺失（行在文件没）
     "ink",
+    // T6R.20 新增（只增不改）：题干标注成对附件缺失（底图/正文任一不可读
+    // 时整对进缺失清单——绝不导出孤立的圈）
+    "annotation",
   ]),
   /** 缺失原因（中文，面向教师可读） */
   reason: z.string().min(1),

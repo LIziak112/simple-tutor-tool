@@ -1,6 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { StudentLoginRequest, StudentMeData } from "@tutor/contract";
 import {
+  currentAnnotationSession,
+  resetAnnotationSession,
+} from "@/features/annotation/annotation-sync";
+import {
   currentNoteSession,
   resetNoteSession,
 } from "@/features/notes/note-sync";
@@ -48,6 +52,11 @@ function useApplyStudentAuthed() {
     if (bound !== null && bound.studentId !== student.id) {
       resetNoteSession();
     }
+    // T6R.20：标注会话同口径（换账号停旧标注同步队列，防误 403 终态）
+    const boundAnnotation = currentAnnotationSession();
+    if (boundAnnotation !== null && boundAnnotation.studentId !== student.id) {
+      resetAnnotationSession();
+    }
     queryClient.setQueryData(studentMeKey, student);
     void queryClient.prefetchQuery({
       queryKey: ["student", "assignments"],
@@ -94,6 +103,7 @@ export function useLogoutStudent() {
     onSuccess: () => {
       queryClient.removeQueries({ queryKey: ["student"] });
       resetNoteSession();
+      resetAnnotationSession();
     },
   });
 }

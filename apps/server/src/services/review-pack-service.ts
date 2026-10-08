@@ -27,6 +27,8 @@ import {
 } from "../db/schema";
 import { HttpError } from "../lib/http-error";
 import { zipBufferOf } from "../lib/zip-write.ts";
+import type { AnnotationPairItem } from "./annotation-service";
+import { assembleAnnotationPairs } from "./annotation-service";
 import {
   answerOf,
   answersReleased,
@@ -112,6 +114,22 @@ export interface ReviewPackAssembly {
     readonly entry: string;
     readonly absPath: string;
     readonly bytes: number;
+  }>;
+  /** T6R.20 题干标注成对装配（已封存；底图在场才有完整对） */
+  readonly annotationPairs: readonly AnnotationPairItem[];
+  /** 标注底图 PNG（zip store 直存；entry=annotation/aNNN-base.png） */
+  readonly annotationEntries: ReadonlyArray<{
+    readonly entry: string;
+    readonly absPath: string;
+    readonly bytes: number;
+    readonly ref: string;
+  }>;
+  /** 标注笔迹 JSON 文本（zip 文本压缩；entry=annotation/aNNN-strokes.json） */
+  readonly annotationStrokeEntries: ReadonlyArray<{
+    readonly entry: string;
+    readonly text: string;
+    readonly bytes: number;
+    readonly ref: string;
   }>;
   readonly manifest: LearningPackManifest;
   /** 文件清单（含 pack.json 实测；预览与预检共用） */
@@ -378,6 +396,46 @@ export function assembleReviewPack(
     }
   }
 
+  // —— T6R.20 题干标注成对附件（已封存标注：底图＋笔迹矢量原子成对；
+  // 底图/正文任一不可读时整对进缺失清单——绝不导出孤立的圈） ——
+  const annotationAsm = assembleAnnotationPairs(db, dataDir, [{ rows: [row] }]);
+  const annotationPairs = annotationAsm.pairs;
+  const annotationEntries: Array<{
+    entry: string;
+    absPath: string;
+    bytes: number;
+    ref: string;
+  }> = [];
+  const annotationStrokeEntries: Array<{
+    entry: string;
+    text: string;
+    bytes: number;
+    ref: string;
+  }> = [];
+  for (const pair of annotationPairs) {
+    if (pair.base !== null && pair.strokesJson !== null) {
+      annotationEntries.push({
+        entry: `annotation/${pair.ref}-base.png`,
+        absPath: pair.base.absPath,
+        bytes: pair.base.bytes,
+        ref: pair.ref,
+      });
+      annotationStrokeEntries.push({
+        entry: `annotation/${pair.ref}-strokes.json`,
+        text: pair.strokesJson,
+        bytes: Buffer.byteLength(pair.strokesJson, "utf8"),
+        ref: pair.ref,
+      });
+    } else {
+      missing.push({
+        path: `annotation/${pair.ref}-base.png`,
+        kind: "annotation" as const,
+        reason: pair.missingReason ?? "底图缺失（无法成对导出）",
+        refs: [qRef],
+      });
+    }
+  }
+
   // —— 固定文件 ——
   const schemaJson = `${JSON.stringify(reviewPackJsonSchema(), null, 2)}\n`;
 
@@ -394,6 +452,14 @@ export function assembleReviewPack(
       bytes: image.bytes,
     })),
     ...inkEntries.map((ink) => ({ path: ink.entry, bytes: ink.bytes })),
+    ...annotationEntries.map((entry) => ({
+      path: entry.entry,
+      bytes: entry.bytes,
+    })),
+    ...annotationStrokeEntries.map((entry) => ({
+      path: entry.entry,
+      bytes: entry.bytes,
+    })),
   ];
   const reviewMd = renderReviewPackPrompt({
     role,
@@ -409,7 +475,10 @@ export function assembleReviewPack(
       reason: miss.reason,
     })),
     imageCount:
-      mediaEntries.length + evidenceEntries.length + inkEntries.length,
+      mediaEntries.length +
+      evidenceEntries.length +
+      inkEntries.length +
+      annotationEntries.length,
     graphFigureCount: staticMaterial.graphFigures.length,
     interactionNotes: staticMaterial.interactionNotes,
   });
@@ -429,6 +498,11 @@ export function assembleReviewPack(
   if (role === "student") {
     contextNotes.push(
       "学生包按学生端投影生成：不含参考答案/判定/评语/解析，也不携带作答/学生/题目/版本定位 id。",
+    );
+  }
+  if (annotationPairs.length > 0) {
+    contextNotes.push(
+      "题干标注按「固定底图＋笔迹矢量」成对导出（annotation/aNNN-base.png 与 annotation/aNNN-strokes.json 原子成对；底图缺失的对在缺失清单标明）。",
     );
   }
   const manifest: LearningPackManifest = {
@@ -467,6 +541,18 @@ export function assembleReviewPack(
         path: ink.entry,
         kind: "ink" as const,
         bytes: ink.bytes,
+        refs: [qRef],
+      })),
+      ...annotationEntries.map((entry) => ({
+        path: entry.entry,
+        kind: "annotation" as const,
+        bytes: entry.bytes,
+        refs: [qRef],
+      })),
+      ...annotationStrokeEntries.map((entry) => ({
+        path: entry.entry,
+        kind: "annotation" as const,
+        bytes: entry.bytes,
         refs: [qRef],
       })),
     ],
@@ -557,7 +643,13 @@ export function assembleReviewPack(
   // —— 预览文件清单（zip 条目全集 = manifest.files + pack.json） ——
   /** manifest kind → 预览分类（review-pack 的 manifest 只产右表六种 kind） */
   const PREVIEW_KIND_OF: Record<
-    "prompt" | "schema" | "question" | "media" | "evidence" | "ink",
+    | "prompt"
+    | "schema"
+    | "question"
+    | "media"
+    | "evidence"
+    | "ink"
+    | "annotation",
     ReviewPackPreviewFile["kind"]
   > = {
     prompt: "review",
@@ -566,6 +658,7 @@ export function assembleReviewPack(
     media: "media",
     evidence: "evidence",
     ink: "ink",
+    annotation: "annotation",
   };
   const files: ReviewPackPreviewFile[] = [
     {
@@ -639,6 +732,31 @@ export function assembleReviewPack(
     });
   }
 
+  // T6R.20 标注附件：底图 PNG 按角色走 attempt 授权直出端点（strokes.json 是
+  // 文本矢量，只随包成对交付，不设单独下载端点——预览面板逐张下载口径只管图片）
+  for (const pair of annotationPairs) {
+    if (pair.base !== null && pair.baseId !== null) {
+      attachments.push({
+        path: `annotation/${pair.ref}-base.png`,
+        kind: "annotation",
+        state: "ready",
+        bytes: pair.base.bytes,
+        downloadUrl:
+          principal.kind === "student"
+            ? `/api/student/attempts/${encodeURIComponent(attempt.id)}/annotation-base/${encodeURIComponent(pair.baseId)}/image.png`
+            : `/api/teacher/annotation-bases/${encodeURIComponent(pair.baseId)}/image.png`,
+      });
+    } else {
+      attachments.push({
+        path: `annotation/${pair.ref}-base.png`,
+        kind: "annotation",
+        state: "missing",
+        bytes: 0,
+        reason: pair.missingReason ?? "底图缺失（无法成对导出）",
+      });
+    }
+  }
+
   const preview: ReviewPackPreviewData = reviewPackPreviewDataSchema.parse({
     role,
     questionNo: no,
@@ -664,6 +782,9 @@ export function assembleReviewPack(
     mediaEntries,
     evidenceEntries,
     inkEntries,
+    annotationPairs,
+    annotationEntries,
+    annotationStrokeEntries,
     manifest,
     files,
     missing,
@@ -728,6 +849,14 @@ export async function zipReviewPack(
       }
       for (const ink of assembly.inkEntries) {
         archive.file(ink.absPath, { name: ink.entry, store: true });
+      }
+      for (const entry of assembly.annotationEntries) {
+        archive.file(entry.absPath, { name: entry.entry, store: true });
+      }
+      for (const entry of assembly.annotationStrokeEntries) {
+        archive.append(Buffer.from(entry.text, "utf8"), {
+          name: entry.entry,
+        });
       }
     });
     // Buffer<ArrayBuffer> 即 Uint8Array<ArrayBuffer>——直接返回免整包拷贝

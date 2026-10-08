@@ -2,16 +2,23 @@ import "katex/dist/katex.min.css";
 
 import type { ReviewPackPreviewData, ReviewPackRole } from "@tutor/contract";
 import { stemMdLeaksAnswers } from "@tutor/md-dsl";
-import { getFontEmbedCSS, toBlob } from "html-to-image";
+import { toBlob } from "html-to-image";
 import { createElement, type ReactElement, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import ReactMarkdown from "react-markdown";
 import { REVIEW_PACK_KIND_LABELS } from "@/features/export/review-pack-kinds";
-import {
-  richMarkdownRehypePlugins,
-  richMarkdownRemarkPlugins,
-} from "@/features/markdown/pipeline";
+import { StaticMarkdown } from "@/features/markdown/static-markdown";
 import { saveBlobAs } from "@/lib/api";
+import {
+  cachedFontEmbedCss,
+  pngBlobHasMagic,
+  preloadImages,
+  samplePngBlank,
+  TEACHER_SECTION_MARKERS,
+  withTimeout,
+} from "./rasterize-utils";
+
+// 审查修复 6：共享原语迁 rasterize-utils 后的兼容再导出（既有测试引用）
+export { rgbaSampleAllBlank } from "./rasterize-utils";
 
 /**
  * 静态合成图导出（T6R.19，方案 §10「合成图与题干圈画」）：把单题授权材料
@@ -169,21 +176,8 @@ function formatGeneratedAt(now: Date): string {
   }).format(now);
 }
 
-/**
- * 教师模板节的哨兵标记（服务端 review-pack-service 拼节用的固定粗体标记）。
- * 追加 `:::solution`/`:::answer` 指令行形态（审查修复轮 P2-5，只增不改）：
- * 若未来服务端学生投影回归、把解答指令节留在学生 questionMd 且节内无
- * [[答案]] 标记，粗体串与泄露 oracle 均不命中——指令形态是纵深防御在此
- * 场景的第二道断档补齐（渲染层会把指令容器渲染成【解答】框）。
- */
-const TEACHER_SECTION_MARKERS = [
-  "**参考答案**",
-  "**详解**",
-  "**判定**",
-  "**老师评语**",
-  ":::solution",
-  ":::answer",
-] as const;
+// 教师模板节哨兵：审查修复 6 起由 rasterize-utils 单源共享（含 :::solution/
+// ::::answer 指令形态的纵深防御，口径见共享处与 T6R.19 审查修复轮 P2-5）。
 
 /**
  * 服务端拼节的学生作答段前缀（static-material：`**学生答案**：…` 恒为末节）。
@@ -415,9 +409,6 @@ export function reviewImageFilename(
 
 // ---------- 栅格化适配器层（需要 DOM；依赖可注入以便 jsdom 测试） ----------
 
-/** PNG 魔数（编码校验：空输出/非 PNG 拒绝落盘） */
-const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] as const;
-
 /** 页面静态版式的字体栈（本地打包字体在前；中文回退系统字体） */
 const REVIEW_IMAGE_FONT_STACK =
   '"Geist Variable", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif';
@@ -475,27 +466,6 @@ function msgOf(err: unknown): string {
  */
 export const REVIEW_IMAGE_ASYNC_STEP_TIMEOUT_MS = 30_000;
 
-/** 超时兜底：正常先到则透传其结果/错误，并清理定时器 */
-function withTimeout<T>(
-  promise: Promise<T>,
-  ms: number,
-  message: string,
-): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(message)), ms);
-    promise.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (err: unknown) => {
-        clearTimeout(timer);
-        reject(err instanceof Error ? err : new Error(String(err)));
-      },
-    );
-  });
-}
-
 function errOf(
   kind: ReviewImageExportErrorKind,
   message: unknown,
@@ -514,141 +484,8 @@ function errOf(
   };
 }
 
-// ---------- 静态 markdown 渲染（与 RichMarkdown 同一 remark/rehype 管线，宿主组件换静态版） ----------
-
-/** react-markdown 注入的 hast 元素（本层只读 properties.directive） */
-interface HastNodeLike {
-  readonly properties?: Record<string, unknown>;
-}
-
-/** 从宿主标签属性还原指令名（与 directives/index.tsx readDirective 同源字段） */
-function directiveNameOf(node: unknown): string {
-  const directive = (node as HastNodeLike | null)?.properties?.directive;
-  return typeof directive === "string" ? directive : "";
-}
-
-/** 块级容器的静态标签（折叠块/分步等在合成图里永远展开呈现） */
-const STATIC_CONTAINER_LABELS: Record<string, string> = {
-  question: "题目",
-  hint: "提示",
-  answer: "答案",
-  solution: "解答",
-  example: "例",
-  steps: "分步",
-  step: "步骤",
-  fold: "折叠块",
-  tip: "提示",
-  warning: "注意",
-  box: "框注",
-  columns: "分栏",
-  col: "栏",
-};
-
-/** 静态块级容器宿主：内容恒展开（交互状态本就未记录，静态标记行已在材料里） */
-function StaticDirectiveContainer({
-  node,
-  children,
-}: {
-  node?: unknown;
-  children?: ReactNode;
-}): ReactElement {
-  const label = STATIC_CONTAINER_LABELS[directiveNameOf(node)];
-  return createElement(
-    "div",
-    {
-      style: {
-        margin: "10px 0",
-        padding: "10px 14px",
-        borderLeft: "3px solid #94a3b8",
-        background: "#f1f5f9",
-        borderRadius: "4px",
-      },
-    },
-    label !== undefined
-      ? createElement(
-          "div",
-          {
-            style: { fontSize: "12px", color: "#475569", marginBottom: "6px" },
-          },
-          `【${label}】`,
-        )
-      : null,
-    children,
-  );
-}
-
-/** 静态叶子指令宿主：::image 指向下方附件区块；其余以文字说明降级 */
-function StaticDirectiveLeaf({ node }: { node?: unknown }): ReactElement {
-  const name = directiveNameOf(node);
-  const text =
-    name === "image"
-      ? "【配图】见下方图片附件区块"
-      : `【${name.length > 0 ? name : "指令"}】交互内容以静态材料说明为准`;
-  return createElement(
-    "p",
-    { style: { margin: "8px 0", fontSize: "13px", color: "#475569" } },
-    text,
-  );
-}
-
-/** 静态行内指令宿主：blank=下划线空框；mark=高亮；其余按原文呈现 */
-function StaticDirectiveText({
-  node,
-  children,
-}: {
-  node?: unknown;
-  children?: ReactNode;
-}): ReactElement {
-  const name = directiveNameOf(node);
-  if (name === "blank") {
-    return createElement("span", {
-      style: {
-        display: "inline-block",
-        minWidth: "3em",
-        borderBottom: "1.5px solid #64748b",
-        height: "1em",
-      },
-    });
-  }
-  if (name === "mark") {
-    return createElement(
-      "span",
-      {
-        style: { background: "#fef08a", padding: "0 2px", borderRadius: "2px" },
-      },
-      children,
-    );
-  }
-  return createElement("span", null, children);
-}
-
-/**
- * 与 RichMarkdown 同一套管线（解析口径一致，插件清单单一来源
- * features/markdown/pipeline.ts——审查修复轮：此前两处重复手写同一配置）；
- * 宿主组件换成上面的静态版。
- */
-const staticComponents = {
-  "directive-container": StaticDirectiveContainer,
-  "directive-leaf": StaticDirectiveLeaf,
-  "directive-text": StaticDirectiveText,
-} as unknown as Parameters<typeof ReactMarkdown>[0]["components"];
-
-/** 单段 markdown 的静态渲染（.rich-markdown 全局排版样式与主应用一致） */
-function StaticMarkdown({ md }: { md: string }): ReactElement {
-  return createElement(
-    "div",
-    { className: "rich-markdown" },
-    createElement(
-      ReactMarkdown,
-      {
-        remarkPlugins: richMarkdownRemarkPlugins,
-        rehypePlugins: richMarkdownRehypePlugins,
-        components: staticComponents,
-      },
-      md,
-    ),
-  );
-}
+// ---------- 静态 markdown 渲染（审查修复 6：抽 features/markdown/static-markdown
+// 共用；::image 叶子缺省渲染「见下方图片附件区块」即本管线口径） ----------
 
 // ---------- 版式区块 → DOM ----------
 
@@ -865,31 +702,7 @@ function buildPageNode(
   return page;
 }
 
-// ---------- 缺省依赖实现（真实浏览器链路） ----------
-
-/** 预解码图片：decode 优先（等待解码完成），旧环境回退 load 事件 */
-async function preloadImages(urls: readonly string[]): Promise<void> {
-  await Promise.all(
-    urls.map(
-      (url) =>
-        new Promise<void>((resolve, reject) => {
-          const image = new Image();
-          const fail = (): void => reject(new Error(`图片加载失败：${url}`));
-          if (typeof image.decode === "function") {
-            image.src = url;
-            image.decode().then(
-              () => resolve(),
-              () => fail(),
-            );
-          } else {
-            image.onload = () => resolve();
-            image.onerror = () => fail();
-            image.src = url;
-          }
-        }),
-    ),
-  );
-}
+// ---------- 缺省依赖实现（真实浏览器链路；共享原语见 rasterize-utils） ----------
 
 /**
  * html-to-image 栅格化：原生 toBlob 直出 Blob——不经 toPng 巨型 Base64 字符串
@@ -913,57 +726,6 @@ async function rasterizePageWithHtmlToImage(
     throw new Error("栅格化未产出 PNG 数据");
   }
   return blob;
-}
-
-/** Blob 是否 PNG 魔数形状（空输出/非 PNG 在此拦截） */
-async function pngBlobHasMagic(blob: Blob): Promise<boolean> {
-  if (blob.size < 8) return false;
-  const head = new Uint8Array(await blob.slice(0, 8).arrayBuffer());
-  return PNG_MAGIC.every((byte, i) => head[i] === byte);
-}
-
-/**
- * 内存采样判定：RGBA 数据全部采样点纯白/透明 → 判空白（页面恒有页眉文字，
- * 文字必有灰阶像素）。缩到 64×64 后文本仍保留灰阶，判定强度与全图网格采样
- * 等价。
- */
-export function rgbaSampleAllBlank(data: Uint8ClampedArray): boolean {
-  for (let i = 0; i + 3 < data.length; i += 4) {
-    if (data[i + 3] === 0) continue; // 透明像素不计
-    if (!(data[i] === 255 && data[i + 1] === 255 && data[i + 2] === 255)) {
-      return false;
-    }
-  }
-  return true;
-}
-
-/**
- * 采样判断整页空白（「不下载空白 PNG 后显示成功」的产物侧防线）：整页绘制
- * 缩到 64×64 离屏小画布后**单次** getImageData 读回、内存里取样判断——
- * 逐像素 getImageData 是 4096 次同步 GPU 读回，在 iPad WebKit 会引发整机
- * 卡顿（审查修复轮 HIGH）。画布不可用时不误杀（返回非空白）。
- */
-async function samplePngBlank(blob: Blob): Promise<boolean> {
-  const url = URL.createObjectURL(blob);
-  try {
-    const image = new Image();
-    await new Promise<void>((resolve, reject) => {
-      image.onload = () => resolve();
-      image.onerror = () => reject(new Error("空白校验图加载失败"));
-      image.src = url;
-    });
-    const canvas = document.createElement("canvas");
-    canvas.width = 64;
-    canvas.height = 64;
-    const ctx = canvas.getContext("2d");
-    if (ctx === null) return false;
-    ctx.drawImage(image, 0, 0, 64, 64);
-    return rgbaSampleAllBlank(ctx.getImageData(0, 0, 64, 64).data);
-  } catch {
-    return false; // 校验链路故障不误杀（魔数/空白另有 encode 分类兜底）
-  } finally {
-    URL.revokeObjectURL(url);
-  }
 }
 
 // ---------- 主流程 ----------
@@ -1020,7 +782,7 @@ export async function exportReviewImages(
       fontCss = await withTimeout(
         deps.collectFontCss !== undefined
           ? deps.collectFontCss(document.body)
-          : getFontEmbedCSS(document.body),
+          : cachedFontEmbedCss(document.body),
         stepTimeoutMs,
         `本地字体收集超时（${Math.round(stepTimeoutMs / 1000)} 秒）`,
       );

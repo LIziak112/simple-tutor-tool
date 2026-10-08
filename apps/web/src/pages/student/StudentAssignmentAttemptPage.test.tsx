@@ -19,6 +19,7 @@ import {
   postAttemptEventsApi,
   putAttemptInkApi,
   saveAttemptAnswerApi,
+  sealAttemptAnnotationsApi,
   startAttemptApi,
   submitAttemptApi,
 } from "@/lib/api";
@@ -106,6 +107,11 @@ vi.mock("@/lib/api", async (importOriginal) => {
     // T6R.10：交卷前拉整卷草稿头（T6R.14 批量端点；默认空态——本文件不涉
     // 及笔记内容，证据声明组装为全 none；共享工厂按请求 id 逐条回显，W5）
     fetchStudentNoteHeadsApi: vi.fn(noteHeadsMockResponse()),
+    // T6R.20：交卷链路的标注封存（幂等 sealedCount=0——解除网络依赖）
+    sealAttemptAnnotationsApi: vi.fn(async () => ({
+      phase: "scratch" as const,
+      sealedCount: 0,
+    })),
     // T2.8：笔迹取回（默认无历史笔迹）与上传（成功回执）
     fetchAttemptInkApi: vi.fn(async () => null),
     putAttemptInkApi: vi.fn(async () => ({
@@ -131,6 +137,7 @@ const mockedSubmit = vi.mocked(submitAttemptApi);
 const mockedPutInk = vi.mocked(putAttemptInkApi);
 const mockedPostEvents = vi.mocked(postAttemptEventsApi);
 const mockedOpenHint = vi.mocked(openAttemptHintApi);
+const mockedSeal = vi.mocked(sealAttemptAnnotationsApi);
 
 const ASSIGNMENT_ID = "44444444-4444-4444-8444-444444444444";
 const ATTEMPT_ID = "55555555-5555-4555-8555-555555555555";
@@ -284,6 +291,9 @@ beforeEach(() => {
   });
   installDraftBackend(memoryBackend());
   installEventStore(memoryEventStore());
+  // T6R.20 审查修复 2：seal 默认成功（幂等空封）；用例按需覆盖
+  mockedSeal.mockReset();
+  mockedSeal.mockResolvedValue({ phase: "scratch", sealedCount: 0 });
 });
 
 describe("StudentAssignmentAttemptPage：草稿作答流程", () => {
@@ -506,6 +516,86 @@ describe("StudentAssignmentAttemptPage：交卷 flush", () => {
     await clickSubmitAndConfirm();
     await waitFor(() => expect(mockedSubmit).toHaveBeenCalledTimes(1));
     expect(mockedPutInk).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ---------- T6R.20 审查修复 2：seal 时序（交卷不可逆点之后） ----------
+
+describe("StudentAssignmentAttemptPage：标注 seal 时序（审查修复 2）", () => {
+  it("seal 在交卷成功之后补调（顺序锁定：submit → seal）；成功无警示", async () => {
+    mockedStart.mockResolvedValue(START_DRAFT);
+    mockedFetch
+      .mockResolvedValueOnce(DRAFT_DATA)
+      .mockResolvedValue(RESULT_DATA);
+    mockedSave.mockResolvedValue({ questionId: "练习四-1", changeCount: 1 });
+    const order: string[] = [];
+    mockedSubmit.mockImplementation(async () => {
+      order.push("submit");
+      return RESULT_DATA;
+    });
+    mockedSeal.mockImplementation(async () => {
+      order.push("seal");
+      return { phase: "scratch", sealedCount: 0 };
+    });
+    renderPage();
+
+    await screen.findByText("第 1 题");
+    fireEvent.click(screen.getByRole("radio", { name: /对/ }));
+    await waitFor(() => expect(mockedSave).toHaveBeenCalled());
+    await clickSubmitAndConfirm();
+
+    await waitFor(() => expect(mockedSeal).toHaveBeenCalledTimes(1));
+    expect(order.indexOf("submit")).toBeLessThan(order.indexOf("seal"));
+    expect(await screen.findByText(/批改结果/)).toBeInTheDocument();
+    expect(screen.queryByText(/标注封存待重试/)).toBeNull();
+  });
+
+  it("seal 失败：非阻断警示——交卷照常切结果视图，横幅「标注封存待重试」", async () => {
+    mockedStart.mockResolvedValue(START_DRAFT);
+    mockedFetch
+      .mockResolvedValueOnce(DRAFT_DATA)
+      .mockResolvedValue(RESULT_DATA);
+    mockedSave.mockResolvedValue({ questionId: "练习四-1", changeCount: 1 });
+    mockedSubmit.mockResolvedValue(RESULT_DATA);
+    mockedSeal.mockRejectedValue(new Error("网络断了"));
+    renderPage();
+
+    await screen.findByText("第 1 题");
+    fireEvent.click(screen.getByRole("radio", { name: /对/ }));
+    await waitFor(() => expect(mockedSave).toHaveBeenCalled());
+    await clickSubmitAndConfirm();
+
+    expect(await screen.findByText(/批改结果/)).toBeInTheDocument();
+    expect(await screen.findByText(/标注封存待重试/)).toBeInTheDocument();
+    expect(mockedSubmit).toHaveBeenCalledTimes(1);
+  });
+
+  it("中止路径（ink flush 失败早退）不 seal——标注未被锁死、可继续作答", async () => {
+    mockedStart.mockResolvedValue(START_DRAFT);
+    mockedFetch
+      .mockResolvedValueOnce(HANDWRITTEN_DRAFT)
+      .mockResolvedValue(RESULT_DATA);
+    mockedSubmit.mockResolvedValue(RESULT_DATA);
+    renderPage();
+
+    await screen.findByText("第一道手写题");
+    await writeOnNextHandwritten();
+    mockedPutInk.mockRejectedValueOnce(new Error("network down"));
+    await clickSubmitAndConfirm();
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(/有题目的笔迹还没上传成功，交卷被暂时阻止/),
+      ).toBeVisible(),
+    );
+    // 交卷中止：submit 与 seal 都未发生（旧序「prep 内 seal」会把未交卷标注
+    // 永久锁死——本用例锁定该缺陷不复现）
+    expect(mockedSubmit).not.toHaveBeenCalled();
+    expect(mockedSeal).not.toHaveBeenCalled();
+    // 继续作答仍可重试交卷
+    await clickSubmitAndConfirm();
+    await waitFor(() => expect(mockedSubmit).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(mockedSeal).toHaveBeenCalledTimes(1));
   });
 });
 

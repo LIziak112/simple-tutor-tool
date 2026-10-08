@@ -13,6 +13,8 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { AnnotationLayer } from "@/features/annotation/AnnotationLayer";
+import { AnnotationView } from "@/features/annotation/AnnotationView";
 import { HintEntryList } from "@/features/attempt/HintPanel";
 import { ReviewPackPanel } from "@/features/export/review-pack-panel";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
@@ -350,6 +352,23 @@ function ResultQuestionCard({
         />
       )}
 
+      {/* T6R.20：本次题干标注回看（scratch 只读——交卷已封存）＋订正标注
+          入口（phase=correction 另开新记录，旧 scratch 不变）。学生自有
+          材料不受答案公布 gate 限制 */}
+      <AnnotationView
+        viewer="student"
+        attemptId={attemptId}
+        questionId={question.questionId}
+        questionNo={index + 1}
+        ariaPrefix={`第 ${index + 1} 题`}
+      />
+      <AnnotationLayer
+        attemptId={attemptId}
+        questionId={question.questionId}
+        phase="correction"
+        ariaPrefix={`第 ${index + 1} 题`}
+      />
+
       {/* 手写题：我的手写笔迹缩略图（T2.8；无笔迹时隐藏） */}
       {isHandwritten && (
         <InkThumbnail attemptId={attemptId} questionId={question.questionId} />
@@ -437,6 +456,7 @@ export function AttemptResultView({
   data,
   onBackHome,
   onSolutionToggle,
+  annotationSealWarning = false,
   wrongPractice,
 }: {
   data: AttemptResultData;
@@ -462,6 +482,11 @@ export function AttemptResultView({
     /** 点击按钮（questionIds = 本卷判错题按本卷题序） */
     onStart: (questionIds: string[]) => void;
   };
+  /**
+   * T6R.20 审查修复 2：交卷后的标注封存（seal）失败警示——非阻断
+   * （交卷已成事实），服务端读路径懒补封兜底最终一致。
+   */
+  annotationSealWarning?: boolean;
 }) {
   const { attempt, summary } = data;
   // T2A.8：答案是否已公布（on_submit / 课程练习 / 已到截止 = true）
@@ -613,6 +638,17 @@ export function AttemptResultView({
             )}
         </div>
       </section>
+
+      {/* T6R.20 审查修复 2：交卷后标注封存失败的非阻断警示（懒补封兜底） */}
+      {annotationSealWarning && (
+        <p
+          role="status"
+          className="flex items-center gap-1.5 rounded-xl border border-amber-300/60 bg-amber-50 px-3 py-2.5 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300"
+        >
+          <TriangleAlert aria-hidden className="size-4 shrink-0" />
+          题干标注封存待重试（不影响本次交卷；稍后回看标注时系统会自动补封）
+        </p>
+      )}
 
       {/* 逐题结果（T2A.7：多单元按节分组，题号全卷连续） */}
       <ol className="flex flex-col gap-4">

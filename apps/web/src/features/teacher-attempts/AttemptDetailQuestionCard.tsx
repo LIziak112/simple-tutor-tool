@@ -4,6 +4,7 @@ import { cn } from "cn";
 import { ChevronDown, Clock3, Lightbulb, PenLine } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { AnnotationView } from "@/features/annotation/AnnotationView";
 import {
   formatReferenceAnswers,
   formatStudentAnswer,
@@ -318,6 +319,17 @@ export function AttemptDetailQuestionCard({
         />
       )}
 
+      {/* T6R.20：学生题干标注回看（教师域；draft 期标注未封存也可看本人
+          作答过程——教师查看学生证据的路由模式）。审查修复 3②：作答/订正
+          两阶段切换（scratch=作答期圈画；correction=订正检查点圈画——
+          无数据时回看视图自呈空态） */}
+      <TeacherAnnotationSection
+        attemptId={attemptId}
+        questionId={question.questionId}
+        questionNo={question.no}
+        ariaPrefix={`第 ${question.no} 题`}
+      />
+
       {/* 学生答案 + 参考答案（draft 无参考答案对比，D5） */}
       <div className="flex flex-col gap-1.5 rounded-lg bg-muted/40 px-4 py-3 text-sm sm:flex-row sm:gap-6">
         <p className="flex flex-wrap gap-1.5">
@@ -377,5 +389,58 @@ export function AttemptDetailQuestionCard({
         questionNo={question.no}
       />
     </article>
+  );
+}
+
+/** 教师侧标注回看（审查修复 3②）：scratch/correction 两阶段切换 */
+function TeacherAnnotationSection({
+  attemptId,
+  questionId,
+  questionNo,
+  ariaPrefix,
+}: {
+  attemptId: string;
+  questionId: string;
+  questionNo: number;
+  ariaPrefix: string;
+}) {
+  const [phase, setPhase] = useState<"scratch" | "correction">("scratch");
+  return (
+    <div className="flex flex-col gap-2">
+      <div
+        role="tablist"
+        aria-label={`${ariaPrefix}题干标注阶段`}
+        className="flex w-fit gap-1 rounded-lg bg-muted p-1"
+      >
+        <Button
+          type="button"
+          role="tab"
+          aria-selected={phase === "scratch"}
+          variant={phase === "scratch" ? "secondary" : "ghost"}
+          className="h-9 px-3 text-xs"
+          onClick={() => setPhase("scratch")}
+        >
+          作答标注
+        </Button>
+        <Button
+          type="button"
+          role="tab"
+          aria-selected={phase === "correction"}
+          variant={phase === "correction" ? "secondary" : "ghost"}
+          className="h-9 px-3 text-xs"
+          onClick={() => setPhase("correction")}
+        >
+          订正标注
+        </Button>
+      </div>
+      <AnnotationView
+        viewer="teacher"
+        attemptId={attemptId}
+        questionId={questionId}
+        questionNo={questionNo}
+        phase={phase}
+        ariaPrefix={ariaPrefix}
+      />
+    </div>
   );
 }

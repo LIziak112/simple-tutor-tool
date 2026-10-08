@@ -451,7 +451,8 @@
                   "ink",
                   "media",
                   "evidence",
-                  "question"
+                  "question",
+                  "annotation"
                 ]
               },
               "bytes": {
@@ -490,7 +491,8 @@
                 "enum": [
                   "media",
                   "evidence-image",
-                  "ink"
+                  "ink",
+                  "annotation"
                 ]
               },
               "reason": {

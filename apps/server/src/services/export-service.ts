@@ -66,6 +66,8 @@ import {
 import { chunk } from "../lib/chunk";
 import { HttpError } from "../lib/http-error";
 import { zipBufferOf } from "../lib/zip-write";
+import type { AnnotationPairItem } from "./annotation-service";
+import { assembleAnnotationPairs } from "./annotation-service";
 import { answerOf, frozenRowsInDisplayOrder } from "./attempt-service";
 import { beijingDateTimeOf, beijingExportStampOf } from "./export-csv";
 import { inkFileAbs } from "./ink-service";
@@ -339,6 +341,22 @@ export interface LearningPackAssembly {
     readonly entry: string;
     readonly absPath: string;
     readonly bytes: number;
+  }>;
+  /** T6R.20 标注成对装配结果（evidence 模块勾选才有；v1 恒空数组） */
+  readonly annotationPairs: readonly AnnotationPairItem[];
+  /** 标注底图 PNG 条目（annotation/aNNN-base.png；v1 恒空数组） */
+  readonly annotationEntries: ReadonlyArray<{
+    readonly entry: string;
+    readonly absPath: string;
+    readonly bytes: number;
+    readonly ref: string;
+  }>;
+  /** 标注笔迹 JSON 文本条目（annotation/aNNN-strokes.json；v1 恒空数组） */
+  readonly annotationStrokeEntries: ReadonlyArray<{
+    readonly entry: string;
+    readonly text: string;
+    readonly bytes: number;
+    readonly ref: string;
   }>;
   /**
    * media 条目（媒体管线第三单）：进入 pack 的 md 中 ::image 引用的图片。
@@ -1436,6 +1454,9 @@ function assembleV1(core: PackCore): LearningPackAssembly {
     inkEntries: core.inkEntries,
     mediaEntries,
     evidenceEntries: [],
+    annotationPairs: [],
+    annotationEntries: [],
+    annotationStrokeEntries: [],
     files,
     totalBytes: files.reduce((sum, file) => sum + file.estimatedBytes, 0),
     displayNameOf: core.displayNameOf,
@@ -1679,6 +1700,74 @@ function assembleV2(core: PackCore): LearningPackAssembly {
     );
   }
 
+  // —— T6R.20 题干标注成对条目（evidence 模块勾选才装配——「未选模块不夹带
+  // 内容」；已封存标注：底图＋笔迹矢量原子成对，任一不可读整对进缺失清单，
+  // 绝不导出孤立的圈） ——
+  const annotationAsm = assembleAnnotationPairs(
+    db,
+    dataDir,
+    m.evidence
+      ? core.orderedAttempts.map((attempt) => ({
+          rows: core.displayRowsOf(attempt),
+        }))
+      : [],
+  );
+  const annotationEntries: Array<{
+    entry: string;
+    absPath: string;
+    bytes: number;
+    ref: string;
+  }> = [];
+  const annotationStrokeEntries: Array<{
+    entry: string;
+    text: string;
+    bytes: number;
+    ref: string;
+  }> = [];
+  const annotationMissing: Array<{
+    path: string;
+    kind: "annotation";
+    reason: string;
+    refs: string[];
+  }> = [];
+  // 审查修复 12（G-M3）：缺失条目 refs 关联对应 questionRef（对齐 review-pack
+  // 单题侧口径；annotation 条目只在 evidence 勾选时产出，彼时
+  // refByResponseRowId 对全部行已填充）
+  const questionRefsByPairRef = new Map<string, string[]>();
+  for (const [rowId, pairs] of annotationAsm.byResponseRowId) {
+    const questionRef = evidenceAsm.refByResponseRowId.get(rowId);
+    if (questionRef === undefined) continue;
+    for (const pair of pairs) {
+      const list = questionRefsByPairRef.get(pair.ref);
+      if (list === undefined)
+        questionRefsByPairRef.set(pair.ref, [questionRef]);
+      else if (!list.includes(questionRef)) list.push(questionRef);
+    }
+  }
+  for (const pair of annotationAsm.pairs) {
+    if (pair.base !== null && pair.strokesJson !== null) {
+      annotationEntries.push({
+        entry: `annotation/${pair.ref}-base.png`,
+        absPath: pair.base.absPath,
+        bytes: pair.base.bytes,
+        ref: pair.ref,
+      });
+      annotationStrokeEntries.push({
+        entry: `annotation/${pair.ref}-strokes.json`,
+        text: pair.strokesJson,
+        bytes: Buffer.byteLength(pair.strokesJson, "utf8"),
+        ref: pair.ref,
+      });
+    } else {
+      annotationMissing.push({
+        path: `annotation/${pair.ref}-base.png`,
+        kind: "annotation",
+        reason: pair.missingReason ?? "底图缺失（无法成对导出）",
+        refs: questionRefsByPairRef.get(pair.ref) ?? [pair.ref],
+      });
+    }
+  }
+
   // —— attempts.responses（v2 行携带快照关联三字段，T6R.12） ——
   const responseRowsV2: LearningPackV2Response[] = [];
   const hashByRef = new Map(
@@ -1846,6 +1935,11 @@ function assembleV2(core: PackCore): LearningPackAssembly {
       `${evidenceAsm.skippedSupplementNotes} 份补充稿在预览时刻（asOf）前无存活版本，未收录（晚于 asOf 创建，或钉定版本已被清理回收）。`,
     );
   }
+  if (annotationEntries.length > 0 || annotationMissing.length > 0) {
+    contextNotes.push(
+      "题干标注按「固定底图＋笔迹矢量」成对导出（annotation/aNNN-base.png 与 annotation/aNNN-strokes.json 原子成对；底图缺失的对在缺失清单标明）。",
+    );
+  }
   const manifest: LearningPackManifest = {
     files: [
       {
@@ -1894,10 +1988,23 @@ function assembleV2(core: PackCore): LearningPackAssembly {
         bytes: entry.bytes,
         refs: [entry.ref],
       })),
+      ...annotationEntries.map((entry) => ({
+        path: entry.entry,
+        kind: "annotation" as const,
+        bytes: entry.bytes,
+        refs: [entry.ref],
+      })),
+      ...annotationStrokeEntries.map((entry) => ({
+        path: entry.entry,
+        kind: "annotation" as const,
+        bytes: entry.bytes,
+        refs: [entry.ref],
+      })),
     ],
     missing: [
       ...missingMediaByPath.values(),
       ...evidenceMissingRowsOf(evidenceAsm),
+      ...annotationMissing,
     ],
     contextNotes,
   };
@@ -1925,6 +2032,9 @@ function assembleV2(core: PackCore): LearningPackAssembly {
     inkEntries: core.inkEntries,
     mediaEntries,
     evidenceEntries,
+    annotationPairs: annotationAsm.pairs,
+    annotationEntries,
+    annotationStrokeEntries,
     files,
     totalBytes: files.reduce((sum, file) => sum + file.estimatedBytes, 0),
     displayNameOf: core.displayNameOf,
@@ -2364,6 +2474,16 @@ export async function buildLearningPackZip(
       // 不在清单（manifest.missing 显式登记），不产生悬垂 zip 条目
       for (const entry of assembly.evidenceEntries) {
         archive.file(entry.absPath, { name: entry.entry, store: true });
+      }
+      // T6R.20 标注成对条目：底图 PNG store 直存（同图片口径）；strokes JSON
+      // 文本压缩；缺失对只在 manifest.missing（无悬垂条目）
+      for (const entry of assembly.annotationEntries) {
+        archive.file(entry.absPath, { name: entry.entry, store: true });
+      }
+      for (const entry of assembly.annotationStrokeEntries) {
+        archive.append(Buffer.from(entry.text, "utf8"), {
+          name: entry.entry,
+        });
       }
     },
     { warningAsError: false },

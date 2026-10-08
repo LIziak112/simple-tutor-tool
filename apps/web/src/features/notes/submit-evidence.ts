@@ -28,6 +28,7 @@ import type {
   NoteServerBodyState,
   SubmitEvidenceDeclaration,
 } from "@tutor/contract";
+import { catchUpAnnotations } from "@/features/annotation/annotation-sync";
 import { fetchStudentNoteHeadsApi } from "@/lib/api";
 import {
   deriveServerState,
@@ -175,6 +176,14 @@ export async function prepareSubmitEvidence(input: {
   // ① 冻结编辑（模态弹层覆盖）后追平本卷草稿（先排干本地落盘再上传再
   //    排干——语义见 note-sync.catchUpNotes）
   await catchUpNotes(input.attemptId);
+
+  // ①' T6R.20 标注追平（审查修复 2：seal 挪到交卷不可逆点之后——确认弹层
+  //    的中止路径〔继续作答/草稿选择取消/ink 失败早退〕不再把未交卷 scratch
+  //    标注永久锁死）：flush 标注同步到此为止；seal 由交卷成功回调补调
+  //    （AttemptSession，失败非阻断）＋服务端读路径懒补封兜底（最终一致）。
+  //    标注未追平（dirty/conflict）不阻止交卷——标注是独立附件
+  //    （submission_evidence 表不动），本地稿保留。
+  await catchUpAnnotations(input.attemptId);
 
   // ② 本卷记录（attempt 前缀单事务装载，strictRead 读失败抛错≠无记录）
   //    与整卷服务端 head 同窗并发读取（T6R.14：一次批量 POST，N 逐题 GET

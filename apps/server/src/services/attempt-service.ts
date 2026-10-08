@@ -1036,8 +1036,12 @@ function requireAssignmentVisible(
   return row;
 }
 
-/** questions 行 → 契约 Question（判分输入与快照内容；解析失败的字段按缺省处理） */
-function questionOfRow(row: QuestionRow, knowledge: string[]): Question {
+/**
+ * questions 行 → 契约 Question（判分输入与快照内容；解析失败的字段按缺省处理）。
+ * T6R.20 审查修复 4 起导出：annotation-service 的 stale 判定以同构路径对题库
+ * 当前行重建快照算 hash（与建卷冻结同一实现单源，不另写副本）。
+ */
+export function questionOfRow(row: QuestionRow, knowledge: string[]): Question {
   const answers: QuestionAnswers | undefined =
     row.answersJson !== null
       ? (questionAnswersSchema.safeParse(jsonOf(row.answersJson)).data ??

@@ -7,6 +7,7 @@ import { displayStemMd } from "@tutor/md-dsl";
 import { cn } from "cn";
 import { Check, X } from "lucide-react";
 import { useRef, useState } from "react";
+import { AnnotationLayer } from "@/features/annotation/AnnotationLayer";
 import { BlankAnswersProvider } from "@/features/markdown/BlankAnswersContext";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { NoteLayer } from "@/features/notes/NoteLayer";
@@ -387,6 +388,16 @@ export function AttemptQuestionCard({
             onUnlocked={onHintUnlocked}
           />
         )}
+
+      {/* T6R.20 题干标注（圈画题干）：所有题型的附加折叠区——标注模式外
+          保留原作答控件（方案 §10）；base ready 才挂画布（层内 gate） */}
+      {attemptId !== undefined && (
+        <AnnotationLayer
+          attemptId={attemptId}
+          questionId={question.id}
+          ariaPrefix={`第 ${index + 1} 题`}
+        />
+      )}
     </>
   );
 

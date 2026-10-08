@@ -9,9 +9,18 @@ import {
   type AdminTeacherResetPasswordRequest,
   type AdminTeacherSummary,
   type AdminTeacherUpdateRequest,
+  ANNOTATION_BASE_IMAGE_FORM_FIELDS,
+  ANNOTATION_FORM_FIELDS,
   type AnalyticsOverviewData,
   type AnalyticsQuestionsData,
   type AnalyticsStudentData,
+  type AnnotationBaseImageReceipt,
+  type AnnotationBasePreviewData,
+  type AnnotationPhase,
+  type AnnotationReceipt,
+  type AnnotationSealData,
+  type AnnotationUploadMetaInput,
+  type AnnotationViewData,
   type AssignmentCheckData,
   type AssignmentCheckRequest,
   type AssignmentCreateData,
@@ -26,6 +35,7 @@ import {
   type AttemptStartData,
   type AttemptStatus,
   type AttemptSubmitRequest,
+  annotationBaseImageUrl,
   apiResponseSchema,
   type BackupRestoreResult,
   type BackupSnapshotList,
@@ -1351,6 +1361,154 @@ export function fetchStudentNotebookApi(
       param: { questionId },
     }),
   );
+}
+
+// ---------- T6R.20：题干标注（固定底图＋独立矢量标注） ----------
+
+/**
+ * 底图装配载荷（POST /api/student/attempts/:id/questions/:qid/annotation/base，
+ * ?phase= 缺省 scratch）：幂等建 pending 底图行；已有 ready 底图直接返回引用
+ * （客户端不再重生成）。载荷 = 学生 stem 级投影，不含 snapshotHash 与任何
+ * 教师节（契约 annotationBasePreviewDataSchema）。
+ */
+export function postAnnotationBaseApi(
+  attemptId: string,
+  questionId: string,
+  phase?: AnnotationPhase,
+): Promise<AnnotationBasePreviewData> {
+  return callApi(() =>
+    api.api.student.attempts[":id"].questions[
+      ":questionId"
+    ].annotation.base.$post({
+      param: { id: attemptId, questionId },
+      ...(phase !== undefined ? { query: { phase } } : {}),
+    }),
+  );
+}
+
+/**
+ * 底图 PNG 回传（POST …/annotation/base/image，multipart）：image 文件 +
+ * questionRevisionId/baseRenderVersion 回传身份（服务端与底图行比对，防陈旧
+ * 标签页）。字段名契约 ANNOTATION_BASE_IMAGE_FORM_FIELDS 单源；hc 对 multipart
+ * 路由推断不出 form 入参——原生 fetch 同口径（putNoteDocumentApi）。
+ */
+export function postAnnotationBaseImageApi(
+  attemptId: string,
+  questionId: string,
+  png: Blob,
+  meta: {
+    questionRevisionId: string;
+    baseRenderVersion: number;
+    phase?: AnnotationPhase;
+  },
+): Promise<AnnotationBaseImageReceipt> {
+  const form = new FormData();
+  const F = ANNOTATION_BASE_IMAGE_FORM_FIELDS;
+  form.append(F.image, png, `annotation-base-${attemptId}-${questionId}.png`);
+  form.append(F.questionRevisionId, meta.questionRevisionId);
+  form.append(F.baseRenderVersion, String(meta.baseRenderVersion));
+  if (meta.phase !== undefined) form.append(F.phase, meta.phase);
+  return callApi(() =>
+    fetch(
+      `/api/student/attempts/${encodeURIComponent(attemptId)}/questions/${encodeURIComponent(questionId)}/annotation/base/image`,
+      { method: "POST", body: form },
+    ),
+  );
+}
+
+/**
+ * 标注正文上传（PUT …/annotation，multipart）：body 文件（gzip 或原始 JSON 的
+ * AnnotationDoc）+ baseRevision/mutationId（phase 可选缺省 scratch）。CAS 409
+ * 附 extra._current；sealed/base-not-ready/幂等语义全在服务端（契约注释）。
+ */
+export function putAnnotationDocApi(
+  attemptId: string,
+  questionId: string,
+  body: Blob,
+  meta: AnnotationUploadMetaInput,
+  signal?: AbortSignal,
+): Promise<AnnotationReceipt> {
+  const form = new FormData();
+  const F = ANNOTATION_FORM_FIELDS;
+  form.append(F.body, body, "annotation.json.gz");
+  form.append(F.baseRevision, String(meta.baseRevision));
+  form.append(F.mutationId, meta.mutationId);
+  if (meta.phase !== undefined) form.append(F.phase, meta.phase);
+  return callApi(() =>
+    fetch(
+      `/api/student/attempts/${encodeURIComponent(attemptId)}/questions/${encodeURIComponent(questionId)}/annotation`,
+      {
+        method: "PUT",
+        body: form,
+        signal: signal ?? null,
+      },
+    ),
+  );
+}
+
+/** 标注回看视图（GET …/annotation?phase=；base 可空空态 + doc 同空同有） */
+export function fetchAnnotationViewApi(
+  attemptId: string,
+  questionId: string,
+  phase?: AnnotationPhase,
+): Promise<AnnotationViewData> {
+  return callApi(() =>
+    api.api.student.attempts[":id"].questions[":questionId"].annotation.$get({
+      param: { id: attemptId, questionId },
+      ...(phase !== undefined ? { query: { phase } } : {}),
+    }),
+  );
+}
+
+/** 交卷/检查点封存（POST /attempts/:id/annotations/seal，JSON body 缺省 scratch） */
+export function sealAttemptAnnotationsApi(
+  attemptId: string,
+  phase?: AnnotationPhase,
+): Promise<AnnotationSealData> {
+  // 路由经 parseJsonBodyOrEmpty 读体（无 z-validator 入参类型），hc 推断不出
+  // json 槽——原生 fetch 同口径（multipart 路由同因）
+  return callApi(() =>
+    fetch(
+      `/api/student/attempts/${encodeURIComponent(attemptId)}/annotations/seal`,
+      {
+        method: "POST",
+        ...(phase !== undefined
+          ? {
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ phase }),
+            }
+          : {}),
+      },
+    ),
+  );
+}
+
+/** 教师回看标注视图（GET /api/teacher/attempts/:id/questions/:qid/annotation） */
+export function fetchTeacherAnnotationViewApi(
+  attemptId: string,
+  questionId: string,
+  phase?: AnnotationPhase,
+): Promise<AnnotationViewData> {
+  return callApi(() =>
+    api.api.teacher.attempts[":id"].questions[":questionId"].annotation.$get({
+      param: { id: attemptId, questionId },
+      ...(phase !== undefined ? { query: { phase } } : {}),
+    }),
+  );
+}
+
+/** 学生端标注底图 PNG 的 URL（与服务端 downloadUrl 同构；上传成功后客户端直构） */
+export function studentAnnotationBasePngUrl(
+  attemptId: string,
+  baseId: string,
+): string {
+  // 审查修复 10：路径模板契约单源（与服务端装配同源）
+  return annotationBaseImageUrl("student", { attemptId, baseId });
+}
+
+/** 教师端标注底图 PNG 的 URL（teacher-attempts 路由直出） */
+export function teacherAnnotationBasePngUrl(baseId: string): string {
+  return `/api/teacher/annotation-bases/${encodeURIComponent(baseId)}/image.png`;
 }
 
 // ---------- 图片上传（POST /api/teacher/media：导入页随行图片流程在用） ----------

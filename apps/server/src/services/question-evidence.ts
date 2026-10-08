@@ -299,6 +299,18 @@ function sha256Hex(text: string): string {
 }
 
 /**
+ * 题目快照内容身份 hash（T6R.20 起导出）：canonicalJson → sha-256，与
+ * assembleQuestionEvidence 内部口径**同一实现**（单源导出，不另写副本）。
+ * 消费方：annotation-service（底图身份三要素的 snapshotHash 与 stale 判定）。
+ * 快照缺失（null）无内容身份，返回 null。
+ */
+export function questionSnapshotHashOf(
+  snapshot: ReturnType<typeof snapshotOfRow>,
+): string | null {
+  return snapshot === null ? null : sha256Hex(canonicalJsonOf(snapshot));
+}
+
+/**
  * 角色化素材：投影与层级切片都在这一处完成（学生角色结构性无答案字段）。
  * 导出供 export-service v1 题目装配复用（v1/v2 同一投影单点，复审 B2）。
  * **服务端泄露哨兵（编排者复审 A1）**：学生角色投影后仍命中
