@@ -155,7 +155,7 @@ describe("ReviewPackPanel（T6R.13）", () => {
   it("完整包：无不完整警示；学生视角说明不含参考答案", async () => {
     await openPanel(COMPLETE_PREVIEW);
     expect(screen.queryByText(/材料不完整/)).toBeNull();
-    expect(screen.getByText(/不含参考答案/)).toBeVisible();
+    expect(screen.getByText(/本包不含参考答案与对错判定/)).toBeVisible();
   });
 
   it("预览网络失败：错误与重试，不显示清单", async () => {
@@ -373,5 +373,14 @@ describe("ReviewPackPanel（T6R.13）", () => {
         "q-2",
       );
     });
+  });
+
+  it("第四出口（T6R.19 合成图）：预览在场即渲染导出入口与学生红线文案", async () => {
+    await openPanel();
+    expect(
+      screen.getByRole("button", { name: /导出合成图（PNG）/ }),
+    ).toBeVisible();
+    // 学生红线：合成图与文字包同口径（不含参考答案）——不把合成图提示成含答案
+    expect(screen.getByText(/合成图与文字包同口径/)).toBeVisible();
   });
 });

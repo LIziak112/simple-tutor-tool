@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { ExportReviewImageSection } from "@/features/notes/ExportReviewImageSection";
 import {
   downloadAttachmentApi,
   downloadReviewPackApi,
@@ -22,9 +23,9 @@ import { copyText } from "@/lib/copy";
 
 /**
  * 单题完整导出面板（T6R.13，方案 §9.1「首批提供完整单题 ZIP，同时提供可选择
- * 的 Markdown 文本与逐张图片下载」）：
+ * 的 Markdown 文本与逐张图片下载」；T6R.19 增第四出口「合成图」）：
  * - 一键一题包：入口按钮 → 预览（附件清单 + 缺失 + reviewMd）→ 下载完整
- *   zip／复制文字／逐张下载真实图片三出口；
+ *   zip／复制文字／逐张下载真实图片三出口 + 合成图静态 PNG 导出；
  * - **复制语义红线**：按钮与提示只说「复制文字（不含图片）」——普通 HTTP
  *   部署无 clipboard API／等待预览后失去用户手势时 copyText 失败，降级为
  *   手工选中文本块（只读 textarea），绝不把「复制文字」提示成「文字图片
@@ -411,6 +412,8 @@ ${preview.questionMd}`}
                   </ul>
                 </div>
               )}
+              {/* 第四出口：静态合成图（T6R.19——题面＋作答＋原稿合成 PNG） */}
+              <ExportReviewImageSection preview={preview} />
             </>
           )}
         </div>

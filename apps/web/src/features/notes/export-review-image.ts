@@ -418,13 +418,14 @@ export interface ReviewImageExportDeps {
   readonly measureBlockHeights?: (blockCount: number) => number[];
 }
 
-/** 导出结果：成功=逐页文件清单；失败=分类错误（零下载） */
+/** 导出结果：成功=逐页文件清单（含 blob 供「复制图片」辅助出口复用）；失败=分类错误（零下载） */
 export type ReviewImageExportResult =
   | {
       readonly ok: true;
       readonly pages: ReadonlyArray<{
         filename: string;
         bytes: number;
+        blob: Blob;
       }>;
     }
   | { readonly ok: false; readonly error: ReviewImageExportError };
@@ -1052,7 +1053,7 @@ export async function exportReviewImages(
       } else {
         saveBlobAs(blob, filename);
       }
-      return { filename, bytes: blob.size };
+      return { filename, bytes: blob.size, blob };
     });
     return { ok: true, pages: out };
   } catch (err) {
