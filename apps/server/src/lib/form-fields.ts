@@ -1,5 +1,10 @@
-import type { NoteImageUploadMeta } from "@tutor/contract";
+import type {
+  AnnotationBaseImageMeta,
+  NoteImageUploadMeta,
+} from "@tutor/contract";
 import {
+  ANNOTATION_BASE_IMAGE_FORM_FIELDS,
+  annotationPhaseSchema,
   NOTE_IMAGE_FORM_FIELDS,
   noteImageUploadMetaSchema,
 } from "@tutor/contract";
@@ -84,4 +89,77 @@ export async function parseNoteImageUploadForm(form: LooseFormBody): Promise<{
   // 字节在解析层一次读出（复审轮⑮：两路由不再各自 arrayBuffer 转换）
   const pngBytes = new Uint8Array(await image.arrayBuffer());
   return { pngBytes, meta: parsed.data };
+}
+
+/** 标注底图上传的 multipart 形态约束（字段名集与错误文案，单一来源） */
+const ANNOTATION_BASE_IMAGE_FORM_HINT =
+  "请求需为 multipart/form-data，且包含 image 文件与 questionRevisionId、baseRenderVersion 字段（phase 可选，缺省 scratch）";
+
+/**
+ * 标注 phase 参数解析（T6R.20，查询参数与表单字段共用）：缺省 scratch；
+ * 非法值 400（值域单源 annotationPhaseSchema）。学生/教师两路由共用。
+ */
+export function parseAnnotationPhaseParam(raw: string | undefined) {
+  const parsed = annotationPhaseSchema.safeParse(raw ?? "scratch");
+  if (!parsed.success) {
+    throw new HttpError(
+      400,
+      "VALIDATION_ERROR",
+      "标注 phase 不合法（只接受 scratch 或 correction）",
+    );
+  }
+  return parsed.data;
+}
+
+/**
+ * 解析标注底图上传表单（T6R.20 学生端唯一上传方）：image 文件＋客户端回传
+ * 身份字段 → { pngBytes, meta }。
+ * - image 必须是文件字段 → 400 VALIDATION_ERROR；
+ * - questionRevisionId 非空串、baseRenderVersion 严格十进制整数、phase 缺省
+ *   scratch（经 annotationPhaseSchema 校验）；
+ * - PNG 字节本身的魔数/宽度/限额校验在 annotation-service.registerBaseImage。
+ */
+export async function parseAnnotationBaseImageForm(
+  form: LooseFormBody,
+): Promise<{ pngBytes: Uint8Array; meta: AnnotationBaseImageMeta }> {
+  const F = ANNOTATION_BASE_IMAGE_FORM_FIELDS;
+  const image = form[F.image];
+  if (!(image instanceof File)) {
+    throw new HttpError(
+      400,
+      "VALIDATION_ERROR",
+      ANNOTATION_BASE_IMAGE_FORM_HINT,
+    );
+  }
+  const baseRenderVersion = strictFormInt(form, F.baseRenderVersion);
+  const phase = formString(form, F.phase);
+  const parsedPhase = annotationPhaseSchema.safeParse(phase ?? "scratch");
+  if (!parsedPhase.success) {
+    throw new HttpError(
+      400,
+      "VALIDATION_ERROR",
+      "标注 phase 不合法（只接受 scratch 或 correction）",
+    );
+  }
+  const questionRevisionId = formString(form, F.questionRevisionId);
+  if (
+    questionRevisionId === undefined ||
+    questionRevisionId.length === 0 ||
+    baseRenderVersion === undefined
+  ) {
+    throw new HttpError(
+      400,
+      "VALIDATION_ERROR",
+      ANNOTATION_BASE_IMAGE_FORM_HINT,
+    );
+  }
+  const pngBytes = new Uint8Array(await image.arrayBuffer());
+  return {
+    pngBytes,
+    meta: {
+      questionRevisionId,
+      baseRenderVersion,
+      phase: parsedPhase.data,
+    },
+  };
 }

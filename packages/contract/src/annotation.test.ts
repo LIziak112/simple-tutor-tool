@@ -12,6 +12,7 @@ import {
   ANNOTATION_MAX_POINTS_PER_STROKE,
   ANNOTATION_MAX_STROKES,
   ANNOTATION_MAX_TOTAL_POINTS,
+  annotationBaseImageMetaSchema,
   annotationBaseImageReceiptSchema,
   annotationBasePreviewDataSchema,
   annotationBaseRefSchema,
@@ -410,6 +411,23 @@ describe("annotationViewDataSchema", () => {
 });
 
 describe("回执与冲突摘要形状", () => {
+  it("annotationBaseImageMetaSchema：回传身份三字段", () => {
+    expect(
+      annotationBaseImageMetaSchema.safeParse({
+        questionRevisionId: "resp-row-1",
+        baseRenderVersion: 1,
+        phase: "correction",
+      }).success,
+    ).toBe(true);
+    expect(
+      annotationBaseImageMetaSchema.safeParse({
+        questionRevisionId: "",
+        baseRenderVersion: 1,
+        phase: "scratch",
+      }).success,
+    ).toBe(false);
+  });
+
   it("annotationReceiptSchema", () => {
     expect(
       annotationReceiptSchema.safeParse({

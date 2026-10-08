@@ -3,6 +3,7 @@ import { statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { gunzipSync, gzipSync } from "node:zlib";
 import type {
+  AnnotationBaseImageMeta,
   AnnotationBaseImageReceipt,
   AnnotationBasePreviewData,
   AnnotationBaseRef,
@@ -380,13 +381,6 @@ export function assembleAnnotationBase(
 }
 
 // ---------- 底图 PNG 回传（决策 4②：身份校验＋落盘建行） ----------
-
-/** 底图上传的客户端回传身份（multipart 字段经路由层组装） */
-export interface AnnotationBaseImageMeta {
-  readonly questionRevisionId: string;
-  readonly baseRenderVersion: number;
-  readonly phase: AnnotationPhase;
-}
 
 /**
  * 回传底图 PNG（POST …/annotation/base/image）：服务端校验——

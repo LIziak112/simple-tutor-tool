@@ -429,6 +429,20 @@ export const annotationErrorCodeSchema = z.enum([
   "VALIDATION_ERROR",
 ]);
 
+/**
+ * 底图上传的客户端回传身份（POST …/annotation/base/image 的 multipart 字段
+ * 经路由层组装后的形态）：questionRevisionId/baseRenderVersion 与装配载荷
+ * 一致（服务端与底图行比对，防陈旧标签页）；phase 缺省 scratch。
+ */
+export const annotationBaseImageMetaSchema = z.object({
+  questionRevisionId: questionRevisionIdSchema,
+  baseRenderVersion: z.number().int().min(1),
+  phase: annotationPhaseSchema,
+});
+export type AnnotationBaseImageMeta = z.infer<
+  typeof annotationBaseImageMetaSchema
+>;
+
 // ---------- multipart 字段名单一来源（同 NOTE_IMAGE_FORM_FIELDS 口径） ----------
 
 /**

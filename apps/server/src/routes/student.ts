@@ -1,5 +1,7 @@
 import type { StudentPasswordChangeRequest } from "@tutor/contract";
 import {
+  annotationSealRequestSchema,
+  annotationUploadMetaSchema,
   attemptAnswerSaveRequestSchema,
   attemptEventBatchRequestSchema,
   attemptSubmitRequestSchema,
@@ -32,6 +34,8 @@ import {
 } from "../lib/binary-response";
 import {
   formString,
+  parseAnnotationBaseImageForm,
+  parseAnnotationPhaseParam,
   parseNoteImageUploadForm,
   strictFormInt,
 } from "../lib/form-fields";
@@ -41,6 +45,14 @@ import {
   parseJsonBody,
   parseJsonBodyOrEmpty,
 } from "../lib/http-error";
+import {
+  annotationBaseImageBytes,
+  assembleAnnotationBase,
+  getAnnotationView,
+  putAnnotationDoc,
+  registerBaseImage,
+  sealAttemptAnnotations,
+} from "../services/annotation-service";
 import {
   getStudentAssignmentPaper,
   listStudentAssignments,
@@ -152,6 +164,18 @@ import { listWrongQuestions } from "../services/wrong-questions";
  * - GET  /notebook/questions/:questionId：题目笔记本（T6R.15 D7）——本人该题
  *   跨来源（作业+课程练习+错题重练）已交卷轮次聚合；零答案零题干（题目侧
  *   只有 questionVersion 版本号数字）；无轮次 200 空数组不探测存在性；
+ * - T6R.20 题干标注族（固定底图＋独立矢量标注，全部 attempt 授权）：
+ *   POST /attempts/:id/questions/:qid/annotation/base（装配载荷：学生 stem
+ *   级投影＋静态素材，幂等建 pending 底图行；?phase= 缺省 scratch）；
+ *   POST …/annotation/base/image（底图 PNG multipart 回传：身份三要素校验＋
+ *   宽度=1440＋PNG 完整性；ready 后永不重生成）；PUT …/annotation（标注正文
+ *   multipart：CAS+mutationId 幂等＋base ready gate＋sealed/交卷门槛）；
+ *   GET …/annotation（回看视图：base stale 旧版标记＋doc，?phase= 同上）；
+ *   GET /attempts/:id/annotation-base/:baseId/image.png（底图直出，仅本人；
+ *   绝不经 /blobs 公开段）；POST /attempts/:id/annotations/seal（交卷/检查点
+ *   封存，幂等）。学生端载荷只含学生 stem 投影与自产笔迹——不含
+ *   snapshotHash（F1）与答案/详解/提示（泄露测试见 routes/
+ *   student-annotations.test.ts）；
  * - GET  /courses、GET /courses/:id：我的课程（可见讲义/单元计数，完成数 T2A.6 前恒 0）
  *   与课程可见目录（T2A.5，D5 过滤；D22——非成员/学生归档/课程归档 403
  *   COURSE_ACCESS_DENIED，课程不存在/条目不可见 404 NOT_FOUND 不暴露存在性）；
@@ -546,6 +570,137 @@ export function createStudentRoutes(
         );
         return noStoreBinaryResponse(zip.bytes, "application/zip", {
           attachmentFilename: zip.filename,
+        });
+      })
+      // ---------- T6R.20 题干标注（固定底图＋独立矢量标注） ----------
+      // ① 底图装配载荷（两阶段 gate 第一阶段）：幂等建 pending 行；ready 后
+      // 直接返回引用。载荷 = 学生 stem 级投影（materialOf 哨兵＋静态素材双守卫），
+      // 不含 snapshotHash（F1 离线答案 oracle 防线）与任何教师节。?phase=
+      // 缺省 scratch；correction 只在已交卷卷上可用（服务层状态门槛）。
+      .post("/attempts/:id/questions/:questionId/annotation/base", (c) => {
+        const phase = parseAnnotationPhaseParam(c.req.query("phase"));
+        return c.json(
+          {
+            ok: true,
+            data: assembleAnnotationBase(
+              db,
+              c.var.student.id,
+              c.req.param("id"),
+              c.req.param("questionId"),
+              phase,
+            ),
+          },
+          200,
+          { "cache-control": "no-store" },
+        );
+      })
+      // ② 底图 PNG 回传（第二阶段）：multipart image + questionRevisionId/
+      // baseRenderVersion 回传身份（phase 可选缺省 scratch）。服务端校验身份
+      // 三要素一致＋宽度=maxWidthPx＋PNG 完整性；ready 后永不重生成（同字节
+      // 幂等、异字节 409）。
+      .post(
+        "/attempts/:id/questions/:questionId/annotation/base/image",
+        async (c) => {
+          const { pngBytes, meta } = await parseAnnotationBaseImageForm(
+            await c.req.parseBody(),
+          );
+          return c.json({
+            ok: true,
+            data: registerBaseImage(
+              db,
+              dataDir,
+              c.var.student.id,
+              c.req.param("id"),
+              c.req.param("questionId"),
+              pngBytes,
+              meta,
+            ),
+          });
+        },
+      )
+      // ③ 标注正文上传（multipart：body 文件〔gzip 或原始 JSON 的
+      // AnnotationDoc〕+ baseRevision/mutationId〔phase 可选缺省 scratch〕）。
+      // CAS 409 附 _current、mutationId 幂等、base ready gate、sealed/交卷
+      // 门槛全在 service（annotation-service.putAnnotationDoc）。
+      .put("/attempts/:id/questions/:questionId/annotation", async (c) => {
+        const form = await c.req.parseBody();
+        const body = form.body;
+        if (!(body instanceof File)) {
+          throw new HttpError(
+            400,
+            "VALIDATION_ERROR",
+            "请求需为 multipart/form-data，且包含 body 文件与 baseRevision、mutationId 字段",
+          );
+        }
+        const parsed = annotationUploadMetaSchema.safeParse({
+          baseRevision: strictFormInt(form, "baseRevision"),
+          mutationId: formString(form, "mutationId"),
+          phase: formString(form, "phase"),
+        });
+        if (!parsed.success) {
+          throw new HttpError(
+            400,
+            "VALIDATION_ERROR",
+            `标注上传元信息不合法：${firstIssueMessage(parsed.error)}`,
+          );
+        }
+        return c.json({
+          ok: true,
+          data: putAnnotationDoc(
+            db,
+            dataDir,
+            c.var.student.id,
+            c.req.param("id"),
+            c.req.param("questionId"),
+            new Uint8Array(await body.arrayBuffer()),
+            parsed.data,
+          ),
+        });
+      })
+      // ④ 回看视图（本人；已交卷可读）：base（stale 旧版标记＋ready 直出 URL）
+      // + doc/annotation（无底图/无落墨为显式空态）。?phase= 缺省 scratch。
+      .get("/attempts/:id/questions/:questionId/annotation", (c) => {
+        const phase = parseAnnotationPhaseParam(c.req.query("phase"));
+        return c.json(
+          {
+            ok: true,
+            data: getAnnotationView(
+              db,
+              dataDir,
+              { kind: "student", id: c.var.student.id },
+              c.req.param("id"),
+              c.req.param("questionId"),
+              phase,
+            ),
+          },
+          200,
+          { "cache-control": "no-store" },
+        );
+      })
+      // ⑤ 底图直出（attempt 授权——requireOwnAttempt＋baseId 属同 attempt；
+      // 绝不经 /blobs 公开段）。路径字面量 image.png（无元数据 JSON 变体）。
+      .get("/attempts/:id/annotation-base/:baseId/image.png", (c) => {
+        const bytes = annotationBaseImageBytes(
+          db,
+          dataDir,
+          { kind: "student", id: c.var.student.id },
+          c.req.param("id"),
+          c.req.param("baseId"),
+        );
+        return noStoreBinaryResponse(bytes, "image/png");
+      })
+      // ⑥ 交卷/检查点封存：?phase 对应请求体 phase（JSON，缺省 scratch）。
+      // 幂等（重放 sealedCount=0）；交卷流程在 flush 标注同步后调用。
+      .post("/attempts/:id/annotations/seal", async (c) => {
+        const body = await parseJsonBodyOrEmpty(c, annotationSealRequestSchema);
+        return c.json({
+          ok: true,
+          data: sealAttemptAnnotations(
+            db,
+            c.var.student.id,
+            c.req.param("id"),
+            body?.phase ?? "scratch",
+          ),
         });
       })
       // T6R.5 ③：版本文档直出（gzip 原字节；授权在 service 归属链，版本行

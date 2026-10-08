@@ -8,7 +8,12 @@ import { Hono } from "hono";
 import type { TeacherEnv } from "../auth/require-teacher";
 import type { Db } from "../db/client";
 import { noStoreBinaryResponse } from "../lib/binary-response";
+import { parseAnnotationPhaseParam } from "../lib/form-fields";
 import { HttpError, parseJsonBody } from "../lib/http-error";
+import {
+  annotationBaseImageBytes,
+  getAnnotationView,
+} from "../services/annotation-service";
 import {
   beijingExportStampOf,
   CSV_UTF8_BOM,
@@ -141,6 +146,40 @@ export function createTeacherAttemptRoutes(
         return noStoreBinaryResponse(zip.bytes, "application/zip", {
           attachmentFilename: zip.filename,
         });
+      })
+      // T6R.20：教师查看学生题干标注（回看视图：底图引用〔含 stale 旧版标记〕
+      // + 矢量正文；?phase= 缺省 scratch）。视图内容 = 学生 stem 投影底图 +
+      // 学生自产笔迹，不含答案节（泄露测试见 routes/student-annotations.test.ts
+      // 的教师半边）。授权经 requireTeacherAttempt（域外统一 404）。
+      .get("/attempts/:id/questions/:questionId/annotation", (c) => {
+        const phase = parseAnnotationPhaseParam(c.req.query("phase"));
+        return c.json(
+          {
+            ok: true,
+            data: getAnnotationView(
+              db,
+              dataDir,
+              { kind: "teacher", id: c.var.teacher.id },
+              c.req.param("id"),
+              c.req.param("questionId"),
+              phase,
+            ),
+          },
+          200,
+          { "cache-control": "no-store" },
+        );
+      })
+      // T6R.20：教师直出底图 PNG（baseId → base 行 → requireTeacherAttempt
+      // 按归属推导；域外/未就绪统一 404 不暴露存在性）
+      .get("/annotation-bases/:baseId/image.png", (c) => {
+        const bytes = annotationBaseImageBytes(
+          db,
+          dataDir,
+          { kind: "teacher", id: c.var.teacher.id },
+          undefined,
+          c.req.param("baseId"),
+        );
+        return noStoreBinaryResponse(bytes, "image/png");
       })
       .post("/responses/:id/mark", async (c) => {
         const req = await parseJsonBody(c, markRequestSchema);
