@@ -1,6 +1,7 @@
 import { BookX, History, Home, Loader2, LogOut, School } from "lucide-react";
 import { Navigate, NavLink, Outlet, useNavigate } from "react-router";
 import { useLogoutStudent, useStudentMe } from "@/features/auth/student-auth";
+import { useBindAnnotationSession } from "@/features/annotation/use-annotation-session";
 import { useBindNoteSession } from "@/features/notes/use-note-session";
 import { useStudentTheme } from "@/features/student/use-student-theme";
 import { ApiError } from "@/lib/api";
@@ -35,6 +36,8 @@ export function StudentLayout() {
   // 在 student-auth 登出处）。结果页读链路全走 Cookie 与 image-sync 队列不
   // 消费 note-session；绑定在布局层即模块级会话服务的身份职责归位
   useBindNoteSession(meQuery.data);
+  // T6R.20：标注会话与草稿会话并行绑定（标注同步队列的身份接线）
+  useBindAnnotationSession(meQuery.data);
 
   if (meQuery.isPending) {
     return <ScreenLoading text="正在确认登录状态…" />;

@@ -77,6 +77,15 @@ function attemptPrefix(
   ]).slice(0, -1);
 }
 
+/** 会话前缀（去尾 ]）：bind 补传的全会话扫描用 */
+function sessionPrefix(session: AnnotationSessionRef): string {
+  return JSON.stringify([
+    "annotation",
+    session.origin,
+    session.studentId,
+  ]).slice(0, -1);
+}
+
 /** 键 → 会话 + scope（sync 订阅回调里反查归属用） */
 export function parseAnnotationKey(
   key: string,
@@ -666,15 +675,36 @@ export function setUploading(
   if (had !== on) notify(key);
 }
 
-/** attempt 作用域待传清单（交卷 flush / seal 追平用；含全部 phase） */
+/**
+ * denied(access) 手动重试清除（同 note-store.clearNoteDeniedAccess 定案口径：
+ * 手动按钮而非自动清除——head 成功不证明写权限恢复；返回是否实际清除）。
+ */
+export async function clearAnnotationDeniedAccess(
+  session: AnnotationSessionRef,
+  scope: AnnotationScope,
+): Promise<boolean> {
+  let cleared = false;
+  await mutateLoaded(session, scope, null, (record) => {
+    if (record.denied?.kind !== "access") return;
+    record.denied = null;
+    cleared = true;
+  });
+  return cleared;
+}
+
+/** 待传清单（缺省=全会话 bind 补传；给 attemptId=交卷 flush 作用域收敛） */
 export async function listPendingAnnotations(
   session: AnnotationSessionRef,
-  attemptId: string,
+  attemptId?: string,
 ): Promise<AnnotationScope[]> {
   const out: AnnotationScope[] = [];
   let pairs: Array<[string, unknown]>;
   try {
-    pairs = await backend().getAll(attemptPrefix(session, attemptId));
+    pairs = await backend().getAll(
+      attemptId === undefined
+        ? sessionPrefix(session)
+        : attemptPrefix(session, attemptId),
+    );
   } catch (err) {
     console.warn("标注本地仓扫描失败（无法补传待传版本）", err);
     return out;
