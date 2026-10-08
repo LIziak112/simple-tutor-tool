@@ -1039,7 +1039,7 @@ describe("getAnnotationView 与底图直出", () => {
     }
   });
 
-  it("seal 幂等：重复 seal sealedCount=0", () => {
+  it("seal 幂等：重复 seal sealedCount=0（审查修复 2 起 seal 在交卷后）", () => {
     const world = makeWorld();
     const { attemptId, revisionId } = makePaper(world);
     readyBase(world, attemptId, revisionId);
@@ -1055,12 +1055,116 @@ describe("getAnnotationView 与底图直出", () => {
         mutationId: randomUUID(),
       },
     );
+    submitAttemptStatus(world.db, attemptId);
     expect(
       sealAttemptAnnotations(world.db, world.studentId, attemptId).sealedCount,
     ).toBe(1);
     expect(
       sealAttemptAnnotations(world.db, world.studentId, attemptId).sealedCount,
     ).toBe(0);
+  });
+});
+
+// ---------- 审查修复 2：seal 时序（交卷不可逆点后 + 懒补封自愈） ----------
+
+describe("seal 时序：门槛与懒补封（审查修复 2）", () => {
+  it("draft 期 seal scratch → 409（杀自害自封）；此后标注仍可编辑（交卷中止不留死锁）", () => {
+    const world = makeWorld();
+    const { attemptId, revisionId } = makePaper(world);
+    readyBase(world, attemptId, revisionId);
+    putAnnotationDoc(
+      world.db,
+      world.dataDir,
+      world.studentId,
+      attemptId,
+      Q,
+      gzipJson(annotationDoc()),
+      { baseRevision: 0, mutationId: randomUUID() },
+    );
+    try {
+      sealAttemptAnnotations(world.db, world.studentId, attemptId);
+      throw new Error("应当抛 409");
+    } catch (err) {
+      expectHttpError(err, 409, "ANNOTATION_NOT_SUBMITTED");
+    }
+    // 交卷中止（继续作答）：标注未被锁死——CAS 下一版照常写入
+    const second = putAnnotationDoc(
+      world.db,
+      world.dataDir,
+      world.studentId,
+      attemptId,
+      Q,
+      gzipJson(annotationDoc(900, 2)),
+      { baseRevision: 1, mutationId: randomUUID() },
+    );
+    expect(second.revision).toBe(2);
+  });
+
+  it("draft 期 seal correction 合法（幂等空封 sealedCount=0，不拦订正检查点语义）", () => {
+    const world = makeWorld();
+    const { attemptId } = makePaper(world);
+    const seal = sealAttemptAnnotations(
+      world.db,
+      world.studentId,
+      attemptId,
+      "correction",
+    );
+    expect(seal.sealedCount).toBe(0);
+  });
+
+  it("已交卷未 seal：getAnnotationView 懒补封（sealedAt 回填、幂等）", () => {
+    const world = makeWorld();
+    const { attemptId, revisionId } = makePaper(world);
+    readyBase(world, attemptId, revisionId);
+    putAnnotationDoc(
+      world.db,
+      world.dataDir,
+      world.studentId,
+      attemptId,
+      Q,
+      gzipJson(annotationDoc()),
+      { baseRevision: 0, mutationId: randomUUID() },
+    );
+    submitAttemptStatus(world.db, attemptId);
+    // 未显式 seal——视图读取入口现场补封（客户端 seal 网络失败的自愈路径）
+    const view = getAnnotationView(
+      world.db,
+      world.dataDir,
+      { kind: "student", id: world.studentId },
+      attemptId,
+      Q,
+    );
+    expect(view.annotation?.sealedAt).not.toBeNull();
+    // 幂等：再次读取不重复计数、值稳定
+    const again = getAnnotationView(
+      world.db,
+      world.dataDir,
+      { kind: "student", id: world.studentId },
+      attemptId,
+      Q,
+    );
+    expect(again.annotation?.sealedAt).toBe(view.annotation?.sealedAt);
+  });
+
+  it("已交卷未 seal：assembleAnnotationPairs 懒补封——未显式 seal 也成对收录", () => {
+    const world = makeWorld();
+    const { attemptId, revisionId } = makePaper(world);
+    readyBase(world, attemptId, revisionId);
+    putAnnotationDoc(
+      world.db,
+      world.dataDir,
+      world.studentId,
+      attemptId,
+      Q,
+      gzipJson(annotationDoc()),
+      { baseRevision: 0, mutationId: randomUUID() },
+    );
+    submitAttemptStatus(world.db, attemptId);
+    const asm = assembleAnnotationPairs(world.db, world.dataDir, [
+      { rows: responseRowsOf(world.db, attemptId) },
+    ]);
+    expect(asm.pairs).toHaveLength(1);
+    expect(asm.pairs[0]?.phase).toBe("scratch");
   });
 });
 
@@ -1076,7 +1180,7 @@ function responseRowsOf(db: Db, attemptId: string) {
 }
 
 describe("assembleAnnotationPairs：成对装配（导出/学习包共用）", () => {
-  it("已封存标注出成对文件（base＋strokes）；未封存不收录", () => {
+  it("已封存标注出成对文件（base＋strokes）；draft 进行中不收录", () => {
     const world = makeWorld();
     const { attemptId, revisionId } = makePaper(world);
     readyBase(world, attemptId, revisionId);
@@ -1089,10 +1193,13 @@ describe("assembleAnnotationPairs：成对装配（导出/学习包共用）", (
       gzipJson(annotationDoc(900, 2)),
       { baseRevision: 0, mutationId: randomUUID() },
     );
+    // draft 进行中（未交卷未封存）：不收录
     const open = assembleAnnotationPairs(world.db, world.dataDir, [
       { rows: responseRowsOf(world.db, attemptId) },
     ]);
     expect(open.pairs).toHaveLength(0);
+    // 交卷后（审查修复 2：显式 seal 或装配入口懒补封）→ 成对收录
+    submitAttemptStatus(world.db, attemptId);
     sealAttemptAnnotations(world.db, world.studentId, attemptId);
     const asm = assembleAnnotationPairs(world.db, world.dataDir, [
       { rows: responseRowsOf(world.db, attemptId) },
@@ -1128,6 +1235,7 @@ describe("assembleAnnotationPairs：成对装配（导出/学习包共用）", (
         mutationId: randomUUID(),
       },
     );
+    submitAttemptStatus(world.db, attemptId);
     sealAttemptAnnotations(world.db, world.studentId, attemptId);
     // 删除底图文件（保留行——模拟磁盘丢失）
     const baseRow = world.db

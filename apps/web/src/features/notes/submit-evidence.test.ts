@@ -406,8 +406,8 @@ describe("snapshotNoteOverview：快览分类与权威方向一致（#13）", ()
   });
 });
 
-describe("prepareSubmitEvidence：T6R.20 标注封存集成（flush→seal→声明）", () => {
-  it("交卷前先追平标注上传再 seal（顺序锁定）；seal 失败抛错阻止交卷", async () => {
+describe("prepareSubmitEvidence：T6R.20 标注追平（审查修复 2：只 flush 不 seal）", () => {
+  it("交卷准备追平标注上传；seal 不在此处（交卷成功回调负责）、seal 失败不阻断", async () => {
     const sealMock = vi.mocked(
       (await import("@/lib/api")).sealAttemptAnnotationsApi,
     );
@@ -465,16 +465,20 @@ describe("prepareSubmitEvidence：T6R.20 标注封存集成（flush→seal→声
         questionIds: [Q1],
       });
       expect(prep.declarations).toEqual([{ questionId: Q1, state: "none" }]);
-      // 顺序：标注上传先于 seal（flush → seal → 交卷）
-      expect(order.indexOf("annotation-put")).toBeLessThan(
-        order.indexOf("seal"),
-      );
+      // 追平完成：待传标注已上传
+      expect(order).toContain("annotation-put");
+      // 审查修复 2：prepareSubmitEvidence 不再 seal（seal 挪到交卷成功回调——
+      // 确认弹层中止路径不得把未交卷标注锁死）
+      expect(order).not.toContain("seal");
+      expect(sealMock).not.toHaveBeenCalled();
 
-      // seal 失败（网络）→ 抛错阻止交卷（调用方提示重试）
+      // seal 失败也不再影响交卷准备（失败非阻断，服务端懒补封兜底）
       sealMock.mockRejectedValueOnce(new Error("连不上服务器"));
-      await expect(
-        prepareSubmitEvidence({ attemptId: ATTEMPT, questionIds: [Q1] }),
-      ).rejects.toThrow("连不上服务器");
+      const second = await prepareSubmitEvidence({
+        attemptId: ATTEMPT,
+        questionIds: [Q1],
+      });
+      expect(second.declarations).toEqual([{ questionId: Q1, state: "none" }]);
     } finally {
       resetAnnotationSession();
     }

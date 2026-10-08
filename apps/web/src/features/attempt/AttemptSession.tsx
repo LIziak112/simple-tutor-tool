@@ -30,7 +30,7 @@ import {
   type SubmitEvidenceProblem,
   snapshotNoteOverview,
 } from "@/features/notes/submit-evidence";
-import { startWrongPracticeApi } from "@/lib/api";
+import { startWrongPracticeApi, sealAttemptAnnotationsApi } from "@/lib/api";
 import { createEventQueue } from "@/lib/event-queue";
 import { formatDueTime } from "@/lib/time";
 import { useOnlineStatus } from "@/lib/use-online-status";
@@ -95,11 +95,28 @@ export function AttemptSession({
   /** 退出（返回首页/课程等；结果视图按钮与空试卷兜底用） */
   onExit: () => void;
 }) {
+  /**
+   * T6R.20 审查修复 2：交卷后的标注封存警示（seal 挪到交卷成功回调内
+   * 非阻断执行）。状态放在本组件（答题↔结果视图切换时实例稳定不丢），
+   * 由 AnswerView 的交卷成功回调写入、结果视图顶部横幅呈现。
+   */
+  const [annotationSealWarning, setAnnotationSealWarning] = useState(false);
   if (isResultDetail(data)) {
-    return <AttemptResultWithDraftCleanup data={data} onBackHome={onExit} />;
+    return (
+      <AttemptResultWithDraftCleanup
+        data={data}
+        onBackHome={onExit}
+        annotationSealWarning={annotationSealWarning}
+      />
+    );
   }
   return (
-    <AnswerView data={data} attemptId={data.attempt.id} onBackHome={onExit} />
+    <AnswerView
+      data={data}
+      attemptId={data.attempt.id}
+      onBackHome={onExit}
+      onAnnotationSealFailed={() => setAnnotationSealWarning(true)}
+    />
   );
 }
 
@@ -116,9 +133,12 @@ export function AttemptSession({
 function AttemptResultWithDraftCleanup({
   data,
   onBackHome,
+  annotationSealWarning = false,
 }: {
   data: AttemptResultData;
   onBackHome: () => void;
+  /** 交卷后标注 seal 失败的警示（AttemptSession 顶态；服务端懒补封兜底） */
+  annotationSealWarning?: boolean;
 }) {
   const attemptId = data.attempt.id;
   const navigate = useNavigate();
@@ -166,6 +186,7 @@ function AttemptResultWithDraftCleanup({
       data={data}
       onBackHome={onBackHome}
       onSolutionToggle={onSolutionToggle}
+      annotationSealWarning={annotationSealWarning}
       wrongPractice={{
         loading: practice.isPending,
         error: practiceErrorText,
@@ -183,10 +204,13 @@ function AnswerView({
   data,
   attemptId,
   onBackHome,
+  onAnnotationSealFailed,
 }: {
   data: AttemptDraftData;
   attemptId: string;
   onBackHome: () => void;
+  /** 交卷成功后的标注 seal 失败回调（非阻断警示——AttemptSession 顶态） */
+  onAnnotationSealFailed: () => void;
 }) {
   /** 手写题的笔迹上传 controller（mount 注册、unmount 注销；交卷前逐题 flush，
    *  草稿同步循环也会逐题 sync——先声明再传给 useDraftSync） */
@@ -421,6 +445,13 @@ function AnswerView({
       {
         onSuccess: () => {
           void draftStore.clearDraft(attemptId);
+          // T6R.20 审查修复 2：标注 seal 在**交卷不可逆点之后**补调——失败
+          // 非阻断（交卷已成事实不回滚），警示置位由结果视图横幅呈现；
+          // 服务端读路径懒补封兜底最终一致（getAnnotationView/
+          // assembleAnnotationPairs 入口）。seal 幂等（409 重交安全）。
+          void sealAttemptAnnotationsApi(attemptId).catch(() => {
+            onAnnotationSealFailed();
+          });
         },
         onSettled: () => {
           setConfirmOpen(false);
@@ -428,7 +459,14 @@ function AnswerView({
         },
       },
     );
-  }, [attemptEvents, attemptId, questionIds, submit, submitRevisions]);
+  }, [
+    attemptEvents,
+    attemptId,
+    onAnnotationSealFailed,
+    questionIds,
+    submit,
+    submitRevisions,
+  ]);
 
   /**
    * 缺稿交卷的明确确认（T6R.10）：用户选择「提交答案，草稿未保存完整」后

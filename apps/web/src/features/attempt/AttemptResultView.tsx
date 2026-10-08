@@ -456,6 +456,7 @@ export function AttemptResultView({
   data,
   onBackHome,
   onSolutionToggle,
+  annotationSealWarning = false,
   wrongPractice,
 }: {
   data: AttemptResultData;
@@ -481,6 +482,11 @@ export function AttemptResultView({
     /** 点击按钮（questionIds = 本卷判错题按本卷题序） */
     onStart: (questionIds: string[]) => void;
   };
+  /**
+   * T6R.20 审查修复 2：交卷后的标注封存（seal）失败警示——非阻断
+   * （交卷已成事实），服务端读路径懒补封兜底最终一致。
+   */
+  annotationSealWarning?: boolean;
 }) {
   const { attempt, summary } = data;
   // T2A.8：答案是否已公布（on_submit / 课程练习 / 已到截止 = true）
@@ -632,6 +638,17 @@ export function AttemptResultView({
             )}
         </div>
       </section>
+
+      {/* T6R.20 审查修复 2：交卷后标注封存失败的非阻断警示（懒补封兜底） */}
+      {annotationSealWarning && (
+        <p
+          role="status"
+          className="flex items-center gap-1.5 rounded-xl border border-amber-300/60 bg-amber-50 px-3 py-2.5 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300"
+        >
+          <TriangleAlert aria-hidden className="size-4 shrink-0" />
+          题干标注封存待重试（不影响本次交卷；稍后回看标注时系统会自动补封）
+        </p>
+      )}
 
       {/* 逐题结果（T2A.7：多单元按节分组，题号全卷连续） */}
       <ol className="flex flex-col gap-4">

@@ -505,11 +505,30 @@ describe("PUT/GET …/annotation 正文与视图", () => {
     assertAnnotationPayloadSafe(view);
   });
 
-  it("交卷流程：seal 后 PUT 409 ANNOTATION_SEALED；seal 幂等；交卷后 scratch 新写 ALREADY_SUBMITTED", async () => {
+  it("交卷流程：seal 在交卷后（draft 期 seal 409）；seal 后 PUT 409 ANNOTATION_SEALED；seal 幂等；交卷后 scratch 新写 ALREADY_SUBMITTED", async () => {
     const attemptId = await freshAttempt();
     await readyBase(attemptId);
     await putAnnotation(attemptId, aCookie, annotationDoc());
 
+    // 审查修复 2③：draft 期 seal → 409（杀自害自封——确认弹层中止后标注仍可编辑）
+    const draftSeal = await sealAnnotations(attemptId, aCookie);
+    expect(draftSeal.status).toBe(409);
+    expect(((await draftSeal.json()) as ApiErr).error).toBe(
+      "ANNOTATION_NOT_SUBMITTED",
+    );
+    const stillWritable = await putAnnotation(
+      attemptId,
+      aCookie,
+      annotationDoc(900, 3),
+      { baseRevision: 1 },
+    );
+    expect(stillWritable.status).toBe(200);
+
+    // 交卷（无笔记冲突——标注不是笔记证据，plain submit 可用）
+    const submitRes = await submitAttemptRequest(app, aCookie, attemptId);
+    expect(submitRes.status).toBe(200);
+
+    // 交卷不可逆点之后 seal（客户端在成功回调内补调的口径）
     const sealRes = await sealAnnotations(attemptId, aCookie);
     expect(sealRes.status).toBe(200);
     const seal = annotationSealDataSchema.parse(
@@ -526,16 +545,12 @@ describe("PUT/GET …/annotation 正文与视图", () => {
     );
     expect(reseal.sealedCount).toBe(0);
 
-    // 交卷（seal 后无笔记冲突——标注不是笔记证据，plain submit 可用）
-    const submitRes = await submitAttemptRequest(app, aCookie, attemptId);
-    expect(submitRes.status).toBe(200);
-
     const sealedPut = await putAnnotation(
       attemptId,
       aCookie,
       annotationDoc(900, 5),
       {
-        baseRevision: 1,
+        baseRevision: 2,
       },
     );
     expect(sealedPut.status).toBe(409);
@@ -562,6 +577,12 @@ describe("PUT/GET …/annotation 正文与视图", () => {
     const latePutBody = (await latePut.json()) as ApiErr;
     expect(latePutBody.error).toBe("ALREADY_SUBMITTED");
     assertNoLeak(latePutBody);
+    // 懒补封（审查修复 2②）：交卷后未显式 seal——视图读取入口现场补封
+    const lazyView = annotationViewDataSchema.parse(
+      ((await (await getView(attempt2, aCookie)).json()) as { data: unknown })
+        .data,
+    );
+    expect(lazyView.annotation?.sealedAt).not.toBeNull();
   });
 
   it("订正另开：交卷后 phase=correction 走全流程，scratch 视图只读可回看", async () => {
@@ -576,10 +597,11 @@ describe("PUT/GET …/annotation 正文与视图", () => {
         }
       ).data,
     );
-    await sealAnnotations(attemptId, aCookie);
     expect((await submitAttemptRequest(app, aCookie, attemptId)).status).toBe(
       200,
     );
+    // 审查修复 2：先交卷再 seal（scratch seal 在交卷不可逆点之后）
+    await sealAnnotations(attemptId, aCookie);
 
     // correction 另开（底图独立、PUT 合法）
     const corrBaseId = await readyBase(

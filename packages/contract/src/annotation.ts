@@ -404,7 +404,10 @@ export const annotationSealDataSchema = z.object({
  * - ANNOTATION_BASE_ALREADY_READY：对已 ready 底图再上传不同内容的 PNG（409；同内容重传幂等返回原回执）；
  * - ANNOTATION_BASE_STALE：底图身份三要素与服务端当前不一致（409；防御态——快照冻结后正常不可达）；
  * - ANNOTATION_SEALED：对已封存标注写入（409，交卷/检查点后只读；订正=新开 correction 记录）；
- * - ANNOTATION_NOT_SUBMITTED：attempt 尚未交卷就写 correction 标注（409，语义同 note.ts NOTE_NOT_SUBMITTED）；
+ * - ANNOTATION_NOT_SUBMITTED：attempt 尚未交卷就写 correction 标注、或 draft 期
+ *   调 scratch seal（409，语义同 note.ts NOTE_NOT_SUBMITTED；审查修复 2 起
+ *   scratch seal 只在交卷后合法——封存随交卷不可逆点进行，correction seal
+ *   恒合法）；
  * - ATTEMPT_NOT_FOUND / QUESTION_NOT_FOUND / FORBIDDEN / ALREADY_SUBMITTED /
  *   UNAUTHORIZED / VALIDATION_ERROR：与 attempt/note 模块同义（404/404/403/409/401/400）；
  *   ALREADY_SUBMITTED 覆盖「交卷后写 scratch 标注」。

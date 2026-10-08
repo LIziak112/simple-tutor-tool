@@ -26,11 +26,12 @@ import {
   annotationIssueIsLimit,
 } from "@tutor/contract";
 import { buildStaticQuestionMaterial } from "@tutor/md-dsl";
-import { and, asc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, isNull, ne } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
   type AnnotationBaseRow,
   type AnnotationRow,
+  attempts as attemptsTable,
   type Attempt,
   annotationBases as annotationBasesTable,
   annotations as annotationsTable,
@@ -856,6 +857,8 @@ export function getAnnotationView(
   } else {
     attempt = requireTeacherAttempt(db, principal.id, attemptId).attempt;
   }
+  // 懒补封（审查修复 2②）：已交卷未封存的 scratch 行在读视图入口自愈
+  lazilySealSubmittedScratch(db, [attempt.id]);
   // 宽松门口（软删题历史材料可读——同 note evidence 读口径）
   const row = db
     .select()
@@ -1024,8 +1027,12 @@ export function annotationBaseImageBytes(
 /**
  * 封存该 attempt 的指定 phase 标注（POST …/annotations/seal，决策 8）：
  * 幂等（已封存行不再变更，重放 sealedCount=0）；返回实际置封存的行数。
- * scratch 在交卷流程调用（flush 标注同步后）；correction 由前端在订正检查点
- * 调用（与笔记 sealCorrection 对偶）。封存后行只读（PUT → 409）。
+ *
+ * 时序口径（审查修复 2）：scratch seal 只在**交卷之后**合法——客户端在交卷
+ * 成功回调内补调（失败非阻断），draft 期调用 409（杀「确认弹层中止路径把
+ * 未交卷 scratch 永久锁死」的自害自封）；correction seal 恒合法（订正检查点
+ * 由前端在保存订正标注时调用）。封存后行只读（PUT → 409）。交卷后客户端
+ * seal 失败/响应丢失的兜底＝读路径懒补封（lazilySealSubmittedScratch）。
  */
 export function sealAttemptAnnotations(
   db: Db,
@@ -1034,6 +1041,13 @@ export function sealAttemptAnnotations(
   phase: AnnotationPhase = "scratch",
 ): AnnotationSealData {
   const attempt = requireUsableAttempt(db, studentId, attemptId);
+  if (phase === "scratch" && attempt.status === "draft") {
+    throw new HttpError(
+      409,
+      "ANNOTATION_NOT_SUBMITTED",
+      "这份作业尚未交卷，题干标注封存随交卷自动进行（不影响继续圈画；订正检查点不受此限）",
+    );
+  }
   const now = new Date().toISOString();
   const sealed = db
     .update(annotationsTable)
@@ -1048,6 +1062,43 @@ export function sealAttemptAnnotations(
     .returning({ id: annotationsTable.id })
     .all();
   return { phase, sealedCount: sealed.length };
+}
+
+/**
+ * 已交卷 attempt 的 scratch 行懒补封（审查修复 2②自愈，幂等）：
+ * 客户端 seal 挪到交卷成功回调后非阻断执行——网络失败、或响应丢失重试撞
+ * 409 ALREADY_SUBMITTED（不走 onSuccess）都会留下「已交卷但未封存」的行，
+ * 而装配收录口径只认 sealedAt。故在 getAnnotationView /
+ * assembleAnnotationPairs 入口现场补封（requireUsableAttempt 懒冻结同款
+ * 「读路径自愈」先例）。scratch 在已交卷 attempt 上本就只读
+ * （ALREADY_SUBMITTED 门槛），补封不改变任何可写性；correction 行**不**
+ * 懒补封——封存是订正检查点语义，进行中的订正不能被读路径意外定格。
+ */
+function lazilySealSubmittedScratch(db: Db, attemptIds: readonly string[]): void {
+  if (attemptIds.length === 0) return;
+  const submittedIds = db
+    .select({ id: attemptsTable.id })
+    .from(attemptsTable)
+    .where(
+      and(
+        inArray(attemptsTable.id, [...attemptIds]),
+        ne(attemptsTable.status, "draft"),
+      ),
+    )
+    .all()
+    .map((row) => row.id);
+  if (submittedIds.length === 0) return;
+  const now = new Date().toISOString();
+  db.update(annotationsTable)
+    .set({ sealedAt: now, updatedAt: now })
+    .where(
+      and(
+        inArray(annotationsTable.attemptId, submittedIds),
+        eq(annotationsTable.phase, "scratch"),
+        isNull(annotationsTable.sealedAt),
+      ),
+    )
+    .run();
 }
 
 // ---------- 导出装配（成对文件；review-pack / 学习包共用，决策 9） ----------
@@ -1113,6 +1164,9 @@ export function assembleAnnotationPairs(
   if (attemptIds.length === 0) {
     return { pairs, byResponseRowId };
   }
+  // 懒补封（审查修复 2②）：已交卷未封存的 scratch 行在装配入口自愈——
+  // 否则客户端 seal 失败会让本应成对收录的材料静默缺席
+  lazilySealSubmittedScratch(db, attemptIds);
   const annotationRows = db
     .select()
     .from(annotationsTable)
