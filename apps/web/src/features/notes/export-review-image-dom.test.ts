@@ -380,6 +380,70 @@ describe("exportReviewImages（失败语义：显式中文错误 + 零下载）"
   });
 });
 
+describe("exportReviewImages（异步步骤超时：挂起转分类失败，绝不永久 loading）", () => {
+  /** 永不 settle 的 Promise（模拟 iOS/旧 WebKit decode()/canvas 挂起怪癖） */
+  const never = <T>(): Promise<T> => new Promise<T>(() => {});
+
+  /** 注入 50ms 短超时（真实定时器——React 提交走 MessageChannel，假定时器推进不到） */
+  const fastTimeout = { stepTimeoutMs: 50 } as const;
+
+  it("字体收集挂起：超时转 font 失败（中文原因含超时）、零下载", async () => {
+    const saved: Array<{ filename: string; bytes: number }> = [];
+    const result = await exportReviewImages(STUDENT_PREVIEW, {
+      ...fastTimeout,
+      collectFontCss: () => never<string>(),
+      loadImages: async () => {},
+      rasterizeNode: async () => fakePngBlob(),
+      samplePngBlank: async () => false,
+      savePng: (blob, filename) => saved.push({ filename, bytes: blob.size }),
+      measureBlockHeights: (count) => Array.from({ length: count }, () => 100),
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.kind).toBe("font");
+    expect(result.error.message).toContain("超时");
+    expect(saved).toHaveLength(0);
+  });
+
+  it("图片预解码挂起：超时转 media 失败（不进渲染）、零下载", async () => {
+    const rasterize = vi.fn(async () => fakePngBlob());
+    const saved: Array<{ filename: string; bytes: number }> = [];
+    const result = await exportReviewImages(STUDENT_PREVIEW, {
+      ...fastTimeout,
+      collectFontCss: async () => "",
+      loadImages: () => never<void>(),
+      rasterizeNode: rasterize,
+      samplePngBlank: async () => false,
+      savePng: (blob, filename) => saved.push({ filename, bytes: blob.size }),
+      measureBlockHeights: (count) => Array.from({ length: count }, () => 100),
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.kind).toBe("media");
+    expect(result.error.message).toContain("超时");
+    expect(rasterize).not.toHaveBeenCalled();
+    expect(saved).toHaveLength(0);
+  });
+
+  it("栅格化挂起：超时转 rasterize 失败、零下载", async () => {
+    const saved: Array<{ filename: string; bytes: number }> = [];
+    const result = await exportReviewImages(STUDENT_PREVIEW, {
+      ...fastTimeout,
+      collectFontCss: async () => "",
+      loadImages: async () => {},
+      rasterizeNode: () => never<Blob>(),
+      samplePngBlank: async () => false,
+      savePng: (blob, filename) => saved.push({ filename, bytes: blob.size }),
+      measureBlockHeights: (count) => Array.from({ length: count }, () => 100),
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.kind).toBe("rasterize");
+    expect(result.error.message).toContain("超时");
+    expect(saved).toHaveLength(0);
+  });
+});
+
 describe("copyPngBlobToClipboard（无剪贴板降级，不崩溃不谎报）", () => {
   it("clipboard/ClipboardItem 不可用（HTTP 部署等）：返回 false、不抛错", async () => {
     // jsdom 默认无 navigator.clipboard 与 ClipboardItem——即目标降级环境

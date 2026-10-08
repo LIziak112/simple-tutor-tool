@@ -416,6 +416,11 @@ export interface ReviewImageExportDeps {
   readonly savePng?: (blob: Blob, filename: string) => void;
   /** 块高度测量（缺省真实布局测量；jsdom 无布局由测试注入） */
   readonly measureBlockHeights?: (blockCount: number) => number[];
+  /**
+   * 单步异步超时毫秒（缺省 REVIEW_IMAGE_ASYNC_STEP_TIMEOUT_MS；测试注入短值
+   * 加速挂起路径——不依赖假定时器，React 提交走 MessageChannel 不受其推进）。
+   */
+  readonly stepTimeoutMs?: number;
 }
 
 /** 导出结果：成功=逐页文件清单（含 blob 供「复制图片」辅助出口复用）；失败=分类错误（零下载） */
@@ -432,6 +437,35 @@ export type ReviewImageExportResult =
 
 function msgOf(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * 单步异步超时（ms）：字体收集 / 图片预解码（全局与逐页）/ 逐页栅格化各自
+ * 限时。iOS Safari 与旧 WebKit 存在 decode()/canvas 挂起、promise 永不
+ * settle 的已知怪癖——不限时会让导出按钮永久停在「正在生成」（审查修复轮
+ * P1-3）；超时按所在步骤转 font/media/rasterize 分类失败（零下载、可回落）。
+ */
+export const REVIEW_IMAGE_ASYNC_STEP_TIMEOUT_MS = 30_000;
+
+/** 超时兜底：正常先到则透传其结果/错误，并清理定时器 */
+function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  message: string,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err: unknown) => {
+        clearTimeout(timer);
+        reject(err instanceof Error ? err : new Error(String(err)));
+      },
+    );
+  });
 }
 
 function errOf(
@@ -941,14 +975,19 @@ export async function exportReviewImages(
   let root: Root | null = null;
   const loadImageFn =
     deps.loadImages !== undefined ? deps.loadImages : preloadImages;
+  const stepTimeoutMs =
+    deps.stepTimeoutMs ?? REVIEW_IMAGE_ASYNC_STEP_TIMEOUT_MS;
   try {
-    // ① 本地字体嵌入（KaTeX/正文字体随构建本地打包；嵌入失败显式放弃）
+    // ① 本地字体嵌入（KaTeX/正文字体随构建本地打包；嵌入失败/收集挂起超时同分类显式放弃）
     let fontCss: string;
     try {
-      fontCss =
+      fontCss = await withTimeout(
         deps.collectFontCss !== undefined
-          ? await deps.collectFontCss(document.body)
-          : await getFontEmbedCSS(document.body);
+          ? deps.collectFontCss(document.body)
+          : getFontEmbedCSS(document.body),
+        stepTimeoutMs,
+        `本地字体收集超时（${Math.round(stepTimeoutMs / 1000)} 秒）`,
+      );
     } catch (err) {
       return errOf(
         "font",
@@ -956,12 +995,16 @@ export async function exportReviewImages(
       );
     }
     try {
-      await document.fonts.ready;
+      await withTimeout(
+        Promise.resolve(document.fonts.ready),
+        stepTimeoutMs,
+        "document.fonts.ready 等待超时",
+      );
     } catch {
-      // 旧环境 fonts 集不可等待：字体嵌入失败已有独立分类，这里不阻断
+      // 旧环境 fonts 集不可等待或挂起：字体嵌入失败已有独立分类，这里不阻断
     }
 
-    // ② 图片预解码（测量高度需要图片真实尺寸；失败显式列出来源）
+    // ② 图片预解码（测量高度需要图片真实尺寸；失败/挂起超时显式列出来源）
     const imageSrcs = sections
       .filter(
         (s): s is Extract<ReviewImageSection, { kind: "image" }> =>
@@ -970,7 +1013,11 @@ export async function exportReviewImages(
       .map((s) => s.src);
     if (imageSrcs.length > 0) {
       try {
-        await loadImageFn(imageSrcs);
+        await withTimeout(
+          loadImageFn(imageSrcs),
+          stepTimeoutMs,
+          `图片解码超时（${Math.round(stepTimeoutMs / 1000)} 秒）`,
+        );
       } catch (err) {
         return errOf(
           "media",
@@ -1033,22 +1080,29 @@ export async function exportReviewImages(
         .filter((src) => src.length > 0);
       if (pageImageSrcs.length > 0) {
         try {
-          await loadImageFn(pageImageSrcs);
+          await withTimeout(
+            loadImageFn(pageImageSrcs),
+            stepTimeoutMs,
+            `页面图片等待超时（${Math.round(stepTimeoutMs / 1000)} 秒）`,
+          );
         } catch (err) {
           return errOf("media", `页面图片等待失败（${msgOf(err)}）`);
         }
       }
       let blob: Blob;
       try {
-        blob =
+        blob = await withTimeout(
           deps.rasterizeNode !== undefined
-            ? await deps.rasterizeNode(pageNode, {
+            ? deps.rasterizeNode(pageNode, {
                 cssWidth: REVIEW_IMAGE_WIDTH_CSS,
                 cssHeight,
                 pixelWidth: pixel.width,
                 pixelHeight: pixel.height,
               })
-            : await rasterizePageWithHtmlToImage(pageNode, cssHeight, fontCss);
+            : rasterizePageWithHtmlToImage(pageNode, cssHeight, fontCss),
+          stepTimeoutMs,
+          `栅格化超时（${Math.round(stepTimeoutMs / 1000)} 秒）`,
+        );
       } catch (err) {
         return errOf(
           "rasterize",
