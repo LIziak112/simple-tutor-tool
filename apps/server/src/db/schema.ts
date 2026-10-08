@@ -1,4 +1,6 @@
 import type {
+  AnnotationBaseState,
+  AnnotationPhase,
   AttemptStatus,
   DocumentKind,
   NoteImageSpec,
@@ -45,6 +47,9 @@ import {
  * T6R.2 追加题目草稿四表：notes（当前头）、note_versions（不可变正文）、
  * note_images（派生图）、submission_evidence（逐题提交证据）——方案见
  * docs/题目草稿功能方案.md §5；契约见 packages/contract/src/note.ts。
+ * T6R.20 追加题干标注两表：annotation_bases（固定底图，身份三要素）、
+ * annotations（标注当前头，CAS revision）——方案见同文档 §10；契约见
+ * packages/contract/src/annotation.ts。
  *
  * 全库约定（见 docs/开发任务清单.md §0.3 与 db-change 技能）：
  * - 主键 id 一律为应用层生成的 crypto.randomUUID() 字符串；
@@ -1242,6 +1247,165 @@ export const submissionEvidence = sqliteTable(
   ],
 );
 
+/**
+ * 题干标注两表（T6R.20，docs/题目草稿功能方案.md §10「固定底图＋独立矢量标注」；
+ * 契约权威定义在 packages/contract/src/annotation.ts）——
+ * annotation_bases 固定底图行（身份三要素：questionRevisionId＋snapshotHash＋
+ * baseRenderVersion）+ annotations 标注当前头（CAS revision，正文文件不可变）。
+ *
+ * 与 notes 四表的关系（计划决策 7 轻量口径）：标注数据量小（限额内几十笔）、
+ * 无审计版本链需求（订正另开是 phase 记录级隔离，非版本链）；单表 + CAS +
+ * mutationId 幂等与 note 上传协议同构，但**不复用** notes/note_versions 头/版本
+ * 两表（NoteDoc 覆盖载荷禁令——方案 §10「不塞进 NoteDoc 同一次覆盖上传」）。
+ *
+ * 存储口径：底图 PNG 与标注正文均不进数据库——底图存 DATA_DIR/blobs/
+ * annotations/<sha256>.png（内容寻址；**绝不放 blobs/media/**——/blobs 伺服
+ * 段白名单只放行 media/，且 requireAnySession 会把题干内容暴露给任意登录
+ * 学生，绕过题目可见性控制），正文存 blobs/annotation-bodies/<hash>.json.gz
+ * （gzip JSON 不可变文件）；库行只存相对路径。
+ *
+ * 归属推导同 notes：attemptId → attempts.studentId → students.teacherId 服务端
+ * 推导，客户端不可指定。
+ */
+export const annotationBases = sqliteTable(
+  "annotation_bases",
+  {
+    /** 主键：crypto.randomUUID()（§0.3；即契约 annotationBaseRef.baseId） */
+    id: text("id").primaryKey(),
+    /** 所属作答（attempts.id；归属链入口） */
+    attemptId: text("attempt_id")
+      .notNull()
+      .references(() => attempts.id),
+    /** 题目（questions.id，来自 DSL；无外键，D10 口径） */
+    questionId: text("question_id").notNull(),
+    /**
+     * 题目版本引用（身份三要素之一）：该 (attempt,question) 的 responses 行 id。
+     * attempt 快照冻结后不可变，本列用于写入时比对（不一致＝数据异常行）。
+     */
+    questionRevisionId: text("question_revision_id").notNull(),
+    /**
+     * 标注阶段：scratch=作答期（交卷 seal）/ correction=订正期另开记录。
+     * **无 supplement**（标注的记录级隔离只有两态）。
+     */
+    phase: text("phase").$type<AnnotationPhase>().notNull().default("scratch"),
+    /**
+     * 题目快照内容身份（身份三要素之二）：服务端 canonicalJson→sha-256。
+     * 不变式：＝该 responses 行 questionSnapshotJson 的规范化 hash（快照冻结
+     * 后不可变，正常永不漂移）；不一致＝stale（旧版本题干的标注，服务端
+     * 如实上报 UI 标旧版，不静默重生成底图——「同一份圈画永不换底图」）。
+     */
+    snapshotHash: text("snapshot_hash").notNull(),
+    /**
+     * 底图生成管线版本（身份三要素之三）：契约 ANNOTATION_BASE_RENDER_VERSION
+     * 单源。**不复用 note_versions.render_version**（那是笔记派生图渲染器版本，
+     * 语义不同，命名隔离）。ready 后永不重生成——版本递增只影响新底图。
+     */
+    baseRenderVersion: integer("base_render_version").notNull(),
+    /** 底图 PNG 相对路径（DATA_DIR 内 blobs/annotations/<sha256>.png）；仅 ready 非 NULL */
+    imagePath: text("image_path"),
+    /** 底图文件 sha-256（hex64）；仅 ready 非 NULL */
+    imageHash: text("image_hash"),
+    /** 底图像素宽（IHDR 实测；恒＝契约 ANNOTATION_BASE_WIDTH_PX）；仅 ready 非 NULL */
+    pixelWidth: integer("pixel_width"),
+    /** 底图像素高（IHDR 实测；≤契约上限）；仅 ready 非 NULL */
+    pixelHeight: integer("pixel_height"),
+    /**
+     * 底图状态：pending=装配载荷已建待客户端回传 PNG / ready=PNG 已落盘
+     * （此后挂画布、可落墨）/ failed=防御态（数据修复/异常标记）。
+     */
+    state: text("state")
+      .$type<AnnotationBaseState>()
+      .notNull()
+      .default("pending"),
+    /** 行创建时间：UTC ISO */
+    createdAt: text("created_at").notNull(),
+    /** 行最近更新时间：UTC ISO */
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    // 定位索引（attempt 下取题的热路径）。唯一性（同 attempt 同题同 phase 至多
+    // 一行）由服务层事务内先查后插保证——同 notes scratch 先例，不建 partial
+    // unique index 以保迁移简单。
+    index("annotation_bases_attempt_question_phase_idx").on(
+      table.attemptId,
+      table.questionId,
+      table.phase,
+    ),
+    // DB 层值域防御（$type 只约束 TS 不约束 SQLite——坏枚举串会让 API 投影
+    // parse 失败整页 500）
+    check(
+      "annotation_bases_phase_check",
+      sql`${table.phase} in ('scratch', 'correction')`,
+    ),
+    check(
+      "annotation_bases_state_check",
+      sql`${table.state} in ('pending', 'ready', 'failed')`,
+    ),
+  ],
+);
+
+/**
+ * 标注行（T6R.20）——每 (attempt, question, phase) 单行的当前头：
+ * - revision 从 0 起的 CAS 计数（无版本表——历史正文文件按内容寻址不可变，
+ *   行内指向最新一份；旧文件无引用后成为孤儿，标注量小不做 GC）；
+ * - bodyPath：gzip 后 AnnotationDoc 的不可变文件（blobs/annotation-bodies/
+ *   <hash>.json.gz，路径三段全服务端生成）；
+ * - sealedAt：交卷（scratch）/订正检查点（correction）封存时间；非空后行
+ *   只读（PUT → 409 ANNOTATION_SEALED，再编辑＝订正另开 correction 行）；
+ * - mutationId：最近一次成功写入的幂等键（单行设计：幂等窗口＝行仍持有该
+ *   id；全局唯一索引防两行共享）。
+ */
+export const annotations = sqliteTable(
+  "annotations",
+  {
+    /** 主键：crypto.randomUUID()（§0.3；即契约 annotationMeta.annotationId） */
+    id: text("id").primaryKey(),
+    /** 所属作答（attempts.id） */
+    attemptId: text("attempt_id")
+      .notNull()
+      .references(() => attempts.id),
+    /** 题目（questions.id，来自 DSL；无外键，D10 口径） */
+    questionId: text("question_id").notNull(),
+    /** 标注阶段（scratch/correction；语义同 annotation_bases.phase） */
+    phase: text("phase").$type<AnnotationPhase>().notNull().default("scratch"),
+    /** 所属底图（annotation_bases.id；「没有可靠底图不能落墨」的行级锚定） */
+    baseId: text("base_id")
+      .notNull()
+      .references(() => annotationBases.id),
+    /** 当前 revision（CAS 期望值口径；0=建行后尚无正文） */
+    revision: integer("revision").notNull().default(0),
+    /** 当前正文文件相对路径（blobs/annotation-bodies/<hash>.json.gz）；revision=0 时 NULL */
+    bodyPath: text("body_path"),
+    /** 当前正文 hash（服务端规范化 sha-256，hex64）；revision=0 时 NULL */
+    hash: text("hash"),
+    /** 笔画数（doc.strokes.length） */
+    strokeCount: integer("stroke_count").notNull().default(0),
+    /** 总点数（全稿 points 之和） */
+    pointCount: integer("point_count").notNull().default(0),
+    /** 封存时间（UTC ISO）；NULL=进行中。交卷 seal 置 scratch 行，检查点置 correction 行 */
+    sealedAt: text("sealed_at"),
+    /** 行最近更新时间：UTC ISO */
+    updatedAt: text("updated_at").notNull(),
+    /** 最近一次成功写入的幂等键（可空仅因 ALTER ADD COLUMN 限制；服务层恒写非空） */
+    mutationId: text("mutation_id"),
+  },
+  (table) => [
+    // 定位索引（attempt 下取题的热路径；唯一性服务层先查后插，同上）
+    index("annotations_attempt_question_phase_idx").on(
+      table.attemptId,
+      table.questionId,
+      table.phase,
+    ),
+    check(
+      "annotations_phase_check",
+      sql`${table.phase} in ('scratch', 'correction')`,
+    ),
+    // 幂等键全局唯一（同 note_versions.mutation_id 口径：SQLite 唯一索引
+    // 允许多个 NULL，空行互不冲突）
+    uniqueIndex("annotations_mutation_id_uk").on(table.mutationId),
+  ],
+);
+
 /** courses 表行类型（SELECT 结果） */
 export type Course = typeof courses.$inferSelect;
 /** courses 表插入类型 */
@@ -1367,3 +1531,11 @@ export type NewNoteImageRow = typeof noteImages.$inferInsert;
 export type SubmissionEvidenceRow = typeof submissionEvidence.$inferSelect;
 /** submission_evidence 表插入类型 */
 export type NewSubmissionEvidenceRow = typeof submissionEvidence.$inferInsert;
+/** annotation_bases 表行类型（SELECT 结果；T6R.20 固定底图） */
+export type AnnotationBaseRow = typeof annotationBases.$inferSelect;
+/** annotation_bases 表插入类型 */
+export type NewAnnotationBaseRow = typeof annotationBases.$inferInsert;
+/** annotations 表行类型（SELECT 结果；T6R.20 标注当前头） */
+export type AnnotationRow = typeof annotations.$inferSelect;
+/** annotations 表插入类型 */
+export type NewAnnotationRow = typeof annotations.$inferInsert;
