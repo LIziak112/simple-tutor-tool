@@ -30,6 +30,7 @@
     "echarts": "^6.1.0",
     "function-plot": "^1.25.4",
     "hono": "^4.13.9",
+    "html-to-image": "^1.11.13",
     "idb-keyval": "^6.3.0",
     "katex": "^0.16.47",
     "lucide-react": "^1.48.0",

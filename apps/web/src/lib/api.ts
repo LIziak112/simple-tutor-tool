@@ -262,9 +262,10 @@ async function throwShellError(res: Response): Promise<never> {
 /**
  * 触发浏览器保存 blob（a[download] 短挂载；object URL 用后即撤）。
  * api.ts 内全部文件直出下载（CSV/MD/学情包/单题包/逐张图片/备份）共用，
- * 不再各自手抄 anchor 七行。
+ * 不再各自手抄 anchor 七行。T6R.19 起导出模块（features/notes/
+ * export-review-image）复用同一实现——仍维持单一来源，不另写副本。
  */
-function saveBlobAs(blob: Blob, filename: string): void {
+export function saveBlobAs(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
   try {
     const anchor = document.createElement("a");

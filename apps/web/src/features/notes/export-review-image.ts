@@ -1,5 +1,26 @@
+import "katex/dist/katex.min.css";
+
 import type { ReviewPackPreviewData, ReviewPackRole } from "@tutor/contract";
 import { stemMdLeaksAnswers } from "@tutor/md-dsl";
+import { getFontEmbedCSS, toPng } from "html-to-image";
+import {
+  type ComponentProps,
+  createElement,
+  type ReactElement,
+  type ReactNode,
+} from "react";
+import { createRoot, type Root } from "react-dom/client";
+import ReactMarkdown from "react-markdown";
+import rehypeKatex from "rehype-katex";
+import rehypeSanitize from "rehype-sanitize";
+import remarkDirective from "remark-directive";
+import remarkFrontmatter from "remark-frontmatter";
+import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import { remarkBlank } from "@/features/markdown/remark/remark-blank";
+import { remarkDirectiveHost } from "@/features/markdown/remark/remark-directive-host";
+import { richMarkdownSanitizeSchema } from "@/features/markdown/sanitize";
+import { saveBlobAs } from "@/lib/api";
 
 /**
  * 静态合成图导出（T6R.19，方案 §10「合成图与题干圈画」）：把单题授权材料
@@ -362,4 +383,718 @@ export function reviewImageFilename(
   pageIndex: number,
 ): string {
   return `review-image-q${questionNo}-${role}-${String(pageIndex + 1).padStart(2, "0")}.png`;
+}
+
+// ---------- 栅格化适配器层（需要 DOM；依赖可注入以便 jsdom 测试） ----------
+
+/** PNG 魔数（编码校验：空输出/非 PNG 拒绝落盘） */
+const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] as const;
+
+/** 页面静态版式的字体栈（本地打包字体在前；中文回退系统字体） */
+const REVIEW_IMAGE_FONT_STACK =
+  '"Geist Variable", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif';
+
+/** 注入点集合（jsdom 无布局/canvas：单测注入假实现；生产缺省走真实链路） */
+export interface ReviewImageExportDeps {
+  /** 收集本地字体嵌入 CSS（缺省 html-to-image getFontEmbedCSS） */
+  readonly collectFontCss?: (node: HTMLElement) => Promise<string>;
+  /** 预解码图片（缺省 new Image + decode；失败显式抛错） */
+  readonly loadImages?: (urls: readonly string[]) => Promise<void>;
+  /** 栅格化页节点（缺省 html-to-image toPng → Blob） */
+  readonly rasterizeNode?: (
+    node: HTMLElement,
+    opts: {
+      readonly cssWidth: number;
+      readonly cssHeight: number;
+      readonly pixelWidth: number;
+      readonly pixelHeight: number;
+    },
+  ) => Promise<Blob>;
+  /** 采样判断 PNG 是否整页空白（缺省 Image+Canvas 采样） */
+  readonly samplePngBlank?: (blob: Blob) => Promise<boolean>;
+  /** 保存 PNG（缺省 saveBlobAs anchor 下载） */
+  readonly savePng?: (blob: Blob, filename: string) => void;
+  /** 块高度测量（缺省真实布局测量；jsdom 无布局由测试注入） */
+  readonly measureBlockHeights?: (blockCount: number) => number[];
+}
+
+/** 导出结果：成功=逐页文件清单；失败=分类错误（零下载） */
+export type ReviewImageExportResult =
+  | {
+      readonly ok: true;
+      readonly pages: ReadonlyArray<{
+        filename: string;
+        bytes: number;
+      }>;
+    }
+  | { readonly ok: false; readonly error: ReviewImageExportError };
+
+function msgOf(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function errOf(
+  kind: ReviewImageExportErrorKind,
+  message: unknown,
+): ReviewImageExportResult {
+  return {
+    ok: false,
+    error: {
+      kind,
+      message:
+        typeof message === "string"
+          ? message
+          : message instanceof Error
+            ? message.message
+            : String(message),
+    },
+  };
+}
+
+// ---------- 静态 markdown 渲染（与 RichMarkdown 同一 remark/rehype 管线，宿主组件换静态版） ----------
+
+/** react-markdown 注入的 hast 元素（本层只读 properties.directive） */
+interface HastNodeLike {
+  readonly properties?: Record<string, unknown>;
+}
+
+/** 从宿主标签属性还原指令名（与 directives/index.tsx readDirective 同源字段） */
+function directiveNameOf(node: unknown): string {
+  const directive = (node as HastNodeLike | null)?.properties?.directive;
+  return typeof directive === "string" ? directive : "";
+}
+
+/** 块级容器的静态标签（折叠块/分步等在合成图里永远展开呈现） */
+const STATIC_CONTAINER_LABELS: Record<string, string> = {
+  question: "题目",
+  hint: "提示",
+  answer: "答案",
+  solution: "解答",
+  example: "例",
+  steps: "分步",
+  step: "步骤",
+  fold: "折叠块",
+  tip: "提示",
+  warning: "注意",
+  box: "框注",
+  columns: "分栏",
+  col: "栏",
+};
+
+/** 静态块级容器宿主：内容恒展开（交互状态本就未记录，静态标记行已在材料里） */
+function StaticDirectiveContainer({
+  node,
+  children,
+}: {
+  node?: unknown;
+  children?: ReactNode;
+}): ReactElement {
+  const label = STATIC_CONTAINER_LABELS[directiveNameOf(node)];
+  return createElement(
+    "div",
+    {
+      style: {
+        margin: "10px 0",
+        padding: "10px 14px",
+        borderLeft: "3px solid #94a3b8",
+        background: "#f1f5f9",
+        borderRadius: "4px",
+      },
+    },
+    label !== undefined
+      ? createElement(
+          "div",
+          {
+            style: { fontSize: "12px", color: "#475569", marginBottom: "6px" },
+          },
+          `【${label}】`,
+        )
+      : null,
+    children,
+  );
+}
+
+/** 静态叶子指令宿主：::image 指向下方附件区块；其余以文字说明降级 */
+function StaticDirectiveLeaf({ node }: { node?: unknown }): ReactElement {
+  const name = directiveNameOf(node);
+  const text =
+    name === "image"
+      ? "【配图】见下方图片附件区块"
+      : `【${name.length > 0 ? name : "指令"}】交互内容以静态材料说明为准`;
+  return createElement(
+    "p",
+    { style: { margin: "8px 0", fontSize: "13px", color: "#475569" } },
+    text,
+  );
+}
+
+/** 静态行内指令宿主：blank=下划线空框；mark=高亮；其余按原文呈现 */
+function StaticDirectiveText({
+  node,
+  children,
+}: {
+  node?: unknown;
+  children?: ReactNode;
+}): ReactElement {
+  const name = directiveNameOf(node);
+  if (name === "blank") {
+    return createElement("span", {
+      style: {
+        display: "inline-block",
+        minWidth: "3em",
+        borderBottom: "1.5px solid #64748b",
+        height: "1em",
+      },
+    });
+  }
+  if (name === "mark") {
+    return createElement(
+      "span",
+      {
+        style: { background: "#fef08a", padding: "0 2px", borderRadius: "2px" },
+      },
+      children,
+    );
+  }
+  return createElement("span", null, children);
+}
+
+/** 与 RichMarkdown 同一套管线（解析口径一致）；宿主组件换成上面的静态版 */
+type ReactMarkdownProps = ComponentProps<typeof ReactMarkdown>;
+type RemarkPluginList = NonNullable<ReactMarkdownProps["remarkPlugins"]>;
+type RehypePluginList = NonNullable<ReactMarkdownProps["rehypePlugins"]>;
+const staticRemarkPlugins: RemarkPluginList = [
+  [remarkFrontmatter, ["yaml"]],
+  remarkMath,
+  remarkGfm,
+  remarkDirective,
+  remarkBlank,
+  remarkDirectiveHost,
+];
+const staticRehypePlugins: RehypePluginList = [
+  rehypeKatex,
+  [rehypeSanitize, richMarkdownSanitizeSchema],
+];
+const staticComponents = {
+  "directive-container": StaticDirectiveContainer,
+  "directive-leaf": StaticDirectiveLeaf,
+  "directive-text": StaticDirectiveText,
+} as unknown as Parameters<typeof ReactMarkdown>[0]["components"];
+
+/** 单段 markdown 的静态渲染（.rich-markdown 全局排版样式与主应用一致） */
+function StaticMarkdown({ md }: { md: string }): ReactElement {
+  return createElement(
+    "div",
+    { className: "rich-markdown" },
+    createElement(
+      ReactMarkdown,
+      {
+        remarkPlugins: staticRemarkPlugins,
+        rehypePlugins: staticRehypePlugins,
+        components: staticComponents,
+      },
+      md,
+    ),
+  );
+}
+
+// ---------- 版式区块 → DOM ----------
+
+/** 区块统一外壳：margin 0（间距靠内部 padding/元素自身 margin，避免跨页边距歧义） */
+function blockShell(
+  attrs: Record<string, string>,
+  style: Record<string, string>,
+  ...children: ReactNode[]
+): ReactElement {
+  return createElement(
+    "div",
+    { ...attrs, style: { margin: "0", ...style } },
+    ...children,
+  );
+}
+
+function renderSectionElement(section: ReviewImageSection): ReactElement {
+  switch (section.kind) {
+    case "header":
+      return blockShell(
+        { "data-export-block": "header" },
+        {
+          borderBottom: "2px solid #0f172a",
+          paddingBottom: "10px",
+          marginBottom: "14px",
+        },
+        createElement(
+          "div",
+          { style: { fontSize: "20px", fontWeight: "700" } },
+          section.title,
+        ),
+        createElement(
+          "div",
+          { style: { fontSize: "13px", color: "#475569", marginTop: "4px" } },
+          `${section.note} · 生成时间 ${section.generatedAtText}`,
+        ),
+      );
+    case "markdown":
+      // 包一层 flow-root 容器防止内部 margin 外溢；分页前拆为逐元素块
+      return blockShell(
+        { "data-export-md-wrap": "" },
+        { display: "flow-root" },
+        createElement(StaticMarkdown, { md: section.md }),
+      );
+    case "image":
+      // maxHeight 兜底：超高图等比缩到单块兜底上限内（仍超即 canvas-limit 显式失败）
+      return blockShell(
+        { "data-export-block": "image", "data-kind": "figure" },
+        { margin: "14px 0", textAlign: "center" },
+        createElement("img", {
+          src: section.src,
+          alt: section.alt,
+          style: {
+            maxWidth: "100%",
+            maxHeight: `${REVIEW_IMAGE_SINGLE_BLOCK_MAX_CONTENT_HEIGHT_CSS - 60}px`,
+            objectFit: "contain",
+            display: "block",
+            margin: "0 auto",
+          },
+        }),
+        createElement(
+          "div",
+          { style: { fontSize: "12px", color: "#64748b", marginTop: "4px" } },
+          section.caption,
+        ),
+      );
+    case "missing-note":
+      return blockShell(
+        { "data-export-block": "missing-note" },
+        {
+          margin: "10px 0",
+          padding: "8px 12px",
+          border: "1px solid #fbbf24",
+          background: "#fffbeb",
+          borderRadius: "4px",
+          fontSize: "13px",
+          color: "#92400e",
+        },
+        `缺失：${section.path} —— ${section.reason}`,
+      );
+  }
+}
+
+/** 渲染完成信号（callback ref 在 commit 时触发——等待 React 真正挂载） */
+function ExportContentRoot({
+  sections,
+  onMounted,
+}: {
+  sections: readonly ReviewImageSection[];
+  onMounted: () => void;
+}): ReactElement {
+  return createElement(
+    "div",
+    {
+      "data-export-content": "",
+      ref: onMounted,
+      style: { position: "relative", background: "#ffffff" },
+    },
+    sections.map(renderSectionElement),
+  );
+}
+
+/** root.render + 等待 commit（callback ref resolve） */
+function renderExportContent(
+  root: Root,
+  sections: readonly ReviewImageSection[],
+): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    try {
+      root.render(
+        createElement(ExportContentRoot, {
+          sections,
+          onMounted: () => resolve(),
+        }),
+      );
+    } catch (err) {
+      reject(err instanceof Error ? err : new Error(String(err)));
+    }
+  });
+}
+
+/**
+ * 拆 markdown 包装层：把每个 [data-export-md-wrap] 的顶层元素各自包进
+ * carry class 的薄壳（margin 可穿透薄壳照常折叠），使 markdown 逐段可分页。
+ */
+function unwrapMarkdownWrappers(content: HTMLElement): void {
+  for (const wrap of [
+    ...content.querySelectorAll<HTMLElement>("[data-export-md-wrap]"),
+  ]) {
+    const parent = wrap.parentElement;
+    if (parent === null) continue;
+    for (const child of [...wrap.children]) {
+      const shell = document.createElement("div");
+      shell.setAttribute("data-export-md-block", "");
+      shell.className = "rich-markdown";
+      shell.appendChild(child);
+      parent.insertBefore(shell, wrap);
+    }
+    wrap.remove();
+  }
+}
+
+/** 真实布局测量：块高=流内占位（相邻块 offsetTop 差；末块到内容底） */
+function measureBlockExtents(
+  content: HTMLElement,
+  blockNodes: readonly HTMLElement[],
+): number[] {
+  const total = content.scrollHeight;
+  return blockNodes.map((node, i) => {
+    const next = blockNodes[i + 1];
+    const end = next !== undefined ? next.offsetTop : total;
+    return Math.max(0, end - node.offsetTop);
+  });
+}
+
+/** 组装一页 DOM：把该页块节点移入页容器（每块恰归一页——不重不漏） */
+function buildPageNode(
+  host: HTMLElement,
+  plan: ReviewImagePagePlan,
+  blockNodes: readonly HTMLElement[],
+): HTMLElement {
+  const page = document.createElement("div");
+  page.setAttribute("data-review-image-page", String(plan.pageIndex));
+  Object.assign(page.style, {
+    width: `${REVIEW_IMAGE_WIDTH_CSS}px`,
+    boxSizing: "border-box",
+    padding: `${REVIEW_IMAGE_PAGE_PADDING_CSS}px`,
+    height: `${plan.contentHeightPx + 2 * REVIEW_IMAGE_PAGE_PADDING_CSS}px`,
+    background: "#ffffff",
+    display: "flow-root",
+    fontFamily: REVIEW_IMAGE_FONT_STACK,
+    fontSize: "16px",
+    lineHeight: "1.75",
+    color: "#0f172a",
+  });
+  for (const id of plan.blockIds) {
+    const node = blockNodes[Number(id.slice(1))];
+    if (node !== undefined) page.appendChild(node); // appendChild=移动（从内容流摘出）
+  }
+  host.appendChild(page);
+  return page;
+}
+
+// ---------- 缺省依赖实现（真实浏览器链路） ----------
+
+/** 预解码图片：decode 优先（等待解码完成），旧环境回退 load 事件 */
+async function preloadImages(urls: readonly string[]): Promise<void> {
+  await Promise.all(
+    urls.map(
+      (url) =>
+        new Promise<void>((resolve, reject) => {
+          const image = new Image();
+          const fail = (): void => reject(new Error(`图片加载失败：${url}`));
+          if (typeof image.decode === "function") {
+            image.src = url;
+            image.decode().then(
+              () => resolve(),
+              () => fail(),
+            );
+          } else {
+            image.onload = () => resolve();
+            image.onerror = () => fail();
+            image.src = url;
+          }
+        }),
+    ),
+  );
+}
+
+/** html-to-image 栅格化：toPng dataUrl → Blob（data: fetch 在现代浏览器可用） */
+async function rasterizePageWithHtmlToImage(
+  node: HTMLElement,
+  cssHeight: number,
+  fontCss: string,
+): Promise<Blob> {
+  const dataUrl = await toPng(node, {
+    width: REVIEW_IMAGE_WIDTH_CSS,
+    height: Math.ceil(cssHeight),
+    pixelRatio: REVIEW_IMAGE_PIXEL_RATIO,
+    backgroundColor: "#ffffff",
+    fontEmbedCSS: fontCss,
+  });
+  if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:image/png")) {
+    throw new Error("栅格化未产出 PNG 数据");
+  }
+  const blob = await (await fetch(dataUrl)).blob();
+  return blob;
+}
+
+/** Blob 是否 PNG 魔数形状（空输出/非 PNG 在此拦截） */
+async function pngBlobHasMagic(blob: Blob): Promise<boolean> {
+  if (blob.size < 8) return false;
+  const head = new Uint8Array(await blob.slice(0, 8).arrayBuffer());
+  return PNG_MAGIC.every((byte, i) => head[i] === byte);
+}
+
+/**
+ * 采样判断整页空白（「不下载空白 PNG 后显示成功」的产物侧防线）：画布采样
+ * 64×64 网格，全部采样点纯白/透明 → 判空白（页面恒有页眉文字，全白只可能是
+ * 字体嵌入或 foreignObject 渲染失败）。画布不可用时不误杀（返回非空白）。
+ */
+async function samplePngBlank(blob: Blob): Promise<boolean> {
+  const url = URL.createObjectURL(blob);
+  try {
+    const image = new Image();
+    await new Promise<void>((resolve, reject) => {
+      image.onload = () => resolve();
+      image.onerror = () => reject(new Error("空白校验图加载失败"));
+      image.src = url;
+    });
+    const canvas = document.createElement("canvas");
+    canvas.width = image.naturalWidth;
+    canvas.height = image.naturalHeight;
+    const ctx = canvas.getContext("2d");
+    if (ctx === null) return false;
+    ctx.drawImage(image, 0, 0);
+    const stepX = Math.max(1, Math.floor(canvas.width / 64));
+    const stepY = Math.max(1, Math.floor(canvas.height / 64));
+    for (let y = 0; y < canvas.height; y += stepY) {
+      for (let x = 0; x < canvas.width; x += stepX) {
+        const [r, g, b, a] = ctx.getImageData(x, y, 1, 1).data;
+        if (a === 0) continue;
+        if (!(r === 255 && g === 255 && b === 255)) return false;
+      }
+    }
+    return true;
+  } catch {
+    return false; // 校验链路故障不误杀（魔数/空白另有 encode 分类兜底）
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+// ---------- 主流程 ----------
+
+/**
+ * 导出合成图（适配器主流程）：
+ * 模型守卫 → 字体嵌入 → 图片预解码 → 离屏渲染 → 测量分页 → 逐页栅格化
+ * + 产物校验（魔数/空白）→ 全部通过后统一下载。任一步失败返回分类错误且
+ * **零下载**；离屏宿主必然清理（成功/失败同路径）。
+ */
+export async function exportReviewImages(
+  preview: ReviewPackPreviewData,
+  deps: ReviewImageExportDeps = {},
+): Promise<ReviewImageExportResult> {
+  let sections: readonly ReviewImageSection[];
+  try {
+    sections = buildReviewImageSections(preview);
+  } catch (err) {
+    return errOf("forbidden", err);
+  }
+  if (typeof document === "undefined") {
+    return errOf("rasterize", "合成图导出需要浏览器环境（当前环境无 DOM）");
+  }
+
+  const host = document.createElement("div");
+  host.setAttribute("data-review-image-host", "");
+  host.setAttribute("aria-hidden", "true");
+  Object.assign(host.style, {
+    position: "fixed",
+    left: "-99999px",
+    top: "0",
+    width: `${REVIEW_IMAGE_WIDTH_CSS}px`,
+    background: "#ffffff",
+    zIndex: "-1",
+  });
+  document.body.appendChild(host);
+  let root: Root | null = null;
+  const loadImageFn =
+    deps.loadImages !== undefined ? deps.loadImages : preloadImages;
+  try {
+    // ① 本地字体嵌入（KaTeX/正文字体随构建本地打包；嵌入失败显式放弃）
+    let fontCss: string;
+    try {
+      fontCss =
+        deps.collectFontCss !== undefined
+          ? await deps.collectFontCss(document.body)
+          : await getFontEmbedCSS(document.body);
+    } catch (err) {
+      return errOf(
+        "font",
+        `本地字体嵌入失败（${msgOf(err)}）——公式/文字可能缺字，已放弃导出；可继续使用「下载完整包」出口`,
+      );
+    }
+    try {
+      await document.fonts.ready;
+    } catch {
+      // 旧环境 fonts 集不可等待：字体嵌入失败已有独立分类，这里不阻断
+    }
+
+    // ② 图片预解码（测量高度需要图片真实尺寸；失败显式列出来源）
+    const imageSrcs = sections
+      .filter(
+        (s): s is Extract<ReviewImageSection, { kind: "image" }> =>
+          s.kind === "image",
+      )
+      .map((s) => s.src);
+    if (imageSrcs.length > 0) {
+      try {
+        await loadImageFn(imageSrcs);
+      } catch (err) {
+        return errOf(
+          "media",
+          `配图/原稿图片加载失败（${msgOf(err)}）——权限可能过期或网络异常，已放弃导出；可继续使用「逐张下载」出口`,
+        );
+      }
+    }
+
+    // ③ 离屏渲染（React 挂载到固定宽容器；commit 后拆 markdown 块）
+    const reactHost = document.createElement("div");
+    host.appendChild(reactHost);
+    root = createRoot(reactHost);
+    await renderExportContent(root, sections);
+    const content = reactHost.querySelector<HTMLElement>(
+      "[data-export-content]",
+    );
+    if (content === null) {
+      return errOf("rasterize", "离屏内容构建失败（未找到内容根节点）");
+    }
+    unwrapMarkdownWrappers(content);
+    const blockNodes = [...content.children] as HTMLElement[];
+
+    // ④ 测量 + 分页（单块超兜底上限 → canvas-limit 显式失败）
+    const heights =
+      deps.measureBlockHeights !== undefined
+        ? deps.measureBlockHeights(blockNodes.length)
+        : measureBlockExtents(content, blockNodes);
+    let pages: readonly ReviewImagePagePlan[];
+    try {
+      pages = planReviewImagePages(
+        blockNodes.map((_, i) => ({
+          id: `b${i}`,
+          heightPx: heights[i] ?? 0,
+        })),
+      );
+    } catch (err) {
+      return errOf("canvas-limit", msgOf(err));
+    }
+    if (pages.length === 0) {
+      return errOf("rasterize", "合成图内容为空，未生成任何页面");
+    }
+
+    // ⑤ 逐页栅格化 + 产物校验（先全部通过，再统一下载——失败零下载）
+    const rendered: Array<{ pageIndex: number; blob: Blob }> = [];
+    for (const plan of pages) {
+      const cssHeight =
+        plan.contentHeightPx + 2 * REVIEW_IMAGE_PAGE_PADDING_CSS;
+      let pixel: { width: number; height: number };
+      try {
+        pixel = reviewImageCanvasPixelSize(plan.contentHeightPx);
+      } catch (err) {
+        return errOf("canvas-limit", msgOf(err));
+      }
+      const pageNode = buildPageNode(host, plan, blockNodes);
+      // 页内图片再等一轮（块移动后仍同一批 URL，缓存命中近零成本）
+      const pageImageSrcs = [
+        ...pageNode.querySelectorAll<HTMLImageElement>("img"),
+      ]
+        .map((img) => img.getAttribute("src") ?? "")
+        .filter((src) => src.length > 0);
+      if (pageImageSrcs.length > 0) {
+        try {
+          await loadImageFn(pageImageSrcs);
+        } catch (err) {
+          return errOf("media", `页面图片等待失败（${msgOf(err)}）`);
+        }
+      }
+      let blob: Blob;
+      try {
+        blob =
+          deps.rasterizeNode !== undefined
+            ? await deps.rasterizeNode(pageNode, {
+                cssWidth: REVIEW_IMAGE_WIDTH_CSS,
+                cssHeight,
+                pixelWidth: pixel.width,
+                pixelHeight: pixel.height,
+              })
+            : await rasterizePageWithHtmlToImage(pageNode, cssHeight, fontCss);
+      } catch (err) {
+        return errOf(
+          "rasterize",
+          `合成图栅格化失败（${msgOf(err)}）——已放弃导出；可继续使用「下载完整包」出口`,
+        );
+      }
+      if (!(await pngBlobHasMagic(blob))) {
+        return errOf(
+          "encode",
+          `第 ${plan.pageIndex + 1} 页 PNG 编码失败（空输出或非 PNG）——不下载残缺文件`,
+        );
+      }
+      const blank =
+        deps.samplePngBlank !== undefined
+          ? await deps.samplePngBlank(blob)
+          : await samplePngBlank(blob);
+      if (blank) {
+        return errOf(
+          "encode",
+          `第 ${plan.pageIndex + 1} 页栅格化为空白图片（字体或渲染失败）——不下载空白图`,
+        );
+      }
+      rendered.push({ pageIndex: plan.pageIndex, blob });
+    }
+
+    // ⑥ 统一下载（全部校验通过才触发）
+    const out = rendered.map(({ pageIndex, blob }) => {
+      const filename = reviewImageFilename(
+        preview.questionNo,
+        preview.role,
+        pageIndex,
+      );
+      if (deps.savePng !== undefined) {
+        deps.savePng(blob, filename);
+      } else {
+        saveBlobAs(blob, filename);
+      }
+      return { filename, bytes: blob.size };
+    });
+    return { ok: true, pages: out };
+  } catch (err) {
+    return errOf("rasterize", `合成图导出失败（${msgOf(err)}）`);
+  } finally {
+    if (root !== null) {
+      try {
+        root.unmount();
+      } catch {
+        // 块节点已被移入页容器：React 清理失败不影响宿主整体移除
+      }
+    }
+    host.remove();
+  }
+}
+
+// ---------- 剪贴板（可选辅助出口：不可用即降级，不崩溃不谎报） ----------
+
+/**
+ * 把 PNG Blob 写入剪贴板（「复制图片」辅助出口）：
+ * navigator.clipboard.write + ClipboardItem 仅安全上下文（HTTPS/localhost）
+ * 且浏览器支持时可用——任一不可用或写入被拒都返回 false（调用方提示改用
+ * 下载文件，绝不显示「已复制」）。与 copyText 的降级纪律同口径。
+ */
+export async function copyPngBlobToClipboard(blob: Blob): Promise<boolean> {
+  const clipboard = (
+    navigator as {
+      clipboard?: { write?: (items: unknown[]) => Promise<void> };
+    }
+  ).clipboard;
+  const ClipboardItemCtor = (
+    globalThis as {
+      ClipboardItem?: new (items: Record<string, Blob>) => unknown;
+    }
+  ).ClipboardItem;
+  if (clipboard?.write === undefined || ClipboardItemCtor === undefined) {
+    return false;
+  }
+  try {
+    await clipboard.write([new ClipboardItemCtor({ "image/png": blob })]);
+    return true;
+  } catch {
+    return false;
+  }
 }
