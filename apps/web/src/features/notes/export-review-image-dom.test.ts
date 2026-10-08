@@ -86,6 +86,73 @@ afterEach(() => {
   }
 });
 
+/** 由行内样式推导内容宽（边框盒宽 − 左右内边距；两个容器都声明 border-box） */
+function inlineContentWidthOf(node: HTMLElement): number {
+  return (
+    Number.parseFloat(node.style.width) -
+    Number.parseFloat(node.style.paddingLeft || "0") -
+    Number.parseFloat(node.style.paddingRight || "0")
+  );
+}
+
+describe("exportReviewImages（测量与渲染同几何——审查修复轮 P0-1/P1-2 回归）", () => {
+  it("测量容器与页容器内容宽一致：同为 648（720 边框盒 − 左右留白 36×2）", async () => {
+    const spies = {
+      rasterizedHtml: [] as string[],
+      saved: [] as Array<{ filename: string; bytes: number }>,
+    };
+    let measurementContent: HTMLElement | null = null;
+    let pageNode: HTMLElement | null = null;
+    const result = await exportReviewImages(STUDENT_PREVIEW, {
+      ...okDeps(spies),
+      rasterizeNode: async (node: HTMLElement) => {
+        // 栅格化时离屏宿主仍在文档中：测量容器与页容器可同时取样
+        measurementContent ??= document.querySelector<HTMLElement>(
+          "[data-export-content]",
+        );
+        pageNode ??= node;
+        spies.rasterizedHtml.push(node.outerHTML);
+        return fakePngBlob();
+      },
+    });
+    expect(result.ok).toBe(true);
+    expect(measurementContent).not.toBeNull();
+    expect(pageNode).not.toBeNull();
+    // 页容器：720 边框盒 − padding 36×2 = 648 内容宽（跨行段落换行口径基准）
+    expect(inlineContentWidthOf(pageNode as HTMLElement)).toBe(648);
+    // 测量容器必须同几何——否则 648 宽下换行更多的段落在 720 宽下测量高度
+    // 偏小，每页底部内容被 foreignObject 视口裁剪丢失（P0-1）
+    expect(inlineContentWidthOf(measurementContent as HTMLElement)).toBe(648);
+    expect(measurementContent?.style.boxSizing).toBe("border-box");
+    expect(pageNode?.style.boxSizing).toBe("border-box");
+  });
+
+  it("页首块 margin-top 归零：每页第一个块行内 marginTop=0（BFC 口径与测量口径一致）", async () => {
+    const spies = {
+      rasterizedHtml: [] as string[],
+      saved: [] as Array<{ filename: string; bytes: number }>,
+      // 每块 900：两块即 1800 > 1500 → 每块独立成页（多页才有页首块语义）
+      heights: (count: number) => Array.from({ length: count }, () => 900),
+    };
+    const firstBlockMargins: string[] = [];
+    const result = await exportReviewImages(STUDENT_PREVIEW, {
+      ...okDeps(spies),
+      rasterizeNode: async (node: HTMLElement) => {
+        const first = node.firstElementChild as HTMLElement | null;
+        firstBlockMargins.push(first?.style.marginTop ?? "(缺失)");
+        return fakePngBlob();
+      },
+    });
+    expect(result.ok).toBe(true);
+    expect(firstBlockMargins.length).toBeGreaterThanOrEqual(2);
+    for (const margin of firstBlockMargins) {
+      // 测量容器的块高差（offsetTop delta）不含块自身 margin-top；页容器
+      // flow-root 的 BFC 全额包含页首块 margin——不归零每页多溢出 8–14px（P1-2）
+      expect(margin).toBe("0px");
+    }
+  });
+});
+
 describe("exportReviewImages（适配器层：成功与清理）", () => {
   it("学生载荷单页成功：页 DOM 含题面与学生答案、下载一次、离屏宿主清理", async () => {
     const spies = {

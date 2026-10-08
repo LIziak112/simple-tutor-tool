@@ -57,7 +57,7 @@ export const REVIEW_IMAGE_WIDTH_CSS = 720;
 /** 像素比（2x 导出：小字与公式笔画在 AI 侧可读） */
 export const REVIEW_IMAGE_PIXEL_RATIO = 2;
 
-/** 页面上下留白（CSS px；左右留白同值，见 PAGE_PADDING 常量组） */
+/** 页面四周留白（CSS px）：页容器四向同值；测量容器取左右（内容宽与页容器一致） */
 export const REVIEW_IMAGE_PAGE_PADDING_CSS = 36;
 
 /**
@@ -690,7 +690,13 @@ function KeyedSection({
   return renderSectionElement(section);
 }
 
-/** 渲染完成信号（callback ref 在 commit 时触发——等待 React 真正挂载） */
+/**
+ * 渲染完成信号（callback ref 在 commit 时触发——等待 React 真正挂载）。
+ *
+ * 测量几何必须与页容器一致（审查修复轮 P0-1）：720 边框盒 − 左右留白 36×2
+ * = 648 内容宽——跨行段落在两处换行口径相同，测量高才等于真实渲染高。
+ * 上下留白不进测量容器：offsetTop 差值口径只看块间差，页高已按 +72 预算。
+ */
 function ExportContentRoot({
   sections,
   onMounted,
@@ -703,7 +709,14 @@ function ExportContentRoot({
     {
       "data-export-content": "",
       ref: onMounted,
-      style: { position: "relative", background: "#ffffff" },
+      style: {
+        position: "relative",
+        background: "#ffffff",
+        boxSizing: "border-box",
+        width: `${REVIEW_IMAGE_WIDTH_CSS}px`,
+        paddingLeft: `${REVIEW_IMAGE_PAGE_PADDING_CSS}px`,
+        paddingRight: `${REVIEW_IMAGE_PAGE_PADDING_CSS}px`,
+      },
     },
     sections.map((section, i) =>
       createElement(KeyedSection, { key: `s${i}`, section }),
@@ -791,6 +804,12 @@ function buildPageNode(
     const node = blockNodes[Number(id.slice(1))];
     if (node !== undefined) page.appendChild(node); // appendChild=移动（从内容流摘出）
   }
+  // 页首块 margin-top 归零（审查修复轮 P1-2）：测量口径是块间 offsetTop 差
+  // （不含块自身 margin-top，测量容器无 BFC 时折叠穿透不计入）；页容器
+  // flow-root 的 BFC 全额包含页首块 margin——不归零每页实际高度超出预算
+  // 8–14px，页底最后一行会被固定页高视口裁掉。
+  const first = page.firstElementChild as HTMLElement | null;
+  if (first !== null) first.style.marginTop = "0";
   host.appendChild(page);
   return page;
 }
