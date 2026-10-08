@@ -14,6 +14,8 @@ import {
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { HintEntryList } from "@/features/attempt/HintPanel";
+import { AnnotationLayer } from "@/features/annotation/AnnotationLayer";
+import { AnnotationView } from "@/features/annotation/AnnotationView";
 import { ReviewPackPanel } from "@/features/export/review-pack-panel";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { CorrectionSection } from "@/features/notes/CorrectionSection";
@@ -349,6 +351,23 @@ function ResultQuestionCard({
           roundLabel={roundLabel}
         />
       )}
+
+      {/* T6R.20：本次题干标注回看（scratch 只读——交卷已封存）＋订正标注
+          入口（phase=correction 另开新记录，旧 scratch 不变）。学生自有
+          材料不受答案公布 gate 限制 */}
+      <AnnotationView
+        viewer="student"
+        attemptId={attemptId}
+        questionId={question.questionId}
+        questionNo={index + 1}
+        ariaPrefix={`第 ${index + 1} 题`}
+      />
+      <AnnotationLayer
+        attemptId={attemptId}
+        questionId={question.questionId}
+        phase="correction"
+        ariaPrefix={`第 ${index + 1} 题`}
+      />
 
       {/* 手写题：我的手写笔迹缩略图（T2.8；无笔迹时隐藏） */}
       {isHandwritten && (

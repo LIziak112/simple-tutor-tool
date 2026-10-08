@@ -28,7 +28,8 @@ import type {
   NoteServerBodyState,
   SubmitEvidenceDeclaration,
 } from "@tutor/contract";
-import { fetchStudentNoteHeadsApi } from "@/lib/api";
+import { fetchStudentNoteHeadsApi, sealAttemptAnnotationsApi } from "@/lib/api";
+import { catchUpAnnotations } from "@/features/annotation/annotation-sync";
 import {
   deriveServerState,
   loadScratchRecords,
@@ -175,6 +176,14 @@ export async function prepareSubmitEvidence(input: {
   // ① 冻结编辑（模态弹层覆盖）后追平本卷草稿（先排干本地落盘再上传再
   //    排干——语义见 note-sync.catchUpNotes）
   await catchUpNotes(input.attemptId);
+
+  // ①' T6R.20 标注固定（方案 §10「按次固定」＋计划决策 8）：flush 标注同步
+  //    → POST seal（phase=scratch 全部 sealedAt，之后 PUT 409）——与
+  //    flushNoteSync 同序（先追平后封存）。seal 幂等（重跑/重交安全）；
+  //    网络失败抛错阻止交卷（可重试）。标注未追平（dirty/conflict）不阻止
+  //    交卷——标注是独立附件（submission_evidence 表不动），本地稿保留。
+  await catchUpAnnotations(input.attemptId);
+  await sealAttemptAnnotationsApi(input.attemptId);
 
   // ② 本卷记录（attempt 前缀单事务装载，strictRead 读失败抛错≠无记录）
   //    与整卷服务端 head 同窗并发读取（T6R.14：一次批量 POST，N 逐题 GET

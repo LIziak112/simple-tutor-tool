@@ -1496,6 +1496,19 @@ export function fetchTeacherAnnotationViewApi(
   );
 }
 
+/** 学生端标注底图 PNG 的 URL（与服务端 downloadUrl 同构；上传成功后客户端直构） */
+export function studentAnnotationBasePngUrl(
+  attemptId: string,
+  baseId: string,
+): string {
+  return `/api/student/attempts/${encodeURIComponent(attemptId)}/annotation-base/${encodeURIComponent(baseId)}/image.png`;
+}
+
+/** 教师端标注底图 PNG 的 URL（teacher-attempts 路由直出） */
+export function teacherAnnotationBasePngUrl(baseId: string): string {
+  return `/api/teacher/annotation-bases/${encodeURIComponent(baseId)}/image.png`;
+}
+
 // ---------- 图片上传（POST /api/teacher/media：导入页随行图片流程在用） ----------
 
 /**

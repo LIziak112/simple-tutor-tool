@@ -13,6 +13,7 @@ import {
   QUESTION_TYPE_LABELS,
 } from "@/features/attempt/answer-format";
 import { ReviewPackPanel } from "@/features/export/review-pack-panel";
+import { AnnotationView } from "@/features/annotation/AnnotationView";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { NoteOriginalView } from "@/features/notes/NoteOriginalView";
 import { AttemptQuestionMarkEditor } from "./AttemptQuestionMarkEditor";
@@ -317,6 +318,16 @@ export function AttemptDetailQuestionCard({
           roundLabel={roundLabel}
         />
       )}
+
+      {/* T6R.20：学生题干标注回看（教师域；draft 期标注未封存也可看本人
+          作答过程——教师查看学生证据的路由模式） */}
+      <AnnotationView
+        viewer="teacher"
+        attemptId={attemptId}
+        questionId={question.questionId}
+        questionNo={question.no}
+        ariaPrefix={`第 ${question.no} 题`}
+      />
 
       {/* 学生答案 + 参考答案（draft 无参考答案对比，D5） */}
       <div className="flex flex-col gap-1.5 rounded-lg bg-muted/40 px-4 py-3 text-sm sm:flex-row sm:gap-6">

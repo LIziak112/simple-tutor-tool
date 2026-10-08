@@ -36,6 +36,13 @@ vi.mock("@/lib/api", async (importOriginal) => {
     ...actual,
     putNoteDocumentApi: vi.fn(),
     fetchStudentNoteHeadsApi: vi.fn(),
+    // T6R.20：交卷链路扩展的标注封存（幂等 sealedCount=0——真实语义由
+    // annotation-sync/服务端测试覆盖，此处只解除网络依赖）
+    sealAttemptAnnotationsApi: vi.fn(async () => ({
+      phase: "scratch" as const,
+      sealedCount: 0,
+    })),
+    putAnnotationDocApi: vi.fn(),
   };
 });
 
@@ -396,5 +403,81 @@ describe("snapshotNoteOverview：快览分类与权威方向一致（#13）", ()
       [Q2, "none"],
       [Q3, "will-freeze"],
     ]);
+  });
+});
+
+describe("prepareSubmitEvidence：T6R.20 标注封存集成（flush→seal→声明）", () => {
+  it("交卷前先追平标注上传再 seal（顺序锁定）；seal 失败抛错阻止交卷", async () => {
+    const sealMock = vi.mocked(
+      (await import("@/lib/api")).sealAttemptAnnotationsApi,
+    );
+    const annotationPutMock = vi.mocked(
+      (await import("@/lib/api")).putAnnotationDocApi,
+    );
+    // 绑定标注会话 + 写一份待传标注（flush 目标）
+    const {
+      bindAnnotationSession,
+      resetAnnotationSession,
+    } = await import("@/features/annotation/annotation-sync");
+    const {
+      installAnnotationBackend,
+      memoryAnnotationBackend,
+      writeAnnotationDoc,
+      settleAnnotationPersistence,
+    } = await import("@/features/annotation/annotation-store");
+    installAnnotationBackend(memoryAnnotationBackend());
+    bindAnnotationSession(SESSION_A);
+    try {
+      writeAnnotationDoc(
+        SESSION_A,
+        { attemptId: ATTEMPT, questionId: Q1, phase: "scratch" },
+        {
+          version: 1,
+          baseWidth: 1440,
+          baseHeight: 900,
+          strokes: [
+            {
+              tool: "pen",
+              color: "#dc2626",
+              weight: 5.76,
+              points: [{ x: 100, y: 100, p: 0.5, t: 0 }],
+            },
+          ],
+        },
+      );
+      await settleAnnotationPersistence();
+      const order: string[] = [];
+      annotationPutMock.mockImplementation(async () => {
+        order.push("annotation-put");
+        return {
+          annotationId: "00000000-0000-4000-8000-000000000001",
+          revision: 1,
+          hash: "a".repeat(64),
+          savedAt: "2026-10-08T00:00:00Z",
+        };
+      });
+      sealMock.mockImplementation(async () => {
+        order.push("seal");
+        return { phase: "scratch", sealedCount: 1 };
+      });
+      mockHeads({});
+      const prep = await prepareSubmitEvidence({
+        attemptId: ATTEMPT,
+        questionIds: [Q1],
+      });
+      expect(prep.declarations).toEqual([{ questionId: Q1, state: "none" }]);
+      // 顺序：标注上传先于 seal（flush → seal → 交卷）
+      expect(order.indexOf("annotation-put")).toBeLessThan(
+        order.indexOf("seal"),
+      );
+
+      // seal 失败（网络）→ 抛错阻止交卷（调用方提示重试）
+      sealMock.mockRejectedValueOnce(new Error("连不上服务器"));
+      await expect(
+        prepareSubmitEvidence({ attemptId: ATTEMPT, questionIds: [Q1] }),
+      ).rejects.toThrow("连不上服务器");
+    } finally {
+      resetAnnotationSession();
+    }
   });
 });

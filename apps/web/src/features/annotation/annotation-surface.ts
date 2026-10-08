@@ -96,7 +96,7 @@ function logicalToBase(baseWidth: number, value: number): number {
  * 位图。cssPerBase = CSS 像素/底图像素：坐标 base×cssPerBase、线宽
  * weight_base×cssPerBase 交给 atrament 后，净落位图值 = 原底图像素值。
  */
-function replayAnnotationStroke(
+export function replayAnnotationStroke(
   atrament: Atrament,
   cssPerBase: number,
   s: InkStroke,
