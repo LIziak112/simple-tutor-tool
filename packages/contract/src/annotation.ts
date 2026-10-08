@@ -355,11 +355,12 @@ export const annotationMetaSchema = z.object({
 /**
  * 标注回看视图（学生本人 / 教师按 attempt 归属共用形状；计划决策 10）：
  * base 携带 stale 供 UI 标「旧版本题干的标注」；doc 与 annotation 同空同有
- * （无落墨=双双 null 的显式空态）。
+ * （无落墨=双双 null 的显式空态）。base 为 null = 该题从未建过底图（标注
+ * 入口未用过）；有标注必有底图（superRefine 锁定）。
  */
 export const annotationViewDataSchema = z
   .object({
-    base: annotationBaseRefSchema,
+    base: annotationBaseRefSchema.nullable(),
     maxWidthPx: z.literal(ANNOTATION_BASE_WIDTH_PX),
     /** 当前标注正文（服务端解压后的 AnnotationDoc）；无标注为 null */
     doc: annotationDocSchema.nullable(),
@@ -374,7 +375,20 @@ export const annotationViewDataSchema = z
         message: "状态不一致：doc 与 annotation 必须同时为空或同时非空",
       });
     }
+    if (view.doc !== null && view.base === null) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["base"],
+        message: "状态不一致：有标注正文必须有底图（没有可靠底图不能落墨）",
+      });
+    }
   });
+
+/** 标注封存响应 data：phase 回显 + 本次实际置封存的行数（幂等重放为 0） */
+export const annotationSealDataSchema = z.object({
+  phase: annotationPhaseSchema,
+  sealedCount: z.number().int().min(0),
+});
 
 // ---------- 错误码 ----------
 
@@ -462,6 +476,7 @@ export type AnnotationBasePreviewData = z.infer<
 >;
 export type AnnotationMeta = z.infer<typeof annotationMetaSchema>;
 export type AnnotationViewData = z.infer<typeof annotationViewDataSchema>;
+export type AnnotationSealData = z.infer<typeof annotationSealDataSchema>;
 export type AnnotationErrorCode = z.infer<typeof annotationErrorCodeSchema>;
 
 // ---------- 与后续任务的关系 ----------

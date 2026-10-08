@@ -356,15 +356,26 @@ describe("annotationViewDataSchema", () => {
     pointCount: 2,
   };
 
-  it("空态（doc=null、annotation=null）合法", () => {
+  it("空态（base/doc/annotation 全 null——该题从未建过底图）合法", () => {
     expect(
       annotationViewDataSchema.safeParse({
-        base: baseRef(),
+        base: null,
         maxWidthPx: 1440,
         doc: null,
         annotation: null,
       }).success,
     ).toBe(true);
+  });
+
+  it("有标注必有底图（base null 而 doc 非 null 拒绝）", () => {
+    expect(
+      annotationViewDataSchema.safeParse({
+        base: null,
+        maxWidthPx: 1440,
+        doc: doc(),
+        annotation: annotationMeta,
+      }).success,
+    ).toBe(false);
   });
 
   it("doc 与 annotation 必须同时为空或同时非空", () => {
