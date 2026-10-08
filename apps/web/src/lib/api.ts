@@ -1318,8 +1318,10 @@ export function createCorrectionApi(
  * correctionSealRequestSchema）：baseRevision 为 CAS 期望值（客户端先追平同步
  * 再取本地 baseRevision），stuckAt/errorCause 可选反思文本（≤500 字，随 seal
  * 落列冻结）。409 NOTE_REVISION_CONFLICT 附 extra._current（并发写/他端已
- * 封存）——UI 据此提示刷新重试；对已封存行再 seal → 409 NOTE_CORRECTION_SEALED
- * （再编辑=新开一行）。成功响应 data 复用 noteHeadData。
+ * 封存）——UI 据此提示刷新重试；对已封存行再 seal → 404 NOTE_NOT_FOUND
+ * （无进行中的订正可保存，可能已保存过；409 NOTE_CORRECTION_SEALED 只出现
+ * 在 PUT 已封存行且 baseRevision>0 的写入路径，再编辑=新开一行）。成功响应
+ * data 复用 noteHeadData。
  */
 export function sealCorrectionApi(
   attemptId: string,

@@ -1084,9 +1084,11 @@ describe("T6R.16 多阶段证据装配", () => {
       all.evidence.find((entry) => entry.phase === "supplement")?.version
         ?.versionId,
     ).toBe(world.suppV2);
+    // 正常收录时跳过计数为 0（不误报）
+    expect(all.skippedSupplementNotes).toBe(0);
   });
 
-  it("无 ≤asOf 版本的 supplement 行跳过（早于 S1 的 asOf）", () => {
+  it("无 ≤asOf 版本的 supplement 行跳过（早于 S1 的 asOf）+ 跳过计数显式上报（T6R.18 F-P2-1）", () => {
     const world = multiPhaseWorld();
     const result = assemble(
       world.db,
@@ -1109,6 +1111,8 @@ describe("T6R.16 多阶段证据装配", () => {
         miss.file.includes("supplement"),
       ),
     ).toBe(false);
+    // 跳过不静默：计数上报供导出侧声明（晚于 asOf 创建或钉定版本已被回收）
+    expect(result.skippedSupplementNotes).toBe(1);
   });
 
   it("封存列入包：订正条目带 sealedAt/stuckAt/errorCause（null 直传）；scratch 恒不携带", () => {

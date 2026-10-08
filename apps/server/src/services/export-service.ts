@@ -1447,6 +1447,16 @@ function assembleV1(core: PackCore): LearningPackAssembly {
 
 // ---------- v2 装配（T6R.12：证据装配、快照关联与 manifest） ----------
 
+/**
+ * 证据条目编号比较（e001…，T6R.18 闸门 F-P3-5）：数值序而非字典序——
+ * localeCompare 会把 e1000 排在 e999 前（packRefOf 3 位起步、超 999 条后
+ * 字典序错乱；preview 证据图清单排序用）。页号排序由调用方追加。
+ */
+export function compareByEvidenceRef(a: string, b: string): number {
+  const seq = (ref: string): number => Number.parseInt(ref.slice(1), 10);
+  return seq(a) - seq(b);
+}
+
 function assembleV2(core: PackCore): LearningPackAssembly {
   const { db, dataDir, teacherId, request, m } = core;
   // evidenceAsm 在本函数内为 const（复审 B3：原 6 处判空/防御 throw 全消，
@@ -1665,7 +1675,7 @@ function assembleV2(core: PackCore): LearningPackAssembly {
       });
     }
     evidenceImages.sort(
-      (a, b) => a.ref.localeCompare(b.ref) || a.pageIndex - b.pageIndex,
+      (a, b) => compareByEvidenceRef(a.ref, b.ref) || a.pageIndex - b.pageIndex,
     );
   }
 
@@ -1812,6 +1822,28 @@ function assembleV2(core: PackCore): LearningPackAssembly {
   if (request.asOf !== undefined && m.traces) {
     contextNotes.push(
       "学习痕迹中的讲义阅读地图按生成时刻计算，未按预览时刻（asOf）钉定。",
+    );
+  }
+  // T6R.18 闸门 F-P3-4：讲义正文是生成时刻的 live 读（讲义可编辑、无版本
+  // 化），未按 asOf 钉定——预览后编辑讲义会改变包内正文，显式声明而非静默
+  if (request.asOf !== undefined && m.lectures.length > 0) {
+    contextNotes.push(
+      "讲义正文按生成时刻读取当前版本，未按预览时刻（asOf）钉定（预览后编辑讲义会改变包内正文）。",
+    );
+  }
+  // T6R.18 闸门 O-M1：证据分析图可由学生在交卷/封存后补传重建（恢复特性，
+  // 如派生图生成失败后的重试）——它是该时刻正文的渲染产物而非封存时刻的
+  // 自动快照；对教师与 AI 显式声明，避免补图被误读为封存时刻的过程证据
+  if (m.evidence) {
+    contextNotes.push(
+      "证据分析图是学生端渲染产物，可在交卷或封存后补传重建，非封存时刻的自动快照。",
+    );
+  }
+  // T6R.18 闸门 F-P2-1：asOf 前无存活版本的补充稿行跳过不静默（晚于 asOf
+  // 创建或钉定版本已被清理回收两态不可分），计数声明
+  if (request.asOf !== undefined && evidenceAsm.skippedSupplementNotes > 0) {
+    contextNotes.push(
+      `${evidenceAsm.skippedSupplementNotes} 份补充稿在预览时刻（asOf）前无存活版本，未收录（晚于 asOf 创建，或钉定版本已被清理回收）。`,
     );
   }
   const manifest: LearningPackManifest = {
