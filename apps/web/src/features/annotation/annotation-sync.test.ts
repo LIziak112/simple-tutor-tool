@@ -24,10 +24,15 @@ vi.mock("@/lib/api", async (importOriginal) => {
   return {
     ...actual,
     putAnnotationDocApi: vi.fn(),
+    fetchAnnotationViewApi: vi.fn(),
   };
 });
 
-import { ApiError, putAnnotationDocApi } from "@/lib/api";
+import {
+  ApiError,
+  fetchAnnotationViewApi,
+  putAnnotationDocApi,
+} from "@/lib/api";
 import {
   ANNOTATION_SYNC_BACKOFF_BASE_MS,
   ANNOTATION_SYNC_BACKOFF_MAX_MS,
@@ -40,6 +45,7 @@ import {
 } from "./annotation-sync";
 
 const putMock = vi.mocked(putAnnotationDocApi);
+const viewMock = vi.mocked(fetchAnnotationViewApi);
 
 const SESSION_A: AnnotationSessionRef = {
   origin: "https://a.example",
@@ -100,6 +106,7 @@ beforeEach(() => {
   installAnnotationBackend(memoryAnnotationBackend());
   resetAnnotationSession();
   putMock.mockReset();
+  viewMock.mockReset();
   bindAnnotationSession(SESSION_A);
 });
 
@@ -249,6 +256,50 @@ describe("annotation-sync：终态与冲突", () => {
     await vi.advanceTimersByTimeAsync(0); // 排干串行队列微任务
     expect(putMock.mock.calls.length).toBe(2);
     expect(callOf(1).meta.mutationId).not.toBe(callOf(0).meta.mutationId); // 重铸
+  });
+
+  it("409 ALREADY_READY/STALE（审查修复 11）：重取视图自愈对齐后立即重传，不无限退避", async () => {
+    // 服务端已有更新版本（他端写过的正文）——重取视图对齐 baseRevision
+    viewMock.mockResolvedValue({
+      base: {
+        baseId: "11111111-1111-4111-8111-111111111111",
+        state: "ready",
+        stale: false,
+        pixelWidth: 1440,
+        pixelHeight: 900,
+        downloadUrl: "/api/student/attempts/a-0001/annotation-base/b1/image.png",
+      },
+      maxWidthPx: 1440,
+      doc: docWithStrokes(9) as never,
+      annotation: {
+        annotationId: "00000000-0000-4000-8000-000000000001",
+        revision: 3,
+        hash: "c".repeat(64),
+        savedAt: "2026-10-08T00:00:00Z",
+        sealedAt: null,
+        strokeCount: 9,
+        pointCount: 9,
+      },
+    });
+    putMock
+      .mockRejectedValueOnce(
+        new ApiError("ANNOTATION_BASE_ALREADY_READY", "底图已就绪且永不重生成", 409),
+      )
+      .mockResolvedValueOnce(receiptOf(4));
+    writeAnnotationDoc(SESSION_A, SCOPE, docWithStrokes(1));
+    await vi.advanceTimersByTimeAsync(ANNOTATION_SYNC_DEBOUNCE_MS);
+    expect(putMock.mock.calls.length).toBeGreaterThanOrEqual(1);
+    // 自愈：重取视图 → baseRevision 对齐 3 → 立即重传（不再走退避定时器）
+    await vi.advanceTimersByTimeAsync(0);
+    expect(viewMock).toHaveBeenCalledWith("a-0001", "q-0001", "scratch");
+    for (let i = 0; i < 10 && putMock.mock.calls.length < 2; i += 1) {
+      await vi.advanceTimersByTimeAsync(0);
+    }
+    expect(putMock.mock.calls.length).toBe(2);
+    expect(callOf(1).meta.baseRevision).toBe(3);
+    const record = await getAnnotationRecord(SESSION_A, SCOPE);
+    expect(record?.pending).toBeNull();
+    expect(record?.baseRevision).toBe(4);
   });
 
   it("denied(access) 手动重试：清终态立即补传；无终态幂等不动作", async () => {

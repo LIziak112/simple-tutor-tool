@@ -115,16 +115,40 @@ export function useAnnotationBase(input: {
         setFlow({ kind: "error", message: rendered.error.message });
         return;
       }
-      const receipt = await postAnnotationBaseImageApi(
-        attemptId,
-        questionId,
-        rendered.blob,
-        {
-          questionRevisionId: preview.questionRevisionId,
-          baseRenderVersion: preview.baseRenderVersion,
-          ...(phase !== "scratch" ? { phase } : {}),
-        },
-      );
+      let receipt: Awaited<ReturnType<typeof postAnnotationBaseImageApi>>;
+      try {
+        receipt = await postAnnotationBaseImageApi(
+          attemptId,
+          questionId,
+          rendered.blob,
+          {
+            questionRevisionId: preview.questionRevisionId,
+            baseRenderVersion: preview.baseRenderVersion,
+            ...(phase !== "scratch" ? { phase } : {}),
+          },
+        );
+      } catch (err) {
+        // 审查修复 11（G-M1/P3-6）：他端已把底图置 ready（永不重生成）或
+        // 身份已换——重取视图拿现成引用静默切 ready，不报错不重生成
+        if (
+          err instanceof ApiError &&
+          err.status === 409 &&
+          (err.code === "ANNOTATION_BASE_ALREADY_READY" ||
+            err.code === "ANNOTATION_BASE_STALE")
+        ) {
+          const refreshed = await fetchAnnotationViewApi(
+            attemptId,
+            questionId,
+            phase,
+          );
+          await applyAnnotationView(session, scope, refreshed);
+          if (refreshed.base !== null && refreshed.base.state === "ready") {
+            setFlow({ kind: "ready", base: refreshed.base });
+            return;
+          }
+        }
+        throw err;
+      }
       const readyBase: AnnotationBaseRef = {
         baseId: receipt.baseId,
         state: "ready",

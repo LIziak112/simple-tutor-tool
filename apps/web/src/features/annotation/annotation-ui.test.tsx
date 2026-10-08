@@ -701,3 +701,48 @@ describe("AnnotationLayer：保存订正标注检查点（审查修复 3①）",
     expect(baseMock).not.toHaveBeenCalled();
   });
 });
+
+// ---------- 审查修复 11：ALREADY_READY 自愈（重取视图静默切 ready） ----------
+
+describe("AnnotationLayer：底图回传 409 自愈（审查修复 11）", () => {
+  it("base/image 撞 ALREADY_READY → 自动重取视图切 ready（无错误态、不再生成）", async () => {
+    viewMock
+      .mockResolvedValueOnce(emptyView(null)) // ① ensureBase：无底图
+      .mockResolvedValueOnce(emptyView(READY_BASE)); // ③ 自愈重取：ready
+    baseMock.mockResolvedValue({
+      base: {
+        baseId: "11111111-1111-4111-8111-111111111111",
+        state: "pending",
+        stale: false,
+        pixelWidth: null,
+        pixelHeight: null,
+      },
+      baseRenderVersion: 1,
+      maxWidthPx: 1440,
+      questionRevisionId: "22222222-2222-4222-8222-222222222222",
+      questionNo: 1,
+      questionMd: "题面",
+      mediaSrcs: [],
+      graphFigures: [],
+      interactionNotes: [],
+    });
+    renderMock.mockResolvedValue({
+      ok: true,
+      blob: fakePngBlob(),
+      pixelWidth: 1440,
+      pixelHeight: 900,
+    });
+    // 他端已生成 ready 底图（永不重生成）——本端异字节回传被 409
+    baseImageMock.mockRejectedValue(
+      new ApiError("ANNOTATION_BASE_ALREADY_READY", "底图已就绪且永不重生成", 409),
+    );
+    render(<AnnotationLayer attemptId="a1" questionId="q1" />);
+    fireEvent.click(screen.getByRole("button", { name: /圈画题干/ }));
+    await waitFor(() =>
+      expect(screen.getByAltText("本题题干标注底图")).toBeInTheDocument(),
+    );
+    expect(baseImageMock).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText(/底图生成失败/)).toBeNull();
+    expect(renderMock).toHaveBeenCalledTimes(1); // 不再重复栅格化
+  });
+});

@@ -19,7 +19,11 @@ import type {
 } from "@tutor/contract";
 import { annotationConflictSummarySchema } from "@tutor/contract";
 import { gzipOrRaw } from "@/features/ink/gzip";
-import { ApiError, putAnnotationDocApi } from "@/lib/api";
+import {
+  ApiError,
+  fetchAnnotationViewApi,
+  putAnnotationDocApi,
+} from "@/lib/api";
 import { SerialTaskQueue } from "@/lib/serial-task-queue.ts";
 import {
   type AnnotationLocalRecord,
@@ -30,6 +34,7 @@ import {
   applyAnnotationConflict,
   applyAnnotationDenied,
   applyAnnotationReceipt,
+  applyAnnotationView,
   clearAnnotationDeniedAccess,
   listPendingAnnotations,
   notifyAnnotationStoreAll,
@@ -89,6 +94,11 @@ interface DocScheduler {
   dirtyPeriod: boolean;
   lastMutationId: string | null;
   queued: boolean;
+  /**
+   * 本 pending 已执行过「重取视图自愈」（审查修复 11 防环）：再撞
+   * ALREADY_READY/STALE 落回退避重试；新内容（mutationId 变化）时复位
+   */
+  refetched: boolean;
 }
 
 const schedulers = new Map<string, DocScheduler>();
@@ -104,6 +114,7 @@ function schedulerOf(key: string): DocScheduler {
       dirtyPeriod: false,
       lastMutationId: null,
       queued: false,
+      refetched: false,
     };
     schedulers.set(key, s);
   }
@@ -167,6 +178,8 @@ type PutVerdict =
       reason: string;
     }
   | { kind: "denied"; deniedKind: "access" | "content"; reason: string }
+  /** 本地视图已过期（ALREADY_READY/STALE，审查修复 11）：重取视图对齐后重传 */
+  | { kind: "refetch-view"; reason: string }
   | { kind: "retry" };
 
 function classifyPutError(err: unknown): PutVerdict {
@@ -194,6 +207,15 @@ function classifyPutError(err: unknown): PutVerdict {
       current: null,
       reason: `${message}（同一上传标识已对应不同正文，请重试以本机为准）`,
     };
+  }
+  // 本地持有的底图/身份视图已过期（审查修复 11：ALREADY_READY=底图已被他端
+  // 置 ready 永不重生成、STALE=身份三要素已换）——重取视图自愈对齐后重传，
+  // 不落入无限退避（这两码正常由 base/image 端点发出，PUT 路径是防御归类）
+  if (
+    status === 409 &&
+    (code === "ANNOTATION_BASE_ALREADY_READY" || code === "ANNOTATION_BASE_STALE")
+  ) {
+    return { kind: "refetch-view", reason: message };
   }
   // 访问权/可写权永久失去：403/404、交卷后写 scratch（ALREADY_SUBMITTED）、
   // 已封存行再写（ANNOTATION_SEALED——订正=新行，本行只读）、未交卷写订正
@@ -278,18 +300,31 @@ async function runUpload(
         );
         return;
       }
+      // 本地视图过期自愈（审查修复 11）：重取视图对齐 baseRevision/底图引用
+      // 后立即重新排队上传——一次为限，再撞按退避（病态服务端不无限打）
+      if (verdict.kind === "refetch-view") {
+        const s = schedulerOf(key);
+        if (!s.refetched) {
+          s.refetched = true;
+          try {
+            const view = await fetchAnnotationViewApi(
+              scope.attemptId,
+              scope.questionId,
+              scope.phase,
+            );
+            if (stale()) return;
+            await applyAnnotationView(session, scope, view);
+            if (stale()) return;
+            due(key);
+            return;
+          } catch {
+            // 重取失败：落入下方退避重试（下次上传仍会再试自愈——refetched
+            // 已置位，本 pending 内不再连打）
+          }
+        }
+      }
       // 退避重试（同 mutationId 幂等重放）
-      const s = schedulerOf(key);
-      s.failures += 1;
-      const delay = Math.min(
-        ANNOTATION_SYNC_BACKOFF_BASE_MS * 2 ** (s.failures - 1),
-        ANNOTATION_SYNC_BACKOFF_MAX_MS,
-      );
-      clearTimer(s.backoff);
-      s.backoff = setTimeout(() => {
-        s.backoff = null;
-        due(key);
-      }, delay);
+      scheduleBackoff(key);
       return;
     }
     if (stale()) return;
@@ -309,6 +344,21 @@ async function runUpload(
 
 function sameSessionSafe(session: AnnotationSessionRef): boolean {
   return currentSession !== null && sameSession(currentSession, session);
+}
+
+/** 退避重试（同 mutationId 幂等重放）：指数退避 1s→60s 封顶 */
+function scheduleBackoff(key: string): void {
+  const s = schedulerOf(key);
+  s.failures += 1;
+  const delay = Math.min(
+    ANNOTATION_SYNC_BACKOFF_BASE_MS * 2 ** (s.failures - 1),
+    ANNOTATION_SYNC_BACKOFF_MAX_MS,
+  );
+  clearTimer(s.backoff);
+  s.backoff = setTimeout(() => {
+    s.backoff = null;
+    due(key);
+  }, delay);
 }
 
 function due(key: string): void {
@@ -351,6 +401,7 @@ function handleRecordChanged(key: string): void {
   if (mutationId === s.lastMutationId) return; // 非内容变化：不动计时器
   s.lastMutationId = mutationId;
   s.failures = 0;
+  s.refetched = false; // 新内容：自愈资格复位（审查修复 11）
   clearTimer(s.backoff);
   s.backoff = null;
   clearTimer(s.debounce);
