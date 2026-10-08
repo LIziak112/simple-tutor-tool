@@ -623,8 +623,34 @@ function revisionConflict(existing: AnnotationRow | undefined): HttpError {
   );
 }
 
-/** 标注行 → 回执（revision≥1 的行必有 hash；缺即数据异常显式 500） */
-function receiptOf(row: AnnotationRow): AnnotationReceipt {
+/**
+ * 孤儿正文文件清理（审查修复 9）：内容寻址路径 blobs/annotation-bodies/
+ * <hash>.json.gz 可能被**多行**引用（同内容跨题/跨阶段各占一行）——删除前
+ * 查 annotations 是否仍有他行引用同 hash（排除本次写入目标行），有则保留；
+ * 导出供失败清理路径的直测（putAnnotationDoc 的 catch 分支在单进程同步下
+ * 不可稳定触达）。
+ */
+export function removeAnnotationBodyIfUnreferenced(
+  db: Db,
+  hash: string,
+  absBodyPath: string,
+  /** 排除的行 id（本次写入目标——事务已回滚，其行未落地/未换版） */
+  excludeAnnotationId: string,
+): void {
+  const referenced = db
+    .select({ id: annotationsTable.id })
+    .from(annotationsTable)
+    .where(and(eq(annotationsTable.hash, hash), ne(annotationsTable.id, excludeAnnotationId)))
+    .get();
+  if (referenced !== undefined) return;
+  try {
+    unlinkSync(absBodyPath);
+  } catch {
+    // 文件未落位或已被删——无需处理
+  }
+}
+
+/** 标注行 → 回执（revision≥1 的行必有 hash；缺即数据异常显式 500） */function receiptOf(row: AnnotationRow): AnnotationReceipt {
   if (row.hash === null || row.revision < 1) {
     throw new HttpError(
       500,
@@ -863,14 +889,11 @@ export function putAnnotationDoc(
     ) {
       return receiptOf(winner);
     }
-    // 孤儿文件清理（事务已回滚/文件未落位；新 hash 与现存行 hash 相同则不删
-    // ——那是行正在引用的文件；删除失败留给部署侧兜底）
+    // 孤儿文件清理（事务已回滚/文件未落位；审查修复 9：删前查引用——
+    // annotations 仍有**他行**引用同 hash 时不删，那是别人正在引用的文件；
+    // 删除失败留给部署侧兜底）
     if (existing?.hash !== hash) {
-      try {
-        unlinkSync(absBodyPath);
-      } catch {
-        // 文件未落位或已被删——无需处理
-      }
+      removeAnnotationBodyIfUnreferenced(db, hash, absBodyPath, annotationId);
     }
     if (winner !== undefined) {
       throw new HttpError(

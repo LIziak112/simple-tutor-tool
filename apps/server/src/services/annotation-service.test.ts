@@ -37,6 +37,7 @@ import {
   getAnnotationView,
   putAnnotationDoc,
   registerBaseImage,
+  removeAnnotationBodyIfUnreferenced,
   sealAttemptAnnotations,
 } from "./annotation-service.ts";
 
@@ -1484,5 +1485,43 @@ describe("base 写路径状态门槛（审查修复 8）", () => {
     } catch (err) {
       expectHttpError(err, 409, "ANNOTATION_NOT_SUBMITTED");
     }
+  });
+});
+
+// ---------- 审查修复 9：孤儿正文删除查引用 ----------
+
+describe("removeAnnotationBodyIfUnreferenced（审查修复 9）", () => {
+  it("他行仍引用同 hash → 不删；无引用 → 删除", () => {
+    const world = makeWorld();
+    const { attemptId, revisionId } = makePaper(world);
+    readyBase(world, attemptId, revisionId);
+    // 行 A（q=A）持有 hash H 的正文
+    const receiptA = putAnnotationDoc(
+      world.db,
+      world.dataDir,
+      world.studentId,
+      attemptId,
+      Q,
+      gzipJson(annotationDoc()),
+      { baseRevision: 0, mutationId: randomUUID() },
+    );
+    const absA = join(world.dataDir, annotationBodyRelPath(receiptA.hash));
+    expect(existsSync(absA)).toBe(true);
+    // 他行（B）引用同 hash：失败清理（目标行 C）不得删共享文件
+    removeAnnotationBodyIfUnreferenced(
+      world.db,
+      receiptA.hash,
+      absA,
+      "00000000-0000-4000-8000-00000000000c",
+    );
+    expect(existsSync(absA)).toBe(true);
+    // 行 A 删除后无人引用 → 可删（目标行排除自身时仍被引用；排除他人则删）
+    removeAnnotationBodyIfUnreferenced(
+      world.db,
+      receiptA.hash,
+      absA,
+      receiptA.annotationId,
+    );
+    expect(existsSync(absA)).toBe(false);
   });
 });

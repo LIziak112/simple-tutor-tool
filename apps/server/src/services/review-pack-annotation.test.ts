@@ -339,6 +339,42 @@ describe("学情数据包 v2 的 annotation 成对附件", () => {
     expect(JSON.parse(strokes ?? "null").baseWidth).toBe(1440);
   });
 
+  it("v2＋evidence：底图缺失的标注对 refs 关联对应 questionRef（审查修复 12）", async () => {
+    const { world, attemptId } = makeAnnotatedWorld();
+    // 删除底图文件（保留行）→ 整对进缺失清单
+    const baseRow = world.db
+      .select()
+      .from(annotationBasesTable)
+      .where(eq(annotationBasesTable.attemptId, attemptId))
+      .get();
+    expect(baseRow).toBeDefined();
+    if (baseRow?.imagePath !== undefined && baseRow.imagePath !== null) {
+      rmSync(join(world.dataDir, baseRow.imagePath));
+    }
+    // 勾 questions（stem 层）：refs 可解析到包内 q 条目——悬空引用形态
+    // （questions 未勾）与 responses[].questionRef 同口径，由 contextNotes 声明
+    const zip = await buildLearningPackZip(
+      world.db,
+      world.dataDir,
+      TEST_TEACHER_ID,
+      v2Request(world.studentId, {
+        modules: { questions: "stem", responses: true, evidence: true },
+      }),
+    );
+    const packText = unzipEntries(zip.bytes).get("pack.json")?.toString("utf8") ?? "";
+    const pack = learningPackV2Schema.parse(JSON.parse(packText));
+    const miss = pack.manifest.missing.find((m) => m.kind === "annotation");
+    expect(miss).toBeDefined();
+    // refs 指向该题的 q 条目（对齐 review-pack 单题侧口径），不再悬空 []
+    expect(miss?.refs.length).toBeGreaterThan(0);
+    expect(miss?.refs[0]).toMatch(/^q\d{3,}$/);
+    // 引用的 q 条目真实在场（content.questions）
+    const ref = miss?.refs[0] ?? "";
+    expect(
+      (pack.content?.questions ?? []).some((question) => question.ref === ref),
+    ).toBe(true);
+  });
+
   it("v1：零 annotation 条目（v1 不扩展——kind 只增不改，v1 消费方无感）", async () => {
     const { world } = makeAnnotatedWorld();
     const request = learningPackExportRequestSchema.parse({

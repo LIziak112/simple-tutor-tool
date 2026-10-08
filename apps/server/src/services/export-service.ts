@@ -1730,6 +1730,19 @@ function assembleV2(core: PackCore): LearningPackAssembly {
     reason: string;
     refs: string[];
   }> = [];
+  // 审查修复 12（G-M3）：缺失条目 refs 关联对应 questionRef（对齐 review-pack
+  // 单题侧口径；annotation 条目只在 evidence 勾选时产出，彼时
+  // refByResponseRowId 对全部行已填充）
+  const questionRefsByPairRef = new Map<string, string[]>();
+  for (const [rowId, pairs] of annotationAsm.byResponseRowId) {
+    const questionRef = evidenceAsm.refByResponseRowId.get(rowId);
+    if (questionRef === undefined) continue;
+    for (const pair of pairs) {
+      const list = questionRefsByPairRef.get(pair.ref);
+      if (list === undefined) questionRefsByPairRef.set(pair.ref, [questionRef]);
+      else if (!list.includes(questionRef)) list.push(questionRef);
+    }
+  }
   for (const pair of annotationAsm.pairs) {
     if (pair.base !== null && pair.strokesJson !== null) {
       annotationEntries.push({
@@ -1749,7 +1762,7 @@ function assembleV2(core: PackCore): LearningPackAssembly {
         path: `annotation/${pair.ref}-base.png`,
         kind: "annotation",
         reason: pair.missingReason ?? "底图缺失（无法成对导出）",
-        refs: [],
+        refs: questionRefsByPairRef.get(pair.ref) ?? [pair.ref],
       });
     }
   }
