@@ -299,9 +299,12 @@ test.describe("Phase 3 全链路（T3.6）：作答 → 数据页 → 批改 →
       await expect(q3Card.getByText("待批", { exact: true })).toBeVisible();
       await expect(q3Card.getByText("学生答案：").first()).toBeVisible();
 
-      // 手写缩略图（教师端 PNG 直出）+ 点击放大 lightbox + 关闭
+      // 手写缩略图（教师端 PNG 直出）+ 点击放大 lightbox + 关闭。
+      // 懒加载图片先滚入视口再等 naturalWidth（T6R.20 审查修复 3② 起 q1/q2
+      // 题卡多出标注阶段切换行，q3 缩略图可能落在懒加载阈值之外）
       const inkImg = q3Card.locator('img[alt="第 3 题的手写笔迹"]');
       await expect(inkImg).toBeVisible();
+      await inkImg.scrollIntoViewIfNeeded();
       await expect
         .poll(async () =>
           inkImg.evaluate((el: HTMLImageElement) => el.naturalWidth),
