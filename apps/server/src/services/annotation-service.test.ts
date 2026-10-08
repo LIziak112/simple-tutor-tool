@@ -1437,3 +1437,52 @@ describe("assembleAnnotationPairs：成对装配（导出/学习包共用）", (
     ]);
   });
 });
+
+// ---------- 审查修复 8：base 写路径状态门槛（与 PUT 对称） ----------
+
+describe("base 写路径状态门槛（审查修复 8）", () => {
+  it("已交卷：scratch 装配/回传 → 409 ALREADY_SUBMITTED（回看走视图接口）", () => {
+    const world = makeWorld();
+    const { attemptId } = makePaper(world, { status: "submitted" });
+    try {
+      assembleAnnotationBase(world.db, world.studentId, attemptId, Q);
+      throw new Error("应当抛 409");
+    } catch (err) {
+      expectHttpError(err, 409, "ALREADY_SUBMITTED");
+    }
+    // 回传同门槛（预置行后再交卷的迟到回传形态）
+    const world2 = makeWorld();
+    const { attemptId: a2, revisionId: rev2 } = makePaper(world2);
+    const preview = assembleAnnotationBase(world2.db, world2.studentId, a2, Q);
+    submitAttemptStatus(world2.db, a2);
+    try {
+      registerBaseImage(
+        world2.db,
+        world2.dataDir,
+        world2.studentId,
+        a2,
+        Q,
+        basePng(),
+        {
+          questionRevisionId: rev2,
+          baseRenderVersion: preview.baseRenderVersion,
+          phase: "scratch",
+        },
+      );
+      throw new Error("应当抛 409");
+    } catch (err) {
+      expectHttpError(err, 409, "ALREADY_SUBMITTED");
+    }
+  });
+
+  it("draft：correction 装配/回传 → 409 ANNOTATION_NOT_SUBMITTED", () => {
+    const world = makeWorld();
+    const { attemptId } = makePaper(world);
+    try {
+      assembleAnnotationBase(world.db, world.studentId, attemptId, Q, "correction");
+      throw new Error("应当抛 409");
+    } catch (err) {
+      expectHttpError(err, 409, "ANNOTATION_NOT_SUBMITTED");
+    }
+  });
+});

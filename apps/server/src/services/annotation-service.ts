@@ -347,6 +347,28 @@ function baseRefOf(
 
 // ---------- 底图装配载荷（决策 2/4①：仅题干＋选项的学生投影） ----------
 
+/** 写入 phase 与 attempt 状态的对称门槛（审查修复 8：与 putAnnotationDoc 一致） */
+function requirePhaseWritable(
+  attempt: Attempt,
+  phase: AnnotationPhase,
+): void {
+  if (phase === "scratch") {
+    if (attempt.status !== "draft") {
+      throw new HttpError(
+        409,
+        "ALREADY_SUBMITTED",
+        "这份作业已交卷，作答期标注底图不能再生成或回传（回看请展开标注视图；订正请新开标注）",
+      );
+    }
+  } else if (attempt.status === "draft") {
+    throw new HttpError(
+      409,
+      "ANNOTATION_NOT_SUBMITTED",
+      "这份作业尚未交卷，订正标注底图只能在交卷后生成",
+    );
+  }
+}
+
 /**
  * 取底图装配载荷（POST …/annotation/base）：幂等建 pending 行——已有行直接
  * 复用（ready 时载荷携带直出引用，客户端不再重生成）；无行则建（身份三要素
@@ -361,6 +383,7 @@ export function assembleAnnotationBase(
   phase: AnnotationPhase = "scratch",
 ): AnnotationBasePreviewData {
   const attempt = requireUsableAttempt(db, studentId, attemptId);
+  requirePhaseWritable(attempt, phase);
   const { row, no } = locateFrozenRow(db, attempt, questionId);
   const snapshot = snapshotOfRow(row);
   const snapshotHash = questionSnapshotHashOf(snapshot);
@@ -447,6 +470,7 @@ export function registerBaseImage(
   meta: AnnotationBaseImageMeta,
 ): AnnotationBaseImageReceipt {
   const attempt = requireUsableAttempt(db, studentId, attemptId);
+  requirePhaseWritable(attempt, meta.phase);
   const { row } = locateFrozenRow(db, attempt, questionId);
   const base = annotationBaseRowOf(db, attempt.id, questionId, meta.phase);
   if (base === undefined) {
