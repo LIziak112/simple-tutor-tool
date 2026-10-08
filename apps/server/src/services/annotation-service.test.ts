@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
-import type { AnnotationDoc, QuestionAnswers } from "@tutor/contract";
+import type { AnnotationDoc, Question, QuestionAnswers } from "@tutor/contract";
 import { annotationDocSchema } from "@tutor/contract";
 import { stemMdLeaksAnswers } from "@tutor/md-dsl";
 import { eq } from "drizzle-orm";
@@ -11,6 +11,7 @@ import type { Db } from "../db/client.ts";
 import {
   annotationBases as annotationBasesTable,
   annotations as annotationsTable,
+  questions as questionsTable,
   responses as responsesTable,
 } from "../db/schema.ts";
 import {
@@ -973,7 +974,7 @@ describe("getAnnotationView 与底图直出", () => {
 
   it("stale：直改 snapshotHash 后视图标旧版（旧版本题干的标注）", () => {
     const world = makeWorld();
-    const { attemptId, revisionId } = makePaper(world);
+    const { attemptId, revisionId } = makeLivePaper(world);
     readyBase(world, attemptId, revisionId);
     world.db
       .update(annotationBasesTable)
@@ -1165,6 +1166,140 @@ describe("seal 时序：门槛与懒补封（审查修复 2）", () => {
     ]);
     expect(asm.pairs).toHaveLength(1);
     expect(asm.pairs[0]?.phase).toBe("scratch");
+  });
+});
+
+// ---------- 审查修复 4：stale 判定真化（与题库当前内容比对） ----------
+
+/** 从冻结快照镜像建 questions 表 live 行（同内容——knowledge 空口径） */
+function insertLiveQuestionFromSnapshot(
+  world: World,
+  snapshotJson: string,
+): void {
+  const q = JSON.parse(snapshotJson) as Question;
+  world.db
+    .insert(questionsTable)
+    .values({
+      id: q.id,
+      teacherId: TEST_TEACHER_ID,
+      unitId: UNIT,
+      order: 0,
+      type: q.type,
+      difficulty: q.difficulty,
+      stemMd: q.stemMd,
+      optionsJson: q.options !== undefined ? JSON.stringify(q.options) : null,
+      answersJson: q.answers !== undefined ? JSON.stringify(q.answers) : null,
+      hintsJson: JSON.stringify(q.hints),
+      solutionMd: q.solutionMd ?? null,
+      sourceMd: q.sourceMd,
+      version: 1,
+      updatedAt: "2026-10-01T00:00:00.000Z",
+      deletedAt: null,
+    })
+    .run();
+}
+
+/** live 题行 + 同内容冻结快照卷（knowledge 空数组——无考点关联即同内容） */
+function makeLivePaper(world: World): {
+  attemptId: string;
+  revisionId: string;
+} {
+  const snapshotJson = snapshotJsonOf({
+    id: Q,
+    stemMd: `计算 $(-3)+7-(-2)$ 的结果，填在括号里：[[${SENTINELS.answer}]]`,
+    answers: { kind: "fill", blanks: [[SENTINELS.answer]] },
+    solutionMd: SENTINELS.solution,
+    hints: [SENTINELS.hint],
+    knowledge: [],
+  });
+  insertLiveQuestionFromSnapshot(world, snapshotJson);
+  const { attemptId, rowIds } = frozenDraftAttempt(
+    world.db,
+    world.studentId,
+    [{ questionId: Q, snapshotJson, unitId: UNIT }],
+    { attemptUnitId: UNIT },
+  );
+  return { attemptId, revisionId: rowIds[0] ?? "" };
+}
+
+
+
+describe("stale 判定真化（审查修复 4）", () => {
+  it("题库当前行与冻结快照同内容 → stale=false（真化判定的基线）", () => {
+    const world = makeWorld();
+    const { attemptId, revisionId } = makeLivePaper(world);
+    readyBase(world, attemptId, revisionId);
+    const view = getAnnotationView(
+      world.db,
+      world.dataDir,
+      { kind: "student", id: world.studentId },
+      attemptId,
+      Q,
+    );
+    expect(view.base?.stale).toBe(false);
+  });
+
+  it("教师编辑题库 → 回看不动旧 base（同 baseId/旧题面）且 stale=true（G-L2）", () => {
+    const world = makeWorld();
+    const { attemptId, revisionId } = makeLivePaper(world);
+    const baseId = readyBase(world, attemptId, revisionId);
+    // 教师改题库（建卷后行不重铸——只影响之后新建的卷；旧标注锚定旧题面）
+    world.db
+      .update(questionsTable)
+      .set({ stemMd: "改版后的新题干（内容已变化）", version: 2 })
+      .where(eq(questionsTable.id, Q))
+      .run();
+    const view = getAnnotationView(
+      world.db,
+      world.dataDir,
+      { kind: "student", id: world.studentId },
+      attemptId,
+      Q,
+    );
+    expect(view.base?.baseId).toBe(baseId); // 不重建、不换底图
+    expect(view.base?.stale).toBe(true);
+    // 装配载荷同口径：旧 base 幂等复用 + stale 标记
+    const preview = assembleAnnotationBase(
+      world.db,
+      world.studentId,
+      attemptId,
+      Q,
+    );
+    expect(preview.base.baseId).toBe(baseId);
+    expect(preview.base.stale).toBe(true);
+  });
+
+  it("题目软删 → stale=true（圈画仍锚定旧题面，如实标注）", () => {
+    const world = makeWorld();
+    const { attemptId, revisionId } = makeLivePaper(world);
+    readyBase(world, attemptId, revisionId);
+    world.db
+      .update(questionsTable)
+      .set({ deletedAt: "2026-10-08T00:00:00.000Z" })
+      .where(eq(questionsTable.id, Q))
+      .run();
+    const view = getAnnotationView(
+      world.db,
+      world.dataDir,
+      { kind: "student", id: world.studentId },
+      attemptId,
+      Q,
+    );
+    expect(view.base?.stale).toBe(true);
+  });
+
+  it("题库无 live 行（防御态）→ 不指认改版（stale=false——横幅口径需要证据）", () => {
+    const world = makeWorld();
+    const { attemptId, revisionId } = makePaper(world);
+    readyBase(world, attemptId, revisionId);
+    const view = getAnnotationView(
+      world.db,
+      world.dataDir,
+      { kind: "student", id: world.studentId },
+      attemptId,
+      Q,
+    );
+    expect(view.base?.stale).toBe(false);
   });
 });
 

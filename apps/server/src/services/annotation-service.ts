@@ -35,6 +35,7 @@ import {
   type Attempt,
   annotationBases as annotationBasesTable,
   annotations as annotationsTable,
+  questions as questionsTable,
   type ResponseRow,
   responses as responsesTable,
 } from "../db/schema";
@@ -47,11 +48,14 @@ import {
 import { HttpError } from "../lib/http-error";
 import { pngIntact } from "../lib/png";
 import {
+  attemptTeacherId,
   frozenRowsInDisplayOrder,
+  questionOfRow,
   requireAttemptQuestion,
   requireOwnAttempt,
   requireUsableAttempt,
 } from "./attempt-service";
+import { knowledgeNamesByQuestion } from "./assignment-service";
 import { materialOf, questionSnapshotHashOf } from "./question-evidence";
 import { snapshotOfRow } from "./snapshot";
 import { requireTeacherAttempt } from "./teacher-attempt-service";
@@ -279,10 +283,48 @@ function annotationRowOf(
     .get();
 }
 
-/** 底图身份是否落后于服务端当前题目内容（stale 判定，决策 10） */
-function baseIsStale(base: AnnotationBaseRow, row: ResponseRow): boolean {
-  if (base.questionRevisionId !== row.id) return true;
-  return base.snapshotHash !== questionSnapshotHashOf(snapshotOfRow(row));
+/**
+ * 底图身份是否落后于**题库当前内容**（stale 判定，审查修复 4 真化）：
+ * 原实现与 attempt 冻结快照自比对恒 false（建卷后 responses 行永不重铸——
+ * attempt-service「教师改题库只影响之后新建的卷」）。真化口径＝按建卷冻结
+ * 同构路径（questionOfRow＋knowledgeNamesByQuestion）对题库当前行算 canonical
+ * hash 与 base.snapshotHash 比对：
+ * - 题目编辑 → 内容 hash 变化 → stale=true（旧圈仍锚定旧底图，如实横幅）；
+ * - 题目软删 → stale=true；
+ * - 题库行缺失（防御：正常流程建卷时必有 live 行；wrong 卷题目也来自题库）
+ *   → 不指认改版（stale=false——「题目已改版」横幅需要证据）。
+ * registerBaseImage 的身份校验仍与 attempt 冻结行比对不变（那是上传一致性，
+ * 不是 staleness——两者口径刻意分离）。
+ */
+function baseIsStale(
+  db: Db,
+  base: AnnotationBaseRow,
+  attempt: Attempt,
+  questionId: string,
+): boolean {
+  const teacherId = attemptTeacherId(db, attempt);
+  if (teacherId === null) return false;
+  const liveRow = db
+    .select()
+    .from(questionsTable)
+    .where(
+      and(
+        eq(questionsTable.teacherId, teacherId),
+        eq(questionsTable.id, questionId),
+      ),
+    )
+    .get();
+  if (liveRow === undefined) return false;
+  if (liveRow.deletedAt !== null) return true;
+  const knowledge =
+    knowledgeNamesByQuestion(db, teacherId, [liveRow.id]).get(liveRow.id) ?? [];
+  try {
+    const currentHash = questionSnapshotHashOf(questionOfRow(liveRow, knowledge));
+    return currentHash !== null && base.snapshotHash !== currentHash;
+  } catch {
+    // questionOfRow 对异常行 parse 抛错：无据不指认改版（同「行缺失」口径）
+    return false;
+  }
 }
 
 /** 底图行 → 契约引用投影（downloadUrl 仅 ready 组装；stale 由调用方现算） */
@@ -362,7 +404,7 @@ export function assembleAnnotationBase(
   return {
     base: baseRefOf(
       base,
-      baseIsStale(base, row),
+      baseIsStale(db, base, attempt, questionId),
       base.state === "ready"
         ? `/api/student/attempts/${encodeURIComponent(attempt.id)}/annotation-base/${encodeURIComponent(base.id)}/image.png`
         : undefined,
@@ -888,7 +930,7 @@ export function getAnnotationView(
         ? null
         : baseRefOf(
             base,
-            baseIsStale(base, row),
+            baseIsStale(db, base, attempt, questionId),
             base.state === "ready"
               ? baseDownloadUrlOf(principal, attempt.id, base.id)
               : undefined,
