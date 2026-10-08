@@ -88,9 +88,7 @@ function StaticDirectiveLeaf({
   renderImage,
 }: {
   node?: unknown;
-  renderImage:
-    | ((attrs: StaticImageAttrs) => ReactElement)
-    | undefined;
+  renderImage: ((attrs: StaticImageAttrs) => ReactElement) | undefined;
 }): ReactElement {
   const name = directiveNameOf(node);
   if (name === "image") {

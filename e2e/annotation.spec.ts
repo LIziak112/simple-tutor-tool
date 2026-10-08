@@ -321,9 +321,9 @@ test.describe("题干标注（T6R.20）", () => {
       // —— 审查修复 3①：保存订正标注检查点 → sealed 固定态（编辑器收起）——
       await resultCard.getByRole("button", { name: "保存订正标注" }).click();
       await resultCard.getByRole("button", { name: "确认保存" }).click();
-      await expect(
-        studentPage.getByText(/已随订正保存固定/),
-      ).toBeVisible({ timeout: 15_000 });
+      await expect(studentPage.getByText(/已随订正保存固定/)).toBeVisible({
+        timeout: 15_000,
+      });
       await expect(
         resultCard.locator('[data-slot="annotation-workspace"]'),
       ).toHaveCount(0);
@@ -382,9 +382,7 @@ test.describe("题干标注（T6R.20）", () => {
       await expect(
         teacherPage.locator('[data-slot="annotation-static-canvas"]'),
       ).toBeVisible({ timeout: 15_000 });
-      await expect(
-        teacherPage.getByText(/订正/).first(),
-      ).toBeVisible();
+      await expect(teacherPage.getByText(/订正/).first()).toBeVisible();
     } finally {
       await teacherContext.close();
     }

@@ -32,10 +32,10 @@ import type { Db } from "../db/client";
 import {
   type AnnotationBaseRow,
   type AnnotationRow,
-  attempts as attemptsTable,
   type Attempt,
   annotationBases as annotationBasesTable,
   annotations as annotationsTable,
+  attempts as attemptsTable,
   questions as questionsTable,
   type ResponseRow,
   responses as responsesTable,
@@ -48,6 +48,7 @@ import {
 } from "../lib/blob-io";
 import { HttpError } from "../lib/http-error";
 import { pngIntact } from "../lib/png";
+import { knowledgeNamesByQuestion } from "./assignment-service";
 import {
   attemptTeacherId,
   frozenRowsInDisplayOrder,
@@ -56,7 +57,6 @@ import {
   requireOwnAttempt,
   requireUsableAttempt,
 } from "./attempt-service";
-import { knowledgeNamesByQuestion } from "./assignment-service";
 import { materialOf, questionSnapshotHashOf } from "./question-evidence";
 import { snapshotOfRow } from "./snapshot";
 import { requireTeacherAttempt } from "./teacher-attempt-service";
@@ -320,7 +320,9 @@ function baseIsStale(
   const knowledge =
     knowledgeNamesByQuestion(db, teacherId, [liveRow.id]).get(liveRow.id) ?? [];
   try {
-    const currentHash = questionSnapshotHashOf(questionOfRow(liveRow, knowledge));
+    const currentHash = questionSnapshotHashOf(
+      questionOfRow(liveRow, knowledge),
+    );
     return currentHash !== null && base.snapshotHash !== currentHash;
   } catch {
     // questionOfRow 对异常行 parse 抛错：无据不指认改版（同「行缺失」口径）
@@ -349,10 +351,7 @@ function baseRefOf(
 // ---------- 底图装配载荷（决策 2/4①：仅题干＋选项的学生投影） ----------
 
 /** 写入 phase 与 attempt 状态的对称门槛（审查修复 8：与 putAnnotationDoc 一致） */
-function requirePhaseWritable(
-  attempt: Attempt,
-  phase: AnnotationPhase,
-): void {
+function requirePhaseWritable(attempt: Attempt, phase: AnnotationPhase): void {
   if (phase === "scratch") {
     if (attempt.status !== "draft") {
       throw new HttpError(
@@ -644,7 +643,12 @@ export function removeAnnotationBodyIfUnreferenced(
   const referenced = db
     .select({ id: annotationsTable.id })
     .from(annotationsTable)
-    .where(and(eq(annotationsTable.hash, hash), ne(annotationsTable.id, excludeAnnotationId)))
+    .where(
+      and(
+        eq(annotationsTable.hash, hash),
+        ne(annotationsTable.id, excludeAnnotationId),
+      ),
+    )
     .get();
   if (referenced !== undefined) return;
   try {
@@ -654,7 +658,9 @@ export function removeAnnotationBodyIfUnreferenced(
   }
 }
 
-/** 标注行 → 回执（revision≥1 的行必有 hash；缺即数据异常显式 500） */function receiptOf(row: AnnotationRow): AnnotationReceipt {
+/** 标注行 → 回执（revision≥1 的行必有 hash；缺即数据异常显式 500） */ function receiptOf(
+  row: AnnotationRow,
+): AnnotationReceipt {
   if (row.hash === null || row.revision < 1) {
     throw new HttpError(
       500,
@@ -1167,7 +1173,10 @@ export function sealAttemptAnnotations(
  * （ALREADY_SUBMITTED 门槛），补封不改变任何可写性；correction 行**不**
  * 懒补封——封存是订正检查点语义，进行中的订正不能被读路径意外定格。
  */
-function lazilySealSubmittedScratch(db: Db, attemptIds: readonly string[]): void {
+function lazilySealSubmittedScratch(
+  db: Db,
+  attemptIds: readonly string[],
+): void {
   if (attemptIds.length === 0) return;
   const submittedIds = db
     .select({ id: attemptsTable.id })

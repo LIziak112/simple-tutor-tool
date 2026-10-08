@@ -213,7 +213,8 @@ function classifyPutError(err: unknown): PutVerdict {
   // 不落入无限退避（这两码正常由 base/image 端点发出，PUT 路径是防御归类）
   if (
     status === 409 &&
-    (code === "ANNOTATION_BASE_ALREADY_READY" || code === "ANNOTATION_BASE_STALE")
+    (code === "ANNOTATION_BASE_ALREADY_READY" ||
+      code === "ANNOTATION_BASE_STALE")
   ) {
     return { kind: "refetch-view", reason: message };
   }

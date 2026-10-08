@@ -9,11 +9,11 @@ import { REVIEW_PACK_KIND_LABELS } from "@/features/export/review-pack-kinds";
 import { StaticMarkdown } from "@/features/markdown/static-markdown";
 import { saveBlobAs } from "@/lib/api";
 import {
-  TEACHER_SECTION_MARKERS,
   cachedFontEmbedCss,
   pngBlobHasMagic,
   preloadImages,
   samplePngBlank,
+  TEACHER_SECTION_MARKERS,
   withTimeout,
 } from "./rasterize-utils";
 

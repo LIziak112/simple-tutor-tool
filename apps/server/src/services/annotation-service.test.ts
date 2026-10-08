@@ -1223,8 +1223,6 @@ function makeLivePaper(world: World): {
   return { attemptId, revisionId: rowIds[0] ?? "" };
 }
 
-
-
 describe("stale 判定真化（审查修复 4）", () => {
   it("题库当前行与冻结快照同内容 → stale=false（真化判定的基线）", () => {
     const world = makeWorld();
@@ -1480,7 +1478,13 @@ describe("base 写路径状态门槛（审查修复 8）", () => {
     const world = makeWorld();
     const { attemptId } = makePaper(world);
     try {
-      assembleAnnotationBase(world.db, world.studentId, attemptId, Q, "correction");
+      assembleAnnotationBase(
+        world.db,
+        world.studentId,
+        attemptId,
+        Q,
+        "correction",
+      );
       throw new Error("应当抛 409");
     } catch (err) {
       expectHttpError(err, 409, "ANNOTATION_NOT_SUBMITTED");

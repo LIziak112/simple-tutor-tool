@@ -30,7 +30,7 @@ import {
   type SubmitEvidenceProblem,
   snapshotNoteOverview,
 } from "@/features/notes/submit-evidence";
-import { startWrongPracticeApi, sealAttemptAnnotationsApi } from "@/lib/api";
+import { sealAttemptAnnotationsApi, startWrongPracticeApi } from "@/lib/api";
 import { createEventQueue } from "@/lib/event-queue";
 import { formatDueTime } from "@/lib/time";
 import { useOnlineStatus } from "@/lib/use-online-status";

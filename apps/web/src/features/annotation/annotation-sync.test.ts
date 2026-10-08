@@ -267,7 +267,8 @@ describe("annotation-sync：终态与冲突", () => {
         stale: false,
         pixelWidth: 1440,
         pixelHeight: 900,
-        downloadUrl: "/api/student/attempts/a-0001/annotation-base/b1/image.png",
+        downloadUrl:
+          "/api/student/attempts/a-0001/annotation-base/b1/image.png",
       },
       maxWidthPx: 1440,
       doc: docWithStrokes(9) as never,
@@ -283,7 +284,11 @@ describe("annotation-sync：终态与冲突", () => {
     });
     putMock
       .mockRejectedValueOnce(
-        new ApiError("ANNOTATION_BASE_ALREADY_READY", "底图已就绪且永不重生成", 409),
+        new ApiError(
+          "ANNOTATION_BASE_ALREADY_READY",
+          "底图已就绪且永不重生成",
+          409,
+        ),
       )
       .mockResolvedValueOnce(receiptOf(4));
     writeAnnotationDoc(SESSION_A, SCOPE, docWithStrokes(1));

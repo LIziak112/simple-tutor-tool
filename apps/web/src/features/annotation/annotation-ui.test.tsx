@@ -106,13 +106,17 @@ vi.mock("@/lib/copy", async (importOriginal) => ({
   copyPngBlobToClipboard: vi.fn(async () => true),
 }));
 
-vi.mock("@/features/ink/engine/atrament-adapter.ts", async (importOriginal) => ({
-  ...(await importOriginal<
-    typeof import("@/features/ink/engine/atrament-adapter.ts")
-  >()),
-  createProgrammaticAtrament: vi.fn(() => new FakeAtrament()),
-}));
+vi.mock(
+  "@/features/ink/engine/atrament-adapter.ts",
+  async (importOriginal) => ({
+    ...(await importOriginal<
+      typeof import("@/features/ink/engine/atrament-adapter.ts")
+    >()),
+    createProgrammaticAtrament: vi.fn(() => new FakeAtrament()),
+  }),
+);
 
+import { createProgrammaticAtrament } from "@/features/ink/engine/atrament-adapter.ts";
 import {
   ApiError,
   fetchAnnotationViewApi,
@@ -122,11 +126,10 @@ import {
   saveBlobAs,
   sealAttemptAnnotationsApi,
 } from "@/lib/api";
+import { copyPngBlobToClipboard } from "@/lib/copy";
 import { AnnotationLayer } from "./AnnotationLayer";
 import { AnnotationView } from "./AnnotationView";
 import { exportAnnotationComposite } from "./annotation-composite";
-import { createProgrammaticAtrament } from "@/features/ink/engine/atrament-adapter.ts";
-import { copyPngBlobToClipboard } from "@/lib/copy";
 import {
   installAnnotationBackend,
   memoryAnnotationBackend,
@@ -589,9 +592,11 @@ describe("AnnotationStaticCanvas：回放坐标比例（审查修复 P0-1）", (
     // DOC 笔迹（底图像素域）：(100,100) → (200,140)；cssPerBase=720/1440=0.5
     expect(atrament.begins[0]?.[0]).toBeCloseTo(50);
     expect(atrament.begins[0]?.[1]).toBeCloseTo(50);
-    expect(atrament.draws.some(([x, y]) => Math.abs(x - 100) < 0.01 && Math.abs(y - 70) < 0.01)).toBe(
-      true,
-    );
+    expect(
+      atrament.draws.some(
+        ([x, y]) => Math.abs(x - 100) < 0.01 && Math.abs(y - 70) < 0.01,
+      ),
+    ).toBe(true);
     // 线宽同比例（5.76 × 0.5 = 2.88）
     expect(atrament.weight).toBeCloseTo(2.88);
     spy.mockRestore();
@@ -703,7 +708,9 @@ describe("AnnotationLayer：保存订正标注检查点（审查修复 3①）",
       expect(screen.getByText(/已随订正保存固定/)).toBeInTheDocument(),
     );
     // 固定态：不挂编辑工作区
-    expect(document.querySelector('[data-slot="annotation-workspace"]')).toBeNull();
+    expect(
+      document.querySelector('[data-slot="annotation-workspace"]'),
+    ).toBeNull();
   });
 
   it("无内容确认保存 → 检查点拒绝（还没有订正标注内容）", async () => {
@@ -732,7 +739,9 @@ describe("AnnotationLayer：保存订正标注检查点（审查修复 3①）",
     await waitFor(() =>
       expect(screen.getByText(/已随订正保存固定/)).toBeInTheDocument(),
     );
-    expect(document.querySelector('[data-slot="annotation-workspace"]')).toBeNull();
+    expect(
+      document.querySelector('[data-slot="annotation-workspace"]'),
+    ).toBeNull();
     expect(baseMock).not.toHaveBeenCalled();
   });
 });
@@ -769,7 +778,11 @@ describe("AnnotationLayer：底图回传 409 自愈（审查修复 11）", () =>
     });
     // 他端已生成 ready 底图（永不重生成）——本端异字节回传被 409
     baseImageMock.mockRejectedValue(
-      new ApiError("ANNOTATION_BASE_ALREADY_READY", "底图已就绪且永不重生成", 409),
+      new ApiError(
+        "ANNOTATION_BASE_ALREADY_READY",
+        "底图已就绪且永不重生成",
+        409,
+      ),
     );
     render(<AnnotationLayer attemptId="a1" questionId="q1" />);
     fireEvent.click(screen.getByRole("button", { name: /圈画题干/ }));

@@ -35,6 +35,7 @@ import {
   type AttemptStartData,
   type AttemptStatus,
   type AttemptSubmitRequest,
+  annotationBaseImageUrl,
   apiResponseSchema,
   type BackupRestoreResult,
   type BackupSnapshotList,
@@ -139,7 +140,6 @@ import {
   type UnitMetaUpdate,
   type WrongQuestionsData,
 } from "@tutor/contract";
-import { annotationBaseImageUrl } from "@tutor/contract";
 import { hc } from "hono/client";
 import type { AppType } from "server";
 

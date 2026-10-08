@@ -200,5 +200,8 @@ export async function parseAnnotationUploadForm(
       `标注上传元信息不合法：${firstIssueMessage(parsed.error)}`,
     );
   }
-  return { bodyBytes: new Uint8Array(await body.arrayBuffer()), meta: parsed.data };
+  return {
+    bodyBytes: new Uint8Array(await body.arrayBuffer()),
+    meta: parsed.data,
+  };
 }

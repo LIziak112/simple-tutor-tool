@@ -1739,7 +1739,8 @@ function assembleV2(core: PackCore): LearningPackAssembly {
     if (questionRef === undefined) continue;
     for (const pair of pairs) {
       const list = questionRefsByPairRef.get(pair.ref);
-      if (list === undefined) questionRefsByPairRef.set(pair.ref, [questionRef]);
+      if (list === undefined)
+        questionRefsByPairRef.set(pair.ref, [questionRef]);
       else if (!list.includes(questionRef)) list.push(questionRef);
     }
   }

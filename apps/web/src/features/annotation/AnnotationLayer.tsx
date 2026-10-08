@@ -17,7 +17,13 @@
  *   会新开一份）；
  * - 标注模式外保留原作答控件（本层是题干区的附加折叠区，不替换作答区）。
  */
-import { ChevronDown, CircleAlert, LoaderCircle, Lock, PenLine } from "lucide-react";
+import {
+  ChevronDown,
+  CircleAlert,
+  LoaderCircle,
+  Lock,
+  PenLine,
+} from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -28,19 +34,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { sealAttemptAnnotationsApi } from "@/lib/api";
 import { AnnotationView } from "./AnnotationView";
 import { AnnotationWorkspace } from "./AnnotationWorkspace";
-import {
-  catchUpAnnotations,
-  retryAnnotationUpload,
-} from "./annotation-sync";
 import { getAnnotationRecord } from "./annotation-store";
+import { catchUpAnnotations, retryAnnotationUpload } from "./annotation-sync";
 import { useAnnotationBase } from "./use-annotation-base";
 import {
   useAnnotationRecord,
   useAnnotationSessionRef,
 } from "./use-annotation-record";
-import { sealAttemptAnnotationsApi } from "@/lib/api";
 
 export interface AnnotationLayerProps {
   attemptId: string;
@@ -93,7 +96,9 @@ export function AnnotationLayer({
         return;
       }
       if (current.conflict !== null) {
-        setSealError("订正标注有同步冲突待处理，请先点开标注层选择保留哪一份。");
+        setSealError(
+          "订正标注有同步冲突待处理，请先点开标注层选择保留哪一份。",
+        );
         return;
       }
       if (current.denied !== null) {

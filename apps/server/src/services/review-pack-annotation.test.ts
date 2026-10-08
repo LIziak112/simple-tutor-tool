@@ -361,7 +361,8 @@ describe("学情数据包 v2 的 annotation 成对附件", () => {
         modules: { questions: "stem", responses: true, evidence: true },
       }),
     );
-    const packText = unzipEntries(zip.bytes).get("pack.json")?.toString("utf8") ?? "";
+    const packText =
+      unzipEntries(zip.bytes).get("pack.json")?.toString("utf8") ?? "";
     const pack = learningPackV2Schema.parse(JSON.parse(packText));
     const miss = pack.manifest.missing.find((m) => m.kind === "annotation");
     expect(miss).toBeDefined();

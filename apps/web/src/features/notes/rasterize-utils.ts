@@ -18,7 +18,9 @@ export const TEACHER_SECTION_MARKERS = [
 ] as const;
 
 /** PNG 魔数（编码产物校验：空输出/非 PNG 拒绝落盘） */
-export const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] as const;
+export const PNG_MAGIC = [
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+] as const;
 
 /** 单步异步超时（iOS/旧 WebKit 的 decode()/canvas 挂起防线，超时转分类失败） */
 export function withTimeout<T>(

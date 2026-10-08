@@ -11,11 +11,11 @@ import { createElement, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { StaticMarkdown } from "@/features/markdown/static-markdown";
 import {
-  TEACHER_SECTION_MARKERS,
   cachedFontEmbedCss,
   pngBlobHasMagic,
   preloadImages,
   samplePngBlank,
+  TEACHER_SECTION_MARKERS,
   withTimeout,
 } from "@/features/notes/rasterize-utils";
 

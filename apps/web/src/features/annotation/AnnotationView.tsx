@@ -8,7 +8,11 @@
  * - 导出合成图＝canvas 直绘（drawImage 底图＋笔迹层单 PNG，不走
  *   html-to-image——见 annotation-composite）。
  */
-import type { AnnotationDoc, AnnotationPhase, AnnotationViewData } from "@tutor/contract";
+import type {
+  AnnotationDoc,
+  AnnotationPhase,
+  AnnotationViewData,
+} from "@tutor/contract";
 import {
   ChevronDown,
   CircleAlert,
@@ -131,6 +135,7 @@ export function AnnotationView({
   /** 底图 img 布局就绪信号（回放门控；换底图/重载视图时复位——P0-1） */
   const [baseLoaded, setBaseLoaded] = useState(false);
   const baseId = view?.base?.baseId ?? null;
+  // biome-ignore lint/correctness/useExhaustiveDependencies(baseId): baseId 是身份变更键（effect 体内不读取——换底图时复位就绪信号）
   useEffect(() => {
     setBaseLoaded(false);
   }, [baseId]);
@@ -158,6 +163,7 @@ export function AnnotationView({
 
   // 切换 phase/题目/角色（load 身份变化；教师卡 phase 切换——审查修复 3②）：
   // 重置回拉取态，由上面的打开效应重新拉取（初始 mount 为幂等 no-op）
+  // biome-ignore lint/correctness/useExhaustiveDependencies(load): load 是身份变更键（effect 体内不读取）
   useEffect(() => {
     setPhaseState((prev) => (prev === "idle" ? prev : "idle"));
     setView(null);
