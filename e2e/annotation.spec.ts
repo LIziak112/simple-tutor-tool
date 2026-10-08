@@ -320,7 +320,8 @@ test.describe("题干标注（T6R.20）", () => {
 
       // —— 审查修复 3①：保存订正标注检查点 → sealed 固定态（编辑器收起）——
       await resultCard.getByRole("button", { name: "保存订正标注" }).click();
-      await resultCard.getByRole("button", { name: "确认保存" }).click();
+      // 确认弹层经 Radix portal 渲染在卡片外——定位走页面级
+      await studentPage.getByRole("button", { name: "确认保存" }).click();
       await expect(studentPage.getByText(/已随订正保存固定/)).toBeVisible({
         timeout: 15_000,
       });
