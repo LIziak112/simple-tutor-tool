@@ -110,18 +110,15 @@ describe("buildAnnotationBaseSections（版式区块：参数化差异）", () =
 });
 
 describe("planAnnotationBaseHeight（单页无分页）", () => {
-  it("总高 ≤ 上限：单页计划成功（内容高=块高之和）", () => {
-    const plan = planAnnotationBaseHeight([
-      { id: "b0", heightPx: 300 },
-      { id: "b1", heightPx: 500 },
-    ]);
+  it("内容高 ≤ 上限：单页计划成功（审查修复 5：直以渲染根容器高度判定）", () => {
+    const plan = planAnnotationBaseHeight(800);
     expect(plan).toEqual({ ok: true, contentHeightCss: 800 });
   });
 
-  it("总高超上限：显式禁用原因（含上限值与「标注」字样），不产出页计划", () => {
-    const plan = planAnnotationBaseHeight([
-      { id: "b0", heightPx: ANNOTATION_BASE_MAX_CONTENT_HEIGHT_CSS + 1 },
-    ]);
+  it("内容高超上限：显式禁用原因（含上限值与「标注」字样），不产出页计划", () => {
+    const plan = planAnnotationBaseHeight(
+      ANNOTATION_BASE_MAX_CONTENT_HEIGHT_CSS + 1,
+    );
     expect(plan.ok).toBe(false);
     if (plan.ok) return;
     expect(plan.reason).toContain(

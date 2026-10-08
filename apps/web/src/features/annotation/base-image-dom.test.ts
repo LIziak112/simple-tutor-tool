@@ -52,7 +52,8 @@ interface Spies {
   rasterizedHtml: string[];
   rasterOpts: Array<{ pixelWidth: number; pixelHeight: number }>;
   imageUrls: string[][];
-  heights?: (count: number) => number[];
+  /** 注入的内容总高（审查修复 5：单页判定直量渲染根容器 scrollHeight） */
+  contentHeight?: number;
 }
 
 /** 全注入成功依赖 */
@@ -71,10 +72,8 @@ function okDeps(spies: Spies) {
       return fakePngBlob();
     },
     samplePngBlank: async () => false,
-    ...(spies.heights !== undefined
-      ? {
-          measureBlockHeights: (count: number) => spies.heights?.(count) ?? [],
-        }
+    ...(spies.contentHeight !== undefined
+      ? { measureContentHeight: () => spies.contentHeight ?? 0 }
       : {}),
   };
 }
@@ -91,7 +90,7 @@ describe("renderAnnotationBaseImage（适配器层：成功）", () => {
       rasterizedHtml: [],
       rasterOpts: [],
       imageUrls: [],
-      heights: (count) => Array.from({ length: count }, () => 120),
+      contentHeight: 240,
     };
     const result = await renderAnnotationBaseImage(previewOf(), okDeps(spies));
     expect(result.ok).toBe(true);
@@ -117,7 +116,7 @@ describe("renderAnnotationBaseImage（适配器层：成功）", () => {
       rasterizedHtml: [],
       rasterOpts: [],
       imageUrls: [],
-      heights: (count) => Array.from({ length: count }, () => 100),
+      contentHeight: 200,
     };
     const result = await renderAnnotationBaseImage(
       previewOf({
@@ -142,11 +141,7 @@ describe("renderAnnotationBaseImage（超高题显式禁用）", () => {
       rasterizedHtml: [],
       rasterOpts: [],
       imageUrls: [],
-      heights: (count) => {
-        const heights = Array.from({ length: count }, () => 100);
-        if (heights.length > 0) heights[0] = 2100;
-        return heights;
-      },
+      contentHeight: 2100,
     };
     const result = await renderAnnotationBaseImage(previewOf(), okDeps(spies));
     expect(result.ok).toBe(false);
@@ -165,7 +160,7 @@ describe("renderAnnotationBaseImage（失败语义：显式中文错误）", () 
     rasterizedHtml: [],
     rasterOpts: [],
     imageUrls: [],
-    heights: (count) => Array.from({ length: count }, () => 100),
+    contentHeight: 200,
   });
 
   it("学生载荷哨兵命中：kind=forbidden、零栅格化", async () => {

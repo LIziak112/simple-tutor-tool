@@ -178,33 +178,27 @@ export function buildAnnotationBaseSections(
 
 // ---------- 单页高计划（纯几何；与 DOM 无关） ----------
 
-/** 测量后的块度量（heightPx=块在版式流中的占位高） */
-export interface AnnotationBaseBlockMetric {
-  readonly id: string;
-  readonly heightPx: number;
-}
-
 /** 单页计划结果：成功=内容高；失败=显式禁用原因（超高题禁用标注） */
 export type AnnotationBaseHeightPlan =
   | { readonly ok: true; readonly contentHeightCss: number }
   | { readonly ok: false; readonly reason: string };
 
 /**
- * 底图单页高计划（参数化差异 3：不分页）：总高超上限 → 显式禁用原因
- * （调用方据此禁用标注入口并说明，草稿照用）。
+ * 底图单页高计划（参数化差异 3：不分页；审查修复 5 简化）：
+ * 内容高＝渲染根容器实测高（scrollHeight），超上限 → 显式禁用原因（调用方
+ * 据此禁用标注入口并说明，草稿照用）。原「逐块拆解测量再求和」是 T6R.19
+ * 分页管线的机械搬运——单页无分页边界需求，总量一处量即可。
  */
 export function planAnnotationBaseHeight(
-  blocks: readonly AnnotationBaseBlockMetric[],
+  contentHeightCss: number,
 ): AnnotationBaseHeightPlan {
-  let total = 0;
-  for (const block of blocks) total += Math.max(0, block.heightPx);
-  if (total > ANNOTATION_BASE_MAX_CONTENT_HEIGHT_CSS) {
+  if (contentHeightCss > ANNOTATION_BASE_MAX_CONTENT_HEIGHT_CSS) {
     return {
       ok: false,
-      reason: `该题题干过长（约 ${Math.round(total)} CSS px，上限 ${ANNOTATION_BASE_MAX_CONTENT_HEIGHT_CSS}），无法生成标注底图——本题已禁用题干标注，草稿纸不受影响，可照常使用`,
+      reason: `该题题干过长（约 ${Math.round(contentHeightCss)} CSS px，上限 ${ANNOTATION_BASE_MAX_CONTENT_HEIGHT_CSS}），无法生成标注底图——本题已禁用题干标注，草稿纸不受影响，可照常使用`,
     };
   }
-  return { ok: true, contentHeightCss: total };
+  return { ok: true, contentHeightCss: Math.max(0, contentHeightCss) };
 }
 
 /** 底图画布像素尺寸（宽恒 1440；高超像素上限抛中文错误——防御兜底） */
@@ -253,7 +247,7 @@ export interface AnnotationBaseRenderDeps {
   /** 采样判断 PNG 是否整页空白（缺省 Image+Canvas 采样） */
   readonly samplePngBlank?: (blob: Blob) => Promise<boolean>;
   /** 块高度测量（缺省真实布局测量；jsdom 无布局由测试注入） */
-  readonly measureBlockHeights?: (blockCount: number) => number[];
+  readonly measureContentHeight?: () => number;
   /** 单步异步超时毫秒（缺省 30s；测试注入短值加速挂起路径） */
   readonly stepTimeoutMs?: number;
 }
@@ -557,37 +551,9 @@ function renderBaseContent(
   });
 }
 
-/** 拆 markdown 包装层：逐顶层元素成块（与 T6R.19 同手法；测量口径一致） */
-function unwrapMarkdownWrappers(content: HTMLElement): void {
-  for (const wrap of [
-    ...content.querySelectorAll<HTMLElement>("[data-export-md-wrap]"),
-  ]) {
-    const parent = wrap.parentElement;
-    if (parent === null) continue;
-    const mdRoot = wrap.querySelector<HTMLElement>(":scope > .rich-markdown");
-    for (const child of [...(mdRoot ?? wrap).children]) {
-      const shell = document.createElement("div");
-      shell.setAttribute("data-export-md-block", "");
-      shell.className = "rich-markdown";
-      shell.appendChild(child);
-      parent.insertBefore(shell, wrap);
-    }
-    wrap.remove();
-  }
-}
-
-/** 真实布局测量：块高=流内占位（相邻块 offsetTop 差；末块到内容底） */
-function measureBlockExtents(
-  content: HTMLElement,
-  blockNodes: readonly HTMLElement[],
-): number[] {
-  const total = content.scrollHeight;
-  return blockNodes.map((node, i) => {
-    const next = blockNodes[i + 1];
-    const end = next !== undefined ? next.offsetTop : total;
-    return Math.max(0, end - node.offsetTop);
-  });
-}
+/** 拆 markdown 包装层已随审查修复 5 删除：单页无分页边界需求，逐块拆解
+ *  测量是 T6R.19 分页管线的机械搬运——内容总高直接量渲染根容器
+ *  scrollHeight（与最终页容器同宽同字号，量出的就是渲染高）。 */
 
 /** ::image 渲染层的 src 归一化预解码（mediaSrcs 契约清单 → 测量前真图） */
 function mediaUrlsOf(preview: AnnotationBasePreviewData): string[] {
@@ -776,7 +742,7 @@ export async function renderAnnotationBaseImage(
       }
     }
 
-    // ③ 离屏渲染（React 挂载到固定宽容器；commit 后拆 markdown 块）
+    // ③ 离屏渲染（React 挂载到固定宽容器；commit 后区块即页容器子节点）
     const reactHost = document.createElement("div");
     host.appendChild(reactHost);
     root = createRoot(reactHost);
@@ -787,17 +753,15 @@ export async function renderAnnotationBaseImage(
     if (content === null) {
       return errOf("rasterize", "离屏内容构建失败（未找到内容根节点）");
     }
-    unwrapMarkdownWrappers(content);
     const blockNodes = [...content.children] as HTMLElement[];
 
-    // ④ 测量 + 单页高计划（超高 → 显式禁用，不生成不截断）
-    const heights =
-      deps.measureBlockHeights !== undefined
-        ? deps.measureBlockHeights(blockNodes.length)
-        : measureBlockExtents(content, blockNodes);
-    const plan = planAnnotationBaseHeight(
-      blockNodes.map((_, i) => ({ id: `b${i}`, heightPx: heights[i] ?? 0 })),
-    );
+    // ④ 内容总高 + 单页高计划（超高 → 显式禁用，不生成不截断；审查修复 5：
+    //    直接量渲染根容器 scrollHeight——与页容器同宽同字号，即真实渲染高）
+    const contentHeightCss =
+      deps.measureContentHeight !== undefined
+        ? deps.measureContentHeight()
+        : content.scrollHeight;
+    const plan = planAnnotationBaseHeight(contentHeightCss);
     if (!plan.ok) {
       return errOf("too-tall", plan.reason);
     }
