@@ -6,12 +6,17 @@ import { loadOrCreateSecretKey, readConfig } from "./config";
 import { runBackfills } from "./db/backfill";
 import { createDbHandle } from "./db/client";
 import { runMigrations } from "./db/migrate";
+import { handleServerError, installCrashHandlers } from "./lib/startup-errors";
 import { startBackupScheduler } from "./services/backup-service";
 
 /**
  * 启动入口：读配置 → 准备数据目录与密钥 → 打开数据库并迁移 → 组装 app → 监听端口。
  * app 的定义在 src/app.ts（无副作用）；本文件只做启动，测试不导入它。
  */
+
+// 崩溃兜底要最先装（2026-10-08 立项）：未处理异常同步写 stderr 横幅后退出，
+// 避免被 pnpm/tsx 链吞成"零输出起不来"（当天实测 stdout 会被缓冲丢失）
+installCrashHandlers();
 
 const config = readConfig(process.env);
 
@@ -62,6 +67,9 @@ const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
     "服务已启动",
   );
 });
+// 端口被占等 listen 错误：默认是未处理 error 事件裸崩（纯英文栈），
+// 换成含端口号/占用进程/清理命令的友好报错后以码 1 退出
+server.on("error", (err: Error) => handleServerError(err, config.port));
 
 // —— 优雅退出（T2.13 E2E teardown 根因修复；systemd/docker stop 同样走这条路）——
 // 背景：E2E 的 webServer 直接 spawn 本进程（node + tsx cli），POSIX 上 Playwright

@@ -2,6 +2,16 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "dev",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": [
+        "/c",
+        "set PORT=8787&& set DATA_DIR=%CD%\\data&& pnpm dev < NUL"
+      ],
+      "port": 5173,
+      "url": "http://localhost:5173"
+    },
+    {
       "name": "phase3-opus-web",
       "runtimeExecutable": "cmd",
       "runtimeArgs": [
