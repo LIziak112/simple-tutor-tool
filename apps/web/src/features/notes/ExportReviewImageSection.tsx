@@ -63,6 +63,7 @@ export function ExportReviewImageSection({
 
   // preview 换新（面板重试/重开拉到新载荷）：旧导出结果与复制状态全部重置，
   // 纪元一并作废——在途旧结果也不得覆盖新材料上的初始态。
+  // biome-ignore lint/correctness/useExhaustiveDependencies(preview): preview 是身份变更键（effect 体内不读取），载荷对象换新即重置
   useEffect(() => {
     epochRef.current += 1;
     setState({ phase: "idle" });

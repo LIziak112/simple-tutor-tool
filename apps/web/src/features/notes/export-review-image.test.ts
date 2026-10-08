@@ -2,6 +2,7 @@ import type { ReviewPackPreviewData } from "@tutor/contract";
 import { describe, expect, it } from "vitest";
 import {
   buildReviewImageSections,
+  emptyReviewImagePagesResult,
   planReviewImagePages,
   REVIEW_IMAGE_IMAGE_MAX_HEIGHT_CSS,
   REVIEW_IMAGE_SINGLE_BLOCK_MAX_CONTENT_HEIGHT_CSS,
@@ -182,6 +183,47 @@ describe("buildReviewImageSections（版式模型，纯函数）", () => {
       buildReviewImageSections({ ...BASE_STUDENT, answersIncluded: true }),
     ).toThrow(/拒绝生成学生合成图/);
   });
+
+  it("守卫①假阳性修复：学生自由作答含 [[x]]/[x] 形态不再误伤——仍可生成（作答段剥离）", () => {
+    const sections = buildReviewImageSections({
+      ...BASE_STUDENT,
+      questionMd:
+        "### 题目 3\n\n题面。\n\n**学生答案**：我写的是 [[x]]，还列了清单\n\n- [x] 我选这个\n",
+    });
+    // 剥离只影响哨兵检测输入，不改渲染内容——作答原文仍进版式
+    expect(JSON.stringify(sections)).toContain("[[x]]");
+    expect(JSON.stringify(sections)).toContain("我选这个");
+  });
+
+  it("作答段剥离保守性：标记非行首不剥——其后题面的 [[答案]] 仍拒绝", () => {
+    expect(() =>
+      buildReviewImageSections({
+        ...BASE_STUDENT,
+        questionMd:
+          "### 题目 3\n\n题面提到 **学生答案**：这是句子中间的同文串\n\n填空：x=[[二]]。\n",
+      }),
+    ).toThrow(/答案标记|拒绝生成学生合成图/);
+  });
+
+  it("题面（作答段之前）含 [[答案]] 仍拒绝——剥离不放过真泄露", () => {
+    expect(() =>
+      buildReviewImageSections({
+        ...BASE_STUDENT,
+        questionMd: "### 题目 3\n\n填空：x=[[二]]。\n\n**学生答案**：3\n",
+      }),
+    ).toThrow(/答案标记/);
+  });
+
+  it("守卫③指令形态（P2-5）：:::solution/:::answer 指令节残留（无 [[答案]] 标记）→ 拒绝", () => {
+    for (const marker of [":::solution", ":::answer"]) {
+      expect(() =>
+        buildReviewImageSections({
+          ...BASE_STUDENT,
+          questionMd: `### 题目 3\n\n题面。\n\n${marker}\n\n解答正文（无答案标记）。\n\n:::\n`,
+        }),
+      ).toThrow(/混入教师域内容|拒绝生成学生合成图/);
+    }
+  });
 });
 
 describe("planReviewImagePages（长内容分片分页：顺序、坐标、页数，不重不漏）", () => {
@@ -310,6 +352,16 @@ describe("image 块高度预算（caption 换行余量——审查修复轮 P2-8
         REVIEW_IMAGE_IMAGE_MAX_HEIGHT_CSS,
     ).toBe(90);
     expect(REVIEW_IMAGE_IMAGE_MAX_HEIGHT_CSS).toBe(1886);
+  });
+});
+
+describe("emptyReviewImagePagesResult（空页防御分支——gemini 补漏 LOW-3）", () => {
+  it("零页结果：kind=rasterize 的显式中文失败（绝不静默成功）", () => {
+    const result = emptyReviewImagePagesResult();
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.kind).toBe("rasterize");
+    expect(result.error.message).toContain("内容为空");
   });
 });
 

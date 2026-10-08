@@ -3,23 +3,14 @@ import "katex/dist/katex.min.css";
 import type { ReviewPackPreviewData, ReviewPackRole } from "@tutor/contract";
 import { stemMdLeaksAnswers } from "@tutor/md-dsl";
 import { getFontEmbedCSS, toBlob } from "html-to-image";
-import {
-  type ComponentProps,
-  createElement,
-  type ReactElement,
-  type ReactNode,
-} from "react";
+import { createElement, type ReactElement, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import ReactMarkdown from "react-markdown";
-import rehypeKatex from "rehype-katex";
-import rehypeSanitize from "rehype-sanitize";
-import remarkDirective from "remark-directive";
-import remarkFrontmatter from "remark-frontmatter";
-import remarkGfm from "remark-gfm";
-import remarkMath from "remark-math";
-import { remarkBlank } from "@/features/markdown/remark/remark-blank";
-import { remarkDirectiveHost } from "@/features/markdown/remark/remark-directive-host";
-import { richMarkdownSanitizeSchema } from "@/features/markdown/sanitize";
+import { REVIEW_PACK_KIND_LABELS } from "@/features/export/review-pack-kinds";
+import {
+  richMarkdownRehypePlugins,
+  richMarkdownRemarkPlugins,
+} from "@/features/markdown/pipeline";
 import { saveBlobAs } from "@/lib/api";
 
 /**
@@ -165,13 +156,6 @@ export type ReviewImageSection =
       readonly reason: string;
     };
 
-/** 附件分类的用户可读名（与 review-pack 面板 KIND_LABELS 同口径） */
-const ATTACHMENT_KIND_LABELS: Record<string, string> = {
-  media: "配图",
-  evidence: "手写原稿图",
-  ink: "手写作答笔迹",
-};
-
 /** 生成时间文案（Asia/Shanghai 固定口径——CI=UTC 不漂移，见 CI 环境确定性纪律） */
 function formatGeneratedAt(now: Date): string {
   return new Intl.DateTimeFormat("zh-CN", {
@@ -185,23 +169,55 @@ function formatGeneratedAt(now: Date): string {
   }).format(now);
 }
 
-/** 教师模板节的哨兵前缀（服务端 review-pack-service 拼节用的固定标记） */
+/**
+ * 教师模板节的哨兵标记（服务端 review-pack-service 拼节用的固定粗体标记）。
+ * 追加 `:::solution`/`:::answer` 指令行形态（审查修复轮 P2-5，只增不改）：
+ * 若未来服务端学生投影回归、把解答指令节留在学生 questionMd 且节内无
+ * [[答案]] 标记，粗体串与泄露 oracle 均不命中——指令形态是纵深防御在此
+ * 场景的第二道断档补齐（渲染层会把指令容器渲染成【解答】框）。
+ */
 const TEACHER_SECTION_MARKERS = [
   "**参考答案**",
   "**详解**",
   "**判定**",
   "**老师评语**",
+  ":::solution",
+  ":::answer",
 ] as const;
 
 /**
+ * 服务端拼节的学生作答段前缀（static-material：`**学生答案**：…` 恒为末节）。
+ */
+const STUDENT_ANSWER_SECTION_PREFIX = "**学生答案**：";
+
+/**
+ * 剥离服务端拼接的学生作答段（保守剥离）：
+ * - 只认「行首的 `**学生答案**：`」，从**最后一个**匹配行起截断到串尾——
+ *   服务端装配恒把作答放末节，学生自由作答文本可能跨多行；
+ * - 剥离只影响哨兵检测输入，不改渲染内容：学生把自己的答案写成 [[x]]/
+ *   `- [x] …` 形态属作答内容（无泄露含义），不该被题面泄露 oracle 误伤成
+ *   永远无法导出（审查修复轮 P2-4 假阳性）。
+ */
+function stripStudentAnswerSection(md: string): string {
+  const idx = md.lastIndexOf(STUDENT_ANSWER_SECTION_PREFIX);
+  if (idx === -1) return md;
+  // 非行首（题面句子中间的同文串）不剥——保守方向：宁可误拒也不放过检测
+  if (idx !== 0 && md[idx - 1] !== "\n") return md;
+  return md.slice(0, idx);
+}
+
+/**
  * 学生载荷守卫：任一命中即拒绝生成合成图（fail-closed）——
- * - stemMdLeaksAnswers：[[答案]] 标记 / 选项任务列表（[x] 正确项），
- *   与服务端 assert-no-stem-leak 同一 oracle（md-dsl 单一实现）；
- * - 教师模板节标记：服务端学生装配结构性不含这些节，出现即投影链路破坏；
+ * - stemMdLeaksAnswers（对**题面部分**执行——先保守剥离服务端拼接的学生
+ *   作答段）：[[答案]] 标记 / 选项任务列表（[x] 正确项），与服务端
+ *   assert-no-stem-leak 同一 oracle（md-dsl 单一实现）；
+ * - 教师模板节标记（对全文执行，含作答段）：服务端学生装配结构性不含这些
+ *   节，出现即投影链路破坏；
  * - answersIncluded=true：载荷不变量破坏（学生包结构性不含答案）。
  */
 function assertStudentPayloadSafe(preview: ReviewPackPreviewData): void {
-  if (stemMdLeaksAnswers(preview.questionMd)) {
+  const stemPartMd = stripStudentAnswerSection(preview.questionMd);
+  if (stemMdLeaksAnswers(stemPartMd)) {
     throw new Error(
       "学生载荷题面仍含答案标记（[[答案]] 或选项正误列表），拒绝生成学生合成图——上游角色投影缺失，请刷新后重试或使用完整包导出",
     );
@@ -268,7 +284,7 @@ export function buildReviewImageSections(
   }
   for (const attachment of preview.attachments) {
     if (attachment.state === "ready" && attachment.downloadUrl !== undefined) {
-      const label = ATTACHMENT_KIND_LABELS[attachment.kind] ?? attachment.kind;
+      const label = REVIEW_PACK_KIND_LABELS[attachment.kind] ?? attachment.kind;
       sections.push({
         kind: "image",
         src: attachment.downloadUrl,
@@ -606,22 +622,11 @@ function StaticDirectiveText({
   return createElement("span", null, children);
 }
 
-/** 与 RichMarkdown 同一套管线（解析口径一致）；宿主组件换成上面的静态版 */
-type ReactMarkdownProps = ComponentProps<typeof ReactMarkdown>;
-type RemarkPluginList = NonNullable<ReactMarkdownProps["remarkPlugins"]>;
-type RehypePluginList = NonNullable<ReactMarkdownProps["rehypePlugins"]>;
-const staticRemarkPlugins: RemarkPluginList = [
-  [remarkFrontmatter, ["yaml"]],
-  remarkMath,
-  remarkGfm,
-  remarkDirective,
-  remarkBlank,
-  remarkDirectiveHost,
-];
-const staticRehypePlugins: RehypePluginList = [
-  rehypeKatex,
-  [rehypeSanitize, richMarkdownSanitizeSchema],
-];
+/**
+ * 与 RichMarkdown 同一套管线（解析口径一致，插件清单单一来源
+ * features/markdown/pipeline.ts——审查修复轮：此前两处重复手写同一配置）；
+ * 宿主组件换成上面的静态版。
+ */
 const staticComponents = {
   "directive-container": StaticDirectiveContainer,
   "directive-leaf": StaticDirectiveLeaf,
@@ -636,8 +641,8 @@ function StaticMarkdown({ md }: { md: string }): ReactElement {
     createElement(
       ReactMarkdown,
       {
-        remarkPlugins: staticRemarkPlugins,
-        rehypePlugins: staticRehypePlugins,
+        remarkPlugins: richMarkdownRemarkPlugins,
+        rehypePlugins: richMarkdownRehypePlugins,
         components: staticComponents,
       },
       md,
@@ -964,6 +969,14 @@ async function samplePngBlank(blob: Blob): Promise<boolean> {
 // ---------- 主流程 ----------
 
 /**
+ * 空页防御（gemini 审查补漏 LOW-3）：分页产出零页（版式没有任何块——当前
+ * 版式模型恒有页眉块，此为 DOM 层防御分支）时显式失败，绝不静默「成功」。
+ */
+export function emptyReviewImagePagesResult(): ReviewImageExportResult {
+  return errOf("rasterize", "合成图内容为空，未生成任何页面");
+}
+
+/**
  * 导出合成图（适配器主流程）：
  * 模型守卫 → 字体嵌入 → 图片预解码 → 离屏渲染 → 测量分页 → 逐页栅格化
  * + 产物校验（魔数/空白）→ 全部通过后统一下载。任一步失败返回分类错误且
@@ -1080,7 +1093,7 @@ export async function exportReviewImages(
       return errOf("canvas-limit", msgOf(err));
     }
     if (pages.length === 0) {
-      return errOf("rasterize", "合成图内容为空，未生成任何页面");
+      return emptyReviewImagePagesResult();
     }
 
     // ⑤ 逐页栅格化 + 产物校验（先全部通过，再统一下载——失败零下载）

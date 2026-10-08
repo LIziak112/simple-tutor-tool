@@ -20,6 +20,7 @@ import {
   type ReviewPackRole,
 } from "@/lib/api";
 import { copyText } from "@/lib/copy";
+import { REVIEW_PACK_KIND_LABELS } from "./review-pack-kinds";
 
 /**
  * 单题完整导出面板（T6R.13，方案 §9.1「首批提供完整单题 ZIP，同时提供可选择
@@ -38,16 +39,8 @@ import { copyText } from "@/lib/copy";
  * - 学生/教师共用（viewer 分派请求路径；文案差异：学生注明不含参考答案）。
  */
 
-/** 文件分类的用户可读名（预览清单行前缀） */
-const KIND_LABELS: Record<string, string> = {
-  pack: "清单",
-  review: "提示词",
-  schema: "结构说明",
-  "question-md": "题目文字",
-  media: "配图",
-  evidence: "手写原稿图",
-  ink: "手写笔迹",
-};
+/** 文件分类的用户可读名（预览清单行前缀；单一来源见 review-pack-kinds.ts） */
+const KIND_LABELS = REVIEW_PACK_KIND_LABELS;
 
 /** 逐张附件的行内任务状态 */
 interface AttachmentJob {
