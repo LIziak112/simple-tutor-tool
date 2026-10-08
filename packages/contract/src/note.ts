@@ -660,8 +660,9 @@ export const correctionCreateRequestSchema = z.object({
  *   上传 meta 同防线值）；
  * - stuckAt / errorCause：可选反思文本（「我卡在哪里」/「我的错因」，各
  *   ≤NOTE_REFLECTION_MAX_LENGTH），随 seal 落列冻结（D10，封存后不可改）。
- * 对已封存行再 seal → 409 NOTE_CORRECTION_SEALED（再编辑 = 新开一行）。
- * 成功响应 data 复用 noteHeadDataSchema。
+ * 对已封存行再 seal → 404 NOTE_NOT_FOUND（无进行中的订正可保存，可能已
+ * 保存过；409 NOTE_CORRECTION_SEALED 只出现在 PUT 已封存行且
+ * baseRevision>0 的写入路径）。成功响应 data 复用 noteHeadDataSchema。
  */
 export const correctionSealRequestSchema = z.object({
   baseRevision: z.number().int().min(1).max(1_000_000),

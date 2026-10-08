@@ -41,6 +41,7 @@ import { submitAttempt } from "./attempt-service";
 import {
   assembleLearningPack,
   buildLearningPackZip,
+  compareByEvidenceRef,
   previewLearningPack,
 } from "./export-service";
 import { saveInk } from "./ink-service";
@@ -1825,6 +1826,128 @@ describe("T6R.16 多阶段证据与固定选择（evidencePhases/asOf/preview）
         note.includes("学习痕迹中的讲义阅读地图"),
       ),
     ).toBe(false);
+  });
+
+  it("T6R.18 闸门：asOf+讲义 → 正文未钉定声明；evidence → 分析图可事后补传声明；跳过的补充稿计数声明", () => {
+    // ① asOf + 讲义模块 → 讲义正文未按 asOf 钉定的显式声明（F-P3-4）
+    const withLecture = learningPackV2Schema.parse(
+      JSON.parse(
+        assembleLearningPack(
+          db,
+          dataDir,
+          TEST_TEACHER_ID,
+          phaseRequest({
+            modules: {
+              questions: "solution",
+              responses: true,
+              evidence: true,
+              evidencePhases: ["scratch", "correction", "supplement"],
+              lectures: [{ lectureId: seed.lectures.l1.id }],
+            },
+            asOf: P_NOW,
+          }),
+          { now: P_LATE },
+        ).packJson,
+      ),
+    );
+    expect(
+      withLecture.manifest.contextNotes.some((note) =>
+        note.includes("讲义正文按生成时刻读取当前版本"),
+      ),
+    ).toBe(true);
+    // ② evidence 开 → 证据分析图可事后补传重建的口径声明（O-M1：非封存时刻
+    //    快照，防学生补图被误读为封存时刻过程证据）
+    expect(
+      withLecture.manifest.contextNotes.some((note) => note.includes("补传")),
+    ).toBe(true);
+
+    // ③ 无 asOf（或未勾讲义）→ 无讲义未钉定声明
+    const noAsOf = learningPackV2Schema.parse(
+      JSON.parse(
+        assembleLearningPack(
+          db,
+          dataDir,
+          TEST_TEACHER_ID,
+          phaseRequest({
+            modules: {
+              questions: "solution",
+              responses: true,
+              evidence: true,
+              evidencePhases: ["scratch", "correction", "supplement"],
+              lectures: [{ lectureId: seed.lectures.l1.id }],
+            },
+          }),
+          { now: P_NOW },
+        ).packJson,
+      ),
+    );
+    expect(
+      noAsOf.manifest.contextNotes.some((note) =>
+        note.includes("讲义正文按生成时刻读取当前版本"),
+      ),
+    ).toBe(false);
+    // ④ evidence 关 → 无补传声明
+    const noEvidence = learningPackV2Schema.parse(
+      JSON.parse(
+        assembleLearningPack(
+          db,
+          dataDir,
+          TEST_TEACHER_ID,
+          phaseRequest({
+            modules: { questions: "solution", responses: true },
+          }),
+          { now: P_NOW },
+        ).packJson,
+      ),
+    );
+    expect(
+      noEvidence.manifest.contextNotes.some((note) => note.includes("补传")),
+    ).toBe(false);
+
+    // ⑤ asOf 早于补充稿首版本 → 跳过行计数进 contextNotes，不静默（F-P2-1：
+    //    SEAL_1 < asOf < SUPP_1，订正#1 在场、补充稿整行跳过）
+    const skipped = learningPackV2Schema.parse(
+      JSON.parse(
+        assembleLearningPack(
+          db,
+          dataDir,
+          TEST_TEACHER_ID,
+          phaseRequest({ asOf: "2026-10-03T02:30:00.000Z" }),
+          { now: P_LATE },
+        ).packJson,
+      ),
+    );
+    expect(
+      skipped.manifest.contextNotes.some((note) =>
+        note.includes("1 份补充稿在预览时刻（asOf）前无存活版本"),
+      ),
+    ).toBe(true);
+    // 对照：asOf 覆盖全部里程碑 → 无跳过声明
+    expect(
+      withLecture.manifest.contextNotes.some((note) =>
+        note.includes("无存活版本，未收录"),
+      ),
+    ).toBe(false);
+  });
+
+  it("T6R.18 闸门 F-P3-5：preview 证据图行排序 ref 数值序（e999 < e1000）+ 页号升序", () => {
+    const rows = [
+      { ref: "e1000", pageIndex: 0 },
+      { ref: "e999", pageIndex: 2 },
+      { ref: "e999", pageIndex: 1 },
+      { ref: "e002", pageIndex: 0 },
+    ];
+    expect(
+      [...rows].sort(
+        (a, b) =>
+          compareByEvidenceRef(a.ref, b.ref) || a.pageIndex - b.pageIndex,
+      ),
+    ).toEqual([
+      { ref: "e002", pageIndex: 0 },
+      { ref: "e999", pageIndex: 1 },
+      { ref: "e999", pageIndex: 2 },
+      { ref: "e1000", pageIndex: 0 },
+    ]);
   });
 
   it("preview 真实图片清单：ready 带 downloadUrl/bytes，missing 带 reason；v1 恒空数组", () => {

@@ -185,6 +185,12 @@ export interface QuestionEvidenceAssembly {
     /** 缺失行页号（闸门 F3：零图/缺版本防御分支为 0，逐图行为真实页号） */
     readonly pageIndex: number;
   }>;
+  /**
+   * 因「无 ≤asOf 存活版本」被跳过的补充稿行数（T6R.18 闸门 F-P2-1：跳过
+   * 不静默——晚于 asOf 创建或钉定版本已被 GC 回收两态不可分，计数上报供
+   * 导出侧 contextNotes 声明；无 asOf（钉当前头）时不适用恒 0）
+   */
+  readonly skippedSupplementNotes: number;
 }
 
 /** 装配选项 */
@@ -436,6 +442,8 @@ export function assembleQuestionEvidence(
 
   const evidence: QuestionEvidenceEntry[] = [];
   const evidenceRefsByResponseRowId = new Map<string, readonly string[]>();
+  // 无 ≤asOf 存活版本而跳过的补充稿行计数（T6R.18 F-P2-1，跳过不静默）
+  let skippedSupplementNotes = 0;
   const missingEvidenceImages: Array<{
     file: string;
     reason: string;
@@ -515,7 +523,9 @@ export function assembleQuestionEvidence(
 
   // 补充稿版本钉定（T6R.16 固定选择）：每 note 取 serverSavedAt ≤ asOf 的最新
   // note_version（currentVersionId 可能晚于 asOf，不能直接用）；无 ≤asOf 版本
-  // 的 note 在行产出时跳过（退化态）。批量预取候选版本后在内存取每 note 最新。
+  // 的 note 在行产出时跳过并计入 skippedSupplementNotes（T6R.18 F-P2-1：
+  // 晚于 asOf 创建或钉定版本已被 GC 回收两态不可分，计数上报不静默）。
+  // 批量预取候选版本后在内存取每 note 最新。
   const supplementVersionIdByNoteId = new Map<string, string>();
   if (includeEvidence && wantSupplement) {
     const supplementNoteIds = [
@@ -730,12 +740,16 @@ export function assembleQuestionEvidence(
       }
       if (wantSupplement) {
         // 补充稿按行收录：版本取 serverSavedAt ≤ asOf 的最新 note_version
-        // （asOf 钉定可变正文）；无 ≤asOf 版本的行跳过（退化态）。
+        // （asOf 钉定可变正文）；无 ≤asOf 版本的行跳过并计数（见下）。
         for (const note of supplementRowsByKey.get(
           `${attempt.id}:${row.questionId}`,
         ) ?? []) {
           const pinnedVersionId = supplementVersionIdByNoteId.get(note.id);
-          if (pinnedVersionId === undefined) continue;
+          if (pinnedVersionId === undefined) {
+            // 跳过计数（T6R.18 F-P2-1）：不上条目但计数上报，导出侧声明
+            skippedSupplementNotes += 1;
+            continue;
+          }
           eSeq += 1;
           const eRef = packRefOf("e", eSeq);
           const pinned = versionEvidenceOf(
@@ -821,6 +835,7 @@ export function assembleQuestionEvidence(
     media: mediaOut,
     missingMedia: missingMediaOut,
     missingEvidenceImages,
+    skippedSupplementNotes,
   };
 }
 
