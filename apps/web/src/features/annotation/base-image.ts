@@ -6,15 +6,18 @@ import {
   type AnnotationBasePreviewData,
 } from "@tutor/contract";
 import { stemMdLeaksAnswers } from "@tutor/md-dsl";
-import { getFontEmbedCSS, toBlob } from "html-to-image";
-import { createElement, type ReactElement, type ReactNode } from "react";
+import { toBlob } from "html-to-image";
+import { createElement, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import ReactMarkdown from "react-markdown";
+import { StaticMarkdown } from "@/features/markdown/static-markdown";
 import {
-  richMarkdownRehypePlugins,
-  richMarkdownRemarkPlugins,
-} from "@/features/markdown/pipeline";
-import { rgbaSampleAllBlank } from "@/features/notes/export-review-image";
+  TEACHER_SECTION_MARKERS,
+  cachedFontEmbedCss,
+  pngBlobHasMagic,
+  preloadImages,
+  samplePngBlank,
+  withTimeout,
+} from "@/features/notes/rasterize-utils";
 
 /**
  * 题干标注底图生成管线（T6R.20，方案 §10「固定底图＋独立矢量标注」）：
@@ -119,16 +122,6 @@ function formatGeneratedAt(now: Date): string {
   }).format(now);
 }
 
-/** 教师模板节哨兵（与 export-review-image TEACHER_SECTION_MARKERS 同集口径） */
-const TEACHER_SECTION_MARKERS = [
-  "**参考答案**",
-  "**详解**",
-  "**判定**",
-  "**老师评语**",
-  ":::solution",
-  ":::answer",
-] as const;
-
 /**
  * 学生载荷守卫（纵深防御第二道；权威哨兵在服务端 materialOf）：
  * 题面含 [[答案]]/选项任务列表（stemMdLeaksAnswers）或教师节标记 →
@@ -221,9 +214,6 @@ export function annotationBaseCanvasPixelSize(contentHeightCss: number): {
 
 // ---------- 栅格化适配器层（需要 DOM；依赖可注入以便 jsdom 测试） ----------
 
-/** PNG 魔数（编码校验） */
-const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] as const;
-
 /** 底图版式的字体栈（与 T6R.19 页面同栈：本地打包字体在前） */
 const ANNOTATION_BASE_FONT_STACK =
   '"Geist Variable", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif';
@@ -287,179 +277,39 @@ function msgOf(err: unknown): string {
 /** 单步异步超时（同 T6R.19 口径：iOS/旧 WebKit 挂起防线，超时转分类失败） */
 export const ANNOTATION_BASE_STEP_TIMEOUT_MS = 30_000;
 
-function withTimeout<T>(
-  promise: Promise<T>,
-  ms: number,
-  message: string,
-): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(message)), ms);
-    promise.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (err: unknown) => {
-        clearTimeout(timer);
-        reject(err instanceof Error ? err : new Error(String(err)));
-      },
-    );
-  });
-}
+// ---------- 静态 markdown 渲染（审查修复 6：抽 features/markdown/static-markdown 共用） ----------
 
-// ---------- 静态 markdown 渲染（同一 remark/rehype 管线；宿主为底图静态版） ----------
-
-/** react-markdown 注入的 hast 元素（本层只读 properties） */
-interface HastNodeLike {
-  readonly properties?: Record<string, unknown>;
-}
-
-function directiveNameOf(node: unknown): string {
-  const directive = (node as HastNodeLike | null)?.properties?.directive;
-  return typeof directive === "string" ? directive : "";
-}
-
-function attrOf(node: unknown, key: string): string | undefined {
-  const value = (node as HastNodeLike | null)?.properties?.[key];
-  return typeof value === "string" ? value : undefined;
-}
-
-/** 块级容器静态标签（折叠块/分步等永远展开；材料已含静态说明行） */
-const STATIC_CONTAINER_LABELS: Record<string, string> = {
-  question: "题目",
-  hint: "提示",
-  answer: "答案",
-  solution: "解答",
-  example: "例",
-  steps: "分步",
-  step: "步骤",
-  fold: "折叠块",
-  tip: "提示",
-  warning: "注意",
-  box: "框注",
-  columns: "分栏",
-  col: "栏",
-};
-
-function StaticDirectiveContainer({
-  node,
-  children,
-}: {
-  node?: unknown;
-  children?: ReactNode;
-}): ReactElement {
-  const label = STATIC_CONTAINER_LABELS[directiveNameOf(node)];
-  return createElement(
-    "div",
-    {
-      style: {
-        margin: "10px 0",
-        padding: "10px 14px",
-        borderLeft: "3px solid #94a3b8",
-        background: "#f1f5f9",
-        borderRadius: "4px",
-      },
-    },
-    label !== undefined
-      ? createElement(
-          "div",
-          {
-            style: { fontSize: "12px", color: "#475569", marginBottom: "6px" },
-          },
-          `【${label}】`,
-        )
-      : null,
-    children,
-  );
-}
-
-/**
- * ::image 归一化（Media.tsx 同口径：blobs/ 开头 → 根相对 URL）。
- * 底图没有「附件区」可指引——图片直接进底图（参数化差异 4）。
- */
+/** ::image 归一化（Media.tsx 同口径：blobs/ 开头 → 根相对 URL）。底图没有
+ *  「附件区」可指引——图片直接进底图（参数化差异 4）。 */
 function normalizeImageSrc(src: string): string {
   return src.startsWith("blobs/") ? `/${src}` : src;
 }
 
-function StaticDirectiveLeaf({ node }: { node?: unknown }): ReactElement {
-  const name = directiveNameOf(node);
-  if (name === "image") {
-    const src = attrOf(node, "src")?.trim();
-    if (src !== undefined && src.length > 0) {
-      return createElement("img", {
-        src: normalizeImageSrc(src),
-        alt: attrOf(node, "alt")?.trim() || "图片",
-        style: {
-          maxWidth: "100%",
-          maxHeight: `${IMAGE_MAX_HEIGHT_CSS}px`,
-          objectFit: "contain",
-          display: "block",
-          margin: "8px auto",
-        },
-      });
-    }
-    return createElement(
-      "p",
-      { style: { margin: "8px 0", fontSize: "13px", color: "#475569" } },
-      "【配图】图片路径缺失",
-    );
+/** ::image 叶子的底图渲染（真实图片进版式，maxHeight 上限内留图注余量） */
+function renderBaseImageLeaf({
+  src,
+  alt,
+}: {
+  src: string | undefined;
+  alt: string | undefined;
+}): ReactElement {
+  if (src !== undefined && src.length > 0) {
+    return createElement("img", {
+      src: normalizeImageSrc(src),
+      alt: alt || "图片",
+      style: {
+        maxWidth: "100%",
+        maxHeight: `${IMAGE_MAX_HEIGHT_CSS}px`,
+        objectFit: "contain",
+        display: "block",
+        margin: "8px auto",
+      },
+    });
   }
   return createElement(
     "p",
     { style: { margin: "8px 0", fontSize: "13px", color: "#475569" } },
-    `【${name.length > 0 ? name : "指令"}】交互内容以静态材料说明为准`,
-  );
-}
-
-function StaticDirectiveText({
-  node,
-  children,
-}: {
-  node?: unknown;
-  children?: ReactNode;
-}): ReactElement {
-  const name = directiveNameOf(node);
-  if (name === "blank") {
-    return createElement("span", {
-      style: {
-        display: "inline-block",
-        minWidth: "3em",
-        borderBottom: "1.5px solid #64748b",
-        height: "1em",
-      },
-    });
-  }
-  if (name === "mark") {
-    return createElement(
-      "span",
-      {
-        style: { background: "#fef08a", padding: "0 2px", borderRadius: "2px" },
-      },
-      children,
-    );
-  }
-  return createElement("span", null, children);
-}
-
-const staticComponents = {
-  "directive-container": StaticDirectiveContainer,
-  "directive-leaf": StaticDirectiveLeaf,
-  "directive-text": StaticDirectiveText,
-} as unknown as Parameters<typeof ReactMarkdown>[0]["components"];
-
-function StaticMarkdown({ md }: { md: string }): ReactElement {
-  return createElement(
-    "div",
-    { className: "rich-markdown" },
-    createElement(
-      ReactMarkdown,
-      {
-        remarkPlugins: richMarkdownRemarkPlugins,
-        rehypePlugins: richMarkdownRehypePlugins,
-        components: staticComponents,
-      },
-      md,
-    ),
+    "【配图】图片路径缺失",
   );
 }
 
@@ -497,7 +347,10 @@ function renderSectionElement(section: AnnotationBaseSection): ReactElement {
           "data-export-md-wrap": "",
           style: { margin: "0", display: "flow-root" },
         },
-        createElement(StaticMarkdown, { md: section.md }),
+        createElement(StaticMarkdown, {
+          md: section.md,
+          renderImage: renderBaseImageLeaf,
+        }),
       );
   }
 }
@@ -587,30 +440,7 @@ function buildBasePageNode(
   return page;
 }
 
-// ---------- 缺省依赖实现（真实浏览器链路） ----------
-
-async function preloadImages(urls: readonly string[]): Promise<void> {
-  await Promise.all(
-    urls.map(
-      (url) =>
-        new Promise<void>((resolve, reject) => {
-          const image = new Image();
-          const fail = (): void => reject(new Error(`图片加载失败：${url}`));
-          if (typeof image.decode === "function") {
-            image.src = url;
-            image.decode().then(
-              () => resolve(),
-              () => fail(),
-            );
-          } else {
-            image.onload = () => resolve();
-            image.onerror = () => fail();
-            image.src = url;
-          }
-        }),
-    ),
-  );
-}
+// ---------- 缺省依赖实现（真实浏览器链路；共享原语见 rasterize-utils） ----------
 
 async function rasterizePageWithHtmlToImage(
   node: HTMLElement,
@@ -628,39 +458,6 @@ async function rasterizePageWithHtmlToImage(
     throw new Error("底图栅格化未产出 PNG 数据");
   }
   return blob;
-}
-
-async function pngBlobHasMagic(blob: Blob): Promise<boolean> {
-  if (blob.size < 8) return false;
-  const head = new Uint8Array(await blob.slice(0, 8).arrayBuffer());
-  return PNG_MAGIC.every((byte, i) => head[i] === byte);
-}
-
-/**
- * 采样判断整页空白（与 T6R.19 samplePngBlank 同口径：缩 64×64 单次读回；
- * 校验链路故障不误杀）。rgbaSampleAllBlank 复用 T6R.19 导出（同一实现）。
- */
-async function samplePngBlank(blob: Blob): Promise<boolean> {
-  const url = URL.createObjectURL(blob);
-  try {
-    const image = new Image();
-    await new Promise<void>((resolve, reject) => {
-      image.onload = () => resolve();
-      image.onerror = () => reject(new Error("空白校验图加载失败"));
-      image.src = url;
-    });
-    const canvas = document.createElement("canvas");
-    canvas.width = 64;
-    canvas.height = 64;
-    const ctx = canvas.getContext("2d");
-    if (ctx === null) return false;
-    ctx.drawImage(image, 0, 0, 64, 64);
-    return rgbaSampleAllBlank(ctx.getImageData(0, 0, 64, 64).data);
-  } catch {
-    return false;
-  } finally {
-    URL.revokeObjectURL(url);
-  }
 }
 
 // ---------- 主流程 ----------
@@ -708,7 +505,7 @@ export async function renderAnnotationBaseImage(
       fontCss = await withTimeout(
         deps.collectFontCss !== undefined
           ? deps.collectFontCss(document.body)
-          : getFontEmbedCSS(document.body),
+          : cachedFontEmbedCss(document.body),
         stepTimeoutMs,
         `本地字体收集超时（${Math.round(stepTimeoutMs / 1000)} 秒）`,
       );
