@@ -2,7 +2,7 @@ import "katex/dist/katex.min.css";
 
 import type { ReviewPackPreviewData, ReviewPackRole } from "@tutor/contract";
 import { stemMdLeaksAnswers } from "@tutor/md-dsl";
-import { getFontEmbedCSS, toPng } from "html-to-image";
+import { getFontEmbedCSS, toBlob } from "html-to-image";
 import {
   type ComponentProps,
   createElement,
@@ -88,6 +88,19 @@ export const REVIEW_IMAGE_SINGLE_BLOCK_MAX_CONTENT_HEIGHT_CSS = Math.floor(
       2 * REVIEW_IMAGE_PAGE_PADDING_CSS,
   ),
 ); // = 1976
+
+/**
+ * image 块内非图片内容预算（CSS px）：图注按两行预留（12px 字号 ×1.5 行高
+ * ×2 ≈36px）＋图注上间距 4 ＋块上下 margin 28 ＋余量 22——长路径 caption
+ * （如「手写原稿图（evidence/e001-original-02.png）」）换两行不再把整块
+ * 顶爆单块兜底上限（审查修复轮 P2-8）。
+ */
+const IMAGE_BLOCK_NON_IMAGE_BUDGET_CSS = 90;
+
+/** image 块内图片 maxHeight（单块兜底上限减非图片预算推导，不手抄数） */
+export const REVIEW_IMAGE_IMAGE_MAX_HEIGHT_CSS =
+  REVIEW_IMAGE_SINGLE_BLOCK_MAX_CONTENT_HEIGHT_CSS -
+  IMAGE_BLOCK_NON_IMAGE_BUDGET_CSS;
 
 /** 学生红线文案（页眉与组件共用单一来源；与面板既有口径一致） */
 export const REVIEW_IMAGE_STUDENT_NOTE =
@@ -332,9 +345,8 @@ export function planReviewImagePages(
         `单块内容高 ${Math.round(height)}px 超过画布分页兜底上限 ${singleMax}px，无法分页——请减少单段内容长度或分多题导出`,
       );
     }
-    if (height > maxPage && currentIds.length > 0) {
-      flush(); // 超常规页高的块前面先收页，让它独立成页
-    }
+    // 统一累加条件：装不下即收页再装（超常规页高的块自然独立成页——
+    // height > maxPage 时 currentHeight + height > maxPage 必然成立）
     if (currentHeight + height > maxPage && currentIds.length > 0) {
       flush();
     }
@@ -686,7 +698,7 @@ function renderSectionElement(section: ReviewImageSection): ReactElement {
           alt: section.alt,
           style: {
             maxWidth: "100%",
-            maxHeight: `${REVIEW_IMAGE_SINGLE_BLOCK_MAX_CONTENT_HEIGHT_CSS - 60}px`,
+            maxHeight: `${REVIEW_IMAGE_IMAGE_MAX_HEIGHT_CSS}px`,
             objectFit: "contain",
             display: "block",
             margin: "0 auto",
@@ -874,23 +886,27 @@ async function preloadImages(urls: readonly string[]): Promise<void> {
   );
 }
 
-/** html-to-image 栅格化：toPng dataUrl → Blob（data: fetch 在现代浏览器可用） */
+/**
+ * html-to-image 栅格化：原生 toBlob 直出 Blob——不经 toPng 巨型 Base64 字符串
+ * →fetch 反解的中间层（审查修复轮内存驻留收敛：单页数十 MB 的 Base64 文本
+ * 与二进制不再同时驻留）。null（画布 0×0 等）与空 Blob 转栅格化失败；
+ * PNG 魔数与空白校验链路对 Blob 照常生效。
+ */
 async function rasterizePageWithHtmlToImage(
   node: HTMLElement,
   cssHeight: number,
   fontCss: string,
 ): Promise<Blob> {
-  const dataUrl = await toPng(node, {
+  const blob = await toBlob(node, {
     width: REVIEW_IMAGE_WIDTH_CSS,
     height: Math.ceil(cssHeight),
     pixelRatio: REVIEW_IMAGE_PIXEL_RATIO,
     backgroundColor: "#ffffff",
     fontEmbedCSS: fontCss,
   });
-  if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:image/png")) {
+  if (blob === null || blob.size === 0) {
     throw new Error("栅格化未产出 PNG 数据");
   }
-  const blob = await (await fetch(dataUrl)).blob();
   return blob;
 }
 
@@ -902,9 +918,25 @@ async function pngBlobHasMagic(blob: Blob): Promise<boolean> {
 }
 
 /**
- * 采样判断整页空白（「不下载空白 PNG 后显示成功」的产物侧防线）：画布采样
- * 64×64 网格，全部采样点纯白/透明 → 判空白（页面恒有页眉文字，全白只可能是
- * 字体嵌入或 foreignObject 渲染失败）。画布不可用时不误杀（返回非空白）。
+ * 内存采样判定：RGBA 数据全部采样点纯白/透明 → 判空白（页面恒有页眉文字，
+ * 文字必有灰阶像素）。缩到 64×64 后文本仍保留灰阶，判定强度与全图网格采样
+ * 等价。
+ */
+export function rgbaSampleAllBlank(data: Uint8ClampedArray): boolean {
+  for (let i = 0; i + 3 < data.length; i += 4) {
+    if (data[i + 3] === 0) continue; // 透明像素不计
+    if (!(data[i] === 255 && data[i + 1] === 255 && data[i + 2] === 255)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * 采样判断整页空白（「不下载空白 PNG 后显示成功」的产物侧防线）：整页绘制
+ * 缩到 64×64 离屏小画布后**单次** getImageData 读回、内存里取样判断——
+ * 逐像素 getImageData 是 4096 次同步 GPU 读回，在 iPad WebKit 会引发整机
+ * 卡顿（审查修复轮 HIGH）。画布不可用时不误杀（返回非空白）。
  */
 async function samplePngBlank(blob: Blob): Promise<boolean> {
   const url = URL.createObjectURL(blob);
@@ -916,21 +948,12 @@ async function samplePngBlank(blob: Blob): Promise<boolean> {
       image.src = url;
     });
     const canvas = document.createElement("canvas");
-    canvas.width = image.naturalWidth;
-    canvas.height = image.naturalHeight;
+    canvas.width = 64;
+    canvas.height = 64;
     const ctx = canvas.getContext("2d");
     if (ctx === null) return false;
-    ctx.drawImage(image, 0, 0);
-    const stepX = Math.max(1, Math.floor(canvas.width / 64));
-    const stepY = Math.max(1, Math.floor(canvas.height / 64));
-    for (let y = 0; y < canvas.height; y += stepY) {
-      for (let x = 0; x < canvas.width; x += stepX) {
-        const [r, g, b, a] = ctx.getImageData(x, y, 1, 1).data;
-        if (a === 0) continue;
-        if (!(r === 255 && g === 255 && b === 255)) return false;
-      }
-    }
-    return true;
+    ctx.drawImage(image, 0, 0, 64, 64);
+    return rgbaSampleAllBlank(ctx.getImageData(0, 0, 64, 64).data);
   } catch {
     return false; // 校验链路故障不误杀（魔数/空白另有 encode 分类兜底）
   } finally {

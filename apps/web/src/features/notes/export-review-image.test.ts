@@ -3,9 +3,12 @@ import { describe, expect, it } from "vitest";
 import {
   buildReviewImageSections,
   planReviewImagePages,
+  REVIEW_IMAGE_IMAGE_MAX_HEIGHT_CSS,
+  REVIEW_IMAGE_SINGLE_BLOCK_MAX_CONTENT_HEIGHT_CSS,
   REVIEW_IMAGE_STUDENT_NOTE,
   reviewImageCanvasPixelSize,
   reviewImageFilename,
+  rgbaSampleAllBlank,
 } from "./export-review-image";
 
 /**
@@ -270,6 +273,43 @@ describe("画布像素尺寸与上限校验", () => {
   it("像素高超过画布边长上限 → 抛错（显式失败原因）", () => {
     // 内容高逼近单块兜底上限时 (1900+72)*2=3944 ≤4096 不抛；再大即抛
     expect(() => reviewImageCanvasPixelSize(2200)).toThrow(/画布|超限/);
+  });
+});
+
+describe("rgbaSampleAllBlank（空白采样判定：纯函数，单次读回后内存取样）", () => {
+  /** 64×64 RGBA 全白 / 全透明 / 含灰阶像素的采样数据 */
+  const blankWhite = () => new Uint8ClampedArray(64 * 64 * 4).fill(255);
+  const blankTransparent = () => new Uint8ClampedArray(64 * 64 * 4); // 全 0（含 alpha 0）
+
+  it("全纯白采样 → 判空白（true）", () => {
+    expect(rgbaSampleAllBlank(blankWhite())).toBe(true);
+  });
+
+  it("全透明采样 → 判空白（true）", () => {
+    expect(rgbaSampleAllBlank(blankTransparent())).toBe(true);
+  });
+
+  it("任一采样点为非纯白不透明像素（文字灰阶）→ 判非空白（false）", () => {
+    const data = blankWhite();
+    // 第 10 个采样点放一个深灰不透明像素（缩到 64×64 后文本仍必有灰阶）
+    data[10 * 4] = 15;
+    data[10 * 4 + 1] = 23;
+    data[10 * 4 + 2] = 42;
+    data[10 * 4 + 3] = 255;
+    expect(rgbaSampleAllBlank(data)).toBe(false);
+  });
+});
+
+describe("image 块高度预算（caption 换行余量——审查修复轮 P2-8）", () => {
+  it("图片 maxHeight 由单块兜底上限推导（不手抄数），且留足两行图注余量", () => {
+    // 单块兜底上限 1976 − 预算 90 = 1886；90 = 图注两行（12px×1.5×2≈36）
+    // + 图注上间距 4 + 块上下 margin 28 + 余量 22——长路径 caption 换两行
+    // 不再顶爆单块上限（整题 canvas-limit 拒绝的可用性缺陷）
+    expect(
+      REVIEW_IMAGE_SINGLE_BLOCK_MAX_CONTENT_HEIGHT_CSS -
+        REVIEW_IMAGE_IMAGE_MAX_HEIGHT_CSS,
+    ).toBe(90);
+    expect(REVIEW_IMAGE_IMAGE_MAX_HEIGHT_CSS).toBe(1886);
   });
 });
 
