@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { copyText } from "./copy";
+import { copyPngBlobToClipboard, copyText } from "./copy";
 
 /** copyText 的降级链路（组件集成行为由页面测试覆盖，此处单测两种路径） */
 
@@ -52,5 +52,75 @@ describe("copyText", () => {
     });
     expect(await copyText("x")).toBe(false);
     restore();
+  });
+});
+
+/** 内容非全零的 PNG 形状 Blob（魔数 8 字节 + 填充） */
+const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] as const;
+function fakePngBlob(): Blob {
+  const arr = new Uint8Array(64);
+  arr.set(PNG_MAGIC, 0);
+  return new Blob([arr], { type: "image/png" });
+}
+
+/** 挂假 ClipboardItem（捕获构造入参以断言 Safari Promise 形态） */
+function stubClipboard(write: (items: unknown[]) => Promise<void>): {
+  itemsSeen: Array<Record<string, unknown>>;
+  restore: () => void;
+} {
+  const itemsSeen: Array<Record<string, unknown>> = [];
+  class FakeClipboardItem {
+    constructor(public readonly items: Record<string, unknown>) {
+      itemsSeen.push(items);
+    }
+  }
+  Object.defineProperty(navigator, "clipboard", {
+    value: { write },
+    configurable: true,
+  });
+  vi.stubGlobal("ClipboardItem", FakeClipboardItem);
+  return {
+    itemsSeen,
+    restore: () => {
+      vi.unstubAllGlobals();
+      Object.defineProperty(navigator, "clipboard", {
+        value: undefined,
+        configurable: true,
+        writable: true,
+      });
+    },
+  };
+}
+
+describe("copyPngBlobToClipboard（T6R.19 复制图片：降级纪律与 Safari 形态）", () => {
+  it("clipboard/ClipboardItem 不可用（HTTP 部署等）：返回 false、不抛错", async () => {
+    expect(
+      (globalThis as { ClipboardItem?: unknown }).ClipboardItem,
+    ).toBeUndefined();
+    await expect(copyPngBlobToClipboard(fakePngBlob())).resolves.toBe(false);
+  });
+
+  it("构造值传 Promise<Blob> 形态（WebKit 仅接受 Promise，Chromium 兼容两者）", async () => {
+    const { itemsSeen, restore } = stubClipboard(
+      vi.fn(() => Promise.resolve()),
+    );
+    try {
+      await expect(copyPngBlobToClipboard(fakePngBlob())).resolves.toBe(true);
+      expect(itemsSeen).toHaveLength(1);
+      expect(itemsSeen[0]?.["image/png"]).toBeInstanceOf(Promise);
+    } finally {
+      restore();
+    }
+  });
+
+  it("clipboard.write 拒绝（transient activation 过期等）：返回 false（不谎报已复制）", async () => {
+    const { restore } = stubClipboard(
+      vi.fn(() => Promise.reject(new Error("NotAllowedError"))),
+    );
+    try {
+      await expect(copyPngBlobToClipboard(fakePngBlob())).resolves.toBe(false);
+    } finally {
+      restore();
+    }
   });
 });

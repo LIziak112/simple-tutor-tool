@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { ExportReviewImageSection } from "@/features/notes/ExportReviewImageSection";
 import {
   downloadAttachmentApi,
   downloadReviewPackApi,
@@ -19,12 +20,13 @@ import {
   type ReviewPackRole,
 } from "@/lib/api";
 import { copyText } from "@/lib/copy";
+import { REVIEW_PACK_KIND_LABELS } from "./review-pack-kinds";
 
 /**
  * 单题完整导出面板（T6R.13，方案 §9.1「首批提供完整单题 ZIP，同时提供可选择
- * 的 Markdown 文本与逐张图片下载」）：
+ * 的 Markdown 文本与逐张图片下载」；T6R.19 增第四出口「合成图」）：
  * - 一键一题包：入口按钮 → 预览（附件清单 + 缺失 + reviewMd）→ 下载完整
- *   zip／复制文字／逐张下载真实图片三出口；
+ *   zip／复制文字／逐张下载真实图片三出口 + 合成图静态 PNG 导出；
  * - **复制语义红线**：按钮与提示只说「复制文字（不含图片）」——普通 HTTP
  *   部署无 clipboard API／等待预览后失去用户手势时 copyText 失败，降级为
  *   手工选中文本块（只读 textarea），绝不把「复制文字」提示成「文字图片
@@ -37,16 +39,8 @@ import { copyText } from "@/lib/copy";
  * - 学生/教师共用（viewer 分派请求路径；文案差异：学生注明不含参考答案）。
  */
 
-/** 文件分类的用户可读名（预览清单行前缀） */
-const KIND_LABELS: Record<string, string> = {
-  pack: "清单",
-  review: "提示词",
-  schema: "结构说明",
-  "question-md": "题目文字",
-  media: "配图",
-  evidence: "手写原稿图",
-  ink: "手写笔迹",
-};
+/** 文件分类的用户可读名（预览清单行前缀；单一来源见 review-pack-kinds.ts） */
+const KIND_LABELS = REVIEW_PACK_KIND_LABELS;
 
 /** 逐张附件的行内任务状态 */
 interface AttachmentJob {
@@ -411,6 +405,8 @@ ${preview.questionMd}`}
                   </ul>
                 </div>
               )}
+              {/* 第四出口：静态合成图（T6R.19——题面＋作答＋原稿合成 PNG） */}
+              <ExportReviewImageSection preview={preview} />
             </>
           )}
         </div>
