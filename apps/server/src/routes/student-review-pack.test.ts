@@ -2,7 +2,7 @@ import type { ApiErr, ReviewPackPreviewData } from "@tutor/contract";
 import { reviewPackPreviewDataSchema } from "@tutor/contract";
 import type { Logger } from "pino";
 import pino from "pino";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { createApp } from "../app.ts";
 import type { Db } from "../db/client.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
@@ -91,6 +91,10 @@ function zipUrl(attempt = attemptId): string {
 }
 
 describe("学生单题 review-pack 路由", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("未登录 401：preview 与 zip 两接口", async () => {
     for (const url of [previewUrl(), zipUrl()]) {
       const res = await app.request(url, { method: "POST" });
@@ -148,6 +152,11 @@ describe("学生单题 review-pack 路由", () => {
   });
 
   it("zip：application/zip + attachment + no-store（跨账号缓存防线）+ 解包全文件哨兵扫描", async () => {
+    // 确定性回归（2026-10-08 CI 事故）：路由盖的是真实墙钟，CI 恰在 01:42 分
+    // 跑挂——pack.json 的 generatedAt 时间戳含答案哨兵 "42" 子串（假阳性）。
+    // 钉住事故时刻跑：zip-assert 现剥时间戳，本用例在任何墙钟下都不得挂。
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-08T01:42:11.210Z"));
     const res = await app.request(zipUrl(), {
       method: "POST",
       headers: { cookie: aCookie },

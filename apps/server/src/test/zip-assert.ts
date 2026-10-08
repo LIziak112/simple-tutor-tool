@@ -19,6 +19,9 @@ export function packEntryOf<T>(
  * pack.json 泄露扫描文本（/code-review C20 收敛共享）：
  * - 只取**字符串值**（数字不承载答案文本——manifest 的 bytes 计数与十进制
  *   哨兵可能子串相撞，是假阳性不是泄露）；
+ * - 字符串值先剥 ISO-8601 时间戳（generatedAt 等墙钟字段是路由真实
+ *   `new Date()` 盖章，其数字同样会与十进制哨兵子串相撞——2026-10-08
+ *   CI 在 01:42 分以此假阳性撞过答案哨兵 "42"）；
  *
  * /security-review F1 注记：此前此处剥除 question.snapshotHash（「内容身份
  * 豁免」）——正是该豁免掩盖了「快照 hash 可作离线答案验证 oracle」的发现；
@@ -30,7 +33,9 @@ export function packLeakTextOf(data: Buffer): string {
   const strings: string[] = [];
   const walk = (node: unknown): void => {
     if (typeof node === "string") {
-      strings.push(node);
+      strings.push(
+        node.replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z/g, ""),
+      );
       return;
     }
     if (Array.isArray(node)) {
