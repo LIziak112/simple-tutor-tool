@@ -1,6 +1,9 @@
 import type { AnnotationDoc } from "@tutor/contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ANNOTATION_CANVAS_DATA_SLOT, createAnnotationSurface } from "./annotation-surface.ts";
+import {
+  ANNOTATION_CANVAS_DATA_SLOT,
+  createAnnotationSurface,
+} from "./annotation-surface.ts";
 
 /**
  * 标注画布适配器测试（T6R.20）：坐标域=底图像素（backing store 恒定、resize
@@ -83,9 +86,19 @@ function mountSurface(initial?: AnnotationDoc): {
 } {
   const container = document.createElement("div");
   document.body.appendChild(container);
-  const rect = { left: 100, top: 50, width: CSS_W, height: CSS_H, right: 100 + CSS_W, bottom: 50 + CSS_H } as DOMRect;
+  const rect = {
+    left: 100,
+    top: 50,
+    width: CSS_W,
+    height: CSS_H,
+    right: 100 + CSS_W,
+    bottom: 50 + CSS_H,
+  } as DOMRect;
   vi.spyOn(container, "getBoundingClientRect").mockReturnValue(rect);
-  const surface = createAnnotationSurface({ baseWidth: BASE_W, baseHeight: BASE_H });
+  const surface = createAnnotationSurface({
+    baseWidth: BASE_W,
+    baseHeight: BASE_H,
+  });
   surface.mount(container, initial);
   const canvas = container.querySelector(
     `canvas[data-slot="${ANNOTATION_CANVAS_DATA_SLOT}"]`,
@@ -215,14 +228,38 @@ describe("标注画布：坐标域与画布恒定", () => {
 describe("标注画布：§4.1 输入状态机接线", () => {
   it("第二指针到达（自愈兜底语义）：在途笔按已收采样先行收笔，两笔不混点", () => {
     const h = mountSurface();
-    pointer(h.canvas, "pointerdown", { pointerId: 1, clientX: 150, clientY: 80 });
-    pointer(h.canvas, "pointermove", { pointerId: 1, clientX: 170, clientY: 85 });
+    pointer(h.canvas, "pointerdown", {
+      pointerId: 1,
+      clientX: 150,
+      clientY: 80,
+    });
+    pointer(h.canvas, "pointermove", {
+      pointerId: 1,
+      clientX: 170,
+      clientY: 85,
+    });
     // 第二 pointerdown＝自愈兜底（丢 up 的畸形序列）：先收笔再开新笔——
     // 旧手势后续采样不混入新笔（§4.1「一笔不混两个来源的采样」）
-    pointer(h.canvas, "pointerdown", { pointerId: 2, clientX: 400, clientY: 300 });
-    pointer(h.canvas, "pointermove", { pointerId: 1, clientX: 190, clientY: 90 });
-    pointer(h.canvas, "pointermove", { pointerId: 2, clientX: 420, clientY: 310 });
-    pointer(h.canvas, "pointerup", { pointerId: 2, clientX: 420, clientY: 310 });
+    pointer(h.canvas, "pointerdown", {
+      pointerId: 2,
+      clientX: 400,
+      clientY: 300,
+    });
+    pointer(h.canvas, "pointermove", {
+      pointerId: 1,
+      clientX: 190,
+      clientY: 90,
+    });
+    pointer(h.canvas, "pointermove", {
+      pointerId: 2,
+      clientX: 420,
+      clientY: 310,
+    });
+    pointer(h.canvas, "pointerup", {
+      pointerId: 2,
+      clientX: 420,
+      clientY: 310,
+    });
     const strokes = h.surface.getDoc().strokes;
     expect(strokes).toHaveLength(2);
     expect(strokes[0]?.points).toHaveLength(2); // 第一笔只含已收采样

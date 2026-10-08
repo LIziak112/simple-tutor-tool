@@ -11,18 +11,16 @@
  *   - error（网络/栅格化瞬时失败）：原因 + 重试按钮；
  * - 标注模式外保留原作答控件（本层是题干区的附加折叠区，不替换作答区）。
  */
-import {
-  ChevronDown,
-  CircleAlert,
-  LoaderCircle,
-  PenLine,
-} from "lucide-react";
+import { ChevronDown, CircleAlert, LoaderCircle, PenLine } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { retryAnnotationUpload } from "./annotation-sync";
-import { useAnnotationRecord, useAnnotationSessionRef } from "./use-annotation-record";
-import { useAnnotationBase } from "./use-annotation-base";
 import { AnnotationWorkspace } from "./AnnotationWorkspace";
+import { retryAnnotationUpload } from "./annotation-sync";
+import { useAnnotationBase } from "./use-annotation-base";
+import {
+  useAnnotationRecord,
+  useAnnotationSessionRef,
+} from "./use-annotation-record";
 
 export interface AnnotationLayerProps {
   attemptId: string;

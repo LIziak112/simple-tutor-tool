@@ -9,18 +9,18 @@ import {
   type AdminTeacherResetPasswordRequest,
   type AdminTeacherSummary,
   type AdminTeacherUpdateRequest,
-  type AnalyticsOverviewData,
   ANNOTATION_BASE_IMAGE_FORM_FIELDS,
+  ANNOTATION_FORM_FIELDS,
+  type AnalyticsOverviewData,
+  type AnalyticsQuestionsData,
+  type AnalyticsStudentData,
   type AnnotationBaseImageReceipt,
   type AnnotationBasePreviewData,
-  ANNOTATION_FORM_FIELDS,
   type AnnotationPhase,
   type AnnotationReceipt,
   type AnnotationSealData,
   type AnnotationUploadMetaInput,
   type AnnotationViewData,
-  type AnalyticsQuestionsData,
-  type AnalyticsStudentData,
   type AssignmentCheckData,
   type AssignmentCheckRequest,
   type AssignmentCreateData,
@@ -1376,12 +1376,12 @@ export function postAnnotationBaseApi(
   phase?: AnnotationPhase,
 ): Promise<AnnotationBasePreviewData> {
   return callApi(() =>
-    api.api.student.attempts[":id"].questions[":questionId"].annotation.base.$post(
-      {
-        param: { id: attemptId, questionId },
-        ...(phase !== undefined ? { query: { phase } } : {}),
-      },
-    ),
+    api.api.student.attempts[":id"].questions[
+      ":questionId"
+    ].annotation.base.$post({
+      param: { id: attemptId, questionId },
+      ...(phase !== undefined ? { query: { phase } } : {}),
+    }),
   );
 }
 

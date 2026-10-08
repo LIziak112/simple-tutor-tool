@@ -9,11 +9,12 @@
  * 孤立的圈——zip 装配侧同口径，见 review-pack-annotation 服务端测试）。
  * 依赖可注入（图片加载器/编码器）供 jsdom 测试。
  */
-import { canvasToPngBlob } from "@/features/ink/engine/canvas-png.ts";
+
 import type { AnnotationBaseRef, AnnotationDoc } from "@tutor/contract";
-import { replayAnnotationStroke } from "./annotation-surface";
-import { createProgrammaticAtrament } from "@/features/ink/engine/atrament-adapter.ts";
 import type Atrament from "atrament";
+import { createProgrammaticAtrament } from "@/features/ink/engine/atrament-adapter.ts";
+import { canvasToPngBlob } from "@/features/ink/engine/canvas-png.ts";
+import { replayAnnotationStroke } from "./annotation-surface";
 
 /** 合成失败分类 */
 export type AnnotationCompositeErrorKind =

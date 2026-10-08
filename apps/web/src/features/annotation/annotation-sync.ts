@@ -19,22 +19,19 @@ import type {
 } from "@tutor/contract";
 import { annotationConflictSummarySchema } from "@tutor/contract";
 import { gzipOrRaw } from "@/features/ink/gzip";
-import {
-  ApiError,
-  putAnnotationDocApi,
-} from "@/lib/api";
+import { ApiError, putAnnotationDocApi } from "@/lib/api";
 import { SerialTaskQueue } from "@/lib/serial-task-queue.ts";
 import {
-  applyAnnotationConflict,
-  applyAnnotationDenied,
-  applyAnnotationReceipt,
-  clearAnnotationDeniedAccess,
-  listPendingAnnotations,
   type AnnotationLocalRecord,
   type AnnotationPendingVersion,
   type AnnotationScope,
   type AnnotationSessionRef,
   annotationKeyOf,
+  applyAnnotationConflict,
+  applyAnnotationDenied,
+  applyAnnotationReceipt,
+  clearAnnotationDeniedAccess,
+  listPendingAnnotations,
   notifyAnnotationStoreAll,
   parseAnnotationKey,
   peekAnnotationRecord,
@@ -130,7 +127,10 @@ function clearTimers(key: string): void {
   if (!s.queued && !controllers.has(key)) schedulers.delete(key);
 }
 
-function sameSession(a: AnnotationSessionRef, b: AnnotationSessionRef): boolean {
+function sameSession(
+  a: AnnotationSessionRef,
+  b: AnnotationSessionRef,
+): boolean {
   return a.origin === b.origin && a.studentId === b.studentId;
 }
 
@@ -180,7 +180,11 @@ function classifyPutError(err: unknown): PutVerdict {
       current: err.extra?._current ?? null,
     });
     if (parsed.success && parsed.data.current !== null) {
-      return { kind: "conflict", current: parsed.data.current, reason: message };
+      return {
+        kind: "conflict",
+        current: parsed.data.current,
+        reason: message,
+      };
     }
     return { kind: "retry" };
   }

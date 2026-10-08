@@ -1,13 +1,14 @@
 import type {
+  AnnotationBaseRef,
   AnnotationConflictCurrent,
   AnnotationDoc,
-  AnnotationBaseRef,
   AnnotationReceipt,
   AnnotationViewData,
 } from "@tutor/contract";
 import { beforeEach, describe, expect, it } from "vitest";
 import { digestOf } from "@/features/attempt/draft-merge";
 import {
+  type AnnotationSessionRef,
   annotationKeyOf,
   applyAnnotationConflict,
   applyAnnotationDenied,
@@ -28,7 +29,6 @@ import {
   setUploading,
   subscribeAnnotationStore,
   writeAnnotationDoc,
-  type AnnotationSessionRef,
 } from "./annotation-store";
 
 /**
@@ -82,7 +82,8 @@ function viewOf(o: {
             stale: false,
             pixelWidth: 1440,
             pixelHeight: 900,
-            downloadUrl: "/api/student/attempts/a-0001/annotation-base/b-1/image.png",
+            downloadUrl:
+              "/api/student/attempts/a-0001/annotation-base/b-1/image.png",
           }
         : o.base,
     maxWidthPx: 1440,
@@ -142,7 +143,11 @@ describe("writeAnnotationDoc（本地写入）", () => {
     expect(record.local).toBe("saving");
     await settleAnnotationPersistence();
     expect(peekAnnotationRecord(SESSION, SCOPE)?.local).toBe("saved");
-    const v2 = writeAnnotationDoc(SESSION, SCOPE, docOf([strokeAt(1, 1), strokeAt(2, 2)]));
+    const v2 = writeAnnotationDoc(
+      SESSION,
+      SCOPE,
+      docOf([strokeAt(1, 1), strokeAt(2, 2)]),
+    );
     expect(v2).toBe(2);
   });
 
@@ -186,7 +191,11 @@ describe("applyBasePreview / applyAnnotationView（服务端事实播种）", ()
   });
 
   it("空视图（无 base 无 doc）建壳：base=null、pending=null", async () => {
-    await applyAnnotationView(SESSION, SCOPE, viewOf({ base: null, doc: null }));
+    await applyAnnotationView(
+      SESSION,
+      SCOPE,
+      viewOf({ base: null, doc: null }),
+    );
     const record = peekAnnotationRecord(SESSION, SCOPE);
     expect(record?.base).toBeNull();
     expect(record?.pending).toBeNull();
@@ -199,9 +208,7 @@ describe("applyBasePreview / applyAnnotationView（服务端事实播种）", ()
     const record = peekAnnotationRecord(SESSION, SCOPE);
     expect(record?.base?.state).toBe("ready");
     expect(record?.baseRevision).toBe(3);
-    expect(record?.annotationId).toBe(
-      "n-00000000-0000-4000-8000-000000000001",
-    );
+    expect(record?.annotationId).toBe("n-00000000-0000-4000-8000-000000000001");
     expect(record?.pending).toBeNull();
     expect(digestOf(record?.doc)).toBe(digestOf(serverDoc));
   });

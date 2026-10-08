@@ -13,9 +13,9 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { HintEntryList } from "@/features/attempt/HintPanel";
 import { AnnotationLayer } from "@/features/annotation/AnnotationLayer";
 import { AnnotationView } from "@/features/annotation/AnnotationView";
+import { HintEntryList } from "@/features/attempt/HintPanel";
 import { ReviewPackPanel } from "@/features/export/review-pack-panel";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { CorrectionSection } from "@/features/notes/CorrectionSection";

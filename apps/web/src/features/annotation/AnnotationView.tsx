@@ -21,9 +21,12 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { saveBlobAs } from "@/lib/api";
-import { fetchAnnotationViewApi, fetchTeacherAnnotationViewApi } from "@/lib/api";
 import { createProgrammaticAtrament } from "@/features/ink/engine/atrament-adapter.ts";
+import {
+  fetchAnnotationViewApi,
+  fetchTeacherAnnotationViewApi,
+  saveBlobAs,
+} from "@/lib/api";
 import {
   annotationCompositeFilename,
   exportAnnotationComposite,
@@ -198,7 +201,11 @@ export function AnnotationView({
               className="flex flex-col items-start gap-2 rounded-xl border border-destructive/40 bg-destructive/5 px-3 py-2.5 text-sm"
             >
               <p className="text-destructive">题干标注加载失败：{error}</p>
-              <Button variant="outline" className="h-10 px-3 text-xs" onClick={() => void load()}>
+              <Button
+                variant="outline"
+                className="h-10 px-3 text-xs"
+                onClick={() => void load()}
+              >
                 重试
               </Button>
             </div>
@@ -256,7 +263,9 @@ export function AnnotationView({
                       draggable={false}
                       loading="lazy"
                     />
-                    <AnnotationStaticCanvas view={{ ...view, base: view.base }} />
+                    <AnnotationStaticCanvas
+                      view={{ ...view, base: view.base }}
+                    />
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     <Button
@@ -266,7 +275,10 @@ export function AnnotationView({
                       onClick={() => void handleExport()}
                     >
                       {exporting ? (
-                        <LoaderCircle aria-hidden className="size-4 animate-spin" />
+                        <LoaderCircle
+                          aria-hidden
+                          className="size-4 animate-spin"
+                        />
                       ) : (
                         <ImageDown aria-hidden className="size-4" />
                       )}
@@ -275,7 +287,9 @@ export function AnnotationView({
                   </div>
                   {exportResult !== null && (
                     <p
-                      role={exportResult.startsWith("已导出") ? "status" : "alert"}
+                      role={
+                        exportResult.startsWith("已导出") ? "status" : "alert"
+                      }
                       className={
                         exportResult.startsWith("已导出")
                           ? "text-sm text-muted-foreground"

@@ -120,4 +120,3 @@ describe("exportAnnotationComposite（canvas 直绘）", () => {
     expect(result.error.kind).toBe("encode");
   });
 });
-

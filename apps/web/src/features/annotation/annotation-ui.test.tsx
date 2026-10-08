@@ -1,6 +1,10 @@
-import type { AnnotationBaseRef, AnnotationDoc, AnnotationViewData } from "@tutor/contract";
-import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type {
+  AnnotationBaseRef,
+  AnnotationDoc,
+  AnnotationViewData,
+} from "@tutor/contract";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * T6R.20 标注 UI 层测试（合成图本体见 annotation-composite.test.ts）：
@@ -68,8 +72,6 @@ vi.mock("./annotation-composite", async (importActual) => ({
   exportAnnotationComposite: vi.fn(),
 }));
 
-import { AnnotationLayer } from "./AnnotationLayer";
-import { AnnotationView } from "./AnnotationView";
 import {
   ApiError,
   fetchAnnotationViewApi,
@@ -77,14 +79,19 @@ import {
   postAnnotationBaseImageApi,
   saveBlobAs,
 } from "@/lib/api";
-import { renderAnnotationBaseImage } from "./base-image";
+import { AnnotationLayer } from "./AnnotationLayer";
+import { AnnotationView } from "./AnnotationView";
 import { exportAnnotationComposite } from "./annotation-composite";
 import {
   installAnnotationBackend,
   memoryAnnotationBackend,
   resetAnnotationStoreForTest,
 } from "./annotation-store";
-import { bindAnnotationSession, resetAnnotationSession } from "./annotation-sync";
+import {
+  bindAnnotationSession,
+  resetAnnotationSession,
+} from "./annotation-sync";
+import { renderAnnotationBaseImage } from "./base-image";
 
 const viewMock = vi.mocked(fetchAnnotationViewApi);
 const baseMock = vi.mocked(postAnnotationBaseApi);
@@ -149,7 +156,10 @@ import { afterEach } from "vitest";
 describe("AnnotationLayer：两阶段底图流", () => {
   it("视图已有 ready 底图 → 直接挂工作区（底图 img 在场），不再生成", async () => {
     viewMock.mockResolvedValue(
-      emptyView({ ...READY_BASE, downloadUrl: "/api/student/attempts/a1/annotation-base/b1/image.png" }),
+      emptyView({
+        ...READY_BASE,
+        downloadUrl: "/api/student/attempts/a1/annotation-base/b1/image.png",
+      }),
     );
     render(
       <AnnotationLayer attemptId="a1" questionId="q1" ariaPrefix="第 1 题" />,
@@ -195,7 +205,9 @@ describe("AnnotationLayer：两阶段底图流", () => {
       pixelHeight: 900,
       updatedAt: "2026-10-08T00:00:00Z",
     });
-    render(<AnnotationLayer attemptId="a1" questionId="q1" ariaPrefix="第 1 题" />);
+    render(
+      <AnnotationLayer attemptId="a1" questionId="q1" ariaPrefix="第 1 题" />,
+    );
     fireEvent.click(screen.getByRole("button", { name: /圈画题干/ }));
     await waitFor(() =>
       expect(screen.getByAltText("第 1 题题干标注底图")).toBeInTheDocument(),
@@ -343,9 +355,7 @@ describe("AnnotationView：回看状态", () => {
 
   it("stale=true → 「旧版本题干的标注」横幅", async () => {
     viewMock.mockResolvedValue(sealedView({ doc: DOC, stale: true }));
-    render(
-      <AnnotationView viewer="student" attemptId="a1" questionId="q1" />,
-    );
+    render(<AnnotationView viewer="student" attemptId="a1" questionId="q1" />);
     fireEvent.click(screen.getByRole("button", { name: /题干标注/ }));
     await waitFor(() =>
       expect(screen.getByText(/旧版本题干的标注/)).toBeInTheDocument(),
@@ -354,9 +364,7 @@ describe("AnnotationView：回看状态", () => {
 
   it("sealed → 「已随交卷固定」说明（只读语义）", async () => {
     viewMock.mockResolvedValue(sealedView({ doc: DOC }));
-    render(
-      <AnnotationView viewer="student" attemptId="a1" questionId="q1" />,
-    );
+    render(<AnnotationView viewer="student" attemptId="a1" questionId="q1" />);
     fireEvent.click(screen.getByRole("button", { name: /题干标注/ }));
     await waitFor(() =>
       expect(screen.getByText(/已随交卷固定/)).toBeInTheDocument(),
@@ -365,9 +373,7 @@ describe("AnnotationView：回看状态", () => {
 
   it("空态（无 doc 无 base）→「未使用题干标注」", async () => {
     viewMock.mockResolvedValue(sealedView({ base: null }));
-    render(
-      <AnnotationView viewer="student" attemptId="a1" questionId="q1" />,
-    );
+    render(<AnnotationView viewer="student" attemptId="a1" questionId="q1" />);
     fireEvent.click(screen.getByRole("button", { name: /题干标注/ }));
     await waitFor(() =>
       expect(screen.getByText(/未使用题干标注/)).toBeInTheDocument(),
@@ -376,11 +382,17 @@ describe("AnnotationView：回看状态", () => {
 
   it("底图缺失（有笔无底图）→「底图缺失」态且不渲染导出按钮", async () => {
     viewMock.mockResolvedValue(
-      sealedView({ doc: DOC, base: { ...READY_BASE, state: "pending", pixelWidth: null, pixelHeight: null } }),
+      sealedView({
+        doc: DOC,
+        base: {
+          ...READY_BASE,
+          state: "pending",
+          pixelWidth: null,
+          pixelHeight: null,
+        },
+      }),
     );
-    render(
-      <AnnotationView viewer="student" attemptId="a1" questionId="q1" />,
-    );
+    render(<AnnotationView viewer="student" attemptId="a1" questionId="q1" />);
     fireEvent.click(screen.getByRole("button", { name: /题干标注/ }));
     await waitFor(() =>
       expect(screen.getByText(/底图缺失/)).toBeInTheDocument(),
@@ -424,9 +436,7 @@ describe("AnnotationView：回看状态", () => {
       ok: false,
       error: { kind: "base-missing", message: "底图加载失败——文件可能已缺失" },
     });
-    render(
-      <AnnotationView viewer="student" attemptId="a1" questionId="q1" />,
-    );
+    render(<AnnotationView viewer="student" attemptId="a1" questionId="q1" />);
     fireEvent.click(screen.getByRole("button", { name: /题干标注/ }));
     await waitFor(() =>
       expect(screen.getByAltText("本题题干标注底图")).toBeInTheDocument(),

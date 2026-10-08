@@ -2,14 +2,14 @@ import { gunzipSync } from "node:zlib";
 import type { AnnotationReceipt } from "@tutor/contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  type AnnotationScope,
+  type AnnotationSessionRef,
   getAnnotationRecord,
   installAnnotationBackend,
   memoryAnnotationBackend,
   peekAnnotationRecord,
   resetAnnotationStoreForTest,
   writeAnnotationDoc,
-  type AnnotationScope,
-  type AnnotationSessionRef,
 } from "./annotation-store";
 
 /**
@@ -27,6 +27,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
   };
 });
 
+import { ApiError, putAnnotationDocApi } from "@/lib/api";
 import {
   ANNOTATION_SYNC_BACKOFF_BASE_MS,
   ANNOTATION_SYNC_BACKOFF_MAX_MS,
@@ -37,7 +38,6 @@ import {
   resolveAnnotationConflictKeepLocalAndUpload,
   retryAnnotationUpload,
 } from "./annotation-sync";
-import { ApiError, putAnnotationDocApi } from "@/lib/api";
 
 const putMock = vi.mocked(putAnnotationDocApi);
 
@@ -88,7 +88,11 @@ async function bodyDoc(blob: Blob): Promise<{ strokes: unknown[] }> {
 function callOf(i: number) {
   const call = putMock.mock.calls[i];
   if (call === undefined) throw new Error(`put 第 ${i} 次调用不存在`);
-  return { meta: call[3], signal: call[4] as AbortSignal | undefined, blob: call[2] };
+  return {
+    meta: call[3],
+    signal: call[4] as AbortSignal | undefined,
+    blob: call[2],
+  };
 }
 
 beforeEach(() => {
@@ -120,7 +124,11 @@ describe("annotation-sync：调度（防抖与最大等待）", () => {
 
   it("correction scope 上送 phase 字段", async () => {
     putMock.mockResolvedValue(receiptOf(1));
-    writeAnnotationDoc(SESSION_A, { ...SCOPE, phase: "correction" }, docWithStrokes(1));
+    writeAnnotationDoc(
+      SESSION_A,
+      { ...SCOPE, phase: "correction" },
+      docWithStrokes(1),
+    );
     await vi.advanceTimersByTimeAsync(ANNOTATION_SYNC_DEBOUNCE_MS);
     expect(putMock.mock.calls.length).toBe(1);
     expect(callOf(0).meta.phase).toBe("correction");
@@ -189,7 +197,9 @@ describe("annotation-sync：终态与冲突", () => {
     );
     writeAnnotationDoc(SESSION_A, SCOPE, docWithStrokes(1));
     await vi.advanceTimersByTimeAsync(ANNOTATION_SYNC_DEBOUNCE_MS);
-    expect(peekAnnotationRecord(SESSION_A, SCOPE)?.denied?.kind).toBe("content");
+    expect(peekAnnotationRecord(SESSION_A, SCOPE)?.denied?.kind).toBe(
+      "content",
+    );
     putMock.mockResolvedValue(receiptOf(1));
     writeAnnotationDoc(SESSION_A, SCOPE, docWithStrokes(2)); // 新内容复活
     await vi.advanceTimersByTimeAsync(ANNOTATION_SYNC_DEBOUNCE_MS);

@@ -415,10 +415,9 @@ describe("prepareSubmitEvidence：T6R.20 标注封存集成（flush→seal→声
       (await import("@/lib/api")).putAnnotationDocApi,
     );
     // 绑定标注会话 + 写一份待传标注（flush 目标）
-    const {
-      bindAnnotationSession,
-      resetAnnotationSession,
-    } = await import("@/features/annotation/annotation-sync");
+    const { bindAnnotationSession, resetAnnotationSession } = await import(
+      "@/features/annotation/annotation-sync"
+    );
     const {
       installAnnotationBackend,
       memoryAnnotationBackend,

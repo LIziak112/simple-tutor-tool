@@ -21,9 +21,14 @@
  * 🧑 真机待确认（R6）：iPad 圈画手感、手掌/笔先落后写、书写中途旋转收笔
  * 手感——决策矩阵在 pointer-machine.test.ts 锁定，手感不可静态审查替代。
  */
-import Atrament from "atrament";
-import { type StrokeBounds, strokeBounds } from "@/features/ink/engine/bounds.ts";
+
+import type { AnnotationDoc } from "@tutor/contract";
+import type Atrament from "atrament";
 import { createProgrammaticAtrament } from "@/features/ink/engine/atrament-adapter.ts";
+import {
+  type StrokeBounds,
+  strokeBounds,
+} from "@/features/ink/engine/bounds.ts";
 import { eraseHit } from "@/features/ink/engine/erase.ts";
 import { InkStore } from "@/features/ink/engine/history.ts";
 import {
@@ -45,7 +50,6 @@ import {
   type InkToolConfig,
   resolveToolSpec,
 } from "@/features/ink/engine/types.ts";
-import type { AnnotationDoc } from "@tutor/contract";
 
 /** 标注画布的 DOM 标识（E2E/注入器定位用；风格对齐 INK_CANVAS_DATA_SLOT） */
 export const ANNOTATION_CANVAS_DATA_SLOT = "annotation-canvas";
@@ -133,7 +137,10 @@ export function createAnnotationSurface(
   let observer: ResizeObserver | null = null;
 
   let tool: InkToolConfig = { type: "pen" };
-  let base: { color: "black" | "blue" | "red"; size: "thin" | "medium" | "thick" } = {
+  let base: {
+    color: "black" | "blue" | "red";
+    size: "thin" | "medium" | "thick";
+  } = {
     color: "red",
     size: "medium",
   };

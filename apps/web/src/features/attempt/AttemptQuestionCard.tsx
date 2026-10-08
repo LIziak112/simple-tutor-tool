@@ -7,9 +7,9 @@ import { displayStemMd } from "@tutor/md-dsl";
 import { cn } from "cn";
 import { Check, X } from "lucide-react";
 import { useRef, useState } from "react";
+import { AnnotationLayer } from "@/features/annotation/AnnotationLayer";
 import { BlankAnswersProvider } from "@/features/markdown/BlankAnswersContext";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
-import { AnnotationLayer } from "@/features/annotation/AnnotationLayer";
 import { NoteLayer } from "@/features/notes/NoteLayer";
 import {
   effectiveNoteLayout,

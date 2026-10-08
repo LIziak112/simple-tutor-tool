@@ -20,7 +20,9 @@ import {
  */
 
 /** 学生装配载荷夹具（契约 AnnotationBasePreviewData 形状） */
-function previewOf(overrides: Partial<AnnotationBasePreviewData> = {}): AnnotationBasePreviewData {
+function previewOf(
+  overrides: Partial<AnnotationBasePreviewData> = {},
+): AnnotationBasePreviewData {
   return {
     base: {
       baseId: "11111111-1111-4111-8111-111111111111",
@@ -55,7 +57,9 @@ describe("底图常量（宽 1440×高上限 4096 的 CSS 推导）", () => {
 
 describe("buildAnnotationBaseSections（版式区块：参数化差异）", () => {
   it("页眉含题号与「题干标注底图」标识；正文为题面 markdown；无学生答案节/教师节", () => {
-    const sections = buildAnnotationBaseSections(previewOf(), { now: new Date(0) });
+    const sections = buildAnnotationBaseSections(previewOf(), {
+      now: new Date(0),
+    });
     expect(sections.length).toBe(2);
     const header = sections[0];
     expect(header?.kind).toBe("header");
@@ -90,7 +94,9 @@ describe("buildAnnotationBaseSections（版式区块：参数化差异）", () =
 
   it("学生红线：题面含 [[答案]] 标记 → 抛错拒绝（不进版式模型）", () => {
     expect(() =>
-      buildAnnotationBaseSections(previewOf({ questionMd: "填空：x=[[二]]。" })),
+      buildAnnotationBaseSections(
+        previewOf({ questionMd: "填空：x=[[二]]。" }),
+      ),
     ).toThrow(/答案标记/);
   });
 
@@ -118,7 +124,9 @@ describe("planAnnotationBaseHeight（单页无分页）", () => {
     ]);
     expect(plan.ok).toBe(false);
     if (plan.ok) return;
-    expect(plan.reason).toContain(String(ANNOTATION_BASE_MAX_CONTENT_HEIGHT_CSS));
+    expect(plan.reason).toContain(
+      String(ANNOTATION_BASE_MAX_CONTENT_HEIGHT_CSS),
+    );
     expect(plan.reason).toContain("标注");
     expect(plan.reason).toContain("草稿");
   });
@@ -134,7 +142,9 @@ describe("annotationBaseCanvasPixelSize（画布像素预算）", () => {
 
   it("内容高超上限（防御：plan 已拦截，此处兜底）→ 抛中文错误", () => {
     expect(() =>
-      annotationBaseCanvasPixelSize(ANNOTATION_BASE_MAX_CONTENT_HEIGHT_CSS + 10),
+      annotationBaseCanvasPixelSize(
+        ANNOTATION_BASE_MAX_CONTENT_HEIGHT_CSS + 10,
+      ),
     ).toThrow(/4096|超高/);
   });
 });

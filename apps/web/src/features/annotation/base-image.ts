@@ -10,11 +10,11 @@ import { getFontEmbedCSS, toBlob } from "html-to-image";
 import { createElement, type ReactElement, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import ReactMarkdown from "react-markdown";
-import { rgbaSampleAllBlank } from "@/features/notes/export-review-image";
 import {
   richMarkdownRehypePlugins,
   richMarkdownRemarkPlugins,
 } from "@/features/markdown/pipeline";
+import { rgbaSampleAllBlank } from "@/features/notes/export-review-image";
 
 /**
  * 题干标注底图生成管线（T6R.20，方案 §10「固定底图＋独立矢量标注」）：
@@ -369,7 +369,9 @@ function StaticDirectiveContainer({
     label !== undefined
       ? createElement(
           "div",
-          { style: { fontSize: "12px", color: "#475569", marginBottom: "6px" } },
+          {
+            style: { fontSize: "12px", color: "#475569", marginBottom: "6px" },
+          },
           `【${label}】`,
         )
       : null,
@@ -845,14 +847,20 @@ export async function renderAnnotationBaseImage(
       return errOf("rasterize", `底图栅格化失败（${msgOf(err)}）`);
     }
     if (!(await pngBlobHasMagic(blob))) {
-      return errOf("encode", "底图 PNG 编码失败（空输出或非 PNG）——不采用残缺文件");
+      return errOf(
+        "encode",
+        "底图 PNG 编码失败（空输出或非 PNG）——不采用残缺文件",
+      );
     }
     const blank =
       deps.samplePngBlank !== undefined
         ? await deps.samplePngBlank(blob)
         : await samplePngBlank(blob);
     if (blank) {
-      return errOf("encode", "底图栅格化为空白图片（字体或渲染失败）——不采用空白图");
+      return errOf(
+        "encode",
+        "底图栅格化为空白图片（字体或渲染失败）——不采用空白图",
+      );
     }
     return {
       ok: true,

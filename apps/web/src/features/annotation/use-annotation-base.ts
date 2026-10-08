@@ -9,20 +9,20 @@
  */
 import type { AnnotationBaseRef } from "@tutor/contract";
 import { useCallback, useRef, useState } from "react";
-import { ApiError } from "@/lib/api";
 import {
+  ApiError,
+  fetchAnnotationViewApi,
   postAnnotationBaseApi,
   postAnnotationBaseImageApi,
-  fetchAnnotationViewApi,
   studentAnnotationBasePngUrl,
 } from "@/lib/api";
-import { renderAnnotationBaseImage } from "./base-image";
 import {
+  type AnnotationSessionRef,
   applyAnnotationView,
   applyBaseDisabled,
   applyBasePreview,
-  type AnnotationSessionRef,
 } from "./annotation-store";
+import { renderAnnotationBaseImage } from "./base-image";
 
 /** 底图生命周期（入口按钮与工作区的渲染依据） */
 export type AnnotationBaseFlow =
@@ -131,7 +131,10 @@ export function useAnnotationBase(input: {
         setFlow({ kind: "disabled", reason });
         return;
       }
-      if (err instanceof ApiError && (err.status === 403 || err.status === 404)) {
+      if (
+        err instanceof ApiError &&
+        (err.status === 403 || err.status === 404)
+      ) {
         // 访问权终态：禁用（不重试必然再拒的请求）
         const reason = `${err.message}——本题暂不能标注`;
         await applyBaseDisabled(session, scope, reason).catch(() => undefined);

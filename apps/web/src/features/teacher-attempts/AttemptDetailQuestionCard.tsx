@@ -4,6 +4,7 @@ import { cn } from "cn";
 import { ChevronDown, Clock3, Lightbulb, PenLine } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { AnnotationView } from "@/features/annotation/AnnotationView";
 import {
   formatReferenceAnswers,
   formatStudentAnswer,
@@ -13,7 +14,6 @@ import {
   QUESTION_TYPE_LABELS,
 } from "@/features/attempt/answer-format";
 import { ReviewPackPanel } from "@/features/export/review-pack-panel";
-import { AnnotationView } from "@/features/annotation/AnnotationView";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { NoteOriginalView } from "@/features/notes/NoteOriginalView";
 import { AttemptQuestionMarkEditor } from "./AttemptQuestionMarkEditor";

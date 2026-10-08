@@ -28,8 +28,8 @@ import type {
   NoteServerBodyState,
   SubmitEvidenceDeclaration,
 } from "@tutor/contract";
-import { fetchStudentNoteHeadsApi, sealAttemptAnnotationsApi } from "@/lib/api";
 import { catchUpAnnotations } from "@/features/annotation/annotation-sync";
+import { fetchStudentNoteHeadsApi, sealAttemptAnnotationsApi } from "@/lib/api";
 import {
   deriveServerState,
   loadScratchRecords,

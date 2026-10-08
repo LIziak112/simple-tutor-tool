@@ -73,17 +73,14 @@ function okDeps(spies: Spies) {
     samplePngBlank: async () => false,
     ...(spies.heights !== undefined
       ? {
-          measureBlockHeights: (count: number) =>
-            spies.heights?.(count) ?? [],
+          measureBlockHeights: (count: number) => spies.heights?.(count) ?? [],
         }
       : {}),
   };
 }
 
 afterEach(() => {
-  for (const host of document.querySelectorAll(
-    "[data-annotation-base-host]",
-  )) {
+  for (const host of document.querySelectorAll("[data-annotation-base-host]")) {
     host.remove();
   }
 });
@@ -96,10 +93,7 @@ describe("renderAnnotationBaseImage（适配器层：成功）", () => {
       imageUrls: [],
       heights: (count) => Array.from({ length: count }, () => 120),
     };
-    const result = await renderAnnotationBaseImage(
-      previewOf(),
-      okDeps(spies),
-    );
+    const result = await renderAnnotationBaseImage(previewOf(), okDeps(spies));
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.pixelWidth).toBe(1440);
@@ -154,10 +148,7 @@ describe("renderAnnotationBaseImage（超高题显式禁用）", () => {
         return heights;
       },
     };
-    const result = await renderAnnotationBaseImage(
-      previewOf(),
-      okDeps(spies),
-    );
+    const result = await renderAnnotationBaseImage(previewOf(), okDeps(spies));
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error.kind).toBe("too-tall");

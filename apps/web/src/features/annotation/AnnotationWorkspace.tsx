@@ -9,11 +9,7 @@
  * 精简为标注语境（本地落盘/同步/冲突/被拒）。
  */
 import type { AnnotationBaseRef } from "@tutor/contract";
-import {
-  CircleAlert,
-  LoaderCircle,
-  PenLine,
-} from "lucide-react";
+import { CircleAlert, LoaderCircle, PenLine } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -24,16 +20,22 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { NoteToolbar } from "@/features/notes/NoteToolbar";
-import type { InkChangeReason } from "@/features/ink/engine/surface";
 import type { InkPenColor, InkPenSize } from "@/features/ink/engine/index.ts";
-import { retryAnnotationUpload, resolveAnnotationConflictKeepLocalAndUpload } from "./annotation-sync";
+import type { InkChangeReason } from "@/features/ink/engine/surface";
+import { NoteToolbar } from "@/features/notes/NoteToolbar";
 import { writeAnnotationDoc } from "./annotation-store";
 import {
-  createAnnotationSurface,
   type AnnotationSurface,
+  createAnnotationSurface,
 } from "./annotation-surface";
-import { useAnnotationRecord, useAnnotationSessionRef } from "./use-annotation-record";
+import {
+  resolveAnnotationConflictKeepLocalAndUpload,
+  retryAnnotationUpload,
+} from "./annotation-sync";
+import {
+  useAnnotationRecord,
+  useAnnotationSessionRef,
+} from "./use-annotation-record";
 
 export interface AnnotationWorkspaceProps {
   attemptId: string;
@@ -74,18 +76,22 @@ export function AnnotationWorkspace({
   // 记录未载入（null）时显示加载态；docVersion 用于自写自载守卫
   const doc = record?.doc ?? null;
   const loadedDocVersion = useRef<number | null>(null);
+  /** record 活引用（挂载 effect 只依赖「doc 就绪」布尔，不随每笔重挂引擎） */
+  const recordRef = useRef(record);
+  recordRef.current = record;
+  const docReady = doc !== null;
 
-  // 引擎挂载（base ready 后一次；localLoaded 后才挂——不在未恢复的纸面上起笔）
+  // 引擎挂载（base ready 后一次；localLoaded 后才挂——不在未恢复的纸面上起笔）。
+  // 初始工具不在此设置：下方工具同步 effect 同轮提交后即刻下发
   useEffect(() => {
     const host = surfaceHostRef.current;
-    if (host === null || session === null || doc === null) return;
+    if (host === null || session === null || !docReady) return;
+    const initialDoc = recordRef.current?.doc;
+    if (initialDoc == null) return;
     const surface = createAnnotationSurface({ baseWidth, baseHeight });
-    surface.setTool(
-      tool === "pen" ? { type: "pen", color: penColor, size: penSize } : { type: "eraser" },
-    );
     surfaceRef.current = surface;
-    surface.mount(host, doc);
-    loadedDocVersion.current = record?.docVersion ?? null;
+    surface.mount(host, initialDoc);
+    loadedDocVersion.current = recordRef.current?.docVersion ?? null;
     surface.onChange((nextDoc, reason: InkChangeReason) => {
       if (reason === "load") return; // 载入恢复不算编辑（同 note 口径）
       writeAnnotationDoc(session, { attemptId, questionId, phase }, nextDoc);
@@ -96,14 +102,14 @@ export function AnnotationWorkspace({
       surfaceRef.current = null;
       loadedDocVersion.current = null;
     };
-    // 引擎只在 base 几何与 scope 上变化时重建；工具经 setTool 下发
-    // biome-ignore lint/correctness/useExhaustiveDependencies(tool, penColor, penSize): 初始工具经 setTool 一次性下发，后续变化走下方同步 effect
-  }, [session, attemptId, questionId, phase, baseWidth, baseHeight, doc === null]);
+  }, [session, attemptId, questionId, phase, baseWidth, baseHeight, docReady]);
 
   // 工具变化 → setTool（不重建引擎）
   useEffect(() => {
     surfaceRef.current?.setTool(
-      tool === "pen" ? { type: "pen", color: penColor, size: penSize } : { type: "eraser" },
+      tool === "pen"
+        ? { type: "pen", color: penColor, size: penSize }
+        : { type: "eraser" },
     );
   }, [tool, penColor, penSize]);
 
