@@ -139,6 +139,7 @@ import {
   type UnitMetaUpdate,
   type WrongQuestionsData,
 } from "@tutor/contract";
+import { annotationBaseImageUrl } from "@tutor/contract";
 import { hc } from "hono/client";
 import type { AppType } from "server";
 
@@ -1501,7 +1502,8 @@ export function studentAnnotationBasePngUrl(
   attemptId: string,
   baseId: string,
 ): string {
-  return `/api/student/attempts/${encodeURIComponent(attemptId)}/annotation-base/${encodeURIComponent(baseId)}/image.png`;
+  // 审查修复 10：路径模板契约单源（与服务端装配同源）
+  return annotationBaseImageUrl("student", { attemptId, baseId });
 }
 
 /** 教师端标注底图 PNG 的 URL（teacher-attempts 路由直出） */

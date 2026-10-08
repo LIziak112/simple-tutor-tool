@@ -471,6 +471,42 @@ export const ANNOTATION_BASE_IMAGE_FORM_FIELDS = {
   phase: "phase",
 } as const;
 
+// ---------- 底图直出 URL 单源（审查修复 10：服务端装配与 web 客户端同源） ----------
+
+/** 学生端底图直出路径模板（attempt 授权路由——requireOwnAttempt＋baseId 归属） */
+export const ANNOTATION_BASE_STUDENT_IMAGE_PATH =
+  "/api/student/attempts/:attemptId/annotation-base/:baseId/image.png" as const;
+
+/** 教师端底图直出路径模板（教师域 baseId 路由——requireTeacherAttempt） */
+export const ANNOTATION_BASE_TEACHER_IMAGE_PATH =
+  "/api/teacher/annotation-bases/:baseId/image.png" as const;
+
+/**
+ * 底图直出 URL（角色化模板参数替换；id 段 encodeURIComponent 归一）。
+ * 服务端（annotation-service 视图/载荷装配）与 web 客户端
+ * （studentAnnotationBasePngUrl）共用——两端不得再手抄路径字面量。
+ */
+export function annotationBaseImageUrl(
+  role: "student" | "teacher",
+  params:
+    | { attemptId: string; baseId: string }
+    | { baseId: string; attemptId?: undefined },
+): string {
+  if (role === "teacher") {
+    return ANNOTATION_BASE_TEACHER_IMAGE_PATH.replace(
+      ":baseId",
+      encodeURIComponent(params.baseId),
+    );
+  }
+  if (params.attemptId === undefined) {
+    throw new Error("学生端底图直出 URL 需要 attemptId");
+  }
+  return ANNOTATION_BASE_STUDENT_IMAGE_PATH.replace(
+    ":attemptId",
+    encodeURIComponent(params.attemptId),
+  ).replace(":baseId", encodeURIComponent(params.baseId));
+}
+
 // ---------- 推断类型导出 ----------
 
 export type AnnotationPhase = z.infer<typeof annotationPhaseSchema>;

@@ -44,9 +44,13 @@ function previewOf(
 }
 
 describe("底图常量（宽 1440×高上限 4096 的 CSS 推导）", () => {
-  it("宽恒 1440 像素 = 720 CSS × 像素比 2（契约 ANNOTATION_BASE_WIDTH_PX 单源）", () => {
+  it("宽恒 1440 像素 = 720 CSS × 像素比 2（契约 ANNOTATION_BASE_WIDTH_PX 单源——审查修复 10：CSS 宽由契约常量派生，不抄数）", () => {
     expect(ANNOTATION_BASE_WIDTH_PX).toBe(1440);
     expect(ANNOTATION_BASE_WIDTH_CSS).toBe(720);
+    expect(ANNOTATION_BASE_WIDTH_CSS).toBe(
+      ANNOTATION_BASE_WIDTH_PX /
+        Math.round(ANNOTATION_BASE_WIDTH_PX / ANNOTATION_BASE_WIDTH_CSS),
+    );
   });
 
   it("内容高上限 1976 CSS = 4096/2 − 上下留白 36×2（推导不抄数）", () => {

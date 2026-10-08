@@ -7,7 +7,10 @@ import {
   ANNOTATION_BASE_WIDTH_PX,
   ANNOTATION_BODY_DECOMPRESSED_MAX_BYTES,
   ANNOTATION_BODY_GZIP_MAX_BYTES,
+  ANNOTATION_BASE_STUDENT_IMAGE_PATH,
+  ANNOTATION_BASE_TEACHER_IMAGE_PATH,
   ANNOTATION_FORM_FIELDS,
+  annotationBaseImageUrl,
   ANNOTATION_MAX_PIXEL_DIM,
   ANNOTATION_MAX_POINTS_PER_STROKE,
   ANNOTATION_MAX_STROKES,
@@ -525,5 +528,31 @@ describe("错误码与 multipart 字段名单一来源", () => {
       baseRenderVersion: "baseRenderVersion",
       phase: "phase",
     });
+  });
+});
+
+describe("底图直出 URL 单源（审查修复 10）", () => {
+  it("路径模板与角色化拼装（id 段 encodeURIComponent 归一）", () => {
+    expect(ANNOTATION_BASE_STUDENT_IMAGE_PATH).toBe(
+      "/api/student/attempts/:attemptId/annotation-base/:baseId/image.png",
+    );
+    expect(ANNOTATION_BASE_TEACHER_IMAGE_PATH).toBe(
+      "/api/teacher/annotation-bases/:baseId/image.png",
+    );
+    expect(
+      annotationBaseImageUrl("student", {
+        attemptId: "a 1",
+        baseId: "b/1",
+      }),
+    ).toBe(
+      "/api/student/attempts/a%201/annotation-base/b%2F1/image.png",
+    );
+    expect(annotationBaseImageUrl("teacher", { baseId: "b1" })).toBe(
+      "/api/teacher/annotation-bases/b1/image.png",
+    );
+    // 学生端缺 attemptId：显式抛错（不产出残缺 URL）
+    expect(() =>
+      annotationBaseImageUrl("student", { baseId: "b1" }),
+    ).toThrow("attemptId");
   });
 });

@@ -107,13 +107,10 @@ describe("exportAnnotationComposite（canvas 直绘）", () => {
     expect(loadImage).not.toHaveBeenCalled();
   });
 
-  it("编码产物非 PNG 魔数：kind=encode", async () => {
+  it("编码产物为空 Blob：kind=encode（PNG 魔数校验已随审查修复 10 删除，原生 toBlob 保证类型）", async () => {
     const result = await exportAnnotationComposite(READY_BASE, DOC, {
       loadImage: async () => new Image(),
-      encodePng: async () =>
-        new Blob([new TextEncoder().encode("not png......")], {
-          type: "image/png",
-        }),
+      encodePng: async () => new Blob([], { type: "image/png" }),
     });
     expect(result.ok).toBe(false);
     if (result.ok) return;

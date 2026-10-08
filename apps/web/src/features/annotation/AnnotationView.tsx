@@ -12,6 +12,7 @@ import type { AnnotationDoc, AnnotationPhase, AnnotationViewData } from "@tutor/
 import {
   ChevronDown,
   CircleAlert,
+  ClipboardCopy,
   History,
   ImageDown,
   LoaderCircle,
@@ -27,6 +28,7 @@ import {
   fetchTeacherAnnotationViewApi,
   saveBlobAs,
 } from "@/lib/api";
+import { copyPngBlobToClipboard } from "@/lib/copy";
 import {
   annotationCompositeFilename,
   exportAnnotationComposite,
@@ -121,6 +123,11 @@ export function AnnotationView({
   const [error, setError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [exportResult, setExportResult] = useState<string | null>(null);
+  /** 最近一次成功导出的合成图 Blob（「复制图片」辅助出口用，审查修复 14） */
+  const [exportedBlob, setExportedBlob] = useState<Blob | null>(null);
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "unsupported">(
+    "idle",
+  );
   /** 底图 img 布局就绪信号（回放门控；换底图/重载视图时复位——P0-1） */
   const [baseLoaded, setBaseLoaded] = useState(false);
   const baseId = view?.base?.baseId ?? null;
@@ -168,15 +175,25 @@ export function AnnotationView({
     if (view === null || view.base === null || view.doc === null) return;
     setExporting(true);
     setExportResult(null);
+    setCopyState("idle");
     const result = await exportAnnotationComposite(view.base, view.doc);
     setExporting(false);
     if (result.ok) {
       saveBlobAs(result.blob, annotationCompositeFilename(questionNo, phase));
+      setExportedBlob(result.blob);
       setExportResult("已导出合成图（底图＋标注一图）");
     } else {
+      setExportedBlob(null);
       setExportResult(result.error.message);
     }
   }, [view, questionNo, phase]);
+
+  /** 复制合成图（审查修复 14：与 ExportReviewImageSection 同降级口径） */
+  const handleCopyImage = useCallback(async (): Promise<void> => {
+    if (exportedBlob === null) return;
+    const ok = await copyPngBlobToClipboard(exportedBlob);
+    setCopyState(ok ? "copied" : "unsupported");
+  }, [exportedBlob]);
 
   return (
     <div data-slot="annotation-view" className="flex min-w-0 flex-col gap-2">
@@ -324,7 +341,29 @@ export function AnnotationView({
                       )}
                       {exporting ? "正在导出…" : "导出合成图（PNG）"}
                     </Button>
+                    {exportedBlob !== null && (
+                      <Button
+                        variant="outline"
+                        className="h-11 min-h-11 px-3"
+                        onClick={() => void handleCopyImage()}
+                      >
+                        <ClipboardCopy aria-hidden className="size-4" />
+                        复制图片
+                      </Button>
+                    )}
                   </div>
+                  {copyState === "copied" && (
+                    <p className="text-sm text-muted-foreground">
+                      已复制图片（可直接粘贴给 AI 或保存）。
+                    </p>
+                  )}
+                  {copyState === "unsupported" && (
+                    <p className="flex items-center gap-1.5 text-sm text-amber-700 dark:text-amber-400">
+                      <CircleAlert aria-hidden className="size-4 shrink-0" />
+                      当前环境不支持复制图片（常见于 HTTP 部署）——请使用已下载
+                      的 PNG 文件，直接作为附件上传给 AI。
+                    </p>
+                  )}
                   {exportResult !== null && (
                     <p
                       role={

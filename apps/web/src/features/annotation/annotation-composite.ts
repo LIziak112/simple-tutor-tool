@@ -62,8 +62,6 @@ async function loadBaseImage(url: string): Promise<HTMLImageElement> {
   return image;
 }
 
-const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] as const;
-
 /**
  * 合成导出（canvas 直绘）：
  * 画布 = 底图像素域（doc.baseWidth×baseHeight）→ drawImage 底图（整幅）→
@@ -150,19 +148,14 @@ export async function exportAnnotationComposite(
         },
       };
     }
-    if (blob.size < 8) {
+    if (blob.size === 0) {
       return {
         ok: false,
         error: { kind: "encode", message: "合成图编码产出为空，已放弃" },
       };
     }
-    const head = new Uint8Array(await blob.slice(0, 8).arrayBuffer());
-    if (!PNG_MAGIC.every((byte, i) => head[i] === byte)) {
-      return {
-        ok: false,
-        error: { kind: "encode", message: "合成图编码产物不是 PNG，已放弃" },
-      };
-    }
+    // PNG 魔数校验已删（审查修复 10/Q-L3）：canvasToPngBlob 走原生
+    // canvas.toBlob("image/png")，产物类型由浏览器保证；空 Blob 上面已拦
     return { ok: true, blob };
   } finally {
     host.remove();

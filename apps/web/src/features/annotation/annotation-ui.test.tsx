@@ -101,6 +101,11 @@ const { FakeAtrament } = vi.hoisted(() => {
   return { FakeAtrament };
 });
 
+vi.mock("@/lib/copy", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/copy")>()),
+  copyPngBlobToClipboard: vi.fn(async () => true),
+}));
+
 vi.mock("@/features/ink/engine/atrament-adapter.ts", async (importOriginal) => ({
   ...(await importOriginal<
     typeof import("@/features/ink/engine/atrament-adapter.ts")
@@ -121,6 +126,7 @@ import { AnnotationLayer } from "./AnnotationLayer";
 import { AnnotationView } from "./AnnotationView";
 import { exportAnnotationComposite } from "./annotation-composite";
 import { createProgrammaticAtrament } from "@/features/ink/engine/atrament-adapter.ts";
+import { copyPngBlobToClipboard } from "@/lib/copy";
 import {
   installAnnotationBackend,
   memoryAnnotationBackend,
@@ -190,6 +196,8 @@ beforeEach(() => {
   sealMock.mockReset();
   sealMock.mockResolvedValue({ phase: "correction", sealedCount: 1 });
   vi.mocked(saveBlobAs).mockReset();
+  vi.mocked(copyPngBlobToClipboard).mockReset();
+  vi.mocked(copyPngBlobToClipboard).mockResolvedValue(true);
   vi.mocked(createProgrammaticAtrament).mockClear();
 });
 
@@ -475,6 +483,33 @@ describe("AnnotationView：回看状态", () => {
     expect(vi.mocked(saveBlobAs)).toHaveBeenCalledWith(
       expect.any(Blob),
       "annotation-q3-scratch.png",
+    );
+    // 审查修复 14：导出成功后「复制图片」辅助出口（成功态）
+    fireEvent.click(screen.getByRole("button", { name: "复制图片" }));
+    await waitFor(() =>
+      expect(screen.getByText(/已复制图片/)).toBeInTheDocument(),
+    );
+    expect(vi.mocked(copyPngBlobToClipboard)).toHaveBeenCalledWith(
+      expect.any(Blob),
+    );
+  });
+
+  it("复制图片环境不支持（HTTP 部署）→ 降级提示改用已下载文件", async () => {
+    viewMock.mockResolvedValue(sealedView({ doc: DOC }));
+    compositeMock.mockResolvedValue({ ok: true, blob: fakePngBlob() });
+    vi.mocked(copyPngBlobToClipboard).mockResolvedValue(false);
+    render(<AnnotationView viewer="student" attemptId="a1" questionId="q1" />);
+    fireEvent.click(screen.getByRole("button", { name: /题干标注/ }));
+    await waitFor(() =>
+      expect(screen.getByAltText("本题题干标注底图")).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /导出合成图/ }));
+    await waitFor(() =>
+      expect(screen.getByText(/已导出合成图/)).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "复制图片" }));
+    await waitFor(() =>
+      expect(screen.getByText(/当前环境不支持复制图片/)).toBeInTheDocument(),
     );
   });
 

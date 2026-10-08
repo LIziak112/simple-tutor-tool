@@ -21,6 +21,7 @@ import {
   ANNOTATION_BASE_WIDTH_PX,
   ANNOTATION_BODY_DECOMPRESSED_MAX_BYTES,
   ANNOTATION_BODY_GZIP_MAX_BYTES,
+  annotationBaseImageUrl,
   annotationConflictCurrentSchema,
   annotationDocSchema,
   annotationIssueIsLimit,
@@ -429,7 +430,10 @@ export function assembleAnnotationBase(
       base,
       baseIsStale(db, base, attempt, questionId),
       base.state === "ready"
-        ? `/api/student/attempts/${encodeURIComponent(attempt.id)}/annotation-base/${encodeURIComponent(base.id)}/image.png`
+        ? annotationBaseImageUrl("student", {
+            attemptId: attempt.id,
+            baseId: base.id,
+          })
         : undefined,
     ),
     baseRenderVersion: ANNOTATION_BASE_RENDER_VERSION,
@@ -915,15 +919,15 @@ export type AnnotationPrincipal =
   | { readonly kind: "student"; readonly id: string }
   | { readonly kind: "teacher"; readonly id: string };
 
-/** 角色化底图直出 URL（学生走 attempt 前缀、教师走 annotation-bases 前缀） */
+/** 角色化底图直出 URL（审查修复 10：路径模板契约单源 annotationBaseImageUrl） */
 function baseDownloadUrlOf(
   principal: AnnotationPrincipal,
   attemptId: string,
   baseId: string,
 ): string {
   return principal.kind === "student"
-    ? `/api/student/attempts/${encodeURIComponent(attemptId)}/annotation-base/${encodeURIComponent(baseId)}/image.png`
-    : `/api/teacher/annotation-bases/${encodeURIComponent(baseId)}/image.png`;
+    ? annotationBaseImageUrl("student", { attemptId, baseId })
+    : annotationBaseImageUrl("teacher", { baseId });
 }
 
 /**
