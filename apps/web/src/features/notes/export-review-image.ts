@@ -681,6 +681,15 @@ function renderSectionElement(section: ReviewImageSection): ReactElement {
   }
 }
 
+/** 单个版式区块（keyed 包装：列表渲染需要稳定 key，DOM 与无 key 版一致） */
+function KeyedSection({
+  section,
+}: {
+  section: ReviewImageSection;
+}): ReactElement {
+  return renderSectionElement(section);
+}
+
 /** 渲染完成信号（callback ref 在 commit 时触发——等待 React 真正挂载） */
 function ExportContentRoot({
   sections,
@@ -696,7 +705,9 @@ function ExportContentRoot({
       ref: onMounted,
       style: { position: "relative", background: "#ffffff" },
     },
-    sections.map(renderSectionElement),
+    sections.map((section, i) =>
+      createElement(KeyedSection, { key: `s${i}`, section }),
+    ),
   );
 }
 
@@ -720,8 +731,10 @@ function renderExportContent(
 }
 
 /**
- * 拆 markdown 包装层：把每个 [data-export-md-wrap] 的顶层元素各自包进
- * carry class 的薄壳（margin 可穿透薄壳照常折叠），使 markdown 逐段可分页。
+ * 拆 markdown 包装层：markdown 区块实际渲染为
+ * [data-export-md-wrap] > div.rich-markdown > 顶层元素（p/h3/ul/…）——
+ * 逐顶层元素包进 carry class 的薄壳（margin 可穿透薄壳照常折叠），使
+ * markdown 逐段可分页（整段 stem 成一块时长题干永远无法分页）。
  */
 function unwrapMarkdownWrappers(content: HTMLElement): void {
   for (const wrap of [
@@ -729,7 +742,8 @@ function unwrapMarkdownWrappers(content: HTMLElement): void {
   ]) {
     const parent = wrap.parentElement;
     if (parent === null) continue;
-    for (const child of [...wrap.children]) {
+    const mdRoot = wrap.querySelector<HTMLElement>(":scope > .rich-markdown");
+    for (const child of [...(mdRoot ?? wrap).children]) {
       const shell = document.createElement("div");
       shell.setAttribute("data-export-md-block", "");
       shell.className = "rich-markdown";

@@ -100,8 +100,14 @@ describe("exportReviewImages（适配器层：成功与清理）", () => {
     expect(spies.saved).toHaveLength(1);
     expect(spies.saved[0]?.filename).toBe("review-image-q3-student-01.png");
     // 页 DOM：题面与学生答案在场（KaTeX 注解里保留原始 LaTeX）
-    expect(spies.rasterizedHtml[0]).toContain("学生答案");
-    expect(spies.rasterizedHtml[0]).toContain("x+1=4");
+    const pageHtml = spies.rasterizedHtml[0] ?? "";
+    expect(pageHtml).toContain("学生答案");
+    expect(pageHtml).toContain("x+1=4");
+    // markdown 逐段拆块（h3 + 两个 p → ≥3 个 md 块壳）——长题干才能分页
+    // （回归：曾整段成一块，长题干恒超画布兜底上限）
+    expect(
+      (pageHtml.match(/data-export-md-block/g) ?? []).length,
+    ).toBeGreaterThanOrEqual(3);
     // 导出后离屏宿主已移除（不留悬挂 DOM）
     expect(document.querySelectorAll("[data-review-image-host]").length).toBe(
       0,
