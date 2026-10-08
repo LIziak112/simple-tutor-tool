@@ -4,6 +4,9 @@ import { z } from "zod";
 export * from "./admin-api.ts";
 /** 学情分析 API 契约（T4.1 起为权威定义，依据 Phase4 清单 §2 D1–D7）：总览/画像/题目三接口 */
 export * from "./analytics-api.ts";
+/** 题干标注契约（T6R.20 起为权威定义）：固定底图＋独立矢量标注（AnnotationDoc、
+ *  底图装配载荷、CAS 上传协议、回看视图、限额常量与错误码；与 note/ink 链隔离） */
+export * from "./annotation.ts";
 /** 作业契约（T2.2 起为权威定义）：教师布置作业 CRUD、学生作业列表与完成状态、错误码 */
 export * from "./assignment.ts";
 /** 作答生命周期契约（T2.6 起为权威定义）：attempt 创建/草稿/交卷/详情视图、错误码 */
