@@ -1066,6 +1066,8 @@ export interface AnnotationPairItem {
   readonly questionId: string;
   readonly phase: AnnotationPhase;
   readonly sealedAt: string;
+  /** 底图行 id（base 行缺失为 null——此时无下载 URL 可组装） */
+  readonly baseId: string | null;
   /** 底图文件在场（含绝对路径/字节）；缺失为 null（此时 strokesJson 恒 null） */
   readonly base: AnnotationPairBase | null;
   /** 笔迹 JSON 文本（gzip 正文原样解压）；底图缺失时 null——**绝不导出孤立的圈** */
@@ -1200,6 +1202,7 @@ export function assembleAnnotationPairs(
       questionId: row.questionId,
       phase: row.phase,
       sealedAt: row.sealedAt ?? "",
+      baseId: base?.id ?? null,
       base: baseInfo,
       strokesJson,
       ...(baseInfo === null && missingReason !== undefined

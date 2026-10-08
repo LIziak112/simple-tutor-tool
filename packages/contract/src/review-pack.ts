@@ -184,6 +184,8 @@ export const reviewPackPreviewFileSchema = z.object({
     "media",
     "evidence",
     "ink",
+    // T6R.20 新增（只增不改）：题干标注成对附件（底图 PNG＋笔迹 JSON）
+    "annotation",
   ]),
   bytes: z.number().int().min(0),
   refs: z.array(z.string()).default([]),
@@ -192,7 +194,7 @@ export const reviewPackPreviewFileSchema = z.object({
 /** 逐张图片附件行（真实图片单独下载用；missing 附原因） */
 export const reviewPackAttachmentSchema = z.object({
   path: z.string().min(1),
-  kind: z.enum(["media", "evidence", "ink"]),
+  kind: z.enum(["media", "evidence", "ink", "annotation"]),
   state: z.enum(["ready", "missing"]),
   /** ready：实测字节；missing：0 */
   bytes: z.number().int().min(0),
