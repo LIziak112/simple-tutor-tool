@@ -1156,33 +1156,3 @@ export async function exportReviewImages(
     host.remove();
   }
 }
-
-// ---------- 剪贴板（可选辅助出口：不可用即降级，不崩溃不谎报） ----------
-
-/**
- * 把 PNG Blob 写入剪贴板（「复制图片」辅助出口）：
- * navigator.clipboard.write + ClipboardItem 仅安全上下文（HTTPS/localhost）
- * 且浏览器支持时可用——任一不可用或写入被拒都返回 false（调用方提示改用
- * 下载文件，绝不显示「已复制」）。与 copyText 的降级纪律同口径。
- */
-export async function copyPngBlobToClipboard(blob: Blob): Promise<boolean> {
-  const clipboard = (
-    navigator as {
-      clipboard?: { write?: (items: unknown[]) => Promise<void> };
-    }
-  ).clipboard;
-  const ClipboardItemCtor = (
-    globalThis as {
-      ClipboardItem?: new (items: Record<string, Blob>) => unknown;
-    }
-  ).ClipboardItem;
-  if (clipboard?.write === undefined || ClipboardItemCtor === undefined) {
-    return false;
-  }
-  try {
-    await clipboard.write([new ClipboardItemCtor({ "image/png": blob })]);
-    return true;
-  } catch {
-    return false;
-  }
-}

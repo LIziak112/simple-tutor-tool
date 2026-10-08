@@ -5,11 +5,13 @@ import {
   LoaderCircle,
   TriangleAlert,
 } from "lucide-react";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { copyPngBlobToClipboard } from "@/lib/copy";
 import {
-  copyPngBlobToClipboard,
   exportReviewImages,
+  REVIEW_IMAGE_STUDENT_NOTE,
+  REVIEW_IMAGE_TEACHER_NOTE,
   type ReviewImageExportResult,
 } from "./export-review-image";
 
@@ -23,11 +25,14 @@ import {
  * - 失败回落：任何失败都指引继续使用面板既有出口（完整包 zip / 复制文字 /
  *   逐张下载）——exportReviewImages 内部保证失败零下载，这里绝不显示成功；
  * - 学生红线：学生视角文案注明合成图不含参考答案与对错判定（与面板既有
- *   口径一致）；教师视角注明含答案仅供核对；
- * - 复制图片辅助出口：成功导出后可复制第一张（多页时其余仍走下载）；
- *   clipboard 不可用（HTTP 部署等）→ 显式提示改用已下载文件，绝不显示
- *   「已复制」（与 copyText 降级纪律同口径）；
- * - 异步纪元：重复点击/面板重开时旧结果直接丢弃（防旧状态覆盖新状态）。
+ *   口径一致，文案引 export-review-image 导出常量单一来源）；教师视角注明
+ *   含答案仅供核对；
+ * - 复制图片辅助出口：成功导出即可复制第一张（多页时其余仍走下载，文案
+ *   区分「复制图片/复制第一张图片」）；clipboard 不可用（HTTP 部署等）→
+ *   显式提示改用已下载文件，绝不显示「已复制」（与 copyText 降级纪律同口径）；
+ * - 异步纪元：重复点击/面板重开时旧结果直接丢弃（防旧状态覆盖新状态）；
+ *   preview 载荷换新（重试/重开）时重置全部导出状态——旧材料的「已导出/
+ *   失败」文案不残留（审查修复轮 P2-9）。
  */
 
 /** 区块任务状态（loading 期间禁用按钮防重复触发） */
@@ -56,6 +61,14 @@ export function ExportReviewImageSection({
   const [copyState, setCopyState] = useState<CopyPhase>("idle");
   const epochRef = useRef(0);
 
+  // preview 换新（面板重试/重开拉到新载荷）：旧导出结果与复制状态全部重置，
+  // 纪元一并作废——在途旧结果也不得覆盖新材料上的初始态。
+  useEffect(() => {
+    epochRef.current += 1;
+    setState({ phase: "idle" });
+    setCopyState("idle");
+  }, [preview]);
+
   const handleExport = useCallback(async () => {
     const epoch = ++epochRef.current;
     setState({ phase: "loading" });
@@ -68,6 +81,8 @@ export function ExportReviewImageSection({
       setState({ phase: "error", message: result.error.message });
     }
   }, [preview]);
+
+  const multiPage = state.phase === "done" && state.pages.length > 1;
 
   const handleCopyImage = useCallback(async () => {
     // 复制第一张（多页时其余页仍以下载文件为准——提示里说清）
@@ -95,23 +110,23 @@ export function ExportReviewImageSection({
           )}
           {loading ? "正在生成合成图…" : "导出合成图（PNG）"}
         </Button>
-        {state.phase === "done" && state.pages.length > 1 && (
+        {state.phase === "done" && state.pages.length > 0 && (
           <Button
             variant="outline"
             className="min-h-11 h-11 px-3"
             onClick={() => void handleCopyImage()}
           >
-            复制第一张图片
+            {multiPage ? "复制第一张图片" : "复制图片"}
           </Button>
         )}
       </div>
       {preview.role === "student" ? (
         <p className="text-xs text-muted-foreground">
-          合成图与文字包同口径：不含参考答案与对错判定（只含你自己的作答与原稿）。
+          合成图与文字包同口径：{REVIEW_IMAGE_STUDENT_NOTE}。
         </p>
       ) : (
         <p className="text-xs text-muted-foreground">
-          教师视角合成图含参考答案、判定与评语（教师域材料，仅供核对）。
+          {REVIEW_IMAGE_TEACHER_NOTE}。
         </p>
       )}
       {state.phase === "done" && (
@@ -119,6 +134,7 @@ export function ExportReviewImageSection({
           已导出 {state.pages.length} 张 PNG（
           {state.pages.map((page) => page.filename).join("、")}）——交给 AI
           时作为附件上传。
+          {multiPage && "若浏览器询问是否允许下载多个文件，请选择允许。"}
         </p>
       )}
       {state.phase === "error" && (
@@ -134,7 +150,9 @@ export function ExportReviewImageSection({
       )}
       {copyState === "copied" && (
         <p className="text-sm text-muted-foreground">
-          已复制第一张图片（多页时其余各页请使用已下载的 PNG 文件）。
+          {multiPage
+            ? "已复制第一张图片（多页时其余各页请使用已下载的 PNG 文件）。"
+            : "已复制图片（可直接粘贴给 AI 或保存）。"}
         </p>
       )}
       {copyState === "unsupported" && (

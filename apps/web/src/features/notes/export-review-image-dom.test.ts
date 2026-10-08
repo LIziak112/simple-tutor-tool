@@ -1,9 +1,6 @@
 import type { ReviewPackPreviewData } from "@tutor/contract";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  copyPngBlobToClipboard,
-  exportReviewImages,
-} from "./export-review-image";
+import { exportReviewImages } from "./export-review-image";
 
 /**
  * T6R.19 合成图导出——栅格化适配器层失败测试（任务清单失败语义逐项）：
@@ -15,8 +12,9 @@ import {
  * - 过大画布：注入测量高度使单块超画布兜底上限 → canvas-limit 显式失败；
  * - 多页：注入测量高度驱动分页 → 逐页下载、文件名 -01/-02 递增；
  * - 失败语义总则：任何失败路径 savePng 零调用（绝不下载空白图后显示成功）；
- * - 无剪贴板：copyPngBlobToClipboard 在无 clipboard/ClipboardItem 环境返回
- *   false（不崩溃、不谎报成功）。
+ * - 异步步骤挂起：decode()/栅格化永不 settle → 单步超时转分类失败；
+ * - 无剪贴板降级（copyPngBlobToClipboard）见 src/lib/copy.test.ts（审查
+ *   修复轮收敛到公共剪贴板模块单一来源）。
  *
  * jsdom 无布局与 canvas：测量高度与栅格化全部经 ReviewImageExportDeps 注入
  * （生产缺省实现走真实 DOM 测量与 html-to-image，由 E2E 覆盖）。
@@ -101,30 +99,33 @@ describe("exportReviewImages（测量与渲染同几何——审查修复轮 P0-
       rasterizedHtml: [] as string[],
       saved: [] as Array<{ filename: string; bytes: number }>,
     };
-    let measurementContent: HTMLElement | null = null;
-    let pageNode: HTMLElement | null = null;
+    let measurementContent: HTMLElement | undefined;
+    let pageNode: HTMLElement | undefined;
     const result = await exportReviewImages(STUDENT_PREVIEW, {
       ...okDeps(spies),
       rasterizeNode: async (node: HTMLElement) => {
         // 栅格化时离屏宿主仍在文档中：测量容器与页容器可同时取样
-        measurementContent ??= document.querySelector<HTMLElement>(
-          "[data-export-content]",
-        );
+        measurementContent ??=
+          document.querySelector<HTMLElement>("[data-export-content]") ??
+          undefined;
         pageNode ??= node;
         spies.rasterizedHtml.push(node.outerHTML);
         return fakePngBlob();
       },
     });
     expect(result.ok).toBe(true);
-    expect(measurementContent).not.toBeNull();
-    expect(pageNode).not.toBeNull();
+    const content = measurementContent;
+    const page = pageNode;
+    expect(content).toBeDefined();
+    expect(page).toBeDefined();
+    if (content === undefined || page === undefined) return;
     // 页容器：720 边框盒 − padding 36×2 = 648 内容宽（跨行段落换行口径基准）
-    expect(inlineContentWidthOf(pageNode as HTMLElement)).toBe(648);
+    expect(inlineContentWidthOf(page)).toBe(648);
     // 测量容器必须同几何——否则 648 宽下换行更多的段落在 720 宽下测量高度
     // 偏小，每页底部内容被 foreignObject 视口裁剪丢失（P0-1）
-    expect(inlineContentWidthOf(measurementContent as HTMLElement)).toBe(648);
-    expect(measurementContent?.style.boxSizing).toBe("border-box");
-    expect(pageNode?.style.boxSizing).toBe("border-box");
+    expect(inlineContentWidthOf(content)).toBe(648);
+    expect(content.style.boxSizing).toBe("border-box");
+    expect(page.style.boxSizing).toBe("border-box");
   });
 
   it("页首块 margin-top 归零：每页第一个块行内 marginTop=0（BFC 口径与测量口径一致）", async () => {
@@ -441,60 +442,5 @@ describe("exportReviewImages（异步步骤超时：挂起转分类失败，绝�
     expect(result.error.kind).toBe("rasterize");
     expect(result.error.message).toContain("超时");
     expect(saved).toHaveLength(0);
-  });
-});
-
-describe("copyPngBlobToClipboard（无剪贴板降级，不崩溃不谎报）", () => {
-  it("clipboard/ClipboardItem 不可用（HTTP 部署等）：返回 false、不抛错", async () => {
-    // jsdom 默认无 navigator.clipboard 与 ClipboardItem——即目标降级环境
-    expect(
-      (globalThis as { ClipboardItem?: unknown }).ClipboardItem,
-    ).toBeUndefined();
-    await expect(copyPngBlobToClipboard(fakePngBlob())).resolves.toBe(false);
-  });
-
-  it("clipboard.write 拒绝：返回 false（不谎报已复制）", async () => {
-    const write = vi.fn(() => Promise.reject(new Error("NotAllowedError")));
-    Object.defineProperty(navigator, "clipboard", {
-      value: { write },
-      configurable: true,
-    });
-    class FakeClipboardItem {
-      constructor(public readonly items: Map<string, Blob>) {}
-    }
-    vi.stubGlobal("ClipboardItem", FakeClipboardItem);
-    try {
-      await expect(copyPngBlobToClipboard(fakePngBlob())).resolves.toBe(false);
-    } finally {
-      vi.unstubAllGlobals();
-      Object.defineProperty(navigator, "clipboard", {
-        value: undefined,
-        configurable: true,
-        writable: true,
-      });
-    }
-  });
-
-  it("clipboard.write 成功：返回 true", async () => {
-    const write = vi.fn(() => Promise.resolve());
-    Object.defineProperty(navigator, "clipboard", {
-      value: { write },
-      configurable: true,
-    });
-    class FakeClipboardItem {
-      constructor(public readonly items: Map<string, Blob>) {}
-    }
-    vi.stubGlobal("ClipboardItem", FakeClipboardItem);
-    try {
-      await expect(copyPngBlobToClipboard(fakePngBlob())).resolves.toBe(true);
-      expect(write).toHaveBeenCalledTimes(1);
-    } finally {
-      vi.unstubAllGlobals();
-      Object.defineProperty(navigator, "clipboard", {
-        value: undefined,
-        configurable: true,
-        writable: true,
-      });
-    }
   });
 });
