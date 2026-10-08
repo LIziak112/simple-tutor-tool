@@ -1,10 +1,13 @@
 import type {
   AnnotationBaseImageMeta,
+  AnnotationUploadMeta,
   NoteImageUploadMeta,
 } from "@tutor/contract";
 import {
   ANNOTATION_BASE_IMAGE_FORM_FIELDS,
+  ANNOTATION_FORM_FIELDS,
   annotationPhaseSchema,
+  annotationUploadMetaSchema,
   NOTE_IMAGE_FORM_FIELDS,
   noteImageUploadMetaSchema,
 } from "@tutor/contract";
@@ -162,4 +165,40 @@ export async function parseAnnotationBaseImageForm(
       phase: parsedPhase.data,
     },
   };
+}
+
+/** 标注正文上传的 multipart 形态约束（字段名集与错误文案，单一来源） */
+const ANNOTATION_UPLOAD_FORM_HINT =
+  "请求需为 multipart/form-data，且包含 body 文件与 baseRevision、mutationId 字段";
+
+/**
+ * 解析标注正文上传表单（T6R.20 学生端 PUT …/annotation；审查修复 13 从
+ * student.ts 内联收敛——与笔记/底图表单同分层）：body 文件（gzip 或原始
+ * JSON）＋baseRevision/mutationId/phase 字段 → { bodyBytes, meta }。
+ * - body 必须是文件字段 → 400 VALIDATION_ERROR；
+ * - 元信息经严格整数/字符串读取后过契约 annotationUploadMetaSchema（越界/
+ *   非法 phase 均 400 VALIDATION_ERROR）；
+ * - 正文字节的 gzip/限额/schema 校验在 annotation-service.putAnnotationDoc。
+ */
+export async function parseAnnotationUploadForm(
+  form: LooseFormBody,
+): Promise<{ bodyBytes: Uint8Array; meta: AnnotationUploadMeta }> {
+  const F = ANNOTATION_FORM_FIELDS;
+  const body = form[F.body];
+  if (!(body instanceof File)) {
+    throw new HttpError(400, "VALIDATION_ERROR", ANNOTATION_UPLOAD_FORM_HINT);
+  }
+  const parsed = annotationUploadMetaSchema.safeParse({
+    baseRevision: strictFormInt(form, F.baseRevision),
+    mutationId: formString(form, F.mutationId),
+    phase: formString(form, F.phase),
+  });
+  if (!parsed.success) {
+    throw new HttpError(
+      400,
+      "VALIDATION_ERROR",
+      `标注上传元信息不合法：${firstIssueMessage(parsed.error)}`,
+    );
+  }
+  return { bodyBytes: new Uint8Array(await body.arrayBuffer()), meta: parsed.data };
 }

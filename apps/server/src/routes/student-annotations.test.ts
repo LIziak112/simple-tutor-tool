@@ -366,7 +366,7 @@ describe("POST …/annotation/base 装配载荷", () => {
 // ---------- 两阶段 gate 与直出 ----------
 
 describe("底图回传/直出与两阶段 gate", () => {
-  it("宽度不符 400；ready 回执形状；直出原字节＋no-store＋image/png；他学生 404", async () => {
+  it("宽度不符 400；ready 回执形状；直出原字节＋no-store＋image/png；他学生 403", async () => {
     const attemptId = await freshAttempt();
     const preview = annotationBasePreviewDataSchema.parse(
       ((await (await postBase(attemptId, aCookie)).json()) as { data: unknown })
@@ -406,7 +406,7 @@ describe("底图回传/直出与两阶段 gate", () => {
     expect(direct.headers.get("cache-control")).toBe("no-store");
     expect(new Uint8Array(await direct.arrayBuffer())).toEqual(png);
 
-    // 他学生：404（不暴露存在性）
+    // 他学生：403（requireOwnAttempt 非本人 attempt）
     expect(
       (
         await app.request(

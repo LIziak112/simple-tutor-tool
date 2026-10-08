@@ -175,7 +175,7 @@ export const students = sqliteTable(
     id: text("id").primaryKey(),
     /**
      * 归属教师（teachers.id，D14：一生只归一位教师，创建时写入）。
-     * 列可空仅因迁移加列无法在 DDL 内回填（D9），代码层恒写非空，读侧可视为必有。
+     * 列可空（D9 历史形态），代码层恒写非空，读侧可视为必有。
      * 不建外键（与 sessions.subjectId 同口径：教师数据永不连带删除）。
      */
     teacherId: text("teacher_id"),

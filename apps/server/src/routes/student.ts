@@ -1,7 +1,6 @@
 import type { StudentPasswordChangeRequest } from "@tutor/contract";
 import {
   annotationSealRequestSchema,
-  annotationUploadMetaSchema,
   attemptAnswerSaveRequestSchema,
   attemptEventBatchRequestSchema,
   attemptSubmitRequestSchema,
@@ -36,6 +35,7 @@ import {
   formString,
   parseAnnotationBaseImageForm,
   parseAnnotationPhaseParam,
+  parseAnnotationUploadForm,
   parseNoteImageUploadForm,
   strictFormInt,
 } from "../lib/form-fields";
@@ -621,29 +621,12 @@ export function createStudentRoutes(
       // ③ 标注正文上传（multipart：body 文件〔gzip 或原始 JSON 的
       // AnnotationDoc〕+ baseRevision/mutationId〔phase 可选缺省 scratch〕）。
       // CAS 409 附 _current、mutationId 幂等、base ready gate、sealed/交卷
-      // 门槛全在 service（annotation-service.putAnnotationDoc）。
+      // 门槛全在 service（annotation-service.putAnnotationDoc）；表单字段
+      // 解析收敛 form-fields.parseAnnotationUploadForm（审查修复 13）。
       .put("/attempts/:id/questions/:questionId/annotation", async (c) => {
-        const form = await c.req.parseBody();
-        const body = form.body;
-        if (!(body instanceof File)) {
-          throw new HttpError(
-            400,
-            "VALIDATION_ERROR",
-            "请求需为 multipart/form-data，且包含 body 文件与 baseRevision、mutationId 字段",
-          );
-        }
-        const parsed = annotationUploadMetaSchema.safeParse({
-          baseRevision: strictFormInt(form, "baseRevision"),
-          mutationId: formString(form, "mutationId"),
-          phase: formString(form, "phase"),
-        });
-        if (!parsed.success) {
-          throw new HttpError(
-            400,
-            "VALIDATION_ERROR",
-            `标注上传元信息不合法：${firstIssueMessage(parsed.error)}`,
-          );
-        }
+        const { bodyBytes, meta } = await parseAnnotationUploadForm(
+          await c.req.parseBody(),
+        );
         return c.json({
           ok: true,
           data: putAnnotationDoc(
@@ -652,8 +635,8 @@ export function createStudentRoutes(
             c.var.student.id,
             c.req.param("id"),
             c.req.param("questionId"),
-            new Uint8Array(await body.arrayBuffer()),
-            parsed.data,
+            bodyBytes,
+            meta,
           ),
         });
       })
