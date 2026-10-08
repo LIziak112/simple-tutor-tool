@@ -9,18 +9,38 @@
  *   - disabled（超高题/EXPORT_ASSEMBLY_BROKEN/403）：「该题禁用标注，
  *     草稿照用」类文案——入口保留禁用态（重新打开可重试装配失败类）；
  *   - error（网络/栅格化瞬时失败）：原因 + 重试按钮；
+ *   - sealed（审查修复 3①）：该 phase 已封存——只读固定态（AnnotationView
+ *     回看：底图＋静态笔迹层＋「已随交卷/订正保存固定」），不挂编辑器；
+ * - phase=correction 的编辑形态带「保存订正标注」检查点（对齐笔记订正
+ *   CorrectionPanel 的 seal 模式：catchUpAnnotations → record 检查 →
+ *   sealAttemptAnnotationsApi(attemptId, 'correction')；保存后定格，再修改
+ *   会新开一份）；
  * - 标注模式外保留原作答控件（本层是题干区的附加折叠区，不替换作答区）。
  */
-import { ChevronDown, CircleAlert, LoaderCircle, PenLine } from "lucide-react";
+import { ChevronDown, CircleAlert, LoaderCircle, Lock, PenLine } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { AnnotationView } from "./AnnotationView";
 import { AnnotationWorkspace } from "./AnnotationWorkspace";
-import { retryAnnotationUpload } from "./annotation-sync";
+import {
+  catchUpAnnotations,
+  retryAnnotationUpload,
+} from "./annotation-sync";
+import { getAnnotationRecord } from "./annotation-store";
 import { useAnnotationBase } from "./use-annotation-base";
 import {
   useAnnotationRecord,
   useAnnotationSessionRef,
 } from "./use-annotation-record";
+import { sealAttemptAnnotationsApi } from "@/lib/api";
 
 export interface AnnotationLayerProps {
   attemptId: string;
@@ -48,7 +68,55 @@ export function AnnotationLayer({
   const [open, setOpen] = useState(false);
   const label = `${ariaPrefix}题干标注`;
 
-  // 展开即触发两阶段流（收起再展开：ready/disabled 幂等不重跑）
+  // ---- 保存订正标注检查点（审查修复 3①；对齐 CorrectionPanel 的 seal 模式） ----
+  const [sealOpen, setSealOpen] = useState(false);
+  const [sealing, setSealing] = useState(false);
+  const [sealError, setSealError] = useState<string | null>(null);
+  /** 本地已封存（seal 成功后即时切固定态；重开页面由 flow=sealed 恢复） */
+  const [sealedLocal, setSealedLocal] = useState(false);
+  const sealed = flow.kind === "sealed" || sealedLocal;
+
+  const sealCorrection = useCallback(async (): Promise<void> => {
+    if (session === null || phase !== "correction") return;
+    setSealing(true);
+    setSealError(null);
+    try {
+      // 先追平：本地落盘 → 上传队列 → 回执落地（seal 的判定以追平后 record 为准）
+      await catchUpAnnotations(attemptId);
+      const current = await getAnnotationRecord(session, {
+        attemptId,
+        questionId,
+        phase,
+      });
+      if (current === null || current.baseRevision === 0) {
+        setSealError("还没有订正标注内容，请先圈画。");
+        return;
+      }
+      if (current.conflict !== null) {
+        setSealError("订正标注有同步冲突待处理，请先点开标注层选择保留哪一份。");
+        return;
+      }
+      if (current.denied !== null) {
+        setSealError(`订正标注同步被拒：${current.denied.reason}`);
+        return;
+      }
+      if (current.pending !== null) {
+        setSealError("订正标注的最新修改还没同步完成，请稍候再试。");
+        return;
+      }
+      await sealAttemptAnnotationsApi(attemptId, "correction");
+      setSealOpen(false);
+      setSealedLocal(true);
+    } catch (err) {
+      setSealError(
+        err instanceof Error ? err.message : "保存订正标注失败，请稍后重试",
+      );
+    } finally {
+      setSealing(false);
+    }
+  }, [session, attemptId, questionId, phase]);
+
+  // 展开即触发两阶段流（收起再展开：ready/disabled/sealed 幂等不重跑）
   useEffect(() => {
     if (open) void ensureBase();
   }, [open, ensureBase]);
@@ -144,14 +212,54 @@ export function AnnotationLayer({
               正在生成题干底图…
             </div>
           )}
-          {flow.kind === "ready" && (
-            <AnnotationWorkspace
-              attemptId={attemptId}
-              questionId={questionId}
-              phase={phase}
-              base={flow.base}
-              ariaPrefix={ariaPrefix}
-            />
+          {flow.kind === "ready" && !sealed && (
+            <>
+              <AnnotationWorkspace
+                attemptId={attemptId}
+                questionId={questionId}
+                phase={phase}
+                base={flow.base}
+                ariaPrefix={ariaPrefix}
+              />
+              {/* 保存订正标注检查点（审查修复 3①）：只有订正期编辑形态提供 */}
+              {phase === "correction" && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    type="button"
+                    className="min-h-11"
+                    disabled={sealing}
+                    onClick={() => {
+                      setSealError(null);
+                      setSealOpen(true);
+                    }}
+                  >
+                    保存订正标注
+                  </Button>
+                  <p className="text-xs text-muted-foreground">
+                    保存后这份订正标注定格，再修改会新开一份
+                  </p>
+                </div>
+              )}
+            </>
+          )}
+          {/* 已封存固定态（审查修复 3①）：只读回看视图（底图＋静态笔迹层），
+              不挂编辑器——scratch=已随交卷固定；correction=已随订正保存固定 */}
+          {sealed && (
+            <div className="flex flex-col gap-2">
+              <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <Lock aria-hidden className="size-3.5" />
+                {phase === "correction"
+                  ? "已随订正保存固定（再修改会新开一份）"
+                  : "已随交卷固定（订正期另开新标注）"}
+              </p>
+              <AnnotationView
+                viewer="student"
+                attemptId={attemptId}
+                questionId={questionId}
+                phase={phase}
+                ariaPrefix={ariaPrefix}
+              />
+            </div>
           )}
           {flow.kind === "disabled" && (
             <div
@@ -188,6 +296,43 @@ export function AnnotationLayer({
           )}
         </>
       )}
+
+      {/* 保存订正标注 = seal 检查点（确认弹层；对齐笔记订正的定格确认） */}
+      <Dialog open={sealOpen} onOpenChange={setSealOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>保存订正标注</DialogTitle>
+            <DialogDescription>
+              保存后这份订正标注定格，再修改会新开一份；老师导出学情材料时会
+              收到这份订正时的圈画。
+            </DialogDescription>
+          </DialogHeader>
+          {sealError !== null && (
+            <p role="alert" className="text-sm text-destructive">
+              {sealError}
+            </p>
+          )}
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              className="h-11"
+              disabled={sealing}
+              onClick={() => setSealOpen(false)}
+            >
+              取消
+            </Button>
+            <Button
+              type="button"
+              className="h-11"
+              disabled={sealing}
+              onClick={() => void sealCorrection()}
+            >
+              {sealing ? "正在保存…" : "确认保存"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

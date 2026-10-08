@@ -21,7 +21,8 @@ import {
  *   回读 doc 内容不变（旧圈不漂移）→ 交卷（flush→seal）→ sealed 后 UI 只读
  *   （scratch 无工具条，订正另开）→ 教师回看视图可见；
  * - 订正链：结果页开订正标注（phase=correction 新记录），旧 scratch 标注
- *   GET 回读不变；
+ *   GET 回读不变；「保存订正标注」检查点 → sealed 固定态（审查修复 3①）；
+ *   教师详情卡切「订正标注」阶段可见订正圈画（审查修复 3②）；
  * - 无底图链：超高题入口禁用文案（「该题禁用标注，草稿照用」类）；mock
  *   装配载荷 500 EXPORT_ASSEMBLY_BROKEN → 同禁用文案；
  * - 学生红线：泄露监控全程零告警（底图载荷只有学生 stem 投影）。
@@ -317,6 +318,31 @@ test.describe("题干标注（T6R.20）", () => {
       );
       expect(JSON.stringify(scratchAfterCorrection.doc)).toBe(scratchDocJson);
 
+      // —— 审查修复 3①：保存订正标注检查点 → sealed 固定态（编辑器收起）——
+      await resultCard.getByRole("button", { name: "保存订正标注" }).click();
+      await resultCard.getByRole("button", { name: "确认保存" }).click();
+      await expect(
+        studentPage.getByText(/已随订正保存固定/),
+      ).toBeVisible({ timeout: 15_000 });
+      await expect(
+        resultCard.locator('[data-slot="annotation-workspace"]'),
+      ).toHaveCount(0);
+      // 服务端权威：correction 行已封存（sealedAt 回填）
+      await expect
+        .poll(
+          async () => {
+            const res = await studentPage.request.get(
+              `/api/student/attempts/${attemptId}/questions/${questionId}/annotation?phase=correction`,
+            );
+            const body = (await res.json()) as {
+              data?: { annotation?: { sealedAt?: string | null } | null };
+            };
+            return body.data?.annotation?.sealedAt ?? null;
+          },
+          { timeout: 15_000 },
+        )
+        .not.toBeNull();
+
       // 学生端全程无泄露告警
       expect(leak.violations()).toEqual([]);
     } finally {
@@ -348,6 +374,17 @@ test.describe("题干标注（T6R.20）", () => {
       await expect(
         teacherPage.getByRole("button", { name: /清空标注/ }),
       ).toHaveCount(0);
+      // —— 审查修复 3②：切「订正标注」阶段 → 订正圈画教师可见（静态笔迹层）——
+      await teacherPage.getByRole("tab", { name: "订正标注" }).click();
+      await expect(
+        teacherPage.locator('[data-slot="annotation-view"] img'),
+      ).toBeVisible({ timeout: 15_000 });
+      await expect(
+        teacherPage.locator('[data-slot="annotation-static-canvas"]'),
+      ).toBeVisible({ timeout: 15_000 });
+      await expect(
+        teacherPage.getByText(/订正/).first(),
+      ).toBeVisible();
     } finally {
       await teacherContext.close();
     }

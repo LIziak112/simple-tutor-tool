@@ -29,6 +29,11 @@ export type AnnotationBaseFlow =
   | { kind: "idle" }
   | { kind: "loading" }
   | { kind: "ready"; base: AnnotationBaseRef }
+  /**
+   * 该 phase 已封存（审查修复 3①）：只读固定态——不挂编辑工作区
+   * （scratch=已随交卷固定；correction=已随订正保存固定）
+   */
+  | { kind: "sealed" }
   /** 该题禁用标注（业务性结果：超高/装配失败——草稿照用） */
   | { kind: "disabled"; reason: string }
   /** 可重试错误（网络/栅格化瞬时失败） */
@@ -65,7 +70,11 @@ export function useAnnotationBase(input: {
 
   const ensureBase = useCallback(async (): Promise<void> => {
     if (session === null || running.current) return;
-    if (flowKindRef.current === "ready" || flowKindRef.current === "disabled") {
+    if (
+      flowKindRef.current === "ready" ||
+      flowKindRef.current === "disabled" ||
+      flowKindRef.current === "sealed"
+    ) {
       return;
     }
     running.current = true;
@@ -75,6 +84,12 @@ export function useAnnotationBase(input: {
       // ① 服务端视图（ready 底图直接用；同时播种 doc/revision）
       const view = await fetchAnnotationViewApi(attemptId, questionId, phase);
       await applyAnnotationView(session, scope, view);
+      // 已封存（审查修复 3①）：只读固定态，不进编辑流（重开结果页时由此
+      // 恢复「订正已保存」的固定展示；scratch 交卷后同口径）
+      if (view.annotation?.sealedAt != null) {
+        setFlow({ kind: "sealed" });
+        return;
+      }
       if (view.base !== null && view.base.state === "ready") {
         setFlow({ kind: "ready", base: view.base });
         return;

@@ -59,6 +59,11 @@ vi.mock("@/lib/api", async (importOriginal) => {
     postAnnotationBaseImageApi: vi.fn(),
     fetchTeacherAnnotationViewApi: vi.fn(),
     saveBlobAs: vi.fn(),
+    putAnnotationDocApi: vi.fn(),
+    sealAttemptAnnotationsApi: vi.fn(async () => ({
+      phase: "correction" as const,
+      sealedCount: 1,
+    })),
   };
 });
 
@@ -108,7 +113,9 @@ import {
   fetchAnnotationViewApi,
   postAnnotationBaseApi,
   postAnnotationBaseImageApi,
+  putAnnotationDocApi,
   saveBlobAs,
+  sealAttemptAnnotationsApi,
 } from "@/lib/api";
 import { AnnotationLayer } from "./AnnotationLayer";
 import { AnnotationView } from "./AnnotationView";
@@ -118,6 +125,8 @@ import {
   installAnnotationBackend,
   memoryAnnotationBackend,
   resetAnnotationStoreForTest,
+  settleAnnotationPersistence,
+  writeAnnotationDoc,
 } from "./annotation-store";
 import {
   bindAnnotationSession,
@@ -130,6 +139,8 @@ const baseMock = vi.mocked(postAnnotationBaseApi);
 const baseImageMock = vi.mocked(postAnnotationBaseImageApi);
 const renderMock = vi.mocked(renderAnnotationBaseImage);
 const compositeMock = vi.mocked(exportAnnotationComposite);
+const putDocMock = vi.mocked(putAnnotationDocApi);
+const sealMock = vi.mocked(sealAttemptAnnotationsApi);
 
 const SESSION = { origin: "https://t.example", studentId: "s-1" };
 
@@ -175,6 +186,9 @@ beforeEach(() => {
   baseImageMock.mockReset();
   renderMock.mockReset();
   compositeMock.mockReset();
+  putDocMock.mockReset();
+  sealMock.mockReset();
+  sealMock.mockResolvedValue({ phase: "correction", sealedCount: 1 });
   vi.mocked(saveBlobAs).mockReset();
   vi.mocked(createProgrammaticAtrament).mockClear();
 });
@@ -574,5 +588,116 @@ describe("AnnotationStaticCanvas：回放坐标比例（审查修复 P0-1）", (
     );
     expect(atramentMock.mock.results.length).toBe(replayCount);
     spy.mockRestore();
+  });
+});
+
+// ---------- 审查修复 3①：订正标注保存检查点（seal correction） ----------
+
+describe("AnnotationLayer：保存订正标注检查点（审查修复 3①）", () => {
+  /** ready 底图且未封存的视图（correction 编辑形态的 ensureBase ①产物） */
+  function openCorrectionView(): void {
+    viewMock.mockResolvedValue({
+      base: READY_BASE,
+      maxWidthPx: 1440,
+      doc: null,
+      annotation: null,
+    });
+  }
+
+  it("correction 编辑形态提供「保存订正标注」；scratch 形态不提供", async () => {
+    openCorrectionView();
+    const { unmount } = render(
+      <AnnotationLayer attemptId="a1" questionId="q1" phase="correction" />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /圈画题干/ }));
+    expect(
+      await screen.findByRole("button", { name: "保存订正标注" }),
+    ).toBeInTheDocument();
+    unmount();
+
+    openCorrectionView();
+    render(<AnnotationLayer attemptId="a1" questionId="q1" />);
+    fireEvent.click(screen.getByRole("button", { name: /圈画题干/ }));
+    await waitFor(() =>
+      expect(screen.getByAltText("本题题干标注底图")).toBeInTheDocument(),
+    );
+    expect(
+      screen.queryByRole("button", { name: "保存订正标注" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("确认保存：追平后 seal(attemptId,'correction') → 固定态「已随订正保存固定」", async () => {
+    // 第一次拉取（ensureBase ①）：ready 底图未封存；后续（保存后的固定态
+    // AnnotationView）：sealed correction 视图
+    viewMock
+      .mockResolvedValueOnce({
+        base: READY_BASE,
+        maxWidthPx: 1440,
+        doc: null,
+        annotation: null,
+      })
+      .mockResolvedValue(sealedView({ doc: DOC }));
+    // 本地已有一笔待传订正标注（seal 前追平：PUT 回执落地 → 无 pending）
+    putDocMock.mockResolvedValue({
+      annotationId: "00000000-0000-4000-8000-000000000001",
+      revision: 1,
+      hash: "a".repeat(64),
+      savedAt: "2026-10-08T00:00:00Z",
+    });
+    writeAnnotationDoc(
+      SESSION,
+      { attemptId: "a1", questionId: "q1", phase: "correction" },
+      DOC,
+    );
+    await settleAnnotationPersistence();
+    render(
+      <AnnotationLayer attemptId="a1" questionId="q1" phase="correction" />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /圈画题干/ }));
+    await waitFor(() =>
+      expect(screen.getByAltText("本题题干标注底图")).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "保存订正标注" }));
+    fireEvent.click(await screen.findByRole("button", { name: "确认保存" }));
+    await waitFor(() =>
+      expect(sealMock).toHaveBeenCalledWith("a1", "correction"),
+    );
+    // 追平先于 seal（catchUp → PUT 回执落地后才封存）
+    expect(putDocMock).toHaveBeenCalled();
+    await waitFor(() =>
+      expect(screen.getByText(/已随订正保存固定/)).toBeInTheDocument(),
+    );
+    // 固定态：不挂编辑工作区
+    expect(document.querySelector('[data-slot="annotation-workspace"]')).toBeNull();
+  });
+
+  it("无内容确认保存 → 检查点拒绝（还没有订正标注内容）", async () => {
+    openCorrectionView();
+    render(
+      <AnnotationLayer attemptId="a1" questionId="q1" phase="correction" />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /圈画题干/ }));
+    await waitFor(() =>
+      expect(screen.getByAltText("本题题干标注底图")).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "保存订正标注" }));
+    fireEvent.click(await screen.findByRole("button", { name: "确认保存" }));
+    await waitFor(() =>
+      expect(screen.getByText(/还没有订正标注内容/)).toBeInTheDocument(),
+    );
+    expect(sealMock).not.toHaveBeenCalled();
+  });
+
+  it("视图已封存（sealedAt 非空）→ 展开即固定态，不挂编辑器（重开页面恢复）", async () => {
+    viewMock.mockResolvedValue(sealedView({ doc: DOC }));
+    render(
+      <AnnotationLayer attemptId="a1" questionId="q1" phase="correction" />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /圈画题干/ }));
+    await waitFor(() =>
+      expect(screen.getByText(/已随订正保存固定/)).toBeInTheDocument(),
+    );
+    expect(document.querySelector('[data-slot="annotation-workspace"]')).toBeNull();
+    expect(baseMock).not.toHaveBeenCalled();
   });
 });

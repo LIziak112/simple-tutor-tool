@@ -149,6 +149,14 @@ export function AnnotationView({
     if (open && phaseState === "idle") void load();
   }, [open, phaseState, load]);
 
+  // 切换 phase/题目/角色（load 身份变化；教师卡 phase 切换——审查修复 3②）：
+  // 重置回拉取态，由上面的打开效应重新拉取（初始 mount 为幂等 no-op）
+  useEffect(() => {
+    setPhaseState((prev) => (prev === "idle" ? prev : "idle"));
+    setView(null);
+    setExportResult(null);
+  }, [load]);
+
   const baseReady =
     view?.base !== null &&
     view?.base !== undefined &&
