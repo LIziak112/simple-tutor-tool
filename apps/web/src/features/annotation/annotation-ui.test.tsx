@@ -72,6 +72,37 @@ vi.mock("./annotation-composite", async (importActual) => ({
   exportAnnotationComposite: vi.fn(),
 }));
 
+// 审查修复 1（P0 回放比例）：替换 atrament 程序化实例为坐标记录桩——
+// 断言静态笔迹层传给 atrament 的 CSS 坐标已按「显示宽/位图宽」换算。
+// 形状与 atrament 程序化接口兼容（color/weight 可写、draw 返回已处理坐标），
+// AnnotationWorkspace 的挂载路径同样可用。vi.hoisted：mock 工厂先于模块
+// 顶层求值，类定义须随之提升。
+const { FakeAtrament } = vi.hoisted(() => {
+  class FakeAtrament {
+    color = "";
+    weight = 0;
+    readonly begins: Array<[number, number]> = [];
+    readonly draws: Array<[number, number]> = [];
+    beginStroke(x: number, y: number): void {
+      this.begins.push([x, y]);
+    }
+    draw(x: number, y: number): { x: number; y: number } {
+      this.draws.push([x, y]);
+      return { x, y };
+    }
+    endStroke(_x: number, _y: number): void {}
+    destroy(): void {}
+  }
+  return { FakeAtrament };
+});
+
+vi.mock("@/features/ink/engine/atrament-adapter.ts", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("@/features/ink/engine/atrament-adapter.ts")
+  >()),
+  createProgrammaticAtrament: vi.fn(() => new FakeAtrament()),
+}));
+
 import {
   ApiError,
   fetchAnnotationViewApi,
@@ -82,6 +113,7 @@ import {
 import { AnnotationLayer } from "./AnnotationLayer";
 import { AnnotationView } from "./AnnotationView";
 import { exportAnnotationComposite } from "./annotation-composite";
+import { createProgrammaticAtrament } from "@/features/ink/engine/atrament-adapter.ts";
 import {
   installAnnotationBackend,
   memoryAnnotationBackend,
@@ -144,6 +176,7 @@ beforeEach(() => {
   renderMock.mockReset();
   compositeMock.mockReset();
   vi.mocked(saveBlobAs).mockReset();
+  vi.mocked(createProgrammaticAtrament).mockClear();
 });
 
 afterEach(() => {
@@ -322,37 +355,38 @@ describe("AnnotationLayer：两阶段底图流", () => {
   });
 });
 
-describe("AnnotationView：回看状态", () => {
-  function sealedView(
-    o: {
-      base?: AnnotationBaseRef | null;
-      doc?: AnnotationDoc | null;
-      stale?: boolean;
-    } = {},
-  ): AnnotationViewData {
-    const doc = o.doc === undefined ? null : o.doc;
-    const rawBase = o.base === undefined ? READY_BASE : o.base;
-    const base =
-      rawBase === null ? null : o.stale ? { ...rawBase, stale: true } : rawBase;
-    return {
-      base,
-      maxWidthPx: 1440,
-      doc,
-      annotation:
-        doc === null
-          ? null
-          : {
-              annotationId: "33333333-3333-4333-8333-333333333333",
-              revision: 2,
-              hash: "b".repeat(64),
-              savedAt: "2026-10-08T00:00:00Z",
-              sealedAt: "2026-10-08T01:00:00Z",
-              strokeCount: doc.strokes.length,
-              pointCount: 4,
-            },
-    };
-  }
+/** 回看视图夹具（AnnotationView 与静态画布两组 describe 共用） */
+function sealedView(
+  o: {
+    base?: AnnotationBaseRef | null;
+    doc?: AnnotationDoc | null;
+    stale?: boolean;
+  } = {},
+): AnnotationViewData {
+  const doc = o.doc === undefined ? null : o.doc;
+  const rawBase = o.base === undefined ? READY_BASE : o.base;
+  const base =
+    rawBase === null ? null : o.stale ? { ...rawBase, stale: true } : rawBase;
+  return {
+    base,
+    maxWidthPx: 1440,
+    doc,
+    annotation:
+      doc === null
+        ? null
+        : {
+            annotationId: "33333333-3333-4333-8333-333333333333",
+            revision: 2,
+            hash: "b".repeat(64),
+            savedAt: "2026-10-08T00:00:00Z",
+            sealedAt: "2026-10-08T01:00:00Z",
+            strokeCount: doc.strokes.length,
+            pointCount: 4,
+          },
+  };
+}
 
+describe("AnnotationView：回看状态", () => {
   it("stale=true → 「旧版本题干的标注」横幅", async () => {
     viewMock.mockResolvedValue(sealedView({ doc: DOC, stale: true }));
     render(<AnnotationView viewer="student" attemptId="a1" questionId="q1" />);
@@ -446,5 +480,99 @@ describe("AnnotationView：回看状态", () => {
       expect(screen.getByText(/底图加载失败/)).toBeInTheDocument(),
     );
     expect(vi.mocked(saveBlobAs)).not.toHaveBeenCalled();
+  });
+});
+
+describe("AnnotationStaticCanvas：回放坐标比例（审查修复 P0-1）", () => {
+  /** 720 CSS 显示宽 / 1440 位图宽 → cssPerBase=0.5（≠1 才能暴露比例缺陷） */
+  const rectSpy = (): ReturnType<typeof vi.spyOn> =>
+    vi
+      .spyOn(HTMLCanvasElement.prototype, "getBoundingClientRect")
+      .mockReturnValue({
+        x: 0,
+        y: 0,
+        top: 0,
+        left: 0,
+        right: 720,
+        bottom: 450,
+        width: 720,
+        height: 450,
+        toJSON: () => ({}),
+      } as DOMRect);
+
+  const atramentMock = vi.mocked(createProgrammaticAtrament);
+
+  function lastAtrament(): InstanceType<typeof FakeAtrament> {
+    const result = atramentMock.mock.results.at(-1);
+    if (result === undefined || result.type !== "return") {
+      throw new Error("尚未创建 atrament 实例");
+    }
+    // mock.results 按 mock 后的真实签名定型为 Atrament——此处经 unknown 落回
+    // 记录桩形态（vi.mock 工厂里替换的实现）
+    return result.value as unknown as InstanceType<typeof FakeAtrament>;
+  }
+
+  it("底图 img 未加载（布局未就绪）不重放——无 NaN 坐标", async () => {
+    const spy = rectSpy();
+    viewMock.mockResolvedValue(sealedView({ doc: DOC }));
+    render(<AnnotationView viewer="student" attemptId="a1" questionId="q1" />);
+    fireEvent.click(screen.getByRole("button", { name: /题干标注/ }));
+    await waitFor(() =>
+      expect(screen.getByAltText("本题题干标注底图")).toBeInTheDocument(),
+    );
+    // img 未触发 load：布局未就绪门控——静态画布连 atrament 都不创建
+    // （杜绝 offsetHeight=0 产 Infinity/NaN 坐标的重放）
+    expect(atramentMock.mock.results.length).toBe(0);
+    spy.mockRestore();
+  });
+
+  it("CSS 显示宽 ≠ 位图宽时按 rect.width/baseWidth 换算（atrament 收到 CSS 坐标）", async () => {
+    const spy = rectSpy();
+    viewMock.mockResolvedValue(sealedView({ doc: DOC }));
+    render(<AnnotationView viewer="student" attemptId="a1" questionId="q1" />);
+    fireEvent.click(screen.getByRole("button", { name: /题干标注/ }));
+    const img = await screen.findByAltText("本题题干标注底图");
+    fireEvent.load(img);
+    await waitFor(() => {
+      expect(lastAtrament().begins.length).toBeGreaterThan(0);
+    });
+    const atrament = lastAtrament();
+    // DOC 笔迹（底图像素域）：(100,100) → (200,140)；cssPerBase=720/1440=0.5
+    expect(atrament.begins[0]?.[0]).toBeCloseTo(50);
+    expect(atrament.begins[0]?.[1]).toBeCloseTo(50);
+    expect(atrament.draws.some(([x, y]) => Math.abs(x - 100) < 0.01 && Math.abs(y - 70) < 0.01)).toBe(
+      true,
+    );
+    // 线宽同比例（5.76 × 0.5 = 2.88）
+    expect(atrament.weight).toBeCloseTo(2.88);
+    spy.mockRestore();
+  });
+
+  it("导出状态刷新不触发重放（依赖收窄——同一 doc 只重放一次）", async () => {
+    const spy = rectSpy();
+    viewMock.mockResolvedValue(sealedView({ doc: DOC }));
+    compositeMock.mockResolvedValue({ ok: true, blob: fakePngBlob() });
+    render(
+      <AnnotationView
+        viewer="student"
+        attemptId="a1"
+        questionId="q1"
+        questionNo={3}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /题干标注/ }));
+    const img = await screen.findByAltText("本题题干标注底图");
+    fireEvent.load(img);
+    await waitFor(() => {
+      expect(lastAtrament().begins.length).toBeGreaterThan(0);
+    });
+    const replayCount = atramentMock.mock.results.length;
+    // 触发一次导出状态刷新（exporting → 结果文案两次重渲染）
+    fireEvent.click(screen.getByRole("button", { name: /导出合成图/ }));
+    await waitFor(() =>
+      expect(screen.getByText(/已导出合成图/)).toBeInTheDocument(),
+    );
+    expect(atramentMock.mock.results.length).toBe(replayCount);
+    spy.mockRestore();
   });
 });
