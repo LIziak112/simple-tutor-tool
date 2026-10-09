@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { serve } from "@hono/node-server";
+import { assertValidatorCoverage } from "@tutor/grading";
 import pino from "pino";
 import { createApp } from "./app";
 import { loadOrCreateSecretKey, readConfig } from "./config";
@@ -17,6 +18,11 @@ import { startBackupScheduler } from "./services/backup-service";
 // 崩溃兜底要最先装（2026-10-08 立项）：未处理异常同步写 stderr 横幅后退出，
 // 避免被 pnpm/tsx 链吞成"零输出起不来"（当天实测 stdout 会被缓冲丢失）
 installCrashHandlers();
+
+// T7.5：判分注册完备性检查——契约题型表引用的校验器缺实现即启动失败
+// （注册遗漏属开发错误，不能让正常题静默换成另一种判分）。放在
+// installCrashHandlers 之后：此处抛错走 stderr 横幅 + exit 1 的友好崩溃路径。
+assertValidatorCoverage();
 
 const config = readConfig(process.env);
 
