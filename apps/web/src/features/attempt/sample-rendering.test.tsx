@@ -14,6 +14,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   allSampleDocs,
   longestPlainTextOf,
+  mathNodePresentOf,
 } from "../../../../../test-support/dsl-samples.ts";
 import { AttemptQuestionCard } from "./AttemptQuestionCard";
 import { HANDWRITTEN_TYPES } from "./answer-format";
@@ -139,10 +140,13 @@ describe("全部样例题目真实题卡渲染（samples/v2 + 完整样例，T7.
       ).toContain(plain);
     }
 
-    // 公式：题干或选项含数学记号时 KaTeX 必须实际渲染（版本错配类回归）
+    // 公式：题干或选项存在数学节点时 KaTeX 必须实际渲染（版本错配类回归；
+    // AST 判定——字面 $（货币等）不是数学环境，不误报）
     const hasMath =
-      publicQuestion.stemMd.includes("$") ||
-      (publicQuestion.options ?? []).some((option) => option.includes("$"));
+      mathNodePresentOf(question.stemMd) ||
+      (publicQuestion.options ?? []).some((option) =>
+        mathNodePresentOf(option),
+      );
     if (hasMath) {
       expect(
         container.querySelector(".katex"),
@@ -155,7 +159,11 @@ describe("全部样例题目真实题卡渲染（samples/v2 + 完整样例，T7.
       case "judge":
         expect(screen.getByRole("radio", { name: "对" })).toBeInTheDocument();
         expect(screen.getByRole("radio", { name: "错" })).toBeInTheDocument();
-        expect(article?.textContent ?? "").toContain("（　）");
+        // 空标记在题尾时经 judgeStemOf 渲染为（　）；句中标记渲染为下划线
+        // 空框（合法形态，不在此断言），与题卡 judgeStemOf 的行尾锚定同口径
+        if (/\[\[\]\]\s*$/.test(publicQuestion.stemMd)) {
+          expect(article?.textContent ?? "").toContain("（　）");
+        }
         break;
       case "choice":
         expect(container.querySelectorAll('input[type="radio"]')).toHaveLength(

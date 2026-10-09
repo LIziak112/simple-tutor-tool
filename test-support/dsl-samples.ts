@@ -69,11 +69,8 @@ export interface SampleDoc {
 }
 
 /** docs/dsl/完整样例.md 原文（完整样例相关断言的单一读取口与定位机制） */
-export function fullSampleDocText(): string {
-  return readFileSync(
-    join(findRepoRoot(), "docs", "dsl", "完整样例.md"),
-    "utf8",
-  );
+export function fullSampleDocText(root: string = findRepoRoot()): string {
+  return readFileSync(join(root, "docs", "dsl", "完整样例.md"), "utf8");
 }
 
 /** 从文档 AST 提取 lang=markdown 的 code 节点内容（完整样例的样例代码块口径） */
@@ -125,7 +122,7 @@ export function allSampleDocs(): SampleDoc[] {
     name: `samples/v2/${relative(dir, path).split(sep).join("/")}`,
     markdown: readFileSync(path, "utf8"),
   }));
-  return [...files, ...fullSampleBlocks()];
+  return [...files, ...fullSampleBlocks(fullSampleDocText(root))];
 }
 
 /** 覆盖缺口：注册表主名集合中未被 covered 覆盖的部分（空数组=全覆盖） */
@@ -162,6 +159,25 @@ export function directiveNamesOf(
   };
   walk(tree);
   return names;
+}
+
+/**
+ * markdown 中是否存在数学节点（math/inlineMath）——「数学应经 KaTeX 渲染」
+ * 断言的 AST 精确判定：题干里字面的 $（货币、转义 \$）不是数学环境，不算。
+ */
+export function mathNodePresentOf(markdown: string): boolean {
+  const tree = processor.parse(markdown) as unknown as MdNode;
+  let present = false;
+  const visit = (node: MdNode): void => {
+    if (present) return;
+    if (node.type === "math" || node.type === "inlineMath") {
+      present = true;
+      return;
+    }
+    for (const child of node.children ?? []) visit(child);
+  };
+  visit(tree);
+  return present;
 }
 
 /**

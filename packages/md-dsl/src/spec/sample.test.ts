@@ -18,8 +18,9 @@ import { lintDocument } from "../lint/lint.ts";
 
 const doc = fullSampleDocText();
 const blocks = fullSampleBlocks(doc);
+const blockMarkdowns = blocks.map((block) => block.markdown);
 /** 每块只跑一轮 lintDocument，kind 与 issue 两类断言共用 */
-const blockLints = blocks.map((block) => lintDocument(block.markdown));
+const blockLints = blockMarkdowns.map((markdown) => lintDocument(markdown));
 
 /** 多文档主名并集（正向覆盖与反向 fixture 共用同一收集口径） */
 function coveredUnionOf(
@@ -58,7 +59,7 @@ describe("docs/dsl/完整样例.md", () => {
   });
 
   it("七种题型在样例题目的 type 属性中全部出现", () => {
-    const all = blocks.map((block) => block.markdown).join("\n");
+    const all = blockMarkdowns.join("\n");
     for (const keyword of [
       "type=judge",
       "type=choice",
@@ -74,7 +75,7 @@ describe("docs/dsl/完整样例.md", () => {
 
   it("AST 精确指令覆盖：三个样例块的主名并集 == 注册表主名集合（不写死数量）", () => {
     expect(
-      missingDirectives(coveredUnionOf(blocks.map((block) => block.markdown))),
+      missingDirectives(coveredUnionOf(blockMarkdowns)),
       "完整样例指令覆盖缺口（新注册指令需同步补样例）",
     ).toEqual([]);
   });
@@ -133,12 +134,9 @@ describe("指令覆盖断言的反向 fixture（防子串伪造，T7.9）", () =
   });
 
   it("删除真实 step 节点但保留 steps 时，覆盖缺口恰为 step（子串口径会连 steps 一起丢）", () => {
-    const covered = coveredUnionOf(
-      blocks.map((block) => block.markdown),
-      {
-        dropDirectives: ["step"],
-      },
-    );
+    const covered = coveredUnionOf(blockMarkdowns, {
+      dropDirectives: ["step"],
+    });
     expect(covered.has("steps"), "steps 容器不受 step 删除影响").toBe(true);
     expect(missingDirectives(covered)).toEqual(["step"]);
   });
