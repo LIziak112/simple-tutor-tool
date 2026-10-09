@@ -1,5 +1,3 @@
-import { existsSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
 import { render } from "@testing-library/react";
 import {
   analyzeLectureStructure,
@@ -7,6 +5,7 @@ import {
   processor,
 } from "@tutor/md-dsl";
 import { describe, expect, it } from "vitest";
+import { allSampleDocs } from "../../../../../test-support/dsl-samples.ts";
 import { extractOutline } from "./outline";
 import { RichMarkdown } from "./RichMarkdown";
 import { remarkDirectiveHost } from "./remark/remark-directive-host";
@@ -29,55 +28,27 @@ interface MdnsNodeLike {
  * 2. analyzeLectureStructure 的块级指令 docIndex 序列 == 前端渲染管线
  *    （remarkDirectiveHost）注入的 dindex 序列——directive_interact 的
  *    (name, index) 两边对账的硬锁定。
+ * T7.9 起样例来源共用自动发现（samples/v2 全部 .md + 完整样例 markdown 块，
+ * 均见 test-support/dsl-samples.ts），不再写死样例文件名清单。
  */
 
-/** 仓库根定位：jsdom 环境下 import.meta.url 非 file 协议，从 cwd 向上找 samples/v2 */
-function repoRoot(): string {
-  let dir = process.cwd();
-  for (let i = 0; i < 6; i += 1) {
-    if (existsSync(join(dir, "samples", "v2"))) return dir;
-    const parent = dirname(dir);
-    if (parent === dir) break;
-    dir = parent;
-  }
-  throw new Error("未找到仓库根（samples/v2 不存在于 cwd 向上 6 层）");
-}
-
-const repo = repoRoot();
-const sampleDir = join(repo, "samples");
-const dslDocPath = join(repo, "docs", "dsl", "完整样例.md");
-
-/** 载入全部样例讲义 markdown：v2 三份（讲义/混合取解析出的讲义段）+ 完整样例三块 */
+/** 载入全部样例讲义 markdown：自动发现语料（name 已带目录前缀）取解析出的讲义段 */
 function loadSampleLectures(): Array<{ name: string; markdown: string }> {
   const out: Array<{ name: string; markdown: string }> = [];
-  const v2Files = ["讲义样例.md", "混合样例.md"] as const;
-  for (const file of v2Files) {
-    const raw = readFileSync(`${sampleDir}/v2/${file}`, "utf8");
-    const parsed = parseDocument(raw);
+  for (const doc of allSampleDocs()) {
+    const parsed = parseDocument(doc.markdown);
     for (const [i, lecture] of parsed.lectures.entries()) {
-      out.push({ name: `samples/v2/${file}#${i}`, markdown: lecture.markdown });
-    }
-  }
-  const dslDoc = readFileSync(dslDocPath, "utf8");
-  const blocks = [...dslDoc.matchAll(/```markdown\r?\n([\s\S]*?)```/g)].map(
-    (m) => m[1] ?? "",
-  );
-  for (const [i, block] of blocks.entries()) {
-    const parsed = parseDocument(block);
-    for (const [j, lecture] of parsed.lectures.entries()) {
-      out.push({
-        name: `docs/dsl/完整样例.md 块${i + 1}#${j}`,
-        markdown: lecture.markdown,
-      });
+      out.push({ name: `${doc.name}#${i}`, markdown: lecture.markdown });
     }
   }
   return out;
 }
 
-describe("headingIndex 三口径一致（samples 全量）", () => {
-  const samples = loadSampleLectures();
+/** 模块顶层收集一次，两个 describe 共用（避免双倍目录遍历/读取/解析） */
+const samples = loadSampleLectures();
 
-  it("样例载入非空（讲义样例 + 混合讲义段 + 完整样例块）", () => {
+describe("headingIndex 三口径一致（samples 全量）", () => {
+  it("样例载入非空（samples/v2 自动发现 + 完整样例块）", () => {
     expect(samples.length).toBeGreaterThanOrEqual(3);
   });
 
@@ -112,8 +83,6 @@ describe("headingIndex 三口径一致（samples 全量）", () => {
 });
 
 describe("指令 docIndex 两端一致（结构分析 == 渲染管线 dindex）", () => {
-  const samples = loadSampleLectures();
-
   it.each(samples.map((s) => [s.name, s.markdown] as const))(
     "%s：analyzeLectureStructure 的块级指令序 == remarkDirectiveHost 注入的 dindex",
     (name, markdown) => {
