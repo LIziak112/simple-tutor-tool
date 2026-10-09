@@ -4,13 +4,13 @@ import { BlankAnswersProvider } from "../BlankAnswersContext";
 import { RichMarkdown } from "../RichMarkdown";
 import { renderMd } from "../test-support/render-md";
 // 旧导入路径（兼容层）：探针刻意经 shim 取 useDirectiveTelemetry，
-// 与 canonical 会话值比对同一引用——锁定 re-export 不是平行副本
-import { useDirectiveTelemetry } from "./expand-context";
+// 与 canonical 导入比对同一引用——锁定 re-export 不是平行副本
+import { useDirectiveTelemetry as useLegacyTelemetry } from "./expand-context";
 import {
   DirectiveSessionProvider,
   type DirectiveTelemetryInfo,
   useDirectiveFill,
-  useDirectiveSession,
+  useDirectiveTelemetry,
 } from "./session-context";
 
 /**
@@ -23,24 +23,36 @@ import {
  * - 嵌套 Provider 继承外层、仅覆盖显式提供的字段（含显式 null 遮蔽）。
  */
 
-/** 会话状态探针：把两个子命名空间的可见形态渲染成属性供断言 */
+/** 会话状态探针：经两个子命名空间 hook 读会话，旧路径与 canonical 比对同一引用 */
 function SessionProbe() {
-  const session = useDirectiveSession();
-  const legacyReport = useDirectiveTelemetry(); // 旧导入路径读同一会话
+  const fill = useDirectiveFill();
+  const canonical = useDirectiveTelemetry();
+  const legacy = useLegacyTelemetry(); // 旧导入路径读同一会话
   return (
     <output
       data-testid="probe"
-      data-fill={session.fill?.values[0] ?? "none"}
+      data-fill={fill?.values[0] ?? "none"}
       data-telemetry={
-        session.telemetry === null
-          ? "null"
-          : session.telemetry === legacyReport
-            ? "same"
-            : "diff"
+        legacy === null ? "null" : legacy === canonical ? "same" : "diff"
       }
     />
   );
 }
+
+/** 折叠块夹具：标题「看细节」、内容「说明文字」（默认收起） */
+const FOLD_MD = [':::fold{title="看细节"}', "说明文字", ":::"].join("\n");
+
+/** 两步逐步揭晓夹具：第一步默认可见，第二步待揭晓 */
+const STEPS_MD = [
+  "::::steps",
+  ":::step",
+  "第一步",
+  ":::",
+  ":::step",
+  "第二步",
+  ":::",
+  "::::",
+].join("\n");
 
 const fillState = (
   overrides?: Partial<{ values: readonly string[]; disabled: boolean }>,
@@ -58,23 +70,12 @@ describe("DirectiveSessionContext（T7.3）", () => {
   });
 
   it("无 Provider：折叠与逐步揭晓照常可操作（无遥测静默 no-op）", () => {
-    renderMd([':::fold{title="看细节"}', "折叠内容", ":::"].join("\n"));
-    expect(screen.queryByText("折叠内容")).toBeNull(); // 默认收起
+    renderMd(FOLD_MD);
+    expect(screen.queryByText("说明文字")).toBeNull(); // 默认收起
     fireEvent.click(screen.getByRole("button", { name: "看细节" }));
-    expect(screen.getByText("折叠内容")).toBeTruthy();
+    expect(screen.getByText("说明文字")).toBeTruthy();
 
-    renderMd(
-      [
-        "::::steps",
-        ":::step",
-        "第一步",
-        ":::",
-        ":::step",
-        "第二步",
-        ":::",
-        "::::",
-      ].join("\n"),
-    );
+    renderMd(STEPS_MD);
     expect(screen.queryByText("第二步")).toBeNull(); // 仅第一步可见
     fireEvent.click(screen.getByRole("button", { name: /显示下一步/ }));
     expect(screen.getByText("第二步")).toBeTruthy();
@@ -98,9 +99,7 @@ describe("DirectiveSessionContext（T7.3）", () => {
     render(
       <BlankAnswersProvider state={fillState({ values: ["7"] })}>
         <RichMarkdown
-          source={
-            ':::fold{title="看细节"}\n说明文字\n:::\n\n计算：$3+4=$ [[7]]。'
-          }
+          source={`${FOLD_MD}\n\n计算：$3+4=$ [[7]]。`}
           onDirectiveTelemetry={(event) => events.push(event)}
         />
       </BlankAnswersProvider>,
@@ -117,22 +116,9 @@ describe("DirectiveSessionContext（T7.3）", () => {
     render(
       <BlankAnswersProvider state={fillState({ values: ["7"] })}>
         <RichMarkdown
-          source={[
-            ':::fold{title="看细节"}',
-            "说明文字",
-            ":::",
-            "",
-            "::::steps",
-            ":::step",
-            "第一步",
-            ":::",
-            ":::step",
-            "第二步",
-            ":::",
-            "::::",
-            "",
-            "计算：$3+4=$ [[7]]。",
-          ].join("\n")}
+          source={[FOLD_MD, "", STEPS_MD, "", "计算：$3+4=$ [[7]]。"].join(
+            "\n",
+          )}
           onDirectiveTelemetry={(event) => events.push(event)}
         />
       </BlankAnswersProvider>,
@@ -190,26 +176,5 @@ describe("DirectiveSessionContext（T7.3）", () => {
     const probe = screen.getByTestId("probe");
     expect(probe.getAttribute("data-fill")).toBe("none");
     expect(probe.getAttribute("data-telemetry")).toBe("null"); // null === null → "null"
-  });
-
-  it("useDirectiveFill 与会话 fill 子命名空间同源", () => {
-    const state = fillState({ values: ["y"] });
-    function FillProbe() {
-      const fill = useDirectiveFill();
-      return (
-        <output
-          data-testid="fill-probe"
-          data-value={fill?.values[0] ?? "none"}
-        />
-      );
-    }
-    render(
-      <DirectiveSessionProvider fill={state}>
-        <FillProbe />
-      </DirectiveSessionProvider>,
-    );
-    expect(screen.getByTestId("fill-probe").getAttribute("data-value")).toBe(
-      "y",
-    );
   });
 });

@@ -85,11 +85,6 @@ export function DirectiveSessionProvider({
   );
 }
 
-/** 取完整会话状态（业务代码用下方子命名空间 hook；本 hook 供探针/诊断） */
-export function useDirectiveSession(): DirectiveSessionState {
-  return useContext(DirectiveSessionContext);
-}
-
 /** 取填空作答状态（无作答状态返回 null，blank 渲染展示空框） */
 export function useDirectiveFill(): DirectiveFillState | null {
   return useContext(DirectiveSessionContext).fill;
