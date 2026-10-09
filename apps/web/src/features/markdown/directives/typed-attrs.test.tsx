@@ -53,20 +53,30 @@ describe("T7.2 缺省值经注册表 schema 通道（组件不再自行解析）
 });
 
 describe("T7.2 非法属性降级（UnknownDirective，正文完整，不抛错）", () => {
-  it("question difficulty=abc：整题降级，题干正文保留", () => {
-    const { container } = renderMd(
-      "::::question{type=judge difficulty=abc}\n判断题正文必须保留。\n::::",
-    );
-    expect(container.querySelector("[data-slot='question']")).toBeNull();
-    expect(container).toHaveTextContent("判断题正文必须保留。");
-    expect(container).toHaveTextContent("未支持指令：question");
-  });
+  it.each(["abc", "7", "0"])(
+    "question difficulty=%s：整题降级，题干正文保留",
+    (difficulty) => {
+      const { container } = renderMd(
+        `::::question{type=judge difficulty=${difficulty}}\n判断题正文必须保留。\n::::`,
+      );
+      expect(container.querySelector("[data-slot='question']")).toBeNull();
+      expect(container).toHaveTextContent("判断题正文必须保留。");
+      expect(container).toHaveTextContent("未支持指令：question");
+    },
+  );
 
   it("mark color=purple：行内降级且文字保留", () => {
     const { container } = renderMd("这里的 :mark[重点]{color=purple} 保留。");
     expect(container.querySelector("mark")).toBeNull();
     expect(container).toHaveTextContent("重点");
     expect(container).toHaveTextContent("未支持指令：mark");
+  });
+
+  it("tip 的 {title} 空写法（无值简写解析为空串）：min(1) 拒绝，降级且正文保留", () => {
+    const { container } = renderMd(":::tip{title}\n简写正文保留。\n:::");
+    expect(container.querySelector("[data-slot='callout']")).toBeNull();
+    expect(container).toHaveTextContent("简写正文保留。");
+    expect(container).toHaveTextContent("未支持指令：tip");
   });
 
   it("graph 缺必填 fn：降级而非渲染缺参占位", () => {
