@@ -1,4 +1,9 @@
 import { z } from "zod";
+
+import {
+  type DirectiveCapability,
+  directiveCapabilitySchema,
+} from "./capability.ts";
 import { questionTypeSchema } from "./content.ts";
 
 /**
@@ -85,6 +90,13 @@ export interface DirectiveDefinition<TAttrs extends z.ZodType = z.ZodType> {
    * linter 也不按指令名语法校验。标准指令（三种写法）不需要此字段。
    */
   readonly syntax?: string;
+  /**
+   * 能力三面（T7.4 / 方案 §4.3，全部面可选）：只标注已实现的交互/证据/判分
+   * 职责，声明不生成新控件或判分算法；未声明 capability 的指令行为与现状
+   * 完全相同。词表与冲突规则见 capability.ts；题型级判分路由在
+   * questionCapabilityBindings，不写在指令上。
+   */
+  readonly capability?: DirectiveCapability;
 }
 
 /** 注册表里的指令定义（attrs 泛型收窄到 ZodType，safeParse 输出 unknown） */
@@ -112,6 +124,7 @@ const directiveDefinitionMetaSchema = z.object({
   example: z.string().min(1),
   aliases: z.array(z.string().regex(DIRECTIVE_NAME_PATTERN)).optional(),
   syntax: z.string().min(1).optional(),
+  capability: directiveCapabilitySchema.optional(),
 });
 
 /**
@@ -130,6 +143,22 @@ function assertAttrDocsConsistent(definition: DirectiveDefinition): void {
         `指令定义不合法（${definition.name}）：attrDocs 的键「${key}」不在其 attrs 属性中`,
       );
     }
+  }
+}
+
+/**
+ * 能力三面的明确冲突校验（T7.4 / 方案 §4.3，注册期 fail fast）：
+ * ink-strokes 证据只配 ink 输入（笔迹只来自手写作答）。这是唯一登记的
+ * 组合约束——none + snapshot（折叠/揭晓遥测）等其余组合不设矩阵，
+ * 词表与面内键的形态校验由 directiveCapabilitySchema（strictObject）承担。
+ */
+function assertCapabilityConsistent(definition: DirectiveDefinition): void {
+  const capability = definition.capability;
+  if (capability?.evidence?.format !== "ink-strokes") return;
+  if (capability.interaction?.inputType !== "ink") {
+    throw new Error(
+      `指令定义不合法（${definition.name}）：evidence.format=ink-strokes 必须配 interaction.inputType=ink（笔迹只来自手写作答）`,
+    );
   }
 }
 
@@ -230,6 +259,7 @@ export function defineDirective<TAttrs extends z.ZodType>(
   }
   assertExampleConsistent(definition);
   assertAttrDocsConsistent(definition);
+  assertCapabilityConsistent(definition);
 
   const keys = [definition.name, ...(definition.aliases ?? [])];
   for (const key of keys) {
@@ -312,6 +342,15 @@ export const questionDirective = defineDirective({
 /** question 指令属性经注册表 schema 校验后的输出形态（T1.3 起解析器消费，勿手抄同形类型） */
 export type QuestionDirectiveAttrs = z.output<typeof questionDirective.attrs>;
 
+/**
+ * 折叠/揭晓类遥测能力：无作答输入（none 不等于不能点击展开），开合/揭晓的
+ * 交互事件以快照证据采集——hint / solution / fold 三个指令共用同一形态。
+ */
+const revealTelemetryCapability = {
+  interaction: { inputType: "none" },
+  evidence: { format: "snapshot" },
+} as const satisfies DirectiveCapability;
+
 /** 提示（题目内可多个 / 讲义正文） */
 export const hintDirective = defineDirective({
   name: "hint",
@@ -322,6 +361,7 @@ export const hintDirective = defineDirective({
   description:
     "提示。题目内可有多个，学生端逐个点开、每次点开都记录事件（教师可见提示使用情况）；也用于讲义正文补充说明。提示内容不下发到题面，学生主动获取。",
   example: ":::hint\n同号相加取相同符号；异号相加取绝对值较大的符号。\n:::",
+  capability: revealTelemetryCapability,
 });
 
 /** 手写题的最终答案（教师侧机密，用于自动判分） */
@@ -346,6 +386,7 @@ export const solutionDirective = defineDirective({
   description:
     "详解/讲解。题目内：交卷后才下发给学生；讲义内：常与 :::example 搭配写例题解析，默认折叠、展开/收起均上报事件。",
   example: ":::solution\n$(-3)+7=4$；$(-2)+(-5)=-7$。\n:::",
+  capability: revealTelemetryCapability,
 });
 
 /** 填空/判断作答空位（[[…]] 行内语法糖，非指令写法） */
@@ -359,6 +400,10 @@ export const blankDirective = defineDirective({
   description:
     "填空/判断的作答空位（语法糖，不是指令，不要写成 :blank[…]）：题干里写 [[4]] 即一个空；等价答案用 | 分隔，如 [[0.5|1/2]]；判断题固定写 [[正确]] 或 [[错误]]。空数由标记自动统计，答案与空按出现顺序对齐。标记内含参考答案，属教师侧内容，学生端下发前会被替换为输入框。",
   example: "计算：$(-3)+7=$ [[4]]；$(-2)+(-5)=$ [[-7]]。",
+  capability: {
+    interaction: { inputType: "fill" },
+    evidence: { format: "snapshot" },
+  },
 });
 
 // ---------- 讲义互动 ----------
@@ -394,6 +439,10 @@ export const stepsDirective = defineDirective({
     "逐步揭晓：把推导/解题过程拆成若干 :::step，学生逐步展开，每展开一步上报一次事件，教师能看到推进到哪里。仅讲义正文可用。",
   example:
     '::::steps\n:::step{title="第 1 步：去括号"}\n先处理乘方，再算乘除。\n:::\n:::step{title="第 2 步：合并"}\n$-4+1=-3$。\n:::\n::::',
+  capability: {
+    interaction: { inputType: "steps" },
+    evidence: { format: "snapshot" },
+  },
 });
 
 /** steps 中的一个步骤 */
@@ -429,6 +478,7 @@ export const foldDirective = defineDirective({
   description:
     "通用折叠块：默认收起、点击展开（展开/收起均上报事件）。适合放拓展阅读、次级说明等不挡主线的内容。仅讲义正文可用。",
   example: ':::fold{title="拓展：为什么 0 不能作除数"}\n…\n:::',
+  capability: revealTelemetryCapability,
 });
 
 /** fold 指令属性经注册表 schema 校验后的输出形态（T7.2 起渲染层消费，勿手抄同形类型） */

@@ -340,3 +340,55 @@ describe("attrDocs：gen:spec 属性表数据源（T1.7）", () => {
     }
   });
 });
+
+describe("能力标注与方案 §4.3 标注表一致（T7.4）", () => {
+  it("blank = fill 输入 + snapshot 证据（判分取所在题型，指令上不标 validation）", () => {
+    expect(blankDirective.capability).toEqual({
+      interaction: { inputType: "fill" },
+      evidence: { format: "snapshot" },
+    });
+  });
+
+  it("hint / fold / solution = none + snapshot（展开/收起遥测，none 无作答输入）", () => {
+    const foldLike = {
+      interaction: { inputType: "none" },
+      evidence: { format: "snapshot" },
+    };
+    expect(hintDirective.capability).toEqual(foldLike);
+    expect(foldDirective.capability).toEqual(foldLike);
+    expect(solutionDirective.capability).toEqual(foldLike);
+  });
+
+  it("steps = steps 输入 + snapshot 证据；不带 validation（不做部分判分）", () => {
+    expect(stepsDirective.capability).toEqual({
+      interaction: { inputType: "steps" },
+      evidence: { format: "snapshot" },
+    });
+    expect(stepsDirective.capability?.validation).toBeUndefined();
+  });
+
+  it("question/answer/example/step 与纯展示指令省略整个 capability（行为不变）", () => {
+    for (const d of [
+      questionDirective,
+      answerDirective,
+      exampleDirective,
+      stepDirective,
+      tipDirective,
+      warningDirective,
+      boxDirective,
+      columnsDirective,
+      colDirective,
+      markDirective,
+      imageDirective,
+      graphDirective,
+    ]) {
+      expect(d.capability, `${d.name} 应省略整个 capability`).toBeUndefined();
+    }
+  });
+
+  it("全部已注册指令无 partial 声明（词表保留但本阶段无实现无声明）", () => {
+    for (const d of listDirectives()) {
+      expect(d.capability?.validation?.shape, `${d.name}`).not.toBe("partial");
+    }
+  });
+});
