@@ -3,12 +3,14 @@ import { describe, expect, it, vi } from "vitest";
 import { BlankAnswersProvider } from "../BlankAnswersContext";
 import { RichMarkdown } from "../RichMarkdown";
 import { renderMd } from "../test-support/render-md";
+// 旧导入路径（兼容层）：探针刻意经 shim 取 useDirectiveTelemetry，
+// 与 canonical 会话值比对同一引用——锁定 re-export 不是平行副本
+import { useDirectiveTelemetry } from "./expand-context";
 import {
   DirectiveSessionProvider,
+  type DirectiveTelemetryInfo,
   useDirectiveFill,
   useDirectiveSession,
-  useDirectiveTelemetry,
-  type DirectiveTelemetryInfo,
 } from "./session-context";
 
 /**
@@ -40,7 +42,9 @@ function SessionProbe() {
   );
 }
 
-const fillState = (overrides?: Partial<{ values: readonly string[]; disabled: boolean }>) => ({
+const fillState = (
+  overrides?: Partial<{ values: readonly string[]; disabled: boolean }>,
+) => ({
   values: overrides?.values ?? [],
   onChange: vi.fn(),
   disabled: overrides?.disabled ?? false,
@@ -60,9 +64,16 @@ describe("DirectiveSessionContext（T7.3）", () => {
     expect(screen.getByText("折叠内容")).toBeTruthy();
 
     renderMd(
-      ["::::steps", ":::step", "第一步", ":::", ":::step", "第二步", ":::", "::::"].join(
-        "\n",
-      ),
+      [
+        "::::steps",
+        ":::step",
+        "第一步",
+        ":::",
+        ":::step",
+        "第二步",
+        ":::",
+        "::::",
+      ].join("\n"),
     );
     expect(screen.queryByText("第二步")).toBeNull(); // 仅第一步可见
     fireEvent.click(screen.getByRole("button", { name: /显示下一步/ }));
@@ -185,7 +196,12 @@ describe("DirectiveSessionContext（T7.3）", () => {
     const state = fillState({ values: ["y"] });
     function FillProbe() {
       const fill = useDirectiveFill();
-      return <output data-testid="fill-probe" data-value={fill?.values[0] ?? "none"} />;
+      return (
+        <output
+          data-testid="fill-probe"
+          data-value={fill?.values[0] ?? "none"}
+        />
+      );
     }
     render(
       <DirectiveSessionProvider fill={state}>
