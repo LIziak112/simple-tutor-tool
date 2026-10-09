@@ -1,10 +1,7 @@
 import { render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
+import { OutlineInlineMath, splitInlineMath } from "./outline-inline-math";
 import { RichMarkdown } from "./RichMarkdown";
-import {
-  OutlineInlineMath,
-  splitInlineMath,
-} from "./outline-inline-math";
 
 /**
  * 目录行内公式组件测试（T6R.23 P2-4，路径 A）：目录条目文本按 $...$ 切分，
@@ -39,9 +36,7 @@ describe("splitInlineMath：$...$ 切分", () => {
   });
 
   it("未配对 $ 按字面量；货币式 $…$ 空白不阻断配对（与 remark-math 同口径）", () => {
-    expect(splitInlineMath("a $ b")).toEqual([
-      { value: "a $ b", math: false },
-    ]);
+    expect(splitInlineMath("a $ b")).toEqual([{ value: "a $ b", math: false }]);
     // remark-math 的 mathText 允许公式内空白：正文把「5 和 」渲染为公式，
     // 目录必须同口径（两边对同一标题的展示一致）
     expect(splitInlineMath("价格 $5 和 $10")).toEqual([
@@ -60,9 +55,7 @@ describe("splitInlineMath：$...$ 切分", () => {
   });
 
   it("$$ 连排与空串：不识别公式", () => {
-    expect(splitInlineMath("$$x$$")).toEqual([
-      { value: "$$x$$", math: false },
-    ]);
+    expect(splitInlineMath("$$x$$")).toEqual([{ value: "$$x$$", math: false }]);
     expect(splitInlineMath("")).toEqual([]);
   });
 });
@@ -114,9 +107,7 @@ describe("目录组件与正文管线的公式识别口径一致", () => {
 
   it.each(cases)("%s：目录与正文 h3 的 KaTeX 渲染数一致", (text) => {
     const { container: outline } = renderOutlineText(text);
-    const { container: body } = render(
-      <RichMarkdown source={`### ${text}`} />,
-    );
+    const { container: body } = render(<RichMarkdown source={`### ${text}`} />);
     const outlineCount = outline.querySelectorAll(".katex").length;
     const bodyCount = body.querySelectorAll(".rich-markdown h3 .katex").length;
     expect(outlineCount, "目录 KaTeX 渲染数").toBe(bodyCount);

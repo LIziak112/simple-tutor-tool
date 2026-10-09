@@ -64,14 +64,21 @@ export function splitInlineMath(text: string): InlineMathPart[] {
  */
 export function OutlineInlineMath({ text }: { readonly text: string }) {
   const parts = splitInlineMath(text);
+  // key＝内容＋出现次序（同文本段可重复出现，下标键被 lint 禁用）
+  const keySeen = new Map<string, number>();
+  const keyOf = (part: InlineMathPart): string => {
+    const base = `${part.math ? "m" : "t"}:${part.value}`;
+    const nth = (keySeen.get(base) ?? 0) + 1;
+    keySeen.set(base, nth);
+    return `${base}#${nth}`;
+  };
   return (
     <>
-      {parts.map((part, index) =>
+      {parts.map((part) =>
         part.math ? (
-          // KaTeX 输出自带 XSS 防护（trust 默认关闭，非法输入渲染为错误
-          // 原文而非注入标记），与正文 rehype-katex 产物同源
           <span
-            key={index}
+            key={keyOf(part)}
+            // biome-ignore lint/security/noDangerouslySetInnerHtml: 内容为 katex.renderToString 输出（trust 默认关闭，非法输入渲染为红色原文而非注入标记），与正文 rehype-katex 产物同源
             dangerouslySetInnerHTML={{
               __html: katex.renderToString(part.value, {
                 throwOnError: false,
@@ -79,7 +86,7 @@ export function OutlineInlineMath({ text }: { readonly text: string }) {
             }}
           />
         ) : (
-          <Fragment key={index}>{part.value}</Fragment>
+          <Fragment key={keyOf(part)}>{part.value}</Fragment>
         ),
       )}
     </>

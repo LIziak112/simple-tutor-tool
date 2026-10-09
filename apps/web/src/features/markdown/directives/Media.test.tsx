@@ -73,7 +73,10 @@ describe("GraphDirective：function-plot 模块形态互操作", () => {
 
   it("生产形态（default 双重包裹，真函数在 default.default）：同样完成绘制并 ready", async () => {
     // 生产 chunk：mod.default 是命名空间对象，真函数嵌在其 default 上
-    hoisted.state.currentDefault = { __esModule: true, default: hoisted.plotMock };
+    hoisted.state.currentDefault = {
+      __esModule: true,
+      default: hoisted.plotMock,
+    };
     const { container } = renderGraph("sin(x)/x");
     await flushImportChain();
     expect(screen.queryByRole("status")).toBeNull();

@@ -435,7 +435,7 @@ export function renderReviewPackPrompt(input: ReviewPackPromptInput): string {
       "**本包材料不完整**：缺少上列文件。缺关键图片时无法进行基于原稿的诊断——请先回到工具补齐（如重新生成原稿图片）后再交给 AI，不要据此声称已完成诊断。",
     );
   }
-  sections.push(fileList.join("\n") + "\n");
+  sections.push(`${fileList.join("\n")}\n`);
 
   // 数据说明（按实际内容；学生包无答案节）
   const dataLines = ["## 数据说明（按本次包内实际内容）", ""];
