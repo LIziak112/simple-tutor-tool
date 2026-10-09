@@ -132,14 +132,11 @@ function gradeMulti(
 }
 
 /**
- * 填空题校验器（2026-10-02 产品决策修订）：恒返回 null —— fill 一律不自动判，
- * 交老师人工批改（与手写题同流程，进待批队列）。原因：数学答案等价形式长尾
- * （±、√、π、区间、单位等）导致 normalize + 有理数等价 + 等价答案列表的
- * 自动判分误判风险高。原逐空判分逻辑废止；normalize/rational 一行未动，
- * 仍服务手写题 final 答案判分。
+ * 填空题校验器：恒返回 null——fill 全人工批改（2026-10-02 产品决策，
+ * 等价形式长尾误判风险的完整理由单点见 grade.ts 路由第 2 步）。
  * T7.5 起 fill 的 validation.shape=rubric，grade 在路由层即短路返回 null，
  * 本校验器经 grade 不可达——照常登记以维持「契约表引用全部有服务端实现」
- * 的完备性一致（两路同 null，语义互为兜底）。
+ * 的完备性一致（两路同 null）。
  */
 function gradeFill(
   _question: Question,
