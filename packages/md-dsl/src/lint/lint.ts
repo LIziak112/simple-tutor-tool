@@ -19,6 +19,7 @@ import { lintMathSpacingOutside } from "./math-text.ts";
 import { lintQuestions } from "./questions.ts";
 import { lintRawHtml } from "./raw-html.ts";
 import { lintTablePipes } from "./tables.ts";
+import { lintTeachingPack } from "./teaching-pack.ts";
 
 /**
  * DSL v2 lint 入口（T1.5）：lintDocument = 解析（透传其 issues，不重复报）+ 规则层新增
@@ -85,6 +86,8 @@ function runRules(
         tree,
         toEnabledCapabilities(options.enabledCapabilities),
       ),
+      // T7.8：教学包声明显式引用存在性（无声明零 issue）
+      ...lintTeachingPack(tree, parsed),
     ];
   } catch (err) {
     return [
