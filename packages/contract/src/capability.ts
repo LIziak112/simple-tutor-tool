@@ -141,6 +141,43 @@ export const capabilitiesManifestSchema = z.strictObject({
   questionTypes: questionCapabilityBindingsSchema,
 });
 export type CapabilitiesManifest = z.infer<typeof capabilitiesManifestSchema>;
+
+// ---------- 能力启用集 profile（T7.7 / 方案 §4.5） ----------
+
+/**
+ * 辅助能力开关（教师级）：仅 steps（逐步揭晓）与 ink（手写辅助）两项。
+ * choice / fill 是正式作答、none 无输入，都不需要开关——不出现在设置勾选与
+ * 本词表中（方案 §4.5 固定边界）。
+ */
+export const capabilitySwitchSchema = z.enum(["steps", "ink"]);
+export type CapabilitySwitch = z.infer<typeof capabilitySwitchSchema>;
+
+/** 缺省全启用：教师未配置（列 NULL）与学生端读取不到字段时的兜底形态 */
+export const ALL_ENABLED_CAPABILITIES: readonly CapabilitySwitch[] = [
+  "steps",
+  "ink",
+];
+
+/**
+ * 教师能力启用集 profile：enabledCapabilities 为已启用的辅助能力数组。
+ * 空数组合法（显式全关——steps 完整展开、手写入口隐藏，正式作答不受影响）；
+ * 重复项拒绝（语义要求显式，不静默去重）。存储于 teachers 表单列
+ * （capabilityProfileJson，NULL=未配置=全启用），读取侧坏 JSON 同样兜底全启用。
+ */
+export const capabilityProfileSchema = z.strictObject({
+  enabledCapabilities: z
+    .array(capabilitySwitchSchema)
+    .refine(
+      (list) => new Set(list).size === list.length,
+      "enabledCapabilities 不能有重复项",
+    ),
+});
+export type CapabilityProfile = z.infer<typeof capabilityProfileSchema>;
+
+/** 学生端响应携带的启用集字段形态（attempt 详情与讲义详情共用；恒为有效集） */
+export const enabledCapabilitiesFieldSchema = z.array(capabilitySwitchSchema);
+
+
 export const questionCapabilityBindings: Record<
   QuestionType,
   QuestionCapabilityBinding

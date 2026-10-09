@@ -273,6 +273,8 @@ describe("attemptDraftDataSchema（草稿视图）", () => {
       },
       // T6R.3：建卷即冻结（false）；懒冻结的升级遗留卷为 true
       legacyUnverified: false,
+      // T7.7：教师辅助能力有效启用集（服务端恒下发）
+      enabledCapabilities: ["steps", "ink"],
     });
     expect(parsed.drafts["练习四-1"]).toEqual({ kind: "judge", value: true });
     expect(parsed.hintsOpened["练习四-4"]?.[0]?.index).toBe(0);
@@ -290,6 +292,7 @@ describe("attemptDraftDataSchema（草稿视图）", () => {
       drafts: {},
       hintsOpened: {},
       legacyUnverified: false,
+      enabledCapabilities: ["steps", "ink"],
     };
     const question = {
       id: "练习四-1",
@@ -351,6 +354,7 @@ describe("attemptDraftDataSchema（草稿视图）", () => {
       drafts: {},
       hintsOpened: {},
       legacyUnverified: false,
+      enabledCapabilities: ["steps", "ink"],
     });
     const question = parsed.units[0]?.questions[0];
     expect(question && "answers" in question).toBe(false);
@@ -428,6 +432,8 @@ describe("attemptResultDataSchema（结果视图）", () => {
         ],
       },
     ],
+    // T7.7：结果视图与草稿视图同口径携带有效启用集
+    enabledCapabilities: ["steps", "ink"],
   } as const;
 
   it("接受合法结果视图：快照 + 参考答案 + 详解 + 本人答案 + autoCorrect", () => {
@@ -854,6 +860,7 @@ describe("attemptDetailDataSchema / attemptErrorCodeSchema", () => {
         drafts: {},
         hintsOpened: {},
         legacyUnverified: false,
+        enabledCapabilities: ["steps", "ink"],
       }).success,
     ).toBe(true);
     expect(
@@ -876,6 +883,7 @@ describe("attemptDetailDataSchema / attemptErrorCodeSchema", () => {
           pendingCount: 0,
         },
         units: [],
+        enabledCapabilities: ["steps", "ink"],
       }).success,
     ).toBe(true);
   });

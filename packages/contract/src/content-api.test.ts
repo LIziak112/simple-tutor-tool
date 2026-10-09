@@ -404,6 +404,8 @@ describe("学生端讲义契约（T2.3；T2A.5 扩展分组与配套练习）", 
           companionUnits: [
             { id: "有理数小练", title: "有理数小练", questionCount: 4 },
           ],
+          // T7.7：教师辅助能力有效启用集（讲义 steps 渲染遵循开关）
+          enabledCapabilities: ["steps", "ink"],
         },
       }).success,
     ).toBe(true);
@@ -419,6 +421,7 @@ describe("学生端讲义契约（T2.3；T2A.5 扩展分组与配套练习）", 
           courseId,
           courseName: "初一上",
           companionUnits: [],
+          enabledCapabilities: ["steps", "ink"],
         },
       }).success,
     ).toBe(true);

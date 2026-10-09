@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { enabledCapabilitiesFieldSchema } from "./capability.ts";
 import {
   assignmentDueAtSchema,
   questionAnswersSchema,
@@ -294,6 +295,13 @@ export const attemptDraftDataSchema = z.object({
    * 内容——前端据此展示「练习内容为恢复后的版本」提示；false = 建卷即冻结。
    */
   legacyUnverified: z.boolean(),
+  /**
+   * 教师辅助能力有效启用集（T7.7 / 方案 §4.5）：steps/ink 子集，读时按
+   * attempt → student → teacher 的配置列计算（NULL=全启用）。steps 关闭时
+   * 前端完整展开逐步揭晓；ink 关闭时隐藏手写/草稿入口——均不影响正式作答
+   * 与提交规则，也不是安全边界（投影与泄露守卫独立保证）。
+   */
+  enabledCapabilities: enabledCapabilitiesFieldSchema,
 });
 
 /**
@@ -417,6 +425,11 @@ export const attemptResultDataSchema = z.object({
   summary: attemptScoreSummarySchema,
   /** 逐题结果分组（T2A.7：assignment 按单元序分节，course 单组；组内按题序） */
   units: z.array(attemptResultUnitSchema),
+  /**
+   * 教师辅助能力有效启用集（T7.7，与草稿视图同口径）：结果视图的详解/揭晓
+   * 渲染同样遵循开关（steps 关闭时详解内 steps 完整展开）。
+   */
+  enabledCapabilities: enabledCapabilitiesFieldSchema,
 });
 
 /** PUT /api/student/attempts/:id/answers/:questionId 请求体 */
