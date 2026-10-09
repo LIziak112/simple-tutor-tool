@@ -56,6 +56,7 @@ const DATA: AttemptResultData = {
   courseName: null,
   dueAt: null,
   answersReleased: true,
+  enabledCapabilities: ["steps", "ink"],
   summary: {
     total: 4,
     answered: 3,

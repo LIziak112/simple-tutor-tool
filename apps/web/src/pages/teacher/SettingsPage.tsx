@@ -9,13 +9,15 @@ import {
 } from "@/features/auth/teacher-auth";
 import { BackupSection } from "@/features/teacher-backup/BackupSection";
 import { ApiTokenSection } from "@/features/teacher-settings/ApiTokenSection";
+import { CapabilityProfileSection } from "@/features/teacher-settings/CapabilityProfileSection";
 import { formatCnTime } from "@/lib/time";
 
 /**
  * /t/settings 设置页（T1.9 账号与会话；T4.5 增「备份与恢复」区——
  * 下载完整备份 / 从备份恢复 / 最近快照列表，见 features/teacher-backup；
  * T4.6 增「AI 连接（API Token）」区——查看 / 生成 / 重置（二次确认），
- * 见 features/teacher-settings）。
+ * 见 features/teacher-settings；T7.7 增「辅助能力」区——steps/ink 两项
+ * 教师级开关，学生端刷新生效，见 CapabilityProfileSection）。
  */
 export function SettingsPage() {
   const meQuery = useTeacherMe();
@@ -89,6 +91,9 @@ export function SettingsPage() {
           </Button>
         </div>
       </div>
+
+      {/* T7.7：辅助能力（steps/ink 教师级开关；学生端刷新生效） */}
+      <CapabilityProfileSection />
 
       {/* T4.5：备份与恢复（下载 / 恢复上传 + 密码确认弹层 / 最近快照） */}
       <BackupSection />

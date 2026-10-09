@@ -191,6 +191,7 @@ const DRAFT_DATA: AttemptDraftData = {
   drafts: {},
   hintsOpened: {},
   legacyUnverified: false,
+  enabledCapabilities: ["steps", "ink"],
 };
 
 const RESULT_DATA: AttemptResultData = {
@@ -204,6 +205,7 @@ const RESULT_DATA: AttemptResultData = {
   courseName: null,
   dueAt: "2026-10-01T12:00:00.000Z",
   answersReleased: true,
+  enabledCapabilities: ["steps", "ink"],
   summary: {
     total: 2,
     answered: 2,
@@ -436,6 +438,7 @@ const HANDWRITTEN_DRAFT: AttemptDraftData = {
   drafts: {},
   hintsOpened: {},
   legacyUnverified: false,
+  enabledCapabilities: ["steps", "ink"],
 };
 
 /** 展开下一道未展开的手写题并「书写一笔」（展开后按钮变「收起」，故每次取第一个） */

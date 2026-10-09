@@ -81,6 +81,7 @@ const COURSE_DRAFT: AttemptDraftData = {
   drafts: {},
   hintsOpened: {},
   legacyUnverified: false,
+  enabledCapabilities: ["steps", "ink"],
 };
 
 function renderPage() {
@@ -233,6 +234,7 @@ describe("结果页「练习本卷错题」直达重练（2026-10）", () => {
     courseName: "初一上",
     dueAt: null,
     answersReleased: true,
+    enabledCapabilities: ["steps", "ink"],
     summary: {
       total: 1,
       answered: 1,

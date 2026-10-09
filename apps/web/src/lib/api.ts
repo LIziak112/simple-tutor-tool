@@ -39,6 +39,7 @@ import {
   apiResponseSchema,
   type BackupRestoreResult,
   type BackupSnapshotList,
+  type CapabilityProfile,
   type ContentTree,
   type CorrectionCreateRequest,
   type CorrectionSealRequest,
@@ -2326,6 +2327,25 @@ export function fetchApiToken(): Promise<TeacherApiTokenData> {
  */
 export function resetApiToken(): Promise<TeacherApiTokenResetData> {
   return callApi(() => api.api.teacher["api-token"].$post());
+}
+
+// ---------- 教师能力启用集（T7.7 设置页「辅助能力」区） ----------
+
+/**
+ * 读取当前教师的能力启用集（未配置 → 全启用；空数组 = 显式全关）。
+ * 学生端 attempt/讲义读取接口按同列读时计算有效集——此处仅供设置页勾选回显。
+ */
+export function fetchCapabilityProfile(): Promise<CapabilityProfile> {
+  return callApi(() => api.api.teacher.settings["capability-profile"].$get());
+}
+
+/** 整体覆盖写入启用集（enabledCapabilities 为 steps/ink 子集，契约拒绝未知名/重复项） */
+export function saveCapabilityProfile(
+  profile: CapabilityProfile,
+): Promise<CapabilityProfile> {
+  return callApi(() =>
+    api.api.teacher.settings["capability-profile"].$put({ json: profile }),
+  );
 }
 
 // ---------- 学情报告（T4.6 接口；T4.7 画像页报告区消费，D24） ----------

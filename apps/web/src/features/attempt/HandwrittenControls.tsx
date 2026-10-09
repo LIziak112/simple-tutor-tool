@@ -16,6 +16,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { useEnabledCapabilities } from "@/features/capability/enabled-capabilities";
 import {
   emptyAtramentDoc,
   type InkChangeReason,
@@ -114,6 +115,12 @@ export function HandwrittenControls({
   const [confirmFullscreen, setConfirmFullscreen] = useState(false);
   /** 从 excalidraw 清空回页内手写的确认弹层 */
   const [confirmReset, setConfirmReset] = useState(false);
+  /**
+   * T7.7 手写辅助开关：关闭时隐藏「展开手写区/全屏作答」入口、不自动展开、
+   * 已有笔迹只读查看（PNG）；最终答案输入始终保留（正式作答不受影响）。
+   * 挂载期的笔迹合并/补传照常执行——开关不清数据不改提交规则。
+   */
+  const { ink: inkEnabled } = useEnabledCapabilities();
 
   /** 页内引擎与全屏引擎的 ref（上传导 PNG 时取当前激活的那个） */
   const pageEngineRef = useRef<InkEngine | null>(null);
@@ -206,7 +213,7 @@ export function HandwrittenControls({
         // 服务端拉取失败（多为断网）：有本地笔迹则用本地并补传；无则按无笔迹处理
         if (localInk !== null) {
           setMasterDoc(localInk);
-          if (!isInkDocEmpty(localInk)) setExpanded(true);
+          if (inkEnabled && !isInkDocEmpty(localInk)) setExpanded(true);
           draftSyncRef.current?.noteLocalWrite();
           controllerRef.current.resync(localInk);
         } else {
@@ -220,7 +227,7 @@ export function HandwrittenControls({
         return;
       }
       setMasterDoc(merged.doc);
-      if (!isInkDocEmpty(merged.doc)) setExpanded(true);
+      if (inkEnabled && !isInkDocEmpty(merged.doc)) setExpanded(true);
       if (merged.source === "server") {
         // 服务端较新：内容落本地仓并记指纹（视为已同步）
         draftStore.saveInk(attemptId, questionId, merged.doc);
@@ -234,8 +241,8 @@ export function HandwrittenControls({
     return () => {
       alive = false;
     };
-    // controller/draftSync 经 ref 取最新；只随题目标识重跑
-  }, [attemptId, questionId]);
+    // controller/draftSync 经 ref 取最新；只随题目标识与开关重跑（开关实际只随页面挂载而定）
+  }, [attemptId, questionId, inkEnabled]);
 
   const finalAnswer = answer?.kind === "final" ? answer.finalAnswer : "";
 
@@ -289,39 +296,44 @@ export function HandwrittenControls({
 
   return (
     <div className="flex flex-col gap-3">
-      {/* 操作行：展开/收起 + 全屏 + 上传状态提示 */}
+      {/* 操作行：展开/收起 + 全屏 + 上传状态提示（T7.7：ink 关闭时两个书写入口
+          隐藏，保存失败提示保留——补传状态与学生相关） */}
       <div className="flex flex-wrap items-center gap-2">
-        <Button
-          type="button"
-          variant="outline"
-          className="h-11"
-          aria-expanded={expanded}
-          onClick={() => {
-            setExpanded((prev) => !prev);
-            clearFailure();
-          }}
-        >
-          {expanded ? (
-            <>
-              <ChevronUp aria-hidden className="size-4" />
-              收起手写区
-            </>
-          ) : (
-            <>
-              <ChevronDown aria-hidden className="size-4" />
-              展开手写区
-            </>
-          )}
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          className="h-11"
-          onClick={openFullscreen}
-        >
-          <Maximize aria-hidden className="size-4" />
-          全屏作答
-        </Button>
+        {inkEnabled && (
+          <>
+            <Button
+              type="button"
+              variant="outline"
+              className="h-11"
+              aria-expanded={expanded}
+              onClick={() => {
+                setExpanded((prev) => !prev);
+                clearFailure();
+              }}
+            >
+              {expanded ? (
+                <>
+                  <ChevronUp aria-hidden className="size-4" />
+                  收起手写区
+                </>
+              ) : (
+                <>
+                  <ChevronDown aria-hidden className="size-4" />
+                  展开手写区
+                </>
+              )}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="h-11"
+              onClick={openFullscreen}
+            >
+              <Maximize aria-hidden className="size-4" />
+              全屏作答
+            </Button>
+          </>
+        )}
         {saveFailed && (
           <p className="text-xs text-destructive" role="status">
             笔迹保存失败（可能网络不稳），将继续自动重试，交卷前会再上传一次
@@ -329,8 +341,29 @@ export function HandwrittenControls({
         )}
       </div>
 
+      {/* T7.7 ink 关闭：已有笔迹的只读查看（无笔迹时整块不渲染——不新增任何入口） */}
+      {!inkEnabled &&
+        masterDoc !== undefined &&
+        masterDoc !== null &&
+        !isInkDocEmpty(masterDoc) && (
+          <div className="flex flex-col gap-2 rounded-lg border border-border bg-muted/30 p-3">
+            <p className="text-sm text-muted-foreground">
+              老师未开启手写辅助，本题已有笔迹仅供查看。
+            </p>
+            <img
+              src={studentInkPngUrl(attemptId, questionId)}
+              alt="本题已有笔迹"
+              loading="lazy"
+              className="w-full rounded-md border border-border bg-white"
+              onError={(event) => {
+                event.currentTarget.style.display = "none";
+              }}
+            />
+          </div>
+        )}
+
       {/* 手写区（展开时）：atrament 页内画布 / excalidraw 占位卡 / 加载态 */}
-      {expanded && (
+      {expanded && inkEnabled && (
         <>
           {masterDoc === undefined && (
             <p

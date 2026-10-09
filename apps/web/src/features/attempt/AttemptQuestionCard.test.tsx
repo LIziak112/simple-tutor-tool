@@ -13,6 +13,7 @@ import type {
 } from "@tutor/contract";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
+import { EnabledCapabilitiesProvider } from "@/features/capability/enabled-capabilities";
 import { NOTE_QUESTION_SHARE } from "@/features/notes/note-layout";
 import { makeResizeObserverStub } from "@/features/notes/note-test-utils";
 import { openAttemptHintApi } from "@/lib/api";
@@ -72,6 +73,8 @@ function renderStatefulCard(
     /** T2.11：已解锁提示（缺省不渲染提示面板） */
     hints?: readonly HintOpenedEntry[];
     onHintUnlocked?: (entry: HintOpenedEntry) => void;
+    /** T7.7：辅助能力启用集（缺省不包 Provider=全启用） */
+    capabilities?: { steps: boolean; ink: boolean };
   } = {},
 ) {
   const onAnswer = vi.fn();
@@ -111,7 +114,13 @@ function renderStatefulCard(
   });
   const utils = render(
     <QueryClientProvider client={client}>
-      <Harness />
+      {options.capabilities === undefined ? (
+        <Harness />
+      ) : (
+        <EnabledCapabilitiesProvider value={options.capabilities}>
+          <Harness />
+        </EnabledCapabilitiesProvider>
+      )}
     </QueryClientProvider>,
   );
   return { ...utils, onAnswer };
@@ -364,6 +373,18 @@ describe("题卡草稿层（T6R.9）", () => {
   it("无 attemptId 不渲染草稿层（预览等场景）", () => {
     renderStatefulCard(baseQuestion({ type: "judge" }));
     expect(screen.queryByRole("button", { name: /草稿纸/ })).toBeNull();
+  });
+
+  it("T7.7 ink 关闭：草稿纸入口隐藏（数据保留服务端，恢复开关后回来看）", () => {
+    const off = renderStatefulCard(baseQuestion({ type: "judge" }), {
+      attemptId: "att-1",
+      capabilities: { steps: true, ink: false },
+    });
+    expect(screen.queryByRole("button", { name: /草稿纸/ })).toBeNull();
+    off.unmount();
+    // 对照：默认（无 Provider=全启用）入口回来
+    renderStatefulCard(baseQuestion({ type: "judge" }), { attemptId: "att-1" });
+    expect(screen.getByRole("button", { name: /草稿纸/ })).toBeInTheDocument();
   });
 
   it("宽容器展开走侧栏分栏（55/45 两列）；窄容器回退 below（任务清单失败测试）", async () => {
