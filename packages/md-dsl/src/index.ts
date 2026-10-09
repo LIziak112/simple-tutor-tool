@@ -6,7 +6,7 @@
  * （解析器/转换/版本检测一并移除，见架构文档 §10 决策 10）。
  */
 
-export type { LintResult } from "./lint/lint.ts";
+export type { LintOptions, LintResult } from "./lint/lint.ts";
 export { lintDocument } from "./lint/lint.ts";
 export {
   LECTURE_PREFIX_LINES,
