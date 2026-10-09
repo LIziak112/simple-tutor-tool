@@ -189,9 +189,7 @@ test.describe("T7.7 辅助能力启用集：关闭 → 学生刷新 → 正式�
       await expect(leak.violations()).toEqual([]);
     } finally {
       // 恢复缺省（未配置=全启用），不把开关状态泄漏给同 run 的其他用例
-      await request.put("/api/teacher/settings/capability-profile", {
-        data: { enabledCapabilities: ["steps", "ink"] },
-      });
+      await saveCapabilityProfile(request, ["steps", "ink"]);
       await studentContext.close();
     }
   });

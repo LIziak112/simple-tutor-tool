@@ -1,4 +1,4 @@
-import type { CapabilitySwitch } from "@tutor/contract";
+import type { EnabledCapabilityFlags } from "@tutor/contract";
 import { createContext, type ReactNode, useContext } from "react";
 
 /**
@@ -17,31 +17,18 @@ import { createContext, type ReactNode, useContext } from "react";
  * 泄露守卫由 studentStemMd 投影与 assertNoLeak 独立保证。
  */
 
-/** 组件消费的启用形态（契约数组归一为布尔，避免各处重复 includes） */
-export interface EnabledCapabilities {
-  readonly steps: boolean;
-  readonly ink: boolean;
-}
-
-const ALL_ENABLED: EnabledCapabilities = { steps: true, ink: true };
-
-/** 契约数组 → 布尔形态（未提供/空值按全启用兜底） */
-export function toEnabledCapabilities(
-  enabled: readonly CapabilitySwitch[] | undefined | null,
-): EnabledCapabilities {
-  if (enabled === undefined || enabled === null) return ALL_ENABLED;
-  return {
-    steps: enabled.includes("steps"),
-    ink: enabled.includes("ink"),
-  };
-}
+/** 组件消费的启用形态（契约布尔形态的别名；归一函数 re-export 契约单一实现） */
+export type EnabledCapabilities = EnabledCapabilityFlags;
+export { toEnabledCapabilities } from "@tutor/contract";
 
 /**
  * 启用集 Context。裸 Context 不导出（DirectiveSessionContext 同款纪律）：
  * 外部一律经 EnabledCapabilitiesProvider 与 useEnabledCapabilities 访问。
  */
-const EnabledCapabilitiesContext =
-  createContext<EnabledCapabilities>(ALL_ENABLED);
+const EnabledCapabilitiesContext = createContext<EnabledCapabilities>({
+  steps: true,
+  ink: true,
+});
 
 /** 提供启用集（页面层从响应数据归一后传入） */
 export function EnabledCapabilitiesProvider({

@@ -4,13 +4,14 @@ import type {
   LintIssue,
   ParsedDocument,
 } from "@tutor/contract";
+import { toEnabledCapabilities } from "@tutor/contract";
 import type { Root } from "mdast";
 import type { ParseOptions } from "../v2/parse.ts";
 import { parseDocument } from "../v2/parse.ts";
 import { isQuestionContainer } from "../v2/question.ts";
 import { errorMessage, makeIssue, processor } from "../v2/shared.ts";
 import { lintBlankMarkerDollar } from "./blank-marker.ts";
-import { capabilityContextOf, lintCapabilityProfile } from "./capability.ts";
+import { lintCapabilityProfile } from "./capability.ts";
 import { lintDirectives } from "./directives.ts";
 import { lintUnclosedContainers } from "./fences.ts";
 import { lintMathDelimiters } from "./math.ts";
@@ -41,7 +42,9 @@ export interface LintResult {
  *   未提供 = 无上下文按全启用（CLI 与默认导入不触发）。
  */
 export interface LintOptions extends ParseOptions {
-  readonly enabledCapabilities?: readonly CapabilitySwitch[];
+  // enabledCapabilities 显式声明 | undefined（同 ParseOptions.fallbackUnitId
+  // 的放宽口径）：调用方可直传可能为 undefined 的值，无需条件展开体操
+  readonly enabledCapabilities?: readonly CapabilitySwitch[] | undefined;
 }
 
 /** 对 v2 DSL 文档做完整 lint：解析 + 规则校验，返回解析结果与合并排序后的全部 issue */
@@ -67,8 +70,6 @@ function runRules(
     const lines = md.split(/\r?\n/);
     // frontmatter 不可用时解析层按 practice 兜底，语境链与其保持一致
     const kind: DocumentKind = parsed.frontmatter?.kind ?? "practice";
-    // T7.7：启用集上下文归一（undefined = 无上下文全启用，规则层零新增）
-    const capabilityCtx = capabilityContextOf(options.enabledCapabilities);
     return [
       ...lintUnclosedContainers(lines),
       ...lintDirectives(tree, kind),
@@ -79,9 +80,11 @@ function runRules(
       ...lintBlankMarkerDollar(tree),
       ...lintRawHtml(tree),
       ...lintEmptyPractice(parsed, tree),
-      ...(capabilityCtx === undefined
-        ? []
-        : lintCapabilityProfile(tree, capabilityCtx)),
+      // T7.7：启用集归一（缺省=全启用 → 规则零新增 issue；显式 undefined 同缺省）
+      ...lintCapabilityProfile(
+        tree,
+        toEnabledCapabilities(options.enabledCapabilities),
+      ),
     ];
   } catch (err) {
     return [

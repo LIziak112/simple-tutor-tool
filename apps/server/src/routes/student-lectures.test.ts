@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import type { ApiErr } from "@tutor/contract";
 import {
+  ALL_ENABLED_CAPABILITIES,
   apiErrSchema,
   studentLectureDetailOkSchema,
   studentLectureListOkSchema,
@@ -351,7 +352,9 @@ describe("GET /api/student/lectures/:id（讲义详情）", () => {
     expect(studentLectureDetailOkSchema.safeParse(beforeBody).success).toBe(
       true,
     );
-    expect(beforeBody.data.enabledCapabilities).toEqual(["steps", "ink"]);
+    expect(beforeBody.data.enabledCapabilities).toEqual([
+      ...ALL_ENABLED_CAPABILITIES,
+    ]);
     assertNoLeak(beforeBody);
 
     // 教师全关 → 学生再次读取即新配置（读时计算，无推送）

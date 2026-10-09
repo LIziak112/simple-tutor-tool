@@ -294,46 +294,80 @@ export function HandwrittenControls({
     masterDoc !== undefined &&
     masterDoc.engine === "excalidraw";
 
+  // T7.7 ink 关闭：单一早退分支收敛全部回退渲染——无书写入口、已有笔迹只读
+  // 查看、最终答案照常。挂载期合并/补传效果在上方照常执行（开关不清数据）；
+  // expanded 状态无渲染消费者，effect 内的 setExpanded 无 UI 影响。
+  if (!inkEnabled) {
+    return (
+      <div className="flex flex-col gap-3">
+        {saveFailed && (
+          <p className="text-xs text-destructive" role="status">
+            笔迹保存失败（可能网络不稳），将继续自动重试，交卷前会再上传一次
+          </p>
+        )}
+        {masterDoc !== undefined &&
+          masterDoc !== null &&
+          !isInkDocEmpty(masterDoc) && (
+            <div className="flex flex-col gap-2 rounded-lg border border-border bg-muted/30 p-3">
+              <p className="text-sm text-muted-foreground">
+                老师未开启手写辅助，本题已有笔迹仅供查看。
+              </p>
+              <img
+                src={studentInkPngUrl(attemptId, questionId)}
+                alt="本题已有笔迹"
+                loading="lazy"
+                className="w-full rounded-md border border-border bg-white"
+                onError={(event) => {
+                  event.currentTarget.style.display = "none";
+                }}
+              />
+            </div>
+          )}
+        <FinalAnswerInput
+          value={finalAnswer}
+          onChange={(value) =>
+            onAnswer({ kind: "final", finalAnswer: value }, true)
+          }
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col gap-3">
-      {/* 操作行：展开/收起 + 全屏 + 上传状态提示（T7.7：ink 关闭时两个书写入口
-          隐藏，保存失败提示保留——补传状态与学生相关） */}
+      {/* 操作行：展开/收起 + 全屏 + 上传状态提示 */}
       <div className="flex flex-wrap items-center gap-2">
-        {inkEnabled && (
-          <>
-            <Button
-              type="button"
-              variant="outline"
-              className="h-11"
-              aria-expanded={expanded}
-              onClick={() => {
-                setExpanded((prev) => !prev);
-                clearFailure();
-              }}
-            >
-              {expanded ? (
-                <>
-                  <ChevronUp aria-hidden className="size-4" />
-                  收起手写区
-                </>
-              ) : (
-                <>
-                  <ChevronDown aria-hidden className="size-4" />
-                  展开手写区
-                </>
-              )}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              className="h-11"
-              onClick={openFullscreen}
-            >
-              <Maximize aria-hidden className="size-4" />
-              全屏作答
-            </Button>
-          </>
-        )}
+        <Button
+          type="button"
+          variant="outline"
+          className="h-11"
+          aria-expanded={expanded}
+          onClick={() => {
+            setExpanded((prev) => !prev);
+            clearFailure();
+          }}
+        >
+          {expanded ? (
+            <>
+              <ChevronUp aria-hidden className="size-4" />
+              收起手写区
+            </>
+          ) : (
+            <>
+              <ChevronDown aria-hidden className="size-4" />
+              展开手写区
+            </>
+          )}
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          className="h-11"
+          onClick={openFullscreen}
+        >
+          <Maximize aria-hidden className="size-4" />
+          全屏作答
+        </Button>
         {saveFailed && (
           <p className="text-xs text-destructive" role="status">
             笔迹保存失败（可能网络不稳），将继续自动重试，交卷前会再上传一次
@@ -341,29 +375,8 @@ export function HandwrittenControls({
         )}
       </div>
 
-      {/* T7.7 ink 关闭：已有笔迹的只读查看（无笔迹时整块不渲染——不新增任何入口） */}
-      {!inkEnabled &&
-        masterDoc !== undefined &&
-        masterDoc !== null &&
-        !isInkDocEmpty(masterDoc) && (
-          <div className="flex flex-col gap-2 rounded-lg border border-border bg-muted/30 p-3">
-            <p className="text-sm text-muted-foreground">
-              老师未开启手写辅助，本题已有笔迹仅供查看。
-            </p>
-            <img
-              src={studentInkPngUrl(attemptId, questionId)}
-              alt="本题已有笔迹"
-              loading="lazy"
-              className="w-full rounded-md border border-border bg-white"
-              onError={(event) => {
-                event.currentTarget.style.display = "none";
-              }}
-            />
-          </div>
-        )}
-
       {/* 手写区（展开时）：atrament 页内画布 / excalidraw 占位卡 / 加载态 */}
-      {expanded && inkEnabled && (
+      {expanded && (
         <>
           {masterDoc === undefined && (
             <p

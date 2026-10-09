@@ -3,6 +3,7 @@ import type { Db } from "../db/client";
 import { HttpError } from "../lib/http-error";
 import type { ZipEntry } from "../lib/zip-read";
 import { readZipEntries, ZipReadError } from "../lib/zip-read";
+import { getCapabilityProfile } from "./capability-profile-service";
 import { commitImport, previewImport } from "./content-service";
 import { saveMedia } from "./media-service";
 
@@ -554,7 +555,12 @@ export function commitZipImport(
     if (realSrc !== undefined) rewrites.set(src, realSrc);
   }
 
-  // ③ 逐份导入（独立事务；rewrites 里没有的引用原样保留）
+  // ③ 逐份导入（独立事务；rewrites 里没有的引用原样保留）。
+  // T7.7：教师启用集整批查一次（逐文件 commitImport 内不再各查一遍 teachers）
+  const enabledCapabilities = getCapabilityProfile(
+    db,
+    teacherId,
+  ).enabledCapabilities;
   const files: ZipImportFileResult[] = bundle.mdFiles.map((file) => {
     const rewritten = rewriteImageSrcs(file.markdown, rewrites);
     const refs = extractImageRefs([file.markdown]);
@@ -570,6 +576,7 @@ export function commitZipImport(
           sourcePath: `zip:${file.path}`,
         },
         dataDir,
+        enabledCapabilities,
       );
       return { ok: true, path: file.path, report, unresolvedRefs };
     } catch (err) {

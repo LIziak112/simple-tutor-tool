@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  ALL_ENABLED_CAPABILITIES,
   type AttemptAnswerSaveData,
   type AttemptDetailData,
   type AttemptDraftData,
@@ -508,7 +509,7 @@ function attemptEnabledCapabilities(
 ): CapabilitySwitch[] {
   const teacherId = attemptTeacherId(db, attempt);
   return teacherId === null
-    ? ["steps", "ink"]
+    ? [...ALL_ENABLED_CAPABILITIES]
     : getCapabilityProfile(db, teacherId).enabledCapabilities;
 }
 

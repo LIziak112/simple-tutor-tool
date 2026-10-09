@@ -1,11 +1,37 @@
 import type { CapabilitySwitch } from "@tutor/contract";
+import { toEnabledCapabilities } from "@tutor/contract";
 import { Check, Loader2, PenLine, TriangleAlert } from "lucide-react";
+import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   useCapabilityProfile,
   useSaveCapabilityProfile,
 } from "@/features/teacher-settings/capability-profile-queries";
+
+/** mutation/query 错误的展示文案（Error 消息优先，兜底中文提示） */
+function errText(
+  failed: boolean,
+  error: unknown,
+  fallback: string,
+): string | null {
+  if (!failed) return null;
+  return error instanceof Error ? error.message : fallback;
+}
+
+/** 同构的告警条（role=alert；两处错误展示共用） */
+function alertNode(text: string | null): ReactNode {
+  if (text === null) return null;
+  return (
+    <p
+      role="alert"
+      className="flex items-start gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive"
+    >
+      <TriangleAlert aria-hidden className="mt-0.5 size-4 shrink-0" />
+      {text}
+    </p>
+  );
+}
 
 /**
  * 设置页「辅助能力」区（T7.7 / 方案 §4.5）：教师级 steps / ink 两项开关。
@@ -27,10 +53,7 @@ export function CapabilityProfileSection() {
   const loaded = profileQuery.data?.enabledCapabilities;
   useEffect(() => {
     if (loaded === undefined) return;
-    setChecked({
-      steps: loaded.includes("steps"),
-      ink: loaded.includes("ink"),
-    });
+    setChecked(toEnabledCapabilities(loaded));
   }, [loaded]);
 
   const switches: ReadonlyArray<{
@@ -51,18 +74,16 @@ export function CapabilityProfileSection() {
     },
   ];
 
-  const errorText =
-    profileQuery.isError && profileQuery.error instanceof Error
-      ? profileQuery.error.message
-      : profileQuery.isError
-        ? "加载失败，请刷新重试"
-        : null;
-  const actionError =
-    saveMutation.isError && saveMutation.error instanceof Error
-      ? saveMutation.error.message
-      : saveMutation.isError
-        ? "保存失败，请稍后重试"
-        : null;
+  const errorText = errText(
+    profileQuery.isError,
+    profileQuery.error,
+    "加载失败，请刷新重试",
+  );
+  const actionError = errText(
+    saveMutation.isError,
+    saveMutation.error,
+    "保存失败，请稍后重试",
+  );
 
   return (
     <div className="flex flex-col gap-4 rounded-xl border border-border bg-card p-5 text-card-foreground">
@@ -79,15 +100,7 @@ export function CapabilityProfileSection() {
           正在加载设置…
         </p>
       )}
-      {errorText && (
-        <p
-          role="alert"
-          className="flex items-start gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive"
-        >
-          <TriangleAlert aria-hidden className="mt-0.5 size-4 shrink-0" />
-          {errorText}
-        </p>
-      )}
+      {alertNode(errorText)}
 
       {profileQuery.data && (
         <>
@@ -128,15 +141,7 @@ export function CapabilityProfileSection() {
             手写题仍可填写最终答案提交。
           </p>
 
-          {actionError && (
-            <p
-              role="alert"
-              className="flex items-start gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive"
-            >
-              <TriangleAlert aria-hidden className="mt-0.5 size-4 shrink-0" />
-              {actionError}
-            </p>
-          )}
+          {alertNode(actionError)}
 
           <div>
             <Button

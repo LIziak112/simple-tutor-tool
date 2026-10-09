@@ -69,18 +69,31 @@ async function makeEnv(): Promise<ProfileEnv> {
   };
 }
 
+/** PUT 启用集（同 cookie 同路径，收敛五处同形 request 块） */
+async function putProfile(
+  app: ReturnType<typeof createApp>,
+  cookie: string | undefined,
+  body: unknown,
+): Promise<Response> {
+  return app.request(PROFILE_PATH, {
+    method: "PUT",
+    headers: {
+      ...(cookie === undefined ? {} : { cookie }),
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+}
+
 describe("GET/PUT /api/teacher/settings/capability-profile（T7.7）", () => {
   it("未登录 → 401（读与写）", async () => {
     const { app } = await makeEnv();
     const get = await app.request(PROFILE_PATH);
     expect(get.status).toBe(401);
     expect(((await get.json()) as ApiErr).error).toBe("UNAUTHORIZED");
-    const put = await app.request(PROFILE_PATH, {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ enabledCapabilities: [] }),
-    });
-    expect(put.status).toBe(401);
+    expect(
+      (await putProfile(app, undefined, { enabledCapabilities: [] })).status,
+    ).toBe(401);
   });
 
   it("GET 未配置 → 全启用；PUT 空数组 → 显式全关；再 GET 读回", async () => {
@@ -93,11 +106,7 @@ describe("GET/PUT /api/teacher/settings/capability-profile（T7.7）", () => {
       ((await initial.json()) as { data: CapabilityProfile }).data,
     ).toEqual({ enabledCapabilities: ["steps", "ink"] });
 
-    const saved = await app.request(PROFILE_PATH, {
-      method: "PUT",
-      headers: { "content-type": "application/json", cookie: cookieA },
-      body: JSON.stringify({ enabledCapabilities: [] }),
-    });
+    const saved = await putProfile(app, cookieA, { enabledCapabilities: [] });
     expect(saved.status).toBe(200);
     expect(((await saved.json()) as { data: CapabilityProfile }).data).toEqual({
       enabledCapabilities: [],
@@ -118,11 +127,7 @@ describe("GET/PUT /api/teacher/settings/capability-profile（T7.7）", () => {
       { enabledCapabilities: ["steps", "steps"] },
       { enabledcapabilities: [] },
     ]) {
-      const res = await app.request(PROFILE_PATH, {
-        method: "PUT",
-        headers: { "content-type": "application/json", cookie: cookieA },
-        body: JSON.stringify(body),
-      });
+      const res = await putProfile(app, cookieA, body);
       expect(res.status, JSON.stringify(body)).toBe(400);
       expect(((await res.json()) as ApiErr).error).toBe("VALIDATION_ERROR");
     }
@@ -130,12 +135,9 @@ describe("GET/PUT /api/teacher/settings/capability-profile（T7.7）", () => {
 
   it("两教师互不影响：甲全关后乙仍是全启用", async () => {
     const { app, cookieA, cookieB } = await makeEnv();
-    const saved = await app.request(PROFILE_PATH, {
-      method: "PUT",
-      headers: { "content-type": "application/json", cookie: cookieA },
-      body: JSON.stringify({ enabledCapabilities: [] }),
-    });
-    expect(saved.status).toBe(200);
+    expect(
+      (await putProfile(app, cookieA, { enabledCapabilities: [] })).status,
+    ).toBe(200);
 
     const b = await app.request(PROFILE_PATH, { headers: { cookie: cookieB } });
     expect(b.status).toBe(200);

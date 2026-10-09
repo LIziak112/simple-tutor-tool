@@ -177,6 +177,28 @@ export type CapabilityProfile = z.infer<typeof capabilityProfileSchema>;
 /** 学生端响应携带的启用集字段形态（attempt 详情与讲义详情共用；恒为有效集） */
 export const enabledCapabilitiesFieldSchema = z.array(capabilitySwitchSchema);
 
+/**
+ * 启用集的布尔形态（md-dsl lint 上下文与 web Context 共用）：数组归一为
+ * 每项开关的开关量，避免两包各自手写 includes（单一事实来源，硬性规则 1）。
+ */
+export interface EnabledCapabilityFlags {
+  readonly steps: boolean;
+  readonly ink: boolean;
+}
+
+/**
+ * 契约数组 → 布尔形态。未提供（undefined/null，无上下文或旧载荷）按全启用
+ * 兜底——「无上下文」与「全启用」对消费方等价（规则/组件在全启用下零回退）。
+ */
+export function toEnabledCapabilities(
+  enabled: readonly CapabilitySwitch[] | undefined | null,
+): EnabledCapabilityFlags {
+  if (enabled === undefined || enabled === null) {
+    return { steps: true, ink: true };
+  }
+  return { steps: enabled.includes("steps"), ink: enabled.includes("ink") };
+}
+
 export const questionCapabilityBindings: Record<
   QuestionType,
   QuestionCapabilityBinding

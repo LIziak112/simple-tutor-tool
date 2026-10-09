@@ -32,6 +32,7 @@ import {
 } from "@tutor/contract";
 import {
   LECTURE_PREFIX_LINES,
+  type LintOptions,
   type LintResult,
   lintDocument,
   SINGLE_QUESTION_PREFIX_LINES,
@@ -116,10 +117,9 @@ import {
 // ---------- 统一 lint ----------
 
 /**
- * 对文档做完整 lint（v2 唯一口径）——lintDocument 的直通入口：仅收敛
- * fallbackUnitId / enabledCapabilities 可选参的传递（exactOptionalPropertyTypes
- * 下不传 undefined）。保留为具名入口供 MCP lint_markdown 与导入预览/commit
- * 共用，口径单点。
+ * 对文档做完整 lint（v2 唯一口径）——lintDocument 的直通入口：收单个
+ * LintOptions 对象原样透传（可选键显式传 undefined 合法，调用方无需条件展开
+ * 体操）。保留为具名入口供 MCP lint_markdown 与导入预览/commit 共用，口径单点。
  *
  * fallbackUnitId（内容模型与导入规范化方案 §2）：frontmatter 未声明 unit 时单元名
  * 锚定文件名。
@@ -129,15 +129,9 @@ import {
  */
 export function analyzeImport(
   markdown: string,
-  fallbackUnitId?: string,
-  enabledCapabilities?: readonly CapabilitySwitch[],
+  options: LintOptions = {},
 ): LintResult {
-  return lintDocument(markdown, {
-    ...(fallbackUnitId !== undefined ? { fallbackUnitId } : {}),
-    ...(enabledCapabilities !== undefined
-      ? { enabledCapabilities: [...enabledCapabilities] }
-      : {}),
-  });
+  return lintDocument(markdown, options);
 }
 
 /**
@@ -206,11 +200,11 @@ function buildPreview(
   dataDir?: string,
 ): ImportPreviewData {
   // T7.7：携带教师启用集（steps/手写回退提示随预览可见）
-  const { issues, parsed } = analyzeImport(
-    markdown,
+  const { issues, parsed } = analyzeImport(markdown, {
     fallbackUnitId,
-    getCapabilityProfile(db, teacherId).enabledCapabilities,
-  );
+    enabledCapabilities: getCapabilityProfile(db, teacherId)
+      .enabledCapabilities,
+  });
   const plan = buildImportPlan({
     parsed,
     folderId,
@@ -436,12 +430,11 @@ export function previewImportBatch(
         : folderToCreate
           ? subdirNameOf(file.path)
           : null;
-    const { issues, parsed } = analyzeImport(
-      file.markdown,
+    const { issues, parsed } = analyzeImport(file.markdown, {
       // 单元名锚定文件名（方案 §2）：批量路径取相对路径的 basename
-      fallbackUnitIdOf(file.path),
+      fallbackUnitId: fallbackUnitIdOf(file.path),
       enabledCapabilities,
-    );
+    });
     const plan = buildImportPlan({ parsed, folderId, snapshot });
     return {
       path: file.path,
@@ -503,14 +496,17 @@ export function commitImport(
   teacherId: string,
   input: ImportCommitRequest,
   dataDir?: string,
+  /** T7.7：批量导入路径整批查一次后传入；缺省本函数自查（单文件路径） */
+  enabledCapabilities?: readonly CapabilitySwitch[],
 ): ImportCommitData {
   // 图片存在性核对与 lint 合并为完整 issue 集（IMAGE_SRC_NOT_FOUND 是 warning
   // 级、不阻断提交——保留「先导 md 后补图」的工作流，问题在预览响应可见）
-  const { issues, parsed } = analyzeImport(
-    input.markdown,
-    fallbackUnitIdOf(input.filename),
-    getCapabilityProfile(db, teacherId).enabledCapabilities,
-  );
+  const { issues, parsed } = analyzeImport(input.markdown, {
+    fallbackUnitId: fallbackUnitIdOf(input.filename),
+    enabledCapabilities:
+      enabledCapabilities ??
+      getCapabilityProfile(db, teacherId).enabledCapabilities,
+  });
   const allIssues = [
     ...issues,
     ...mediaImageExistenceIssues(input.markdown, dataDir),

@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import type { ApiErr } from "@tutor/contract";
 import {
+  ALL_ENABLED_CAPABILITIES,
   type AttemptDraftData,
   type AttemptResultData,
   attemptDraftOkSchema,
@@ -948,7 +949,7 @@ describe("GET /api/student/attempts/:id：草稿视图与结果视图", () => {
     assertNoStemLeak(body);
     const draft = (body as { data: AttemptDraftData }).data;
     // T7.7：草稿视图随卷下发有效启用集（教师未配置 → 全启用）
-    expect(draft.enabledCapabilities).toEqual(["steps", "ink"]);
+    expect(draft.enabledCapabilities).toEqual([...ALL_ENABLED_CAPABILITIES]);
     // T2A.7：分组结构（样例单单元 → units 恰 1 组，组内 8 题按题序）
     expect(draft.units.length).toBe(1);
     const draftQuestions = draft.units[0]?.questions ?? [];

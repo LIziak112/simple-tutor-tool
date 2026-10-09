@@ -47,7 +47,7 @@ describe("getCapabilityProfile（读取与兜底）", () => {
   it("未配置（NULL）→ 全启用", () => {
     const db = createTestDb();
     expect(getCapabilityProfile(db, TEST_TEACHER_ID)).toEqual({
-      enabledCapabilities: ["steps", "ink"],
+      enabledCapabilities: [...ALL_ENABLED_CAPABILITIES],
     });
   });
 
@@ -110,7 +110,7 @@ describe("updateCapabilityProfile（写入）", () => {
       enabledCapabilities: [],
     });
     expect(getCapabilityProfile(db, OTHER_TEACHER_ID)).toEqual({
-      enabledCapabilities: ["steps", "ink"],
+      enabledCapabilities: [...ALL_ENABLED_CAPABILITIES],
     });
   });
 });

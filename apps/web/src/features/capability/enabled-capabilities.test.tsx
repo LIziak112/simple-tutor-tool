@@ -5,7 +5,10 @@ import {
   installDraftBackend,
   memoryBackend,
 } from "@/features/attempt/draft-store";
-import { HandwrittenControls } from "@/features/attempt/HandwrittenControls";
+import {
+  HandwrittenControls,
+  type HandwrittenControlsProps,
+} from "@/features/attempt/HandwrittenControls";
 import {
   EnabledCapabilitiesProvider,
   toEnabledCapabilities,
@@ -110,14 +113,17 @@ describe("enabled-capabilities Context", () => {
 
 describe("HandwrittenControls 的 ink 回退", () => {
   /** 渲染手写控件（可包 Provider） */
-  function renderControls(enabled?: { steps: boolean; ink: boolean }) {
+  function renderControls(
+    enabled?: { steps: boolean; ink: boolean },
+    onAnswer: HandwrittenControlsProps["onAnswer"] = () => {},
+  ) {
     const controls = (
       <HandwrittenControls
         attemptId="attempt-1"
         questionId="q-solve"
         stemMd="计算题"
         answer={undefined}
-        onAnswer={() => {}}
+        onAnswer={onAnswer}
       />
     );
     return render(
@@ -141,20 +147,7 @@ describe("HandwrittenControls 的 ink 回退", () => {
 
   it("ink 关闭：两个手写入口隐藏；最终答案输入保留可填写", async () => {
     const onAnswer = vi.fn();
-    const controls = (
-      <HandwrittenControls
-        attemptId="attempt-1"
-        questionId="q-solve"
-        stemMd="计算题"
-        answer={undefined}
-        onAnswer={onAnswer}
-      />
-    );
-    render(
-      <EnabledCapabilitiesProvider value={{ steps: true, ink: false }}>
-        {controls}
-      </EnabledCapabilitiesProvider>,
-    );
+    renderControls({ steps: true, ink: false }, onAnswer);
     // 挂载期笔迹拉取（fetch mock null）完成后入口判定稳定
     await waitFor(() =>
       expect(screen.queryByRole("button", { name: /展开手写区/ })).toBeNull(),
