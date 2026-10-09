@@ -25,7 +25,9 @@ const blocks = fullSampleBlocks();
 
 /** 覆盖断言的口径函数：主名集合与注册表主名集合比对，返回缺口（空=全覆盖） */
 function missingDirectives(covered: ReadonlySet<string>): string[] {
-  const registry = new Set(listDirectives().map((definition) => definition.name));
+  const registry = new Set(
+    listDirectives().map((definition) => definition.name),
+  );
   return [...registry].filter((name) => !covered.has(name)).sort();
 }
 
@@ -129,7 +131,9 @@ describe("指令覆盖断言的反向 fixture（防子串伪造，T7.9）", () =
   });
 
   it("blank 语法糖 [[…]] 经现有转换计入指令覆盖（fixture 无 blank 字面量）", () => {
-    const names = directiveNamesOf("计算：$1+1=$ [[2]]，写成小数是 [[0.5|1/2]]。");
+    const names = directiveNamesOf(
+      "计算：$1+1=$ [[2]]，写成小数是 [[0.5|1/2]]。",
+    );
     expect(names.has("blank")).toBe(true);
   });
 

@@ -41,7 +41,10 @@ function loadSampleLectures(): Array<{ name: string; markdown: string }> {
   for (const file of sampleFilesOfRepo()) {
     const parsed = parseDocument(file.markdown);
     for (const [i, lecture] of parsed.lectures.entries()) {
-      out.push({ name: `samples/v2/${file.name}#${i}`, markdown: lecture.markdown });
+      out.push({
+        name: `samples/v2/${file.name}#${i}`,
+        markdown: lecture.markdown,
+      });
     }
   }
   for (const block of fullSampleBlocks()) {

@@ -1,4 +1,10 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, sep } from "node:path";
 import { parsedDocumentSchema } from "@tutor/contract";
@@ -64,9 +70,7 @@ afterEach(() => {
 describe("样例自动发现（discoverSampleFiles）", () => {
   it("samples/v2 现存样例全部发现，结果按路径稳定排序", () => {
     const paths = discoverSampleFiles(join(findRepoRoot(), "samples", "v2"));
-    const names = paths.map(
-      (path) => path.split(sep).pop() ?? path,
-    );
+    const names = paths.map((path) => path.split(sep).pop() ?? path);
     expect(
       names,
       "现存三份样例均被发现（新样例自动追加，无需手改清单）",
@@ -88,9 +92,9 @@ describe("样例自动发现（discoverSampleFiles）", () => {
     writeFileSync(join(nested, "纯练习.md"), PRACTICE_FIXTURE, "utf8");
 
     const found = discoverSampleFiles(dir);
-    expect(found.map((path) => relative(dir, path).split(sep).join("/"))).toEqual(
-      ["临时讲义.md", "嵌套/纯练习.md"],
-    );
+    expect(
+      found.map((path) => relative(dir, path).split(sep).join("/")),
+    ).toEqual(["临时讲义.md", "嵌套/纯练习.md"]);
     const kinds = found.map(
       (path) => parseDocument(readFileSync(path, "utf8")).frontmatter?.kind,
     );
@@ -131,10 +135,7 @@ describe("全部样例解析回归（samples/v2 自动发现 + 完整样例三�
     "%s：parseDocument 通过 ParsedDocument 契约且 0 issue",
     (name, markdown) => {
       const parsed = parseDocument(markdown);
-      expect(
-        parsed.issues,
-        `${name} 应维持样例零 issue 约定`,
-      ).toEqual([]);
+      expect(parsed.issues, `${name} 应维持样例零 issue 约定`).toEqual([]);
       expect(
         parsedDocumentSchema.safeParse(parsed).success,
         `${name} 解析输出应通过内容契约`,

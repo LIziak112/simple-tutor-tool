@@ -5,7 +5,11 @@ import {
   type QuestionPublic,
   questionPublicSchema,
 } from "@tutor/contract";
-import { parseDocument, stemMdLeaksAnswers, studentStemMd } from "@tutor/md-dsl";
+import {
+  parseDocument,
+  stemMdLeaksAnswers,
+  studentStemMd,
+} from "@tutor/md-dsl";
 import { describe, expect, it, vi } from "vitest";
 import {
   fullSampleBlocks,
@@ -100,10 +104,7 @@ function toPublic(question: Question): QuestionPublic {
 function longestPlainText(stemMd: string): string {
   const plain = stemMd
     .split("\n")
-    .filter(
-      (line) =>
-        !/^\s*(?::{1,4}|```|[-*+]\s+\[|\d+[.)]\s|#)/.test(line),
-    )
+    .filter((line) => !/^\s*(?::{1,4}|```|[-*+]\s+\[|\d+[.)]\s|#)/.test(line))
     .join(" ")
     .replace(/\$[^$]*\$/g, " ")
     .replace(/\[\[[^[\]]*\]\]/g, " ")
@@ -119,19 +120,18 @@ function longestPlainText(stemMd: string): string {
 }
 
 describe("全部样例题目真实题卡渲染（samples/v2 + 完整样例，T7.9）", () => {
-  const entries = collectSampleQuestions().map((entry) => [
-    entry.source,
-    entry.question,
-  ] as const);
+  const entries = collectSampleQuestions().map(
+    (entry) => [entry.source, entry.question] as const,
+  );
 
   it("样例题目语料非空（纯练习文档不被跳过）", () => {
     expect(entries.length).toBeGreaterThanOrEqual(8);
     expect(
       entries.some(([source]) => source.includes("samples/v2/练习样例.md")),
     ).toBe(true);
-    expect(
-      entries.some(([source]) => source.includes("完整样例.md 块3")),
-    ).toBe(true);
+    expect(entries.some(([source]) => source.includes("完整样例.md 块3"))).toBe(
+      true,
+    );
   });
 
   it.each(entries)("%s：题面/公式/控件必要语义齐全", (source, question) => {
@@ -204,9 +204,10 @@ describe("全部样例题目真实题卡渲染（samples/v2 + 完整样例，T7.
         ).toHaveLength(publicQuestion.options?.length ?? 0);
         break;
       case "fill": {
-        const blanks = question.answers?.kind === "fill"
-          ? question.answers.blanks.length
-          : 0;
+        const blanks =
+          question.answers?.kind === "fill"
+            ? question.answers.blanks.length
+            : 0;
         expect(blanks, `${source} 填空题应有答案空位`).toBeGreaterThan(0);
         for (let i = 1; i <= blanks; i += 1) {
           expect(
