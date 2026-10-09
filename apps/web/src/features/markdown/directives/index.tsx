@@ -34,7 +34,7 @@ import {
   StepDirective,
   StepsDirective,
 } from "./Steps";
-import type { DirectiveBaseProps, DirectiveProps } from "./types";
+import type { DirectiveProps } from "./types";
 import { UnknownDirective } from "./UnknownDirective";
 
 /**
@@ -52,17 +52,15 @@ import { UnknownDirective } from "./UnknownDirective";
  * 新增一个指令 = 注册表加定义 + 此表加一行 + 写组件（add-directive 技能四步）。
  */
 
-/** 渲染器输入：宿主还原的原始字符串 attrs 与基础 props 分离传入 */
-interface DirectiveRenderInput {
-  readonly base: DirectiveBaseProps;
-  readonly attrs: Readonly<Record<string, string>>;
-}
-
 /**
- * 一个指令的渲染器：schema 解析成功渲染组件；属性非法返回 null，
- * 宿主据此降级 UnknownDirective（正文保留）。
+ * 一个指令的渲染器：接收宿主还原的原始字符串属性形态的 DirectiveProps；
+ * schema 解析成功渲染组件，属性非法返回 null——null 是本层唯一的失败信号，
+ * 宿主据此降级 UnknownDirective（正文保留）。渲染器不得用 null 表达
+ * 「合法的空输出」（请返回空 fragment），该约定由 withTypedAttrs 保证。
  */
-export type DirectiveRenderer = (input: DirectiveRenderInput) => ReactNode;
+export type DirectiveRenderer = (
+  props: DirectiveProps<Readonly<Record<string, string>>>,
+) => ReactNode;
 
 /**
  * 把组件与其指令的属性 schema 绑定成渲染器（safeParse 的类型安全挂载点）：
@@ -73,7 +71,7 @@ function withTypedAttrs<TSchema extends z.ZodType>(
   definition: DirectiveDefinition<TSchema>,
   component: ComponentType<DirectiveProps<z.output<TSchema>>>,
 ): DirectiveRenderer {
-  return ({ base, attrs }) => {
+  return ({ attrs, ...base }) => {
     const parsed = definition.attrs.safeParse(attrs);
     if (!parsed.success) return null; // 属性非法：宿主降级 UnknownDirective
     return createElement(component, { ...base, attrs: parsed.data });
@@ -162,31 +160,25 @@ function createDirectiveHost(inline: boolean) {
       Object.hasOwn(directiveComponents, primaryName)
         ? directiveComponents[primaryName]
         : undefined;
-    if (render === undefined) {
-      return (
-        <UnknownDirective name={info.name} inline={inline}>
-          {children}
-        </UnknownDirective>
-      );
-    }
-    const base: DirectiveBaseProps = {
-      name: primaryName,
-      index: info.index,
-      docIndex: info.docIndex,
-      children,
-      // exactOptionalPropertyTypes：仅在存在时携带该字段
-      ...(info.directiveClass !== undefined
-        ? { directiveClass: info.directiveClass }
-        : {}),
-    };
-    // 属性经注册表 schema safeParse：非法（值越界、必填缺失、strict 拒绝
-    // 跨指令串用键）时降级 UnknownDirective，与未知指令同路径保留正文。
+    // 降级元素单点构造：未注册（查表未命中）与属性非法（渲染器返回 null，
+    // 如值越界、必填缺失、strict 拒绝跨指令串用键）共用同一条路径保留正文。
+    const degrade = (): ReactNode => (
+      <UnknownDirective name={info.name} inline={inline}>
+        {children}
+      </UnknownDirective>
+    );
     return (
-      render({ base, attrs: info.attrs }) ?? (
-        <UnknownDirective name={info.name} inline={inline}>
-          {children}
-        </UnknownDirective>
-      )
+      render?.({
+        name: primaryName,
+        attrs: info.attrs,
+        index: info.index,
+        docIndex: info.docIndex,
+        children,
+        // exactOptionalPropertyTypes：仅在存在时携带该字段
+        ...(info.directiveClass !== undefined
+          ? { directiveClass: info.directiveClass }
+          : {}),
+      }) ?? degrade()
     );
   }
   DirectiveHost.displayName = inline

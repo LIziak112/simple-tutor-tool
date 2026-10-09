@@ -7,19 +7,13 @@ import {
   DirectiveLeafHost,
   DirectiveTextHost,
 } from "./directives";
-import { RichMarkdown } from "./RichMarkdown";
+import { renderMd } from "./test-support/render-md";
 
 /**
  * RichMarkdown 组件测试（T1.8 验收项）：
  * 公式渲染、填空空框、选择题任务列表、fold 折叠、steps 逐步揭晓、
  * hint/answer/solution 预览折叠、题卡编号、未知指令降级、XSS 防护。
  */
-
-/** 便捷渲染：包一层 div 便于 querySelector */
-function renderMd(source: string) {
-  const utils = render(<RichMarkdown source={source} />);
-  return utils;
-}
 
 describe("RichMarkdown：公式渲染（KaTeX）", () => {
   it("行内与块级公式渲染为 KaTeX 输出，而不是原始 $…$ 文本", () => {

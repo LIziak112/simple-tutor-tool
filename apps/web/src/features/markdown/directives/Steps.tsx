@@ -84,7 +84,7 @@ export function StepDirective({
         <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">
           {index}
         </span>
-        {title && title.length > 0 ? title : `第 ${index} 步`}
+        {title || `第 ${index} 步`}
       </p>
       <div className="text-sm leading-7">{children}</div>
     </li>
@@ -99,7 +99,7 @@ export function FoldDirective({
 }: DirectiveProps<FoldDirectiveAttrs>) {
   const onToggle = useFoldTelemetry("fold", docIndex);
   return (
-    <LabeledFold label={attrs.title?.trim() || "详情"} onToggle={onToggle}>
+    <LabeledFold label={attrs.title.trim() || "详情"} onToggle={onToggle}>
       {children}
     </LabeledFold>
   );

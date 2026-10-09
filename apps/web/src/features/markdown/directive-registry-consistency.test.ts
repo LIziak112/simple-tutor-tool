@@ -42,15 +42,11 @@ describe("指令注册表与渲染映射一致性", () => {
   });
 
   it("多出一条组件映射时，同一个一致性断言会失败", () => {
-    // T7.2 起表值是「schema 绑定渲染器」，多出条目复用一条真实渲染器即可触发
-    const tip = directiveComponents.tip;
-    if (tip === undefined) {
-      throw new Error("fixture 前置失败：tip 渲染器缺失");
-    }
+    // 断言只比对键名集合，值从不被读——任意占位值即可触发“多余项”失败
     expect(() =>
       assertComponentNamesConsistent({
         ...directiveComponents,
-        "extra-tip": tip,
+        "extra-tip": null,
       }),
     ).toThrow();
   });
