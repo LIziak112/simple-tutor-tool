@@ -40,6 +40,7 @@ import { createTeacherBackupRoutes } from "./teacher-backup";
 import { createTeacherExportRoutes } from "./teacher-export";
 import { createTeacherMediaRoutes } from "./teacher-media";
 import { createTeacherReportRoutes } from "./teacher-reports";
+import { createTeacherSettingsRoutes } from "./teacher-settings";
 import { createStudentTeacherRoutes } from "./teacher-students";
 
 /**
@@ -228,5 +229,8 @@ export function createTeacherRoutes(
       .route("/", createTeacherApiTokenRoutes(db))
       // T4.6（D24）：学情报告列表 / 删除（save_report 的教师端出口；画像页 UI 在 T4.7）
       .route("/", createTeacherReportRoutes(db))
+      // T7.7：教师设置——能力启用集读写（GET/PUT /settings/capability-profile，
+      // 学生端 attempt/讲义读取接口读时计算有效启用集下发）
+      .route("/", createTeacherSettingsRoutes(db))
   );
 }

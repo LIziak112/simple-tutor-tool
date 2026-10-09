@@ -12,7 +12,6 @@ import {
   ink,
   questions,
   students,
-  teachers,
   units,
 } from "./schema";
 import { makeMigrationsFolderUpTo } from "./test-utils.ts";
@@ -95,17 +94,13 @@ describe("T6R.2 迁移：空库与带存量库", () => {
     // 是为了让「带真实形态数据的库」更贴近存量库（边界库夹具，非断言消费）
     const now = new Date().toISOString();
     const teacherId = randomUUID();
-    db.insert(teachers)
-      .values({
-        id: teacherId,
-        loginName: "teacher",
-        isAdmin: true,
-        disabledAt: null,
-        passwordHash: "scrypt$模拟哈希",
-        apiToken: null,
-        createdAt: now,
-      })
-      .run();
+    // 教师行走原生 SQL（同 attempts 的既有惯例）：drizzle 绑定当前 schema，
+    // 边界库的 teachers 表还没有后续迁移新增的列（T7.7 capability_profile_json）
+    db.$client
+      .prepare(
+        "INSERT INTO teachers (id, login_name, is_admin, disabled_at, password_hash, api_token, created_at) VALUES (?, 'teacher', 1, NULL, 'scrypt$模拟哈希', NULL, ?)",
+      )
+      .run(teacherId, now);
     const studentId = randomUUID();
     db.insert(students)
       .values({
