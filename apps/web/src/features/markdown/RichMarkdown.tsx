@@ -8,8 +8,8 @@ import {
   DirectiveLeafHost,
   DirectiveTextHost,
 } from "./directives";
-import type { DirectiveTelemetryInfo } from "./directives/expand-context";
-import { DirectiveTelemetryContext } from "./directives/expand-context";
+import type { DirectiveTelemetryInfo } from "./directives/session-context";
+import { DirectiveSessionProvider } from "./directives/session-context";
 import {
   richMarkdownRehypePlugins,
   richMarkdownRemarkPlugins,
@@ -45,9 +45,11 @@ export interface RichMarkdownProps {
   className?: string;
   /**
    * 指令交互遥测回调（T4.0b directive_interact 埋点）：折叠开/合、steps 揭晓
-   * 都经 DirectiveTelemetryContext 下发到各指令组件，组件只报
+   * 都经会话上下文的 telemetry 子命名空间下发到各指令组件，组件只报
    * {name, index(文档全局序号), action, step?}——归属哪个 scope/宿主由本回调
-   * 的提供方（页面层）决定；缺省不收集（教师端预览等场景）。
+   * 的提供方（页面层）决定；缺省不收集（教师端预览等场景）。本组件是会话
+   * 上下文的内层 Provider：只覆盖 telemetry，外层（题卡）提供的 fill 作答
+   * 状态原样穿透（T7.3）。
    */
   onDirectiveTelemetry?: ((event: DirectiveTelemetryInfo) => void) | undefined;
   /**
@@ -78,7 +80,7 @@ export function RichMarkdown({
       : null);
   return (
     <div className={cn("rich-markdown", className)}>
-      <DirectiveTelemetryContext.Provider value={telemetry}>
+      <DirectiveSessionProvider telemetry={telemetry}>
         <ReactMarkdown
           remarkPlugins={richMarkdownRemarkPlugins}
           rehypePlugins={richMarkdownRehypePlugins}
@@ -86,7 +88,7 @@ export function RichMarkdown({
         >
           {source}
         </ReactMarkdown>
-      </DirectiveTelemetryContext.Provider>
+      </DirectiveSessionProvider>
     </div>
   );
 }

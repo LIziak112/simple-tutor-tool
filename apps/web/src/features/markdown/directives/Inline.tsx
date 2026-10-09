@@ -1,7 +1,6 @@
 import type { MarkDirectiveAttrs } from "@tutor/contract";
 import { cn } from "cn";
-import { useContext } from "react";
-import { blankAnswersContext } from "../BlankAnswersContext";
+import { useDirectiveFill } from "./session-context";
 import type { DirectiveBaseProps, DirectiveProps } from "./types";
 
 /**
@@ -33,11 +32,11 @@ export function MarkDirective({
  * 填空空位。两种形态（T2.6 起双轨）：
  * - 纯展示（教师预览/讲义/结果视图）：下划线空框。标记内的参考答案是教师侧
  *   内容，一律不显示（T1.8 设计决策 2）；
- * - 作答形态（答题页提供了 BlankAnswersContext）：按空序编号渲染为内联输入框
- *   （触控目标 ≥44px，iPad 随手写可直接在框内转文字）。
+ * - 作答形态（答题页经会话上下文提供 fill 子命名空间）：按空序编号渲染为
+ *   内联输入框（触控目标 ≥44px，iPad 随手写可直接在框内转文字）。
  */
 export function BlankDirective({ index }: DirectiveBaseProps) {
-  const answers = useContext(blankAnswersContext);
+  const answers = useDirectiveFill();
   if (answers !== null) {
     const blankIndex = Math.max(0, index - 1); // 编号 1 起 → 下标 0 起；未编号兜底第 1 空
     const value = answers.values[blankIndex] ?? "";

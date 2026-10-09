@@ -15,6 +15,8 @@
 
 **建议**：照 T6R.13 static-material 先例，把 remarkBlank（纯函数、无 DOM 依赖）移入 `packages/md-dsl`（如 `src/v2/blank-transform.ts`），web 的 `pipeline.ts`/`RichMarkdown.tsx` 改从包出口导入；`test-support/dsl-samples.ts` 随之改用同层导入。适合与 T7.2（宿主消费 Zod 属性解析）或 T7.3（DirectiveSessionContext）一并做，避免渲染管线反复动刀。
 
+**状态（2026-10-09）**：T7.2、T7.3 均已完成，本项未并入——两任务的清单条目均不含此项，且它是跨包搬迁+样例门禁的独立回归面，与上下文收编混批会模糊 bisect 边界。仍待处理；建议作为独立小任务（半天量级）或随下一次动渲染管线的任务落地。
+
 ## 二、Question → 学生端公开投影的字段映射有三份同构拷贝
 
 `id/type/difficulty/knowledge/stemMd(studentStemMd)/options.map(text)/hintCount` 的映射手写于：
