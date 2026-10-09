@@ -1,4 +1,4 @@
-import type { ApiErr } from "@tutor/contract";
+import type { ApiErr, CapabilityProfile } from "@tutor/contract";
 import type { Logger } from "pino";
 import pino from "pino";
 import { describe, expect, it } from "vitest";
@@ -90,7 +90,7 @@ describe("GET/PUT /api/teacher/settings/capability-profile（T7.7）", () => {
     });
     expect(initial.status).toBe(200);
     expect(
-      (await initial.json()).data,
+      ((await initial.json()) as { data: CapabilityProfile }).data,
     ).toEqual({ enabledCapabilities: ["steps", "ink"] });
 
     const saved = await app.request(PROFILE_PATH, {
@@ -99,12 +99,16 @@ describe("GET/PUT /api/teacher/settings/capability-profile（T7.7）", () => {
       body: JSON.stringify({ enabledCapabilities: [] }),
     });
     expect(saved.status).toBe(200);
-    expect((await saved.json()).data).toEqual({ enabledCapabilities: [] });
+    expect(
+      ((await saved.json()) as { data: CapabilityProfile }).data,
+    ).toEqual({ enabledCapabilities: [] });
 
     const after = await app.request(PROFILE_PATH, {
       headers: { cookie: cookieA },
     });
-    expect((await after.json()).data).toEqual({ enabledCapabilities: [] });
+    expect(
+      ((await after.json()) as { data: CapabilityProfile }).data,
+    ).toEqual({ enabledCapabilities: [] });
   });
 
   it("PUT 非法入参 → 400（未知开关名 / 重复项 / 拼错键）", async () => {
@@ -135,7 +139,7 @@ describe("GET/PUT /api/teacher/settings/capability-profile（T7.7）", () => {
 
     const b = await app.request(PROFILE_PATH, { headers: { cookie: cookieB } });
     expect(b.status).toBe(200);
-    expect((await b.json()).data).toEqual({
+    expect(((await b.json()) as { data: CapabilityProfile }).data).toEqual({
       enabledCapabilities: ["steps", "ink"],
     });
   });

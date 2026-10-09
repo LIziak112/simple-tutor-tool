@@ -12,6 +12,7 @@ import {
   type AttemptStartData,
   type AttemptSubmitRevision,
   attemptQuestionPublicSchema,
+  type CapabilitySwitch,
   type HintOpenedEntry,
   type NoteSubmissionEvidenceState,
   optionSchema,
@@ -28,6 +29,7 @@ import {
 } from "@tutor/contract";
 import { grade } from "@tutor/grading";
 import { studentStemMd } from "@tutor/md-dsl";
+import { getCapabilityProfile } from "./capability-profile-service";
 import {
   and,
   asc,
@@ -492,6 +494,22 @@ export function attemptTeacherId(db: Db, attempt: Attempt): string | null {
     .where(eq(students.id, attempt.studentId))
     .get();
   return row?.teacherId ?? null;
+}
+
+/**
+ * T7.7：attempt → 所属教师的有效辅助能力启用集（草稿/结果视图同口径下发）。
+ * 无教师域的异常学生行兜底全启用——与题目域的 fail closed（空结果）不同：
+ * 开关只影响 steps 揭晓与手写入口的渲染，不是安全边界，兜底到「多给辅助」
+ * 一侧不改变正式作答与判分（方案 §4.5）。
+ */
+function attemptEnabledCapabilities(
+  db: Db,
+  attempt: Attempt,
+): CapabilitySwitch[] {
+  const teacherId = attemptTeacherId(db, attempt);
+  return teacherId === null
+    ? ["steps", "ink"]
+    : getCapabilityProfile(db, teacherId).enabledCapabilities;
 }
 
 /**
@@ -1723,6 +1741,8 @@ export function getAttemptDetail(
  */
 function buildDraftData(db: Db, attempt: Attempt): AttemptDraftData {
   const meta = attemptSourceMeta(db, attempt);
+  // T7.7：attempt → 所属教师的有效启用集（steps/ink 渲染开关随卷下发）
+  const enabledCapabilities = attemptEnabledCapabilities(db, attempt);
   const drafts: Record<string, StudentAnswer> = {};
   const hintsOpened: Record<string, HintOpenedEntry[]> = {};
   // 单一数据源：行只查一次、快照只 parse 一次——公开投影/草稿答案/提示回显
@@ -1749,6 +1769,7 @@ function buildDraftData(db: Db, attempt: Attempt): AttemptDraftData {
     hintsOpened,
     // T6R.3：懒冻结的升级遗留卷标记（前端提示「内容为恢复后的版本」）
     legacyUnverified: attempt.legacyUnverified,
+    enabledCapabilities,
   };
 }
 
@@ -1842,6 +1863,8 @@ function buildResultData(
   preloadedRows?: readonly ResponseRow[],
 ): AttemptResultData {
   const meta = attemptSourceMeta(db, attempt);
+  // T7.7：结果视图同口径携带有效启用集（详解内 steps 渲染遵循开关）
+  const enabledCapabilities = attemptEnabledCapabilities(db, attempt);
   // T2A.8：assignment 来源按作业判定；course 来源恒公布（D11 课程练习交卷即公布）
   const assignmentRow =
     attempt.sourceType === "assignment"
@@ -1936,5 +1959,6 @@ function buildResultData(
     answersReleased: released,
     summary,
     units: unitGroups,
+    enabledCapabilities,
   };
 }

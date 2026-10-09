@@ -10,6 +10,7 @@ import type {
 } from "@tutor/contract";
 import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import type { Db } from "../db/client";
+import { getCapabilityProfile } from "./capability-profile-service";
 import {
   type Attempt,
   attempts,
@@ -775,5 +776,8 @@ export function getStudentLecture(
       title: titles.get(id) ?? "",
       questionCount: counts.get(id) ?? 0,
     })),
+    // T7.7：讲义 steps 渲染遵循课程所属教师的启用集（读时计算，学生刷新生效）
+    enabledCapabilities: getCapabilityProfile(db, context.teacherId)
+      .enabledCapabilities,
   };
 }
