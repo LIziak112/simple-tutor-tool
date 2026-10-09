@@ -1,11 +1,12 @@
+import type { ColDirectiveAttrs } from "@tutor/contract";
 import type { CSSProperties } from "react";
-import type { DirectiveProps } from "./types";
+import type { DirectiveBaseProps, DirectiveProps } from "./types";
 
 /**
  * ::::columns / :::col 分栏容器：iPad 横屏并排（flex-row）、竖屏/窄屏自动堆叠。
  * width 属性（如 "40%"）映射为 flex-basis，缺省各栏均分。
  */
-export function ColumnsDirective({ children }: DirectiveProps) {
+export function ColumnsDirective({ children }: DirectiveBaseProps) {
   return (
     <div
       data-slot="columns"
@@ -16,7 +17,10 @@ export function ColumnsDirective({ children }: DirectiveProps) {
   );
 }
 
-export function ColDirective({ attrs, children }: DirectiveProps) {
+export function ColDirective({
+  attrs,
+  children,
+}: DirectiveProps<ColDirectiveAttrs>) {
   const width = attrs.width?.trim();
   const style: CSSProperties | undefined =
     width && width.length > 0 ? { flex: `0 0 ${width}` } : undefined;

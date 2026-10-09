@@ -10,7 +10,6 @@ import {
   DirectiveTextHost,
   directiveComponents,
 } from "./directives";
-import { TipDirective } from "./directives/Callout";
 import { RichMarkdown } from "./RichMarkdown";
 import {
   DIRECTIVE_HOST_ATTRS,
@@ -43,10 +42,11 @@ describe("指令注册表与渲染映射一致性", () => {
   });
 
   it("多出一条组件映射时，同一个一致性断言会失败", () => {
+    // 断言只比对键名集合，值从不被读——任意占位值即可触发“多余项”失败
     expect(() =>
       assertComponentNamesConsistent({
         ...directiveComponents,
-        "extra-tip": TipDirective,
+        "extra-tip": null,
       }),
     ).toThrow();
   });

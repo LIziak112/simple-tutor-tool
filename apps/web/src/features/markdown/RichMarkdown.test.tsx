@@ -7,19 +7,13 @@ import {
   DirectiveLeafHost,
   DirectiveTextHost,
 } from "./directives";
-import { RichMarkdown } from "./RichMarkdown";
+import { renderMd } from "./test-support/render-md";
 
 /**
  * RichMarkdown 组件测试（T1.8 验收项）：
  * 公式渲染、填空空框、选择题任务列表、fold 折叠、steps 逐步揭晓、
  * hint/answer/solution 预览折叠、题卡编号、未知指令降级、XSS 防护。
  */
-
-/** 便捷渲染：包一层 div 便于 querySelector */
-function renderMd(source: string) {
-  const utils = render(<RichMarkdown source={source} />);
-  return utils;
-}
 
 describe("RichMarkdown：公式渲染（KaTeX）", () => {
   it("行内与块级公式渲染为 KaTeX 输出，而不是原始 $…$ 文本", () => {
@@ -362,7 +356,9 @@ describe("RichMarkdown：XSS 防护（rehype-sanitize）", () => {
   ])("自动推导白名单后，图片危险协议 %s 仍被剥除", (src) => {
     const { container } = renderMd(`::image{src="${src}"}\n\n正文保留。`);
     expect(container.querySelector("img")).toBeNull();
-    expect(container).toHaveTextContent("图片路径缺失");
+    // T7.2：危险协议被 sanitize 剥除后 src 缺失，注册表 schema 判必填
+    // 缺失 → 整体降级 UnknownDirective（比占位提示更强的失败关闭）
+    expect(container).toHaveTextContent("未支持指令：image");
     expect(container).toHaveTextContent("正文保留。");
   });
 

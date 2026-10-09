@@ -1,13 +1,20 @@
+import type {
+  ExampleDirectiveAttrs,
+  QuestionDirectiveAttrs,
+  QuestionType,
+} from "@tutor/contract";
 import { Sigma } from "lucide-react";
 import type { DirectiveProps } from "./types";
 
 /**
  * :::question 题卡（T1.8 设计决策 3）：边框 + 题号徽章 + 题型/难度/考点标签。
  * 学生作答交互属 T2.x，本层只做"预览渲染"。
+ * T7.2 起 attrs 由注册表 schema 解析后传入：type 已校验为七种题型、
+ * difficulty 已是 1–5 数字（缺省 2），组件不再自行解析字符串。
  */
 
-/** 题型的中文标签（与 @tutor/contract questionTypeSchema 的七种取值同源） */
-const QUESTION_TYPE_LABELS: Readonly<Record<string, string>> = {
+/** 题型的中文徽章文案（键类型锁死七种题型的穷尽性；文案与 contract 的共用短版不同，属展示层口径） */
+const QUESTION_TYPE_LABELS: Readonly<Record<QuestionType, string>> = {
   judge: "判断题",
   choice: "单选题",
   multi: "多选题",
@@ -17,16 +24,13 @@ const QUESTION_TYPE_LABELS: Readonly<Record<string, string>> = {
   "find-error": "找错题",
 };
 
-/** 难度解析：1–5 整数，非法值回落到缺省 2（与注册表 difficulty 缺省一致） */
-function parseDifficulty(raw: string | undefined): number {
-  const n = Number.parseInt(raw ?? "2", 10);
-  if (!Number.isFinite(n)) return 2;
-  return Math.min(5, Math.max(1, n));
-}
-
-export function QuestionDirective({ attrs, index, children }: DirectiveProps) {
-  const typeLabel = QUESTION_TYPE_LABELS[attrs.type ?? ""] ?? "题目";
-  const difficulty = parseDifficulty(attrs.difficulty);
+export function QuestionDirective({
+  attrs,
+  index,
+  children,
+}: DirectiveProps<QuestionDirectiveAttrs>) {
+  const typeLabel = QUESTION_TYPE_LABELS[attrs.type];
+  const difficulty = attrs.difficulty;
   const knowledge = attrs.knowledge?.trim();
   return (
     <section
@@ -63,7 +67,10 @@ export function QuestionDirective({ attrs, index, children }: DirectiveProps) {
 }
 
 /** ::::example 讲义例题块：题面直接可见，内部常搭配 :::solution（自带折叠） */
-export function ExampleDirective({ attrs, children }: DirectiveProps) {
+export function ExampleDirective({
+  attrs,
+  children,
+}: DirectiveProps<ExampleDirectiveAttrs>) {
   const title = attrs.title?.trim() || "例题";
   return (
     <figure
