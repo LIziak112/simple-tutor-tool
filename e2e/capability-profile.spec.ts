@@ -4,8 +4,11 @@ import {
   attachLeakMonitor,
   createCourseViaApi,
   getStudentViaApi,
+  isolateRegisterRateLimit,
+  registerTeacherViaUi,
   setCourseItemVisible,
   teacherApiLogin,
+  teacherLoginViaApi,
   uniqueSuffix,
 } from "./helpers";
 
@@ -16,6 +19,10 @@ import {
  *    无手写/全屏/草稿纸入口、最终答案可填写 → 交卷成功（结果视图正常渲染）；
  * 2. 教师恢复全启用 → 学生「再做一次」新卷：揭晓按钮与手写入口回来。
  * 正式作答（判断）在关闭状态下照常可答可判分；复用既有泄露监控。
+ *
+ * 隔离：开关是教师级全局状态，而 E2E 全 run 共享同一「甲」教师——本用例
+ * 注册**专属乙教师**承载全部造数与开关翻转（multi-teacher 全链同款模式），
+ * 并发 spec 的甲域学生不受影响（曾致 b-batch 草稿纸入口被并发关闭而超时）。
  */
 
 /** 两题练习：判断题（题干内 steps 逐步揭晓）+ 手写计算题（最终答案） */
@@ -73,9 +80,23 @@ test.describe("T7.7 辅助能力启用集：关闭 → 学生刷新 → 正式�
   }) => {
     test.setTimeout(150_000);
 
-    // —— 造数（教师 API）：专属课程 + 练习单元 + 学生入成员；先全关辅助能力 ——
+    // —— 造数（乙教师 API）：先保证甲存在（注册 409 前置），再注册专属乙并
+    //    把 request 会话切到乙——课程/导入/学生/开关翻转全在乙域 ——
     await teacherApiLogin(request);
     const suffix = uniqueSuffix();
+    const regContext = await browser.newContext();
+    const regPage = await regContext.newPage();
+    const yiLoginName = `e2e乙能力-${suffix}`;
+    const yiPassword = "e2e-yi-capability-8";
+    // 注册 IP 隔离按浏览器分槽（chromium/webkit 各持独立限流额度，同 run 多次运行不叠加）
+    await isolateRegisterRateLimit(
+      regPage,
+      `10.239.7.${browser.browserType().name() === "chromium" ? 1 : 2}`,
+    );
+    await registerTeacherViaUi(regPage, request, yiLoginName, yiPassword);
+    await regContext.close();
+    await teacherLoginViaApi(request, yiLoginName, yiPassword);
+
     const courseName = `e2e能力开关${suffix}`;
     const unitName = `能力开关小练${suffix}`;
     const courseId = await createCourseViaApi(request, courseName);
@@ -188,8 +209,6 @@ test.describe("T7.7 辅助能力启用集：关闭 → 学生刷新 → 正式�
 
       await expect(leak.violations()).toEqual([]);
     } finally {
-      // 恢复缺省（未配置=全启用），不把开关状态泄漏给同 run 的其他用例
-      await saveCapabilityProfile(request, ["steps", "ink"]);
       await studentContext.close();
     }
   });
