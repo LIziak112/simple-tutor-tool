@@ -264,7 +264,20 @@ export const libraryBatchDataSchema = z.object({
  * - 单元 = frontmatter（kind: practice、unit: <id>、lecture: <配套讲义标题>、topic）
  *   + 未删除各题 sourceMd 按题序拼接；已删题不导出（防止「导出→再导入」复活已删题），
  *   另有已删题时 frontmatter 后以 HTML 注释注明数量；
- * - 讲义 = kind: lecture frontmatter + markdown 原文。
+ * - 讲义 = kind: lecture frontmatter + markdown 原文；
+ * - 资源携带教学包声明（T7.8，frontmatter.teachingPack 落库回写）时，frontmatter
+ *   附带 teachingPack 声明行（确定性 YAML flow 形态，可原样重新导入）。
+ *
+ * GET /api/teacher/units/:id/export-pack.zip、/api/teacher/lectures/:id/export-pack.zip
+ * （T7.8 教学包 ZIP，文件直出 application/zip + no-store，非 JSON 壳）：
+ * - content.md：当前资源正文（同上 export.md 口径，含声明）；
+ * - capabilities-snapshot.json：导出时刻系统能力清单（/api/public/spec 同源；
+ *   仅归档，重新导入时被 ZIP 解包忽略，不注册能力、不覆盖运行配置）；
+ * - 正文引用的本地图片按原 src 路径（blobs/media/<hash>.<ext>）随行，
+ *   ZIP 导入配对规则①精确命中，内容寻址幂等使重导 src 不变；
+ * - 导出前对 content.md 重跑 lint：error 级问题（含声明引用失效
+ *   DIRECTIVE_REF_NOT_FOUND / VALIDATOR_REF_NOT_FOUND）→ 422 LINT_ERROR
+ *   （_issues 附明细），不生成包；无声明的资源也可导出（content.md + 快照）。
  */
 export const exportKindSchema = z.enum(["unit", "lecture"]);
 

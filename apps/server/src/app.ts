@@ -267,6 +267,7 @@ export function createApp(options: CreateAppOptions) {
         options.publicUrl,
         options.dataDir,
         options.dbHandle,
+        options.specDir,
       ),
     )
     .route(

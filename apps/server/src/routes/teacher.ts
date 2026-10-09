@@ -100,6 +100,8 @@ export function createTeacherRoutes(
   publicUrl: string,
   dataDir: string,
   dbHandle?: DbHandle,
+  /** 规范目录覆盖（T7.8 教学包快照经 library 路由透传，与 /api/public/spec 同源） */
+  specDir?: string | undefined,
 ) {
   const requireTeacher = createRequireTeacher(db, publicUrl);
   return (
@@ -202,7 +204,7 @@ export function createTeacherRoutes(
       .route("/", createImportRoutes(db, dataDir))
       .route("/", createContentRoutes(db))
       .route("/", createCourseRoutes(db))
-      .route("/", createLibraryRoutes(db, dataDir))
+      .route("/", createLibraryRoutes(db, dataDir, specDir))
       // T2B.7：共享发布与导入（发布/列表/预览/导入/删除，业务在 shared-service）
       .route("/", createSharedRoutes(db, dataDir))
       .route("/", createStudentTeacherRoutes(db))

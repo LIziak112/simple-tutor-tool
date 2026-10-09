@@ -1327,4 +1327,60 @@ describe("资源库路由：export.md 保留教学包声明（T7.8）", () => {
     );
     expect(await cleared.text()).not.toContain("teachingPack:");
   });
+
+  it("export-pack.zip：文件直出 application/zip 附件；未知单元 404；引用失效 422 LINT_ERROR", async () => {
+    const { app, db, teacherCookie } = await makeApp();
+    const commit = await request(
+      app,
+      "POST",
+      "/api/teacher/import/commit",
+      teacherCookie,
+      { markdown: PACK_MD, filename: "导出声明.md" },
+    );
+    expect(commit.status).toBe(200);
+
+    const res = await request(
+      app,
+      "GET",
+      "/api/teacher/units/导出声明单元/export-pack.zip",
+      teacherCookie,
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("application/zip");
+    expect(res.headers.get("content-disposition")).toContain("attachment");
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    const bytes = Buffer.from(await res.arrayBuffer());
+    expect(bytes.subarray(0, 2).toString("latin1")).toBe("PK");
+
+    const missing = await request(
+      app,
+      "GET",
+      "/api/teacher/units/ghost/export-pack.zip",
+      teacherCookie,
+    );
+    expect(missing.status).toBe(404);
+
+    // 声明引用失效（手工改列模拟存量劣化）→ 422 LINT_ERROR 不生成包
+    db.update(units)
+      .set({
+        teachingPackJson: JSON.stringify({
+          formatVersion: 1,
+          name: "失效包",
+          version: "1",
+          directives: ["no-such-directive"],
+          validators: [],
+        }),
+      })
+      .where(eq(units.id, "导出声明单元"))
+      .run();
+    const broken = await request(
+      app,
+      "GET",
+      "/api/teacher/units/导出声明单元/export-pack.zip",
+      teacherCookie,
+    );
+    expect(broken.status).toBe(422);
+    const err = await readErr(broken);
+    expect(err.error).toBe("LINT_ERROR");
+  });
 });

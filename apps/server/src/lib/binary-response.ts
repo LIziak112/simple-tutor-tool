@@ -56,13 +56,23 @@ export function noStoreBinaryResponse(
   bytes: ArrayBuffer | Uint8Array<ArrayBuffer>,
   contentType: string,
   options: {
-    /** 附件下载语义：给定时设置 content-disposition: attachment（文档直出用） */
+    /** 附件下载语义：给定时设置 content-disposition: attachment（文档直出用；仅 ASCII 名） */
     attachmentFilename?: string;
+    /**
+     * 附件下载语义（可含中文）：提供时按 RFC 5987 编码为 filename*，filename
+     * 降为 ASCII 兜底（undici 的 Response 头不接受非 ASCII 字节——直接放中文
+     * 文件名会抛错；export.md 与 T7.8 教学包 ZIP 共用本口径）
+     */
+    attachmentFilenameUtf8?: string;
   } = {},
 ): Response {
   return new Response(bytes, {
     status: 200,
-    headers: noStoreAttachmentHeaders(contentType, options.attachmentFilename),
+    headers: noStoreAttachmentHeaders(
+      contentType,
+      options.attachmentFilename,
+      options.attachmentFilenameUtf8,
+    ),
   });
 }
 
@@ -73,16 +83,30 @@ export function noStoreBinaryResponse(
 export function noStoreAttachmentHeaders(
   contentType: string,
   attachmentFilename?: string,
+  attachmentFilenameUtf8?: string,
 ): Record<string, string> {
   const headers: Record<string, string> = {
     "content-type": contentType,
     "cache-control": "no-store",
   };
-  if (attachmentFilename !== undefined) {
-    headers["content-disposition"] =
-      `attachment; filename="${attachmentFilename}"`;
+  if (attachmentFilenameUtf8 !== undefined) {
+    headers["content-disposition"] = attachmentDisposition(
+      attachmentFilenameUtf8,
+    );
+  } else if (attachmentFilename !== undefined) {
+    headers["content-disposition"] = `attachment; filename="${attachmentFilename}"`;
   }
   return headers;
+}
+
+/**
+ * RFC 6266/5987 附件文件名头值：filename=ASCII 兜底 + filename*=UTF-8''编码
+ * （支持中文附件名；ASCII 兜底给不支持 filename* 的旧客户端）。
+ */
+export function attachmentDisposition(filename: string): string {
+  const ascii = filename.replace(/[^\x20-\x7e]/g, "_").replace(/"/g, "_");
+  const fallback = ascii.length > 0 ? ascii : "export";
+  return `attachment; filename="${fallback}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
 }
 
 /**
