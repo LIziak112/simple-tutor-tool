@@ -56,23 +56,18 @@ export function noStoreBinaryResponse(
   bytes: ArrayBuffer | Uint8Array<ArrayBuffer>,
   contentType: string,
   options: {
-    /** 附件下载语义：给定时设置 content-disposition: attachment（文档直出用；仅 ASCII 名） */
-    attachmentFilename?: string;
     /**
-     * 附件下载语义（可含中文）：提供时按 RFC 5987 编码为 filename*，filename
-     * 降为 ASCII 兜底（undici 的 Response 头不接受非 ASCII 字节——直接放中文
-     * 文件名会抛错；export.md 与 T7.8 教学包 ZIP 共用本口径）
+     * 附件下载语义：给定时设置 content-disposition: attachment，经
+     * attachmentDisposition 编码（可含中文；undici 的 Response 头不接受非
+     * ASCII 字节，直接放中文文件名会抛错——纯 ASCII 名只多一段无害的
+     * filename* 参数，T6R.13 起 ASCII 调用点与 T7.8 中文包名共用同一口径）
      */
-    attachmentFilenameUtf8?: string;
+    attachmentFilename?: string;
   } = {},
 ): Response {
   return new Response(bytes, {
     status: 200,
-    headers: noStoreAttachmentHeaders(
-      contentType,
-      options.attachmentFilename,
-      options.attachmentFilenameUtf8,
-    ),
+    headers: noStoreAttachmentHeaders(contentType, options.attachmentFilename),
   });
 }
 
@@ -83,19 +78,13 @@ export function noStoreBinaryResponse(
 export function noStoreAttachmentHeaders(
   contentType: string,
   attachmentFilename?: string,
-  attachmentFilenameUtf8?: string,
 ): Record<string, string> {
   const headers: Record<string, string> = {
     "content-type": contentType,
     "cache-control": "no-store",
   };
-  if (attachmentFilenameUtf8 !== undefined) {
-    headers["content-disposition"] = attachmentDisposition(
-      attachmentFilenameUtf8,
-    );
-  } else if (attachmentFilename !== undefined) {
-    headers["content-disposition"] =
-      `attachment; filename="${attachmentFilename}"`;
+  if (attachmentFilename !== undefined) {
+    headers["content-disposition"] = attachmentDisposition(attachmentFilename);
   }
   return headers;
 }

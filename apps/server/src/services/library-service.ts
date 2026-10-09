@@ -1309,7 +1309,7 @@ function ensureQuestionId(sourceMd: string, id: string): string {
  * （合法 YAML flow 映射，frontmatter 解析可原样读回；server 不依赖 yaml 包，硬性规则 5）。
  * 列 NULL/坏 JSON/不合契约（写侧恒过契约，此处兜底异常存量）一律视为未声明，不导出。
  */
-export function teachingPackYamlLine(pack: TeachingPack): string {
+function teachingPackYamlLine(pack: TeachingPack): string {
   const refs = (list: readonly string[]) =>
     `[${list.map((item) => JSON.stringify(item)).join(", ")}]`;
   return `teachingPack: {formatVersion: ${pack.formatVersion}, name: ${JSON.stringify(pack.name)}, version: ${JSON.stringify(pack.version)}, directives: ${refs(pack.directives)}, validators: ${refs(pack.validators)}}`;

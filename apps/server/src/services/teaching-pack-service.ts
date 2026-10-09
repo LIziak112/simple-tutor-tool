@@ -4,7 +4,7 @@ import { HttpError } from "../lib/http-error";
 import { type ZipArchiveWriter, zipBufferOf } from "../lib/zip-write";
 import { readSpecFile } from "../spec-files";
 import { exportLectureMd, exportUnitMd } from "./library-service";
-import { extractMediaImageSrcs, readMediaBlob } from "./media-service";
+import { extractMediaImageSrcs, statMediaSrc } from "./media-service";
 
 /**
  * 教学包 ZIP 导出（T7.8 / 方案 §4.6）：把一份单元/讲义导出为可分享的包——
@@ -62,16 +62,17 @@ export async function exportTeachingPackZip(
   // ③ 当前系统能力清单快照（仅归档）
   const snapshot = await readSpecFile("capabilities.json", specDir);
 
-  // ④ 收集正文引用的本地图片（严格形态；缺失跳过，见文件头注释）
-  const images: { src: string; bytes: Buffer }[] = [];
+  // ④ 收集正文引用的本地图片：statMediaSrc 是「zip 打包图片在场核对」的既定
+  //    单点（question-evidence 与学情包导出共用，越界/缺失中文 reason）；
+  //    缺失（reason）跳过随行，见文件头注释
+  const images: { src: string; absPath: string }[] = [];
   for (const src of extractMediaImageSrcs([exported.markdown])) {
-    const blob = readMediaBlob(dataDir, src.slice("blobs/media/".length));
-    if (blob !== null) {
-      images.push({ src, bytes: Buffer.from(blob.bytes) });
-    }
+    const stat = statMediaSrc(dataDir, src);
+    if (!("reason" in stat)) images.push({ src, absPath: stat.absPath });
   }
 
-  // ⑤ 组包（文本 deflate；图片已压缩 → store 仅存储）
+  // ⑤ 组包（文本 deflate；图片已压缩 → store 仅存储；条目名按原 src 路径写
+  //    子目录，archiver 同款口径见 export-service 的 media 条目）
   const bytes = await zipBufferOf((archive: ZipArchiveWriter) => {
     archive.append(Buffer.from(exported.markdown, "utf8"), {
       name: "content.md",
@@ -80,7 +81,7 @@ export async function exportTeachingPackZip(
       name: "capabilities-snapshot.json",
     });
     for (const image of images) {
-      archive.append(image.bytes, { name: image.src, store: true });
+      archive.file(image.absPath, { name: image.src, store: true });
     }
   });
 

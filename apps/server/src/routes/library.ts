@@ -16,7 +16,7 @@ import {
   libraryListQuerySchema,
   unitMetaUpdateSchema,
 } from "@tutor/contract";
-import { Hono } from "hono";
+import { type Context, Hono } from "hono";
 import type { TeacherEnv } from "../auth/require-teacher";
 import type { Db } from "../db/client";
 import {
@@ -47,7 +47,10 @@ import {
   updateUnitMeta,
 } from "../services/library-service";
 import { batchPublishToShared } from "../services/shared-service";
-import { exportTeachingPackZip } from "../services/teaching-pack-service";
+import {
+  exportTeachingPackZip,
+  type TeachingPackKind,
+} from "../services/teaching-pack-service";
 
 /**
  * 资源库路由（需教师会话，T2A.2），由 teacher.ts 挂在 /api/teacher 之下：
@@ -76,6 +79,29 @@ export function createLibraryRoutes(
   /** 规范目录覆盖（T7.8 教学包快照与 /api/public/spec 同源；缺省走目录候选） */
   specDir?: string | undefined,
 ) {
+  /**
+   * T7.8 教学包 ZIP 导出 handler 工厂（unit/lecture 两端点同构，仅 kind 字面量
+   * 不同）；域校验 404 与导出前检查（引用失效 422）都在 service。
+   */
+  type ExportPackPath =
+    | "/units/:id/export-pack.zip"
+    | "/lectures/:id/export-pack.zip";
+  const exportPackZipHandler = (kind: TeachingPackKind) => {
+    return async (c: Context<TeacherEnv, ExportPackPath>) => {
+      const zip = await exportTeachingPackZip(
+        db,
+        c.var.teacher.id,
+        kind,
+        c.req.param("id"),
+        dataDir,
+        specDir,
+      );
+      return noStoreBinaryResponse(zip.bytes, "application/zip", {
+        attachmentFilename: zip.filename,
+      });
+    };
+  };
+
   return (
     new Hono<TeacherEnv>()
       // ---------- 文件夹 ----------
@@ -196,19 +222,7 @@ export function createLibraryRoutes(
       })
       // T7.8：导出教学包（ZIP 文件直出；导出前检查声明引用，失效 422 不生成包；
       // 文件名可含中文 → RFC 5987 编码，同 export.md 口径）
-      .get("/units/:id/export-pack.zip", async (c) => {
-        const zip = await exportTeachingPackZip(
-          db,
-          c.var.teacher.id,
-          "unit",
-          c.req.param("id"),
-          dataDir,
-          specDir,
-        );
-        return noStoreBinaryResponse(zip.bytes, "application/zip", {
-          attachmentFilenameUtf8: zip.filename,
-        });
-      })
+      .get("/units/:id/export-pack.zip", exportPackZipHandler("unit"))
       // ---------- 讲义管理 ----------
       .patch("/lectures/:id", async (c) => {
         const body: LectureMetaUpdate = await parseJsonBody(
@@ -248,19 +262,7 @@ export function createLibraryRoutes(
         return markdownResponse(markdown, filename);
       })
       // T7.8：导出教学包（同单元端点，kind=lecture）
-      .get("/lectures/:id/export-pack.zip", async (c) => {
-        const zip = await exportTeachingPackZip(
-          db,
-          c.var.teacher.id,
-          "lecture",
-          c.req.param("id"),
-          dataDir,
-          specDir,
-        );
-        return noStoreBinaryResponse(zip.bytes, "application/zip", {
-          attachmentFilenameUtf8: zip.filename,
-        });
-      })
+      .get("/lectures/:id/export-pack.zip", exportPackZipHandler("lecture"))
   );
 }
 

@@ -5,7 +5,7 @@ import {
   questionCapabilityBindings,
 } from "@tutor/contract";
 import type { Root } from "mdast";
-import { makeIssue } from "../v2/shared.ts";
+import { isYaml, makeIssue } from "../v2/shared.ts";
 
 /**
  * 教学包声明显式引用校验（T7.8 / 方案 §4.6）：
@@ -37,7 +37,7 @@ export function lintTeachingPack(
   if (pack === undefined) return [];
 
   // 行锚：frontmatter 映射首行（围栏行的下一行）；无位置信息时兜底第 1 行
-  const yamlNode = tree.children.find((node) => node.type === "yaml");
+  const yamlNode = tree.children.find(isYaml);
   const line = (yamlNode?.position?.start.line ?? 0) + 1;
 
   const issues: LintIssue[] = [];
