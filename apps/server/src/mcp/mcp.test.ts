@@ -340,7 +340,7 @@ describe("MCP 鉴权（T4.6 D22）", () => {
 });
 
 describe("MCP 工具（SDK 客户端逐个断言，T4.6 D23）", () => {
-  it("tools/list 列出 13 个工具（D23 定稿 11 个 + upload_image + import_zip）", async () => {
+  it("tools/list 列出 14 个工具（D23 定稿 11 个 + upload_image + import_zip + describe_capabilities）", async () => {
     const env = await makeEnv();
     const client = await connectClient(env, env.tokenA);
     const list = await client.listTools();
@@ -360,8 +360,39 @@ describe("MCP 工具（SDK 客户端逐个断言，T4.6 D23）", () => {
         "save_report",
         "upload_image",
         "import_zip",
+        "describe_capabilities",
       ].sort(),
     );
+    await client.close();
+  });
+
+  it("describe_capabilities 返回清单原文，与 HTTP /api/public/spec/capabilities.json 逐字节一致（T7.6）", async () => {
+    const env = await makeEnv();
+    const client = await connectClient(env, env.tokenA);
+    const result = await client.callTool({
+      name: "describe_capabilities",
+      arguments: {},
+    });
+    expect(result.isError).toBeFalsy();
+    const blocks = result.content as TextContent[];
+    expect(blocks).toHaveLength(1);
+    const manifestText = blocks[0]?.text ?? "";
+    expect(JSON.parse(manifestText).formatVersion).toBe(1);
+
+    const http = await env.app.request("/api/public/spec/capabilities.json");
+    expect(http.status).toBe(200);
+    expect(manifestText).toBe(await http.text());
+    await client.close();
+  });
+
+  it("describe_capabilities 的 description 写明 snapshot/partial 口径（不给 AI 错误能力承诺）", async () => {
+    const env = await makeEnv();
+    const client = await connectClient(env, env.tokenA);
+    const list = await client.listTools();
+    const tool = list.tools.find((t) => t.name === "describe_capabilities");
+    expect(tool?.description).toContain("snapshot");
+    expect(tool?.description).toContain("partial");
+    expect(tool?.description).toContain("没有实现");
     await client.close();
   });
 
