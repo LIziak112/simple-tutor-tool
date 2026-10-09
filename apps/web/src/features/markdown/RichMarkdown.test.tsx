@@ -2,6 +2,11 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
+import {
+  DirectiveContainerHost,
+  DirectiveLeafHost,
+  DirectiveTextHost,
+} from "./directives";
 import { RichMarkdown } from "./RichMarkdown";
 
 /**
@@ -299,6 +304,43 @@ describe("RichMarkdown：版式与强调指令", () => {
 });
 
 describe("RichMarkdown：未知指令降级（§5.1.1(3)）", () => {
+  describe.each([
+    ["容器", DirectiveContainerHost],
+    ["块", DirectiveLeafHost],
+    ["行内", DirectiveTextHost],
+  ] as const)("%s宿主", (_label, Host) => {
+    it.each(["constructor", "toString", "__proto__"])(
+      "未注册的原型名称 %s 降级且保留正文",
+      (name) => {
+        // __proto__ 不被 remark-directive 识别，直接测宿主避免把普通文本当成降级。
+        const { container } = render(
+          <Host node={{ properties: { directive: name } }}>
+            <strong>正文必须保留</strong>
+          </Host>,
+        );
+        expect(container.querySelector("strong")).toHaveTextContent(
+          "正文必须保留",
+        );
+        expect(container).toHaveTextContent(`未支持指令：${name}`);
+      },
+    );
+  });
+
+  it.each(["constructor", "toString"])(
+    "原型名称 %s 在完整 Markdown 管线的三种写法中均降级",
+    (name) => {
+      const { container } = renderMd(
+        `:::${name}\n容器正文\n:::\n\n::${name}[块正文]\n\n句中 :${name}[行内正文]。`,
+      );
+      expect(container).toHaveTextContent("容器正文");
+      expect(container).toHaveTextContent("块正文");
+      expect(container).toHaveTextContent("行内正文");
+      expect(
+        screen.getAllByText(new RegExp(`未支持指令：${name}`)),
+      ).toHaveLength(3);
+    },
+  );
+
   it("未知容器指令显示内部文字与“未支持指令”标注，不崩溃", () => {
     renderMd(':::mystery{title="x"}\n内部文字XYZ\n:::');
     expect(screen.getByText("内部文字XYZ")).toBeInTheDocument();
@@ -313,6 +355,29 @@ describe("RichMarkdown：未知指令降级（§5.1.1(3)）", () => {
 });
 
 describe("RichMarkdown：XSS 防护（rehype-sanitize）", () => {
+  it.each([
+    "javascript:alert(1)",
+    "vbscript:msgbox(1)",
+    "data:image/png;base64,AAAA",
+  ])("自动推导白名单后，图片危险协议 %s 仍被剥除", (src) => {
+    const { container } = renderMd(`::image{src="${src}"}\n\n正文保留。`);
+    expect(container.querySelector("img")).toBeNull();
+    expect(container).toHaveTextContent("图片路径缺失");
+    expect(container).toHaveTextContent("正文保留。");
+  });
+
+  it("schema 的 id/class 键不会改变既有锚点与样式类通道", () => {
+    const { container } = renderMd(
+      ':::box{#toc-id .warning title="提示盒"}\n正文\n:::',
+    );
+    expect(container.querySelector("[id]")).toBeNull();
+    expect(container.querySelector("[data-slot='callout']")).toHaveClass(
+      "border-amber-400",
+    );
+    expect(container).toHaveTextContent("提示盒");
+    expect(container).toHaveTextContent("正文");
+  });
+
   it("<script> 与 <img onerror> 不进入 DOM，javascript: 链接被清除", () => {
     const { container } = renderMd(
       [

@@ -1,5 +1,7 @@
+import { listDirectives, type RegisteredDirective } from "@tutor/contract";
 import type rehypeSanitize from "rehype-sanitize";
 import { defaultSchema } from "rehype-sanitize";
+import { z } from "zod";
 
 /** 清洗 schema 类型：直接从 rehype-sanitize 的入参推导（v6 未在入口导出 Schema 名） */
 type SanitizeSchema = NonNullable<Parameters<typeof rehypeSanitize>[0]>;
@@ -114,23 +116,21 @@ const KATEX_SVG_ATTRS = [
   "y2",
 ] as const;
 
-/** 指令宿主标签上允许的属性（remarkDirectiveHost 注入 + 指令属性透传） */
-const DIRECTIVE_HOST_ATTRS = [
-  "directive", // 指令名（刻意避开 sanitize 的 clobber 属性 name/id）
-  "dclass", // `{.样式类}` 简写
-  "index", // 文档顺序编号（第 N 题 / 提示 N / 第 N 步）
-  "dindex", // 文档全局指令序号（T4.0b directive_interact 的 index 口径）
-  "title",
-  "type",
-  "difficulty",
-  "knowledge",
-  "src",
-  "alt", // ::image 的替代文本（缺省「图片」，契约 image 指令可选属性）
-  "width",
-  "fn",
-  "range",
-  "color",
-] as const;
+/** 四个宿主语义属性与注册表 schema 属性同源合并，仅用于指令宿主。 */
+export function deriveDirectiveHostAttrs(
+  directives: readonly RegisteredDirective[],
+): string[] {
+  const attrs = new Set(["directive", "dclass", "index", "dindex"]);
+  for (const definition of directives) {
+    if (definition.attrs instanceof z.ZodObject) {
+      for (const key of Object.keys(definition.attrs.shape)) attrs.add(key);
+    }
+  }
+  return [...attrs];
+}
+
+/** id/class 的上游宿主处理不变，不改变 sanitize 的 clobber 与协议规则。 */
+export const DIRECTIVE_HOST_ATTRS = deriveDirectiveHostAttrs(listDirectives());
 
 function buildMathmlAttributes(): Record<string, string[]> {
   const entries: Record<string, string[]> = {};

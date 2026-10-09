@@ -28,7 +28,7 @@ import { UnknownDirective } from "./UnknownDirective";
  *
  * 新增一个指令 = 注册表加定义 + 此表加一行 + 写组件（add-directive 技能四步）。
  */
-const directiveComponents: Readonly<
+export const directiveComponents: Readonly<
   Record<string, ComponentType<DirectiveProps>>
 > = {
   // 题目结构
@@ -103,8 +103,14 @@ function createDirectiveHost(inline: boolean) {
   function DirectiveHost({ node, children }: DirectiveHostProps) {
     const info = readDirective(node);
     // 别名经注册表归一到主名（§5.1.1(3) 改名兼容）
-    const primaryName = getDirective(info.name)?.name ?? info.name;
-    const Component = directiveComponents[primaryName];
+    const definition = getDirective(info.name);
+    const primaryName = definition?.name ?? info.name;
+    // 注册与组件映射均须命中；禁止从对象原型链取出“组件”。
+    const Component =
+      definition !== undefined &&
+      Object.hasOwn(directiveComponents, primaryName)
+        ? directiveComponents[primaryName]
+        : undefined;
     if (Component === undefined) {
       return (
         <UnknownDirective name={info.name} inline={inline}>
