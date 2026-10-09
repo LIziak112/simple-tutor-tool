@@ -1,6 +1,7 @@
 import type { FunctionPlotOptions } from "function-plot";
 import { ImageOff, RefreshCw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { resolveFunctionPlot } from "../function-plot-interop";
 import { parseGraphRange } from "../graph-range";
 import type { DirectiveProps } from "./types";
 
@@ -88,6 +89,15 @@ export function GraphDirective({ attrs }: DirectiveProps) {
     import("function-plot")
       .then((functionPlot) => {
         if (disposed || !hostRef.current) return;
+        // 生产 chunk 的 CJS 互操作双重包裹在解析器内统一拆包（P2-3）
+        const plot = resolveFunctionPlot(functionPlot);
+        if (plot === null) {
+          console.error(
+            "[GraphDirective] function-plot 模块形态未识别（动态导入互操作异常）",
+          );
+          if (!disposed) setState("error");
+          return;
+        }
         try {
           const options: FunctionPlotOptions = {
             target: hostRef.current,
@@ -98,9 +108,11 @@ export function GraphDirective({ attrs }: DirectiveProps) {
           // exactOptionalPropertyTypes：xAxis 仅在可解析出区间时携带
           const xAxis = parseGraphRange(range);
           if (xAxis) options.xAxis = xAxis;
-          functionPlot.default(options);
+          plot(options);
           if (!disposed) setState("ready");
-        } catch {
+        } catch (err) {
+          // 诊断日志：区分代码调用异常与 fn 表达式书写错误（用户可见文案不变）
+          console.error("[GraphDirective] 函数图像渲染失败：", err);
           if (!disposed) setState("error");
         }
       })

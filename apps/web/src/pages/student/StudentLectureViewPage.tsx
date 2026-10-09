@@ -4,6 +4,7 @@ import { Link, useParams, useSearchParams } from "react-router";
 import type { DirectiveTelemetryInfo } from "@/features/markdown/directives/expand-context";
 import type { OutlineItem } from "@/features/markdown/outline";
 import { extractOutline } from "@/features/markdown/outline";
+import { OutlineInlineMath } from "@/features/markdown/outline-inline-math";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { useLectureSectionFocus } from "@/features/markdown/use-lecture-section-focus";
 import { useStudentLecture } from "@/features/student/student-queries";
@@ -66,7 +67,10 @@ function LectureOutline({
                 item.depth === 3 ? "pl-7 text-muted-foreground" : "font-medium"
               }`}
             >
-              <span className="truncate">{item.text}</span>
+              {/* 标题公式按 $...$ 渲染行内 KaTeX（P2-4），不再暴露原始 LaTeX */}
+              <span className="truncate">
+                <OutlineInlineMath text={item.text} />
+              </span>
             </button>
           </li>
         ))}

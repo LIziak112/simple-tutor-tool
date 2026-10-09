@@ -1,4 +1,5 @@
 import type { GraphFigureSpec } from "@tutor/md-dsl";
+import { resolveFunctionPlot } from "../markdown/function-plot-interop";
 import { parseGraphRange } from "../markdown/graph-range";
 
 /**
@@ -44,7 +45,15 @@ export async function renderGraphFigurePng(
   pixelHeight = 260,
 ): Promise<GraphFigureRenderResult> {
   try {
-    const functionPlot = (await import("function-plot")).default;
+    // 生产 chunk 的 CJS 互操作双重包裹在解析器内统一拆包（P2-3）
+    const functionPlot = resolveFunctionPlot(await import("function-plot"));
+    if (functionPlot === null) {
+      return {
+        ok: false,
+        reason:
+          "图表静态化失败：function-plot 模块形态未识别（动态导入互操作异常）",
+      };
+    }
     host.replaceChildren();
     host.style.width = `${pixelWidth}px`;
     const options = {
