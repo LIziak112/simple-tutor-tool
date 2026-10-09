@@ -5,8 +5,8 @@ import {
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import type { Db } from "../db/client";
-import { createTestDb, TEST_TEACHER_ID } from "../db/test-utils";
 import { teachers } from "../db/schema";
+import { createTestDb, TEST_TEACHER_ID } from "../db/test-utils";
 import {
   getCapabilityProfile,
   updateCapabilityProfile,

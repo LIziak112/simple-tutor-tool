@@ -1049,8 +1049,7 @@ describe("GET /api/student/attempts/:id：草稿视图与结果视图", () => {
     // 草稿视图：ink 关闭（steps 保留）
     const draftRes = await getAttempt(app, aCookie, attemptId);
     expect(
-      ((draftRes.body as { data: AttemptDraftData }).data)
-        .enabledCapabilities,
+      (draftRes.body as { data: AttemptDraftData }).data.enabledCapabilities,
     ).toEqual(["steps"]);
     assertNoLeak(draftRes.body);
     assertNoStemLeak(draftRes.body);
@@ -1063,8 +1062,7 @@ describe("GET /api/student/attempts/:id：草稿视图与结果视图", () => {
     expect((await postSubmit(app, aCookie, attemptId)).status).toBe(200);
     const resultRes = await getAttempt(app, aCookie, attemptId);
     expect(
-      ((resultRes.body as { data: AttemptResultData }).data)
-        .enabledCapabilities,
+      (resultRes.body as { data: AttemptResultData }).data.enabledCapabilities,
     ).toEqual(["steps"]);
   });
 });

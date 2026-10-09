@@ -161,9 +161,9 @@ test.describe("T7.7 辅助能力启用集：关闭 → 学生刷新 → 正式�
         .getByRole("button", { name: "确认交卷" })
         .first()
         .click();
-      await expect(
-        studentPage.getByText("批改结果"),
-      ).toBeVisible({ timeout: 30_000 });
+      await expect(studentPage.getByText("批改结果")).toBeVisible({
+        timeout: 30_000,
+      });
 
       // —— 教师恢复全启用 → 落地页「再做一次」新卷：入口回来 ——
       await saveCapabilityProfile(request, ["steps", "ink"]);

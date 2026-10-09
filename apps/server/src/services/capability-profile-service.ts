@@ -1,7 +1,7 @@
 import {
   ALL_ENABLED_CAPABILITIES,
-  capabilityProfileSchema,
   type CapabilityProfile,
+  capabilityProfileSchema,
 } from "@tutor/contract";
 import { eq } from "drizzle-orm";
 import type { Db } from "../db/client";
@@ -26,9 +26,7 @@ function allEnabledProfile(): CapabilityProfile {
 }
 
 /** 列 JSON 串 → profile（NULL/空串/坏值兜底全启用，不抛错） */
-function profileOfColumn(
-  json: string | null | undefined,
-): CapabilityProfile {
+function profileOfColumn(json: string | null | undefined): CapabilityProfile {
   if (json === null || json === undefined || json === "") {
     return allEnabledProfile();
   }

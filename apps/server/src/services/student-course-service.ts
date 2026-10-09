@@ -10,7 +10,6 @@ import type {
 } from "@tutor/contract";
 import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import type { Db } from "../db/client";
-import { getCapabilityProfile } from "./capability-profile-service";
 import {
   type Attempt,
   attempts,
@@ -22,6 +21,7 @@ import {
   units,
 } from "../db/schema";
 import { HttpError } from "../lib/http-error";
+import { getCapabilityProfile } from "./capability-profile-service";
 import { listVisibleItems, requireVisibleCourseUnit } from "./course-service";
 import { pendingMarkCounts } from "./pending-mark.ts";
 

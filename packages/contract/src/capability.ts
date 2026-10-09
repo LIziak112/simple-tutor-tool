@@ -177,7 +177,6 @@ export type CapabilityProfile = z.infer<typeof capabilityProfileSchema>;
 /** 学生端响应携带的启用集字段形态（attempt 详情与讲义详情共用；恒为有效集） */
 export const enabledCapabilitiesFieldSchema = z.array(capabilitySwitchSchema);
 
-
 export const questionCapabilityBindings: Record<
   QuestionType,
   QuestionCapabilityBinding

@@ -29,7 +29,6 @@ import {
 } from "@tutor/contract";
 import { grade } from "@tutor/grading";
 import { studentStemMd } from "@tutor/md-dsl";
-import { getCapabilityProfile } from "./capability-profile-service";
 import {
   and,
   asc,
@@ -64,6 +63,7 @@ import {
 import { HttpError } from "../lib/http-error";
 import { computePerQuestionActiveSec, countAnswerChanges } from "./active-time";
 import { knowledgeNamesByQuestion } from "./assignment-service";
+import { getCapabilityProfile } from "./capability-profile-service";
 import { requireVisibleCourseUnit } from "./course-service";
 import { attemptTimeline } from "./event-service";
 import {

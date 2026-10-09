@@ -1,11 +1,11 @@
 import type {
+  CapabilitySwitch,
   ContentTree,
   ContentTreeCourse,
   ContentTreeQuestion,
   CourseData,
   CourseUpdateRequest,
   ImportBatchConflict,
-  CapabilitySwitch,
   ImportBatchData,
   ImportBatchFilePreview,
   ImportCommitData,
@@ -409,8 +409,10 @@ export function previewImportBatch(
   assertFolderExists(db, teacherId, baseFolderId);
   const snapshot = loadLibrarySnapshot(db, new Date().toISOString(), teacherId);
   // T7.7：启用集整批查一次（循环内逐文件复用，不逐文件打库）
-  const enabledCapabilities = getCapabilityProfile(db, teacherId)
-    .enabledCapabilities;
+  const enabledCapabilities = getCapabilityProfile(
+    db,
+    teacherId,
+  ).enabledCapabilities;
   // 名称 → id（同名取 order 首个，与 ensureCourseFolder 复用口径一致）
   const folderIdByName = new Map<string, string>();
   for (const [id, name] of snapshot.folderNameById) {

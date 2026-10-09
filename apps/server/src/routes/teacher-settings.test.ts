@@ -5,8 +5,8 @@ import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import { createTeacherSession } from "../auth/session.ts";
 import type { Db } from "../db/client";
-import { createTestDb, createTestDir } from "../db/test-utils";
 import { teachers } from "../db/schema";
+import { createTestDb, createTestDir } from "../db/test-utils";
 
 /**
  * T7.7 教师能力启用集路由测试（GET/PUT /api/teacher/settings/capability-profile）：
@@ -99,16 +99,16 @@ describe("GET/PUT /api/teacher/settings/capability-profile（T7.7）", () => {
       body: JSON.stringify({ enabledCapabilities: [] }),
     });
     expect(saved.status).toBe(200);
-    expect(
-      ((await saved.json()) as { data: CapabilityProfile }).data,
-    ).toEqual({ enabledCapabilities: [] });
+    expect(((await saved.json()) as { data: CapabilityProfile }).data).toEqual({
+      enabledCapabilities: [],
+    });
 
     const after = await app.request(PROFILE_PATH, {
       headers: { cookie: cookieA },
     });
-    expect(
-      ((await after.json()) as { data: CapabilityProfile }).data,
-    ).toEqual({ enabledCapabilities: [] });
+    expect(((await after.json()) as { data: CapabilityProfile }).data).toEqual({
+      enabledCapabilities: [],
+    });
   });
 
   it("PUT 非法入参 → 400（未知开关名 / 重复项 / 拼错键）", async () => {

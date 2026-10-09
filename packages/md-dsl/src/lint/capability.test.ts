@@ -58,7 +58,9 @@ $1+1=2$。[[正确]]
 describe("CAPABILITY_DISABLED（T7.7 辅助能力回退提示）", () => {
   it("无启用集上下文：不产生任何 CAPABILITY_DISABLED（CLI/缺省全启用）", () => {
     const lecture = lintDocument(LECTURE_STEPS_MD);
-    expect(lecture.issues.filter((i) => i.code === "CAPABILITY_DISABLED")).toEqual([]);
+    expect(
+      lecture.issues.filter((i) => i.code === "CAPABILITY_DISABLED"),
+    ).toEqual([]);
     const practice = lintDocument(PRACTICE_MD);
     expect(
       practice.issues.filter((i) => i.code === "CAPABILITY_DISABLED"),
@@ -109,7 +111,9 @@ describe("CAPABILITY_DISABLED（T7.7 辅助能力回退提示）", () => {
   });
 
   it("规则在 rules.ts 登记（gen:spec 文档数据源）", () => {
-    const entry = LINT_RULES.find((rule) => rule.code === "CAPABILITY_DISABLED");
+    const entry = LINT_RULES.find(
+      (rule) => rule.code === "CAPABILITY_DISABLED",
+    );
     expect(entry?.level).toBe("warning");
     expect(entry?.description).toContain("辅助能力");
   });

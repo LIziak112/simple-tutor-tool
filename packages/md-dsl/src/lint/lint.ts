@@ -9,11 +9,8 @@ import type { ParseOptions } from "../v2/parse.ts";
 import { parseDocument } from "../v2/parse.ts";
 import { isQuestionContainer } from "../v2/question.ts";
 import { errorMessage, makeIssue, processor } from "../v2/shared.ts";
-import {
-  capabilityContextOf,
-  lintCapabilityProfile,
-} from "./capability.ts";
 import { lintBlankMarkerDollar } from "./blank-marker.ts";
+import { capabilityContextOf, lintCapabilityProfile } from "./capability.ts";
 import { lintDirectives } from "./directives.ts";
 import { lintUnclosedContainers } from "./fences.ts";
 import { lintMathDelimiters } from "./math.ts";
