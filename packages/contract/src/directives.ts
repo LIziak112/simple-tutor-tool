@@ -2,17 +2,17 @@ import { z } from "zod";
 
 import {
   type DirectiveCapability,
+  type DirectiveKind,
   directiveCapabilitySchema,
   directiveKindSchema,
-  type DirectiveKind,
 } from "./capability.ts";
 import { questionTypeSchema } from "./content.ts";
 
+export type { DirectiveKind } from "./capability.ts";
 // kind 的 schema 与类型自本文件迁至 capability.ts（T7.6：能力清单条目需要 kind，
 // 而 directives.ts 已依赖 capability.ts——schema 放低层文件避免反向依赖）；
 // 此处 re-export 维持既有导入路径不变（单一来源仍是 capability.ts）。
 export { directiveKindSchema } from "./capability.ts";
-export type { DirectiveKind } from "./capability.ts";
 
 /**
  * 指令注册表（DSL v2 可扩展性的核心）。

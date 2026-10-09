@@ -167,18 +167,20 @@ describe("能力清单 schema（T7.6 / 方案 §4.4）", () => {
     expect(capabilitiesManifestSchema.safeParse(noCap).success).toBe(false);
   });
 
-  it("拼错键被 strictObject 拒绝（注册期/生成期双闸）", () => {
+  it("拼错键被 strictObject 拒绝（safeParse 入参为 unknown，此处只有 zod 闸）", () => {
     expect(
       capabilitiesManifestSchema.safeParse({
         ...minimalManifest,
-        // @ts-expect-error 故意拼错键（formatversion≠formatVersion）：验证 strict 拒绝，类型与 zod 双闸
         formatversion: 1,
       }).success,
     ).toBe(false);
   });
 
   it("questionTypes 少一种题型即整份清单被拒（复用穷尽 Record）", () => {
-    const incomplete = { ...questionCapabilityBindings };
+    const incomplete = { ...questionCapabilityBindings } as Record<
+      string,
+      (typeof questionCapabilityBindings)[keyof typeof questionCapabilityBindings]
+    >;
     delete incomplete.multi;
     expect(
       capabilitiesManifestSchema.safeParse({
