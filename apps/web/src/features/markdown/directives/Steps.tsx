@@ -1,6 +1,7 @@
 import type { FoldDirectiveAttrs, StepDirectiveAttrs } from "@tutor/contract";
 import { BookOpen, ChevronDown, KeyRound, Lightbulb } from "lucide-react";
 import { Children, createContext, useContext, useState } from "react";
+import { useEnabledCapabilities } from "@/features/capability/enabled-capabilities";
 import { useDirectiveTelemetry } from "./expand-context";
 import { LabeledFold } from "./LabeledFold";
 import type { DirectiveBaseProps, DirectiveProps } from "./types";
@@ -28,11 +29,15 @@ function useFoldTelemetry(
   };
 }
 
-/** ::::steps 逐步揭晓容器：第一步默认可见，「显示下一步」逐个展开（触控目标 ≥44px） */
+/** ::::steps 逐步揭晓容器：第一步默认可见，「显示下一步」逐个展开（触控目标 ≥44px）。
+ *  T7.7：教师关闭 steps 辅助能力时完整展开全部步骤、不渲染揭晓按钮——
+ *  按钮（及其 reveal 遥测）不存在即无从触发，不伪造事件。 */
 export function StepsDirective({ children, docIndex }: DirectiveBaseProps) {
-  const [revealed, setRevealed] = useState(1);
+  const [revealedCount, setRevealedCount] = useState(1);
+  const { steps: stepsEnabled } = useEnabledCapabilities();
   const total = Children.count(children);
-  const remaining = total - revealed;
+  const revealed = stepsEnabled ? revealedCount : Number.POSITIVE_INFINITY;
+  const remaining = stepsEnabled ? total - revealedCount : 0;
   const reportTelemetry = useDirectiveTelemetry();
   const reveal = (): void => {
     // T4.0b（§4.3.3 修订）：reveal 的 payload 带容器身份 + 步序号两套编号
@@ -40,10 +45,10 @@ export function StepsDirective({ children, docIndex }: DirectiveBaseProps) {
     reportTelemetry?.({
       name: "steps",
       index: docIndex,
-      step: revealed + 1,
+      step: revealedCount + 1,
       action: "reveal",
     });
-    setRevealed((n) => n + 1);
+    setRevealedCount((n) => n + 1);
   };
   return (
     <div data-slot="steps" className="my-4">

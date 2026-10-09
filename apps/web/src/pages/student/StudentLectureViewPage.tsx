@@ -1,6 +1,10 @@
 import { ArrowLeft, Dumbbell, ListTree } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
+import {
+  EnabledCapabilitiesProvider,
+  toEnabledCapabilities,
+} from "@/features/capability/enabled-capabilities";
 import type { DirectiveTelemetryInfo } from "@/features/markdown/directives/expand-context";
 import type { OutlineItem } from "@/features/markdown/outline";
 import { extractOutline } from "@/features/markdown/outline";
@@ -248,12 +252,20 @@ export default function StudentLectureViewPage() {
 
             {/* 正文（讲义全文；rich-markdown 内部处理公式块横向滚动；
               折叠开合/步骤揭晓经 onDirectiveTelemetry 上报 directive_interact
-              〔host=lecture〕，T4.0b；旧 lecture_expand 不再产生） */}
-            <RichMarkdown
-              source={lectureQuery.data.markdown}
-              className="min-w-0 flex-1 rounded-2xl border border-border bg-card px-4 py-5 shadow-xs sm:px-6 lg:px-8"
-              onDirectiveTelemetry={onDirectiveTelemetry}
-            />
+              〔host=lecture〕，T4.0b；旧 lecture_expand 不再产生）。
+              T7.7：steps 揭晓遵循教师启用集（关闭时完整展开），Provider 包裹
+              使 RichMarkdown 内全部指令组件可读 */}
+            <EnabledCapabilitiesProvider
+              value={toEnabledCapabilities(
+                lectureQuery.data.enabledCapabilities,
+              )}
+            >
+              <RichMarkdown
+                source={lectureQuery.data.markdown}
+                className="min-w-0 flex-1 rounded-2xl border border-border bg-card px-4 py-5 shadow-xs sm:px-6 lg:px-8"
+                onDirectiveTelemetry={onDirectiveTelemetry}
+              />
+            </EnabledCapabilitiesProvider>
           </div>
 
           {/* 本课配套练习（D8）：同课程可见的配套单元——进入单元落地页作答（T2A.6） */}

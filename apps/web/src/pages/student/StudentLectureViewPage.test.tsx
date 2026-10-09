@@ -41,6 +41,7 @@ const LECTURE: StudentLectureDetail = {
   courseId: COURSE_ID,
   courseName: "初一上",
   companionUnits: [],
+  enabledCapabilities: ["steps", "ink"],
   markdown: [
     "# 第1讲 有理数",
     "",
@@ -218,6 +219,7 @@ describe("StudentLectureViewPage：课程上下文与配套练习（T2A.5）", (
   it("有可见配套单元：底部显示「本课配套练习」（标题/题数/去练习链接，T2A.6）", async () => {
     mockedLecture.mockResolvedValue({
       ...LECTURE,
+      enabledCapabilities: ["steps", "ink"],
       companionUnits: [
         { id: "有理数小练", title: "有理数小练", questionCount: 4 },
       ],

@@ -21,6 +21,7 @@ import {
   units,
 } from "../db/schema";
 import { HttpError } from "../lib/http-error";
+import { getCapabilityProfile } from "./capability-profile-service";
 import { listVisibleItems, requireVisibleCourseUnit } from "./course-service";
 import { pendingMarkCounts } from "./pending-mark.ts";
 
@@ -775,5 +776,8 @@ export function getStudentLecture(
       title: titles.get(id) ?? "",
       questionCount: counts.get(id) ?? 0,
     })),
+    // T7.7：讲义 steps 渲染遵循课程所属教师的启用集（读时计算，学生刷新生效）
+    enabledCapabilities: getCapabilityProfile(db, context.teacherId)
+      .enabledCapabilities,
   };
 }

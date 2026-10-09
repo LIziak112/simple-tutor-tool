@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { enabledCapabilitiesFieldSchema } from "./capability.ts";
 import { lintIssueSchema, questionTypeSchema } from "./content.ts";
 
 /**
@@ -541,6 +542,13 @@ export const studentLectureDetailSchema = z.object({
   courseName: z.string().min(1),
   /** 本课配套练习（D8：同课程可见的配套单元；空数组 = 无可见配套） */
   companionUnits: z.array(studentLectureCompanionUnitSchema),
+  /**
+   * 教师辅助能力有效启用集（T7.7 / 方案 §4.5）：讲义中的 :::steps 按 teacher
+   * 配置渲染（关闭时完整展开、隐藏「显示下一步」）；讲义无手写入口，ink 开关
+   * 在此响应仅为字段形态统一。教师预览接口不下发本字段，无该字段的旧载荷按
+   * 全启用处理（前端 Context 缺省）。
+   */
+  enabledCapabilities: enabledCapabilitiesFieldSchema,
 });
 
 /** 携带学生讲义列表/详情的成功响应壳 */

@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import type { ApiErr } from "@tutor/contract";
 import {
+  ALL_ENABLED_CAPABILITIES,
   type AttemptDraftData,
   type AttemptResultData,
   attemptDraftOkSchema,
@@ -947,6 +948,8 @@ describe("GET /api/student/attempts/:id：草稿视图与结果视图", () => {
     assertNoLeak(body);
     assertNoStemLeak(body);
     const draft = (body as { data: AttemptDraftData }).data;
+    // T7.7：草稿视图随卷下发有效启用集（教师未配置 → 全启用）
+    expect(draft.enabledCapabilities).toEqual([...ALL_ENABLED_CAPABILITIES]);
     // T2A.7：分组结构（样例单单元 → units 恰 1 组，组内 8 题按题序）
     expect(draft.units.length).toBe(1);
     const draftQuestions = draft.units[0]?.questions ?? [];
@@ -1026,6 +1029,42 @@ describe("GET /api/student/attempts/:id：草稿视图与结果视图", () => {
     );
     // 对照：本人可取
     expect((await getAttempt(app, aCookie, attemptId)).res.status).toBe(200);
+  });
+
+  it("T7.7 教师关闭辅助能力：草稿与结果视图的启用集读时反映（刷新生效语义）", async () => {
+    const { app, teacherCookie, aCookie, assignmentId } =
+      await makeAttemptApp();
+    const attemptId = (await startAttemptOk(app, aCookie, assignmentId))
+      .id as string;
+
+    const saved = await app.request(
+      "/api/teacher/settings/capability-profile",
+      {
+        method: "PUT",
+        headers: { "content-type": "application/json", cookie: teacherCookie },
+        body: JSON.stringify({ enabledCapabilities: ["steps"] }),
+      },
+    );
+    expect(saved.status).toBe(200);
+
+    // 草稿视图：ink 关闭（steps 保留）
+    const draftRes = await getAttempt(app, aCookie, attemptId);
+    expect(
+      (draftRes.body as { data: AttemptDraftData }).data.enabledCapabilities,
+    ).toEqual(["steps"]);
+    assertNoLeak(draftRes.body);
+    assertNoStemLeak(draftRes.body);
+
+    // 交卷后结果视图同口径
+    await putAnswer(app, aCookie, attemptId, Q.judge, {
+      kind: "judge",
+      value: true,
+    });
+    expect((await postSubmit(app, aCookie, attemptId)).status).toBe(200);
+    const resultRes = await getAttempt(app, aCookie, attemptId);
+    expect(
+      (resultRes.body as { data: AttemptResultData }).data.enabledCapabilities,
+    ).toEqual(["steps"]);
   });
 });
 

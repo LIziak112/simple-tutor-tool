@@ -13,6 +13,7 @@ import type { Db } from "../db/client";
 import { firstIssueMessage, HttpError } from "../lib/http-error";
 import { getAnalyticsQuestions } from "../services/analytics-service";
 import { listTeacherAssignments } from "../services/assignment-service";
+import { getCapabilityProfile } from "../services/capability-profile-service";
 import {
   analyzeImport,
   commitImport,
@@ -322,8 +323,13 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
       },
     },
     guard(({ markdown }) => {
-      // 与导入预览同一份口径（analyzeImport：fallback 锚定 + lintDocument）
-      const { issues, parsed } = analyzeImport(markdown, "mcp-import");
+      // 与导入预览同一份口径（analyzeImport：fallback 锚定 + lintDocument；
+      // T7.7 起 lint 结果含 token 教师的辅助能力回退提示）
+      const { issues, parsed } = analyzeImport(markdown, {
+        fallbackUnitId: "mcp-import",
+        enabledCapabilities: getCapabilityProfile(db, teacherId)
+          .enabledCapabilities,
+      });
       return jsonContent({
         summary: summarizeParsed(parsed),
         issues,

@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  ALL_ENABLED_CAPABILITIES,
   capabilitiesManifestSchema,
+  capabilityProfileSchema,
+  capabilitySwitchSchema,
   questionCapabilityBindings,
   questionCapabilityBindingsSchema,
 } from "./capability";
@@ -187,6 +190,53 @@ describe("能力清单 schema（T7.6 / 方案 §4.4）", () => {
         ...minimalManifest,
         questionTypes: incomplete,
       }).success,
+    ).toBe(false);
+  });
+});
+
+describe("能力启用集 profile（T7.7 / 方案 §4.5）", () => {
+  it("默认全启用的常量形态：steps 与 ink（choice/fill 是正式作答不出现在开关中）", () => {
+    expect(ALL_ENABLED_CAPABILITIES).toEqual(["steps", "ink"]);
+    expect(capabilitySwitchSchema.options).toEqual(["steps", "ink"]);
+  });
+
+  it("两项全启用、单项、空数组都合法（空数组=显式全关）", () => {
+    expect(
+      capabilityProfileSchema.safeParse({
+        enabledCapabilities: ["steps", "ink"],
+      }).success,
+    ).toBe(true);
+    expect(
+      capabilityProfileSchema.safeParse({ enabledCapabilities: ["ink"] })
+        .success,
+    ).toBe(true);
+    expect(
+      capabilityProfileSchema.safeParse({ enabledCapabilities: [] }).success,
+    ).toBe(true);
+  });
+
+  it("重复开关被拒（语义要求显式，不静默去重）", () => {
+    expect(
+      capabilityProfileSchema.safeParse({
+        enabledCapabilities: ["steps", "steps"],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("非法开关名被拒（choice/fill 等正式作答能力不在开关词表）", () => {
+    expect(
+      capabilityProfileSchema.safeParse({ enabledCapabilities: ["choice"] })
+        .success,
+    ).toBe(false);
+    expect(
+      capabilityProfileSchema.safeParse({ enabledCapabilities: ["ink ", ""] })
+        .success,
+    ).toBe(false);
+  });
+
+  it("拼错键被 strictObject 拒绝", () => {
+    expect(
+      capabilityProfileSchema.safeParse({ enabledcapabilities: [] }).success,
     ).toBe(false);
   });
 });

@@ -52,7 +52,7 @@ import {
 export interface ParseOptions {
   readonly unitId?: string;
   readonly questionStartNumber?: number;
-  readonly fallbackUnitId?: string;
+  readonly fallbackUnitId?: string | undefined;
 }
 
 /**

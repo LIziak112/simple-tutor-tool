@@ -8,6 +8,7 @@ import { cn } from "cn";
 import { Check, X } from "lucide-react";
 import { useRef, useState } from "react";
 import { AnnotationLayer } from "@/features/annotation/AnnotationLayer";
+import { useEnabledCapabilities } from "@/features/capability/enabled-capabilities";
 import { BlankAnswersProvider } from "@/features/markdown/BlankAnswersContext";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { NoteLayer } from "@/features/notes/NoteLayer";
@@ -286,13 +287,18 @@ export function AttemptQuestionCard({
   // T6R.9 草稿层：非手写题 + 作答语境（attemptId）。布局按题卡**量化分栏
   // 结论**（复审④：ResizeObserver 回调只在跨阈值翻转时 setState——旋转/
   // 分屏拖动不再每帧整卡重渲染；显式偏好不订阅观察）
+  // T7.7：教师关闭手写辅助（ink）时草稿纸入口一并隐藏——草稿纸是 ink 辅助
+  // 入口（已有草稿数据保留服务端，恢复开关后回来看）。
+  const { ink: inkEnabled } = useEnabledCapabilities();
   const articleRef = useRef<HTMLElement | null>(null);
   const layoutPref = useNoteLayoutPreference();
   const sideUsable = useNoteSideUsable(articleRef, layoutPref === "auto");
   const layout = effectiveNoteLayout(layoutPref, sideUsable);
   const [noteOpen, setNoteOpen] = useState(false);
   const noteLayer =
-    attemptId !== undefined && !HANDWRITTEN_TYPES.has(question.type) ? (
+    inkEnabled &&
+    attemptId !== undefined &&
+    !HANDWRITTEN_TYPES.has(question.type) ? (
       <NoteLayer
         attemptId={attemptId}
         questionId={question.id}

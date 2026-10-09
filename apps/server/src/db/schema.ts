@@ -83,6 +83,14 @@ export const teachers = sqliteTable(
     /** MCP / 脚本调用用的 API Token（T4.6 起启用，D22：randomBytes(32) base64url，
      *  每教师一份、可重置；未生成时为 NULL。唯一索引允许多个 NULL（存量行不冲突）） */
     apiToken: text("api_token"),
+    /**
+     * 辅助能力启用集 JSON（T7.7 / 方案 §4.5）：capabilityProfileSchema 形态
+     * （{"enabledCapabilities":[…]}，值为 steps/ink 子集）。NULL = 未配置 =
+     * 全启用（缺省语义，存量行无需回填）；空数组 = 显式全关。学生端 attempt/
+     * 讲义读取接口按本列计算有效启用集下发；开关只影响辅助入口渲染，不是
+     * 安全边界。
+     */
+    capabilityProfileJson: text("capability_profile_json"),
     /** 创建时间：UTC ISO 字符串 */
     createdAt: text("created_at").notNull(),
   },

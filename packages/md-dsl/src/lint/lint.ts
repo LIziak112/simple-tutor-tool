@@ -1,10 +1,17 @@
-import type { DocumentKind, LintIssue, ParsedDocument } from "@tutor/contract";
+import type {
+  CapabilitySwitch,
+  DocumentKind,
+  LintIssue,
+  ParsedDocument,
+} from "@tutor/contract";
+import { toEnabledCapabilities } from "@tutor/contract";
 import type { Root } from "mdast";
 import type { ParseOptions } from "../v2/parse.ts";
 import { parseDocument } from "../v2/parse.ts";
 import { isQuestionContainer } from "../v2/question.ts";
 import { errorMessage, makeIssue, processor } from "../v2/shared.ts";
 import { lintBlankMarkerDollar } from "./blank-marker.ts";
+import { lintCapabilityProfile } from "./capability.ts";
 import { lintDirectives } from "./directives.ts";
 import { lintUnclosedContainers } from "./fences.ts";
 import { lintMathDelimiters } from "./math.ts";
@@ -28,10 +35,22 @@ export interface LintResult {
   readonly issues: LintIssue[];
 }
 
+/**
+ * lint 选项（T7.7 起在解析选项之上扩展）：
+ * - enabledCapabilities：教师辅助能力启用集（steps/ink 子集）。提供时对使用了
+ *   steps 或手写题型但对应开关关闭的位置给 CAPABILITY_DISABLED 回退提示；
+ *   未提供 = 无上下文按全启用（CLI 与默认导入不触发）。
+ */
+export interface LintOptions extends ParseOptions {
+  // enabledCapabilities 显式声明 | undefined（同 ParseOptions.fallbackUnitId
+  // 的放宽口径）：调用方可直传可能为 undefined 的值，无需条件展开体操
+  readonly enabledCapabilities?: readonly CapabilitySwitch[] | undefined;
+}
+
 /** 对 v2 DSL 文档做完整 lint：解析 + 规则校验，返回解析结果与合并排序后的全部 issue */
 export function lintDocument(
   md: string,
-  options: ParseOptions = {},
+  options: LintOptions = {},
 ): LintResult {
   const parsed = parseDocument(md, options);
   const extra = runRules(md, parsed, options);
@@ -43,7 +62,7 @@ export function lintDocument(
 function runRules(
   md: string,
   parsed: ParsedDocument,
-  options: ParseOptions,
+  options: LintOptions,
 ): LintIssue[] {
   try {
     // 与解析器同一套管线重新 parse（纯函数、无共享状态；lint 是 dry-run 场景，成本可接受）
@@ -61,6 +80,11 @@ function runRules(
       ...lintBlankMarkerDollar(tree),
       ...lintRawHtml(tree),
       ...lintEmptyPractice(parsed, tree),
+      // T7.7：启用集归一（缺省=全启用 → 规则零新增 issue；显式 undefined 同缺省）
+      ...lintCapabilityProfile(
+        tree,
+        toEnabledCapabilities(options.enabledCapabilities),
+      ),
     ];
   } catch (err) {
     return [

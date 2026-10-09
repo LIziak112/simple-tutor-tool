@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import type { ApiErr } from "@tutor/contract";
 import {
+  ALL_ENABLED_CAPABILITIES,
   apiErrSchema,
   studentLectureDetailOkSchema,
   studentLectureListOkSchema,
@@ -330,6 +331,50 @@ describe("GET /api/student/lectures/:id（讲义详情）", () => {
       headers: { cookie: `tutor_session=${extractSessionToken(login)}` },
     });
     expect(res.status).toBe(401);
+  });
+
+  it("T7.7 启用集随详情下发：默认全启用；教师全关后读时反映（刷新生效语义）；泄露断言不受影响", async () => {
+    const { app, studentCookie, teacherCookie } = await makeApp();
+    const list = await app.request("/api/student/lectures", {
+      headers: { cookie: studentCookie },
+    });
+    const lectureId = (
+      (await list.json()) as { data: { lectures: { id: string }[] } }
+    ).data.lectures[0]?.id;
+
+    // 默认（教师未配置）：全启用
+    const before = await app.request(`/api/student/lectures/${lectureId}`, {
+      headers: { cookie: studentCookie },
+    });
+    const beforeBody = (await before.json()) as {
+      data: { enabledCapabilities: string[] };
+    };
+    expect(studentLectureDetailOkSchema.safeParse(beforeBody).success).toBe(
+      true,
+    );
+    expect(beforeBody.data.enabledCapabilities).toEqual([
+      ...ALL_ENABLED_CAPABILITIES,
+    ]);
+    assertNoLeak(beforeBody);
+
+    // 教师全关 → 学生再次读取即新配置（读时计算，无推送）
+    const saved = await app.request(
+      "/api/teacher/settings/capability-profile",
+      {
+        method: "PUT",
+        headers: { "content-type": "application/json", cookie: teacherCookie },
+        body: JSON.stringify({ enabledCapabilities: [] }),
+      },
+    );
+    expect(saved.status).toBe(200);
+    const after = await app.request(`/api/student/lectures/${lectureId}`, {
+      headers: { cookie: studentCookie },
+    });
+    const afterBody = (await after.json()) as {
+      data: { enabledCapabilities: string[] };
+    };
+    expect(afterBody.data.enabledCapabilities).toEqual([]);
+    assertNoLeak(afterBody);
   });
 });
 

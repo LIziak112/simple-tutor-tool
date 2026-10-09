@@ -1,0 +1,1 @@
+ALTER TABLE `teachers` ADD `capability_profile_json` text;

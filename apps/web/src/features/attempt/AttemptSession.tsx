@@ -25,6 +25,10 @@ import {
 } from "@/features/attempt/use-draft-sync";
 import type { InkUploadController } from "@/features/attempt/use-ink-upload";
 import {
+  EnabledCapabilitiesProvider,
+  toEnabledCapabilities,
+} from "@/features/capability/enabled-capabilities";
+import {
   prepareSubmitEvidence,
   type SubmitEvidencePrep,
   type SubmitEvidenceProblem,
@@ -101,22 +105,26 @@ export function AttemptSession({
    * 由 AnswerView 的交卷成功回调写入、结果视图顶部横幅呈现。
    */
   const [annotationSealWarning, setAnnotationSealWarning] = useState(false);
-  if (isResultDetail(data)) {
-    return (
-      <AttemptResultWithDraftCleanup
-        data={data}
-        onBackHome={onExit}
-        annotationSealWarning={annotationSealWarning}
-      />
-    );
-  }
+  // T7.7：教师辅助能力启用集随卷下发（草稿/结果两视图同口径；详解内 steps
+  // 的揭晓渲染同样遵循开关）。页面挂载期取值——教师改配置后学生刷新生效。
+  const capabilities = toEnabledCapabilities(data.enabledCapabilities);
   return (
-    <AnswerView
-      data={data}
-      attemptId={data.attempt.id}
-      onBackHome={onExit}
-      onAnnotationSealFailed={() => setAnnotationSealWarning(true)}
-    />
+    <EnabledCapabilitiesProvider value={capabilities}>
+      {isResultDetail(data) ? (
+        <AttemptResultWithDraftCleanup
+          data={data}
+          onBackHome={onExit}
+          annotationSealWarning={annotationSealWarning}
+        />
+      ) : (
+        <AnswerView
+          data={data}
+          attemptId={data.attempt.id}
+          onBackHome={onExit}
+          onAnnotationSealFailed={() => setAnnotationSealWarning(true)}
+        />
+      )}
+    </EnabledCapabilitiesProvider>
   );
 }
 

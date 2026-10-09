@@ -259,6 +259,12 @@ export const LINT_RULES: readonly LintRuleDoc[] = [
       "题目 id 重复：同一文档内必须唯一（id 用于学情跨版本追踪），删除 id 属性或改成唯一值",
   },
   {
+    code: "CAPABILITY_DISABLED",
+    level: "warning",
+    description:
+      "使用了 steps 逐步揭晓或手写题型（solve/apply/find-error），但教师级辅助能力开关已关闭：学生端回退为完整展开全部步骤 / 隐藏手写与草稿入口（最终答案仍可提交，正式作答不受影响）。仅当 lint 携带教师启用集时触发——CLI 与未提供上下文的校验按全启用，不产生本提示",
+  },
+  {
     code: "LINT_INTERNAL_ERROR",
     level: "error",
     description: "linter 内部错误（这是 linter 缺陷，请反馈给开发者）",
