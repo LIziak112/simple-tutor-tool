@@ -185,34 +185,28 @@ describe("renderPromptTemplateMarkdown", () => {
 });
 
 describe("renderCapabilitiesManifest（T7.6 能力清单）", () => {
+  // 模块顶（demo-box 注册之前）解析一次，供多个用例共用
+  const manifest = capabilitiesManifestSchema.parse(
+    JSON.parse(manifestText) as unknown,
+  );
+  const byName = new Map(manifest.directives.map((d) => [d.name, d]));
+
   it("生成物是合法 JSON 且通过自身 schema（契约定义的清单形态）", () => {
-    const parsed: unknown = JSON.parse(manifestText);
-    const manifest = capabilitiesManifestSchema.parse(parsed);
     expect(manifest.formatVersion).toBe(1);
     expect(manifest.directives).toHaveLength(manifestDirectives.length);
   });
 
   it("指令集合等于 listDirectives 主名集合（全量收录、注册顺序，不写死数量）", () => {
-    const manifest = capabilitiesManifestSchema.parse(
-      JSON.parse(manifestText) as unknown,
-    );
     expect(manifest.directives.map((d) => d.name)).toEqual(
       manifestDirectives.map((d) => d.name),
     );
   });
 
   it("questionTypes 与契约题型能力表逐字段一致（单一来源嵌入）", () => {
-    const manifest = capabilitiesManifestSchema.parse(
-      JSON.parse(manifestText) as unknown,
-    );
     expect(manifest.questionTypes).toEqual(questionCapabilityBindings);
   });
 
   it("capability 标注与注册表一致；未声明为 null；全清单无 partial", () => {
-    const manifest = capabilitiesManifestSchema.parse(
-      JSON.parse(manifestText) as unknown,
-    );
-    const byName = new Map(manifest.directives.map((d) => [d.name, d]));
     expect(byName.get("blank")?.capability).toEqual({
       interaction: { inputType: "fill" },
       evidence: { format: "snapshot" },
@@ -224,10 +218,6 @@ describe("renderCapabilitiesManifest（T7.6 能力清单）", () => {
   });
 
   it("属性表数据层与规范.md 同源：image.src 必填无缺省、mark.color 缺省 yellow、difficulty 缺省 2", () => {
-    const manifest = capabilitiesManifestSchema.parse(
-      JSON.parse(manifestText) as unknown,
-    );
-    const byName = new Map(manifest.directives.map((d) => [d.name, d]));
     const attr = (directive: string, name: string) =>
       byName.get(directive)?.attrs.find((a) => a.name === name);
     expect(attr("image", "src")).toMatchObject({ required: true });

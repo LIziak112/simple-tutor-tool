@@ -425,7 +425,7 @@ export function renderCapabilitiesManifest(
         attrRowData(
           key,
           schema,
-          (def.attrDocs as Record<string, string | undefined>)[key],
+          ((def.attrDocs ?? {}) as Record<string, string | undefined>)[key],
         ),
       ),
       capability: def.capability ?? null,

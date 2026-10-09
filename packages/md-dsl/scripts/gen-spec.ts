@@ -94,6 +94,9 @@ function renderLearningPackPromptDoc(): string {
   return `${sections.join("\n")}\n`;
 }
 
+// T7.6 能力清单渲染一次，docs 侧与 kit 同步件共用同一字符串（逐字节一致的保证）
+const capabilitiesJson = renderCapabilitiesManifest(directives);
+
 const outputs: ReadonlyArray<{
   readonly file: string;
   readonly content: string;
@@ -104,6 +107,8 @@ const outputs: ReadonlyArray<{
   },
   { file: "提示词模板.md", content: renderPromptTemplateMarkdown(directives) },
   { file: "学情分析提示词.md", content: renderLearningPackPromptDoc() },
+  // T7.6 能力清单（HTTP /spec 数据源；kit 侧同步件用同一字符串）
+  { file: "schema/capabilities.json", content: capabilitiesJson },
 ];
 
 // 输出目录按脚本自身位置定位（../../.. 即仓库根），与运行时 cwd 无关
@@ -114,23 +119,12 @@ const repoRoot = join(
   "..",
 );
 const outDir = join(repoRoot, "docs", "dsl");
-await mkdir(outDir, { recursive: true });
+// mkdir schema/ 子目录（recursive 自动建出父目录 docs/dsl），outputs 统一走同一循环
+await mkdir(join(outDir, "schema"), { recursive: true });
 for (const { file, content } of outputs) {
   await writeFile(join(outDir, file), content, "utf8");
   console.log(`已生成 ${join(outDir, file)}（${content.length} 字符）`);
 }
-
-// T7.6 能力清单：docs/dsl/schema/capabilities.json（HTTP /spec 数据源）
-const capabilitiesJson = renderCapabilitiesManifest(directives);
-await mkdir(join(outDir, "schema"), { recursive: true });
-await writeFile(
-  join(outDir, "schema", "capabilities.json"),
-  capabilitiesJson,
-  "utf8",
-);
-console.log(
-  `已生成 ${join(outDir, "schema", "capabilities.json")}（${capabilitiesJson.length} 字符）`,
-);
 
 // dsl-kit 一站式分发包同步：规范三件套 + JSON Schema 复制进仓库根 dsl-kit/
 // （README.md 与 SKILL.md 手写维护，不经本脚本；拷贝与 docs/dsl 逐字节一致，

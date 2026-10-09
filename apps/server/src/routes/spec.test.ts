@@ -111,20 +111,16 @@ describe("GET /api/public/spec/:file（T1.13；T7.6 增 capabilities.json）", (
     }
   });
 
-  it("注入 specDir 指向的目录被使用；目录不存在时 500 SPEC_UNAVAILABLE（中文提示）", async () => {
+  it("注入 specDir 指向的目录被使用；目录不存在时 500 SPEC_UNAVAILABLE（中文提示；缺清单文件同路径）", async () => {
     const app = makeApp(join(tmpdir(), "t113-missing-dir"));
-    const res = await app.request("/api/public/spec/rules.md");
-    expect(res.status).toBe(500);
-    const body = (await res.json()) as ApiErr;
-    expect(body.ok).toBe(false);
-    expect(body.error).toBe("SPEC_UNAVAILABLE");
-    expect(body.message).toContain("规范文档缺失");
-    // 缺清单文件沿用既有规范文件错误（T7.6 验收：同一 SPEC_UNAVAILABLE 路径）
-    const capRes = await app.request("/api/public/spec/capabilities.json");
-    expect(capRes.status).toBe(500);
-    const capBody = (await capRes.json()) as ApiErr;
-    expect(capBody.error).toBe("SPEC_UNAVAILABLE");
-    expect(capBody.message).toContain("capabilities.json");
+    for (const file of ["rules.md", "capabilities.json"]) {
+      const res = await app.request(`/api/public/spec/${file}`);
+      expect(res.status, file).toBe(500);
+      const body = (await res.json()) as ApiErr;
+      expect(body.ok, file).toBe(false);
+      expect(body.error, file).toBe("SPEC_UNAVAILABLE");
+      expect(body.message, file).toContain("规范文档缺失");
+    }
   });
 
   it("SPEC_DIR 环境变量优先生效（覆盖缺省仓库根 docs/dsl）", async () => {
