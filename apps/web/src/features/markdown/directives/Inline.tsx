@@ -1,24 +1,29 @@
+import type { MarkDirectiveAttrs } from "@tutor/contract";
 import { cn } from "cn";
 import { useContext } from "react";
 import { blankAnswersContext } from "../BlankAnswersContext";
-import type { DirectiveProps } from "./types";
+import type { DirectiveBaseProps, DirectiveProps } from "./types";
 
 /**
  * 行内指令：:mark[文字]{color=…} 荧光笔重点标记、[[…]] 填空空框（blank 语法糖）。
  */
 
-/** mark 的高亮颜色（color 属性取值与注册表 schema 一致，缺省 yellow） */
-const MARK_COLORS: Readonly<Record<string, string>> = {
+/** mark 的高亮颜色（键类型从注册表 schema 输出推导，穷尽四种合法取值） */
+const MARK_COLORS: Readonly<Record<MarkDirectiveAttrs["color"], string>> = {
   yellow: "bg-yellow-200 dark:bg-yellow-400/30",
   red: "bg-red-200 dark:bg-red-400/30",
   blue: "bg-blue-200 dark:bg-blue-400/30",
   green: "bg-green-200 dark:bg-green-400/30",
 };
 
-export function MarkDirective({ attrs, children }: DirectiveProps) {
-  const color = MARK_COLORS[attrs.color ?? "yellow"] ?? MARK_COLORS.yellow;
+export function MarkDirective({
+  attrs,
+  children,
+}: DirectiveProps<MarkDirectiveAttrs>) {
   return (
-    <mark className={cn("rounded-sm px-0.5 text-inherit", color)}>
+    <mark
+      className={cn("rounded-sm px-0.5 text-inherit", MARK_COLORS[attrs.color])}
+    >
       {children}
     </mark>
   );
@@ -31,7 +36,7 @@ export function MarkDirective({ attrs, children }: DirectiveProps) {
  * - 作答形态（答题页提供了 BlankAnswersContext）：按空序编号渲染为内联输入框
  *   （触控目标 ≥44px，iPad 随手写可直接在框内转文字）。
  */
-export function BlankDirective({ index }: DirectiveProps) {
+export function BlankDirective({ index }: DirectiveBaseProps) {
   const answers = useContext(blankAnswersContext);
   if (answers !== null) {
     const blankIndex = Math.max(0, index - 1); // 编号 1 起 → 下标 0 起；未编号兜底第 1 空

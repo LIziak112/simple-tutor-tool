@@ -10,7 +10,6 @@ import {
   DirectiveTextHost,
   directiveComponents,
 } from "./directives";
-import { TipDirective } from "./directives/Callout";
 import { RichMarkdown } from "./RichMarkdown";
 import {
   DIRECTIVE_HOST_ATTRS,
@@ -43,10 +42,15 @@ describe("指令注册表与渲染映射一致性", () => {
   });
 
   it("多出一条组件映射时，同一个一致性断言会失败", () => {
+    // T7.2 起表值是「schema 绑定渲染器」，多出条目复用一条真实渲染器即可触发
+    const tip = directiveComponents.tip;
+    if (tip === undefined) {
+      throw new Error("fixture 前置失败：tip 渲染器缺失");
+    }
     expect(() =>
       assertComponentNamesConsistent({
         ...directiveComponents,
-        "extra-tip": TipDirective,
+        "extra-tip": tip,
       }),
     ).toThrow();
   });

@@ -1,8 +1,9 @@
+import type { FoldDirectiveAttrs, StepDirectiveAttrs } from "@tutor/contract";
 import { BookOpen, ChevronDown, KeyRound, Lightbulb } from "lucide-react";
 import { Children, createContext, useContext, useState } from "react";
 import { useDirectiveTelemetry } from "./expand-context";
 import { LabeledFold } from "./LabeledFold";
-import type { DirectiveProps } from "./types";
+import type { DirectiveBaseProps, DirectiveProps } from "./types";
 
 /**
  * 讲义互动指令：steps/step 逐步揭晓、fold 通用折叠、hint/answer/solution 预览折叠。
@@ -28,7 +29,7 @@ function useFoldTelemetry(
 }
 
 /** ::::steps 逐步揭晓容器：第一步默认可见，「显示下一步」逐个展开（触控目标 ≥44px） */
-export function StepsDirective({ children, docIndex }: DirectiveProps) {
+export function StepsDirective({ children, docIndex }: DirectiveBaseProps) {
   const [revealed, setRevealed] = useState(1);
   const total = Children.count(children);
   const remaining = total - revealed;
@@ -65,11 +66,15 @@ export function StepsDirective({ children, docIndex }: DirectiveProps) {
   );
 }
 
-/** :::step steps 中的一个步骤；title 缺省按顺序显示「第 N 步」 */
-export function StepDirective({ index, attrs, children }: DirectiveProps) {
+/** :::step steps 中的一个步骤；title 缺省空串，按顺序显示「第 N 步」 */
+export function StepDirective({
+  index,
+  attrs,
+  children,
+}: DirectiveProps<StepDirectiveAttrs>) {
   const revealed = useContext(StepsRevealContext);
   if (revealed < index) return null;
-  const title = attrs.title?.trim();
+  const title = attrs.title.trim();
   return (
     <li
       data-slot="step"
@@ -86,8 +91,12 @@ export function StepDirective({ index, attrs, children }: DirectiveProps) {
   );
 }
 
-/** :::fold 通用折叠块，title 缺省「详情」 */
-export function FoldDirective({ attrs, docIndex, children }: DirectiveProps) {
+/** :::fold 通用折叠块，title 缺省「详情」（schema 缺省；trim 后为空的书写值同落缺省） */
+export function FoldDirective({
+  attrs,
+  docIndex,
+  children,
+}: DirectiveProps<FoldDirectiveAttrs>) {
   const onToggle = useFoldTelemetry("fold", docIndex);
   return (
     <LabeledFold label={attrs.title?.trim() || "详情"} onToggle={onToggle}>
@@ -97,7 +106,11 @@ export function FoldDirective({ attrs, docIndex, children }: DirectiveProps) {
 }
 
 /** :::hint 提示：题目内带序号（提示 N），讲义内不编号 */
-export function HintDirective({ index, docIndex, children }: DirectiveProps) {
+export function HintDirective({
+  index,
+  docIndex,
+  children,
+}: DirectiveBaseProps) {
   const onToggle = useFoldTelemetry("hint", docIndex);
   return (
     <LabeledFold
@@ -111,7 +124,7 @@ export function HintDirective({ index, docIndex, children }: DirectiveProps) {
 }
 
 /** :::answer 手写题最终答案（教师侧机密）：预览折叠 + 琥珀色标识（不上报，机密内容学生端不下发） */
-export function AnswerDirective({ children }: DirectiveProps) {
+export function AnswerDirective({ children }: DirectiveBaseProps) {
   return (
     <LabeledFold
       label="最终答案"
@@ -124,7 +137,7 @@ export function AnswerDirective({ children }: DirectiveProps) {
 }
 
 /** :::solution 详解：预览折叠，交卷后才下发属学生端语义（本层不处理） */
-export function SolutionDirective({ docIndex, children }: DirectiveProps) {
+export function SolutionDirective({ docIndex, children }: DirectiveBaseProps) {
   const onToggle = useFoldTelemetry("solution", docIndex);
   return (
     <LabeledFold

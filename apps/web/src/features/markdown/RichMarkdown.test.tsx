@@ -362,7 +362,9 @@ describe("RichMarkdown：XSS 防护（rehype-sanitize）", () => {
   ])("自动推导白名单后，图片危险协议 %s 仍被剥除", (src) => {
     const { container } = renderMd(`::image{src="${src}"}\n\n正文保留。`);
     expect(container.querySelector("img")).toBeNull();
-    expect(container).toHaveTextContent("图片路径缺失");
+    // T7.2：危险协议被 sanitize 剥除后 src 缺失，注册表 schema 判必填
+    // 缺失 → 整体降级 UnknownDirective（比占位提示更强的失败关闭）
+    expect(container).toHaveTextContent("未支持指令：image");
     expect(container).toHaveTextContent("正文保留。");
   });
 

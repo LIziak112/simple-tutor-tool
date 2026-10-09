@@ -1,3 +1,4 @@
+import type { GraphDirectiveAttrs, ImageDirectiveAttrs } from "@tutor/contract";
 import type { FunctionPlotOptions } from "function-plot";
 import { ImageOff, RefreshCw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -22,14 +23,15 @@ function normalizeImageSrc(src: string): string {
 
 /**
  * ::image 块级图片：src 为服务端 blobs 路径（归一化为根相对），width 缺省自适应，
- * alt 缺省「图片」。三态齐全：加载成功 / 加载失败占位（onError 切入，不裂图）/
- * src 缺失提示。
+ * alt 缺省「图片」。src 必填已由注册表 schema 保证（缺失在渲染层降级），
+ * trim 后为空的书写值（schema min(1) 允许纯空白）仍走占位分支。三态齐全：
+ * 加载成功 / 加载失败占位（onError 切入，不裂图）/ 空白 src 提示。
  */
-export function ImageDirective({ attrs }: DirectiveProps) {
-  const src = attrs.src?.trim();
+export function ImageDirective({ attrs }: DirectiveProps<ImageDirectiveAttrs>) {
+  const src = attrs.src.trim();
   // 失败按 src 记录：文档编辑换图（src 变化）后不再命中，无需 effect 重置
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
-  if (!src || src.length === 0) {
+  if (src.length === 0) {
     return (
       <div className="my-3 flex min-h-11 items-center gap-2 rounded-xl border border-dashed border-border bg-muted/40 px-3 text-sm text-muted-foreground">
         <ImageOff aria-hidden className="size-4" />
@@ -68,9 +70,10 @@ export function ImageDirective({ attrs }: DirectiveProps) {
 
 type GraphState = "loading" | "ready" | "error";
 
-/** ::graph 函数图像：function-plot 动态加载渲染 */
-export function GraphDirective({ attrs }: DirectiveProps) {
-  const fn = attrs.fn?.trim() ?? "";
+/** ::graph 函数图像：function-plot 动态加载渲染。fn 必填已由注册表 schema
+ * 保证（缺失在渲染层降级），trim 后为空的书写值仍走占位分支。 */
+export function GraphDirective({ attrs }: DirectiveProps<GraphDirectiveAttrs>) {
+  const fn = attrs.fn.trim();
   const range = attrs.range?.trim();
   const hostRef = useRef<HTMLDivElement>(null);
   const [state, setState] = useState<GraphState>("loading");

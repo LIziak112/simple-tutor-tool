@@ -1,6 +1,12 @@
+import type {
+  BoxDirectiveAttrs,
+  TipDirectiveAttrs,
+  WarningDirectiveAttrs,
+} from "@tutor/contract";
 import { cn } from "cn";
 import { Info, TriangleAlert } from "lucide-react";
 import type { ReactNode } from "react";
+import type { DirectiveProps } from "./types";
 
 /**
  * 提示框族：tip（弱提示）/ warning（醒目警示）/ box（通用版式盒，按 .样式类 变体）。
@@ -56,14 +62,11 @@ export function Callout({ variant, title, children }: CalloutProps) {
   );
 }
 
-/** :::tip 提示框，title 缺省显示「提示」 */
+/** :::tip 提示框，title 缺省显示「提示」（UI 层文案缺省，schema 无 default） */
 export function TipDirective({
   attrs,
   children,
-}: {
-  attrs: Readonly<Record<string, string>>;
-  children?: ReactNode;
-}) {
+}: DirectiveProps<TipDirectiveAttrs>) {
   return (
     <Callout variant="tip" title={attrs.title?.trim() || "提示"}>
       {children}
@@ -71,14 +74,11 @@ export function TipDirective({
   );
 }
 
-/** :::warning 警告框，title 缺省显示「注意」 */
+/** :::warning 警告框，title 缺省显示「注意」（UI 层文案缺省，schema 无 default） */
 export function WarningDirective({
   attrs,
   children,
-}: {
-  attrs: Readonly<Record<string, string>>;
-  children?: ReactNode;
-}) {
+}: DirectiveProps<WarningDirectiveAttrs>) {
   return (
     <Callout variant="warning" title={attrs.title?.trim() || "注意"}>
       {children}
@@ -91,11 +91,7 @@ export function BoxDirective({
   attrs,
   directiveClass,
   children,
-}: {
-  attrs: Readonly<Record<string, string>>;
-  directiveClass?: string;
-  children?: ReactNode;
-}) {
+}: DirectiveProps<BoxDirectiveAttrs>) {
   const firstClass = directiveClass?.split(/\s+/).find((c) => c.length > 0);
   const variant: CalloutVariant =
     firstClass === "warning"
