@@ -12,10 +12,11 @@ import {
 } from "@tutor/md-dsl";
 import { describe, expect, it, vi } from "vitest";
 import {
-  fullSampleBlocks,
-  sampleFilesOfRepo,
+  allSampleDocs,
+  longestPlainTextOf,
 } from "../../../../../test-support/dsl-samples.ts";
 import { AttemptQuestionCard } from "./AttemptQuestionCard";
+import { HANDWRITTEN_TYPES } from "./answer-format";
 
 /**
  * T7.9 全部练习/混合样例题目的真实题卡渲染回归：
@@ -50,27 +51,13 @@ vi.mock("@/lib/api", () => ({
   })),
 }));
 
-/** 手写三题型（与题卡内 HANDWRITTEN_TYPES 同集合；渲染最终答案控件需 attemptId） */
-const HANDWRITTEN_TYPES: ReadonlySet<Question["type"]> = new Set([
-  "solve",
-  "apply",
-  "find-error",
-]);
-
 /** 全语料题目：samples/v2 自动发现的练习/混合文档 + 完整样例练习/混合块 */
 function collectSampleQuestions(): Array<{
   source: string;
   question: Question;
 }> {
-  const docs = [
-    ...sampleFilesOfRepo().map((file) => ({
-      name: `samples/v2/${file.name}`,
-      markdown: file.markdown,
-    })),
-    ...fullSampleBlocks(),
-  ];
   const out: Array<{ source: string; question: Question }> = [];
-  for (const doc of docs) {
+  for (const doc of allSampleDocs()) {
     for (const unit of parseDocument(doc.markdown).units) {
       for (const question of unit.questions) {
         out.push({ source: `${doc.name}#${question.id}`, question });
@@ -93,30 +80,6 @@ function toPublic(question: Question): QuestionPublic {
       : {}),
     hintCount: question.hints.length,
   });
-}
-
-/**
- * 题干最长纯文本片段（渲染后应原样出现在题卡文本里）：
- * 跳过指令行/选项任务列表/围栏/标题行，剥掉行内数学、空位标记与 :mark 标记，
- * 按空白与中文标点切段取最长。片段过短（题干几乎全是公式/指令）时由题型控件
- * 断言兜底，不强求文本 oracle。
- */
-function longestPlainText(stemMd: string): string {
-  const plain = stemMd
-    .split("\n")
-    .filter((line) => !/^\s*(?::{1,4}|```|[-*+]\s+\[|\d+[.)]\s|#)/.test(line))
-    .join(" ")
-    .replace(/\$[^$]*\$/g, " ")
-    .replace(/\[\[[^[\]]*\]\]/g, " ")
-    // :mark 行内指令三形态：先剥完整形态 [文本]{属性}，再剥单属性/单文本形态
-    .replace(/:[a-zA-Z-]+\[[^\]]*\]\{[^}]*\}/g, " ")
-    .replace(/:[a-zA-Z-]+\{[^}]*\}/g, " ")
-    .replace(/:[a-zA-Z-]+\[[^\]]*\]/g, " ");
-  const chunks = plain.split(/[\s。；，、：？！（）()]+/);
-  return chunks.reduce(
-    (best, chunk) => (chunk.length > best.length ? chunk : best),
-    "",
-  );
 }
 
 describe("全部样例题目真实题卡渲染（samples/v2 + 完整样例，T7.9）", () => {
@@ -166,8 +129,9 @@ describe("全部样例题目真实题卡渲染（samples/v2 + 完整样例，T7.
       `${source} 应渲染题号`,
     ).toBeInTheDocument();
 
-    // 题面文本 oracle：题干最长的纯文本片段出现在渲染结果里
-    const plain = longestPlainText(question.stemMd);
+    // 题面文本 oracle：题干最长的纯文本片段（AST 口径，见 dsl-samples）出现在渲染结果里；
+    // 片段过短（题干几乎全是公式/指令）时由题型控件断言兜底
+    const plain = longestPlainTextOf(question.stemMd);
     if (plain.length >= 4) {
       expect(
         (article?.textContent ?? "").replace(/\s+/g, ""),

@@ -1,10 +1,9 @@
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { listDirectives } from "@tutor/contract";
 import { describe, expect, it } from "vitest";
 import {
   directiveNamesOf,
   fullSampleBlocks,
+  fullSampleDocText,
+  missingDirectives,
 } from "../../../../test-support/dsl-samples.ts";
 import { lintDocument } from "../lint/lint.ts";
 
@@ -17,18 +16,21 @@ import { lintDocument } from "../lint/lint.ts";
  * 行内代码与代码块里的指令字样不再能伪造覆盖）。
  */
 
-const docPath = fileURLToPath(
-  new URL("../../../../docs/dsl/完整样例.md", import.meta.url),
-);
-const doc = readFileSync(docPath, "utf8");
-const blocks = fullSampleBlocks();
+const doc = fullSampleDocText();
+const blocks = fullSampleBlocks(doc);
+/** 每块只跑一轮 lintDocument，kind 与 issue 两类断言共用 */
+const blockLints = blocks.map((block) => lintDocument(block.markdown));
 
-/** 覆盖断言的口径函数：主名集合与注册表主名集合比对，返回缺口（空=全覆盖） */
-function missingDirectives(covered: ReadonlySet<string>): string[] {
-  const registry = new Set(
-    listDirectives().map((definition) => definition.name),
-  );
-  return [...registry].filter((name) => !covered.has(name)).sort();
+/** 多文档主名并集（正向覆盖与反向 fixture 共用同一收集口径） */
+function coveredUnionOf(
+  markdowns: readonly string[],
+  options?: Parameters<typeof directiveNamesOf>[1],
+): Set<string> {
+  const covered = new Set<string>();
+  for (const markdown of markdowns) {
+    for (const name of directiveNamesOf(markdown, options)) covered.add(name);
+  }
+  return covered;
 }
 
 describe("docs/dsl/完整样例.md", () => {
@@ -40,18 +42,15 @@ describe("docs/dsl/完整样例.md", () => {
 
   it("AST 恰有三个 markdown 样例代码块，kind 依次为 practice / lecture / mixed", () => {
     expect(blocks).toHaveLength(3);
-    const kinds = blocks.map(
-      (block) => lintDocument(block.markdown).parsed.frontmatter?.kind,
-    );
+    const kinds = blockLints.map((lint) => lint.parsed.frontmatter?.kind);
     expect(kinds).toEqual(["practice", "lecture", "mixed"]);
   });
 
   it("每个样例块 lint 0 issue（验收：完整样例可用作 few-shot）", () => {
-    for (const [index, block] of blocks.entries()) {
-      const { issues } = lintDocument(block.markdown);
+    for (const [index, lint] of blockLints.entries()) {
       expect(
-        issues,
-        `第 ${index + 1} 个样例块应 0 issue，实际：${issues
+        lint.issues,
+        `第 ${index + 1} 个样例块应 0 issue，实际：${lint.issues
           .map((i) => `${i.code}@${i.line}`)
           .join("、")}`,
       ).toEqual([]);
@@ -74,12 +73,8 @@ describe("docs/dsl/完整样例.md", () => {
   });
 
   it("AST 精确指令覆盖：三个样例块的主名并集 == 注册表主名集合（不写死数量）", () => {
-    const covered = new Set<string>();
-    for (const block of blocks) {
-      for (const name of directiveNamesOf(block.markdown)) covered.add(name);
-    }
     expect(
-      missingDirectives(covered),
+      missingDirectives(coveredUnionOf(blocks.map((block) => block.markdown))),
       "完整样例指令覆盖缺口（新注册指令需同步补样例）",
     ).toEqual([]);
   });
@@ -138,14 +133,12 @@ describe("指令覆盖断言的反向 fixture（防子串伪造，T7.9）", () =
   });
 
   it("删除真实 step 节点但保留 steps 时，覆盖缺口恰为 step（子串口径会连 steps 一起丢）", () => {
-    const covered = new Set<string>();
-    for (const block of blocks) {
-      for (const name of directiveNamesOf(block.markdown, {
+    const covered = coveredUnionOf(
+      blocks.map((block) => block.markdown),
+      {
         dropDirectives: ["step"],
-      })) {
-        covered.add(name);
-      }
-    }
+      },
+    );
     expect(covered.has("steps"), "steps 容器不受 step 删除影响").toBe(true);
     expect(missingDirectives(covered)).toEqual(["step"]);
   });

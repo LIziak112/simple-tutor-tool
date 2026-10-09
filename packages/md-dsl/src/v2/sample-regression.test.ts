@@ -10,11 +10,10 @@ import { join, relative, sep } from "node:path";
 import { parsedDocumentSchema } from "@tutor/contract";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  allSampleDocs,
   discoverSampleFiles,
   findRepoRoot,
-  fullSampleBlocks,
   requireMarkdownBlocks,
-  sampleFilesOfRepo,
 } from "../../../../test-support/dsl-samples.ts";
 import { parseDocument } from "./parse.ts";
 
@@ -115,26 +114,22 @@ describe("样例自动发现（discoverSampleFiles）", () => {
 });
 
 describe("全部样例解析回归（samples/v2 自动发现 + 完整样例三块）", () => {
-  const docs = [
-    ...sampleFilesOfRepo().map((file) => ({
-      name: `samples/v2/${file.name}`,
-      markdown: file.markdown,
-    })),
-    ...fullSampleBlocks(),
-  ];
+  const docs = allSampleDocs();
+  /** 每份文档只解析一次，三类断言（kind/契约/题目收集）共用 */
+  const parsedDocs = docs.map((d) => ({
+    name: d.name,
+    parsed: parseDocument(d.markdown),
+  }));
 
   it("样例来源非空，三种 kind 均有实际覆盖", () => {
     expect(docs.length).toBeGreaterThanOrEqual(4);
-    const kinds = new Set(
-      docs.map((d) => parseDocument(d.markdown).frontmatter?.kind),
-    );
+    const kinds = new Set(parsedDocs.map((d) => d.parsed.frontmatter?.kind));
     expect(kinds).toEqual(new Set(["practice", "lecture", "mixed"]));
   });
 
-  it.each(docs.map((d) => [d.name, d.markdown] as const))(
+  it.each(parsedDocs.map((d) => [d.name, d.parsed] as const))(
     "%s：parseDocument 通过 ParsedDocument 契约且 0 issue",
-    (name, markdown) => {
-      const parsed = parseDocument(markdown);
+    (name, parsed) => {
       expect(parsed.issues, `${name} 应维持样例零 issue 约定`).toEqual([]);
       expect(
         parsedDocumentSchema.safeParse(parsed).success,
@@ -143,19 +138,15 @@ describe("全部样例解析回归（samples/v2 自动发现 + 完整样例三�
     },
   );
 
-  it("练习/混合文档的题目全部可收集（纯练习不因 lectures 为空被跳过）", () => {
-    const questions = docs.flatMap((d) =>
-      parseDocument(d.markdown).units.flatMap((unit) => unit.questions),
-    );
-    expect(questions.length).toBeGreaterThanOrEqual(8);
-    const practiceSources = docs.filter(
-      (d) => parseDocument(d.markdown).frontmatter?.kind === "practice",
-    );
+  it("练习与混合文档的题目全部可收集（纯练习不因 lectures 为空被跳过）", () => {
+    const questionsOfKind = (kind: "practice" | "mixed") =>
+      parsedDocs
+        .filter((d) => d.parsed.frontmatter?.kind === kind)
+        .flatMap((d) => d.parsed.units.flatMap((unit) => unit.questions));
     expect(
-      practiceSources
-        .flatMap((d) => parseDocument(d.markdown).units)
-        .flatMap((unit) => unit.questions).length,
+      questionsOfKind("practice").length,
       "纯练习文档（lectures 为空）的题目必须进入回归语料",
     ).toBeGreaterThanOrEqual(8);
+    expect(questionsOfKind("mixed").length).toBeGreaterThanOrEqual(1);
   });
 });
