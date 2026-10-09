@@ -171,6 +171,17 @@ describe("DirectiveSessionContext（T7.3）", () => {
     );
   });
 
+  it("显式传 fill=null 同样视为覆盖：内层明确取消作答态（对称分支）", () => {
+    render(
+      <DirectiveSessionProvider fill={fillState({ values: ["x"] })}>
+        <DirectiveSessionProvider fill={null}>
+          <SessionProbe />
+        </DirectiveSessionProvider>
+      </DirectiveSessionProvider>,
+    );
+    expect(screen.getByTestId("probe").getAttribute("data-fill")).toBe("none");
+  });
+
   it("无任何 Provider：两个子命名空间均为缺省（fill=null、telemetry=null）", () => {
     render(<SessionProbe />);
     const probe = screen.getByTestId("probe");
