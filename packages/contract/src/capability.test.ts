@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  capabilitiesManifestSchema,
   questionCapabilityBindings,
   questionCapabilityBindingsSchema,
 } from "./capability";
@@ -102,5 +103,90 @@ describe("题型与指令的边界（不把 choice 当注册指令）", () => {
         `题型 ${type} 不应同时是注册指令名`,
       ).toBe(false);
     }
+  });
+});
+
+describe("能力清单 schema（T7.6 / 方案 §4.4）", () => {
+  /** 最小合法清单：一条未声明能力的指令 + 一条已声明指令 + 七型题型表 */
+  const minimalManifest = {
+    formatVersion: 1,
+    directives: [
+      {
+        name: "tip",
+        kind: "container",
+        attrs: [],
+        capability: null,
+      },
+      {
+        name: "blank",
+        kind: "text",
+        attrs: [
+          {
+            name: "answer",
+            type: "string",
+            required: true,
+            description: "填空答案",
+          },
+          {
+            name: "difficulty",
+            type: "number",
+            required: false,
+            default: 2,
+            description: "难度",
+          },
+        ],
+        capability: {
+          interaction: { inputType: "fill" },
+          evidence: { format: "snapshot" },
+        },
+      },
+    ],
+    questionTypes: questionCapabilityBindings,
+  };
+
+  it("最小合法清单通过（capability null=未声明；attrs 空数组合法；default 为原始值）", () => {
+    expect(capabilitiesManifestSchema.safeParse(minimalManifest).success).toBe(
+      true,
+    );
+  });
+
+  it("formatVersion 只认 1（版本演进时显式升版）", () => {
+    expect(
+      capabilitiesManifestSchema.safeParse({
+        ...minimalManifest,
+        formatVersion: 2,
+      }).success,
+    ).toBe(false);
+  });
+
+  it("条目缺 capability 键被拒（null 是显式值，不是缺省）", () => {
+    const noCap = {
+      ...minimalManifest,
+      directives: [{ name: "tip", kind: "container", attrs: [] }],
+    };
+    expect(capabilitiesManifestSchema.safeParse(noCap).success).toBe(false);
+  });
+
+  it("拼错键被 strictObject 拒绝（safeParse 入参为 unknown，此处只有 zod 闸）", () => {
+    expect(
+      capabilitiesManifestSchema.safeParse({
+        ...minimalManifest,
+        formatversion: 1,
+      }).success,
+    ).toBe(false);
+  });
+
+  it("questionTypes 少一种题型即整份清单被拒（复用穷尽 Record）", () => {
+    const incomplete = { ...questionCapabilityBindings } as Record<
+      string,
+      (typeof questionCapabilityBindings)[keyof typeof questionCapabilityBindings]
+    >;
+    delete incomplete.multi;
+    expect(
+      capabilitiesManifestSchema.safeParse({
+        ...minimalManifest,
+        questionTypes: incomplete,
+      }).success,
+    ).toBe(false);
   });
 });

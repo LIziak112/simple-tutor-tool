@@ -6,9 +6,9 @@ import { HttpError } from "./lib/http-error";
 
 /**
  * DSL 规范文件读取（T1.13）：GET /api/public/spec/:file 的数据源。
- * docs/dsl 的三份文档 + JSON Schema 是构建产物（规范.md/提示词模板.md/schema 由
- * pnpm gen:spec 生成），按静态产物直出（md/json 原文作为 body，不走统一壳），
- * 便于 AI 客户端 / MCP 原样拉取。
+ * docs/dsl 的三份文档 + JSON Schema + 能力清单（T7.6）是构建产物（规范.md/
+ * 提示词模板.md/schema/capabilities.json 由 pnpm gen:spec 生成），按静态产物
+ * 直出（md/json 原文作为 body，不走统一壳），便于 AI 客户端 / MCP 原样拉取。
  *
  * 目录解析（命中即用，specDirCandidates）：
  * 1. 注入覆盖（createApp options.specDir，测试/部署显式指定，只用该目录不回退）；
@@ -31,6 +31,7 @@ const SPEC_PHYSICAL_PATHS: Readonly<Record<SpecFileName, string>> = {
   "example.md": "完整样例.md",
   "prompt.md": "提示词模板.md",
   "schema.json": "schema/content.json",
+  "capabilities.json": "schema/capabilities.json",
 };
 
 /** spec 目录查找候选（顺序即优先级） */

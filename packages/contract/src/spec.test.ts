@@ -11,16 +11,17 @@ import {
  */
 
 describe("spec 文件名枚举与 Content-Type（T1.13）", () => {
-  it("枚举恰好包含四个文件，与架构文档 §3 /spec 路由一致", () => {
+  it("枚举恰好包含五个文件，与架构文档 §3 /spec 路由一致（T7.6 增 capabilities.json）", () => {
     expect([...specFileNames]).toEqual([
       "rules.md",
       "example.md",
       "prompt.md",
       "schema.json",
+      "capabilities.json",
     ]);
   });
 
-  it("schema 只接受四个合法文件名，其余拒绝", () => {
+  it("schema 只接受五个合法文件名，其余拒绝", () => {
     for (const name of specFileNames) {
       expect(specFileNameSchema.safeParse(name).success).toBe(true);
     }
@@ -51,6 +52,9 @@ describe("spec 文件名枚举与 Content-Type（T1.13）", () => {
       "text/markdown; charset=utf-8",
     );
     expect(specFileContentTypes["schema.json"]).toBe(
+      "application/json; charset=utf-8",
+    );
+    expect(specFileContentTypes["capabilities.json"]).toBe(
       "application/json; charset=utf-8",
     );
   });

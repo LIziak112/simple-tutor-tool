@@ -88,6 +88,59 @@ export const questionCapabilityBindingsSchema = z.record(
   questionTypeSchema,
   questionCapabilityBindingSchema,
 );
+
+/**
+ * 指令写法（§5.1.1(1) 三种固定语法，永远不新增写法）。
+ * 自 directives.ts 迁入（T7.6）：能力清单条目需要 kind，而 directives.ts 已
+ * 依赖本文件——schema 放这里避免反向依赖；directives.ts re-export 维持旧路径。
+ */
+export const directiveKindSchema = z.enum(["container", "leaf", "text"]);
+export type DirectiveKind = z.infer<typeof directiveKindSchema>;
+
+// ---------- 能力清单（capabilities.json，T7.6 / 方案 §4.4） ----------
+
+/**
+ * 清单指令条目的属性表一行：与规范.md 属性表同列同数据源（zod 内省 +
+ * attrDocs，渲染在 md-dsl gen.ts）。default 为原始值（数字/布尔/字符串），
+ * 非规范.md 的展示串；id/class 通用底座不列（说明统一在规范总则）。
+ */
+export const capabilityAttrSchema = z.strictObject({
+  name: z.string().min(1),
+  type: z.string().min(1),
+  required: z.boolean(),
+  default: z.union([z.string(), z.number(), z.boolean()]).optional(),
+  description: z.string().min(1),
+});
+export type CapabilityAttr = z.infer<typeof capabilityAttrSchema>;
+
+/**
+ * 清单指令条目：全量收录全部已注册指令（方案 §4.4 收录范围），未声明能力
+ * 的指令 capability 为 null——AI 消费需要完整指令面，null 即「无输入/证据
+ * 能力声明，行为与现状一致」。
+ */
+export const directiveCapabilityEntrySchema = z.strictObject({
+  name: z.string().min(1),
+  kind: directiveKindSchema,
+  attrs: z.array(capabilityAttrSchema),
+  capability: directiveCapabilitySchema.nullable(),
+});
+export type DirectiveCapabilityEntry = z.infer<
+  typeof directiveCapabilityEntrySchema
+>;
+
+/**
+ * 能力清单（capabilities.json）schema：formatVersion=1；directives 全量指令；
+ * questionTypes 复用题型能力表 schema（键=题型、值=桥接表项）。生成侧只读
+ * 契约注册表与题型表（不导入服务端 grading 函数，方案 §4.4），经 gen:spec、
+ * /api/public/spec/capabilities.json、MCP describe_capabilities、dsl-kit/ 四路
+ * 分发——对 AI 只描述既有能力，不做能力承诺。
+ */
+export const capabilitiesManifestSchema = z.strictObject({
+  formatVersion: z.literal(1),
+  directives: z.array(directiveCapabilityEntrySchema).min(1),
+  questionTypes: questionCapabilityBindingsSchema,
+});
+export type CapabilitiesManifest = z.infer<typeof capabilitiesManifestSchema>;
 export const questionCapabilityBindings: Record<
   QuestionType,
   QuestionCapabilityBinding

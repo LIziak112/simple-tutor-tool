@@ -38,7 +38,7 @@ import { readSpecFile } from "../spec-files";
 
 /**
  * MCP 工具注册（T4.6，D23 清单定稿 11 个 + 媒体管线第三单增补 upload_image
- * + AI 侧 zip 打包上传导入 import_zip，共 13 个）。
+ * + AI 侧 zip 打包上传导入 import_zip，共 13 个；T7.6 增 describe_capabilities，共 14 个）。
  *
  * 全部工具绑定 token 教师域（teacherId 来自鉴权中间件，不信任客户端入参）；
  * 返回统一用 SDK content 结构（text；JSON 数据序列化后作为文本——AI 阅读
@@ -275,7 +275,7 @@ export function mcpLearningPackRequestOf(
 // ---------- 工具注册 ----------
 
 /**
- * 创建一台绑定单教师的 MCP 服务器实例（13 工具）。
+ * 创建一台绑定单教师的 MCP 服务器实例（14 工具）。
  * stateless 挂载下每个 HTTP 请求新建一个实例（注册开销可忽略，无跨请求状态）。
  */
 export function createMcpServer(deps: McpServerDeps): McpServer {
@@ -712,6 +712,23 @@ export function createMcpServer(deps: McpServerDeps): McpServer {
       // dry-run：previewImport 不传 dataDir（图片还没传，IMAGE_SRC_NOT_FOUND
       // 会误导 AI），配对/冲突/未配对状态由报告单独给出——零写入
       return jsonContent(previewZipImport(db, teacherId, runInput));
+    }),
+  );
+
+  // 14. describe_capabilities：能力清单（T7.6，与 get_dsl_spec 并列的只读规范件）
+  server.registerTool(
+    "describe_capabilities",
+    {
+      description:
+        "获取内容 DSL 的能力清单（capabilities.json 原文）：全部已注册指令的输入/证据/校验三面能力标注（未声明的指令为 null）与七种题型的输入、证据、判分形态与内置校验器。说明：evidence 的 snapshot 描述既有作答快照/交互事件、ink-strokes 描述既有笔迹存储——是可采集形式而非每题必有；validation.shape 的 partial 仅是词表保留值，本阶段没有实现也没有声明，不要当作可用能力。与 get_dsl_spec（规范与样例）并列：写内容前先读规范，需要能力面信息时读本清单。",
+      inputSchema: {},
+      annotations: { readOnlyHint: true },
+    },
+    guard(async () => {
+      // 复用 readSpecFile：与 HTTP /api/public/spec/capabilities.json 同一数据源
+      // （同 mtime 缓存），HTTP 与 MCP 内容逐字节一致
+      const manifest = await readSpecFile("capabilities.json", specDir);
+      return textContent(manifest.content);
     }),
   );
 

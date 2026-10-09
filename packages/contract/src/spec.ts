@@ -10,17 +10,18 @@ import { z } from "zod";
  * 文件与 docs/dsl 的物理映射（rules.md → 规范.md 等）属服务端部署细节，不进契约。
  */
 
-/** /api/public/spec/:file 提供的四个文件（docs/dsl 三份文档 + JSON Schema） */
+/** /api/public/spec/:file 提供的五个文件（docs/dsl 三份文档 + JSON Schema + 能力清单） */
 export const specFileNames = [
   "rules.md",
   "example.md",
   "prompt.md",
   "schema.json",
+  "capabilities.json",
 ] as const;
 
 export type SpecFileName = (typeof specFileNames)[number];
 
-/** 请求参数校验：file 路径参数只允许四个枚举值 */
+/** 请求参数校验：file 路径参数只允许五个枚举值 */
 export const specFileNameSchema = z.enum(specFileNames);
 
 /** 每个文件的响应 Content-Type（md 统一 text/markdown，json 为 application/json） */
@@ -29,4 +30,5 @@ export const specFileContentTypes: Readonly<Record<SpecFileName, string>> = {
   "example.md": "text/markdown; charset=utf-8",
   "prompt.md": "text/markdown; charset=utf-8",
   "schema.json": "application/json; charset=utf-8",
+  "capabilities.json": "application/json; charset=utf-8",
 };

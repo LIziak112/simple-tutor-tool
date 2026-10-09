@@ -2,9 +2,17 @@ import { z } from "zod";
 
 import {
   type DirectiveCapability,
+  type DirectiveKind,
   directiveCapabilitySchema,
+  directiveKindSchema,
 } from "./capability.ts";
 import { questionTypeSchema } from "./content.ts";
+
+export type { DirectiveKind } from "./capability.ts";
+// kind 的 schema 与类型自本文件迁至 capability.ts（T7.6：能力清单条目需要 kind，
+// 而 directives.ts 已依赖 capability.ts——schema 放低层文件避免反向依赖）；
+// 此处 re-export 维持既有导入路径不变（单一来源仍是 capability.ts）。
+export { directiveKindSchema } from "./capability.ts";
 
 /**
  * 指令注册表（DSL v2 可扩展性的核心）。
@@ -36,10 +44,6 @@ import { questionTypeSchema } from "./content.ts";
  *    细粒度结构规则（step 必须是 steps 直接子级、question 不可嵌套等）由解析器/linter
  *    依据语法树实现，不在注册表表达。
  */
-
-/** 指令写法（§5.1.1(1) 三种固定语法，永远不新增写法） */
-export const directiveKindSchema = z.enum(["container", "leaf", "text"]);
-export type DirectiveKind = z.infer<typeof directiveKindSchema>;
 
 /**
  * 指令允许出现的位置（粗粒度语境，供 T1.5 linter 校验）：

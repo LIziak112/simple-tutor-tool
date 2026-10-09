@@ -2,9 +2,10 @@
  * gen:spec 脚本入口（T1.7）：从指令注册表 + lint 规则清单生成
  * docs/dsl/规范.md 与 docs/dsl/提示词模板.md；T4.3 起追加第三个输出
  * docs/dsl/学情分析提示词.md（五种任务目标的完整提示词模板，人读版；
- * T6R.16 增第五目标 per-question-review 逐题评析）；
- * dsl-kit 起（一站式分发包）另把规范三件套 + content.json 同步拷贝进
- * 仓库根 dsl-kit/（README.md / SKILL.md 手写维护，不经本脚本）。
+ * T6R.16 增第五目标 per-question-review 逐题评析）；T7.6 起追加第四个输出
+ * docs/dsl/schema/capabilities.json（能力清单：全量指令能力三面 + 题型表）；
+ * dsl-kit 起（一站式分发包）另把规范三件套 + content.json + capabilities.json
+ * 同步拷贝进仓库根 dsl-kit/（README.md / SKILL.md 手写维护，不经本脚本）。
  * 运行：根目录 `pnpm gen:spec`（本脚本与 contract 的 export-schema 串联，
  * 一次命令全量刷新规范、两份提示词模板与 JSON Schema）。
  *
@@ -25,6 +26,7 @@ import {
 } from "@tutor/contract";
 import { LINT_RULES } from "../src/lint/rules.ts";
 import {
+  renderCapabilitiesManifest,
   renderPromptTemplateMarkdown,
   renderSpecMarkdown,
 } from "../src/spec/gen.ts";
@@ -92,6 +94,9 @@ function renderLearningPackPromptDoc(): string {
   return `${sections.join("\n")}\n`;
 }
 
+// T7.6 能力清单渲染一次，docs 侧与 kit 同步件共用同一字符串（逐字节一致的保证）
+const capabilitiesJson = renderCapabilitiesManifest(directives);
+
 const outputs: ReadonlyArray<{
   readonly file: string;
   readonly content: string;
@@ -102,6 +107,8 @@ const outputs: ReadonlyArray<{
   },
   { file: "提示词模板.md", content: renderPromptTemplateMarkdown(directives) },
   { file: "学情分析提示词.md", content: renderLearningPackPromptDoc() },
+  // T7.6 能力清单（HTTP /spec 数据源；kit 侧同步件用同一字符串）
+  { file: "schema/capabilities.json", content: capabilitiesJson },
 ];
 
 // 输出目录按脚本自身位置定位（../../.. 即仓库根），与运行时 cwd 无关
@@ -112,7 +119,8 @@ const repoRoot = join(
   "..",
 );
 const outDir = join(repoRoot, "docs", "dsl");
-await mkdir(outDir, { recursive: true });
+// mkdir schema/ 子目录（recursive 自动建出父目录 docs/dsl），outputs 统一走同一循环
+await mkdir(join(outDir, "schema"), { recursive: true });
 for (const { file, content } of outputs) {
   await writeFile(join(outDir, file), content, "utf8");
   console.log(`已生成 ${join(outDir, file)}（${content.length} 字符）`);
@@ -138,6 +146,8 @@ const kitCopies: ReadonlyArray<{ file: string; content: string }> = [
     file: "schema/content.json",
     content: await readFile(join(outDir, "schema", "content.json"), "utf8"),
   },
+  // 能力清单按清单/方案口径放 dsl-kit 根路径（与 schema/ 子目录的 content.json 不同）
+  { file: "capabilities.json", content: capabilitiesJson },
 ];
 await mkdir(join(kitDir, "schema"), { recursive: true });
 for (const { file, content } of kitCopies) {

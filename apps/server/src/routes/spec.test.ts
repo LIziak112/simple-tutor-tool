@@ -41,8 +41,8 @@ afterEach(() => {
   }
 });
 
-describe("GET /api/public/spec/:file（T1.13）", () => {
-  it("四个文件全部 200，Content-Type 与关键内容正确（无 Cookie 公开访问）", async () => {
+describe("GET /api/public/spec/:file（T1.13；T7.6 增 capabilities.json）", () => {
+  it("五个文件全部 200，Content-Type 与关键内容正确（无 Cookie 公开访问）", async () => {
     const app = makeApp();
 
     const rules = await app.request("/api/public/spec/rules.md");
@@ -79,6 +79,24 @@ describe("GET /api/public/spec/:file（T1.13）", () => {
     expect(schemaText).toContain("questionPublic");
     // body 必须是合法 JSON（AI 客户端会原样解析）
     expect(() => JSON.parse(schemaText)).not.toThrow();
+
+    const capabilities = await app.request(
+      "/api/public/spec/capabilities.json",
+    );
+    expect(capabilities.status).toBe(200);
+    expect(capabilities.headers.get("content-type")).toBe(
+      "application/json; charset=utf-8",
+    );
+    const capabilitiesText = await capabilities.text();
+    // 合法 JSON，含清单结构与指令/题型标记（T7.6）
+    const manifest = JSON.parse(capabilitiesText) as {
+      formatVersion: number;
+      directives: Array<{ name: string }>;
+      questionTypes: Record<string, unknown>;
+    };
+    expect(manifest.formatVersion).toBe(1);
+    expect(manifest.directives.map((d) => d.name)).toContain("question");
+    expect(Object.keys(manifest.questionTypes)).toContain("find-error");
   });
 
   it("未知文件名 → 404 统一错误壳", async () => {
@@ -93,14 +111,16 @@ describe("GET /api/public/spec/:file（T1.13）", () => {
     }
   });
 
-  it("注入 specDir 指向的目录被使用；目录不存在时 500 SPEC_UNAVAILABLE（中文提示）", async () => {
+  it("注入 specDir 指向的目录被使用；目录不存在时 500 SPEC_UNAVAILABLE（中文提示；缺清单文件同路径）", async () => {
     const app = makeApp(join(tmpdir(), "t113-missing-dir"));
-    const res = await app.request("/api/public/spec/rules.md");
-    expect(res.status).toBe(500);
-    const body = (await res.json()) as ApiErr;
-    expect(body.ok).toBe(false);
-    expect(body.error).toBe("SPEC_UNAVAILABLE");
-    expect(body.message).toContain("规范文档缺失");
+    for (const file of ["rules.md", "capabilities.json"]) {
+      const res = await app.request(`/api/public/spec/${file}`);
+      expect(res.status, file).toBe(500);
+      const body = (await res.json()) as ApiErr;
+      expect(body.ok, file).toBe(false);
+      expect(body.error, file).toBe("SPEC_UNAVAILABLE");
+      expect(body.message, file).toContain("规范文档缺失");
+    }
   });
 
   it("SPEC_DIR 环境变量优先生效（覆盖缺省仓库根 docs/dsl）", async () => {

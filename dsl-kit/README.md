@@ -6,8 +6,8 @@
 >
 > **固定位置约定**：规范与校验永远从这里找，不用到处翻。
 > 其中 `规范.md`、`完整样例.md`、`提示词模板.md`、`schema/content.json`、
-> `tutor-lint.mjs` 由仓库 `pnpm gen:spec` 自动同步/打包（与 `docs/dsl/` 同源），
-> **请勿手改**；`README.md` 与 `SKILL.md` 手写维护。
+> `capabilities.json`、`tutor-lint.mjs` 由仓库 `pnpm gen:spec` 自动同步/打包
+> （与 `docs/dsl/` 同源），**请勿手改**；`README.md` 与 `SKILL.md` 手写维护。
 
 ## 文件清单
 
@@ -17,6 +17,7 @@
 | [完整样例.md](完整样例.md) | 三种 kind 的完整可复制样例（给 AI 的 few-shot 首选） | 手写（随仓库） |
 | [提示词模板.md](提示词模板.md) | 出题提示词模板，与规范、样例一起发给 AI | 自动生成 |
 | [schema/content.json](schema/content.json) | 题目/单元/讲义结构化字段的 JSON Schema | 自动导出 |
+| [capabilities.json](capabilities.json) | 指令能力三面与题型判分形态的机器可读清单（capability 未声明为 null） | 自动生成 |
 | [tutor-lint.mjs](tutor-lint.mjs) | **可独立运行的校验脚本**（单文件零依赖，Node ≥20）：`node tutor-lint.mjs <文件或目录>`，与仓库 `pnpm tutor-lint` 同一 linter、行为一致；有 error 退出码 1 | 自动打包 |
 | [SKILL.md](SKILL.md) | 「材料整理」技能：让 AI 按固定工作流整理材料并自校验 | 手写 |
 
@@ -39,10 +40,11 @@ AI，让它按规范产出 Markdown。产出后用下面「怎么校验」任一
 部署了 simple-tutor-tool 的用户可以不经文件夹直接用服务器能力：
 
 - **MCP**：地址 `<你的服务器>/mcp`（教师 API Token 鉴权）。相关工具：
-  `get_dsl_spec`（取规范与样例）、`lint_markdown`（校验）、`upload_image`
+  `get_dsl_spec`（取规范与样例）、`describe_capabilities`（取能力清单）、
+  `lint_markdown`（校验）、`upload_image`
   （传图取回 src）、`import_markdown` / `import_zip`（导入）；
 - **`/spec` 路由**：`/spec/rules.md`、`/spec/example.md`、`/spec/prompt.md`、
-  `/spec/schema.json` 随时取最新规范，链接直接发给 AI 即可。
+  `/spec/schema.json`、`/spec/capabilities.json` 随时取最新规范，链接直接发给 AI 即可。
 
 ## 怎么校验产出的 MD（任选其一，推荐顺序从上到下）
 
