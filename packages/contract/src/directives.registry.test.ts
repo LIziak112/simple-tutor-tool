@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
+import type { DirectiveCapability } from "./capability";
 import { defineDirective, getDirective, listDirectives } from "./directives";
 
 /**
@@ -14,6 +15,7 @@ function testDirective(overrides: {
   kind?: "container" | "leaf" | "text";
   aliases?: string[];
   example?: string;
+  capability?: DirectiveCapability;
 }) {
   const name = overrides.name ?? "t-test-demo";
   return defineDirective({
@@ -26,6 +28,9 @@ function testDirective(overrides: {
     example: overrides.example ?? `:::${name}\n内容\n:::`,
     // exactOptionalPropertyTypes：undefined 不能显式赋给可选属性，条件展开
     ...(overrides.aliases === undefined ? {} : { aliases: overrides.aliases }),
+    ...(overrides.capability === undefined
+      ? {}
+      : { capability: overrides.capability }),
   });
 }
 
@@ -211,5 +216,73 @@ describe("指令定义校验（注册期 fail fast）", () => {
         example: ":::t-test-attrdocs-bad\n内容\n:::",
       }),
     ).toThrow(/attrDocs.*titel|titel.*attrDocs/);
+  });
+});
+
+describe("能力三面注册期校验（T7.4，方案 §4.3）", () => {
+  it("ink-strokes 证据必须配 ink 输入，否则注册失败", () => {
+    expect(() =>
+      testDirective({
+        name: "t-test-cap-bad-ink",
+        capability: {
+          interaction: { inputType: "none" },
+          evidence: { format: "ink-strokes" },
+        },
+      }),
+    ).toThrow(/ink-strokes.*ink|ink.*ink-strokes/);
+    // 缺 interaction 面同样不满足"配 ink"
+    expect(() =>
+      testDirective({
+        name: "t-test-cap-bad-ink2",
+        capability: { evidence: { format: "ink-strokes" } },
+      }),
+    ).toThrow(/ink-strokes/);
+  });
+
+  it("none + snapshot 合法（折叠遥测形态），注册后按原样可查", () => {
+    const capability = {
+      interaction: { inputType: "none" },
+      evidence: { format: "snapshot" },
+    } as const;
+    testDirective({ name: "t-test-cap-fold-like", capability });
+    expect(getDirective("t-test-cap-fold-like")?.capability).toEqual(
+      capability,
+    );
+  });
+
+  it("steps + snapshot、fill + snapshot 等既有标注组合合法", () => {
+    expect(() =>
+      testDirective({
+        name: "t-test-cap-steps-like",
+        capability: {
+          interaction: { inputType: "steps" },
+          evidence: { format: "snapshot" },
+        },
+      }),
+    ).not.toThrow();
+    expect(() =>
+      testDirective({
+        name: "t-test-cap-fill-like",
+        capability: {
+          interaction: { inputType: "fill" },
+          evidence: { format: "snapshot" },
+        },
+      }),
+    ).not.toThrow();
+  });
+
+  it("缺省 capability 合法（未声明的指令行为不变）", () => {
+    expect(() => testDirective({ name: "t-test-cap-absent" })).not.toThrow();
+    expect(getDirective("t-test-cap-absent")?.capability).toBeUndefined();
+  });
+
+  it("capability 键拼错被 strictObject 拒绝（注册期暴露）", () => {
+    expect(() =>
+      testDirective({
+        name: "t-test-cap-typo",
+        // @ts-expect-error 故意拼错键（inputTypes≠inputType）：验证注册期 strictObject 拒绝，类型与 zod 双闸
+        capability: { interaction: { inputTypes: "none" } },
+      }),
+    ).toThrow(/不合法/);
   });
 });

@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { questionTypeSchema } from "./content";
-import { listDirectives } from "./directives";
 import {
   questionCapabilityBindings,
   questionCapabilityBindingsSchema,
 } from "./capability";
+import { questionTypeSchema } from "./content";
+import { listDirectives } from "./directives";
 
 /**
  * 能力三面词表与题型桥接表测试（T7.4 / 方案 §4.3）：
@@ -77,9 +77,9 @@ describe("questionCapabilityBindings（T7.4 题型桥接表）", () => {
       (typeof questionCapabilityBindings)[keyof typeof questionCapabilityBindings]
     >;
     delete incomplete.judge;
-    expect(
-      questionCapabilityBindingsSchema.safeParse(incomplete).success,
-    ).toBe(false);
+    expect(questionCapabilityBindingsSchema.safeParse(incomplete).success).toBe(
+      false,
+    );
   });
 });
 

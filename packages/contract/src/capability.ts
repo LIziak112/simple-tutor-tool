@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { questionTypeSchema, type QuestionType } from "./content.ts";
+import { type QuestionType, questionTypeSchema } from "./content.ts";
 
 /**
  * 指令能力三面与题型桥接表（T7.4 / 方案 §4.3）。
@@ -46,7 +46,9 @@ export type ValidationShape = z.infer<typeof validationShapeSchema>;
  * 字符串，为后续每面增字段留形；strictObject 拒绝拼错键，注册期即暴露。
  */
 export const directiveCapabilitySchema = z.strictObject({
-  interaction: z.strictObject({ inputType: directiveInputTypeSchema }).optional(),
+  interaction: z
+    .strictObject({ inputType: directiveInputTypeSchema })
+    .optional(),
   evidence: z.strictObject({ format: evidenceFormatSchema }).optional(),
   validation: z.strictObject({ shape: validationShapeSchema }).optional(),
 });

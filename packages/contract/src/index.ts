@@ -16,6 +16,10 @@ export * from "./auth.ts";
 /** 备份与恢复 API 契约（T4.5 起为权威定义，依据 Phase4 清单 §2 D20/D21）：快照列表、
  *  恢复（multipart zip + 登录密码）摘要、上传上限与保留份数、错误码 */
 export * from "./backup-api.ts";
+/** 指令能力三面与题型桥接表（T7.4 起为权威定义，方案 §4.3）：interaction/evidence/validation
+ *  词表、directiveCapabilitySchema、questionCapabilityBindings（服务端 T7.5 校验器路由与
+ *  T7.6 capabilities.json 的数据源；只描述既有行为，不生成新控件或判分算法） */
+export * from "./capability.ts";
 /** 内容契约（DSL v2）：题目、讲义、单元、解析结果、lint issue，T1.1 起为权威定义 */
 export * from "./content.ts";
 /** 内容导入 API 契约（T1.10 起为权威定义）：导入预览/提交请求体与响应、LINT_ERROR 错误壳 */
