@@ -1052,16 +1052,23 @@ export const notes = sqliteTable(
 );
 
 /**
- * 备份快照引用列清单（T6R.14 /simplify C9 单源）：GC 备份引用保留清单
- * （backup-service.collectBackupReferencedPaths）从快照 db 读取的
- * (表, 路径列) 对。**消费方 backup-service 与 notes 表定义在此同源**——
- * 表改名靠本常量同步；失败语义不对称的原因：列名改了 SELECT 抛错 →
- * unreadable 计数触发保守 fail-safe（宁可不删），表名改了则静默按
- * 「表不存在」零引用——后者只能靠本常量与表定义同文件保证同步。
+ * 备份快照引用列清单（T6R.14 /simplify C9 单源；T6R.23 P1-3/P2-1 扩列）：
+ * GC 备份引用保留清单（backup-service.collectBackupReferencedPaths）从
+ * 快照 db 读取的 (表, 路径列) 对——**所有含 DATA_DIR 相对 blob 文件引用
+ * 的表**在此登记（notes 表族 / ink 笔迹两列 / 0027 标注两表）。
+ * **消费方 backup-service 与各表定义在此同源**——表改名靠本常量同步；
+ * 失败语义不对称的原因：列名改了 SELECT 抛错 → unreadable 计数触发保守
+ * fail-safe（宁可不删），表名改了则静默按「表不存在」零引用——后者只能
+ * 靠本常量与表定义同文件保证同步。可空列（annotation_bases.image_path、
+ * annotations.body_path）的 NULL 行不是文件引用，由消费方跳过。
  */
-export const NOTE_BACKUP_REF_COLUMNS = [
+export const BLOB_BACKUP_REF_COLUMNS = [
   ["note_versions", "body_path"],
   ["note_images", "path"],
+  ["ink", "strokes_path"],
+  ["ink", "png_path"],
+  ["annotation_bases", "image_path"],
+  ["annotations", "body_path"],
 ] as const;
 
 /**

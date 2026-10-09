@@ -20,7 +20,7 @@ import { eq } from "drizzle-orm";
 import type { Logger } from "pino";
 import { verifyPassword } from "../auth/password";
 import type { Db, DbHandle } from "../db/client";
-import { NOTE_BACKUP_REF_COLUMNS, teachers } from "../db/schema";
+import { BLOB_BACKUP_REF_COLUMNS, teachers } from "../db/schema";
 import { HttpError } from "../lib/http-error";
 import { readZipEntries, type ZipEntry, ZipReadError } from "../lib/zip-read";
 import { beijingExportStampOf } from "./export-csv";
@@ -145,11 +145,14 @@ export function listSnapshots(dataDir: string): BackupSnapshot[] {
 /**
  * 收集现存备份快照引用的 blobs 存储路径（T6R.14 GC 备份引用保留清单的
  * 扫描件，唯一消费方 note-service.gcNoteVersions）：逐个只读打开 backups/
- * 快照，取 note_versions.body_path 与 note_images.path 的**原始存储路径**
- * （相对 DATA_DIR；notes 域内的对账键归一〔越界判定/小写〕是 notes 侧
- * 单一实现，本函数不复制）。
+ * 快照，取 BLOB_BACKUP_REF_COLUMNS 登记的各表路径列（notes 表族 / ink /
+ * 0027 标注两表）的**原始存储路径**（相对 DATA_DIR；notes 域内的对账键
+ * 归一〔越界判定/小写〕是 notes 侧单一实现，本函数不复制）。
  * - 枚举经 listSnapshots（快照命名模式单一来源）；
- * - 旧快照可能没有 notes 表族（T6R.2 之前的库）——按零引用处理，不视为损坏；
+ * - 旧快照可能缺其中部分表（T6R.2 之前的库无 notes 表族、0027 之前的库
+ *   无 annotation 两表）——按零引用处理，不视为损坏；
+ * - 可空路径列的 NULL 行（pending 底图 / revision=0 标注）不是文件引用，
+ *   跳过不入清单；
  * - 单个快照打开/读取失败（损坏/非 SQLite）→ unreadable 计一并**丢弃该
  *   快照已读的半截路径**（中途出错不可信），其余快照继续；
  * - 无 backups 目录 → 零引用零计数（GC 既有 worlds 不受影响）。
@@ -183,15 +186,20 @@ export function collectBackupReferencedPaths(dataDir: string): {
         const tableExists = (table: string): boolean =>
           tableNames.some((row) => row.name === table);
         collected = [];
-        // (表,列) 对由 db/schema NOTE_BACKUP_REF_COLUMNS 单源（C9）——
-        // 与 notes 表定义同文件保证表名同步；列名漂移则 SELECT 抛错走
-        // unreadable 保守 fail-safe
-        for (const [table, column] of NOTE_BACKUP_REF_COLUMNS) {
+        // (表,列) 对由 db/schema BLOB_BACKUP_REF_COLUMNS 单源（C9；T6R.23
+        // P1-3/P2-1 扩为全部含 blob 文件引用的表）——与各表定义同文件保证
+        // 表名同步；列名漂移则 SELECT 抛错走 unreadable 保守 fail-safe
+        for (const [table, column] of BLOB_BACKUP_REF_COLUMNS) {
           if (!tableExists(table)) continue;
+          // 可空列（annotation_bases.image_path、annotations.body_path）
+          // 在 pending / revision=0 行为 NULL——不是文件引用，跳过（消费方
+          // GC 直接对路径做 resolve，吃不得 null）
           const rows = snapshotDb
             .prepare(`SELECT ${column} AS p FROM ${table}`)
-            .all() as Array<{ p: string }>;
-          for (const row of rows) collected.push(row.p);
+            .all() as Array<{ p: string | null }>;
+          for (const row of rows) {
+            if (row.p !== null) collected.push(row.p);
+          }
         }
       } finally {
         snapshotDb.close();

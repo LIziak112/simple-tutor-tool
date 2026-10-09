@@ -515,6 +515,65 @@ describe("collectBackupReferencedPaths（T6R.14 GC 备份引用保留清单扫�
       "blobs/notes/n-1/img-i-1.png",
     ]);
   });
+
+  it("快照含 ink/annotation_bases/annotations 行：四列 blob 路径全收集；可空列 NULL 跳过；截断件照旧计 unreadable（P1-3/P2-1）", () => {
+    const fixture = makeFixtureSync();
+    fixtures.push(fixture);
+    const { dataDir } = fixture;
+
+    // 直造含 0027 两表与 ink 行的快照文件（列名与 db/schema 表定义同源；
+    // 真实 VACUUM INTO 快照的恢复链路由 backup-gc.test 的 0027 用例覆盖）。
+    // annotation_bases 混入一行 pending（image_path NULL）——可空列的 NULL
+    // 不是文件引用，收集时须跳过（消费方 GC 直接对路径做 resolve，吃不得 null）
+    mkdirSync(join(dataDir, BACKUP_DIR_NAME), { recursive: true });
+    const crafted = join(dataDir, BACKUP_DIR_NAME, "tutor-20261003-000000.db");
+    const craftedDb = createDb(crafted);
+    craftedDb.$client
+      .prepare(
+        "CREATE TABLE ink (id TEXT PRIMARY KEY, strokes_path TEXT NOT NULL, png_path TEXT NOT NULL)",
+      )
+      .run();
+    craftedDb.$client
+      .prepare(
+        "CREATE TABLE annotation_bases (id TEXT PRIMARY KEY, image_path TEXT)",
+      )
+      .run();
+    craftedDb.$client
+      .prepare("CREATE TABLE annotations (id TEXT PRIMARY KEY, body_path TEXT)")
+      .run();
+    craftedDb.$client
+      .prepare(
+        `INSERT INTO ink VALUES ('ink-1', 'blobs/ink/att-9/strokes-0123456789abcdef.json.gz', 'blobs/ink/att-9/strokes-0123456789abcdef.png')`,
+      )
+      .run();
+    craftedDb.$client
+      .prepare(
+        `INSERT INTO annotation_bases VALUES ('base-ready', 'blobs/annotations/${"a".repeat(64)}.png')`,
+      )
+      .run();
+    craftedDb.$client
+      .prepare("INSERT INTO annotation_bases VALUES ('base-pending', NULL)")
+      .run();
+    craftedDb.$client
+      .prepare(
+        `INSERT INTO annotations VALUES ('anno-1', 'blobs/annotation-bodies/${"b".repeat(64)}.json.gz')`,
+      )
+      .run();
+    craftedDb.$client.close();
+
+    // 截断快照（仅头页，C3）与合法新表快照并存：新表纳入扫描后，截断件
+    // 照旧计 unreadable（保守 fail-safe 行为不变）
+    writeTruncatedSnapshot(dataDir, "tutor-20261002-000000.db", 16);
+
+    const result = collectBackupReferencedPaths(dataDir);
+    expect(result.unreadable).toBe(1);
+    expect(result.paths).toEqual([
+      "blobs/ink/att-9/strokes-0123456789abcdef.json.gz",
+      "blobs/ink/att-9/strokes-0123456789abcdef.png",
+      `blobs/annotations/${"a".repeat(64)}.png`,
+      `blobs/annotation-bodies/${"b".repeat(64)}.json.gz`,
+    ]);
+  });
 });
 
 describe("快照轮转与调度", () => {

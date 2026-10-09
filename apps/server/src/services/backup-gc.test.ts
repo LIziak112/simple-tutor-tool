@@ -3,17 +3,23 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { gunzipSync } from "node:zlib";
 import type { NoteImageUploadMeta } from "@tutor/contract";
+import { annotationDocSchema } from "@tutor/contract";
+import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, it } from "vitest";
 import { runBackfills } from "../db/backfill";
 import { createDb, createDbHandle, type Db, type DbHandle } from "../db/client";
 import { runMigrations } from "../db/migrate";
 import {
+  annotationBases as annotationBasesTable,
+  annotations as annotationsTable,
   attempts as attemptsTable,
   noteVersions as noteVersionsTable,
   submissionEvidence as submissionEvidenceTable,
@@ -25,12 +31,21 @@ import {
   writeCorruptSnapshot,
   zipToBackupBuffer,
 } from "../test/backup-fixtures";
+import { frozenDraftAttempt, snapshotJsonOf } from "../test/evidence-fixtures";
 import {
   gzipJson,
   makeNotePng,
   makeStudent,
   noteDoc,
 } from "../test/note-fixtures";
+import {
+  annotationBaseRelPath,
+  annotationBodyRelPath,
+  assembleAnnotationBase,
+  canonicalAnnotationJson,
+  putAnnotationDoc,
+  registerBaseImage,
+} from "./annotation-service";
 import { insertFrozenResponse, newDraftAttempt } from "./attempt-service";
 import {
   BACKUP_DIR_NAME,
@@ -403,5 +418,151 @@ describe("GC 备份引用保留清单（方案 §6.3：备份引用也进保留�
     expect(result.sweptOrphanFiles).toBe(0);
     expect(existsSync(resolve(w.dataDir, orphanRel))).toBe(true);
     expect(w.db.select().from(noteVersionsTable).all()).toHaveLength(2);
+  });
+});
+
+// ---------- 0027 标注两表的备份恢复链（T6R.23 P1-3/P2-1） ----------
+
+describe("0027 annotation 两表备份恢复链", () => {
+  it("底图 PNG 与标注正文随整库备份→恢复：两表行与两类文件完整复原；真快照（含空 0027 表）不触发 GC 保守模式", async () => {
+    const source = await makeWorld("anno");
+    worlds.push(source);
+
+    // 另起一份带可物化题干的单题卷（makeWorld 内置卷的快照是 {id,type}
+    // 裸形态，assemble 物化会拒——annotation 走 evidence 夹具同款造数）
+    const ANNO_Q = "q-anno-1";
+    const { attemptId, rowIds } = frozenDraftAttempt(
+      source.db,
+      source.studentId,
+      [
+        {
+          questionId: ANNO_Q,
+          snapshotJson: snapshotJsonOf({
+            id: ANNO_Q,
+            stemMd: "圈出关键句：[[落点]]",
+            answers: { kind: "fill", blanks: [["落点"]] },
+          }),
+          unitId: "unit-anno",
+        },
+      ],
+      { attemptUnitId: "unit-anno" },
+    );
+    const revisionId = rowIds[0] ?? "";
+
+    // 两阶段造数：装配 pending → 回传底图 PNG（ready，blobs/annotations/）
+    const pngBytes = makeNotePng(1440, 960);
+    const preview = assembleAnnotationBase(
+      source.db,
+      source.studentId,
+      attemptId,
+      ANNO_Q,
+    );
+    const baseReceipt = registerBaseImage(
+      source.db,
+      source.dataDir,
+      source.studentId,
+      attemptId,
+      ANNO_Q,
+      pngBytes,
+      {
+        questionRevisionId: revisionId,
+        baseRenderVersion: preview.baseRenderVersion,
+        phase: "scratch",
+      },
+    );
+    expect(baseReceipt.state).toBe("ready");
+    // 落墨 revision 1（正文 blobs/annotation-bodies/<hash>.json.gz）
+    const doc = annotationDocSchema.parse({
+      version: 1,
+      baseWidth: 1440,
+      baseHeight: 960,
+      strokes: [
+        {
+          tool: "pen",
+          color: "#c0392b",
+          weight: 6,
+          points: [
+            { x: 12, y: 30, p: 0.5, t: 0 },
+            { x: 44, y: 70, p: 0.8, t: 25 },
+          ],
+        },
+      ],
+    });
+    const putReceipt = putAnnotationDoc(
+      source.db,
+      source.dataDir,
+      source.studentId,
+      attemptId,
+      ANNO_Q,
+      gzipJson(doc),
+      { baseRevision: 0, mutationId: randomUUID() },
+    );
+    expect(putReceipt.revision).toBe(1);
+
+    // 打包（快照 db + 底图 + 正文 = 3 条目；世界无 shared/secret.key）
+    const zip = await zipToBackupBuffer(
+      buildBackupZip(source.dataDir, source.db),
+    );
+
+    // 干净实例恢复（同款入口：恢复前密码校验 → 原子替换 → 连接重启）
+    const clean = await makeWorld("annoclean");
+    worlds.push(clean);
+    expect(existsSync(join(clean.dataDir, "blobs", "annotations"))).toBe(false);
+    const result = await restoreFromBackup(
+      clean.dataDir,
+      clean.handle,
+      TEST_TEACHER_ID,
+      PASSWORD,
+      zip,
+    );
+    expect(result.sessionWarning).toBe(true);
+    expect(result.restoredFiles).toBe(3);
+
+    // 两表行完整：底图 ready 且路径与源库一致；标注行 revision/bodyPath 归位
+    const baseRow = clean.db
+      .select()
+      .from(annotationBasesTable)
+      .where(eq(annotationBasesTable.attemptId, attemptId))
+      .get();
+    expect(baseRow?.state).toBe("ready");
+    expect(baseRow?.imagePath).toBe(
+      annotationBaseRelPath(baseReceipt.imageHash),
+    );
+    const annoRow = clean.db
+      .select()
+      .from(annotationsTable)
+      .where(eq(annotationsTable.attemptId, attemptId))
+      .get();
+    expect(annoRow?.revision).toBe(1);
+    expect(annoRow?.bodyPath).toBe(annotationBodyRelPath(putReceipt.hash));
+    if (
+      baseRow?.imagePath === undefined ||
+      baseRow.imagePath === null ||
+      annoRow?.bodyPath === undefined ||
+      annoRow.bodyPath === null
+    ) {
+      throw new Error("两表行路径缺失（前面断言应已失败）");
+    }
+
+    // 两类文件完整复原：底图字节一致；正文 gunzip 后与规范化 JSON 逐字相等
+    expect(
+      new Uint8Array(readFileSync(join(clean.dataDir, baseRow.imagePath))),
+    ).toEqual(pngBytes);
+    const bodyJson = JSON.parse(
+      new TextDecoder().decode(
+        gunzipSync(
+          new Uint8Array(readFileSync(join(clean.dataDir, annoRow.bodyPath))),
+        ),
+      ),
+    ) as unknown;
+    expect(bodyJson).toEqual(JSON.parse(canonicalAnnotationJson(doc)));
+
+    // 新表纳入扫描清单后保守行为不变：恢复库的真快照（迁移库，0027 两表
+    // 存在且空/含行）可正常读，unreadable=0 不触发 GC 保守模式
+    const gc = gcNoteVersions(clean.db, clean.dataDir, {
+      now: new Date("2026-10-08T00:00:00.000Z"),
+    });
+    expect(gc.unreadableBackupDbs).toBe(0);
+    expect(gc.malformedBodyPaths).toBe(0);
   });
 });
