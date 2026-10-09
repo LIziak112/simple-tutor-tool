@@ -81,6 +81,16 @@ describe("questionCapabilityBindings（T7.4 题型桥接表）", () => {
       false,
     );
   });
+
+  it("多出非题型的键同样被拒（键封闭于 questionTypeSchema）", () => {
+    const withGhost = {
+      ...questionCapabilityBindings,
+      essay: questionCapabilityBindings.fill,
+    };
+    expect(questionCapabilityBindingsSchema.safeParse(withGhost).success).toBe(
+      false,
+    );
+  });
 });
 
 describe("题型与指令的边界（不把 choice 当注册指令）", () => {

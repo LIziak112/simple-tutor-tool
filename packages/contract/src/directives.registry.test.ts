@@ -239,6 +239,15 @@ describe("能力三面注册期校验（T7.4，方案 §4.3）", () => {
     ).toThrow(/ink-strokes/);
   });
 
+  it("ink + ink-strokes 是冲突规则唯一放行的笔迹组合，应注册成功", () => {
+    const capability = {
+      interaction: { inputType: "ink" },
+      evidence: { format: "ink-strokes" },
+    } as const;
+    testDirective({ name: "t-test-cap-ink-ok", capability });
+    expect(getDirective("t-test-cap-ink-ok")?.capability).toEqual(capability);
+  });
+
   it("none + snapshot 合法（折叠遥测形态），注册后按原样可查", () => {
     const capability = {
       interaction: { inputType: "none" },
