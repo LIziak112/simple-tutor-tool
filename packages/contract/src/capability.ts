@@ -42,6 +42,16 @@ export const validationShapeSchema = z.enum([
 export type ValidationShape = z.infer<typeof validationShapeSchema>;
 
 /**
+ * evidence / validation 面内形态（指令 capability 与题型桥接表共用）：
+ * 单字段对象而非扁平字符串，为后续每面增字段留形——两处引用同一 schema，
+ * 增字段时只改这里，指令面与题型面不会漂移。
+ */
+const evidenceFacetSchema = z.strictObject({ format: evidenceFormatSchema });
+const validationFacetSchema = z.strictObject({
+  shape: validationShapeSchema,
+});
+
+/**
  * 能力三面（全部可选）。面内用单字段对象（inputType/format/shape）而非扁平
  * 字符串，为后续每面增字段留形；strictObject 拒绝拼错键，注册期即暴露。
  */
@@ -49,21 +59,22 @@ export const directiveCapabilitySchema = z.strictObject({
   interaction: z
     .strictObject({ inputType: directiveInputTypeSchema })
     .optional(),
-  evidence: z.strictObject({ format: evidenceFormatSchema }).optional(),
-  validation: z.strictObject({ shape: validationShapeSchema }).optional(),
+  evidence: evidenceFacetSchema.optional(),
+  validation: validationFacetSchema.optional(),
 });
 export type DirectiveCapability = z.infer<typeof directiveCapabilitySchema>;
 
 /**
  * 题型能力表项：以现有 QuestionType 为键声明该题型的输入、证据、内置校验器
- * 与判分形态。evidence.format 是"可采集形式"——手写题未书写笔迹不视为错误，
- * 最终答案照常保存（容忍语义由 T7.5 判分链保证，本表只声明）。
+ * 与判分形态（形态照方案 §4.3 桥接表列名：inputType 顶层，evidence/validation
+ * 为面内单字段）。evidence.format 是"可采集形式"——手写题未书写笔迹不视为
+ * 错误，最终答案照常保存（容忍语义由 T7.5 判分链保证，本表只声明）。
  */
 export const questionCapabilityBindingSchema = z.strictObject({
   inputType: directiveInputTypeSchema,
-  evidence: z.strictObject({ format: evidenceFormatSchema }),
+  evidence: evidenceFacetSchema,
   validatorId: z.string().min(1),
-  validation: z.strictObject({ shape: validationShapeSchema }),
+  validation: validationFacetSchema,
 });
 export type QuestionCapabilityBinding = z.infer<
   typeof questionCapabilityBindingSchema

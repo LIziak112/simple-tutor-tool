@@ -342,6 +342,15 @@ export const questionDirective = defineDirective({
 /** question 指令属性经注册表 schema 校验后的输出形态（T1.3 起解析器消费，勿手抄同形类型） */
 export type QuestionDirectiveAttrs = z.output<typeof questionDirective.attrs>;
 
+/**
+ * 折叠/揭晓类遥测能力：无作答输入（none 不等于不能点击展开），开合/揭晓的
+ * 交互事件以快照证据采集——hint / solution / fold 三个指令共用同一形态。
+ */
+const revealTelemetryCapability = {
+  interaction: { inputType: "none" },
+  evidence: { format: "snapshot" },
+} as const satisfies DirectiveCapability;
+
 /** 提示（题目内可多个 / 讲义正文） */
 export const hintDirective = defineDirective({
   name: "hint",
@@ -352,10 +361,7 @@ export const hintDirective = defineDirective({
   description:
     "提示。题目内可有多个，学生端逐个点开、每次点开都记录事件（教师可见提示使用情况）；也用于讲义正文补充说明。提示内容不下发到题面，学生主动获取。",
   example: ":::hint\n同号相加取相同符号；异号相加取绝对值较大的符号。\n:::",
-  capability: {
-    interaction: { inputType: "none" },
-    evidence: { format: "snapshot" },
-  },
+  capability: revealTelemetryCapability,
 });
 
 /** 手写题的最终答案（教师侧机密，用于自动判分） */
@@ -380,10 +386,7 @@ export const solutionDirective = defineDirective({
   description:
     "详解/讲解。题目内：交卷后才下发给学生；讲义内：常与 :::example 搭配写例题解析，默认折叠、展开/收起均上报事件。",
   example: ":::solution\n$(-3)+7=4$；$(-2)+(-5)=-7$。\n:::",
-  capability: {
-    interaction: { inputType: "none" },
-    evidence: { format: "snapshot" },
-  },
+  capability: revealTelemetryCapability,
 });
 
 /** 填空/判断作答空位（[[…]] 行内语法糖，非指令写法） */
@@ -475,10 +478,7 @@ export const foldDirective = defineDirective({
   description:
     "通用折叠块：默认收起、点击展开（展开/收起均上报事件）。适合放拓展阅读、次级说明等不挡主线的内容。仅讲义正文可用。",
   example: ':::fold{title="拓展：为什么 0 不能作除数"}\n…\n:::',
-  capability: {
-    interaction: { inputType: "none" },
-    evidence: { format: "snapshot" },
-  },
+  capability: revealTelemetryCapability,
 });
 
 /** fold 指令属性经注册表 schema 校验后的输出形态（T7.2 起渲染层消费，勿手抄同形类型） */
