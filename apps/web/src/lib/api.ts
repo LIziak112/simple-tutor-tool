@@ -300,7 +300,15 @@ export function saveBlobAs(blob: Blob, filename: string): void {
 function filenameFromDisposition(res: Response, fallback: string): string {
   const disposition = res.headers.get("content-disposition") ?? "";
   const star = /filename\*=UTF-8''([^;]+)/i.exec(disposition)?.[1];
-  if (star !== undefined) return decodeURIComponent(star);
+  if (star !== undefined) {
+    // 坏 % 序列（非规范编码）解码会抛 URIError——回退 filename= 段，不让
+    // 一个畸形头把整个下载变成裸异常（本 helper 被全部下载器共用）
+    try {
+      return decodeURIComponent(star);
+    } catch {
+      // 落到下方 filename= 解析
+    }
+  }
   // 负向断言排除 filename*= 形态（上面未命中才走到这里，防御同名段并存）
   const matched = /filename(?!\*)="?([^";]+)"?/i.exec(disposition)?.[1];
   return matched !== undefined && matched.length > 0 ? matched : fallback;

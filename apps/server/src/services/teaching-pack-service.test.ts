@@ -1,9 +1,10 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { capabilitiesManifestSchema } from "@tutor/contract";
+import { lintDocument } from "@tutor/md-dsl";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
-import { imports, units } from "../db/schema";
+import { imports, lectures, units } from "../db/schema";
 import { createTestDb, createTestDir, TEST_TEACHER_ID } from "../db/test-utils";
 import { readZipEntriesMap } from "../lib/zip-read";
 import { getCapabilityProfile } from "./capability-profile-service";
@@ -49,6 +50,23 @@ $3-1=2$。[[正确]]
 ::::
 `;
 }
+
+/** 带声明的讲义文档（kind=lecture 分支覆盖用） */
+const LECTURE_PACK_MD = `---
+kind: lecture
+teachingPack: {name: "讲义教学包", directives: [steps], validators: []}
+---
+
+# 第1讲 讲义包
+
+正文一段。
+
+::::steps
+:::step{title="第一步"}
+看条件。
+:::
+::::
+`;
 
 describe("exportTeachingPackZip（T7.8 教学包 ZIP 导出）", () => {
   it("ZIP 结构：content.md 保留声明 + capabilities-snapshot.json 为当前清单 + 图片按原 src 路径随行", async () => {
@@ -124,6 +142,47 @@ describe("exportTeachingPackZip（T7.8 教学包 ZIP 导出）", () => {
     await expect(
       exportTeachingPackZip(db, TEST_TEACHER_ID, "unit", UNIT_ID, dataDir),
     ).rejects.toMatchObject({ status: 422, code: "LINT_ERROR" });
+  });
+
+  it("kind=lecture：content.md 为 kind: lecture 头 + 声明行 + 原文，可再导入解析", async () => {
+    const db = createTestDb();
+    const dataDir = createTestDir();
+    commitImport(db, TEST_TEACHER_ID, {
+      markdown: LECTURE_PACK_MD,
+      filename: "讲义包.md",
+    });
+    const lectureId = db
+      .select({ id: lectures.id })
+      .from(lectures)
+      .all()[0]?.id;
+    if (lectureId === undefined) throw new Error("讲义未入库");
+
+    const zip = await exportTeachingPackZip(
+      db,
+      TEST_TEACHER_ID,
+      "lecture",
+      lectureId,
+      dataDir,
+    );
+    expect(zip.filename).toBe("第1讲 讲义包.zip");
+    const entries = readZipEntriesMap(Buffer.from(zip.bytes));
+    expect([...entries.keys()].sort()).toEqual([
+      "capabilities-snapshot.json",
+      "content.md",
+    ]);
+    const contentMd = entries.get("content.md")?.toString("utf8") ?? "";
+    expect(contentMd).toContain('name: "讲义教学包"');
+    // 讲义导出前检查同口径：0 error 且声明解析回读一致（往返）
+    const linted = lintDocument(contentMd);
+    expect(linted.issues.filter((i) => i.level === "error")).toHaveLength(0);
+    expect(linted.parsed.frontmatter?.teachingPack).toEqual({
+      formatVersion: 1,
+      name: "讲义教学包",
+      version: "1",
+      directives: ["steps"],
+      validators: [],
+    });
+    expect(linted.parsed.lectures).toHaveLength(1);
   });
 
   it("域隔离：其他教师的资源 → 404", async () => {

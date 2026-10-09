@@ -1315,17 +1315,33 @@ function teachingPackYamlLine(pack: TeachingPack): string {
   return `teachingPack: {formatVersion: ${pack.formatVersion}, name: ${JSON.stringify(pack.name)}, version: ${JSON.stringify(pack.version)}, directives: ${refs(pack.directives)}, validators: ${refs(pack.validators)}}`;
 }
 
-/** 从 teachingPackJson 列读回声明行；无有效声明返回空（见上函数头注释的兜底口径） */
+/**
+ * 从 teachingPackJson 列读回声明行；无有效声明返回空（见上函数头注释的兜底口径）。
+ * 坏值（手工改库 / 备份恢复半截的存量异常）console.warn 留痕——写侧恒过契约，
+ * 走到这里说明数据被外力破坏，静默丢声明会让教师重导后无声清空（宽松口径
+ * 留痕同 zipBufferOf 的 warningAsError:false 惯例）。
+ */
 export function teachingPackYamlLineOf(column: string | null): string | null {
   if (column === null) return null;
   let data: unknown;
   try {
     data = JSON.parse(column);
-  } catch {
+  } catch (err) {
+    console.warn(
+      "teachingPackYamlLineOf: teachingPackJson 不是合法 JSON，导出不含声明",
+      err,
+    );
     return null;
   }
   const parsed = teachingPackSchema.safeParse(data);
-  return parsed.success ? teachingPackYamlLine(parsed.data) : null;
+  if (!parsed.success) {
+    console.warn(
+      "teachingPackYamlLineOf: teachingPackJson 不合契约，导出不含声明",
+      parsed.error.issues[0]?.message,
+    );
+    return null;
+  }
+  return teachingPackYamlLine(parsed.data);
 }
 
 /**

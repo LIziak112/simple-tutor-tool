@@ -1388,4 +1388,42 @@ describe("资源库路由：export.md 保留教学包声明（T7.8）", () => {
     const err = await readErr(broken);
     expect(err.error).toBe("LINT_ERROR");
   });
+
+  it("讲义端点 export-pack.zip：同一工厂 kind=lecture 直出 zip（content.md 含声明）", async () => {
+    const { app, teacherCookie } = await makeApp();
+    const commit = await request(
+      app,
+      "POST",
+      "/api/teacher/import/commit",
+      teacherCookie,
+      { markdown: PACK_MD, filename: "导出声明.md" },
+    );
+    expect(commit.status).toBe(200);
+    const lectureId = (
+      (
+        (await (
+          await request(
+            app,
+            "GET",
+            "/api/teacher/library/lectures",
+            teacherCookie,
+          )
+        ).json()) as { data: { lectures: { id: string; title: string }[] } }
+      ).data.lectures.find((l) => l.title === "第1讲 导出声明") ?? { id: "" }
+    ).id;
+
+    const res = await request(
+      app,
+      "GET",
+      `/api/teacher/lectures/${lectureId}/export-pack.zip`,
+      teacherCookie,
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("application/zip");
+    const bytes = Buffer.from(await res.arrayBuffer());
+    expect(bytes.subarray(0, 2).toString("latin1")).toBe("PK");
+    // content.md 里声明随讲义导出（正文含标题与声明行）
+    const text = bytes.toString("latin1");
+    expect(text).toContain("content.md");
+  });
 });
