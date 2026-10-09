@@ -61,6 +61,20 @@ describe("CapabilityProfileSection（T7.7 辅助能力设置区）", () => {
     );
   });
 
+  it("保存成功后再改动勾选：「已保存」退回「保存」（存在未保存修改时不误导）", async () => {
+    mockedFetch.mockResolvedValue({ enabledCapabilities: ["steps", "ink"] });
+    renderSection();
+    mockedSave.mockResolvedValue({ enabledCapabilities: ["steps", "ink"] });
+    fireEvent.click(await screen.findByRole("button", { name: "保存" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "已保存" })).toBeTruthy(),
+    );
+    // 改动勾选（存在未保存修改）→ 标签退回「保存」
+    fireEvent.click(screen.getByLabelText("手写辅助"));
+    expect(screen.queryByRole("button", { name: "已保存" })).toBeNull();
+    expect(screen.getByRole("button", { name: "保存" })).toBeTruthy();
+  });
+
   it("全部取消后保存：收到空数组（显式全关是合法配置）", async () => {
     mockedFetch.mockResolvedValue({ enabledCapabilities: ["steps", "ink"] });
     renderSection();

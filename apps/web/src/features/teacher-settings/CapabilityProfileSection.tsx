@@ -85,6 +85,12 @@ export function CapabilityProfileSection() {
     "保存失败，请稍后重试",
   );
 
+  /** 勾选是否偏离已加载配置（「已保存」标签只在无未保存改动时展示） */
+  const dirty =
+    loaded !== undefined &&
+    (checked.steps !== loaded.includes("steps") ||
+      checked.ink !== loaded.includes("ink"));
+
   return (
     <div className="flex flex-col gap-4 rounded-xl border border-border bg-card p-5 text-card-foreground">
       <div>
@@ -161,7 +167,7 @@ export function CapabilityProfileSection() {
                   <Loader2 aria-hidden className="animate-spin" />
                   正在保存…
                 </>
-              ) : saveMutation.isSuccess && !actionError ? (
+              ) : saveMutation.isSuccess && !actionError && !dirty ? (
                 <>
                   <Check aria-hidden />
                   已保存
