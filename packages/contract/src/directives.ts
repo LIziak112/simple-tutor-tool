@@ -380,6 +380,9 @@ export const exampleDirective = defineDirective({
     '::::example{title="例 1"}\n计算 $(-3)+7$。\n\n:::solution\n$(-3)+7=4$。\n:::\n::::',
 });
 
+/** example 指令属性经注册表 schema 校验后的输出形态（T7.2 起渲染层消费，勿手抄同形类型） */
+export type ExampleDirectiveAttrs = z.output<typeof exampleDirective.attrs>;
+
 /** 逐步揭晓容器 */
 export const stepsDirective = defineDirective({
   name: "steps",
@@ -409,6 +412,9 @@ export const stepDirective = defineDirective({
   example: ':::step{title="第 1 步：去括号"}\n先处理乘方，再算乘除。\n:::',
 });
 
+/** step 指令属性经注册表 schema 校验后的输出形态（T7.2 起渲染层消费，勿手抄同形类型） */
+export type StepDirectiveAttrs = z.output<typeof stepDirective.attrs>;
+
 /** 通用折叠块 */
 export const foldDirective = defineDirective({
   name: "fold",
@@ -424,6 +430,9 @@ export const foldDirective = defineDirective({
     "通用折叠块：默认收起、点击展开（展开/收起均上报事件）。适合放拓展阅读、次级说明等不挡主线的内容。仅讲义正文可用。",
   example: ':::fold{title="拓展：为什么 0 不能作除数"}\n…\n:::',
 });
+
+/** fold 指令属性经注册表 schema 校验后的输出形态（T7.2 起渲染层消费，勿手抄同形类型） */
+export type FoldDirectiveAttrs = z.output<typeof foldDirective.attrs>;
 
 // ---------- 版式与强调 ----------
 
@@ -443,6 +452,9 @@ export const tipDirective = defineDirective({
   example: ':::tip{title="小技巧"}\n先通分再计算。\n:::',
 });
 
+/** tip 指令属性经注册表 schema 校验后的输出形态（T7.2 起渲染层消费，勿手抄同形类型） */
+export type TipDirectiveAttrs = z.output<typeof tipDirective.attrs>;
+
 /** 警告框 */
 export const warningDirective = defineDirective({
   name: "warning",
@@ -459,6 +471,9 @@ export const warningDirective = defineDirective({
   example:
     ':::warning{title="易错点"}\n$-2^2 \\neq (-2)^2$：底数带不带括号，意义完全不同。\n:::',
 });
+
+/** warning 指令属性经注册表 schema 校验后的输出形态（T7.2 起渲染层消费，勿手抄同形类型） */
+export type WarningDirectiveAttrs = z.output<typeof warningDirective.attrs>;
 
 /** 通用版式盒（.样式类 可选） */
 export const boxDirective = defineDirective({
@@ -478,6 +493,9 @@ export const boxDirective = defineDirective({
     "通用版式盒（自定义强调容器）。样式类用 .样式类 简写：如 :::box{.warning title=「易错点」} 中 .warning 会被解析进 class 属性（常用值 warning/info/success），不写样式类时为中性样式。需要 tip/warning 之外的固定外观时用它。",
   example: ':::box{.warning title="易错点"}\n除法不满足结合律。\n:::',
 });
+
+/** box 指令属性经注册表 schema 校验后的输出形态（T7.2 起渲染层消费，勿手抄同形类型） */
+export type BoxDirectiveAttrs = z.output<typeof boxDirective.attrs>;
 
 /** 分栏容器 */
 export const columnsDirective = defineDirective({
@@ -508,6 +526,9 @@ export const colDirective = defineDirective({
   example: ':::col{width="40%"}\n左栏内容：文字或指令。\n:::',
 });
 
+/** col 指令属性经注册表 schema 校验后的输出形态（T7.2 起渲染层消费，勿手抄同形类型） */
+export type ColDirectiveAttrs = z.output<typeof colDirective.attrs>;
+
 /** 行内重点标记（荧光笔） */
 export const markDirective = defineDirective({
   name: "mark",
@@ -523,6 +544,9 @@ export const markDirective = defineDirective({
     "行内重点标记（荧光笔效果）：在句子中间圈出关键词。讲义与题目文本中均可使用。",
   example: "注意 :mark[系数的符号]{color=red} 不能丢。",
 });
+
+/** mark 指令属性经注册表 schema 校验后的输出形态（T7.2 起渲染层消费，勿手抄同形类型） */
+export type MarkDirectiveAttrs = z.output<typeof markDirective.attrs>;
 
 // ---------- 媒体 ----------
 
@@ -550,6 +574,9 @@ export const imageDirective = defineDirective({
   example: '::image{src="blobs/media/9af3….png" alt="数轴示意图" width="60%"}',
 });
 
+/** image 指令属性经注册表 schema 校验后的输出形态（T7.2 起渲染层消费，勿手抄同形类型） */
+export type ImageDirectiveAttrs = z.output<typeof imageDirective.attrs>;
+
 /** 函数图像 */
 export const graphDirective = defineDirective({
   name: "graph",
@@ -570,3 +597,6 @@ export const graphDirective = defineDirective({
     "函数图像，前端用 function-plot 按需加载渲染。fn 为函数表达式（如 x^2、sin(x)），range 为 x 轴范围（如 -3,3），缺省自动选取。",
   example: '::graph{fn="x^2" range="-3,3"}',
 });
+
+/** graph 指令属性经注册表 schema 校验后的输出形态（T7.2 起渲染层消费，勿手抄同形类型） */
+export type GraphDirectiveAttrs = z.output<typeof graphDirective.attrs>;
