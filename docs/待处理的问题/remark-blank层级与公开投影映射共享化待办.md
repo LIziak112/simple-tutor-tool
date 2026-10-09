@@ -28,3 +28,5 @@
 投影规则演进（新增剥除项等）时三处漂移；`questionPublicSchema.parse` 只守形状不守投影语义。web 测试不能 import server 包（跨 app），前两份也未导出。
 
 **建议**：把"Question（或冻结快照）→ questionPublicSchema 形态（不含 questionRevisionId）"的纯投影函数落到 `packages/md-dsl` 或 `packages/contract` 侧导出，服务端两处与测试共用；assignment-service 的多字段形态（dueAt 等）在其上扩展。适合与 T7.4（能力契约与题型桥接表，本就要动 contract）同批处理。
+
+**状态（2026-10-09）**：T7.4 已完成，本项未并入——清单条目不含此项，且投影函数共享化是 server/web 行为等价重构（三处调用点 + 泄露测试回归面），与契约词表添加分属两个回归面（与 T7.3 不并入 remarkBlank 同口径的范围纪律）。仍待处理；建议作为独立小任务，或在触及 attempt/assignment 投影逻辑的下一个任务里顺带。
