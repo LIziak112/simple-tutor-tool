@@ -1,0 +1,325 @@
+{
+  "formatVersion": 1,
+  "directives": [
+    {
+      "name": "question",
+      "kind": "container",
+      "attrs": [
+        {
+          "name": "type",
+          "type": "judge / choice / multi / fill / solve / apply / find-error",
+          "required": true,
+          "description": "题型，必填。七种取值：judge 判断 / choice 单选 / multi 多选 / fill 填空 / solve 计算 / apply 应用 / find-error 找错；写其他值会在 lint 报错"
+        },
+        {
+          "name": "difficulty",
+          "type": "number",
+          "required": false,
+          "default": 2,
+          "description": "难度 1–5 的整数，缺省 2；可写字符串数字（如 difficulty=3），解析时自动转换"
+        },
+        {
+          "name": "knowledge",
+          "type": "string",
+          "required": false,
+          "description": "考点（单个字符串），用于学情统计；解析时归一为数组入库"
+        }
+      ],
+      "capability": null
+    },
+    {
+      "name": "hint",
+      "kind": "container",
+      "attrs": [],
+      "capability": {
+        "interaction": {
+          "inputType": "none"
+        },
+        "evidence": {
+          "format": "snapshot"
+        }
+      }
+    },
+    {
+      "name": "answer",
+      "kind": "container",
+      "attrs": [],
+      "capability": null
+    },
+    {
+      "name": "solution",
+      "kind": "container",
+      "attrs": [],
+      "capability": {
+        "interaction": {
+          "inputType": "none"
+        },
+        "evidence": {
+          "format": "snapshot"
+        }
+      }
+    },
+    {
+      "name": "blank",
+      "kind": "text",
+      "attrs": [],
+      "capability": {
+        "interaction": {
+          "inputType": "fill"
+        },
+        "evidence": {
+          "format": "snapshot"
+        }
+      }
+    },
+    {
+      "name": "example",
+      "kind": "container",
+      "attrs": [
+        {
+          "name": "title",
+          "type": "string",
+          "required": false,
+          "description": "例题标题，可选；缺省前端显示「例题」"
+        }
+      ],
+      "capability": null
+    },
+    {
+      "name": "steps",
+      "kind": "container",
+      "attrs": [],
+      "capability": {
+        "interaction": {
+          "inputType": "steps"
+        },
+        "evidence": {
+          "format": "snapshot"
+        }
+      }
+    },
+    {
+      "name": "step",
+      "kind": "container",
+      "attrs": [
+        {
+          "name": "title",
+          "type": "string",
+          "required": false,
+          "default": "",
+          "description": "该步标题，缺省为空串；缺省时前端按顺序显示「第 N 步」"
+        }
+      ],
+      "capability": null
+    },
+    {
+      "name": "fold",
+      "kind": "container",
+      "attrs": [
+        {
+          "name": "title",
+          "type": "string",
+          "required": false,
+          "default": "详情",
+          "description": "折叠标题，缺省「详情」"
+        }
+      ],
+      "capability": {
+        "interaction": {
+          "inputType": "none"
+        },
+        "evidence": {
+          "format": "snapshot"
+        }
+      }
+    },
+    {
+      "name": "tip",
+      "kind": "container",
+      "attrs": [
+        {
+          "name": "title",
+          "type": "string",
+          "required": false,
+          "description": "标题，可选；缺省前端显示「提示」"
+        }
+      ],
+      "capability": null
+    },
+    {
+      "name": "warning",
+      "kind": "container",
+      "attrs": [
+        {
+          "name": "title",
+          "type": "string",
+          "required": false,
+          "description": "标题，可选；缺省前端显示「注意」"
+        }
+      ],
+      "capability": null
+    },
+    {
+      "name": "box",
+      "kind": "container",
+      "attrs": [
+        {
+          "name": "title",
+          "type": "string",
+          "required": false,
+          "description": "盒标题，可选；常与 .样式类 简写搭配（如 :::box{.warning title=\"易错点\"}）"
+        }
+      ],
+      "capability": null
+    },
+    {
+      "name": "columns",
+      "kind": "container",
+      "attrs": [],
+      "capability": null
+    },
+    {
+      "name": "col",
+      "kind": "container",
+      "attrs": [
+        {
+          "name": "width",
+          "type": "string",
+          "required": false,
+          "description": "栏宽（如 \"40%\"、\"2fr\"），缺省各栏均分"
+        }
+      ],
+      "capability": null
+    },
+    {
+      "name": "mark",
+      "kind": "text",
+      "attrs": [
+        {
+          "name": "color",
+          "type": "yellow / red / blue / green",
+          "required": false,
+          "default": "yellow",
+          "description": "高亮颜色：yellow / red / blue / green，缺省 yellow"
+        }
+      ],
+      "capability": null
+    },
+    {
+      "name": "image",
+      "kind": "leaf",
+      "attrs": [
+        {
+          "name": "src",
+          "type": "string",
+          "required": true,
+          "description": "图片路径，必填：写图片上传接口返回的 blobs/media/<内容哈希>.<扩展名> 路径（如 \"blobs/media/9af3….png\"），不支持外链 URL"
+        },
+        {
+          "name": "alt",
+          "type": "string",
+          "required": false,
+          "description": "替代文本（图片加载失败或读屏时显示），缺省「图片」"
+        },
+        {
+          "name": "width",
+          "type": "string",
+          "required": false,
+          "description": "显示宽度（如 \"60%\"、\"320px\"），缺省自适应"
+        }
+      ],
+      "capability": null
+    },
+    {
+      "name": "graph",
+      "kind": "leaf",
+      "attrs": [
+        {
+          "name": "fn",
+          "type": "string",
+          "required": true,
+          "description": "函数表达式，必填，如 \"x^2\"、\"sin(x)\""
+        },
+        {
+          "name": "range",
+          "type": "string",
+          "required": false,
+          "description": "x 轴范围（如 \"-3,3\"），缺省自动选取"
+        }
+      ],
+      "capability": null
+    }
+  ],
+  "questionTypes": {
+    "judge": {
+      "inputType": "choice",
+      "evidence": {
+        "format": "snapshot"
+      },
+      "validatorId": "judge",
+      "validation": {
+        "shape": "exact"
+      }
+    },
+    "choice": {
+      "inputType": "choice",
+      "evidence": {
+        "format": "snapshot"
+      },
+      "validatorId": "choice",
+      "validation": {
+        "shape": "exact"
+      }
+    },
+    "multi": {
+      "inputType": "choice",
+      "evidence": {
+        "format": "snapshot"
+      },
+      "validatorId": "multi",
+      "validation": {
+        "shape": "exact"
+      }
+    },
+    "fill": {
+      "inputType": "fill",
+      "evidence": {
+        "format": "snapshot"
+      },
+      "validatorId": "fill",
+      "validation": {
+        "shape": "rubric"
+      }
+    },
+    "solve": {
+      "inputType": "ink",
+      "evidence": {
+        "format": "ink-strokes"
+      },
+      "validatorId": "solve",
+      "validation": {
+        "shape": "exact"
+      }
+    },
+    "apply": {
+      "inputType": "ink",
+      "evidence": {
+        "format": "ink-strokes"
+      },
+      "validatorId": "apply",
+      "validation": {
+        "shape": "exact"
+      }
+    },
+    "find-error": {
+      "inputType": "ink",
+      "evidence": {
+        "format": "ink-strokes"
+      },
+      "validatorId": "find-error",
+      "validation": {
+        "shape": "exact"
+      }
+    }
+  }
+}

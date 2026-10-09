@@ -1,11 +1,20 @@
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { defineDirective, listDirectives } from "@tutor/contract";
+import {
+  capabilitiesManifestSchema,
+  defineDirective,
+  listDirectives,
+  questionCapabilityBindings,
+} from "@tutor/contract";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { LINT_RULES } from "../lint/rules.ts";
-import { renderPromptTemplateMarkdown, renderSpecMarkdown } from "./gen.ts";
+import {
+  renderCapabilitiesManifest,
+  renderPromptTemplateMarkdown,
+  renderSpecMarkdown,
+} from "./gen.ts";
 
 /**
  * gen:spec 渲染核心测试（T1.7，测试先行）：
@@ -13,7 +22,8 @@ import { renderPromptTemplateMarkdown, renderSpecMarkdown } from "./gen.ts";
  * - 17 个首发指令全部渲染（名称/description/example/属性表）；
  * - 临时指令测试（验收 2）：defineDirective 动态注册 demo-box 后，
  *   规范文本出现该指令的名称/description/example——临时指令不留在代码里；
- * - 内容抽查：question 属性表含 type 七值、兼容规则三条、lint 错误码清单。
+ * - 内容抽查：question 属性表含 type 七值、兼容规则三条、lint 错误码清单；
+ * - T7.6 能力清单：过自身 schema、指令集合=注册表主名、题型表一致、无 partial。
  */
 
 const specDirectives = listDirectives();
@@ -23,6 +33,8 @@ const spec = renderSpecMarkdown({
 });
 const promptDirectives = listDirectives();
 const prompt = renderPromptTemplateMarkdown(promptDirectives);
+const manifestDirectives = listDirectives();
+const manifestText = renderCapabilitiesManifest(manifestDirectives);
 
 describe("renderSpecMarkdown：稳定性与完整性", () => {
   it("幂等：同一数据源两次生成字节相同", () => {
@@ -172,6 +184,82 @@ describe("renderPromptTemplateMarkdown", () => {
   });
 });
 
+describe("renderCapabilitiesManifest（T7.6 能力清单）", () => {
+  it("生成物是合法 JSON 且通过自身 schema（契约定义的清单形态）", () => {
+    const parsed: unknown = JSON.parse(manifestText);
+    const manifest = capabilitiesManifestSchema.parse(parsed);
+    expect(manifest.formatVersion).toBe(1);
+    expect(manifest.directives).toHaveLength(manifestDirectives.length);
+  });
+
+  it("指令集合等于 listDirectives 主名集合（全量收录、注册顺序，不写死数量）", () => {
+    const manifest = capabilitiesManifestSchema.parse(
+      JSON.parse(manifestText) as unknown,
+    );
+    expect(manifest.directives.map((d) => d.name)).toEqual(
+      manifestDirectives.map((d) => d.name),
+    );
+  });
+
+  it("questionTypes 与契约题型能力表逐字段一致（单一来源嵌入）", () => {
+    const manifest = capabilitiesManifestSchema.parse(
+      JSON.parse(manifestText) as unknown,
+    );
+    expect(manifest.questionTypes).toEqual(questionCapabilityBindings);
+  });
+
+  it("capability 标注与注册表一致；未声明为 null；全清单无 partial", () => {
+    const manifest = capabilitiesManifestSchema.parse(
+      JSON.parse(manifestText) as unknown,
+    );
+    const byName = new Map(manifest.directives.map((d) => [d.name, d]));
+    expect(byName.get("blank")?.capability).toEqual({
+      interaction: { inputType: "fill" },
+      evidence: { format: "snapshot" },
+    });
+    for (const name of ["question", "answer", "tip", "image"]) {
+      expect(byName.get(name)?.capability, name).toBeNull();
+    }
+    expect(manifestText).not.toContain('"partial"');
+  });
+
+  it("属性表数据层与规范.md 同源：image.src 必填无缺省、mark.color 缺省 yellow、difficulty 缺省 2", () => {
+    const manifest = capabilitiesManifestSchema.parse(
+      JSON.parse(manifestText) as unknown,
+    );
+    const byName = new Map(manifest.directives.map((d) => [d.name, d]));
+    const attr = (directive: string, name: string) =>
+      byName.get(directive)?.attrs.find((a) => a.name === name);
+    expect(attr("image", "src")).toMatchObject({ required: true });
+    expect(attr("image", "src")?.default).toBeUndefined();
+    expect(attr("mark", "color")).toMatchObject({
+      required: false,
+      default: "yellow",
+    });
+    expect(attr("question", "difficulty")).toMatchObject({
+      required: false,
+      default: 2,
+    });
+  });
+
+  it("幂等：同一数据源两次渲染字节相同（现场双渲染，不依赖模块顶缓存的注册表时点）", () => {
+    // 不与模块顶 manifestText 比较：本用例运行时 demo-box 已注册（前面的临时指令
+    // 用例），注册表内容不同；幂等语义 = 同一数据源两次渲染一致
+    const again = renderCapabilitiesManifest(listDirectives());
+    expect(renderCapabilitiesManifest(listDirectives())).toBe(again);
+    expect(again).toContain("demo-box"); // 临时指令同样全量收录（验收 2 的清单侧）
+  });
+
+  it("磁盘一致：docs/dsl/schema/capabilities.json 是最新生成产物（CI diff 检查的进程内预演）", () => {
+    const docDir = fileURLToPath(
+      new URL("../../../../docs/dsl/schema/", import.meta.url),
+    );
+    expect(readFileSync(`${docDir}capabilities.json`, "utf8")).toBe(
+      manifestText,
+    );
+  });
+});
+
 describe("生成的规范与磁盘上已提交的版本一致（CI diff 检查的进程内预演）", () => {
   it("docs/dsl/规范.md 与提示词模板.md 是最新生成产物", () => {
     // 用模块顶部缓存的渲染结果（demo-box 注册之前）对比磁盘文件
@@ -198,6 +286,15 @@ describe("dsl-kit 一站式分发包（规范 + 校验 + 材料整理技能，�
         readFileSync(join(repoRoot, "docs", "dsl", rel), "utf8"),
       );
     }
+    // 能力清单按清单口径放 dsl-kit 根路径（docs 侧在 schema/ 子目录），同样逐字节一致
+    expect(
+      readFileSync(join(repoRoot, "dsl-kit", "capabilities.json"), "utf8"),
+    ).toBe(
+      readFileSync(
+        join(repoRoot, "docs", "dsl", "schema", "capabilities.json"),
+        "utf8",
+      ),
+    );
   });
 
   it("离线校验脚本在位：dsl-kit/tutor-lint.mjs 为非空打包产物", () => {

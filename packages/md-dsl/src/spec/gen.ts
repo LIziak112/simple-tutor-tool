@@ -1,4 +1,10 @@
-import type { DirectiveLocation, RegisteredDirective } from "@tutor/contract";
+import {
+  type CapabilitiesManifest,
+  type CapabilityAttr,
+  type DirectiveLocation,
+  questionCapabilityBindings,
+  type RegisteredDirective,
+} from "@tutor/contract";
 import { z } from "zod";
 import { LOCATION_LABELS } from "../lint/directives.ts";
 import type { LintRuleDoc } from "../lint/rules.ts";
@@ -52,18 +58,21 @@ function formatLiteral(value: unknown): string {
   return JSON.stringify(value) ?? "—";
 }
 
-/** 解包 Optional/Default 包装层，取核心 schema 与必填/缺省信息 */
+/** 解包 Optional/Default 包装层，取核心 schema 与必填/缺省信息（缺省为原始值） */
 function unwrapAttr(schema: z.ZodType): {
   core: z.ZodType;
   optional: boolean;
-  defaultValue: string | undefined;
+  defaultValue: unknown;
+  hasDefault: boolean;
 } {
   let core = schema;
   let optional = false;
-  let defaultValue: string | undefined;
+  let defaultValue: unknown;
+  let hasDefault = false;
   const outer = defOf(core);
   if (outer?.type === "default") {
-    defaultValue = formatLiteral(outer.defaultValue);
+    defaultValue = outer.defaultValue;
+    hasDefault = true;
     if (isZodType(outer.innerType)) core = outer.innerType;
   }
   const inner = defOf(core);
@@ -71,7 +80,19 @@ function unwrapAttr(schema: z.ZodType): {
     optional = true;
     if (isZodType(inner.innerType)) core = inner.innerType;
   }
-  return { core, optional, defaultValue };
+  return { core, optional, defaultValue, hasDefault };
+}
+
+/** 属性表缺省值 → capabilities.json 的原始值（注册表缺省均为数字/字符串/布尔；意外类型兜底 JSON 串） */
+function defaultLiteralOf(value: unknown): string | number | boolean {
+  if (
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
+    return value;
+  }
+  return JSON.stringify(value) ?? "";
 }
 
 /** 属性类型展示：枚举列出全部取值，其余显示目标类型名（源码里属性值一律是字符串） */
@@ -82,25 +103,45 @@ function typeName(core: z.ZodType): string {
   return "string";
 }
 
+/**
+ * 属性表一行的数据形态（契约 CapabilityAttr）：规范.md 表格与 capabilities.json
+ * 清单共用同一内省结果（类型/必填/缺省/说明），两处不会漂移。
+ */
+function attrRowData(
+  name: string,
+  schema: z.ZodType,
+  doc: string | undefined,
+): CapabilityAttr {
+  const { core, optional, defaultValue, hasDefault } = unwrapAttr(schema);
+  return {
+    name,
+    type: typeName(core),
+    required: !(optional || hasDefault),
+    ...(hasDefault ? { default: defaultLiteralOf(defaultValue) } : {}),
+    description: doc ?? "",
+  };
+}
+
 /** 属性表的一行：| 属性 | 类型 | 必填 | 缺省 | 说明 | */
 function attrRow(
   name: string,
   schema: z.ZodType,
   doc: string | undefined,
 ): string {
-  const { core, optional, defaultValue } = unwrapAttr(schema);
-  const required = !(optional || defaultValue !== undefined);
+  const data = attrRowData(name, schema, doc);
+  const defaultValue =
+    data.default === undefined ? "—" : formatLiteral(data.default);
   return [
     "| ",
-    name,
+    data.name,
     " | ",
-    typeName(core),
+    data.type,
     " | ",
-    required ? "是" : "否",
+    data.required ? "是" : "否",
     " | ",
-    defaultValue ?? "—",
+    defaultValue,
     " | ",
-    escapeCell(doc ?? ""),
+    escapeCell(data.description),
     " |",
   ].join("");
 }
@@ -204,7 +245,7 @@ export function renderSpecMarkdown(input: SpecInput): string {
       "> 本文件由 `pnpm gen:spec` 自动生成：指令清单来自指令注册表（`packages/contract/src/directives.ts`），",
       "> lint 错误码来自 `packages/md-dsl/src/lint/rules.ts`，请勿手改；修改数据源后重新生成并提交",
       ">（CI 会校验 `pnpm gen:spec` 后 git diff 为空）。",
-      "> 配套文件：`完整样例.md`（手写维护）、`提示词模板.md`（自动生成）、`schema/content.json`（JSON Schema）。",
+      "> 配套文件：`完整样例.md`（手写维护）、`提示词模板.md`（自动生成）、`schema/content.json`（JSON Schema）、`schema/capabilities.json`（能力清单）。",
       "",
     ].join("\n"),
   );
@@ -352,15 +393,46 @@ export function renderSpecMarkdown(input: SpecInput): string {
       "## 七、校验工具与配套资源",
       "",
       "- CLI 校验：`pnpm tutor-lint <文件或目录>`（彩色输出全部 issue；有 error 退出码 1）；",
-      "- 一站式分发包 `dsl-kit/`（仓库根）：本规范、完整样例、提示词模板、可独立运行的校验脚本 `tutor-lint.mjs`（`node tutor-lint.mjs <文件或目录>`，单文件零依赖，Node ≥20）与「材料整理」技能（SKILL.md）的自包含文件夹，拷走即可配任何 AI 工具离线使用（由 `pnpm gen:spec` 自动同步，勿手改）；",
+      "- 一站式分发包 `dsl-kit/`（仓库根）：本规范、完整样例、提示词模板、能力清单（`capabilities.json`）、可独立运行的校验脚本 `tutor-lint.mjs`（`node tutor-lint.mjs <文件或目录>`，单文件零依赖，Node ≥20）与「材料整理」技能（SKILL.md）的自包含文件夹，拷走即可配任何 AI 工具离线使用（由 `pnpm gen:spec` 自动同步，勿手改）；",
       "- `完整样例.md`：三种 kind 的完整可复制样例（few-shot 首选）；",
       "- `提示词模板.md`：出题提示词模板，与本规范、完整样例一起发给 AI；",
-      "- `schema/content.json`：题目/单元/讲义结构化字段的 JSON Schema（由 contract 导出）。",
+      "- `schema/content.json`：题目/单元/讲义结构化字段的 JSON Schema（由 contract 导出）；",
+      "- `schema/capabilities.json`：指令能力三面与题型判分形态的机器可读清单（capability 未声明的指令为 null；`/api/public/spec/capabilities.json` 与 MCP `describe_capabilities` 同源提供）。snapshot 描述既有作答快照/交互事件的采集形式、ink-strokes 描述既有笔迹存储，不代表每题必有；partial 仅是词表保留值，本阶段没有实现也没有声明。",
       "",
     ].join("\n"),
   );
 
   return `${sections.join("\n")}\n`;
+}
+
+// ---------- capabilities.json（T7.6 / 方案 §4.4） ----------
+
+/**
+ * 渲染能力清单（capabilities.json 原文）：全量已注册指令（属性表复用规范.md
+ * 同一内省，capability 未声明为 null）+ 契约题型能力表原样嵌入。只读契约
+ * 注册表与题型表（不导入服务端 grading 函数）；2 空格 JSON + 尾换行，
+ * 与 schema/content.json 落盘格式一致（幂等，CI diff 校验依赖这一点）。
+ */
+export function renderCapabilitiesManifest(
+  directives: readonly RegisteredDirective[],
+): string {
+  const manifest: CapabilitiesManifest = {
+    formatVersion: 1,
+    directives: directives.map((def) => ({
+      name: def.name,
+      kind: def.kind,
+      attrs: Object.entries(businessShape(def)).map(([key, schema]) =>
+        attrRowData(
+          key,
+          schema,
+          (def.attrDocs as Record<string, string | undefined>)[key],
+        ),
+      ),
+      capability: def.capability ?? null,
+    })),
+    questionTypes: questionCapabilityBindings,
+  };
+  return `${JSON.stringify(manifest, null, 2)}\n`;
 }
 
 // ---------- 提示词模板.md ----------
