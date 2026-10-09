@@ -689,6 +689,8 @@ function snapshotBusinessTables(db: Db): Map<string, string[]> {
       delete row.frozen_at;
       delete row.legacy_unverified;
       if (table === "responses") delete row.unit_id;
+      // T7.8 教学包声明列（lectures/units，0029 新增，NULL=未声明）
+      delete row.teaching_pack_json;
       return JSON.stringify(row, Object.keys(row).sort());
     });
     snapshot.set(table, rows.sort());

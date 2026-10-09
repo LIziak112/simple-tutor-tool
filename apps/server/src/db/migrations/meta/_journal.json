@@ -204,6 +204,13 @@
       "when": 1791559080154,
       "tag": "0028_regular_apocalypse",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "6",
+      "when": 1791563952755,
+      "tag": "0029_daily_blazing_skull",
+      "breakpoints": true
     }
   ]
 }
