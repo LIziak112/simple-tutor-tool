@@ -617,7 +617,9 @@ describe("commitImport：教学包声明保存（T7.8）", () => {
       directives: [],
       validators: [],
     });
-    expect(db.select().from(lectures).all()[0]?.teachingPackJson).toBe(expected);
+    expect(db.select().from(lectures).all()[0]?.teachingPackJson).toBe(
+      expected,
+    );
     expect(db.select().from(units).all()[0]?.teachingPackJson).toBe(expected);
   });
 
@@ -656,9 +658,14 @@ describe("commitImport：教学包声明保存（T7.8）", () => {
       filename: "教学包.md",
     });
     const before = db.select().from(lectures).all()[0]?.teachingPackJson;
-    updateLecture(db, TEST_TEACHER_ID, db.select().from(lectures).all()[0]?.id ?? "", {
-      markdown: "# 第一讲 教学包\n\n编辑后的正文。\n",
-    });
+    updateLecture(
+      db,
+      TEST_TEACHER_ID,
+      db.select().from(lectures).all()[0]?.id ?? "",
+      {
+        markdown: "# 第一讲 教学包\n\n编辑后的正文。\n",
+      },
+    );
     expect(db.select().from(lectures).all()[0]?.teachingPackJson).toBe(before);
     expect(db.select().from(lectures).all()[0]?.markdown).toContain(
       "编辑后的正文",

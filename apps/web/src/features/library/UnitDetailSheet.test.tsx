@@ -141,7 +141,9 @@ describe("UnitDetailSheet 导出教学包（T7.8）", () => {
 
   it("导出失败：面板展示服务端中文错误（如声明引用失效 422 的明细）", async () => {
     apiMocks.downloadTeachingPack.mockRejectedValue(
-      new Error("教学包导出前检查未通过（第 2 行：引用了未注册的指令），未生成包"),
+      new Error(
+        "教学包导出前检查未通过（第 2 行：引用了未注册的指令），未生成包",
+      ),
     );
     renderSheet();
 

@@ -306,7 +306,7 @@ export function renderSpecMarkdown(input: SpecInput): string {
       "```",
       "",
       "- 这是**依赖声明，不是能力定义**：能力面以当前系统的能力清单（capabilities.json）为准，声明不复制定义、不覆盖判分；",
-      "- `name` 非空必填；`version` 是分享标签（缺省 `\"1\"`）；`formatVersion` 缺省 1；`directives` / `validators` 缺省空数组；",
+      '- `name` 非空必填；`version` 是分享标签（缺省 `"1"`）；`formatVersion` 缺省 1；`directives` / `validators` 缺省空数组；',
       "- `directives` 只能引用已注册指令名（别名合法），`validators` 只能引用题型能力表的内置校验器（judge / choice / multi / fill / solve / apply / find-error）；缺失引用是 **error**（DIRECTIVE_REF_NOT_FOUND / VALIDATOR_REF_NOT_FOUND，阻断导入）；不要求列齐正文实际使用的全部指令；",
       "- 声明会随导入保存到单元/讲义，随导出（export.md / 教学包 ZIP）原样保留；重新导入按新文件的声明覆盖，普通 MD 重导会清空旧声明。",
       "",

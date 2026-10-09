@@ -6,13 +6,7 @@ import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createDb } from "./client.ts";
 import { resolveMigrationsFolder, runMigrations } from "./migrate.ts";
-import {
-  assignments,
-  courses,
-  ink,
-  questions,
-  students,
-} from "./schema";
+import { assignments, courses, ink, questions, students } from "./schema";
 import { makeMigrationsFolderUpTo } from "./test-utils.ts";
 
 let dir: string;

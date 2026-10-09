@@ -1,6 +1,6 @@
 import { defineDirective, getDirective } from "@tutor/contract";
-import { z } from "zod";
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import { lintDocument } from "./lint.ts";
 
 /**
@@ -62,9 +62,7 @@ describe("lintTeachingPack：DIRECTIVE_REF_NOT_FOUND / VALIDATOR_REF_NOT_FOUND",
 
   it("directives 引用别名合法（经注册表归一命中主名）", () => {
     const found = codesOf(
-      practiceMd(
-        'teachingPack: {name: "包", directives: ["t-test-pack-old"]}',
-      ),
+      practiceMd('teachingPack: {name: "包", directives: ["t-test-pack-old"]}'),
     );
     expect(getDirective("t-test-pack-old")?.name).toBe("t-test-pack-main");
     expect(

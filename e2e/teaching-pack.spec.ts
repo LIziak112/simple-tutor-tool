@@ -186,9 +186,9 @@ test.describe("T7.8 教学包往返：导入 → 作答判分 → 导出 ZIP →
     const contentMd = entries.get("content.md")?.toString("utf8") ?? "";
     expect(contentMd).toContain('name: "E2E 教学包"');
     expect(contentMd).toContain(`src="${imageSrc}"`);
-    const snapshot = entries.get("capabilities-snapshot.json")?.toString(
-      "utf8",
-    );
+    const snapshot = entries
+      .get("capabilities-snapshot.json")
+      ?.toString("utf8");
     expect(snapshot).toContain('"formatVersion": 1');
 
     // —— content.md 重新导入 → 声明保留（export.md 复核）——
@@ -204,7 +204,7 @@ test.describe("T7.8 教学包往返：导入 → 作答判分 → 导出 ZIP →
       `/api/teacher/units/${encodeURIComponent(unitName)}/export.md`,
     );
     const exportedMd = await mdRes.text();
-    expect(exportedMd).toContain('teachingPack:');
+    expect(exportedMd).toContain("teachingPack:");
     expect(exportedMd).toContain('name: "E2E 教学包"');
   });
 });

@@ -1,7 +1,7 @@
 import { lintDocument } from "@tutor/md-dsl";
 import type { Db } from "../db/client";
 import { HttpError } from "../lib/http-error";
-import { zipBufferOf, type ZipArchiveWriter } from "../lib/zip-write";
+import { type ZipArchiveWriter, zipBufferOf } from "../lib/zip-write";
 import { readSpecFile } from "../spec-files";
 import { exportLectureMd, exportUnitMd } from "./library-service";
 import { extractMediaImageSrcs, readMediaBlob } from "./media-service";

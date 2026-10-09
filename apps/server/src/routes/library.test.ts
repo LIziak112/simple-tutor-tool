@@ -1270,7 +1270,12 @@ describe("资源库路由：export.md 保留教学包声明（T7.8）", () => {
     const lectureId = (
       (
         (await (
-          await request(app, "GET", "/api/teacher/library/lectures", teacherCookie)
+          await request(
+            app,
+            "GET",
+            "/api/teacher/library/lectures",
+            teacherCookie,
+          )
         ).json()) as { data: { lectures: { id: string; title: string }[] } }
       ).data.lectures.find((l) => l.title === "第1讲 导出声明") ?? {
         id: "",

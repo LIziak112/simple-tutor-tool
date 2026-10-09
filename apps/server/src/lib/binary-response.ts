@@ -94,7 +94,8 @@ export function noStoreAttachmentHeaders(
       attachmentFilenameUtf8,
     );
   } else if (attachmentFilename !== undefined) {
-    headers["content-disposition"] = `attachment; filename="${attachmentFilename}"`;
+    headers["content-disposition"] =
+      `attachment; filename="${attachmentFilename}"`;
   }
   return headers;
 }

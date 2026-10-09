@@ -35,9 +35,9 @@ describe("teachingPackSchema", () => {
   it("name 必填非空；version 非空；formatVersion 只接受 1", () => {
     expect(teachingPackSchema.safeParse({}).success).toBe(false);
     expect(teachingPackSchema.safeParse({ name: "" }).success).toBe(false);
-    expect(teachingPackSchema.safeParse({ name: "x", version: "" }).success).toBe(
-      false,
-    );
+    expect(
+      teachingPackSchema.safeParse({ name: "x", version: "" }).success,
+    ).toBe(false);
     expect(
       teachingPackSchema.safeParse({ name: "x", formatVersion: 2 }).success,
     ).toBe(false);

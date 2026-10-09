@@ -5,12 +5,12 @@ import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { imports, units } from "../db/schema";
 import { createTestDb, createTestDir, TEST_TEACHER_ID } from "../db/test-utils";
-import { missingMediaImageSrcs, saveMedia } from "./media-service";
-import { commitImport } from "./content-service";
+import { readZipEntriesMap } from "../lib/zip-read";
 import { getCapabilityProfile } from "./capability-profile-service";
+import { commitImport } from "./content-service";
+import { missingMediaImageSrcs, saveMedia } from "./media-service";
 import { exportTeachingPackZip } from "./teaching-pack-service";
 import { commitZipImport, unpackImportZip } from "./zip-import-service";
-import { readZipEntriesMap } from "../lib/zip-read";
 
 /**
  * T7.8 教学包 ZIP 导出（方案 §4.6）服务层测试：
@@ -82,9 +82,9 @@ describe("exportTeachingPackZip（T7.8 教学包 ZIP 导出）", () => {
     expect(contentMd).toContain(`src="${saved.src}"`);
 
     // 快照即当前系统能力清单（可被契约解析）
-    const snapshot = entries.get("capabilities-snapshot.json")?.toString(
-      "utf8",
-    );
+    const snapshot = entries
+      .get("capabilities-snapshot.json")
+      ?.toString("utf8");
     expect(() =>
       capabilitiesManifestSchema.parse(JSON.parse(snapshot ?? "null")),
     ).not.toThrow();

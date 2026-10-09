@@ -19,7 +19,10 @@ import {
 import { Hono } from "hono";
 import type { TeacherEnv } from "../auth/require-teacher";
 import type { Db } from "../db/client";
-import { noStoreBinaryResponse, attachmentDisposition } from "../lib/binary-response";
+import {
+  attachmentDisposition,
+  noStoreBinaryResponse,
+} from "../lib/binary-response";
 import { parseJsonBody } from "../lib/http-error";
 import {
   batchLibrary,
@@ -43,8 +46,8 @@ import {
   updateLectureFolder,
   updateUnitMeta,
 } from "../services/library-service";
-import { exportTeachingPackZip } from "../services/teaching-pack-service";
 import { batchPublishToShared } from "../services/shared-service";
+import { exportTeachingPackZip } from "../services/teaching-pack-service";
 
 /**
  * 资源库路由（需教师会话，T2A.2），由 teacher.ts 挂在 /api/teacher 之下：
