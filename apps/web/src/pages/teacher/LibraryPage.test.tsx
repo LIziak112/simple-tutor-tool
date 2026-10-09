@@ -11,6 +11,7 @@ import { LIBRARY_FOLDER_STORAGE_KEY } from "@/features/library/library-view-memo
 import {
   batchLibraryApi,
   deleteUnitApi,
+  downloadTeachingPack,
   fetchLibraryFolders,
   fetchLibraryLectures,
   fetchLibraryUnits,
@@ -47,6 +48,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
     purgeUnitApi: vi.fn(),
     purgeLectureApi: vi.fn(),
     downloadExportMd: vi.fn(),
+    downloadTeachingPack: vi.fn(),
     renameLibraryFolderApi: vi.fn(),
     reorderLibraryFoldersApi: vi.fn(),
     deleteLibraryFolderApi: vi.fn(),
@@ -169,6 +171,24 @@ describe("资源库页面", () => {
     ).toBeInTheDocument();
     // 考点出现在单元行汇总与展开题目表中，至少渲染一次
     expect(screen.getAllByText("相反数").length).toBeGreaterThan(0);
+  });
+
+  it("T7.8：单元行「导出教学包」按钮 → downloadTeachingPack(unit, id)；失败明细进提示条", async () => {
+    mockDataLoaded();
+    renderPage();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "导出教学包 练习四" }),
+    );
+    await waitFor(() =>
+      expect(downloadTeachingPack).toHaveBeenCalledWith("unit", "练习四"),
+    );
+
+    // 失败（如声明引用失效 422）：错误文本进操作提示条
+    vi.mocked(downloadTeachingPack).mockRejectedValue(
+      new Error("教学包导出前检查未通过，未生成包"),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "导出教学包 练习四" }));
+    expect(await screen.findByText(/导出前检查未通过/)).toBeInTheDocument();
   });
 
   it("加载中显示骨架；空数据显示空态引导", async () => {

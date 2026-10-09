@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import type { LibraryUnitSummary, LibraryUsage } from "@tutor/contract";
-import { Download, Info, Loader2, Save, Settings2, Trash2 } from "lucide-react";
+import { Download, Info, Loader2, Package, Save, Settings2, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,6 +15,7 @@ import { UsageSection } from "@/features/library/UsageSection";
 import { PublishConfirmDialog } from "@/features/shared/PublishConfirmDialog";
 import {
   downloadExportMd,
+  downloadTeachingPack,
   type UnitMetaUpdate,
   updateUnitMetaApi,
 } from "@/lib/api";
@@ -104,6 +105,15 @@ export function UnitDetailSheet({
 
   const exportMutation = useMutation({
     mutationFn: () => downloadExportMd("unit", unit.id),
+    onSuccess: () => setError(null),
+    onError: (err) =>
+      setError(err instanceof Error ? err.message : "导出失败，请稍后重试"),
+  });
+
+  // T7.8：导出教学包 ZIP（content.md + 能力清单快照 + 随行图片；声明引用失效时
+  // 服务端 422，message 已含首条明细）
+  const exportPackMutation = useMutation({
+    mutationFn: () => downloadTeachingPack("unit", unit.id),
     onSuccess: () => setError(null),
     onError: (err) =>
       setError(err instanceof Error ? err.message : "导出失败，请稍后重试"),
@@ -327,6 +337,26 @@ export function UnitDetailSheet({
               <>
                 <Download aria-hidden />
                 导出 Markdown
+              </>
+            )}
+          </Button>
+          {/* T7.8：导出教学包（ZIP：正文 + 能力清单快照 + 随行图片，可整包分享/再导入） */}
+          <Button
+            type="button"
+            variant="outline"
+            className="min-h-11 px-4"
+            disabled={exportPackMutation.isPending}
+            onClick={() => exportPackMutation.mutate()}
+          >
+            {exportPackMutation.isPending ? (
+              <>
+                <Loader2 aria-hidden className="animate-spin" />
+                导出中…
+              </>
+            ) : (
+              <>
+                <Package aria-hidden />
+                导出教学包
               </>
             )}
           </Button>

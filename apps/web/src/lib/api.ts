@@ -1756,6 +1756,51 @@ export async function downloadExportMd(
   saveBlobAs(await res.blob(), filename);
 }
 
+/**
+ * 下载教学包 ZIP（GET …/export-pack.zip，T7.8；文件直出非 JSON 统一壳）：
+ * 同构 fetch 拿 blob 触发浏览器下载；错误按统一壳解析（404 资源不存在 /
+ * 422 LINT_ERROR 导出前检查未过——声明引用失效，附 _issues 明细）。
+ */
+export async function downloadTeachingPack(
+  kind: "unit" | "lecture",
+  id: string,
+): Promise<void> {
+  const path =
+    kind === "unit"
+      ? `/api/teacher/units/${encodeURIComponent(id)}/export-pack.zip`
+      : `/api/teacher/lectures/${encodeURIComponent(id)}/export-pack.zip`;
+  let res: Response;
+  try {
+    res = await fetch(path);
+  } catch {
+    throw new Error(
+      "连不上服务器，请确认后端已启动（pnpm --filter server dev）后重试",
+    );
+  }
+  if (!res.ok) {
+    let body: unknown = null;
+    try {
+      body = await res.json();
+    } catch {
+      body = null;
+    }
+    const parsed = apiResponseSchema.safeParse(body);
+    if (parsed.success && !parsed.data.ok) {
+      throw new ApiError(
+        parsed.data.error,
+        parsed.data.message,
+        res.status,
+        pickExtraFields(body),
+      );
+    }
+    throw new Error(`导出失败（HTTP ${res.status}），请稍后重试`);
+  }
+  const disposition = res.headers.get("content-disposition") ?? "";
+  const star = /filename\*=UTF-8''([^;]+)/i.exec(disposition)?.[1];
+  const filename = star !== undefined ? decodeURIComponent(star) : `${id}.zip`;
+  saveBlobAs(await res.blob(), filename);
+}
+
 // ---------- T2B.6：管理端（/api/admin/*，requireAdmin；D19 管理员无业务数据权限） ----------
 
 /** 教师列表（loginName/isAdmin/disabledAt/createdAt/学生数；status=all|active|disabled 筛选） */

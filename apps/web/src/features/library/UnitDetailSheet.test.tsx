@@ -4,21 +4,22 @@ import type { LibraryUnitSummary, LibraryUsage } from "@tutor/contract";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { UnitDetailSheet } from "@/features/library/UnitDetailSheet";
 import {
+  downloadTeachingPack,
   fetchLectureUsageApi,
   publishUnitToSharedApi,
   updateUnitMetaApi,
 } from "@/lib/api";
 
 /**
- * 单元详情面板的「发布到共享」测试（T2B.7 验收项「发布确认弹层」）：
- * 按钮 → 确认弹层说明**快照副本**语义 → 确认发布 → 调 publish 接口 →
- * 展示实际写入文件名。
+ * 单元详情面板测试：T2B.7「发布到共享」（确认弹层说明快照语义）与
+ * T7.8「导出教学包」（按钮直下 ZIP；失败展示服务端中文错误）。
  */
 
 const apiMocks = vi.hoisted(() => ({
   publishUnitToSharedApi: vi.fn(),
   updateUnitMetaApi: vi.fn(),
   fetchLectureUsageApi: vi.fn(),
+  downloadTeachingPack: vi.fn(),
 }));
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -28,10 +29,12 @@ vi.mock("@/lib/api", async (importOriginal) => {
     publishUnitToSharedApi: apiMocks.publishUnitToSharedApi,
     updateUnitMetaApi: apiMocks.updateUnitMetaApi,
     fetchLectureUsageApi: apiMocks.fetchLectureUsageApi,
+    downloadTeachingPack: apiMocks.downloadTeachingPack,
   };
 });
 
 vi.mocked(publishUnitToSharedApi);
+vi.mocked(downloadTeachingPack);
 vi.mocked(updateUnitMetaApi);
 vi.mocked(fetchLectureUsageApi);
 
@@ -118,6 +121,33 @@ describe("UnitDetailSheet 发布到共享（确认弹层说明快照语义）", 
     expect(await screen.findByText("服务器繁忙")).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "确认发布" }),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("UnitDetailSheet 导出教学包（T7.8）", () => {
+  it("「导出教学包」→ 调 downloadTeachingPack(unit, id)", async () => {
+    apiMocks.downloadTeachingPack.mockResolvedValue(undefined);
+    renderSheet();
+
+    fireEvent.click(screen.getByRole("button", { name: "导出教学包" }));
+    await waitFor(() =>
+      expect(apiMocks.downloadTeachingPack).toHaveBeenCalledWith(
+        "unit",
+        "练习四",
+      ),
+    );
+  });
+
+  it("导出失败：面板展示服务端中文错误（如声明引用失效 422 的明细）", async () => {
+    apiMocks.downloadTeachingPack.mockRejectedValue(
+      new Error("教学包导出前检查未通过（第 2 行：引用了未注册的指令），未生成包"),
+    );
+    renderSheet();
+
+    fireEvent.click(screen.getByRole("button", { name: "导出教学包" }));
+    expect(
+      await screen.findByText(/教学包导出前检查未通过/),
     ).toBeInTheDocument();
   });
 });
