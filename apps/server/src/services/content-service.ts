@@ -566,6 +566,14 @@ export function commitImport(
     const now = new Date().toISOString();
     const importId = crypto.randomUUID();
 
+    // T7.8：教学包声明整份导入共享（讲义与单元各存一份；普通 MD = null——
+    // 重导按新文件覆盖，无声明即清空）。形态来自 frontmatter 契约解析，
+    // 写入侧无需再校验（lint 已过，error 级问题在上面被拒）。
+    const teachingPackJson =
+      parsed.frontmatter?.teachingPack === undefined
+        ? null
+        : JSON.stringify(parsed.frontmatter.teachingPack);
+
     // ---- 目标文件夹落定（见函数头注释的优先级） ----
     let folderId: string | null;
     if (input.folderId !== undefined) {
@@ -602,7 +610,12 @@ export function commitImport(
       if (existingId !== undefined) {
         // 命中即替换 markdown；软删行同时恢复（与题目「同 id 再导入即恢复」同口径）
         tx.update(lectures)
-          .set({ markdown: lecture.markdown, updatedAt: now, deletedAt: null })
+          .set({
+            markdown: lecture.markdown,
+            updatedAt: now,
+            deletedAt: null,
+            teachingPackJson,
+          })
           .where(eq(lectures.id, existingId))
           .run();
         lectureReports.push({
@@ -623,6 +636,7 @@ export function commitImport(
             markdown: lecture.markdown,
             order: nextLectureOrder,
             updatedAt: now,
+            teachingPackJson,
           })
           .run();
         nextLectureOrder += 1;
@@ -675,6 +689,7 @@ export function commitImport(
             topic: unit.topic ?? null,
             updatedAt: now,
             deletedAt: null,
+            teachingPackJson,
           })
           .where(and(eq(units.teacherId, teacherId), eq(units.id, unit.id)))
           .run();
@@ -695,6 +710,7 @@ export function commitImport(
             topic: unit.topic ?? null,
             order: nextUnitOrder,
             updatedAt: now,
+            teachingPackJson,
           })
           .run();
         nextUnitOrder += 1;

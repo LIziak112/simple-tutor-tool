@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { teachingPackSchema } from "./teaching-pack.ts";
 
 /**
  * 内容契约（DSL v2）：练习题、讲义、单元与解析结果的权威数据结构。
@@ -234,6 +235,8 @@ export const frontmatterSchema = z.object({
   title: z.string().optional(),
   lecture: z.string().optional(),
   topic: z.string().optional(),
+  /** 教学包声明（T7.8 / 方案 §4.6，可选命名空间）：依赖声明非能力定义，无该字段即普通 MD */
+  teachingPack: teachingPackSchema.optional(),
 });
 
 /** linter 输出的单个问题（§5.1）：line/column 均从 1 起；fix 为可选的修正建议文本 */

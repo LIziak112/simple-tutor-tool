@@ -68,6 +68,9 @@ export * from "./student-notebook-api.ts";
 export * from "./student-records-api.ts";
 /** 教师端作答数据契约（T3.1 起为权威定义，依据 Phase3 清单 D5–D8）：作答列表/详情查询与数据、错误码 */
 export * from "./teacher-attempt-api.ts";
+/** 教学包声明契约（T7.8 起为权威定义，方案 §4.6）：frontmatter 可选 teachingPack 命名空间——
+ *  formatVersion/name/version 与 directives/validators 引用数组的依赖声明（非能力定义） */
+export * from "./teaching-pack.ts";
 
 /**
  * API 响应壳（占位示例）。

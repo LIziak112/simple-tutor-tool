@@ -11,6 +11,7 @@ import {
   Download,
   FileStack,
   FolderInput,
+  Package,
   PencilLine,
   Plus,
   RotateCcw,
@@ -77,6 +78,7 @@ import {
   deleteQuestionApi,
   deleteUnitApi,
   downloadExportMd,
+  downloadTeachingPack,
   purgeLectureApi,
   purgeUnitApi,
   restoreLectureApi,
@@ -170,6 +172,16 @@ export function LibraryPage() {
   const [undoable, setUndoable] = useState<UndoableAction | null>(null);
 
   const isRecycle = tab === "recycle";
+
+  // T7.8：导出教学包 ZIP（讲义/单元列表行共用；失败明细进 actionError 展示）
+  function exportPack(kind: "unit" | "lecture", id: string): void {
+    downloadTeachingPack(kind, id).catch((err: unknown) =>
+      setActionError(
+        err instanceof Error ? err.message : "导出失败，请稍后重试",
+      ),
+    );
+  }
+
   const listParams = useMemo(
     () => ({
       folderId: folder === undefined ? undefined : folder,
@@ -414,7 +426,9 @@ export function LibraryPage() {
         <div>
           <h1 className="text-lg font-semibold">资源库</h1>
           <p className="mt-0.5 text-sm text-muted-foreground">
-            讲义库与题库：导入的内容都在这里，按文件夹组织，供课程与作业引用
+            讲义库与题库：导入的内容都在这里，按文件夹组织，供课程与作业引用；
+            列表与详情面板可把讲义 / 单元导出为教学包 ZIP（正文 + 能力清单快照 +
+            随行图片），整包分享或重新导入
           </p>
         </div>
         <Button asChild className="min-h-11 px-4">
@@ -637,6 +651,7 @@ export function LibraryPage() {
                   ),
                 )
               }
+              onExportPack={(id) => exportPack("lecture", id)}
               onDelete={(lecture) =>
                 setDeleting({
                   kind: "lecture",
@@ -686,6 +701,7 @@ export function LibraryPage() {
                   ),
                 )
               }
+              onExportPack={(id) => exportPack("unit", id)}
               onDelete={(unit) =>
                 setDeleting({ kind: "unit", id: unit.id, name: unit.title })
               }
@@ -868,6 +884,7 @@ function LectureListView({
   onRetry,
   onEdit,
   onExport,
+  onExportPack,
   onDelete,
   onBatchMove,
   onBatchDelete,
@@ -883,6 +900,8 @@ function LectureListView({
   onRetry: () => void;
   onEdit: (id: string) => void;
   onExport: (id: string) => void;
+  /** T7.8：导出教学包 ZIP（content.md + 能力清单快照 + 随行图片） */
+  onExportPack: (id: string) => void;
   onDelete: (lecture: LibraryLectureSummary) => void;
   onBatchMove: () => void;
   onBatchDelete: () => void;
@@ -994,6 +1013,15 @@ function LectureListView({
             <Button
               type="button"
               variant="ghost"
+              className="size-11 shrink-0"
+              aria-label={`导出教学包 ${lecture.title}`}
+              onClick={() => onExportPack(lecture.id)}
+            >
+              <Package aria-hidden />
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
               className="size-11 shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
               aria-label={`删除讲义 ${lecture.title}`}
               onClick={() => onDelete(lecture)}
@@ -1019,6 +1047,7 @@ function UnitListView({
   onRetry,
   onOpenDetail,
   onExport,
+  onExportPack,
   onDelete,
   onEditQuestion,
   onDeleteQuestion,
@@ -1036,6 +1065,8 @@ function UnitListView({
   onRetry: () => void;
   onOpenDetail: (id: string) => void;
   onExport: (id: string) => void;
+  /** T7.8：导出教学包 ZIP（同讲义列表口径） */
+  onExportPack: (id: string) => void;
   onDelete: (unit: LibraryUnitSummary) => void;
   onEditQuestion: (id: string) => void;
   onDeleteQuestion: (id: string) => void;
@@ -1180,6 +1211,15 @@ function UnitListView({
                 onClick={() => onExport(unit.id)}
               >
                 <Download aria-hidden />
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                className="size-11 shrink-0"
+                aria-label={`导出教学包 ${unit.title}`}
+                onClick={() => onExportPack(unit.id)}
+              >
+                <Package aria-hidden />
               </Button>
               <Button
                 type="button"

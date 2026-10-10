@@ -1223,3 +1223,207 @@ describe("资源库路由：export.md 往返", () => {
     expect(previewBody.data.summary.lectureCount).toBe(1);
   });
 });
+
+// ---------- T7.8：export.md 保留教学包声明 ----------
+
+/** 带声明的 mixed 文档（讲义 + 单元各一；引用全部合法） */
+const PACK_MD = `---
+kind: mixed
+unit: 导出声明单元
+teachingPack: {name: "导出测试包", version: "2", directives: [steps], validators: [judge]}
+---
+
+# 第1讲 导出声明
+
+正文。
+
+::::question{type=judge difficulty=1 id="export-pack-q1"}
+$2+2=4$。[[正确]]
+::::
+`;
+
+describe("资源库路由：export.md 保留教学包声明（T7.8）", () => {
+  it("单元与讲义导出都带声明行；导出文本可再导入且声明解析一致；普通 MD 重导后导出无声明", async () => {
+    const { app, teacherCookie } = await makeApp();
+    const commit = await request(
+      app,
+      "POST",
+      "/api/teacher/import/commit",
+      teacherCookie,
+      { markdown: PACK_MD, filename: "导出声明.md" },
+    );
+    expect(commit.status).toBe(200);
+
+    const unitExport = await request(
+      app,
+      "GET",
+      "/api/teacher/units/导出声明单元/export.md",
+      teacherCookie,
+    );
+    expect(unitExport.status).toBe(200);
+    const unitMd = await unitExport.text();
+    // 声明行以确定性格式回写（固定键序 + JSON 字符串值，合法 YAML flow 映射）
+    expect(unitMd).toContain(
+      'teachingPack: {formatVersion: 1, name: "导出测试包", version: "2", directives: ["steps"], validators: ["judge"]}',
+    );
+
+    const lectureId = (
+      (
+        (await (
+          await request(
+            app,
+            "GET",
+            "/api/teacher/library/lectures",
+            teacherCookie,
+          )
+        ).json()) as { data: { lectures: { id: string; title: string }[] } }
+      ).data.lectures.find((l) => l.title === "第1讲 导出声明") ?? {
+        id: "",
+      }
+    ).id;
+    const lectureExport = await request(
+      app,
+      "GET",
+      `/api/teacher/lectures/${lectureId}/export.md`,
+      teacherCookie,
+    );
+    expect(lectureExport.status).toBe(200);
+    const lectureMd = await lectureExport.text();
+    expect(lectureMd).toContain('name: "导出测试包"');
+
+    // 导出文本 0 error 且声明解析一致（往返第一步）
+    const linted = lintDocument(unitMd);
+    expect(linted.issues.filter((i) => i.level === "error")).toHaveLength(0);
+    expect(linted.parsed.frontmatter?.teachingPack).toEqual({
+      formatVersion: 1,
+      name: "导出测试包",
+      version: "2",
+      directives: ["steps"],
+      validators: ["judge"],
+    });
+
+    // 导出文本再导入（同一单元走更新路径）→ 再导出，声明保持
+    const reimport = await request(
+      app,
+      "POST",
+      "/api/teacher/import/commit",
+      teacherCookie,
+      { markdown: unitMd, filename: "导出声明.md" },
+    );
+    expect(reimport.status).toBe(200);
+
+    // 普通 MD 重导（去掉声明行）→ 导出不再有声明
+    const plain = PACK_MD.split("\n")
+      .filter((line) => !line.startsWith("teachingPack:"))
+      .join("\n");
+    const plainCommit = await request(
+      app,
+      "POST",
+      "/api/teacher/import/commit",
+      teacherCookie,
+      { markdown: plain, filename: "导出声明.md" },
+    );
+    expect(plainCommit.status).toBe(200);
+    const cleared = await request(
+      app,
+      "GET",
+      "/api/teacher/units/导出声明单元/export.md",
+      teacherCookie,
+    );
+    expect(await cleared.text()).not.toContain("teachingPack:");
+  });
+
+  it("export-pack.zip：文件直出 application/zip 附件；未知单元 404；引用失效 422 LINT_ERROR", async () => {
+    const { app, db, teacherCookie } = await makeApp();
+    const commit = await request(
+      app,
+      "POST",
+      "/api/teacher/import/commit",
+      teacherCookie,
+      { markdown: PACK_MD, filename: "导出声明.md" },
+    );
+    expect(commit.status).toBe(200);
+
+    const res = await request(
+      app,
+      "GET",
+      "/api/teacher/units/导出声明单元/export-pack.zip",
+      teacherCookie,
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("application/zip");
+    expect(res.headers.get("content-disposition")).toContain("attachment");
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    const bytes = Buffer.from(await res.arrayBuffer());
+    expect(bytes.subarray(0, 2).toString("latin1")).toBe("PK");
+
+    const missing = await request(
+      app,
+      "GET",
+      "/api/teacher/units/ghost/export-pack.zip",
+      teacherCookie,
+    );
+    expect(missing.status).toBe(404);
+
+    // 声明引用失效（手工改列模拟存量劣化）→ 422 LINT_ERROR 不生成包
+    db.update(units)
+      .set({
+        teachingPackJson: JSON.stringify({
+          formatVersion: 1,
+          name: "失效包",
+          version: "1",
+          directives: ["no-such-directive"],
+          validators: [],
+        }),
+      })
+      .where(eq(units.id, "导出声明单元"))
+      .run();
+    const broken = await request(
+      app,
+      "GET",
+      "/api/teacher/units/导出声明单元/export-pack.zip",
+      teacherCookie,
+    );
+    expect(broken.status).toBe(422);
+    const err = await readErr(broken);
+    expect(err.error).toBe("LINT_ERROR");
+  });
+
+  it("讲义端点 export-pack.zip：同一工厂 kind=lecture 直出 zip（content.md 含声明）", async () => {
+    const { app, teacherCookie } = await makeApp();
+    const commit = await request(
+      app,
+      "POST",
+      "/api/teacher/import/commit",
+      teacherCookie,
+      { markdown: PACK_MD, filename: "导出声明.md" },
+    );
+    expect(commit.status).toBe(200);
+    const lectureId = (
+      (
+        (await (
+          await request(
+            app,
+            "GET",
+            "/api/teacher/library/lectures",
+            teacherCookie,
+          )
+        ).json()) as { data: { lectures: { id: string; title: string }[] } }
+      ).data.lectures.find((l) => l.title === "第1讲 导出声明") ?? { id: "" }
+    ).id;
+
+    const res = await request(
+      app,
+      "GET",
+      `/api/teacher/lectures/${lectureId}/export-pack.zip`,
+      teacherCookie,
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("application/zip");
+    const bytes = Buffer.from(await res.arrayBuffer());
+    expect(bytes.subarray(0, 2).toString("latin1")).toBe("PK");
+    // content.md 里声明随讲义导出（正文含标题与声明行）
+    const text = bytes.toString("latin1");
+    expect(text).toContain("content.md");
+  });
+});

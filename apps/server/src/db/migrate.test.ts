@@ -6,14 +6,7 @@ import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createDb } from "./client.ts";
 import { resolveMigrationsFolder, runMigrations } from "./migrate.ts";
-import {
-  assignments,
-  courses,
-  ink,
-  questions,
-  students,
-  units,
-} from "./schema";
+import { assignments, courses, ink, questions, students } from "./schema";
 import { makeMigrationsFolderUpTo } from "./test-utils.ts";
 
 let dir: string;
@@ -130,20 +123,14 @@ describe("T6R.2 迁移：空库与带存量库", () => {
       })
       .run();
     const unitId = "unit-练习四";
-    db.insert(units)
-      .values({
-        id: unitId,
-        teacherId,
-        courseId: null,
-        folderId: null,
-        lectureId: null,
-        title: "练习四",
-        topic: null,
-        order: 0,
-        updatedAt: now,
-        deletedAt: null,
-      })
-      .run();
+    // 单元行同走原生 SQL（T7.8，同 teachers/attempts 惯例）：边界库的 units 表
+    // 还没有 0029 新增的 teaching_pack_json 列
+    db.$client
+      .prepare(
+        `INSERT INTO units (id, teacher_id, course_id, folder_id, lecture_id, title, topic, "order", updated_at, deleted_at)
+         VALUES (?, ?, NULL, NULL, NULL, '练习四', NULL, 0, ?, NULL)`,
+      )
+      .run(unitId, teacherId, now);
     const questionId = "练习四-1";
     db.insert(questions)
       .values({

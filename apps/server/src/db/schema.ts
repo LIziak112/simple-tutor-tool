@@ -314,6 +314,12 @@ export const lectures = sqliteTable(
     updatedAt: text("updated_at").notNull(),
     /** 软删时间：UTC ISO 字符串；未删除为 NULL（D3：软删进回收站，可恢复） */
     deletedAt: text("deleted_at"),
+    /**
+     * 教学包声明 JSON（T7.8 / 方案 §4.6，形态来自 contract teachingPackSchema）：
+     * 导入时从 frontmatter.teachingPack 落库；NULL = 未声明（普通 MD）。正文编辑
+     * 不触碰本列（声明保留）；重新导入按新文件覆盖（普通 MD 重导清空）。
+     */
+    teachingPackJson: text("teaching_pack_json"),
   },
   (table) => [index("lectures_teacher_idx").on(table.teacherId)],
 );
@@ -359,6 +365,12 @@ export const units = sqliteTable(
     updatedAt: text("updated_at").notNull(),
     /** 软删时间：UTC ISO 字符串；未删除为 NULL（D3：软删进回收站，可恢复） */
     deletedAt: text("deleted_at"),
+    /**
+     * 教学包声明 JSON（T7.8 / 方案 §4.6，形态来自 contract teachingPackSchema）：
+     * 同一次导入拆出的单元与讲义共享同一声明；NULL = 未声明（普通 MD）。语义同
+     * lectures.teachingPackJson（导入覆盖 / 编辑保留 / 普通 MD 重导清空）。
+     */
+    teachingPackJson: text("teaching_pack_json"),
   },
   (table) => [primaryKey({ columns: [table.teacherId, table.id] })],
 );

@@ -293,13 +293,23 @@ export function saveBlobAs(blob: Blob, filename: string): void {
 }
 
 /**
- * Content-Disposition → 下载文件名（filename="…" 形态；取不到回退 fallback）。
- * 中文文件名的 filename*=UTF-8'' 形态另见 downloadExportMd（唯一特例，不并）。
+ * Content-Disposition → 下载文件名。优先 filename*=UTF-8''（RFC 5987，中文
+ * 附件名——export.md 与 T7.8 教学包 ZIP），回退 filename="…"（ASCII 兜底段，
+ * 服务端 attachmentDisposition 恒成对输出两段），都取不到回退 fallback。
  */
 function filenameFromDisposition(res: Response, fallback: string): string {
   const disposition = res.headers.get("content-disposition") ?? "";
-  // 负向断言排除 filename*= 形态（RFC 5987 编码形态只有 downloadExportMd
-  // 那一处理——它的 `*=UTF-8''` 前缀会被本正则误捕，这里不受理）
+  const star = /filename\*=UTF-8''([^;]+)/i.exec(disposition)?.[1];
+  if (star !== undefined) {
+    // 坏 % 序列（非规范编码）解码会抛 URIError——回退 filename= 段，不让
+    // 一个畸形头把整个下载变成裸异常（本 helper 被全部下载器共用）
+    try {
+      return decodeURIComponent(star);
+    } catch {
+      // 落到下方 filename= 解析
+    }
+  }
+  // 负向断言排除 filename*= 形态（上面未命中才走到这里，防御同名段并存）
   const matched = /filename(?!\*)="?([^";]+)"?/i.exec(disposition)?.[1];
   return matched !== undefined && matched.length > 0 ? matched : fallback;
 }
@@ -1732,28 +1742,36 @@ export async function downloadExportMd(
   }
   if (!res.ok) {
     // 文件接口的错误仍是统一 JSON 壳
-    let body: unknown = null;
-    try {
-      body = await res.json();
-    } catch {
-      body = null;
-    }
-    const parsed = apiResponseSchema.safeParse(body);
-    if (parsed.success && !parsed.data.ok) {
-      throw new ApiError(
-        parsed.data.error,
-        parsed.data.message,
-        res.status,
-        pickExtraFields(body),
-      );
-    }
-    throw new Error(`导出失败（HTTP ${res.status}），请稍后重试`);
+    await throwShellError(res);
   }
-  const disposition = res.headers.get("content-disposition") ?? "";
-  // 优先 filename*=UTF-8''（中文标题），回退整个头文本
-  const star = /filename\*=UTF-8''([^;]+)/i.exec(disposition)?.[1];
-  const filename = star !== undefined ? decodeURIComponent(star) : `${id}.md`;
-  saveBlobAs(await res.blob(), filename);
+  saveBlobAs(await res.blob(), filenameFromDisposition(res, `${id}.md`));
+}
+
+/**
+ * 下载教学包 ZIP（GET …/export-pack.zip，T7.8；文件直出非 JSON 统一壳）：
+ * 同构 fetch 拿 blob 触发浏览器下载；错误按统一壳解析（404 资源不存在 /
+ * 422 LINT_ERROR 导出前检查未过——声明引用失效，附 _issues 明细）。
+ */
+export async function downloadTeachingPack(
+  kind: "unit" | "lecture",
+  id: string,
+): Promise<void> {
+  const path =
+    kind === "unit"
+      ? `/api/teacher/units/${encodeURIComponent(id)}/export-pack.zip`
+      : `/api/teacher/lectures/${encodeURIComponent(id)}/export-pack.zip`;
+  let res: Response;
+  try {
+    res = await fetch(path);
+  } catch {
+    throw new Error(
+      "连不上服务器，请确认后端已启动（pnpm --filter server dev）后重试",
+    );
+  }
+  if (!res.ok) {
+    await throwShellError(res);
+  }
+  saveBlobAs(await res.blob(), filenameFromDisposition(res, `${id}.zip`));
 }
 
 // ---------- T2B.6：管理端（/api/admin/*，requireAdmin；D19 管理员无业务数据权限） ----------

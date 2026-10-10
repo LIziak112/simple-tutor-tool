@@ -16,9 +16,13 @@ import {
   libraryListQuerySchema,
   unitMetaUpdateSchema,
 } from "@tutor/contract";
-import { Hono } from "hono";
+import { type Context, Hono } from "hono";
 import type { TeacherEnv } from "../auth/require-teacher";
 import type { Db } from "../db/client";
+import {
+  attachmentDisposition,
+  noStoreBinaryResponse,
+} from "../lib/binary-response";
 import { parseJsonBody } from "../lib/http-error";
 import {
   batchLibrary,
@@ -43,6 +47,10 @@ import {
   updateUnitMeta,
 } from "../services/library-service";
 import { batchPublishToShared } from "../services/shared-service";
+import {
+  exportTeachingPackZip,
+  type TeachingPackKind,
+} from "../services/teaching-pack-service";
 
 /**
  * 资源库路由（需教师会话，T2A.2），由 teacher.ts 挂在 /api/teacher 之下：
@@ -52,9 +60,11 @@ import { batchPublishToShared } from "../services/shared-service";
  *   folderId="none" = 未归类）；
  * - 单元：PATCH /units/:id（元数据）、DELETE /units/:id（软删）、
  *   POST /units/:id/restore、DELETE /units/:id/purge（D3 条件 409 RESOURCE_IN_USE）、
- *   GET /units/:id/usage、GET /units/:id/export.md；
+ *   GET /units/:id/usage、GET /units/:id/export.md、GET /units/:id/export-pack.zip
+ *   （T7.8 教学包 ZIP：content.md + capabilities-snapshot.json + 随行图片）；
  * - 讲义：PATCH /lectures/:id（移动文件夹）、POST /lectures/:id/restore、
- *   DELETE /lectures/:id/purge、GET /lectures/:id/usage、GET /lectures/:id/export.md；
+ *   DELETE /lectures/:id/purge、GET /lectures/:id/usage、GET /lectures/:id/export.md、
+ *   GET /lectures/:id/export-pack.zip（T7.8，同单元）；
  * - 批量：POST /library/batch（move/delete/restore/addToCourse/publish——
  *   publish 为共享快照批量发布，业务在 shared-service）。
  *
@@ -63,7 +73,35 @@ import { batchPublishToShared } from "../services/shared-service";
  * T2B.3 起全部接口按会话教师（c.var.teacher.id）过滤与写入：乙访问甲的资源 → 404。
  * 业务逻辑在 LibraryService（api-endpoint 技能约定：路由只做鉴权→校验→调 service→包装）。
  */
-export function createLibraryRoutes(db: Db, dataDir: string) {
+export function createLibraryRoutes(
+  db: Db,
+  dataDir: string,
+  /** 规范目录覆盖（T7.8 教学包快照与 /api/public/spec 同源；缺省走目录候选） */
+  specDir?: string | undefined,
+) {
+  /**
+   * T7.8 教学包 ZIP 导出 handler 工厂（unit/lecture 两端点同构，仅 kind 字面量
+   * 不同）；域校验 404 与导出前检查（引用失效 422）都在 service。
+   */
+  type ExportPackPath =
+    | "/units/:id/export-pack.zip"
+    | "/lectures/:id/export-pack.zip";
+  const exportPackZipHandler = (kind: TeachingPackKind) => {
+    return async (c: Context<TeacherEnv, ExportPackPath>) => {
+      const zip = await exportTeachingPackZip(
+        db,
+        c.var.teacher.id,
+        kind,
+        c.req.param("id"),
+        dataDir,
+        specDir,
+      );
+      return noStoreBinaryResponse(zip.bytes, "application/zip", {
+        attachmentFilename: zip.filename,
+      });
+    };
+  };
+
   return (
     new Hono<TeacherEnv>()
       // ---------- 文件夹 ----------
@@ -182,6 +220,9 @@ export function createLibraryRoutes(db: Db, dataDir: string) {
         );
         return markdownResponse(markdown, filename);
       })
+      // T7.8：导出教学包（ZIP 文件直出；导出前检查声明引用，失效 422 不生成包；
+      // 文件名可含中文 → RFC 5987 编码，同 export.md 口径）
+      .get("/units/:id/export-pack.zip", exportPackZipHandler("unit"))
       // ---------- 讲义管理 ----------
       .patch("/lectures/:id", async (c) => {
         const body: LectureMetaUpdate = await parseJsonBody(
@@ -220,6 +261,8 @@ export function createLibraryRoutes(db: Db, dataDir: string) {
         );
         return markdownResponse(markdown, filename);
       })
+      // T7.8：导出教学包（同单元端点，kind=lecture）
+      .get("/lectures/:id/export-pack.zip", exportPackZipHandler("lecture"))
   );
 }
 
@@ -252,13 +295,7 @@ function markdownResponse(markdown: string, filename: string): Response {
       "content-type": "text/markdown; charset=utf-8",
       // 导出内容随资源编辑变化，禁缓存避免「导出旧版本」
       "cache-control": "no-store",
-      "content-disposition": `attachment; filename="${asciiFallback(filename)}"; filename*=UTF-8''${encodeURIComponent(filename)}`,
+      "content-disposition": attachmentDisposition(filename),
     },
   });
-}
-
-/** filename 的 ASCII 兜底（RFC 6266：不支持 filename* 的旧客户端用） */
-function asciiFallback(filename: string): string {
-  const ascii = filename.replace(/[^\x20-\x7e]/g, "_");
-  return ascii.length > 0 ? ascii.replace(/"/g, "_") : "export.md";
 }

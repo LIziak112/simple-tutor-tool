@@ -265,6 +265,18 @@ export const LINT_RULES: readonly LintRuleDoc[] = [
       "使用了 steps 逐步揭晓或手写题型（solve/apply/find-error），但教师级辅助能力开关已关闭：学生端回退为完整展开全部步骤 / 隐藏手写与草稿入口（最终答案仍可提交，正式作答不受影响）。仅当 lint 携带教师启用集时触发——CLI 与未提供上下文的校验按全启用，不产生本提示",
   },
   {
+    code: "DIRECTIVE_REF_NOT_FOUND",
+    level: "error",
+    description:
+      "frontmatter 的 teachingPack.directives 引用了未注册的指令：教学包声明是依赖承诺，缺失引用会阻断导入——请改用指令清单内的名称（声明只列依赖，不要求列齐正文使用的全部指令）",
+  },
+  {
+    code: "VALIDATOR_REF_NOT_FOUND",
+    level: "error",
+    description:
+      "frontmatter 的 teachingPack.validators 引用了不存在的校验器：请改用题型能力表的内置 validatorId（judge / choice / multi / fill / solve / apply / find-error）",
+  },
+  {
     code: "LINT_INTERNAL_ERROR",
     level: "error",
     description: "linter 内部错误（这是 linter 缺陷，请反馈给开发者）",

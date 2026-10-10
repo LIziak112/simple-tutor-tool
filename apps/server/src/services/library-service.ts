@@ -1,4 +1,5 @@
-import type { LibraryBatchRequest } from "@tutor/contract";
+import type { LibraryBatchRequest, TeachingPack } from "@tutor/contract";
+import { teachingPackSchema } from "@tutor/contract";
 import {
   and,
   asc,
@@ -1304,8 +1305,49 @@ function ensureQuestionId(sourceMd: string, id: string): string {
 }
 
 /**
+ * 教学包声明 → frontmatter YAML 行（T7.8）：确定性格式——固定键序 + JSON 字符串值
+ * （合法 YAML flow 映射，frontmatter 解析可原样读回；server 不依赖 yaml 包，硬性规则 5）。
+ * 列 NULL/坏 JSON/不合契约（写侧恒过契约，此处兜底异常存量）一律视为未声明，不导出。
+ */
+function teachingPackYamlLine(pack: TeachingPack): string {
+  const refs = (list: readonly string[]) =>
+    `[${list.map((item) => JSON.stringify(item)).join(", ")}]`;
+  return `teachingPack: {formatVersion: ${pack.formatVersion}, name: ${JSON.stringify(pack.name)}, version: ${JSON.stringify(pack.version)}, directives: ${refs(pack.directives)}, validators: ${refs(pack.validators)}}`;
+}
+
+/**
+ * 从 teachingPackJson 列读回声明行；无有效声明返回空（见上函数头注释的兜底口径）。
+ * 坏值（手工改库 / 备份恢复半截的存量异常）console.warn 留痕——写侧恒过契约，
+ * 走到这里说明数据被外力破坏，静默丢声明会让教师重导后无声清空（宽松口径
+ * 留痕同 zipBufferOf 的 warningAsError:false 惯例）。
+ */
+export function teachingPackYamlLineOf(column: string | null): string | null {
+  if (column === null) return null;
+  let data: unknown;
+  try {
+    data = JSON.parse(column);
+  } catch (err) {
+    console.warn(
+      "teachingPackYamlLineOf: teachingPackJson 不是合法 JSON，导出不含声明",
+      err,
+    );
+    return null;
+  }
+  const parsed = teachingPackSchema.safeParse(data);
+  if (!parsed.success) {
+    console.warn(
+      "teachingPackYamlLineOf: teachingPackJson 不合契约，导出不含声明",
+      parsed.error.issues[0]?.message,
+    );
+    return null;
+  }
+  return teachingPackYamlLine(parsed.data);
+}
+
+/**
  * 导出单元（GET /api/teacher/units/:id/export.md）：域内取单元（D12，越权 404）：
- * frontmatter（kind: practice、unit、lecture（配套讲义标题，若有）、topic（若有））
+ * frontmatter（kind: practice、unit、lecture（配套讲义标题，若有）、topic（若有）、
+ * teachingPack（列内有声明时回写，T7.8））
  * + 未删除各题 sourceMd 按题序拼接（空行分隔；缺省 id 的题注入显式 id，见
  * ensureQuestionId）。已删题不导出——防止「导出→再导入」经 D18 的同 id 恢复规则
  * 复活已删题；另有已删题时 frontmatter 后以 HTML 注释注明（lint 不产生
@@ -1345,6 +1387,10 @@ export function exportUnitMd(
   }
   if (unit.topic !== null) {
     lines.push(`topic: ${yamlString(unit.topic)}`);
+  }
+  const packLine = teachingPackYamlLineOf(unit.teachingPackJson);
+  if (packLine !== null) {
+    lines.push(packLine);
   }
   lines.push("---", "");
   const deletedQuestionCount = db
@@ -1386,8 +1432,8 @@ export function exportUnitMd(
 
 /**
  * 导出讲义（GET /api/teacher/lectures/:id/export.md）：域内取讲义（D12，越权 404）：
- * `---\nkind: lecture\n---\n\n` + markdown 原文（可原样重新导入；文件名 = 讲义标题）。
- * 讲义不存在 → 404。
+ * `---\nkind: lecture\n---\n\n` + markdown 原文（可原样重新导入；文件名 = 讲义标题）；
+ * 列内有教学包声明时 frontmatter 回写声明行（T7.8）。讲义不存在 → 404。
  */
 export function exportLectureMd(
   db: Db,
@@ -1395,13 +1441,22 @@ export function exportLectureMd(
   id: string,
 ): { markdown: string; filename: string } {
   const row = db
-    .select({ title: lectures.title, markdown: lectures.markdown })
+    .select({
+      title: lectures.title,
+      markdown: lectures.markdown,
+      teachingPackJson: lectures.teachingPackJson,
+    })
     .from(lectures)
     .where(and(eq(lectures.teacherId, teacherId), eq(lectures.id, id)))
     .get();
   if (row === undefined) {
     throw new HttpError(404, "LECTURE_NOT_FOUND", "讲义不存在");
   }
-  const markdown = `---\nkind: lecture\n---\n\n${row.markdown}`;
+  const packLine = teachingPackYamlLineOf(row.teachingPackJson);
+  const frontmatter =
+    packLine === null
+      ? "---\nkind: lecture\n---\n"
+      : `---\nkind: lecture\n${packLine}\n---\n`;
+  const markdown = `${frontmatter}\n${row.markdown}`;
   return { markdown, filename: `${safeFilename(row.title)}.md` };
 }

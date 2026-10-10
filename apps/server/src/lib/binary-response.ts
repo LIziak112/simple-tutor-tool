@@ -56,7 +56,12 @@ export function noStoreBinaryResponse(
   bytes: ArrayBuffer | Uint8Array<ArrayBuffer>,
   contentType: string,
   options: {
-    /** 附件下载语义：给定时设置 content-disposition: attachment（文档直出用） */
+    /**
+     * 附件下载语义：给定时设置 content-disposition: attachment，经
+     * attachmentDisposition 编码（可含中文；undici 的 Response 头不接受非
+     * ASCII 字节，直接放中文文件名会抛错——纯 ASCII 名只多一段无害的
+     * filename* 参数，T6R.13 起 ASCII 调用点与 T7.8 中文包名共用同一口径）
+     */
     attachmentFilename?: string;
   } = {},
 ): Response {
@@ -79,10 +84,19 @@ export function noStoreAttachmentHeaders(
     "cache-control": "no-store",
   };
   if (attachmentFilename !== undefined) {
-    headers["content-disposition"] =
-      `attachment; filename="${attachmentFilename}"`;
+    headers["content-disposition"] = attachmentDisposition(attachmentFilename);
   }
   return headers;
+}
+
+/**
+ * RFC 6266/5987 附件文件名头值：filename=ASCII 兜底 + filename*=UTF-8''编码
+ * （支持中文附件名；ASCII 兜底给不支持 filename* 的旧客户端）。
+ */
+export function attachmentDisposition(filename: string): string {
+  const ascii = filename.replace(/[^\x20-\x7e]/g, "_").replace(/"/g, "_");
+  const fallback = ascii.length > 0 ? ascii : "export";
+  return `attachment; filename="${fallback}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
 }
 
 /**

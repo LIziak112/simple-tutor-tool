@@ -31,6 +31,7 @@ import {
   createCourse,
   previewImport,
   previewImportBatch,
+  updateLecture,
 } from "./content-service.ts";
 import { createFolder } from "./library-service.ts";
 import { createStudent } from "./student-service.ts";
@@ -532,6 +533,143 @@ describe("commitImport：mixed 文档（讲义 + 单元）", () => {
     ]);
     expect(db.select().from(units).all()).toHaveLength(1);
     expect(db.select().from(units).all()[0]?.topic).toBe("新主题");
+  });
+});
+
+// ---------- T7.8：教学包声明的导入保存（方案 §4.6） ----------
+
+/** 带教学包声明的 mixed 文档（讲义 + 单元各一，声明引用全部合法） */
+const PACK_MIXED_MD = `---
+kind: mixed
+unit: 教学包单元
+teachingPack: {name: "测试教学包", version: "2", directives: [steps, blank], validators: [judge, fill]}
+---
+
+# 第一讲 教学包
+
+正文一段。
+
+::::question{type=judge difficulty=1 id=tp-q1}
+$1+1=2$。[[正确]]
+::::
+`;
+
+/** 同文档去掉声明行（普通 MD 重导，应清空旧声明） */
+const PACK_MIXED_PLAIN_MD = PACK_MIXED_MD.split("\n")
+  .filter((line) => !line.startsWith("teachingPack:"))
+  .join("\n");
+
+describe("commitImport：教学包声明保存（T7.8）", () => {
+  it("一次导入拆出的讲义与单元共享同一声明（teachingPackJson 落库）", () => {
+    const db = createTestDb();
+    commitImport(db, TEST_TEACHER_ID, {
+      markdown: PACK_MIXED_MD,
+      filename: "教学包.md",
+    });
+
+    const expected = JSON.stringify({
+      formatVersion: 1,
+      name: "测试教学包",
+      version: "2",
+      directives: ["steps", "blank"],
+      validators: ["judge", "fill"],
+    });
+    const lectureRow = db.select().from(lectures).all()[0];
+    expect(lectureRow?.teachingPackJson).toBe(expected);
+    const unitRow = db.select().from(units).all()[0];
+    expect(unitRow?.teachingPackJson).toBe(expected);
+  });
+
+  it("普通 MD 重导清空旧声明（更新与替换路径都覆盖）", () => {
+    const db = createTestDb();
+    commitImport(db, TEST_TEACHER_ID, {
+      markdown: PACK_MIXED_MD,
+      filename: "教学包.md",
+    });
+    const second = commitImport(db, TEST_TEACHER_ID, {
+      markdown: PACK_MIXED_PLAIN_MD,
+      filename: "教学包.md",
+    });
+    expect(second.lectures.every((l) => l.updated)).toBe(true);
+    expect(second.units.every((u) => u.updated)).toBe(true);
+    expect(db.select().from(lectures).all()[0]?.teachingPackJson).toBeNull();
+    expect(db.select().from(units).all()[0]?.teachingPackJson).toBeNull();
+  });
+
+  it("重导新声明覆盖旧声明（更新路径）", () => {
+    const db = createTestDb();
+    commitImport(db, TEST_TEACHER_ID, {
+      markdown: PACK_MIXED_MD,
+      filename: "教学包.md",
+    });
+    const modified = PACK_MIXED_MD.replace(
+      'teachingPack: {name: "测试教学包", version: "2", directives: [steps, blank], validators: [judge, fill]}',
+      'teachingPack: {name: "改名包"}',
+    );
+    commitImport(db, TEST_TEACHER_ID, {
+      markdown: modified,
+      filename: "教学包.md",
+    });
+    const expected = JSON.stringify({
+      formatVersion: 1,
+      name: "改名包",
+      version: "1",
+      directives: [],
+      validators: [],
+    });
+    expect(db.select().from(lectures).all()[0]?.teachingPackJson).toBe(
+      expected,
+    );
+    expect(db.select().from(units).all()[0]?.teachingPackJson).toBe(expected);
+  });
+
+  it("缺失引用阻断 preview 与直接 commit（commit 重新分析不可绕过）", () => {
+    const db = createTestDb();
+    const broken = PACK_MIXED_MD.replace(
+      "directives: [steps, blank]",
+      "directives: [steps, no-such-directive]",
+    ).replace("validators: [judge, fill]", "validators: [judge, gpt]");
+
+    const preview = previewImport(db, TEST_TEACHER_ID, {
+      markdown: broken,
+      filename: "教学包.md",
+    });
+    expect(
+      preview.issues.filter((i) => i.code === "DIRECTIVE_REF_NOT_FOUND"),
+    ).toHaveLength(1);
+    expect(
+      preview.issues.filter((i) => i.code === "VALIDATOR_REF_NOT_FOUND"),
+    ).toHaveLength(1);
+
+    expect(() =>
+      commitImport(db, TEST_TEACHER_ID, {
+        markdown: broken,
+        filename: "教学包.md",
+      }),
+    ).toThrowError(HttpError);
+    expect(db.select().from(units).all()).toHaveLength(0);
+    expect(db.select().from(lectures).all()).toHaveLength(0);
+  });
+
+  it("正文编辑不触碰声明列：updateLecture 只换 markdown（声明保留）", () => {
+    const db = createTestDb();
+    commitImport(db, TEST_TEACHER_ID, {
+      markdown: PACK_MIXED_MD,
+      filename: "教学包.md",
+    });
+    const before = db.select().from(lectures).all()[0]?.teachingPackJson;
+    updateLecture(
+      db,
+      TEST_TEACHER_ID,
+      db.select().from(lectures).all()[0]?.id ?? "",
+      {
+        markdown: "# 第一讲 教学包\n\n编辑后的正文。\n",
+      },
+    );
+    expect(db.select().from(lectures).all()[0]?.teachingPackJson).toBe(before);
+    expect(db.select().from(lectures).all()[0]?.markdown).toContain(
+      "编辑后的正文",
+    );
   });
 });
 

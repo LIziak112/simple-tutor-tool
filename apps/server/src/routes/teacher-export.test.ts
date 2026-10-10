@@ -266,7 +266,8 @@ describe("POST /api/teacher/export/learning-pack*（T4.3 路由层）", () => {
     expect(res.headers.get("content-type")).toBe("application/zip");
     expect(res.headers.get("cache-control")).toBe("no-store");
     expect(res.headers.get("content-disposition")).toMatch(
-      /^attachment; filename="learning-pack-\d{8}-\d{6}\.zip"$/,
+      // T7.8 起 attachmentDisposition 恒成对输出 ASCII 兜底段 + filename* 段
+      /^attachment; filename="learning-pack-\d{8}-\d{6}\.zip"; filename\*=UTF-8''learning-pack-\d{8}-\d{6}\.zip$/,
     );
     // 解包前的轻量断言：zip 魔数 + 条目名（CD/本地头里的名字是 UTF-8 字节，
     // 整体按 utf8 解码时二进制段变 U+FFFD，但连续的合法 UTF-8 名字原样浮现）
