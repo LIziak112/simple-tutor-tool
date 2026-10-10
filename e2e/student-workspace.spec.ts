@@ -175,6 +175,62 @@ test("130题长作业：答题卡独立滚动、跳到末题、待检查刷新�
   await expect(
     last.getByRole("button", { name: "第 130 题待检查" }),
   ).toHaveAttribute("aria-pressed", "true");
+  const attemptUrl = page.url();
+  await expect
+    .poll(async () =>
+      page.evaluate(() => {
+        const key = Object.keys(localStorage).find((key) =>
+          key.startsWith("attempt-reading:"),
+        );
+        const saved = JSON.parse(
+          key ? (localStorage.getItem(key) ?? "null") : "null",
+        ) as { questionId: string; offset: number } | null;
+        const article = document.querySelector(
+          `article[data-question-id="${saved?.questionId}"]`,
+        );
+        const header = document.querySelector('[data-slot="attempt-header"]');
+        const rect = article?.parentElement?.getBoundingClientRect();
+        return saved &&
+          rect &&
+          header &&
+          rect.bottom > header.getBoundingClientRect().height &&
+          rect.top < innerHeight
+          ? Math.abs(
+              rect.top - header.getBoundingClientRect().height - saved.offset,
+            )
+          : Infinity;
+      }),
+    )
+    .toBeLessThanOrEqual(2);
+  const position = await page.evaluate(() => {
+    const key = Object.keys(localStorage).find((key) =>
+      key.startsWith("attempt-reading:"),
+    );
+    return JSON.parse(key ? (localStorage.getItem(key) ?? "null") : "null") as {
+      questionId: string;
+      offset: number;
+    } | null;
+  });
+  expect(position).not.toBeNull();
+  await page.goto("/s/home");
+  await page.goto(attemptUrl);
+  await expect
+    .poll(async () =>
+      page.evaluate((saved) => {
+        const card = document.querySelector(
+          `article[data-question-id="${saved?.questionId}"]`,
+        )?.parentElement;
+        const header = document.querySelector('[data-slot="attempt-header"]');
+        return card && header && saved
+          ? Math.abs(
+              card.getBoundingClientRect().top -
+                header.getBoundingClientRect().height -
+                saved.offset,
+            )
+          : Infinity;
+      }, position),
+    )
+    .toBeLessThanOrEqual(2);
   await page.reload();
   await expect(
     last.getByRole("button", { name: "第 130 题待检查" }),

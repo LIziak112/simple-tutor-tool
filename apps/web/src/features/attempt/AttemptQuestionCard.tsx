@@ -239,6 +239,7 @@ export function AttemptQuestionCard({
   return (
     <article
       ref={articleRef}
+      data-question-id={question.id}
       tabIndex={-1}
       className="flex scroll-mt-[calc(var(--attempt-header-height,64px)+12px)] flex-col gap-3 rounded-lg border border-border bg-card p-4 text-card-foreground outline-none focus-visible:ring-2 focus-visible:ring-primary sm:p-5"
       aria-label={`第 ${index + 1} 题`}

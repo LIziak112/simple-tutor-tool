@@ -50,6 +50,7 @@ import { AttemptWorkspace } from "./AttemptWorkspace";
 import { useSubmitAttempt } from "./attempt-queries";
 import { QuestionNavigator } from "./QuestionNavigator";
 import { completionLabel, getQuestionCompletion } from "./question-completion";
+import { useReadingPosition } from "./use-reading-position";
 import { useWorkspaceFlags } from "./use-workspace-flags";
 
 /** 详情 data 的嵌套判别（Zod union 判别键在 attempt.status，TS 无法自动收窄） */
@@ -341,6 +342,7 @@ function AnswerView({
     [],
   );
   const cardElements = useRef(new Map<string, HTMLLIElement>());
+  useReadingPosition(attemptId, cardElements, setCurrentQuestionId);
   const navigationItems = flatQuestions.map((question, index) => ({
     id: question.id,
     index,
@@ -378,38 +380,6 @@ function AnswerView({
       });
     });
   };
-  useEffect(() => {
-    let frame = 0;
-    const update = () => {
-      frame = 0;
-      const headerHeight =
-        document
-          .querySelector('[data-slot="attempt-header"]')
-          ?.getBoundingClientRect().height ?? 64;
-      let closest: string | null = null;
-      let distance = Infinity;
-      for (const [id, element] of cardElements.current) {
-        const rect = element.getBoundingClientRect();
-        if (rect.bottom <= headerHeight) continue;
-        const next = Math.abs(rect.top - headerHeight - 12);
-        if (next < distance) {
-          closest = id;
-          distance = next;
-        }
-      }
-      if (closest !== null) setCurrentQuestionId(closest);
-    };
-    const onScroll = () => {
-      if (!frame) frame = requestAnimationFrame(update);
-    };
-    window.addEventListener("scroll", onScroll, { passive: true });
-    update();
-    return () => {
-      window.removeEventListener("scroll", onScroll);
-      cancelAnimationFrame(frame);
-    };
-  }, []);
-
   // T6R.3：交卷回传的题目版本集合（建卷冻结时下发的 questionRevisionId 原样
   // 回传，服务端与冻结集合比对——本页数据即学生看到的卷，天然一致）
   const submitRevisions = useMemo(
