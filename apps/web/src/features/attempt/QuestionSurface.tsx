@@ -2,6 +2,7 @@ import type { QuestionPublic, StudentAnswer } from "@tutor/contract";
 import { displayStemMd } from "@tutor/md-dsl";
 import { cn } from "cn";
 import { Check, X } from "lucide-react";
+import { useId } from "react";
 import { BlankAnswersProvider } from "@/features/markdown/BlankAnswersContext";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { letterOf, withBlankValue } from "./answer-format";
@@ -47,7 +48,7 @@ function JudgeControls({
     answer?.kind === "judge" && typeof answer.value === "boolean"
       ? answer.value
       : undefined;
-  const groupName = `judge-${question.id}`;
+  const groupName = `judge-${question.id}-${useId()}`;
   const labelClass = (selected: boolean) =>
     cn(
       "flex min-h-12 flex-1 cursor-pointer items-center justify-center gap-2 rounded-lg border-2 text-base font-medium outline-none transition-colors has-[:focus-visible]:ring-3 has-[:focus-visible]:ring-ring/50",
@@ -67,7 +68,11 @@ function JudgeControls({
           className="sr-only"
         />
         <span className="flex items-center gap-2">
-          {picked === true && <Check aria-hidden className="size-5" />}对
+          <Check
+            aria-hidden
+            className={`size-5 ${picked === true ? "" : "invisible"}`}
+          />
+          对
         </span>
       </label>
       <label className={labelClass(picked === false)}>
@@ -80,7 +85,11 @@ function JudgeControls({
           className="sr-only"
         />
         <span className="flex items-center gap-2">
-          {picked === false && <X aria-hidden className="size-5" />}错
+          <X
+            aria-hidden
+            className={`size-5 ${picked === false ? "" : "invisible"}`}
+          />
+          错
         </span>
       </label>
     </div>
@@ -98,13 +107,14 @@ function ChoiceControls({
   onAnswer: (answer: StudentAnswer) => void;
 }) {
   const picked = answer?.kind === "choice" ? answer.index : undefined;
+  const groupName = `choice-${question.id}-${useId()}`;
   return (
     <div className="flex flex-col gap-2" role="radiogroup" aria-label="选项">
       {(question.options ?? []).map((option, index) => (
         <label key={option} className={optionShellClass(picked === index)}>
           <input
             type="radio"
-            name={`choice-${question.id}`}
+            name={groupName}
             aria-label={`选项 ${letterOf(index)}`}
             checked={picked === index}
             onChange={() => onAnswer({ kind: "choice", index })}
@@ -179,6 +189,7 @@ export function QuestionSurface({
   return (
     <div
       data-slot="question-surface"
+      inert={mode === "export"}
       className="flex min-w-0 flex-col gap-4 text-base leading-7"
     >
       {/* 题干：判断题剥掉尾部空标记；填空题空位内联输入 */}

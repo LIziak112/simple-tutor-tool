@@ -184,6 +184,31 @@ export const annotationHashSchema = z
   .string()
   .regex(/^[0-9a-f]{64}$/, "hash 须为 64 位小写十六进制（sha-256）");
 
+/** 原位题面布局身份。独立于旧底图协议，U05再接入可选layout字段。 */
+export const ANNOTATION_SURFACE_RENDER_VERSION = 2;
+export const ANNOTATION_SURFACE_PIXEL_RATIO = 2;
+export const annotationSurfaceLayoutSchema = z.strictObject({
+  renderVersion: z.literal(ANNOTATION_SURFACE_RENDER_VERSION),
+  questionRevisionId: questionRevisionIdSchema,
+  cssWidth: z
+    .number()
+    .positive()
+    .max(ANNOTATION_MAX_PIXEL_DIM / ANNOTATION_SURFACE_PIXEL_RATIO),
+  cssHeight: z
+    .number()
+    .positive()
+    .max(ANNOTATION_MAX_PIXEL_DIM / ANNOTATION_SURFACE_PIXEL_RATIO),
+  pixelRatio: z.literal(ANNOTATION_SURFACE_PIXEL_RATIO),
+  styleVersion: z.literal(1),
+  /** 只散列公开题面，不是服务端snapshotHash。 */
+  contentSignature: annotationHashSchema,
+  geometrySignature: annotationHashSchema,
+  fontSignature: annotationHashSchema,
+});
+export type AnnotationSurfaceLayout = z.infer<
+  typeof annotationSurfaceLayoutSchema
+>;
+
 // ---------- 上传协议（CAS＋mutationId 幂等；同 note.ts §6.2 形态） ----------
 
 /**

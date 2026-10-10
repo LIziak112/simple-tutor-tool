@@ -11,22 +11,36 @@ import { NotFoundPage } from "./pages/NotFoundPage";
 const devOnlyRoutes = import.meta.env.DEV
   ? (() => {
       const RenderDevPage = lazy(() => import("./pages/dev/RenderDevPage"));
+      const QuestionBaseDevPage = lazy(
+        () => import("./pages/dev/QuestionBaseDevPage"),
+      );
       return (
-        <Route
-          key="dev-render"
-          path="/dev/render"
-          element={
-            <Suspense
-              fallback={
-                <p className="p-8 text-sm text-muted-foreground">
-                  开发页加载中…
-                </p>
-              }
-            >
-              <RenderDevPage />
-            </Suspense>
-          }
-        />
+        <>
+          <Route
+            key="dev-question-base"
+            path="/dev/question-base"
+            element={
+              <Suspense fallback={<p>开发页加载中…</p>}>
+                <QuestionBaseDevPage />
+              </Suspense>
+            }
+          />
+          <Route
+            key="dev-render"
+            path="/dev/render"
+            element={
+              <Suspense
+                fallback={
+                  <p className="p-8 text-sm text-muted-foreground">
+                    开发页加载中…
+                  </p>
+                }
+              >
+                <RenderDevPage />
+              </Suspense>
+            }
+          />
+        </>
       );
     })()
   : null;

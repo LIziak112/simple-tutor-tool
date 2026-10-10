@@ -14,6 +14,31 @@ const question: QuestionPublic = {
 };
 
 describe("共享题面", () => {
+  it("同一道题的正常与导出实例隔离radio组", () => {
+    const { container } = render(
+      <>
+        <QuestionSurface question={question} />
+        <QuestionSurface question={question} mode="export" />
+      </>,
+    );
+    const groups = [
+      ...container.querySelectorAll<HTMLInputElement>('input[type="radio"]'),
+    ].map((input) => input.name);
+    expect(groups[0]).not.toBe(groups[2]);
+  });
+  it("判断图标预留尺寸，不随选中态增加元素", () => {
+    const { container, rerender } = render(
+      <QuestionSurface question={{ ...question, type: "judge" }} />,
+    );
+    expect(container.querySelectorAll("svg")).toHaveLength(2);
+    rerender(
+      <QuestionSurface
+        question={{ ...question, type: "judge" }}
+        answer={{ kind: "judge", value: true }}
+      />,
+    );
+    expect(container.querySelectorAll("svg")).toHaveLength(2);
+  });
   it("正常模式保留原生作答及选中状态", () => {
     const onAnswer = vi.fn();
     render(
