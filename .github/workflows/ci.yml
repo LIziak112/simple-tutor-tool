@@ -46,7 +46,20 @@ jobs:
         run: pnpm typecheck
 
       - name: 单元测试
-        run: pnpm test
+        run: |
+          set -o pipefail
+          pnpm test 2>&1 | tee /tmp/test-output.log
+
+      # 2026-10-10：340d13a/142a112 单测步骤红而本地全维度复现均绿，日志需登录不可读——
+      # 失败用例名经 ::error 工作流命令写进 check 注解（注解可经公开 API 匿名读取），
+      # 免登录即可定位。每步注解上限 10 条，优先取 FAIL 行。
+      - name: 失败用例摘录（写进 check 注解）
+        if: failure()
+        run: |
+          grep -E "FAIL |AssertionError|Error: " /tmp/test-output.log | head -10 | while IFS= read -r line; do
+            msg=$(echo "$line" | tr -d '\r' | cut -c1-500)
+            echo "::error::${msg}"
+          done || echo "（无匹配行）"
 
       # T1.7：规范文档由注册表生成（docs/dsl/规范.md、提示词模板.md、schema/content.json）。
       # 改了注册表/lint 规则/契约后忘记跑 pnpm gen:spec 时，此步失败（产物与代码不允许漂移）
