@@ -174,12 +174,29 @@ function writeStroke(
 }
 
 describe("标注画布：坐标域与画布恒定", () => {
-  it("backing store = 底图像素域；CSS 盒随容器（100%×aspect-ratio）", () => {
+  it("backing store = 底图像素域；画布填满宿主且不接管宿主布局", () => {
     const h = mountSurface();
     expect(h.canvas.width).toBe(BASE_W);
     expect(h.canvas.height).toBe(BASE_H);
     expect(h.canvas.style.width).toBe("100%");
-    expect(h.container.style.aspectRatio).toBe(`${BASE_W} / ${BASE_H}`);
+    expect(h.canvas.style.height).toBe("100%");
+    expect(h.container.style.position).toBe("");
+    expect(h.container.style.width).toBe("");
+    expect(h.container.style.aspectRatio).toBe("");
+  });
+
+  it("挂载到绝对定位覆盖层时保留调用方的定位和尺寸", () => {
+    const h = mountSurface();
+    h.surface.destroy();
+    h.container.style.position = "absolute";
+    h.container.style.inset = "0";
+    h.container.style.width = "80%";
+    h.container.style.aspectRatio = "2 / 1";
+    h.surface.mount(h.container);
+    expect(h.container.style.position).toBe("absolute");
+    expect(h.container.style.inset).toBe("0px");
+    expect(h.container.style.width).toBe("80%");
+    expect(h.container.style.aspectRatio).toBe("2 / 1");
   });
 
   it("收点在底图像素域（CSS→base 换算，2 位小数）；weight 同域", () => {

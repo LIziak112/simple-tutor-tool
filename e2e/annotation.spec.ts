@@ -122,6 +122,10 @@ async function expectCanvasFollowsImage(
     const imgRect = img.getBoundingClientRect();
     const canvasRect = canvas.getBoundingClientRect();
     return {
+      imgX: imgRect.left,
+      imgY: imgRect.top,
+      canvasX: canvasRect.left,
+      canvasY: canvasRect.top,
       imgW: imgRect.width,
       imgH: imgRect.height,
       canvasW: canvasRect.width,
@@ -133,6 +137,8 @@ async function expectCanvasFollowsImage(
   // 画布与底图 img 同 CSS 盒（同一 scale=displayWidth/baseWidth 变换）
   expect(box.canvasW).toBeCloseTo(box.imgW, 0);
   expect(box.canvasH).toBeCloseTo(box.imgH, 0);
+  expect(box.canvasX).toBeCloseTo(box.imgX, 0);
+  expect(box.canvasY).toBeCloseTo(box.imgY, 0);
   return { width: box.canvasW, height: box.canvasH };
 }
 
@@ -211,6 +217,25 @@ test.describe("题干标注（T6R.20）", () => {
 
       // —— 落笔（PointerEvent pen）并等待保存上传 ——
       await drawStrokeWithPointerEvents(canvas);
+      expect(
+        await canvas.evaluate((element) => {
+          const drawing = element as HTMLCanvasElement;
+          const context = drawing.getContext("2d");
+          if (context === null) return false;
+          const pixels = context.getImageData(
+            0,
+            0,
+            drawing.width,
+            drawing.height,
+          ).data;
+          for (let offset = 0; offset < pixels.length; offset += 4) {
+            if ((pixels[offset] ?? 0) > 100 && (pixels[offset + 3] ?? 0) > 0)
+              return true;
+          }
+          return false;
+        }),
+        "真实画布中应存在红色笔迹像素",
+      ).toBe(true);
       await studentPage.waitForRequest(
         (req) =>
           req.method() === "PUT" &&

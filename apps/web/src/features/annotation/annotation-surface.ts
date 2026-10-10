@@ -482,10 +482,7 @@ export function createAnnotationSurface(
   const surface: AnnotationSurface = {
     mount(el: HTMLElement, initial?: AnnotationDoc): void {
       container = el;
-      el.style.position = "relative";
-      el.style.width = "100%";
-      // 容器高随宽等比（底图宽高比）——画布 CSS 盒与底图 img 同尺寸
-      el.style.aspectRatio = `${baseWidth} / ${baseHeight}`;
+      // 宿主由题面负责定位与尺寸；引擎只铺满它，不把覆盖层推入文档流。
       el.style.overflow = "hidden";
       el.style.userSelect = "none";
       el.style.setProperty("-webkit-user-select", "none");
