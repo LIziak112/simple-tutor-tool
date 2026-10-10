@@ -78,7 +78,7 @@ export function FinalAnswerInput({
 
   return (
     <div className="flex flex-col gap-1.5">
-      <div className="flex items-center justify-between gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <span className="text-sm font-medium">{label}</span>
         <fieldset
           aria-label="输入方式"
@@ -117,7 +117,7 @@ export function FinalAnswerInput({
           onChange={(event) => onChange(event.target.value)}
           placeholder="填写最终答案（如计算结果）"
           aria-label={label}
-          className="h-11 rounded-md border border-border bg-background px-3 text-sm outline-none transition-colors focus-visible:border-primary focus-visible:ring-3 focus-visible:ring-ring/50"
+          className="h-11 min-w-0 rounded-md border border-border bg-background px-3 text-base outline-none transition-colors focus-visible:border-primary focus-visible:ring-3 focus-visible:ring-ring/50"
         />
       )}
 

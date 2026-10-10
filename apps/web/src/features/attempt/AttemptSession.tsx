@@ -5,9 +5,17 @@ import type {
   AttemptResultData,
   HintOpenedEntry,
 } from "@tutor/contract";
+import { ArrowLeft, Grid2X2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { AttemptBottomBar } from "@/features/attempt/AttemptBottomBar";
 import { AttemptQuestionCard } from "@/features/attempt/AttemptQuestionCard";
 import { AttemptResultView } from "@/features/attempt/AttemptResultView";
@@ -38,7 +46,11 @@ import { sealAttemptAnnotationsApi, startWrongPracticeApi } from "@/lib/api";
 import { createEventQueue } from "@/lib/event-queue";
 import { formatDueTime } from "@/lib/time";
 import { useOnlineStatus } from "@/lib/use-online-status";
+import { AttemptWorkspace } from "./AttemptWorkspace";
 import { useSubmitAttempt } from "./attempt-queries";
+import { QuestionNavigator } from "./QuestionNavigator";
+import { completionLabel, getQuestionCompletion } from "./question-completion";
+import { useWorkspaceFlags } from "./use-workspace-flags";
 
 /** 详情 data 的嵌套判别（Zod union 判别键在 attempt.status，TS 无法自动收窄） */
 export function isDraftDetail(
@@ -118,6 +130,7 @@ export function AttemptSession({
         />
       ) : (
         <AnswerView
+          key={data.attempt.id}
           data={data}
           attemptId={data.attempt.id}
           onBackHome={onExit}
@@ -236,7 +249,7 @@ function AnswerView({
   const draftSync = useDraftSync(attemptId, data.drafts, inkControllers);
   // 学习痕迹埋点（T2.10）：attempt_start/聚焦/answer_change/ink/page_*/submit
   const attemptEvents = useAttemptEvents(attemptId);
-  const { answers, setAnswer, answeredCount, saveFailed } = useAttemptAnswers(
+  const { answers, setAnswer, saveFailed } = useAttemptAnswers(
     attemptId,
     draftSync.recoveredDrafts,
     draftSync,
@@ -307,8 +320,95 @@ function AnswerView({
     [flatQuestions],
   );
   const total = flatQuestions.length;
-  const answered = answers === null ? 0 : answeredCount(questionIds);
+  const [navigatorOpen, setNavigatorOpen] = useState(false);
+  const [currentQuestionId, setCurrentQuestionId] = useState<string | null>(
+    null,
+  );
+  const { flags: flaggedQuestions, toggle: toggleFlag } =
+    useWorkspaceFlags(attemptId);
+  const [formalInkPresence, setFormalInkPresence] = useState<
+    ReadonlyMap<string, boolean>
+  >(new Map());
+  const onInkPresenceChange = useCallback(
+    (questionId: string, present: boolean) => {
+      setFormalInkPresence((previous) => {
+        if (previous.get(questionId) === present) return previous;
+        const next = new Map(previous);
+        next.set(questionId, present);
+        return next;
+      });
+    },
+    [],
+  );
+  const cardElements = useRef(new Map<string, HTMLLIElement>());
+  const navigationItems = flatQuestions.map((question, index) => ({
+    id: question.id,
+    index,
+    completion: getQuestionCompletion(
+      question,
+      answers?.[question.id],
+      formalInkPresence.get(question.id),
+    ),
+    flagged: flaggedQuestions.has(question.id),
+  }));
+  const answered = navigationItems.filter(
+    (item) => item.completion.state === "filled",
+  ).length;
   const unanswered = total - answered;
+  const jumpToQuestion = (id: string, focusAnswer = false) => {
+    setNavigatorOpen(false);
+    setCurrentQuestionId(id);
+    requestAnimationFrame(() => {
+      const card = cardElements.current.get(id);
+      const article = card?.querySelector<HTMLElement>("article");
+      article?.scrollIntoView?.({ block: "start", behavior: "auto" });
+      const fields = card?.querySelectorAll<HTMLInputElement>(
+        'input:not([type="radio"]):not([type="checkbox"])',
+      );
+      const target = focusAnswer
+        ? (Array.from(fields ?? []).find(
+            (field) => field.value.trim() === "",
+          ) ?? fields?.[0])
+        : null;
+      const answerControl = card?.querySelector<HTMLElement>(
+        'math-field, [data-slot="question-surface"] input[type="radio"], [data-slot="question-surface"] input[type="checkbox"], [data-slot="question-surface"] button',
+      );
+      (target ?? (focusAnswer ? answerControl : null) ?? article)?.focus({
+        preventScroll: true,
+      });
+    });
+  };
+  useEffect(() => {
+    let frame = 0;
+    const update = () => {
+      frame = 0;
+      const headerHeight =
+        document
+          .querySelector('[data-slot="attempt-header"]')
+          ?.getBoundingClientRect().height ?? 64;
+      let closest: string | null = null;
+      let distance = Infinity;
+      for (const [id, element] of cardElements.current) {
+        const rect = element.getBoundingClientRect();
+        if (rect.bottom <= headerHeight) continue;
+        const next = Math.abs(rect.top - headerHeight - 12);
+        if (next < distance) {
+          closest = id;
+          distance = next;
+        }
+      }
+      if (closest !== null) setCurrentQuestionId(closest);
+    };
+    const onScroll = () => {
+      if (!frame) frame = requestAnimationFrame(update);
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    update();
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      cancelAnimationFrame(frame);
+    };
+  }, []);
 
   // T6R.3：交卷回传的题目版本集合（建卷冻结时下发的 questionRevisionId 原样
   // 回传，服务端与冻结集合比对——本页数据即学生看到的卷，天然一致）
@@ -508,14 +608,27 @@ function AnswerView({
 
   return (
     <DraftSyncContext.Provider value={draftSync}>
-      <div className="flex flex-col gap-5 pb-24">
+      <AttemptWorkspace>
         {/* 练习头：来源 + 标题 + 截止 + 草稿保存状态（T2.9 三态 + T2A.6 终态） */}
-        <header className="flex flex-col gap-1.5 rounded-2xl border border-border bg-card px-4 py-4 shadow-xs sm:px-5">
+        <header
+          data-slot="attempt-header"
+          className="sticky top-0 z-20 -mx-3 flex min-h-16 flex-col gap-1.5 border-b border-border bg-background/95 px-3 py-2 backdrop-blur sm:-mx-6 sm:px-6"
+        >
           <div className="flex items-start justify-between gap-3">
-            <h1 className="min-w-0 text-xl font-bold break-words">
+            <Button
+              type="button"
+              variant="ghost"
+              className="size-11 shrink-0 p-0"
+              aria-label="返回"
+              title="返回"
+              onClick={onBackHome}
+            >
+              <ArrowLeft aria-hidden className="size-5" />
+            </Button>
+            <h1 className="min-w-0 flex-1 self-center text-lg leading-[26px] font-semibold break-words">
               {data.title}
             </h1>
-            <div className="shrink-0 pt-1">
+            <div className="max-w-[120px] self-center text-right">
               <DraftStatusBar status={draftSync.status} />
             </div>
           </div>
@@ -540,74 +653,119 @@ function AnswerView({
           )}
         </header>
 
-        {/* 空试卷：单元没有可作答的题目 */}
-        {total === 0 && (
-          <div className="rounded-2xl border border-dashed border-border bg-card px-6 py-10 text-center">
-            <p className="text-sm font-medium">这份练习还没有题目</p>
-            <p className="mt-1 text-sm text-muted-foreground">
-              可能老师正在整理内容，请联系老师确认后再来。
-            </p>
-            <Button
-              variant="outline"
-              className="mt-4 min-h-11"
-              onClick={onBackHome}
-            >
-              返回
-            </Button>
-          </div>
-        )}
+        <div className="grid min-w-0 grid-cols-1 gap-6 min-[1200px]:grid-cols-[192px_minmax(0,1fr)]">
+          <aside className="sticky top-[calc(var(--attempt-header-height,64px)+16px)] hidden max-h-[calc(100dvh-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] self-start overflow-y-auto min-[1200px]:block">
+            <h2 className="mb-3 text-sm font-semibold">答题卡</h2>
+            <QuestionNavigator
+              items={navigationItems}
+              currentId={currentQuestionId}
+              onJump={jumpToQuestion}
+            />
+          </aside>
 
-        {/* 题卡列表（ref 注册进视口观察：question_view + 聚焦兜底，T2.10）。
+          {/* 空试卷：单元没有可作答的题目 */}
+          {total === 0 && (
+            <div className="rounded-lg border border-dashed border-border bg-card px-6 py-10 text-center">
+              <p className="text-sm font-medium">这份练习还没有题目</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                可能老师正在整理内容，请联系老师确认后再来。
+              </p>
+              <Button
+                variant="outline"
+                className="mt-4 min-h-11"
+                onClick={onBackHome}
+              >
+                返回
+              </Button>
+            </div>
+          )}
+
+          {/* 题卡列表（ref 注册进视口观察：question_view + 聚焦兜底，T2.10）。
             T2A.7：多单元作业按单元分节（节标题 = 单元标题），题号全卷连续 */}
-        <ol className="flex flex-col gap-4">
-          {data.units.map((unit) => (
-            <li key={unit.id} className="flex flex-col gap-4">
-              {showUnitHeaders && (
-                <h2 className="flex items-center gap-2 pt-2 text-sm font-semibold text-foreground before:h-4 before:w-1 before:rounded-full before:bg-primary">
-                  {unit.title}
-                </h2>
-              )}
-              <ol className="flex flex-col gap-4">
-                {unit.questions.map((question) => {
-                  const index = flatQuestions.indexOf(question);
-                  return (
-                    <li
-                      key={question.id}
-                      ref={(el) => attemptEvents.registerCard(question.id, el)}
-                    >
-                      <AttemptQuestionCard
-                        index={index}
-                        question={question}
-                        answer={answers?.[question.id]}
-                        onAnswer={(answer, defer) =>
-                          setAnswer(question.id, answer, defer ?? false)
-                        }
-                        attemptId={attemptId}
-                        registerInkController={registerInkController}
-                        onInkStroke={(strokes) => {
-                          attemptEvents.noteInteraction(question.id);
-                          attemptEvents.trackInkStrokes(question.id, strokes);
+          <ol className={total === 0 ? "hidden" : "flex flex-col gap-4"}>
+            {data.units.map((unit) => (
+              <li key={unit.id} className="flex flex-col gap-4">
+                {showUnitHeaders && (
+                  <h2
+                    data-slot="attempt-unit-heading"
+                    className="flex items-center gap-2 pt-2 text-sm font-semibold text-foreground before:h-4 before:w-1 before:rounded-full before:bg-primary"
+                  >
+                    {unit.title}
+                  </h2>
+                )}
+                <ol className="flex flex-col gap-4">
+                  {unit.questions.map((question) => {
+                    const index = flatQuestions.indexOf(question);
+                    return (
+                      <li
+                        key={question.id}
+                        ref={(el) => {
+                          attemptEvents.registerCard(question.id, el);
+                          if (el) cardElements.current.set(question.id, el);
+                          else cardElements.current.delete(question.id);
                         }}
-                        onInkEdit={(reason) => {
-                          attemptEvents.noteInteraction(question.id);
-                          attemptEvents.trackInkEdit(question.id, reason);
-                        }}
-                        onInkFullscreen={(on) => {
-                          attemptEvents.noteInteraction(question.id);
-                          attemptEvents.trackInkFullscreen(question.id, on);
-                        }}
-                        hints={hintsOpened[question.id] ?? []}
-                        onHintUnlocked={(entry) =>
-                          unlockHint(question.id, entry)
-                        }
-                      />
-                    </li>
-                  );
-                })}
-              </ol>
-            </li>
-          ))}
-        </ol>
+                      >
+                        <AttemptQuestionCard
+                          index={index}
+                          question={question}
+                          answer={answers?.[question.id]}
+                          onAnswer={(answer, defer) =>
+                            setAnswer(question.id, answer, defer ?? false)
+                          }
+                          attemptId={attemptId}
+                          flagged={flaggedQuestions.has(question.id)}
+                          onToggleFlag={() => toggleFlag(question.id)}
+                          formalInkPresence={
+                            formalInkPresence.get(question.id) ?? false
+                          }
+                          onInkPresenceChange={onInkPresenceChange}
+                          registerInkController={registerInkController}
+                          onInkStroke={(strokes) => {
+                            attemptEvents.noteInteraction(question.id);
+                            attemptEvents.trackInkStrokes(question.id, strokes);
+                          }}
+                          onInkEdit={(reason) => {
+                            attemptEvents.noteInteraction(question.id);
+                            attemptEvents.trackInkEdit(question.id, reason);
+                          }}
+                          onInkFullscreen={(on) => {
+                            attemptEvents.noteInteraction(question.id);
+                            attemptEvents.trackInkFullscreen(question.id, on);
+                          }}
+                          hints={hintsOpened[question.id] ?? []}
+                          onHintUnlocked={(entry) =>
+                            unlockHint(question.id, entry)
+                          }
+                        />
+                      </li>
+                    );
+                  })}
+                </ol>
+              </li>
+            ))}
+          </ol>
+        </div>
+
+        <Dialog open={navigatorOpen} onOpenChange={setNavigatorOpen}>
+          <DialogContent className="flex max-h-[70dvh] w-[calc(100%-24px)] flex-col rounded-lg">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Grid2X2 aria-hidden className="size-4" />
+                答题卡
+              </DialogTitle>
+              <DialogDescription>
+                已填写 {answered}/{total} 题
+              </DialogDescription>
+            </DialogHeader>
+            <div className="min-h-0 overflow-y-auto p-1">
+              <QuestionNavigator
+                items={navigationItems}
+                currentId={currentQuestionId}
+                onJump={jumpToQuestion}
+              />
+            </div>
+          </DialogContent>
+        </Dialog>
 
         {/* 吸底操作条：已答进度 + 保存状态 + 离线/无权限/错误提示 + 交卷（禁用态见组件） */}
         <AttemptBottomBar
@@ -619,6 +777,7 @@ function AnswerView({
           inkFlushError={inkFlushError}
           submitError={submitError}
           onOpenSubmit={openSubmitDialog}
+          onOpenNavigator={() => setNavigatorOpen(true)}
         />
 
         <SubmitConfirmDialog
@@ -648,8 +807,19 @@ function AnswerView({
           onConfirm={() => void confirmSubmit()}
           onConfirmMissing={confirmMissingSubmit}
           onCancel={closeSubmitDialog}
+          incompleteQuestions={navigationItems
+            .filter((item) => item.completion.state !== "filled")
+            .map((item) => ({
+              id: item.id,
+              index: item.index,
+              label: completionLabel(item.completion),
+            }))}
+          onGoToQuestion={(id) => {
+            closeSubmitDialog();
+            jumpToQuestion(id, true);
+          }}
         />
-      </div>
+      </AttemptWorkspace>
     </DraftSyncContext.Provider>
   );
 }

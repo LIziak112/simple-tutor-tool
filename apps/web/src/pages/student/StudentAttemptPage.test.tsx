@@ -132,10 +132,8 @@ describe("StudentAttemptPage（/s/attempts/:attemptId，T2A.6）", () => {
     expect(
       await screen.findByText("课程：初一上 · 第 2 次"),
     ).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "返回单元练习" })).toHaveAttribute(
-      "href",
-      `/s/courses/${COURSE_ID}/units/${encodeURIComponent("有理数小练")}`,
-    );
+    expect(screen.getByRole("button", { name: /^返回$/ })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "返回单元练习" })).toBeNull();
     expect(screen.getByRole("button", { name: "交卷" })).toBeInTheDocument();
   });
 

@@ -74,30 +74,32 @@ export default function StudentAttemptPage() {
         : "/s/home";
   return (
     <div className="flex flex-col gap-3">
-      {data.attempt.sourceType === "course" && (
-        <nav aria-label="返回" className="flex items-center gap-2">
-          <Link
-            to={exitTarget}
-            aria-label="返回单元练习"
-            className="flex min-h-11 items-center gap-1 rounded-lg text-sm text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
-          >
-            <School aria-hidden className="size-4" />
-            返回单元练习
-          </Link>
-        </nav>
-      )}
-      {data.attempt.sourceType === "wrong" && (
-        <nav aria-label="返回" className="flex items-center gap-2">
-          <Link
-            to={exitTarget}
-            aria-label="返回错题本"
-            className="flex min-h-11 items-center gap-1 rounded-lg text-sm text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
-          >
-            <BookX aria-hidden className="size-4" />
-            返回错题本
-          </Link>
-        </nav>
-      )}
+      {data.attempt.status !== "draft" &&
+        data.attempt.sourceType === "course" && (
+          <nav aria-label="返回" className="flex items-center gap-2">
+            <Link
+              to={exitTarget}
+              aria-label="返回单元练习"
+              className="flex min-h-11 items-center gap-1 rounded-lg text-sm text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
+            >
+              <School aria-hidden className="size-4" />
+              返回单元练习
+            </Link>
+          </nav>
+        )}
+      {data.attempt.status !== "draft" &&
+        data.attempt.sourceType === "wrong" && (
+          <nav aria-label="返回" className="flex items-center gap-2">
+            <Link
+              to={exitTarget}
+              aria-label="返回错题本"
+              className="flex min-h-11 items-center gap-1 rounded-lg text-sm text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
+            >
+              <BookX aria-hidden className="size-4" />
+              返回错题本
+            </Link>
+          </nav>
+        )}
       <AttemptSession data={data} onExit={() => void navigate(exitTarget)} />
     </div>
   );

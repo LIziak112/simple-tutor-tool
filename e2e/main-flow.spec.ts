@@ -176,7 +176,9 @@ test.describe("主流程：布置作业 → 学生作答与交卷 → 结果与�
         studentPage.locator('article[aria-label="第 9 题"]'),
       ).toBeVisible();
       // 多单元按布置顺序分节（T2A.7）：答题页渲染单元节标题，练习四在前
-      const unitHeaders = studentPage.locator("h2");
+      const unitHeaders = studentPage.locator(
+        '[data-slot="attempt-unit-heading"]',
+      );
       await expect(unitHeaders).toHaveCount(2);
       await expect(unitHeaders.nth(0)).toHaveText("练习四");
       await expect(unitHeaders.nth(1)).toHaveText(extraUnitName);
@@ -232,7 +234,7 @@ test.describe("主流程：布置作业 → 学生作答与交卷 → 结果与�
         .not.toContain("保存中");
 
       // —— 交卷：已答 7/9（第 7、8 题手写未答）→ 确认弹层 → 服务端判分 ——
-      await expect(studentPage.getByText("已答 7 / 9 题")).toBeVisible();
+      await expect(studentPage.getByText("已填写 7 / 9 题")).toBeVisible();
       await studentPage
         .getByRole("button", { name: "交卷", exact: true })
         .click();

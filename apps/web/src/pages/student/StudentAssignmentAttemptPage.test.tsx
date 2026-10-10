@@ -299,6 +299,39 @@ beforeEach(() => {
 });
 
 describe("StudentAssignmentAttemptPage：草稿作答流程", () => {
+  it("部分填空不计完整，答题卡和交卷遗漏使用同一份状态", async () => {
+    mockedStart.mockResolvedValue(START_DRAFT);
+    mockedFetch.mockResolvedValue({
+      ...DRAFT_DATA,
+      units: DRAFT_DATA.units.map((unit) => ({
+        ...unit,
+        questions: unit.questions.map((question, index) =>
+          index === 0
+            ? {
+                ...question,
+                type: "fill" as const,
+                stemMd: "甲 [[]]，乙 [[]]，丙 [[]]，丁 [[]]",
+              }
+            : question,
+        ),
+      })),
+    });
+    mockedSave.mockResolvedValue({ questionId: "练习四-1", changeCount: 1 });
+    renderPage();
+    const firstBlank = (await screen.findAllByLabelText("第1空"))[0];
+    if (!firstBlank) throw new Error("未渲染第一空");
+    fireEvent.change(firstBlank, {
+      target: { value: "1" },
+    });
+    expect(screen.getByText("已填 1/4 空")).toBeInTheDocument();
+    expect(document.body.textContent).toContain("已填写 0 / 2 题");
+    fireEvent.click(screen.getByRole("button", { name: "交卷" }));
+    expect(
+      await screen.findByRole("button", { name: /去补全第 1 题/ }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /去补全第 1 题/ }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
   it("进入自动创建 attempt 并渲染题卡、进度条与截止时间", async () => {
     mockedStart.mockResolvedValue(START_DRAFT);
     mockedFetch.mockResolvedValue(DRAFT_DATA);
@@ -310,7 +343,7 @@ describe("StudentAssignmentAttemptPage：草稿作答流程", () => {
     expect(screen.getByText("第 1 题")).toBeInTheDocument();
     expect(screen.getByText("第 2 题")).toBeInTheDocument();
     // 进度条文本含 <b> 强调，用整页文本断言
-    expect(document.body.textContent).toContain("已答 0 / 2 题");
+    expect(document.body.textContent).toContain("已填写 0 / 2 题");
     expect(screen.getByText("10月1日 20:00 截止")).toBeInTheDocument();
   });
 
@@ -329,7 +362,7 @@ describe("StudentAssignmentAttemptPage：草稿作答流程", () => {
         value: true,
       } satisfies StudentAnswer);
     });
-    expect(document.body.textContent).toContain("已答 1 / 2 题");
+    expect(document.body.textContent).toContain("已填写 1 / 2 题");
   });
 
   it("交卷确认显示未答数量；确认后 submit 并切结果视图", async () => {
@@ -643,7 +676,7 @@ describe("StudentAssignmentAttemptPage：草稿防丢", () => {
     const yes = await screen.findByRole("radio", { name: /对/ });
     await waitFor(() => expect(yes).toBeChecked());
     expect(screen.getByDisplayValue("4")).toBeInTheDocument();
-    expect(document.body.textContent).toContain("已答 2 / 2 题");
+    expect(document.body.textContent).toContain("已填写 2 / 2 题");
     // 合并后本地较新 → 触发一次增量同步（逐题 PUT）
     await waitFor(() =>
       expect(mockedSave).toHaveBeenCalledWith(ATTEMPT_ID, "练习四-1", {

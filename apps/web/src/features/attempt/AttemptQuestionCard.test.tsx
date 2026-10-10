@@ -14,7 +14,6 @@ import type {
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { EnabledCapabilitiesProvider } from "@/features/capability/enabled-capabilities";
-import { NOTE_QUESTION_SHARE } from "@/features/notes/note-layout";
 import { makeResizeObserverStub } from "@/features/notes/note-test-utils";
 import { openAttemptHintApi } from "@/lib/api";
 import { AttemptQuestionCard } from "./AttemptQuestionCard";
@@ -131,6 +130,8 @@ describe("题头元信息", () => {
     renderStatefulCard(baseQuestion({ type: "judge", difficulty: 3 }));
     expect(screen.getByText("第 3 题")).toBeInTheDocument();
     expect(screen.getByText("判断")).toBeInTheDocument();
+    expect(screen.queryByText("有理数加法")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "第 3 题资料" }));
     expect(screen.getByText("有理数加法")).toBeInTheDocument();
     expect(screen.getByLabelText("难度 3 星（满分 5 星）")).toBeInTheDocument();
   });
@@ -387,7 +388,7 @@ describe("题卡草稿层（T6R.9）", () => {
     expect(screen.getByRole("button", { name: /草稿纸/ })).toBeInTheDocument();
   });
 
-  it("宽容器展开走侧栏分栏（55/45 两列）；窄容器回退 below（任务清单失败测试）", async () => {
+  it("宽窄容器展开均固定下置，不挤窄题干", async () => {
     const ro = stubCardWidth();
     renderStatefulCard(
       baseQuestion({ type: "choice", options: ["$1$", "$2$"] }),
@@ -396,11 +397,9 @@ describe("题卡草稿层（T6R.9）", () => {
     await ro.push(1024); // 宽题卡：两列达标
     fireEvent.click(screen.getByRole("button", { name: /草稿纸/ }));
     const row = document.querySelector('[data-slot="note-body-row"]');
-    expect(row?.getAttribute("data-layout")).toBe("side");
-    // 列宽由常量渲染（复审⑨）：55% 与阈值同源
-    expect((row?.firstElementChild as HTMLElement)?.style.width).toBe(
-      `${NOTE_QUESTION_SHARE * 100}%`,
-    );
+    expect(row?.getAttribute("data-layout")).toBe("below");
+    // 草稿展开不设置题面列宽。
+    expect((row?.firstElementChild as HTMLElement)?.style.width).toBe("");
 
     // 收窄到竖屏宽度：auto 回退 below（复审③：恒定树只切样式不换结构）
     await ro.push(700);
@@ -432,24 +431,24 @@ describe("题卡草稿层（T6R.9）", () => {
     );
   });
 
-  it("side 布局开合不重挂题干子树（填空输入保持焦点——复审③）", async () => {
+  it("草稿开合不重挂题干子树，填空输入保持焦点", async () => {
     const ro = stubCardWidth();
     const fill = baseQuestion({
       type: "fill",
       stemMd: "计算：$1+1=$ [[]]。",
     });
     renderStatefulCard(fill, { attemptId: "att-1" });
-    await ro.push(1024); // auto → side
+    await ro.push(1024);
     const input = screen.getByLabelText("第1空");
     input.focus();
     expect(document.activeElement).toBe(input);
-    // 展开草稿（below 分支 → side 分支）：同一棵子树只切样式，输入不失焦
+    // 展开草稿时沿用题面子树，输入不失焦。
     fireEvent.click(screen.getByRole("button", { name: /草稿纸/ }));
     expect(
       document
         .querySelector('[data-slot="note-body-row"]')
         ?.getAttribute("data-layout"),
-    ).toBe("side");
+    ).toBe("below");
     expect(document.activeElement).toBe(input);
     expect(input).toHaveValue("");
   });

@@ -92,6 +92,9 @@ export interface HandwrittenControlsProps {
    * 触发一次（on=进入全屏 true / 退出 false）。缺省不触发。
    */
   onInkFullscreen?: ((on: boolean) => void) | undefined;
+  onInkPresenceChange?:
+    | ((questionId: string, present: boolean) => void)
+    | undefined;
 }
 
 export function HandwrittenControls({
@@ -104,11 +107,19 @@ export function HandwrittenControls({
   onInkStroke,
   onInkEdit,
   onInkFullscreen,
+  onInkPresenceChange,
 }: HandwrittenControlsProps) {
   /** 权威笔迹：undefined=服务端加载中；null=无笔迹；有值=当前文档 */
   const [masterDoc, setMasterDoc] = useState<InkDoc | null | undefined>(
     undefined,
   );
+  useEffect(() => {
+    if (masterDoc !== undefined)
+      onInkPresenceChange?.(
+        questionId,
+        masterDoc !== null && !isInkDocEmpty(masterDoc),
+      );
+  }, [masterDoc, questionId, onInkPresenceChange]);
   const [expanded, setExpanded] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   /** 从 atrament（有笔迹）切全屏的确认弹层 */

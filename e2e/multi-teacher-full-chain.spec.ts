@@ -217,8 +217,10 @@ test.describe("T2B.8 多教师全链路：乙注册 → 甲发布 → 乙导入�
         studentPage.locator('article[aria-label="第 2 题"]'),
       ).toBeVisible();
       // 单单元作业不渲染单元节标题（T2A.7：节头仅多单元分节时显示）——
-      // 断言全卷题目数即可（h2 计数为 0 顺带固化该口径）
-      await expect(studentPage.locator("h2")).toHaveCount(0);
+      // 明确检查单元节标题，不把答题卡等辅助标题混入。
+      await expect(
+        studentPage.locator('[data-slot="attempt-unit-heading"]'),
+      ).toHaveCount(0);
       await expect(studentPage.locator("article[aria-label]")).toHaveCount(2);
 
       // 第 1 题判断答「对」；第 2 题单选选 B（选择控件点可见 label，与主流程一致）
@@ -236,7 +238,7 @@ test.describe("T2B.8 多教师全链路：乙注册 → 甲发布 → 乙导入�
         .poll(async () => studentPage.getByTestId("draft-status").textContent())
         .not.toContain("保存中");
 
-      await expect(studentPage.getByText("已答 2 / 2 题")).toBeVisible();
+      await expect(studentPage.getByText("已填写 2 / 2 题")).toBeVisible();
       await studentPage
         .getByRole("button", { name: "交卷", exact: true })
         .click();

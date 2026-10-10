@@ -3,36 +3,25 @@ import type {
   QuestionPublic,
   StudentAnswer,
 } from "@tutor/contract";
-import { displayStemMd } from "@tutor/md-dsl";
-import { cn } from "cn";
-import { Check, X } from "lucide-react";
+import { Flag, MoreHorizontal } from "lucide-react";
 import { useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
 import { AnnotationLayer } from "@/features/annotation/AnnotationLayer";
 import { useEnabledCapabilities } from "@/features/capability/enabled-capabilities";
-import { BlankAnswersProvider } from "@/features/markdown/BlankAnswersContext";
-import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { NoteLayer } from "@/features/notes/NoteLayer";
-import {
-  effectiveNoteLayout,
-  NOTE_PAPER_COLUMN_STYLE,
-  NOTE_QUESTION_COLUMN_STYLE,
-  NOTE_SIDE_ROW_STYLE,
-  NOTE_STACK_ROW_STYLE,
-  useNoteLayoutPreference,
-  useNoteSideUsable,
-} from "@/features/notes/note-layout";
+import { NOTE_STACK_ROW_STYLE } from "@/features/notes/note-layout";
 import {
   HANDWRITTEN_TYPES,
-  letterOf,
   QUESTION_TYPE_BADGE_CLASS,
   QUESTION_TYPE_LABELS,
-  withBlankValue,
 } from "./answer-format";
 import {
   HandwrittenControls,
   type HandwrittenControlsProps,
 } from "./HandwrittenControls";
 import { HintPanel } from "./HintPanel";
+import { QuestionSurface } from "./QuestionSurface";
+import { completionLabel, getQuestionCompletion } from "./question-completion";
 
 /**
  * 答题页题卡（T2.6）：题号、题型徽章（中文）、难度星、考点 tag、题干
@@ -40,209 +29,99 @@ import { HintPanel } from "./HintPanel";
  * 手写题（solve/apply/find-error）的作答控件在 HandwrittenControls（T2.8：
  * 展开手写区 + 全屏作答 + 最终答案/MathLive，含笔迹上传状态机）。
  * T2.11：hintCount>0 且提供解锁回调时渲染分步提示面板（HintPanel）。
- * T6R.9：非手写题接入题卡草稿层（NoteLayer）——展开且容器够宽时题干 55%
- * 与草稿 45% 侧栏分栏（方案 §4.3；阈值见 note-layout），窄容器/收起时
- * 草稿在题干下方整宽（below）；布局切换只改外框，不新建笔记不改正文身份。
+ * 草稿固定在题干下方整宽，展开不改变题面换行和标画坐标。
  * 触控目标全部 ≥44px（ui-conventions）；judge 题干尾部 [[]] 脱敏框剥掉
  * （对错由按钮作答，空框反而误导）。
  */
-
-/** 判断题题干尾部的空标记（studentStemMd 投影把 [[正确]] 脱敏成 [[]]） */
-function judgeStemOf(stemMd: string): string {
-  return stemMd.replace(/\s*\[\[\]\]\s*$/, "（　）");
-}
 
 /** 题头元信息：题号 + 题型徽章 + 难度星 + 考点 tag */
 function QuestionMeta({
   index,
   question,
+  answer,
+  flagged,
+  onToggleFlag,
+  formalInkPresence,
 }: {
   index: number;
   question: QuestionPublic;
+  answer: StudentAnswer | undefined;
+  flagged: boolean;
+  onToggleFlag: (() => void) | undefined;
+  formalInkPresence: boolean;
 }) {
-  return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-      <p className="flex items-center gap-2 text-sm font-semibold">
-        <span
-          aria-hidden
-          className="flex size-7 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground"
-        >
-          {index + 1}
-        </span>
-        <span>第 {index + 1} 题</span>
-      </p>
-      <span
-        className={`rounded-full px-2.5 py-1 text-xs font-medium ${QUESTION_TYPE_BADGE_CLASS[question.type]}`}
-      >
-        {QUESTION_TYPE_LABELS[question.type]}
-      </span>
-      <span
-        role="img"
-        className="text-xs text-amber-500"
-        aria-label={`难度 ${question.difficulty} 星（满分 5 星）`}
-      >
-        {"★".repeat(question.difficulty)}
-        <span className="text-muted-foreground/60">
-          {"★".repeat(5 - question.difficulty)}
-        </span>
-      </span>
-      {question.knowledge.map((name) => (
-        <span
-          key={name}
-          className="rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground"
-        >
-          {name}
-        </span>
-      ))}
-    </div>
-  );
-}
-
-/** 选项按钮的公共外壳（单选/多选共用；触控 ≥44px；has-[:checked] 联动选中态） */
-function optionShellClass(selected: boolean): string {
-  return cn(
-    "flex min-h-14 w-full cursor-pointer items-start gap-3 rounded-lg border px-4 py-3 text-left outline-none transition-colors has-[:focus-visible]:ring-3 has-[:focus-visible]:ring-ring/50",
-    selected
-      ? "border-primary bg-primary/5 ring-1 ring-primary"
-      : "border-border bg-card hover:border-primary/40 hover:bg-accent/40",
-  );
-}
-
-/** 单个选项的内容（字母 + Markdown/公式文本） */
-function OptionBody({ letter, text }: { letter: string; text: string }) {
+  const [detailsOpen, setDetailsOpen] = useState(false);
   return (
     <>
-      <span className="mt-0.5 w-5 shrink-0 text-sm font-semibold">
-        {letter}
-      </span>
-      <RichMarkdown source={text} className="min-w-0 flex-1 text-sm" />
+      <div className="flex min-h-11 items-center justify-between gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1.5">
+          <p className="flex items-center gap-2 text-sm font-semibold">
+            <span>第 {index + 1} 题</span>
+          </p>
+          <span
+            className={`rounded-md px-2 py-1 text-xs font-medium ${QUESTION_TYPE_BADGE_CLASS[question.type]}`}
+          >
+            {QUESTION_TYPE_LABELS[question.type]}
+          </span>
+          <span className="text-xs text-muted-foreground">
+            {completionLabel(
+              getQuestionCompletion(question, answer, formalInkPresence),
+            )}
+          </span>
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          {onToggleFlag && (
+            <Button
+              type="button"
+              variant="ghost"
+              className="size-11 p-0"
+              title="待检查"
+              aria-label={`第 ${index + 1} 题待检查`}
+              aria-pressed={flagged}
+              onClick={onToggleFlag}
+            >
+              <Flag
+                aria-hidden
+                className={`size-4 ${flagged ? "fill-primary text-primary" : ""}`}
+              />
+            </Button>
+          )}
+          <Button
+            type="button"
+            variant="ghost"
+            className="size-11 p-0"
+            title="题目资料"
+            aria-label={`第 ${index + 1} 题资料`}
+            aria-expanded={detailsOpen}
+            onClick={() => setDetailsOpen((v) => !v)}
+          >
+            <MoreHorizontal aria-hidden className="size-4" />
+          </Button>
+        </div>
+      </div>
+      {detailsOpen && (
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <span
+            role="img"
+            className="text-xs text-amber-500"
+            aria-label={`难度 ${question.difficulty} 星（满分 5 星）`}
+          >
+            {"★".repeat(question.difficulty)}
+            <span className="text-muted-foreground/60">
+              {"★".repeat(5 - question.difficulty)}
+            </span>
+          </span>
+          {question.knowledge.map((name) => (
+            <span
+              key={name}
+              className="rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground"
+            >
+              {name}
+            </span>
+          ))}
+        </div>
+      )}
     </>
-  );
-}
-
-/** 判断题：对/错两个大按钮（原生 radio 语义，组内互斥） */
-function JudgeControls({
-  question,
-  answer,
-  onAnswer,
-}: {
-  question: QuestionPublic;
-  answer: StudentAnswer | undefined;
-  onAnswer: (answer: StudentAnswer) => void;
-}) {
-  const picked =
-    answer?.kind === "judge" && typeof answer.value === "boolean"
-      ? answer.value
-      : undefined;
-  const groupName = `judge-${question.id}`;
-  const labelClass = (selected: boolean) =>
-    cn(
-      "flex min-h-14 flex-1 cursor-pointer items-center justify-center gap-2 rounded-lg border-2 text-base font-medium outline-none transition-colors has-[:focus-visible]:ring-3 has-[:focus-visible]:ring-ring/50",
-      selected
-        ? "border-primary bg-primary/10 text-primary"
-        : "border-border bg-card hover:bg-muted/60",
-    );
-  return (
-    <div className="flex gap-3" role="radiogroup" aria-label="判断对错">
-      <label className={labelClass(picked === true)}>
-        <input
-          type="radio"
-          name={groupName}
-          aria-label="对"
-          checked={picked === true}
-          onChange={() => onAnswer({ kind: "judge", value: true })}
-          className="sr-only"
-        />
-        <span className="flex items-center gap-2">
-          {picked === true && <Check aria-hidden className="size-5" />}对
-        </span>
-      </label>
-      <label className={labelClass(picked === false)}>
-        <input
-          type="radio"
-          name={groupName}
-          aria-label="错"
-          checked={picked === false}
-          onChange={() => onAnswer({ kind: "judge", value: false })}
-          className="sr-only"
-        />
-        <span className="flex items-center gap-2">
-          {picked === false && <X aria-hidden className="size-5" />}错
-        </span>
-      </label>
-    </div>
-  );
-}
-
-/** 单选题：原生 radio 选项列表（aria-label 按字母播报，公式内容读屏不可靠） */
-function ChoiceControls({
-  question,
-  answer,
-  onAnswer,
-}: {
-  question: QuestionPublic;
-  answer: StudentAnswer | undefined;
-  onAnswer: (answer: StudentAnswer) => void;
-}) {
-  const picked = answer?.kind === "choice" ? answer.index : undefined;
-  return (
-    <div className="flex flex-col gap-2" role="radiogroup" aria-label="选项">
-      {(question.options ?? []).map((option, index) => (
-        <label key={option} className={optionShellClass(picked === index)}>
-          <input
-            type="radio"
-            name={`choice-${question.id}`}
-            aria-label={`选项 ${letterOf(index)}`}
-            checked={picked === index}
-            onChange={() => onAnswer({ kind: "choice", index })}
-            className="sr-only"
-          />
-          <OptionBody letter={letterOf(index)} text={option} />
-        </label>
-      ))}
-    </div>
-  );
-}
-
-/** 多选题：原生 checkbox 列表（再点一次取消；空选视为未答） */
-function MultiControls({
-  question,
-  answer,
-  onAnswer,
-}: {
-  question: QuestionPublic;
-  answer: StudentAnswer | undefined;
-  onAnswer: (answer: StudentAnswer) => void;
-}) {
-  const pickedIndexes =
-    answer?.kind === "multi" ? answer.indexes : ([] as readonly number[]);
-  const toggle = (index: number) => {
-    const next = pickedIndexes.includes(index)
-      ? pickedIndexes.filter((i) => i !== index)
-      : [...pickedIndexes, index];
-    onAnswer({ kind: "multi", indexes: next });
-  };
-  return (
-    <fieldset
-      aria-label="多选题选项"
-      className="m-0 flex flex-col gap-2 border-0 p-0"
-    >
-      {(question.options ?? []).map((option, index) => (
-        <label
-          key={option}
-          className={optionShellClass(pickedIndexes.includes(index))}
-        >
-          <input
-            type="checkbox"
-            aria-label={`选项 ${letterOf(index)}`}
-            checked={pickedIndexes.includes(index)}
-            onChange={() => toggle(index)}
-            className="sr-only"
-          />
-          <OptionBody letter={letterOf(index)} text={option} />
-        </label>
-      ))}
-    </fieldset>
   );
 }
 
@@ -259,6 +138,10 @@ export function AttemptQuestionCard({
   onInkFullscreen,
   hints,
   onHintUnlocked,
+  flagged = false,
+  onToggleFlag,
+  formalInkPresence = false,
+  onInkPresenceChange,
 }: {
   /** 题号（0 起，展示 +1） */
   index: number;
@@ -281,19 +164,15 @@ export function AttemptQuestionCard({
   hints?: readonly HintOpenedEntry[];
   /** 提示解锁成功回调（T2.11；与 attemptId 同时提供才渲染提示面板） */
   onHintUnlocked?: (entry: HintOpenedEntry) => void;
+  flagged?: boolean;
+  onToggleFlag?: () => void;
+  formalInkPresence?: boolean;
+  onInkPresenceChange?: HandwrittenControlsProps["onInkPresenceChange"];
 }) {
-  const plainAnswer = (next: StudentAnswer) => onAnswer(next);
-
-  // T6R.9 草稿层：非手写题 + 作答语境（attemptId）。布局按题卡**量化分栏
-  // 结论**（复审④：ResizeObserver 回调只在跨阈值翻转时 setState——旋转/
-  // 分屏拖动不再每帧整卡重渲染；显式偏好不订阅观察）
   // T7.7：教师关闭手写辅助（ink）时草稿纸入口一并隐藏——草稿纸是 ink 辅助
   // 入口（已有草稿数据保留服务端，恢复开关后回来看）。
   const { ink: inkEnabled } = useEnabledCapabilities();
   const articleRef = useRef<HTMLElement | null>(null);
-  const layoutPref = useNoteLayoutPreference();
-  const sideUsable = useNoteSideUsable(articleRef, layoutPref === "auto");
-  const layout = effectiveNoteLayout(layoutPref, sideUsable);
   const [noteOpen, setNoteOpen] = useState(false);
   const noteLayer =
     inkEnabled &&
@@ -308,66 +187,15 @@ export function AttemptQuestionCard({
       />
     ) : null;
 
-  /** 题干 + 作答控件 + 提示面板（侧栏分栏时的左列内容） */
+  /** 题面、正式作答与辅助内容保持稳定的组件身份。 */
   const questionBody = (
     <>
-      {/* 题干：判断题剥掉尾部空标记；填空题空位内联输入 */}
-      {question.type === "judge" ? (
-        <RichMarkdown
-          source={judgeStemOf(question.stemMd)}
-          className="text-base"
-        />
-      ) : question.type === "fill" ? (
-        <BlankAnswersProvider
-          state={{
-            values: answer?.kind === "fill" ? answer.values : [],
-            onChange: (blankIndex, value) =>
-              onAnswer(
-                {
-                  kind: "fill",
-                  values: withBlankValue(
-                    answer?.kind === "fill" ? answer.values : [],
-                    blankIndex,
-                    value,
-                  ),
-                },
-                true,
-              ),
-            disabled: false,
-          }}
-        >
-          <RichMarkdown source={question.stemMd} className="text-base" />
-        </BlankAnswersProvider>
-      ) : question.type === "choice" || question.type === "multi" ? (
-        // 选择题：选项在下方按钮里——服务端 stemMd 已是 studentStemMd 投影形态，
-        // displayStemMd 兜底剥内嵌列表（防未来新路径漏走投影，重复且 [x] 会显示成打勾框）
-        <RichMarkdown source={displayStemMd(question)} className="text-base" />
-      ) : (
-        <RichMarkdown source={question.stemMd} className="text-base" />
-      )}
+      <QuestionSurface
+        question={question}
+        answer={answer}
+        onAnswer={onAnswer}
+      />
 
-      {/* 作答控件 */}
-      {question.type === "judge" && (
-        <JudgeControls
-          question={question}
-          answer={answer}
-          onAnswer={plainAnswer}
-        />
-      )}
-      {question.type === "choice" && (
-        <ChoiceControls
-          question={question}
-          answer={answer}
-          onAnswer={plainAnswer}
-        />
-      )}
-      {question.type === "multi" && (
-        <MultiControls
-          question={question}
-          answer={answer}
-          onAnswer={plainAnswer}
-        />
-      )}
       {HANDWRITTEN_TYPES.has(question.type) && attemptId !== undefined && (
         <HandwrittenControls
           attemptId={attemptId}
@@ -379,6 +207,7 @@ export function AttemptQuestionCard({
           onInkStroke={onInkStroke}
           onInkEdit={onInkEdit}
           onInkFullscreen={onInkFullscreen}
+          onInkPresenceChange={onInkPresenceChange}
         />
       )}
 
@@ -407,38 +236,29 @@ export function AttemptQuestionCard({
     </>
   );
 
-  // 侧栏分栏（方案 §4.3 初值 55/45，常量渲染见 note-layout 导出——复审⑨）：
-  // 仅草稿展开且容器够宽时两列；收起/窄容器回到题干下方整宽（below）。
-  // 双列容器**恒定渲染**、sideBySide 只切 data-layout 与样式（复审③）：
-  // 开合/布局切换不重建题干子树（RichMarkdown 重解析、输入焦点、草稿
-  // 引擎全保留）
-  const sideBySide = noteLayer !== null && noteOpen && layout === "side";
-
   return (
     <article
       ref={articleRef}
-      className="flex flex-col gap-4 rounded-2xl border border-border bg-card p-4 text-card-foreground shadow-xs sm:p-5"
+      tabIndex={-1}
+      className="flex scroll-mt-[calc(var(--attempt-header-height,64px)+12px)] flex-col gap-3 rounded-lg border border-border bg-card p-4 text-card-foreground outline-none focus-visible:ring-2 focus-visible:ring-primary sm:p-5"
       aria-label={`第 ${index + 1} 题`}
     >
-      <QuestionMeta index={index} question={question} />
+      <QuestionMeta
+        index={index}
+        question={question}
+        answer={answer}
+        flagged={flagged}
+        onToggleFlag={onToggleFlag}
+        formalInkPresence={formalInkPresence}
+      />
       <div
         data-slot="note-body-row"
-        data-layout={sideBySide ? "side" : "below"}
+        data-layout="below"
         className="flex"
-        style={sideBySide ? NOTE_SIDE_ROW_STYLE : NOTE_STACK_ROW_STYLE}
+        style={NOTE_STACK_ROW_STYLE}
       >
-        <div
-          className="flex min-w-0 flex-col gap-4"
-          style={sideBySide ? NOTE_QUESTION_COLUMN_STYLE : undefined}
-        >
-          {questionBody}
-        </div>
-        <div
-          className="min-w-0"
-          style={sideBySide ? NOTE_PAPER_COLUMN_STYLE : undefined}
-        >
-          {noteLayer}
-        </div>
+        <div className="flex min-w-0 flex-col gap-4">{questionBody}</div>
+        <div className="min-w-0">{noteLayer}</div>
       </div>
     </article>
   );

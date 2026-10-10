@@ -55,6 +55,8 @@ export function SubmitConfirmDialog({
   onConfirm,
   onConfirmMissing,
   onCancel,
+  incompleteQuestions = [],
+  onGoToQuestion,
 }: {
   open: boolean;
   /** 未作答题数（0 时也确认一次，防止误触） */
@@ -74,6 +76,8 @@ export function SubmitConfirmDialog({
   /** 缺稿交卷的明确确认（用户选择「提交答案，草稿未保存完整」） */
   onConfirmMissing?: () => void;
   onCancel: () => void;
+  incompleteQuestions?: readonly { id: string; index: number; label: string }[];
+  onGoToQuestion?: (id: string) => void;
 }) {
   const busy = submitting || preparing;
   return (
@@ -104,6 +108,27 @@ export function SubmitConfirmDialog({
               : "全部题目已作答，交卷后立即判分且不能再修改答案。"}
           </DialogDescription>
         </DialogHeader>
+
+        {incompleteQuestions.length > 0 && onGoToQuestion && (
+          <fieldset
+            className="m-0 flex flex-wrap gap-2 border-0 p-0"
+            aria-label="待补全题目"
+          >
+            {incompleteQuestions.map((question) => (
+              <Button
+                key={question.id}
+                type="button"
+                variant="outline"
+                className="min-h-11 max-w-full whitespace-normal"
+                disabled={busy}
+                aria-label={`去补全第 ${question.index + 1} 题，${question.label}`}
+                onClick={() => onGoToQuestion(question.id)}
+              >
+                第 {question.index + 1} 题 · {question.label}
+              </Button>
+            ))}
+          </fieldset>
+        )}
 
         {/* T6R.10 草稿状态区（本地快览；确认时以重新组装的权威判定为准） */}
         {noteSummary !== null && !choiceMode && noteProblems === null && (

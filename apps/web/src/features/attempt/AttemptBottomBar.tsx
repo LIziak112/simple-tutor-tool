@@ -1,4 +1,4 @@
-import { AlertTriangle, Ban, WifiOff } from "lucide-react";
+import { AlertTriangle, Ban, Grid2X2, WifiOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 /**
@@ -20,6 +20,7 @@ export function AttemptBottomBar({
   inkFlushError,
   submitError,
   onOpenSubmit,
+  onOpenNavigator,
 }: {
   answered: number;
   total: number;
@@ -34,14 +35,29 @@ export function AttemptBottomBar({
   /** 交卷请求失败的错误文案（null=无错误） */
   submitError: string | null;
   onOpenSubmit: () => void;
+  onOpenNavigator?: () => void;
 }) {
   return (
-    <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-card/95 pb-[env(safe-area-inset-bottom)] backdrop-blur">
-      <div className="mx-auto flex w-full max-w-3xl items-center justify-between gap-3 px-4 py-3 lg:max-w-5xl">
+    <div
+      data-slot="attempt-bottom-bar"
+      className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card/95 pb-[env(safe-area-inset-bottom)] backdrop-blur"
+    >
+      <div className="mx-auto flex min-h-16 w-full max-w-[1120px] items-center justify-between gap-3 px-3 py-2 sm:px-6">
+        {onOpenNavigator && (
+          <Button
+            variant="ghost"
+            className="h-11 shrink-0 px-2"
+            onClick={onOpenNavigator}
+          >
+            <Grid2X2 aria-hidden className="size-4" />
+            <span className="hidden min-[390px]:inline">答题卡</span>
+            <span className="sr-only min-[390px]:hidden">答题卡</span>
+          </Button>
+        )}
         <div className="flex min-w-0 flex-1 flex-col gap-1.5">
           <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
             <span>
-              已答 <b className="text-primary">{answered}</b> / {total} 题
+              已填写 <b className="text-primary">{answered}</b> / {total} 题
             </span>
             {offline && (
               <span className="flex items-center gap-1 text-xs text-amber-600">
@@ -91,7 +107,7 @@ export function AttemptBottomBar({
           </div>
         </div>
         <Button
-          className="min-h-12 shrink-0 px-8 text-base"
+          className="h-11 min-w-[88px] shrink-0 px-4 text-base"
           disabled={total === 0 || offline || denied}
           onClick={onOpenSubmit}
         >

@@ -1,8 +1,10 @@
 import { BookX, History, Home, Loader2, LogOut, School } from "lucide-react";
+import { useState } from "react";
 import { Navigate, NavLink, Outlet, useNavigate } from "react-router";
 import { useBindAnnotationSession } from "@/features/annotation/use-annotation-session";
 import { useLogoutStudent, useStudentMe } from "@/features/auth/student-auth";
 import { useBindNoteSession } from "@/features/notes/use-note-session";
+import { StudentWorkspaceContext } from "@/features/student/student-workspace-layout";
 import { useStudentTheme } from "@/features/student/use-student-theme";
 import { ApiError } from "@/lib/api";
 import { ScreenError, ScreenLoading } from "./StudentScreen";
@@ -27,6 +29,7 @@ const NAV_ITEMS = [
 ] as const;
 
 export function StudentLayout() {
+  const [workspace, setWorkspace] = useState(false);
   useStudentTheme();
   const meQuery = useStudentMe();
   const logoutMutation = useLogoutStudent();
@@ -68,64 +71,76 @@ export function StudentLayout() {
   const displayName = meQuery.data.displayName;
 
   return (
-    <div className="flex min-h-dvh flex-col bg-background text-foreground">
-      <header className="sticky top-0 z-10 border-b border-border/70 bg-card/90 backdrop-blur">
-        <div className="mx-auto flex w-full max-w-3xl items-center gap-3 px-4 py-2 lg:max-w-5xl">
-          {/* 姓名：头像圆标（姓名首字）+ 名字（窄屏只留头像） */}
-          <div className="flex min-w-0 shrink-0 items-center gap-2">
-            <span
-              aria-hidden
-              className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground"
-            >
-              {displayName.slice(0, 1)}
-            </span>
-            <p className="hidden max-w-32 truncate text-sm font-semibold sm:block">
-              {displayName}
-            </p>
-          </div>
-          <nav
-            aria-label="学生端导航"
-            className="flex min-w-0 flex-1 items-center justify-center"
-          >
-            <div className="flex items-center gap-1 rounded-xl bg-muted p-1">
-              {NAV_ITEMS.map((item) => (
-                <NavLink
-                  key={item.to}
-                  to={item.to}
-                  className={({ isActive }) =>
-                    `flex min-h-11 items-center gap-1.5 rounded-lg px-3 text-sm font-medium whitespace-nowrap outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 sm:px-4 ${
-                      isActive
-                        ? "bg-card text-primary shadow-sm"
-                        : "text-muted-foreground hover:text-foreground"
-                    }`
-                  }
+    <StudentWorkspaceContext.Provider value={setWorkspace}>
+      <div className="flex min-h-dvh flex-col bg-background text-foreground">
+        {!workspace && (
+          <header className="sticky top-0 z-10 border-b border-border/70 bg-card/90 backdrop-blur">
+            <div className="mx-auto flex w-full max-w-3xl items-center gap-3 px-4 py-2 lg:max-w-5xl">
+              {/* 姓名：头像圆标（姓名首字）+ 名字（窄屏只留头像） */}
+              <div className="flex min-w-0 shrink-0 items-center gap-2">
+                <span
+                  aria-hidden
+                  className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground"
                 >
-                  <item.icon aria-hidden className="size-4 shrink-0" />
-                  {item.label}
-                </NavLink>
-              ))}
+                  {displayName.slice(0, 1)}
+                </span>
+                <p className="hidden max-w-32 truncate text-sm font-semibold sm:block">
+                  {displayName}
+                </p>
+              </div>
+              <nav
+                aria-label="学生端导航"
+                className="flex min-w-0 flex-1 items-center justify-center"
+              >
+                <div className="flex items-center gap-1 rounded-xl bg-muted p-1">
+                  {NAV_ITEMS.map((item) => (
+                    <NavLink
+                      key={item.to}
+                      to={item.to}
+                      aria-label={item.label}
+                      className={({ isActive }) =>
+                        `flex min-h-11 min-w-11 items-center justify-center gap-1.5 rounded-lg px-2 text-sm font-medium whitespace-nowrap outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 sm:px-4 ${
+                          isActive
+                            ? "bg-card text-primary shadow-sm"
+                            : "text-muted-foreground hover:text-foreground"
+                        }`
+                      }
+                    >
+                      <item.icon aria-hidden className="size-4 shrink-0" />
+                      <span className="hidden sm:inline">{item.label}</span>
+                    </NavLink>
+                  ))}
+                </div>
+              </nav>
+              <button
+                type="button"
+                onClick={handleLogout}
+                disabled={logoutMutation.isPending}
+                aria-label="退出"
+                className="flex min-h-11 min-w-11 shrink-0 items-center justify-center gap-1.5 rounded-lg px-2 text-sm text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-60"
+              >
+                {logoutMutation.isPending ? (
+                  <Loader2 aria-hidden className="size-4 animate-spin" />
+                ) : (
+                  <LogOut aria-hidden className="size-4 shrink-0" />
+                )}
+                <span className="hidden sm:inline">退出</span>
+              </button>
             </div>
-          </nav>
-          <button
-            type="button"
-            onClick={handleLogout}
-            disabled={logoutMutation.isPending}
-            className="flex min-h-11 shrink-0 items-center gap-1.5 rounded-lg px-3 text-sm text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-60"
-          >
-            {logoutMutation.isPending ? (
-              <Loader2 aria-hidden className="size-4 animate-spin" />
-            ) : (
-              <LogOut aria-hidden className="size-4 shrink-0" />
-            )}
-            退出
-          </button>
-        </div>
-      </header>
+          </header>
+        )}
 
-      <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6 lg:max-w-5xl lg:py-8">
-        <Outlet />
-      </main>
-    </div>
+        <main
+          className={
+            workspace
+              ? "mx-auto w-full max-w-[1120px] flex-1 px-3 sm:px-6"
+              : "mx-auto w-full max-w-3xl flex-1 px-4 py-6 lg:max-w-5xl lg:py-8"
+          }
+        >
+          <Outlet />
+        </main>
+      </div>
+    </StudentWorkspaceContext.Provider>
   );
 }
 
