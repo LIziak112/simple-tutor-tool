@@ -57,9 +57,7 @@ jobs:
         if: failure()
         run: |
           {
-            grep -E "tests? \| [0-9]+ failed|failed\) " /tmp/test-output.log | head -4
-            grep -E "^ *× |^ *✗ " /tmp/test-output.log | head -6
-            grep -iE "unhandled|segmen|worker .*exit|internal error" /tmp/test-output.log | head -3
+            grep -A10 -E "⎯⎯⎯⎯ Unhandled" /tmp/test-output.log | head -12
             grep -E "Test Files|Tests  " /tmp/test-output.log | tail -2
           } | while IFS= read -r line; do
             msg=$(echo "$line" | tr -d '\r' | cut -c1-500)
