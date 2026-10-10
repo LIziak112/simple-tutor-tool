@@ -56,9 +56,10 @@ jobs:
       - name: 失败用例摘录（写进 check 注解）
         if: failure()
         run: |
+          sed 's/\x1b\[[0-9;]*m//g' /tmp/test-output.log > /tmp/test-clean.log
           {
-            grep -A10 -E "⎯⎯⎯⎯ Unhandled" /tmp/test-output.log | head -12
-            grep -E "Test Files|Tests  " /tmp/test-output.log | tail -2
+            grep -B1 -A14 "Unhandled Errors" /tmp/test-clean.log | head -14
+            grep -E "Test Files|Tests  " /tmp/test-clean.log | tail -2
           } | while IFS= read -r line; do
             msg=$(echo "$line" | tr -d '\r' | cut -c1-500)
             echo "::error::${msg}"
