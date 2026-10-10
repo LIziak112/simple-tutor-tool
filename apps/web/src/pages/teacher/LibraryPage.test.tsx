@@ -47,8 +47,12 @@ vi.mock("@/lib/api", async (importOriginal) => {
     restoreLectureApi: vi.fn(),
     purgeUnitApi: vi.fn(),
     purgeLectureApi: vi.fn(),
-    downloadExportMd: vi.fn(),
-    downloadTeachingPack: vi.fn(),
+    // 下载类 mock 必须返回 Promise：裸 vi.fn() 返回 undefined，按钮点击路径
+    // downloadXxx(...).catch(...) 会对 undefined 读 catch 抛 TypeError，经 React
+    // 事件系统异步重抛成 jsdom 未捕获异常——vitest 判「未处理错误」退出码 1
+    // （断言全过；本地时序吞掉、CI 慢机稳定复现，2026-10-10 340d13a/142a112 两轮红）
+    downloadExportMd: vi.fn(async () => {}),
+    downloadTeachingPack: vi.fn(async () => {}),
     renameLibraryFolderApi: vi.fn(),
     reorderLibraryFoldersApi: vi.fn(),
     deleteLibraryFolderApi: vi.fn(),
