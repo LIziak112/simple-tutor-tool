@@ -23,7 +23,7 @@ import { createRequireStudent, type StudentEnv } from "../auth/require-student";
 import {
   deleteSession,
   isSecurePublicUrl,
-  SESSION_COOKIE,
+  STUDENT_SESSION_COOKIE,
   sessionCookieOptions,
 } from "../auth/session";
 import type { Db } from "../db/client";
@@ -923,14 +923,14 @@ export function createStudentRoutes(
         });
       })
       .post("/logout", (c) => {
-        const token = getCookie(c, SESSION_COOKIE);
+        const token = getCookie(c, STUDENT_SESSION_COOKIE);
         if (token) {
           deleteSession(db, token);
         }
         // Cookie 属性与写入时保持一致（尤其 Path），否则浏览器删不掉
         deleteCookie(
           c,
-          SESSION_COOKIE,
+          STUDENT_SESSION_COOKIE,
           sessionCookieOptions(isSecurePublicUrl(publicUrl)),
         );
         return c.json({ ok: true, data: null });

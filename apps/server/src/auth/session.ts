@@ -5,17 +5,26 @@ import { sessions } from "../db/schema";
 
 /**
  * 会话服务（老师与学生共用 sessions 表，§5.7）。
- * Cookie 名 tutor_session，值即 sessions.id：
+ * Cookie 值即 sessions.id：
  * - token = randomBytes(32).toString("base64url")（256 位随机，熵高于 UUID）；
  * - 不给 sessions 表加列（T0.5 建好的结构不动），token 直接作主键；
  * - Cookie 属性 httpOnly + SameSite=Lax + Path=/ + Max-Age（与会话 TTL 对齐），
  *   PUBLIC_URL 为 https 时加 Secure；
  * - 滑动续期：守卫校验通过时 touchSession + 重设 Cookie（见 require-teacher /
  *   require-student），活跃用户「最后一次活动 + TTL」内不掉线。
+ *
+ * 师生各用一枚 Cookie（2026-10 双身份并存修复）：此前共用 tutor_session
+ * 一种名字，同一浏览器第二个身份登录会覆盖第一个的 token、把先登录方顶
+ * 下线。拆分后教师保留旧名（存量教师 Cookie 升级后不失效），学生用独立
+ * 名——学生重登代价低（专属链接点开即进）。/blobs 等双端路由由
+ * require-any-session 同时认两枚（见 auth/require-any-session.ts）。
  */
 
-/** 会话 Cookie 名（老师与学生同一种 Cookie） */
-export const SESSION_COOKIE = "tutor_session";
+/** 教师会话 Cookie 名（沿用拆分前的旧名：老部署教师登录态升级后不失效） */
+export const TEACHER_SESSION_COOKIE = "tutor_session";
+
+/** 学生会话 Cookie 名（独立于教师，双身份同浏览器并存互不覆盖） */
+export const STUDENT_SESSION_COOKIE = "tutor_student_session";
 
 /** 教师会话有效期：7 天（学生 90 天见 STUDENT_SESSION_TTL_MS；调整改这里） */
 export const TEACHER_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;

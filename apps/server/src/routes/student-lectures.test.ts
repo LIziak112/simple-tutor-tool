@@ -53,15 +53,15 @@ $1$ 大于 $0$，是正数。
 ::::
 `;
 
-/** 从 set-cookie 里取出 tutor_session 的值 */
-function extractSessionToken(res: Response): string {
+/** 从 set-cookie 里取出会话 Cookie 的值（缺省教师 tutor_session；学生传 tutor_student_session） */
+function extractSessionToken(res: Response, cookie = "tutor_session"): string {
   const line = res.headers
     .getSetCookie()
-    .find((c) => c.toLowerCase().startsWith("tutor_session="));
+    .find((c) => c.toLowerCase().startsWith(`${cookie}=`));
   if (!line) {
-    throw new Error("响应中没有 tutor_session cookie");
+    throw new Error(`响应中没有 ${cookie} cookie`);
   }
-  return line.slice("tutor_session=".length).split(";")[0] ?? "";
+  return line.slice(`${cookie}=`.length).split(";")[0] ?? "";
 }
 
 /**
@@ -118,7 +118,7 @@ async function makeApp(options?: { importLecture?: boolean }): Promise<{
     body: JSON.stringify({ loginName: "张三", password: STUDENT_PASSWORD }),
   });
   expect(login.status).toBe(200);
-  const studentCookie = `tutor_session=${extractSessionToken(login)}`;
+  const studentCookie = `tutor_student_session=${extractSessionToken(login, "tutor_student_session")}`;
 
   // T2A.5：学生能看到讲义的前提是课程成员 + 目录条目可见（D5）
   const member = await app.request(`/api/teacher/courses/${courseId}/members`, {
@@ -328,7 +328,11 @@ describe("GET /api/student/lectures/:id（讲义详情）", () => {
       }),
     });
     const res = await app.request("/api/student/lectures", {
-      headers: { cookie: `tutor_session=${extractSessionToken(login)}` },
+      headers: {
+        // 教师登录写的是 tutor_session（教师 Cookie 名）——隔离场景即教师
+        // 带着自己的 Cookie 访问学生接口，守卫按 subjectType 拒绝
+        cookie: `tutor_session=${extractSessionToken(login)}`,
+      },
     });
     expect(res.status).toBe(401);
   });
@@ -447,11 +451,11 @@ describe("POST /api/student/logout（学生退出登录，T2.3）", () => {
       .getSetCookie()
       .find((c) => c.toLowerCase().includes("max-age=0"));
     expect(cleared).toBeDefined();
-    expect(cleared?.toLowerCase()).toContain("tutor_session=");
+    expect(cleared?.toLowerCase()).toContain("tutor_student_session=");
     expect(cleared?.toLowerCase()).toContain("path=/");
 
     // 会话行已删除（库内无残留）；旧 Cookie 再访问 → 401
-    const token = studentCookie.slice("tutor_session=".length);
+    const token = studentCookie.slice("tutor_student_session=".length);
     expect(
       db
         .select()

@@ -104,12 +104,12 @@ interface WrongEnv {
   unitId: string;
 }
 
-function extractSessionToken(res: Response): string {
+function extractSessionToken(res: Response, cookie = "tutor_session"): string {
   const line = res.headers
     .getSetCookie()
-    .find((c) => c.toLowerCase().startsWith("tutor_session="));
-  if (!line) throw new Error("响应中没有 tutor_session cookie");
-  return line.slice("tutor_session=".length).split(";")[0] ?? "";
+    .find((c) => c.toLowerCase().startsWith(`${cookie}=`));
+  if (!line) throw new Error(`响应中没有 ${cookie} cookie`);
+  return line.slice(`${cookie}=`.length).split(";")[0] ?? "";
 }
 
 /** 组装被测环境：教师 + 课程（练习单元可见）+ 成员学生甲 */
@@ -204,7 +204,7 @@ async function makeWrongEnv(): Promise<WrongEnv> {
     app,
     db,
     teacherCookie,
-    aCookie: `tutor_session=${extractSessionToken(login)}`,
+    aCookie: `tutor_student_session=${extractSessionToken(login, "tutor_student_session")}`,
     courseId,
     unitId,
   };

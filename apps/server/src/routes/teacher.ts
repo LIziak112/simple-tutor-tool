@@ -5,8 +5,8 @@ import { createRequireTeacher } from "../auth/require-teacher";
 import {
   deleteSession,
   isSecurePublicUrl,
-  SESSION_COOKIE,
   sessionCookieOptions,
+  TEACHER_SESSION_COOKIE,
 } from "../auth/session";
 import type { Db, DbHandle } from "../db/client";
 import { staticDbHandle } from "../db/client";
@@ -111,14 +111,14 @@ export function createTeacherRoutes(
         return c.json({ ok: true, data: c.var.teacher });
       })
       .post("/logout", (c) => {
-        const token = getCookie(c, SESSION_COOKIE);
+        const token = getCookie(c, TEACHER_SESSION_COOKIE);
         if (token) {
           deleteSession(db, token);
         }
         // Cookie 属性与写入时保持一致（尤其 Path），否则浏览器删不掉
         deleteCookie(
           c,
-          SESSION_COOKIE,
+          TEACHER_SESSION_COOKIE,
           sessionCookieOptions(isSecurePublicUrl(publicUrl)),
         );
         return c.json({ ok: true, data: null });

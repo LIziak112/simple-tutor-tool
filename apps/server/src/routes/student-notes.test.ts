@@ -139,12 +139,12 @@ function versionCountOf(attemptId: string, questionId: string): number {
     .all().length;
 }
 
-function extractSessionToken(res: Response): string {
+function extractSessionToken(res: Response, cookie = "tutor_session"): string {
   const line = res.headers
     .getSetCookie()
-    .find((c: string) => c.toLowerCase().startsWith("tutor_session="));
-  if (!line) throw new Error("响应中没有 tutor_session cookie");
-  return line.slice("tutor_session=".length).split(";")[0] ?? "";
+    .find((c: string) => c.toLowerCase().startsWith(`${cookie}=`));
+  if (!line) throw new Error(`响应中没有 ${cookie} cookie`);
+  return line.slice(`${cookie}=`.length).split(";")[0] ?? "";
 }
 
 async function createStudent(
@@ -173,7 +173,7 @@ async function loginStudent(app: App, name: string): Promise<string> {
     body: JSON.stringify({ loginName: name, password: STUDENT_PASSWORD }),
   });
   expect(res.status).toBe(200);
-  return `tutor_session=${extractSessionToken(res)}`;
+  return `tutor_student_session=${extractSessionToken(res, "tutor_student_session")}`;
 }
 
 // ---------- 鉴权与门槛矩阵 ----------

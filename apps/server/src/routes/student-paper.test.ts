@@ -73,15 +73,15 @@ async function makeApp(): Promise<{
   return { app, db, teacherCookie, unitId };
 }
 
-/** 从 set-cookie 里取出 tutor_session 的值 */
-function extractSessionToken(res: Response): string {
+/** 从 set-cookie 里取出会话 Cookie 的值（缺省教师 tutor_session；学生传 tutor_student_session） */
+function extractSessionToken(res: Response, cookie = "tutor_session"): string {
   const line = res.headers
     .getSetCookie()
-    .find((c) => c.toLowerCase().startsWith("tutor_session="));
+    .find((c) => c.toLowerCase().startsWith(`${cookie}=`));
   if (!line) {
-    throw new Error("响应中没有 tutor_session cookie");
+    throw new Error(`响应中没有 ${cookie} cookie`);
   }
-  return line.slice("tutor_session=".length).split(";")[0] ?? "";
+  return line.slice(`${cookie}=`.length).split(";")[0] ?? "";
 }
 
 /** 导入练习样例，返回单元 id（frontmatter unit = 练习四） */
@@ -132,7 +132,7 @@ async function loginStudent(
     body: JSON.stringify({ loginName: name, password: STUDENT_PASSWORD }),
   });
   expect(res.status).toBe(200);
-  return `tutor_session=${extractSessionToken(res)}`;
+  return `tutor_student_session=${extractSessionToken(res, "tutor_student_session")}`;
 }
 
 /** 布置作业给指定学生（断言 201），返回 assignmentId */

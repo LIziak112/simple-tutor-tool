@@ -108,12 +108,12 @@ async function makeApp(): Promise<TestApp> {
   return { app, db, teacherCookie, courseId, lectureId, lectureItemId: "" };
 }
 
-function extractSessionToken(res: Response): string {
+function extractSessionToken(res: Response, cookie = "tutor_session"): string {
   const line = res.headers
     .getSetCookie()
-    .find((c) => c.toLowerCase().startsWith("tutor_session="));
-  if (!line) throw new Error("响应中没有 tutor_session cookie");
-  return line.slice("tutor_session=".length).split(";")[0] ?? "";
+    .find((c) => c.toLowerCase().startsWith(`${cookie}=`));
+  if (!line) throw new Error(`响应中没有 ${cookie} cookie`);
+  return line.slice(`${cookie}=`.length).split(";")[0] ?? "";
 }
 
 /** 登录态 JSON 请求 */
@@ -168,7 +168,7 @@ describe("GET /api/teacher/courses（列表）", () => {
       body: JSON.stringify({ loginName: "张三", password: STUDENT_PASSWORD }),
     });
     expect(login.status).toBe(200);
-    const studentCookie = `tutor_session=${extractSessionToken(login)}`;
+    const studentCookie = `tutor_student_session=${extractSessionToken(login, "tutor_student_session")}`;
     const res = await request(
       app,
       "GET",
