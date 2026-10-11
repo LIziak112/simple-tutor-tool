@@ -1,6 +1,10 @@
 import type { AnnotationBaseRef, AnnotationDoc } from "@tutor/contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { exportAnnotationComposite } from "./annotation-composite";
+import {
+  exportAnnotationComposite,
+  exportAnnotationCompositeSource,
+  ongoingAnnotationFilename,
+} from "./annotation-composite";
 
 /**
  * T6R.20 标注合成图（annotation-composite）单测：canvas 直绘成功、底图
@@ -77,6 +81,36 @@ afterEach(() => {
 });
 
 describe("exportAnnotationComposite（canvas 直绘）", () => {
+  it("本机PNG源不需要服务器baseId，尺寸匹配才导出且下载名包含作业题号", async () => {
+    const loadImage = vi.fn(async () => new Image());
+    const source = {
+      downloadUrl: "blob:local",
+      pixelWidth: 1440,
+      pixelHeight: 900,
+    };
+    expect(
+      (
+        await exportAnnotationCompositeSource(source, DOC, {
+          loadImage,
+          encodePng: async () => fakePngBlob(),
+        })
+      ).ok,
+    ).toBe(true);
+    loadImage.mockClear();
+    expect(
+      (
+        await exportAnnotationCompositeSource(
+          { ...source, pixelWidth: 900 },
+          DOC,
+          { loadImage },
+        )
+      ).ok,
+    ).toBe(false);
+    expect(loadImage).not.toHaveBeenCalled();
+    expect(ongoingAnnotationFilename("练习/六:乘法", 8)).toBe(
+      "练习_六_乘法-第8题-标画.png",
+    );
+  });
   it("成功：底图加载 + drawImage + 笔迹重放 → 单张 PNG", async () => {
     const result = await exportAnnotationComposite(READY_BASE, DOC, {
       loadImage: async () => new Image(),

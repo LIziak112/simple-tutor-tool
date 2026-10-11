@@ -41,6 +41,7 @@ export interface SubmitNoteProblemView {
   index: number;
   /** 中文原因（submit-evidence 产出） */
   reason: string;
+  domain?: "annotation";
 }
 
 export function SubmitConfirmDialog({
@@ -80,6 +81,8 @@ export function SubmitConfirmDialog({
   onGoToQuestion?: (id: string) => void;
 }) {
   const busy = submitting || preparing;
+  const annotationProblem =
+    noteProblems?.some((problem) => problem.domain === "annotation") ?? false;
   return (
     <Dialog open={open} onOpenChange={(next) => !next && onCancel()}>
       <DialogContent
@@ -162,18 +165,19 @@ export function SubmitConfirmDialog({
             className="rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2.5 text-sm leading-6"
           >
             <p className="font-medium text-destructive">
-              以下题目的草稿未保存完整：
+              以下题目的{annotationProblem ? "材料" : "草稿"}未保存完整：
             </p>
             <ul className="mt-1 list-disc pl-5 text-muted-foreground">
               {noteProblems.map((problem) => (
-                <li key={problem.index}>
+                <li key={`${problem.index}:${problem.domain ?? "scratch"}`}>
                   第 {problem.index} 题：{problem.reason}
                 </li>
               ))}
             </ul>
             <p className="mt-1.5 text-muted-foreground">
-              可以返回重试同步；或明确选择提交——这些题目的草稿将标记为
-              「未保存」，交卷后找回的内容只能作为补充材料，不会算作原稿。
+              {annotationProblem
+                ? "可以返回重试同步，或仅交答案。本机标画不会删除，但未上传的标画不能视为交卷原稿；未保存草稿按缺稿提交。"
+                : "可以返回重试同步；或明确选择提交——这些题目的草稿将标记为「未保存」，交卷后找回的内容只能作为补充材料，不会算作原稿。"}
             </p>
           </div>
         )}
@@ -207,7 +211,11 @@ export function SubmitConfirmDialog({
               onClick={onConfirmMissing}
               disabled={busy}
             >
-              {busy ? "正在交卷…" : "提交答案，草稿未保存完整"}
+              {busy
+                ? "正在交卷…"
+                : annotationProblem
+                  ? "仅交答案，未保存材料留在本机"
+                  : "提交答案，草稿未保存完整"}
             </Button>
           ) : (
             <Button className="min-h-11" onClick={onConfirm} disabled={busy}>

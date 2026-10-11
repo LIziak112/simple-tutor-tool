@@ -11,6 +11,7 @@
  */
 
 import type { AnnotationBaseRef, AnnotationDoc } from "@tutor/contract";
+import { ANNOTATION_MAX_PIXEL_DIM } from "@tutor/contract";
 import type Atrament from "atrament";
 import { createProgrammaticAtrament } from "@/features/ink/engine/atrament-adapter.ts";
 import { canvasToPngBlob } from "@/features/ink/engine/canvas-png.ts";
@@ -83,6 +84,40 @@ export async function exportAnnotationComposite(
       },
     };
   }
+  return exportAnnotationCompositeSource(
+    {
+      downloadUrl: url,
+      pixelWidth: base.pixelWidth,
+      pixelHeight: base.pixelHeight ?? 0,
+    },
+    doc,
+    deps,
+  );
+}
+
+/** 本机Blob URL与服务器URL共用几何合成，不伪造服务器baseId。 */
+export async function exportAnnotationCompositeSource(
+  source: { downloadUrl: string; pixelWidth: number; pixelHeight: number },
+  doc: AnnotationDoc,
+  deps: AnnotationCompositeDeps = {},
+): Promise<AnnotationCompositeResult> {
+  if (
+    source.pixelWidth !== doc.baseWidth ||
+    source.pixelHeight !== doc.baseHeight ||
+    source.pixelWidth <= 0 ||
+    source.pixelHeight <= 0 ||
+    source.pixelWidth > ANNOTATION_MAX_PIXEL_DIM ||
+    source.pixelHeight > ANNOTATION_MAX_PIXEL_DIM
+  ) {
+    return {
+      ok: false,
+      error: {
+        kind: "base-missing",
+        message: "底图与标画尺寸不匹配，无法导出",
+      },
+    };
+  }
+  const url = source.downloadUrl;
   let image: HTMLImageElement;
   try {
     image = await (deps.loadImage !== undefined
@@ -97,6 +132,19 @@ export async function exportAnnotationComposite(
       },
     };
   }
+  if (
+    image.naturalWidth > 0 &&
+    (image.naturalWidth !== source.pixelWidth ||
+      image.naturalHeight !== source.pixelHeight)
+  ) {
+    return {
+      ok: false,
+      error: {
+        kind: "base-missing",
+        message: "底图实际像素与标画尺寸不匹配，无法导出",
+      },
+    };
+  }
   const host = document.createElement("div");
   host.setAttribute("data-annotation-composite-host", "");
   host.setAttribute("aria-hidden", "true");
@@ -106,6 +154,7 @@ export async function exportAnnotationComposite(
     top: "0",
     zIndex: "-1",
   });
+  let atrament: Atrament | null = null;
   try {
     const canvas = document.createElement("canvas");
     canvas.width = doc.baseWidth;
@@ -122,17 +171,13 @@ export async function exportAnnotationComposite(
         error: { kind: "internal", message: "无法创建画布上下文" },
       };
     }
+    // Atrament构造与destroy都会清空画布：先构造再绘制，编码之后才销毁。
+    atrament = createProgrammaticAtrament(canvas);
     ctx.fillStyle = "#ffffff";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(image, 0, 0, doc.baseWidth, doc.baseHeight);
-    let atrament: Atrament | null = null;
-    try {
-      atrament = createProgrammaticAtrament(canvas);
-      for (const stroke of doc.strokes) {
-        replayAnnotationStroke(atrament, 1, stroke);
-      }
-    } finally {
-      atrament?.destroy();
+    for (const stroke of doc.strokes) {
+      replayAnnotationStroke(atrament, 1, stroke);
     }
     let blob: Blob;
     try {
@@ -157,9 +202,33 @@ export async function exportAnnotationComposite(
     // PNG 魔数校验已删（审查修复 10/Q-L3）：canvasToPngBlob 走原生
     // canvas.toBlob("image/png")，产物类型由浏览器保证；空 Blob 上面已拦
     return { ok: true, blob };
+  } catch (error) {
+    return {
+      ok: false,
+      error: {
+        kind: "internal",
+        message:
+          error instanceof Error ? error.message : "合成图绘制失败，请重试",
+      },
+    };
   } finally {
+    atrament?.destroy();
     host.remove();
   }
+}
+
+export function ongoingAnnotationFilename(
+  title: string,
+  questionNo: number,
+): string {
+  const safe =
+    title
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: 下载文件名必须剔除Windows禁止的控制字符
+      .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_")
+      .replace(/[. ]+$/g, "")
+      .trim()
+      .slice(0, 80) || "练习";
+  return `${safe}-第${questionNo}题-标画.png`;
 }
 
 /** 合成图文件名（annotation-q<题号>-<phase>.png；题号由调用方给展示序号） */

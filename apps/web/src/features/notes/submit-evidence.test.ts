@@ -12,6 +12,17 @@
 import type { NoteHeadData } from "@tutor/contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { docOf } from "@/features/notes/note-fixtures";
+
+const annotationProblems = vi.hoisted(() =>
+  vi.fn(
+    async () =>
+      [] as Array<{ questionId: string; reason: string; domain: "annotation" }>,
+  ),
+);
+vi.mock("@/features/annotation/annotation-submit-materials", () => ({
+  snapshotAnnotationProblems: annotationProblems,
+}));
+
 import {
   applyUploadConflict,
   applyUploadDenied,
@@ -71,6 +82,7 @@ const Q3 = "p1-q3";
 const QUESTIONS = [Q1, Q2, Q3];
 
 beforeEach(() => {
+  annotationProblems.mockResolvedValue([]);
   installNoteBackend(memoryNoteBackend());
   bindNoteSession(SESSION_A);
   putMock.mockReset();
@@ -115,6 +127,27 @@ function mockHeads(overrides: Record<string, NoteHeadData>): void {
 }
 
 describe("prepareSubmitEvidence：正常固定", () => {
+  it("标画未传完整必须明确确认，确认后不伪造草稿missing声明", async () => {
+    mockHeads({});
+    annotationProblems.mockResolvedValue([
+      { questionId: Q1, reason: "标画尚未上传完整", domain: "annotation" },
+    ]);
+    const prep = await prepareSubmitEvidence({
+      attemptId: ATTEMPT,
+      questionIds: QUESTIONS,
+    });
+    expect(prep.declarations).toBeNull();
+    expect(prep.problems[0]?.domain).toBe("annotation");
+    const confirmed = await prepareSubmitEvidence({
+      attemptId: ATTEMPT,
+      questionIds: QUESTIONS,
+      allowMissing: new Set([Q1]),
+    });
+    expect(
+      confirmed.declarations?.find((item) => item.questionId === Q1)?.state,
+    ).toBe("none");
+    expect(confirmed.problems).toEqual([]);
+  });
   it("本地已同步 + head 有版本 → frozen(head 权威 versionId/revision)；其余题 none", async () => {
     // 本地有笔；上传成功（回执 rev1）。head 显示他处已存到 rev2 → 按 head 声明
     await writeLocal(Q1, DOC_A);

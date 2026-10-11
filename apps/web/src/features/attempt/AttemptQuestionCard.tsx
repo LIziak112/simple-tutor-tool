@@ -7,6 +7,7 @@ import type {
 import {
   CircleAlert,
   Flag,
+  ImageDown,
   MoreHorizontal,
   NotebookPen,
   Pencil,
@@ -19,7 +20,11 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { AnnotationExportDialog } from "@/features/annotation/AnnotationExportDialog";
 import { AnnotationLayer } from "@/features/annotation/AnnotationLayer";
+import { ongoingAnnotationFilename } from "@/features/annotation/annotation-composite";
+import { currentAnnotationSession } from "@/features/annotation/annotation-sync";
+import { exportQuestionAnnotationImage } from "@/features/annotation/export-question-annotation";
 import {
   QuestionAnnotationOverlay,
   type QuestionAnnotationOverlayHandle,
@@ -82,6 +87,7 @@ function QuestionMeta({
     togglePaper: () => void;
     annotationHidden?: boolean;
     toggleAnnotationVisibility?: () => void;
+    exportAnnotation?: () => void;
   } | null;
 }) {
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -168,6 +174,12 @@ function QuestionMeta({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+              {tools?.exportAnnotation && (
+                <DropdownMenuItem onSelect={tools.exportAnnotation}>
+                  <ImageDown aria-hidden />
+                  导出题目与标画
+                </DropdownMenuItem>
+              )}
               {tools?.toggleAnnotationVisibility &&
                 tools.annotationCount > 0 && (
                   <DropdownMenuItem
@@ -240,6 +252,7 @@ export function AttemptQuestionCard({
   onToggleFlag,
   formalInkPresence = false,
   onInkPresenceChange,
+  assignmentTitle = "练习",
 }: {
   /** 题号（0 起，展示 +1） */
   index: number;
@@ -266,6 +279,7 @@ export function AttemptQuestionCard({
   onToggleFlag?: () => void;
   formalInkPresence?: boolean;
   onInkPresenceChange?: HandwrittenControlsProps["onInkPresenceChange"];
+  assignmentTitle?: string;
 }) {
   // T7.7：教师关闭手写辅助（ink）时草稿纸入口一并隐藏——草稿纸是 ink 辅助
   // 入口（已有草稿数据保留服务端，恢复开关后回来看）。
@@ -295,6 +309,7 @@ export function AttemptQuestionCard({
   };
   const [annotationOpen, setAnnotationOpen] = useState(false);
   const [annotationHidden, setAnnotationHidden] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
   const inlineQuestion: AttemptQuestionPublic | null =
     editor &&
     "questionRevisionId" in question &&
@@ -460,6 +475,9 @@ export function AttemptQuestionCard({
                   annotationRecord?.conflict != null ||
                   annotationRecord?.denied != null ||
                   annotationRecord?.local === "failed",
+                ...(inlineQuestion
+                  ? { exportAnnotation: () => setExportOpen(true) }
+                  : {}),
                 paperProblem:
                   noteRecord?.conflict != null ||
                   noteRecord?.denied != null ||
@@ -496,6 +514,28 @@ export function AttemptQuestionCard({
         <div className="flex min-w-0 flex-col gap-4">{questionBody}</div>
         <div className="min-w-0">{noteLayer}</div>
       </div>
+      {inlineQuestion && attemptId && (
+        <AnnotationExportDialog
+          open={exportOpen}
+          onOpenChange={setExportOpen}
+          filename={ongoingAnnotationFilename(assignmentTitle, index + 1)}
+          createImage={async () => {
+            if (editor && !(await editor.request(null)))
+              throw new Error("当前稿件未保存，请先重试保存");
+            const session = currentAnnotationSession();
+            const surface = articleRef.current?.querySelector<HTMLElement>(
+              '[data-slot="question-surface"]',
+            );
+            if (!session || !surface) throw new Error("题面尚未就绪，请重试");
+            return exportQuestionAnnotationImage(
+              session,
+              { attemptId, questionId: question.id, phase: "scratch" },
+              inlineQuestion,
+              surface,
+            );
+          }}
+        />
+      )}
     </article>
   );
 }

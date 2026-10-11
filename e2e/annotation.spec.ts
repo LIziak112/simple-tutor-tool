@@ -304,6 +304,23 @@ test.describe("题干标注（T6R.20）", () => {
       await expect(
         resultCard.locator('[data-slot="annotation-static-canvas"]'),
       ).toBeVisible();
+      await expect
+        .poll(() =>
+          resultCard
+            .locator('[data-slot="annotation-static-canvas"]')
+            .evaluate((element) => {
+              const canvas = element as HTMLCanvasElement;
+              const pixels =
+                canvas
+                  .getContext("2d")
+                  ?.getImageData(0, 0, canvas.width, canvas.height).data ?? [];
+              let count = 0;
+              for (let i = 3; i < pixels.length; i += 4)
+                if ((pixels[i] ?? 0) > 0) count++;
+              return count;
+            }),
+        )
+        .toBeGreaterThan(10);
       await expect(
         resultCard.getByRole("button", { name: /清空标注/ }),
       ).toHaveCount(0);

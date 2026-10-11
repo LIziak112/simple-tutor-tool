@@ -767,6 +767,7 @@ export async function clearAnnotationDeniedAccess(
 export async function listPendingAnnotations(
   session: AnnotationSessionRef,
   attemptId?: string,
+  options: { strictRead?: boolean } = {},
 ): Promise<AnnotationScope[]> {
   const out: AnnotationScope[] = [];
   let pairs: Array<[string, unknown]>;
@@ -777,8 +778,9 @@ export async function listPendingAnnotations(
         : attemptPrefix(session, attemptId),
     );
   } catch (err) {
+    if (options.strictRead) throw err;
     console.warn("标注本地仓扫描失败（无法补传待传版本）", err);
-    return out;
+    pairs = [];
   }
   for (const [key, raw] of pairs) {
     const parsed = parseAnnotationKey(key);
@@ -787,10 +789,15 @@ export async function listPendingAnnotations(
       const revived = reviveRecord(raw);
       if (revived !== null) records.set(key, revived);
     }
-    const record = records.get(key);
-    if (record !== undefined && record.pending !== null) {
-      out.push(parsed.scope);
-    }
+  }
+  const prefix =
+    attemptId === undefined
+      ? sessionPrefix(session)
+      : attemptPrefix(session, attemptId);
+  for (const [key, record] of records) {
+    if (!key.startsWith(prefix) || record.pending === null) continue;
+    const parsed = parseAnnotationKey(key);
+    if (parsed) out.push(parsed.scope);
   }
   return out;
 }

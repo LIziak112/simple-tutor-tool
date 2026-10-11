@@ -729,6 +729,7 @@ function AnswerView({
                         <AttemptQuestionCard
                           index={index}
                           question={question}
+                          assignmentTitle={data.title}
                           answer={answers?.[question.id]}
                           onAnswer={(answer, defer) =>
                             setAnswer(question.id, answer, defer ?? false)
@@ -815,7 +816,11 @@ function AnswerView({
                     // 题号必然在同卷集合内；防御 miss 过滤该条（不渲染「第 0 题」）
                     return index === undefined
                       ? null
-                      : { index, reason: problem.reason };
+                      : {
+                          index,
+                          reason: problem.reason,
+                          ...(problem.domain ? { domain: problem.domain } : {}),
+                        };
                   })
                   .filter(
                     (view): view is { index: number; reason: string } =>

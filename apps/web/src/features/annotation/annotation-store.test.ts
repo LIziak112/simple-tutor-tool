@@ -5,7 +5,7 @@ import type {
   AnnotationReceipt,
   AnnotationViewData,
 } from "@tutor/contract";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { digestOf } from "@/features/attempt/draft-merge";
 import {
   type AnnotationSessionRef,
@@ -45,6 +45,30 @@ const SCOPE = {
   questionId: "q-0001",
   phase: "scratch" as const,
 };
+
+it("交卷扫描保留仅在内存的待传标画，严格读失败不能误报无附件", async () => {
+  const storage = memoryAnnotationBackend();
+  installAnnotationBackend({
+    ...storage,
+    set: async () => {
+      throw new Error("磁盘已满");
+    },
+  });
+  writeAnnotationDoc(SESSION, SCOPE, docOf([strokeAt(10, 10)]));
+  await settleAnnotationPersistence();
+  expect(await listPendingAnnotations(SESSION, SCOPE.attemptId)).toEqual([
+    SCOPE,
+  ]);
+  installAnnotationBackend({
+    ...storage,
+    getAll: vi.fn(async () => {
+      throw new Error("读取失败");
+    }),
+  });
+  await expect(
+    listPendingAnnotations(SESSION, SCOPE.attemptId, { strictRead: true }),
+  ).rejects.toThrow("读取失败");
+});
 
 function docOf(
   strokes: AnnotationDoc["strokes"] = [],

@@ -89,9 +89,12 @@ function AnnotationStaticCanvas({
       for (const stroke of doc.strokes) {
         replayAnnotationStroke(atrament, cssPerBase, stroke);
       }
-    } finally {
+    } catch (error) {
       atrament?.destroy();
+      throw error;
     }
+    // destroy会清画布，只在静态回放卸载/重绘时执行，不能抹掉刚绘制的圈。
+    return () => atrament?.destroy();
   }, [baseLoaded, doc, base]);
   return (
     <canvas

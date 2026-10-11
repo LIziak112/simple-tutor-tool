@@ -28,6 +28,7 @@ import type {
   NoteServerBodyState,
   SubmitEvidenceDeclaration,
 } from "@tutor/contract";
+import { snapshotAnnotationProblems } from "@/features/annotation/annotation-submit-materials";
 import { catchUpAnnotations } from "@/features/annotation/annotation-sync";
 import { fetchStudentNoteHeadsApi } from "@/lib/api";
 import {
@@ -56,6 +57,7 @@ export interface SubmitNoteStatus {
 export interface SubmitEvidenceProblem {
   questionId: string;
   reason: string;
+  domain?: "annotation";
 }
 
 export interface SubmitEvidencePrep {
@@ -254,6 +256,15 @@ export async function prepareSubmitEvidence(input: {
     declarations.push({ questionId, state: "none" });
   }
 
+  const annotationProblems = await snapshotAnnotationProblems(
+    input.attemptId,
+    input.questionIds,
+  );
+  problems.push(
+    ...annotationProblems.filter(
+      (problem) => !input.allowMissing?.has(problem.questionId),
+    ),
+  );
   return {
     declarations: problems.length > 0 ? null : declarations,
     problems,

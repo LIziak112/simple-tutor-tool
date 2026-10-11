@@ -543,12 +543,13 @@ export async function drawStrokeWithPointerEvents(
     const cx = rect.width / 2;
     const cy = rect.height / 2;
     const dx = Math.min(120, rect.width * 0.2);
+    const dy = Math.min(40, rect.height * 0.2);
     const pts = [
-      [cx - dx, cy - 30],
-      [cx - dx / 2, cy + 40],
-      [cx, cy - 40],
-      [cx + dx / 2, cy + 40],
-      [cx + dx, cy - 20],
+      [cx - dx, cy - dy * 0.75],
+      [cx - dx / 2, cy + dy],
+      [cx, cy - dy],
+      [cx + dx / 2, cy + dy],
+      [cx + dx, cy - dy * 0.5],
     ] as const;
     const fire = (
       type: string,

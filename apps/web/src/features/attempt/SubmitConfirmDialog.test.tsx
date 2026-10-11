@@ -5,6 +5,28 @@ import { SubmitConfirmDialog } from "./SubmitConfirmDialog";
 /** 交卷确认弹层测试（T2.6）：未答数量提示与确认/继续作答回调。 */
 
 describe("SubmitConfirmDialog", () => {
+  it("待传标画提示仅交答案、本机保留且不能冒称交卷原稿", () => {
+    const confirm = vi.fn();
+    render(
+      <SubmitConfirmDialog
+        open
+        unansweredCount={0}
+        submitting={false}
+        choiceMode
+        noteProblems={[
+          { index: 1, reason: "标画尚未上传完整", domain: "annotation" },
+        ]}
+        onConfirm={vi.fn()}
+        onConfirmMissing={confirm}
+        onCancel={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/本机标画不会删除/)).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "仅交答案，未保存材料留在本机" }),
+    );
+    expect(confirm).toHaveBeenCalledOnce();
+  });
   it("有未答题时显示具体数量并警示不能再修改", () => {
     render(
       <SubmitConfirmDialog
