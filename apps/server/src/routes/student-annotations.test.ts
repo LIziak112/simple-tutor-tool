@@ -7,6 +7,7 @@ import {
   annotationReceiptSchema,
   annotationSealDataSchema,
   annotationViewDataSchema,
+  attemptDraftOkSchema,
 } from "@tutor/contract";
 import { stemMdLeaksAnswers } from "@tutor/md-dsl";
 import type { Logger } from "pino";
@@ -88,6 +89,82 @@ beforeAll(async () => {
 function freshAttempt(): Promise<string> {
   return freshNoteAttempt(app, teacherCookie, unitId, [aId], aCookie);
 }
+
+describe("原位布局底图首建", () => {
+  async function world() {
+    const attemptId = await freshAttempt();
+    const response = await app.request(`/api/student/attempts/${attemptId}`, {
+      headers: { cookie: aCookie },
+    });
+    const draft = attemptDraftOkSchema.parse(await response.json()).data;
+    const question = draft.units
+      .flatMap((unit) => unit.questions)
+      .find((entry) => entry.id === Q);
+    if (!question) throw new Error("测试题目不存在");
+    const layout = {
+      renderVersion: 2,
+      questionRevisionId: question.questionRevisionId,
+      cssWidth: 300,
+      cssHeight: 200,
+      pixelRatio: 2,
+      styleVersion: 1,
+      contentSignature: "a".repeat(64),
+      geometrySignature: "b".repeat(64),
+      fontSignature: "c".repeat(64),
+    };
+    const create = (value: unknown) =>
+      app.request(
+        `/api/student/attempts/${attemptId}/questions/${Q}/annotation/base`,
+        {
+          method: "POST",
+          headers: { cookie: aCookie, "content-type": "application/json" },
+          body: JSON.stringify({ layout: value }),
+        },
+      );
+    return { attemptId, layout, create };
+  }
+  it("新版布局往返、动态PNG几何、ready不可覆盖且载荷无泄露", async () => {
+    const { attemptId, layout, create } = await world();
+    const created = await create(layout);
+    expect(created.status).toBe(200);
+    const payload = await created.json();
+    assertNoLeak(payload);
+    const preview = annotationBasePreviewDataSchema.parse(
+      (payload as { data: unknown }).data,
+    );
+    expect(preview.base.layout).toEqual(layout);
+    expect(preview.baseRenderVersion).toBe(2);
+    const meta = {
+      questionRevisionId: layout.questionRevisionId,
+      baseRenderVersion: 2,
+    };
+    expect(
+      (await postBaseImage(attemptId, aCookie, meta, makeNotePng(600, 400)))
+        .status,
+    ).toBe(200);
+    expect(
+      (await postBaseImage(attemptId, aCookie, meta, makeNotePng(600, 401)))
+        .status,
+    ).toBe(400);
+    const different = await create({ ...layout, cssWidth: 320 });
+    expect(different.status).toBe(409);
+    assertNoLeak(await different.json());
+  });
+  it("两个客户端首建不同布局保留首份身份，陈旧revision与越界被拒", async () => {
+    const { layout, create } = await world();
+    expect(
+      (await create({ ...layout, questionRevisionId: randomUUID() })).status,
+    ).toBe(409);
+    expect((await create({ ...layout, cssHeight: 3000 })).status).toBe(400);
+    const results = await Promise.all([
+      create(layout),
+      create({ ...layout, geometrySignature: "d".repeat(64) }),
+    ]);
+    expect(results.map((response) => response.status).sort()).toEqual([
+      200, 409,
+    ]);
+  });
+});
 
 // ---------- 请求组装 ----------
 

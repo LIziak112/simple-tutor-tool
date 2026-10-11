@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
-import type { QuestionAnswers } from "@tutor/contract";
+import type { AnnotationSurfaceLayout, QuestionAnswers } from "@tutor/contract";
 import {
   learningPackExportRequestSchema,
   learningPackV2Schema,
@@ -152,6 +152,69 @@ function makeAnnotatedWorld(options: { withAnnotation?: boolean } = {}): {
 }
 
 describe("review-pack 的 annotation 成对附件", () => {
+  it("新版非1440底图与笔迹原尺寸进入复盘包和学情包", async () => {
+    const db = createTestDb();
+    const dataDir = createTestDir();
+    const studentId = makeStudent(db);
+    const { attemptId, revisionId } = makePaper(db, studentId);
+    const layout: AnnotationSurfaceLayout = {
+      renderVersion: 2,
+      questionRevisionId: revisionId,
+      cssWidth: 300,
+      cssHeight: 200,
+      pixelRatio: 2,
+      styleVersion: 1,
+      contentSignature: "a".repeat(64),
+      geometrySignature: "b".repeat(64),
+      fontSignature: "c".repeat(64),
+    };
+    assembleAnnotationBase(db, studentId, attemptId, Q, "scratch", layout);
+    const png = makeNotePng(600, 400);
+    registerBaseImage(db, dataDir, studentId, attemptId, Q, png, {
+      questionRevisionId: revisionId,
+      baseRenderVersion: 2,
+      phase: "scratch",
+    });
+    const doc = { ...annotationDoc(400), baseWidth: 600 };
+    putAnnotationDoc(db, dataDir, studentId, attemptId, Q, gzipJson(doc), {
+      baseRevision: 0,
+      mutationId: randomUUID(),
+    });
+    submitAttemptStatus(db, attemptId);
+    sealAttemptAnnotations(db, studentId, attemptId);
+    const assembly = assembleReviewPack(
+      db,
+      dataDir,
+      { kind: "teacher", id: TEST_TEACHER_ID },
+      attemptId,
+      Q,
+    );
+    const review = unzipEntries(await zipReviewPack(assembly));
+    const learning = unzipEntries(
+      (
+        await buildLearningPackZip(
+          db,
+          dataDir,
+          TEST_TEACHER_ID,
+          learningPackExportRequestSchema.parse({
+            packVersion: 2,
+            scope: { studentIds: [studentId] },
+            modules: { responses: true, evidence: true },
+            goal: "diagnose-weakness",
+          }),
+        )
+      ).bytes,
+    );
+    for (const entries of [review, learning]) {
+      expect(entries.get("annotation/a001-base.png")).toEqual(Buffer.from(png));
+      expect(
+        JSON.parse(
+          entries.get("annotation/a001-strokes.json")?.toString("utf8") ??
+            "null",
+        ),
+      ).toMatchObject({ baseWidth: 600, baseHeight: 400 });
+    }
+  });
   it("学生包：zip 含成对文件（原字节/规范化 JSON）；manifest 与附件清单一致", async () => {
     const { world, attemptId } = makeAnnotatedWorld();
     const assembly = assembleReviewPack(

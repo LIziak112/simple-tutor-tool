@@ -1,0 +1,150 @@
+import type {
+  AnnotationSurfaceLayout,
+  AttemptQuestionPublic,
+} from "@tutor/contract";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+
+vi.mock("@/lib/api", async (original) => ({
+  ...(await original<typeof import("@/lib/api")>()),
+  fetchAnnotationViewApi: vi.fn(),
+}));
+vi.mock("./question-base-image", () => ({ renderQuestionBaseImage: vi.fn() }));
+
+import { ApiError, fetchAnnotationViewApi } from "@/lib/api";
+import {
+  getAnnotationRecord,
+  installAnnotationBackend,
+  memoryAnnotationBackend,
+  resetAnnotationStoreForTest,
+  writeLocalAnnotationBase,
+} from "./annotation-store";
+import {
+  bindAnnotationSession,
+  resetAnnotationSession,
+} from "./annotation-sync";
+import { prepareQuestionAnnotationBase } from "./question-annotation-base";
+import { renderQuestionBaseImage } from "./question-base-image";
+
+const session = { origin: "https://tutor.test", studentId: "student-a" };
+const scope = {
+  attemptId: "attempt-a",
+  questionId: "question-a",
+  phase: "scratch" as const,
+};
+const layout: AnnotationSurfaceLayout = {
+  renderVersion: 2,
+  questionRevisionId: "11111111-1111-4111-8111-111111111111",
+  cssWidth: 300,
+  cssHeight: 200,
+  pixelRatio: 2,
+  styleVersion: 1,
+  contentSignature: "a".repeat(64),
+  geometrySignature: "b".repeat(64),
+  fontSignature: "c".repeat(64),
+};
+const question: AttemptQuestionPublic = {
+  id: scope.questionId,
+  questionRevisionId: layout.questionRevisionId,
+  type: "judge",
+  stemMd: "公开题面",
+  difficulty: 1,
+  knowledge: [],
+  hintCount: 0,
+};
+const png = new Blob(["png"], { type: "image/png" });
+const surface = document.createElement("div");
+beforeEach(() => {
+  resetAnnotationSession();
+  resetAnnotationStoreForTest();
+  installAnnotationBackend(memoryAnnotationBackend());
+  vi.clearAllMocks();
+  bindAnnotationSession(session);
+  vi.mocked(renderQuestionBaseImage).mockResolvedValue({
+    blob: png,
+    layout,
+    pixelWidth: 600,
+    pixelHeight: 400,
+  });
+  vi.mocked(fetchAnnotationViewApi).mockResolvedValue({
+    base: null,
+    maxWidthPx: 1440,
+    doc: null,
+    annotation: null,
+  });
+});
+afterEach(() => resetAnnotationSession());
+it("本机已ready不等待网络或重复栅格化", async () => {
+  await writeLocalAnnotationBase(
+    session,
+    scope,
+    { png, layout },
+    { version: 1, baseWidth: 600, baseHeight: 400, strokes: [] },
+  );
+  expect(
+    (await prepareQuestionAnnotationBase(session, scope, question, surface))
+      .kind,
+  ).toBe("surface");
+  expect(fetchAnnotationViewApi).not.toHaveBeenCalled();
+  expect(renderQuestionBaseImage).not.toHaveBeenCalled();
+});
+it("网络失败仍可原子保存本机底图并进入，不伪造服务器ID", async () => {
+  vi.mocked(fetchAnnotationViewApi).mockRejectedValue(new Error("网络中断"));
+  expect(
+    (await prepareQuestionAnnotationBase(session, scope, question, surface))
+      .kind,
+  ).toBe("surface");
+  expect((await getAnnotationRecord(session, scope))?.base).toBeNull();
+  expect((await getAnnotationRecord(session, scope))?.localBase?.png).toBe(png);
+});
+
+it("失败的本机记录不能被缓存快路径冒称ready", async () => {
+  const backend = memoryAnnotationBackend();
+  installAnnotationBackend({
+    ...backend,
+    set: async () => {
+      throw new Error("本机存储不可用");
+    },
+  });
+  await expect(
+    writeLocalAnnotationBase(
+      session,
+      scope,
+      { png, layout },
+      { version: 1, baseWidth: 600, baseHeight: 400, strokes: [] },
+    ),
+  ).rejects.toThrow();
+  await expect(
+    prepareQuestionAnnotationBase(session, scope, question, surface),
+  ).rejects.toThrow("本机存储不可用");
+});
+it("旧版底图不重新生成，拒绝访问不离线兜底", async () => {
+  const base = {
+    baseId: "22222222-2222-4222-8222-222222222222",
+    state: "ready" as const,
+    stale: false,
+    pixelWidth: 1440,
+    pixelHeight: 900,
+  };
+  vi.mocked(fetchAnnotationViewApi).mockResolvedValue({
+    base,
+    maxWidthPx: 1440,
+    doc: null,
+    annotation: null,
+  });
+  expect(
+    (await prepareQuestionAnnotationBase(session, scope, question, surface))
+      .kind,
+  ).toBe("legacy");
+  expect(renderQuestionBaseImage).not.toHaveBeenCalled();
+  vi.mocked(fetchAnnotationViewApi).mockRejectedValue(
+    new ApiError("FORBIDDEN", "无权访问", 403),
+  );
+  await expect(
+    prepareQuestionAnnotationBase(
+      session,
+      { ...scope, questionId: "other" },
+      { ...question, id: "other" },
+      surface,
+    ),
+  ).rejects.toThrow("无权访问");
+});

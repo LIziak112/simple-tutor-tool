@@ -1,6 +1,7 @@
 import type {
   AnnotationBaseState,
   AnnotationPhase,
+  AnnotationSurfaceLayout,
   AttemptStatus,
   DocumentKind,
   NoteImageSpec,
@@ -1328,6 +1329,10 @@ export const annotationBases = sqliteTable(
      * 语义不同，命名隔离）。ready 后永不重生成——版本递增只影响新底图。
      */
     baseRenderVersion: integer("base_render_version").notNull(),
+    /** 新原位底图布局；历史固定宽底图为NULL。 */
+    layout: text("layout_json", {
+      mode: "json",
+    }).$type<AnnotationSurfaceLayout>(),
     /** 底图 PNG 相对路径（DATA_DIR 内 blobs/annotations/<sha256>.png）；仅 ready 非 NULL */
     imagePath: text("image_path"),
     /** 底图文件 sha-256（hex64）；仅 ready 非 NULL */

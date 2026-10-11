@@ -21,7 +21,13 @@ import type {
   AnnotationDoc,
   AnnotationPhase,
   AnnotationReceipt,
+  AnnotationSurfaceLayout,
   AnnotationViewData,
+} from "@tutor/contract";
+import {
+  ANNOTATION_BASE_PNG_MAX_BYTES,
+  annotationDocSchema,
+  annotationSurfaceLayoutSchema,
 } from "@tutor/contract";
 import { digestOf } from "@/features/attempt/draft-merge";
 import {
@@ -139,6 +145,12 @@ export interface AnnotationDeniedInfo {
 
 /** 一份标注的本地记录（IDB 值形态） */
 export interface AnnotationLocalRecord {
+  /** PNG与布局同正文原子落盘；base为空时不伪造服务器身份。 */
+  localBase: {
+    png: Blob;
+    layout: AnnotationSurfaceLayout;
+    boundBaseId?: string;
+  } | null;
   /** 本地最新正文（AnnotationDoc 全字段必填，无默认值物化问题） */
   doc: AnnotationDoc;
   /** 待传版本（null=无未传改动） */
@@ -167,6 +179,7 @@ export interface AnnotationLocalRecord {
 
 function freshRecord(): AnnotationLocalRecord {
   return {
+    localBase: null,
     doc: { version: 1, baseWidth: 0, baseHeight: 0, strokes: [] },
     pending: null,
     baseRevision: 0,
@@ -199,6 +212,7 @@ function reviveRecord(raw: unknown): AnnotationLocalRecord | null {
   }
   return {
     ...freshRecord(),
+    localBase: r.localBase ?? null,
     doc,
     pending:
       r.pending && typeof r.pending.mutationId === "string" && r.pending.doc
@@ -402,6 +416,7 @@ export function deriveAnnotationServerState(
 
 /** 钩子消费的只读视图（快照缓存口径同 note-store） */
 export interface AnnotationRecordView {
+  localBase: AnnotationLocalRecord["localBase"];
   doc: AnnotationDoc | null;
   local: "saving" | "saved" | "failed";
   localError: string | null;
@@ -476,6 +491,7 @@ export function getAnnotationView(
     base: record.base,
     baseDisabledReason: record.baseDisabledReason,
     pendingMutationId: record.pending?.mutationId ?? null,
+    localBase: record.localBase,
     conflict: record.conflict,
     denied: record.denied,
     docVersion: record.docVersion,
@@ -526,6 +542,47 @@ export function writeAnnotationDoc(
   return records.get(key)?.docVersion ?? 0;
 }
 
+/** 新原位底图首次本地落盘：一条IDB记录承载PNG、布局和待传矢量。 */
+export async function writeLocalAnnotationBase(
+  session: AnnotationSessionRef,
+  scope: AnnotationScope,
+  base: NonNullable<AnnotationLocalRecord["localBase"]>,
+  doc: AnnotationDoc,
+): Promise<void> {
+  const layout = annotationSurfaceLayoutSchema.parse(base.layout);
+  annotationDocSchema.parse(doc);
+  if (
+    base.png.size === 0 ||
+    base.png.size > ANNOTATION_BASE_PNG_MAX_BYTES ||
+    base.png.type !== "image/png"
+  )
+    throw new Error("本机底图PNG为空、格式错误或超限");
+  if (
+    doc.baseWidth !== Math.ceil(layout.cssWidth * layout.pixelRatio) ||
+    doc.baseHeight !== Math.ceil(layout.cssHeight * layout.pixelRatio)
+  )
+    throw new Error("本机笔迹尺寸与布局不匹配");
+  await mutateLoaded(session, scope, freshRecord, (record) => {
+    const previous = record.localBase?.layout ?? record.base?.layout;
+    if (
+      previous !== undefined &&
+      JSON.stringify(previous) !== JSON.stringify(layout)
+    )
+      throw new Error("已有另一布局的本机稿，不能覆盖");
+    if (record.base !== null && record.base.layout === undefined)
+      throw new Error("旧版底图只能在原布局编辑");
+    record.localBase = { png: base.png, layout };
+    record.doc = doc;
+    record.docVersion += 1;
+    record.pending = { mutationId: randomUuid(), doc };
+    record.editedAt = Date.now();
+  });
+  await settleAnnotationPersistence();
+  const saved = peekAnnotationRecord(session, scope);
+  if (saved?.local !== "saved")
+    throw new Error(saved?.localError ?? "本机底图未保存，请重试");
+}
+
 /** 两份 AnnotationDoc 是否逐字段一致（digestOf 稳定序列化比较） */
 function annotationDocsEqual(a: AnnotationDoc, b: AnnotationDoc): boolean {
   return digestOf(a) === digestOf(b);
@@ -536,8 +593,23 @@ export async function applyBasePreview(
   session: AnnotationSessionRef,
   scope: AnnotationScope,
   preview: AnnotationBasePreviewData,
+  confirmedLocalPng?: Blob,
 ): Promise<void> {
   await mutateLoaded(session, scope, freshRecord, (record) => {
+    if (confirmedLocalPng !== undefined) {
+      if (
+        record.localBase === null ||
+        record.localBase.png !== confirmedLocalPng ||
+        preview.base.state !== "ready" ||
+        JSON.stringify(record.localBase.layout) !==
+          JSON.stringify(preview.base.layout)
+      )
+        throw new Error("本机底图已更新，不能确认旧的布局绑定");
+      record.localBase = {
+        ...record.localBase,
+        boundBaseId: preview.base.baseId,
+      };
+    }
     record.base = preview.base;
     // 载荷到达即底图链路可用，此前缓存的禁用原因作废
     record.baseDisabledReason = null;

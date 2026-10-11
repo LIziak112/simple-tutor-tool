@@ -19,6 +19,7 @@ import {
   type AnnotationPhase,
   type AnnotationReceipt,
   type AnnotationSealData,
+  type AnnotationSurfaceLayout,
   type AnnotationUploadMetaInput,
   type AnnotationViewData,
   type AssignmentCheckData,
@@ -1386,7 +1387,22 @@ export function postAnnotationBaseApi(
   attemptId: string,
   questionId: string,
   phase?: AnnotationPhase,
+  layout?: AnnotationSurfaceLayout,
+  signal?: AbortSignal,
 ): Promise<AnnotationBasePreviewData> {
+  if (layout !== undefined) {
+    return callApi(() =>
+      fetch(
+        `/api/student/attempts/${encodeURIComponent(attemptId)}/questions/${encodeURIComponent(questionId)}/annotation/base${phase === undefined ? "" : `?phase=${encodeURIComponent(phase)}`}`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ layout }),
+          ...(signal !== undefined ? { signal } : {}),
+        },
+      ),
+    );
+  }
   return callApi(() =>
     api.api.student.attempts[":id"].questions[
       ":questionId"
@@ -1412,6 +1428,7 @@ export function postAnnotationBaseImageApi(
     baseRenderVersion: number;
     phase?: AnnotationPhase;
   },
+  signal?: AbortSignal,
 ): Promise<AnnotationBaseImageReceipt> {
   const form = new FormData();
   const F = ANNOTATION_BASE_IMAGE_FORM_FIELDS;
@@ -1422,7 +1439,11 @@ export function postAnnotationBaseImageApi(
   return callApi(() =>
     fetch(
       `/api/student/attempts/${encodeURIComponent(attemptId)}/questions/${encodeURIComponent(questionId)}/annotation/base/image`,
-      { method: "POST", body: form },
+      {
+        method: "POST",
+        body: form,
+        ...(signal !== undefined ? { signal } : {}),
+      },
     ),
   );
 }

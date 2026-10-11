@@ -1,5 +1,6 @@
 import type { StudentPasswordChangeRequest } from "@tutor/contract";
 import {
+  annotationBaseCreateRequestSchema,
   annotationSealRequestSchema,
   attemptAnswerSaveRequestSchema,
   attemptEventBatchRequestSchema,
@@ -577,23 +578,46 @@ export function createStudentRoutes(
       // 直接返回引用。载荷 = 学生 stem 级投影（materialOf 哨兵＋静态素材双守卫），
       // 不含 snapshotHash（F1 离线答案 oracle 防线）与任何教师节。?phase=
       // 缺省 scratch；correction 只在已交卷卷上可用（服务层状态门槛）。
-      .post("/attempts/:id/questions/:questionId/annotation/base", (c) => {
-        const phase = parseAnnotationPhaseParam(c.req.query("phase"));
-        return c.json(
-          {
-            ok: true,
-            data: assembleAnnotationBase(
-              db,
-              c.var.student.id,
-              c.req.param("id"),
-              c.req.param("questionId"),
-              phase,
-            ),
-          },
-          200,
-          { "cache-control": "no-store" },
-        );
-      })
+      .post(
+        "/attempts/:id/questions/:questionId/annotation/base",
+        async (c) => {
+          const phase = parseAnnotationPhaseParam(c.req.query("phase"));
+          let body: unknown = {};
+          if (c.req.header("content-type")?.includes("application/json")) {
+            try {
+              body = await c.req.json();
+            } catch {
+              throw new HttpError(
+                400,
+                "VALIDATION_ERROR",
+                "底图首建请求不是合法JSON",
+              );
+            }
+          }
+          const parsed = annotationBaseCreateRequestSchema.safeParse(body);
+          if (!parsed.success)
+            throw new HttpError(
+              400,
+              "VALIDATION_ERROR",
+              "底图布局参数不合法或超限",
+            );
+          return c.json(
+            {
+              ok: true,
+              data: assembleAnnotationBase(
+                db,
+                c.var.student.id,
+                c.req.param("id"),
+                c.req.param("questionId"),
+                phase,
+                parsed.data.layout,
+              ),
+            },
+            200,
+            { "cache-control": "no-store" },
+          );
+        },
+      )
       // ② 底图 PNG 回传（第二阶段）：multipart image + questionRevisionId/
       // baseRenderVersion 回传身份（phase 可选缺省 scratch）。服务端校验身份
       // 三要素一致＋宽度=maxWidthPx＋PNG 完整性；ready 后永不重生成（同字节

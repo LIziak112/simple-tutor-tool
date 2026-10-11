@@ -15,7 +15,7 @@ import {
 /**
  * T6R.9 答题页草稿层 E2E（真实 Chromium + 真实 IndexedDB——刷新恢复经
  * note-store 持久层）：开草稿 → 手写一笔 → 选项操作 → 收起（卸载画布）→
- * 刷新 → 本地恢复（自动展开带笔迹）＋ 选项回显；全程笔记 PUT 上行被观测
+ * 刷新 → 本地恢复（默认收起，显式打开验笔迹）＋ 选项回显；全程笔记 PUT 上行被观测
  * （2s 防抖 + 全链路 T6R.4 服务端）。jsdom 层的行为断言见 NoteLayer.test。
  * 观感项（横竖屏/分屏/工具条触控目标）🧑 留 iPad 真机。
  */
@@ -112,16 +112,21 @@ test.describe("答题页草稿层（T6R.9）", () => {
       // ⑤ 收起：纸面隐藏保留（保活期内不卸载；标记带笔数），选项保持
       await choiceCard.getByRole("button", { name: /收起/ }).click();
       await expect(
-        choiceCard.getByRole("button", { name: /草稿纸（已有 1 笔）/ }),
+        choiceCard.getByRole("button", { name: /草稿纸（已有笔迹）/ }),
       ).toBeVisible();
       await expect(choiceCard.locator('[data-slot="note-paper"]')).toBeHidden();
 
-      // ⑥ 刷新 → 真 IDB 恢复：有笔迹自动展开、笔数回显、选项回显
+      // ⑥ 刷新 → 真 IDB 恢复：不自动撑开题卡，显式打开后验笔数和答案
       await studentPage.reload();
       await expect(
         studentPage.locator('article[aria-label="第 2 题"]'),
       ).toBeVisible();
       const restored = studentPage.locator('article[aria-label="第 2 题"]');
+      await expect(restored.locator('[data-slot="note-layer"]')).toBeHidden();
+      await expect(restored.locator('[data-slot="note-paper"]')).toBeHidden();
+      await restored
+        .getByRole("button", { name: /草稿纸（已有笔迹）/ })
+        .click();
       await expect(restored.locator('[data-slot="note-layer"]')).toBeVisible();
       await expect(restored.getByText(/1 笔/)).toBeVisible();
       await expect(

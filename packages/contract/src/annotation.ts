@@ -184,7 +184,7 @@ export const annotationHashSchema = z
   .string()
   .regex(/^[0-9a-f]{64}$/, "hash 须为 64 位小写十六进制（sha-256）");
 
-/** 原位题面布局身份。独立于旧底图协议，U05再接入可选layout字段。 */
+/** 原位题面布局身份；旧底图缺省layout时仍按固定宽v1处理。 */
 export const ANNOTATION_SURFACE_RENDER_VERSION = 2;
 export const ANNOTATION_SURFACE_PIXEL_RATIO = 2;
 export const annotationSurfaceLayoutSchema = z.strictObject({
@@ -207,6 +207,13 @@ export const annotationSurfaceLayoutSchema = z.strictObject({
 });
 export type AnnotationSurfaceLayout = z.infer<
   typeof annotationSurfaceLayoutSchema
+>;
+
+export const annotationBaseCreateRequestSchema = z.strictObject({
+  layout: annotationSurfaceLayoutSchema.optional(),
+});
+export type AnnotationBaseCreateRequest = z.infer<
+  typeof annotationBaseCreateRequestSchema
 >;
 
 // ---------- 上传协议（CAS＋mutationId 幂等；同 note.ts §6.2 形态） ----------
@@ -303,9 +310,23 @@ export const annotationBaseRefSchema = z
     pixelWidth: z.number().int().min(1).nullable(),
     pixelHeight: z.number().int().min(1).nullable(),
     downloadUrl: z.string().min(1).optional(),
+    layout: annotationSurfaceLayoutSchema.optional(),
   })
   .superRefine((base, ctx) => {
     if (base.state === "ready") {
+      if (
+        base.layout !== undefined &&
+        (base.pixelWidth !==
+          Math.ceil(base.layout.cssWidth * base.layout.pixelRatio) ||
+          base.pixelHeight !==
+            Math.ceil(base.layout.cssHeight * base.layout.pixelRatio))
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["layout"],
+          message: "底图像素几何与布局不一致",
+        });
+      }
       if (base.pixelWidth === null || base.pixelHeight === null) {
         ctx.addIssue({
           code: "custom",
@@ -346,10 +367,8 @@ export const annotationGraphFigureSchema = z.object({
  *   静态题面（buildStaticQuestionMaterial 同一实现；不含学生答案节、不含
  *   任何教师节）。**不含 snapshotHash**（F1 离线答案 oracle 防线）。
  */
-export const annotationBasePreviewDataSchema = z.object({
+const annotationBasePreviewShape = {
   base: annotationBaseRefSchema,
-  baseRenderVersion: z.literal(ANNOTATION_BASE_RENDER_VERSION),
-  maxWidthPx: z.literal(ANNOTATION_BASE_WIDTH_PX),
   questionRevisionId: questionRevisionIdSchema,
   /** 卷内题号（快照缺失行不计数口径，与结果视图一致） */
   questionNo: z.number().int().min(1),
@@ -361,7 +380,41 @@ export const annotationBasePreviewDataSchema = z.object({
   graphFigures: z.array(annotationGraphFigureSchema),
   /** 交互状态说明（fold/steps 等） */
   interactionNotes: z.array(z.string()),
-});
+};
+export const annotationBasePreviewDataSchema = z
+  .discriminatedUnion("baseRenderVersion", [
+    z.object({
+      ...annotationBasePreviewShape,
+      baseRenderVersion: z.literal(ANNOTATION_BASE_RENDER_VERSION),
+      maxWidthPx: z.literal(ANNOTATION_BASE_WIDTH_PX),
+    }),
+    z.object({
+      ...annotationBasePreviewShape,
+      baseRenderVersion: z.literal(ANNOTATION_SURFACE_RENDER_VERSION),
+      maxWidthPx: z.number().int().min(1).max(ANNOTATION_MAX_PIXEL_DIM),
+    }),
+  ])
+  .superRefine((preview, ctx) => {
+    const layout = preview.base.layout;
+    if (preview.baseRenderVersion === ANNOTATION_BASE_RENDER_VERSION) {
+      if (layout !== undefined)
+        ctx.addIssue({
+          code: "custom",
+          path: ["base", "layout"],
+          message: "旧版底图不得携带新版布局",
+        });
+    } else if (
+      layout === undefined ||
+      layout.questionRevisionId !== preview.questionRevisionId ||
+      Math.ceil(layout.cssWidth * layout.pixelRatio) !== preview.maxWidthPx
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["base", "layout"],
+        message: "新版底图必须携带匹配题目版本和尺寸的布局",
+      });
+    }
+  });
 
 // ---------- 回看视图 ----------
 
@@ -386,13 +439,24 @@ export const annotationMetaSchema = z.object({
 export const annotationViewDataSchema = z
   .object({
     base: annotationBaseRefSchema.nullable(),
-    maxWidthPx: z.literal(ANNOTATION_BASE_WIDTH_PX),
+    maxWidthPx: z.number().int().min(1).max(ANNOTATION_MAX_PIXEL_DIM),
     /** 当前标注正文（服务端解压后的 AnnotationDoc）；无标注为 null */
     doc: annotationDocSchema.nullable(),
     /** 标注元信息；无行为 null */
     annotation: annotationMetaSchema.nullable(),
   })
   .superRefine((view, ctx) => {
+    const layout = view.base?.layout;
+    const expectedWidth =
+      layout === undefined
+        ? ANNOTATION_BASE_WIDTH_PX
+        : Math.ceil(layout.cssWidth * layout.pixelRatio);
+    if (view.maxWidthPx !== expectedWidth)
+      ctx.addIssue({
+        code: "custom",
+        path: ["maxWidthPx"],
+        message: "回看宽度与底图版本不一致",
+      });
     if ((view.doc === null) !== (view.annotation === null)) {
       ctx.addIssue({
         code: "custom",
@@ -446,6 +510,7 @@ export const annotationErrorCodeSchema = z.enum([
   "ANNOTATION_BASE_NOT_READY",
   "ANNOTATION_BASE_IMAGE_INVALID",
   "ANNOTATION_BASE_ALREADY_READY",
+  "ANNOTATION_BASE_LAYOUT_CONFLICT",
   "ANNOTATION_BASE_STALE",
   "ANNOTATION_SEALED",
   "ANNOTATION_NOT_SUBMITTED",

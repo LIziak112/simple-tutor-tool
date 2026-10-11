@@ -22,7 +22,10 @@ import { gzipOrRaw } from "@/features/ink/gzip";
 import {
   ApiError,
   fetchAnnotationViewApi,
+  postAnnotationBaseApi,
+  postAnnotationBaseImageApi,
   putAnnotationDocApi,
+  studentAnnotationBasePngUrl,
 } from "@/lib/api";
 import { SerialTaskQueue } from "@/lib/serial-task-queue.ts";
 import {
@@ -35,6 +38,7 @@ import {
   applyAnnotationDenied,
   applyAnnotationReceipt,
   applyAnnotationView,
+  applyBasePreview,
   clearAnnotationDeniedAccess,
   listPendingAnnotations,
   notifyAnnotationStoreAll,
@@ -201,6 +205,9 @@ function classifyPutError(err: unknown): PutVerdict {
     }
     return { kind: "retry" };
   }
+  if (status === 409 && code === "ANNOTATION_BASE_LAYOUT_CONFLICT") {
+    return { kind: "conflict", current: null, reason: message };
+  }
   if (status === 409 && code === "ANNOTATION_MUTATION_MISMATCH") {
     return {
       kind: "conflict",
@@ -262,6 +269,88 @@ async function runUpload(
     const baseRevision = record.baseRevision;
     let receipt: AnnotationReceipt;
     try {
+      if (
+        record.localBase !== null &&
+        (record.base?.state !== "ready" ||
+          record.localBase.boundBaseId !== record.base.baseId)
+      ) {
+        if (record.local !== "saved") return;
+        const local = record.localBase;
+        const preview = await postAnnotationBaseApi(
+          scope.attemptId,
+          scope.questionId,
+          scope.phase,
+          local.layout,
+          put.signal,
+        );
+        if (stale()) return;
+        if (
+          JSON.stringify(preview.base.layout) !== JSON.stringify(local.layout)
+        )
+          throw new ApiError(
+            "ANNOTATION_BASE_LAYOUT_CONFLICT",
+            "服务器已有另一布局，保留本机稿并查看原标画",
+            409,
+          );
+        let image: Awaited<ReturnType<typeof postAnnotationBaseImageApi>>;
+        try {
+          image = await postAnnotationBaseImageApi(
+            scope.attemptId,
+            scope.questionId,
+            local.png,
+            {
+              questionRevisionId: local.layout.questionRevisionId,
+              baseRenderVersion: local.layout.renderVersion,
+              phase: scope.phase,
+            },
+            put.signal,
+          );
+        } catch (error) {
+          if (
+            error instanceof ApiError &&
+            error.code === "ANNOTATION_BASE_ALREADY_READY"
+          )
+            throw new ApiError(
+              "ANNOTATION_BASE_LAYOUT_CONFLICT",
+              "本机底图与服务器固定底图不同，已保留本机稿",
+              409,
+            );
+          throw error;
+        }
+        if (stale()) return;
+        if (
+          image.baseId !== preview.base.baseId ||
+          image.pixelWidth !==
+            Math.ceil(local.layout.cssWidth * local.layout.pixelRatio) ||
+          image.pixelHeight !==
+            Math.ceil(local.layout.cssHeight * local.layout.pixelRatio)
+        )
+          throw new ApiError(
+            "ANNOTATION_BASE_LAYOUT_CONFLICT",
+            "服务器底图回执与本机布局不匹配，已保留本机稿",
+            409,
+          );
+        await applyBasePreview(
+          session,
+          scope,
+          {
+            ...preview,
+            base: {
+              ...preview.base,
+              state: "ready",
+              pixelWidth: image.pixelWidth,
+              pixelHeight: image.pixelHeight,
+              downloadUrl: studentAnnotationBasePngUrl(
+                scope.attemptId,
+                image.baseId,
+              ),
+            },
+          },
+          local.png,
+        );
+        await settleAnnotationPersistence();
+        if (stale()) return;
+      }
       let bytes = gzipMemo.get(doc);
       if (bytes === undefined) {
         bytes = await gzipOrRaw(JSON.stringify(doc));

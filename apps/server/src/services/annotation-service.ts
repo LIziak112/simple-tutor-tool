@@ -11,6 +11,7 @@ import type {
   AnnotationPhase,
   AnnotationReceipt,
   AnnotationSealData,
+  AnnotationSurfaceLayout,
   AnnotationUploadMetaInput,
   AnnotationViewData,
 } from "@tutor/contract";
@@ -21,7 +22,9 @@ import {
   ANNOTATION_BASE_WIDTH_PX,
   ANNOTATION_BODY_DECOMPRESSED_MAX_BYTES,
   ANNOTATION_BODY_GZIP_MAX_BYTES,
+  ANNOTATION_SURFACE_RENDER_VERSION,
   annotationBaseImageUrl,
+  annotationBasePreviewDataSchema,
   annotationConflictCurrentSchema,
   annotationDocSchema,
   annotationIssueIsLimit,
@@ -342,6 +345,7 @@ function baseRefOf(
     stale,
     pixelWidth: base.pixelWidth,
     pixelHeight: base.pixelHeight,
+    ...(base.layout !== null ? { layout: base.layout } : {}),
     ...(base.state === "ready" && downloadUrl !== undefined
       ? { downloadUrl }
       : {}),
@@ -381,11 +385,19 @@ export function assembleAnnotationBase(
   attemptId: string,
   questionId: string,
   phase: AnnotationPhase = "scratch",
+  layout?: AnnotationSurfaceLayout,
 ): AnnotationBasePreviewData {
   const attempt = requireUsableAttempt(db, studentId, attemptId);
   requirePhaseWritable(attempt, phase);
   const { row, no } = locateFrozenRow(db, attempt, questionId);
   const snapshot = snapshotOfRow(row);
+  if (layout !== undefined && layout.questionRevisionId !== row.id) {
+    throw new HttpError(
+      409,
+      "ANNOTATION_BASE_STALE",
+      "题面版本已变化，请重新进入标画",
+    );
+  }
   const snapshotHash = questionSnapshotHashOf(snapshot);
   if (snapshot === null || snapshotHash === null) {
     // locateFrozenRow 已保证快照非空；此分支仅满足类型收窄（不可达）
@@ -403,7 +415,9 @@ export function assembleAnnotationBase(
       questionRevisionId: row.id,
       phase,
       snapshotHash,
-      baseRenderVersion: ANNOTATION_BASE_RENDER_VERSION,
+      baseRenderVersion:
+        layout?.renderVersion ?? ANNOTATION_BASE_RENDER_VERSION,
+      layout: layout ?? null,
       imagePath: null,
       imageHash: null,
       pixelWidth: null,
@@ -413,6 +427,16 @@ export function assembleAnnotationBase(
       updatedAt: now,
     };
     db.insert(annotationBasesTable).values(base).run();
+  }
+  if (
+    layout !== undefined &&
+    JSON.stringify(base.layout) !== JSON.stringify(layout)
+  ) {
+    throw new HttpError(
+      409,
+      "ANNOTATION_BASE_LAYOUT_CONFLICT",
+      "服务器已有另一布局的底图，请保留本机稿并查看原标画",
+    );
   }
 
   // 学生 stem 级投影＋静态素材（双哨兵：materialOf 500 / buildStatic 抛错）
@@ -424,7 +448,7 @@ export function assembleAnnotationBase(
     questionNo: no,
   });
 
-  return {
+  return annotationBasePreviewDataSchema.parse({
     base: baseRefOf(
       base,
       baseIsStale(db, base, attempt, questionId),
@@ -435,8 +459,11 @@ export function assembleAnnotationBase(
           })
         : undefined,
     ),
-    baseRenderVersion: ANNOTATION_BASE_RENDER_VERSION,
-    maxWidthPx: ANNOTATION_BASE_WIDTH_PX,
+    baseRenderVersion: base.baseRenderVersion,
+    maxWidthPx:
+      base.layout === null
+        ? ANNOTATION_BASE_WIDTH_PX
+        : Math.ceil(base.layout.cssWidth * base.layout.pixelRatio),
     questionRevisionId: row.id,
     questionNo: no,
     questionMd: staticMaterial.markdown,
@@ -446,7 +473,7 @@ export function assembleAnnotationBase(
       ...(figure.range !== undefined ? { range: figure.range } : {}),
     })),
     interactionNotes: [...staticMaterial.interactionNotes],
-  };
+  });
 }
 
 // ---------- 底图 PNG 回传（决策 4②：身份校验＋落盘建行） ----------
@@ -489,7 +516,8 @@ export function registerBaseImage(
   if (
     base.questionRevisionId !== row.id ||
     base.snapshotHash !== currentHash ||
-    base.baseRenderVersion !== ANNOTATION_BASE_RENDER_VERSION
+    (base.baseRenderVersion !== ANNOTATION_BASE_RENDER_VERSION &&
+      base.baseRenderVersion !== ANNOTATION_SURFACE_RENDER_VERSION)
   ) {
     throw new HttpError(
       409,
@@ -524,11 +552,22 @@ export function registerBaseImage(
       "底图不是完整的 PNG 文件",
     );
   }
-  if (size.width !== ANNOTATION_BASE_WIDTH_PX) {
+  const expectedWidth =
+    base.layout === null
+      ? ANNOTATION_BASE_WIDTH_PX
+      : Math.ceil(base.layout.cssWidth * base.layout.pixelRatio);
+  const expectedHeight =
+    base.layout === null
+      ? null
+      : Math.ceil(base.layout.cssHeight * base.layout.pixelRatio);
+  if (
+    size.width !== expectedWidth ||
+    (expectedHeight !== null && size.height !== expectedHeight)
+  ) {
     throw new HttpError(
       400,
       "ANNOTATION_BASE_IMAGE_INVALID",
-      `底图宽度必须等于 ${ANNOTATION_BASE_WIDTH_PX} 像素（当前 ${size.width}）`,
+      `底图尺寸与绑定布局不一致（期望宽${expectedWidth}${expectedHeight === null ? "" : `、高${expectedHeight}`}像素）`,
     );
   }
   if (size.height > ANNOTATION_BASE_MAX_HEIGHT_PX) {
@@ -992,7 +1031,10 @@ export function getAnnotationView(
               ? baseDownloadUrlOf(principal, attempt.id, base.id)
               : undefined,
           ),
-    maxWidthPx: ANNOTATION_BASE_WIDTH_PX,
+    maxWidthPx:
+      base?.layout == null
+        ? ANNOTATION_BASE_WIDTH_PX
+        : Math.ceil(base.layout.cssWidth * base.layout.pixelRatio),
     doc:
       annotation !== undefined && hasDoc
         ? readAnnotationDoc(dataDir, annotation)

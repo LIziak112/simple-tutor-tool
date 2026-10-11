@@ -1,0 +1,1 @@
+ALTER TABLE `annotation_bases` ADD `layout_json` text;
