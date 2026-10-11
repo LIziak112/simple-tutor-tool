@@ -64,15 +64,15 @@ function setCookieHeader(res: Response): string {
     .join("\n");
 }
 
-/** 从 set-cookie 里取出 tutor_session 的值（token） */
-function extractSessionToken(res: Response): string {
+/** 从 set-cookie 里取出会话 Cookie 的值（缺省教师 tutor_session；学生传 tutor_student_session） */
+function extractSessionToken(res: Response, cookie = "tutor_session"): string {
   const line = res.headers
     .getSetCookie()
-    .find((c) => c.toLowerCase().startsWith("tutor_session="));
+    .find((c) => c.toLowerCase().startsWith(`${cookie}=`));
   if (!line) {
-    throw new Error("响应中没有 tutor_session cookie");
+    throw new Error(`响应中没有 ${cookie} cookie`);
   }
-  return line.slice("tutor_session=".length).split(";")[0] ?? "";
+  return line.slice(`${cookie}=`.length).split(";")[0] ?? "";
 }
 
 /** 在指定 app 上发 JSON POST（可带额外请求头：Cookie、X-Forwarded-For 等） */
@@ -853,7 +853,7 @@ describe("双身份并存（师生会话 Cookie 拆分，2026-10）", () => {
   async function makeDualRoleApp(): Promise<{
     app: ReturnType<typeof createApp>;
     db: Db;
-    teacherToken: string;
+    teacherCookie: string;
     linkToken: string;
   }> {
     const { app, db } = makeApp();
@@ -861,12 +861,12 @@ describe("双身份并存（师生会话 Cookie 拆分，2026-10）", () => {
       loginName: LOGIN_NAME,
       password: PASSWORD,
     });
-    const teacherToken = extractSessionToken(setup);
+    const teacherCookie = `tutor_session=${extractSessionToken(setup)}`;
     const create = await app.request("/api/teacher/students", {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        cookie: `tutor_session=${teacherToken}`,
+        cookie: teacherCookie,
       },
       body: JSON.stringify({
         displayName: "张三",
@@ -880,7 +880,7 @@ describe("双身份并存（师生会话 Cookie 拆分，2026-10）", () => {
     const linkToken = (
       (await create.json()) as { data: { student: { linkToken: string } } }
     ).data.student.linkToken;
-    return { app, db, teacherToken, linkToken };
+    return { app, db, teacherCookie, linkToken };
   }
 
   function studentLogin(app: ReturnType<typeof createApp>): Promise<Response> {
@@ -890,19 +890,8 @@ describe("双身份并存（师生会话 Cookie 拆分，2026-10）", () => {
     });
   }
 
-  /** 从 set-cookie 取出 tutor_student_session 的值（拆分后的学生会话 Cookie） */
-  function extractStudentToken(res: Response): string {
-    const line = res.headers
-      .getSetCookie()
-      .find((c) => c.toLowerCase().startsWith("tutor_student_session="));
-    if (!line) {
-      throw new Error("响应中没有 tutor_student_session cookie");
-    }
-    return line.slice("tutor_student_session=".length).split(";")[0] ?? "";
-  }
-
   it("学生登录只写 tutor_student_session、不碰 tutor_session 槽位；教师会话不受影响", async () => {
-    const { app, teacherToken } = await makeDualRoleApp();
+    const { app, teacherCookie } = await makeDualRoleApp();
     const login = await studentLogin(app);
     expect(login.status).toBe(200);
 
@@ -914,7 +903,7 @@ describe("双身份并存（师生会话 Cookie 拆分，2026-10）", () => {
     expect(lines.some((l) => l.startsWith("tutor_session="))).toBe(false);
 
     const me = await app.request("/api/teacher/me", {
-      headers: { cookie: `tutor_session=${teacherToken}` },
+      headers: { cookie: teacherCookie },
     });
     expect(me.status).toBe(200);
   });
@@ -923,7 +912,7 @@ describe("双身份并存（师生会话 Cookie 拆分，2026-10）", () => {
     const { app } = await makeDualRoleApp();
     const first = await studentLogin(app);
     expect(first.status).toBe(200);
-    const studentToken = extractStudentToken(first);
+    const studentToken = extractSessionToken(first, "tutor_student_session");
 
     const teacherLogin = await jsonRequestOn(app, "/api/public/teacher/login", {
       loginName: LOGIN_NAME,
@@ -959,7 +948,7 @@ describe("双身份并存（师生会话 Cookie 拆分，2026-10）", () => {
   it("学生守卫只认 tutor_student_session：同一 token 放旧名 tutor_session → 401", async () => {
     const { app } = await makeDualRoleApp();
     const login = await studentLogin(app);
-    const token = extractStudentToken(login);
+    const token = extractSessionToken(login, "tutor_student_session");
 
     const ok = await app.request("/api/student/me", {
       headers: { cookie: `tutor_student_session=${token}` },
@@ -973,9 +962,9 @@ describe("双身份并存（师生会话 Cookie 拆分，2026-10）", () => {
   });
 
   it("学生登出只清 tutor_student_session、只删学生会话行；教师会话不受影响", async () => {
-    const { app, db, teacherToken } = await makeDualRoleApp();
+    const { app, db, teacherCookie } = await makeDualRoleApp();
     const login = await studentLogin(app);
-    const studentToken = extractStudentToken(login);
+    const studentToken = extractSessionToken(login, "tutor_student_session");
 
     const logout = await app.request("/api/student/logout", {
       method: "POST",
@@ -995,11 +984,12 @@ describe("双身份并存（师生会话 Cookie 拆分，2026-10）", () => {
     expect(cleared.some((c) => c.startsWith("tutor_session="))).toBe(false);
 
     // 学生会话行已删；教师会话行仍在且可用
+    const teacherToken = teacherCookie.slice("tutor_session=".length);
     const rows = db.select().from(sessions).all();
     expect(rows.some((r) => r.id === studentToken)).toBe(false);
     expect(rows.some((r) => r.id === teacherToken)).toBe(true);
     const me = await app.request("/api/teacher/me", {
-      headers: { cookie: `tutor_session=${teacherToken}` },
+      headers: { cookie: teacherCookie },
     });
     expect(me.status).toBe(200);
   });
