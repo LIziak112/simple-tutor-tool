@@ -18,6 +18,7 @@ import {
   TEACHER_SECTION_MARKERS,
   withTimeout,
 } from "@/features/notes/rasterize-utils";
+import { contentHash64 } from "@/lib/content-hash";
 
 const STEP_TIMEOUT_MS = 15_000;
 const BLOCK_SELECTOR =
@@ -82,16 +83,6 @@ function sameGeometry(left: SurfaceMeasure, right: SurfaceMeasure): boolean {
   );
 }
 
-async function digest(value: unknown): Promise<string> {
-  const hash = await crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(JSON.stringify(value)),
-  );
-  return Array.from(new Uint8Array(hash), (byte) =>
-    byte.toString(16).padStart(2, "0"),
-  ).join("");
-}
-
 /** 只测量公开题面；与建底图共享签名算法，不栅格化、不取表单值。 */
 export async function questionSurfaceMatchesLayout(
   question: AttemptQuestionPublic,
@@ -106,13 +97,13 @@ export async function questionSurfaceMatchesLayout(
   )
     return false;
   const [content, geometry, fonts] = await Promise.all([
-    digest({
+    contentHash64({
       type: question.type,
       stemMd: question.stemMd,
       options: question.options ?? [],
     }),
-    digest(measure.blocks),
-    digest(measure.fonts),
+    contentHash64(measure.blocks),
+    contentHash64(measure.fonts),
   ]);
   return (
     content === layout.contentSignature &&
@@ -251,13 +242,13 @@ export async function renderQuestionBaseImage(
       throw new Error("题面布局已变化或与底图不一致，请恢复原布局后重试");
     const [contentSignature, geometrySignature, fontSignature] =
       await Promise.all([
-        digest({
+        contentHash64({
           type: question.type,
           stemMd: question.stemMd,
           options: question.options ?? [],
         }),
-        digest(before.blocks),
-        digest(before.fonts),
+        contentHash64(before.blocks),
+        contentHash64(before.fonts),
       ]);
     const layout = annotationSurfaceLayoutSchema.parse({
       renderVersion: ANNOTATION_SURFACE_RENDER_VERSION,
