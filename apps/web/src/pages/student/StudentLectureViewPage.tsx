@@ -1,23 +1,50 @@
 import { ArrowLeft, Dumbbell, ListTree } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { Link, useParams, useSearchParams } from "react-router";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   EnabledCapabilitiesProvider,
   toEnabledCapabilities,
 } from "@/features/capability/enabled-capabilities";
 import type { DirectiveTelemetryInfo } from "@/features/markdown/directives/expand-context";
-import type { OutlineItem } from "@/features/markdown/outline";
+import { LectureOutline } from "@/features/markdown/LectureOutline";
 import { extractOutline } from "@/features/markdown/outline";
-import { OutlineInlineMath } from "@/features/markdown/outline-inline-math";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
-import { useLectureSectionFocus } from "@/features/markdown/use-lecture-section-focus";
+import {
+  LECTURE_HEADING_SELECTOR,
+  useLectureSectionFocus,
+} from "@/features/markdown/use-lecture-section-focus";
 import { useStudentLecture } from "@/features/student/student-queries";
 import {
   StudentErrorPanel,
   StudentListSkeleton,
 } from "@/features/student/student-ui";
+import { useStudentWorkspace } from "@/features/student/student-workspace-layout";
 import { createEventQueue } from "@/lib/event-queue";
-import { formatCnTime } from "@/lib/time";
+
+const LectureMarkdown = memo(RichMarkdown);
+const DESKTOP_QUERY = "(min-width: 1024px)";
+function subscribeDesktop(onChange: () => void): () => void {
+  const media = window.matchMedia(DESKTOP_QUERY);
+  media.addEventListener("change", onChange);
+  return () => media.removeEventListener("change", onChange);
+}
+function getDesktopSnapshot(): boolean {
+  return window.matchMedia(DESKTOP_QUERY).matches;
+}
 
 /**
  * /s/lectures/:id 讲义阅读页（T2.3，§5.3 讲义渲染；T2A.5 加课程上下文与配套练习）。
@@ -34,63 +61,80 @@ import { formatCnTime } from "@/lib/time";
  *   §5.0-C13）；目录点击报 lecture_toc_jump。讲义域位置/交互事件带
  *   lectureUpdatedAt（版本定位，§4.4.2 前提 1）；队列 dispose 时尽力 flush；
  * - 自动目录（H2/H3）：目录条目顺序 = 正文 h2/h3 顺序，点击滚动到对应标题；
- * - 目录可折叠（长讲义收起目录专注正文）；
- * - iPad 适配：竖屏目录在正文上方；横屏（lg:）目录固定在左侧 sticky 双栏，
+ * - 专用阅读栏常驻返回与目录入口，章节状态复用既有位置观察器；
+ * - iPad 适配：窄屏目录弹层；横屏（lg:）目录固定在左侧 sticky 双栏，
  *   两侧都不出现横向滚动（公式块 overflow 由 rich-markdown 样式内部消化）。
  */
 
 /** 滚动正文中的第 index 个 H2/H3 标题到视口（目录条目与渲染标题一一对应） */
 function scrollToHeading(index: number): void {
-  const headings = document.querySelectorAll<HTMLElement>(
-    ".rich-markdown h2, .rich-markdown h3",
-  );
-  headings[index]?.scrollIntoView({ behavior: "smooth", block: "start" });
-}
-
-/** 目录区块（条目为 ≥44px 触控目标的按钮；H3 缩进体现层级） */
-function LectureOutline({
-  items,
-  onNavigate,
-}: {
-  items: OutlineItem[];
-  onNavigate: (index: number) => void;
-}) {
-  if (items.length === 0) return null;
-  return (
-    <nav
-      aria-label="讲义目录"
-      className="rounded-xl border border-border bg-card p-2"
-    >
-      <ol className="flex flex-col">
-        {items.map((item, index) => (
-          <li key={item.id}>
-            <button
-              type="button"
-              onClick={() => onNavigate(index)}
-              className={`flex min-h-11 w-full items-center rounded-lg px-3 text-left text-sm text-foreground outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring ${
-                item.depth === 3 ? "pl-7 text-muted-foreground" : "font-medium"
-              }`}
-            >
-              {/* 标题公式按 $...$ 渲染行内 KaTeX（P2-4），不再暴露原始 LaTeX */}
-              <span className="truncate">
-                <OutlineInlineMath text={item.text} />
-              </span>
-            </button>
-          </li>
-        ))}
-      </ol>
-    </nav>
-  );
+  const target = document.querySelectorAll<HTMLElement>(
+    LECTURE_HEADING_SELECTOR,
+  )[index];
+  if (!target) return;
+  target.tabIndex = -1;
+  target.focus({ preventScroll: true });
+  target.scrollIntoView({
+    behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+      ? "instant"
+      : "smooth",
+    block: "start",
+  });
 }
 
 export default function StudentLectureViewPage() {
+  useStudentWorkspace();
   const { id = "" } = useParams<{ id: string }>();
   const [searchParams] = useSearchParams();
   /** 课程上下文（课程目录/讲义列表带出；缺省时服务端取第一个可见该讲义的课程） */
   const courseId = searchParams.get("courseId") ?? undefined;
   const lectureQuery = useStudentLecture(id, courseId);
-  /** 目录折叠状态（长讲义可收起；默认展开方便跳转） */
+  const isDesktop = useSyncExternalStore(
+    subscribeDesktop,
+    getDesktopSnapshot,
+    () => false,
+  );
+  /** 桌面侧栏默认展开；窄屏只通过阅读栏进入目录。 */
   const [outlineOpen, setOutlineOpen] = useState(true);
+  const [mobileOutlineOpen, setMobileOutlineOpen] = useState(false);
+  const [currentIndex, setCurrentIndex] = useState<number | null>(0);
+  const toolbarRef = useRef<HTMLElement>(null);
+  const articleRef = useRef<HTMLElement>(null);
+  const outlineTriggerRef = useRef<HTMLButtonElement>(null);
+  const pendingHeadingRef = useRef<number | null>(null);
+  const capabilities = useMemo(
+    () => toEnabledCapabilities(lectureQuery.data?.enabledCapabilities ?? []),
+    [lectureQuery.data?.enabledCapabilities],
+  );
+
+  // 标题换行、文字放大后仍按实际工具栏高度预留锚点和键盘焦点位置。
+  useEffect(() => {
+    const toolbar = toolbarRef.current;
+    if (!toolbar) return;
+    const root = document.documentElement;
+    const previousPadding = root.style.scrollPaddingTop;
+    const updateHeight = () => {
+      const offset = `${toolbar.getBoundingClientRect().height + 16}px`;
+      articleRef.current?.style.setProperty("--lecture-toolbar-offset", offset);
+      root.style.scrollPaddingTop = offset;
+    };
+    updateHeight();
+    const observer = new ResizeObserver(updateHeight);
+    observer.observe(toolbar);
+    return () => {
+      observer.disconnect();
+      root.style.scrollPaddingTop = previousPadding;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (isDesktop) setMobileOutlineOpen(false);
+  }, [isDesktop]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 切换讲义或重新载入正文时重置阅读状态，不沿用上一份讲义的下标。
+  useEffect(() => {
+    setCurrentIndex(0);
+    pendingHeadingRef.current = null;
+  }, [id, lectureQuery.data?.markdown]);
 
   // 学习痕迹（T2.10 + T4.0a/b）：lecture scope 队列（无 attempt 上下文，带
   // lectureId 供队列层注入 lecture_visible/hidden、net、idle）。回调经 ref 转发——
@@ -150,6 +194,7 @@ export default function StudentLectureViewPage() {
 
   // T4.0b 位置族：「当前阅读节」切换 → lecture_section_focus（迟滞防抖 §5.0-C13）
   const trackSectionFocus = useRef((headingIndex: number): void => {
+    setCurrentIndex(headingIndex);
     queueRef.current?.track({
       type: "lecture_section_focus",
       clientTs: Date.now(),
@@ -167,7 +212,7 @@ export default function StudentLectureViewPage() {
   });
 
   // T4.0b 位置族：目录点击 → lecture_toc_jump（headingIndex 与自动目录下标同源）
-  const onOutlineNavigate = useRef((headingIndex: number): void => {
+  function navigateOutline(headingIndex: number): void {
     queueRef.current?.track({
       type: "lecture_toc_jump",
       clientTs: Date.now(),
@@ -177,8 +222,15 @@ export default function StudentLectureViewPage() {
         ? { lectureUpdatedAt: lectureUpdatedAtRef.current }
         : {}),
     });
-    scrollToHeading(headingIndex);
-  }).current;
+    setCurrentIndex(headingIndex);
+    if (!isDesktop) {
+      // Radix 完成弹层关闭后再聚焦正文，避免焦点被模态圈闭抢回。
+      pendingHeadingRef.current = headingIndex;
+      setMobileOutlineOpen(false);
+    } else {
+      scrollToHeading(headingIndex);
+    }
+  }
 
   const outline = useMemo(
     () => (lectureQuery.data ? extractOutline(lectureQuery.data.markdown) : []),
@@ -186,27 +238,81 @@ export default function StudentLectureViewPage() {
   );
 
   return (
-    <article aria-label="讲义阅读" className="flex flex-col gap-4">
-      <header className="flex items-center gap-2">
+    <article
+      ref={articleRef}
+      aria-label="讲义阅读"
+      className="lecture-reading flex flex-col gap-5 pb-8"
+    >
+      <nav
+        ref={toolbarRef}
+        aria-label="讲义阅读工具栏"
+        className="sticky top-0 z-20 -mx-3 flex min-h-16 items-center gap-2 border-b border-border bg-background px-3 py-2 sm:-mx-6 sm:px-6"
+      >
         <Link
           to={courseId !== undefined ? `/s/courses/${courseId}` : "/s/lectures"}
           aria-label={courseId !== undefined ? "返回课程目录" : "返回讲义列表"}
-          className="flex size-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
+          className="flex size-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
         >
           <ArrowLeft aria-hidden className="size-5" />
         </Link>
-        <div className="min-w-0">
-          <h1 className="truncate text-lg font-semibold">
+        <div className="min-w-0 flex-1">
+          <p className="text-sm leading-relaxed font-semibold break-words sm:text-base">
             {lectureQuery.data?.title ?? "讲义"}
-          </h1>
-          {lectureQuery.data && (
-            <p className="truncate text-xs text-muted-foreground">
-              课程：{lectureQuery.data.courseName} · 更新于{" "}
-              {formatCnTime(lectureQuery.data.updatedAt)}
-            </p>
-          )}
+          </p>
         </div>
-      </header>
+        {outline.length > 0 && (
+          <button
+            ref={outlineTriggerRef}
+            type="button"
+            aria-expanded={isDesktop ? outlineOpen : mobileOutlineOpen}
+            aria-haspopup={!isDesktop ? "dialog" : undefined}
+            aria-controls={
+              isDesktop ? "lecture-desktop-outline" : "lecture-mobile-outline"
+            }
+            onClick={() =>
+              isDesktop
+                ? setOutlineOpen((value) => !value)
+                : setMobileOutlineOpen(true)
+            }
+            className="flex min-h-11 shrink-0 items-center gap-2 rounded-lg border border-border bg-card px-3 text-sm font-medium hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+          >
+            <ListTree aria-hidden className="size-4" />
+            {isDesktop && outlineOpen ? "收起目录" : "展开目录"}
+          </button>
+        )}
+      </nav>
+
+      <Dialog
+        open={!isDesktop && mobileOutlineOpen}
+        onOpenChange={setMobileOutlineOpen}
+      >
+        {!isDesktop && (
+          <DialogContent
+            id="lecture-mobile-outline"
+            className="w-[calc(100%-2rem)] max-w-md overflow-hidden p-4"
+            onCloseAutoFocus={(event) => {
+              event.preventDefault();
+              const index = pendingHeadingRef.current;
+              pendingHeadingRef.current = null;
+              if (index !== null) scrollToHeading(index);
+              else outlineTriggerRef.current?.focus({ preventScroll: true });
+            }}
+          >
+            <DialogHeader className="pr-11">
+              <DialogTitle className="leading-normal">讲义目录</DialogTitle>
+              <DialogDescription>选择章节，跳转到正文</DialogDescription>
+            </DialogHeader>
+            <div className="min-h-0 overflow-y-auto overscroll-contain">
+              <LectureOutline
+                key={lectureQuery.data?.markdown}
+                items={outline}
+                currentIndex={currentIndex}
+                onNavigate={navigateOutline}
+              />
+            </div>
+          </DialogContent>
+        )}
+      </Dialog>
 
       {lectureQuery.isPending && (
         <StudentListSkeleton label="正在加载讲义" rows={2} />
@@ -226,27 +332,23 @@ export default function StudentLectureViewPage() {
 
       {lectureQuery.data && (
         <>
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
-            {/* 目录：竖屏在正文上方（可折叠）；横屏固定左侧 sticky */}
-            {outline.length > 0 && (
-              <div className="lg:sticky lg:top-20 lg:w-60 lg:shrink-0">
-                <button
-                  type="button"
-                  aria-expanded={outlineOpen}
-                  onClick={() => setOutlineOpen((v) => !v)}
-                  className="flex min-h-11 w-full items-center gap-2 rounded-lg px-1 text-sm font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-                >
-                  <ListTree aria-hidden className="size-4 shrink-0" />
-                  {outlineOpen ? "收起目录" : "展开目录"}
-                </button>
-                {outlineOpen && (
-                  <div className="max-h-[40dvh] overflow-y-auto lg:max-h-[70dvh]">
-                    <LectureOutline
-                      items={outline}
-                      onNavigate={onOutlineNavigate}
-                    />
-                  </div>
-                )}
+          <div className="flex min-w-0 flex-col gap-5 lg:flex-row lg:items-start">
+            {isDesktop && outlineOpen && outline.length > 0 && (
+              <div
+                id="lecture-desktop-outline"
+                className="sticky top-[var(--lecture-toolbar-offset,5rem)] w-64 shrink-0 rounded-xl border border-border bg-card p-3"
+              >
+                <p className="mb-3 px-3 text-xs font-semibold text-muted-foreground">
+                  讲义目录
+                </p>
+                <div className="max-h-[calc(100dvh-var(--lecture-toolbar-offset,5rem)-4rem)] overflow-y-auto overscroll-contain pr-1">
+                  <LectureOutline
+                    key={lectureQuery.data?.markdown}
+                    items={outline}
+                    currentIndex={currentIndex}
+                    onNavigate={navigateOutline}
+                  />
+                </div>
               </div>
             )}
 
@@ -255,17 +357,26 @@ export default function StudentLectureViewPage() {
               〔host=lecture〕，T4.0b；旧 lecture_expand 不再产生）。
               T7.7：steps 揭晓遵循教师启用集（关闭时完整展开），Provider 包裹
               使 RichMarkdown 内全部指令组件可读 */}
-            <EnabledCapabilitiesProvider
-              value={toEnabledCapabilities(
-                lectureQuery.data.enabledCapabilities,
-              )}
-            >
-              <RichMarkdown
-                source={lectureQuery.data.markdown}
-                className="min-w-0 flex-1 rounded-2xl border border-border bg-card px-4 py-5 shadow-xs sm:px-6 lg:px-8"
-                onDirectiveTelemetry={onDirectiveTelemetry}
-              />
-            </EnabledCapabilitiesProvider>
+            <div className="min-w-0 flex-1 rounded-2xl border border-border bg-card px-4 py-5 shadow-xs sm:px-6 lg:px-8">
+              <p className="mb-4 flex flex-wrap gap-x-3 gap-y-1 text-xs leading-relaxed text-muted-foreground">
+                <span>课程：{lectureQuery.data.courseName}</span>
+                <span>
+                  更新于{" "}
+                  {new Intl.DateTimeFormat("zh-CN", {
+                    year: "numeric",
+                    month: "long",
+                    day: "numeric",
+                  }).format(new Date(lectureQuery.data.updatedAt))}
+                </span>
+              </p>
+              <EnabledCapabilitiesProvider value={capabilities}>
+                <LectureMarkdown
+                  source={lectureQuery.data.markdown}
+                  className="lecture-body"
+                  onDirectiveTelemetry={onDirectiveTelemetry}
+                />
+              </EnabledCapabilitiesProvider>
+            </div>
           </div>
 
           {/* 本课配套练习（D8）：同课程可见的配套单元——进入单元落地页作答（T2A.6） */}

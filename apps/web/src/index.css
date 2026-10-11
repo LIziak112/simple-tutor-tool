@@ -160,6 +160,18 @@
 .rich-markdown > :first-child {
   @apply mt-0;
 }
+/* 阅读工具栏高度由 ResizeObserver 实测；滚动间距由根滚动容器承担。 */
+.lecture-reading .rich-markdown :is(h1, h2, h3, h4, h5, h6) {
+  scroll-margin-top: 0;
+}
+.lecture-reading .rich-markdown :is(h2, h3):focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 4px;
+}
+.lecture-reading .lecture-body {
+  font-size: 1rem;
+  line-height: 1.8;
+}
 /* 目录锚点滚动落点预留 sticky 顶栏高度（学生端讲义阅读页 scrollIntoView 用） */
 .rich-markdown h1,
 .rich-markdown h2,
