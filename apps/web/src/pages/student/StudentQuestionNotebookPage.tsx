@@ -1,8 +1,14 @@
 import { useQuery } from "@tanstack/react-query";
 import type { NotebookRound } from "@tutor/contract";
-import { BookOpen, ChevronLeft, ChevronRight, History } from "lucide-react";
+import {
+  ArrowLeft,
+  BookOpen,
+  ChevronLeft,
+  ChevronRight,
+  History,
+} from "lucide-react";
 import { useState } from "react";
-import { Link, useParams } from "react-router";
+import { Link, useParams, useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
 import {
   ReflectionColumns,
@@ -43,6 +49,24 @@ function safeCnTime(utcIso: string | null | undefined): string {
 
 export default function StudentQuestionNotebookPage() {
   const { questionId = "" } = useParams();
+  const [params] = useSearchParams();
+  const source = params.get("returnTo");
+  // 只接受结果页路径，拒绝外站、路径穿越和其他角色页面。
+  const returnTo =
+    source &&
+    /^\/s\/(?:attempts|assignments)\/[a-zA-Z0-9_-]+(?:[?#].*)?$/.test(source) &&
+    !source.includes("\\")
+      ? source
+      : null;
+  const back = (
+    <Link
+      to={returnTo ?? "/s/records"}
+      className="flex min-h-11 w-fit items-center gap-2 rounded-lg border border-border px-3 text-sm outline-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50"
+    >
+      <ArrowLeft aria-hidden className="size-4" />
+      {returnTo ? "返回作答结果" : "返回我的记录"}
+    </Link>
+  );
   const notebookQuery = useQuery({
     queryKey: studentNotebookKey(questionId),
     queryFn: () => fetchStudentNotebookApi(questionId),
@@ -54,32 +78,38 @@ export default function StudentQuestionNotebookPage() {
 
   if (notebookQuery.isPending) {
     return (
-      <div
-        role="status"
-        aria-label="正在加载题目笔记本"
-        className="flex flex-col gap-3"
-      >
-        {[0, 1, 2].map((i) => (
-          <div
-            key={i}
-            className="h-20 animate-pulse rounded-2xl border border-border bg-muted/60"
-          />
-        ))}
-        <p className="text-sm text-muted-foreground">正在加载题目笔记本…</p>
+      <div className="flex flex-col gap-4">
+        {back}
+        <div
+          role="status"
+          aria-label="正在加载题目笔记本"
+          className="flex flex-col gap-3"
+        >
+          {[0, 1, 2].map((i) => (
+            <div
+              key={i}
+              className="h-20 animate-pulse rounded-2xl border border-border bg-muted/60"
+            />
+          ))}
+          <p className="text-sm text-muted-foreground">正在加载题目笔记本…</p>
+        </div>
       </div>
     );
   }
   if (notebookQuery.isError || notebookQuery.data === undefined) {
     return (
-      <StudentErrorPanel
-        title="笔记本加载失败"
-        message={
-          notebookQuery.error instanceof Error
-            ? notebookQuery.error.message
-            : "网络异常，请稍后重试"
-        }
-        onRetry={() => void notebookQuery.refetch()}
-      />
+      <div className="flex flex-col gap-4">
+        {back}
+        <StudentErrorPanel
+          title="笔记本加载失败"
+          message={
+            notebookQuery.error instanceof Error
+              ? notebookQuery.error.message
+              : "网络异常，请稍后重试"
+          }
+          onRetry={() => void notebookQuery.refetch()}
+        />
+      </div>
     );
   }
 
@@ -87,6 +117,7 @@ export default function StudentQuestionNotebookPage() {
 
   return (
     <div className="flex flex-col gap-4">
+      {back}
       <StudentPageHeader
         icon={<History aria-hidden className="size-5" />}
         title="题目笔记本"

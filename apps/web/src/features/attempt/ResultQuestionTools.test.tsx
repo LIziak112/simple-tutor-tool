@@ -23,6 +23,7 @@ it("工具分组保留编辑实例，题号更新不丢订正反思", () => {
   const { rerender } = render(
     <ResultQuestionTools questionNo={1} {...props} />,
   );
+  fireEvent.click(screen.getByRole("button", { name: "订正" }));
   fireEvent.change(screen.getByRole("textbox", { name: "订正反思" }), {
     target: { value: "先判断条件" },
   });
@@ -33,5 +34,11 @@ it("工具分组保留编辑实例，题号更新不丢订正反思", () => {
   expect(
     screen.getByRole("region", { name: "第 2 题材料与订正" }),
   ).toBeInTheDocument();
-  expect(screen.getByRole("heading", { name: "本次原稿" })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "本次原稿" }));
+  expect(screen.queryByRole("textbox", { name: "订正反思" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "订正" }));
+  expect(screen.getByRole("textbox", { name: "订正反思" })).toHaveValue(
+    "先判断条件",
+  );
+  expect(screen.queryAllByRole("heading")).toHaveLength(0);
 });

@@ -180,6 +180,21 @@ function renderView(onBackHome = vi.fn()) {
 }
 
 describe("得分汇总卡", () => {
+  it("答案由待公布变为公布时，材料控制器保持挂载", () => {
+    const ui = (released: boolean) => (
+      <MemoryRouter>
+        <AttemptResultView
+          data={{ ...DATA, answersReleased: released }}
+          onBackHome={() => {}}
+        />
+      </MemoryRouter>
+    );
+    const { rerender } = renderReact(ui(false));
+    const card = screen.getByRole("article", { name: "第 1 题" });
+    const original = within(card).getByTestId("note-original-stub");
+    rerender(ui(true));
+    expect(within(card).getByTestId("note-original-stub")).toBe(original);
+  });
   it("先读答案与详解，再访问原稿和订正，定位范围不卸载正文", () => {
     renderView();
     const card = screen.getByRole("article", { name: "第 1 题" });
@@ -192,10 +207,7 @@ describe("得分汇总卡", () => {
       answer.compareDocumentPosition(solution) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
-    expect(
-      solution.compareDocumentPosition(tools) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
+    expect(tools).toContainElement(solution);
     fireEvent.change(screen.getByRole("combobox", { name: "回看定位范围" }), {
       target: { value: "wrong" },
     });
@@ -383,6 +395,12 @@ describe("逐题结果卡", () => {
     expect(
       screen.queryByAltText("第 p4-q7 题的手写笔迹"),
     ).not.toBeInTheDocument();
+    fireEvent.click(
+      within(screen.getByRole("article", { name: "第 4 题" })).getByRole(
+        "button",
+        { name: "本次原稿" },
+      ),
+    );
     fireEvent.click(screen.getByRole("button", { name: "查看手写原稿" }));
     const img = screen.getByAltText("第 p4-q7 题的手写笔迹");
     expect(img).toHaveAttribute(

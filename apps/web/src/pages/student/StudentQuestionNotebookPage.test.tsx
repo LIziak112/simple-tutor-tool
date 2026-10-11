@@ -65,9 +65,9 @@ function notebookOf(rounds: NotebookRound[]): StudentNotebookData {
   return { questionId: QUESTION_ID, rounds };
 }
 
-function renderPage() {
+function renderPage(returnTo?: string) {
   return renderWithStudentRoutes({
-    initialPath: `/s/notebook/${QUESTION_ID}`,
+    initialPath: `/s/notebook/${QUESTION_ID}${returnTo ? `?returnTo=${encodeURIComponent(returnTo)}` : ""}`,
     routePath: "/s/notebook/:questionId",
     element: <StudentQuestionNotebookPage />,
   });
@@ -78,6 +78,47 @@ beforeEach(() => {
 });
 
 describe("StudentQuestionNotebookPage：三态", () => {
+  it("从作业入口查看已交卷结果，也能返回原作业结果", async () => {
+    notebookMock.mockResolvedValue(notebookOf([]));
+    const source =
+      "/s/assignments/assignment-1?reviewScope=all&reviewQuestion=p1-q8";
+    renderPage(source);
+    expect(
+      await screen.findByRole("link", { name: "返回作答结果" }),
+    ).toHaveAttribute("href", source);
+  });
+  it.each(["loading", "error", "empty"])(
+    "%s 状态也能返回原结果与题目",
+    async (state) => {
+      if (state === "loading")
+        notebookMock.mockReturnValue(new Promise(() => {}));
+      else if (state === "error")
+        notebookMock.mockRejectedValue(
+          new ApiError("UNAUTHORIZED", "登录已过期", 401),
+        );
+      else notebookMock.mockResolvedValue(notebookOf([]));
+      const target =
+        "/s/attempts/att-1?returnTo=%2Fs%2Frecords&reviewScope=wrong&reviewQuestion=p1-q8";
+      renderPage(target);
+      expect(
+        await screen.findByRole("link", { name: "返回作答结果" }),
+      ).toHaveAttribute("href", target);
+    },
+  );
+
+  it.each([
+    undefined,
+    "https://evil.example/",
+    "//evil.example/",
+    "/t/attempts/att-1",
+    "/s/attempts/../home",
+  ])("不可信来源 %s 回退我的记录", async (target) => {
+    notebookMock.mockResolvedValue(notebookOf([]));
+    renderPage(target);
+    expect(
+      await screen.findByRole("link", { name: "返回我的记录" }),
+    ).toHaveAttribute("href", "/s/records");
+  });
   it("加载中显示骨架（不白屏）", async () => {
     notebookMock.mockReturnValue(new Promise(() => {}));
     renderPage();

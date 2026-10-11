@@ -352,9 +352,12 @@ describe("CorrectionSection：折叠/展开与三态", () => {
 
   it("「本题历史」链接携 questionId 跳笔记本", async () => {
     await expandAndWait(headFixture());
-    expect(
-      screen.getByRole("link", { name: "第 1 题本题历史" }),
-    ).toHaveAttribute("href", "/s/notebook/p1-q1");
+    const href = screen
+      .getByRole("link", { name: "第 1 题本题历史" })
+      .getAttribute("href");
+    expect(new URL(href ?? "", "http://localhost").pathname).toBe(
+      "/s/notebook/p1-q1",
+    );
   });
 });
 

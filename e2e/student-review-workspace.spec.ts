@@ -157,6 +157,109 @@ async function prepareResult(
   return { attemptId, title, secret, result };
 }
 
+test("单行操作栏与本题历史返回：窄屏、缩放、镜像与刷新", async ({
+  request,
+  page,
+}, testInfo) => {
+  const { attemptId, result } = await prepareResult(request, page, false, true);
+  const questionId = result.units[0]?.questions[1]?.questionId;
+  if (!questionId) throw new Error("缺少第二题");
+  const params = new URLSearchParams({
+    returnTo: "/s/records?status=graded",
+    reviewScope: "pending",
+    reviewQuestion: questionId,
+  });
+  const source = `/s/attempts/${attemptId}?${params}`;
+  await page.goto(source);
+  const card = page.getByRole("article", { name: "第 2 题", exact: true });
+  const tools = card.getByRole("region", { name: "第 2 题材料与订正" });
+  const row = tools.getByRole("group", { name: "第 2 题操作（可横向滚动）" });
+  for (const width of [320, 390, 820, 1110, 1920]) {
+    await page.setViewportSize({ width, height: 900 });
+    await tools.scrollIntoViewIfNeeded();
+    const measurements = await row.evaluate((element) =>
+      [...element.children].map((child) => child.getBoundingClientRect().top),
+    );
+    expect(Math.max(...measurements) - Math.min(...measurements)).toBeLessThan(
+      3,
+    );
+    expect(
+      await tools.evaluate((element) => element.getBoundingClientRect().height),
+    ).toBeLessThan(80);
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+    await page.screenshot({
+      path: testInfo.outputPath(`single-row-${width}.png`),
+    });
+  }
+  await page.setViewportSize({ width: 820, height: 900 });
+  await page.evaluate(() => {
+    document.documentElement.style.zoom = "2";
+    document.documentElement.dir = "rtl";
+  });
+  await tools.scrollIntoViewIfNeeded();
+  await expect(tools.getByLabel("横向滚动查看更多操作")).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  await page.screenshot({
+    path: testInfo.outputPath("single-row-zoom-rtl.png"),
+  });
+  await page.evaluate(() => {
+    document.documentElement.style.zoom = "";
+    document.documentElement.dir = "ltr";
+  });
+  await row.getByRole("button", { name: "本次原稿", exact: true }).click();
+  await expect(
+    card.getByRole("button", { name: "第 2 题查看草稿原稿" }),
+  ).toBeVisible();
+  await row.getByRole("button", { name: "订正", exact: true }).click();
+  await expect(
+    card.getByRole("button", { name: "第 2 题查看草稿原稿" }),
+  ).toBeHidden();
+  await expect(
+    card.getByRole("button", { name: "添加订正标画", exact: false }),
+  ).toBeVisible();
+  await row.getByRole("button", { name: "更多", exact: true }).click();
+  await expect(
+    card.getByRole("button", { name: "第 2 题 AI 复习包" }),
+  ).toBeVisible();
+  await row.getByRole("button", { name: "更多", exact: true }).click();
+  await card.getByRole("link", { name: "第 2 题本题历史" }).click();
+  await expect(
+    page.getByRole("link", { name: "返回作答结果" }),
+  ).toHaveAttribute("href", source);
+  await page.reload();
+  await page.getByRole("link", { name: "返回作答结果" }).click();
+  await expect(page).toHaveURL(new RegExp(`/s/attempts/${attemptId}\\?`));
+  const returned = new URL(page.url());
+  expect(returned.searchParams.get("reviewQuestion")).toBe(questionId);
+  expect(returned.searchParams.get("reviewScope")).toBe("pending");
+  expect(returned.searchParams.get("returnTo")).toBe(
+    "/s/records?status=graded",
+  );
+  await expect(card).toBeInViewport();
+  await expect(
+    page.getByRole("button", { name: "返回我的记录", exact: true }),
+  ).toBeVisible();
+  const assignmentId = result.attempt.assignmentId;
+  if (!assignmentId) throw new Error("缺少作业ID");
+  const assignmentSource = `/s/assignments/${assignmentId}?${params}`;
+  await page.goto(assignmentSource);
+  await card.getByRole("link", { name: "第 2 题本题历史" }).click();
+  await expect(
+    page.getByRole("link", { name: "返回作答结果" }),
+  ).toHaveAttribute("href", assignmentSource);
+  await page.getByRole("link", { name: "返回作答结果" }).click();
+  await expect(card).toBeInViewport();
+  expect(new URL(page.url()).pathname).toBe(`/s/assignments/${assignmentId}`);
+});
+
 test("130题多单元回看：保活、定位、响应式、记录往返与按需材料", async ({
   request,
   page,
@@ -338,6 +441,7 @@ test("130题多单元回看：保活、定位、响应式、记录往返与按�
       2,
     ),
   );
+  await last.getByRole("button", { name: "本次原稿", exact: true }).click();
   await last
     .getByRole("button", { name: "第 130 题查看草稿原稿", exact: true })
     .click();

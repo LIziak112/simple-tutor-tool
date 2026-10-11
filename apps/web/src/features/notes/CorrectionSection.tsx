@@ -22,15 +22,8 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { NoteHeadData } from "@tutor/contract";
-import {
-  ChevronDown,
-  ClipboardEdit,
-  History,
-  Plus,
-  TriangleAlert,
-} from "lucide-react";
+import { ChevronDown, ClipboardEdit, Plus, TriangleAlert } from "lucide-react";
 import { useEffect, useState } from "react";
-import { Link } from "react-router";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -64,6 +57,7 @@ import { useNoteSyncActions } from "@/features/notes/use-note-sync-actions";
 import { ApiError, createCorrectionApi } from "@/lib/api";
 import { fetchNoteEvidenceApi } from "@/lib/note-endpoints";
 import { formatCnTime } from "@/lib/time";
+import { QuestionHistoryLink } from "./QuestionHistoryLink";
 
 /** D8 找回入口的证据状态集合（原稿未固定族） */
 const RECOVERABLE_EVIDENCE: ReadonlySet<string> = new Set([
@@ -75,6 +69,8 @@ const RECOVERABLE_EVIDENCE: ReadonlySet<string> = new Set([
 export interface CorrectionSectionProps {
   /** 并排呈现闭合工具，打开后恢复完整内容宽度。 */
   compact?: boolean;
+  /** 统一操作栏已提供历史入口。 */
+  hideHistory?: boolean;
   attemptId: string;
   questionId: string;
   /** 无障碍标签前缀（如「第 3 题」） */
@@ -86,6 +82,7 @@ export function CorrectionSection({
   questionId,
   ariaPrefix = "本题",
   compact = false,
+  hideHistory = false,
 }: CorrectionSectionProps) {
   const session = useNoteSessionRef();
   const queryClient = useQueryClient();
@@ -246,14 +243,12 @@ export function CorrectionSection({
             className={`size-4 transition-transform ${open ? "rotate-180" : ""}`}
           />
         </Button>
-        <Link
-          to={`/s/notebook/${encodeURIComponent(questionId)}`}
-          aria-label={`${ariaPrefix}本题历史`}
-          className="flex min-h-11 items-center gap-1 rounded-lg px-2 text-sm text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
-        >
-          <History aria-hidden className="size-4" />
-          本题历史
-        </Link>
+        {!hideHistory && (
+          <QuestionHistoryLink
+            questionId={questionId}
+            ariaPrefix={ariaPrefix}
+          />
+        )}
       </div>
 
       {open && (
