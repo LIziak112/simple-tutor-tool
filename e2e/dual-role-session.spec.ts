@@ -2,9 +2,9 @@ import { expect, test } from "@playwright/test";
 import {
   createStudentViaApi,
   STUDENT_PASSWORD,
-  teacherApiLogin,
   TEACHER_LOGIN_NAME,
   TEACHER_PASSWORD,
+  teacherApiLogin,
   uniqueSuffix,
 } from "./helpers";
 

@@ -2,10 +2,13 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ApiErr } from "@tutor/contract";
 import { mediaUploadResultSchema } from "@tutor/contract";
+import { eq } from "drizzle-orm";
 import type { Logger } from "pino";
 import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
+import type { Db } from "../db/client.ts";
+import { teachers } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 
 /**
@@ -52,15 +55,17 @@ function extractSessionToken(res: Response, cookie = "tutor_session"): string {
 /** 全套前置：教师 setup + 建学生「张三」并登录（伺服侧双端会话验收用） */
 async function makeMediaApp(): Promise<{
   app: App;
+  db: Db;
   dataDir: string;
   teacherCookie: string;
   studentCookie: string;
 }> {
   const dataDir = createTestDir();
+  const db = createTestDb();
   const app = createApp({
     isProduction: false,
     logger: silentLogger,
-    db: createTestDb(),
+    db,
     dataDir,
     publicUrl: "http://localhost:8787",
   });
@@ -88,6 +93,7 @@ async function makeMediaApp(): Promise<{
   expect(login.status).toBe(200);
   return {
     app,
+    db,
     dataDir,
     teacherCookie,
     studentCookie: `tutor_student_session=${extractSessionToken(login, "tutor_student_session")}`,
@@ -285,6 +291,30 @@ describe("GET/HEAD /blobs/media/<hash>.<ext>：伺服", () => {
       headers: { cookie: `tutor_session=${legacyToken}` },
     });
     expect(legacy.status).toBe(200);
+  });
+
+  it("教师被禁用后残留的教师 Cookie 不挡有效学生会话：双 Cookie 仍可达（逐槽兜底）", async () => {
+    const { app, db, teacherCookie, studentCookie } = await makeMediaApp();
+    const { name } = await uploadPng(app, teacherCookie);
+
+    // D5：禁用即吊销该教师全部会话——但其 Cookie 仍残留在浏览器（最长 7 天）。
+    // 修复前：教师槽会话行有效但主体不可用 → 直接 401，不再尝试学生槽，
+    // 双身份浏览器的学生端图片会一直 401 到教师 Cookie 自然过期
+    db.update(teachers)
+      .set({ disabledAt: new Date().toISOString() })
+      .where(eq(teachers.loginName, "teacher"))
+      .run();
+
+    const res = await app.request(blobUrl(name), {
+      headers: { cookie: `${teacherCookie}; ${studentCookie}` },
+    });
+    expect(res.status).toBe(200);
+
+    // 对照：只剩被禁用教师的 Cookie（无学生槽兜底）→ 401
+    const only = await app.request(blobUrl(name), {
+      headers: { cookie: teacherCookie },
+    });
+    expect(only.status).toBe(401);
   });
 
   it("HEAD → 200 只回响应头不带体，头与 GET 一致", async () => {
