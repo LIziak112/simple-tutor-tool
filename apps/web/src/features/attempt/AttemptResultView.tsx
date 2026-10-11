@@ -11,7 +11,7 @@ import {
   TriangleAlert,
   XCircle,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { AnnotationLayer } from "@/features/annotation/AnnotationLayer";
 import { AnnotationView } from "@/features/annotation/AnnotationView";
@@ -20,6 +20,7 @@ import { ReviewPackPanel } from "@/features/export/review-pack-panel";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { CorrectionSection } from "@/features/notes/CorrectionSection";
 import { NoteOriginalView } from "@/features/notes/NoteOriginalView";
+import { QuestionHistoryLink } from "@/features/notes/QuestionHistoryLink";
 import { studentInkPngUrl } from "@/lib/api";
 import { formatCnTime } from "@/lib/time";
 import {
@@ -203,38 +204,53 @@ function ResultOptions({
 export function SolutionFold({
   solutionMd,
   onToggle,
+  renderLayout,
+  enabled = true,
 }: {
   solutionMd: string | null;
-  /** 开合回调（open=收起→展开、close=展开→收起）；缺省 no-op */
   onToggle?: ((action: "open" | "close") => void) | undefined;
+  /** 结果页将入口放入统一操作行，其余调用方沿用折叠布局。 */
+  renderLayout?: (trigger: ReactNode, content: ReactNode) => ReactNode;
+  /** 公布前隐藏详解，保持统一布局内的材料控制器挂载。 */
+  enabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  if (!enabled) return renderLayout?.(null, null) ?? null;
   if (solutionMd === null) {
-    return <p className="text-sm text-muted-foreground">这道题没有详解。</p>;
+    const absent = (
+      <p className="text-sm text-muted-foreground">这道题没有详解。</p>
+    );
+    return renderLayout ? renderLayout(absent, null) : absent;
   }
-  return (
+  const trigger = (
+    <Button
+      variant="outline"
+      className="min-h-11 w-fit shrink-0 whitespace-nowrap"
+      aria-expanded={open}
+      onClick={() => {
+        const next = !open;
+        onToggle?.(next ? "open" : "close");
+        setOpen(next);
+      }}
+    >
+      查看详解
+      <ChevronDown
+        aria-hidden
+        className={cn("size-4 transition-transform", open && "rotate-180")}
+      />
+    </Button>
+  );
+  const content = open ? (
+    <div className="border-s-2 border-border ps-3">
+      <RichMarkdown source={solutionMd} className="text-sm" />
+    </div>
+  ) : null;
+  return renderLayout ? (
+    renderLayout(trigger, content)
+  ) : (
     <div className="flex flex-col gap-2">
-      <Button
-        variant="outline"
-        className="min-h-11 w-fit"
-        aria-expanded={open}
-        onClick={() => {
-          const next = !open;
-          onToggle?.(next ? "open" : "close");
-          setOpen(next);
-        }}
-      >
-        查看详解
-        <ChevronDown
-          aria-hidden
-          className={cn("size-4 transition-transform", open && "rotate-180")}
-        />
-      </Button>
-      {open && (
-        <div className="border-l-2 border-border pl-3">
-          <RichMarkdown source={solutionMd} className="text-sm" />
-        </div>
-      )}
+      {trigger}
+      {content}
     </div>
   );
 }
@@ -312,6 +328,77 @@ function ResultQuestionCard({
   // D9：最终判定优先（交卷时 = autoCorrect，批注后以 teacherMark 为准）；
   // null = 待批（D3 后可自动判分题交卷即有 finalCorrect，null 即真待批）
   const verdict = reviewQuestionState(question, released).verdict;
+  const renderTools = (
+    explanationTrigger?: ReactNode,
+    explanationContent?: ReactNode,
+  ) => (
+    <ResultQuestionTools
+      questionNo={index + 1}
+      explanationTrigger={explanationTrigger}
+      explanationContent={explanationContent}
+      history={
+        <QuestionHistoryLink
+          questionId={question.questionId}
+          ariaPrefix={`第 ${index + 1} 题`}
+        />
+      }
+      original={
+        <>
+          {!isHandwritten && (
+            <NoteOriginalView
+              compact
+              viewer="student"
+              attemptId={attemptId}
+              questionId={question.questionId}
+              ariaPrefix={`第 ${index + 1} 题`}
+              roundLabel={roundLabel}
+            />
+          )}
+          {isHandwritten && (
+            <InkThumbnail
+              attemptId={attemptId}
+              questionId={question.questionId}
+            />
+          )}
+          <AnnotationView
+            compact
+            viewer="student"
+            attemptId={attemptId}
+            questionId={question.questionId}
+            questionNo={index + 1}
+            ariaPrefix={`第 ${index + 1} 题`}
+          />
+        </>
+      }
+      correction={
+        <>
+          <AnnotationLayer
+            attemptId={attemptId}
+            questionId={question.questionId}
+            phase="correction"
+            ariaPrefix={`第 ${index + 1} 题`}
+            triggerLabel="添加订正标画"
+          />
+          <CorrectionSection
+            hideHistory
+            compact
+            attemptId={attemptId}
+            questionId={question.questionId}
+            ariaPrefix={`第 ${index + 1} 题`}
+          />
+        </>
+      }
+      more={
+        <ReviewPackPanel
+          compact
+          viewer="student"
+          attemptId={attemptId}
+          questionId={question.questionId}
+          questionNo={index + 1}
+        />
+      }
+    />
+  );
   return (
     <article
       data-review-question={question.questionId}
@@ -385,18 +472,6 @@ function ResultQuestionCard({
           />
         )}
 
-      {/* T2A.8：详解只在公布后渲染（未公布时服务端 solutionMd=null） */}
-      {released && (
-        <SolutionFold
-          solutionMd={question.solutionMd}
-          onToggle={
-            onSolutionToggle === undefined
-              ? undefined
-              : (action) => onSolutionToggle(question.questionId, index, action)
-          }
-        />
-      )}
-
       {/* 只回看本人已解锁的提示，公布前不增加任何答案材料。 */}
       {question.hintsOpened.length > 0 && (
         <div className="flex flex-col gap-1.5">
@@ -408,62 +483,15 @@ function ResultQuestionCard({
         </div>
       )}
 
-      <ResultQuestionTools
-        questionNo={index + 1}
-        original={
-          <>
-            {!isHandwritten && (
-              <NoteOriginalView
-                compact
-                viewer="student"
-                attemptId={attemptId}
-                questionId={question.questionId}
-                ariaPrefix={`第 ${index + 1} 题`}
-                roundLabel={roundLabel}
-              />
-            )}
-            {isHandwritten && (
-              <InkThumbnail
-                attemptId={attemptId}
-                questionId={question.questionId}
-              />
-            )}
-            <AnnotationView
-              compact
-              viewer="student"
-              attemptId={attemptId}
-              questionId={question.questionId}
-              questionNo={index + 1}
-              ariaPrefix={`第 ${index + 1} 题`}
-            />
-          </>
+      <SolutionFold
+        enabled={released}
+        solutionMd={question.solutionMd}
+        onToggle={
+          onSolutionToggle === undefined
+            ? undefined
+            : (action) => onSolutionToggle(question.questionId, index, action)
         }
-        correction={
-          <>
-            <AnnotationLayer
-              attemptId={attemptId}
-              questionId={question.questionId}
-              phase="correction"
-              ariaPrefix={`第 ${index + 1} 题`}
-              triggerLabel="添加订正标画"
-            />
-            <CorrectionSection
-              compact
-              attemptId={attemptId}
-              questionId={question.questionId}
-              ariaPrefix={`第 ${index + 1} 题`}
-            />
-          </>
-        }
-        more={
-          <ReviewPackPanel
-            compact
-            viewer="student"
-            attemptId={attemptId}
-            questionId={question.questionId}
-            questionNo={index + 1}
-          />
-        }
+        renderLayout={renderTools}
       />
     </article>
   );
