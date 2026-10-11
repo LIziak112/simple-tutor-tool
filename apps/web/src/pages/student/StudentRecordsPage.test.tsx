@@ -144,6 +144,47 @@ beforeEach(() => {
 });
 
 describe("StudentRecordsPage 三态", () => {
+  it("0分有效，未公布不展示得分或待批计数", async () => {
+    mockedRecords.mockResolvedValue({
+      records: [
+        makeRow({ score: 0 }),
+        makeRow({
+          attemptId: "aaaaaaaa-0000-4000-8000-000000000001",
+          assignmentTitle: "未公布卷",
+          answersReleased: false,
+          score: 90,
+          pendingCount: 2,
+        }),
+      ],
+      total: 2,
+    });
+    renderPage();
+    const zero = await screen.findByRole("link", {
+      name: "查看结果：周末加练（已批改）",
+    });
+    expect(within(zero).getByText("0")).toBeInTheDocument();
+    expect(zero).toHaveTextContent("/ 100");
+    const restricted = screen.getByRole("link", {
+      name: "查看结果：未公布卷（已批改）",
+    });
+    expect(restricted).toHaveTextContent("待公布");
+    expect(restricted).not.toHaveTextContent("90");
+    expect(restricted).not.toHaveTextContent("待批 2");
+  });
+  it("更多筛选收起时仍能看见并清除所选课程", async () => {
+    mockedRecords.mockResolvedValue({ records: [], total: 0 });
+    renderPage(`/s/records?courseId=${COURSES.courses[0]?.id}&offset=50`);
+    await screen.findByRole("button", { name: "清除课程筛选" });
+    expect(
+      screen.queryByRole("combobox", { name: "课程" }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "清除课程筛选" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("location-probe")).toHaveTextContent(
+        /^\/s\/records$/,
+      ),
+    );
+  });
   it("加载中显示骨架提示，不白屏", () => {
     mockedRecords.mockReturnValue(new Promise(() => undefined));
     renderPage();
@@ -217,7 +258,10 @@ describe("StudentRecordsPage 卡片字段口径（D10）", () => {
     const gradedCard = screen.getByRole("link", {
       name: "查看结果：周末加练（已批改）",
     });
-    expect(gradedCard).toHaveAttribute("href", `/s/attempts/${ATTEMPT_IDS[0]}`);
+    expect(gradedCard).toHaveAttribute(
+      "href",
+      `/s/attempts/${ATTEMPT_IDS[0]}?returnTo=%2Fs%2Frecords`,
+    );
     expect(within(gradedCard).getByText("作业")).toBeInTheDocument();
     expect(within(gradedCard).getByText("90")).toBeInTheDocument();
 
@@ -233,7 +277,10 @@ describe("StudentRecordsPage 卡片字段口径（D10）", () => {
     const draftCard = screen.getByRole("link", {
       name: "继续作答：周末加练（进行中）",
     });
-    expect(draftCard).toHaveAttribute("href", `/s/attempts/${ATTEMPT_IDS[2]}`);
+    expect(draftCard).toHaveAttribute(
+      "href",
+      `/s/attempts/${ATTEMPT_IDS[2]}?returnTo=%2Fs%2Frecords`,
+    );
     expect(within(draftCard).queryByText("得分")).not.toBeInTheDocument();
 
     // 未公布卡：待公布徽章、无得分数字与待批徽章
@@ -282,6 +329,7 @@ describe("StudentRecordsPage 筛选与分页的 URL 同步", () => {
     await screen.findByText("还没有作答记录");
 
     // 下拉选项：课程名与作业标题（来自 mock 接口）
+    fireEvent.click(screen.getByRole("button", { name: "更多筛选" }));
     expect(
       screen.getByRole("combobox", { name: /课程/ }).querySelectorAll("option"),
     ).toHaveLength(2);

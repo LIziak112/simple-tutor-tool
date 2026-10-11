@@ -118,10 +118,12 @@ type NotePrepPhase =
 export function AttemptSession({
   data,
   onExit,
+  exitLabel,
 }: {
   data: AttemptDetailData;
   /** 退出（返回首页/课程等；结果视图按钮与空试卷兜底用） */
   onExit: () => void;
+  exitLabel?: string | undefined;
 }) {
   /**
    * T6R.20 审查修复 2：交卷后的标注封存警示（seal 挪到交卷成功回调内
@@ -136,8 +138,10 @@ export function AttemptSession({
     <EnabledCapabilitiesProvider value={capabilities}>
       {isResultDetail(data) ? (
         <AttemptResultWithDraftCleanup
+          key={data.attempt.id}
           data={data}
           onBackHome={onExit}
+          backLabel={exitLabel}
           annotationSealWarning={annotationSealWarning}
         />
       ) : (
@@ -168,10 +172,12 @@ export function AttemptSession({
 function AttemptResultWithDraftCleanup({
   data,
   onBackHome,
+  backLabel,
   annotationSealWarning = false,
 }: {
   data: AttemptResultData;
   onBackHome: () => void;
+  backLabel?: string | undefined;
   /** 交卷后标注 seal 失败的警示（AttemptSession 顶态；服务端懒补封兜底） */
   annotationSealWarning?: boolean;
 }) {
@@ -220,6 +226,7 @@ function AttemptResultWithDraftCleanup({
     <AttemptResultView
       data={data}
       onBackHome={onBackHome}
+      backLabel={backLabel}
       onSolutionToggle={onSolutionToggle}
       annotationSealWarning={annotationSealWarning}
       wrongPractice={{

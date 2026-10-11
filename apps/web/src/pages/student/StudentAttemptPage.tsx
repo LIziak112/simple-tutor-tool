@@ -1,6 +1,7 @@
-import { Link, useNavigate, useParams } from "react-router";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 import { AttemptSession } from "@/features/attempt/AttemptSession";
 import { useAttemptDetail } from "@/features/attempt/attempt-queries";
+import { recordsReturnTarget } from "@/features/student/record-review-navigation";
 import {
   StudentErrorPanel,
   StudentListSkeleton,
@@ -17,6 +18,8 @@ import { ApiError } from "@/lib/api";
 export default function StudentAttemptPage() {
   const { attemptId = "" } = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const recordsTarget = recordsReturnTarget(searchParams.get("returnTo"));
   const detailQuery = useAttemptDetail(attemptId || undefined);
 
   if (detailQuery.isPending) {
@@ -72,6 +75,10 @@ export default function StudentAttemptPage() {
         ? `/s/courses/${data.attempt.courseId}/units/${encodeURIComponent(data.attempt.unitId)}`
         : "/s/home";
   return (
-    <AttemptSession data={data} onExit={() => void navigate(exitTarget)} />
+    <AttemptSession
+      data={data}
+      exitLabel={recordsTarget ? "返回我的记录" : undefined}
+      onExit={() => void navigate(recordsTarget ?? exitTarget)}
+    />
   );
 }

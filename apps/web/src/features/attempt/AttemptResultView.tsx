@@ -498,12 +498,14 @@ function ResultQuestionCard({
 export function AttemptResultView({
   data,
   onBackHome,
+  backLabel,
   onSolutionToggle,
   annotationSealWarning = false,
   wrongPractice,
 }: {
   data: AttemptResultData;
   onBackHome: () => void;
+  backLabel?: string | undefined;
   /**
    * 详解折叠开合回调（T4.0b host=result 复盘埋点）：页面层入队
    * directive_interact{host:result, attemptId, questionId, name:solution,
@@ -562,11 +564,12 @@ export function AttemptResultView({
       released={released}
       onBack={onBackHome}
       backLabel={
-        attempt.sourceType === "course"
+        backLabel ??
+        (attempt.sourceType === "course"
           ? "返回单元练习"
           : attempt.sourceType === "wrong"
             ? "返回错题本"
-            : "返回首页"
+            : "返回首页")
       }
     >
       <div className="flex flex-col gap-5">

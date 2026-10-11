@@ -84,9 +84,9 @@ const COURSE_DRAFT: AttemptDraftData = {
   enabledCapabilities: ["steps", "ink"],
 };
 
-function renderPage() {
+function renderPage(search = "") {
   return renderWithStudentRoutes({
-    initialPath: `/s/attempts/${ATTEMPT_ID}`,
+    initialPath: `/s/attempts/${ATTEMPT_ID}${search}`,
     routePath: "/s/attempts/:attemptId",
     element: <StudentAttemptPage />,
   });
@@ -278,6 +278,22 @@ describe("结果页「练习本卷错题」直达重练（2026-10）", () => {
       },
     ],
   };
+
+  it("合法记录上下文显示返回我的记录，拒绝外链上下文", async () => {
+    mockedFetch.mockResolvedValue(RESULT_WITH_WRONG);
+    const first = renderPage("?returnTo=%2Fs%2Frecords%3Fstatus%3Dgraded");
+    expect(
+      await screen.findByRole("button", { name: "返回我的记录" }),
+    ).toBeInTheDocument();
+    first.unmount();
+    renderPage("?returnTo=https%3A%2F%2Fevil.test%2Fs%2Frecords");
+    expect(
+      await screen.findByRole("button", { name: "返回单元练习" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "返回我的记录" }),
+    ).not.toBeInTheDocument();
+  });
 
   it("点击「练习本卷错题（1 题）」：按本卷题序调组卷接口，成功后跳新卷作答页", async () => {
     // 首次进入旧卷结果页；组卷成功后跳新 id → 再次 fetch（返回新卷结果）

@@ -28,6 +28,7 @@ import {
   StudentPageHeader,
   StudentSectionLink,
 } from "@/features/student/student-ui";
+import { useRecordsReadingPosition } from "@/features/student/use-records-reading-position";
 
 /**
  * /s/records 我的记录（T3.5，D10）：本人全部作答的时间倒序索引——作业与
@@ -49,7 +50,7 @@ function RecordsSkeleton() {
       {[0, 1, 2].map((i) => (
         <div
           key={i}
-          className="h-28 animate-pulse rounded-2xl border border-border bg-muted/60"
+          className="h-28 animate-pulse rounded-lg border border-border bg-muted/60"
         />
       ))}
       <p className="text-sm text-muted-foreground">正在加载我的记录…</p>
@@ -115,14 +116,27 @@ export default function StudentRecordsPage() {
   }
 
   const total = recordsQuery.data?.total ?? 0;
+  const rememberRecord = useRecordsReadingPosition(
+    searchParams,
+    recordsQuery.data !== undefined,
+  );
 
   return (
-    <section aria-labelledby="records-title" className="flex flex-col gap-4">
+    <section
+      aria-labelledby="records-title"
+      className="flex flex-col gap-4"
+      onClickCapture={(event) => {
+        if (!(event.target instanceof Element)) return;
+        const link = event.target.closest<HTMLElement>("[data-record-attempt]");
+        if (link?.dataset.recordAttempt)
+          rememberRecord(link.dataset.recordAttempt);
+      }}
+    >
       <StudentPageHeader
         icon={<History />}
         title="我的记录"
         titleId="records-title"
-        description="每一次作答都按时间排在这里，点卡片可以回看结果或继续没做完的练习。"
+        description={recordsQuery.data ? `共 ${total} 条记录` : undefined}
       />
 
       <StudentRecordsFilters
@@ -138,7 +152,7 @@ export default function StudentRecordsPage() {
       {recordsQuery.isError && (
         <div
           role="alert"
-          className="flex flex-col items-start gap-3 rounded-2xl border border-red-200 bg-card p-5 dark:border-red-500/30"
+          className="flex flex-col items-start gap-3 border-l-2 border-destructive pl-4"
         >
           <p className="flex items-center gap-2 text-sm font-medium text-destructive">
             <TriangleAlert aria-hidden className="size-4 shrink-0" />
@@ -169,6 +183,22 @@ export default function StudentRecordsPage() {
             ))}
           </ol>
         ))}
+
+      {recordsQuery.data &&
+        recordsQuery.data.records.length === 0 &&
+        state.offset > 0 && (
+          <Button
+            variant="outline"
+            className="min-h-11 w-fit"
+            onClick={() =>
+              void setSearchParams(
+                studentRecordsUrlQuery({ ...state, offset: 0 }),
+              )
+            }
+          >
+            返回第一页
+          </Button>
+        )}
 
       {recordsQuery.data !== undefined &&
         recordsQuery.data.records.length > 0 && (

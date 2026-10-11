@@ -6,9 +6,10 @@ import type {
 } from "@tutor/contract";
 import { cn } from "cn";
 import { ChevronLeft, ChevronRight, Clock3 } from "lucide-react";
-import { Link } from "react-router";
+import { Link, useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
 import { formatCnTime } from "@/lib/time";
+import { recordReviewHref } from "./record-review-navigation";
 
 /**
  * /s/records 我的记录列表的卡片与分页（T3.5，D10）：
@@ -102,37 +103,36 @@ export function recordTitleOf(row: TeacherAttemptSource): string {
  */
 function RecordScore({ row }: { row: StudentRecordRow }) {
   if (row.status === "draft") return null;
+  if (!row.answersReleased)
+    return <span className="text-sm text-muted-foreground">待公布</span>;
   if (row.score === null) {
-    return row.answersReleased ? (
-      <span className="text-sm text-muted-foreground">得分 待批</span>
-    ) : (
-      <span className="rounded-full bg-amber-500/15 px-2.5 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-300">
-        待公布
-      </span>
-    );
+    return <span className="text-sm text-muted-foreground">得分 待批</span>;
   }
   return (
     <span className="text-sm text-muted-foreground">
       得分 <b className="font-semibold text-foreground">{row.score}</b>
+      <span className="tabular-nums"> / 100</span>
     </span>
   );
 }
 
 /** 单条记录卡片（整卡可点，触控目标 ≥44px） */
 export function RecordCard({ row }: { row: StudentRecordRow }) {
+  const [search] = useSearchParams();
   const activityAt = row.submittedAt ?? row.startedAt;
   const isDraft = row.status === "draft";
   return (
     <li>
       <Link
-        to={`/s/attempts/${row.attemptId}`}
+        to={recordReviewHref(row.attemptId, search)}
+        data-record-attempt={row.attemptId}
         aria-label={`${isDraft ? "继续作答" : "查看结果"}：${recordTitleOf(row)}（${RECORD_STATUS_LABELS[row.status]}）`}
         className={cn(
-          "group flex min-h-11 flex-col gap-1.5 rounded-2xl border bg-card px-4 py-3 text-card-foreground shadow-xs outline-none transition-colors hover:border-primary/40 hover:bg-accent/30 focus-visible:ring-3 focus-visible:ring-ring/50",
+          "group grid min-h-11 min-w-0 gap-2 rounded-lg border bg-card px-4 py-3 text-card-foreground outline-none transition-colors hover:border-primary/40 hover:bg-accent/30 focus-visible:ring-3 focus-visible:ring-ring/50 sm:grid-cols-[minmax(0,1fr)_auto]",
           isDraft ? "border-sky-300 dark:border-sky-500/40" : "border-border",
         )}
       >
-        <p className="flex flex-wrap items-center gap-2">
+        <p className="flex flex-wrap items-center gap-2 sm:col-span-2">
           <RecordSourceBadge sourceType={row.sourceType} />
           <RecordStatusBadge status={row.status} />
           <span className="ml-auto text-xs text-muted-foreground">
@@ -140,12 +140,12 @@ export function RecordCard({ row }: { row: StudentRecordRow }) {
           </span>
         </p>
         <p className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-sm">
-          <span className="min-w-0 truncate font-semibold">
+          <span className="min-w-0 break-words font-semibold [overflow-wrap:anywhere]">
             {recordTitleOf(row)}
           </span>
           {/* 课程名（作业挂课程配课程名；课程练习前置「课程：」） */}
           {row.courseName !== null && (
-            <span className="min-w-0 truncate text-muted-foreground">
+            <span className="min-w-0 break-words text-muted-foreground [overflow-wrap:anywhere]">
               {row.sourceType === "course"
                 ? `课程：${row.courseName}`
                 : `（${row.courseName}）`}
@@ -155,12 +155,14 @@ export function RecordCard({ row }: { row: StudentRecordRow }) {
         <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
           <RecordScore row={row} />
           {/* 待批徽章（D4 口径；未公布时服务端置 null，不显示） */}
-          {row.pendingCount !== null && row.pendingCount > 0 && (
-            <span className="flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">
-              <Clock3 aria-hidden className="size-3" />
-              待批 {row.pendingCount}
-            </span>
-          )}
+          {row.answersReleased &&
+            row.pendingCount !== null &&
+            row.pendingCount > 0 && (
+              <span className="flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">
+                <Clock3 aria-hidden className="size-3" />
+                待批 {row.pendingCount}
+              </span>
+            )}
           <span className="ml-auto flex items-center gap-0.5 text-sm font-medium text-primary">
             {isDraft ? "继续作答" : "查看结果"}
             <ChevronRight

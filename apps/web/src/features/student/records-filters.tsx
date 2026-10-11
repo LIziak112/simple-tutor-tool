@@ -1,5 +1,5 @@
 import type { AttemptSource, AttemptStatus } from "@tutor/contract";
-import { CalendarRange, ChevronDown, RotateCcw } from "lucide-react";
+import { CalendarRange, ChevronDown, RotateCcw, X } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { localInputToUtcIso } from "@/lib/time";
@@ -161,7 +161,7 @@ export function StudentRecordsFilters({
     () => state.from !== "" || state.to !== "",
   );
   return (
-    <div className="flex flex-col gap-3 rounded-2xl border border-border bg-card p-3 shadow-xs">
+    <div className="flex min-w-0 flex-col gap-3 border-y border-border py-3">
       <div className="flex flex-wrap items-end gap-3">
         <div className="flex min-w-0 flex-col gap-1.5">
           <label
@@ -182,58 +182,6 @@ export function StudentRecordsFilters({
             <option value="assignment">作业</option>
             <option value="course">课程练习</option>
             <option value="wrong">错题重练</option>
-          </select>
-        </div>
-
-        <div className="flex min-w-0 flex-col gap-1.5">
-          <label
-            htmlFor="records-course-filter"
-            className="text-sm text-muted-foreground"
-          >
-            课程
-          </label>
-          <select
-            id="records-course-filter"
-            className="min-h-11 rounded-lg border border-input bg-transparent px-3 text-base outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
-            value={state.courseId ?? ""}
-            onChange={(e) =>
-              onPatch({
-                courseId: e.target.value === "" ? null : e.target.value,
-              })
-            }
-          >
-            <option value="">全部课程</option>
-            {courses.map((course) => (
-              <option key={course.id} value={course.id}>
-                {course.name}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="flex min-w-0 flex-col gap-1.5">
-          <label
-            htmlFor="records-assignment-filter"
-            className="text-sm text-muted-foreground"
-          >
-            作业
-          </label>
-          <select
-            id="records-assignment-filter"
-            className="min-h-11 max-w-56 rounded-lg border border-input bg-transparent px-3 text-base outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
-            value={state.assignmentId ?? ""}
-            onChange={(e) =>
-              onPatch({
-                assignmentId: e.target.value === "" ? null : e.target.value,
-              })
-            }
-          >
-            <option value="">全部作业</option>
-            {assignments.map((assignment) => (
-              <option key={assignment.id} value={assignment.id}>
-                {assignment.title}
-              </option>
-            ))}
           </select>
         </div>
 
@@ -267,7 +215,7 @@ export function StudentRecordsFilters({
           onClick={() => setTimeOpen((open) => !open)}
         >
           <CalendarRange aria-hidden />
-          按时间筛选
+          更多筛选
           <ChevronDown
             aria-hidden
             className={
@@ -277,13 +225,116 @@ export function StudentRecordsFilters({
             }
           />
         </Button>
+        {hasActiveRecordsFilters(state) && (
+          <Button variant="outline" className="min-h-11" onClick={onReset}>
+            <RotateCcw aria-hidden />
+            清除筛选
+          </Button>
+        )}
       </div>
+
+      {(state.courseId || state.assignmentId || state.from || state.to) && (
+        <fieldset
+          aria-label="已选筛选条件"
+          className="flex min-w-0 flex-wrap gap-2"
+        >
+          {state.courseId && (
+            <Button
+              variant="ghost"
+              className="min-h-11 h-auto max-w-full whitespace-normal text-left"
+              aria-label="清除课程筛选"
+              onClick={() => onPatch({ courseId: null })}
+            >
+              课程：
+              {courses.find((course) => course.id === state.courseId)?.name ??
+                "所选课程"}
+              <X aria-hidden className="size-4 shrink-0" />
+            </Button>
+          )}
+          {state.assignmentId && (
+            <Button
+              variant="ghost"
+              className="min-h-11 h-auto max-w-full whitespace-normal text-left"
+              aria-label="清除作业筛选"
+              onClick={() => onPatch({ assignmentId: null })}
+            >
+              作业：
+              {assignments.find(
+                (assignment) => assignment.id === state.assignmentId,
+              )?.title ?? "所选作业"}
+              <X aria-hidden className="size-4 shrink-0" />
+            </Button>
+          )}
+          {state.from && (
+            <Button
+              variant="ghost"
+              className="min-h-11"
+              aria-label="清除开始日期筛选"
+              onClick={() => onPatch({ from: "" })}
+            >
+              从 {state.from.replace("T", " ")}
+              <X aria-hidden className="size-4" />
+            </Button>
+          )}
+          {state.to && (
+            <Button
+              variant="ghost"
+              className="min-h-11"
+              aria-label="清除结束日期筛选"
+              onClick={() => onPatch({ to: "" })}
+            >
+              到 {state.to.replace("T", " ")}
+              <X aria-hidden className="size-4" />
+            </Button>
+          )}
+        </fieldset>
+      )}
 
       {timeOpen && (
         <div
           id="records-time-filters"
           className="flex flex-wrap items-end gap-3 border-t border-border pt-3"
         >
+          <div className="flex min-w-0 flex-col gap-1.5">
+            <label htmlFor="records-course-filter" className="text-sm">
+              课程
+            </label>
+            <select
+              id="records-course-filter"
+              value={state.courseId ?? ""}
+              onChange={(event) =>
+                onPatch({ courseId: event.target.value || null })
+              }
+              className="min-h-11 max-w-full rounded-lg border border-input bg-background px-3 text-base"
+            >
+              <option value="">全部课程</option>
+              {courses.map((course) => (
+                <option key={course.id} value={course.id}>
+                  {course.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="flex min-w-0 flex-col gap-1.5">
+            <label htmlFor="records-assignment-filter" className="text-sm">
+              作业
+            </label>
+            <select
+              id="records-assignment-filter"
+              value={state.assignmentId ?? ""}
+              onChange={(event) =>
+                onPatch({ assignmentId: event.target.value || null })
+              }
+              className="min-h-11 max-w-56 rounded-lg border border-input bg-background px-3 text-base"
+            >
+              <option value="">全部作业</option>
+              {assignments.map((assignment) => (
+                <option key={assignment.id} value={assignment.id}>
+                  {assignment.title}
+                </option>
+              ))}
+            </select>
+          </div>
           <div className="flex min-w-0 flex-col gap-1.5">
             <label htmlFor="records-from-filter" className="text-sm">
               开始日期（从）
@@ -309,15 +360,6 @@ export function StudentRecordsFilters({
               onChange={(e) => onPatch({ to: e.target.value })}
             />
           </div>
-        </div>
-      )}
-
-      {hasActiveRecordsFilters(state) && (
-        <div className="flex justify-end border-t border-border pt-3">
-          <Button variant="outline" className="min-h-11" onClick={onReset}>
-            <RotateCcw aria-hidden />
-            清除筛选
-          </Button>
         </div>
       )}
     </div>
