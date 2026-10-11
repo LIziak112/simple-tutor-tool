@@ -71,15 +71,15 @@ async function jsonRequest(
   });
 }
 
-/** 从 set-cookie 里取出 tutor_session 的值 */
-function extractSessionToken(res: Response): string {
+/** 从 set-cookie 里取出会话 Cookie 的值（缺省教师 tutor_session；学生传 tutor_student_session） */
+function extractSessionToken(res: Response, cookie = "tutor_session"): string {
   const line = res.headers
     .getSetCookie()
-    .find((c) => c.toLowerCase().startsWith("tutor_session="));
+    .find((c) => c.toLowerCase().startsWith(`${cookie}=`));
   if (!line) {
-    throw new Error("响应中没有 tutor_session cookie");
+    throw new Error(`响应中没有 ${cookie} cookie`);
   }
-  return line.slice("tutor_session=".length).split(";")[0] ?? "";
+  return line.slice(`${cookie}=`.length).split(";")[0] ?? "";
 }
 
 /** 从 set-cookie 拼小写串（Cookie 属性断言用） */
@@ -347,7 +347,9 @@ describe("专属链接登录（GET /api/public/s/:token）", () => {
 
     // 学生 Cookie 能访问 me
     const me = await app.request("/api/student/me", {
-      headers: { cookie: `tutor_session=${extractSessionToken(res)}` },
+      headers: {
+        cookie: `tutor_student_session=${extractSessionToken(res, "tutor_student_session")}`,
+      },
     });
     expect(me.status).toBe(200);
     const meBody = (await me.json()) as {
@@ -456,7 +458,7 @@ describe("密码登录（POST /api/public/student/login）", () => {
     expect(studentMeOkSchema.safeParse(body).success).toBe(true);
 
     // 会话：subjectType=student，有效期 90 天（> 89 天）
-    const token = extractSessionToken(res);
+    const token = extractSessionToken(res, "tutor_student_session");
     const row = db.select().from(sessions).where(eq(sessions.id, token)).get();
     expect(row?.subjectType).toBe("student");
     expect(row?.subjectId).toBe(studentId);
@@ -477,7 +479,7 @@ describe("密码登录（POST /api/public/student/login）", () => {
       loginName: "张三",
       password: STUDENT_PASSWORD,
     });
-    const token = extractSessionToken(login);
+    const token = extractSessionToken(login, "tutor_student_session");
 
     // 拨到「1 分钟后过期」，模拟临近过期仍在线使用
     db.update(sessions)
@@ -486,7 +488,7 @@ describe("密码登录（POST /api/public/student/login）", () => {
       .run();
 
     const me = await app.request("/api/student/me", {
-      headers: { cookie: `tutor_session=${token}` },
+      headers: { cookie: `tutor_student_session=${token}` },
     });
     expect(me.status).toBe(200);
 
@@ -632,7 +634,7 @@ describe("会话隔离（验收项：学生会话无法访问教师接口）", (
       loginName: "张三",
       password: STUDENT_PASSWORD,
     });
-    const cookie = `tutor_session=${extractSessionToken(login)}`;
+    const cookie = `tutor_student_session=${extractSessionToken(login, "tutor_student_session")}`;
 
     const me = await app.request("/api/teacher/me", { headers: { cookie } });
     expect(me.status).toBe(401);
@@ -667,7 +669,7 @@ describe("会话隔离（验收项：学生会话无法访问教师接口）", (
       loginName: "张三",
       password: STUDENT_PASSWORD,
     });
-    const cookie = `tutor_session=${extractSessionToken(login)}`;
+    const cookie = `tutor_student_session=${extractSessionToken(login, "tutor_student_session")}`;
 
     const before = await app.request("/api/student/me", {
       headers: { cookie },
@@ -789,7 +791,7 @@ describe("学生自助改密码（POST /api/student/password）", () => {
       password: STUDENT_PASSWORD,
     });
     expect(res.status).toBe(200);
-    return `tutor_session=${extractSessionToken(res)}`;
+    return `tutor_student_session=${extractSessionToken(res, "tutor_student_session")}`;
   }
 
   it("未登录返回 401", async () => {

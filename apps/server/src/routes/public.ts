@@ -15,9 +15,10 @@ import { type Context, Hono } from "hono";
 import { setCookie } from "hono/cookie";
 import {
   isSecurePublicUrl,
-  SESSION_COOKIE,
+  STUDENT_SESSION_COOKIE,
   STUDENT_SESSION_TTL_MS,
   sessionCookieOptions,
+  TEACHER_SESSION_COOKIE,
   TEACHER_SESSION_TTL_MS,
 } from "../auth/session";
 import {
@@ -87,7 +88,7 @@ export function createPublicRoutes(
         const { teacher, token } = await setupTeacher(db, body);
         setCookie(
           c,
-          SESSION_COOKIE,
+          TEACHER_SESSION_COOKIE,
           token,
           sessionCookieOptions(secure, TEACHER_SESSION_TTL_MS),
         );
@@ -101,7 +102,7 @@ export function createPublicRoutes(
         const { teacher, token } = await loginTeacher(db, body, getClientIp(c));
         setCookie(
           c,
-          SESSION_COOKIE,
+          TEACHER_SESSION_COOKIE,
           token,
           sessionCookieOptions(secure, TEACHER_SESSION_TTL_MS),
         );
@@ -120,13 +121,14 @@ export function createPublicRoutes(
         );
         setCookie(
           c,
-          SESSION_COOKIE,
+          TEACHER_SESSION_COOKIE,
           token,
           sessionCookieOptions(secure, TEACHER_SESSION_TTL_MS),
         );
         return c.json({ ok: true, data: teacher });
       })
-      // —— 学生两种登录（T2.1，§5.7）：成功都写同一种会话 Cookie（90 天） ——
+      // —— 学生两种登录（T2.1，§5.7）：成功都写学生专属会话 Cookie（90 天，
+      //    独立 Cookie 名与教师并存互不覆盖，2026-10 拆分） ——
       .post("/student/login", async (c) => {
         const body: StudentLoginRequest = await parseJsonBody(
           c,
@@ -139,7 +141,7 @@ export function createPublicRoutes(
         );
         setCookie(
           c,
-          SESSION_COOKIE,
+          STUDENT_SESSION_COOKIE,
           token,
           sessionCookieOptions(secure, STUDENT_SESSION_TTL_MS),
         );
@@ -150,7 +152,7 @@ export function createPublicRoutes(
         const { student, token } = loginStudentByLink(db, c.req.param("token"));
         setCookie(
           c,
-          SESSION_COOKIE,
+          STUDENT_SESSION_COOKIE,
           token,
           sessionCookieOptions(secure, STUDENT_SESSION_TTL_MS),
         );

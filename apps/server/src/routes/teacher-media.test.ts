@@ -2,10 +2,13 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ApiErr } from "@tutor/contract";
 import { mediaUploadResultSchema } from "@tutor/contract";
+import { eq } from "drizzle-orm";
 import type { Logger } from "pino";
 import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../app.ts";
+import type { Db } from "../db/client.ts";
+import { teachers } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 
 /**
@@ -41,26 +44,28 @@ function makePng(tailBytes = 32): Uint8Array {
   );
 }
 
-function extractSessionToken(res: Response): string {
+function extractSessionToken(res: Response, cookie = "tutor_session"): string {
   const line = res.headers
     .getSetCookie()
-    .find((c) => c.toLowerCase().startsWith("tutor_session="));
-  if (!line) throw new Error("响应中没有 tutor_session cookie");
-  return line.slice("tutor_session=".length).split(";")[0] ?? "";
+    .find((c) => c.toLowerCase().startsWith(`${cookie}=`));
+  if (!line) throw new Error(`响应中没有 ${cookie} cookie`);
+  return line.slice(`${cookie}=`.length).split(";")[0] ?? "";
 }
 
 /** 全套前置：教师 setup + 建学生「张三」并登录（伺服侧双端会话验收用） */
 async function makeMediaApp(): Promise<{
   app: App;
+  db: Db;
   dataDir: string;
   teacherCookie: string;
   studentCookie: string;
 }> {
   const dataDir = createTestDir();
+  const db = createTestDb();
   const app = createApp({
     isProduction: false,
     logger: silentLogger,
-    db: createTestDb(),
+    db,
     dataDir,
     publicUrl: "http://localhost:8787",
   });
@@ -88,9 +93,10 @@ async function makeMediaApp(): Promise<{
   expect(login.status).toBe(200);
   return {
     app,
+    db,
     dataDir,
     teacherCookie,
-    studentCookie: `tutor_session=${extractSessionToken(login)}`,
+    studentCookie: `tutor_student_session=${extractSessionToken(login, "tutor_student_session")}`,
   };
 }
 
@@ -260,6 +266,55 @@ describe("GET/HEAD /blobs/media/<hash>.<ext>：伺服", () => {
     });
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("image/png");
+  });
+
+  it("双 Cookie 拆分后的组合形态均可达：两枚同发、教师槽伪造回落学生槽、旧名残留学生 token", async () => {
+    const { app, teacherCookie, studentCookie } = await makeMediaApp();
+    const { name } = await uploadPng(app, teacherCookie);
+
+    // 同一浏览器师生双开（2026-10 Cookie 拆分修复的场景）：两枚同发任一有效即放行
+    const both = await app.request(blobUrl(name), {
+      headers: { cookie: `${teacherCookie}; ${studentCookie}` },
+    });
+    expect(both.status).toBe(200);
+
+    // 教师槽位伪造值 → 回落到学生槽位（守卫逐枚尝试的兜底语义）
+    const fallback = await app.request(blobUrl(name), {
+      headers: { cookie: `tutor_session=forged; ${studentCookie}` },
+    });
+    expect(fallback.status).toBe(200);
+
+    // 升级兼容：老部署浏览器的学生会话 token 仍留在旧名 tutor_session 下，
+    // getAnySession 不分角色 → 残留 token 照常可达（自然过期为止）
+    const legacyToken = studentCookie.slice("tutor_student_session=".length);
+    const legacy = await app.request(blobUrl(name), {
+      headers: { cookie: `tutor_session=${legacyToken}` },
+    });
+    expect(legacy.status).toBe(200);
+  });
+
+  it("教师被禁用后残留的教师 Cookie 不挡有效学生会话：双 Cookie 仍可达（逐槽兜底）", async () => {
+    const { app, db, teacherCookie, studentCookie } = await makeMediaApp();
+    const { name } = await uploadPng(app, teacherCookie);
+
+    // D5：禁用即吊销该教师全部会话——但其 Cookie 仍残留在浏览器（最长 7 天）。
+    // 修复前：教师槽会话行有效但主体不可用 → 直接 401，不再尝试学生槽，
+    // 双身份浏览器的学生端图片会一直 401 到教师 Cookie 自然过期
+    db.update(teachers)
+      .set({ disabledAt: new Date().toISOString() })
+      .where(eq(teachers.loginName, "teacher"))
+      .run();
+
+    const res = await app.request(blobUrl(name), {
+      headers: { cookie: `${teacherCookie}; ${studentCookie}` },
+    });
+    expect(res.status).toBe(200);
+
+    // 对照：只剩被禁用教师的 Cookie（无学生槽兜底）→ 401
+    const only = await app.request(blobUrl(name), {
+      headers: { cookie: teacherCookie },
+    });
+    expect(only.status).toBe(401);
   });
 
   it("HEAD → 200 只回响应头不带体，头与 GET 一致", async () => {

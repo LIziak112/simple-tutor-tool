@@ -62,15 +62,15 @@ interface TestEnv {
   memberStudentId: string;
 }
 
-/** 从 set-cookie 里取出 tutor_session 的值 */
-function extractSessionToken(res: Response): string {
+/** 从 set-cookie 里取出会话 Cookie 的值（缺省教师 tutor_session；学生传 tutor_student_session） */
+function extractSessionToken(res: Response, cookie = "tutor_session"): string {
   const line = res.headers
     .getSetCookie()
-    .find((c) => c.toLowerCase().startsWith("tutor_session="));
+    .find((c) => c.toLowerCase().startsWith(`${cookie}=`));
   if (!line) {
-    throw new Error("响应中没有 tutor_session cookie");
+    throw new Error(`响应中没有 ${cookie} cookie`);
   }
-  return line.slice("tutor_session=".length).split(";")[0] ?? "";
+  return line.slice(`${cookie}=`.length).split(";")[0] ?? "";
 }
 
 /** 建学生并密码登录，返回 { studentId, cookie } */
@@ -103,7 +103,7 @@ async function createStudentAndLogin(
   expect(login.status).toBe(200);
   return {
     studentId: created.data.student.id,
-    cookie: `tutor_session=${extractSessionToken(login)}`,
+    cookie: `tutor_student_session=${extractSessionToken(login, "tutor_student_session")}`,
   };
 }
 

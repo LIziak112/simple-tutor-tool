@@ -5,8 +5,8 @@ import type { Db } from "../db/client";
 import {
   getTeacherSession,
   isSecurePublicUrl,
-  SESSION_COOKIE,
   sessionCookieOptions,
+  TEACHER_SESSION_COOKIE,
   TEACHER_SESSION_TTL_MS,
   touchSession,
 } from "./session";
@@ -36,7 +36,7 @@ export function createRequireTeacher(db: Db, publicUrl: string) {
   // 「有的分支返回值、有的分支自然结束」的混合写法
   return createMiddleware<TeacherEnv>(
     async (c, next): Promise<Response | undefined> => {
-      const token = getCookie(c, SESSION_COOKIE);
+      const token = getCookie(c, TEACHER_SESSION_COOKIE);
       const session = token ? getTeacherSession(db, token) : null;
       const teacher = session ? getTeacherInfo(db, session.teacherId) : null;
       // teacher 存在 ⇒ session 与 token 必存在，!token 仅用于类型收窄
@@ -53,7 +53,7 @@ export function createRequireTeacher(db: Db, publicUrl: string) {
       touchSession(db, token, TEACHER_SESSION_TTL_MS);
       setCookie(
         c,
-        SESSION_COOKIE,
+        TEACHER_SESSION_COOKIE,
         token,
         sessionCookieOptions(secure, TEACHER_SESSION_TTL_MS),
       );

@@ -188,12 +188,12 @@ async function makeIsolationApp(): Promise<IsolationApp> {
   };
 }
 
-function extractSessionToken(res: Response): string {
+function extractSessionToken(res: Response, cookie = "tutor_session"): string {
   const line = res.headers
     .getSetCookie()
-    .find((c) => c.toLowerCase().startsWith("tutor_session="));
-  if (!line) throw new Error("响应中没有 tutor_session cookie");
-  return line.slice("tutor_session=".length).split(";")[0] ?? "";
+    .find((c) => c.toLowerCase().startsWith(`${cookie}=`));
+  if (!line) throw new Error(`响应中没有 ${cookie} cookie`);
+  return line.slice(`${cookie}=`.length).split(";")[0] ?? "";
 }
 
 function request(
@@ -1852,7 +1852,7 @@ async function makeSameIdConflictApp() {
       }),
     });
     expect(loginRes.status).toBe(200);
-    const studentCookie = `tutor_session=${extractSessionToken(loginRes)}`;
+    const studentCookie = `tutor_student_session=${extractSessionToken(loginRes, "tutor_student_session")}`;
     const attemptRes = await app.request(
       `/api/student/assignments/${assignmentId}/attempt`,
       { method: "POST", headers: { cookie: studentCookie } },

@@ -21,12 +21,15 @@ import type { TestApp } from "./note-fixtures.ts";
  *   测试按需回拨到相对 asOf 的时刻（同 submitAttemptStatus 直改口径）。
  */
 
-export function extractSessionToken(res: Response): string {
+export function extractSessionToken(
+  res: Response,
+  cookie = "tutor_session",
+): string {
   const line = res.headers
     .getSetCookie()
-    .find((c: string) => c.toLowerCase().startsWith("tutor_session="));
-  if (!line) throw new Error("响应中没有 tutor_session cookie");
-  return line.slice("tutor_session=".length).split(";")[0] ?? "";
+    .find((c: string) => c.toLowerCase().startsWith(`${cookie}=`));
+  if (!line) throw new Error(`响应中没有 ${cookie} cookie`);
+  return line.slice(`${cookie}=`.length).split(";")[0] ?? "";
 }
 
 /**
@@ -110,7 +113,7 @@ export async function loginStudent(
     body: JSON.stringify({ loginName: name, password }),
   });
   if (res.status !== 200) throw new Error(`学生登录失败：${res.status}`);
-  return `tutor_session=${extractSessionToken(res)}`;
+  return `tutor_student_session=${extractSessionToken(res, "tutor_student_session")}`;
 }
 
 /** 直插提交证据行（state 全值域版；frozen 须带 versionId，其余 null） */

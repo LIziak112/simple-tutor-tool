@@ -64,15 +64,15 @@ function setCookieHeader(res: Response): string {
     .join("\n");
 }
 
-/** 从 set-cookie 里取出 tutor_session 的值（token） */
-function extractSessionToken(res: Response): string {
+/** 从 set-cookie 里取出会话 Cookie 的值（缺省教师 tutor_session；学生传 tutor_student_session） */
+function extractSessionToken(res: Response, cookie = "tutor_session"): string {
   const line = res.headers
     .getSetCookie()
-    .find((c) => c.toLowerCase().startsWith("tutor_session="));
+    .find((c) => c.toLowerCase().startsWith(`${cookie}=`));
   if (!line) {
-    throw new Error("响应中没有 tutor_session cookie");
+    throw new Error(`响应中没有 ${cookie} cookie`);
   }
-  return line.slice("tutor_session=".length).split(";")[0] ?? "";
+  return line.slice(`${cookie}=`.length).split(";")[0] ?? "";
 }
 
 /** 在指定 app 上发 JSON POST（可带额外请求头：Cookie、X-Forwarded-For 等） */
@@ -837,5 +837,160 @@ describe("Cookie Secure 属性随 PUBLIC_URL 变化（验收项）", () => {
     expect(loginHttp.headers.getSetCookie()).toHaveLength(0);
     httpsApp.db.$client.close();
     httpApp.db.$client.close();
+  });
+});
+
+describe("双身份并存（师生会话 Cookie 拆分，2026-10）", () => {
+  const STUDENT_LOGIN_NAME = "zhangsan";
+  const STUDENT_PASSWORD = "stu-pass-6";
+
+  /**
+   * 教师 setup + 建一名学生。同一浏览器教师/学生双开是真实场景
+   * （老师自测学生端、单设备双角色），此前共用 tutor_session 一枚 Cookie，
+   * 第二个身份登录会覆盖第一个的 token，先登录方被顶下线——本组测试
+   * 固定拆分后的不变量：学生会话用独立 Cookie 名，两身份互不影响。
+   */
+  async function makeDualRoleApp(): Promise<{
+    app: ReturnType<typeof createApp>;
+    db: Db;
+    teacherCookie: string;
+    linkToken: string;
+  }> {
+    const { app, db } = makeApp();
+    const setup = await jsonRequestOn(app, "/api/public/teacher/setup", {
+      loginName: LOGIN_NAME,
+      password: PASSWORD,
+    });
+    const teacherCookie = `tutor_session=${extractSessionToken(setup)}`;
+    const create = await app.request("/api/teacher/students", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        cookie: teacherCookie,
+      },
+      body: JSON.stringify({
+        displayName: "张三",
+        loginName: STUDENT_LOGIN_NAME,
+        password: STUDENT_PASSWORD,
+      }),
+    });
+    if (create.status !== 201) {
+      throw new Error(`建学生失败：${create.status}`);
+    }
+    const linkToken = (
+      (await create.json()) as { data: { student: { linkToken: string } } }
+    ).data.student.linkToken;
+    return { app, db, teacherCookie, linkToken };
+  }
+
+  function studentLogin(app: ReturnType<typeof createApp>): Promise<Response> {
+    return jsonRequestOn(app, "/api/public/student/login", {
+      loginName: STUDENT_LOGIN_NAME,
+      password: STUDENT_PASSWORD,
+    });
+  }
+
+  it("学生登录只写 tutor_student_session、不碰 tutor_session 槽位；教师会话不受影响", async () => {
+    const { app, teacherCookie } = await makeDualRoleApp();
+    const login = await studentLogin(app);
+    expect(login.status).toBe(200);
+
+    const lines = login.headers.getSetCookie().map((c) => c.toLowerCase());
+    expect(lines.some((l) => l.startsWith("tutor_student_session="))).toBe(
+      true,
+    );
+    // 关键回归断言：不再写 tutor_session（旧实现正是这里把教师顶下线）
+    expect(lines.some((l) => l.startsWith("tutor_session="))).toBe(false);
+
+    const me = await app.request("/api/teacher/me", {
+      headers: { cookie: teacherCookie },
+    });
+    expect(me.status).toBe(200);
+  });
+
+  it("教师登录只写 tutor_session、不碰 tutor_student_session 槽位；学生会话不受影响", async () => {
+    const { app } = await makeDualRoleApp();
+    const first = await studentLogin(app);
+    expect(first.status).toBe(200);
+    const studentToken = extractSessionToken(first, "tutor_student_session");
+
+    const teacherLogin = await jsonRequestOn(app, "/api/public/teacher/login", {
+      loginName: LOGIN_NAME,
+      password: PASSWORD,
+    });
+    expect(teacherLogin.status).toBe(200);
+    const lines = teacherLogin.headers
+      .getSetCookie()
+      .map((c) => c.toLowerCase());
+    expect(lines.some((l) => l.startsWith("tutor_session="))).toBe(true);
+    expect(lines.some((l) => l.startsWith("tutor_student_session="))).toBe(
+      false,
+    );
+
+    const me = await app.request("/api/student/me", {
+      headers: { cookie: `tutor_student_session=${studentToken}` },
+    });
+    expect(me.status).toBe(200);
+  });
+
+  it("专属链接登录（GET /api/public/s/:token）同样只写 tutor_student_session", async () => {
+    const { app, linkToken } = await makeDualRoleApp();
+    const res = await app.request(`/api/public/s/${linkToken}`);
+    expect(res.status).toBe(200);
+
+    const lines = res.headers.getSetCookie().map((c) => c.toLowerCase());
+    expect(lines.some((l) => l.startsWith("tutor_student_session="))).toBe(
+      true,
+    );
+    expect(lines.some((l) => l.startsWith("tutor_session="))).toBe(false);
+  });
+
+  it("学生守卫只认 tutor_student_session：同一 token 放旧名 tutor_session → 401", async () => {
+    const { app } = await makeDualRoleApp();
+    const login = await studentLogin(app);
+    const token = extractSessionToken(login, "tutor_student_session");
+
+    const ok = await app.request("/api/student/me", {
+      headers: { cookie: `tutor_student_session=${token}` },
+    });
+    expect(ok.status).toBe(200);
+
+    const legacy = await app.request("/api/student/me", {
+      headers: { cookie: `tutor_session=${token}` },
+    });
+    expect(legacy.status).toBe(401);
+  });
+
+  it("学生登出只清 tutor_student_session、只删学生会话行；教师会话不受影响", async () => {
+    const { app, db, teacherCookie } = await makeDualRoleApp();
+    const login = await studentLogin(app);
+    const studentToken = extractSessionToken(login, "tutor_student_session");
+
+    const logout = await app.request("/api/student/logout", {
+      method: "POST",
+      headers: { cookie: `tutor_student_session=${studentToken}` },
+    });
+    expect(logout.status).toBe(200);
+    // 清除指令只针对学生 Cookie（守卫滑动续期会先续发一条同名 Cookie，
+    // 同名按序应用、后写的清除生效——与 student-lectures 登出测试同口径，
+    // 这里断言「max-age=0 的行里没有教师 Cookie 名」）
+    const cleared = logout.headers
+      .getSetCookie()
+      .map((c) => c.toLowerCase())
+      .filter((c) => c.includes("max-age=0"));
+    expect(cleared.some((c) => c.startsWith("tutor_student_session="))).toBe(
+      true,
+    );
+    expect(cleared.some((c) => c.startsWith("tutor_session="))).toBe(false);
+
+    // 学生会话行已删；教师会话行仍在且可用
+    const teacherToken = teacherCookie.slice("tutor_session=".length);
+    const rows = db.select().from(sessions).all();
+    expect(rows.some((r) => r.id === studentToken)).toBe(false);
+    expect(rows.some((r) => r.id === teacherToken)).toBe(true);
+    const me = await app.request("/api/teacher/me", {
+      headers: { cookie: teacherCookie },
+    });
+    expect(me.status).toBe(200);
   });
 });

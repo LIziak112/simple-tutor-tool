@@ -115,12 +115,12 @@ interface TestEnv {
   assignmentSubmittedId: string;
 }
 
-function extractSessionToken(res: Response): string {
+function extractSessionToken(res: Response, cookie = "tutor_session"): string {
   const line = res.headers
     .getSetCookie()
-    .find((c) => c.toLowerCase().startsWith("tutor_session="));
-  if (!line) throw new Error("响应中没有 tutor_session cookie");
-  return line.slice("tutor_session=".length).split(";")[0] ?? "";
+    .find((c) => c.toLowerCase().startsWith(`${cookie}=`));
+  if (!line) throw new Error(`响应中没有 ${cookie} cookie`);
+  return line.slice(`${cookie}=`.length).split(";")[0] ?? "";
 }
 
 /** 发 JSON 请求（POST/PATCH/PUT/DELETE；可带 Cookie） */
@@ -309,7 +309,7 @@ async function makeEnv(): Promise<TestEnv> {
     password: STUDENT_PASSWORD,
   });
   expect(loginRes.status).toBe(200);
-  const studentCookie = `tutor_session=${extractSessionToken(loginRes)}`;
+  const studentCookie = `tutor_student_session=${extractSessionToken(loginRes, "tutor_student_session")}`;
 
   // 课程 + 成员 + 目录条目（课程练习入口）
   const courseRes = await request(
