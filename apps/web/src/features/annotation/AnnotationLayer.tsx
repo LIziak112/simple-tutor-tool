@@ -55,6 +55,8 @@ export interface AnnotationLayerProps {
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
   showTrigger?: boolean;
+  /** 结果回看可明确区分本次原标画与新订正。 */
+  triggerLabel?: string;
 }
 
 export function AnnotationLayer({
@@ -65,6 +67,7 @@ export function AnnotationLayer({
   open: controlledOpen,
   onOpenChange,
   showTrigger = true,
+  triggerLabel = "圈画题干",
 }: AnnotationLayerProps) {
   const session = useAnnotationSessionRef();
   const record = useAnnotationRecord(attemptId, questionId, phase);
@@ -162,7 +165,7 @@ export function AnnotationLayer({
             onClick={() => setOpen(true)}
           >
             <PenLine aria-hidden className="size-4" />
-            圈画题干
+            {triggerLabel}
             {strokeCount > 0 && (
               <span className="text-muted-foreground">· {strokeCount} 笔</span>
             )}
@@ -196,7 +199,7 @@ export function AnnotationLayer({
         <div className="flex items-center justify-between gap-2">
           <p className="flex items-center gap-1.5 text-sm font-medium">
             <PenLine aria-hidden className="size-4" />
-            圈画题干
+            {triggerLabel}
             {strokeCount > 0 && (
               <span className="font-normal text-muted-foreground">
                 {strokeCount} 笔

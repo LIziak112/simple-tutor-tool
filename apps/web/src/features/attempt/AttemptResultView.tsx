@@ -31,6 +31,7 @@ import {
   QUESTION_TYPE_BADGE_CLASS,
   QUESTION_TYPE_LABELS,
 } from "./answer-format";
+import { ResultQuestionTools } from "./ResultQuestionTools";
 import { ResultWorkspace } from "./ResultWorkspace";
 import { reviewCounts, reviewQuestionState } from "./result-review-model";
 
@@ -103,7 +104,7 @@ function TeacherMarkBlock({
   teacherComment: string | null;
 }) {
   return (
-    <div className="flex flex-col gap-1 rounded-lg border border-sky-200 bg-sky-50/70 p-3 dark:border-sky-500/30 dark:bg-sky-500/10">
+    <div className="flex flex-col gap-1 border-l-2 border-sky-500 pl-3">
       <p className="flex items-center gap-1.5 text-sm font-medium text-sky-800 dark:text-sky-300">
         <PenLine aria-hidden className="size-4 shrink-0" />
         老师批改：
@@ -114,7 +115,7 @@ function TeacherMarkBlock({
             : "已评语"}
       </p>
       {teacherComment !== null && (
-        <p className="text-sm text-sky-900 dark:text-sky-200">
+        <p className="break-words text-sm text-foreground [overflow-wrap:anywhere]">
           {teacherComment}
         </p>
       )}
@@ -153,7 +154,7 @@ function ResultOptions({
           <li
             key={option}
             className={cn(
-              "flex min-h-11 items-start gap-2 rounded-lg border px-3 py-2 text-sm",
+              "flex min-h-11 flex-wrap items-start gap-2 rounded-lg border px-3 py-2 text-sm",
               isCorrect
                 ? "border-emerald-300 bg-emerald-50 dark:border-emerald-500/40 dark:bg-emerald-500/10"
                 : isPicked && released
@@ -166,7 +167,10 @@ function ResultOptions({
             <span className="mt-0.5 w-5 shrink-0 font-semibold">
               {letterOf(index)}
             </span>
-            <RichMarkdown source={option} className="min-w-0 flex-1 text-sm" />
+            <RichMarkdown
+              source={option}
+              className="min-w-0 flex-1 text-base [&_p]:my-0"
+            />
             {isCorrect && (
               <span className="shrink-0 text-xs font-medium text-emerald-700 dark:text-emerald-300">
                 {isPicked ? "正确项 · 你的选择" : "正确项"}
@@ -228,7 +232,7 @@ export function SolutionFold({
         />
       </Button>
       {open && (
-        <div className="rounded-lg border border-border bg-muted/40 p-4">
+        <div className="border-l-2 border-border pl-3">
           <RichMarkdown source={solutionMd} className="text-sm" />
         </div>
       )}
@@ -245,20 +249,36 @@ function InkThumbnail({
   questionId: string;
 }) {
   const [available, setAvailable] = useState(true);
-  if (!available) return null;
+  const [open, setOpen] = useState(false);
   return (
     <div className="flex flex-col gap-1.5">
-      <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
+      <Button
+        variant="outline"
+        className="min-h-11 w-fit"
+        aria-expanded={open}
+        onClick={() => setOpen(!open)}
+      >
         <PenLine aria-hidden className="size-4" />
-        我的手写笔迹
-      </p>
-      <img
-        src={studentInkPngUrl(attemptId, questionId)}
-        alt={`第 ${questionId} 题的手写笔迹`}
-        loading="lazy"
-        className="w-full rounded-lg border border-border bg-white"
-        onError={() => setAvailable(false)}
-      />
+        查看手写原稿
+        <ChevronDown
+          aria-hidden
+          className={cn("size-4 transition-transform", open && "rotate-180")}
+        />
+      </Button>
+      {open && (
+        <p className="text-sm text-muted-foreground">
+          {available ? "我的手写笔迹" : "本次作答没有可查看的手写原稿。"}
+        </p>
+      )}
+      {open && available && (
+        <img
+          src={studentInkPngUrl(attemptId, questionId)}
+          alt={`第 ${questionId} 题的手写笔迹`}
+          loading="lazy"
+          className="w-full rounded-lg border border-border bg-white"
+          onError={() => setAvailable(false)}
+        />
+      )}
     </div>
   );
 }
@@ -347,15 +367,6 @@ function ResultQuestionCard({
         ))}
       </div>
 
-      {/* 老师批改块（D9）：有判定或评语时显著展示（未公布时服务端置 null 不渲染） */}
-      {released &&
-        (question.teacherMark !== null || question.teacherComment !== null) && (
-          <TeacherMarkBlock
-            teacherMark={question.teacherMark}
-            teacherComment={question.teacherComment}
-          />
-        )}
-
       {/* 题干快照（服务端已 studentStemMd 投影；displayStemMd 兜底剥内嵌选项列表） */}
       <RichMarkdown
         source={displayStemMd(question.snapshot)}
@@ -363,63 +374,7 @@ function ResultQuestionCard({
       />
       <ResultOptions question={question} released={released} />
 
-      {/* T6R.11：本次草稿原稿查看入口（非手写题——手写题没有草稿层，笔迹
-          缩略图另见下方）。学生看自己的草稿不受答案公布 gate 限制，两种
-          形态都渲染；面板按证据行定位本次原稿（软删题历史可读） */}
-      {!isHandwritten && (
-        <NoteOriginalView
-          viewer="student"
-          attemptId={attemptId}
-          questionId={question.questionId}
-          ariaPrefix={`第 ${index + 1} 题`}
-          roundLabel={roundLabel}
-        />
-      )}
-
-      {/* T6R.20：本次题干标注回看（scratch 只读——交卷已封存）＋订正标注
-          入口（phase=correction 另开新记录，旧 scratch 不变）。学生自有
-          材料不受答案公布 gate 限制 */}
-      <AnnotationView
-        viewer="student"
-        attemptId={attemptId}
-        questionId={question.questionId}
-        questionNo={index + 1}
-        ariaPrefix={`第 ${index + 1} 题`}
-      />
-      <AnnotationLayer
-        attemptId={attemptId}
-        questionId={question.questionId}
-        phase="correction"
-        ariaPrefix={`第 ${index + 1} 题`}
-      />
-
-      {/* 手写题：我的手写笔迹缩略图（T2.8；无笔迹时隐藏） */}
-      {isHandwritten && (
-        <InkThumbnail attemptId={attemptId} questionId={question.questionId} />
-      )}
-
-      {/* T6R.15：订正区（所有题型——订正是学生自有材料，不依赖草稿层，
-          手写题也有订正入口；含「本题历史」链接与 D8 找回入口）。学生
-          自有材料不受答案公布 gate 限制，两种形态都渲染 */}
-      <CorrectionSection
-        attemptId={attemptId}
-        questionId={question.questionId}
-        ariaPrefix={`第 ${index + 1} 题`}
-      />
-
-      {/* 做题时看过的提示（T2.11 回看；没解锁过则整块隐藏。
-          未公布时照常回看——只含学生自己请求过的条目，不构成泄露） */}
-      {question.hintsOpened.length > 0 && (
-        <div className="flex flex-col gap-1.5">
-          <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
-            <Lightbulb aria-hidden className="size-4" />
-            做题时看过的提示（{question.hintsOpened.length} 条）
-          </p>
-          <HintEntryList entries={question.hintsOpened} />
-        </div>
-      )}
-
-      <div className="flex flex-col gap-1.5 rounded-lg bg-muted/40 px-4 py-3 text-sm sm:flex-row sm:gap-6">
+      <div className="flex flex-col gap-2 border-t border-border pt-3 text-sm sm:flex-row sm:gap-6">
         <p className="flex flex-wrap gap-1.5">
           <span className="shrink-0 text-muted-foreground">你的答案：</span>
           <span
@@ -451,6 +406,14 @@ function ResultQuestionCard({
         )}
       </div>
 
+      {released &&
+        (question.teacherMark !== null || question.teacherComment !== null) && (
+          <TeacherMarkBlock
+            teacherMark={question.teacherMark}
+            teacherComment={question.teacherComment}
+          />
+        )}
+
       {/* T2A.8：详解只在公布后渲染（未公布时服务端 solutionMd=null） */}
       {released && (
         <SolutionFold
@@ -463,13 +426,69 @@ function ResultQuestionCard({
         />
       )}
 
-      {/* T6R.13：单题完整导出入口（AI 复习包——题干投影 + 本人答案 + 手写
-          原稿图；学生包不含参考答案/判定，任何公布态都可导出） */}
-      <ReviewPackPanel
-        viewer="student"
-        attemptId={attemptId}
-        questionId={question.questionId}
+      {/* 只回看本人已解锁的提示，公布前不增加任何答案材料。 */}
+      {question.hintsOpened.length > 0 && (
+        <div className="flex flex-col gap-1.5">
+          <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
+            <Lightbulb aria-hidden className="size-4" />
+            做题时看过的提示（{question.hintsOpened.length} 条）
+          </p>
+          <HintEntryList entries={question.hintsOpened} />
+        </div>
+      )}
+
+      <ResultQuestionTools
         questionNo={index + 1}
+        original={
+          <>
+            {!isHandwritten && (
+              <NoteOriginalView
+                viewer="student"
+                attemptId={attemptId}
+                questionId={question.questionId}
+                ariaPrefix={`第 ${index + 1} 题`}
+                roundLabel={roundLabel}
+              />
+            )}
+            {isHandwritten && (
+              <InkThumbnail
+                attemptId={attemptId}
+                questionId={question.questionId}
+              />
+            )}
+            <AnnotationView
+              viewer="student"
+              attemptId={attemptId}
+              questionId={question.questionId}
+              questionNo={index + 1}
+              ariaPrefix={`第 ${index + 1} 题`}
+            />
+          </>
+        }
+        correction={
+          <>
+            <AnnotationLayer
+              attemptId={attemptId}
+              questionId={question.questionId}
+              phase="correction"
+              ariaPrefix={`第 ${index + 1} 题`}
+              triggerLabel="添加订正标画"
+            />
+            <CorrectionSection
+              attemptId={attemptId}
+              questionId={question.questionId}
+              ariaPrefix={`第 ${index + 1} 题`}
+            />
+          </>
+        }
+        more={
+          <ReviewPackPanel
+            viewer="student"
+            attemptId={attemptId}
+            questionId={question.questionId}
+            questionNo={index + 1}
+          />
+        }
       />
     </article>
   );
@@ -558,7 +577,7 @@ export function AttemptResultView({
         >
           <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
             <h2 id="result-summary" className="text-base font-semibold">
-              {data.title} · {released ? "批改结果" : "已交卷"}
+              {released ? "批改结果" : "已交卷"}
             </h2>
             {/* 来源行（T2A.6，与答题视图同口径）：课程练习带次数（历次回看可分辨
               第几次）；作业标「作业」（挂课程时「作业 · 课程名」，T2A.7）；
@@ -629,7 +648,7 @@ export function AttemptResultView({
               )}
             </div>
           ) : (
-            <div className="flex flex-col gap-2 rounded-2xl border border-amber-300/60 bg-amber-50 p-4 text-sm dark:border-amber-500/30 dark:bg-amber-500/10">
+            <div className="flex flex-col gap-2 border-l-2 border-amber-400 pl-3 text-sm">
               <p className="flex items-center gap-2 font-medium text-amber-800 dark:text-amber-300">
                 <Clock aria-hidden className="size-4 shrink-0" />
                 已交卷，答案将在截止后公布

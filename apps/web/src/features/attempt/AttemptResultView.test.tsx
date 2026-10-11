@@ -2,6 +2,7 @@ import {
   fireEvent,
   render as renderReact,
   screen,
+  within,
 } from "@testing-library/react";
 import type { AttemptResultData } from "@tutor/contract";
 import type { ReactNode } from "react";
@@ -179,6 +180,28 @@ function renderView(onBackHome = vi.fn()) {
 }
 
 describe("得分汇总卡", () => {
+  it("先读答案与详解，再访问原稿和订正，定位范围不卸载正文", () => {
+    renderView();
+    const card = screen.getByRole("article", { name: "第 1 题" });
+    const answer = within(card).getByText("你的答案：");
+    const solution = within(card).getByRole("button", { name: "查看详解" });
+    const tools = within(card).getByRole("region", {
+      name: "第 1 题材料与订正",
+    });
+    expect(
+      answer.compareDocumentPosition(solution) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      solution.compareDocumentPosition(tools) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    fireEvent.change(screen.getByRole("combobox", { name: "回看定位范围" }), {
+      target: { value: "wrong" },
+    });
+    expect(screen.getAllByRole("article")).toHaveLength(4);
+    expect(within(card).getByTestId("note-original-stub")).toBeInTheDocument();
+  });
   it("显示得分、对/错/待批与未答计数（D1：未答独立展示）与交卷时间", () => {
     renderView();
     expect(screen.getByText("60")).toBeInTheDocument();
@@ -318,8 +341,12 @@ describe("逐题结果卡", () => {
     expect(screen.queryByText(/-\\frac\{5\}\{4\} 或 -5\/4/)).toBeNull();
   });
 
-  it("手写题显示「我的手写笔迹」缩略图（学生本人 PNG 直出）；客观题不显示", () => {
+  it("手写原稿按需读取PNG，客观题不拉手写图片", () => {
     renderView();
+    expect(
+      screen.queryByAltText("第 p4-q7 题的手写笔迹"),
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "查看手写原稿" }));
     const img = screen.getByAltText("第 p4-q7 题的手写笔迹");
     expect(img).toHaveAttribute(
       "src",
@@ -415,8 +442,12 @@ describe("T2A.8 未公布形态（answersReleased=false，截止后公布且未�
     expect(bodyText).not.toContain("答错");
     expect(bodyText).not.toContain("待批");
     expect(bodyText).toContain("已作答 3 题 / 共 4 题");
-    // 标题后缀从「批改结果」换成「已交卷」
-    expect(screen.getByText(/周末加练 · 已交卷/)).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "周末加练", level: 1 }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "已交卷", level: 2 }),
+    ).toBeInTheDocument();
   });
 
   it("逐题卡只渲染本人作答内容：无对错图标、无参考答案、无详解；本人答案与已解锁提示保留", () => {
