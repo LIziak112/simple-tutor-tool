@@ -193,6 +193,12 @@ test.describe("题干标注（T6R.20）", () => {
       const questionId = `${unitName}-1`;
       const card = studentPage.locator('article[aria-label="第 1 题"]');
 
+      // 固定v1兼容场景；新稿原位链路由question-inline-annotation单独验收。
+      const legacy = await studentPage.request.post(
+        `/api/student/attempts/${attemptId}/questions/${encodeURIComponent(questionId)}/annotation/base`,
+      );
+      expect(legacy.ok()).toBe(true);
+
       // —— 开标注：两阶段底图流（真实栅格化）——
       await card.getByRole("button", { name: /圈画题干/ }).click();
       const wrap = card.locator('[data-slot="annotation-base-wrap"]');
@@ -455,10 +461,15 @@ test.describe("题干标注（T6R.20）", () => {
       const card = page.locator('article[aria-label="第 1 题"]');
       await card.getByRole("button", { name: /圈画题干/ }).click();
       // 超高题：显式禁用 + 说明原因 + 草稿照用口径
-      await expect(card.getByText(/已禁用题干标注/)).toBeVisible({
-        timeout: 120_000,
-      });
-      await expect(card.getByText(/草稿纸不受影响/)).toBeVisible();
+      await expect(page.getByRole("alert")).toContainText(/尺寸超限/);
+      await expect(page.getByRole("alert")).toContainText(/草稿不受影响/);
+      await expect(
+        card.locator('canvas[data-slot="annotation-canvas"]'),
+      ).toHaveCount(0);
+      await expect(
+        card.locator('[data-slot="question-surface"]'),
+      ).not.toHaveAttribute("inert", "");
+      await expect(card.getByText(/已禁用题干标注/)).toHaveCount(0);
       // 不挂画布（没有可靠底图不能落墨）
       await expect(
         card.locator('[data-slot="annotation-base-wrap"]'),
@@ -537,9 +548,9 @@ test.describe("题干标注（T6R.20）", () => {
 
       const card = page.locator('article[aria-label="第 1 题"]');
       await card.getByRole("button", { name: /圈画题干/ }).click();
-      await expect(card.getByText(/已禁用题干标注/)).toBeVisible({
-        timeout: 30_000,
-      });
+      await expect(page.getByRole("alert")).toContainText(
+        "题面装配失败：题干含答案标记",
+      );
       await expect(
         card.locator('[data-slot="annotation-base-wrap"]'),
       ).toHaveCount(0);

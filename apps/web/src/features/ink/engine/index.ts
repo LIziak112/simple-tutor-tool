@@ -69,6 +69,7 @@ export interface InkEngineOptions {
 /** 引擎对外 API（固定；canUndo/canRedo 供工具栏禁用态，属附加查询） */
 export interface InkEngine {
   getData(): InkDoc;
+  finish?(): void;
   load(data: InkDoc): void;
   exportPng(): Promise<Blob>;
   undo(): void;
@@ -125,6 +126,7 @@ export function create(
 
   return {
     getData: () => surface.getDoc(),
+    finish: () => surface.finish?.(),
     load: (data) => surface.load(data),
     exportPng: () => surface.exportPng(),
     undo: () => surface.undo(),

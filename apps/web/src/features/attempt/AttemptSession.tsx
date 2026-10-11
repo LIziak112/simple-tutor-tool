@@ -5,7 +5,7 @@ import type {
   AttemptResultData,
   HintOpenedEntry,
 } from "@tutor/contract";
-import { Grid2X2 } from "lucide-react";
+import { Grid2X2, RotateCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { Button } from "@/components/ui/button";
@@ -20,7 +20,6 @@ import { AttemptBottomBar } from "@/features/attempt/AttemptBottomBar";
 import { AttemptHeader } from "@/features/attempt/AttemptHeader";
 import { AttemptQuestionCard } from "@/features/attempt/AttemptQuestionCard";
 import { AttemptResultView } from "@/features/attempt/AttemptResultView";
-import { DraftStatusBar } from "@/features/attempt/DraftStatusBar";
 import { draftStore } from "@/features/attempt/draft-store";
 import {
   SubmitConfirmDialog,
@@ -47,10 +46,18 @@ import { sealAttemptAnnotationsApi, startWrongPracticeApi } from "@/lib/api";
 import { createEventQueue } from "@/lib/event-queue";
 import { formatDueTime } from "@/lib/time";
 import { useOnlineStatus } from "@/lib/use-online-status";
+import {
+  AttemptEditorProvider,
+  useAttemptEditor,
+} from "./AttemptEditorContext";
 import { AttemptWorkspace } from "./AttemptWorkspace";
 import { useSubmitAttempt } from "./attempt-queries";
 import { QuestionNavigator } from "./QuestionNavigator";
 import { completionLabel, getQuestionCompletion } from "./question-completion";
+import {
+  retryAttemptLocalPersistence,
+  useAttemptSaveStatus,
+} from "./use-attempt-save-status";
 import { useReadingPosition } from "./use-reading-position";
 import { useWorkspaceFlags } from "./use-workspace-flags";
 
@@ -131,13 +138,15 @@ export function AttemptSession({
           annotationSealWarning={annotationSealWarning}
         />
       ) : (
-        <AnswerView
-          key={data.attempt.id}
-          data={data}
-          attemptId={data.attempt.id}
-          onBackHome={onExit}
-          onAnnotationSealFailed={() => setAnnotationSealWarning(true)}
-        />
+        <AttemptEditorProvider key={data.attempt.id}>
+          <AnswerView
+            key={data.attempt.id}
+            data={data}
+            attemptId={data.attempt.id}
+            onBackHome={onExit}
+            onAnnotationSealFailed={() => setAnnotationSealWarning(true)}
+          />
+        </AttemptEditorProvider>
       )}
     </EnabledCapabilitiesProvider>
   );
@@ -235,6 +244,7 @@ function AnswerView({
   /** 交卷成功后的标注 seal 失败回调（非阻断警示——AttemptSession 顶态） */
   onAnnotationSealFailed: () => void;
 }) {
+  const editor = useAttemptEditor();
   /** 手写题的笔迹上传 controller（mount 注册、unmount 注销；交卷前逐题 flush，
    *  草稿同步循环也会逐题 sync——先声明再传给 useDraftSync） */
   const inkControllers = useRef(new Map<string, InkUploadController>());
@@ -358,7 +368,8 @@ function AnswerView({
     (item) => item.completion.state === "filled",
   ).length;
   const unanswered = total - answered;
-  const jumpToQuestion = (id: string, focusAnswer = false) => {
+  const jumpToQuestion = async (id: string, focusAnswer = false) => {
+    if (editor && !(await editor.request(null))) return;
     setNavigatorOpen(false);
     setCurrentQuestionId(id);
     requestAnimationFrame(() => {
@@ -404,7 +415,8 @@ function AnswerView({
    * 打开交卷弹层：重置明确选择分支并取草稿本地快览（无网络，纯内存态——
    * 确认时以 prepareSubmitEvidence 的权威判定为准）。
    */
-  const openSubmitDialog = useCallback(() => {
+  const openSubmitDialog = useCallback(async () => {
+    if (editor && !(await editor.request(null))) return;
     setNotePrep({ kind: "idle" });
     missingConfirmedRef.current = null;
     submitAbortedRef.current = false;
@@ -429,7 +441,7 @@ function AnswerView({
           : null,
       );
     });
-  }, [attemptId, questionIds]);
+  }, [attemptId, questionIds, editor]);
 
   /**
    * 关闭交卷弹层 = 取消 = 中止准备链：置 abort 标志（confirmSubmit 各
@@ -573,6 +585,15 @@ function AnswerView({
 
   // 离线状态（T2.12）：离线时禁用交卷并提示（作答照常，草稿本地保存）
   const online = useOnlineStatus();
+  const saveStatus = useAttemptSaveStatus(
+    attemptId,
+    questionIds,
+    draftSync.status,
+    online,
+    inkControllers,
+  );
+  const [retryingSave, setRetryingSave] = useState(false);
+  const [retrySaveError, setRetrySaveError] = useState<string | null>(null);
 
   // 访问权终态（T2A.6，D7）：已无权限时收起交卷入口（交卷必然同样被拒）
   const denied = draftSync.status.state === "denied";
@@ -583,8 +604,54 @@ function AnswerView({
         {/* 练习头：来源 + 标题 + 截止 + 草稿保存状态（T2.9 三态 + T2A.6 终态） */}
         <AttemptHeader
           title={data.title}
-          status={<DraftStatusBar status={draftSync.status} />}
-          onBack={onBackHome}
+          status={
+            <div className="flex min-w-0 items-center gap-2">
+              <p
+                data-testid="draft-status"
+                className="text-xs text-muted-foreground"
+                aria-live="polite"
+              >
+                {saveStatus}
+              </p>
+              {saveStatus.startsWith("本机保存失败") && (
+                <Button
+                  variant="ghost"
+                  className="size-11 shrink-0 p-0"
+                  title="重试本机保存"
+                  aria-label="重试本机保存"
+                  disabled={retryingSave}
+                  onClick={async () => {
+                    setRetryingSave(true);
+                    setRetrySaveError(null);
+                    try {
+                      await retryAttemptLocalPersistence(
+                        attemptId,
+                        questionIds,
+                      );
+                    } catch (cause) {
+                      setRetrySaveError(
+                        cause instanceof Error
+                          ? cause.message
+                          : "本机保存仍失败，请保持页面打开",
+                      );
+                    } finally {
+                      setRetryingSave(false);
+                    }
+                  }}
+                >
+                  <RotateCw />
+                </Button>
+              )}
+              {retrySaveError && (
+                <span role="alert" className="text-xs text-destructive">
+                  {retrySaveError}
+                </span>
+              )}
+            </div>
+          }
+          onBack={async () => {
+            if (!editor || (await editor.request(null))) onBackHome();
+          }}
         >
           <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
             <span>{sourceLabel(data)}</span>

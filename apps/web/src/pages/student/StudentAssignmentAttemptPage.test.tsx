@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import type {
   AttemptDraftData,
   AttemptResultData,
@@ -474,15 +474,18 @@ const HANDWRITTEN_DRAFT: AttemptDraftData = {
   enabledCapabilities: ["steps", "ink"],
 };
 
-/** 展开下一道未展开的手写题并「书写一笔」（展开后按钮变「收起」，故每次取第一个） */
-async function writeOnNextHandwritten(): Promise<void> {
-  const toggles = screen.getAllByRole("button", {
+/** 单活动编辑者会收起前题，必须按题号定位，不能取首个收起态入口。 */
+async function writeOnNextHandwritten(questionNumber = 1): Promise<void> {
+  const card = within(
+    screen.getByRole("article", { name: `第 ${questionNumber} 题` }),
+  );
+  const toggle = card.getByRole("button", {
     name: /手写作答/,
     expanded: false,
   });
-  fireEvent.click(toggles[0] as HTMLElement);
-  const emits = await screen.findAllByTestId("ink-emit-atrament");
-  fireEvent.click(emits[emits.length - 1] as HTMLElement);
+  fireEvent.click(toggle);
+  await waitFor(() => expect(toggle).toHaveAttribute("aria-expanded", "true"));
+  fireEvent.click(await card.findByTestId("ink-emit-atrament"));
 }
 
 /** 点交卷并确认 */
@@ -503,7 +506,7 @@ describe("StudentAssignmentAttemptPage：交卷 flush", () => {
 
     await screen.findByText("第一道手写题");
     await writeOnNextHandwritten();
-    await writeOnNextHandwritten();
+    await writeOnNextHandwritten(2);
     await clickSubmitAndConfirm();
 
     await waitFor(() => expect(mockedPutInk).toHaveBeenCalledTimes(2));

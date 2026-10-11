@@ -1,4 +1,5 @@
 import type {
+  AttemptQuestionPublic,
   HintOpenedEntry,
   QuestionPublic,
   StudentAnswer,
@@ -10,7 +11,7 @@ import {
   NotebookPen,
   Pencil,
 } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -19,11 +20,16 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { AnnotationLayer } from "@/features/annotation/AnnotationLayer";
+import {
+  QuestionAnnotationOverlay,
+  type QuestionAnnotationOverlayHandle,
+} from "@/features/annotation/QuestionAnnotationOverlay";
 import { useAnnotationRecord } from "@/features/annotation/use-annotation-record";
 import { useEnabledCapabilities } from "@/features/capability/enabled-capabilities";
 import { NoteLayer } from "@/features/notes/NoteLayer";
 import { NOTE_STACK_ROW_STYLE } from "@/features/notes/note-layout";
 import { useNoteRecord } from "@/features/notes/use-note-record";
+import { useAttemptEditor } from "./AttemptEditorContext";
 import {
   HANDWRITTEN_TYPES,
   QUESTION_TYPE_BADGE_CLASS,
@@ -74,6 +80,8 @@ function QuestionMeta({
     paperProblem: boolean;
     toggleAnnotation: () => void;
     togglePaper: () => void;
+    annotationHidden?: boolean;
+    toggleAnnotationVisibility?: () => void;
   } | null;
 }) {
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -111,7 +119,7 @@ function QuestionMeta({
               variant="ghost"
               className="size-11 p-0"
               title="圈画题干"
-              aria-label={`第 ${index + 1} 题圈画题干${tools.annotationCount > 0 ? `（已有 ${tools.annotationCount} 笔）` : ""}${tools.annotationProblem ? "，同步需处理" : ""}`}
+              aria-label={`第 ${index + 1} 题圈画题干${tools.annotationOpen ? "（标画中）" : ""}${tools.annotationCount > 0 ? `（已有 ${tools.annotationCount} 笔）` : ""}${tools.annotationProblem ? "，同步需处理" : ""}`}
               aria-expanded={tools.annotationOpen}
               onClick={tools.toggleAnnotation}
             >
@@ -160,6 +168,16 @@ function QuestionMeta({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+              {tools?.toggleAnnotationVisibility &&
+                tools.annotationCount > 0 && (
+                  <DropdownMenuItem
+                    role="menuitemcheckbox"
+                    aria-checked={!tools.annotationHidden}
+                    onSelect={tools.toggleAnnotationVisibility}
+                  >
+                    显示标画
+                  </DropdownMenuItem>
+                )}
               <DropdownMenuItem
                 onSelect={() => setDetailsOpen((value) => !value)}
               >
@@ -253,8 +271,43 @@ export function AttemptQuestionCard({
   // 入口（已有草稿数据保留服务端，恢复开关后回来看）。
   const { ink: inkEnabled } = useEnabledCapabilities();
   const articleRef = useRef<HTMLElement | null>(null);
-  const [noteOpen, setNoteOpen] = useState(false);
+  const editor = useAttemptEditor();
+  const annotationOverlay = useRef<QuestionAnnotationOverlayHandle>(null);
+  const [localNoteOpen, setLocalNoteOpen] = useState(false);
+  const noteOpen = editor
+    ? editor.active?.questionId === question.id &&
+      editor.active.kind !== "annotation"
+    : localNoteOpen;
+  const setNoteOpen = (next: boolean | ((previous: boolean) => boolean)) => {
+    const open = typeof next === "function" ? next(noteOpen) : next;
+    if (editor)
+      void editor.request(
+        open
+          ? {
+              questionId: question.id,
+              kind: HANDWRITTEN_TYPES.has(question.type)
+                ? "answerInk"
+                : "scratch",
+            }
+          : null,
+      );
+    else setLocalNoteOpen(open);
+  };
   const [annotationOpen, setAnnotationOpen] = useState(false);
+  const [annotationHidden, setAnnotationHidden] = useState(false);
+  const inlineQuestion: AttemptQuestionPublic | null =
+    editor &&
+    "questionRevisionId" in question &&
+    typeof question.questionRevisionId === "string"
+      ? { ...question, questionRevisionId: question.questionRevisionId }
+      : null;
+  const drawing =
+    editor?.active?.questionId === question.id &&
+    editor.active.kind === "annotation";
+  useEffect(() => {
+    if (inlineQuestion !== null && annotationOpen && !drawing)
+      setAnnotationOpen(false);
+  }, [inlineQuestion, annotationOpen, drawing]);
   const annotationRecord = useAnnotationRecord(attemptId ?? "", question.id);
   const noteRecord = useNoteRecord(attemptId ?? "", question.id);
   const noteLayer =
@@ -274,11 +327,34 @@ export function AttemptQuestionCard({
   /** 题面、正式作答与辅助内容保持稳定的组件身份。 */
   const questionBody = (
     <>
-      <QuestionSurface
-        question={question}
-        answer={answer}
-        onAnswer={onAnswer}
-      />
+      {inlineQuestion && attemptId !== undefined ? (
+        <QuestionAnnotationOverlay
+          ref={annotationOverlay}
+          attemptId={attemptId}
+          question={inlineQuestion}
+          label={`第 ${index + 1} 题`}
+          hidden={annotationHidden}
+          onLegacy={() => {
+            setAnnotationOpen(true);
+            void editor?.request({
+              questionId: question.id,
+              kind: "annotation",
+            });
+          }}
+        >
+          <QuestionSurface
+            question={question}
+            answer={answer}
+            onAnswer={onAnswer}
+          />
+        </QuestionAnnotationOverlay>
+      ) : (
+        <QuestionSurface
+          question={question}
+          answer={answer}
+          onAnswer={onAnswer}
+        />
+      )}
 
       {HANDWRITTEN_TYPES.has(question.type) && attemptId !== undefined && (
         <HandwrittenControls
@@ -313,15 +389,29 @@ export function AttemptQuestionCard({
 
       {/* T6R.20 题干标注（圈画题干）：所有题型的附加折叠区——标注模式外
           保留原作答控件（方案 §10）；base ready 才挂画布（层内 gate） */}
-      {attemptId !== undefined && (
-        <AnnotationLayer
-          attemptId={attemptId}
-          questionId={question.id}
-          ariaPrefix={`第 ${index + 1} 题`}
-          open={annotationOpen}
-          onOpenChange={setAnnotationOpen}
-          showTrigger={false}
-        />
+      {attemptId !== undefined &&
+        (inlineQuestion === null || annotationOpen) && (
+          <AnnotationLayer
+            attemptId={attemptId}
+            questionId={question.id}
+            ariaPrefix={`第 ${index + 1} 题`}
+            open={annotationOpen}
+            onOpenChange={async (open) => {
+              if (!open && editor && !(await editor.request(null))) return;
+              setAnnotationOpen(open);
+            }}
+            showTrigger={false}
+          />
+        )}
+      {inlineQuestion !== null && annotationOpen && drawing && (
+        <div
+          data-slot="attempt-bottom-bar"
+          className="fixed inset-x-0 bottom-0 z-30 flex min-h-16 items-center justify-center border-t border-border bg-card pb-[env(safe-area-inset-bottom)]"
+        >
+          <Button className="h-11" onClick={() => void editor?.request(null)}>
+            作答
+          </Button>
+        </div>
       )}
     </>
   );
@@ -333,6 +423,20 @@ export function AttemptQuestionCard({
       tabIndex={-1}
       className="flex scroll-mt-[calc(var(--attempt-header-height,64px)+12px)] flex-col gap-3 rounded-lg border border-border bg-card p-4 text-card-foreground outline-none focus-visible:ring-2 focus-visible:ring-primary sm:p-5"
       aria-label={`第 ${index + 1} 题`}
+      onPointerDownCapture={(event) => {
+        if (
+          editor?.active?.kind !== "annotation" ||
+          !(event.target instanceof Element)
+        )
+          return;
+        if (
+          event.target.closest(
+            '[data-slot="question-annotation-overlay"], [data-slot="annotation-workspace"], [data-slot="attempt-bottom-bar"]',
+          )
+        )
+          return;
+        void editor.request(null);
+      }}
     >
       <QuestionMeta
         index={index}
@@ -345,7 +449,7 @@ export function AttemptQuestionCard({
           attemptId === undefined
             ? null
             : {
-                annotationOpen,
+                annotationOpen: annotationOpen || drawing,
                 paperOpen: noteOpen,
                 paperEnabled: inkEnabled,
                 annotationCount: annotationRecord?.doc?.strokes.length ?? 0,
@@ -358,8 +462,26 @@ export function AttemptQuestionCard({
                   noteRecord?.conflict != null ||
                   noteRecord?.denied != null ||
                   noteRecord?.local === "failed",
-                toggleAnnotation: () => setAnnotationOpen((value) => !value),
+                toggleAnnotation: () => {
+                  if (inlineQuestion === null)
+                    setAnnotationOpen((value) => !value);
+                  else if (drawing) void editor?.request(null);
+                  else if (annotationOpen) setAnnotationOpen(false);
+                  else {
+                    setAnnotationHidden(false);
+                    void annotationOverlay.current?.start();
+                  }
+                },
                 togglePaper: () => setNoteOpen((value) => !value),
+                ...(inlineQuestion
+                  ? {
+                      annotationHidden,
+                      toggleAnnotationVisibility: async () => {
+                        if (!editor || (await editor.request(null)))
+                          setAnnotationHidden((value) => !value);
+                      },
+                    }
+                  : {}),
               }
         }
       />

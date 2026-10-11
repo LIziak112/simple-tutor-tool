@@ -5,6 +5,7 @@ import {
   installAnnotationBackend,
   memoryAnnotationBackend,
   resetAnnotationStoreForTest,
+  retryAnnotationPersistence,
   writeLocalAnnotationBase,
 } from "./annotation-store";
 
@@ -93,6 +94,38 @@ it("不同布局或不匹配的矢量不得覆盖已有本机底图", async () =
       { ...doc, baseWidth: 601 },
     ),
   ).rejects.toThrow("尺寸");
+  expect(
+    (await getAnnotationRecord(session, scope))?.localBase?.layout,
+  ).toEqual(layout);
+});
+
+it("重试原子落盘保留同一底图、文档版本和待传标识", async () => {
+  const backend = memoryAnnotationBackend();
+  let failed = true;
+  installAnnotationBackend({
+    ...backend,
+    set: async (key, value) => {
+      if (failed) throw new Error("空间不足");
+      await backend.set(key, value);
+    },
+  });
+  await expect(
+    writeLocalAnnotationBase(session, scope, { png, layout }, doc),
+  ).rejects.toThrow("空间不足");
+  const before = await getAnnotationRecord(session, scope);
+  const version = before?.docVersion;
+  const pending = before?.pending;
+  await expect(retryAnnotationPersistence(session, scope)).rejects.toThrow(
+    "空间不足",
+  );
+  failed = false;
+  await retryAnnotationPersistence(session, scope);
+  const saved = await getAnnotationRecord(session, scope);
+  expect(saved?.local).toBe("saved");
+  expect(saved?.docVersion).toBe(version);
+  expect(saved?.pending).toEqual(pending);
+  expect(saved?.localBase?.png).toBe(png);
+  resetAnnotationStoreForTest();
   expect(
     (await getAnnotationRecord(session, scope))?.localBase?.layout,
   ).toEqual(layout);

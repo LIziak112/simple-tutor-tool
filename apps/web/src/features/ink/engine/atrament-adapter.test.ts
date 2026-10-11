@@ -497,6 +497,26 @@ describe("atrament-adapter：多指与多画布", () => {
 });
 
 describe("atrament-adapter：取消/失焦/丢捕获（只保留已收真实采样）", () => {
+  it("切编辑域显式收笔，保留已收采样和原撤销历史", () => {
+    const h = mountSurface();
+    pointer(h.canvas, "pointerdown", {
+      pointerId: 1,
+      pointerType: "pen",
+      clientX: 100,
+      clientY: 50,
+    });
+    pointer(h.canvas, "pointermove", {
+      pointerId: 1,
+      pointerType: "pen",
+      clientX: 140,
+      clientY: 80,
+    });
+    h.surface.finish?.();
+    expect(h.events).toHaveLength(1);
+    expect(h.events[0]?.strokes).toBe(1);
+    h.surface.undo();
+    expect(h.events.at(-1)?.strokes).toBe(0);
+  });
   it("pointercancel：按已收点收笔、不补造终点；后续事件不粘笔；新手势正常", () => {
     const h = mountSurface();
     pointer(h.canvas, "pointerdown", pd("pen", 1, 20, 20));

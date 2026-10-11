@@ -802,6 +802,21 @@ export function resetAnnotationStoreForTest(): void {
 }
 
 /** 等待当前全部本地落盘事务完成（交卷 flush 前的等待原语） */
+/** 只重写原记录，不生成新版本或待传标识。 */
+export async function retryAnnotationPersistence(
+  session: AnnotationSessionRef,
+  scope: AnnotationScope,
+): Promise<void> {
+  const key = annotationKeyOf(session, scope);
+  if (records.get(key)?.local !== "failed") return;
+  const tail = schedulePersist(key);
+  notify(key);
+  await tail;
+  const saved = records.get(key);
+  if (saved?.local === "failed")
+    throw new Error(saved.localError ?? "本机标画保存失败");
+}
+
 export function settleAnnotationPersistence(): Promise<void> {
   const tails: Array<Promise<void>> = [];
   for (const queue of queues.values()) tails.push(queue.tail);

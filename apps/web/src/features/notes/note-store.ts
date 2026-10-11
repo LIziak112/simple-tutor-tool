@@ -1212,3 +1212,18 @@ export function settleNotePersistence(): Promise<void> {
   for (const queue of queues.values()) tails.push(queue.tail);
   return Promise.all(tails).then(() => undefined);
 }
+
+/** 只重写原记录，保留草稿版本与同步标识。 */
+export async function retryNotePersistence(
+  session: NoteSessionRef,
+  scope: NoteScope,
+): Promise<void> {
+  const key = noteKeyOf(session, scope);
+  if (records.get(key)?.local !== "failed") return;
+  const tail = schedulePersist(key);
+  notify(key);
+  await tail;
+  const saved = records.get(key);
+  if (saved?.local === "failed")
+    throw new Error(saved.localError ?? "本机草稿保存失败");
+}

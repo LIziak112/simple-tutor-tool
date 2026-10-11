@@ -47,12 +47,8 @@ export function AttemptWorkspace({ children }: { children: ReactNode }) {
   useEffect(() => {
     const element = root.current;
     if (element === null) return;
-    const header = element.querySelector<HTMLElement>(
-      '[data-slot="attempt-header"]',
-    );
-    const footer = element.querySelector<HTMLElement>(
-      '[data-slot="attempt-bottom-bar"]',
-    );
+    let header: HTMLElement | null = null;
+    let footer: HTMLElement | null = null;
     const measure = () => {
       element.style.setProperty(
         "--attempt-header-height",
@@ -63,12 +59,34 @@ export function AttemptWorkspace({ children }: { children: ReactNode }) {
         `${footer?.getBoundingClientRect().height || 64}px`,
       );
     };
+    const observer =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(measure);
+    const discover = () => {
+      const nextHeader = element.querySelector<HTMLElement>(
+        '[data-slot="attempt-header"]',
+      );
+      const nextFooter = element.querySelector<HTMLElement>(
+        '[data-slot="attempt-bottom-bar"]',
+      );
+      if (header === nextHeader && footer === nextFooter) return;
+      if (header) observer?.unobserve(header);
+      if (footer) observer?.unobserve(footer);
+      header = nextHeader;
+      footer = nextFooter;
+      if (header) observer?.observe(header);
+      if (footer) observer?.observe(footer);
+      measure();
+    };
+    discover();
     measure();
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(measure);
-    if (header) observer.observe(header);
-    if (footer) observer.observe(footer);
-    return () => observer.disconnect();
+    const mutation = new MutationObserver(discover);
+    mutation.observe(element, { childList: true, subtree: true });
+    return () => {
+      observer?.disconnect();
+      mutation.disconnect();
+    };
   }, []);
   return (
     <div

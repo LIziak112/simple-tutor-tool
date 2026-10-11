@@ -727,6 +727,10 @@ export function createAtramentSurface(
       redraw();
     },
 
+    finish(): void {
+      finishPointer({ kind: "layoutchange" });
+    },
+
     async exportPng(): Promise<Blob> {
       if (!canvas) throw new Error("导出失败：画布尚未挂载");
       const out = document.createElement("canvas");

@@ -1,5 +1,6 @@
 import { AlertTriangle, Ban, Grid2X2, WifiOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useAttemptEditor } from "./AttemptEditorContext";
 
 /**
  * 答题页吸底操作条（T2.6 建立，T2.12 抽成组件并加离线交卷保护）：
@@ -37,6 +38,8 @@ export function AttemptBottomBar({
   onOpenSubmit: () => void;
   onOpenNavigator?: () => void;
 }) {
+  const editor = useAttemptEditor();
+  if (editor?.active?.kind === "annotation") return null;
   return (
     <div
       data-slot="attempt-bottom-bar"

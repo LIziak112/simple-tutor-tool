@@ -96,6 +96,15 @@ it("网络失败仍可原子保存本机底图并进入，不伪造服务器ID",
   expect((await getAnnotationRecord(session, scope))?.base).toBeNull();
   expect((await getAnnotationRecord(session, scope))?.localBase?.png).toBe(png);
 });
+it("题面投影损坏不是普通网络离线，必须拒绝生成", async () => {
+  vi.mocked(fetchAnnotationViewApi).mockRejectedValue(
+    new ApiError("EXPORT_ASSEMBLY_BROKEN", "题面投影异常", 500),
+  );
+  await expect(
+    prepareQuestionAnnotationBase(session, scope, question, surface),
+  ).rejects.toThrow("题面投影异常");
+  expect(renderQuestionBaseImage).not.toHaveBeenCalled();
+});
 
 it("失败的本机记录不能被缓存快路径冒称ready", async () => {
   const backend = memoryAnnotationBackend();

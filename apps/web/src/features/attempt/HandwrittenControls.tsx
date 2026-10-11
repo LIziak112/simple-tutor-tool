@@ -25,8 +25,9 @@ import {
 } from "@/features/ink/engine/index.ts";
 import { InkPad } from "@/features/ink/InkPad";
 import { fetchAttemptInkApi, studentInkPngUrl } from "@/lib/api";
+import { useAttemptEditor } from "./AttemptEditorContext";
 import { mergeInkDocs } from "./draft-merge";
-import { draftStore } from "./draft-store";
+import { draftStore, getDraftPersistenceState } from "./draft-store";
 import { FinalAnswerInput } from "./FinalAnswerInput";
 import { InkFullscreenLayer } from "./InkFullscreenLayer";
 import { useDraftSyncContext } from "./use-draft-sync";
@@ -129,6 +130,12 @@ export function HandwrittenControls({
   const [internalExpanded, setInternalExpanded] = useState(false);
   const expanded = controlledExpanded ?? internalExpanded;
   const externallyControlled = controlledExpanded !== undefined;
+  const [retainedPaper, setRetainedPaper] = useState<string | null>(
+    controlledExpanded === true ? questionId : null,
+  );
+  useEffect(() => {
+    if (expanded && externallyControlled) setRetainedPaper(questionId);
+  }, [expanded, externallyControlled, questionId]);
   const setExpanded = useCallback(
     (next: boolean | ((previous: boolean) => boolean)) => {
       const value = typeof next === "function" ? next(expanded) : next;
@@ -163,6 +170,17 @@ export function HandwrittenControls({
   const engineGetter = useCallback(
     () => (fullscreen ? fullscreenEngineRef.current : pageEngineRef.current),
     [fullscreen],
+  );
+  const coordinator = useAttemptEditor();
+  const finish = useCallback(async () => {
+    engineGetter()?.finish?.();
+    await draftStore.flush(attemptId);
+    if (getDraftPersistenceState(attemptId) === "failed")
+      throw new Error("手写作答本机保存失败，请保持页面打开并重试");
+  }, [engineGetter, attemptId]);
+  useEffect(
+    () => coordinator?.register(questionId, finish, "answerInk"),
+    [coordinator?.register, questionId, finish],
   );
   const {
     onDocChange: onDocChangeUpload,
@@ -409,8 +427,9 @@ export function HandwrittenControls({
       </div>
 
       {/* 手写区（展开时）：atrament 页内画布 / excalidraw 占位卡 / 加载态 */}
-      {expanded && (
-        <>
+      {(expanded ||
+        (controlledExpanded !== undefined && retainedPaper === questionId)) && (
+        <div hidden={!expanded}>
           {masterDoc === undefined && (
             <p
               aria-live="polite"
@@ -459,7 +478,7 @@ export function HandwrittenControls({
               </Button>
             </div>
           )}
-        </>
+        </div>
       )}
 
       {/* 最终答案（普通输入 / 数学键盘，T2.6 输入框保留 + MathLive 切换） */}

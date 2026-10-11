@@ -67,7 +67,11 @@ export async function prepareQuestionAnnotationBase(
     remoteDoc ??= view.doc;
   } catch (error) {
     guard();
-    if (error instanceof ApiError && error.status < 500) throw error;
+    if (
+      error instanceof ApiError &&
+      (error.status < 500 || error.code === "EXPORT_ASSEMBLY_BROKEN")
+    )
+      throw error;
     // 网络失败允许从已经授权显示的公开题面建本机稿，重连时严格绑定。
   }
   if (base !== null && base.layout === undefined)

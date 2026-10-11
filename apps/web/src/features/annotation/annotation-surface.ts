@@ -63,6 +63,8 @@ function round2(v: number): number {
 export interface AnnotationSurface {
   mount(el: HTMLElement, initial?: AnnotationDoc): void;
   getDoc(): AnnotationDoc;
+  finish(): void;
+  setInputEnabled(enabled: boolean): void;
   load(doc: AnnotationDoc): void;
   undo(): void;
   redo(): void;
@@ -83,6 +85,7 @@ export interface AnnotationSurfaceOptions {
   baseHeight: number;
   /** 输入模式（缺省 auto——笔/手指/鼠标都可圈画，同旧作答组件口径） */
   inputMode?: InkInputMode;
+  inputEnabled?: boolean;
 }
 
 /**
@@ -135,6 +138,7 @@ export function createAnnotationSurface(
   let atrament: Atrament | null = null;
   let ctx2d: CanvasRenderingContext2D | null = null;
   let observer: ResizeObserver | null = null;
+  let inputBound = false;
 
   let tool: InkToolConfig = { type: "pen" };
   let base: {
@@ -426,7 +430,15 @@ export function createAnnotationSurface(
     const r = advancePointerMachine(machine, event);
     machine = r.state;
     for (const d of r.decisions) {
-      if (d.action === "commit") commitLiveStroke();
+      if (d.action === "commit") {
+        commitLiveStroke();
+        try {
+          if (canvas?.hasPointerCapture?.(d.pointerId))
+            canvas.releasePointerCapture(d.pointerId);
+        } catch {
+          /* 指针可能已由浏览器释放。 */
+        }
+      }
     }
   }
 
@@ -477,6 +489,43 @@ export function createAnnotationSurface(
     e.preventDefault();
   }
 
+  function bindInput(enabled: boolean): void {
+    if (!canvas) return;
+    canvas.dataset.inputEnabled = String(enabled);
+    canvas.style.pointerEvents = enabled ? "auto" : "none";
+    if (inputBound === enabled) return;
+    inputBound = enabled;
+    if (enabled) {
+      canvas.addEventListener("pointerdown", onPointerDown);
+      canvas.addEventListener("pointermove", onPointerMove);
+      canvas.addEventListener("pointerup", onPointerUp);
+      canvas.addEventListener("pointercancel", onPointerCancel);
+      canvas.addEventListener("lostpointercapture", onLostPointerCapture);
+      canvas.addEventListener("touchstart", onTouchStart, { passive: false });
+      canvas.addEventListener("touchmove", onTouchMove, { passive: false });
+      canvas.addEventListener("contextmenu", onContextMenu);
+      canvas.addEventListener("selectstart", onSelectStart);
+      window.addEventListener("blur", onWindowBlur);
+      document.addEventListener("visibilitychange", onVisibilityChange);
+      applyTouchAction();
+    } else {
+      finishPointer({ kind: "layoutchange" });
+      canvas.removeEventListener("pointerdown", onPointerDown);
+      canvas.removeEventListener("pointermove", onPointerMove);
+      canvas.removeEventListener("pointerup", onPointerUp);
+      canvas.removeEventListener("pointercancel", onPointerCancel);
+      canvas.removeEventListener("lostpointercapture", onLostPointerCapture);
+      canvas.removeEventListener("touchstart", onTouchStart);
+      canvas.removeEventListener("touchmove", onTouchMove);
+      canvas.removeEventListener("contextmenu", onContextMenu);
+      canvas.removeEventListener("selectstart", onSelectStart);
+      window.removeEventListener("blur", onWindowBlur);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    }
+    canvas.dataset.inputEnabled = String(enabled);
+    canvas.style.pointerEvents = enabled ? "auto" : "none";
+  }
+
   // ---- 实现 ----
 
   const surface: AnnotationSurface = {
@@ -513,18 +562,7 @@ export function createAnnotationSurface(
       }
       redraw();
 
-      // 指针直接绑画布元素（§4.1：不依赖 event.target.closest 穿透）
-      canvas.addEventListener("pointerdown", onPointerDown);
-      canvas.addEventListener("pointermove", onPointerMove);
-      canvas.addEventListener("pointerup", onPointerUp);
-      canvas.addEventListener("pointercancel", onPointerCancel);
-      canvas.addEventListener("lostpointercapture", onLostPointerCapture);
-      canvas.addEventListener("touchstart", onTouchStart, { passive: false });
-      canvas.addEventListener("touchmove", onTouchMove, { passive: false });
-      canvas.addEventListener("contextmenu", onContextMenu);
-      canvas.addEventListener("selectstart", onSelectStart);
-      window.addEventListener("blur", onWindowBlur);
-      document.addEventListener("visibilitychange", onVisibilityChange);
+      bindInput(options.inputEnabled ?? true);
 
       // 布局变化（旋转/resize）：在途一笔先按已收点收笔（不混用两个坐标
       // 变换）；位图恒定无需重设——CSS 缩放由浏览器完成
@@ -535,6 +573,10 @@ export function createAnnotationSurface(
     },
 
     getDoc,
+    finish(): void {
+      finishPointer({ kind: "layoutchange" });
+    },
+    setInputEnabled: bindInput,
 
     load(doc: AnnotationDoc): void {
       finishPointer({ kind: "layoutchange" });
@@ -579,22 +621,10 @@ export function createAnnotationSurface(
     },
 
     destroy(): void {
+      bindInput(false);
       observer?.disconnect();
       observer = null;
       changeListeners.clear();
-      window.removeEventListener("blur", onWindowBlur);
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-      if (canvas) {
-        canvas.removeEventListener("pointerdown", onPointerDown);
-        canvas.removeEventListener("pointermove", onPointerMove);
-        canvas.removeEventListener("pointerup", onPointerUp);
-        canvas.removeEventListener("pointercancel", onPointerCancel);
-        canvas.removeEventListener("lostpointercapture", onLostPointerCapture);
-        canvas.removeEventListener("touchstart", onTouchStart);
-        canvas.removeEventListener("touchmove", onTouchMove);
-        canvas.removeEventListener("contextmenu", onContextMenu);
-        canvas.removeEventListener("selectstart", onSelectStart);
-      }
       atrament?.destroy();
       atrament = null;
       ctx2d = null;

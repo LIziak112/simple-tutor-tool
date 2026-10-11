@@ -44,6 +44,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import { useAttemptEditor } from "@/features/attempt/AttemptEditorContext";
 import { InkPad } from "@/features/ink/InkPad";
 import { recoverNoteImages } from "@/features/notes/image-sync";
 import { NoteStatusArea } from "@/features/notes/NoteStatusArea";
@@ -60,6 +61,7 @@ import {
 } from "@/features/notes/use-note-editor";
 import { useNoteHead, useNoteSessionRef } from "@/features/notes/use-note-head";
 import { useNoteSyncActions } from "@/features/notes/use-note-sync-actions";
+import { getNoteRecord, settleNotePersistence } from "./note-store";
 
 /**
  * 收起后的引擎保活时长（复审⑦暂定 45s，区间 30-60s）：收起题卡高频发生在
@@ -103,6 +105,24 @@ export function NoteLayer({
     active: open,
   });
   const { view } = editor;
+  const coordinator = useAttemptEditor();
+  const finish = useCallback(async () => {
+    editor.engineRef.current?.finish?.();
+    await settleNotePersistence();
+    if (session) {
+      const saved = await getNoteRecord(session, {
+        attemptId,
+        questionId,
+        phase: "scratch",
+      });
+      if (saved?.local === "failed")
+        throw new Error(saved.localError ?? "草稿本机保存失败");
+    }
+  }, [editor.engineRef, session, attemptId, questionId]);
+  useEffect(
+    () => coordinator?.register(questionId, finish, "scratch"),
+    [coordinator?.register, questionId, finish],
+  );
   const headQuery = useNoteHead(attemptId, questionId);
   const layoutPref = useNoteLayoutPreference();
 

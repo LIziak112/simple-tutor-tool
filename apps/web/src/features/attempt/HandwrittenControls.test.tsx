@@ -151,6 +151,27 @@ beforeEach(() => {
 });
 
 describe("展开/收起手写区", () => {
+  it("受控切题收起保留同一画布，待传笔迹仍可导出而不重建历史", async () => {
+    const props = {
+      attemptId: "a",
+      questionId: "q1",
+      stemMd: "题干",
+      answer: undefined,
+      onAnswer: vi.fn(),
+      expanded: true,
+      onExpandedChange: vi.fn(),
+      showExpandTrigger: false,
+    };
+    const { rerender } = render(<HandwrittenControls {...props} />);
+    await screen.findByTestId("ink-emit-atrament-stroke");
+    const pad = document.querySelector('[data-slot="ink-pad"]');
+    rerender(<HandwrittenControls {...props} expanded={false} />);
+    expect(document.querySelector('[data-slot="ink-pad"]')).toBe(pad);
+    expect(pad).not.toBeVisible();
+    rerender(<HandwrittenControls {...props} expanded />);
+    expect(document.querySelector('[data-slot="ink-pad"]')).toBe(pad);
+    expect(pad).toBeVisible();
+  });
   it("默认收起：不渲染画布；点击展开挂载页内 InkPad（atrament），再点收起", async () => {
     renderControls();
     const toggle = await screen.findByRole("button", { name: /展开手写区/ });

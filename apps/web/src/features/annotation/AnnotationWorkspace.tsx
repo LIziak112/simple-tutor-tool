@@ -20,10 +20,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { useAttemptEditor } from "@/features/attempt/AttemptEditorContext";
 import type { InkPenColor, InkPenSize } from "@/features/ink/engine/index.ts";
 import type { InkChangeReason } from "@/features/ink/engine/surface";
 import { NoteToolbar } from "@/features/notes/NoteToolbar";
-import { writeAnnotationDoc } from "./annotation-store";
+import {
+  getAnnotationRecord,
+  settleAnnotationPersistence,
+  writeAnnotationDoc,
+} from "./annotation-store";
 import {
   type AnnotationSurface,
   createAnnotationSurface,
@@ -59,6 +64,23 @@ export function AnnotationWorkspace({
   const label = `${ariaPrefix}题干标注`;
 
   const surfaceRef = useRef<AnnotationSurface | null>(null);
+  const coordinator = useAttemptEditor();
+  useEffect(() => {
+    if (phase !== "scratch") return;
+    return coordinator?.register(questionId, async () => {
+      surfaceRef.current?.finish();
+      await settleAnnotationPersistence();
+      if (session) {
+        const saved = await getAnnotationRecord(session, {
+          attemptId,
+          questionId,
+          phase,
+        });
+        if (saved?.local === "failed")
+          throw new Error(saved.localError ?? "原标画本机保存失败");
+      }
+    });
+  }, [coordinator?.register, session, attemptId, questionId, phase]);
   const surfaceHostRef = useRef<HTMLDivElement | null>(null);
   const [tool, setTool] = useState<"pen" | "eraser">("pen");
   const [penColor, setPenColor] = useState<InkPenColor>("red");
@@ -94,7 +116,11 @@ export function AnnotationWorkspace({
     loadedDocVersion.current = recordRef.current?.docVersion ?? null;
     surface.onChange((nextDoc, reason: InkChangeReason) => {
       if (reason === "load") return; // 载入恢复不算编辑（同 note 口径）
-      writeAnnotationDoc(session, { attemptId, questionId, phase }, nextDoc);
+      loadedDocVersion.current = writeAnnotationDoc(
+        session,
+        { attemptId, questionId, phase },
+        nextDoc,
+      );
       setHistoryTick((t) => t + 1);
     });
     return () => {

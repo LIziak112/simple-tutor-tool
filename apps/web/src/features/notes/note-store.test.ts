@@ -29,6 +29,8 @@ import {
   type NoteStoreBackend,
   noteKeyOf,
   resetNoteStoreForTest,
+  retryNotePersistence,
+  settleNotePersistence,
   setUploading,
   subscribeNoteStore,
   writeNoteDoc,
@@ -56,6 +58,34 @@ import {
  */
 
 const RECEIPT_1 = receiptOf(1);
+
+it("草稿落盘重试保留版本、笔迹与原待传标识", async () => {
+  resetNoteStoreForTest();
+  const backend = memoryNoteBackend();
+  let fail = true;
+  installNoteBackend({
+    ...backend,
+    set: async (key, value) => {
+      if (fail) throw new Error("草稿空间不足");
+      await backend.set(key, value);
+    },
+  });
+  writeNoteDoc(SESSION_A, SCOPE, DOC_A);
+  await settleNotePersistence();
+  await expect(retryNotePersistence(SESSION_A, SCOPE)).rejects.toThrow(
+    "草稿空间不足",
+  );
+  const before = await getNoteRecord(SESSION_A, SCOPE);
+  const version = before?.docVersion;
+  const mutationId = before?.pending?.mutationId;
+  fail = false;
+  await retryNotePersistence(SESSION_A, SCOPE);
+  const saved = await getNoteRecord(SESSION_A, SCOPE);
+  expect(saved?.local).toBe("saved");
+  expect(saved?.docVersion).toBe(version);
+  expect(saved?.pending?.mutationId).toBe(mutationId);
+  expect(saved?.doc).toEqual(DOC_A);
+});
 
 /** 取记录（缺失即测试前置失败） */
 async function recordOf(

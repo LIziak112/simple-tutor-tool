@@ -1,6 +1,9 @@
 import type { AttemptQuestionPublic } from "@tutor/contract";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { renderQuestionBaseImage } from "./question-base-image";
+import {
+  measureQuestionSurface,
+  renderQuestionBaseImage,
+} from "./question-base-image";
 
 const question: AttemptQuestionPublic = {
   id: "q",
@@ -13,6 +16,14 @@ const question: AttemptQuestionPublic = {
 };
 afterEach(() => vi.restoreAllMocks());
 describe("新题面底图准入", () => {
+  it("编辑覆盖层不参与题面签名，不能改变准入几何", () => {
+    const reference = document.createElement("div");
+    reference.innerHTML =
+      '<p>题干</p><div data-slot="question-annotation-overlay"><canvas></canvas></div>';
+    expect(
+      measureQuestionSurface(reference).blocks.map((block) => block.tag),
+    ).toEqual(["DIV", "P"]);
+  });
   it("拒绝未脱敏题面和选项，不创建离屏宿主", async () => {
     const reference = document.createElement("div");
     for (const unsafe of [

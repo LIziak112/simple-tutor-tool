@@ -91,12 +91,39 @@ function idbBackend(): KVBackend {
 
 /** 当前生效后端（惰性初始化；测试可注入替换） */
 let activeBackend: KVBackend | null = null;
+let backendGeneration = 0;
+export type DraftPersistenceState = "saving" | "saved" | "failed";
+const persistenceStates = new Map<string, DraftPersistenceState>();
+const writeVersions = new Map<string, number>();
+const persistenceListeners = new Set<() => void>();
+export function subscribeDraftPersistence(listener: () => void): () => void {
+  persistenceListeners.add(listener);
+  return () => {
+    persistenceListeners.delete(listener);
+  };
+}
+export function getDraftPersistenceState(
+  attemptId: string,
+): DraftPersistenceState {
+  return persistenceStates.get(attemptId) ?? "saved";
+}
+function setPersistenceState(
+  attemptId: string,
+  state: DraftPersistenceState,
+): void {
+  if (persistenceStates.get(attemptId) === state) return;
+  persistenceStates.set(attemptId, state);
+  for (const listener of persistenceListeners) listener();
+}
 
 /**
  * 测试注入后端（生产不调用；每个用例换 memoryBackend 保证隔离）。
  * 装入新后端同时清空内存缓存与待写定时器——缓存属于旧后端，一并作废。
  */
 export function installDraftBackend(backend: KVBackend): void {
+  backendGeneration++;
+  persistenceStates.clear();
+  writeVersions.clear();
   for (const timer of writeTimers.values()) clearTimeout(timer);
   writeTimers.clear();
   cache.clear();
@@ -151,6 +178,8 @@ function mutate(
 }
 
 function scheduleWrite(attemptId: string): void {
+  writeVersions.set(attemptId, (writeVersions.get(attemptId) ?? 0) + 1);
+  setPersistenceState(attemptId, "saving");
   if (writeTimers.has(attemptId)) return;
   writeTimers.set(
     attemptId,
@@ -170,9 +199,22 @@ async function writeNow(attemptId: string): Promise<void> {
   }
   const record = cache.get(attemptId);
   if (record === undefined) return;
+  const generation = backendGeneration;
+  const version = writeVersions.get(attemptId);
+  setPersistenceState(attemptId, "saving");
   try {
     await backend().set(keyOf(attemptId), record);
+    if (
+      generation === backendGeneration &&
+      version === writeVersions.get(attemptId)
+    )
+      setPersistenceState(attemptId, "saved");
   } catch (err) {
+    if (
+      generation === backendGeneration &&
+      version === writeVersions.get(attemptId)
+    )
+      setPersistenceState(attemptId, "failed");
     console.warn("草稿本地写入失败（不影响作答）", err);
   }
 }
@@ -288,6 +330,8 @@ export const draftStore = {
       writeTimers.delete(attemptId);
     }
     cache.delete(attemptId);
+    writeVersions.delete(attemptId);
+    setPersistenceState(attemptId, "saved");
     try {
       await backend().del(keyOf(attemptId));
     } catch (err) {

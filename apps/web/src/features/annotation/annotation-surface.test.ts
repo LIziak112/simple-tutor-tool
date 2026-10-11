@@ -174,6 +174,33 @@ function writeStroke(
 }
 
 describe("标注画布：坐标域与画布恒定", () => {
+  it("切题显式收笔提交已收点，迟到up不重复提交", () => {
+    const h = mountSurface();
+    pointer(h.canvas, "pointerdown", { clientX: 150, clientY: 80 });
+    pointer(h.canvas, "pointermove", { clientX: 180, clientY: 90 });
+    h.surface.finish();
+    expect(h.surface.getDoc().strokes).toHaveLength(1);
+    pointer(h.canvas, "pointerup", { clientX: 180, clientY: 90 });
+    expect(h.surface.getDoc().strokes).toHaveLength(1);
+  });
+  it("作答态不收指针，恢复标画保留撤销历史", () => {
+    const h = mountSurface();
+    writeStroke(h, [
+      { x: 120, y: 70 },
+      { x: 140, y: 80 },
+    ]);
+    h.surface.setInputEnabled(false);
+    writeStroke(h, [
+      { x: 140, y: 90 },
+      { x: 180, y: 100 },
+    ]);
+    expect(h.surface.getDoc().strokes).toHaveLength(1);
+    h.surface.setInputEnabled(true);
+    h.surface.undo();
+    expect(h.surface.getDoc().strokes).toHaveLength(0);
+    h.surface.redo();
+    expect(h.surface.getDoc().strokes).toHaveLength(1);
+  });
   it("backing store = 底图像素域；画布填满宿主且不接管宿主布局", () => {
     const h = mountSurface();
     expect(h.canvas.width).toBe(BASE_W);

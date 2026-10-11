@@ -4,6 +4,7 @@ import { digestOf } from "./draft-merge";
 import {
   DRAFT_WRITE_DEBOUNCE_MS,
   draftStore,
+  getDraftPersistenceState,
   installDraftBackend,
   type KVBackend,
   memoryBackend,
@@ -57,6 +58,21 @@ beforeEach(() => {
 });
 
 describe("写盘防抖", () => {
+  it("本机写失败可观察，不把内存稿冒称落盘；成功重试清错误", async () => {
+    const set = vi.fn<KVBackend["set"]>(async () => {
+      throw new Error("空间不足");
+    });
+    installDraftBackend({ ...backend, set });
+    expect(getDraftPersistenceState("att-1")).toBe("saved");
+    draftStore.saveAnswer("att-1", "q1", judge);
+    expect(getDraftPersistenceState("att-1")).toBe("saving");
+    await draftStore.flush("att-1");
+    expect(getDraftPersistenceState("att-1")).toBe("failed");
+    expect((await draftStore.loadDraft("att-1"))?.answers.q1).toEqual(judge);
+    set.mockImplementation(backend.set);
+    await draftStore.flush("att-1");
+    expect(getDraftPersistenceState("att-1")).toBe("saved");
+  });
   it("防抖窗内的多次写入合并为一次底层 set，且落盘为最后值", async () => {
     draftStore.saveAnswer("att-1", "q1", judge);
     draftStore.saveAnswer("att-1", "q1", fill);
