@@ -15,7 +15,7 @@ function judgeStemOf(stemMd: string): string {
 /** 选项按钮的公共外壳（单选/多选共用；触控 ≥44px；has-[:checked] 联动选中态） */
 function optionShellClass(selected: boolean): string {
   return cn(
-    "flex min-h-12 w-full cursor-pointer items-start gap-3 rounded-lg border px-3 py-3 text-left outline-none transition-colors has-[:focus-visible]:ring-3 has-[:focus-visible]:ring-ring/50",
+    "flex min-h-12 w-full cursor-pointer items-start gap-3 rounded-lg border px-3 py-3 text-left outline-none transition-colors has-[:focus-visible]:outline-solid has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-ring",
     selected
       ? "border-primary bg-primary/5 ring-1 ring-primary"
       : "border-border bg-card hover:border-primary/40 hover:bg-accent/40",
@@ -27,9 +27,12 @@ function OptionBody({ letter, text }: { letter: string; text: string }) {
   return (
     <>
       <span className="mt-0.5 w-5 shrink-0 text-sm font-semibold">
-        {letter}
+        <span className="sr-only">选项</span> {letter}
       </span>
-      <RichMarkdown source={text} className="min-w-0 flex-1 text-base" />
+      <RichMarkdown
+        source={text}
+        className="min-w-0 flex-1 text-base leading-[1.75]"
+      />
     </>
   );
 }
@@ -51,7 +54,7 @@ function JudgeControls({
   const groupName = `judge-${question.id}-${useId()}`;
   const labelClass = (selected: boolean) =>
     cn(
-      "flex min-h-12 flex-1 cursor-pointer items-center justify-center gap-2 rounded-lg border-2 text-base font-medium outline-none transition-colors has-[:focus-visible]:ring-3 has-[:focus-visible]:ring-ring/50",
+      "flex min-h-12 flex-1 cursor-pointer items-center justify-center gap-2 rounded-lg border-2 text-base font-medium outline-none transition-colors has-[:focus-visible]:outline-solid has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-ring",
       selected
         ? "border-primary bg-primary/10 text-primary"
         : "border-border bg-card hover:bg-muted/60",
@@ -96,7 +99,7 @@ function JudgeControls({
   );
 }
 
-/** 单选题：原生 radio 选项列表（aria-label 按字母播报，公式内容读屏不可靠） */
+/** 单选题：原生标签提供字母及正文，保留公式的可访问语义。 */
 function ChoiceControls({
   question,
   answer,
@@ -115,7 +118,6 @@ function ChoiceControls({
           <input
             type="radio"
             name={groupName}
-            aria-label={`选项 ${letterOf(index)}`}
             checked={picked === index}
             onChange={() => onAnswer({ kind: "choice", index })}
             className="sr-only"
@@ -157,7 +159,6 @@ function MultiControls({
         >
           <input
             type="checkbox"
-            aria-label={`选项 ${letterOf(index)}`}
             checked={pickedIndexes.includes(index)}
             onChange={() => toggle(index)}
             className="sr-only"
@@ -190,13 +191,13 @@ export function QuestionSurface({
     <div
       data-slot="question-surface"
       inert={mode === "export"}
-      className="flex min-w-0 flex-col gap-4 text-base leading-7"
+      className="mx-auto flex w-full min-w-0 max-w-[720px] flex-col gap-4 text-base leading-[1.75]"
     >
       {/* 题干：判断题剥掉尾部空标记；填空题空位内联输入 */}
       {question.type === "judge" ? (
         <RichMarkdown
           source={judgeStemOf(question.stemMd)}
-          className="text-base"
+          className="text-base leading-[1.75]"
         />
       ) : question.type === "fill" ? (
         <BlankAnswersProvider
@@ -217,14 +218,23 @@ export function QuestionSurface({
             disabled: false,
           }}
         >
-          <RichMarkdown source={question.stemMd} className="text-base" />
+          <RichMarkdown
+            source={question.stemMd}
+            className="text-base leading-[1.75]"
+          />
         </BlankAnswersProvider>
       ) : question.type === "choice" || question.type === "multi" ? (
         // 选择题：选项在下方按钮里——服务端 stemMd 已是 studentStemMd 投影形态，
         // displayStemMd 兜底剥内嵌列表（防未来新路径漏走投影，重复且 [x] 会显示成打勾框）
-        <RichMarkdown source={displayStemMd(question)} className="text-base" />
+        <RichMarkdown
+          source={displayStemMd(question)}
+          className="text-base leading-[1.75]"
+        />
       ) : (
-        <RichMarkdown source={question.stemMd} className="text-base" />
+        <RichMarkdown
+          source={question.stemMd}
+          className="text-base leading-[1.75]"
+        />
       )}
 
       {/* 作答控件 */}

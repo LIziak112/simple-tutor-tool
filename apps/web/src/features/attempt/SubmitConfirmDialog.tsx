@@ -86,6 +86,7 @@ export function SubmitConfirmDialog({
   return (
     <Dialog open={open} onOpenChange={(next) => !next && onCancel()}>
       <DialogContent
+        className="flex max-h-[min(88dvh,720px)] w-[calc(100%-24px)] flex-col overflow-hidden"
         aria-describedby="submit-confirm-desc"
         closeDisabled={busy}
         // busy 期间封堵 Radix 关闭路径（关闭=取消=中止——中止只应发生在
@@ -112,90 +113,92 @@ export function SubmitConfirmDialog({
           </DialogDescription>
         </DialogHeader>
 
-        {incompleteQuestions.length > 0 && onGoToQuestion && (
-          <fieldset
-            className="m-0 flex flex-wrap gap-2 border-0 p-0"
-            aria-label="待补全题目"
-          >
-            {incompleteQuestions.map((question) => (
-              <Button
-                key={question.id}
-                type="button"
-                variant="outline"
-                className="min-h-11 max-w-full whitespace-normal"
-                disabled={busy}
-                aria-label={`去补全第 ${question.index + 1} 题，${question.label}`}
-                onClick={() => onGoToQuestion(question.id)}
-              >
-                第 {question.index + 1} 题 · {question.label}
-              </Button>
-            ))}
-          </fieldset>
-        )}
+        <div className="flex min-h-0 flex-col gap-4 overflow-y-auto overscroll-contain p-1 -m-1">
+          {incompleteQuestions.length > 0 && onGoToQuestion && (
+            <fieldset
+              className="m-0 flex flex-wrap gap-2 border-0 p-0"
+              aria-label="待补全题目"
+            >
+              {incompleteQuestions.map((question) => (
+                <Button
+                  key={question.id}
+                  type="button"
+                  variant="outline"
+                  className="min-h-11 max-w-full whitespace-normal"
+                  disabled={busy}
+                  aria-label={`去补全第 ${question.index + 1} 题，${question.label}`}
+                  onClick={() => onGoToQuestion(question.id)}
+                >
+                  第 {question.index + 1} 题 · {question.label}
+                </Button>
+              ))}
+            </fieldset>
+          )}
 
-        {/* T6R.10 草稿状态区（本地快览；确认时以重新组装的权威判定为准） */}
-        {noteSummary !== null && !choiceMode && noteProblems === null && (
-          <p className="rounded-lg bg-muted px-3 py-2 text-xs leading-6 text-muted-foreground">
-            草稿：
-            {noteSummary.willFreeze > 0 && (
-              <>{noteSummary.willFreeze} 题草稿已同步，交卷时固定为原稿</>
-            )}
-            {noteSummary.willFreeze > 0 && noteSummary.problem > 0 && "；"}
-            {noteSummary.problem > 0 && (
-              <span className="text-destructive">
-                {noteSummary.problem} 题草稿未保存完整
-              </span>
-            )}
-            {(noteSummary.willFreeze > 0 || noteSummary.problem > 0) &&
-              noteSummary.unwritten > 0 &&
-              "；"}
-            {noteSummary.unwritten > 0 &&
-              `其余 ${noteSummary.unwritten} 题未写草稿`}
-            。
-          </p>
-        )}
+          {/* T6R.10 草稿状态区（本地快览；确认时以重新组装的权威判定为准） */}
+          {noteSummary !== null && !choiceMode && noteProblems === null && (
+            <p className="rounded-lg bg-muted px-3 py-2 text-xs leading-6 text-muted-foreground">
+              草稿：
+              {noteSummary.willFreeze > 0 && (
+                <>{noteSummary.willFreeze} 题草稿已同步，交卷时固定为原稿</>
+              )}
+              {noteSummary.willFreeze > 0 && noteSummary.problem > 0 && "；"}
+              {noteSummary.problem > 0 && (
+                <span className="text-destructive">
+                  {noteSummary.problem} 题草稿未保存完整
+                </span>
+              )}
+              {(noteSummary.willFreeze > 0 || noteSummary.problem > 0) &&
+                noteSummary.unwritten > 0 &&
+                "；"}
+              {noteSummary.unwritten > 0 &&
+                `其余 ${noteSummary.unwritten} 题未写草稿`}
+              。
+            </p>
+          )}
 
-        {/* T6R.10 未追平草稿清单：choice 相（缺稿交卷必须明确选择）或
+          {/* T6R.10 未追平草稿清单：choice 相（缺稿交卷必须明确选择）或
             error 相（携带最近一次清单——错误文案与问题列表都可见）。
             noteProblems 非 null 时必非空——只在 problems 非空时产生
             （不变量，见 NotePrepPhase 注释） */}
-        {noteProblems !== null && (
-          <div
-            role="alert"
-            className="rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2.5 text-sm leading-6"
-          >
-            <p className="font-medium text-destructive">
-              以下题目的{annotationProblem ? "材料" : "草稿"}未保存完整：
+          {noteProblems !== null && (
+            <div
+              role="alert"
+              className="rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2.5 text-sm leading-6"
+            >
+              <p className="font-medium text-destructive">
+                以下题目的{annotationProblem ? "材料" : "草稿"}未保存完整：
+              </p>
+              <ul className="mt-1 list-disc pl-5 text-muted-foreground">
+                {noteProblems.map((problem) => (
+                  <li key={`${problem.index}:${problem.domain ?? "scratch"}`}>
+                    第 {problem.index} 题：{problem.reason}
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-1.5 text-muted-foreground">
+                {annotationProblem
+                  ? "可以返回重试同步，或仅交答案。本机标画不会删除，但未上传的标画不能视为交卷原稿；未保存草稿按缺稿提交。"
+                  : "可以返回重试同步；或明确选择提交——这些题目的草稿将标记为「未保存」，交卷后找回的内容只能作为补充材料，不会算作原稿。"}
+              </p>
+            </div>
+          )}
+
+          {preparing && (
+            <p className="text-xs text-muted-foreground">
+              正在同步草稿并确认可固定的版本，请稍候…
             </p>
-            <ul className="mt-1 list-disc pl-5 text-muted-foreground">
-              {noteProblems.map((problem) => (
-                <li key={`${problem.index}:${problem.domain ?? "scratch"}`}>
-                  第 {problem.index} 题：{problem.reason}
-                </li>
-              ))}
-            </ul>
-            <p className="mt-1.5 text-muted-foreground">
-              {annotationProblem
-                ? "可以返回重试同步，或仅交答案。本机标画不会删除，但未上传的标画不能视为交卷原稿；未保存草稿按缺稿提交。"
-                : "可以返回重试同步；或明确选择提交——这些题目的草稿将标记为「未保存」，交卷后找回的内容只能作为补充材料，不会算作原稿。"}
+          )}
+
+          {/* 阻止性错误（head 拉取失败等）：如实提示，重试点确认即重试 */}
+          {notePrepError !== null && (
+            <p role="alert" className="text-xs text-destructive">
+              {notePrepError}
             </p>
-          </div>
-        )}
+          )}
+        </div>
 
-        {preparing && (
-          <p className="text-xs text-muted-foreground">
-            正在同步草稿并确认可固定的版本，请稍候…
-          </p>
-        )}
-
-        {/* 阻止性错误（head 拉取失败等）：如实提示，重试点确认即重试 */}
-        {notePrepError !== null && (
-          <p role="alert" className="text-xs text-destructive">
-            {notePrepError}
-          </p>
-        )}
-
-        <DialogFooter>
+        <DialogFooter className="shrink-0 border-t border-border pt-4">
           <Button
             variant="outline"
             className="min-h-11"

@@ -47,7 +47,7 @@ const DialogContent = ({
         // 时会把 footer 挤出屏幕（webkit E2E 高负载下曾致「创建」按钮
         // 滚不进视口超时）。与原 AssignmentComposeWizard/
         // AssignmentEditDialog 的 per-usage 写法同一取值，已收敛到基座。
-        "fixed top-1/2 left-1/2 z-50 grid max-h-[88vh] w-full max-w-lg -translate-x-1/2 -translate-y-1/2 gap-4 overflow-y-auto rounded-xl border border-border bg-card p-6 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95",
+        "fixed top-1/2 left-1/2 z-50 grid max-h-[88vh] w-full max-w-lg -translate-x-1/2 -translate-y-1/2 gap-4 overflow-y-auto overscroll-contain rounded-xl border border-border bg-card p-6 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 motion-safe:data-[state=closed]:zoom-out-95 motion-safe:data-[state=open]:zoom-in-95 motion-reduce:duration-0",
         className,
       )}
       {...props}
@@ -70,7 +70,7 @@ const DialogContent = ({
         <DialogPrimitive.Close
           data-slot="dialog-close"
           aria-label="关闭弹层"
-          className="absolute top-2.5 right-2.5 flex size-11 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
+          className="absolute top-2.5 right-2.5 flex size-11 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
         >
           <X aria-hidden className="size-4" />
         </DialogPrimitive.Close>

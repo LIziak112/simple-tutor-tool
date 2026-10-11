@@ -123,7 +123,7 @@ function QuestionMeta({
             <Button
               type="button"
               variant="ghost"
-              className="size-11 p-0"
+              className="h-11 min-w-11 gap-1.5 px-2"
               title="圈画题干"
               aria-label={`第 ${index + 1} 题圈画题干${tools.annotationOpen ? "（标画中）" : ""}${tools.annotationCount > 0 ? `（已有 ${tools.annotationCount} 笔）` : ""}${tools.annotationProblem ? "，同步需处理" : ""}`}
               aria-expanded={tools.annotationOpen}
@@ -137,13 +137,20 @@ function QuestionMeta({
                   className={`size-4 ${tools.annotationOpen || tools.annotationCount > 0 ? "text-primary" : ""}`}
                 />
               )}
+              <span className="hidden lg:inline">圈画</span>
+              {tools.annotationCount > 0 && (
+                <span
+                  aria-hidden
+                  className="size-1.5 rounded-full bg-current"
+                />
+              )}
             </Button>
           )}
           {tools?.paperEnabled && (
             <Button
               type="button"
               variant="ghost"
-              className="size-11 p-0"
+              className="h-11 min-w-11 gap-1.5 px-2"
               title={
                 HANDWRITTEN_TYPES.has(question.type) ? "手写作答" : "草稿纸"
               }
@@ -157,6 +164,15 @@ function QuestionMeta({
                 <NotebookPen
                   aria-hidden
                   className={`size-4 ${tools.paperOpen || tools.paperCount > 0 || formalInkPresence ? "text-primary" : ""}`}
+                />
+              )}
+              <span className="hidden lg:inline">
+                {HANDWRITTEN_TYPES.has(question.type) ? "手写" : "草稿"}
+              </span>
+              {(tools.paperCount > 0 || formalInkPresence) && (
+                <span
+                  aria-hidden
+                  className="size-1.5 rounded-full bg-current"
                 />
               )}
             </Button>
@@ -443,7 +459,7 @@ export function AttemptQuestionCard({
       ref={articleRef}
       data-question-id={question.id}
       tabIndex={-1}
-      className="flex scroll-mt-[calc(var(--attempt-header-height,64px)+12px)] flex-col gap-3 rounded-[8px] border border-border bg-card p-4 text-card-foreground outline-none focus-visible:ring-2 focus-visible:ring-primary sm:p-5"
+      className="mx-auto flex w-full max-w-[768px] scroll-mt-[calc(var(--attempt-header-height,64px)+12px)] flex-col gap-3 rounded-[8px] border border-border bg-card p-4 text-card-foreground outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring sm:p-5"
       aria-label={`第 ${index + 1} 题`}
       onPointerDownCapture={(event) => {
         if (

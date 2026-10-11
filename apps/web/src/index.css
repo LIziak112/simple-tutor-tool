@@ -91,7 +91,8 @@
   --background: oklch(0.982 0.006 255);
   --primary: oklch(0.55 0.2 260);
   --primary-foreground: oklch(0.985 0 0);
-  --ring: oklch(0.65 0.15 260);
+  --ring: oklch(0.55 0.2 260);
+  --muted-foreground: oklch(0.5 0 0);
   --accent: oklch(0.955 0.025 260);
   --accent-foreground: oklch(0.42 0.16 260);
 }
@@ -144,8 +145,17 @@
 
 /* ---- RichMarkdown 正文排版（T1.8）：Markdown 基础元素 ----
    指令组件（题卡/折叠/分栏等）自带 Tailwind 类，不在此处重复 */
-.rich-markdown {
-  @apply text-[15px] leading-7 break-words;
+@layer components {
+  .rich-markdown {
+    @apply text-[0.9375rem] leading-[1.8666667] break-words;
+  }
+}
+
+/* 学生端焦点使用不透明外轮廓，兼容系统高对比度模式。 */
+.student-theme [data-slot="button"]:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+  box-shadow: none;
 }
 .rich-markdown > :first-child {
   @apply mt-0;

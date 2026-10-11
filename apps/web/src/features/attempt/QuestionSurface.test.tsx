@@ -14,6 +14,36 @@ const question: QuestionPublic = {
 };
 
 describe("共享题面", () => {
+  it("单选控件名称包含字母和实际选项内容", () => {
+    render(
+      <QuestionSurface
+        question={{ ...question, options: ["系统调用", "中断"] }}
+      />,
+    );
+    expect(screen.getAllByRole("radio")[0]).toHaveAccessibleName(
+      "选项 A 系统调用",
+    );
+    expect(screen.getAllByRole("radio")[1]).toHaveAccessibleName("选项 B 中断");
+  });
+
+  it("多选控件名称包含正文，选择行为仍由原生标签触发", () => {
+    const onAnswer = vi.fn();
+    render(
+      <QuestionSurface
+        question={{ ...question, type: "multi", options: ["进程", "设备"] }}
+        onAnswer={onAnswer}
+      />,
+    );
+    expect(screen.getAllByRole("checkbox")[1]).toHaveAccessibleName(
+      "选项 B 设备",
+    );
+    fireEvent.click(screen.getByRole("checkbox", { name: "选项 B 设备" }));
+    expect(onAnswer).toHaveBeenCalledWith(
+      { kind: "multi", indexes: [1] },
+      undefined,
+    );
+  });
+
   it("同一道题的正常与导出实例隔离radio组", () => {
     const { container } = render(
       <>
@@ -48,8 +78,8 @@ describe("共享题面", () => {
         onAnswer={onAnswer}
       />,
     );
-    expect(screen.getByRole("radio", { name: "选项 B" })).toBeChecked();
-    fireEvent.click(screen.getByRole("radio", { name: "选项 A" }));
+    expect(screen.getByRole("radio", { name: /^选项 B/ })).toBeChecked();
+    fireEvent.click(screen.getByRole("radio", { name: /^选项 A/ }));
     expect(onAnswer).toHaveBeenCalledWith(
       { kind: "choice", index: 0 },
       undefined,
@@ -66,8 +96,8 @@ describe("共享题面", () => {
         mode="export"
       />,
     );
-    expect(screen.getByRole("radio", { name: "选项 B" })).not.toBeChecked();
-    fireEvent.click(screen.getByRole("radio", { name: "选项 A" }));
+    expect(screen.getByRole("radio", { name: /^选项 B/ })).not.toBeChecked();
+    fireEvent.click(screen.getByRole("radio", { name: /^选项 A/ }));
     expect(onAnswer).not.toHaveBeenCalled();
   });
 

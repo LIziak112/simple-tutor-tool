@@ -49,7 +49,7 @@ export function AttemptBottomBar({
         {onOpenNavigator && (
           <Button
             variant="ghost"
-            className="h-11 shrink-0 px-2"
+            className="h-11 shrink-0 px-2 lg:hidden"
             onClick={onOpenNavigator}
           >
             <Grid2X2 aria-hidden className="size-4" />
@@ -59,7 +59,7 @@ export function AttemptBottomBar({
         )}
         <div className="flex min-w-0 flex-1 flex-col gap-1.5">
           <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-            <span>
+            <span className="tabular-nums">
               已填写 <b className="text-primary">{answered}</b> / {total} 题
             </span>
             {offline && (
@@ -102,7 +102,7 @@ export function AttemptBottomBar({
             className="h-1.5 w-full max-w-xs overflow-hidden rounded-full bg-muted"
           >
             <div
-              className="h-full rounded-full bg-primary transition-[width]"
+              className="h-full rounded-full bg-primary motion-safe:transition-[width]"
               style={{
                 width: `${total === 0 ? 0 : Math.round((answered / total) * 100)}%`,
               }}

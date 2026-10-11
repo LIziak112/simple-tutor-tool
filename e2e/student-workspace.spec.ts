@@ -107,6 +107,7 @@ test("学生工作区：部分填写、遗漏定位、答题卡与响应式布�
         ),
       )
         .map((element) => element.getBoundingClientRect())
+        .filter((rect) => rect.width > 0 && rect.height > 0)
         .map((rect) => ({
           left: rect.left,
           right: rect.right,
@@ -271,6 +272,8 @@ test("130题长作业：答题卡独立滚动、跳到末题、待检查刷新�
       }),
     )
     .toBeLessThanOrEqual(2);
+  await page.goto("/s/home");
+  // pagehide会捕获最后一次滚动，恢复应以离页时真正落盘的位置为准。
   const position = await page.evaluate(() => {
     const key = Object.keys(localStorage).find((key) =>
       key.startsWith("attempt-reading:"),
@@ -281,7 +284,6 @@ test("130题长作业：答题卡独立滚动、跳到末题、待检查刷新�
     } | null;
   });
   expect(position).not.toBeNull();
-  await page.goto("/s/home");
   await page.goto(attemptUrl);
   await expect
     .poll(async () =>

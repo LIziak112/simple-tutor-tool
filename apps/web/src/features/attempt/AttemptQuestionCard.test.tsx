@@ -196,10 +196,12 @@ describe("单选题控件", () => {
 
   it("选项列表带字母；点选提交 {kind:'choice', index} 并回显选中", () => {
     const { onAnswer } = renderStatefulCard(choice);
-    fireEvent.click(screen.getByRole("radio", { name: "选项 B" }));
+    const [first, second] = screen.getAllByRole("radio");
+    if (!first || !second) throw new Error("单选选项缺失");
+    fireEvent.click(second);
     expect(onAnswer).toHaveBeenCalledWith({ kind: "choice", index: 1 }, false);
-    expect(screen.getByRole("radio", { name: "选项 B" })).toBeChecked();
-    expect(screen.getByRole("radio", { name: "选项 A" })).not.toBeChecked();
+    expect(second).toBeChecked();
+    expect(first).not.toBeChecked();
   });
 });
 
@@ -212,24 +214,26 @@ describe("多选题控件", () => {
 
   it("多选累加、再点取消；提交 {kind:'multi', indexes}", () => {
     const { onAnswer } = renderStatefulCard(multi);
-    fireEvent.click(screen.getByRole("checkbox", { name: "选项 A" }));
+    const [first, , third] = screen.getAllByRole("checkbox");
+    if (!first || !third) throw new Error("多选选项缺失");
+    fireEvent.click(first);
     expect(onAnswer).toHaveBeenLastCalledWith(
       { kind: "multi", indexes: [0] },
       false,
     );
-    fireEvent.click(screen.getByRole("checkbox", { name: "选项 C" }));
+    fireEvent.click(third);
     expect(onAnswer).toHaveBeenLastCalledWith(
       { kind: "multi", indexes: [0, 2] },
       false,
     );
     // 再点 A → 从选中集中移除
-    fireEvent.click(screen.getByRole("checkbox", { name: "选项 A" }));
+    fireEvent.click(first);
     expect(onAnswer).toHaveBeenLastCalledWith(
       { kind: "multi", indexes: [2] },
       false,
     );
-    expect(screen.getByRole("checkbox", { name: "选项 A" })).not.toBeChecked();
-    expect(screen.getByRole("checkbox", { name: "选项 C" })).toBeChecked();
+    expect(first).not.toBeChecked();
+    expect(third).toBeChecked();
   });
 });
 

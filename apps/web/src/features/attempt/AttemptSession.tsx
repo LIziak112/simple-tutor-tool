@@ -623,7 +623,7 @@ function AnswerView({
             <div className="flex min-w-0 items-center gap-2">
               <p
                 data-testid="draft-status"
-                className="text-xs text-muted-foreground"
+                className="min-w-0 text-xs break-words text-muted-foreground"
                 aria-live="polite"
               >
                 {saveStatus}
@@ -703,8 +703,8 @@ function AnswerView({
           )}
         </AttemptHeader>
 
-        <div className="grid min-w-0 grid-cols-1 gap-6 min-[1200px]:grid-cols-[192px_minmax(0,1fr)]">
-          <aside className="sticky top-[calc(var(--attempt-header-height,64px)+16px)] hidden max-h-[calc(100dvh-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] self-start overflow-y-auto min-[1200px]:block">
+        <div className="grid min-w-0 grid-cols-1 gap-6 lg:grid-cols-[176px_minmax(0,1fr)]">
+          <aside className="sticky top-[calc(var(--attempt-header-height,64px)+16px)] hidden max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] self-start overflow-y-auto overscroll-contain lg:block">
             <h2 className="mb-3 text-sm font-semibold">答题卡</h2>
             <QuestionNavigator
               items={navigationItems}
@@ -786,7 +786,7 @@ function AnswerView({
                 已填写 {answered}/{total} 题
               </DialogDescription>
             </DialogHeader>
-            <div className="min-h-0 overflow-y-auto p-1">
+            <div className="min-h-0 overflow-y-auto overscroll-contain p-1">
               <QuestionNavigator
                 items={navigationItems}
                 currentId={currentQuestionId}
