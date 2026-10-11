@@ -53,11 +53,14 @@ export function ReviewPackPanel({
   attemptId,
   questionId,
   questionNo,
+  compact = false,
 }: {
   viewer: ReviewPackRole;
   attemptId: string;
   questionId: string;
   questionNo: number;
+  /** 结果页闭合入口与同组工具并排。 */
+  compact?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [preview, setPreview] = useState<ReviewPackPreviewData | null>(null);
@@ -178,7 +181,9 @@ ${preview.questionMd}`;
   );
 
   return (
-    <div className="flex flex-col gap-2">
+    <div
+      className={`flex min-w-0 flex-col gap-2 ${compact ? (open ? "w-full" : "w-fit") : ""}`}
+    >
       <Button
         variant="outline"
         className="min-h-11 w-fit"

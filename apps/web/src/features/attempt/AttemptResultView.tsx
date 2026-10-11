@@ -250,7 +250,9 @@ function InkThumbnail({
   const [available, setAvailable] = useState(true);
   const [open, setOpen] = useState(false);
   return (
-    <div className="flex flex-col gap-1.5">
+    <div
+      className={`flex min-w-0 flex-col gap-1.5 ${open ? "w-full" : "w-fit"}`}
+    >
       <Button
         variant="outline"
         className="min-h-11 w-fit"
@@ -412,6 +414,7 @@ function ResultQuestionCard({
           <>
             {!isHandwritten && (
               <NoteOriginalView
+                compact
                 viewer="student"
                 attemptId={attemptId}
                 questionId={question.questionId}
@@ -426,6 +429,7 @@ function ResultQuestionCard({
               />
             )}
             <AnnotationView
+              compact
               viewer="student"
               attemptId={attemptId}
               questionId={question.questionId}
@@ -444,6 +448,7 @@ function ResultQuestionCard({
               triggerLabel="添加订正标画"
             />
             <CorrectionSection
+              compact
               attemptId={attemptId}
               questionId={question.questionId}
               ariaPrefix={`第 ${index + 1} 题`}
@@ -452,6 +457,7 @@ function ResultQuestionCard({
         }
         more={
           <ReviewPackPanel
+            compact
             viewer="student"
             attemptId={attemptId}
             questionId={question.questionId}
@@ -546,16 +552,19 @@ export function AttemptResultView({
         {/* 得分汇总卡（未公布时替换为「已交卷」横幅 + 已答统计，不显示对错与得分） */}
         <section
           aria-labelledby="result-summary"
-          className="flex flex-col gap-4 border-b border-border py-4"
+          className="flex flex-col gap-4 border-b border-border py-5"
         >
           <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
-            <h2 id="result-summary" className="text-base font-semibold">
+            <h2
+              id="result-summary"
+              className="text-lg leading-snug font-semibold"
+            >
               {released ? "批改结果" : "已交卷"}
             </h2>
             {/* 来源行（T2A.6，与答题视图同口径）：课程练习带次数（历次回看可分辨
               第几次）；作业标「作业」（挂课程时「作业 · 课程名」，T2A.7）；
               错题重练「错题重练 · 第 n 次」（2026-10） */}
-            <p className="text-xs text-muted-foreground">
+            <p className="text-sm leading-relaxed text-muted-foreground">
               {attempt.sourceType === "course"
                 ? `课程：${data.courseName ?? ""} · 第 ${attempt.attemptNo} 次`
                 : attempt.sourceType === "wrong"
@@ -565,57 +574,83 @@ export function AttemptResultView({
                     : "作业"}
             </p>
             {attempt.submittedAt !== null && (
-              <p className="text-xs text-muted-foreground">
+              <p className="text-sm leading-relaxed text-muted-foreground">
                 交卷时间：{formatCnTime(attempt.submittedAt)}
               </p>
             )}
           </div>
           {released ? (
-            <div className="flex flex-wrap items-end gap-x-8 gap-y-3">
-              <p className="flex items-baseline gap-2">
-                <span className="text-4xl font-bold text-primary">
-                  {/* D9：全部批完显示最终得分，否则回退自动判分（无可判分为「待批」） */}
-                  {displayScore === null ? "待批" : displayScore}
-                </span>
-                <span className="text-sm text-muted-foreground">
+            <div className="grid min-w-0 gap-4 lg:grid-cols-[140px_minmax(0,1fr)] lg:items-start">
+              <div className="flex flex-col gap-1">
+                <p className="text-sm font-medium">
+                  {summary.scoreFinal !== null ? "最终得分" : "自动判分得分"}
+                </p>
+                <p className="flex items-baseline gap-2 tabular-nums">
+                  <span className="text-4xl leading-tight font-semibold text-primary">
+                    {/* D9：全部批完显示最终得分，否则回退自动判分（无可判分为「待批」） */}
+                    {displayScore === null ? "待批" : displayScore}
+                  </span>
+                  {displayScore !== null && (
+                    <span className="text-base text-muted-foreground">
+                      / 100
+                    </span>
+                  )}
+                </p>
+                <p className="text-sm leading-relaxed text-muted-foreground">
                   {summary.scoreFinal !== null
-                    ? "最终得分（含老师批改，满分 100）"
+                    ? "含老师批改，满分 100"
                     : attempt.scoreAuto === null
                       ? "暂无可自动判分的题目"
-                      : "自动判分得分（满分 100）"}
-                </span>
-              </p>
-              <p className="flex flex-wrap gap-2 text-sm text-muted-foreground [&>span]:rounded-lg [&>span]:bg-muted/60 [&>span]:px-3 [&>span]:py-1.5">
-                <span>
-                  共 <b className="text-foreground">{summary.total}</b> 题
-                </span>
-                <span>
-                  答对 <b className="text-emerald-600">{counts.correct}</b> 题
-                </span>
-                <span>
-                  答错 <b className="text-red-600">{counts.wrong}</b> 题
-                </span>
-                <span>
-                  待批{" "}
-                  <b className="text-amber-600">
+                      : "满分 100"}
+                </p>
+              </div>
+              <dl
+                aria-label="题目数量统计"
+                className="grid min-w-0 grid-cols-2 gap-2 sm:grid-cols-5 [&>div]:flex [&>div]:min-w-0 [&>div]:flex-col [&>div]:gap-1.5 [&>div]:rounded-lg [&>div]:border [&>div]:px-3 [&>div]:py-3 [&_dt]:text-sm [&_dt]:font-medium [&_dd]:text-2xl [&_dd]:leading-tight [&_dd]:font-semibold [&_dd]:tabular-nums [&_dd>span]:ml-1 [&_dd>span]:text-xs [&_dd>span]:font-normal"
+              >
+                <div className="border-border bg-muted/50">
+                  <dt>总题数</dt>
+                  <dd>
+                    {summary.total}
+                    <span>题</span>
+                  </dd>
+                </div>
+                <div className="border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-300">
+                  <dt>答对</dt>
+                  <dd>
+                    {counts.correct}
+                    <span>题</span>
+                  </dd>
+                </div>
+                <div className="border-red-200 bg-red-50 text-red-800 dark:border-red-500/40 dark:bg-red-500/10 dark:text-red-300">
+                  <dt>答错</dt>
+                  <dd>
+                    {counts.wrong}
+                    <span>题</span>
+                  </dd>
+                </div>
+                <div className="border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300">
+                  <dt>待批</dt>
+                  <dd>
                     {/* D9：pendingCount 为 D4 权威计数（批注后 autoCorrect 仍空而
                       finalCorrect 已定；公布态下恒非 null，回退仅兜底） */}
                     {summary.pendingCount ?? summary.pending}
-                  </b>{" "}
-                  题
-                </span>
+                    <span>题</span>
+                  </dd>
+                </div>
                 {/* D1（T3.2a）：未作答客观题已判错计入「答错」；「未答」独立展示
                   （此前挂在待批下的「含未答」不再准确——未答的待批题只剩手写/
                   无标准答案，其余未答客观题在答错里） */}
-                {summary.unanswered > 0 && (
-                  <span>
-                    未答 <b className="text-foreground">{summary.unanswered}</b>{" "}
-                    题
-                  </span>
-                )}
-              </p>
+                <div className="border-border bg-background">
+                  <dt>未答</dt>
+                  <dd>
+                    {summary.unanswered}
+                    <span>题</span>
+                  </dd>
+                </div>
+              </dl>
               {summary.unanswered > 0 && (
-                <p className="w-full text-sm text-muted-foreground">
+                <p className="text-sm leading-relaxed text-muted-foreground lg:col-span-2">
                   未答数单独统计，可能与判错或待批重叠，不能相加。
                 </p>
               )}

@@ -15,18 +15,24 @@ export function ResultQuestionTools({
   return (
     <section
       aria-label={`第 ${questionNo} 题材料与订正`}
-      className="flex min-w-0 flex-col gap-4 border-t border-border pt-3"
+      className="flex min-w-0 flex-col gap-3 border-t border-border pt-3"
     >
-      <div className="flex min-w-0 flex-col gap-2">
-        <h4 className="text-sm font-medium text-muted-foreground">本次原稿</h4>
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
+        <h4 className="w-16 shrink-0 text-sm font-medium text-muted-foreground">
+          本次原稿
+        </h4>
         {original}
       </div>
-      <div className="flex min-w-0 flex-col gap-2">
-        <h4 className="text-sm font-medium text-muted-foreground">订正</h4>
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
+        <h4 className="w-16 shrink-0 text-sm font-medium text-muted-foreground">
+          订正
+        </h4>
         {correction}
       </div>
-      <div className="flex min-w-0 flex-col gap-2">
-        <h4 className="text-sm font-medium text-muted-foreground">更多</h4>
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
+        <h4 className="w-16 shrink-0 text-sm font-medium text-muted-foreground">
+          更多
+        </h4>
         {more}
       </div>
     </section>

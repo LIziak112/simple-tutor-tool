@@ -4,8 +4,17 @@ import {
   ChevronLeft,
   ChevronRight,
   ListOrdered,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from "lucide-react";
-import { type ReactNode, useMemo, useRef, useState } from "react";
+import {
+  type ReactNode,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -50,6 +59,20 @@ export function ResultWorkspace({
   );
   const location = useResultReviewLocation(attemptId, ids, released, root);
   const [open, setOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
+  const navigationId = useId();
+  const anchor = useRef<{ element: HTMLElement; top: number } | null>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies(collapsed): 开合提交布局后恢复当前题卡位置。
+  useLayoutEffect(() => {
+    const saved = anchor.current;
+    if (saved) {
+      window.scrollBy({
+        top: saved.element.getBoundingClientRect().top - saved.top,
+        behavior: "instant",
+      });
+      anchor.current = null;
+    }
+  }, [collapsed]);
   const jumping = useRef<string | null>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const range = questions.filter((question) =>
@@ -129,12 +152,46 @@ export function ResultWorkspace({
           </p>
         </div>
       </header>
-      <div className="grid min-w-0 gap-6 lg:grid-cols-[240px_minmax(0,1fr)]">
+      <div
+        className={`grid min-w-0 gap-6 ${collapsed ? "lg:grid-cols-[44px_minmax(0,1fr)]" : "lg:grid-cols-[240px_minmax(0,1fr)]"}`}
+      >
         <aside
           className="sticky top-[calc(var(--attempt-header-height,96px)+16px)] hidden max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,96px)-var(--attempt-footer-height,64px)-32px)] overflow-y-auto overscroll-contain lg:block"
           aria-label="结果定位"
         >
-          {navigator}
+          <Button
+            variant="outline"
+            className={`sticky top-0 z-10 mb-3 min-h-11 ${collapsed ? "size-11 p-0" : "w-full justify-between"}`}
+            aria-label={collapsed ? "展开题号栏" : "收起题号栏"}
+            title={collapsed ? "展开题号栏" : "收起题号栏"}
+            aria-expanded={!collapsed}
+            aria-controls={navigationId}
+            onClick={() => {
+              const element = [
+                ...(root.current?.querySelectorAll<HTMLElement>(
+                  "[data-review-question]",
+                ) ?? []),
+              ].find(
+                (card) => card.dataset.reviewQuestion === location.currentId,
+              );
+              if (element)
+                anchor.current = {
+                  element,
+                  top: element.getBoundingClientRect().top,
+                };
+              setCollapsed((value) => !value);
+            }}
+          >
+            {!collapsed && <span>回看题号</span>}
+            {collapsed ? (
+              <PanelLeftOpen aria-hidden className="size-4" />
+            ) : (
+              <PanelLeftClose aria-hidden className="size-4" />
+            )}
+          </Button>
+          <div id={navigationId} hidden={collapsed}>
+            {navigator}
+          </div>
         </aside>
         <div ref={root} className="min-w-0">
           {children}

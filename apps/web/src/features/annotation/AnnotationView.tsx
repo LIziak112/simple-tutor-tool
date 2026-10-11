@@ -107,6 +107,8 @@ function AnnotationStaticCanvas({
 }
 
 export interface AnnotationViewProps {
+  /** 结果页闭合入口并排，展开材料仍占满可用宽度。 */
+  compact?: boolean;
   viewer: "student" | "teacher";
   attemptId: string;
   questionId: string;
@@ -123,6 +125,7 @@ export function AnnotationView({
   phase = "scratch",
   questionNo = 0,
   ariaPrefix = "本题",
+  compact = false,
 }: AnnotationViewProps) {
   const [open, setOpen] = useState(false);
   const [phaseState, setPhaseState] = useState<ViewPhase>("idle");
@@ -203,7 +206,10 @@ export function AnnotationView({
   }, [exportedBlob]);
 
   return (
-    <div data-slot="annotation-view" className="flex min-w-0 flex-col gap-2">
+    <div
+      data-slot="annotation-view"
+      className={`flex min-w-0 flex-col gap-2 ${compact ? (open ? "w-full" : "w-fit") : ""}`}
+    >
       {!open ? (
         <Button
           type="button"

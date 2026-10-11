@@ -2,6 +2,7 @@ import { devices, expect, test } from "@playwright/test";
 import {
   attachLeakMonitor,
   createCourseViaApi,
+  expectResultCount,
   getStudentViaApi,
   handwriteOneStroke,
   TEACHER_LOGIN_NAME,
@@ -143,8 +144,8 @@ test.describe("学生我的记录与错题本（T3.5：批改延伸）", () => {
         timeout: 30_000,
       });
       // 判错 1（判断答错）+ 待批 1（手写只写笔迹）
-      await expect(studentPage.getByText("答错 1 题")).toBeVisible();
-      await expect(studentPage.getByText("待批 1 题")).toBeVisible();
+      await expectResultCount(studentPage, "答错", 1);
+      await expectResultCount(studentPage, "待批", 1);
       expect(leak.violations().join("\n")).toBe("");
 
       // —— 教师端 UI：登录 → 待批队列 → 评语 + 键盘 1 标对（同 T3.2b 流程）——
@@ -194,7 +195,9 @@ test.describe("学生我的记录与错题本（T3.5：批改延伸）", () => {
       // 汇总：最终得分大数字 50（text-4xl 定位，避开随机后缀里的同数字子串）
       // + 「含老师批改」标签；待批 0
       await expect(studentPage.locator("span.text-4xl")).toHaveText("50");
-      await expect(studentPage.getByText(/最终得分（含老师批改/)).toBeVisible();
+      await expect(
+        studentPage.getByText("含老师批改，满分 100", { exact: true }),
+      ).toBeVisible();
       // 手写题（第 2 题）：老师批改块「判对」+ 评语；图标答对
       const q2Result = studentPage.locator('article[aria-label="第 2 题"]');
       await expect(q2Result.getByText(/老师批改：判对/)).toBeVisible();

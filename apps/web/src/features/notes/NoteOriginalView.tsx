@@ -64,6 +64,7 @@ export function NoteOriginalView({
   questionId,
   ariaPrefix = "本题",
   roundLabel = null,
+  compact = false,
 }: {
   /** 查看角色（api 层 NoteRole：学生本人 / 教师域链授权） */
   viewer: NoteRole;
@@ -73,6 +74,8 @@ export function NoteOriginalView({
   ariaPrefix?: string;
   /** 轮次标注（attemptRoundLabel 产物）；null 不显示 */
   roundLabel?: string | null;
+  /** 紧凑工具行展开时占满一行，既有调用方保持原布局。 */
+  compact?: boolean;
 }) {
   const [phase, setPhase] = useState<OriginalPhase>({ kind: "closed" });
   /** 正文渲染核（T6R.15 抽共享）：按 versionId 取正文→渲染→URL 落地 */
@@ -206,7 +209,7 @@ export function NoteOriginalView({
   return (
     <div
       data-slot="note-original-view"
-      className="flex flex-col gap-2 rounded-lg border border-border bg-card px-3 py-3"
+      className={`flex min-w-0 flex-col gap-2 rounded-lg border border-border bg-card px-3 py-3 ${compact ? "w-full" : ""}`}
     >
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
         <p className="flex items-center gap-1.5 text-sm font-medium">

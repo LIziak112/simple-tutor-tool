@@ -206,13 +206,12 @@ describe("得分汇总卡", () => {
     renderView();
     expect(screen.getByText("60")).toBeInTheDocument();
     expect(screen.getByText(/自动判分得分/)).toBeInTheDocument();
-    // 计数行内含 <b> 强调，文本被拆分为多个节点——用整体文本断言
-    const bodyText = document.body.textContent ?? "";
-    expect(bodyText).toContain("共 4 题");
-    expect(bodyText).toContain("答对 1 题");
-    expect(bodyText).toContain("答错 2 题");
-    expect(bodyText).toContain("待批 1 题");
-    expect(bodyText).toContain("未答 1 题");
+    const statistics = screen.getByLabelText("题目数量统计");
+    expect(statistics).toHaveTextContent("总题数4题");
+    expect(statistics).toHaveTextContent("答对1题");
+    expect(statistics).toHaveTextContent("答错2题");
+    expect(statistics).toHaveTextContent("待批1题");
+    expect(statistics).toHaveTextContent("未答1题");
     expect(screen.getByText(/交卷时间：/)).toBeInTheDocument();
   });
 
@@ -571,14 +570,15 @@ describe("D9（T3.5）老师批改后的展示", () => {
   it("汇总大数字显示最终得分 scoreFinal（标签「含老师批改」），待批计数用 pendingCount 归零", () => {
     render(<AttemptResultView data={GRADED} onBackHome={vi.fn()} />);
     expect(screen.getByText("50")).toBeInTheDocument();
-    expect(screen.getByText(/最终得分（含老师批改/)).toBeInTheDocument();
+    expect(screen.getByText("最终得分", { exact: true })).toBeInTheDocument();
+    expect(screen.getByText("含老师批改，满分 100")).toBeInTheDocument();
     // 回归：不再显示旧口径的自动判分标签
     expect(screen.queryByText(/自动判分得分/)).toBeNull();
     // pendingCount=0（summary.pending 仍为 1，展示以权威计数为准；
-    // 计数行内 <b> 拆分文本节点，用整体文本断言）
-    const bodyText = document.body.textContent ?? "";
-    expect(bodyText).toContain("待批 0 题");
-    expect(bodyText).not.toContain("待批 1 题");
+    // 数字与标签组成独立统计项，采用服务端权威计数。
+    const statistics = screen.getByLabelText("题目数量统计");
+    expect(statistics).toHaveTextContent("待批0题");
+    expect(statistics).not.toHaveTextContent("待批1题");
   });
 
   it("批过的题显著展示「老师批改：判对/判错」与评语", () => {

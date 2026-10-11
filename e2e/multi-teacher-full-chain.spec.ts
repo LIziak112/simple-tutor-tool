@@ -2,6 +2,7 @@ import { devices, expect, test } from "@playwright/test";
 import {
   attachLeakMonitor,
   createStudentViaApi,
+  expectResultCount,
   getStudentViaApi,
   isolateRegisterRateLimit,
   registerTeacherViaUi,
@@ -252,9 +253,9 @@ test.describe("T2B.8 多教师全链路：乙注册 → 甲发布 → 乙导入�
         timeout: 30_000,
       });
       await expect(studentPage.getByText("100", { exact: true })).toBeVisible();
-      await expect(studentPage.getByText("共 2 题")).toBeVisible();
-      await expect(studentPage.getByText("答对 2 题")).toBeVisible();
-      await expect(studentPage.getByText("待批 0 题")).toBeVisible();
+      await expectResultCount(studentPage, "总题数", 2);
+      await expectResultCount(studentPage, "答对", 2);
+      await expectResultCount(studentPage, "待批", 0);
 
       // 泄露检查：交卷前所有 /api/student/* 响应无禁用键、无提示/详解原文
       await studentPage.waitForTimeout(800); // 等最后一批响应体读完

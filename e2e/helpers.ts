@@ -28,6 +28,20 @@ export function uniqueSuffix(): string {
   return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 }
 
+/** 按统计标签核对结果页数字，不依赖旧横排文案或样式类。 */
+export async function expectResultCount(
+  page: Page,
+  label: "总题数" | "答对" | "答错" | "待批" | "未答",
+  count: number,
+): Promise<void> {
+  const metric = page
+    .getByLabel("题目数量统计")
+    .getByText(label, { exact: true })
+    .locator("..");
+  await expect(metric).toBeVisible();
+  await expect(metric).toHaveText(`${label}${count}题`);
+}
+
 // ---------- 教师 API 会话 ----------
 
 /**

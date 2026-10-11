@@ -3,6 +3,7 @@ import {
   addCourseMemberViaApi,
   attachLeakMonitor,
   createCourseViaApi,
+  expectResultCount,
   getStudentViaApi,
   handwriteOneStroke,
   setCourseItemVisible,
@@ -224,9 +225,9 @@ test.describe("Phase 3 全链路（T3.6）：作答 → 数据页 → 批改 →
         timeout: 30_000,
       });
       // 答对 1（判断）+ 答错 1（判断）+ 待批 1（手写只写笔迹）
-      await expect(studentPage.getByText("答对 1 题")).toBeVisible();
-      await expect(studentPage.getByText("答错 1 题")).toBeVisible();
-      await expect(studentPage.getByText("待批 1 题")).toBeVisible();
+      await expectResultCount(studentPage, "答对", 1);
+      await expectResultCount(studentPage, "答错", 1);
+      await expectResultCount(studentPage, "待批", 1);
       expect(leak.violations().join("\n")).toBe("");
 
       // —— 教师端 UI：登录 → 数据页三视图各切换一次 ——
@@ -396,8 +397,10 @@ test.describe("Phase 3 全链路（T3.6）：作答 → 数据页 → 批改 →
       await recordLink.click();
       await studentPage.waitForURL("**/s/attempts/**");
       await expect(studentPage.locator("span.text-4xl")).toHaveText("67");
-      await expect(studentPage.getByText(/最终得分（含老师批改/)).toBeVisible();
-      await expect(studentPage.getByText("待批 0 题")).toBeVisible();
+      await expect(
+        studentPage.getByText("含老师批改，满分 100", { exact: true }),
+      ).toBeVisible();
+      await expectResultCount(studentPage, "待批", 0);
       // 手写题（第 3 题）：老师批改块「判对」+ 评语；图标答对
       const q3Result = studentPage.locator('article[aria-label="第 3 题"]');
       await expect(q3Result.getByText(/老师批改：判对/)).toBeVisible();

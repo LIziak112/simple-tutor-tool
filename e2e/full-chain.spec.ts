@@ -2,6 +2,7 @@ import { devices, expect, test } from "@playwright/test";
 import {
   addCourseMemberViaApi,
   attachLeakMonitor,
+  expectResultCount,
   getStudentViaApi,
   setCourseItemVisible,
   TEACHER_LOGIN_NAME,
@@ -304,7 +305,7 @@ test.describe("全链路：批量导入 → 建课程 → 可见性 → 课程�
       await expect(studentPage.getByText("批改结果")).toBeVisible({
         timeout: 30_000,
       });
-      await expect(studentPage.getByText("答对 2 题")).toBeVisible();
+      await expectResultCount(studentPage, "答对", 2);
 
       // 再做一次（确认弹层「从空白开始」）→ 全错 → 历次记录 2 次
       await studentPage.getByRole("button", { name: "返回单元练习" }).click();
@@ -347,7 +348,7 @@ test.describe("全链路：批量导入 → 建课程 → 可见性 → 课程�
       await expect(studentPage.getByText("批改结果")).toBeVisible({
         timeout: 30_000,
       });
-      await expect(studentPage.getByText("答错 2 题")).toBeVisible();
+      await expectResultCount(studentPage, "答错", 2);
       await studentPage.getByRole("button", { name: "返回单元练习" }).click();
       await studentPage.waitForURL(
         `**/s/courses/${courseId}/units/${encodeURIComponent(courseUnitName)}`,
@@ -493,10 +494,10 @@ test.describe("全链路：批量导入 → 建课程 → 可见性 → 课程�
         timeout: 30_000,
       });
       await expect(assignPage.getByText("100", { exact: true })).toBeVisible();
-      await expect(assignPage.getByText("共 3 题")).toBeVisible();
-      await expect(assignPage.getByText("答对 3 题")).toBeVisible();
-      await expect(assignPage.getByText("答错 0 题")).toBeVisible();
-      await expect(assignPage.getByText("待批 0 题")).toBeVisible();
+      await expectResultCount(assignPage, "总题数", 3);
+      await expectResultCount(assignPage, "答对", 3);
+      await expectResultCount(assignPage, "答错", 0);
+      await expectResultCount(assignPage, "待批", 0);
       const resultUnitHeaders = assignPage.locator("[data-review-unit]");
       await expect(resultUnitHeaders).toHaveCount(2);
       await expect(resultUnitHeaders.nth(0)).toHaveText(courseUnitName);

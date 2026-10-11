@@ -196,6 +196,8 @@ test("130题多单元回看：保活、定位、响应式、记录往返与按�
     [390, 844],
     [768, 1024],
     [810, 668],
+    [1024, 768],
+    [1110, 668],
     [1200, 900],
     [1440, 900],
   ] as const) {
@@ -231,6 +233,49 @@ test("130题多单元回看：保活、定位、响应式、记录往返与按�
     });
     expect(geometry.top).toBeGreaterThanOrEqual(geometry.headerBottom);
     measurements.push({ width, height, ...geometry });
+    if (width >= 1024) {
+      const tools = last.getByRole("region", { name: "第 130 题材料与订正" });
+      const toolsBox = await tools.boundingBox();
+      expect(toolsBox?.height).toBeLessThanOrEqual(180);
+      const before = await last.boundingBox();
+      if (!before) throw new Error("无法测量题卡");
+      const toggle = page.getByRole("button", { name: "收起题号栏" });
+      await toggle.press("Enter");
+      await expect(
+        page.getByRole("button", { name: "展开题号栏" }),
+      ).toBeFocused();
+      await expect(
+        navigation.getByRole("combobox", { name: "回看定位范围" }),
+      ).toBeHidden();
+      await expect
+        .poll(async () => (await last.boundingBox())?.width ?? 0)
+        .toBeGreaterThan(before.width + 190);
+      await expect(last).toBeInViewport();
+      await page.screenshot({
+        path: testInfo.outputPath(`review-collapsed-${width}.png`),
+      });
+      await page.getByRole("button", { name: "展开题号栏" }).press("Space");
+      await expect(
+        navigation.getByRole("combobox", { name: "回看定位范围" }),
+      ).toHaveValue("all");
+      await expect(page.locator("[data-review-question]")).toHaveCount(130);
+      await page
+        .locator("[aria-labelledby='result-summary']")
+        .scrollIntoViewIfNeeded();
+      await expect(page.getByLabel("题目数量统计")).toBeVisible();
+      await page.screenshot({
+        path: testInfo.outputPath(`review-summary-${width}.png`),
+      });
+      await navigation
+        .getByRole("button", { name: "第 130 题，未作答，判错", exact: true })
+        .click();
+      await tools.scrollIntoViewIfNeeded();
+      // 补足固定底栏的遮挡区，让完整工具组出现在截图中。
+      await page.evaluate(() => window.scrollBy(0, 100));
+      await page.screenshot({
+        path: testInfo.outputPath(`review-tools-${width}.png`),
+      });
+    }
     await page.screenshot({ path: testInfo.outputPath(`review-${width}.png`) });
   }
   await page.evaluate(() => {
@@ -306,6 +351,14 @@ test("130题多单元回看：保活、定位、响应式、记录往返与按�
     last.getByText("本题未使用题干标注", { exact: true }),
   ).toBeVisible();
   expect(materialRequests.length).toBeGreaterThan(0);
+  await page.setViewportSize({ width: 1110, height: 668 });
+  await expect(last.locator('[data-slot="note-original-view"]')).toBeVisible();
+  const originalBox = await last
+    .locator('[data-slot="note-original-view"]')
+    .boundingBox();
+  const cardBox = await last.boundingBox();
+  if (!originalBox || !cardBox) throw new Error("无法测量展开材料");
+  expect(originalBox.width).toBeGreaterThan(cardBox.width - 60);
   const lastQuestionId = await last.getAttribute("data-review-question");
   if (!lastQuestionId) throw new Error("末题缺少题目ID");
   for (const url of materialRequests)

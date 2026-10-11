@@ -2,6 +2,7 @@ import { devices, expect, test } from "@playwright/test";
 import {
   attachLeakMonitor,
   createCourseViaApi,
+  expectResultCount,
   getStudentViaApi,
   handwriteOneStroke,
   TEACHER_LOGIN_NAME,
@@ -181,8 +182,8 @@ test.describe("教师批改流（T3.2b：待批队列 → 学生已批）", () =
         timeout: 30_000,
       });
       // 判对 1（判断）+ 待批 1（手写只写笔迹）
-      await expect(studentPage.getByText("答对 1 题")).toBeVisible();
-      await expect(studentPage.getByText("待批 1 题")).toBeVisible();
+      await expectResultCount(studentPage, "答对", 1);
+      await expectResultCount(studentPage, "待批", 1);
       expect(leak.violations().join("\n")).toBe("");
 
       // —— 教师端 UI：登录 → 待批队列（按学生筛选隔离并行 worker 的数据）——
@@ -376,8 +377,8 @@ test.describe("教师批改流（T3.2b：待批队列 → 学生已批）", () =
       });
       // 判断题自动判对；fill 全人工批改 → 不自动判对错：该题「待批改」、
       // 汇总「待批 1 题」（未批完不显示最终得分）
-      await expect(studentPage.getByText("答对 1 题")).toBeVisible();
-      await expect(studentPage.getByText("待批 1 题")).toBeVisible();
+      await expectResultCount(studentPage, "答对", 1);
+      await expectResultCount(studentPage, "待批", 1);
       const q2Pending = studentPage.locator('article[aria-label="第 2 题"]');
       await expect(
         q2Pending.getByText("待批改", { exact: true }),
@@ -423,9 +424,14 @@ test.describe("教师批改流（T3.2b：待批队列 → 学生已批）", () =
       await recordLink.click();
       await studentPage.waitForURL("**/s/attempts/**");
       await expect(studentPage.getByText("批改结果")).toBeVisible();
-      await expect(studentPage.getByText(/最终得分（含老师批改/)).toBeVisible();
+      await expect(
+        studentPage.getByText("最终得分", { exact: true }),
+      ).toBeVisible();
+      await expect(
+        studentPage.getByText("含老师批改，满分 100", { exact: true }),
+      ).toBeVisible();
       await expect(studentPage.locator("span.text-4xl")).toHaveText("100");
-      await expect(studentPage.getByText("待批 0 题")).toBeVisible();
+      await expectResultCount(studentPage, "待批", 0);
       const q2Final = studentPage.locator('article[aria-label="第 2 题"]');
       await expect(q2Final.getByText(/老师批改：判对/)).toBeVisible();
       await expect(q2Final.getByLabel("答对")).toBeVisible();

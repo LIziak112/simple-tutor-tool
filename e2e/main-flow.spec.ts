@@ -3,6 +3,7 @@ import {
   addCourseMemberViaApi,
   attachLeakMonitor,
   ensureDefaultCourse,
+  expectResultCount,
   getStudentViaApi,
   handwriteOneStroke,
   importJudgeUnit,
@@ -253,11 +254,11 @@ test.describe("主流程：布置作业 → 学生作答与交卷 → 结果与�
       // scoreAuto=100；共 9 题 = 答对 5 + 待批 4（填空第 4、5 题——fill 全人工
       // 批改后不自动判对错 + 手写未答第 7、8 题），未答 2 = 手写第 7、8 题
       await expect(studentPage.getByText("100", { exact: true })).toBeVisible();
-      await expect(studentPage.getByText("共 9 题")).toBeVisible();
-      await expect(studentPage.getByText("答对 5 题")).toBeVisible();
-      await expect(studentPage.getByText("答错 0 题")).toBeVisible();
-      await expect(studentPage.getByText("待批 4 题")).toBeVisible();
-      await expect(studentPage.getByText("未答 2 题")).toBeVisible();
+      await expectResultCount(studentPage, "总题数", 9);
+      await expectResultCount(studentPage, "答对", 5);
+      await expectResultCount(studentPage, "答错", 0);
+      await expectResultCount(studentPage, "待批", 4);
+      await expectResultCount(studentPage, "未答", 2);
 
       // 多单元分节按布置顺序；题号1—9连续，题目标题不混入单元标题。
       const resultUnitHeaders = studentPage.locator("[data-review-unit]");

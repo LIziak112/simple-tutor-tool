@@ -4,6 +4,7 @@ import {
   attachLeakMonitor,
   createStudentViaApi,
   ensureDefaultCourse,
+  expectResultCount,
   getStudentViaApi,
   importJudgeUnit,
   TEACHER_LOGIN_NAME,
@@ -176,7 +177,7 @@ test.describe("布置作业组合方式：每个单元一份（separate）", () 
       await expect(studentPage.getByText("批改结果")).toBeVisible({
         timeout: 30_000,
       });
-      await expect(studentPage.getByText("答对 2 题")).toBeVisible();
+      await expectResultCount(studentPage, "答对", 2);
 
       // 回首页：A 那份已批改（入口变「查看结果」），B 那份仍「未开始」
       await studentPage.goto("/s/home");

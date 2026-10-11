@@ -3,6 +3,7 @@ import {
   addCourseMemberViaApi,
   attachLeakMonitor,
   createCourseViaApi,
+  expectResultCount,
   getStudentViaApi,
   setCourseItemVisible,
   teacherApiLogin,
@@ -142,7 +143,7 @@ test.describe("课程练习：完成单元 → 结果 → 再做一次 → 历�
       await expect(studentPage.getByText("批改结果")).toBeVisible({
         timeout: 30_000,
       });
-      await expect(studentPage.getByText("答对 2 题")).toBeVisible();
+      await expectResultCount(studentPage, "答对", 2);
 
       // —— 返回落地页：历次记录 1 次 + 得分汇总；再做一次（确认弹层文案） ——
       await studentPage.getByRole("button", { name: "返回单元练习" }).click();
@@ -195,7 +196,7 @@ test.describe("课程练习：完成单元 → 结果 → 再做一次 → 历�
       await expect(studentPage.getByText("批改结果")).toBeVisible({
         timeout: 30_000,
       });
-      await expect(studentPage.getByText("答错 2 题")).toBeVisible();
+      await expectResultCount(studentPage, "答错", 2);
 
       // —— 落地页：历次记录 2 次；首次 100 / 最近 0 / 最高 100（各自独立） ——
       await studentPage.getByRole("button", { name: "返回单元练习" }).click();
@@ -223,7 +224,7 @@ test.describe("课程练习：完成单元 → 结果 → 再做一次 → 历�
         studentPage.getByText(`课程：${courseName} · 第 1 次`),
       ).toBeVisible();
       await expect(studentPage.getByText("批改结果")).toBeVisible();
-      await expect(studentPage.getByText("答对 2 题")).toBeVisible();
+      await expectResultCount(studentPage, "答对", 2);
 
       // —— 泄露检查：全程 /api/student/* 响应无禁用键、无提示/详解原文 ——
       await studentPage.waitForTimeout(800); // 等最后一批响应体读完

@@ -73,6 +73,8 @@ const RECOVERABLE_EVIDENCE: ReadonlySet<string> = new Set([
 ]);
 
 export interface CorrectionSectionProps {
+  /** 并排呈现闭合工具，打开后恢复完整内容宽度。 */
+  compact?: boolean;
   attemptId: string;
   questionId: string;
   /** 无障碍标签前缀（如「第 3 题」） */
@@ -83,6 +85,7 @@ export function CorrectionSection({
   attemptId,
   questionId,
   ariaPrefix = "本题",
+  compact = false,
 }: CorrectionSectionProps) {
   const session = useNoteSessionRef();
   const queryClient = useQueryClient();
@@ -223,7 +226,10 @@ export function CorrectionSection({
   const canCopyOriginal = head?.evidence?.state === "frozen";
 
   return (
-    <div data-slot="correction-section" className="flex flex-col gap-2">
+    <div
+      data-slot="correction-section"
+      className={`flex min-w-0 flex-col gap-2 ${compact ? (open || supplementNeedsUI ? "w-full" : "w-fit") : ""}`}
+    >
       <div className="flex flex-wrap items-center gap-2">
         <Button
           type="button"
