@@ -89,7 +89,9 @@ export function AnnotationExportDialog({
               {originalSize ? <ZoomOut aria-hidden /> : <ZoomIn aria-hidden />}
             </Button>
           </div>
-          <DialogDescription className="break-all">{filename}</DialogDescription>
+          <DialogDescription className="break-all">
+            {filename}
+          </DialogDescription>
         </DialogHeader>
         <div className="min-h-0 flex-1 overflow-auto">
           {error ? (

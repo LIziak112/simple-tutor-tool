@@ -6,6 +6,7 @@ import remarkDirective from "remark-directive";
 import remarkFrontmatter from "remark-frontmatter";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
+import { rehypeMathFallback } from "./rehype-math-fallback";
 import { remarkBlank } from "./remark/remark-blank";
 import { remarkDirectiveHost } from "./remark/remark-directive-host";
 import { richMarkdownSanitizeSchema } from "./sanitize";
@@ -15,7 +16,7 @@ import { richMarkdownSanitizeSchema } from "./sanitize";
  * 与 packages/md-dsl 解析器同一套 remark 插件，保证解析口径一致——
  *   remarkParse → remark-frontmatter → remark-math → remark-gfm → remark-directive
  *   → remarkBlank（[[…]] → blank 指令）→ remarkDirectiveHost（指令 → 宿主标签）
- *   → rehype-katex（公式）→ rehype-sanitize（自定义 schema：放行 KaTeX 输出与
+ *   → 历史坏公式明确降级 → rehype-katex（公式）→ rehype-sanitize（自定义 schema：放行 KaTeX 输出与
  *     指令宿主标签，清除 script/事件属性/javascript: 协议）
  *
  * 消费方：主应用 RichMarkdown 与静态导出管线（合成图 export-review-image，
@@ -38,6 +39,7 @@ export const richMarkdownRemarkPlugins: RemarkPluginList = [
 ];
 
 export const richMarkdownRehypePlugins: RehypePluginList = [
+  rehypeMathFallback,
   rehypeKatex,
   // rehype-sanitize 的选项就是 schema 本身（v6 签名：rehypeSanitize(schema)）
   [rehypeSanitize, richMarkdownSanitizeSchema],

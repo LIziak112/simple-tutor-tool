@@ -16,6 +16,25 @@ import { renderMd } from "./test-support/render-md";
  */
 
 describe("RichMarkdown：公式渲染（KaTeX）", () => {
+  it("历史跨空位公式保留分数、乘号和括号的可读降级，明确标识且不改源文", () => {
+    const source =
+      "原式 $= +\\left($[[6]]$ \\times \\frac{5}{6}\\right) = $[[5]]。";
+    const { container } = renderMd(source);
+    expect(container.querySelector(".katex-error")).toBeNull();
+    expect(container.querySelectorAll(".math-fallback")).toHaveLength(2);
+    expect(container.querySelector(".mfrac")).not.toBeNull();
+    expect(container.textContent).toContain("历史公式简化显示");
+    expect(container.querySelectorAll('[data-testid="blank"]')).toHaveLength(2);
+    expect(source).toContain("\\left");
+  });
+  it("无法可靠降级的公式显示中性错误，不把红色LaTeX源码当正文", () => {
+    const { container } = renderMd("$\\unknown{<script>}$");
+    expect(container.querySelector(".katex-error")).toBeNull();
+    expect(container.querySelector(".math-render-error")).not.toBeNull();
+    expect(container.textContent).toContain("公式无法显示");
+    expect(container.textContent).not.toContain("\\unknown");
+    expect(container.querySelector("script")).toBeNull();
+  });
   it("行内与块级公式渲染为 KaTeX 输出，而不是原始 $…$ 文本", () => {
     const { container } = renderMd(
       "行内公式 $x^2+1$ 与块级公式：\n\n$$E=mc^2$$",

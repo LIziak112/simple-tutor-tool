@@ -25,6 +25,10 @@ export {
   analyzeLectureStructure,
   weightedCharCounts,
 } from "./v2/lecture-structure.ts";
+export {
+  simplifySizedMathDelimiters,
+  sizedMathDelimiters,
+} from "./v2/math-delimiters.ts";
 export type { ParseOptions } from "./v2/parse.ts";
 export { parseDocument } from "./v2/parse.ts";
 // 题干形态变换唯一公开面：学生端 payload 用 studentStemMd（脱敏 + 剥选项），

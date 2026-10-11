@@ -32,6 +32,7 @@ import {
   previewImport,
   previewImportBatch,
   updateLecture,
+  updateQuestion,
 } from "./content-service.ts";
 import { createFolder } from "./library-service.ts";
 import { createStudent } from "./student-service.ts";
@@ -59,6 +60,64 @@ function loadSample(relative: string): string {
 const PRACTICE_MD = loadSample("v2/练习样例.md");
 const LECTURE_MD = loadSample("v2/讲义样例.md");
 const MIXED_MD = loadSample("v2/混合样例.md");
+
+describe("公式发布闸门", () => {
+  const source =
+    "::::question{type=fill difficulty=1 id=math-gate}\n原式 $= +($[[6]]$ \\times \\frac{5}{6}) = $[[5]]。\n::::";
+  const broken = source.replace("+(", "+\\left(").replace("})", "}\\right)");
+  const wrap = (value: string) =>
+    `---\nkind: practice\nunit: 公式检查\n---\n\n${value}`;
+
+  it("导入预览给出位置与改法，提交拒绝且无写入", () => {
+    const db = createTestDb();
+    const input = { markdown: wrap(broken), filename: "公式检查.md" };
+    const preview = previewImport(db, TEST_TEACHER_ID, input);
+    expect(preview.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "MATH_LEFT_RIGHT_UNBALANCED",
+          level: "error",
+          line: 7,
+          fix: expect.stringContaining("普通括号"),
+        }),
+      ]),
+    );
+    expect(() => commitImport(db, TEST_TEACHER_ID, input)).toThrowError(
+      HttpError,
+    );
+    expect(db.select().from(questions).all()).toHaveLength(0);
+    expect(db.select().from(imports).all()).toHaveLength(0);
+  });
+
+  it("题目修订也拒绝同类错误，错误坐标回到题源", () => {
+    const db = createTestDb();
+    commitImport(db, TEST_TEACHER_ID, {
+      markdown: wrap(source),
+      filename: "公式检查.md",
+    });
+    const before = db.select().from(questions).get();
+    expect(before).toBeDefined();
+    const error = captureError(() =>
+      updateQuestion(db, TEST_TEACHER_ID, "math-gate", { sourceMd: broken }),
+    );
+    expect(error).toMatchObject({
+      status: 422,
+      code: "LINT_ERROR",
+      extra: {
+        _issues: expect.arrayContaining([
+          expect.objectContaining({
+            code: "MATH_LEFT_RIGHT_UNBALANCED",
+            line: 2,
+            fix: expect.stringContaining("普通括号"),
+          }),
+        ]),
+      },
+    });
+    expect(db.select().from(questions).get()).toEqual(before);
+    updateQuestion(db, TEST_TEACHER_ID, "math-gate", { sourceMd: source });
+    expect(db.select().from(questions).get()?.version).toBe(2);
+  });
+});
 
 /** 练习样例 8 题的题型分布（缺省 id `练习四-N`，第 7 题显式 id=p4-q7） */
 const PRACTICE_TYPE_DISTRIBUTION = {

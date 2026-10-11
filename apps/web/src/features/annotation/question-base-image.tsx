@@ -160,7 +160,11 @@ async function awaitReady(surface: HTMLElement): Promise<void> {
       requestAnimationFrame(() => resolve()),
     );
     if (performance.now() > deadline) throw new Error("题面布局稳定等待超时");
-    if (surface.querySelector('.katex-error, [role="alert"]'))
+    if (
+      surface.querySelector(
+        '.katex-error, .math-fallback, .math-render-error, [role="alert"]',
+      )
+    )
       throw new Error("题面公式或配图渲染失败，请修正后重试");
     if (surface.querySelector('[role="status"]')) {
       unchanged = 0;

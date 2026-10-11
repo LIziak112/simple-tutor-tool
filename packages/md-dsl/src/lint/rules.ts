@@ -224,9 +224,9 @@ export const LINT_RULES: readonly LintRuleDoc[] = [
   },
   {
     code: "MATH_LEFT_RIGHT_UNBALANCED",
-    level: "warning",
+    level: "error",
     description:
-      "公式内 \\left 与 \\right 不配对（KaTeX 无法渲染，页面会显示 LaTeX 源码）：必须在同一条公式内配对；要在算式中间插填空 [[…]] 而断开公式时，断点两侧改用普通括号 ( )",
+      "公式内 \\left 与 \\right 不配对（无法正常渲染，阻断导入与修订）：必须在同一条公式内配对；要在算式中间插填空 [[…]] 而断开公式时，断点两侧改用普通括号 ( )",
   },
   {
     code: "MATH_SPACING_OUTSIDE",
