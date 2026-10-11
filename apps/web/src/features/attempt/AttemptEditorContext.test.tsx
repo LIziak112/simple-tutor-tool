@@ -40,6 +40,72 @@ function Controls({ finish }: { finish: () => Promise<void> }) {
     </>
   );
 }
+it("130题按题订阅编辑状态，仅原题与新题更新；只读操作方不跟随模式重渲染", async () => {
+  const renders = new Map<string, number>();
+  function Probe({ id }: { id: string | null }) {
+    const editor = useAttemptEditor(id);
+    const key = id ?? "commands";
+    renders.set(key, (renders.get(key) ?? 0) + 1);
+    return <span>{editor?.active?.questionId ?? key}</span>;
+  }
+  render(
+    <AttemptEditorProvider>
+      <Controls finish={async () => {}} />
+      <Probe id={null} />
+      {Array.from({ length: 130 }, (_, index) => `q${index + 1}`).map((id) => (
+        <Probe key={id} id={id} />
+      ))}
+    </AttemptEditorProvider>,
+  );
+  const before = new Map(renders);
+  fireEvent.click(screen.getByText("甲"));
+  await waitFor(() =>
+    expect(screen.getByRole("status")).toHaveTextContent("q1"),
+  );
+  expect(renders.get("q1")).toBeGreaterThan(before.get("q1") ?? 0);
+  for (const [key, count] of before)
+    if (key !== "q1") expect(renders.get(key)).toBe(count);
+  const afterFirst = new Map(renders);
+  fireEvent.click(screen.getByText("乙"));
+  await waitFor(() =>
+    expect(screen.getByRole("status")).toHaveTextContent("q2"),
+  );
+  expect(renders.get("q2")).toBeGreaterThan(afterFirst.get("q2") ?? 0);
+  for (const [key, count] of afterFirst)
+    if (key !== "q1" && key !== "q2") expect(renders.get(key)).toBe(count);
+});
+it("按题订阅方在事件中能读取其他题当前编辑者，不需要整卷重渲染", async () => {
+  function OtherQuestion() {
+    const editor = useAttemptEditor("q2");
+    return (
+      <button
+        type="button"
+        onClick={() => {
+          if (editor?.getActive()?.kind === "annotation")
+            void editor.request(null);
+        }}
+      >
+        其他题作答
+      </button>
+    );
+  }
+  const finish = vi.fn(async () => undefined);
+  render(
+    <AttemptEditorProvider>
+      <Controls finish={finish} />
+      <OtherQuestion />
+    </AttemptEditorProvider>,
+  );
+  fireEvent.click(screen.getByText("甲"));
+  await waitFor(() =>
+    expect(screen.getByRole("status")).toHaveTextContent("q1"),
+  );
+  fireEvent.click(screen.getByText("其他题作答"));
+  await waitFor(() =>
+    expect(screen.getByRole("status")).toHaveTextContent("作答"),
+  );
+  expect(finish).toHaveBeenCalledOnce();
+});
 it("切题先结束原笔并落盘，完成前不挂第二个编辑者", async () => {
   let resolve: (() => void) | undefined;
   const finish = vi.fn(

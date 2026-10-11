@@ -7,6 +7,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 
 export type AttemptEditor = {
@@ -15,6 +16,7 @@ export type AttemptEditor = {
 };
 interface EditorContextValue {
   active: AttemptEditor | null;
+  getActive(): AttemptEditor | null;
   request(
     next: AttemptEditor | null,
     prepare?: (signal: AbortSignal) => Promise<boolean>,
@@ -25,14 +27,52 @@ interface EditorContextValue {
     kind?: AttemptEditor["kind"],
   ): () => void;
 }
-const Context = createContext<EditorContextValue | null>(null);
-export const useAttemptEditor = () => useContext(Context);
+interface EditorStore extends Omit<EditorContextValue, "active"> {
+  subscribe(listener: () => void): () => void;
+}
+const Context = createContext<EditorStore | null>(null);
+const noSubscribe = () => () => {};
+/** undefined订阅全局，题号只订阅本题，null只取稳定操作而不订阅模式。 */
+export function useAttemptEditor(
+  questionId?: string | null,
+): EditorContextValue | null {
+  const store = useContext(Context);
+  const read = useCallback(() => {
+    const active = store?.getActive() ?? null;
+    return questionId === null
+      ? null
+      : questionId === undefined || active?.questionId === questionId
+        ? active
+        : null;
+  }, [store, questionId]);
+  const active = useSyncExternalStore(
+    store?.subscribe ?? noSubscribe,
+    read,
+    read,
+  );
+  return useMemo(
+    () =>
+      store
+        ? {
+            active,
+            getActive: store.getActive,
+            request: store.request,
+            register: store.register,
+          }
+        : null,
+    [store, active],
+  );
+}
 
 /** 切换等待原编辑者收笔与本机落盘；失败不卸载原稿。 */
 export function AttemptEditorProvider({ children }: { children: ReactNode }) {
-  const [active, setActive] = useState<AttemptEditor | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const activeRef = useRef(active);
+  const activeRef = useRef<AttemptEditor | null>(null);
+  const listeners = useRef(new Set<() => void>());
+  const publish = useCallback((next: AttemptEditor | null) => {
+    activeRef.current = next;
+    for (const listener of listeners.current) listener();
+  }, []);
   const controllers = useRef(new Map<string, () => Promise<void>>());
   const sequence = useRef(0);
   const preparation = useRef<AbortController | null>(null);
@@ -58,16 +98,14 @@ export function AttemptEditorProvider({ children }: { children: ReactNode }) {
           )?.();
         if (generation !== sequence.current) return false;
         if (prepare) {
-          activeRef.current = null;
-          setActive(null);
+          publish(null);
           if (
             !(await prepare(controller.signal)) ||
             generation !== sequence.current
           )
             return false;
         }
-        activeRef.current = next;
-        setActive(next);
+        publish(next);
         setError(null);
         return true;
       } catch (cause) {
@@ -78,7 +116,7 @@ export function AttemptEditorProvider({ children }: { children: ReactNode }) {
         return false;
       }
     },
-    [],
+    [publish],
   );
   const register = useCallback(
     (
@@ -117,8 +155,18 @@ export function AttemptEditorProvider({ children }: { children: ReactNode }) {
     };
   }, [request]);
   const value = useMemo(
-    () => ({ active, request, register }),
-    [active, request, register],
+    () => ({
+      getActive: () => activeRef.current,
+      subscribe: (listener: () => void) => {
+        listeners.current.add(listener);
+        return () => {
+          listeners.current.delete(listener);
+        };
+      },
+      request,
+      register,
+    }),
+    [request, register],
   );
   return (
     <Context.Provider value={value}>

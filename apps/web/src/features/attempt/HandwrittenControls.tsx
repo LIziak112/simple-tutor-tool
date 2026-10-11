@@ -168,9 +168,9 @@ export function HandwrittenControls({
   const draftSyncRef = useRef(draftSync);
   draftSyncRef.current = draftSync;
 
-  // 上传状态机：engineGetter 取「当前激活引擎」（全屏开着用全屏引擎）
+  // 上传状态机始终取同一纸面引擎，全屏只切换外框。
   const engineGetter = useCallback(() => pageEngineRef.current, []);
-  const coordinator = useAttemptEditor();
+  const coordinator = useAttemptEditor(null);
   const finish = useCallback(async () => {
     engineGetter()?.finish?.();
     await draftStore.flush(attemptId);

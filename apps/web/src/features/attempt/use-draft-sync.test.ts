@@ -96,6 +96,43 @@ describe("进入答题页：合并恢复", () => {
 });
 
 describe("增量同步时机", () => {
+  it("交卷调用syncNow必须等待已在途同步，不得提前返回", async () => {
+    const { result } = setupHook();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    let done: (() => void) | undefined;
+    mockedSave.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          done = () => resolve({ questionId: "q", changeCount: 1 });
+        }),
+    );
+    act(() => {
+      draftStore.saveAnswer("att-1", "q", judge);
+    });
+    let first: Promise<void> | undefined;
+    let second: Promise<void> | undefined;
+    let completed = false;
+    await act(async () => {
+      first = result.current.syncNow();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      second = result.current.syncNow().then(() => {
+        completed = true;
+      });
+      await Promise.resolve();
+    });
+    expect(completed).toBe(false);
+    await act(async () => {
+      done?.();
+      await first;
+      await second;
+    });
+    expect(completed).toBe(true);
+    expect(mockedSave).toHaveBeenCalledOnce();
+  });
   it("每 10 秒定时触发：到点把指纹不同的答案 PUT 出去", async () => {
     const { result } = setupHook({});
     await act(async () => {

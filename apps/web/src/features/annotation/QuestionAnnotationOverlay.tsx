@@ -50,7 +50,7 @@ export const QuestionAnnotationOverlay = forwardRef<
     hidden?: boolean;
   }
 >(({ attemptId, question, label, children, onLegacy, hidden = false }, ref) => {
-  const editor = useAttemptEditor();
+  const editor = useAttemptEditor(question.id);
   const session = useAnnotationSessionRef();
   const record = useAnnotationRecord(attemptId, question.id);
   const root = useRef<HTMLDivElement>(null);

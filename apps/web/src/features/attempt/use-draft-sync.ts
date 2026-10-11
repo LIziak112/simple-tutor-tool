@@ -86,6 +86,7 @@ export function useDraftSync(
   >(undefined);
   /** 同步进行中标志（定时/事件并发触发时只跑一轮） */
   const syncingRef = useRef(false);
+  const syncCompletion = useRef<Promise<void> | null>(null);
   /**
    * 终态停止标志（T2A.6，D7）：置位后定时器/visibility/online 触发的 syncNow
    * 全部 no-op，本地草稿保留但不再上传。ref 而非 state：syncNow 是稳定回调，
@@ -113,12 +114,19 @@ export function useDraftSync(
 
   const syncNow = useCallback(async (): Promise<void> => {
     if (deniedRef.current) return; // 终态：不再上传（本地草稿保留）
-    if (syncingRef.current) return;
+    if (syncingRef.current) {
+      await syncCompletion.current;
+      return;
+    }
     if (!navigator.onLine) {
       setStatus({ state: "offline" });
       return;
     }
     syncingRef.current = true;
+    let complete = () => {};
+    syncCompletion.current = new Promise<void>((resolve) => {
+      complete = resolve;
+    });
     try {
       const record = await draftStore.loadDraft(attemptIdRef.current);
       /** 待补传答案（指纹不同）：[questionId, answer]（跳过值缺失的防御分支） */
@@ -184,6 +192,8 @@ export function useDraftSync(
       }
     } finally {
       syncingRef.current = false;
+      complete();
+      syncCompletion.current = null;
     }
   }, [inkControllers, inksClean, recomputeIfClean]);
 

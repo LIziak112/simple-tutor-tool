@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError } from "@/lib/api";
 import { isAnswered } from "./answer-format";
 import { saveDraftAnswer } from "./attempt-queries";
+import { unsyncedAnswerIds } from "./draft-merge";
 import { draftStore } from "./draft-store";
 import type { DraftSyncApi } from "./use-draft-sync";
 
@@ -37,6 +38,8 @@ export interface AttemptAnswersState {
   answeredCount: (questionIds: readonly string[]) => number;
   /** 最近一次保存是否失败（底栏提示用） */
   saveFailed: boolean;
+  /** 交卷前收尾防抖与在途请求，最新答案未到服务端时拒绝。 */
+  flush(): Promise<void>;
 }
 
 /** useAttemptAnswers 的可选回调集 */
@@ -99,38 +102,70 @@ export function useAttemptAnswers(
   // T2.10：保存生效回调同样走 ref（事件上报不重建保存链）
   const optionsRef = useRef(options);
   optionsRef.current = options;
+  const inFlight = useRef(new Set<Promise<boolean>>());
+  const deniedFor = useRef<string | null>(null);
 
   const save = useCallback((questionId: string, answer: StudentAnswer) => {
+    const scope = attemptIdRef.current;
+    const api = syncRef.current;
     // T2.10：与保存同节奏上报 answer_change（防抖/立即提交点各一次）
     optionsRef.current?.onAnswerCommitted?.(questionId, answer);
-    saveDraftAnswer(attemptIdRef.current, questionId, answer)
-      .then(() => {
+    const task: Promise<boolean> = saveDraftAnswer(scope, questionId, answer)
+      .then(async () => {
+        await draftStore.markAnswerSynced(scope, questionId, answer);
+        if (attemptIdRef.current !== scope) return true;
         setSaveFailed(false);
         // T2.9：答案已到服务端 → 草稿仓记指纹（增量同步去重）+ 顶栏回到已保存
-        const api = syncRef.current;
         if (api !== null && api !== undefined) {
-          void draftStore.markAnswerSynced(
-            attemptIdRef.current,
-            questionId,
-            answer,
-          );
           api.noteAnswerSynced(questionId, answer);
         }
+        return true;
       })
       .catch((err: unknown) => {
+        if (attemptIdRef.current !== scope) return false;
         // 403/404 = 访问权终态（T2A.6，D7）：停止重试循环（区别于网络失败）
         if (
           err instanceof ApiError &&
           (err.status === 403 || err.status === 404)
         ) {
-          syncRef.current?.noteDenied();
+          deniedFor.current = scope;
+          api?.noteDenied();
           setSaveFailed(true);
-          return;
+          return false;
         }
         setSaveFailed(true);
-        syncRef.current?.noteSyncFailed();
+        api?.noteSyncFailed();
+        return false;
+      })
+      .finally(() => {
+        inFlight.current.delete(task);
       });
+    inFlight.current.add(task);
+    return task;
   }, []);
+
+  const flush = useCallback(async () => {
+    const scope = attemptIdRef.current;
+    for (const entry of pendingRef.current.values()) clearTimeout(entry.timer);
+    pendingRef.current.clear();
+    await Promise.all([...inFlight.current]);
+    if (deniedFor.current === scope)
+      throw new Error("已无权限保存答案，请返回首页");
+    const record = await draftStore.loadDraft(scope);
+    if (attemptIdRef.current !== scope)
+      throw new Error("练习已切换，请重新交卷");
+    const results = await Promise.all(
+      record === null
+        ? []
+        : unsyncedAnswerIds(record).flatMap((id) => {
+            const answer = record.answers[id];
+            return answer === undefined ? [] : [save(id, answer)];
+          }),
+    );
+    if (!results.every(Boolean))
+      throw new Error("答案尚未保存，请检查网络后重试交卷");
+    await draftStore.flush(scope);
+  }, [save]);
 
   const setAnswer = useCallback(
     (questionId: string, answer: StudentAnswer, defer = false) => {
@@ -177,5 +212,5 @@ export function useAttemptAnswers(
     [answers],
   );
 
-  return { answers, setAnswer, answeredCount, saveFailed };
+  return { answers, setAnswer, answeredCount, saveFailed, flush };
 }

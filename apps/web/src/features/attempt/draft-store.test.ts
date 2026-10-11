@@ -131,6 +131,20 @@ describe("clearDraft", () => {
 });
 
 describe("同步指纹", () => {
+  it("旧答案上传回执只更新已传指纹，不能覆写期间新输入", async () => {
+    draftStore.saveAnswer("late-answer", "q", { kind: "fill", values: ["7"] });
+    await draftStore.markAnswerSynced("late-answer", "q", {
+      kind: "fill",
+      values: ["6"],
+    });
+    expect((await draftStore.loadDraft("late-answer"))?.answers.q).toEqual({
+      kind: "fill",
+      values: ["7"],
+    });
+    expect(draftStore.getSaveFlags("late-answer", "q").answerPending).toBe(
+      true,
+    );
+  });
   it("markAnswerSynced 后该题不再算未同步；markSynced 推进 syncedAt", async () => {
     draftStore.saveAnswer("att-1", "q1", judge);
     await draftStore.markAnswerSynced("att-1", "q1", judge);

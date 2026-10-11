@@ -52,7 +52,7 @@ export function summarizeAttemptSaveStatus(input: SaveSummaryInput): string {
     return "已存本机，正在同步…";
   return "全部已保存";
 }
-const subscribe = (listener: () => void) => {
+export const subscribeAttemptSaveChanges = (listener: () => void) => {
   const stops = [
     subscribeNoteStore(listener),
     subscribeAnnotationStore(listener),
@@ -62,6 +62,80 @@ const subscribe = (listener: () => void) => {
     for (const stop of stops) stop();
   };
 };
+
+export interface AttemptSaveDetail {
+  questionId: string;
+  questionNo: number;
+  answer: string;
+  ink: string;
+  scratch: string;
+  annotation: string;
+}
+function recordSaveLabel(view: SaveView | null): string {
+  if (!view) return "未使用";
+  if (view.local === "failed") return "本机保存失败";
+  if (view.local === "saving") return "正在存本机";
+  if (view.server === "conflict") return "同步冲突，本机稿已保留";
+  if (view.server === "denied") return "无权限同步，本机稿已保留";
+  return view.server === "synced" ? "已保存" : "等待同步";
+}
+
+/** 弹层打开才消费，仅读标量；同一状态字符串不会触发整卷重渲染。 */
+export function readAttemptSaveDetails(
+  attemptId: string,
+  questionIds: readonly string[],
+  controllers: ReadonlyMap<string, Pick<InkUploadController, "isDirty">>,
+): AttemptSaveDetail[] {
+  const noteSession = currentNoteSession();
+  const annotationSession = currentAnnotationSession();
+  const local = getDraftPersistenceState(attemptId);
+  return questionIds.flatMap((questionId, index) => {
+    const scope = { attemptId, questionId, phase: "scratch" as const };
+    const noteView = noteSession ? getNoteView(noteSession, scope) : null;
+    const note =
+      noteView &&
+      (noteView.noteId !== null ||
+        noteView.pendingMutationId !== null ||
+        noteView.docVersion > 0 ||
+        noteView.local !== "saved" ||
+        noteView.server !== "synced")
+        ? noteView
+        : null;
+    const annotation = annotationSession
+      ? getAnnotationView(annotationSession, scope)
+      : null;
+    const flags = draftStore.getSaveFlags(attemptId, questionId);
+    const inkDirty = controllers.get(questionId)?.isDirty();
+    if (!flags.hasAnswer && !flags.hasInk && !inkDirty && !note && !annotation)
+      return [];
+    const localProblem =
+      local === "failed"
+        ? "本机保存失败"
+        : local === "saving"
+          ? "正在存本机"
+          : null;
+    return [
+      {
+        questionId,
+        questionNo: index + 1,
+        answer: flags.hasAnswer
+          ? (localProblem ?? (flags.answerPending ? "等待同步" : "已保存"))
+          : "未填写",
+        ink:
+          flags.hasInk || inkDirty
+            ? (localProblem ??
+              (inkDirty
+                ? "等待同步"
+                : inkDirty === false
+                  ? "已保存"
+                  : "状态待核对"))
+            : "未使用",
+        scratch: recordSaveLabel(note),
+        annotation: recordSaveLabel(annotation),
+      },
+    ];
+  });
+}
 
 /** 各域沿用原仓的落盘队列；重试不改变答案、笔迹或云端回执。 */
 export async function retryAttemptLocalPersistence(
@@ -118,5 +192,9 @@ export function useAttemptSaveStatus(
       annotations,
     });
   }, [attemptId, questionIds, answer, online, controllers]);
-  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  return useSyncExternalStore(
+    subscribeAttemptSaveChanges,
+    getSnapshot,
+    getSnapshot,
+  );
 }

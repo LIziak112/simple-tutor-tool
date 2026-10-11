@@ -1,5 +1,5 @@
 import type { StudentAnswer } from "@tutor/contract";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { createEventQueue, type EventQueueApi } from "@/lib/event-queue";
 
 /**
@@ -345,14 +345,26 @@ export function useAttemptEvents(attemptId: string): AttemptEventsApi {
     }
   }, [flushInkEdits]);
 
-  return {
-    noteInteraction,
-    trackAnswerChange,
-    trackInkStrokes,
-    trackInkEdit,
-    trackInkFullscreen,
-    trackHintUnlock,
-    registerCard,
-    finalizeSubmit,
-  };
+  return useMemo(
+    () => ({
+      noteInteraction,
+      trackAnswerChange,
+      trackInkStrokes,
+      trackInkEdit,
+      trackInkFullscreen,
+      trackHintUnlock,
+      registerCard,
+      finalizeSubmit,
+    }),
+    [
+      noteInteraction,
+      trackAnswerChange,
+      trackInkStrokes,
+      trackInkEdit,
+      trackInkFullscreen,
+      trackHintUnlock,
+      registerCard,
+      finalizeSubmit,
+    ],
+  );
 }

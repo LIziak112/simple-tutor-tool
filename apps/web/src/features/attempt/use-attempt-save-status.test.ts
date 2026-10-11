@@ -1,11 +1,18 @@
 import { expect, it, vi } from "vitest";
 import {
+  applyServerHead,
+  installNoteBackend,
+  memoryNoteBackend,
+} from "@/features/notes/note-store";
+import * as noteSync from "@/features/notes/note-sync";
+import {
   draftStore,
   getDraftPersistenceState,
   installDraftBackend,
   memoryBackend,
 } from "./draft-store";
 import {
+  readAttemptSaveDetails,
   retryAttemptLocalPersistence,
   summarizeAttemptSaveStatus,
 } from "./use-attempt-save-status";
@@ -18,6 +25,65 @@ const saved = {
   notes: [],
   annotations: [],
 };
+it("仅预取的空草稿壳不是已使用稿件，不污染保存详情", async () => {
+  installNoteBackend(memoryNoteBackend());
+  const session = { origin: "details-origin", studentId: "student" };
+  const current = vi
+    .spyOn(noteSync, "currentNoteSession")
+    .mockReturnValue(session);
+  try {
+    await applyServerHead(
+      session,
+      { attemptId: "details-empty", questionId: "q", phase: "scratch" },
+      {
+        note: null,
+        images: [],
+        evidence: null,
+        corrections: [],
+        supplements: [],
+      },
+    );
+    expect(readAttemptSaveDetails("details-empty", ["q"], new Map())).toEqual(
+      [],
+    );
+  } finally {
+    current.mockRestore();
+    installNoteBackend(memoryNoteBackend());
+  }
+});
+it("保存详情按题分域定位，不将pending答案或正式笔迹冒称已保存", async () => {
+  installDraftBackend(memoryBackend());
+  draftStore.saveAnswer("details", "q1", { kind: "judge", value: false });
+  await draftStore.flush("details");
+  const controllers = new Map([["q2", { isDirty: () => true }]]);
+  expect(readAttemptSaveDetails("details", ["q1", "q2"], controllers)).toEqual([
+    {
+      questionId: "q1",
+      questionNo: 1,
+      answer: "等待同步",
+      ink: "未使用",
+      scratch: "未使用",
+      annotation: "未使用",
+    },
+    {
+      questionId: "q2",
+      questionNo: 2,
+      answer: "未填写",
+      ink: "等待同步",
+      scratch: "未使用",
+      annotation: "未使用",
+    },
+  ]);
+  await draftStore.markAnswerSynced("details", "q1", {
+    kind: "judge",
+    value: false,
+  });
+  expect(readAttemptSaveDetails("details", ["q1"], new Map())[0]?.answer).toBe(
+    "已保存",
+  );
+  expect(readAttemptSaveDetails("details", ["another"], new Map())).toEqual([]);
+  installDraftBackend(memoryBackend());
+});
 it("四域均确认才显示全部保存；只有标画待传不能宣称云端已保存", () => {
   expect(summarizeAttemptSaveStatus(saved)).toBe("全部已保存");
   expect(

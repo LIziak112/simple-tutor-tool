@@ -1,8 +1,10 @@
+import { writeFile } from "node:fs/promises";
 import { expect, test } from "@playwright/test";
 import {
   addCourseMemberViaApi,
   attachLeakMonitor,
   createCourseViaApi,
+  drawStrokeWithPointerEvents,
   getStudentViaApi,
   openChoicePractice,
   setCourseItemVisible,
@@ -17,7 +19,7 @@ test("学生工作区：部分填写、遗漏定位、答题卡与响应式布�
   await teacherApiLogin(request);
   const suffix = uniqueSuffix();
   const courseName = `工作区课程${suffix}`;
-  const unitName = `工作区练习${suffix}`;
+  const unitName = `工作区练习长标题覆盖多因数连乘奇负偶正与约分${suffix}${"LongTitle".repeat(8)}`;
   const courseId = await createCourseViaApi(request, courseName);
   const markdown = [
     "---",
@@ -83,8 +85,15 @@ test("学生工作区：部分填写、遗漏定位、答题卡与响应式布�
   await expect(page.locator('[data-slot="attempt-bottom-bar"]')).toContainText(
     "已填写 1 / 2 题",
   );
-  for (const width of [320, 390, 768, 810, 1200, 1440]) {
-    await page.setViewportSize({ width, height: 900 });
+  for (const [width, height] of [
+    [320, 800],
+    [390, 844],
+    [768, 1024],
+    [810, 668],
+    [1200, 900],
+    [1440, 900],
+  ] as const) {
+    await page.setViewportSize({ width, height });
     const geometry = await page.evaluate(() => {
       const header = document
         .querySelector('[data-slot="attempt-header"]')
@@ -156,6 +165,32 @@ test("130题长作业：答题卡独立滚动、跳到末题、待检查刷新�
   request,
   page,
 }, testInfo) => {
+  await page.addInitScript(() => {
+    const listeners = new Set<EventListenerOrEventListenerObject>();
+    const add = EventTarget.prototype.addEventListener;
+    const remove = EventTarget.prototype.removeEventListener;
+    EventTarget.prototype.addEventListener = function (
+      type,
+      callback,
+      options,
+    ) {
+      if (this === window && type === "blur" && callback)
+        listeners.add(callback);
+      add.call(this, type, callback, options);
+    };
+    EventTarget.prototype.removeEventListener = function (
+      type,
+      callback,
+      options,
+    ) {
+      if (this === window && type === "blur" && callback)
+        listeners.delete(callback);
+      remove.call(this, type, callback, options);
+    };
+    Object.defineProperty(window, "workspaceBlurListenerCount", {
+      value: () => listeners.size,
+    });
+  });
   await teacherApiLogin(request);
   const suffix = uniqueSuffix();
   const courseName = `长卷课程${suffix}`;
@@ -275,5 +310,165 @@ test("130题长作业：答题卡独立滚动、跳到末题、待检查刷新�
   await page.screenshot({
     path: testInfo.outputPath("long-workspace-390.png"),
   });
+  expect(
+    await page.locator('canvas[data-slot="annotation-canvas"]').count(),
+  ).toBe(0);
+  const rasterCalls: string[] = [];
+  page.on("request", (request) => {
+    if (
+      request.method() === "POST" &&
+      /annotation\/base\/image/.test(request.url())
+    )
+      rasterCalls.push(request.url());
+  });
+  const measureEnter = () =>
+    last.evaluate(async (article) => {
+      const button = article.querySelector<HTMLButtonElement>(
+        'button[aria-label*="圈画题干"]',
+      );
+      if (!button) throw new Error("缺少标画入口");
+      const start = performance.now();
+      return await new Promise<number>((resolve, reject) => {
+        let frame = 0;
+        let readyFrames = 0;
+        const timeout = setTimeout(() => {
+          cancelAnimationFrame(frame);
+          reject(new Error("标画就绪超时"));
+        }, 30_000);
+        const check = () => {
+          if (
+            article.querySelector(
+              'canvas[data-slot="annotation-canvas"][data-input-enabled="true"]',
+            ) &&
+            (
+              window as unknown as { workspaceBlurListenerCount(): number }
+            ).workspaceBlurListenerCount() === 1
+          )
+            readyFrames++;
+          else readyFrames = 0;
+          if (readyFrames >= 2) {
+            clearTimeout(timeout);
+            resolve(performance.now() - start);
+            return;
+          }
+          frame = requestAnimationFrame(check);
+        };
+        button.click();
+        frame = requestAnimationFrame(check);
+      });
+    });
+  const firstOpenMs = await measureEnter();
+  const canvas = last.locator('canvas[data-slot="annotation-canvas"]');
+  await drawStrokeWithPointerEvents(canvas);
+  await page.getByRole("button", { name: "作答", exact: true }).click();
+  await expect(canvas).toHaveAttribute("data-input-enabled", "false");
+  const warmMs: number[] = [];
+  const listenerCount = () =>
+    page.evaluate(() =>
+      (
+        window as unknown as { workspaceBlurListenerCount(): number }
+      ).workspaceBlurListenerCount(),
+    );
+  const beforeListeners = await listenerCount();
+  for (let repeat = 0; repeat < 5; repeat++) {
+    warmMs.push(await measureEnter());
+    expect(await listenerCount()).toBe(beforeListeners + 1);
+    await expect(page.locator('canvas[data-input-enabled="true"]')).toHaveCount(
+      1,
+    );
+    await page.getByRole("button", { name: "作答", exact: true }).click();
+    await expect(canvas).toHaveAttribute("data-input-enabled", "false");
+  }
+  expect(await listenerCount()).toBe(beforeListeners);
+  expect(
+    await page.locator('canvas[data-slot="annotation-canvas"]').count(),
+  ).toBe(1);
+  await measureEnter();
+  const moveMetrics = await canvas.evaluate(async (element) => {
+    const canvas = element as HTMLCanvasElement;
+    const rect = canvas.getBoundingClientRect();
+    let unrelatedMutations = 0;
+    const observer = new MutationObserver((records) => {
+      unrelatedMutations += records.length;
+    });
+    document
+      .querySelectorAll('article:not([aria-label="第 130 题"])')
+      .forEach((card) => {
+        observer.observe(card, {
+          subtree: true,
+          childList: true,
+          attributes: true,
+          characterData: true,
+        });
+      });
+    const intervals: number[] = [];
+    let previous = performance.now();
+    const send = (type: string, x: number) =>
+      canvas.dispatchEvent(
+        new PointerEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          pointerId: 39,
+          pointerType: "mouse",
+          button: 0,
+          buttons: type === "pointerup" ? 0 : 1,
+          clientX: rect.left + 20 + x,
+          clientY: rect.top + rect.height / 2,
+          pressure: 0.5,
+          isPrimary: true,
+        }),
+      );
+    send("pointerdown", 0);
+    for (let index = 0; index < 60; index++) {
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame((now) => {
+          intervals.push(now - previous);
+          previous = now;
+          resolve();
+        }),
+      );
+      send("pointermove", index * 2);
+    }
+    await Promise.resolve();
+    observer.disconnect();
+    send("pointerup", 120);
+    return {
+      unrelatedMutations,
+      frameP95: intervals.sort((a, b) => a - b)[
+        Math.floor(intervals.length * 0.95)
+      ],
+      moveCount: 60,
+    };
+  });
+  expect(moveMetrics.unrelatedMutations).toBe(0);
+  await page.getByRole("button", { name: "作答", exact: true }).click();
+  const metrics = {
+    browser: testInfo.project.name,
+    questions: 130,
+    network: "隔离本机API，无节流",
+    firstOpenMs,
+    warmMs,
+    listenerCount: beforeListeners,
+    rasterUploads: rasterCalls.length,
+    ...moveMetrics,
+  };
+  const metricsPath = testInfo.outputPath("workspace-performance.json");
+  await writeFile(metricsPath, JSON.stringify(metrics, null, 2), "utf8");
+  await testInfo.attach("workspace-performance", {
+    path: metricsPath,
+    contentType: "application/json",
+  });
+  console.log("工作区实测", JSON.stringify(metrics));
+  expect(Math.max(...warmMs)).toBeLessThanOrEqual(150);
+  await page.getByRole("button", { name: "保存详情" }).click();
+  await expect(page.getByRole("dialog", { name: "保存详情" })).toContainText(
+    "标画：",
+  );
+  await page.screenshot({
+    path: testInfo.outputPath("save-details-390.png"),
+    animations: "disabled",
+  });
+  await page.getByRole("button", { name: "定位第 130 题" }).click();
+  await expect(last).toBeFocused();
   expect(leak.violations()).toEqual([]);
 });

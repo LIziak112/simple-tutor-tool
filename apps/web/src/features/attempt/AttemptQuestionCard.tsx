@@ -285,7 +285,7 @@ export function AttemptQuestionCard({
   // 入口（已有草稿数据保留服务端，恢复开关后回来看）。
   const { ink: inkEnabled } = useEnabledCapabilities();
   const articleRef = useRef<HTMLElement | null>(null);
-  const editor = useAttemptEditor();
+  const editor = useAttemptEditor(question.id);
   const annotationOverlay = useRef<QuestionAnnotationOverlayHandle>(null);
   const [localNoteOpen, setLocalNoteOpen] = useState(false);
   const noteOpen = editor
@@ -438,11 +438,11 @@ export function AttemptQuestionCard({
       ref={articleRef}
       data-question-id={question.id}
       tabIndex={-1}
-      className="flex scroll-mt-[calc(var(--attempt-header-height,64px)+12px)] flex-col gap-3 rounded-lg border border-border bg-card p-4 text-card-foreground outline-none focus-visible:ring-2 focus-visible:ring-primary sm:p-5"
+      className="flex scroll-mt-[calc(var(--attempt-header-height,64px)+12px)] flex-col gap-3 rounded-[8px] border border-border bg-card p-4 text-card-foreground outline-none focus-visible:ring-2 focus-visible:ring-primary sm:p-5"
       aria-label={`第 ${index + 1} 题`}
       onPointerDownCapture={(event) => {
         if (
-          editor?.active?.kind !== "annotation" ||
+          editor?.getActive()?.kind !== "annotation" ||
           !(event.target instanceof Element)
         )
           return;

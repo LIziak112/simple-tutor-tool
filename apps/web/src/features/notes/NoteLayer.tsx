@@ -110,7 +110,7 @@ export function NoteLayer({
     active: open,
   });
   const { view } = editor;
-  const coordinator = useAttemptEditor();
+  const coordinator = useAttemptEditor(null);
   const finish = useCallback(async () => {
     editor.engineRef.current?.finish?.();
     await settleNotePersistence();

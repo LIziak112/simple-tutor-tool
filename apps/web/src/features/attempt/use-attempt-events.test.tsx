@@ -25,6 +25,17 @@ vi.mock("@/lib/api", async (importOriginal) => {
 // vi.mock 提升后动态 import 拿 mock 实例（与组件测试的 vi.mocked 模式一致）
 const { postAttemptEventsApi } = await import("@/lib/api");
 const mockedPost = vi.mocked(postAttemptEventsApi);
+it("父级保存状态更新时事件操作对象保持稳定，题卡不会因此重渲染", () => {
+  let current: ReturnType<typeof useAttemptEvents> | undefined;
+  function Probe() {
+    current = useAttemptEvents("stable-events");
+    return null;
+  }
+  const { rerender } = render(<Probe />);
+  const before = current;
+  rerender(<Probe />);
+  expect(current).toBe(before);
+});
 
 interface HarnessApi {
   trackInkEdit(

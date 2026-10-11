@@ -454,8 +454,10 @@ test.describe("全链路：批量导入 → 建课程 → 可见性 → 课程�
       await expect(
         assignPage.locator('article[aria-label="第 3 题"]'),
       ).toBeVisible();
-      // 按布置顺序分节（答题页 h2 = 单元标题）
-      const unitHeaders = assignPage.locator("h2");
+      // 答题卡也有二级标题，只统计单元分节。
+      const unitHeaders = assignPage.locator(
+        '[data-slot="attempt-unit-heading"]',
+      );
       await expect(unitHeaders).toHaveCount(2);
       await expect(unitHeaders.nth(0)).toHaveText(courseUnitName);
       await expect(unitHeaders.nth(1)).toHaveText(assignUnitName);

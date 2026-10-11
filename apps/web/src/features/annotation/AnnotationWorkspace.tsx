@@ -64,7 +64,7 @@ export function AnnotationWorkspace({
   const label = `${ariaPrefix}题干标注`;
 
   const surfaceRef = useRef<AnnotationSurface | null>(null);
-  const coordinator = useAttemptEditor();
+  const coordinator = useAttemptEditor(null);
   useEffect(() => {
     if (phase !== "scratch") return;
     return coordinator?.register(questionId, async () => {

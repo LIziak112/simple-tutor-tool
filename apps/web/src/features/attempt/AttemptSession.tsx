@@ -16,9 +16,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { catchUpAnnotations } from "@/features/annotation/annotation-sync";
 import { AttemptBottomBar } from "@/features/attempt/AttemptBottomBar";
 import { AttemptHeader } from "@/features/attempt/AttemptHeader";
-import { AttemptQuestionCard } from "@/features/attempt/AttemptQuestionCard";
+import { AttemptQuestionRow } from "@/features/attempt/AttemptQuestionRow";
 import { AttemptResultView } from "@/features/attempt/AttemptResultView";
 import { draftStore } from "@/features/attempt/draft-store";
 import {
@@ -36,6 +37,7 @@ import {
   EnabledCapabilitiesProvider,
   toEnabledCapabilities,
 } from "@/features/capability/enabled-capabilities";
+import { catchUpNotes } from "@/features/notes/note-sync";
 import {
   prepareSubmitEvidence,
   type SubmitEvidencePrep,
@@ -50,6 +52,7 @@ import {
   AttemptEditorProvider,
   useAttemptEditor,
 } from "./AttemptEditorContext";
+import { AttemptSaveDetails } from "./AttemptSaveDetails";
 import { AttemptWorkspace } from "./AttemptWorkspace";
 import { useSubmitAttempt } from "./attempt-queries";
 import { QuestionNavigator } from "./QuestionNavigator";
@@ -244,7 +247,7 @@ function AnswerView({
   /** 交卷成功后的标注 seal 失败回调（非阻断警示——AttemptSession 顶态） */
   onAnnotationSealFailed: () => void;
 }) {
-  const editor = useAttemptEditor();
+  const editor = useAttemptEditor(null);
   /** 手写题的笔迹上传 controller（mount 注册、unmount 注销；交卷前逐题 flush，
    *  草稿同步循环也会逐题 sync——先声明再传给 useDraftSync） */
   const inkControllers = useRef(new Map<string, InkUploadController>());
@@ -261,18 +264,18 @@ function AnswerView({
   const draftSync = useDraftSync(attemptId, data.drafts, inkControllers);
   // 学习痕迹埋点（T2.10）：attempt_start/聚焦/answer_change/ink/page_*/submit
   const attemptEvents = useAttemptEvents(attemptId);
-  const { answers, setAnswer, saveFailed } = useAttemptAnswers(
-    attemptId,
-    draftSync.recoveredDrafts,
-    draftSync,
-    {
-      // 保存生效点：聚焦切到该题 + answer_change 事件（from=上次上报值）
-      onAnswerCommitted: (questionId, answer) => {
-        attemptEvents.noteInteraction(questionId);
-        attemptEvents.trackAnswerChange(questionId, answer);
-      },
+  const {
+    answers,
+    setAnswer,
+    saveFailed,
+    flush: flushAnswers,
+  } = useAttemptAnswers(attemptId, draftSync.recoveredDrafts, draftSync, {
+    // 保存生效点：聚焦切到该题 + answer_change 事件（from=上次上报值）
+    onAnswerCommitted: (questionId, answer) => {
+      attemptEvents.noteInteraction(questionId);
+      attemptEvents.trackAnswerChange(questionId, answer);
     },
-  );
+  });
   const [confirmOpen, setConfirmOpen] = useState(false);
   /**
    * 已解锁提示（T2.11）：初值取草稿视图回显（刷新不丢），解锁成功后本地追加；
@@ -486,6 +489,9 @@ function AnswerView({
     );
     let prep: SubmitEvidencePrep;
     try {
+      await draftSync.syncNow();
+      await flushAnswers();
+      if (submitAbortedRef.current) return;
       prep = await prepareSubmitEvidence({
         attemptId,
         questionIds,
@@ -553,6 +559,8 @@ function AnswerView({
   }, [
     attemptEvents,
     attemptId,
+    draftSync.syncNow,
+    flushAnswers,
     onAnnotationSealFailed,
     questionIds,
     submit,
@@ -613,6 +621,20 @@ function AnswerView({
               >
                 {saveStatus}
               </p>
+              <AttemptSaveDetails
+                attemptId={attemptId}
+                questionIds={questionIds}
+                controllers={inkControllers}
+                onJump={jumpToQuestion}
+                onRetry={async () => {
+                  await retryAttemptLocalPersistence(attemptId, questionIds);
+                  await Promise.all([
+                    draftSync.syncNow(),
+                    catchUpNotes(attemptId),
+                    catchUpAnnotations(attemptId),
+                  ]);
+                }}
+              />
               {saveStatus.startsWith("本机保存失败") && (
                 <Button
                   variant="ghost"
@@ -718,48 +740,26 @@ function AnswerView({
                   {unit.questions.map((question) => {
                     const index = flatQuestions.indexOf(question);
                     return (
-                      <li
+                      <AttemptQuestionRow
                         key={question.id}
-                        ref={(el) => {
-                          attemptEvents.registerCard(question.id, el);
-                          if (el) cardElements.current.set(question.id, el);
-                          else cardElements.current.delete(question.id);
-                        }}
-                      >
-                        <AttemptQuestionCard
-                          index={index}
-                          question={question}
-                          assignmentTitle={data.title}
-                          answer={answers?.[question.id]}
-                          onAnswer={(answer, defer) =>
-                            setAnswer(question.id, answer, defer ?? false)
-                          }
-                          attemptId={attemptId}
-                          flagged={flaggedQuestions.has(question.id)}
-                          onToggleFlag={() => toggleFlag(question.id)}
-                          formalInkPresence={
-                            formalInkPresence.get(question.id) ?? false
-                          }
-                          onInkPresenceChange={onInkPresenceChange}
-                          registerInkController={registerInkController}
-                          onInkStroke={(strokes) => {
-                            attemptEvents.noteInteraction(question.id);
-                            attemptEvents.trackInkStrokes(question.id, strokes);
-                          }}
-                          onInkEdit={(reason) => {
-                            attemptEvents.noteInteraction(question.id);
-                            attemptEvents.trackInkEdit(question.id, reason);
-                          }}
-                          onInkFullscreen={(on) => {
-                            attemptEvents.noteInteraction(question.id);
-                            attemptEvents.trackInkFullscreen(question.id, on);
-                          }}
-                          hints={hintsOpened[question.id] ?? []}
-                          onHintUnlocked={(entry) =>
-                            unlockHint(question.id, entry)
-                          }
-                        />
-                      </li>
+                        cardElements={cardElements}
+                        events={attemptEvents}
+                        index={index}
+                        question={question}
+                        assignmentTitle={data.title}
+                        answer={answers?.[question.id]}
+                        onAnswer={setAnswer}
+                        attemptId={attemptId}
+                        flagged={flaggedQuestions.has(question.id)}
+                        onToggleFlag={toggleFlag}
+                        formalInkPresence={
+                          formalInkPresence.get(question.id) ?? false
+                        }
+                        onInkPresenceChange={onInkPresenceChange}
+                        registerInkController={registerInkController}
+                        hints={hintsOpened[question.id]}
+                        onHintUnlocked={unlockHint}
+                      />
                     );
                   })}
                 </ol>

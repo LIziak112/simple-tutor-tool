@@ -233,6 +233,18 @@ async function loadDraft(
 }
 
 export const draftStore = {
+  /** 保存详情只取标量，不序列化正式笔迹或读取图片。 */
+  getSaveFlags(attemptId: string, questionId: string) {
+    const record = cache.get(attemptId);
+    const answer = record?.answers[questionId];
+    return {
+      hasAnswer: answer !== undefined,
+      answerPending:
+        answer !== undefined &&
+        record?.answerDigests[questionId] !== digestOf(answer),
+      hasInk: record?.inks[questionId] !== undefined,
+    };
+  },
   loadDraft,
 
   /** 每次改答案写本地（内存同步可见，落盘防抖；不受网络状态影响） */
@@ -262,7 +274,7 @@ export const draftStore = {
     answer: StudentAnswer,
   ): Promise<void> {
     mutate(attemptId, (record) => {
-      record.answers[questionId] = answer;
+      record.answers[questionId] ??= answer;
       record.answerDigests[questionId] = digestOf(answer);
     });
     return writeNow(attemptId);
