@@ -424,6 +424,13 @@ describe("T2A.8 未公布形态（answersReleased=false，截止后公布且未�
     expect(screen.getByText(/做题时看过的提示（1 条）/)).toBeInTheDocument();
   });
 
+  it("未公布的选项只显示中性本人选择，不暗示判错", () => {
+    render(<AttemptResultView data={RESTRICTED} onBackHome={vi.fn()} />);
+    const picked = screen.getByText("你的选择").closest("li");
+    expect(picked?.className).not.toMatch(/red|emerald/);
+    expect(screen.queryByText("正确项")).toBeNull();
+  });
+
   it("对照：answersReleased=true（默认公布）完整渲染（回归保障）", () => {
     renderView();
     expect(screen.queryByText(/已交卷，答案将在截止后公布/)).toBeNull();

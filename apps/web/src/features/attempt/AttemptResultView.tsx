@@ -31,6 +31,7 @@ import {
   QUESTION_TYPE_BADGE_CLASS,
   QUESTION_TYPE_LABELS,
 } from "./answer-format";
+import { reviewCounts, reviewQuestionState } from "./result-review-model";
 
 /**
  * 交卷后的结果视图（T2.6）：顶部得分汇总（scoreAuto/对错待批数/提交时间）+
@@ -121,7 +122,13 @@ function TeacherMarkBlock({
 }
 
 /** 选项行（含正确项与学生所选标记；仅 choice/multi） */
-function ResultOptions({ question }: { question: AttemptResultQuestion }) {
+function ResultOptions({
+  question,
+  released,
+}: {
+  question: AttemptResultQuestion;
+  released: boolean;
+}) {
   const options = question.snapshot.options;
   if (options === undefined) return null;
   const picked =
@@ -140,7 +147,7 @@ function ResultOptions({ question }: { question: AttemptResultQuestion }) {
     <ol className="flex flex-col gap-1.5" aria-label="选项">
       {options.map((option, index) => {
         const isPicked = picked.includes(index);
-        const isCorrect = correct.includes(index);
+        const isCorrect = released && correct.includes(index);
         return (
           <li
             key={option}
@@ -148,9 +155,11 @@ function ResultOptions({ question }: { question: AttemptResultQuestion }) {
               "flex min-h-11 items-start gap-2 rounded-lg border px-3 py-2 text-sm",
               isCorrect
                 ? "border-emerald-300 bg-emerald-50 dark:border-emerald-500/40 dark:bg-emerald-500/10"
-                : isPicked
+                : isPicked && released
                   ? "border-red-300 bg-red-50 dark:border-red-500/40 dark:bg-red-500/10"
-                  : "border-transparent",
+                  : isPicked
+                    ? "border-primary bg-primary/5"
+                    : "border-transparent",
             )}
           >
             <span className="mt-0.5 w-5 shrink-0 font-semibold">
@@ -159,11 +168,18 @@ function ResultOptions({ question }: { question: AttemptResultQuestion }) {
             <RichMarkdown source={option} className="min-w-0 flex-1 text-sm" />
             {isCorrect && (
               <span className="shrink-0 text-xs font-medium text-emerald-700 dark:text-emerald-300">
-                正确项
+                {isPicked ? "正确项 · 你的选择" : "正确项"}
               </span>
             )}
             {isPicked && !isCorrect && (
-              <span className="shrink-0 text-xs font-medium text-red-700 dark:text-red-300">
+              <span
+                className={cn(
+                  "shrink-0 text-xs font-medium",
+                  released
+                    ? "text-red-700 dark:text-red-300"
+                    : "text-foreground",
+                )}
+              >
                 你的选择
               </span>
             )}
@@ -273,7 +289,7 @@ function ResultQuestionCard({
   const isHandwritten = HANDWRITTEN_TYPES.has(question.snapshot.type);
   // D9：最终判定优先（交卷时 = autoCorrect，批注后以 teacherMark 为准）；
   // null = 待批（D3 后可自动判分题交卷即有 finalCorrect，null 即真待批）
-  const verdict = question.finalCorrect ?? question.autoCorrect;
+  const verdict = reviewQuestionState(question, released).verdict;
   return (
     <article
       className={cn(
@@ -337,7 +353,7 @@ function ResultQuestionCard({
         source={displayStemMd(question.snapshot)}
         className="text-base"
       />
-      <ResultOptions question={question} />
+      <ResultOptions question={question} released={released} />
 
       {/* T6R.11：本次草稿原稿查看入口（非手写题——手写题没有草稿层，笔迹
           缩略图另见下方）。学生看自己的草稿不受答案公布 gate 限制，两种
@@ -498,6 +514,7 @@ export function AttemptResultView({
   // T2A.7：逐题结果按单元分组；题号全卷连续（累计 index）。
   // 多单元时渲染节标题（单元标题），单单元不显示节头（与答题视图一致）。
   const flatQuestions = data.units.flatMap((unit) => unit.questions);
+  const counts = reviewCounts(flatQuestions, released);
   const showUnitHeaders = data.units.length > 1;
   // 2026-10：本卷判错题（finalCorrect === false，按本卷题序）——直达重练的
   // 圈题范围与示数。未公布时服务端已把 finalCorrect 置 null（数出来必为 0），
@@ -556,10 +573,10 @@ export function AttemptResultView({
                 共 <b className="text-foreground">{summary.total}</b> 题
               </span>
               <span>
-                答对 <b className="text-emerald-600">{summary.correct}</b> 题
+                答对 <b className="text-emerald-600">{counts.correct}</b> 题
               </span>
               <span>
-                答错 <b className="text-red-600">{summary.wrong}</b> 题
+                答错 <b className="text-red-600">{counts.wrong}</b> 题
               </span>
               <span>
                 待批{" "}
@@ -580,6 +597,11 @@ export function AttemptResultView({
                 </span>
               )}
             </p>
+            {summary.unanswered > 0 && (
+              <p className="w-full text-sm text-muted-foreground">
+                未作答的客观题已计入判错；未答数与判错数不能相加。
+              </p>
+            )}
           </div>
         ) : (
           <div className="flex flex-col gap-2 rounded-2xl border border-amber-300/60 bg-amber-50 p-4 text-sm dark:border-amber-500/30 dark:bg-amber-500/10">
