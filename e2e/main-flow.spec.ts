@@ -146,7 +146,8 @@ test.describe("主流程：布置作业 → 学生作答与交卷 → 结果与�
       assignmentCard.getByText(`${extraUnitName}（1 题）`),
     ).toBeVisible();
 
-    // —— 学生端：独立 context（教师/学生会话共用同一 Cookie 名，避免互相覆盖）——
+    // —— 学生端：独立 context（iPad 设备仿真 + 本地存储隔离；会话 Cookie
+    //    已按师生拆名，2026-10 起同浏览器双身份不再互相覆盖）——
     const studentContext = await browser.newContext(devices["iPad (gen 7)"]);
     const studentPage = await studentContext.newPage();
     try {
