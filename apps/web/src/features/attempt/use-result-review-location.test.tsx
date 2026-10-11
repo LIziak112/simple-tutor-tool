@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
-import { useRef } from "react";
+import { StrictMode, useRef } from "react";
 import { MemoryRouter } from "react-router";
 import { afterEach, expect, it, vi } from "vitest";
 import {
@@ -33,7 +33,7 @@ afterEach(() => {
   sessionStorage.clear();
 });
 
-function prepareRestore() {
+function prepareRestore(strict = false) {
   const frames: FrameRequestCallback[] = [];
   vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
     frames.push(callback);
@@ -44,11 +44,12 @@ function prepareRestore() {
     'result-reading:["http://test","student","attempt"]',
     "q2",
   );
-  render(
+  const fixture = (
     <MemoryRouter>
       <ReadingFixture />
-    </MemoryRouter>,
+    </MemoryRouter>
   );
+  render(strict ? <StrictMode>{fixture}</StrictMode> : fixture);
   return () =>
     act(() => {
       while (frames.length) frames.shift()?.(0);
@@ -57,6 +58,17 @@ function prepareRestore() {
 
 it("恢复学生自己的阅读题号，不混用答案存储", () => {
   const flush = prepareRestore();
+  flush();
+  expect(screen.getByRole("status")).toHaveTextContent("q2");
+});
+
+it("严格模式重放副作用不会在恢复前用首题覆盖历史位置", () => {
+  const flush = prepareRestore(true);
+  expect(
+    sessionStorage.getItem(
+      'result-reading:["http://test","student","attempt"]',
+    ),
+  ).toBe("q2");
   flush();
   expect(screen.getByRole("status")).toHaveTextContent("q2");
 });

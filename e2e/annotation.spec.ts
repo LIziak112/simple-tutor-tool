@@ -11,6 +11,10 @@ import {
   teacherApiLogin,
   uniqueSuffix,
 } from "./helpers";
+import {
+  installReviewResourceProbe,
+  reviewResourceCounts,
+} from "./review-resource-probe";
 
 /**
  * T6R.20 题干标注 E2E（真实浏览器全链——底图栅格化/坐标锚定/交卷封存/
@@ -177,6 +181,7 @@ test.describe("题干标注（T6R.20）", () => {
     // —— 学生作答（iPad 竖屏）——
     const studentContext = await browser.newContext(devices["iPad (gen 7)"]);
     const studentPage = await studentContext.newPage();
+    await installReviewResourceProbe(studentPage);
     let attemptId = "";
     try {
       const leak = attachLeakMonitor(studentPage);
@@ -325,8 +330,33 @@ test.describe("题干标注（T6R.20）", () => {
         resultCard.getByRole("button", { name: /清空标注/ }),
       ).toHaveCount(0);
 
+      const closeOriginal = resultCard.getByRole("button", {
+        name: "收起第 1 题题干标注",
+        exact: true,
+      });
+      await closeOriginal.click();
+      await expect(
+        resultCard.locator('[data-slot="annotation-static-canvas"]'),
+      ).toHaveCount(0);
+      const baseline = await reviewResourceCounts(studentPage);
+      for (let index = 0; index < 3; index++) {
+        await resultCard
+          .getByRole("button", { name: "查看第 1 题题干标注", exact: true })
+          .click();
+        await expect(
+          resultCard.locator('[data-slot="annotation-static-canvas"]'),
+        ).toBeVisible();
+        await closeOriginal.click();
+        await expect(
+          resultCard.locator('[data-slot="annotation-static-canvas"]'),
+        ).toHaveCount(0);
+        await expect
+          .poll(() => reviewResourceCounts(studentPage))
+          .toEqual(baseline);
+      }
+
       // —— 订正另开：phase=correction 新记录，旧 scratch bytes 不变 ——
-      await resultCard.getByRole("button", { name: /圈画题干/ }).click();
+      await resultCard.getByRole("button", { name: "添加订正标画" }).click();
       const correctionWrap = resultCard.locator(
         '[data-slot="annotation-workspace"]',
       );

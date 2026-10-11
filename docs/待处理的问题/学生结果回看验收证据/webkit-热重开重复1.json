@@ -1,0 +1,12 @@
+{
+  "browser": "webkit",
+  "questions": 130,
+  "network": "隔离本机API，无节流",
+  "firstOpenMs": 495.3000000715256,
+  "warmMs": [46.59999990463257, 69, 52, 64.59999990463257, 52.10000002384186],
+  "listenerCount": 0,
+  "rasterUploads": 1,
+  "unrelatedMutations": 0,
+  "frameP95": 16.700000000000728,
+  "moveCount": 60
+}

@@ -372,7 +372,8 @@ test("130题长作业：答题卡独立滚动、跳到末题、待检查刷新�
   const beforeListeners = await listenerCount();
   for (let repeat = 0; repeat < 5; repeat++) {
     warmMs.push(await measureEnter());
-    expect(await listenerCount()).toBe(beforeListeners + 1);
+    // 版式校验会暂时解绑输入，等待稳定绑定后仍严格检查唯一监听。
+    await expect.poll(listenerCount).toBe(beforeListeners + 1);
     await expect(page.locator('canvas[data-input-enabled="true"]')).toHaveCount(
       1,
     );

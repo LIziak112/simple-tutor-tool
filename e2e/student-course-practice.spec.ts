@@ -145,7 +145,7 @@ test.describe("课程练习：完成单元 → 结果 → 再做一次 → 历�
       await expect(studentPage.getByText("答对 2 题")).toBeVisible();
 
       // —— 返回落地页：历次记录 1 次 + 得分汇总；再做一次（确认弹层文案） ——
-      await studentPage.getByRole("link", { name: "返回单元练习" }).click();
+      await studentPage.getByRole("button", { name: "返回单元练习" }).click();
       await studentPage.waitForURL(
         `**/s/courses/${courseId}/units/${encodeURIComponent(unitName)}`,
       );
@@ -198,7 +198,7 @@ test.describe("课程练习：完成单元 → 结果 → 再做一次 → 历�
       await expect(studentPage.getByText("答错 2 题")).toBeVisible();
 
       // —— 落地页：历次记录 2 次；首次 100 / 最近 0 / 最高 100（各自独立） ——
-      await studentPage.getByRole("link", { name: "返回单元练习" }).click();
+      await studentPage.getByRole("button", { name: "返回单元练习" }).click();
       await studentPage.waitForURL(
         `**/s/courses/${courseId}/units/${encodeURIComponent(unitName)}`,
       );

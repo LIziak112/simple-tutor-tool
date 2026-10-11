@@ -44,6 +44,8 @@ export function useResultReviewLocation(
     [params, ids, released],
   );
   const [currentId, setCurrentId] = useState(normalized.questionId);
+  const [restoredKey, setRestoredKey] = useState<string | null>(null);
+  const restoring = useRef(true);
   const interacted = useRef(false);
   const jumpToElement = useCallback(
     (id: string, focus: boolean) => {
@@ -81,6 +83,8 @@ export function useResultReviewLocation(
     setParams(next, { replace: true, preventScrollReset: true });
   };
   useEffect(() => {
+    restoring.current = true;
+    setRestoredKey(null);
     let frame = 0;
     let cancelled = false;
     const interrupt = () => {
@@ -104,7 +108,10 @@ export function useResultReviewLocation(
     }
     frame = requestAnimationFrame(() => {
       frame = requestAnimationFrame(() => {
-        if (!cancelled && !interacted.current && id) jumpToElement(id, false);
+        if (cancelled) return;
+        if (!interacted.current && id) jumpToElement(id, false);
+        restoring.current = false;
+        setRestoredKey(key);
       });
     });
     return () => {
@@ -124,6 +131,7 @@ export function useResultReviewLocation(
       ?.querySelector('[data-slot="attempt-header"]');
     const observer = new IntersectionObserver(
       (entries) => {
+        if (restoring.current) return;
         for (const entry of entries) {
           if (!(entry.target instanceof HTMLElement)) continue;
           if (entry.isIntersecting) visible.add(entry.target);
@@ -156,12 +164,12 @@ export function useResultReviewLocation(
     return () => observer.disconnect();
   }, [root, ids]);
   useEffect(() => {
-    if (!key || !currentId) return;
+    if (!key || !currentId || restoredKey !== key) return;
     try {
       sessionStorage.setItem(key, currentId);
     } catch {
       /* 不存答案，仅降级阅读恢复。 */
     }
-  }, [key, currentId]);
+  }, [key, currentId, restoredKey]);
   return { currentId, scope: normalized.scope, jump, setScope };
 }

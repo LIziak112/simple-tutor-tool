@@ -216,6 +216,41 @@ describe("得分汇总卡", () => {
     expect(screen.getByText(/交卷时间：/)).toBeInTheDocument();
   });
 
+  it("全待批且未答时不声称未答题已判错，未答数独立说明", () => {
+    render(
+      <AttemptResultView
+        data={{
+          ...DATA,
+          attempt: { ...DATA.attempt, scoreAuto: null },
+          summary: {
+            ...DATA.summary,
+            answered: 0,
+            correct: 0,
+            wrong: 0,
+            pending: 4,
+            pendingCount: 4,
+            unanswered: 4,
+            autoGradable: 0,
+          },
+          units: DATA.units.map((unit) => ({
+            ...unit,
+            questions: unit.questions.map((question) => ({
+              ...question,
+              answer: null,
+              autoCorrect: null,
+              finalCorrect: null,
+            })),
+          })),
+        }}
+        onBackHome={() => {}}
+      />,
+    );
+    expect(
+      screen.getByText("未答数单独统计，可能与判错或待批重叠，不能相加。"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/已计入判错/)).toBeNull();
+  });
+
   it("返回首页按钮触发回调", () => {
     const onBackHome = vi.fn();
     renderView(onBackHome);
@@ -249,6 +284,9 @@ describe("得分汇总卡", () => {
     );
     expect(screen.getByText("练习四")).toBeInTheDocument();
     expect(screen.getByText("练习五")).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "练习五", level: 2 }),
+    ).toBeInTheDocument();
     expect(screen.getByText("第 4 题")).toBeInTheDocument();
     view.unmount();
 
@@ -269,7 +307,7 @@ describe("逐题结果卡", () => {
     expect(screen.getAllByText("相反数").length).toBeGreaterThan(0);
   });
 
-  it("本人答案 vs 参考答案；无标准答案显示「由老师批改后公布」", () => {
+  it("本人答案 vs 参考答案；无标准答案显示「暂无参考答案」", () => {
     renderView();
     expect(screen.getAllByText("你的答案：").length).toBe(4);
     // 答错的单选：你的答案 A / 参考答案 B（选项字母行也会出现 A/B，取全部）
@@ -279,7 +317,7 @@ describe("逐题结果卡", () => {
     expect(screen.getByRole("article", { name: "第 4 题" })).toHaveTextContent(
       "未作答",
     );
-    expect(screen.getByText("由老师批改后公布")).toBeInTheDocument();
+    expect(screen.getByText("暂无参考答案")).toBeInTheDocument();
   });
 
   it("参考答案含 $…$ 公式时按 KaTeX 渲染（不再显示 $ 原文）", () => {
@@ -562,7 +600,7 @@ describe("D9（T3.5）老师批改后的展示", () => {
 
   it("未批且已交（teacherMark/Comment 为 null）维持既有待批态，不渲染老师批改块", () => {
     renderView();
-    // 用块标题「老师批改：」区分（题内另有「由老师批改后公布」的参考答案占位文案）
+    // 老师批改块与参考答案缺省文案分开断言。
     const bodyText = document.body.textContent ?? "";
     expect(bodyText).not.toContain("老师批改：");
     expect(screen.getAllByLabelText("待批改").length).toBe(1);

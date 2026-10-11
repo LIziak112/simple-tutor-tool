@@ -307,7 +307,7 @@ test.describe("全链路：批量导入 → 建课程 → 可见性 → 课程�
       await expect(studentPage.getByText("答对 2 题")).toBeVisible();
 
       // 再做一次（确认弹层「从空白开始」）→ 全错 → 历次记录 2 次
-      await studentPage.getByRole("link", { name: "返回单元练习" }).click();
+      await studentPage.getByRole("button", { name: "返回单元练习" }).click();
       await studentPage.waitForURL(
         `**/s/courses/${courseId}/units/${encodeURIComponent(courseUnitName)}`,
       );
@@ -348,7 +348,7 @@ test.describe("全链路：批量导入 → 建课程 → 可见性 → 课程�
         timeout: 30_000,
       });
       await expect(studentPage.getByText("答错 2 题")).toBeVisible();
-      await studentPage.getByRole("link", { name: "返回单元练习" }).click();
+      await studentPage.getByRole("button", { name: "返回单元练习" }).click();
       await studentPage.waitForURL(
         `**/s/courses/${courseId}/units/${encodeURIComponent(courseUnitName)}`,
       );
@@ -488,7 +488,7 @@ test.describe("全链路：批量导入 → 建课程 → 可见性 → 课程�
         .first()
         .click();
 
-      // —— 结果视图：得分汇总 + 按单元分节（h3）+ 题号连续 1–3 ——
+      // —— 结果视图：得分汇总 + 按单元分节 + 题号连续1—3 ——
       await expect(assignPage.getByText("批改结果")).toBeVisible({
         timeout: 30_000,
       });
@@ -497,7 +497,7 @@ test.describe("全链路：批量导入 → 建课程 → 可见性 → 课程�
       await expect(assignPage.getByText("答对 3 题")).toBeVisible();
       await expect(assignPage.getByText("答错 0 题")).toBeVisible();
       await expect(assignPage.getByText("待批 0 题")).toBeVisible();
-      const resultUnitHeaders = assignPage.locator("h3");
+      const resultUnitHeaders = assignPage.locator("[data-review-unit]");
       await expect(resultUnitHeaders).toHaveCount(2);
       await expect(resultUnitHeaders.nth(0)).toHaveText(courseUnitName);
       await expect(resultUnitHeaders.nth(1)).toHaveText(assignUnitName);

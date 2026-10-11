@@ -104,7 +104,7 @@ test.describe("交卷固定原稿（T6R.10）", () => {
       const originalVersionId = evidence1.versionId;
 
       // —— 第二轮：返回单元落地页 → 再做一次（同题）→ 再写草稿 → 再交卷 ——
-      await studentPage.getByRole("link", { name: "返回单元练习" }).click();
+      await studentPage.getByRole("button", { name: "返回单元练习" }).click();
       await studentPage.waitForURL(
         `**/s/courses/${courseId}/units/${encodeURIComponent(unitName)}`,
       );

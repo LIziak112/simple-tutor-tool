@@ -12,7 +12,7 @@ import {
   NotebookPen,
   Pencil,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -310,12 +310,17 @@ export function AttemptQuestionCard({
   const [annotationOpen, setAnnotationOpen] = useState(false);
   const [annotationHidden, setAnnotationHidden] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
-  const inlineQuestion: AttemptQuestionPublic | null =
-    editor &&
-    "questionRevisionId" in question &&
-    typeof question.questionRevisionId === "string"
-      ? { ...question, questionRevisionId: question.questionRevisionId }
-      : null;
+  const hasEditor = editor != null;
+  // 保存/上传状态不改变题面；稳定引用避免重复解绑标画输入进行版式校验。
+  const inlineQuestion = useMemo<AttemptQuestionPublic | null>(
+    () =>
+      hasEditor &&
+      "questionRevisionId" in question &&
+      typeof question.questionRevisionId === "string"
+        ? { ...question, questionRevisionId: question.questionRevisionId }
+        : null,
+    [hasEditor, question],
+  );
   const drawing =
     editor?.active?.questionId === question.id &&
     editor.active.kind === "annotation";

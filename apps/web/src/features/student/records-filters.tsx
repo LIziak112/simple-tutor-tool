@@ -1,4 +1,8 @@
-import type { AttemptSource, AttemptStatus } from "@tutor/contract";
+import {
+  type AttemptSource,
+  type AttemptStatus,
+  studentRecordsQuerySchema,
+} from "@tutor/contract";
 import { CalendarRange, ChevronDown, RotateCcw, X } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -58,7 +62,7 @@ export function parseStudentRecordsUrl(
   const offset = Number.parseInt(search.get("offset") ?? "", 10);
   const courseId = search.get("courseId");
   const assignmentId = search.get("assignmentId");
-  return {
+  const state: StudentRecordsUrlState = {
     sourceType: pickEnum(
       search.get("sourceType"),
       ["all", "assignment", "course", "wrong"],
@@ -74,8 +78,30 @@ export function parseStudentRecordsUrl(
     ),
     from: search.get("from") ?? "",
     to: search.get("to") ?? "",
-    offset: Number.isFinite(offset) && offset > 0 ? Math.floor(offset) : 0,
+    offset: Number.isSafeInteger(offset) && offset > 0 ? offset : 0,
   };
+  for (const field of ["courseId", "assignmentId"] as const) {
+    if (
+      !studentRecordsQuerySchema.shape[field].safeParse(
+        state[field] ?? undefined,
+      ).success
+    )
+      state[field] = null;
+  }
+  for (const field of ["from", "to"] as const) {
+    if (!state[field]) continue;
+    try {
+      if (
+        !studentRecordsQuerySchema.shape[field].safeParse(
+          localInputToUtcIso(state[field]),
+        ).success
+      )
+        state[field] = "";
+    } catch {
+      state[field] = "";
+    }
+  }
+  return state;
 }
 
 /** 页面状态 → URLSearchParams（只写非默认项，保持地址干净） */

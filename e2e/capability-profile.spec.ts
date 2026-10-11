@@ -188,7 +188,7 @@ test.describe("T7.7 辅助能力启用集：关闭 → 学生刷新 → 正式�
 
       // —— 教师恢复全启用 → 落地页「再做一次」新卷：入口回来 ——
       await saveCapabilityProfile(request, ["steps", "ink"]);
-      await studentPage.getByRole("link", { name: "返回单元练习" }).click();
+      await studentPage.getByRole("button", { name: "返回单元练习" }).click();
       await studentPage.waitForURL(
         `**/s/courses/${courseId}/units/${encodeURIComponent(unitName)}`,
       );

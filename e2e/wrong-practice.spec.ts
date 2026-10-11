@@ -174,7 +174,7 @@ test.describe("错题重练：组卷 → 作答 → 轮次史/攻克 → 教师�
 
       // —— 返回错题本：轮次史新增第 2 轮 ✓（来源「错题重练 · 第 1 次」）；
       //    严格标准（默认）下 q1 只连对 1 次 → 仍待复习 ——
-      await studentPage.getByRole("link", { name: "返回错题本" }).click();
+      await studentPage.getByRole("button", { name: "返回错题本" }).click();
       await studentPage.waitForURL("**/s/wrong");
       await expect(
         studentPage.getByRole("button", { name: "待复习 2 题" }),
@@ -225,7 +225,7 @@ test.describe("错题重练：组卷 → 作答 → 轮次史/攻克 → 教师�
       });
 
       // —— 回错题本：严格标准下连续 2 次做对 → q1 迁入已攻克（q2 仍待复习）——
-      await studentPage.getByRole("link", { name: "返回错题本" }).click();
+      await studentPage.getByRole("button", { name: "返回错题本" }).click();
       await studentPage.waitForURL("**/s/wrong");
       await expect(
         studentPage.getByRole("button", { name: "待复习 1 题" }),

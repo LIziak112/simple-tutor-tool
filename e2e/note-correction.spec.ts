@@ -185,7 +185,9 @@ test.describe("订正、补充稿与历史对照（T6R.15）", () => {
       await resultChoiceCard
         .getByRole("button", { name: "第 2 题订正", exact: true })
         .click();
-      await resultChoiceCard.getByRole("button", { name: "添加订正" }).click();
+      await resultChoiceCard
+        .getByRole("button", { name: "添加订正", exact: true })
+        .click();
       await studentPage
         .getByRole("button", { name: "复制原稿开始订正" })
         .click();
@@ -228,7 +230,9 @@ test.describe("订正、补充稿与历史对照（T6R.15）", () => {
       ).toBeVisible({ timeout: 15_000 });
 
       // —— 订正二：空白新开（反思留空——可选字段不填也可封存） ——
-      await resultChoiceCard.getByRole("button", { name: "添加订正" }).click();
+      await resultChoiceCard
+        .getByRole("button", { name: "添加订正", exact: true })
+        .click();
       await studentPage.getByRole("button", { name: "空白订正" }).click();
       const panel2 = resultChoiceCard.locator('[data-slot="correction-panel"]');
       await expect(panel2).toBeVisible();

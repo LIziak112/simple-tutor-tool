@@ -24,13 +24,12 @@ import { studentInkPngUrl } from "@/lib/api";
 import { formatCnTime } from "@/lib/time";
 import {
   attemptRoundLabel,
-  formatReferenceAnswers,
-  formatStudentAnswer,
   HANDWRITTEN_TYPES,
   letterOf,
   QUESTION_TYPE_BADGE_CLASS,
   QUESTION_TYPE_LABELS,
 } from "./answer-format";
+import { ResultAnswerComparison } from "./ResultAnswerComparison";
 import { ResultQuestionTools } from "./ResultQuestionTools";
 import { ResultWorkspace } from "./ResultWorkspace";
 import { reviewCounts, reviewQuestionState } from "./result-review-model";
@@ -374,37 +373,7 @@ function ResultQuestionCard({
       />
       <ResultOptions question={question} released={released} />
 
-      <div className="flex flex-col gap-2 border-t border-border pt-3 text-sm sm:flex-row sm:gap-6">
-        <p className="flex flex-wrap gap-1.5">
-          <span className="shrink-0 text-muted-foreground">你的答案：</span>
-          <span
-            className={cn(
-              "font-medium",
-              question.answer === null && "text-muted-foreground",
-            )}
-          >
-            {formatStudentAnswer(question.answer)}
-          </span>
-        </p>
-        {/* 参考答案走 RichMarkdown：[[…]] 标记内禁写 $（防 remark-math 切开
-            标记泄露答案），裸 LaTeX 由 formatReferenceAnswers 显示侧自动包 $；
-            T2.13 旧写法 $…$ 原样走同一管线，判分归一化剥 $ 不受影响。
-            外层 p→div：RichMarkdown 是块级 div，不能嵌在 <p> 内。
-            T2A.8：未公布时整块不下发（服务端 answers=null） */}
-        {released && (
-          <div className="flex min-w-0 flex-wrap gap-1.5">
-            <span className="shrink-0 text-muted-foreground">参考答案：</span>
-            {question.answers === null ? (
-              <span className="font-medium">由老师批改后公布</span>
-            ) : (
-              <RichMarkdown
-                source={formatReferenceAnswers(question.answers)}
-                className="min-w-0 font-medium [&_p]:my-0"
-              />
-            )}
-          </div>
-        )}
-      </div>
+      <ResultAnswerComparison question={question} released={released} />
 
       {released &&
         (question.teacherMark !== null || question.teacherComment !== null) && (
@@ -561,6 +530,7 @@ export function AttemptResultView({
       title={data.title}
       attemptId={attempt.id}
       questions={flatQuestions}
+      status={attempt.status}
       released={released}
       onBack={onBackHome}
       backLabel={
@@ -646,7 +616,7 @@ export function AttemptResultView({
               </p>
               {summary.unanswered > 0 && (
                 <p className="w-full text-sm text-muted-foreground">
-                  未作答的客观题已计入判错；未答数与判错数不能相加。
+                  未答数单独统计，可能与判错或待批重叠，不能相加。
                 </p>
               )}
             </div>
@@ -721,9 +691,12 @@ export function AttemptResultView({
           {data.units.map((unit) => (
             <li key={unit.id} className="flex flex-col gap-4">
               {showUnitHeaders && (
-                <h3 className="flex items-center gap-2 pt-2 text-sm font-semibold text-foreground before:h-4 before:w-1 before:rounded-full before:bg-primary">
+                <h2
+                  data-review-unit={unit.id}
+                  className="flex items-center gap-2 pt-2 text-sm font-semibold text-foreground before:h-4 before:w-1 before:rounded-full before:bg-primary"
+                >
                   {unit.title}
-                </h3>
+                </h2>
               )}
               <ol className="flex flex-col gap-4">
                 {unit.questions.map((question) => (

@@ -1,4 +1,4 @@
-import type { AttemptResultQuestion } from "@tutor/contract";
+import type { AttemptResultQuestion, AttemptStatus } from "@tutor/contract";
 import {
   ArrowLeft,
   ChevronLeft,
@@ -29,6 +29,7 @@ export function ResultWorkspace({
   attemptId,
   questions,
   released,
+  status,
   onBack,
   backLabel,
   children,
@@ -37,6 +38,7 @@ export function ResultWorkspace({
   attemptId: string;
   questions: readonly AttemptResultQuestion[];
   released: boolean;
+  status: AttemptStatus;
   onBack(): void;
   backLabel: string;
   children: ReactNode;
@@ -119,13 +121,17 @@ export function ResultWorkspace({
             {title}
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            {released ? "结果回看" : "已交卷 · 待公布"}
+            {!released
+              ? "已交卷 · 待公布"
+              : status === "graded"
+                ? "已批改 · 结果回看"
+                : "已交卷 · 待批改"}
           </p>
         </div>
       </header>
       <div className="grid min-w-0 gap-6 lg:grid-cols-[240px_minmax(0,1fr)]">
         <aside
-          className="sticky top-[calc(var(--attempt-header-height,96px)+16px)] hidden max-h-[calc(100dvh-var(--attempt-header-height,96px)-var(--attempt-footer-height,64px)-32px)] overflow-y-auto overscroll-contain lg:block"
+          className="sticky top-[calc(var(--attempt-header-height,96px)+16px)] hidden max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,96px)-var(--attempt-footer-height,64px)-32px)] overflow-y-auto overscroll-contain lg:block"
           aria-label="结果定位"
         >
           {navigator}

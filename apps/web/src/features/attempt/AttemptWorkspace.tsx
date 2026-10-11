@@ -49,15 +49,27 @@ export function AttemptWorkspace({ children }: { children: ReactNode }) {
     if (element === null) return;
     let header: HTMLElement | null = null;
     let footer: HTMLElement | null = null;
+    const setMeasurement = (name: string, value: number) => {
+      const next = `${value}px`;
+      if (element.style.getPropertyValue(name) !== next)
+        element.style.setProperty(name, next);
+    };
     const measure = () => {
-      element.style.setProperty(
+      // DOMRect含CSS缩放，布局变量须还原为未缩放单位。
+      const visualWidth = element.getBoundingClientRect().width;
+      const scale =
+        element.offsetWidth > 0 && visualWidth > 0
+          ? visualWidth / element.offsetWidth
+          : 1;
+      setMeasurement(
         "--attempt-header-height",
-        `${header?.getBoundingClientRect().height || 64}px`,
+        (header?.getBoundingClientRect().height || 64 * scale) / scale,
       );
-      element.style.setProperty(
+      setMeasurement(
         "--attempt-footer-height",
-        `${footer?.getBoundingClientRect().height || 64}px`,
+        (footer?.getBoundingClientRect().height || 64 * scale) / scale,
       );
+      setMeasurement("--attempt-viewport-height", window.innerHeight / scale);
     };
     const observer =
       typeof ResizeObserver === "undefined"
@@ -81,11 +93,16 @@ export function AttemptWorkspace({ children }: { children: ReactNode }) {
     };
     discover();
     measure();
+    observer?.observe(element);
+    window.addEventListener("resize", measure);
+    window.visualViewport?.addEventListener("resize", measure);
     const mutation = new MutationObserver(discover);
     mutation.observe(element, { childList: true, subtree: true });
     return () => {
       observer?.disconnect();
       mutation.disconnect();
+      window.removeEventListener("resize", measure);
+      window.visualViewport?.removeEventListener("resize", measure);
     };
   }, []);
   return (

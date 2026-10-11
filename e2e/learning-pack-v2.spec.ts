@@ -242,7 +242,9 @@ test.describe("learning-pack-v2 批量学情包 v2 全链（T6R.16）", () => {
       await resultChoiceCard
         .getByRole("button", { name: "第 2 题订正", exact: true })
         .click();
-      await resultChoiceCard.getByRole("button", { name: "添加订正" }).click();
+      await resultChoiceCard
+        .getByRole("button", { name: "添加订正", exact: true })
+        .click();
       await studentPage
         .getByRole("button", { name: "复制原稿开始订正" })
         .click();

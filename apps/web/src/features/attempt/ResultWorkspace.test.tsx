@@ -11,6 +11,7 @@ it("移动题号抽屉不卸载正文，标题完整、上一下一边界正确"
         attemptId="a1"
         questions={[]}
         released
+        status="graded"
         onBack={vi.fn()}
         backLabel="返回我的记录"
       >
@@ -22,6 +23,7 @@ it("移动题号抽屉不卸载正文，标题完整、上一下一边界正确"
     screen.getByRole("heading", { name: "长标题完整显示" }),
   ).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "上一题" })).toBeDisabled();
+  expect(screen.getByText("已批改 · 结果回看")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "打开回看题号" }));
   expect(screen.getByRole("dialog")).toBeInTheDocument();
   expect(screen.getByText("保活正文")).toBeInTheDocument();

@@ -29,7 +29,7 @@ it("保存的列表位置按学生与筛选隔离，不存答案", () => {
   fireEvent.click(screen.getByRole("button", { name: "记录" }));
   expect(sessionStorage.getItem(key)).toBe("attempt");
 });
-it("恢复目记录，学生开始滚动后不抢位", () => {
+it("学生开始滚动后不抢列表阅读位置", () => {
   sessionStorage.setItem(key, "attempt");
   const frames: FrameRequestCallback[] = [];
   vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
@@ -45,4 +45,21 @@ it("恢复目记录，学生开始滚动后不抢位", () => {
     while (frames.length) frames.shift()?.(0);
   });
   expect(scroll).not.toHaveBeenCalled();
+});
+
+it("列表就绪后恢复到之前打开的记录", () => {
+  sessionStorage.setItem(key, "attempt");
+  const frames: FrameRequestCallback[] = [];
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+    frames.push(callback);
+    return frames.length;
+  });
+  vi.stubGlobal("cancelAnimationFrame", vi.fn());
+  render(<Fixture />);
+  const scroll = vi.fn();
+  screen.getByRole("button", { name: "记录" }).scrollIntoView = scroll;
+  act(() => {
+    while (frames.length) frames.shift()?.(0);
+  });
+  expect(scroll).toHaveBeenCalledWith({ block: "center", behavior: "instant" });
 });

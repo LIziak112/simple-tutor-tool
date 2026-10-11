@@ -1,0 +1,15 @@
+{
+  "browser": "chromium",
+  "questions": 130,
+  "network": "隔离本机API，无节流",
+  "firstOpenMs": 918.4000000953674,
+  "warmMs": [
+    31.200000047683716, 29.799999952316284, 42.89999997615814, 64.5,
+    42.200000047683716
+  ],
+  "listenerCount": 0,
+  "rasterUploads": 1,
+  "unrelatedMutations": 0,
+  "frameP95": 7.100000000000364,
+  "moveCount": 60
+}

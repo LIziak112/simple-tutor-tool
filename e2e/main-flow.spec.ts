@@ -259,8 +259,8 @@ test.describe("主流程：布置作业 → 学生作答与交卷 → 结果与�
       await expect(studentPage.getByText("待批 4 题")).toBeVisible();
       await expect(studentPage.getByText("未答 2 题")).toBeVisible();
 
-      // 多单元分节（结果视图 h3 = 单元标题，按布置顺序）；题号 1–9 连续
-      const resultUnitHeaders = studentPage.locator("h3");
+      // 多单元分节按布置顺序；题号1—9连续，题目标题不混入单元标题。
+      const resultUnitHeaders = studentPage.locator("[data-review-unit]");
       await expect(resultUnitHeaders).toHaveCount(2);
       await expect(resultUnitHeaders.nth(0)).toHaveText("练习四");
       await expect(resultUnitHeaders.nth(1)).toHaveText(extraUnitName);
@@ -283,6 +283,8 @@ test.describe("主流程：布置作业 → 学生作答与交卷 → 结果与�
       // （toBeVisible 不等图片加载完成——单次 evaluate 会踩解码竞态，
       // expect.poll 轮询到解码完成为止）
       const r6 = studentPage.locator('article[aria-label="第 6 题"]');
+      await expect(r6.locator('img[alt*="手写笔迹"]')).toHaveCount(0);
+      await r6.getByRole("button", { name: "查看手写原稿" }).click();
       const inkImg = r6.locator('img[alt*="手写笔迹"]');
       await expect(inkImg).toBeVisible();
       await expect

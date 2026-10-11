@@ -1,0 +1,45 @@
+{
+  "firstRenderMs": 4639,
+  "nodeCount": 15299,
+  "questions": 130,
+  "initialCanvases": 0,
+  "closedMaterialRequests": 0,
+  "measurements": [
+    {
+      "width": 320,
+      "height": 800,
+      "headerBottom": 214,
+      "top": 247
+    },
+    {
+      "width": 390,
+      "height": 844,
+      "headerBottom": 186.5,
+      "top": 219.5
+    },
+    {
+      "width": 768,
+      "height": 1024,
+      "headerBottom": 131.5,
+      "top": 168.5
+    },
+    {
+      "width": 810,
+      "height": 668,
+      "headerBottom": 131.5,
+      "top": 168.5
+    },
+    {
+      "width": 1200,
+      "height": 900,
+      "headerBottom": 104,
+      "top": 141
+    },
+    {
+      "width": 1440,
+      "height": 900,
+      "headerBottom": 104,
+      "top": 141
+    }
+  ]
+}

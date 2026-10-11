@@ -241,7 +241,9 @@ test.describe("B 批次全链（T6R.18 发布闸门）", () => {
       await resultChoiceCard
         .getByRole("button", { name: "第 2 题订正", exact: true })
         .click();
-      await resultChoiceCard.getByRole("button", { name: "添加订正" }).click();
+      await resultChoiceCard
+        .getByRole("button", { name: "添加订正", exact: true })
+        .click();
       await tabA.getByRole("button", { name: "复制原稿开始订正" }).click();
       const panelA = resultChoiceCard.locator('[data-slot="correction-panel"]');
       await expect(panelA).toBeVisible();
