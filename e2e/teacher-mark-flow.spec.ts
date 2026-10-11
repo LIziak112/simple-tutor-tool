@@ -163,7 +163,7 @@ test.describe("教师批改流（T3.2b：待批队列 → 学生已批）", () =
         .click();
       // 第 2 题手写：展开手写区 + 画一笔；最终答案留空（只写笔迹 → 交卷后待批）
       const q2 = studentPage.locator('article[aria-label="第 2 题"]');
-      await q2.getByRole("button", { name: "展开手写区" }).click();
+      await q2.getByRole("button", { name: /手写作答/ }).click();
       const canvas = q2.locator("canvas[data-slot=ink-canvas]");
       await expect(canvas).toBeVisible();
       await handwriteOneStroke(studentPage, canvas);

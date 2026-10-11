@@ -476,7 +476,10 @@ const HANDWRITTEN_DRAFT: AttemptDraftData = {
 
 /** 展开下一道未展开的手写题并「书写一笔」（展开后按钮变「收起」，故每次取第一个） */
 async function writeOnNextHandwritten(): Promise<void> {
-  const toggles = screen.getAllByRole("button", { name: /展开手写区/ });
+  const toggles = screen.getAllByRole("button", {
+    name: /手写作答/,
+    expanded: false,
+  });
   fireEvent.click(toggles[0] as HTMLElement);
   const emits = await screen.findAllByTestId("ink-emit-atrament");
   fireEvent.click(emits[emits.length - 1] as HTMLElement);
@@ -690,7 +693,7 @@ describe("StudentAssignmentAttemptPage：草稿防丢", () => {
     } satisfies StudentAnswer);
   });
 
-  it("刷新恢复（笔迹）：本地有笔迹且服务端为空 → 自动展开并补传（resync 防抖后 PUT）", async () => {
+  it("刷新恢复（笔迹）：已有本地笔迹默认收起，展开后可继续编辑并补传", async () => {
     draftStore.saveInk(ATTEMPT_ID, "q-ink-1", localInkDoc(2));
     mockedStart.mockResolvedValue(START_DRAFT);
     mockedFetch
@@ -698,8 +701,11 @@ describe("StudentAssignmentAttemptPage：草稿防丢", () => {
       .mockResolvedValue(RESULT_DATA);
     renderPage();
 
-    // 非空本地笔迹 → 自动展开（按钮翻转为「收起手写区」）
-    await screen.findByRole("button", { name: /收起手写区/ });
+    const paper = await screen.findByRole("button", {
+      name: /手写作答.*已有笔迹/,
+    });
+    expect(paper).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(paper);
     // resync 进 2 秒防抖后上传（InkPad mock 提供可导 PNG 的引擎）
     await waitFor(() => expect(mockedPutInk).toHaveBeenCalledTimes(1), {
       timeout: 4000,

@@ -40,7 +40,7 @@ export function AttemptBottomBar({
   return (
     <div
       data-slot="attempt-bottom-bar"
-      className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card/95 pb-[env(safe-area-inset-bottom)] backdrop-blur"
+      className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card/95 pb-[env(safe-area-inset-bottom)] backdrop-blur group-data-[keyboard-open=true]/workspace:hidden"
     >
       <div className="mx-auto flex min-h-16 w-full max-w-[1120px] items-center justify-between gap-3 px-3 py-2 sm:px-6">
         {onOpenNavigator && (

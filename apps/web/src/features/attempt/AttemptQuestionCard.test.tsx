@@ -126,12 +126,32 @@ function renderStatefulCard(
 }
 
 describe("题头元信息", () => {
+  it("标画和草稿入口只在题头出现，展开状态受题卡控制", () => {
+    const { container } = renderStatefulCard(baseQuestion({}), {
+      attemptId: "attempt-tools",
+    });
+    const header = container.querySelector('[data-slot="question-header"]');
+    const annotation = screen.getByRole("button", { name: "第 3 题圈画题干" });
+    const paper = screen.getByRole("button", { name: "第 3 题草稿纸" });
+    expect(header).toContainElement(annotation);
+    expect(header).toContainElement(paper);
+    expect(paper).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(paper);
+    expect(paper).toHaveAttribute("aria-expanded", "true");
+    expect(
+      screen.getAllByRole("button", { name: "第 3 题草稿纸" }),
+    ).toHaveLength(1);
+  });
   it("渲染题号（+1）、题型徽章中文、难度星、考点 tag", () => {
     renderStatefulCard(baseQuestion({ type: "judge", difficulty: 3 }));
     expect(screen.getByText("第 3 题")).toBeInTheDocument();
     expect(screen.getByText("判断")).toBeInTheDocument();
     expect(screen.queryByText("有理数加法")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "第 3 题资料" }));
+    fireEvent.pointerDown(screen.getByRole("button", { name: "第 3 题更多" }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    fireEvent.click(screen.getByRole("menuitem", { name: "题目资料" }));
     expect(screen.getByText("有理数加法")).toBeInTheDocument();
     expect(screen.getByLabelText("难度 3 星（满分 5 星）")).toBeInTheDocument();
   });
@@ -283,11 +303,9 @@ describe("手写题（solve/apply/find-error）控件", () => {
     // T2.8：手写区默认收起（节省首屏），不再显示占位文案
     expect(screen.queryByText(/手写作答区即将开放/)).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /展开手写区/ }),
+      screen.getByRole("button", { name: /第 3 题手写作答/ }),
     ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: /全屏作答/ }),
-    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /全屏作答/ })).toBeNull();
     const input = screen.getByLabelText("最终答案");
     fireEvent.change(input, { target: { value: "-3" } });
     expect(onAnswer).toHaveBeenLastCalledWith(

@@ -133,15 +133,13 @@ export function AnnotationView({
     "idle",
   );
   /** 底图 img 布局就绪信号（回放门控；换底图/重载视图时复位——P0-1） */
-  const [baseLoaded, setBaseLoaded] = useState(false);
+  const [loadedBaseId, setLoadedBaseId] = useState<string | null>(null);
   const baseId = view?.base?.baseId ?? null;
-  // biome-ignore lint/correctness/useExhaustiveDependencies(baseId): baseId 是身份变更键（effect 体内不读取——换底图时复位就绪信号）
-  useEffect(() => {
-    setBaseLoaded(false);
-  }, [baseId]);
+  const baseLoaded = baseId !== null && loadedBaseId === baseId;
   const label = `${ariaPrefix}题干标注`;
 
   const load = useCallback(async (): Promise<void> => {
+    setLoadedBaseId(null);
     setPhaseState("loading");
     setError(null);
     try {
@@ -322,7 +320,7 @@ export function AnnotationView({
                       className="block w-full select-none"
                       draggable={false}
                       loading="lazy"
-                      onLoad={() => setBaseLoaded(true)}
+                      onLoad={() => setLoadedBaseId(baseId)}
                     />
                     <AnnotationStaticCanvas
                       doc={view.doc}

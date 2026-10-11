@@ -215,7 +215,7 @@ test.describe("主流程：布置作业 → 学生作答与交卷 → 结果与�
 
       // —— 手写一题（第 6 题 solve：展开手写区 + 鼠标拖动画布 + 最终答案）——
       const q6 = studentPage.locator('article[aria-label="第 6 题"]');
-      await q6.getByRole("button", { name: "展开手写区" }).click();
+      await q6.getByRole("button", { name: /手写作答/ }).click();
       const canvas = q6.locator("canvas[data-slot=ink-canvas]");
       await expect(canvas).toBeVisible();
       await handwriteOneStroke(studentPage, canvas);

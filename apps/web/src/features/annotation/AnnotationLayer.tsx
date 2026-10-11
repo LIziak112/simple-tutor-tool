@@ -52,6 +52,9 @@ export interface AnnotationLayerProps {
   phase?: "scratch" | "correction";
   /** 无障碍标签前缀（如「第 3 题」） */
   ariaPrefix?: string;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  showTrigger?: boolean;
 }
 
 export function AnnotationLayer({
@@ -59,6 +62,9 @@ export function AnnotationLayer({
   questionId,
   phase = "scratch",
   ariaPrefix = "本题",
+  open: controlledOpen,
+  onOpenChange,
+  showTrigger = true,
 }: AnnotationLayerProps) {
   const session = useAnnotationSessionRef();
   const record = useAnnotationRecord(attemptId, questionId, phase);
@@ -68,7 +74,12 @@ export function AnnotationLayer({
     questionId,
     phase,
   });
-  const [open, setOpen] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = controlledOpen ?? internalOpen;
+  const setOpen = (next: boolean) => {
+    if (controlledOpen === undefined) setInternalOpen(next);
+    onOpenChange?.(next);
+  };
   const label = `${ariaPrefix}题干标注`;
 
   // ---- 保存订正标注检查点（审查修复 3①；对齐 CorrectionPanel 的 seal 模式） ----
@@ -135,9 +146,14 @@ export function AnnotationLayer({
   }, [session, attemptId, questionId, phase]);
 
   return (
-    <div data-slot="annotation-layer" className="flex min-w-0 flex-col gap-2">
+    <div
+      data-slot="annotation-layer"
+      className={
+        !showTrigger && !open ? "hidden" : "flex min-w-0 flex-col gap-2"
+      }
+    >
       {/* 收起形态：入口按钮（标注模式切换明确——显式开/收） */}
-      {!open && (
+      {!open && showTrigger && (
         <div className="flex flex-wrap items-center gap-2">
           <Button
             type="button"

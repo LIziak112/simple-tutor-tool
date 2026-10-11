@@ -143,7 +143,7 @@ test.describe("T7.8 教学包往返：导入 → 作答判分 → 导出 ZIP →
       // 随行图片渲染（题内可能还有装饰性 img 角色，断言首张可见即可）
       await expect(judge.getByRole("img").first()).toBeVisible();
       const solve = studentPage.locator('article[aria-label="第 2 题"]');
-      await solve.getByRole("button", { name: "展开手写区" }).click();
+      await solve.getByRole("button", { name: /手写作答/ }).click();
       const canvas = solve.locator("canvas[data-slot=ink-canvas]");
       await expect(canvas).toBeVisible();
       await handwriteOneStroke(studentPage, canvas);

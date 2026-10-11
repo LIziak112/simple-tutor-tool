@@ -62,6 +62,27 @@ test("学生工作区：部分填写、遗漏定位、答题卡与响应式布�
   await page.getByRole("button", { name: /去补全第 1 题/ }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(first.getByLabel("第2空")).toBeFocused();
+  for (const [index, value] of ["4", "6", "8"].entries()) {
+    await first.getByLabel(`第${index + 2}空`).fill(value);
+  }
+  await expect(first.getByText("已填写", { exact: true })).toBeVisible();
+  await expect(page.locator('[data-slot="attempt-bottom-bar"]')).toContainText(
+    "已填写 1 / 2 题",
+  );
+  await first.getByLabel("第3空").fill("");
+  await expect(first.getByText("已填 3/4 空")).toBeVisible();
+  await page
+    .locator('article[aria-label="第 2 题"]')
+    .getByText("错", { exact: true })
+    .click();
+  await expect(
+    page
+      .locator('article[aria-label="第 2 题"]')
+      .getByRole("radio", { name: "错", exact: true }),
+  ).toBeChecked();
+  await expect(page.locator('[data-slot="attempt-bottom-bar"]')).toContainText(
+    "已填写 1 / 2 题",
+  );
   for (const width of [320, 390, 768, 810, 1200, 1440]) {
     await page.setViewportSize({ width, height: 900 });
     const geometry = await page.evaluate(() => {
@@ -103,11 +124,25 @@ test("学生工作区：部分填写、遗漏定位、答题卡与响应式布�
       fullPage: false,
     });
   }
+  // CSS 2倍缩放补充压力测试；实体设备与浏览器原生缩放另列手动验收。
+  await page.setViewportSize({ width: 640, height: 1600 });
+  await page.evaluate(() => {
+    document.body.style.zoom = "2";
+  });
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
+    .toBeLessThanOrEqual(640);
+  await page.screenshot({
+    path: testInfo.outputPath("workspace-css-zoom-200.png"),
+  });
+  await page.evaluate(() => {
+    document.body.style.zoom = "";
+  });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole("button", { name: "答题卡", exact: true }).click();
   await page
     .getByRole("dialog")
-    .getByRole("button", { name: /第 2 题，未填写/ })
+    .getByRole("button", { name: /第 2 题，已填写/ })
     .click();
   await expect(page.locator('article[aria-label="第 2 题"]')).toBeFocused();
   await page.getByRole("button", { name: "返回", exact: true }).click();
@@ -171,10 +206,9 @@ test("130题长作业：答题卡独立滚动、跳到末题、待检查刷新�
   const last = page.locator('article[aria-label="第 130 题"]');
   await expect(last).toBeFocused();
   await expect(last).toBeInViewport();
-  await last.getByRole("button", { name: "第 130 题待检查" }).click();
-  await expect(
-    last.getByRole("button", { name: "第 130 题待检查" }),
-  ).toHaveAttribute("aria-pressed", "true");
+  await last.getByRole("button", { name: "第 130 题更多" }).click();
+  await page.getByRole("menuitemcheckbox", { name: "待检查" }).click();
+  await expect(last.locator('svg[aria-label="待检查"]')).toBeVisible();
   const attemptUrl = page.url();
   await expect
     .poll(async () =>
@@ -232,9 +266,7 @@ test("130题长作业：答题卡独立滚动、跳到末题、待检查刷新�
     )
     .toBeLessThanOrEqual(2);
   await page.reload();
-  await expect(
-    last.getByRole("button", { name: "第 130 题待检查" }),
-  ).toHaveAttribute("aria-pressed", "true");
+  await expect(last.locator('svg[aria-label="待检查"]')).toBeVisible();
   await page.getByRole("button", { name: "答题卡", exact: true }).click();
   await dialog
     .getByRole("button", { name: /第 130 题，未填写，待检查/ })

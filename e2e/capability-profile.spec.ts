@@ -201,7 +201,7 @@ test.describe("T7.7 辅助能力启用集：关闭 → 学生刷新 → 正式�
       ).toBeVisible();
       await expect(judge2.getByText("再与零比大小。")).toBeHidden();
       await expect(
-        studentPage.getByRole("button", { name: /展开手写区/ }),
+        studentPage.getByRole("button", { name: /手写作答/ }),
       ).toBeVisible();
       await expect(
         studentPage.getByRole("button", { name: /草稿纸/ }),

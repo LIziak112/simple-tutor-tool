@@ -191,7 +191,7 @@ describe("全部样例题目真实题卡渲染（samples/v2 + 完整样例，T7.
       }
       default:
         expect(
-          screen.getByRole("button", { name: /展开手写区/ }),
+          screen.getByRole("button", { name: /手写作答/ }),
           `${source} 手写题应有手写区入口`,
         ).toBeInTheDocument();
         expect(

@@ -3,13 +3,27 @@ import type {
   QuestionPublic,
   StudentAnswer,
 } from "@tutor/contract";
-import { Flag, MoreHorizontal } from "lucide-react";
+import {
+  CircleAlert,
+  Flag,
+  MoreHorizontal,
+  NotebookPen,
+  Pencil,
+} from "lucide-react";
 import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { AnnotationLayer } from "@/features/annotation/AnnotationLayer";
+import { useAnnotationRecord } from "@/features/annotation/use-annotation-record";
 import { useEnabledCapabilities } from "@/features/capability/enabled-capabilities";
 import { NoteLayer } from "@/features/notes/NoteLayer";
 import { NOTE_STACK_ROW_STYLE } from "@/features/notes/note-layout";
+import { useNoteRecord } from "@/features/notes/use-note-record";
 import {
   HANDWRITTEN_TYPES,
   QUESTION_TYPE_BADGE_CLASS,
@@ -42,6 +56,7 @@ function QuestionMeta({
   flagged,
   onToggleFlag,
   formalInkPresence,
+  tools,
 }: {
   index: number;
   question: QuestionPublic;
@@ -49,11 +64,25 @@ function QuestionMeta({
   flagged: boolean;
   onToggleFlag: (() => void) | undefined;
   formalInkPresence: boolean;
+  tools: {
+    annotationOpen: boolean;
+    paperOpen: boolean;
+    paperEnabled: boolean;
+    annotationCount: number;
+    paperCount: number;
+    annotationProblem: boolean;
+    paperProblem: boolean;
+    toggleAnnotation: () => void;
+    togglePaper: () => void;
+  } | null;
 }) {
   const [detailsOpen, setDetailsOpen] = useState(false);
   return (
     <>
-      <div className="flex min-h-11 items-center justify-between gap-2">
+      <div
+        data-slot="question-header"
+        className="flex min-h-11 items-start justify-between gap-2 sm:items-center"
+      >
         <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1.5">
           <p className="flex items-center gap-2 text-sm font-semibold">
             <span>第 {index + 1} 题</span>
@@ -63,40 +92,91 @@ function QuestionMeta({
           >
             {QUESTION_TYPE_LABELS[question.type]}
           </span>
-          <span className="text-xs text-muted-foreground">
+          <span className="w-full text-xs text-muted-foreground sm:w-auto">
             {completionLabel(
               getQuestionCompletion(question, answer, formalInkPresence),
             )}
           </span>
+          {flagged && (
+            <Flag
+              aria-label="待检查"
+              className="size-3.5 fill-primary text-primary"
+            />
+          )}
         </div>
         <div className="flex shrink-0 items-center gap-1">
-          {onToggleFlag && (
+          {tools && (
             <Button
               type="button"
               variant="ghost"
               className="size-11 p-0"
-              title="待检查"
-              aria-label={`第 ${index + 1} 题待检查`}
-              aria-pressed={flagged}
-              onClick={onToggleFlag}
+              title="圈画题干"
+              aria-label={`第 ${index + 1} 题圈画题干${tools.annotationCount > 0 ? `（已有 ${tools.annotationCount} 笔）` : ""}${tools.annotationProblem ? "，同步需处理" : ""}`}
+              aria-expanded={tools.annotationOpen}
+              onClick={tools.toggleAnnotation}
             >
-              <Flag
-                aria-hidden
-                className={`size-4 ${flagged ? "fill-primary text-primary" : ""}`}
-              />
+              {tools.annotationProblem ? (
+                <CircleAlert aria-hidden className="size-4 text-amber-600" />
+              ) : (
+                <Pencil
+                  aria-hidden
+                  className={`size-4 ${tools.annotationOpen || tools.annotationCount > 0 ? "text-primary" : ""}`}
+                />
+              )}
             </Button>
           )}
-          <Button
-            type="button"
-            variant="ghost"
-            className="size-11 p-0"
-            title="题目资料"
-            aria-label={`第 ${index + 1} 题资料`}
-            aria-expanded={detailsOpen}
-            onClick={() => setDetailsOpen((v) => !v)}
-          >
-            <MoreHorizontal aria-hidden className="size-4" />
-          </Button>
+          {tools?.paperEnabled && (
+            <Button
+              type="button"
+              variant="ghost"
+              className="size-11 p-0"
+              title={
+                HANDWRITTEN_TYPES.has(question.type) ? "手写作答" : "草稿纸"
+              }
+              aria-label={`第 ${index + 1} 题${HANDWRITTEN_TYPES.has(question.type) ? "手写作答" : "草稿纸"}${tools.paperCount > 0 || formalInkPresence ? "（已有笔迹）" : ""}${tools.paperProblem ? "，同步需处理" : ""}`}
+              aria-expanded={tools.paperOpen}
+              onClick={tools.togglePaper}
+            >
+              {tools.paperProblem ? (
+                <CircleAlert aria-hidden className="size-4 text-amber-600" />
+              ) : (
+                <NotebookPen
+                  aria-hidden
+                  className={`size-4 ${tools.paperOpen || tools.paperCount > 0 || formalInkPresence ? "text-primary" : ""}`}
+                />
+              )}
+            </Button>
+          )}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                className="size-11 p-0"
+                title="更多"
+                aria-label={`第 ${index + 1} 题更多`}
+              >
+                <MoreHorizontal aria-hidden className="size-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem
+                onSelect={() => setDetailsOpen((value) => !value)}
+              >
+                {detailsOpen ? "收起题目资料" : "题目资料"}
+              </DropdownMenuItem>
+              {onToggleFlag && (
+                <DropdownMenuItem
+                  role="menuitemcheckbox"
+                  aria-checked={flagged}
+                  onSelect={onToggleFlag}
+                >
+                  <Flag aria-hidden />
+                  待检查
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
       {detailsOpen && (
@@ -174,6 +254,9 @@ export function AttemptQuestionCard({
   const { ink: inkEnabled } = useEnabledCapabilities();
   const articleRef = useRef<HTMLElement | null>(null);
   const [noteOpen, setNoteOpen] = useState(false);
+  const [annotationOpen, setAnnotationOpen] = useState(false);
+  const annotationRecord = useAnnotationRecord(attemptId ?? "", question.id);
+  const noteRecord = useNoteRecord(attemptId ?? "", question.id);
   const noteLayer =
     inkEnabled &&
     attemptId !== undefined &&
@@ -184,6 +267,7 @@ export function AttemptQuestionCard({
         open={noteOpen}
         onOpenChange={setNoteOpen}
         ariaPrefix={`第 ${index + 1} 题`}
+        showTrigger={false}
       />
     ) : null;
 
@@ -208,6 +292,9 @@ export function AttemptQuestionCard({
           onInkEdit={onInkEdit}
           onInkFullscreen={onInkFullscreen}
           onInkPresenceChange={onInkPresenceChange}
+          expanded={noteOpen}
+          onExpandedChange={setNoteOpen}
+          showExpandTrigger={false}
         />
       )}
 
@@ -231,6 +318,9 @@ export function AttemptQuestionCard({
           attemptId={attemptId}
           questionId={question.id}
           ariaPrefix={`第 ${index + 1} 题`}
+          open={annotationOpen}
+          onOpenChange={setAnnotationOpen}
+          showTrigger={false}
         />
       )}
     </>
@@ -251,6 +341,27 @@ export function AttemptQuestionCard({
         flagged={flagged}
         onToggleFlag={onToggleFlag}
         formalInkPresence={formalInkPresence}
+        tools={
+          attemptId === undefined
+            ? null
+            : {
+                annotationOpen,
+                paperOpen: noteOpen,
+                paperEnabled: inkEnabled,
+                annotationCount: annotationRecord?.doc?.strokes.length ?? 0,
+                paperCount: noteRecord?.doc?.ink.strokes.length ?? 0,
+                annotationProblem:
+                  annotationRecord?.conflict != null ||
+                  annotationRecord?.denied != null ||
+                  annotationRecord?.local === "failed",
+                paperProblem:
+                  noteRecord?.conflict != null ||
+                  noteRecord?.denied != null ||
+                  noteRecord?.local === "failed",
+                toggleAnnotation: () => setAnnotationOpen((value) => !value),
+                togglePaper: () => setNoteOpen((value) => !value),
+              }
+        }
       />
       <div
         data-slot="note-body-row"

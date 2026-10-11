@@ -5,7 +5,7 @@ import type {
   AttemptResultData,
   HintOpenedEntry,
 } from "@tutor/contract";
-import { ArrowLeft, Grid2X2 } from "lucide-react";
+import { Grid2X2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router";
 import { Button } from "@/components/ui/button";
@@ -17,6 +17,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { AttemptBottomBar } from "@/features/attempt/AttemptBottomBar";
+import { AttemptHeader } from "@/features/attempt/AttemptHeader";
 import { AttemptQuestionCard } from "@/features/attempt/AttemptQuestionCard";
 import { AttemptResultView } from "@/features/attempt/AttemptResultView";
 import { DraftStatusBar } from "@/features/attempt/DraftStatusBar";
@@ -580,28 +581,11 @@ function AnswerView({
     <DraftSyncContext.Provider value={draftSync}>
       <AttemptWorkspace>
         {/* 练习头：来源 + 标题 + 截止 + 草稿保存状态（T2.9 三态 + T2A.6 终态） */}
-        <header
-          data-slot="attempt-header"
-          className="sticky top-0 z-20 -mx-3 flex min-h-16 flex-col gap-1.5 border-b border-border bg-background/95 px-3 py-2 backdrop-blur sm:-mx-6 sm:px-6"
+        <AttemptHeader
+          title={data.title}
+          status={<DraftStatusBar status={draftSync.status} />}
+          onBack={onBackHome}
         >
-          <div className="flex items-start justify-between gap-3">
-            <Button
-              type="button"
-              variant="ghost"
-              className="size-11 shrink-0 p-0"
-              aria-label="返回"
-              title="返回"
-              onClick={onBackHome}
-            >
-              <ArrowLeft aria-hidden className="size-5" />
-            </Button>
-            <h1 className="min-w-0 flex-1 self-center text-lg leading-[26px] font-semibold break-words">
-              {data.title}
-            </h1>
-            <div className="max-w-[120px] self-center text-right">
-              <DraftStatusBar status={draftSync.status} />
-            </div>
-          </div>
           <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
             <span>{sourceLabel(data)}</span>
             {data.attempt.sourceType === "assignment" && (
@@ -621,7 +605,7 @@ function AnswerView({
               当前页面内容作答。
             </p>
           )}
-        </header>
+        </AttemptHeader>
 
         <div className="grid min-w-0 grid-cols-1 gap-6 min-[1200px]:grid-cols-[192px_minmax(0,1fr)]">
           <aside className="sticky top-[calc(var(--attempt-header-height,64px)+16px)] hidden max-h-[calc(100dvh-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] self-start overflow-y-auto min-[1200px]:block">

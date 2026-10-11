@@ -125,7 +125,7 @@ test.describe("学生我的记录与错题本（T3.5：批改延伸）", () => {
         .click();
       // 第 2 题手写：展开手写区 + 画一笔；最终答案留空（只写笔迹 → 交卷后待批）
       const q2 = studentPage.locator('article[aria-label="第 2 题"]');
-      await q2.getByRole("button", { name: "展开手写区" }).click();
+      await q2.getByRole("button", { name: /手写作答/ }).click();
       const canvas = q2.locator("canvas[data-slot=ink-canvas]");
       await expect(canvas).toBeVisible();
       await handwriteOneStroke(studentPage, canvas);

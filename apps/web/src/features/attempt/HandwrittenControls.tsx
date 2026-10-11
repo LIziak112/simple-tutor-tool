@@ -95,6 +95,9 @@ export interface HandwrittenControlsProps {
   onInkPresenceChange?:
     | ((questionId: string, present: boolean) => void)
     | undefined;
+  expanded?: boolean;
+  onExpandedChange?: (expanded: boolean) => void;
+  showExpandTrigger?: boolean;
 }
 
 export function HandwrittenControls({
@@ -108,6 +111,9 @@ export function HandwrittenControls({
   onInkEdit,
   onInkFullscreen,
   onInkPresenceChange,
+  expanded: controlledExpanded,
+  onExpandedChange,
+  showExpandTrigger = true,
 }: HandwrittenControlsProps) {
   /** 权威笔迹：undefined=服务端加载中；null=无笔迹；有值=当前文档 */
   const [masterDoc, setMasterDoc] = useState<InkDoc | null | undefined>(
@@ -120,7 +126,17 @@ export function HandwrittenControls({
         masterDoc !== null && !isInkDocEmpty(masterDoc),
       );
   }, [masterDoc, questionId, onInkPresenceChange]);
-  const [expanded, setExpanded] = useState(false);
+  const [internalExpanded, setInternalExpanded] = useState(false);
+  const expanded = controlledExpanded ?? internalExpanded;
+  const externallyControlled = controlledExpanded !== undefined;
+  const setExpanded = useCallback(
+    (next: boolean | ((previous: boolean) => boolean)) => {
+      const value = typeof next === "function" ? next(expanded) : next;
+      if (controlledExpanded === undefined) setInternalExpanded(value);
+      onExpandedChange?.(value);
+    },
+    [expanded, controlledExpanded, onExpandedChange],
+  );
   const [fullscreen, setFullscreen] = useState(false);
   /** 从 atrament（有笔迹）切全屏的确认弹层 */
   const [confirmFullscreen, setConfirmFullscreen] = useState(false);
@@ -206,7 +222,7 @@ export function HandwrittenControls({
   useEffect(() => {
     let alive = true;
     setMasterDoc(undefined);
-    setExpanded(false);
+    setInternalExpanded(false);
     void (async () => {
       // 本地草稿与（可能失败的）服务端拉取并行；失败不阻塞答题
       const [localInk, fetched] = await Promise.all([
@@ -224,7 +240,8 @@ export function HandwrittenControls({
         // 服务端拉取失败（多为断网）：有本地笔迹则用本地并补传；无则按无笔迹处理
         if (localInk !== null) {
           setMasterDoc(localInk);
-          if (inkEnabled && !isInkDocEmpty(localInk)) setExpanded(true);
+          if (inkEnabled && !externallyControlled && !isInkDocEmpty(localInk))
+            setInternalExpanded(true);
           draftSyncRef.current?.noteLocalWrite();
           controllerRef.current.resync(localInk);
         } else {
@@ -238,7 +255,8 @@ export function HandwrittenControls({
         return;
       }
       setMasterDoc(merged.doc);
-      if (inkEnabled && !isInkDocEmpty(merged.doc)) setExpanded(true);
+      if (inkEnabled && !externallyControlled && !isInkDocEmpty(merged.doc))
+        setInternalExpanded(true);
       if (merged.source === "server") {
         // 服务端较新：内容落本地仓并记指纹（视为已同步）
         draftStore.saveInk(attemptId, questionId, merged.doc);
@@ -253,7 +271,7 @@ export function HandwrittenControls({
       alive = false;
     };
     // controller/draftSync 经 ref 取最新；只随题目标识与开关重跑（开关实际只随页面挂载而定）
-  }, [attemptId, questionId, inkEnabled]);
+  }, [attemptId, questionId, inkEnabled, externallyControlled]);
 
   const finalAnswer = answer?.kind === "final" ? answer.finalAnswer : "";
 
@@ -348,37 +366,41 @@ export function HandwrittenControls({
     <div className="flex flex-col gap-3">
       {/* 操作行：展开/收起 + 全屏 + 上传状态提示 */}
       <div className="flex flex-wrap items-center gap-2">
-        <Button
-          type="button"
-          variant="outline"
-          className="h-11"
-          aria-expanded={expanded}
-          onClick={() => {
-            setExpanded((prev) => !prev);
-            clearFailure();
-          }}
-        >
-          {expanded ? (
-            <>
-              <ChevronUp aria-hidden className="size-4" />
-              收起手写区
-            </>
-          ) : (
-            <>
-              <ChevronDown aria-hidden className="size-4" />
-              展开手写区
-            </>
-          )}
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          className="h-11"
-          onClick={openFullscreen}
-        >
-          <Maximize aria-hidden className="size-4" />
-          全屏作答
-        </Button>
+        {showExpandTrigger && (
+          <Button
+            type="button"
+            variant="outline"
+            className="h-11"
+            aria-expanded={expanded}
+            onClick={() => {
+              setExpanded((prev) => !prev);
+              clearFailure();
+            }}
+          >
+            {expanded ? (
+              <>
+                <ChevronUp aria-hidden className="size-4" />
+                收起手写区
+              </>
+            ) : (
+              <>
+                <ChevronDown aria-hidden className="size-4" />
+                展开手写区
+              </>
+            )}
+          </Button>
+        )}
+        {(showExpandTrigger || expanded) && (
+          <Button
+            type="button"
+            variant="outline"
+            className="h-11"
+            onClick={openFullscreen}
+          >
+            <Maximize aria-hidden className="size-4" />
+            全屏作答
+          </Button>
+        )}
         {saveFailed && (
           <p className="text-xs text-destructive" role="status">
             笔迹保存失败（可能网络不稳），将继续自动重试，交卷前会再上传一次

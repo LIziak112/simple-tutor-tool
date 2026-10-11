@@ -235,6 +235,33 @@ afterEach(() => {
 });
 
 describe("NoteLayer：收起/展开形态", () => {
+  it("旧稿播种不自动展开，不打断阅读位置", async () => {
+    const { onOpenChange } = renderLayer();
+    await act(async () => {
+      await applyServerLoad(
+        SESSION_A,
+        SCOPE,
+        {
+          version: 1,
+          ink: {
+            width: 1000,
+            strokes: [
+              stroke([
+                [1, 1],
+                [2, 2],
+              ]),
+            ],
+          },
+        },
+        null,
+      );
+    });
+    expect(onOpenChange).not.toHaveBeenCalled();
+    expect(screen.queryByRole("toolbar")).toBeNull();
+    expect(
+      screen.getByRole("button", { name: /已有 1 笔/ }),
+    ).toBeInTheDocument();
+  });
   it("收起只显示标记按钮（画布不挂载）；点开挂载画布与精简工具条", async () => {
     const { onOpenChange } = renderLayer();
     expect(screen.getByRole("button", { name: /草稿纸/ })).toBeInTheDocument();

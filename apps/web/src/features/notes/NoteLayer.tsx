@@ -12,7 +12,7 @@
  *   T6R.15：工具条与引擎接线核心抽至 NoteToolbar / useNoteEditor（订正
  *   编辑器 CorrectionPanel 共用），冲突/被拒动作接线抽至 useNoteSyncActions
  *   （闸门修复 F4；CorrectionPanel/CorrectionSection 补充稿块共用），本组件
- *   保留答题页形态编排（自动展开/保活/布局 preference/答题页 head 接线/
+ *   保留答题页形态编排（用户展开/保活/布局 preference/答题页 head 接线/
  *   补图重试）。
  *
  * 纸高（方案 §4.3 / T6R.7 衔接注记②定案）：逻辑高持久化在 NoteDoc，
@@ -33,7 +33,7 @@ import {
   LoaderCircle,
   NotebookPen,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -82,6 +82,8 @@ export interface NoteLayerProps {
   onOpenChange: (open: boolean) => void;
   /** 无障碍标签前缀（如「第 3 题」），空格拼接「草稿纸」 */
   ariaPrefix?: string;
+  /** 题头已提供入口时隐藏重复按钮。 */
+  showTrigger?: boolean;
 }
 
 export function NoteLayer({
@@ -90,6 +92,7 @@ export function NoteLayer({
   open,
   onOpenChange,
   ariaPrefix = "本题",
+  showTrigger = true,
 }: NoteLayerProps) {
   const session = useNoteSessionRef();
   const editor = useNoteEditor({
@@ -106,21 +109,8 @@ export function NoteLayer({
   const doc = view?.doc ?? null;
   const strokeCount = doc?.ink.strokes.length ?? 0;
 
-  // 有笔迹自动展开一次（本地恢复或服务端播种到达后）；**手动收起即置位**
-  // （复审⑧）：收起后到达的播种不再把题卡顶开——展开只由用户再次决定
-  const autoExpandedRef = useRef(false);
-  useEffect(() => {
-    if (autoExpandedRef.current || strokeCount === 0) return;
-    autoExpandedRef.current = true;
-    onOpenChange(true);
-  }, [strokeCount, onOpenChange]);
-  const requestOpenChange = useCallback(
-    (next: boolean) => {
-      if (!next) autoExpandedRef.current = true;
-      onOpenChange(next);
-    },
-    [onOpenChange],
-  );
+  // 旧稿到达只回显笔数，不替用户展开纸面。
+  const requestOpenChange = onOpenChange;
 
   // ---- 收起保活（复审⑦）：展开即清计时；收起计时到点才卸载纸面 ----
   const [paperAlive, setPaperAlive] = useState(false);
@@ -173,9 +163,14 @@ export function NoteLayer({
   const paperReady = open || paperAlive;
 
   return (
-    <div data-slot="note-layer" className="flex min-w-0 flex-col gap-2">
+    <div
+      data-slot="note-layer"
+      className={
+        !showTrigger && !open ? "hidden" : "flex min-w-0 flex-col gap-2"
+      }
+    >
       {/* 收起形态：标记按钮（有笔迹只显示标记——纸面隐藏不占布局） */}
-      {!open && (
+      {!open && showTrigger && (
         <div className="flex flex-wrap items-center gap-2">
           <Button
             type="button"

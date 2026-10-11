@@ -206,7 +206,7 @@ test.describe("Phase 3 全链路（T3.6）：作答 → 数据页 → 批改 →
         .click();
       // 第 3 题手写：展开手写区 + 画一笔；最终答案留空（只写笔迹 → 交卷后待批）
       const q3 = studentPage.locator('article[aria-label="第 3 题"]');
-      await q3.getByRole("button", { name: "展开手写区" }).click();
+      await q3.getByRole("button", { name: /手写作答/ }).click();
       const canvas = q3.locator("canvas[data-slot=ink-canvas]");
       await expect(canvas).toBeVisible();
       await handwriteOneStroke(studentPage, canvas);
