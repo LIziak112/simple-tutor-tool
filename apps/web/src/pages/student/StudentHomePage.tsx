@@ -1,24 +1,18 @@
-import type { StudentAssignment } from "@tutor/contract";
-import {
-  BookOpen,
-  BookX,
-  CircleCheck,
-  ClipboardList,
-  School,
-  Sparkles,
-} from "lucide-react";
+import { BookOpen, BookX, ClipboardList, School, Sparkles } from "lucide-react";
 import { useMemo } from "react";
 import { Link } from "react-router";
 import { Button } from "@/components/ui/button";
 import { useStudentMe } from "@/features/auth/student-auth";
+import {
+  filterAssignmentList,
+  parseAssignmentListUrl,
+} from "@/features/student/assignment-list-filters";
 import {
   useStudentAssignments,
   useStudentCourses,
 } from "@/features/student/student-queries";
 import { useStudentWrongQuestions } from "@/features/student/student-records-queries";
 import {
-  AssignmentGroupLabel,
-  isAssignmentTodo,
   StudentAssignmentCard,
   StudentCourseCard,
   StudentEmptyState,
@@ -38,7 +32,7 @@ import {
  * 三件事：要做的（作业）、要复习的（错题）、在学的（课程）；「我的记录」
  * 只在顶栏导航，不在首页重复（去重复入口）。
  * - 问候横幅：姓名 + 今日待办一句话（待完成作业数 / 待复习错题数）；
- * - 「我的作业」：按「待完成 / 已完成」两组排列（待完成在前、实心按钮），
+ * - 「我的作业」：只展示最新两份待完成作业，其余由独立列表筛选浏览，
  *   卡片含标题/单元/题数/截止北京时间（48 小时内与过期高亮）/状态徽章；
  * - 「错题本」：概览卡（待复习/已攻克计数 + 去复习入口；数据为全量形态
  *   includeResolved=true 前端分流计数，攻克标准与 /s/wrong 页共用
@@ -185,62 +179,22 @@ function WrongQuestionsOverview({
   );
 }
 
-/** 作业列表：待完成在前（实心入口），已完成在后；两组都有时加组标题 */
-function AssignmentList({ assignments }: { assignments: StudentAssignment[] }) {
-  const todo = assignments.filter((item) => isAssignmentTodo(item.status));
-  const done = assignments.filter((item) => !isAssignmentTodo(item.status));
-  const showLabels = todo.length > 0 && done.length > 0;
-  return (
-    <div className="flex flex-col gap-4">
-      {todo.length === 0 && (
-        <div className="flex items-center gap-2 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300">
-          <CircleCheck aria-hidden className="size-5 shrink-0" />
-          作业都完成了，做得好。
-        </div>
-      )}
-      {todo.length > 0 && (
-        <div className="flex flex-col gap-2">
-          {showLabels && (
-            <AssignmentGroupLabel>待完成 {todo.length}</AssignmentGroupLabel>
-          )}
-          <ul className="flex flex-col gap-3">
-            {todo.map((assignment) => (
-              <StudentAssignmentCard
-                key={assignment.id}
-                assignment={assignment}
-              />
-            ))}
-          </ul>
-        </div>
-      )}
-      {done.length > 0 && (
-        <div className="flex flex-col gap-2">
-          {showLabels && (
-            <AssignmentGroupLabel>已完成 {done.length}</AssignmentGroupLabel>
-          )}
-          <ul className="flex flex-col gap-3">
-            {done.map((assignment) => (
-              <StudentAssignmentCard
-                key={assignment.id}
-                assignment={assignment}
-              />
-            ))}
-          </ul>
-        </div>
-      )}
-    </div>
-  );
-}
-
 export default function StudentHomePage() {
   const assignmentsQuery = useStudentAssignments();
   const coursesQuery = useStudentCourses();
   const wrong = useWrongCounts();
 
-  const todoCount =
-    assignmentsQuery.data?.assignments.filter((item) =>
-      isAssignmentTodo(item.status),
-    ).length ?? null;
+  const todo = useMemo(
+    () =>
+      assignmentsQuery.data
+        ? filterAssignmentList(
+            assignmentsQuery.data.assignments,
+            parseAssignmentListUrl(new URLSearchParams()),
+          )
+        : null,
+    [assignmentsQuery.data],
+  );
+  const todoCount = todo?.length ?? null;
 
   return (
     <div className="flex flex-col gap-6">
@@ -251,18 +205,26 @@ export default function StudentHomePage() {
 
       <div className="flex flex-col gap-8 lg:flex-row lg:items-start lg:gap-8">
         {/* 我的作业（主区，占 3/5；「我的记录」入口只在顶栏导航，不在此重复） */}
-        <section aria-labelledby="home-assignments" className="lg:w-3/5">
+        <section
+          aria-labelledby="home-assignments"
+          className="min-w-0 lg:w-3/5"
+        >
           <StudentSectionTitle
             id="home-assignments"
             icon={<ClipboardList aria-hidden />}
             title="我的作业"
+            action={
+              <StudentSectionLink to="/s/assignments">
+                查看全部
+              </StudentSectionLink>
+            }
             {...(todoCount !== null && todoCount > 0
               ? { count: todoCount }
               : {})}
           />
 
           {assignmentsQuery.isPending && (
-            <StudentListSkeleton label="正在加载作业" />
+            <StudentListSkeleton label="正在加载作业" rows={2} />
           )}
           {assignmentsQuery.isError && (
             <StudentErrorPanel
@@ -276,11 +238,16 @@ export default function StudentHomePage() {
             />
           )}
           {assignmentsQuery.data &&
-            (assignmentsQuery.data.assignments.length === 0 ? (
+            (todo?.length === 0 ? (
               <StudentEmptyState
+                compact
                 icon={<ClipboardList />}
                 title="现在没有待完成的作业"
-                description="老师布置作业后会出现在这里，也可以先去课程里看看讲义。"
+                description={
+                  assignmentsQuery.data.assignments.length > 0
+                    ? "已完成的作业可以在“我的作业”中查看。"
+                    : "老师布置作业后会出现在这里，也可以先去课程里看看讲义。"
+                }
                 action={
                   <StudentSectionLink to="/s/courses">
                     去课程看看
@@ -288,7 +255,14 @@ export default function StudentHomePage() {
                 }
               />
             ) : (
-              <AssignmentList assignments={assignmentsQuery.data.assignments} />
+              <ul aria-label="最近待完成作业" className="flex flex-col gap-3">
+                {todo?.slice(0, 2).map((assignment) => (
+                  <StudentAssignmentCard
+                    key={assignment.id}
+                    assignment={assignment}
+                  />
+                ))}
+              </ul>
             ))}
         </section>
 

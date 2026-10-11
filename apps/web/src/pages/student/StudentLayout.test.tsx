@@ -8,7 +8,7 @@ import StudentLayout from "./StudentLayout";
 
 /**
  * 学生端布局与守卫测试（T2.3）：未登录跳 /s/login；已登录渲染顶栏
- * （姓名 / 四分区导航 / 退出）；退出调 logout 接口并回登录页。
+ * （姓名 / 五分区导航 / 退出）；退出调 logout 接口并回登录页。
  * 2026-10 学生端 IA 调整：错题本升为一级导航（/s/wrong）。
  */
 
@@ -73,14 +73,18 @@ describe("StudentLayout", () => {
     });
   });
 
-  it("已登录渲染顶栏：姓名、四分区导航（首页/课程/错题本/我的记录）与退出按钮", async () => {
+  it("已登录渲染顶栏：姓名、五分区导航（首页/我的作业/课程/错题本/我的记录）与退出按钮", async () => {
     mockedMe.mockResolvedValue(STUDENT);
     renderLayout();
 
-    expect(await screen.findByText("张三")).toBeInTheDocument();
+    expect(await screen.findAllByText("张三")).toHaveLength(2);
     expect(screen.getByRole("link", { name: "首页" })).toHaveAttribute(
       "href",
       "/s/home",
+    );
+    expect(screen.getByRole("link", { name: "我的作业" })).toHaveAttribute(
+      "href",
+      "/s/assignments",
     );
     expect(screen.getByRole("link", { name: "课程" })).toHaveAttribute(
       "href",
@@ -98,7 +102,8 @@ describe("StudentLayout", () => {
     expect(
       screen.queryByRole("link", { name: "讲义" }),
     ).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /退出/ })).toBeInTheDocument();
+    // jsdom 不加载响应式 CSS；实际可见的退出入口由浏览器测试验证。
+    expect(screen.getAllByRole("button", { name: /退出/ })).toHaveLength(2);
     // 子路由正常渲染
     expect(screen.getByTestId("route-stub")).toHaveTextContent("学生首页");
   });
@@ -108,7 +113,10 @@ describe("StudentLayout", () => {
     mockedLogout.mockResolvedValue(null);
     renderLayout();
 
-    fireEvent.click(await screen.findByRole("button", { name: /退出/ }));
+    const buttons = await screen.findAllByRole("button", { name: /退出/ });
+    const button = buttons[0];
+    if (!button) throw new Error("缺少退出按钮");
+    fireEvent.click(button);
 
     await waitFor(() => {
       expect(screen.getByTestId("route-stub")).toHaveTextContent("学生登录页");

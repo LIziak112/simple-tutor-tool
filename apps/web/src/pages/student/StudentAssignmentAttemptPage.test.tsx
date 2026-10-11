@@ -266,9 +266,9 @@ const RESULT_DATA: AttemptResultData = {
   ],
 };
 
-function renderPage() {
+function renderPage(returnTo?: string) {
   return renderWithStudentRoutes({
-    initialPath: `/s/assignments/${ASSIGNMENT_ID}`,
+    initialPath: `/s/assignments/${ASSIGNMENT_ID}${returnTo ? `?returnTo=${encodeURIComponent(returnTo)}` : ""}`,
     routePath: "/s/assignments/:id",
     element: <StudentAssignmentAttemptPage />,
   });
@@ -421,6 +421,17 @@ describe("StudentAssignmentAttemptPage：草稿作答流程", () => {
 });
 
 describe("StudentAssignmentAttemptPage：已交卷直接结果视图", () => {
+  it("从作业列表进入结果后，显式返回原筛选列表", async () => {
+    mockedStart.mockResolvedValue(RESULT_DATA.attempt);
+    mockedFetch.mockResolvedValue(RESULT_DATA);
+    renderPage("/s/assignments?status=done&page=2");
+    fireEvent.click(
+      await screen.findByRole("button", { name: "返回我的作业" }),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("route-stub")).toBeInTheDocument(),
+    );
+  });
   it("startAttempt 返回 submitted 时不开新卷，直接渲染结果", async () => {
     mockedStart.mockResolvedValue(RESULT_DATA.attempt);
     mockedFetch.mockResolvedValue(RESULT_DATA);
