@@ -24,12 +24,13 @@ import {
   type InkEngine,
 } from "@/features/ink/engine/index.ts";
 import { InkPad } from "@/features/ink/InkPad";
+import { PaperPresentation } from "@/features/ink/PaperPresentation";
+import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { fetchAttemptInkApi, studentInkPngUrl } from "@/lib/api";
 import { useAttemptEditor } from "./AttemptEditorContext";
 import { mergeInkDocs } from "./draft-merge";
 import { draftStore, getDraftPersistenceState } from "./draft-store";
 import { FinalAnswerInput } from "./FinalAnswerInput";
-import { InkFullscreenLayer } from "./InkFullscreenLayer";
 import { useDraftSyncContext } from "./use-draft-sync";
 import {
   type InkUploadController,
@@ -99,6 +100,7 @@ export interface HandwrittenControlsProps {
   expanded?: boolean;
   onExpandedChange?: (expanded: boolean) => void;
   showExpandTrigger?: boolean;
+  ariaPrefix?: string;
 }
 
 export function HandwrittenControls({
@@ -115,6 +117,7 @@ export function HandwrittenControls({
   expanded: controlledExpanded,
   onExpandedChange,
   showExpandTrigger = true,
+  ariaPrefix = "本题",
 }: HandwrittenControlsProps) {
   /** 权威笔迹：undefined=服务端加载中；null=无笔迹；有值=当前文档 */
   const [masterDoc, setMasterDoc] = useState<InkDoc | null | undefined>(
@@ -145,8 +148,8 @@ export function HandwrittenControls({
     [expanded, controlledExpanded, onExpandedChange],
   );
   const [fullscreen, setFullscreen] = useState(false);
-  /** 从 atrament（有笔迹）切全屏的确认弹层 */
-  const [confirmFullscreen, setConfirmFullscreen] = useState(false);
+  const [legacyOpened, setLegacyOpened] = useState(false);
+  const [paperError, setPaperError] = useState<string | null>(null);
   /** 从 excalidraw 清空回页内手写的确认弹层 */
   const [confirmReset, setConfirmReset] = useState(false);
   /**
@@ -158,7 +161,6 @@ export function HandwrittenControls({
 
   /** 页内引擎与全屏引擎的 ref（上传导 PNG 时取当前激活的那个） */
   const pageEngineRef = useRef<InkEngine | null>(null);
-  const fullscreenEngineRef = useRef<InkEngine | null>(null);
   /** 草稿同步联动（T2.9；题卡单测无 Provider 时为 null，各回调空值保护） */
   const draftSync = useDraftSyncContext();
   /** 联动对象存 ref：状态对象每次渲染都是新引用，挂载合并 effect 与
@@ -167,10 +169,7 @@ export function HandwrittenControls({
   draftSyncRef.current = draftSync;
 
   // 上传状态机：engineGetter 取「当前激活引擎」（全屏开着用全屏引擎）
-  const engineGetter = useCallback(
-    () => (fullscreen ? fullscreenEngineRef.current : pageEngineRef.current),
-    [fullscreen],
-  );
+  const engineGetter = useCallback(() => pageEngineRef.current, []);
   const coordinator = useAttemptEditor();
   const finish = useCallback(async () => {
     engineGetter()?.finish?.();
@@ -306,24 +305,26 @@ export function HandwrittenControls({
     onInkFullscreenRef.current?.(fullscreen);
   }, [fullscreen]);
 
-  /** 打开全屏：页内有笔迹（atrament）先确认覆盖；excalidraw 权威直接续写 */
+  /** 全屏只扩外框，不更换引擎或清空正文。 */
   const openFullscreen = () => {
-    if (
-      masterDoc !== null &&
-      masterDoc !== undefined &&
-      masterDoc.engine === "atrament" &&
-      !isInkDocEmpty(masterDoc)
-    ) {
-      setConfirmFullscreen(true);
-      return;
-    }
+    pageEngineRef.current?.finish?.();
+    setExpanded(true);
+    setLegacyOpened(true);
+    setPaperError(null);
     setFullscreen(true);
   };
 
   /** 退出全屏：即刻触发一次上传（引擎实例还热），再卸载全屏层 */
-  const closeFullscreen = () => {
-    void uploadController.flush();
-    setFullscreen(false);
+  const closeFullscreen = async () => {
+    try {
+      await finish();
+      void uploadController.flush();
+      setFullscreen(false);
+    } catch (cause) {
+      setPaperError(
+        cause instanceof Error ? cause.message : "本机手写保存失败，请重试",
+      );
+    }
   };
 
   /** 确认「清空并改用页内手写」：权威切回空 atrament 并立即上传覆盖服务端 */
@@ -429,55 +430,89 @@ export function HandwrittenControls({
       {/* 手写区（展开时）：atrament 页内画布 / excalidraw 占位卡 / 加载态 */}
       {(expanded ||
         (controlledExpanded !== undefined && retainedPaper === questionId)) && (
-        <div hidden={!expanded}>
-          {masterDoc === undefined && (
-            <p
-              aria-live="polite"
-              className="flex min-h-24 items-center justify-center gap-2 rounded-lg border border-dashed border-border bg-muted/30 text-sm text-muted-foreground"
-            >
-              <LoaderCircle aria-hidden className="size-4 animate-spin" />
-              正在载入笔迹…
-            </p>
-          )}
-          {masterDoc !== undefined && !masterIsExcalidraw && (
-            <InkPad
-              engine="atrament"
-              initial={masterDoc ?? undefined}
-              label="手写答题区"
-              onDocChange={handleDocChange}
-              engineRef={pageEngineRef}
-            />
-          )}{" "}
-          {masterIsExcalidraw && (
-            <div className="flex flex-col gap-3 rounded-lg border border-border bg-muted/30 p-3">
-              <p className="flex items-center gap-2 text-sm text-muted-foreground">
-                <PenLine aria-hidden className="size-4" />
-                本题笔迹在全屏模式下创建（
-                {masterDoc?.engine === "excalidraw"
-                  ? `${masterDoc.data.scene.elements.length} 笔`
-                  : ""}
-                ），点上方「全屏作答」继续编辑
+        <div hidden={!expanded && !fullscreen}>
+          <PaperPresentation
+            fullscreen={fullscreen}
+            label="全屏作答"
+            heading={`${ariaPrefix}手写作答`}
+            context={<RichMarkdown source={stemMd} />}
+            onClose={closeFullscreen}
+          >
+            {paperError && (
+              <p role="alert" className="text-sm text-destructive">
+                {paperError}
               </p>
-              {/* 学生本人笔迹 PNG 直出（无笔迹/加载失败时隐藏） */}
-              <img
-                src={studentInkPngUrl(attemptId, questionId)}
-                alt="本题笔迹预览"
-                loading="lazy"
-                className="w-full rounded-md border border-border bg-white"
-                onError={(event) => {
-                  event.currentTarget.style.display = "none";
-                }}
-              />
-              <Button
-                type="button"
-                variant="ghost"
-                className="h-11 w-fit text-destructive"
-                onClick={() => setConfirmReset(true)}
+            )}
+            {masterDoc === undefined && (
+              <p
+                aria-live="polite"
+                className="flex min-h-24 items-center justify-center gap-2 rounded-lg border border-dashed border-border bg-muted/30 text-sm text-muted-foreground"
               >
-                清空笔迹，改用页内手写
-              </Button>
-            </div>
-          )}
+                <LoaderCircle aria-hidden className="size-4 animate-spin" />
+                正在载入笔迹…
+              </p>
+            )}
+            {masterDoc !== undefined && !masterIsExcalidraw && (
+              <InkPad
+                engine="atrament"
+                initial={masterDoc ?? undefined}
+                label="手写答题区"
+                onDocChange={handleDocChange}
+                engineRef={pageEngineRef}
+                inputEnabled={expanded || fullscreen}
+                compactToolbar
+                inputMode="session"
+              />
+            )}{" "}
+            {masterIsExcalidraw && (
+              <>
+                {legacyOpened && (
+                  <div hidden={!fullscreen}>
+                    <InkPad
+                      engine="excalidraw"
+                      initial={masterDoc ?? undefined}
+                      label="历史手写作答区"
+                      onDocChange={handleDocChange}
+                      engineRef={pageEngineRef}
+                      inputEnabled={fullscreen}
+                      initialHeight={600}
+                    />
+                  </div>
+                )}
+                <div
+                  hidden={fullscreen}
+                  className="flex flex-col gap-3 rounded-lg border border-border bg-muted/30 p-3"
+                >
+                  <p className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <PenLine aria-hidden className="size-4" />
+                    本题笔迹在全屏模式下创建（
+                    {masterDoc?.engine === "excalidraw"
+                      ? `${masterDoc.data.scene.elements.length} 笔`
+                      : ""}
+                    ），点上方「全屏作答」继续编辑
+                  </p>
+                  {/* 学生本人笔迹 PNG 直出（无笔迹/加载失败时隐藏） */}
+                  <img
+                    src={studentInkPngUrl(attemptId, questionId)}
+                    alt="本题笔迹预览"
+                    loading="lazy"
+                    className="w-full rounded-md border border-border bg-white"
+                    onError={(event) => {
+                      event.currentTarget.style.display = "none";
+                    }}
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="h-11 w-fit text-destructive"
+                    onClick={() => setConfirmReset(true)}
+                  >
+                    清空笔迹，改用页内手写
+                  </Button>
+                </div>
+              </>
+            )}
+          </PaperPresentation>
         </div>
       )}
 
@@ -488,50 +523,6 @@ export function HandwrittenControls({
           onAnswer({ kind: "final", finalAnswer: value }, true)
         }
       />
-
-      {/* 全屏作答层（excalidraw；初始笔迹只在权威也是 excalidraw 时传入） */}
-      {fullscreen && (
-        <InkFullscreenLayer
-          stemMd={stemMd}
-          initial={masterIsExcalidraw ? (masterDoc ?? undefined) : undefined}
-          onDocChange={handleDocChange}
-          onClose={closeFullscreen}
-          engineRef={fullscreenEngineRef}
-        />
-      )}
-
-      {/* 引擎切换确认：页内 → 全屏（覆盖页内笔迹） */}
-      <Dialog open={confirmFullscreen} onOpenChange={setConfirmFullscreen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>进入全屏作答？</DialogTitle>
-            <DialogDescription>
-              全屏模式使用另一套画布（适合长过程、画图）。进入后本题将以全屏笔迹为准，
-              当前页内笔迹会被替代且无法找回。确定进入吗？
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              className="h-11"
-              onClick={() => setConfirmFullscreen(false)}
-            >
-              留在页内
-            </Button>
-            <Button
-              type="button"
-              className="h-11"
-              onClick={() => {
-                setConfirmFullscreen(false);
-                setFullscreen(true);
-              }}
-            >
-              进入全屏
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       {/* 引擎切换确认：全屏 → 清空回页内 */}
       <Dialog open={confirmReset} onOpenChange={setConfirmReset}>

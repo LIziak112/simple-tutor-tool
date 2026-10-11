@@ -934,6 +934,39 @@ describe("atrament-adapter：回归（撤销/重做/橡皮/鼠标/load）", () =
 });
 
 describe("atrament-adapter：屏幕端纸张背景（可选配置，缺省零变化）", () => {
+  it("切换全屏前主动收笔释放捕获，只提交一次真实采样", () => {
+    const h = mountSurface();
+    const release = vi.fn();
+    h.canvas.hasPointerCapture = () => true;
+    h.canvas.releasePointerCapture = release;
+    pointer(h.canvas, "pointerdown");
+    pointer(h.canvas, "pointermove", { clientX: 80 });
+    h.surface.finish?.();
+    expect(release).toHaveBeenCalledWith(1);
+    expect(strokesOf(h)).toHaveLength(1);
+    pointer(h.canvas, "pointerup");
+    expect(strokesOf(h)).toHaveLength(1);
+  });
+  it("保活纸面禁用输入时解绑事件，重新启用仍能撤销原笔", () => {
+    const h = mountSurface();
+    writeStroke(h, [
+      { x: 20, y: 20 },
+      { x: 80, y: 20 },
+    ]);
+    expect(h.surface.setInputEnabled).toBeTypeOf("function");
+    h.surface.setInputEnabled?.(false);
+    writeStroke(h, [
+      { x: 30, y: 30 },
+      { x: 90, y: 30 },
+    ]);
+    expect(strokesOf(h)).toHaveLength(1);
+    expect(h.canvas.dataset.inputEnabled).toBe("false");
+    h.surface.setInputEnabled?.(true);
+    h.surface.undo();
+    expect(strokesOf(h)).toHaveLength(0);
+    h.surface.redo();
+    expect(strokesOf(h)).toHaveLength(1);
+  });
   it("缺省不设置任何背景样式（旧作答组件零变化）", () => {
     const h = mountSurface();
     expect(h.canvas.style.backgroundImage).toBe("");

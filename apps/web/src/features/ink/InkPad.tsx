@@ -27,6 +27,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { CompactInkToolbar } from "./CompactInkToolbar";
 import {
   create,
   type InkChangeReason,
@@ -66,6 +67,8 @@ import {
 export interface InkPadProps {
   /** 底层引擎：atrament（页内答题区，默认）/ excalidraw（全屏作答） */
   engine?: InkEngineKind;
+  /** 保活纸面收起时停止输入，默认开启以兼容其他调用方。 */
+  inputEnabled?: boolean;
   /** 恢复的笔迹（草稿）；exactOptionalPropertyTypes 下显式接受 undefined */
   initial?: InkDoc | undefined;
   /** atrament 初始高度（CSS 像素），写到底部自动加高 */
@@ -96,6 +99,7 @@ export interface InkPadProps {
    * 定案）。画布与引擎生命周期不受影响。
    */
   showToolbar?: boolean;
+  compactToolbar?: boolean;
   /**
    * 受控纸高（CSS px，T6R.9 NoteLayer 专用）：提供时画布容器高度恒为此值、
    * **禁用内部 CSS px 直增自动加高**——新草稿的加高决策统一走
@@ -151,9 +155,11 @@ const SNAPSHOT_PEN = (): InkSessionInputPreference => "pen";
 export function SessionPrefToggleButton({
   disabled,
   className,
+  iconOnly = false,
 }: {
   disabled?: boolean;
   className?: string;
+  iconOnly?: boolean;
 }) {
   const sessionPref = useSyncExternalStore(
     onSessionInputPreferenceChange,
@@ -164,6 +170,7 @@ export function SessionPrefToggleButton({
       type="button"
       variant={sessionPref === "finger" ? "secondary" : "ghost"}
       aria-pressed={sessionPref === "finger"}
+      aria-label={iconOnly ? "手指书写" : undefined}
       disabled={disabled}
       onClick={() =>
         setSessionInputPreference(sessionPref === "pen" ? "finger" : "pen")
@@ -176,7 +183,7 @@ export function SessionPrefToggleButton({
       }
     >
       <Pointer aria-hidden />
-      手指书写
+      {!iconOnly && "手指书写"}
     </Button>
   );
 }
@@ -192,12 +199,16 @@ export function InkPad({
   inputMode = "auto",
   background,
   showToolbar = true,
+  compactToolbar = false,
   paperHeight,
   onEngineRebuild,
+  inputEnabled = true,
 }: InkPadProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   /** 内部引擎实例引用（engineRef prop 为对外透出） */
   const localEngineRef = useRef<InkEngine | null>(null);
+  const inputEnabledRef = useRef(inputEnabled);
+  inputEnabledRef.current = inputEnabled;
   /** onDocChange 用 ref 转发：父组件传内联函数时不触发引擎重建 */
   const onDocChangeRef = useRef(onDocChange);
   useEffect(() => {
@@ -285,6 +296,7 @@ export function InkPad({
           : {}),
       });
       localEngineRef.current = ink;
+      ink.setInputEnabled?.(inputEnabledRef.current);
       if (engineRef) engineRef.current = ink;
       off = ink.on("change", (doc, reason) => {
         setCanUndo(ink.canUndo());
@@ -331,6 +343,11 @@ export function InkPad({
     };
     // initial 经 initialRef 取值；engineRef 为父组件持有的稳定 ref 对象
   }, [engine, retryKey, engineRef]);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies(retryKey): 重试重建后需恢复当前输入门
+  useEffect(() => {
+    localEngineRef.current?.setInputEnabled?.(inputEnabled);
+  }, [inputEnabled, retryKey]);
 
   // 会话偏好 → 引擎（T6R.7）。声明在引擎创建 effect **之后**：挂载时引擎已
   // 就绪、当前偏好即刻下发（否则首帧 localEngineRef 为 null，pen 值又不再
@@ -380,7 +397,32 @@ export function InkPad({
       {/* 工具栏（T6R.9：showToolbar=false 时整体不渲染——NoteLayer 自带精简
           工具条；画布与引擎生命周期不受影响）：笔/荧光笔/橡皮/滚动（或套索）
           + 颜色三选 + 粗细三档 + 撤销/重做/清空 */}
-      {showToolbar && (
+      {showToolbar && compactToolbar && (
+        <CompactInkToolbar
+          label={label}
+          tool={toolType}
+          onToolChange={setToolType}
+          color={penColor}
+          onColorChange={setPenColor}
+          size={penSize}
+          onSizeChange={setPenSize}
+          canUndo={canUndo}
+          canRedo={canRedo}
+          onUndo={handleUndo}
+          onRedo={handleRedo}
+          onClearRequest={() => setClearOpen(true)}
+          advanced
+          disabled={toolsDisabled}
+          fingerToggle={
+            <SessionPrefToggleButton
+              iconOnly
+              disabled={toolsDisabled}
+              className="size-11 shrink-0 p-0"
+            />
+          }
+        />
+      )}
+      {showToolbar && !compactToolbar && (
         <div
           role="toolbar"
           aria-label={`${label}工具栏`}

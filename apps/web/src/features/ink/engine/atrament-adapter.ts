@@ -541,7 +541,12 @@ export function createAtramentSurface(
     const r = advancePointerMachine(machine, event);
     machine = r.state;
     for (const d of r.decisions) {
-      if (d.action === "commit") commitLiveStroke();
+      if (d.action === "commit") {
+        commitLiveStroke();
+        if (canvas?.hasPointerCapture?.(d.pointerId)) {
+          canvas.releasePointerCapture(d.pointerId);
+        }
+      }
     }
   }
 
@@ -628,6 +633,40 @@ export function createAtramentSurface(
     if (hoverDot) hoverDot.style.display = "none";
   }
 
+  let inputBound = false;
+  function bindInput(enabled: boolean): void {
+    if (!canvas) return;
+    canvas.dataset.inputEnabled = String(enabled);
+    canvas.style.pointerEvents = enabled ? "auto" : "none";
+    if (inputBound === enabled) return;
+    inputBound = enabled;
+    if (!enabled) {
+      finishPointer({ kind: "layoutchange" });
+      onPointerLeave();
+    }
+    const method = enabled ? "addEventListener" : "removeEventListener";
+    const target = canvas;
+    const bind = <K extends keyof HTMLElementEventMap>(
+      name: K,
+      listener: (event: HTMLElementEventMap[K]) => void,
+    ) => {
+      if (enabled) target.addEventListener(name, listener, { passive: false });
+      else target.removeEventListener(name, listener);
+    };
+    bind("pointerdown", onPointerDown);
+    bind("pointermove", onPointerMove);
+    bind("pointerup", onPointerUp);
+    bind("pointercancel", onPointerCancel);
+    bind("lostpointercapture", onLostPointerCapture);
+    bind("pointerleave", onPointerLeave);
+    bind("touchstart", onTouchStart);
+    bind("touchmove", onTouchMove);
+    bind("contextmenu", onContextMenu);
+    bind("selectstart", onSelectStart);
+    window[method]("blur", onWindowBlur);
+    document[method]("visibilitychange", onVisibilityChange);
+  }
+
   // ---- InkSurface 实现 ----
 
   const surface: ToolAwareSurface = {
@@ -682,21 +721,7 @@ export function createAtramentSurface(
       }
       redraw();
 
-      canvas.addEventListener("pointerdown", onPointerDown);
-      canvas.addEventListener("pointermove", onPointerMove);
-      canvas.addEventListener("pointerup", onPointerUp);
-      canvas.addEventListener("pointercancel", onPointerCancel);
-      // 指针捕获丢失（元素/画布被移动、浏览器接管手势等）：按已收采样收笔
-      canvas.addEventListener("lostpointercapture", onLostPointerCapture);
-      canvas.addEventListener("pointerleave", onPointerLeave);
-      canvas.addEventListener("touchstart", onTouchStart, { passive: false });
-      canvas.addEventListener("touchmove", onTouchMove, { passive: false });
-      canvas.addEventListener("contextmenu", onContextMenu);
-      canvas.addEventListener("selectstart", onSelectStart);
-      // 窗口失焦/页面隐藏（切后台/锁屏/系统弹窗）：按已收采样收笔（两监听
-      // 并存兜底，状态机幂等不双提交，见 onVisibilityChange 注释）
-      window.addEventListener("blur", onWindowBlur);
-      document.addEventListener("visibilitychange", onVisibilityChange);
+      bindInput(true);
 
       // 尺寸变化（旋转、自动加高、窗口缩放）：在途一笔先按已收点收笔——
       // 一笔中途不混用两个坐标变换（方案 §4.1；收笔后同一手势的后续采样
@@ -730,6 +755,7 @@ export function createAtramentSurface(
     finish(): void {
       finishPointer({ kind: "layoutchange" });
     },
+    setInputEnabled: bindInput,
 
     async exportPng(): Promise<Blob> {
       if (!canvas) throw new Error("导出失败：画布尚未挂载");
@@ -792,23 +818,10 @@ export function createAtramentSurface(
     },
 
     destroy(): void {
+      bindInput(false);
       observer?.disconnect();
       observer = null;
       changeListeners.clear();
-      window.removeEventListener("blur", onWindowBlur);
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-      if (canvas) {
-        canvas.removeEventListener("pointerdown", onPointerDown);
-        canvas.removeEventListener("pointermove", onPointerMove);
-        canvas.removeEventListener("pointerup", onPointerUp);
-        canvas.removeEventListener("pointercancel", onPointerCancel);
-        canvas.removeEventListener("lostpointercapture", onLostPointerCapture);
-        canvas.removeEventListener("pointerleave", onPointerLeave);
-        canvas.removeEventListener("touchstart", onTouchStart);
-        canvas.removeEventListener("touchmove", onTouchMove);
-        canvas.removeEventListener("contextmenu", onContextMenu);
-        canvas.removeEventListener("selectstart", onSelectStart);
-      }
       atrament?.destroy();
       atrament = null;
       ctx2d = null;

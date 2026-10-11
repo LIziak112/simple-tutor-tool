@@ -67,6 +67,16 @@ vi.mock("./engine/index.ts", () => ({
 
 import { InkPad } from "./InkPad.tsx";
 
+it("紧凑工具行保留五个图标入口，颜色和粗细通过菜单选择", () => {
+  render(<InkPad compactToolbar inputMode="session" />);
+  const toolbar = screen.getByRole("toolbar");
+  expect(toolbar.querySelectorAll("button")).toHaveLength(5);
+  fireEvent.pointerDown(screen.getByRole("button", { name: /更多操作/ }), {
+    button: 0,
+    ctrlKey: false,
+  });
+});
+
 function emptyDoc(): InkDoc<"atrament"> {
   return {
     engine: "atrament",

@@ -290,7 +290,9 @@ describe("NoteLayer：收起/展开形态", () => {
     expect(record?.doc.ink.strokes.length).toBe(1);
 
     // 收起 → 纸面隐藏保留（保活期内不销毁），store 正文保留
-    fireEvent.click(screen.getByRole("button", { name: /收起/ }));
+    await act(async () =>
+      fireEvent.click(screen.getByRole("button", { name: /收起/ })),
+    );
     expect(mockDestroy).not.toHaveBeenCalled();
     expect(screen.getByText(/1 笔/)).toBeInTheDocument();
 
@@ -311,7 +313,9 @@ describe("NoteLayer：收起/展开形态", () => {
         [10, 10],
         [40, 40],
       ]);
-      fireEvent.click(screen.getByRole("button", { name: /收起/ }));
+      await act(async () =>
+        fireEvent.click(screen.getByRole("button", { name: /收起/ })),
+      );
       expect(mockDestroy).not.toHaveBeenCalled();
       act(() => {
         vi.advanceTimersByTime(NOTE_ENGINE_KEEPALIVE_MS);

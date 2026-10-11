@@ -31,6 +31,7 @@ import {
   ChevronDown,
   CircleAlert,
   LoaderCircle,
+  Maximize2,
   NotebookPen,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
@@ -46,6 +47,8 @@ import {
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { useAttemptEditor } from "@/features/attempt/AttemptEditorContext";
 import { InkPad } from "@/features/ink/InkPad";
+import { PaperPresentation } from "@/features/ink/PaperPresentation";
+import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { recoverNoteImages } from "@/features/notes/image-sync";
 import { NoteStatusArea } from "@/features/notes/NoteStatusArea";
 import { NoteToolbar } from "@/features/notes/NoteToolbar";
@@ -86,6 +89,7 @@ export interface NoteLayerProps {
   ariaPrefix?: string;
   /** 题头已提供入口时隐藏重复按钮。 */
   showTrigger?: boolean;
+  stemMd?: string;
 }
 
 export function NoteLayer({
@@ -95,6 +99,7 @@ export function NoteLayer({
   onOpenChange,
   ariaPrefix = "本题",
   showTrigger = true,
+  stemMd,
 }: NoteLayerProps) {
   const session = useNoteSessionRef();
   const editor = useNoteEditor({
@@ -130,7 +135,31 @@ export function NoteLayer({
   const strokeCount = doc?.ink.strokes.length ?? 0;
 
   // 旧稿到达只回显笔数，不替用户展开纸面。
-  const requestOpenChange = onOpenChange;
+  const [fullscreen, setFullscreen] = useState(false);
+  const [paperError, setPaperError] = useState<string | null>(null);
+  const requestOpenChange = async (next: boolean) => {
+    try {
+      if (!next) await finish();
+      setFullscreen(false);
+      setPaperError(null);
+      onOpenChange(next);
+    } catch (cause) {
+      setPaperError(
+        cause instanceof Error ? cause.message : "草稿本机保存失败，请重试",
+      );
+    }
+  };
+  const closeFullscreen = async () => {
+    try {
+      await finish();
+      setFullscreen(false);
+      setPaperError(null);
+    } catch (cause) {
+      setPaperError(
+        cause instanceof Error ? cause.message : "草稿本机保存失败，请重试",
+      );
+    }
+  };
 
   // ---- 收起保活（复审⑦）：展开即清计时；收起计时到点才卸载纸面 ----
   const [paperAlive, setPaperAlive] = useState(false);
@@ -189,190 +218,226 @@ export function NoteLayer({
         !showTrigger && !open ? "hidden" : "flex min-w-0 flex-col gap-2"
       }
     >
-      {/* 收起形态：标记按钮（有笔迹只显示标记——纸面隐藏不占布局） */}
-      {!open && showTrigger && (
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            className="h-11 gap-1.5"
-            onClick={() => requestOpenChange(true)}
-            aria-label={
-              strokeCount > 0 ? `${label}（已有 ${strokeCount} 笔）` : label
-            }
-          >
-            <NotebookPen aria-hidden className="size-4" />
-            草稿纸
-            {strokeCount > 0 && (
-              <span className="text-muted-foreground">· {strokeCount} 笔</span>
-            )}
-            <ChevronDown aria-hidden className="size-4" />
-          </Button>
-          {(view?.conflict != null ||
-            view?.denied != null ||
-            view?.local === "failed") && (
-            <span
-              role="status"
-              className="flex items-center gap-1 text-xs text-amber-600"
+      <PaperPresentation
+        fullscreen={fullscreen}
+        label={`${label}全屏`}
+        heading={label}
+        context={stemMd ? <RichMarkdown source={stemMd} /> : label}
+        onClose={closeFullscreen}
+      >
+        {paperError && (
+          <p role="alert" className="text-sm text-destructive">
+            {paperError}
+          </p>
+        )}
+        {/* 收起形态：标记按钮（有笔迹只显示标记——纸面隐藏不占布局） */}
+        {!open && showTrigger && (
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              className="h-11 gap-1.5"
+              onClick={() => requestOpenChange(true)}
+              aria-label={
+                strokeCount > 0 ? `${label}（已有 ${strokeCount} 笔）` : label
+              }
             >
-              <CircleAlert aria-hidden className="size-3.5" />
-              草稿同步需处理，点开查看
-            </span>
-          )}
-        </div>
-      )}
-
-      {/* 展开形态：标题行 + 精简工具条（方案 §4.3：常驻笔/橡皮/撤销/更多＋
-          手指书写；44px 触控目标） */}
-      {open && (
-        <div className="flex items-center justify-between gap-2">
-          <p className="flex items-center gap-1.5 text-sm font-medium">
-            <NotebookPen aria-hidden className="size-4" />
-            草稿纸
-            {strokeCount > 0 && (
-              <span className="font-normal text-muted-foreground">
-                {strokeCount} 笔
+              <NotebookPen aria-hidden className="size-4" />
+              草稿纸
+              {strokeCount > 0 && (
+                <span className="text-muted-foreground">
+                  · {strokeCount} 笔
+                </span>
+              )}
+              <ChevronDown aria-hidden className="size-4" />
+            </Button>
+            {(view?.conflict != null ||
+              view?.denied != null ||
+              view?.local === "failed") && (
+              <span
+                role="status"
+                className="flex items-center gap-1 text-xs text-amber-600"
+              >
+                <CircleAlert aria-hidden className="size-3.5" />
+                草稿同步需处理，点开查看
               </span>
             )}
-          </p>
-          <Button
-            type="button"
-            variant="ghost"
-            className="h-11 gap-1 px-2.5"
-            onClick={() => requestOpenChange(false)}
-            aria-label={`收起${label}`}
-          >
-            <ChevronDown aria-hidden className="size-4" />
-            收起
-          </Button>
-        </div>
-      )}
-      {open && (
-        <NoteToolbar
-          label={label}
-          tool={editor.tool}
-          onToolChange={editor.setTool}
-          penColor={editor.penColor}
-          onPenColorChange={editor.setPenColor}
-          penSize={editor.penSize}
-          onPenSizeChange={editor.setPenSize}
-          canUndo={editor.canUndo}
-          canRedo={editor.canRedo}
-          onUndo={() => editor.engineRef.current?.undo()}
-          onRedo={() => editor.engineRef.current?.redo()}
-          onClearRequest={() => setClearOpen(true)}
-          clearLabel="清空草稿纸"
-          moreTitle="更多（重做/颜色/粗细/清空/布局）"
-          menuExtras={(Object.keys(LAYOUT_LABEL) as NoteLayoutPreference[]).map(
-            (p) => (
-              <DropdownMenuItem
-                key={p}
-                aria-checked={layoutPref === p}
-                onSelect={() => setNoteLayoutPreference(p)}
-              >
-                <Check
-                  aria-hidden
-                  className={layoutPref === p ? "visible" : "invisible"}
-                />
-                布局：{LAYOUT_LABEL[p]}
-              </DropdownMenuItem>
-            ),
-          )}
-        />
-      )}
+          </div>
+        )}
 
-      {/* 纸面（位置与宽度恒定；保活期后卸载；不在未恢复的纸面上起笔）。
+        {/* 展开形态：标题行 + 精简工具条（方案 §4.3：常驻笔/橡皮/撤销/更多＋
+          手指书写；44px 触控目标） */}
+        {open && !fullscreen && (
+          <div className="flex items-center justify-between gap-2">
+            <p className="flex items-center gap-1.5 text-sm font-medium">
+              <NotebookPen aria-hidden className="size-4" />
+              草稿纸
+              {strokeCount > 0 && (
+                <span className="font-normal text-muted-foreground">
+                  {strokeCount} 笔
+                </span>
+              )}
+            </p>
+            <div className="flex shrink-0 items-center gap-1">
+              <Button
+                variant="ghost"
+                className="size-11 p-0"
+                title="全屏草稿"
+                aria-label={`${label}全屏`}
+                onClick={() => {
+                  editor.engineRef.current?.finish?.();
+                  setFullscreen(true);
+                }}
+              >
+                <Maximize2 aria-hidden />
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                className="h-11 gap-1 px-2.5"
+                onClick={() => requestOpenChange(false)}
+                aria-label={`收起${label}`}
+              >
+                <ChevronDown aria-hidden className="size-4" />
+                收起
+              </Button>
+            </div>
+          </div>
+        )}
+        {open && (
+          <NoteToolbar
+            compact={coordinator !== null}
+            label={label}
+            tool={editor.tool}
+            onToolChange={editor.setTool}
+            penColor={editor.penColor}
+            onPenColorChange={editor.setPenColor}
+            penSize={editor.penSize}
+            onPenSizeChange={editor.setPenSize}
+            canUndo={editor.canUndo}
+            canRedo={editor.canRedo}
+            onUndo={() => editor.engineRef.current?.undo()}
+            onRedo={() => editor.engineRef.current?.redo()}
+            onClearRequest={() => setClearOpen(true)}
+            clearLabel="清空草稿纸"
+            moreTitle={
+              coordinator
+                ? "更多（重做/颜色/粗细/清空）"
+                : "更多（重做/颜色/粗细/清空/布局）"
+            }
+            menuExtras={
+              !coordinator &&
+              (Object.keys(LAYOUT_LABEL) as NoteLayoutPreference[]).map((p) => (
+                <DropdownMenuItem
+                  key={p}
+                  aria-checked={layoutPref === p}
+                  onSelect={() => setNoteLayoutPreference(p)}
+                >
+                  <Check
+                    aria-hidden
+                    className={layoutPref === p ? "visible" : "invisible"}
+                  />
+                  布局：{LAYOUT_LABEL[p]}
+                </DropdownMenuItem>
+              ))
+            }
+          />
+        )}
+
+        {/* 纸面（位置与宽度恒定；保活期后卸载；不在未恢复的纸面上起笔）。
           收起用 **visibility + 高度塌缩**而非 display:none（复审⑤）：宽度
           保持满幅——引擎的 ResizeObserver 不触发 0 宽报告，重开不再全量
           重放/闪烁。（jsdom 测试桩不模拟 0 宽报告——该差异不进单测口径，
           真实行为由 E2E/真机覆盖。） */}
-      <div
-        ref={editor.paperWrapRef}
-        data-slot="note-paper"
-        className="w-full"
-        style={
-          open
-            ? undefined
-            : { height: 0, visibility: "hidden", overflow: "hidden" }
-        }
-      >
-        {paperReady ? (
-          editor.localLoaded ? (
-            <InkPad
-              engine="atrament"
-              showToolbar={false}
-              inputMode="session"
-              label={label}
-              engineRef={editor.engineRef}
-              background={doc?.background ?? "grid"}
-              paperHeight={editor.cssHeight}
-              initial={inkDocOf(doc ?? EMPTY_NOTE_DOC)}
-              onDocChange={editor.handleDocChange}
-              onEngineRebuild={editor.onEngineRebuild}
-            />
-          ) : (
-            <div
-              role="status"
-              className="flex h-20 items-center justify-center gap-2 rounded-xl border border-dashed border-border text-sm text-muted-foreground"
-            >
-              <LoaderCircle aria-hidden className="size-4 animate-spin" />
-              正在打开草稿…
-            </div>
-          )
-        ) : null}
-      </div>
+        <div
+          ref={editor.paperWrapRef}
+          data-slot="note-paper"
+          className="w-full"
+          style={
+            open
+              ? undefined
+              : { height: 0, visibility: "hidden", overflow: "hidden" }
+          }
+        >
+          {paperReady ? (
+            editor.localLoaded ? (
+              <InkPad
+                engine="atrament"
+                showToolbar={false}
+                inputMode="session"
+                label={label}
+                engineRef={editor.engineRef}
+                background={doc?.background ?? "grid"}
+                paperHeight={editor.cssHeight}
+                initial={inkDocOf(doc ?? EMPTY_NOTE_DOC)}
+                onDocChange={editor.handleDocChange}
+                onEngineRebuild={editor.onEngineRebuild}
+                inputEnabled={open}
+              />
+            ) : (
+              <div
+                role="status"
+                className="flex h-20 items-center justify-center gap-2 rounded-xl border border-dashed border-border text-sm text-muted-foreground"
+              >
+                <LoaderCircle aria-hidden className="size-4 animate-spin" />
+                正在打开草稿…
+              </div>
+            )
+          ) : null}
+        </div>
 
-      {/* 四维状态区 + 冲突/被拒/补图面板（方案 §5.3：正交、可理解、可操作）。
+        {/* 四维状态区 + 冲突/被拒/补图面板（方案 §5.3：正交、可理解、可操作）。
           T6R.15：抽至共享 NoteStatusArea（CorrectionPanel 复用），本组件按
           草稿语境接线（label=草稿、图片维度开） */}
-      {open && (
-        <NoteStatusArea
-          view={view}
-          localLoaded={editor.localLoaded}
-          label="草稿"
-          images
-          resolveError={resolveError}
-          onKeepLocal={keepLocal}
-          onKeepCloud={keepCloud}
-          onRetryDenied={retryDenied}
-          imageRetrying={imageRetrying}
-          onRetryImages={retryImages}
-        />
-      )}
+        {open && (
+          <NoteStatusArea
+            view={view}
+            localLoaded={editor.localLoaded}
+            label="草稿"
+            images
+            resolveError={resolveError}
+            onKeepLocal={keepLocal}
+            onKeepCloud={keepCloud}
+            onRetryDenied={retryDenied}
+            imageRetrying={imageRetrying}
+            onRetryImages={retryImages}
+          />
+        )}
 
-      {/* 清空二次确认（清空=空稿作为新正文版本保存——覆盖语义同 ink 通道） */}
-      <Dialog open={clearOpen} onOpenChange={setClearOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>清空草稿纸？</DialogTitle>
-            <DialogDescription>
-              将清除本题草稿的全部笔迹，清空后可用「撤销」恢复；已同步到服务端
-              的旧版本不受影响。
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              className="h-11"
-              onClick={() => setClearOpen(false)}
-            >
-              取消
-            </Button>
-            <Button
-              type="button"
-              variant="destructive"
-              className="h-11"
-              onClick={() => {
-                editor.engineRef.current?.clear();
-                setClearOpen(false);
-              }}
-            >
-              清空
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        {/* 清空二次确认（清空=空稿作为新正文版本保存——覆盖语义同 ink 通道） */}
+        <Dialog open={clearOpen} onOpenChange={setClearOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>清空草稿纸？</DialogTitle>
+              <DialogDescription>
+                将清除本题草稿的全部笔迹，清空后可用「撤销」恢复；已同步到服务端
+                的旧版本不受影响。
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                className="h-11"
+                onClick={() => setClearOpen(false)}
+              >
+                取消
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                className="h-11"
+                onClick={() => {
+                  editor.engineRef.current?.clear();
+                  setClearOpen(false);
+                }}
+              >
+                清空
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </PaperPresentation>
     </div>
   );
 }

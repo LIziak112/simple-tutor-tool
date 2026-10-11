@@ -70,6 +70,7 @@ export interface InkEngineOptions {
 export interface InkEngine {
   getData(): InkDoc;
   finish?(): void;
+  setInputEnabled?(enabled: boolean): void;
   load(data: InkDoc): void;
   exportPng(): Promise<Blob>;
   undo(): void;
@@ -127,6 +128,7 @@ export function create(
   return {
     getData: () => surface.getDoc(),
     finish: () => surface.finish?.(),
+    setInputEnabled: (enabled) => surface.setInputEnabled?.(enabled),
     load: (data) => surface.load(data),
     exportPng: () => surface.exportPng(),
     undo: () => surface.undo(),

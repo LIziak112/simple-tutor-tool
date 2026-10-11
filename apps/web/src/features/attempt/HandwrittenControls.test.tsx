@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { InkDoc } from "@tutor/contract";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { installDraftBackend, memoryBackend } from "./draft-store";
+import { draftStore, installDraftBackend, memoryBackend } from "./draft-store";
 import { HandwrittenControls } from "./HandwrittenControls";
 
 /**
@@ -204,24 +204,48 @@ describe("展开/收起手写区", () => {
   });
 });
 
-describe("引擎切换策略（atrament ↔ excalidraw）", () => {
-  it("页内有笔迹时点「全屏作答」先确认；确认后进入全屏（Excalidraw 画布）", async () => {
+describe("同稿全屏与历史引擎兼容", () => {
+  it("本机保存失败时全屏保持打开，重试成功才退出", async () => {
+    renderControls();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /全屏作答/ })).toBeVisible(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /全屏作答/ }));
+    const flush = vi
+      .spyOn(draftStore, "flush")
+      .mockRejectedValue(new Error("本机写入失败"));
+    fireEvent.click(screen.getByRole("button", { name: "退出全屏" }));
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent("本机写入失败"),
+    );
+    expect(screen.getByRole("dialog", { name: "全屏作答" })).toBeVisible();
+    flush.mockRestore();
+    fireEvent.click(screen.getByRole("button", { name: "退出全屏" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "全屏作答" })).toBeNull(),
+    );
+  });
+  it("页内有笔迹直接进入同一atrament画布，不替换正文", async () => {
     fetchInkMock.mockResolvedValue(atramentDoc(2)); // 自动展开 + 有笔迹
     renderControls();
     await screen.findByTestId("ink-initial-stroke-count");
+    const pad = document.querySelector('[data-engine="atrament"]');
     fireEvent.click(screen.getByRole("button", { name: /全屏作答/ }));
-    // 覆盖确认弹层（不合并两种引擎的矢量数据）
-    expect(
-      document.querySelector('[data-slot="dialog-title"]'),
-    ).toHaveTextContent("进入全屏作答？");
-    fireEvent.click(screen.getByRole("button", { name: "进入全屏" }));
-    // 全屏层出现 Excalidraw 画布
     await waitFor(() =>
-      expect(
-        document.querySelector('[data-engine="excalidraw"]'),
-      ).not.toBeNull(),
+      expect(screen.getByRole("dialog", { name: "全屏作答" })).toBeVisible(),
     );
-    expect(screen.getByRole("dialog", { name: "全屏作答" })).toBeVisible();
+    expect(screen.getByRole("dialog", { name: "全屏作答" })).toContainElement(
+      pad as HTMLElement,
+    );
+    expect(document.querySelector('[data-engine="excalidraw"]')).toBeNull();
+    expect(screen.getByTestId("ink-initial-stroke-count")).toHaveTextContent(
+      "2",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "退出全屏" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "全屏作答" })).toBeNull(),
+    );
+    expect(document.querySelector('[data-engine="atrament"]')).toBe(pad);
   });
 
   it("excalidraw 权威：页内显示占位卡与缩略图；「清空并改用页内手写」回到 atrament", async () => {
@@ -320,8 +344,10 @@ describe("手写编辑分型与全屏事件（T4.0b）", () => {
     // 无笔迹直接进全屏（无确认弹层）；退出再进再退
     fireEvent.click(screen.getByRole("button", { name: /全屏作答/ }));
     expect(onInkFullscreen).toHaveBeenLastCalledWith(true);
-    fireEvent.click(screen.getByRole("button", { name: /^完成$/ }));
-    expect(onInkFullscreen).toHaveBeenLastCalledWith(false);
+    fireEvent.click(screen.getByRole("button", { name: "退出全屏" }));
+    await waitFor(() =>
+      expect(onInkFullscreen).toHaveBeenLastCalledWith(false),
+    );
     fireEvent.click(screen.getByRole("button", { name: /全屏作答/ }));
     expect(onInkFullscreen).toHaveBeenLastCalledWith(true);
     expect(onInkFullscreen).toHaveBeenCalledTimes(3);

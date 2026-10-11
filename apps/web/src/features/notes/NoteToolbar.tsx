@@ -25,6 +25,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { CompactInkToolbar } from "@/features/ink/CompactInkToolbar";
 import type { InkPenColor, InkPenSize } from "@/features/ink/engine/index.ts";
 import {
   COLOR_LABEL,
@@ -59,6 +60,7 @@ export interface NoteToolbarProps {
   /** 「更多」菜单的追加段（场景特有——NoteLayer 的布局 preference 等）；
    * 渲染在清空项之前，自带分隔条 */
   menuExtras?: ReactNode;
+  compact?: boolean;
 }
 
 export function NoteToolbar({
@@ -77,7 +79,31 @@ export function NoteToolbar({
   clearLabel = "清空",
   moreTitle = "更多（重做/颜色/粗细/清空）",
   menuExtras,
+  compact = false,
 }: NoteToolbarProps) {
+  if (compact)
+    return (
+      <CompactInkToolbar
+        label={label}
+        tool={tool}
+        onToolChange={(next) => {
+          if (next === "pen" || next === "eraser") onToolChange(next);
+        }}
+        color={penColor}
+        onColorChange={onPenColorChange}
+        size={penSize}
+        onSizeChange={onPenSizeChange}
+        canUndo={canUndo}
+        canRedo={canRedo}
+        onUndo={onUndo}
+        onRedo={onRedo}
+        onClearRequest={onClearRequest}
+        clearLabel={clearLabel}
+        fingerToggle={
+          <SessionPrefToggleButton iconOnly className="size-11 shrink-0 p-0" />
+        }
+      />
+    );
   return (
     <div
       role="toolbar"

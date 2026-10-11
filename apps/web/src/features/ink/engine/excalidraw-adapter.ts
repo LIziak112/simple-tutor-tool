@@ -58,6 +58,7 @@ export function createExcalidrawSurface(
   let rendered = false;
   let api: ExcalidrawImperativeAPI | null = null;
   let destroyed = false;
+  let inputEnabled = true;
 
   /** 最近一次场景元素（引用比较识别真实变更） */
   let lastElements: readonly ExcalidrawElement[] = [];
@@ -88,6 +89,7 @@ export function createExcalidrawSurface(
       lastElements = next;
       return;
     }
+    if (!inputEnabled || destroyed) return;
     if (next !== lastElements) {
       const reason: InkChangeReason =
         next.length < lastElements.length ? "erase" : "stroke";
@@ -108,7 +110,7 @@ export function createExcalidrawSurface(
       el.style.position = "relative";
       el.style.overflow = "hidden";
 
-      const host = document.createElement("div");
+      host = document.createElement("div");
       host.style.position = "absolute";
       host.style.inset = "0";
       el.appendChild(host);
@@ -263,6 +265,14 @@ export function createExcalidrawSurface(
 
     canRedo(): boolean {
       return redoStack.length > 0;
+    },
+
+    setInputEnabled(enabled: boolean): void {
+      inputEnabled = enabled;
+      if (host) host.inert = !enabled;
+      runWhenReady(() => {
+        api?.updateScene({ appState: { viewModeEnabled: !inputEnabled } });
+      });
     },
 
     load(data: InkDoc): void {

@@ -317,6 +317,7 @@ export function AttemptQuestionCard({
       <NoteLayer
         attemptId={attemptId}
         questionId={question.id}
+        stemMd={question.stemMd}
         open={noteOpen}
         onOpenChange={setNoteOpen}
         ariaPrefix={`第 ${index + 1} 题`}
@@ -358,6 +359,7 @@ export function AttemptQuestionCard({
 
       {HANDWRITTEN_TYPES.has(question.type) && attemptId !== undefined && (
         <HandwrittenControls
+          ariaPrefix={`第 ${index + 1} 题`}
           attemptId={attemptId}
           questionId={question.id}
           stemMd={question.stemMd}
