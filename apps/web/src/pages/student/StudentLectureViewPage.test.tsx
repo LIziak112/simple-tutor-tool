@@ -1,4 +1,10 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import type { StudentLectureDetail } from "@tutor/contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -67,17 +73,28 @@ const LECTURE: StudentLectureDetail = {
 
 /** jsdom 没有 scrollIntoView：mock 记录调用目标 */
 const scrollIntoViewMock = vi.fn();
+let desktop = true;
+let reducedMotion = false;
 
 beforeEach(() => {
   scrollIntoViewMock.mockReset();
   Element.prototype.scrollIntoView = scrollIntoViewMock;
   installEventStore(memoryEventStore());
   mockedPostEvents.mockClear();
+  desktop = true;
+  reducedMotion = false;
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    matches: query.includes("1024") ? desktop : reducedMotion,
+    media: query,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  }));
 });
 
 afterEach(() => {
   // 还原原型，避免影响其他测试文件
   Reflect.deleteProperty(Element.prototype, "scrollIntoView");
+  vi.unstubAllGlobals();
 });
 
 function renderPage(id = LECTURE_ID) {
@@ -93,12 +110,12 @@ describe("StudentLectureViewPage", () => {
     mockedLecture.mockResolvedValue(LECTURE);
     renderPage();
 
-    // 标题与更新时间（页面 header 的 h1 与正文 markdown 的 H1 各一个，均应渲染）
+    // 阅读栏不再重复文档主标题的语义层级。
     const titleHeadings = await screen.findAllByRole("heading", {
       name: "第1讲 有理数",
       level: 1,
     });
-    expect(titleHeadings.length).toBe(2);
+    expect(titleHeadings.length).toBe(1);
     expect(screen.getByText(/更新于/)).toBeInTheDocument();
     // 正文 H2/H3 由 RichMarkdown 渲染（level 2/3 的 heading）
     expect(
@@ -185,6 +202,190 @@ describe("StudentLectureViewPage", () => {
       screen.getByText("没有找到该内容（可能尚未发布或已被移除）"),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "重试" })).toBeInTheDocument();
+  });
+});
+
+describe("StudentLectureViewPage：阅读导航", () => {
+  it("目录跳转后聚焦正文标题并标记当前节", async () => {
+    mockedLecture.mockResolvedValue(LECTURE);
+    renderPage();
+    const item = await screen.findByRole("button", {
+      name: "二、有理数的分类",
+    });
+    fireEvent.click(item);
+    expect(
+      screen.getByRole("heading", { name: "二、有理数的分类" }),
+    ).toHaveFocus();
+    expect(item).toHaveAttribute("aria-current", "location");
+    expect(scrollIntoViewMock).toHaveBeenCalledWith({
+      behavior: "smooth",
+      block: "start",
+    });
+  });
+
+  it("减少动态效果时目录即时滚动", async () => {
+    reducedMotion = true;
+    mockedLecture.mockResolvedValue(LECTURE);
+    renderPage();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "二、有理数的分类" }),
+    );
+    expect(scrollIntoViewMock).toHaveBeenCalledWith({
+      behavior: "instant",
+      block: "start",
+    });
+  });
+
+  it("按章节折叠子节，跳转仍对应全文原始下标", async () => {
+    mockedLecture.mockResolvedValue({
+      ...LECTURE,
+      markdown:
+        "# 讲义\n\n## 第一章\n\n### 相同子节\n\n## 第二章\n\n### 相同子节\n\n## 总结",
+    });
+    renderPage();
+    await screen.findByRole("button", { name: "第一章" });
+    expect(screen.getAllByRole("button", { name: "相同子节" })).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "展开第二章的子目录" }));
+    const secondGroup = screen.getByRole("group", { name: "第二章" });
+    fireEvent.click(
+      within(secondGroup).getByRole("button", {
+        name: "相同子节",
+      }),
+    );
+    expect(scrollIntoViewMock.mock.contexts[0]).toBe(
+      document.querySelectorAll(".rich-markdown h2, .rich-markdown h3")[3],
+    );
+    expect(
+      screen.queryByRole("button", { name: "展开总结的子目录" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("窄屏默认直接阅读，打开目录后跳转关闭弹层并聚焦正文", async () => {
+    desktop = false;
+    mockedLecture.mockResolvedValue(LECTURE);
+    renderPage();
+    await screen.findByRole("heading", { name: "一、正数与负数", level: 2 });
+    expect(
+      screen.queryByRole("navigation", { name: "讲义目录" }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "展开目录" }));
+    const dialog = screen.getByRole("dialog", { name: "讲义目录" });
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "二、有理数的分类" }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    expect(
+      screen.getByRole("heading", { name: "二、有理数的分类" }),
+    ).toHaveFocus();
+  });
+
+  it("自动展开只跟随当前章，手动展开的章节保持打开", async () => {
+    mockedLecture.mockResolvedValue({
+      ...LECTURE,
+      markdown:
+        "# 讲义\n\n## 第一章\n\n### 第一章子节\n\n## 第二章\n\n### 第二章子节\n\n## 第三章\n\n### 第三章子节",
+    });
+    renderPage();
+    await screen.findByRole("button", { name: "第一章" });
+    fireEvent.click(screen.getByRole("button", { name: "第二章" }));
+    expect(
+      screen.queryByRole("button", { name: "第一章子节" }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "展开第一章的子目录" }));
+    fireEvent.click(screen.getByRole("button", { name: "第三章" }));
+    expect(
+      screen.getByRole("button", { name: "第一章子节" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "第二章子节" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("H3 在首个章节前仍独立可达，公式标题跳转保持下标", async () => {
+    mockedLecture.mockResolvedValue({
+      ...LECTURE,
+      markdown: "# 讲义\n\n### 导读\n\n## 绝对值 $|x|$\n\n### 子节",
+    });
+    renderPage();
+    fireEvent.click(await screen.findByText("导读", { selector: "button" }));
+    expect(document.querySelector(".rich-markdown h3")).toHaveFocus();
+    // jsdom 对 MathML 的计算样式不完整，含公式控件的名称由真实浏览器验收。
+    const formulaButton = document
+      .querySelector('nav[aria-label="讲义目录"] .katex')
+      ?.closest("button");
+    if (!formulaButton) throw new Error("目录中缺少公式标题");
+    fireEvent.click(formulaButton);
+    expect(scrollIntoViewMock.mock.contexts[1]).toBe(
+      document.querySelectorAll(".rich-markdown h2, .rich-markdown h3")[1],
+    );
+  });
+
+  it("窄屏关闭目录恢复入口焦点", async () => {
+    desktop = false;
+    mockedLecture.mockResolvedValue(LECTURE);
+    renderPage();
+    const trigger = await screen.findByRole("button", { name: "展开目录" });
+    fireEvent.click(trigger);
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    expect(trigger).toHaveFocus();
+  });
+
+  it("没有目录时仍可返回讲义列表", async () => {
+    mockedLecture.mockResolvedValue({
+      ...LECTURE,
+      markdown: "# 无目录讲义\n\n正文。",
+    });
+    renderPage();
+    await screen.findByRole("heading", { name: "无目录讲义" });
+    expect(
+      screen.queryByRole("button", { name: "展开目录" }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("link", { name: "返回讲义列表" }));
+    expect(await screen.findByTestId("route-stub")).toHaveTextContent(
+      "讲义列表",
+    );
+  });
+
+  it("章节观察器切换时更新目录状态", async () => {
+    let notify: IntersectionObserverCallback | undefined;
+    vi.stubGlobal(
+      "IntersectionObserver",
+      class {
+        constructor(callback: IntersectionObserverCallback) {
+          notify = callback;
+        }
+        observe() {}
+        disconnect() {}
+      },
+    );
+    mockedLecture.mockResolvedValue(LECTURE);
+    renderPage();
+    const item = await screen.findByRole("button", {
+      name: "二、有理数的分类",
+    });
+    const target = screen.getByRole("heading", { name: "二、有理数的分类" });
+    act(() =>
+      notify?.(
+        [
+          {
+            target,
+            intersectionRatio: 1,
+            isIntersecting: true,
+            boundingClientRect: target.getBoundingClientRect(),
+            intersectionRect: target.getBoundingClientRect(),
+            rootBounds: null,
+            time: 0,
+          },
+        ],
+        {} as IntersectionObserver,
+      ),
+    );
+    expect(item).toHaveAttribute("aria-current", "location");
   });
 });
 
