@@ -11,7 +11,7 @@ import {
   TriangleAlert,
   XCircle,
 } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { AnnotationLayer } from "@/features/annotation/AnnotationLayer";
 import { AnnotationView } from "@/features/annotation/AnnotationView";
@@ -31,6 +31,7 @@ import {
   QUESTION_TYPE_BADGE_CLASS,
   QUESTION_TYPE_LABELS,
 } from "./answer-format";
+import { ResultWorkspace } from "./ResultWorkspace";
 import { reviewCounts, reviewQuestionState } from "./result-review-model";
 
 /**
@@ -292,8 +293,9 @@ function ResultQuestionCard({
   const verdict = reviewQuestionState(question, released).verdict;
   return (
     <article
+      data-review-question={question.questionId}
       className={cn(
-        "relative flex flex-col gap-4 overflow-hidden rounded-2xl border border-border bg-card p-4 pl-5 text-card-foreground shadow-xs sm:p-5 sm:pl-6",
+        "relative flex scroll-mt-[calc(var(--attempt-header-height,96px)+16px)] flex-col gap-4 overflow-hidden rounded-lg border border-border bg-card p-4 pl-5 text-card-foreground sm:p-5 sm:pl-6",
         "before:absolute before:inset-y-0 before:left-0 before:w-1.5",
         !released
           ? "before:bg-muted"
@@ -313,7 +315,13 @@ function ResultQuestionCard({
             {verdictLabel(verdict)}
           </span>
         )}
-        <p className="text-sm font-semibold">第 {index + 1} 题</p>
+        <h3
+          data-review-heading
+          tabIndex={-1}
+          className="text-base font-semibold outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          第 {index + 1} 题
+        </h3>
         <span
           className={`rounded-full px-2.5 py-1 text-xs font-medium ${QUESTION_TYPE_BADGE_CLASS[question.snapshot.type]}`}
         >
@@ -513,7 +521,10 @@ export function AttemptResultView({
   const displayScore = summary.scoreFinal ?? attempt.scoreAuto;
   // T2A.7：逐题结果按单元分组；题号全卷连续（累计 index）。
   // 多单元时渲染节标题（单元标题），单单元不显示节头（与答题视图一致）。
-  const flatQuestions = data.units.flatMap((unit) => unit.questions);
+  const flatQuestions = useMemo(
+    () => data.units.flatMap((unit) => unit.questions),
+    [data.units],
+  );
   const counts = reviewCounts(flatQuestions, released);
   const showUnitHeaders = data.units.length > 1;
   // 2026-10：本卷判错题（finalCorrect === false，按本卷题序）——直达重练的
@@ -525,179 +536,191 @@ export function AttemptResultView({
   const showWrongPractice =
     released && wrongPractice !== undefined && wrongQuestionIds.length > 0;
   return (
-    <div className="flex flex-col gap-5">
-      {/* 得分汇总卡（未公布时替换为「已交卷」横幅 + 已答统计，不显示对错与得分） */}
-      <section
-        aria-labelledby="result-summary"
-        className="flex flex-col gap-4 rounded-2xl border border-border bg-card p-5 shadow-xs"
-      >
-        <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
-          <h2 id="result-summary" className="text-base font-semibold">
-            {data.title} · {released ? "批改结果" : "已交卷"}
-          </h2>
-          {/* 来源行（T2A.6，与答题视图同口径）：课程练习带次数（历次回看可分辨
+    <ResultWorkspace
+      title={data.title}
+      attemptId={attempt.id}
+      questions={flatQuestions}
+      released={released}
+      onBack={onBackHome}
+      backLabel={
+        attempt.sourceType === "course"
+          ? "返回单元练习"
+          : attempt.sourceType === "wrong"
+            ? "返回错题本"
+            : "返回首页"
+      }
+    >
+      <div className="flex flex-col gap-5">
+        {/* 得分汇总卡（未公布时替换为「已交卷」横幅 + 已答统计，不显示对错与得分） */}
+        <section
+          aria-labelledby="result-summary"
+          className="flex flex-col gap-4 border-b border-border py-4"
+        >
+          <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
+            <h2 id="result-summary" className="text-base font-semibold">
+              {data.title} · {released ? "批改结果" : "已交卷"}
+            </h2>
+            {/* 来源行（T2A.6，与答题视图同口径）：课程练习带次数（历次回看可分辨
               第几次）；作业标「作业」（挂课程时「作业 · 课程名」，T2A.7）；
               错题重练「错题重练 · 第 n 次」（2026-10） */}
-          <p className="text-xs text-muted-foreground">
-            {attempt.sourceType === "course"
-              ? `课程：${data.courseName ?? ""} · 第 ${attempt.attemptNo} 次`
-              : attempt.sourceType === "wrong"
-                ? `错题重练 · 第 ${attempt.attemptNo} 次`
-                : data.courseName !== null
-                  ? `作业 · ${data.courseName}`
-                  : "作业"}
-          </p>
-          {attempt.submittedAt !== null && (
             <p className="text-xs text-muted-foreground">
-              交卷时间：{formatCnTime(attempt.submittedAt)}
+              {attempt.sourceType === "course"
+                ? `课程：${data.courseName ?? ""} · 第 ${attempt.attemptNo} 次`
+                : attempt.sourceType === "wrong"
+                  ? `错题重练 · 第 ${attempt.attemptNo} 次`
+                  : data.courseName !== null
+                    ? `作业 · ${data.courseName}`
+                    : "作业"}
             </p>
-          )}
-        </div>
-        {released ? (
-          <div className="flex flex-wrap items-end gap-x-8 gap-y-3">
-            <p className="flex items-baseline gap-2">
-              <span className="text-4xl font-bold text-primary">
-                {/* D9：全部批完显示最终得分，否则回退自动判分（无可判分为「待批」） */}
-                {displayScore === null ? "待批" : displayScore}
-              </span>
-              <span className="text-sm text-muted-foreground">
-                {summary.scoreFinal !== null
-                  ? "最终得分（含老师批改，满分 100）"
-                  : attempt.scoreAuto === null
-                    ? "暂无可自动判分的题目"
-                    : "自动判分得分（满分 100）"}
-              </span>
-            </p>
-            <p className="flex flex-wrap gap-2 text-sm text-muted-foreground [&>span]:rounded-lg [&>span]:bg-muted/60 [&>span]:px-3 [&>span]:py-1.5">
-              <span>
-                共 <b className="text-foreground">{summary.total}</b> 题
-              </span>
-              <span>
-                答对 <b className="text-emerald-600">{counts.correct}</b> 题
-              </span>
-              <span>
-                答错 <b className="text-red-600">{counts.wrong}</b> 题
-              </span>
-              <span>
-                待批{" "}
-                <b className="text-amber-600">
-                  {/* D9：pendingCount 为 D4 权威计数（批注后 autoCorrect 仍空而
-                      finalCorrect 已定；公布态下恒非 null，回退仅兜底） */}
-                  {summary.pendingCount ?? summary.pending}
-                </b>{" "}
-                题
-              </span>
-              {/* D1（T3.2a）：未作答客观题已判错计入「答错」；「未答」独立展示
-                  （此前挂在待批下的「含未答」不再准确——未答的待批题只剩手写/
-                  无标准答案，其余未答客观题在答错里） */}
-              {summary.unanswered > 0 && (
+            {attempt.submittedAt !== null && (
+              <p className="text-xs text-muted-foreground">
+                交卷时间：{formatCnTime(attempt.submittedAt)}
+              </p>
+            )}
+          </div>
+          {released ? (
+            <div className="flex flex-wrap items-end gap-x-8 gap-y-3">
+              <p className="flex items-baseline gap-2">
+                <span className="text-4xl font-bold text-primary">
+                  {/* D9：全部批完显示最终得分，否则回退自动判分（无可判分为「待批」） */}
+                  {displayScore === null ? "待批" : displayScore}
+                </span>
+                <span className="text-sm text-muted-foreground">
+                  {summary.scoreFinal !== null
+                    ? "最终得分（含老师批改，满分 100）"
+                    : attempt.scoreAuto === null
+                      ? "暂无可自动判分的题目"
+                      : "自动判分得分（满分 100）"}
+                </span>
+              </p>
+              <p className="flex flex-wrap gap-2 text-sm text-muted-foreground [&>span]:rounded-lg [&>span]:bg-muted/60 [&>span]:px-3 [&>span]:py-1.5">
                 <span>
-                  未答 <b className="text-foreground">{summary.unanswered}</b>{" "}
+                  共 <b className="text-foreground">{summary.total}</b> 题
+                </span>
+                <span>
+                  答对 <b className="text-emerald-600">{counts.correct}</b> 题
+                </span>
+                <span>
+                  答错 <b className="text-red-600">{counts.wrong}</b> 题
+                </span>
+                <span>
+                  待批{" "}
+                  <b className="text-amber-600">
+                    {/* D9：pendingCount 为 D4 权威计数（批注后 autoCorrect 仍空而
+                      finalCorrect 已定；公布态下恒非 null，回退仅兜底） */}
+                    {summary.pendingCount ?? summary.pending}
+                  </b>{" "}
                   题
                 </span>
+                {/* D1（T3.2a）：未作答客观题已判错计入「答错」；「未答」独立展示
+                  （此前挂在待批下的「含未答」不再准确——未答的待批题只剩手写/
+                  无标准答案，其余未答客观题在答错里） */}
+                {summary.unanswered > 0 && (
+                  <span>
+                    未答 <b className="text-foreground">{summary.unanswered}</b>{" "}
+                    题
+                  </span>
+                )}
+              </p>
+              {summary.unanswered > 0 && (
+                <p className="w-full text-sm text-muted-foreground">
+                  未作答的客观题已计入判错；未答数与判错数不能相加。
+                </p>
               )}
-            </p>
-            {summary.unanswered > 0 && (
-              <p className="w-full text-sm text-muted-foreground">
-                未作答的客观题已计入判错；未答数与判错数不能相加。
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2 rounded-2xl border border-amber-300/60 bg-amber-50 p-4 text-sm dark:border-amber-500/30 dark:bg-amber-500/10">
+              <p className="flex items-center gap-2 font-medium text-amber-800 dark:text-amber-300">
+                <Clock aria-hidden className="size-4 shrink-0" />
+                已交卷，答案将在截止后公布
+                {data.dueAt !== null &&
+                  `（截止时间：${formatCnTime(data.dueAt)}）`}
               </p>
-            )}
-          </div>
-        ) : (
-          <div className="flex flex-col gap-2 rounded-2xl border border-amber-300/60 bg-amber-50 p-4 text-sm dark:border-amber-500/30 dark:bg-amber-500/10">
-            <p className="flex items-center gap-2 font-medium text-amber-800 dark:text-amber-300">
-              <Clock aria-hidden className="size-4 shrink-0" />
-              已交卷，答案将在截止后公布
-              {data.dueAt !== null &&
-                `（截止时间：${formatCnTime(data.dueAt)}）`}
-            </p>
-            <p className="text-amber-800 dark:text-amber-300">
-              截止前只显示你的作答内容；截止后将自动公布对错、参考答案与详解
-              （已作答 {summary.answered} 题 / 共 {summary.total} 题）。
-            </p>
-          </div>
-        )}
-        <div className="flex flex-col gap-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <Button variant="outline" className="min-h-11" onClick={onBackHome}>
-              返回首页
-            </Button>
-            {/* 练习本卷错题（2026-10 直达重练）：N=本卷判错题数；点击组新
+              <p className="text-amber-800 dark:text-amber-300">
+                截止前只显示你的作答内容；截止后将自动公布对错、参考答案与详解
+                （已作答 {summary.answered} 题 / 共 {summary.total} 题）。
+              </p>
+            </div>
+          )}
+          <div className="flex flex-col gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              {/* 练习本卷错题（2026-10 直达重练）：N=本卷判错题数；点击组新
                 重练卷并跳作答（提交中 loading 禁用防重复建卷） */}
-            {showWrongPractice && wrongPractice !== undefined && (
-              <Button
-                variant="secondary"
-                className="min-h-11"
-                disabled={wrongPractice.loading}
-                onClick={() => wrongPractice.onStart(wrongQuestionIds)}
-              >
-                <RotateCcw
-                  aria-hidden
-                  className={cn(
-                    "size-4",
-                    wrongPractice.loading && "animate-spin",
-                  )}
-                />
-                {wrongPractice.loading
-                  ? "正在组卷…"
-                  : `练习本卷错题（${wrongQuestionIds.length} 题）`}
-              </Button>
-            )}
-          </div>
-          {/* 组卷失败（网络/题目状态变化含 400 WRONG_PRACTICE_EMPTY 极端
-              情况）：中文告警，可重试（再点按钮）或刷新本页 */}
-          {showWrongPractice &&
-            wrongPractice !== undefined &&
-            wrongPractice.error !== null && (
-              <p
-                role="alert"
-                className="flex items-center gap-1.5 text-sm text-destructive"
-              >
-                <TriangleAlert aria-hidden className="size-4 shrink-0" />
-                练习本卷错题组卷失败：{wrongPractice.error}
-                ；题目状态可能有变化，请稍后重试或刷新本页。
-              </p>
-            )}
-        </div>
-      </section>
-
-      {/* T6R.20 审查修复 2：交卷后标注封存失败的非阻断警示（懒补封兜底） */}
-      {annotationSealWarning && (
-        <p
-          role="status"
-          className="flex items-center gap-1.5 rounded-xl border border-amber-300/60 bg-amber-50 px-3 py-2.5 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300"
-        >
-          <TriangleAlert aria-hidden className="size-4 shrink-0" />
-          题干标注封存待重试（不影响本次交卷；稍后回看标注时系统会自动补封）
-        </p>
-      )}
-
-      {/* 逐题结果（T2A.7：多单元按节分组，题号全卷连续） */}
-      <ol className="flex flex-col gap-4">
-        {data.units.map((unit) => (
-          <li key={unit.id} className="flex flex-col gap-4">
-            {showUnitHeaders && (
-              <h3 className="flex items-center gap-2 pt-2 text-sm font-semibold text-foreground before:h-4 before:w-1 before:rounded-full before:bg-primary">
-                {unit.title}
-              </h3>
-            )}
-            <ol className="flex flex-col gap-4">
-              {unit.questions.map((question) => (
-                <li key={question.questionId}>
-                  <ResultQuestionCard
-                    index={flatQuestions.indexOf(question)}
-                    question={question}
-                    attemptId={attempt.id}
-                    released={released}
-                    roundLabel={roundLabel}
-                    onSolutionToggle={onSolutionToggle}
+              {showWrongPractice && wrongPractice !== undefined && (
+                <Button
+                  variant="secondary"
+                  className="min-h-11"
+                  disabled={wrongPractice.loading}
+                  onClick={() => wrongPractice.onStart(wrongQuestionIds)}
+                >
+                  <RotateCcw
+                    aria-hidden
+                    className={cn(
+                      "size-4",
+                      wrongPractice.loading && "animate-spin",
+                    )}
                   />
-                </li>
-              ))}
-            </ol>
-          </li>
-        ))}
-      </ol>
-    </div>
+                  {wrongPractice.loading
+                    ? "正在组卷…"
+                    : `练习本卷错题（${wrongQuestionIds.length} 题）`}
+                </Button>
+              )}
+            </div>
+            {/* 组卷失败（网络/题目状态变化含 400 WRONG_PRACTICE_EMPTY 极端
+              情况）：中文告警，可重试（再点按钮）或刷新本页 */}
+            {showWrongPractice &&
+              wrongPractice !== undefined &&
+              wrongPractice.error !== null && (
+                <p
+                  role="alert"
+                  className="flex items-center gap-1.5 text-sm text-destructive"
+                >
+                  <TriangleAlert aria-hidden className="size-4 shrink-0" />
+                  练习本卷错题组卷失败：{wrongPractice.error}
+                  ；题目状态可能有变化，请稍后重试或刷新本页。
+                </p>
+              )}
+          </div>
+        </section>
+
+        {/* T6R.20 审查修复 2：交卷后标注封存失败的非阻断警示（懒补封兜底） */}
+        {annotationSealWarning && (
+          <p
+            role="status"
+            className="flex items-center gap-1.5 rounded-xl border border-amber-300/60 bg-amber-50 px-3 py-2.5 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300"
+          >
+            <TriangleAlert aria-hidden className="size-4 shrink-0" />
+            题干标注封存待重试（不影响本次交卷；稍后回看标注时系统会自动补封）
+          </p>
+        )}
+
+        {/* 逐题结果（T2A.7：多单元按节分组，题号全卷连续） */}
+        <ol className="flex flex-col gap-4">
+          {data.units.map((unit) => (
+            <li key={unit.id} className="flex flex-col gap-4">
+              {showUnitHeaders && (
+                <h3 className="flex items-center gap-2 pt-2 text-sm font-semibold text-foreground before:h-4 before:w-1 before:rounded-full before:bg-primary">
+                  {unit.title}
+                </h3>
+              )}
+              <ol className="flex flex-col gap-4">
+                {unit.questions.map((question) => (
+                  <li key={question.questionId}>
+                    <ResultQuestionCard
+                      index={flatQuestions.indexOf(question)}
+                      question={question}
+                      attemptId={attempt.id}
+                      released={released}
+                      roundLabel={roundLabel}
+                      onSolutionToggle={onSolutionToggle}
+                    />
+                  </li>
+                ))}
+              </ol>
+            </li>
+          ))}
+        </ol>
+      </div>
+    </ResultWorkspace>
   );
 }

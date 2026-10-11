@@ -1,10 +1,20 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import {
+  fireEvent,
+  render as renderReact,
+  screen,
+} from "@testing-library/react";
 import type { AttemptResultData } from "@tutor/contract";
+import type { ReactNode } from "react";
+import { MemoryRouter } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 import { reviewPackStubDatasets } from "@/features/export/review-pack-test-stub";
 import { correctionStubDatasets } from "@/features/notes/correction-test-stub";
 import { noteOriginalStubDatasets } from "@/features/notes/note-original-test-stub";
 import { AttemptResultView } from "./AttemptResultView";
+
+function render(ui: ReactNode) {
+  return renderReact(<MemoryRouter>{ui}</MemoryRouter>);
+}
 
 /**
  * 结果视图组件测试（T2.6）：得分汇总（scoreAuto/对错待批/未答说明）、
@@ -243,7 +253,9 @@ describe("逐题结果卡", () => {
     expect(screen.getAllByText("A").length).toBeGreaterThanOrEqual(2);
     expect(screen.getAllByText("B").length).toBeGreaterThanOrEqual(2);
     // 未作答的手写题
-    expect(screen.getByText("未作答")).toBeInTheDocument();
+    expect(screen.getByRole("article", { name: "第 4 题" })).toHaveTextContent(
+      "未作答",
+    );
     expect(screen.getByText("由老师批改后公布")).toBeInTheDocument();
   });
 

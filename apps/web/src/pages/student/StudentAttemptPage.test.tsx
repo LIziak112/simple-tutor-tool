@@ -178,6 +178,12 @@ describe("StudentAttemptPage（/s/attempts/:attemptId，T2A.6）", () => {
     renderPage();
     expect(await screen.findByText(/得分/)).toBeInTheDocument();
     expect(
+      screen.queryByRole("navigation", { name: "返回" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "返回单元练习" }),
+    ).toBeInTheDocument();
+    expect(
       screen.queryByRole("button", { name: "交卷" }),
     ).not.toBeInTheDocument();
   });
