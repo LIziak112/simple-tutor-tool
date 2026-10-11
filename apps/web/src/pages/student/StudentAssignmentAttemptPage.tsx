@@ -1,10 +1,11 @@
 import { useEffect } from "react";
-import { useNavigate, useParams } from "react-router";
+import { useNavigate, useParams, useSearchParams } from "react-router";
 import { AttemptSession } from "@/features/attempt/AttemptSession";
 import {
   useAttemptDetail,
   useStartAttempt,
 } from "@/features/attempt/attempt-queries";
+import { assignmentsReturnTarget } from "@/features/student/assignment-list-filters";
 import {
   StudentErrorPanel,
   StudentListSkeleton,
@@ -22,6 +23,8 @@ import {
 export default function StudentAssignmentAttemptPage() {
   const { id: assignmentId = "" } = useParams();
   const navigate = useNavigate();
+  const [params] = useSearchParams();
+  const returnTo = assignmentsReturnTarget(params.get("returnTo"));
 
   // 第 1 步：幂等创建/取回 attempt（进入页面触发一次；重试走错误态按钮）
   const startAttempt = useStartAttempt(assignmentId);
@@ -79,7 +82,8 @@ export default function StudentAssignmentAttemptPage() {
   return (
     <AttemptSession
       data={detailQuery.data}
-      onExit={() => void navigate("/s/home")}
+      onExit={() => void navigate(returnTo ?? "/s/home")}
+      exitLabel={returnTo ? "返回我的作业" : undefined}
     />
   );
 }

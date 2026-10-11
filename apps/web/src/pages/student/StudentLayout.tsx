@@ -1,4 +1,12 @@
-import { BookX, History, Home, Loader2, LogOut, School } from "lucide-react";
+import {
+  BookX,
+  ClipboardList,
+  History,
+  Home,
+  Loader2,
+  LogOut,
+  School,
+} from "lucide-react";
 import { useState } from "react";
 import { Navigate, NavLink, Outlet, useNavigate } from "react-router";
 import { useBindAnnotationSession } from "@/features/annotation/use-annotation-session";
@@ -11,21 +19,27 @@ import { ScreenError, ScreenLoading } from "./StudentScreen";
 
 /**
  * /s 学生端布局 + 路由守卫（T2.3；2026-10 IA 调整：导航定稿为
- * 「首页 / 课程 / 错题本 / 我的记录」；2026-10 UI 打磨：学生端主题色、
+ * 「首页 / 我的作业 / 课程 / 错题本 / 我的记录」；2026-10 UI 打磨：学生端主题色、
  * 顶栏三段式——左侧姓名头像、中间分段式导航、右侧退出）。
  * 守卫：me 查询 pending → 全屏加载；401 → 跳 /s/login；其他错误 → 错误态 + 重试。
  * 布局：内容区居中限宽；iPad 竖屏单栏，横屏（lg:）加宽；导航项触控目标 ≥44px，
- * 竖屏（< sm）导航只显示图标 + 文字缩小，保证四项一行放得下。
+ * 窄屏导航独立一行并缩短标签，五个入口始终可达。
  * 讲义不占顶栏入口：/s/lectures 保留为二级页面（首页「按讲义浏览」进入，
  * 讲义的主要入口是课程目录）。
  */
 
-/** 学生端分区导航（首页 / 课程 / 错题本 / 我的记录；错题本 2026-10 起为一级功能） */
+/** 学生端分区导航（首页 / 我的作业 / 课程 / 错题本 / 我的记录；错题本 2026-10 起为一级功能） */
 const NAV_ITEMS = [
   { to: "/s/home", label: "首页", icon: Home },
+  {
+    to: "/s/assignments",
+    label: "我的作业",
+    shortLabel: "作业",
+    icon: ClipboardList,
+  },
   { to: "/s/courses", label: "课程", icon: School },
   { to: "/s/wrong", label: "错题本", icon: BookX },
-  { to: "/s/records", label: "我的记录", icon: History },
+  { to: "/s/records", label: "我的记录", shortLabel: "记录", icon: History },
 ] as const;
 
 export function StudentLayout() {
@@ -69,63 +83,83 @@ export function StudentLayout() {
   }
 
   const displayName = meQuery.data.displayName;
+  const identity = (
+    <div className="flex min-w-0 shrink-0 items-center gap-2">
+      <span
+        aria-hidden
+        className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground"
+      >
+        {displayName.slice(0, 1)}
+      </span>
+      <p className="hidden max-w-32 truncate text-sm font-semibold sm:block">
+        {displayName}
+      </p>
+    </div>
+  );
+  const logout = (
+    <button
+      type="button"
+      onClick={handleLogout}
+      disabled={logoutMutation.isPending}
+      aria-label="退出"
+      className="flex min-h-11 min-w-11 shrink-0 items-center justify-center gap-1.5 rounded-lg px-2 text-sm text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-60"
+    >
+      {logoutMutation.isPending ? (
+        <Loader2 aria-hidden className="size-4 animate-spin" />
+      ) : (
+        <LogOut aria-hidden className="size-4 shrink-0" />
+      )}
+      <span className="hidden sm:inline">退出</span>
+    </button>
+  );
 
   return (
     <StudentWorkspaceContext.Provider value={setWorkspace}>
       <div className="flex min-h-dvh flex-col bg-background text-foreground">
         {!workspace && (
           <header className="sticky top-0 z-10 border-b border-border/70 bg-card/90 backdrop-blur">
-            <div className="mx-auto flex w-full max-w-3xl items-center gap-3 px-4 py-2 lg:max-w-5xl">
-              {/* 姓名：头像圆标（姓名首字）+ 名字（窄屏只留头像） */}
-              <div className="flex min-w-0 shrink-0 items-center gap-2">
-                <span
-                  aria-hidden
-                  className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground"
-                >
-                  {displayName.slice(0, 1)}
-                </span>
-                <p className="hidden max-w-32 truncate text-sm font-semibold sm:block">
-                  {displayName}
-                </p>
+            <div className="mx-auto flex w-full max-w-3xl flex-col gap-2 px-4 py-2 lg:max-w-5xl lg:flex-row lg:items-center lg:gap-3">
+              <div className="flex w-full items-center justify-between gap-3 lg:hidden">
+                {identity}
+                {logout}
               </div>
-              <nav
-                aria-label="学生端导航"
-                className="flex min-w-0 flex-1 items-center justify-center"
-              >
-                <div className="flex items-center gap-1 rounded-xl bg-muted p-1">
+              <div className="hidden shrink-0 lg:block">{identity}</div>
+              <nav aria-label="学生端导航" className="w-full min-w-0 lg:flex-1">
+                <div className="grid min-w-0 grid-cols-5 gap-1 rounded-xl bg-muted p-1">
                   {NAV_ITEMS.map((item) => (
                     <NavLink
                       key={item.to}
                       to={item.to}
                       aria-label={item.label}
                       className={({ isActive }) =>
-                        `flex min-h-11 min-w-11 items-center justify-center gap-1.5 rounded-lg px-2 text-sm font-medium whitespace-nowrap outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 sm:px-4 ${
+                        `flex min-h-11 min-w-11 items-center justify-center gap-1.5 rounded-lg px-1 text-sm font-medium whitespace-nowrap outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 sm:px-2 ${
                           isActive
                             ? "bg-card text-primary shadow-sm"
                             : "text-muted-foreground hover:text-foreground"
                         }`
                       }
                     >
-                      <item.icon aria-hidden className="size-4 shrink-0" />
-                      <span className="hidden sm:inline">{item.label}</span>
+                      <item.icon
+                        aria-hidden
+                        className="hidden size-4 shrink-0 sm:block"
+                      />
+                      <span className="text-xs sm:text-sm">
+                        {"shortLabel" in item ? (
+                          <>
+                            <span className="sm:hidden">{item.shortLabel}</span>
+                            <span className="hidden sm:inline">
+                              {item.label}
+                            </span>
+                          </>
+                        ) : (
+                          item.label
+                        )}
+                      </span>
                     </NavLink>
                   ))}
                 </div>
               </nav>
-              <button
-                type="button"
-                onClick={handleLogout}
-                disabled={logoutMutation.isPending}
-                aria-label="退出"
-                className="flex min-h-11 min-w-11 shrink-0 items-center justify-center gap-1.5 rounded-lg px-2 text-sm text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-60"
-              >
-                {logoutMutation.isPending ? (
-                  <Loader2 aria-hidden className="size-4 animate-spin" />
-                ) : (
-                  <LogOut aria-hidden className="size-4 shrink-0" />
-                )}
-                <span className="hidden sm:inline">退出</span>
-              </button>
+              <div className="hidden shrink-0 lg:block">{logout}</div>
             </div>
           </header>
         )}

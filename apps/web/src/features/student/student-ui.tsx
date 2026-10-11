@@ -14,7 +14,10 @@ import {
 import type { ReactNode } from "react";
 import { Link } from "react-router";
 import { Button } from "@/components/ui/button";
-import { formatDueTime } from "@/lib/time";
+import { formatCnTime, formatDueTime } from "@/lib/time";
+import { isAssignmentTodo } from "./assignment-list-filters";
+
+export { isAssignmentTodo } from "./assignment-list-filters";
 
 /**
  * 学生端共享展示组件（T2.3；2026-10 UI 打磨：统一卡片风格、页头、空态）。
@@ -57,11 +60,6 @@ export function AssignmentStatusBadge({
       {meta.label}
     </span>
   );
-}
-
-/** 作业是否还要做（未开始 / 进行中） */
-export function isAssignmentTodo(status: AssignmentStatus): boolean {
-  return status === "not_started" || status === "in_progress";
 }
 
 /** 截止紧迫度：overdue=已过截止、soon=48 小时内截止、normal=其他 */
@@ -131,16 +129,21 @@ const STATUS_ACCENT: Record<AssignmentStatus, string> = {
  */
 export function StudentAssignmentCard({
   assignment,
+  returnTo,
+  showCreatedAt = false,
 }: {
   assignment: StudentAssignment;
+  returnTo?: string;
+  showCreatedAt?: boolean;
 }) {
   const unitNames = assignment.units.map((unit) => unit.title);
   const todo = isAssignmentTodo(assignment.status);
   return (
     <li
+      data-slot="student-assignment-card"
       className={cn(
-        "relative flex flex-col gap-3 overflow-hidden rounded-2xl border border-border bg-card p-4 pl-5 text-card-foreground shadow-xs",
-        "before:absolute before:inset-y-0 before:left-0 before:w-1.5",
+        "relative flex flex-col gap-3 overflow-hidden rounded-2xl border border-border bg-card p-4 ps-5 text-card-foreground shadow-xs",
+        "before:absolute before:inset-y-0 before:start-0 before:w-1.5",
         STATUS_ACCENT[assignment.status],
       )}
     >
@@ -161,6 +164,11 @@ export function StudentAssignmentCard({
           )}
           <span>共 {assignment.questionCount} 题</span>
         </p>
+        {showCreatedAt && (
+          <p className="text-sm text-muted-foreground">
+            {formatCnTime(assignment.createdAt)} 布置
+          </p>
+        )}
         <AssignmentDueLabel dueAt={assignment.dueAt} highlight={todo} />
       </div>
       <Button
@@ -168,7 +176,9 @@ export function StudentAssignmentCard({
         variant={todo ? "default" : "outline"}
         className="min-h-11 text-sm"
       >
-        <Link to={`/s/assignments/${assignment.id}`}>
+        <Link
+          to={`/s/assignments/${assignment.id}${returnTo ? `?${new URLSearchParams({ returnTo })}` : ""}`}
+        >
           {ENTRY_LABEL[assignment.status]}
         </Link>
       </Button>

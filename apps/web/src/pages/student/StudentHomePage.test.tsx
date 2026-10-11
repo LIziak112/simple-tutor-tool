@@ -203,6 +203,33 @@ beforeEach(() => {
 });
 
 describe("StudentHomePage", () => {
+  it("大量作业时只显示最新两份待办，已交卷从首页移出", async () => {
+    const base = ASSIGNMENTS.assignments[0];
+    if (!base) throw new Error("缺少夹具");
+    mockedAssignments.mockResolvedValue({
+      assignments: [
+        ...Array.from({ length: 15 }, (_, index) => ({
+          ...base,
+          id: `assignment-${index}`,
+          title: `待办${index}`,
+          createdAt: new Date(Date.UTC(2026, 9, index + 1)).toISOString(),
+        })),
+        { ...base, id: "done", title: "已交作业", status: "submitted" },
+      ],
+    });
+    mockedCourses.mockResolvedValue(COURSES);
+    renderPage();
+    expect(await screen.findByText("待办14")).toBeInTheDocument();
+    expect(screen.getByText("待办13")).toBeInTheDocument();
+    expect(screen.queryByText("待办12")).toBeNull();
+    expect(screen.queryByText("已交作业")).toBeNull();
+    expect(screen.getAllByRole("link", { name: "开始练习" })).toHaveLength(2);
+    expect(screen.getByRole("link", { name: "查看全部" })).toHaveAttribute(
+      "href",
+      "/s/assignments",
+    );
+    expect(screen.getByText(/15 份作业待完成/)).toBeInTheDocument();
+  });
   it("渲染作业卡片：标题、单元、题数、截止北京时间、不限截止、状态徽章", async () => {
     mockedAssignments.mockResolvedValue(ASSIGNMENTS);
     mockedCourses.mockResolvedValue(COURSES);
@@ -224,7 +251,27 @@ describe("StudentHomePage", () => {
     expect(screen.getByText("不限截止")).toBeInTheDocument();
   });
 
-  it("作业卡片入口是答题页链接（T2.6 起可进入；文案随状态变化）", async () => {
+  it("全部交卷时显示待办空态，结果可通过查看全部访问", async () => {
+    mockedAssignments.mockResolvedValue({
+      assignments: ASSIGNMENTS.assignments.map((item) => ({
+        ...item,
+        status: "graded" as const,
+      })),
+    });
+    mockedCourses.mockResolvedValue(COURSES);
+    renderPage();
+    expect(await screen.findByText("现在没有待完成的作业")).toBeInTheDocument();
+    expect(
+      screen.getByText("已完成的作业可以在“我的作业”中查看。"),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "查看结果" })).toBeNull();
+    expect(screen.getByRole("link", { name: "查看全部" })).toHaveAttribute(
+      "href",
+      "/s/assignments",
+    );
+  });
+
+  it("首页待办入口进入答题页，已交作业移入完整列表", async () => {
     const first = ASSIGNMENTS.assignments[0];
     const second = ASSIGNMENTS.assignments[1];
     if (first === undefined || second === undefined) {
@@ -251,10 +298,8 @@ describe("StudentHomePage", () => {
       "href",
       `/s/assignments/${second.id}`,
     );
-    expect(screen.getByRole("link", { name: "查看结果" })).toHaveAttribute(
-      "href",
-      "/s/assignments/88888888-8888-4888-8888-888888888888",
-    );
+    expect(screen.queryByRole("link", { name: "查看结果" })).toBeNull();
+    expect(screen.queryByText("已交的作业")).toBeNull();
   });
 
   it("渲染我的课程卡片：名称/简介/可见计数/进度条（T2A.6 前恒 0）与课程页链接", async () => {
