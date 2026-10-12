@@ -355,12 +355,28 @@ export const questionUpdateDataSchema = z.object({
   issues: z.array(lintIssueSchema),
 });
 
+/**
+ * 讲义行的文档形态（lectures.kind，2026-10 讲练一体）：
+ * - lecture：纯讲义（既有形态，markdown 全文下发）；
+ * - lesson：讲练页（题目原位混排；学生端改安全投影——原文不下发，见下方详情注释）。
+ * 学生/教师各讲义接口（列表摘要、课程目录条目、资源库列表、编辑详情）共用同一投影
+ * （student-course-api.ts / library-api.ts 也 import——放在本文件靠前处，避免
+ * 声明顺序引发的初始化死区）。
+ */
+export const lectureKindSchema = z.enum(["lecture", "lesson"]);
+
 /** GET /api/teacher/lectures/:id 响应 data：编辑抽屉取讲义原文（markdown 含 H1 标题行） */
 export const lectureDetailSchema = z.object({
   /** 讲义 id（数据库 uuid，编辑保持不变） */
   id: z.uuid(),
   title: z.string().min(1),
-  /** 讲义原始 Markdown（含 H1 标题行，整篇编辑提交） */
+  /**
+   * 文档形态（2026-10 讲练一体）：编辑抽屉按存储 kind 选 lint 语境（lesson 时
+   * 题块合法不报 QUESTION_IN_LECTURE，与服务端 updateLecture 同口径），
+   * 渲染预览对题块用占位卡（内容编辑走题库，防双源漂移）。
+   */
+  kind: lectureKindSchema,
+  /** 讲义原始 Markdown（含 H1 标题行，整篇编辑提交；kind=lesson 时题块原样保留） */
   markdown: z.string().min(1),
   /** 最近更新时间：UTC ISO 字符串 */
   updatedAt: z.string().min(1),
@@ -461,6 +477,8 @@ export const courseDataSchema = z.object({
 export const studentLectureSummarySchema = z.object({
   /** 讲义 id（导入时生成的 UUID） */
   id: z.uuid(),
+  /** 文档形态（2026-10 讲练一体）：lesson 行显「讲练」徽标并直达讲练页 */
+  kind: lectureKindSchema,
   /** 讲义标题（H1 标题文本） */
   title: z.string().min(1),
   /** 可见配套单元的主题；无可见配套或未标注为 null */
@@ -517,13 +535,6 @@ export const studentLectureCompanionUnitSchema = z.object({
 });
 
 /**
- * 讲义行的文档形态（lectures.kind，2026-10 讲练一体）：
- * - lecture：纯讲义（既有形态，markdown 全文下发）；
- * - lesson：讲练页（题目原位混排；学生端改安全投影——原文不下发，见下方详情注释）。
- */
-export const studentLectureKindSchema = z.enum(["lecture", "lesson"]);
-
-/**
  * GET /api/student/lectures/:id 响应 data：讲义全文 markdown（含 H1 标题行）+
  * 课程上下文与配套练习（T2A.5，D5/D8）。
  *
@@ -550,7 +561,7 @@ export const studentLectureDetailSchema = z
     id: z.uuid(),
     title: z.string().min(1),
     /** 文档形态（2026-10）：lesson 时讲义原文不下发（见 markdown 注释） */
-    kind: studentLectureKindSchema,
+    kind: lectureKindSchema,
     /**
      * 讲义原始 Markdown（含 H1 标题行；前端用 <RichMarkdown> 渲染）。
      * kind=lesson 时恒 null：题块原文含答案标记与提示内容，学生端只拿 blocks

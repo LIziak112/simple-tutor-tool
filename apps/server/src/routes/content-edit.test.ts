@@ -616,8 +616,10 @@ describe("讲义编辑与删除", () => {
       cookie,
     );
     expect(detailRes.status).toBe(200);
-    const detail = ((await detailRes.json()) as { data: { markdown: string } })
-      .data;
+    const detail = (
+      (await detailRes.json()) as { data: { kind: string; markdown: string } }
+    ).data;
+    expect(detail.kind).toBe("lecture"); // 2026-10 讲练一体：详情携带文档形态
     expect(detail.markdown).toContain("# 第1讲 有理数");
 
     const edited = detail.markdown.replace(
@@ -853,9 +855,10 @@ describe("讲练页讲义编辑（lint 按存储 kind：题块合法、markdown 
       cookie,
     );
     expect(detailRes.status).toBe(200);
-    const { markdown } = (
-      (await detailRes.json()) as { data: { markdown: string } }
+    const { kind, markdown } = (
+      (await detailRes.json()) as { data: { kind: string; markdown: string } }
     ).data;
+    expect(kind).toBe("lesson"); // 编辑抽屉按此选 lint 语境与占位卡预览
     expect(markdown).toContain('id="随堂讲练-1"'); // 导入时已注入最终题目 id
 
     // 编辑：标题微调 + 追加一段正文，题块原样保留

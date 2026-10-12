@@ -33,6 +33,7 @@ const DETAIL: StudentCourseDetailData = {
     {
       id: "34343434-3434-4343-8343-343434343434",
       kind: "section",
+      docKind: null,
       refId: null,
       title: "第一章 有理数",
       order: 0,
@@ -42,6 +43,7 @@ const DETAIL: StudentCourseDetailData = {
     {
       id: "45454545-4545-4545-8545-454545454545",
       kind: "lecture",
+      docKind: "lecture",
       refId: LECTURE_ID,
       title: "第1讲 有理数",
       order: 1,
@@ -51,6 +53,7 @@ const DETAIL: StudentCourseDetailData = {
     {
       id: "56565656-5656-4565-8565-565656565656",
       kind: "unit",
+      docKind: null,
       refId: "有理数小练",
       title: "有理数小练",
       order: 2,

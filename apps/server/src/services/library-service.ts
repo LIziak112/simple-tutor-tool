@@ -584,6 +584,8 @@ export interface LibraryListFilter {
 /** 讲义库列表项（契约 libraryLectureSummarySchema 同形） */
 export interface LibraryLectureSummaryRow {
   readonly id: string;
+  /** 文档形态（2026-10 讲练一体：lesson 行显「讲练」徽标） */
+  readonly kind: "lecture" | "lesson";
   readonly title: string;
   readonly folderId: string | null;
   readonly updatedAt: string;
@@ -661,6 +663,7 @@ export function listLibraryLectures(
     .filter((row) => q.length === 0 || row.title.toLowerCase().includes(q))
     .map((row) => ({
       id: row.id,
+      kind: row.kind,
       title: row.title,
       folderId: row.folderId,
       updatedAt: row.updatedAt,

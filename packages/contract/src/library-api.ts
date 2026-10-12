@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { questionTypeSchema } from "./content.ts";
-import { contentTreeQuestionSchema } from "./content-api.ts";
+import { contentTreeQuestionSchema, lectureKindSchema } from "./content-api.ts";
 
 /**
  * 资源库 API 契约（T2A.2 起为权威定义）：教师端资源库页面（讲义库 / 题库 / 回收站）
@@ -81,6 +81,8 @@ export type LibraryListQuery = z.infer<typeof libraryListQuerySchema>;
 /** 讲义库列表项：标题 + 归属 + 引用数（§4-4 状态一目了然） */
 export const libraryLectureSummarySchema = z.object({
   id: z.uuid(),
+  /** 文档形态（2026-10 讲练一体）：lesson 行显「讲练」徽标（点击仍进编辑/预览） */
+  kind: lectureKindSchema,
   title: z.string().min(1),
   /** 所属文件夹；NULL = 未归类 */
   folderId: z.uuid().nullable(),

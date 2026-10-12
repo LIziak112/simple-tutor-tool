@@ -23,12 +23,14 @@ const mockedLectures = vi.mocked(fetchStudentLecturesApi);
 
 const LECTURE_1 = {
   id: "33333333-3333-4333-8333-333333333333",
+  kind: "lecture",
   title: "第1讲 有理数",
   topic: "有理数",
   updatedAt: "2026-09-20T10:00:00.000Z",
 } as const;
 const LECTURE_2 = {
   id: "66666666-6666-4666-8666-666666666666",
+  kind: "lecture",
   title: "第2讲 数轴",
   topic: null,
   updatedAt: "2026-09-21T10:00:00.000Z",

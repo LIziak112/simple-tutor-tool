@@ -1262,6 +1262,8 @@ export function getLectureDetail(
   return {
     id: row.id,
     title: row.title,
+    // 文档形态随行（2026-10 讲练一体）：前端按 kind 选 lint 语境与占位卡预览
+    kind: row.kind,
     markdown: row.markdown,
     updatedAt: row.updatedAt,
   };

@@ -193,6 +193,7 @@ const ASSIGNMENTS: TeacherAssignmentListData = {
 const LECTURE_1_DETAIL: LectureDetail = {
   id: LECTURE_1,
   title: "有理数讲义",
+  kind: "lecture",
   markdown: [
     "# 有理数讲义",
     "",
@@ -216,6 +217,7 @@ const LECTURES: LibraryLectureList = {
   lectures: [
     {
       id: LECTURE_1,
+      kind: "lecture",
       title: "有理数讲义",
       folderId: null,
       updatedAt: NOW,
@@ -224,6 +226,7 @@ const LECTURES: LibraryLectureList = {
     },
     {
       id: LECTURE_2,
+      kind: "lecture",
       title: "方程讲义",
       folderId: null,
       updatedAt: NOW,

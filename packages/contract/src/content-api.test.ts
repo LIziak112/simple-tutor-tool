@@ -12,6 +12,7 @@ import {
   importPreviewDataSchema,
   importPreviewOkSchema,
   importPreviewRequestSchema,
+  lectureDetailSchema,
   studentLectureDetailOkSchema,
   studentLectureDetailQuerySchema,
   studentLectureDetailSchema,
@@ -312,12 +313,14 @@ describe("contentTreeSchema / contentTreeOkSchema（T1.11 内容树）", () => {
 describe("学生端讲义契约（T2.3；T2A.5 扩展分组与配套练习）", () => {
   const summary = {
     id: "0b6f18ae-6b9a-4d0e-8b7c-9b1b1b1b1b1b",
+    kind: "lecture",
     title: "第1讲 有理数",
     topic: "有理数",
     updatedAt: "2026-09-20T10:00:00.000Z",
   } as const;
   const otherSummary = {
     id: "1c7f29bf-7cab-4f1f-9c8d-8c2c2c2c2c2c",
+    kind: "lesson",
     title: "第2讲 数轴",
     topic: null,
     updatedAt: "2026-09-21T10:00:00.000Z",
@@ -332,6 +335,21 @@ describe("学生端讲义契约（T2.3；T2A.5 扩展分组与配套练习）", 
     ).toBe(true);
   });
 
+  it("讲义摘要：kind 必填，lecture/lesson 合法、缺省与越界值被拒（讲练一体列表徽标数据源）", () => {
+    expect(
+      studentLectureSummarySchema.safeParse({ ...summary, kind: "lesson" })
+        .success,
+    ).toBe(true);
+    const { kind: _omit, ...withoutKind } = summary;
+    expect(studentLectureSummarySchema.safeParse(withoutKind).success).toBe(
+      false,
+    );
+    expect(
+      studentLectureSummarySchema.safeParse({ ...summary, kind: "mixed" })
+        .success,
+    ).toBe(false);
+  });
+
   it("讲义摘要：id 非 UUID、缺 updatedAt 被拒", () => {
     expect(
       studentLectureSummarySchema.safeParse({ ...summary, id: "not-uuid" })
@@ -340,6 +358,7 @@ describe("学生端讲义契约（T2.3；T2A.5 扩展分组与配套练习）", 
     expect(
       studentLectureSummarySchema.safeParse({
         id: summary.id,
+        kind: "lecture",
         title: summary.title,
         topic: null,
       }).success,
@@ -498,9 +517,9 @@ describe("学生端讲义契约（T2.3；T2A.5 扩展分组与配套练习）", 
     // 缺 blocks → 拒绝（讲练页必须以切段 + 冻结题投影下发）
     const { blocks: _omitBlocks, ...withoutBlocks } = lessonBase;
     void _omitBlocks;
-    expect(
-      studentLectureDetailSchema.safeParse(withoutBlocks).success,
-    ).toBe(false);
+    expect(studentLectureDetailSchema.safeParse(withoutBlocks).success).toBe(
+      false,
+    );
     // companionUnits 非空 → 拒绝（题目已在页内，嵌入单元不重复出现）
     expect(
       studentLectureDetailSchema.safeParse({
@@ -540,8 +559,30 @@ describe("学生端讲义契约（T2.3；T2A.5 扩展分组与配套练习）", 
     // 缺 kind → 拒绝（必填）
     const { kind: _omitKind, ...withoutKind } = lectureBase;
     void _omitKind;
+    expect(studentLectureDetailSchema.safeParse(withoutKind).success).toBe(
+      false,
+    );
+  });
+});
+
+describe("教师讲义详情契约（T1.12；讲练一体 2026-10 增 kind）", () => {
+  const base = {
+    id: "0b6f18ae-6b9a-4d0e-8b7c-9b1b1b1b1b1b",
+    title: "第1讲 有理数",
+    markdown: "# 第1讲 有理数\n\n正文",
+    updatedAt: "2026-09-20T10:00:00.000Z",
+  } as const;
+
+  it("kind 必填：缺省被拒，lecture/lesson 合法（编辑抽屉按 kind 选 lint 语境）", () => {
+    expect(lectureDetailSchema.safeParse(base).success).toBe(false);
     expect(
-      studentLectureDetailSchema.safeParse(withoutKind).success,
+      lectureDetailSchema.safeParse({ ...base, kind: "lecture" }).success,
+    ).toBe(true);
+    expect(
+      lectureDetailSchema.safeParse({ ...base, kind: "lesson" }).success,
+    ).toBe(true);
+    expect(
+      lectureDetailSchema.safeParse({ ...base, kind: "mixed" }).success,
     ).toBe(false);
   });
 });

@@ -497,6 +497,31 @@ describe("资源库路由：列表", () => {
     ).json()) as { data: { lectures: { id: string }[] } };
     expect(recycle.data.lectures.map((l) => l.id)).toEqual([lecture.id]);
   });
+
+  it("lectures 列表携带 kind：讲练页（kind=lesson）行可数据驱动显「讲练」徽标（2026-10 讲练一体）", async () => {
+    const { app, teacherCookie } = await makeApp();
+    const commit = await request(
+      app,
+      "POST",
+      "/api/teacher/import/commit",
+      teacherCookie,
+      {
+        markdown:
+          '---\nkind: lesson\nunit: 随堂讲练\n---\n\n# 讲练 数轴热身\n\n::::question{type=judge id="lib-lesson-1"}\n数轴向右为正。[[正确]]\n::::\n',
+        filename: "随堂讲练.md",
+      },
+    );
+    expect(commit.status).toBe(200);
+
+    const body = (await (
+      await request(app, "GET", "/api/teacher/library/lectures", teacherCookie)
+    ).json()) as { data: { lectures: { title: string; kind: string }[] } };
+    const byTitle = new Map(
+      body.data.lectures.map((l) => [l.title, l.kind] as const),
+    );
+    expect(byTitle.get("讲练 数轴热身")).toBe("lesson");
+    expect(byTitle.get(LECTURE_TITLE)).toBe("lecture"); // 既有纯讲义不受影响
+  });
 });
 
 // ---------- 单元 / 讲义元数据编辑 ----------

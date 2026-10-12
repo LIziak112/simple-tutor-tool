@@ -327,6 +327,21 @@ export function getStudentCourseDetail(
     .map((item) => item.refId as string);
   const counts = liveQuestionCounts(db, course.teacherId, unitIds);
   const attemptSummaries = courseUnitAttemptSummaries(db, studentId, courseId);
+  // 讲义条目的文档形态（2026-10 讲练一体）：lesson 行前端显「讲练」徽标并直达
+  // 讲练页；资源行缺失（不应发生）按默认 lecture 兜底（不因此丢条目）
+  const lectureIds = items
+    .filter((item) => item.kind === "lecture")
+    .map((item) => item.refId as string);
+  const lectureKinds = new Map(
+    lectureIds.length > 0
+      ? db
+          .select({ id: lectures.id, kind: lectures.kind })
+          .from(lectures)
+          .where(inArray(lectures.id, lectureIds))
+          .all()
+          .map((row) => [row.id, row.kind] as const)
+      : [],
+  );
   return {
     id: course.id,
     name: course.title,
@@ -334,6 +349,10 @@ export function getStudentCourseDetail(
     items: items.map((item) => ({
       id: item.id,
       kind: item.kind,
+      docKind:
+        item.kind === "lecture"
+          ? (lectureKinds.get(item.refId ?? "") ?? "lecture")
+          : null,
       refId: item.refId,
       title: item.title,
       order: item.order,
@@ -543,7 +562,13 @@ export function listStudentLectures(
   // 每篇可见讲义在各课程中的条目位置（courseIndex 已按 order 升序）
   const lectureRows = new Map<
     string,
-    { id: string; title: string; updatedAt: string; order: number }
+    {
+      id: string;
+      kind: "lecture" | "lesson";
+      title: string;
+      updatedAt: string;
+      order: number;
+    }
   >();
   /** 讲义 id → (courseIndex, itemOrder) 最优位置（去重列表排序用） */
   const bestKeyByLecture = new Map<string, readonly [number, number]>();
@@ -556,6 +581,7 @@ export function listStudentLectures(
     const rows = db
       .select({
         id: lectures.id,
+        kind: lectures.kind,
         title: lectures.title,
         updatedAt: lectures.updatedAt,
         order: lectures.order,
@@ -580,6 +606,7 @@ export function listStudentLectures(
       }
       summaries.push({
         id: row.id,
+        kind: row.kind, // 文档形态随行（2026-10 讲练一体：lesson 行显徽标/直达）
         title: row.title,
         topic: null, // 稍后统一填充（可见配套单元聚合）
         updatedAt: row.updatedAt,
@@ -629,6 +656,7 @@ export function listStudentLectures(
     lectures: deduped.map((row) =>
       withTopic({
         id: row.id,
+        kind: row.kind,
         title: row.title,
         topic: null,
         updatedAt: row.updatedAt,

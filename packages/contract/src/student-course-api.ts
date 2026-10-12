@@ -92,21 +92,40 @@ export const studentUnitAttemptSummarySchema = z.object({
  * - 讲义条目点击进入 /s/lectures/:refId?courseId=<课程 id>（带课程上下文）；
  * - 单元条目点击进入 /s/courses/:courseId/units/:refId（单元落地页，T2A.6）。
  */
-export const studentCourseItemSchema = z.object({
-  /** course_items.id */
-  id: z.uuid(),
-  kind: z.enum(["section", "lecture", "unit"]),
-  /** 引用资源 id（lectures.id / units.id）；分节为 null */
-  refId: z.string().nullable(),
-  /** 显示标题：分节 = 分节标题；讲义/单元 = 资源当前标题 */
-  title: z.string().min(1),
-  /** 课程内排序（小在前） */
-  order: z.number().int().min(0),
-  /** 单元条目的未删除题目数；分节/讲义为 null */
-  questionCount: z.number().int().min(0).nullable(),
-  /** 单元条目的课程练习作答摘要；从未做为 null */
-  attempt: studentUnitAttemptSummarySchema.nullable(),
-});
+export const studentCourseItemSchema = z
+  .object({
+    /** course_items.id */
+    id: z.uuid(),
+    kind: z.enum(["section", "lecture", "unit"]),
+    /**
+     * 讲义条目的文档形态（lectures.kind，2026-10 讲练一体）：
+     * lesson 行前端显「讲练」徽标并直达 /s/lectures/:id/lesson；分节/单元条目恒 null。
+     * 命名 docKind 以区分条目类型 kind（section/lecture|unit）；配对关系由
+     * superRefine 锁定（docKind 非 null ⇔ 讲义条目）。
+     */
+    docKind: z.enum(["lecture", "lesson"]).nullable(),
+    /** 引用资源 id（lectures.id / units.id）；分节为 null */
+    refId: z.string().nullable(),
+    /** 显示标题：分节 = 分节标题；讲义/单元 = 资源当前标题 */
+    title: z.string().min(1),
+    /** 课程内排序（小在前） */
+    order: z.number().int().min(0),
+    /** 单元条目的未删除题目数；分节/讲义为 null */
+    questionCount: z.number().int().min(0).nullable(),
+    /** 单元条目的课程练习作答摘要；从未做为 null */
+    attempt: studentUnitAttemptSummarySchema.nullable(),
+  })
+  .superRefine((item, ctx) => {
+    // 交叉不变式：docKind 只属于讲义条目（分节/单元恒 null——形态字段不越位）
+    if (item.kind !== "lecture" && item.docKind !== null) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["docKind"],
+        message:
+          "形态不变式冲突：docKind 只能出现在讲义条目上（分节/单元恒 null）",
+      });
+    }
+  });
 
 /**
  * GET /api/student/courses/:id 响应 data：课程名 + 简介 + 可见目录。

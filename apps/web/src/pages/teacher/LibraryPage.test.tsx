@@ -128,6 +128,7 @@ const LECTURES: LibraryLectureList = {
   lectures: [
     {
       id: "22222222-2222-4222-8222-222222222222",
+      kind: "lecture",
       title: "第1讲 有理数",
       folderId: FOLDER_ID,
       updatedAt: "2026-09-26T00:00:00.000Z",
