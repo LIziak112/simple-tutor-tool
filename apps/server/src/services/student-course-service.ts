@@ -8,9 +8,6 @@ import type {
   StudentUnitAttemptSummary,
   StudentUnitLandingData,
 } from "@tutor/contract";
-// 讲练一体（2026-10）：kind=lesson 讲义的学生侧安全投影——服务端切段，
-// 原文（题块含 [[答案]]/:::solution/:::hint）绝不下发（方案决策 1）
-import { splitLessonBlocks } from "@tutor/md-dsl";
 import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
@@ -780,9 +777,11 @@ export function requireVisibleStudentLecture(
  * - companionUnits：同课程内 units.lectureId = 该讲义且对该生可见的单元条目
  *   （目录条目顺序），带未删除题数——「即将开放」语义，作答入口 T2A.6 开放；
  * - kind=lesson（2026-10 讲练一体）安全投影：markdown 恒 null（题块原文含
- *   [[答案]]/:::solution/:::hint，防泄露根基，方案决策 1）+ blocks 切段
- *   （splitLessonBlocks 服务端执行）+ companionUnits 恒空（嵌入单元隐藏，
- *   题目已在页内，防重复入口）；kind=lecture 形态不变（全文下发）。
+ *   [[答案]]/:::solution/:::hint，防泄露根基，方案决策 1）+ companionUnits 恒空
+ *   （嵌入单元隐藏，题目已在页内，防重复入口）；讲练内容（blocks 切段 + 冻结题
+ *   公开投影）只经 lesson/start 开卷接口下发（lesson-service，曾随本接口下发
+ *   blocks 因全站零消费已删，闸门修复 2026-10-13）；kind=lecture 形态不变
+ *   （全文下发）。
  */
 export function getStudentLecture(
   db: Db,
@@ -797,7 +796,7 @@ export function getStudentLecture(
     lecture: row,
   } = requireVisibleStudentLecture(db, studentId, lectureId, courseId, now);
 
-  // 讲练页：安全投影（原文与配套入口都不下发，题目投影走开卷接口）
+  // 讲练页：安全投影（原文与配套入口都不下发，讲练内容走开卷接口 lesson/start）
   if (row.kind === "lesson") {
     return {
       id: row.id,
@@ -809,7 +808,6 @@ export function getStudentLecture(
       courseName: context.title,
       // 嵌入单元隐藏（题目已在页内单题作答，不再出现整卷入口，防重复）
       companionUnits: [],
-      blocks: splitLessonBlocks(row.markdown),
       // T7.7：讲义 steps 渲染遵循课程所属教师的启用集（读时计算，学生刷新生效）
       enabledCapabilities: getCapabilityProfile(db, context.teacherId)
         .enabledCapabilities,

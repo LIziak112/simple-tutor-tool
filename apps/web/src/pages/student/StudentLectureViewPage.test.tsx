@@ -224,10 +224,6 @@ describe("StudentLectureViewPage", () => {
       ...LECTURE,
       kind: "lesson",
       markdown: null,
-      blocks: [
-        { type: "md", md: "# 第1讲 有理数\n\n正文。" },
-        { type: "question", questionId: "lesson-q1" },
-      ],
       companionUnits: [],
     });
     render(

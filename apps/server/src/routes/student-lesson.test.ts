@@ -46,9 +46,9 @@ import { submitAttemptRequest } from "../test/submit-revisions";
  *   （含题块、- [x]、:::solution/:::hint）绝不出现（键名级 assertNoLeak +
  *   内容级 assertNoStemLeak + 题块原文字符串级断言三层）；released 只含已
  *   提交题；
- * - GET /lectures/:id kind=lesson 安全投影：markdown 恒 null + blocks 切段 +
- *   companionUnits 恒空（kind=lecture 行为不变的对照见 student-lectures.test.ts
- *   既有用例）；
+ * - GET /lectures/:id kind=lesson 安全投影：markdown 恒 null +
+ *   companionUnits 恒空、不带切段（讲练内容只经 lesson/start 下发；kind=lecture
+ *   行为不变的对照见 student-lectures.test.ts 既有用例）；
  * - 零题讲练页（LESSON_WITHOUT_QUESTION）开卷合法（questions 空、blocks 纯 md）；
  * - 建卷发 attempt_start 事件（幂等取回不重复记、restart 新卷各记一条）。
  *
@@ -708,7 +708,7 @@ describe("泄露矩阵：released 只含已提交题（AGENTS.md 规则 3 核心
     });
   });
 
-  it("lesson 讲义详情：markdown 恒 null、blocks 切段、companionUnits 恒空、全响应无题块原文", async () => {
+  it("lesson 讲义详情：markdown 恒 null、companionUnits 恒空、不带切段、全响应无题块原文", async () => {
     const env = await makeEnv();
     const res = await env.app.request(
       `/api/student/lectures/${env.lectureId}`,
@@ -721,7 +721,6 @@ describe("泄露矩阵：released 只含已提交题（AGENTS.md 规则 3 核心
       data: {
         kind: string;
         markdown: string | null;
-        blocks: { type: string; questionId?: string }[];
         companionUnits: unknown[];
         courseId: string;
       };
@@ -729,19 +728,10 @@ describe("泄露矩阵：released 只含已提交题（AGENTS.md 规则 3 核心
     expect(studentLectureDetailOkSchema.safeParse(body).success).toBe(true);
     expect(body.data.kind).toBe("lesson");
     expect(body.data.markdown).toBeNull();
-    expect(body.data.blocks.map((b) => b.type)).toEqual([
-      "md",
-      "question",
-      "md",
-      "question",
-      "md",
-    ]);
-    expect(body.data.blocks[1]).toEqual({
-      type: "question",
-      questionId: Q.choice,
-    });
     expect(body.data.companionUnits).toEqual([]);
     expect(body.data.courseId).toBe(env.courseId);
+    // 死载荷已删：详情不带 blocks 切段（讲练内容只经 lesson/start 下发，闸门修复）
+    expect("blocks" in body.data).toBe(false);
 
     // 泄露：详情不得出现任何题目侧字段（题目投影只经开卷接口下发）
     assertNoLeak(body, { forbid: ["stemMd", "questions"] });
