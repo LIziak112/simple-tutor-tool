@@ -1807,6 +1807,10 @@ export function submitAttempt(
   const { status: finalStatus, scoreFinal } = finalScoreOf(finalCorrects);
 
   const nowIso = new Date(now).toISOString();
+  // lesson 收尾把「本次交卷的行」的提交时刻记为交卷时刻（responses.submittedAt
+  // 列注释口径）；非 lesson 行不写该列（保持 null）。事务内 update 与下方内存
+  // 镜像展开同一对象，两处口径永不漂移
+  const lessonSubmittedAtPatch = isLesson ? { submittedAt: nowIso } : {};
   db.transaction((tx) => {
     for (const g of graded) {
       tx.update(responses)
@@ -1815,9 +1819,7 @@ export function submitAttempt(
           autoCorrect: g.autoCorrect,
           // D3：交卷同时写 finalCorrect = autoCorrect（teacherMark 必空）
           finalCorrect: g.autoCorrect,
-          // lesson 收尾把「本次交卷的行」的提交时刻记为交卷时刻（responses.
-          // submittedAt 列注释口径）；非 lesson 行不写该列（保持 null）
-          ...(isLesson ? { submittedAt: nowIso } : {}),
+          ...lessonSubmittedAtPatch,
           activeSec: activeSecByQuestion[g.response.questionId] ?? null,
           changeCount: Math.max(
             g.response.changeCount,
@@ -1872,7 +1874,7 @@ export function submitAttempt(
       answerJson: g.answer !== undefined ? JSON.stringify(g.answer) : null,
       autoCorrect: g.autoCorrect,
       finalCorrect: g.autoCorrect,
-      ...(isLesson ? { submittedAt: nowIso } : {}),
+      ...lessonSubmittedAtPatch,
       activeSec: activeSecByQuestion[g.response.questionId] ?? null,
       changeCount: Math.max(
         g.response.changeCount,

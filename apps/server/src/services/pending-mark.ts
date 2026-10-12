@@ -1,4 +1,12 @@
-import { and, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import {
+  and,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+  type SQL,
+  sql,
+} from "drizzle-orm";
 import type { Db } from "../db/client";
 import { type Attempt, responses } from "../db/schema";
 
@@ -31,6 +39,22 @@ import { type Attempt, responses } from "../db/schema";
 export type PendingMarkAttempt = Pick<Attempt, "id" | "status">;
 
 /**
+ * D4 待批行的共享条件（不含 attempt 归属筛选——单卷 eq / 批量 inArray 各自给）：
+ * finalCorrect IS NULL + 快照非空（排幽灵行）+ draft 批次叠加行级已提交
+ * （2026-10 讲练一体扩：lesson 进行中卷只数已单题提交的行，课堂当场批改；
+ * 非 lesson 的 draft 恒 0。非 draft 批次整卷恒「已交」，保持既有口径不加
+ * 条件——设计依据详见模块头注释）。两函数（单卷/批量）共用本构造器，
+ * 口径永不漂移。
+ */
+function pendingMarkConditions(draft: boolean): (SQL | undefined)[] {
+  return [
+    isNull(responses.finalCorrect),
+    isNotNull(responses.questionSnapshotJson),
+    draft ? isNotNull(responses.submittedAt) : undefined,
+  ];
+}
+
+/**
  * 单个 attempt 的待批题数。draft 卷只有 lesson 单题提交会命中
  * （非 lesson 的 draft 恒 0）；非 draft 按整卷既有口径。
  */
@@ -42,13 +66,7 @@ export function pendingMarkCount(db: Db, attempt: PendingMarkAttempt): number {
       .where(
         and(
           eq(responses.attemptId, attempt.id),
-          isNull(responses.finalCorrect),
-          isNotNull(responses.questionSnapshotJson),
-          // D4 扩展（2026-10 讲练一体）：draft 卷只数已单题提交的行（非 lesson
-          // 的 draft 恒 0）；非 draft 整卷恒「已交」，保持既有口径不加条件
-          attempt.status === "draft"
-            ? isNotNull(responses.submittedAt)
-            : undefined,
+          ...pendingMarkConditions(attempt.status === "draft"),
         ),
       )
       .get()?.n ?? 0
@@ -70,7 +88,7 @@ export function pendingMarkCounts(
       .filter((attempt) => (attempt.status === "draft") === draft)
       .map((attempt) => attempt.id);
   // 非 draft（整卷已交）与 draft（lesson 进行中卷——行级 submittedAt 判定）
-  // 两批各查一次；条件差异见 pendingMarkCount 注释
+  // 两批各查一次；条件差异见 pendingMarkConditions 注释
   for (const [draft, ids] of [
     [false, idsOf(false)],
     [true, idsOf(true)],
@@ -83,10 +101,7 @@ export function pendingMarkCounts(
         .where(
           and(
             inArray(responses.attemptId, chunk),
-            isNull(responses.finalCorrect),
-            isNotNull(responses.questionSnapshotJson),
-            // draft 批次只数已单题提交的行（lesson）；非 draft 批次整卷已交
-            draft ? isNotNull(responses.submittedAt) : undefined,
+            ...pendingMarkConditions(draft),
           ),
         )
         .groupBy(responses.attemptId)
