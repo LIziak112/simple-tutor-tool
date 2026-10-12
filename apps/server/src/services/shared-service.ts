@@ -220,8 +220,9 @@ export function publishUnitToShared(
 
 /**
  * 发布讲义（POST /api/teacher/library/lectures/:id/publish）：
- * 内容**逐字复用** exportLectureMd（`kind: lecture` frontmatter + 原文——缺了
- * frontmatter 重新导入会被识别为缺省 practice，D16）；标题 = 讲义标题。
+ * 内容**逐字复用** exportLectureMd（frontmatter kind 按讲义存储列——普通讲义
+ * `kind: lecture`、讲练页 `kind: lesson`（题块随原文导出，教师域共享链路）；
+ * 缺了 frontmatter 重新导入会被识别为缺省 practice，D16）；标题 = 讲义标题。
  */
 export function publishLectureToShared(
   db: Db,

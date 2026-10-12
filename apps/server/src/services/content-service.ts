@@ -588,6 +588,12 @@ export function commitImport(
     }
 
     // ---- 讲义：按 (teacherId, folderId, title) 匹配替换 markdown，无则插入 ----
+    // 讲练一体（2026-10）：讲义形态按文档 kind 写入——lesson 文档的讲义全部
+    // kind='lesson'（ParsedDocument 的 lectures[].markdown 已含注入 id 的题块，
+    // 落库原样存），其余文档（lecture/mixed 及无讲义产出的 practice）恒
+    // 'lecture'；重导同名讲义覆盖 kind——导入是权威（编辑保存永不改本列）。
+    const lectureKind: "lecture" | "lesson" =
+      parsed.frontmatter?.kind === "lesson" ? "lesson" : "lecture";
     const lectureReports: ImportLectureReport[] = [];
     const lectureIdByTitle = new Map<string, string>();
     const folderLectures = tx
@@ -612,6 +618,7 @@ export function commitImport(
         tx.update(lectures)
           .set({
             markdown: lecture.markdown,
+            kind: lectureKind,
             updatedAt: now,
             deletedAt: null,
             teachingPackJson,
@@ -634,6 +641,7 @@ export function commitImport(
             folderId,
             title: lecture.title,
             markdown: lecture.markdown,
+            kind: lectureKind,
             order: nextLectureOrder,
             updatedAt: now,
             teachingPackJson,
@@ -1261,8 +1269,10 @@ export function getLectureDetail(
 
 /**
  * 讲义编辑（PUT /api/teacher/lectures/:id）：整篇 markdown 提交，title 从 H1 重取，
- * 讲义 id（数据库 uuid）保持不变。解析语境 wrapLectureMd；
- * 多个 H1 → 422（一篇讲义只能有一个 H1）；error 级 lint issue → 422 LINT_ERROR。
+ * 讲义 id（数据库 uuid）保持不变。解析语境 wrapLectureMd 按**存储的 kind** 包装
+ * （讲练一体 2026-10：lesson 讲练讲义正文含题块合法，markdown 原样保存；
+ * 编辑不改 kind 列——形态只能由重导覆盖）；多个 H1 → 422（一篇讲义只能有一个
+ * H1）；error 级 lint issue → 422 LINT_ERROR。
  */
 export function updateLecture(
   db: Db,
@@ -1279,7 +1289,8 @@ export function updateLecture(
     throw new HttpError(404, "LECTURE_NOT_FOUND", "讲义不存在");
   }
 
-  const wrapped = wrapLectureMd(input.markdown);
+  // lesson 语境下题块合法（不产生 QUESTION_IN_LECTURE）、讲义段落指令与 mixed 同链
+  const wrapped = wrapLectureMd(input.markdown, row.kind);
   const { parsed, issues } = lintDocument(wrapped);
 
   if (parsed.lectures.length > 1) {
@@ -1304,7 +1315,8 @@ export function updateLecture(
     );
   }
 
-  // 0 篇（无 H1）已被 MISSING_HEADING error 拦截，此处必有一篇；仍做类型收窄防御
+  // 0 篇（无 H1）：lecture 语境被 MISSING_HEADING error 拦截；lesson 语境解析器
+  // 不记该码（MISSING_HEADING 仅 lecture 路径），由下方 title 收窄分支兜底 422
   const title = parsed.lectures[0]?.title;
   if (title === undefined || title.trim().length === 0) {
     throw new HttpError(

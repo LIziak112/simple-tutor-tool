@@ -325,12 +325,157 @@ unit: 练习四
       {
         markdown: PRACTICE_MD,
         filename: "练习样例.md",
-        courseId: "0b6f18ae-6b9a-4d0e-8b7c-9b1b1b1b1b1b",
+        courseId: "0b6f18ae-6d9a-4d0e-8b7c-9b1b1b1b1b1b",
       },
       cookie,
     );
     expect(res.status).toBe(404);
     expect(((await res.json()) as ApiErr).error).toBe("COURSE_NOT_FOUND");
+  });
+});
+
+// ---------- 讲练一体（2026-10，kind: lesson）：导入落库 ----------
+/** 混合样例（兼容性回归样例，讲义两讲 + 单元 随堂练习 三题） */
+const MIXED_MD = readFileSync(
+  new URL("../../../../samples/v2/混合样例.md", import.meta.url),
+  "utf8",
+);
+
+/** 讲练页样例：单讲 + 单题（缺省 id），题块原位保留在讲义 markdown */
+const LESSON_MD = `---
+kind: lesson
+unit: 随堂讲练
+topic: 有理数
+---
+
+# 第1讲 有理数
+
+$0$ 既不是正数也不是负数。
+
+::::question{type=judge difficulty=1}
+$0$ 是最小的正整数。[[错误]]
+
+:::solution
+$0$ 既不是正数也不是负数；最小的正整数是 $1$。
+:::
+::::
+
+题后一段正文。
+`;
+
+describe("讲练一体：kind: lesson 文档导入（讲义含题块入库 + kind 落库 + 单元关联）", () => {
+  it("commit 200：讲义 kind='lesson'、markdown 原位保留注入 id 的题块；单元/题目照常落库且 lectureId 关联", async () => {
+    const { app, db, cookie } = await makeTeacherApp();
+    const res = await postJson(
+      app,
+      "/api/teacher/import/commit",
+      { markdown: LESSON_MD, filename: "随堂讲练.md" },
+      cookie,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      data: {
+        lectures: { inserted: number; title: string }[];
+        units: { id: string; title: string }[];
+      };
+    };
+    expect(body.data.lectures).toEqual([
+      {
+        id: expect.any(String),
+        inserted: true,
+        title: "第1讲 有理数",
+        updated: false,
+      },
+    ]);
+    expect(body.data.units.map((u) => u.id)).toEqual(["随堂讲练"]);
+
+    // 讲义行：kind='lesson'，markdown 保留题块（含注入的最终题目 id）与题后正文
+    const lecture = db
+      .select()
+      .from(lectures)
+      .where(eq(lectures.title, "第1讲 有理数"))
+      .get();
+    expect(lecture?.kind).toBe("lesson");
+    expect(lecture?.markdown).toContain("# 第1讲 有理数");
+    expect(lecture?.markdown).toContain(
+      '::::question{type=judge difficulty=1 id="随堂讲练-1"}',
+    );
+    expect(lecture?.markdown).toContain("[[错误]]");
+    expect(lecture?.markdown).toContain("题后一段正文。");
+
+    // 单元（与 mixed 同构）：lectureTitle 解析链 → 关联同名讲义
+    const unit = db.select().from(units).where(eq(units.id, "随堂讲练")).get();
+    expect(unit?.lectureId).toBe(lecture?.id);
+    // 题目照常入库（sourceMd 同步注入 id）
+    const question = db
+      .select()
+      .from(questions)
+      .where(eq(questions.id, "随堂讲练-1"))
+      .get();
+    expect(question?.type).toBe("judge");
+    expect(question?.sourceMd).toContain('id="随堂讲练-1"');
+  });
+
+  it("重导覆盖：mixed 导入的讲义 kind='lecture'，同名讲义被 lesson 文档重导后 kind 更新为 'lesson'（导入是权威）", async () => {
+    const { app, db, cookie } = await makeTeacherApp();
+    const mixed = await postJson(
+      app,
+      "/api/teacher/import/commit",
+      { markdown: MIXED_MD, filename: "混合样例.md" },
+      cookie,
+    );
+    expect(mixed.status).toBe(200);
+    // mixed 讲义（题块已被剔除）：两讲全部 kind='lecture'
+    const before = db
+      .select({
+        id: lectures.id,
+        title: lectures.title,
+        kind: lectures.kind,
+        markdown: lectures.markdown,
+      })
+      .from(lectures)
+      .all()
+      .sort((a, b) => a.title.localeCompare(b.title, "zh-Hans-CN"));
+    expect(before.map((l) => [l.title, l.kind])).toEqual([
+      ["第1讲 有理数", "lecture"],
+      ["第2讲 数轴", "lecture"],
+    ]);
+    const mixedMarkdown = before[0]?.markdown ?? "";
+    expect(mixedMarkdown).not.toContain("question"); // mixed 讲义无题块（对照）
+
+    // lesson 重导（未归类同文件夹、同名讲义替换）
+    const reimport = await postJson(
+      app,
+      "/api/teacher/import/commit",
+      { markdown: LESSON_MD, filename: "随堂讲练.md" },
+      cookie,
+    );
+    expect(reimport.status).toBe(200);
+    const reimportBody = (await reimport.json()) as {
+      data: { lectures: { inserted: boolean; updated: boolean }[] };
+    };
+    expect(reimportBody.data.lectures[0]).toMatchObject({
+      inserted: false,
+      updated: true,
+    });
+
+    const after = db
+      .select({
+        id: lectures.id,
+        title: lectures.title,
+        kind: lectures.kind,
+        markdown: lectures.markdown,
+      })
+      .from(lectures)
+      .all()
+      .sort((a, b) => a.title.localeCompare(b.title, "zh-Hans-CN"));
+    // 第1讲：kind 覆盖为 lesson、markdown 换成含题块版本；第2讲不受影响
+    expect(after.map((l) => [l.title, l.kind])).toEqual([
+      ["第1讲 有理数", "lesson"],
+      ["第2讲 数轴", "lecture"],
+    ]);
+    expect(after[0]?.id).toBe(before[0]?.id); // 讲义 id 不变（匹配键替换）
+    expect(after[0]?.markdown).toContain('id="随堂讲练-1"');
   });
 });
 

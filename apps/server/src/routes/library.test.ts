@@ -1224,6 +1224,134 @@ describe("资源库路由：export.md 往返", () => {
   });
 });
 
+// ---------- 讲练一体（2026-10，kind: lesson）：export.md 讲练页往返 ----------
+
+/** 讲练页样例：缺省 id 题（导入注入显式 id）+ 显式 id 题，导出后重导 id 应稳定 */
+const LESSON_EXPORT_MD = `---
+kind: lesson
+unit: 讲练导出单元
+topic: 有理数
+---
+
+# 第1讲 有理数讲练
+
+正文一段。
+
+::::question{type=judge difficulty=1}
+$0$ 是最小的正整数。[[错误]]
+::::
+
+::::question{type=choice id="lesson-choice-1" difficulty=2}
+比 $0$ 大的数是（　）
+
+- [x] $1$
+- [ ] $-1$
+::::
+
+题后一段正文。
+`;
+
+describe("资源库路由：export.md 讲练页往返（kind: lesson，导出→再导入 id 稳定）", () => {
+  it("导出 lesson 讲义：kind: lesson 头 + 原文（含注入 id 题块）；再导入后题目 id 稳定、markdown 等价、kind 保持、二次导出逐字节一致", async () => {
+    const { app, db, teacherCookie } = await makeApp();
+    // 讲练页导入（未归类；与样例讲义不同名不冲突）
+    const commit = await request(
+      app,
+      "POST",
+      "/api/teacher/import/commit",
+      teacherCookie,
+      { markdown: LESSON_EXPORT_MD, filename: "讲练导出.md" },
+    );
+    expect(commit.status).toBe(200);
+    const lectureId = db
+      .select({ id: lectures.id })
+      .from(lectures)
+      .where(eq(lectures.title, "第1讲 有理数讲练"))
+      .get()?.id;
+    if (lectureId === undefined) throw new Error("讲练讲义未入库");
+    const before = db
+      .select()
+      .from(lectures)
+      .where(eq(lectures.id, lectureId))
+      .get();
+    expect(before?.kind).toBe("lesson");
+
+    // 导出：frontmatter 写 kind: lesson（对齐导入所需），原文含注入 id 的题块
+    const res = await request(
+      app,
+      "GET",
+      `/api/teacher/lectures/${lectureId}/export.md`,
+      teacherCookie,
+    );
+    expect(res.status).toBe(200);
+    const exported = await res.text();
+    expect(exported.startsWith("---\nkind: lesson\n---\n\n")).toBe(true);
+    expect(exported).toContain('id="讲练导出单元-1"'); // 缺省 id 已显式化
+    expect(exported).toContain('id="lesson-choice-1"');
+    expect(exported.endsWith(before?.markdown ?? "")).toBe(true);
+
+    // 往返第一步：导出文本 preview 0 error
+    const preview = await request(
+      app,
+      "POST",
+      "/api/teacher/import/preview",
+      teacherCookie,
+      { markdown: exported, filename: "第1讲 有理数讲练.md" },
+    );
+    expect(preview.status).toBe(200);
+    const previewBody = (await preview.json()) as {
+      data: { issues: { level: string }[] };
+    };
+    expect(
+      previewBody.data.issues.filter((i) => i.level === "error"),
+    ).toHaveLength(0);
+
+    // 再导入（未归类同文件夹、同名讲义 → 原地更新；注：frontmatter 无 unit，
+    // 单元名由 filename 兜底——题库单元归属随之变化是既有重导语义，不在本测范围）
+    const reimport = await request(
+      app,
+      "POST",
+      "/api/teacher/import/commit",
+      teacherCookie,
+      { markdown: exported, filename: "第1讲 有理数讲练.md" },
+    );
+    expect(reimport.status).toBe(200);
+    const reBody = (await reimport.json()) as {
+      data: { questions: { inserted: number; updated: number } };
+    };
+    expect(reBody.data.questions).toEqual({ inserted: 0, updated: 2 });
+
+    const after = db
+      .select()
+      .from(lectures)
+      .where(eq(lectures.id, lectureId))
+      .get();
+    expect(after?.id).toBe(lectureId); // 同名讲义原地更新，id 不变
+    expect(after?.kind).toBe("lesson"); // kind 保持
+    expect(after?.markdown).toBe(before?.markdown); // markdown 等价（id 已显式，零漂移）
+
+    // 题目 id 稳定（两题都在、无新增），版本按既有重导语义 +1
+    const rows = db
+      .select({ id: questions.id, version: questions.version })
+      .from(questions)
+      .all()
+      .filter((r) => r.id === "讲练导出单元-1" || r.id === "lesson-choice-1");
+    expect(rows.map((r) => r.id).sort()).toEqual(
+      ["lesson-choice-1", "讲练导出单元-1"].sort(),
+    );
+    expect(rows.every((r) => r.version === 2)).toBe(true);
+
+    // 二次导出与首次逐字节一致（幂等闭环）
+    const second = await request(
+      app,
+      "GET",
+      `/api/teacher/lectures/${lectureId}/export.md`,
+      teacherCookie,
+    );
+    expect(await second.text()).toBe(exported);
+  });
+});
+
 // ---------- T7.8：export.md 保留教学包声明 ----------
 
 /** 带声明的 mixed 文档（讲义 + 单元各一；引用全部合法） */
