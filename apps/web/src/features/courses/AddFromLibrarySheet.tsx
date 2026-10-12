@@ -8,6 +8,7 @@ import {
   Square,
 } from "lucide-react";
 import { useMemo, useState } from "react";
+import { LessonBadge } from "@/components/source-badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -493,11 +494,7 @@ function ResourceRow({
         )}
         <span className="min-w-0 flex-1">
           <span className="flex min-w-0 items-center gap-2">
-            {docKind === "lesson" ? (
-              <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300">
-                讲练
-              </span>
-            ) : null}
+            {docKind === "lesson" ? <LessonBadge /> : null}
             <span className="min-w-0 truncate font-medium">{title}</span>
           </span>
           <span className="block truncate text-xs text-muted-foreground">

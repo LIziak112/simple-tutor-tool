@@ -1,5 +1,6 @@
 import { ArrowLeft, BookOpen, ChevronRight, School } from "lucide-react";
 import { Link } from "react-router";
+import { LessonBadge } from "@/components/source-badge";
 import { useStudentLectures } from "@/features/student/student-queries";
 import {
   StudentEmptyState,
@@ -86,11 +87,7 @@ export default function StudentLecturesPage() {
                       className="flex min-h-14 items-center justify-between gap-3 rounded-2xl border border-border bg-card px-4 py-2 shadow-xs outline-none transition-colors hover:border-primary/40 hover:bg-accent/40 focus-visible:ring-3 focus-visible:ring-ring/50"
                     >
                       <span className="flex min-w-0 flex-1 items-center gap-2">
-                        {lecture.kind === "lesson" ? (
-                          <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300">
-                            讲练
-                          </span>
-                        ) : null}
+                        {lecture.kind === "lesson" ? <LessonBadge /> : null}
                         <span className="min-w-0 truncate text-sm font-medium">
                           {lecture.title}
                         </span>

@@ -1,5 +1,4 @@
 import type {
-  AttemptSource,
   AttemptStatus,
   StudentRecordRow,
   TeacherAttemptSource,
@@ -8,6 +7,7 @@ import { cn } from "cn";
 import { ChevronLeft, ChevronRight, Clock3 } from "lucide-react";
 import { Link, useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
+import { SourceBadge } from "@/components/source-badge";
 import { formatCnTime } from "@/lib/time";
 import { recordReviewHref } from "./record-review-navigation";
 
@@ -45,39 +45,6 @@ function RecordStatusBadge({ status }: { status: AttemptStatus }) {
       className={`rounded-full px-2.5 py-0.5 text-xs ${STATUS_BADGE_CLASS[status]}`}
     >
       {RECORD_STATUS_LABELS[status]}
-    </span>
-  );
-}
-
-/** 来源徽章配色：作业蓝、课程练习紫、错题重练橙、讲练绿（与教师数据页同配色词表） */
-const SOURCE_BADGE_CLASS: Record<AttemptSource, string> = {
-  assignment: "bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-300",
-  course:
-    "bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-300",
-  wrong:
-    "bg-orange-100 text-orange-700 dark:bg-orange-500/20 dark:text-orange-300",
-  lesson: "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300",
-};
-
-/** 来源中文（作业 / 课程练习 / 错题重练 / 讲练；与教师数据页同词表） */
-const SOURCE_LABELS: Record<AttemptSource, string> = {
-  assignment: "作业",
-  course: "课程练习",
-  wrong: "错题重练",
-  lesson: "讲练",
-};
-
-/** 来源徽章（与教师数据页同配色） */
-export function RecordSourceBadge({
-  sourceType,
-}: {
-  sourceType: AttemptSource;
-}) {
-  return (
-    <span
-      className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${SOURCE_BADGE_CLASS[sourceType]}`}
-    >
-      {SOURCE_LABELS[sourceType]}
     </span>
   );
 }
@@ -135,7 +102,7 @@ export function RecordCard({ row }: { row: StudentRecordRow }) {
         )}
       >
         <p className="flex flex-wrap items-center gap-2 sm:col-span-2">
-          <RecordSourceBadge sourceType={row.sourceType} />
+          <SourceBadge sourceType={row.sourceType} />
           <RecordStatusBadge status={row.status} />
           <span className="ml-auto text-xs text-muted-foreground">
             {formatCnTime(activityAt)}

@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
+import { LessonBadge } from "@/components/source-badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -988,9 +989,7 @@ function LectureListView({
             <p className="flex min-w-0 flex-1 items-center gap-2 px-1">
               {lecture.kind === "lesson" ? (
                 // 讲练页（2026-10 讲练一体）：教师侧仅提示形态，点击仍进编辑/预览
-                <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300">
-                  讲练
-                </span>
+                <LessonBadge />
               ) : null}
               <span className="min-w-0 truncate text-sm font-medium">
                 {lecture.title}

@@ -1,11 +1,11 @@
 import type {
-  AttemptSource,
   AttemptStatus,
   TeacherAttemptCard,
   TeacherAttemptSource,
 } from "@tutor/contract";
 import { ChevronLeft, ChevronRight, Clock3 } from "lucide-react";
 import { Link } from "react-router";
+import { SourceBadge } from "@/components/source-badge";
 import { Button } from "@/components/ui/button";
 import { formatRelativeTime } from "@/lib/time";
 import type { AttemptViewMode } from "./attempt-filters";
@@ -48,32 +48,7 @@ export function AttemptStatusBadge({ status }: { status: AttemptStatus }) {
   );
 }
 
-/** 来源徽章（作业 / 课程练习 / 错题重练 / 讲练；与学生端记录卡同配色词表） */
-const SOURCE_BADGE_CLASS: Record<AttemptSource, string> = {
-  assignment: "bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-300",
-  course:
-    "bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-300",
-  wrong:
-    "bg-orange-100 text-orange-700 dark:bg-orange-500/20 dark:text-orange-300",
-  lesson:
-    "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300",
-};
-
-function SourceBadge({ sourceType }: { sourceType: AttemptSource }) {
-  return (
-    <span
-      className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${SOURCE_BADGE_CLASS[sourceType]}`}
-    >
-      {sourceType === "assignment"
-        ? "作业"
-        : sourceType === "course"
-          ? "课程练习"
-          : sourceType === "wrong"
-            ? "错题重练"
-            : "讲练"}
-    </span>
-  );
-}
+/** 来源徽章与词表：components/source-badge 单源（与学生端记录卡同配色词表） */
 
 /** 来源上下文描述（与详情页头同口径；T3.2b 起待批队列卡片共用） */
 export function sourceContextOf(card: TeacherAttemptSource): string {

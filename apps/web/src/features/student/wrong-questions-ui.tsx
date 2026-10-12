@@ -22,7 +22,8 @@ import {
 } from "@/features/attempt/answer-format";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { DISPLAY_TZ, formatCnTime } from "@/lib/time";
-import { RecordSourceBadge, recordTitleOf } from "./records-views";
+import { SourceBadge } from "@/components/source-badge";
+import { recordTitleOf } from "./records-views";
 
 // 与 lib/time.ts 同一 dayjs 单例（extend 幂等；本文件分组函数独立可用）
 dayjs.extend(utc);
@@ -502,7 +503,7 @@ export function WrongQuestionItem({
       <RoundsHistory question={question} />
 
       <p className="flex flex-wrap items-center gap-2 border-t border-border pt-3 text-xs text-muted-foreground">
-        <RecordSourceBadge sourceType={question.sourceType} />
+        <SourceBadge sourceType={question.sourceType} />
         <span className="min-w-0 truncate">
           最近来源：{recordTitleOf(question)}
           {question.courseName !== null && `（${question.courseName}）`}
