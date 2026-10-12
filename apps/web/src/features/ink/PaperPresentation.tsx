@@ -7,6 +7,7 @@ export function PaperPresentation({
   fullscreen,
   label,
   context,
+  contextLabel = "题干",
   heading,
   onClose,
   children,
@@ -14,6 +15,7 @@ export function PaperPresentation({
   fullscreen: boolean;
   label: string;
   context?: ReactNode;
+  contextLabel?: string;
   heading?: string;
   onClose(): void | Promise<void>;
   children: ReactNode;
@@ -142,9 +144,9 @@ export function PaperPresentation({
               {context && (
                 <details open>
                   <summary className="cursor-pointer text-xs text-muted-foreground">
-                    题干
+                    {contextLabel}
                   </summary>
-                  <div className="max-h-[max(48px,calc(28dvh-88px))] overflow-y-auto pt-1">
+                  <div className="max-h-[40dvh] overflow-y-auto overscroll-contain pt-1">
                     {context}
                   </div>
                 </details>

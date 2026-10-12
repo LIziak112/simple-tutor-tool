@@ -90,6 +90,8 @@ export interface NoteLayerProps {
   /** 题头已提供入口时隐藏重复按钮。 */
   showTrigger?: boolean;
   stemMd?: string;
+  /** 学生公开选项，用于全屏参考；不包含答案或解析。 */
+  options?: readonly string[] | undefined;
 }
 
 export function NoteLayer({
@@ -100,6 +102,7 @@ export function NoteLayer({
   ariaPrefix = "本题",
   showTrigger = true,
   stemMd,
+  options,
 }: NoteLayerProps) {
   const session = useNoteSessionRef();
   const editor = useNoteEditor({
@@ -222,7 +225,24 @@ export function NoteLayer({
         fullscreen={fullscreen}
         label={`${label}全屏`}
         heading={label}
-        context={stemMd ? <RichMarkdown source={stemMd} /> : label}
+        contextLabel={options?.length ? "题目（含选项）" : "题干"}
+        context={
+          <>
+            {stemMd ? <RichMarkdown source={stemMd} /> : label}
+            {options && options.length > 0 && (
+              <ol aria-label="参考选项" className="mt-2 flex flex-col gap-2">
+                {options.map((option, index) => (
+                  <li key={option} className="flex items-baseline gap-2">
+                    <span className="shrink-0 font-medium">
+                      {String.fromCharCode(65 + index)}
+                    </span>
+                    <RichMarkdown source={option} className="min-w-0 flex-1" />
+                  </li>
+                ))}
+              </ol>
+            )}
+          </>
+        }
         onClose={closeFullscreen}
       >
         {paperError && (
