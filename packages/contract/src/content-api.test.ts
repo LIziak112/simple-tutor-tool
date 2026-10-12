@@ -397,6 +397,7 @@ describe("学生端讲义契约（T2.3；T2A.5 扩展分组与配套练习）", 
         data: {
           id: summary.id,
           title: summary.title,
+          kind: "lecture",
           markdown: "# 第1讲 有理数\n\n## 一、正数与负数\n",
           updatedAt: summary.updatedAt,
           courseId,
@@ -416,6 +417,7 @@ describe("学生端讲义契约（T2.3；T2A.5 扩展分组与配套练习）", 
         data: {
           id: summary.id,
           title: summary.title,
+          kind: "lecture",
           markdown: "# 第1讲 有理数\n",
           updatedAt: summary.updatedAt,
           courseId,
@@ -431,6 +433,7 @@ describe("学生端讲义契约（T2.3；T2A.5 扩展分组与配套练习）", 
     const base = {
       id: summary.id,
       title: summary.title,
+      kind: "lecture",
       updatedAt: summary.updatedAt,
       courseId,
       courseName: "初一上",
@@ -445,6 +448,100 @@ describe("学生端讲义契约（T2.3；T2A.5 扩展分组与配套练习）", 
         markdown: "# 第1讲 有理数\n",
         courseId: undefined,
       }).success,
+    ).toBe(false);
+  });
+
+  // ---------- 2026-10 讲练一体：kind=lesson 的学生讲义详情安全投影 ----------
+
+  it("kind=lesson 详情：markdown 恒 null + blocks 切段 + companionUnits 恒空（嵌入单元隐藏）", () => {
+    const parsed = studentLectureDetailSchema.parse({
+      id: summary.id,
+      title: summary.title,
+      kind: "lesson",
+      // 讲练页原文不下发（题块含 [[答案]]/:::solution/:::hint，防泄露根基）
+      markdown: null,
+      updatedAt: summary.updatedAt,
+      courseId,
+      courseName: "初一上",
+      companionUnits: [],
+      blocks: [
+        { type: "md", md: "# 第1讲 有理数讲练\n\n先讲一段。" },
+        { type: "question", questionId: "有理数讲练-1" },
+        { type: "md", md: "## 小结" },
+      ],
+      enabledCapabilities: ["steps", "ink"],
+    });
+    expect(parsed.markdown).toBeNull();
+    expect(parsed.blocks).toHaveLength(3);
+  });
+
+  it("kind=lesson 交叉不变式：markdown 非 null、缺 blocks、companionUnits 非空均拒绝", () => {
+    const lessonBase = {
+      id: summary.id,
+      title: summary.title,
+      kind: "lesson",
+      markdown: null,
+      updatedAt: summary.updatedAt,
+      courseId,
+      courseName: "初一上",
+      companionUnits: [],
+      blocks: [{ type: "md", md: "# 第1讲" }],
+      enabledCapabilities: ["steps", "ink"],
+    } as const;
+    // markdown 携带原文 → 拒绝（讲练页原文绝不进学生端响应）
+    expect(
+      studentLectureDetailSchema.safeParse({
+        ...lessonBase,
+        markdown: "# 第1讲 有理数讲练\n\n::::question\n……\n::::",
+      }).success,
+    ).toBe(false);
+    // 缺 blocks → 拒绝（讲练页必须以切段 + 冻结题投影下发）
+    const { blocks: _omitBlocks, ...withoutBlocks } = lessonBase;
+    void _omitBlocks;
+    expect(
+      studentLectureDetailSchema.safeParse(withoutBlocks).success,
+    ).toBe(false);
+    // companionUnits 非空 → 拒绝（题目已在页内，嵌入单元不重复出现）
+    expect(
+      studentLectureDetailSchema.safeParse({
+        ...lessonBase,
+        companionUnits: [
+          { id: "有理数讲练", title: "有理数讲练", questionCount: 1 },
+        ],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("kind=lecture 形态不变：markdown 非 null、不携带 blocks；携带 blocks 或 markdown=null 拒绝", () => {
+    const lectureBase = {
+      id: summary.id,
+      title: summary.title,
+      kind: "lecture",
+      markdown: "# 第1讲 有理数\n",
+      updatedAt: summary.updatedAt,
+      courseId,
+      courseName: "初一上",
+      companionUnits: [],
+      enabledCapabilities: ["steps", "ink"],
+    } as const;
+    expect(studentLectureDetailSchema.parse(lectureBase).kind).toBe("lecture");
+    // 纯讲义不得携带 blocks（切段是讲练页专属形态）
+    expect(
+      studentLectureDetailSchema.safeParse({
+        ...lectureBase,
+        blocks: [{ type: "md", md: "# 第1讲" }],
+      }).success,
+    ).toBe(false);
+    // 纯讲义 markdown 恒非 null
+    expect(
+      studentLectureDetailSchema.safeParse({ ...lectureBase, markdown: null })
+        .success,
+    ).toBe(false);
+    // 缺 kind → 拒绝（必填）
+    const { kind: _omitKind, ...withoutKind } = lectureBase;
+    void _omitKind;
+    expect(
+      studentLectureDetailSchema.safeParse(withoutKind).success,
     ).toBe(false);
   });
 });

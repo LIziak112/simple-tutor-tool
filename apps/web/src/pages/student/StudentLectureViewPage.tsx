@@ -235,7 +235,12 @@ export default function StudentLectureViewPage() {
   }
 
   const outline = useMemo(
-    () => (lectureQuery.data ? extractOutline(lectureQuery.data.markdown) : []),
+    // 2026-10 讲练一体：kind=lesson 时 markdown 恒 null（安全投影）——本页对
+    // lesson 的重定向由讲练页任务接入，这里空串兜底（纯讲义不受影响）
+    () =>
+      lectureQuery.data
+        ? extractOutline(lectureQuery.data.markdown ?? "")
+        : [],
     [lectureQuery.data],
   );
 
@@ -380,8 +385,9 @@ export default function StudentLectureViewPage() {
                 </span>
               </p>
               <EnabledCapabilitiesProvider value={capabilities}>
+                {/* kind=lesson 时 markdown 恒 null，讲练页路由接入前空串兜底 */}
                 <LectureMarkdown
-                  source={lectureQuery.data.markdown}
+                  source={lectureQuery.data.markdown ?? ""}
                   className="lecture-body"
                   onDirectiveTelemetry={onDirectiveTelemetry}
                 />

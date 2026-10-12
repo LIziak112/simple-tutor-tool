@@ -767,6 +767,9 @@ export function getStudentLecture(
   return {
     id: row.id,
     title: row.title,
+    // 2026-10 讲练一体：kind=lesson 的安全投影（markdown=null + blocks）由后续
+    // 任务接入（lectures.kind 列落地后判定）；当前库只有纯讲义，恒 lecture
+    kind: "lecture",
     markdown: row.markdown,
     updatedAt: row.updatedAt,
     courseId: context.id,

@@ -43,6 +43,7 @@ const COURSE_ID = "12121212-1212-4121-8121-121212121212";
 const LECTURE: StudentLectureDetail = {
   id: LECTURE_ID,
   title: "第1讲 有理数",
+  kind: "lecture",
   updatedAt: "2026-09-20T10:00:00.000Z",
   courseId: COURSE_ID,
   courseName: "初一上",
