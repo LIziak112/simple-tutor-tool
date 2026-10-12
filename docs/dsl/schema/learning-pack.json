@@ -506,7 +506,8 @@
                 "enum": [
                   "assignment",
                   "course",
-                  "wrong"
+                  "wrong",
+                  "lesson"
                 ]
               },
               "assignmentId": {
