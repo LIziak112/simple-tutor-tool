@@ -402,6 +402,9 @@ const studentRoutes = (() => {
   const StudentLectureViewPage = lazy(
     () => import("./pages/student/StudentLectureViewPage"),
   );
+  const StudentLessonPage = lazy(
+    () => import("./pages/student/StudentLessonPage"),
+  );
   const StudentRecordsPage = lazy(
     () => import("./pages/student/StudentRecordsPage"),
   );
@@ -512,6 +515,16 @@ const studentRoutes = (() => {
           element={
             <Suspense fallback={pageFallback}>
               <StudentLectureViewPage />
+            </Suspense>
+          }
+        />
+        <Route
+          // 2026-10 讲练一体：讲练页（kind=lesson 讲义的学生作答入口——
+          // 幂等开卷 + 单题提交即时反馈；讲义阅读页对 kind=lesson 重定向至此）
+          path="lectures/:id/lesson"
+          element={
+            <Suspense fallback={pageFallback}>
+              <StudentLessonPage />
             </Suspense>
           }
         />
