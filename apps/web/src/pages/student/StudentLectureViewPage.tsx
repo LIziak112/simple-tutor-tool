@@ -101,6 +101,8 @@ export default function StudentLectureViewPage() {
   const toolbarRef = useRef<HTMLElement>(null);
   const articleRef = useRef<HTMLElement>(null);
   const outlineTriggerRef = useRef<HTMLButtonElement>(null);
+  const desktopOutlineScrollRef = useRef<HTMLDivElement>(null);
+  const mobileOutlineScrollRef = useRef<HTMLDivElement>(null);
   const pendingHeadingRef = useRef<number | null>(null);
   const capabilities = useMemo(
     () => toEnabledCapabilities(lectureQuery.data?.enabledCapabilities ?? []),
@@ -302,11 +304,15 @@ export default function StudentLectureViewPage() {
               <DialogTitle className="leading-normal">讲义目录</DialogTitle>
               <DialogDescription>选择章节，跳转到正文</DialogDescription>
             </DialogHeader>
-            <div className="min-h-0 overflow-y-auto overscroll-contain">
+            <div
+              ref={mobileOutlineScrollRef}
+              className="min-h-0 overflow-y-auto overscroll-contain"
+            >
               <LectureOutline
                 key={lectureQuery.data?.markdown}
                 items={outline}
                 currentIndex={currentIndex}
+                scrollContainerRef={mobileOutlineScrollRef}
                 onNavigate={navigateOutline}
               />
             </div>
@@ -341,11 +347,15 @@ export default function StudentLectureViewPage() {
                 <p className="mb-3 px-3 text-xs font-semibold text-muted-foreground">
                   讲义目录
                 </p>
-                <div className="max-h-[calc(100dvh-var(--lecture-toolbar-offset,5rem)-4rem)] overflow-y-auto overscroll-contain pr-1">
+                <div
+                  ref={desktopOutlineScrollRef}
+                  className="max-h-[calc(100dvh-var(--lecture-toolbar-offset,5rem)-4rem)] overflow-y-auto overscroll-contain pr-1"
+                >
                   <LectureOutline
                     key={lectureQuery.data?.markdown}
                     items={outline}
                     currentIndex={currentIndex}
+                    scrollContainerRef={desktopOutlineScrollRef}
                     onNavigate={navigateOutline}
                   />
                 </div>

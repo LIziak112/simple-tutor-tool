@@ -23,6 +23,10 @@ test("长讲义的返回、章节目录、窄屏焦点与导航恢复", async ({
     "第二讲：数轴与绝对值",
     "第三讲：分类讨论",
     "总结",
+    ...Array.from(
+      { length: 12 },
+      (_, index) => `拓展第 ${index + 1} 讲：数轴分析与分类讨论`,
+    ),
   ] as const;
   const markdown = [
     "---",
@@ -76,6 +80,67 @@ test("长讲义的返回、章节目录、窄屏焦点与导航恢复", async ({
   ).toHaveCount(1);
   const outline = page.getByRole("navigation", { name: "讲义目录" });
   await expect(outline).toBeVisible();
+
+  // 目录比视口长：随正文阅读定位小节，独立目录应居中而不推动正文。
+  await page.setViewportSize({ width: 1440, height: 650 });
+  const laterChapter = chapters[10];
+  if (!laterChapter) throw new Error("缺少长目录验收章节");
+  await page
+    .getByRole("heading", { name: laterChapter, exact: true })
+    .evaluate((element) =>
+      element.scrollIntoView({ block: "start", behavior: "instant" }),
+    );
+  await expect(
+    outline.getByRole("button", { name: laterChapter, exact: true }),
+  ).toHaveAttribute("aria-current", "location");
+  async function centeringError() {
+    return outline.evaluate((nav) => {
+      const container = nav.parentElement;
+      const selected = nav.querySelector('[aria-current="location"]');
+      if (!container || !selected) return Number.POSITIVE_INFINITY;
+      const itemBox = selected.getBoundingClientRect();
+      const box = container.getBoundingClientRect();
+      const desired =
+        container.scrollTop +
+        itemBox.top +
+        itemBox.height / 2 -
+        box.top -
+        container.clientTop -
+        container.clientHeight / 2;
+      const clamped = Math.max(
+        0,
+        Math.min(desired, container.scrollHeight - container.clientHeight),
+      );
+      return Math.abs(clamped - container.scrollTop);
+    });
+  }
+  await expect.poll(centeringError).toBeLessThan(3);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const laterGroup = outline.getByRole("group", {
+    name: laterChapter,
+    exact: true,
+  });
+  await laterGroup
+    .getByRole("button", { name: "一、母题精讲", exact: true })
+    .click();
+  await expect(
+    laterGroup.getByRole("button", { name: "一、母题精讲", exact: true }),
+  ).toHaveAttribute("aria-current", "location");
+  await expect.poll(centeringError).toBeLessThan(3);
+  await page.screenshot({
+    path: testInfo.outputPath("lecture-outline-centered.png"),
+  });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const positionBefore = await page.evaluate(() => window.scrollY);
+  // 展开其他目录章只改变目录高度；收起整个侧栏会改变正文宽度，不能拿来验证滚动隔离。
+  await outline
+    .getByRole("button", { name: `展开${chapters[0]}的子目录`, exact: true })
+    .evaluate((button) => (button as HTMLButtonElement).click());
+  await expect.poll(centeringError).toBeLessThan(3);
+  expect(await page.evaluate(() => window.scrollY)).toBe(positionBefore);
+  await page.getByRole("button", { name: "收起目录", exact: true }).click();
+  await page.getByRole("button", { name: "展开目录", exact: true }).click();
+  await expect.poll(centeringError).toBeLessThan(3);
   await outline.getByRole("button", { name: chapters[2], exact: true }).click();
   const target = page.getByRole("heading", { name: chapters[2], exact: true });
   await expect(target).toBeFocused();
@@ -155,6 +220,10 @@ test("长讲义的返回、章节目录、窄屏焦点与导航恢复", async ({
     await page.screenshot({
       path: testInfo.outputPath(`lecture-${width}.png`),
     });
+    await trigger.click();
+    await expect(dialog).toBeVisible();
+    await expect.poll(centeringError).toBeLessThan(3);
+    await dialog.press("Escape");
   }
 
   await page.setViewportSize({ width: 1024, height: 900 });
