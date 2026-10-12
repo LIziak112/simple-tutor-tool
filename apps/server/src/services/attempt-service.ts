@@ -51,6 +51,7 @@ import {
   attempts,
   type Course,
   courses,
+  lectures,
   notes,
   type Question as QuestionRow,
   questions,
@@ -137,15 +138,14 @@ import { jsonOf, snapshotOfRow } from "./snapshot";
  * （见 buildResultData）；截止后读时自动恢复。
  */
 
-/** attempt 行 → 摘要（接口形态）；导出供 wrong-practice.ts 组卷复用（同一投影） */
+/** attempt 行 → 摘要（接口形态）；导出供 wrong-practice.ts / lesson-service.ts 组卷复用（同一投影） */
 export function attemptSummaryOf(row: Attempt): AttemptStartData {
   return {
     id: row.id,
     sourceType: row.sourceType,
     assignmentId: row.assignmentId,
-    // 2026-10 讲练一体：lesson 来源必填（讲练开卷时写入），其余来源恒 null；
-    // lecture_id 列与 lesson 组卷在后续任务落地，当前库尚无 lesson 行，恒 null
-    lectureId: null,
+    // 2026-10 讲练一体：lesson 开卷写入讲义 id，其余来源恒 null（契约反向锁定）
+    lectureId: row.lectureId,
     courseId: row.courseId,
     // T2A.7：assignment 来源多单元化后 unitId 恒 null（题目集合走
     // assignment_units）；course 来源恒有值；wrong 来源恒 null（2026-10）。
@@ -226,8 +226,9 @@ export function insertFrozenResponse(
  * 建卷冻结写入（纯插入，事务内调用）：live 题行 → 完整契约 Question 序列化 +
  * 冻结时版本与单元归属，逐行插入。建卷时 attempt 行刚插入、responses 必无行，
  * 无需查重（与懒冻结的补写入口 backfillFrozenResponses 相区分）。
+ * 2026-10 讲练一体起导出：lesson-service 开卷建卷复用（同款冻结语义）。
  */
-function insertFrozenResponses(
+export function insertFrozenResponses(
   tx: Tx,
   attemptId: string,
   liveRows: readonly QuestionRow[],
@@ -302,8 +303,9 @@ function backfillFrozenResponses(
  * attemptQuestionRows 口径，域内取题 D10）+ 各题考点名（快照 knowledge 用，
  * 只查卷内题目的关联，不拉全教师域）。
  * 教师域缺失的异常行按空集合处理（fail closed，空卷冻结）。
+ * 2026-10 讲练一体起导出：lesson-service 开卷建卷复用（嵌入单元 live 题）。
  */
-function freezeInputsOfAttempt(
+export function freezeInputsOfAttempt(
   db: Db,
   attempt: Attempt,
 ): {
@@ -504,9 +506,10 @@ export function attemptTeacherId(db: Db, attempt: Attempt): string | null {
  * T7.7：attempt → 所属教师的有效辅助能力启用集（草稿/结果视图同口径下发）。
  * 无教师域的异常学生行兜底全启用——与题目域的 fail closed（空结果）不同：
  * 开关只影响 steps 揭晓与手写入口的渲染，不是安全边界，兜底到「多给辅助」
- * 一侧不改变正式作答与判分（方案 §4.5）。
+ * 一侧不改变正式作答与判分（方案 §4.5）。2026-10 讲练一体起导出：
+ * lesson-service 开卷投影同口径复用。
  */
-function attemptEnabledCapabilities(
+export function attemptEnabledCapabilities(
   db: Db,
   attempt: Attempt,
 ): CapabilitySwitch[] {
@@ -520,6 +523,8 @@ function attemptEnabledCapabilities(
  * attempt 的有序单元 id 列表（T2A.7）：
  * - course 来源：[attempt.unitId]（单单元，创建时必写；防御性空列表兜底异常行；
  *   课程侧可见性由 requireVisibleCourseUnit 把关）；
+ * - lesson 来源（2026-10 讲练一体）：[attempt.unitId]（嵌入单元的快照值，开卷
+ *   时写入；零题讲练页为讲义 id 占位——该值下无题目行，冻结结果为空卷）；
  * - assignment 来源：该作业 assignment_units 按 order 升序的列表（作业行经 FK
  *   必存在——含已删作业，作答不随作业软删消失）。
  *   D16：**单元软删不影响作业通道**——引用行保留，题目照常下发/判分；
@@ -533,7 +538,7 @@ export function attemptUnitIds(db: Db, attempt: Attempt): string[] {
   if (attempt.sourceType === "wrong") {
     return [];
   }
-  if (attempt.sourceType === "course") {
+  if (attempt.sourceType === "course" || attempt.sourceType === "lesson") {
     return attempt.unitId !== null ? [attempt.unitId] : [];
   }
   const assignmentId = attempt.assignmentId;
@@ -597,8 +602,10 @@ export const UNGROUPED_TITLE = "未分组题目";
  * answers/solutionMd/sourceMd 一律剥离——与 publicQuestionsOfRows 同一防泄露
  * 口径（fail closed，经 attemptQuestionPublicSchema.parse strip 未知键）。
  * questionRevisionId = 该题冻结 responses 行 id（不透明版本引用，交卷回传）。
+ * 2026-10 讲练一体起导出：lesson-service 开卷投影的 questions 平铺复用
+ * （同一 fail-closed 投影，防泄露口径单一出处）。
  */
-function publicOfSnapshot(
+export function publicOfSnapshot(
   question: Question,
   questionRevisionId: string,
 ): AttemptQuestionPublic {
@@ -866,6 +873,29 @@ function attemptSourceMeta(db: Db, attempt: Attempt): AttemptSourceMeta {
     //（「错题重练 · 第 n 次」的来源行由前端从 attemptNo 拼）
     return { title: WRONG_PRACTICE_TITLE, courseName: null, dueAt: null };
   }
+  if (attempt.sourceType === "lesson") {
+    // 讲练页（2026-10）：标题 = 讲练页讲义当前标题（D1 引用语义），不限截止
+    //（lesson 当题释放恒题级粒度，不适用 answerRelease，见 attemptSourceSchema）；
+    // courseId 可空（打开时来自哪门课），课程名随行
+    const lectureRow = db
+      .select({ title: lectures.title })
+      .from(lectures)
+      .where(eq(lectures.id, attempt.lectureId ?? ""))
+      .get();
+    const course: Course | undefined =
+      attempt.courseId !== null
+        ? db
+            .select()
+            .from(courses)
+            .where(eq(courses.id, attempt.courseId))
+            .get()
+        : undefined;
+    return {
+      title: lectureRow?.title ?? "讲练练习",
+      courseName: course?.title ?? null,
+      dueAt: null,
+    };
+  }
   if (attempt.sourceType === "course") {
     // 课程练习：标题 = 单元当前标题（D1 引用而非复制）；不限截止（D11 交卷即公布）。
     // T2B.5：单元标题按 attempt → student.teacherId 域内读（D10）
@@ -1104,17 +1134,20 @@ export function answerOf(answerJson: string | null): StudentAnswer | null {
 // 含坏数据 warn 留痕）——本文件经顶部 import 使用，不再留平行 safeParse。
 
 /**
- * 新建 draft attempt 的行字面量（三来源建卷共用；T6R.3 建卷即冻结——
+ * 新建 draft attempt 的行字面量（四来源建卷共用；T6R.3 建卷即冻结——
  * frozenAt=startedAt、legacyUnverified=false，快照行随建卷事务预插）。
- * wrong 组卷复用时三归属键传 null、attemptNo 按已有 wrong 卷数 +1。
+ * wrong 组卷复用时三归属键传 null、attemptNo 按已有 wrong 卷数 +1；
+ * lesson 开卷（2026-10）传 lectureId（所属讲练页，契约归属不变式）。
  */
 export function newDraftAttempt(config: {
   id: string;
   studentId: string;
-  sourceType: "assignment" | "course" | "wrong";
+  sourceType: "assignment" | "course" | "wrong" | "lesson";
   assignmentId: string | null;
   courseId: string | null;
   unitId: string | null;
+  /** 所属讲练页（lectures.id）；仅 lesson 来源传值，其余恒 null（2026-10） */
+  lectureId?: string | null;
   attemptNo: number;
   startedAt: string;
 }): Attempt {
@@ -1125,9 +1158,8 @@ export function newDraftAttempt(config: {
     assignmentId: config.assignmentId,
     courseId: config.courseId,
     unitId: config.unitId,
-    // 讲练一体（2026-10）：lecture_id 列已建，lesson 开卷在后续任务接入——
-    // 本函数只服务 assignment/course/wrong 三来源建卷，lectureId 恒 null
-    lectureId: null,
+    // 讲练一体（2026-10）：lesson 开卷写入讲义 id；assignment/course/wrong 恒 null
+    lectureId: config.lectureId ?? null,
     attemptNo: config.attemptNo,
     status: "draft",
     startedAt: config.startedAt,
@@ -1784,8 +1816,11 @@ function buildDraftData(db: Db, attempt: Attempt): AttemptDraftData {
  * 结果视图的单题行（快照投影：除已解锁条目外无 hints 内容，options 转纯文本；
  * D9〔T3.5〕新增 teacherMark / teacherComment / finalCorrect 透传 responses 行）。
  * 快照由调用方传入（buildResultData 预加载或现场 parse，单一解析出口 snapshotOfRow）。
+ * **stemMd 是作答时原文（含 [[答案]] 标记）**——消费方下发前必须自行经
+ * studentStemMd 学生端投影（buildResultData 的 releaseAwareQuestion 与
+ * lesson-service 的 released 条目同法）。2026-10 讲练一体起导出供后者复用。
  */
-function resultQuestionOf(
+export function resultQuestionOf(
   row: ResponseRow,
   snapshot: Question,
 ): AttemptResultQuestion {
