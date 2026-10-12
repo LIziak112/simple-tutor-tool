@@ -18,6 +18,7 @@ import {
   courses,
   type InkRow,
   ink,
+  lectures,
   questions,
   type ResponseRow,
   responses,
@@ -89,7 +90,10 @@ export function inkInfoOf(
  * 来源上下文（列表卡片与详情头共用）：assignment=作业标题（+可选课程名）；
  * course=单元标题 + 课程名 + attemptNo（「单元标题 · 第 n 次」）；wrong=错题
  * 重练（2026-10：courseId/assignmentId/unitId 全 null，展示「错题重练 ·
- * 第 n 次」，由前端/CSV 拼串）。
+ * 第 n 次」，由前端/CSV 拼串）；lesson=讲练页（2026-10 讲练一体：unitId 为
+ * 嵌入单元快照值，**unitTitle 承载讲义标题**——记录/教师列表的展示标题
+ * 口径「标题=讲义标题」，契约形态字段已可表达（teacherAttemptSourceSchema
+ * 注释），讲义行异常缺失时兜底嵌入单元标题/attempt.unitId）。
  * 单元/课程按 teacherId 域内读；assignment 行经 FK 必存在（含已软删作业——
  * 作答记录不随作业删除消失，标题为布置时快照），异常缺失时兜底占位文案。
  * T3.2b 起导出——待批队列卡片拼装复用（mark-response.ts）。
@@ -108,6 +112,47 @@ export function sourceOf(
       assignmentTitle: null,
       unitId: null,
       unitTitle: null,
+      attemptNo: attempt.attemptNo,
+    };
+  }
+  if (attempt.sourceType === "lesson") {
+    // 讲练页（2026-10）：courseId 可空（打开时来自哪门课），不挂作业；
+    // unitId = 嵌入单元快照值（分组键），unitTitle = 讲义标题（展示口径）
+    const course =
+      attempt.courseId !== null
+        ? db
+            .select({ title: courses.title })
+            .from(courses)
+            .where(eq(courses.id, attempt.courseId))
+            .get()
+        : undefined;
+    const lecture =
+      attempt.lectureId !== null
+        ? db
+            .select({ title: lectures.title })
+            .from(lectures)
+            .where(eq(lectures.id, attempt.lectureId))
+            .get()
+        : undefined;
+    const unit =
+      lecture === undefined && attempt.unitId !== null
+        ? db
+            .select({ title: units.title })
+            .from(units)
+            .where(
+              and(eq(units.teacherId, teacherId), eq(units.id, attempt.unitId)),
+            )
+            .get()
+        : undefined;
+    return {
+      sourceType: "lesson",
+      courseId: attempt.courseId,
+      courseName: course?.title ?? null,
+      assignmentId: null,
+      assignmentTitle: null,
+      unitId: attempt.unitId,
+      // 讲义标题 → 嵌入单元标题 → attempt.unitId（人文文案兜底，不露异常）
+      unitTitle: lecture?.title ?? unit?.title ?? attempt.unitId ?? "讲练练习",
       attemptNo: attempt.attemptNo,
     };
   }

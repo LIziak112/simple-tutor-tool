@@ -6,7 +6,7 @@ import type {
   PendingMarkListQuery,
   StudentAnswer,
 } from "@tutor/contract";
-import { and, asc, eq, isNotNull, isNull, ne } from "drizzle-orm";
+import { and, asc, eq, isNotNull, isNull, ne, or } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
   type Attempt,
@@ -29,12 +29,15 @@ import {
  * 批注与待批队列业务层（T3.2b，Phase3 清单 D3/D4）：
  * - markResponse：教师批注单题（判定 + 评语一次提交）。归属链
  *   response → attempt → student → teacherId（非本人 → 404 RESPONSE_NOT_FOUND，
- *   不暴露存在性，T2B 域口径）；draft attempt → 409 NOT_SUBMITTED（未交卷的
- *   题没有可批改的冻结行）；**允许对任何已交卷的题批注/改判**（含自动判过的
- *   题，入口在详情页）。事务内：写 teacherMark/teacherComment → 本题
- *   finalCorrect = teacherMark ?? autoCorrect（D3 持久化口径）→ 用
+ *   不暴露存在性，T2B 域口径）；行未交（attempt 为 draft 且该行未单题提交）
+ *   → 409 NOT_SUBMITTED（未交卷的题没有可批改的冻结行；2026-10 讲练一体起
+ *   lesson 进行中卷已单题提交的行允许课中批改，与待批谓词同口径）；
+ *   **允许对任何已交卷的题批注/改判**（含自动判过的题，入口在详情页）。
+ *   事务内：写 teacherMark/teacherComment → 本题 finalCorrect =
+ *   teacherMark ?? autoCorrect（D3 持久化口径）→ 已离开 draft 的卷用
  *   attempt-service 的 finalScoreOf 重算整卷 scoreFinal/status 写回（D2 状态机，
- *   与交卷链路同一实现，不复制公式）；
+ *   与交卷链路同一实现，不复制公式；lesson 进行中卷不重算——收尾链路驱动，
+ *   课中批改不提前收卷）；
  * - listPendingMarks：待批队列（D4 共享谓词口径——已交卷 attempt 中
  *   finalCorrect IS NULL 的 responses，含只写笔迹未填最终答案的手写题）；
  *   教师域过滤 + courseId/assignmentId/studentId 筛选 + submittedAt 升序
@@ -115,7 +118,10 @@ export function markResponse(
   if (row === undefined || row.ownerTeacherId !== teacherId) {
     throw new HttpError(404, "RESPONSE_NOT_FOUND", "作答记录不存在");
   }
-  if (row.attempt.status === "draft") {
+  if (row.attempt.status === "draft" && row.response.submittedAt === null) {
+    // draft 卷的行未单题提交（与待批谓词同口径的镜像守卫）；lesson 进行中卷
+    // 已单题提交的行（responses.submittedAt 非空）允许课中批改——非 lesson 的
+    // draft 行恒不满足 submittedAt 条件，409 行为零变化
     throw new HttpError(409, "NOT_SUBMITTED", "未交卷的作答不能批注");
   }
 
@@ -134,6 +140,9 @@ export function markResponse(
       })
       .where(eq(responses.id, responseId))
       .run();
+    // 已离开 draft 的卷才重算整卷状态（lesson 进行中卷的 D2 状态机由收尾
+    // 链路驱动——课中批改只落本题判定，不提前收卷）
+    if (row.attempt.status === "draft") return;
     // 2. 整卷重算（finalScoreOf 与交卷链路同一实现，D2 状态机不复制公式）。
     //    与待批谓词同口径过滤幽灵行（快照空的历史题目缺失行不进重算——
     //    它们永远 null finalCorrect，计入会让 attempt 永卡 submitted）
@@ -181,7 +190,9 @@ export function markResponse(
         : null,
     teacherComment: updated.teacherComment,
     finalCorrect: updated.finalCorrect,
-    // 批注只发生在已交卷 attempt，回读的 status 不会是 draft
+    // 批注只发生在「题已交」的 attempt；lesson 进行中卷（attempt 仍 draft）课中
+    // 批改时契约枚举无 draft，按 D2 语义映射 submitted（仍有未判定/未提交行，
+    // 收尾链路稍后写终态）
     attemptStatus: attempt.status === "graded" ? "graded" : "submitted",
     scoreFinal: attempt.scoreFinal,
     pendingCount: pendingMarkCount(db, attempt),
@@ -191,12 +202,14 @@ export function markResponse(
 // ---------- GET /api/teacher/pending-marks ----------
 
 /**
- * 待批队列（D4）：共享谓词口径（responses.finalCorrect IS NULL 且 attempt
- * 已交卷）+ 教师域过滤（students.teacherId）+ 可选 courseId/assignmentId/
- * studentId 筛选。排序 submittedAt 升序（先交先批；同刻并列按 attemptId、
- * questionId 升序兜底稳定，同一 attempt 的待批题相邻）。无分页（见契约注释）。
- * 卡片拼装：按 attempt 分组复用 sourceOf/inkByQuestionOf（每 attempt 一次查询），
- * 快照坏数据行跳过并留痕（snapshotOfRow 内 warn，全服务端同一口径）。
+ * 待批队列（D4）：共享谓词口径（finalCorrect IS NULL 且快照非空，且题已「交」
+ * ——attempt 非 draft 或该行已单题提交，lesson 进行中卷已提交的手写/无答案题
+ * 即时进队供课中批改）+ 教师域过滤（students.teacherId）+ 可选 courseId/
+ * assignmentId/studentId 筛选。排序 submittedAt 升序（先交先批；lesson 进行中
+ * 卷 attempt.submittedAt 为空，按 startedAt 兜底——开卷即排队）。无分页（见
+ * 契约注释）。卡片拼装：按 attempt 分组复用 sourceOf/inkByQuestionOf（每
+ * attempt 一次查询），快照坏数据行跳过并留痕（snapshotOfRow 内 warn，全服务
+ * 端同一口径）。
  */
 export function listPendingMarks(
   db: Db,
@@ -205,9 +218,12 @@ export function listPendingMarks(
 ): PendingMarkListData {
   const where = and(
     eq(students.teacherId, teacherId),
-    // 共享谓词（pending-mark.ts 同口径）：已交卷 attempt + finalCorrect IS NULL
+    // 共享谓词（pending-mark.ts 同口径，D4 2026-10 扩展）：题已「交」
+    // （attempt 非 draft **或该行已单题提交**——lesson 进行中卷已提交的
+    // 手写/无答案题即时进队，课堂当场批改；只有 lesson 单题提交会写
+    // responses.submittedAt，非 lesson 行为零变化）+ finalCorrect IS NULL
     // + 快照非空（T6R.3：幽灵行不进队列——它们不可批也不显示）
-    ne(attempts.status, "draft"),
+    or(ne(attempts.status, "draft"), isNotNull(responses.submittedAt)),
     isNull(responses.finalCorrect),
     isNotNull(responses.questionSnapshotJson),
     query.studentId !== undefined

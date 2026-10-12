@@ -2098,3 +2098,188 @@ describe("整卷收尾 lesson 语义（submitAttempt 对未提交行执行，已
     );
   });
 });
+
+// ==================== 待批谓词与记录聚合收录 lesson（提交序列第 7 步第 2 部分） ====================
+
+describe("待批谓词扩 submittedAt：lesson 进行中卷已提交的待批题即时进教师队列", () => {
+  it("单题提交 fill（待批）后立即出现在 GET /api/teacher/pending-marks；未提交时不出现；教师批改后出队", async () => {
+    const { env, attemptId, revisions } = await makeSubmitEnv();
+
+    // 开卷未提交：draft 卷不构成待批（既有口径），队列无该卷
+    const before = await env.app.request("/api/teacher/pending-marks", {
+      headers: { cookie: env.teacherCookie },
+    });
+    expect(before.status).toBe(200);
+    const beforeMarks = (
+      (await before.json()) as { data: { marks: { attemptId: string }[] } }
+    ).data.marks;
+    expect(beforeMarks.filter((m) => m.attemptId === attemptId)).toEqual([]);
+
+    // 单题提交 fill（恒人工）→ 立即进队
+    await saveDraftAnswer(env, attemptId, S.fill, {
+      kind: "fill",
+      values: ["2"],
+    });
+    await submitQuestionOk(env, attemptId, S.fill, revisions.get(S.fill) ?? "");
+
+    const after = await env.app.request("/api/teacher/pending-marks", {
+      headers: { cookie: env.teacherCookie },
+    });
+    expect(after.status).toBe(200);
+    const marks = (
+      (await after.json()) as {
+        data: {
+          marks: {
+            attemptId: string;
+            questionId: string;
+            responseId: string;
+            sourceType: string;
+            studentName: string;
+          }[];
+        };
+      }
+    ).data.marks.filter((m) => m.attemptId === attemptId);
+    expect(marks).toHaveLength(1);
+    expect(marks[0]).toMatchObject({
+      questionId: S.fill,
+      sourceType: "lesson",
+      studentName: "成员张三",
+    });
+
+    // 教师课中批改（correct）→ 出队
+    const marked = await env.app.request(
+      `/api/teacher/responses/${marks[0]?.responseId}/mark`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          cookie: env.teacherCookie,
+        },
+        body: JSON.stringify({ mark: "correct", comment: null }),
+      },
+    );
+    expect(marked.status).toBe(200);
+
+    const cleared = await env.app.request("/api/teacher/pending-marks", {
+      headers: { cookie: env.teacherCookie },
+    });
+    const clearedMarks = (
+      (await cleared.json()) as { data: { marks: { attemptId: string }[] } }
+    ).data.marks;
+    expect(clearedMarks.filter((m) => m.attemptId === attemptId)).toEqual([]);
+
+    // 学生刷新 start：released 反映教师判定（teacherMark/finalCorrect 当前行值）
+    const start = await startOk(env);
+    const released = start.data.released[S.fill];
+    expect(released).toMatchObject({
+      autoCorrect: null, // 不可自动判——批改不改 autoCorrect
+      teacherMark: "correct",
+      finalCorrect: true,
+    });
+  });
+});
+
+describe("我的记录收录 lesson 来源（恒可回看 + 讲练标题 + 教师列表枚举）", () => {
+  it("lesson 草稿与完成卷都进记录：unitTitle=讲义标题、sourceType 筛选、pendingCount 现算；移出课程不失权", async () => {
+    const { env, attemptId, revisions } = await makeSubmitEnv();
+
+    // 进行中（draft，含 1 道已提交待批题）
+    await saveDraftAnswer(env, attemptId, S.fill, {
+      kind: "fill",
+      values: ["2"],
+    });
+    await submitQuestionOk(env, attemptId, S.fill, revisions.get(S.fill) ?? "");
+
+    const recordsRes = await env.app.request("/api/student/records", {
+      headers: { cookie: env.memberCookie },
+    });
+    expect(recordsRes.status).toBe(200);
+    const records = (
+      (await recordsRes.json()) as {
+        data: {
+          records: {
+            attemptId: string;
+            sourceType: string;
+            unitId: string | null;
+            unitTitle: string | null;
+            attemptNo: number;
+            status: string;
+            pendingCount: number | null;
+            answersReleased: boolean;
+          }[];
+        };
+      }
+    ).data.records;
+    const lessonRow = records.find((row) => row.attemptId === attemptId);
+    expect(lessonRow).toBeDefined();
+    expect(lessonRow).toMatchObject({
+      sourceType: "lesson",
+      unitTitle: "第2讲 单题提交", // 标题=讲义标题（记录聚合口径）
+      attemptNo: 1,
+      status: "draft",
+      pendingCount: 1, // 已提交待批行（D4 扩展谓词：draft + 行 submittedAt 非空）
+      answersReleased: true, // lesson 恒公布（不适用 after_due）
+    });
+
+    // sourceType=lesson 筛选
+    const filtered = await env.app.request(
+      "/api/student/records?sourceType=lesson",
+      { headers: { cookie: env.memberCookie } },
+    );
+    const filteredRows = (
+      (await filtered.json()) as { data: { records: { attemptId: string }[] } }
+    ).data.records;
+    expect(filteredRows.map((row) => row.attemptId)).toEqual([attemptId]);
+
+    // 教师端 attempts 列表（sourceType=lesson 过滤 + 来源字段）
+    const teacherList = await env.app.request(
+      "/api/teacher/attempts?sourceType=lesson",
+      { headers: { cookie: env.teacherCookie } },
+    );
+    expect(teacherList.status).toBe(200);
+    const cards = (
+      (await teacherList.json()) as {
+        data: {
+          attempts: {
+            attemptId: string;
+            sourceType: string;
+            unitTitle: string | null;
+            assignmentId: string | null;
+            attemptNo: number;
+            pendingCount: number;
+          }[];
+        };
+      }
+    ).data.attempts;
+    expect(cards.map((card) => card.attemptId)).toEqual([attemptId]);
+    expect(cards[0]).toMatchObject({
+      sourceType: "lesson",
+      unitTitle: "第2讲 单题提交",
+      assignmentId: null,
+      pendingCount: 1,
+    });
+
+    // 移出课程（D7）：lesson 不失权——草稿照常列出（对照 wrong 口径）
+    const removed = await env.app.request(
+      `/api/teacher/courses/${env.courseId}/members`,
+      {
+        method: "DELETE",
+        headers: {
+          "content-type": "application/json",
+          cookie: env.teacherCookie,
+        },
+        body: JSON.stringify({ studentIds: [env.memberStudentId] }),
+      },
+    );
+    expect(removed.status).toBe(200);
+    const afterRemoval = await env.app.request("/api/student/records", {
+      headers: { cookie: env.memberCookie },
+    });
+    const rowsAfter = (
+      (await afterRemoval.json()) as {
+        data: { records: { attemptId: string }[] };
+      }
+    ).data.records;
+    expect(rowsAfter.map((row) => row.attemptId)).toContain(attemptId);
+  });
+});

@@ -657,7 +657,8 @@ function buildMatrix(db: Db, ctx: AnalyticsContext): AnalyticsMatrix {
     return latest.status === "graded" ? "graded" : "submitted";
   };
 
-  // 待批数（D4 共享谓词；单元列聚合该单元全部历次已交卷；draft 恒 0）
+  // 待批数（D4 共享谓词，2026-10 扩展：lesson 进行中卷已单题提交的待批行
+  // 也计数——与教师待批队列同一口径；其余来源 draft 恒 0）
   const pendingByAttempt = pendingMarkCounts(db, ctx.allAttempts);
 
   const cells: Array<AnalyticsAssignmentCell | AnalyticsUnitCell> = [];
@@ -1476,7 +1477,8 @@ export function getAnalyticsOverview(
   const focus = buildFocusCard(db, ctx);
   const offline = buildOffline(db, ctx, ctx.qualifying);
 
-  // 待批数（D4 共享谓词；D3 域+课程筛选、不受 days——旧作业的待批同样要批）
+  // 待批数（D4 共享谓词（2026-10 扩展同待批队列）；D3 域+课程筛选、不受
+  // days——旧作业的待批同样要批）
   const pendingByAttempt = pendingMarkCounts(db, ctx.allAttempts);
   let pendingMarkCount = 0;
   for (const count of pendingByAttempt.values()) pendingMarkCount += count;

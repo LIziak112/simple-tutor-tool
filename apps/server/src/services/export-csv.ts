@@ -344,11 +344,18 @@ export function exportCsv(
         : [],
     );
 
-    // 来源列的固定值（整份 attempt 一致）
-    const sourceTypeText = source.sourceType === "course" ? "课程练习" : "作业";
+    // 来源列的固定值（整份 attempt 一致；lesson 的 unitTitle 承载讲义标题）
+    const sourceTypeText =
+      source.sourceType === "course"
+        ? "课程练习"
+        : source.sourceType === "wrong"
+          ? "错题重练"
+          : source.sourceType === "lesson"
+            ? "讲练"
+            : "作业";
     const courseText = source.courseName ?? "";
     const assignmentOrUnitText =
-      source.sourceType === "course"
+      source.sourceType === "course" || source.sourceType === "lesson"
         ? `${source.unitTitle} · 第 ${source.attemptNo} 次`
         : (source.assignmentTitle ?? "");
     const submittedText = beijingDateTimeOf(

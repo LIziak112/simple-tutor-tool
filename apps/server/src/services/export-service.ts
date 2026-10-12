@@ -2246,9 +2246,11 @@ function renderSummaryMd(input: SummaryMdInput): string {
           ? `${row.unitTitle ?? "—"}（课程练习）`
           : row.sourceType === "wrong"
             ? "错题重练"
-            : (row.assignmentTitle ?? "—");
+            : row.sourceType === "lesson"
+              ? `${row.unitTitle ?? "—"}（讲练）`
+              : (row.assignmentTitle ?? "—");
       lines.push(
-        `| ${name} | ${row.sourceType === "course" ? "课程练习" : row.sourceType === "wrong" ? "错题重练" : "作业"} | ${
+        `| ${name} | ${row.sourceType === "course" ? "课程练习" : row.sourceType === "wrong" ? "错题重练" : row.sourceType === "lesson" ? "讲练" : "作业"} | ${
           row.courseName ?? "—"
         } | ${target} | 第 ${row.attemptNo} 次 | ${
           row.isFirst ? "是" : "否"
