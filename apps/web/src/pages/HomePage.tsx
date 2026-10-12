@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { useStudentMe } from "@/features/auth/student-auth";
 import { useTeacherMe } from "@/features/auth/teacher-auth";
 import { fetchHealth } from "@/lib/api";
+import { BRAND_NAME, BRAND_TAGLINE } from "@/lib/brand";
 import { formatCnTime } from "@/lib/time";
 
 /**
@@ -81,8 +82,11 @@ export function HomePage() {
   return (
     <main className="flex min-h-dvh flex-col items-center justify-center gap-8 bg-background px-6 py-12 text-foreground">
       <header className="text-center">
-        <h1 className="text-2xl font-semibold">辅导讲练工具</h1>
-        <p className="mt-1 text-sm text-muted-foreground">请选择你的身份进入</p>
+        <h1 className="text-4xl font-semibold tracking-tight">{BRAND_NAME}</h1>
+        <p lang="en" className="mt-3 text-base text-muted-foreground">
+          {BRAND_TAGLINE}
+        </p>
+        <p className="mt-5 text-sm text-muted-foreground">请选择你的身份进入</p>
       </header>
 
       <section

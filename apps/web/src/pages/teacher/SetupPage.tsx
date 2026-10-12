@@ -2,6 +2,7 @@ import { teacherLoginNameSchema, teacherPasswordSchema } from "@tutor/contract";
 import { Loader2, LockKeyhole, TriangleAlert } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { Link, Navigate, useNavigate } from "react-router";
+import { Brand } from "@/components/brand";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -90,6 +91,9 @@ export function SetupPage() {
 
   return (
     <main className="flex min-h-dvh flex-col items-center justify-center gap-6 bg-background px-6 text-foreground">
+      <div className="w-full max-w-sm">
+        <Brand />
+      </div>
       <header className="text-center">
         <h1 className="flex items-center justify-center gap-2 text-2xl font-semibold">
           <LockKeyhole aria-hidden className="size-6" />
