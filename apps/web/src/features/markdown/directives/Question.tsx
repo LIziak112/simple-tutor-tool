@@ -4,6 +4,7 @@ import type {
   QuestionType,
 } from "@tutor/contract";
 import { Sigma } from "lucide-react";
+import { useQuestionView } from "./question-view";
 import type { DirectiveProps } from "./types";
 
 /**
@@ -14,7 +15,7 @@ import type { DirectiveProps } from "./types";
  */
 
 /** 题型的中文徽章文案（键类型锁死七种题型的穷尽性；文案与 contract 的共用短版不同，属展示层口径） */
-const QUESTION_TYPE_LABELS: Readonly<Record<QuestionType, string>> = {
+export const QUESTION_TYPE_LABELS: Readonly<Record<QuestionType, string>> = {
   judge: "判断题",
   choice: "单选题",
   multi: "多选题",
@@ -83,5 +84,66 @@ export function ExampleDirective({
       </figcaption>
       <div className="text-sm leading-7">{children}</div>
     </figure>
+  );
+}
+
+/**
+ * 题块占位卡（教师讲练语境，2026-10 讲练一体）：教师预览 lesson 讲义时，
+ * ::::question 块渲染为只读占位——题目内容**编辑走题库**（单一真相源，
+ * 防讲义/题库双源漂移），预览只给定位信息（题号/题型/难度）与可折叠的
+ * 题块原文（渲染管线会把 [[参考答案]] 丢弃，原文视图原样保留）。
+ *
+ * 由映射层在 QuestionView.placeholder 模式下选用（directives/index.tsx）；
+ * attrs 同 question 指令（type/difficulty/knowledge）。降级：sourceRange
+ * 缺失（position 在管线某环节丢失）时不渲染折叠，只剩占位说明。
+ */
+export function QuestionPlaceholderDirective({
+  attrs,
+  index,
+  sourceRange,
+}: DirectiveProps<QuestionDirectiveAttrs>) {
+  const { source } = useQuestionView();
+  const raw =
+    sourceRange !== undefined
+      ? source.slice(sourceRange.start, sourceRange.end)
+      : null;
+  return (
+    <section
+      data-slot="question-placeholder"
+      className="my-4 rounded-xl border border-dashed border-border bg-muted/40 p-4"
+    >
+      <header className="mb-2 flex flex-wrap items-center gap-2 text-xs">
+        <span className="rounded-md bg-primary px-2 py-1 font-semibold text-primary-foreground">
+          第 {index} 题
+        </span>
+        <span className="rounded-md border border-border bg-card px-2 py-1 text-muted-foreground">
+          {QUESTION_TYPE_LABELS[attrs.type]}
+        </span>
+        <span
+          role="img"
+          title={`难度 ${attrs.difficulty}`}
+          aria-label={`难度 ${attrs.difficulty}`}
+          className="select-none tracking-tight text-amber-500"
+        >
+          {"★".repeat(attrs.difficulty)}
+          <span className="text-muted-foreground/30">
+            {"★".repeat(5 - attrs.difficulty)}
+          </span>
+        </span>
+        <span className="text-muted-foreground">内容请在题库编辑</span>
+      </header>
+      {/* 只读原文折叠：不提供任何编辑入口（题目编辑走题库） */}
+      {raw !== null ? (
+        <details className="group">
+          <summary className="flex min-h-9 cursor-pointer list-none items-center gap-1.5 text-xs text-muted-foreground outline-none select-none focus-visible:ring-3 focus-visible:ring-ring/50 [&::-webkit-details-marker]:hidden">
+            <span className="transition-transform group-open:rotate-90">▸</span>
+            查看题目原文
+          </summary>
+          <pre className="mt-2 overflow-x-auto rounded-lg bg-card p-3 text-xs leading-6 whitespace-pre-wrap">
+            {raw}
+          </pre>
+        </details>
+      ) : null}
+    </section>
   );
 }

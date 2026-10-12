@@ -16,7 +16,28 @@ import { useSharedPreview } from "@/features/shared/shared-queries";
  * 讲义阅读同一渲染管线；共享文件是他人快照，不提供编辑）。响应里的动作清单
  * 属导入流程，这里不展示——「导入到我的资源库」切换到导入抽屉再算。
  * 文件存在 error 级 lint 时仅提示（导入会被拒绝），不影响查看；三态齐全（§4.6）。
+ * 讲练一体（2026-10）：frontmatter kind: lesson 的文件预览时题块渲染占位卡
+ * （教师域文档，题目内容编辑走题库）；lecture/mixed/practice 照常渲染题面。
  */
+
+/**
+ * 判定共享文件是否讲练页（显示用途的轻量 frontmatter 嗅探）：与 server
+ * shared-service 的 frontmatterOf 同风格——只看首块 `---` 围栏内 kind 键的
+ * 去引号值，不做完整 YAML 解析（预览形态判定，判错只影响占位卡开关）。
+ */
+function isLessonDocument(markdown: string): boolean {
+  const lines = markdown.replaceAll("\r\n", "\n").split("\n");
+  if ((lines[0] ?? "").trim() !== "---") return false;
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i] ?? "";
+    if (line.trim() === "---") return false; // 围栏结束仍未命中
+    const match = /^kind:\s*(.*)$/.exec(line);
+    if (match === null) continue;
+    return (match[1] ?? "").trim().replace(/^["']|["']$/g, "") === "lesson";
+  }
+  return false;
+}
+
 export function SharedPreviewSheet({
   file,
   onClose,
@@ -83,7 +104,13 @@ export function SharedPreviewSheet({
                 </p>
               ) : null}
               <div className="mx-auto max-w-3xl">
-                <RichMarkdown source={preview?.markdown ?? ""} />
+                <RichMarkdown
+                  source={preview?.markdown ?? ""}
+                  questionPlaceholder={
+                    (preview !== null && isLessonDocument(preview.markdown)) ||
+                    undefined
+                  }
+                />
               </div>
             </div>
             <div className="flex shrink-0 flex-wrap items-center gap-2 border-t border-border px-4 py-3">

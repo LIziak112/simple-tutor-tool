@@ -25,7 +25,12 @@ import { BoxDirective, TipDirective, WarningDirective } from "./Callout";
 import { ColDirective, ColumnsDirective } from "./Columns";
 import { BlankDirective, MarkDirective } from "./Inline";
 import { GraphDirective, ImageDirective } from "./Media";
-import { ExampleDirective, QuestionDirective } from "./Question";
+import {
+  ExampleDirective,
+  QuestionDirective,
+  QuestionPlaceholderDirective,
+} from "./Question";
+import { useQuestionView } from "./question-view";
 import {
   AnswerDirective,
   FoldDirective,
@@ -103,10 +108,22 @@ export const directiveComponents: Readonly<Record<string, DirectiveRenderer>> =
     graph: withTypedAttrs(graphDirective, GraphDirective),
   };
 
-/** react-markdown 传给 components 的 hast 元素（本层只读 properties） */
+/**
+ * 题块占位卡渲染器（教师讲练语境，2026-10 讲练一体）：**不在** directiveComponents
+ * 映射内——该映射与注册表保持 1:1（directive-registry-consistency 测试锁定），
+ * 占位卡是 question 的语境变体而非新指令；宿主在 QuestionView.placeholder
+ * 模式下以它替代 question 行。attrs 同 schema 校验（非法属性同样降级）。
+ */
+const questionPlaceholderRenderer = withTypedAttrs(
+  questionDirective,
+  QuestionPlaceholderDirective,
+);
+
+/** hast 元素（本层只读 properties 与 position） */
 interface HastElementLike {
   tagName?: string;
   properties?: Record<string, unknown>;
+  position?: HastPosition;
   children?: unknown[];
 }
 
@@ -116,6 +133,12 @@ interface DirectiveHostProps {
   children?: ReactNode;
 }
 
+/** hast 节点的 position 形态（只读偏移；sanitize 后保留） */
+interface HastPosition {
+  start?: { offset?: number };
+  end?: { offset?: number };
+}
+
 /** 从 hast properties 还原指令信息 */
 function readDirective(node: HastElementLike | undefined): {
   name: string;
@@ -123,6 +146,7 @@ function readDirective(node: HastElementLike | undefined): {
   directiveClass: string | undefined;
   index: number;
   docIndex: number;
+  sourceRange: { start: number; end: number } | undefined;
 } {
   const properties = node?.properties ?? {};
   const attrs: Record<string, string> = {};
@@ -145,6 +169,16 @@ function readDirective(node: HastElementLike | undefined): {
     directiveClass: typeof dclass === "string" ? dclass : undefined,
     index: typeof index === "number" ? index : 0,
     docIndex: typeof dindex === "number" ? dindex : 0,
+    // 原文区间（可选）：hast position 的字符偏移在 sanitize 后保留
+    //（hast-util-sanitize 会把 position 贴回节点）；丢失时缺席，消费方降级
+    sourceRange:
+      typeof node?.position?.start?.offset === "number" &&
+      typeof node.position.end?.offset === "number"
+        ? {
+            start: node.position.start.offset,
+            end: node.position.end.offset,
+          }
+        : undefined,
   };
 }
 
@@ -154,10 +188,14 @@ function createDirectiveHost(inline: boolean) {
     // 别名经注册表归一到主名（§5.1.1(3) 改名兼容）
     const definition = getDirective(info.name);
     const primaryName = definition?.name ?? info.name;
-    // 注册与组件映射均须命中；禁止从对象原型链取出“渲染器”。
-    const render =
-      definition !== undefined &&
-      Object.hasOwn(directiveComponents, primaryName)
+    // 题块占位模式（教师讲练语境，2026-10 讲练一体）：question 选用占位卡
+    // 渲染器（attrs 同 schema 校验；其余指令不受影响）
+    const { placeholder } = useQuestionView();
+    const usePlaceholder = placeholder && primaryName === "question";
+    const render = usePlaceholder
+      ? questionPlaceholderRenderer
+      : definition !== undefined &&
+          Object.hasOwn(directiveComponents, primaryName)
         ? directiveComponents[primaryName]
         : undefined;
     // 降级元素单点构造：未注册（查表未命中）与属性非法（渲染器返回 null，
@@ -177,6 +215,9 @@ function createDirectiveHost(inline: boolean) {
         // exactOptionalPropertyTypes：仅在存在时携带该字段
         ...(info.directiveClass !== undefined
           ? { directiveClass: info.directiveClass }
+          : {}),
+        ...(info.sourceRange !== undefined
+          ? { sourceRange: info.sourceRange }
           : {}),
       }) ?? degrade()
     );

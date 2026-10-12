@@ -323,14 +323,18 @@ function PendingCard({
                 ? "bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-300"
                 : card.sourceType === "wrong"
                   ? "bg-orange-100 text-orange-700 dark:bg-orange-500/20 dark:text-orange-300"
-                  : "bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-300",
+                  : card.sourceType === "lesson"
+                    ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300"
+                    : "bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-300",
             )}
           >
             {card.sourceType === "assignment"
               ? "作业"
               : card.sourceType === "wrong"
                 ? "错题重练"
-                : "课程练习"}
+                : card.sourceType === "lesson"
+                  ? "讲练"
+                  : "课程练习"}
           </span>
           <span className="min-w-0">{sourceContextOf(card)}</span>
         </p>

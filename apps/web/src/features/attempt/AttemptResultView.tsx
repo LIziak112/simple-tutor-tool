@@ -576,7 +576,9 @@ export function AttemptResultView({
           ? "返回单元练习"
           : attempt.sourceType === "wrong"
             ? "返回错题本"
-            : "返回首页")
+            : attempt.sourceType === "lesson"
+              ? "返回讲练页"
+              : "返回首页")
       }
     >
       <div className="flex flex-col gap-5">
@@ -594,15 +596,18 @@ export function AttemptResultView({
             </h2>
             {/* 来源行（T2A.6，与答题视图同口径）：课程练习带次数（历次回看可分辨
               第几次）；作业标「作业」（挂课程时「作业 · 课程名」，T2A.7）；
-              错题重练「错题重练 · 第 n 次」（2026-10） */}
+              错题重练「错题重练 · 第 n 次」（2026-10）；讲练「讲练：讲义标题 ·
+              第 n 次」（title 为讲义标题，2026-10 讲练一体） */}
             <p className="text-sm leading-relaxed text-muted-foreground">
               {attempt.sourceType === "course"
                 ? `课程：${data.courseName ?? ""} · 第 ${attempt.attemptNo} 次`
                 : attempt.sourceType === "wrong"
                   ? `错题重练 · 第 ${attempt.attemptNo} 次`
-                  : data.courseName !== null
-                    ? `作业 · ${data.courseName}`
-                    : "作业"}
+                  : attempt.sourceType === "lesson"
+                    ? `讲练：${data.title} · 第 ${attempt.attemptNo} 次`
+                    : data.courseName !== null
+                      ? `作业 · ${data.courseName}`
+                      : "作业"}
             </p>
             {attempt.submittedAt !== null && (
               <p className="text-sm leading-relaxed text-muted-foreground">

@@ -39,6 +39,10 @@ function sourceLineOf(data: TeacherAttemptDetailData): string {
   if (data.sourceType === "wrong") {
     return `错题重练 · 第 ${data.attemptNo} 次`;
   }
+  if (data.sourceType === "lesson") {
+    // 讲练（2026-10）：unitTitle 承载讲义标题（sourceOf 口径）
+    return `讲练：${data.unitTitle ?? ""} · 第 ${data.attemptNo} 次`;
+  }
   return data.courseName !== null
     ? `作业 · ${data.courseName}`
     : `作业 · ${data.assignmentTitle ?? ""}`;
@@ -69,13 +73,15 @@ function BackToDataButton() {
  *   = 该学生在该课程的**全部练习历次**（CSV「作业或单元」列含「第 n 次」，
  *   教师可按次定位本 attempt；这是 D13 参数集下最贴近的口径）；
  * - wrong 来源（2026-10）：无课程/作业可定位，取 studentId + sourceType=wrong
- *   = 该生的全部错题重练卷（同按「第 n 次」列定位）。
+ *   = 该生的全部错题重练卷（同按「第 n 次」列定位）；
+ * - lesson 来源（2026-10 讲练一体）：studentId + sourceType=lesson（courseId
+ *   仅是「打开时来自哪门课」，不作定位键）= 该生的全部讲练卷，按「第 n 次」列定位。
  */
 function exportCsvParamsOfAttempt(data: TeacherAttemptDetailData): {
   studentId: string;
   assignmentId?: string | undefined;
   courseId?: string | undefined;
-  sourceType?: "course" | "assignment" | "wrong" | undefined;
+  sourceType?: "course" | "assignment" | "wrong" | "lesson" | undefined;
 } {
   if (data.sourceType === "assignment") {
     return {
@@ -87,6 +93,12 @@ function exportCsvParamsOfAttempt(data: TeacherAttemptDetailData): {
     return {
       studentId: data.studentId,
       sourceType: "wrong",
+    };
+  }
+  if (data.sourceType === "lesson") {
+    return {
+      studentId: data.studentId,
+      sourceType: "lesson",
     };
   }
   return {

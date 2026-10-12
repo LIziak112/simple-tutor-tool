@@ -63,7 +63,8 @@ export function judgeLabelOf(value: boolean | string): string {
  * - wrong：attemptNo 是该生**全部错题重练的组卷计数**（含废弃 draft，见
  *   wrong-practice 计数口径），不是该题/该卷的第几轮——文案用「第 N 次组卷」
  *   不承诺每题轮次；
- * - assignment：一人一卷恒 1 次，不做次数标注。
+ * - assignment：一人一卷恒 1 次，不做次数标注；
+ * - lesson（2026-10 讲练一体）：该讲练页的开卷次数（start 幂等、restart 递增）。
  * 学生结果视图与教师详情/待批卡同口径。
  */
 export function attemptRoundLabel(
@@ -72,6 +73,7 @@ export function attemptRoundLabel(
 ): string {
   if (sourceType === "course") return `第 ${attemptNo} 次课程练习`;
   if (sourceType === "wrong") return `错题重练 · 第 ${attemptNo} 次组卷`;
+  if (sourceType === "lesson") return `第 ${attemptNo} 次讲练`;
   return "本次作业";
 }
 

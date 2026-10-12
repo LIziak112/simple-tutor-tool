@@ -138,6 +138,69 @@ describe("StudentAttemptPage（/s/attempts/:attemptId，T2A.6）", () => {
     expect(screen.getByRole("button", { name: "交卷" })).toBeInTheDocument();
   });
 
+  it("lesson 来源：来源行「讲练：讲义标题 · 第 n 次」（不落「作业」兜底），退出回讲练页（2026-10 讲练一体）", async () => {
+    const LECTURE_ID = "77777777-7777-4777-8777-777777777777";
+    mockedFetch.mockResolvedValue({
+      ...COURSE_DRAFT,
+      attempt: {
+        ...COURSE_DRAFT.attempt,
+        sourceType: "lesson",
+        lectureId: LECTURE_ID,
+        unitId: "随堂讲练",
+      },
+      title: "第1讲 有理数讲练",
+      courseName: null,
+    });
+    renderPage();
+    expect(
+      await screen.findByText("讲练：第1讲 有理数讲练 · 第 2 次"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/^作业/)).toBeNull();
+    expect(screen.getByRole("button", { name: /^返回$/ })).toBeInTheDocument();
+  });
+
+  it("lesson 已完成：结果视图返回按钮「返回讲练页」，点击退出讲练页路由", async () => {
+    const LECTURE_ID = "77777777-7777-4777-8777-777777777777";
+    const COURSE_ID2 = "12121212-1212-4121-8121-121212121212";
+    mockedFetch.mockResolvedValue({
+      ...COURSE_DRAFT,
+      attempt: {
+        ...COURSE_DRAFT.attempt,
+        sourceType: "lesson",
+        lectureId: LECTURE_ID,
+        courseId: COURSE_ID2,
+        unitId: "随堂讲练",
+        status: "submitted",
+        submittedAt: "2026-10-12T02:30:00.000Z",
+        scoreAuto: 100,
+      },
+      title: "第1讲 有理数讲练",
+      courseName: "初一上",
+      answersReleased: true,
+      summary: {
+        total: 1,
+        answered: 1,
+        correct: 1,
+        wrong: 0,
+        pending: 0,
+        unanswered: 0,
+        autoGradable: 1,
+        scoreFinal: 100,
+        pendingCount: 0,
+      },
+      units: [],
+    });
+    const { stubTestId } = renderPage();
+    const back = await screen.findByRole("button", {
+      name: "返回讲练页",
+    });
+    fireEvent.click(back);
+    // 退出目标 /s/lectures/:id/lesson 不在学生路由桩内 → 落通配桩（已离开本页）
+    await waitFor(() =>
+      expect(screen.getByTestId(stubTestId)).toBeInTheDocument(),
+    );
+  });
+
   it("T6R.3 legacyUnverified 横幅（true）：懒冻结的升级遗留卷显示恢复版本提示", async () => {
     mockedFetch.mockResolvedValue({ ...COURSE_DRAFT, legacyUnverified: true });
     renderPage();

@@ -19,6 +19,12 @@ export interface DirectiveBaseProps {
    * 与服务端解析（lecture-insights）按同一规则对账。
    */
   readonly docIndex: number;
+  /**
+   * 指令原文在 source 中的字符区间（2026-10 讲练一体，可选）：由宿主从 hast
+   * 节点 position 偏移还原；占位卡等需要展示**原文**的组件按此从 source 切片。
+   * 渲染管线某环节丢失 position 时缺席——消费方须自行降级（不展示原文）。
+   */
+  readonly sourceRange?: { readonly start: number; readonly end: number };
   /** 指令内部内容（react-markdown 已渲染好的 React 子树） */
   children?: ReactNode;
 }
