@@ -310,7 +310,9 @@ interface LecturePlan {
 
 /** 解析单篇讲义 markdown 重取 title，与库中行比较（纯读，不写库） */
 function planLecture(row: Lecture): LecturePlan {
-  const wrapped = wrapLectureMd(row.markdown);
+  // 2026-10 讲练一体：按存储的 kind 包装——lesson 讲义正文含题块（注入 id），
+  // 按 lecture 语境会被 QUESTION_IN_LECTURE error 误跳过（重解析链路失效）
+  const wrapped = wrapLectureMd(row.markdown, row.kind);
   const parsed = parseDocument(wrapped);
 
   const errorIssue = parsed.issues.find((issue) => issue.level === "error");

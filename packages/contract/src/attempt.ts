@@ -411,7 +411,9 @@ export const attemptResultQuestionSchema = z.object({
 export const attemptScoreSummarySchema = z.object({
   /** 总题数（参与本次作答的题目） */
   total: z.number().int().min(0),
-  /** 已作答题数（answer 非 null） */
+  /** 已作答题数（answer 非 null）。lesson 讲练页的现算汇总（开卷投影/单题提交
+   * 响应）只统计已单题提交的行——见 lessonLiveSummaryOf 口径与
+   * lessonQuestionSubmitDataSchema 注释；结果视图（整卷）计全部卷行 */
   answered: z.number().int().min(0),
   /** 自动判对数 */
   correct: z.number().int().min(0),
@@ -588,13 +590,16 @@ export const attemptSubmitRequestSchema = z.object({
     .max(ATTEMPT_SUBMIT_MAX_QUESTIONS),
   /**
    * 每题笔记证据声明（T6R.10，方案 §6.4 第 3 步——交卷事务固定原稿）。
-   * **缺省 = 旧客户端**：服务端检测到该 attempt 存在草稿（notes 表有
-   * scratch 行且 head revision>0）时 409 NOTE_EVIDENCE_MISMATCH 拒绝并
-   * 要求刷新；确无草稿按兼容规则交卷（不落 submission_evidence 行 =
+   * **缺省 = 旧客户端**：服务端检测到该 attempt **参与本次判分题目**的草稿
+   * （notes 表有 scratch 行且 head revision>0）时 409 NOTE_EVIDENCE_MISMATCH
+   * 拒绝并要求刷新；确无草稿按兼容规则交卷（不落 submission_evidence 行 =
    * 未采集，与 state='none'〔明确空稿〕区分，见 schema 注释）。
-   * 字段存在（新客户端）时必须覆盖卷面全部题目：服务端与冻结题目集合
-   * 精确比对（缺项/多项/未知题目同样 409），逐项验证归属与并发状态后
+   * 字段存在（新客户端）时必须覆盖**参与本次判分的全部题目**：服务端与该
+   * 范围精确比对（缺项/多项/未知题目同样 409），逐项验证归属与并发状态后
    **同一事务**写 submission_evidence 与成绩/状态——原稿引用写入后不能换。
+   * 判分范围（2026-10 讲练一体）：assignment/course/wrong 来源 = 全部冻结题；
+   * lesson 来源整卷收尾 = **未单题提交的行**（已提交题的证据已在该题提交事务
+   * 冻结，不再重复声明——多带已提交题同样 409）。
    */
   evidence: z
     .array(submitEvidenceDeclarationSchema)
