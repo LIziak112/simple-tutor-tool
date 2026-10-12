@@ -70,6 +70,15 @@ beforeEach(() => {
 });
 
 describe("ConnectPage（T4.7 D26）", () => {
+  it("没有凭据时复制明确标注为示例，生成凭据不能冒充已连接", async () => {
+    renderPage();
+    const copy = await screen.findByRole("button", {
+      name: "复制通用 MCP 配置 JSON",
+    });
+    expect(copy).toHaveTextContent("复制示例");
+    expect(screen.getByText("尚未生成凭据")).toBeVisible();
+    expect(screen.queryByText("已连接 AI")).toBeNull();
+  });
   it("客户端切换只保留一份配置，并提供对应说明", async () => {
     renderPage();
     await screen.findByRole("button", { name: "复制通用 MCP 配置 JSON" });
@@ -130,11 +139,13 @@ describe("ConnectPage（T4.7 D26）", () => {
   it("未生成 token：提示生成 + 配置片段用占位符并注明", async () => {
     renderPage();
 
-    expect(await screen.findByText(/尚未生成 Token/)).toBeVisible();
+    expect(await screen.findByText(/尚未生成 Token。生成后/)).toBeVisible();
     // 当前配置片段含占位符
     const blocks = await screen.findAllByText(/你的API_TOKEN/);
     expect(blocks.length).toBe(1);
-    expect(screen.getByText(/尚未生成 Token，片段中为占位符/)).toBeVisible();
+    expect(
+      await screen.findByText(/尚未生成 Token，片段中为占位符/),
+    ).toBeVisible();
   });
 
   it("生成 token 后：明文展示 + 一份配置 JSON 代入真实地址与 token，可复制", async () => {
@@ -154,6 +165,7 @@ describe("ConnectPage（T4.7 D26）", () => {
       expect(mockedReset).toHaveBeenCalledTimes(1);
     });
 
+    fireEvent.click(await screen.findByRole("button", { name: "查看凭据" }));
     // mutation onSuccess invalidate → 同 key 重取拿到新 token 并展示
     await waitFor(() => {
       expect(screen.getByText("t47-real-token")).toBeVisible();
@@ -181,6 +193,7 @@ describe("ConnectPage（T4.7 D26）", () => {
     mockedFetchToken.mockResolvedValue({ token: "existing-token-xyz" });
     renderPage();
 
+    fireEvent.click(await screen.findByRole("button", { name: "查看凭据" }));
     expect(await screen.findByText("existing-token-xyz")).toBeVisible();
     expect(screen.queryByText(/你的API_TOKEN/)).toBeNull();
     expect(

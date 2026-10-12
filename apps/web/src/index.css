@@ -6,7 +6,7 @@
 @custom-variant dark (&:is(.dark *));
 
 /* 教师端以实体轮廓标识键盘焦点，避免透明焦点圈在浅色表面不够清楚。 */
-.teacher-theme :is(a, button, input):focus-visible {
+.teacher-theme :is(a, button, input, summary, textarea, select):focus-visible {
   outline: 2px solid var(--foreground);
   outline-offset: 2px;
 }
@@ -248,4 +248,173 @@
 }
 .rich-markdown .katex-display {
   @apply my-3 overflow-x-auto py-1;
+}
+
+/* 教师工作台语义色独立作用于页面与显式标记的弹层，不改学生主题。 */
+.teacher-theme {
+  --background: oklch(0.972949 0.00287 264.542);
+  --foreground: oklch(0.279434 0.030641 260.474);
+  --card: oklch(1 0 89.876);
+  --card-foreground: oklch(0.279434 0.030641 260.474);
+  --popover: oklch(1 0 89.876);
+  --popover-foreground: oklch(0.279434 0.030641 260.474);
+  --primary: oklch(0.487551 0.181316 272.534);
+  --primary-foreground: oklch(1 0 89.876);
+  --secondary: oklch(0.957251 0.020359 276.958);
+  --secondary-foreground: oklch(0.487551 0.181316 272.534);
+  --muted: oklch(0.954754 0.005771 264.532);
+  --muted-foreground: oklch(0.504128 0.035217 260.619);
+  --accent: oklch(0.957251 0.020359 276.958);
+  --accent-foreground: oklch(0.487551 0.181316 272.534);
+  --border: oklch(0.923614 0.009203 258.337);
+  --input: oklch(0.620971 0.031507 261.421);
+  --ring: oklch(0.487551 0.181316 272.534);
+  --destructive: oklch(0.503258 0.179346 21.799);
+  --sidebar: oklch(1 0 89.876);
+  --sidebar-foreground: oklch(0.504128 0.035217 260.619);
+  --sidebar-accent: oklch(0.957251 0.020359 276.958);
+  --sidebar-accent-foreground: oklch(0.487551 0.181316 272.534);
+  --sidebar-border: oklch(0.923614 0.009203 258.337);
+  --sidebar-ring: oklch(0.487551 0.181316 272.534);
+}
+
+/* 教师工作台语义色独立作用于页面与显式标记的弹层，不改学生主题。 */
+.dark .teacher-theme,
+.dark.teacher-theme {
+  --background: oklch(0.226663 0.022788 265.601);
+  --foreground: oklch(0.942356 0.0116 264.509);
+  --card: oklch(0.268713 0.025848 265.386);
+  --card-foreground: oklch(0.942356 0.0116 264.509);
+  --popover: oklch(0.268713 0.025848 265.386);
+  --popover-foreground: oklch(0.942356 0.0116 264.509);
+  --primary: oklch(0.55597 0.182651 272.901);
+  --primary-foreground: oklch(1 0 89.876);
+  --secondary: oklch(0.331964 0.066545 272.004);
+  --secondary-foreground: oklch(0.89478 0.051372 276.865);
+  --muted: oklch(0.312782 0.030931 263.972);
+  --muted-foreground: oklch(0.761388 0.03121 262.506);
+  --accent: oklch(0.331964 0.066545 272.004);
+  --accent-foreground: oklch(0.89478 0.051372 276.865);
+  --border: oklch(0.381762 0.031484 263.039);
+  --input: oklch(0.660746 0.034215 261.687);
+  --ring: oklch(0.786073 0.109089 276.695);
+  --destructive: oklch(0.800739 0.116179 12.007);
+  --sidebar: oklch(0.268713 0.025848 265.386);
+  --sidebar-foreground: oklch(0.761388 0.03121 262.506);
+  --sidebar-accent: oklch(0.331964 0.066545 272.004);
+  --sidebar-accent-foreground: oklch(0.89478 0.051372 276.865);
+  --sidebar-border: oklch(0.381762 0.031484 263.039);
+  --sidebar-ring: oklch(0.786073 0.109089 276.695);
+}
+
+/* 教师页面统一内容轴线；复杂编辑页保留自己的阅读宽度。 */
+.teacher-page {
+  width: 100%;
+  max-width: 80rem;
+  margin-inline: auto;
+  padding: 1.75rem 2rem 3rem;
+}
+.teacher-config-page {
+  width: 100%;
+  max-width: 62.5rem;
+  margin-inline: auto;
+  padding: 1.5rem 3rem 4rem;
+}
+.teacher-page-title {
+  font-size: 1.875rem;
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+}
+.teacher-config-section {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+.teacher-config-section h2 {
+  font-size: 1.125rem;
+  line-height: 1.4;
+}
+.teacher-settings-link {
+  min-height: 2.75rem;
+  display: flex;
+  align-items: center;
+  border-bottom: 2px solid transparent;
+  padding-block: 0.75rem;
+  color: var(--muted-foreground);
+  font-size: 0.875rem;
+}
+.teacher-settings-link[aria-current="page"] {
+  color: var(--accent-foreground);
+  border-bottom-color: var(--accent-foreground);
+  font-weight: 600;
+}
+/* 强调文字使用前景色，实心按钮继续使用主色，兼顾浅色与暗色对比度。 */
+.teacher-theme .text-primary {
+  color: var(--accent-foreground);
+}
+.teacher-toggle {
+  appearance: none;
+  width: 2.5rem;
+  height: 1.5rem;
+  border-radius: 2rem;
+  background: var(--input);
+  position: relative;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.teacher-toggle::before {
+  content: "";
+  position: absolute;
+  top: 0.1875rem;
+  left: 0.1875rem;
+  width: 1.125rem;
+  height: 1.125rem;
+  border-radius: 50%;
+  background: white;
+}
+.teacher-toggle:checked {
+  background: var(--primary);
+}
+.teacher-toggle:checked::before {
+  left: 1.1875rem;
+}
+.teacher-theme
+  :is(
+    input:not([type="checkbox"]):not([type="radio"]),
+    textarea,
+    select
+  ):focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+@media (max-width: 1023px) {
+  .teacher-page,
+  .teacher-config-page {
+    padding: 1.5rem 1.5rem 3rem;
+  }
+}
+@media (max-width: 767px) {
+  .teacher-page,
+  .teacher-config-page {
+    padding: 1.5rem 1.25rem 2.5rem;
+  }
+  .teacher-page-title {
+    font-size: 1.625rem;
+  }
+  .teacher-theme
+    :is(input:not([type="checkbox"]):not([type="radio"]), textarea, select) {
+    font-size: 1rem;
+  }
+}
+@media (forced-colors: active) {
+  .teacher-toggle {
+    appearance: auto;
+  }
+  .teacher-toggle::before {
+    display: none;
+  }
+  .teacher-settings-link[aria-current="page"] {
+    border-bottom-color: Highlight;
+  }
 }

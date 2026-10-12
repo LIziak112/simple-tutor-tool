@@ -67,13 +67,10 @@ export function SharedPage() {
   }));
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-6">
-      <header className="flex flex-wrap items-center justify-between gap-3">
+    <div className="teacher-page">
+      <header className="mb-2 flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="flex items-center gap-2 text-xl font-semibold">
-            <Share2 aria-hidden className="size-5 text-primary" />
-            共享
-          </h1>
+          <h1 className="teacher-page-title">共享资源</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             老师们发布到这里的内容与服务器本地的文件；「导入到我的资源库」进入你自己的域。
           </p>
@@ -89,7 +86,7 @@ export function SharedPage() {
             onChange={(e) => setQuery(e.target.value)}
             placeholder="搜索标题 / 文件名 / 发布者"
             aria-label="搜索共享文件"
-            className="min-h-11 w-64 pl-9"
+            className="min-h-11 w-full min-w-0 sm:w-64 pl-9"
           />
         </div>
       </header>
@@ -133,7 +130,7 @@ export function SharedPage() {
           aria-live="polite"
           className="mt-10 flex flex-col items-center gap-3 text-muted-foreground"
         >
-          <Loader2 aria-hidden className="size-6 animate-spin" />
+          <Loader2 aria-hidden className="size-6 motion-safe:animate-spin" />
           <p className="text-sm">正在加载共享目录…</p>
         </div>
       ) : listQuery.isError ? (
@@ -173,7 +170,7 @@ export function SharedPage() {
               key={file.filename}
               className="rounded-xl border border-border bg-card px-4 py-3.5"
             >
-              <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="mb-2 flex flex-wrap items-start justify-between gap-4">
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="flex min-h-6 items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs font-medium">

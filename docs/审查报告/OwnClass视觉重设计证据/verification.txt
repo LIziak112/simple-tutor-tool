@@ -1,0 +1,111 @@
+ui-full-test.log
+Not implemented: HTMLCanvasElement's getContext() method: without installing the canvas npm package
+Not implemented: HTMLCanvasElement's getContext() method: without installing the canvas npm package
+
+ Test Files  338 passed (338)
+      Tests  4034 passed (4034)
+   Start at  20:02:32
+   Duration  302.93s (tests 36%, import 32%, environment 22%, setup 6%, transform 4%)
+
+Environment  |web| jsdom was created 190 times · 241.18s total, 32% of tracked time
+             create it once per worker with pool: 'vmThreads' (keeps per-file isolation) or isolate: false (shares it across files)
+             learn more: https://vitest.dev/guide/improving-performance#test-environments
+
+
+ui-empty-unit.log
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - ESM syntax in a file loaded as CommonJS (../../vitest.config.ts:1:1). Use a `.mjs` extension or set `"type": "module"` in the closest package.json
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v5.0.2 C:/Users/HUAYU/.codex/worktrees/ownclass-teacher-ui/simple-tutor-tool
+
+
+ Test Files  2 passed (2)
+      Tests  21 passed (21)
+   Start at  20:08:50
+   Duration  3.99s (tests 28%, environment 26%, import 24%, transform 15%, setup 6%)
+
+
+ui-types.log
+$ tsc -p e2e/tsconfig.json && pnpm -r run typecheck
+Scope: 5 of 6 workspace projects
+packages/contract typecheck$ tsc --noEmit
+packages/contract typecheck: Done
+packages/md-dsl typecheck$ tsc --noEmit
+packages/grading typecheck$ tsc --noEmit
+packages/grading typecheck: Done
+packages/md-dsl typecheck: Done
+apps/server typecheck$ tsc --noEmit
+apps/server typecheck: Done
+apps/web typecheck$ tsc --noEmit
+apps/web typecheck: Done
+
+ui-lint.log
+  
+    123 123 │           const dx2 = s.points[i]!.x - s.points[i - 1]!.x;
+    124 124 │           const dy1 = s.points[i - 1]!.y - s.points[i - 2]!.y;
+    125     │ - ········const·dy2·=·s.points[i]!.y·-·s.points[i·-·1]!.y;
+        125 │ + ········const·dy2·=·s.points[i]!.y·-·s.points[i·-·1]?.y;
+    126 126 │           // x 或 y 方向发生明确折返（阈值过滤抖动）
+    127 127 │           if (dx1 * dx2 < -4 || dy1 * dy2 < -4) turns++;
+  
+
+Checked 916 files in 899ms. No fixes applied.
+Found 18 warnings.
+Found 1 info.
+
+ui-build.log
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 3.84s
+
+PWA v1.3.0
+mode      generateSW
+precache  359 entries (12079.16 KiB)
+files generated
+  dist/sw.js
+  dist/workbox-271d3e69.js
+
+ui-e2e.log
+  ok 12 [webkit] › e2e\teacher-navigation-settings.spec.ts:53:1 › 未保存配置离开有确认，取消与浏览器返回均不丢编辑 (3.6s)
+  ok 11 [webkit] › e2e\teacher-navigation-settings.spec.ts:9:1 › 有内容的资源列表保留标题宽度，窄屏操作栏不挤压正文 (9.6s)
+  ok 14 [webkit] › e2e\teacher-navigation-settings.spec.ts:131:1 › OwnClass 品牌与教师导航在各种宽度可达，无页面横向溢出 (13.6s)
+  ok 15 [webkit] › e2e\teacher-navigation-settings.spec.ts:181:1 › 设置分类保留未保存状态、URL、浏览器前进后退和快照展开 (4.6s)
+  ok 13 [webkit] › e2e\teacher-navigation-settings.spec.ts:76:1 › 教师主页面统一布局，设置首屏与完整导航在标准桌面可见 (23.0s)
+  ok 17 [webkit] › e2e\teacher-navigation-settings.spec.ts:265:1 › 减少动态效果、键盘抽屉与短高度窗口 (1.6s)
+  ok 16 [webkit] › e2e\teacher-navigation-settings.spec.ts:232:1 › AI 配置只有一份，切换客户端与凭据重置取消不改变凭据 (2.9s)
+  ok 19 [webkit] › e2e\teacher-navigation-settings.spec.ts:325:1 › 长登录名和两倍文本大小保持完整内容与操作可达 (2.0s)
+  ok 18 [webkit] › e2e\teacher-navigation-settings.spec.ts:295:1 › 地址加载失败可重试恢复，不停留在加载状态 (3.1s)
+  ok 20 [webkit] › e2e\teacher-navigation-settings.spec.ts:354:1 › 浅深色文字与键盘焦点使用足够对比度 (2.6s)
+
+  20 passed (1.4m)
+
+ui-guard-e2e.log
+[WebServer] Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+Running 2 tests using 2 workers
+
+(node:29720) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:17220) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ok 2 [webkit] › e2e\teacher-navigation-settings.spec.ts:53:1 › 未保存配置离开有确认，取消与浏览器返回均不丢编辑 (6.7s)
+  ok 1 [chromium] › e2e\teacher-navigation-settings.spec.ts:53:1 › 未保存配置离开有确认，取消与浏览器返回均不丢编辑 (6.6s)
+
+  2 passed (17.2s)
+
+ui-final-e2e.log
+(node:42332) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:21100) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:27088) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ok 4 [chromium] › e2e\teacher-navigation-settings.spec.ts:354:1 › 浅深色文字与键盘焦点使用足够对比度 (5.0s)
+  ok 3 [webkit] › e2e\teacher-navigation-settings.spec.ts:354:1 › 浅深色文字与键盘焦点使用足够对比度 (5.5s)
+  ok 2 [webkit] › e2e\teacher-navigation-settings.spec.ts:76:1 › 教师主页面统一布局，设置首屏与完整导航在标准桌面可见 (27.2s)
+  ok 1 [chromium] › e2e\teacher-navigation-settings.spec.ts:76:1 › 教师主页面统一布局，设置首屏与完整导航在标准桌面可见 (27.7s)
+
+  4 passed (35.2s)
