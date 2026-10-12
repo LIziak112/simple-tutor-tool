@@ -7,8 +7,9 @@ import type {
   LessonStartData,
   StudentAnswer,
 } from "@tutor/contract";
-// 学生端题干唯一投影入口（released 条目与结果视图同法，[[答案]]→[[]]、剥选项）
-import { splitLessonBlocks, studentStemMd } from "@tutor/md-dsl";
+// 学生端题干投影唯一入口在 attempt-service 的 studentFacingResultOf
+//（released 条目与结果视图同法，[[答案]]→[[]]、剥选项）
+import { splitLessonBlocks } from "@tutor/md-dsl";
 import { and, asc, desc, eq, isNull } from "drizzle-orm";
 import type { Db } from "../db/client";
 import { type Attempt, attempts, units } from "../db/schema";
@@ -24,6 +25,7 @@ import {
   newDraftAttempt,
   publicOfSnapshot,
   resultQuestionOf,
+  studentFacingResultOf,
 } from "./attempt-service";
 import { recordAttemptStartEvent } from "./event-service";
 import { openedHintEcho } from "./hint-service";
@@ -202,13 +204,12 @@ function buildLessonStartData(
     const echo = openedHintEcho(row.hintsOpenedJson, snapshot.hints);
     if (echo.length > 0) hintsOpened[row.questionId] = echo;
     if (row.submittedAt === null) continue; // 未单题提交：不进 released、不计对错
-    // 已单题提交 → 当题释放（读当前行值：进行中卷教师可能已批 teacherMark）
-    const item = resultQuestionOf(row, snapshot);
-    released[row.questionId] = {
-      ...item,
-      // 结果视图同法：released 题干一律经学生端投影（含 [[答案]] 标记的原文不下发）
-      snapshot: { ...item.snapshot, stemMd: studentStemMd(snapshot) },
-    };
+    // 已单题提交 → 当题释放（读当前行值：进行中卷教师可能已批 teacherMark）；
+    // 题干经 studentFacingResultOf 学生端投影（与结果视图/单题提交同一包装处，
+    // 含 [[答案]] 标记的原文不下发）
+    released[row.questionId] = studentFacingResultOf(
+      resultQuestionOf(row, snapshot),
+    );
   }
   return {
     lecture: {

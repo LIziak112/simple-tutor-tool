@@ -1914,8 +1914,20 @@ export function submitAttempt(
  * - 快照缺失的历史行跳过（与判分/视图口径一致；lesson 建卷即冻结全快照，
  *   正常链路无此类行）。
  */
+
+/** lessonLiveSummaryOf 的判定输入行裁剪（瘦列，不含每题数 KB 的快照原文）：
+ * 单题提交传事务闭包带出的行集（即此形态），开卷链路传完整行结构兼容 */
+type LessonSummaryRow = Pick<
+  ResponseRow,
+  | "questionSnapshotJson"
+  | "answerJson"
+  | "submittedAt"
+  | "autoCorrect"
+  | "finalCorrect"
+>;
+
 export function lessonLiveSummaryOf(
-  rows: readonly ResponseRow[],
+  rows: readonly LessonSummaryRow[],
   attempt: Pick<Attempt, "scoreFinal">,
 ): AttemptScoreSummary {
   let total = 0;
@@ -2054,8 +2066,10 @@ export function submitLessonQuestion(
   );
 
   const nowIso = new Date(now).toISOString();
-  // 单事务先复核后写：better-sqlite3 同步单进程，复核防御与写入原子同界
-  db.transaction((tx) => {
+  // 单事务先复核后写：better-sqlite3 同步单进程，复核防御与写入原子同界。
+  // 闭包带出收尾判定的瘦行集（不含快照原文列）——事务后 summary 直接消费，
+  // 热路径不再整卷全列回读（每题数 KB 的 questionSnapshotJson）
+  const summaryRows = db.transaction((tx) => {
     const freshAttempt = tx
       .select()
       .from(attempts)
@@ -2103,10 +2117,13 @@ export function submitLessonQuestion(
         .run();
     }
     // 自动收尾判定：全部冻结行（快照非空）都已提交 → 最后一题，收尾 attempt
-    //（与整卷交卷同口径复用 scoreAutoOf / finalScoreOf）
+    //（与整卷交卷同口径复用 scoreAutoOf / finalScoreOf）。行集为瘦列投影
+    //（answerJson 供 summary 的 answered 计数），出事务即 lessonLiveSummaryOf
+    // 的输入——与开卷链路同一口径，不复制谓词
     const rowsAfter = tx
       .select({
         questionSnapshotJson: responses.questionSnapshotJson,
+        answerJson: responses.answerJson,
         submittedAt: responses.submittedAt,
         autoCorrect: responses.autoCorrect,
         finalCorrect: responses.finalCorrect,
@@ -2129,32 +2146,32 @@ export function submitLessonQuestion(
         .where(eq(attempts.id, attemptId))
         .run();
     }
+    return rowsAfter;
   });
 
   // 成功后直记 question_submit 事件（payload 仅 questionId，拒绝路径不记）
   recordQuestionSubmitEvent(db, studentId, attemptId, questionId);
 
   // 响应组装：该题 result 投影（stemMd 经学生端投影）+ 现算 summary + 最新
-  // attempt 摘要（自动收尾后为新状态）
+  // attempt 摘要（自动收尾后为新状态）。提交行按主键取一行（快照复用事务前
+  // 已 parse 的同一份）；summary 消费事务带出的瘦行集
   const freshAttempt = db
     .select()
     .from(attempts)
     .where(eq(attempts.id, attemptId))
     .get();
-  const freshRows = attemptResponseRows(db, attemptId);
-  const freshRow = freshRows.find((r) => r.questionId === questionId);
+  const freshRow = db
+    .select()
+    .from(responses)
+    .where(eq(responses.id, row.id))
+    .get();
   if (freshAttempt === undefined || freshRow === undefined) {
     // 理论不可达（事务刚写完）；防御性兜底不让接口 500 无信息
     throw new HttpError(500, "INTERNAL", "提交失败，请刷新页面后重试");
   }
-  const item = resultQuestionOf(freshRow, snapshot);
   return {
-    question: {
-      ...item,
-      // 结果视图同法：当题题干一律经学生端投影（含 [[答案]] 标记的原文不下发）
-      snapshot: { ...item.snapshot, stemMd: studentStemMd(snapshot) },
-    },
-    summary: lessonLiveSummaryOf(freshRows, freshAttempt),
+    question: studentFacingResultOf(resultQuestionOf(freshRow, snapshot)),
+    summary: lessonLiveSummaryOf(summaryRows, freshAttempt),
     attempt: attemptSummaryOf(freshAttempt),
   };
 }
@@ -2228,9 +2245,9 @@ function buildDraftData(db: Db, attempt: Attempt): AttemptDraftData {
  * 结果视图的单题行（快照投影：除已解锁条目外无 hints 内容，options 转纯文本；
  * D9〔T3.5〕新增 teacherMark / teacherComment / finalCorrect 透传 responses 行）。
  * 快照由调用方传入（buildResultData 预加载或现场 parse，单一解析出口 snapshotOfRow）。
- * **stemMd 是作答时原文（含 [[答案]] 标记）**——消费方下发前必须自行经
- * studentStemMd 学生端投影（buildResultData 的 releaseAwareQuestion 与
- * lesson-service 的 released 条目同法）。2026-10 讲练一体起导出供后者复用。
+ * **stemMd 是作答时原文（含 [[答案]] 标记）**——学生端消费方一律先经
+ * studentFacingResultOf 整题投影（唯一包装处，不得再各自手写）。2026-10
+ * 讲练一体起导出供 lesson-service 复用。
  */
 export function resultQuestionOf(
   row: ResponseRow,
@@ -2262,6 +2279,23 @@ export function resultQuestionOf(
     finalCorrect: row.finalCorrect,
     // T2.11：只回显做题时已解锁的提示（文本取自快照；未解锁条目绝不在此）
     hintsOpened: resultHintsOpenedOf(row, snapshot.hints),
+  };
+}
+
+/**
+ * 结果条目的学生端整题投影（防泄露不变式的唯一包装处，2026-10 讲练一体收敛
+ * 三份手写副本）：在 resultQuestionOf 条目之上把 snapshot.stemMd 经
+ * studentStemMd 投影（[[答案]] → 空框、剥题干内嵌选项列表——AGENTS 第 3 条，
+ * 学生端题干唯一入口）。三个消费方：buildResultData 的 releaseAwareQuestion
+ * （已公布也投影）、submitLessonQuestion 响应（提交即释放）、lesson-service
+ * 的 released 条目（当题释放）。
+ */
+export function studentFacingResultOf(
+  item: AttemptResultQuestion,
+): AttemptResultQuestion {
+  return {
+    ...item,
+    snapshot: { ...item.snapshot, stemMd: studentStemMd(item.snapshot) },
   };
 }
 
@@ -2328,16 +2362,13 @@ function buildResultData(
     assignmentRow === null || answersReleased(assignmentRow, now);
 
   /** 受限形态的逐题投影（见函数头注释）。
-   * stemMd 一律经 studentStemMd 学生端投影（已公布也不例外）：[[答案]] 渲染为
-   * 空框、选择题选项列表由前端 options 行渲染——保证学生载荷在任何形态下都不含
-   * [x] 正确项标记与非空 [[…]] 标记（AGENTS 第 3 条，studentStemMd 唯一入口）。
-   * D9 字段 teacherMark / teacherComment / finalCorrect 与 autoCorrect 同法置
-   * null——教师已批也不在截止前泄露对错与评语 */
+   * stemMd 一律经 studentFacingResultOf 学生端投影（已公布也不例外）：[[答案]]
+   * 渲染为空框、选择题选项列表由前端 options 行渲染——保证学生载荷在任何形态下
+   * 都不含 [x] 正确项标记与非空 [[…]] 标记（AGENTS 第 3 条，studentStemMd
+   * 唯一入口）。D9 字段 teacherMark / teacherComment / finalCorrect 与
+   * autoCorrect 同法置 null——教师已批也不在截止前泄露对错与评语 */
   const releaseAwareQuestion = (item: AttemptResultQuestion) => {
-    const projected: AttemptResultQuestion = {
-      ...item,
-      snapshot: { ...item.snapshot, stemMd: studentStemMd(item.snapshot) },
-    };
+    const projected = studentFacingResultOf(item);
     return released
       ? projected
       : {
