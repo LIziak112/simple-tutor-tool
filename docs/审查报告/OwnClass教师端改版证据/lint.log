@@ -1,0 +1,403 @@
+$ biome check .
+packages\contract\src\review-pack.ts:487:17 lint/style/useTemplate  FIXABLE  ━━━━━━━━━━━━━━━━━━━━━━━
+
+  i Template literals are preferred over string concatenation.
+
+    485 │     dataLines.push(`- 交互内容说明：${note}。`);
+    486 │   }
+  > 487 │   sections.push(dataLines.join("\n") + "\n");
+        │                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    488 │
+    489 │   // 红线
+
+  i Unsafe fix: Use a template literal.
+
+    485 485 │       dataLines.push(`- 交互内容说明：${note}。`);
+    486 486 │     }
+    487     │ - ··sections.push(dataLines.join("\n")·+·"\n");
+        487 │ + ··sections.push(`${dataLines.join("\n")}\n`);
+    488 488 │
+    489 489 │     // 红线
+
+
+apps\web\src\features\ink\lab\measure.test.ts:50:12 lint/style/noNonNullAssertion  FIXABLE  ━━━━━━━━━━
+
+  ! Forbidden non-null assertion.
+
+    48 │     const s = timingStats(samples);
+    49 │     expect(s).not.toBeNull();
+  > 50 │     expect(s!.min).toBeLessThanOrEqual(s!.p50);
+       │            ^^
+    51 │     expect(s!.p50).toBeLessThanOrEqual(s!.p95);
+    52 │     expect(s!.p95).toBeLessThanOrEqual(s!.max);
+
+  i Unsafe fix: Replace with optional chain operator ?. This operator includes runtime checks, so it is safer than the compile-only non-null assertion operator
+
+     48  48 │       const s = timingStats(samples);
+     49  49 │       expect(s).not.toBeNull();
+     50     │ - ····expect(s!.min).toBeLessThanOrEqual(s!.p50);
+         50 │ + ····expect(s?.min).toBeLessThanOrEqual(s!.p50);
+     51  51 │       expect(s!.p50).toBeLessThanOrEqual(s!.p95);
+     52  52 │       expect(s!.p95).toBeLessThanOrEqual(s!.max);
+
+
+apps\web\src\features\ink\lab\measure.test.ts:50:40 lint/style/noNonNullAssertion  FIXABLE  ━━━━━━━━━━
+
+  ! Forbidden non-null assertion.
+
+    48 │     const s = timingStats(samples);
+    49 │     expect(s).not.toBeNull();
+  > 50 │     expect(s!.min).toBeLessThanOrEqual(s!.p50);
+       │                                        ^^
+    51 │     expect(s!.p50).toBeLessThanOrEqual(s!.p95);
+    52 │     expect(s!.p95).toBeLessThanOrEqual(s!.max);
+
+  i Unsafe fix: Replace with optional chain operator ?. This operator includes runtime checks, so it is safer than the compile-only non-null assertion operator
+
+     48  48 │       const s = timingStats(samples);
+     49  49 │       expect(s).not.toBeNull();
+     50     │ - ····expect(s!.min).toBeLessThanOrEqual(s!.p50);
+         50 │ + ····expect(s!.min).toBeLessThanOrEqual(s?.p50);
+     51  51 │       expect(s!.p50).toBeLessThanOrEqual(s!.p95);
+     52  52 │       expect(s!.p95).toBeLessThanOrEqual(s!.max);
+
+
+apps\web\src\features\ink\lab\measure.test.ts:51:12 lint/style/noNonNullAssertion  FIXABLE  ━━━━━━━━━━
+
+  ! Forbidden non-null assertion.
+
+    49 │     expect(s).not.toBeNull();
+    50 │     expect(s!.min).toBeLessThanOrEqual(s!.p50);
+  > 51 │     expect(s!.p50).toBeLessThanOrEqual(s!.p95);
+       │            ^^
+    52 │     expect(s!.p95).toBeLessThanOrEqual(s!.max);
+    53 │   });
+
+  i Unsafe fix: Replace with optional chain operator ?. This operator includes runtime checks, so it is safer than the compile-only non-null assertion operator
+
+     49  49 │       expect(s).not.toBeNull();
+     50  50 │       expect(s!.min).toBeLessThanOrEqual(s!.p50);
+     51     │ - ····expect(s!.p50).toBeLessThanOrEqual(s!.p95);
+         51 │ + ····expect(s?.p50).toBeLessThanOrEqual(s!.p95);
+     52  52 │       expect(s!.p95).toBeLessThanOrEqual(s!.max);
+     53  53 │     });
+
+
+apps\web\src\features\ink\lab\measure.test.ts:51:40 lint/style/noNonNullAssertion  FIXABLE  ━━━━━━━━━━
+
+  ! Forbidden non-null assertion.
+
+    49 │     expect(s).not.toBeNull();
+    50 │     expect(s!.min).toBeLessThanOrEqual(s!.p50);
+  > 51 │     expect(s!.p50).toBeLessThanOrEqual(s!.p95);
+       │                                        ^^
+    52 │     expect(s!.p95).toBeLessThanOrEqual(s!.max);
+    53 │   });
+
+  i Unsafe fix: Replace with optional chain operator ?. This operator includes runtime checks, so it is safer than the compile-only non-null assertion operator
+
+     49  49 │       expect(s).not.toBeNull();
+     50  50 │       expect(s!.min).toBeLessThanOrEqual(s!.p50);
+     51     │ - ····expect(s!.p50).toBeLessThanOrEqual(s!.p95);
+         51 │ + ····expect(s!.p50).toBeLessThanOrEqual(s?.p95);
+     52  52 │       expect(s!.p95).toBeLessThanOrEqual(s!.max);
+     53  53 │     });
+
+
+apps\web\src\features\ink\lab\measure.test.ts:52:12 lint/style/noNonNullAssertion  FIXABLE  ━━━━━━━━━━
+
+  ! Forbidden non-null assertion.
+
+    50 │     expect(s!.min).toBeLessThanOrEqual(s!.p50);
+    51 │     expect(s!.p50).toBeLessThanOrEqual(s!.p95);
+  > 52 │     expect(s!.p95).toBeLessThanOrEqual(s!.max);
+       │            ^^
+    53 │   });
+    54 │
+
+  i Unsafe fix: Replace with optional chain operator ?. This operator includes runtime checks, so it is safer than the compile-only non-null assertion operator
+
+     50  50 │       expect(s!.min).toBeLessThanOrEqual(s!.p50);
+     51  51 │       expect(s!.p50).toBeLessThanOrEqual(s!.p95);
+     52     │ - ····expect(s!.p95).toBeLessThanOrEqual(s!.max);
+         52 │ + ····expect(s?.p95).toBeLessThanOrEqual(s!.max);
+     53  53 │     });
+     54  54 │
+
+
+apps\web\src\features\ink\lab\measure.test.ts:52:40 lint/style/noNonNullAssertion  FIXABLE  ━━━━━━━━━━
+
+  ! Forbidden non-null assertion.
+
+    50 │     expect(s!.min).toBeLessThanOrEqual(s!.p50);
+    51 │     expect(s!.p50).toBeLessThanOrEqual(s!.p95);
+  > 52 │     expect(s!.p95).toBeLessThanOrEqual(s!.max);
+       │                                        ^^
+    53 │   });
+    54 │
+
+  i Unsafe fix: Replace with optional chain operator ?. This operator includes runtime checks, so it is safer than the compile-only non-null assertion operator
+
+     50  50 │       expect(s!.min).toBeLessThanOrEqual(s!.p50);
+     51  51 │       expect(s!.p50).toBeLessThanOrEqual(s!.p95);
+     52     │ - ····expect(s!.p95).toBeLessThanOrEqual(s!.max);
+         52 │ + ····expect(s!.p95).toBeLessThanOrEqual(s?.max);
+     53  53 │     });
+     54  54 │
+
+
+apps\web\src\features\ink\lab\synthetic-strokes.test.ts:108:21 lint/style/noNonNullAssertion  FIXABLE  ━━━━━━━━━━
+
+  ! Forbidden non-null assertion.
+
+    106 │     for (const s of hl) {
+    107 │       for (let i = 2; i < s.points.length; i++) {
+  > 108 │         const dx1 = s.points[i - 1]!.x - s.points[i - 2]!.x;
+        │                     ^^^^^^^^^^^^^^^^
+    109 │         const dx2 = s.points[i]!.x - s.points[i - 1]!.x;
+    110 │         if (dx1 * dx2 < 0) hasBacktrack = true;
+
+  i Unsafe fix: Replace with optional chain operator ?. This operator includes runtime checks, so it is safer than the compile-only non-null assertion operator
+
+    106 106 │       for (const s of hl) {
+    107 107 │         for (let i = 2; i < s.points.length; i++) {
+    108     │ - ········const·dx1·=·s.points[i·-·1]!.x·-·s.points[i·-·2]!.x;
+        108 │ + ········const·dx1·=·s.points[i·-·1]?.x·-·s.points[i·-·2]!.x;
+    109 109 │           const dx2 = s.points[i]!.x - s.points[i - 1]!.x;
+    110 110 │           if (dx1 * dx2 < 0) hasBacktrack = true;
+
+
+apps\web\src\features\ink\lab\synthetic-strokes.test.ts:108:42 lint/style/noNonNullAssertion  FIXABLE  ━━━━━━━━━━
+
+  ! Forbidden non-null assertion.
+
+    106 │     for (const s of hl) {
+    107 │       for (let i = 2; i < s.points.length; i++) {
+  > 108 │         const dx1 = s.points[i - 1]!.x - s.points[i - 2]!.x;
+        │                                          ^^^^^^^^^^^^^^^^
+    109 │         const dx2 = s.points[i]!.x - s.points[i - 1]!.x;
+    110 │         if (dx1 * dx2 < 0) hasBacktrack = true;
+
+  i Unsafe fix: Replace with optional chain operator ?. This operator includes runtime checks, so it is safer than the compile-only non-null assertion operator
+
+    106 106 │       for (const s of hl) {
+    107 107 │         for (let i = 2; i < s.points.length; i++) {
+    108     │ - ········const·dx1·=·s.points[i·-·1]!.x·-·s.points[i·-·2]!.x;
+        108 │ + ········const·dx1·=·s.points[i·-·1]!.x·-·s.points[i·-·2]?.x;
+    109 109 │           const dx2 = s.points[i]!.x - s.points[i - 1]!.x;
+    110 110 │           if (dx1 * dx2 < 0) hasBacktrack = true;
+
+
+apps\web\src\features\ink\lab\synthetic-strokes.test.ts:109:21 lint/style/noNonNullAssertion  FIXABLE  ━━━━━━━━━━
+
+  ! Forbidden non-null assertion.
+
+    107 │       for (let i = 2; i < s.points.length; i++) {
+    108 │         const dx1 = s.points[i - 1]!.x - s.points[i - 2]!.x;
+  > 109 │         const dx2 = s.points[i]!.x - s.points[i - 1]!.x;
+        │                     ^^^^^^^^^^^^
+    110 │         if (dx1 * dx2 < 0) hasBacktrack = true;
+    111 │       }
+
+  i Unsafe fix: Replace with optional chain operator ?. This operator includes runtime checks, so it is safer than the compile-only non-null assertion operator
+
+    107 107 │         for (let i = 2; i < s.points.length; i++) {
+    108 108 │           const dx1 = s.points[i - 1]!.x - s.points[i - 2]!.x;
+    109     │ - ········const·dx2·=·s.points[i]!.x·-·s.points[i·-·1]!.x;
+        109 │ + ········const·dx2·=·s.points[i]?.x·-·s.points[i·-·1]!.x;
+    110 110 │           if (dx1 * dx2 < 0) hasBacktrack = true;
+    111 111 │         }
+
+
+apps\web\src\features\ink\lab\synthetic-strokes.test.ts:109:38 lint/style/noNonNullAssertion  FIXABLE  ━━━━━━━━━━
+
+  ! Forbidden non-null assertion.
+
+    107 │       for (let i = 2; i < s.points.length; i++) {
+    108 │         const dx1 = s.points[i - 1]!.x - s.points[i - 2]!.x;
+  > 109 │         const dx2 = s.points[i]!.x - s.points[i - 1]!.x;
+        │                                      ^^^^^^^^^^^^^^^^
+    110 │         if (dx1 * dx2 < 0) hasBacktrack = true;
+    111 │       }
+
+  i Unsafe fix: Replace with optional chain operator ?. This operator includes runtime checks, so it is safer than the compile-only non-null assertion operator
+
+    107 107 │         for (let i = 2; i < s.points.length; i++) {
+    108 108 │           const dx1 = s.points[i - 1]!.x - s.points[i - 2]!.x;
+    109     │ - ········const·dx2·=·s.points[i]!.x·-·s.points[i·-·1]!.x;
+        109 │ + ········const·dx2·=·s.points[i]!.x·-·s.points[i·-·1]?.x;
+    110 110 │           if (dx1 * dx2 < 0) hasBacktrack = true;
+    111 111 │         }
+
+
+apps\web\src\features\ink\lab\synthetic-strokes.test.ts:122:21 lint/style/noNonNullAssertion  FIXABLE  ━━━━━━━━━━
+
+  ! Forbidden non-null assertion.
+
+    120 │       let turns = 0;
+    121 │       for (let i = 2; i < s.points.length; i++) {
+  > 122 │         const dx1 = s.points[i - 1]!.x - s.points[i - 2]!.x;
+        │                     ^^^^^^^^^^^^^^^^
+    123 │         const dx2 = s.points[i]!.x - s.points[i - 1]!.x;
+    124 │         const dy1 = s.points[i - 1]!.y - s.points[i - 2]!.y;
+
+  i Unsafe fix: Replace with optional chain operator ?. This operator includes runtime checks, so it is safer than the compile-only non-null assertion operator
+
+    120 120 │         let turns = 0;
+    121 121 │         for (let i = 2; i < s.points.length; i++) {
+    122     │ - ········const·dx1·=·s.points[i·-·1]!.x·-·s.points[i·-·2]!.x;
+        122 │ + ········const·dx1·=·s.points[i·-·1]?.x·-·s.points[i·-·2]!.x;
+    123 123 │           const dx2 = s.points[i]!.x - s.points[i - 1]!.x;
+    124 124 │           const dy1 = s.points[i - 1]!.y - s.points[i - 2]!.y;
+
+
+apps\web\src\features\ink\lab\synthetic-strokes.test.ts:122:42 lint/style/noNonNullAssertion  FIXABLE  ━━━━━━━━━━
+
+  ! Forbidden non-null assertion.
+
+    120 │       let turns = 0;
+    121 │       for (let i = 2; i < s.points.length; i++) {
+  > 122 │         const dx1 = s.points[i - 1]!.x - s.points[i - 2]!.x;
+        │                                          ^^^^^^^^^^^^^^^^
+    123 │         const dx2 = s.points[i]!.x - s.points[i - 1]!.x;
+    124 │         const dy1 = s.points[i - 1]!.y - s.points[i - 2]!.y;
+
+  i Unsafe fix: Replace with optional chain operator ?. This operator includes runtime checks, so it is safer than the compile-only non-null assertion operator
+
+    120 120 │         let turns = 0;
+    121 121 │         for (let i = 2; i < s.points.length; i++) {
+    122     │ - ········const·dx1·=·s.points[i·-·1]!.x·-·s.points[i·-·2]!.x;
+        122 │ + ········const·dx1·=·s.points[i·-·1]!.x·-·s.points[i·-·2]?.x;
+    123 123 │           const dx2 = s.points[i]!.x - s.points[i - 1]!.x;
+    124 124 │           const dy1 = s.points[i - 1]!.y - s.points[i - 2]!.y;
+
+
+apps\web\src\features\ink\lab\synthetic-strokes.test.ts:123:21 lint/style/noNonNullAssertion  FIXABLE  ━━━━━━━━━━
+
+  ! Forbidden non-null assertion.
+
+    121 │       for (let i = 2; i < s.points.length; i++) {
+    122 │         const dx1 = s.points[i - 1]!.x - s.points[i - 2]!.x;
+  > 123 │         const dx2 = s.points[i]!.x - s.points[i - 1]!.x;
+        │                     ^^^^^^^^^^^^
+    124 │         const dy1 = s.points[i - 1]!.y - s.points[i - 2]!.y;
+    125 │         const dy2 = s.points[i]!.y - s.points[i - 1]!.y;
+
+  i Unsafe fix: Replace with optional chain operator ?. This operator includes runtime checks, so it is safer than the compile-only non-null assertion operator
+
+    121 121 │         for (let i = 2; i < s.points.length; i++) {
+    122 122 │           const dx1 = s.points[i - 1]!.x - s.points[i - 2]!.x;
+    123     │ - ········const·dx2·=·s.points[i]!.x·-·s.points[i·-·1]!.x;
+        123 │ + ········const·dx2·=·s.points[i]?.x·-·s.points[i·-·1]!.x;
+    124 124 │           const dy1 = s.points[i - 1]!.y - s.points[i - 2]!.y;
+    125 125 │           const dy2 = s.points[i]!.y - s.points[i - 1]!.y;
+
+
+apps\web\src\features\ink\lab\synthetic-strokes.test.ts:123:38 lint/style/noNonNullAssertion  FIXABLE  ━━━━━━━━━━
+
+  ! Forbidden non-null assertion.
+
+    121 │       for (let i = 2; i < s.points.length; i++) {
+    122 │         const dx1 = s.points[i - 1]!.x - s.points[i - 2]!.x;
+  > 123 │         const dx2 = s.points[i]!.x - s.points[i - 1]!.x;
+        │                                      ^^^^^^^^^^^^^^^^
+    124 │         const dy1 = s.points[i - 1]!.y - s.points[i - 2]!.y;
+    125 │         const dy2 = s.points[i]!.y - s.points[i - 1]!.y;
+
+  i Unsafe fix: Replace with optional chain operator ?. This operator includes runtime checks, so it is safer than the compile-only non-null assertion operator
+
+    121 121 │         for (let i = 2; i < s.points.length; i++) {
+    122 122 │           const dx1 = s.points[i - 1]!.x - s.points[i - 2]!.x;
+    123     │ - ········const·dx2·=·s.points[i]!.x·-·s.points[i·-·1]!.x;
+        123 │ + ········const·dx2·=·s.points[i]!.x·-·s.points[i·-·1]?.x;
+    124 124 │           const dy1 = s.points[i - 1]!.y - s.points[i - 2]!.y;
+    125 125 │           const dy2 = s.points[i]!.y - s.points[i - 1]!.y;
+
+
+apps\web\src\features\ink\lab\synthetic-strokes.test.ts:124:21 lint/style/noNonNullAssertion  FIXABLE  ━━━━━━━━━━
+
+  ! Forbidden non-null assertion.
+
+    122 │         const dx1 = s.points[i - 1]!.x - s.points[i - 2]!.x;
+    123 │         const dx2 = s.points[i]!.x - s.points[i - 1]!.x;
+  > 124 │         const dy1 = s.points[i - 1]!.y - s.points[i - 2]!.y;
+        │                     ^^^^^^^^^^^^^^^^
+    125 │         const dy2 = s.points[i]!.y - s.points[i - 1]!.y;
+    126 │         // x 或 y 方向发生明确折返（阈值过滤抖动）
+
+  i Unsafe fix: Replace with optional chain operator ?. This operator includes runtime checks, so it is safer than the compile-only non-null assertion operator
+
+    122 122 │           const dx1 = s.points[i - 1]!.x - s.points[i - 2]!.x;
+    123 123 │           const dx2 = s.points[i]!.x - s.points[i - 1]!.x;
+    124     │ - ········const·dy1·=·s.points[i·-·1]!.y·-·s.points[i·-·2]!.y;
+        124 │ + ········const·dy1·=·s.points[i·-·1]?.y·-·s.points[i·-·2]!.y;
+    125 125 │           const dy2 = s.points[i]!.y - s.points[i - 1]!.y;
+    126 126 │           // x 或 y 方向发生明确折返（阈值过滤抖动）
+
+
+apps\web\src\features\ink\lab\synthetic-strokes.test.ts:124:42 lint/style/noNonNullAssertion  FIXABLE  ━━━━━━━━━━
+
+  ! Forbidden non-null assertion.
+
+    122 │         const dx1 = s.points[i - 1]!.x - s.points[i - 2]!.x;
+    123 │         const dx2 = s.points[i]!.x - s.points[i - 1]!.x;
+  > 124 │         const dy1 = s.points[i - 1]!.y - s.points[i - 2]!.y;
+        │                                          ^^^^^^^^^^^^^^^^
+    125 │         const dy2 = s.points[i]!.y - s.points[i - 1]!.y;
+    126 │         // x 或 y 方向发生明确折返（阈值过滤抖动）
+
+  i Unsafe fix: Replace with optional chain operator ?. This operator includes runtime checks, so it is safer than the compile-only non-null assertion operator
+
+    122 122 │           const dx1 = s.points[i - 1]!.x - s.points[i - 2]!.x;
+    123 123 │           const dx2 = s.points[i]!.x - s.points[i - 1]!.x;
+    124     │ - ········const·dy1·=·s.points[i·-·1]!.y·-·s.points[i·-·2]!.y;
+        124 │ + ········const·dy1·=·s.points[i·-·1]!.y·-·s.points[i·-·2]?.y;
+    125 125 │           const dy2 = s.points[i]!.y - s.points[i - 1]!.y;
+    126 126 │           // x 或 y 方向发生明确折返（阈值过滤抖动）
+
+
+apps\web\src\features\ink\lab\synthetic-strokes.test.ts:125:21 lint/style/noNonNullAssertion  FIXABLE  ━━━━━━━━━━
+
+  ! Forbidden non-null assertion.
+
+    123 │         const dx2 = s.points[i]!.x - s.points[i - 1]!.x;
+    124 │         const dy1 = s.points[i - 1]!.y - s.points[i - 2]!.y;
+  > 125 │         const dy2 = s.points[i]!.y - s.points[i - 1]!.y;
+        │                     ^^^^^^^^^^^^
+    126 │         // x 或 y 方向发生明确折返（阈值过滤抖动）
+    127 │         if (dx1 * dx2 < -4 || dy1 * dy2 < -4) turns++;
+
+  i Unsafe fix: Replace with optional chain operator ?. This operator includes runtime checks, so it is safer than the compile-only non-null assertion operator
+
+    123 123 │           const dx2 = s.points[i]!.x - s.points[i - 1]!.x;
+    124 124 │           const dy1 = s.points[i - 1]!.y - s.points[i - 2]!.y;
+    125     │ - ········const·dy2·=·s.points[i]!.y·-·s.points[i·-·1]!.y;
+        125 │ + ········const·dy2·=·s.points[i]?.y·-·s.points[i·-·1]!.y;
+    126 126 │           // x 或 y 方向发生明确折返（阈值过滤抖动）
+    127 127 │           if (dx1 * dx2 < -4 || dy1 * dy2 < -4) turns++;
+
+
+apps\web\src\features\ink\lab\synthetic-strokes.test.ts:125:38 lint/style/noNonNullAssertion  FIXABLE  ━━━━━━━━━━
+
+  ! Forbidden non-null assertion.
+
+    123 │         const dx2 = s.points[i]!.x - s.points[i - 1]!.x;
+    124 │         const dy1 = s.points[i - 1]!.y - s.points[i - 2]!.y;
+  > 125 │         const dy2 = s.points[i]!.y - s.points[i - 1]!.y;
+        │                                      ^^^^^^^^^^^^^^^^
+    126 │         // x 或 y 方向发生明确折返（阈值过滤抖动）
+    127 │         if (dx1 * dx2 < -4 || dy1 * dy2 < -4) turns++;
+
+  i Unsafe fix: Replace with optional chain operator ?. This operator includes runtime checks, so it is safer than the compile-only non-null assertion operator
+
+    123 123 │           const dx2 = s.points[i]!.x - s.points[i - 1]!.x;
+    124 124 │           const dy1 = s.points[i - 1]!.y - s.points[i - 2]!.y;
+    125     │ - ········const·dy2·=·s.points[i]!.y·-·s.points[i·-·1]!.y;
+        125 │ + ········const·dy2·=·s.points[i]!.y·-·s.points[i·-·1]?.y;
+    126 126 │           // x 或 y 方向发生明确折返（阈值过滤抖动）
+    127 127 │           if (dx1 * dx2 < -4 || dy1 * dy2 < -4) turns++;
+
+
+Checked 915 files in 865ms. No fixes applied.
+Found 18 warnings.
+Found 1 info.

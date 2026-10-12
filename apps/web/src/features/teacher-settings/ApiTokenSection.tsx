@@ -34,18 +34,27 @@ import { copyText } from "@/lib/copy";
  *   与配置示例」链接直达。
  * 三态齐全（加载/错误/数据）、触控目标 ≥44px（min-h-11）。
  */
-export function ApiTokenSection() {
+export function ApiTokenSection({
+  title = "AI 连接（API Token）",
+  showConnectionLink = true,
+}: {
+  title?: string;
+  showConnectionLink?: boolean;
+}) {
   const tokenQuery = useApiToken();
   const resetMutation = useResetApiToken();
   const [confirmOpen, setConfirmOpen] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [copyResult, setCopyResult] = useState<{
+    token: string;
+    ok: boolean;
+  } | null>(null);
+  const copied =
+    copyResult?.token === tokenQuery.data?.token && copyResult?.ok === true;
+  const copyFailed =
+    copyResult?.token === tokenQuery.data?.token && copyResult?.ok === false;
 
   async function handleCopy(token: string) {
-    const ok = await copyText(token);
-    if (ok) {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }
+    setCopyResult({ token, ok: await copyText(token) });
   }
 
   /** 生成（首次）与重置（已有）共用后端动作；已有 token 时必须先过确认弹层 */
@@ -78,9 +87,9 @@ export function ApiTokenSection() {
   return (
     <div className="flex flex-col gap-4 rounded-xl border border-border bg-card p-5 text-card-foreground">
       <div>
-        <h2 className="flex items-center gap-2 text-sm font-semibold">
+        <h2 className="flex items-center gap-2 text-base font-semibold">
           <KeyRound aria-hidden className="size-4" />
-          AI 连接（API Token）
+          {title}
         </h2>
         <p className="mt-1 text-sm text-muted-foreground">
           供 Claude Desktop 等 AI 客户端经 MCP 连接本工具使用（地址 /mcp）。
@@ -90,7 +99,7 @@ export function ApiTokenSection() {
 
       {tokenQuery.isPending && (
         <p className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Loader2 aria-hidden className="size-4 animate-spin" />
+          <Loader2 aria-hidden className="size-4 motion-safe:animate-spin" />
           正在加载…
         </p>
       )}
@@ -104,11 +113,31 @@ export function ApiTokenSection() {
           {errorText}
         </p>
       )}
+      {errorText && (
+        <Button
+          variant="outline"
+          className="min-h-11 self-start"
+          onClick={() => void tokenQuery.refetch()}
+        >
+          重新加载凭据
+        </Button>
+      )}
 
       {/* T4.7：连接说明页入口（MCP 地址与配置示例在 /t/connect） */}
-      <Button variant="outline" className="min-h-11 self-start px-4" asChild>
-        <Link to="/t/connect">连接说明与配置示例 →</Link>
-      </Button>
+      {showConnectionLink && (
+        <Button variant="outline" className="min-h-11 self-start px-4" asChild>
+          <Link to="/t/connect">连接说明与配置示例 →</Link>
+        </Button>
+      )}
+
+      <p role="status" className="sr-only">
+        {copied ? "凭据已复制到剪贴板" : ""}
+      </p>
+      {copyFailed && (
+        <p role="alert" className="text-sm text-destructive">
+          复制失败，请选中内容手动复制。
+        </p>
+      )}
 
       {tokenQuery.data && (
         <div className="flex flex-col gap-3">
@@ -160,7 +189,7 @@ export function ApiTokenSection() {
             >
               {resetMutation.isPending ? (
                 <>
-                  <Loader2 aria-hidden className="animate-spin" />
+                  <Loader2 aria-hidden className="motion-safe:animate-spin" />
                   正在{tokenQuery.data.token === null ? "生成" : "重置"}…
                 </>
               ) : (

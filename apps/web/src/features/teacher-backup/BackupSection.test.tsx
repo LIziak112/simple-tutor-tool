@@ -67,6 +67,25 @@ beforeEach(() => {
 });
 
 describe("BackupSection 渲染与快照列表", () => {
+  it("默认展示最近三条，全部快照可展开并收起", async () => {
+    mockedSnapshots.mockResolvedValue({
+      snapshots: Array.from({ length: 5 }, (_, index) => ({
+        filename: `snapshot-${index}.db`,
+        createdAt: "2026-10-01T00:00:00.000Z",
+        sizeBytes: 4096,
+      })),
+    });
+    renderSection();
+    const expand = await screen.findByRole("button", {
+      name: "查看全部 5 条快照",
+    });
+    expect(screen.getAllByRole("listitem")).toHaveLength(3);
+    fireEvent.click(expand);
+    expect(screen.getAllByRole("listitem")).toHaveLength(5);
+    fireEvent.click(screen.getByRole("button", { name: "收起快照" }));
+    expect(screen.getAllByRole("listitem")).toHaveLength(3);
+  });
+
   it("区块渲染：下载按钮、恢复入口、快照列表（时间 + 大小）；备份内容与下载说明文案准确", async () => {
     renderSection();
 
