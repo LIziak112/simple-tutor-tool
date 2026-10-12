@@ -13,6 +13,10 @@ import {
   attemptSummarySchema,
   hintOpenDataSchema,
   hintOpenRequestSchema,
+  lessonBlockSchema,
+  lessonQuestionSubmitDataSchema,
+  lessonQuestionSubmitRequestSchema,
+  lessonStartDataSchema,
   wrongPracticeRequestSchema,
 } from "./attempt.ts";
 
@@ -49,6 +53,8 @@ const SUMMARY_DRAFT = {
   id: ATTEMPT_ID,
   sourceType: "assignment",
   assignmentId: ASSIGNMENT_ID,
+  // 2026-10 讲练一体：lesson 来源必填，其余来源恒 null
+  lectureId: null,
   courseId: null,
   // T2A.7：assignment 来源多单元化后 unitId 为 null（题目集合走 assignment_units）
   unitId: null,
@@ -101,17 +107,18 @@ describe("attemptStatusSchema / attemptSummarySchema", () => {
     ).toBe(false);
   });
 
-  it("作答来源（T2A.6，D9）：assignment 记 assignmentId；course 记 courseId+attemptNo；wrong 三键全空（2026-10）", () => {
+  it("作答来源（T2A.6，D9）：assignment 记 assignmentId；course 记 courseId+attemptNo；wrong 三键全空（2026-10）；lesson 记 lectureId（2026-10）", () => {
     const course = attemptSummarySchema.parse(SUMMARY_COURSE_SECOND);
     expect(course.sourceType).toBe("course");
     expect(course.assignmentId).toBeNull();
     expect(course.courseId).toBe(COURSE_ID);
     expect(course.attemptNo).toBe(2);
-    // 来源枚举三种（assignment | course | wrong）
+    // 来源枚举四种（assignment | course | wrong | lesson）
     expect(attemptSourceSchema.options).toEqual([
       "assignment",
       "course",
       "wrong",
+      "lesson",
     ]);
     // 缺来源字段 / 非法来源值 → 拒绝
     const { sourceType: _omitSource, ...withoutSource } = SUMMARY_DRAFT;
@@ -203,6 +210,76 @@ describe("attemptStatusSchema / attemptSummarySchema", () => {
     ).toBe(false);
     expect(
       attemptSummarySchema.safeParse({ ...wrong, unitId: UNIT_ID }).success,
+    ).toBe(false);
+  });
+
+  it("lesson 来源（2026-10 讲练一体）：lectureId 必填、assignmentId 恒 null、unitId 恒非空（嵌入单元快照值）；courseId 可空可非空", () => {
+    const LECTURE_ID = "88888888-8888-4888-8888-888888888888";
+    const lessonBase = {
+      ...SUMMARY_DRAFT,
+      sourceType: "lesson",
+      assignmentId: null,
+      lectureId: LECTURE_ID,
+      courseId: null,
+      unitId: "有理数讲练",
+      attemptNo: 1,
+    } as const;
+    // courseId 可空（不带课程上下文打开）与可非空（记录来自哪门课）均合法
+    expect(attemptSummarySchema.parse(lessonBase).lectureId).toBe(LECTURE_ID);
+    expect(
+      attemptSummarySchema.parse({ ...lessonBase, courseId: COURSE_ID })
+        .courseId,
+    ).toBe(COURSE_ID);
+    // lectureId 缺失/为 null → 拒绝（讲练作答必须记录所属讲练页）
+    const { lectureId: _omitLecture, ...withoutLecture } = lessonBase;
+    void _omitLecture;
+    expect(attemptSummarySchema.safeParse(withoutLecture).success).toBe(false);
+    expect(
+      attemptSummarySchema.safeParse({ ...lessonBase, lectureId: null })
+        .success,
+    ).toBe(false);
+    // 空串 lectureId → 拒绝（min(1)）
+    expect(
+      attemptSummarySchema.safeParse({ ...lessonBase, lectureId: "" }).success,
+    ).toBe(false);
+    // assignmentId 非空 → 拒绝（讲练作答不挂作业）
+    expect(
+      attemptSummarySchema.safeParse({
+        ...lessonBase,
+        assignmentId: ASSIGNMENT_ID,
+      }).success,
+    ).toBe(false);
+    // unitId 为 null → 拒绝（嵌入单元快照值非空）
+    expect(
+      attemptSummarySchema.safeParse({ ...lessonBase, unitId: null }).success,
+    ).toBe(false);
+  });
+
+  it("非 lesson 来源携带 lectureId → 拒绝（讲练开卷专属归属键，交叉不变式锁定）", () => {
+    expect(
+      attemptSummarySchema.safeParse({
+        ...SUMMARY_COURSE_SECOND,
+        lectureId: "88888888-8888-4888-8888-888888888888",
+      }).success,
+    ).toBe(false);
+    expect(
+      attemptSummarySchema.safeParse({
+        ...SUMMARY_DRAFT,
+        lectureId: "88888888-8888-4888-8888-888888888888",
+      }).success,
+    ).toBe(false);
+    const wrong = {
+      ...SUMMARY_DRAFT,
+      sourceType: "wrong",
+      assignmentId: null,
+      courseId: null,
+      unitId: null,
+    } as const;
+    expect(
+      attemptSummarySchema.safeParse({
+        ...wrong,
+        lectureId: "88888888-8888-4888-8888-888888888888",
+      }).success,
     ).toBe(false);
   });
 
@@ -848,6 +925,206 @@ describe("attemptSubmitRequestSchema.evidence（T6R.10 提交事务固定原稿�
   });
 });
 
+describe("lessonStartDataSchema / lessonQuestionSubmit（2026-10 讲练一体）", () => {
+  const LECTURE_ID = "88888888-8888-4888-8888-888888888888";
+  const LESSON_SUMMARY_DRAFT = {
+    ...SUMMARY_DRAFT,
+    sourceType: "lesson",
+    assignmentId: null,
+    lectureId: LECTURE_ID,
+    courseId: COURSE_ID,
+    unitId: "有理数讲练",
+  } as const;
+
+  const LESSON_QUESTION = {
+    id: "有理数讲练-1",
+    type: "judge",
+    difficulty: 1,
+    knowledge: ["有理数的概念"],
+    stemMd: "$0$ 既不是正数，也不是负数。[[]]",
+    hintCount: 0,
+    questionRevisionId: "11111111-1111-4111-8111-111111111111",
+  } as const;
+
+  const LESSON_START = {
+    lecture: {
+      id: LECTURE_ID,
+      title: "第1讲 有理数讲练",
+      topic: "有理数",
+      courseId: COURSE_ID,
+      courseName: "初一上",
+    },
+    blocks: [
+      { type: "md", md: "# 第1讲 有理数讲练\n\n先讲一段正数与负数。" },
+      { type: "question", questionId: "有理数讲练-1" },
+      { type: "md", md: "## 小结\n\n本段完。" },
+    ],
+    attempt: LESSON_SUMMARY_DRAFT,
+    questions: [LESSON_QUESTION],
+    drafts: { "有理数讲练-1": { kind: "judge", value: true } },
+    hintsOpened: {},
+    released: {},
+    // 进行中卷 summary 为 null（读侧现算；完成后非空）
+    summary: null,
+    enabledCapabilities: ["steps", "ink"],
+  } as const;
+
+  it("lessonBlockSchema：md 段非空、question 段 questionId 非空；其他 type 拒绝", () => {
+    expect(lessonBlockSchema.parse({ type: "md", md: "讲一段。" })).toEqual({
+      type: "md",
+      md: "讲一段。",
+    });
+    expect(
+      lessonBlockSchema.parse({
+        type: "question",
+        questionId: "有理数讲练-1",
+      }),
+    ).toEqual({ type: "question", questionId: "有理数讲练-1" });
+    expect(lessonBlockSchema.safeParse({ type: "md", md: "" }).success).toBe(
+      false,
+    );
+    expect(
+      lessonBlockSchema.safeParse({ type: "question", questionId: "" })
+        .success,
+    ).toBe(false);
+    expect(lessonBlockSchema.safeParse({ type: "html", md: "…" }).success).toBe(
+      false,
+    );
+  });
+
+  it("接受合法开卷新卷：blocks 切段 + 冻结题平铺（含 questionRevisionId）+ drafts/hintsOpened/released + summary null（进行中）", () => {
+    const parsed = lessonStartDataSchema.parse(LESSON_START);
+    expect(parsed.blocks).toHaveLength(3);
+    expect(parsed.blocks[1]).toEqual({
+      type: "question",
+      questionId: "有理数讲练-1",
+    });
+    expect(parsed.questions[0]?.questionRevisionId).toBe(
+      "11111111-1111-4111-8111-111111111111",
+    );
+    expect(parsed.summary).toBeNull();
+    expect(parsed.lecture.courseId).toBe(COURSE_ID);
+  });
+
+  it("attempt.sourceType 非 lesson → 整体拒绝（讲练开卷数据只承载 lesson 来源）", () => {
+    expect(
+      lessonStartDataSchema.safeParse({
+        ...LESSON_START,
+        attempt: { ...LESSON_SUMMARY_DRAFT, sourceType: "course" },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("attempt 已完成（非 draft）但 summary 为 null → 拒绝（完成后非空，状态-形态一致性）", () => {
+    expect(
+      lessonStartDataSchema.safeParse({
+        ...LESSON_START,
+        attempt: { ...LESSON_SUMMARY_DRAFT, status: "graded" },
+      }).success,
+    ).toBe(false);
+    // 已完成 + summary 非空 → 合法（草稿与完成态共用一形态，由 attempt.status 区分）
+    expect(
+      lessonStartDataSchema.safeParse({
+        ...LESSON_START,
+        attempt: { ...LESSON_SUMMARY_DRAFT, status: "graded" },
+        summary: {
+          total: 1,
+          answered: 1,
+          correct: 1,
+          wrong: 0,
+          pending: 0,
+          unanswered: 0,
+          autoGradable: 1,
+          scoreFinal: 100,
+          pendingCount: 0,
+        },
+      }).success,
+    ).toBe(true);
+  });
+
+  it("单题提交请求：questionRevisionId 必填；evidence 可选（复用整卷声明形态，含 superRefine）", () => {
+    expect(
+      lessonQuestionSubmitRequestSchema.parse({
+        questionRevisionId: "11111111-1111-4111-8111-111111111111",
+      }),
+    ).toEqual({ questionRevisionId: "11111111-1111-4111-8111-111111111111" });
+    // evidence 复用 submitEvidenceDeclarationSchema：frozen 缺 versionId → 拒绝
+    expect(
+      lessonQuestionSubmitRequestSchema.safeParse({
+        questionRevisionId: "11111111-1111-4111-8111-111111111111",
+        evidence: {
+          questionId: "有理数讲练-1",
+          state: "frozen",
+          revision: 1,
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      lessonQuestionSubmitRequestSchema.safeParse({
+        questionRevisionId: "11111111-1111-4111-8111-111111111111",
+        evidence: {
+          questionId: "有理数讲练-1",
+          state: "frozen",
+          versionId: "33333333-3333-4333-8333-333333333333",
+          revision: 2,
+        },
+      }).success,
+    ).toBe(true);
+    // 空/空白 revisionId → 拒绝（与交卷同口径）
+    expect(
+      lessonQuestionSubmitRequestSchema.safeParse({ questionRevisionId: "" })
+        .success,
+    ).toBe(false);
+    expect(
+      lessonQuestionSubmitRequestSchema.safeParse({}).success,
+    ).toBe(false);
+  });
+
+  it("单题提交响应：question（当题释放）+ summary + attempt 三键；summary 必填非 null", () => {
+    const payload = {
+      question: {
+        questionId: "有理数讲练-1",
+        snapshot: {
+          id: "有理数讲练-1",
+          type: "judge",
+          difficulty: 1,
+          knowledge: ["有理数的概念"],
+          stemMd: "$0$ 既不是正数，也不是负数。[[正确]]",
+          hintCount: 0,
+        },
+        answers: { kind: "judge", value: true },
+        solutionMd: null,
+        answer: { kind: "judge", value: true },
+        autoCorrect: true,
+        teacherMark: null,
+        teacherComment: null,
+        finalCorrect: true,
+        hintsOpened: [],
+      },
+      summary: {
+        total: 1,
+        answered: 1,
+        correct: 1,
+        wrong: 0,
+        pending: 0,
+        unanswered: 0,
+        autoGradable: 1,
+        scoreFinal: null,
+        pendingCount: 0,
+      },
+      attempt: LESSON_SUMMARY_DRAFT,
+    };
+    const data = lessonQuestionSubmitDataSchema.parse(payload);
+    expect(data.question.autoCorrect).toBe(true);
+    expect(data.attempt.sourceType).toBe("lesson");
+    // summary 为 null → 拒绝（单题提交响应恒带现算汇总）
+    expect(
+      lessonQuestionSubmitDataSchema.safeParse({ ...payload, summary: null })
+        .success,
+    ).toBe(false);
+  });
+});
+
 describe("attemptDetailDataSchema / attemptErrorCodeSchema", () => {
   it("详情 data 是草稿视图与结果视图的 union（按 attempt.status 分支）", () => {
     expect(
@@ -943,6 +1220,10 @@ describe("attemptDetailDataSchema / attemptErrorCodeSchema", () => {
     expect(attemptErrorCodeSchema.parse("NOT_FOUND")).toBe("NOT_FOUND");
     expect(attemptErrorCodeSchema.parse("WRONG_PRACTICE_EMPTY")).toBe(
       "WRONG_PRACTICE_EMPTY",
+    );
+    // 2026-10 讲练一体：该题已单题提交（lesson 逐题提交防重，409）
+    expect(attemptErrorCodeSchema.parse("QUESTION_ALREADY_SUBMITTED")).toBe(
+      "QUESTION_ALREADY_SUBMITTED",
     );
     expect(attemptErrorCodeSchema.safeParse("SUBMIT_TWICE").success).toBe(
       false,

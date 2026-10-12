@@ -79,7 +79,11 @@ export const teacherAttemptListQuerySchema = z.object({
  *   （挂课程时配课程名）；unitId / unitTitle 为 null（多单元题目集合在
  *   assignment_units），attemptNo 恒 1；
  * - course 来源：courseId / courseName / unitId / unitTitle 非空、attemptNo
- *   从 1 递增；展示「单元标题 · 第 n 次」；assignmentId / assignmentTitle 为 null。
+ *   从 1 递增；展示「单元标题 · 第 n 次」；assignmentId / assignmentTitle 为 null；
+ * - wrong / lesson 来源（枚举随 attemptSourceSchema，2026-10）：wrong 三组键全
+ *   null（展示「错题重练 · 第 n 次」由前端拼）；lesson 不挂作业（assignmentId /
+ *   assignmentTitle 恒 null），unitId/unitTitle 为嵌入单元快照值——展示文案由
+ *   讲练一体后续任务对齐（本契约先保证枚举联动，形态字段已可表达）。
  */
 export const teacherAttemptSourceSchema = z.object({
   sourceType: attemptSourceSchema,

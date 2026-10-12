@@ -54,16 +54,28 @@ function apiOkExtend<T extends z.ZodType>(dataSchema: T) {
 export const attemptStatusSchema = z.enum(["draft", "submitted", "graded"]);
 
 /**
- * 作答来源（T2A.6，Phase 2A 清单 D9；2026-10 增 wrong）：
+ * 作答来源（T2A.6，Phase 2A 清单 D9；2026-10 增 wrong 与 lesson）：
  * - assignment：作业作答（记 assignmentId；courseId 可空，T2A.7 起取作业所属课程）；
  * - course：课程练习作答（记 courseId + unitId，可重做，attemptNo 递增）；
  * - wrong：错题重练作答（2026-10 学生端闭环）：assignmentId / courseId / unitId
  *   恒 null（无课程/作业归属，attempt 永不失权），attemptNo 按该生已有 wrong
  *   来源 attempt 数从 1 递增；题目集合是创建时圈定的错题快照（不落单元，
- *   见服务端 startWrongPractice）。
- * 三种来源共用同一套作答接口与答题页（判分/快照/提示/笔迹/事件全按 attemptId）。
+ *   见服务端 startWrongPractice）；
+ * - lesson：讲练页作答（2026-10 讲练一体）：记 lectureId（所属讲练页）+
+ *   unitId（嵌入单元的快照值），assignmentId 恒 null，courseId 可空（打开时
+ *   来自哪门课）。与 course 来源的行为差异（方案决策 7）：start 幂等
+ *   create-or-return——刷新已完成讲练页不消耗 attemptNo，「再做一次」是显式
+ *   独立动作（仅完成后可用，attemptNo+1 新卷）；lesson 作答永不失权（讲练页
+ *   只经课程可见，但已开卷的作答记录恒可回看）。当题释放恒为题级粒度
+ *   （提交即释放该题对错与详解），attempt 级 answerRelease 不适用于 lesson 来源。
+ * 四种来源共用同一套作答接口与答题页（判分/快照/提示/笔迹/事件全按 attemptId）。
  */
-export const attemptSourceSchema = z.enum(["assignment", "course", "wrong"]);
+export const attemptSourceSchema = z.enum([
+  "assignment",
+  "course",
+  "wrong",
+  "lesson",
+]);
 
 /**
  * 教师批改标记（D3 持久化口径：teacherMark 优先于 autoCorrect）。
@@ -79,13 +91,18 @@ export const teacherMarkSchema = z.enum(["correct", "wrong"]);
  * - assignment 来源：一个作业一人至多一份进行中（draft）attempt；交卷后再次 POST
  *   /attempt 返回已交的那份（前端据此直接进结果视图，不另开新卷）；
  * - course 来源：同一 (学生, 课程, 单元) 同时最多 1 份 draft；已交卷后「再做一次」
- *   创建新 attempt（attemptNo 递增，从 1 起，新一次从空白开始，D10）。
+ *   创建新 attempt（attemptNo 递增，从 1 起，新一次从空白开始，D10）；
+ * - lesson 来源（2026-10）：同一 (学生, 讲练页) 同时最多 1 份 draft；start 幂等
+ *   create-or-return，「再做一次」是显式独立动作（仅完成后，attemptNo+1 新卷）。
  *
  * 来源交叉不变式已在 schema 层锁定（下方 superRefine，不再是仅存于注释的约定）：
  * - course 来源：assignmentId 恒 null，courseId / unitId 恒有值；
  * - assignment 来源：assignmentId 恒有值，unitId 恒 null（courseId 随作业可空可非空）；
  * - wrong 来源（2026-10）：assignmentId / courseId / unitId 恒 null（错题重练
- *   无课程与作业归属；题目集合 = 创建 attempt 时冻结进 responses 的错题快照）。
+ *   无课程与作业归属；题目集合 = 创建 attempt 时冻结进 responses 的错题快照）；
+ * - lesson 来源（2026-10 讲练一体）：lectureId 恒有值（所属讲练页）、assignmentId
+ *   恒 null（不挂作业）、unitId 恒有值（嵌入单元的快照值）、courseId 可空可非空
+ *   （打开时来自哪门课）；反之 lectureId 是讲练开卷专属归属键，其余三种来源恒 null。
  */
 export const attemptSummarySchema = z
   .object({
@@ -95,6 +112,8 @@ export const attemptSummarySchema = z
     sourceType: attemptSourceSchema,
     /** 所属作业（assignments.id）；course 来源为 null */
     assignmentId: z.uuid().nullable(),
+    /** 所属讲练页（lectures.id）；lesson 来源必填，其余来源恒 null（2026-10） */
+    lectureId: z.string().min(1).nullable(),
     /** 课程练习所属课程（courses.id）；assignment 来源取作业所属课程（可空，D9/T2A.7） */
     courseId: z.uuid().nullable(),
     /**
@@ -119,7 +138,42 @@ export const attemptSummarySchema = z
     scoreAuto: z.number().int().min(0).max(100).nullable(),
   })
   .superRefine((summary, ctx) => {
-    if (summary.sourceType === "course") {
+    // lectureId 是讲练开卷专属归属键（2026-10）：除 lesson 外的来源携带即拒绝
+    if (summary.sourceType !== "lesson" && summary.lectureId !== null) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["lectureId"],
+        message: `来源不变式冲突：${summary.sourceType} 来源的 lectureId 必须为 null（讲练开卷专属归属键）`,
+      });
+    }
+    if (summary.sourceType === "lesson") {
+      // lesson（2026-10 讲练一体）：lectureId 必填、不挂作业、unitId=嵌入单元快照值；
+      // courseId 无约束（可空可非空——打开时来自哪门课）
+      if (summary.lectureId === null) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["lectureId"],
+          message:
+            "来源不变式冲突：lesson 来源的 lectureId 必须非空（讲练作答必须记录所属讲练页）",
+        });
+      }
+      if (summary.assignmentId !== null) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["assignmentId"],
+          message:
+            "来源不变式冲突：lesson 来源的 assignmentId 必须为 null（讲练作答不挂作业）",
+        });
+      }
+      if (summary.unitId === null) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["unitId"],
+          message:
+            "来源不变式冲突：lesson 来源的 unitId 必须非空（嵌入单元的快照值，题目集合落该单元）",
+        });
+      }
+    } else if (summary.sourceType === "course") {
       if (summary.assignmentId !== null) {
         ctx.addIssue({
           code: "custom",
@@ -548,6 +602,123 @@ export const attemptSubmitRequestSchema = z.object({
     .optional(),
 });
 
+// ---------- 讲练页（kind: lesson，2026-10：单题提交即时反馈） ----------
+
+/**
+ * 讲练页切段（学生侧安全投影的最小单元）：讲义 markdown 原文是教师域数据
+ * （题块内含 [[答案]] 标记 / :::solution / :::hint），学生端只拿服务端
+ * splitLessonBlocks 切出的段落序列——md 段是原文的非题区间（可渲染），
+ * question 段只携带题目 id（内容由冻结题公开投影下发，防泄露根基，方案决策 1）。
+ * md 段非空：切段时相邻题块间的空区间直接跳过（空段是切段 bug 的信号）。
+ */
+export const lessonBlockSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("md"),
+    /** 讲义段落 Markdown（可含 H1/H2 标题与指令语法，前端 RichMarkdown 渲染） */
+    md: z.string().min(1),
+  }),
+  z.object({
+    type: z.literal("question"),
+    /** 题目 id（DSL id，来自题目容器开围栏注入的 id 属性） */
+    questionId: z.string().min(1),
+  }),
+]);
+
+/**
+ * POST /api/student/lectures/:id/lesson/start（幂等 create-or-return）与
+ * restart 响应 data：讲练页开卷投影。**草稿与完成态共用一形态**，由
+ * attempt.status 区分（draft → 作答态渲染题卡；submitted/graded → 结果态，
+ * released 全量 + summary 非空）。
+ * - blocks：讲义切段（安全投影，原文绝不下发）；
+ * - questions：冻结快照平铺（attemptQuestionPublic，含 questionRevisionId；
+ *   题号顺序 = blocks 中出现顺序；教师重导后不在当前 markdown 的孤儿冻结题
+ *   由前端渲染于页尾「本次练习其余题目」区，不丢失，方案决策 2）；
+ * - drafts / hintsOpened：与草稿视图同口径（本人答案与已解锁提示回显）；
+ * - released：已单题提交的题 → 当题结果形态（attemptResultQuestion：
+ *   提交即释放该题的参考答案/详解/判定——恒题级粒度，见 attemptSourceSchema
+ *   的 lesson 注释）；
+ * - summary：进行中为 null（服务端读侧现算，不落库）；完成后非空（superRefine
+ *   锁定状态-形态一致性）。
+ */
+export const lessonStartDataSchema = z
+  .object({
+    /** 讲练页上下文（顶部标题与来源行） */
+    lecture: z.object({
+      id: z.uuid(),
+      /** 讲练页标题（H1 标题文本） */
+      title: z.string().min(1),
+      /** 讲练页主题（frontmatter topic）；未标注为 null（与学生讲义摘要同口径） */
+      topic: z.string().nullable(),
+      /** 打开时来自哪门课（可空口径同 attempt.courseId）；课程名随行 */
+      courseId: z.uuid().nullable(),
+      courseName: z.string().min(1).nullable(),
+    }),
+    /** 讲义切段（渲染顺序即页面顺序） */
+    blocks: z.array(lessonBlockSchema),
+    attempt: attemptSummarySchema,
+    /** 冻结快照平铺（公开投影 + questionRevisionId） */
+    questions: z.array(attemptQuestionPublicSchema),
+    /** 本人草稿答案：questionId → StudentAnswer（与草稿视图同口径） */
+    drafts: z.record(z.string(), studentAnswerSchema),
+    /** 已解锁提示：questionId → 已解锁条目（与草稿视图同口径） */
+    hintsOpened: z.record(z.string(), hintOpenedEntrySchema.array()),
+    /** 已单题提交的题：questionId → 当题结果（当题已释放） */
+    released: z.record(z.string(), attemptResultQuestionSchema),
+    /** 得分汇总（进行中为 null；完成后非空——现算口径与结果视图一致） */
+    summary: attemptScoreSummarySchema.nullable(),
+    /** 教师辅助能力有效启用集（与草稿/结果视图同口径） */
+    enabledCapabilities: enabledCapabilitiesFieldSchema,
+  })
+  .superRefine((data, ctx) => {
+    if (data.attempt.sourceType !== "lesson") {
+      ctx.addIssue({
+        code: "custom",
+        path: ["attempt", "sourceType"],
+        message:
+          "状态-形态不一致：讲练开卷数据只承载 lesson 来源的 attempt（其余来源走通用草稿/结果视图）",
+      });
+    }
+    if (data.attempt.status !== "draft" && data.summary === null) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["summary"],
+        message:
+          "状态-形态不一致：attempt 已完成（submitted/graded）但 summary 为 null（完成后汇总必须非空）",
+      });
+    }
+  });
+
+/**
+ * POST /api/student/attempts/:id/questions/:questionId/submit 请求体
+ * （2026-10 讲练一体单题提交）：
+ * - questionRevisionId：建卷时下发的该题版本引用（responses 行 id）——服务端
+ *   与该题冻结行比对，错版 409 QUESTION_REVISION_STALE（旧标签页防误交，与
+ *   整卷交卷同口径）；路径上的 questionId 是幂等键的一部分；
+ * - evidence：可选的单题笔记证据声明，**复用整卷 submitEvidenceDeclarationSchema
+ *   形态**（含 questionId，须与路径一致，服务端校验；CAS 语义同 T6R.10——
+ *   frozen 比对 head、none/missing 按声明固定，缺省 = 旧客户端兼容分支）。
+ */
+export const lessonQuestionSubmitRequestSchema = z.object({
+  questionRevisionId: questionRevisionIdSchema,
+  evidence: submitEvidenceDeclarationSchema.optional(),
+});
+
+/**
+ * 单题提交响应 data（当题释放）：**只含该题**的判分结果 + 现算汇总 + attempt
+ * 摘要三键。question 为 attemptResultQuestion 形态（学生已锁定答案，提交即
+ * 释放参考答案/详解/判定；不可自动判 → finalCorrect 留 null 进待批，前端显示
+ * 「待老师批改」）；summary 恒非 null（进行中卷也现算部分汇总：已提交题计入
+ * correct/wrong/pending，未提交题计入 unanswered）。全部行提交完成后服务端
+ * 自动收尾（最后一题的事务内置 attempt 为 submitted/graded 并写得分）。
+ */
+export const lessonQuestionSubmitDataSchema = z.object({
+  /** 该题的当题结果（提交即时释放） */
+  question: attemptResultQuestionSchema,
+  /** 现算得分汇总（口径与结果视图一致） */
+  summary: attemptScoreSummarySchema,
+  attempt: attemptSummarySchema,
+});
+
 /**
  * POST /api/student/attempts/:id/hints 请求体（T2.11 分步提示）：
  * 获取该题第 index 条提示（0 起）并解锁（服务端记录 hint_open 事件与已解锁集合）。
@@ -619,6 +790,9 @@ export const attemptDetailDataSchema = z
  * - ASSIGNMENT_NOT_FOUND：创建 attempt 的作业不存在（含已删除）（404）；
  * - ATTEMPT_NOT_FOUND：attempt 不存在（404）；
  * - ALREADY_SUBMITTED：attempt 已交卷，不能再保存草稿 / 重复交卷（409，验收项）；
+ * - QUESTION_ALREADY_SUBMITTED：该题已单题提交过（2026-10 讲练一体逐题提交；
+ *   409——lesson 卷同一题二次提交被可诊断拒绝，与整卷 ALREADY_SUBMITTED 分码，
+ *   前端据此锁定题卡为结果态而非提示整卷已交）；
  * - QUESTION_REVISION_STALE：交卷回传的题目版本集合与本次冻结集合不一致
  *   （缺项 / questionRevisionId 错版 / 多出未知题目 / 未带请求体的非空卷；
  *   409，T6R.3）——旧标签页或陈旧页面的提交被可诊断拒绝，前端提示刷新后重交；
@@ -644,6 +818,7 @@ export const attemptErrorCodeSchema = z.enum([
   "ASSIGNMENT_NOT_FOUND",
   "ATTEMPT_NOT_FOUND",
   "ALREADY_SUBMITTED",
+  "QUESTION_ALREADY_SUBMITTED",
   "QUESTION_REVISION_STALE",
   "NOTE_EVIDENCE_MISMATCH",
   "QUESTION_NOT_FOUND",
@@ -670,6 +845,12 @@ export const attemptAnswerSaveOkSchema = apiOkExtend(
 );
 /** 携带提示解锁结果的成功响应壳（hint 是唯一放行的提示内容键） */
 export const hintOpenOkSchema = apiOkExtend(hintOpenDataSchema);
+/** 携带讲练开卷投影的成功响应壳（start/restart 共用；2026-10） */
+export const lessonStartOkSchema = apiOkExtend(lessonStartDataSchema);
+/** 携带单题提交结果的成功响应壳（当题释放；2026-10） */
+export const lessonQuestionSubmitOkSchema = apiOkExtend(
+  lessonQuestionSubmitDataSchema,
+);
 
 // ---------- 推断类型导出 ----------
 
@@ -709,6 +890,18 @@ export type AttemptErrorCode = z.infer<typeof attemptErrorCodeSchema>;
 export type WrongPracticeRequest = z.infer<typeof wrongPracticeRequestSchema>;
 /** 详情响应 data：草稿视图或结果视图（服务端按 attempt.status 返回其一） */
 export type AttemptDetailData = z.infer<typeof attemptDetailDataSchema>;
+/** 讲练页切段（2026-10：md 段 / 题目槽） */
+export type LessonBlock = z.infer<typeof lessonBlockSchema>;
+/** 讲练开卷投影（草稿与完成态共用一形态，由 attempt.status 区分；2026-10） */
+export type LessonStartData = z.infer<typeof lessonStartDataSchema>;
+/** 单题提交请求体（questionRevisionId + 可选证据声明；2026-10） */
+export type LessonQuestionSubmitRequest = z.infer<
+  typeof lessonQuestionSubmitRequestSchema
+>;
+/** 单题提交响应 data（question/summary/attempt 三键；2026-10） */
+export type LessonQuestionSubmitData = z.infer<
+  typeof lessonQuestionSubmitDataSchema
+>;
 
 // ---------- 与作业状态的关系 ----------
 

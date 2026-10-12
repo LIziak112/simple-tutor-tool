@@ -54,6 +54,7 @@ const DATA: AttemptResultData = {
     id: "55555555-5555-4555-8555-555555555555",
     sourceType: "assignment",
     assignmentId: "44444444-4444-4444-8444-444444444444",
+    lectureId: null,
     courseId: null,
     // T2A.7：assignment 来源多单元化后 unitId 为 null
     unitId: null,

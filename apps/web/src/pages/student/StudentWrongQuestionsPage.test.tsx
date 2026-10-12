@@ -707,6 +707,7 @@ describe("StudentWrongQuestionsPage 重练入口（2026-10）", () => {
     id: NEW_ATTEMPT_ID,
     sourceType: "wrong",
     assignmentId: null,
+    lectureId: null,
     courseId: null,
     unitId: null,
     attemptNo: 1,

@@ -27,9 +27,11 @@ import { studentAnswerSchema } from "./grading.ts";
  */
 
 /**
- * 事件类型（§5.5 既有 11 种零变化 + T4.0a 新增 11 种，共 22 种）：
+ * 事件类型（§5.5 既有 11 种零变化 + T4.0a 新增 11 种 + 2026-10 讲练一体 1 种，
+ * 共 23 种）：
  * - attempt 上下文（既有 10 种 + T4.0a 的交互族 question/result 宿主、
- *   ink_edit_batch / ink_fullscreen、环境族 net / idle）；
+ *   ink_edit_batch / ink_fullscreen、环境族 net / idle + 2026-10 的
+ *   question_submit 逐题提交埋点）；
  * - 无 attempt 上下文（讲义域：既有 lecture_expand + T4.0a 的环境族讲义版、
  *   位置族、交互族 lecture 宿主）。
  * 语义只增不改（Phase4 §0.2 / 方案 §4.1-1）：既有事件的 payload 结构与
@@ -59,6 +61,8 @@ export const learningEventTypeSchema = z.enum([
   "directive_interact",
   "ink_edit_batch",
   "ink_fullscreen",
+  // ---------- 2026-10 讲练一体新增（逐题提交埋点） ----------
+  "question_submit",
 ]);
 
 /** 客户端毫秒时间戳（epoch ms 正整数） */
@@ -144,6 +148,18 @@ export const pageVisibleEventSchema = z.object({
 export const submitEventSchema = z.object({
   type: z.literal("submit"),
   clientTs: clientTsSchema,
+});
+
+/**
+ * 逐题提交（2026-10 讲练一体）：讲练页单题提交成功后上报一次，payload 仅
+ * questionId（答案与判定在作答接口响应里，事件只做行为埋点——服务端按它
+ * 统计逐题用时与提交节奏，与整卷 submit 的截止语义互补）。attempt 域
+ * （POST /api/student/attempts/:id/events）。
+ */
+export const questionSubmitEventSchema = z.object({
+  type: z.literal("question_submit"),
+  clientTs: clientTsSchema,
+  questionId: questionIdSchema,
 });
 
 /**
@@ -381,7 +397,8 @@ export const inkFullscreenEventSchema = z.object({
  * attempt 上下文事件（POST /api/student/attempts/:id/events 的元素）：
  * 既有 10 种 + T4.0a 增收（方案 §4.2）：交互族 host=question/result、
  * ink_edit_batch、ink_fullscreen、环境族 net / idle（lecture_visible/hidden
- * 与 host=lecture 的 directive_interact 不在本端点——讲义域走 POST /events）。
+ * 与 host=lecture 的 directive_interact 不在本端点——讲义域走 POST /events）
+ * + 2026-10 的 question_submit（讲练页逐题提交埋点）。
  *
  * 外层用 z.union 而非 discriminatedUnion：directive_interact 的 question /
  * result 两形态共用同一 type 字面量（Zod 4 判别联合不允许重复判别值），
@@ -398,6 +415,7 @@ export const attemptEventSchema = z.union([
   pageHiddenEventSchema,
   pageVisibleEventSchema,
   submitEventSchema,
+  questionSubmitEventSchema,
   directiveInteractQuestionEventSchema,
   directiveInteractResultEventSchema,
   inkEditBatchEventSchema,
@@ -429,7 +447,7 @@ export const lectureEventSchema = z.union([
   idleEndEventSchema,
 ]);
 
-/** 全部 22 种事件的联合（供服务端入库与计算层使用） */
+/** 全部 23 种事件的联合（供服务端入库与计算层使用） */
 export const learningEventSchema = z.union([
   ...attemptEventSchema.options,
   ...lectureEventSchema.options,

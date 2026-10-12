@@ -2,8 +2,10 @@ import type {
   AnnotationBaseState,
   AnnotationPhase,
   AnnotationSurfaceLayout,
+  AttemptSource,
   AttemptStatus,
   DocumentKind,
+  LearningEventType,
   NoteImageSpec,
   NoteImageState,
   NotePhase,
@@ -670,8 +672,9 @@ export const assignmentStudents = sqliteTable(
  * - sourceType（D9）：assignment=作业作答（记 assignmentId）/ course=课程练习
  *   （记 courseId + unitId，可重做，attemptNo 递增）/ wrong=错题重练（2026-10，
  *   三归属键恒 null、永不失权；题目集合与快照在该 attempt 自己的 responses 行，
- *   创建时按组卷顺序冻结）。三种来源共用同一套作答接口（判分/快照/提示/笔迹/
- *   事件全按 attemptId 工作）；
+ *   创建时按组卷顺序冻结）/ lesson=讲练页作答（2026-10，lectureId 必填 +
+ *   unitId=嵌入单元快照值；列由讲练一体后续任务加）。四种来源共用同一套作答
+ *   接口（判分/快照/提示/笔迹/事件全按 attemptId 工作）；
  * - status：draft=进行中（草稿）、submitted=已交卷（存在待批题，等教师批改）、
  *   graded=已批改（= 全部 finalCorrect 非 null；全客观题卷交卷即 graded，D2/D3，
  *   T3.2a）；
@@ -694,9 +697,11 @@ export const attempts = sqliteTable(
     studentId: text("student_id")
       .notNull()
       .references(() => students.id),
-    /** 作答来源（D9 + 2026-10 wrong）：assignment | course | wrong */
+    /** 作答来源（D9 + 2026-10 wrong/lesson）：assignment | course | wrong | lesson
+     *  （lesson 行由讲练开卷在后续任务写入；此处改用契约类型单一出处，值域随
+     *  attemptSourceSchema 联动，消除手抄枚举漂移——AGENTS 第 1 条同精神） */
     sourceType: text("source_type")
-      .$type<"assignment" | "course" | "wrong">()
+      .$type<AttemptSource>()
       .notNull()
       .default("assignment"),
     /**
@@ -934,33 +939,9 @@ export const events = sqliteTable(
      * JSON.parse。环境族 net/idle 无讲义语义，为 NULL。
      */
     lectureId: text("lecture_id"),
-    /** 事件类型（learningEventTypeSchema 22 种之一：T2.10 既有 11 + T4.0a 新增 11） */
-    type: text("type")
-      .$type<
-        | "attempt_start"
-        | "question_view"
-        | "question_focus"
-        | "question_blur"
-        | "answer_change"
-        | "hint_open"
-        | "ink_stroke_batch"
-        | "page_hidden"
-        | "page_visible"
-        | "submit"
-        | "lecture_expand"
-        | "lecture_visible"
-        | "lecture_hidden"
-        | "net_offline"
-        | "net_online"
-        | "idle_start"
-        | "idle_end"
-        | "lecture_section_focus"
-        | "lecture_toc_jump"
-        | "directive_interact"
-        | "ink_edit_batch"
-        | "ink_fullscreen"
-      >()
-      .notNull(),
+    /** 事件类型（learningEventTypeSchema 23 种之一：T2.10 既有 11 + T4.0a 11 +
+     *  2026-10 question_submit；改用契约类型单一出处，消除手抄枚举漂移） */
+    type: text("type").$type<LearningEventType>().notNull(),
     /** 事件载荷 JSON（契约各事件 schema 的序列化，不含题目侧内容） */
     payloadJson: text("payload_json").notNull(),
     /** 客户端事件时间（epoch 毫秒整数） */

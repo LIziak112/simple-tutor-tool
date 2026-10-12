@@ -49,7 +49,7 @@ function apiOkExtend<T extends z.ZodType>(dataSchema: T) {
 export const notebookRoundSchema = z.object({
   /** 该轮作答 id（attempts.id） */
   attemptId: z.uuid(),
-  /** 该轮作答来源（复用 attemptSourceSchema：assignment | course | wrong） */
+  /** 该轮作答来源（复用 attemptSourceSchema：assignment | course | wrong | lesson，lesson 为 2026-10 新增） */
   sourceType: attemptSourceSchema,
   /**
    * 该轮来源标题（服务端口径：作业 = 作业标题；课程练习 = 「单元标题 ·

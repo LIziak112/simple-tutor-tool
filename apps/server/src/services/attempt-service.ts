@@ -143,6 +143,9 @@ export function attemptSummaryOf(row: Attempt): AttemptStartData {
     id: row.id,
     sourceType: row.sourceType,
     assignmentId: row.assignmentId,
+    // 2026-10 讲练一体：lesson 来源必填（讲练开卷时写入），其余来源恒 null；
+    // lecture_id 列与 lesson 组卷在后续任务落地，当前库尚无 lesson 行，恒 null
+    lectureId: null,
     courseId: row.courseId,
     // T2A.7：assignment 来源多单元化后 unitId 恒 null（题目集合走
     // assignment_units）；course 来源恒有值；wrong 来源恒 null（2026-10）。
