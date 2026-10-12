@@ -1,5 +1,12 @@
 import { ChevronDown } from "lucide-react";
-import { useEffect, useId, useMemo, useState } from "react";
+import {
+  type RefObject,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { OutlineItem } from "./outline";
 import { OutlineInlineMath } from "./outline-inline-math";
 
@@ -8,12 +15,15 @@ export function LectureOutline({
   items,
   currentIndex,
   onNavigate,
+  scrollContainerRef,
 }: {
   items: OutlineItem[];
   currentIndex: number | null;
   onNavigate: (index: number) => void;
+  scrollContainerRef?: RefObject<HTMLDivElement | null>;
 }) {
   const prefix = useId();
+  const navRef = useRef<HTMLElement>(null);
   const groups = useMemo(() => {
     const result: Array<{
       item: OutlineItem;
@@ -50,6 +60,45 @@ export function LectureOutline({
     });
   }, [currentGroupIndex]);
 
+  useEffect(() => {
+    const container = scrollContainerRef?.current;
+    const nav = navRef.current;
+    if (!container || !nav || currentIndex === null) return;
+    function centerCurrent() {
+      if (!container || !nav) return;
+      const selected = nav.querySelector<HTMLButtonElement>(
+        `[data-outline-index="${currentIndex}"]`,
+      );
+      const target =
+        currentGroupIndex !== undefined &&
+        expanded.get(currentGroupIndex) === false
+          ? nav.querySelector<HTMLButtonElement>(
+              `[data-outline-index="${currentGroupIndex}"]`,
+            )
+          : selected;
+      if (!target || container.clientHeight === 0) return;
+      const itemBox = target.getBoundingClientRect();
+      const containerBox = container.getBoundingClientRect();
+      const nextTop =
+        container.scrollTop +
+        itemBox.top +
+        itemBox.height / 2 -
+        containerBox.top -
+        container.clientTop -
+        container.clientHeight / 2;
+      // 只移动目录；即时跟随避免阅读过程中不断播放动画，也不改变焦点。
+      container.scrollTop = Math.max(
+        0,
+        Math.min(nextTop, container.scrollHeight - container.clientHeight),
+      );
+    }
+    centerCurrent();
+    const observer = new ResizeObserver(centerCurrent);
+    observer.observe(container);
+    observer.observe(nav);
+    return () => observer.disconnect();
+  }, [currentIndex, currentGroupIndex, expanded, scrollContainerRef]);
+
   function entry(item: OutlineItem, index: number) {
     const current = currentIndex === index;
     return (
@@ -57,6 +106,7 @@ export function LectureOutline({
         type="button"
         onClick={() => onNavigate(index)}
         aria-current={current ? "location" : undefined}
+        data-outline-index={index}
         className={`min-h-11 min-w-0 flex-1 rounded-lg border-l-2 px-3 py-2 text-left text-sm leading-relaxed break-words focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring hover:bg-muted ${current ? "border-primary bg-primary/10 font-semibold text-primary" : `border-transparent ${item.depth === 3 ? "text-muted-foreground" : "font-medium text-foreground"}`}`}
       >
         <OutlineInlineMath text={item.text} />
@@ -65,7 +115,7 @@ export function LectureOutline({
   }
 
   return (
-    <nav aria-label="讲义目录">
+    <nav ref={navRef} aria-label="讲义目录">
       <ol className="flex flex-col gap-2">
         {groups.map((group) => {
           const open =
