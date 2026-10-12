@@ -25,6 +25,10 @@ import {
   VerdictBadge,
 } from "@/features/attempt/AttemptResultView";
 import {
+  busyCloseGuard,
+  DraftProblemAlert,
+} from "@/features/attempt/SubmitConfirmDialog";
+import {
   HANDWRITTEN_TYPES,
   QUESTION_TYPE_BADGE_CLASS,
   QUESTION_TYPE_LABELS,
@@ -90,15 +94,8 @@ function LessonSubmitDialog({
         className="flex max-h-[min(80dvh,640px)] w-[calc(100%-24px)] flex-col"
         aria-describedby="lesson-submit-desc"
         closeDisabled={busy}
-        onEscapeKeyDown={(event) => {
-          if (busy) event.preventDefault();
-        }}
-        onPointerDownOutside={(event) => {
-          if (busy) event.preventDefault();
-        }}
-        onInteractOutside={(event) => {
-          if (busy) event.preventDefault();
-        }}
+        // busy 封堵与警示块与整卷 SubmitConfirmDialog 同源（单一出处）
+        {...busyCloseGuard(busy)}
       >
         <DialogHeader>
           <DialogTitle>提交本题吗？</DialogTitle>
@@ -113,19 +110,12 @@ function LessonSubmitDialog({
         </DialogHeader>
         <div className="flex min-h-0 flex-col gap-3 overflow-y-auto overscroll-contain p-1 -m-1">
           {phase.kind === "choice" && (
-            <div
-              role="alert"
-              className="rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2.5 text-sm leading-6"
+            <DraftProblemAlert
+              title="这道题的草稿未保存完整："
+              footnote="可以返回稍等同步完成；或明确选择提交——草稿将标记为「未保存」， 之后找回的内容只能作为补充材料。"
             >
-              <p className="font-medium text-destructive">
-                这道题的草稿未保存完整：
-              </p>
               <p className="mt-1 text-muted-foreground">{phase.reason}</p>
-              <p className="mt-1.5 text-muted-foreground">
-                可以返回稍等同步完成；或明确选择提交——草稿将标记为「未保存」，
-                之后找回的内容只能作为补充材料。
-              </p>
-            </div>
+            </DraftProblemAlert>
           )}
           {phase.kind === "error" && (
             <p role="alert" className="text-xs text-destructive">

@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -42,6 +43,52 @@ export interface SubmitNoteProblemView {
   /** 中文原因（submit-evidence 产出） */
   reason: string;
   domain?: "annotation";
+}
+
+/**
+ * busy 期间封堵 Radix 关闭路径的三件套（Esc / 点按遮罩 / 外点）：与
+ * closeDisabled 同纪律（关闭=取消=中止，busy 中不应发生——准备中途关闭会让
+ * 网络链与弹层状态失同步）。整卷交卷确认与讲练单题提交弹层共用（2026-10
+ * 讲练一体收口单源）。
+ */
+export function busyCloseGuard(busy: boolean): {
+  onEscapeKeyDown: (event: { preventDefault: () => void }) => void;
+  onPointerDownOutside: (event: { preventDefault: () => void }) => void;
+  onInteractOutside: (event: { preventDefault: () => void }) => void;
+} {
+  const block = (event: { preventDefault: () => void }): void => {
+    if (busy) event.preventDefault();
+  };
+  return {
+    onEscapeKeyDown: block,
+    onPointerDownOutside: block,
+    onInteractOutside: block,
+  };
+}
+
+/**
+ * 缺稿警示块（destructive 描边容器）：整卷交卷确认与讲练单题提交弹层共用；
+ * 标题/正文/尾注由调用方给定（单题与整卷的文案口径不同，见各弹层）。
+ */
+export function DraftProblemAlert({
+  title,
+  children,
+  footnote,
+}: {
+  title: string;
+  children: ReactNode;
+  footnote: string;
+}) {
+  return (
+    <div
+      role="alert"
+      className="rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2.5 text-sm leading-6"
+    >
+      <p className="font-medium text-destructive">{title}</p>
+      {children}
+      <p className="mt-1.5 text-muted-foreground">{footnote}</p>
+    </div>
+  );
 }
 
 export function SubmitConfirmDialog({
@@ -91,15 +138,7 @@ export function SubmitConfirmDialog({
         closeDisabled={busy}
         // busy 期间封堵 Radix 关闭路径（关闭=取消=中止——中止只应发生在
         // 可恢复的边界；准备中关闭会让网络链与弹层状态失同步）
-        onEscapeKeyDown={(event) => {
-          if (busy) event.preventDefault();
-        }}
-        onPointerDownOutside={(event) => {
-          if (busy) event.preventDefault();
-        }}
-        onInteractOutside={(event) => {
-          if (busy) event.preventDefault();
-        }}
+        {...busyCloseGuard(busy)}
       >
         <DialogHeader>
           <DialogTitle>确认交卷吗？</DialogTitle>
@@ -162,13 +201,14 @@ export function SubmitConfirmDialog({
             noteProblems 非 null 时必非空——只在 problems 非空时产生
             （不变量，见 NotePrepPhase 注释） */}
           {noteProblems !== null && (
-            <div
-              role="alert"
-              className="rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2.5 text-sm leading-6"
+            <DraftProblemAlert
+              title={`以下题目的${annotationProblem ? "材料" : "草稿"}未保存完整：`}
+              footnote={
+                annotationProblem
+                  ? "可以返回重试同步，或仅交答案。本机标画不会删除，但未上传的标画不能视为交卷原稿；未保存草稿按缺稿提交。"
+                  : "可以返回重试同步；或明确选择提交——这些题目的草稿将标记为「未保存」，交卷后找回的内容只能作为补充材料，不会算作原稿。"
+              }
             >
-              <p className="font-medium text-destructive">
-                以下题目的{annotationProblem ? "材料" : "草稿"}未保存完整：
-              </p>
               <ul className="mt-1 list-disc pl-5 text-muted-foreground">
                 {noteProblems.map((problem) => (
                   <li key={`${problem.index}:${problem.domain ?? "scratch"}`}>
@@ -176,12 +216,7 @@ export function SubmitConfirmDialog({
                   </li>
                 ))}
               </ul>
-              <p className="mt-1.5 text-muted-foreground">
-                {annotationProblem
-                  ? "可以返回重试同步，或仅交答案。本机标画不会删除，但未上传的标画不能视为交卷原稿；未保存草稿按缺稿提交。"
-                  : "可以返回重试同步；或明确选择提交——这些题目的草稿将标记为「未保存」，交卷后找回的内容只能作为补充材料，不会算作原稿。"}
-              </p>
-            </div>
+            </DraftProblemAlert>
           )}
 
           {preparing && (
