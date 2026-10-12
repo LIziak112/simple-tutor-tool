@@ -281,6 +281,7 @@ export function AddFromLibrarySheet({
                   <ResourceRow
                     key={lecture.id}
                     title={lecture.title}
+                    docKind={lecture.kind}
                     meta={`被 ${courseCountLabel(lecture.courseCount)}引用`}
                     disabled={inCourse}
                     badge={inCourse ? "已在本课程" : null}
@@ -448,6 +449,7 @@ function ResourceList({
 
 function ResourceRow({
   title,
+  docKind,
   meta,
   disabled,
   badge,
@@ -455,6 +457,8 @@ function ResourceRow({
   onToggle,
 }: {
   title: string;
+  /** 讲义行的文档形态（2026-10 讲练一体）：lesson 显「讲练」徽标 */
+  docKind?: "lecture" | "lesson";
   meta: string;
   disabled: boolean;
   badge: string | null;
@@ -488,7 +492,14 @@ function ResourceRow({
           />
         )}
         <span className="min-w-0 flex-1">
-          <span className="block truncate font-medium">{title}</span>
+          <span className="flex min-w-0 items-center gap-2">
+            {docKind === "lesson" ? (
+              <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300">
+                讲练
+              </span>
+            ) : null}
+            <span className="min-w-0 truncate font-medium">{title}</span>
+          </span>
           <span className="block truncate text-xs text-muted-foreground">
             {meta}
           </span>

@@ -149,9 +149,15 @@ export default function StudentCourseDetailPage() {
                 </li>
               ) : item.kind === "lecture" ? (
                 <li key={item.id}>
+                  {/* kind=lesson（2026-10 讲练一体）：「讲练」徽标 + 直达讲练页
+                      （不经阅读页重定向，courseId 上下文保留）；纯讲义进阅读页 */}
                   <Link
-                    to={`/s/lectures/${item.refId}?courseId=${courseQuery.data.id}`}
-                    aria-label={`阅读讲义 ${item.title}`}
+                    to={
+                      item.docKind === "lesson"
+                        ? `/s/lectures/${item.refId}/lesson?courseId=${courseQuery.data.id}`
+                        : `/s/lectures/${item.refId}?courseId=${courseQuery.data.id}`
+                    }
+                    aria-label={`${item.docKind === "lesson" ? "打开讲练" : "阅读讲义"} ${item.title}`}
                     className="group flex min-h-16 items-center gap-3 rounded-2xl border border-border bg-card px-4 py-3 shadow-xs outline-none transition-colors hover:border-primary/40 hover:bg-accent/40 focus-visible:ring-3 focus-visible:ring-ring/50"
                   >
                     <span
@@ -161,11 +167,18 @@ export default function StudentCourseDetailPage() {
                       <BookOpen className="size-5" />
                     </span>
                     <span className="flex min-w-0 flex-1 flex-col">
-                      <span className="truncate text-sm font-medium">
-                        {item.title}
+                      <span className="flex min-w-0 items-center gap-2">
+                        {item.docKind === "lesson" ? (
+                          <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300">
+                            讲练
+                          </span>
+                        ) : null}
+                        <span className="truncate text-sm font-medium">
+                          {item.title}
+                        </span>
                       </span>
                       <span className="text-xs text-muted-foreground">
-                        讲义
+                        讲义{item.docKind === "lesson" ? " · 可边学边练" : ""}
                       </span>
                     </span>
                     <ChevronRight

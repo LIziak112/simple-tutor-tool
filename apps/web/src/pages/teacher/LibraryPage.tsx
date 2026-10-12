@@ -985,8 +985,16 @@ function LectureListView({
               aria-label={`选择讲义 ${lecture.title}`}
               className="size-5 shrink-0 accent-primary"
             />
-            <p className="min-w-0 flex-1 truncate px-1 text-sm font-medium">
-              {lecture.title}
+            <p className="flex min-w-0 flex-1 items-center gap-2 px-1">
+              {lecture.kind === "lesson" ? (
+                // 讲练页（2026-10 讲练一体）：教师侧仅提示形态，点击仍进编辑/预览
+                <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300">
+                  讲练
+                </span>
+              ) : null}
+              <span className="min-w-0 truncate text-sm font-medium">
+                {lecture.title}
+              </span>
             </p>
             <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">
               被 {lecture.courseCount} 个课程引用 ·{" "}

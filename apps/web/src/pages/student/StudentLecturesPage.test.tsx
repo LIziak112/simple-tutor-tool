@@ -35,6 +35,14 @@ const LECTURE_2 = {
   topic: null,
   updatedAt: "2026-09-21T10:00:00.000Z",
 } as const;
+/** 讲练页（kind=lesson）：行内显「讲练」徽标、链接直达讲练页 */
+const LESSON_1 = {
+  id: "77777777-7777-4777-8777-777777777777",
+  kind: "lesson",
+  title: "讲练 有理数热身",
+  topic: null,
+  updatedAt: "2026-09-22T10:00:00.000Z",
+} as const;
 const COURSE_A = "12121212-1212-4121-8121-121212121212";
 const COURSE_B = "23232323-2323-4232-8232-232323232323";
 
@@ -94,6 +102,36 @@ describe("StudentLecturesPage", () => {
     expect(screen.getByRole("link", { name: "返回首页" })).toHaveAttribute(
       "href",
       "/s/home",
+    );
+  });
+
+  it("讲练页（kind=lesson）行显「讲练」徽标并直达讲练页（保留 courseId，2026-10 讲练一体）", async () => {
+    mockedLectures.mockResolvedValue({
+      lectures: [LECTURE_1, LESSON_1],
+      courses: [
+        {
+          courseId: COURSE_A,
+          courseName: "初一上",
+          lectures: [LECTURE_1, LESSON_1],
+        },
+      ],
+    });
+    renderPage();
+
+    // 徽标只出现在讲练页行（纯讲义行无「讲练」字样）
+    const lessonLink = await screen.findByRole("link", {
+      name: /讲练 有理数热身/,
+    });
+    expect(screen.getAllByText("讲练")).toHaveLength(1);
+    // 直达讲练页（不经阅读页重定向，省一跳），保留课程上下文
+    expect(lessonLink).toHaveAttribute(
+      "href",
+      `/s/lectures/${LESSON_1.id}/lesson?courseId=${COURSE_A}`,
+    );
+    // 纯讲义仍进阅读页
+    expect(screen.getByRole("link", { name: /第1讲 有理数/ })).toHaveAttribute(
+      "href",
+      `/s/lectures/${LECTURE_1.id}?courseId=${COURSE_A}`,
     );
   });
 

@@ -12,9 +12,16 @@ import { formatRelativeTime } from "@/lib/time";
  * /s/lectures 讲义列表页（T2.3；T2A.5 按课程分组 + D5 过滤）。
  * 顶栏导航已无讲义入口：本页经首页/课程页的「按讲义浏览」进入（二级页面）。
  * 数据用分组视图（courses）：只列出有可见讲义的课程组，组内按目录条目顺序；
- * 点击进入阅读页（缺省课程上下文——服务端取第一个可见该讲义的课程）。
+ * 点击进入阅读页（缺省课程上下文——服务端取第一个可见该讲义的课程）；
+ * kind=lesson（2026-10 讲练一体）行显「讲练」徽标并直达讲练页（不经阅读页
+ * 重定向，省一跳；courseId 上下文保留）。
  * 三态齐全；条目为触控目标 ≥44px 的整行链接。
  */
+
+/** 讲练页行的目标地址：/s/lectures/:id/lesson（保留课程上下文） */
+function lessonHref(lectureId: string, courseId: string): string {
+  return `/s/lectures/${lectureId}/lesson?courseId=${courseId}`;
+}
 export default function StudentLecturesPage() {
   const lecturesQuery = useStudentLectures();
 
@@ -70,11 +77,23 @@ export default function StudentLecturesPage() {
                 {group.lectures.map((lecture) => (
                   <li key={lecture.id}>
                     <Link
-                      to={`/s/lectures/${lecture.id}?courseId=${group.courseId}`}
+                      to={
+                        lecture.kind === "lesson"
+                          ? lessonHref(lecture.id, group.courseId)
+                          : `/s/lectures/${lecture.id}?courseId=${group.courseId}`
+                      }
+                      aria-label={`${lecture.kind === "lesson" ? "打开讲练" : "阅读讲义"} ${lecture.title}`}
                       className="flex min-h-14 items-center justify-between gap-3 rounded-2xl border border-border bg-card px-4 py-2 shadow-xs outline-none transition-colors hover:border-primary/40 hover:bg-accent/40 focus-visible:ring-3 focus-visible:ring-ring/50"
                     >
-                      <span className="min-w-0 flex-1 truncate text-sm font-medium">
-                        {lecture.title}
+                      <span className="flex min-w-0 flex-1 items-center gap-2">
+                        {lecture.kind === "lesson" ? (
+                          <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300">
+                            讲练
+                          </span>
+                        ) : null}
+                        <span className="min-w-0 truncate text-sm font-medium">
+                          {lecture.title}
+                        </span>
                       </span>
                       <span className="flex shrink-0 flex-col items-end gap-0.5 text-xs text-muted-foreground">
                         {lecture.topic && <span>{lecture.topic}</span>}
