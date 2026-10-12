@@ -65,8 +65,9 @@ import { reviewCounts, reviewQuestionState } from "./result-review-model";
 /**
  * 判定图标：true=绿勾、false=红叉（D1 后含未作答客观题；D9 后最终判定
  * finalCorrect 优先——教师批注改判以批注为准）、null=待批（琥珀时钟）。
+ * 2026-10 讲练一体：讲练页题卡结果态复用（导出；仍单一出处）。
  */
-function VerdictIcon({ verdict }: { verdict: boolean | null }) {
+export function VerdictIcon({ verdict }: { verdict: boolean | null }) {
   if (verdict === true) {
     return (
       <CheckCircle2
@@ -85,8 +86,8 @@ function VerdictIcon({ verdict }: { verdict: boolean | null }) {
   );
 }
 
-/** 判定文字（与图标一致的辅助文本） */
-function verdictLabel(verdict: boolean | null): string {
+/** 判定文字（与图标一致的辅助文本；讲练页题卡复用，2026-10 导出） */
+export function verdictLabel(verdict: boolean | null): string {
   if (verdict === true) return "答对";
   if (verdict === false) return "答错";
   return "待批改";
@@ -95,8 +96,9 @@ function verdictLabel(verdict: boolean | null): string {
 /**
  * 老师批改块（D9，显著展示）：有 teacherMark / teacherComment 任一时渲染。
  * teacherMark=null 且只有评语（清除判定保留评语）时标题显示「已评语」。
+ * 2026-10 讲练一体：讲练页题卡结果态复用（导出；仍单一出处）。
  */
-function TeacherMarkBlock({
+export function TeacherMarkBlock({
   teacherMark,
   teacherComment,
 }: {
@@ -123,8 +125,9 @@ function TeacherMarkBlock({
   );
 }
 
-/** 选项行（含正确项与学生所选标记；仅 choice/multi） */
-function ResultOptions({
+/** 选项行（含正确项与学生所选标记；仅 choice/multi）。2026-10 讲练页题卡
+ *  结果态复用（导出；仍单一出处）。 */
+export function ResultOptions({
   question,
   released,
 }: {

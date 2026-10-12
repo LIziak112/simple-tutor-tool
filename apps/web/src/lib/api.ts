@@ -75,6 +75,9 @@ import {
   type LectureMetaUpdate,
   type LectureUpdateData,
   type LectureUpdateRequest,
+  type LessonQuestionSubmitData,
+  type LessonQuestionSubmitRequest,
+  type LessonStartData,
   type LibraryBatchData,
   type LibraryBatchRequest,
   type LibraryFolder,
@@ -916,6 +919,66 @@ export function openAttemptHintApi(
 ): Promise<HintOpenData> {
   const args = { param: { id: attemptId }, json: { questionId, index } };
   return callApi(() => api.api.student.attempts[":id"].hints.$post(args));
+}
+
+// ---------- 2026-10：讲练一体（lesson 开卷 / 重做 / 单题提交） ----------
+
+/**
+ * 讲练开卷（POST /lectures/:id/lesson/start，幂等 create-or-return）：
+ * 进行中返回同一份 draft、已完成返回最新那份，无作答才建卷冻结——刷新
+ * 已完成讲练页不消耗 attemptNo（方案决策 7）。?courseId= 课程上下文（与
+ * GET /lectures/:id 同款 query 形态，契约未定义 start 请求体）。
+ * 响应是讲练安全投影（blocks 切段 + 冻结题公开投影 + released/summary），
+ * 讲义原文与未提交题的答案/详解/提示内容绝不下发。纯讲义（kind=lecture）
+ * 404；非成员带 courseId 403 / 缺省 404（D22 不暴露存在性）。
+ */
+export function startLessonAttemptApi(
+  lectureId: string,
+  courseId?: string | undefined,
+): Promise<LessonStartData> {
+  const args = {
+    param: { id: lectureId },
+    ...(courseId !== undefined ? { query: { courseId } } : {}),
+  };
+  return callApi(() =>
+    api.api.student.lectures[":id"].lesson.start.$post(args),
+  );
+}
+
+/**
+ * 讲练重做（POST /lectures/:id/lesson/restart，「再做一次」显式独立动作）：
+ * 仅最新 attempt 已完成可用（进行中/无作答 409 ALREADY_SUBMITTED），返回
+ * 新卷（attemptNo+1，从空白开始）的讲练投影。无参数（课程上下文取第一个
+ * 可见课程）。
+ */
+export function restartLessonAttemptApi(
+  lectureId: string,
+): Promise<LessonStartData> {
+  return callApi(() =>
+    api.api.student.lectures[":id"].lesson.restart.$post({
+      param: { id: lectureId },
+    }),
+  );
+}
+
+/**
+ * 单题提交（POST /attempts/:id/questions/:questionId/submit，lesson 逐题
+ * 即时反馈）：请求携带建卷时下发的该题 questionRevisionId（错版 409
+ * QUESTION_REVISION_STALE）+ 可选单题笔记证据声明（evidence.questionId
+ * 须与路径一致，服务端校验；CAS 语义同整卷 T6R.10）。响应只含该题结果
+ * （提交即时释放参考答案/详解/判定）+ 现算汇总 + attempt 摘要；已提交再交
+ * 409 QUESTION_ALREADY_SUBMITTED / 整卷已收尾 409 ALREADY_SUBMITTED。
+ * json 以独立变量传入的原因同 updateQuestion（parseJsonBody 服务端校验）。
+ */
+export function submitLessonQuestionApi(
+  attemptId: string,
+  questionId: string,
+  request: LessonQuestionSubmitRequest,
+): Promise<LessonQuestionSubmitData> {
+  const args = { param: { id: attemptId, questionId }, json: request };
+  return callApi(() =>
+    api.api.student.attempts[":id"].questions[":questionId"].submit.$post(args),
+  );
 }
 
 // ---------- T2.10：学习痕迹事件（学生端） ----------
