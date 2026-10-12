@@ -53,6 +53,10 @@ import {
  * T6R.20 追加题干标注两表：annotation_bases（固定底图，身份三要素）、
  * annotations（标注当前头，CAS revision）——方案见同文档 §10；契约见
  * packages/contract/src/annotation.ts。
+ * 讲练一体（2026-10）：lectures 加 kind（lecture/lesson，导入按文档 frontmatter
+ * kind 写入）、attempts 加 lectureId（lesson 来源讲练页讲义）+ 索引
+ * attempts_student_lecture_idx、responses 加 submittedAt（lesson 单题提交时刻，
+ * 作答服务后续任务实装写入）。
  *
  * 全库约定（见 docs/开发任务清单.md §0.3 与 db-change 技能）：
  * - 主键 id 一律为应用层生成的 crypto.randomUUID() 字符串；
@@ -309,8 +313,19 @@ export const lectures = sqliteTable(
     folderId: text("folder_id").references(() => libraryFolders.id),
     /** 讲义标题（H1 标题文本，导入匹配键） */
     title: text("title").notNull(),
-    /** 讲义原始 Markdown（含 H1 标题行） */
+    /** 讲义原始 Markdown（含 H1 标题行；lesson 讲练页的题块原位保留于此） */
     markdown: text("markdown").notNull(),
+    /**
+     * 讲义形态（讲练一体 2026-10）：lecture=纯讲义 / lesson=讲练页。导入按文档
+     * frontmatter kind 写入（lesson 文档的讲义全部 lesson，其余 'lecture'；
+     * 重导同名讲义覆盖 kind——导入是权威），编辑保存不改动本列。lesson 讲义
+     * markdown 原位保留题块（解析时已注入最终题目 id），学生端经安全投影
+     * （splitLessonBlocks 切段）下发，原文永不出教师域。
+     */
+    kind: text("kind")
+      .$type<"lecture" | "lesson">()
+      .notNull()
+      .default("lecture"),
     /** 课程内排序（小在前）；@deprecated T2A 展示顺序改 course_items.order */
     order: integer("order").notNull(),
     /** 最近更新时间：UTC ISO 字符串 */
@@ -673,7 +688,7 @@ export const assignmentStudents = sqliteTable(
  *   （记 courseId + unitId，可重做，attemptNo 递增）/ wrong=错题重练（2026-10，
  *   三归属键恒 null、永不失权；题目集合与快照在该 attempt 自己的 responses 行，
  *   创建时按组卷顺序冻结）/ lesson=讲练页作答（2026-10，lectureId 必填 +
- *   unitId=嵌入单元快照值；列由讲练一体后续任务加）。四种来源共用同一套作答
+ *   unitId=嵌入单元快照值）。四种来源共用同一套作答
  *   接口（判分/快照/提示/笔迹/事件全按 attemptId 工作）；
  * - status：draft=进行中（草稿）、submitted=已交卷（存在待批题，等教师批改）、
  *   graded=已批改（= 全部 finalCorrect 非 null；全客观题卷交卷即 graded，D2/D3，
@@ -717,6 +732,12 @@ export const attempts = sqliteTable(
     /** 目标练习单元（units.id，来自 DSL；T2A.7 起 assignment 来源为快照语义；
      *  T2B.1/D10 起无外键，值不变） */
     unitId: text("unit_id"),
+    /**
+     * 讲练页来源讲义（lectures.id；讲练一体 2026-10）：lesson 来源必填 = 讲练页
+     * 讲义 id，其余来源恒 null。无外键（参照 unitId 同款口径：D10 后子表外键
+     * 已拆，域一致性由服务层保证）。
+     */
+    lectureId: text("lecture_id"),
     /** 第几次作答（D10：course 来源从 1 递增；assignment 来源恒 1） */
     attemptNo: integer("attempt_no").notNull().default(1),
     /** 作答状态：draft | submitted | graded */
@@ -765,6 +786,9 @@ export const attempts = sqliteTable(
       table.courseId,
       table.unitId,
     ),
+    // 讲练页「同一 (学生, 讲义)」历次作答查询索引（讲练一体 2026-10；start 的
+    // 幂等 create-or-return 与记录聚合走本索引，唯一性由服务层事务先查后插保证）
+    index("attempts_student_lecture_idx").on(table.studentId, table.lectureId),
   ],
 );
 
@@ -829,6 +853,12 @@ export const responses = sqliteTable(
     questionSnapshotJson: text("question_snapshot_json"),
     /** 学生答案（StudentAnswer 序列化）；未作为 NULL（交卷时未答题行也为 NULL） */
     answerJson: text("answer_json"),
+    /**
+     * 单题提交时刻（讲练一体 2026-10，lesson 逐题提交专用，后续任务实装）：
+     * UTC ISO；单题提交 = 该题提交时刻，整卷收尾对剩余行 = 交卷时刻；
+     * NULL = 未提交。既有整卷作答链路（assignment/course/wrong）不写本列。
+     */
+    submittedAt: text("submitted_at"),
     /** 自动判分结果：true/false；NULL = 不能自动判定（D1 后不含未作答客观题） */
     autoCorrect: integer("auto_correct", { mode: "boolean" }),
     /** 最终判定（D3：交卷时写 = autoCorrect，教师批注后 teacherMark 优先）；未批为 NULL，即待批（D4） */

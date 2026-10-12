@@ -691,6 +691,12 @@ function snapshotBusinessTables(db: Db): Map<string, string[]> {
       if (table === "responses") delete row.unit_id;
       // T7.8 教学包声明列（lectures/units，0029 新增，NULL=未声明）
       delete row.teaching_pack_json;
+      // 讲练一体三列（0031 新增，2026-10）：lectures.kind 带默认值 'lecture'
+      // （imports.kind 是 T1.10 既有列，保留在对比内）；attempts.lecture_id 与
+      // responses.submitted_at 可空、存量行恒 NULL。新增列语义见 schema/migrate 测试
+      if (table === "lectures") delete row.kind;
+      if (table === "attempts") delete row.lecture_id;
+      if (table === "responses") delete row.submitted_at;
       return JSON.stringify(row, Object.keys(row).sort());
     });
     snapshot.set(table, rows.sort());

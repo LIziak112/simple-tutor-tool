@@ -1125,6 +1125,9 @@ export function newDraftAttempt(config: {
     assignmentId: config.assignmentId,
     courseId: config.courseId,
     unitId: config.unitId,
+    // 讲练一体（2026-10）：lecture_id 列已建，lesson 开卷在后续任务接入——
+    // 本函数只服务 assignment/course/wrong 三来源建卷，lectureId 恒 null
+    lectureId: null,
     attemptNo: config.attemptNo,
     status: "draft",
     startedAt: config.startedAt,

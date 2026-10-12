@@ -7,6 +7,7 @@ import {
   assignmentUnits,
   attempts,
   courses,
+  lectures,
   loginFailures,
   noteImages,
   notes,
@@ -421,6 +422,8 @@ describe("attempts / responses 表（T2.6 作答生命周期）", () => {
       assignmentId,
       courseId: null,
       unitId,
+      // 讲练一体（2026-10）：非 lesson 来源 lectureId 恒 null
+      lectureId: null,
       attemptNo: 1,
       status: "draft" as const,
       startedAt: now,
@@ -509,6 +512,140 @@ describe("attempts / responses 表（T2.6 作答生命周期）", () => {
         })
         .run(),
     ).toThrow();
+    db.$client.close();
+  });
+});
+
+describe("讲练一体三列一索引（2026-10：lectures.kind / attempts.lectureId / responses.submittedAt）", () => {
+  /** 造一行讲义（folderId/courseId 均 null = 未归类）；返回行 id */
+  function seedLecture(db: ReturnType<typeof createTestDb>): string {
+    const id = randomUUID();
+    db.insert(lectures)
+      .values({
+        id,
+        teacherId: randomUUID(),
+        title: "第1讲 有理数",
+        markdown: "# 第1讲 有理数",
+        order: 0,
+        updatedAt: new Date().toISOString(),
+      })
+      .run();
+    return id;
+  }
+
+  it("lectures.kind 缺省 lecture（存量行语义不变）；可写 lesson 读回（导入按文档 kind 写入）", () => {
+    const db = createTestDb();
+    const lectureId = seedLecture(db);
+    // 不写 kind 落库 → 默认 'lecture'（存量讲义与既有三种文档形态全部如此）
+    expect(
+      db
+        .select({ kind: lectures.kind })
+        .from(lectures)
+        .where(eq(lectures.id, lectureId))
+        .get()?.kind,
+    ).toBe("lecture");
+    // 讲练页行：kind='lesson' 可写读回
+    db.update(lectures)
+      .set({ kind: "lesson" })
+      .where(eq(lectures.id, lectureId))
+      .run();
+    expect(
+      db
+        .select({ kind: lectures.kind })
+        .from(lectures)
+        .where(eq(lectures.id, lectureId))
+        .get()?.kind,
+    ).toBe("lesson");
+    db.$client.close();
+  });
+
+  it("attempts.lectureId 可空可写（lesson 来源必填语义由服务层保证）；attempts_student_lecture_idx 按 (student_id, lecture_id) 建出", () => {
+    const db = createTestDb();
+    // 索引存在性与列序
+    const idx = db.$client
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'attempts_student_lecture_idx'",
+      )
+      .all() as TableNameRow[];
+    expect(idx.map((r) => r.name)).toEqual(["attempts_student_lecture_idx"]);
+    const idxCols = db.$client
+      .prepare("PRAGMA index_info('attempts_student_lecture_idx')")
+      .all() as Array<{ name: string }>;
+    expect(idxCols.map((c) => c.name)).toEqual(["student_id", "lecture_id"]);
+
+    // lesson 来源 attempt 整行读写（lectureId 无外键，unitId 同款口径——
+    // 指向的讲义行不建 FK，域一致性由服务层保证）
+    const student = studentRow();
+    db.insert(students).values(student).run();
+    const now = new Date().toISOString();
+    const lectureId = randomUUID();
+    const attempt = {
+      id: randomUUID(),
+      studentId: student.id,
+      sourceType: "lesson" as const,
+      assignmentId: null,
+      courseId: null,
+      unitId: "随堂讲练",
+      lectureId,
+      attemptNo: 1,
+      status: "draft" as const,
+      startedAt: now,
+      submittedAt: null,
+      activeSec: null,
+      device: null,
+      scoreAuto: null,
+      scoreFinal: null,
+      frozenAt: now,
+      legacyUnverified: false,
+    };
+    db.insert(attempts).values(attempt).run();
+    expect(
+      db.select().from(attempts).where(eq(attempts.id, attempt.id)).get(),
+    ).toEqual(attempt);
+    db.$client.close();
+  });
+
+  it("responses.submittedAt 可空可写（NULL=未提交；单题提交时刻，lesson 逐题提交后续任务实装）", () => {
+    const db = createTestDb();
+    const student = studentRow();
+    db.insert(students).values(student).run();
+    const now = new Date().toISOString();
+    const attemptId = randomUUID();
+    db.insert(attempts)
+      .values({
+        id: attemptId,
+        studentId: student.id,
+        sourceType: "lesson",
+        unitId: null,
+        status: "draft",
+        startedAt: now,
+      })
+      .run();
+    const responseId = randomUUID();
+    db.insert(responses)
+      .values({ id: responseId, attemptId, questionId: "随堂讲练-1" })
+      .run();
+    // 未提交 → NULL
+    expect(
+      db
+        .select({ submittedAt: responses.submittedAt })
+        .from(responses)
+        .where(eq(responses.id, responseId))
+        .get()?.submittedAt,
+    ).toBeNull();
+    // 写入单题提交时刻读回
+    const submittedAt = "2026-10-12T08:00:00.000Z";
+    db.update(responses)
+      .set({ submittedAt })
+      .where(eq(responses.id, responseId))
+      .run();
+    expect(
+      db
+        .select({ submittedAt: responses.submittedAt })
+        .from(responses)
+        .where(eq(responses.id, responseId))
+        .get()?.submittedAt,
+    ).toBe(submittedAt);
     db.$client.close();
   });
 });
