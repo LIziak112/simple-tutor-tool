@@ -49,8 +49,8 @@ export const sharedFilenameSchema = z
     "文件名不合法（不能包含路径分隔符）",
   );
 
-/** 共享文件类型：讲义 / 练习（frontmatter kind 缺省按 practice，D16） */
-export const sharedFileKindSchema = z.enum(["lecture", "practice"]);
+/** 共享文件类型：讲义 / 练习 / 讲练页（frontmatter kind 缺省按 practice，D16；lesson 讲练页 2026-10） */
+export const sharedFileKindSchema = z.enum(["lecture", "practice", "lesson"]);
 
 /** 共享文件来源：在线发布（有伴生 meta）/ 本地文件（教师直接放进目录，D15） */
 export const sharedFileSourceSchema = z.enum(["published", "local"]);

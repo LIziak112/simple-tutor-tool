@@ -31,6 +31,7 @@ const adminSharedKey = ["admin", "shared-files"] as const;
 const KIND_LABELS: Record<SharedFileSummary["kind"], string> = {
   lecture: "讲义",
   practice: "练习",
+  lesson: "讲练",
 };
 
 export function AdminSharedFilesPage() {
@@ -203,7 +204,7 @@ export function AdminSharedFilesPage() {
                     </>
                   )}
                   {" · "}
-                  {file.kind === "practice"
+                  {file.kind !== "lecture"
                     ? `${file.questionCount} 题 · `
                     : ""}
                   <span title={formatCnTime(file.publishedAt)}>

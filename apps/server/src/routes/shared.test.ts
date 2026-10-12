@@ -151,7 +151,7 @@ interface SharedListBody {
   data: {
     files: Array<{
       filename: string;
-      kind: "lecture" | "practice";
+      kind: "lecture" | "practice" | "lesson";
       title: string;
       questionCount: number;
       publisher: string | null;
@@ -221,6 +221,35 @@ describe("T2B.7 发布 → 列表 → 乙预览/导入（域内独立）", () =>
     expect(
       readFileSync(join(dataDir, "shared", `${filename}.meta.json`), "utf8"),
     ).toContain('"teacherId"');
+  });
+
+  it("本地讲练页文件：kind: lesson 归类为 lesson（标题取 H1、题数计数）", async () => {
+    const { app, cookieA, dataDir } = await makeSharedApp();
+    dropLocalFile(
+      dataDir,
+      "lesson-local.md",
+      [
+        "---",
+        "kind: lesson",
+        "unit: 随堂练习",
+        "---",
+        "",
+        "# 第1讲 正数与负数",
+        "",
+        "::::question{type=choice difficulty=1 id=lesson-q1}",
+        "$-5$ 的相反数是（　）",
+        "",
+        "- [x] $5$",
+        "::::",
+      ].join("\n"),
+    );
+    const list = await fetchSharedList(app, cookieA);
+    const entry = list.data.files.find((f) => f.filename === "lesson-local.md");
+    expect(entry).toBeDefined();
+    expect(entry?.kind).toBe("lesson");
+    expect(entry?.title).toBe("第1讲 正数与负数");
+    expect(entry?.questionCount).toBe(1);
+    expect(entry?.source).toBe("local");
   });
 
   it("批量发布（batch action=publish）：逐项生成快照并返回 filename；未知 id 逐条失败不中断", async () => {
