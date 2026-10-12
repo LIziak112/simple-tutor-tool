@@ -26,7 +26,8 @@ export function useSaveCapabilityProfile() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (profile: CapabilityProfile) => saveCapabilityProfile(profile),
-    onSuccess: () => {
+    onSuccess: (profile) => {
+      queryClient.setQueryData(capabilityProfileKey, profile);
       void queryClient.invalidateQueries({ queryKey: capabilityProfileKey });
     },
   });

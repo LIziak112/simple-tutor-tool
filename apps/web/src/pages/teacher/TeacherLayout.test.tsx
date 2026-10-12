@@ -188,13 +188,18 @@ describe("TeacherLayout 导航（侧边栏去重简化）", () => {
 });
 
 describe("TeacherLayout 管理入口（T2B.6：只对 isAdmin 显示）", () => {
-  it("管理员在侧边栏末尾看到「管理」入口（指向 /a）", async () => {
+  it("系统管理集中在账号分类，导航只保留一个账号入口", async () => {
     mockedMe.mockResolvedValue(TEACHER);
     renderLayout("/t/courses");
 
+    await screen.findByTestId("teacher-login-name");
+    expect(screen.queryByRole("link", { name: "系统管理" })).toBeNull();
+    expect(screen.getAllByRole("link", { name: "查看教师账号" })).toHaveLength(
+      1,
+    );
     expect(
-      await screen.findByRole("link", { name: "系统管理" }),
-    ).toHaveAttribute("href", "/a");
+      screen.queryByText("Your data. Your way. All for learning."),
+    ).toBeNull();
   });
 
   it("普通教师不显示「管理」入口", async () => {

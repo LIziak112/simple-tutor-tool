@@ -1,7 +1,8 @@
 import {
   Check,
   Copy,
-  KeyRound,
+  Eye,
+  EyeOff,
   Loader2,
   RotateCcw,
   TriangleAlert,
@@ -43,6 +44,7 @@ export function ApiTokenSection({
 }) {
   const tokenQuery = useApiToken();
   const resetMutation = useResetApiToken();
+  const [revealedToken, setRevealedToken] = useState<string | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [copyResult, setCopyResult] = useState<{
     token: string;
@@ -85,15 +87,12 @@ export function ApiTokenSection({
         : null;
 
   return (
-    <div className="flex flex-col gap-4 rounded-xl border border-border bg-card p-5 text-card-foreground">
+    <div className="teacher-config-section">
       <div>
-        <h2 className="flex items-center gap-2 text-base font-semibold">
-          <KeyRound aria-hidden className="size-4" />
-          {title}
-        </h2>
+        <h2 className="text-lg font-semibold">{title}</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          供 Claude Desktop 等 AI 客户端经 MCP 连接本工具使用（地址 /mcp）。
-          每位教师一份，可随时查看、可重置；重置后旧 token 立即失效。
+          凭据用于你的 AI 客户端访问教学数据，每位教师独立使用。
+          可随时查看与复制；重置后旧 Token 立即失效。
         </p>
       </div>
 
@@ -135,12 +134,12 @@ export function ApiTokenSection({
       </p>
       {copyFailed && (
         <p role="alert" className="text-sm text-destructive">
-          复制失败，请选中内容手动复制。
+          复制失败，请先查看凭据，再选中内容手动复制。
         </p>
       )}
 
       {tokenQuery.data && (
-        <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-4 rounded-xl border border-border bg-card p-5 sm:p-6">
           {tokenQuery.data.token === null ? (
             <p className="text-sm text-muted-foreground">
               尚未生成 Token。生成后即可在 AI 客户端中配置连接。
@@ -148,8 +147,33 @@ export function ApiTokenSection({
           ) : (
             <div className="flex flex-wrap items-center gap-2">
               <code className="min-h-11 flex-1 overflow-x-auto rounded-lg border border-border bg-muted/50 px-3 py-3 font-mono text-sm break-all">
-                {tokenQuery.data.token}
+                {revealedToken === tokenQuery.data.token
+                  ? tokenQuery.data.token
+                  : "••••••••••••••••••••••••"}
               </code>
+              <Button
+                variant="outline"
+                className="min-h-11"
+                onClick={() =>
+                  setRevealedToken(
+                    revealedToken === tokenQuery.data?.token
+                      ? null
+                      : (tokenQuery.data?.token ?? null),
+                  )
+                }
+              >
+                {revealedToken === tokenQuery.data.token ? (
+                  <>
+                    <EyeOff aria-hidden />
+                    收起凭据
+                  </>
+                ) : (
+                  <>
+                    <Eye aria-hidden />
+                    查看凭据
+                  </>
+                )}
+              </Button>
               <Button
                 variant="outline"
                 className="min-h-11 px-4"
@@ -182,7 +206,7 @@ export function ApiTokenSection({
 
           <div>
             <Button
-              variant="outline"
+              variant={tokenQuery.data.token === null ? "default" : "outline"}
               className="min-h-11 px-5"
               disabled={resetMutation.isPending}
               onClick={handleGenerateClick}
@@ -205,7 +229,7 @@ export function ApiTokenSection({
 
       {/* 重置二次确认（D22：重置后旧 token 立即失效；列表性内容放 Dialog 正文而非 DialogDescription） */}
       <Dialog open={confirmOpen} onOpenChange={(open) => setConfirmOpen(open)}>
-        <DialogContent>
+        <DialogContent className="teacher-theme">
           <DialogHeader>
             <DialogTitle>重置 API Token？</DialogTitle>
             <DialogDescription>
@@ -230,7 +254,11 @@ export function ApiTokenSection({
             >
               取消
             </Button>
-            <Button className="min-h-11" onClick={handleResetConfirm}>
+            <Button
+              variant="destructive"
+              className="min-h-11"
+              onClick={handleResetConfirm}
+            >
               确认重置
             </Button>
           </DialogFooter>

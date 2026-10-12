@@ -471,9 +471,9 @@ export function ExportWizard({
       ?.title ?? null;
 
   return (
-    <section className="mx-auto flex w-full max-w-4xl flex-col gap-4 px-4 py-6 md:px-6 md:py-8">
+    <section className="teacher-page flex flex-col gap-6">
       <header className="flex flex-col gap-1">
-        <h1 className="text-xl font-semibold">导出给 AI</h1>
+        <h1 className="teacher-page-title">导出给 AI</h1>
         <p className="text-sm text-muted-foreground">
           按五个步骤勾选范围与内容，生成一份可直接交给 AI 的学情数据包
           （zip：数据 + 提示词 + 说明文件）。

@@ -51,6 +51,27 @@ beforeEach(() => {
 });
 
 describe("设置分类", () => {
+  it("账号分类展示管理员专属系统入口与品牌广告词", async () => {
+    renderPage("/t/settings?section=account");
+    expect(
+      await screen.findByRole("link", { name: "系统管理" }),
+    ).toHaveAttribute("href", "/a");
+    expect(
+      screen.getByText("Your data. Your way. All for learning."),
+    ).toBeVisible();
+  });
+
+  it("普通教师账号分类没有管理入口", async () => {
+    vi.mocked(fetchTeacherMe).mockResolvedValue({
+      id: "11111111-1111-4111-8111-111111111111",
+      loginName: "teacher",
+      isAdmin: false,
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    renderPage("/t/settings?section=account");
+    await screen.findByRole("button", { name: "退出登录" });
+    expect(screen.queryByRole("link", { name: "系统管理" })).toBeNull();
+  });
   it("默认展示学生作答方式，账号与备份不占首屏", async () => {
     renderPage();
     expect(

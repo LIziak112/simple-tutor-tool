@@ -46,6 +46,14 @@ beforeEach(() => {
 });
 
 describe("ApiTokenSection（T4.6 D22）", () => {
+  it("凭据默认掩码，可以随时查看和收起", async () => {
+    mockedFetch.mockResolvedValue({ token: "private-token" });
+    renderSection();
+    fireEvent.click(await screen.findByRole("button", { name: "查看凭据" }));
+    expect(screen.getByText("private-token")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "收起凭据" }));
+    expect(screen.queryByText("private-token")).toBeNull();
+  });
   it("重置凭据后不显示旧 Token 的复制成功状态", async () => {
     mockedFetch
       .mockResolvedValueOnce({ token: "old-copy-token" })
@@ -55,11 +63,13 @@ describe("ApiTokenSection（T4.6 D22）", () => {
       clipboard: { writeText: vi.fn().mockResolvedValue(undefined) },
     });
     renderSection();
+    fireEvent.click(await screen.findByRole("button", { name: "查看凭据" }));
     await screen.findByText("old-copy-token");
     fireEvent.click(screen.getByRole("button", { name: "复制" }));
     await screen.findByRole("button", { name: "已复制" });
     fireEvent.click(screen.getByRole("button", { name: "重置 Token" }));
     fireEvent.click(await screen.findByRole("button", { name: "确认重置" }));
+    fireEvent.click(await screen.findByRole("button", { name: "查看凭据" }));
     await screen.findByText("new-copy-token");
     expect(screen.queryByRole("button", { name: "已复制" })).toBeNull();
   });
@@ -87,10 +97,11 @@ describe("ApiTokenSection（T4.6 D22）", () => {
       value: vi.fn().mockReturnValue(false),
     });
     renderSection();
+    fireEvent.click(await screen.findByRole("button", { name: "查看凭据" }));
     await screen.findByText("copy-token");
     fireEvent.click(screen.getByRole("button", { name: "复制" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "复制失败，请选中内容手动复制",
+      "复制失败，请先查看凭据，再选中内容手动复制",
     );
   });
 
@@ -117,6 +128,7 @@ describe("ApiTokenSection（T4.6 D22）", () => {
     Object.assign(navigator, { clipboard: { writeText } });
     renderSection();
 
+    fireEvent.click(await screen.findByRole("button", { name: "查看凭据" }));
     expect(await screen.findByText("t46-token-plain-value")).toBeVisible();
 
     fireEvent.click(screen.getByRole("button", { name: /复制/ }));

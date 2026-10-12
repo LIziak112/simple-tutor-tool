@@ -92,10 +92,10 @@ export function InsightsOverviewPage() {
   const data = overviewQuery.data;
 
   return (
-    <section className="mx-auto flex w-full max-w-5xl flex-col gap-4 px-4 py-6 md:px-6 md:py-8">
-      <header className="flex flex-wrap items-start justify-between gap-3">
+    <section className="teacher-page flex flex-col gap-6">
+      <header className="mb-2 flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold">学情总览</h1>
+          <h1 className="teacher-page-title">学情总览</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             一页看全完成情况与薄弱点：矩阵看谁没做，重点卡片备下节课，
             计数区待批与离线一目了然。
