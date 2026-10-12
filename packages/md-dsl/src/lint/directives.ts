@@ -101,10 +101,10 @@ function chainLabel(chain: readonly string[]): string {
     .join(" → ");
 }
 
-/** 指令层规则入口：遍历 AST，输出 UNKNOWN_DIRECTIVE / INVALID_DIRECTIVE_ATTRS / DIRECTIVE_NOT_ALLOWED_HERE / IMAGE_SRC_NOT_BLOBS / *_OUTSIDE_QUESTION / HEADING_IN_CONTAINER */
+/** 指令层规则入口：遍历 AST，输出 UNKNOWN_DIRECTIVE / INVALID_DIRECTIVE_ATTRS / DIRECTIVE_NOT_ALLOWED_HERE / QUESTION_NESTED_IN_LESSON / IMAGE_SRC_NOT_BLOBS / *_OUTSIDE_QUESTION / HEADING_IN_CONTAINER */
 export function lintDirectives(tree: Root, kind: DocumentKind): LintIssue[] {
   const issues: LintIssue[] = [];
-  walk(tree, initialChain(kind), true, issues);
+  walk(tree, initialChain(kind), true, kind, issues);
   return issues;
 }
 
@@ -112,6 +112,7 @@ function walk(
   node: Node,
   chain: readonly string[],
   isTopLevel: boolean,
+  kind: DocumentKind,
   issues: LintIssue[],
 ): void {
   const insideCollapsible = chain.some((context) =>
@@ -126,7 +127,7 @@ function walk(
     }
     let childChain = chain;
     if (isDirectiveNode(child)) {
-      checkDirective(child, chain, isTopLevel, issues);
+      checkDirective(child, chain, isTopLevel, kind, issues);
       if (child.type === "containerDirective") {
         const canonical = canonicalName(child);
         if (CONTEXT_CONTAINER_NAMES.has(canonical)) {
@@ -137,7 +138,7 @@ function walk(
         }
       }
     }
-    walk(child, childChain, false, issues);
+    walk(child, childChain, false, kind, issues);
   }
 }
 
@@ -161,6 +162,7 @@ function checkDirective(
   node: AnyDirectiveNode,
   chain: readonly string[],
   isTopLevel: boolean,
+  kind: DocumentKind,
   issues: LintIssue[],
 ): void {
   const line = node.position?.start.line ?? 1;
@@ -176,15 +178,31 @@ function checkDirective(
 
   if (name === "question") {
     if (!isTopLevel) {
-      issues.push(
-        makeIssue(
-          "warning",
-          line,
-          column,
-          "DIRECTIVE_NOT_ALLOWED_HERE",
-          `指令 ${sigil}question（第 ${line} 行）嵌套在其他容器内部：question 只能作为文档顶层容器（题目之间不能互相嵌套）；请把内层题目移到外层 ${sigil}question 围栏之外，或删除多余的围栏`,
-        ),
-      );
+      if (kind === "lesson") {
+        // 安全红线（2026-10-13 安全审查）：讲练页的嵌套题块不入题库（无法作答）
+        // 也不进切段边界，其原文（- [x] 正确项标记 / [[答案]] / :::solution 详解）
+        // 会随学生端 md 段原样下发（AGENTS 规则 3）——升 error 阻断导入与编辑保存。
+        // 其余 kind 维持既有 warning（存量文档兼容，DSL 只增不改）
+        issues.push(
+          makeIssue(
+            "error",
+            line,
+            column,
+            "QUESTION_NESTED_IN_LESSON",
+            `讲练页（kind: lesson）的题目容器（第 ${line} 行）嵌套在其他容器内部：嵌套题不会进题库（学生无法作答），其原文含参考答案与详解，会随讲义段落原样下发学生端；请把题块移到版式容器（box/columns/fold 等）之外，作为文档顶层容器`,
+          ),
+        );
+      } else {
+        issues.push(
+          makeIssue(
+            "warning",
+            line,
+            column,
+            "DIRECTIVE_NOT_ALLOWED_HERE",
+            `指令 ${sigil}question（第 ${line} 行）嵌套在其他容器内部：question 只能作为文档顶层容器（题目之间不能互相嵌套）；请把内层题目移到外层 ${sigil}question 围栏之外，或删除多余的围栏`,
+          ),
+        );
+      }
     }
     // 顶层 question：practice/mixed 合法；lecture 的结构错误由解析层 QUESTION_IN_LECTURE 报 error，不再重复
     return;

@@ -84,6 +84,12 @@ export const LINT_RULES: readonly LintRuleDoc[] = [
       "讲义文档出现题目容器：question 只能用于 practice 或 mixed，讲义用 :::example 写例题",
   },
   {
+    code: "QUESTION_NESTED_IN_LESSON",
+    level: "error",
+    description:
+      "讲练页（kind: lesson）的题目容器嵌套在其他容器内部：嵌套题不会进题库（无法作答），其原文（含正确项标记/参考答案/详解）会随讲义段落下发学生端；题块必须作为文档顶层容器",
+  },
+  {
     code: "MISSING_HEADING",
     level: "error",
     description:

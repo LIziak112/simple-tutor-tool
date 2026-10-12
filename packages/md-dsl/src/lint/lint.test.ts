@@ -676,6 +676,43 @@ describe("lintDocument：指令规则补充", () => {
     expect(issues[0]?.line).toBe(9);
   });
 
+  it("lesson 讲练页：题目嵌套在版式容器内 → error QUESTION_NESTED_IN_LESSON（嵌套题不入题库，原文含答案/详解会随 md 段下发学生端，安全红线）；mixed 同写法维持既有 warning", () => {
+    const lessonText = md([
+      "---",
+      "kind: lesson",
+      "unit: 随堂练习",
+      "---",
+      "",
+      "# 第1讲 正数与负数",
+      "",
+      ":::box",
+      "边栏说明。",
+      "",
+      "::::question{type=choice difficulty=1}",
+      "$-5$ 的相反数是（　）",
+      "",
+      "- [x] $5$",
+      "- [ ] $-5$",
+      "",
+      ":::solution",
+      "只有符号不同，故相反数是 $5$。",
+      ":::",
+      "::::",
+      ":::",
+    ]);
+    const lesson = lintDocument(lessonText);
+    const issue = issueOf(lesson.issues, "QUESTION_NESTED_IN_LESSON");
+    expect(issue?.level).toBe("error");
+    expect(issue?.line).toBe(11);
+
+    // mixed 同构写法：既有 warning 行为零变化（存量文档兼容，DSL 只增不改）
+    const mixed = lintDocument(lessonText.replace("kind: lesson", "kind: mixed"));
+    expect(codes(mixed.issues)).not.toContain("QUESTION_NESTED_IN_LESSON");
+    expect(issueOf(mixed.issues, "DIRECTIVE_NOT_ALLOWED_HERE")?.level).toBe(
+      "warning",
+    );
+  });
+
   it("question 嵌套在 question 内：DIRECTIVE_NOT_ALLOWED_HERE；外层判断题同时报多标记 warning", () => {
     const text = md([
       "---",
