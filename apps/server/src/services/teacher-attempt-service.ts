@@ -18,7 +18,6 @@ import {
   courses,
   type InkRow,
   ink,
-  lectures,
   questions,
   type ResponseRow,
   responses,
@@ -32,6 +31,7 @@ import {
   attemptResponseRows,
   attemptUnitIds,
   ensureAttemptFrozen,
+  lessonSourceContextOf,
   unitGroupedRows,
 } from "./attempt-service";
 import { pendingMarkCount } from "./pending-mark";
@@ -117,42 +117,18 @@ export function sourceOf(
   }
   if (attempt.sourceType === "lesson") {
     // 讲练页（2026-10）：courseId 可空（打开时来自哪门课），不挂作业；
-    // unitId = 嵌入单元快照值（分组键），unitTitle = 讲义标题（展示口径）
-    const course =
-      attempt.courseId !== null
-        ? db
-            .select({ title: courses.title })
-            .from(courses)
-            .where(eq(courses.id, attempt.courseId))
-            .get()
-        : undefined;
-    const lecture =
-      attempt.lectureId !== null
-        ? db
-            .select({ title: lectures.title })
-            .from(lectures)
-            .where(eq(lectures.id, attempt.lectureId))
-            .get()
-        : undefined;
-    const unit =
-      lecture === undefined && attempt.unitId !== null
-        ? db
-            .select({ title: units.title })
-            .from(units)
-            .where(
-              and(eq(units.teacherId, teacherId), eq(units.id, attempt.unitId)),
-            )
-            .get()
-        : undefined;
+    // unitId = 嵌入单元快照值（分组键），unitTitle = 讲义标题（展示口径）。
+    // 上下文与学生侧 attemptSourceMeta 同一实现（lessonSourceContextOf：
+    // 讲义标题 → 嵌入单元标题 → attempt.unitId 的人文兜底链）
+    const { title, courseName } = lessonSourceContextOf(db, attempt, teacherId);
     return {
       sourceType: "lesson",
       courseId: attempt.courseId,
-      courseName: course?.title ?? null,
+      courseName,
       assignmentId: null,
       assignmentTitle: null,
       unitId: attempt.unitId,
-      // 讲义标题 → 嵌入单元标题 → attempt.unitId（人文文案兜底，不露异常）
-      unitTitle: lecture?.title ?? unit?.title ?? attempt.unitId ?? "讲练练习",
+      unitTitle: title,
       attemptNo: attempt.attemptNo,
     };
   }

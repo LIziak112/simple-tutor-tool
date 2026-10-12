@@ -31,7 +31,10 @@ import { recordAttemptStartEvent } from "./event-service";
 import { openedHintEcho } from "./hint-service";
 import type { Tx } from "./question-sync";
 import { snapshotOfRow } from "./snapshot";
-import { requireVisibleStudentLecture } from "./student-course-service";
+import {
+  notFound,
+  requireVisibleStudentLecture,
+} from "./student-course-service";
 
 /**
  * LessonService（2026-10 讲练一体，方案「作答服务」节 + 决策 1/2/7）——
@@ -76,15 +79,6 @@ interface LessonCourseRef {
   readonly id: string;
   readonly title: string;
   readonly teacherId: string;
-}
-
-/** 讲练开卷入口不存在（纯讲义不是讲练页；D22 不暴露形态差异） */
-function lessonNotFound(): HttpError {
-  return new HttpError(
-    404,
-    "NOT_FOUND",
-    "没有找到该内容（可能尚未发布或已被移除）",
-  );
 }
 
 /** restart 的状态冲突（进行中/无作答不可重做；复用 attempt 状态冲突的既有分码） */
@@ -250,8 +244,9 @@ function requireLessonContext(
     courseId,
   );
   if (lecture.kind !== "lesson") {
-    // 纯讲义没有讲练开卷入口（404 不暴露差异，D22 同口径）
-    throw lessonNotFound();
+    // 纯讲义没有讲练开卷入口（404 不暴露差异，D22 同口径；文案单源
+    // student-course-service.notFound）
+    throw notFound();
   }
   const unit = embeddedUnitOf(db, course.teacherId, lecture.id);
   return {

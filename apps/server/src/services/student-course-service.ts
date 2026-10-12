@@ -142,8 +142,10 @@ export function studentTeacherIdOf(db: Db, studentId: string): string | null {
   );
 }
 
-/** 404 NOT_FOUND（D22：不暴露存在性——课程/讲义不存在、条目隐藏等统一口径） */
-function notFound(): HttpError {
+/** 404 NOT_FOUND（D22：不暴露存在性——课程/讲义不存在、条目隐藏等统一口径）。
+ * 2026-10 讲练一体起导出——lesson-service 开卷入口（纯讲义非讲练页）同一文案
+ * 复用，第三份副本不再各自手写 */
+export function notFound(): HttpError {
   return new HttpError(
     404,
     "NOT_FOUND",

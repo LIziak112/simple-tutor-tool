@@ -870,6 +870,52 @@ interface AttemptSourceMeta {
   dueAt: string | null;
 }
 
+/**
+ * lesson 来源的上下文单源（2026-10 讲练一体收敛；本模块 attemptSourceMeta
+ * 学生侧与 teacher-attempt-service.sourceOf 教师侧两投影共用，不再各自查行）：
+ * - 标题链（以教师侧既有三级链为准，更完备）：讲义标题（D1 引用语义，随行
+ *   当前值）→ 嵌入单元标题（teacherId 域内，讲义行异常缺失时兜底）→
+ *   attempt.unitId →「讲练练习」（人文文案兜底，不露异常）；
+ * - 课程名随 courseId 行（打开时来自哪门课；可空 → null）。
+ */
+export function lessonSourceContextOf(
+  db: Db,
+  attempt: Attempt,
+  teacherId: string | null,
+): { title: string; courseName: string | null } {
+  const lecture =
+    attempt.lectureId !== null
+      ? db
+          .select({ title: lectures.title })
+          .from(lectures)
+          .where(eq(lectures.id, attempt.lectureId))
+          .get()
+      : undefined;
+  const course =
+    attempt.courseId !== null
+      ? db
+          .select({ title: courses.title })
+          .from(courses)
+          .where(eq(courses.id, attempt.courseId))
+          .get()
+      : undefined;
+  const unit =
+    lecture === undefined && attempt.unitId !== null && teacherId !== null
+      ? db
+          .select({ title: units.title })
+          .from(units)
+          .where(
+            and(eq(units.teacherId, teacherId), eq(units.id, attempt.unitId)),
+          )
+          .get()
+      : undefined;
+  return {
+    // 讲义标题 → 嵌入单元标题 → attempt.unitId →「讲练练习」
+    title: lecture?.title ?? unit?.title ?? attempt.unitId ?? "讲练练习",
+    courseName: course?.title ?? null,
+  };
+}
+
 function attemptSourceMeta(db: Db, attempt: Attempt): AttemptSourceMeta {
   if (attempt.sourceType === "wrong") {
     // 错题重练（2026-10）：标题固定「错题重练」，无课程/截止
@@ -879,25 +925,14 @@ function attemptSourceMeta(db: Db, attempt: Attempt): AttemptSourceMeta {
   if (attempt.sourceType === "lesson") {
     // 讲练页（2026-10）：标题 = 讲练页讲义当前标题（D1 引用语义），不限截止
     //（lesson 当题释放恒题级粒度，不适用 answerRelease，见 attemptSourceSchema）；
-    // courseId 可空（打开时来自哪门课），课程名随行
-    const lectureRow = db
-      .select({ title: lectures.title })
-      .from(lectures)
-      .where(eq(lectures.id, attempt.lectureId ?? ""))
-      .get();
-    const course: Course | undefined =
-      attempt.courseId !== null
-        ? db
-            .select()
-            .from(courses)
-            .where(eq(courses.id, attempt.courseId))
-            .get()
-        : undefined;
-    return {
-      title: lectureRow?.title ?? "讲练练习",
-      courseName: course?.title ?? null,
-      dueAt: null,
-    };
+    // courseId 可空（打开时来自哪门课），课程名随行。上下文与教师侧 sourceOf
+    // 同一实现（lessonSourceContextOf，标题兜底链以教师侧三级链为准）
+    const { title, courseName } = lessonSourceContextOf(
+      db,
+      attempt,
+      attemptTeacherId(db, attempt),
+    );
+    return { title, courseName, dueAt: null };
   }
   if (attempt.sourceType === "course") {
     // 课程练习：标题 = 单元当前标题（D1 引用而非复制）；不限截止（D11 交卷即公布）。
