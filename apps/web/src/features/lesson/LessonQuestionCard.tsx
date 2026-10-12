@@ -25,10 +25,6 @@ import {
   VerdictBadge,
 } from "@/features/attempt/AttemptResultView";
 import {
-  busyCloseGuard,
-  DraftProblemAlert,
-} from "@/features/attempt/SubmitConfirmDialog";
-import {
   HANDWRITTEN_TYPES,
   QUESTION_TYPE_BADGE_CLASS,
   QUESTION_TYPE_LABELS,
@@ -41,6 +37,10 @@ import {
   getQuestionCompletion,
 } from "@/features/attempt/question-completion";
 import { ResultAnswerComparison } from "@/features/attempt/ResultAnswerComparison";
+import {
+  busyCloseGuard,
+  DraftProblemAlert,
+} from "@/features/attempt/SubmitConfirmDialog";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { QuestionHistoryLink } from "@/features/notes/QuestionHistoryLink";
 import type {

@@ -6,8 +6,8 @@ import type {
 import { cn } from "cn";
 import { ChevronLeft, ChevronRight, Clock3 } from "lucide-react";
 import { Link, useSearchParams } from "react-router";
-import { Button } from "@/components/ui/button";
 import { SourceBadge } from "@/components/source-badge";
+import { Button } from "@/components/ui/button";
 import { formatCnTime } from "@/lib/time";
 import { recordReviewHref } from "./record-review-navigation";
 
