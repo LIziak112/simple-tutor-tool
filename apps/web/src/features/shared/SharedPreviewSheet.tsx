@@ -89,9 +89,7 @@ export function SharedPreviewSheet({
               <div className="mx-auto max-w-3xl">
                 <RichMarkdown
                   source={preview?.markdown ?? ""}
-                  questionPlaceholder={
-                    file.kind === "lesson" || undefined
-                  }
+                  questionPlaceholder={file.kind === "lesson" || undefined}
                 />
               </div>
             </div>

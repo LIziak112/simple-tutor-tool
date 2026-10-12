@@ -51,13 +51,13 @@ import { sealAttemptAnnotationsApi, startWrongPracticeApi } from "@/lib/api";
 import { createEventQueue } from "@/lib/event-queue";
 import { formatDueTime } from "@/lib/time";
 import { useOnlineStatus } from "@/lib/use-online-status";
-import { attemptSourceLabel } from "./answer-format";
 import {
   AttemptEditorProvider,
   useAttemptEditor,
 } from "./AttemptEditorContext";
 import { AttemptSaveDetails } from "./AttemptSaveDetails";
 import { AttemptWorkspace } from "./AttemptWorkspace";
+import { attemptSourceLabel } from "./answer-format";
 import { useSubmitAttempt } from "./attempt-queries";
 import { QuestionNavigator } from "./QuestionNavigator";
 import { completionLabel, getQuestionCompletion } from "./question-completion";
@@ -65,13 +65,13 @@ import {
   retryAttemptLocalPersistence,
   useAttemptSaveStatus,
 } from "./use-attempt-save-status";
+import { useReadingPosition } from "./use-reading-position";
 import {
-  evidenceProblemViewsOf,
-  useSubmitEvidenceConfirm,
   type EvidenceConfirmContext,
   type EvidenceConfirmOutcome,
+  evidenceProblemViewsOf,
+  useSubmitEvidenceConfirm,
 } from "./use-submit-evidence-confirm";
-import { useReadingPosition } from "./use-reading-position";
 import { useWorkspaceFlags } from "./use-workspace-flags";
 
 /** 详情 data 的嵌套判别（Zod union 判别键在 attempt.status，TS 无法自动收窄） */
@@ -428,9 +428,7 @@ function AnswerView({
    * 切结果视图（不自动重交）。
    */
   const runSubmit = useCallback(
-    async (
-      ctx: EvidenceConfirmContext,
-    ): Promise<EvidenceConfirmOutcome> => {
+    async (ctx: EvidenceConfirmContext): Promise<EvidenceConfirmOutcome> => {
       setInkFlushError(false);
       // 两条独立网络链并行（模态弹层已冻结编辑，无用户输入竞态）：
       // 手写题笔迹 flush（既有硬约束，失败阻止交卷）+ 草稿追平与证据组装。

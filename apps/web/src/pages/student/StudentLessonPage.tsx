@@ -33,14 +33,14 @@ import {
 } from "@/components/ui/dialog";
 import { isAnswered } from "@/features/attempt/answer-format";
 import { SubmitConfirmDialog } from "@/features/attempt/SubmitConfirmDialog";
-import {
-  evidenceProblemViewsOf,
-  useSubmitEvidenceConfirm,
-  type EvidenceConfirmContext,
-  type EvidenceConfirmOutcome,
-} from "@/features/attempt/use-submit-evidence-confirm";
 import { retryAttemptLocalPersistence } from "@/features/attempt/use-attempt-save-status";
 import { DraftSyncContext } from "@/features/attempt/use-draft-sync";
+import {
+  type EvidenceConfirmContext,
+  type EvidenceConfirmOutcome,
+  evidenceProblemViewsOf,
+  useSubmitEvidenceConfirm,
+} from "@/features/attempt/use-submit-evidence-confirm";
 import {
   EnabledCapabilitiesProvider,
   toEnabledCapabilities,
@@ -231,7 +231,10 @@ function LessonBody({
   renderCard,
 }: {
   data: LessonStartData;
-  order: { ordered: LessonQuestionSlot[]; byId: Map<string, LessonQuestionSlot> };
+  order: {
+    ordered: LessonQuestionSlot[];
+    byId: Map<string, LessonQuestionSlot>;
+  };
   renderCard: (
     question: AttemptQuestionPublic,
     index: number,
@@ -404,7 +407,8 @@ function LessonBody({
                 event.preventDefault();
                 const index = pendingHeadingRef.current;
                 pendingHeadingRef.current = null;
-                if (index !== null) scrollToHeadingAt(LESSON_HEADING_SELECTOR, index);
+                if (index !== null)
+                  scrollToHeadingAt(LESSON_HEADING_SELECTOR, index);
                 else outlineTriggerRef.current?.focus({ preventScroll: true });
               }}
             >
@@ -627,7 +631,10 @@ function LessonAnswerView({
             submitting={finishPhase.kind === "preparing"}
             preparing={finishPhase.kind === "preparing"}
             noteSummary={noteSummary}
-            noteProblems={evidenceProblemViewsOf(finishPhase, questionIndexById)}
+            noteProblems={evidenceProblemViewsOf(
+              finishPhase,
+              questionIndexById,
+            )}
             choiceMode={finishPhase.kind === "choice"}
             notePrepError={
               finishPhase.kind === "error" ? finishPhase.message : null

@@ -213,9 +213,7 @@ export default function StudentLectureViewPage() {
   // （单题作答 + 即时反馈）——本阅读页对 lesson 详情重定向过去（保留 courseId
   // 课程上下文；讲义列表/课程目录行的点击由此直达讲练页）
   if (lectureQuery.data?.kind === "lesson") {
-    return (
-      <Navigate replace to={lessonHref(id, courseId)} />
-    );
+    return <Navigate replace to={lessonHref(id, courseId)} />;
   }
 
   return (
@@ -275,7 +273,8 @@ export default function StudentLectureViewPage() {
               event.preventDefault();
               const index = pendingHeadingRef.current;
               pendingHeadingRef.current = null;
-              if (index !== null) scrollToHeadingAt(LECTURE_HEADING_SELECTOR, index);
+              if (index !== null)
+                scrollToHeadingAt(LECTURE_HEADING_SELECTOR, index);
               else outlineTriggerRef.current?.focus({ preventScroll: true });
             }}
           >

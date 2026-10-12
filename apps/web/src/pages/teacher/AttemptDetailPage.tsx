@@ -10,7 +10,10 @@ import {
   AttemptDetailQuestionCard,
   formatActiveSec,
 } from "@/features/teacher-attempts/AttemptDetailQuestionCard";
-import { AttemptStatusBadge, sourceLineOf } from "@/features/teacher-attempts/attempt-views";
+import {
+  AttemptStatusBadge,
+  sourceLineOf,
+} from "@/features/teacher-attempts/attempt-views";
 import { ExportCsvButton } from "@/features/teacher-attempts/ExportCsvButton";
 import { useTeacherAttemptDetail } from "@/features/teacher-attempts/teacher-attempt-queries";
 import { ApiError } from "@/lib/api";

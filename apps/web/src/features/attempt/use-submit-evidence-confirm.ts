@@ -173,8 +173,7 @@ export function useSubmitEvidenceConfirm(
     // 并集累积（P0-1）：两批 problem 先后出现各自确认后都按 missing 提交——
     // 覆盖式赋值会丢掉第一批确认
     const confirmed = new Set(missingConfirmedRef.current ?? []);
-    for (const problem of current.problems)
-      confirmed.add(problem.questionId);
+    for (const problem of current.problems) confirmed.add(problem.questionId);
     missingConfirmedRef.current = confirmed;
     void confirm();
   }, [confirm]);
