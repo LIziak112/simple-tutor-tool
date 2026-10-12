@@ -1,3 +1,4 @@
+import { gzipSync } from "node:zlib";
 import type { ApiErr, SubmitEvidenceDeclaration } from "@tutor/contract";
 import {
   apiErrSchema,
@@ -2283,3 +2284,121 @@ describe("我的记录收录 lesson 来源（恒可回看 + 讲练标题 + 教�
     expect(rowsAfter.map((row) => row.attemptId)).toContain(attemptId);
   });
 });
+
+describe("单题提交后的行级锁定：已提交题的答案与笔迹不可再改（卷仍 draft）", () => {
+  it("PUT 答案该题 → 409 QUESTION_ALREADY_SUBMITTED；未提交题照常可存；提交时答案保持提交时刻值", async () => {
+    const { env, attemptId, revisions } = await makeSubmitEnv();
+    await saveDraftAnswer(env, attemptId, S.choice, {
+      kind: "choice",
+      index: 1,
+    });
+    await submitQuestionOk(
+      env,
+      attemptId,
+      S.choice,
+      revisions.get(S.choice) ?? "",
+    );
+
+    // 已提交题：改答案被拒（判定已按提交时的答案落定）
+    const denied = await restartOrStartError(
+      await saveDraftAnswerRaw(env, attemptId, S.choice, {
+        kind: "choice",
+        index: 0,
+      }),
+    );
+    expect(denied.status).toBe(409);
+    expect(denied.error).toBe("QUESTION_ALREADY_SUBMITTED");
+    // 答案保持提交时刻值（未被覆盖）
+    expect(responseRowOf(env.db, attemptId, S.choice).autoCorrect).toBe(true);
+
+    // 未提交题照常可存草稿
+    await saveDraftAnswer(env, attemptId, S.judge, {
+      kind: "judge",
+      value: false,
+    });
+    const start = await startOk(env);
+    expect(start.data.drafts[S.judge]).toEqual({ kind: "judge", value: false });
+  });
+
+  it("PUT 笔迹该题 → 409 QUESTION_ALREADY_SUBMITTED（已提交题的手写证据不可再改）", async () => {
+    const { env, attemptId, revisions } = await makeSubmitEnv();
+    await saveDraftAnswer(env, attemptId, S.fill, {
+      kind: "fill",
+      values: ["2"],
+    });
+    await submitQuestionOk(env, attemptId, S.fill, revisions.get(S.fill) ?? "");
+
+    const form = new FormData();
+    form.append(
+      "strokes",
+      new Blob([inkGz(1)], { type: "application/gzip" }),
+      "strokes.json.gz",
+    );
+    form.append(
+      "snapshot",
+      new Blob([minimalPng()], { type: "image/png" }),
+      "snapshot.png",
+    );
+    const res = await env.app.request(
+      `/api/student/attempts/${attemptId}/ink/${encodeURIComponent(S.fill)}`,
+      { method: "PUT", headers: { cookie: env.memberCookie }, body: form },
+    );
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as ApiErr).error).toBe(
+      "QUESTION_ALREADY_SUBMITTED",
+    );
+  });
+});
+
+/** PUT 草稿答案但不断言 200（行级锁定用例需要拿到错误响应） */
+async function saveDraftAnswerRaw(
+  env: TestEnv,
+  attemptId: string,
+  questionId: string,
+  answer: unknown,
+): Promise<Response> {
+  return env.app.request(
+    `/api/student/attempts/${attemptId}/answers/${encodeURIComponent(questionId)}`,
+    {
+      method: "PUT",
+      headers: {
+        "content-type": "application/json",
+        cookie: env.memberCookie,
+      },
+      body: JSON.stringify({ answer }),
+    },
+  );
+}
+
+/** 最小合法 PNG（服务端只校验魔数/IHDR；与既有测试同构造） */
+function minimalPng(width = 320, height = 200): Uint8Array {
+  const buf = Buffer.alloc(64);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(buf, 0);
+  buf.writeUInt32BE(13, 8);
+  buf.write("IHDR", 12, "latin1");
+  buf.writeUInt32BE(width, 16);
+  buf.writeUInt32BE(height, 20);
+  return new Uint8Array(buf);
+}
+
+/** 构造 atrament InkDoc 并 gzip（与既有测试同口径） */
+function inkGz(strokeCount: number): Uint8Array {
+  const doc = {
+    engine: "atrament" as const,
+    version: 1 as const,
+    data: {
+      width: 1000,
+      strokes: Array.from({ length: strokeCount }, (_, i) => ({
+        tool: "pen" as const,
+        color: "#1f2328",
+        weight: 4,
+        points: [
+          { x: 10 + i, y: 20, p: 0.5, t: 0 },
+          { x: 30 + i, y: 40, p: 0.8, t: 25 },
+        ],
+      })),
+    },
+    updatedAt: 1727392800000,
+  };
+  return new Uint8Array(gzipSync(Buffer.from(JSON.stringify(doc), "utf-8")));
+}

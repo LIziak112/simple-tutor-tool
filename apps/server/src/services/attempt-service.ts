@@ -974,6 +974,38 @@ export function requireAttemptQuestion(
   return hit;
 }
 
+/**
+ * 单题提交后的**行级锁定守卫**（2026-10 讲练一体）：该题已单题提交
+ * （responses.submittedAt 非空）→ 409 QUESTION_ALREADY_SUBMITTED——判定已按
+ * 提交时的答案落定，答案与笔迹此后不可再改（saveDraftAnswer / saveInk 调用，
+ * 都在 requireAttemptQuestion 之后）。非 lesson 行的 submittedAt 恒 null，
+ * 两接口对既有来源的行为零变化。
+ */
+export function assertRowNotSubmitted(
+  db: Db,
+  attemptId: string,
+  questionId: string,
+  action = "修改答案",
+): void {
+  const row = db
+    .select({ submittedAt: responses.submittedAt })
+    .from(responses)
+    .where(
+      and(
+        eq(responses.attemptId, attemptId),
+        eq(responses.questionId, questionId),
+      ),
+    )
+    .get();
+  if (row !== undefined && row.submittedAt !== null) {
+    throw new HttpError(
+      409,
+      "QUESTION_ALREADY_SUBMITTED",
+      `这道题已经提交过了，不能再${action}`,
+    );
+  }
+}
+
 /** 严格口径的 WHERE 单源（单题/批量两兄弟共用；C8）——三条件：
  * attempt 归属 + 题目成员 + 快照非空（语义见 requireAttemptQuestion 注释） */
 function buildAttemptQuestionWhere(attemptId: string, questionId: string): SQL {
@@ -1355,6 +1387,9 @@ export function saveDraftAnswer(
     );
   }
   requireAttemptQuestion(db, attempt, questionId);
+  // lesson 单题提交后的行级锁定（2026-10）：已提交题的答案不可再改
+  //（判定已按提交时的答案落定；非 lesson 行 submittedAt 恒 null，零变化）
+  assertRowNotSubmitted(db, attemptId, questionId);
 
   // T6R.3：requireAttemptQuestion 已保证该题冻结行存在（快照非空）——无插入
   // 分支（旧行缺失分支在建卷冻结后不可达，已删）；upsert 收敛为原行更新
