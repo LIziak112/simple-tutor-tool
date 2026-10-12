@@ -23,6 +23,7 @@ import {
   teacherLoginViaApi,
   uniqueSuffix,
 } from "./helpers";
+import { expectNavigationRingSpace } from "./navigation-ring";
 
 async function prepareResult(
   request: APIRequestContext,
@@ -311,6 +312,9 @@ test("130题多单元回看：保活、定位、响应式、记录往返与按�
       width < 1024
         ? page.getByRole("dialog")
         : page.getByRole("complementary", { name: "结果定位" });
+    await expectNavigationRingSpace(
+      navigation.getByRole("navigation", { name: "回看题号" }),
+    );
     await navigation
       .getByRole("button", { name: "第 130 题，未作答，判错", exact: true })
       .click();
