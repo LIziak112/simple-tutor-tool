@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   attemptRoundLabel,
+  attemptSourceLabel,
   formatReferenceAnswers,
   formatStudentAnswer,
   isAnswered,
@@ -19,6 +20,45 @@ describe("attemptRoundLabel（轮次标注按来源）", () => {
     expect(attemptRoundLabel("assignment", 1)).toBe("本次作业");
     // lesson：attemptNo 是该讲练页的开卷次数（restart 递增）
     expect(attemptRoundLabel("lesson", 2)).toBe("第 2 次讲练");
+  });
+});
+
+describe("attemptSourceLabel（学生端来源行文案，2026-10 收口单源）", () => {
+  const base = { attempt: { sourceType: "course", attemptNo: 2 } } as const;
+  it("course 带课程名与次数；lesson 带讲义标题；wrong 带次数", () => {
+    expect(
+      attemptSourceLabel({ ...base, courseName: "初一上", title: "有理数" }),
+    ).toBe("课程：初一上 · 第 2 次");
+    expect(
+      attemptSourceLabel({
+        attempt: { sourceType: "lesson", attemptNo: 3 },
+        courseName: null,
+        title: "第1讲 有理数·讲练",
+      }),
+    ).toBe("讲练：第1讲 有理数·讲练 · 第 3 次");
+    expect(
+      attemptSourceLabel({
+        attempt: { sourceType: "wrong", attemptNo: 5 },
+        courseName: null,
+        title: "错题组",
+      }),
+    ).toBe("错题重练 · 第 5 次");
+  });
+  it("assignment：挂课程「作业 · 课程名」，未挂只显示「作业」", () => {
+    expect(
+      attemptSourceLabel({
+        attempt: { sourceType: "assignment", attemptNo: 1 },
+        courseName: "初一上",
+        title: "周末加练",
+      }),
+    ).toBe("作业 · 初一上");
+    expect(
+      attemptSourceLabel({
+        attempt: { sourceType: "assignment", attemptNo: 1 },
+        courseName: null,
+        title: "周末加练",
+      }),
+    ).toBe("作业");
   });
 });
 

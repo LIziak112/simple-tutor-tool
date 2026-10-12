@@ -1,6 +1,7 @@
 import type {
   AttemptStatus,
   TeacherAttemptCard,
+  TeacherAttemptDetailData,
   TeacherAttemptSource,
 } from "@tutor/contract";
 import { ChevronLeft, ChevronRight, Clock3 } from "lucide-react";
@@ -69,6 +70,27 @@ export function sourceContextOf(card: TeacherAttemptSource): string {
       : `${card.unitTitle ?? ""} · 第 ${card.attemptNo} 次`;
   }
   return `${card.courseName ?? ""} · ${card.unitTitle ?? ""} · 第 ${card.attemptNo} 次`;
+}
+
+/**
+ * 详情页头的来源行文案（与卡片 sourceContextOf 是**不同**展示口径：列表卡
+ * 按学生视角组合标题，详情头与学生端结果视图同口径「课程：/错题重练/
+ * 讲练：」；2026-10 收口时两函数同居本模块，教师端来源文案单一出处）。
+ */
+export function sourceLineOf(data: TeacherAttemptDetailData): string {
+  if (data.sourceType === "course") {
+    return `课程：${data.courseName ?? ""} · 第 ${data.attemptNo} 次`;
+  }
+  if (data.sourceType === "wrong") {
+    return `错题重练 · 第 ${data.attemptNo} 次`;
+  }
+  if (data.sourceType === "lesson") {
+    // 讲练（2026-10）：unitTitle 承载讲义标题（sourceOf 口径）
+    return `讲练：${data.unitTitle ?? ""} · 第 ${data.attemptNo} 次`;
+  }
+  return data.courseName !== null
+    ? `作业 · ${data.courseName}`
+    : `作业 · ${data.assignmentTitle ?? ""}`;
 }
 
 /** 展示得分（D2 口径：scoreFinal ?? scoreAuto；无分「—」） */

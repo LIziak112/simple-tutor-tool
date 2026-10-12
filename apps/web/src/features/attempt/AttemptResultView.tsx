@@ -25,6 +25,7 @@ import { studentInkPngUrl } from "@/lib/api";
 import { formatCnTime } from "@/lib/time";
 import {
   attemptRoundLabel,
+  attemptSourceLabel,
   HANDWRITTEN_TYPES,
   letterOf,
   QUESTION_TYPE_BADGE_CLASS,
@@ -613,15 +614,7 @@ export function AttemptResultView({
               错题重练「错题重练 · 第 n 次」（2026-10）；讲练「讲练：讲义标题 ·
               第 n 次」（title 为讲义标题，2026-10 讲练一体） */}
             <p className="text-sm leading-relaxed text-muted-foreground">
-              {attempt.sourceType === "course"
-                ? `课程：${data.courseName ?? ""} · 第 ${attempt.attemptNo} 次`
-                : attempt.sourceType === "wrong"
-                  ? `错题重练 · 第 ${attempt.attemptNo} 次`
-                  : attempt.sourceType === "lesson"
-                    ? `讲练：${data.title} · 第 ${attempt.attemptNo} 次`
-                    : data.courseName !== null
-                      ? `作业 · ${data.courseName}`
-                      : "作业"}
+              {attemptSourceLabel(data)}
             </p>
             {attempt.submittedAt !== null && (
               <p className="text-sm leading-relaxed text-muted-foreground">

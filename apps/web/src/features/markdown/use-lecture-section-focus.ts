@@ -26,8 +26,35 @@ export const HYSTERESIS_MARGIN = 0.1;
 /** 候选节的稳定时长（毫秒）：不足余量时需稳定该时长才切换 */
 export const CANDIDATE_STABLE_MS = 1000;
 
-/** 与 scrollToHeading 同一选择器（StudentLectureViewPage；不得两处漂移） */
+/** 与目录滚动同一选择器（讲义阅读页；不得两处漂移） */
 export const LECTURE_HEADING_SELECTOR = ".rich-markdown h2, .rich-markdown h3";
+
+/**
+ * 讲练页的目录滚动目标：限定 md 段（[data-lesson-md]）——题干同样经
+ * .rich-markdown 渲染，题干内的标题不得进目录（采集与滚动同源，见
+ * StudentLessonPage 的目录拼接）。与 LECTURE_HEADING_SELECTOR 同居本
+ * 模块（2026-10 讲练一体收口：两个选择器一处可查，防漂移）。
+ */
+export const LESSON_HEADING_SELECTOR =
+  "[data-lesson-md] h2, [data-lesson-md] h3";
+
+/**
+ * 滚动正文中的第 index 个 H2/H3 标题到视口并聚焦（目录条目与渲染标题一一
+ * 对应；讲义阅读页与讲练页共用——选择器由调用方传入，讲义用
+ * LECTURE_HEADING_SELECTOR、讲练用 LESSON_HEADING_SELECTOR）。
+ */
+export function scrollToHeadingAt(selector: string, index: number): void {
+  const target = document.querySelectorAll<HTMLElement>(selector)[index];
+  if (!target) return;
+  target.tabIndex = -1;
+  target.focus({ preventScroll: true });
+  target.scrollIntoView({
+    behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+      ? "instant"
+      : "smooth",
+    block: "start",
+  });
+}
 
 export interface UseLectureSectionFocusOptions {
   /** 正文 DOM 就绪（讲义数据加载完成）才挂观察器 */

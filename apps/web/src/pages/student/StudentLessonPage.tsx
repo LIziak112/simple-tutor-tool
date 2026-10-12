@@ -20,7 +20,6 @@ import {
   useMemo,
   useRef,
   useState,
-  useSyncExternalStore,
 } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
@@ -56,10 +55,15 @@ import { LectureOutline } from "@/features/markdown/LectureOutline";
 import { extractOutline } from "@/features/markdown/outline";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import {
+  LESSON_HEADING_SELECTOR,
+  scrollToHeadingAt,
+} from "@/features/markdown/use-lecture-section-focus";
+import {
   StudentErrorPanel,
   StudentListSkeleton,
 } from "@/features/student/student-ui";
 import { useStudentWorkspace } from "@/features/student/student-workspace-layout";
+import { useDesktopViewport } from "@/lib/use-desktop-viewport";
 
 /**
  * /s/lectures/:id/lesson 学生讲练页（2026-10 讲练一体）：
@@ -80,33 +84,6 @@ import { useStudentWorkspace } from "@/features/student/student-workspace-layout
 const LessonMarkdown = memo(RichMarkdown);
 /** 空提示集（模块级稳定引用：题卡 memo 比较不因 `?? []` 每次新数组失效） */
 const EMPTY_HINTS: readonly HintOpenedEntry[] = [];
-const DESKTOP_QUERY = "(min-width: 1024px)";
-function subscribeDesktop(onChange: () => void): () => void {
-  const media = window.matchMedia(DESKTOP_QUERY);
-  media.addEventListener("change", onChange);
-  return () => media.removeEventListener("change", onChange);
-}
-function getDesktopSnapshot(): boolean {
-  return window.matchMedia(DESKTOP_QUERY).matches;
-}
-
-/** 目录滚动目标：md 段内的 H2/H3（题干标题不进目录，采集与滚动同源） */
-const LESSON_HEADING_SELECTOR = "[data-lesson-md] h2, [data-lesson-md] h3";
-
-function scrollToHeading(index: number): void {
-  const target = document.querySelectorAll<HTMLElement>(
-    LESSON_HEADING_SELECTOR,
-  )[index];
-  if (!target) return;
-  target.tabIndex = -1;
-  target.focus({ preventScroll: true });
-  target.scrollIntoView({
-    behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
-      ? "instant"
-      : "smooth",
-    block: "start",
-  });
-}
 
 export default function StudentLessonPage() {
   useStudentWorkspace();
@@ -261,11 +238,7 @@ function LessonBody({
     orphan: boolean,
   ) => ReactNode;
 }) {
-  const isDesktop = useSyncExternalStore(
-    subscribeDesktop,
-    getDesktopSnapshot,
-    () => false,
-  );
+  const isDesktop = useDesktopViewport();
   const [outlineOpen, setOutlineOpen] = useState(true);
   const [mobileOutlineOpen, setMobileOutlineOpen] = useState(false);
   const outlineTriggerRef = useRef<HTMLButtonElement>(null);
@@ -311,7 +284,7 @@ function LessonBody({
       setMobileOutlineOpen(false);
       return;
     }
-    scrollToHeading(headingIndex);
+    scrollToHeadingAt(LESSON_HEADING_SELECTOR, headingIndex);
   };
 
   const outlineNode = (scrollRef: RefObject<HTMLDivElement | null>) => (
@@ -431,7 +404,7 @@ function LessonBody({
                 event.preventDefault();
                 const index = pendingHeadingRef.current;
                 pendingHeadingRef.current = null;
-                if (index !== null) scrollToHeading(index);
+                if (index !== null) scrollToHeadingAt(LESSON_HEADING_SELECTOR, index);
                 else outlineTriggerRef.current?.focus({ preventScroll: true });
               }}
             >

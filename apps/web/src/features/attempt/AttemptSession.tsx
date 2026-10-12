@@ -51,6 +51,7 @@ import { sealAttemptAnnotationsApi, startWrongPracticeApi } from "@/lib/api";
 import { createEventQueue } from "@/lib/event-queue";
 import { formatDueTime } from "@/lib/time";
 import { useOnlineStatus } from "@/lib/use-online-status";
+import { attemptSourceLabel } from "./answer-format";
 import {
   AttemptEditorProvider,
   useAttemptEditor,
@@ -96,22 +97,6 @@ export function isResultDetail(
  * - 草稿同步终态（T2A.6，D7）：顶栏显示「已无权限访问该练习」时同时收起
  *   交卷入口（交卷必然同样被拒）。
  */
-
-/** 来源行文案：课程练习带次数；作业显示「作业」（挂课程时「作业 · 课程名」，T2A.7）；
- * 错题重练显示「错题重练 · 第 n 次」（2026-10，与结果视图/记录卡同口径）；
- * 讲练显示「讲练：讲义标题 · 第 n 次」（2026-10 讲练一体，title 为讲义标题） */
-function sourceLabel(data: AttemptDetailData): string {
-  if (data.attempt.sourceType === "course") {
-    return `课程：${data.courseName ?? ""} · 第 ${data.attempt.attemptNo} 次`;
-  }
-  if (data.attempt.sourceType === "wrong") {
-    return `错题重练 · 第 ${data.attempt.attemptNo} 次`;
-  }
-  if (data.attempt.sourceType === "lesson") {
-    return `讲练：${data.title} · 第 ${data.attempt.attemptNo} 次`;
-  }
-  return data.courseName !== null ? `作业 · ${data.courseName}` : "作业";
-}
 
 /**
  * 交卷准备阶段（T6R.10，验收修复 A-4）：单一判别联合替代原先三个独立
@@ -665,7 +650,7 @@ function AnswerView({
           }}
         >
           <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-            <span>{sourceLabel(data)}</span>
+            <span>{attemptSourceLabel(data)}</span>
             {data.attempt.sourceType === "assignment" && (
               <span>
                 {data.dueAt === null

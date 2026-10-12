@@ -58,6 +58,32 @@ export function judgeLabelOf(value: boolean | string): string {
 }
 
 /**
+ * 学生端来源行文案（2026-10 收口单源）：答题视图头部（AttemptHeader 下方）
+ * 与结果视图汇总行原先两份同文实现合并于此。教师端卡片/详情是另一展示口径
+ * （见 teacher-attempts/attempt-views 的 sourceContextOf/sourceLineOf）。
+ * - course：课程：课程名 · 第 n 次（历次回看可分辨第几次）；
+ * - wrong：错题重练 · 第 n 次；
+ * - lesson：讲练：讲义标题 · 第 n 次（title 为讲义标题，2026-10 讲练一体）；
+ * - assignment：挂课程「作业 · 课程名」（T2A.7），未挂「作业」。
+ */
+export function attemptSourceLabel(data: {
+  attempt: { sourceType: AttemptSource; attemptNo: number };
+  courseName: string | null;
+  title: string;
+}): string {
+  if (data.attempt.sourceType === "course") {
+    return `课程：${data.courseName ?? ""} · 第 ${data.attempt.attemptNo} 次`;
+  }
+  if (data.attempt.sourceType === "wrong") {
+    return `错题重练 · 第 ${data.attempt.attemptNo} 次`;
+  }
+  if (data.attempt.sourceType === "lesson") {
+    return `讲练：${data.title} · 第 ${data.attempt.attemptNo} 次`;
+  }
+  return data.courseName !== null ? `作业 · ${data.courseName}` : "作业";
+}
+
+/**
  * 作答轮次标注（T6R.11 原稿查看面板共用）。**次数语义按来源不同**：
  * - course：该课程练习的第 n 次（attemptNo 逐次递增，可分辨第几轮）；
  * - wrong：attemptNo 是该生**全部错题重练的组卷计数**（含废弃 draft，见

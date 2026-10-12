@@ -10,7 +10,7 @@ import {
   AttemptDetailQuestionCard,
   formatActiveSec,
 } from "@/features/teacher-attempts/AttemptDetailQuestionCard";
-import { AttemptStatusBadge } from "@/features/teacher-attempts/attempt-views";
+import { AttemptStatusBadge, sourceLineOf } from "@/features/teacher-attempts/attempt-views";
 import { ExportCsvButton } from "@/features/teacher-attempts/ExportCsvButton";
 import { useTeacherAttemptDetail } from "@/features/teacher-attempts/teacher-attempt-queries";
 import { ApiError } from "@/lib/api";
@@ -30,23 +30,6 @@ import { formatCnTime } from "@/lib/time";
  * - 数据全部来自服务端（快照 + responses），前端不拼判分；三态齐全；
  *   返回保留数据页筛选（筛选在 URL query，navigate(-1) 原样回到列表）。
  */
-
-/** 来源头描述（与卡片/学生端结果视图同口径） */
-function sourceLineOf(data: TeacherAttemptDetailData): string {
-  if (data.sourceType === "course") {
-    return `课程：${data.courseName ?? ""} · 第 ${data.attemptNo} 次`;
-  }
-  if (data.sourceType === "wrong") {
-    return `错题重练 · 第 ${data.attemptNo} 次`;
-  }
-  if (data.sourceType === "lesson") {
-    // 讲练（2026-10）：unitTitle 承载讲义标题（sourceOf 口径）
-    return `讲练：${data.unitTitle ?? ""} · 第 ${data.attemptNo} 次`;
-  }
-  return data.courseName !== null
-    ? `作业 · ${data.courseName}`
-    : `作业 · ${data.assignmentTitle ?? ""}`;
-}
 
 /** 返回数据页：站内到达时回退一步（保留筛选 URL）；直接打开（刷新/书签）则去 /t/data */
 function BackToDataButton() {
