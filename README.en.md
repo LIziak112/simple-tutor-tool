@@ -25,24 +25,6 @@ AI writes content (DSL-spec MD) ──→ import: auto-parse & render ──→ 
 - **For students**: nothing to install, no registration — open a personal link in an iPad or desktop browser and start. Read interactive lectures with typeset formulas and collapsible examples; circle key conditions on question stems, work on built-in scratchpads, or write full solutions with Apple Pencil; after submitting, file corrections with "where I got stuck / root cause" reflections, review the mistake notebook and per-question history notebook, and redo weak questions in one tap.
 - **For AI collaboration**: no more copying and pasting questions and student answers into chat windows by hand. On the authoring side, [`dsl-kit/`](dsl-kit/) packs the DSL spec, prompt templates, and a zero-dependency offline linter; on the data side, export an "AI learning-data bundle (v1/v2)" or a single-question "AI review pack" with handwriting/correction images and anti-hallucination prompts, or connect Claude and other clients live via the built-in MCP server.
 
-## Screenshots
-
-| Interactive lecture (formulas / TOC / collapsible solution / step reveal) | Student answering & built-in grid scratchpad |
-| --- | --- |
-| ![Interactive lecture view](docs/screenshots/student-lecture.png) | ![Student answering with scratchpad](docs/screenshots/student-answering.png) |
-
-| Result review & sealed correction reflection | Student mistake notebook & multi-way redo |
-| --- | --- |
-| ![Result review and correction reflection](docs/screenshots/student-result.png) | ![Mistake notebook](docs/screenshots/wrong-book.png) |
-
-| Teacher · multi-speed handwriting replay | Teacher · per-question grading & frozen scratchpad |
-| --- | --- |
-| ![Handwriting stroke replay](docs/screenshots/handwriting-replay.png) | ![Teacher grading and scratchpad original](docs/screenshots/teacher-grading.png) |
-
-| Teacher · answer data (3-view grouping) | Teacher · analytics overview & next-lesson focus |
-| --- | --- |
-| ![Per-student answer data](docs/screenshots/teacher-data.png) | ![Analytics overview and next-lesson focus](docs/screenshots/teacher-insights.png) |
-
 ## Try it online
 
 A live demo environment, seeded with sample data (it gets reset from time to time — please don't enter real student information):

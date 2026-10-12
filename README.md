@@ -25,24 +25,6 @@ AI 产内容（符合 DSL 规范的 MD）──→ 导入自动解析渲染 ─�
 - **对学生**：免安装 App、免注册，iPad 或电脑浏览器点开专属链接即用。看带公式和折叠解析的互动讲义，做题时可在题干上圈画重点、展开草稿纸演算、用 Apple Pencil 手写解题过程；交卷后对照解析做订正与错因反思，系统自动沉淀错题本与单题历次笔记本，随时一键重练薄弱题。
 - **对 AI 协作**：不用把题目和学生作答手工复制粘贴给大模型。制作端有完整的 DSL 规范、提示词与离线校验包（[`dsl-kit/`](dsl-kit/)）；数据端可一键导出带手写原稿/订正图片与防幻觉提示词的「AI 学情数据包」或单题「AI 复习包」，也可通过内置 MCP Server 让 Claude 等客户端实时接入。
 
-## 界面一览
-
-| 互动讲义阅读（公式 / 大纲 / 折叠详解 / 分步揭晓） | 学生答题与内置演算草稿纸 |
-| --- | --- |
-| ![互动讲义阅读](docs/screenshots/student-lecture.png) | ![学生答题与草稿演算](docs/screenshots/student-answering.png) |
-
-| 交卷结果回看与订正反思封存 | 学生错题本与多维重练 |
-| --- | --- |
-| ![交卷结果与订正反思](docs/screenshots/student-result.png) | ![学生错题本](docs/screenshots/wrong-book.png) |
-
-| 教师端 · 手写推导倍速回放 | 教师端 · 逐题批阅与草稿原稿查阅 |
-| --- | --- |
-| ![手写笔迹回放](docs/screenshots/handwriting-replay.png) | ![教师批阅与草稿原稿](docs/screenshots/teacher-grading.png) |
-
-| 教师端 · 作答数据（三视图分组） | 教师端 · 学情总览与下节课重点 |
-| --- | --- |
-| ![按学生查看作答数据](docs/screenshots/teacher-data.png) | ![学情总览与下节课重点](docs/screenshots/teacher-insights.png) |
-
 ## 在线体验
 
 一个随时可以点开玩的演示环境（里面是演示数据，会不定期重置，请勿录入真实学生信息）：
