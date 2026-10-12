@@ -1,6 +1,7 @@
 import { ArrowLeft, BookOpen, ChevronRight, School } from "lucide-react";
 import { Link } from "react-router";
 import { LessonBadge } from "@/components/source-badge";
+import { lessonHref } from "@/features/student/lesson-navigation";
 import { useStudentLectures } from "@/features/student/student-queries";
 import {
   StudentEmptyState,
@@ -19,10 +20,6 @@ import { formatRelativeTime } from "@/lib/time";
  * 三态齐全；条目为触控目标 ≥44px 的整行链接。
  */
 
-/** 讲练页行的目标地址：/s/lectures/:id/lesson（保留课程上下文） */
-function lessonHref(lectureId: string, courseId: string): string {
-  return `/s/lectures/${lectureId}/lesson?courseId=${courseId}`;
-}
 export default function StudentLecturesPage() {
   const lecturesQuery = useStudentLectures();
 

@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { Link, useParams } from "react-router";
 import { LessonBadge } from "@/components/source-badge";
+import { lessonHref } from "@/features/student/lesson-navigation";
 import { useStudentCourse } from "@/features/student/student-queries";
 import {
   StudentEmptyState,
@@ -155,7 +156,7 @@ export default function StudentCourseDetailPage() {
                   <Link
                     to={
                       item.docKind === "lesson"
-                        ? `/s/lectures/${item.refId}/lesson?courseId=${courseQuery.data.id}`
+                        ? lessonHref(String(item.refId), courseQuery.data.id)
                         : `/s/lectures/${item.refId}?courseId=${courseQuery.data.id}`
                     }
                     aria-label={`${item.docKind === "lesson" ? "打开讲练" : "阅读讲义"} ${item.title}`}

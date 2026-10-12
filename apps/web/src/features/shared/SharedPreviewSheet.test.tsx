@@ -32,13 +32,17 @@ const FILE: SharedFileSummary = {
   canDelete: false,
 };
 
-function renderSheet() {
+function renderSheet(kind: SharedFileSummary["kind"] = "lecture") {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   render(
     <QueryClientProvider client={client}>
-      <SharedPreviewSheet file={FILE} onClose={() => {}} onImport={() => {}} />
+      <SharedPreviewSheet
+        file={{ ...FILE, kind }}
+        onClose={() => {}}
+        onImport={() => {}}
+      />
     </QueryClientProvider>,
   );
 }
@@ -48,7 +52,7 @@ beforeEach(() => {
 });
 
 describe("SharedPreviewSheet：讲练页题块占位（2026-10 讲练一体）", () => {
-  it("frontmatter kind: lesson 的共享文件：题块渲染占位卡，讲义正文照常渲染", async () => {
+  it("kind: lesson 的共享文件：题块渲染占位卡，讲义正文照常渲染", async () => {
     mockedPreview.mockResolvedValue({
       summary: {
         unitCount: 1,
@@ -73,7 +77,7 @@ describe("SharedPreviewSheet：讲练页题块占位（2026-10 讲练一体）",
         "::::",
       ].join("\n"),
     });
-    renderSheet();
+    renderSheet("lesson");
 
     expect(await screen.findByText("正文一段。")).toBeInTheDocument();
     expect(screen.getByText("内容请在题库编辑")).toBeInTheDocument();

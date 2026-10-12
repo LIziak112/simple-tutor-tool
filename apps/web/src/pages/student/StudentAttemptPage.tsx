@@ -1,6 +1,7 @@
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 import { AttemptSession } from "@/features/attempt/AttemptSession";
 import { useAttemptDetail } from "@/features/attempt/attempt-queries";
+import { lessonHref } from "@/features/student/lesson-navigation";
 import { recordsReturnTarget } from "@/features/student/record-review-navigation";
 import {
   StudentErrorPanel,
@@ -71,11 +72,7 @@ export default function StudentAttemptPage() {
     data.attempt.sourceType === "wrong"
       ? "/s/wrong"
       : data.attempt.sourceType === "lesson" && data.attempt.lectureId !== null
-        ? `/s/lectures/${data.attempt.lectureId}/lesson${
-            data.attempt.courseId !== null
-              ? `?courseId=${data.attempt.courseId}`
-              : ""
-          }`
+        ? lessonHref(data.attempt.lectureId, data.attempt.courseId)
         : data.attempt.sourceType === "course" &&
             data.attempt.courseId !== null &&
             data.attempt.unitId !== null

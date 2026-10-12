@@ -27,6 +27,7 @@ import {
   LECTURE_HEADING_SELECTOR,
   useLectureSectionFocus,
 } from "@/features/markdown/use-lecture-section-focus";
+import { lessonHref } from "@/features/student/lesson-navigation";
 import { useStudentLecture } from "@/features/student/student-queries";
 import {
   StudentErrorPanel,
@@ -247,10 +248,7 @@ export default function StudentLectureViewPage() {
   // 课程上下文；讲义列表/课程目录行的点击由此直达讲练页）
   if (lectureQuery.data?.kind === "lesson") {
     return (
-      <Navigate
-        replace
-        to={`/s/lectures/${id}/lesson${courseId !== undefined ? `?courseId=${courseId}` : ""}`}
-      />
+      <Navigate replace to={lessonHref(id, courseId)} />
     );
   }
 
