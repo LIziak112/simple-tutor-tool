@@ -403,5 +403,3 @@ export function useLessonAttempt(
     finish,
   };
 }
-
-/** 供页面给题卡内 HandwrittenControls 提供 DraftSyncContext（状态联动同答题页） */
