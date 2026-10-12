@@ -6,7 +6,7 @@ import type {
 } from "@tutor/contract";
 import { displayStemMd } from "@tutor/md-dsl";
 import { cn } from "cn";
-import { CheckCircle2, Clock, LoaderCircle, XCircle } from "lucide-react";
+import { LoaderCircle } from "lucide-react";
 import { memo, useState } from "react";
 import { Link } from "react-router";
 import { Button } from "@/components/ui/button";
@@ -22,6 +22,7 @@ import {
   ResultOptions,
   SolutionFold,
   TeacherMarkBlock,
+  VerdictBadge,
 } from "@/features/attempt/AttemptResultView";
 import {
   HANDWRITTEN_TYPES,
@@ -56,57 +57,6 @@ import type {
  * - 只读防御态：既未提交又无作答回调（异常数据形态）——提示刷新。
  * 作答链路全部经 handlers 复用答题页既有 hook（use-lesson-attempt 单一出处）。
  */
-
-/** 判定徽章：finalCorrect 优先（教师批注改判以批注为准）；null=待老师批改 */
-function verdictBadge(released: AttemptResultQuestion): {
-  label: string;
-  className: string;
-} {
-  const verdict = released.finalCorrect;
-  if (verdict === true) {
-    return {
-      label: "答对",
-      className: "text-emerald-700 dark:text-emerald-300",
-    };
-  }
-  if (verdict === false) {
-    return { label: "答错", className: "text-red-600 dark:text-red-400" };
-  }
-  return {
-    label: "待老师批改",
-    className: "text-amber-700 dark:text-amber-300",
-  };
-}
-
-function VerdictBadge({ released }: { released: AttemptResultQuestion }) {
-  const verdict = released.finalCorrect;
-  const { label, className } = verdictBadge(released);
-  return (
-    <span
-      className={cn(
-        "flex items-center gap-1.5 text-sm font-semibold",
-        className,
-      )}
-    >
-      {verdict === true && (
-        <CheckCircle2
-          aria-label="答对"
-          className="size-5 shrink-0 text-emerald-600"
-        />
-      )}
-      {verdict === false && (
-        <XCircle aria-label="答错" className="size-5 shrink-0 text-red-600" />
-      )}
-      {verdict === null && (
-        <Clock
-          aria-label="待老师批改"
-          className="size-5 shrink-0 text-amber-500"
-        />
-      )}
-      {label}
-    </span>
-  );
-}
 
 /** 单题提交确认弹层的阶段（一次 set 完成迁移，无中间组合态） */
 type SubmitPhase =
@@ -300,7 +250,12 @@ export const LessonQuestionCard = memo(function LessonQuestionCard({
         )}
       >
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-          <VerdictBadge released={released} />
+          {/* 判定徽章单一出处（AttemptResultView）：讲练页覆盖待批文案 */}
+          <VerdictBadge
+            verdict={released.finalCorrect}
+            pendingLabel="待老师批改"
+            toned
+          />
           <h3 className="text-base font-semibold">第 {index + 1} 题</h3>
           <span
             className={`rounded-full px-2.5 py-1 text-xs font-medium ${QUESTION_TYPE_BADGE_CLASS[released.snapshot.type]}`}

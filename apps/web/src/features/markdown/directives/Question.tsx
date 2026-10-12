@@ -15,7 +15,7 @@ import type { DirectiveProps } from "./types";
  */
 
 /** 题型的中文徽章文案（键类型锁死七种题型的穷尽性；文案与 contract 的共用短版不同，属展示层口径） */
-export const QUESTION_TYPE_LABELS: Readonly<Record<QuestionType, string>> = {
+const QUESTION_TYPE_LABELS: Readonly<Record<QuestionType, string>> = {
   judge: "判断题",
   choice: "单选题",
   multi: "多选题",
