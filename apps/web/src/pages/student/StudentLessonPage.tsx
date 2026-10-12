@@ -11,6 +11,7 @@ import {
   memo,
   type ReactNode,
   type RefObject,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -28,10 +29,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { isAnswered } from "@/features/attempt/answer-format";
+import { SubmitConfirmDialog } from "@/features/attempt/SubmitConfirmDialog";
 import {
-  SubmitConfirmDialog,
-  type SubmitNoteSummary,
-} from "@/features/attempt/SubmitConfirmDialog";
+  evidenceProblemViewsOf,
+  useSubmitEvidenceConfirm,
+  type EvidenceConfirmContext,
+  type EvidenceConfirmOutcome,
+} from "@/features/attempt/use-submit-evidence-confirm";
 import { retryAttemptLocalPersistence } from "@/features/attempt/use-attempt-save-status";
 import { DraftSyncContext } from "@/features/attempt/use-draft-sync";
 import {
@@ -47,8 +51,6 @@ import { useLessonAttempt } from "@/features/lesson/use-lesson-attempt";
 import { LectureOutline } from "@/features/markdown/LectureOutline";
 import { extractOutline } from "@/features/markdown/outline";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
-import type { SubmitEvidenceProblem } from "@/features/notes/submit-evidence";
-import { snapshotNoteOverview } from "@/features/notes/submit-evidence";
 import {
   StudentErrorPanel,
   StudentListSkeleton,
@@ -434,17 +436,6 @@ function LessonBody({
   );
 }
 
-/** 完成练习弹层的阶段（与 AnswerView 的 NotePrepPhase 同构，无编辑器语境） */
-type FinishPhase =
-  | { kind: "idle" }
-  | { kind: "preparing" }
-  | {
-      kind: "error";
-      message: string;
-      problems: SubmitEvidenceProblem[] | null;
-    }
-  | { kind: "choice"; problems: SubmitEvidenceProblem[] };
-
 /** 进行中卷（draft）：作答视图 */
 function LessonAnswerView({
   data,
@@ -463,13 +454,6 @@ function LessonAnswerView({
     () => toEnabledCapabilities(data.enabledCapabilities),
     [data.enabledCapabilities],
   );
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const [finishPhase, setFinishPhase] = useState<FinishPhase>({ kind: "idle" });
-  const [noteSummary, setNoteSummary] = useState<SubmitNoteSummary | null>(
-    null,
-  );
-  const summarySeqRef = useRef(0);
-  const missingConfirmedRef = useRef<Set<string> | null>(null);
   const [retryingSave, setRetryingSave] = useState(false);
 
   const questionIds = useMemo(
@@ -485,6 +469,44 @@ function LessonAnswerView({
       ),
     [data],
   );
+
+  /**
+   * 完成练习编排（注入共享确认状态机 use-submit-evidence-confirm）：
+   * 整卷收尾链（ink flush → 追平 → evidence 按未提交题 → finalizeSubmit →
+   * submit）在 use-lesson-attempt 单一出处（session.finish），这里只把
+   * 结果翻译成状态机口径——stale/error 都按阻止性错误提示（点确认即重试
+   * 整条链）；缺稿确认集经 ctx 注入（讲练收尾不调用 clearMissingConfirmed，
+   * 重试沿用已确认集——与整卷 AnswerView 的差异语义，原样保留）。
+   */
+  const runFinish = useCallback(
+    async (ctx: EvidenceConfirmContext): Promise<EvidenceConfirmOutcome> => {
+      const outcome = await session.finish(
+        ctx.missingConfirmed !== null
+          ? { allowMissing: ctx.missingConfirmed }
+          : undefined,
+      );
+      if (outcome.kind === "submitted") return { kind: "submitted" };
+      if (outcome.kind === "problems") {
+        return { kind: "problems", problems: outcome.problems };
+      }
+      return { kind: "error", message: outcome.message };
+    },
+    [session.finish],
+  );
+
+  const {
+    confirmOpen,
+    phase: finishPhase,
+    noteSummary,
+    open: openFinishDialog,
+    cancel: closeFinishDialog,
+    confirm: confirmFinish,
+    confirmMissing: confirmMissingFinish,
+  } = useSubmitEvidenceConfirm({
+    attemptId,
+    questionIds,
+    run: runFinish,
+  });
 
   // 最后一题单题提交的事务内自动收尾：会话覆盖层先切完成视图（refetch 落地
   // 后由页面级分支接管并卸载作答会话），避免「提交完成但页面仍作答态」的窗口
@@ -505,65 +527,6 @@ function LessonAnswerView({
   }
   const total = data.questions.length;
   const submitted = Object.keys(session.released).length;
-
-  const openFinishDialog = () => {
-    setFinishPhase({ kind: "idle" });
-    missingConfirmedRef.current = null;
-    setNoteSummary(null);
-    setConfirmOpen(true);
-    // 快览代际守卫：仅最新一次 open 的 then 可 set（同 AnswerView）
-    const seq = ++summarySeqRef.current;
-    void snapshotNoteOverview({ attemptId, questionIds }).then((statuses) => {
-      if (seq !== summarySeqRef.current) return;
-      const willFreeze = statuses.filter(
-        (s) => s.kind === "will-freeze",
-      ).length;
-      const problem = statuses.filter((s) => s.kind === "problem").length;
-      setNoteSummary(
-        willFreeze + problem > 0
-          ? {
-              willFreeze,
-              problem,
-              unwritten: statuses.length - willFreeze - problem,
-            }
-          : null,
-      );
-    });
-  };
-
-  const confirmFinish = async () => {
-    setFinishPhase({ kind: "preparing" });
-    const outcome = await session.finish(
-      missingConfirmedRef.current !== null
-        ? { allowMissing: missingConfirmedRef.current }
-        : undefined,
-    );
-    if (outcome.kind === "submitted") {
-      setConfirmOpen(false);
-      setFinishPhase({ kind: "idle" });
-      return;
-    }
-    if (outcome.kind === "problems") {
-      setFinishPhase({ kind: "choice", problems: outcome.problems });
-      return;
-    }
-    // stale / error：弹层保留提示（点确认即重试整条链）
-    setFinishPhase((prev) => ({
-      kind: "error",
-      message: outcome.message,
-      problems: prev.kind === "choice" ? prev.problems : null,
-    }));
-  };
-
-  const confirmMissingFinish = () => {
-    if (finishPhase.kind !== "choice") return;
-    // 并集累积（同 AnswerView：先后两批 problem 各自确认后都按 missing 提交）
-    const confirmed = new Set(missingConfirmedRef.current ?? []);
-    for (const problem of finishPhase.problems)
-      confirmed.add(problem.questionId);
-    missingConfirmedRef.current = confirmed;
-    void confirmFinish();
-  };
 
   const renderCard = (
     question: AttemptQuestionPublic,
@@ -668,37 +631,14 @@ function LessonAnswerView({
             submitting={finishPhase.kind === "preparing"}
             preparing={finishPhase.kind === "preparing"}
             noteSummary={noteSummary}
-            noteProblems={
-              finishPhase.kind === "choice" || finishPhase.kind === "error"
-                ? (finishPhase.problems
-                    ?.map((problem) => {
-                      const index = questionIndexById.get(problem.questionId);
-                      return index === undefined
-                        ? null
-                        : {
-                            index,
-                            reason: problem.reason,
-                            ...(problem.domain
-                              ? { domain: problem.domain }
-                              : {}),
-                          };
-                    })
-                    .filter(
-                      (view): view is { index: number; reason: string } =>
-                        view !== null,
-                    ) ?? null)
-                : null
-            }
+            noteProblems={evidenceProblemViewsOf(finishPhase, questionIndexById)}
             choiceMode={finishPhase.kind === "choice"}
             notePrepError={
               finishPhase.kind === "error" ? finishPhase.message : null
             }
             onConfirm={() => void confirmFinish()}
             onConfirmMissing={confirmMissingFinish}
-            onCancel={() => {
-              setConfirmOpen(false);
-              setFinishPhase({ kind: "idle" });
-            }}
+            onCancel={closeFinishDialog}
           />
         </article>
       </EnabledCapabilitiesProvider>
