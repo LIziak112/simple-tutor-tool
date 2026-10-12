@@ -113,6 +113,12 @@ export const LINT_RULES: readonly LintRuleDoc[] = [
       "讲练页（kind: lesson）没有任何题目：建议改用 kind: lecture（warning 不阻断，讲义照常导入，只是没有单题作答的练习部分）",
   },
   {
+    code: "LESSON_QUESTION_WITHOUT_ID",
+    level: "warning",
+    description:
+      "讲练页切段遇到没有 id 的题目容器（splitLessonBlocks 服务端安全投影的兜底提示，不出现在文档 lint）：正常导入的讲练页题目 id 已注入开围栏，出现本提示多为存储正文被手工改动，已按「单元-序号」兜底对位",
+  },
+  {
     code: "UNIT_FROM_FALLBACK",
     level: "warning",
     description:

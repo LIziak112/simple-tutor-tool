@@ -42,6 +42,10 @@ export {
   studentStemMd,
 } from "./v2/public-stem.ts";
 export { processor } from "./v2/shared.ts";
+// 讲练页切段（2026-10 讲练一体）：服务端学生侧安全投影的唯一入口——
+// 题块原文绝不出现在学生载荷，question 段只携带题目 id（方案决策 1）。
+export type { SplitLessonBlocksOptions } from "./v2/split-lesson.ts";
+export { splitLessonBlocks } from "./v2/split-lesson.ts";
 // 静态题目素材（T6R.12 前端建立，T6R.13 移入本包）：服务端单题 review-pack
 // 与浏览器侧静态合成图共用的纯函数模块（DOM 渲染留在 apps/web）。
 export type {
