@@ -1,11 +1,14 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   act,
   fireEvent,
+  render,
   screen,
   waitFor,
   within,
 } from "@testing-library/react";
 import type { StudentLectureDetail } from "@tutor/contract";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ApiError,
@@ -15,6 +18,17 @@ import {
 import { installEventStore, memoryEventStore } from "@/lib/event-queue";
 import { renderWithStudentRoutes } from "@/test/student-routes";
 import StudentLectureViewPage from "./StudentLectureViewPage";
+
+/** 落点地址探针（重定向目标断言用） */
+function LocationProbe() {
+  const location = useLocation();
+  return (
+    <p data-testid="location-probe">
+      {location.pathname}
+      {location.search}
+    </p>
+  );
+}
 
 /**
  * 讲义阅读页组件测试（T2.3）：RichMarkdown 全文渲染、自动目录（H2/H3）
@@ -203,6 +217,41 @@ describe("StudentLectureViewPage", () => {
       screen.getByText("没有找到该内容（可能尚未发布或已被移除）"),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "重试" })).toBeInTheDocument();
+  });
+
+  it("kind=lesson 重定向到讲练页（保留 courseId；2026-10 讲练一体）", async () => {
+    mockedLecture.mockResolvedValue({
+      ...LECTURE,
+      kind: "lesson",
+      markdown: null,
+      blocks: [
+        { type: "md", md: "# 第1讲 有理数\n\n正文。" },
+        { type: "question", questionId: "lesson-q1" },
+      ],
+      companionUnits: [],
+    });
+    render(
+      <QueryClientProvider
+        client={
+          new QueryClient({ defaultOptions: { queries: { retry: false } } })
+        }
+      >
+        <MemoryRouter
+          initialEntries={[`/s/lectures/${LECTURE_ID}?courseId=${COURSE_ID}`]}
+        >
+          <Routes>
+            <Route
+              path="/s/lectures/:id"
+              element={<StudentLectureViewPage />}
+            />
+            <Route path="/s/lectures/:id/lesson" element={<LocationProbe />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByTestId("location-probe")).toHaveTextContent(
+      `/s/lectures/${LECTURE_ID}/lesson?courseId=${COURSE_ID}`,
+    );
   });
 });
 

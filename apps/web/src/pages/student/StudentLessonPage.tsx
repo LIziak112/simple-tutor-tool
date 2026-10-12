@@ -144,6 +144,7 @@ export default function StudentLessonPage() {
       key={data.attempt.id}
       data={data}
       courseId={courseId}
+      lectureId={id}
       refetch={lessonQuery.refetch}
     />
   );
@@ -448,10 +449,12 @@ type FinishPhase =
 function LessonAnswerView({
   data,
   courseId,
+  lectureId,
   refetch,
 }: {
   data: LessonStartData;
   courseId: string | undefined;
+  lectureId: string;
   refetch: () => Promise<unknown>;
 }) {
   const session = useLessonAttempt(data, { refetch });
@@ -495,7 +498,7 @@ function LessonAnswerView({
           ...(session.summary !== null ? { summary: session.summary } : {}),
         }}
         courseId={courseId}
-        lectureId={data.attempt.lectureId ?? ""}
+        lectureId={lectureId}
         refetch={refetch}
       />
     );

@@ -7,7 +7,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { Link, useParams, useSearchParams } from "react-router";
+import { Link, Navigate, useParams, useSearchParams } from "react-router";
 import {
   Dialog,
   DialogContent,
@@ -236,13 +236,23 @@ export default function StudentLectureViewPage() {
 
   const outline = useMemo(
     // 2026-10 讲练一体：kind=lesson 时 markdown 恒 null（安全投影）——本页对
-    // lesson 的重定向由讲练页任务接入，这里空串兜底（纯讲义不受影响）
+    // lesson 重定向到讲练页（下方分支），这里空串兜底（纯讲义不受影响）
     () =>
-      lectureQuery.data
-        ? extractOutline(lectureQuery.data.markdown ?? "")
-        : [],
+      lectureQuery.data ? extractOutline(lectureQuery.data.markdown ?? "") : [],
     [lectureQuery.data],
   );
+
+  // 2026-10 讲练一体：讲练页（kind=lesson）的学生入口是 /s/lectures/:id/lesson
+  // （单题作答 + 即时反馈）——本阅读页对 lesson 详情重定向过去（保留 courseId
+  // 课程上下文；讲义列表/课程目录行的点击由此直达讲练页）
+  if (lectureQuery.data?.kind === "lesson") {
+    return (
+      <Navigate
+        replace
+        to={`/s/lectures/${id}/lesson${courseId !== undefined ? `?courseId=${courseId}` : ""}`}
+      />
+    );
+  }
 
   return (
     <article
