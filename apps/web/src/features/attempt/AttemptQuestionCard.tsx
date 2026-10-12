@@ -4,6 +4,7 @@ import type {
   QuestionPublic,
   StudentAnswer,
 } from "@tutor/contract";
+import { displayStemMd } from "@tutor/md-dsl";
 import {
   CircleAlert,
   Flag,
@@ -84,6 +85,7 @@ function QuestionMeta({
     annotationProblem: boolean;
     paperProblem: boolean;
     toggleAnnotation: () => void;
+    cancelAnnotation: () => void;
     togglePaper: () => void;
     annotationHidden?: boolean;
     toggleAnnotationVisibility?: () => void;
@@ -127,7 +129,9 @@ function QuestionMeta({
               title="圈画题干"
               aria-label={`第 ${index + 1} 题圈画题干${tools.annotationOpen ? "（标画中）" : ""}${tools.annotationCount > 0 ? `（已有 ${tools.annotationCount} 笔）` : ""}${tools.annotationProblem ? "，同步需处理" : ""}`}
               aria-expanded={tools.annotationOpen}
+              data-annotation-trigger
               onClick={tools.toggleAnnotation}
+              onDoubleClick={tools.cancelAnnotation}
             >
               {tools.annotationProblem ? (
                 <CircleAlert aria-hidden className="size-4 text-amber-600" />
@@ -353,7 +357,8 @@ export function AttemptQuestionCard({
       <NoteLayer
         attemptId={attemptId}
         questionId={question.id}
-        stemMd={question.stemMd}
+        stemMd={displayStemMd(question)}
+        options={question.options}
         open={noteOpen}
         onOpenChange={setNoteOpen}
         ariaPrefix={`第 ${index + 1} 题`}
@@ -469,7 +474,7 @@ export function AttemptQuestionCard({
           return;
         if (
           event.target.closest(
-            '[data-slot="question-annotation-overlay"], [data-slot="annotation-workspace"], [data-slot="attempt-bottom-bar"]',
+            '[data-annotation-trigger], [data-slot="question-annotation-overlay"], [data-slot="annotation-workspace"], [data-slot="attempt-bottom-bar"]',
           )
         )
           return;
@@ -512,6 +517,13 @@ export function AttemptQuestionCard({
                     setAnnotationHidden(false);
                     void annotationOverlay.current?.start();
                   }
+                },
+                cancelAnnotation: () => {
+                  if (!editor) setAnnotationOpen(false);
+                  else
+                    void editor.request(null).then((closed) => {
+                      if (closed) setAnnotationOpen(false);
+                    });
                 },
                 togglePaper: () => setNoteOpen((value) => !value),
                 ...(inlineQuestion
