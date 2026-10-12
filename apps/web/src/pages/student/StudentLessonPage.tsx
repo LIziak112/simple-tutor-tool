@@ -1,4 +1,8 @@
-import type { AttemptQuestionPublic, LessonStartData } from "@tutor/contract";
+import type {
+  AttemptQuestionPublic,
+  HintOpenedEntry,
+  LessonStartData,
+} from "@tutor/contract";
 import {
   ArrowLeft,
   CheckCircle2,
@@ -74,6 +78,8 @@ import { useStudentWorkspace } from "@/features/student/student-workspace-layout
  */
 
 const LessonMarkdown = memo(RichMarkdown);
+/** 空提示集（模块级稳定引用：题卡 memo 比较不因 `?? []` 每次新数组失效） */
+const EMPTY_HINTS: readonly HintOpenedEntry[] = [];
 const DESKTOP_QUERY = "(min-width: 1024px)";
 function subscribeDesktop(onChange: () => void): () => void {
   const media = window.matchMedia(DESKTOP_QUERY);
@@ -194,39 +200,61 @@ function HeaderBar({
   );
 }
 
-/** 题目在 blocks 中按出现顺序排列（孤儿冻结题排在其后） */
-function orderedQuestionsOf(
-  data: LessonStartData,
-): { question: AttemptQuestionPublic; orphan: boolean }[] {
+/** 题槽：题目 + 全卷题号（0 起，孤儿排后）+ 是否孤儿冻结题 */
+interface LessonQuestionSlot {
+  question: AttemptQuestionPublic;
+  index: number;
+  orphan: boolean;
+}
+
+/**
+ * 题目在 blocks 中按出现顺序排列（孤儿冻结题排在其后）+ 伴生 byId 索引：
+ * 父组件算一次传入 LessonBody，题槽渲染统一 map.get（免循环内 find 的
+ * O(n²) 与 as 断言）。
+ */
+function lessonQuestionOrder(data: LessonStartData): {
+  ordered: LessonQuestionSlot[];
+  byId: Map<string, LessonQuestionSlot>;
+} {
   const byId = new Map(data.questions.map((q) => [q.id, q] as const));
   const seen = new Set<string>();
-  const result: { question: AttemptQuestionPublic; orphan: boolean }[] = [];
+  const ordered: LessonQuestionSlot[] = [];
+  const slotById = new Map<string, LessonQuestionSlot>();
+  const place = (question: AttemptQuestionPublic, orphan: boolean): void => {
+    const slot: LessonQuestionSlot = {
+      question,
+      index: ordered.length,
+      orphan,
+    };
+    seen.add(question.id);
+    slotById.set(question.id, slot);
+    ordered.push(slot);
+  };
   for (const block of data.blocks) {
     if (block.type !== "question") continue;
     const question = byId.get(block.questionId);
     if (question !== undefined && !seen.has(question.id)) {
-      seen.add(question.id);
-      result.push({ question, orphan: false });
+      place(question, false);
     }
   }
   for (const question of data.questions) {
-    if (!seen.has(question.id)) {
-      seen.add(question.id);
-      result.push({ question, orphan: true });
-    }
+    if (!seen.has(question.id)) place(question, true);
   }
-  return result;
+  return { ordered, byId: slotById };
 }
 
 /**
  * 正文：目录（md 段拼接）+ blocks 交替渲染 + 孤儿题分组。
- * renderCard 由两个视图注入（作答卡带 handlers / 完成卡只读）。
+ * renderCard 由两个视图注入（作答卡带 handlers / 完成卡只读）；order 由
+ * 父组件 useMemo 算好传入（两视图与题槽渲染同一份）。
  */
 function LessonBody({
   data,
+  order,
   renderCard,
 }: {
   data: LessonStartData;
+  order: { ordered: LessonQuestionSlot[]; byId: Map<string, LessonQuestionSlot> };
   renderCard: (
     question: AttemptQuestionPublic,
     index: number,
@@ -256,12 +284,7 @@ function LessonBody({
       ),
     [data.blocks],
   );
-  const ordered = useMemo(() => orderedQuestionsOf(data), [data]);
-  const indexOfQuestion = useMemo(
-    () => new Map(ordered.map(({ question }, i) => [question.id, i] as const)),
-    [ordered],
-  );
-  const orphans = ordered.filter((item) => item.orphan);
+  const orphans = order.ordered.filter((slot) => slot.orphan);
   const outlineKey = useMemo(
     () => data.blocks.map((b) => (b.type === "md" ? b.md : "q")).join("¦"),
     [data.blocks],
@@ -322,24 +345,22 @@ function LessonBody({
 
       <div className="flex min-w-0 flex-1 flex-col gap-4">
         {/* blocks：md 段与题卡按讲义顺序交替 */}
-        {data.blocks.map((block, blockIndex) =>
-          block.type === "md" ? (
-            <section
-              key={blockKeys[blockIndex]}
-              data-lesson-md
-              aria-label="讲义段落"
-              className="rounded-2xl border border-border bg-card px-4 py-5 shadow-xs sm:px-6 lg:px-8"
-            >
-              <LessonMarkdown source={block.md} className="lecture-body" />
-            </section>
-          ) : indexOfQuestion.has(block.questionId) ? (
-            renderCard(
-              data.questions.find(
-                (q) => q.id === block.questionId,
-              ) as AttemptQuestionPublic,
-              indexOfQuestion.get(block.questionId) as number,
-              false,
-            )
+        {data.blocks.map((block, blockIndex) => {
+          if (block.type === "md") {
+            return (
+              <section
+                key={blockKeys[blockIndex]}
+                data-lesson-md
+                aria-label="讲义段落"
+                className="rounded-2xl border border-border bg-card px-4 py-5 shadow-xs sm:px-6 lg:px-8"
+              >
+                <LessonMarkdown source={block.md} className="lecture-body" />
+              </section>
+            );
+          }
+          const slot = order.byId.get(block.questionId);
+          return slot !== undefined ? (
+            renderCard(slot.question, slot.index, slot.orphan)
           ) : (
             // 题槽未冻结（重导新增的题）：本次练习按开卷内容进行，占位说明
             <p
@@ -348,8 +369,8 @@ function LessonBody({
             >
               老师在讲练页里新增了题目；本次练习仍按开卷时的内容进行，完成后「再做一次」可以练到新题。
             </p>
-          ),
-        )}
+          );
+        })}
 
         {/* 孤儿冻结题（不在当前 markdown）：页尾分组，不丢失（方案决策 2） */}
         {orphans.length > 0 && (
@@ -367,12 +388,8 @@ function LessonBody({
               老师更新了这份讲练页，这些题不在当前讲义里，但仍在你的本次练习中——照常作答即可。
             </p>
             <div className="flex flex-col gap-4">
-              {orphans.map(({ question }) =>
-                renderCard(
-                  question,
-                  indexOfQuestion.get(question.id) as number,
-                  true,
-                ),
+              {orphans.map(({ question, index }) =>
+                renderCard(question, index, true),
               )}
             </div>
           </section>
@@ -460,14 +477,15 @@ function LessonAnswerView({
     () => data.questions.map((question) => question.id),
     [data.questions],
   );
+  const order = useMemo(() => lessonQuestionOrder(data), [data]);
   const questionIndexById = useMemo(
     () =>
       new Map(
-        orderedQuestionsOf(data).map(
-          ({ question }, i) => [question.id, i + 1] as const,
+        [...order.byId.values()].map(
+          (slot) => [slot.question.id, slot.index + 1] as const,
         ),
       ),
-    [data],
+    [order],
   );
 
   /**
@@ -508,6 +526,11 @@ function LessonAnswerView({
     run: runFinish,
   });
 
+  /** 待批题手动刷新（useCallback 稳定引用：题卡 memo 不因内联箭头失效） */
+  const handleRefresh = useCallback(() => {
+    void refetch();
+  }, [refetch]);
+
   // 最后一题单题提交的事务内自动收尾：会话覆盖层先切完成视图（refetch 落地
   // 后由页面级分支接管并卸载作答会话），避免「提交完成但页面仍作答态」的窗口
   if (session.attempt.status !== "draft") {
@@ -539,11 +562,11 @@ function LessonAnswerView({
       question={question}
       attemptId={attemptId}
       answer={session.answers?.[question.id]}
-      hints={session.hintsOpened[question.id] ?? []}
+      hints={session.hintsOpened[question.id] ?? EMPTY_HINTS}
       released={session.released[question.id]}
       attemptCompleted={false}
       handlers={session.handlers}
-      onRefresh={() => void refetch()}
+      onRefresh={handleRefresh}
     />
   );
 
@@ -623,7 +646,7 @@ function LessonAnswerView({
             </p>
           )}
 
-          <LessonBody data={data} renderCard={renderCard} />
+          <LessonBody data={data} order={order} renderCard={renderCard} />
 
           <SubmitConfirmDialog
             open={confirmOpen}
@@ -662,6 +685,7 @@ function LessonCompletedView({
   const [restartOpen, setRestartOpen] = useState(false);
   const summary = data.summary;
   const attemptId = data.attempt.id;
+  const order = useMemo(() => lessonQuestionOrder(data), [data]);
   const capabilities = useMemo(
     () => toEnabledCapabilities(data.enabledCapabilities),
     [data.enabledCapabilities],
@@ -671,6 +695,11 @@ function LessonCompletedView({
       ? restart.error.message
       : "网络异常，请稍后重试"
     : null;
+
+  /** 待批题手动刷新（useCallback 稳定引用：题卡 memo 不因内联箭头失效） */
+  const handleRefresh = useCallback(() => {
+    void refetch();
+  }, [refetch]);
 
   const renderCard = (
     question: AttemptQuestionPublic,
@@ -683,11 +712,11 @@ function LessonCompletedView({
       question={question}
       attemptId={attemptId}
       answer={data.drafts[question.id]}
-      hints={[]}
+      hints={EMPTY_HINTS}
       released={data.released[question.id]}
       attemptCompleted
       handlers={undefined}
-      onRefresh={() => void refetch()}
+      onRefresh={handleRefresh}
     />
   );
 
@@ -741,7 +770,7 @@ function LessonCompletedView({
           }
         />
 
-        <LessonBody data={data} renderCard={renderCard} />
+        <LessonBody data={data} order={order} renderCard={renderCard} />
 
         {/* 再做一次确认：显式动作（新卷从空白开始，之前作答保留可回看） */}
         <Dialog open={restartOpen} onOpenChange={setRestartOpen}>
