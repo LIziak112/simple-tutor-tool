@@ -38,33 +38,47 @@ import {
  *    H4 以下不进目录；空标题的 H2/H3 不进目录（契约 text min(1)）。
  */
 
-/** 切分模式：strip 剔除题块（lecture/mixed 既有行为）；keep 保留并注入题目 id（lesson） */
-export type LectureSplitMode = "strip" | "keep";
-
-/** 切分选项 */
-export interface LectureSplitOptions {
+/**
+ * 切分选项：两种模式共有字段（模式专属字段见各变体，mode 为判别键）。
+ */
+export interface LectureSplitOptionsCommon {
   /** 文档顶层子级（含 frontmatter yaml 节点，切分时自动跳过） */
   readonly children: readonly RootContent[];
   /** 文档按行拆分的原文（「原文是真相」：markdown 按行号切原文，不重新序列化） */
   readonly lines: readonly string[];
   /** 正文起始行（frontmatter 结束行的下一行）：第一篇的切分起点，用于并入 H1 前正文 */
   readonly contentStartLine: number;
-  /** 题目容器占用的行区间（strip 模式从讲义原文中剔除；keep 模式按 questionNodes 派生） */
-  readonly questionRanges: ReadonlyArray<readonly [number, number]>;
   /** issue 输出 */
   readonly issues: LintIssue[];
-  /**
-   * 切分模式（缺省 strip，既有调用零变化）。keep 模式：题块保留在讲义 markdown
-   * 原位（多讲义文件逐篇处理，题块归属各自所在讲义段），并对没有显式 id 的题目
-   * 容器开围栏注入 id="<最终题目id>"，同一注入写进该题 sourceMd（题目编辑/reparse
-   * 往返 id 稳定）；已有显式 id（含 {#id} 简写）不重复注入。
-   */
-  readonly mode?: LectureSplitMode;
-  /** keep 模式必传：与 questionRanges 同源的题目容器节点（读开围栏属性判显式 id） */
-  readonly questionNodes?: readonly ContainerDirective[];
-  /** keep 模式必传：解析产出的题目（按文档顺序；返回开围栏注入后的新数组） */
-  readonly questions?: readonly Question[];
 }
+
+/**
+ * strip 模式选项（lecture/mixed 既有行为）：题目容器行区间从讲义原文中剔除。
+ */
+export interface LectureSplitOptionsStrip extends LectureSplitOptionsCommon {
+  readonly mode: "strip";
+  /** 题目容器占用的行区间（从讲义原文中剔除；H1 前正文检测同样按此排除） */
+  readonly questionRanges: ReadonlyArray<readonly [number, number]>;
+}
+
+/**
+ * keep 模式选项（lesson 讲练页）：题块行区间保留在讲义 markdown 原位，并对
+ * 缺省 id 的题目容器开围栏注入 id="<最终题目id>"（同一注入写进该题 sourceMd，
+ * 往返稳定，方案决策 8）；题块行区间按 questionNodes 派生（H1 前正文检测的
+ * 排除区间），不再单独收 questionRanges。
+ */
+export interface LectureSplitOptionsKeep extends LectureSplitOptionsCommon {
+  readonly mode: "keep";
+  /** 与解析产出同源的题目容器节点（读开围栏属性判显式 id；题块行区间由此派生） */
+  readonly questionNodes: readonly ContainerDirective[];
+  /** 解析产出的题目（按文档顺序；返回开围栏注入后的新数组） */
+  readonly questions: readonly Question[];
+}
+
+/** 切分选项（判别联合，按 mode 收窄） */
+export type LectureSplitOptions =
+  | LectureSplitOptionsStrip
+  | LectureSplitOptionsKeep;
 
 /** 切分结果：h1Count 供调用方决定是否记 MISSING_HEADING（仅 kind: lecture 记 error） */
 export interface LectureSplitResult {
@@ -109,17 +123,22 @@ function childValue(node: Node): string | undefined {
 export function splitLectures(
   options: LectureSplitOptions,
 ): LectureSplitResult {
-  const { children, lines, contentStartLine, questionRanges, issues } = options;
-  const mode: LectureSplitMode = options.mode ?? "strip";
+  const { children, lines, contentStartLine, issues } = options;
   const h1Nodes = children.filter((child) => isH1(child));
   if (h1Nodes.length === 0) return { lectures: [], h1Count: 0 };
 
   // keep 模式（讲练页）：先把缺省题目 id 注入题块开围栏（讲义 markdown 与题目
   // sourceMd 同步写入），切分时不再剔除题块行区间；strip 模式维持既有剔除行为
   const injected =
-    mode === "keep" ? injectQuestionFenceIds(options) : undefined;
+    options.mode === "keep" ? injectQuestionFenceIds(options) : undefined;
   const sliceSource = injected?.lines ?? lines;
-  const excluded = mode === "keep" ? [] : questionRanges;
+  // 题块行区间：strip 用调用方传入（从讲义原文剔除）；keep 按 questionNodes
+  // 派生（仅用于 H1 前正文检测的排除区间，讲义切分不剔除题块）
+  const questionRanges =
+    options.mode === "keep"
+      ? options.questionNodes.map(lineRange)
+      : options.questionRanges;
+  const excluded = options.mode === "keep" ? [] : questionRanges;
 
   const lectures: Lecture[] = [];
   for (const [index, h1] of h1Nodes.entries()) {
@@ -196,13 +215,14 @@ interface FenceInjected {
  * 与解析产出的对齐沿用 lint/questions.ts 的对位法：同一容器切同一批原文行，
  * 被丢弃的题（type 缺失/未知，解析层已报 error）不占位、不注入。
  */
-function injectQuestionFenceIds(options: LectureSplitOptions): FenceInjected {
+function injectQuestionFenceIds(
+  options: LectureSplitOptionsKeep,
+): FenceInjected {
   const { lines, questionNodes, questions } = options;
   const next = [...lines];
-  const updated = questions !== undefined ? [...questions] : [];
-  const nodes = questionNodes ?? [];
+  const updated = [...questions];
   let keptIndex = 0;
-  for (const node of nodes) {
+  for (const node of questionNodes) {
     const [startLine, endLine] = lineRange(node);
     const question = updated[keptIndex];
     // 与解析产出按行区间精确对齐（同容器同切片；不匹配 = 被丢弃的题）

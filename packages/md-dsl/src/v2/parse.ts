@@ -234,6 +234,7 @@ function parseLectureDocument(ctx: ParseContext): {
 
   // 讲义切分（题目容器行区间从讲义原文中剔除，与 mixed 一致）
   const split = splitLectures({
+    mode: "strip",
     children: ctx.tree.children,
     lines: ctx.lines,
     contentStartLine: ctx.contentStartLine,
@@ -332,6 +333,7 @@ function parseMixedDocument(ctx: ParseContext): {
   });
 
   const split = splitLectures({
+    mode: "strip",
     children: ctx.tree.children,
     lines: ctx.lines,
     contentStartLine: ctx.contentStartLine,
@@ -383,12 +385,11 @@ function parseLessonDocument(ctx: ParseContext): {
   });
 
   const split = splitLectures({
+    mode: "keep",
     children: ctx.tree.children,
     lines: ctx.lines,
     contentStartLine: ctx.contentStartLine,
-    questionRanges: questionNodes.map(lineRange),
     issues: ctx.issues,
-    mode: "keep",
     questionNodes,
     questions,
   });
