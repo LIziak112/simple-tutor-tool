@@ -350,12 +350,14 @@ describe("Lecture：讲义", () => {
 });
 
 describe("frontmatter 与文档类型", () => {
-  it("kind 只允许 practice/lecture/mixed", () => {
+  it("kind 允许 practice/lecture/mixed/lesson 四种（lesson=讲练页，2026-10）", () => {
     expect(documentKindSchema.options).toEqual([
       "practice",
       "lecture",
       "mixed",
+      "lesson",
     ]);
+    expect(documentKindSchema.parse("lesson")).toBe("lesson");
     expect(documentKindSchema.safeParse("homework").success).toBe(false);
   });
 

@@ -93,8 +93,18 @@ export function formatQuestionAnswers(
   }
 }
 
-/** 文档类型：练习 / 讲义 / 混合（frontmatter kind） */
-export const documentKindSchema = z.enum(["practice", "lecture", "mixed"]);
+/**
+ * 文档类型：练习 / 讲义 / 混合 / 讲练页（frontmatter kind）。
+ * lesson（2026-10 讲练一体，第四种文档形态）：题目容器合法且**保留在讲义
+ * markdown 原位**（解析时开围栏注入最终题目 id），导入建讲练页 + 练习单元；
+ * 学生端单题提交、当题即时释放对错与详解——服务课堂"讲一段练一题"场景。
+ */
+export const documentKindSchema = z.enum([
+  "practice",
+  "lecture",
+  "mixed",
+  "lesson",
+]);
 
 /**
  * 选择题选项：text 为选项 Markdown（字母 A/B/C/D 由顺序推导，不单独存）。
