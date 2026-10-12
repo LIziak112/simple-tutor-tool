@@ -48,7 +48,8 @@ export function QuestionNavigator({
         <span>◐ 部分填写</span>
         <span>● 已填写</span>
       </div>
-      <ol className="grid grid-cols-[repeat(auto-fill,44px)] justify-start gap-2">
+      {/* 为向外延伸 4px 的选中框和键盘焦点框留出空间，避免滚动容器裁切。 */}
+      <ol className="grid grid-cols-[repeat(auto-fill,44px)] justify-start gap-2 p-1">
         {items.map((item) => (
           <li key={item.id}>
             <button

@@ -11,6 +11,7 @@ import {
   teacherApiLogin,
   uniqueSuffix,
 } from "./helpers";
+import { expectNavigationRingSpace } from "./navigation-ring";
 
 test("学生工作区：部分填写、遗漏定位、答题卡与响应式布局", async ({
   request,
@@ -94,6 +95,10 @@ test("学生工作区：部分填写、遗漏定位、答题卡与响应式布�
     [1440, 900],
   ] as const) {
     await page.setViewportSize({ width, height });
+    if (width >= 1024)
+      await expectNavigationRingSpace(
+        page.getByRole("navigation", { name: "答题卡" }),
+      );
     const geometry = await page.evaluate(() => {
       const header = document
         .querySelector('[data-slot="attempt-header"]')
@@ -150,6 +155,9 @@ test("学生工作区：部分填写、遗漏定位、答题卡与响应式布�
   });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole("button", { name: "答题卡", exact: true }).click();
+  await expectNavigationRingSpace(
+    page.getByRole("dialog").getByRole("navigation", { name: "答题卡" }),
+  );
   await page
     .getByRole("dialog")
     .getByRole("button", { name: /第 2 题，已填写/ })

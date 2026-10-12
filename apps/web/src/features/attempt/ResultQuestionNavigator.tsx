@@ -31,7 +31,7 @@ export function ResultQuestionNavigator({
       {items.length === 0 ? (
         <p className="text-sm text-muted-foreground">此范围没有题目</p>
       ) : (
-        <ol className="grid grid-cols-[repeat(auto-fill,44px)] gap-2">
+        <ol className="grid grid-cols-[repeat(auto-fill,44px)] gap-2 p-1">
           {items.map(({ question, index }) => {
             const state = reviewQuestionState(question, released);
             const label = [
