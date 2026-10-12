@@ -70,6 +70,47 @@ beforeEach(() => {
 });
 
 describe("ConnectPage（T4.7 D26）", () => {
+  it("客户端切换只保留一份配置，并提供对应说明", async () => {
+    renderPage();
+    await screen.findByRole("button", { name: "复制通用 MCP 配置 JSON" });
+    fireEvent.click(screen.getByRole("radio", { name: "Claude Desktop" }));
+    expect(
+      screen.getByRole("button", { name: "复制 Claude Desktop 配置 JSON" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "复制通用 MCP 配置 JSON" }),
+    ).toBeNull();
+    expect(screen.getAllByText(/你的API_TOKEN/)).toHaveLength(1);
+  });
+
+  it("复制失败提示手动复制", async () => {
+    Object.assign(navigator, {
+      clipboard: {
+        writeText: vi.fn().mockRejectedValue(new Error("拒绝访问")),
+      },
+    });
+    Object.defineProperty(document, "execCommand", {
+      configurable: true,
+      value: vi.fn().mockReturnValue(false),
+    });
+    renderPage();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "复制 MCP 服务器地址" }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "复制失败，请选中内容手动复制",
+    );
+  });
+
+  it("部署配置失败提供重试入口，而非持续加载", async () => {
+    mockedConfig.mockRejectedValue(new Error("地址不可用"));
+    renderPage();
+    expect(
+      await screen.findByRole("button", { name: "重新获取地址" }),
+    ).toBeVisible();
+    expect(screen.queryByText("正在获取部署地址…")).toBeNull();
+  });
+
   it("MCP 地址 = PUBLIC_URL + /mcp，一键复制写入剪贴板", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.assign(navigator, { clipboard: { writeText } });
@@ -89,14 +130,14 @@ describe("ConnectPage（T4.7 D26）", () => {
   it("未生成 token：提示生成 + 配置片段用占位符并注明", async () => {
     renderPage();
 
-    expect(await screen.findByText(/还没有 Token/)).toBeVisible();
-    // 两处配置片段（通用 + Claude Desktop）均含占位符
+    expect(await screen.findByText(/尚未生成 Token/)).toBeVisible();
+    // 当前配置片段含占位符
     const blocks = await screen.findAllByText(/你的API_TOKEN/);
-    expect(blocks.length).toBe(2);
+    expect(blocks.length).toBe(1);
     expect(screen.getByText(/尚未生成 Token，片段中为占位符/)).toBeVisible();
   });
 
-  it("生成 token 后：明文展示 + 两处配置 JSON 代入真实地址与 token，可复制", async () => {
+  it("生成 token 后：明文展示 + 一份配置 JSON 代入真实地址与 token，可复制", async () => {
     mockedReset.mockResolvedValue({ token: "t47-real-token" });
     // 调用队列：首次查询 null、invalidate 后的第二次调用给新值
     // （在 click 前排好队，避免 mock 改值晚于重取的竞态）
@@ -122,11 +163,11 @@ describe("ConnectPage（T4.7 D26）", () => {
       "http://192.168.1.10:8787/mcp",
       "t47-real-token",
     );
-    // 两处配置块内容一致且代入真实值（通用与 Claude Desktop）
+    // 当前配置块代入真实地址与凭据
     const blocks = screen.getAllByText(
       (_, element) => element?.textContent === expected,
     );
-    expect(blocks.length).toBe(2);
+    expect(blocks.length).toBe(1);
 
     fireEvent.click(
       screen.getByRole("button", { name: "复制通用 MCP 配置 JSON" }),
@@ -145,7 +186,7 @@ describe("ConnectPage（T4.7 D26）", () => {
     expect(
       screen.getAllByText(/"Authorization": "Bearer existing-token-xyz"/)
         .length,
-    ).toBe(2);
+    ).toBe(1);
   });
 
   it("token 加载失败显示错误文案", async () => {

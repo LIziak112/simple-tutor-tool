@@ -1,4 +1,5 @@
 import type { ManifestOptions } from "vite-plugin-pwa";
+import { BRAND_NAME, BRAND_TAGLINE } from "./brand";
 
 /**
  * PWA manifest 配置（T2.12）。
@@ -32,9 +33,9 @@ export type PwaManifest = Partial<ManifestOptions> & {
 };
 
 export const pwaManifest: PwaManifest = {
-  name: "一对一辅导讲练",
-  short_name: "辅导讲练",
-  description: "一对一辅导老师的讲义与练习工具：看讲义、做作业、自动判分。",
+  name: BRAND_NAME,
+  short_name: BRAND_NAME,
+  description: BRAND_TAGLINE,
   lang: "zh-CN",
   dir: "ltr",
   start_url: "/",

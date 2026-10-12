@@ -64,7 +64,7 @@ export function CapabilityProfileSection() {
     {
       key: "steps",
       label: "逐步揭晓",
-      description: "讲义与题目里的 :::steps 交互——关闭后学生端完整展开全部步骤",
+      description: "按步骤展示讲义和题目；关闭后一次显示全部步骤",
     },
     {
       key: "ink",
@@ -94,7 +94,7 @@ export function CapabilityProfileSection() {
   return (
     <div className="flex flex-col gap-4 rounded-xl border border-border bg-card p-5 text-card-foreground">
       <div>
-        <h2 className="text-sm font-semibold">辅助能力（学生作答方式）</h2>
+        <h2 className="text-base font-semibold">学生作答方式</h2>
         <p className="mt-1 text-sm text-muted-foreground">
           只控制辅助作答方式，正式作答（判断、选择、填空与最终答案）始终可用。
         </p>
@@ -102,7 +102,7 @@ export function CapabilityProfileSection() {
 
       {profileQuery.isPending && (
         <p className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Loader2 aria-hidden className="size-4 animate-spin" />
+          <Loader2 aria-hidden className="size-4 motion-safe:animate-spin" />
           正在加载设置…
         </p>
       )}
@@ -164,7 +164,7 @@ export function CapabilityProfileSection() {
             >
               {saveMutation.isPending ? (
                 <>
-                  <Loader2 aria-hidden className="animate-spin" />
+                  <Loader2 aria-hidden className="motion-safe:animate-spin" />
                   正在保存…
                 </>
               ) : saveMutation.isSuccess && !actionError && !dirty ? (

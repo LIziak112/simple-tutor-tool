@@ -59,6 +59,7 @@ export function BackupSection() {
   // 恢复流转：选文件 → 密码弹层 → 提交 → 结果提示
   const [pendingZip, setPendingZip] = useState<File | null>(null);
   const [password, setPassword] = useState("");
+  const [snapshotsExpanded, setSnapshotsExpanded] = useState(false);
   const [restoreDone, setRestoreDone] = useState<BackupRestoreResult | null>(
     null,
   );
@@ -94,7 +95,7 @@ export function BackupSection() {
   return (
     <div className="flex flex-col gap-4 rounded-xl border border-border bg-card p-5 text-card-foreground">
       <div>
-        <h2 className="flex items-center gap-2 text-sm font-semibold">
+        <h2 className="flex items-center gap-2 text-base font-semibold">
           <DatabaseBackup aria-hidden className="size-4" />
           备份与恢复
         </h2>
@@ -118,7 +119,7 @@ export function BackupSection() {
           >
             {downloadMutation.isPending ? (
               <>
-                <Loader2 aria-hidden className="animate-spin" />
+                <Loader2 aria-hidden className="motion-safe:animate-spin" />
                 正在打包…
               </>
             ) : (
@@ -228,7 +229,10 @@ export function BackupSection() {
           <>
             {snapshotsQuery.isPending && (
               <p className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Loader2 aria-hidden className="size-4 animate-spin" />
+                <Loader2
+                  aria-hidden
+                  className="size-4 motion-safe:animate-spin"
+                />
                 正在加载…
               </p>
             )}
@@ -248,22 +252,41 @@ export function BackupSection() {
               )}
             {snapshotsQuery.isSuccess &&
               snapshotsQuery.data.snapshots.length > 0 && (
-                <ul className="flex flex-col divide-y divide-border rounded-lg border border-border">
-                  {snapshotsQuery.data.snapshots.map((snapshot) => (
-                    <li
-                      key={snapshot.filename}
-                      className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-sm"
-                    >
-                      <span>{formatCnTime(snapshot.createdAt)}</span>
-                      <span className="flex items-center gap-3 text-muted-foreground">
-                        <span className="font-mono text-xs">
-                          {snapshot.filename}
+                <ul
+                  id="backup-snapshots"
+                  className="flex flex-col divide-y divide-border rounded-lg border border-border"
+                >
+                  {snapshotsQuery.data.snapshots
+                    .slice(0, snapshotsExpanded ? undefined : 3)
+                    .map((snapshot) => (
+                      <li
+                        key={snapshot.filename}
+                        className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-sm"
+                      >
+                        <span>{formatCnTime(snapshot.createdAt)}</span>
+                        <span className="flex items-center gap-3 text-muted-foreground">
+                          <span className="font-mono text-xs break-all">
+                            {snapshot.filename}
+                          </span>
+                          <span>{formatBytes(snapshot.sizeBytes)}</span>
                         </span>
-                        <span>{formatBytes(snapshot.sizeBytes)}</span>
-                      </span>
-                    </li>
-                  ))}
+                      </li>
+                    ))}
                 </ul>
+              )}
+            {snapshotsQuery.isSuccess &&
+              snapshotsQuery.data.snapshots.length > 3 && (
+                <Button
+                  variant="ghost"
+                  className="min-h-11 self-start"
+                  aria-expanded={snapshotsExpanded}
+                  aria-controls="backup-snapshots"
+                  onClick={() => setSnapshotsExpanded((expanded) => !expanded)}
+                >
+                  {snapshotsExpanded
+                    ? "收起快照"
+                    : `查看全部 ${snapshotsQuery.data.snapshots.length} 条快照`}
+                </Button>
               )}
           </>
         )}
@@ -333,7 +356,7 @@ export function BackupSection() {
               >
                 {restoreMutation.isPending ? (
                   <>
-                    <Loader2 aria-hidden className="animate-spin" />
+                    <Loader2 aria-hidden className="motion-safe:animate-spin" />
                     正在恢复…
                   </>
                 ) : (

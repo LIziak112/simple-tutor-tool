@@ -1,0 +1,37 @@
+[WebServer] (node:44760) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:24736) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (node:38640) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] (!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+[WebServer]   - import "./src/lib/pwa-manifest" without a file extension (vite.config.ts:8:29). Add the file extension
+[WebServer]   - import "./brand" without a file extension (src/lib/pwa-manifest.ts:2:43). Add the file extension
+[WebServer] Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+Running 14 tests using 2 workers
+
+(node:46032) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:11052) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ok  2 [chromium] › e2e\teacher-navigation-settings.spec.ts:58:1 › 设置分类保留未保存状态、URL、浏览器前进后退和快照展开 (4.6s)
+  ok  3 [chromium] › e2e\teacher-navigation-settings.spec.ts:108:1 › AI 配置只有一份，切换客户端与凭据重置取消不改变凭据 (2.4s)
+  ok  4 [chromium] › e2e\teacher-navigation-settings.spec.ts:137:1 › 减少动态效果、键盘抽屉与短高度窗口 (1.5s)
+  ok  5 [chromium] › e2e\teacher-navigation-settings.spec.ts:167:1 › 地址加载失败可重试恢复，不停留在加载状态 (2.9s)
+  ok  1 [chromium] › e2e\teacher-navigation-settings.spec.ts:8:1 › OwnClass 品牌与教师导航在各种宽度可达，无页面横向溢出 (13.1s)
+  ok  6 [chromium] › e2e\teacher-navigation-settings.spec.ts:197:1 › 长登录名和两倍文本大小保持完整内容与操作可达 (1.9s)
+(node:12540) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ok  7 [chromium] › e2e\teacher-navigation-settings.spec.ts:226:1 › 浅深色文字与键盘焦点使用足够对比度 (2.1s)
+(node:16416) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ok  9 [webkit] › e2e\teacher-navigation-settings.spec.ts:58:1 › 设置分类保留未保存状态、URL、浏览器前进后退和快照展开 (4.0s)
+  ok 10 [webkit] › e2e\teacher-navigation-settings.spec.ts:108:1 › AI 配置只有一份，切换客户端与凭据重置取消不改变凭据 (2.3s)
+  ok 11 [webkit] › e2e\teacher-navigation-settings.spec.ts:137:1 › 减少动态效果、键盘抽屉与短高度窗口 (1.4s)
+  ok  8 [webkit] › e2e\teacher-navigation-settings.spec.ts:8:1 › OwnClass 品牌与教师导航在各种宽度可达，无页面横向溢出 (12.1s)
+  ok 12 [webkit] › e2e\teacher-navigation-settings.spec.ts:167:1 › 地址加载失败可重试恢复，不停留在加载状态 (2.9s)
+  ok 13 [webkit] › e2e\teacher-navigation-settings.spec.ts:197:1 › 长登录名和两倍文本大小保持完整内容与操作可达 (1.8s)
+  ok 14 [webkit] › e2e\teacher-navigation-settings.spec.ts:226:1 › 浅深色文字与键盘焦点使用足够对比度 (1.8s)
+
+  14 passed (35.0s)

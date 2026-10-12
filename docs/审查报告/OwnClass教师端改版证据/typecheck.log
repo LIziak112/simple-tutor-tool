@@ -1,0 +1,12 @@
+$ tsc -p e2e/tsconfig.json && pnpm -r run typecheck
+Scope: 5 of 6 workspace projects
+packages/contract typecheck$ tsc --noEmit
+packages/contract typecheck: Done
+packages/grading typecheck$ tsc --noEmit
+packages/md-dsl typecheck$ tsc --noEmit
+packages/grading typecheck: Done
+packages/md-dsl typecheck: Done
+apps/server typecheck$ tsc --noEmit
+apps/server typecheck: Done
+apps/web typecheck$ tsc --noEmit
+apps/web typecheck: Done

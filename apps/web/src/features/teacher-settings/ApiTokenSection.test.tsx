@@ -46,6 +46,54 @@ beforeEach(() => {
 });
 
 describe("ApiTokenSection（T4.6 D22）", () => {
+  it("重置凭据后不显示旧 Token 的复制成功状态", async () => {
+    mockedFetch
+      .mockResolvedValueOnce({ token: "old-copy-token" })
+      .mockResolvedValue({ token: "new-copy-token" });
+    mockedReset.mockResolvedValue({ token: "new-copy-token" });
+    Object.assign(navigator, {
+      clipboard: { writeText: vi.fn().mockResolvedValue(undefined) },
+    });
+    renderSection();
+    await screen.findByText("old-copy-token");
+    fireEvent.click(screen.getByRole("button", { name: "复制" }));
+    await screen.findByRole("button", { name: "已复制" });
+    fireEvent.click(screen.getByRole("button", { name: "重置 Token" }));
+    fireEvent.click(await screen.findByRole("button", { name: "确认重置" }));
+    await screen.findByText("new-copy-token");
+    expect(screen.queryByRole("button", { name: "已复制" })).toBeNull();
+  });
+
+  it("凭据加载失败时可以重试恢复", async () => {
+    mockedFetch
+      .mockRejectedValueOnce(new Error("网络异常"))
+      .mockResolvedValue({ token: null });
+    renderSection();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "重新加载凭据" }),
+    );
+    expect(
+      await screen.findByRole("button", { name: "生成 Token" }),
+    ).toBeVisible();
+  });
+
+  it("复制失败时提供手动复制提示", async () => {
+    mockedFetch.mockResolvedValue({ token: "copy-token" });
+    Object.assign(navigator, {
+      clipboard: { writeText: vi.fn().mockRejectedValue(new Error("拒绝")) },
+    });
+    Object.defineProperty(document, "execCommand", {
+      configurable: true,
+      value: vi.fn().mockReturnValue(false),
+    });
+    renderSection();
+    await screen.findByText("copy-token");
+    fireEvent.click(screen.getByRole("button", { name: "复制" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "复制失败，请选中内容手动复制",
+    );
+  });
+
   it("未生成：提示文案 + 「生成 Token」按钮，点击直接调用（无确认弹层）", async () => {
     mockedReset.mockResolvedValue({ token: "new-token-abc" });
     renderSection();
