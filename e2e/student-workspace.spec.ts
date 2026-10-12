@@ -95,10 +95,50 @@ test("学生工作区：部分填写、遗漏定位、答题卡与响应式布�
     [1440, 900],
   ] as const) {
     await page.setViewportSize({ width, height });
-    if (width >= 1024)
+    if (width >= 1024) {
       await expectNavigationRingSpace(
         page.getByRole("navigation", { name: "答题卡" }),
       );
+      const sidebar = page.getByRole("complementary", { name: "答题定位" });
+      const toggle = sidebar.getByRole("button", { name: "收起答题卡" });
+      await expect(toggle).toHaveAttribute("aria-expanded", "true");
+      const textLeft = await toggle
+        .locator("span")
+        .evaluate((element) => element.getBoundingClientRect().left);
+      const nextTextLeft = await sidebar
+        .getByRole("button", { name: "下一道未答" })
+        .evaluate((element) => {
+          const range = document.createRange();
+          range.selectNodeContents(element.firstChild ?? element);
+          return range.getBoundingClientRect().left;
+        });
+      expect(Math.abs(textLeft - nextTextLeft)).toBeLessThanOrEqual(1);
+      const questionRow = first.locator("..");
+      const before = await questionRow.boundingBox();
+      if (!before) throw new Error("无法测量题卡");
+      await toggle.press("Enter");
+      const expand = sidebar.getByRole("button", { name: "展开答题卡" });
+      await expect(expand).toBeFocused();
+      await expect(expand).toHaveCSS("outline-style", "solid");
+      await expect(expand).toHaveCSS("outline-offset", "-2px");
+      await expect(expand).toHaveAttribute("aria-expanded", "false");
+      await expect(sidebar.getByRole("navigation")).toBeHidden();
+      await expect
+        .poll(async () => (await questionRow.boundingBox())?.width ?? 0)
+        .toBeGreaterThan(before.width + 100);
+      await expect(first.getByLabel("第1空")).toHaveValue("2");
+      await page.screenshot({
+        path: testInfo.outputPath(`workspace-collapsed-${width}.png`),
+      });
+      await expand.press("Enter");
+      await expect(toggle).toBeFocused();
+      await expect(toggle).toHaveCSS("outline-style", "solid");
+      await expect(toggle).toHaveCSS("outline-offset", "-2px");
+      await expect(sidebar.getByRole("navigation")).toBeVisible();
+      await expect
+        .poll(async () => (await questionRow.boundingBox())?.width ?? 0)
+        .toBeCloseTo(before.width, 0);
+    }
     const geometry = await page.evaluate(() => {
       const header = document
         .querySelector('[data-slot="attempt-header"]')
@@ -236,6 +276,32 @@ test("130题长作业：答题卡独立滚动、跳到末题、待检查刷新�
   await page.goto(`/s/${student.linkToken}`);
   await page.waitForURL("**/s/home");
   await openChoicePractice(page, courseId, courseName, unitName, 130);
+  await page.setViewportSize({ width: 1200, height: 900 });
+  const desktopNavigation = page.getByRole("complementary", {
+    name: "答题定位",
+  });
+  const middleNumber = desktopNavigation.getByRole("button", {
+    name: "第 65 题，未填写",
+    exact: true,
+  });
+  await middleNumber.click();
+  await expect(middleNumber).toHaveAttribute("aria-current", "location");
+  const middle = page.getByRole("article", { name: "第 65 题", exact: true });
+  const middleTop = (await middle.boundingBox())?.y;
+  if (middleTop === undefined) throw new Error("无法测量当前题位置");
+  await desktopNavigation
+    .getByRole("button", { name: "收起答题卡" })
+    .press("Enter");
+  await expect
+    .poll(async () => (await middle.boundingBox())?.y ?? Infinity)
+    .toBeCloseTo(middleTop, 0);
+  await desktopNavigation
+    .getByRole("button", { name: "展开答题卡" })
+    .press("Enter");
+  await expect(middleNumber).toHaveAttribute("aria-current", "location");
+  await expect
+    .poll(async () => (await middle.boundingBox())?.y ?? Infinity)
+    .toBeCloseTo(middleTop, 0);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole("button", { name: "答题卡", exact: true }).click();
   const dialog = page.getByRole("dialog");

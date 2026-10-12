@@ -5,8 +5,16 @@ import type {
   AttemptResultData,
   HintOpenedEntry,
 } from "@tutor/contract";
-import { Grid2X2, RotateCw } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Grid2X2, PanelLeftClose, PanelLeftOpen, RotateCw } from "lucide-react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useNavigate } from "react-router";
 import { Button } from "@/components/ui/button";
 import {
@@ -343,6 +351,21 @@ function AnswerView({
   );
   const total = flatQuestions.length;
   const [navigatorOpen, setNavigatorOpen] = useState(false);
+  const [navigatorCollapsed, setNavigatorCollapsed] = useState(false);
+  const navigationId = useId();
+  const navigationAnchor = useRef<{ element: HTMLElement; top: number } | null>(
+    null,
+  );
+  // biome-ignore lint/correctness/useExhaustiveDependencies(navigatorCollapsed): 折叠布局提交后恢复当前题卡位置。
+  useLayoutEffect(() => {
+    const saved = navigationAnchor.current;
+    if (!saved) return;
+    window.scrollBy({
+      top: saved.element.getBoundingClientRect().top - saved.top,
+      behavior: "instant",
+    });
+    navigationAnchor.current = null;
+  }, [navigatorCollapsed]);
   const [currentQuestionId, setCurrentQuestionId] = useState<string | null>(
     null,
   );
@@ -703,14 +726,50 @@ function AnswerView({
           )}
         </AttemptHeader>
 
-        <div className="grid min-w-0 grid-cols-1 gap-6 lg:grid-cols-[176px_minmax(0,1fr)]">
-          <aside className="sticky top-[calc(var(--attempt-header-height,64px)+16px)] hidden max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] self-start overflow-y-auto overscroll-contain lg:block">
-            <h2 className="mb-3 text-sm font-semibold">答题卡</h2>
-            <QuestionNavigator
-              items={navigationItems}
-              currentId={currentQuestionId}
-              onJump={jumpToQuestion}
-            />
+        <div
+          className={`grid min-w-0 grid-cols-1 gap-6 ${navigatorCollapsed ? "lg:grid-cols-[44px_minmax(0,1fr)]" : "lg:grid-cols-[176px_minmax(0,1fr)]"}`}
+        >
+          <aside
+            aria-label="答题定位"
+            className="sticky top-[calc(var(--attempt-header-height,64px)+16px)] hidden max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] self-start overflow-y-auto overscroll-contain lg:block"
+          >
+            <h2 className="sticky top-0 z-10 mb-3">
+              <Button
+                variant="outline"
+                className={`min-h-11 text-sm font-semibold ${navigatorCollapsed ? "size-11 p-0" : "w-full justify-between px-3"}`}
+                // 学生端全局焦点规则在工具类层之外；内收轮廓避免滚动栏裁切。
+                style={{ outlineOffset: -2 }}
+                aria-label={navigatorCollapsed ? "展开答题卡" : "收起答题卡"}
+                title={navigatorCollapsed ? "展开答题卡" : "收起答题卡"}
+                aria-expanded={!navigatorCollapsed}
+                aria-controls={navigationId}
+                onClick={() => {
+                  const element = currentQuestionId
+                    ? cardElements.current.get(currentQuestionId)
+                    : undefined;
+                  if (element)
+                    navigationAnchor.current = {
+                      element,
+                      top: element.getBoundingClientRect().top,
+                    };
+                  setNavigatorCollapsed((value) => !value);
+                }}
+              >
+                {!navigatorCollapsed && <span>答题卡</span>}
+                {navigatorCollapsed ? (
+                  <PanelLeftOpen aria-hidden className="size-4" />
+                ) : (
+                  <PanelLeftClose aria-hidden className="size-4" />
+                )}
+              </Button>
+            </h2>
+            <div id={navigationId} hidden={navigatorCollapsed}>
+              <QuestionNavigator
+                items={navigationItems}
+                currentId={currentQuestionId}
+                onJump={jumpToQuestion}
+              />
+            </div>
           </aside>
 
           {/* 空试卷：单元没有可作答的题目 */}
