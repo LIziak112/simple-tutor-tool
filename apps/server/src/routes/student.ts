@@ -9,6 +9,7 @@ import {
   correctionSealRequestSchema,
   hintOpenRequestSchema,
   lectureEventBatchRequestSchema,
+  lessonQuestionSubmitRequestSchema,
   noteHeadsRequestSchema,
   noteUploadMetaSchema,
   studentLectureDetailQuerySchema,
@@ -65,6 +66,7 @@ import {
   startAttempt,
   startCourseAttempt,
   submitAttempt,
+  submitLessonQuestion,
 } from "../services/attempt-service";
 import {
   appendAttemptEvents,
@@ -117,7 +119,12 @@ import { listWrongQuestions } from "../services/wrong-questions";
  *   一人一份进行中；已交卷返回已交的那份让前端直接进结果视图）；
  * - PUT  /attempts/:id/answers/:questionId：保存草稿答案（T2.6；已交 409）；
  * - POST /attempts/:id/submit：服务端判分 + 快照冻结 + 返回结果（T2.6；
- *   重复交卷 409 ALREADY_SUBMITTED）；
+ *   重复交卷 409 ALREADY_SUBMITTED；2026-10 lesson 语义：只对未单题提交行
+ *   判分，已提交行不重判）；
+ * - POST /attempts/:id/questions/:questionId/submit：单题提交（2026-10 讲练
+ *   一体，lesson 专属——当题判分与释放、questionRevisionId CAS、可选单题
+ *   笔记证据声明；最后一题事务内自动收尾；重复提交 409
+ *   QUESTION_ALREADY_SUBMITTED）；
  * - POST /attempts/:id/hints：分步提示（T2.11，{questionId, index} → 被请求的
  *   那一条提示 + 计数；index 越界 400 HINT_INDEX_OUT_OF_RANGE；draft 与已交均
  *   可用；服务端记录 hint_open 事件与 responses 已解锁集合）；
@@ -303,6 +310,25 @@ export function createStudentRoutes(
             new Date(),
             body?.revisions ?? [],
             body?.evidence,
+          ),
+        });
+      })
+      // 2026-10 讲练一体：单题提交（lesson 逐题即时反馈）——questionRevisionId
+      // CAS（错版 409 QUESTION_REVISION_STALE）+ 可选单题笔记证据声明（T6R.10
+      // 单题化：questionId 须与路径一致）；响应只含该题结果（提交即释放参考
+      // 答案/详解/判定）+ 现算汇总 + attempt 摘要，其他未提交题的答案/详解/
+      // 提示内容绝不下发（泄露矩阵 routes/student-lesson.test.ts）。非 lesson
+      // 来源 404（讲练专属入口）；最后一题提交在事务内自动收尾整卷
+      .post("/attempts/:id/questions/:questionId/submit", async (c) => {
+        const body = await parseJsonBody(c, lessonQuestionSubmitRequestSchema);
+        return c.json({
+          ok: true,
+          data: submitLessonQuestion(
+            db,
+            c.var.student.id,
+            c.req.param("id"),
+            c.req.param("questionId"),
+            body,
           ),
         });
       })

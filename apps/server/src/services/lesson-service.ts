@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import type {
   AttemptQuestionPublic,
   AttemptResultQuestion,
-  AttemptScoreSummary,
   HintOpenedEntry,
   LessonBlock,
   LessonStartData,
@@ -21,6 +20,7 @@ import {
   attemptSummaryOf,
   freezeInputsOfAttempt,
   insertFrozenResponses,
+  lessonLiveSummaryOf,
   newDraftAttempt,
   publicOfSnapshot,
   resultQuestionOf,
@@ -50,9 +50,9 @@ import { requireVisibleStudentLecture } from "./student-course-service";
  *   平铺（publicOfSnapshot 口径 + questionRevisionId）；drafts/hintsOpened
  *   与草稿视图同口径；released = 已单题提交的题（responses.submittedAt 非空）
  *   按 attemptResultQuestion 口径**当题释放**（提交即释放，读当前行值——
- *   进行中卷教师可能已批）；summary 读侧现算（不落库；已提交题计入对错、
- *   未提交题计入 unanswered，与单题提交响应口径一致；attempt 级
- *   scoreAuto/scoreFinal 只在离开 draft 时写，本模块不写）。
+ *   进行中卷教师可能已批）；summary 读侧现算（不落库；经 attempt-service 的
+ *   lessonLiveSummaryOf 与单题提交响应同一实现，口径永不漂移；attempt 级
+ *   scoreAuto/scoreFinal 由单题提交/整卷收尾链路在离开 draft 时写入）。
  * - 孤儿题（教师重导后冻结题不在当前 markdown，决策 2）：questions 是冻结行
  *   平铺、不按 blocks 过滤——前端把不在题目槽的冻结题渲染于页尾，不丢失。
  *
@@ -175,9 +175,9 @@ function createLessonAttempt(
  * 讲练开卷投影组装（start/restart 共用）。blocks 服务端切段；questions 冻结行
  * 公开投影平铺（快照缺失的历史行跳过，不回填）；drafts/hintsOpened 与草稿
  * 视图同口径；released 只含已单题提交的题（当题已释放，stemMd 经
- * studentStemMd 投影）；summary 读侧现算（已提交行计入 correct/wrong/pending、
- * 未提交计入 unanswered；pendingCount 按 D4 的 finalCorrect 口径只数已提交行
- * ——进行中卷教师课中批改后即归零）。
+ * studentStemMd 投影）；summary 读侧现算——经 attempt-service 的
+ * lessonLiveSummaryOf（与单题提交响应同一实现：已提交行计入对错、未提交计入
+ * unanswered，pendingCount 按 D4 finalCorrect 口径只数已提交行）。
  */
 function buildLessonStartData(
   db: Db,
@@ -192,16 +192,10 @@ function buildLessonStartData(
   const drafts: Record<string, StudentAnswer> = {};
   const hintsOpened: Record<string, HintOpenedEntry[]> = {};
   const released: Record<string, AttemptResultQuestion> = {};
-  let total = 0;
-  let answered = 0;
-  let correct = 0;
-  let wrong = 0;
-  let pending = 0;
-  let pendingCount = 0;
-  for (const row of attemptResponseRows(db, attempt.id)) {
+  const rows = attemptResponseRows(db, attempt.id);
+  for (const row of rows) {
     const snapshot = snapshotOfRow(row);
     if (snapshot === null) continue; // 历史题目缺失/坏快照：跳过（不回填、不判分）
-    total += 1;
     questions.push(publicOfSnapshot(snapshot, row.id));
     const answer = answerOf(row.answerJson);
     if (answer !== null) drafts[row.questionId] = answer;
@@ -209,11 +203,6 @@ function buildLessonStartData(
     if (echo.length > 0) hintsOpened[row.questionId] = echo;
     if (row.submittedAt === null) continue; // 未单题提交：不进 released、不计对错
     // 已单题提交 → 当题释放（读当前行值：进行中卷教师可能已批 teacherMark）
-    if (answer !== null) answered += 1;
-    if (row.autoCorrect === true) correct += 1;
-    else if (row.autoCorrect === false) wrong += 1;
-    else pending += 1;
-    if (row.finalCorrect === null) pendingCount += 1;
     const item = resultQuestionOf(row, snapshot);
     released[row.questionId] = {
       ...item,
@@ -221,18 +210,6 @@ function buildLessonStartData(
       snapshot: { ...item.snapshot, stemMd: studentStemMd(snapshot) },
     };
   }
-  const summary: AttemptScoreSummary = {
-    total,
-    answered,
-    correct,
-    wrong,
-    pending,
-    unanswered: total - answered,
-    autoGradable: correct + wrong,
-    // attempt 级得分只在离开 draft 时写（收尾链路）；进行中恒 null
-    scoreFinal: attempt.scoreFinal,
-    pendingCount,
-  };
   return {
     lecture: {
       id: lecture.id,
@@ -248,7 +225,7 @@ function buildLessonStartData(
     drafts,
     hintsOpened,
     released,
-    summary,
+    summary: lessonLiveSummaryOf(rows, attempt),
     enabledCapabilities: attemptEnabledCapabilities(db, attempt),
   };
 }

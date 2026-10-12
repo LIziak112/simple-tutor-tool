@@ -1,10 +1,12 @@
-import type { ApiErr } from "@tutor/contract";
+import type { ApiErr, SubmitEvidenceDeclaration } from "@tutor/contract";
 import {
   apiErrSchema,
+  attemptResultOkSchema,
+  lessonQuestionSubmitOkSchema,
   lessonStartOkSchema,
   studentLectureDetailOkSchema,
 } from "@tutor/contract";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { Logger } from "pino";
 import pino from "pino";
 import { describe, expect, it } from "vitest";
@@ -16,10 +18,17 @@ import {
   lectures,
   questions,
   responses,
+  submissionEvidence,
 } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 import { assertNoStemLeak } from "../test/assert-no-stem-leak.ts";
+import {
+  frozenDraftAttempt,
+  snapshotJsonOf,
+} from "../test/evidence-fixtures.ts";
+import { putNoteReceipt } from "../test/note-fixtures.ts";
+import { submitAttemptRequest } from "../test/submit-revisions";
 
 /**
  * 讲练一体（2026-10）开卷与学生安全投影集成测试（app.request() 直调路由 +
@@ -41,6 +50,19 @@ import { assertNoStemLeak } from "../test/assert-no-stem-leak.ts";
  *   既有用例）；
  * - 零题讲练页（LESSON_WITHOUT_QUESTION）开卷合法（questions 空、blocks 纯 md）；
  * - 建卷发 attempt_start 事件（幂等取回不重复记、restart 新卷各记一条）。
+ *
+ * 单题提交与整卷收尾（提交序列第 7 步，2026-10 作答服务第二单）：
+ * - POST /attempts/:id/questions/:questionId/submit：当题判分与释放（choice
+ *   对/错、judge、fill 待批、未作答判 false）、questionRevisionId CAS
+ *   （QUESTION_REVISION_STALE）、幂等拒绝（QUESTION_ALREADY_SUBMITTED）、
+ *   非本人 403、非 lesson 来源 404、已完成卷 409、单题笔记证据 CAS（frozen/
+ *   none/missing 与缺省旧客户端）、question_submit 事件、响应泄露矩阵
+ *   （其他未提交题的答案/详解/提示内容绝不出现）；
+ * - 最后一题单题提交事务内自动收尾（graded / submitted 两路，scoreAuto/
+ *   scoreFinal 与整卷同口径）；并发双收尾后到者 409 幂等；
+ * - 整卷收尾（POST /attempts/:id/submit）lesson 语义：只对未提交行判分
+ *   （未答判 false），已单题提交行不重判、保判定与 submittedAt，evidence
+ *   只覆盖未提交题（已提交题的草稿不阻塞旧客户端收尾）。
  */
 
 const silentLogger: Logger = pino({ enabled: false });
@@ -143,6 +165,8 @@ interface TestEnv {
   db: Db;
   teacherCookie: string;
   memberCookie: string;
+  /** 成员学生 id（直插夹具行用） */
+  memberStudentId: string;
   outsiderCookie: string;
   courseId: string;
   lectureId: string;
@@ -264,6 +288,7 @@ async function makeEnv(options?: { markdown?: string }): Promise<TestEnv> {
     db,
     teacherCookie,
     memberCookie: member.cookie,
+    memberStudentId: member.studentId,
     outsiderCookie: outsider.cookie,
     courseId,
     lectureId: lecture.id,
@@ -336,6 +361,7 @@ interface StartBody {
         autoCorrect: boolean | null;
         teacherMark: string | null;
         finalCorrect: boolean | null;
+        hintsOpened: { index: number; text: string }[];
         snapshot: { stemMd: string };
       }
     >;
@@ -833,5 +859,1242 @@ describe("零题讲练页（LESSON_WITHOUT_QUESTION）开卷合法", () => {
     expect(body.data.summary).toMatchObject({ total: 0, unanswered: 0 });
     assertNoLeak(body);
     assertNoQuestionBlockText(body);
+  });
+});
+
+// ==================== 单题提交与整卷收尾（提交序列第 7 步） ====================
+
+/**
+ * 单题提交夹具：4 题——choice（可判对/错，带提示）、judge（[[错误]] + 详解）、
+ * fill（2026-10-02 起恒人工批改 → 提交即待批）、choice2（不存草稿，验证未作答
+ * 提交按 D1 判 false 与最后一题自动收尾）。
+ */
+const LESSON_SUBMIT_MD = `---
+kind: lesson
+unit: 提交讲练
+topic: 单题提交
+---
+
+# 第2讲 单题提交
+
+开讲正文段。
+
+::::question{type=choice difficulty=1}
+下列是正整数的是：
+
+- [ ] $-1$
+- [x] $1$
+- [ ] $0$
+
+:::hint
+大于 $0$ 的自然数是正整数。
+:::
+::::
+
+题间正文段。
+
+::::question{type=judge difficulty=1}
+$0$ 是最小的正整数。[[错误]]
+
+:::solution
+最小的正整数是 $1$。
+:::
+::::
+
+::::question{type=fill difficulty=2}
+计算：$1+1=$ [[2]]。
+::::
+
+::::question{type=choice difficulty=1}
+$2+2=$（　）
+
+- [ ] $3$
+- [x] $4$
+::::
+`;
+
+/** 单题提交夹具的题目 id（单元 slug 缺省编号） */
+const S = {
+  choice: "提交讲练-1",
+  judge: "提交讲练-2",
+  fill: "提交讲练-3",
+  choice2: "提交讲练-4",
+} as const;
+
+/** 单题提交响应 data 的宽松形态（断言用；契约校验走 lessonQuestionSubmitOkSchema） */
+interface SubmitBody {
+  data: {
+    question: {
+      questionId: string;
+      answers: unknown;
+      solutionMd: string | null;
+      answer: unknown;
+      autoCorrect: boolean | null;
+      teacherMark: string | null;
+      finalCorrect: boolean | null;
+      hintsOpened: { index: number; text: string }[];
+      snapshot: { stemMd: string; hintCount: number };
+    };
+    summary: {
+      total: number;
+      answered: number;
+      correct: number;
+      wrong: number;
+      pending: number;
+      unanswered: number;
+      autoGradable: number;
+      scoreFinal: number | null;
+      pendingCount: number | null;
+    };
+    attempt: {
+      id: string;
+      status: string;
+      scoreAuto: number | null;
+      submittedAt: string | null;
+    };
+  };
+}
+
+/** 单题提交夹具环境（4 题讲练页 + 成员开卷） */
+async function makeSubmitEnv(): Promise<{
+  env: TestEnv;
+  attemptId: string;
+  revisions: Map<string, string>;
+}> {
+  const env = await makeEnv({ markdown: LESSON_SUBMIT_MD });
+  const started = await startOk(env);
+  return {
+    env,
+    attemptId: started.data.attempt.id,
+    revisions: new Map(
+      started.data.questions.map((q) => [q.id, q.questionRevisionId]),
+    ),
+  };
+}
+
+/** PUT 草稿答案（通用存答接口） */
+async function saveDraftAnswer(
+  env: TestEnv,
+  attemptId: string,
+  questionId: string,
+  answer: unknown,
+): Promise<void> {
+  const res = await env.app.request(
+    `/api/student/attempts/${attemptId}/answers/${encodeURIComponent(questionId)}`,
+    {
+      method: "PUT",
+      headers: {
+        "content-type": "application/json",
+        cookie: env.memberCookie,
+      },
+      body: JSON.stringify({ answer }),
+    },
+  );
+  expect(res.status).toBe(200);
+}
+
+/** POST 单题提交（lessonQuestionSubmitRequest；evidence 可选） */
+async function submitQuestion(
+  env: TestEnv,
+  attemptId: string,
+  questionId: string,
+  questionRevisionId: string,
+  evidence?: SubmitEvidenceDeclaration,
+  cookie: string = env.memberCookie,
+): Promise<Response> {
+  return env.app.request(
+    `/api/student/attempts/${attemptId}/questions/${encodeURIComponent(questionId)}/submit`,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        cookie,
+      },
+      body: JSON.stringify({
+        questionRevisionId,
+        ...(evidence === undefined ? {} : { evidence }),
+      }),
+    },
+  );
+}
+
+/** 单题提交成功路径：200 + 契约壳校验，返回 data */
+async function submitQuestionOk(
+  env: TestEnv,
+  attemptId: string,
+  questionId: string,
+  questionRevisionId: string,
+  evidence?: SubmitEvidenceDeclaration,
+): Promise<SubmitBody> {
+  const res = await submitQuestion(
+    env,
+    attemptId,
+    questionId,
+    questionRevisionId,
+    evidence,
+  );
+  expect(res.status).toBe(200);
+  const body = (await res.json()) as SubmitBody;
+  expect(lessonQuestionSubmitOkSchema.safeParse(body).success).toBe(true);
+  return body;
+}
+
+/** 该 attempt 的 question_submit 事件条数 */
+function questionSubmitEventsOf(db: Db, attemptId: string): number {
+  return db
+    .select()
+    .from(events)
+    .where(eq(events.attemptId, attemptId))
+    .all()
+    .filter((row) => row.type === "question_submit").length;
+}
+
+/** 库内 responses 行（判定/submittedAt 断言用） */
+function responseRowOf(
+  db: Db,
+  attemptId: string,
+  questionId: string,
+): {
+  autoCorrect: boolean | null;
+  finalCorrect: boolean | null;
+  submittedAt: string | null;
+  teacherMark: string | null;
+} {
+  const row = db
+    .select({
+      autoCorrect: responses.autoCorrect,
+      finalCorrect: responses.finalCorrect,
+      submittedAt: responses.submittedAt,
+      teacherMark: responses.teacherMark,
+    })
+    .from(responses)
+    .where(
+      and(
+        eq(responses.attemptId, attemptId),
+        eq(responses.questionId, questionId),
+      ),
+    )
+    .get();
+  if (row === undefined)
+    throw new Error(`夹具缺少 responses 行：${questionId}`);
+  return row;
+}
+
+describe("POST /api/student/attempts/:id/questions/:questionId/submit（单题提交，当题即时反馈）", () => {
+  it("choice 答：判对（autoCorrect=finalCorrect=true）、当题释放参考答案、summary 现算、泄露矩阵三层断言、question_submit 事件恰一条", async () => {
+    const { env, attemptId, revisions } = await makeSubmitEnv();
+    await saveDraftAnswer(env, attemptId, S.choice, {
+      kind: "choice",
+      index: 1,
+    });
+
+    const body = await submitQuestionOk(
+      env,
+      attemptId,
+      S.choice,
+      revisions.get(S.choice) ?? "",
+    );
+
+    // 当题结果：判对 + 参考答案释放 + 学生端题干投影
+    expect(body.data.question).toMatchObject({
+      questionId: S.choice,
+      answer: { kind: "choice", index: 1 },
+      autoCorrect: true,
+      finalCorrect: true,
+      teacherMark: null,
+    });
+    expect(body.data.question.answers).not.toBeNull();
+    expect(body.data.question.snapshot.stemMd).not.toContain("[[");
+    expect(body.data.question.hintsOpened).toEqual([]); // 未解锁过提示
+
+    // 库内行：判分落库 + submittedAt 写入
+    expect(responseRowOf(env.db, attemptId, S.choice)).toMatchObject({
+      autoCorrect: true,
+      finalCorrect: true,
+      submittedAt: expect.any(String),
+    });
+
+    // 现算 summary：1/4 已提交（对）、3 未提交；卷仍 draft
+    expect(body.data.summary).toMatchObject({
+      total: 4,
+      answered: 1,
+      correct: 1,
+      wrong: 0,
+      pending: 0,
+      unanswered: 3,
+      autoGradable: 1,
+      scoreFinal: null,
+      pendingCount: 0,
+    });
+    expect(body.data.attempt).toMatchObject({
+      id: attemptId,
+      status: "draft",
+      scoreAuto: null,
+      submittedAt: null,
+    });
+
+    // 泄露矩阵：其他未提交题（judge 详解/[[错误]]、fill [[2]]、未解锁提示）
+    // 的内容绝不出现——键名级（放行当题 answers/answer/solutionMd）+ 题干级 +
+    // 题块原文三层
+    assertNoLeak(body, { allow: ["answers", "answer", "solutionMd"] });
+    assertNoStemLeak(body);
+    const text = JSON.stringify(body);
+    expect(text).not.toContain("最小的正整数是 $1$。"); // judge 详解（未提交）
+    expect(text).not.toContain("大于 $0$ 的自然数是正整数。"); // 未解锁提示
+    expect(text).not.toContain("[[2]]"); // fill 题干答案标记（未提交）
+    expect(text).not.toContain("[[错误]]");
+
+    // question_submit 事件：恰一条、payload 仅 questionId
+    const rows = env.db
+      .select()
+      .from(events)
+      .where(eq(events.attemptId, attemptId))
+      .all()
+      .filter((row) => row.type === "question_submit");
+    expect(rows).toHaveLength(1);
+    expect(JSON.parse(rows[0]?.payloadJson ?? "{}")).toEqual({
+      type: "question_submit",
+      clientTs: expect.any(Number),
+      questionId: S.choice,
+    });
+  });
+
+  it("choice 错答判 false；judge 答对判 true；重复提交 409 QUESTION_ALREADY_SUBMITTED", async () => {
+    const { env, attemptId, revisions } = await makeSubmitEnv();
+    await saveDraftAnswer(env, attemptId, S.choice, {
+      kind: "choice",
+      index: 0,
+    });
+    const wrong = await submitQuestionOk(
+      env,
+      attemptId,
+      S.choice,
+      revisions.get(S.choice) ?? "",
+    );
+    expect(wrong.data.question).toMatchObject({
+      autoCorrect: false,
+      finalCorrect: false,
+    });
+    expect(wrong.data.summary).toMatchObject({ correct: 0, wrong: 1 });
+
+    await saveDraftAnswer(env, attemptId, S.judge, {
+      kind: "judge",
+      value: false,
+    });
+    const judge = await submitQuestionOk(
+      env,
+      attemptId,
+      S.judge,
+      revisions.get(S.judge) ?? "",
+    );
+    expect(judge.data.question).toMatchObject({
+      autoCorrect: true,
+      finalCorrect: true,
+    });
+    // judge 题带详解：当题释放
+    expect(judge.data.question.solutionMd).toContain("最小的正整数是 $1$。");
+
+    // 幂等拒绝：同一题二次提交
+    const dup = await restartOrStartError(
+      await submitQuestion(
+        env,
+        attemptId,
+        S.judge,
+        revisions.get(S.judge) ?? "",
+      ),
+    );
+    expect(dup.status).toBe(409);
+    expect(dup.error).toBe("QUESTION_ALREADY_SUBMITTED");
+    // 拒绝不写事件、不重复计分
+    expect(questionSubmitEventsOf(env.db, attemptId)).toBe(2);
+  });
+
+  it("fill 恒人工批改：autoCorrect/finalCorrect 留 null 进待批，summary.pending/pendingCount 计 1", async () => {
+    const { env, attemptId, revisions } = await makeSubmitEnv();
+    await saveDraftAnswer(env, attemptId, S.fill, {
+      kind: "fill",
+      values: ["2"],
+    });
+    const body = await submitQuestionOk(
+      env,
+      attemptId,
+      S.fill,
+      revisions.get(S.fill) ?? "",
+    );
+    expect(body.data.question).toMatchObject({
+      autoCorrect: null,
+      finalCorrect: null,
+      answer: { kind: "fill", values: ["2"] },
+    });
+    // 提交即释放解析（学生已锁定答案，看解析不影响判定）
+    expect(body.data.question.answers).not.toBeNull();
+    expect(body.data.summary).toMatchObject({
+      answered: 1,
+      correct: 0,
+      wrong: 0,
+      pending: 1,
+      pendingCount: 1, // D4 finalCorrect 口径：待批
+      unanswered: 3,
+    });
+    expect(responseRowOf(env.db, attemptId, S.fill)).toMatchObject({
+      autoCorrect: null,
+      finalCorrect: null,
+      submittedAt: expect.any(String),
+    });
+  });
+
+  it("未作答提交按 D1 判 false（answer null、autoCorrect=false）", async () => {
+    const { env, attemptId, revisions } = await makeSubmitEnv();
+    // choice2 不存草稿直接提交
+    const body = await submitQuestionOk(
+      env,
+      attemptId,
+      S.choice2,
+      revisions.get(S.choice2) ?? "",
+    );
+    expect(body.data.question).toMatchObject({
+      questionId: S.choice2,
+      answer: null,
+      autoCorrect: false,
+      finalCorrect: false,
+    });
+    // 未作答不计入 answered（契约 answer 口径）
+    expect(body.data.summary).toMatchObject({
+      answered: 0,
+      wrong: 1,
+      unanswered: 4,
+    });
+  });
+
+  it("已解锁提示在提交响应回显；解锁后 start 投影同样回显（released 与草稿回显一致）", async () => {
+    const { env, attemptId, revisions } = await makeSubmitEnv();
+    // 先解锁 choice 的第 0 条提示再提交
+    const hint = await env.app.request(
+      `/api/student/attempts/${attemptId}/hints`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          cookie: env.memberCookie,
+        },
+        body: JSON.stringify({ questionId: S.choice, index: 0 }),
+      },
+    );
+    expect(hint.status).toBe(200);
+
+    await saveDraftAnswer(env, attemptId, S.choice, {
+      kind: "choice",
+      index: 1,
+    });
+    const body = await submitQuestionOk(
+      env,
+      attemptId,
+      S.choice,
+      revisions.get(S.choice) ?? "",
+    );
+    expect(body.data.question.hintsOpened).toEqual([
+      { index: 0, text: "大于 $0$ 的自然数是正整数。" },
+    ]);
+
+    // start 投影的 released 同样携带该题（含已解锁提示回显）
+    const start = await startOk(env);
+    const released = start.data.released[S.choice];
+    expect(released?.hintsOpened).toEqual([
+      { index: 0, text: "大于 $0$ 的自然数是正整数。" },
+    ]);
+  });
+
+  it("错版 409 QUESTION_REVISION_STALE；不在冻结集的题 404 QUESTION_NOT_FOUND", async () => {
+    const { env, attemptId, revisions } = await makeSubmitEnv();
+    await saveDraftAnswer(env, attemptId, S.choice, {
+      kind: "choice",
+      index: 1,
+    });
+
+    const stale = await restartOrStartError(
+      await submitQuestion(env, attemptId, S.choice, "not-the-row-id"),
+    );
+    expect(stale.status).toBe(409);
+    expect(stale.error).toBe("QUESTION_REVISION_STALE");
+
+    const missing = await restartOrStartError(
+      await submitQuestion(
+        env,
+        attemptId,
+        "提交讲练-99",
+        revisions.get(S.choice) ?? "",
+      ),
+    );
+    expect(missing.status).toBe(404);
+    expect(missing.error).toBe("QUESTION_NOT_FOUND");
+  });
+
+  it("非本人 403；attempt 不存在 404；未登录 401", async () => {
+    const { env, attemptId, revisions } = await makeSubmitEnv();
+
+    const foreign = await restartOrStartError(
+      await submitQuestion(
+        env,
+        attemptId,
+        S.choice,
+        revisions.get(S.choice) ?? "",
+        undefined,
+        env.outsiderCookie,
+      ),
+    );
+    expect(foreign.status).toBe(403);
+    expect(foreign.error).toBe("FORBIDDEN");
+
+    const missing = await env.app.request(
+      `/api/student/attempts/0d6a07f0-0000-4000-8000-000000000000/questions/${encodeURIComponent(S.choice)}/submit`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          cookie: env.memberCookie,
+        },
+        body: JSON.stringify({ questionRevisionId: "x" }),
+      },
+    );
+    expect(missing.status).toBe(404);
+    expect(((await missing.json()) as ApiErr).error).toBe("ATTEMPT_NOT_FOUND");
+
+    const anon = await env.app.request(
+      `/api/student/attempts/${attemptId}/questions/${encodeURIComponent(S.choice)}/submit`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ questionRevisionId: "x" }),
+      },
+    );
+    expect(anon.status).toBe(401);
+  });
+
+  it("非 lesson 来源 404（单题提交是讲练专属入口；assignment 草稿卷不开放）", async () => {
+    const env = await makeEnv({ markdown: LESSON_SUBMIT_MD });
+    // 直插一份 assignment 来源草稿卷（归属成员本人；evidence 夹具四件套）
+    const fabricated = frozenDraftAttempt(env.db, env.memberStudentId, [
+      {
+        questionId: "外来题-1",
+        snapshotJson: snapshotJsonOf({ id: "外来题-1" }),
+      },
+    ]);
+    const res = await restartOrStartError(
+      await submitQuestion(
+        env,
+        fabricated.attemptId,
+        "外来题-1",
+        fabricated.rowIds[0] ?? "",
+      ),
+    );
+    expect(res.status).toBe(404);
+    expect(res.error).toBe("NOT_FOUND");
+  });
+
+  it("单题笔记证据 CAS：frozen 精确比对通过并落证据行；错版/有稿 none/缺省有稿均 409；无稿缺省不落行；missing 如实记录", async () => {
+    const { env, attemptId, revisions } = await makeSubmitEnv();
+    await saveDraftAnswer(env, attemptId, S.fill, {
+      kind: "fill",
+      values: ["2"],
+    });
+
+    // 该题上传一版草稿（真实笔记通道 → 服务端 head revision=1）
+    const receipt = await putNoteReceipt(
+      env.app,
+      env.memberCookie,
+      attemptId,
+      S.fill,
+    );
+
+    // 旧客户端（缺 evidence）但有草稿 → 409
+    const legacy = await restartOrStartError(
+      await submitQuestion(env, attemptId, S.fill, revisions.get(S.fill) ?? ""),
+    );
+    expect(legacy.status).toBe(409);
+    expect(legacy.error).toBe("NOTE_EVIDENCE_MISMATCH");
+
+    // none 声明但实际有稿 → 409
+    const noneMismatch = await restartOrStartError(
+      await submitQuestion(
+        env,
+        attemptId,
+        S.fill,
+        revisions.get(S.fill) ?? "",
+        {
+          questionId: S.fill,
+          state: "none",
+        },
+      ),
+    );
+    expect(noneMismatch.status).toBe(409);
+    expect(noneMismatch.error).toBe("NOTE_EVIDENCE_MISMATCH");
+
+    // frozen 错版（revision 不符）→ 409
+    const frozenStale = await restartOrStartError(
+      await submitQuestion(
+        env,
+        attemptId,
+        S.fill,
+        revisions.get(S.fill) ?? "",
+        {
+          questionId: S.fill,
+          state: "frozen",
+          versionId: receipt.versionId,
+          revision: receipt.revision + 5,
+        },
+      ),
+    );
+    expect(frozenStale.status).toBe(409);
+    expect(frozenStale.error).toBe("NOTE_EVIDENCE_MISMATCH");
+
+    // evidence.questionId 与路径不一致 → 409
+    const wrongQuestion = await restartOrStartError(
+      await submitQuestion(
+        env,
+        attemptId,
+        S.fill,
+        revisions.get(S.fill) ?? "",
+        {
+          questionId: S.choice,
+          state: "none",
+        },
+      ),
+    );
+    expect(wrongQuestion.status).toBe(409);
+    expect(wrongQuestion.error).toBe("NOTE_EVIDENCE_MISMATCH");
+
+    // 全部拒绝后卷面未动（仍是 draft、无证据行）
+    expect(env.db.select().from(submissionEvidence).all()).toEqual([]);
+
+    // frozen 精确比对通过 → 200 + 证据行落库
+    const ok = await submitQuestionOk(
+      env,
+      attemptId,
+      S.fill,
+      revisions.get(S.fill) ?? "",
+      {
+        questionId: S.fill,
+        state: "frozen",
+        versionId: receipt.versionId,
+        revision: receipt.revision,
+      },
+    );
+    expect(ok.data.question.autoCorrect).toBeNull();
+    const evidenceRows = env.db
+      .select()
+      .from(submissionEvidence)
+      .where(eq(submissionEvidence.attemptId, attemptId))
+      .all();
+    expect(evidenceRows).toHaveLength(1);
+    expect(evidenceRows[0]).toMatchObject({
+      questionId: S.fill,
+      state: "frozen",
+      versionId: receipt.versionId,
+    });
+
+    // 无稿题缺省提交（choice 无笔记）→ 200 且不落证据行（未采集）
+    await saveDraftAnswer(env, attemptId, S.choice, {
+      kind: "choice",
+      index: 1,
+    });
+    await submitQuestionOk(
+      env,
+      attemptId,
+      S.choice,
+      revisions.get(S.choice) ?? "",
+    );
+    expect(
+      env.db
+        .select()
+        .from(submissionEvidence)
+        .where(eq(submissionEvidence.attemptId, attemptId))
+        .all(),
+    ).toHaveLength(1);
+
+    // 无稿题声明 none → 200 落 none 行；声明 missing → 如实记录 missing
+    await saveDraftAnswer(env, attemptId, S.judge, {
+      kind: "judge",
+      value: false,
+    });
+    await submitQuestionOk(
+      env,
+      attemptId,
+      S.judge,
+      revisions.get(S.judge) ?? "",
+      {
+        questionId: S.judge,
+        state: "none",
+      },
+    );
+    await submitQuestionOk(
+      env,
+      attemptId,
+      S.choice2,
+      revisions.get(S.choice2) ?? "",
+      { questionId: S.choice2, state: "missing" },
+    );
+    const states = Object.fromEntries(
+      env.db
+        .select()
+        .from(submissionEvidence)
+        .where(eq(submissionEvidence.attemptId, attemptId))
+        .all()
+        .map((row) => [row.questionId, row.state]),
+    );
+    expect(states).toEqual({
+      [S.fill]: "frozen",
+      [S.judge]: "none",
+      [S.choice2]: "missing",
+    });
+  });
+});
+
+describe("最后一题单题提交自动收尾（Review Focus 3：与「完成练习」殊途同归）", () => {
+  it("全客观卷：最后一题提交后 attempt=graded、scoreAuto=scoreFinal=100；已完成卷再提交 409 ALREADY_SUBMITTED；restart 可用", async () => {
+    const env = await makeEnv(); // LESSON_MD：choice + judge 两题
+    const started = await startOk(env);
+    const attemptId = started.data.attempt.id;
+    const revisions = new Map(
+      started.data.questions.map((q) => [q.id, q.questionRevisionId]),
+    );
+
+    await saveDraftAnswer(env, attemptId, Q.choice, {
+      kind: "choice",
+      index: 1,
+    });
+    const first = await submitQuestionOk(
+      env,
+      attemptId,
+      Q.choice,
+      revisions.get(Q.choice) ?? "",
+    );
+    // 第一题提交后卷仍 draft
+    expect(first.data.attempt.status).toBe("draft");
+
+    await saveDraftAnswer(env, attemptId, Q.judge, {
+      kind: "judge",
+      value: false,
+    });
+    const last = await submitQuestionOk(
+      env,
+      attemptId,
+      Q.judge,
+      revisions.get(Q.judge) ?? "",
+    );
+    // 最后一题提交 → 事务内自动收尾：全判完 = graded，scoreAuto = scoreFinal = 100
+    expect(last.data.attempt).toMatchObject({
+      status: "graded",
+      scoreAuto: 100,
+      submittedAt: expect.any(String),
+    });
+    expect(last.data.summary).toMatchObject({
+      total: 2,
+      correct: 2,
+      scoreFinal: 100,
+      pendingCount: 0,
+    });
+    // 库内一致
+    const attemptRow = env.db
+      .select()
+      .from(attempts)
+      .where(eq(attempts.id, attemptId))
+      .get();
+    expect(attemptRow).toMatchObject({
+      status: "graded",
+      scoreAuto: 100,
+      scoreFinal: 100,
+      submittedAt: expect.any(String),
+    });
+
+    // 已完成卷再单题提交：卷已离开 draft → 409 ALREADY_SUBMITTED（状态优先拒绝）
+    const closed = await restartOrStartError(
+      await submitQuestion(
+        env,
+        attemptId,
+        Q.choice,
+        revisions.get(Q.choice) ?? "",
+      ),
+    );
+    expect(closed.status).toBe(409);
+    expect(closed.error).toBe("ALREADY_SUBMITTED");
+
+    // 整卷收尾同刻到达（并发双收尾的后到者）→ 409 幂等
+    const closedPaper = await submitAttemptRequest(
+      env.app,
+      env.memberCookie,
+      attemptId,
+    );
+    expect(closedPaper.status).toBe(409);
+    expect(((await closedPaper.json()) as ApiErr).error).toBe(
+      "ALREADY_SUBMITTED",
+    );
+
+    // 完成后 restart 可用（真实链路端到端）
+    const restarted = await restartLesson(env);
+    expect(restarted.status).toBe(201);
+  });
+
+  it("混合卷（有待批）：最后一题提交后 attempt=submitted、scoreAuto=2/3≈67、scoreFinal null；与整卷收尾同刻并发后到者 409；事件恰 4 条", async () => {
+    const { env, attemptId, revisions } = await makeSubmitEnv();
+    await saveDraftAnswer(env, attemptId, S.choice, {
+      kind: "choice",
+      index: 1,
+    });
+    await submitQuestionOk(
+      env,
+      attemptId,
+      S.choice,
+      revisions.get(S.choice) ?? "",
+    );
+    await saveDraftAnswer(env, attemptId, S.judge, {
+      kind: "judge",
+      value: false,
+    });
+    await submitQuestionOk(
+      env,
+      attemptId,
+      S.judge,
+      revisions.get(S.judge) ?? "",
+    );
+    await saveDraftAnswer(env, attemptId, S.fill, {
+      kind: "fill",
+      values: ["2"],
+    });
+    await submitQuestionOk(env, attemptId, S.fill, revisions.get(S.fill) ?? "");
+
+    // 最后一题：choice2 未作答提交 → D1 判 false + 自动收尾（fill 待批）
+    const last = await submitQuestionOk(
+      env,
+      attemptId,
+      S.choice2,
+      revisions.get(S.choice2) ?? "",
+    );
+    expect(last.data.attempt).toMatchObject({
+      status: "submitted",
+      scoreAuto: 67,
+      submittedAt: expect.any(String),
+    });
+    expect(last.data.summary).toMatchObject({
+      total: 4,
+      correct: 2,
+      wrong: 1,
+      pending: 1,
+      pendingCount: 1,
+      scoreFinal: null,
+    });
+    expect(questionSubmitEventsOf(env.db, attemptId)).toBe(4);
+
+    // 双收尾的后到者（整卷）→ 409
+    const closedPaper = await submitAttemptRequest(
+      env.app,
+      env.memberCookie,
+      attemptId,
+    );
+    expect(closedPaper.status).toBe(409);
+    expect(((await closedPaper.json()) as ApiErr).error).toBe(
+      "ALREADY_SUBMITTED",
+    );
+  });
+
+  it("口径对照：同一份卷「全部单题提交」与「整卷收尾」的 scoreAuto/状态一致", async () => {
+    const env = await makeEnv({ markdown: LESSON_SUBMIT_MD });
+    // 第二位学生（成员）走整卷收尾路径
+    const second = await createStudentAndLogin(
+      env.app,
+      env.teacherCookie,
+      "成员王五",
+    );
+    const added = await env.app.request(
+      `/api/teacher/courses/${env.courseId}/members`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          cookie: env.teacherCookie,
+        },
+        body: JSON.stringify({ studentIds: [second.studentId] }),
+      },
+    );
+    expect(added.status).toBe(200);
+
+    // 甲（成员张三）：逐题提交全部 4 题
+    const a = await startOk(env);
+    const revisionsA = new Map(
+      a.data.questions.map((q) => [q.id, q.questionRevisionId]),
+    );
+    await saveDraftAnswer(env, a.data.attempt.id, S.choice, {
+      kind: "choice",
+      index: 1,
+    });
+    await submitQuestionOk(
+      env,
+      a.data.attempt.id,
+      S.choice,
+      revisionsA.get(S.choice) ?? "",
+    );
+    await saveDraftAnswer(env, a.data.attempt.id, S.judge, {
+      kind: "judge",
+      value: false,
+    });
+    await submitQuestionOk(
+      env,
+      a.data.attempt.id,
+      S.judge,
+      revisionsA.get(S.judge) ?? "",
+    );
+    await saveDraftAnswer(env, a.data.attempt.id, S.fill, {
+      kind: "fill",
+      values: ["2"],
+    });
+    await submitQuestionOk(
+      env,
+      a.data.attempt.id,
+      S.fill,
+      revisionsA.get(S.fill) ?? "",
+    );
+    const lastA = await submitQuestionOk(
+      env,
+      a.data.attempt.id,
+      S.choice2,
+      revisionsA.get(S.choice2) ?? "",
+    );
+
+    // 乙（成员王五）：同答案整卷收尾（judge 也答对、choice2 未答）
+    const startB = await env.app.request(
+      `/api/student/lectures/${env.lectureId}/lesson/start`,
+      { method: "POST", headers: { cookie: second.cookie } },
+    );
+    expect(startB.status).toBe(200);
+    const bodyB = (await startB.json()) as StartBody;
+    const attemptB = bodyB.data.attempt.id;
+    await env.app.request(
+      `/api/student/attempts/${attemptB}/answers/${encodeURIComponent(S.choice)}`,
+      {
+        method: "PUT",
+        headers: {
+          "content-type": "application/json",
+          cookie: second.cookie,
+        },
+        body: JSON.stringify({ answer: { kind: "choice", index: 1 } }),
+      },
+    );
+    await env.app.request(
+      `/api/student/attempts/${attemptB}/answers/${encodeURIComponent(S.judge)}`,
+      {
+        method: "PUT",
+        headers: {
+          "content-type": "application/json",
+          cookie: second.cookie,
+        },
+        body: JSON.stringify({ answer: { kind: "judge", value: false } }),
+      },
+    );
+    await env.app.request(
+      `/api/student/attempts/${attemptB}/answers/${encodeURIComponent(S.fill)}`,
+      {
+        method: "PUT",
+        headers: {
+          "content-type": "application/json",
+          cookie: second.cookie,
+        },
+        body: JSON.stringify({ answer: { kind: "fill", values: ["2"] } }),
+      },
+    );
+    const paper = await submitAttemptRequest(env.app, second.cookie, attemptB);
+    expect(paper.status).toBe(200);
+    const paperBody = (await paper.json()) as {
+      data: {
+        attempt: { status: string; scoreAuto: number | null };
+        summary: { scoreFinal: number | null };
+      };
+    };
+    // 殊途同归：同一状态机与同一得分口径（submitted / scoreAuto=67）
+    expect(paperBody.data.attempt.status).toBe(lastA.data.attempt.status);
+    expect(paperBody.data.attempt.scoreAuto).toBe(lastA.data.attempt.scoreAuto);
+    expect(paperBody.data.summary.scoreFinal).toBeNull();
+  });
+});
+
+describe("整卷收尾 lesson 语义（submitAttempt 对未提交行执行，已提交行不重判）", () => {
+  it("混合收尾：已单题提交 2 题保判定与原 submittedAt；未提交未答判 false；evidence 只查未提交题（已提交题的草稿不阻塞）；question_submit 事件只记单题提交", async () => {
+    const { env, attemptId, revisions } = await makeSubmitEnv();
+
+    // 甲题 choice：存答案 + 传笔记草稿 + 带证据单题提交（frozen）
+    await saveDraftAnswer(env, attemptId, S.choice, {
+      kind: "choice",
+      index: 1,
+    });
+    const receipt = await putNoteReceipt(
+      env.app,
+      env.memberCookie,
+      attemptId,
+      S.choice,
+    );
+    await submitQuestionOk(
+      env,
+      attemptId,
+      S.choice,
+      revisions.get(S.choice) ?? "",
+      {
+        questionId: S.choice,
+        state: "frozen",
+        versionId: receipt.versionId,
+        revision: receipt.revision,
+      },
+    );
+    const choiceSubmittedAt = responseRowOf(
+      env.db,
+      attemptId,
+      S.choice,
+    ).submittedAt;
+
+    // 乙题 fill：待批单题提交
+    await saveDraftAnswer(env, attemptId, S.fill, {
+      kind: "fill",
+      values: ["2"],
+    });
+    await submitQuestionOk(env, attemptId, S.fill, revisions.get(S.fill) ?? "");
+    const fillSubmittedAt = responseRowOf(
+      env.db,
+      attemptId,
+      S.fill,
+    ).submittedAt;
+
+    // 丙题 judge：存答案 + 传笔记草稿（未提交——旧客户端收尾会因它 409）
+    await saveDraftAnswer(env, attemptId, S.judge, {
+      kind: "judge",
+      value: false,
+    });
+    const judgeReceipt = await putNoteReceipt(
+      env.app,
+      env.memberCookie,
+      attemptId,
+      S.judge,
+    );
+
+    // 旧客户端（缺 evidence）：未提交的 judge 有草稿 → 409（scope 命中）；
+    // 已提交 choice 的草稿不应单独阻塞（下方声明版通过即证明）
+    const legacy = await submitAttemptRequest(
+      env.app,
+      env.memberCookie,
+      attemptId,
+    );
+    expect(legacy.status).toBe(409);
+    expect(((await legacy.json()) as ApiErr).error).toBe(
+      "NOTE_EVIDENCE_MISMATCH",
+    );
+
+    // 新客户端：evidence 只覆盖未提交题（judge frozen / choice2 none——fill
+    // 已单题提交，其证据不重做也不再声明）
+    const revisionsList = [...revisions.entries()].map(([questionId, id]) => ({
+      questionId,
+      questionRevisionId: id,
+    }));
+    const res = await env.app.request(
+      `/api/student/attempts/${attemptId}/submit`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          cookie: env.memberCookie,
+        },
+        body: JSON.stringify({
+          revisions: revisionsList,
+          evidence: [
+            {
+              questionId: S.judge,
+              state: "frozen",
+              versionId: judgeReceipt.versionId,
+              revision: judgeReceipt.revision,
+            },
+            { questionId: S.choice2, state: "none" },
+          ],
+        }),
+      },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as unknown;
+    expect(attemptResultOkSchema.safeParse(body).success).toBe(true);
+
+    // 已提交行不重判、保原 submittedAt 与单题证据
+    expect(responseRowOf(env.db, attemptId, S.choice)).toEqual({
+      autoCorrect: true,
+      finalCorrect: true,
+      submittedAt: choiceSubmittedAt,
+      teacherMark: null,
+    });
+    expect(responseRowOf(env.db, attemptId, S.fill)).toEqual({
+      autoCorrect: null,
+      finalCorrect: null,
+      submittedAt: fillSubmittedAt,
+      teacherMark: null,
+    });
+    // 未提交行：judge 答对、choice2 未答判 false，submittedAt = 交卷时刻
+    const judgeRow = responseRowOf(env.db, attemptId, S.judge);
+    const choice2Row = responseRowOf(env.db, attemptId, S.choice2);
+    expect(judgeRow).toMatchObject({ autoCorrect: true, finalCorrect: true });
+    expect(choice2Row).toMatchObject({
+      autoCorrect: false,
+      finalCorrect: false,
+    });
+    const attemptRow = env.db
+      .select()
+      .from(attempts)
+      .where(eq(attempts.id, attemptId))
+      .get();
+    expect(attemptRow?.submittedAt).toBeTruthy();
+    expect(judgeRow.submittedAt).toBe(attemptRow?.submittedAt);
+    expect(choice2Row.submittedAt).toBe(attemptRow?.submittedAt);
+
+    // 整卷收尾状态与得分：fill 待批 → submitted、scoreAuto 67、scoreFinal null
+    expect(attemptRow).toMatchObject({
+      status: "submitted",
+      scoreAuto: 67,
+      scoreFinal: null,
+    });
+
+    // 证据行：choice（单题提交时 frozen）+ 整卷两行（judge frozen / choice2
+    // none）；fill 单题提交时无声明无稿 → 不落行（未采集）
+    const evidenceByQuestion = Object.fromEntries(
+      env.db
+        .select()
+        .from(submissionEvidence)
+        .where(eq(submissionEvidence.attemptId, attemptId))
+        .all()
+        .map((row) => [row.questionId, row.state]),
+    );
+    expect(evidenceByQuestion).toEqual({
+      [S.choice]: "frozen",
+      [S.judge]: "frozen",
+      [S.choice2]: "none",
+    });
+
+    // question_submit 事件只记单题提交的 2 题
+    expect(questionSubmitEventsOf(env.db, attemptId)).toBe(2);
+  });
+
+  it("先整卷收尾再单题提交 → 409（卷已离开 draft）；revisions 全集校验不变（缺已提交题 409 QUESTION_REVISION_STALE）", async () => {
+    const { env, attemptId, revisions } = await makeSubmitEnv();
+    await saveDraftAnswer(env, attemptId, S.choice, {
+      kind: "choice",
+      index: 1,
+    });
+    await submitQuestionOk(
+      env,
+      attemptId,
+      S.choice,
+      revisions.get(S.choice) ?? "",
+    );
+
+    // 先单题提交一题，再整卷收尾其余（evidence 覆盖未提交三题）
+    await saveDraftAnswer(env, attemptId, S.judge, {
+      kind: "judge",
+      value: false,
+    });
+    await saveDraftAnswer(env, attemptId, S.fill, {
+      kind: "fill",
+      values: ["2"],
+    });
+    const res = await env.app.request(
+      `/api/student/attempts/${attemptId}/submit`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          cookie: env.memberCookie,
+        },
+        body: JSON.stringify({
+          revisions: [...revisions.entries()].map(([questionId, id]) => ({
+            questionId,
+            questionRevisionId: id,
+          })),
+          evidence: [
+            { questionId: S.judge, state: "none" },
+            { questionId: S.fill, state: "none" },
+            { questionId: S.choice2, state: "none" },
+          ],
+        }),
+      },
+    );
+    expect(res.status).toBe(200);
+
+    // 整卷收尾后单题提交（review focus：后到者）→ 409 ALREADY_SUBMITTED
+    const late = await restartOrStartError(
+      await submitQuestion(
+        env,
+        attemptId,
+        S.judge,
+        revisions.get(S.judge) ?? "",
+      ),
+    );
+    expect(late.status).toBe(409);
+    expect(late.error).toBe("ALREADY_SUBMITTED");
+
+    // revisions 全集校验不变：新开一份卷，单题提交一题后，整卷只回传其余三题
+    //（缺已提交题）→ 409 QUESTION_REVISION_STALE
+    const second = await createStudentAndLogin(
+      env.app,
+      env.teacherCookie,
+      "成员赵六",
+    );
+    await env.app.request(`/api/teacher/courses/${env.courseId}/members`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        cookie: env.teacherCookie,
+      },
+      body: JSON.stringify({ studentIds: [second.studentId] }),
+    });
+    const startB = await env.app.request(
+      `/api/student/lectures/${env.lectureId}/lesson/start`,
+      { method: "POST", headers: { cookie: second.cookie } },
+    );
+    expect(startB.status).toBe(200);
+    const bodyB = (await startB.json()) as StartBody;
+    const attemptB = bodyB.data.attempt.id;
+    const revisionsB = new Map(
+      bodyB.data.questions.map((q) => [q.id, q.questionRevisionId]),
+    );
+    await env.app.request(
+      `/api/student/attempts/${attemptB}/answers/${encodeURIComponent(S.choice)}`,
+      {
+        method: "PUT",
+        headers: {
+          "content-type": "application/json",
+          cookie: second.cookie,
+        },
+        body: JSON.stringify({ answer: { kind: "choice", index: 1 } }),
+      },
+    );
+    const singleB = await env.app.request(
+      `/api/student/attempts/${attemptB}/questions/${encodeURIComponent(S.choice)}/submit`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json", cookie: second.cookie },
+        body: JSON.stringify({
+          questionRevisionId: revisionsB.get(S.choice) ?? "",
+        }),
+      },
+    );
+    expect(singleB.status).toBe(200);
+    const partial = await env.app.request(
+      `/api/student/attempts/${attemptB}/submit`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json", cookie: second.cookie },
+        body: JSON.stringify({
+          revisions: [...revisionsB.entries()]
+            .filter(([questionId]) => questionId !== S.choice)
+            .map(([questionId, id]) => ({
+              questionId,
+              questionRevisionId: id,
+            })),
+        }),
+      },
+    );
+    expect(partial.status).toBe(409);
+    expect(((await partial.json()) as ApiErr).error).toBe(
+      "QUESTION_REVISION_STALE",
+    );
   });
 });
