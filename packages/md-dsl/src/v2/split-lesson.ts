@@ -1,5 +1,5 @@
 import type { LessonBlock, LintIssue } from "@tutor/contract";
-import { isQuestionContainer } from "./question.ts";
+import { defaultQuestionIdOf, isQuestionContainer } from "./question.ts";
 import {
   FALLBACK_UNIT_ID,
   firstNonEmpty,
@@ -19,7 +19,8 @@ import {
  * 1. 纯函数、不抛异常；问题只记 warning（LESSON_QUESTION_WITHOUT_ID，经可选
  *    issues 旁路输出），不阻断切段；
  * 2. 无 id 的题块按「单元id-序号」兜底对位（序号按全部题块计，与解析器缺省
- *    id 的占号规则一致）；正常导入的讲练页不会出现本情形（解析已注入缺省 id）；
+ *    id 的占号规则一致；规则单一出处 defaultQuestionIdOf，见 question.ts）；
+ *    正常导入的讲练页不会出现本情形（解析已注入缺省 id）；
  * 3. md 段去掉首尾空白行后为空时直接跳过（契约 lessonBlockSchema md min(1)，
  *    空段是切段 bug 的信号）；行尾 CRLF 归一为 LF（与解析器切原文同款）。
  */
@@ -27,7 +28,7 @@ import {
 /** 切段选项 */
 export interface SplitLessonBlocksOptions {
   /**
-   * 兜底单元名：无 id 题块的缺省 id 前缀（「单元id-序号」）。
+   * 兜底单元名：无 id 题块的缺省 id 前缀（「单元id-序号」，defaultQuestionIdOf）。
    * 缺省用解析器兜底值 unit（与 frontmatter 缺 unit 时的缺省单元 id 同源）。
    */
   readonly unitId?: string | undefined;
@@ -63,18 +64,20 @@ export function splitLessonBlocks(
     if (id !== undefined) {
       blocks.push({ type: "question", questionId: id });
     } else {
+      // 兜底 id 与解析器缺省规则同一出处（defaultQuestionIdOf）——两侧对位不漂移
+      const fallbackId = defaultQuestionIdOf(unitId, ordinal);
       options.issues?.push(
         makeIssue(
           "warning",
           startLine,
           child.position?.start.column ?? 1,
           "LESSON_QUESTION_WITHOUT_ID",
-          `讲练页题目容器没有 id 属性（第 ${startLine} 行）：正常导入的讲练页题目 id 已注入开围栏，出现本 warning 多为存储的讲义正文被手工改动；已按「${unitId}-${ordinal}」兜底对位，请核对与冻结题目集合是否对得上`,
+          `讲练页题目容器没有 id 属性（第 ${startLine} 行）：正常导入的讲练页题目 id 已注入开围栏，出现本 warning 多为存储的讲义正文被手工改动；已按「${fallbackId}」兜底对位，请核对与冻结题目集合是否对得上`,
         ),
       );
       blocks.push({
         type: "question",
-        questionId: `${unitId}-${ordinal}`,
+        questionId: fallbackId,
       });
     }
     cursor = endLine + 1;

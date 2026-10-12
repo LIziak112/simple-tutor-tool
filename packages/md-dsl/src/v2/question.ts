@@ -46,6 +46,16 @@ export function isQuestionContainer(node: Node): node is ContainerDirective {
   return isContainer(node) && canonicalName(node) === "question";
 }
 
+/**
+ * 缺省题目 id（单一出处）：`单元id-序号`。
+ * 显式 id 属性缺失/为空时的兜底规则——解析器（extractQuestion）与讲练页切段
+ * （split-lesson 的无 id 题块兜底对位）同用本函数；占号语义一致：序号按全部
+ * 题块计（被丢弃的题也占号），见本文件头注释第 4 条。
+ */
+export function defaultQuestionIdOf(unitId: string, ordinal: number): string {
+  return `${unitId}-${ordinal}`;
+}
+
 /** 从文档顶层子级中解析全部 question 容器（按出现顺序），供三条 kind 路径共用 */
 export function extractQuestions(
   children: readonly RootContent[],
@@ -172,12 +182,12 @@ function extractQuestion(
       break;
   }
 
-  // ---- 题目 id：显式属性优先，缺省「单元id-序号」 ----
+  // ---- 题目 id：显式属性优先，缺省「单元id-序号」（defaultQuestionIdOf 单一出处） ----
   const explicitId = attrs.id?.trim();
   const id =
     explicitId !== undefined && explicitId.length > 0
       ? explicitId
-      : `${ctx.unitId}-${ctx.number}`;
+      : defaultQuestionIdOf(ctx.unitId, ctx.number);
 
   const question: Question = {
     id,
