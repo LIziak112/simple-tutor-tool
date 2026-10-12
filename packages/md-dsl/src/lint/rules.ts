@@ -31,12 +31,12 @@ export const LINT_RULES: readonly LintRuleDoc[] = [
     code: "MISSING_KIND",
     level: "error",
     description:
-      "frontmatter 缺 kind 字段：必须是 practice（练习）/ lecture（讲义）/ mixed（混合）之一",
+      "frontmatter 缺 kind 字段：必须是 practice（练习）/ lecture（讲义）/ mixed（混合）/ lesson（讲练页）之一",
   },
   {
     code: "INVALID_KIND",
     level: "error",
-    description: "kind 值不合法：只能是 practice / lecture / mixed",
+    description: "kind 值不合法：只能是 practice / lecture / mixed / lesson",
   },
   {
     code: "INVALID_FRONTMATTER",
@@ -104,7 +104,13 @@ export const LINT_RULES: readonly LintRuleDoc[] = [
     code: "QUESTION_BEFORE_FIRST_HEADING",
     level: "warning",
     description:
-      "mixed 文档里题目出现在第一个一级标题之前：该题不与任何讲义关联",
+      "mixed / lesson 文档里题目出现在第一个一级标题之前：该题不与任何讲义关联",
+  },
+  {
+    code: "LESSON_WITHOUT_QUESTION",
+    level: "warning",
+    description:
+      "讲练页（kind: lesson）没有任何题目：建议改用 kind: lecture（warning 不阻断，讲义照常导入，只是没有单题作答的练习部分）",
   },
   {
     code: "UNIT_FROM_FALLBACK",

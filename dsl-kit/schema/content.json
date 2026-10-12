@@ -545,7 +545,8 @@
               "enum": [
                 "practice",
                 "lecture",
-                "mixed"
+                "mixed",
+                "lesson"
               ]
             },
             "dsl": {

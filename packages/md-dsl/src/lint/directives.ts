@@ -37,7 +37,8 @@ const HEADING_COLLAPSIBLE_CONTAINERS = new Set([
  *
  * 语境链（allowedIn 语义，见 directives.ts 注册表注释）：
  * 「祖先语境链命中任一允许值即合法」。文档顶层语境按 kind 起始：
- * practice → document；lecture → lecture；mixed → document + lecture（讲义段落即 lecture）。
+ * practice → document；lecture → lecture；mixed / lesson → document + lecture
+ * （讲义段落即 lecture；lesson 的题块与 mixed 同款，讲练一体 2026-10）。
  * 进入 question/steps/columns 容器后把该名字追加进链（mark 在 steps 内命中 lecture 即合法）。
  *
  * 与解析层/专属规则的去重约定：
@@ -89,7 +90,8 @@ function isHeading(node: Node): node is Heading {
 /** 文档顶层语境链（按 kind；与解析层 frontmatter 不可用时的 practice 兜底一致） */
 function initialChain(kind: DocumentKind): readonly string[] {
   if (kind === "lecture") return ["lecture"];
-  if (kind === "mixed") return ["document", "lecture"];
+  // mixed 与 lesson 的正文都是「讲义段落 + 题目」：讲义段落即 lecture 语境
+  if (kind === "mixed" || kind === "lesson") return ["document", "lecture"];
   return ["document"];
 }
 

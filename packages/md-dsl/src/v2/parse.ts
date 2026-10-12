@@ -7,7 +7,7 @@ import {
   type Question,
   type Unit,
 } from "@tutor/contract";
-import type { Root } from "mdast";
+import type { Root, RootContent } from "mdast";
 import type { ContainerDirective } from "mdast-util-directive";
 import { extractFrontmatter } from "./frontmatter.ts";
 import { headingText, isH1, splitLectures } from "./lecture.ts";
@@ -28,7 +28,9 @@ import {
  * DSL v2 文档解析入口（T1.3 练习题；T1.4 起按 frontmatter kind 分派）：
  * - practice：抽取题目 → 单元（T1.3 行为原样保留）；
  * - lecture：按 H1「第X讲」切分多篇讲义，抽取 H2/H3 目录（lecture.ts）；
- * - mixed：讲义段与题目拆分，题目归入同一单元并经 lectureTitle 关联（lecture.ts）。
+ * - mixed：讲义段与题目拆分，题目归入同一单元并经 lectureTitle 关联（lecture.ts）；
+ * - lesson：讲练页（2026-10 讲练一体）——与 mixed 同构，但题块以 keep 模式
+ *   原位保留在讲义 markdown（缺省题目 id 注入开围栏），供学生端单题作答切段。
  *
  * 依据：docs/技术架构与实施方案.md §5.1（语法与规则要点表）、§5.1.1(4)（原文是真相）、
  * §5.3（讲义自动目录 H2/H3）、docs/开发任务清单.md T1.3/T1.4。
@@ -146,12 +148,21 @@ function parseInner(md: string, options: ParseOptions): ParsedDocument {
 
   // ---- kind 分派：frontmatter 不可用时按 practice 继续（题目仍尽量解析，T1.3 行为） ----
   const kind = frontmatter?.kind ?? "practice";
-  const body =
-    kind === "lecture"
-      ? parseLectureDocument(ctx)
-      : kind === "mixed"
-        ? parseMixedDocument(ctx)
-        : parsePracticeDocument(ctx);
+  let body: { lectures: Lecture[]; units: Unit[] };
+  switch (kind) {
+    case "lecture":
+      body = parseLectureDocument(ctx);
+      break;
+    case "mixed":
+      body = parseMixedDocument(ctx);
+      break;
+    case "lesson":
+      body = parseLessonDocument(ctx);
+      break;
+    default:
+      body = parsePracticeDocument(ctx);
+      break;
+  }
 
   // ---- 契约兜底：产出必须永远符合 T1.1 契约 ----
   return finalize({ ...body, issues }, frontmatter);
@@ -250,18 +261,20 @@ function parseLectureDocument(ctx: ParseContext): {
   return { lectures: applyLectureTitleOverride(ctx, split.lectures), units };
 }
 
-// ---------- mixed（T1.4） ----------
+// ---------- mixed（T1.4）/ lesson（2026-10 讲练一体） ----------
 
-function parseMixedDocument(ctx: ParseContext): {
-  lectures: Lecture[];
-  units: Unit[];
+/**
+ * mixed/lesson 共用：单次遍历分流顶层题目容器，并跟踪「最后一题出现位置所处的
+ * 那一讲」（最后一题之前最近的 H1 标题；全部题目都在第一个 H1 之前则无关联值）。
+ */
+function trackQuestionContainers(children: readonly RootContent[]): {
+  readonly questionNodes: ContainerDirective[];
+  readonly lastQuestionLectureTitle: string | undefined;
 } {
-  // 单次遍历：分流题目容器，并跟踪「最后一题出现位置所处的那一讲」
-  //（最后一题之前最近的 H1 标题；全部题目都在第一个 H1 之前则无关联，记 warning）
   const questionNodes: ContainerDirective[] = [];
   let currentH1Title: string | undefined;
   let lastQuestionLectureTitle: string | undefined;
-  for (const child of ctx.tree.children) {
+  for (const child of children) {
     if (isQuestionContainer(child)) {
       questionNodes.push(child);
       lastQuestionLectureTitle = currentH1Title;
@@ -269,6 +282,47 @@ function parseMixedDocument(ctx: ParseContext): {
       currentH1Title = headingText(child).trim();
     }
   }
+  return { questionNodes, lastQuestionLectureTitle };
+}
+
+/**
+ * mixed/lesson 共用的配套讲义推断链：显式 frontmatter.lecture 优先 → 位置推断
+ * （单讲义文件指向 title 覆盖后的最终讲义名，即存储后的名字；多讲义逐篇按各自
+ * H1，推断值即 H1 文本）→ 都没有记 QUESTION_BEFORE_FIRST_HEADING（warning）。
+ */
+function inferUnitLectureTitle(
+  ctx: ParseContext,
+  lectures: Lecture[],
+  inferred: string | undefined,
+  firstQuestion: ContainerDirective | undefined,
+): string | undefined {
+  let lectureTitle = firstNonEmpty(ctx.frontmatter?.lecture);
+  if (lectureTitle === undefined && firstNonEmpty(inferred) !== undefined) {
+    const single = lectures.length === 1 ? lectures[0] : undefined;
+    lectureTitle =
+      single !== undefined ? single.title : firstNonEmpty(inferred);
+  }
+  if (lectureTitle === undefined) {
+    ctx.issues.push(
+      makeIssue(
+        "warning",
+        firstQuestion?.position?.start.line ?? 1,
+        firstQuestion?.position?.start.column ?? 1,
+        "QUESTION_BEFORE_FIRST_HEADING",
+        "所有题目都出现在第一个 H1 讲义标题之前，练习单元无法关联讲义（unit.lectureTitle 缺省）；请把题目移到对应讲义内容之后，或在 frontmatter 中显式声明 lecture: 讲义标题",
+      ),
+    );
+  }
+  return lectureTitle;
+}
+
+function parseMixedDocument(ctx: ParseContext): {
+  lectures: Lecture[];
+  units: Unit[];
+} {
+  const { questionNodes, lastQuestionLectureTitle } = trackQuestionContainers(
+    ctx.tree.children,
+  );
 
   const questions = extractQuestions(ctx.tree.children, {
     lines: ctx.lines,
@@ -292,25 +346,79 @@ function parseMixedDocument(ctx: ParseContext): {
   // 全部题目进同一个单元；关联讲义：显式 frontmatter.lecture 优先，缺省按题目位置推断
   const units: Unit[] = [];
   if (questions.length > 0) {
-    let lectureTitle = firstNonEmpty(ctx.frontmatter?.lecture);
-    const inferred = firstNonEmpty(lastQuestionLectureTitle);
-    if (lectureTitle === undefined && inferred !== undefined) {
-      // 推断命中且是单讲义文件：配套指针指向 title 覆盖后的最终讲义名（存储后的名字）；
-      // 多讲义文件逐篇按各自 H1，推断值即 H1 文本（不变）
-      const single = lectures.length === 1 ? lectures[0] : undefined;
-      lectureTitle = single !== undefined ? single.title : inferred;
-    }
-    if (lectureTitle === undefined) {
-      ctx.issues.push(
-        makeIssue(
-          "warning",
-          questionNodes[0]?.position?.start.line ?? 1,
-          questionNodes[0]?.position?.start.column ?? 1,
-          "QUESTION_BEFORE_FIRST_HEADING",
-          "所有题目都出现在第一个 H1 讲义标题之前，练习单元无法关联讲义（unit.lectureTitle 缺省）；请把题目移到对应讲义内容之后，或在 frontmatter 中显式声明 lecture: 讲义标题",
-        ),
-      );
-    }
+    const lectureTitle = inferUnitLectureTitle(
+      ctx,
+      lectures,
+      lastQuestionLectureTitle,
+      questionNodes[0],
+    );
+    units.push(buildUnit(ctx, questions, lectureTitle));
+  }
+  return { lectures, units };
+}
+
+// ---------- lesson（2026-10 讲练一体：讲练页） ----------
+
+/**
+ * 讲练页解析：结构与 mixed 同构（题目全收单单元、lectureTitle 推断链复用、
+ * QUESTION_BEFORE_FIRST_HEADING 同款），差异两点：
+ * 1. splitLectures 用 keep 模式——题块原位保留在讲义 markdown，缺省题目 id
+ *    注入开围栏（同一注入写进题目 sourceMd，往返稳定，方案决策 8）；
+ * 2. 讲练页不产生 QUESTION_IN_LECTURE（题块本就合法）；零题记 warning
+ *    LESSON_WITHOUT_QUESTION（建议改用 kind: lecture，不阻断）。
+ */
+function parseLessonDocument(ctx: ParseContext): {
+  lectures: Lecture[];
+  units: Unit[];
+} {
+  const { questionNodes, lastQuestionLectureTitle } = trackQuestionContainers(
+    ctx.tree.children,
+  );
+
+  let questions: Question[] = extractQuestions(ctx.tree.children, {
+    lines: ctx.lines,
+    unitId: ctx.unitId,
+    startNumber: ctx.options.questionStartNumber ?? 1,
+    issues: ctx.issues,
+  });
+
+  const split = splitLectures({
+    children: ctx.tree.children,
+    lines: ctx.lines,
+    contentStartLine: ctx.contentStartLine,
+    questionRanges: questionNodes.map(lineRange),
+    issues: ctx.issues,
+    mode: "keep",
+    questionNodes,
+    questions,
+  });
+  // keep 模式返回注入 id 后的题目数组（浅拷贝回可变形态，契约 Unit.questions 是可变数组）
+  if (split.questions !== undefined) questions = [...split.questions];
+
+  // title 讲义命名链与 mixed 同款（推断指针指向覆盖后的最终讲义名）
+  const lectures = applyLectureTitleOverride(ctx, split.lectures);
+
+  // 零题守卫：讲练页没有题目就退化为普通讲义（warning 不阻断，讲义照常产出）
+  if (questions.length === 0) {
+    ctx.issues.push(
+      makeIssue(
+        "warning",
+        1,
+        1,
+        "LESSON_WITHOUT_QUESTION",
+        "讲练页没有题目，建议改用 kind: lecture（warning 不阻断：讲义部分照常导入，只是没有单题作答的练习）",
+      ),
+    );
+  }
+
+  const units: Unit[] = [];
+  if (questions.length > 0) {
+    const lectureTitle = inferUnitLectureTitle(
+      ctx,
+      lectures,
+      lastQuestionLectureTitle,
+      questionNodes[0],
+    );
     units.push(buildUnit(ctx, questions, lectureTitle));
   }
   return { lectures, units };
