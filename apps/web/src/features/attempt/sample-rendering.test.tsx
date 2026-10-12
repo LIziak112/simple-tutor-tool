@@ -20,8 +20,8 @@ import { AttemptQuestionCard } from "./AttemptQuestionCard";
 import { HANDWRITTEN_TYPES } from "./answer-format";
 
 /**
- * T7.9 全部练习/混合样例题目的真实题卡渲染回归：
- * 自动发现 samples/v2 全部 .md + 完整样例三个 markdown 块 → parseDocument →
+ * T7.9 全部练习/混合/讲练样例题目的真实题卡渲染回归：
+ * 自动发现 samples/v2 全部 .md + 完整样例全部 markdown 块 → parseDocument →
  * 按公共契约构造 QuestionPublic（stemMd 经 studentStemMd 学生端唯一投影）→
  * jsdom 挂载 AttemptQuestionCard，断言题面文本、公式（KaTeX）、填空空位、
  * 选项控件与手写题最终答案等必要语义；不做全文 HTML 快照。
@@ -52,7 +52,7 @@ vi.mock("@/lib/api", () => ({
   })),
 }));
 
-/** 全语料题目：samples/v2 自动发现的练习/混合文档 + 完整样例练习/混合块 */
+/** 全语料题目：samples/v2 自动发现的练习/混合/讲练文档 + 完整样例全部 markdown 块 */
 function collectSampleQuestions(): Array<{
   source: string;
   question: Question;
