@@ -41,14 +41,14 @@ apps/web typecheck$ tsc --noEmit
 apps/web typecheck: Done
 
 ui-lint.log
-  
+
     123 123 │           const dx2 = s.points[i]!.x - s.points[i - 1]!.x;
     124 124 │           const dy1 = s.points[i - 1]!.y - s.points[i - 2]!.y;
     125     │ - ········const·dy2·=·s.points[i]!.y·-·s.points[i·-·1]!.y;
         125 │ + ········const·dy2·=·s.points[i]!.y·-·s.points[i·-·1]?.y;
     126 126 │           // x 或 y 方向发生明确折返（阈值过滤抖动）
     127 127 │           if (dx1 * dx2 < -4 || dy1 * dy2 < -4) turns++;
-  
+
 
 Checked 916 files in 899ms. No fixes applied.
 Found 18 warnings.
