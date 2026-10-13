@@ -7,7 +7,6 @@ import type {
   StudentAnswer,
 } from "@tutor/contract";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { draftStore } from "@/features/attempt/draft-store";
 import { useAttemptAnswers } from "@/features/attempt/use-attempt-answers";
 import { useAttemptEvents } from "@/features/attempt/use-attempt-events";
 import { useAttemptSaveStatus } from "@/features/attempt/use-attempt-save-status";
@@ -18,7 +17,7 @@ import {
   type SubmitEvidencePrep,
   type SubmitEvidenceProblem,
 } from "@/features/notes/submit-evidence";
-import { ApiError, submitAttemptApi, submitLessonQuestionApi } from "@/lib/api";
+import { ApiError, submitLessonQuestionApi } from "@/lib/api";
 import { useOnlineStatus } from "@/lib/use-online-status";
 
 /**
@@ -27,20 +26,20 @@ import { useOnlineStatus } from "@/lib/use-online-status";
  * 事件埋点（use-attempt-events：question_view / answer_change / 提示解锁）、
  * 笔迹上传 controller 注册表，全部复用答题页同一批 hook（参数化而非分叉）。
  *
- * 与整卷答题会话（AttemptSession/AnswerView）的差异：
- * - 逐题提交：submitQuestion 走单题接口（questionRevisionId CAS + 单题笔记
+ * 与整卷答题会话（AttemptSession/AnswerView）的差异（2026-10 教师演示口径）：
+ * - 无「完成练习」整卷收尾——讲练是老师讲解材料，收尾只发生在最后一题
+ *   「显示答案」的事务内自动收尾（服务端语义不变）；
+ * - 逐题释放：submitQuestion 走单题接口（questionRevisionId CAS + 单题笔记
  *   证据声明——prepareSubmitEvidence 对单题复用同一实现），成功后把当题结果
  *   叠加进本地 released 覆盖层（页面不再等 start 重取）；
  * - 覆盖层：released / summary / attempt 三个读侧字段以 start 数据为基线、
  *   单题提交响应覆盖；start 数据刷新（refetch）时覆盖层重置（服务端值为
- *   权威——「刷新」拿教师批改结果的收敛路径）；
- * - 完成练习：复用整卷交卷语义（submitAttemptApi：revisions 回传全集、
- *   evidence 只按未提交题声明——服务端对已提交行不重判不重做证据）；
+ *   权威——收敛路径）；
  * - 事件：单题提交的服务端直记 question_submit/attempt_start/hint_open 不经
- *   本队列（双份可容忍，见 06/07 审查报告）；整卷收尾前照常 finalizeSubmit。
+ *   本队列（双份可容忍，见 06/07 审查报告）。
  */
 
-/** 单题提交 / 完成练习的流程结果（卡片与页面据此呈现） */
+/** 释放答案（「显示答案」）的流程结果（卡片与页面据此呈现） */
 export type LessonSubmitOutcome =
   /** 已提交（含 QUESTION_ALREADY_SUBMITTED / ALREADY_SUBMITTED 的静默收敛：不弹错、refetch 收敛） */
   | { kind: "submitted" }
@@ -65,7 +64,7 @@ export interface LessonQuestionHandlers {
   ) => void;
   /** 题卡 DOM 注册（question_view 埋点 + 视口观察） */
   registerCard: (questionId: string, el: HTMLElement | null) => void;
-  /** 单题提交（确认后调用）；opts.allowMissing = 用户已确认缺稿提交 */
+  /** 显示答案（题卡「显示答案」一键直达调用）；opts.allowMissing = 用户已在缺稿弹层明确选择继续 */
   submit: (
     questionId: string,
     opts?: { allowMissing?: boolean },
@@ -121,10 +120,6 @@ export function useLessonAttempt(
   denied: boolean;
   handlers: LessonQuestionHandlers;
   draftSyncContext: ReturnType<typeof useDraftSync>;
-  /** 完成练习（整卷收尾；页面确认弹层驱动） */
-  finish: (opts?: {
-    allowMissing?: ReadonlySet<string>;
-  }) => Promise<LessonSubmitOutcome>;
 } {
   const attemptId = data.attempt.id;
   // refetch 独立取值（useQuery 的 refetch 引用稳定）：submit/finish 的回调
@@ -308,74 +303,6 @@ export function useLessonAttempt(
     [attemptId, data.questions, prepEvidence, refetch, settleDrafts],
   );
 
-  /** 完成练习（整卷收尾）：revisions 回传全集（含已单题提交行），evidence 只按未提交题 */
-  const finish = useCallback(
-    async (opts?: {
-      allowMissing?: ReadonlySet<string>;
-    }): Promise<LessonSubmitOutcome> => {
-      // 已提交题的 HandwrittenControls 已随题卡锁定卸载——注册表内只剩未提交题
-      const inkResults = await Promise.all(
-        [...inkControllers.current.values()].map((controller) =>
-          controller.flush(),
-        ),
-      );
-      if (!inkResults.every(Boolean)) {
-        return {
-          kind: "error",
-          message: "手写内容还没有上传完成，请稍后重试",
-        };
-      }
-      const settled = await settleDrafts();
-      if (settled !== null) return settled;
-      const unsubmitted = questionIds.filter(
-        (questionId) => !(questionId in released),
-      );
-      const prep = await prepEvidence(unsubmitted, opts?.allowMissing);
-      if ("kind" in prep) return prep;
-      if (prep.declarations === null) {
-        return { kind: "problems", problems: prep.problems };
-      }
-      // 交卷前收尾事件（尽力 flush；失败不阻塞，宽松口径兜底迟到事件）
-      await attemptEvents.finalizeSubmit();
-      try {
-        await submitAttemptApi(
-          attemptId,
-          data.questions.map((question) => ({
-            questionId: question.id,
-            questionRevisionId: question.questionRevisionId,
-          })),
-          prep.declarations,
-        );
-        await draftStore.clearDraft(attemptId);
-        // 收敛到完成态：start 幂等取回已完成卷（released 全量 + summary）
-        await refetch().catch(() => undefined);
-        return { kind: "submitted" };
-      } catch (err) {
-        if (isAlreadySubmittedError(err)) {
-          await refetch().catch(() => undefined);
-          return { kind: "submitted" };
-        }
-        if (isStaleError(err)) {
-          return { kind: "stale", message: "页面内容已过期，请刷新后重试" };
-        }
-        return {
-          kind: "error",
-          message: messageOf(err, "交卷失败，请稍后重试"),
-        };
-      }
-    },
-    [
-      attemptEvents,
-      attemptId,
-      data.questions,
-      refetch,
-      prepEvidence,
-      questionIds,
-      released,
-      settleDrafts,
-    ],
-  );
-
   const handlers = useMemo<LessonQuestionHandlers>(
     () => ({
       onAnswer: (questionId, answer, defer) =>
@@ -400,6 +327,5 @@ export function useLessonAttempt(
     denied,
     handlers,
     draftSyncContext: draftSync,
-    finish,
   };
 }

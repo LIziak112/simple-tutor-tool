@@ -15,7 +15,6 @@ import {
   memo,
   type ReactNode,
   type RefObject,
-  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -32,16 +31,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { AttemptEditorProvider } from "@/features/attempt/AttemptEditorContext";
-import { isAnswered } from "@/features/attempt/answer-format";
-import { SubmitConfirmDialog } from "@/features/attempt/SubmitConfirmDialog";
 import { retryAttemptLocalPersistence } from "@/features/attempt/use-attempt-save-status";
 import { DraftSyncContext } from "@/features/attempt/use-draft-sync";
-import {
-  type EvidenceConfirmContext,
-  type EvidenceConfirmOutcome,
-  evidenceProblemViewsOf,
-  useSubmitEvidenceConfirm,
-} from "@/features/attempt/use-submit-evidence-confirm";
 import {
   EnabledCapabilitiesProvider,
   toEnabledCapabilities,
@@ -52,6 +43,7 @@ import {
   useRestartLesson,
 } from "@/features/lesson/lesson-queries";
 import { useLessonAttempt } from "@/features/lesson/use-lesson-attempt";
+import { lessonHref } from "@/features/student/lesson-navigation";
 import { LectureOutline } from "@/features/markdown/LectureOutline";
 import { extractOutline } from "@/features/markdown/outline";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
@@ -67,7 +59,8 @@ import { useStudentWorkspace } from "@/features/student/student-workspace-layout
 import { useDesktopViewport } from "@/lib/use-desktop-viewport";
 
 /**
- * /s/lectures/:id/lesson 学生讲练页（2026-10 讲练一体）：
+ * /s/lectures/:id/lesson/run 学生讲练作答页（2026-10 讲练一体；10-13 教师
+ * 演示口径拆双页后本页承接 /lesson/run，入口/返回键统一指向落地页 /lesson）：
  * - 进入即幂等开卷（POST lesson/start——进行中取回同一份 draft、已完成取回
  *   最新那份，刷新安全不消耗 attemptNo）；?courseId= 课程上下文（返回键）；
  * - blocks 渲染：md 段 RichMarkdown 与题卡按讲义顺序交替（切段经
@@ -76,9 +69,9 @@ import { useDesktopViewport } from "@/lib/use-desktop-viewport";
  *   在页尾「本次练习其余题目」分组渲染（不丢失，方案决策 2）；
  * - 目录：全部 md 段拼接 extractOutline（桌面 sticky 侧栏 / 窄屏弹层，
  *   LectureOutline 复用）；
- * - 顶部：标题 + 课程/进度（n/m 已提交）+ 草稿保存状态 + 未全部提交时
- *   「完成练习」（整卷收尾语义与确认弹窗，evidence 按未提交题声明）；
- *   已完成时「再做一次」（restart）与「查看结果」（/s/attempts/:id）；
+ * - 顶部：标题 + 课程/讲练次数 + 草稿保存状态（教师演示口径：无「完成练习」
+ *   与进度计数——讲练是老师讲解材料，收尾只在最后一题「显示答案」事务内
+ *   自动发生）；已完成时「再做一次」（restart）与「查看结果」（/s/attempts/:id）；
  * - 三态齐全：加载骨架 / 错误（重试）/ 零题讲练页纯阅读提示。
  */
 
@@ -101,7 +94,8 @@ export default function StudentLessonPage() {
       <section aria-label="讲练页打开失败" className="flex flex-col gap-4">
         <HeaderBar
           title="讲练页"
-          courseId={courseId}
+          backTo={lessonHref(id, courseId)}
+          backLabel="返回讲练"
           actions={null}
           context={<span>讲练</span>}
         />
@@ -119,12 +113,7 @@ export default function StudentLessonPage() {
   }
   const data = lessonQuery.data;
   return data.attempt.status !== "draft" ? (
-    <LessonCompletedView
-      data={data}
-      courseId={courseId}
-      lectureId={id}
-      refetch={lessonQuery.refetch}
-    />
+    <LessonCompletedView data={data} courseId={courseId} lectureId={id} />
   ) : (
     <LessonAnswerView
       key={data.attempt.id}
@@ -139,12 +128,15 @@ export default function StudentLessonPage() {
 /** 顶部工具栏：返回 + 标题 + 操作区 + 上下文行（sticky） */
 function HeaderBar({
   title,
-  courseId,
+  backTo,
+  backLabel,
   actions,
   context,
 }: {
   title: string;
-  courseId: string | undefined;
+  /** 返回目标（落地页 /s/lectures/:id/lesson） */
+  backTo: string;
+  backLabel: string;
   actions: ReactNode;
   context: ReactNode;
 }) {
@@ -154,8 +146,8 @@ function HeaderBar({
       className="sticky top-0 z-20 -mx-3 flex min-h-16 flex-wrap items-center gap-x-2 gap-y-1 border-b border-border bg-background px-3 py-2 sm:-mx-6 sm:px-6"
     >
       <Link
-        to={courseId !== undefined ? `/s/courses/${courseId}` : "/s/lectures"}
-        aria-label={courseId !== undefined ? "返回课程目录" : "返回讲义列表"}
+        to={backTo}
+        aria-label={backLabel}
         className="flex size-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
       >
         <ArrowLeft aria-hidden className="size-5" />
@@ -456,58 +448,9 @@ function LessonAnswerView({
     [data.questions],
   );
   const order = useMemo(() => lessonQuestionOrder(data), [data]);
-  const questionIndexById = useMemo(
-    () =>
-      new Map(
-        [...order.byId.values()].map(
-          (slot) => [slot.question.id, slot.index + 1] as const,
-        ),
-      ),
-    [order],
-  );
 
-  /**
-   * 完成练习编排（注入共享确认状态机 use-submit-evidence-confirm）：
-   * 整卷收尾链（ink flush → 追平 → evidence 按未提交题 → finalizeSubmit →
-   * submit）在 use-lesson-attempt 单一出处（session.finish），这里只把
-   * 结果翻译成状态机口径——stale/error 都按阻止性错误提示（点确认即重试
-   * 整条链）；缺稿确认集经 ctx 注入（讲练收尾不调用 clearMissingConfirmed，
-   * 重试沿用已确认集——与整卷 AnswerView 的差异语义，原样保留）。
-   */
-  const runFinish = useCallback(
-    async (ctx: EvidenceConfirmContext): Promise<EvidenceConfirmOutcome> => {
-      const outcome = await session.finish(
-        ctx.missingConfirmed !== null
-          ? { allowMissing: ctx.missingConfirmed }
-          : undefined,
-      );
-      if (outcome.kind === "submitted") return { kind: "submitted" };
-      if (outcome.kind === "problems") {
-        return { kind: "problems", problems: outcome.problems };
-      }
-      return { kind: "error", message: outcome.message };
-    },
-    [session.finish],
-  );
-
-  const {
-    confirmOpen,
-    phase: finishPhase,
-    noteSummary,
-    open: openFinishDialog,
-    cancel: closeFinishDialog,
-    confirm: confirmFinish,
-    confirmMissing: confirmMissingFinish,
-  } = useSubmitEvidenceConfirm({
-    attemptId,
-    questionIds,
-    run: runFinish,
-  });
-
-  /** 待批题手动刷新（useCallback 稳定引用：题卡 memo 不因内联箭头失效） */
-  const handleRefresh = useCallback(() => {
-    void refetch();
-  }, [refetch]);
+  // 教师演示口径（2026-10）：不设「完成练习」与进度——讲练是老师讲解材料，
+  // 收尾只发生在最后一题「显示答案」的事务内自动收尾（服务端语义不变）。
 
   // 最后一题单题提交的事务内自动收尾：会话覆盖层先切完成视图（refetch 落地
   // 后由页面级分支接管并卸载作答会话），避免「提交完成但页面仍作答态」的窗口
@@ -522,12 +465,10 @@ function LessonAnswerView({
         }}
         courseId={courseId}
         lectureId={lectureId}
-        refetch={refetch}
       />
     );
   }
   const total = data.questions.length;
-  const submitted = Object.keys(session.released).length;
 
   const renderCard = (
     question: AttemptQuestionPublic,
@@ -542,18 +483,9 @@ function LessonAnswerView({
       answer={session.answers?.[question.id]}
       hints={session.hintsOpened[question.id] ?? EMPTY_HINTS}
       released={session.released[question.id]}
-      attemptCompleted={false}
       handlers={session.handlers}
-      onRefresh={handleRefresh}
     />
   );
-
-  const unsubmitted = questionIds.filter(
-    (questionId) => !(questionId in session.released),
-  );
-  const unansweredCount = unsubmitted.filter(
-    (questionId) => !isAnswered(session.answers?.[questionId]),
-  ).length;
 
   return (
     <AttemptEditorProvider>
@@ -562,7 +494,8 @@ function LessonAnswerView({
           <article aria-label="讲练作答" className="flex flex-col gap-4 pb-8">
             <HeaderBar
               title={data.lecture.title}
-              courseId={courseId}
+              backTo={lessonHref(lectureId, courseId)}
+              backLabel="返回讲练"
               context={
                 <>
                   <span>
@@ -571,25 +504,10 @@ function LessonAnswerView({
                       : ""}
                     讲练 · 第 {data.attempt.attemptNo} 次
                   </span>
-                  {total > 0 && (
-                    <span>
-                      已提交 {submitted}/{total} 题
-                    </span>
-                  )}
                   <span aria-live="polite">{session.saveStatus}</span>
                 </>
               }
-              actions={
-                total > 0 ? (
-                  <Button
-                    className="min-h-11"
-                    disabled={session.denied}
-                    onClick={openFinishDialog}
-                  >
-                    完成练习
-                  </Button>
-                ) : null
-              }
+              actions={null}
             />
 
             {/* 零题讲练页：纯阅读提示（开卷合法但不构成练习） */}
@@ -629,25 +547,6 @@ function LessonAnswerView({
             )}
 
             <LessonBody data={data} order={order} renderCard={renderCard} />
-
-            <SubmitConfirmDialog
-              open={confirmOpen}
-              unansweredCount={unansweredCount}
-              submitting={finishPhase.kind === "preparing"}
-              preparing={finishPhase.kind === "preparing"}
-              noteSummary={noteSummary}
-              noteProblems={evidenceProblemViewsOf(
-                finishPhase,
-                questionIndexById,
-              )}
-              choiceMode={finishPhase.kind === "choice"}
-              notePrepError={
-                finishPhase.kind === "error" ? finishPhase.message : null
-              }
-              onConfirm={() => void confirmFinish()}
-              onConfirmMissing={confirmMissingFinish}
-              onCancel={closeFinishDialog}
-            />
           </article>
         </EnabledCapabilitiesProvider>
       </DraftSyncContext.Provider>
@@ -660,12 +559,10 @@ function LessonCompletedView({
   data,
   courseId,
   lectureId,
-  refetch,
 }: {
   data: LessonStartData;
   courseId: string | undefined;
   lectureId: string;
-  refetch: () => Promise<unknown>;
 }) {
   const restart = useRestartLesson(lectureId);
   const [restartOpen, setRestartOpen] = useState(false);
@@ -682,11 +579,6 @@ function LessonCompletedView({
       : "网络异常，请稍后重试"
     : null;
 
-  /** 待批题手动刷新（useCallback 稳定引用：题卡 memo 不因内联箭头失效） */
-  const handleRefresh = useCallback(() => {
-    void refetch();
-  }, [refetch]);
-
   const renderCard = (
     question: AttemptQuestionPublic,
     index: number,
@@ -700,9 +592,7 @@ function LessonCompletedView({
       answer={data.drafts[question.id]}
       hints={EMPTY_HINTS}
       released={data.released[question.id]}
-      attemptCompleted
       handlers={undefined}
-      onRefresh={handleRefresh}
     />
   );
 
@@ -711,7 +601,8 @@ function LessonCompletedView({
       <article aria-label="讲练回看" className="flex flex-col gap-4 pb-8">
         <HeaderBar
           title={data.lecture.title}
-          courseId={courseId}
+          backTo={lessonHref(lectureId, courseId)}
+          backLabel="返回讲练"
           context={
             <>
               <span>

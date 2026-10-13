@@ -218,6 +218,8 @@ export function listPendingMarks(
 ): PendingMarkListData {
   const where = and(
     eq(students.teacherId, teacherId),
+    // 作废卷（2026-10 讲练随时重开）的行退出待批队列
+    isNull(attempts.abandonedAt),
     // 共享谓词（pending-mark.ts 同口径，D4 2026-10 扩展）：题已「交」
     // （attempt 非 draft **或该行已单题提交**——lesson 进行中卷已提交的
     // 手写/无答案题即时进队，课堂当场批改；只有 lesson 单题提交会写
