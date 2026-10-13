@@ -132,6 +132,8 @@ export function createProgrammaticAtrament(
 }
 
 export interface AtramentSurfaceOptions {
+  /** 实验页可选平滑强度；正式调用缺省沿用库默认值。 */
+  smoothing?: number;
   /** 初始高度提示（CSS 像素）。容器高度最终由外部（InkPad）控制 */
   height?: number;
   /**
@@ -154,9 +156,14 @@ export interface AtramentSurfaceOptions {
 export const INK_CANVAS_DATA_SLOT = "ink-canvas";
 export const INK_CANVAS_SELECTOR = `canvas[data-slot="${INK_CANVAS_DATA_SLOT}"]`;
 
+export interface AtramentSurface extends ToolAwareSurface {
+  /** 实验调参复用当前文档与历史，不重建输入面。 */
+  setSmoothing(value: number): void;
+}
+
 export function createAtramentSurface(
   options: AtramentSurfaceOptions = {},
-): ToolAwareSurface {
+): AtramentSurface {
   const store = new InkStore();
 
   // ---- 内部状态（mount 前不可用） ----
@@ -669,7 +676,7 @@ export function createAtramentSurface(
 
   // ---- InkSurface 实现 ----
 
-  const surface: ToolAwareSurface = {
+  const surface: AtramentSurface = {
     mount(el: HTMLElement, initial?: InkDoc): void {
       container = el;
       // 防误触与布局（§5.4.1 输入层第 4 条）。
@@ -711,6 +718,8 @@ export function createAtramentSurface(
       // 构造 atrament（配置好 2d context 画笔状态）后立刻解绑其内部指针
       // 监听：输入层完全由本文件接管（见文件头与 createProgrammaticAtrament）
       atrament = createProgrammaticAtrament(canvas);
+      if (options.smoothing !== undefined)
+        atrament.smoothing = options.smoothing;
 
       applyTouchAction();
 
@@ -737,6 +746,12 @@ export function createAtramentSurface(
 
     getDoc(): InkDoc<"atrament"> {
       return buildAtramentDoc(store);
+    },
+
+    setSmoothing(value): void {
+      finishPointer({ kind: "layoutchange" });
+      if (atrament) atrament.smoothing = value;
+      redraw();
     },
 
     load(data: InkDoc): void {

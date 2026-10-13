@@ -32,6 +32,14 @@ pnpm dev / pnpm test / pnpm e2e（真实Playwright：Chromium/WebKit，隔离临
 ## 完成一个任务的定义
 代码 + 测试 + 类型检查通过 + 相关文档（docs/dsl 或本文件）已同步更新 + 在 PR 描述中列出如何手动验证。
 
+## 手写手感实验页
+
+- `/dev/ink-feel` 为独立懒加载实验入口，开发与生产构建均可访问；`/dev/ink` 提供链接。
+- 对比当前 Atrament、低平滑 Atrament 与 perfect-freehand；实验稿仅保存在独立本机键 `ownclass:ink-feel:`，不接入正式作答 API。
+- 实验参数可重绘本组旧稿，不要求保留旧渲染规则；预测点不进入正文、历史或 PNG。正式作答默认引擎和保存方式不变。
+- perfect-freehand 1.2.2（MIT）是实验页直接依赖，随构建打包；引入理由是比较压感轮廓，替代方案为沿用既有 Atrament。
+- 真机验证：同设备比较中文转折、小字、数学符号、快速连笔、压感、手指滚动、旋转与全屏；模拟事件和帧统计不能代替 Pencil 手感。
+
 ## OwnClass 品牌与教师端 UI 约定
 - 网站名称为 OwnClass，广告词为 “Your data. Your way. All for learning.”；两者为用户定稿的英文品牌文案，其余界面文案和代码注释继续使用中文。
 - 教师导航按教学、分析、系统分组，原路径不变；资源库在导入流程保持高亮，系统管理位于账号分类，仅管理员可见。1024px 以下通过抽屉访问完整导航。
