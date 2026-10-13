@@ -81,6 +81,32 @@ afterEach(() => {
 });
 
 describe("exportAnnotationComposite（canvas 直绘）", () => {
+  it("原位标画导出按原CSS尺寸重放，像素尺寸保持底图尺寸", async () => {
+    let size: string[] = [];
+    const result = await exportAnnotationCompositeSource(
+      {
+        downloadUrl: "blob:local",
+        pixelWidth: 1440,
+        pixelHeight: 900,
+        cssWidth: 720,
+      },
+      DOC,
+      {
+        loadImage: async () => new Image(),
+        encodePng: async (canvas) => {
+          size = [
+            canvas.style.width,
+            canvas.style.height,
+            String(canvas.width),
+            String(canvas.height),
+          ];
+          return fakePngBlob();
+        },
+      },
+    );
+    expect(result.ok).toBe(true);
+    expect(size).toEqual(["720px", "450px", "1440", "900"]);
+  });
   it("本机PNG源不需要服务器baseId，尺寸匹配才导出且下载名包含作业题号", async () => {
     const loadImage = vi.fn(async () => new Image());
     const source = {

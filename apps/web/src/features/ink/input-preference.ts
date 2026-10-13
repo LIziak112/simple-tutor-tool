@@ -13,6 +13,8 @@
  * - 默认值 pen 即「不以 UA 推断是否有笔」的落点：纯触屏用户主动切换一次
  *   「手指书写」，本会话内所有草稿画布生效。
  */
+
+import { useSyncExternalStore } from "react";
 import { createExternalPrefStore } from "@/lib/create-external-pref-store";
 import type { InkInputMode } from "./engine/types.ts";
 
@@ -24,6 +26,14 @@ const store = createExternalPrefStore<InkSessionInputPreference>("pen");
 /** 当前会话偏好（缺省 "pen"） */
 export function getSessionInputPreference(): InkSessionInputPreference {
   return store.get();
+}
+
+/** 草稿与圈画共享输入偏好，切换时保留现有画布与历史。 */
+export function useSessionInputPreference(): InkSessionInputPreference {
+  return useSyncExternalStore(
+    onSessionInputPreferenceChange,
+    getSessionInputPreference,
+  );
 }
 
 /** 切换会话偏好并通知订阅者（同值幂等，不通知） */

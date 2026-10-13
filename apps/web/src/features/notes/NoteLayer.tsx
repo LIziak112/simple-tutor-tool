@@ -332,27 +332,22 @@ export function NoteLayer({
             onRedo={() => editor.engineRef.current?.redo()}
             onClearRequest={() => setClearOpen(true)}
             clearLabel="清空草稿纸"
-            moreTitle={
-              coordinator
-                ? "更多（重做/颜色/粗细/清空）"
-                : "更多（重做/颜色/粗细/清空/布局）"
-            }
-            menuExtras={
-              !coordinator &&
-              (Object.keys(LAYOUT_LABEL) as NoteLayoutPreference[]).map((p) => (
-                <DropdownMenuItem
-                  key={p}
-                  aria-checked={layoutPref === p}
-                  onSelect={() => setNoteLayoutPreference(p)}
-                >
-                  <Check
-                    aria-hidden
-                    className={layoutPref === p ? "visible" : "invisible"}
-                  />
-                  布局：{LAYOUT_LABEL[p]}
-                </DropdownMenuItem>
-              ))
-            }
+            moreTitle="更多（重做/颜色/粗细/清空/布局）"
+            menuExtras={(
+              Object.keys(LAYOUT_LABEL) as NoteLayoutPreference[]
+            ).map((p) => (
+              <DropdownMenuItem
+                key={p}
+                aria-checked={layoutPref === p}
+                onSelect={() => setNoteLayoutPreference(p)}
+              >
+                <Check
+                  aria-hidden
+                  className={layoutPref === p ? "visible" : "invisible"}
+                />
+                布局：{LAYOUT_LABEL[p]}
+              </DropdownMenuItem>
+            ))}
           />
         )}
 

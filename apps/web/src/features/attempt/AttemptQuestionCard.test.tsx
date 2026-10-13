@@ -410,7 +410,7 @@ describe("题卡草稿层（T6R.9）", () => {
     expect(screen.getByRole("button", { name: /草稿纸/ })).toBeInTheDocument();
   });
 
-  it("宽窄容器展开均固定下置，不挤窄题干", async () => {
+  it("自动布局宽容器展开为右侧，收窄后回退下方且保留子树", async () => {
     const ro = stubCardWidth();
     renderStatefulCard(
       baseQuestion({ type: "choice", options: ["$1$", "$2$"] }),
@@ -419,15 +419,18 @@ describe("题卡草稿层（T6R.9）", () => {
     await ro.push(1024); // 宽题卡：两列达标
     fireEvent.click(screen.getByRole("button", { name: /草稿纸/ }));
     const row = document.querySelector('[data-slot="note-body-row"]');
-    expect(row?.getAttribute("data-layout")).toBe("below");
-    // 草稿展开不设置题面列宽。
-    expect((row?.firstElementChild as HTMLElement)?.style.width).toBe("");
+    expect(row?.getAttribute("data-layout")).toBe("side");
+    expect(
+      Number.parseFloat((row?.firstElementChild as HTMLElement)?.style.width),
+    ).toBeCloseTo(55);
+    const paper = document.querySelector('[data-slot="note-layer"]');
 
     // 收窄到竖屏宽度：auto 回退 below（复审③：恒定树只切样式不换结构）
     await ro.push(700);
     expect(row?.getAttribute("data-layout")).toBe("below");
+    expect((row?.firstElementChild as HTMLElement)?.style.width).toBe("");
     // 草稿区仍在（below 形态，题干下方整宽）
-    expect(document.querySelector('[data-slot="note-layer"]')).not.toBeNull();
+    expect(document.querySelector('[data-slot="note-layer"]')).toBe(paper);
   });
 
   it("窄容器直接展开也走 below；草稿展开不遮挡填空输入（可继续作答）", async () => {
@@ -470,7 +473,7 @@ describe("题卡草稿层（T6R.9）", () => {
       document
         .querySelector('[data-slot="note-body-row"]')
         ?.getAttribute("data-layout"),
-    ).toBe("below");
+    ).toBe("side");
     expect(document.activeElement).toBe(input);
     expect(input).toHaveValue("");
   });

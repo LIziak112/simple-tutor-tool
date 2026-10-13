@@ -33,6 +33,7 @@ const engine = vi.hoisted(() => ({
   destroy: vi.fn(),
   finish: vi.fn(),
   setInputEnabled: vi.fn(),
+  setInputMode: vi.fn(),
   setTool: vi.fn(),
   onChange: vi.fn(() => () => undefined),
   load: vi.fn(),

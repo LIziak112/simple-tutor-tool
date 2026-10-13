@@ -97,7 +97,12 @@ export async function exportAnnotationComposite(
 
 /** 本机Blob URL与服务器URL共用几何合成，不伪造服务器baseId。 */
 export async function exportAnnotationCompositeSource(
-  source: { downloadUrl: string; pixelWidth: number; pixelHeight: number },
+  source: {
+    downloadUrl: string;
+    pixelWidth: number;
+    pixelHeight: number;
+    cssWidth?: number;
+  },
   doc: AnnotationDoc,
   deps: AnnotationCompositeDeps = {},
 ): Promise<AnnotationCompositeResult> {
@@ -146,6 +151,9 @@ export async function exportAnnotationCompositeSource(
     };
   }
   const host = document.createElement("div");
+  // 平滑与自适应笔宽依赖CSS采样距离，原位导出须复用底图保存时的书写尺寸。
+  const cssWidth = source.cssWidth ?? doc.baseWidth;
+  const cssPerBase = cssWidth / doc.baseWidth;
   host.setAttribute("data-annotation-composite-host", "");
   host.setAttribute("aria-hidden", "true");
   Object.assign(host.style, {
@@ -159,9 +167,9 @@ export async function exportAnnotationCompositeSource(
     const canvas = document.createElement("canvas");
     canvas.width = doc.baseWidth;
     canvas.height = doc.baseHeight;
-    // 参与布局（CSS 尺寸 = 位图尺寸 → atrament 的 offsetWidth 换算恒等）
-    canvas.style.width = `${doc.baseWidth}px`;
-    canvas.style.height = `${doc.baseHeight}px`;
+    // 参与布局，CSS与位图的比例同原画布；底图仍按原像素尺寸绘制。
+    canvas.style.width = `${cssWidth}px`;
+    canvas.style.height = `${doc.baseHeight * cssPerBase}px`;
     host.appendChild(canvas);
     document.body.appendChild(host);
     const ctx = canvas.getContext("2d");
@@ -177,7 +185,7 @@ export async function exportAnnotationCompositeSource(
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(image, 0, 0, doc.baseWidth, doc.baseHeight);
     for (const stroke of doc.strokes) {
-      replayAnnotationStroke(atrament, 1, stroke);
+      replayAnnotationStroke(atrament, cssPerBase, stroke);
     }
     let blob: Blob;
     try {

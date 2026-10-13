@@ -65,6 +65,7 @@ export async function exportQuestionAnnotationImage(
         downloadUrl: url,
         pixelWidth: Math.ceil(layout.cssWidth * layout.pixelRatio),
         pixelHeight: Math.ceil(layout.cssHeight * layout.pixelRatio),
+        cssWidth: layout.cssWidth,
       },
       record.doc,
     );

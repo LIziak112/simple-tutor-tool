@@ -212,3 +212,138 @@ it("迟到的准备结果被取消，不能重新打开已退出的编辑者", a
   await act(async () => resolve?.(true));
   expect(screen.getByRole("status")).toHaveTextContent("作答");
 });
+
+it("同题草稿与标画独立展开，退出标画保留草稿，切题收笔后关闭旧草稿", async () => {
+  const finishPaper = vi.fn(async () => undefined);
+  function Papers() {
+    const editor = useAttemptEditor();
+    return (
+      <>
+        <output aria-label="展开纸面">
+          {editor?.paper?.questionId ?? "收起"}
+        </output>
+        <button
+          type="button"
+          onClick={() => {
+            editor?.register("q1", finishPaper, "scratch");
+            void editor?.requestPaper({ questionId: "q1", kind: "scratch" });
+          }}
+        >
+          草稿
+        </button>
+        <button type="button" onClick={() => void editor?.requestPaper(null)}>
+          收纸
+        </button>
+      </>
+    );
+  }
+  render(
+    <AttemptEditorProvider>
+      <Controls finish={async () => {}} />
+      <Papers />
+    </AttemptEditorProvider>,
+  );
+  fireEvent.click(screen.getByText("草稿"));
+  await waitFor(() =>
+    expect(screen.getByLabelText("展开纸面")).toHaveTextContent("q1"),
+  );
+  fireEvent.click(screen.getByText("甲"));
+  await waitFor(() =>
+    expect(screen.getByRole("status", { name: "" })).toHaveTextContent("q1"),
+  );
+  expect(screen.getByLabelText("展开纸面")).toHaveTextContent("q1");
+  expect(finishPaper).toHaveBeenCalledOnce();
+  fireEvent.click(screen.getByText("退出"));
+  await waitFor(() =>
+    expect(screen.getByRole("status", { name: "" })).toHaveTextContent("作答"),
+  );
+  expect(screen.getByLabelText("展开纸面")).toHaveTextContent("q1");
+  fireEvent.click(screen.getByText("乙"));
+  await waitFor(() =>
+    expect(screen.getByLabelText("展开纸面")).toHaveTextContent("收起"),
+  );
+  expect(finishPaper).toHaveBeenCalledTimes(3);
+});
+
+it("草稿落盘失败时不能切题或收起，标画退出不隐藏纸面", async () => {
+  function Papers() {
+    const editor = useAttemptEditor();
+    return (
+      <>
+        <output aria-label="展开纸面">
+          {editor?.paper?.questionId ?? "收起"}
+        </output>
+        <button
+          type="button"
+          onClick={() => {
+            editor?.register(
+              "q1",
+              async () => {
+                throw new Error("草稿写入失败");
+              },
+              "scratch",
+            );
+            void editor?.requestPaper({ questionId: "q1", kind: "scratch" });
+          }}
+        >
+          草稿
+        </button>
+        <button type="button" onClick={() => void editor?.requestPaper(null)}>
+          收纸
+        </button>
+      </>
+    );
+  }
+  render(
+    <AttemptEditorProvider>
+      <Controls finish={async () => {}} />
+      <Papers />
+    </AttemptEditorProvider>,
+  );
+  fireEvent.click(screen.getByText("草稿"));
+  await waitFor(() =>
+    expect(screen.getByLabelText("展开纸面")).toHaveTextContent("q1"),
+  );
+  fireEvent.click(screen.getByText("乙"));
+  await waitFor(() =>
+    expect(screen.getByRole("alert")).toHaveTextContent("草稿写入失败"),
+  );
+  expect(screen.getByLabelText("展开纸面")).toHaveTextContent("q1");
+  fireEvent.click(screen.getByText("收纸"));
+  await waitFor(() =>
+    expect(screen.getByRole("alert")).toHaveTextContent("草稿写入失败"),
+  );
+  expect(screen.getByLabelText("展开纸面")).toHaveTextContent("q1");
+});
+
+it("只有纸面展开时Esc收起纸面，同题标画仍可独立收起", async () => {
+  function Paper() {
+    const editor = useAttemptEditor();
+    return (
+      <>
+        <output>{editor?.paper?.questionId ?? "收起"}</output>
+        <button
+          type="button"
+          onClick={() =>
+            void editor?.requestPaper({ questionId: "q1", kind: "scratch" })
+          }
+        >
+          草稿
+        </button>
+      </>
+    );
+  }
+  render(
+    <AttemptEditorProvider>
+      <Paper />
+    </AttemptEditorProvider>,
+  );
+  fireEvent.click(screen.getByText("草稿"));
+  await waitFor(() =>
+    expect(screen.getByRole("status")).toHaveTextContent("q1"),
+  );
+  fireEvent.keyDown(window, { key: "Escape" });
+  await waitFor(() =>
+    expect(screen.getByRole("status")).toHaveTextContent("收起"),
+  );
+});

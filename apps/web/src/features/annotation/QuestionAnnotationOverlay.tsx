@@ -19,6 +19,11 @@ import {
 import { useAttemptEditor } from "@/features/attempt/AttemptEditorContext";
 import { canvasToPngBlob } from "@/features/ink/engine/canvas-png";
 import type { InkPenColor, InkPenSize } from "@/features/ink/engine/index";
+import { SessionPrefToggleButton } from "@/features/ink/InkPad";
+import {
+  getSessionInputPreference,
+  useSessionInputPreference,
+} from "@/features/ink/input-preference";
 import { PAPER_KEEPALIVE_MS } from "@/features/ink/use-retained-paper";
 import {
   getAnnotationRecord,
@@ -53,6 +58,7 @@ export const QuestionAnnotationOverlay = forwardRef<
   }
 >(({ attemptId, question, label, children, onLegacy, hidden = false }, ref) => {
   const editor = useAttemptEditor(question.id);
+  const inputPreference = useSessionInputPreference();
   const session = useAnnotationSessionRef();
   const record = useAnnotationRecord(attemptId, question.id);
   const root = useRef<HTMLDivElement>(null);
@@ -292,6 +298,7 @@ export const QuestionAnnotationOverlay = forwardRef<
       baseWidth: Math.ceil(layout.cssWidth * layout.pixelRatio),
       baseHeight: Math.ceil(layout.cssHeight * layout.pixelRatio),
       inputEnabled: false,
+      inputMode: getSessionInputPreference(),
     });
     surface.current = current;
     current.mount(host.current, recordRef.current.doc);
@@ -313,11 +320,12 @@ export const QuestionAnnotationOverlay = forwardRef<
   }, [mountedOnce, session, attemptId, question.id, layout]);
   useEffect(() => {
     if (!mountedOnce) return;
+    surface.current?.setInputMode(inputPreference);
     surface.current?.setInputEnabled(active);
     surface.current?.setTool(
       tool === "pen" ? { type: "pen", color, size } : { type: "eraser" },
     );
-  }, [active, tool, color, size, mountedOnce]);
+  }, [active, tool, color, size, mountedOnce, inputPreference]);
   useEffect(() => {
     if (!active) return;
     const onKeyDown = (event: KeyboardEvent) => {
@@ -332,6 +340,13 @@ export const QuestionAnnotationOverlay = forwardRef<
       if (
         event.target instanceof Element &&
         event.target.closest('input, textarea, [contenteditable="true"]')
+      )
+        return;
+      if (
+        event.target instanceof Element &&
+        event.target.closest(
+          '[data-slot="note-layer"], [data-slot="handwritten-controls"]',
+        )
       )
         return;
       if (
@@ -374,10 +389,11 @@ export const QuestionAnnotationOverlay = forwardRef<
       {layout && (
         <div
           data-slot="question-annotation-overlay"
+          data-drawing={active}
           className={
             original
-              ? "relative mt-3 w-full bg-white"
-              : "pointer-events-none absolute inset-0 z-10"
+              ? `relative mt-3 w-full bg-white ${active ? "outline outline-2 outline-offset-4 outline-sky-200" : ""}`
+              : `pointer-events-none absolute inset-0 z-10 ${active ? "outline outline-2 outline-offset-4 outline-sky-200" : ""}`
           }
           hidden={!visible}
           style={
@@ -494,16 +510,6 @@ export const QuestionAnnotationOverlay = forwardRef<
             >
               <Undo2 />
             </Button>
-            <Button
-              title="重做"
-              aria-label="重做"
-              variant="ghost"
-              className="size-11 shrink-0 p-0"
-              disabled={!surface.current?.canRedo()}
-              onClick={() => surface.current?.redo()}
-            >
-              <Redo2 />
-            </Button>
             <DropdownMenu>
               <DropdownMenuTrigger
                 aria-label="更多标画操作"
@@ -513,6 +519,13 @@ export const QuestionAnnotationOverlay = forwardRef<
                 <MoreHorizontal />
               </DropdownMenuTrigger>
               <DropdownMenuContent>
+                <DropdownMenuItem
+                  disabled={!surface.current?.canRedo()}
+                  onSelect={() => surface.current?.redo()}
+                >
+                  <Redo2 aria-hidden />
+                  重做
+                </DropdownMenuItem>
                 {(["red", "blue", "black"] as const).map((value) => (
                   <DropdownMenuItem key={value} onClick={() => setColor(value)}>
                     <span
@@ -530,11 +543,15 @@ export const QuestionAnnotationOverlay = forwardRef<
                     {size === value ? "（当前）" : ""}
                   </DropdownMenuItem>
                 ))}
-                <DropdownMenuItem onClick={() => surface.current?.clear()}>
+                <DropdownMenuItem onSelect={() => surface.current?.clear()}>
                   清空标画（可撤销）
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
+            <SessionPrefToggleButton
+              iconOnly
+              className="size-11 shrink-0 p-0"
+            />
             <Button
               className="h-11 w-16 shrink-0 px-2"
               onClick={() => void editor?.request(null)}

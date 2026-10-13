@@ -158,6 +158,37 @@ function toBase(cssX: number, cssY: number): { x: number; y: number } {
   };
 }
 
+it("切为笔写模式后手指不落墨，切回手指书写无需重建画布", () => {
+  const { surface, canvas } = mountSurface();
+  surface.setInputMode("pen");
+  pointer(canvas, "pointerdown", { pointerType: "touch" });
+  pointer(canvas, "pointermove", { pointerType: "touch", clientX: 150 });
+  pointer(canvas, "pointerup", { pointerType: "touch", clientX: 150 });
+  expect(surface.getDoc().strokes).toHaveLength(0);
+  pointer(canvas, "pointerdown");
+  pointer(canvas, "pointermove", { clientX: 150 });
+  pointer(canvas, "pointerup", { clientX: 150 });
+  expect(surface.getDoc().strokes).toHaveLength(1);
+  surface.setInputMode("finger");
+  pointer(canvas, "pointerdown", { pointerType: "touch" });
+  pointer(canvas, "pointermove", { pointerType: "touch", clientX: 150 });
+  pointer(canvas, "pointerup", { pointerType: "touch", clientX: 150 });
+  expect(surface.getDoc().strokes).toHaveLength(2);
+  expect(canvas.isConnected).toBe(true);
+});
+
+it("清空时收尾在途笔，迟到的移动与抬笔不恢复已清空正文", () => {
+  const { surface, canvas } = mountSurface();
+  pointer(canvas, "pointerdown");
+  pointer(canvas, "pointermove", { clientX: 150 });
+  surface.clear();
+  pointer(canvas, "pointermove", { clientX: 180 });
+  pointer(canvas, "pointerup", { clientX: 180 });
+  expect(surface.getDoc().strokes).toHaveLength(0);
+  surface.undo();
+  expect(surface.getDoc().strokes).toHaveLength(1);
+});
+
 function writeStroke(
   h: ReturnType<typeof mountSurface>,
   points: Array<{ x: number; y: number }>,

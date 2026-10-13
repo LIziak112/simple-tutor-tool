@@ -65,6 +65,7 @@ export interface AnnotationSurface {
   getDoc(): AnnotationDoc;
   finish(): void;
   setInputEnabled(enabled: boolean): void;
+  setInputMode(mode: InkInputMode): void;
   load(doc: AnnotationDoc): void;
   undo(): void;
   redo(): void;
@@ -577,6 +578,10 @@ export function createAnnotationSurface(
       finishPointer({ kind: "layoutchange" });
     },
     setInputEnabled: bindInput,
+    setInputMode(mode): void {
+      machine = { ...machine, mode };
+      applyTouchAction();
+    },
 
     load(doc: AnnotationDoc): void {
       finishPointer({ kind: "layoutchange" });
@@ -593,6 +598,7 @@ export function createAnnotationSurface(
       redraw();
     },
     clear(): void {
+      finishPointer({ kind: "layoutchange" });
       withReason("clear", () => store.commitClear());
       redraw();
     },

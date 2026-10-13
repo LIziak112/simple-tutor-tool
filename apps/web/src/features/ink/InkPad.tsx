@@ -179,8 +179,8 @@ export function SessionPrefToggleButton({
       className={className ?? toolButtonClass}
       title={
         sessionPref === "pen"
-          ? "手指书写（无笔设备：手指直接书写；本会话内所有草稿画布生效）"
-          : "切回笔写／手指滚动（本会话内所有草稿画布生效）"
+          ? "手指书写（无笔设备：手指直接书写；本会话内草稿与标画画布生效）"
+          : "切回笔写／手指滚动（本会话内草稿与标画画布生效）"
       }
     >
       <Pointer aria-hidden />

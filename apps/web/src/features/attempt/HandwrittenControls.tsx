@@ -475,7 +475,7 @@ export function HandwrittenControls({
   }
 
   return (
-    <div className="flex flex-col gap-3">
+    <div data-slot="handwritten-controls" className="flex flex-col gap-3">
       {/* 操作行：展开/收起 + 全屏 + 上传状态提示 */}
       <div className="flex flex-wrap items-center gap-2">
         {showExpandTrigger && (

@@ -35,6 +35,7 @@ export function CompactInkToolbar({
   advanced = false,
   disabled = false,
   clearLabel = "清空",
+  menuExtras,
 }: {
   label: string;
   tool: InkToolType;
@@ -52,6 +53,7 @@ export function CompactInkToolbar({
   advanced?: boolean;
   disabled?: boolean;
   clearLabel?: string;
+  menuExtras?: ReactNode;
 }) {
   return (
     <div
@@ -107,7 +109,11 @@ export function CompactInkToolbar({
         >
           <MoreHorizontal aria-hidden />
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
+        <DropdownMenuContent
+          align="end"
+          className="max-h-[var(--radix-dropdown-menu-content-available-height)] overflow-y-auto"
+          collisionPadding={8}
+        >
           <DropdownMenuItem disabled={!canRedo} onSelect={onRedo}>
             <Redo2 aria-hidden />
             重做
@@ -157,6 +163,8 @@ export function CompactInkToolbar({
             </DropdownMenuItem>
           ))}
           <DropdownMenuSeparator />
+          {menuExtras}
+          {menuExtras && <DropdownMenuSeparator />}
           <DropdownMenuItem variant="destructive" onSelect={onClearRequest}>
             {clearLabel}
           </DropdownMenuItem>

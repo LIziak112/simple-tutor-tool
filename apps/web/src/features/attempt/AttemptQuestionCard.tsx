@@ -33,7 +33,15 @@ import {
 import { useAnnotationRecord } from "@/features/annotation/use-annotation-record";
 import { useEnabledCapabilities } from "@/features/capability/enabled-capabilities";
 import { NoteLayer } from "@/features/notes/NoteLayer";
-import { NOTE_STACK_ROW_STYLE } from "@/features/notes/note-layout";
+import {
+  effectiveNoteLayout,
+  NOTE_PAPER_COLUMN_STYLE,
+  NOTE_QUESTION_COLUMN_STYLE,
+  NOTE_SIDE_ROW_STYLE,
+  NOTE_STACK_ROW_STYLE,
+  useNoteLayoutPreference,
+  useNoteSideUsable,
+} from "@/features/notes/note-layout";
 import { useNoteRecord } from "@/features/notes/use-note-record";
 import { useAttemptEditor } from "./AttemptEditorContext";
 import {
@@ -160,6 +168,7 @@ function QuestionMeta({
               }
               aria-label={`第 ${index + 1} 题${HANDWRITTEN_TYPES.has(question.type) ? "手写作答" : "草稿纸"}${tools.paperCount > 0 || formalInkPresence ? "（已有笔迹）" : ""}${tools.paperProblem ? "，同步需处理" : ""}`}
               aria-expanded={tools.paperOpen}
+              data-paper-trigger
               onClick={tools.togglePaper}
             >
               {tools.paperProblem ? (
@@ -312,13 +321,12 @@ export function AttemptQuestionCard({
   const annotationOverlay = useRef<QuestionAnnotationOverlayHandle>(null);
   const [localNoteOpen, setLocalNoteOpen] = useState(false);
   const noteOpen = editor
-    ? editor.active?.questionId === question.id &&
-      editor.active.kind !== "annotation"
+    ? editor.paper?.questionId === question.id
     : localNoteOpen;
   const setNoteOpen = (next: boolean | ((previous: boolean) => boolean)) => {
     const open = typeof next === "function" ? next(noteOpen) : next;
     if (editor)
-      void editor.request(
+      void editor.requestPaper(
         open
           ? {
               questionId: question.id,
@@ -333,6 +341,16 @@ export function AttemptQuestionCard({
   const [annotationOpen, setAnnotationOpen] = useState(false);
   const [annotationHidden, setAnnotationHidden] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  const layoutPreference = useNoteLayoutPreference();
+  const sideUsable = useNoteSideUsable(articleRef, layoutPreference === "auto");
+  const layout =
+    noteOpen && !HANDWRITTEN_TYPES.has(question.type)
+      ? effectiveNoteLayout(layoutPreference, sideUsable)
+      : "below";
+  const allowWidePaper =
+    noteOpen &&
+    !HANDWRITTEN_TYPES.has(question.type) &&
+    layoutPreference !== "below";
   const hasEditor = editor != null;
   // 保存/上传状态不改变题面；稳定引用避免重复解绑标画输入进行版式校验。
   const inlineQuestion = useMemo<AttemptQuestionPublic | null>(
@@ -467,17 +485,18 @@ export function AttemptQuestionCard({
       ref={articleRef}
       data-question-id={question.id}
       tabIndex={-1}
-      className="mx-auto flex w-full max-w-[768px] scroll-mt-[calc(var(--attempt-header-height,64px)+12px)] flex-col gap-3 rounded-[8px] border border-border bg-card p-4 text-card-foreground outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring sm:p-5"
+      className={`mx-auto flex w-full ${allowWidePaper ? "max-w-[1120px]" : "max-w-[768px]"} scroll-mt-[calc(var(--attempt-header-height,64px)+12px)] flex-col gap-3 rounded-[8px] border border-border bg-card p-4 text-card-foreground outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring sm:p-5`}
       aria-label={`第 ${index + 1} 题`}
       onPointerDownCapture={(event) => {
         if (
           editor?.getActive()?.kind !== "annotation" ||
-          !(event.target instanceof Element)
+          !(event.target instanceof Element) ||
+          !event.currentTarget.contains(event.target)
         )
           return;
         if (
           event.target.closest(
-            '[data-annotation-trigger], [data-slot="question-annotation-overlay"], [data-slot="annotation-workspace"], [data-slot="attempt-bottom-bar"]',
+            '[data-annotation-trigger], [data-paper-trigger], [data-slot="question-annotation-overlay"], [data-slot="annotation-workspace"], [data-slot="attempt-bottom-bar"], [data-slot="note-layer"], [data-slot="handwritten-controls"]',
           )
         )
           return;
@@ -543,12 +562,22 @@ export function AttemptQuestionCard({
       />
       <div
         data-slot="note-body-row"
-        data-layout="below"
+        data-layout={layout}
         className="flex"
-        style={NOTE_STACK_ROW_STYLE}
+        style={layout === "side" ? NOTE_SIDE_ROW_STYLE : NOTE_STACK_ROW_STYLE}
       >
-        <div className="flex min-w-0 flex-col gap-4">{questionBody}</div>
-        <div className="min-w-0">{noteLayer}</div>
+        <div
+          className="flex min-w-0 flex-col gap-4"
+          style={layout === "side" ? NOTE_QUESTION_COLUMN_STYLE : undefined}
+        >
+          {questionBody}
+        </div>
+        <div
+          className="min-w-0"
+          style={layout === "side" ? NOTE_PAPER_COLUMN_STYLE : undefined}
+        >
+          {noteLayer}
+        </div>
       </div>
       {footer}
       {inlineQuestion && attemptId && (

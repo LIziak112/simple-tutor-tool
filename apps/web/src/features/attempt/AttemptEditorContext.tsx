@@ -16,7 +16,10 @@ export type AttemptEditor = {
 };
 interface EditorContextValue {
   active: AttemptEditor | null;
+  paper: AttemptEditor | null;
   getActive(): AttemptEditor | null;
+  getPaper(): AttemptEditor | null;
+  requestPaper(next: AttemptEditor | null): Promise<boolean>;
   request(
     next: AttemptEditor | null,
     prepare?: (signal: AbortSignal) => Promise<boolean>,
@@ -27,7 +30,7 @@ interface EditorContextValue {
     kind?: AttemptEditor["kind"],
   ): () => void;
 }
-interface EditorStore extends Omit<EditorContextValue, "active"> {
+interface EditorStore extends Omit<EditorContextValue, "active" | "paper"> {
   subscribe(listener: () => void): () => void;
 }
 const Context = createContext<EditorStore | null>(null);
@@ -50,17 +53,33 @@ export function useAttemptEditor(
     read,
     read,
   );
+  const readPaper = useCallback(() => {
+    const paper = store?.getPaper() ?? null;
+    return questionId === null
+      ? null
+      : questionId === undefined || paper?.questionId === questionId
+        ? paper
+        : null;
+  }, [store, questionId]);
+  const paper = useSyncExternalStore(
+    store?.subscribe ?? noSubscribe,
+    readPaper,
+    readPaper,
+  );
   return useMemo(
     () =>
       store
         ? {
             active,
+            paper,
             getActive: store.getActive,
+            getPaper: store.getPaper,
+            requestPaper: store.requestPaper,
             request: store.request,
             register: store.register,
           }
         : null,
-    [store, active],
+    [store, active, paper],
   );
 }
 
@@ -68,6 +87,8 @@ export function useAttemptEditor(
 export function AttemptEditorProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const activeRef = useRef<AttemptEditor | null>(null);
+  // 纸面展开与标画模式独立；同题两个区域可直接落笔。
+  const paperRef = useRef<AttemptEditor | null>(null);
   const listeners = useRef(new Set<() => void>());
   const publish = useCallback((next: AttemptEditor | null) => {
     activeRef.current = next;
@@ -87,6 +108,7 @@ export function AttemptEditorProvider({ children }: { children: ReactNode }) {
       preparation.current = controller;
       const previous = activeRef.current;
       if (
+        !paperRef.current &&
         previous?.questionId === next?.questionId &&
         previous?.kind === next?.kind
       )
@@ -95,6 +117,11 @@ export function AttemptEditorProvider({ children }: { children: ReactNode }) {
         if (previous)
           await controllers.current.get(
             `${previous.kind}:${previous.questionId}`,
+          )?.();
+        const paper = paperRef.current;
+        if (paper)
+          await controllers.current.get(
+            `${paper.kind}:${paper.questionId}`,
           )?.();
         if (generation !== sequence.current) return false;
         if (prepare) {
@@ -105,7 +132,41 @@ export function AttemptEditorProvider({ children }: { children: ReactNode }) {
           )
             return false;
         }
+        if (next && paper?.questionId !== next.questionId)
+          paperRef.current = null;
         publish(next);
+        setError(null);
+        return true;
+      } catch (cause) {
+        if (generation === sequence.current)
+          setError(
+            cause instanceof Error ? cause.message : "本机稿未保存，请重试",
+          );
+        return false;
+      }
+    },
+    [publish],
+  );
+  const requestPaper = useCallback(
+    async (next: AttemptEditor | null) => {
+      const generation = ++sequence.current;
+      preparation.current?.abort();
+      const previous = paperRef.current;
+      const active = activeRef.current;
+      try {
+        if (previous)
+          await controllers.current.get(
+            `${previous.kind}:${previous.questionId}`,
+          )?.();
+        const closeActive =
+          active && next && active.questionId !== next.questionId;
+        if (closeActive)
+          await controllers.current.get(
+            `${active.kind}:${active.questionId}`,
+          )?.();
+        if (generation !== sequence.current) return false;
+        paperRef.current = next;
+        publish(closeActive ? null : active);
         setError(null);
         return true;
       } catch (cause) {
@@ -140,12 +201,13 @@ export function AttemptEditorProvider({ children }: { children: ReactNode }) {
         event.key !== "Escape" ||
         event.isComposing ||
         event.keyCode === 229 ||
-        !activeRef.current
+        (!activeRef.current && !paperRef.current)
       )
         return;
       if (document.querySelector('[role="dialog"][data-state="open"]')) return;
       event.preventDefault();
-      void request(null);
+      if (activeRef.current) void request(null);
+      else void requestPaper(null);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => {
@@ -153,10 +215,11 @@ export function AttemptEditorProvider({ children }: { children: ReactNode }) {
       preparation.current?.abort();
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [request]);
+  }, [request, requestPaper]);
   const value = useMemo(
     () => ({
       getActive: () => activeRef.current,
+      getPaper: () => paperRef.current,
       subscribe: (listener: () => void) => {
         listeners.current.add(listener);
         return () => {
@@ -164,9 +227,10 @@ export function AttemptEditorProvider({ children }: { children: ReactNode }) {
         };
       },
       request,
+      requestPaper,
       register,
     }),
-    [request, register],
+    [request, requestPaper, register],
   );
   return (
     <Context.Provider value={value}>

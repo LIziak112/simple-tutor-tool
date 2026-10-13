@@ -23,6 +23,10 @@ import {
 import { useAttemptEditor } from "@/features/attempt/AttemptEditorContext";
 import type { InkPenColor, InkPenSize } from "@/features/ink/engine/index.ts";
 import type { InkChangeReason } from "@/features/ink/engine/surface";
+import {
+  getSessionInputPreference,
+  useSessionInputPreference,
+} from "@/features/ink/input-preference";
 import { NoteToolbar } from "@/features/notes/NoteToolbar";
 import {
   getAnnotationRecord,
@@ -60,6 +64,7 @@ export function AnnotationWorkspace({
   ariaPrefix = "本题",
 }: AnnotationWorkspaceProps) {
   const session = useAnnotationSessionRef();
+  const inputPreference = useSessionInputPreference();
   const record = useAnnotationRecord(attemptId, questionId, phase);
   const label = `${ariaPrefix}题干标注`;
 
@@ -110,7 +115,11 @@ export function AnnotationWorkspace({
     if (host === null || session === null || !docReady) return;
     const initialDoc = recordRef.current?.doc;
     if (initialDoc == null) return;
-    const surface = createAnnotationSurface({ baseWidth, baseHeight });
+    const surface = createAnnotationSurface({
+      baseWidth,
+      baseHeight,
+      inputMode: getSessionInputPreference(),
+    });
     surfaceRef.current = surface;
     surface.mount(host, initialDoc);
     loadedDocVersion.current = recordRef.current?.docVersion ?? null;
@@ -132,12 +141,14 @@ export function AnnotationWorkspace({
 
   // 工具变化 → setTool（不重建引擎）
   useEffect(() => {
+    if (!docReady) return;
+    surfaceRef.current?.setInputMode(inputPreference);
     surfaceRef.current?.setTool(
       tool === "pen"
         ? { type: "pen", color: penColor, size: penSize }
         : { type: "eraser" },
     );
-  }, [tool, penColor, penSize]);
+  }, [tool, penColor, penSize, inputPreference, docReady]);
 
   // 外部换稿守卫（自写自载）：docVersion 推进而非本引擎产物 → load 重放
   useEffect(() => {
@@ -179,7 +190,7 @@ export function AnnotationWorkspace({
       {/* 底图 + 笔迹画布：同一盒（img 定尺寸，画布铺满其上——同 scale 变换） */}
       <div
         data-slot="annotation-base-wrap"
-        className="relative w-full overflow-hidden rounded-lg border border-border bg-white"
+        className="relative w-full overflow-hidden rounded-lg border border-sky-200 bg-white outline outline-1 outline-sky-200"
       >
         <img
           src={base.downloadUrl}

@@ -99,6 +99,7 @@ export function NoteToolbar({
         onRedo={onRedo}
         onClearRequest={onClearRequest}
         clearLabel={clearLabel}
+        menuExtras={menuExtras}
         fingerToggle={
           <SessionPrefToggleButton iconOnly className="size-11 shrink-0 p-0" />
         }
