@@ -3,6 +3,7 @@ import type { ApiErr, SubmitEvidenceDeclaration } from "@tutor/contract";
 import {
   apiErrSchema,
   attemptResultOkSchema,
+  lessonLandingOkSchema,
   lessonQuestionSubmitOkSchema,
   lessonStartOkSchema,
   studentLectureDetailOkSchema,
@@ -739,18 +740,23 @@ describe("泄露矩阵：released 只含已提交题（AGENTS.md 规则 3 核心
   });
 });
 
-describe("POST /api/student/lectures/:id/lesson/restart（再做一次，显式独立动作）", () => {
-  it("无作答 409；进行中 409 ALREADY_SUBMITTED", async () => {
+describe("POST /api/student/lectures/:id/lesson/restart（再做一次/重新开始，显式独立动作）", () => {
+  it("无作答 409；随时重开——进行中 draft restart 也 201（旧卷作废，2026-10 教师演示口径；详测见 landing describe）", async () => {
     const env = await makeEnv();
 
     const none = await restartOrStartError(await restartLesson(env));
     expect(none.status).toBe(409);
     expect(none.error).toBe("ALREADY_SUBMITTED");
 
+    // 进行中重开：不再 409——旧卷作废、新卷 attemptNo+1
     await startOk(env);
-    const inProgress = await restartOrStartError(await restartLesson(env));
-    expect(inProgress.status).toBe(409);
-    expect(inProgress.error).toBe("ALREADY_SUBMITTED");
+    const inProgress = await restartLesson(env);
+    expect(inProgress.status).toBe(201);
+    const body = (await inProgress.json()) as StartBody;
+    expect(body.data.attempt).toMatchObject({
+      attemptNo: 2,
+      status: "draft",
+    });
   });
 
   it("已完成：201 新卷 attemptNo+1、从空白开始；start 幂等取回新 draft；两卷各记一条 attempt_start", async () => {
@@ -2392,3 +2398,188 @@ function inkGz(strokeCount: number): Uint8Array {
   };
   return new Uint8Array(gzipSync(Buffer.from(JSON.stringify(doc), "utf-8")));
 }
+
+describe("GET /lectures/:id/lesson/landing + 随时重开（2026-10 教师演示口径）", () => {
+  /** GET 讲练落地页（query 可带 courseId） */
+  async function landingOf(
+    env: TestEnv,
+    cookie: string = env.memberCookie,
+    courseId?: string,
+  ): Promise<Response> {
+    const query = courseId === undefined ? "" : `?courseId=${courseId}`;
+    return env.app.request(
+      `/api/student/lectures/${env.lectureId}/lesson/landing${query}`,
+      { headers: { cookie } },
+    );
+  }
+
+  it("落地形态：标题/题数/题型分布/空历次/summary null；全响应无题目内容与答案、详解、提示（泄露三层断言）", async () => {
+    const env = await makeEnv();
+    const res = await landingOf(env);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as unknown;
+    expect(lessonLandingOkSchema.safeParse(body).success).toBe(true);
+    const data = (
+      body as {
+        data: {
+          title: string;
+          questionCount: number;
+          typeDistribution: Record<string, number>;
+          attempts: unknown[];
+          summary: unknown;
+        };
+      }
+    ).data;
+    expect(data.title).toBe("第1讲 有理数");
+    expect(data.questionCount).toBe(2);
+    expect(data.typeDistribution).toEqual({ choice: 1, judge: 1 });
+    expect(data.attempts).toEqual([]);
+    expect(data.summary).toBeNull();
+    // 泄露：计数与元信息之外零内容（键名级 + 题块原文级）
+    assertNoLeak(body);
+    assertNoQuestionBlockText(body);
+  });
+
+  it("开卷后：历次 1 条（draft、attemptNo=1）+ summary（hasDraft）；完成后带得分与交卷时间", async () => {
+    const env = await makeEnv();
+    await startOk(env);
+    const landing = await (
+      (await landingOf(env)) as Response & { json(): Promise<unknown> }
+    ).json();
+    const data = (
+      landing as {
+        data: {
+          attempts: {
+            attemptId: string;
+            attemptNo: number;
+            status: string;
+            score: number | null;
+            submittedAt: string | null;
+          }[];
+          summary: {
+            count: number;
+            submittedCount: number;
+            hasDraft: boolean;
+          } | null;
+        };
+      }
+    ).data;
+    expect(data.attempts).toHaveLength(1);
+    expect(data.attempts[0]).toMatchObject({
+      attemptNo: 1,
+      status: "draft",
+      score: null,
+      submittedAt: null,
+    });
+    expect(data.summary).toMatchObject({
+      count: 1,
+      submittedCount: 0,
+      hasDraft: true,
+    });
+  });
+
+  it("随时重开（核心语义）：进行中卷 restart → 201 新卷 attemptNo+1 从空白开始；旧卷作废——landing/我的记录不再列出、start 幂等取回新卷、旧卷详情与存答 409 ATTEMPT_ABANDONED、教师待批队列清空", async () => {
+    const { env, attemptId, revisions } = await makeSubmitEnv();
+    // 进行中卷上提交一道 fill（已释放答案 + 待批行）——最典型的半成品演示卷
+    await saveDraftAnswer(env, attemptId, S.fill, {
+      kind: "fill",
+      values: ["2"],
+    });
+    await submitQuestionOk(env, attemptId, S.fill, revisions.get(S.fill) ?? "");
+
+    // 重开前：教师待批队列含该生；学生记录含该 draft
+    const pendingBefore = await env.app.request("/api/teacher/pending-marks", {
+      headers: { cookie: env.teacherCookie },
+    });
+    expect(JSON.stringify(await pendingBefore.json())).toContain("成员张三");
+    const recordsBefore = await env.app.request("/api/student/records", {
+      headers: { cookie: env.memberCookie },
+    });
+    expect(JSON.stringify(await recordsBefore.json())).toContain(attemptId);
+
+    // 重开（进行中）：新卷 attemptNo+1、从空白开始
+    const res = await restartLesson(env);
+    expect(res.status).toBe(201);
+    const restarted = (await res.json()) as {
+      data: {
+        attempt: { id: string; attemptNo: number; status: string };
+        released: Record<string, unknown>;
+        drafts: Record<string, unknown>;
+      };
+    };
+    const newAttemptId = restarted.data.attempt.id;
+    expect(newAttemptId).not.toBe(attemptId);
+    expect(restarted.data.attempt).toMatchObject({
+      attemptNo: 2,
+      status: "draft",
+    });
+    expect(restarted.data.released).toEqual({});
+    expect(restarted.data.drafts).toEqual({});
+
+    // landing：只剩新卷（作废卷不入历次）
+    const landingRes = await landingOf(env);
+    const landing = (await landingRes.json()) as {
+      data: {
+        attempts: { attemptId: string; attemptNo: number }[];
+        summary: { count: number; hasDraft: boolean } | null;
+      };
+    };
+    expect(landing.data.attempts.map((row) => row.attemptId)).toEqual([
+      newAttemptId,
+    ]);
+    expect(landing.data.summary).toMatchObject({ count: 1, hasDraft: true });
+
+    // start 幂等取回新卷（旧卷已作废不再返回）
+    const startAgain = await startOk(env);
+    expect(startAgain.data.attempt.id).toBe(newAttemptId);
+
+    // 旧卷：详情与存答都以 ATTEMPT_ABANDONED 拒绝
+    const detail = await env.app.request(
+      `/api/student/attempts/${attemptId}`,
+      { headers: { cookie: env.memberCookie } },
+    );
+    expect(detail.status).toBe(409);
+    expect(((await detail.json()) as ApiErr).error).toBe("ATTEMPT_ABANDONED");
+    const save = await env.app.request(
+      `/api/student/attempts/${attemptId}/answers/${encodeURIComponent(S.fill)}`,
+      {
+        method: "PUT",
+        headers: {
+          "content-type": "application/json",
+          cookie: env.memberCookie,
+        },
+        body: JSON.stringify({ answer: { kind: "fill", values: ["3"] } }),
+      },
+    );
+    expect(save.status).toBe(409);
+    expect(((await save.json()) as ApiErr).error).toBe("ATTEMPT_ABANDONED");
+
+    // 学生记录不再含作废卷；教师待批队列清空
+    const recordsAfter = await env.app.request("/api/student/records", {
+      headers: { cookie: env.memberCookie },
+    });
+    expect(JSON.stringify(await recordsAfter.json())).not.toContain(attemptId);
+    const pendingAfter = await env.app.request("/api/teacher/pending-marks", {
+      headers: { cookie: env.teacherCookie },
+    });
+    expect(
+      JSON.stringify(await pendingAfter.json()),
+    ).not.toContain("成员张三");
+  });
+
+  it("访问控制：非成员无上下文 404、非成员带 courseId 403、纯讲义 404、未登录 401（与 start 同口径）", async () => {
+    const env = await makeEnv();
+    const noContext = await landingOf(env, env.outsiderCookie);
+    expect(noContext.status).toBe(404);
+    const withCourse = await landingOf(env, env.outsiderCookie, env.courseId);
+    expect(withCourse.status).toBe(403);
+
+    const plain = await makeEnv({ markdown: LECTURE_ONLY_MD });
+    expect((await landingOf(plain)).status).toBe(404);
+
+    const anonymous = await env.app.request(
+      `/api/student/lectures/${env.lectureId}/lesson/landing`,
+    );
+    expect(anonymous.status).toBe(401);
+  });
+});

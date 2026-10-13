@@ -79,6 +79,7 @@ import {
 import { openHint } from "../services/hint-service";
 import { getInkDoc, getStudentInkPng, saveInk } from "../services/ink-service";
 import {
+  getLessonLanding,
   restartLessonAttempt,
   startLessonAttempt,
 } from "../services/lesson-service";
@@ -1009,9 +1010,34 @@ export function createStudentRoutes(
           ),
         });
       })
-      // 2026-10 讲练一体：讲练重做（「再做一次」显式独立动作）——仅最新 attempt
-      // 已离开 draft 可用（进行中/无作答 409 ALREADY_SUBMITTED），新卷
-      // attemptNo+1 从空白开始；无参数（课程上下文取第一个可见课程）
+      // 2026-10 教师演示口径：讲练落地页（开始练习/继续作答/重开三态入口 +
+      // 历次记录的数据源）。只含计数与作答元信息，不含任何题目内容与答案/
+      // 详解/提示（泄露三层断言见 routes/student-lesson.test.ts）；?courseId
+      // 三分谓词与 start 同口径（D22）
+      .get("/lectures/:id/lesson/landing", (c) => {
+        const parsed = studentLectureDetailQuerySchema.safeParse({
+          courseId: c.req.query("courseId") ?? undefined,
+        });
+        if (!parsed.success) {
+          throw new HttpError(
+            400,
+            "VALIDATION_ERROR",
+            "查询参数不合法：courseId 必须是 UUID 格式",
+          );
+        }
+        return c.json({
+          ok: true,
+          data: getLessonLanding(
+            db,
+            c.var.student.id,
+            c.req.param("id"),
+            parsed.data.courseId,
+          ),
+        });
+      })
+      // 2026-10 讲练一体：讲练重做（「再做一次/重新开始」显式独立动作）——
+      // 随时可用（进行中卷先作废再开新卷，教师演示口径）；新卷 attemptNo+1
+      // 从空白开始；无参数（课程上下文取第一个可见课程）
       .post("/lectures/:id/lesson/restart", (c) => {
         return c.json(
           {

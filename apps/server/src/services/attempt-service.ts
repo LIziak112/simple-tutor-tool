@@ -473,6 +473,15 @@ export function requireUsableAttempt(
   attemptId: string,
 ): Attempt {
   const attempt = requireOwnAttempt(db, studentId, attemptId);
+  // 作废卷（2026-10 讲练随时重开）：其上一切读写（详情/存草稿/单题提交/提示
+  // 解锁——本函数是这些路径共用的取卷入口）都拒绝，前端提示重新进入
+  if (attempt.abandonedAt !== null) {
+    throw new HttpError(
+      409,
+      "ATTEMPT_ABANDONED",
+      "这份作答已作废（讲练已重新开始），请回到讲练页继续最新一次",
+    );
+  }
   if (attempt.sourceType === "course" && attempt.status === "draft") {
     requireVisibleCourseUnit(
       db,
@@ -1240,6 +1249,9 @@ export function newDraftAttempt(config: {
     scoreFinal: null,
     frozenAt: config.startedAt,
     legacyUnverified: false,
+    // 作废时刻（2026-10 讲练随时重开）：建卷恒 null，讲练重开时才由
+    // restartLessonAttempt 写入
+    abandonedAt: null,
   };
 }
 

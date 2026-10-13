@@ -9,7 +9,7 @@ import type {
   TeacherAttemptSource,
 } from "@tutor/contract";
 import { studentStemMd } from "@tutor/md-dsl";
-import { and, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import type { Db } from "../db/client";
 import {
   type Attempt,
@@ -269,7 +269,12 @@ export function listTeacherAttempts(
     query.to !== undefined ? sql`${lastActivitySql} <= ${query.to}` : undefined,
   ].filter((item): item is NonNullable<typeof item> => item !== undefined);
 
-  const where = and(eq(students.teacherId, teacherId), ...filters);
+  const where = and(
+    eq(students.teacherId, teacherId),
+    // 作废卷（2026-10 讲练随时重开）不进教师作答列表（行保留审计）
+    isNull(attempts.abandonedAt),
+    ...filters,
+  );
   const totalRow = db
     .select({ n: sql<number>`count(*)` })
     .from(attempts)

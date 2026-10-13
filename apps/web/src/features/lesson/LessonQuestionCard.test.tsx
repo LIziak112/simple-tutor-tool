@@ -19,10 +19,11 @@ import type {
 
 /**
  * 讲练页题卡（2026-10 讲练一体）组件测试：
- * - 作答态：题干投影（QuestionSurface）+ 按题型作答 + 提示面板 + 「提交本题」
- *   （提交前确认弹层；未作答警示；problems → 缺稿明确选择；stale/error 文案）；
- * - 结果态：对错徽章（null=待老师批改 + 刷新）+ 参考答案 + 详解折叠 +
- *   已解锁提示回显 + 本题历史链接 +（attempt 收尾后）完整结果页链接；
+ * - 作答态：题干投影（QuestionSurface）+ 按题型作答 + 提示面板 + 「显示答案」
+ *   （一键直达：教师演示场景，未作答不警示、不弹确认层；仅缺稿 problems /
+ *   stale / error 时弹兜底层：缺稿明确选择、出错文案与重试）；
+ * - 结果态（教师演示简化形态）：对错徽章（null=无自动判定不显示）+ 参考答案
+ *   + 解析直接展示；不渲染本题历史/结果页链接/批改块/提示回显/待批刷新；
  * - 只读防御态：无 handlers 且无 released。
  */
 
@@ -99,9 +100,7 @@ function renderCard(props?: {
   answer?: StudentAnswer;
   hints?: readonly HintOpenedEntry[];
   released?: AttemptResultQuestion;
-  attemptCompleted?: boolean;
   handlers?: LessonQuestionHandlers | null;
-  onRefresh?: () => void;
   index?: number;
 }) {
   return render(
@@ -114,13 +113,11 @@ function renderCard(props?: {
           answer={props?.answer}
           hints={props?.hints ?? []}
           released={props?.released}
-          attemptCompleted={props?.attemptCompleted ?? false}
           handlers={
             props?.handlers === null
               ? undefined
               : (props?.handlers ?? baseHandlers())
           }
-          onRefresh={props?.onRefresh ?? vi.fn()}
         />
       </MemoryRouter>
     </TestProviders>,
@@ -158,9 +155,7 @@ function FlowHarness({
           answer={undefined}
           hints={[]}
           released={releasedState}
-          attemptCompleted={false}
           handlers={handlers}
-          onRefresh={vi.fn()}
         />
       </MemoryRouter>
     </TestProviders>
@@ -198,7 +193,7 @@ describe("LessonQuestionCard：作答态", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("提交本题：先确认（未作答警示），确认后调 submit 并转结果态", async () => {
+  it("显示答案：一键直达调 submit（无确认弹层、未作答不警示），成功后转结果态", async () => {
     const submit = vi.fn(
       async (
         _questionId: string,
@@ -206,51 +201,60 @@ describe("LessonQuestionCard：作答态", () => {
       ): Promise<LessonSubmitOutcome> => ({ kind: "submitted" }),
     );
     render(<FlowHarness submit={submit} />);
-    fireEvent.click(screen.getByRole("button", { name: "提交本题" }));
-    expect(
-      await screen.findByRole("dialog", { name: "提交本题吗？" }),
-    ).toBeInTheDocument();
-    // 未作答警示（choice 未选）
-    expect(screen.getByText(/还没有作答/)).toBeInTheDocument();
-    expect(submit).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole("button", { name: "确认提交" }));
+    fireEvent.click(screen.getByRole("button", { name: "显示答案" }));
+    // 教师演示场景：未选答案也直接显示，不弹确认层
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     await waitFor(() => expect(submit).toHaveBeenCalledTimes(1));
     expect(submit.mock.calls[0]?.[0]).toBe("lesson-q1");
-    // 提交成功 → 卡片转结果态（对错徽章出现、弹层关闭）
+    expect(submit.mock.calls[0]?.[1]).toBeUndefined();
+    // 成功 → 卡片转结果态（对错徽章出现）
     expect(await screen.findByText("答对")).toBeInTheDocument();
-    await waitFor(() =>
-      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
-    );
     expect(
-      screen.queryByRole("button", { name: "提交本题" }),
+      screen.queryByRole("button", { name: "显示答案" }),
     ).not.toBeInTheDocument();
   });
 
-  it("已作答时确认弹层提示提交后不可修改", async () => {
-    renderCard({
-      answer: { kind: "choice", index: 0 },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "提交本题" }));
-    expect(
-      await screen.findByRole("dialog", { name: "提交本题吗？" }),
-    ).toBeInTheDocument();
-    expect(screen.getByText(/提交后.*不能再修改/)).toBeInTheDocument();
-    expect(screen.queryByText(/还没有作答/)).not.toBeInTheDocument();
-  });
-
-  it("取消确认：不调 submit，回到作答", async () => {
+  it("已选答案后点击显示答案：同样直达，不弹确认层", async () => {
     const submit = vi.fn(
       async (): Promise<LessonSubmitOutcome> => ({ kind: "submitted" }),
     );
+    renderCard({
+      answer: { kind: "choice", index: 0 },
+      handlers: baseHandlers({ submit }),
+    });
+    fireEvent.click(screen.getByRole("button", { name: "显示答案" }));
+    await waitFor(() => expect(submit).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("缺稿弹层选「返回作答」：不带 allowMissing 重试，回到作答态", async () => {
+    const submit = vi.fn(
+      async (
+        _questionId: string,
+        opts?: { allowMissing?: boolean },
+      ): Promise<LessonSubmitOutcome> =>
+        opts?.allowMissing
+          ? { kind: "submitted" }
+          : {
+              kind: "problems",
+              problems: [
+                {
+                  questionId: "lesson-q1",
+                  reason: "草稿尚未保存完整（网络不稳定，正在重试）",
+                },
+              ],
+            },
+    );
     render(<FlowHarness submit={submit} />);
-    fireEvent.click(screen.getByRole("button", { name: "提交本题" }));
-    fireEvent.click(await screen.findByRole("button", { name: "继续作答" }));
+    fireEvent.click(screen.getByRole("button", { name: "显示答案" }));
+    fireEvent.click(await screen.findByRole("button", { name: "返回作答" }));
     await waitFor(() =>
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
     );
-    expect(submit).not.toHaveBeenCalled();
+    // 只有初次直达那次调用，未带 allowMissing 重交
+    expect(submit).toHaveBeenCalledTimes(1);
     expect(
-      screen.getByRole("button", { name: "提交本题" }),
+      screen.getByRole("button", { name: "显示答案" }),
     ).toBeInTheDocument();
   });
 
@@ -273,17 +277,16 @@ describe("LessonQuestionCard：作答态", () => {
             },
     );
     render(<FlowHarness submit={submit} />);
-    fireEvent.click(screen.getByRole("button", { name: "提交本题" }));
-    fireEvent.click(await screen.findByRole("button", { name: "确认提交" }));
-    // 明确选择分支：问题清单 + 缺稿提交按钮
+    fireEvent.click(screen.getByRole("button", { name: "显示答案" }));
+    // 直接弹缺稿明确选择（无确认层前置）
     expect(
       await screen.findByText("这道题的草稿未保存完整："),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /提交答案，草稿未保存完整/ }),
+      screen.getByRole("button", { name: /显示答案，草稿未保存完整/ }),
     ).toBeInTheDocument();
     fireEvent.click(
-      screen.getByRole("button", { name: /提交答案，草稿未保存完整/ }),
+      screen.getByRole("button", { name: /显示答案，草稿未保存完整/ }),
     );
     await waitFor(() =>
       expect(submit).toHaveBeenLastCalledWith("lesson-q1", {
@@ -293,7 +296,7 @@ describe("LessonQuestionCard：作答态", () => {
     expect(await screen.findByText("答对")).toBeInTheDocument();
   });
 
-  it("stale（题目版本过期）：提示刷新，不转结果态", async () => {
+  it("stale（题目版本过期）：弹层提示刷新，不转结果态", async () => {
     const submit = vi.fn(
       async (): Promise<LessonSubmitOutcome> => ({
         kind: "stale",
@@ -301,49 +304,50 @@ describe("LessonQuestionCard：作答态", () => {
       }),
     );
     render(<FlowHarness submit={submit} />);
-    fireEvent.click(screen.getByRole("button", { name: "提交本题" }));
-    fireEvent.click(await screen.findByRole("button", { name: "确认提交" }));
+    fireEvent.click(screen.getByRole("button", { name: "显示答案" }));
     expect(
       await screen.findByText("页面内容已过期，请刷新后重试"),
     ).toBeInTheDocument();
     // 仍在作答态（弹层开启期间对弹层外元素避免 accessible-name 查询——
     // jsdom 对 react-remove-scroll 注入样式做 getComputedStyle 会崩，用文本查询）
-    expect(screen.getByText("提交本题")).toBeInTheDocument();
+    expect(screen.getByText("显示答案")).toBeInTheDocument();
   });
 
-  it("error（保存失败等）：弹层显示错误信息，可重试提交", async () => {
+  it("error（保存失败等）：弹层显示错误信息，关闭后可再点重试", async () => {
     let calls = 0;
     const submit = vi.fn(async (): Promise<LessonSubmitOutcome> => {
       calls += 1;
       return calls === 1
-        ? { kind: "error", message: "答案尚未保存，请检查网络后重试交卷" }
+        ? { kind: "error", message: "答案尚未保存，请检查网络后重试" }
         : { kind: "submitted" };
     });
     render(<FlowHarness submit={submit} />);
-    fireEvent.click(screen.getByRole("button", { name: "提交本题" }));
-    fireEvent.click(await screen.findByRole("button", { name: "确认提交" }));
+    fireEvent.click(screen.getByRole("button", { name: "显示答案" }));
     expect(
-      await screen.findByText("答案尚未保存，请检查网络后重试交卷"),
+      await screen.findByText("答案尚未保存，请检查网络后重试"),
     ).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "确认提交" }));
+    fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "显示答案" }));
     expect(await screen.findByText("答对")).toBeInTheDocument();
   });
 });
 
 describe("LessonQuestionCard：结果态", () => {
-  it("对错徽章 + 参考答案 + 详解折叠 + 本题历史链接", async () => {
+  it("对错徽章 + 参考答案 + 解析直接展示；不渲染折叠按钮与本题历史", () => {
     renderCard({ released: RELEASED_Q1 });
     expect(screen.getByText("答对")).toBeInTheDocument();
     expect(screen.getByText("参考答案：")).toBeInTheDocument();
+    // 解析直接展示（不折叠、无需点击；前缀锚定详解段——题干也含「正数是」字样）
+    expect(screen.getByText(/^正数是/)).toBeInTheDocument();
     expect(
-      screen.getByRole("link", { name: "第 1 题本题历史" }),
-    ).toBeInTheDocument();
-    // 详解默认折叠，展开后可见（前缀锚定详解段——题干也含「正数是」字样）
-    expect(screen.queryByText("正数是 $+7$。")).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "查看详解" }));
-    await waitFor(() =>
-      expect(screen.getByText(/^正数是/)).toBeInTheDocument(),
-    );
+      screen.queryByRole("button", { name: "查看详解" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: /本题历史/ }),
+    ).not.toBeInTheDocument();
   });
 
   it("选项标记正确项与本人选择", () => {
@@ -351,58 +355,24 @@ describe("LessonQuestionCard：结果态", () => {
     expect(screen.getByText("正确项 · 你的选择")).toBeInTheDocument();
   });
 
-  it("已解锁提示回显（released.hintsOpened）", () => {
-    renderCard({
-      released: {
-        ...RELEASED_Q1,
-        hintsOpened: [{ index: 0, text: "正数大于 0。" }],
-      },
-    });
-    expect(screen.getByText("做题时看过的提示（1 条）")).toBeInTheDocument();
-    expect(screen.getByText("正数大于 0。")).toBeInTheDocument();
-  });
-
-  it("教师批改块（teacherMark/teacherComment）", () => {
-    renderCard({
-      released: {
-        ...RELEASED_Q1,
-        autoCorrect: null,
-        finalCorrect: false,
-        teacherMark: "wrong",
-        teacherComment: "注意正数的定义。",
-      },
-    });
-    expect(screen.getByText("答错")).toBeInTheDocument();
-    expect(screen.getByText(/注意正数的定义/)).toBeInTheDocument();
-  });
-
-  it("待批（finalCorrect=null）：显示「待老师批改」+ 刷新按钮调 onRefresh", () => {
-    const onRefresh = vi.fn();
+  it("无自动判定（finalCorrect=null，如填空/手写）：不渲染判定徽章与刷新，仍展示参考答案与解析", () => {
     renderCard({
       released: {
         ...RELEASED_Q1,
         answers: null,
         autoCorrect: null,
         finalCorrect: null,
+        solutionMd: "参考答案见比对区。",
       },
-      onRefresh,
     });
-    expect(screen.getByText("待老师批改")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "刷新" }));
-    expect(onRefresh).toHaveBeenCalled();
-  });
-
-  it("attempt 已收尾：附「查看完整结果页」链接指向 /s/attempts/:id", () => {
-    renderCard({ released: RELEASED_Q1, attemptCompleted: true });
-    const link = screen.getByRole("link", { name: "查看完整结果页" });
-    expect(link).toHaveAttribute("href", `/s/attempts/${ATTEMPT_ID}`);
-  });
-
-  it("未收尾：不渲染完整结果页链接", () => {
-    renderCard({ released: RELEASED_Q1, attemptCompleted: false });
+    expect(screen.queryByText("答对")).not.toBeInTheDocument();
+    expect(screen.queryByText("答错")).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("link", { name: "查看完整结果页" }),
+      screen.queryByRole("button", { name: "刷新" }),
     ).not.toBeInTheDocument();
+    expect(screen.getByText("参考答案：")).toBeInTheDocument();
+    expect(screen.getByText("解析")).toBeInTheDocument();
+    expect(screen.getByText("参考答案见比对区。")).toBeInTheDocument();
   });
 });
 
@@ -414,7 +384,7 @@ describe("LessonQuestionCard：只读防御态", () => {
       screen.getByText("本题暂时不能作答，请刷新页面后重试。"),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "提交本题" }),
+      screen.queryByRole("button", { name: "显示答案" }),
     ).not.toBeInTheDocument();
   });
 });
