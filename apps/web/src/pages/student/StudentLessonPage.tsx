@@ -15,7 +15,6 @@ import {
   memo,
   type ReactNode,
   type RefObject,
-  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -32,16 +31,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { AttemptEditorProvider } from "@/features/attempt/AttemptEditorContext";
-import { isAnswered } from "@/features/attempt/answer-format";
-import { SubmitConfirmDialog } from "@/features/attempt/SubmitConfirmDialog";
 import { retryAttemptLocalPersistence } from "@/features/attempt/use-attempt-save-status";
 import { DraftSyncContext } from "@/features/attempt/use-draft-sync";
-import {
-  type EvidenceConfirmContext,
-  type EvidenceConfirmOutcome,
-  evidenceProblemViewsOf,
-  useSubmitEvidenceConfirm,
-} from "@/features/attempt/use-submit-evidence-confirm";
 import {
   EnabledCapabilitiesProvider,
   toEnabledCapabilities,
@@ -76,9 +67,9 @@ import { useDesktopViewport } from "@/lib/use-desktop-viewport";
  *   在页尾「本次练习其余题目」分组渲染（不丢失，方案决策 2）；
  * - 目录：全部 md 段拼接 extractOutline（桌面 sticky 侧栏 / 窄屏弹层，
  *   LectureOutline 复用）；
- * - 顶部：标题 + 课程/进度（n/m 已提交）+ 草稿保存状态 + 未全部提交时
- *   「完成练习」（整卷收尾语义与确认弹窗，evidence 按未提交题声明）；
- *   已完成时「再做一次」（restart）与「查看结果」（/s/attempts/:id）；
+ * - 顶部：标题 + 课程/讲练次数 + 草稿保存状态（教师演示口径：无「完成练习」
+ *   与进度计数——讲练是老师讲解材料，收尾只在最后一题「显示答案」事务内
+ *   自动发生）；已完成时「再做一次」（restart）与「查看结果」（/s/attempts/:id）；
  * - 三态齐全：加载骨架 / 错误（重试）/ 零题讲练页纯阅读提示。
  */
 
@@ -451,55 +442,9 @@ function LessonAnswerView({
     [data.questions],
   );
   const order = useMemo(() => lessonQuestionOrder(data), [data]);
-  const questionIndexById = useMemo(
-    () =>
-      new Map(
-        [...order.byId.values()].map(
-          (slot) => [slot.question.id, slot.index + 1] as const,
-        ),
-      ),
-    [order],
-  );
 
-  /**
-   * 完成练习编排（注入共享确认状态机 use-submit-evidence-confirm）：
-   * 整卷收尾链（ink flush → 追平 → evidence 按未提交题 → finalizeSubmit →
-   * submit）在 use-lesson-attempt 单一出处（session.finish），这里只把
-   * 结果翻译成状态机口径——stale/error 都按阻止性错误提示（点确认即重试
-   * 整条链）；缺稿确认集经 ctx 注入（讲练收尾不调用 clearMissingConfirmed，
-   * 重试沿用已确认集——与整卷 AnswerView 的差异语义，原样保留）。
-   */
-  const runFinish = useCallback(
-    async (ctx: EvidenceConfirmContext): Promise<EvidenceConfirmOutcome> => {
-      const outcome = await session.finish(
-        ctx.missingConfirmed !== null
-          ? { allowMissing: ctx.missingConfirmed }
-          : undefined,
-      );
-      if (outcome.kind === "submitted") return { kind: "submitted" };
-      if (outcome.kind === "problems") {
-        return { kind: "problems", problems: outcome.problems };
-      }
-      return { kind: "error", message: outcome.message };
-    },
-    [session.finish],
-  );
-
-  const {
-    confirmOpen,
-    phase: finishPhase,
-    noteSummary,
-    open: openFinishDialog,
-    cancel: closeFinishDialog,
-    confirm: confirmFinish,
-    confirmMissing: confirmMissingFinish,
-  } = useSubmitEvidenceConfirm({
-    attemptId,
-    questionIds,
-    run: runFinish,
-  });
-
-  /** 待批题手动刷新已随题卡简化移除（课中批改即时下发的承载另行设计） */
+  // 教师演示口径（2026-10）：不设「完成练习」与进度——讲练是老师讲解材料，
+  // 收尾只发生在最后一题「显示答案」的事务内自动收尾（服务端语义不变）。
 
   // 最后一题单题提交的事务内自动收尾：会话覆盖层先切完成视图（refetch 落地
   // 后由页面级分支接管并卸载作答会话），避免「提交完成但页面仍作答态」的窗口
@@ -518,7 +463,6 @@ function LessonAnswerView({
     );
   }
   const total = data.questions.length;
-  const submitted = Object.keys(session.released).length;
 
   const renderCard = (
     question: AttemptQuestionPublic,
@@ -537,13 +481,6 @@ function LessonAnswerView({
     />
   );
 
-  const unsubmitted = questionIds.filter(
-    (questionId) => !(questionId in session.released),
-  );
-  const unansweredCount = unsubmitted.filter(
-    (questionId) => !isAnswered(session.answers?.[questionId]),
-  ).length;
-
   return (
     <AttemptEditorProvider>
       <DraftSyncContext.Provider value={session.draftSyncContext}>
@@ -560,25 +497,10 @@ function LessonAnswerView({
                       : ""}
                     讲练 · 第 {data.attempt.attemptNo} 次
                   </span>
-                  {total > 0 && (
-                    <span>
-                      已提交 {submitted}/{total} 题
-                    </span>
-                  )}
                   <span aria-live="polite">{session.saveStatus}</span>
                 </>
               }
-              actions={
-                total > 0 ? (
-                  <Button
-                    className="min-h-11"
-                    disabled={session.denied}
-                    onClick={openFinishDialog}
-                  >
-                    完成练习
-                  </Button>
-                ) : null
-              }
+              actions={null}
             />
 
             {/* 零题讲练页：纯阅读提示（开卷合法但不构成练习） */}
@@ -618,25 +540,6 @@ function LessonAnswerView({
             )}
 
             <LessonBody data={data} order={order} renderCard={renderCard} />
-
-            <SubmitConfirmDialog
-              open={confirmOpen}
-              unansweredCount={unansweredCount}
-              submitting={finishPhase.kind === "preparing"}
-              preparing={finishPhase.kind === "preparing"}
-              noteSummary={noteSummary}
-              noteProblems={evidenceProblemViewsOf(
-                finishPhase,
-                questionIndexById,
-              )}
-              choiceMode={finishPhase.kind === "choice"}
-              notePrepError={
-                finishPhase.kind === "error" ? finishPhase.message : null
-              }
-              onConfirm={() => void confirmFinish()}
-              onConfirmMissing={confirmMissingFinish}
-              onCancel={closeFinishDialog}
-            />
           </article>
         </EnabledCapabilitiesProvider>
       </DraftSyncContext.Provider>

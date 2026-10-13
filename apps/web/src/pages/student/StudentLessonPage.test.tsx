@@ -13,7 +13,6 @@ import {
   fetchStudentNoteHeadsApi,
   restartLessonAttemptApi,
   startLessonAttemptApi,
-  submitAttemptApi,
   submitLessonQuestionApi,
 } from "@/lib/api";
 import StudentLessonPage from "./StudentLessonPage";
@@ -21,8 +20,8 @@ import StudentLessonPage from "./StudentLessonPage";
 /**
  * /s/lectures/:id/lesson 学生讲练页（2026-10 讲练一体）组件测试：
  * 进入即幂等开卷（start）→ blocks 渲染（md 段 + 题卡交替 + 孤儿题分组）、
- * 进度（n/m 已提交）、显示答案（一键直达；错误码收敛）、完成练习（整卷
- * 收尾）、再做一次、零题纯阅读空态、加载/错误三态。API 层 mock。
+ * 显示答案（一键直达；错误码收敛；最后一题自动收尾）、再做一次、零题纯阅读
+ * 空态、加载/错误三态。教师演示口径：无「完成练习」与进度计数。API 层 mock。
  */
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -32,7 +31,6 @@ vi.mock("@/lib/api", async (importOriginal) => {
     startLessonAttemptApi: vi.fn(),
     restartLessonAttemptApi: vi.fn(),
     submitLessonQuestionApi: vi.fn(),
-    submitAttemptApi: vi.fn(),
     fetchStudentNoteHeadsApi: vi.fn(),
   };
 });
@@ -40,7 +38,6 @@ vi.mock("@/lib/api", async (importOriginal) => {
 const mockedStart = vi.mocked(startLessonAttemptApi);
 const mockedRestart = vi.mocked(restartLessonAttemptApi);
 const mockedSubmitQuestion = vi.mocked(submitLessonQuestionApi);
-const mockedSubmitAttempt = vi.mocked(submitAttemptApi);
 const mockedNoteHeads = vi.mocked(fetchStudentNoteHeadsApi);
 
 const LECTURE_ID = "44444444-4444-4444-8444-444444444444";
@@ -236,7 +233,6 @@ beforeEach(() => {
   mockedStart.mockReset();
   mockedRestart.mockReset();
   mockedSubmitQuestion.mockReset();
-  mockedSubmitAttempt.mockReset();
   // 批量头按请求题数返回空笔记头（无草稿 → none 声明）
   mockedNoteHeads
     .mockReset()
@@ -259,7 +255,7 @@ beforeEach(() => {
 });
 
 describe("StudentLessonPage：开卷与 blocks 渲染", () => {
-  it("进入即幂等开卷（带 courseId），md 段与题卡交替渲染，进度 0/3", async () => {
+  it("进入即幂等开卷（带 courseId），md 段与题卡交替渲染；无进度与完成练习（教师演示口径）", async () => {
     mockedStart.mockResolvedValue(lessonStart());
     renderPage();
     expect(await screen.findByText("第 1 题")).toBeInTheDocument();
@@ -273,10 +269,11 @@ describe("StudentLessonPage：开卷与 blocks 渲染", () => {
     ).toBeInTheDocument();
     // 两道题槽题卡
     expect(screen.getByText("第 2 题")).toBeInTheDocument();
-    expect(screen.getByText("已提交 0/3 题")).toBeInTheDocument();
+    // 讲练是讲解材料：头部不渲染进度计数与「完成练习」
+    expect(screen.queryByText(/已提交 \d+\/\d+ 题/)).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "完成练习" }),
-    ).toBeInTheDocument();
+      screen.queryByRole("button", { name: "完成练习" }),
+    ).not.toBeInTheDocument();
   });
 
   it("md 段拼接目录：桌面侧栏展示全部 H2 标题", async () => {
@@ -323,7 +320,7 @@ describe("StudentLessonPage：开卷与 blocks 渲染", () => {
     expect(mockedStart).toHaveBeenCalledTimes(2);
   });
 
-  it("零题讲练页：纯阅读提示，不渲染完成练习", async () => {
+  it("零题讲练页：纯阅读提示，不渲染作答控件", async () => {
     mockedStart.mockResolvedValue(
       lessonStart({
         questions: [],
@@ -335,7 +332,7 @@ describe("StudentLessonPage：开卷与 blocks 渲染", () => {
     renderPage();
     expect(await screen.findByText(/暂时没有题目/)).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "完成练习" }),
+      screen.queryByRole("button", { name: "显示答案" }),
     ).not.toBeInTheDocument();
   });
 });
@@ -363,7 +360,7 @@ describe("StudentLessonPage：显示答案（单题）", () => {
     );
   });
 
-  it("显示答案（预置响应）：卡片转结果态，进度 1/3", async () => {
+  it("显示答案（预置响应）：卡片转结果态", async () => {
     mockedStart.mockResolvedValue(lessonStart());
     mockedSubmitQuestion.mockResolvedValue({
       question: releasedOf(Q1, { autoCorrect: true, finalCorrect: true }),
@@ -374,7 +371,6 @@ describe("StudentLessonPage：显示答案（单题）", () => {
     await screen.findByText("第 1 题");
     fireEvent.click(firstSubmitButton());
     expect(await screen.findByText("答对")).toBeInTheDocument();
-    expect(screen.getByText("已提交 1/3 题")).toBeInTheDocument();
     // 已显示答案的题卡锁定：不再渲染显示答案按钮
     const submitButtons = screen.queryAllByRole("button", { name: "显示答案" });
     expect(submitButtons).toHaveLength(2); // 第 2 题 + 孤儿第 3 题
@@ -466,67 +462,7 @@ describe("StudentLessonPage：显示答案（单题）", () => {
   });
 });
 
-describe("StudentLessonPage：完成练习（整卷收尾）", () => {
-  it("未全部提交时「完成练习」：确认后整卷提交，revisions 全集 + evidence 只按未提交题", async () => {
-    // 第一段（Once）：进行中卷（q1 已单题提交）
-    mockedStart.mockResolvedValueOnce(
-      lessonStart({
-        released: {
-          "lesson-q1": releasedOf(Q1, {
-            autoCorrect: true,
-            finalCorrect: true,
-          }),
-        },
-      }),
-    );
-    mockedSubmitAttempt.mockResolvedValue({} as never);
-    // 收尾后的 start：全部已释放 + graded
-    mockedStart.mockResolvedValue(
-      lessonStart({
-        status: "graded",
-        released: {
-          "lesson-q1": releasedOf(Q1, {
-            autoCorrect: true,
-            finalCorrect: true,
-          }),
-          "lesson-q2": releasedOf(Q2, {
-            autoCorrect: false,
-            finalCorrect: false,
-          }),
-          "lesson-q3": releasedOf(Q3, {
-            autoCorrect: true,
-            finalCorrect: true,
-          }),
-        },
-      }),
-    );
-    renderPage();
-    expect(await screen.findByText("已提交 1/3 题")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "完成练习" }));
-    expect(
-      await screen.findByRole("dialog", { name: "确认交卷吗？" }),
-    ).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "确认交卷" }));
-    await waitFor(() => expect(mockedSubmitAttempt).toHaveBeenCalled());
-    const firstCall = mockedSubmitAttempt.mock.calls[0];
-    if (firstCall === undefined) throw new Error("整卷提交未被调用");
-    const [attemptId, revisions, evidence] = firstCall;
-    expect(attemptId).toBe(ATTEMPT_ID);
-    expect(revisions).toEqual([
-      { questionId: "lesson-q1", questionRevisionId: "rev-q1" },
-      { questionId: "lesson-q2", questionRevisionId: "rev-q2" },
-      { questionId: "lesson-q3", questionRevisionId: "rev-q3" },
-    ]);
-    expect(evidence).toEqual([
-      { questionId: "lesson-q2", state: "none" },
-      { questionId: "lesson-q3", state: "none" },
-    ]);
-    // 收尾后切完成视图
-    expect(
-      await screen.findByRole("button", { name: "再做一次" }),
-    ).toBeInTheDocument();
-  });
-
+describe("StudentLessonPage：已完成卷视图", () => {
   it("已完成开卷（刷新已完成讲练页）：完成视图 + 汇总 + 再做一次重开新卷", async () => {
     // 第一段：已完成态
     mockedStart.mockResolvedValueOnce(
@@ -569,11 +505,10 @@ describe("StudentLessonPage：完成练习（整卷收尾）", () => {
     fireEvent.click(screen.getByRole("button", { name: "再做一次" }));
     fireEvent.click(await screen.findByRole("button", { name: "开始新一轮" }));
     await waitFor(() => expect(mockedRestart).toHaveBeenCalledWith(LECTURE_ID));
-    // 重做成功 → 回到作答视图（进度归零）
-    expect(await screen.findByText("已提交 0/3 题")).toBeInTheDocument();
+    // 重做成功 → 回到作答视图（三张题卡全部回到作答态）
     expect(
-      screen.getByRole("button", { name: "完成练习" }),
-    ).toBeInTheDocument();
+      await screen.findAllByRole("button", { name: "显示答案" }),
+    ).toHaveLength(3);
   });
 
   it("已完成视图的题卡为结果态（不渲染作答控件）", async () => {
