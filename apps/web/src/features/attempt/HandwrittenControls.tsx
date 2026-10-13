@@ -40,23 +40,12 @@ import {
 } from "./use-ink-upload";
 
 /**
- * 手写题作答控件（T2.8，架构 §5.4「两种作答区 + 最终答案输入」）：
- *
- * - **展开手写区**（默认收起，节省首屏）：展开后内嵌 InkPad（Atrament 页内形态）；
- *   进入答题页已有笔迹（服务端 GET 命中且非空，或 T2.9 本地草稿较新）时自动展开
- *   并 load 对应 InkDoc；
- * - **全屏作答**：Excalidraw 全屏层（题干固定顶部）；
- * - **引擎切换策略**（任务报告「待决问题」第 2 条的实现答案）：
- *   每题同一时刻只有一份「权威笔迹」（masterDoc），权威引擎 = 最后书写的引擎。
- *   · atrament → 全屏：若页内已有笔迹，先确认「全屏使用新画布，页内笔迹将被替代」；
- *   · 全屏书写后：页内画布让位为占位卡（笔迹缩略 + 继续全屏），
- *     提供「清空并改用页内手写」（二次确认，同步上传空文档清掉服务端笔迹）；
- *   · 两种引擎的数据不合并（矢量格式互不相容），同题切换 = 覆盖，均有确认弹层；
- * - **上传时机**：每笔结束本地暂存 + 2 秒防抖 PUT；退出全屏即刻上传（引擎还热）；
- *   交卷前由页面统一 flush（见 StudentAssignmentAttemptPage）。
- * - **草稿防丢（T2.9）**：每笔结束同步写 IndexedDB（draftStore.saveInk，网络无关）；
- *   挂载时「服务端笔迹 × 本地笔迹」合并（updatedAt 新者胜），本地较新或服务端
- *   拉取失败且有本地笔迹 → resync 补传；同步回调联动顶栏三态（DraftSyncContext）。
+ * 正式手写作答控制器：页内与全屏保持同一 Atrament 画布及撤销历史，
+ * 历史 Excalidraw 场景继续可读可编辑，不自动转换或替换已有笔迹。
+ * 每笔结束保存本机稿，2 秒防抖上传固定矢量及其派生 PNG；交卷 flush
+ * 等待在途上传并追平最新稿，图片生成不依赖活画布。
+ * 恢复先确认云端修订号，读取失败只展示本机稿并提供重试；跨设备修订
+ * 冲突须显式裁决，不依赖设备时钟。收起保活到期且落盘成功才释放纸面。
  */
 
 /** 笔迹文档的当前笔画数（atrament=strokes；excalidraw=scene.elements，口径同 ink 表） */
@@ -231,16 +220,14 @@ export function HandwrittenControls({
       ) {
         onInkEditRef.current?.(reason);
       } else {
-        // stroke/load 维持旧笔画计数回调（ink_stroke_batch 语义不变；
-        // 作答链路无 engine.load 调用，load 只在开发页/回放出现）
+        // 仅新书写计入笔画批次；load 已在入口排除，恢复不计成编辑。
         onInkStrokeRef.current?.(inkStrokeCount(doc));
       }
     },
     [attemptId, questionId, onDocChangeUpload],
   );
 
-  // 挂载时合并「服务端笔迹 × 本地草稿笔迹」（T2.9）：updatedAt 新者胜；
-  // 本地较新（或服务端拉取失败但有本地）→ resync 补传；服务端胜 → 落本地并记指纹
+  // 恢复基线与本机稿：修订一致才可补传；云端已前进则保留两份并要求裁决。
   // biome-ignore lint/correctness/useExhaustiveDependencies(restoreRetry): 用户重试触发重新读取，不参与请求参数
   useEffect(() => {
     let alive = true;
@@ -378,7 +365,7 @@ export function HandwrittenControls({
     setFullscreen(true);
   };
 
-  /** 退出全屏：即刻触发一次上传（引擎实例还热），再卸载全屏层 */
+  /** 退出全屏先保存本机稿，再启动固定文档上传并切回页内外框。 */
   const closeFullscreen = async () => {
     try {
       await finish();

@@ -156,7 +156,7 @@ function requireInkRow(db: Db, attemptId: string, questionId: string): InkRow {
  * - 题目不属于该作业单元/已软删 → 404 QUESTION_NOT_FOUND；
  * - strokes+snapshot 合计超 2 MiB → 413 INK_TOO_LARGE（验收项）；
  * - strokes 不能解压 / 不符合 inkDocSchema，或 snapshot 不是 PNG → 400 INK_INVALID；
- * - 幂等覆盖：文件原子重写 + ink 行 upsert（id 不变），width/height 从 PNG IHDR
+ * - 版本校验与幂等重试：文件成对写入不可变路径 + ink 行 upsert（id 不变），width/height 从 PNG IHDR
  *   提取（失败为 0），strokeCount 从 InkDoc 提取。
  */
 export function saveInk(

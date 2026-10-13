@@ -3,7 +3,7 @@ import { z } from "zod";
 /**
  * 手写笔迹契约（T2.8 起为权威定义）：InkDoc 矢量文档形状 + 上传/取回/元数据响应。
  * 依据：docs/技术架构与实施方案.md §5.2（ink 表：笔迹不进数据库、不用 base64，
- * 文件存 DATA_DIR/blobs/ink/<attemptId>/<questionId>.json.gz 与 .png，库里只存路径）、
+ * 文件存 DATA_DIR/blobs/ink/<attemptId>/ 下的不可变 .json.gz 与 .png，库里只存路径与修订信息）、
  * §5.4（两种作答区 + 统一 InkSurface；矢量坐标归一化到逻辑宽度 1000）、
  * docs/开发任务清单.md T2.8。
  *
@@ -54,7 +54,7 @@ export const inkAtramentDataSchema = z.object({
 });
 
 /**
- * Excalidraw 引擎（全屏作答）的数据：直接存库原生场景 JSON（serializeAsJSON
+ * Excalidraw 引擎（历史场景）的数据：直接存库原生场景 JSON（serializeAsJSON
  * 的解析结果），本契约不解释其内部结构（§5.4.0：用库时存库自己的 JSON）。
  * 服务端只校验「elements 是对象数组」这一层，内部交给库的 restore() 清洗。
  */

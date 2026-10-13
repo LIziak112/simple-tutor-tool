@@ -7,7 +7,7 @@
  *
  * 内部 = InkSurface 适配层（surface.ts）+ 两个适配器：
  * - atrament：页内答题区（默认形态）；
- * - excalidraw：全屏作答（mount 时才动态 import，独立 chunk 不进主包）。
+ * - excalidraw：历史场景兼容（mount 时才动态 import，独立 chunk 不进主包）。
  * 状态/历史在纯数据层（history.ts），引擎与适配器只是转发。
  */
 import type { NoteBackground } from "@tutor/contract";
@@ -45,7 +45,7 @@ export type {
 export * from "./types.ts";
 
 export interface InkEngineOptions {
-  /** 底层引擎：atrament（页内答题区，默认）/ excalidraw（全屏作答） */
+  /** 底层引擎：atrament（页内答题区，默认）/ excalidraw（历史场景） */
   engine?: InkEngineKind;
   /** 恢复的笔迹（草稿） */
   initial?: InkDoc;
