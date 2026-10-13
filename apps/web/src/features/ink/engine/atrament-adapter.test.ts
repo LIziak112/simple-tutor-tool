@@ -1,6 +1,9 @@
 import type { NoteBackground } from "@tutor/contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createAtramentSurface } from "./atrament-adapter.ts";
+import {
+  createAtramentSurface,
+  createProgrammaticAtrament,
+} from "./atrament-adapter.ts";
 import type { InkDoc, InkInputMode } from "./types.ts";
 
 /**
@@ -50,6 +53,11 @@ class ResizeObserverStub {
 }
 
 let getContextSpy: ReturnType<typeof vi.spyOn>;
+
+it("统一绘制入口默认使用 0.35，实时书写与导出回放共用低平滑", () => {
+  const renderer = createProgrammaticAtrament(document.createElement("canvas"));
+  expect(renderer.smoothing).toBe(0.35);
+});
 
 beforeEach(() => {
   ResizeObserverStub.instances.length = 0;

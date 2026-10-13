@@ -849,7 +849,7 @@ describe("renderNoteImages：产物与上传元信息对齐", () => {
       expect(p.pixelWidth).toBeLessThanOrEqual(NOTE_IMAGE_MAX_PIXEL_DIM);
       expect(p.pixelHeight).toBeLessThanOrEqual(NOTE_IMAGE_MAX_PIXEL_DIM);
     }
-    expect(NOTE_RENDER_VERSION).toBe(1);
+    expect(NOTE_RENDER_VERSION).toBe(2);
   });
 });
 

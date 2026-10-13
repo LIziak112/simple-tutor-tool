@@ -33,7 +33,7 @@ const LANES: Array<{ id: FeelLane; title: string; description: string }> = [
   {
     id: "baseline",
     title: "当前手写",
-    description: "Atrament 默认平滑，作为当前项目的对照。",
+    description: "Atrament 平滑强度 0.35，作为当前项目的对照。",
   },
   {
     id: "responsive",

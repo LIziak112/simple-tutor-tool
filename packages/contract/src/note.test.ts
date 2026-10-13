@@ -805,8 +805,8 @@ describe("T6R.5 路由形状：noteHeadData / noteImageUploadMeta", () => {
   });
 
   it("渲染版本常量锁定当前值（渲染行为变更时递增，须改这里与注释）", () => {
-    // T6R.6 渲染器建立时的初值；递增时机见 note.ts NOTE_RENDER_VERSION 注释
-    expect(NOTE_RENDER_VERSION).toBe(1);
+    // 默认平滑改为 0.35 后的渲染版本；递增时机见 note.ts 注释。
+    expect(NOTE_RENDER_VERSION).toBe(2);
   });
 
   it("切片重叠常量锁定暂定值（T6R.17 上移契约单一来源，搬家不抄数）", () => {

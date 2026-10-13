@@ -106,7 +106,7 @@ export const NOTE_REFLECTION_MAX_LENGTH = 500;
  * 切片几何或重叠值、绘制原语版本、分析图/缩略图像素宽等）；纯重构不改像素
  * 输出时不递增。递增时旧版本派生图不自动重生成，补图链路按需重建。
  */
-export const NOTE_RENDER_VERSION = 1;
+export const NOTE_RENDER_VERSION = 2;
 
 // ---------- NoteDoc v1 ----------
 

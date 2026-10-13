@@ -84,6 +84,9 @@ export interface InkBrushSpec {
   weight: number;
 }
 
+/** 默认低平滑强度，实时书写、导出与回放使用同一设置。 */
+export const INK_DEFAULT_SMOOTHING = 0.35;
+
 /** 三档笔粗细（逻辑单位，宽度 1000 基准；2–3 档粗细） */
 export const INK_PEN_SIZES: Record<InkPenSize, number> = {
   thin: 2.5,

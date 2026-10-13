@@ -73,6 +73,7 @@ import {
 } from "./pointer-machine.ts";
 import type { InkChangeReason, ToolAwareSurface } from "./surface.ts";
 import {
+  INK_DEFAULT_SMOOTHING,
   INK_ERASE_RADIUS,
   type InkDoc,
   type InkInputMode,
@@ -126,13 +127,13 @@ export function replayAtramentStroke(
 export function createProgrammaticAtrament(
   canvas: HTMLCanvasElement,
 ): Atrament {
-  const atrament = new Atrament(canvas);
+  const atrament = new Atrament(canvas, { smoothing: INK_DEFAULT_SMOOTHING });
   atrament.destroy();
   return atrament;
 }
 
 export interface AtramentSurfaceOptions {
-  /** 实验页可选平滑强度；正式调用缺省沿用库默认值。 */
+  /** 实验页可选平滑强度；正式调用缺省使用 0.35。 */
   smoothing?: number;
   /** 初始高度提示（CSS 像素）。容器高度最终由外部（InkPad）控制 */
   height?: number;
