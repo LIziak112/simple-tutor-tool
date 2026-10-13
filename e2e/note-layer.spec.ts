@@ -4,6 +4,7 @@ import {
   attachLeakMonitor,
   choiceJudgePracticeMarkdown,
   createCourseViaApi,
+  createStudentViaApi,
   drawStrokeWithPointerEvents,
   getStudentViaApi,
   openChoicePractice,
@@ -174,3 +175,64 @@ for (const natural of [false, true]) {
     });
   });
 }
+
+test("切换草稿后题干保持可见，正常打开不强制置顶", async ({
+  request,
+  page,
+}) => {
+  await teacherApiLogin(request);
+  const suffix = uniqueSuffix();
+  const unitName = `草稿定位${suffix}`;
+  const courseId = await createCourseViaApi(request, unitName);
+  const imported = await request.post("/api/teacher/import/commit", {
+    data: {
+      markdown: choiceJudgePracticeMarkdown(unitName),
+      filename: `${unitName}.md`,
+      courseId,
+    },
+  });
+  expect(imported.ok()).toBe(true);
+  await setCourseItemVisible(request, courseId, unitName, true);
+  const loginName = `paper-position-${suffix}`;
+  await createStudentViaApi(request, unitName, loginName);
+  const student = await getStudentViaApi(request, loginName);
+  await addCourseMemberViaApi(request, courseId, student.id);
+  await page.goto(`/s/${student.linkToken}`);
+  await page.waitForURL("**/s/home");
+  await openChoicePractice(page, courseId, unitName, unitName);
+  const first = page.locator('article[aria-label="第 1 题"]');
+  const second = page.locator('article[aria-label="第 2 题"]');
+  await expect(second).toBeVisible();
+  // 禁用浏览器滚动锚定，明确复现上题收起导致后题上移的布局情况。
+  await page.addStyleTag({
+    content: "* { overflow-anchor: none !important; }",
+  });
+  await first.evaluate((el) =>
+    window.scrollBy(0, el.getBoundingClientRect().top - 180),
+  );
+  const before = await first.evaluate((el) => el.getBoundingClientRect().top);
+  await first
+    .getByRole("button", { name: "第 1 题草稿纸", exact: true })
+    .click();
+  await expect(first.locator('[data-slot="note-paper"]')).toBeVisible();
+  await expect
+    .poll(() => first.evaluate((el) => el.getBoundingClientRect().top))
+    .toBeCloseTo(before, 0);
+  await second.evaluate((el) =>
+    window.scrollBy(0, el.getBoundingClientRect().top - 180),
+  );
+  await second
+    .getByRole("button", { name: "第 2 题草稿纸", exact: true })
+    .click();
+  await expect(first.locator('[data-slot="note-paper"]')).toBeHidden();
+  await expect(second.locator('[data-slot="note-paper"]')).toBeVisible();
+  await expect
+    .poll(() =>
+      second.evaluate((el) => {
+        const top = el.getBoundingClientRect().top;
+        const margin = Number.parseFloat(getComputedStyle(el).scrollMarginTop);
+        return top >= margin - 1 && top < 250;
+      }),
+    )
+    .toBe(true);
+});
