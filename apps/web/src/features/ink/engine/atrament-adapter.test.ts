@@ -256,11 +256,27 @@ function writeStroke(
   const { pointerType = "pen", pointerId = 1 } = opts;
   const first = points[0];
   if (!first) throw new Error("空笔画");
-  pointer(h.canvas, "pointerdown", { pointerType, pointerId, ...first });
+  pointer(h.canvas, "pointerdown", {
+    pointerType,
+    pointerId,
+    clientX: first.x,
+    clientY: first.y,
+  });
   for (const p of points.slice(1)) {
-    pointer(h.canvas, "pointermove", { pointerType, pointerId, ...p });
+    pointer(h.canvas, "pointermove", {
+      pointerType,
+      pointerId,
+      clientX: p.x,
+      clientY: p.y,
+    });
   }
-  pointer(h.canvas, "pointerup", { pointerType, pointerId, ...points.at(-1) });
+  const last = points.at(-1) ?? first;
+  pointer(h.canvas, "pointerup", {
+    pointerType,
+    pointerId,
+    clientX: last.x,
+    clientY: last.y,
+  });
 }
 
 function strokesOf(h: Harness) {
@@ -863,6 +879,85 @@ describe("atrament-adapter：setInputMode 与 touch-action 随模式切换", () 
 });
 
 describe("atrament-adapter：回归（撤销/重做/橡皮/鼠标/load）", () => {
+  it("橡皮未抬起时撤销先收笔，迟到抬笔不再次删除", () => {
+    const h = mountSurface();
+    writeStroke(h, [
+      { x: 220, y: 40 },
+      { x: 260, y: 40 },
+    ]);
+    writeStroke(h, [
+      { x: 20, y: 40 },
+      { x: 60, y: 40 },
+    ]);
+    const original = strokesOf(h);
+    h.surface.setTool({ type: "eraser" });
+    pointer(h.canvas, "pointerdown", pd("pen", 1, 240, 40));
+    h.surface.undo();
+    pointer(h.canvas, "pointerup", {
+      pointerType: "pen",
+      clientX: 240,
+      clientY: 40,
+    });
+    expect(strokesOf(h)).toEqual(original);
+    h.surface.redo();
+    expect(strokesOf(h)).toEqual([original[1]]);
+  });
+  it.each(["pointerup", "pointercancel"] as const)(
+    "擦右侧后 %s 重绘保留后写的左侧笔迹，撤销重做一致",
+    (end) => {
+      const h = mountSurface();
+      writeStroke(h, [
+        { x: 220, y: 40 },
+        { x: 260, y: 40 },
+      ]);
+      writeStroke(h, [
+        { x: 20, y: 40 },
+        { x: 60, y: 40 },
+      ]);
+      const original = strokesOf(h);
+      h.surface.setTool({ type: "eraser" });
+      pointer(h.canvas, "pointerdown", pd("pen", 1, 240, 40));
+      const paint = vi.spyOn(StubContext.prototype, "quadraticCurveTo");
+      pointer(h.canvas, end, { pointerType: "pen", clientX: 240, clientY: 40 });
+      expect(strokesOf(h)).toEqual([original[1]]);
+      expect(paint).toHaveBeenCalled();
+      paint.mockClear();
+      h.surface.undo();
+      expect(strokesOf(h)).toEqual(original);
+      expect(paint).toHaveBeenCalled();
+      paint.mockClear();
+      h.surface.redo();
+      expect(strokesOf(h)).toEqual([original[1]]);
+      expect(paint).toHaveBeenCalled();
+      paint.mockRestore();
+    },
+  );
+
+  it("快速橡皮拖动经过笔画仍擦除，远处笔画保留", () => {
+    const h = mountSurface();
+    writeStroke(h, [
+      { x: 120, y: 20 },
+      { x: 120, y: 80 },
+    ]);
+    writeStroke(h, [
+      { x: 250, y: 20 },
+      { x: 250, y: 80 },
+    ]);
+    h.surface.setTool({ type: "eraser" });
+    pointer(h.canvas, "pointerdown", pd("pen", 1, 80, 40));
+    pointer(h.canvas, "pointermove", {
+      pointerType: "pen",
+      clientX: 160,
+      clientY: 40,
+    });
+    pointer(h.canvas, "pointerup", {
+      pointerType: "pen",
+      clientX: 160,
+      clientY: 40,
+    });
+    expect(strokesOf(h)).toHaveLength(1);
+    expect(strokesOf(h)[0]?.points[0]?.x).toBeGreaterThan(800);
+  });
   it("鼠标书写 → 撤销 → 重做 → 橡皮整笔擦除（reason 分型不变）", () => {
     const h = mountSurface();
     writeStroke(

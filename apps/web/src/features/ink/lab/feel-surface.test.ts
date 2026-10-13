@@ -89,6 +89,23 @@ function drawFrame() {
   for (const cb of pending) cb(0);
 }
 
+it("自然笔感橡皮快速拖动扫过笔画，远处笔迹不变且可一步撤销", () => {
+  send("pointerdown", 150, 1, 0, { clientY: 20 });
+  send("pointermove", 150, 1, 10, { clientY: 100 });
+  send("pointerup", 150, 1, 20, { clientY: 100 });
+  send("pointerdown", 350, 1, 30, { clientY: 20 });
+  send("pointermove", 350, 1, 40, { clientY: 100 });
+  send("pointerup", 350, 1, 50, { clientY: 100 });
+  const original = points();
+  surface.setTool({ type: "eraser" });
+  send("pointerdown", 100, 1, 60, { clientY: 60 });
+  send("pointermove", 200, 1, 70, { clientY: 60 });
+  send("pointerup", 200, 1, 80, { clientY: 60 });
+  expect(points()).toEqual([original[1]]);
+  surface.undo();
+  expect(points()).toEqual(original);
+});
+
 it("预测只显示；真实点替换预测，取消不补造终点", () => {
   send("pointerdown");
   send("pointermove", 30, 1, 30, {

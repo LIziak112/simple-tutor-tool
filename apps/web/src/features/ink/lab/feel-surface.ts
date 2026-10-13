@@ -126,6 +126,7 @@ export function createFeelSurface(
   let startStamp = 0;
   let lastStamp = -Infinity;
   let pendingErase = new Set<number>();
+  let erasePrev: Pick<InkStrokePoint, "x" | "y"> | undefined;
   let eraseActive = false;
   let reason: InkChangeReason = "stroke";
   const samples: number[] = [];
@@ -222,6 +223,7 @@ export function createFeelSurface(
       redrawDry();
     }
     live = null;
+    erasePrev = undefined;
     eraseActive = false;
     clearWet();
   }
@@ -279,6 +281,7 @@ export function createFeelSurface(
       const first = point(event, rect);
       eraseActive = tool.type === "eraser";
       if (eraseActive) {
+        erasePrev = first;
         pendingErase = new Set(
           eraseHit(store.peekStrokes(), first.x, first.y, INK_ERASE_RADIUS),
         );
@@ -339,12 +342,14 @@ export function createFeelSurface(
           next.y,
           INK_ERASE_RADIUS,
           eraseBoxes,
+          erasePrev,
         )) {
           if (!pendingErase.has(hit)) {
             pendingErase.add(hit);
             changed = true;
           }
         }
+        erasePrev = next;
       } else if (live) {
         live.points.push(next);
         samples.push(performance.now());
