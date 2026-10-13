@@ -88,10 +88,10 @@ export function StudentsPage() {
   }, [activeCoursesQuery.data, archivedCoursesQuery.data]);
 
   return (
-    <section className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-4 py-6 md:px-6 md:py-8">
-      <header className="flex flex-wrap items-start justify-between gap-3">
+    <section className="teacher-page flex flex-col gap-6">
+      <header className="mb-2 flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold">学生</h1>
+          <h1 className="teacher-page-title">学生</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             新增学生后把专属链接或登录名+初始密码发给学生即可开始。
           </p>
@@ -214,7 +214,7 @@ function StudentsEmpty({ onCreate }: { onCreate: () => void }) {
       <p className="max-w-sm text-sm text-muted-foreground">
         新增第一位学生后，系统会生成一条专属链接，微信发给学生即可打开使用。
       </p>
-      <Button className="min-h-11 px-4" onClick={onCreate}>
+      <Button variant="outline" className="min-h-11 px-4" onClick={onCreate}>
         <UserRoundPlus aria-hidden />
         新增学生
       </Button>

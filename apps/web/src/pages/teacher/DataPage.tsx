@@ -140,10 +140,10 @@ export function DataPage() {
   const total = attemptsQuery.data?.total ?? 0;
 
   return (
-    <section className="mx-auto flex w-full max-w-3xl flex-col gap-4 px-4 py-6 md:px-6 md:py-8">
-      <header className="flex flex-wrap items-start justify-between gap-3">
+    <section className="teacher-page flex flex-col gap-6">
+      <header className="mb-2 flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold">作答数据</h1>
+          <h1 className="teacher-page-title">作答数据</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             按课程、作业或学生浏览每一次作答；进行中的草稿也会列出，
             点击卡片查看逐题详情。

@@ -5,113 +5,155 @@ import {
   GraduationCap,
   Library,
   LineChart,
+  Menu,
   PlugZap,
   Settings,
   Share2,
-  ShieldCheck,
   UserRound,
   Users,
 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { Link, Navigate, Outlet, useLocation } from "react-router";
+import { Brand } from "@/components/brand";
+import { Button } from "@/components/ui/button";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
 import { useTeacherMe } from "@/features/auth/teacher-auth";
+import { SettingsNavigationProvider } from "@/features/teacher-settings/settings-navigation";
 import { ApiError } from "@/lib/api";
+import { BRAND_NAME } from "@/lib/brand";
 import { AuthScreenError, AuthScreenLoading } from "./SetupPage";
 
-/**
- * /t 教师端布局 + 路由守卫（T1.9）。侧边栏（T2A.9 定稿，2026-09-29 去重简化；
- * T4.7 起「学情」附近追加「导出」（/t/export 导出中心）与「连接 AI」
- * （/t/connect，D26）两个入口）：资源库 · 课程 · 学生 · 作业 · 数据 · 学情 ·
- * 导出 · 连接 AI · 设置（数据自 T3.1 起为作答数据页，学情自 T4.2 起为学情
- * 分析页三视图：总览 / 学生画像 / 题目视角）。
- * T2B.6：管理员（me.isAdmin）在侧边栏末尾追加「管理」入口（/a 独立布局）。
- * 讲义库/题库/回收站由 /t/library 页面顶部页签切换（?tab= 直达，无参数时
- * 记忆上次页签），导入经页面
- * 「导入内容」按钮进入 /t/import——侧边栏不再单列，避免与页内导航重复；
- * 资源库入口在 /t/import 上保持高亮（导入属资源库流程）。触控目标一律 ≥44px。
- * 守卫：me 查询 pending → 全屏加载；401 → 跳 /t/login；其他错误 → 错误态 + 重试。
- * 布局：左侧导航（md+）/顶部横向导航（小屏）。
- */
-
-/** 导航条目 */
 interface NavItemSpec {
   to: string;
   label: string;
   icon: typeof Library;
-  /** 额外的高亮路径前缀（资源库在 /t/import 导入流程页上保持高亮） */
   matchPrefixes?: string[];
 }
 
-/** 导航分区（资源库 · 共享 · 课程 / 学生 / 作业 / 数据 / 学情 / 设置） */
-const NAV_ITEMS: NavItemSpec[] = [
+/** 导航与顶栏共用分组数据，导入属于资源库，详情保留父分区高亮。 */
+const NAV_GROUPS: { label: string; items: NavItemSpec[] }[] = [
   {
-    to: "/t/library",
-    label: "资源库",
-    icon: Library,
-    matchPrefixes: ["/t/library", "/t/import"],
+    label: "教学",
+    items: [
+      {
+        to: "/t/library",
+        label: "资源库",
+        icon: Library,
+        matchPrefixes: ["/t/library", "/t/import"],
+      },
+      { to: "/t/shared", label: "共享资源", icon: Share2 },
+      { to: "/t/courses", label: "课程", icon: GraduationCap },
+      { to: "/t/students", label: "学生", icon: Users },
+      { to: "/t/assignments", label: "作业", icon: ClipboardList },
+    ],
   },
-  // T2B.7：共享目录（发布 → 浏览 → 导入，D15–D18）
-  { to: "/t/shared", label: "共享", icon: Share2 },
-  { to: "/t/courses", label: "课程", icon: GraduationCap },
-  { to: "/t/students", label: "学生", icon: Users },
-  { to: "/t/assignments", label: "作业", icon: ClipboardList },
-  { to: "/t/data", label: "数据", icon: Database },
-  { to: "/t/insights", label: "学情", icon: LineChart },
-  // T4.7：导出中心（T4.4 五步向导）与连接 AI（D26）入口，放「学情」附近
-  { to: "/t/export", label: "导出", icon: FileDown },
-  { to: "/t/connect", label: "连接 AI", icon: PlugZap },
-  { to: "/t/settings", label: "设置", icon: Settings },
+  {
+    label: "分析",
+    items: [
+      { to: "/t/insights", label: "学情分析", icon: LineChart },
+      { to: "/t/data", label: "作答记录", icon: Database },
+      { to: "/t/export", label: "导出中心", icon: FileDown },
+    ],
+  },
+  {
+    label: "系统",
+    items: [
+      { to: "/t/connect", label: "连接 AI", icon: PlugZap },
+      { to: "/t/settings", label: "设置", icon: Settings },
+    ],
+  },
 ];
 
-/** 管理端入口（T2B.6：只对 isAdmin 追加在导航末尾，D6/D19） */
-const ADMIN_NAV_ITEM: NavItemSpec = {
-  to: "/a",
-  label: "管理",
-  icon: ShieldCheck,
-};
-
-/**
- * 高亮判定：路径前缀匹配（/t/courses/:id 仍高亮「课程」）；
- * 资源库额外匹配 /t/import（导入经「导入内容」按钮进入，属资源库流程）。
- * 自算而非 NavLink 的 isActive，并据此设置 aria-current="page"。
- */
 function isNavActive(item: NavItemSpec, pathname: string): boolean {
-  const prefixes = item.matchPrefixes ?? [item.to];
-  return prefixes.some(
+  return (item.matchPrefixes ?? [item.to]).some(
     (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
   );
 }
 
-function NavItem({ item }: { item: NavItemSpec }) {
-  const { pathname } = useLocation();
-  const active = isNavActive(item, pathname);
+function NavItem({
+  item,
+  onNavigate,
+}: {
+  item: NavItemSpec;
+  onNavigate?: () => void;
+}) {
+  const active = isNavActive(item, useLocation().pathname);
   return (
     <Link
       to={item.to}
+      onClick={onNavigate}
       aria-current={active ? "page" : undefined}
-      className={`flex min-h-11 items-center gap-2 rounded-lg px-3 text-sm font-medium whitespace-nowrap outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 ${
+      className={`flex min-h-11 items-center gap-3 rounded-lg px-3 py-2 text-sm outline-offset-2 focus-visible:outline-2 focus-visible:outline-primary ${
         active
-          ? "bg-primary/10 text-primary"
-          : "text-muted-foreground hover:bg-muted hover:text-foreground"
+          ? "bg-sidebar-accent font-semibold text-sidebar-accent-foreground"
+          : "font-medium text-sidebar-foreground hover:bg-sidebar-accent hover:text-foreground"
       }`}
     >
-      <item.icon aria-hidden className="size-4 shrink-0" />
-      {item.label}
+      <item.icon aria-hidden className="size-[18px] shrink-0" />
+      <span className="flex-1">{item.label}</span>
     </Link>
   );
 }
 
-export function TeacherLayout() {
-  const meQuery = useTeacherMe();
+function TeacherNavigation({ onNavigate }: { onNavigate?: () => void }) {
+  return (
+    <nav
+      aria-label="教师端导航"
+      className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overscroll-contain px-4 py-1"
+    >
+      {NAV_GROUPS.map((group) => (
+        <section key={group.label} aria-label={group.label}>
+          <p className="mt-1 mb-1 px-3 text-xs font-medium text-sidebar-foreground">
+            {group.label}
+          </p>
+          <div className="flex flex-col">
+            {group.items.map((item) => (
+              <NavItem
+                key={item.to}
+                item={item}
+                {...(onNavigate ? { onNavigate } : {})}
+              />
+            ))}
+          </div>
+        </section>
+      ))}
+    </nav>
+  );
+}
 
-  if (meQuery.isPending) {
-    return <AuthScreenLoading text="正在确认登录状态…" />;
-  }
+export function TeacherLayout() {
+  useEffect(() => {
+    document.documentElement.classList.add("teacher-theme");
+    return () => document.documentElement.classList.remove("teacher-theme");
+  }, []);
+  const meQuery = useTeacherMe();
+  const { pathname } = useLocation();
+  const [navOpen, setNavOpen] = useState(false);
+  const previousPath = useRef(pathname);
+  useEffect(() => {
+    if (previousPath.current !== pathname) {
+      previousPath.current = pathname;
+      setNavOpen(false);
+    }
+  }, [pathname]);
+  const currentGroup = NAV_GROUPS.find((group) =>
+    group.items.some((item) => isNavActive(item, pathname)),
+  );
+  const currentItem = currentGroup?.items.find((item) =>
+    isNavActive(item, pathname),
+  );
+
+  if (meQuery.isPending) return <AuthScreenLoading text="正在确认登录状态…" />;
   if (meQuery.isError) {
     const err = meQuery.error;
-    if (err instanceof ApiError && err.code === "UNAUTHORIZED") {
-      // 未登录 / 会话过期：交给登录页（登录页再按 hasTeacher 分流到 setup）
-      return <LoginRedirect />;
-    }
+    if (err instanceof ApiError && err.code === "UNAUTHORIZED")
+      return <Navigate to="/t/login" replace />;
     return (
       <AuthScreenError
         message={err instanceof Error ? err.message : "网络异常，请稍后重试"}
@@ -121,38 +163,84 @@ export function TeacherLayout() {
   }
 
   return (
-    <div className="flex min-h-dvh flex-col bg-background text-foreground md:flex-row">
-      <nav
-        aria-label="教师端导航"
-        className="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-border bg-card px-3 py-2 md:w-56 md:flex-col md:items-stretch md:gap-1 md:border-r md:border-b-0 md:px-3 md:py-4"
-      >
-        <p className="mr-2 hidden px-2 pb-2 text-sm font-semibold md:block">
-          辅导工作台
-        </p>
-        {(meQuery.data.isAdmin
-          ? [...NAV_ITEMS, ADMIN_NAV_ITEM]
-          : NAV_ITEMS
-        ).map((item) => (
-          <NavItem key={item.to} item={item} />
-        ))}
-      </nav>
-
-      <main className="min-w-0 flex-1">
-        {/* 顶栏：教师身份一律显示登录名（D1 无 displayName）；管理员另有侧边栏「管理」入口 */}
-        <header className="flex min-h-11 items-center justify-end gap-2 border-b border-border bg-card px-4 text-sm text-muted-foreground">
-          <UserRound aria-hidden className="size-4" />
-          <span data-testid="teacher-login-name">{meQuery.data.loginName}</span>
-        </header>
-        <Outlet />
-      </main>
-    </div>
+    <SettingsNavigationProvider>
+      <div className="teacher-theme flex min-h-dvh bg-background text-foreground">
+        <a
+          href="#teacher-content"
+          className="sr-only z-[60] rounded-lg bg-card p-3 text-sm focus:not-sr-only focus:fixed focus:top-2 focus:left-2"
+        >
+          跳到主要内容
+        </a>
+        <aside className="sticky top-0 hidden h-dvh w-[224px] shrink-0 flex-col border-r border-sidebar-border bg-sidebar lg:flex">
+          <div className="px-6 pt-5 pb-3">
+            <Brand compact />
+          </div>
+          <TeacherNavigation />
+          <Link
+            to="/t/settings?section=account"
+            aria-label="查看教师账号"
+            className="flex min-h-16 items-center gap-3 border-t border-sidebar-border px-6 py-3 text-sm text-muted-foreground hover:bg-sidebar-accent"
+          >
+            <UserRound aria-hidden className="size-4 shrink-0" />
+            <span className="min-w-0">
+              <span
+                data-testid="teacher-login-name"
+                className="block break-all font-medium text-foreground"
+              >
+                {meQuery.data.loginName}
+              </span>
+              <span className="text-xs">教师账号</span>
+            </span>
+          </Link>
+        </aside>
+        <div className="min-w-0 flex-1">
+          <header className="flex min-h-14 flex-wrap items-center gap-2 px-5 py-1.5 lg:px-10">
+            <div className="flex min-w-0 items-center gap-3">
+              <Sheet open={navOpen} onOpenChange={setNavOpen}>
+                <SheetTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="size-11 lg:hidden"
+                    aria-label="打开导航"
+                  >
+                    <Menu aria-hidden />
+                  </Button>
+                </SheetTrigger>
+                <SheetContent
+                  side="left"
+                  className="teacher-theme w-[min(20rem,100%)] max-w-full sm:max-w-80"
+                >
+                  <SheetHeader>
+                    <SheetTitle>{BRAND_NAME} 导航</SheetTitle>
+                  </SheetHeader>
+                  <TeacherNavigation onNavigate={() => setNavOpen(false)} />
+                </SheetContent>
+              </Sheet>
+              <p className="text-sm">
+                <span className="hidden text-muted-foreground sm:inline">
+                  {currentGroup?.label ?? "教学"}
+                  <span aria-hidden className="px-2">
+                    /
+                  </span>
+                </span>
+                <span className="font-medium">
+                  {currentItem?.label ?? "教师工作台"}
+                </span>
+              </p>
+            </div>
+          </header>
+          <main
+            id="teacher-content"
+            tabIndex={-1}
+            className="min-w-0 outline-none"
+          >
+            <Outlet />
+          </main>
+        </div>
+      </div>
+    </SettingsNavigationProvider>
   );
 }
 
-/** 401 跳登录（replace：登录后回 /t，不把守卫页留在历史栈里） */
-function LoginRedirect() {
-  return <Navigate to="/t/login" replace />;
-}
-
-// 供 App.tsx 路由级懒加载
 export default TeacherLayout;

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import type { TeacherInfo } from "@tutor/contract";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -57,6 +57,27 @@ beforeEach(() => {
 });
 
 describe("TeacherLayout 导航（侧边栏去重简化）", () => {
+  it("展示 OwnClass 品牌，并按用途组织导航", async () => {
+    mockedMe.mockResolvedValue(TEACHER);
+    renderLayout("/t/courses");
+    const nav = await screen.findByRole("navigation", { name: "教师端导航" });
+    expect(screen.getByText("OwnClass")).toBeVisible();
+    for (const label of ["教学", "分析", "系统"]) {
+      expect(
+        within(nav).getByRole("region", { name: label }),
+      ).toBeInTheDocument();
+    }
+  });
+
+  it("窄屏导航抽屉选择入口后关闭", async () => {
+    mockedMe.mockResolvedValue(TEACHER);
+    renderLayout("/t/courses");
+    fireEvent.click(await screen.findByRole("button", { name: "打开导航" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("link", { name: "学生" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
   it("顶栏显示当前登录名（D1：身份显示一律用登录名）", async () => {
     mockedMe.mockResolvedValue(TEACHER);
     renderLayout("/t/courses");
@@ -86,16 +107,16 @@ describe("TeacherLayout 导航（侧边栏去重简化）", () => {
       "href",
       "/t/assignments",
     );
-    expect(screen.getByRole("link", { name: "数据" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "作答记录" })).toHaveAttribute(
       "href",
       "/t/data",
     );
-    expect(screen.getByRole("link", { name: "学情" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "学情分析" })).toHaveAttribute(
       "href",
       "/t/insights",
     );
     // T4.7：导出中心与连接 AI（D26），放「学情」附近
-    expect(screen.getByRole("link", { name: "导出" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "导出中心" })).toHaveAttribute(
       "href",
       "/t/export",
     );
@@ -167,14 +188,18 @@ describe("TeacherLayout 导航（侧边栏去重简化）", () => {
 });
 
 describe("TeacherLayout 管理入口（T2B.6：只对 isAdmin 显示）", () => {
-  it("管理员在侧边栏末尾看到「管理」入口（指向 /a）", async () => {
+  it("系统管理集中在账号分类，导航只保留一个账号入口", async () => {
     mockedMe.mockResolvedValue(TEACHER);
     renderLayout("/t/courses");
 
-    expect(await screen.findByRole("link", { name: "管理" })).toHaveAttribute(
-      "href",
-      "/a",
+    await screen.findByTestId("teacher-login-name");
+    expect(screen.queryByRole("link", { name: "系统管理" })).toBeNull();
+    expect(screen.getAllByRole("link", { name: "查看教师账号" })).toHaveLength(
+      1,
     );
+    expect(
+      screen.queryByText("Your data. Your way. All for learning."),
+    ).toBeNull();
   });
 
   it("普通教师不显示「管理」入口", async () => {
@@ -183,7 +208,7 @@ describe("TeacherLayout 管理入口（T2B.6：只对 isAdmin 显示）", () => 
 
     await screen.findByTestId("teacher-login-name");
     expect(
-      screen.queryByRole("link", { name: "管理" }),
+      screen.queryByRole("link", { name: "系统管理" }),
     ).not.toBeInTheDocument();
   });
 });

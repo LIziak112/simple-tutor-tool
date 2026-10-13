@@ -14,8 +14,8 @@ const publicDir = resolve(import.meta.dirname, "..", "..", "public");
 
 describe("pwaManifest（PWA manifest 配置）", () => {
   it("名称/展示方式/颜色符合约定", () => {
-    expect(pwaManifest.name).toBe("一对一辅导讲练");
-    expect(pwaManifest.short_name).toBe("辅导讲练");
+    expect(pwaManifest.name).toBe("OwnClass");
+    expect(pwaManifest.short_name).toBe("OwnClass");
     expect(pwaManifest.display).toBe("standalone");
     expect(pwaManifest.lang).toBe("zh-CN");
     expect(pwaManifest.theme_color).toBe(PWA_THEME_COLOR);

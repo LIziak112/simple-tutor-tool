@@ -1,5 +1,5 @@
 import { teacherLoginNameSchema } from "@tutor/contract";
-import { Loader2, LogIn, TriangleAlert } from "lucide-react";
+import { GraduationCap, Loader2, LogIn, TriangleAlert } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { Link, Navigate, useNavigate } from "react-router";
 import { Button } from "@/components/ui/button";
@@ -9,6 +9,7 @@ import {
   useTeacherStatus,
 } from "@/features/auth/teacher-auth";
 import { ApiError } from "@/lib/api";
+import { BRAND_NAME, BRAND_TAGLINE } from "@/lib/brand";
 import { AuthScreenError, AuthScreenLoading } from "./SetupPage";
 
 /**
@@ -107,23 +108,26 @@ export function LoginPage() {
   const shownError = formError ?? serverErrorMessage(loginMutation.error);
 
   return (
-    <main className="flex min-h-dvh flex-col items-center justify-center gap-6 bg-background px-6 text-foreground">
-      <header className="text-center">
-        <h1 className="flex items-center justify-center gap-2 text-2xl font-semibold">
-          <LogIn aria-hidden className="size-6" />
-          教师登录
-        </h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          输入登录名与密码进入辅导工作台
-        </p>
-      </header>
+    <main className="flex min-h-dvh flex-col items-center justify-center bg-background px-6 py-8 text-foreground">
+      <div className="w-full max-w-sm rounded-2xl border border-border bg-card p-6 text-card-foreground shadow-sm sm:p-8">
+        <header className="text-center">
+          <span
+            aria-hidden
+            className="mx-auto flex size-14 items-center justify-center rounded-2xl bg-primary text-primary-foreground"
+          >
+            <GraduationCap className="size-7" />
+          </span>
+          <h1 className="mt-4 text-xl font-semibold">教师登录</h1>
+          <p className="mt-2 mb-6 text-sm text-muted-foreground">
+            输入登录名与密码进入辅导工作台
+          </p>
+        </header>
 
-      <form
-        noValidate
-        onSubmit={handleSubmit}
-        className="w-full max-w-sm rounded-xl border border-border bg-card p-5 text-card-foreground shadow-sm"
-      >
-        <div className="flex flex-col gap-4">
+        <form
+          noValidate
+          onSubmit={handleSubmit}
+          className="flex flex-col gap-4"
+        >
           <div className="flex flex-col gap-1.5">
             <label htmlFor="login-name" className="text-sm font-medium">
               登录名
@@ -138,6 +142,7 @@ export function LoginPage() {
               aria-invalid={shownError != null}
               onChange={(e) => setLoginName(e.target.value)}
               disabled={loginMutation.isPending}
+              className="min-h-11"
             />
           </div>
 
@@ -155,6 +160,7 @@ export function LoginPage() {
               aria-invalid={shownError != null}
               onChange={(e) => setPassword(e.target.value)}
               disabled={loginMutation.isPending}
+              className="min-h-11"
             />
           </div>
 
@@ -170,7 +176,7 @@ export function LoginPage() {
 
           <Button
             type="submit"
-            className="min-h-11 w-full"
+            className="min-h-12 w-full px-4 text-base"
             disabled={loginMutation.isPending}
           >
             {loginMutation.isPending ? (
@@ -179,27 +185,36 @@ export function LoginPage() {
                 正在登录…
               </>
             ) : (
-              "登录"
+              <>
+                <LogIn aria-hidden />
+                登录
+              </>
             )}
           </Button>
-        </div>
-      </form>
+        </form>
 
-      <p className="max-w-sm text-center text-xs text-muted-foreground">
-        连续输错 5 次将临时锁定 10 分钟。
-      </p>
-
-      {statusQuery.data.registrationOpen && (
-        <p className="text-sm text-muted-foreground">
-          没有账号？
-          <Link
-            to="/t/register"
-            className="mx-1 font-medium text-primary underline-offset-4 hover:underline"
-          >
-            注册
-          </Link>
+        <p className="mt-6 text-center text-xs text-muted-foreground">
+          连续输错 5 次将临时锁定 10 分钟。
         </p>
-      )}
+
+        {statusQuery.data.registrationOpen && (
+          <p className="mt-3 text-center text-sm text-muted-foreground">
+            没有账号？
+            <Link
+              to="/t/register"
+              className="mx-1 font-medium text-primary underline-offset-4 hover:underline"
+            >
+              注册
+            </Link>
+          </p>
+        )}
+        <footer className="mt-6 text-center text-xs text-muted-foreground">
+          <p className="font-semibold">{BRAND_NAME}</p>
+          <p lang="en" className="mt-1 leading-relaxed">
+            {BRAND_TAGLINE}
+          </p>
+        </footer>
+      </div>
     </main>
   );
 }

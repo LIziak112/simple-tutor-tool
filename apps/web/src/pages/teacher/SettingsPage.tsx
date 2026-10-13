@@ -1,6 +1,12 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { Loader2, LogOut, TriangleAlert } from "lucide-react";
-import { Navigate, useNavigate } from "react-router";
+import {
+  ArrowRight,
+  Loader2,
+  LogOut,
+  ShieldCheck,
+  TriangleAlert,
+} from "lucide-react";
+import { Link, Navigate, useNavigate, useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
 import {
   teacherMeKey,
@@ -8,78 +14,149 @@ import {
   useTeacherMe,
 } from "@/features/auth/teacher-auth";
 import { BackupSection } from "@/features/teacher-backup/BackupSection";
-import { ApiTokenSection } from "@/features/teacher-settings/ApiTokenSection";
 import { CapabilityProfileSection } from "@/features/teacher-settings/CapabilityProfileSection";
+import { useSettingsNavigation } from "@/features/teacher-settings/settings-navigation";
+import { BRAND_NAME, BRAND_TAGLINE } from "@/lib/brand";
 import { formatCnTime } from "@/lib/time";
+import { AuthScreenLoading } from "./SetupPage";
 
-/**
- * /t/settings 设置页（T1.9 账号与会话；T4.5 增「备份与恢复」区——
- * 下载完整备份 / 从备份恢复 / 最近快照列表，见 features/teacher-backup；
- * T4.6 增「AI 连接（API Token）」区——查看 / 生成 / 重置（二次确认），
- * 见 features/teacher-settings；T7.7 增「辅助能力」区——steps/ink 两项
- * 教师级开关，学生端刷新生效，见 CapabilityProfileSection）。
- */
+const SECTIONS = [
+  { id: "teaching", label: "学生作答方式", shortLabel: "作答方式" },
+  { id: "backup", label: "备份与恢复", shortLabel: "备份恢复" },
+  { id: "account", label: "账号与会话", shortLabel: "账号会话" },
+] as const;
+
+/** 分类写入 URL；配置控制器持续挂载，切换时保留未保存状态。 */
 export function SettingsPage() {
   const meQuery = useTeacherMe();
   const logoutMutation = useLogoutTeacher();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-
-  // 布局守卫已确保登录；这里兜底：会话刚失效（如另一处登出）时跳登录
-  if (meQuery.isError || !meQuery.data) {
+  const settingsNavigation = useSettingsNavigation();
+  const [searchParams] = useSearchParams();
+  const activeSection =
+    SECTIONS.find((section) => section.id === searchParams.get("section"))
+      ?.id ?? "teaching";
+  if (meQuery.isPending) return <AuthScreenLoading text="正在加载设置…" />;
+  if (meQuery.isError || !meQuery.data)
     return <Navigate to="/t/login" replace />;
-  }
-
   function handleLogout() {
-    logoutMutation.mutate(undefined, {
-      onSuccess: () => {
-        // me 缓存已在 mutation 里清掉；这里再回到登录页
-        void queryClient.invalidateQueries({ queryKey: teacherMeKey });
-        navigate("/t/login", { replace: true });
-      },
-    });
+    const action = () =>
+      logoutMutation.mutate(undefined, {
+        onSuccess: () => {
+          queryClient.removeQueries({
+            queryKey: ["teacher", "capability-draft"],
+          });
+          void queryClient.invalidateQueries({ queryKey: teacherMeKey });
+          navigate("/t/login", { replace: true });
+        },
+      });
+    if (settingsNavigation) settingsNavigation.leave(action);
+    else action();
   }
-
   return (
-    <section className="mx-auto flex w-full max-w-2xl flex-col gap-6 px-6 py-8">
-      <header>
-        <h1 className="text-xl font-semibold">设置</h1>
-        <p className="mt-1 text-sm text-muted-foreground">教师账号与会话</p>
+    <section className="teacher-config-page">
+      <header className="mb-7">
+        <h1 className="teacher-page-title">设置</h1>
+        <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+          为你的课堂选择合适的作答方式，并管理数据与账号。
+        </p>
       </header>
-
-      <div className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5 text-card-foreground">
-        <h2 className="text-sm font-semibold">账号</h2>
-        <p className="text-sm text-muted-foreground">
-          教师账号创建于 {formatCnTime(meQuery.data.createdAt)}
-        </p>
-      </div>
-
-      <div className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5 text-card-foreground">
-        <h2 className="text-sm font-semibold">会话</h2>
-        <p className="text-sm text-muted-foreground">
-          退出后需要重新输入密码；连续输错 5 次将临时锁定 10 分钟。
-        </p>
-        {logoutMutation.isError && (
-          <p
-            role="alert"
-            className="flex items-start gap-2 rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive"
+      <nav
+        aria-label="设置分类"
+        className="mb-7 flex flex-wrap gap-x-7 border-b border-border"
+      >
+        {SECTIONS.map(({ id, label, shortLabel }) => (
+          <Link
+            key={id}
+            to={`/t/settings?section=${id}`}
+            aria-label={label}
+            aria-current={activeSection === id ? "page" : undefined}
+            className="teacher-settings-link"
           >
-            <TriangleAlert aria-hidden className="mt-0.5 size-4 shrink-0" />
-            {logoutMutation.error instanceof Error
-              ? logoutMutation.error.message
-              : "退出失败，请稍后重试"}
+            <span className="hidden sm:inline">{label}</span>
+            <span className="sm:hidden">{shortLabel}</span>
+          </Link>
+        ))}
+      </nav>
+      <div hidden={activeSection !== "teaching"}>
+        <CapabilityProfileSection
+          key={meQuery.data.id}
+          teacherId={meQuery.data.id}
+        />
+        <div className="mt-10 flex flex-wrap items-center justify-between gap-4 border-t border-border pt-5">
+          <div>
+            <h2 className="text-sm font-semibold">让 AI 参与备课</h2>
+            <p className="mt-1 text-[0.8125rem] text-muted-foreground">
+              连接你的 AI 客户端，读取学情并导入练习。
+            </p>
+          </div>
+          <Link
+            to="/t/connect"
+            className="flex min-h-11 items-center gap-2 text-sm font-medium text-primary"
+          >
+            管理 AI 连接
+            <ArrowRight aria-hidden className="size-4" />
+          </Link>
+        </div>
+      </div>
+      <div hidden={activeSection !== "backup"}>
+        <BackupSection />
+      </div>
+      <div hidden={activeSection !== "account"} className="space-y-7">
+        <section>
+          <h2 className="text-lg font-semibold">教师账号</h2>
+          <dl className="mt-4 divide-y divide-border rounded-xl border border-border bg-card px-6 text-sm">
+            <div className="flex flex-wrap justify-between gap-3 py-5">
+              <dt className="text-muted-foreground">登录名</dt>
+              <dd className="min-w-0 break-all font-medium">
+                {meQuery.data.loginName}
+              </dd>
+            </div>
+            <div className="flex flex-wrap justify-between gap-3 py-5">
+              <dt className="text-muted-foreground">创建时间</dt>
+              <dd className="tabular-nums">
+                {formatCnTime(meQuery.data.createdAt)}
+              </dd>
+            </div>
+          </dl>
+          {meQuery.data.isAdmin && (
+            <Link
+              to="/a"
+              className="mt-3 flex min-h-11 items-center gap-2 text-sm font-medium text-primary"
+            >
+              <ShieldCheck aria-hidden className="size-4" />
+              系统管理
+              <ArrowRight aria-hidden className="size-4" />
+            </Link>
+          )}
+        </section>
+        <section>
+          <h2 className="text-lg font-semibold">登录会话</h2>
+          <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+            退出后需要重新登录，才能继续使用教师工作台。
           </p>
-        )}
-        <div>
+          {logoutMutation.isError && (
+            <p
+              role="alert"
+              className="mt-3 flex items-start gap-2 text-sm text-destructive"
+            >
+              <TriangleAlert aria-hidden className="size-4 shrink-0" />
+              {logoutMutation.error instanceof Error
+                ? logoutMutation.error.message
+                : "退出失败"}
+              ，请重试。
+            </p>
+          )}
           <Button
             variant="outline"
-            className="min-h-11 px-6 text-destructive"
+            className="mt-4 min-h-11"
             disabled={logoutMutation.isPending}
             onClick={handleLogout}
           >
             {logoutMutation.isPending ? (
               <>
-                <Loader2 aria-hidden className="animate-spin" />
+                <Loader2 aria-hidden className="motion-safe:animate-spin" />
                 正在退出…
               </>
             ) : (
@@ -89,20 +166,15 @@ export function SettingsPage() {
               </>
             )}
           </Button>
-        </div>
+        </section>
+        <footer className="flex flex-wrap justify-between gap-3 border-t border-border pt-5 text-sm">
+          <span className="font-semibold">{BRAND_NAME}</span>
+          <span lang="en" className="text-xs text-muted-foreground">
+            {BRAND_TAGLINE}
+          </span>
+        </footer>
       </div>
-
-      {/* T7.7：辅助能力（steps/ink 教师级开关；学生端刷新生效） */}
-      <CapabilityProfileSection />
-
-      {/* T4.5：备份与恢复（下载 / 恢复上传 + 密码确认弹层 / 最近快照） */}
-      <BackupSection />
-
-      {/* T4.6：AI 连接（API Token 查看 / 生成 / 重置，D22） */}
-      <ApiTokenSection />
     </section>
   );
 }
-
-// 供 App.tsx 路由级懒加载
 export default SettingsPage;

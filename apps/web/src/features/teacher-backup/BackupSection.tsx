@@ -1,6 +1,5 @@
 import type { BackupRestoreResult } from "@tutor/contract";
 import {
-  DatabaseBackup,
   Download,
   History,
   Loader2,
@@ -59,6 +58,7 @@ export function BackupSection() {
   // 恢复流转：选文件 → 密码弹层 → 提交 → 结果提示
   const [pendingZip, setPendingZip] = useState<File | null>(null);
   const [password, setPassword] = useState("");
+  const [snapshotsExpanded, setSnapshotsExpanded] = useState(false);
   const [restoreDone, setRestoreDone] = useState<BackupRestoreResult | null>(
     null,
   );
@@ -92,12 +92,9 @@ export function BackupSection() {
         : null;
 
   return (
-    <div className="flex flex-col gap-4 rounded-xl border border-border bg-card p-5 text-card-foreground">
+    <div className="teacher-config-section">
       <div>
-        <h2 className="flex items-center gap-2 text-sm font-semibold">
-          <DatabaseBackup aria-hidden className="size-4" />
-          备份与恢复
-        </h2>
+        <h2 className="text-lg font-semibold">备份与恢复</h2>
         {/* 备份内容表述（Opus 实测③-4）：blobs/shared 不存在时不打包；
             换行落在全角标点后（JSX 换行折叠为空格，避免插进词中间） */}
         <p className="mt-1 text-sm text-muted-foreground">
@@ -108,17 +105,17 @@ export function BackupSection() {
       </div>
 
       {/* 下载（Opus 实测③-1：服务端下载前恒先拍当前时刻快照，文案同步说明） */}
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-3 rounded-xl border border-border bg-card p-5 sm:p-6">
+        <h3 className="text-base font-semibold">数据备份</h3>
         <div className="flex flex-wrap items-center gap-3">
           <Button
-            variant="outline"
             className="min-h-11 px-5"
             disabled={downloadMutation.isPending}
             onClick={() => downloadMutation.mutate(undefined)}
           >
             {downloadMutation.isPending ? (
               <>
-                <Loader2 aria-hidden className="animate-spin" />
+                <Loader2 aria-hidden className="motion-safe:animate-spin" />
                 正在打包…
               </>
             ) : (
@@ -150,8 +147,101 @@ export function BackupSection() {
         </p>
       </div>
 
+      {/* 最近快照 */}
+      <div className="flex flex-col gap-3">
+        <h3 className="flex items-center gap-2 text-sm font-semibold">
+          <History aria-hidden className="size-4" />
+          最近快照
+        </h3>
+        {restoreDone ? (
+          /* 恢复成功后会话可能已失效（sessionWarning 恒 true）：列表失效重取
+             若得 401 不再以红字错误态与成功横幅同屏（Opus 实测③-5），
+             改为重新登录引导 */
+          <p className="text-sm text-muted-foreground">
+            已恢复，请重新登录后查看快照列表
+          </p>
+        ) : (
+          <>
+            {snapshotsQuery.isPending && (
+              <p className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2
+                  aria-hidden
+                  className="size-4 motion-safe:animate-spin"
+                />
+                正在加载…
+              </p>
+            )}
+            {snapshotsQuery.isError && (
+              <p role="alert" className="text-sm text-destructive">
+                快照列表加载失败：
+                {snapshotsQuery.error instanceof Error
+                  ? snapshotsQuery.error.message
+                  : "请稍后重试"}
+              </p>
+            )}
+            {snapshotsQuery.isError && (
+              <Button
+                variant="outline"
+                className="min-h-11 self-start"
+                onClick={() => void snapshotsQuery.refetch()}
+              >
+                重新加载快照
+              </Button>
+            )}
+            {snapshotsQuery.isSuccess &&
+              snapshotsQuery.data.snapshots.length === 0 && (
+                <p className="text-sm text-muted-foreground">
+                  暂无快照（下载完整备份时会自动先拍一份）
+                </p>
+              )}
+            {snapshotsQuery.isSuccess &&
+              snapshotsQuery.data.snapshots.length > 0 && (
+                <ul
+                  id="backup-snapshots"
+                  className="flex flex-col divide-y divide-border rounded-xl border border-border bg-card"
+                >
+                  {snapshotsQuery.data.snapshots
+                    .slice(0, snapshotsExpanded ? undefined : 3)
+                    .map((snapshot) => (
+                      <li
+                        key={snapshot.filename}
+                        className="flex flex-wrap items-center justify-between gap-3 px-5 py-4 text-sm tabular-nums"
+                      >
+                        <span>{formatCnTime(snapshot.createdAt)}</span>
+                        <span className="flex min-w-0 flex-wrap items-center gap-3 text-muted-foreground">
+                          <span className="font-mono text-xs break-all">
+                            {snapshot.filename}
+                          </span>
+                          <span>{formatBytes(snapshot.sizeBytes)}</span>
+                        </span>
+                      </li>
+                    ))}
+                </ul>
+              )}
+            {snapshotsQuery.isSuccess &&
+              snapshotsQuery.data.snapshots.length > 3 && (
+                <Button
+                  variant="ghost"
+                  className="min-h-11 self-start"
+                  aria-expanded={snapshotsExpanded}
+                  aria-controls="backup-snapshots"
+                  onClick={() => setSnapshotsExpanded((expanded) => !expanded)}
+                >
+                  {snapshotsExpanded
+                    ? "收起快照"
+                    : `查看全部 ${snapshotsQuery.data.snapshots.length} 条快照`}
+                </Button>
+              )}
+          </>
+        )}
+      </div>
+
       {/* 恢复上传 */}
-      <div className="flex flex-col gap-3 border-t border-border pt-4">
+      <div className="flex flex-col gap-3 rounded-xl border border-destructive/30 bg-destructive/5 p-5 sm:p-6">
+        <h3 className="text-base font-semibold text-destructive">恢复备份</h3>
+        <p className="text-sm leading-relaxed text-muted-foreground">
+          恢复会整体替换当前数据，完成后可能需要重新登录。
+        </p>
         <input
           ref={fileInputRef}
           type="file"
@@ -167,7 +257,7 @@ export function BackupSection() {
         <div className="flex flex-wrap items-center gap-3">
           <Button
             variant="outline"
-            className="min-h-11 px-5"
+            className="min-h-11 border-destructive/60 px-5 text-destructive"
             onClick={() => fileInputRef.current?.click()}
           >
             <RotateCcw aria-hidden />
@@ -208,64 +298,6 @@ export function BackupSection() {
               </Button>
             </div>
           </div>
-        )}
-      </div>
-
-      {/* 最近快照 */}
-      <div className="flex flex-col gap-2 border-t border-border pt-4">
-        <h3 className="flex items-center gap-2 text-sm font-semibold">
-          <History aria-hidden className="size-4" />
-          最近快照
-        </h3>
-        {restoreDone ? (
-          /* 恢复成功后会话可能已失效（sessionWarning 恒 true）：列表失效重取
-             若得 401 不再以红字错误态与成功横幅同屏（Opus 实测③-5），
-             改为重新登录引导 */
-          <p className="text-sm text-muted-foreground">
-            已恢复，请重新登录后查看快照列表
-          </p>
-        ) : (
-          <>
-            {snapshotsQuery.isPending && (
-              <p className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Loader2 aria-hidden className="size-4 animate-spin" />
-                正在加载…
-              </p>
-            )}
-            {snapshotsQuery.isError && (
-              <p role="alert" className="text-sm text-destructive">
-                快照列表加载失败：
-                {snapshotsQuery.error instanceof Error
-                  ? snapshotsQuery.error.message
-                  : "请稍后重试"}
-              </p>
-            )}
-            {snapshotsQuery.isSuccess &&
-              snapshotsQuery.data.snapshots.length === 0 && (
-                <p className="text-sm text-muted-foreground">
-                  暂无快照（下载完整备份时会自动先拍一份）
-                </p>
-              )}
-            {snapshotsQuery.isSuccess &&
-              snapshotsQuery.data.snapshots.length > 0 && (
-                <ul className="flex flex-col divide-y divide-border rounded-lg border border-border">
-                  {snapshotsQuery.data.snapshots.map((snapshot) => (
-                    <li
-                      key={snapshot.filename}
-                      className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-sm"
-                    >
-                      <span>{formatCnTime(snapshot.createdAt)}</span>
-                      <span className="flex items-center gap-3 text-muted-foreground">
-                        <span className="font-mono text-xs">
-                          {snapshot.filename}
-                        </span>
-                        <span>{formatBytes(snapshot.sizeBytes)}</span>
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-          </>
         )}
       </div>
 
@@ -333,7 +365,7 @@ export function BackupSection() {
               >
                 {restoreMutation.isPending ? (
                   <>
-                    <Loader2 aria-hidden className="animate-spin" />
+                    <Loader2 aria-hidden className="motion-safe:animate-spin" />
                     正在恢复…
                   </>
                 ) : (

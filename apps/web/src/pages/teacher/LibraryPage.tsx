@@ -422,14 +422,12 @@ export function LibraryPage() {
   }, [importSuccess]);
 
   return (
-    <section className="mx-auto w-full max-w-6xl px-4 py-6 md:px-6 xl:max-w-7xl">
-      <header className="flex flex-wrap items-center justify-between gap-3">
+    <section className="teacher-page">
+      <header className="mb-2 flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-lg font-semibold">资源库</h1>
+          <h1 className="teacher-page-title">资源库</h1>
           <p className="mt-0.5 text-sm text-muted-foreground">
-            讲义库与题库：导入的内容都在这里，按文件夹组织，供课程与作业引用；
-            列表与详情面板可把讲义 / 单元导出为教学包 ZIP（正文 + 能力清单快照 +
-            随行图片），整包分享或重新导入
+            管理讲义与练习单元，按文件夹组织，供课程与作业使用。
           </p>
         </div>
         <Button asChild className="min-h-11 px-4">
@@ -470,7 +468,7 @@ export function LibraryPage() {
       <div
         role="tablist"
         aria-label="资源库分区"
-        className="mt-4 flex flex-wrap gap-1"
+        className="mt-6 flex flex-wrap gap-1 border-b border-border pb-3"
       >
         {TABS.map(({ key, label, icon: Icon }) => (
           <button
@@ -977,7 +975,7 @@ function LectureListView({
         {lectures.map((lecture) => (
           <li
             key={lecture.id}
-            className="flex min-h-11 items-center gap-2 rounded-lg border border-border bg-card px-2 py-1.5"
+            className="grid min-h-11 grid-cols-[1.25rem_minmax(0,1fr)] items-start gap-x-3 rounded-xl border border-border bg-card px-5 py-3"
           >
             <input
               type="checkbox"
@@ -986,55 +984,57 @@ function LectureListView({
               aria-label={`选择讲义 ${lecture.title}`}
               className="size-5 shrink-0 accent-primary"
             />
-            <p className="flex min-w-0 flex-1 items-center gap-2 px-1">
+            <p className="flex min-w-0 flex-1 flex-wrap items-center gap-2 px-1 text-sm">
               {lecture.kind === "lesson" ? (
                 // 讲练页（2026-10 讲练一体）：教师侧仅提示形态，点击仍进编辑/预览
                 <LessonBadge />
               ) : null}
-              <span className="min-w-0 truncate text-sm font-medium">
+              <span className="min-w-0 flex-1 font-semibold break-words">
                 {lecture.title}
               </span>
             </p>
-            <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">
+            <span className="col-start-2 px-1 text-xs leading-relaxed text-muted-foreground">
               被 {lecture.courseCount} 个课程引用 ·{" "}
               {formatRelativeTime(lecture.updatedAt)}
             </span>
-            <Button
-              type="button"
-              variant="ghost"
-              className="size-11 shrink-0"
-              aria-label={`编辑讲义 ${lecture.title}`}
-              onClick={() => onEdit(lecture.id)}
-            >
-              <PencilLine aria-hidden />
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              className="size-11 shrink-0"
-              aria-label={`导出讲义 ${lecture.title}`}
-              onClick={() => onExport(lecture.id)}
-            >
-              <Download aria-hidden />
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              className="size-11 shrink-0"
-              aria-label={`导出教学包 ${lecture.title}`}
-              onClick={() => onExportPack(lecture.id)}
-            >
-              <Package aria-hidden />
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              className="size-11 shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
-              aria-label={`删除讲义 ${lecture.title}`}
-              onClick={() => onDelete(lecture)}
-            >
-              <Trash2 aria-hidden />
-            </Button>
+            <div className="col-start-2 mt-2 flex flex-wrap justify-end gap-1 border-t border-border pt-1">
+              <Button
+                type="button"
+                variant="ghost"
+                className="size-11 shrink-0"
+                aria-label={`编辑讲义 ${lecture.title}`}
+                onClick={() => onEdit(lecture.id)}
+              >
+                <PencilLine aria-hidden />
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                className="size-11 shrink-0"
+                aria-label={`导出讲义 ${lecture.title}`}
+                onClick={() => onExport(lecture.id)}
+              >
+                <Download aria-hidden />
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                className="size-11 shrink-0"
+                aria-label={`导出教学包 ${lecture.title}`}
+                onClick={() => onExportPack(lecture.id)}
+              >
+                <Package aria-hidden />
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                className="size-11 shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                aria-label={`删除讲义 ${lecture.title}`}
+                onClick={() => onDelete(lecture)}
+              >
+                <Trash2 aria-hidden />
+              </Button>
+            </div>
           </li>
         ))}
       </ul>
@@ -1152,29 +1152,32 @@ function UnitListView({
             key={unit.id}
             className="rounded-lg border border-border bg-card px-2 py-1.5"
           >
-            <div className="flex min-h-11 items-center gap-2">
+            <div className="grid min-h-11 grid-cols-[1.25rem_minmax(0,1fr)] items-start gap-x-3 px-3 py-3">
               <input
                 type="checkbox"
                 checked={selected.has(unit.id)}
                 onChange={() => onToggle(unit.id)}
                 aria-label={`选择单元 ${unit.title}`}
-                className="size-5 shrink-0 accent-primary"
+                className="mt-3 size-5 shrink-0 accent-primary"
               />
               <details className="group min-w-0 flex-1">
-                <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 outline-none select-none focus-visible:ring-3 focus-visible:ring-ring/50 [&::-webkit-details-marker]:hidden">
+                <summary className="grid min-h-11 cursor-pointer list-none grid-cols-[1rem_minmax(0,1fr)] items-start gap-x-2 gap-y-1 py-2 outline-none focus-visible:ring-3 focus-visible:ring-ring/50 [&::-webkit-details-marker]:hidden">
                   <ChevronRight
                     aria-hidden
-                    className="size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-90"
+                    className="mt-0.5 size-4 shrink-0 text-muted-foreground motion-safe:transition-transform group-open:rotate-90"
                   />
-                  <span className="min-w-0 flex-1 truncate text-sm font-medium">
+                  <span
+                    data-testid="unit-title"
+                    className="min-w-0 text-sm font-semibold break-words"
+                  >
                     {unit.title}
                   </span>
                   {unit.topic !== null ? (
-                    <span className="hidden max-w-40 truncate rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary sm:inline-block">
+                    <span className="col-start-2 min-w-0 text-[0.8125rem] leading-relaxed break-words text-muted-foreground">
                       {unit.topic}
                     </span>
                   ) : null}
-                  <span className="shrink-0 text-xs text-muted-foreground">
+                  <span className="col-start-2 text-xs leading-relaxed text-muted-foreground tabular-nums">
                     {unit.questionCount} 题 · 被 {unit.courseCount} 个课程引用 ·{" "}
                     {unit.assignmentCount} 个作业使用
                   </span>
@@ -1201,42 +1204,44 @@ function UnitListView({
                   />
                 </div>
               </details>
-              <Button
-                type="button"
-                variant="ghost"
-                className="size-11 shrink-0"
-                aria-label={`单元信息 ${unit.title}`}
-                onClick={() => onOpenDetail(unit.id)}
-              >
-                <Settings2 aria-hidden />
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                className="size-11 shrink-0"
-                aria-label={`导出单元 ${unit.title}`}
-                onClick={() => onExport(unit.id)}
-              >
-                <Download aria-hidden />
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                className="size-11 shrink-0"
-                aria-label={`导出教学包 ${unit.title}`}
-                onClick={() => onExportPack(unit.id)}
-              >
-                <Package aria-hidden />
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                className="size-11 shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                aria-label={`删除单元 ${unit.title}`}
-                onClick={() => onDelete(unit)}
-              >
-                <Trash2 aria-hidden />
-              </Button>
+              <div className="col-start-2 flex flex-wrap justify-end gap-1 border-t border-border pt-1">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="size-11 shrink-0"
+                  aria-label={`单元信息 ${unit.title}`}
+                  onClick={() => onOpenDetail(unit.id)}
+                >
+                  <Settings2 aria-hidden />
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="size-11 shrink-0"
+                  aria-label={`导出单元 ${unit.title}`}
+                  onClick={() => onExport(unit.id)}
+                >
+                  <Download aria-hidden />
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="size-11 shrink-0"
+                  aria-label={`导出教学包 ${unit.title}`}
+                  onClick={() => onExportPack(unit.id)}
+                >
+                  <Package aria-hidden />
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="size-11 shrink-0 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                  aria-label={`删除单元 ${unit.title}`}
+                  onClick={() => onDelete(unit)}
+                >
+                  <Trash2 aria-hidden />
+                </Button>
+              </div>
             </div>
           </li>
         ))}
