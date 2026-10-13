@@ -18,14 +18,66 @@ function hStroke(): InkStroke {
 }
 
 describe("整笔橡皮命中检测", () => {
+  it("轨迹共线、端点与零长度线段正确；空笔画不命中", () => {
+    const s = hStroke();
+    expect(eraseHit([s], 600, 100, 14, undefined, { x: 400, y: 100 })).toEqual([
+      0,
+    ]);
+    expect(eraseHit([s], 600, 150, 14, undefined, { x: 400, y: 150 })).toEqual(
+      [],
+    );
+    const dot = { ...s, points: [s.points[0]].filter((p) => p !== undefined) };
+    expect(eraseHit([dot], 150, 100, 14, undefined, { x: 50, y: 100 })).toEqual(
+      [0],
+    );
+    expect(eraseHit([{ ...s, points: [] }], 100, 100, 14)).toEqual([]);
+  });
+
+  it("自然笔感计入配置的笔宽倍率", () => {
+    const s: InkStroke = {
+      ...hStroke(),
+      rendering: {
+        renderer: "freehand",
+        sizeScale: 3,
+        smoothing: 0.5,
+        thinning: 0,
+        streamline: 0,
+        simulatePressure: false,
+      },
+    };
+    expect(strokeHit(s, 250, 119, 14)).toBe(true);
+    expect(strokeHit(s, 250, 121, 14)).toBe(false);
+  });
+  it("计入笔宽，只命中空间位置接近的笔画", () => {
+    const right = { ...hStroke(), weight: 20 };
+    const left = {
+      ...right,
+      points: right.points.map((p) => ({ ...p, y: 600 })),
+    };
+    expect(eraseHit([right, left], 250, 123, 14)).toEqual([0]);
+    expect(eraseHit([right, left], 250, 125, 14)).toEqual([]);
+  });
+
+  it("快速拖动扫过两次采样之间的笔画，不误擦远处平行笔迹", () => {
+    const strokes = [
+      hStroke(),
+      { ...hStroke(), points: hStroke().points.map((p) => ({ ...p, y: 600 })) },
+    ];
+    expect(
+      eraseHit(strokes, 250, 180, 14, undefined, { x: 250, y: 20 }),
+    ).toEqual([0]);
+    expect(
+      eraseHit(strokes, 550, 180, 14, undefined, { x: 550, y: 20 }),
+    ).toEqual([]);
+  });
   it("落在笔画段中间命中（点到线段的距离）", () => {
     const s = hStroke();
     // (250,100) 在 (200,100)-(300,100) 段上
     expect(strokeHit(s, 250, 100, 14)).toBe(true);
     // 距离 12 < 半径 14 → 命中
     expect(strokeHit(s, 250, 112, 14)).toBe(true);
-    // 距离 15 > 半径 → 不命中
-    expect(strokeHit(s, 250, 115, 14)).toBe(false);
+    // 距离 17 > 半径加半笔宽 → 不命中
+    expect(strokeHit(s, 250, 117, 14)).toBe(false);
   });
 
   it("端点附近命中；远离不命中", () => {

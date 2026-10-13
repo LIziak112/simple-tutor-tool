@@ -56,6 +56,7 @@ import {
 import { HintPanel } from "./HintPanel";
 import { QuestionSurface } from "./QuestionSurface";
 import { completionLabel, getQuestionCompletion } from "./question-completion";
+import { usePaperPosition } from "./use-paper-position";
 
 /**
  * 答题页题卡（T2.6）：题号、题型徽章（中文）、难度星、考点 tag、题干
@@ -317,6 +318,7 @@ export function AttemptQuestionCard({
   // 入口（已有草稿数据保留服务端，恢复开关后回来看）。
   const { ink: inkEnabled } = useEnabledCapabilities();
   const articleRef = useRef<HTMLElement | null>(null);
+  const openPaperWithPosition = usePaperPosition(articleRef);
   const editor = useAttemptEditor(question.id);
   const annotationOverlay = useRef<QuestionAnnotationOverlayHandle>(null);
   const [localNoteOpen, setLocalNoteOpen] = useState(false);
@@ -325,18 +327,22 @@ export function AttemptQuestionCard({
     : localNoteOpen;
   const setNoteOpen = (next: boolean | ((previous: boolean) => boolean)) => {
     const open = typeof next === "function" ? next(noteOpen) : next;
-    if (editor)
-      void editor.requestPaper(
-        open
-          ? {
-              questionId: question.id,
-              kind: HANDWRITTEN_TYPES.has(question.type)
-                ? "answerInk"
-                : "scratch",
-            }
-          : null,
-      );
-    else setLocalNoteOpen(open);
+    const request = async () => {
+      if (editor)
+        return editor.requestPaper(
+          open
+            ? {
+                questionId: question.id,
+                kind: HANDWRITTEN_TYPES.has(question.type)
+                  ? "answerInk"
+                  : "scratch",
+              }
+            : null,
+        );
+      setLocalNoteOpen(open);
+      return true;
+    };
+    void openPaperWithPosition(request, open);
   };
   const [annotationOpen, setAnnotationOpen] = useState(false);
   const [annotationHidden, setAnnotationHidden] = useState(false);
