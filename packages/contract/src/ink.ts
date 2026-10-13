@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { inkRenderingSchema } from "./ink-profile.ts";
 
 /**
  * 手写笔迹契约（T2.8 起为权威定义）：InkDoc 矢量文档形状 + 上传/取回/元数据响应。
@@ -39,6 +40,8 @@ export const inkStrokePointSchema = z.object({
 
 /** 一笔完整笔画（整笔橡皮删除笔画本身，不产生橡皮笔画） */
 export const inkStrokeSchema = z.object({
+  /** 实际绘制参数，缺省使用标准笔；不含临时预测。 */
+  rendering: inkRenderingSchema.optional(),
   tool: z.enum(["pen", "highlighter"]),
   /** CSS 颜色字符串（荧光笔带 alpha） */
   color: z.string().min(1),

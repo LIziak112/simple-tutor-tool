@@ -170,6 +170,30 @@ export const appSettings = sqliteTable("app_settings", {
   value: text("value").notNull(),
 });
 
+/** 命名手写配置按师生身份和账号隔离，当前设备选择不写入服务器。 */
+export const inkProfiles = sqliteTable(
+  "ink_profiles",
+  {
+    id: text("id").primaryKey(),
+    subjectType: text("subject_type", {
+      enum: ["teacher", "student"],
+    }).notNull(),
+    subjectId: text("subject_id").notNull(),
+    name: text("name").notNull(),
+    configJson: text("config_json").notNull(),
+    revision: integer("revision").notNull().default(1),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    index("ink_profiles_owner_idx").on(table.subjectType, table.subjectId),
+    uniqueIndex("ink_profiles_owner_name_uk").on(
+      table.subjectType,
+      table.subjectId,
+      table.name,
+    ),
+  ],
+);
+
 /** app_settings 表行类型（SELECT 结果） */
 export type AppSetting = typeof appSettings.$inferSelect;
 /** app_settings 表插入类型 */

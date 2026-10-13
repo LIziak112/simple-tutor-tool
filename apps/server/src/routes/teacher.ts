@@ -30,6 +30,7 @@ import {
 import { createContentRoutes } from "./content";
 import { createCourseRoutes } from "./courses";
 import { createImportRoutes } from "./import";
+import { createTeacherInkProfileRoutes } from "./ink-profiles";
 import { createLibraryRoutes } from "./library";
 import { createSharedRoutes } from "./shared";
 import { createTeacherAnalyticsRoutes } from "./teacher-analytics";
@@ -107,6 +108,7 @@ export function createTeacherRoutes(
   return (
     new Hono<TeacherEnv>()
       .use("*", requireTeacher)
+      .route("/", createTeacherInkProfileRoutes(db))
       .get("/me", (c) => {
         return c.json({ ok: true, data: c.var.teacher });
       })
