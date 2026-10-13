@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:ink-feel": "node scripts/ink-feel-server.mjs",
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit"

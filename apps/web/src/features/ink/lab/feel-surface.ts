@@ -38,7 +38,7 @@ export const DEFAULT_FEEL_PARAMS: FeelParams = {
   smoothing: 0.3,
   streamline: 0.15,
   sizeScale: 1,
-  prediction: true,
+  prediction: false,
   simulatePressure: false,
 };
 export const FEEL_PRESETS = [

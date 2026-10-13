@@ -51,7 +51,7 @@ beforeEach(() => {
     clientHeight: { value: 400 },
   });
   document.body.append(host);
-  surface = createFeelSurface();
+  surface = createFeelSurface({ ...DEFAULT_FEEL_PARAMS, prediction: true });
   surface.mount(host);
   const target = host.querySelector<HTMLCanvasElement>("[data-slot=feel-wet]");
   if (!target) throw new Error("实验画布未挂载");
