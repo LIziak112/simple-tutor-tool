@@ -161,6 +161,7 @@ export function createAnnotationSurface(
   let liveStrokeIsErase = false;
   let livePrev: { x: number; y: number } | null = null;
   let pendingErase = new Set<number>();
+  let erasePrev: Pick<InkStrokePoint, "x" | "y"> | undefined;
 
   let reasonOverride: InkChangeReason | null = null;
   store.subscribe(() => {
@@ -278,14 +279,18 @@ export function createAnnotationSurface(
     livePrev = null;
     liveStrokeIsErase = false;
     pendingErase = new Set();
+    erasePrev = undefined;
     redraw();
   }
 
   /** 收笔：按已收真实采样提交（不补造终点；落笔快照分派，同引擎口径） */
   function commitLiveStroke(): void {
     if (liveStrokeIsErase) {
-      if (pendingErase.size > 0) {
-        withReason("erase", () => store.commitErase([...pendingErase]));
+      // 删除前的预览下标不能继续用于删除后正文。
+      const indices = [...pendingErase];
+      pendingErase.clear();
+      if (indices.length > 0) {
+        withReason("erase", () => store.commitErase(indices));
       }
       redraw();
     } else if (livePoints.length > 0 && liveBrush) {
@@ -309,6 +314,7 @@ export function createAnnotationSurface(
     livePrev = null;
     liveStrokeIsErase = false;
     pendingErase = new Set();
+    erasePrev = undefined;
   }
 
   // ---- 事件处理（接线同 atrament-adapter；坐标域换为底图像素） ----
@@ -350,6 +356,7 @@ export function createAnnotationSurface(
     liveStrokeIsErase = tool.type === "eraser";
 
     if (liveStrokeIsErase) {
+      erasePrev = { x, y };
       pendingErase = new Set(
         eraseHit(
           store.peekStrokes(),
@@ -401,7 +408,8 @@ export function createAnnotationSurface(
     for (const ev of events) {
       const { x, y } = eventToBase(ev, rect);
       if (eraseView && eraseBoxes) {
-        const hits = eraseHit(eraseView, x, y, radius, eraseBoxes);
+        const hits = eraseHit(eraseView, x, y, radius, eraseBoxes, erasePrev);
+        erasePrev = { x, y };
         let changed = false;
         for (const h of hits) {
           if (!pendingErase.has(h)) {
@@ -590,10 +598,12 @@ export function createAnnotationSurface(
     },
 
     undo(): void {
+      finishPointer({ kind: "layoutchange" });
       withReason("undo", () => store.undo());
       redraw();
     },
     redo(): void {
+      finishPointer({ kind: "layoutchange" });
       withReason("redo", () => store.redo());
       redraw();
     },

@@ -229,6 +229,7 @@ export function createAtramentSurface(
   let livePrev: { x: number; y: number } | null = null;
   /** 橡皮拖动中待删除的笔画下标集合（一次拖动合并为一个历史条目） */
   let pendingErase = new Set<number>();
+  let erasePrev: Pick<InkStrokePoint, "x" | "y"> | undefined;
 
   /**
    * 下一次 store 变化通知携带的原因（T4.0b，§5.0-C14）：在调用 store 的变更
@@ -382,6 +383,7 @@ export function createAtramentSurface(
     livePrev = null;
     liveStrokeIsErase = false;
     pendingErase = new Set();
+    erasePrev = undefined;
     redraw(); // 抹掉手掌已画的部分
   }
 
@@ -396,9 +398,12 @@ export function createAtramentSurface(
    */
   function commitLiveStroke(): void {
     if (liveStrokeIsErase) {
+      // 下标属于删除前正文，提交前清空预览，避免重绘时误隐藏前移的其他笔画。
+      const indices = [...pendingErase];
+      pendingErase.clear();
       // 一次拖动的全部命中合并为一个历史条目（撤销=全部恢复）
-      if (pendingErase.size > 0) {
-        withReason("erase", () => store.commitErase([...pendingErase]));
+      if (indices.length > 0) {
+        withReason("erase", () => store.commitErase(indices));
       }
       redraw();
     } else if (livePoints.length > 0 && liveBrush) {
@@ -430,6 +435,7 @@ export function createAtramentSurface(
     livePrev = null;
     liveStrokeIsErase = false;
     pendingErase = new Set();
+    erasePrev = undefined;
   }
 
   // ---- 事件处理 ----
@@ -472,6 +478,7 @@ export function createAtramentSurface(
     liveStrokeIsErase = tool.type === "eraser";
 
     if (liveStrokeIsErase) {
+      erasePrev = { x: toLogical(cssWidth, x), y: toLogical(cssWidth, y) };
       pendingErase = new Set(
         eraseHit(
           store.peekStrokes(),
@@ -546,7 +553,9 @@ export function createAtramentSurface(
           toLogical(cssWidth, y),
           INK_ERASE_RADIUS,
           eraseBoxes,
+          erasePrev,
         );
+        erasePrev = { x: toLogical(cssWidth, x), y: toLogical(cssWidth, y) };
         let changed = false;
         for (const h of hits) {
           if (!pendingErase.has(h)) {
@@ -822,16 +831,19 @@ export function createAtramentSurface(
     },
 
     undo(): void {
+      finishPointer({ kind: "layoutchange" });
       withReason("undo", () => store.undo());
       redraw();
     },
 
     redo(): void {
+      finishPointer({ kind: "layoutchange" });
       withReason("redo", () => store.redo());
       redraw();
     },
 
     clear(): void {
+      finishPointer({ kind: "layoutchange" });
       withReason("clear", () => store.commitClear());
       redraw();
     },

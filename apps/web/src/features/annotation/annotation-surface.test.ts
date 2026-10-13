@@ -197,11 +197,27 @@ function writeStroke(
   const { pointerType = "pen", pointerId = 1 } = opts;
   const first = points[0];
   if (!first) throw new Error("空笔画");
-  pointer(h.canvas, "pointerdown", { pointerType, pointerId, ...first });
+  pointer(h.canvas, "pointerdown", {
+    pointerType,
+    pointerId,
+    clientX: first.x,
+    clientY: first.y,
+  });
   for (const p of points.slice(1)) {
-    pointer(h.canvas, "pointermove", { pointerType, pointerId, ...p });
+    pointer(h.canvas, "pointermove", {
+      pointerType,
+      pointerId,
+      clientX: p.x,
+      clientY: p.y,
+    });
   }
-  pointer(h.canvas, "pointerup", { pointerType, pointerId, ...points.at(-1) });
+  const last = points.at(-1) ?? first;
+  pointer(h.canvas, "pointerup", {
+    pointerType,
+    pointerId,
+    clientX: last.x,
+    clientY: last.y,
+  });
 }
 
 describe("标注画布：坐标域与画布恒定", () => {
@@ -451,6 +467,66 @@ describe("标注画布：不依赖 event.target 穿透", () => {
 });
 
 describe("标注画布：历史与工具", () => {
+  it("橡皮在途撤销先收笔，迟到事件不再次删稿", () => {
+    const h = mountSurface();
+    writeStroke(h, [
+      { x: 500, y: 100 },
+      { x: 550, y: 100 },
+    ]);
+    writeStroke(h, [
+      { x: 130, y: 100 },
+      { x: 180, y: 100 },
+    ]);
+    const original = h.surface.getDoc().strokes;
+    h.surface.setTool({ type: "eraser" });
+    pointer(h.canvas, "pointerdown", { clientX: 520, clientY: 100 });
+    h.surface.undo();
+    pointer(h.canvas, "pointerup", { clientX: 520, clientY: 100 });
+    expect(h.surface.getDoc().strokes).toEqual(original);
+    h.surface.redo();
+    expect(h.surface.getDoc().strokes).toEqual([original[1]]);
+  });
+  it("擦除右侧后重绘保留左侧，强制收笔、撤销与重做保持一致", () => {
+    const h = mountSurface();
+    writeStroke(h, [
+      { x: 500, y: 100 },
+      { x: 550, y: 100 },
+    ]);
+    writeStroke(h, [
+      { x: 130, y: 100 },
+      { x: 180, y: 100 },
+    ]);
+    const original = h.surface.getDoc().strokes;
+    h.surface.setTool({ type: "eraser" });
+    pointer(h.canvas, "pointerdown", { clientX: 520, clientY: 100 });
+    const paint = vi.spyOn(StubContext.prototype, "quadraticCurveTo");
+    h.surface.finish();
+    expect(h.surface.getDoc().strokes).toEqual([original[1]]);
+    expect(paint).toHaveBeenCalled();
+    h.surface.undo();
+    expect(h.surface.getDoc().strokes).toEqual(original);
+    h.surface.redo();
+    expect(h.surface.getDoc().strokes).toEqual([original[1]]);
+    paint.mockRestore();
+  });
+
+  it("快速拖动按底图坐标连续命中，远处标画保留", () => {
+    const h = mountSurface();
+    writeStroke(h, [
+      { x: 300, y: 80 },
+      { x: 300, y: 160 },
+    ]);
+    writeStroke(h, [
+      { x: 600, y: 80 },
+      { x: 600, y: 160 },
+    ]);
+    h.surface.setTool({ type: "eraser" });
+    pointer(h.canvas, "pointerdown", { clientX: 250, clientY: 120 });
+    pointer(h.canvas, "pointermove", { clientX: 350, clientY: 120 });
+    pointer(h.canvas, "pointerup", { clientX: 350, clientY: 120 });
+    expect(h.surface.getDoc().strokes).toHaveLength(1);
+    expect(h.surface.getDoc().strokes[0]?.points[0]?.x).toBeGreaterThan(1000);
+  });
   it("undo/redo/clear 与 reason 分型；load 外部文档替换", () => {
     const h = mountSurface();
     writeStroke(h, [
