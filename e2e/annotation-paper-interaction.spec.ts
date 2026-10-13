@@ -11,11 +11,12 @@ import {
   uniqueSuffix,
 } from "./helpers";
 
-test.beforeEach(async ({ request, page }) => {
+test.beforeEach(async ({ request, page }, testInfo) => {
   await teacherApiLogin(request);
   const suffix = uniqueSuffix();
   const courseName = `交互回归课程${suffix}`;
   const unitName = `交互回归练习${suffix}`;
+  const longQuestion = testInfo.title.startsWith("草稿开合保持");
   const courseId = await createCourseViaApi(request, courseName);
   const markdown = [
     "---",
@@ -25,11 +26,22 @@ test.beforeEach(async ({ request, page }) => {
     "",
     '::::question{type=choice difficulty=1 knowledge="计算"}',
     "计算 $1+1$ 的结果，选择正确选项。",
+    ...(longQuestion
+      ? ["请认真阅读完整题干，并比较每一个选项的条件和结论。".repeat(8)]
+      : []),
     "",
     "- [ ] 选项甲：$1$",
     "- [x] 选项乙：$2$",
     "- [ ] 选项丙：$3$",
     "- [ ] 选项丁：$4$",
+    ...(longQuestion
+      ? [
+          "",
+          "这段补充材料也属于题面，应与上方题干和选项一起保持原来的换行与标画位置。".repeat(
+            4,
+          ),
+        ]
+      : []),
     "",
     ":::solution",
     "不应提前出现的秘密详解",
@@ -52,6 +64,169 @@ test.beforeEach(async ({ request, page }) => {
   await page.waitForURL("**/s/home");
   await page.setViewportSize({ width: 1100, height: 668 });
   await openChoicePractice(page, courseId, courseName, unitName, 1);
+});
+
+for (const preference of ["auto", "side", "below"] as const) {
+  test(`草稿开合保持${preference}布局题面和圈画的几何、像素与笔数`, async ({
+    page,
+  }, testInfo) => {
+    await page.setViewportSize({ width: 1500, height: 1100 });
+    const labels = {
+      auto: "自动（按宽度）",
+      side: "左右分栏",
+      below: "上下排列",
+    };
+    const card = page.getByRole("article", { name: "第 1 题", exact: true });
+    const paperTrigger = card.getByRole("button", {
+      name: /^第 1 题草稿纸(?:（|$)/,
+    });
+    const paper = card.locator('[data-slot="note-layer"]');
+    if (preference !== "auto") {
+      await paperTrigger.click();
+      await paper
+        .getByRole("button", { name: "更多操作（第 1 题草稿纸）" })
+        .click();
+      await page
+        .getByRole("menuitem", {
+          name: `布局：${labels[preference]}`,
+          exact: true,
+        })
+        .click();
+      await paperTrigger.click();
+      await expect(paper).toBeHidden();
+    }
+    // 自动档在展开之前就有足够宽度；不能靠展开草稿才扩大题卡。
+    await page.getByRole("button", { name: "收起答题卡", exact: true }).click();
+    const trigger = card.getByRole("button", { name: /圈画题干/ });
+    await trigger.click();
+    const canvas = card.locator('canvas[data-slot="annotation-canvas"]');
+    await expect(canvas).toHaveAttribute("data-input-enabled", "true");
+    await drawStrokeWithPointerEvents(canvas);
+    await expect(trigger).toHaveAccessibleName(/已有 1 笔/);
+    const snapshot = async () =>
+      card.evaluate((article) => {
+        const question = article.querySelector(
+          '[data-slot="question-surface"]',
+        );
+        const canvas = article.querySelector(
+          'canvas[data-slot="annotation-canvas"]',
+        );
+        if (!question || !(canvas instanceof HTMLCanvasElement))
+          throw new Error("题面或标画画布未就绪");
+        const context = canvas.getContext("2d");
+        if (!context) throw new Error("无法检查标画像素");
+        const pixels = context.getImageData(
+          0,
+          0,
+          canvas.width,
+          canvas.height,
+        ).data;
+        let hash = 2166136261;
+        let painted = 0;
+        for (let index = 0; index < pixels.length; index++) {
+          hash = Math.imul(hash ^ (pixels[index] ?? 0), 16777619);
+          if (index % 4 === 3 && (pixels[index] ?? 0) > 0) painted++;
+        }
+        const root = article.getBoundingClientRect();
+        const geometry = (element: Element) => {
+          const box = element.getBoundingClientRect();
+          return [box.x - root.x, box.y - root.y, box.width, box.height].map(
+            (value) => Math.round(value * 100) / 100,
+          );
+        };
+        return {
+          question: geometry(question),
+          canvas: geometry(canvas),
+          width: canvas.width,
+          height: canvas.height,
+          hash,
+          painted,
+        };
+      });
+    const original = await snapshot();
+    expect(original.painted).toBeGreaterThan(10);
+    const cycle = async (active: boolean) => {
+      for (const opened of [true, false, true, false]) {
+        await paperTrigger.click();
+        if (opened) await expect(paper).toBeVisible();
+        else await expect(paper).toBeHidden();
+        await expect(canvas).toBeVisible();
+        await expect(canvas).toHaveAttribute(
+          "data-input-enabled",
+          String(active),
+        );
+        await expect.poll(snapshot).toEqual(original);
+        await expect(trigger).toHaveAccessibleName(/已有 1 笔/);
+        await expect(
+          card.getByRole("button", { name: "查看原标画", exact: true }),
+        ).toHaveCount(0);
+      }
+    };
+    await cycle(true);
+    await page.getByRole("button", { name: "作答", exact: true }).click();
+    await cycle(false);
+    await page.screenshot({
+      path: testInfo.outputPath(`paper-geometry-${preference}.png`),
+    });
+  });
+}
+
+test("已有标画在题卡扩宽后保持原题面尺寸、位置与像素", async ({ page }) => {
+  await page.setViewportSize({ width: 1300, height: 1000 });
+  const card = page.getByRole("article", { name: "第 1 题", exact: true });
+  // 模拟升级前较窄的题卡，之后恢复新版外框宽度。
+  await card.evaluate((element) => {
+    element.style.maxWidth = "768px";
+  });
+  const trigger = card.getByRole("button", { name: /圈画题干/ });
+  await trigger.click();
+  const canvas = card.locator('canvas[data-slot="annotation-canvas"]');
+  await expect(canvas).toHaveAttribute("data-input-enabled", "true");
+  await drawStrokeWithPointerEvents(canvas);
+  await expect(trigger).toHaveAccessibleName(/已有 1 笔/);
+  const geometry = async () =>
+    card.evaluate((article) => {
+      const question = article.querySelector('[data-slot="question-surface"]');
+      const canvas = article.querySelector(
+        'canvas[data-slot="annotation-canvas"]',
+      );
+      if (!question || !(canvas instanceof HTMLCanvasElement))
+        throw new Error("标画尚未就绪");
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("无法读取标画");
+      let hash = 2166136261;
+      for (const value of context.getImageData(
+        0,
+        0,
+        canvas.width,
+        canvas.height,
+      ).data)
+        hash = Math.imul(hash ^ value, 16777619);
+      const box = (element: Element) => {
+        const rect = element.getBoundingClientRect();
+        return [rect.x, rect.y, rect.width, rect.height].map(
+          (value) => Math.round(value * 100) / 100,
+        );
+      };
+      return { question: box(question), canvas: box(canvas), hash };
+    });
+  const original = await geometry();
+  const width = await card.evaluate(
+    (element) => element.getBoundingClientRect().width,
+  );
+  await card.evaluate((element) => {
+    element.style.removeProperty("max-width");
+  });
+  await expect
+    .poll(() =>
+      card.evaluate((element) => element.getBoundingClientRect().width),
+    )
+    .toBeGreaterThan(width);
+  await expect.poll(geometry).toEqual(original);
+  await expect(canvas).toHaveAttribute("data-input-enabled", "true");
+  await expect(
+    card.getByRole("button", { name: "查看原标画", exact: true }),
+  ).toHaveCount(0);
 });
 
 test("圈画再次点击与双击取消，不丢已有笔迹", async ({ page }) => {

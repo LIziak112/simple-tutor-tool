@@ -42,6 +42,7 @@ test("原位标画：不复制题面、退出一击作答、切题唯一输入�
   await page.goto(`/s/${student.linkToken}`);
   await page.waitForURL("**/s/home");
   await openChoicePractice(page, courseId, courseName, unitName);
+  await page.setViewportSize({ width: 1300, height: 1000 });
   const first = page.locator('article[aria-label="第 1 题"]');
   const second = page.locator('article[aria-label="第 2 题"]');
   const before = await first
@@ -64,6 +65,8 @@ test("原位标画：不复制题面、退出一击作答、切题唯一输入�
     .boundingBox();
   expect(after?.width).toBeCloseTo(before?.width ?? 0, 0);
   expect(after?.height).toBeCloseTo(before?.height ?? 0, 0);
+  expect(after?.x).toBeCloseTo(before?.x ?? 0, 0);
+  expect(after?.y).toBeCloseTo(before?.y ?? 0, 0);
   const canvas = first.locator('canvas[data-slot="annotation-canvas"]');
   await drawStrokeWithPointerEvents(canvas);
   await expect

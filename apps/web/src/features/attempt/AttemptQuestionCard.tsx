@@ -343,14 +343,15 @@ export function AttemptQuestionCard({
   const [exportOpen, setExportOpen] = useState(false);
   const layoutPreference = useNoteLayoutPreference();
   const sideUsable = useNoteSideUsable(articleRef, layoutPreference === "auto");
-  const layout =
-    noteOpen && !HANDWRITTEN_TYPES.has(question.type)
-      ? effectiveNoteLayout(layoutPreference, sideUsable)
-      : "below";
-  const allowWidePaper =
-    noteOpen &&
-    !HANDWRITTEN_TYPES.has(question.type) &&
-    layoutPreference !== "below";
+  const hasScratchLayout =
+    inkEnabled &&
+    attemptId !== undefined &&
+    !HANDWRITTEN_TYPES.has(question.type);
+  // 草稿可见性不改变题面的列位或宽度，避免开合重排已标画内容。
+  const layout = hasScratchLayout
+    ? effectiveNoteLayout(layoutPreference, sideUsable)
+    : "below";
+  const allowWidePaper = hasScratchLayout && layoutPreference !== "below";
   const hasEditor = editor != null;
   // 保存/上传状态不改变题面；稳定引用避免重复解绑标画输入进行版式校验。
   const inlineQuestion = useMemo<AttemptQuestionPublic | null>(

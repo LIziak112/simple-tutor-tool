@@ -417,6 +417,8 @@ describe("题卡草稿层（T6R.9）", () => {
       { attemptId: "att-1" },
     );
     await ro.push(1024); // 宽题卡：两列达标
+    const beforeOpen = document.querySelector('[data-slot="note-body-row"]');
+    expect(beforeOpen?.getAttribute("data-layout")).toBe("side");
     fireEvent.click(screen.getByRole("button", { name: /草稿纸/ }));
     const row = document.querySelector('[data-slot="note-body-row"]');
     expect(row?.getAttribute("data-layout")).toBe("side");

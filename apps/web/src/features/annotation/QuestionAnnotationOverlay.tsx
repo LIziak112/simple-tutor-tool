@@ -384,7 +384,12 @@ export const QuestionAnnotationOverlay = forwardRef<
   }, [original, localPng]);
 
   return (
-    <div ref={root} className="relative min-w-0" data-slot="annotated-question">
+    <div
+      ref={root}
+      className="relative mx-auto w-full min-w-0"
+      data-slot="annotated-question"
+      style={layout && !original ? { maxWidth: layout.cssWidth } : undefined}
+    >
       {children}
       {layout && (
         <div
@@ -393,13 +398,13 @@ export const QuestionAnnotationOverlay = forwardRef<
           className={
             original
               ? `relative mt-3 w-full bg-white ${active ? "outline outline-2 outline-offset-4 outline-sky-200" : ""}`
-              : `pointer-events-none absolute inset-0 z-10 ${active ? "outline outline-2 outline-offset-4 outline-sky-200" : ""}`
+              : `pointer-events-none absolute left-0 top-0 z-10 ${active ? "outline outline-2 outline-offset-4 outline-sky-200" : ""}`
           }
           hidden={!visible}
           style={
             original
               ? { aspectRatio: `${layout.cssWidth} / ${layout.cssHeight}` }
-              : undefined
+              : { width: layout.cssWidth, height: layout.cssHeight }
           }
         >
           {original && originalUrl && (

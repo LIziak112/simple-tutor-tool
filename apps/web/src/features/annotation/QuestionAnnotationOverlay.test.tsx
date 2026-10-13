@@ -163,6 +163,10 @@ it("绘制时锁表单，退出留痕且不重建历史引擎", async () => {
     document.querySelector('[data-slot="question-surface"]'),
   ).toHaveAttribute("inert");
   expect(engine.setInputEnabled).toHaveBeenLastCalledWith(true);
+  const overlay = document.querySelector(
+    '[data-slot="question-annotation-overlay"]',
+  );
+  expect(overlay).toHaveStyle({ width: "300px", height: "200px" });
   const mounts = engine.mount.mock.calls.length;
   fireEvent.click(screen.getByRole("button", { name: "作答" }));
   await waitFor(() =>
