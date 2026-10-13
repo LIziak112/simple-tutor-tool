@@ -96,6 +96,7 @@ export function useInkUpload(
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** 上传进行中标志：flush 与防抖不并发（后到的覆盖等待下一次） */
   const uploadingRef = useRef(false);
+  const inFlightRef = useRef<Promise<boolean> | null>(null);
   const attemptIdRef = useRef(attemptId);
   const questionIdRef = useRef(questionId);
   attemptIdRef.current = attemptId;
@@ -105,48 +106,55 @@ export function useInkUpload(
   hooksRef.current = hooks;
 
   /** 执行一次上传；返回是否成功（不抛错——失败语义由返回值与 saveFailed 承载） */
-  const doUpload = useCallback(async (): Promise<boolean> => {
-    if (deniedRef.current) return false; // 访问权终态：不再上传
-    const doc = pendingRef.current;
-    const engine = engineGetter();
-    if (doc === null || engine === null) {
-      return doc === null; // 无待传文档=成功；有文档但引擎没了（异常态）=失败
-    }
-    if (uploadingRef.current) return false; // 已在上传中：等下一次防抖/flush
-    uploadingRef.current = true;
-    try {
-      // PNG 导出在最前面同步发起（atrament 的 drawImage 同步段依赖画布存活；
-      // 退出全屏立即触发上传时，引擎随后的卸载不影响已发起的导出）
-      const pngPromise = engine.exportPng();
-      const gzip = await gzipOrRaw(JSON.stringify(doc));
-      const png = await pngPromise;
-      await putAttemptInkApi(
-        attemptIdRef.current,
-        questionIdRef.current,
-        new Blob([gzip], { type: "application/gzip" }),
-        png,
-      );
-      // 上传期间又有新变化：不清 dirty（下一次防抖/flush 再传）
-      if (pendingRef.current === doc) pendingRef.current = null;
-      setSaveFailed(false);
-      hooksRef.current?.onSynced?.(doc);
-      return true;
-    } catch (err) {
-      // 403/404 = 访问权终态（T2A.6，D7）：停止后续上传，交由上层提示
-      if (
-        err instanceof ApiError &&
-        (err.status === 403 || err.status === 404)
-      ) {
-        deniedRef.current = true;
-        hooksRef.current?.onDenied?.();
-        return false;
+  const doUpload = useCallback((): Promise<boolean> => {
+    if (inFlightRef.current !== null) return inFlightRef.current;
+    const task = (async (): Promise<boolean> => {
+      if (deniedRef.current) return false; // 访问权终态：不再上传
+      const doc = pendingRef.current;
+      const engine = engineGetter();
+      if (doc === null || engine === null) {
+        return doc === null; // 无待传文档=成功；有文档但引擎没了（异常态）=失败
       }
-      setSaveFailed(true);
-      hooksRef.current?.onFailed?.();
-      return false;
-    } finally {
-      uploadingRef.current = false;
-    }
+      uploadingRef.current = true;
+      try {
+        // PNG 导出在最前面同步发起（atrament 的 drawImage 同步段依赖画布存活；
+        // 退出全屏立即触发上传时，引擎随后的卸载不影响已发起的导出）
+        const pngPromise = engine.exportPng();
+        const gzip = await gzipOrRaw(JSON.stringify(doc));
+        const png = await pngPromise;
+        await putAttemptInkApi(
+          attemptIdRef.current,
+          questionIdRef.current,
+          new Blob([gzip], { type: "application/gzip" }),
+          png,
+        );
+        // 上传期间又有新变化：不清 dirty（下一次防抖/flush 再传）
+        if (pendingRef.current === doc) pendingRef.current = null;
+        setSaveFailed(false);
+        hooksRef.current?.onSynced?.(doc);
+        return true;
+      } catch (err) {
+        // 403/404 = 访问权终态（T2A.6，D7）：停止后续上传，交由上层提示
+        if (
+          err instanceof ApiError &&
+          (err.status === 403 || err.status === 404)
+        ) {
+          deniedRef.current = true;
+          hooksRef.current?.onDenied?.();
+          return false;
+        }
+        setSaveFailed(true);
+        hooksRef.current?.onFailed?.();
+        return false;
+      } finally {
+        uploadingRef.current = false;
+      }
+    })();
+    const tracked = task.finally(() => {
+      if (inFlightRef.current === tracked) inFlightRef.current = null;
+    });
+    inFlightRef.current = tracked;
+    return tracked;
   }, [engineGetter]);
 
   /** 把文档放入待传并进防抖（书写一笔与本地恢复补传共用） */
@@ -174,15 +182,19 @@ export function useInkUpload(
       clearTimeout(timerRef.current);
       timerRef.current = null;
     }
-    if (pendingRef.current === null) return true; // 无变化（含从未书写）
-    return doUpload();
+    // 等待同一在途请求；成功后继续追平其间新增的稿，只有实际失败才阻止交卷。
+    while (pendingRef.current !== null) {
+      if (!(await doUpload())) return false;
+    }
+    return true;
   }, [doUpload]);
 
   const sync = useCallback(async (): Promise<InkSyncResult> => {
     if (deniedRef.current) return "denied";
     if (pendingRef.current === null) return "synced";
     if (engineGetter() === null || uploadingRef.current) return "deferred";
-    return (await doUpload()) ? "synced" : "failed";
+    if (!(await doUpload())) return "failed";
+    return pendingRef.current === null ? "synced" : "deferred";
   }, [doUpload, engineGetter]);
 
   /** 卸载时清定时器（防跳页时误发请求；交卷 flush 由页面统一做） */

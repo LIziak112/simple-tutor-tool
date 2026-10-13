@@ -116,6 +116,41 @@ describe("isInkDocEmpty", () => {
 });
 
 describe("防抖上传", () => {
+  it("flush 等待在途上传，并继续追平期间新增的稿，不把正常上传误报失败", async () => {
+    let complete: (() => void) | undefined;
+    putMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          complete = () =>
+            resolve({
+              questionId: "q1",
+              inkId: "ink-1",
+              strokeCount: 1,
+              width: 100,
+              height: 50,
+              updatedAt: "2026-10-13",
+            });
+        }),
+    );
+    const result = setup(makeEngine());
+    let first = Promise.resolve(false);
+    let second = Promise.resolve(false);
+    await act(async () => {
+      result.current.onDocChange(docWith(1));
+      first = result.current.controller.flush();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      result.current.onDocChange(docWith(2));
+      second = result.current.controller.flush();
+      complete?.();
+      expect(await first).toBe(true);
+      expect(await second).toBe(true);
+    });
+    expect(putMock).toHaveBeenCalledTimes(2);
+    expect(result.current.controller.isDirty()).toBe(false);
+  });
   it("笔迹变化后 2 秒防抖窗内合并为一次 PUT；参数含 gzip 字节与 PNG", async () => {
     const result = setup(makeEngine());
     act(() => {

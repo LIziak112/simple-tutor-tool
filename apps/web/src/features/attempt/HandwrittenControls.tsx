@@ -150,6 +150,8 @@ export function HandwrittenControls({
   const [fullscreen, setFullscreen] = useState(false);
   const [legacyOpened, setLegacyOpened] = useState(false);
   const [paperError, setPaperError] = useState<string | null>(null);
+  const [restoreFailed, setRestoreFailed] = useState(false);
+  const [restoreRetry, setRestoreRetry] = useState(0);
   /** 从 excalidraw 清空回页内手写的确认弹层 */
   const [confirmReset, setConfirmReset] = useState(false);
   /**
@@ -236,9 +238,11 @@ export function HandwrittenControls({
 
   // 挂载时合并「服务端笔迹 × 本地草稿笔迹」（T2.9）：updatedAt 新者胜；
   // 本地较新（或服务端拉取失败但有本地）→ resync 补传；服务端胜 → 落本地并记指纹
+  // biome-ignore lint/correctness/useExhaustiveDependencies(restoreRetry): 用户重试触发重新读取，不参与请求参数
   useEffect(() => {
     let alive = true;
     setMasterDoc(undefined);
+    setRestoreFailed(false);
     setInternalExpanded(false);
     void (async () => {
       // 本地草稿与（可能失败的）服务端拉取并行；失败不阻塞答题
@@ -262,7 +266,8 @@ export function HandwrittenControls({
           draftSyncRef.current?.noteLocalWrite();
           controllerRef.current.resync(localInk);
         } else {
-          setMasterDoc(null);
+          // 读取失败不代表云端无稿，保持画布未就绪，避免新稿覆盖原稿。
+          setRestoreFailed(true);
         }
         return;
       }
@@ -288,7 +293,7 @@ export function HandwrittenControls({
       alive = false;
     };
     // controller/draftSync 经 ref 取最新；只随题目标识与开关重跑（开关实际只随页面挂载而定）
-  }, [attemptId, questionId, inkEnabled, externallyControlled]);
+  }, [attemptId, questionId, inkEnabled, externallyControlled, restoreRetry]);
 
   const finalAnswer = answer?.kind === "final" ? answer.finalAnswer : "";
 
@@ -426,6 +431,22 @@ export function HandwrittenControls({
           </p>
         )}
       </div>
+
+      {restoreFailed && (
+        <div
+          role="alert"
+          className="flex flex-wrap items-center gap-2 text-sm text-destructive"
+        >
+          <span>笔迹读取失败，请重试后继续手写；最终答案仍可填写。</span>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setRestoreRetry((value) => value + 1)}
+          >
+            重试读取笔迹
+          </Button>
+        </div>
+      )}
 
       {/* 手写区（展开时）：atrament 页内画布 / excalidraw 占位卡 / 加载态 */}
       {(expanded ||

@@ -150,6 +150,23 @@ beforeEach(() => {
   installDraftBackend(memoryBackend());
 });
 
+it("云端笔迹读取失败且本机无稿时不能展示空画布，重试后恢复旧稿", async () => {
+  fetchInkMock.mockRejectedValueOnce(new Error("断网"));
+  renderControls();
+  await waitFor(() =>
+    expect(screen.getByRole("alert")).toHaveTextContent("笔迹读取失败"),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "展开手写区" }));
+  expect(document.querySelector('[data-slot="ink-pad"]')).toBeNull();
+  fetchInkMock.mockResolvedValue(atramentDoc(3));
+  fireEvent.click(screen.getByRole("button", { name: "重试读取笔迹" }));
+  await waitFor(() =>
+    expect(screen.getByTestId("ink-initial-stroke-count")).toHaveTextContent(
+      "3",
+    ),
+  );
+});
+
 describe("展开/收起手写区", () => {
   it("受控切题收起保留同一画布，待传笔迹仍可导出而不重建历史", async () => {
     const props = {
