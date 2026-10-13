@@ -6,9 +6,10 @@ import {
   Loader2,
   LogOut,
   School,
+  Settings2,
 } from "lucide-react";
 import { useState } from "react";
-import { Link, Navigate, NavLink, Outlet, useNavigate } from "react-router";
+import { Navigate, NavLink, Outlet, useNavigate } from "react-router";
 import { useBindAnnotationSession } from "@/features/annotation/use-annotation-session";
 import { useLogoutStudent, useStudentMe } from "@/features/auth/student-auth";
 import { useBindInkProfiles } from "@/features/ink/use-ink-profiles";
@@ -86,23 +87,28 @@ export function StudentLayout() {
 
   const displayName = meQuery.data.displayName;
   const identity = (
-    <div className="flex min-w-0 shrink-0 items-center gap-2">
-      <Link
-        to="/s/ink-feel"
-        className="inline-flex min-h-11 items-center text-xs text-primary"
-      >
-        手写手感
-      </Link>
+    <NavLink
+      to="/s/settings"
+      aria-label={`${displayName}，学生设置`}
+      title="学生设置"
+      className={({ isActive }) =>
+        `flex min-h-11 min-w-11 shrink-0 items-center gap-2 rounded-xl px-2 outline-none focus-visible:ring-3 focus-visible:ring-ring/50 ${isActive ? "bg-primary/10 text-primary" : "hover:bg-muted"}`
+      }
+    >
       <span
         aria-hidden
         className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground"
       >
         {displayName.slice(0, 1)}
       </span>
-      <p className="hidden max-w-32 truncate text-sm font-semibold sm:block">
+      <span className="hidden max-w-24 truncate text-sm font-semibold sm:block">
         {displayName}
-      </p>
-    </div>
+      </span>
+      <Settings2
+        aria-hidden
+        className="size-3.5 shrink-0 text-muted-foreground"
+      />
+    </NavLink>
   );
   const logout = (
     <button

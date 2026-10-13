@@ -42,6 +42,10 @@ function renderLayout() {
         <Routes>
           <Route path="/s" element={<StudentLayout />}>
             <Route
+              path="settings"
+              element={<p data-testid="route-stub">学生设置页</p>}
+            />
+            <Route
               path="home"
               element={<p data-testid="route-stub">学生首页</p>}
             />
@@ -62,6 +66,21 @@ beforeEach(() => {
 });
 
 describe("StudentLayout", () => {
+  it("头像姓名统一进入设置，顶栏不再显示独立手写手感链接", async () => {
+    mockedMe.mockResolvedValue(STUDENT);
+    renderLayout();
+    const entries = await screen.findAllByRole("link", {
+      name: "张三，学生设置",
+    });
+    expect(entries).toHaveLength(2);
+    expect(entries[0]).toHaveAttribute("href", "/s/settings");
+    expect(
+      screen.queryByRole("link", { name: "手写手感" }),
+    ).not.toBeInTheDocument();
+    if (!entries[0]) throw new Error("设置入口缺失");
+    fireEvent.click(entries[0]);
+    expect(screen.getByTestId("route-stub")).toHaveTextContent("学生设置页");
+  });
   it("未登录（401）跳转 /s/login", async () => {
     mockedMe.mockRejectedValue(
       new ApiError("UNAUTHORIZED", "未登录或会话已过期，请重新登录", 401),

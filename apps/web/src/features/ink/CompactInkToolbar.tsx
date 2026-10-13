@@ -60,7 +60,7 @@ export function CompactInkToolbar({
       className="flex min-h-11 min-w-0 items-center gap-1"
     >
       <a
-        href="/s/ink-feel"
+        href="/s/settings/ink-feel"
         className="inline-flex min-h-11 items-center px-2 text-xs text-primary"
       >
         手感设置

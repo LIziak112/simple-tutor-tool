@@ -356,6 +356,9 @@ const studentRoutes = (() => {
   );
   const StudentLayout = lazy(() => import("./pages/student/StudentLayout"));
   const StudentHomePage = lazy(() => import("./pages/student/StudentHomePage"));
+  const StudentSettingsPage = lazy(
+    () => import("./pages/student/StudentSettingsPage"),
+  );
   const StudentAssignmentsPage = lazy(
     () => import("./pages/student/StudentAssignmentsPage"),
   );
@@ -424,6 +427,22 @@ const studentRoutes = (() => {
         }
       >
         <Route index element={<Navigate to="/s/home" replace />} />
+        <Route
+          path="settings"
+          element={
+            <Suspense fallback={pageFallback}>
+              <StudentSettingsPage />
+            </Suspense>
+          }
+        />
+        <Route
+          path="settings/ink-feel"
+          element={
+            <Suspense fallback={pageFallback}>
+              <InkFeelPage embedded />
+            </Suspense>
+          }
+        />
         <Route
           path="home"
           element={
@@ -573,11 +592,7 @@ export function App() {
       />
       <Route
         path="/s/ink-feel"
-        element={
-          <Suspense fallback={<p>正在加载手感设置…</p>}>
-            <InkFeelPage />
-          </Suspense>
-        }
+        element={<Navigate to="/s/settings/ink-feel" replace />}
       />
       <Route
         path="/t/ink-feel"

@@ -60,7 +60,11 @@ const PRESETS = [
   },
 ];
 
-export default function InkFeelPage() {
+export default function InkFeelPage({
+  embedded = false,
+}: {
+  embedded?: boolean;
+}) {
   const { pathname } = useLocation();
   const device = useInkProfileSelection();
   const [account, setAccount] = useState<InkProfileAccount | null>(null);
@@ -250,9 +254,20 @@ export default function InkFeelPage() {
       setBusy(false);
     }
   }
+  const Container = embedded ? "section" : "main";
   return (
-    <main className="mx-auto max-w-4xl space-y-5 p-4 sm:p-6">
+    <Container
+      className={`mx-auto max-w-4xl space-y-5 ${embedded ? "" : "p-4 sm:p-6"}`}
+    >
       <header>
+        {embedded && (
+          <Link
+            to="/s/settings"
+            className="mb-3 inline-flex min-h-11 items-center rounded-md text-sm text-muted-foreground outline-none hover:text-primary focus-visible:ring-3 focus-visible:ring-ring/50"
+          >
+            ← 返回学生设置
+          </Link>
+        )}
         <h1 className="text-2xl font-semibold">手写手感</h1>
         <p className="mt-2 text-sm text-muted-foreground">
           边写边调整，找到舒服的手感，再保存成自己的配置。
@@ -522,7 +537,7 @@ export default function InkFeelPage() {
           </p>
         )}
       </section>
-    </main>
+    </Container>
   );
 }
 
