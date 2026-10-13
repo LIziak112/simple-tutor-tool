@@ -24,6 +24,7 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { useTeacherMe } from "@/features/auth/teacher-auth";
+import { useBindInkProfiles } from "@/features/ink/use-ink-profiles";
 import { SettingsNavigationProvider } from "@/features/teacher-settings/settings-navigation";
 import { ApiError } from "@/lib/api";
 import { BRAND_NAME } from "@/lib/brand";
@@ -133,6 +134,7 @@ export function TeacherLayout() {
     return () => document.documentElement.classList.remove("teacher-theme");
   }, []);
   const meQuery = useTeacherMe();
+  useBindInkProfiles("teacher", meQuery.data?.id);
   const { pathname } = useLocation();
   const [navOpen, setNavOpen] = useState(false);
   const previousPath = useRef(pathname);

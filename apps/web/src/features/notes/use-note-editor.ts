@@ -1,3 +1,4 @@
+import { useInkProfileSelection } from "@/features/ink/ink-profile-store";
 /**
  * 草稿编辑器的引擎接线核心（T6R.15 单3 从 NoteLayer 抽出，「抽共享而非
  * 复制」）：InkPad 会话 + note-store 写入 + 纸面几何（逻辑高持久化、CSS 高
@@ -103,6 +104,11 @@ export function useNoteEditor({
   phase,
   active,
 }: UseNoteEditorOptions): NoteEditorHandle {
+  const profile = useInkProfileSelection();
+  useEffect(() => {
+    setPenColor(profile.config.color);
+    setPenSize(profile.config.size);
+  }, [profile.config]);
   const view = useNoteRecord(attemptId, questionId, phase);
 
   // ---- 本地载入（刷新/重进的恢复路径；区分「尚未加载」与「无记录」） ----

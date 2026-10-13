@@ -8,9 +8,10 @@ import {
   School,
 } from "lucide-react";
 import { useState } from "react";
-import { Navigate, NavLink, Outlet, useNavigate } from "react-router";
+import { Link, Navigate, NavLink, Outlet, useNavigate } from "react-router";
 import { useBindAnnotationSession } from "@/features/annotation/use-annotation-session";
 import { useLogoutStudent, useStudentMe } from "@/features/auth/student-auth";
+import { useBindInkProfiles } from "@/features/ink/use-ink-profiles";
 import { useBindNoteSession } from "@/features/notes/use-note-session";
 import { StudentWorkspaceContext } from "@/features/student/student-workspace-layout";
 import { useStudentTheme } from "@/features/student/use-student-theme";
@@ -46,6 +47,7 @@ export function StudentLayout() {
   const [workspace, setWorkspace] = useState(false);
   useStudentTheme();
   const meQuery = useStudentMe();
+  useBindInkProfiles("student", meQuery.data?.id);
   const logoutMutation = useLogoutStudent();
   const navigate = useNavigate();
   // T6R.11 复审（会话接线层级）：草稿会话绑定上提到布局层——所有 /s/* 学生
@@ -85,6 +87,12 @@ export function StudentLayout() {
   const displayName = meQuery.data.displayName;
   const identity = (
     <div className="flex min-w-0 shrink-0 items-center gap-2">
+      <Link
+        to="/s/ink-feel"
+        className="inline-flex min-h-11 items-center text-xs text-primary"
+      >
+        手写手感
+      </Link>
       <span
         aria-hidden
         className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground"

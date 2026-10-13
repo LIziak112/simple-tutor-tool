@@ -20,6 +20,8 @@ export interface StrokeBounds {
  * 折叠实现逐位一致。
  */
 export function strokeBounds(stroke: InkStroke, pad = 0): StrokeBounds | null {
+  if (stroke.rendering?.renderer === "freehand")
+    pad *= stroke.rendering.sizeScale;
   if (stroke.points.length === 0) return null;
   let minX = Number.POSITIVE_INFINITY;
   let minY = Number.POSITIVE_INFINITY;

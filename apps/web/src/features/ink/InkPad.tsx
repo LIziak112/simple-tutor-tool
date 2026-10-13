@@ -43,6 +43,7 @@ import {
   PAPER_GROW_STEP_CSS_PX,
   PAPER_GROW_TRIGGER_CSS_PX,
 } from "./engine/paper-style.ts";
+import { useInkProfileSelection } from "./ink-profile-store";
 import {
   getSessionInputPreference,
   type InkSessionInputPreference,
@@ -204,6 +205,12 @@ export function InkPad({
   onEngineRebuild,
   inputEnabled = true,
 }: InkPadProps) {
+  const profile = useInkProfileSelection();
+  useEffect(() => {
+    localEngineRef.current?.setProfile?.(profile.config);
+    setPenColor(profile.config.color);
+    setPenSize(profile.config.size);
+  }, [profile.config]);
   const containerRef = useRef<HTMLDivElement>(null);
   /** 内部引擎实例引用（engineRef prop 为对外透出） */
   const localEngineRef = useRef<InkEngine | null>(null);

@@ -1,10 +1,24 @@
-import type { InkStroke, InkStrokePoint } from "@tutor/contract";
-import { getStroke } from "perfect-freehand";
+import {
+  DEFAULT_INK_PROFILE_CONFIG,
+  type InkStroke,
+  type InkStrokePoint,
+  type NoteBackground,
+} from "@tutor/contract";
+import type Atrament from "atrament";
+import {
+  createProgrammaticAtrament,
+  replayAtramentStroke,
+} from "../engine/atrament-adapter";
 import { strokeBounds } from "../engine/bounds";
 import { canvasToPngBlob } from "../engine/canvas-png";
 import { buildAtramentDoc, parseAtramentDoc } from "../engine/doc";
 import { eraseHit } from "../engine/erase";
+import { paintFreehandStroke } from "../engine/freehand-paint";
 import { InkStore } from "../engine/history";
+import {
+  NOTE_PAPER_GRID_SPACING_LOGICAL,
+  paperBackgroundCss,
+} from "../engine/paper-style";
 import {
   advancePointerMachine,
   createPointerMachineState,
@@ -81,8 +95,13 @@ export interface FeelSurface extends ToolAwareSurface {
 /** 实验渲染器复用正式输入状态机与笔画仓；预测永远留在湿墨层。 */
 export function createFeelSurface(
   initialParams = DEFAULT_FEEL_PARAMS,
+  options: {
+    store?: InkStore;
+    background?: NoteBackground;
+    preserveRendering?: boolean;
+  } = {},
 ): FeelSurface {
-  const store = new InkStore();
+  const store = options.store ?? new InkStore();
   let params = { ...initialParams };
   let machine = createPointerMachineState("pen");
   let tool: InkToolConfig = { type: "pen", color: "black", size: "medium" };
@@ -94,6 +113,7 @@ export function createFeelSurface(
   let dry: HTMLCanvasElement | null = null;
   let wet: HTMLCanvasElement | null = null;
   let dryCtx: CanvasRenderingContext2D | null = null;
+  let replayBrush: Atrament | null = null;
   let wetCtx: CanvasRenderingContext2D | null = null;
   let observer: ResizeObserver | null = null;
   let width = 500;
@@ -143,44 +163,15 @@ export function createFeelSurface(
     complete: boolean,
   ) {
     if (!dry || stroke.points.length === 0) return;
-    const outline = getStroke(
-      stroke.points.map((p) => ({ x: p.x, y: p.y, pressure: p.p })),
-      {
-        size: stroke.weight * params.sizeScale,
-        thinning: stroke.tool === "highlighter" ? 0 : params.thinning,
-        smoothing: params.smoothing,
-        streamline: params.streamline,
-        simulatePressure: params.simulatePressure,
-        last: complete,
-      },
-    );
-    const first = outline[0];
-    if (!first) return;
-    ctx.save();
-    const scale = dry.width / 1000;
-    ctx.setTransform(scale, 0, 0, scale, 0, 0);
-    ctx.fillStyle = stroke.color;
-    ctx.beginPath();
-    ctx.moveTo(first[0] ?? 0, first[1] ?? 0);
-    let previous = first;
-    for (const point of outline.slice(1)) {
-      ctx.quadraticCurveTo(
-        previous[0] ?? 0,
-        previous[1] ?? 0,
-        ((previous[0] ?? 0) + (point[0] ?? 0)) / 2,
-        ((previous[1] ?? 0) + (point[1] ?? 0)) / 2,
-      );
-      previous = point;
+    const config = options.preserveRendering
+      ? (stroke.rendering ?? DEFAULT_INK_PROFILE_CONFIG)
+      : { ...params, renderer: "freehand" as const };
+    if (config.renderer === "freehand") {
+      paintFreehandStroke(ctx, dry.width / 1000, stroke, config, complete);
+      return;
     }
-    ctx.quadraticCurveTo(
-      previous[0] ?? 0,
-      previous[1] ?? 0,
-      first[0] ?? 0,
-      first[1] ?? 0,
-    );
-    ctx.closePath();
-    ctx.fill();
-    ctx.restore();
+    if (replayBrush) replayAtramentStroke(replayBrush, width, stroke);
+    return;
   }
   function redrawDry() {
     if (!dry || !dryCtx) return;
@@ -299,6 +290,14 @@ export function createFeelSurface(
         live = {
           tool: tool.type === "highlighter" ? "highlighter" : "pen",
           ...resolved.brush,
+          rendering: {
+            renderer: "freehand",
+            smoothing: params.smoothing,
+            thinning: params.thinning,
+            streamline: params.streamline,
+            sizeScale: params.sizeScale,
+            simulatePressure: params.simulatePressure,
+          },
           points: [first],
         };
         samples.push(performance.now());
@@ -439,6 +438,13 @@ export function createFeelSurface(
     const pixelHeight = Math.round(nextHeight * dpr);
     width = nextWidth;
     height = nextHeight;
+    if (dry) {
+      dry.style.backgroundImage = paperBackgroundCss(
+        options.background ?? "white",
+        width,
+      );
+      dry.style.backgroundSize = `${(NOTE_PAPER_GRID_SPACING_LOGICAL * width) / 1000}px ${(NOTE_PAPER_GRID_SPACING_LOGICAL * width) / 1000}px`;
+    }
     if (dry.width === pixelWidth && dry.height === pixelHeight) return;
     finish();
     for (const canvas of [dry, wet]) {
@@ -469,6 +475,8 @@ export function createFeelSurface(
       }
       dry.style.pointerEvents = "none";
       dryCtx = dry.getContext("2d");
+      if (options.preserveRendering)
+        replayBrush = createProgrammaticAtrament(dry);
       wetCtx = wet.getContext("2d");
       if (!dryCtx || !wetCtx) throw new Error("浏览器无法创建手写画布");
       if (initial) store.replace(parseAtramentDoc(initial), initial.updatedAt);
@@ -560,6 +568,8 @@ export function createFeelSurface(
       finish();
       clearWet();
       observer?.disconnect();
+      replayBrush?.destroy();
+      replayBrush = null;
       unsubscribe();
       listeners.clear();
       if (wet)

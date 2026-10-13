@@ -1,53 +1,115 @@
 import { expect, test } from "@playwright/test";
+import type { InkDoc, InkStroke } from "../packages/contract/src/ink";
 
-/**
- * T6R.6 独立渲染器 E2E（浏览器渲染测试）：/dev/ink 第 ④ 区块在真实
- * Chromium/WebKit canvas 里渲染固定文档并**解码自产 PNG** 做内容级检查
- * （背景入图、轻划落墨与零长笔画语义、荧光笔/擦除保真、长稿切片顺序与
- * 重叠、确定性双渲字节一致、缩略图规格）。jsdom 无 2d canvas——单测层只能
- * 做命令流断言（render-note.test.ts），本用例是任务验收「真实解码 PNG、
- * 不只验魔数」的自动化闸门。长稿小字可读性等观感项 🧑 留 iPad 真机。
- *
- * 断言口径（复审⑤）：检查以稳定 id 标识（面板 li[data-check-id]），本文件
- * 维护一份 id 镜像名单（spec 跑在 Node，不 import 面板模块——那会拖入
- * React 组件图）；文案变更不断言、id 变更须两侧同步。
- */
-
-/** 面板检查 id 镜像名单（与 NoteRenderVerifyPanel.NOTE_RENDER_CHECK_IDS 对应） */
-const EXPECTED_CHECK_IDS = [
-  "bg-white",
-  "bg-grid",
-  "bg-line",
-  "tap-ink",
-  "zero-length",
-  "highlighter",
-  "erase",
-  "slicing",
-  "determinism",
-  "thumbnail",
-] as const;
-
-test("渲染验证面板：全部检查通过（真实解码 PNG）", async ({ page }) => {
-  await page.goto("/dev/ink");
-
-  // 区块容器（id 在标题 h2 上，用 :has 定位所属 section）
-  const panel = page.locator("section:has(#ink-sec-render)");
-  await expect(panel).toBeVisible();
-  await panel.getByRole("button", { name: /运行渲染验证/ }).click();
-
-  const items = panel.locator("li[data-verdict]");
-  await expect(items).toHaveCount(EXPECTED_CHECK_IDS.length, {
-    timeout: 60_000,
-  });
-
-  const fails = panel.locator("li[data-verdict='fail']");
-  await expect(fails).toHaveCount(0);
-
-  // 通过项的 id 集合与名单一致（解文案耦合：id 稳定，文案可改）
-  const passIds = await panel
-    .locator("li[data-verdict='pass']")
-    .evaluateAll((lis) =>
-      lis.map((li) => (li as HTMLElement).dataset.checkId ?? ""),
+test("自然笔感的点号在正式 PNG、裁剪草稿与回放中均保留", async ({ page }) => {
+  await page.goto("/dev/ink-feel");
+  const pixels = await page.evaluate(async () => {
+    const snapshotUrl = "/src/features/ink/render-ink-snapshot.ts";
+    const replayUrl = "/src/features/ink/replay/draw.ts";
+    const noteUrl = "/src/features/notes/render-note.ts";
+    const { renderInkSnapshot } = (await import(snapshotUrl)) as {
+      renderInkSnapshot: (doc: InkDoc) => Promise<Blob>;
+    };
+    const { renderNotePage } = (await import(noteUrl)) as {
+      renderNotePage: (
+        doc: import("../packages/contract/src/note").NoteDoc,
+        page: {
+          pageIndex: number;
+          crop: { x: number; y: number; width: number; height: number };
+          pixelWidth: number;
+          pixelHeight: number;
+        },
+      ) => Promise<{ blob: Blob }>;
+    };
+    const { createAtramentReplayCanvas } = (await import(replayUrl)) as {
+      createAtramentReplayCanvas: (host: HTMLElement) => {
+        drawFrame: (strokes: InkStroke[], counts: number[]) => void;
+        destroy: () => void;
+      };
+    };
+    const s: InkStroke = {
+      tool: "pen",
+      color: "#ff0000",
+      weight: 8,
+      points: [{ x: 100, y: 150, p: 0.5, t: 0 }],
+      rendering: {
+        renderer: "freehand",
+        smoothing: 0.5,
+        thinning: 0.6,
+        streamline: 0.15,
+        sizeScale: 1.5,
+        simulatePressure: false,
+      },
+    };
+    const doc: InkDoc = {
+      engine: "atrament",
+      version: 1,
+      updatedAt: 1,
+      data: { width: 1000, strokes: [s] },
+    };
+    const sample = async (blob: Blob, y: number) => {
+      const bitmap = await createImageBitmap(blob);
+      const canvas = document.createElement("canvas");
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) throw new Error("像素解码失败");
+      ctx.drawImage(bitmap, 0, 0);
+      bitmap.close();
+      return Array.from(ctx.getImageData(100, y, 1, 1).data);
+    };
+    const png = await sample(await renderInkSnapshot(doc), 150);
+    const crop = await renderNotePage(
+      {
+        version: 1,
+        ink: doc.data,
+        background: "white",
+        paperHeightLogical: 320,
+      },
+      {
+        pageIndex: 0,
+        crop: { x: 0, y: 120, width: 1000, height: 200 },
+        pixelWidth: 1000,
+        pixelHeight: 200,
+      },
     );
-  expect([...passIds].sort()).toEqual([...EXPECTED_CHECK_IDS].sort());
+    const cropped = await sample(crop.blob, 30);
+    const host = document.createElement("div");
+    host.style.cssText = "width:1000px;height:320px;position:relative";
+    document.body.append(host);
+    const replay = createAtramentReplayCanvas(host);
+    replay.drawFrame([s], [1]);
+    const canvas = host.querySelector("canvas");
+    if (!canvas) throw new Error("回放画布缺失");
+    const scale = canvas.width / 1000;
+    const played = Array.from(
+      canvas.getContext("2d")?.getImageData(100 * scale, 150 * scale, 1, 1)
+        .data ?? [],
+    );
+    replay.destroy();
+    host.remove();
+    return [png, cropped, played];
+  });
+  for (const pixel of pixels) {
+    expect(pixel[0], JSON.stringify(pixels)).toBeGreaterThan(240);
+    expect(pixel[1]).toBeLessThan(20);
+    expect(pixel[2]).toBeLessThan(20);
+    expect(pixel[3]).toBe(255);
+  }
+});
+
+/** 用户页面不再包含验证面板；浏览器直接检查草稿自产 PNG。 */
+test("草稿真实像素回归不依赖开发页", async ({ page }) => {
+  await page.goto("/dev/ink-feel");
+  const verdicts = await page.evaluate(async () => {
+    const modulePath = "/src/features/ink/lab/note-render-checks.ts";
+    const checks = (await import(modulePath)) as {
+      runChecks: () => Promise<
+        Array<{ id: string; pass: boolean; detail: string }>
+      >;
+    };
+    return checks.runChecks();
+  });
+  expect(verdicts).toHaveLength(10);
+  expect(verdicts.filter((v) => !v.pass)).toEqual([]);
 });

@@ -48,8 +48,12 @@
  * - 书写中途旋转设备（先收笔再换坐标变换的手感）；
  * - 系统手势边缘滑动触发 pointercancel（收笔不粘笔）。
  */
-import type { NoteBackground } from "@tutor/contract";
+import type { InkRendering, NoteBackground } from "@tutor/contract";
 import Atrament from "atrament";
+import { paintFreehandStroke } from "./freehand-paint";
+
+const drawingCanvases = new WeakMap<Atrament, HTMLCanvasElement>();
+
 import { type StrokeBounds, strokeBounds } from "./bounds.ts";
 import { canvasToPngBlob } from "./canvas-png.ts";
 import { buildAtramentDoc, parseAtramentDoc } from "./doc.ts";
@@ -98,6 +102,19 @@ export function replayAtramentStroke(
   cssWidth: number,
   s: InkStroke,
 ): void {
+  const canvas = drawingCanvases.get(atrament);
+  if (s.rendering?.renderer === "freehand" && canvas) {
+    const context = canvas.getContext("2d");
+    if (context)
+      paintFreehandStroke(
+        context,
+        ((canvas.width / (canvas.offsetWidth || cssWidth)) * cssWidth) / 1000,
+        s,
+        s.rendering,
+      );
+    return;
+  }
+  atrament.smoothing = s.rendering?.smoothing ?? 0.35;
   if (s.points.length === 0) return;
   atrament.color = s.color;
   atrament.weight = fromLogical(cssWidth, s.weight);
@@ -128,11 +145,14 @@ export function createProgrammaticAtrament(
   canvas: HTMLCanvasElement,
 ): Atrament {
   const atrament = new Atrament(canvas, { smoothing: INK_DEFAULT_SMOOTHING });
+  drawingCanvases.set(atrament, canvas);
   atrament.destroy();
   return atrament;
 }
 
 export interface AtramentSurfaceOptions {
+  store?: InkStore;
+  rendering?: InkRendering;
   /** 实验页可选平滑强度；正式调用缺省使用 0.35。 */
   smoothing?: number;
   /** 初始高度提示（CSS 像素）。容器高度最终由外部（InkPad）控制 */
@@ -165,7 +185,8 @@ export interface AtramentSurface extends ToolAwareSurface {
 export function createAtramentSurface(
   options: AtramentSurfaceOptions = {},
 ): AtramentSurface {
-  const store = new InkStore();
+  const store = options.store ?? new InkStore();
+  let currentSmoothing = options.smoothing ?? INK_DEFAULT_SMOOTHING;
 
   // ---- 内部状态（mount 前不可用） ----
   let container: HTMLElement | null = null;
@@ -216,7 +237,7 @@ export function createAtramentSurface(
    * 未及赋值的旁路通知按缺省 "stroke" 处理。
    */
   let reasonOverride: InkChangeReason | null = null;
-  store.subscribe(() => {
+  const unsubscribeStore = store.subscribe(() => {
     const reason = reasonOverride ?? "stroke";
     reasonOverride = null;
     notifyListeners(reason);
@@ -392,6 +413,14 @@ export function createAtramentSurface(
             tool: liveTool,
             color: brush.color,
             weight: brush.weight, // 逻辑单位（规格本身按宽度 1000 定义）
+            ...(options.rendering
+              ? {
+                  rendering: {
+                    ...options.rendering,
+                    smoothing: currentSmoothing,
+                  },
+                }
+              : {}),
             points,
           },
         ]),
@@ -461,6 +490,7 @@ export function createAtramentSurface(
     liveTool = tool.type === "highlighter" ? "highlighter" : "pen";
     if (!liveBrush || !atrament) return;
     atrament.color = liveBrush.color;
+    atrament.smoothing = currentSmoothing;
     atrament.weight = fromLogical(cssWidth, liveBrush.weight);
     atrament.beginStroke(x, y);
     // 起点先画一个墨点（轻点可见），并记录归一化点
@@ -750,6 +780,7 @@ export function createAtramentSurface(
     },
 
     setSmoothing(value): void {
+      currentSmoothing = value;
       finishPointer({ kind: "layoutchange" });
       if (atrament) atrament.smoothing = value;
       redraw();
@@ -834,6 +865,7 @@ export function createAtramentSurface(
     },
 
     destroy(): void {
+      unsubscribeStore();
       bindInput(false);
       observer?.disconnect();
       observer = null;

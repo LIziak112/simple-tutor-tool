@@ -14,6 +14,7 @@
  */
 
 import {
+  DEFAULT_INK_PROFILE_CONFIG,
   NOTE_ANALYSIS_SLICE_OVERLAP_LOGICAL,
   NOTE_IMAGE_MAX_PIXEL_DIM,
   NOTE_IMAGE_PNG_MAX_BYTES,
@@ -21,6 +22,7 @@ import {
   type NoteDoc,
 } from "@tutor/contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as freehandPaint from "@/features/ink/engine/freehand-paint";
 import {
   NOTE_PAPER_GRID_SPACING_LOGICAL,
   NOTE_PAPER_LINE_COLOR,
@@ -120,6 +122,39 @@ const ctxByCanvas = new WeakMap<HTMLCanvasElement, RecordingContext>();
 
 /** 本测试内按创建顺序出现的 canvas（隔离断言用；afterEach 清空） */
 const createdCanvases: HTMLCanvasElement[] = [];
+
+it("草稿与正式 PNG 保留自然笔感参数，裁剪后仍使用同一绘制原语", async () => {
+  const d = docOf([
+    stroke([
+      [100, 150],
+      [200, 160],
+    ]),
+  ]);
+  const first = d.ink.strokes[0];
+  if (!first) throw new Error("测试笔画缺失");
+  first.rendering = {
+    ...DEFAULT_INK_PROFILE_CONFIG,
+    renderer: "freehand",
+    sizeScale: 1.5,
+  };
+  const paint = vi
+    .spyOn(freehandPaint, "paintFreehandStroke")
+    .mockImplementation(() => {});
+  try {
+    await renderNotePage(d, {
+      pageIndex: 0,
+      crop: { x: 0, y: 120, width: 1000, height: 200 },
+      pixelWidth: 480,
+      pixelHeight: 96,
+    });
+    expect(paint).toHaveBeenCalledOnce();
+    expect(paint.mock.calls[0]?.[1]).toBe(0.48);
+    expect(paint.mock.calls[0]?.[2].points[0]?.y).toBe(30);
+    expect(paint.mock.calls[0]?.[3].sizeScale).toBe(1.5);
+  } finally {
+    paint.mockRestore();
+  }
+});
 
 /** toBlob 行为：返回字节串 → 正常；null → 编码失败；"defer" → 挂起待手动释放 */
 let toBlobBehavior: (
@@ -849,7 +884,7 @@ describe("renderNoteImages：产物与上传元信息对齐", () => {
       expect(p.pixelWidth).toBeLessThanOrEqual(NOTE_IMAGE_MAX_PIXEL_DIM);
       expect(p.pixelHeight).toBeLessThanOrEqual(NOTE_IMAGE_MAX_PIXEL_DIM);
     }
-    expect(NOTE_RENDER_VERSION).toBe(2);
+    expect(NOTE_RENDER_VERSION).toBe(3);
   });
 });
 

@@ -10,9 +10,16 @@
  * - excalidraw：历史场景兼容（mount 时才动态 import，独立 chunk 不进主包）。
  * 状态/历史在纯数据层（history.ts），引擎与适配器只是转发。
  */
-import type { NoteBackground } from "@tutor/contract";
+import {
+  type InkProfileConfig,
+  inkRenderingOf,
+  type NoteBackground,
+} from "@tutor/contract";
+import { getInkProfileSelection } from "../ink-profile-store";
+import { createFeelSurface } from "../lab/feel-surface";
 import { createAtramentSurface } from "./atrament-adapter.ts";
 import { createExcalidrawSurface } from "./excalidraw-adapter.ts";
+import { InkStore } from "./history";
 import type { InkChangeReason, ToolAwareSurface } from "./surface.ts";
 import type {
   InkDoc,
@@ -68,6 +75,7 @@ export interface InkEngineOptions {
 
 /** 引擎对外 API（固定；canUndo/canRedo 供工具栏禁用态，属附加查询） */
 export interface InkEngine {
+  setProfile?(config: InkProfileConfig): void;
   getData(): InkDoc;
   finish?(): void;
   setInputEnabled?(enabled: boolean): void;
@@ -106,47 +114,111 @@ export function create(
   opts: InkEngineOptions = {},
 ): InkEngine {
   // exactOptionalPropertyTypes：不把 undefined 显式传给可选属性
-  const surface: ToolAwareSurface =
+  const store = new InkStore();
+  let config = getInkProfileSelection().config;
+  let inputEnabled = true;
+  let inputMode = opts.inputMode ?? config.inputMode;
+  let currentTool: InkToolConfig = {
+    type: "pen",
+    color: config.color,
+    size: config.size,
+  };
+  const subscribers = new Set<(doc: InkDoc, reason: InkChangeReason) => void>();
+  let unsubscribe: (() => void) | null = null;
+  const build = (): ToolAwareSurface =>
     opts.engine === "excalidraw"
       ? createExcalidrawSurface({
           ...(opts.onReady ? { onReady: opts.onReady } : {}),
           ...(opts.onError ? { onError: opts.onError } : {}),
         })
-      : createAtramentSurface({
-          ...(opts.height !== undefined ? { height: opts.height } : {}),
-          ...(opts.inputMode !== undefined
-            ? { inputMode: opts.inputMode }
-            : {}),
-          ...(opts.background !== undefined
-            ? { background: opts.background }
-            : {}),
-        });
+      : config.renderer === "freehand"
+        ? createFeelSurface(
+            { ...config, smoothing: Math.min(1, config.smoothing) },
+            {
+              store,
+              preserveRendering: true,
+              ...(opts.background ? { background: opts.background } : {}),
+            },
+          )
+        : createAtramentSurface({
+            store,
+            smoothing: config.smoothing,
+            rendering: inkRenderingOf(config),
+            ...(opts.height !== undefined ? { height: opts.height } : {}),
+            ...(opts.inputMode !== undefined
+              ? { inputMode: opts.inputMode }
+              : {}),
+            ...(opts.background !== undefined
+              ? { background: opts.background }
+              : {}),
+          });
 
+  let surface = build();
+  const connect = () => {
+    unsubscribe = surface.onChange((doc, reason) => {
+      for (const cb of subscribers) cb(doc, reason);
+    });
+    surface.setTool(currentTool);
+    surface.setInputMode?.(inputMode);
+    surface.setInputEnabled?.(inputEnabled);
+  };
   surface.mount(container, opts.initial);
+  connect();
   if (opts.engine !== "excalidraw") opts.onReady?.(); // atrament 同步就绪
 
   return {
+    setProfile(next) {
+      if (JSON.stringify(next) === JSON.stringify(config)) return;
+      if (opts.engine === "excalidraw") return;
+      surface.finish?.();
+      const doc = surface.getDoc();
+      unsubscribe?.();
+      surface.destroy();
+      config = next;
+      inputMode = next.inputMode;
+      if (currentTool.type === "pen")
+        currentTool = { type: "pen", color: next.color, size: next.size };
+      surface = build();
+      surface.mount(container, doc);
+      connect();
+    },
     getData: () => surface.getDoc(),
     finish: () => surface.finish?.(),
-    setInputEnabled: (enabled) => surface.setInputEnabled?.(enabled),
+    setInputEnabled: (enabled) => {
+      inputEnabled = enabled;
+      surface.setInputEnabled?.(enabled);
+    },
     load: (data) => surface.load(data),
     exportPng: () => surface.exportPng(),
     undo: () => surface.undo(),
     redo: () => surface.redo(),
     clear: () => surface.clear(),
-    setTool: (tool) => surface.setTool(tool),
+    setTool: (tool) => {
+      currentTool = tool;
+      surface.setTool(tool);
+    },
     // 守卫收敛于此（复审⑩）：surface 未实现（excalidraw）时安全 no-op，
     // 调用方（InkPad 等）无需 ?. 链
-    setInputMode: (mode: InkInputMode) => surface.setInputMode?.(mode),
+    setInputMode: (mode: InkInputMode) => {
+      inputMode = mode;
+      surface.setInputMode?.(mode);
+    },
     on: (event, cb) =>
       event === "change"
-        ? surface.onChange(cb)
+        ? (() => {
+            subscribers.add(cb);
+            return () => subscribers.delete(cb);
+          })()
         : (
             () => () =>
               undefined
           )(),
     canUndo: () => surface.canUndo(),
     canRedo: () => surface.canRedo(),
-    destroy: () => surface.destroy(),
+    destroy: () => {
+      unsubscribe?.();
+      surface.destroy();
+      subscribers.clear();
+    },
   };
 }

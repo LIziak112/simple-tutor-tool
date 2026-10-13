@@ -1,3 +1,4 @@
+import { inkRenderingSchema } from "@tutor/contract";
 /**
  * 笔迹回放的纯数据层（T3.3，D12）。
  *
@@ -131,6 +132,10 @@ function parseAtramentStrokes(raw: unknown): RawStroke[] | null {
     }
     out.push({
       stroke: {
+        ...(item.rendering &&
+        inkRenderingSchema.safeParse(item.rendering).success
+          ? { rendering: inkRenderingSchema.parse(item.rendering) }
+          : {}),
         tool: item.tool === "highlighter" ? "highlighter" : "pen",
         color:
           typeof item.color === "string" && item.color.length > 0

@@ -409,9 +409,7 @@ async function renderNotePageWithBoxes(
       if (s === undefined || bb === null || bb === undefined) continue;
       if (!boxIntersectsCrop(bb, crop)) continue;
       replayAtramentStroke(atrament, INK_LOGICAL_WIDTH, {
-        tool: s.tool,
-        color: s.color,
-        weight: s.weight,
+        ...s,
         points: s.points.map((pt) => ({
           x: pt.x - crop.x,
           y: pt.y - crop.y,

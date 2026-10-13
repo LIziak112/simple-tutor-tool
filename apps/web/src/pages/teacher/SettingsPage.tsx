@@ -80,6 +80,12 @@ export function SettingsPage() {
         ))}
       </nav>
       <div hidden={activeSection !== "teaching"}>
+        <Link
+          to="/t/ink-feel"
+          className="inline-flex min-h-11 items-center text-sm text-primary underline underline-offset-4"
+        >
+          调整我的手写手感
+        </Link>
         <CapabilityProfileSection
           key={meQuery.data.id}
           teacherId={meQuery.data.id}

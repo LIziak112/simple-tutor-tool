@@ -1,7 +1,5 @@
 import type { NoteDoc } from "@tutor/contract";
-import { Play } from "lucide-react";
-import { useState } from "react";
-import { Button } from "@/components/ui/button";
+
 import { INK_PEN_COLORS } from "@/features/ink/engine/types.ts";
 import {
   denseStroke,
@@ -16,7 +14,7 @@ import {
 } from "@/features/notes/render-note.ts";
 
 /**
- * T6R.6 渲染验证面板（/dev/ink 第 ④ 区块）：在**真实浏览器 canvas** 里跑
+ * 草稿渲染回归检查（由 E2E 调用）：在**真实浏览器 canvas** 里跑
  * 独立渲染器并解码自己的 PNG 做内容级检查——这是任务验收「真实解码 PNG
  * 并做内容检查/基准图对照，不能只验魔数」的浏览器侧闸门（jsdom 无 2d
  * canvas，命令流级断言在 render-note.test.ts，两层互补）。
@@ -216,7 +214,7 @@ async function renderPngRegion(
 
 // ---------- 检查链 ----------
 
-async function runChecks(): Promise<Verdict[]> {
+export async function runChecks(): Promise<Verdict[]> {
   const verdicts: Verdict[] = [];
   const check = async (
     id: string,
@@ -512,77 +510,4 @@ async function runChecks(): Promise<Verdict[]> {
   });
 
   return verdicts;
-}
-
-/** T6R.6 渲染验证面板（真实 canvas；只在浏览器/E2E 中运行有意义） */
-export function NoteRenderVerifyPanel() {
-  const [rows, setRows] = useState<Verdict[] | null>(null);
-  const [running, setRunning] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function run(): Promise<void> {
-    setRunning(true);
-    setError(null);
-    setRows(null);
-    try {
-      setRows(await runChecks());
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setRunning(false);
-    }
-  }
-
-  const passCount = rows?.filter((r) => r.pass).length ?? 0;
-
-  return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-3">
-        <Button
-          type="button"
-          className="h-11"
-          disabled={running}
-          onClick={() => void run()}
-        >
-          {running ? (
-            "验证中…"
-          ) : (
-            <>
-              <Play aria-hidden /> 运行渲染验证
-            </>
-          )}
-        </Button>
-        {rows && (
-          <span className="text-xs tabular-nums text-muted-foreground">
-            {passCount}/{rows.length} 通过
-          </span>
-        )}
-      </div>
-      {error && (
-        <p className="text-xs text-destructive" role="alert">
-          验证链异常：{error}
-        </p>
-      )}
-      {rows && (
-        <ul className="space-y-1">
-          {rows.map((r) => (
-            <li
-              key={r.id}
-              data-check-id={r.id}
-              data-verdict={r.pass ? "pass" : "fail"}
-              className="text-xs leading-5"
-            >
-              <span className={r.pass ? "text-foreground" : "text-destructive"}>
-                {r.pass ? "[通过]" : "[失败]"}
-              </span>{" "}
-              {r.name}
-              {!r.pass && (
-                <span className="text-destructive"> —— {r.detail}</span>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
 }

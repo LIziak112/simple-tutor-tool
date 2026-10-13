@@ -20,125 +20,157 @@ import {
  * 观感项（横竖屏/分屏/工具条触控目标）🧑 留 iPad 真机。
  */
 
-test.describe("答题页草稿层（T6R.9）", () => {
-  test("开草稿 → 写 → 选项操作 → 收起 → 刷新 → 恢复（真 IDB）", async ({
-    request,
-    browser,
-  }) => {
-    test.setTimeout(120_000);
+for (const natural of [false, true]) {
+  test.describe(`答题页草稿层（${natural ? "自然笔感" : "标准硬笔"}）`, () => {
+    test("开草稿 → 写 → 选项操作 → 收起 → 刷新 → 恢复（真 IDB）", async ({
+      request,
+      browser,
+    }) => {
+      test.setTimeout(120_000);
 
-    // —— 造数（教师 API）：专属课程 + 可见两题练习 + 学生入成员 ——
-    await teacherApiLogin(request);
-    const suffix = uniqueSuffix();
-    const courseName = `e2e草稿课程${suffix}`;
-    const unitName = `草稿小练${suffix}`;
-    const courseId = await createCourseViaApi(request, courseName);
-    const importRes = await request.post("/api/teacher/import/commit", {
-      data: {
-        markdown: choiceJudgePracticeMarkdown(unitName),
-        filename: `${unitName}.md`,
-        courseId,
-      },
-    });
-    if (!importRes.ok()) {
-      throw new Error(`导入课程练习失败：HTTP ${importRes.status()}`);
-    }
-    await setCourseItemVisible(request, courseId, unitName, true);
-
-    const loginName = `e2e-note-${suffix}`;
-    await request.post("/api/teacher/students", {
-      data: { displayName: `e2e草稿生${suffix}`, loginName },
-    });
-    const student = await getStudentViaApi(request, loginName);
-    await addCourseMemberViaApi(request, courseId, student.id);
-
-    // —— 学生端：iPad 独立 context ——
-    const studentContext = await browser.newContext(devices["iPad (gen 7)"]);
-    const studentPage = await studentContext.newPage();
-    try {
-      const leak = attachLeakMonitor(studentPage);
-      // 真 IDB 契约守卫（kv-backend.keys 修复）：bind 扫描补传不得报
-      // 「草稿本地仓扫描失败」（曾因裸 IDBRequest 未解包全挂）。只拦草稿域
-      // 报错——不拦无关控制台输出，避免环境噪音引入抖动
-      const noteClientErrors: string[] = [];
-      studentPage.on("console", (msg) => {
-        if (
-          (msg.type() === "warning" || msg.type() === "error") &&
-          msg.text().includes("草稿")
-        ) {
-          noteClientErrors.push(msg.text());
-        }
+      // —— 造数（教师 API）：专属课程 + 可见两题练习 + 学生入成员 ——
+      await teacherApiLogin(request);
+      const suffix = uniqueSuffix();
+      const courseName = `e2e草稿课程${suffix}`;
+      const unitName = `草稿小练${suffix}`;
+      const courseId = await createCourseViaApi(request, courseName);
+      const importRes = await request.post("/api/teacher/import/commit", {
+        data: {
+          markdown: choiceJudgePracticeMarkdown(unitName),
+          filename: `${unitName}.md`,
+          courseId,
+        },
       });
-      await studentPage.goto(`/s/${student.linkToken}`);
-      await studentPage.waitForURL("**/s/home");
+      if (!importRes.ok()) {
+        throw new Error(`导入课程练习失败：HTTP ${importRes.status()}`);
+      }
+      await setCourseItemVisible(request, courseId, unitName, true);
 
-      // 进入练习（课程 → 单元 → 开始练习——共享件三连，attemptId 本用例不用）
-      await openChoicePractice(studentPage, courseId, courseName, unitName);
+      const loginName = `e2e-note-${suffix}`;
+      await request.post("/api/teacher/students", {
+        data: { displayName: `e2e草稿生${suffix}`, loginName },
+      });
+      const student = await getStudentViaApi(request, loginName);
+      await addCourseMemberViaApi(request, courseId, student.id);
 
-      const choiceCard = studentPage.locator('article[aria-label="第 2 题"]');
+      // —— 学生端：iPad 独立 context ——
+      const studentContext = await browser.newContext(devices["iPad (gen 7)"]);
+      const studentPage = await studentContext.newPage();
+      try {
+        const leak = attachLeakMonitor(studentPage);
+        // 真 IDB 契约守卫（kv-backend.keys 修复）：bind 扫描补传不得报
+        // 「草稿本地仓扫描失败」（曾因裸 IDBRequest 未解包全挂）。只拦草稿域
+        // 报错——不拦无关控制台输出，避免环境噪音引入抖动
+        const noteClientErrors: string[] = [];
+        studentPage.on("console", (msg) => {
+          if (
+            (msg.type() === "warning" || msg.type() === "error") &&
+            msg.text().includes("草稿")
+          ) {
+            noteClientErrors.push(msg.text());
+          }
+        });
+        await studentPage.goto(`/s/${student.linkToken}`);
+        await studentPage.waitForURL("**/s/home");
 
-      // ① 开草稿：收起态标记 → 展开（工具条 + 画布挂载）
-      await choiceCard
-        .getByRole("button", { name: /草稿纸/ })
-        .first()
-        .click();
-      await expect(
-        choiceCard.getByRole("toolbar", { name: /第 2 题草稿纸工具栏/ }),
-      ).toBeVisible();
-      const noteCanvas = choiceCard.locator('[data-slot="note-paper"] canvas');
-      await expect(noteCanvas).toBeVisible();
+        if (natural) {
+          await studentPage.goto("/s/ink-feel");
+          await studentPage
+            .getByRole("button", { name: "自然压感", exact: true })
+            .click();
+          await studentPage
+            .getByLabel("配置名称", { exact: true })
+            .fill("我的自然笔感");
+          await studentPage
+            .getByRole("button", { name: "保存为新配置", exact: true })
+            .click();
+          await expect(
+            studentPage.getByText("配置已保存到账号，并在本设备使用", {
+              exact: true,
+            }),
+          ).toBeVisible();
+          await studentPage.goto("/s/home");
+        }
 
-      // ② 写一笔（合成指针序列；笔记 PUT 上行观测——2s 停笔防抖后触发）
-      const notePut = studentPage.waitForRequest(
-        (req) =>
-          req.method() === "PUT" &&
-          /\/api\/student\/attempts\/.+\/notes\//.test(req.url()),
-        { timeout: 15_000 },
-      );
-      await drawStrokeWithPointerEvents(noteCanvas);
+        // 进入练习（课程 → 单元 → 开始练习——共享件三连，attemptId 本用例不用）
+        await openChoicePractice(studentPage, courseId, courseName, unitName);
 
-      // ③ 选项操作（草稿展开的同时选项可正常作答）
-      await choiceCard
-        .getByRole("radio", { name: "选项 B" })
-        .locator("xpath=ancestor::label[1]")
-        .click();
-      await expect(
-        choiceCard.getByRole("radio", { name: "选项 B" }),
-      ).toBeChecked();
+        const choiceCard = studentPage.locator('article[aria-label="第 2 题"]');
 
-      // ④ 笔记上行全链路（T6R.4 服务端 CAS 首传）
-      await notePut;
+        // ① 开草稿：收起态标记 → 展开（工具条 + 画布挂载）
+        await choiceCard
+          .getByRole("button", { name: /草稿纸/ })
+          .first()
+          .click();
+        await expect(
+          choiceCard.getByRole("toolbar", { name: /第 2 题草稿纸工具栏/ }),
+        ).toBeVisible();
+        const noteCanvas = choiceCard.locator(
+          '[data-slot="note-paper"] canvas[data-slot=ink-canvas], [data-slot="note-paper"] canvas[data-slot=feel-wet]',
+        );
+        await expect(noteCanvas).toBeVisible();
 
-      // ⑤ 收起：纸面隐藏保留（保活期内不卸载；标记带笔数），选项保持
-      await choiceCard.getByRole("button", { name: /收起/ }).click();
-      await expect(
-        choiceCard.getByRole("button", { name: /草稿纸（已有笔迹）/ }),
-      ).toBeVisible();
-      await expect(choiceCard.locator('[data-slot="note-paper"]')).toBeHidden();
+        // ② 写一笔（合成指针序列；笔记 PUT 上行观测——2s 停笔防抖后触发）
+        const notePut = studentPage.waitForRequest(
+          (req) =>
+            req.method() === "PUT" &&
+            /\/api\/student\/attempts\/.+\/notes\//.test(req.url()),
+          { timeout: 15_000 },
+        );
+        await drawStrokeWithPointerEvents(noteCanvas);
 
-      // ⑥ 刷新 → 真 IDB 恢复：不自动撑开题卡，显式打开后验笔数和答案
-      await studentPage.reload();
-      await expect(
-        studentPage.locator('article[aria-label="第 2 题"]'),
-      ).toBeVisible();
-      const restored = studentPage.locator('article[aria-label="第 2 题"]');
-      await expect(restored.locator('[data-slot="note-layer"]')).toBeHidden();
-      await expect(restored.locator('[data-slot="note-paper"]')).toBeHidden();
-      await restored
-        .getByRole("button", { name: /草稿纸（已有笔迹）/ })
-        .click();
-      await expect(restored.locator('[data-slot="note-layer"]')).toBeVisible();
-      await expect(restored.getByText(/1 笔/)).toBeVisible();
-      await expect(
-        restored.getByRole("radio", { name: "选项 B" }),
-      ).toBeChecked();
+        // ③ 选项操作（草稿展开的同时选项可正常作答）
+        await choiceCard
+          .getByRole("radio", { name: "选项 B" })
+          .locator("xpath=ancestor::label[1]")
+          .click();
+        await expect(
+          choiceCard.getByRole("radio", { name: "选项 B" }),
+        ).toBeChecked();
 
-      // 学生端响应无泄露（规则 3 的 E2E 层防线）
-      expect(leak.violations()).toEqual([]);
-      // 本地仓扫描（bind 补传链路）无草稿域客户端报错
-      expect(noteClientErrors).toEqual([]);
-    } finally {
-      await studentContext.close();
-    }
+        // ④ 笔记上行全链路（T6R.4 服务端 CAS 首传）
+        await notePut;
+        await expect(
+          choiceCard.locator(
+            '[data-slot="note-paper"] canvas[data-slot="feel-wet"]',
+          ),
+        ).toHaveCount(natural ? 1 : 0);
+
+        // ⑤ 收起：纸面隐藏保留（保活期内不卸载；标记带笔数），选项保持
+        await choiceCard.getByRole("button", { name: /收起/ }).click();
+        await expect(
+          choiceCard.getByRole("button", { name: /草稿纸（已有笔迹）/ }),
+        ).toBeVisible();
+        await expect(
+          choiceCard.locator('[data-slot="note-paper"]'),
+        ).toBeHidden();
+
+        // ⑥ 刷新 → 真 IDB 恢复：不自动撑开题卡，显式打开后验笔数和答案
+        await studentPage.reload();
+        await expect(
+          studentPage.locator('article[aria-label="第 2 题"]'),
+        ).toBeVisible();
+        const restored = studentPage.locator('article[aria-label="第 2 题"]');
+        await expect(restored.locator('[data-slot="note-layer"]')).toBeHidden();
+        await expect(restored.locator('[data-slot="note-paper"]')).toBeHidden();
+        await restored
+          .getByRole("button", { name: /草稿纸（已有笔迹）/ })
+          .click();
+        await expect(
+          restored.locator('[data-slot="note-layer"]'),
+        ).toBeVisible();
+        await expect(restored.getByText(/1 笔/)).toBeVisible();
+        await expect(
+          restored.getByRole("radio", { name: "选项 B" }),
+        ).toBeChecked();
+
+        // 学生端响应无泄露（规则 3 的 E2E 层防线）
+        expect(leak.violations()).toEqual([]);
+        // 本地仓扫描（bind 补传链路）无草稿域客户端报错
+        expect(noteClientErrors).toEqual([]);
+      } finally {
+        await studentContext.close();
+      }
+    });
   });
-});
+}
