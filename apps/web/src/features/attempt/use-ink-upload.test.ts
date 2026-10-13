@@ -2,7 +2,6 @@ import { renderHook } from "@testing-library/react";
 import type { InkDoc } from "@tutor/contract";
 import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { InkEngine } from "@/features/ink/engine/index.ts";
 import {
   INK_UPLOAD_DEBOUNCE_MS,
   type InkSyncResult,
@@ -33,34 +32,15 @@ vi.mock("@/lib/api", async (importOriginal) => ({
 vi.mock("@/features/ink/gzip", () => ({
   gzipOrRaw: async (text: string) => new TextEncoder().encode(text),
 }));
+vi.mock("@/features/ink/render-ink-snapshot", () => ({
+  renderInkSnapshot: vi.fn(
+    async () => new Blob([new Uint8Array([0x89, 0x50])], { type: "image/png" }),
+  ),
+}));
 
 import { putAttemptInkApi } from "@/lib/api";
 
 const putMock = vi.mocked(putAttemptInkApi);
-
-/** 可编程引擎 stub：exportPng 成功/失败可控 */
-function makeEngine(options: { pngFails?: boolean } = {}): InkEngine {
-  const doc = emptyDoc();
-  return {
-    getData: () => doc,
-    load: () => undefined,
-    exportPng: () =>
-      options.pngFails
-        ? Promise.reject(new Error("导出失败"))
-        : Promise.resolve(
-            new Blob([new Uint8Array([0x89, 0x50])], { type: "image/png" }),
-          ),
-    undo: () => undefined,
-    redo: () => undefined,
-    clear: () => undefined,
-    setTool: () => undefined,
-    setInputMode: () => undefined,
-    on: () => () => undefined,
-    canUndo: () => false,
-    canRedo: () => false,
-    destroy: () => undefined,
-  };
-}
 
 function emptyDoc(): InkDoc {
   return {
@@ -88,15 +68,21 @@ function docWith(strokes: number, updatedAt = 2): InkDoc {
   };
 }
 
-/** 包一层 hook（engine 引用可替换）；hooks 透传给 useInkUpload */
-function setup(engine: InkEngine | null, hooks?: InkUploadHooks) {
-  const ref = { current: engine };
-  return renderHook(() => useInkUpload("att-1", "q1", () => ref.current, hooks))
-    .result;
+/** 上传只依赖固定文档与回执，不再绑定编辑器实例。 */
+function setup(hooks?: InkUploadHooks) {
+  return renderHook(() => useInkUpload("att-1", "q1", hooks)).result;
 }
 
 beforeEach(() => {
-  putMock.mockClear();
+  putMock.mockReset();
+  putMock.mockResolvedValue({
+    questionId: "q1",
+    inkId: "ink-1",
+    strokeCount: 1,
+    width: 100,
+    height: 50,
+    updatedAt: "2026-09-27T00:00:00.000Z",
+  });
   vi.useFakeTimers();
 });
 
@@ -116,8 +102,67 @@ describe("isInkDocEmpty", () => {
 });
 
 describe("防抖上传", () => {
+  it("重试复用上传标识和字节，成功后下一稿使用新服务端基线", async () => {
+    putMock.mockRejectedValueOnce(new Error("回执丢失"));
+    putMock.mockResolvedValue({
+      questionId: "q1",
+      inkId: "ink-1",
+      strokeCount: 1,
+      width: 100,
+      height: 50,
+      updatedAt: "2026-10-13",
+      revision: 5,
+    });
+    const result = setup();
+    await act(async () => {
+      result.current.controller.setBaseRevision?.(4);
+      result.current.onDocChange(docWith(1));
+      expect(await result.current.controller.flush()).toBe(false);
+      expect(await result.current.controller.flush()).toBe(true);
+      result.current.onDocChange(docWith(2));
+      expect(await result.current.controller.flush()).toBe(true);
+    });
+    expect(putMock.mock.calls[0]?.[4]).toEqual(putMock.mock.calls[1]?.[4]);
+    expect(putMock.mock.calls[0]?.[4]?.baseRevision).toBe(4);
+    expect(putMock.mock.calls[2]?.[4]?.baseRevision).toBe(5);
+  });
+  it("flush 等待在途上传，并继续追平期间新增的稿，不把正常上传误报失败", async () => {
+    let complete: (() => void) | undefined;
+    putMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          complete = () =>
+            resolve({
+              questionId: "q1",
+              inkId: "ink-1",
+              strokeCount: 1,
+              width: 100,
+              height: 50,
+              updatedAt: "2026-10-13",
+            });
+        }),
+    );
+    const result = setup();
+    let first = Promise.resolve(false);
+    let second = Promise.resolve(false);
+    await act(async () => {
+      result.current.onDocChange(docWith(1));
+      first = result.current.controller.flush();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      result.current.onDocChange(docWith(2));
+      second = result.current.controller.flush();
+      complete?.();
+      expect(await first).toBe(true);
+      expect(await second).toBe(true);
+    });
+    expect(putMock).toHaveBeenCalledTimes(2);
+    expect(result.current.controller.isDirty()).toBe(false);
+  });
   it("笔迹变化后 2 秒防抖窗内合并为一次 PUT；参数含 gzip 字节与 PNG", async () => {
-    const result = setup(makeEngine());
+    const result = setup();
     act(() => {
       result.current.onDocChange(docWith(1));
     });
@@ -138,7 +183,7 @@ describe("防抖上传", () => {
   });
 
   it("无变化时 flush 是 no-op 成功（从未书写的题不阻塞交卷）", async () => {
-    const result = setup(makeEngine());
+    const result = setup();
     let ok = true;
     await act(async () => {
       ok = await result.current.controller.flush();
@@ -148,7 +193,7 @@ describe("防抖上传", () => {
   });
 
   it("flush：清掉防抖定时器立即上传，成功返回 true", async () => {
-    const result = setup(makeEngine());
+    const result = setup();
     act(() => {
       result.current.onDocChange(docWith(3));
     });
@@ -168,7 +213,7 @@ describe("防抖上传", () => {
 
   it("上传失败：flush 返回 false（阻止交卷）、saveFailed 置位；恢复后可重试成功", async () => {
     putMock.mockRejectedValueOnce(new Error("network"));
-    const result = setup(makeEngine());
+    const result = setup();
     act(() => {
       result.current.onDocChange(docWith(1));
     });
@@ -187,8 +232,8 @@ describe("防抖上传", () => {
     expect(result.current.saveFailed).toBe(false);
   });
 
-  it("引擎已销毁（退出全屏后未及时上传的边缘态）：flush 失败保留待传文档", async () => {
-    const result = setup(null); // 引擎 getter 恒为 null（已销毁）
+  it("引擎已销毁仍能从固定矢量生成快照并上传", async () => {
+    const result = setup();
     act(() => {
       result.current.onDocChange(docWith(1));
     });
@@ -196,9 +241,8 @@ describe("防抖上传", () => {
     await act(async () => {
       ok = await result.current.controller.flush();
     });
-    expect(ok).toBe(false);
-    // 待传文档保留：重开对应作答区（引擎恢复）后重试可成功
-    expect(result.current.controller.isDirty()).toBe(true);
+    expect(ok).toBe(true);
+    expect(result.current.controller.isDirty()).toBe(false);
   });
 });
 
@@ -206,7 +250,7 @@ describe("防抖上传", () => {
 
 describe("sync()（草稿同步循环入口）", () => {
   it("无待传文档 → synced（不发包）", async () => {
-    const result = setup(makeEngine());
+    const result = setup();
     let outcome: InkSyncResult = "deferred";
     await act(async () => {
       outcome = await result.current.controller.sync();
@@ -217,7 +261,7 @@ describe("sync()（草稿同步循环入口）", () => {
 
   it("有待传 + 引擎可用 + 上传成功 → synced，onSynced 带本次上传的 doc", async () => {
     const onSynced = vi.fn();
-    const result = setup(makeEngine(), { onSynced });
+    const result = setup({ onSynced });
     act(() => {
       result.current.onDocChange(docWith(2));
     });
@@ -231,8 +275,8 @@ describe("sync()（草稿同步循环入口）", () => {
     expect(result.current.controller.isDirty()).toBe(false);
   });
 
-  it("有待传但引擎不可用（题卡收起）→ deferred：不发 PUT、保留待传", async () => {
-    const result = setup(null);
+  it("题卡收起后同步不依赖活画布", async () => {
+    const result = setup();
     act(() => {
       result.current.onDocChange(docWith(1));
     });
@@ -240,15 +284,15 @@ describe("sync()（草稿同步循环入口）", () => {
     await act(async () => {
       outcome = await result.current.controller.sync();
     });
-    expect(outcome).toBe("deferred");
-    expect(putMock).not.toHaveBeenCalled();
-    expect(result.current.controller.isDirty()).toBe(true);
+    expect(outcome).toBe("synced");
+    expect(putMock).toHaveBeenCalled();
+    expect(result.current.controller.isDirty()).toBe(false);
   });
 
   it("上传失败 → failed，onFailed 回调（顶栏转离线）", async () => {
     putMock.mockRejectedValueOnce(new Error("network"));
     const onFailed = vi.fn();
-    const result = setup(makeEngine(), { onFailed });
+    const result = setup({ onFailed });
     act(() => {
       result.current.onDocChange(docWith(1));
     });
@@ -265,7 +309,7 @@ describe("sync()（草稿同步循环入口）", () => {
 describe("resync()（本地较新恢复的补传入口）", () => {
   it("把文档放入待传并进 2 秒防抖；到期上传成功触发 onSynced", async () => {
     const onSynced = vi.fn();
-    const result = setup(makeEngine(), { onSynced });
+    const result = setup({ onSynced });
     act(() => {
       result.current.controller.resync(docWith(3));
     });

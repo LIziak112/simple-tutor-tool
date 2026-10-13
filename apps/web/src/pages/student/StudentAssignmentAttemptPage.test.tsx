@@ -91,6 +91,12 @@ vi.mock("@/features/ink/InkPad", () => ({
 }));
 
 // gzip mock：jsdom 的 Blob 流与 node 全局 CompressionStream 组合不可靠，
+vi.mock("@/features/ink/render-ink-snapshot", () => ({
+  renderInkSnapshot: vi.fn(
+    async () => new Blob(["固定笔迹"], { type: "image/png" }),
+  ),
+}));
+
 // 返回原始字节（服务端对无 gzip 魔数的载荷按原始 JSON 兼容解析）
 vi.mock("@/features/ink/gzip", () => ({
   gzipOrRaw: async (text: string) => new TextEncoder().encode(text),

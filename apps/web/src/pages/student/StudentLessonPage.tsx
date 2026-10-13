@@ -31,6 +31,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { AttemptEditorProvider } from "@/features/attempt/AttemptEditorContext";
 import { isAnswered } from "@/features/attempt/answer-format";
 import { SubmitConfirmDialog } from "@/features/attempt/SubmitConfirmDialog";
 import { retryAttemptLocalPersistence } from "@/features/attempt/use-attempt-save-status";
@@ -555,97 +556,102 @@ function LessonAnswerView({
   ).length;
 
   return (
-    <DraftSyncContext.Provider value={session.draftSyncContext}>
-      <EnabledCapabilitiesProvider value={capabilities}>
-        <article aria-label="讲练作答" className="flex flex-col gap-4 pb-8">
-          <HeaderBar
-            title={data.lecture.title}
-            courseId={courseId}
-            context={
-              <>
-                <span>
-                  {data.lecture.courseName !== null
-                    ? `课程：${data.lecture.courseName} · `
-                    : ""}
-                  讲练 · 第 {data.attempt.attemptNo} 次
-                </span>
-                {total > 0 && (
+    <AttemptEditorProvider>
+      <DraftSyncContext.Provider value={session.draftSyncContext}>
+        <EnabledCapabilitiesProvider value={capabilities}>
+          <article aria-label="讲练作答" className="flex flex-col gap-4 pb-8">
+            <HeaderBar
+              title={data.lecture.title}
+              courseId={courseId}
+              context={
+                <>
                   <span>
-                    已提交 {submitted}/{total} 题
+                    {data.lecture.courseName !== null
+                      ? `课程：${data.lecture.courseName} · `
+                      : ""}
+                    讲练 · 第 {data.attempt.attemptNo} 次
                   </span>
-                )}
-                <span aria-live="polite">{session.saveStatus}</span>
-              </>
-            }
-            actions={
-              total > 0 ? (
-                <Button
-                  className="min-h-11"
-                  disabled={session.denied}
-                  onClick={openFinishDialog}
-                >
-                  完成练习
-                </Button>
-              ) : null
-            }
-          />
+                  {total > 0 && (
+                    <span>
+                      已提交 {submitted}/{total} 题
+                    </span>
+                  )}
+                  <span aria-live="polite">{session.saveStatus}</span>
+                </>
+              }
+              actions={
+                total > 0 ? (
+                  <Button
+                    className="min-h-11"
+                    disabled={session.denied}
+                    onClick={openFinishDialog}
+                  >
+                    完成练习
+                  </Button>
+                ) : null
+              }
+            />
 
-          {/* 零题讲练页：纯阅读提示（开卷合法但不构成练习） */}
-          {total === 0 && (
-            <p className="rounded-2xl border border-dashed border-border bg-card px-4 py-3 text-sm text-muted-foreground">
-              这份讲练页暂时没有题目，可以先阅读讲义内容。
-            </p>
-          )}
-
-          {/* 本机保存失败时的手动重试（其余失败态由同步循环自动重试） */}
-          {session.saveStatus.startsWith("本机保存失败") && (
-            <p className="flex flex-wrap items-center gap-2 text-sm text-destructive">
-              本机草稿保存失败
-              <Button
-                variant="outline"
-                className="min-h-11"
-                disabled={retryingSave}
-                onClick={async () => {
-                  setRetryingSave(true);
-                  try {
-                    await retryAttemptLocalPersistence(attemptId, questionIds);
-                    await session.draftSyncContext.syncNow();
-                  } catch {
-                    // 重试失败保持提示（下一次点击再试）
-                  } finally {
-                    setRetryingSave(false);
-                  }
-                }}
-              >
-                <RotateCw aria-hidden className="size-4" />
-                重试保存
-              </Button>
-            </p>
-          )}
-
-          <LessonBody data={data} order={order} renderCard={renderCard} />
-
-          <SubmitConfirmDialog
-            open={confirmOpen}
-            unansweredCount={unansweredCount}
-            submitting={finishPhase.kind === "preparing"}
-            preparing={finishPhase.kind === "preparing"}
-            noteSummary={noteSummary}
-            noteProblems={evidenceProblemViewsOf(
-              finishPhase,
-              questionIndexById,
+            {/* 零题讲练页：纯阅读提示（开卷合法但不构成练习） */}
+            {total === 0 && (
+              <p className="rounded-2xl border border-dashed border-border bg-card px-4 py-3 text-sm text-muted-foreground">
+                这份讲练页暂时没有题目，可以先阅读讲义内容。
+              </p>
             )}
-            choiceMode={finishPhase.kind === "choice"}
-            notePrepError={
-              finishPhase.kind === "error" ? finishPhase.message : null
-            }
-            onConfirm={() => void confirmFinish()}
-            onConfirmMissing={confirmMissingFinish}
-            onCancel={closeFinishDialog}
-          />
-        </article>
-      </EnabledCapabilitiesProvider>
-    </DraftSyncContext.Provider>
+
+            {/* 本机保存失败时的手动重试（其余失败态由同步循环自动重试） */}
+            {session.saveStatus.startsWith("本机保存失败") && (
+              <p className="flex flex-wrap items-center gap-2 text-sm text-destructive">
+                本机草稿保存失败
+                <Button
+                  variant="outline"
+                  className="min-h-11"
+                  disabled={retryingSave}
+                  onClick={async () => {
+                    setRetryingSave(true);
+                    try {
+                      await retryAttemptLocalPersistence(
+                        attemptId,
+                        questionIds,
+                      );
+                      await session.draftSyncContext.syncNow();
+                    } catch {
+                      // 重试失败保持提示（下一次点击再试）
+                    } finally {
+                      setRetryingSave(false);
+                    }
+                  }}
+                >
+                  <RotateCw aria-hidden className="size-4" />
+                  重试保存
+                </Button>
+              </p>
+            )}
+
+            <LessonBody data={data} order={order} renderCard={renderCard} />
+
+            <SubmitConfirmDialog
+              open={confirmOpen}
+              unansweredCount={unansweredCount}
+              submitting={finishPhase.kind === "preparing"}
+              preparing={finishPhase.kind === "preparing"}
+              noteSummary={noteSummary}
+              noteProblems={evidenceProblemViewsOf(
+                finishPhase,
+                questionIndexById,
+              )}
+              choiceMode={finishPhase.kind === "choice"}
+              notePrepError={
+                finishPhase.kind === "error" ? finishPhase.message : null
+              }
+              onConfirm={() => void confirmFinish()}
+              onConfirmMissing={confirmMissingFinish}
+              onCancel={closeFinishDialog}
+            />
+          </article>
+        </EnabledCapabilitiesProvider>
+      </DraftSyncContext.Provider>
+    </AttemptEditorProvider>
   );
 }
 

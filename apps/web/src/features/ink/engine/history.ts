@@ -45,15 +45,23 @@ function equalStrokes(
  * 保证 getData() 的结果与后续操作互不影响（草稿保存/往返比较的前提）。
  */
 export class InkStore {
+  #maxEntries: number;
+  #maxPoints: number;
+  #undoPoints = 0;
   #strokes: InkStroke[] = [];
   #undoStack: InkHistoryEntry[] = [];
   #redoStack: InkHistoryEntry[] = [];
   #listeners = new Set<(strokes: readonly InkStroke[]) => void>();
   #updatedAt = 0;
 
+  constructor(budget: { maxEntries?: number; maxPoints?: number } = {}) {
+    this.#maxEntries = Math.max(1, budget.maxEntries ?? 200);
+    this.#maxPoints = Math.max(1, budget.maxPoints ?? 600_000);
+  }
+
   /** 当前笔画快照（副本，调用方可安全持有） */
   getStrokes(): InkStroke[] {
-    return clone(this.#strokes);
+    return cloneStrokes(this.#strokes);
   }
 
   /**
@@ -90,8 +98,8 @@ export class InkStore {
   /** 新增一笔（或若干笔，如 load 之后连续书写）。任何新提交都会清空重做栈 */
   commitAdd(strokes: InkStroke[]): void {
     if (strokes.length === 0) return;
-    this.#strokes.push(...clone(strokes));
-    this.#pushUndo({ kind: "add", strokes: clone(strokes) });
+    this.#strokes.push(...cloneStrokes(strokes));
+    this.#pushUndo({ kind: "add", strokes: cloneStrokes(strokes) });
     this.#changed();
   }
 
@@ -148,6 +156,7 @@ export class InkStore {
   undo(): boolean {
     const entry = this.#undoStack.pop();
     if (!entry) return false;
+    this.#undoPoints -= historyPoints(entry);
     this.#applyInverse(entry);
     this.#redoStack.push(entry);
     this.#changed();
@@ -160,6 +169,8 @@ export class InkStore {
     if (!entry) return false;
     this.#applyForward(entry);
     this.#undoStack.push(entry);
+    this.#undoPoints += historyPoints(entry);
+    this.#trimHistory();
     this.#changed();
     return true;
   }
@@ -174,7 +185,21 @@ export class InkStore {
 
   #pushUndo(entry: InkHistoryEntry): void {
     this.#undoStack.push(entry);
+    this.#undoPoints += historyPoints(entry);
     this.#redoStack = [];
+    this.#trimHistory();
+  }
+
+  #trimHistory(): void {
+    // 即使单次清空超过预算，也保留最近一步，确保清空可撤销；正文不参与淘汰。
+    while (
+      this.#undoStack.length > 1 &&
+      (this.#undoStack.length > this.#maxEntries ||
+        this.#undoPoints > this.#maxPoints)
+    ) {
+      const oldest = this.#undoStack.shift();
+      if (oldest) this.#undoPoints -= historyPoints(oldest);
+    }
   }
 
   /** 通知并刷新时间戳。replace 传入外部文档的 updatedAt 以保证往返一致 */
@@ -234,5 +259,31 @@ export class InkStore {
         break;
       }
     }
+  }
+}
+
+/** 已知纯数值笔迹结构逐层复制，避免通用 structuredClone 在每笔结束时扫描整个对象图。 */
+function cloneStrokes(strokes: InkStroke[]): InkStroke[] {
+  return strokes.map((stroke) => ({
+    ...stroke,
+    points: stroke.points.map((point) => ({ ...point })),
+  }));
+}
+
+function historyPoints(entry: InkHistoryEntry): number {
+  const points = (strokes: InkStroke[]) =>
+    strokes.reduce((sum, stroke) => sum + stroke.points.length, 0);
+  switch (entry.kind) {
+    case "add":
+      return points(entry.strokes);
+    case "remove":
+      return entry.removed.reduce(
+        (sum, item) => sum + item.stroke.points.length,
+        0,
+      );
+    case "clear":
+      return points(entry.previous);
+    case "replace":
+      return points(entry.previous) + points(entry.next);
   }
 }

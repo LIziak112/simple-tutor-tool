@@ -32,6 +32,12 @@ export function digestOf(value: unknown): string {
   return stableStringify(value);
 }
 
+/** 服务端修订号是同步基线，不是学生正文，不参与笔迹内容去重。 */
+export function inkDigestOf(doc: InkDoc): string {
+  const { serverRevision: _revision, ...body } = doc;
+  return digestOf(body);
+}
+
 /** 本地有、但尚未成功同步到服务端的答案题号列表 */
 export function unsyncedAnswerIds(record: AttemptDraftRecord): string[] {
   return Object.keys(record.answers).filter(
@@ -44,7 +50,8 @@ export function unsyncedAnswerIds(record: AttemptDraftRecord): string[] {
 export function unsyncedInkIds(record: AttemptDraftRecord): string[] {
   return Object.keys(record.inks).filter(
     (questionId) =>
-      record.inkDigests[questionId] !== digestOf(record.inks[questionId]),
+      record.inkDigests[questionId] !==
+      inkDigestOf(record.inks[questionId] as InkDoc),
   );
 }
 

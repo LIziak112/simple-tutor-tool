@@ -1,4 +1,7 @@
-import type { StudentPasswordChangeRequest } from "@tutor/contract";
+import type {
+  InkWriteMeta,
+  StudentPasswordChangeRequest,
+} from "@tutor/contract";
 import {
   annotationBaseCreateRequestSchema,
   annotationSealRequestSchema,
@@ -8,6 +11,7 @@ import {
   correctionCreateRequestSchema,
   correctionSealRequestSchema,
   hintOpenRequestSchema,
+  inkWriteMetaSchema,
   lectureEventBatchRequestSchema,
   lessonQuestionSubmitRequestSchema,
   noteHeadsRequestSchema,
@@ -393,6 +397,20 @@ export function createStudentRoutes(
         const body = await c.req.parseBody();
         const strokes = body.strokes;
         const snapshot = body.snapshot;
+        let meta: InkWriteMeta | undefined;
+        if (body.meta !== undefined) {
+          try {
+            meta = inkWriteMetaSchema.parse(
+              JSON.parse(String(body.meta)) as unknown,
+            );
+          } catch {
+            throw new HttpError(
+              400,
+              "VALIDATION_ERROR",
+              "笔迹版本信息无效，请刷新后重试",
+            );
+          }
+        }
         // 两段都必须是文件（multipart 文件字段；字符串字段说明客户端组装错误）
         if (!(strokes instanceof File) || !(snapshot instanceof File)) {
           throw new HttpError(
@@ -411,6 +429,7 @@ export function createStudentRoutes(
             c.req.param("questionId"),
             new Uint8Array(await strokes.arrayBuffer()),
             new Uint8Array(await snapshot.arrayBuffer()),
+            meta,
           ),
         });
       })

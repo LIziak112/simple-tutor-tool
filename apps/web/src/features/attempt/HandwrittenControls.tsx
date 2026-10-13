@@ -25,10 +25,11 @@ import {
 } from "@/features/ink/engine/index.ts";
 import { InkPad } from "@/features/ink/InkPad";
 import { PaperPresentation } from "@/features/ink/PaperPresentation";
+import { useRetainedPaper } from "@/features/ink/use-retained-paper";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { fetchAttemptInkApi, studentInkPngUrl } from "@/lib/api";
 import { useAttemptEditor } from "./AttemptEditorContext";
-import { mergeInkDocs } from "./draft-merge";
+import { digestOf, mergeInkDocs } from "./draft-merge";
 import { draftStore, getDraftPersistenceState } from "./draft-store";
 import { FinalAnswerInput } from "./FinalAnswerInput";
 import { useDraftSyncContext } from "./use-draft-sync";
@@ -39,23 +40,12 @@ import {
 } from "./use-ink-upload";
 
 /**
- * 手写题作答控件（T2.8，架构 §5.4「两种作答区 + 最终答案输入」）：
- *
- * - **展开手写区**（默认收起，节省首屏）：展开后内嵌 InkPad（Atrament 页内形态）；
- *   进入答题页已有笔迹（服务端 GET 命中且非空，或 T2.9 本地草稿较新）时自动展开
- *   并 load 对应 InkDoc；
- * - **全屏作答**：Excalidraw 全屏层（题干固定顶部）；
- * - **引擎切换策略**（任务报告「待决问题」第 2 条的实现答案）：
- *   每题同一时刻只有一份「权威笔迹」（masterDoc），权威引擎 = 最后书写的引擎。
- *   · atrament → 全屏：若页内已有笔迹，先确认「全屏使用新画布，页内笔迹将被替代」；
- *   · 全屏书写后：页内画布让位为占位卡（笔迹缩略 + 继续全屏），
- *     提供「清空并改用页内手写」（二次确认，同步上传空文档清掉服务端笔迹）；
- *   · 两种引擎的数据不合并（矢量格式互不相容），同题切换 = 覆盖，均有确认弹层；
- * - **上传时机**：每笔结束本地暂存 + 2 秒防抖 PUT；退出全屏即刻上传（引擎还热）；
- *   交卷前由页面统一 flush（见 StudentAssignmentAttemptPage）。
- * - **草稿防丢（T2.9）**：每笔结束同步写 IndexedDB（draftStore.saveInk，网络无关）；
- *   挂载时「服务端笔迹 × 本地笔迹」合并（updatedAt 新者胜），本地较新或服务端
- *   拉取失败且有本地笔迹 → resync 补传；同步回调联动顶栏三态（DraftSyncContext）。
+ * 正式手写作答控制器：页内与全屏保持同一 Atrament 画布及撤销历史，
+ * 历史 Excalidraw 场景继续可读可编辑，不自动转换或替换已有笔迹。
+ * 每笔结束保存本机稿，2 秒防抖上传固定矢量及其派生 PNG；交卷 flush
+ * 等待在途上传并追平最新稿，图片生成不依赖活画布。
+ * 恢复先确认云端修订号，读取失败只展示本机稿并提供重试；跨设备修订
+ * 冲突须显式裁决，不依赖设备时钟。收起保活到期且落盘成功才释放纸面。
  */
 
 /** 笔迹文档的当前笔画数（atrament=strokes；excalidraw=scene.elements，口径同 ink 表） */
@@ -133,12 +123,6 @@ export function HandwrittenControls({
   const [internalExpanded, setInternalExpanded] = useState(false);
   const expanded = controlledExpanded ?? internalExpanded;
   const externallyControlled = controlledExpanded !== undefined;
-  const [retainedPaper, setRetainedPaper] = useState<string | null>(
-    controlledExpanded === true ? questionId : null,
-  );
-  useEffect(() => {
-    if (expanded && externallyControlled) setRetainedPaper(questionId);
-  }, [expanded, externallyControlled, questionId]);
   const setExpanded = useCallback(
     (next: boolean | ((previous: boolean) => boolean)) => {
       const value = typeof next === "function" ? next(expanded) : next;
@@ -150,6 +134,11 @@ export function HandwrittenControls({
   const [fullscreen, setFullscreen] = useState(false);
   const [legacyOpened, setLegacyOpened] = useState(false);
   const [paperError, setPaperError] = useState<string | null>(null);
+  const [restoreFailed, setRestoreFailed] = useState(false);
+  const [restoreRetry, setRestoreRetry] = useState(0);
+  const [conflict, setConflict] = useState(false);
+  const conflictChoice = useRef<"local" | "server" | null>(null);
+  const baseRevision = useRef(0);
   /** 从 excalidraw 清空回页内手写的确认弹层 */
   const [confirmReset, setConfirmReset] = useState(false);
   /**
@@ -177,6 +166,7 @@ export function HandwrittenControls({
     if (getDraftPersistenceState(attemptId) === "failed")
       throw new Error("手写作答本机保存失败，请保持页面打开并重试");
   }, [engineGetter, attemptId]);
+  const paperAlive = useRetainedPaper(expanded || fullscreen, finish);
   useEffect(
     () => coordinator?.register(questionId, finish, "answerInk"),
     [coordinator?.register, questionId, finish],
@@ -186,13 +176,15 @@ export function HandwrittenControls({
     controller: uploadController,
     saveFailed,
     clearFailure,
-  } = useInkUpload(attemptId, questionId, engineGetter, {
+  } = useInkUpload(attemptId, questionId, {
     onSynced: (doc) => {
+      baseRevision.current = doc.serverRevision ?? baseRevision.current + 1;
       void draftStore.markInkSynced(attemptId, questionId, doc);
       draftSyncRef.current?.noteInkSynced();
     },
     onFailed: () => draftSyncRef.current?.noteSyncFailed(),
     onDenied: () => draftSyncRef.current?.noteDenied(),
+    onConflict: () => setConflict(true),
   });
   /** 上传 controller 存 ref（controller 对象每次渲染都是新引用） */
   const controllerRef = useRef(uploadController);
@@ -214,6 +206,8 @@ export function HandwrittenControls({
   onInkEditRef.current = onInkEdit;
   const handleDocChange = useCallback(
     (doc: InkDoc, reason: InkChangeReason) => {
+      if (reason === "load") return;
+      doc = { ...doc, serverRevision: baseRevision.current };
       setMasterDoc(doc);
       draftStore.saveInk(attemptId, questionId, doc);
       draftSyncRef.current?.noteLocalWrite();
@@ -226,23 +220,23 @@ export function HandwrittenControls({
       ) {
         onInkEditRef.current?.(reason);
       } else {
-        // stroke/load 维持旧笔画计数回调（ink_stroke_batch 语义不变；
-        // 作答链路无 engine.load 调用，load 只在开发页/回放出现）
+        // 仅新书写计入笔画批次；load 已在入口排除，恢复不计成编辑。
         onInkStrokeRef.current?.(inkStrokeCount(doc));
       }
     },
     [attemptId, questionId, onDocChangeUpload],
   );
 
-  // 挂载时合并「服务端笔迹 × 本地草稿笔迹」（T2.9）：updatedAt 新者胜；
-  // 本地较新（或服务端拉取失败但有本地）→ resync 补传；服务端胜 → 落本地并记指纹
+  // 恢复基线与本机稿：修订一致才可补传；云端已前进则保留两份并要求裁决。
+  // biome-ignore lint/correctness/useExhaustiveDependencies(restoreRetry): 用户重试触发重新读取，不参与请求参数
   useEffect(() => {
     let alive = true;
     setMasterDoc(undefined);
+    setRestoreFailed(false);
     setInternalExpanded(false);
     void (async () => {
       // 本地草稿与（可能失败的）服务端拉取并行；失败不阻塞答题
-      const [localInk, fetched] = await Promise.all([
+      const [initialLocalInk, fetched] = await Promise.all([
         draftStore
           .loadDraft(attemptId)
           .then((record) => record?.inks[questionId] ?? null)
@@ -253,17 +247,74 @@ export function HandwrittenControls({
         ),
       ]);
       if (!alive) return;
+      let localInk = initialLocalInk;
+      if (fetched !== undefined && localInk === null) {
+        localInk =
+          (await draftStore.recoverLegacyDraft(attemptId))?.inks[questionId] ??
+          null;
+        if (!alive) return;
+      }
       if (fetched === undefined) {
-        // 服务端拉取失败（多为断网）：有本地笔迹则用本地并补传；无则按无笔迹处理
+        controllerRef.current.pause?.();
+        // 云端读取失败时只回显本机稿，暂停编辑与上传，等待重试确认基线。
         if (localInk !== null) {
           setMasterDoc(localInk);
           if (inkEnabled && !externallyControlled && !isInkDocEmpty(localInk))
             setInternalExpanded(true);
-          draftSyncRef.current?.noteLocalWrite();
-          controllerRef.current.resync(localInk);
+          setRestoreFailed(true);
         } else {
-          setMasterDoc(null);
+          // 读取失败不代表云端无稿，保持画布未就绪，避免新稿覆盖原稿。
+          setRestoreFailed(true);
         }
+        return;
+      }
+      baseRevision.current = fetched?.serverRevision ?? (fetched ? 1 : 0);
+      controllerRef.current.setBaseRevision?.(baseRevision.current);
+      const choice = conflictChoice.current;
+      conflictChoice.current = null;
+      const sameBody =
+        localInk &&
+        fetched &&
+        localInk.engine === fetched.engine &&
+        digestOf(localInk.data) === digestOf(fetched.data);
+      const needsChoice =
+        localInk &&
+        fetched?.serverRevision !== undefined &&
+        !sameBody &&
+        localInk.serverRevision !== fetched.serverRevision;
+      if (needsChoice && choice === null) {
+        controllerRef.current.pause?.();
+        setMasterDoc(localInk);
+        setConflict(true);
+        return;
+      }
+      setConflict(false);
+      if (choice === "local" && localInk) {
+        const next = { ...localInk, serverRevision: baseRevision.current };
+        setMasterDoc(next);
+        draftStore.saveInk(attemptId, questionId, next);
+        controllerRef.current.resync(next);
+        return;
+      }
+      if (
+        choice === "server" ||
+        sameBody ||
+        (fetched?.serverRevision !== undefined && !localInk)
+      ) {
+        setMasterDoc(fetched);
+        if (fetched) {
+          draftStore.saveInk(attemptId, questionId, fetched);
+          await draftStore.markInkSynced(attemptId, questionId, fetched);
+        }
+        return;
+      }
+      if (
+        localInk &&
+        fetched?.serverRevision !== undefined &&
+        localInk.serverRevision === fetched.serverRevision
+      ) {
+        setMasterDoc(localInk);
+        controllerRef.current.resync(localInk);
         return;
       }
       const merged = mergeInkDocs(localInk, fetched);
@@ -288,7 +339,7 @@ export function HandwrittenControls({
       alive = false;
     };
     // controller/draftSync 经 ref 取最新；只随题目标识与开关重跑（开关实际只随页面挂载而定）
-  }, [attemptId, questionId, inkEnabled, externallyControlled]);
+  }, [attemptId, questionId, inkEnabled, externallyControlled, restoreRetry]);
 
   const finalAnswer = answer?.kind === "final" ? answer.finalAnswer : "";
 
@@ -314,7 +365,7 @@ export function HandwrittenControls({
     setFullscreen(true);
   };
 
-  /** 退出全屏：即刻触发一次上传（引擎实例还热），再卸载全屏层 */
+  /** 退出全屏先保存本机稿，再启动固定文档上传并切回页内外框。 */
   const closeFullscreen = async () => {
     try {
       await finish();
@@ -342,12 +393,54 @@ export function HandwrittenControls({
     masterDoc !== undefined &&
     masterDoc.engine === "excalidraw";
 
+  const recoveryStatus = (
+    <>
+      {conflict && (
+        <div
+          role="alert"
+          className="flex flex-wrap items-center gap-2 text-sm text-destructive"
+        >
+          <span>云端笔迹已变化，本机稿已保留。请选择保留哪一份。</span>
+          {(["local", "server"] as const).map((choice) => (
+            <Button
+              key={choice}
+              type="button"
+              variant="outline"
+              onClick={() => {
+                conflictChoice.current = choice;
+                setRestoreRetry((value) => value + 1);
+              }}
+            >
+              {choice === "local" ? "保留本机稿" : "使用云端稿"}
+            </Button>
+          ))}
+        </div>
+      )}
+      {restoreFailed && (
+        <div
+          role="alert"
+          className="flex flex-wrap items-center gap-2 text-sm text-destructive"
+        >
+          <span>笔迹读取失败，请重试后继续手写；最终答案仍可填写。</span>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setRestoreRetry((value) => value + 1)}
+          >
+            重试读取笔迹
+          </Button>
+        </div>
+      )}
+    </>
+  );
+
   // T7.7 ink 关闭：单一早退分支收敛全部回退渲染——无书写入口、已有笔迹只读
   // 查看、最终答案照常。挂载期合并/补传效果在上方照常执行（开关不清数据）；
   // expanded 状态无渲染消费者，effect 内的 setExpanded 无 UI 影响。
   if (!inkEnabled) {
     return (
       <div className="flex flex-col gap-3">
+        {recoveryStatus}
         {saveFailed && (
           <p className="text-xs text-destructive" role="status">
             笔迹保存失败（可能网络不稳），将继续自动重试，交卷前会再上传一次
@@ -427,9 +520,10 @@ export function HandwrittenControls({
         )}
       </div>
 
+      {recoveryStatus}
+
       {/* 手写区（展开时）：atrament 页内画布 / excalidraw 占位卡 / 加载态 */}
-      {(expanded ||
-        (controlledExpanded !== undefined && retainedPaper === questionId)) && (
+      {paperAlive && (
         <div hidden={!expanded && !fullscreen}>
           <PaperPresentation
             fullscreen={fullscreen}
@@ -459,7 +553,9 @@ export function HandwrittenControls({
                 label="手写答题区"
                 onDocChange={handleDocChange}
                 engineRef={pageEngineRef}
-                inputEnabled={expanded || fullscreen}
+                inputEnabled={
+                  (expanded || fullscreen) && !restoreFailed && !conflict
+                }
                 compactToolbar
                 inputMode="session"
               />
@@ -474,7 +570,7 @@ export function HandwrittenControls({
                       label="历史手写作答区"
                       onDocChange={handleDocChange}
                       engineRef={pageEngineRef}
-                      inputEnabled={fullscreen}
+                      inputEnabled={fullscreen && !restoreFailed && !conflict}
                       initialHeight={600}
                     />
                   </div>

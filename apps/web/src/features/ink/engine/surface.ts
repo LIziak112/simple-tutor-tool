@@ -15,7 +15,7 @@ import type { InkDoc, InkInputMode, InkToolConfig } from "./types.ts";
  * - erase：整笔橡皮一次拖动提交；
  * - undo / redo：历史栈操作；
  * - clear：清空画布；
- * - load：载入外部文档（全屏进出在页内/全屏两引擎间移交笔迹触发 load）——
+ * - load：载入外部文档（恢复与冲突裁决）——
  *   **消费方把 load 排除在 inkEditCount 之外**（不得计成编辑，§5.0-C14）。
  */
 export type InkChangeReason =

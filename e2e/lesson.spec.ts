@@ -3,6 +3,7 @@ import {
   addCourseMemberViaApi,
   attachLeakMonitor,
   createCourseViaApi,
+  drawStrokeWithPointerEvents,
   expectResultCount,
   getStudentViaApi,
   TEACHER_LOGIN_NAME,
@@ -295,6 +296,26 @@ test.describe("讲练一体全链：导入 → 徽标 → 逐题提交 → 批�
 
       // —— 逐题提交 1/5：choice 答对 → 答对徽章 + 详解展开 ——
       const q1 = studentPage.locator('article[aria-label="第 1 题"]');
+      // 讲练客观题也能演算和圈画；提交后切为只读，不留下编辑入口。
+      const paper = q1.getByRole("button", { name: /^第 1 题草稿纸(?:（|$)/ });
+      await paper.click();
+      await drawStrokeWithPointerEvents(
+        q1.locator('[data-slot="ink-pad-canvas"] canvas'),
+      );
+      await paper.click();
+      await expect(q1.locator('[data-slot="note-paper"]')).not.toBeVisible();
+      await q1.getByRole("button", { name: /圈画题干/ }).click();
+      const annotationToolbar = studentPage.getByRole("toolbar", {
+        name: /标画工具栏/,
+      });
+      await expect(annotationToolbar).toBeVisible();
+      await drawStrokeWithPointerEvents(
+        q1.locator('[data-slot="question-annotation-overlay"] canvas'),
+      );
+      await annotationToolbar
+        .getByRole("button", { name: "作答", exact: true })
+        .click();
+      await expect(annotationToolbar).toHaveCount(0);
       await q1
         .getByRole("radio", { name: "选项 B" })
         .locator("xpath=ancestor::label[1]")
@@ -304,6 +325,9 @@ test.describe("讲练一体全链：导入 → 徽标 → 逐题提交 → 批�
         .getByRole("button", { name: "确认提交", exact: true })
         .click();
       await expect(q1.getByText("答对", { exact: true }).first()).toBeVisible();
+      await expect(
+        q1.getByRole("button", { name: /草稿纸|圈画题干/ }),
+      ).toHaveCount(0);
       await q1.getByRole("button", { name: /查看详解/ }).click();
       await expect(q1.getByText(/对路题详解/)).toBeVisible();
       await expect(studentPage.getByText("已提交 1/5 题")).toBeVisible();

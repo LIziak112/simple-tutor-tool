@@ -2,6 +2,23 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import { PaperPresentation } from "./PaperPresentation";
 
+it("仅全屏时挂载参考题面，收起时避免每题重复渲染公式与图片", () => {
+  const view = (fullscreen: boolean) => (
+    <PaperPresentation
+      fullscreen={fullscreen}
+      label="纸面"
+      onClose={() => undefined}
+      context={<p>参考题面</p>}
+    >
+      <canvas />
+    </PaperPresentation>
+  );
+  const { rerender } = render(view(false));
+  expect(screen.queryByText("参考题面")).toBeNull();
+  rerender(view(true));
+  expect(screen.getByText("参考题面")).toBeVisible();
+});
+
 it("全屏仅改变纸面外框，连续十次切换不替换画布", () => {
   const close = vi.fn();
   const view = (fullscreen: boolean) => (

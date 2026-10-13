@@ -317,9 +317,7 @@ describe("NoteLayer：收起/展开形态", () => {
         fireEvent.click(screen.getByRole("button", { name: /收起/ })),
       );
       expect(mockDestroy).not.toHaveBeenCalled();
-      act(() => {
-        vi.advanceTimersByTime(NOTE_ENGINE_KEEPALIVE_MS);
-      });
+      await act(() => vi.advanceTimersByTimeAsync(NOTE_ENGINE_KEEPALIVE_MS));
       expect(mockDestroy).toHaveBeenCalledTimes(1); // 超时卸载释放画布
 
       // 重开：重建引擎，initial 带回全部笔迹；引擎换实例分支无条件 load

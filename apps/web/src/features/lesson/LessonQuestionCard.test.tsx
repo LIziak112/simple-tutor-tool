@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type {
   AttemptQuestionPublic,
@@ -5,9 +6,11 @@ import type {
   HintOpenedEntry,
   StudentAnswer,
 } from "@tutor/contract";
+import type { ReactNode } from "react";
 import { useState } from "react";
 import { MemoryRouter } from "react-router";
 import { describe, expect, it, vi } from "vitest";
+import { AttemptEditorProvider } from "@/features/attempt/AttemptEditorContext";
 import { LessonQuestionCard } from "./LessonQuestionCard";
 import type {
   LessonQuestionHandlers,
@@ -24,6 +27,16 @@ import type {
  */
 
 const ATTEMPT_ID = "66666666-6666-4666-8666-666666666666";
+
+it("讲练客观题作答态提供草稿与标画，已提交后不能继续编辑", () => {
+  const view = renderCard();
+  expect(screen.getByRole("button", { name: /草稿纸/ })).toBeVisible();
+  expect(screen.getByRole("button", { name: /圈画题干/ })).toBeVisible();
+  view.unmount();
+  renderCard({ released: RELEASED_Q1 });
+  expect(screen.queryByRole("button", { name: /草稿纸/ })).toBeNull();
+  expect(screen.queryByRole("button", { name: /圈画题干/ })).toBeNull();
+});
 
 const QUESTION: AttemptQuestionPublic = {
   id: "lesson-q1",
@@ -92,23 +105,25 @@ function renderCard(props?: {
   index?: number;
 }) {
   return render(
-    <MemoryRouter>
-      <LessonQuestionCard
-        index={props?.index ?? 0}
-        question={props?.question ?? QUESTION}
-        attemptId={ATTEMPT_ID}
-        answer={props?.answer}
-        hints={props?.hints ?? []}
-        released={props?.released}
-        attemptCompleted={props?.attemptCompleted ?? false}
-        handlers={
-          props?.handlers === null
-            ? undefined
-            : (props?.handlers ?? baseHandlers())
-        }
-        onRefresh={props?.onRefresh ?? vi.fn()}
-      />
-    </MemoryRouter>,
+    <TestProviders>
+      <MemoryRouter>
+        <LessonQuestionCard
+          index={props?.index ?? 0}
+          question={props?.question ?? QUESTION}
+          attemptId={ATTEMPT_ID}
+          answer={props?.answer}
+          hints={props?.hints ?? []}
+          released={props?.released}
+          attemptCompleted={props?.attemptCompleted ?? false}
+          handlers={
+            props?.handlers === null
+              ? undefined
+              : (props?.handlers ?? baseHandlers())
+          }
+          onRefresh={props?.onRefresh ?? vi.fn()}
+        />
+      </MemoryRouter>
+    </TestProviders>,
   );
 }
 
@@ -134,19 +149,21 @@ function FlowHarness({
     },
   };
   return (
-    <MemoryRouter>
-      <LessonQuestionCard
-        index={0}
-        question={question}
-        attemptId={ATTEMPT_ID}
-        answer={undefined}
-        hints={[]}
-        released={releasedState}
-        attemptCompleted={false}
-        handlers={handlers}
-        onRefresh={vi.fn()}
-      />
-    </MemoryRouter>
+    <TestProviders>
+      <MemoryRouter>
+        <LessonQuestionCard
+          index={0}
+          question={question}
+          attemptId={ATTEMPT_ID}
+          answer={undefined}
+          hints={[]}
+          released={releasedState}
+          attemptCompleted={false}
+          handlers={handlers}
+          onRefresh={vi.fn()}
+        />
+      </MemoryRouter>
+    </TestProviders>
   );
 }
 
@@ -401,3 +418,14 @@ describe("LessonQuestionCard：只读防御态", () => {
     ).not.toBeInTheDocument();
   });
 });
+
+function TestProviders({ children }: { children: ReactNode }) {
+  const [client] = useState(
+    () => new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+  );
+  return (
+    <QueryClientProvider client={client}>
+      <AttemptEditorProvider>{children}</AttemptEditorProvider>
+    </QueryClientProvider>
+  );
+}

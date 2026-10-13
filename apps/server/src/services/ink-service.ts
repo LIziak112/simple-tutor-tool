@@ -6,11 +6,12 @@ import {
   type InkDoc,
   type InkMeta,
   type InkUploadData,
+  type InkWriteMeta,
   inkDocSchema,
 } from "@tutor/contract";
 import { and, eq } from "drizzle-orm";
 import type { Db } from "../db/client";
-import { attempts, type InkRow, ink, students } from "../db/schema";
+import { attempts, type InkRow, ink, responses, students } from "../db/schema";
 import {
   parseGzipOrJsonBytes,
   readFileBytes,
@@ -155,7 +156,7 @@ function requireInkRow(db: Db, attemptId: string, questionId: string): InkRow {
  * - 题目不属于该作业单元/已软删 → 404 QUESTION_NOT_FOUND；
  * - strokes+snapshot 合计超 2 MiB → 413 INK_TOO_LARGE（验收项）；
  * - strokes 不能解压 / 不符合 inkDocSchema，或 snapshot 不是 PNG → 400 INK_INVALID；
- * - 幂等覆盖：文件原子重写 + ink 行 upsert（id 不变），width/height 从 PNG IHDR
+ * - 版本校验与幂等重试：文件成对写入不可变路径 + ink 行 upsert（id 不变），width/height 从 PNG IHDR
  *   提取（失败为 0），strokeCount 从 InkDoc 提取。
  */
 export function saveInk(
@@ -166,6 +167,7 @@ export function saveInk(
   questionId: string,
   strokesBytes: Uint8Array,
   snapshotBytes: Uint8Array,
+  meta?: InkWriteMeta,
 ): InkUploadData {
   const attempt = requireUsableAttempt(db, studentId, attemptId);
   if (attempt.status !== "draft") {
@@ -199,65 +201,143 @@ export function saveInk(
     throw new HttpError(400, "INK_INVALID", "快照不是合法的 PNG 文件");
   }
 
-  // 落盘（原子替换：唯一 tmp + rename，机制在 lib/blob-io.writeFileAtomic——
-  // T6R.4 复审①起 tmp 名每次唯一，并发上传不再共享/互清临时文件）
-  const dir = inkDir(dataDir, attemptId);
-  const base = safeInkFileName(questionId);
-  const strokesPath = join(dir, `${base}.json.gz`);
-  const pngPath = join(dir, `${base}.png`);
-  writeFileAtomic({ finalPath: strokesPath, bytes: strokesBytes });
-  writeFileAtomic({ finalPath: pngPath, bytes: snapshotBytes });
+  return db.transaction(
+    (tx) => {
+      // 取得写锁后重查提交状态，防止另一个进程在预检与写入之间封卷。
+      const latest = tx
+        .select({ status: attempts.status })
+        .from(attempts)
+        .where(eq(attempts.id, attemptId))
+        .get();
+      const submitted = tx
+        .select({ at: responses.submittedAt })
+        .from(responses)
+        .where(
+          and(
+            eq(responses.attemptId, attemptId),
+            eq(responses.questionId, questionId),
+          ),
+        )
+        .get();
+      if (latest?.status !== "draft" || submitted?.at != null)
+        throw new HttpError(
+          409,
+          "ALREADY_SUBMITTED",
+          "本题已提交，不能再修改笔迹",
+        );
+      const current = tx
+        .select()
+        .from(ink)
+        .where(
+          and(eq(ink.attemptId, attemptId), eq(ink.questionId, questionId)),
+        )
+        .get();
+      const hash = createHash("sha256")
+        .update(strokesBytes)
+        .update(snapshotBytes)
+        .digest("hex");
+      if (meta && current?.mutationId === meta.mutationId) {
+        if (current.bodyHash !== hash)
+          throw new HttpError(
+            409,
+            "INK_MUTATION_MISMATCH",
+            "同一上传标识对应不同笔迹，请重新读取后重试",
+          );
+        return {
+          questionId,
+          inkId: current.id,
+          strokeCount: current.strokeCount,
+          width: current.width,
+          height: current.height,
+          updatedAt: current.updatedAt,
+          revision: current.revision,
+        };
+      }
+      if (!meta && current)
+        throw new HttpError(
+          409,
+          "INK_VERSION_REQUIRED",
+          "笔迹客户端版本过旧，请刷新后继续手写",
+        );
+      if (meta && meta.baseRevision !== (current?.revision ?? 0)) {
+        throw new HttpError(
+          409,
+          "INK_REVISION_CONFLICT",
+          "另一设备已更新笔迹，请选择保留本机稿或云端稿",
+        );
+      }
+      const revision = (current?.revision ?? 0) + 1;
 
-  // upsert ink 行（幂等覆盖保留 id）
-  const now = new Date().toISOString();
-  const strokeCount = strokeCountOf(doc);
-  const relStrokes = join("blobs", "ink", attemptId, `${base}.json.gz`);
-  const relPng = join("blobs", "ink", attemptId, `${base}.png`);
-  // 单语句 upsert + RETURNING（复审⑩，仓库首例）：INSERT..ON CONFLICT..
-  // RETURNING 返回受影响行的**实际值**（新插返回新行、冲突返回更新后的
-  // 既有行）——drizzle 0.45 的 better-sqlite3 驱动把 RETURNING 行走
-  // .get() 取首行，语义等价于 SQLite 原生 RETURNING；由此免掉前置点查，
-  // inkId 稳定性由 DB 行本身保证（冲突分支不更新 id 列）
-  const saved = db
-    .insert(ink)
-    .values({
-      id: randomUUID(),
-      attemptId,
-      questionId,
-      strokesPath: relStrokes,
-      pngPath: relPng,
-      width: size.width,
-      height: size.height,
-      strokeCount,
-      updatedAt: now,
-    })
-    .onConflictDoUpdate({
-      target: [ink.attemptId, ink.questionId],
-      set: {
-        strokesPath: relStrokes,
-        pngPath: relPng,
+      // 落盘（原子替换：唯一 tmp + rename，机制在 lib/blob-io.writeFileAtomic——
+      // T6R.4 复审①起 tmp 名每次唯一，并发上传不再共享/互清临时文件）
+      const dir = inkDir(dataDir, attemptId);
+      // 每次变更写独立文件，两个文件都完成后才切换数据库指针；失败不破坏已确认稿。
+      const base = `${safeInkFileName(questionId)}-v${revision}-${randomUUID()}`;
+      const strokesPath = join(dir, `${base}.json.gz`);
+      const pngPath = join(dir, `${base}.png`);
+      writeFileAtomic({ finalPath: strokesPath, bytes: strokesBytes });
+      writeFileAtomic({ finalPath: pngPath, bytes: snapshotBytes });
+
+      // upsert ink 行（幂等覆盖保留 id）
+      const now = new Date().toISOString();
+      const strokeCount = strokeCountOf(doc);
+      const relStrokes = join("blobs", "ink", attemptId, `${base}.json.gz`);
+      const relPng = join("blobs", "ink", attemptId, `${base}.png`);
+      // 单语句 upsert + RETURNING（复审⑩，仓库首例）：INSERT..ON CONFLICT..
+      // RETURNING 返回受影响行的**实际值**（新插返回新行、冲突返回更新后的
+      // 既有行）——drizzle 0.45 的 better-sqlite3 驱动把 RETURNING 行走
+      // .get() 取首行，语义等价于 SQLite 原生 RETURNING；由此免掉前置点查，
+      // inkId 稳定性由 DB 行本身保证（冲突分支不更新 id 列）
+      const saved = tx
+        .insert(ink)
+        .values({
+          id: randomUUID(),
+          attemptId,
+          questionId,
+          revision,
+          mutationId: meta?.mutationId ?? null,
+          bodyHash: hash,
+          strokesPath: relStrokes,
+          pngPath: relPng,
+          width: size.width,
+          height: size.height,
+          strokeCount,
+          updatedAt: now,
+        })
+        .onConflictDoUpdate({
+          target: [ink.attemptId, ink.questionId],
+          set: {
+            revision,
+            mutationId: meta?.mutationId ?? null,
+            bodyHash: hash,
+            strokesPath: relStrokes,
+            pngPath: relPng,
+            width: size.width,
+            height: size.height,
+            strokeCount,
+            updatedAt: now,
+          },
+        })
+        .returning({ id: ink.id })
+        .get();
+      if (saved === undefined) {
+        // 防御：upsert 必有受影响行（drizzle/SQLite 契约），不可达
+        throw new HttpError(500, "INTERNAL", "笔迹行写入失败");
+      }
+      const inkId = saved.id;
+
+      return {
+        questionId,
+        inkId,
+        strokeCount,
         width: size.width,
         height: size.height,
-        strokeCount,
         updatedAt: now,
-      },
-    })
-    .returning({ id: ink.id })
-    .get();
-  if (saved === undefined) {
-    // 防御：upsert 必有受影响行（drizzle/SQLite 契约），不可达
-    throw new HttpError(500, "INTERNAL", "笔迹行写入失败");
-  }
-  const inkId = saved.id;
-
-  return {
-    questionId,
-    inkId,
-    strokeCount,
-    width: size.width,
-    height: size.height,
-    updatedAt: now,
-  };
+        revision,
+      };
+    },
+    { behavior: "immediate" },
+  );
 }
 
 // ---------- GET /api/student/attempts/:id/ink/:questionId ----------
@@ -305,7 +385,7 @@ export function getInkDoc(
   if (!parsed.success) {
     throw new HttpError(500, "INK_UNREADABLE", "笔迹文件损坏，请联系老师处理");
   }
-  return parsed.data;
+  return { ...parsed.data, serverRevision: row.revision };
 }
 
 /** 笔迹落盘文件读取结果（路由直出用：PNG 快照与 gzip 矢量共用） */

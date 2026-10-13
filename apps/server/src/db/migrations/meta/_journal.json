@@ -225,6 +225,13 @@
       "when": 1791802820087,
       "tag": "0031_mushy_agent_zero",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "6",
+      "when": 1791864133357,
+      "tag": "0032_long_marauders",
+      "breakpoints": true
     }
   ]
 }
