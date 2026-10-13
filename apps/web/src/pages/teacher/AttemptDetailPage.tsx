@@ -10,7 +10,10 @@ import {
   AttemptDetailQuestionCard,
   formatActiveSec,
 } from "@/features/teacher-attempts/AttemptDetailQuestionCard";
-import { AttemptStatusBadge } from "@/features/teacher-attempts/attempt-views";
+import {
+  AttemptStatusBadge,
+  sourceLineOf,
+} from "@/features/teacher-attempts/attempt-views";
 import { ExportCsvButton } from "@/features/teacher-attempts/ExportCsvButton";
 import { useTeacherAttemptDetail } from "@/features/teacher-attempts/teacher-attempt-queries";
 import { ApiError } from "@/lib/api";
@@ -30,19 +33,6 @@ import { formatCnTime } from "@/lib/time";
  * - 数据全部来自服务端（快照 + responses），前端不拼判分；三态齐全；
  *   返回保留数据页筛选（筛选在 URL query，navigate(-1) 原样回到列表）。
  */
-
-/** 来源头描述（与卡片/学生端结果视图同口径） */
-function sourceLineOf(data: TeacherAttemptDetailData): string {
-  if (data.sourceType === "course") {
-    return `课程：${data.courseName ?? ""} · 第 ${data.attemptNo} 次`;
-  }
-  if (data.sourceType === "wrong") {
-    return `错题重练 · 第 ${data.attemptNo} 次`;
-  }
-  return data.courseName !== null
-    ? `作业 · ${data.courseName}`
-    : `作业 · ${data.assignmentTitle ?? ""}`;
-}
 
 /** 返回数据页：站内到达时回退一步（保留筛选 URL）；直接打开（刷新/书签）则去 /t/data */
 function BackToDataButton() {
@@ -69,13 +59,15 @@ function BackToDataButton() {
  *   = 该学生在该课程的**全部练习历次**（CSV「作业或单元」列含「第 n 次」，
  *   教师可按次定位本 attempt；这是 D13 参数集下最贴近的口径）；
  * - wrong 来源（2026-10）：无课程/作业可定位，取 studentId + sourceType=wrong
- *   = 该生的全部错题重练卷（同按「第 n 次」列定位）。
+ *   = 该生的全部错题重练卷（同按「第 n 次」列定位）；
+ * - lesson 来源（2026-10 讲练一体）：studentId + sourceType=lesson（courseId
+ *   仅是「打开时来自哪门课」，不作定位键）= 该生的全部讲练卷，按「第 n 次」列定位。
  */
 function exportCsvParamsOfAttempt(data: TeacherAttemptDetailData): {
   studentId: string;
   assignmentId?: string | undefined;
   courseId?: string | undefined;
-  sourceType?: "course" | "assignment" | "wrong" | undefined;
+  sourceType?: "course" | "assignment" | "wrong" | "lesson" | undefined;
 } {
   if (data.sourceType === "assignment") {
     return {
@@ -87,6 +79,12 @@ function exportCsvParamsOfAttempt(data: TeacherAttemptDetailData): {
     return {
       studentId: data.studentId,
       sourceType: "wrong",
+    };
+  }
+  if (data.sourceType === "lesson") {
+    return {
+      studentId: data.studentId,
+      sourceType: "lesson",
     };
   }
   return {

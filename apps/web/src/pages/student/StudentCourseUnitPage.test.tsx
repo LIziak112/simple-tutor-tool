@@ -80,6 +80,7 @@ beforeEach(() => {
     id: ATTEMPT_ID,
     sourceType: "course",
     assignmentId: null,
+    lectureId: null,
     courseId: COURSE_ID,
     unitId: UNIT_ID,
     attemptNo: 1,

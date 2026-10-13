@@ -31,12 +31,12 @@ export const LINT_RULES: readonly LintRuleDoc[] = [
     code: "MISSING_KIND",
     level: "error",
     description:
-      "frontmatter 缺 kind 字段：必须是 practice（练习）/ lecture（讲义）/ mixed（混合）之一",
+      "frontmatter 缺 kind 字段：必须是 practice（练习）/ lecture（讲义）/ mixed（混合）/ lesson（讲练页）之一",
   },
   {
     code: "INVALID_KIND",
     level: "error",
-    description: "kind 值不合法：只能是 practice / lecture / mixed",
+    description: "kind 值不合法：只能是 practice / lecture / mixed / lesson",
   },
   {
     code: "INVALID_FRONTMATTER",
@@ -84,6 +84,12 @@ export const LINT_RULES: readonly LintRuleDoc[] = [
       "讲义文档出现题目容器：question 只能用于 practice 或 mixed，讲义用 :::example 写例题",
   },
   {
+    code: "QUESTION_NESTED_IN_LESSON",
+    level: "error",
+    description:
+      "讲练页（kind: lesson）的题目容器嵌套在其他容器内部：嵌套题不会进题库（无法作答），其原文（含正确项标记/参考答案/详解）会随讲义段落下发学生端；题块必须作为文档顶层容器",
+  },
+  {
     code: "MISSING_HEADING",
     level: "error",
     description:
@@ -104,7 +110,19 @@ export const LINT_RULES: readonly LintRuleDoc[] = [
     code: "QUESTION_BEFORE_FIRST_HEADING",
     level: "warning",
     description:
-      "mixed 文档里题目出现在第一个一级标题之前：该题不与任何讲义关联",
+      "mixed / lesson 文档里题目出现在第一个一级标题之前：该题不与任何讲义关联",
+  },
+  {
+    code: "LESSON_WITHOUT_QUESTION",
+    level: "warning",
+    description:
+      "讲练页（kind: lesson）没有任何题目：建议改用 kind: lecture（warning 不阻断，讲义照常导入，只是没有单题作答的练习部分）",
+  },
+  {
+    code: "LESSON_QUESTION_WITHOUT_ID",
+    level: "warning",
+    description:
+      "讲练页切段遇到没有 id 的题目容器（splitLessonBlocks 服务端安全投影的兜底提示，不出现在文档 lint）：正常导入的讲练页题目 id 已注入开围栏，出现本提示多为存储正文被手工改动，已按「单元-序号」兜底对位",
   },
   {
     code: "UNIT_FROM_FALLBACK",

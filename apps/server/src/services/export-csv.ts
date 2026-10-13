@@ -1,4 +1,4 @@
-import type { ExportCsvQuery } from "@tutor/contract";
+import type { AttemptSource, ExportCsvQuery } from "@tutor/contract";
 import {
   HANDWRITTEN_QUESTION_TYPES,
   QUESTION_TYPE_LABELS,
@@ -68,6 +68,17 @@ export const CSV_COLUMNS: readonly string[] = [
   "教师评语",
   "手写笔迹链接",
 ];
+
+/**
+ * 作答来源类型的固定展示文案（单源）：CSV「来源类型」列与材料整理包
+ * （export-service）汇总行的来源列共用，两处文案永不漂移。
+ */
+export const SOURCE_TYPE_TEXT: Record<AttemptSource, string> = {
+  course: "课程练习",
+  wrong: "错题重练",
+  lesson: "讲练",
+  assignment: "作业",
+};
 
 /** 展示时区（§0.3：库存/传输 UTC；CSV 面向教师阅读 → Asia/Shanghai 北京时间） */
 const DISPLAY_TZ = "Asia/Shanghai";
@@ -344,11 +355,11 @@ export function exportCsv(
         : [],
     );
 
-    // 来源列的固定值（整份 attempt 一致）
-    const sourceTypeText = source.sourceType === "course" ? "课程练习" : "作业";
+    // 来源列的固定值（整份 attempt 一致；lesson 的 unitTitle 承载讲义标题）
+    const sourceTypeText = SOURCE_TYPE_TEXT[source.sourceType];
     const courseText = source.courseName ?? "";
     const assignmentOrUnitText =
-      source.sourceType === "course"
+      source.sourceType === "course" || source.sourceType === "lesson"
         ? `${source.unitTitle} · 第 ${source.attemptNo} 次`
         : (source.assignmentTitle ?? "");
     const submittedText = beijingDateTimeOf(

@@ -34,6 +34,9 @@ import { sourceOf } from "./teacher-attempt-service";
  *       软删（deletedAt IS NULL）。作业软删同按移出处理：草稿失去正常入口
  *       （直连 /attempts/:id 仍可续作是 T5 归属即权限的既有口径，只是不再
  *       出现在索引里），已交卷历史照常保留。
+ *     - wrong / lesson 来源 draft 恒不失权（2026-10）：wrong 无课程/作业
+ *       归属；lesson 作答永不失权（已开卷的作答记录恒可回看）——草稿照常
+ *       列出、可续作（见 lostAccessDraftIds）。
  * - 筛选可任意组合：sourceType / courseId / assignmentId / status / from / to
  *   （时间范围按「最近活动时间」submittedAt ?? startedAt，与排序同一时间轴，
  *   D6/D10 同口径）；
@@ -86,7 +89,9 @@ function assignmentDraftReachable(
  * 失权草稿的 attempt id 集合（见模块头注释的可见性口径）。
  * course 维度按 (courseId, unitId) 缓存 requireVisibleCourseUnit 的判定结果
  * （同组草稿不重复走门）；一个学生的草稿总量有限，全量扫描无压力。
- * wrong 来源（2026-10）恒不失权——无课程/作业归属，草稿与记录一直可见。
+ * wrong（2026-10）与 lesson（2026-10 讲练一体）恒不失权——wrong 无课程/作业
+ * 归属；lesson 作答永不失权（契约 attemptSourceSchema lesson 注释：讲练页
+ * 只经课程可见，但已开卷的作答记录恒可回看）——两者草稿照常列出、可续作。
  */
 function lostAccessDraftIds(
   db: Db,
@@ -101,8 +106,8 @@ function lostAccessDraftIds(
   const excluded = new Set<string>();
   const courseUnitVisible = new Map<string, boolean>();
   for (const draft of drafts) {
-    if (draft.sourceType === "wrong") {
-      continue; // 错题重练无归属，永不失权（草稿照常列出、可续作）
+    if (draft.sourceType === "wrong" || draft.sourceType === "lesson") {
+      continue; // 错题重练/讲练作答不失权（草稿照常列出、可续作）
     }
     if (draft.sourceType === "course") {
       const key = `${draft.courseId ?? ""}\n${draft.unitId ?? ""}`;
@@ -225,12 +230,10 @@ export function listStudentRecords(
       status: attempt.status,
       // D2 展示口径 scoreFinal ?? scoreAuto；未公布置 null（显示「待公布」）
       score: released ? (attempt.scoreFinal ?? attempt.scoreAuto) : null,
-      // D4 共享谓词（draft 恒 0）；未公布置 null（与 D9 结果视图同法）
-      pendingCount: released
-        ? attempt.status === "draft"
-          ? 0
-          : (pendingByAttempt.get(attempt.id) ?? 0)
-        : null,
+      // D4 共享谓词（2026-10 扩展：draft 卷的已单题提交行也计数——lesson
+      // 进行中卷的待批数；非 lesson 的 draft 恒不在 Map 中 → 0）；
+      // 未公布置 null（与 D9 结果视图同法）
+      pendingCount: released ? (pendingByAttempt.get(attempt.id) ?? 0) : null,
       answersReleased: released,
       startedAt: attempt.startedAt,
       submittedAt: attempt.submittedAt,

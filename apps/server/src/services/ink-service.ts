@@ -20,6 +20,7 @@ import {
 import { HttpError } from "../lib/http-error";
 import { pngSize } from "../lib/png";
 import {
+  assertRowNotSubmitted,
   requireAttemptQuestion,
   requireUsableAttempt,
 } from "./attempt-service";
@@ -175,6 +176,9 @@ export function saveInk(
     );
   }
   requireAttemptQuestion(db, attempt, questionId);
+  // lesson 单题提交后的行级锁定（2026-10）：已提交题的笔迹不可再改
+  //（attempt-level 状态检查只拦整卷；非 lesson 行 submittedAt 恒 null，零变化）
+  assertRowNotSubmitted(db, attemptId, questionId, "修改笔迹");
 
   // 限额（契约口径：gzip 后 strokes + png 合计）
   if (

@@ -1,11 +1,12 @@
 import type {
-  AttemptSource,
   AttemptStatus,
   TeacherAttemptCard,
+  TeacherAttemptDetailData,
   TeacherAttemptSource,
 } from "@tutor/contract";
 import { ChevronLeft, ChevronRight, Clock3 } from "lucide-react";
 import { Link } from "react-router";
+import { SourceBadge } from "@/components/source-badge";
 import { Button } from "@/components/ui/button";
 import { formatRelativeTime } from "@/lib/time";
 import type { AttemptViewMode } from "./attempt-filters";
@@ -48,28 +49,7 @@ export function AttemptStatusBadge({ status }: { status: AttemptStatus }) {
   );
 }
 
-/** 来源徽章（作业 / 课程练习 / 错题重练；与学生端记录卡同配色词表） */
-const SOURCE_BADGE_CLASS: Record<AttemptSource, string> = {
-  assignment: "bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-300",
-  course:
-    "bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-300",
-  wrong:
-    "bg-orange-100 text-orange-700 dark:bg-orange-500/20 dark:text-orange-300",
-};
-
-function SourceBadge({ sourceType }: { sourceType: AttemptSource }) {
-  return (
-    <span
-      className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${SOURCE_BADGE_CLASS[sourceType]}`}
-    >
-      {sourceType === "assignment"
-        ? "作业"
-        : sourceType === "course"
-          ? "课程练习"
-          : "错题重练"}
-    </span>
-  );
-}
+/** 来源徽章与词表：components/source-badge 单源（与学生端记录卡同配色词表） */
 
 /** 来源上下文描述（与详情页头同口径；T3.2b 起待批队列卡片共用） */
 export function sourceContextOf(card: TeacherAttemptSource): string {
@@ -82,7 +62,35 @@ export function sourceContextOf(card: TeacherAttemptSource): string {
   if (card.sourceType === "wrong") {
     return `错题重练 · 第 ${card.attemptNo} 次`;
   }
+  if (card.sourceType === "lesson") {
+    // 讲练（2026-10）：unitTitle 承载讲义标题（sourceOf 口径）；courseId 可空
+    //（打开时来自哪门课）——无课程时不出现前导分隔符
+    return card.courseName !== null
+      ? `${card.courseName} · ${card.unitTitle ?? ""} · 第 ${card.attemptNo} 次`
+      : `${card.unitTitle ?? ""} · 第 ${card.attemptNo} 次`;
+  }
   return `${card.courseName ?? ""} · ${card.unitTitle ?? ""} · 第 ${card.attemptNo} 次`;
+}
+
+/**
+ * 详情页头的来源行文案（与卡片 sourceContextOf 是**不同**展示口径：列表卡
+ * 按学生视角组合标题，详情头与学生端结果视图同口径「课程：/错题重练/
+ * 讲练：」；2026-10 收口时两函数同居本模块，教师端来源文案单一出处）。
+ */
+export function sourceLineOf(data: TeacherAttemptDetailData): string {
+  if (data.sourceType === "course") {
+    return `课程：${data.courseName ?? ""} · 第 ${data.attemptNo} 次`;
+  }
+  if (data.sourceType === "wrong") {
+    return `错题重练 · 第 ${data.attemptNo} 次`;
+  }
+  if (data.sourceType === "lesson") {
+    // 讲练（2026-10）：unitTitle 承载讲义标题（sourceOf 口径）
+    return `讲练：${data.unitTitle ?? ""} · 第 ${data.attemptNo} 次`;
+  }
+  return data.courseName !== null
+    ? `作业 · ${data.courseName}`
+    : `作业 · ${data.assignmentTitle ?? ""}`;
 }
 
 /** 展示得分（D2 口径：scoreFinal ?? scoreAuto；无分「—」） */
@@ -104,7 +112,8 @@ function groupOf(
   }
   if (view === "assignment") {
     // 作业来源按作业分组；课程练习按「课程 · 单元」单独成组（不属于任何作业）；
-    // 错题重练无作业归属，统一进「错题重练」组（2026-10）
+    // 错题重练无作业归属，统一进「错题重练」组（2026-10）；讲练按嵌入单元
+    // 快照值单独成组（unitId 对应讲练页，标题展示讲义标题，2026-10 讲练一体）
     if (card.sourceType === "assignment") {
       return {
         key: `a:${card.assignmentId ?? ""}`,
@@ -113,6 +122,12 @@ function groupOf(
     }
     if (card.sourceType === "wrong") {
       return { key: "w:wrong", title: "错题重练" };
+    }
+    if (card.sourceType === "lesson") {
+      return {
+        key: `l:${card.unitId ?? card.attemptId}`,
+        title: `讲练 · ${card.unitTitle ?? ""}`,
+      };
     }
     return {
       key: `c:${card.courseId ?? ""}:${card.unitId ?? ""}`,

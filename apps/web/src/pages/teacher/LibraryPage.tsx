@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
+import { LessonBadge } from "@/components/source-badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -983,8 +984,14 @@ function LectureListView({
               aria-label={`选择讲义 ${lecture.title}`}
               className="size-5 shrink-0 accent-primary"
             />
-            <p className="min-w-0 px-1 text-sm font-semibold break-words">
-              {lecture.title}
+            <p className="flex min-w-0 flex-1 flex-wrap items-center gap-2 px-1 text-sm">
+              {lecture.kind === "lesson" ? (
+                // 讲练页（2026-10 讲练一体）：教师侧仅提示形态，点击仍进编辑/预览
+                <LessonBadge />
+              ) : null}
+              <span className="min-w-0 flex-1 font-semibold break-words">
+                {lecture.title}
+              </span>
             </p>
             <span className="col-start-2 px-1 text-xs leading-relaxed text-muted-foreground">
               被 {lecture.courseCount} 个课程引用 ·{" "}

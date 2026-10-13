@@ -584,6 +584,8 @@ export interface LibraryListFilter {
 /** 讲义库列表项（契约 libraryLectureSummarySchema 同形） */
 export interface LibraryLectureSummaryRow {
   readonly id: string;
+  /** 文档形态（2026-10 讲练一体：lesson 行显「讲练」徽标） */
+  readonly kind: "lecture" | "lesson";
   readonly title: string;
   readonly folderId: string | null;
   readonly updatedAt: string;
@@ -661,6 +663,7 @@ export function listLibraryLectures(
     .filter((row) => q.length === 0 || row.title.toLowerCase().includes(q))
     .map((row) => ({
       id: row.id,
+      kind: row.kind,
       title: row.title,
       folderId: row.folderId,
       updatedAt: row.updatedAt,
@@ -1432,8 +1435,10 @@ export function exportUnitMd(
 
 /**
  * 导出讲义（GET /api/teacher/lectures/:id/export.md）：域内取讲义（D12，越权 404）：
- * `---\nkind: lecture\n---\n\n` + markdown 原文（可原样重新导入；文件名 = 讲义标题）；
- * 列内有教学包声明时 frontmatter 回写声明行（T7.8）。讲义不存在 → 404。
+ * `---\nkind: <kind>\n---\n\n` + markdown 原文（可原样重新导入；文件名 = 讲义标题）；
+ * kind 按存储列写（讲练一体 2026-10：lesson 讲练讲义导出 kind: lesson + 含注入
+ * id 的题块原文，再导入 id 稳定）；列内有教学包声明时 frontmatter 回写声明行
+ * （T7.8）。讲义不存在 → 404。
  */
 export function exportLectureMd(
   db: Db,
@@ -1444,6 +1449,7 @@ export function exportLectureMd(
     .select({
       title: lectures.title,
       markdown: lectures.markdown,
+      kind: lectures.kind,
       teachingPackJson: lectures.teachingPackJson,
     })
     .from(lectures)
@@ -1455,8 +1461,8 @@ export function exportLectureMd(
   const packLine = teachingPackYamlLineOf(row.teachingPackJson);
   const frontmatter =
     packLine === null
-      ? "---\nkind: lecture\n---\n"
-      : `---\nkind: lecture\n${packLine}\n---\n`;
+      ? `---\nkind: ${row.kind}\n---\n`
+      : `---\nkind: ${row.kind}\n${packLine}\n---\n`;
   const markdown = `${frontmatter}\n${row.markdown}`;
   return { markdown, filename: `${safeFilename(row.title)}.md` };
 }

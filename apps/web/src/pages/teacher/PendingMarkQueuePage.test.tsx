@@ -162,6 +162,26 @@ describe("PendingMarkQueuePage 快捷键与导航", () => {
 });
 
 describe("PendingMarkQueuePage 批改与进度", () => {
+  it("lesson（讲练）来源卡片：徽章「讲练」+ 上下文为讲义标题（2026-10 讲练一体，不落「课程练习」）", async () => {
+    mockedMarks.mockResolvedValue({
+      marks: [
+        makeCard({
+          sourceType: "lesson",
+          courseName: null,
+          unitId: "随堂讲练",
+          unitTitle: "第1讲 有理数讲练",
+          attemptNo: 2,
+        }),
+      ],
+    } as PendingMarkListData);
+    renderPage();
+    await screen.findByRole("article", { name: "待批卡片：张三" });
+    // 徽章讲练（emerald 词表）+ 上下文：讲义标题 · 第 n 次（与列表 sourceContextOf 同口径）
+    expect(screen.getByText("讲练")).toBeInTheDocument();
+    expect(screen.getByText("第1讲 有理数讲练 · 第 2 次")).toBeInTheDocument();
+    expect(screen.queryByText("课程练习")).toBeNull();
+  });
+
   it("键盘 1 标对：卡片乐观离队、进度 0/2→1/2、评语随判定一并提交", async () => {
     mockedMarks.mockResolvedValue({
       marks: [

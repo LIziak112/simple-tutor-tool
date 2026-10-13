@@ -354,12 +354,28 @@ export const questionUpdateDataSchema = z.object({
   issues: z.array(lintIssueSchema),
 });
 
+/**
+ * 讲义行的文档形态（lectures.kind，2026-10 讲练一体）：
+ * - lecture：纯讲义（既有形态，markdown 全文下发）；
+ * - lesson：讲练页（题目原位混排；学生端改安全投影——原文不下发，见下方详情注释）。
+ * 学生/教师各讲义接口（列表摘要、课程目录条目、资源库列表、编辑详情）共用同一投影
+ * （student-course-api.ts / library-api.ts 也 import——放在本文件靠前处，避免
+ * 声明顺序引发的初始化死区）。
+ */
+export const lectureKindSchema = z.enum(["lecture", "lesson"]);
+
 /** GET /api/teacher/lectures/:id 响应 data：编辑抽屉取讲义原文（markdown 含 H1 标题行） */
 export const lectureDetailSchema = z.object({
   /** 讲义 id（数据库 uuid，编辑保持不变） */
   id: z.uuid(),
   title: z.string().min(1),
-  /** 讲义原始 Markdown（含 H1 标题行，整篇编辑提交） */
+  /**
+   * 文档形态（2026-10 讲练一体）：编辑抽屉按存储 kind 选 lint 语境（lesson 时
+   * 题块合法不报 QUESTION_IN_LECTURE，与服务端 updateLecture 同口径），
+   * 渲染预览对题块用占位卡（内容编辑走题库，防双源漂移）。
+   */
+  kind: lectureKindSchema,
+  /** 讲义原始 Markdown（含 H1 标题行，整篇编辑提交；kind=lesson 时题块原样保留） */
   markdown: z.string().min(1),
   /** 最近更新时间：UTC ISO 字符串 */
   updatedAt: z.string().min(1),
@@ -460,6 +476,8 @@ export const courseDataSchema = z.object({
 export const studentLectureSummarySchema = z.object({
   /** 讲义 id（导入时生成的 UUID） */
   id: z.uuid(),
+  /** 文档形态（2026-10 讲练一体）：lesson 行显「讲练」徽标并直达讲练页 */
+  kind: lectureKindSchema,
   /** 讲义标题（H1 标题文本） */
   title: z.string().min(1),
   /** 可见配套单元的主题；无可见配套或未标注为 null */
@@ -524,32 +542,81 @@ export const studentLectureCompanionUnitSchema = z.object({
  * （answers/solutionMd/hintsJson/stemMd/optionsJson 等，AGENTS.md 第 3 条）——
  * 讲义 markdown 本身允许含指令语法文本。
  *
+ * kind=lesson（2026-10 讲练一体）安全投影：题块内含 [[答案]] 标记 / :::solution /
+ * :::hint，**讲练页 markdown 原文恒不下发**（恒 null，superRefine 锁定）——学生端
+ * 讲练内容只经 POST /api/student/lectures/:id/lesson/start 下发（blocks 切段 +
+ * 冻结题公开投影，见 lesson-api.ts）；本详情不携带切段（曾随本接口下发 blocks，
+ * 因前端拿到即重定向讲练页、全站零消费已删，闸门修复 2026-10-13）；
+ * companionUnits 对嵌入单元隐藏（题目已在页内，防重复入口，恒空
+ * 数组）。kind=lecture 形态不变（向后兼容：既有字段零变化）。
+ *
  * 访问判定（D22）：讲义只经课程可见（不再有全量讲义）——指定 courseId 时非成员/
  * 课程归档 403 COURSE_ACCESS_DENIED，条目隐藏/未到发布/已删除 404 NOT_FOUND；
  * 未指定 courseId 时该生在任何课程中都看不到该讲义 → 404 NOT_FOUND（不暴露存在性）。
  * courseId/courseName 为该次访问的课程上下文（缺省时取第一个可见该讲义的课程，
  * 排序 course.order → 条目 order）。
  */
-export const studentLectureDetailSchema = z.object({
-  id: z.uuid(),
-  title: z.string().min(1),
-  /** 讲义原始 Markdown（含 H1 标题行；前端用 <RichMarkdown> 渲染） */
-  markdown: z.string().min(1),
-  /** 最近更新时间：UTC ISO 字符串 */
-  updatedAt: z.string().min(1),
-  /** 本次访问的课程上下文（可见该讲义的课程之一） */
-  courseId: z.uuid(),
-  courseName: z.string().min(1),
-  /** 本课配套练习（D8：同课程可见的配套单元；空数组 = 无可见配套） */
-  companionUnits: z.array(studentLectureCompanionUnitSchema),
-  /**
-   * 教师辅助能力有效启用集（T7.7 / 方案 §4.5）：讲义中的 :::steps 按 teacher
-   * 配置渲染（关闭时完整展开、隐藏「显示下一步」）；讲义无手写入口，ink 开关
-   * 在此响应仅为字段形态统一。教师预览接口不下发本字段，无该字段的旧载荷按
-   * 全启用处理（前端 Context 缺省）。
-   */
-  enabledCapabilities: enabledCapabilitiesFieldSchema,
-});
+export const studentLectureDetailSchema = z
+  .object({
+    id: z.uuid(),
+    title: z.string().min(1),
+    /** 文档形态（2026-10）：lesson 时讲义原文不下发（见 markdown 注释） */
+    kind: lectureKindSchema,
+    /**
+     * 讲义原始 Markdown（含 H1 标题行；前端用 <RichMarkdown> 渲染）。
+     * kind=lesson 时恒 null：题块原文含答案标记与提示内容，学生端讲练内容只经
+     * lesson/start 的 blocks 切段 + 冻结题公开投影（防泄露根基，方案决策 1）。
+     */
+    markdown: z.string().min(1).nullable(),
+    /** 最近更新时间：UTC ISO 字符串 */
+    updatedAt: z.string().min(1),
+    /** 本次访问的课程上下文（可见该讲义的课程之一） */
+    courseId: z.uuid(),
+    courseName: z.string().min(1),
+    /**
+     * 本课配套练习（D8：同课程可见的配套单元；空数组 = 无可见配套）。
+     * kind=lesson 时恒空数组：嵌入单元的题目已在页内（单题作答），不再出现
+     * 整卷入口（防重复，superRefine 锁定）。
+     */
+    companionUnits: z.array(studentLectureCompanionUnitSchema),
+    /**
+     * 教师辅助能力有效启用集（T7.7 / 方案 §4.5）：讲义中的 :::steps 按 teacher
+     * 配置渲染（关闭时完整展开、隐藏「显示下一步」）；讲义无手写入口，ink 开关
+     * 在此响应仅为字段形态统一。教师预览接口不下发本字段，无该字段的旧载荷按
+     * 全启用处理（前端 Context 缺省）。
+     */
+    enabledCapabilities: enabledCapabilitiesFieldSchema,
+  })
+  .superRefine((detail, ctx) => {
+    if (detail.kind === "lesson") {
+      if (detail.markdown !== null) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["markdown"],
+          message:
+            "形态不变式冲突：kind=lesson 的 markdown 必须为 null（讲练页原文含答案标记/提示内容，绝不下发学生端）",
+        });
+      }
+      if (detail.companionUnits.length > 0) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["companionUnits"],
+          message:
+            "形态不变式冲突：kind=lesson 的 companionUnits 必须为空数组（嵌入单元隐藏，题目已在页内）",
+        });
+      }
+      return;
+    }
+    // kind=lecture：既有形态不变——markdown 恒非 null 非空
+    if (detail.markdown === null) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["markdown"],
+        message:
+          "形态不变式冲突：kind=lecture 的 markdown 必须非空（纯讲义全文下发是既有形态）",
+      });
+    }
+  });
 
 /** 携带学生讲义列表/详情的成功响应壳 */
 export const studentLectureListOkSchema = apiOkExtend(

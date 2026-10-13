@@ -42,6 +42,7 @@ function loadSample(relative: string): string {
 
 const PRACTICE_MD = loadSample("v2/练习样例.md");
 const LECTURE_MD = loadSample("v2/讲义样例.md");
+const LESSON_MD = loadSample("v2/讲练样例.md");
 
 /** 练习样例 8 题的期望 id 集合（与 content-service.test 保持同一口径） */
 const PRACTICE_IDS = new Set([
@@ -167,6 +168,40 @@ describe("reparseAll：模拟解析器升级（验收核心）", () => {
     ).toHaveLength(7);
     expect(report.questions).toHaveLength(8);
     expect(report.dryRun).toBe(false);
+  });
+});
+
+describe("reparseAll：讲练页（kind: lesson，2026-10 讲练一体）", () => {
+  it("lesson 讲义按存储 kind 重解析，不被 QUESTION_IN_LECTURE 误跳过；题块保留、全部 unchanged", () => {
+    const db = createTestDb();
+    commitImport(db, TEST_TEACHER_ID, {
+      markdown: LESSON_MD,
+      filename: "讲练样例.md",
+    });
+    const beforeLectures = db.select().from(lectures).all();
+    // 讲练样例双 H1 → 两篇讲义（各自正文含注入 id 的题块）
+    expect(beforeLectures.length).toBeGreaterThanOrEqual(1);
+    expect(
+      beforeLectures.every(
+        (row) =>
+          row.kind === "lesson" && row.markdown.includes("::::question"),
+      ),
+    ).toBe(true);
+    const beforeQuestions = db.select().from(questions).all();
+
+    const report = reparseAll(db, { dryRun: false });
+
+    // 不出现 skipped（修复前：按 lecture 语境包装 → QUESTION_IN_LECTURE error → skipped）
+    expect(report.lectures.every((r) => r.status === "unchanged")).toBe(true);
+    expect(report.questions.every((r) => r.status === "unchanged")).toBe(true);
+    // 题块仍原位保留（重解析不改讲义 markdown），题目行数不变
+    const afterLectures = db.select().from(lectures).all();
+    expect(afterLectures.map((r) => r.markdown)).toEqual(
+      beforeLectures.map((r) => r.markdown),
+    );
+    expect(db.select().from(questions).all()).toHaveLength(
+      beforeQuestions.length,
+    );
   });
 });
 

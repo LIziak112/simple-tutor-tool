@@ -4,6 +4,7 @@ import {
   libraryBatchItemResultSchema,
   libraryBatchRequestSchema,
   libraryFolderReorderSchema,
+  libraryLectureSummarySchema,
   libraryListQuerySchema,
   libraryUnitSummarySchema,
   libraryUsageSchema,
@@ -168,6 +169,33 @@ describe("libraryFolderReorderSchema", () => {
     expect(libraryFolderReorderSchema.safeParse({ ids: [UUID] }).success).toBe(
       true,
     );
+  });
+});
+
+describe("libraryLectureSummarySchema", () => {
+  const summary = {
+    id: UUID,
+    title: "第1讲 有理数",
+    folderId: null,
+    updatedAt: "2026-09-26T00:00:00.000Z",
+    deletedAt: null,
+    courseCount: 1,
+  } as const;
+
+  it("kind 必填：lecture/lesson 合法（讲练一体资源库「讲练」徽标数据源）", () => {
+    expect(
+      libraryLectureSummarySchema.safeParse({ ...summary, kind: "lecture" })
+        .success,
+    ).toBe(true);
+    expect(
+      libraryLectureSummarySchema.safeParse({ ...summary, kind: "lesson" })
+        .success,
+    ).toBe(true);
+    expect(libraryLectureSummarySchema.safeParse(summary).success).toBe(false);
+    expect(
+      libraryLectureSummarySchema.safeParse({ ...summary, kind: "mixed" })
+        .success,
+    ).toBe(false);
   });
 });
 

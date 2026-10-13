@@ -148,6 +148,72 @@ export function recordHintOpenEvent(
 }
 
 /**
+ * 服务端直接记录 attempt_start 事件（2026-10 讲练一体：lesson 开卷建卷时由
+ * lesson-service 调用——建卷必有一次「作答开始」的行为痕迹，不依赖前端队列
+ * 上报，与 hint_open 服务端直记同模式）。payload 只含元信息（type/clientTs），
+ * 不含任何题目侧内容；幂等取回（create-or-return 命中已有卷）不重复记，仅
+ * 新建 attempt 时各记一条。clientTs 用服务端时钟（与 hint_open 同口径，
+ * §2.6-3 不同源注记——attempt_start 不参与 focus/blur 区间计时，active-time
+ * 明确排除，混排无影响）；前端讲练页若复用 use-attempt-events 另报一条，
+ * events 表追加语义可容忍（行为痕迹双记不进任何区间/判分计算）。
+ */
+export function recordAttemptStartEvent(
+  db: Db,
+  studentId: string,
+  attemptId: string,
+): void {
+  const now = Date.now();
+  insertEvents(db, [
+    {
+      id: "",
+      attemptId,
+      studentId,
+      questionId: null,
+      lectureId: null,
+      type: "attempt_start",
+      payloadJson: JSON.stringify({ type: "attempt_start", clientTs: now }),
+      clientTs: now,
+      serverTs: "",
+    },
+  ]);
+}
+
+/**
+ * 服务端直接记录 question_submit 事件（2026-10 讲练一体：lesson 单题提交接口
+ * 成功后由 attempt-service 调用——每次有效提交必有一条逐题埋点，不依赖前端
+ * 队列，与 hint_open / attempt_start 服务端直记同模式）。payload 仅
+ * questionId（契约 questionSubmitEventSchema：答案与判定在作答接口响应里，
+ * 事件只做行为埋点）；拒绝路径（409 幂等/错版/证据不符）不记。clientTs 用
+ * 服务端时钟（§2.6-3 不同源注记；question_submit 不参与 focus/blur 区间
+ * 计时，混排无影响）；前端若另报一条，events 追加语义可容忍。
+ */
+export function recordQuestionSubmitEvent(
+  db: Db,
+  studentId: string,
+  attemptId: string,
+  questionId: string,
+): void {
+  const now = Date.now();
+  insertEvents(db, [
+    {
+      id: "",
+      attemptId,
+      studentId,
+      questionId,
+      lectureId: null,
+      type: "question_submit",
+      payloadJson: JSON.stringify({
+        type: "question_submit",
+        clientTs: now,
+        questionId,
+      }),
+      clientTs: now,
+      serverTs: "",
+    },
+  ]);
+}
+
+/**
  * 契约事件 → events 行（attempt 上下文：questionId 按事件语义提取；
  * studentId 恒写会话学生，lectureId 由 payload 顶层提取——attempt 域事件
  * 目前均无讲义语义，保持 NULL，与 lectureEventRow 走同一提取模式）

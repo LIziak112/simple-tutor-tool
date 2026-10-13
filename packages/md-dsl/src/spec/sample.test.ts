@@ -6,14 +6,16 @@ import {
   missingDirectives,
 } from "../../../../test-support/dsl-samples.ts";
 import { lintDocument } from "../lint/lint.ts";
+import { parseDocument } from "../v2/parse.ts";
 
 /**
- * docs/dsl/完整样例.md 质量门（T1.7）：手写文档，三个 ```markdown 代码块
- * 分别是三种 kind 的完整文档，必须全部 lintDocument 0 issue——
+ * docs/dsl/完整样例.md 质量门（T1.7）：手写文档，四个 ```markdown 代码块
+ * 分别是四种 kind 的完整文档，必须全部 lintDocument 0 issue——
  * 既是给老师的可信样例，也是复制给 AI 的 few-shot，任何退化都在这里被拦下。
  * T7.9 起：代码块从文档 AST（lang=markdown 的 code 节点）提取；指令覆盖从
  * 子串抽查升级为 AST 精确主名集合 == listDirectives 主名集合（说明文字、
  * 行内代码与代码块里的指令字样不再能伪造覆盖）。
+ * 2026-10 讲练一体：新增第四节「讲练页（kind: lesson）」，块数与 kind 序列同步扩为四。
  */
 
 const doc = fullSampleDocText();
@@ -35,16 +37,17 @@ function coveredUnionOf(
 }
 
 describe("docs/dsl/完整样例.md", () => {
-  it("文档结构与三节标题齐全", () => {
+  it("文档结构与四节标题齐全", () => {
     expect(doc).toContain("## 一、练习（kind: practice）");
     expect(doc).toContain("## 二、讲义（kind: lecture）");
     expect(doc).toContain("## 三、混合（kind: mixed）");
+    expect(doc).toContain("## 四、讲练页（kind: lesson）");
   });
 
-  it("AST 恰有三个 markdown 样例代码块，kind 依次为 practice / lecture / mixed", () => {
-    expect(blocks).toHaveLength(3);
+  it("AST 恰有四个 markdown 样例代码块，kind 依次为 practice / lecture / mixed / lesson", () => {
+    expect(blocks).toHaveLength(4);
     const kinds = blockLints.map((lint) => lint.parsed.frontmatter?.kind);
-    expect(kinds).toEqual(["practice", "lecture", "mixed"]);
+    expect(kinds).toEqual(["practice", "lecture", "mixed", "lesson"]);
   });
 
   it("每个样例块 lint 0 issue（验收：完整样例可用作 few-shot）", () => {
@@ -71,6 +74,15 @@ describe("docs/dsl/完整样例.md", () => {
     ]) {
       expect(all, `完整样例应包含 ${keyword}`).toContain(keyword);
     }
+  });
+
+  it("讲练页样例块（第 4 块）：显式 id 与缺省 id 混用，缺省 id 由解析注入开围栏", () => {
+    const lesson = parseDocument(blockMarkdowns[3] ?? "");
+    const questions = lesson.units[0]?.questions ?? [];
+    expect(questions.map((q) => q.id)).toEqual(["lesson-q1", "随堂讲练-2"]);
+    // 缺省 id 题块开围栏被注入最终题目 id（题块原位保留在讲义 markdown）
+    expect(lesson.lectures[0]?.markdown).toContain('id="随堂讲练-2"');
+    expect(questions[1]?.sourceMd).toContain('id="随堂讲练-2"');
   });
 
   it("AST 精确指令覆盖：三个样例块的主名并集 == 注册表主名集合（不写死数量）", () => {

@@ -15,6 +15,8 @@ import {
   attemptQuestionPublicSchema,
   type CapabilitySwitch,
   type HintOpenedEntry,
+  type LessonQuestionSubmitData,
+  type LessonQuestionSubmitRequest,
   type NoteSubmissionEvidenceState,
   optionSchema,
   type Question,
@@ -51,6 +53,8 @@ import {
   attempts,
   type Course,
   courses,
+  lectures,
+  type NoteRow,
   notes,
   type Question as QuestionRow,
   questions,
@@ -66,7 +70,7 @@ import { computePerQuestionActiveSec, countAnswerChanges } from "./active-time";
 import { knowledgeNamesByQuestion } from "./assignment-service";
 import { getCapabilityProfile } from "./capability-profile-service";
 import { requireVisibleCourseUnit } from "./course-service";
-import { attemptTimeline } from "./event-service";
+import { attemptTimeline, recordQuestionSubmitEvent } from "./event-service";
 import {
   hintsOfJson,
   openedHintEcho,
@@ -137,12 +141,14 @@ import { jsonOf, snapshotOfRow } from "./snapshot";
  * （见 buildResultData）；截止后读时自动恢复。
  */
 
-/** attempt 行 → 摘要（接口形态）；导出供 wrong-practice.ts 组卷复用（同一投影） */
+/** attempt 行 → 摘要（接口形态）；导出供 wrong-practice.ts / lesson-service.ts 组卷复用（同一投影） */
 export function attemptSummaryOf(row: Attempt): AttemptStartData {
   return {
     id: row.id,
     sourceType: row.sourceType,
     assignmentId: row.assignmentId,
+    // 2026-10 讲练一体：lesson 开卷写入讲义 id，其余来源恒 null（契约反向锁定）
+    lectureId: row.lectureId,
     courseId: row.courseId,
     // T2A.7：assignment 来源多单元化后 unitId 恒 null（题目集合走
     // assignment_units）；course 来源恒有值；wrong 来源恒 null（2026-10）。
@@ -223,8 +229,9 @@ export function insertFrozenResponse(
  * 建卷冻结写入（纯插入，事务内调用）：live 题行 → 完整契约 Question 序列化 +
  * 冻结时版本与单元归属，逐行插入。建卷时 attempt 行刚插入、responses 必无行，
  * 无需查重（与懒冻结的补写入口 backfillFrozenResponses 相区分）。
+ * 2026-10 讲练一体起导出：lesson-service 开卷建卷复用（同款冻结语义）。
  */
-function insertFrozenResponses(
+export function insertFrozenResponses(
   tx: Tx,
   attemptId: string,
   liveRows: readonly QuestionRow[],
@@ -299,8 +306,9 @@ function backfillFrozenResponses(
  * attemptQuestionRows 口径，域内取题 D10）+ 各题考点名（快照 knowledge 用，
  * 只查卷内题目的关联，不拉全教师域）。
  * 教师域缺失的异常行按空集合处理（fail closed，空卷冻结）。
+ * 2026-10 讲练一体起导出：lesson-service 开卷建卷复用（嵌入单元 live 题）。
  */
-function freezeInputsOfAttempt(
+export function freezeInputsOfAttempt(
   db: Db,
   attempt: Attempt,
 ): {
@@ -501,9 +509,10 @@ export function attemptTeacherId(db: Db, attempt: Attempt): string | null {
  * T7.7：attempt → 所属教师的有效辅助能力启用集（草稿/结果视图同口径下发）。
  * 无教师域的异常学生行兜底全启用——与题目域的 fail closed（空结果）不同：
  * 开关只影响 steps 揭晓与手写入口的渲染，不是安全边界，兜底到「多给辅助」
- * 一侧不改变正式作答与判分（方案 §4.5）。
+ * 一侧不改变正式作答与判分（方案 §4.5）。2026-10 讲练一体起导出：
+ * lesson-service 开卷投影同口径复用。
  */
-function attemptEnabledCapabilities(
+export function attemptEnabledCapabilities(
   db: Db,
   attempt: Attempt,
 ): CapabilitySwitch[] {
@@ -517,6 +526,8 @@ function attemptEnabledCapabilities(
  * attempt 的有序单元 id 列表（T2A.7）：
  * - course 来源：[attempt.unitId]（单单元，创建时必写；防御性空列表兜底异常行；
  *   课程侧可见性由 requireVisibleCourseUnit 把关）；
+ * - lesson 来源（2026-10 讲练一体）：[attempt.unitId]（嵌入单元的快照值，开卷
+ *   时写入；零题讲练页为讲义 id 占位——该值下无题目行，冻结结果为空卷）；
  * - assignment 来源：该作业 assignment_units 按 order 升序的列表（作业行经 FK
  *   必存在——含已删作业，作答不随作业软删消失）。
  *   D16：**单元软删不影响作业通道**——引用行保留，题目照常下发/判分；
@@ -530,7 +541,7 @@ export function attemptUnitIds(db: Db, attempt: Attempt): string[] {
   if (attempt.sourceType === "wrong") {
     return [];
   }
-  if (attempt.sourceType === "course") {
+  if (attempt.sourceType === "course" || attempt.sourceType === "lesson") {
     return attempt.unitId !== null ? [attempt.unitId] : [];
   }
   const assignmentId = attempt.assignmentId;
@@ -594,8 +605,10 @@ export const UNGROUPED_TITLE = "未分组题目";
  * answers/solutionMd/sourceMd 一律剥离——与 publicQuestionsOfRows 同一防泄露
  * 口径（fail closed，经 attemptQuestionPublicSchema.parse strip 未知键）。
  * questionRevisionId = 该题冻结 responses 行 id（不透明版本引用，交卷回传）。
+ * 2026-10 讲练一体起导出：lesson-service 开卷投影的 questions 平铺复用
+ * （同一 fail-closed 投影，防泄露口径单一出处）。
  */
-function publicOfSnapshot(
+export function publicOfSnapshot(
   question: Question,
   questionRevisionId: string,
 ): AttemptQuestionPublic {
@@ -857,11 +870,69 @@ interface AttemptSourceMeta {
   dueAt: string | null;
 }
 
+/**
+ * lesson 来源的上下文单源（2026-10 讲练一体收敛；本模块 attemptSourceMeta
+ * 学生侧与 teacher-attempt-service.sourceOf 教师侧两投影共用，不再各自查行）：
+ * - 标题链（以教师侧既有三级链为准，更完备）：讲义标题（D1 引用语义，随行
+ *   当前值）→ 嵌入单元标题（teacherId 域内，讲义行异常缺失时兜底）→
+ *   attempt.unitId →「讲练练习」（人文文案兜底，不露异常）；
+ * - 课程名随 courseId 行（打开时来自哪门课；可空 → null）。
+ */
+export function lessonSourceContextOf(
+  db: Db,
+  attempt: Attempt,
+  teacherId: string | null,
+): { title: string; courseName: string | null } {
+  const lecture =
+    attempt.lectureId !== null
+      ? db
+          .select({ title: lectures.title })
+          .from(lectures)
+          .where(eq(lectures.id, attempt.lectureId))
+          .get()
+      : undefined;
+  const course =
+    attempt.courseId !== null
+      ? db
+          .select({ title: courses.title })
+          .from(courses)
+          .where(eq(courses.id, attempt.courseId))
+          .get()
+      : undefined;
+  const unit =
+    lecture === undefined && attempt.unitId !== null && teacherId !== null
+      ? db
+          .select({ title: units.title })
+          .from(units)
+          .where(
+            and(eq(units.teacherId, teacherId), eq(units.id, attempt.unitId)),
+          )
+          .get()
+      : undefined;
+  return {
+    // 讲义标题 → 嵌入单元标题 → attempt.unitId →「讲练练习」
+    title: lecture?.title ?? unit?.title ?? attempt.unitId ?? "讲练练习",
+    courseName: course?.title ?? null,
+  };
+}
+
 function attemptSourceMeta(db: Db, attempt: Attempt): AttemptSourceMeta {
   if (attempt.sourceType === "wrong") {
     // 错题重练（2026-10）：标题固定「错题重练」，无课程/截止
     //（「错题重练 · 第 n 次」的来源行由前端从 attemptNo 拼）
     return { title: WRONG_PRACTICE_TITLE, courseName: null, dueAt: null };
+  }
+  if (attempt.sourceType === "lesson") {
+    // 讲练页（2026-10）：标题 = 讲练页讲义当前标题（D1 引用语义），不限截止
+    //（lesson 当题释放恒题级粒度，不适用 answerRelease，见 attemptSourceSchema）；
+    // courseId 可空（打开时来自哪门课），课程名随行。上下文与教师侧 sourceOf
+    // 同一实现（lessonSourceContextOf，标题兜底链以教师侧三级链为准）
+    const { title, courseName } = lessonSourceContextOf(
+      db,
+      attempt,
+      attemptTeacherId(db, attempt),
+    );
+    return { title, courseName, dueAt: null };
   }
   if (attempt.sourceType === "course") {
     // 课程练习：标题 = 单元当前标题（D1 引用而非复制）；不限截止（D11 交卷即公布）。
@@ -936,6 +1007,38 @@ export function requireAttemptQuestion(
     );
   }
   return hit;
+}
+
+/**
+ * 单题提交后的**行级锁定守卫**（2026-10 讲练一体）：该题已单题提交
+ * （responses.submittedAt 非空）→ 409 QUESTION_ALREADY_SUBMITTED——判定已按
+ * 提交时的答案落定，答案与笔迹此后不可再改（saveDraftAnswer / saveInk 调用，
+ * 都在 requireAttemptQuestion 之后）。非 lesson 行的 submittedAt 恒 null，
+ * 两接口对既有来源的行为零变化。
+ */
+export function assertRowNotSubmitted(
+  db: Db,
+  attemptId: string,
+  questionId: string,
+  action = "修改答案",
+): void {
+  const row = db
+    .select({ submittedAt: responses.submittedAt })
+    .from(responses)
+    .where(
+      and(
+        eq(responses.attemptId, attemptId),
+        eq(responses.questionId, questionId),
+      ),
+    )
+    .get();
+  if (row !== undefined && row.submittedAt !== null) {
+    throw new HttpError(
+      409,
+      "QUESTION_ALREADY_SUBMITTED",
+      `这道题已经提交过了，不能再${action}`,
+    );
+  }
 }
 
 /** 严格口径的 WHERE 单源（单题/批量两兄弟共用；C8）——三条件：
@@ -1101,17 +1204,20 @@ export function answerOf(answerJson: string | null): StudentAnswer | null {
 // 含坏数据 warn 留痕）——本文件经顶部 import 使用，不再留平行 safeParse。
 
 /**
- * 新建 draft attempt 的行字面量（三来源建卷共用；T6R.3 建卷即冻结——
+ * 新建 draft attempt 的行字面量（四来源建卷共用；T6R.3 建卷即冻结——
  * frozenAt=startedAt、legacyUnverified=false，快照行随建卷事务预插）。
- * wrong 组卷复用时三归属键传 null、attemptNo 按已有 wrong 卷数 +1。
+ * wrong 组卷复用时三归属键传 null、attemptNo 按已有 wrong 卷数 +1；
+ * lesson 开卷（2026-10）传 lectureId（所属讲练页，契约归属不变式）。
  */
 export function newDraftAttempt(config: {
   id: string;
   studentId: string;
-  sourceType: "assignment" | "course" | "wrong";
+  sourceType: "assignment" | "course" | "wrong" | "lesson";
   assignmentId: string | null;
   courseId: string | null;
   unitId: string | null;
+  /** 所属讲练页（lectures.id）；仅 lesson 来源传值，其余恒 null（2026-10） */
+  lectureId?: string | null;
   attemptNo: number;
   startedAt: string;
 }): Attempt {
@@ -1122,6 +1228,8 @@ export function newDraftAttempt(config: {
     assignmentId: config.assignmentId,
     courseId: config.courseId,
     unitId: config.unitId,
+    // 讲练一体（2026-10）：lesson 开卷写入讲义 id；assignment/course/wrong 恒 null
+    lectureId: config.lectureId ?? null,
     attemptNo: config.attemptNo,
     status: "draft",
     startedAt: config.startedAt,
@@ -1314,6 +1422,9 @@ export function saveDraftAnswer(
     );
   }
   requireAttemptQuestion(db, attempt, questionId);
+  // lesson 单题提交后的行级锁定（2026-10）：已提交题的答案不可再改
+  //（判定已按提交时的答案落定；非 lesson 行 submittedAt 恒 null，零变化）
+  assertRowNotSubmitted(db, attemptId, questionId);
 
   // T6R.3：requireAttemptQuestion 已保证该题冻结行存在（快照非空）——无插入
   // 分支（旧行缺失分支在建卷冻结后不可达，已删）；upsert 收敛为原行更新
@@ -1356,8 +1467,14 @@ interface GradedResponse {
   autoCorrect: boolean | null;
 }
 
-/** scoreAuto 口径：答对数 / 可自动判分数（autoCorrect 非 null），四舍五入百分比；无可判分为 null */
-function scoreAutoOf(graded: readonly GradedResponse[]): number | null {
+/**
+ * scoreAuto 口径：答对数 / 可自动判分数（autoCorrect 非 null），四舍五入百分比；
+ * 无可判分为 null。入参结构化（只需 autoCorrect）：交卷链路传判分中间结果，
+ * lesson 单题提交自动收尾传事务内重读的冻结行（同口径复用，不复制公式）。
+ */
+function scoreAutoOf(
+  graded: readonly { autoCorrect: boolean | null }[],
+): number | null {
   const autoGradable = graded.filter((g) => g.autoCorrect !== null).length;
   if (autoGradable === 0) return null;
   const correct = graded.filter((g) => g.autoCorrect === true).length;
@@ -1428,11 +1545,14 @@ function validateSubmitRevisions(
  * - missing：用户已明确选择「提交答案，草稿未保存完整」（确认动作在
  *   客户端交卷流程承担），服务端如实记录、不叠加上传状态校验。
  *
- * 旧客户端（缺 evidence 字段）：检测到草稿存在 ⇒ 409 要求刷新（不能把
- * 已有草稿记 none）；确无草稿按兼容规则交卷——**不落证据行**（= 未采集，
- * 与 state='none'〔明确空稿〕区分，schema 注释同口径）。
+ * 旧客户端（缺 evidence 字段）：检测到**参与本次判分题目的**草稿存在 ⇒ 409
+ * 要求刷新（不能把已有草稿记 none）；确无草稿按兼容规则交卷——**不落证据行**
+ * （= 未采集，与 state='none'〔明确空稿〕区分）。graded 范围 = 本次交卷要
+ * 判分的行（lesson 整卷收尾只含未提交题——已单题提交题的证据已在该题提交
+ * 事务冻结，其草稿不再阻塞收尾；非 lesson 来源 graded 恒为全部冻结题，
+ * 行为零变化）。
  *
- * 新客户端：声明集合必须与冻结题目集合精确一致（缺项/多项/未知/重复
+ * 新客户端：声明集合必须与 graded 范围精确一致（缺项/多项/未知/重复
  * 同 409，口径同 validateSubmitRevisions）。
  */
 function buildSubmissionEvidence(
@@ -1455,8 +1575,11 @@ function buildSubmissionEvidence(
   );
 
   if (declarations === undefined) {
-    // 旧客户端：有草稿 ⇒ 拒绝并要求刷新；无草稿 ⇒ 兼容交卷（未采集=无行）
-    if (noteRows.some((n) => n.currentRevision > 0)) {
+    // 旧客户端：范围内有草稿 ⇒ 拒绝并要求刷新；无草稿 ⇒ 兼容交卷（未采集=无行）
+    const scope = new Set(graded.map((g) => g.response.questionId));
+    if (
+      noteRows.some((n) => n.currentRevision > 0 && scope.has(n.questionId))
+    ) {
       throw evidenceMismatch("这份练习有尚未固定的草稿，请刷新页面后重新交卷");
     }
     return [];
@@ -1467,47 +1590,106 @@ function buildSubmissionEvidence(
     evidenceMismatch("笔记证据声明与试卷题目不一致，请刷新页面后重新交卷"),
   );
 
-  return declarations.map((decl) => {
-    const note = noteByQuestion.get(decl.questionId);
-    if (decl.state === "frozen") {
-      if (
-        note === undefined ||
-        note.currentVersionId !== decl.versionId ||
-        note.currentRevision !== decl.revision
-      ) {
-        throw evidenceMismatch(
-          "草稿状态已变化（可能其他设备刚保存了新版本），请重新交卷",
-        );
-      }
-      return {
-        questionId: decl.questionId,
-        state: "frozen" as const,
-        versionId: decl.versionId,
-      };
+  return declarations.map((decl) =>
+    evidenceRowOfDeclaration(noteByQuestion.get(decl.questionId), decl),
+  );
+}
+
+/**
+ * 单条证据声明的验证核心（整卷 buildSubmissionEvidence 与 lesson 单题
+ * buildSingleQuestionEvidence 共用，语义见上方注释块）：
+ * 返回要写的证据行；任何不符抛 409 NOTE_EVIDENCE_MISMATCH。
+ */
+function evidenceRowOfDeclaration(
+  note: NoteRow | undefined,
+  decl: SubmitEvidenceDeclaration,
+): {
+  questionId: string;
+  state: NoteSubmissionEvidenceState;
+  versionId: string | null;
+} {
+  if (decl.state === "frozen") {
+    if (
+      note === undefined ||
+      note.currentVersionId !== decl.versionId ||
+      note.currentRevision !== decl.revision
+    ) {
+      throw evidenceMismatch(
+        "草稿状态已变化（可能其他设备刚保存了新版本），请重新交卷",
+      );
     }
-    if (decl.state === "none") {
-      if (note !== undefined && note.currentRevision > 0) {
-        throw evidenceMismatch(
-          "该题存在未固定的草稿，请返回处理后再交卷（或刷新页面查看最新草稿）",
-        );
-      }
-      return {
-        questionId: decl.questionId,
-        state: "none" as const,
-        versionId: null,
-      };
-    }
-    // missing（复审接受项）：到达此分支时服务端可能已有该题矢量（客户端
-    // 分类窗口的竞态——声明组装后、提交落地前他处上传成功）。按用户明示
-    // 选择如实记录 missing，**不自动升格 frozen**：本地可能还有更新的未传
-    // 内容，升格会把陈旧 head 伪装成原稿；已落地内容经 T6R.15 supplement
-    // 找回，不冒称原稿
     return {
       questionId: decl.questionId,
-      state: "missing" as const,
+      state: "frozen" as const,
+      versionId: decl.versionId,
+    };
+  }
+  if (decl.state === "none") {
+    if (note !== undefined && note.currentRevision > 0) {
+      throw evidenceMismatch(
+        "该题存在未固定的草稿，请返回处理后再交卷（或刷新页面查看最新草稿）",
+      );
+    }
+    return {
+      questionId: decl.questionId,
+      state: "none" as const,
       versionId: null,
     };
-  });
+  }
+  // missing（复审接受项）：到达此分支时服务端可能已有该题矢量（客户端
+  // 分类窗口的竞态——声明组装后、提交落地前他处上传成功）。按用户明示
+  // 选择如实记录 missing，**不自动升格 frozen**：本地可能还有更新的未传
+  // 内容，升格会把陈旧 head 伪装成原稿；已落地内容经 T6R.15 supplement
+  // 找回，不冒称原稿
+  return {
+    questionId: decl.questionId,
+    state: "missing" as const,
+    versionId: null,
+  };
+}
+
+/**
+ * lesson 单题提交的证据验证（T6R.10 语义单题化，2026-10 讲练一体）：
+ * - 声明缺省 = 旧客户端——该题存在草稿（scratch 行 head revision>0）⇒ 409
+ *   拒绝、确无草稿不落行（未采集，与整卷兼容规则同口径）；
+ * - 声明携带时 evidence.questionId 必须与路径 questionId 一致（否则 409
+ *   NOTE_EVIDENCE_MISMATCH——契约注释「须与路径一致，服务端校验」）；
+ * - 逐声明验证复用 evidenceRowOfDeclaration（与整卷同一实现，不复制语义）。
+ * 验证纯读、先于事务；返回 null = 本次提交不落证据行。
+ */
+function buildSingleQuestionEvidence(
+  db: Db,
+  attemptId: string,
+  questionId: string,
+  decl: SubmitEvidenceDeclaration | undefined,
+): {
+  questionId: string;
+  state: NoteSubmissionEvidenceState;
+  versionId: string | null;
+} | null {
+  const note = db
+    .select()
+    .from(notes)
+    .where(
+      and(
+        eq(notes.attemptId, attemptId),
+        eq(notes.questionId, questionId),
+        eq(notes.phase, "scratch"),
+      ),
+    )
+    .get();
+  if (decl === undefined) {
+    if (note !== undefined && note.currentRevision > 0) {
+      throw evidenceMismatch("这道题有尚未固定的草稿，请刷新页面后重新提交");
+    }
+    return null;
+  }
+  if (decl.questionId !== questionId) {
+    throw evidenceMismatch(
+      "笔记证据声明与提交的题目不一致，请刷新页面后重新提交",
+    );
+  }
+  return evidenceRowOfDeclaration(note, decl);
 }
 
 /** 证据声明验证失败的统一拒绝（T6R.10，409；前端据此刷新/重走交卷流程） */
@@ -1546,8 +1728,15 @@ export function finalScoreOf(finalCorrects: readonly (boolean | null)[]): {
  *   损坏）按「历史题目缺失」计：跳过判分、答案行保留，不拿当前题库回填伪造；
  * - grade(question, answer)（@tutor/grading，判分逻辑本身不变）；D1 后未作答
  *   客观题（含多选空选）判 false，未作答手写题 → null 进待批；
+ * - **lesson 整卷收尾语义（2026-10 讲练一体，方案决策 5）**：已单题提交的行
+ *   （responses.submittedAt 非空——只有 lesson 单题提交会写该列）**不重判、
+ *   保 finalCorrect/teacherMark/submittedAt**（当题判定与证据已在该题提交事务
+ *   落定，教师课中批改的 teacherMark 也保留）；仅对未提交行执行上述既有判分
+ *   （未答按 D1 判 false），并把这些行的 submittedAt 写为交卷时刻。非 lesson
+ *   来源行的 submittedAt 恒 null → 走全量判分，行为零变化；
  * - **finalCorrect = autoCorrect（D3 持久化口径，T3.2a）**：交卷时 teacherMark
  *   必空，逐题同时写 finalCorrect——待批题 ≡ finalCorrect IS NULL（D4 共享谓词）；
+ *   lesson 已提交行按行内当前 finalCorrect 参与整卷状态/得分计算；
  * - 写入方式：**原行更新**（行在建卷/懒冻结时已存在；行 id 不变 = 对外下发的
  *   questionRevisionId 稳定）；questionVersion/questionSnapshotJson 保持冻结值；
  *   hintsUsed/hintsOpenedJson/inkId/teacherMark/teacherComment 不在交卷时改写；
@@ -1557,15 +1746,19 @@ export function finalScoreOf(finalCorrects: readonly (boolean | null)[]): {
  *   事件计数为权威（每次有效修改一条），草稿计数兜底（无前端事件的 attempt，
  *   如脚本直接调 API 交卷）；
  * - T6R.3 版本验证：clientRevisions 提供时（HTTP 路由恒传，不带请求体按空
- *   集合）与冻结集合精确比对，不符 409 QUESTION_REVISION_STALE；服务层内部
- *   调用（seed 等）可省略参数跳过验证；
+ *   集合）与**全部冻结题**（含 lesson 已单题提交的行——旧标签页的整卷提交
+ *   仍须回传完整版本集合）精确比对，不符 409 QUESTION_REVISION_STALE；
+ *   服务层内部调用（seed 等）可省略参数跳过验证；
+ * - T6R.10 笔记证据：验证范围 = 参与本次判分的行（lesson：未提交题——已提交
+ *   题证据已单题冻结不重做）；写入与判分同事务；
  * - attempt.status/scoreAuto/scoreFinal 按 D2/D3：全部 finalCorrect 非 null →
  *   直接 graded 并写 scoreFinal（=scoreAuto，此时分母相同）；否则 submitted、
  *   scoreFinal=null（待批批改后由 T3.2b 重算）；submittedAt、activeSec 总用时
  *   （各题之和；无任何事件时保持 NULL）；
  * - 返回结果视图（含答案与详解，AGENTS 第 3 条的「未交卷」限制就此解除；
  *   T2A.8 例外：answerRelease='after_due' 且交卷瞬间未到截止时，响应同样是
- *   受限形态——只下发本人答案，截止后恢复完整）。
+ *   受限形态——只下发本人答案，截止后恢复完整）。lesson 来源恒 on_submit
+ *   题级释放，结果视图完整形态（当题粒度已在讲练开卷投影承载）。
  *
  * now 可注入（T2A.8 定时测试；默认当前时刻，submittedAt 亦取该时刻）。
  */
@@ -1586,31 +1779,56 @@ export function submitAttempt(
   // 三来源统一取行（rowid 序；判分/写入与顺序无关，展示排序在结果视图
   // 经 unitGroupedRows 重建）
   const ownRows = attemptResponseRows(db, attemptId);
+  // lesson 整卷收尾（2026-10）：已单题提交的行不重判（见函数头注释）
+  const isLesson = attempt.sourceType === "lesson";
 
   // T2.10：每题有效用时与改答案次数（服务端按事件序列计算，§5.5）
   const timeline = attemptTimeline(db, attemptId);
   const activeSecByQuestion = computePerQuestionActiveSec(timeline);
   const eventChangeCountByQuestion = countAnswerChanges(timeline);
 
+  // allFrozen：全部冻结题（revisions 全集校验与整卷得分汇总的输入）；
+  // graded：本次要判分写入的行（lesson 剔除已单题提交者）
+  const allFrozen: GradedResponse[] = [];
   const graded: GradedResponse[] = [];
+  const keptRows: ResponseRow[] = [];
+  const finalCorrects: (boolean | null)[] = [];
   for (const ownRow of ownRows) {
     const snapshot = snapshotOfRow(ownRow);
     if (snapshot === null) continue; // 历史题目缺失/坏快照按缺失计（不回填、不判分）
     // answerOf 收敛为 null 语义后按 undefined 归一（判分/序列化的未作答口径）
     const answer = answerOf(ownRow.answerJson) ?? undefined;
-    graded.push({
+    if (isLesson && ownRow.submittedAt !== null) {
+      // 已单题提交：保行内判定（教师课中可能已批 teacherMark → finalCorrect），
+      // 不重判不重写；快照与答案随行透传给结果视图与汇总
+      keptRows.push(ownRow);
+      allFrozen.push({
+        response: ownRow,
+        question: snapshot,
+        answer,
+        autoCorrect: ownRow.autoCorrect,
+      });
+      finalCorrects.push(ownRow.finalCorrect);
+      continue;
+    }
+    const entry: GradedResponse = {
       response: ownRow,
       question: snapshot,
       answer,
       autoCorrect: grade(snapshot, answer),
-    });
+    };
+    allFrozen.push(entry);
+    graded.push(entry);
+    finalCorrects.push(entry.autoCorrect);
   }
 
+  // revisions 全集校验不变：比对对象是**全部冻结题**（lesson 含已提交行）
   if (clientRevisions !== undefined) {
-    validateSubmitRevisions(graded, clientRevisions);
+    validateSubmitRevisions(allFrozen, clientRevisions);
   }
   // T6R.10：笔记证据声明验证（纯读、先于事务；写入与判分同事务）——
-  // 任一项验证失败零落行，attempt 保持 draft 可恢复
+  // 范围 = 参与本次判分的行（lesson：未提交题）；任一项验证失败零落行，
+  // attempt 保持 draft 可恢复
   const evidenceRows = buildSubmissionEvidence(
     db,
     attemptId,
@@ -1618,12 +1836,16 @@ export function submitAttempt(
     evidenceDeclarations,
   );
 
-  const scoreAuto = scoreAutoOf(graded);
-  // D3：交卷时 teacherMark 必空 → finalCorrect = autoCorrect；D2 据此定 status/scoreFinal
-  const finalCorrects = graded.map((g) => g.autoCorrect);
+  const scoreAuto = scoreAutoOf(allFrozen);
+  // D3：本次判分行 finalCorrect = autoCorrect（teacherMark 必空）；lesson 已
+  // 提交行按行内当前 finalCorrect（教师批改优先）；D2 据此定 status/scoreFinal
   const { status: finalStatus, scoreFinal } = finalScoreOf(finalCorrects);
 
   const nowIso = new Date(now).toISOString();
+  // lesson 收尾把「本次交卷的行」的提交时刻记为交卷时刻（responses.submittedAt
+  // 列注释口径）；非 lesson 行不写该列（保持 null）。事务内 update 与下方内存
+  // 镜像展开同一对象，两处口径永不漂移
+  const lessonSubmittedAtPatch = isLesson ? { submittedAt: nowIso } : {};
   db.transaction((tx) => {
     for (const g of graded) {
       tx.update(responses)
@@ -1632,6 +1854,7 @@ export function submitAttempt(
           autoCorrect: g.autoCorrect,
           // D3：交卷同时写 finalCorrect = autoCorrect（teacherMark 必空）
           finalCorrect: g.autoCorrect,
+          ...lessonSubmittedAtPatch,
           activeSec: activeSecByQuestion[g.response.questionId] ?? null,
           changeCount: Math.max(
             g.response.changeCount,
@@ -1677,18 +1900,23 @@ export function submitAttempt(
   });
 
   // 预加载：判分循环已 parse 的快照 + 内存镜像事务写入后的行/attempt（结果
-  // 视图免二次查询/parse，且拿到的是判分后的新值——预载原始行会带旧判定）
-  const updatedRows = graded.map((g) => ({
-    ...g.response,
-    answerJson: g.answer !== undefined ? JSON.stringify(g.answer) : null,
-    autoCorrect: g.autoCorrect,
-    finalCorrect: g.autoCorrect,
-    activeSec: activeSecByQuestion[g.response.questionId] ?? null,
-    changeCount: Math.max(
-      g.response.changeCount,
-      eventChangeCountByQuestion[g.response.questionId] ?? 0,
-    ),
-  }));
+  // 视图免二次查询/parse，且拿到的是判分后的新值——预载原始行会带旧判定）。
+  // lesson 已提交行原样随行（判定/提交时刻保留，不构造镜像）
+  const updatedRows = [
+    ...keptRows,
+    ...graded.map((g) => ({
+      ...g.response,
+      answerJson: g.answer !== undefined ? JSON.stringify(g.answer) : null,
+      autoCorrect: g.autoCorrect,
+      finalCorrect: g.autoCorrect,
+      ...lessonSubmittedAtPatch,
+      activeSec: activeSecByQuestion[g.response.questionId] ?? null,
+      changeCount: Math.max(
+        g.response.changeCount,
+        eventChangeCountByQuestion[g.response.questionId] ?? 0,
+      ),
+    })),
+  ];
   const attemptAfter: Attempt = {
     ...attempt,
     status: finalStatus,
@@ -1704,9 +1932,285 @@ export function submitAttempt(
     db,
     attemptAfter,
     now,
-    new Map(graded.map((g) => [g.response.questionId, g.question] as const)),
+    new Map(allFrozen.map((g) => [g.response.questionId, g.question] as const)),
     updatedRows,
   );
+}
+
+// ---------- POST /api/student/attempts/:id/questions/:questionId/submit（2026-10） ----------
+
+/**
+ * lesson 卷的读侧现算汇总（2026-10 讲练一体；lesson-service 开卷投影与
+ * submitLessonQuestion 响应共用同一口径，单一出处）：
+ * - 仅**已提交行**（responses.submittedAt 非空）计入对错（autoCorrect）与
+ *   answered（answer 非 null），未提交行全部计入 unanswered——「提交瞬间看到
+ *   部分汇总、刷新 start 又变」两者永不漂移；
+ * - pendingCount 按 D4 的 finalCorrect 口径只数已提交行（进行中卷教师课中
+ *   批改后即归零）；
+ * - scoreFinal 读 attempt 行（进行中恒 null；离开 draft 时由收尾链路写入）；
+ * - 快照缺失的历史行跳过（与判分/视图口径一致；lesson 建卷即冻结全快照，
+ *   正常链路无此类行）。
+ */
+
+/** lessonLiveSummaryOf 的判定输入行裁剪（瘦列，不含每题数 KB 的快照原文）：
+ * 单题提交传事务闭包带出的行集（即此形态），开卷链路传完整行结构兼容 */
+type LessonSummaryRow = Pick<
+  ResponseRow,
+  | "questionSnapshotJson"
+  | "answerJson"
+  | "submittedAt"
+  | "autoCorrect"
+  | "finalCorrect"
+>;
+
+export function lessonLiveSummaryOf(
+  rows: readonly LessonSummaryRow[],
+  attempt: Pick<Attempt, "scoreFinal">,
+): AttemptScoreSummary {
+  let total = 0;
+  let answered = 0;
+  let correct = 0;
+  let wrong = 0;
+  let pending = 0;
+  let pendingCount = 0;
+  for (const row of rows) {
+    if (row.questionSnapshotJson === null) continue;
+    total += 1;
+    if (row.submittedAt === null) continue;
+    if (answerOf(row.answerJson) !== null) answered += 1;
+    if (row.autoCorrect === true) correct += 1;
+    else if (row.autoCorrect === false) wrong += 1;
+    else pending += 1;
+    if (row.finalCorrect === null) pendingCount += 1;
+  }
+  return {
+    total,
+    answered,
+    correct,
+    wrong,
+    pending,
+    unanswered: total - answered,
+    autoGradable: correct + wrong,
+    scoreFinal: attempt.scoreFinal,
+    pendingCount,
+  };
+}
+
+/** 该题已单题提交的统一拒绝（2026-10；与整卷重复交卷 ALREADY_SUBMITTED 分码） */
+function questionAlreadySubmitted(): HttpError {
+  return new HttpError(
+    409,
+    "QUESTION_ALREADY_SUBMITTED",
+    "这道题已经提交过了，不能重复提交",
+  );
+}
+
+/**
+ * 单题提交（2026-10 讲练一体，方案「作答服务」节 + 决策 3——既有交卷管线的
+ * 单题化）：lesson 来源 draft 卷的逐题即时反馈，单事务完成
+ * 「CAS 校验 → 判分 → 冻结证据 → （最后一题）自动收尾」。
+ *
+ * - 归属与状态：requireUsableAttempt（404/403；lesson 永不失权——无课程分态
+ *   重校验）；非 lesson 来源 → 404 NOT_FOUND（单题提交是讲练专属入口，其余
+ *   来源仍走整卷交卷）；已离开 draft → 409 ALREADY_SUBMITTED；
+ * - 题目与版本：该题冻结行（严格口径：快照非空，缺失 → 404
+ *   QUESTION_NOT_FOUND）；questionRevisionId 与行 id 精确比对（错版 409
+ *   QUESTION_REVISION_STALE，与整卷同口径）；行内 submittedAt 已非空 →
+ *   409 QUESTION_ALREADY_SUBMITTED（幂等拒绝，前端据此锁定题卡）；
+ * - 判分：草稿答案已在行内（无 = 未作答提交，按 D1 客观题判 false）；
+ *   grade(snapshot, answer)（@tutor/grading 复用，不复制判分逻辑）写
+ *   autoCorrect 与 finalCorrect（不可自动判 → 两者留 null 进教师待批——
+ *   D4 谓词按「卷非 draft 或行已提交」收录，见 pending-mark.ts）；行内
+ *   teacherMark 必空（draft 卷不可批注），finalCorrect = autoCorrect；
+ * - submittedAt = now（该行的提交时刻）；hints/ink/answerJson/changeCount
+ *   等其余列不动；
+ * - 笔记证据（T6R.10 单题化）：req.evidence 经 buildSingleQuestionEvidence
+ *   验证（frozen CAS / none / missing / 缺省旧客户端），通过则同事务写
+ *   submission_evidence（(attempt, question) 唯一——每题至多一条，整卷收尾
+ *   不再为已提交题补写）；
+ * - **自动收尾（最后一题，方案决策 5）**：事务内重读全部冻结行（快照非空），
+ *   若全部 submittedAt 非空 → attempt 置 submitted/graded（finalScoreOf，
+ *   有待批 = submitted、全判完 = graded）并写 scoreAuto（scoreAutoOf）/
+ *   scoreFinal——与整卷交卷同口径复用计算函数；并发双收尾（整卷与本接口
+ *   同刻）由「事务内复核 attempt 仍 draft + 行仍 null」保证后到者 409 幂等
+ *   （better-sqlite3 同步事务天然串行）；
+ * - 成功后直记 question_submit 事件（payload 仅 questionId；拒绝路径不记）；
+ * - 响应（lessonQuestionSubmitData）：**只含该题**的 result 投影（提交即释放
+ *   参考答案/详解/判定——stemMd 经 studentStemMd 学生端投影）+ 现算 summary
+ *   （lessonLiveSummaryOf）+ attempt 摘要（自动收尾后为新状态）；其他未提交
+ *   题的答案/详解/提示内容绝不出现（泄露矩阵见 routes/student-lesson.test.ts）。
+ *
+ * now 可注入（测试；默认当前时刻，行 submittedAt 亦取该时刻）。
+ */
+export function submitLessonQuestion(
+  db: Db,
+  studentId: string,
+  attemptId: string,
+  questionId: string,
+  req: LessonQuestionSubmitRequest,
+  now: Date | string = new Date(),
+): LessonQuestionSubmitData {
+  const attempt = requireUsableAttempt(db, studentId, attemptId);
+  if (attempt.sourceType !== "lesson") {
+    throw new HttpError(404, "NOT_FOUND", "这份练习不是讲练练习，不能逐题提交");
+  }
+  if (attempt.status !== "draft") {
+    throw new HttpError(
+      409,
+      "ALREADY_SUBMITTED",
+      "这份练习已经完成，不能再提交",
+    );
+  }
+
+  // 冻结行（严格口径：快照非空）——行 id 即对外下发的 questionRevisionId
+  const row = db
+    .select()
+    .from(responses)
+    .where(buildAttemptQuestionWhere(attemptId, questionId))
+    .get();
+  if (row === undefined) {
+    throw new HttpError(
+      404,
+      "QUESTION_NOT_FOUND",
+      "题目不存在或不属于这次练习",
+    );
+  }
+  if (row.id !== req.questionRevisionId) {
+    throw revisionStale();
+  }
+  if (row.submittedAt !== null) {
+    throw questionAlreadySubmitted();
+  }
+  const snapshot = snapshotOfRow(row);
+  if (snapshot === null) {
+    // 理论不可达（严格口径已保证快照非空）；防御性兜底不静默
+    throw new HttpError(
+      404,
+      "QUESTION_NOT_FOUND",
+      "题目不存在或不属于这次练习",
+    );
+  }
+  // 草稿答案已在行内（无 = 未作答提交，grade 按 D1 客观题判 false）
+  const answer = answerOf(row.answerJson) ?? undefined;
+  const autoCorrect = grade(snapshot, answer);
+
+  // 笔记证据（单题化）：验证纯读、先于事务；写入与判分同事务
+  const evidenceRow = buildSingleQuestionEvidence(
+    db,
+    attemptId,
+    questionId,
+    req.evidence,
+  );
+
+  const nowIso = new Date(now).toISOString();
+  // 单事务先复核后写：better-sqlite3 同步单进程，复核防御与写入原子同界。
+  // 闭包带出收尾判定的瘦行集（不含快照原文列）——事务后 summary 直接消费，
+  // 热路径不再整卷全列回读（每题数 KB 的 questionSnapshotJson）
+  const summaryRows = db.transaction((tx) => {
+    const freshAttempt = tx
+      .select()
+      .from(attempts)
+      .where(eq(attempts.id, attemptId))
+      .get();
+    const freshRow = tx
+      .select()
+      .from(responses)
+      .where(eq(responses.id, row.id))
+      .get();
+    if (
+      freshAttempt === undefined ||
+      freshAttempt.sourceType !== "lesson" ||
+      freshAttempt.status !== "draft"
+    ) {
+      // 并发双收尾的后到者：整卷收尾（或另一路收尾）已离开 draft
+      throw new HttpError(
+        409,
+        "ALREADY_SUBMITTED",
+        "这份练习已经完成，不能再提交",
+      );
+    }
+    if (freshRow === undefined || freshRow.submittedAt !== null) {
+      throw questionAlreadySubmitted();
+    }
+    tx.update(responses)
+      .set({
+        autoCorrect,
+        // D3：提交时 teacherMark 必空（draft 卷不可批注）→ finalCorrect = autoCorrect
+        finalCorrect: autoCorrect,
+        submittedAt: nowIso,
+      })
+      .where(eq(responses.id, row.id))
+      .run();
+    if (evidenceRow !== null) {
+      tx.insert(submissionEvidence)
+        .values({
+          id: randomUUID(),
+          attemptId,
+          questionId: evidenceRow.questionId,
+          state: evidenceRow.state,
+          versionId: evidenceRow.versionId,
+          recordedAt: nowIso,
+        })
+        .run();
+    }
+    // 自动收尾判定：全部冻结行（快照非空）都已提交 → 最后一题，收尾 attempt
+    //（与整卷交卷同口径复用 scoreAutoOf / finalScoreOf）。行集为瘦列投影
+    //（answerJson 供 summary 的 answered 计数），出事务即 lessonLiveSummaryOf
+    // 的输入——与开卷链路同一口径，不复制谓词
+    const rowsAfter = tx
+      .select({
+        questionSnapshotJson: responses.questionSnapshotJson,
+        answerJson: responses.answerJson,
+        submittedAt: responses.submittedAt,
+        autoCorrect: responses.autoCorrect,
+        finalCorrect: responses.finalCorrect,
+      })
+      .from(responses)
+      .where(eq(responses.attemptId, attemptId))
+      .all();
+    const gradable = rowsAfter.filter((r) => r.questionSnapshotJson !== null);
+    if (gradable.every((r) => r.submittedAt !== null)) {
+      const { status, scoreFinal } = finalScoreOf(
+        gradable.map((r) => r.finalCorrect),
+      );
+      tx.update(attempts)
+        .set({
+          status,
+          submittedAt: nowIso,
+          scoreAuto: scoreAutoOf(gradable),
+          scoreFinal,
+        })
+        .where(eq(attempts.id, attemptId))
+        .run();
+    }
+    return rowsAfter;
+  });
+
+  // 成功后直记 question_submit 事件（payload 仅 questionId，拒绝路径不记）
+  recordQuestionSubmitEvent(db, studentId, attemptId, questionId);
+
+  // 响应组装：该题 result 投影（stemMd 经学生端投影）+ 现算 summary + 最新
+  // attempt 摘要（自动收尾后为新状态）。提交行按主键取一行（快照复用事务前
+  // 已 parse 的同一份）；summary 消费事务带出的瘦行集
+  const freshAttempt = db
+    .select()
+    .from(attempts)
+    .where(eq(attempts.id, attemptId))
+    .get();
+  const freshRow = db
+    .select()
+    .from(responses)
+    .where(eq(responses.id, row.id))
+    .get();
+  if (freshAttempt === undefined || freshRow === undefined) {
+    // 理论不可达（事务刚写完）；防御性兜底不让接口 500 无信息
+    throw new HttpError(500, "INTERNAL", "提交失败，请刷新页面后重试");
+  }
+  return {
+    question: studentFacingResultOf(resultQuestionOf(freshRow, snapshot)),
+    summary: lessonLiveSummaryOf(summaryRows, freshAttempt),
+    attempt: attemptSummaryOf(freshAttempt),
+  };
 }
 
 // ---------- GET /api/student/attempts/:id ----------
@@ -1778,8 +2282,11 @@ function buildDraftData(db: Db, attempt: Attempt): AttemptDraftData {
  * 结果视图的单题行（快照投影：除已解锁条目外无 hints 内容，options 转纯文本；
  * D9〔T3.5〕新增 teacherMark / teacherComment / finalCorrect 透传 responses 行）。
  * 快照由调用方传入（buildResultData 预加载或现场 parse，单一解析出口 snapshotOfRow）。
+ * **stemMd 是作答时原文（含 [[答案]] 标记）**——学生端消费方一律先经
+ * studentFacingResultOf 整题投影（唯一包装处，不得再各自手写）。2026-10
+ * 讲练一体起导出供 lesson-service 复用。
  */
-function resultQuestionOf(
+export function resultQuestionOf(
   row: ResponseRow,
   snapshot: Question,
 ): AttemptResultQuestion {
@@ -1809,6 +2316,23 @@ function resultQuestionOf(
     finalCorrect: row.finalCorrect,
     // T2.11：只回显做题时已解锁的提示（文本取自快照；未解锁条目绝不在此）
     hintsOpened: resultHintsOpenedOf(row, snapshot.hints),
+  };
+}
+
+/**
+ * 结果条目的学生端整题投影（防泄露不变式的唯一包装处，2026-10 讲练一体收敛
+ * 三份手写副本）：在 resultQuestionOf 条目之上把 snapshot.stemMd 经
+ * studentStemMd 投影（[[答案]] → 空框、剥题干内嵌选项列表——AGENTS 第 3 条，
+ * 学生端题干唯一入口）。三个消费方：buildResultData 的 releaseAwareQuestion
+ * （已公布也投影）、submitLessonQuestion 响应（提交即释放）、lesson-service
+ * 的 released 条目（当题释放）。
+ */
+export function studentFacingResultOf(
+  item: AttemptResultQuestion,
+): AttemptResultQuestion {
+  return {
+    ...item,
+    snapshot: { ...item.snapshot, stemMd: studentStemMd(item.snapshot) },
   };
 }
 
@@ -1875,16 +2399,13 @@ function buildResultData(
     assignmentRow === null || answersReleased(assignmentRow, now);
 
   /** 受限形态的逐题投影（见函数头注释）。
-   * stemMd 一律经 studentStemMd 学生端投影（已公布也不例外）：[[答案]] 渲染为
-   * 空框、选择题选项列表由前端 options 行渲染——保证学生载荷在任何形态下都不含
-   * [x] 正确项标记与非空 [[…]] 标记（AGENTS 第 3 条，studentStemMd 唯一入口）。
-   * D9 字段 teacherMark / teacherComment / finalCorrect 与 autoCorrect 同法置
-   * null——教师已批也不在截止前泄露对错与评语 */
+   * stemMd 一律经 studentFacingResultOf 学生端投影（已公布也不例外）：[[答案]]
+   * 渲染为空框、选择题选项列表由前端 options 行渲染——保证学生载荷在任何形态下
+   * 都不含 [x] 正确项标记与非空 [[…]] 标记（AGENTS 第 3 条，studentStemMd
+   * 唯一入口）。D9 字段 teacherMark / teacherComment / finalCorrect 与
+   * autoCorrect 同法置 null——教师已批也不在截止前泄露对错与评语 */
   const releaseAwareQuestion = (item: AttemptResultQuestion) => {
-    const projected: AttemptResultQuestion = {
-      ...item,
-      snapshot: { ...item.snapshot, stemMd: studentStemMd(item.snapshot) },
-    };
+    const projected = studentFacingResultOf(item);
     return released
       ? projected
       : {

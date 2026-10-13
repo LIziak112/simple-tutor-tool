@@ -11,13 +11,14 @@ import {
 } from "./learning-event.ts";
 
 /**
- * 学习痕迹事件契约测试（T2.10 + T4.0a）：
- * - 事件类型枚举（既有 11 种零变化 + T4.0a 新增 11 种，共 22 种）；
+ * 学习痕迹事件契约测试（T2.10 + T4.0a + 2026-10 讲练一体）：
+ * - 事件类型枚举（既有 11 种零变化 + T4.0a 新增 11 种 + question_submit，共 23 种）；
  * - 单条事件：合法/非法 type、缺 questionId、answer_change 的 from/to 形态；
  * - 批量请求：200 条通过 / 201 条拒绝（任务验收：超 200 → 400 的契约层依据）；
  * - attempt 事件联合不含 lecture_expand、lecture 联合只含讲义域事件组；
  * - T4.0a：三族新事件的归属/分支锁定（host 分支、reveal 仅 lecture 带 step、
  *   端点互斥、多余键剥离——studentId 伪造无效的契约层依据）。
+ * - question_submit（2026-10 讲练一体）：逐题提交埋点，attempt 域、payload 仅 questionId。
  */
 
 /** 最小合法事件（按 type 补 payload） */
@@ -29,7 +30,7 @@ function eventOf(
 }
 
 describe("learningEventTypeSchema", () => {
-  it("枚举：既有 11 种零变化 + T4.0a 新增 11 种（方案 §4.3 三族）", () => {
+  it("枚举：既有 11 种零变化 + T4.0a 新增 11 种（方案 §4.3 三族）+ question_submit（2026-10）", () => {
     expect(learningEventTypeSchema.options).toEqual([
       // 既有（T2.10，顺序与语义零变化）
       "attempt_start",
@@ -57,6 +58,8 @@ describe("learningEventTypeSchema", () => {
       "directive_interact",
       "ink_edit_batch",
       "ink_fullscreen",
+      // 2026-10 讲练一体：逐题提交埋点（attempt 域）
+      "question_submit",
     ]);
   });
 });
@@ -469,6 +472,47 @@ describe("T4.0a 交互族（directive_interact / ink_edit_batch / ink_fullscreen
 
 // ---------- T6R.17：事件 payload 字段白名单守护（辅助信息纪律） ----------
 
+describe("question_submit（2026-10 讲练一体逐题提交埋点）", () => {
+  it("attempt 域接收：payload 仅 questionId；缺 questionId 拒绝", () => {
+    expect(
+      attemptEventSchema.safeParse(
+        eventOf("question_submit", { questionId: "有理数讲练-1" }),
+      ).success,
+    ).toBe(true);
+    expect(
+      learningEventSchema.safeParse(
+        eventOf("question_submit", { questionId: "有理数讲练-1" }),
+      ).success,
+    ).toBe(true);
+    expect(
+      attemptEventSchema.safeParse(eventOf("question_submit")).success,
+    ).toBe(false);
+  });
+
+  it("讲义域联合不收（逐题提交只发生在 attempt 语境）", () => {
+    expect(
+      lectureEventSchema.safeParse(
+        eventOf("question_submit", { questionId: "有理数讲练-1" }),
+      ).success,
+    ).toBe(false);
+  });
+
+  it("多余键剥离（studentId 伪造无效，归属列由服务端写入）", () => {
+    const parsed = learningEventSchema.safeParse(
+      eventOf("question_submit", {
+        questionId: "有理数讲练-1",
+        studentId: "forged",
+      }),
+    );
+    expect(parsed.success).toBe(true);
+    expect(parsed.data).toEqual({
+      type: "question_submit",
+      clientTs: 1_769_000_000_000,
+      questionId: "有理数讲练-1",
+    });
+  });
+});
+
 describe("learningEventSchema：payload 字段白名单守护（T6R.17 辅助信息纪律）", () => {
   /**
    * 纪律出处（T6R.17 辅助信息纪律，承接 learning-event.ts 文件头安全口径
@@ -533,10 +577,10 @@ describe("learningEventSchema：payload 字段白名单守护（T6R.17 辅助信
         }
       }
     }
-    // 守护自检：分支数须与现行 22 种事件的 schema 分支数一致（directive_interact
+    // 守护自检：分支数须与现行 23 种事件的 schema 分支数一致（directive_interact
     // 按 host/action 拆 4 分支、net/idle 两 scope 共用同一 schema）——新增事件
     // 此数必然 +1，白名单须同步审视，这正是守护点
-    expect(branches.length).toBe(25);
+    expect(branches.length).toBe(26);
     expect(violations).toEqual([]);
   });
 });

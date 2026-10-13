@@ -1,13 +1,6 @@
 import { ArrowLeft, Dumbbell, ListTree } from "lucide-react";
-import {
-  memo,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from "react";
-import { Link, useParams, useSearchParams } from "react-router";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { Link, Navigate, useParams, useSearchParams } from "react-router";
 import {
   Dialog,
   DialogContent,
@@ -25,8 +18,10 @@ import { extractOutline } from "@/features/markdown/outline";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import {
   LECTURE_HEADING_SELECTOR,
+  scrollToHeadingAt,
   useLectureSectionFocus,
 } from "@/features/markdown/use-lecture-section-focus";
+import { lessonHref } from "@/features/student/lesson-navigation";
 import { useStudentLecture } from "@/features/student/student-queries";
 import {
   StudentErrorPanel,
@@ -34,17 +29,9 @@ import {
 } from "@/features/student/student-ui";
 import { useStudentWorkspace } from "@/features/student/student-workspace-layout";
 import { createEventQueue } from "@/lib/event-queue";
+import { useDesktopViewport } from "@/lib/use-desktop-viewport";
 
 const LectureMarkdown = memo(RichMarkdown);
-const DESKTOP_QUERY = "(min-width: 1024px)";
-function subscribeDesktop(onChange: () => void): () => void {
-  const media = window.matchMedia(DESKTOP_QUERY);
-  media.addEventListener("change", onChange);
-  return () => media.removeEventListener("change", onChange);
-}
-function getDesktopSnapshot(): boolean {
-  return window.matchMedia(DESKTOP_QUERY).matches;
-}
 
 /**
  * /s/lectures/:id 讲义阅读页（T2.3，§5.3 讲义渲染；T2A.5 加课程上下文与配套练习）。
@@ -66,22 +53,6 @@ function getDesktopSnapshot(): boolean {
  *   两侧都不出现横向滚动（公式块 overflow 由 rich-markdown 样式内部消化）。
  */
 
-/** 滚动正文中的第 index 个 H2/H3 标题到视口（目录条目与渲染标题一一对应） */
-function scrollToHeading(index: number): void {
-  const target = document.querySelectorAll<HTMLElement>(
-    LECTURE_HEADING_SELECTOR,
-  )[index];
-  if (!target) return;
-  target.tabIndex = -1;
-  target.focus({ preventScroll: true });
-  target.scrollIntoView({
-    behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
-      ? "instant"
-      : "smooth",
-    block: "start",
-  });
-}
-
 export default function StudentLectureViewPage() {
   useStudentWorkspace();
   const { id = "" } = useParams<{ id: string }>();
@@ -89,11 +60,7 @@ export default function StudentLectureViewPage() {
   /** 课程上下文（课程目录/讲义列表带出；缺省时服务端取第一个可见该讲义的课程） */
   const courseId = searchParams.get("courseId") ?? undefined;
   const lectureQuery = useStudentLecture(id, courseId);
-  const isDesktop = useSyncExternalStore(
-    subscribeDesktop,
-    getDesktopSnapshot,
-    () => false,
-  );
+  const isDesktop = useDesktopViewport();
   /** 桌面侧栏默认展开；窄屏只通过阅读栏进入目录。 */
   const [outlineOpen, setOutlineOpen] = useState(true);
   const [mobileOutlineOpen, setMobileOutlineOpen] = useState(false);
@@ -230,14 +197,24 @@ export default function StudentLectureViewPage() {
       pendingHeadingRef.current = headingIndex;
       setMobileOutlineOpen(false);
     } else {
-      scrollToHeading(headingIndex);
+      scrollToHeadingAt(LECTURE_HEADING_SELECTOR, headingIndex);
     }
   }
 
   const outline = useMemo(
-    () => (lectureQuery.data ? extractOutline(lectureQuery.data.markdown) : []),
+    // 2026-10 讲练一体：kind=lesson 时 markdown 恒 null（安全投影）——本页对
+    // lesson 重定向到讲练页（下方分支），这里空串兜底（纯讲义不受影响）
+    () =>
+      lectureQuery.data ? extractOutline(lectureQuery.data.markdown ?? "") : [],
     [lectureQuery.data],
   );
+
+  // 2026-10 讲练一体：讲练页（kind=lesson）的学生入口是 /s/lectures/:id/lesson
+  // （单题作答 + 即时反馈）——本阅读页对 lesson 详情重定向过去（保留 courseId
+  // 课程上下文；讲义列表/课程目录行的点击由此直达讲练页）
+  if (lectureQuery.data?.kind === "lesson") {
+    return <Navigate replace to={lessonHref(id, courseId)} />;
+  }
 
   return (
     <article
@@ -296,7 +273,8 @@ export default function StudentLectureViewPage() {
               event.preventDefault();
               const index = pendingHeadingRef.current;
               pendingHeadingRef.current = null;
-              if (index !== null) scrollToHeading(index);
+              if (index !== null)
+                scrollToHeadingAt(LECTURE_HEADING_SELECTOR, index);
               else outlineTriggerRef.current?.focus({ preventScroll: true });
             }}
           >
@@ -380,8 +358,9 @@ export default function StudentLectureViewPage() {
                 </span>
               </p>
               <EnabledCapabilitiesProvider value={capabilities}>
+                {/* kind=lesson 时 markdown 恒 null，讲练页路由接入前空串兜底 */}
                 <LectureMarkdown
-                  source={lectureQuery.data.markdown}
+                  source={lectureQuery.data.markdown ?? ""}
                   className="lecture-body"
                   onDirectiveTelemetry={onDirectiveTelemetry}
                 />

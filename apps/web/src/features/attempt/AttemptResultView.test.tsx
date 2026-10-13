@@ -54,6 +54,7 @@ const DATA: AttemptResultData = {
     id: "55555555-5555-4555-8555-555555555555",
     sourceType: "assignment",
     assignmentId: "44444444-4444-4444-8444-444444444444",
+    lectureId: null,
     courseId: null,
     // T2A.7：assignment 来源多单元化后 unitId 为 null
     unitId: null,
@@ -883,6 +884,35 @@ describe("本次草稿原稿入口（T6R.11）", () => {
     // wrong 的 attemptNo=该生错题重练组卷计数（含废弃 draft），非每题轮次——
     // 文案不承诺「第 n 轮」
     expect(stubsOf()[0]?.round).toBe("错题重练 · 第 3 次组卷");
+  });
+
+  it("轮次标注按来源：lesson=第 n 次讲练；来源行「讲练：讲义标题 · 第 n 次」+ 返回按钮「返回讲练页」（2026-10 讲练一体）", () => {
+    const baseUnit = DATA.units[0];
+    const lessonData: AttemptResultData = {
+      ...DATA,
+      attempt: {
+        ...DATA.attempt,
+        sourceType: "lesson",
+        assignmentId: null,
+        lectureId: "77777777-7777-4777-8777-777777777777",
+        courseId: null,
+        unitId: "随堂讲练",
+        attemptNo: 2,
+      },
+      units: baseUnit === undefined ? [] : [baseUnit],
+      title: "第1讲 有理数讲练",
+      courseName: null,
+    };
+    render(<AttemptResultView data={lessonData} onBackHome={vi.fn()} />);
+    expect(stubsOf()[0]?.round).toBe("第 2 次讲练");
+    expect(
+      screen.getByText("讲练：第1讲 有理数讲练 · 第 2 次"),
+    ).toBeInTheDocument();
+    // 来源行不落「作业」兜底；返回按钮默认文案指向讲练页
+    expect(screen.queryByText(/^作业/)).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "返回讲练页" }),
+    ).toBeInTheDocument();
   });
 
   it("ariaPrefix 接线：各题桩带自己的题号前缀", () => {

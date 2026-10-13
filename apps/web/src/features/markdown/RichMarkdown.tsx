@@ -8,6 +8,7 @@ import {
   DirectiveLeafHost,
   DirectiveTextHost,
 } from "./directives";
+import { QuestionViewProvider } from "./directives/question-view";
 import type { DirectiveTelemetryInfo } from "./directives/session-context";
 import { DirectiveSessionProvider } from "./directives/session-context";
 import {
@@ -60,6 +61,13 @@ export interface RichMarkdownProps {
   onDirectiveExpand?:
     | ((info: { name: string; index: number }) => void)
     | undefined;
+  /**
+   * 题块占位模式（2026-10 讲练一体，教师语境）：true 时 ::::question 块渲染
+   * 为只读占位卡（题号/题型/难度 + 「内容请在题库编辑」+ 可折叠原文）——教师
+   * 预览 lesson 讲义时用；缺省 false 照常渲染题面（题目编辑抽屉等既有消费方
+   * 零变化）。学生端 markdown 永不含题块，本模式仅教师路径触达。
+   */
+  questionPlaceholder?: boolean | undefined;
 }
 
 export function RichMarkdown({
@@ -67,6 +75,7 @@ export function RichMarkdown({
   className,
   onDirectiveTelemetry,
   onDirectiveExpand,
+  questionPlaceholder,
 }: RichMarkdownProps) {
   // 兼容别名：旧回调只收 open 方向（收起/揭晓是 T4.0b 新增语义，旧回调不感知）
   const telemetry: ((event: DirectiveTelemetryInfo) => void) | null =
@@ -78,17 +87,27 @@ export function RichMarkdown({
           }
         }
       : null);
+  const body = (
+    <DirectiveSessionProvider telemetry={telemetry}>
+      <ReactMarkdown
+        remarkPlugins={richMarkdownRemarkPlugins}
+        rehypePlugins={richMarkdownRehypePlugins}
+        components={directiveHostComponents}
+      >
+        {source}
+      </ReactMarkdown>
+    </DirectiveSessionProvider>
+  );
   return (
     <div className={cn("rich-markdown", className)}>
-      <DirectiveSessionProvider telemetry={telemetry}>
-        <ReactMarkdown
-          remarkPlugins={richMarkdownRemarkPlugins}
-          rehypePlugins={richMarkdownRehypePlugins}
-          components={directiveHostComponents}
-        >
-          {source}
-        </ReactMarkdown>
-      </DirectiveSessionProvider>
+      {questionPlaceholder === true ? (
+        // 占位卡按 sourceRange 从 source 切题块原文（position 经 sanitize 保留）
+        <QuestionViewProvider value={{ placeholder: true, source }}>
+          {body}
+        </QuestionViewProvider>
+      ) : (
+        body
+      )}
     </div>
   );
 }

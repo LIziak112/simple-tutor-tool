@@ -616,8 +616,10 @@ describe("讲义编辑与删除", () => {
       cookie,
     );
     expect(detailRes.status).toBe(200);
-    const detail = ((await detailRes.json()) as { data: { markdown: string } })
-      .data;
+    const detail = (
+      (await detailRes.json()) as { data: { kind: string; markdown: string } }
+    ).data;
+    expect(detail.kind).toBe("lecture"); // 2026-10 讲练一体：详情携带文档形态
     expect(detail.markdown).toContain("# 第1讲 有理数");
 
     const edited = detail.markdown.replace(
@@ -785,6 +787,146 @@ describe("讲义编辑与删除", () => {
       "第1讲 有理数",
       "第2讲 数轴",
     ]);
+  });
+});
+
+// ---------- 讲练一体（2026-10，kind: lesson）：讲练讲义编辑语境 ----------
+
+/** 讲练页样例：单讲 + 单题（缺省 id），教师编辑讲练讲义时题块合法 */
+const LESSON_MD = `---
+kind: lesson
+unit: 随堂讲练
+---
+
+# 第1讲 有理数讲练
+
+正文一段。
+
+::::question{type=judge difficulty=1}
+$0$ 是最小的正整数。[[错误]]
+::::
+
+题后一段正文。
+`;
+
+/** 组装仅导入讲练页样例的教师应用（避免与三份基础样例的同名讲义互相覆盖） */
+async function makeLessonApp(): Promise<TeacherApp & { lectureId: string }> {
+  const db = createTestDb();
+  const app = createApp({
+    isProduction: false,
+    logger: silentLogger,
+    db,
+    publicUrl: "http://localhost:8787",
+    dataDir: createTestDir(),
+  });
+  const res = await app.request("/api/public/teacher/setup", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ loginName: "teacher", password: PASSWORD }),
+  });
+  const line = res.headers
+    .getSetCookie()
+    .find((c) => c.toLowerCase().startsWith("tutor_session="));
+  if (!line) throw new Error("setup 未下发会话 Cookie");
+  const token = line.slice("tutor_session=".length).split(";")[0] ?? "";
+  const cookie = `tutor_session=${token}`;
+  const commit = await app.request("/api/teacher/import/commit", {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie },
+    body: JSON.stringify({ markdown: LESSON_MD, filename: "随堂讲练.md" }),
+  });
+  if (commit.status !== 200) throw new Error("讲练样例导入失败");
+  const lectureId = db
+    .select({ id: lectures.id })
+    .from(lectures)
+    .where(eq(lectures.title, "第1讲 有理数讲练"))
+    .get()?.id;
+  if (lectureId === undefined) throw new Error("讲练讲义缺失");
+  return { app, db, cookie, lectureId };
+}
+
+describe("讲练页讲义编辑（lint 按存储 kind：题块合法、markdown 原样保存、kind 不变）", () => {
+  it("PUT 含题块的讲练讲义 200（不报 QUESTION_IN_LECTURE）；保存后 markdown 保留题块、kind 仍为 lesson", async () => {
+    const { app, db, cookie, lectureId } = await makeLessonApp();
+    const detailRes = await request(
+      app,
+      "GET",
+      `/api/teacher/lectures/${lectureId}`,
+      cookie,
+    );
+    expect(detailRes.status).toBe(200);
+    const { kind, markdown } = (
+      (await detailRes.json()) as { data: { kind: string; markdown: string } }
+    ).data;
+    expect(kind).toBe("lesson"); // 编辑抽屉按此选 lint 语境与占位卡预览
+    expect(markdown).toContain('id="随堂讲练-1"'); // 导入时已注入最终题目 id
+
+    // 编辑：标题微调 + 追加一段正文，题块原样保留
+    const edited = markdown
+      .replace("# 第1讲 有理数讲练", "# 第1讲 有理数讲练（修订）")
+      .replace("题后一段正文。", "题后一段正文。\n\n再补一段。");
+    const putRes = await request(
+      app,
+      "PUT",
+      `/api/teacher/lectures/${lectureId}`,
+      cookie,
+      { markdown: edited },
+    );
+    expect(putRes.status).toBe(200); // lesson 语境：题块合法，不报 QUESTION_IN_LECTURE
+    const putBody = ((await putRes.json()) as { data: { title: string } }).data;
+    expect(putBody.title).toBe("第1讲 有理数讲练（修订）");
+
+    // 保存后：markdown 原样保留题块（含注入 id）；kind 列不被编辑改动
+    const row = db
+      .select()
+      .from(lectures)
+      .where(eq(lectures.id, lectureId))
+      .get();
+    expect(row?.markdown).toBe(edited);
+    expect(row?.markdown).toContain('id="随堂讲练-1"');
+    expect(row?.kind).toBe("lesson");
+  });
+
+  it("对照：纯讲义（kind=lecture）编辑塞入题块仍 422 QUESTION_IN_LECTURE（既有行为不变）", async () => {
+    const { app, db, cookie } = await makeTeacherApp();
+    const tree = await getTree(app, cookie);
+    const lectureId = tree.courses[0]?.lectures.find(
+      (l) => l.title === "第2讲 数轴",
+    )?.id;
+    if (lectureId === undefined) throw new Error("第2讲缺失");
+    expect(
+      db
+        .select({ kind: lectures.kind })
+        .from(lectures)
+        .where(eq(lectures.id, lectureId))
+        .get()?.kind,
+    ).toBe("lecture");
+
+    const detailRes = await request(
+      app,
+      "GET",
+      `/api/teacher/lectures/${lectureId}`,
+      cookie,
+    );
+    const { markdown } = (
+      (await detailRes.json()) as { data: { markdown: string } }
+    ).data;
+    const withQuestion = `${markdown}\n\n::::question{type=judge id="edit-q1"}\n$1>0$。[[正确]]\n::::\n`;
+    const res = await request(
+      app,
+      "PUT",
+      `/api/teacher/lectures/${lectureId}`,
+      cookie,
+      { markdown: withQuestion },
+    );
+    expect(res.status).toBe(422);
+    const body = (await res.json()) as ApiErr & {
+      _issues?: { code: string }[];
+    };
+    expect(body.error).toBe("LINT_ERROR");
+    expect(body._issues?.some((i) => i.code === "QUESTION_IN_LECTURE")).toBe(
+      true,
+    );
   });
 });
 

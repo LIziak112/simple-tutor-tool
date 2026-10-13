@@ -8,6 +8,7 @@ import {
   Square,
 } from "lucide-react";
 import { useMemo, useState } from "react";
+import { LessonBadge } from "@/components/source-badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -281,6 +282,7 @@ export function AddFromLibrarySheet({
                   <ResourceRow
                     key={lecture.id}
                     title={lecture.title}
+                    docKind={lecture.kind}
                     meta={`被 ${courseCountLabel(lecture.courseCount)}引用`}
                     disabled={inCourse}
                     badge={inCourse ? "已在本课程" : null}
@@ -448,6 +450,7 @@ function ResourceList({
 
 function ResourceRow({
   title,
+  docKind,
   meta,
   disabled,
   badge,
@@ -455,6 +458,8 @@ function ResourceRow({
   onToggle,
 }: {
   title: string;
+  /** 讲义行的文档形态（2026-10 讲练一体）：lesson 显「讲练」徽标 */
+  docKind?: "lecture" | "lesson";
   meta: string;
   disabled: boolean;
   badge: string | null;
@@ -488,7 +493,10 @@ function ResourceRow({
           />
         )}
         <span className="min-w-0 flex-1">
-          <span className="block truncate font-medium">{title}</span>
+          <span className="flex min-w-0 items-center gap-2">
+            {docKind === "lesson" ? <LessonBadge /> : null}
+            <span className="min-w-0 truncate font-medium">{title}</span>
+          </span>
           <span className="block truncate text-xs text-muted-foreground">
             {meta}
           </span>

@@ -74,7 +74,7 @@ export function extractFrontmatter(
             fenceLine + 1,
             fenceColumn,
             "MISSING_KIND",
-            "frontmatter 缺少 kind（practice | lecture | mixed）",
+            "frontmatter 缺少 kind（practice | lecture | mixed | lesson）",
           ),
         );
       } else {
@@ -84,7 +84,7 @@ export function extractFrontmatter(
             fenceLine + 1,
             fenceColumn,
             "INVALID_KIND",
-            `kind 值不合法：${zIssue.message}（合法值：practice | lecture | mixed）`,
+            `kind 值不合法：${zIssue.message}（合法值：practice | lecture | mixed | lesson）`,
           ),
         );
       }

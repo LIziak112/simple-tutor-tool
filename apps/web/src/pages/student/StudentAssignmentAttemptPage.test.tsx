@@ -146,6 +146,7 @@ const START_DRAFT: AttemptStartData = {
   id: ATTEMPT_ID,
   sourceType: "assignment",
   assignmentId: ASSIGNMENT_ID,
+  lectureId: null,
   courseId: null,
   // T2A.7：assignment 来源多单元化后 unitId 为 null
   unitId: null,

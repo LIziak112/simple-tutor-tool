@@ -36,6 +36,7 @@ import { formatCnTime, formatRelativeTime } from "@/lib/time";
 const KIND_LABELS: Record<SharedFileSummary["kind"], string> = {
   lecture: "讲义",
   practice: "练习",
+  lesson: "讲练",
 };
 
 export function SharedPage() {
@@ -174,10 +175,10 @@ export function SharedPage() {
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="flex min-h-6 items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs font-medium">
-                      {file.kind === "lecture" ? (
-                        <BookOpen aria-hidden className="size-3" />
-                      ) : (
+                      {file.kind === "practice" ? (
                         <FileText aria-hidden className="size-3" />
+                      ) : (
+                        <BookOpen aria-hidden className="size-3" />
                       )}
                       {KIND_LABELS[file.kind]}
                     </span>
@@ -210,7 +211,7 @@ export function SharedPage() {
                       </>
                     )}
                     {" · "}
-                    {file.kind === "practice"
+                    {file.kind !== "lecture"
                       ? `${file.questionCount} 题 · `
                       : ""}
                     <span title={formatCnTime(file.publishedAt)}>

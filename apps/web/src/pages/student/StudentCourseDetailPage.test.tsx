@@ -24,6 +24,8 @@ const mockedCourse = vi.mocked(fetchStudentCourseApi);
 
 const COURSE_ID = "12121212-1212-4121-8121-121212121212";
 const LECTURE_ID = "33333333-3333-4333-8333-333333333333";
+/** 讲练页讲义条目（docKind=lesson）：显「讲练」徽标并直达讲练页 */
+const LESSON_LECTURE_ID = "77777777-7777-4777-8777-777777777777";
 
 const DETAIL: StudentCourseDetailData = {
   id: COURSE_ID,
@@ -33,6 +35,7 @@ const DETAIL: StudentCourseDetailData = {
     {
       id: "34343434-3434-4343-8343-343434343434",
       kind: "section",
+      docKind: null,
       refId: null,
       title: "第一章 有理数",
       order: 0,
@@ -42,6 +45,7 @@ const DETAIL: StudentCourseDetailData = {
     {
       id: "45454545-4545-4545-8545-454545454545",
       kind: "lecture",
+      docKind: "lecture",
       refId: LECTURE_ID,
       title: "第1讲 有理数",
       order: 1,
@@ -51,10 +55,21 @@ const DETAIL: StudentCourseDetailData = {
     {
       id: "56565656-5656-4565-8565-565656565656",
       kind: "unit",
+      docKind: null,
       refId: "有理数小练",
       title: "有理数小练",
       order: 2,
       questionCount: 4,
+      attempt: null,
+    },
+    {
+      id: "67676767-6767-4676-8676-676767676767",
+      kind: "lecture",
+      docKind: "lesson",
+      refId: LESSON_LECTURE_ID,
+      title: "讲练 数轴热身",
+      order: 3,
+      questionCount: null,
       attempt: null,
     },
   ],
@@ -95,6 +110,14 @@ describe("StudentCourseDetailPage", () => {
     expect(
       screen.getByRole("link", { name: "打开练习 有理数小练（4 题）" }),
     ).toHaveAttribute("href", `/s/courses/${COURSE_ID}/units/有理数小练`);
+    // 讲练页条目（docKind=lesson，2026-10 讲练一体）：「讲练」徽标 + 直达讲练页
+    expect(screen.getAllByText("讲练")).toHaveLength(1);
+    expect(
+      screen.getByRole("link", { name: "打开讲练 讲练 数轴热身" }),
+    ).toHaveAttribute(
+      "href",
+      `/s/lectures/${LESSON_LECTURE_ID}/lesson?courseId=${COURSE_ID}`,
+    );
     // 返回我的课程
     expect(screen.getByRole("link", { name: "返回我的课程" })).toHaveAttribute(
       "href",

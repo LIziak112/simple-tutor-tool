@@ -110,3 +110,41 @@ describe("wrapLectureMd", () => {
     expect(shifted[0]?.line).toBe(1);
   });
 });
+
+describe("wrapLectureMd kind 透传（讲练页，2026-10 讲练一体）", () => {
+  /** 讲练页的讲义正文形态：讲义段落 + 题块 + 讲义正文提示（hint 在讲义正文合法） */
+  const LESSON_BODY_MD = `# 第1讲 有理数
+
+$0$ 既不是正数也不是负数。
+
+::::question{type=judge}
+$0$ 是最小的正整数。[[错误]]
+::::
+
+:::hint
+讲义正文的提示（讲练语境与 mixed 同款，合法）。
+:::
+`;
+
+  it("kind: lesson 包装：题块不报 QUESTION_IN_LECTURE，lint 语境按讲练（0 error，讲义正文 hint 合法）", () => {
+    const wrapped = wrapLectureMd(LESSON_BODY_MD, "lesson");
+    const parsed = parseDocument(wrapped);
+    expect(parsed.frontmatter?.kind).toBe("lesson");
+    expect(parsed.issues.map((i) => i.code)).not.toContain(
+      "QUESTION_IN_LECTURE",
+    );
+    expect(parsed.issues.filter((i) => i.level === "error")).toEqual([]);
+    // 讲练页题块保留在讲义 markdown 原位（缺省 id 注入）
+    expect(parsed.lectures[0]?.markdown).toContain("::::question");
+    const { issues } = lintDocument(wrapped);
+    expect(issues.filter((i) => i.level === "error")).toEqual([]);
+    expect(issues.map((i) => i.code)).not.toContain("HINT_OUTSIDE_QUESTION");
+  });
+
+  it("缺省不传 kind：维持 lecture 包装（题块照旧报 QUESTION_IN_LECTURE，既有行为不变）", () => {
+    const wrapped = wrapLectureMd(LESSON_BODY_MD);
+    const parsed = parseDocument(wrapped);
+    expect(parsed.frontmatter?.kind).toBe("lecture");
+    expect(parsed.issues.map((i) => i.code)).toContain("QUESTION_IN_LECTURE");
+  });
+});

@@ -89,6 +89,7 @@ describe("学生端课程契约（T2A.5）", () => {
         order: 0,
         questionCount: null,
         attempt: null,
+        docKind: null,
       }).success,
     ).toBe(true);
     expect(
@@ -100,6 +101,7 @@ describe("学生端课程契约（T2A.5）", () => {
         order: 1,
         questionCount: null,
         attempt: null,
+        docKind: "lecture",
       }).success,
     ).toBe(true);
     expect(
@@ -111,6 +113,7 @@ describe("学生端课程契约（T2A.5）", () => {
         order: 2,
         questionCount: 4,
         attempt: null,
+        docKind: null,
       }).success,
     ).toBe(true);
     // unit 的 refId 来自 DSL（非 UUID 合法）；非法 kind 被拒
@@ -122,6 +125,48 @@ describe("学生端课程契约（T2A.5）", () => {
         title: "x",
         order: 0,
         questionCount: null,
+      }).success,
+    ).toBe(false);
+  });
+
+  it("目录条目 docKind：讲义条目必填（lecture/lesson），分节/单元恒 null（讲练一体列表徽标数据源）", async () => {
+    const { studentCourseItemSchema } = await import("./student-course-api.ts");
+    const lectureEntry = {
+      id: "4faf5bef-afde-4c40-8f0a-cf6f6f6f6f6f",
+      kind: "lecture",
+      refId: "0b6f18ae-6b9a-4d0e-8b7c-9b1b1b1b1b1b",
+      title: "第1讲 有理数（讲练）",
+      order: 1,
+      questionCount: null,
+      attempt: null,
+    } as const;
+    // 讲练页条目：docKind=lesson 合法（前端据此显「讲练」徽标并直达讲练页）
+    expect(
+      studentCourseItemSchema.safeParse({
+        ...lectureEntry,
+        docKind: "lesson",
+      }).success,
+    ).toBe(true);
+    // 讲义条目缺 docKind → 拒绝（必填）
+    expect(studentCourseItemSchema.safeParse(lectureEntry).success).toBe(false);
+    // docKind 越界值（frontmatter 的 mixed/practice 不是讲义行形态）→ 拒绝
+    expect(
+      studentCourseItemSchema.safeParse({
+        ...lectureEntry,
+        docKind: "mixed",
+      }).success,
+    ).toBe(false);
+    // 分节条目 docKind 非 null → 拒绝（只有讲义条目携带文档形态）
+    expect(
+      studentCourseItemSchema.safeParse({
+        id: lectureEntry.id,
+        kind: "section",
+        refId: null,
+        title: "第一章",
+        order: 0,
+        questionCount: null,
+        attempt: null,
+        docKind: "lesson",
       }).success,
     ).toBe(false);
   });
@@ -164,6 +209,7 @@ describe("T2A.6 课程练习：单元条目作答摘要与单元落地页契约"
         title: "有理数小练",
         order: 2,
         questionCount: 4,
+        docKind: null,
         attempt: {
           count: 2,
           submittedCount: 1,
@@ -184,6 +230,7 @@ describe("T2A.6 课程练习：单元条目作答摘要与单元落地页契约"
         title: "有理数小练",
         order: 2,
         questionCount: 4,
+        docKind: null,
         attempt: {
           count: 1,
           submittedCount: 1,

@@ -20,11 +20,16 @@ export function wrapSingleQuestionMd(unitId: string, sourceMd: string): string {
 }
 
 /**
- * 把单篇讲义 markdown 包装成可解析的 lecture 文档：
- * `---\nkind: lecture\n---\n\n` + markdown（markdown 自身含 H1 标题行）。
+ * 把单篇讲义 markdown 包装成可解析的整篇文档：`---\nkind: <kind>\n---\n\n` + markdown
+ * （markdown 自身含 H1 标题行）。kind 缺省 lecture（普通讲义，既有调用兼容）；
+ * 讲练页（kind: lesson）的讲义正文含题目容器，包装时传 "lesson" 让 lint 按
+ * 讲练语境校验（题块合法、讲义段落语境与 mixed 同款）。
  */
-export function wrapLectureMd(markdown: string): string {
-  return `---\nkind: lecture\n---\n\n${markdown}`;
+export function wrapLectureMd(
+  markdown: string,
+  kind: "lecture" | "lesson" = "lecture",
+): string {
+  return `---\nkind: ${kind}\n---\n\n${markdown}`;
 }
 
 /** wrapSingleQuestionMd 前缀占的行数（第 offset+1 行起才是 sourceMd 第 1 行） */

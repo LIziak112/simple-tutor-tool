@@ -21,10 +21,12 @@ import { parseDocument } from "./parse.ts";
  * T7.9 样例自动发现与解析回归门禁：
  * - samples/v2 下全部 .md（含嵌套目录）经 discoverSampleFiles 稳定排序发现，
  *   新增讲义/纯练习文件零配置纳入；
- * - 每份文档（+ 完整样例三个 markdown 块）实际进入 parseDocument，输出通过
+ * - 每份文档（+ 完整样例全部 markdown 块）实际进入 parseDocument，输出通过
  *   ParsedDocument 契约且维持样例零 issue 约定；
- * - 三种 kind 均有实际覆盖；纯练习文档的题目不因 lectures 为空被跳过。
+ * - 四种 kind 均有实际覆盖；纯练习文档的题目不因 lectures 为空被跳过。
  * 临时目录 fixture 验证发现能力本身，测试结束清理。
+ * 2026-10 讲练一体：新增 samples/v2/讲练样例.md（kind: lesson），
+ *   choice/judge/fill 三题型自动纳入解析与渲染回归语料。
  */
 
 /** 临时讲义 fixture：最小合法 lecture 文档 */
@@ -113,7 +115,7 @@ describe("样例自动发现（discoverSampleFiles）", () => {
   });
 });
 
-describe("全部样例解析回归（samples/v2 自动发现 + 完整样例三块）", () => {
+describe("全部样例解析回归（samples/v2 自动发现 + 完整样例全部块）", () => {
   const docs = allSampleDocs();
   /** 每份文档只解析一次，三类断言（kind/契约/题目收集）共用 */
   const parsedDocs = docs.map((d) => ({
@@ -121,10 +123,10 @@ describe("全部样例解析回归（samples/v2 自动发现 + 完整样例三�
     parsed: parseDocument(d.markdown),
   }));
 
-  it("样例来源非空，三种 kind 均有实际覆盖", () => {
+  it("样例来源非空，四种 kind 均有实际覆盖", () => {
     expect(docs.length).toBeGreaterThanOrEqual(4);
     const kinds = new Set(parsedDocs.map((d) => d.parsed.frontmatter?.kind));
-    expect(kinds).toEqual(new Set(["practice", "lecture", "mixed"]));
+    expect(kinds).toEqual(new Set(["practice", "lecture", "mixed", "lesson"]));
   });
 
   it.each(parsedDocs.map((d) => [d.name, d.parsed] as const))(
@@ -138,8 +140,8 @@ describe("全部样例解析回归（samples/v2 自动发现 + 完整样例三�
     },
   );
 
-  it("练习与混合文档的题目全部可收集（纯练习不因 lectures 为空被跳过）", () => {
-    const questionsOfKind = (kind: "practice" | "mixed") =>
+  it("练习/混合/讲练文档的题目全部可收集（纯练习不因 lectures 为空被跳过）", () => {
+    const questionsOfKind = (kind: "practice" | "mixed" | "lesson") =>
       parsedDocs
         .filter((d) => d.parsed.frontmatter?.kind === kind)
         .flatMap((d) => d.parsed.units.flatMap((unit) => unit.questions));
@@ -148,5 +150,9 @@ describe("全部样例解析回归（samples/v2 自动发现 + 完整样例三�
       "纯练习文档（lectures 为空）的题目必须进入回归语料",
     ).toBeGreaterThanOrEqual(8);
     expect(questionsOfKind("mixed").length).toBeGreaterThanOrEqual(1);
+    expect(
+      questionsOfKind("lesson").length,
+      "讲练页样例的三种题型（judge/choice/fill）必须进入回归语料",
+    ).toBeGreaterThanOrEqual(3);
   });
 });

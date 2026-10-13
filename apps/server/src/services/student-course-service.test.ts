@@ -402,6 +402,41 @@ describe("getStudentCourseDetail（课程可见目录，D22 矩阵）", () => {
     );
   });
 
+  it("讲义条目 docKind 投影：lesson 讲义 docKind=lesson，分节/单元恒 null（2026-10 讲练一体）", () => {
+    const db = createTestDb();
+    const ctx = seed(db);
+    const lessonId = crypto.randomUUID();
+    db.insert(lectures)
+      .values({
+        id: lessonId,
+        teacherId: TEST_TEACHER_ID,
+        courseId: null,
+        folderId: null,
+        kind: "lesson",
+        title: "讲练 数轴热身",
+        markdown: "# 讲练 数轴热身",
+        order: 8,
+        updatedAt: T0,
+        deletedAt: null,
+      })
+      .run();
+    insertItem(db, ctx.courseAId, {
+      kind: "lecture",
+      refId: lessonId,
+      order: 9,
+      visible: true,
+    });
+
+    const detail = getStudentCourseDetail(db, ctx.memberId, ctx.courseAId);
+    const docKinds = new Map(
+      detail.items.map((item) => [item.title, item.docKind]),
+    );
+    expect(docKinds.get("讲练 数轴热身")).toBe("lesson");
+    expect(docKinds.get("第1讲 有理数")).toBe("lecture");
+    expect(docKinds.get("第一章 有理数")).toBeNull(); // 分节
+    expect(docKinds.get("有理数小练")).toBeNull(); // 单元
+  });
+
   it("非成员 403 / 课程归档 403 / 课程不存在 404（D22）", () => {
     const db = createTestDb();
     const ctx = seed(db);
@@ -514,6 +549,45 @@ describe("listStudentLectures（可见讲义双视图）", () => {
       .run();
     const member = listStudentLectures(db, ctx.memberId);
     expect(member.lectures.some((l) => l.title === "孤儿讲义")).toBe(false);
+  });
+
+  it("kind 随行投影：讲练页（kind=lesson）在去重与分组两视图都携带文档形态（2026-10 讲练一体）", () => {
+    const db = createTestDb();
+    const ctx = seed(db);
+    const lessonId = crypto.randomUUID();
+    db.insert(lectures)
+      .values({
+        id: lessonId,
+        teacherId: TEST_TEACHER_ID,
+        courseId: null,
+        folderId: null,
+        kind: "lesson",
+        title: "讲练 有理数热身",
+        markdown:
+          '# 讲练 有理数热身\n\n::::question{type=judge id="w1"}\n$0$ 是负数。[[错误]]\n::::',
+        order: 8,
+        updatedAt: T0,
+        deletedAt: null,
+      })
+      .run();
+    insertItem(db, ctx.courseAId, {
+      kind: "lecture",
+      refId: lessonId,
+      order: 9,
+      visible: true,
+    });
+
+    const data = listStudentLectures(db, ctx.memberId);
+    const deduped = data.lectures.find((l) => l.id === lessonId);
+    expect(deduped?.kind).toBe("lesson");
+    // 既有纯讲义仍是 lecture（默认值行不受影响）
+    expect(data.lectures.find((l) => l.title === "第1讲 有理数")?.kind).toBe(
+      "lecture",
+    );
+    const grouped = data.courses
+      .find((group) => group.courseId === ctx.courseAId)
+      ?.lectures.find((l) => l.id === lessonId);
+    expect(grouped?.kind).toBe("lesson");
   });
 });
 

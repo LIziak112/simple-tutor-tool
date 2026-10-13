@@ -364,7 +364,9 @@ export function LectureEditSheet({
   const check = useMemo(() => {
     const data = detailQuery.data;
     if (data === undefined || debouncedText === null) return null;
-    const wrapped = wrapLectureMd(debouncedText);
+    // 解析语境按存储 kind（讲练一体 2026-10）：lesson 时题块合法，本地 lint 与
+    // 服务端 updateLecture 的 wrapLectureMd 同口径（两端一套包装，见 edit-context）
+    const wrapped = wrapLectureMd(debouncedText, data.kind);
     const { parsed, issues } = lintDocument(wrapped);
     const local = shiftLintIssuesToFragment(issues, LECTURE_PREFIX_LINES);
     const extra: LintIssue[] = [];
@@ -457,7 +459,11 @@ export function LectureEditSheet({
             <div className="grid min-h-0 flex-1 grid-cols-1 gap-0 lg:grid-cols-2">
               <div className="flex min-h-0 flex-col overflow-hidden lg:border-r lg:border-border">
                 <p className="shrink-0 border-b border-border px-3 py-2 text-xs font-medium text-muted-foreground">
-                  讲义原文（整篇 Markdown，首个 H1 为标题）
+                  讲义原文（整篇 Markdown，首个 H1 为标题
+                  {detailQuery.data.kind === "lesson"
+                    ? "；题块按讲练语境校验，内容请在题库编辑"
+                    : ""}
+                  ）
                 </p>
                 <div className="min-h-0 flex-1 overflow-y-auto">
                   <MarkdownEditor
@@ -480,8 +486,16 @@ export function LectureEditSheet({
                 </p>
                 <div className="min-h-0 flex-1 overflow-y-auto p-4">
                   <div className="mx-auto max-w-2xl">
+                    {/* 讲练页（kind=lesson）：题块渲染只读占位卡（内容编辑走
+                        题库，防双源漂移）；纯讲义无题块，占位模式不生效 */}
                     <RichMarkdown
-                      source={check?.wrapped ?? wrapLectureMd(text)}
+                      source={
+                        check?.wrapped ??
+                        wrapLectureMd(text, detailQuery.data.kind)
+                      }
+                      questionPlaceholder={
+                        detailQuery.data.kind === "lesson" || undefined
+                      }
                     />
                   </div>
                 </div>

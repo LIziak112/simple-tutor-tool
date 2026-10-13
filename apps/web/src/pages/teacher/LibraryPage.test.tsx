@@ -128,9 +128,19 @@ const LECTURES: LibraryLectureList = {
   lectures: [
     {
       id: "22222222-2222-4222-8222-222222222222",
+      kind: "lecture",
       title: "第1讲 有理数",
       folderId: FOLDER_ID,
       updatedAt: "2026-09-26T00:00:00.000Z",
+      deletedAt: null,
+      courseCount: 0,
+    },
+    {
+      id: "8a8a8a8a-8a8a-48a8-88a8-8a8a8a8a8a8a",
+      kind: "lesson",
+      title: "讲练 有理数热身",
+      folderId: null,
+      updatedAt: "2026-09-27T00:00:00.000Z",
       deletedAt: null,
       courseCount: 0,
     },
@@ -345,6 +355,24 @@ describe("资源库页面", () => {
       "true",
     );
     expect(await screen.findByText("第1讲 有理数")).toBeInTheDocument();
+  });
+
+  it("讲义库列表：kind=lesson 行显「讲练」徽标，教师操作不变（点击仍进编辑，2026-10 讲练一体）", async () => {
+    mockDataLoaded();
+    mockedLectures.mockResolvedValue(LECTURES as never);
+    renderPage();
+    fireEvent.click(await screen.findByRole("tab", { name: "讲义库" }));
+
+    // 讲练页行显徽标；纯讲义行没有
+    await screen.findByText("讲练 有理数热身");
+    expect(screen.getAllByText("讲练")).toHaveLength(1);
+    // 教师侧操作不变：编辑按钮仍在（不进学生讲练页）
+    expect(
+      screen.getByRole("button", { name: "编辑讲义 讲练 有理数热身" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "编辑讲义 第1讲 有理数" }),
+    ).toBeInTheDocument();
   });
 
   it("显式 ?tab=recycle 直达回收站，记忆随之更新", async () => {

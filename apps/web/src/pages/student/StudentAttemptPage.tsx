@@ -1,6 +1,7 @@
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 import { AttemptSession } from "@/features/attempt/AttemptSession";
 import { useAttemptDetail } from "@/features/attempt/attempt-queries";
+import { lessonHref } from "@/features/student/lesson-navigation";
 import { recordsReturnTarget } from "@/features/student/record-review-navigation";
 import {
   StudentErrorPanel,
@@ -63,17 +64,20 @@ export default function StudentAttemptPage() {
 
   const data = detailQuery.data;
   // 退出目标：课程练习回单元落地页（继续「再做一次/历次记录」动线）；错题重练
-  // 回错题本（2026-10，交卷后能直接看到轮次史新增一轮与攻克状态）；作业回首页。
+  // 回错题本（2026-10，交卷后能直接看到轮次史新增一轮与攻克状态）；讲练回讲练
+  // 页（2026-10 讲练一体——恒可回看/再做一次，courseId 上下文随行）；作业回首页。
   // T2A.7：attempt.unitId 可空（assignment 来源多单元化为 null）——course 来源
   // 恒有值，仅在两者齐备时才构造单元落地页地址，否则回首页兜底。
   const exitTarget =
     data.attempt.sourceType === "wrong"
       ? "/s/wrong"
-      : data.attempt.sourceType === "course" &&
-          data.attempt.courseId !== null &&
-          data.attempt.unitId !== null
-        ? `/s/courses/${data.attempt.courseId}/units/${encodeURIComponent(data.attempt.unitId)}`
-        : "/s/home";
+      : data.attempt.sourceType === "lesson" && data.attempt.lectureId !== null
+        ? lessonHref(data.attempt.lectureId, data.attempt.courseId)
+        : data.attempt.sourceType === "course" &&
+            data.attempt.courseId !== null &&
+            data.attempt.unitId !== null
+          ? `/s/courses/${data.attempt.courseId}/units/${encodeURIComponent(data.attempt.unitId)}`
+          : "/s/home";
   return (
     <AttemptSession
       data={data}

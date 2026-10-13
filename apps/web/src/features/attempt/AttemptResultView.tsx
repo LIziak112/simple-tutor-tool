@@ -25,6 +25,7 @@ import { studentInkPngUrl } from "@/lib/api";
 import { formatCnTime } from "@/lib/time";
 import {
   attemptRoundLabel,
+  attemptSourceLabel,
   HANDWRITTEN_TYPES,
   letterOf,
   QUESTION_TYPE_BADGE_CLASS,
@@ -63,40 +64,61 @@ import { reviewCounts, reviewQuestionState } from "./result-review-model";
  */
 
 /**
- * 判定图标：true=绿勾、false=红叉（D1 后含未作答客观题；D9 后最终判定
- * finalCorrect 优先——教师批注改判以批注为准）、null=待批（琥珀时钟）。
+ * 判定徽章组合（图标 + 文案 + 配色单一出处）：true=绿勾「答对」、false=
+ * 红叉「答错」（D1 后含未作答客观题；D9 后最终判定 finalCorrect 优先——
+ * 教师批注改判以批注为准）、null=琥珀时钟待批（文案可经 pendingLabel 覆盖，
+ * 讲练页题卡用「待老师批改」）。toned=true 时文字套判定配色（讲练页题卡
+ * 形态）；默认继承前景色（结果视图既有形态）。
+ * 2026-10 讲练一体：讲练页题卡结果态复用（导出；仍单一出处）。
  */
-function VerdictIcon({ verdict }: { verdict: boolean | null }) {
-  if (verdict === true) {
-    return (
+export function VerdictBadge({
+  verdict,
+  pendingLabel = "待批改",
+  toned = false,
+}: {
+  verdict: boolean | null;
+  /** 待批（null）文案覆盖——讲练页用「待老师批改」 */
+  pendingLabel?: string;
+  /** 文字是否套判定配色（讲练页题卡带色；结果视图沿用默认前景色） */
+  toned?: boolean;
+}) {
+  const label =
+    verdict === true ? "答对" : verdict === false ? "答错" : pendingLabel;
+  const icon =
+    verdict === true ? (
       <CheckCircle2
         aria-label="答对"
         className="size-5 shrink-0 text-emerald-600"
       />
-    );
-  }
-  if (verdict === false) {
-    return (
+    ) : verdict === false ? (
       <XCircle aria-label="答错" className="size-5 shrink-0 text-red-600" />
+    ) : (
+      <Clock
+        aria-label={pendingLabel}
+        className="size-5 shrink-0 text-amber-500"
+      />
     );
-  }
   return (
-    <Clock aria-label="待批改" className="size-5 shrink-0 text-amber-500" />
+    <span
+      className={cn(
+        "flex items-center gap-1.5 text-sm font-semibold",
+        toned && verdict === true && "text-emerald-700 dark:text-emerald-300",
+        toned && verdict === false && "text-red-600 dark:text-red-400",
+        toned && verdict === null && "text-amber-700 dark:text-amber-300",
+      )}
+    >
+      {icon}
+      {label}
+    </span>
   );
-}
-
-/** 判定文字（与图标一致的辅助文本） */
-function verdictLabel(verdict: boolean | null): string {
-  if (verdict === true) return "答对";
-  if (verdict === false) return "答错";
-  return "待批改";
 }
 
 /**
  * 老师批改块（D9，显著展示）：有 teacherMark / teacherComment 任一时渲染。
  * teacherMark=null 且只有评语（清除判定保留评语）时标题显示「已评语」。
+ * 2026-10 讲练一体：讲练页题卡结果态复用（导出；仍单一出处）。
  */
-function TeacherMarkBlock({
+export function TeacherMarkBlock({
   teacherMark,
   teacherComment,
 }: {
@@ -123,8 +145,9 @@ function TeacherMarkBlock({
   );
 }
 
-/** 选项行（含正确项与学生所选标记；仅 choice/multi） */
-function ResultOptions({
+/** 选项行（含正确项与学生所选标记；仅 choice/multi）。2026-10 讲练页题卡
+ *  结果态复用（导出；仍单一出处）。 */
+export function ResultOptions({
   question,
   released,
 }: {
@@ -417,12 +440,7 @@ function ResultQuestionCard({
     >
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
         {/* T2A.8：未公布时不显示对错判定（finalCorrect/autoCorrect 已置 null） */}
-        {released && (
-          <span className="flex items-center gap-1.5 text-sm font-semibold">
-            <VerdictIcon verdict={verdict} />
-            {verdictLabel(verdict)}
-          </span>
-        )}
+        {released && <VerdictBadge verdict={verdict} />}
         <h3
           data-review-heading
           tabIndex={-1}
@@ -573,7 +591,9 @@ export function AttemptResultView({
           ? "返回单元练习"
           : attempt.sourceType === "wrong"
             ? "返回错题本"
-            : "返回首页")
+            : attempt.sourceType === "lesson"
+              ? "返回讲练页"
+              : "返回首页")
       }
     >
       <div className="flex flex-col gap-5">
@@ -591,15 +611,10 @@ export function AttemptResultView({
             </h2>
             {/* 来源行（T2A.6，与答题视图同口径）：课程练习带次数（历次回看可分辨
               第几次）；作业标「作业」（挂课程时「作业 · 课程名」，T2A.7）；
-              错题重练「错题重练 · 第 n 次」（2026-10） */}
+              错题重练「错题重练 · 第 n 次」（2026-10）；讲练「讲练：讲义标题 ·
+              第 n 次」（title 为讲义标题，2026-10 讲练一体） */}
             <p className="text-sm leading-relaxed text-muted-foreground">
-              {attempt.sourceType === "course"
-                ? `课程：${data.courseName ?? ""} · 第 ${attempt.attemptNo} 次`
-                : attempt.sourceType === "wrong"
-                  ? `错题重练 · 第 ${attempt.attemptNo} 次`
-                  : data.courseName !== null
-                    ? `作业 · ${data.courseName}`
-                    : "作业"}
+              {attemptSourceLabel(data)}
             </p>
             {attempt.submittedAt !== null && (
               <p className="text-sm leading-relaxed text-muted-foreground">

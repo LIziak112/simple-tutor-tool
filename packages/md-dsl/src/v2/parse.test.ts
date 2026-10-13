@@ -529,3 +529,229 @@ describe("parseDocument：fallbackUnitId 单元名锚定文件名（内容模型
     expect(codes(result.issues)).not.toContain("UNIT_FROM_FALLBACK");
   });
 });
+
+// ---------- 讲练页（kind: lesson，2026-10 讲练一体，测试先行） ----------
+
+/** 讲练页样例：2 讲 + 2 题（缺省 id），题块原位保留并注入最终题目 id */
+const LESSON_SAMPLE = `---
+kind: lesson
+unit: 随堂讲练
+topic: 有理数
+---
+
+# 第1讲 有理数
+
+$0$ 既不是正数也不是负数。
+
+::::question{type=judge difficulty=1}
+$0$ 是最小的正整数。[[错误]]
+::::
+
+# 第2讲 数轴
+
+数轴上右边的数总比左边的数大。
+
+::::question{type=fill difficulty=2}
+计算：$|-5|=$ [[5]]。
+::::
+
+题后还有一段正文。
+`;
+
+describe("parseDocument：讲练页样例（kind: lesson）", () => {
+  const lessonParsed = parseDocument(LESSON_SAMPLE);
+  const unit = lessonParsed.units[0];
+  const questions = unit?.questions ?? [];
+
+  it("合法样例 0 issue，且输出通过内容契约校验；题目全收进同一个单元", () => {
+    expect(lessonParsed.issues).toEqual([]);
+    expect(parsedDocumentSchema.safeParse(lessonParsed).success).toBe(true);
+    expect(lessonParsed.units).toHaveLength(1);
+    expect(questions.map((q) => q.type)).toEqual(["judge", "fill"]);
+    expect(unit?.id).toBe("随堂讲练");
+    expect(unit?.topic).toBe("有理数");
+  });
+
+  it("frontmatter 解析 kind: lesson（dsl 缺省 2）", () => {
+    expect(lessonParsed.frontmatter).toEqual({
+      kind: "lesson",
+      unit: "随堂讲练",
+      topic: "有理数",
+      dsl: 2,
+    });
+  });
+
+  it("缺省题目 id 按「单元-序号」生成并注入题块开围栏（题块原位保留在讲义 markdown）", () => {
+    expect(questions.map((q) => q.id)).toEqual(["随堂讲练-1", "随堂讲练-2"]);
+    const first = lessonParsed.lectures[0]?.markdown ?? "";
+    expect(first).toContain("# 第1讲 有理数");
+    expect(first).toContain(
+      '::::question{type=judge difficulty=1 id="随堂讲练-1"}',
+    );
+    expect(first).toContain("[[错误]]"); // 题块内容保留（讲练页不剔除题块）
+    const second = lessonParsed.lectures[1]?.markdown ?? "";
+    expect(second).toContain("# 第2讲 数轴");
+    expect(second).toContain(
+      '::::question{type=fill difficulty=2 id="随堂讲练-2"}',
+    );
+    expect(second).toContain("题后还有一段正文。");
+  });
+
+  it("多讲义（多 H1）逐篇归属：各题块注入各自所在讲义段", () => {
+    expect(lessonParsed.lectures).toHaveLength(2);
+    expect(lessonParsed.lectures[0]?.markdown).toContain("随堂讲练-1");
+    expect(lessonParsed.lectures[0]?.markdown).not.toContain("随堂讲练-2");
+    expect(lessonParsed.lectures[1]?.markdown).toContain("随堂讲练-2");
+    expect(lessonParsed.lectures[1]?.markdown).not.toContain("随堂讲练-1");
+  });
+
+  it("同一注入写进题目 sourceMd（编辑/reparse 往返 id 稳定）", () => {
+    expect(questions[0]).toBeDefined();
+    expect(questions[0]?.sourceMd).toContain('id="随堂讲练-1"');
+    // sourceMd 独立重解析：注入的 id 显式生效，缺省序号推导不再参与
+    const reParsed = parseDocument(questions[0]?.sourceMd ?? "", {
+      unitId: "别的单元",
+      questionStartNumber: 9,
+    });
+    expect(reParsed.units[0]?.questions[0]?.id).toBe("随堂讲练-1");
+  });
+
+  it("stemMd 不受注入影响（开围栏行本就不在题干行区间内）", () => {
+    expect(questions[0]?.stemMd).toBe("$0$ 是最小的正整数。[[错误]]");
+  });
+
+  it("unit.lectureTitle 推断链与 mixed 同款（最后一题之前最近的 H1）", () => {
+    expect(unit?.lectureTitle).toBe("第2讲 数轴");
+  });
+
+  it("显式 id（含 {#id} 简写）不重复注入，sourceMd 原样", () => {
+    const md = `---
+kind: lesson
+unit: 讲练单元
+---
+
+# 第1讲
+
+::::question{type=judge id="p1"}
+[[正确]]
+::::
+
+::::question{#p2 type=judge}
+[[错误]]
+::::
+`;
+    const result = parseDocument(md);
+    expect(result.issues).toEqual([]);
+    const markdown = result.lectures[0]?.markdown ?? "";
+    expect(markdown).toContain('::::question{type=judge id="p1"}');
+    expect(markdown).toContain("::::question{#p2 type=judge}");
+    // 开围栏里的 id 只剩显式写的那一处（无注入追加）
+    expect(markdown.match(/id=/g)).toHaveLength(1);
+    expect(result.units[0]?.questions.map((q) => q.id)).toEqual(["p1", "p2"]);
+    expect(result.units[0]?.questions[0]?.sourceMd).toContain('id="p1"');
+  });
+
+  it("零题：记 LESSON_WITHOUT_QUESTION（warning 不阻断），讲义照常产出、无单元", () => {
+    const md = `---
+kind: lesson
+---
+
+# 第1讲 有理数
+
+只有讲义正文。
+`;
+    const result = parseDocument(md);
+    expect(result.lectures).toHaveLength(1);
+    expect(result.units).toEqual([]);
+    const issue = result.issues.find(
+      (i) => i.code === "LESSON_WITHOUT_QUESTION",
+    );
+    expect(issue?.level).toBe("warning");
+    expect(issue?.message).toContain("kind: lecture");
+    expect(result.issues.filter((i) => i.level === "error")).toEqual([]);
+  });
+
+  it("全部题目都在第一个 H1 之前：QUESTION_BEFORE_FIRST_HEADING 同款，unit.lectureTitle 缺省，题块并入第一篇", () => {
+    const md = `---
+kind: lesson
+unit: 讲练单元
+---
+
+::::question{type=judge id="pre"}
+[[正确]]
+::::
+
+# 第1讲
+
+正文。
+`;
+    const result = parseDocument(md);
+    const issue = result.issues.find(
+      (i) => i.code === "QUESTION_BEFORE_FIRST_HEADING",
+    );
+    expect(issue?.level).toBe("warning");
+    expect(result.units[0]?.lectureTitle).toBeUndefined();
+    // keep 模式不丢内容：题块保留在第一篇讲义 markdown 内
+    expect(result.lectures[0]?.markdown).toContain('id="pre"');
+  });
+
+  it("与 mixed 对照：同体材 strip 剔除题块、lesson 原位保留并注入（既有 mixed 行为不变）", () => {
+    const body = `# 第1讲
+
+正文。
+
+::::question{type=judge}
+[[正确]]
+::::
+`;
+    const mixed = parseDocument(`---\nkind: mixed\nunit: 单元\n---\n\n${body}`);
+    const lesson = parseDocument(
+      `---\nkind: lesson\nunit: 单元\n---\n\n${body}`,
+    );
+    expect(mixed.lectures[0]?.markdown).not.toContain("::::question");
+    expect(lesson.lectures[0]?.markdown).toContain(
+      '::::question{type=judge id="单元-1"}',
+    );
+  });
+
+  it('缺省 id 含双引号时用单引号包裹注入（remark-directive 属性值不支持 \\" 转义）', () => {
+    const md = `---
+kind: lesson
+unit: 单元"A"
+---
+
+# 第1讲
+
+::::question{type=judge}
+[[正确]]
+::::
+`;
+    const result = parseDocument(md);
+    expect(result.units[0]?.questions[0]?.id).toBe('单元"A"-1');
+    expect(result.lectures[0]?.markdown).toContain(
+      "::::question{type=judge id='单元\"A\"-1'}",
+    );
+  });
+
+  it("frontmatter 文案：MISSING_KIND / INVALID_KIND 消息值域含 lesson（讲练页）", () => {
+    const missing = parseDocument("---\nunit: 练习\n---\n");
+    expect(
+      missing.issues.find((i) => i.code === "MISSING_KIND")?.message,
+    ).toContain("lesson");
+    const invalid = parseDocument("---\nkind: notes\n---\n");
+    expect(
+      invalid.issues.find((i) => i.code === "INVALID_KIND")?.message,
+    ).toContain("lesson");
+  });
+
+  it("健壮性：畸形讲练页输入（未闭合题块）不抛异常、输出恒过契约", () => {
+    const bad = "---\nkind: lesson\n---\n\n::::question\n[[正确]]\n";
+    expect(() => parseDocument(bad)).not.toThrow();
+    const result = parseDocument(bad);
+    expect(parsedDocumentSchema.safeParse(result).success).toBe(true);
+  });
+
+  it("纯函数：同输入重复调用结果一致", () => {
+    expect(parseDocument(LESSON_SAMPLE)).toEqual(lessonParsed);
+  });
+});

@@ -69,7 +69,11 @@ import { zipBufferOf } from "../lib/zip-write";
 import type { AnnotationPairItem } from "./annotation-service";
 import { assembleAnnotationPairs } from "./annotation-service";
 import { answerOf, frozenRowsInDisplayOrder } from "./attempt-service";
-import { beijingDateTimeOf, beijingExportStampOf } from "./export-csv";
+import {
+  beijingDateTimeOf,
+  beijingExportStampOf,
+  SOURCE_TYPE_TEXT,
+} from "./export-csv";
 import { inkFileAbs } from "./ink-service";
 import { lectureReadingMapFor } from "./lecture-insights";
 import { serializeStudentAnswer } from "./mark-response";
@@ -2246,9 +2250,11 @@ function renderSummaryMd(input: SummaryMdInput): string {
           ? `${row.unitTitle ?? "—"}（课程练习）`
           : row.sourceType === "wrong"
             ? "错题重练"
-            : (row.assignmentTitle ?? "—");
+            : row.sourceType === "lesson"
+              ? `${row.unitTitle ?? "—"}（讲练）`
+              : (row.assignmentTitle ?? "—");
       lines.push(
-        `| ${name} | ${row.sourceType === "course" ? "课程练习" : row.sourceType === "wrong" ? "错题重练" : "作业"} | ${
+        `| ${name} | ${SOURCE_TYPE_TEXT[row.sourceType]} | ${
           row.courseName ?? "—"
         } | ${target} | 第 ${row.attemptNo} 次 | ${
           row.isFirst ? "是" : "否"

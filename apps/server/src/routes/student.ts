@@ -9,6 +9,7 @@ import {
   correctionSealRequestSchema,
   hintOpenRequestSchema,
   lectureEventBatchRequestSchema,
+  lessonQuestionSubmitRequestSchema,
   noteHeadsRequestSchema,
   noteUploadMetaSchema,
   studentLectureDetailQuerySchema,
@@ -65,6 +66,7 @@ import {
   startAttempt,
   startCourseAttempt,
   submitAttempt,
+  submitLessonQuestion,
 } from "../services/attempt-service";
 import {
   appendAttemptEvents,
@@ -72,6 +74,10 @@ import {
 } from "../services/event-service";
 import { openHint } from "../services/hint-service";
 import { getInkDoc, getStudentInkPng, saveInk } from "../services/ink-service";
+import {
+  restartLessonAttempt,
+  startLessonAttempt,
+} from "../services/lesson-service";
 import {
   attachNoteImage,
   createCorrection,
@@ -113,7 +119,12 @@ import { listWrongQuestions } from "../services/wrong-questions";
  *   一人一份进行中；已交卷返回已交的那份让前端直接进结果视图）；
  * - PUT  /attempts/:id/answers/:questionId：保存草稿答案（T2.6；已交 409）；
  * - POST /attempts/:id/submit：服务端判分 + 快照冻结 + 返回结果（T2.6；
- *   重复交卷 409 ALREADY_SUBMITTED）；
+ *   重复交卷 409 ALREADY_SUBMITTED；2026-10 lesson 语义：只对未单题提交行
+ *   判分，已提交行不重判）；
+ * - POST /attempts/:id/questions/:questionId/submit：单题提交（2026-10 讲练
+ *   一体，lesson 专属——当题判分与释放、questionRevisionId CAS、可选单题
+ *   笔记证据声明；最后一题事务内自动收尾；重复提交 409
+ *   QUESTION_ALREADY_SUBMITTED）；
  * - POST /attempts/:id/hints：分步提示（T2.11，{questionId, index} → 被请求的
  *   那一条提示 + 计数；index 越界 400 HINT_INDEX_OUT_OF_RANGE；draft 与已交均
  *   可用；服务端记录 hint_open 事件与 responses 已解锁集合）；
@@ -182,7 +193,13 @@ import { listWrongQuestions } from "../services/wrong-questions";
  *   COURSE_ACCESS_DENIED，课程不存在/条目不可见 404 NOT_FOUND 不暴露存在性）；
  * - GET  /lectures、GET /lectures/:id：可见讲义双视图（去重并集 + 按课程分组）与
  *   讲义详情（T2.3 起；T2A.5 切换 D5——只含所在课程可见讲义，详情带 ?courseId=
- *   课程上下文与本课配套练习 D8）；
+ *   课程上下文与本课配套练习 D8；2026-10 讲练一体 kind=lesson 安全投影：markdown
+ *   恒 null + blocks 切段 + companionUnits 恒空）；
+ * - POST /lectures/:id/lesson/start、POST /lectures/:id/lesson/restart（2026-10
+ *   讲练一体）：讲练开卷（幂等 create-or-return，绝不因已完成而开新卷）与
+ *   「再做一次」（仅完成后可用，进行中 409 ALREADY_SUBMITTED）；响应是讲练
+ *   安全投影（blocks 切段 + 冻结题公开投影 + 已提交题当题释放），讲义原文与
+ *   未提交题的答案/详解/提示内容绝不下发（泄露矩阵 routes/student-lesson.test.ts）；
  * - GET  /records（T3.5，D10）：我的记录——本人全部作答的时间倒序索引
  *   （sourceType/courseId/assignmentId/status/from/to/limit/offset 筛选分页；
  *   失权草稿不列、已交卷一律保留；after_due 未公布得分/待批置 null）；
@@ -293,6 +310,25 @@ export function createStudentRoutes(
             new Date(),
             body?.revisions ?? [],
             body?.evidence,
+          ),
+        });
+      })
+      // 2026-10 讲练一体：单题提交（lesson 逐题即时反馈）——questionRevisionId
+      // CAS（错版 409 QUESTION_REVISION_STALE）+ 可选单题笔记证据声明（T6R.10
+      // 单题化：questionId 须与路径一致）；响应只含该题结果（提交即释放参考
+      // 答案/详解/判定）+ 现算汇总 + attempt 摘要，其他未提交题的答案/详解/
+      // 提示内容绝不下发（泄露矩阵 routes/student-lesson.test.ts）。非 lesson
+      // 来源 404（讲练专属入口）；最后一题提交在事务内自动收尾整卷
+      .post("/attempts/:id/questions/:questionId/submit", async (c) => {
+        const body = await parseJsonBody(c, lessonQuestionSubmitRequestSchema);
+        return c.json({
+          ok: true,
+          data: submitLessonQuestion(
+            db,
+            c.var.student.id,
+            c.req.param("id"),
+            c.req.param("questionId"),
+            body,
           ),
         });
       })
@@ -900,7 +936,10 @@ export function createStudentRoutes(
           201,
         );
       })
-      // T2A.5：讲义详情带课程上下文（?courseId=，D22 访问判定）与本课配套练习（D8）
+      // T2A.5：讲义详情带课程上下文（?courseId=，D22 访问判定）与本课配套练习（D8）；
+      // kind=lesson（2026-10 讲练一体）安全投影：markdown 恒 null + blocks 切段 +
+      // companionUnits 恒空（嵌入单元隐藏，题目已在页内），泄露测试见
+      // routes/student-lesson.test.ts
       .get("/lectures/:id", (c) => {
         const parsed = studentLectureDetailQuerySchema.safeParse({
           courseId: c.req.query("courseId") ?? undefined,
@@ -921,6 +960,45 @@ export function createStudentRoutes(
             parsed.data.courseId,
           ),
         });
+      })
+      // 2026-10 讲练一体：讲练开卷（幂等 create-or-return——进行中返回同一份
+      // draft、已完成返回最新那份，绝不重开；无作答才建卷冻结）。访问判定与
+      // GET /lectures/:id 同一三分谓词（?courseId= 可选课程上下文，契约未定义
+      // start 请求体 schema，复用详情查询 schema 的 query 形态）；响应是讲练
+      // 安全投影（blocks 切段 + 冻结题公开投影 + released/summary），原文与
+      // 未提交题的答案/详解/提示内容绝不下发（泄露矩阵 routes/student-lesson.test.ts）
+      .post("/lectures/:id/lesson/start", (c) => {
+        const parsed = studentLectureDetailQuerySchema.safeParse({
+          courseId: c.req.query("courseId") ?? undefined,
+        });
+        if (!parsed.success) {
+          throw new HttpError(
+            400,
+            "VALIDATION_ERROR",
+            "查询参数不合法：courseId 必须是 UUID 格式",
+          );
+        }
+        return c.json({
+          ok: true,
+          data: startLessonAttempt(
+            db,
+            c.var.student.id,
+            c.req.param("id"),
+            parsed.data.courseId,
+          ),
+        });
+      })
+      // 2026-10 讲练一体：讲练重做（「再做一次」显式独立动作）——仅最新 attempt
+      // 已离开 draft 可用（进行中/无作答 409 ALREADY_SUBMITTED），新卷
+      // attemptNo+1 从空白开始；无参数（课程上下文取第一个可见课程）
+      .post("/lectures/:id/lesson/restart", (c) => {
+        return c.json(
+          {
+            ok: true,
+            data: restartLessonAttempt(db, c.var.student.id, c.req.param("id")),
+          },
+          201,
+        );
       })
       .post("/logout", (c) => {
         const token = getCookie(c, STUDENT_SESSION_COOKIE);

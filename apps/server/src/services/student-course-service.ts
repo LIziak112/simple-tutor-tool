@@ -139,8 +139,10 @@ export function studentTeacherIdOf(db: Db, studentId: string): string | null {
   );
 }
 
-/** 404 NOT_FOUND（D22：不暴露存在性——课程/讲义不存在、条目隐藏等统一口径） */
-function notFound(): HttpError {
+/** 404 NOT_FOUND（D22：不暴露存在性——课程/讲义不存在、条目隐藏等统一口径）。
+ * 2026-10 讲练一体起导出——lesson-service 开卷入口（纯讲义非讲练页）同一文案
+ * 复用，第三份副本不再各自手写 */
+export function notFound(): HttpError {
   return new HttpError(
     404,
     "NOT_FOUND",
@@ -324,6 +326,21 @@ export function getStudentCourseDetail(
     .map((item) => item.refId as string);
   const counts = liveQuestionCounts(db, course.teacherId, unitIds);
   const attemptSummaries = courseUnitAttemptSummaries(db, studentId, courseId);
+  // 讲义条目的文档形态（2026-10 讲练一体）：lesson 行前端显「讲练」徽标并直达
+  // 讲练页；资源行缺失（不应发生）按默认 lecture 兜底（不因此丢条目）
+  const lectureIds = items
+    .filter((item) => item.kind === "lecture")
+    .map((item) => item.refId as string);
+  const lectureKinds = new Map(
+    lectureIds.length > 0
+      ? db
+          .select({ id: lectures.id, kind: lectures.kind })
+          .from(lectures)
+          .where(inArray(lectures.id, lectureIds))
+          .all()
+          .map((row) => [row.id, row.kind] as const)
+      : [],
+  );
   return {
     id: course.id,
     name: course.title,
@@ -331,6 +348,10 @@ export function getStudentCourseDetail(
     items: items.map((item) => ({
       id: item.id,
       kind: item.kind,
+      docKind:
+        item.kind === "lecture"
+          ? (lectureKinds.get(item.refId ?? "") ?? "lecture")
+          : null,
       refId: item.refId,
       title: item.title,
       order: item.order,
@@ -540,7 +561,13 @@ export function listStudentLectures(
   // 每篇可见讲义在各课程中的条目位置（courseIndex 已按 order 升序）
   const lectureRows = new Map<
     string,
-    { id: string; title: string; updatedAt: string; order: number }
+    {
+      id: string;
+      kind: "lecture" | "lesson";
+      title: string;
+      updatedAt: string;
+      order: number;
+    }
   >();
   /** 讲义 id → (courseIndex, itemOrder) 最优位置（去重列表排序用） */
   const bestKeyByLecture = new Map<string, readonly [number, number]>();
@@ -553,6 +580,7 @@ export function listStudentLectures(
     const rows = db
       .select({
         id: lectures.id,
+        kind: lectures.kind,
         title: lectures.title,
         updatedAt: lectures.updatedAt,
         order: lectures.order,
@@ -577,6 +605,7 @@ export function listStudentLectures(
       }
       summaries.push({
         id: row.id,
+        kind: row.kind, // 文档形态随行（2026-10 讲练一体：lesson 行显徽标/直达）
         title: row.title,
         topic: null, // 稍后统一填充（可见配套单元聚合）
         updatedAt: row.updatedAt,
@@ -626,6 +655,7 @@ export function listStudentLectures(
     lectures: deduped.map((row) =>
       withTopic({
         id: row.id,
+        kind: row.kind,
         title: row.title,
         topic: null,
         updatedAt: row.updatedAt,
@@ -642,23 +672,39 @@ export function listStudentLectures(
 // ---------- 讲义详情（GET /api/student/lectures/:id?courseId=） ----------
 
 /**
- * 讲义详情 + 课程上下文 + 本课配套练习（D8）。
- * - courseId 指定时：课程不存在 → 404 NOT_FOUND；非成员/学生已归档/课程已归档 →
- *   403 COURSE_ACCESS_DENIED；该讲义在该课程不可见（隐藏/未到发布/已删除/不在
- *   目录中）→ 404 NOT_FOUND（D22）；
+ * 三分访问谓词的产物：可见课程上下文 + 该课程可见目录 + 讲义行投影。
+ * lesson-service 开卷（start/restart）与 getStudentLecture 共用同一谓词
+ * （讲义只经课程可见，D5/D22），保证两个入口的访问口径永不漂移。
+ */
+interface VisibleStudentLecture {
+  readonly course: VisibleCourse;
+  readonly items: ReturnType<typeof listVisibleItems>;
+  readonly lecture: {
+    readonly id: string;
+    readonly title: string;
+    /** 讲义原文（kind=lesson 时含题块——**教师域数据**，只供服务端切段，绝不下发） */
+    readonly markdown: string;
+    readonly kind: "lecture" | "lesson";
+    readonly updatedAt: string;
+  };
+}
+
+/**
+ * 讲义可见性三分谓词（D22，getStudentLecture 与 lesson 开卷共用的唯一实现）：
+ * - courseId 指定时：课程不存在 → 404 NOT_FOUND；存在但非成员/学生已归档/课程
+ *   已归档 → 403 COURSE_ACCESS_DENIED；该讲义在该课程不可见（隐藏/未到发布/
+ *   已删除/不在目录中）→ 404 NOT_FOUND；
  * - courseId 缺省时：取第一个（course.order → 条目 order）该生可见该讲义的课程；
  *   任何课程都看不到 → 404 NOT_FOUND（不暴露存在性）；
- * - companionUnits：同课程内 units.lectureId = 该讲义且对该生可见的单元条目
- *   （目录条目顺序），带未删除题数——「即将开放」语义，作答入口 T2A.6 开放。
- * 只 SELECT lectures 的 markdown 元信息列；不触碰 questions 内容列。
+ * - 讲义行缺失/已软删 → 404（防御：可见条目不应指向缺失讲义，D5 条件 4 已滤）。
  */
-export function getStudentLecture(
+export function requireVisibleStudentLecture(
   db: Db,
   studentId: string,
   lectureId: string,
   courseId?: string | undefined,
   now: Date | string = new Date(),
-): StudentLectureDetail {
+): VisibleStudentLecture {
   const visibleCourses = visibleCoursesOfStudent(db, studentId);
 
   /** 课程上下文 + 该课程的可见目录（一次选出） */
@@ -696,10 +742,9 @@ export function getStudentLecture(
   if (found === undefined) {
     throw notFound();
   }
-  const { course: context, items: contextItems } = found;
 
   // 讲义在该课程目录中可见（D5 已滤隐藏/未到发布/软删/资源缺失）
-  const lectureItem = contextItems.find(
+  const lectureItem = found.items.find(
     (item) => item.kind === "lecture" && item.refId === lectureId,
   );
   if (lectureItem === undefined) {
@@ -710,6 +755,7 @@ export function getStudentLecture(
       id: lectures.id,
       title: lectures.title,
       markdown: lectures.markdown,
+      kind: lectures.kind,
       updatedAt: lectures.updatedAt,
     })
     .from(lectures)
@@ -717,6 +763,55 @@ export function getStudentLecture(
     .get();
   if (row === undefined) {
     throw notFound(); // 防御：可见条目不应指向缺失/已删讲义（D5 条件 4 已滤）
+  }
+  return { course: found.course, items: found.items, lecture: row };
+}
+
+/**
+ * 讲义详情 + 课程上下文 + 本课配套练习（D8）。
+ * - courseId 指定时：课程不存在 → 404 NOT_FOUND；非成员/学生已归档/课程已归档 →
+ *   403 COURSE_ACCESS_DENIED；该讲义在该课程不可见（隐藏/未到发布/已删除/不在
+ *   目录中）→ 404 NOT_FOUND（D22）；
+ * - courseId 缺省时：取第一个（course.order → 条目 order）该生可见该讲义的课程；
+ *   任何课程都看不到 → 404 NOT_FOUND（不暴露存在性）；
+ * - companionUnits：同课程内 units.lectureId = 该讲义且对该生可见的单元条目
+ *   （目录条目顺序），带未删除题数——「即将开放」语义，作答入口 T2A.6 开放；
+ * - kind=lesson（2026-10 讲练一体）安全投影：markdown 恒 null（题块原文含
+ *   [[答案]]/:::solution/:::hint，防泄露根基，方案决策 1）+ companionUnits 恒空
+ *   （嵌入单元隐藏，题目已在页内，防重复入口）；讲练内容（blocks 切段 + 冻结题
+ *   公开投影）只经 lesson/start 开卷接口下发（lesson-service，曾随本接口下发
+ *   blocks 因全站零消费已删，闸门修复 2026-10-13）；kind=lecture 形态不变
+ *   （全文下发）。
+ */
+export function getStudentLecture(
+  db: Db,
+  studentId: string,
+  lectureId: string,
+  courseId?: string | undefined,
+  now: Date | string = new Date(),
+): StudentLectureDetail {
+  const {
+    course: context,
+    items: contextItems,
+    lecture: row,
+  } = requireVisibleStudentLecture(db, studentId, lectureId, courseId, now);
+
+  // 讲练页：安全投影（原文与配套入口都不下发，讲练内容走开卷接口 lesson/start）
+  if (row.kind === "lesson") {
+    return {
+      id: row.id,
+      title: row.title,
+      kind: "lesson",
+      markdown: null,
+      updatedAt: row.updatedAt,
+      courseId: context.id,
+      courseName: context.title,
+      // 嵌入单元隐藏（题目已在页内单题作答，不再出现整卷入口，防重复）
+      companionUnits: [],
+      // T7.7：讲义 steps 渲染遵循课程所属教师的启用集（读时计算，学生刷新生效）
+      enabledCapabilities: getCapabilityProfile(db, context.teacherId)
+        .enabledCapabilities,
+    };
   }
 
   // 本课配套练习（D8）：同课程可见单元条目中 units.lectureId 指向该讲义者
@@ -767,6 +862,8 @@ export function getStudentLecture(
   return {
     id: row.id,
     title: row.title,
+    // 走到这里 kind 恒 lecture（lesson 分支已在上方返回安全投影）
+    kind: "lecture",
     markdown: row.markdown,
     updatedAt: row.updatedAt,
     courseId: context.id,

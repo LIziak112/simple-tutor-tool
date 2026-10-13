@@ -220,8 +220,9 @@ export function publishUnitToShared(
 
 /**
  * 发布讲义（POST /api/teacher/library/lectures/:id/publish）：
- * 内容**逐字复用** exportLectureMd（`kind: lecture` frontmatter + 原文——缺了
- * frontmatter 重新导入会被识别为缺省 practice，D16）；标题 = 讲义标题。
+ * 内容**逐字复用** exportLectureMd（frontmatter kind 按讲义存储列——普通讲义
+ * `kind: lecture`、讲练页 `kind: lesson`（题块随原文导出，教师域共享链路）；
+ * 缺了 frontmatter 重新导入会被识别为缺省 practice，D16）；标题 = 讲义标题。
  */
 export function publishLectureToShared(
   db: Db,
@@ -317,24 +318,25 @@ const QUESTION_OPEN_RE = /^:{4}question(\{.*)?$/;
 
 /**
  * 轻量提取类型 / 标题 / 题数（D15：解析 frontmatter/标题级信息，不做完整 lint）：
- * - kind：frontmatter `kind: lecture` → lecture，其余（缺省）→ practice；
- * - title：讲义取首个 H1；练习取 frontmatter unit；兜底文件名去 .md 扩展名；
+ * - kind：frontmatter `kind: lecture` → lecture、`kind: lesson` → lesson，其余（缺省/mixed/practice）→ practice；
+ * - title：讲义与讲练页取首个 H1；练习取 frontmatter unit；兜底文件名去 .md 扩展名；
  * - questionCount：`::::question` 行数。
  */
 function extractSummaryInfo(
   filename: string,
   markdown: string,
 ): {
-  kind: "lecture" | "practice";
+  kind: "lecture" | "practice" | "lesson";
   title: string;
   questionCount: number;
 } {
   const lines = markdown.replaceAll("\r\n", "\n").split("\n");
   const fm = frontmatterOf(lines);
-  const kind: "lecture" | "practice" =
-    unquoteYaml(fm.get("kind")) === "lecture" ? "lecture" : "practice";
+  const fmKind = unquoteYaml(fm.get("kind"));
+  const kind: "lecture" | "practice" | "lesson" =
+    fmKind === "lecture" || fmKind === "lesson" ? fmKind : "practice";
   let title: string | undefined;
-  if (kind === "lecture") {
+  if (kind !== "practice") {
     title = lines
       .slice(1)
       .find((line) => /^#\s+.+/.test(line))

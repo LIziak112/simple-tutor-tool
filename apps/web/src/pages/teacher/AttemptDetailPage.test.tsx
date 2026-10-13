@@ -240,6 +240,37 @@ describe("AttemptDetailPage 导出 CSV（T3.4，D13）", () => {
       assignmentId: ASSIGNMENT_ID,
     });
   });
+
+  it("lesson（讲练）来源：来源行「讲练：讲义标题 · 第 n 次」，CSV 带 sourceType=lesson（2026-10 讲练一体）", async () => {
+    mockedDownload.mockResolvedValue(undefined);
+    const STUDENT_ID = "11111111-1111-4111-8111-111111111111";
+    mockedDetail.mockResolvedValue(
+      makeDetail({
+        sourceType: "lesson",
+        courseId: null,
+        courseName: null,
+        unitId: "随堂讲练",
+        unitTitle: "第1讲 有理数讲练",
+        attemptNo: 2,
+      }),
+    );
+    renderPage();
+    await screen.findByRole("heading", { name: "张三" });
+    // 来源行不落「作业 · …」兜底分支
+    expect(
+      screen.getByText("讲练：第1讲 有理数讲练 · 第 2 次"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/^作业/)).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "导出 CSV" }));
+    await waitFor(() => {
+      expect(mockedDownload).toHaveBeenCalledTimes(1);
+    });
+    expect(mockedDownload).toHaveBeenLastCalledWith({
+      studentId: STUDENT_ID,
+      sourceType: "lesson",
+    });
+  });
 });
 
 describe("AttemptDetailPage 已交卷详情（D7）", () => {
