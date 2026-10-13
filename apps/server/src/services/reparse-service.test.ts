@@ -183,8 +183,7 @@ describe("reparseAll：讲练页（kind: lesson，2026-10 讲练一体）", () =
     expect(beforeLectures.length).toBeGreaterThanOrEqual(1);
     expect(
       beforeLectures.every(
-        (row) =>
-          row.kind === "lesson" && row.markdown.includes("::::question"),
+        (row) => row.kind === "lesson" && row.markdown.includes("::::question"),
       ),
     ).toBe(true);
     const beforeQuestions = db.select().from(questions).all();

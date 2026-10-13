@@ -204,9 +204,7 @@ export function AdminSharedFilesPage() {
                     </>
                   )}
                   {" · "}
-                  {file.kind !== "lecture"
-                    ? `${file.questionCount} 题 · `
-                    : ""}
+                  {file.kind !== "lecture" ? `${file.questionCount} 题 · ` : ""}
                   <span title={formatCnTime(file.publishedAt)}>
                     {formatRelativeTime(file.publishedAt)}
                   </span>
