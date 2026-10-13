@@ -154,6 +154,8 @@ export function listStudentRecords(
 
   const where = and(
     eq(attempts.studentId, studentId),
+    // 作废卷（2026-10 讲练随时重开）不入记录
+    isNull(attempts.abandonedAt),
     excluded.size > 0 ? notInArray(attempts.id, [...excluded]) : undefined,
     query.sourceType !== undefined
       ? eq(attempts.sourceType, query.sourceType)

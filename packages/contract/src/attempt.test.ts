@@ -16,6 +16,7 @@ import {
   lessonBlockSchema,
   lessonQuestionSubmitDataSchema,
   lessonQuestionSubmitRequestSchema,
+  lessonLandingDataSchema,
   lessonStartDataSchema,
   wrongPracticeRequestSchema,
 } from "./attempt.ts";
@@ -1118,6 +1119,85 @@ describe("lessonStartDataSchema / lessonQuestionSubmit（2026-10 讲练一体）
     expect(
       lessonQuestionSubmitDataSchema.safeParse({ ...payload, summary: null })
         .success,
+    ).toBe(false);
+  });
+});
+
+describe("lessonLandingDataSchema（2026-10 讲练落地页）", () => {
+  const LECTURE_ID = "88888888-8888-4888-8888-888888888888";
+  const ATTEMPT_ID = "99999999-9999-4999-8999-999999999999";
+
+  it("接受合法落地：题数/题型分布 + 历次（attemptNo 降序）+ 汇总；从未做 summary=null", () => {
+    const parsed = lessonLandingDataSchema.parse({
+      lectureId: LECTURE_ID,
+      title: "第1讲 有理数讲练",
+      topic: "有理数",
+      courseId: COURSE_ID,
+      courseName: "初一上",
+      questionCount: 2,
+      typeDistribution: { judge: 1, choice: 1 },
+      attempts: [
+        {
+          attemptId: ATTEMPT_ID,
+          attemptNo: 1,
+          status: "draft",
+          score: null,
+          startedAt: "2026-10-13T02:00:00.000Z",
+          submittedAt: null,
+        },
+      ],
+      summary: {
+        count: 1,
+        submittedCount: 0,
+        hasDraft: true,
+        firstScore: null,
+        latestScore: null,
+        bestScore: null,
+        pendingCount: 0,
+      },
+    });
+    expect(parsed.attempts[0]?.status).toBe("draft");
+    expect(parsed.summary?.hasDraft).toBe(true);
+  });
+
+  it("零题讲练（questionCount=0 + 空分布 + summary=null）合法", () => {
+    const parsed = lessonLandingDataSchema.parse({
+      lectureId: LECTURE_ID,
+      title: "纯讲义",
+      topic: null,
+      courseId: null,
+      courseName: null,
+      questionCount: 0,
+      typeDistribution: {},
+      attempts: [],
+      summary: null,
+    });
+    expect(parsed.questionCount).toBe(0);
+    expect(parsed.summary).toBeNull();
+  });
+
+  it("历次行 status 越值（非 draft/submitted/graded）→ 拒绝", () => {
+    expect(
+      lessonLandingDataSchema.safeParse({
+        lectureId: LECTURE_ID,
+        title: "第1讲",
+        topic: null,
+        courseId: null,
+        courseName: null,
+        questionCount: 0,
+        typeDistribution: {},
+        attempts: [
+          {
+            attemptId: ATTEMPT_ID,
+            attemptNo: 1,
+            status: "abandoned",
+            score: null,
+            startedAt: "2026-10-13T02:00:00.000Z",
+            submittedAt: null,
+          },
+        ],
+        summary: null,
+      }).success,
     ).toBe(false);
   });
 });

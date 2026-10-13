@@ -18,7 +18,8 @@ import {
 import StudentLessonPage from "./StudentLessonPage";
 
 /**
- * /s/lectures/:id/lesson 学生讲练页（2026-10 讲练一体）组件测试：
+ * /s/lectures/:id/lesson/run 学生讲练作答页（2026-10 讲练一体；10-13 教师
+ * 演示口径拆双页后本页挂 /lesson/run，入口在落地页 /lesson）组件测试：
  * 进入即幂等开卷（start）→ blocks 渲染（md 段 + 题卡交替 + 孤儿题分组）、
  * 显示答案（一键直达；错误码收敛；最后一题自动收尾）、再做一次、零题纯阅读
  * 空态、加载/错误三态。教师演示口径：无「完成练习」与进度计数。API 层 mock。
@@ -198,7 +199,7 @@ function LocationProbe() {
 }
 
 function renderPage(
-  path = `/s/lectures/${LECTURE_ID}/lesson?courseId=${COURSE_ID}`,
+  path = `/s/lectures/${LECTURE_ID}/lesson/run?courseId=${COURSE_ID}`,
 ) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -208,7 +209,7 @@ function renderPage(
       <MemoryRouter initialEntries={[path]}>
         <Routes>
           <Route
-            path="/s/lectures/:id/lesson"
+            path="/s/lectures/:id/lesson/run"
             element={<StudentLessonPage />}
           />
           <Route path="/s/lectures/:id" element={<LocationProbe />} />
@@ -545,24 +546,24 @@ describe("StudentLessonPage：已完成卷视图", () => {
 });
 
 describe("StudentLessonPage：导航", () => {
-  it("带 courseId 返回课程目录；无 courseId 返回讲义列表", async () => {
+  it("返回键统一指向讲练落地页（courseId 随行）", async () => {
     mockedStart.mockResolvedValue(lessonStart());
     renderPage();
     await screen.findByText("第 1 题");
-    expect(screen.getByRole("link", { name: "返回课程目录" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "返回讲练" })).toHaveAttribute(
       "href",
-      `/s/courses/${COURSE_ID}`,
+      `/s/lectures/${LECTURE_ID}/lesson?courseId=${COURSE_ID}`,
     );
   });
 
-  it("无 courseId：返回讲义列表，start 不带课程上下文", async () => {
+  it("无 courseId：落地页地址不带 query，start 不带课程上下文", async () => {
     mockedStart.mockResolvedValue(lessonStart());
-    renderPage(`/s/lectures/${LECTURE_ID}/lesson`);
+    renderPage(`/s/lectures/${LECTURE_ID}/lesson/run`);
     await screen.findByText("第 1 题");
     expect(mockedStart).toHaveBeenCalledWith(LECTURE_ID, undefined);
-    expect(screen.getByRole("link", { name: "返回讲义列表" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "返回讲练" })).toHaveAttribute(
       "href",
-      "/s/lectures",
+      `/s/lectures/${LECTURE_ID}/lesson`,
     );
   });
 });

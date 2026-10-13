@@ -1,0 +1,1 @@
+ALTER TABLE `attempts` ADD `abandoned_at` text;

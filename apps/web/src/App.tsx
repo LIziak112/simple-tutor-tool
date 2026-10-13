@@ -408,6 +408,9 @@ const studentRoutes = (() => {
   const StudentLessonPage = lazy(
     () => import("./pages/student/StudentLessonPage"),
   );
+  const StudentLessonLandingPage = lazy(
+    () => import("./pages/student/StudentLessonLandingPage"),
+  );
   const StudentRecordsPage = lazy(
     () => import("./pages/student/StudentRecordsPage"),
   );
@@ -522,9 +525,19 @@ const studentRoutes = (() => {
           }
         />
         <Route
-          // 2026-10 讲练一体：讲练页（kind=lesson 讲义的学生作答入口——
-          // 幂等开卷 + 单题提交即时反馈；讲义阅读页对 kind=lesson 重定向至此）
+          // 2026-10 讲练一体 → 10-13 教师演示口径拆双页：
+          // /lesson = 落地页（开始练习/继续作答/重开 + 历次记录——讲义列表/
+          // 课程目录/阅读页重定向/交卷后返回目标的统一入口）；
+          // /lesson/run = 作答页（md 段与题卡交错，进入即幂等开卷）
           path="lectures/:id/lesson"
+          element={
+            <Suspense fallback={pageFallback}>
+              <StudentLessonLandingPage />
+            </Suspense>
+          }
+        />
+        <Route
+          path="lectures/:id/lesson/run"
           element={
             <Suspense fallback={pageFallback}>
               <StudentLessonPage />

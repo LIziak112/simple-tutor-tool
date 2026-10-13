@@ -771,6 +771,14 @@ export const attempts = sqliteTable(
     legacyUnverified: integer("legacy_unverified", { mode: "boolean" })
       .notNull()
       .default(false),
+    /**
+     * 作废时刻（2026-10 讲练随时重开）：UTC ISO；非 null = 已作废。讲练落地页
+     * 「重新开始」放弃进行中卷时写入——被作废卷不再出现在讲练落地/开卷/记录/
+     * 待批队列（学情与错题本本就只统计已交卷，天然排除），其上一切读写经
+     * requireUsableAttempt 以 ATTEMPT_ABANDONED 拒绝。行与子行（responses/
+     * 事件/笔记）保留审计，不物理删除。
+     */
+    abandonedAt: text("abandoned_at"),
   },
   (table) => [
     // 「一个作业一人一份进行中」的查询索引；唯一性由服务层保证（先查后插，

@@ -77,6 +77,7 @@ import {
   type LectureUpdateRequest,
   type LessonQuestionSubmitData,
   type LessonQuestionSubmitRequest,
+  type LessonLandingData,
   type LessonStartData,
   type LibraryBatchData,
   type LibraryBatchRequest,
@@ -921,7 +922,27 @@ export function openAttemptHintApi(
   return callApi(() => api.api.student.attempts[":id"].hints.$post(args));
 }
 
-// ---------- 2026-10：讲练一体（lesson 开卷 / 重做 / 单题提交） ----------
+// ---------- 2026-10：讲练一体（lesson 落地 / 开卷 / 重做 / 单题提交） ----------
+
+/**
+ * 讲练落地页（GET /lectures/:id/lesson/landing）：「开始练习（从未做）/
+ * 继续作答（进行中）/ 再做一次或重新开始（重开）」三态入口与历次记录的
+ * 数据源。只含计数与作答元信息，不含任何题目内容与答案/详解/提示。
+ * ?courseId= 课程上下文（三分谓词与 start 同口径：非成员带 courseId 403 /
+ * 缺省 404；纯讲义 404）。
+ */
+export function fetchLessonLandingApi(
+  lectureId: string,
+  courseId?: string | undefined,
+): Promise<LessonLandingData> {
+  const args = {
+    param: { id: lectureId },
+    ...(courseId !== undefined ? { query: { courseId } } : {}),
+  };
+  return callApi(() =>
+    api.api.student.lectures[":id"].lesson.landing.$get(args),
+  );
+}
 
 /**
  * 讲练开卷（POST /lectures/:id/lesson/start，幂等 create-or-return）：
@@ -946,10 +967,10 @@ export function startLessonAttemptApi(
 }
 
 /**
- * 讲练重做（POST /lectures/:id/lesson/restart，「再做一次」显式独立动作）：
- * 仅最新 attempt 已完成可用（进行中/无作答 409 ALREADY_SUBMITTED），返回
- * 新卷（attemptNo+1，从空白开始）的讲练投影。无参数（课程上下文取第一个
- * 可见课程）。
+ * 讲练重做（POST /lectures/:id/lesson/restart，「再做一次/重新开始」显式
+ * 独立动作，2026-10 教师演示口径随时可用）：最新 attempt 进行中时先作废
+ * （abandonedAt 软标记——历次/记录/待批不再计入）再开新卷；无任何作答
+ * 409。返回新卷（attemptNo+1，从空白开始）的讲练投影。无参数。
  */
 export function restartLessonAttemptApi(
   lectureId: string,

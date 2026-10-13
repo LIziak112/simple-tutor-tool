@@ -4,6 +4,7 @@ import type {
   AttemptResultQuestion,
   HintOpenedEntry,
   LessonBlock,
+  LessonLandingData,
   LessonStartData,
   StudentAnswer,
 } from "@tutor/contract";
@@ -12,7 +13,7 @@ import type {
 import { splitLessonBlocks } from "@tutor/md-dsl";
 import { and, asc, desc, eq, isNull } from "drizzle-orm";
 import type { Db } from "../db/client";
-import { type Attempt, attempts, units } from "../db/schema";
+import { type Attempt, attempts, questions, units } from "../db/schema";
 import { HttpError } from "../lib/http-error";
 import {
   answerOf,
@@ -29,6 +30,7 @@ import {
 } from "./attempt-service";
 import { recordAttemptStartEvent } from "./event-service";
 import { openedHintEcho } from "./hint-service";
+import { pendingMarkCounts } from "./pending-mark";
 import type { Tx } from "./question-sync";
 import { snapshotOfRow } from "./snapshot";
 import {
@@ -46,9 +48,11 @@ import {
  *   题目 = 嵌入单元的 live 题）。访问校验复用 getStudentLecture 的三分谓词
  *   （requireVisibleStudentLecture 唯一实现：不存在 404 / 非成员 403 / 不可见
  *   404，D22）。
- * - restartLessonAttempt：「再做一次」显式独立动作——仅最新 attempt 已离开
- *   draft（submitted/graded）可用，否则 409 ALREADY_SUBMITTED（attempt 状态
- *   冲突的既有分码）；新卷 attemptNo+1、从空白开始。
+ * - restartLessonAttempt：「再做一次/重新开始」显式独立动作——**随时可用**
+ *   （2026-10 教师演示口径）：最新 attempt 为 draft 时先作废再开新卷
+ *   （abandonedAt 软标记），仅无任何 attempt 409；新卷 attemptNo+1、从空白开始。
+ * - getLessonLanding：讲练落地页（三态入口 + 历次记录）——题数/题型分布取
+ *   嵌入单元 live 题，attempts 为全部未作废作答，summary 与单元落地同构。
  * - 投影组装（start/restart 共用，buildLessonStartData）：blocks 服务端切段
  *   （splitLessonBlocks，讲义原文绝不下发——题块含 [[答案]]/:::solution/
  *   :::hint，防泄露根基，决策 1）；questions = 冻结 responses 行的公开投影
@@ -87,6 +91,7 @@ function restartConflict(message: string): HttpError {
 }
 
 /** 该生在该讲练页的全部 lesson 来源 attempt（attemptNo 降序，[0] 为最新） */
+/** 该生在该讲练页的全部**未作废** lesson 来源 attempt（attemptNo 降序，[0] 为最新；作废卷见 abandonedAt 语义） */
 function lessonAttemptsOf(
   db: Db | Tx,
   studentId: string,
@@ -100,6 +105,7 @@ function lessonAttemptsOf(
         eq(attempts.studentId, studentId),
         eq(attempts.sourceType, "lesson"),
         eq(attempts.lectureId, lectureId),
+        isNull(attempts.abandonedAt),
       ),
     )
     .orderBy(desc(attempts.attemptNo))
@@ -308,10 +314,11 @@ export function startLessonAttempt(
 // ---------- POST /api/student/lectures/:id/lesson/restart ----------
 
 /**
- * 讲练重做（「再做一次」显式独立动作，决策 7）：
- * - 仅当最新 attempt 已离开 draft（submitted/graded）可用——进行中 409
- *   ALREADY_SUBMITTED（attempt 状态冲突的既有分码；无任何作答同样 409，
- *   先完成一次练习）；事务内先查后插保证并发只得一份新 draft；
+ * 讲练重做（「再做一次/重新开始」显式独立动作，决策 7 + 2026-10 随时重开）：
+ * - **随时可用**（教师演示口径）：最新 attempt 为 draft（进行中半成品卷）时，
+ *   事务内先将其作废（abandonedAt 软标记——行与子行保留审计，不再出现在
+ *   落地/开卷/记录/待批，其上读写经 requireUsableAttempt 以 ATTEMPT_ABANDONED
+ *   拒绝），再开新卷；无任何 attempt 409（先开始一次）；
  * - 新卷 attemptNo = 最新一份 + 1、从空白开始（不预填上次答案与笔迹），
  *   重新按嵌入单元当前 live 题建卷冻结；courseId 取当前第一个可见课程；
  * - 建卷直记 attempt_start 事件（每份新卷一条）。
@@ -330,10 +337,13 @@ export function restartLessonAttempt(
   const attempt = db.transaction((tx) => {
     const latest = lessonAttemptsOf(tx, studentId, lectureId)[0];
     if (latest === undefined) {
-      throw restartConflict("还没有完成过这份讲练练习，先开始并完成一次练习");
+      throw restartConflict("还没有做过这份讲练，先开始一次才能重开");
     }
     if (latest.status === "draft") {
-      throw restartConflict("这份讲练练习还在进行中，完成后才能再做一次");
+      tx.update(attempts)
+        .set({ abandonedAt: new Date().toISOString() })
+        .where(eq(attempts.id, latest.id))
+        .run();
     }
     return createLessonAttempt(tx, db, {
       studentId,
@@ -345,4 +355,95 @@ export function restartLessonAttempt(
   });
   recordAttemptStartEvent(db, studentId, attempt.id);
   return buildLessonStartData(db, lecture, course, topic, attempt);
+}
+
+// ---------- GET /api/student/lectures/:id/lesson/landing ----------
+
+/**
+ * 讲练落地页（2026-10 教师演示口径）：「开始练习（从未做）/ 继续作答（有
+ * 进行中卷）/ 再做一次或重新开始（重开新卷）」三态入口与历次记录的数据源。
+ * - 题数/题型分布：嵌入单元当前 live 题统计（只读 type 列，域内——与单元
+ *   落地 getStudentUnitLanding 同口径；零题讲练为 0/空分布）；
+ * - attempts：该生该讲练全部未作废作答（attemptNo 降序；draft 行前端进讲练
+ *   页续作、已交行进结果页）；
+ * - summary：与单元落地 studentUnitAttemptSummarySchema 同构（得分 =
+ *   scoreFinal ?? scoreAuto；首次/最近只取已交卷按 attemptNo；pendingCount
+ *   走 D4 共享谓词——进行中 lesson 卷的已单题提交待批行也计入）；从未做 null。
+ * 安全（AGENTS.md 第 3 条）：只含计数与作答元信息，不含任何题目内容与
+ * 答案/详解/提示（泄露三层断言见 routes/student-lesson.test.ts）。
+ */
+export function getLessonLanding(
+  db: Db,
+  studentId: string,
+  lectureId: string,
+  courseId?: string | undefined,
+): LessonLandingData {
+  const { lecture, course, unitId, topic } = requireLessonContext(
+    db,
+    studentId,
+    lectureId,
+    courseId,
+  );
+
+  const typeDistribution: Record<string, number> = {};
+  let questionCount = 0;
+  for (const row of db
+    .select({ type: questions.type })
+    .from(questions)
+    .where(
+      and(
+        eq(questions.teacherId, course.teacherId),
+        eq(questions.unitId, unitId),
+        isNull(questions.deletedAt),
+      ),
+    )
+    .all()) {
+    questionCount += 1;
+    typeDistribution[row.type] = (typeDistribution[row.type] ?? 0) + 1;
+  }
+
+  const attemptRows = lessonAttemptsOf(db, studentId, lectureId);
+  const submittedRows = attemptRows.filter((row) => row.status !== "draft");
+  const ascending = [...submittedRows].sort(
+    (a, b) => a.attemptNo - b.attemptNo,
+  );
+  const scoreOf = (row: Attempt): number | null =>
+    row.scoreFinal ?? row.scoreAuto;
+  const scores = ascending.map(scoreOf);
+  const nonNullScores = scores.filter((s): s is number => s !== null);
+  let pendingCount = 0;
+  for (const value of pendingMarkCounts(db, attemptRows).values()) {
+    pendingCount += value;
+  }
+
+  return {
+    lectureId: lecture.id,
+    title: lecture.title,
+    topic,
+    courseId: course.id,
+    courseName: course.title,
+    questionCount,
+    typeDistribution,
+    attempts: attemptRows.map((row) => ({
+      attemptId: row.id,
+      attemptNo: row.attemptNo,
+      status: row.status,
+      score: scoreOf(row),
+      startedAt: row.startedAt,
+      submittedAt: row.submittedAt,
+    })),
+    summary:
+      attemptRows.length > 0
+        ? {
+            count: attemptRows.length,
+            submittedCount: submittedRows.length,
+            hasDraft: attemptRows.some((row) => row.status === "draft"),
+            firstScore: scores[0] ?? null,
+            latestScore: scores[scores.length - 1] ?? null,
+            bestScore:
+              nonNullScores.length > 0 ? Math.max(...nonNullScores) : null,
+            pendingCount,
+          }
+        : null,
+  };
 }

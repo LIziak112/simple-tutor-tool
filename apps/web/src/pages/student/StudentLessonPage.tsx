@@ -43,6 +43,7 @@ import {
   useRestartLesson,
 } from "@/features/lesson/lesson-queries";
 import { useLessonAttempt } from "@/features/lesson/use-lesson-attempt";
+import { lessonHref } from "@/features/student/lesson-navigation";
 import { LectureOutline } from "@/features/markdown/LectureOutline";
 import { extractOutline } from "@/features/markdown/outline";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
@@ -58,7 +59,8 @@ import { useStudentWorkspace } from "@/features/student/student-workspace-layout
 import { useDesktopViewport } from "@/lib/use-desktop-viewport";
 
 /**
- * /s/lectures/:id/lesson 学生讲练页（2026-10 讲练一体）：
+ * /s/lectures/:id/lesson/run 学生讲练作答页（2026-10 讲练一体；10-13 教师
+ * 演示口径拆双页后本页承接 /lesson/run，入口/返回键统一指向落地页 /lesson）：
  * - 进入即幂等开卷（POST lesson/start——进行中取回同一份 draft、已完成取回
  *   最新那份，刷新安全不消耗 attemptNo）；?courseId= 课程上下文（返回键）；
  * - blocks 渲染：md 段 RichMarkdown 与题卡按讲义顺序交替（切段经
@@ -92,7 +94,8 @@ export default function StudentLessonPage() {
       <section aria-label="讲练页打开失败" className="flex flex-col gap-4">
         <HeaderBar
           title="讲练页"
-          courseId={courseId}
+          backTo={lessonHref(id, courseId)}
+          backLabel="返回讲练"
           actions={null}
           context={<span>讲练</span>}
         />
@@ -125,12 +128,15 @@ export default function StudentLessonPage() {
 /** 顶部工具栏：返回 + 标题 + 操作区 + 上下文行（sticky） */
 function HeaderBar({
   title,
-  courseId,
+  backTo,
+  backLabel,
   actions,
   context,
 }: {
   title: string;
-  courseId: string | undefined;
+  /** 返回目标（落地页 /s/lectures/:id/lesson） */
+  backTo: string;
+  backLabel: string;
   actions: ReactNode;
   context: ReactNode;
 }) {
@@ -140,8 +146,8 @@ function HeaderBar({
       className="sticky top-0 z-20 -mx-3 flex min-h-16 flex-wrap items-center gap-x-2 gap-y-1 border-b border-border bg-background px-3 py-2 sm:-mx-6 sm:px-6"
     >
       <Link
-        to={courseId !== undefined ? `/s/courses/${courseId}` : "/s/lectures"}
-        aria-label={courseId !== undefined ? "返回课程目录" : "返回讲义列表"}
+        to={backTo}
+        aria-label={backLabel}
         className="flex size-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
       >
         <ArrowLeft aria-hidden className="size-5" />
@@ -488,7 +494,8 @@ function LessonAnswerView({
           <article aria-label="讲练作答" className="flex flex-col gap-4 pb-8">
             <HeaderBar
               title={data.lecture.title}
-              courseId={courseId}
+              backTo={lessonHref(lectureId, courseId)}
+              backLabel="返回讲练"
               context={
                 <>
                   <span>
@@ -594,7 +601,8 @@ function LessonCompletedView({
       <article aria-label="讲练回看" className="flex flex-col gap-4 pb-8">
         <HeaderBar
           title={data.lecture.title}
-          courseId={courseId}
+          backTo={lessonHref(lectureId, courseId)}
+          backLabel="返回讲练"
           context={
             <>
               <span>

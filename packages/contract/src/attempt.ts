@@ -6,6 +6,10 @@ import {
   questionPublicSchema,
 } from "./content.ts";
 import { studentAnswerSchema } from "./grading.ts";
+import {
+  studentUnitAttemptRecordSchema,
+  studentUnitAttemptSummarySchema,
+} from "./student-course-api.ts";
 
 /**
  * 作答生命周期契约（T2.6 起为权威定义）：attempt 的创建（幂等）、草稿保存、
@@ -724,6 +728,39 @@ export const lessonQuestionSubmitDataSchema = z.object({
   attempt: attemptSummarySchema,
 });
 
+// ---------- 讲练落地页（2026-10 教师演示口径：开始练习/继续作答/重开 + 历次） ----------
+
+/**
+ * GET /api/student/lectures/:id/lesson/landing 响应 data：讲练落地信息。
+ * 讲练是老师讲解材料（非练习考核），落地页承载「开始练习（从未做）/ 继续作答
+ * （有进行中卷）/ 再做一次或重新开始（重开新卷）」三态入口与历次记录列表。
+ * - attempts：该生该讲练的全部**未作废**作答（attemptNo 降序；作废卷见
+ *   abandonedAt 语义，不入历次）；draft 行点击进讲练页续作，已交行进结果页；
+ * - summary：与单元落地（studentUnitAttemptSummarySchema）同构；从未做为 null；
+ * - questionCount/typeDistribution：嵌入单元当前 live 题统计（零题讲练为 0/空）；
+ * - 安全：只含计数与作答元信息，不含任何题目内容与答案/详解/提示
+ *   （assertNoLeak 泄露测试覆盖，AGENTS.md 第 3 条）。
+ */
+export const lessonLandingDataSchema = z.object({
+  /** 讲练页讲义 id */
+  lectureId: z.uuid(),
+  /** 讲练页标题（H1） */
+  title: z.string().min(1),
+  /** 主题；未标注为 null（与 lessonStartData.lecture 同口径） */
+  topic: z.string().nullable(),
+  /** 打开时来自哪门课（可空口径同 attempt.courseId）；课程名随行 */
+  courseId: z.uuid().nullable(),
+  courseName: z.string().min(1).nullable(),
+  /** 嵌入单元未删除题目数（零题讲练为 0） */
+  questionCount: z.number().int().min(0),
+  /** 题型分布：题型 → 题数（仅含有题数的题型） */
+  typeDistribution: z.record(z.string(), z.number().int().min(1)),
+  /** 历次作答（attemptNo 降序；作废卷不计入） */
+  attempts: z.array(studentUnitAttemptRecordSchema),
+  /** 作答汇总；从未做为 null */
+  summary: studentUnitAttemptSummarySchema.nullable(),
+});
+
 /**
  * POST /api/student/attempts/:id/hints 请求体（T2.11 分步提示）：
  * 获取该题第 index 条提示（0 起）并解锁（服务端记录 hint_open 事件与已解锁集合）。
@@ -795,6 +832,9 @@ export const attemptDetailDataSchema = z
  * - ASSIGNMENT_NOT_FOUND：创建 attempt 的作业不存在（含已删除）（404）；
  * - ATTEMPT_NOT_FOUND：attempt 不存在（404）；
  * - ALREADY_SUBMITTED：attempt 已交卷，不能再保存草稿 / 重复交卷（409，验收项）；
+ * - ATTEMPT_ABANDONED：作答已作废（2026-10 讲练随时重开：进行中卷被「重新开始」
+ *   放弃后，其上一切读写——详情/存草稿/单题提交/提示解锁——都被拒绝；409，
+ *   前端提示重新进入）；
  * - QUESTION_ALREADY_SUBMITTED：该题已单题提交过（2026-10 讲练一体逐题提交；
  *   409——lesson 卷同一题二次提交被可诊断拒绝，与整卷 ALREADY_SUBMITTED 分码，
  *   前端据此锁定题卡为结果态而非提示整卷已交）；
@@ -823,6 +863,7 @@ export const attemptErrorCodeSchema = z.enum([
   "ASSIGNMENT_NOT_FOUND",
   "ATTEMPT_NOT_FOUND",
   "ALREADY_SUBMITTED",
+  "ATTEMPT_ABANDONED",
   "QUESTION_ALREADY_SUBMITTED",
   "QUESTION_REVISION_STALE",
   "NOTE_EVIDENCE_MISMATCH",
@@ -852,6 +893,8 @@ export const attemptAnswerSaveOkSchema = apiOkExtend(
 export const hintOpenOkSchema = apiOkExtend(hintOpenDataSchema);
 /** 携带讲练开卷投影的成功响应壳（start/restart 共用；2026-10） */
 export const lessonStartOkSchema = apiOkExtend(lessonStartDataSchema);
+/** 携带讲练落地信息的成功响应壳（三态入口 + 历次；2026-10） */
+export const lessonLandingOkSchema = apiOkExtend(lessonLandingDataSchema);
 /** 携带单题提交结果的成功响应壳（当题释放；2026-10） */
 export const lessonQuestionSubmitOkSchema = apiOkExtend(
   lessonQuestionSubmitDataSchema,
@@ -899,6 +942,8 @@ export type AttemptDetailData = z.infer<typeof attemptDetailDataSchema>;
 export type LessonBlock = z.infer<typeof lessonBlockSchema>;
 /** 讲练开卷投影（草稿与完成态共用一形态，由 attempt.status 区分；2026-10） */
 export type LessonStartData = z.infer<typeof lessonStartDataSchema>;
+/** 讲练落地信息（三态入口 + 历次记录的数据源；2026-10） */
+export type LessonLandingData = z.infer<typeof lessonLandingDataSchema>;
 /** 单题提交请求体（questionRevisionId + 可选证据声明；2026-10） */
 export type LessonQuestionSubmitRequest = z.infer<
   typeof lessonQuestionSubmitRequestSchema

@@ -14,13 +14,15 @@ import {
 
 /**
  * 讲练一体（kind: lesson）全链 e2e（提交序列第 11 步）：一条用例串起
- * 「导入 → 徽标 → 学生讲练页交错渲染与防泄露 → 逐题提交即时反馈 →
- * 刷新保持 → 最后一题显示答案自动收尾 → 结果页/我的记录 → 错题本 → 教师课中批改 →
- * 再做一次」：
+ * 「导入 → 徽标 → 落地页（开始练习/历次记录） → 讲练页交错渲染与防泄露 →
+ * 逐题显示答案即时反馈 → 刷新保持 → 最后一题显示答案自动收尾 → 结果页/
+ * 我的记录 → 错题本 → 教师课中批改 → 再做一次 → 落地页随时重开（进行中
+ * 作废）」：
  *
  * - 教师导入 kind:lesson 文档（choice 对错两路 + judge ×2 + fill，含 hint/
  *   solution）→ 资源库讲义库行「讲练」徽标；
- * - 学生讲义列表与课程目录「讲练」徽标 + 直达 /s/lectures/:id/lesson；
+ * - 学生讲义列表与课程目录「讲练」徽标 + 直达 /s/lectures/:id/lesson 落地页
+ *   （三态入口 + 历次记录）；「开始练习」进作答页 /lesson/run；
  * - 讲练页：md 段与题卡按讲义顺序交错（DOM 序断言）；未提交时页面文本
  *   不含任何详解/提示/题块原文（[[、- [x]、:::solution 等）；
  * - 逐题显示答案（一键直达，无确认层）：choice 答对 → 答对徽章 + 解析直接
@@ -31,7 +33,9 @@ import {
  *   「讲练」）、我的记录出现「讲练」来源行；
  * - 错题本含答错题；教师待批队列出现该卷 fill 题（讲练徽章 + 讲义标题 ·
  *   第 n 次上下文）→ 标对 → 学生讲练页刷新见 teacherMark 判定；
- * - 再做一次 → 新卷（第 2 次从空白开始），旧卷保留在记录。
+ * - 再做一次 → 新卷（第 2 次从空白开始），旧卷保留在记录；
+ * - 落地页随时重开：进行中卷「重新开始」→ 旧卷作废（退出历次与记录），
+ *   新卷第 3 次从空白开始。
  */
 
 /** 讲练文档 fixture：单 H1 单讲义，5 题（choice 对/choice 错/judge/fill/judge）
@@ -208,15 +212,24 @@ test.describe("讲练一体全链：导入 → 徽标 → 逐题提交 → 批�
         lectureListLink.getByText("讲练", { exact: true }),
       ).toBeVisible();
       await lectureListLink.click();
-      await studentPage.waitForURL(/\/s\/lectures\/[^/]+\/lesson/);
+      // —— 落地页（/lesson）：三态入口 + 历次记录（首次 = 开始练习 + 空历次） ——
+      await studentPage.waitForURL(/\/s\/lectures\/[^/]+\/lesson(\?|$)/);
       const lectureId = studentPage
         .url()
         .match(/\/s\/lectures\/([^/]+)\/lesson/)?.[1];
       if (lectureId === undefined) {
         throw new Error(`未能从 URL 解析讲义 id：${studentPage.url()}`);
       }
+      await expect(
+        studentPage.getByRole("heading", { name: lectureTitle }),
+      ).toBeVisible();
+      await expect(studentPage.getByText(/历次记录（0）/)).toBeVisible();
+      await studentPage
+        .getByRole("button", { name: `开始练习 ${lectureTitle}` })
+        .click();
+      await studentPage.waitForURL(/\/s\/lectures\/[^/]+\/lesson\/run/);
 
-      // —— 讲练页：标题/课程上下文/进度 + md 段与题卡交错 ——
+      // —— 作答页（/lesson/run）：标题/课程上下文 + md 段与题卡交错 ——
       // 页头标题是 <p>，heading 断言走 md 段里的 H1（与阅读页同口径）
       await expect(
         studentPage.getByRole("heading", { level: 1, name: lectureTitle }),
@@ -493,9 +506,9 @@ test.describe("讲练一体全链：导入 → 徽标 → 逐题提交 → 批�
       await expect(pendingCard).toHaveCount(0);
       await expect(page.getByText("本组待批题已全部批完")).toBeVisible();
 
-      // —— 学生讲练页刷新：fill 题见 teacherMark 判定（徽章按 finalCorrect 显示；批改块不在讲练卡展示）——
+      // —— 学生讲练页（作答页）刷新：fill 题见 teacherMark 判定（徽章按 finalCorrect 显示；批改块不在讲练卡展示）——
       await studentPage.goto(
-        `/s/lectures/${lectureId}/lesson?courseId=${courseId}`,
+        `/s/lectures/${lectureId}/lesson/run?courseId=${courseId}`,
       );
       await expect(
         studentPage.getByText("已完成", { exact: true }),
@@ -543,6 +556,51 @@ test.describe("讲练一体全链：导入 → 徽标 → 逐题提交 → 批�
           name: `继续作答：${lectureTitle} · 第 2 次（进行中）`,
         }),
       ).toBeVisible();
+
+      // —— 落地页：历次记录（2）+ 随时重开（进行中「重新开始」——旧卷作废） ——
+      await studentPage.goto(
+        `/s/lectures/${lectureId}/lesson?courseId=${courseId}`,
+      );
+      await expect(studentPage.getByText(/历次记录（2）/)).toBeVisible();
+      await expect(
+        studentPage.getByRole("button", { name: "继续作答", exact: true }),
+      ).toBeVisible();
+      await studentPage.getByRole("button", { name: "重新开始" }).click();
+      // 确认弹层明示作废语义
+      await expect(
+        studentPage.getByRole("dialog", { name: "重新开始确认" }),
+      ).toBeVisible();
+      await expect(
+        studentPage.getByText(/进行中的这一次将被作废（不再计入历次与统计）/),
+      ).toBeVisible();
+      await studentPage.getByRole("button", { name: "开始新一次" }).click();
+      // 新卷第 3 次从空白开始；作废的第 2 次退出历次与记录
+      await studentPage.waitForURL(/\/s\/lectures\/[^/]+\/lesson\/run/);
+      await expect(
+        studentPage.getByText(`课程：${courseName} · 讲练 · 第 3 次`),
+      ).toBeVisible();
+      await expect(
+        studentPage
+          .locator('article[aria-label="第 1 题"]')
+          .getByRole("button", { name: "显示答案" }),
+      ).toBeVisible();
+      await studentPage.goto(
+        `/s/lectures/${lectureId}/lesson?courseId=${courseId}`,
+      );
+      // 历次 = 第 1 次（已批）+ 第 3 次（新进行中）；作废的第 2 次不出现
+      await expect(studentPage.getByText(/历次记录（2）/)).toBeVisible();
+      await expect(
+        studentPage.getByRole("button", { name: "继续作答第 3 次" }),
+      ).toBeVisible();
+      await expect(
+        studentPage.getByRole("button", { name: "继续作答第 2 次" }),
+      ).toHaveCount(0);
+      await studentPage.goto("/s/records");
+      await expect(
+        studentPage.getByRole("link", {
+          name: `继续作答：${lectureTitle} · 第 2 次（进行中）`,
+        }),
+      ).toHaveCount(0);
 
       // 泄露检查：全程 /api/student/* 响应无禁用键（交卷后放行口径同既有 spec）
       await studentPage.waitForTimeout(800);
