@@ -2,6 +2,7 @@ import type { InkDoc, StudentAnswer } from "@tutor/contract";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { digestOf } from "./draft-merge";
 import {
+  bindDraftSession,
   DRAFT_WRITE_DEBOUNCE_MS,
   draftStore,
   getDraftPersistenceState,
@@ -9,6 +10,18 @@ import {
   type KVBackend,
   memoryBackend,
 } from "./draft-store";
+
+it("同一题卷标识在不同学生会话中隔离，旧学生重登可恢复未同步稿", async () => {
+  bindDraftSession({ origin: "https://tutor.test", studentId: "a" });
+  draftStore.saveInk("same-attempt", "q", doc(2));
+  await draftStore.flush("same-attempt");
+  bindDraftSession({ origin: "https://tutor.test", studentId: "b" });
+  expect(await draftStore.loadDraft("same-attempt")).toBeNull();
+  bindDraftSession({ origin: "https://tutor.test", studentId: "a" });
+  expect((await draftStore.loadDraft("same-attempt"))?.inks.q?.data).toEqual(
+    doc(2).data,
+  );
+});
 
 /**
  * 草稿本地仓测试（T2.9）：读写/覆盖/清除/防抖写盘（fake timers + 注入内存后端，
@@ -170,6 +183,13 @@ describe("同步指纹", () => {
     await draftStore.markInkSynced("att-1", "q2", doc(2));
     const record = await draftStore.loadDraft("att-1");
     expect(record?.inkDigests.q2).toBe(digestOf(doc(2)));
+  });
+
+  it("旧稿上传回执不能覆盖在途期间写入的新版正文", async () => {
+    draftStore.saveInk("att-1", "q2", doc(3));
+    await draftStore.markInkSynced("att-1", "q2", doc(2));
+    const record = await draftStore.loadDraft("att-1");
+    expect(record?.inks.q2?.data).toEqual(doc(3).data);
   });
 });
 

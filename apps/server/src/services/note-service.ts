@@ -67,6 +67,7 @@ import {
   requireUsableAttempt,
 } from "./attempt-service";
 import { collectBackupReferencedPaths } from "./backup-service";
+import { gcInkFiles } from "./ink-gc";
 import { studentTeacherIdOf } from "./student-course-service";
 import {
   findTeacherAttempt,
@@ -1996,5 +1997,11 @@ export function gcNoteVersions(
     sweepRoot(resolve(dataDir, "blobs", "ink"), false);
     sweepRoot(resolve(dataDir, "blobs", "media"), false);
   }
+  result.sweptOrphanFiles += gcInkFiles(
+    db,
+    dataDir,
+    cutoffMs,
+    backupReferenced,
+  );
   return result;
 }

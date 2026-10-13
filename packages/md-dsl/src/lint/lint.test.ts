@@ -706,7 +706,9 @@ describe("lintDocument：指令规则补充", () => {
     expect(issue?.line).toBe(11);
 
     // mixed 同构写法：既有 warning 行为零变化（存量文档兼容，DSL 只增不改）
-    const mixed = lintDocument(lessonText.replace("kind: lesson", "kind: mixed"));
+    const mixed = lintDocument(
+      lessonText.replace("kind: lesson", "kind: mixed"),
+    );
     expect(codes(mixed.issues)).not.toContain("QUESTION_NESTED_IN_LESSON");
     expect(issueOf(mixed.issues, "DIRECTIVE_NOT_ALLOWED_HERE")?.level).toBe(
       "warning",

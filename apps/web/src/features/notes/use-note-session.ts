@@ -8,11 +8,13 @@
  */
 import type { StudentMeData } from "@tutor/contract";
 import { useEffect } from "react";
+import { bindDraftSession } from "@/features/attempt/draft-store";
 import { bindNoteSession } from "@/features/notes/note-sync";
 
 export function useBindNoteSession(me: StudentMeData | undefined): void {
   useEffect(() => {
     if (me === undefined) return;
+    bindDraftSession({ origin: window.location.origin, studentId: me.id });
     bindNoteSession({
       origin: window.location.origin,
       studentId: me.id,

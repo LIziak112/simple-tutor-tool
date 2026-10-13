@@ -38,6 +38,19 @@ declare global {
 /** 本站静态资源目录（vite 插件在 dev/build 时提供） */
 const ASSET_PATH = "/excalidraw-assets/";
 
+/** 历史场景从固定 JSON 渲染，不读取正在编辑的场景。 */
+export async function renderExcalidrawSnapshot(doc: InkDoc): Promise<Blob> {
+  window.EXCALIDRAW_ASSET_PATH = ASSET_PATH;
+  const mod = await import("@excalidraw/excalidraw");
+  const restored = mod.restore({ elements: sceneElements(doc) }, null, null);
+  return mod.exportToBlob({
+    elements: restored.elements,
+    appState: { exportBackground: true, viewBackgroundColor: "#ffffff" },
+    mimeType: "image/png",
+    files: {},
+  });
+}
+
 export interface ExcalidrawSurfaceOptions {
   /** 库与界面就绪后回调（懒加载完成） */
   onReady?: () => void;

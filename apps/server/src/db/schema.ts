@@ -913,6 +913,10 @@ export const ink = sqliteTable(
       .references(() => attempts.id),
     /** 题目（questions.id，来自 DSL；可能含中文/点/连字符；T2B.1/D10 起无外键，值不变） */
     questionId: text("question_id").notNull(),
+    /** 正式笔迹并发基线，历史行迁移为首版。 */
+    revision: integer("revision").notNull().default(1),
+    mutationId: text("mutation_id"),
+    bodyHash: text("body_hash"),
     /** 矢量文档相对路径（DATA_DIR 内，blobs/ink/<attemptId>/<安全名>.json.gz） */
     strokesPath: text("strokes_path").notNull(),
     /** 快照 PNG 相对路径（DATA_DIR 内，blobs/ink/<attemptId>/<安全名>.png） */

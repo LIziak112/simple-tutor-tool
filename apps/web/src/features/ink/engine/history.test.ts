@@ -15,6 +15,21 @@ function stroke(points: Array<[number, number]>): InkStroke {
 
 /** 撤销/重做测试（验收项：含擦除的撤销） */
 describe("InkStore 撤销/重做", () => {
+  it("历史预算只淘汰最早操作，当前正文与最近撤销、重做保持完整", () => {
+    const store = new InkStore({ maxEntries: 2, maxPoints: 3 });
+    for (let i = 0; i < 4; i++) store.commitAdd([stroke([[i, i]])]);
+    expect(store.getStrokes()).toHaveLength(4);
+    expect(store.undo()).toBe(true);
+    expect(store.undo()).toBe(true);
+    expect(store.undo()).toBe(false);
+    expect(store.getStrokes()).toHaveLength(2);
+    expect(store.redo()).toBe(true);
+    expect(store.redo()).toBe(true);
+    expect(store.getStrokes()).toHaveLength(4);
+    store.commitClear();
+    expect(store.undo()).toBe(true);
+    expect(store.getStrokes()).toHaveLength(4);
+  });
   it("新增笔画：undo 移除、redo 恢复", () => {
     const store = new InkStore();
     store.commitAdd([

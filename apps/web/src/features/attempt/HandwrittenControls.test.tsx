@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { InkDoc } from "@tutor/contract";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { EnabledCapabilitiesProvider } from "@/features/capability/enabled-capabilities";
 import { draftStore, installDraftBackend, memoryBackend } from "./draft-store";
 import { HandwrittenControls } from "./HandwrittenControls";
 
@@ -167,6 +168,40 @@ it("云端笔迹读取失败且本机无稿时不能展示空画布，重试后�
   );
 });
 
+it("时钟领先的陈旧本机稿也须显式裁决，使用云端稿不会补传旧稿", async () => {
+  draftStore.saveInk("att-1", "q1", {
+    ...atramentDoc(4),
+    updatedAt: 9999999999999,
+    serverRevision: 1,
+  });
+  fetchInkMock.mockResolvedValue({ ...atramentDoc(2), serverRevision: 2 });
+  renderControls();
+  await screen.findByText(/云端笔迹已变化/);
+  fireEvent.click(screen.getByRole("button", { name: "使用云端稿" }));
+  await waitFor(() => expect(screen.queryByText(/云端笔迹已变化/)).toBeNull());
+  const record = await draftStore.loadDraft("att-1");
+  expect(record?.inks.q1?.data).toEqual(atramentDoc(2).data);
+  expect(record?.inks.q1?.serverRevision).toBe(2);
+});
+
+it("教师关闭手写入口后，读取失败仍提供重试，避免无法交卷的死路", async () => {
+  fetchInkMock.mockRejectedValueOnce(new Error("断网"));
+  render(
+    <EnabledCapabilitiesProvider value={{ ink: false, steps: true }}>
+      <HandwrittenControls
+        attemptId="att-1"
+        questionId="q1"
+        stemMd="题干"
+        answer={undefined}
+        onAnswer={vi.fn()}
+      />
+    </EnabledCapabilitiesProvider>,
+  );
+  expect(
+    await screen.findByRole("button", { name: "重试读取笔迹" }),
+  ).toBeVisible();
+});
+
 describe("展开/收起手写区", () => {
   it("受控切题收起保留同一画布，待传笔迹仍可导出而不重建历史", async () => {
     const props = {
@@ -197,7 +232,7 @@ describe("展开/收起手写区", () => {
     await waitFor(() => expect(queryInkPad()).not.toBeNull());
     expect(screen.getByRole("button", { name: /收起手写区/ })).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: /收起手写区/ }));
-    expect(queryInkPad()).toBeNull();
+    expect(queryInkPad()).not.toBeVisible();
   });
 
   it("服务端已有笔迹（非空 atrament）时自动展开并 load 服务端 InkDoc", async () => {
@@ -330,14 +365,14 @@ describe("手写编辑分型与全屏事件（T4.0b）", () => {
     ] as const) {
       fireEvent.click(screen.getByTestId(`ink-emit-atrament-${reason}`));
     }
-    // 编辑四类进 onInkEdit；stroke/load 维持旧笔画计数回调
+    // 编辑四类进 onInkEdit；load 是恢复，不属于学生书写。
     expect(onInkEdit.mock.calls.map((call) => call[0])).toEqual([
       "erase",
       "undo",
       "redo",
       "clear",
     ]);
-    expect(onInkStroke.mock.calls.map((call) => call[0])).toEqual([1, 1]);
+    expect(onInkStroke.mock.calls.map((call) => call[0])).toEqual([1]);
   });
 
   it("onInkFullscreen：进出全屏各触发一次（挂载初始 false 不报）", async () => {

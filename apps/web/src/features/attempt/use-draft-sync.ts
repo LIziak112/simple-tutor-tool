@@ -12,7 +12,7 @@ import {
 import { ApiError } from "@/lib/api";
 import { saveDraftAnswer } from "./attempt-queries";
 import { unsyncedAnswerIds } from "./draft-merge";
-import { draftStore } from "./draft-store";
+import { draftStore, getDraftSessionEpoch } from "./draft-store";
 import type { InkUploadController } from "./use-ink-upload";
 
 /**
@@ -123,12 +123,14 @@ export function useDraftSync(
       return;
     }
     syncingRef.current = true;
+    const epoch = getDraftSessionEpoch();
     let complete = () => {};
     syncCompletion.current = new Promise<void>((resolve) => {
       complete = resolve;
     });
     try {
       const record = await draftStore.loadDraft(attemptIdRef.current);
+      if (epoch !== getDraftSessionEpoch()) return;
       /** 待补传答案（指纹不同）：[questionId, answer]（跳过值缺失的防御分支） */
       const pendingAnswers: ReadonlyArray<readonly [string, StudentAnswer]> =
         record === null
@@ -161,6 +163,7 @@ export function useDraftSync(
           ),
         ),
       ]);
+      if (epoch !== getDraftSessionEpoch()) return;
       // 403/404 = 访问权终态（D7）：停止重试与 10 秒循环，本地草稿保留不上传
       const deniedHit =
         answerSettled.some(
@@ -176,6 +179,7 @@ export function useDraftSync(
       const inksOk = !inkResults.includes("failed");
       if (answersOk && inksOk) {
         for (const [index, [questionId, answer]] of pendingAnswers.entries()) {
+          if (epoch !== getDraftSessionEpoch()) return;
           if (answerSettled[index]?.status === "fulfilled") {
             await draftStore.markAnswerSynced(
               attemptIdRef.current,

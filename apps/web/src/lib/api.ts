@@ -1045,10 +1045,12 @@ export function putAttemptInkApi(
   questionId: string,
   strokesGzip: Blob,
   snapshotPng: Blob,
+  meta?: import("@tutor/contract").InkWriteMeta,
 ): Promise<InkUploadData> {
   const form = new FormData();
   form.append("strokes", strokesGzip, "strokes.json.gz");
   form.append("snapshot", snapshotPng, "snapshot.png");
+  if (meta) form.append("meta", JSON.stringify(meta));
   return callApi(() =>
     fetch(
       `/api/student/attempts/${encodeURIComponent(attemptId)}/ink/${encodeURIComponent(questionId)}`,

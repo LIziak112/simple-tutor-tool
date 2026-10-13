@@ -127,8 +127,28 @@ beforeEach(async () => {
   );
 });
 afterEach(() => {
+  vi.useRealTimers();
   resetAnnotationSession();
   vi.unstubAllGlobals();
+});
+it("标画收起保活到期释放空画布，重新打开恢复引擎", async () => {
+  render(<Harness />);
+  fireEvent.click(screen.getByText("标画"));
+  await waitFor(() => expect(screen.getByRole("toolbar")).toBeVisible());
+  vi.useFakeTimers();
+  fireEvent.click(screen.getByRole("button", { name: "作答" }));
+  await act(async () => {
+    await Promise.resolve();
+  });
+  const destroyed = engine.destroy.mock.calls.length;
+  await act(() => vi.advanceTimersByTimeAsync(45_000));
+  expect(engine.destroy.mock.calls.length).toBeGreaterThan(destroyed);
+  vi.useRealTimers();
+  const mounted = engine.mount.mock.calls.length;
+  fireEvent.click(screen.getByText("标画"));
+  await waitFor(() =>
+    expect(engine.mount.mock.calls.length).toBeGreaterThan(mounted),
+  );
 });
 it("绘制时锁表单，退出留痕且不重建历史引擎", async () => {
   render(<Harness />);

@@ -13,7 +13,7 @@ import {
   NotebookPen,
   Pencil,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -273,6 +273,7 @@ export function AttemptQuestionCard({
   formalInkPresence = false,
   onInkPresenceChange,
   assignmentTitle = "练习",
+  footer,
 }: {
   /** 题号（0 起，展示 +1） */
   index: number;
@@ -300,6 +301,8 @@ export function AttemptQuestionCard({
   formalInkPresence?: boolean;
   onInkPresenceChange?: HandwrittenControlsProps["onInkPresenceChange"];
   assignmentTitle?: string;
+  /** 作答流程可追加题级提交入口，共享题面与编辑器。 */
+  footer?: ReactNode;
 }) {
   // T7.7：教师关闭手写辅助（ink）时草稿纸入口一并隐藏——草稿纸是 ink 辅助
   // 入口（已有草稿数据保留服务端，恢复开关后回来看）。
@@ -547,6 +550,7 @@ export function AttemptQuestionCard({
         <div className="flex min-w-0 flex-col gap-4">{questionBody}</div>
         <div className="min-w-0">{noteLayer}</div>
       </div>
+      {footer}
       {inlineQuestion && attemptId && (
         <AnnotationExportDialog
           open={exportOpen}

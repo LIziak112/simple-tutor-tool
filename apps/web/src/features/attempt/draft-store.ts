@@ -2,6 +2,7 @@ import type { InkDoc, StudentAnswer } from "@tutor/contract";
 import { createStore, del, get, set } from "idb-keyval";
 import {
   digestOf,
+  inkDigestOf,
   mergeAnswers,
   unsyncedAnswerIds,
   unsyncedInkIds,
@@ -52,7 +53,33 @@ export const DRAFT_WRITE_DEBOUNCE_MS = 300;
 
 const DRAFT_DB = "tutor-drafts";
 const DRAFT_STORE = "drafts";
-const keyOf = (attemptId: string) => `draft:${attemptId}`;
+type DraftSession = { origin: string; studentId: string };
+let draftSession: DraftSession | null = null;
+const keyOf = (attemptId: string) =>
+  draftSession === null
+    ? `draft:${attemptId}`
+    : `draft:${JSON.stringify([draftSession.origin, draftSession.studentId, attemptId])}`;
+
+export function getDraftSessionEpoch(): number {
+  return backendGeneration;
+}
+
+/** 切账号前启动旧稿落盘；迟到读写回执不能进入新账号的内存仓。 */
+export function bindDraftSession(session: DraftSession | null): void {
+  if (
+    draftSession?.origin === session?.origin &&
+    draftSession?.studentId === session?.studentId
+  )
+    return;
+  for (const attemptId of cache.keys()) void writeNow(attemptId);
+  backendGeneration++;
+  for (const timer of writeTimers.values()) clearTimeout(timer);
+  writeTimers.clear();
+  cache.clear();
+  persistenceStates.clear();
+  writeVersions.clear();
+  draftSession = session;
+}
 
 function emptyRecord(): AttemptDraftRecord {
   return {
@@ -121,6 +148,7 @@ function setPersistenceState(
  * 装入新后端同时清空内存缓存与待写定时器——缓存属于旧后端，一并作废。
  */
 export function installDraftBackend(backend: KVBackend): void {
+  draftSession = null;
   backendGeneration++;
   persistenceStates.clear();
   writeVersions.clear();
@@ -139,9 +167,12 @@ function backend(): KVBackend {
 }
 
 /** 吞错执行底层读（IndexedDB 不可用时返回 null，绝不抛给作答链路） */
-async function safeGet(attemptId: string): Promise<AttemptDraftRecord | null> {
+async function safeGet(
+  attemptId: string,
+  storageKey = keyOf(attemptId),
+): Promise<AttemptDraftRecord | null> {
   try {
-    const value = await backend().get(keyOf(attemptId));
+    const value = await backend().get(storageKey);
     if (value === undefined || value === null) return null;
     // 记录由本模块独占写入，形态可信；防御性补齐缺省字段（前向兼容旧记录）
     const raw = value as Partial<AttemptDraftRecord>;
@@ -227,12 +258,34 @@ async function loadDraft(
 ): Promise<AttemptDraftRecord | null> {
   const cached = cache.get(attemptId);
   if (cached !== undefined) return cached;
+  const generation = backendGeneration;
   const stored = await safeGet(attemptId);
+  if (generation !== backendGeneration) return null;
   if (stored !== null) cache.set(attemptId, stored);
   return stored;
 }
 
 export const draftStore = {
+  /** 仅在服务端已验证本人作答归属后调用；旧稿迁入新键，原键继续保留。 */
+  async recoverLegacyDraft(
+    attemptId: string,
+  ): Promise<AttemptDraftRecord | null> {
+    const generation = backendGeneration;
+    const current = await loadDraft(attemptId);
+    if (
+      generation !== backendGeneration ||
+      current !== null ||
+      draftSession === null
+    )
+      return current;
+    const legacy = await safeGet(attemptId, `draft:${attemptId}`);
+    if (generation !== backendGeneration) return null;
+    if (legacy) {
+      cache.set(attemptId, legacy);
+      scheduleWrite(attemptId);
+    }
+    return legacy;
+  },
   /** 保存详情只取标量，不序列化正式笔迹或读取图片。 */
   getSaveFlags(attemptId: string, questionId: string) {
     const record = cache.get(attemptId);
@@ -287,8 +340,14 @@ export const draftStore = {
     doc: InkDoc,
   ): Promise<void> {
     mutate(attemptId, (record) => {
-      record.inks[questionId] = doc;
-      record.inkDigests[questionId] = digestOf(doc);
+      const current = record.inks[questionId];
+      const next =
+        current && inkDigestOf(current) !== inkDigestOf(doc) ? current : doc;
+      record.inks[questionId] =
+        doc.serverRevision === undefined
+          ? next
+          : { ...next, serverRevision: doc.serverRevision };
+      record.inkDigests[questionId] = inkDigestOf(doc);
     });
     return writeNow(attemptId);
   },
@@ -318,7 +377,9 @@ export const draftStore = {
     attemptId: string,
     serverAnswers: Record<string, StudentAnswer>,
   ): Promise<Record<string, StudentAnswer>> {
-    await loadDraft(attemptId);
+    const generation = backendGeneration;
+    await draftStore.recoverLegacyDraft(attemptId);
+    if (generation !== backendGeneration) return serverAnswers;
     const local = cache.get(attemptId);
     const { merged } = mergeAnswers(local?.answers ?? null, serverAnswers);
     if (local === undefined && Object.keys(merged).length === 0) {

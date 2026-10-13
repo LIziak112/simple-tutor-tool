@@ -6,7 +6,7 @@ import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createDb } from "./client.ts";
 import { resolveMigrationsFolder, runMigrations } from "./migrate.ts";
-import { assignments, courses, ink, questions, students } from "./schema";
+import { assignments, courses, questions, students } from "./schema";
 import { makeMigrationsFolderUpTo } from "./test-utils.ts";
 
 let dir: string;
@@ -180,19 +180,19 @@ describe("T6R.2 迁移：空库与带存量库", () => {
          VALUES (?, ?, ?, 3, '{"id":"练习四-1","type":"judge"}', '{"kind":"judge","value":true}', NULL, NULL, NULL, NULL, NULL, 0, NULL, 2, NULL)`,
       )
       .run(randomUUID(), attemptId, questionId);
-    db.insert(ink)
-      .values({
-        id: randomUUID(),
+    // 旧结构夹具必须按旧列写入，不能使用升级后的 Drizzle 表模型。
+    db.$client
+      .prepare(
+        "INSERT INTO ink (id, attempt_id, question_id, strokes_path, png_path, width, height, stroke_count, updated_at) VALUES (?, ?, ?, ?, ?, 1000, 800, 5, ?)",
+      )
+      .run(
+        randomUUID(),
         attemptId,
         questionId,
-        strokesPath: `blobs/ink/${attemptId}/${encodeURIComponent(questionId)}.json.gz`,
-        pngPath: `blobs/ink/${attemptId}/${encodeURIComponent(questionId)}.png`,
-        width: 1000,
-        height: 800,
-        strokeCount: 5,
-        updatedAt: now,
-      })
-      .run();
+        `blobs/ink/${attemptId}/${encodeURIComponent(questionId)}.json.gz`,
+        `blobs/ink/${attemptId}/${encodeURIComponent(questionId)}.png`,
+        now,
+      );
     return { attemptId, questionId };
   }
 
@@ -230,6 +230,11 @@ describe("T6R.2 迁移：空库与带存量库", () => {
     expect(
       db.$client.prepare("SELECT count(*) AS n FROM ink").get(),
     ).toMatchObject({ n: 1 });
+    expect(
+      db.$client
+        .prepare("SELECT revision, mutation_id, body_hash FROM ink")
+        .get(),
+    ).toEqual({ revision: 1, mutation_id: null, body_hash: null });
     // T6R.3（0022）：存量 attempts 行补冻结列默认值——未冻结、非 legacy
     // （升级前已交卷的行沿用交卷快照；进行中行由服务层懒冻结，见 attempt-service）
     const attemptRow = db.$client

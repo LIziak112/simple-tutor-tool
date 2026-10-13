@@ -141,7 +141,7 @@ export function PaperPresentation({
           <div className="flex min-h-11 items-start justify-between gap-3">
             <div className="min-w-0 flex-1 text-sm">
               <p className="mb-1 font-medium">{heading ?? label}</p>
-              {context && (
+              {fullscreen && context && (
                 <details open>
                   <summary className="cursor-pointer text-xs text-muted-foreground">
                     {contextLabel}

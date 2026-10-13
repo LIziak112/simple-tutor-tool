@@ -136,7 +136,7 @@ test("草稿与正式手写：同画布全屏保留撤销历史、十次切换�
           const store = kind === "formal" ? "drafts" : "notes";
           const key =
             kind === "formal"
-              ? `draft:${attemptId}`
+              ? `draft:${JSON.stringify([location.origin, studentId, attemptId])}`
               : JSON.stringify([
                   "note",
                   location.origin,

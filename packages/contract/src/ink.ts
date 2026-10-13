@@ -72,14 +72,24 @@ export const inkDocSchema = z.discriminatedUnion("engine", [
     data: inkAtramentDataSchema,
     /** 最后变更时间（epoch 毫秒）；load 外部文档时原样保留 */
     updatedAt: z.number().int().min(0),
+    /** 服务端修订号；本地编辑保存其基线，历史文档可缺省。 */
+    serverRevision: z.number().int().min(0).optional(),
   }),
   z.object({
     engine: z.literal("excalidraw"),
     version: z.literal(1),
     data: inkExcalidrawDataSchema,
     updatedAt: z.number().int().min(0),
+    serverRevision: z.number().int().min(0).optional(),
   }),
 ]);
+
+/** 正式笔迹上传并发元信息；正文与图片整体作为一次幂等变更。 */
+export const inkWriteMetaSchema = z.object({
+  baseRevision: z.number().int().min(0),
+  mutationId: z.string().uuid(),
+});
+export type InkWriteMeta = z.infer<typeof inkWriteMetaSchema>;
 
 /** PUT /api/student/attempts/:id/ink/:questionId 响应 data */
 export const inkUploadDataSchema = z.object({
@@ -94,6 +104,8 @@ export const inkUploadDataSchema = z.object({
   height: z.number().int().min(0),
   /** 服务端落库时间：UTC ISO */
   updatedAt: z.string().min(1),
+  /** 历史响应缺省，新服务端始终返回。 */
+  revision: z.number().int().positive().optional(),
 });
 
 /** GET /api/student/attempts/:id/ink/:questionId 响应 data：直接是 InkDoc */
@@ -122,6 +134,9 @@ export const inkErrorCodeSchema = z.enum([
   "INK_TOO_LARGE",
   "INK_INVALID",
   "INK_NOT_FOUND",
+  "INK_REVISION_CONFLICT",
+  "INK_MUTATION_MISMATCH",
+  "INK_VERSION_REQUIRED",
   "ATTEMPT_NOT_FOUND",
   "FORBIDDEN",
   "ALREADY_SUBMITTED",

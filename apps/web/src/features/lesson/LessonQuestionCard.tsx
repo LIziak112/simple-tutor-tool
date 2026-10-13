@@ -18,6 +18,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { AttemptQuestionCard } from "@/features/attempt/AttemptQuestionCard";
 import {
   ResultOptions,
   SolutionFold,
@@ -25,17 +26,11 @@ import {
   VerdictBadge,
 } from "@/features/attempt/AttemptResultView";
 import {
-  HANDWRITTEN_TYPES,
   QUESTION_TYPE_BADGE_CLASS,
   QUESTION_TYPE_LABELS,
 } from "@/features/attempt/answer-format";
-import { HandwrittenControls } from "@/features/attempt/HandwrittenControls";
-import { HintEntryList, HintPanel } from "@/features/attempt/HintPanel";
-import { QuestionSurface } from "@/features/attempt/QuestionSurface";
-import {
-  completionLabel,
-  getQuestionCompletion,
-} from "@/features/attempt/question-completion";
+import { HintEntryList } from "@/features/attempt/HintPanel";
+import { getQuestionCompletion } from "@/features/attempt/question-completion";
 import { ResultAnswerComparison } from "@/features/attempt/ResultAnswerComparison";
 import {
   busyCloseGuard,
@@ -195,7 +190,10 @@ export const LessonQuestionCard = memo(function LessonQuestionCard({
   const [phase, setPhase] = useState<SubmitPhase>({ kind: "idle" });
 
   const registerCard = (element: HTMLElement | null) => {
-    handlers?.registerCard(question.id, element);
+    const card =
+      element?.querySelector<HTMLElement>("article[data-question-id]") ??
+      element;
+    handlers?.registerCard(question.id, card);
   };
 
   /** 确认提交（allowMissing=true = 用户已明确选择缺稿提交） */
@@ -326,63 +324,34 @@ export const LessonQuestionCard = memo(function LessonQuestionCard({
     defer,
   ) => handlers.onAnswer(question.id, next, defer ?? false);
   return (
-    <article
+    <div
       ref={registerCard}
-      data-question-id={question.id}
       tabIndex={-1}
-      aria-label={`第 ${index + 1} 题`}
-      className="flex scroll-mt-24 flex-col gap-3 rounded-2xl border border-border bg-card p-4 text-card-foreground shadow-xs sm:p-5"
+      className="flex scroll-mt-24 flex-col gap-3 outline-none"
     >
-      <div className="flex min-h-11 flex-wrap items-center gap-x-2 gap-y-1.5">
-        <p className="text-sm font-semibold">第 {index + 1} 题</p>
-        <span
-          className={`rounded-md px-2 py-1 text-xs font-medium ${QUESTION_TYPE_BADGE_CLASS[question.type]}`}
-        >
-          {QUESTION_TYPE_LABELS[question.type]}
-        </span>
-        <span className="w-full text-xs text-muted-foreground sm:w-auto">
-          {completionLabel(getQuestionCompletion(question, answer, false))}
-        </span>
-      </div>
-
-      <QuestionSurface
+      <AttemptQuestionCard
+        index={index}
         question={question}
+        attemptId={attemptId}
         answer={answer}
         onAnswer={onAnswer}
+        registerInkController={handlers.registerInkController}
+        hints={hints}
+        onHintUnlocked={(entry) => handlers.onHintUnlocked(question.id, entry)}
+        assignmentTitle="讲练"
+        footer={
+          <Button
+            type="button"
+            className="min-h-11 w-fit"
+            onClick={() => {
+              setPhase({ kind: "idle" });
+              setDialogOpen(true);
+            }}
+          >
+            提交本题
+          </Button>
+        }
       />
-
-      {HANDWRITTEN_TYPES.has(question.type) && (
-        <HandwrittenControls
-          ariaPrefix={`第 ${index + 1} 题`}
-          attemptId={attemptId}
-          questionId={question.id}
-          stemMd={question.stemMd}
-          answer={answer}
-          onAnswer={onAnswer}
-          registerController={handlers.registerInkController}
-        />
-      )}
-
-      {question.hintCount > 0 && (
-        <HintPanel
-          attemptId={attemptId}
-          questionId={question.id}
-          hintCount={question.hintCount}
-          hints={hints}
-          onUnlocked={(entry) => handlers.onHintUnlocked(question.id, entry)}
-        />
-      )}
-
-      <Button
-        type="button"
-        className="min-h-11 w-fit"
-        onClick={() => {
-          setPhase({ kind: "idle" });
-          setDialogOpen(true);
-        }}
-      >
-        提交本题
-      </Button>
 
       <LessonSubmitDialog
         open={dialogOpen}
@@ -396,6 +365,6 @@ export const LessonQuestionCard = memo(function LessonQuestionCard({
         }}
         onConfirm={(allowMissing) => void confirmSubmit(allowMissing)}
       />
-    </article>
+    </div>
   );
 });

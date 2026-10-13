@@ -48,6 +48,10 @@ import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { useAttemptEditor } from "@/features/attempt/AttemptEditorContext";
 import { InkPad } from "@/features/ink/InkPad";
 import { PaperPresentation } from "@/features/ink/PaperPresentation";
+import {
+  PAPER_KEEPALIVE_MS,
+  useRetainedPaper,
+} from "@/features/ink/use-retained-paper";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { recoverNoteImages } from "@/features/notes/image-sync";
 import { NoteStatusArea } from "@/features/notes/NoteStatusArea";
@@ -71,7 +75,7 @@ import { getNoteRecord, settleNotePersistence } from "./note-store";
  * 「先做选项再回草稿」的往返里，立即卸载会让重开整段重建（引擎实例 + 笔迹
  * 重放）。超时（确无回写意图）才真正卸载释放画布内存。
  */
-export const NOTE_ENGINE_KEEPALIVE_MS = 45_000;
+export const NOTE_ENGINE_KEEPALIVE_MS = PAPER_KEEPALIVE_MS;
 
 const LAYOUT_LABEL: Record<NoteLayoutPreference, string> = {
   auto: "自动（按宽度）",
@@ -165,19 +169,7 @@ export function NoteLayer({
   };
 
   // ---- 收起保活（复审⑦）：展开即清计时；收起计时到点才卸载纸面 ----
-  const [paperAlive, setPaperAlive] = useState(false);
-  useEffect(() => {
-    if (open) {
-      setPaperAlive(true);
-      return;
-    }
-    // 计时器闭包化（复审⑮）：卸载/重开由 effect 清理自动撤销，无共享 ref
-    const timer = setTimeout(
-      () => setPaperAlive(false),
-      NOTE_ENGINE_KEEPALIVE_MS,
-    );
-    return () => clearTimeout(timer);
-  }, [open]);
+  const paperAlive = useRetainedPaper(open || fullscreen, finish);
 
   // ---- 冲突裁决 / 被拒重试（共享 hook useNoteSyncActions，scope 定在
   // scratch；图片维度逻辑留本组件）/ 补图重试 ----

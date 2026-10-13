@@ -4,6 +4,7 @@ import {
   currentAnnotationSession,
   resetAnnotationSession,
 } from "@/features/annotation/annotation-sync";
+import { bindDraftSession } from "@/features/attempt/draft-store";
 import {
   currentNoteSession,
   resetNoteSession,
@@ -44,6 +45,7 @@ export function useStudentMe() {
 function useApplyStudentAuthed() {
   const queryClient = useQueryClient();
   return (student: StudentMeData) => {
+    bindDraftSession({ origin: window.location.origin, studentId: student.id });
     // T6R.9 复审①：登录身份与当前草稿绑定不同 → 立即停旧会话。否则换账号后
     // 旧待传继续跑，会用**新会话 Cookie** 上传——attempt 归属由服务端从会话
     // 推导，旧账号的草稿必 403，被误打成 denied(access) 终态。同账号重登
@@ -101,6 +103,7 @@ export function useLogoutStudent() {
   return useMutation({
     mutationFn: logoutStudentApi,
     onSuccess: () => {
+      bindDraftSession(null);
       queryClient.removeQueries({ queryKey: ["student"] });
       resetNoteSession();
       resetAnnotationSession();

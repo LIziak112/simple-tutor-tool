@@ -17,7 +17,9 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useAttemptEditor } from "@/features/attempt/AttemptEditorContext";
+import { canvasToPngBlob } from "@/features/ink/engine/canvas-png";
 import type { InkPenColor, InkPenSize } from "@/features/ink/engine/index";
+import { PAPER_KEEPALIVE_MS } from "@/features/ink/use-retained-paper";
 import {
   getAnnotationRecord,
   settleAnnotationPersistence,
@@ -78,6 +80,9 @@ export const QuestionAnnotationOverlay = forwardRef<
     selected && (original ? originalLoaded : compatible === true && !hidden);
   const visible = original || (compatible === true && !hidden);
   const [mountedOnce, setMountedOnce] = useState(false);
+  const [previewBlob, setPreviewBlob] = useState<Blob | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const previewVersion = useRef<number | null>(null);
   const scope = {
     attemptId,
     questionId: question.id,
@@ -229,9 +234,51 @@ export const QuestionAnnotationOverlay = forwardRef<
   }, [active, original]);
 
   useEffect(() => {
-    if (visible && record?.doc && (!original || originalLoaded))
+    if (
+      visible &&
+      record?.doc &&
+      (!original || originalLoaded) &&
+      (active || previewBlob === null)
+    )
       setMountedOnce(true);
-  }, [visible, record?.doc, original, originalLoaded]);
+  }, [visible, record?.doc, original, originalLoaded, active, previewBlob]);
+  useEffect(() => {
+    if (active || !mountedOnce || !session) return;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      void (async () => {
+        await finish();
+        const canvas = host.current?.querySelector("canvas");
+        const current = recordRef.current;
+        if ((current?.doc?.strokes.length ?? 0) > 0 && !canvas) return;
+        const blob = canvas ? await canvasToPngBlob(canvas) : null;
+        if (cancelled) return;
+        previewVersion.current = current?.docVersion ?? null;
+        setPreviewBlob(blob);
+        setMountedOnce(false);
+      })().catch(() => undefined);
+    }, PAPER_KEEPALIVE_MS);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [active, mountedOnce, session, finish]);
+  useEffect(() => {
+    if (!previewBlob) {
+      setPreviewUrl(null);
+      return;
+    }
+    const url = URL.createObjectURL(previewBlob);
+    setPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [previewBlob]);
+  useEffect(() => {
+    if (
+      previewVersion.current !== null &&
+      record?.docVersion !== previewVersion.current
+    )
+      setPreviewBlob(null);
+  }, [record?.docVersion]);
   useEffect(() => {
     if (
       !mountedOnce ||
@@ -353,6 +400,13 @@ export const QuestionAnnotationOverlay = forwardRef<
             className="absolute inset-0"
             style={{ pointerEvents: active ? "auto" : "none" }}
           />
+          {!mountedOnce && previewUrl && (
+            <img
+              src={previewUrl}
+              alt="本题标画笔迹"
+              className="pointer-events-none absolute inset-0 h-full w-full"
+            />
+          )}
         </div>
       )}
       {loading && (

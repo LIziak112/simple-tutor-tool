@@ -1,9 +1,9 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { gunzipSync, gzipSync } from "node:zlib";
-import type { ApiErr, InkDoc } from "@tutor/contract";
-import { inkUploadOkSchema } from "@tutor/contract";
+import type { ApiErr, InkDoc, InkWriteMeta } from "@tutor/contract";
+import { inkFetchOkSchema, inkUploadOkSchema } from "@tutor/contract";
 import type { Logger } from "pino";
 import pino from "pino";
 import { describe, expect, it } from "vitest";
@@ -11,7 +11,9 @@ import { createApp } from "../app.ts";
 import type { Db } from "../db/client.ts";
 import { ink as inkTable } from "../db/schema.ts";
 import { createTestDb, createTestDir } from "../db/test-utils.ts";
+import { createSnapshot } from "../services/backup-service";
 import { safeInkFileName } from "../services/ink-service.ts";
+import { gcNoteVersions } from "../services/note-service";
 import { assertNoLeak } from "../test/assert-no-leak.ts";
 import { makeNotePng as makePng } from "../test/note-fixtures.ts";
 import { submitAttemptRequest } from "../test/submit-revisions";
@@ -206,8 +208,10 @@ function putInk(
   questionId: string,
   strokes: Uint8Array,
   snapshot: Uint8Array,
+  meta?: InkWriteMeta,
 ): Promise<Response> {
   const form = new FormData();
+  if (meta) form.append("meta", JSON.stringify(meta));
   form.append(
     "strokes",
     new Blob([strokes], { type: "application/gzip" }),
@@ -285,7 +289,7 @@ describe("PUT + GET 笔迹：上传取回往返", () => {
     const getRes = await getInk(app, aCookie, attemptId, Q.solve);
     expect(getRes.status).toBe(200);
     const getBody = (await getRes.json()) as { data: InkDoc };
-    expect(getBody.data).toEqual(doc);
+    expect(getBody.data).toEqual({ ...doc, serverRevision: 1 });
 
     // 学生 PNG 直出：字节与 content-type
     const pngRes = await app.request(
@@ -329,7 +333,10 @@ describe("PUT + GET 笔迹：上传取回往返", () => {
     const res = await putInk(app, aCookie, attemptId, Q.solve, raw, makePng());
     expect(res.status).toBe(200);
     const getRes = await getInk(app, aCookie, attemptId, Q.solve);
-    expect(((await getRes.json()) as { data: InkDoc }).data).toEqual(doc);
+    expect(((await getRes.json()) as { data: InkDoc }).data).toEqual({
+      ...doc,
+      serverRevision: 1,
+    });
   });
 
   it("幂等覆盖：同题再传 → inkId 不变、库仍一行、GET 返回新内容", async () => {
@@ -354,6 +361,7 @@ describe("PUT + GET 笔迹：上传取回往返", () => {
       Q.solve,
       gzipDoc(atramentDoc(5, 1727392900000)),
       makePng(640, 480),
+      { baseRevision: 1, mutationId: randomUUID() },
     );
     expect(second.status).toBe(200);
     const secondData = (
@@ -715,6 +723,84 @@ describe("路径安全", () => {
 });
 
 describe("泄露（AGENTS.md 第 3 条）", () => {
+  it("旧版不可变文件只在安全窗口后回收，当前头与备份引用继续保留", async () => {
+    const { app, db, dataDir, aCookie, attemptId } = await makeInkApp();
+    const send = (baseRevision: number) =>
+      putInk(
+        app,
+        aCookie,
+        attemptId,
+        Q.solve,
+        gzipDoc(atramentDoc(baseRevision + 1)),
+        makePng(),
+        { baseRevision, mutationId: randomUUID() },
+      );
+    expect((await send(0)).status).toBe(200);
+    const backedUp = db.select().from(inkTable).get();
+    if (!backedUp) throw new Error("笔迹未保存");
+    createSnapshot(dataDir, db);
+    expect((await send(1)).status).toBe(200);
+    const orphan = db.select().from(inkTable).get();
+    if (!orphan) throw new Error("笔迹未保存");
+    expect((await send(2)).status).toBe(200);
+    const head = db.select().from(inkTable).get();
+    if (!head) throw new Error("笔迹未保存");
+    expect(gcNoteVersions(db, dataDir).sweptOrphanFiles).toBe(0);
+    const future = new Date(Date.now() + 25 * 60 * 60 * 1000);
+    expect(gcNoteVersions(db, dataDir, { now: future }).sweptOrphanFiles).toBe(
+      2,
+    );
+    expect(existsSync(join(dataDir, orphan.strokesPath))).toBe(false);
+    for (const row of [backedUp, head]) {
+      expect(existsSync(join(dataDir, row.strokesPath))).toBe(true);
+      expect(existsSync(join(dataDir, row.pngPath))).toBe(true);
+    }
+  });
+  it("版本冲突和幂等重试不覆盖当前稿，错误载荷也不泄露题目内容", async () => {
+    const { app, aCookie, attemptId } = await makeInkApp();
+    const meta = { baseRevision: 0, mutationId: randomUUID() };
+    const send = (count: number, next = meta) =>
+      putInk(
+        app,
+        aCookie,
+        attemptId,
+        Q.solve,
+        gzipDoc(atramentDoc(count)),
+        makePng(),
+        next,
+      );
+    const first = await send(2);
+    expect(first.status).toBe(200);
+    expect(inkUploadOkSchema.parse(await first.json()).data.revision).toBe(1);
+    const retry = await send(2);
+    expect(retry.status).toBe(200);
+    expect(inkUploadOkSchema.parse(await retry.json()).data.revision).toBe(1);
+    const mismatch = await send(3);
+    expect(mismatch.status).toBe(409);
+    assertNoLeak(await mismatch.json());
+    const stale = await send(4, { baseRevision: 0, mutationId: randomUUID() });
+    expect(stale.status).toBe(409);
+    assertNoLeak(await stale.json());
+    const legacy = await putInk(
+      app,
+      aCookie,
+      attemptId,
+      Q.solve,
+      gzipDoc(atramentDoc(5)),
+      makePng(),
+    );
+    expect(legacy.status).toBe(409);
+    const fetched = await getInk(app, aCookie, attemptId, Q.solve);
+    const fetchedDoc = inkFetchOkSchema.parse(await fetched.json()).data;
+    if (fetchedDoc.engine !== "atrament") throw new Error("笔迹引擎不匹配");
+    expect(fetchedDoc.data.strokes).toHaveLength(2);
+    const cleared = await send(0, {
+      baseRevision: 1,
+      mutationId: randomUUID(),
+    });
+    expect(cleared.status).toBe(200);
+    expect(inkUploadOkSchema.parse(await cleared.json()).data.revision).toBe(2);
+  });
   it("GET ink 响应 assertNoLeak：只有学生自己的笔迹，无题目侧字段", async () => {
     const { app, aCookie, attemptId } = await makeInkApp();
     await putInk(
