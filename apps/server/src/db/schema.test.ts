@@ -440,7 +440,7 @@ describe("attempts / responses 表（T2.6 作答生命周期）", () => {
     db.insert(attempts).values(attempt).run();
     expect(
       db.select().from(attempts).where(eq(attempts.id, attempt.id)).get(),
-    ).toEqual(attempt);
+    ).toEqual({ ...attempt, abandonedAt: null });
     db.$client.close();
   });
 
@@ -601,7 +601,7 @@ describe("讲练一体三列一索引（2026-10：lectures.kind / attempts.lectu
     db.insert(attempts).values(attempt).run();
     expect(
       db.select().from(attempts).where(eq(attempts.id, attempt.id)).get(),
-    ).toEqual(attempt);
+    ).toEqual({ ...attempt, abandonedAt: null });
     db.$client.close();
   });
 

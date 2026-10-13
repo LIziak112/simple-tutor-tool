@@ -14,9 +14,9 @@ import {
   hintOpenDataSchema,
   hintOpenRequestSchema,
   lessonBlockSchema,
+  lessonLandingDataSchema,
   lessonQuestionSubmitDataSchema,
   lessonQuestionSubmitRequestSchema,
-  lessonLandingDataSchema,
   lessonStartDataSchema,
   wrongPracticeRequestSchema,
 } from "./attempt.ts";

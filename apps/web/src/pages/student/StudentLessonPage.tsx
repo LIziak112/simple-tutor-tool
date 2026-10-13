@@ -43,7 +43,6 @@ import {
   useRestartLesson,
 } from "@/features/lesson/lesson-queries";
 import { useLessonAttempt } from "@/features/lesson/use-lesson-attempt";
-import { lessonHref } from "@/features/student/lesson-navigation";
 import { LectureOutline } from "@/features/markdown/LectureOutline";
 import { extractOutline } from "@/features/markdown/outline";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
@@ -51,6 +50,7 @@ import {
   LESSON_HEADING_SELECTOR,
   scrollToHeadingAt,
 } from "@/features/markdown/use-lecture-section-focus";
+import { lessonHref } from "@/features/student/lesson-navigation";
 import {
   StudentErrorPanel,
   StudentListSkeleton,

@@ -701,6 +701,8 @@ function snapshotBusinessTables(db: Db): Map<string, string[]> {
       // responses.submitted_at 可空、存量行恒 NULL。新增列语义见 schema/migrate 测试
       if (table === "lectures") delete row.kind;
       if (table === "attempts") delete row.lecture_id;
+      // 0034 新增废弃时间，旧行默认NULL；原有业务字段仍逐项保真。
+      if (table === "attempts") delete row.abandoned_at;
       if (table === "responses") delete row.submitted_at;
       return JSON.stringify(row, Object.keys(row).sort());
     });

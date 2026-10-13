@@ -2534,10 +2534,9 @@ describe("GET /lectures/:id/lesson/landing + 随时重开（2026-10 教师演示
     expect(startAgain.data.attempt.id).toBe(newAttemptId);
 
     // 旧卷：详情与存答都以 ATTEMPT_ABANDONED 拒绝
-    const detail = await env.app.request(
-      `/api/student/attempts/${attemptId}`,
-      { headers: { cookie: env.memberCookie } },
-    );
+    const detail = await env.app.request(`/api/student/attempts/${attemptId}`, {
+      headers: { cookie: env.memberCookie },
+    });
     expect(detail.status).toBe(409);
     expect(((await detail.json()) as ApiErr).error).toBe("ATTEMPT_ABANDONED");
     const save = await env.app.request(
@@ -2562,9 +2561,7 @@ describe("GET /lectures/:id/lesson/landing + 随时重开（2026-10 教师演示
     const pendingAfter = await env.app.request("/api/teacher/pending-marks", {
       headers: { cookie: env.teacherCookie },
     });
-    expect(
-      JSON.stringify(await pendingAfter.json()),
-    ).not.toContain("成员张三");
+    expect(JSON.stringify(await pendingAfter.json())).not.toContain("成员张三");
   });
 
   it("访问控制：非成员无上下文 404、非成员带 courseId 403、纯讲义 404、未登录 401（与 start 同口径）", async () => {
