@@ -1,5 +1,6 @@
 import { ImageDown, Maximize2, RotateCcw, X } from "lucide-react";
 import { useRef, useState } from "react";
+import { Link } from "react-router";
 import { Button } from "@/components/ui/button";
 import type {
   InkDoc,
@@ -31,6 +32,12 @@ export default function InkDevPage() {
       <header className="border-b border-border px-4 py-3">
         <div className="mx-auto flex max-w-4xl flex-wrap items-baseline gap-3">
           <h1 className="text-sm font-semibold">手写开发页 /dev/ink</h1>
+          <Link
+            to="/dev/ink-feel"
+            className="inline-flex min-h-11 items-center text-sm text-primary underline underline-offset-4"
+          >
+            比较手写手感
+          </Link>
           <span className="text-xs text-muted-foreground">
             T2.7 真机调手感的实验场：三个区块分别试写；iPad 调试可加 ?debug=1
           </span>

@@ -70,6 +70,9 @@ const inkDevRoute = (() => {
   );
 })();
 
+/** 真机手感实验独立加载，生产构建保留入口。 */
+const InkFeelPage = lazy(() => import("./pages/dev/InkFeelPage"));
+
 /** 教师端路由（T1.9）：路由级代码分割，登录/设置页与主布局分块加载 */
 const teacherRoutes = (() => {
   const SetupPage = lazy(() => import("./pages/teacher/SetupPage"));
@@ -585,6 +588,14 @@ export function App() {
       <Route path="/" element={<HomePage />} />
       {devOnlyRoutes}
       {inkDevRoute}
+      <Route
+        path="/dev/ink-feel"
+        element={
+          <Suspense fallback={<p className="p-8">手写实验页加载中…</p>}>
+            <InkFeelPage />
+          </Suspense>
+        }
+      />
       {teacherRoutes}
       {studentRoutes}
       {adminRoutes}

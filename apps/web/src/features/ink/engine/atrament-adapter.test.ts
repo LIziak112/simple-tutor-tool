@@ -183,6 +183,23 @@ function lostCapture(canvas: HTMLCanvasElement, pointerId: number): void {
   );
 }
 
+it("实验平滑调参保留撤销历史与输入面", () => {
+  const h = mountSurface();
+  pointer(h.canvas, "pointerdown");
+  pointer(h.canvas, "pointermove", { clientX: 40 });
+  pointer(h.canvas, "pointerup");
+  h.surface.setSmoothing(0.15);
+  expect(h.surface.canUndo()).toBe(true);
+  h.surface.undo();
+  expect(h.surface.getDoc().data).toEqual({ width: 1000, strokes: [] });
+  expect(h.surface.canRedo()).toBe(true);
+  h.surface.setSmoothing(0.4);
+  h.surface.redo();
+  expect(h.surface.getDoc().data).toMatchObject({
+    strokes: [{ points: expect.any(Array) }],
+  });
+});
+
 /**
  * pointerdown 参数构造（复审⑬：内联字面量统一收口；坐标默认 (20,20)、
  * pointerId 默认 1，与 pointer() 的缺省一致）

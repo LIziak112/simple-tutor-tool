@@ -984,8 +984,7 @@ describe("lessonStartDataSchema / lessonQuestionSubmit（2026-10 讲练一体）
       false,
     );
     expect(
-      lessonBlockSchema.safeParse({ type: "question", questionId: "" })
-        .success,
+      lessonBlockSchema.safeParse({ type: "question", questionId: "" }).success,
     ).toBe(false);
     expect(lessonBlockSchema.safeParse({ type: "html", md: "…" }).success).toBe(
       false,
@@ -1075,9 +1074,7 @@ describe("lessonStartDataSchema / lessonQuestionSubmit（2026-10 讲练一体）
       lessonQuestionSubmitRequestSchema.safeParse({ questionRevisionId: "" })
         .success,
     ).toBe(false);
-    expect(
-      lessonQuestionSubmitRequestSchema.safeParse({}).success,
-    ).toBe(false);
+    expect(lessonQuestionSubmitRequestSchema.safeParse({}).success).toBe(false);
   });
 
   it("单题提交响应：question（当题释放）+ summary + attempt 三键；summary 必填非 null", () => {

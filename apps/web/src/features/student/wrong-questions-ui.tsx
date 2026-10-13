@@ -12,6 +12,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { Link } from "react-router";
+import { SourceBadge } from "@/components/source-badge";
 import { Button } from "@/components/ui/button";
 import { SolutionFold } from "@/features/attempt/AttemptResultView";
 import {
@@ -22,7 +23,6 @@ import {
 } from "@/features/attempt/answer-format";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { DISPLAY_TZ, formatCnTime } from "@/lib/time";
-import { SourceBadge } from "@/components/source-badge";
 import { recordTitleOf } from "./records-views";
 
 // 与 lib/time.ts 同一 dayjs 单例（extend 幂等；本文件分组函数独立可用）
