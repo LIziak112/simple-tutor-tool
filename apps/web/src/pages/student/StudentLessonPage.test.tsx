@@ -21,8 +21,8 @@ import StudentLessonPage from "./StudentLessonPage";
 /**
  * /s/lectures/:id/lesson 学生讲练页（2026-10 讲练一体）组件测试：
  * 进入即幂等开卷（start）→ blocks 渲染（md 段 + 题卡交替 + 孤儿题分组）、
- * 进度（n/m 已提交）、单题提交（错误码收敛）、完成练习（整卷收尾）、
- * 再做一次、零题纯阅读空态、加载/错误三态。API 层 mock。
+ * 进度（n/m 已提交）、显示答案（一键直达；错误码收敛）、完成练习（整卷
+ * 收尾）、再做一次、零题纯阅读空态、加载/错误三态。API 层 mock。
  */
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -225,10 +225,10 @@ function renderPage(
   );
 }
 
-/** 取第一个「提交本题」按钮（同页多张未提交题卡按文档序点击第一张） */
+/** 取第一个「显示答案」按钮（同页多张未提交题卡按文档序点击第一张） */
 function firstSubmitButton(): HTMLElement {
-  const [first] = screen.getAllByRole("button", { name: "提交本题" });
-  if (first === undefined) throw new Error("没有可提交的题卡");
+  const [first] = screen.getAllByRole("button", { name: "显示答案" });
+  if (first === undefined) throw new Error("没有可显示答案的题卡");
   return first;
 }
 
@@ -340,8 +340,8 @@ describe("StudentLessonPage：开卷与 blocks 渲染", () => {
   });
 });
 
-describe("StudentLessonPage：单题提交", () => {
-  it("确认后提交本题：请求带 questionRevisionId 与 none 证据", async () => {
+describe("StudentLessonPage：显示答案（单题）", () => {
+  it("点击显示答案：一键直达，请求带 questionRevisionId 与 none 证据", async () => {
     mockedStart.mockResolvedValue(lessonStart());
     mockedSubmitQuestion.mockResolvedValue({
       question: releasedOf(Q1, { autoCorrect: true, finalCorrect: true }),
@@ -351,7 +351,6 @@ describe("StudentLessonPage：单题提交", () => {
     renderPage();
     await screen.findByText("第 1 题");
     fireEvent.click(firstSubmitButton());
-    fireEvent.click(await screen.findByRole("button", { name: "确认提交" }));
     await waitFor(() =>
       expect(mockedSubmitQuestion).toHaveBeenCalledWith(
         ATTEMPT_ID,
@@ -364,7 +363,7 @@ describe("StudentLessonPage：单题提交", () => {
     );
   });
 
-  it("提交流（预置响应）：卡片转结果态，进度 1/3", async () => {
+  it("显示答案（预置响应）：卡片转结果态，进度 1/3", async () => {
     mockedStart.mockResolvedValue(lessonStart());
     mockedSubmitQuestion.mockResolvedValue({
       question: releasedOf(Q1, { autoCorrect: true, finalCorrect: true }),
@@ -374,11 +373,10 @@ describe("StudentLessonPage：单题提交", () => {
     renderPage();
     await screen.findByText("第 1 题");
     fireEvent.click(firstSubmitButton());
-    fireEvent.click(await screen.findByRole("button", { name: "确认提交" }));
     expect(await screen.findByText("答对")).toBeInTheDocument();
     expect(screen.getByText("已提交 1/3 题")).toBeInTheDocument();
-    // 已提交题卡锁定：不再渲染提交按钮
-    const submitButtons = screen.queryAllByRole("button", { name: "提交本题" });
+    // 已显示答案的题卡锁定：不再渲染显示答案按钮
+    const submitButtons = screen.queryAllByRole("button", { name: "显示答案" });
     expect(submitButtons).toHaveLength(2); // 第 2 题 + 孤儿第 3 题
   });
 
@@ -401,8 +399,7 @@ describe("StudentLessonPage：单题提交", () => {
     renderPage();
     await screen.findByText("第 1 题");
     fireEvent.click(firstSubmitButton());
-    fireEvent.click(await screen.findByRole("button", { name: "确认提交" }));
-    // 弹层关闭且无错误提示；start 重新拉取后题卡为结果态
+    // 无错误弹层；start 重新拉取后题卡为结果态
     await waitFor(() =>
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
     );
@@ -422,11 +419,10 @@ describe("StudentLessonPage：单题提交", () => {
     renderPage();
     await screen.findByText("第 1 题");
     fireEvent.click(firstSubmitButton());
-    fireEvent.click(await screen.findByRole("button", { name: "确认提交" }));
     expect(await screen.findByText(/请刷新后重试/)).toBeInTheDocument();
   });
 
-  it("最后一题提交触发自动收尾：attempt 转 graded → 页面切完成视图（再做一次/查看结果）", async () => {
+  it("最后一题显示答案触发自动收尾：attempt 转 graded → 页面切完成视图（再做一次/查看结果）", async () => {
     // q1、q2 已释放，只余孤儿 q3
     mockedStart.mockResolvedValue(
       lessonStart({
@@ -455,10 +451,9 @@ describe("StudentLessonPage：单题提交", () => {
       attempt: attemptOf("graded"),
     });
     renderPage();
-    // 孤儿题的提交按钮（页尾区唯一未提交题）
+    // 孤儿题的显示答案按钮（页尾区唯一未提交题）
     await screen.findByText("本次练习其余题目");
-    fireEvent.click(screen.getByRole("button", { name: "提交本题" }));
-    fireEvent.click(await screen.findByRole("button", { name: "确认提交" }));
+    fireEvent.click(screen.getByRole("button", { name: "显示答案" }));
     // 完成视图：已完成状态 + 再做一次 + 查看结果
     expect(
       await screen.findByRole("button", { name: "再做一次" }),
@@ -604,13 +599,13 @@ describe("StudentLessonPage：完成练习（整卷收尾）", () => {
     renderPage();
     await screen.findByRole("button", { name: "再做一次" });
     expect(
-      screen.queryByRole("button", { name: "提交本题" }),
+      screen.queryByRole("button", { name: "显示答案" }),
     ).not.toBeInTheDocument();
     expect(screen.getAllByText("答对").length).toBeGreaterThan(0);
-    // 题卡附完整结果页链接（收尾后可进订正/笔记）
-    expect(screen.getAllByRole("link", { name: "查看完整结果页" }).length).toBe(
-      3,
-    );
+    // 教师演示简化形态：题卡不带完整结果页链接（结果入口在页面头部「查看结果」）
+    expect(
+      screen.queryByRole("link", { name: "查看完整结果页" }),
+    ).not.toBeInTheDocument();
   });
 });
 

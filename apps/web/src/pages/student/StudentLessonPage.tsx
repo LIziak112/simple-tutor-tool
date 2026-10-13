@@ -119,12 +119,7 @@ export default function StudentLessonPage() {
   }
   const data = lessonQuery.data;
   return data.attempt.status !== "draft" ? (
-    <LessonCompletedView
-      data={data}
-      courseId={courseId}
-      lectureId={id}
-      refetch={lessonQuery.refetch}
-    />
+    <LessonCompletedView data={data} courseId={courseId} lectureId={id} />
   ) : (
     <LessonAnswerView
       key={data.attempt.id}
@@ -504,10 +499,7 @@ function LessonAnswerView({
     run: runFinish,
   });
 
-  /** 待批题手动刷新（useCallback 稳定引用：题卡 memo 不因内联箭头失效） */
-  const handleRefresh = useCallback(() => {
-    void refetch();
-  }, [refetch]);
+  /** 待批题手动刷新已随题卡简化移除（课中批改即时下发的承载另行设计） */
 
   // 最后一题单题提交的事务内自动收尾：会话覆盖层先切完成视图（refetch 落地
   // 后由页面级分支接管并卸载作答会话），避免「提交完成但页面仍作答态」的窗口
@@ -522,7 +514,6 @@ function LessonAnswerView({
         }}
         courseId={courseId}
         lectureId={lectureId}
-        refetch={refetch}
       />
     );
   }
@@ -542,9 +533,7 @@ function LessonAnswerView({
       answer={session.answers?.[question.id]}
       hints={session.hintsOpened[question.id] ?? EMPTY_HINTS}
       released={session.released[question.id]}
-      attemptCompleted={false}
       handlers={session.handlers}
-      onRefresh={handleRefresh}
     />
   );
 
@@ -660,12 +649,10 @@ function LessonCompletedView({
   data,
   courseId,
   lectureId,
-  refetch,
 }: {
   data: LessonStartData;
   courseId: string | undefined;
   lectureId: string;
-  refetch: () => Promise<unknown>;
 }) {
   const restart = useRestartLesson(lectureId);
   const [restartOpen, setRestartOpen] = useState(false);
@@ -682,11 +669,6 @@ function LessonCompletedView({
       : "网络异常，请稍后重试"
     : null;
 
-  /** 待批题手动刷新（useCallback 稳定引用：题卡 memo 不因内联箭头失效） */
-  const handleRefresh = useCallback(() => {
-    void refetch();
-  }, [refetch]);
-
   const renderCard = (
     question: AttemptQuestionPublic,
     index: number,
@@ -700,9 +682,7 @@ function LessonCompletedView({
       answer={data.drafts[question.id]}
       hints={EMPTY_HINTS}
       released={data.released[question.id]}
-      attemptCompleted
       handlers={undefined}
-      onRefresh={handleRefresh}
     />
   );
 

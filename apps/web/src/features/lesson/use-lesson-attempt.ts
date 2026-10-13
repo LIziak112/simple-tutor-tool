@@ -65,7 +65,7 @@ export interface LessonQuestionHandlers {
   ) => void;
   /** 题卡 DOM 注册（question_view 埋点 + 视口观察） */
   registerCard: (questionId: string, el: HTMLElement | null) => void;
-  /** 单题提交（确认后调用）；opts.allowMissing = 用户已确认缺稿提交 */
+  /** 显示答案（题卡「显示答案」一键直达调用）；opts.allowMissing = 用户已在缺稿弹层明确选择继续 */
   submit: (
     questionId: string,
     opts?: { allowMissing?: boolean },

@@ -23,9 +23,9 @@ import {
  * - 学生讲义列表与课程目录「讲练」徽标 + 直达 /s/lectures/:id/lesson；
  * - 讲练页：md 段与题卡按讲义顺序交错（DOM 序断言）；未提交时页面文本
  *   不含任何详解/提示/题块原文（[[、- [x]、:::solution 等）；
- * - 逐题提交：choice 答对 → 答对徽章 + 详解展开；choice 答错 → 答错徽章 +
- *   参考答案 + 详解；judge 答对；fill → 「待老师批改」+ 详解已释放；每次
- *   提交后进度计数前进；
+ * - 逐题显示答案（一键直达，无确认层）：choice 答对 → 答对徽章 + 解析直接
+ *   展示；choice 答错 → 答错徽章 + 参考答案 + 解析；judge 答对；fill → 无
+ *   自动判定不显示徽章，参考答案与解析直接展示；每次显示后进度计数前进；
  * - 刷新：已提交题保持结果态、未提交题草稿答案恢复；
  * - 完成练习（剩余未答题收尾）→ 完成视图 → 结果页可进（来源行「讲练」）、
  *   我的记录出现「讲练」来源行；
@@ -269,7 +269,7 @@ test.describe("讲练一体全链：导入 → 徽标 → 逐题提交 → 批�
         const card = studentPage.locator(`article[aria-label="第 ${no} 题"]`);
         await expect(card).toBeVisible();
         await expect(
-          card.getByRole("button", { name: "提交本题" }),
+          card.getByRole("button", { name: "显示答案" }),
         ).toBeVisible();
       }
 
@@ -294,9 +294,9 @@ test.describe("讲练一体全链：导入 → 徽标 → 逐题提交 → 批�
       await studentPage.waitForTimeout(800); // 等泄露监控读尽响应体
       expect(leak.violations().join("\n")).toBe("");
 
-      // —— 逐题提交 1/5：choice 答对 → 答对徽章 + 详解展开 ——
+      // —— 逐题显示答案 1/5：choice 答对 → 答对徽章 + 解析直接展示 ——
       const q1 = studentPage.locator('article[aria-label="第 1 题"]');
-      // 讲练客观题也能演算和圈画；提交后切为只读，不留下编辑入口。
+      // 讲练客观题也能演算和圈画；显示答案后切为只读，不留下编辑入口。
       const paper = q1.getByRole("button", { name: /^第 1 题草稿纸(?:（|$)/ });
       await paper.click();
       await drawStrokeWithPointerEvents(
@@ -320,61 +320,54 @@ test.describe("讲练一体全链：导入 → 徽标 → 逐题提交 → 批�
         .getByRole("radio", { name: "选项 B" })
         .locator("xpath=ancestor::label[1]")
         .click();
-      await q1.getByRole("button", { name: "提交本题" }).click();
-      await studentPage
-        .getByRole("button", { name: "确认提交", exact: true })
-        .click();
+      await q1.getByRole("button", { name: "显示答案" }).click();
       await expect(q1.getByText("答对", { exact: true }).first()).toBeVisible();
       await expect(
         q1.getByRole("button", { name: /草稿纸|圈画题干/ }),
       ).toHaveCount(0);
-      await q1.getByRole("button", { name: /查看详解/ }).click();
+      // 教师演示形态：解析直接展示（无折叠按钮、无本题历史链接）
       await expect(q1.getByText(/对路题详解/)).toBeVisible();
+      await expect(
+        q1.getByRole("button", { name: /查看详解/ }),
+      ).toHaveCount(0);
+      await expect(
+        q1.getByRole("link", { name: /本题历史/ }),
+      ).toHaveCount(0);
       await expect(studentPage.getByText("已提交 1/5 题")).toBeVisible();
 
-      // —— 逐题提交 2/5：choice 答错 → 答错徽章 + 参考答案 + 详解 ——
+      // —— 逐题显示答案 2/5：choice 答错 → 答错徽章 + 参考答案 + 解析 ——
       const q2 = studentPage.locator('article[aria-label="第 2 题"]');
       await q2
         .getByRole("radio", { name: "选项 B" }) // 正确答案为 A → 答错
         .locator("xpath=ancestor::label[1]")
         .click();
-      await q2.getByRole("button", { name: "提交本题" }).click();
-      await studentPage
-        .getByRole("button", { name: "确认提交", exact: true })
-        .click();
+      await q2.getByRole("button", { name: "显示答案" }).click();
       await expect(q2.getByText("答错", { exact: true }).first()).toBeVisible();
       await expect(q2.getByText("参考答案：")).toBeVisible();
-      await q2.getByRole("button", { name: /查看详解/ }).click();
       await expect(q2.getByText(/错路题详解/)).toBeVisible();
       await expect(studentPage.getByText("已提交 2/5 题")).toBeVisible();
 
-      // —— 逐题提交 3/5：judge 答对 ——
+      // —— 逐题显示答案 3/5：judge 答对 ——
       const q3 = studentPage.locator('article[aria-label="第 3 题"]');
       await q3
         .getByRole("radio", { name: "对", exact: true })
         .locator("xpath=ancestor::label[1]")
         .click();
-      await q3.getByRole("button", { name: "提交本题" }).click();
-      await studentPage
-        .getByRole("button", { name: "确认提交", exact: true })
-        .click();
+      await q3.getByRole("button", { name: "显示答案" }).click();
       await expect(q3.getByText("答对", { exact: true }).first()).toBeVisible();
       await expect(studentPage.getByText("已提交 3/5 题")).toBeVisible();
 
-      // —— 逐题提交 4/5：fill → 「待老师批改」+ 详解已释放 ——
+      // —— 逐题显示答案 4/5：fill → 无自动判定不显徽章，参考答案与解析展示 ——
       const q4 = studentPage.locator('article[aria-label="第 4 题"]');
       await q4.getByLabel("第1空").fill("5");
-      await q4.getByRole("button", { name: "提交本题" }).click();
-      await studentPage
-        .getByRole("button", { name: "确认提交", exact: true })
-        .click();
+      await q4.getByRole("button", { name: "显示答案" }).click();
       await expect(
-        q4.getByText("待老师批改", { exact: true }).first(),
-      ).toBeVisible();
+        q4.getByText("待老师批改", { exact: true }),
+      ).toHaveCount(0);
       await expect(
         q4.getByRole("button", { name: "刷新", exact: true }),
-      ).toBeVisible();
-      await q4.getByRole("button", { name: /查看详解/ }).click();
+      ).toHaveCount(0);
+      await expect(q4.getByText("参考答案：")).toBeVisible();
       await expect(q4.getByText(/填空题详解/)).toBeVisible();
       await expect(studentPage.getByText("已提交 4/5 题")).toBeVisible();
 
@@ -414,8 +407,7 @@ test.describe("讲练一体全链：导入 → 徽标 → 逐题提交 → 批�
       await expect(
         studentPage
           .locator('article[aria-label="第 4 题"]')
-          .getByText("待老师批改", { exact: true })
-          .first(),
+          .getByText("参考答案："),
       ).toBeVisible();
       await expect(
         studentPage
@@ -508,7 +500,7 @@ test.describe("讲练一体全链：导入 → 徽标 → 逐题提交 → 批�
       await expect(pendingCard).toHaveCount(0);
       await expect(page.getByText("本组待批题已全部批完")).toBeVisible();
 
-      // —— 学生讲练页刷新：fill 题见 teacherMark 判定（待批 → 答对 + 批改块）——
+      // —— 学生讲练页刷新：fill 题见 teacherMark 判定（徽章按 finalCorrect 显示；批改块不在讲练卡展示）——
       await studentPage.goto(
         `/s/lectures/${lectureId}/lesson?courseId=${courseId}`,
       );
@@ -517,7 +509,7 @@ test.describe("讲练一体全链：导入 → 徽标 → 逐题提交 → 批�
       ).toBeVisible();
       // 汇总行口径（契约 attemptScoreSummary）：correct/wrong 是自动判定计数，
       // 教师批对的 fill 不进 correct；待批数走 pendingCount（finalCorrect 权威
-      // 计数）——批后归零。题卡级 teacherMark 断言见下方。
+      // 计数）——批后归零。题卡级徽章断言见下方。
       await expect(
         studentPage.getByText("答对 3 · 答错 1 · 待批 0"),
       ).toBeVisible();
@@ -525,8 +517,8 @@ test.describe("讲练一体全链：导入 → 徽标 → 逐题提交 → 批�
       await expect(
         q4Marked.getByText("答对", { exact: true }).first(),
       ).toBeVisible();
-      await expect(q4Marked.getByText(/老师批改：判对/)).toBeVisible();
-      await expect(q4Marked.getByText(commentText)).toBeVisible();
+      // 教师演示简化形态：批改块/批语不在讲练卡展示（在结果页可见）
+      await expect(q4Marked.getByText(/老师批改：/)).toHaveCount(0);
 
       // —— 再做一次：新卷从空白开始，旧卷保留在记录 ——
       await studentPage.getByRole("button", { name: "再做一次" }).click();
@@ -537,7 +529,7 @@ test.describe("讲练一体全链：导入 → 徽标 → 逐题提交 → 批�
       await expect(studentPage.getByText("已提交 0/5 题")).toBeVisible();
       const q1New = studentPage.locator('article[aria-label="第 1 题"]');
       await expect(
-        q1New.getByRole("button", { name: "提交本题" }),
+        q1New.getByRole("button", { name: "显示答案" }),
       ).toBeVisible();
       // 详解/提示再次全部隐藏（新卷未提交）
       const bodyTextNew = await studentPage.locator("body").innerText();
