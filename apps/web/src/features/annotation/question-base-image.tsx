@@ -12,7 +12,7 @@ import { toBlob } from "html-to-image";
 import { createRoot } from "react-dom/client";
 import { QuestionSurface } from "@/features/attempt/QuestionSurface";
 import {
-  cachedFontEmbedCss,
+  collectFontEmbedCss,
   pngBlobHasMagic,
   samplePngBlank,
   TEACHER_SECTION_MARKERS,
@@ -262,7 +262,7 @@ export async function renderQuestionBaseImage(
       fontSignature,
     });
     const fontCss = await withTimeout(
-      cachedFontEmbedCss(document.body),
+      collectFontEmbedCss(exported),
       STEP_TIMEOUT_MS,
       "本地字体嵌入超时",
     );

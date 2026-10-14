@@ -11,7 +11,7 @@ import { createElement, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { StaticMarkdown } from "@/features/markdown/static-markdown";
 import {
-  cachedFontEmbedCss,
+  collectFontEmbedCss,
   pngBlobHasMagic,
   preloadImages,
   samplePngBlank,
@@ -220,7 +220,7 @@ const ANNOTATION_BASE_FONT_STACK =
 
 /** 注入点集合（jsdom 无布局/canvas：单测注入假实现；生产缺省走真实链路） */
 export interface AnnotationBaseRenderDeps {
-  /** 收集本地字体嵌入 CSS（缺省 html-to-image getFontEmbedCSS） */
+  /** 从已挂载的导出内容收集并严格嵌入本站字体 */
   readonly collectFontCss?: (node: HTMLElement) => Promise<string>;
   /** 预解码图片（缺省 new Image + decode；失败显式抛错） */
   readonly loadImages?: (urls: readonly string[]) => Promise<void>;
@@ -499,30 +499,7 @@ export async function renderAnnotationBaseImage(
     deps.loadImages !== undefined ? deps.loadImages : preloadImages;
   const stepTimeoutMs = deps.stepTimeoutMs ?? ANNOTATION_BASE_STEP_TIMEOUT_MS;
   try {
-    // ① 本地字体嵌入（失败/挂起超时同分类显式放弃）
-    let fontCss: string;
-    try {
-      fontCss = await withTimeout(
-        deps.collectFontCss !== undefined
-          ? deps.collectFontCss(document.body)
-          : cachedFontEmbedCss(document.body),
-        stepTimeoutMs,
-        `本地字体收集超时（${Math.round(stepTimeoutMs / 1000)} 秒）`,
-      );
-    } catch (err) {
-      return errOf("font", `本地字体嵌入失败（${msgOf(err)}）——已放弃生成底图`);
-    }
-    try {
-      await withTimeout(
-        Promise.resolve(document.fonts.ready),
-        stepTimeoutMs,
-        "document.fonts.ready 等待超时",
-      );
-    } catch {
-      // 旧环境 fonts 集不可等待：字体嵌入失败已有独立分类，不阻断
-    }
-
-    // ② ::image 图片预解码（测量高度需要真实尺寸）
+    // ① ::image 图片预解码（测量高度需要真实尺寸）
     const imageUrls = mediaUrlsOf(preview);
     if (imageUrls.length > 0) {
       try {
@@ -539,7 +516,7 @@ export async function renderAnnotationBaseImage(
       }
     }
 
-    // ③ 离屏渲染（React 挂载到固定宽容器；commit 后区块即页容器子节点）
+    // ② 离屏渲染（React 挂载到固定宽容器；commit 后区块即页容器子节点）
     const reactHost = document.createElement("div");
     host.appendChild(reactHost);
     root = createRoot(reactHost);
@@ -550,6 +527,20 @@ export async function renderAnnotationBaseImage(
     if (content === null) {
       return errOf("rasterize", "离屏内容构建失败（未找到内容根节点）");
     }
+    // ③ 本地字体嵌入（失败/挂起超时同分类显式放弃）
+    let fontCss: string;
+    try {
+      fontCss = await withTimeout(
+        deps.collectFontCss !== undefined
+          ? deps.collectFontCss(content)
+          : collectFontEmbedCss(content),
+        stepTimeoutMs,
+        `本地字体收集超时（${Math.round(stepTimeoutMs / 1000)} 秒）`,
+      );
+    } catch (err) {
+      return errOf("font", `本地字体嵌入失败（${msgOf(err)}）——已放弃生成底图`);
+    }
+
     const blockNodes = [...content.children] as HTMLElement[];
 
     // ④ 内容总高 + 单页高计划（超高 → 显式禁用，不生成不截断；审查修复 5：
