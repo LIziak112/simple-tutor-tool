@@ -1,11 +1,14 @@
 import type { AnnotationDoc, AnnotationSurfaceLayout } from "@tutor/contract";
-import { beforeEach, expect, it } from "vitest";
+import { beforeEach, expect, it, vi } from "vitest";
 import {
   getAnnotationRecord,
   installAnnotationBackend,
   memoryAnnotationBackend,
   resetAnnotationStoreForTest,
   retryAnnotationPersistence,
+  settleAnnotationPersistence,
+  settleAnnotationRecordPersistence,
+  writeAnnotationDoc,
   writeLocalAnnotationBase,
 } from "./annotation-store";
 
@@ -34,6 +37,39 @@ const doc: AnnotationDoc = {
 };
 const png = new Blob([new Uint8Array([137, 80, 78, 71])], {
   type: "image/png",
+});
+
+it("题级等待覆盖连续写入，整卷等待仍等待未完成的题", async () => {
+  await writeLocalAnnotationBase(session, scope, { png, layout }, doc);
+  const backend = memoryAnnotationBackend();
+  const first = Promise.withResolvers<void>();
+  const second = Promise.withResolvers<void>();
+  const writes = vi.fn();
+  installAnnotationBackend({
+    ...backend,
+    set: async (key, value) => {
+      writes();
+      await (writes.mock.calls.length === 1 ? first.promise : second.promise);
+      await backend.set(key, value);
+    },
+  });
+  const saved = writeLocalAnnotationBase(session, scope, { png, layout }, doc);
+  await vi.waitFor(() => expect(writes).toHaveBeenCalledTimes(1));
+  writeAnnotationDoc(session, scope, doc);
+  let settled = false;
+  const waiting = settleAnnotationRecordPersistence(session, scope).then(() => {
+    settled = true;
+  });
+  const globalWaiting = settleAnnotationPersistence();
+  try {
+    first.resolve();
+    await vi.waitFor(() => expect(writes).toHaveBeenCalledTimes(2));
+    expect(settled).toBe(false);
+  } finally {
+    second.resolve();
+    await Promise.all([saved, waiting, globalWaiting]);
+  }
+  expect((await getAnnotationRecord(session, scope))?.local).toBe("saved");
 });
 beforeEach(() => {
   resetAnnotationStoreForTest();

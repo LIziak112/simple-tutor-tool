@@ -12,6 +12,7 @@ import {
 import * as noteSync from "@/features/notes/note-sync";
 import { DOC_A, headOf } from "@/features/notes/note-test-utils";
 import {
+  fetchAnnotationViewApi,
   fetchAttemptMaterialRevisionsApi,
   fetchStudentNoteDocumentApi,
   fetchStudentNoteHeadsApi,
@@ -27,6 +28,7 @@ vi.mock("@/lib/api", async (original) => ({
   fetchAttemptMaterialRevisionsApi: vi.fn(),
   fetchStudentNoteHeadsApi: vi.fn(),
   fetchStudentNoteDocumentApi: vi.fn(),
+  fetchAnnotationViewApi: vi.fn(),
 }));
 const session = { origin: "https://recover.test", studentId: "student" };
 it("已核对本机基线的页面遇到断网仍可编辑，首次读取失败不可起空稿", async () => {
@@ -56,12 +58,50 @@ function prepare() {
     annotations: {},
     ink: {},
   });
+  vi.mocked(fetchAnnotationViewApi).mockResolvedValue({
+    base: null,
+    annotation: null,
+    doc: null,
+    maxWidthPx: 1440,
+  });
 }
 it("所有材料已确认不存在才能恢复完成，不因没有待传内容直接报告已保存", async () => {
   prepare();
   expect(getAttemptRecoveryState("fresh").state).toBe("loading");
   await recoverAttemptMaterials("fresh", ["q1", "q2"]);
   expect(getAttemptRecoveryState("fresh").state).toBe("ready");
+});
+it("逐题本机读取并发有界，全部读取完成才解锁", async () => {
+  prepare();
+  const gate = Promise.withResolvers<void>();
+  let active = 0;
+  let peak = 0;
+  const started = vi.fn();
+  installAnnotationBackend({
+    ...memoryAnnotationBackend(),
+    get: async () => {
+      active++;
+      peak = Math.max(peak, active);
+      started();
+      await gate.promise;
+      active--;
+      return undefined;
+    },
+  });
+  const task = recoverAttemptMaterials(
+    "parallel-local",
+    Array.from({ length: 12 }, (_, i) => `q${i}`),
+  );
+  try {
+    await vi.waitFor(() => expect(started).toHaveBeenCalledTimes(4));
+    expect(getAttemptRecoveryState("parallel-local").state).toBe("loading");
+  } finally {
+    gate.resolve();
+    await task;
+  }
+  expect(peak).toBe(4);
+  expect(started).toHaveBeenCalledTimes(12);
+  expect(getAttemptRecoveryState("parallel-local").state).toBe("ready");
 });
 it("本机读取失败明确失败，不以无稿完成恢复", async () => {
   prepare();
@@ -75,6 +115,64 @@ it("本机读取失败明确失败，不以无稿完成恢复", async () => {
     "读取",
   );
   expect(getAttemptRecoveryState("bad-read").state).toBe("failed");
+});
+it("云端标画最多四题并发，保留全部恢复完成后的解锁", async () => {
+  prepare();
+  const ids = Array.from({ length: 9 }, (_, i) => `q${i}`);
+  vi.mocked(fetchAttemptMaterialRevisionsApi).mockResolvedValue({
+    notes: {},
+    annotations: Object.fromEntries(ids.map((id) => [id, 1])),
+    ink: {},
+  });
+  const gate = Promise.withResolvers<void>();
+  let active = 0;
+  let peak = 0;
+  const started = vi.fn();
+  vi.mocked(fetchAnnotationViewApi).mockImplementation(async () => {
+    active++;
+    peak = Math.max(peak, active);
+    started();
+    await gate.promise;
+    active--;
+    return { base: null, annotation: null, doc: null, maxWidthPx: 1440 };
+  });
+  const task = recoverAttemptMaterials("parallel-cloud", ids);
+  try {
+    await vi.waitFor(() => expect(started).toHaveBeenCalledTimes(4));
+    expect(getAttemptRecoveryState("parallel-cloud").state).toBe("loading");
+  } finally {
+    gate.resolve();
+    await task;
+  }
+  expect(peak).toBe(4);
+  expect(started).toHaveBeenCalledTimes(9);
+});
+it("失败先等待本批在途读取，期间重试复用任务且不启动下一批", async () => {
+  prepare();
+  const gate = Promise.withResolvers<void>();
+  const started = vi.fn();
+  installAnnotationBackend({
+    ...memoryAnnotationBackend(),
+    get: async () => {
+      started();
+      if (started.mock.calls.length === 1) throw new Error("读取失败");
+      await gate.promise;
+      return undefined;
+    },
+  });
+  const ids = Array.from({ length: 8 }, (_, i) => `q${i}`);
+  const task = recoverAttemptMaterials("drain-failure", ids);
+  const rejected = expect(task).rejects.toThrow("读取失败");
+  try {
+    await vi.waitFor(() => expect(started).toHaveBeenCalledTimes(4));
+    expect(recoverAttemptMaterials("drain-failure", ids)).toBe(task);
+    expect(getAttemptRecoveryState("drain-failure").state).toBe("loading");
+  } finally {
+    gate.resolve();
+    await rejected;
+  }
+  expect(started).toHaveBeenCalledTimes(4);
+  expect(getAttemptRecoveryState("drain-failure").state).toBe("failed");
 });
 it("云端盘点失败不得初始化空稿或声称全部已保存", async () => {
   prepare();

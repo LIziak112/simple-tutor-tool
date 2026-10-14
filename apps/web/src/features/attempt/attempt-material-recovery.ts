@@ -45,6 +45,25 @@ function setState(key: string, state: AttemptRecoveryState) {
   for (const listener of listeners) listener();
 }
 
+/** 本机与标画默认每批四题；失败先等本批结束，避免重试与迟到任务交错。 */
+async function recoverInBatches<T>(
+  items: readonly T[],
+  stale: () => boolean,
+  recover: (item: T, index: number) => Promise<void>,
+  batchSize = 4,
+): Promise<void> {
+  for (let start = 0; start < items.length; start += batchSize) {
+    if (stale()) return;
+    const results = await Promise.allSettled(
+      items
+        .slice(start, start + batchSize)
+        .map((item, index) => recover(item, start + index)),
+    );
+    for (const result of results)
+      if (result.status === "rejected") throw result.reason;
+  }
+}
+
 /** 只读盘点后恢复原有材料；没有确认无稿前不构造空白稿或向云端写入。 */
 export function recoverAttemptMaterials(
   attemptId: string,
@@ -69,12 +88,18 @@ export function recoverAttemptMaterials(
       if (stale()) return;
       const needNotes: string[] = [];
       const needAnnotations: string[] = [];
-      for (const questionId of questionIds) {
+      await recoverInBatches(questionIds, stale, async (questionId) => {
         const scope = { attemptId, questionId, phase: "scratch" as const };
-        const [note, annotation] = await Promise.all([
+        const local = await Promise.allSettled([
           getNoteRecord(noteSession, scope, { strictRead: true }),
           getAnnotationRecord(annotationSession, scope, { strictRead: true }),
         ]);
+        const [noteResult, annotationResult] = local;
+        if (noteResult.status === "rejected") throw noteResult.reason;
+        if (annotationResult.status === "rejected")
+          throw annotationResult.reason;
+        const note = noteResult.value;
+        const annotation = annotationResult.value;
         if (stale()) return;
         const noteRevision = manifest.notes[questionId];
         if (
@@ -88,14 +113,17 @@ export function recoverAttemptMaterials(
           (!annotation || annotation.baseRevision !== annotationRevision)
         )
           needAnnotations.push(questionId);
-      }
+      });
+      if (stale()) return;
       // 只取存在或版本变动的草稿；多题分批读取，避免整卷逐题请求。
       for (let start = 0; start < needNotes.length; start += 100) {
         const ids = needNotes.slice(start, start + 100);
         const heads = await fetchStudentNoteHeadsApi(attemptId, ids);
         if (stale()) return;
-        await Promise.all(
-          ids.map(async (questionId, index) => {
+        await recoverInBatches(
+          ids,
+          stale,
+          async (questionId, index) => {
             const head = heads[index];
             if (!head) throw new Error("草稿盘点与正文不一致，请重试");
             if (
@@ -110,11 +138,12 @@ export function recoverAttemptMaterials(
               head,
               { strict: true },
             );
-          }),
+          },
+          100,
         );
       }
       // 标画保持原底图与坐标，不重建背景，不拼接同纸笔迹。
-      for (const questionId of needAnnotations) {
+      await recoverInBatches(needAnnotations, stale, async (questionId) => {
         const view = await fetchAnnotationViewApi(
           attemptId,
           questionId,
@@ -126,7 +155,7 @@ export function recoverAttemptMaterials(
           { attemptId, questionId, phase: "scratch" },
           view,
         );
-      }
+      });
       if (!stale()) setState(key, READY);
     } catch (cause) {
       if (!stale())

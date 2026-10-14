@@ -580,7 +580,7 @@ export async function writeLocalAnnotationBase(
     record.pending = { mutationId: randomUuid(), doc };
     record.editedAt = Date.now();
   });
-  await settleAnnotationPersistence();
+  await settleAnnotationRecordPersistence(session, scope);
   const saved = peekAnnotationRecord(session, scope);
   if (saved?.local !== "saved")
     throw new Error(saved?.localError ?? "本机底图未保存，请重试");
@@ -869,4 +869,18 @@ export function settleAnnotationPersistence(): Promise<void> {
   const tails: Array<Promise<void>> = [];
   for (const queue of queues.values()) tails.push(queue.tail);
   return Promise.all(tails).then(() => undefined);
+}
+
+/** 单题打开与收笔只等待本题；交卷仍使用整卷等待入口。 */
+export async function settleAnnotationRecordPersistence(
+  session: AnnotationSessionRef,
+  scope: AnnotationScope,
+): Promise<void> {
+  const key = annotationKeyOf(session, scope);
+  const generation = backendGeneration;
+  while (queues.has(key)) {
+    await queues.get(key)?.tail;
+    if (generation !== backendGeneration)
+      throw new Error("标画存储会话已切换，请重新打开");
+  }
 }

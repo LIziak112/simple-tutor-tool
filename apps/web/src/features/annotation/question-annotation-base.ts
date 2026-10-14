@@ -12,7 +12,7 @@ import {
   type AnnotationSessionRef,
   applyAnnotationView,
   getAnnotationRecord,
-  settleAnnotationPersistence,
+  settleAnnotationRecordPersistence,
   writeLocalAnnotationBase,
 } from "./annotation-store";
 import { currentAnnotationSession } from "./annotation-sync";
@@ -43,11 +43,13 @@ export async function prepareQuestionAnnotationBase(
   const cached = await getAnnotationRecord(session, scope);
   guard();
   if (cached?.localBase != null) {
-    await settleAnnotationPersistence();
+    await settleAnnotationRecordPersistence(session, scope);
     guard();
-    if (cached.local !== "saved")
-      throw new Error(cached.localError ?? "本机底图未保存，请重试");
-    return { kind: "surface", localBase: cached.localBase };
+    const saved = await getAnnotationRecord(session, scope);
+    guard();
+    if (saved?.local !== "saved" || !saved.localBase)
+      throw new Error(saved?.localError ?? "本机底图未保存，请重试");
+    return { kind: "surface", localBase: saved.localBase };
   }
   if (cached?.base != null && cached.base.layout === undefined)
     return { kind: "legacy", base: cached.base };

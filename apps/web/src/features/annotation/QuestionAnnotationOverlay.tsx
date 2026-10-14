@@ -29,7 +29,7 @@ import {
 import { PAPER_KEEPALIVE_MS } from "@/features/ink/use-retained-paper";
 import {
   getAnnotationRecord,
-  settleAnnotationPersistence,
+  settleAnnotationRecordPersistence,
   writeAnnotationDoc,
 } from "./annotation-store";
 import {
@@ -109,8 +109,12 @@ export const QuestionAnnotationOverlay = forwardRef<
 
   const finish = useCallback(async () => {
     surface.current?.finish();
-    await settleAnnotationPersistence();
     if (session) {
+      await settleAnnotationRecordPersistence(session, {
+        attemptId,
+        questionId: question.id,
+        phase: "scratch",
+      });
       const saved = await getAnnotationRecord(session, {
         attemptId,
         questionId: question.id,

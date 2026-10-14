@@ -87,6 +87,69 @@ it("本机已ready不等待网络或重复栅格化", async () => {
   expect(fetchAnnotationViewApi).not.toHaveBeenCalled();
   expect(renderQuestionBaseImage).not.toHaveBeenCalled();
 });
+it("另一题写盘挂起不阻塞已保存底图打开或本题底图保存", async () => {
+  const backend = memoryAnnotationBackend();
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const started = Promise.withResolvers<void>();
+  installAnnotationBackend({
+    ...backend,
+    set: async (key, value) => {
+      if (key.includes("blocked-question")) {
+        started.resolve();
+        await gate;
+      }
+      await backend.set(key, value);
+    },
+  });
+  // 当前题已经保存，再让另一题的落盘保持挂起。
+  await writeLocalAnnotationBase(
+    session,
+    scope,
+    { png, layout },
+    {
+      version: 1,
+      baseWidth: 600,
+      baseHeight: 400,
+      strokes: [],
+    },
+  );
+  const blocked = writeLocalAnnotationBase(
+    session,
+    { ...scope, questionId: "blocked-question" },
+    { png, layout },
+    {
+      version: 1,
+      baseWidth: 600,
+      baseHeight: 400,
+      strokes: [],
+    },
+  );
+  await started.promise;
+  try {
+    await expect(
+      prepareQuestionAnnotationBase(session, scope, question, surface),
+    ).resolves.toMatchObject({ kind: "surface" });
+    await expect(
+      writeLocalAnnotationBase(
+        session,
+        scope,
+        { png, layout },
+        {
+          version: 1,
+          baseWidth: 600,
+          baseHeight: 400,
+          strokes: [],
+        },
+      ),
+    ).resolves.toBeUndefined();
+  } finally {
+    release();
+    await blocked;
+  }
+}, 1000);
 it("网络失败仍可原子保存本机底图并进入，不伪造服务器ID", async () => {
   vi.mocked(fetchAnnotationViewApi).mockRejectedValue(new Error("网络中断"));
   expect(
