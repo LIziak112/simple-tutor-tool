@@ -1,6 +1,7 @@
 import "katex/dist/katex.min.css";
 
 import { cn } from "cn";
+import { memo } from "react";
 import type { Components } from "react-markdown";
 import ReactMarkdown from "react-markdown";
 import {
@@ -70,7 +71,8 @@ export interface RichMarkdownProps {
   questionPlaceholder?: boolean | undefined;
 }
 
-export function RichMarkdown({
+/** 相同属性不重复解析；内部指令的上下文与交互状态仍独立更新。 */
+export const RichMarkdown = memo(function RichMarkdown({
   source,
   className,
   onDirectiveTelemetry,
@@ -110,4 +112,4 @@ export function RichMarkdown({
       )}
     </div>
   );
-}
+});
