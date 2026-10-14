@@ -95,8 +95,8 @@ test("原位标画：不复制题面、退出一击作答、切题唯一输入�
   ).toBeChecked();
   await expect(canvas).toBeVisible();
   await first.getByRole("button", { name: "第 1 题更多" }).click();
-  await page.getByRole("menuitem", { name: "导出题目与标画" }).click();
-  const preview = page.getByRole("img", { name: "标画导出预览" });
+  await page.getByRole("menuitem", { name: "导出本题" }).click();
+  const preview = page.getByRole("img", { name: "本题导出预览" });
   await expect(preview).toBeVisible();
   const exported = await preview.evaluate(async (element) => {
     const image = element as HTMLImageElement;
@@ -150,8 +150,8 @@ test("原位标画：不复制题面、退出一击作答、切题唯一输入�
     const canvas = element as HTMLCanvasElement;
     return { width: canvas.width, height: canvas.height };
   });
-  expect(exported.width).toBe(dimensions.width);
-  expect(exported.height).toBe(dimensions.height);
+  expect(exported.width).toBe(1048);
+  expect(exported.height).toBeLessThanOrEqual(4096);
   expect(exported.red).toBeGreaterThan(10);
   expect(exported.black).toBeGreaterThan(10);
   const overlayBounds = await canvas.evaluate((element) => {
@@ -181,12 +181,29 @@ test("原位标画：不复制题面、退出一击作答、切题唯一输入�
   });
   for (let i = 0; i < overlayBounds.length; i++)
     expect(
-      Math.abs((overlayBounds[i] ?? 0) - (exported.bounds[i] ?? 0)),
+      Math.abs(
+        (overlayBounds[i] ?? 0) *
+          Math.min(1, 1000 / dimensions.width, 2400 / dimensions.height) +
+          (i < 2
+            ? 24 +
+              (1000 -
+                Math.ceil(
+                  dimensions.width *
+                    Math.min(
+                      1,
+                      1000 / dimensions.width,
+                      2400 / dimensions.height,
+                    ),
+                )) /
+                2
+            : 84) -
+          (exported.bounds[i] ?? 0),
+      ),
     ).toBeLessThanOrEqual(2);
   const downloadPromise = page.waitForEvent("download");
   await page.getByRole("button", { name: "下载图片" }).click();
   const download = await downloadPromise;
-  expect(download.suggestedFilename()).toContain("第1题-标画.png");
+  expect(download.suggestedFilename()).toContain("第1题-作答材料.png");
   const path = testInfo.outputPath("ongoing-annotation.png");
   await download.saveAs(path);
   expect(await readFile(path)).toEqual(Buffer.from(exported.bytes));
@@ -205,7 +222,7 @@ test("原位标画：不复制题面、退出一击作答、切题唯一输入�
     first.locator('[data-slot="question-surface"]'),
   ).not.toHaveAttribute("inert", "");
   await first.getByRole("button", { name: "第 1 题更多" }).click();
-  await page.getByRole("menuitemcheckbox", { name: "显示标画" }).click();
+  await page.getByRole("menuitem", { name: "隐藏标画" }).click();
   await expect(canvas).toBeHidden();
   await first.getByRole("button", { name: /圈画题干/ }).click();
   await expect(canvas).toBeVisible();
@@ -289,8 +306,8 @@ test("原位标画：不复制题面、退出一击作答、切题唯一输入�
   ).toBeVisible();
   await expect.poll(() => blockedUploads).toBeGreaterThan(0);
   await first.getByRole("button", { name: "第 1 题更多" }).click();
-  await page.getByRole("menuitem", { name: "导出题目与标画" }).click();
-  await expect(page.getByRole("img", { name: "标画导出预览" })).toBeVisible();
+  await page.getByRole("menuitem", { name: "导出本题" }).click();
+  await expect(page.getByRole("img", { name: "本题导出预览" })).toBeVisible();
   await page.evaluate(() =>
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,

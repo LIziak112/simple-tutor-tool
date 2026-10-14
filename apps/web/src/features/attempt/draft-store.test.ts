@@ -33,6 +33,18 @@ const judge: StudentAnswer = { kind: "judge", value: true };
 const judgeFalse: StudentAnswer = { kind: "judge", value: false };
 const fill: StudentAnswer = { kind: "fill", values: ["4"] };
 
+it("导出严格读取本机稿时，存储失败不能被当作无稿", async () => {
+  installDraftBackend({
+    ...memoryBackend(),
+    get: async () => {
+      throw new Error("读取失败");
+    },
+  });
+  await expect(
+    draftStore.loadDraft("export-read", { strictRead: true }),
+  ).rejects.toThrow("读取失败");
+});
+
 function doc(strokes: number): InkDoc {
   return {
     engine: "atrament",

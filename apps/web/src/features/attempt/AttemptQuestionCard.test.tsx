@@ -143,7 +143,9 @@ describe("题头元信息", () => {
     ).toHaveLength(1);
   });
   it("渲染题号（+1）、题型徽章中文、难度星、考点 tag", () => {
-    renderStatefulCard(baseQuestion({ type: "judge", difficulty: 3 }));
+    const { container } = renderStatefulCard(
+      baseQuestion({ type: "judge", difficulty: 3 }),
+    );
     expect(screen.getByText("第 3 题")).toBeInTheDocument();
     expect(screen.getByText("判断")).toBeInTheDocument();
     expect(screen.queryByText("有理数加法")).toBeNull();
@@ -151,8 +153,10 @@ describe("题头元信息", () => {
       button: 0,
       ctrlKey: false,
     });
-    fireEvent.click(screen.getByRole("menuitem", { name: "题目资料" }));
-    expect(screen.getByText("有理数加法")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("menuitem", { name: "显示题目资料" }));
+    expect(
+      container.querySelector('[data-slot="question-header"]'),
+    ).toContainElement(screen.getByText("有理数加法"));
     expect(screen.getByLabelText("难度 3 星（满分 5 星）")).toBeInTheDocument();
   });
 
