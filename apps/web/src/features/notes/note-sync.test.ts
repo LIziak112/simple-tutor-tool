@@ -454,15 +454,13 @@ describe("note-sync：冲突与终态", () => {
     await Promise.resolve(); // fetch 已挂起
     writeNoteDoc(SESSION_A, SCOPE, DOC_EMPTY); // 裁决拉取在途期间用户清空重写
     releaseFetch(noteDocSchema.parse(DOC_A)); // 云端稿（A 内容）返回
-    await resolving;
+    await expect(resolving).rejects.toThrow("裁决期间草稿已修改");
     const record = peekNoteRecord(SESSION_A, SCOPE);
-    expect(record?.conflict).toBeNull(); // 分歧已消解
+    expect(record?.conflict).not.toBeNull(); // 新写仍需明确裁决
     expect(record?.doc.ink.strokes.length).toBe(0); // 新写（空稿）胜出，云端 A 不覆盖
     expect(record?.pending).not.toBeNull(); // 新 pending 保留
     await vi.advanceTimersByTimeAsync(NOTE_SYNC_DEBOUNCE_MS);
-    expect(putMock.mock.calls.length).toBe(2); // 新写继续上传
-    expect((await bodyDoc(callOf(1).blob)).ink.strokes.length).toBe(0);
-    expect(callOf(1).meta.baseRevision).toBe(2); // head 已对齐冲突摘要
+    expect(putMock.mock.calls.length).toBe(1); // 不自动以新写覆盖云端
   });
 
   it("冲突裁决 keepCloud：拉云端稿为工作稿、清 pending、不再上传", async () => {

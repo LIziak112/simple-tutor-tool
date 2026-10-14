@@ -46,6 +46,8 @@ import {
 } from "@/components/ui/dialog";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { useAttemptEditor } from "@/features/attempt/AttemptEditorContext";
+import { attemptMaterialsEditable } from "@/features/attempt/attempt-material-recovery";
+import { useDraftSyncContext } from "@/features/attempt/use-draft-sync";
 import { InkPad } from "@/features/ink/InkPad";
 import { PaperPresentation } from "@/features/ink/PaperPresentation";
 import {
@@ -108,6 +110,7 @@ export function NoteLayer({
   stemMd,
   options,
 }: NoteLayerProps) {
+  const recovery = useDraftSyncContext()?.recovery;
   const session = useNoteSessionRef();
   const editor = useNoteEditor({
     session,
@@ -367,7 +370,8 @@ export function NoteLayer({
           }
         >
           {paperReady ? (
-            editor.localLoaded ? (
+            editor.localLoaded &&
+            (!recovery || attemptMaterialsEditable(recovery)) ? (
               <InkPad
                 engine="atrament"
                 showToolbar={false}
@@ -387,7 +391,9 @@ export function NoteLayer({
                 className="flex h-20 items-center justify-center gap-2 rounded-xl border border-dashed border-border text-sm text-muted-foreground"
               >
                 <LoaderCircle aria-hidden className="size-4 animate-spin" />
-                正在打开草稿…
+                {recovery?.state === "failed"
+                  ? "草稿恢复失败，请在顶部重试"
+                  : "正在恢复草稿…"}
               </div>
             )
           ) : null}

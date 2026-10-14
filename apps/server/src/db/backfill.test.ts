@@ -704,6 +704,10 @@ function snapshotBusinessTables(db: Db): Map<string, string[]> {
       // 0034 新增废弃时间，旧行默认NULL；原有业务字段仍逐项保真。
       if (table === "attempts") delete row.abandoned_at;
       if (table === "responses") delete row.submitted_at;
+      if (table === "responses") {
+        delete row.answer_revision;
+        delete row.answer_mutation_id;
+      }
       return JSON.stringify(row, Object.keys(row).sort());
     });
     snapshot.set(table, rows.sort());
@@ -785,6 +789,12 @@ describe("T2B.1 多教师基础结构迁移（post-T2A 结构 fixture → 迁移
     for (const table of PRE_T2B_TABLES) {
       expect(after.get(table)).toEqual(before.get(table));
     }
+    const revisions = db.$client
+      .prepare("SELECT answer_revision, answer_mutation_id FROM responses")
+      .all();
+    expect(revisions.length).toBeGreaterThan(0);
+    for (const row of revisions)
+      expect(row).toEqual({ answer_revision: 0, answer_mutation_id: null });
     db.$client.close();
   });
 

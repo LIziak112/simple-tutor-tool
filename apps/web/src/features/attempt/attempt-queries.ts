@@ -1,9 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
+  AttemptAnswerSaveData,
   AttemptSubmitRevision,
   StudentAnswer,
   SubmitEvidenceDeclaration,
 } from "@tutor/contract";
+import { attemptAnswerConflictCurrentSchema } from "@tutor/contract";
 import {
   studentAssignmentsKey,
   studentCoursesKey,
@@ -17,6 +19,8 @@ import {
   startCourseAttemptApi,
   submitAttemptApi,
 } from "@/lib/api";
+import { randomUuid } from "@/lib/uuid";
+import { draftStore, getDraftSessionEpoch } from "./draft-store";
 
 /**
  * 学生端作答数据层（T2.6；T2A.6 扩展课程练习）：attempt 创建（作业/课程两种
@@ -38,8 +42,11 @@ export function useAttemptDetail(attemptId: string | undefined) {
     queryKey: studentAttemptKey(attemptId ?? "pending"),
     queryFn: () => fetchAttemptApi(attemptId ?? ""),
     enabled: attemptId !== undefined,
-    staleTime: 60_000,
-    refetchOnWindowFocus: false,
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
+    refetchInterval: (query) =>
+      query.state.data?.attempt.status === "draft" ? 10_000 : false,
   });
 }
 
@@ -126,10 +133,63 @@ export function useSubmitAttempt(attemptId: string) {
  * 高频触发（每次作答/每个防抖窗）时 mutation 栈会堆积无意义的历史条目）。
  * 失败由调用方捕获并置「保存失败」提示；重试靠学生继续作答或刷新页面。
  */
+const answerSaveTails = new Map<string, Promise<void>>();
 export function saveDraftAnswer(
   attemptId: string,
   questionId: string,
   answer: StudentAnswer,
-): Promise<unknown> {
-  return saveAttemptAnswerApi(attemptId, questionId, answer);
+): Promise<AttemptAnswerSaveData> {
+  const epoch = getDraftSessionEpoch();
+  const mutationId =
+    draftStore.answerMutationId(attemptId, questionId) ?? randomUuid();
+  const key = JSON.stringify([epoch, attemptId, questionId]);
+  const prior = answerSaveTails.get(key) ?? Promise.resolve();
+  const task = prior.then(async () => {
+    if (epoch !== getDraftSessionEpoch())
+      throw new Error("作答会话已切换，旧答案未上传");
+    const record = await draftStore.loadDraft(attemptId, { strictRead: true });
+    if (epoch !== getDraftSessionEpoch())
+      throw new Error("作答会话已切换，旧答案未上传");
+    if (record?.answerConflicts?.[questionId])
+      throw new Error("本题答案有同步冲突，请先选择保留哪一份");
+    const baseRevision = record?.answerRevisions?.[questionId];
+    try {
+      const receipt = await (baseRevision === undefined
+        ? saveAttemptAnswerApi(attemptId, questionId, answer)
+        : saveAttemptAnswerApi(attemptId, questionId, answer, {
+            baseRevision,
+            mutationId,
+          }));
+      if (epoch !== getDraftSessionEpoch()) return receipt;
+      await draftStore.markAnswerSynced(
+        attemptId,
+        questionId,
+        answer,
+        receipt.revision,
+      );
+      return receipt;
+    } catch (cause) {
+      if (
+        epoch === getDraftSessionEpoch() &&
+        cause instanceof ApiError &&
+        cause.code === "ANSWER_REVISION_CONFLICT"
+      ) {
+        const current = attemptAnswerConflictCurrentSchema.safeParse(
+          cause.extra?._current,
+        );
+        if (current.success)
+          draftStore.setAnswerConflict(attemptId, questionId, current.data);
+      }
+      throw cause;
+    }
+  });
+  const tail = task.then(
+    () => undefined,
+    () => undefined,
+  );
+  answerSaveTails.set(key, tail);
+  void tail.then(() => {
+    if (answerSaveTails.get(key) === tail) answerSaveTails.delete(key);
+  });
+  return task;
 }

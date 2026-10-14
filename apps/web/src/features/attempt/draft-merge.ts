@@ -42,6 +42,7 @@ export function inkDigestOf(doc: InkDoc): string {
 export function unsyncedAnswerIds(record: AttemptDraftRecord): string[] {
   return Object.keys(record.answers).filter(
     (questionId) =>
+      record.answerConflicts?.[questionId] === undefined &&
       record.answerDigests[questionId] !== digestOf(record.answers[questionId]),
   );
 }
@@ -63,15 +64,22 @@ export function unsyncedInkIds(record: AttemptDraftRecord): string[] {
 export function mergeAnswers(
   local: Record<string, StudentAnswer> | null,
   server: Record<string, StudentAnswer>,
+  baselines?: Record<string, string>,
 ): {
   merged: Record<string, StudentAnswer>;
   /** 合并后与服务端内容不一致、需要 PUT 补传的题号（本地胜出或本地独有） */
   needsSync: string[];
 } {
   if (local === null) return { merged: { ...server }, needsSync: [] };
-  const merged: Record<string, StudentAnswer> = { ...server, ...local };
+  const merged: Record<string, StudentAnswer> = { ...server };
+  for (const [id, answer] of Object.entries(local)) {
+    // 已确认的旧缓存不是编辑；云端的新内容（包括清空）应直接采用。
+    if (baselines !== undefined && baselines[id] === digestOf(answer)) continue;
+    merged[id] = answer;
+  }
   const needsSync = Object.keys(local).filter(
     (questionId) =>
+      merged[questionId] === local[questionId] &&
       digestOf(local[questionId]) !== digestOf(server[questionId]),
   );
   return { merged, needsSync };

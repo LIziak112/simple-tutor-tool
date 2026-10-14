@@ -206,6 +206,56 @@ describe("同步指纹", () => {
 });
 
 describe("applyServerDrafts（进入答题页合并）", () => {
+  it("迟到的旧云端读取不得覆盖已确认的新答案或倒退版本", async () => {
+    await draftStore.applyServerDrafts("late-read", { q1: judge }, { q1: 1 });
+    draftStore.saveAnswer("late-read", "q1", judgeFalse);
+    await draftStore.markAnswerSynced("late-read", "q1", judgeFalse, 2);
+    await draftStore.applyServerDrafts("late-read", { q1: judge }, { q1: 1 });
+    const record = await draftStore.loadDraft("late-read");
+    expect(record?.answers.q1).toEqual(judgeFalse);
+    expect(record?.answerRevisions?.q1).toBe(2);
+  });
+  it("同题分歧只裁决该题，未冲突题并集不丢失", async () => {
+    await draftStore.applyServerDrafts(
+      "conflict",
+      { q1: judge },
+      { q1: 1, q2: 0, q3: 0 },
+    );
+    draftStore.saveAnswer("conflict", "q1", judgeFalse);
+    draftStore.saveAnswer("conflict", "q2", fill);
+    await draftStore.applyServerDrafts(
+      "conflict",
+      { q1: fill, q3: judge },
+      { q1: 2, q2: 0, q3: 1 },
+    );
+    expect(
+      (await draftStore.loadDraft("conflict"))?.answerConflicts?.q1?.revision,
+    ).toBe(2);
+    await draftStore.resolveAnswerConflict("conflict", "q1", "cloud");
+    expect(draftStore.peekAnswers("conflict")).toEqual({
+      q1: fill,
+      q2: fill,
+      q3: judge,
+    });
+  });
+  it("已同步旧缓存采纳新云端答案，不回传旧空稿；不相交题目默认合并", async () => {
+    draftStore.saveAnswer("merge-devices", "q1", {
+      kind: "fill",
+      values: [""],
+    });
+    await draftStore.markAnswerSynced("merge-devices", "q1", {
+      kind: "fill",
+      values: [""],
+    });
+    draftStore.saveAnswer("merge-devices", "q21", judge);
+    const merged = await draftStore.applyServerDrafts("merge-devices", {
+      q1: { kind: "fill", values: ["1"] },
+      q20: judge,
+    });
+    expect(merged.q1).toEqual({ kind: "fill", values: ["1"] });
+    expect(merged.q20).toEqual(judge);
+    expect(merged.q21).toEqual(judge);
+  });
   it("本地为空 + 服务端有草稿 → 采纳服务端且全部视为已同步", async () => {
     const merged = await draftStore.applyServerDrafts("att-1", { q1: judge });
     expect(merged).toEqual({ q1: judge });

@@ -342,6 +342,10 @@ export const attemptDraftDataSchema = z.object({
    * 键名用 drafts（学生自己的答案），与结果视图的 answers（参考答案）区分。
    */
   drafts: z.record(z.string(), studentAnswerSchema),
+  /** 本人答案的逐题服务器版本；旧响应缺省由客户端按未建立基线处理。 */
+  draftRevisions: z
+    .record(z.string(), z.number().int().nonnegative())
+    .optional(),
   /**
    * 已解锁提示（T2.11）：questionId → 已解锁条目（含内容，刷新页面后回显）。
    * 未解锁提示的内容不在此（也不在任何学生端响应）。
@@ -493,12 +497,44 @@ export const attemptResultDataSchema = z.object({
 });
 
 /** PUT /api/student/attempts/:id/answers/:questionId 请求体 */
-export const attemptAnswerSaveRequestSchema = z.object({
-  answer: studentAnswerSchema,
+export const attemptAnswerSaveRequestSchema = z
+  .object({
+    answer: studentAnswerSchema,
+    /** 逐题比较版本，不影响其他题的合并。 */
+    baseRevision: z.number().int().nonnegative().optional(),
+    /** 同一次保存重试保持不变，避免回执丢失产生重复写入。 */
+    mutationId: z.string().uuid().optional(),
+  })
+  .refine(
+    (value) =>
+      (value.baseRevision === undefined) === (value.mutationId === undefined),
+    {
+      message: "答案版本与保存标识必须同时提供",
+    },
+  );
+
+/** 冲突仅包含学生自己的云端稿，不包含参考答案、详解或提示。 */
+export const attemptAnswerConflictCurrentSchema = z.object({
+  revision: z.number().int().nonnegative(),
+  draft: studentAnswerSchema.nullable(),
 });
+export type AttemptAnswerConflictCurrent = z.infer<
+  typeof attemptAnswerConflictCurrentSchema
+>;
+
+/** 本人作答材料盘点，仅提供题号键和版本，正文沿用已有授权接口读取。 */
+export const attemptMaterialRevisionsSchema = z.object({
+  notes: z.record(z.string(), z.number().int().nonnegative()),
+  annotations: z.record(z.string(), z.number().int().nonnegative()),
+  ink: z.record(z.string(), z.number().int().nonnegative()),
+});
+export type AttemptMaterialRevisions = z.infer<
+  typeof attemptMaterialRevisionsSchema
+>;
 
 /** PUT /api/student/attempts/:id/answers/:questionId 响应 data */
 export const attemptAnswerSaveDataSchema = z.object({
+  revision: z.number().int().nonnegative().optional(),
   /** 已保存的题目 id（回显，方便前端对账） */
   questionId: z.string().min(1),
   /** 该题累计保存次数（含本次；T2.10 起用于改答案次数统计） */
@@ -669,6 +705,9 @@ export const lessonStartDataSchema = z
     questions: z.array(attemptQuestionPublicSchema),
     /** 本人草稿答案：questionId → StudentAnswer（与草稿视图同口径） */
     drafts: z.record(z.string(), studentAnswerSchema),
+    draftRevisions: z
+      .record(z.string(), z.number().int().nonnegative())
+      .optional(),
     /** 已解锁提示：questionId → 已解锁条目（与草稿视图同口径） */
     hintsOpened: z.record(z.string(), hintOpenedEntrySchema.array()),
     /** 已单题提交的题：questionId → 当题结果（当题已释放） */

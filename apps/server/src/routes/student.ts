@@ -65,6 +65,7 @@ import {
 } from "../services/assignment-service";
 import {
   getAttemptDetail,
+  getAttemptMaterialRevisions,
   getStudentAttemptPaper,
   saveDraftAnswer,
   startAttempt,
@@ -297,9 +298,20 @@ export function createStudentRoutes(
             c.req.param("id"),
             c.req.param("questionId"),
             body.answer,
+            body,
           ),
         });
       })
+      .get("/attempts/:id/materials", (c) =>
+        c.json({
+          ok: true,
+          data: getAttemptMaterialRevisions(
+            db,
+            c.var.student.id,
+            c.req.param("id"),
+          ),
+        }),
+      )
       .post("/attempts/:id/submit", async (c) => {
         // T2A.8：now 显式注入（服务层按 answerRelease+dueAt 决定交卷瞬间的形态）
         // T6R.3：交卷回传每题 questionRevisionId 验证题目版本（与冻结集合精确

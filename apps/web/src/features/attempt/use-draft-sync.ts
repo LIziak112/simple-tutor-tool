@@ -10,6 +10,7 @@ import {
   useState,
 } from "react";
 import { ApiError } from "@/lib/api";
+import type { AttemptRecoveryState } from "./attempt-material-recovery";
 import { saveDraftAnswer } from "./attempt-queries";
 import { unsyncedAnswerIds } from "./draft-merge";
 import { draftStore, getDraftSessionEpoch } from "./draft-store";
@@ -44,6 +45,8 @@ export type DraftSaveStatus =
 
 /** 供答题页与手写控件联动的草稿同步 API */
 export interface DraftSyncApi {
+  recoveryError?: string | null;
+  recovery?: AttemptRecoveryState;
   /** 顶栏状态 */
   status: DraftSaveStatus;
   /** 合并后的答案（undefined=合并未完成，答题页暂不播种） */
@@ -76,6 +79,7 @@ export function useDraftSync(
   attemptId: string,
   serverDrafts: Record<string, StudentAnswer>,
   inkControllers: RefObject<Map<string, InkUploadController>>,
+  serverRevisions?: Record<string, number>,
 ): DraftSyncApi {
   const [status, setStatus] = useState<DraftSaveStatus>({
     state: "saved",
@@ -84,6 +88,7 @@ export function useDraftSync(
   const [recoveredDrafts, setRecoveredDrafts] = useState<
     Record<string, StudentAnswer> | undefined
   >(undefined);
+  const [recoveryError, setRecoveryError] = useState<string | null>(null);
   /** 同步进行中标志（定时/事件并发触发时只跑一轮） */
   const syncingRef = useRef(false);
   const syncCompletion = useRef<Promise<void> | null>(null);
@@ -94,6 +99,7 @@ export function useDraftSync(
    */
   const deniedRef = useRef(false);
   const attemptIdRef = useRef(attemptId);
+  const readyRef = useRef(false);
   attemptIdRef.current = attemptId;
 
   /** 全部笔迹 controller 是否都无待传（ref 取当前注册表，引用稳定） */
@@ -113,6 +119,7 @@ export function useDraftSync(
   }, [inksClean]);
 
   const syncNow = useCallback(async (): Promise<void> => {
+    if (!readyRef.current) return;
     if (deniedRef.current) return; // 终态：不再上传（本地草稿保留）
     if (syncingRef.current) {
       await syncCompletion.current;
@@ -185,6 +192,7 @@ export function useDraftSync(
               attemptIdRef.current,
               questionId,
               answer,
+              answerSettled[index].value.revision,
             );
           }
         }
@@ -206,14 +214,18 @@ export function useDraftSync(
   useEffect(() => {
     let alive = true;
     deniedRef.current = false;
+    readyRef.current = false;
     setRecoveredDrafts(undefined);
     setStatus({ state: "saved", savedAt: 0 });
-    void (async () => {
+    const recover = async () => {
       const merged = await draftStore.applyServerDrafts(
         attemptId,
         serverDrafts,
+        serverRevisions,
       );
       if (!alive) return;
+      readyRef.current = true;
+      setRecoveryError(null);
       setRecoveredDrafts(merged);
       if (deniedRef.current) return;
       const record = await draftStore.loadDraft(attemptId);
@@ -222,11 +234,26 @@ export function useDraftSync(
         setStatus({ state: "saving" });
         void syncNow();
       }
-    })();
+    };
+    const retry = () => {
+      void recover().catch((cause: unknown) => {
+        if (alive) {
+          setRecoveryError(
+            cause instanceof Error ? cause.message : "答案本机恢复失败，请重试",
+          );
+          setStatus({ state: "offline" });
+        }
+      });
+    };
+    retry();
+    const timer = setInterval(() => {
+      if (!readyRef.current) retry();
+    }, DRAFT_SYNC_INTERVAL_MS);
     return () => {
       alive = false;
+      clearInterval(timer);
     };
-  }, [attemptId, serverDrafts, syncNow]);
+  }, [attemptId, serverDrafts, serverRevisions, syncNow]);
 
   // 定时增量 + 切后台立即同步并落盘 + 断网/恢复事件 + 页面卸载兜底落盘
   useEffect(() => {
@@ -276,10 +303,8 @@ export function useDraftSync(
   }, []);
 
   const noteAnswerSynced = useCallback(
-    (questionId: string, answer: StudentAnswer) => {
-      void draftStore
-        .markAnswerSynced(attemptIdRef.current, questionId, answer)
-        .then(recomputeIfClean);
+    (_questionId: string, _answer: StudentAnswer) => {
+      void recomputeIfClean();
     },
     [recomputeIfClean],
   );
@@ -304,6 +329,7 @@ export function useDraftSync(
     () => ({
       status,
       recoveredDrafts,
+      recoveryError,
       noteLocalWrite,
       noteAnswerSynced,
       noteInkSynced,
@@ -314,6 +340,7 @@ export function useDraftSync(
     [
       status,
       recoveredDrafts,
+      recoveryError,
       noteLocalWrite,
       noteAnswerSynced,
       noteInkSynced,

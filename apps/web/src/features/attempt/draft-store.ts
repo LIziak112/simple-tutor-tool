@@ -1,5 +1,10 @@
-import type { InkDoc, StudentAnswer } from "@tutor/contract";
+import type {
+  AttemptAnswerConflictCurrent,
+  InkDoc,
+  StudentAnswer,
+} from "@tutor/contract";
 import { createStore, del, get, set } from "idb-keyval";
+import { randomUuid } from "@/lib/uuid";
 import {
   digestOf,
   inkDigestOf,
@@ -39,6 +44,10 @@ export interface AttemptDraftRecord {
   answerDigests: Record<string, string>;
   /** 上次成功同步到服务端的笔迹指纹（questionId → digest） */
   inkDigests: Record<string, string>;
+  /** 新协议逐题基线、稳定重试标识及待裁决云端稿。旧记录缺省为空。 */
+  answerRevisions?: Record<string, number>;
+  answerMutationIds?: Record<string, string>;
+  answerConflicts?: Record<string, AttemptAnswerConflictCurrent>;
 }
 
 /** 底层键值存取的最小面（idb-keyval 的 get/set/del 子集；注入内存版便于单测） */
@@ -184,6 +193,9 @@ async function safeGet(
       syncedAt: raw.syncedAt ?? 0,
       answerDigests: raw.answerDigests ?? {},
       inkDigests: raw.inkDigests ?? {},
+      answerRevisions: raw.answerRevisions ?? {},
+      answerMutationIds: raw.answerMutationIds ?? {},
+      answerConflicts: raw.answerConflicts ?? {},
     };
   } catch (err) {
     if (strictRead) throw err;
@@ -208,6 +220,7 @@ function mutate(
   fn(record);
   cache.set(attemptId, record);
   scheduleWrite(attemptId);
+  for (const listener of persistenceListeners) listener();
 }
 
 function scheduleWrite(attemptId: string): void {
@@ -268,6 +281,8 @@ async function loadDraft(
     options?.strictRead,
   );
   if (generation !== backendGeneration) return null;
+  const written = cache.get(attemptId);
+  if (written !== undefined) return written;
   if (stored !== null) cache.set(attemptId, stored);
   return stored;
 }
@@ -278,14 +293,14 @@ export const draftStore = {
     attemptId: string,
   ): Promise<AttemptDraftRecord | null> {
     const generation = backendGeneration;
-    const current = await loadDraft(attemptId);
+    const current = await loadDraft(attemptId, { strictRead: true });
     if (
       generation !== backendGeneration ||
       current !== null ||
       draftSession === null
     )
       return current;
-    const legacy = await safeGet(attemptId, `draft:${attemptId}`);
+    const legacy = await safeGet(attemptId, `draft:${attemptId}`, true);
     if (generation !== backendGeneration) return null;
     if (legacy) {
       cache.set(attemptId, legacy);
@@ -306,6 +321,19 @@ export const draftStore = {
     };
   },
   loadDraft,
+  /** 仅查询当前会话已载入的内存稿，供 UI 同步刷新，不触发读取或写入。 */
+  peekAnswers(attemptId: string): Record<string, StudentAnswer> | null {
+    const record = cache.get(attemptId);
+    return record ? { ...record.answers } : null;
+  },
+  peekAnswerConflicts(
+    attemptId: string,
+  ): Record<string, AttemptAnswerConflictCurrent> {
+    return cache.get(attemptId)?.answerConflicts ?? {};
+  },
+  answerMutationId(attemptId: string, questionId: string): string | undefined {
+    return cache.get(attemptId)?.answerMutationIds?.[questionId];
+  },
 
   /** 每次改答案写本地（内存同步可见，落盘防抖；不受网络状态影响） */
   saveAnswer(
@@ -315,6 +343,8 @@ export const draftStore = {
   ): void {
     mutate(attemptId, (record) => {
       record.answers[questionId] = answer;
+      record.answerMutationIds ??= {};
+      record.answerMutationIds[questionId] = randomUuid();
       record.savedAt = Date.now();
     });
   },
@@ -332,10 +362,20 @@ export const draftStore = {
     attemptId: string,
     questionId: string,
     answer: StudentAnswer,
+    revision?: number,
   ): Promise<void> {
     mutate(attemptId, (record) => {
+      if (
+        revision !== undefined &&
+        revision < (record.answerRevisions?.[questionId] ?? 0)
+      )
+        return;
       record.answers[questionId] ??= answer;
       record.answerDigests[questionId] = digestOf(answer);
+      if (revision !== undefined) {
+        record.answerRevisions ??= {};
+        record.answerRevisions[questionId] = revision;
+      }
     });
     return writeNow(attemptId);
   },
@@ -367,6 +407,7 @@ export const draftStore = {
     const record = await loadDraft(attemptId);
     if (record === null) return;
     if (
+      Object.keys(record.answerConflicts ?? {}).length === 0 &&
       unsyncedAnswerIds(record).length === 0 &&
       unsyncedInkIds(record).length === 0
     ) {
@@ -383,23 +424,107 @@ export const draftStore = {
   async applyServerDrafts(
     attemptId: string,
     serverAnswers: Record<string, StudentAnswer>,
+    serverRevisions?: Record<string, number>,
   ): Promise<Record<string, StudentAnswer>> {
     const generation = backendGeneration;
     await draftStore.recoverLegacyDraft(attemptId);
     if (generation !== backendGeneration) return serverAnswers;
     const local = cache.get(attemptId);
-    const { merged } = mergeAnswers(local?.answers ?? null, serverAnswers);
-    if (local === undefined && Object.keys(merged).length === 0) {
+    const effectiveServer = { ...serverAnswers };
+    const staleIds = new Set(
+      Object.entries(serverRevisions ?? {})
+        .filter(
+          ([id, revision]) => revision < (local?.answerRevisions?.[id] ?? 0),
+        )
+        .map(([id]) => id),
+    );
+    for (const id of staleIds) {
+      const answer = local?.answers[id];
+      if (answer === undefined) delete effectiveServer[id];
+      else effectiveServer[id] = answer;
+    }
+    const { merged } = mergeAnswers(
+      local?.answers ?? null,
+      effectiveServer,
+      local?.answerDigests ?? {},
+    );
+    if (
+      local === undefined &&
+      Object.keys(merged).length === 0 &&
+      serverRevisions === undefined
+    ) {
       // 两边都空：不建记录（首次进入且未作答）
       return merged;
     }
     mutate(attemptId, (record) => {
       record.answers = merged;
+      for (const [id, revision] of Object.entries(serverRevisions ?? {})) {
+        if (staleIds.has(id)) continue;
+        const old = local?.answerDigests[id];
+        const serverDigest = digestOf(serverAnswers[id]);
+        const localAnswer = merged[id];
+        const dirty =
+          localAnswer !== undefined && digestOf(localAnswer) !== serverDigest;
+        const changedRemotely =
+          old !== undefined
+            ? old !== serverDigest
+            : serverAnswers[id] !== undefined;
+        if (
+          dirty &&
+          (changedRemotely || record.answerConflicts?.[id] !== undefined)
+        ) {
+          record.answerConflicts ??= {};
+          record.answerConflicts[id] = {
+            revision,
+            draft: serverAnswers[id] ?? null,
+          };
+        } else {
+          record.answerRevisions ??= {};
+          record.answerRevisions[id] = revision;
+          if (record.answerConflicts) delete record.answerConflicts[id];
+        }
+      }
       for (const [questionId, answer] of Object.entries(serverAnswers)) {
+        if (staleIds.has(questionId)) continue;
         record.answerDigests[questionId] = digestOf(answer);
       }
     });
     return merged;
+  },
+
+  setAnswerConflict(
+    attemptId: string,
+    questionId: string,
+    cloud: AttemptAnswerConflictCurrent,
+  ): void {
+    mutate(attemptId, (record) => {
+      record.answerConflicts ??= {};
+      record.answerConflicts[questionId] = cloud;
+    });
+  },
+  async resolveAnswerConflict(
+    attemptId: string,
+    questionId: string,
+    keep: "local" | "cloud",
+  ): Promise<void> {
+    const record = await loadDraft(attemptId, { strictRead: true });
+    const conflict = record?.answerConflicts?.[questionId];
+    if (!record || !conflict) return;
+    mutate(attemptId, (current) => {
+      current.answerRevisions ??= {};
+      current.answerRevisions[questionId] = conflict.revision;
+      if (conflict.draft === null) delete current.answerDigests[questionId];
+      else current.answerDigests[questionId] = digestOf(conflict.draft);
+      if (keep === "cloud") {
+        if (conflict.draft === null) delete current.answers[questionId];
+        else current.answers[questionId] = conflict.draft;
+      } else {
+        current.answerMutationIds ??= {};
+        current.answerMutationIds[questionId] = randomUuid();
+      }
+      if (current.answerConflicts) delete current.answerConflicts[questionId];
+    });
+    await writeNow(attemptId);
   },
 
   /** 交卷成功后清除本地草稿（含防抖未落盘的部分） */

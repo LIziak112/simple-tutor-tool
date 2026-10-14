@@ -32,12 +32,14 @@ import {
   type AttemptAnswerSaveRequest,
   type AttemptDetailData,
   type AttemptEvent,
+  type AttemptMaterialRevisions,
   type AttemptSource,
   type AttemptStartData,
   type AttemptStatus,
   type AttemptSubmitRequest,
   annotationBaseImageUrl,
   apiResponseSchema,
+  attemptMaterialRevisionsSchema,
   type BackupRestoreResult,
   type BackupSnapshotList,
   type CapabilityProfile,
@@ -863,8 +865,12 @@ export function saveAttemptAnswerApi(
   attemptId: string,
   questionId: string,
   answer: AttemptAnswerSaveRequest["answer"],
+  sync?: Pick<AttemptAnswerSaveRequest, "baseRevision" | "mutationId">,
 ): Promise<AttemptAnswerSaveData> {
-  const args = { param: { id: attemptId, questionId }, json: { answer } };
+  const args = {
+    param: { id: attemptId, questionId },
+    json: { answer, ...sync },
+  };
   return callApi(() =>
     api.api.student.attempts[":id"].answers[":questionId"].$put(args),
   );
@@ -905,6 +911,17 @@ export function fetchAttemptApi(attemptId: string): Promise<AttemptDetailData> {
   return callApi(() =>
     api.api.student.attempts[":id"].$get({ param: { id: attemptId } }),
   );
+}
+
+export async function fetchAttemptMaterialRevisionsApi(
+  attemptId: string,
+): Promise<AttemptMaterialRevisions> {
+  const data = await callApi(() =>
+    api.api.student.attempts[":id"].materials.$get({
+      param: { id: attemptId },
+    }),
+  );
+  return attemptMaterialRevisionsSchema.parse(data);
 }
 
 /**

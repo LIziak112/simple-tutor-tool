@@ -13,6 +13,7 @@ import {
   subscribeNoteStore,
 } from "@/features/notes/note-store";
 import { currentNoteSession } from "@/features/notes/note-sync";
+import type { AttemptRecoveryState } from "./attempt-material-recovery";
 import {
   type DraftPersistenceState,
   draftStore,
@@ -24,17 +25,22 @@ import type { InkUploadController } from "./use-ink-upload";
 
 type SaveView = Pick<NoteRecordView | AnnotationRecordView, "local" | "server">;
 interface SaveSummaryInput {
+  recovery?: AttemptRecoveryState;
   answer: DraftSaveStatus;
   local: DraftPersistenceState;
   online: boolean;
   inkDirty: boolean;
   notes: readonly SaveView[];
   annotations: readonly SaveView[];
+  answerConflict?: boolean;
 }
 export function summarizeAttemptSaveStatus(input: SaveSummaryInput): string {
   const views = [...input.notes, ...input.annotations];
   if (input.local === "failed" || views.some((view) => view.local === "failed"))
     return "本机保存失败，请保持页面打开并重试";
+  if (input.recovery?.state === "loading") return "正在恢复作答与材料…";
+  if (input.recovery?.state === "failed") return "作答材料恢复失败，请重试";
+  if (input.answerConflict) return "有答案同步冲突，请选择保留版本";
   if (input.answer.state === "denied") return "已无权限访问该练习";
   if (input.local === "saving" || views.some((view) => view.local === "saving"))
     return "正在保存到本机…";
@@ -166,6 +172,7 @@ export function useAttemptSaveStatus(
   answer: DraftSaveStatus,
   online: boolean,
   controllers: RefObject<Map<string, InkUploadController>>,
+  recovery?: AttemptRecoveryState,
 ): string {
   const getSnapshot = useCallback(() => {
     const noteSession = currentNoteSession();
@@ -182,6 +189,9 @@ export function useAttemptSaveStatus(
       if (annotation) annotations.push(annotation);
     }
     return summarizeAttemptSaveStatus({
+      ...(recovery ? { recovery } : {}),
+      answerConflict:
+        Object.keys(draftStore.peekAnswerConflicts(attemptId)).length > 0,
       answer,
       local: getDraftPersistenceState(attemptId),
       online,
@@ -191,7 +201,7 @@ export function useAttemptSaveStatus(
       notes,
       annotations,
     });
-  }, [attemptId, questionIds, answer, online, controllers]);
+  }, [attemptId, questionIds, answer, online, controllers, recovery]);
   return useSyncExternalStore(
     subscribeAttemptSaveChanges,
     getSnapshot,

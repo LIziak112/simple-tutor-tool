@@ -885,6 +885,10 @@ export const responses = sqliteTable(
     questionSnapshotJson: text("question_snapshot_json"),
     /** 学生答案（StudentAnswer 序列化）；未作为 NULL（交卷时未答题行也为 NULL） */
     answerJson: text("answer_json"),
+    /** 普通答案独立 CAS 版本，与作答次数统计、手写版本分别维护。 */
+    answerRevision: integer("answer_revision").notNull().default(0),
+    /** 最近一次有版本保存标识；建立新协议后拒绝无版本旧客户端覆盖。 */
+    answerMutationId: text("answer_mutation_id"),
     /**
      * 单题提交时刻（讲练一体 2026-10，lesson 逐题提交专用，后续任务实装）：
      * UTC ISO；单题提交 = 该题提交时刻，整卷收尾对剩余行 = 交卷时刻；

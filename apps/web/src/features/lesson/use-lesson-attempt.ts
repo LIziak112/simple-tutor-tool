@@ -139,7 +139,12 @@ export function useLessonAttempt(
     },
     [],
   );
-  const draftSync = useDraftSync(attemptId, data.drafts, inkControllers);
+  const draftSync = useDraftSync(
+    attemptId,
+    data.drafts,
+    inkControllers,
+    data.draftRevisions,
+  );
   const attemptEvents = useAttemptEvents(attemptId);
   const {
     answers,

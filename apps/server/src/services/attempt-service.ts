@@ -2,9 +2,11 @@ import { randomUUID } from "node:crypto";
 import {
   ALL_ENABLED_CAPABILITIES,
   type AttemptAnswerSaveData,
+  type AttemptAnswerSaveRequest,
   type AttemptDetailData,
   type AttemptDraftData,
   type AttemptDraftUnit,
+  type AttemptMaterialRevisions,
   type AttemptQuestionPublic,
   type AttemptResultData,
   type AttemptResultQuestion,
@@ -12,6 +14,7 @@ import {
   type AttemptScoreSummary,
   type AttemptStartData,
   type AttemptSubmitRevision,
+  attemptAnswerConflictCurrentSchema,
   attemptQuestionPublicSchema,
   type CapabilitySwitch,
   type HintOpenedEntry,
@@ -47,12 +50,14 @@ import type { Db } from "../db/client";
 import {
   type Assignment,
   type Attempt,
+  annotations,
   assignmentStudents,
   assignments,
   assignmentUnits,
   attempts,
   type Course,
   courses,
+  ink,
   lectures,
   type NoteRow,
   notes,
@@ -1418,48 +1423,151 @@ export function getStudentAttemptPaper(
  * 答案与题型不匹配（如给选择题提交 judge 答案）不在此拦截：交卷时 grade 按
  * kind 不匹配判 null（待批），前端控件只发对应形态（见任务报告「待决问题」）。
  */
+/** 本人材料版本盘点；只读且不包含题目参考答案或笔迹正文。 */
+export function getAttemptMaterialRevisions(
+  db: Db,
+  studentId: string,
+  attemptId: string,
+): AttemptMaterialRevisions {
+  requireUsableAttempt(db, studentId, attemptId);
+  return {
+    notes: Object.fromEntries(
+      db
+        .select({ id: notes.questionId, revision: notes.currentRevision })
+        .from(notes)
+        .where(and(eq(notes.attemptId, attemptId), eq(notes.phase, "scratch")))
+        .all()
+        .map((row) => [row.id, row.revision]),
+    ),
+    annotations: Object.fromEntries(
+      db
+        .select({ id: annotations.questionId, revision: annotations.revision })
+        .from(annotations)
+        .where(
+          and(
+            eq(annotations.attemptId, attemptId),
+            eq(annotations.phase, "scratch"),
+          ),
+        )
+        .all()
+        .map((row) => [row.id, row.revision]),
+    ),
+    ink: Object.fromEntries(
+      db
+        .select({ id: ink.questionId, revision: ink.revision })
+        .from(ink)
+        .where(eq(ink.attemptId, attemptId))
+        .all()
+        .map((row) => [row.id, row.revision]),
+    ),
+  };
+}
+
 export function saveDraftAnswer(
   db: Db,
   studentId: string,
   attemptId: string,
   questionId: string,
   answer: StudentAnswer,
+  options: Pick<AttemptAnswerSaveRequest, "baseRevision" | "mutationId"> = {},
 ): AttemptAnswerSaveData {
-  const attempt = requireUsableAttempt(db, studentId, attemptId);
-  if (attempt.status !== "draft") {
-    throw new HttpError(
-      409,
-      "ALREADY_SUBMITTED",
-      "这份练习已交卷，不能再修改答案",
-    );
-  }
-  requireAttemptQuestion(db, attempt, questionId);
-  // lesson 单题提交后的行级锁定（2026-10）：已提交题的答案不可再改
-  //（判定已按提交时的答案落定；非 lesson 行 submittedAt 恒 null，零变化）
-  assertRowNotSubmitted(db, attemptId, questionId);
+  return db.transaction((tx) => {
+    const attempt = requireUsableAttempt(db, studentId, attemptId);
+    if (attempt.status !== "draft") {
+      throw new HttpError(
+        409,
+        "ALREADY_SUBMITTED",
+        "这份练习已交卷，不能再修改答案",
+      );
+    }
+    requireAttemptQuestion(db, attempt, questionId);
+    // lesson 单题提交后的行级锁定（2026-10）：已提交题的答案不可再改
+    //（判定已按提交时的答案落定；非 lesson 行 submittedAt 恒 null，零变化）
+    assertRowNotSubmitted(db, attemptId, questionId);
 
-  // T6R.3：requireAttemptQuestion 已保证该题冻结行存在（快照非空）——无插入
-  // 分支（旧行缺失分支在建卷冻结后不可达，已删）；upsert 收敛为原行更新
-  const existing = db
-    .select({ id: responses.id, changeCount: responses.changeCount })
-    .from(responses)
-    .where(
-      and(
-        eq(responses.attemptId, attemptId),
-        eq(responses.questionId, questionId),
-      ),
+    // T6R.3：requireAttemptQuestion 已保证该题冻结行存在（快照非空）——无插入
+    // 分支（旧行缺失分支在建卷冻结后不可达，已删）；upsert 收敛为原行更新
+    const existing = tx
+      .select({
+        id: responses.id,
+        changeCount: responses.changeCount,
+        answerJson: responses.answerJson,
+        answerRevision: responses.answerRevision,
+        answerMutationId: responses.answerMutationId,
+      })
+      .from(responses)
+      .where(
+        and(
+          eq(responses.attemptId, attemptId),
+          eq(responses.questionId, questionId),
+        ),
+      )
+      .get();
+    if (existing === undefined) {
+      // 理论不可达（上一行成员校验刚通过）；防御性兜底不让脏状态静默
+      throw new HttpError(500, "INTERNAL", "保存失败，请刷新页面后重试");
+    }
+    const encoded = JSON.stringify(answer);
+    const conflict = () =>
+      new HttpError(
+        409,
+        "ANSWER_REVISION_CONFLICT",
+        "本题答案在另一设备已更新，请选择保留当前设备版本或采用云端版本",
+        {
+          _current: attemptAnswerConflictCurrentSchema.parse({
+            revision: existing.answerRevision,
+            draft: answerOf(existing.answerJson),
+          }),
+        },
+      );
+    if (
+      options.baseRevision === undefined &&
+      existing.answerMutationId !== null
     )
-    .get();
-  if (existing === undefined) {
-    // 理论不可达（上一行成员校验刚通过）；防御性兜底不让脏状态静默
-    throw new HttpError(500, "INTERNAL", "保存失败，请刷新页面后重试");
-  }
-  const nextCount = existing.changeCount + 1;
-  db.update(responses)
-    .set({ answerJson: JSON.stringify(answer), changeCount: nextCount })
-    .where(eq(responses.id, existing.id))
-    .run();
-  return { questionId, changeCount: nextCount };
+      throw conflict();
+    if (
+      options.mutationId !== undefined &&
+      existing.answerMutationId === options.mutationId
+    ) {
+      if (encoded !== existing.answerJson) throw conflict();
+      return {
+        questionId,
+        changeCount: existing.changeCount,
+        revision: existing.answerRevision,
+      };
+    }
+    // 内容相同即收敛，不要求用户裁决，也不重复计数；接管后阻止旧客户端盲写。
+    if (options.baseRevision !== undefined && encoded === existing.answerJson) {
+      tx.update(responses)
+        .set({ answerMutationId: options.mutationId })
+        .where(eq(responses.id, existing.id))
+        .run();
+      return {
+        questionId,
+        changeCount: existing.changeCount,
+        revision: existing.answerRevision,
+      };
+    }
+    if (
+      options.baseRevision !== undefined &&
+      options.baseRevision !== existing.answerRevision
+    )
+      throw conflict();
+    const nextCount = existing.changeCount + 1;
+    const nextRevision = existing.answerRevision + 1;
+    tx.update(responses)
+      .set({
+        answerJson: encoded,
+        changeCount: nextCount,
+        answerRevision: nextRevision,
+        ...(options.mutationId === undefined
+          ? {}
+          : { answerMutationId: options.mutationId }),
+      })
+      .where(eq(responses.id, existing.id))
+      .run();
+    return { questionId, changeCount: nextCount, revision: nextRevision };
+  });
 }
 
 // ---------- POST /api/student/attempts/:id/submit ----------
@@ -2261,11 +2369,13 @@ function buildDraftData(db: Db, attempt: Attempt): AttemptDraftData {
   // T7.7：attempt → 所属教师的有效启用集（steps/ink 渲染开关随卷下发）
   const enabledCapabilities = attemptEnabledCapabilities(db, attempt);
   const drafts: Record<string, StudentAnswer> = {};
+  const draftRevisions: Record<string, number> = {};
   const hintsOpened: Record<string, HintOpenedEntry[]> = {};
   // 单一数据源：行只查一次、快照只 parse 一次——公开投影/草稿答案/提示回显
   // 在同一批行上派生（groupedSnapshotRows 统一「跳过缺失+组 id 回退+空组过滤」）
   const units = groupedSnapshotRows(db, attempt, (row, snapshot) => {
     const answer = answerOf(row.answerJson);
+    draftRevisions[row.questionId] = row.answerRevision;
     if (answer !== null) drafts[row.questionId] = answer;
     // T2.11：已解锁提示回显（纯函数——文本取自同一份冻结快照，不再二次查库）
     const echo = openedHintEcho(row.hintsOpenedJson, snapshot.hints);
@@ -2283,6 +2393,7 @@ function buildDraftData(db: Db, attempt: Attempt): AttemptDraftData {
     dueAt: meta.dueAt,
     units,
     drafts,
+    draftRevisions,
     hintsOpened,
     // T6R.3：懒冻结的升级遗留卷标记（前端提示「内容为恢复后的版本」）
     legacyUnverified: attempt.legacyUnverified,
