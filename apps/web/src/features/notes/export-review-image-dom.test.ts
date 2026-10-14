@@ -94,6 +94,24 @@ function inlineContentWidthOf(node: HTMLElement): number {
 }
 
 describe("exportReviewImages（测量与渲染同几何——审查修复轮 P0-1/P1-2 回归）", () => {
+  it("收集已挂载回看副本中的公式字体，不使用 body 的字体快照", async () => {
+    const spies = {
+      rasterizedHtml: [] as string[],
+      saved: [] as Array<{ filename: string; bytes: number }>,
+    };
+    let collected = false;
+    const result = await exportReviewImages(STUDENT_PREVIEW, {
+      ...okDeps(spies),
+      collectFontCss: async (node: HTMLElement) => {
+        expect(node).not.toBe(document.body);
+        expect(node.querySelector(".katex")).not.toBeNull();
+        collected = true;
+        return "";
+      },
+    });
+    expect(result.ok).toBe(true);
+    expect(collected).toBe(true);
+  });
   it("测量容器与页容器内容宽一致：同为 648（720 边框盒 − 左右留白 36×2）", async () => {
     const spies = {
       rasterizedHtml: [] as string[],

@@ -12,6 +12,18 @@ const common = {
 };
 const fixtures: Readonly<Record<string, AttemptQuestionPublic>> = {
   judge: { ...common, type: "judge", stemMd: "一是正数。[[]]" },
+  limit: {
+    ...common,
+    type: "fill",
+    stemMd:
+      "数二\n\n$$\\lim_{x\\to +\\infty} x^2[\\arctan(x+1) - \\arctan x] =$$\n\n计算结果为 [[]]。",
+  },
+  mathFonts: {
+    ...common,
+    type: "fill",
+    stemMd:
+      "计算下列式子。\n\n$$\\sum_{k=1}^{n} \\frac{k^2}{\\sqrt{k+1}} + \\int_0^1 x^2\\,dx =$$\n\n结果为 [[]]。",
+  },
   choice: {
     ...common,
     type: "choice",

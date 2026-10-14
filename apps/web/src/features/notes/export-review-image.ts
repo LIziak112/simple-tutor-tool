@@ -9,7 +9,7 @@ import { REVIEW_PACK_KIND_LABELS } from "@/features/export/review-pack-kinds";
 import { StaticMarkdown } from "@/features/markdown/static-markdown";
 import { saveBlobAs } from "@/lib/api";
 import {
-  cachedFontEmbedCss,
+  collectFontEmbedCss,
   pngBlobHasMagic,
   preloadImages,
   samplePngBlank,
@@ -415,7 +415,7 @@ const REVIEW_IMAGE_FONT_STACK =
 
 /** 注入点集合（jsdom 无布局/canvas：单测注入假实现；生产缺省走真实链路） */
 export interface ReviewImageExportDeps {
-  /** 收集本地字体嵌入 CSS（缺省 html-to-image getFontEmbedCSS） */
+  /** 从已挂载的导出内容收集并严格嵌入本站字体 */
   readonly collectFontCss?: (node: HTMLElement) => Promise<string>;
   /** 预解码图片（缺省 new Image + decode；失败显式抛错） */
   readonly loadImages?: (urls: readonly string[]) => Promise<void>;
@@ -776,33 +776,7 @@ export async function exportReviewImages(
   const stepTimeoutMs =
     deps.stepTimeoutMs ?? REVIEW_IMAGE_ASYNC_STEP_TIMEOUT_MS;
   try {
-    // ① 本地字体嵌入（KaTeX/正文字体随构建本地打包；嵌入失败/收集挂起超时同分类显式放弃）
-    let fontCss: string;
-    try {
-      fontCss = await withTimeout(
-        deps.collectFontCss !== undefined
-          ? deps.collectFontCss(document.body)
-          : cachedFontEmbedCss(document.body),
-        stepTimeoutMs,
-        `本地字体收集超时（${Math.round(stepTimeoutMs / 1000)} 秒）`,
-      );
-    } catch (err) {
-      return errOf(
-        "font",
-        `本地字体嵌入失败（${msgOf(err)}）——公式/文字可能缺字，已放弃导出；可继续使用「下载完整包」出口`,
-      );
-    }
-    try {
-      await withTimeout(
-        Promise.resolve(document.fonts.ready),
-        stepTimeoutMs,
-        "document.fonts.ready 等待超时",
-      );
-    } catch {
-      // 旧环境 fonts 集不可等待或挂起：字体嵌入失败已有独立分类，这里不阻断
-    }
-
-    // ② 图片预解码（测量高度需要图片真实尺寸；失败/挂起超时显式列出来源）
+    // ① 图片预解码（测量高度需要图片真实尺寸；失败/挂起超时显式列出来源）
     const imageSrcs = sections
       .filter(
         (s): s is Extract<ReviewImageSection, { kind: "image" }> =>
@@ -824,7 +798,7 @@ export async function exportReviewImages(
       }
     }
 
-    // ③ 离屏渲染（React 挂载到固定宽容器；commit 后拆 markdown 块）
+    // ② 离屏渲染（React 挂载到固定宽容器；commit 后拆 markdown 块）
     const reactHost = document.createElement("div");
     host.appendChild(reactHost);
     root = createRoot(reactHost);
@@ -836,6 +810,23 @@ export async function exportReviewImages(
       return errOf("rasterize", "离屏内容构建失败（未找到内容根节点）");
     }
     unwrapMarkdownWrappers(content);
+    // ③ 本地字体嵌入（KaTeX/正文字体随构建本地打包；嵌入失败/收集挂起超时同分类显式放弃）
+    let fontCss: string;
+    try {
+      fontCss = await withTimeout(
+        deps.collectFontCss !== undefined
+          ? deps.collectFontCss(content)
+          : collectFontEmbedCss(content),
+        stepTimeoutMs,
+        `本地字体收集超时（${Math.round(stepTimeoutMs / 1000)} 秒）`,
+      );
+    } catch (err) {
+      return errOf(
+        "font",
+        `本地字体嵌入失败（${msgOf(err)}）——公式/文字可能缺字，已放弃导出；可继续使用「下载完整包」出口`,
+      );
+    }
+
     const blockNodes = [...content.children] as HTMLElement[];
 
     // ④ 测量 + 分页（单块超兜底上限 → canvas-limit 显式失败）

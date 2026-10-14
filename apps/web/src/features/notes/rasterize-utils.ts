@@ -1,10 +1,7 @@
-import { getFontEmbedCSS } from "html-to-image";
-
 /**
  * 栅格化共享原语（T6R.19 合成图 / T6R.20 标注底图共用；审查修复 6+7 抽出）：
  * 教师节哨兵、PNG 魔数校验、单步异步超时、图片预解码、整页空白采样——两条
- * 管线此前各持一份机械副本；字体嵌入 CSS 的模块级缓存（Q-H3：应用级静态
- * 资源、会话内不变，失败不缓存——下次生成重试）。
+ * 管线此前各持一份机械副本；字体按当前导出节点收集，只缓存成功资源。
  */
 
 /** 教师模板节哨兵（学生载荷守卫：题面混入教师域内容即拒绝生成） */
@@ -114,24 +111,156 @@ export async function pngBlobHasMagic(blob: Blob): Promise<boolean> {
   return PNG_MAGIC.every((byte, i) => head[i] === byte);
 }
 
-// ---------- 字体嵌入缓存（审查修复 7 / Q-H3） ----------
+// ---------- 当前导出节点的自包含字体 ----------
 
-/**
- * 字体嵌入 CSS 的模块级单例缓存（按宿主节点 WeakMap）：字体是应用级静态
- * 资源、会话内不变——getFontEmbedCSS 每次都要遍历样式表与 font-face 规则
- * （大应用数百毫秒），两次导出/两次底图生成重复收集纯浪费。**失败不缓存**
- * （rejected promise 即刻出表，下次生成重试）；已缓存的进行中请求并发共享。
- */
-const fontEmbedCssByNode = new WeakMap<HTMLElement, Promise<string>>();
+const fontResourceByUrl = new Map<string, Promise<string>>();
+const FONT_RESOURCE_TIMEOUT_MS = 15_000;
 
-export function cachedFontEmbedCss(node: HTMLElement): Promise<string> {
-  const cached = fontEmbedCssByNode.get(node);
-  if (cached !== undefined) return cached;
-  const pending = getFontEmbedCSS(node);
-  fontEmbedCssByNode.set(node, pending);
+function normalizeFontFamily(value: string): string {
+  return value
+    .trim()
+    .replace(/^["']|["']$/g, "")
+    .toLowerCase();
+}
+
+/** 拒绝 HTML 错误页等假成功响应；字体格式由文件头决定，不依赖服务器 MIME。 */
+function fontMime(bytes: Uint8Array): string {
+  const signature = String.fromCharCode(...bytes.slice(0, 4));
+  if (signature === "wOF2") return "font/woff2";
+  if (signature === "wOFF") return "font/woff";
+  if (signature === "OTTO") return "font/otf";
+  if (signature === "true" || signature === "\u0000\u0001\u0000\u0000")
+    return "font/ttf";
+  throw new Error("字体响应不是有效的字体文件，请重试");
+}
+
+async function readFontDataUrl(url: string): Promise<string> {
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      signal: AbortSignal.timeout(FONT_RESOURCE_TIMEOUT_MS),
+      redirect: "error",
+    });
+  } catch {
+    throw new Error("字体加载失败或超时，请重试");
+  }
+  if (!response.ok) throw new Error(`字体加载失败（HTTP ${response.status}）`);
+  const buffer = await response.arrayBuffer();
+  const mime = fontMime(new Uint8Array(buffer));
+  if (typeof FontFace === "function") {
+    try {
+      // 只校验资源，不加入页面字体集合，不改变题面排版。
+      await new FontFace("OwnClassExportFont", buffer).load();
+    } catch {
+      throw new Error("字体文件无法解码，请重试");
+    }
+  }
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("字体编码失败，请重试"));
+    reader.onload = () => {
+      if (typeof reader.result !== "string")
+        reject(new Error("字体编码失败，请重试"));
+      else resolve(reader.result);
+    };
+    reader.readAsDataURL(new Blob([buffer], { type: mime }));
+  });
+}
+
+function fontDataUrl(url: string): Promise<string> {
+  const cached = fontResourceByUrl.get(url);
+  if (cached) return cached;
+  const pending = withTimeout(
+    readFontDataUrl(url),
+    FONT_RESOURCE_TIMEOUT_MS,
+    "字体加载超时，请重试",
+  );
+  fontResourceByUrl.set(url, pending);
   void pending.catch(() => {
-    // 失败不缓存：下次生成重新收集
-    fontEmbedCssByNode.delete(node);
+    // 不经过 html-to-image 的资源缓存：该库把下载失败缓存成空字符串。
+    fontResourceByUrl.delete(url);
   });
   return pending;
+}
+
+function fontFaceRules(sheet: CSSStyleSheet): CSSFontFaceRule[] {
+  const result: CSSFontFaceRule[] = [];
+  const visit = (rules: CSSRuleList): void => {
+    for (const rule of Array.from(rules)) {
+      if (rule.type === CSSRule.FONT_FACE_RULE)
+        result.push(rule as CSSFontFaceRule);
+      else if (rule.type === CSSRule.IMPORT_RULE) {
+        const imported = (rule as CSSImportRule).styleSheet;
+        if (imported) result.push(...fontFaceRules(imported));
+      } else if ("cssRules" in rule) visit((rule as CSSGroupingRule).cssRules);
+    }
+  };
+  try {
+    visit(sheet.cssRules);
+  } catch {
+    throw new Error("字体样式表无法读取，请重试");
+  }
+  return result;
+}
+
+/** 节点字体集合会随挂载变化；只复用字体字节，不复用整个页面的 CSS 快照。 */
+export async function collectFontEmbedCss(node: HTMLElement): Promise<string> {
+  const owner = node.ownerDocument;
+  const usedFonts = new Set<string>();
+  for (const element of [node, ...node.querySelectorAll("*")]) {
+    for (const family of getComputedStyle(element).fontFamily.split(","))
+      usedFonts.add(normalizeFontFamily(family));
+  }
+  const rules = Array.from(owner.styleSheets)
+    .flatMap(fontFaceRules)
+    .filter((rule) =>
+      usedFonts.has(
+        normalizeFontFamily(rule.style.getPropertyValue("font-family")),
+      ),
+    );
+  const css = await Promise.all(
+    rules.map(async (rule) => {
+      const src = rule.style.getPropertyValue("src");
+      const sources = Array.from(
+        src.matchAll(
+          /url\(\s*(?:"([^"]*)"|'([^']*)'|([^\s)]*))\s*\)\s*(?:format\(\s*["']?([^"')]+)["']?\s*\))?/gi,
+        ),
+      );
+      const source =
+        sources.find((match) => match[4]?.toLowerCase() === "woff2") ??
+        sources[0];
+      const resource = source?.[1] ?? source?.[2] ?? source?.[3];
+      if (!resource) throw new Error("字体资源地址为空或不受支持，请重试");
+      const url = new URL(
+        resource,
+        rule.parentStyleSheet?.href ?? owner.baseURI,
+      );
+      if (
+        url.protocol !== "data:" &&
+        url.origin !== new URL(owner.baseURI).origin
+      )
+        throw new Error("字体必须使用本站资源，请重试");
+      const embedded = await fontDataUrl(url.href);
+      const declarations = Array.from(
+        { length: rule.style.length },
+        (_, index) => rule.style[index],
+      )
+        .filter(
+          (property): property is string =>
+            property !== undefined && property !== "src",
+        )
+        .map(
+          (property) =>
+            `${property}: ${rule.style.getPropertyValue(property)};`,
+        );
+      return `@font-face { ${declarations.join(" ")} src: url("${embedded}"); }`;
+    }),
+  );
+  if (owner.fonts)
+    await withTimeout(
+      owner.fonts.ready,
+      FONT_RESOURCE_TIMEOUT_MS,
+      "字体就绪等待超时，请重试",
+    );
+  return css.join("\n");
 }

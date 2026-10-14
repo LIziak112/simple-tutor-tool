@@ -85,6 +85,26 @@ afterEach(() => {
 });
 
 describe("renderAnnotationBaseImage（适配器层：成功）", () => {
+  it("字体收集发生在公开公式副本挂载后，范围不包含整个页面", async () => {
+    const spies: Spies = {
+      rasterizedHtml: [],
+      rasterOpts: [],
+      imageUrls: [],
+      contentHeight: 240,
+    };
+    let collected = false;
+    const result = await renderAnnotationBaseImage(previewOf(), {
+      ...okDeps(spies),
+      collectFontCss: async (node: HTMLElement) => {
+        expect(node).not.toBe(document.body);
+        expect(node.querySelector(".katex")).not.toBeNull();
+        collected = true;
+        return "";
+      },
+    });
+    expect(result.ok).toBe(true);
+    expect(collected).toBe(true);
+  });
   it("单页成功：题面在场、不含答案哨兵、像素宽恒 1440、离屏宿主清理", async () => {
     const spies: Spies = {
       rasterizedHtml: [],
