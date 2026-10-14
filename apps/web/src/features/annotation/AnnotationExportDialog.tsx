@@ -16,6 +16,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import type { OngoingExportPage } from "@/features/export/ongoing-question-export";
 import { saveBlobAs } from "@/lib/api";
 import { copyPngBlobToClipboard } from "@/lib/copy";
 
@@ -24,17 +25,23 @@ export function AnnotationExportDialog({
   onOpenChange,
   createImage,
   filename,
+  title = "导出标画",
+  previewLabel = "标画导出预览",
 }: {
   open: boolean;
   onOpenChange(open: boolean): void;
-  createImage(): Promise<Blob>;
+  createImage(): Promise<Blob | OngoingExportPage[]>;
   filename: string;
+  title?: string;
+  previewLabel?: string;
 }) {
   const createRef = useRef(createImage);
   createRef.current = createImage;
-  const [result, setResult] = useState<{ blob: Blob; url: string } | null>(
-    null,
-  );
+  const [pages, setPages] = useState<Array<
+    OngoingExportPage & { url: string }
+  > | null>(null);
+  const [pageIndex, setPageIndex] = useState(0);
+  const result = pages?.[pageIndex] ?? null;
   const [error, setError] = useState<string | null>(null);
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
   const [copying, setCopying] = useState(false);
@@ -46,18 +53,28 @@ export function AnnotationExportDialog({
     if (!open) return;
     let cancelled = false;
     generation.current += 1;
-    let url: string | null = null;
-    setResult(null);
+    const urls: string[] = [];
+    setPages(null);
+    setPageIndex(0);
     setError(null);
     setCopyStatus(null);
     setCopying(false);
     setOriginalSize(false);
     void createRef
       .current()
-      .then((blob) => {
+      .then((output) => {
         if (cancelled) return;
-        url = URL.createObjectURL(blob);
-        setResult({ blob, url });
+        const images = Array.isArray(output)
+          ? output
+          : [{ blob: output, label: "" }];
+        if (images.length === 0) throw new Error("未生成图片，请重试");
+        setPages(
+          images.map((page) => {
+            const url = URL.createObjectURL(page.blob);
+            urls.push(url);
+            return { ...page, url };
+          }),
+        );
       })
       .catch((cause: unknown) => {
         if (!cancelled)
@@ -68,7 +85,7 @@ export function AnnotationExportDialog({
     return () => {
       cancelled = true;
       generation.current += 1;
-      if (url) URL.revokeObjectURL(url);
+      for (const url of urls) URL.revokeObjectURL(url);
     };
   }, [open, retry]);
   return (
@@ -76,11 +93,11 @@ export function AnnotationExportDialog({
       <DialogContent className="flex max-h-[90dvh] w-[calc(100%-24px)] max-w-3xl flex-col">
         <DialogHeader>
           <div className="flex items-center justify-between gap-2 pr-10">
-            <DialogTitle>导出标画</DialogTitle>
+            <DialogTitle>{title}</DialogTitle>
             <Button
               variant="outline"
               className="size-11 shrink-0 p-0"
-              disabled={!result}
+              disabled={!result || error !== null}
               aria-pressed={originalSize}
               aria-label={originalSize ? "适应宽度预览" : "按原尺寸预览"}
               title={originalSize ? "适应宽度预览" : "按原尺寸预览"}
@@ -90,10 +107,39 @@ export function AnnotationExportDialog({
             </Button>
           </div>
           <DialogDescription className="break-all">
-            {filename}
+            {result?.label || filename}
           </DialogDescription>
         </DialogHeader>
-        <div className="min-h-0 flex-1 overflow-auto">
+        {pages && pages.length > 1 && (
+          <div className="flex items-center justify-center gap-3">
+            <Button
+              variant="outline"
+              className="h-11"
+              disabled={pageIndex === 0 || copying}
+              onClick={() => {
+                setPageIndex((value) => value - 1);
+                setCopyStatus(null);
+              }}
+            >
+              上一页
+            </Button>
+            <span className="text-sm tabular-nums">
+              第 {pageIndex + 1} / {pages.length} 页
+            </span>
+            <Button
+              variant="outline"
+              className="h-11"
+              disabled={pageIndex === pages.length - 1 || copying}
+              onClick={() => {
+                setPageIndex((value) => value + 1);
+                setCopyStatus(null);
+              }}
+            >
+              下一页
+            </Button>
+          </div>
+        )}
+        <div className="min-h-0 flex-1 overflow-auto overscroll-contain">
           {error ? (
             <div>
               <p role="alert" className="text-sm text-destructive">
@@ -111,7 +157,7 @@ export function AnnotationExportDialog({
           ) : result ? (
             <img
               src={result.url}
-              alt="标画导出预览"
+              alt={previewLabel}
               className={originalSize ? "h-auto max-w-none" : "h-auto w-full"}
               onError={() => setError("预览加载失败，请重试生成")}
             />
@@ -125,38 +171,49 @@ export function AnnotationExportDialog({
             </p>
           )}
         </div>
-        {copyStatus && (
-          <p role="status" className="text-sm text-muted-foreground">
-            {copyStatus}
-          </p>
-        )}
+        <p role="status" className="text-sm text-muted-foreground">
+          {copyStatus}
+        </p>
         <DialogFooter className="flex-wrap">
           <Button
             className="h-11"
-            disabled={!result}
+            disabled={!result || error !== null}
             onClick={() => {
-              if (result) saveBlobAs(result.blob, filename);
+              if (pages)
+                for (const [index, page] of pages.entries())
+                  saveBlobAs(
+                    page.blob,
+                    pages.length === 1
+                      ? filename
+                      : filename.replace(/\.png$/i, `-${index + 1}.png`),
+                  );
             }}
           >
             <Download aria-hidden />
-            下载图片
+            {pages && pages.length > 1 ? "下载全部图片" : "下载图片"}
           </Button>
           <Button
             variant="outline"
             className="h-11"
-            disabled={!result || copying}
+            disabled={!result || error !== null || copying}
             onClick={async () => {
               if (!result) return;
               const expected = generation.current;
               setCopying(true);
               const copied = await copyPngBlobToClipboard(result.blob);
               if (expected !== generation.current) return;
-              setCopyStatus(copied ? "已复制图片" : "复制失败，请下载图片");
+              setCopyStatus(
+                copied
+                  ? pages && pages.length > 1
+                    ? `已复制第 ${pageIndex + 1} 页图片`
+                    : "已复制图片"
+                  : "复制失败，请下载图片",
+              );
               setCopying(false);
             }}
           >
             <ClipboardCopy aria-hidden />
-            复制图片
+            {pages && pages.length > 1 ? "复制本页图片" : "复制图片"}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -170,6 +170,7 @@ function backend(): KVBackend {
 async function safeGet(
   attemptId: string,
   storageKey = keyOf(attemptId),
+  strictRead = false,
 ): Promise<AttemptDraftRecord | null> {
   try {
     const value = await backend().get(storageKey);
@@ -185,6 +186,7 @@ async function safeGet(
       inkDigests: raw.inkDigests ?? {},
     };
   } catch (err) {
+    if (strictRead) throw err;
     console.warn("草稿本地读取失败（不影响作答）", err);
     return null;
   }
@@ -255,11 +257,16 @@ async function writeNow(attemptId: string): Promise<void> {
 /** 读草稿（内存优先，回源 IndexedDB） */
 async function loadDraft(
   attemptId: string,
+  options?: { strictRead?: boolean },
 ): Promise<AttemptDraftRecord | null> {
   const cached = cache.get(attemptId);
   if (cached !== undefined) return cached;
   const generation = backendGeneration;
-  const stored = await safeGet(attemptId);
+  const stored = await safeGet(
+    attemptId,
+    keyOf(attemptId),
+    options?.strictRead,
+  );
   if (generation !== backendGeneration) return null;
   if (stored !== null) cache.set(attemptId, stored);
   return stored;

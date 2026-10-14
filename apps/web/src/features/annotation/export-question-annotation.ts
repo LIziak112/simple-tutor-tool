@@ -11,6 +11,7 @@ import {
 } from "./annotation-store";
 import { currentAnnotationSession } from "./annotation-sync";
 import { prepareQuestionAnnotationBase } from "./question-annotation-base";
+import { renderQuestionBaseImage } from "./question-base-image";
 
 /** 同份公开底图与矢量快照；不克隆带个人输入/提示的整张题卡。 */
 export async function exportQuestionAnnotationImage(
@@ -24,6 +25,23 @@ export async function exportQuestionAnnotationImage(
       throw new Error("会话已切换，请重新导出");
   };
   guard();
+  const before = await getAnnotationRecord(session, scope);
+  guard();
+  if (!before?.localBase && !before?.base && !before?.doc?.strokes.length) {
+    const view = await fetchAnnotationViewApi(
+      scope.attemptId,
+      scope.questionId,
+      scope.phase,
+    );
+    guard();
+    if (view.annotation?.sealedAt != null)
+      throw new Error("标画已随交卷固定，请到结果页导出");
+    if (!view.base && !view.doc?.strokes.length) {
+      const rendered = await renderQuestionBaseImage(question, surface);
+      guard();
+      return rendered.blob;
+    }
+  }
   const prepared = await prepareQuestionAnnotationBase(
     session,
     scope,

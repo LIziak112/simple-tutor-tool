@@ -136,6 +136,9 @@ describe("exportAnnotationComposite（canvas 直绘）", () => {
     expect(ongoingAnnotationFilename("练习/六:乘法", 8)).toBe(
       "练习_六_乘法-第8题-标画.png",
     );
+    expect(ongoingAnnotationFilename("练习/六:乘法", 8, "作答材料")).toBe(
+      "练习_六_乘法-第8题-作答材料.png",
+    );
   });
   it("成功：底图加载 + drawImage + 笔迹重放 → 单张 PNG", async () => {
     const result = await exportAnnotationComposite(READY_BASE, DOC, {

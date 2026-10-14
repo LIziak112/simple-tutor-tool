@@ -228,6 +228,7 @@ export async function exportAnnotationCompositeSource(
 export function ongoingAnnotationFilename(
   title: string,
   questionNo: number,
+  material: "标画" | "作答材料" = "标画",
 ): string {
   const safe =
     title
@@ -236,7 +237,7 @@ export function ongoingAnnotationFilename(
       .replace(/[. ]+$/g, "")
       .trim()
       .slice(0, 80) || "练习";
-  return `${safe}-第${questionNo}题-标画.png`;
+  return `${safe}-第${questionNo}题-${material}.png`;
 }
 
 /** 合成图文件名（annotation-q<题号>-<phase>.png；题号由调用方给展示序号） */

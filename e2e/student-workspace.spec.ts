@@ -317,7 +317,7 @@ test("130题长作业：答题卡独立滚动、跳到末题、待检查刷新�
   await expect(last).toBeFocused();
   await expect(last).toBeInViewport();
   await last.getByRole("button", { name: "第 130 题更多" }).click();
-  await page.getByRole("menuitemcheckbox", { name: "待检查" }).click();
+  await page.getByRole("menuitem", { name: "标记待检查" }).click();
   await expect(last.locator('svg[aria-label="待检查"]')).toBeVisible();
   const attemptUrl = page.url();
   await expect

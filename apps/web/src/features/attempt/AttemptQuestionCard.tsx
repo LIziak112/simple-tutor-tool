@@ -7,8 +7,12 @@ import type {
 import { displayStemMd } from "@tutor/md-dsl";
 import {
   CircleAlert,
+  Eye,
+  EyeOff,
   Flag,
+  FlagOff,
   ImageDown,
+  Info,
   MoreHorizontal,
   NotebookPen,
   Pencil,
@@ -19,11 +23,13 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { AnnotationExportDialog } from "@/features/annotation/AnnotationExportDialog";
 import { AnnotationLayer } from "@/features/annotation/AnnotationLayer";
 import { ongoingAnnotationFilename } from "@/features/annotation/annotation-composite";
+import { getAnnotationRecord } from "@/features/annotation/annotation-store";
 import { currentAnnotationSession } from "@/features/annotation/annotation-sync";
 import { exportQuestionAnnotationImage } from "@/features/annotation/export-question-annotation";
 import {
@@ -32,6 +38,10 @@ import {
 } from "@/features/annotation/QuestionAnnotationOverlay";
 import { useAnnotationRecord } from "@/features/annotation/use-annotation-record";
 import { useEnabledCapabilities } from "@/features/capability/enabled-capabilities";
+import {
+  createOngoingQuestionImages,
+  loadOngoingPaper,
+} from "@/features/export/ongoing-question-export";
 import { NoteLayer } from "@/features/notes/NoteLayer";
 import {
   effectiveNoteLayout,
@@ -42,6 +52,7 @@ import {
   useNoteLayoutPreference,
   useNoteSideUsable,
 } from "@/features/notes/note-layout";
+import { currentNoteSession } from "@/features/notes/note-sync";
 import { useNoteRecord } from "@/features/notes/use-note-record";
 import { useAttemptEditor } from "./AttemptEditorContext";
 import {
@@ -49,6 +60,7 @@ import {
   QUESTION_TYPE_BADGE_CLASS,
   QUESTION_TYPE_LABELS,
 } from "./answer-format";
+import { getDraftSessionEpoch } from "./draft-store";
 import {
   HandwrittenControls,
   type HandwrittenControlsProps,
@@ -103,165 +115,159 @@ function QuestionMeta({
 }) {
   const [detailsOpen, setDetailsOpen] = useState(false);
   return (
-    <>
-      <div
-        data-slot="question-header"
-        className="flex min-h-11 items-start justify-between gap-2 sm:items-center"
-      >
-        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1.5">
-          <p className="flex items-center gap-2 text-sm font-semibold">
-            <span>第 {index + 1} 题</span>
-          </p>
-          <span
-            className={`rounded-md px-2 py-1 text-xs font-medium ${QUESTION_TYPE_BADGE_CLASS[question.type]}`}
-          >
-            {QUESTION_TYPE_LABELS[question.type]}
-          </span>
-          <span className="w-full text-xs text-muted-foreground sm:w-auto">
-            {completionLabel(
-              getQuestionCompletion(question, answer, formalInkPresence),
-            )}
-          </span>
-          {flagged && (
-            <Flag
-              aria-label="待检查"
-              className="size-3.5 fill-primary text-primary"
-            />
+    <div
+      data-slot="question-header"
+      className="flex min-h-11 items-start justify-between gap-2 sm:items-center"
+    >
+      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1.5">
+        <p className="flex items-center gap-2 text-sm font-semibold">
+          <span>第 {index + 1} 题</span>
+        </p>
+        <span
+          className={`rounded-md px-2 py-1 text-xs font-medium ${QUESTION_TYPE_BADGE_CLASS[question.type]}`}
+        >
+          {QUESTION_TYPE_LABELS[question.type]}
+        </span>
+        <span className="text-xs text-muted-foreground">
+          {completionLabel(
+            getQuestionCompletion(question, answer, formalInkPresence),
           )}
-        </div>
-        <div className="flex shrink-0 items-center gap-1">
-          {tools && (
-            <Button
-              type="button"
-              variant="ghost"
-              className="h-11 min-w-11 gap-1.5 px-2"
-              title="圈画题干"
-              aria-label={`第 ${index + 1} 题圈画题干${tools.annotationOpen ? "（标画中）" : ""}${tools.annotationCount > 0 ? `（已有 ${tools.annotationCount} 笔）` : ""}${tools.annotationProblem ? "，同步需处理" : ""}`}
-              aria-expanded={tools.annotationOpen}
-              data-annotation-trigger
-              onClick={tools.toggleAnnotation}
-              onDoubleClick={tools.cancelAnnotation}
-            >
-              {tools.annotationProblem ? (
-                <CircleAlert aria-hidden className="size-4 text-amber-600" />
-              ) : (
-                <Pencil
-                  aria-hidden
-                  className={`size-4 ${tools.annotationOpen || tools.annotationCount > 0 ? "text-primary" : ""}`}
-                />
-              )}
-              <span className="hidden lg:inline">圈画</span>
-              {tools.annotationCount > 0 && (
-                <span
-                  aria-hidden
-                  className="size-1.5 rounded-full bg-current"
-                />
-              )}
-            </Button>
-          )}
-          {tools?.paperEnabled && (
-            <Button
-              type="button"
-              variant="ghost"
-              className="h-11 min-w-11 gap-1.5 px-2"
-              title={
-                HANDWRITTEN_TYPES.has(question.type) ? "手写作答" : "草稿纸"
-              }
-              aria-label={`第 ${index + 1} 题${HANDWRITTEN_TYPES.has(question.type) ? "手写作答" : "草稿纸"}${tools.paperCount > 0 || formalInkPresence ? "（已有笔迹）" : ""}${tools.paperProblem ? "，同步需处理" : ""}`}
-              aria-expanded={tools.paperOpen}
-              data-paper-trigger
-              onClick={tools.togglePaper}
-            >
-              {tools.paperProblem ? (
-                <CircleAlert aria-hidden className="size-4 text-amber-600" />
-              ) : (
-                <NotebookPen
-                  aria-hidden
-                  className={`size-4 ${tools.paperOpen || tools.paperCount > 0 || formalInkPresence ? "text-primary" : ""}`}
-                />
-              )}
-              <span className="hidden lg:inline">
-                {HANDWRITTEN_TYPES.has(question.type) ? "手写" : "草稿"}
-              </span>
-              {(tools.paperCount > 0 || formalInkPresence) && (
-                <span
-                  aria-hidden
-                  className="size-1.5 rounded-full bg-current"
-                />
-              )}
-            </Button>
-          )}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                className="size-11 p-0"
-                title="更多"
-                aria-label={`第 ${index + 1} 题更多`}
-              >
-                <MoreHorizontal aria-hidden className="size-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              {tools?.exportAnnotation && (
-                <DropdownMenuItem onSelect={tools.exportAnnotation}>
-                  <ImageDown aria-hidden />
-                  导出题目与标画
-                </DropdownMenuItem>
-              )}
-              {tools?.toggleAnnotationVisibility &&
-                tools.annotationCount > 0 && (
-                  <DropdownMenuItem
-                    role="menuitemcheckbox"
-                    aria-checked={!tools.annotationHidden}
-                    onSelect={tools.toggleAnnotationVisibility}
-                  >
-                    显示标画
-                  </DropdownMenuItem>
-                )}
-              <DropdownMenuItem
-                onSelect={() => setDetailsOpen((value) => !value)}
-              >
-                {detailsOpen ? "收起题目资料" : "题目资料"}
-              </DropdownMenuItem>
-              {onToggleFlag && (
-                <DropdownMenuItem
-                  role="menuitemcheckbox"
-                  aria-checked={flagged}
-                  onSelect={onToggleFlag}
-                >
-                  <Flag aria-hidden />
-                  待检查
-                </DropdownMenuItem>
-              )}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      </div>
-      {detailsOpen && (
-        <div className="flex flex-wrap items-center gap-2 text-xs">
-          <span
-            role="img"
-            className="text-xs text-amber-500"
-            aria-label={`难度 ${question.difficulty} 星（满分 5 星）`}
-          >
-            {"★".repeat(question.difficulty)}
-            <span className="text-muted-foreground/60">
-              {"★".repeat(5 - question.difficulty)}
-            </span>
-          </span>
-          {question.knowledge.map((name) => (
+        </span>
+        {flagged && (
+          <Flag
+            aria-label="待检查"
+            className="size-3.5 fill-primary text-primary"
+          />
+        )}
+        {detailsOpen && (
+          <div className="contents">
             <span
-              key={name}
-              className="rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground"
+              role="img"
+              className="text-xs text-amber-500"
+              aria-label={`难度 ${question.difficulty} 星（满分 5 星）`}
             >
-              {name}
+              {"★".repeat(question.difficulty)}
+              <span className="text-muted-foreground/60">
+                {"★".repeat(5 - question.difficulty)}
+              </span>
             </span>
-          ))}
-        </div>
-      )}
-    </>
+            {question.knowledge.map((name) => (
+              <span
+                key={name}
+                className="max-w-full break-words rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground"
+              >
+                {name}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+      <div className="flex shrink-0 items-center gap-1">
+        {tools && (
+          <Button
+            type="button"
+            variant="ghost"
+            className="h-11 min-w-11 gap-1.5 px-2"
+            title="圈画题干"
+            aria-label={`第 ${index + 1} 题圈画题干${tools.annotationOpen ? "（标画中）" : ""}${tools.annotationCount > 0 ? `（已有 ${tools.annotationCount} 笔）` : ""}${tools.annotationProblem ? "，同步需处理" : ""}`}
+            aria-expanded={tools.annotationOpen}
+            data-annotation-trigger
+            onClick={tools.toggleAnnotation}
+            onDoubleClick={tools.cancelAnnotation}
+          >
+            {tools.annotationProblem ? (
+              <CircleAlert aria-hidden className="size-4 text-amber-600" />
+            ) : (
+              <Pencil
+                aria-hidden
+                className={`size-4 ${tools.annotationOpen || tools.annotationCount > 0 ? "text-primary" : ""}`}
+              />
+            )}
+            <span className="hidden lg:inline">圈画</span>
+            {tools.annotationCount > 0 && (
+              <span aria-hidden className="size-1.5 rounded-full bg-current" />
+            )}
+          </Button>
+        )}
+        {tools?.paperEnabled && (
+          <Button
+            type="button"
+            variant="ghost"
+            className="h-11 min-w-11 gap-1.5 px-2"
+            title={HANDWRITTEN_TYPES.has(question.type) ? "手写作答" : "草稿纸"}
+            aria-label={`第 ${index + 1} 题${HANDWRITTEN_TYPES.has(question.type) ? "手写作答" : "草稿纸"}${tools.paperCount > 0 || formalInkPresence ? "（已有笔迹）" : ""}${tools.paperProblem ? "，同步需处理" : ""}`}
+            aria-expanded={tools.paperOpen}
+            data-paper-trigger
+            onClick={tools.togglePaper}
+          >
+            {tools.paperProblem ? (
+              <CircleAlert aria-hidden className="size-4 text-amber-600" />
+            ) : (
+              <NotebookPen
+                aria-hidden
+                className={`size-4 ${tools.paperOpen || tools.paperCount > 0 || formalInkPresence ? "text-primary" : ""}`}
+              />
+            )}
+            <span className="hidden lg:inline">
+              {HANDWRITTEN_TYPES.has(question.type) ? "手写" : "草稿"}
+            </span>
+            {(tools.paperCount > 0 || formalInkPresence) && (
+              <span aria-hidden className="size-1.5 rounded-full bg-current" />
+            )}
+          </Button>
+        )}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              className="size-11 p-0"
+              title="更多"
+              aria-label={`第 ${index + 1} 题更多`}
+            >
+              <MoreHorizontal aria-hidden className="size-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            align="end"
+            className="min-w-48 max-w-[calc(100vw-24px)] motion-reduce:animate-none"
+          >
+            {tools?.exportAnnotation && (
+              <DropdownMenuItem onSelect={tools.exportAnnotation}>
+                <ImageDown aria-hidden />
+                导出本题
+              </DropdownMenuItem>
+            )}
+            {tools?.exportAnnotation && <DropdownMenuSeparator />}
+            {tools?.toggleAnnotationVisibility && tools.annotationCount > 0 && (
+              <DropdownMenuItem onSelect={tools.toggleAnnotationVisibility}>
+                {tools.annotationHidden ? (
+                  <Eye aria-hidden />
+                ) : (
+                  <EyeOff aria-hidden />
+                )}
+                {tools.annotationHidden ? "显示标画" : "隐藏标画"}
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuItem
+              onSelect={() => setDetailsOpen((value) => !value)}
+            >
+              <Info aria-hidden />
+              {detailsOpen ? "隐藏题目资料" : "显示题目资料"}
+            </DropdownMenuItem>
+            {onToggleFlag && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={onToggleFlag}>
+                  {flagged ? <FlagOff aria-hidden /> : <Flag aria-hidden />}
+                  {flagged ? "取消待检查" : "标记待检查"}
+                </DropdownMenuItem>
+              </>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    </div>
   );
 }
 
@@ -591,20 +597,58 @@ export function AttemptQuestionCard({
         <AnnotationExportDialog
           open={exportOpen}
           onOpenChange={setExportOpen}
-          filename={ongoingAnnotationFilename(assignmentTitle, index + 1)}
+          filename={ongoingAnnotationFilename(
+            assignmentTitle,
+            index + 1,
+            "作答材料",
+          )}
+          title="导出本题"
+          previewLabel="本题导出预览"
           createImage={async () => {
             if (editor && !(await editor.request(null)))
               throw new Error("当前稿件未保存，请先重试保存");
             const session = currentAnnotationSession();
+            const noteSession = currentNoteSession();
+            const draftEpoch = getDraftSessionEpoch();
             const surface = articleRef.current?.querySelector<HTMLElement>(
               '[data-slot="question-surface"]',
             );
-            if (!session || !surface) throw new Error("题面尚未就绪，请重试");
-            return exportQuestionAnnotationImage(
+            if (!session || !noteSession || !surface)
+              throw new Error("题面尚未就绪，请重试");
+            const guard = () => {
+              if (
+                currentAnnotationSession() !== session ||
+                currentNoteSession() !== noteSession ||
+                getDraftSessionEpoch() !== draftEpoch
+              )
+                throw new Error("会话已切换，请重新导出");
+            };
+            const paper = await loadOngoingPaper(
+              noteSession,
+              attemptId,
+              question.id,
+              HANDWRITTEN_TYPES.has(question.type),
+            );
+            guard();
+            const questionImage = await exportQuestionAnnotationImage(
               session,
               { attemptId, questionId: question.id, phase: "scratch" },
               inlineQuestion,
               surface,
+            );
+            guard();
+            const record = await getAnnotationRecord(session, {
+              attemptId,
+              questionId: question.id,
+              phase: "scratch",
+            });
+            guard();
+            return createOngoingQuestionImages(
+              questionImage,
+              paper,
+              `${assignmentTitle} · 第 ${index + 1} 题`,
+              guard,
+              (record?.doc?.strokes.length ?? 0) > 0,
             );
           }}
         />
