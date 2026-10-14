@@ -288,6 +288,7 @@ describe("状态机三态", () => {
       result.current.noteLocalWrite();
     });
     await act(async () => {
+      await draftStore.markAnswerSynced("att-1", "q1", judge);
       result.current.noteAnswerSynced("q1", judge);
       await vi.advanceTimersByTimeAsync(0);
     });

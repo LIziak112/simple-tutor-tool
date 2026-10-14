@@ -29,6 +29,11 @@ import { AttemptBottomBar } from "@/features/attempt/AttemptBottomBar";
 import { AttemptHeader } from "@/features/attempt/AttemptHeader";
 import { AttemptQuestionRow } from "@/features/attempt/AttemptQuestionRow";
 import { AttemptResultView } from "@/features/attempt/AttemptResultView";
+import {
+  attemptMaterialsEditable,
+  recoverAttemptMaterials,
+  useAttemptMaterialRecovery,
+} from "@/features/attempt/attempt-material-recovery";
 import { draftStore } from "@/features/attempt/draft-store";
 import { SubmitConfirmDialog } from "@/features/attempt/SubmitConfirmDialog";
 import { useAttemptAnswers } from "@/features/attempt/use-attempt-answers";
@@ -56,6 +61,7 @@ import {
   useAttemptEditor,
 } from "./AttemptEditorContext";
 import { AttemptSaveDetails } from "./AttemptSaveDetails";
+import { AttemptSyncConflicts } from "./AttemptSyncConflicts";
 import { AttemptWorkspace } from "./AttemptWorkspace";
 import { attemptSourceLabel } from "./answer-format";
 import { useSubmitAttempt } from "./attempt-queries";
@@ -259,7 +265,12 @@ function AnswerView({
     [],
   );
   // 草稿防丢（T2.9）：合并本地与服务端草稿 + 10 秒/切后台/断网恢复增量同步
-  const draftSync = useDraftSync(attemptId, data.drafts, inkControllers);
+  const draftSync = useDraftSync(
+    attemptId,
+    data.drafts,
+    inkControllers,
+    data.draftRevisions,
+  );
   // 学习痕迹埋点（T2.10）：attempt_start/聚焦/answer_change/ink/page_*/submit
   const attemptEvents = useAttemptEvents(attemptId);
   const {
@@ -316,6 +327,7 @@ function AnswerView({
     [flatQuestions],
   );
   const total = flatQuestions.length;
+  const materialRecovery = useAttemptMaterialRecovery(attemptId, questionIds);
   const [navigatorOpen, setNavigatorOpen] = useState(false);
   const [navigatorCollapsed, setNavigatorCollapsed] = useState(false);
   const navigationId = useId();
@@ -430,6 +442,8 @@ function AnswerView({
   const runSubmit = useCallback(
     async (ctx: EvidenceConfirmContext): Promise<EvidenceConfirmOutcome> => {
       setInkFlushError(false);
+      if (materialRecovery.state !== "ready" || draftSync.recoveryError)
+        return { kind: "error", message: "请先完成作答材料恢复后再交卷" };
       // 两条独立网络链并行（模态弹层已冻结编辑，无用户输入竞态）：
       // 手写题笔迹 flush（既有硬约束，失败阻止交卷）+ 草稿追平与证据组装。
       // ink flush 契约永不 reject（失败以 false 返回）——单一 rejection 源
@@ -510,6 +524,8 @@ function AnswerView({
       attemptEvents,
       attemptId,
       draftSync.syncNow,
+      draftSync.recoveryError,
+      materialRecovery.state,
       flushAnswers,
       onAnnotationSealFailed,
       questionIds,
@@ -571,6 +587,11 @@ function AnswerView({
     draftSync.status,
     online,
     inkControllers,
+    draftSync.recoveryError
+      ? { state: "failed", message: draftSync.recoveryError }
+      : answers === null
+        ? { state: "loading" }
+        : materialRecovery,
   );
   const [retryingSave, setRetryingSave] = useState(false);
   const [retrySaveError, setRetrySaveError] = useState<string | null>(null);
@@ -579,7 +600,9 @@ function AnswerView({
   const denied = draftSync.status.state === "denied";
 
   return (
-    <DraftSyncContext.Provider value={draftSync}>
+    <DraftSyncContext.Provider
+      value={{ ...draftSync, recovery: materialRecovery }}
+    >
       <AttemptWorkspace>
         {/* 练习头：来源 + 标题 + 截止 + 草稿保存状态（T2.9 三态 + T2A.6 终态） */}
         <AttemptHeader
@@ -599,6 +622,7 @@ function AnswerView({
                 controllers={inkControllers}
                 onJump={jumpToQuestion}
                 onRetry={async () => {
+                  await recoverAttemptMaterials(attemptId, questionIds);
                   await retryAttemptLocalPersistence(attemptId, questionIds);
                   await Promise.all([
                     draftSync.syncNow(),
@@ -668,6 +692,27 @@ function AnswerView({
           )}
         </AttemptHeader>
 
+        <AttemptSyncConflicts
+          attemptId={attemptId}
+          questionIds={questionIds}
+          sync={draftSync}
+          beforeResolve={async () => !editor || (await editor.request(null))}
+        />
+        {materialRecovery.state === "failed" && (
+          <div role="alert" className="rounded-lg border p-4">
+            <p>{materialRecovery.message}</p>
+            <Button
+              onClick={() =>
+                void recoverAttemptMaterials(attemptId, questionIds).catch(
+                  () => {},
+                )
+              }
+            >
+              重试恢复作答材料
+            </Button>
+          </div>
+        )}
+
         <div
           className={`grid min-w-0 grid-cols-1 gap-6 ${navigatorCollapsed ? "lg:grid-cols-[44px_minmax(0,1fr)]" : "lg:grid-cols-[176px_minmax(0,1fr)]"}`}
         >
@@ -733,7 +778,12 @@ function AnswerView({
 
           {/* 题卡列表（ref 注册进视口观察：question_view + 聚焦兜底，T2.10）。
             T2A.7：多单元作业按单元分节（节标题 = 单元标题），题号全卷连续 */}
-          <ol className={total === 0 ? "hidden" : "flex flex-col gap-4"}>
+          <ol
+            inert={
+              !attemptMaterialsEditable(materialRecovery) || answers === null
+            }
+            className={total === 0 ? "hidden" : "flex flex-col gap-4"}
+          >
             {data.units.map((unit) => (
               <li key={unit.id} className="flex flex-col gap-4">
                 {showUnitHeaders && (

@@ -192,6 +192,7 @@ function buildLessonStartData(
 
   const questions: AttemptQuestionPublic[] = [];
   const drafts: Record<string, StudentAnswer> = {};
+  const draftRevisions: Record<string, number> = {};
   const hintsOpened: Record<string, HintOpenedEntry[]> = {};
   const released: Record<string, AttemptResultQuestion> = {};
   const rows = attemptResponseRows(db, attempt.id);
@@ -200,6 +201,7 @@ function buildLessonStartData(
     if (snapshot === null) continue; // 历史题目缺失/坏快照：跳过（不回填、不判分）
     questions.push(publicOfSnapshot(snapshot, row.id));
     const answer = answerOf(row.answerJson);
+    draftRevisions[row.questionId] = row.answerRevision;
     if (answer !== null) drafts[row.questionId] = answer;
     const echo = openedHintEcho(row.hintsOpenedJson, snapshot.hints);
     if (echo.length > 0) hintsOpened[row.questionId] = echo;
@@ -224,6 +226,7 @@ function buildLessonStartData(
     attempt: attemptSummaryOf(attempt),
     questions,
     drafts,
+    draftRevisions,
     hintsOpened,
     released,
     summary: lessonLiveSummaryOf(rows, attempt),

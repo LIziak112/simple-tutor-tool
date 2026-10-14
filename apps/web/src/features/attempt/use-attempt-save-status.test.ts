@@ -25,6 +25,20 @@ const saved = {
   notes: [],
   annotations: [],
 };
+it("未确认恢复或恢复失败时不能显示全部已保存", () => {
+  expect(
+    summarizeAttemptSaveStatus({ ...saved, recovery: { state: "loading" } }),
+  ).toBe("正在恢复作答与材料…");
+  expect(
+    summarizeAttemptSaveStatus({
+      ...saved,
+      recovery: { state: "failed", message: "读取失败" },
+    }),
+  ).toBe("作答材料恢复失败，请重试");
+  expect(summarizeAttemptSaveStatus({ ...saved, answerConflict: true })).toBe(
+    "有答案同步冲突，请选择保留版本",
+  );
+});
 it("仅预取的空草稿壳不是已使用稿件，不污染保存详情", async () => {
   installNoteBackend(memoryNoteBackend());
   const session = { origin: "details-origin", studentId: "student" };

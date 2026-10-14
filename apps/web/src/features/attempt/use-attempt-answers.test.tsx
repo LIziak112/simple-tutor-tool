@@ -12,7 +12,7 @@ const drafts = {};
 beforeEach(() => {
   vi.useFakeTimers();
   installDraftBackend(memoryBackend());
-  save.mockReset().mockResolvedValue({});
+  save.mockReset().mockResolvedValue({ questionId: "q", changeCount: 1 });
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -54,8 +54,8 @@ it("flush等待旧在途请求后再提交新答案，旧回执不覆写本机�
   let done: (() => void) | undefined;
   save.mockImplementationOnce(
     () =>
-      new Promise<void>((resolve) => {
-        done = resolve;
+      new Promise<Awaited<ReturnType<typeof saveDraftAnswer>>>((resolve) => {
+        done = () => resolve({ questionId: "q", changeCount: 1 });
       }),
   );
   const { result } = renderHook(() =>

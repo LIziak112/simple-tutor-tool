@@ -4,7 +4,11 @@ import { ApiError } from "@/lib/api";
 import { isAnswered } from "./answer-format";
 import { saveDraftAnswer } from "./attempt-queries";
 import { unsyncedAnswerIds } from "./draft-merge";
-import { draftStore } from "./draft-store";
+import {
+  draftStore,
+  getDraftSessionEpoch,
+  subscribeDraftPersistence,
+} from "./draft-store";
 import type { DraftSyncApi } from "./use-draft-sync";
 
 /**
@@ -70,10 +74,6 @@ export function useAttemptAnswers(
     null,
   );
   const [saveFailed, setSaveFailed] = useState(false);
-  /** 已播种的 attemptId（T2.9：恢复是异步的，播种只做一次；
-   *  用函数式合并而非整体覆盖——播种与用户作答在同批更新竞争时，已答内容优先） */
-  const seededForRef = useRef<string | null>(null);
-
   // 播种：drafts 首次到位（或 attemptId 切换后重置再播种）。
   // biome-ignore lint/correctness/useExhaustiveDependencies: setAnswers/setSaveFailed 为 React 稳定引用
   useEffect(() => {
@@ -81,10 +81,17 @@ export function useAttemptAnswers(
     setSaveFailed(false);
   }, [attemptId]);
   useEffect(() => {
-    if (drafts === undefined || seededForRef.current === attemptId) return;
-    seededForRef.current = attemptId;
-    setAnswers((prev) => ({ ...drafts, ...(prev ?? {}) }));
+    if (drafts === undefined) return;
+    setAnswers(draftStore.peekAnswers(attemptId) ?? { ...drafts });
   }, [attemptId, drafts]);
+  useEffect(
+    () =>
+      subscribeDraftPersistence(() => {
+        const current = draftStore.peekAnswers(attemptId);
+        if (current) setAnswers(current);
+      }),
+    [attemptId],
+  );
 
   // 防抖窗与最新待存值（questionId → { answer, timer }）
   const pendingRef = useRef(
@@ -107,12 +114,19 @@ export function useAttemptAnswers(
 
   const save = useCallback((questionId: string, answer: StudentAnswer) => {
     const scope = attemptIdRef.current;
+    const epoch = getDraftSessionEpoch();
     const api = syncRef.current;
     // T2.10：与保存同节奏上报 answer_change（防抖/立即提交点各一次）
     optionsRef.current?.onAnswerCommitted?.(questionId, answer);
     const task: Promise<boolean> = saveDraftAnswer(scope, questionId, answer)
-      .then(async () => {
-        await draftStore.markAnswerSynced(scope, questionId, answer);
+      .then(async (receipt) => {
+        if (epoch !== getDraftSessionEpoch()) return false;
+        await draftStore.markAnswerSynced(
+          scope,
+          questionId,
+          answer,
+          receipt?.revision,
+        );
         if (attemptIdRef.current !== scope) return true;
         setSaveFailed(false);
         // T2.9：答案已到服务端 → 草稿仓记指纹（增量同步去重）+ 顶栏回到已保存
@@ -152,6 +166,8 @@ export function useAttemptAnswers(
     if (deniedFor.current === scope)
       throw new Error("已无权限保存答案，请返回首页");
     const record = await draftStore.loadDraft(scope);
+    if (Object.keys(record?.answerConflicts ?? {}).length > 0)
+      throw new Error("答案存在同步冲突，请先选择保留版本");
     if (attemptIdRef.current !== scope)
       throw new Error("练习已切换，请重新交卷");
     const results = await Promise.all(

@@ -786,7 +786,9 @@ async function mutateLoaded(
   fn: (record: NoteLocalRecord) => void,
 ): Promise<void> {
   const key = noteKeyOf(session, scope);
-  const existing = records.get(key) ?? (await getNoteRecord(session, scope));
+  const existing =
+    records.get(key) ??
+    (await getNoteRecord(session, scope, { strictRead: true }));
   if (existing === null) {
     if (create === null) return;
     mutate(key, create, fn);
@@ -819,6 +821,26 @@ function applyLoadMutations(
   serverDoc: NoteDoc,
   head: NoteHeadData | null | undefined,
 ): void {
+  if (
+    head?.note &&
+    record.pending !== null &&
+    !noteDocsEqual(record.pending.doc, serverDoc) &&
+    head.note.revision > record.baseRevision
+  ) {
+    record.lastHead = head;
+    record.conflict = {
+      reason: "当前设备与云端都修改了本题草稿，请选择保留版本",
+      current: {
+        noteId: head.note.noteId,
+        revision: head.note.revision,
+        versionId: head.note.currentVersionId,
+        hash: null,
+        serverSavedAt: head.note.serverSavedAt,
+      },
+      localDoc: record.pending.doc,
+    };
+    return;
+  }
   // 守卫前置（复审②）：head 回退（备份恢复）已置 conflict——就地止步，
   // 服务端稿不覆盖本地 doc、不动 pending/conflict，等用户裁决
   if (head !== undefined && head !== null && applyHeadInfo(record, head)) {
@@ -953,6 +975,12 @@ export async function resolveNoteConflict(
   await mutateLoaded(session, scope, null, (record) => {
     const conflict = record.conflict;
     if (conflict === null) return; // 无分歧（重复裁决/迟到）：幂等跳过
+    if (
+      choice.keep === "cloud" &&
+      choice.expectedMutationId !== undefined &&
+      record.pending?.mutationId !== choice.expectedMutationId
+    )
+      throw new Error("裁决期间草稿已修改，请重新选择");
     record.conflict = null;
     if (conflict.current !== null) {
       record.baseRevision = conflict.current.revision;
@@ -960,12 +988,6 @@ export async function resolveNoteConflict(
         record.noteId = conflict.current.noteId;
     }
     if (choice.keep === "cloud") {
-      if (
-        choice.expectedMutationId !== undefined &&
-        record.pending?.mutationId !== choice.expectedMutationId
-      ) {
-        return; // fetch 窗口内有新写：新写胜出，云端稿不覆盖（复审⑤）
-      }
       record.pending = null;
       replaceDoc(record, choice.doc);
       return;

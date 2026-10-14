@@ -6,12 +6,25 @@ import type {
   InkDoc,
   StudentAnswer,
 } from "@tutor/contract";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  installAnnotationBackend,
+  memoryAnnotationBackend,
+} from "@/features/annotation/annotation-store";
+import {
+  bindAnnotationSession,
+  resetAnnotationSession,
+} from "@/features/annotation/annotation-sync";
 import {
   draftStore,
   installDraftBackend,
   memoryBackend,
 } from "@/features/attempt/draft-store";
+import {
+  installNoteBackend,
+  memoryNoteBackend,
+} from "@/features/notes/note-store";
+import { bindNoteSession, resetNoteSession } from "@/features/notes/note-sync";
 import { noteHeadsMockResponse } from "@/features/notes/note-test-utils";
 import {
   fetchAttemptApi,
@@ -108,11 +121,19 @@ vi.mock("@/lib/api", async (importOriginal) => {
     ...actual,
     startAttemptApi: vi.fn(),
     fetchAttemptApi: vi.fn(),
+    fetchAttemptMaterialRevisionsApi: vi.fn(async () => ({
+      notes: {},
+      annotations: {},
+      ink: {},
+    })),
     saveAttemptAnswerApi: vi.fn(),
     submitAttemptApi: vi.fn(),
     // T6R.10：交卷前拉整卷草稿头（T6R.14 批量端点；默认空态——本文件不涉
     // 及笔记内容，证据声明组装为全 none；共享工厂按请求 id 逐条回显，W5）
-    fetchStudentNoteHeadsApi: vi.fn(noteHeadsMockResponse()),
+    fetchStudentNoteHeadsApi: vi.fn(
+      (attemptId: string, questionIds: readonly string[]) =>
+        noteHeadsMockResponse()(attemptId, questionIds),
+    ),
     // T6R.20：交卷链路的标注封存（幂等 sealedCount=0——解除网络依赖）
     sealAttemptAnnotationsApi: vi.fn(async () => ({
       phase: "scratch" as const,
@@ -282,6 +303,13 @@ function renderPage(returnTo?: string) {
 }
 
 beforeEach(() => {
+  resetNoteSession();
+  resetAnnotationSession();
+  installNoteBackend(memoryNoteBackend());
+  installAnnotationBackend(memoryAnnotationBackend());
+  const session = { origin: "https://page.test", studentId: "student-page" };
+  bindNoteSession(session);
+  bindAnnotationSession(session);
   resetNoteHeadBatchForTest();
   mockedStart.mockReset();
   mockedFetch.mockReset();
@@ -303,6 +331,10 @@ beforeEach(() => {
   // T6R.20 审查修复 2：seal 默认成功（幂等空封）；用例按需覆盖
   mockedSeal.mockReset();
   mockedSeal.mockResolvedValue({ phase: "scratch", sealedCount: 0 });
+});
+afterEach(() => {
+  resetNoteSession();
+  resetAnnotationSession();
 });
 
 describe("StudentAssignmentAttemptPage：草稿作答流程", () => {

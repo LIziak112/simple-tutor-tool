@@ -187,6 +187,18 @@ describe("writeAnnotationDoc（本地写入）", () => {
 });
 
 describe("applyBasePreview / applyAnnotationView（服务端事实播种）", () => {
+  it("迟到旧视图或云端回退不得降低已确认版本与替换正文", async () => {
+    const cloud = docOf([strokeAt(8, 8)]);
+    await applyAnnotationView(SESSION, SCOPE, viewOf({ doc: cloud }));
+    const stale = viewOf({ doc: docOf([strokeAt(1, 1)]) });
+    if (!stale.annotation) throw new Error("测试需要标画版本");
+    stale.annotation.revision = 2;
+    await applyAnnotationView(SESSION, SCOPE, stale);
+    const record = peekAnnotationRecord(SESSION, SCOPE);
+    expect(record?.baseRevision).toBe(3);
+    expect(record?.doc).toEqual(cloud);
+    expect(record?.conflict).not.toBeNull();
+  });
   it("applyBasePreview 缓存 base 引用；applyBaseDisabled 落禁用原因且载荷到达后作废", async () => {
     await applyBaseDisabled(SESSION, SCOPE, "该题题干过长……");
     expect(peekAnnotationRecord(SESSION, SCOPE)?.baseDisabledReason).toContain(
@@ -247,7 +259,8 @@ describe("applyBasePreview / applyAnnotationView（服务端事实播种）", ()
     const record = peekAnnotationRecord(SESSION, SCOPE);
     expect(record?.pending).not.toBeNull();
     expect(record?.doc.strokes[0]?.points[0]?.x).toBe(1); // 本地稿保留
-    expect(record?.baseRevision).toBe(3);
+    expect(record?.baseRevision).toBe(0);
+    expect(record?.conflict?.current?.revision).toBe(3);
   });
 
   it("本地 pending 与服务端稿相等（丢回执形态）：清 pending 不回传", async () => {

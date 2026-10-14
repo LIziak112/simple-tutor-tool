@@ -59,6 +59,22 @@ import {
 
 const RECEIPT_1 = receiptOf(1);
 
+it("读取另一设备的新草稿不能推进本机待传稿基线，必须等待裁决", async () => {
+  resetNoteStoreForTest();
+  installNoteBackend(memoryNoteBackend());
+  await applyServerLoad(SESSION_A, SCOPE, DOC_A, headOf());
+  const baseline = (await getNoteRecord(SESSION_A, SCOPE))?.baseRevision ?? 0;
+  writeNoteDoc(SESSION_A, SCOPE, DOC_B);
+  const cloud = headOf();
+  if (!cloud.note) throw new Error("测试需要云端草稿");
+  cloud.note.revision = baseline + 1;
+  await applyServerLoad(SESSION_A, SCOPE, DOC_A, cloud);
+  const record = await getNoteRecord(SESSION_A, SCOPE);
+  expect(record?.baseRevision).toBe(baseline);
+  expect(record?.doc).toEqual(DOC_B);
+  expect(record?.conflict?.current?.revision).toBe(baseline + 1);
+});
+
 it("草稿落盘重试保留版本、笔迹与原待传标识", async () => {
   resetNoteStoreForTest();
   const backend = memoryNoteBackend();

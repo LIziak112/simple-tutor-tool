@@ -530,6 +530,79 @@ describe("学生侧 attempt 接口鉴权口径（T5：入口类查可见性 / �
 });
 
 describe("PUT /api/student/attempts/:id/answers/:questionId：草稿保存", () => {
+  it("材料盘点只返回本人材料版本，空卷为空；无会话不可读取", async () => {
+    const { app, aCookie, bCookie, assignmentId } = await makeAttemptApp();
+    const attemptId = (await startAttemptOk(app, aCookie, assignmentId))
+      .id as string;
+    const url = `/api/student/attempts/${attemptId}/materials`;
+    const response = await app.request(url, { headers: { Cookie: aCookie } });
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body).toMatchObject({
+      data: { notes: {}, annotations: {}, ink: {} },
+    });
+    assertNoLeak(body);
+    expect((await app.request(url)).status).toBe(401);
+    expect(
+      (await app.request(url, { headers: { Cookie: bCookie } })).status,
+    ).toBe(403);
+  });
+  it("两设备不同题默认合并，同题陈旧写拒绝且重试幂等；冲突不泄露参考答案", async () => {
+    const { app, aCookie, assignmentId } = await makeAttemptApp();
+    const attemptId = (await startAttemptOk(app, aCookie, assignmentId))
+      .id as string;
+    const write = (
+      questionId: string,
+      value: unknown,
+      baseRevision: number,
+      mutationId: string,
+    ) =>
+      app.request(
+        `/api/student/attempts/${attemptId}/answers/${encodeURIComponent(questionId)}`,
+        {
+          method: "PUT",
+          headers: { Cookie: aCookie, "Content-Type": "application/json" },
+          body: JSON.stringify({ answer: value, baseRevision, mutationId }),
+        },
+      );
+    const idA = "11111111-1111-4111-8111-111111111111";
+    const idB = "22222222-2222-4222-8222-222222222222";
+    expect(
+      (await write(Q.judge, { kind: "judge", value: true }, 0, idA)).status,
+    ).toBe(200);
+    const retry = await write(Q.judge, { kind: "judge", value: true }, 0, idA);
+    expect(
+      (
+        (await retry.json()) as {
+          data: { revision: number; changeCount: number };
+        }
+      ).data,
+    ).toMatchObject({ revision: 1, changeCount: 1 });
+    expect(
+      (await write(Q.choice, { kind: "choice", index: 1 }, 0, idB)).status,
+    ).toBe(200);
+    const stale = await write(Q.judge, { kind: "judge", value: false }, 0, idB);
+    expect(stale.status).toBe(409);
+    const conflict = await stale.json();
+    expect(conflict).toMatchObject({
+      error: "ANSWER_REVISION_CONFLICT",
+      _current: { revision: 1, draft: { kind: "judge", value: true } },
+    });
+    assertNoLeak(conflict);
+    const { body } = await getAttempt(app, aCookie, attemptId);
+    const detail = (body as { data: AttemptDraftData }).data;
+    expect(detail.drafts[Q.judge]).toEqual({ kind: "judge", value: true });
+    expect(detail.drafts[Q.choice]).toEqual({ kind: "choice", index: 1 });
+    expect(detail.draftRevisions?.[Q.judge]).toBe(1);
+    expect(
+      (
+        await putAnswer(app, aCookie, attemptId, Q.judge, {
+          kind: "judge",
+          value: false,
+        })
+      ).status,
+    ).toBe(409);
+  });
   it("保存后 GET 详情可读回（往返）；重复保存 changeCount 递增", async () => {
     const { app, aCookie, assignmentId } = await makeAttemptApp();
     const attemptId = (await startAttemptOk(app, aCookie, assignmentId))

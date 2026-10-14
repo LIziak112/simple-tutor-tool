@@ -436,6 +436,7 @@ export interface AnnotationRecordView {
 export async function getAnnotationRecord(
   session: AnnotationSessionRef,
   scope: AnnotationScope,
+  options?: { strictRead?: boolean },
 ): Promise<AnnotationLocalRecord | null> {
   const key = annotationKeyOf(session, scope);
   const cached = records.get(key);
@@ -444,6 +445,7 @@ export async function getAnnotationRecord(
   try {
     raw = await backend().get(key);
   } catch (err) {
+    if (options?.strictRead) throw err;
     console.warn("标注本地记录读取失败（不影响作答）", err);
     return null;
   }
@@ -512,7 +514,8 @@ async function mutateLoaded(
 ): Promise<void> {
   const key = annotationKeyOf(session, scope);
   const existing =
-    records.get(key) ?? (await getAnnotationRecord(session, scope));
+    records.get(key) ??
+    (await getAnnotationRecord(session, scope, { strictRead: true }));
   if (existing === null) {
     if (create === null) return;
     mutate(key, create, fn);
@@ -637,10 +640,47 @@ export async function applyAnnotationView(
   session: AnnotationSessionRef,
   scope: AnnotationScope,
   view: AnnotationViewData,
+  choice?: { expectedMutationId: string | null },
 ): Promise<void> {
   await mutateLoaded(session, scope, freshRecord, (record) => {
-    record.base = view.base;
     const meta = view.annotation;
+    if (!choice && (meta?.revision ?? 0) < record.baseRevision) {
+      record.conflict = {
+        reason: "云端标画版本比本机已确认版本更旧，请重新核对并选择",
+        current: {
+          annotationId: meta?.annotationId ?? null,
+          revision: meta?.revision ?? 0,
+          hash: meta?.hash ?? null,
+          savedAt: meta?.savedAt ?? null,
+        },
+      };
+      return;
+    }
+    if (
+      choice &&
+      (record.pending?.mutationId ?? null) !== choice.expectedMutationId
+    )
+      throw new Error("裁决期间标画已修改，请重新选择");
+    if (
+      !choice &&
+      meta &&
+      record.pending &&
+      view.doc &&
+      !annotationDocsEqual(record.pending.doc, view.doc) &&
+      meta.revision > record.baseRevision
+    ) {
+      record.conflict = {
+        reason: "当前设备与云端都修改了本题标画，请选择保留版本",
+        current: {
+          annotationId: meta.annotationId,
+          revision: meta.revision,
+          hash: meta.hash,
+          savedAt: meta.savedAt,
+        },
+      };
+      return;
+    }
+    record.base = view.base;
     record.baseRevision = meta?.revision ?? 0;
     record.annotationId = meta?.annotationId ?? null;
     if (view.doc === null) {
@@ -648,6 +688,7 @@ export async function applyAnnotationView(
       return;
     }
     if (
+      !choice &&
       record.pending !== null &&
       !annotationDocsEqual(record.pending.doc, view.doc)
     ) {

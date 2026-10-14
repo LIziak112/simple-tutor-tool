@@ -61,12 +61,6 @@ export function CompactInkToolbar({
       aria-label={`${label}工具栏`}
       className="flex min-h-11 min-w-0 items-center gap-1"
     >
-      <a
-        href="/s/settings/ink-feel"
-        className="inline-flex min-h-11 items-center px-2 text-xs text-primary"
-      >
-        手感设置
-      </a>
       <Button
         variant={tool === "pen" ? "secondary" : "ghost"}
         className="size-11 shrink-0 p-0"

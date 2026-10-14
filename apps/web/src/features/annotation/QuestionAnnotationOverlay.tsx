@@ -17,6 +17,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useAttemptEditor } from "@/features/attempt/AttemptEditorContext";
+import { attemptMaterialsEditable } from "@/features/attempt/attempt-material-recovery";
+import { useDraftSyncContext } from "@/features/attempt/use-draft-sync";
 import { canvasToPngBlob } from "@/features/ink/engine/canvas-png";
 import type { InkPenColor, InkPenSize } from "@/features/ink/engine/index";
 import { SessionPrefToggleButton } from "@/features/ink/InkPad";
@@ -58,6 +60,7 @@ export const QuestionAnnotationOverlay = forwardRef<
   }
 >(({ attemptId, question, label, children, onLegacy, hidden = false }, ref) => {
   const editor = useAttemptEditor(question.id);
+  const recovery = useDraftSyncContext()?.recovery;
   const inputPreference = useSessionInputPreference();
   const session = useAnnotationSessionRef();
   const record = useAnnotationRecord(attemptId, question.id);
@@ -124,6 +127,14 @@ export const QuestionAnnotationOverlay = forwardRef<
 
   useImperativeHandle(ref, () => ({
     async start() {
+      if (recovery && !attemptMaterialsEditable(recovery)) {
+        setError(
+          recovery.state === "failed"
+            ? "标画恢复失败，请在顶部重试"
+            : "正在恢复标画，请稍候",
+        );
+        return;
+      }
       if (!editor || !session || loading) return;
       setLoading(true);
       setError(null);

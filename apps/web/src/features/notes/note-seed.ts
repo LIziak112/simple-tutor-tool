@@ -34,6 +34,8 @@ import { fetchStudentNoteDocumentApi } from "@/lib/api";
 /** 播种选项：recoverImages=true 时 head.images 含损坏行则触发补图（scratch 语境；订正行不在任何 head 图片投影里，不传） */
 export interface SeedRecordOptions {
   recoverImages?: boolean;
+  /** 作答恢复必须将正文读取失败暴露给 UI，不能把错误当作空稿。 */
+  strict?: boolean;
 }
 
 /**
@@ -60,6 +62,7 @@ export async function seedRecordFromServerHead(
     versionId !== null &&
     note !== null &&
     (before === null ||
+      before.docVersion === 0 ||
       before.noteId !== note.noteId ||
       before.baseRevision < note.revision);
 
@@ -89,6 +92,8 @@ export async function seedRecordFromServerHead(
     // 回退检测守卫）；revision=0 的空白新行不会走到这里（serverAhead 已拦）
     await applyServerLoad(session, scope, raw, head);
   } catch (err) {
+    if (options?.strict)
+      throw new Error("草稿正文恢复失败，请重试", { cause: err });
     // 正文拉取失败不抛错：本地稿（若有）继续可用，且基线未被对齐——下一次
     // head 重拉时 serverAhead 仍成立，播种自然重试（闸门修复 F1 的核心）
     console.warn(

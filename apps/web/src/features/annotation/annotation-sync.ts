@@ -642,6 +642,26 @@ export async function resolveAnnotationConflictKeepLocalAndUpload(
   }
 }
 
+/** 只在用户明确选择后采用云端稿；拉取期间的新笔画不得被覆盖。 */
+export async function resolveAnnotationConflictKeepCloud(
+  session: AnnotationSessionRef,
+  scope: AnnotationScope,
+): Promise<void> {
+  const record = peekAnnotationRecord(session, scope);
+  if (!record?.conflict) return;
+  const expectedMutationId = record.pending?.mutationId ?? null;
+  const view = await fetchAnnotationViewApi(
+    scope.attemptId,
+    scope.questionId,
+    scope.phase,
+  );
+  if (!sameSessionSafe(session))
+    throw new Error("账号已切换，请重新进入作答页");
+  if (!view.doc) throw new Error("云端标画正文不可读取，请重试");
+  await applyAnnotationView(session, scope, view, { expectedMutationId });
+  await settleAnnotationPersistence();
+}
+
 // ---------- 诊断 ----------
 
 export function annotationSyncQueueStats() {

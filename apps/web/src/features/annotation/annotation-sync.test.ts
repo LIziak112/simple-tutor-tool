@@ -258,7 +258,7 @@ describe("annotation-sync：终态与冲突", () => {
     expect(callOf(1).meta.mutationId).not.toBe(callOf(0).meta.mutationId); // 重铸
   });
 
-  it("409 ALREADY_READY/STALE（审查修复 11）：重取视图自愈对齐后立即重传，不无限退避", async () => {
+  it("409 ALREADY_READY/STALE：重取视图发现另一设备正文时等待裁决，不自动覆盖", async () => {
     // 服务端已有更新版本（他端写过的正文）——重取视图对齐 baseRevision
     viewMock.mockResolvedValue({
       base: {
@@ -294,17 +294,16 @@ describe("annotation-sync：终态与冲突", () => {
     writeAnnotationDoc(SESSION_A, SCOPE, docWithStrokes(1));
     await vi.advanceTimersByTimeAsync(ANNOTATION_SYNC_DEBOUNCE_MS);
     expect(putMock.mock.calls.length).toBeGreaterThanOrEqual(1);
-    // 自愈：重取视图 → baseRevision 对齐 3 → 立即重传（不再走退避定时器）
+    // 底图竞争伴随正文分歧：保留本机基线并停止重传。
     await vi.advanceTimersByTimeAsync(0);
     expect(viewMock).toHaveBeenCalledWith("a-0001", "q-0001", "scratch");
     for (let i = 0; i < 10 && putMock.mock.calls.length < 2; i += 1) {
       await vi.advanceTimersByTimeAsync(0);
     }
-    expect(putMock.mock.calls.length).toBe(2);
-    expect(callOf(1).meta.baseRevision).toBe(3);
+    expect(putMock.mock.calls.length).toBe(1);
     const record = await getAnnotationRecord(SESSION_A, SCOPE);
-    expect(record?.pending).toBeNull();
-    expect(record?.baseRevision).toBe(4);
+    expect(record?.pending).not.toBeNull();
+    expect(record?.conflict?.current?.revision).toBe(3);
   });
 
   it("denied(access) 手动重试：清终态立即补传；无终态幂等不动作", async () => {
