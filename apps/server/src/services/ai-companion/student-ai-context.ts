@@ -3,6 +3,7 @@ import type {
   AiContextMissingNote,
   AiContextSnapshot,
   AiMessage,
+  AiPolicyResolution,
   AiPromptTemplateKey,
   AiTeachingMode,
   Question,
@@ -20,15 +21,14 @@ import { asc, eq } from "drizzle-orm";
 import type { Db } from "../../db/client.ts";
 import { type Attempt, aiMessages, responses } from "../../db/schema.ts";
 import { HttpError } from "../../lib/http-error.ts";
-import { serializeStudentAnswer } from "../mark-response.ts";
-import { resolveNowDate } from "../export-service.ts";
 import { answerOf, attemptTeacherId } from "../attempt-service.ts";
+import { resolveNowDate } from "../export-service.ts";
+import { serializeStudentAnswer } from "../mark-response.ts";
 import { snapshotOfRow } from "../snapshot.ts";
 import { sqliteAiPolicyConfigSource } from "./ai-policy-config-source.ts";
 import { getTeacherAiSettings } from "./settings-service.ts";
 import {
   type AiPolicyConfigSource,
-  type AiPolicyResolution,
   resolveAttemptQuestionAiPolicy,
 } from "./teaching-policy-service.ts";
 
@@ -65,14 +65,14 @@ import {
  * 尺度 open / guided。post_submit_only 作答中不可用(裁决层拒绝),不到
  * 装配;完成后 reason=completed 恒按复盘尺度。
  */
-const AI_MODE_HARD_CONSTRAINTS: Readonly<Record<AiPromptTemplateKey, string>> = {
-  open:
-    "当前为开放伴学:可参考参考答案与官方解析,按学生诉求提供帮助,需要时完整推导;不得虚构未看到的材料,不得把你自己生成的内容说成官方参考答案或官方解析。",
-  guided:
-    "当前为仅启发:只指出学生当前的错误、必要概念或下一步;不直接给出最终答案、填空答案或正确选项,也不换一种形式(如代入验证、排除到只剩一项、逐步逼近)透露等价答案。",
-  review:
-    "当前为完成后复盘:对照学生本次作答与参考答案、官方解析,解释关键错误和纠正方法,可以完整讲解;本任务属完成后复盘,不按作答中求助处理。",
-};
+const AI_MODE_HARD_CONSTRAINTS: Readonly<Record<AiPromptTemplateKey, string>> =
+  {
+    open: "当前为开放伴学:可参考参考答案与官方解析,按学生诉求提供帮助,需要时完整推导;不得虚构未看到的材料,不得把你自己生成的内容说成官方参考答案或官方解析。",
+    guided:
+      "当前为仅启发:只指出学生当前的错误、必要概念或下一步;不直接给出最终答案、填空答案或正确选项,也不换一种形式(如代入验证、排除到只剩一项、逐步逼近)透露等价答案。",
+    review:
+      "当前为完成后复盘:对照学生本次作答与参考答案、官方解析,解释关键错误和纠正方法,可以完整讲解;本任务属完成后复盘,不按作答中求助处理。",
+  };
 
 /** 模板 key 推导:完成后 → review;作答中 guided_only → guided;其余 → open */
 export function promptTemplateKeyOf(
@@ -97,12 +97,11 @@ function optionLabelOf(index: number): string {
 }
 
 /** 选项文本增强:字母后附选项正文(choice/multi 有选项时),AI 无需回查题面列表 */
-function optionTextOf(
-  snapshot: Question,
-  index: number,
-): string {
+function optionTextOf(snapshot: Question, index: number): string {
   const option = snapshot.options?.[index];
-  return option === undefined ? optionLabelOf(index) : `${optionLabelOf(index)}（${option.text}）`;
+  return option === undefined
+    ? optionLabelOf(index)
+    : `${optionLabelOf(index)}（${option.text}）`;
 }
 
 /**
@@ -221,12 +220,13 @@ function teacherTemplateBodyOf(
 }
 
 /** promptSnapshotMd:教师模板正文 + 模式硬约束句(模板空仅剩硬约束,需求 §5.1) */
-function promptSnapshotMdOf(templateBody: string, key: AiPromptTemplateKey): string {
+function promptSnapshotMdOf(
+  templateBody: string,
+  key: AiPromptTemplateKey,
+): string {
   const trimmed = templateBody.trim();
   const hard = `【模式硬约束】${AI_MODE_HARD_CONSTRAINTS[key]}`;
-  return trimmed === ""
-    ? hard
-    : `【教师教学要求】${trimmed}\n\n${hard}`;
+  return trimmed === "" ? hard : `【教师教学要求】${trimmed}\n\n${hard}`;
 }
 
 /**
@@ -305,7 +305,15 @@ function assembleBundleFromRows(args: {
   now: Date | string | undefined;
   hmacSecret: string;
 }): AiContextBundle {
-  const { db, resolution, completed, attempt, responseId, snapshot, answerJson } = args;
+  const {
+    db,
+    resolution,
+    completed,
+    attempt,
+    responseId,
+    snapshot,
+    answerJson,
+  } = args;
   const modeAtSend: AiTeachingMode = resolution.mode ?? "open_study";
   const templateKey = promptTemplateKeyOf(modeAtSend, completed);
 
@@ -469,7 +477,9 @@ ${answerLine}
 ${referenceSectionOf(bundle)}${materialLines}`;
 
   const askContent =
-    presetPrompt !== undefined && presetPrompt !== null && presetPrompt.trim() !== ""
+    presetPrompt !== undefined &&
+    presetPrompt !== null &&
+    presetPrompt.trim() !== ""
       ? `${presetPrompt}\n\n${studentQuestion}`
       : studentQuestion;
 
