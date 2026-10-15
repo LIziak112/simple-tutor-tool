@@ -173,22 +173,17 @@ function requireSubjectInTeacherDomain(
   }
 }
 
-/** 读覆盖存储值（无行 = 继承） */
+/**
+ * 读覆盖存储值（无行 = 继承）。委托 SAI-05 唯一读取实现——同一条
+ * (subjectType, subjectId) 主键查询与无行语义不另抄一份（通道同源）。
+ */
 function storedOverrideMode(
   db: Db,
   subject: AiPolicySubject,
 ): AiPolicyInheritableMode {
-  const row = db
-    .select({ mode: aiPolicyOverrides.mode })
-    .from(aiPolicyOverrides)
-    .where(
-      and(
-        eq(aiPolicyOverrides.subjectType, subject.type),
-        eq(aiPolicyOverrides.subjectId, subject.id),
-      ),
-    )
-    .get();
-  return row?.mode ?? "inherit";
+  return subject.type === "student"
+    ? sqliteAiPolicyConfigSource.studentOverrideMode(db, subject.id)
+    : sqliteAiPolicyConfigSource.assignmentOverrideMode(db, subject.id);
 }
 
 /**
@@ -252,16 +247,17 @@ export function putAiPolicyOverride(
       )
       .run();
   } else {
+    const updatedAt = new Date().toISOString();
     db.insert(aiPolicyOverrides)
       .values({
         subjectType: subject.type,
         subjectId: subject.id,
         mode,
-        updatedAt: new Date().toISOString(),
+        updatedAt,
       })
       .onConflictDoUpdate({
         target: [aiPolicyOverrides.subjectType, aiPolicyOverrides.subjectId],
-        set: { mode, updatedAt: new Date().toISOString() },
+        set: { mode, updatedAt },
       })
       .run();
   }
