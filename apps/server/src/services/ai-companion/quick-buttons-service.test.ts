@@ -80,8 +80,12 @@ describe("getStudentQuickButtons（无配置不物化）", () => {
     putStudentQuickButtons(db, a, putBody([...DEFAULT_QUICK_BUTTONS]));
     // 同一恢复默认操作在 B 上重复：默认语义 id（hint-next 等）不构成冲突
     putStudentQuickButtons(db, b, putBody([...DEFAULT_QUICK_BUTTONS]));
-    expect(getStudentQuickButtons(db, a).buttons).toEqual(DEFAULT_QUICK_BUTTONS);
-    expect(getStudentQuickButtons(db, b).buttons).toEqual(DEFAULT_QUICK_BUTTONS);
+    expect(getStudentQuickButtons(db, a).buttons).toEqual(
+      DEFAULT_QUICK_BUTTONS,
+    );
+    expect(getStudentQuickButtons(db, b).buttons).toEqual(
+      DEFAULT_QUICK_BUTTONS,
+    );
     db.$client.close();
   });
 });
@@ -90,15 +94,22 @@ describe("putStudentQuickButtons（整组替换）", () => {
   it("添加、改名、改提示词、改附件、禁用、重排均保存并按序读回", () => {
     const db = createTestDb();
     const studentId = makeStudent(db);
-    const first = putStudentQuickButtons(db, studentId, putBody([
-      button("custom-1", 0, {
-        name: "我的启发",
-        prompt: "给我一点提示。",
-        attachmentPref: { annotation: true, draft: false, formalInk: true },
-      }),
-      button("custom-2", 1, { enabled: false }),
-    ]));
-    expect(first.buttons.map((b) => b.name)).toEqual(["我的启发", "按钮-custom-2"]);
+    const first = putStudentQuickButtons(
+      db,
+      studentId,
+      putBody([
+        button("custom-1", 0, {
+          name: "我的启发",
+          prompt: "给我一点提示。",
+          attachmentPref: { annotation: true, draft: false, formalInk: true },
+        }),
+        button("custom-2", 1, { enabled: false }),
+      ]),
+    );
+    expect(first.buttons.map((b) => b.name)).toEqual([
+      "我的启发",
+      "按钮-custom-2",
+    ]);
     expect(first.buttons[0]?.attachmentPref).toEqual({
       annotation: true,
       draft: false,
@@ -123,7 +134,11 @@ describe("putStudentQuickButtons（整组替换）", () => {
   it("删光 → 墓碑行持久空组，重取不回填默认；空组后可再新增", () => {
     const db = createTestDb();
     const studentId = makeStudent(db);
-    const saved = putStudentQuickButtons(db, studentId, putBody([button("only", 0)]));
+    const saved = putStudentQuickButtons(
+      db,
+      studentId,
+      putBody([button("only", 0)]),
+    );
     const emptied = putStudentQuickButtons(
       db,
       studentId,
@@ -140,14 +155,20 @@ describe("putStudentQuickButtons（整组替换）", () => {
       putBody([button("back", 0)], emptied.updatedAt),
     );
     expect(refilled.buttons.map((b) => b.id)).toEqual(["back"]);
-    expect(getStudentQuickButtons(db, studentId).buttons).toEqual(refilled.buttons);
+    expect(getStudentQuickButtons(db, studentId).buttons).toEqual(
+      refilled.buttons,
+    );
     db.$client.close();
   });
 
   it("过期版本 → 409 AI_SETTINGS_STALE，库中列表原样保留（不部分写入）", () => {
     const db = createTestDb();
     const studentId = makeStudent(db);
-    const saved = putStudentQuickButtons(db, studentId, putBody([button("keep", 0)]));
+    const saved = putStudentQuickButtons(
+      db,
+      studentId,
+      putBody([button("keep", 0)]),
+    );
     const stale = putBody([button("intruder", 0)], "2000-01-01T00:00:00.000Z");
     try {
       putStudentQuickButtons(db, studentId, stale);
@@ -167,7 +188,11 @@ describe("putStudentQuickButtons（整组替换）", () => {
     const db = createTestDb();
     const studentId = makeStudent(db);
     putStudentQuickButtons(db, studentId, putBody([button("old", 0)]));
-    const replaced = putStudentQuickButtons(db, studentId, putBody([button("new", 0)]));
+    const replaced = putStudentQuickButtons(
+      db,
+      studentId,
+      putBody([button("new", 0)]),
+    );
     expect(replaced.buttons.map((b) => b.id)).toEqual(["new"]);
     db.$client.close();
   });
@@ -175,7 +200,11 @@ describe("putStudentQuickButtons（整组替换）", () => {
   it("整组时间戳统一且单调递增：同毫秒连续保存锚点仍前进", () => {
     const db = createTestDb();
     const studentId = makeStudent(db);
-    const first = putStudentQuickButtons(db, studentId, putBody([button("a", 0)]));
+    const first = putStudentQuickButtons(
+      db,
+      studentId,
+      putBody([button("a", 0)]),
+    );
     const second = putStudentQuickButtons(
       db,
       studentId,
@@ -184,7 +213,11 @@ describe("putStudentQuickButtons（整组替换）", () => {
     expect(second.updatedAt > first.updatedAt).toBe(true);
     // 旧锚点重放被拒（上一组锚点已过期）
     try {
-      putStudentQuickButtons(db, studentId, putBody([button("a", 0)], first.updatedAt));
+      putStudentQuickButtons(
+        db,
+        studentId,
+        putBody([button("a", 0)], first.updatedAt),
+      );
       expect.unreachable("旧锚点重放必须被拒绝");
     } catch (error) {
       expect(error).toMatchObject({ status: 409, code: "AI_SETTINGS_STALE" });
@@ -195,7 +228,11 @@ describe("putStudentQuickButtons（整组替换）", () => {
   it("恢复默认 = 整组显式提交契约常量：四项与顺序正确", () => {
     const db = createTestDb();
     const studentId = makeStudent(db);
-    const customized = putStudentQuickButtons(db, studentId, putBody([button("mine", 0)]));
+    const customized = putStudentQuickButtons(
+      db,
+      studentId,
+      putBody([button("mine", 0)]),
+    );
     const restored = putStudentQuickButtons(
       db,
       studentId,
@@ -212,11 +249,23 @@ describe("putStudentQuickButtons（整组替换）", () => {
     const db = createTestDb();
     const a = makeStudent(db);
     const b = makeStudent(db);
-    putStudentQuickButtons(db, a, putBody([button("a-only", 0, { name: "A 的按钮" })]));
-    expect(getStudentQuickButtons(db, b).buttons).toEqual(DEFAULT_QUICK_BUTTONS);
+    putStudentQuickButtons(
+      db,
+      a,
+      putBody([button("a-only", 0, { name: "A 的按钮" })]),
+    );
+    expect(getStudentQuickButtons(db, b).buttons).toEqual(
+      DEFAULT_QUICK_BUTTONS,
+    );
     // B 的保存只写 B 的行（服务入参以会话学生为准，无客户端可传归属）
-    const savedB = putStudentQuickButtons(db, b, putBody([button("b-only", 0)]));
-    expect(getStudentQuickButtons(db, a).buttons.map((x) => x.id)).toEqual(["a-only"]);
+    const savedB = putStudentQuickButtons(
+      db,
+      b,
+      putBody([button("b-only", 0)]),
+    );
+    expect(getStudentQuickButtons(db, a).buttons.map((x) => x.id)).toEqual([
+      "a-only",
+    ]);
     expect(getStudentQuickButtons(db, b).buttons).toEqual(savedB.buttons);
     db.$client.close();
   });

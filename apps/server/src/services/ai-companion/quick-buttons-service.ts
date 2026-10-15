@@ -3,7 +3,10 @@ import type {
   StudentQuickButtonsData,
   StudentQuickButtonsPutRequest,
 } from "@tutor/contract";
-import { aiMaterialPreferenceSchema, DEFAULT_QUICK_BUTTONS } from "@tutor/contract";
+import {
+  aiMaterialPreferenceSchema,
+  DEFAULT_QUICK_BUTTONS,
+} from "@tutor/contract";
 import { asc, eq } from "drizzle-orm";
 import type { Db } from "../../db/client.ts";
 import { aiQuickButtons } from "../../db/schema.ts";
@@ -77,9 +80,7 @@ function projectRow(
 }
 
 /** 当前整组锚点：无行 = 未设置锚点；有行 = 行时间戳最大值（整组同戳，防御取 max） */
-function currentAnchor(
-  rows: (typeof aiQuickButtons.$inferSelect)[],
-): string {
+function currentAnchor(rows: (typeof aiQuickButtons.$inferSelect)[]): string {
   if (rows.length === 0) return QUICK_BUTTONS_UNSET_UPDATED_AT;
   return rows.reduce(
     (max, row) => (row.updatedAt > max ? row.updatedAt : max),

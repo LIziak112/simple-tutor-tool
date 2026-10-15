@@ -112,6 +112,7 @@ import { changeStudentPassword } from "../services/student-service";
 import { startWrongPractice } from "../services/wrong-practice";
 import { listWrongQuestions } from "../services/wrong-questions";
 import { createStudentInkProfileRoutes } from "./ink-profiles";
+import { createStudentAiRoutes } from "./student-ai";
 
 /**
  * 学生路由（需学生会话），挂载在 /api/student，整组套 requireStudent 守卫：
@@ -253,6 +254,7 @@ export function createStudentRoutes(
     new Hono<StudentEnv>()
       .use("*", requireStudent)
       .route("/", createStudentInkProfileRoutes(db))
+      .route("/", createStudentAiRoutes(db))
       .get("/me", (c) => {
         return c.json({ ok: true, data: c.var.student });
       })

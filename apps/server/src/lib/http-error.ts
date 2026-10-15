@@ -82,7 +82,7 @@ export async function parseJsonBodyOrEmpty<T>(
 export async function parseJsonBodyWithCode<T>(
   c: Context,
   schema: ZodType<T>,
-  codeOf: (firstIssuePath: string) => string,
+  codeOf: (firstIssuePath: string, firstIssue?: { code?: string }) => string,
 ): Promise<T> {
   return parseJsonText(await c.req.text(), schema, codeOf);
 }
@@ -91,7 +91,10 @@ export async function parseJsonBodyWithCode<T>(
 function parseJsonText<T>(
   text: string,
   schema: ZodType<T>,
-  codeOf: (firstIssuePath: string) => string = () => "VALIDATION_ERROR",
+  codeOf: (
+    firstIssuePath: string,
+    firstIssue?: { code?: string },
+  ) => string = () => "VALIDATION_ERROR",
 ): T {
   let raw: unknown;
   try {
@@ -101,10 +104,11 @@ function parseJsonText<T>(
   }
   const parsed = schema.safeParse(raw);
   if (!parsed.success) {
-    const firstPath = String(parsed.error.issues[0]?.path[0] ?? "");
+    const firstIssue = parsed.error.issues[0];
+    const firstPath = String(firstIssue?.path[0] ?? "");
     throw new HttpError(
       400,
-      codeOf(firstPath),
+      codeOf(firstPath, firstIssue),
       `请求参数不合法：${firstIssueMessage(parsed.error)}`,
     );
   }
