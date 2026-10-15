@@ -16,12 +16,25 @@ import {
   AI_TASK_PENDING_PER_STUDENT,
   AI_TASK_QUEUE_BUCKETS,
 } from "@tutor/contract";
-import { and, asc, desc, eq, gt, inArray, lt, lte, or } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gt,
+  inArray,
+  isNull,
+  lt,
+  lte,
+  or,
+} from "drizzle-orm";
 import type { Db } from "../../db/client.ts";
 import {
+  type AiTaskMaterialRow,
   type AiTaskRow,
   aiFacts,
   aiMessages,
+  aiTaskMaterials,
   aiTasks,
 } from "../../db/schema.ts";
 import { HttpError } from "../../lib/http-error.ts";
@@ -205,12 +218,8 @@ function applyTransition(
       : { cancelRequestedAt: patch.cancelRequestedAt }),
     ...(patch.retryCount === undefined ? {} : { retryCount: patch.retryCount }),
     ...(patch.leaseToken === undefined ? {} : { leaseToken: patch.leaseToken }),
-    ...(patch.leaseUntil === undefined
-      ? {}
-      : { leaseUntil: patch.leaseUntil }),
-    ...(patch.generation === undefined
-      ? {}
-      : { generation: patch.generation }),
+    ...(patch.leaseUntil === undefined ? {} : { leaseUntil: patch.leaseUntil }),
+    ...(patch.generation === undefined ? {} : { generation: patch.generation }),
   };
   const changed = tx
     .update(aiTasks)
@@ -277,7 +286,18 @@ function policyUsable(
  * 版本必然变化；无密钥可推导需求（读取侧不依赖 DATA_DIR/secret.key）。
  */
 export function aiTaskContextVersionOf(db: Db, task: AiTaskRow): string {
-  let snapshot: Record<string, unknown> = {};
+  return contextVersionOf(task, loadAiTaskMaterialRows(db, task.id));
+}
+
+/**
+ * 快照解析（含损坏守卫）：解析失败/缺 capturedAt → 500 AI_CONTEXT_BROKEN。
+ * 视图与版本计算共用一次解析，不重复 parse。
+ */
+function parseSnapshotOf(task: AiTaskRow): {
+  capturedAt: string;
+  substantive: Record<string, unknown>;
+} {
+  let snapshot: Record<string, unknown>;
   try {
     snapshot = JSON.parse(task.contextSnapshotJson) as Record<string, unknown>;
   } catch {
@@ -287,8 +307,24 @@ export function aiTaskContextVersionOf(db: Db, task: AiTaskRow): string {
       "任务上下文快照损坏，无法计算版本",
     );
   }
-  const { capturedAt: _excluded, ...substantive } = snapshot;
-  const materials = loadAiTaskMaterialRows(db, task.id).map((row) => [
+  if (typeof snapshot.capturedAt !== "string") {
+    throw new HttpError(
+      500,
+      "AI_CONTEXT_BROKEN",
+      "任务上下文快照损坏，缺少快照时间",
+    );
+  }
+  const { capturedAt, ...substantive } = snapshot;
+  return { capturedAt, substantive };
+}
+
+/** 版本计算的纯函数核心（材料行由调用方装载，避免同请求重复查询） */
+function contextVersionOf(
+  task: AiTaskRow,
+  materialRows: readonly AiTaskMaterialRow[],
+): string {
+  const { substantive } = parseSnapshotOf(task);
+  const materials = materialRows.map((row) => [
     row.kind,
     row.pageIndex,
     row.hash,
@@ -598,24 +634,21 @@ export interface ListAiTasksResult {
   readonly nextCursor: string | null;
 }
 
-/** 学生任务公开视图（契约 aiTaskPublicSchema 单源投影；不含内部字段） */
-export function aiTaskPublicViewOf(
-  db: Db,
+/** 视图预取数据（批量路径一次装载整页；单任务路径逐项查询） */
+interface TaskViewPrefetch {
+  readonly materials: readonly AiTaskMaterialRow[];
+  readonly firstQuestion: string;
+  readonly hasReply: boolean;
+  readonly usable: boolean;
+}
+
+/** 视图纯投影核心：快照只解析一次，版本计算与材料投影复用同一批行 */
+function aiTaskPublicViewCore(
   task: AiTaskRow,
-  configSource: AiPolicyConfigSource = sqliteAiPolicyConfigSource,
+  prefetch: TaskViewPrefetch,
 ): AiTaskPublic {
-  const snapshot = JSON.parse(task.contextSnapshotJson) as {
-    capturedAt?: unknown;
-  };
-  if (typeof snapshot.capturedAt !== "string") {
-    throw new HttpError(
-      500,
-      "AI_CONTEXT_BROKEN",
-      "任务上下文快照损坏，缺少快照时间",
-    );
-  }
-  const usable = policyUsable(db, task, configSource);
-  const allowed: AiTaskAction[] = usable
+  const { capturedAt } = parseSnapshotOf(task);
+  const allowed: AiTaskAction[] = prefetch.usable
     ? [...AI_TASK_ALLOWED_ACTIONS[task.status]]
     : // 策略当前不可用：保留输入与退出权，其余动作（发送/分享/追问/重试）暂不可用
       task.status === "cancelled" || task.status === "replied"
@@ -629,36 +662,88 @@ export function aiTaskPublicViewOf(
     channel: task.channel,
     status: task.status,
     modeAtSend: task.modeAtSend,
-    question: firstQuestionOf(db, task.id),
+    question: prefetch.firstQuestion,
     beforeSubmit: task.beforeSubmit,
-    contextVersion: aiTaskContextVersionOf(db, task),
-    snapshotAt: snapshot.capturedAt,
-    hasReply: hasAssistantReply(db, task.id),
+    contextVersion: contextVersionOf(task, prefetch.materials),
+    snapshotAt: capturedAt,
+    hasReply: prefetch.hasReply,
     replyDeliveredAt: task.replyDeliveredAt,
     errorText: task.errorText,
     retryCount: task.retryCount,
     allowedActions: allowed,
-    materials: aiTaskMaterialsPublicOf(loadAiTaskMaterialRows(db, task.id)),
+    materials: aiTaskMaterialsPublicOf(prefetch.materials),
     createdAt: task.createdAt,
     updatedAt: task.updatedAt,
   };
 }
 
+/** 学生任务公开视图（契约 aiTaskPublicSchema 单源投影；不含内部字段） */
+export function aiTaskPublicViewOf(
+  db: Db,
+  task: AiTaskRow,
+  configSource: AiPolicyConfigSource = sqliteAiPolicyConfigSource,
+): AiTaskPublic {
+  return aiTaskPublicViewCore(task, {
+    materials: loadAiTaskMaterialRows(db, task.id),
+    firstQuestion: firstQuestionOf(db, task.id),
+    hasReply: hasAssistantReply(db, task.id),
+    usable: policyUsable(db, task, configSource),
+  });
+}
+
+/**
+ * 只读预检：存在过期租约或超时 dispatching 才值得为恢复开写事务——
+ * 绝大多数读取没有任何待回收行，不应每次列表都拿写锁。
+ */
+function queueHasStaleWork(db: Db, now: Date): boolean {
+  const staleBeforeIso = new Date(
+    now.getTime() - AI_OUTBOUND_TIMEOUT_MS,
+  ).toISOString();
+  return (
+    db
+      .select({ id: aiTasks.id })
+      .from(aiTasks)
+      .where(
+        or(
+          and(
+            eq(aiTasks.status, "claimed"),
+            lte(aiTasks.leaseUntil, now.toISOString()),
+          ),
+          and(
+            eq(aiTasks.status, "dispatching"),
+            lte(aiTasks.updatedAt, staleBeforeIso),
+          ),
+        ),
+      )
+      .limit(1)
+      .get() !== undefined
+  );
+}
+
 /**
  * 本人任务列表：按题/作答范围过滤 + 创建时间倒序稳定游标分页（createdAt+id
  * 双键，不重不漏）。读取路径顺带惰性清理（过期租约回 created、超时
- * dispatching 转 uncertain）——查询与领取共用同一套回收语义。
+ * dispatching 转 uncertain）——查询与领取共用同一套回收语义；无待回收行时
+ * 只读预检跳过恢复写事务。整页视图数据批量预取（材料行/首条学生消息/回信
+ * 存在性各一条查询，策略裁决按 (attemptId,questionId) 页内记忆化），不逐行
+ * N+1。
  */
 export function listStudentAiTasks(
   db: Db,
   input: ListAiTasksInput,
-  options: { now?: Date | string } = {},
+  options: {
+    now?: Date | string;
+    configSource?: AiPolicyConfigSource;
+  } = {},
 ): ListAiTasksResult {
   if (!Number.isInteger(input.limit) || input.limit < 1 || input.limit > 50) {
     throw invalid("每页条数必须在 1 到 50 之间");
   }
+  const configSource = options.configSource ?? sqliteAiPolicyConfigSource;
   const now = nowSpecOf(options.now);
-  recoverAiQueue(db, { now: now.date });
+  if (queueHasStaleWork(db, now.date)) {
+    recoverAiQueue(db, { now: now.date });
+  }
   const conditions = [eq(aiTasks.studentId, input.studentId)];
   if (input.attemptId !== undefined) {
     conditions.push(eq(aiTasks.attemptId, input.attemptId));
@@ -693,10 +778,72 @@ export function listStudentAiTasks(
           i: page[page.length - 1]!.id,
         })
       : null;
-  return {
-    tasks: page.map((row) => aiTaskPublicViewOf(db, row)),
-    nextCursor,
-  };
+  if (page.length === 0) return { tasks: [], nextCursor: null };
+
+  // —— 整页批量预取（与单任务视图同一投影核心） ——
+  const taskIds = page.map((row) => row.id);
+  const materialsByTask = new Map<string, AiTaskMaterialRow[]>();
+  for (const row of db
+    .select()
+    .from(aiTaskMaterials)
+    .where(inArray(aiTaskMaterials.taskId, taskIds))
+    .orderBy(asc(aiTaskMaterials.kind), asc(aiTaskMaterials.pageIndex))
+    .all()) {
+    const list = materialsByTask.get(row.taskId);
+    if (list === undefined) materialsByTask.set(row.taskId, [row]);
+    else list.push(row);
+  }
+  const firstQuestionByTask = new Map<string, string>();
+  for (const message of db
+    .select({ taskId: aiMessages.taskId, contentMd: aiMessages.contentMd })
+    .from(aiMessages)
+    .where(
+      and(inArray(aiMessages.taskId, taskIds), eq(aiMessages.role, "student")),
+    )
+    .orderBy(asc(aiMessages.createdAt), asc(aiMessages.id))
+    .all()) {
+    if (!firstQuestionByTask.has(message.taskId)) {
+      firstQuestionByTask.set(message.taskId, message.contentMd);
+    }
+  }
+  const repliedTaskIds = new Set(
+    db
+      .select({ taskId: aiMessages.taskId })
+      .from(aiMessages)
+      .where(
+        and(
+          inArray(aiMessages.taskId, taskIds),
+          eq(aiMessages.role, "assistant"),
+        ),
+      )
+      .all()
+      .map((row) => row.taskId),
+  );
+  // 策略裁决页内记忆化：页内同学生，同 (attemptId, questionId) 只实时裁一次
+  const usableByKey = new Map<string, boolean>();
+  const tasks = page.map((row) => {
+    const firstQuestion = firstQuestionByTask.get(row.id);
+    if (firstQuestion === undefined) {
+      throw new HttpError(
+        500,
+        "AI_CONTEXT_BROKEN",
+        "任务缺少首条学生消息，数据不完整",
+      );
+    }
+    const key = `${row.attemptId}:${row.questionId}`;
+    let usable = usableByKey.get(key);
+    if (usable === undefined) {
+      usable = policyUsable(db, row, configSource);
+      usableByKey.set(key, usable);
+    }
+    return aiTaskPublicViewCore(row, {
+      materials: materialsByTask.get(row.id) ?? [],
+      firstQuestion,
+      hasReply: repliedTaskIds.has(row.id),
+      usable,
+    });
+  });
+  return { tasks, nextCursor };
 }
 
 /** 队列摘要（顶栏三计数；分桶单源 AI_TASK_QUEUE_BUCKETS，未读为交付态推导） */
@@ -720,11 +867,16 @@ export function aiQueueSummaryOf(
       )
       .all().length;
   const unreadReplyCount = db
-    .select({ replyDeliveredAt: aiTasks.replyDeliveredAt })
+    .select({ id: aiTasks.id })
     .from(aiTasks)
-    .where(and(eq(aiTasks.studentId, studentId), eq(aiTasks.status, "replied")))
-    .all()
-    .filter((row) => row.replyDeliveredAt === null).length;
+    .where(
+      and(
+        eq(aiTasks.studentId, studentId),
+        eq(aiTasks.status, "replied"),
+        isNull(aiTasks.replyDeliveredAt),
+      ),
+    )
+    .all().length;
   return {
     pendingCount: countOf(AI_TASK_QUEUE_BUCKETS.pending),
     processingCount: countOf(AI_TASK_QUEUE_BUCKETS.processing),
@@ -809,7 +961,19 @@ export function claimMcpTask(
           .orderBy(asc(aiTasks.createdAt), asc(aiTasks.id))
           .limit(CLAIM_SCAN_LIMIT)
           .all();
-        candidate = scan.find((row) => policyUsable(tx, row, configSource));
+        // 裁决按 (attemptId,questionId) 记忆化：域内 FIFO 扫描常多题同卷，
+        // 同卷候选只实时裁一次（不放宽「教师刚改设置立即生效」——扫描事务内
+        // 裁决仍是本次领取的当前值）
+        const usableByKey = new Map<string, boolean>();
+        candidate = scan.find((row) => {
+          const key = `${row.attemptId}:${row.questionId}`;
+          let usable = usableByKey.get(key);
+          if (usable === undefined) {
+            usable = policyUsable(tx, row, configSource);
+            usableByKey.set(key, usable);
+          }
+          return usable;
+        });
         if (candidate === undefined) return null;
       }
       const leaseToken = randomUUID();
