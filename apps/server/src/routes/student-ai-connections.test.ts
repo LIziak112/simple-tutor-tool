@@ -4,6 +4,7 @@ import {
   aiConnectionDeleteOkSchema,
   aiConnectionListOkSchema,
   aiConnectionPatchOkSchema,
+  aiConnectionTestOkSchema,
 } from "@tutor/contract";
 import { eq } from "drizzle-orm";
 import pino from "pino";
@@ -34,7 +35,8 @@ import { assertNoLeak } from "../test/assert-no-leak.ts";
  * - 全部学生可读响应过 assertNoLeak（硬规则 3；连接视图另加 forbid 哨兵：
  *   密文列形态与明文凭证键不允许出现在任何读响应）；
  * - 测试连接（POST /:id/test）路由级只走不出站分支（link/mcp → 400
- *   AI_CONNECTION_INVALID、跨学生 404）；真实出站成败与探针无题面断言
+ *   AI_CONNECTION_INVALID、跨学生 404、坏密文 → 200 needs_rekey 可解释
+ *   降级且响应过 assertNoLeak）；真实出站成败与探针无题面断言
  *   在 connection-service.test（fake transport），本文件零真实外呼。
  */
 
@@ -438,7 +440,7 @@ it("通道约束：同通道重复 409；PATCH 判别不符 400；strict 未知�
 });
 
 it("测试连接路由级：link/mcp 通道 400 不出站；跨学生 404；默认互斥跨通道先清后设", async () => {
-  const { app, a, b } = world();
+  const { app, db, a, b } = world();
   // link 连接：无出站目标 → 400（路由级不出网；真实出站归 service 测试）
   const linkRes = await req(
     app,
@@ -466,7 +468,7 @@ it("测试连接路由级：link/mcp 通道 400 不出站；跨学生 404；默�
   expect(cross.status).toBe(404);
 
   // 默认互斥：inapp 设默认后 link 失去默认（学生维度跨通道唯一）
-  await createInapp(app, a, { isDefault: true });
+  const inappId = await createInapp(app, a, { isDefault: true });
   const listText = await listAs(app, a);
   const conns = JSON.parse(listText).data.connections as Array<{
     channel: string;
@@ -474,4 +476,42 @@ it("测试连接路由级：link/mcp 通道 400 不出站；跨学生 404；默�
   }>;
   expect(conns.find((c) => c.channel === "link")?.isDefault).toBe(false);
   expect(conns.find((c) => c.channel === "inapp")?.isDefault).toBe(true);
+
+  // needs_rekey 分支：坏密文（未知 cipherVersion，模拟 secret.key 丢失/
+  // 密文损坏）→ 200 可解释降级，路由级不出网、不抛堆栈；第五端点的
+  // 200 响应过 assertNoLeak + 明文 Key 扫描（不出站即可离线覆盖）
+  const brokenRow = db
+    .select()
+    .from(aiConnections)
+    .where(eq(aiConnections.id, inappId))
+    .all()[0];
+  db.update(aiConnections)
+    .set({
+      configJson: JSON.stringify({
+        ...(JSON.parse(brokenRow?.configJson ?? "{}") as Record<
+          string,
+          unknown
+        >),
+        cipherVersion: 99,
+      }),
+    })
+    .where(eq(aiConnections.id, inappId))
+    .run();
+  const rekeyRes = await req(app, "POST", `${BASE}/${inappId}/test`, {
+    cookie: a,
+  });
+  expect(rekeyRes.status).toBe(200);
+  const rekeyText = await rekeyRes.text();
+  expect(rekeyText).not.toContain(PLAIN_KEY);
+  const rekeyBody = aiConnectionTestOkSchema.parse(JSON.parse(rekeyText));
+  assertNoLeak(rekeyBody);
+  expect(rekeyBody.data.verifyStatus).toBe("needs_rekey");
+  // needs_rekey 状态粘滞：再测不出站（直接 200 同结果，零外呼窗口）
+  const rekeyAgain = await req(app, "POST", `${BASE}/${inappId}/test`, {
+    cookie: a,
+  });
+  expect(rekeyAgain.status).toBe(200);
+  expect(
+    aiConnectionTestOkSchema.parse(await rekeyAgain.json()).data.verifyStatus,
+  ).toBe("needs_rekey");
 });
