@@ -1,5 +1,5 @@
 import { ArrowLeft, MoreHorizontal } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -22,11 +22,16 @@ export function AttemptHeader({
   children,
 }: {
   title: string;
-  status: ReactNode;
+  status: (closeDetails: () => void) => ReactNode;
   onBack: () => void;
   children: ReactNode;
 }) {
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const navigating = useRef(false);
+  const closeDetails = () => {
+    navigating.current = detailsOpen;
+    setDetailsOpen(false);
+  };
   return (
     <header
       data-slot="attempt-header"
@@ -66,20 +71,29 @@ export function AttemptHeader({
         </DropdownMenu>
       </div>
       <div className="contents">
-        <div className="col-span-3 row-start-3 min-w-0 pl-13 sm:col-start-2 sm:row-start-2 sm:pl-0">
+        <div className="hidden min-w-0 sm:col-span-3 sm:col-start-2 sm:row-start-2 sm:block">
           {children}
         </div>
-        <div className="col-span-2 col-start-2 row-start-2 min-w-0 sm:col-span-1 sm:col-start-3 sm:row-start-1 sm:max-w-sm">
-          {status}
+        <div className="hidden min-w-0 sm:col-start-3 sm:row-start-1 sm:block sm:max-w-sm">
+          {status(closeDetails)}
         </div>
       </div>
       <Dialog open={detailsOpen} onOpenChange={setDetailsOpen}>
-        <DialogContent className="max-h-[70dvh] overflow-y-auto">
+        <DialogContent
+          className="max-h-[70dvh] overflow-y-auto"
+          onCloseAutoFocus={(event) => {
+            if (navigating.current) {
+              event.preventDefault();
+              navigating.current = false;
+            }
+          }}
+        >
           <DialogHeader>
             <DialogTitle className="break-words">{title}</DialogTitle>
             <DialogDescription>练习信息</DialogDescription>
           </DialogHeader>
           <div>{children}</div>
+          {status(closeDetails)}
         </DialogContent>
       </Dialog>
     </header>

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import { AttemptHeader } from "./AttemptHeader";
 
@@ -7,7 +7,14 @@ it("返回可用，长标题限制两行，更多可查看完整标题", () => {
   render(
     <AttemptHeader
       title="很长的练习标题，需要在更多里查看完整名称"
-      status={<p>已保存</p>}
+      status={(closeDetails) => (
+        <div>
+          <p>全部已保存</p>
+          <button type="button" onClick={closeDetails}>
+            定位题目
+          </button>
+        </div>
+      )}
       onBack={back}
     >
       课程信息
@@ -24,4 +31,12 @@ it("返回可用，长标题限制两行，更多可查看完整标题", () => {
   expect(screen.getByRole("dialog")).toHaveTextContent(
     "很长的练习标题，需要在更多里查看完整名称",
   );
+  expect(screen.getByRole("dialog")).toHaveTextContent("课程信息");
+  expect(screen.getByRole("dialog")).toHaveTextContent("全部已保存");
+  fireEvent.click(
+    within(screen.getByRole("dialog")).getByRole("button", {
+      name: "定位题目",
+    }),
+  );
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });
