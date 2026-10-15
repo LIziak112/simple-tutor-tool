@@ -13,10 +13,10 @@ import {
   useLogoutTeacher,
   useTeacherMe,
 } from "@/features/auth/teacher-auth";
+import { TeacherAiSettingsSection } from "@/features/student-ai/TeacherAiSettingsSection";
 import { BackupSection } from "@/features/teacher-backup/BackupSection";
 import { CapabilityProfileSection } from "@/features/teacher-settings/CapabilityProfileSection";
 import { useSettingsNavigation } from "@/features/teacher-settings/settings-navigation";
-import { TeacherAiSettingsSection } from "@/features/student-ai/TeacherAiSettingsSection";
 import { BRAND_NAME, BRAND_TAGLINE } from "@/lib/brand";
 import { formatCnTime } from "@/lib/time";
 import { AuthScreenLoading } from "./SetupPage";

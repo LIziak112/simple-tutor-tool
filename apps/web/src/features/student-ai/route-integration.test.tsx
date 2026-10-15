@@ -339,9 +339,9 @@ describe("SAI-08 真实路由联调（学生快捷按钮）", () => {
     expect(await screen.findByLabelText("第 1 项按钮名称")).toHaveValue(
       "启发下一步",
     );
-    expect(
-      env.db.select().from(env.schema.aiQuickButtons).all(),
-    ).toHaveLength(0);
+    expect(env.db.select().from(env.schema.aiQuickButtons).all()).toHaveLength(
+      0,
+    );
     // 暂存改名 + 禁用第 2 项 → 保存真实 PUT：整组物化落库
     fireEvent.change(screen.getByLabelText("第 1 项按钮名称"), {
       target: { value: "联调按钮" },
@@ -374,8 +374,7 @@ describe("SAI-08 真实路由联调（学生快捷按钮）", () => {
       headers: { cookie: studentCookie },
     });
     expect(
-      ((await refetch.json()) as { data: { buttons: unknown[] } }).data
-        .buttons,
+      ((await refetch.json()) as { data: { buttons: unknown[] } }).data.buttons,
     ).toEqual([]);
   });
 });
