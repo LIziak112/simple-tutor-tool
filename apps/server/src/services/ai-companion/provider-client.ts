@@ -20,13 +20,24 @@ import {
  * - User-Agent 固定标识 + 对账标识（任务 id / connection-test），便于
  *   网关侧对账；标识是服务端任务 id，不是学生内部 UUID；
  * - 测试连接探针为固定短文案（无学生数据），max_tokens 受限。
+ *
+ * SAI-17 扩展（页内 AI 异步执行）：executeChatCompletions 输出内部详细结果
+ * （usage 归一、失败 reason 分类、Retry-After 指引）供 worker/adapter 裁决；
+ * callChatCompletions 保持 SAI-16 学生可读壳语义原样（连接测试等既有调用
+ * 不变）。消息内容支持 OpenAI 多模态 content parts（图像 data URL）。
  */
 
 /** 出站消息形态（system/user/assistant；装配层负责内容边界） */
 export interface ProviderMessage {
   readonly role: "system" | "user" | "assistant";
-  readonly content: string;
+  /** 纯文本或 OpenAI 多模态 content parts（SAI-17 图像部件；文本消息保持字符串） */
+  readonly content: string | readonly ProviderContentPart[];
 }
+
+/** OpenAI 兼容多模态内容部件（图像用 data URL 携带服务端收集的 PNG） */
+export type ProviderContentPart =
+  | { readonly type: "text"; readonly text: string }
+  | { readonly type: "image_url"; readonly image_url: { readonly url: string } };
 
 /** 传输请求（假 transport 捕获点 = 连接层桩） */
 export interface ProviderTransportRequest {
@@ -66,6 +77,8 @@ export interface ChatCompletionsInput {
   readonly maxTokens?: number;
   readonly transport?: ProviderTransport;
   readonly logger?: Logger;
+  /** Retry-After 为 HTTP 日期形态时的换算基准（缺省当前时间；测试注入） */
+  readonly now?: Date;
 }
 
 /** 调用结果：失败只带错误码与中文短句（无供应商原文/头/堆栈） */
@@ -75,6 +88,41 @@ export type ChatCompletionsResult =
       readonly ok: false;
       readonly code: "AI_OUTBOUND_FAILED" | "AI_OUTBOUND_TIMEOUT";
       readonly message: string;
+    };
+
+/** usage 归一（OpenAI 兼容 usage 字段的驼峰形态；供应商缺省则省略） */
+export interface ProviderUsage {
+  readonly promptTokens?: number;
+  readonly completionTokens?: number;
+  readonly totalTokens?: number;
+}
+
+/** 失败分类（worker 重试/需重配/状态不明裁决的输入；不面向学生） */
+export type ProviderFailureReason =
+  | "rate_limited" // 408/429：明确被拒，未计费，可按时退避重试
+  | "auth" // 401/403：Key 无效或无权限，需重配，不重试
+  | "not_found" // 404：地址或模型不存在，需重配
+  | "bad_request" // 其余 4xx：请求被拒（含模型不收图），需重配/调整
+  | "redirect" // 3xx：重定向不跟随，需检查地址
+  | "server_error" // 5xx：临时故障，可按时退避重试
+  | "other_status" // 其余未知状态码
+  | "bad_response" // 200 但结构损坏：供应商已处理，不可自动重试
+  | "response_aborted" // 响应体超限中断：可能已处理，状态不明
+  | "network" // 未送达（连接被拒等）：明确失败
+  | "timeout" // 超时：可能已处理，状态不明
+  | "target_blocked"; // 连接级 SSRF 裁决拒绝：目标不允许，需重配
+
+/** 内部详细结果（SAI-17 worker/adapter 消费；学生可读壳仍走 ChatCompletionsResult） */
+export type DetailedChatCompletionsResult =
+  | { readonly ok: true; readonly content: string; readonly usage?: ProviderUsage }
+  | {
+      readonly ok: false;
+      readonly code: "AI_OUTBOUND_FAILED" | "AI_OUTBOUND_TIMEOUT";
+      readonly message: string;
+      readonly reason: ProviderFailureReason;
+      /** Retry-After 指引（ms；解析失败/未提供则缺省）。解析封顶 24h，
+       *  等待上限由 worker 按并发预算裁剪——供应商指引不导致失控长阻塞 */
+      readonly retryAfterMs?: number;
     };
 
 /** 固定 User-Agent 标识（网关侧对账；不含学生信息） */
@@ -109,6 +157,38 @@ function failureMessageOf(status: number): string {
   return `请求被供应商拒绝（HTTP ${status}）`;
 }
 
+/** HTTP 状态 → 失败分类（与 failureMessageOf 分支同源对齐） */
+function reasonOfStatus(status: number): ProviderFailureReason {
+  if (status >= 300 && status < 400) return "redirect";
+  if (status === 401 || status === 403) return "auth";
+  if (status === 404) return "not_found";
+  if (status === 408 || status === 429) return "rate_limited";
+  if (status >= 500) return "server_error";
+  if (status >= 400) return "bad_request";
+  return "other_status";
+}
+
+/** Retry-After 解析封顶（24h）：恶意超大值不产生失控等待，等待上限另由 worker 裁剪 */
+const RETRY_AFTER_PARSE_MAX_MS = 24 * 60 * 60 * 1000;
+
+/** Retry-After 头解析：整数秒或 HTTP 日期（相对 now）；无效/缺失返回 undefined */
+function retryAfterMsOf(
+  headers: Record<string, string>,
+  now: Date,
+): number | undefined {
+  const raw = headers["retry-after"];
+  if (raw === undefined || raw === "") return undefined;
+  const seconds = Number.parseInt(raw, 10);
+  if (/^\d+$/.test(raw.trim()) && Number.isFinite(seconds)) {
+    return Math.min(seconds * 1000, RETRY_AFTER_PARSE_MAX_MS);
+  }
+  const at = Date.parse(raw);
+  if (Number.isFinite(at)) {
+    return Math.max(0, Math.min(at - now.getTime(), RETRY_AFTER_PARSE_MAX_MS));
+  }
+  return undefined;
+}
+
 /** 从 OpenAI 兼容响应体取回信文本；形状不符返回 null */
 function contentOf(bodyText: string): string | null {
   try {
@@ -125,10 +205,76 @@ function contentOf(bodyText: string): string | null {
   }
 }
 
-/** 核心调用：装配 → 传输 → 归一（成功/失败都只回收敛后的形态） */
-export async function callChatCompletions(
+/** usage 字段归一（prompt_tokens 等数值形态；任一存在才返回对象） */
+function usageOf(bodyText: string): ProviderUsage | undefined {
+  try {
+    const parsed: unknown = JSON.parse(bodyText);
+    if (typeof parsed !== "object" || parsed === null) return undefined;
+    const usage = (parsed as { usage?: unknown }).usage;
+    if (typeof usage !== "object" || usage === null) return undefined;
+    const pick = (key: string): number | undefined => {
+      const value = (usage as Record<string, unknown>)[key];
+      return typeof value === "number" && Number.isFinite(value)
+        ? value
+        : undefined;
+    };
+    const normalized: ProviderUsage = {
+      ...(pick("prompt_tokens") !== undefined && {
+        promptTokens: pick("prompt_tokens"),
+      }),
+      ...(pick("completion_tokens") !== undefined && {
+        completionTokens: pick("completion_tokens"),
+      }),
+      ...(pick("total_tokens") !== undefined && {
+        totalTokens: pick("total_tokens"),
+      }),
+    };
+    return Object.keys(normalized).length > 0 ? normalized : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** 传输异常归一（守卫错误码映射；未知异常不透传消息） */
+function failureOfTransportError(error: unknown): {
+  ok: false;
+  code: "AI_OUTBOUND_FAILED" | "AI_OUTBOUND_TIMEOUT";
+  message: string;
+  reason: ProviderFailureReason;
+} {
+  if (error instanceof OutboundTargetError) {
+    if (error.code === "TIMEOUT") {
+      return {
+        ok: false,
+        code: "AI_OUTBOUND_TIMEOUT",
+        message: error.message,
+        reason: "timeout",
+      };
+    }
+    const reason: ProviderFailureReason =
+      error.code === "BODY_TOO_LARGE"
+        ? "response_aborted"
+        : error.code === "TARGET_INVALID" || error.code === "TARGET_BLOCKED"
+          ? "target_blocked"
+          : "network";
+    return { ok: false, code: "AI_OUTBOUND_FAILED", message: error.message, reason };
+  }
+  return {
+    ok: false,
+    code: "AI_OUTBOUND_FAILED",
+    message: "出站请求失败，请稍后重试",
+    reason: "network",
+  };
+}
+
+/**
+ * 核心调用（SAI-17 详细形态）：装配 → 传输 → 归一。成功附 usage；失败附
+ * reason 分类与 Retry-After 指引，供 worker 裁决退避/需重配/状态不明。
+ * 请求装配、脱敏日志与学生可读错误句与 callChatCompletions 单源共用。
+ */
+export async function executeChatCompletions(
   input: ChatCompletionsInput,
-): Promise<ChatCompletionsResult> {
+): Promise<DetailedChatCompletionsResult> {
   const url = chatCompletionsUrl(input.baseUrl);
   const headers: Record<string, string> = {
     authorization: `Bearer ${input.apiKey}`,
@@ -180,10 +326,16 @@ export async function callChatCompletions(
     "AI 出站请求",
   );
   if (response.status < 200 || response.status >= 300) {
+    const retryAfterMs = retryAfterMsOf(
+      response.headers,
+      input.now ?? new Date(),
+    );
     return {
       ok: false,
       code: "AI_OUTBOUND_FAILED",
       message: failureMessageOf(response.status),
+      reason: reasonOfStatus(response.status),
+      ...(retryAfterMs !== undefined && { retryAfterMs }),
     };
   }
   const content = contentOf(response.bodyText);
@@ -192,28 +344,25 @@ export async function callChatCompletions(
       ok: false,
       code: "AI_OUTBOUND_FAILED",
       message: "供应商响应格式无法解析",
+      reason: "bad_response",
     };
   }
-  return { ok: true, content };
+  const usage = usageOf(response.bodyText);
+  return { ok: true, content, ...(usage !== undefined && { usage }) };
 }
 
-/** 传输异常归一（守卫错误码映射；未知异常不透传消息） */
-function failureOfTransportError(error: unknown): {
-  ok: false;
-  code: "AI_OUTBOUND_FAILED" | "AI_OUTBOUND_TIMEOUT";
-  message: string;
-} {
-  if (error instanceof OutboundTargetError) {
-    if (error.code === "TIMEOUT") {
-      return { ok: false, code: "AI_OUTBOUND_TIMEOUT", message: error.message };
-    }
-    return { ok: false, code: "AI_OUTBOUND_FAILED", message: error.message };
+/**
+ * 学生可读壳（SAI-16 既有语义原样）：详细结果收敛为既有的
+ * ChatCompletionsResult 形态——连接测试等既有调用方行为不变。
+ */
+export async function callChatCompletions(
+  input: ChatCompletionsInput,
+): Promise<ChatCompletionsResult> {
+  const detailed = await executeChatCompletions(input);
+  if (detailed.ok) {
+    return { ok: true, content: detailed.content };
   }
-  return {
-    ok: false,
-    code: "AI_OUTBOUND_FAILED",
-    message: "出站请求失败，请稍后重试",
-  };
+  return { ok: false, code: detailed.code, message: detailed.message };
 }
 
 /** 连接测试：固定探针 + 测试时限 + 小 max_tokens（一次真实调用） */
