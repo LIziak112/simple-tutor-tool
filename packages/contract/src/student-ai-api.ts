@@ -319,7 +319,14 @@ export const aiConnectionPatchRequestSchema = z.discriminatedUnion("channel", [
       isDefault: z.boolean().optional(),
     })
     .strict(),
-  aiConnectionMcpMemberSchema,
+  z
+    .object({
+      channel: z.literal("mcp"),
+      /** 重置 token：旧 token 立即失效，新明文只在 PATCH 响应出现一次 */
+      resetToken: z.boolean().optional(),
+      isDefault: z.boolean().optional(),
+    })
+    .strict(),
   z
     .object({
       channel: z.literal("link"),
