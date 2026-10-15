@@ -2,7 +2,6 @@ import { createHash, randomBytes } from "node:crypto";
 import {
   AI_MCP_TOKEN_BYTES,
   AI_SHARE_DEFAULT_VALID_HOURS,
-  type AiChannel,
   type AiConnectionCreateRequest,
   type AiConnectionPatchRequest,
   type AiConnectionPublic,
@@ -16,7 +15,11 @@ import {
   aiTasks,
 } from "../../db/schema.ts";
 import { HttpError } from "../../lib/http-error.ts";
-import { openApiKey, sealApiKey } from "./connection-cipher.ts";
+import {
+  credentialFingerprint,
+  openApiKey,
+  sealApiKey,
+} from "./connection-cipher.ts";
 import { parseOutboundBaseUrl } from "./outbound-target.ts";
 import {
   type ProviderTransport,
@@ -79,11 +82,6 @@ function hashMcpToken(token: string): string {
   return createHash("sha256")
     .update(`${MCP_TOKEN_PURPOSE}:${token}`, "utf8")
     .digest("hex");
-}
-
-/** 指纹（sha256(明文) 前 8 hex：可比较、可展示、不可逆） */
-function fingerprintOf(token: string): string {
-  return createHash("sha256").update(token, "utf8").digest("hex").slice(0, 8);
 }
 
 /** db.transaction 回调的事务参数类型（与 Db 同源的结构类型） */
@@ -266,7 +264,7 @@ export function createStudentAiConnection(
     const token = generateMcpToken();
     const config: McpConnectionConfig = {
       tokenHash: hashMcpToken(token),
-      tokenFingerprint: fingerprintOf(token),
+      tokenFingerprint: credentialFingerprint(token),
     };
     configJson = JSON.stringify(config);
     credential = { token };
@@ -326,27 +324,26 @@ export function patchStudentAiConnection(
   if (request.channel === "inapp") {
     if (request.baseUrl !== undefined) guardBaseUrl(request.baseUrl);
     const config = JSON.parse(row.configJson) as InappConnectionConfig;
-    const next: {
-      baseUrl?: string;
-      model?: string;
-      imageCapability?: "unknown" | "supported" | "unsupported";
-      keySealed?: ReturnType<typeof sealApiKey>;
-    } = {};
-    if (request.baseUrl !== undefined) next.baseUrl = request.baseUrl;
-    if (request.model !== undefined) next.model = request.model;
-    if (request.imageCapability !== undefined)
-      next.imageCapability = request.imageCapability;
-    if (request.apiKey !== undefined)
-      next.keySealed = sealApiKey(rootSecret, request.apiKey);
+    // 未提交的字段保持库内原值（SAI-03 定案「缺省 = 不改」）；
+    // Key 轮换时五元密文组整体替换
+    const keySealed =
+      request.apiKey !== undefined
+        ? sealApiKey(rootSecret, request.apiKey)
+        : undefined;
     const merged: InappConnectionConfig = {
-      baseUrl: next.baseUrl ?? config.baseUrl,
-      model: next.model ?? config.model,
-      keyCiphertext: next.keySealed?.ciphertext ?? config.keyCiphertext,
-      keyIv: next.keySealed?.iv ?? config.keyIv,
-      keyTag: next.keySealed?.tag ?? config.keyTag,
-      keyFingerprint: next.keySealed?.fingerprint ?? config.keyFingerprint,
-      cipherVersion: next.keySealed?.cipherVersion ?? config.cipherVersion,
-      imageCapability: next.imageCapability ?? config.imageCapability,
+      ...config,
+      ...(request.baseUrl !== undefined && { baseUrl: request.baseUrl }),
+      ...(request.model !== undefined && { model: request.model }),
+      ...(request.imageCapability !== undefined && {
+        imageCapability: request.imageCapability,
+      }),
+      ...(keySealed !== undefined && {
+        keyCiphertext: keySealed.ciphertext,
+        keyIv: keySealed.iv,
+        keyTag: keySealed.tag,
+        keyFingerprint: keySealed.fingerprint,
+        cipherVersion: keySealed.cipherVersion,
+      }),
     };
     configJson = JSON.stringify(merged);
     if (request.apiKey !== undefined) {
@@ -361,7 +358,7 @@ export function patchStudentAiConnection(
     if (request.resetToken === true) {
       const token = generateMcpToken();
       tokenHash = hashMcpToken(token);
-      tokenFingerprint = fingerprintOf(token);
+      tokenFingerprint = credentialFingerprint(token);
       credential = { token };
     }
     configJson = JSON.stringify({ tokenHash, tokenFingerprint });
@@ -422,7 +419,7 @@ export function deleteStudentAiConnection(
       .where(
         and(
           eq(aiTasks.studentId, studentId),
-          eq(aiTasks.channel, row.channel as AiChannel),
+          eq(aiTasks.channel, row.channel),
           eq(aiTasks.status, "created"),
         ),
       )
