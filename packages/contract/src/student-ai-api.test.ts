@@ -16,6 +16,7 @@ import {
   aiTaskFollowupRequestSchema,
   aiTaskListQuerySchema,
   aiTaskShareRequestSchema,
+  aiTaskUpdatePendingRequestSchema,
 } from "./student-ai-api";
 
 /**
@@ -87,6 +88,34 @@ it("任务创建：问题必填限长、材料偏好三类、幂等键必填、�
   expect(
     aiTaskCreateRequestSchema.safeParse({ ...base, mutationId: undefined })
       .success,
+  ).toBe(false);
+});
+
+it("待处理任务更新：question 可选但非空白、越权字段拒绝", () => {
+  expect(aiTaskUpdatePendingRequestSchema.parse({}).question).toBeUndefined();
+  expect(
+    aiTaskUpdatePendingRequestSchema.parse({ question: "换个问法" }).question,
+  ).toBe("换个问法");
+  expect(
+    aiTaskUpdatePendingRequestSchema.safeParse({ question: "   " }).success,
+  ).toBe(false);
+  expect(
+    aiTaskUpdatePendingRequestSchema.safeParse({
+      question: "问".repeat(AI_QUESTION_MAX_CHARS + 1),
+    }).success,
+  ).toBe(false);
+  // strict：自报归属/策略字段整体拒绝（身份恒取会话）
+  expect(
+    aiTaskUpdatePendingRequestSchema.safeParse({
+      question: "换个问法",
+      studentId: "s-1",
+    }).success,
+  ).toBe(false);
+  expect(
+    aiTaskUpdatePendingRequestSchema.safeParse({
+      question: "换个问法",
+      materials: { annotation: true, draft: false, formalInk: false },
+    }).success,
   ).toBe(false);
 });
 

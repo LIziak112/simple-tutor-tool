@@ -1,7 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import type {
   AiChannel,
+  AiFact,
   AiFactType,
+  AiMessage,
   AiTaskAction,
   AiTaskPublic,
   AiTaskStatus,
@@ -1648,6 +1650,109 @@ export function markReplyDelivered(
     },
     { behavior: "immediate" },
   );
+}
+
+// ---------- 学生任务详情与回信打开（SAI-13 路由投影；需求 §3.3/§7.5） ----------
+
+/** 学生任务详情（契约 aiTaskDetailDataSchema 单源投影） */
+export interface StudentAiTaskDetail {
+  readonly task: AiTaskPublic;
+  /** 同题对话：回信内容按当前策略门禁交付（见 getStudentAiTaskDetail） */
+  readonly messages: readonly AiMessage[];
+  /** 事实时间线（学生投影：无 detailJson，教师域视图另走 aiTeacherFactSchema） */
+  readonly facts: readonly AiFact[];
+}
+
+/**
+ * 学生任务详情读取：归属核验（404 同文案防枚举）→ 公开视图（策略实时叠加
+ * allowedActions）→ 对话与事实时间线。
+ *
+ * 回信内容交付门禁（需求 §3.3「尚未展示的旧模式回信收存但在本题完成前不向
+ * 学生继续交付；已展示的内容不假装被撤回」）：assistant 消息只在
+ * ① replyDeliveredAt 已置（打开过，内容保持可见）或 ② 当前策略可用
+ * （policyUsable——教师刚改设置立即生效）时进入响应；否则只保留 hasReply
+ * 事实（「已收到回信未读」），正文不下发。学生本人问题（student 消息）恒可见。
+ */
+export function getStudentAiTaskDetail(
+  db: Db,
+  input: { studentId: string; taskId: string },
+  options: { configSource?: AiPolicyConfigSource } = {},
+): StudentAiTaskDetail {
+  const configSource = options.configSource ?? sqliteAiPolicyConfigSource;
+  const task = requireOwnTask(db, input.studentId, input.taskId);
+  const usable = policyUsable(db, task, configSource);
+  const view = aiTaskPublicViewCore(task, {
+    materials: loadAiTaskMaterialRows(db, task.id),
+    firstQuestion: firstQuestionOf(db, task.id),
+    hasReply: hasAssistantReply(db, task.id),
+    usable,
+  });
+  const messages = db
+    .select()
+    .from(aiMessages)
+    .where(eq(aiMessages.taskId, task.id))
+    .orderBy(asc(aiMessages.createdAt), asc(aiMessages.id))
+    .all()
+    .map((row) => ({
+      id: row.id,
+      taskId: row.taskId,
+      role: row.role,
+      contentMd: row.contentMd,
+      createdAt: row.createdAt,
+    }))
+    .filter(
+      (message) =>
+        message.role === "student" || usable || task.replyDeliveredAt !== null,
+    );
+  const facts = db
+    .select()
+    .from(aiFacts)
+    .where(eq(aiFacts.taskId, task.id))
+    .orderBy(asc(aiFacts.serverTs), asc(aiFacts.id))
+    .all()
+    .map((row) => ({
+      id: row.id,
+      taskId: row.taskId,
+      type: row.type,
+      beforeSubmit: row.beforeSubmit,
+      serverTs: row.serverTs,
+    }));
+  return { task: view, messages, facts };
+}
+
+/**
+ * 学生打开回信（POST /ai/tasks/:id/opened 的服务入口）：打开**前**按当前
+ * 策略与完成态实时重校验——未交付（replyDeliveredAt 为空）且当前不可用时
+ * 403 AI_POLICY_DISABLED（不交付正文，hasReply 事实仍在）；已交付过的重复
+ * 打开幂等放行（内容已展示，不假装撤回）。随后复用 markReplyDelivered
+ * （replied 态校验、reply_delivered 事实、幂等语义均为 SAI-12 既有实现）。
+ */
+export function openStudentAiReply(
+  db: Db,
+  input: { studentId: string; taskId: string },
+  options: { now?: Date | string; configSource?: AiPolicyConfigSource } = {},
+): AiTaskRow {
+  const task = requireOwnTask(db, input.studentId, input.taskId);
+  if (task.replyDeliveredAt === null) {
+    const configSource = options.configSource ?? sqliteAiPolicyConfigSource;
+    const { resolution } = resolveAttemptQuestionAiPolicy(
+      db,
+      task.studentId,
+      task.attemptId,
+      task.questionId,
+      configSource,
+    );
+    if (!resolution.usable || resolution.mode === undefined) {
+      throw new HttpError(
+        403,
+        "AI_POLICY_DISABLED",
+        "当前教学模式下暂不能查看这条回信，本题完成后可继续查看",
+      );
+    }
+  }
+  return markReplyDelivered(db, input, {
+    ...(options.now !== undefined && { now: options.now }),
+  });
 }
 
 // ---------- 恢复（重启/备份恢复后的惰性清理；§6） ----------

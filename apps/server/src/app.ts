@@ -131,6 +131,21 @@ function guardBodyLimit(config: {
  */
 export const MEDIA_UPLOAD_BODY_LIMIT = 6 * 1024 * 1024;
 
+/**
+ * AI 任务文字请求的 body 预检上限（SAI-13）：问题 ≤2,000 字符（§9 限额表，
+ * UTF-8 ≤6KB）+ 材料偏好/幂等键等 JSON 信封余量，取整 64KB；create 与
+ * update-pending 两个小信封入口同配置。超限在 parseJsonBody（整包进内存）
+ * 之前拒绝（413 AI_TEXT_TOO_LONG，不落库）；字符级精确限额由契约 schema
+ * 校验（AI_TEXT_TOO_LONG 同码分流，含 chunked 无 content-length 的兜底路径）。
+ */
+const AI_TASK_JSON_BODY_LIMIT = 64 * 1024;
+const AI_TASK_JSON_GUARD = {
+  method: "POST",
+  limit: AI_TASK_JSON_BODY_LIMIT,
+  code: "AI_TEXT_TOO_LONG",
+  message: "发送内容过大（超过求助文本上限），请精简后重试",
+} as const;
+
 export function createApp(options: CreateAppOptions) {
   const logger = options.logger ?? pino({ level: "info" });
   const requireAnySession = createRequireAnySession(options.db);
@@ -259,6 +274,13 @@ export function createApp(options: CreateAppOptions) {
         code: "MEDIA_TOO_LARGE",
         message: "图片超过 5MB 上传上限，请压缩后重试",
       }),
+    )
+    // SAI-13 AI 任务文字请求（create / update-pending 小信封；材料 multipart
+    // 与追问入口归后续批次，届时按 §9 材料粗防线另配）
+    .use("/api/student/ai/tasks", guardBodyLimit(AI_TASK_JSON_GUARD))
+    .use(
+      "/api/student/ai/tasks/:id/update-pending",
+      guardBodyLimit(AI_TASK_JSON_GUARD),
     )
     .route(
       "/api/teacher",

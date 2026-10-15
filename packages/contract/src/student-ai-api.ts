@@ -126,6 +126,22 @@ export type AiTaskCreateRequest = z.infer<typeof aiTaskCreateRequestSchema>;
 
 export const aiTaskOkSchema = apiOkExtend(aiTaskPublicSchema);
 
+// ---------- POST /api/student/ai/tasks/:id/update-pending ----------
+
+/**
+ * 待处理任务更新请求（需求 §8「学生显式更新待处理内容」，仅 created 态可用）：
+ * question 省略 = 只按当前作答重新装配快照；提供则替换首条问题正文。
+ * 材料变化不走本接口（换材料 = 新任务/新 mutationId，SAI-11 attach 语义）。
+ */
+export const aiTaskUpdatePendingRequestSchema = z
+  .object({
+    question: questionField("问题").optional(),
+  })
+  .strict();
+export type AiTaskUpdatePendingRequest = z.infer<
+  typeof aiTaskUpdatePendingRequestSchema
+>;
+
 // ---------- POST /api/student/ai/tasks/:id/followup ----------
 
 /**
