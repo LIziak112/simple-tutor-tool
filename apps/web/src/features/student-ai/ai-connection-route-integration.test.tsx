@@ -66,7 +66,8 @@ async function makeEnv() {
     dataDir: mkdtempSync(join(tmpdir(), "tutor-route-data-")),
     publicUrl: "http://localhost:8787",
   });
-  const setup = await app.request("/api/public/teacher/setup", {
+  // 教师 setup 仅为建库首位教师(学生行的外键锚点);会话本身本测试不使用
+  await app.request("/api/public/teacher/setup", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -105,10 +106,7 @@ async function makeEnv() {
 /** 全局 fetch 桩:转发到真实 app.request(自动携带指定学生会话 Cookie) */
 function installFetchStub(
   app: {
-    request: (
-      path: string,
-      init?: RequestInit,
-    ) => Response | Promise<Response>;
+    request: (path: string, init?: RequestInit) => Response | Promise<Response>;
   },
   cookie: string,
 ): void {
@@ -134,9 +132,11 @@ function studentCookieOf(
   env: Awaited<ReturnType<typeof makeEnv>>,
   studentId: string,
 ): Promise<string> {
-  return import("../../../../server/src/auth/session").then(({ createStudentSession }) => {
-    return `tutor_student_session=${createStudentSession(env.db, studentId).token}`;
-  });
+  return import("../../../../server/src/auth/session").then(
+    ({ createStudentSession }) => {
+      return `tutor_student_session=${createStudentSession(env.db, studentId).token}`;
+    },
+  );
 }
 
 function renderManager(client: QueryClient, search = "") {
@@ -195,7 +195,9 @@ describe("SAI-18 真实路由联调(学生连接设置)", () => {
     // 列表回显:baseUrl + 指纹,永不回显明文 Key
     expect(await screen.findByText(/api\.example\.com/u)).toBeInTheDocument();
     expect(screen.getByText(/Key 指纹/u)).toBeInTheDocument();
-    expect(screen.queryByText(/sk-route-secret-plain/u)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/sk-route-secret-plain/u),
+    ).not.toBeInTheDocument();
     // 库内 configJson 只存密文形态(无明文,SAI-16 密封纪律)
     const row = env.db.select().from(env.schema.aiConnections).get();
     expect(row?.configJson).not.toContain("sk-route-secret-plain");
@@ -268,14 +270,13 @@ describe("SAI-18 真实路由联调(学生连接设置)", () => {
     });
     expect(created.status).toBe(201);
     renderManager(newClient());
-    expect(await screen.findByText(/ai-unreachable\.invalid/u)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/ai-unreachable\.invalid/u),
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
     // 真实探针出站失败:200 + verifyStatus=failed(连接仍保留)
     await waitFor(
-      () =>
-        expect(
-          screen.getByText(/连接测试未通过/u),
-        ).toBeInTheDocument(),
+      () => expect(screen.getByText(/连接测试未通过/u)).toBeInTheDocument(),
       { timeout: 20_000 },
     );
     expect(screen.getByText(/ai-unreachable\.invalid/u)).toBeInTheDocument();
@@ -307,10 +308,7 @@ describe("SAI-18 真实路由联调(学生连接设置)", () => {
     const cookie = await studentCookieOf(env, "student-sai18-a");
     installFetchStub(env.app, cookie);
     const from = "/s/assignments/route-assignment?question=q-route";
-    renderManager(
-      newClient(),
-      `?from=${encodeURIComponent(from)}`,
-    );
+    renderManager(newClient(), `?from=${encodeURIComponent(from)}`);
     fireEvent.click(
       screen.getByRole("checkbox", { name: "我已了解数据外发说明" }),
     );

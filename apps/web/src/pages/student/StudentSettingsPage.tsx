@@ -72,7 +72,10 @@ export default function StudentSettingsPage() {
         </Link>
       </section>
       {/* SAI-18：连接 AI 入口(子页管理批准端点/Key/默认通道) */}
-      <section aria-labelledby="student-ai-connection-title" className="space-y-3">
+      <section
+        aria-labelledby="student-ai-connection-title"
+        className="space-y-3"
+      >
         <h2
           id="student-ai-connection-title"
           className="text-sm font-medium text-muted-foreground"

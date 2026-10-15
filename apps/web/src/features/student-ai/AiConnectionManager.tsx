@@ -1,10 +1,10 @@
 import { useQueryClient } from "@tanstack/react-query";
 import type {
+  AiChannel,
   AiConnectionCreateRequest,
   AiConnectionFirstCredential,
   AiConnectionPatchRequest,
   AiConnectionPublic,
-  AiChannel,
 } from "@tutor/contract";
 import { AI_SHARE_MAX_VALID_HOURS } from "@tutor/contract";
 import {
@@ -98,9 +98,10 @@ const CHANNEL_LABEL: Record<AiChannel, string> = {
 };
 
 /** verifyStatus 徽章文案:已配置 / 验证成功 / 暂不可用分开显示 */
-function verifyBadgeOf(
-  connection: AiConnectionPublic,
-): { text: string; tone: "ok" | "warn" | "muted" } {
+function verifyBadgeOf(connection: AiConnectionPublic): {
+  text: string;
+  tone: "ok" | "warn" | "muted";
+} {
   // mcp/link 无测试语义(SAI-16:verifyStatus 恒 unverified),只如实说明
   // 配置已保存——在线判断归后续领取链路,不显示「已连接」
   if (connection.channel !== "inapp") {
@@ -141,9 +142,8 @@ export function AiConnectionManager() {
   /** 编辑态:正在修改的连接 id(null = 新建) */
   const [editingId, setEditingId] = useState<string | null>(null);
   /** mcp 创建/重置的一次性 token 展示(明文只出现在本组件内存) */
-  const [tokenOnce, setTokenOnce] = useState<AiConnectionFirstCredential | null>(
-    null,
-  );
+  const [tokenOnce, setTokenOnce] =
+    useState<AiConnectionFirstCredential | null>(null);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">(
     "idle",
   );
@@ -217,7 +217,9 @@ export function AiConnectionManager() {
     }
   }
 
-  function buildPatchRequest(target: AiConnectionPublic): AiConnectionPatchRequest {
+  function buildPatchRequest(
+    target: AiConnectionPublic,
+  ): AiConnectionPatchRequest {
     switch (target.channel) {
       case "inapp":
         return {
@@ -251,7 +253,7 @@ export function AiConnectionManager() {
     const editing =
       editingId === null
         ? null
-        : connections.find((item) => item.id === editingId) ?? null;
+        : (connections.find((item) => item.id === editingId) ?? null);
     if (editingId !== null && editing !== null) {
       patchMutation.mutate(
         { id: editingId, request: buildPatchRequest(editing) },
@@ -357,7 +359,7 @@ export function AiConnectionManager() {
   const deletingRow =
     confirmDeleteId === null
       ? null
-      : connections.find((item) => item.id === confirmDeleteId) ?? null;
+      : (connections.find((item) => item.id === confirmDeleteId) ?? null);
 
   return (
     <div className="space-y-6">
@@ -387,9 +389,7 @@ export function AiConnectionManager() {
           <li>
             求助内容将发送到你配置的 AI 服务(发送目的地由你在此页选择并保存)。
           </li>
-          <li>
-            默认包含本题已有答案解析(实际尺度服从教师设置的教学模式)。
-          </li>
+          <li>默认包含本题已有答案解析(实际尺度服从教师设置的教学模式)。</li>
           <li>所选书写材料(圈画、草稿、手写)可能包含你的姓名。</li>
           <li>调用外部 AI 可能产生 API 费用,按你的连接服务方计费。</li>
         </ul>
@@ -702,7 +702,8 @@ export function AiConnectionManager() {
             </label>
             <label className="flex flex-col gap-1.5 text-sm">
               <span>
-                API Key(只写入不回显;{editingId === null ? "必填" : "留空 = 保持原 Key"})
+                API Key(只写入不回显;
+                {editingId === null ? "必填" : "留空 = 保持原 Key"})
               </span>
               <input
                 type="password"
@@ -720,7 +721,10 @@ export function AiConnectionManager() {
 
         {draft.channel === "mcp" && (
           <p className="flex items-start gap-2 text-sm leading-relaxed text-muted-foreground">
-            <CircleAlert aria-hidden className="mt-0.5 size-4 shrink-0 text-primary" />
+            <CircleAlert
+              aria-hidden
+              className="mt-0.5 size-4 shrink-0 text-primary"
+            />
             MCP Token 由系统生成,保存后只显示一次;旧 Token 可随时在此重置。
           </p>
         )}
@@ -770,7 +774,9 @@ export function AiConnectionManager() {
             disabled={!consentOk || !formValid || saving}
             onClick={handleSave}
           >
-            {saving && <Loader2 aria-hidden className="motion-safe:animate-spin" />}
+            {saving && (
+              <Loader2 aria-hidden className="motion-safe:animate-spin" />
+            )}
             保存连接
           </Button>
           {editingId !== null && (

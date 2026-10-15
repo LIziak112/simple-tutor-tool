@@ -1,8 +1,9 @@
-import {
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type {
+  AiConnectionCreateData,
+  AiConnectionCreateRequest,
+  AiConnectionPatchRequest,
+} from "@tutor/contract";
 import {
   createStudentAiConnectionApi,
   deleteStudentAiConnectionApi,
@@ -10,11 +11,6 @@ import {
   patchStudentAiConnectionApi,
   testStudentAiConnectionApi,
 } from "@/lib/api";
-import type {
-  AiConnectionCreateData,
-  AiConnectionCreateRequest,
-  AiConnectionPatchRequest,
-} from "@tutor/contract";
 
 /**
  * SAI-18 学生 AI 连接查询封装(/s/settings/ai 页数据源,SAI-16 五端点)。
@@ -55,8 +51,10 @@ function useInvalidateConnections() {
         (item) =>
           (item as { id?: string }).id !== data.connection.id &&
           // isDefault 学生维度跨通道唯一:新默认行落下后其余行失默认位
-          !(data.connection.isDefault &&
-            (item as { isDefault?: boolean }).isDefault),
+          !(
+            data.connection.isDefault &&
+            (item as { isDefault?: boolean }).isDefault
+          ),
       );
       return { connections: [...others, data.connection] };
     });

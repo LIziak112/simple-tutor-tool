@@ -1,14 +1,8 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { AiConnectionListData } from "@tutor/contract";
-import {
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { copyText } from "@/lib/copy";
 import {
   ApiError,
   createStudentAiConnectionApi,
@@ -16,6 +10,7 @@ import {
   patchStudentAiConnectionApi,
   testStudentAiConnectionApi,
 } from "@/lib/api";
+import { copyText } from "@/lib/copy";
 import { AiConnectionManager } from "./AiConnectionManager";
 
 /**
@@ -83,7 +78,9 @@ function renderManager(
   options: { from?: string } = {},
 ) {
   const search =
-    options.from === undefined ? "" : `?from=${encodeURIComponent(options.from)}`;
+    options.from === undefined
+      ? ""
+      : `?from=${encodeURIComponent(options.from)}`;
   const view = render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[`/s/settings/ai${search}`]}>
@@ -123,9 +120,7 @@ describe("AiConnectionManager(SAI-18 学生连接设置)", () => {
       renderManager();
       expect(await screen.findByText(/尚未配置 AI 连接/u)).toBeInTheDocument();
       // 首次说明四要素:目的地 / 答案解析 / 姓名 / 费用
-      expect(
-        screen.getByText(/发送到你配置的 AI 服务/u),
-      ).toBeInTheDocument();
+      expect(screen.getByText(/发送到你配置的 AI 服务/u)).toBeInTheDocument();
       expect(screen.getByText(/答案解析/u)).toBeInTheDocument();
       expect(screen.getByText(/姓名/u)).toBeInTheDocument();
       expect(screen.getByText(/费用/u)).toBeInTheDocument();
@@ -135,9 +130,7 @@ describe("AiConnectionManager(SAI-18 学生连接设置)", () => {
       expect(consent).not.toBeChecked();
       // 填满表单但未确认知情:保存不可用,不发出任何创建请求
       fillInappForm();
-      expect(
-        screen.getByRole("button", { name: "保存连接" }),
-      ).toBeDisabled();
+      expect(screen.getByRole("button", { name: "保存连接" })).toBeDisabled();
       expect(mockedCreate).not.toHaveBeenCalled();
     });
 
@@ -146,9 +139,7 @@ describe("AiConnectionManager(SAI-18 学生连接设置)", () => {
       renderManager();
       await screen.findByText(/api\.example\.com/u);
       fillInappForm({ baseUrl: "https://api2.example.com/v1" });
-      expect(
-        screen.getByRole("button", { name: "保存连接" }),
-      ).toBeEnabled();
+      expect(screen.getByRole("button", { name: "保存连接" })).toBeEnabled();
     });
   });
 
@@ -160,7 +151,11 @@ describe("AiConnectionManager(SAI-18 学生连接设置)", () => {
       );
       fillInappForm();
       mockedCreate.mockRejectedValue(
-        new ApiError("AI_CONNECTION_INVALID", "接口地址不可达,请检查后重试", 400),
+        new ApiError(
+          "AI_CONNECTION_INVALID",
+          "接口地址不可达,请检查后重试",
+          400,
+        ),
       );
       fireEvent.click(screen.getByRole("button", { name: "保存连接" }));
       const alert = await screen.findByRole("alert");
@@ -339,7 +334,9 @@ describe("AiConnectionManager(SAI-18 学生连接设置)", () => {
       expect(confirmSpy).toHaveBeenCalledWith(
         expect.stringMatching(/尚未保存/u),
       );
-      expect(screen.getByRole("button", { name: "保存连接" })).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "保存连接" }),
+      ).toBeInTheDocument();
       expect(screen.queryByText("设置主页占位")).not.toBeInTheDocument();
       confirmSpy.mockRestore();
     });
@@ -398,9 +395,7 @@ describe("AiConnectionManager(SAI-18 学生连接设置)", () => {
       mockedCopy.mockResolvedValue(false);
       fireEvent.click(screen.getByRole("button", { name: "复制 Token" }));
       await waitFor(() =>
-        expect(
-          screen.getByText(/复制失败,请手动复制/u),
-        ).toBeInTheDocument(),
+        expect(screen.getByText(/复制失败,请手动复制/u)).toBeInTheDocument(),
       );
       // 明文仍在页面,可手动选择复制;没有虚报「已复制」
       expect(screen.queryByText(/已复制/u)).not.toBeInTheDocument();
