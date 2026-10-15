@@ -52,7 +52,11 @@ export interface ProviderDispatchInput {
 
 /** 适配层受控结果（失败只有固定 kind + 中文短句 + 可选退避指引） */
 export type ProviderDispatchOutcome =
-  | { readonly ok: true; readonly content: string; readonly usage?: ProviderUsage }
+  | {
+      readonly ok: true;
+      readonly content: string;
+      readonly usage?: ProviderUsage;
+    }
   | {
       readonly ok: false;
       /** 可退避重试（明确被拒未计费）：429/临时 5xx */
@@ -115,10 +119,7 @@ function withImages(
       attached = true;
       return {
         role: message.role,
-        content: [
-          { type: "text", text: message.content },
-          ...imageParts,
-        ],
+        content: [{ type: "text", text: message.content }, ...imageParts],
       };
     }
     return { role: message.role, content: message.content };
@@ -177,7 +178,11 @@ export async function dispatchToProvider(
   input: ProviderDispatchInput,
 ): Promise<ProviderDispatchOutcome> {
   if (input.imageCapability === "unsupported" && input.images.length > 0) {
-    return { ok: false, kind: "needs_reconfig", message: IMAGE_UNSUPPORTED_MESSAGE };
+    return {
+      ok: false,
+      kind: "needs_reconfig",
+      message: IMAGE_UNSUPPORTED_MESSAGE,
+    };
   }
   const detailed = await executeChatCompletions({
     baseUrl: input.baseUrl,

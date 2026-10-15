@@ -6,18 +6,21 @@ import type { AiTaskRow } from "../../db/schema.ts";
 import { HttpError } from "../../lib/http-error.ts";
 import { findDispatchInappConnection } from "./connection-service.ts";
 import type { ProviderTransport } from "./provider-client.ts";
-import { dispatchToProvider } from "./student-ai-provider-adapter.ts";
 import {
   assembleOutboundMessages,
   loadTaskHistory,
-  systemPromptOfSnapshotMd,
   type OutboundAssembly,
+  systemPromptOfSnapshotMd,
 } from "./student-ai-context.ts";
 import {
   collectAiTaskMaterialBytes,
   loadOutboundMaterialRefs,
   taskOf,
 } from "./student-ai-materials.ts";
+import {
+  dispatchToProvider,
+  type ProviderDispatchOutcome,
+} from "./student-ai-provider-adapter.ts";
 import {
   beginInappDispatch,
   completeInappDispatch,
@@ -391,7 +394,7 @@ async function dispatchOne(
   let attempt = 0;
   for (;;) {
     attempt += 1;
-    let outcome;
+    let outcome: ProviderDispatchOutcome;
     try {
       outcome = await dispatchToProvider({
         baseUrl: connection.baseUrl,
@@ -543,7 +546,8 @@ async function dispatchPass(
   );
   const summary: StudentAiDispatchRunSummary = {
     // dispatched = 真正进入出站流程（含最终 late/写回竞态的派发）
-    dispatched: outcomes.filter((o) => o !== "skipped" && o !== "paused").length,
+    dispatched: outcomes.filter((o) => o !== "skipped" && o !== "paused")
+      .length,
     replied: outcomes.filter((o) => o === "replied").length,
     failed: outcomes.filter((o) => o === "failed").length,
     paused: outcomes.filter((o) => o === "paused").length,

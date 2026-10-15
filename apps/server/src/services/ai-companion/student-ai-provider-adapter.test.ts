@@ -9,11 +9,11 @@ import {
   type ProviderTransport,
   type ProviderTransportRequest,
 } from "./provider-client.ts";
+import type { OutboundAssembly } from "./student-ai-context.ts";
 import {
   dispatchToProvider,
   type ProviderDispatchInput,
 } from "./student-ai-provider-adapter.ts";
-import type { OutboundAssembly } from "./student-ai-context.ts";
 
 /**
  * SAI-17 页内 AI 执行链的供应商适配层测试（B09 必测第一/二条的归一层）：
@@ -46,7 +46,10 @@ function fakeTransport(
 
 const okBody = JSON.stringify({
   choices: [
-    { message: { role: "assistant", content: "这是模型回复" }, finish_reason: "stop" },
+    {
+      message: { role: "assistant", content: "这是模型回复" },
+      finish_reason: "stop",
+    },
   ],
   usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
 });
@@ -157,7 +160,11 @@ describe("executeChatCompletions（内部详细结果）", () => {
       transport,
       now,
     });
-    expect(result).toMatchObject({ ok: false, reason: "rate_limited", retryAfterMs: 30_000 });
+    expect(result).toMatchObject({
+      ok: false,
+      reason: "rate_limited",
+      retryAfterMs: 30_000,
+    });
   });
 
   it("429：Retry-After 异常值（非数字非日期）不产生 retryAfterMs", async () => {
@@ -284,9 +291,11 @@ describe("executeChatCompletions（内部详细结果）", () => {
         transport,
       });
       expect(result).toMatchObject({ ok: false, reason });
-      expect(result.ok === false && result.code === "AI_OUTBOUND_TIMEOUT"
-        ? "AI_OUTBOUND_TIMEOUT"
-        : reason).toBe(reason === "timeout" ? "AI_OUTBOUND_TIMEOUT" : reason);
+      expect(
+        result.ok === false && result.code === "AI_OUTBOUND_TIMEOUT"
+          ? "AI_OUTBOUND_TIMEOUT"
+          : reason,
+      ).toBe(reason === "timeout" ? "AI_OUTBOUND_TIMEOUT" : reason);
     }
   });
 });
@@ -337,11 +346,17 @@ describe("dispatchToProvider（服务端批准上下文 → 统一出站）", ()
     };
     expect(body.model).toBe("glm-test");
     expect(body.stream).toBe(false);
-    expect(body.messages?.[0]).toEqual({ role: "system", content: "【系统段】" });
+    expect(body.messages?.[0]).toEqual({
+      role: "system",
+      content: "【系统段】",
+    });
     const contextContent = body.messages?.[1]?.content as Array<
       Record<string, unknown>
     >;
-    expect(contextContent[0]).toEqual({ type: "text", text: "【待分析数据】题面与作答" });
+    expect(contextContent[0]).toEqual({
+      type: "text",
+      text: "【待分析数据】题面与作答",
+    });
     expect(contextContent[1]).toEqual({
       type: "image_url",
       image_url: { url: "data:image/png;base64,AQID" },
@@ -350,7 +365,10 @@ describe("dispatchToProvider（服务端批准上下文 → 统一出站）", ()
       type: "image_url",
       image_url: { url: "data:image/png;base64,BAU=" },
     });
-    expect(body.messages?.[2]).toEqual({ role: "user", content: "请帮我讲解本题" });
+    expect(body.messages?.[2]).toEqual({
+      role: "user",
+      content: "请帮我讲解本题",
+    });
   });
 
   it("模型不支持图且学生未减选：出站前阻断（零出站调用），needs_reconfig 明示", async () => {
@@ -441,7 +459,8 @@ describe("dispatchToProvider（服务端批准上下文 → 统一出站）", ()
     expect(result).toEqual({
       ok: false,
       kind: "uncertain",
-      message: "出站请求超时，无法确认供应商是否已处理；已标记为发送结果待确认，请核对后再决定是否重试",
+      message:
+        "出站请求超时，无法确认供应商是否已处理；已标记为发送结果待确认，请核对后再决定是否重试",
     });
   });
 
@@ -496,7 +515,11 @@ describe("dispatchToProvider（服务端批准上下文 → 统一出站）", ()
 
   it("logger 缺省不抛错（生产注入 pino）", async () => {
     const { transport } = fakeTransport(() => respond(okBody));
-    const logger = { info: () => {}, warn: () => {}, error: () => {} } as unknown as Logger;
+    const logger = {
+      info: () => {},
+      warn: () => {},
+      error: () => {},
+    } as unknown as Logger;
     const result = await dispatchToProvider(
       dispatchInput({ transport, logger }),
     );

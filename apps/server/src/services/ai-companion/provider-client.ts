@@ -37,7 +37,10 @@ export interface ProviderMessage {
 /** OpenAI 兼容多模态内容部件（图像用 data URL 携带服务端收集的 PNG） */
 export type ProviderContentPart =
   | { readonly type: "text"; readonly text: string }
-  | { readonly type: "image_url"; readonly image_url: { readonly url: string } };
+  | {
+      readonly type: "image_url";
+      readonly image_url: { readonly url: string };
+    };
 
 /** 传输请求（假 transport 捕获点 = 连接层桩） */
 export interface ProviderTransportRequest {
@@ -114,7 +117,11 @@ export type ProviderFailureReason =
 
 /** 内部详细结果（SAI-17 worker/adapter 消费；学生可读壳仍走 ChatCompletionsResult） */
 export type DetailedChatCompletionsResult =
-  | { readonly ok: true; readonly content: string; readonly usage?: ProviderUsage }
+  | {
+      readonly ok: true;
+      readonly content: string;
+      readonly usage?: ProviderUsage;
+    }
   | {
       readonly ok: false;
       readonly code: "AI_OUTBOUND_FAILED" | "AI_OUTBOUND_TIMEOUT";
@@ -254,7 +261,12 @@ function failureOfTransportError(error: unknown): {
         : error.code === "TARGET_INVALID" || error.code === "TARGET_BLOCKED"
           ? "target_blocked"
           : "network";
-    return { ok: false, code: "AI_OUTBOUND_FAILED", message: error.message, reason };
+    return {
+      ok: false,
+      code: "AI_OUTBOUND_FAILED",
+      message: error.message,
+      reason,
+    };
   }
   return {
     ok: false,

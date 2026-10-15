@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { and, eq } from "drizzle-orm";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runBackfills } from "../../db/backfill.ts";
-import { type Db, createDbHandle } from "../../db/client.ts";
+import { createDbHandle, type Db } from "../../db/client.ts";
 import { runMigrations } from "../../db/migrate.ts";
 import {
   aiFacts,
@@ -32,6 +32,7 @@ import {
   requestWithTargetGuard,
 } from "./outbound-target.ts";
 import type { ProviderTransport } from "./provider-client.ts";
+import { attachAiTaskMaterials } from "./student-ai-materials.ts";
 import {
   cancelAiTask,
   createAiTask,
@@ -39,7 +40,6 @@ import {
   resumeAiTask,
   retryAiTask,
 } from "./student-ai-queue.ts";
-import { attachAiTaskMaterials } from "./student-ai-materials.ts";
 import {
   AI_DISPATCH_MAX_ATTEMPTS,
   AI_DISPATCH_PER_STUDENT_CONCURRENCY,
@@ -141,8 +141,10 @@ function taskStatus(db: Db, taskId: string): string {
 }
 
 function taskErrorText(db: Db, taskId: string): string | null {
-  return db.select().from(aiTasks).where(eq(aiTasks.id, taskId)).get()
-    ?.errorText ?? null;
+  return (
+    db.select().from(aiTasks).where(eq(aiTasks.id, taskId)).get()?.errorText ??
+    null
+  );
 }
 
 function assistantReplies(db: Db, taskId: string): string[] {
@@ -197,11 +199,13 @@ interface RecordedRequest {
   readonly at: number;
 }
 
-type FakeBehavior = (respond: (
-  status: number,
-  headers: Record<string, string>,
-  bodyText: string,
-) => void) => void | Promise<void>;
+type FakeBehavior = (
+  respond: (
+    status: number,
+    headers: Record<string, string>,
+    bodyText: string,
+  ) => void,
+) => void | Promise<void>;
 
 interface FakeProvider {
   readonly requests: RecordedRequest[];
@@ -209,7 +213,9 @@ interface FakeProvider {
   close(): Promise<void>;
 }
 
-async function startFakeProvider(behavior: FakeBehavior): Promise<FakeProvider> {
+async function startFakeProvider(
+  behavior: FakeBehavior,
+): Promise<FakeProvider> {
   const requests: RecordedRequest[] = [];
   const sockets = new Set<{ destroy: () => void }>();
   let closed = false;
@@ -275,6 +281,29 @@ const respondJson: FakeBehavior = (respond) => {
   respond(200, { "content-type": "application/json" }, okBodyText);
 };
 
+/**
+ * 挂起出站的 transport + 手动释放门。release 的目标经闭包赋值后从对象
+ * 方法内读取——TS 对「闭包内赋值的 let」在直线流里做窄化会把它收成
+ * never（option-call 报 TS2349），方法内读取保持声明类型。
+ */
+function heldTransportOf(): {
+  readonly transport: ProviderTransport;
+  /** 释放挂起的出站（返回 200 标准回复）；无挂起时 no-op */
+  readonly release: () => void;
+} {
+  let pending: ((guarded: GuardedResponse) => void) | null = null;
+  const transport: ProviderTransport = async () =>
+    new Promise<GuardedResponse>((resolve) => {
+      pending = resolve;
+    });
+  return {
+    transport,
+    release: () => {
+      pending?.({ status: 200, headers: {}, bodyText: okBodyText });
+    },
+  };
+}
+
 // ---------- 必测①主链路：真实 HTTP fake provider ----------
 
 describe("SAI-17 worker 主链路（真实 HTTP / 装配 / 队列）", () => {
@@ -336,8 +365,20 @@ describe("SAI-17 worker 主链路（真实 HTTP / 装配 / 队列）", () => {
       studentId: world.studentId,
       taskId,
       pages: [
-        { kind: "annotation", pageIndex: 0, pixelWidth: 320, pixelHeight: 200, png: pngA },
-        { kind: "draft", pageIndex: 0, pixelWidth: 320, pixelHeight: 200, png: pngB },
+        {
+          kind: "annotation",
+          pageIndex: 0,
+          pixelWidth: 320,
+          pixelHeight: 200,
+          png: pngA,
+        },
+        {
+          kind: "draft",
+          pageIndex: 0,
+          pixelWidth: 320,
+          pixelHeight: 200,
+          png: pngB,
+        },
       ],
     });
     const provider = await startFakeProvider(respondJson);
@@ -361,11 +402,15 @@ describe("SAI-17 worker 主链路（真实 HTTP / 装配 / 队列）", () => {
       expect(context.filter((p) => p.type === "image_url")).toEqual([
         {
           type: "image_url",
-          image_url: { url: `data:image/png;base64,${Buffer.from(pngA).toString("base64")}` },
+          image_url: {
+            url: `data:image/png;base64,${Buffer.from(pngA).toString("base64")}`,
+          },
         },
         {
           type: "image_url",
-          image_url: { url: `data:image/png;base64,${Buffer.from(pngB).toString("base64")}` },
+          image_url: {
+            url: `data:image/png;base64,${Buffer.from(pngB).toString("base64")}`,
+          },
         },
       ]);
     } finally {
@@ -380,7 +425,11 @@ describe("SAI-17 worker 主链路（真实 HTTP / 装配 / 队列）", () => {
     addInappConnection(db, world.studentId);
     const taskId = mkInappTask(db, world);
     const provider = await startFakeProvider((respond) => {
-      respond(200, { "content-type": "application/json" }, "<html>broken</html>");
+      respond(
+        200,
+        { "content-type": "application/json" },
+        "<html>broken</html>",
+      );
     });
     try {
       const summary = await runStudentAiDispatchOnce(db, {
@@ -439,7 +488,13 @@ describe("SAI-17 worker 主链路（真实 HTTP / 装配 / 队列）", () => {
       studentId: world.studentId,
       taskId,
       pages: [
-        { kind: "annotation", pageIndex: 0, pixelWidth: 320, pixelHeight: 200, png: makeNotePng(320, 200) },
+        {
+          kind: "annotation",
+          pageIndex: 0,
+          pixelWidth: 320,
+          pixelHeight: 200,
+          png: makeNotePng(320, 200),
+        },
       ],
     });
     const provider = await startFakeProvider(respondJson);
@@ -604,18 +659,11 @@ describe("SAI-17 worker 并发与写回 CAS", () => {
     const world = setupWorld(db);
     addInappConnection(db, world.studentId);
     const taskId = mkInappTask(db, world);
-    let releaseFirst: (() => void) | null = null;
+    const held = heldTransportOf();
     let firstCalls = 0;
-    const heldTransport: ProviderTransport = async () => {
+    const heldTransport: ProviderTransport = async (request) => {
       firstCalls += 1;
-      return new Promise<GuardedResponse>((resolve) => {
-        releaseFirst = () =>
-          resolve({
-            status: 200,
-            headers: {},
-            bodyText: okBodyText,
-          });
-      });
+      return held.transport(request);
     };
     const provider = await startFakeProvider(respondJson);
     try {
@@ -635,7 +683,7 @@ describe("SAI-17 worker 并发与写回 CAS", () => {
       });
       expect(secondSummary.dispatched).toBe(0);
       expect(provider.requests.length).toBe(0);
-      releaseFirst?.();
+      held.release();
       const firstSummary = await firstRun;
       expect(firstSummary.replied).toBe(1);
       expect(firstCalls).toBe(1);
@@ -652,12 +700,8 @@ describe("SAI-17 worker 并发与写回 CAS", () => {
     const world = setupWorld(db);
     addInappConnection(db, world.studentId);
     const taskId = mkInappTask(db, world);
-    let releaseFirst: (() => void) | null = null;
-    const heldTransport: ProviderTransport = async () =>
-      new Promise<GuardedResponse>((resolve) => {
-        releaseFirst = () =>
-          resolve({ status: 200, headers: {}, bodyText: okBodyText });
-      });
+    const held = heldTransportOf();
+    const heldTransport: ProviderTransport = held.transport;
     const firstRun = runStudentAiDispatchOnce(db, {
       dataDir,
       rootSecret: ROOT_SECRET,
@@ -674,9 +718,15 @@ describe("SAI-17 worker 并发与写回 CAS", () => {
       { now: new Date(T0 + 200_000) },
     );
     const provider = await startFakeProvider((respond) => {
-      respond(200, { "content-type": "application/json" }, JSON.stringify({
-        choices: [{ message: { role: "assistant", content: "SECOND-REPLY" } }],
-      }));
+      respond(
+        200,
+        { "content-type": "application/json" },
+        JSON.stringify({
+          choices: [
+            { message: { role: "assistant", content: "SECOND-REPLY" } },
+          ],
+        }),
+      );
     });
     try {
       await runStudentAiDispatchOnce(db, {
@@ -688,7 +738,7 @@ describe("SAI-17 worker 并发与写回 CAS", () => {
       expect(taskStatus(db, taskId)).toBe("replied");
       expect(assistantReplies(db, taskId)).toEqual(["SECOND-REPLY"]);
       // 旧代（generation=1）迟到回信到达：只记 late_reply 事实，不覆盖
-      releaseFirst?.();
+      held.release();
       await firstRun;
       expect(assistantReplies(db, taskId)).toEqual(["SECOND-REPLY"]);
       const lateFacts = db
@@ -757,7 +807,9 @@ describe("SAI-17 worker 并发与写回 CAS", () => {
       });
       await until(() => provider.requests.length >= 3, 3000);
       await new Promise((resolve) => setTimeout(resolve, 200));
-      expect(provider.requests.length).toBe(AI_DISPATCH_PER_STUDENT_CONCURRENCY);
+      expect(provider.requests.length).toBe(
+        AI_DISPATCH_PER_STUDENT_CONCURRENCY,
+      );
       // 关停 fake provider 挂起响应 → 三笔按网络失败落 failed，其余仍 created
       await provider.close();
       await run;
@@ -880,13 +932,23 @@ describe("SAI-17 worker 生命周期与恢复", () => {
       const afterFirst = provider.requests.length;
       // 人为制造一行 stale dispatching（重启前崩溃窗口）
       insertResponse(db, world.attemptId, "q-stale");
-      const staleId = mkInappTask(db, world, { at: 2000, questionId: "q-stale" });
+      const staleId = mkInappTask(db, world, {
+        at: 2000,
+        questionId: "q-stale",
+      });
       db.update(aiTasks)
-        .set({ status: "dispatching", generation: 1, updatedAt: new Date(T0).toISOString() })
+        .set({
+          status: "dispatching",
+          generation: 1,
+          updatedAt: new Date(T0).toISOString(),
+        })
         .where(eq(aiTasks.id, staleId))
         .run();
       insertResponse(db, world.attemptId, "q-fresh");
-      const freshId = mkInappTask(db, world, { at: 3000, questionId: "q-fresh" });
+      const freshId = mkInappTask(db, world, {
+        at: 3000,
+        questionId: "q-fresh",
+      });
       const summary = await runStudentAiDispatchOnce(db, {
         dataDir,
         rootSecret: ROOT_SECRET,
@@ -974,7 +1036,8 @@ describe("SAI-17 worker 调度与阻塞", () => {
     let release: (() => void) | null = null;
     const heldTransport: ProviderTransport = async () =>
       new Promise<GuardedResponse>((resolve) => {
-        release = () => resolve({ status: 200, headers: {}, bodyText: okBodyText });
+        release = () =>
+          resolve({ status: 200, headers: {}, bodyText: okBodyText });
       });
     const run = runStudentAiDispatchOnce(db, {
       dataDir,
