@@ -288,9 +288,16 @@ function expectHttpError(
   throw new Error(`期望抛出 HttpError ${status} ${code}，实际未抛出`);
 }
 
-/** 断言 object 序列化后的全部文本不含任何哨兵(泄露断言单点) */
+/**
+ * 断言序列化后的全部文本不含任何哨兵(泄露断言单点)。Error 的 message 是
+ * 不可枚举属性,JSON.stringify 会丢弃——错误消息面必须显式并入扫描,否则
+ * 「错误消息不含哨兵」断言空转。
+ */
 function expectNoSentinels(value: unknown, sentinels: readonly string[]): void {
-  const text = JSON.stringify(value);
+  const text =
+    value instanceof Error
+      ? `${JSON.stringify(value)} ${value.message}`
+      : JSON.stringify(value);
   for (const sentinel of sentinels) {
     expect(text, `哨兵不应出现:${sentinel}`).not.toContain(sentinel);
   }
