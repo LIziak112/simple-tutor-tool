@@ -46,6 +46,27 @@ function apiOkExtend<T extends z.ZodType>(dataSchema: T) {
   });
 }
 
+/** 学生问题/追问文本字段：trim 后 1–2000 字符（§9；UTF-8 字节数服务端复核） */
+function questionField(label: string) {
+  return z
+    .string()
+    .trim()
+    .min(1, `${label}不能为空`)
+    .max(AI_QUESTION_MAX_CHARS, `${label}最多 ${AI_QUESTION_MAX_CHARS} 个字符`);
+}
+
+/** 票据/链接有效期字段：1–72 整数小时（§9） */
+function shareValidHoursField() {
+  return z
+    .number()
+    .int()
+    .min(1, "有效期至少 1 小时")
+    .max(
+      AI_SHARE_MAX_VALID_HOURS,
+      `有效期最多 ${AI_SHARE_MAX_VALID_HOURS} 小时`,
+    );
+}
+
 // ---------- GET /api/student/ai/status ----------
 
 /** 状态查询：作答 + 题目定位（不能只传 questionId） */
@@ -93,11 +114,7 @@ export const aiTaskCreateRequestSchema = z
   .object({
     attemptId: z.uuid(),
     questionId: z.string().min(1),
-    question: z
-      .string()
-      .trim()
-      .min(1, "问题不能为空")
-      .max(AI_QUESTION_MAX_CHARS, `问题最多 ${AI_QUESTION_MAX_CHARS} 个字符`),
+    question: questionField("问题"),
     channel: aiChannelSchema,
     materials: aiMaterialPreferenceSchema,
     /** 客户端幂等键（uuid 或等价不透明串；服务端唯一索引） */
@@ -118,11 +135,7 @@ export const aiTaskOkSchema = apiOkExtend(aiTaskPublicSchema);
  */
 export const aiTaskFollowupRequestSchema = z
   .object({
-    question: z
-      .string()
-      .trim()
-      .min(1, "追问不能为空")
-      .max(AI_QUESTION_MAX_CHARS, `追问最多 ${AI_QUESTION_MAX_CHARS} 个字符`),
+    question: questionField("追问"),
     /** 追问幂等键（可选；网络重试不产生重复追问） */
     mutationId: z.string().min(1).optional(),
   })
@@ -144,15 +157,7 @@ export const aiTaskFollowupOkSchema = apiOkExtend(aiTaskFollowupDataSchema);
 /** 票据生成请求：有效期默认 24h、上限 72h（§9） */
 export const aiTaskShareRequestSchema = z
   .object({
-    validHours: z
-      .number()
-      .int()
-      .min(1, "票据有效期至少 1 小时")
-      .max(
-        AI_SHARE_MAX_VALID_HOURS,
-        `票据有效期最多 ${AI_SHARE_MAX_VALID_HOURS} 小时`,
-      )
-      .default(AI_SHARE_DEFAULT_VALID_HOURS),
+    validHours: shareValidHoursField().default(AI_SHARE_DEFAULT_VALID_HOURS),
   })
   .strict();
 export type AiTaskShareRequest = z.infer<typeof aiTaskShareRequestSchema>;
@@ -208,14 +213,14 @@ export const aiTaskDetailOkSchema = apiOkExtend(aiTaskDetailDataSchema);
 
 // ---------- GET /api/student/ai/queue-summary ----------
 
-/** 全局队列摘要：待领取/处理中/未读三计数含义分开（§6.1） */
+/** 全局队列摘要：待领取/处理中/未读三计数含义分开（分桶单源 AI_TASK_QUEUE_BUCKETS） */
 export const aiQueueSummaryDataSchema = z
   .object({
-    /** 待领取（created+mcp）与暂停待继续 */
+    /** 待领取（pending 桶：created） */
     pendingCount: z.number().int().min(0),
-    /** 处理中（dispatching+claimed+uncertain） */
+    /** 处理中（processing 桶：dispatching/claimed/uncertain） */
     processingCount: z.number().int().min(0),
-    /** 已回信未读（replied 且 replyDeliveredAt 为空） */
+    /** 已回信未读（replied 且 replyDeliveredAt 为空，交付态推导非状态分桶） */
     unreadReplyCount: z.number().int().min(0),
   })
   .strict();
@@ -240,6 +245,15 @@ export const aiMaterialUploadReceiptOkSchema = apiOkExtend(
 
 // ---------- /api/student/ai/connections ----------
 
+/** mcp 成员（创建与更新共用同一形态：token 服务端生成，无凭证入参） */
+const aiConnectionMcpMemberSchema = z
+  .object({
+    channel: z.literal("mcp"),
+    /** token 由服务端生成，明文只在创建响应显示一次 */
+    isDefault: z.boolean().optional(),
+  })
+  .strict();
+
 /** 连接创建请求（inapp：明文 Key 只出现在写请求；mcp/link：无凭证入参） */
 export const aiConnectionCreateRequestSchema = z.discriminatedUnion("channel", [
   z
@@ -253,22 +267,11 @@ export const aiConnectionCreateRequestSchema = z.discriminatedUnion("channel", [
       isDefault: z.boolean().optional(),
     })
     .strict(),
-  z
-    .object({
-      channel: z.literal("mcp"),
-      /** token 由服务端生成，明文只在创建响应显示一次 */
-      isDefault: z.boolean().optional(),
-    })
-    .strict(),
+  aiConnectionMcpMemberSchema,
   z
     .object({
       channel: z.literal("link"),
-      defaultValidHours: z
-        .number()
-        .int()
-        .min(1)
-        .max(AI_SHARE_MAX_VALID_HOURS)
-        .optional(),
+      defaultValidHours: shareValidHoursField().optional(),
       isDefault: z.boolean().optional(),
     })
     .strict(),
@@ -289,21 +292,11 @@ export const aiConnectionPatchRequestSchema = z.discriminatedUnion("channel", [
       isDefault: z.boolean().optional(),
     })
     .strict(),
-  z
-    .object({
-      channel: z.literal("mcp"),
-      isDefault: z.boolean().optional(),
-    })
-    .strict(),
+  aiConnectionMcpMemberSchema,
   z
     .object({
       channel: z.literal("link"),
-      defaultValidHours: z
-        .number()
-        .int()
-        .min(1)
-        .max(AI_SHARE_MAX_VALID_HOURS)
-        .optional(),
+      defaultValidHours: shareValidHoursField().optional(),
       isDefault: z.boolean().optional(),
     })
     .strict(),
@@ -390,7 +383,7 @@ export type AiMcpSubmitReplyRequest = z.infer<
 
 // ---------- GET /api/public/ai/share/:ticket（无会话，票据即授权） ----------
 
-/** 票据读响应 data 即分享视图（单快照；错误码 AI_SHARE_EXPIRED/REVOKED/POLICY_DISABLED） */
+/** 票据读响应 data 即分享视图本体（与领域层 aiShareViewSchema 同源，非复制） */
 export const aiShareViewDataSchema = aiShareViewSchema;
 export type AiShareViewData = z.infer<typeof aiShareViewDataSchema>;
 export const aiShareOkSchema = apiOkExtend(aiShareViewDataSchema);
@@ -416,11 +409,7 @@ export const aiBatchReviewCreateRequestSchema = z
         `单次批量最多 ${AI_BATCH_MAX_QUESTIONS} 道题`,
       ),
     channel: aiChannelSchema,
-    question: z
-      .string()
-      .trim()
-      .min(1, "复盘诉求不能为空")
-      .max(AI_QUESTION_MAX_CHARS),
+    question: questionField("复盘诉求"),
   })
   .strict();
 export type AiBatchReviewCreateRequest = z.infer<

@@ -4,11 +4,12 @@ import {
   AI_QUESTION_MAX_CHARS,
   AI_REPLY_MAX_CHARS,
   AI_SHARE_DEFAULT_VALID_HOURS,
-  AI_SHARE_MAX_VALID_HOURS,
 } from "./student-ai";
 import {
   aiBatchReviewCreateRequestSchema,
   aiConnectionCreateDataSchema,
+  aiConnectionCreateRequestSchema,
+  aiConnectionPatchRequestSchema,
   aiMaterialUploadReceiptDataSchema,
   aiMcpSubmitReplyRequestSchema,
   aiStatusQuerySchema,
@@ -267,7 +268,52 @@ it("连接创建响应：凭证只按首次明文形态出现且可空", () => {
   ).toBe(false);
 });
 
-it("票据有效期选择范围与上限常量一致", () => {
-  expect(AI_SHARE_DEFAULT_VALID_HOURS).toBe(24);
-  expect(AI_SHARE_MAX_VALID_HOURS).toBe(72);
+it("连接写请求：inapp 明文 Key 只进写请求，mcp/link 无凭证入参，strict 拒绝越权", () => {
+  // inapp 创建：明文 Key 是写请求唯一合法出现位置（响应只回指纹）
+  const created = aiConnectionCreateRequestSchema.parse({
+    channel: "inapp",
+    baseUrl: "https://api.example.com/v1",
+    model: "glm-4.7",
+    apiKey: "sk-test",
+  });
+  expect(created.channel === "inapp" && created.apiKey).toBe("sk-test");
+  // mcp/link 创建：token 服务端生成，无凭证入参
+  expect(
+    aiConnectionCreateRequestSchema.safeParse({ channel: "mcp" }).success,
+  ).toBe(true);
+  expect(
+    aiConnectionCreateRequestSchema.safeParse({
+      channel: "link",
+      defaultValidHours: 48,
+    }).success,
+  ).toBe(true);
+  // 创建请求不接受指纹/密文等响应侧字段
+  expect(
+    aiConnectionCreateRequestSchema.safeParse({
+      channel: "inapp",
+      baseUrl: "https://api.example.com/v1",
+      model: "glm-4.7",
+      apiKey: "sk-test",
+      keyFingerprint: "ab12cd34",
+    }).success,
+  ).toBe(false);
+  // patch：全部可选（缺省 = 不改）；不传 apiKey = 保持原 Key；越界有效期拒绝
+  expect(
+    aiConnectionPatchRequestSchema.safeParse({
+      channel: "inapp",
+      model: "glm-5",
+    }).success,
+  ).toBe(true);
+  expect(
+    aiConnectionPatchRequestSchema.safeParse({
+      channel: "link",
+      defaultValidHours: 73,
+    }).success,
+  ).toBe(false);
+  expect(
+    aiConnectionPatchRequestSchema.safeParse({
+      channel: "mcp",
+      token: "plaintext",
+    }).success,
+  ).toBe(false);
 });

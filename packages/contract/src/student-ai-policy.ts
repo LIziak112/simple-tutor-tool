@@ -38,11 +38,10 @@ export const DEFAULT_AI_TEACHER_MODE: AiTeachingMode = "open_study";
 /**
  * 配置输入模式：三显式值 + inherit（仅用于学生/作业覆盖的请求与存储回显）。
  * 继承不能序列化为"开放"——否则无法区分默认生效与显式覆盖（需求 §3.1）。
+ * 三显式值从 aiTeachingModeSchema 单源派生，不另抄一份字面量。
  */
 export const aiPolicyInheritableModeSchema = z.enum([
-  "open_study",
-  "guided_only",
-  "post_submit_only",
+  ...aiTeachingModeSchema.options,
   "inherit",
 ]);
 export type AiPolicyInheritableMode = z.infer<
@@ -196,7 +195,12 @@ export const AI_QUICK_BUTTON_NAME_MAX_CHARS = 16;
 /** 按钮提示词长度上限（§9：500 字符） */
 export const AI_QUICK_BUTTON_PROMPT_MAX_CHARS = 500;
 
-/** 附件偏好/材料选择：圈画、草稿、正式手写三类独立勾选（需求 §4.2） */
+/**
+ * 附件偏好/材料选择：圈画、草稿、正式手写三类独立勾选（需求 §4.2）。
+ * 三个布尔键与领域层 aiMaterialKindSchema 的 annotation|draft|formal_ink
+ * 一一对应（student-ai.ts）；因 student-ai.ts 反向引用本文件的模式枚举，
+ * 此处不 import 该枚举以免循环，新增材料类别时两处必须同步。
+ */
 export const aiMaterialPreferenceSchema = z
   .object({
     annotation: z.boolean(),

@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import type { z } from "zod";
 import {
   AI_PROMPT_TEMPLATE_MAX_CHARS,
   AI_QUICK_BUTTON_MAX_COUNT,
@@ -27,6 +28,19 @@ import {
 
 /** 取一个合法按钮做变异基底（不直接改 DEFAULT_QUICK_BUTTONS 常量） */
 const baseButton = { ...DEFAULT_QUICK_BUTTONS[0] };
+
+/** 断言输入被 schema 拒绝且首条校验信息含指定片段（中文报错口径） */
+function expectRejectsWith<T extends z.ZodType>(
+  schema: T,
+  input: unknown,
+  fragment: string,
+): void {
+  const result = schema.safeParse(input);
+  expect(result.success).toBe(false);
+  if (!result.success) {
+    expect(result.error.issues[0]?.message).toContain(fragment);
+  }
+}
 
 it("新账号/无配置默认开放伴学，继承与显式开放在配置空间可区分", () => {
   expect(DEFAULT_AI_TEACHER_MODE).toBe("open_study");
@@ -97,27 +111,21 @@ it("空白名称、空模板与超限内容给出明确中文校验失败", () =
   expect(AI_PROMPT_TEMPLATE_MAX_CHARS).toBe(8000);
   expect(AI_QUICK_BUTTON_MAX_COUNT).toBe(12);
 
-  const blankName = studentQuickButtonsPutRequestSchema.safeParse({
-    buttons: [{ ...baseButton, name: "  " }],
-  });
-  expect(blankName.success).toBe(false);
-  if (!blankName.success) {
-    expect(blankName.error.issues[0]?.message).toContain("名称");
-  }
-  const blankPrompt = studentQuickButtonsPutRequestSchema.safeParse({
-    buttons: [{ ...baseButton, prompt: "" }],
-  });
-  expect(blankPrompt.success).toBe(false);
-  if (!blankPrompt.success) {
-    expect(blankPrompt.error.issues[0]?.message).toContain("提示词");
-  }
-  const blankTemplate = aiTeacherSettingsPutRequestSchema.safeParse({
-    promptsGuided: "   ",
-  });
-  expect(blankTemplate.success).toBe(false);
-  if (!blankTemplate.success) {
-    expect(blankTemplate.error.issues[0]?.message).toContain("模板");
-  }
+  expectRejectsWith(
+    studentQuickButtonsPutRequestSchema,
+    { buttons: [{ ...baseButton, name: "  " }] },
+    "名称",
+  );
+  expectRejectsWith(
+    studentQuickButtonsPutRequestSchema,
+    { buttons: [{ ...baseButton, prompt: "" }] },
+    "提示词",
+  );
+  expectRejectsWith(
+    aiTeacherSettingsPutRequestSchema,
+    { promptsGuided: "   " },
+    "模板",
+  );
   // 超限：按钮名 17 字、按钮提示词 501 字、模板 8001 字
   expect(
     studentQuickButtonsPutRequestSchema.safeParse({
@@ -143,24 +151,20 @@ it("presets 全部删除合法，契约不强制恢复四个默认按钮", () =>
 });
 
 it("同一 ID 重复与排序冲突不能留下不确定列表", () => {
-  const dupId = studentQuickButtonsPutRequestSchema.safeParse({
-    buttons: [baseButton, { ...baseButton }],
-  });
-  expect(dupId.success).toBe(false);
-  if (!dupId.success) {
-    expect(dupId.error.issues[0]?.message).toContain("重复");
-  }
+  expectRejectsWith(
+    studentQuickButtonsPutRequestSchema,
+    { buttons: [baseButton, { ...baseButton }] },
+    "重复",
+  );
   const other = {
     ...DEFAULT_QUICK_BUTTONS[1],
     orderIndex: baseButton.orderIndex,
   };
-  const dupOrder = studentQuickButtonsPutRequestSchema.safeParse({
-    buttons: [baseButton, other],
-  });
-  expect(dupOrder.success).toBe(false);
-  if (!dupOrder.success) {
-    expect(dupOrder.error.issues[0]?.message).toContain("顺序");
-  }
+  expectRejectsWith(
+    studentQuickButtonsPutRequestSchema,
+    { buttons: [baseButton, other] },
+    "顺序",
+  );
   // 超过 12 个按钮拒绝
   const tooMany = Array.from({ length: 13 }, (_, i) => ({
     ...baseButton,

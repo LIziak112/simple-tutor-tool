@@ -94,6 +94,21 @@ export const AI_TASK_ALLOWED_ACTIONS: Readonly<
   cancelled: [],
 };
 
+/**
+ * 队列摘要分桶（GET /ai/queue-summary 三计数的语义单源，需求 §6.1/§7.1）：
+ * - pending：待领取（created，含 MCP 待领取与页内待发送）；
+ * - processing：处理中（dispatching/claimed/uncertain）；
+ * - 未读不是状态分桶：replied 且 replyDeliveredAt 为空（交付态推导）。
+ * paused/failed/cancelled 不进顶栏待处理计数（队列页单独分组查看）。
+ */
+export const AI_TASK_QUEUE_BUCKETS: Readonly<{
+  pending: readonly AiTaskStatus[];
+  processing: readonly AiTaskStatus[];
+}> = {
+  pending: ["created"],
+  processing: ["dispatching", "claimed", "uncertain"],
+};
+
 // ---------- 上下文快照（内部视图：受控 AI 出口合法携带答案解析） ----------
 
 /** 参考内容缺失说明（需求 §4.1 三缺失态；两者齐全为 null） */
