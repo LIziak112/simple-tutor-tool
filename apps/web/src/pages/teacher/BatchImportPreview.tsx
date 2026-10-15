@@ -671,9 +671,12 @@ function CommitStateBadge({ state }: { state: FileCommitState }) {
   }
 }
 
-/** 内容列 → 「文件 → 存储名」实际名称（方案 §5；无动作 = 空文档） */
+/** 内容列 → 「文件 → 存储名」实际名称（方案 §5；无动作 = 空文档；lesson 只报讲练页名） */
 function describeSummary(file: ImportBatchFilePreview): string {
-  const names = describeImportNames(file.preview.actions);
+  const names = describeImportNames(
+    file.preview.actions,
+    file.preview.summary.kind ?? "practice",
+  );
   const parts: string[] = [];
   if (names.lecture !== null) parts.push(names.lecture);
   if (names.unit !== null) {

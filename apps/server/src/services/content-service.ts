@@ -159,6 +159,8 @@ export function summarizeParsed(parsed: ParsedDocument): ImportSummary {
     }
   }
   return {
+    // 文档形态（2026-10-15）：kind=lesson 时前端按「讲练页一件事」呈现
+    kind: parsed.frontmatter?.kind ?? "practice",
     unitCount: parsed.units.length,
     lectureCount: parsed.lectures.length,
     questionCount,
@@ -859,6 +861,7 @@ export function commitImport(
     //      sourcePath/batchId/folderId）----
     const report: ImportCommitData = {
       importId,
+      kind: parsed.frontmatter?.kind ?? "practice",
       courseId: input.courseId ?? input.addToCourse?.courseId ?? null,
       folderId,
       units: unitReports,
