@@ -16,6 +16,7 @@ import {
   createOngoingQuestionImages,
   loadImage,
   loadOngoingPaper,
+  type OngoingComposedPage,
   type OngoingPaper,
 } from "./ongoing-question-export";
 
@@ -156,7 +157,11 @@ export async function captureAiQuestionMaterials(
     sameSelection(previous.selection, selection)
   )
     return previous;
-  const scope = { attemptId, questionId: question.id, phase: "scratch" as const };
+  const scope = {
+    attemptId,
+    questionId: question.id,
+    phase: "scratch" as const,
+  };
   // 2. 选定题收笔 + 等待该题本机落盘（保存失败即停，绝不假成功）。
   try {
     await input.flush(question.id);
@@ -198,7 +203,10 @@ export async function captureAiQuestionMaterials(
     );
   const pages: AiCapturedPage[] = [];
   // 5a. 圈画：原底图配套合成（题面 + 标画同域坐标；收起仍可从已保存底图取）。
-  if (selection.annotation && (annotationRecord?.doc?.strokes.length ?? 0) > 0) {
+  if (
+    selection.annotation &&
+    (annotationRecord?.doc?.strokes.length ?? 0) > 0
+  ) {
     let blob: Blob;
     try {
       blob = await exportQuestionAnnotationImage(
@@ -269,7 +277,7 @@ export async function captureAiQuestionMaterials(
         );
       }
       guard();
-      let composed;
+      let composed: OngoingComposedPage[];
       try {
         composed = await createOngoingQuestionImages(
           questionBlob,

@@ -131,7 +131,11 @@ export async function prepareQuestionAnnotationBase(
     // 状态回填之后再次核对，不能使用点击前已经失效的题面快照。
     const candidate =
       possible &&
-      (await questionSurfaceMatchesLayout(question, surfaceElement, possible.layout))
+      (await questionSurfaceMatchesLayout(
+        question,
+        surfaceElement,
+        possible.layout,
+      ))
         ? possible
         : null;
     guard();

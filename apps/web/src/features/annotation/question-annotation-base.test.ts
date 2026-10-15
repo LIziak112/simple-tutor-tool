@@ -300,9 +300,7 @@ it("surface=null：云端 ready 底图下载落盘后可用，不依赖活题面
     (await prepareQuestionAnnotationBase(session, scope, question, null)).kind,
   ).toBe("surface");
   expect(renderQuestionBaseImage).not.toHaveBeenCalled();
-  expect((await getAnnotationRecord(session, scope))?.localBase?.png).toBe(
-    png,
-  );
+  expect((await getAnnotationRecord(session, scope))?.localBase?.png).toBe(png);
 });
 
 it("surface=null：无任何缓存底图需新渲染时明确失败，不当空稿", async () => {

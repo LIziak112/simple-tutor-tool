@@ -3,8 +3,8 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { docOf, stroke } from "@/features/notes/note-fixtures";
 import {
   AiCaptureError,
-  captureAiQuestionMaterials,
   type AiCaptureInput,
+  captureAiQuestionMaterials,
 } from "./ai-material-capture";
 
 /** 会话标识可变：换账号/切题测试在中途翻转 */
@@ -65,10 +65,8 @@ vi.mock("@/features/annotation/question-base-image", () => ({
 }));
 vi.mock("@/features/attempt/attempt-material-recovery", () => ({
   getAttemptRecoveryState: mocks.recovery,
-  attemptMaterialsEditable: (s: {
-    state: string;
-    verified?: boolean;
-  }) => s.state === "ready" || (s.state === "failed" && s.verified === true),
+  attemptMaterialsEditable: (s: { state: string; verified?: boolean }) =>
+    s.state === "ready" || (s.state === "failed" && s.verified === true),
 }));
 vi.mock("@/features/attempt/draft-store", () => ({
   draftStore: { loadDraft: mocks.draft, peekAnswerConflicts: mocks.conflicts },
@@ -151,7 +149,11 @@ const withDraftDoc = (strokes: number) =>
 
 beforeEach(() => {
   vi.resetAllMocks();
-  state.noteSession = { origin: "https://test", studentId: "student", epoch: 1 };
+  state.noteSession = {
+    origin: "https://test",
+    studentId: "student",
+    epoch: 1,
+  };
   state.annotationSession = {
     origin: "https://test",
     studentId: "student",
@@ -367,7 +369,9 @@ it("风险5：长稿多页与圈画同选时页序/类别不混；每页携带�
   vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:fixed");
   vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
   const pageBlobs = [1, 2, 3].map((n) => new Blob([`page-${n}`]));
-  mocks.png.mockImplementation(async () => pageBlobs.shift() ?? new Blob(["x"]));
+  mocks.png.mockImplementation(
+    async () => pageBlobs.shift() ?? new Blob(["x"]),
+  );
   mocks.local.mockResolvedValue(withDraftDoc(1));
   mocks.renderNote.mockResolvedValue([
     { blob: new Blob(["d1"]) },
@@ -462,7 +466,11 @@ it("风险6：采集中换账号/切题——迟到图片丢弃，不能进入�
     denied: null,
   });
   mocks.exportAnnotation.mockImplementation(async () => {
-    state.noteSession = { origin: "https://test", studentId: "other", epoch: 2 };
+    state.noteSession = {
+      origin: "https://test",
+      studentId: "other",
+      epoch: 2,
+    };
     return new Blob(["late"]);
   });
   const failure = await captureAiQuestionMaterials(
@@ -473,7 +481,11 @@ it("风险6：采集中换账号/切题——迟到图片丢弃，不能进入�
   expect(failure).toBeInstanceOf(AiCaptureError);
   expect((failure as AiCaptureError).stage).toBe("identity");
   // 草稿分页渲染途中切题：已绘页面不能拼成快照
-  state.noteSession = { origin: "https://test", studentId: "student", epoch: 1 };
+  state.noteSession = {
+    origin: "https://test",
+    studentId: "student",
+    epoch: 1,
+  };
   installCanvasStub();
   vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:fixed");
   vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
