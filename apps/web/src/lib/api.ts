@@ -131,6 +131,8 @@ import {
   type StudentLoginRequest,
   type StudentMeData,
   type StudentNotebookData,
+  type StudentQuickButtonsData,
+  type StudentQuickButtonsPutRequest,
   type StudentRecordsData,
   type StudentResetLinkData,
   type StudentResetPasswordData,
@@ -2511,9 +2513,7 @@ export function fetchTeacherAiSettingsApi(): Promise<AiTeacherSettingsData> {
 export function saveTeacherAiSettingsApi(
   request: AiTeacherSettingsPutRequest,
 ): Promise<AiTeacherSettingsData> {
-  return callApi(() =>
-    api.api.teacher.ai.settings.$put({ json: request }),
-  );
+  return callApi(() => api.api.teacher.ai.settings.$put({ json: request }));
 }
 
 /** 读学生 / 作业的 AI 策略覆盖（含保存后即刻有效裁决预览） */
@@ -2544,6 +2544,25 @@ export function putAiPolicyOverrideApi(
       ? api.api.teacher.students[":id"]["ai-policy"].$put(args)
       : api.api.teacher.assignments[":id"]["ai-policy"].$put(args),
   );
+}
+
+// ---------- 学生端快捷按钮（SAI-08；路由 student-ai.ts，契约 student-ai-policy.ts） ----------
+
+/** 读本人快捷按钮整组（无配置 → 契约默认四项 + 未设置锚点；删光 → 空组不回填） */
+export function fetchStudentQuickButtonsApi(): Promise<StudentQuickButtonsData> {
+  return callApi(() => api.api.student.ai["quick-buttons"].$get());
+}
+
+/**
+ * 整组替换本人快捷按钮（含空组 = 删光）。baseUpdatedAt 过期 → 409
+ * AI_SETTINGS_STALE（服务端保留最后成功值，本地编辑不自动覆盖）。
+ */
+export function saveStudentQuickButtonsApi(
+  request: StudentQuickButtonsPutRequest,
+): Promise<StudentQuickButtonsData> {
+  // json 独立变量：hc 覆盖 PUT 的 json 槽惯例（同 putAiPolicyOverride）
+  const args = { json: request };
+  return callApi(() => api.api.student.ai["quick-buttons"].$put(args));
 }
 
 // ---------- 学情报告（T4.6 接口；T4.7 画像页报告区消费，D24） ----------
