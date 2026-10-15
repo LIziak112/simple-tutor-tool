@@ -1,6 +1,7 @@
 import type { StudentAnswer } from "@tutor/contract";
 import {
   createContext,
+  type ReactNode,
   type RefObject,
   useCallback,
   useContext,
@@ -356,8 +357,81 @@ export function useDraftSync(
  * 答题页提供；题卡单测无 Provider 时为 null（no-op，不影响 T2.8 行为）。
  */
 export const DraftSyncContext = createContext<DraftSyncApi | null>(null);
+type DraftSyncActions = Pick<
+  DraftSyncApi,
+  | "noteLocalWrite"
+  | "noteAnswerSynced"
+  | "noteInkSynced"
+  | "noteSyncFailed"
+  | "noteDenied"
+  | "syncNow"
+>;
+const FullSyncContext = createContext<DraftSyncApi | null>(null);
+const ActionsContext = createContext<DraftSyncActions | null>(null);
+const RecoveryContext = createContext<AttemptRecoveryState | null | undefined>(
+  undefined,
+);
+
+/** 新接线细分订阅；保留旧 Provider 与完整 hook 的兼容入口。 */
+export function DraftSyncProvider({
+  value,
+  children,
+}: {
+  value: DraftSyncApi;
+  children: ReactNode;
+}) {
+  const {
+    noteLocalWrite,
+    noteAnswerSynced,
+    noteInkSynced,
+    noteSyncFailed,
+    noteDenied,
+    syncNow,
+  } = value;
+  const actions = useMemo(
+    () => ({
+      noteLocalWrite,
+      noteAnswerSynced,
+      noteInkSynced,
+      noteSyncFailed,
+      noteDenied,
+      syncNow,
+    }),
+    [
+      noteLocalWrite,
+      noteAnswerSynced,
+      noteInkSynced,
+      noteSyncFailed,
+      noteDenied,
+      syncNow,
+    ],
+  );
+  return (
+    <FullSyncContext.Provider value={value}>
+      <ActionsContext.Provider value={actions}>
+        <RecoveryContext.Provider value={value.recovery ?? null}>
+          {children}
+        </RecoveryContext.Provider>
+      </ActionsContext.Provider>
+    </FullSyncContext.Provider>
+  );
+}
+
+export function useDraftSyncRecovery(): AttemptRecoveryState | undefined {
+  const recovery = useContext(RecoveryContext);
+  const legacy = useContext(DraftSyncContext);
+  return recovery === undefined ? legacy?.recovery : (recovery ?? undefined);
+}
+
+export function useDraftSyncActions(): DraftSyncActions | null {
+  const actions = useContext(ActionsContext);
+  const legacy = useContext(DraftSyncContext);
+  return actions ?? legacy;
+}
 
 /** 取当前草稿同步 API（无 Provider 返回 null，调用方需空值保护） */
 export function useDraftSyncContext(): DraftSyncApi | null {
-  return useContext(DraftSyncContext);
+  const current = useContext(FullSyncContext);
+  const legacy = useContext(DraftSyncContext);
+  return current ?? legacy;
 }

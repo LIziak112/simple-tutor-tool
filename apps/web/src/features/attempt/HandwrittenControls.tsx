@@ -32,7 +32,7 @@ import { useAttemptEditor } from "./AttemptEditorContext";
 import { digestOf, mergeInkDocs } from "./draft-merge";
 import { draftStore, getDraftPersistenceState } from "./draft-store";
 import { FinalAnswerInput } from "./FinalAnswerInput";
-import { useDraftSyncContext } from "./use-draft-sync";
+import { useDraftSyncActions } from "./use-draft-sync";
 import {
   type InkUploadController,
   isInkDocEmpty,
@@ -151,7 +151,7 @@ export function HandwrittenControls({
   /** 页内引擎与全屏引擎的 ref（上传导 PNG 时取当前激活的那个） */
   const pageEngineRef = useRef<InkEngine | null>(null);
   /** 草稿同步联动（T2.9；题卡单测无 Provider 时为 null，各回调空值保护） */
-  const draftSync = useDraftSyncContext();
+  const draftSync = useDraftSyncActions();
   /** 联动对象存 ref：状态对象每次渲染都是新引用，挂载合并 effect 与
    *  handleDocChange 不因引用变化重建/重跑 */
   const draftSyncRef = useRef(draftSync);

@@ -18,7 +18,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useAttemptEditor } from "@/features/attempt/AttemptEditorContext";
 import { attemptMaterialsEditable } from "@/features/attempt/attempt-material-recovery";
-import { useDraftSyncContext } from "@/features/attempt/use-draft-sync";
+import { useDraftSyncRecovery } from "@/features/attempt/use-draft-sync";
 import { canvasToPngBlob } from "@/features/ink/engine/canvas-png";
 import type { InkPenColor, InkPenSize } from "@/features/ink/engine/index";
 import { SessionPrefToggleButton } from "@/features/ink/InkPad";
@@ -27,6 +27,7 @@ import {
   useSessionInputPreference,
 } from "@/features/ink/input-preference";
 import { PAPER_KEEPALIVE_MS } from "@/features/ink/use-retained-paper";
+import { measureStage } from "@/lib/performance-stages";
 import {
   getAnnotationRecord,
   settleAnnotationRecordPersistence,
@@ -38,6 +39,7 @@ import {
 } from "./annotation-surface";
 import { prepareQuestionAnnotationBase } from "./question-annotation-base";
 import { questionSurfaceMatchesLayout } from "./question-base-image";
+import { scheduleQuestionBasePrewarm } from "./schedule-question-base-prewarm";
 import {
   useAnnotationRecord,
   useAnnotationSessionRef,
@@ -60,7 +62,7 @@ export const QuestionAnnotationOverlay = forwardRef<
   }
 >(({ attemptId, question, label, children, onLegacy, hidden = false }, ref) => {
   const editor = useAttemptEditor(question.id);
-  const recovery = useDraftSyncContext()?.recovery;
+  const recovery = useDraftSyncRecovery();
   const inputPreference = useSessionInputPreference();
   const session = useAnnotationSessionRef();
   const record = useAnnotationRecord(attemptId, question.id);
@@ -98,6 +100,8 @@ export const QuestionAnnotationOverlay = forwardRef<
     phase: "scratch" as const,
   };
 
+  const getActiveEditor = editor?.getActive;
+  const getPaperEditor = editor?.getPaper;
   useEffect(() => {
     if (session)
       void getAnnotationRecord(session, {
@@ -124,6 +128,41 @@ export const QuestionAnnotationOverlay = forwardRef<
         throw new Error(saved.localError ?? "本机标画未保存");
     }
   }, [session, attemptId, question.id]);
+
+  useEffect(() => {
+    const element = root.current?.querySelector<HTMLElement>(
+      '[data-slot="question-surface"]',
+    );
+    if (
+      !session ||
+      !getActiveEditor ||
+      !getPaperEditor ||
+      !element ||
+      hidden ||
+      record?.localBase ||
+      record?.base ||
+      !recovery ||
+      !attemptMaterialsEditable(recovery)
+    )
+      return;
+    return scheduleQuestionBasePrewarm(
+      session,
+      { attemptId, questionId: question.id, phase: "scratch" },
+      question,
+      element,
+      () => getActiveEditor() !== null || getPaperEditor() !== null,
+    );
+  }, [
+    session,
+    getActiveEditor,
+    getPaperEditor,
+    attemptId,
+    question,
+    hidden,
+    record?.localBase,
+    record?.base,
+    recovery,
+  ]);
   useEffect(
     () => editor?.register(question.id, finish),
     [editor?.register, question.id, finish],
@@ -155,6 +194,7 @@ export const QuestionAnnotationOverlay = forwardRef<
               scope,
               question,
               element,
+              signal,
             );
             if (signal.aborted) return false;
             if (prepared.kind === "legacy") {
@@ -163,10 +203,12 @@ export const QuestionAnnotationOverlay = forwardRef<
             }
             if (prepared.kind === "sealed")
               throw new Error("标画已随交卷固定，请刷新查看");
-            const matches = await questionSurfaceMatchesLayout(
-              question,
-              element,
-              prepared.localBase.layout,
+            const matches = await measureStage("annotation:layout-match", () =>
+              questionSurfaceMatchesLayout(
+                question,
+                element,
+                prepared.localBase.layout,
+              ),
             );
             if (signal.aborted) return false;
             setCompatible(matches);

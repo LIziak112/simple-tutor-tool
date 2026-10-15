@@ -18,6 +18,8 @@ test("原位标画：不复制题面、退出一击作答、切题唯一输入�
   request,
 }, testInfo) => {
   test.setTimeout(120_000);
+  // 预备验证时只让第一题题面可见，避免测量另一题的后台生成次数。
+  await page.setViewportSize({ width: 1300, height: 400 });
   await teacherApiLogin(request);
   const suffix = uniqueSuffix();
   const courseName = `原位课程${suffix}`;
@@ -42,16 +44,60 @@ test("原位标画：不复制题面、退出一击作答、切题唯一输入�
   await page.goto(`/s/${student.linkToken}`);
   await page.waitForURL("**/s/home");
   await openChoicePractice(page, courseId, courseName, unitName);
-  await page.setViewportSize({ width: 1300, height: 1000 });
   const first = page.locator('article[aria-label="第 1 题"]');
   const second = page.locator('article[aria-label="第 2 题"]');
   const before = await first
     .locator('[data-slot="question-surface"]')
     .boundingBox();
+  // 可见题空闲预备只存在内存，真正打开时复用已校验的底图。
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          performance.getEntriesByName("ownclass:annotation:png-check").length,
+      ),
+    )
+    .toBeGreaterThan(0);
+  const generatedBeforeOpen = await page.evaluate(
+    () => performance.getEntriesByName("ownclass:annotation:rasterize").length,
+  );
+  const storedBeforeOpen = await page.evaluate(
+    () =>
+      new Promise<number>((resolve, reject) => {
+        const open = indexedDB.open("tutor-annotations");
+        open.onerror = () => reject(open.error);
+        open.onsuccess = () => {
+          const db = open.result;
+          if (!db.objectStoreNames.contains("annotations")) {
+            db.close();
+            resolve(0);
+            return;
+          }
+          const transaction = db.transaction("annotations", "readonly");
+          const count = transaction.objectStore("annotations").count();
+          transaction.oncomplete = () => {
+            db.close();
+            resolve(count.result);
+          };
+          transaction.onerror = () => {
+            db.close();
+            reject(transaction.error);
+          };
+        };
+      }),
+  );
+  expect(storedBeforeOpen).toBe(0);
   await first.getByRole("button", { name: /圈画题干/ }).click();
   await expect(
     page.getByRole("toolbar", { name: "第 1 题标画工具栏" }),
   ).toBeVisible({ timeout: 30_000 });
+  expect(
+    await page.evaluate(
+      () =>
+        performance.getEntriesByName("ownclass:annotation:rasterize").length,
+    ),
+  ).toBe(generatedBeforeOpen);
+  await page.setViewportSize({ width: 1300, height: 1000 });
   await expect(first.locator('[data-slot="question-surface"]')).toHaveAttribute(
     "inert",
     "",

@@ -32,7 +32,7 @@ import {
 } from "@/components/ui/dialog";
 import { AttemptEditorProvider } from "@/features/attempt/AttemptEditorContext";
 import { retryAttemptLocalPersistence } from "@/features/attempt/use-attempt-save-status";
-import { DraftSyncContext } from "@/features/attempt/use-draft-sync";
+import { DraftSyncProvider } from "@/features/attempt/use-draft-sync";
 import {
   EnabledCapabilitiesProvider,
   toEnabledCapabilities,
@@ -489,7 +489,7 @@ function LessonAnswerView({
 
   return (
     <AttemptEditorProvider>
-      <DraftSyncContext.Provider value={session.draftSyncContext}>
+      <DraftSyncProvider value={session.draftSyncContext}>
         <EnabledCapabilitiesProvider value={capabilities}>
           <article aria-label="讲练作答" className="flex flex-col gap-4 pb-8">
             <HeaderBar
@@ -549,7 +549,7 @@ function LessonAnswerView({
             <LessonBody data={data} order={order} renderCard={renderCard} />
           </article>
         </EnabledCapabilitiesProvider>
-      </DraftSyncContext.Provider>
+      </DraftSyncProvider>
     </AttemptEditorProvider>
   );
 }

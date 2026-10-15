@@ -35,6 +35,11 @@ vi.mock("@/lib/api", async (importOriginal) => {
 });
 
 const mockedFetch = vi.mocked(fetchAttemptApi);
+const resultModuleState = vi.hoisted(() => ({ loaded: false }));
+vi.mock("@/features/attempt/AttemptResultView", async (original) => {
+  resultModuleState.loaded = true;
+  return original<typeof import("@/features/attempt/AttemptResultView")>();
+});
 const mockedPractice = vi.mocked(startWrongPracticeApi);
 const mockedCreateCorrection = vi.mocked(createCorrectionApi);
 const mockedSealCorrection = vi.mocked(sealCorrectionApi);
@@ -101,6 +106,12 @@ beforeEach(() => {
 // ---------- T6R.15（F）：答题/草稿渲染零订正与笔记本请求（泄露断言） ----------
 
 describe("草稿渲染不发起订正/笔记本请求（T6R.15 F）", () => {
+  it("草稿入口不提前加载结果回看模块", async () => {
+    mockedFetch.mockResolvedValue(COURSE_DRAFT);
+    renderPage();
+    await screen.findByText("课程：初一上 · 第 2 次");
+    expect(resultModuleState.loaded).toBe(false);
+  });
   it("draft 渲染 settle 后零 corrections/notebook 请求与查询（重练不自动展示历史答案）", async () => {
     mockedFetch.mockResolvedValue(COURSE_DRAFT);
     const { client } = renderPage();

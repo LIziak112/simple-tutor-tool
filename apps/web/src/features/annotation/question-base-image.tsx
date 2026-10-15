@@ -19,6 +19,7 @@ import {
   withTimeout,
 } from "@/features/notes/rasterize-utils";
 import { contentHash64 } from "@/lib/content-hash";
+import { measureStage } from "@/lib/performance-stages";
 
 const STEP_TIMEOUT_MS = 15_000;
 const BLOCK_SELECTOR =
@@ -45,7 +46,7 @@ export function measureQuestionSurface(surface: HTMLElement) {
     cssWidth: root.width,
     cssHeight: root.height,
     blocks: nodes.map((node) => {
-      const rect = node.getBoundingClientRect();
+      const rect = node === surface ? root : node.getBoundingClientRect();
       return {
         tag: node.tagName,
         x: rounded(rect.left - root.left),
@@ -139,17 +140,24 @@ function assertSize(surface: HTMLElement): void {
     throw new Error("题面存在横向溢出，请先修正题面排版");
 }
 
-async function awaitReady(surface: HTMLElement): Promise<void> {
+/** 返回已验证的最后一帧快照，避免调用方紧接着重复读取相同布局。 */
+export async function awaitQuestionSurfaceReady(
+  surface: HTMLElement,
+  check: () => void = () => {},
+): Promise<SurfaceMeasure> {
   const deadline = performance.now() + STEP_TIMEOUT_MS;
   if (document.fonts) await document.fonts.ready;
   const images = [...surface.querySelectorAll<HTMLImageElement>("img")];
   await Promise.all(images.map((image) => image.decode()));
+  check();
   let previous = "";
   let unchanged = 0;
+  let snapshot: SurfaceMeasure | undefined;
   while (unchanged < 3) {
     await new Promise<void>((resolve) =>
       requestAnimationFrame(() => resolve()),
     );
+    check();
     if (performance.now() > deadline) throw new Error("题面布局稳定等待超时");
     if (
       surface.querySelector(
@@ -161,30 +169,41 @@ async function awaitReady(surface: HTMLElement): Promise<void> {
       unchanged = 0;
       continue;
     }
-    const current = JSON.stringify(measureQuestionSurface(surface));
+    snapshot = measureQuestionSurface(surface);
+    const current = JSON.stringify(snapshot);
     unchanged = previous === current ? unchanged + 1 : 0;
     previous = current;
   }
+  if (!snapshot) throw new Error("题面尚未就绪，请重试");
+  return snapshot;
 }
 
 /** U02准入管线：只从公开题目重建副本，绝不克隆带有本人答案的DOM。 */
 export async function renderQuestionBaseImage(
   question: AttemptQuestionPublic,
   reference: HTMLElement,
+  options: { signal?: AbortSignal; shouldAbort?: () => boolean } = {},
 ): Promise<{
   blob: Blob;
   layout: AnnotationSurfaceLayout;
   pixelWidth: number;
   pixelHeight: number;
 }> {
+  const check = () => {
+    if (options.signal?.aborted || options.shouldAbort?.())
+      throw new DOMException("底图预备已取消", "AbortError");
+  };
+  check();
   assertPublicQuestion(question);
   assertSize(reference);
-  await withTimeout(
-    awaitReady(reference),
-    STEP_TIMEOUT_MS,
-    "题面资源或布局未稳定，请稍后重试",
+  const before = await measureStage("annotation:reference-ready", () =>
+    withTimeout(
+      awaitQuestionSurfaceReady(reference, check),
+      STEP_TIMEOUT_MS,
+      "题面资源或布局未稳定，请稍后重试",
+    ),
   );
-  const before = measureQuestionSurface(reference);
+  check();
   const host = document.createElement("div");
   host.dataset.slot = "question-base-host";
   host.setAttribute("aria-hidden", "true");
@@ -208,35 +227,41 @@ export async function renderQuestionBaseImage(
   document.body.appendChild(host);
   const root = createRoot(host);
   try {
-    await withTimeout(
-      new Promise<void>((resolve) =>
-        root.render(
-          <div
-            ref={(node) => {
-              if (node) resolve();
-            }}
-          >
-            <QuestionSurface question={question} mode="export" />
-          </div>,
+    await measureStage("annotation:public-copy", () =>
+      withTimeout(
+        new Promise<void>((resolve) =>
+          root.render(
+            <div
+              ref={(node) => {
+                if (node) resolve();
+              }}
+            >
+              <QuestionSurface question={question} mode="export" />
+            </div>,
+          ),
         ),
+        STEP_TIMEOUT_MS,
+        "导出题面挂载超时",
       ),
-      STEP_TIMEOUT_MS,
-      "导出题面挂载超时",
     );
     const exported = host.querySelector<HTMLElement>(
       '[data-slot="question-surface"]',
     );
+    check();
     if (!exported) throw new Error("导出题面未挂载");
     for (const image of exported.querySelectorAll<HTMLImageElement>("img"))
       image.loading = "eager";
-    await withTimeout(
-      awaitReady(exported),
-      STEP_TIMEOUT_MS,
-      "导出题面资源未稳定，请重试",
+    const exportedSnapshot = await measureStage("annotation:copy-ready", () =>
+      withTimeout(
+        awaitQuestionSurfaceReady(exported, check),
+        STEP_TIMEOUT_MS,
+        "导出题面资源未稳定，请重试",
+      ),
     );
+    check();
     assertSize(exported);
     if (
-      !sameGeometry(before, measureQuestionSurface(exported)) ||
+      !sameGeometry(before, exportedSnapshot) ||
       !sameGeometry(before, measureQuestionSurface(reference))
     )
       throw new Error("题面布局已变化或与底图不一致，请恢复原布局后重试");
@@ -261,27 +286,41 @@ export async function renderQuestionBaseImage(
       geometrySignature,
       fontSignature,
     });
-    const fontCss = await withTimeout(
-      collectFontEmbedCss(exported),
-      STEP_TIMEOUT_MS,
-      "本地字体嵌入超时",
+    const fontCss = await measureStage("annotation:font-css", () =>
+      withTimeout(
+        collectFontEmbedCss(exported),
+        STEP_TIMEOUT_MS,
+        "本地字体嵌入超时",
+      ),
     );
+    check();
     const pixelWidth = Math.ceil(before.cssWidth * layout.pixelRatio);
     const pixelHeight = Math.ceil(before.cssHeight * layout.pixelRatio);
-    const blob = await withTimeout(
-      toBlob(exported, {
-        width: before.cssWidth,
-        height: before.cssHeight,
-        canvasWidth: pixelWidth / layout.pixelRatio,
-        canvasHeight: pixelHeight / layout.pixelRatio,
-        pixelRatio: layout.pixelRatio,
-        backgroundColor: "#ffffff",
-        fontEmbedCSS: fontCss,
-      }),
-      STEP_TIMEOUT_MS,
-      "题面栅格化超时",
+    const blob = await measureStage("annotation:rasterize", () =>
+      withTimeout(
+        toBlob(exported, {
+          width: before.cssWidth,
+          height: before.cssHeight,
+          canvasWidth: pixelWidth / layout.pixelRatio,
+          canvasHeight: pixelHeight / layout.pixelRatio,
+          pixelRatio: layout.pixelRatio,
+          backgroundColor: "#ffffff",
+          fontEmbedCSS: fontCss,
+        }),
+        STEP_TIMEOUT_MS,
+        "题面栅格化超时",
+      ),
     );
-    if (!blob || !(await pngBlobHasMagic(blob)) || (await samplePngBlank(blob)))
+    check();
+    const valid = await measureStage(
+      "annotation:png-check",
+      async () =>
+        blob !== null &&
+        (await pngBlobHasMagic(blob)) &&
+        !(await samplePngBlank(blob)),
+    );
+    check();
+    if (!blob || !valid)
       throw new Error("底图为空白或编码失败，不采用残缺图片");
     if (blob.size > ANNOTATION_BASE_PNG_MAX_BYTES)
       throw new Error("底图文件超限，请使用草稿纸");

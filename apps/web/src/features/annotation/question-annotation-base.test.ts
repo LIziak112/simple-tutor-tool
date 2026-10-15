@@ -8,7 +8,10 @@ vi.mock("@/lib/api", async (original) => ({
   ...(await original<typeof import("@/lib/api")>()),
   fetchAnnotationViewApi: vi.fn(),
 }));
-vi.mock("./question-base-image", () => ({ renderQuestionBaseImage: vi.fn() }));
+vi.mock("./question-base-image", () => ({
+  renderQuestionBaseImage: vi.fn(),
+  questionSurfaceMatchesLayout: vi.fn(async () => true),
+}));
 
 import { ApiError, fetchAnnotationViewApi } from "@/lib/api";
 import {
@@ -24,6 +27,11 @@ import {
 } from "./annotation-sync";
 import { prepareQuestionAnnotationBase } from "./question-annotation-base";
 import { renderQuestionBaseImage } from "./question-base-image";
+import {
+  cancelQuestionBasePrewarm,
+  clearPrewarmedQuestionBases,
+  prewarmQuestionBase,
+} from "./question-base-prewarm";
 
 const session = { origin: "https://tutor.test", studentId: "student-a" };
 const scope = {
@@ -54,6 +62,7 @@ const question: AttemptQuestionPublic = {
 const png = new Blob(["png"], { type: "image/png" });
 const surface = document.createElement("div");
 beforeEach(() => {
+  clearPrewarmedQuestionBases();
   resetAnnotationSession();
   resetAnnotationStoreForTest();
   installAnnotationBackend(memoryAnnotationBackend());
@@ -72,7 +81,19 @@ beforeEach(() => {
     annotation: null,
   });
 });
-afterEach(() => resetAnnotationSession());
+afterEach(() => {
+  clearPrewarmedQuestionBases();
+  resetAnnotationSession();
+});
+it("显式打开先接管预备，云端回填引发候选清理也不重复生成", async () => {
+  await prewarmQuestionBase(session, scope, question, surface, () => false);
+  vi.mocked(fetchAnnotationViewApi).mockImplementation(async () => {
+    cancelQuestionBasePrewarm(session, scope);
+    return { base: null, annotation: null, doc: null, maxWidthPx: 1440 };
+  });
+  await prepareQuestionAnnotationBase(session, scope, question, surface);
+  expect(renderQuestionBaseImage).toHaveBeenCalledOnce();
+});
 it("本机已ready不等待网络或重复栅格化", async () => {
   await writeLocalAnnotationBase(
     session,

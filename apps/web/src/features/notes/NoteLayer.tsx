@@ -47,7 +47,7 @@ import {
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { useAttemptEditor } from "@/features/attempt/AttemptEditorContext";
 import { attemptMaterialsEditable } from "@/features/attempt/attempt-material-recovery";
-import { useDraftSyncContext } from "@/features/attempt/use-draft-sync";
+import { useDraftSyncRecovery } from "@/features/attempt/use-draft-sync";
 import { InkPad } from "@/features/ink/InkPad";
 import { PaperPresentation } from "@/features/ink/PaperPresentation";
 import {
@@ -110,7 +110,7 @@ export function NoteLayer({
   stemMd,
   options,
 }: NoteLayerProps) {
-  const recovery = useDraftSyncContext()?.recovery;
+  const recovery = useDraftSyncRecovery();
   const session = useNoteSessionRef();
   const editor = useNoteEditor({
     session,

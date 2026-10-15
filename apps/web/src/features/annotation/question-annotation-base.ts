@@ -5,7 +5,7 @@ import {
   fetchAnnotationViewApi,
   studentAnnotationBasePngUrl,
 } from "@/lib/api";
-import { SerialTaskQueue } from "@/lib/serial-task-queue";
+import { measureStage } from "@/lib/performance-stages";
 import {
   type AnnotationLocalRecord,
   type AnnotationScope,
@@ -16,9 +16,16 @@ import {
   writeLocalAnnotationBase,
 } from "./annotation-store";
 import { currentAnnotationSession } from "./annotation-sync";
-import { renderQuestionBaseImage } from "./question-base-image";
+import {
+  questionSurfaceMatchesLayout,
+  renderQuestionBaseImage,
+} from "./question-base-image";
+import {
+  cancelOtherQuestionBasePrewarm,
+  takePrewarmedQuestionBase,
+} from "./question-base-prewarm";
+import { questionBaseRenderQueue } from "./question-base-render-queue";
 
-const rasterQueue = new SerialTaskQueue();
 export type QuestionAnnotationBaseResult =
   | {
       kind: "surface";
@@ -33,12 +40,15 @@ export async function prepareQuestionAnnotationBase(
   scope: AnnotationScope,
   question: AttemptQuestionPublic,
   surface: HTMLElement,
+  signal?: AbortSignal,
 ): Promise<QuestionAnnotationBaseResult> {
   const guard = () => {
+    if (signal?.aborted) throw new DOMException("标画打开已取消", "AbortError");
     if (currentAnnotationSession() !== session)
       throw new Error("标画会话已切换，请重新打开");
   };
   guard();
+  cancelOtherQuestionBasePrewarm(session, scope);
   if (scope.questionId !== question.id) throw new Error("标画题目标识不匹配");
   const cached = await getAnnotationRecord(session, scope);
   guard();
@@ -53,13 +63,22 @@ export async function prepareQuestionAnnotationBase(
   }
   if (cached?.base != null && cached.base.layout === undefined)
     return { kind: "legacy", base: cached.base };
+  // 云端回填可能清理控件候选；先接管在途或已完成的预备，再核对云端。
+  const candidatePromise = takePrewarmedQuestionBase(
+    session,
+    scope,
+    question,
+    surface,
+  );
   let remoteDoc = cached?.pending?.doc ?? null;
   let base = cached?.base ?? null;
   try {
-    const view = await withTimeout(
-      fetchAnnotationViewApi(scope.attemptId, scope.questionId, scope.phase),
-      15_000,
-      "底图状态加载超时，改为本机保存",
+    const view = await measureStage("annotation:base-state", () =>
+      withTimeout(
+        fetchAnnotationViewApi(scope.attemptId, scope.questionId, scope.phase),
+        15_000,
+        "底图状态加载超时，改为本机保存",
+      ),
     );
     guard();
     if (view.annotation?.sealedAt != null) return { kind: "sealed" };
@@ -88,38 +107,56 @@ export async function prepareQuestionAnnotationBase(
     const png = await response.blob();
     guard();
     const layout = base.layout;
-    await writeLocalAnnotationBase(
-      session,
-      scope,
-      { png, layout },
-      remoteDoc ?? {
-        version: 1,
-        baseWidth: base.pixelWidth ?? 0,
-        baseHeight: base.pixelHeight ?? 0,
-        strokes: [],
-      },
+    await measureStage("annotation:local-save", () =>
+      writeLocalAnnotationBase(
+        session,
+        scope,
+        { png, layout },
+        remoteDoc ?? {
+          version: 1,
+          baseWidth: base.pixelWidth ?? 0,
+          baseHeight: base.pixelHeight ?? 0,
+          strokes: [],
+        },
+      ),
     );
   } else {
-    const rendered = await rasterQueue.run(async () => {
-      guard();
-      return renderQuestionBaseImage(question, surface);
-    });
+    const possible = await candidatePromise;
+    guard();
+    // 状态回填之后再次核对，不能使用点击前已经失效的题面快照。
+    const candidate =
+      possible &&
+      (await questionSurfaceMatchesLayout(question, surface, possible.layout))
+        ? possible
+        : null;
+    guard();
+    const rendered =
+      candidate ??
+      (await questionBaseRenderQueue.run(async () => {
+        guard();
+        return renderQuestionBaseImage(question, surface, {
+          ...(signal ? { signal } : {}),
+          shouldAbort: () => currentAnnotationSession() !== session,
+        });
+      }));
     guard();
     if (
       base?.layout !== undefined &&
       JSON.stringify(base.layout) !== JSON.stringify(rendered.layout)
     )
       throw new Error("另一设备已绑定不同布局，不能替换；请查看原标画");
-    await writeLocalAnnotationBase(
-      session,
-      scope,
-      { png: rendered.blob, layout: rendered.layout },
-      remoteDoc ?? {
-        version: 1,
-        baseWidth: rendered.pixelWidth,
-        baseHeight: rendered.pixelHeight,
-        strokes: [],
-      },
+    await measureStage("annotation:local-save", () =>
+      writeLocalAnnotationBase(
+        session,
+        scope,
+        { png: rendered.blob, layout: rendered.layout },
+        remoteDoc ?? {
+          version: 1,
+          baseWidth: rendered.pixelWidth,
+          baseHeight: rendered.pixelHeight,
+          strokes: [],
+        },
+      ),
     );
   }
   guard();
