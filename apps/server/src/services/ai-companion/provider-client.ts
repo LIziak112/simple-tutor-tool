@@ -218,16 +218,13 @@ function usageOf(bodyText: string): ProviderUsage | undefined {
         ? value
         : undefined;
     };
+    const promptTokens = pick("prompt_tokens");
+    const completionTokens = pick("completion_tokens");
+    const totalTokens = pick("total_tokens");
     const normalized: ProviderUsage = {
-      ...(pick("prompt_tokens") !== undefined && {
-        promptTokens: pick("prompt_tokens"),
-      }),
-      ...(pick("completion_tokens") !== undefined && {
-        completionTokens: pick("completion_tokens"),
-      }),
-      ...(pick("total_tokens") !== undefined && {
-        totalTokens: pick("total_tokens"),
-      }),
+      ...(promptTokens !== undefined && { promptTokens }),
+      ...(completionTokens !== undefined && { completionTokens }),
+      ...(totalTokens !== undefined && { totalTokens }),
     };
     return Object.keys(normalized).length > 0 ? normalized : undefined;
   } catch {
