@@ -29,6 +29,7 @@ import { sqliteAiPolicyConfigSource } from "./ai-policy-config-source.ts";
 import { getTeacherAiSettings } from "./settings-service.ts";
 import {
   type AiPolicyConfigSource,
+  type AttemptQuestionAiPolicy,
   resolveAttemptQuestionAiPolicy,
 } from "./teaching-policy-service.ts";
 
@@ -223,6 +224,58 @@ function promptSnapshotMdOf(
 }
 
 /**
+ * 裁决链统一入口(创建冻结与外发时点重装配共用):不可用 → 403
+ * AI_POLICY_DISABLED——两阶段装配共用同一拒绝文案与口径,防单侧漂移。
+ * 返回附收紧的 mode(守卫后必非空),供规则装配直接使用。
+ */
+function requireUsableResolution(
+  db: Db,
+  locate: AiContextLocateInput,
+  configSource: AiPolicyConfigSource,
+): AttemptQuestionAiPolicy & { mode: AiTeachingMode } {
+  const resolved = resolveAttemptQuestionAiPolicy(
+    db,
+    locate.studentId,
+    locate.attemptId,
+    locate.questionId,
+    configSource,
+  );
+  if (!resolved.resolution.usable || resolved.resolution.mode === undefined) {
+    throw new HttpError(
+      403,
+      "AI_POLICY_DISABLED",
+      "当前教学模式下本题暂不能使用 AI 求助",
+    );
+  }
+  return { ...resolved, mode: resolved.resolution.mode };
+}
+
+/**
+ * 规则部分装配(单源:创建冻结与外发时点重装配共用)——当前模式对应的
+ * 模板档位、提示词快照与其 sha-256(promptHash 全仓唯一口径,无密钥需求)。
+ */
+function promptRulesOf(
+  db: Db,
+  attempt: Attempt,
+  modeAtSend: AiTeachingMode,
+  completed: boolean,
+): AiOutboundPromptSnapshot {
+  const promptTemplateKey = promptTemplateKeyOf(modeAtSend, completed);
+  const promptSnapshotMd = promptSnapshotMdOf(
+    teacherTemplateBodyOf(db, attemptTeacherId(db, attempt), promptTemplateKey),
+    promptTemplateKey,
+  );
+  return {
+    modeAtSend,
+    promptTemplateKey,
+    promptSnapshotMd,
+    promptHash: createHash("sha256")
+      .update(promptSnapshotMd, "utf8")
+      .digest("hex"),
+  };
+}
+
+/**
  * 装配单题文字上下文(创建与外发两时点共用;每次调用实时裁决)。
  *
  * 拒绝口径:
@@ -238,20 +291,7 @@ export function buildAiContextBundle(
   configSource: AiPolicyConfigSource = sqliteAiPolicyConfigSource,
 ): AiContextBundle {
   const { resolution, completed, attempt, responseId } =
-    resolveAttemptQuestionAiPolicy(
-      db,
-      locate.studentId,
-      locate.attemptId,
-      locate.questionId,
-      configSource,
-    );
-  if (!resolution.usable || resolution.mode === undefined) {
-    throw new HttpError(
-      403,
-      "AI_POLICY_DISABLED",
-      "当前教学模式下本题暂不能使用 AI 求助",
-    );
-  }
+    requireUsableResolution(db, locate, configSource);
   // 冻结行读取:只读该行绑定快照,不读当前题库(表行 3:教师改题不生效)
   const row = db
     .select()
@@ -308,7 +348,7 @@ function assembleBundleFromRows(args: {
     answerJson,
   } = args;
   const modeAtSend: AiTeachingMode = resolution.mode ?? "open_study";
-  const templateKey = promptTemplateKeyOf(modeAtSend, completed);
+  const rules = promptRulesOf(db, attempt, modeAtSend, completed);
 
   // —— 白名单字段(全部来自冻结快照与该 responses 行;不展开 Question 其余字段) ——
   const referenceAnswerMd =
@@ -318,12 +358,6 @@ function assembleBundleFromRows(args: {
   const solutionMd = snapshot.solutionMd ?? null;
   const missingNote = missingNoteOf(snapshot.answers, snapshot.solutionMd);
   const studentAnswerText = studentAnswerTextOf(snapshot, answerOf(answerJson));
-  const templateBody = teacherTemplateBodyOf(
-    db,
-    attemptTeacherId(db, attempt),
-    templateKey,
-  );
-  const promptSnapshotMd = promptSnapshotMdOf(templateBody, templateKey);
   const capturedAt = resolveNowDate(args.now).toISOString();
   const snapshotData: AiContextSnapshot = {
     questionRevisionId: responseId,
@@ -336,7 +370,7 @@ function assembleBundleFromRows(args: {
     referenceAnswerMd,
     solutionMd,
     missingNote,
-    promptSnapshotMd,
+    promptSnapshotMd: rules.promptSnapshotMd,
     capturedAt,
   };
   // 服务端自检:strict + superRefine(矛盾快照在契约层拒绝,不进出站视图)
@@ -353,21 +387,16 @@ function assembleBundleFromRows(args: {
     .update(contextVersionInput(snapshotData), "utf8")
     .digest("hex")
     .slice(0, 16)}`;
-  const promptHash = createHash("sha256")
-    .update(promptSnapshotMd, "utf8")
-    .digest("hex");
 
   return {
     resolution,
     completed,
     attempt,
-    modeAtSend,
-    promptTemplateKey: templateKey,
+    ...rules,
     responseId,
-    promptHash,
     contextVersion,
     snapshot: parsed.data,
-    systemPromptMd: `${promptSnapshotMd}\n\n【注入防御】${INJECTION_GUARD}`,
+    systemPromptMd: `${rules.promptSnapshotMd}\n\n【注入防御】${INJECTION_GUARD}`,
   };
 }
 
@@ -394,7 +423,7 @@ function contextVersionInput(snapshot: AiContextSnapshot): string {
 
 // ---------- 外发时点重装配(SAI-15 生命周期 hook 的第二阶段装配) ----------
 
-/** 外发时点的提示词装配产物(只含规则部分;数据段保持创建时冻结) */
+/** 规则部分装配产物(只含规则;数据段保持创建时冻结) */
 export interface AiOutboundPromptSnapshot {
   /** 发送时有效模式(完成后恒 open_study 复盘;§3.3「尚未外发采用当前要求」) */
   readonly modeAtSend: AiTeachingMode;
@@ -412,40 +441,19 @@ export interface AiOutboundPromptSnapshot {
  * 的模式与提示词),不重捕快照数据段(题面/本人答案/材料保持创建时冻结,
  * 需求 §8「不可悄悄覆盖原快照」)。教师刚改设置、学生刚提交,下一次出站
  * 立即采用当前要求(提交后 → review 复盘模板,保留原请求时间)。
- * 拒绝口径与 buildAiContextBundle 同源:裁决不可用 → 403 AI_POLICY_DISABLED。
+ * 拒绝与规则计算经 requireUsableResolution/promptRulesOf 与创建装配单源共用。
  */
 export function outboundPromptSnapshotOf(
   db: Db,
   locate: AiContextLocateInput,
   configSource: AiPolicyConfigSource = sqliteAiPolicyConfigSource,
 ): AiOutboundPromptSnapshot {
-  const { resolution, completed, attempt } = resolveAttemptQuestionAiPolicy(
+  const { completed, attempt, mode } = requireUsableResolution(
     db,
-    locate.studentId,
-    locate.attemptId,
-    locate.questionId,
+    locate,
     configSource,
   );
-  if (!resolution.usable || resolution.mode === undefined) {
-    throw new HttpError(
-      403,
-      "AI_POLICY_DISABLED",
-      "当前教学模式下本题暂不能使用 AI 求助",
-    );
-  }
-  const promptTemplateKey = promptTemplateKeyOf(resolution.mode, completed);
-  const promptSnapshotMd = promptSnapshotMdOf(
-    teacherTemplateBodyOf(db, attemptTeacherId(db, attempt), promptTemplateKey),
-    promptTemplateKey,
-  );
-  return {
-    modeAtSend: resolution.mode,
-    promptTemplateKey,
-    promptSnapshotMd,
-    promptHash: createHash("sha256")
-      .update(promptSnapshotMd, "utf8")
-      .digest("hex"),
-  };
+  return promptRulesOf(db, attempt, mode, completed);
 }
 
 // ---------- 数据段与出站消息组装(题面与笔迹提示只是数据,要点 4/5) ----------
