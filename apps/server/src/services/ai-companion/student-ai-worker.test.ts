@@ -991,22 +991,17 @@ describe("SAI-17 worker 生命周期与恢复", () => {
     const world = setupWorld(db);
     addInappConnection(db, world.studentId);
     const taskId = mkInappTask(db, world);
-    let releaseFirst: (() => void) | null = null;
-    const heldTransport: ProviderTransport = async () =>
-      new Promise<GuardedResponse>((resolve) => {
-        releaseFirst = () =>
-          resolve({ status: 200, headers: {}, bodyText: okBodyText });
-      });
+    const held = heldTransportOf();
     const run = runStudentAiDispatchOnce(db, {
       dataDir: dir,
       rootSecret: ROOT_SECRET,
-      transport: heldTransport,
+      transport: held.transport,
       now: () => new Date(T0),
     });
     await until(() => taskStatus(db, taskId) === "dispatching");
     // 备份恢复语义：底层连接被换（runtimeEpoch 变化）
     handle.restart();
-    releaseFirst?.();
+    held.release();
     await run;
     // 旧代回执只记事实：任务未 replied、回信不入 ai_messages
     expect(assistantReplies(db, taskId)).toEqual([]);
@@ -1033,16 +1028,11 @@ describe("SAI-17 worker 调度与阻塞", () => {
     const world = setupWorld(db);
     addInappConnection(db, world.studentId);
     const taskId = mkInappTask(db, world);
-    let release: (() => void) | null = null;
-    const heldTransport: ProviderTransport = async () =>
-      new Promise<GuardedResponse>((resolve) => {
-        release = () =>
-          resolve({ status: 200, headers: {}, bodyText: okBodyText });
-      });
+    const held = heldTransportOf();
     const run = runStudentAiDispatchOnce(db, {
       dataDir,
       rootSecret: ROOT_SECRET,
-      transport: heldTransport,
+      transport: held.transport,
       now: () => new Date(T0),
     });
     await until(() => taskStatus(db, taskId) === "dispatching");
@@ -1054,7 +1044,7 @@ describe("SAI-17 worker 调度与阻塞", () => {
       .set({ answerJson: JSON.stringify({ kind: "choice", index: 0 }) })
       .where(eq(responses.attemptId, world.attemptId))
       .run();
-    release?.();
+    held.release();
     await run;
     expect(taskStatus(db, taskId)).toBe("replied");
     const saved = db
