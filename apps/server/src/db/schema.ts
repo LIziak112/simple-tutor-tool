@@ -1,4 +1,11 @@
 import type {
+  AiChannel,
+  AiConnectionVerifyStatus,
+  AiFactType,
+  AiMaterialKind,
+  AiMessageRole,
+  AiTaskStatus,
+  AiTeachingMode,
   AnnotationBaseState,
   AnnotationPhase,
   AnnotationSurfaceLayout,
@@ -57,6 +64,11 @@ import {
  * kind 写入）、attempts 加 lectureId（lesson 来源讲练页讲义）+ 索引
  * attempts_student_lecture_idx、responses 加 submittedAt（lesson 单题提交时刻，
  * 作答服务后续任务实装写入）。
+ * 学生端 AI 伴学（2026-10，SAI-05）：追加 ai_* 九表（ai_teacher_settings /
+ * ai_policy_overrides / ai_connections / ai_tasks / ai_task_materials /
+ * ai_messages / ai_facts / ai_share_tickets / ai_quick_buttons——docs/
+ * 学生端AI伴学/技术实施方案.md §5.1 为权威设计），全部新表零改既有列；
+ * BLOB_BACKUP_REF_COLUMNS 增 ai_task_materials.png_path 行（§5.2 备份保护）。
  *
  * 全库约定（见 docs/开发任务清单.md §0.3 与 db-change 技能）：
  * - 主键 id 一律为应用层生成的 crypto.randomUUID() 字符串；
@@ -1124,15 +1136,16 @@ export const notes = sqliteTable(
 );
 
 /**
- * 备份快照引用列清单（T6R.14 /simplify C9 单源；T6R.23 P1-3/P2-1 扩列）：
+ * 备份快照引用列清单（T6R.14 /simplify C9 单源；T6R.23 P1-3/P2-1 扩列；
+ * SAI-05 增 ai 材料图）：
  * GC 备份引用保留清单（backup-service.collectBackupReferencedPaths）从
  * 快照 db 读取的 (表, 路径列) 对——**所有含 DATA_DIR 相对 blob 文件引用
- * 的表**在此登记（notes 表族 / ink 笔迹两列 / 0027 标注两表）。
- * **消费方 backup-service 与各表定义在此同源**——表改名靠本常量同步；
- * 失败语义不对称的原因：列名改了 SELECT 抛错 → unreadable 计数触发保守
- * fail-safe（宁可不删），表名改了则静默按「表不存在」零引用——后者只能
- * 靠本常量与表定义同文件保证同步。可空列（annotation_bases.image_path、
- * annotations.body_path）的 NULL 行不是文件引用，由消费方跳过。
+ * 的表**在此登记（notes 表族 / ink 笔迹两列 / 0027 标注两表 / ai_task_
+ * materials 材料图）。**消费方 backup-service 与各表定义在此同源**——表改名
+ * 靠本常量同步；失败语义不对称的原因：列名改了 SELECT 抛错 → unreadable
+ * 计数触发保守 fail-safe（宁可不删），表名改了则静默按「表不存在」零引用
+ * ——后者只能靠本常量与表定义同文件保证同步。可空列（annotation_bases.
+ * image_path、annotations.body_path）的 NULL 行不是文件引用，由消费方跳过。
  */
 export const BLOB_BACKUP_REF_COLUMNS = [
   ["note_versions", "body_path"],
@@ -1141,6 +1154,7 @@ export const BLOB_BACKUP_REF_COLUMNS = [
   ["ink", "png_path"],
   ["annotation_bases", "image_path"],
   ["annotations", "body_path"],
+  ["ai_task_materials", "png_path"],
 ] as const;
 
 /**
@@ -1489,6 +1503,436 @@ export const annotations = sqliteTable(
   ],
 );
 
+/**
+ * 学生端 AI 伴学九表（SAI-05，2026-10）——docs/学生端AI伴学/技术实施方案.md
+ * §5.1 为权威设计（表/列/索引逐张对照，不自行简化合并）；契约权威定义在
+ * packages/contract/src/student-ai-policy.ts 与 student-ai.ts（本处 $type 仅
+ * 引用契约枚举类型，不重复手写值域）。
+ *
+ * 全组约定：
+ * - 全部新表零改既有列；主键 UUID、时间 UTC ISO、snake_case（§0.3 全库约定）；
+ * - 归属/域一致性由服务层校验（teacherId / 多态 subjectId 不建外键——
+ *   「教师数据永不连带删除」既有口径，students.teacherId 同款）；
+ * - 删除策略（批次「明确删除、软删、归档与留存」）：题目与已有作答永不物理删；
+ *   任务/事实/回信是正式证据，取消回信不删除（ai_facts append-only，
+ *   ai_task_materials 经 FK 锁任务物理删）；连接/快捷按钮可删（学生私有配置）。
+ */
+/** 教师全局 AI 设置（§5.1 表 1）：一行 = 一位教师的默认模式 + 三模板。无行 = 未设置（默认模式 open_study、模板用 DEFAULT_AI_PROMPT_TEMPLATES）——不回填行，继承语义靠「无行」表达。 */
+export const aiTeacherSettings = sqliteTable(
+  "ai_teacher_settings",
+  {
+    /** 教师主键（teachers.id；无外键——教师数据永不连带删除口径） */
+    teacherId: text("teacher_id").primaryKey(),
+    /** 默认教学模式（三显式值；无行才是「未设置」，inherit 不落本表） */
+    defaultMode: text("default_mode").$type<AiTeachingMode>().notNull(),
+    /** 开放伴学模板正文；NULL = 默认模板（恢复默认 = 置 NULL） */
+    promptsOpen: text("prompts_open"),
+    /** 仅启发模板正文；NULL = 默认模板 */
+    promptsGuided: text("prompts_guided"),
+    /** 完成后复盘模板正文；NULL = 默认模板 */
+    promptsReview: text("prompts_review"),
+    /** 最近更新时间：UTC ISO 字符串（PUT 回传 baseUpdatedAt 做版本冲突检测） */
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    check(
+      "ai_teacher_settings_default_mode_check",
+      sql`${table.defaultMode} in ('open_study', 'guided_only', 'post_submit_only')`,
+    ),
+  ],
+);
+
+/**
+ * 学生 / 作业 AI 策略覆盖（§5.1 表 2）：复合主键 (subjectType, subjectId)。
+ * - 无行 = 继承（三显式值之一才落行，inherit 不入库——「未配置」与「显式
+ *   禁止」天然可区分，需求 §3.1）；改回继承 = 删行（SAI-06 服务层语义）；
+ * - 不建外键（subjectId 多态指向 students / assignments，教师数据永不连带
+ *   删除口径）；域一致性（studentId/assignmentId 须属本教师）由服务层校验。
+ */
+export const aiPolicyOverrides = sqliteTable(
+  "ai_policy_overrides",
+  {
+    /** 覆盖对象类型（student | assignment 两命名空间，同 id 互不挤占） */
+    subjectType: text("subject_type")
+      .$type<"student" | "assignment">()
+      .notNull(),
+    /** 覆盖对象 id（students.id / assignments.id；无外键） */
+    subjectId: text("subject_id").notNull(),
+    /** 覆盖模式（三显式值；inherit 语义 = 无行，值域不含 inherit） */
+    mode: text("mode").$type<AiTeachingMode>().notNull(),
+    /** 最近更新时间：UTC ISO 字符串 */
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.subjectType, table.subjectId] }),
+    check(
+      "ai_policy_overrides_subject_type_check",
+      sql`${table.subjectType} in ('student', 'assignment')`,
+    ),
+    check(
+      "ai_policy_overrides_mode_check",
+      sql`${table.mode} in ('open_study', 'guided_only', 'post_submit_only')`,
+    ),
+  ],
+);
+
+/**
+ * 学生 AI 连接器（§5.1 表 3）：页内直连 / 远程 MCP / 上下文链接三通道配置。
+ * - configJson 按通道存不同形态（inapp: baseUrl/model/keyCiphertext/keyIv/
+ *   keyTag/keyFingerprint；mcp: tokenHash/tokenFingerprint；link: 偏好如
+ *   defaultValidHours）——明文凭证只写不读，读取层只回指纹（契约
+ *   aiConnectionPublicSchema）；
+ * - archivedAt：归档（软删语义，历史任务引用不受影响）；
+ * - 「同学生同 channel 至多一条 active」由服务层先查后插保证（attempts
+ *   表先例：不建 partial unique index 以保迁移简单）。
+ */
+export const aiConnections = sqliteTable(
+  "ai_connections",
+  {
+    /** 主键：crypto.randomUUID()（§0.3 主键约定） */
+    id: text("id").primaryKey(),
+    /** 归属学生（students.id） */
+    studentId: text("student_id")
+      .notNull()
+      .references(() => students.id),
+    /** 通道：inapp=页内直连 / mcp=远程 MCP / link=上下文链接 */
+    channel: text("channel").$type<AiChannel>().notNull(),
+    /** 是否默认连接（学生维度的发送目标选择；同学生至多一条由服务层保证） */
+    isDefault: integer("is_default", { mode: "boolean" })
+      .notNull()
+      .default(false),
+    /** 通道配置 JSON（形态见表注释；密文/哈希/指纹，无明文密钥） */
+    configJson: text("config_json").notNull(),
+    /** 连接校验状态（契约 aiConnectionVerifyStatusSchema；needs_rekey = secret.key 丢失待重填） */
+    verifyStatus: text("verify_status")
+      .$type<AiConnectionVerifyStatus>()
+      .notNull()
+      .default("unverified"),
+    /** 最近校验成功时间：UTC ISO；未校验为 NULL */
+    verifiedAt: text("verified_at"),
+    /** 创建时间：UTC ISO 字符串 */
+    createdAt: text("created_at").notNull(),
+    /** 最近更新时间：UTC ISO 字符串 */
+    updatedAt: text("updated_at").notNull(),
+    /** 归档时间：UTC ISO；未归档为 NULL（软删，历史任务引用不受影响） */
+    archivedAt: text("archived_at"),
+  },
+  (table) => [
+    // 学生端连接列表的定位索引（(studentId, channel) 查 active 连接）
+    index("ai_connections_student_channel_idx").on(
+      table.studentId,
+      table.channel,
+    ),
+    check(
+      "ai_connections_channel_check",
+      sql`${table.channel} in ('inapp', 'mcp', 'link')`,
+    ),
+    check(
+      "ai_connections_verify_status_check",
+      sql`${table.verifyStatus} in ('unverified', 'verified', 'failed', 'needs_rekey')`,
+    ),
+  ],
+);
+
+/**
+ * AI 任务表（§5.1 表 4，任务状态机见方案 §3.4/§6）——一行 = 一次求助任务。
+ * - 版本锚定：questionRevisionId = responses 行 id，contextSnapshotJson 为
+ *   建任务时冻结的完整上下文快照（含答案解析，受控 AI 出口合法内容；存库列
+ *   ——拍板 D2，进备份、无文件 GC 负担），此后教师改题库不影响本任务；
+ * - mutationId 全局唯一：同请求键重放幂等（命中同参数返回原任务）；
+ * - generation：出站代际，每次 dispatch 尝试 +1 并先落库，回写按
+ *   (taskId, generation) CAS——迟到结果不覆盖（§6）；
+ * - 租约列（leaseToken/leaseUntil）仅 MCP 领取通道使用；
+ * - 删除策略：任务行是正式证据（facts/材料/回信的锚点），不物理删。
+ */
+export const aiTasks = sqliteTable(
+  "ai_tasks",
+  {
+    /** 主键：crypto.randomUUID()（§0.3 主键约定） */
+    id: text("id").primaryKey(),
+    /** 求助学生（students.id） */
+    studentId: text("student_id")
+      .notNull()
+      .references(() => students.id),
+    /** 所属作答（attempts.id；归属/作废/失权由 requireUsableAttempt 把关） */
+    attemptId: text("attempt_id")
+      .notNull()
+      .references(() => attempts.id),
+    /** 题目（questions.id，来自 DSL；无外键，D10 口径；同 questionId 跨教师经 (attemptId, questionId) 定位天然分离） */
+    questionId: text("question_id").notNull(),
+    /** 版本锚定 = 本卷该题 responses 行 id（对外 questionRevisionId 同源；无外键，notes 同款） */
+    questionRevisionId: text("question_revision_id").notNull(),
+    /** 发送通道（契约 aiChannelSchema） */
+    channel: text("channel").$type<AiChannel>().notNull(),
+    /** 创建/发送时有效模式（历史任务保留当时模式，契约 aiTaskPublicSchema） */
+    modeAtSend: text("mode_at_send").$type<AiTeachingMode>().notNull(),
+    /** 当时提示词快照的 sha-256（教师模板正文不落任务行，教师视图按需比对） */
+    promptHash: text("prompt_hash").notNull(),
+    /** 冻结上下文快照 JSON（aiContextSnapshotSchema 序列化；内部视图含答案解析） */
+    contextSnapshotJson: text("context_snapshot_json").notNull(),
+    /** 处理状态（契约 aiTaskStatusSchema 八态；查看态 replyDeliveredAt 另列） */
+    status: text("status").$type<AiTaskStatus>().notNull().default("created"),
+    /** 创建时服务端判定的提交前/提交后（客户端迟到上报不改写） */
+    beforeSubmit: integer("before_submit", { mode: "boolean" }).notNull(),
+    /** 幂等请求键（客户端生成；全局唯一索引承载查重：同键重放命中原任务） */
+    mutationId: text("mutation_id").notNull(),
+    /** MCP 租约截止：UTC ISO；非 claimed 为 NULL（过期惰性回 created） */
+    leaseUntil: text("lease_until"),
+    /** MCP 租约令牌（写回 CAS 凭证；迟到持有者仅记 late_reply 事实） */
+    leaseToken: text("lease_token"),
+    /** 学生打开回信时刻：UTC ISO；null = 未交付（含已收信未读与禁用期收存） */
+    replyDeliveredAt: text("reply_delivered_at"),
+    /** 取消请求时刻（claimed 后取消：阻止交付，回信仍入库为事实）；null = 未请求 */
+    cancelRequestedAt: text("cancel_requested_at"),
+    /** 最近失败摘要（failed 态）；无失败为 NULL */
+    errorText: text("error_text"),
+    /** 显式重试次数（失败后学生显式重试 +1，绝不自动重发） */
+    retryCount: integer("retry_count").notNull().default(0),
+    /** 出站代际（0 = 未出站；每次 dispatch 尝试 +1 先落库，回写 CAS 比对） */
+    generation: integer("generation").notNull().default(0),
+    /** 创建时间：UTC ISO 字符串 */
+    createdAt: text("created_at").notNull(),
+    /** 最近更新时间：UTC ISO 字符串 */
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    // 学生任务列表（按创建时间倒序在少量行上做）
+    index("ai_tasks_student_created_idx").on(table.studentId, table.createdAt),
+    // 同卷同题的进行中任务定位（AI_TASK_ACTIVE_PER_QUESTION 限额与查重）
+    index("ai_tasks_attempt_question_idx").on(
+      table.attemptId,
+      table.questionId,
+    ),
+    // 队列扫描（MCP 领取按 channel+status FIFO；createdAt 排序在少量行上做）
+    index("ai_tasks_channel_status_idx").on(table.channel, table.status),
+    // 租约惰性清理（claimed 且 leaseUntil < now → 回 created 可再领取）
+    index("ai_tasks_status_lease_idx").on(table.status, table.leaseUntil),
+    // 幂等键全局唯一（同请求键第二任务被 DB 拒绝）
+    uniqueIndex("ai_tasks_mutation_id_uk").on(table.mutationId),
+    check(
+      "ai_tasks_channel_check",
+      sql`${table.channel} in ('inapp', 'mcp', 'link')`,
+    ),
+    check(
+      "ai_tasks_mode_at_send_check",
+      sql`${table.modeAtSend} in ('open_study', 'guided_only', 'post_submit_only')`,
+    ),
+    check(
+      "ai_tasks_status_check",
+      sql`${table.status} in ('created', 'dispatching', 'uncertain', 'claimed', 'replied', 'paused', 'failed', 'cancelled')`,
+    ),
+  ],
+);
+
+/**
+ * AI 任务材料表（§5.1 表 5）——任务附带的笔迹材料 PNG 分页行。
+ * - pngPath 相对 DATA_DIR（blobs/ai-materials/<sha256>.png，内容寻址不可变；
+ *   写序：临时文件 → 事务插行 → rename，note_versions 同款，SAI-11 落地）；
+ * - BLOB_BACKUP_REF_COLUMNS 已登记 png_path——被本表行或备份引用的 PNG
+ *   绝不回收（GC 与备份收集同源消费）；
+ * - 删除策略：行存在期间任务不可物理删（FK 拦截）——取消回信不删除正式证据。
+ */
+export const aiTaskMaterials = sqliteTable(
+  "ai_task_materials",
+  {
+    /** 主键：crypto.randomUUID()（§0.3 主键约定） */
+    id: text("id").primaryKey(),
+    /** 所属任务（ai_tasks.id） */
+    taskId: text("task_id")
+      .notNull()
+      .references(() => aiTasks.id),
+    /** 材料类别：annotation=题面圈画 / draft=草稿 / formal_ink=正式手写 */
+    kind: text("kind").$type<AiMaterialKind>().notNull(),
+    /** 页序（同类材料内从 0 递增，长稿分页） */
+    pageIndex: integer("page_index").notNull(),
+    /** PNG 文件相对路径（DATA_DIR 内，内容寻址不可变；学生端视图不透出本列） */
+    pngPath: text("png_path").notNull(),
+    /** 像素宽 */
+    pixelWidth: integer("pixel_width").notNull(),
+    /** 像素高 */
+    pixelHeight: integer("pixel_height").notNull(),
+    /** 文件字节数（限额账本口径同 note_images：删文件不释放额度） */
+    byteSize: integer("byte_size").notNull(),
+    /** 文件 sha-256（hex64，内容寻址身份） */
+    hash: text("hash").notNull(),
+    /** 材料状态（契约 aiTaskMaterialSchema；missing 时缺失原因由服务层随行返回） */
+    state: text("state")
+      .$type<"pending" | "ready" | "failed" | "missing">()
+      .notNull(),
+  },
+  (table) => [
+    // 槽位唯一：同任务同类别同页号只有一张图
+    uniqueIndex("ai_task_materials_task_kind_page_uk").on(
+      table.taskId,
+      table.kind,
+      table.pageIndex,
+    ),
+    check(
+      "ai_task_materials_kind_check",
+      sql`${table.kind} in ('annotation', 'draft', 'formal_ink')`,
+    ),
+    check(
+      "ai_task_materials_state_check",
+      sql`${table.state} in ('pending', 'ready', 'failed', 'missing')`,
+    ),
+  ],
+);
+
+/**
+ * AI 同题对话表（§5.1 表 6，方案 §3.3）——绑定单一任务：首条为任务问题，
+ * 追问递增（同题 ≤ AI_TURNS_MAX 轮）。只引用本题当前对话，追问上下文重建
+ * 读本表 + 任务快照，不注入其他题或其他学生数据。
+ */
+export const aiMessages = sqliteTable(
+  "ai_messages",
+  {
+    /** 主键：crypto.randomUUID()（§0.3 主键约定） */
+    id: text("id").primaryKey(),
+    /** 所属任务（ai_tasks.id） */
+    taskId: text("task_id")
+      .notNull()
+      .references(() => aiTasks.id),
+    /** 发言角色：student=学生提问 / assistant=AI 回信 */
+    role: text("role").$type<AiMessageRole>().notNull(),
+    /** 消息正文 Markdown（上限 AI_REPLY_MAX_CHARS 由写入层校验） */
+    contentMd: text("content_md").notNull(),
+    /** 创建时间：UTC ISO 字符串 */
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    // 对话时序读取（追问上下文重建按 createdAt 升序取历史）
+    index("ai_messages_task_created_idx").on(table.taskId, table.createdAt),
+    check(
+      "ai_messages_role_check",
+      sql`${table.role} in ('student', 'assistant')`,
+    ),
+  ],
+);
+
+/**
+ * AI 审计事实表（§5.1 表 7，方案 §3.5）——append-only，永不 UPDATE/DELETE。
+ * - taskId 不建外键（其余三表按 §5.1 显式标 FK，本表未标——事实须在任务行
+ *   任何形态下独立存在，且任务行本就不物理删，无级联语义需求）；
+ * - attemptId/questionId/studentId 为冗余列：教师督学按卷/按题查询免 join
+ *   （值随任务行同源写入）；
+ * - 教师督学只消费本表 + 任务行：无记录 ≠ 独立完成；仅入队未外发 =
+ *   「作答中求助·未处理」；beforeSubmit 由服务端按当时完成态判定。
+ */
+export const aiFacts = sqliteTable(
+  "ai_facts",
+  {
+    /** 主键：crypto.randomUUID()（§0.3 主键约定） */
+    id: text("id").primaryKey(),
+    /** 所属任务（ai_tasks.id；无外键，见表注释） */
+    taskId: text("task_id").notNull(),
+    /** 所属作答（attempts.id；冗余列，随任务行同源写入） */
+    attemptId: text("attempt_id").notNull(),
+    /** 题目（questions.id；冗余列） */
+    questionId: text("question_id").notNull(),
+    /** 学生（students.id；冗余列） */
+    studentId: text("student_id").notNull(),
+    /** 事实类型（契约 aiFactTypeSchema 11 种） */
+    type: text("type").$type<AiFactType>().notNull(),
+    /** 服务端判定的提交前/提交后（客户端迟到上报不改写） */
+    beforeSubmit: integer("before_submit", { mode: "boolean" }).notNull(),
+    /** 事实详情 JSON（连接方式、当时模式、错误摘要；教师域视图用；无详情为 NULL） */
+    detailJson: text("detail_json"),
+    /** 服务端时间：UTC ISO 字符串 */
+    serverTs: text("server_ts").notNull(),
+  },
+  (table) => [
+    // 任务时间线（学生/教师回看任务的完整事实序列）
+    index("ai_facts_task_ts_idx").on(table.taskId, table.serverTs),
+    // 教师按卷/按题督学查询（冗余列免 join 的物理基础）
+    index("ai_facts_attempt_question_ts_idx").on(
+      table.attemptId,
+      table.questionId,
+      table.serverTs,
+    ),
+    check(
+      "ai_facts_type_check",
+      sql`${table.type} in ('task_created', 'link_generated', 'dispatched', 'link_viewed', 'reply_received', 'reply_delivered', 'paused', 'resumed', 'cancelled', 'failed', 'late_reply')`,
+    ),
+  ],
+);
+
+/**
+ * AI 分享票据表（§5.1 表 8，方案 §7/§3.6）——上下文链接通道的读端点凭证。
+ * - tokenHash 唯一：明文 token 只在生成响应出现一次，库与日志只存哈希；
+ * - payloadHash：快照身份（同任务换快照 = 新票据，旧票据不复活）；
+ * - 撤销 = 置 revokedAt（行保留审计）；过期/撤销/禁用即拒绝（AI_SHARE_*）；
+ * - viewCount/lastViewedAt：link_viewed 事实的计数冗余（正文实际返回才 +1）。
+ */
+export const aiShareTickets = sqliteTable(
+  "ai_share_tickets",
+  {
+    /** 主键：crypto.randomUUID()（§0.3 主键约定） */
+    id: text("id").primaryKey(),
+    /** 所属任务（ai_tasks.id） */
+    taskId: text("task_id")
+      .notNull()
+      .references(() => aiTasks.id),
+    /** 明文 token 的哈希（sha-256 hex64；全局唯一） */
+    tokenHash: text("token_hash").notNull(),
+    /** 票据指向的快照身份哈希（换快照 = 新票据） */
+    payloadHash: text("payload_hash").notNull(),
+    /** 过期时间：UTC ISO 字符串 */
+    expiresAt: text("expires_at").notNull(),
+    /** 撤销时间：UTC ISO；未撤销为 NULL（撤销行保留审计） */
+    revokedAt: text("revoked_at"),
+    /** 正文实际返回次数（HEAD/预览不算） */
+    viewCount: integer("view_count").notNull().default(0),
+    /** 最近正文返回时间：UTC ISO；从未被读为 NULL */
+    lastViewedAt: text("last_viewed_at"),
+    /** 创建时间：UTC ISO 字符串 */
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    // 读端点按 token 定位（哈希查重 + 撤销/过期判定一行完成）
+    uniqueIndex("ai_share_tickets_token_hash_uk").on(table.tokenHash),
+  ],
+);
+
+/**
+ * 学生 AI 快捷按钮表（§5.1 表 9）——学生自定义快捷按钮（整组替换语义）。
+ * - 默认四按钮不落库（契约 DEFAULT_QUICK_BUTTONS 常量兜底），学生首次
+ *   自定义时才物化——避免每位学生四行回填；恢复默认 = 整组显式提交常量；
+ * - id 用契约稳定 ID（默认按钮固定语义 id、自定义按钮 uuid）；
+ * - attachmentPref 存 aiMaterialPreferenceSchema 序列化 JSON（三类材料勾选）；
+ * - (studentId, orderIndex) 唯一（展示序物理基础；逻辑序由服务层整组替换
+ *   保证——契约 superRefine 已拒重复 orderIndex，DB 层兜底防并行写坏序）。
+ */
+export const aiQuickButtons = sqliteTable(
+  "ai_quick_buttons",
+  {
+    /** 稳定 ID（默认按钮固定语义 id 如 hint-next；自定义按钮 crypto.randomUUID()） */
+    id: text("id").primaryKey(),
+    /** 归属学生（students.id） */
+    studentId: text("student_id")
+      .notNull()
+      .references(() => students.id),
+    /** 按钮名称（≤16 字符，契约限额） */
+    name: text("name").notNull(),
+    /** 按钮提示词（≤500 字符，契约限额） */
+    prompt: text("prompt").notNull(),
+    /** 展示序（0 起小在前；(studentId, orderIndex) 唯一） */
+    orderIndex: integer("order_index").notNull(),
+    /** 是否启用（禁用按钮不渲染但保留配置） */
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    /** 附件偏好 JSON（aiMaterialPreferenceSchema：annotation/draft/formalInk 三勾选） */
+    attachmentPref: text("attachment_pref").notNull(),
+    /** 最近更新时间：UTC ISO 字符串（PUT 回传 baseUpdatedAt 做冲突检测） */
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    // 同学生展示序唯一（值域内排序读取免额外索引：studentId 前缀即命中）
+    uniqueIndex("ai_quick_buttons_student_order_uk").on(
+      table.studentId,
+      table.orderIndex,
+    ),
+  ],
+);
+
 /** courses 表行类型（SELECT 结果） */
 export type Course = typeof courses.$inferSelect;
 /** courses 表插入类型 */
@@ -1622,3 +2066,39 @@ export type NewAnnotationBaseRow = typeof annotationBases.$inferInsert;
 export type AnnotationRow = typeof annotations.$inferSelect;
 /** annotations 表插入类型 */
 export type NewAnnotationRow = typeof annotations.$inferInsert;
+/** ai_teacher_settings 表行类型（SELECT 结果；SAI-05 教师全局 AI 设置） */
+export type AiTeacherSettingsRow = typeof aiTeacherSettings.$inferSelect;
+/** ai_teacher_settings 表插入类型 */
+export type NewAiTeacherSettingsRow = typeof aiTeacherSettings.$inferInsert;
+/** ai_policy_overrides 表行类型（SELECT 结果；SAI-05 学生/作业策略覆盖） */
+export type AiPolicyOverrideRow = typeof aiPolicyOverrides.$inferSelect;
+/** ai_policy_overrides 表插入类型 */
+export type NewAiPolicyOverrideRow = typeof aiPolicyOverrides.$inferInsert;
+/** ai_connections 表行类型（SELECT 结果；SAI-05 学生连接器） */
+export type AiConnectionRow = typeof aiConnections.$inferSelect;
+/** ai_connections 表插入类型 */
+export type NewAiConnectionRow = typeof aiConnections.$inferInsert;
+/** ai_tasks 表行类型（SELECT 结果；SAI-05 AI 任务） */
+export type AiTaskRow = typeof aiTasks.$inferSelect;
+/** ai_tasks 表插入类型 */
+export type NewAiTaskRow = typeof aiTasks.$inferInsert;
+/** ai_task_materials 表行类型（SELECT 结果；SAI-05 任务材料） */
+export type AiTaskMaterialRow = typeof aiTaskMaterials.$inferSelect;
+/** ai_task_materials 表插入类型 */
+export type NewAiTaskMaterialRow = typeof aiTaskMaterials.$inferInsert;
+/** ai_messages 表行类型（SELECT 结果；SAI-05 同题对话） */
+export type AiMessageRow = typeof aiMessages.$inferSelect;
+/** ai_messages 表插入类型 */
+export type NewAiMessageRow = typeof aiMessages.$inferInsert;
+/** ai_facts 表行类型（SELECT 结果；SAI-05 审计事实，append-only） */
+export type AiFactRow = typeof aiFacts.$inferSelect;
+/** ai_facts 表插入类型 */
+export type NewAiFactRow = typeof aiFacts.$inferInsert;
+/** ai_share_tickets 表行类型（SELECT 结果；SAI-05 分享票据） */
+export type AiShareTicketRow = typeof aiShareTickets.$inferSelect;
+/** ai_share_tickets 表插入类型 */
+export type NewAiShareTicketRow = typeof aiShareTickets.$inferInsert;
+/** ai_quick_buttons 表行类型（SELECT 结果；SAI-05 学生快捷按钮） */
+export type AiQuickButtonRow = typeof aiQuickButtons.$inferSelect;
+/** ai_quick_buttons 表插入类型 */
+export type NewAiQuickButtonRow = typeof aiQuickButtons.$inferInsert;

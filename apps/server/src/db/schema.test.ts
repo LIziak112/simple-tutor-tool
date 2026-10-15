@@ -2,10 +2,20 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import {
+  aiConnections,
+  aiFacts,
+  aiMessages,
+  aiPolicyOverrides,
+  aiQuickButtons,
+  aiShareTickets,
+  aiTaskMaterials,
+  aiTasks,
+  aiTeacherSettings,
   assignmentStudents,
   assignments,
   assignmentUnits,
   attempts,
+  BLOB_BACKUP_REF_COLUMNS,
   courses,
   lectures,
   loginFailures,
@@ -20,7 +30,7 @@ import {
   teachers,
   units,
 } from "./schema";
-import { createTestDb } from "./test-utils";
+import { createTestDb, TEST_TEACHER_ID } from "./test-utils";
 
 /** sqlite_master 行的最小形状（建表元数据查询用） */
 interface TableNameRow {
@@ -959,6 +969,746 @@ describe("notes / note_versions / note_images / submission_evidence 表（T6R.2 
       currentVersionId: versionId,
       serverSavedAt: now,
     });
+    db.$client.close();
+  });
+});
+
+// ---------- 学生端 AI 伴学九表（SAI-05，技术实施方案 §5.1） ----------
+
+/** PRAGMA index_info 行形状（索引列序断言用，attempts_student_lecture_idx 同款） */
+interface IndexInfoRow {
+  name: string;
+}
+
+/** 读索引的列序（存在性 + 列序一并锁定；不存在时返回空数组） */
+function indexColumns(
+  db: ReturnType<typeof createTestDb>,
+  name: string,
+): string[] {
+  return (
+    db.$client.prepare(`PRAGMA index_info('${name}')`).all() as IndexInfoRow[]
+  ).map((col) => col.name);
+}
+
+/** 造 ai 表最小外键链：学生 → attempt（attempts 仅外键 students）；返回各 id */
+function seedAiRefs(db: ReturnType<typeof createTestDb>): {
+  studentId: string;
+  attemptId: string;
+} {
+  // loginName 全局唯一：同库多次 seedAiRefs 须各带不同登录名
+  const student = studentRow({ loginName: `stu-${randomUUID()}` });
+  db.insert(students).values(student).run();
+  const attemptId = randomUUID();
+  db.insert(attempts)
+    .values({
+      id: attemptId,
+      studentId: student.id,
+      sourceType: "assignment",
+      assignmentId: null,
+      courseId: null,
+      unitId: null,
+      attemptNo: 1,
+      status: "draft",
+      startedAt: new Date().toISOString(),
+      frozenAt: new Date().toISOString(),
+      legacyUnverified: false,
+    })
+    .run();
+  return { studentId: student.id, attemptId };
+}
+
+/** 造一行 ai_tasks（缺省 channel=inapp / status=created；字段可覆盖） */
+function seedAiTask(
+  db: ReturnType<typeof createTestDb>,
+  refs: { studentId: string; attemptId: string },
+  o: Partial<typeof aiTasks.$inferInsert> = {},
+): typeof aiTasks.$inferInsert {
+  const now = new Date().toISOString();
+  const task = {
+    id: randomUUID(),
+    studentId: refs.studentId,
+    attemptId: refs.attemptId,
+    questionId: "练习四-1",
+    questionRevisionId: randomUUID(),
+    channel: "inapp" as const,
+    modeAtSend: "open_study" as const,
+    promptHash: "a".repeat(64),
+    contextSnapshotJson: '{"questionId":"练习四-1"}',
+    status: "created" as const,
+    beforeSubmit: true,
+    mutationId: randomUUID(),
+    leaseUntil: null,
+    leaseToken: null,
+    replyDeliveredAt: null,
+    cancelRequestedAt: null,
+    errorText: null,
+    generation: 0,
+    createdAt: now,
+    updatedAt: now,
+    ...o,
+  };
+  db.insert(aiTasks).values(task).run();
+  return task;
+}
+
+describe("ai_teacher_settings / ai_policy_overrides 表（SAI-05 教学配置存储）", () => {
+  it("迁移后两表存在；教师设置行可读写（三模板列 NULL = 默认模板）", () => {
+    const db = createTestDb();
+    const tables = db.$client
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('ai_teacher_settings','ai_policy_overrides') ORDER BY name",
+      )
+      .all() as TableNameRow[];
+    expect(tables.map((r) => r.name)).toEqual([
+      "ai_policy_overrides",
+      "ai_teacher_settings",
+    ]);
+
+    const row = {
+      teacherId: TEST_TEACHER_ID,
+      defaultMode: "guided_only" as const,
+      promptsOpen: null,
+      promptsGuided: "仅启发自定义模板",
+      promptsReview: null,
+      updatedAt: new Date().toISOString(),
+    };
+    db.insert(aiTeacherSettings).values(row).run();
+    expect(
+      db
+        .select()
+        .from(aiTeacherSettings)
+        .where(eq(aiTeacherSettings.teacherId, row.teacherId))
+        .get(),
+    ).toEqual(row);
+    db.$client.close();
+  });
+
+  it("defaultMode 值域 CHECK：'inherit' 等第四值被 DB 拒绝（无行才是继承语义）", () => {
+    const db = createTestDb();
+    expect(() =>
+      db.$client
+        .prepare(
+          "INSERT INTO ai_teacher_settings (teacher_id, default_mode, prompts_open, prompts_guided, prompts_review, updated_at) VALUES (?, 'inherit', NULL, NULL, NULL, ?)",
+        )
+        .run(TEST_TEACHER_ID, new Date().toISOString()),
+    ).toThrow();
+    db.$client.close();
+  });
+
+  it("ai_policy_overrides 复合主键：同 (subjectType, subjectId) 拒绝重复；mode / subjectType 值域 CHECK", () => {
+    const db = createTestDb();
+    const now = new Date().toISOString();
+    db.insert(aiPolicyOverrides)
+      .values({
+        subjectType: "student",
+        subjectId: "stu-1",
+        mode: "post_submit_only",
+        updatedAt: now,
+      })
+      .run();
+    // 同键第二行 → 违反复合主键
+    expect(() =>
+      db
+        .insert(aiPolicyOverrides)
+        .values({
+          subjectType: "student",
+          subjectId: "stu-1",
+          mode: "open_study",
+          updatedAt: now,
+        })
+        .run(),
+    ).toThrow();
+    // mode='inherit' 不被值域接受（无行 = 继承，不落行）
+    expect(() =>
+      db.$client
+        .prepare(
+          "INSERT INTO ai_policy_overrides (subject_type, subject_id, mode, updated_at) VALUES ('student', 'stu-2', 'inherit', ?)",
+        )
+        .run(now),
+    ).toThrow();
+    // subjectType 值域：'course' 被拒绝（域一致性服务层校验，DB 锁值域）
+    expect(() =>
+      db.$client
+        .prepare(
+          "INSERT INTO ai_policy_overrides (subject_type, subject_id, mode, updated_at) VALUES ('course', 'c-1', 'open_study', ?)",
+        )
+        .run(now),
+    ).toThrow();
+    db.$client.close();
+  });
+
+  it("同 subjectId 跨 subjectType 共存（学生 id 与作业 id 是两个命名空间，互不挤占）", () => {
+    const db = createTestDb();
+    const now = new Date().toISOString();
+    const sharedId = randomUUID();
+    db.insert(aiPolicyOverrides)
+      .values({
+        subjectType: "student",
+        subjectId: sharedId,
+        mode: "guided_only",
+        updatedAt: now,
+      })
+      .run();
+    expect(() =>
+      db
+        .insert(aiPolicyOverrides)
+        .values({
+          subjectType: "assignment",
+          subjectId: sharedId,
+          mode: "open_study",
+          updatedAt: now,
+        })
+        .run(),
+    ).not.toThrow();
+    db.$client.close();
+  });
+});
+
+describe("ai_connections 表（SAI-05 学生连接器）", () => {
+  it("迁移后表存在；行可读写（isDefault=false / verifyStatus=unverified 缺省）；(studentId, channel) 索引建出", () => {
+    const db = createTestDb();
+    const tables = db.$client
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'ai_connections'",
+      )
+      .all() as TableNameRow[];
+    expect(tables.map((r) => r.name)).toEqual(["ai_connections"]);
+
+    const student = studentRow();
+    db.insert(students).values(student).run();
+    const id = randomUUID();
+    db.insert(aiConnections)
+      .values({
+        id,
+        studentId: student.id,
+        channel: "inapp",
+        configJson:
+          '{"baseUrl":"https://api.example.com","model":"glm-4.6","keyCiphertext":"x","keyIv":"y","keyTag":"z","keyFingerprint":"abcd1234"}',
+        createdAt: "2026-10-15T00:00:00.000Z",
+        updatedAt: "2026-10-15T00:00:00.000Z",
+      })
+      .run();
+    expect(
+      db.select().from(aiConnections).where(eq(aiConnections.id, id)).get(),
+    ).toMatchObject({
+      id,
+      isDefault: false,
+      verifyStatus: "unverified",
+      verifiedAt: null,
+      archivedAt: null,
+    });
+    expect(indexColumns(db, "ai_connections_student_channel_idx")).toEqual([
+      "student_id",
+      "channel",
+    ]);
+    db.$client.close();
+  });
+
+  it("channel 值域 CHECK：'web' 被拒绝；外键：孤儿 studentId 拒绝（无效引用不能写入）", () => {
+    const db = createTestDb();
+    const now = new Date().toISOString();
+    expect(() =>
+      db.$client
+        .prepare(
+          "INSERT INTO ai_connections (id, student_id, channel, config_json, created_at, updated_at) VALUES (?, ?, 'web', '{}', ?, ?)",
+        )
+        .run(randomUUID(), randomUUID(), now, now),
+    ).toThrow();
+    expect(() =>
+      db
+        .insert(aiConnections)
+        .values({
+          id: randomUUID(),
+          studentId: randomUUID(),
+          channel: "mcp",
+          configJson: '{"tokenHash":"h","tokenFingerprint":"f"}',
+          createdAt: now,
+          updatedAt: now,
+        })
+        .run(),
+    ).toThrow();
+    db.$client.close();
+  });
+});
+
+describe("ai_tasks / ai_task_materials 表（SAI-05 任务与材料）", () => {
+  it("迁移后两表存在；行可读写（status=created / retryCount=0 / generation=0 缺省）", () => {
+    const db = createTestDb();
+    const tables = db.$client
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('ai_tasks','ai_task_materials') ORDER BY name",
+      )
+      .all() as TableNameRow[];
+    expect(tables.map((r) => r.name)).toEqual([
+      "ai_task_materials",
+      "ai_tasks",
+    ]);
+
+    const refs = seedAiRefs(db);
+    const task = seedAiTask(db, refs);
+    expect(
+      db.select().from(aiTasks).where(eq(aiTasks.id, task.id)).get(),
+    ).toMatchObject({
+      status: "created",
+      retryCount: 0,
+      generation: 0,
+      leaseUntil: null,
+      replyDeliveredAt: null,
+    });
+    db.$client.close();
+  });
+
+  it("mutationId 唯一索引：同请求键第二任务被拒；不同学生不同键互不冲突", () => {
+    const db = createTestDb();
+    const refsA = seedAiRefs(db);
+    const refsB = seedAiRefs(db);
+    const mutationId = randomUUID();
+    seedAiTask(db, refsA, { mutationId });
+    // 同 mutationId（同学生重复请求键）→ 唯一索引拒绝（幂等查重物理基础）
+    expect(() =>
+      seedAiTask(db, refsA, { mutationId, questionId: "练习四-2" }),
+    ).toThrow();
+    // 不同学生 / 不同键各自合法
+    expect(() => seedAiTask(db, refsB)).not.toThrow();
+    expect(() =>
+      seedAiTask(db, refsA, { questionId: "练习四-3" }),
+    ).not.toThrow();
+    db.$client.close();
+  });
+
+  it("status / channel 值域 CHECK：'deleted'、'web' 均被拒绝", () => {
+    const db = createTestDb();
+    const refs = seedAiRefs(db);
+    const task = seedAiTask(db, refs);
+    expect(() =>
+      db.$client
+        .prepare("UPDATE ai_tasks SET status = 'deleted' WHERE id = ?")
+        .run(task.id),
+    ).toThrow();
+    expect(() =>
+      db.$client
+        .prepare("UPDATE ai_tasks SET channel = 'web' WHERE id = ?")
+        .run(task.id),
+    ).toThrow();
+    db.$client.close();
+  });
+
+  it("外键：孤儿 attemptId / studentId 拒绝（无效引用不能写入）", () => {
+    const db = createTestDb();
+    const refs = seedAiRefs(db);
+    expect(() => seedAiTask(db, refs, { attemptId: randomUUID() })).toThrow();
+    expect(() => seedAiTask(db, refs, { studentId: randomUUID() })).toThrow();
+    db.$client.close();
+  });
+
+  it("同 questionId 跨教师记录仍分开：各自 (attemptId, questionId) 定位互不串卷", () => {
+    const db = createTestDb();
+    // 教师A（TEST_TEACHER_ID 已种入）与教师B的学生各持一卷，题目 id 相同（D10 复合主键形态）
+    const teacherB = {
+      id: randomUUID(),
+      loginName: "teacher-b",
+      isAdmin: false,
+      disabledAt: null,
+      passwordHash: null,
+      apiToken: null,
+      createdAt: new Date().toISOString(),
+    };
+    db.insert(teachers).values(teacherB).run();
+    const studentA = studentRow({ teacherId: TEST_TEACHER_ID });
+    const studentB = studentRow({ teacherId: teacherB.id, loginName: "李四" });
+    db.insert(students).values(studentA).run();
+    db.insert(students).values(studentB).run();
+    const now = new Date().toISOString();
+    const attemptA = randomUUID();
+    const attemptB = randomUUID();
+    for (const [attemptId, studentId] of [
+      [attemptA, studentA.id],
+      [attemptB, studentB.id],
+    ] as const) {
+      db.insert(attempts)
+        .values({
+          id: attemptId,
+          studentId,
+          sourceType: "assignment",
+          attemptNo: 1,
+          status: "draft",
+          startedAt: now,
+        })
+        .run();
+    }
+    const sharedQuestionId = "shared-q";
+    seedAiTask(
+      db,
+      { studentId: studentA.id, attemptId: attemptA },
+      { questionId: sharedQuestionId },
+    );
+    seedAiTask(
+      db,
+      { studentId: studentB.id, attemptId: attemptB },
+      { questionId: sharedQuestionId },
+    );
+    // ai_tasks_attempt_question_idx 对应查询：各自只取到本教师的任务
+    const rowsA = db
+      .select({ studentId: aiTasks.studentId })
+      .from(aiTasks)
+      .where(eq(aiTasks.attemptId, attemptA))
+      .all();
+    expect(rowsA).toEqual([{ studentId: studentA.id }]);
+    const rowsB = db
+      .select({ studentId: aiTasks.studentId })
+      .from(aiTasks)
+      .where(eq(aiTasks.attemptId, attemptB))
+      .all();
+    expect(rowsB).toEqual([{ studentId: studentB.id }]);
+    db.$client.close();
+  });
+
+  it("四个查询索引建出且列序一致（student/created、attempt/question、channel/status、status/lease）", () => {
+    const db = createTestDb();
+    expect(indexColumns(db, "ai_tasks_student_created_idx")).toEqual([
+      "student_id",
+      "created_at",
+    ]);
+    expect(indexColumns(db, "ai_tasks_attempt_question_idx")).toEqual([
+      "attempt_id",
+      "question_id",
+    ]);
+    expect(indexColumns(db, "ai_tasks_channel_status_idx")).toEqual([
+      "channel",
+      "status",
+    ]);
+    expect(indexColumns(db, "ai_tasks_status_lease_idx")).toEqual([
+      "status",
+      "lease_until",
+    ]);
+    db.$client.close();
+  });
+
+  it("ai_task_materials：(taskId, kind, pageIndex) 唯一；kind 值域 CHECK；外键孤儿 taskId 拒绝", () => {
+    const db = createTestDb();
+    const refs = seedAiRefs(db);
+    const task = seedAiTask(db, refs);
+    const material = {
+      id: randomUUID(),
+      taskId: task.id,
+      kind: "draft" as const,
+      pageIndex: 0,
+      pngPath: "blobs/ai-materials/aaaaaaaa.png",
+      pixelWidth: 1000,
+      pixelHeight: 800,
+      byteSize: 2048,
+      hash: "b".repeat(64),
+      state: "ready" as const,
+    };
+    db.insert(aiTaskMaterials).values(material).run();
+    expect(
+      db
+        .select()
+        .from(aiTaskMaterials)
+        .where(eq(aiTaskMaterials.id, material.id))
+        .get(),
+    ).toEqual(material);
+
+    // 同 (taskId, kind, pageIndex) 第二行 → 唯一索引拒绝；换 pageIndex 合法
+    expect(() =>
+      db
+        .insert(aiTaskMaterials)
+        .values({ ...material, id: randomUUID() })
+        .run(),
+    ).toThrow();
+    expect(() =>
+      db
+        .insert(aiTaskMaterials)
+        .values({ ...material, id: randomUUID(), pageIndex: 1 })
+        .run(),
+    ).not.toThrow();
+    // kind 值域：'photo' 被拒绝
+    expect(() =>
+      db.$client
+        .prepare(
+          "INSERT INTO ai_task_materials (id, task_id, kind, page_index, png_path, pixel_width, pixel_height, byte_size, hash, state) VALUES (?, ?, 'photo', 2, ?, 1, 1, 1, ?, 'ready')",
+        )
+        .run(randomUUID(), task.id, "blobs/ai-materials/b.png", "c".repeat(64)),
+    ).toThrow();
+    // 外键：孤儿 taskId 拒绝
+    expect(() =>
+      db
+        .insert(aiTaskMaterials)
+        .values({
+          ...material,
+          id: randomUUID(),
+          pageIndex: 3,
+          taskId: randomUUID(),
+        })
+        .run(),
+    ).toThrow();
+    db.$client.close();
+  });
+
+  it("BLOB_BACKUP_REF_COLUMNS 登记 ai_task_materials.png_path（备份/GC 引用保护单源）", () => {
+    expect(BLOB_BACKUP_REF_COLUMNS).toContainEqual([
+      "ai_task_materials",
+      "png_path",
+    ]);
+  });
+
+  it("删除连接 / 快捷按钮不级联材料；材料在则任务不可物理删（正式证据保护）", () => {
+    const db = createTestDb();
+    const refs = seedAiRefs(db);
+    const task = seedAiTask(db, refs);
+    db.insert(aiTaskMaterials)
+      .values({
+        id: randomUUID(),
+        taskId: task.id,
+        kind: "annotation",
+        pageIndex: 0,
+        pngPath: "blobs/ai-materials/d.png",
+        pixelWidth: 1000,
+        pixelHeight: 800,
+        byteSize: 2048,
+        hash: "d".repeat(64),
+        state: "ready",
+      })
+      .run();
+    // 连接 / 快捷按钮行删除后材料行原样保留（FK 图上无级联路径）
+    const connId = randomUUID();
+    db.insert(aiConnections)
+      .values({
+        id: connId,
+        studentId: refs.studentId,
+        channel: "link",
+        configJson: '{"defaultValidHours":24}',
+        createdAt: "2026-10-15T00:00:00.000Z",
+        updatedAt: "2026-10-15T00:00:00.000Z",
+      })
+      .run();
+    db.delete(aiConnections).where(eq(aiConnections.id, connId)).run();
+    db.delete(aiQuickButtons)
+      .where(eq(aiQuickButtons.studentId, refs.studentId))
+      .run();
+    expect(
+      db
+        .select()
+        .from(aiTaskMaterials)
+        .where(eq(aiTaskMaterials.taskId, task.id))
+        .all(),
+    ).toHaveLength(1);
+    // 材料行存在期间任务不可物理删（FK 拦截；取消回信不删除正式证据）
+    expect(() =>
+      db.delete(aiTasks).where(eq(aiTasks.id, task.id)).run(),
+    ).toThrow();
+    db.$client.close();
+  });
+});
+
+describe("ai_messages / ai_facts / ai_share_tickets / ai_quick_buttons 表（SAI-05）", () => {
+  it("ai_messages：行可读写、(taskId, createdAt) 索引建出、role 值域与外键", () => {
+    const db = createTestDb();
+    const refs = seedAiRefs(db);
+    const task = seedAiTask(db, refs);
+    const message = {
+      id: randomUUID(),
+      taskId: task.id,
+      role: "student" as const,
+      contentMd: "这道题第二步怎么变形？",
+      createdAt: new Date().toISOString(),
+    };
+    db.insert(aiMessages).values(message).run();
+    expect(
+      db.select().from(aiMessages).where(eq(aiMessages.id, message.id)).get(),
+    ).toEqual(message);
+    expect(indexColumns(db, "ai_messages_task_created_idx")).toEqual([
+      "task_id",
+      "created_at",
+    ]);
+    expect(() =>
+      db
+        .insert(aiMessages)
+        .values({ ...message, id: randomUUID(), taskId: randomUUID() })
+        .run(),
+    ).toThrow();
+    expect(() =>
+      db.$client
+        .prepare(
+          "INSERT INTO ai_messages (id, task_id, role, content_md, created_at) VALUES (?, ?, 'system', 'x', ?)",
+        )
+        .run(randomUUID(), task.id, new Date().toISOString()),
+    ).toThrow();
+    db.$client.close();
+  });
+
+  it("ai_facts：11 类事实可写（含 late_reply）、两索引建出、坏 type 拒绝", () => {
+    const db = createTestDb();
+    const refs = seedAiRefs(db);
+    const task = seedAiTask(db, refs);
+    const now = new Date().toISOString();
+    for (const type of [
+      "task_created",
+      "link_generated",
+      "dispatched",
+      "link_viewed",
+      "reply_received",
+      "reply_delivered",
+      "paused",
+      "resumed",
+      "cancelled",
+      "failed",
+      "late_reply",
+    ] as const) {
+      db.insert(aiFacts)
+        .values({
+          id: randomUUID(),
+          taskId: task.id,
+          attemptId: refs.attemptId,
+          questionId: "练习四-1",
+          studentId: refs.studentId,
+          type,
+          beforeSubmit: true,
+          detailJson: null,
+          serverTs: now,
+        })
+        .run();
+    }
+    expect(
+      db
+        .select({ id: aiFacts.id })
+        .from(aiFacts)
+        .where(eq(aiFacts.taskId, task.id))
+        .all(),
+    ).toHaveLength(11);
+    expect(indexColumns(db, "ai_facts_task_ts_idx")).toEqual([
+      "task_id",
+      "server_ts",
+    ]);
+    expect(indexColumns(db, "ai_facts_attempt_question_ts_idx")).toEqual([
+      "attempt_id",
+      "question_id",
+      "server_ts",
+    ]);
+    expect(() =>
+      db.$client
+        .prepare(
+          "INSERT INTO ai_facts (id, task_id, attempt_id, question_id, student_id, type, before_submit, detail_json, server_ts) VALUES (?, ?, ?, 'q', ?, 'deleted', 1, NULL, ?)",
+        )
+        .run(randomUUID(), task.id, refs.attemptId, refs.studentId, now),
+    ).toThrow();
+    db.$client.close();
+  });
+
+  it("ai_share_tickets：tokenHash 唯一、viewCount 缺省 0、外键孤儿拒绝", () => {
+    const db = createTestDb();
+    const refs = seedAiRefs(db);
+    const task = seedAiTask(db, refs);
+    const ticket = {
+      id: randomUUID(),
+      taskId: task.id,
+      tokenHash: "e".repeat(64),
+      payloadHash: "f".repeat(64),
+      expiresAt: "2026-10-16T00:00:00.000Z",
+      revokedAt: null,
+      viewCount: 0,
+      lastViewedAt: null,
+      createdAt: new Date().toISOString(),
+    };
+    db.insert(aiShareTickets).values(ticket).run();
+    expect(
+      db
+        .select()
+        .from(aiShareTickets)
+        .where(eq(aiShareTickets.id, ticket.id))
+        .get(),
+    ).toEqual(ticket);
+    // 同 tokenHash 第二行（另一任务）→ 唯一索引拒绝
+    const otherTask = seedAiTask(db, refs, { questionId: "练习四-9" });
+    expect(() =>
+      db
+        .insert(aiShareTickets)
+        .values({ ...ticket, id: randomUUID(), taskId: otherTask.id })
+        .run(),
+    ).toThrow();
+    // 换 tokenHash（撤销后重开新票据）合法
+    expect(() =>
+      db
+        .insert(aiShareTickets)
+        .values({
+          ...ticket,
+          id: randomUUID(),
+          tokenHash: "0".repeat(64),
+        })
+        .run(),
+    ).not.toThrow();
+    // 外键：孤儿 taskId 拒绝
+    expect(() =>
+      db
+        .insert(aiShareTickets)
+        .values({
+          ...ticket,
+          id: randomUUID(),
+          tokenHash: "1".repeat(64),
+          taskId: randomUUID(),
+        })
+        .run(),
+    ).toThrow();
+    db.$client.close();
+  });
+
+  it("ai_quick_buttons：(studentId, orderIndex) 唯一、enabled 缺省 true、外键孤儿拒绝", () => {
+    const db = createTestDb();
+    const refs = seedAiRefs(db);
+    const button = {
+      id: "hint-next",
+      studentId: refs.studentId,
+      name: "启发下一步",
+      prompt: "请指出下一步该做什么。",
+      orderIndex: 0,
+      attachmentPref: '{"annotation":true,"draft":true,"formalInk":true}',
+      updatedAt: new Date().toISOString(),
+    };
+    db.insert(aiQuickButtons).values(button).run();
+    expect(
+      db
+        .select()
+        .from(aiQuickButtons)
+        .where(eq(aiQuickButtons.id, button.id))
+        .get(),
+    ).toEqual({ ...button, enabled: true });
+    // 同 (studentId, orderIndex) 第二行 → 唯一索引拒绝；换序合法；换学生同序合法
+    expect(() =>
+      db
+        .insert(aiQuickButtons)
+        .values({ ...button, id: "b2", orderIndex: 0 })
+        .run(),
+    ).toThrow();
+    expect(() =>
+      db
+        .insert(aiQuickButtons)
+        .values({ ...button, id: "b2", orderIndex: 1 })
+        .run(),
+    ).not.toThrow();
+    const otherStudent = studentRow({ loginName: "王五" });
+    db.insert(students).values(otherStudent).run();
+    expect(() =>
+      db
+        .insert(aiQuickButtons)
+        .values({
+          ...button,
+          id: "hint-next-other",
+          studentId: otherStudent.id,
+          orderIndex: 0,
+        })
+        .run(),
+    ).not.toThrow();
+    // 外键：孤儿 studentId 拒绝
+    expect(() =>
+      db
+        .insert(aiQuickButtons)
+        .values({
+          ...button,
+          id: "b3",
+          studentId: randomUUID(),
+        })
+        .run(),
+    ).toThrow();
     db.$client.close();
   });
 });
