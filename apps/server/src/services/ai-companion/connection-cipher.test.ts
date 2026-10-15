@@ -47,7 +47,7 @@ describe("connection-cipher seal/open", () => {
   });
 
   it("密文被篡改（GCM 认证失败）→ needs_rekey，不抛异常不泄漏", () => {
-    const sealed = sealApiKey(ROOT_A, "sk-tamper-me") as SealedApiKey;
+    const sealed = sealApiKey(ROOT_A, "sk-tamper-me");
     const bytes = Buffer.from(sealed.ciphertext, "base64");
     bytes[0] = (bytes[0] ?? 0) ^ 0xff;
     const tampered: SealedApiKey = {

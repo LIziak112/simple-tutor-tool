@@ -1,7 +1,4 @@
-import {
-  AI_CONNECTION_TEST_TIMEOUT_MS,
-  AI_OUTBOUND_TIMEOUT_MS,
-} from "@tutor/contract";
+import { AI_CONNECTION_TEST_TIMEOUT_MS } from "@tutor/contract";
 import type { Logger } from "pino";
 import { redactHeaderValue } from "../../lib/log-redact.ts";
 import {
@@ -239,6 +236,3 @@ export async function testProviderConnection(input: {
     ...(input.logger !== undefined && { logger: input.logger }),
   });
 }
-
-/** AI_OUTBOUND_TIMEOUT_MS 再导出一次：正式出站调用方（SAI-17）单源取用 */
-export { AI_OUTBOUND_TIMEOUT_MS };

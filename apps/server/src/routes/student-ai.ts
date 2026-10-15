@@ -16,6 +16,7 @@ import type { AiTaskRow } from "../db/schema.ts";
 import {
   firstIssueMessage,
   HttpError,
+  parseJsonBody,
   parseJsonBodyWithCode,
 } from "../lib/http-error.ts";
 import {
@@ -121,14 +122,6 @@ function textLimitCodeOf(firstPath: string, issue?: { code?: string }): string {
   return firstPath === "question" && issue?.code !== "invalid_type"
     ? "AI_TEXT_TOO_LONG"
     : "VALIDATION_ERROR";
-}
-
-/**
- * 连接请求形状错误统一 400 VALIDATION_ERROR（strict 未知键、超长、缺字段）；
- * 通道适用性 / SSRF 保存期拒绝等语义级错误由服务层抛 AI_CONNECTION_INVALID。
- */
-function connectionShapeCode(): string {
-  return "VALIDATION_ERROR";
 }
 
 export function createStudentAiRoutes(db: Db, dataDir: string) {
@@ -277,10 +270,11 @@ export function createStudentAiRoutes(db: Db, dataDir: string) {
         });
       })
       .post("/ai/connections", async (c) => {
-        const request = await parseJsonBodyWithCode(
+        // 形状错误统一 400 VALIDATION_ERROR（parseJsonBody 缺省口径）；
+        // 通道适用性 / SSRF 保存期拒绝等语义级错误由服务层抛 AI_CONNECTION_INVALID
+        const request = await parseJsonBody(
           c,
           aiConnectionCreateRequestSchema,
-          connectionShapeCode,
         );
         const result = createStudentAiConnection(db, {
           studentId: c.var.student.id,
@@ -290,10 +284,9 @@ export function createStudentAiRoutes(db: Db, dataDir: string) {
         return c.json({ ok: true, data: result }, 201);
       })
       .patch("/ai/connections/:id", async (c) => {
-        const request = await parseJsonBodyWithCode(
+        const request = await parseJsonBody(
           c,
           aiConnectionPatchRequestSchema,
-          connectionShapeCode,
         );
         const result = patchStudentAiConnection(db, {
           studentId: c.var.student.id,
