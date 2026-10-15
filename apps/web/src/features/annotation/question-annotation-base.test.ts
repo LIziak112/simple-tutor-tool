@@ -84,6 +84,7 @@ beforeEach(() => {
 afterEach(() => {
   clearPrewarmedQuestionBases();
   resetAnnotationSession();
+  vi.unstubAllGlobals();
 });
 it("显式打开先接管预备，云端回填引发候选清理也不重复生成", async () => {
   await prewarmQuestionBase(session, scope, question, surface, () => false);
@@ -240,4 +241,75 @@ it("旧版底图不重新生成，拒绝访问不离线兜底", async () => {
       surface,
     ),
   ).rejects.toThrow("无权访问");
+});
+
+// ---------- surface=null（B05 AI 材料采集：材料收起/画布释放） ----------
+
+it("surface=null：本机已保存底图直接复用，不依赖活题面", async () => {
+  await writeLocalAnnotationBase(
+    session,
+    scope,
+    { png, layout },
+    { version: 1, baseWidth: 600, baseHeight: 400, strokes: [] },
+  );
+  expect(
+    (await prepareQuestionAnnotationBase(session, scope, question, null)).kind,
+  ).toBe("surface");
+  expect(fetchAnnotationViewApi).not.toHaveBeenCalled();
+  expect(renderQuestionBaseImage).not.toHaveBeenCalled();
+});
+
+it("surface=null：旧版底图仍返回 legacy，不因缺题面重新渲染", async () => {
+  vi.mocked(fetchAnnotationViewApi).mockResolvedValue({
+    base: {
+      baseId: "22222222-2222-4222-8222-222222222222",
+      state: "ready" as const,
+      stale: false,
+      pixelWidth: 1440,
+      pixelHeight: 900,
+    },
+    maxWidthPx: 1440,
+    doc: null,
+    annotation: null,
+  });
+  expect(
+    (await prepareQuestionAnnotationBase(session, scope, question, null)).kind,
+  ).toBe("legacy");
+  expect(renderQuestionBaseImage).not.toHaveBeenCalled();
+});
+
+it("surface=null：云端 ready 底图下载落盘后可用，不依赖活题面", async () => {
+  vi.mocked(fetchAnnotationViewApi).mockResolvedValue({
+    base: {
+      baseId: "33333333-3333-4333-8333-333333333333",
+      state: "ready" as const,
+      stale: false,
+      pixelWidth: 600,
+      pixelHeight: 400,
+      layout,
+    },
+    maxWidthPx: 1440,
+    doc: null,
+    annotation: null,
+  });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => ({ ok: true, blob: async () => png })),
+  );
+  expect(
+    (await prepareQuestionAnnotationBase(session, scope, question, null)).kind,
+  ).toBe("surface");
+  expect(renderQuestionBaseImage).not.toHaveBeenCalled();
+  expect((await getAnnotationRecord(session, scope))?.localBase?.png).toBe(
+    png,
+  );
+});
+
+it("surface=null：无任何缓存底图需新渲染时明确失败，不当空稿", async () => {
+  await expect(
+    prepareQuestionAnnotationBase(session, scope, question, null),
+  ).rejects.toThrow("题面尚未就绪，请重试");
+  expect(renderQuestionBaseImage).not.toHaveBeenCalled();
+  // 不能因缺题面留下空底图记录（不当作空稿建稿）
+  expect((await getAnnotationRecord(session, scope))?.localBase).toBeNull();
 });
