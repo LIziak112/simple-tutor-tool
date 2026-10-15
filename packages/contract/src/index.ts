@@ -60,6 +60,16 @@ export * from "./shared-api.ts";
 export * from "./spec.ts";
 /** 学生账号契约（T2.1 起为权威定义）：学生 CRUD、两种登录、自助信息与改密码、错误码 */
 export * from "./student.ts";
+/** 学生端 AI 伴学：任务、材料与连接领域契约（SAI-03 起为权威定义，依据 B00 技术方案
+ *  §3/§4.1/§5/§9）——限额常量单源、任务状态机与允许动作表、上下文快照（受控 AI 出口
+ *  合法携带答案解析，教师私注不在 schema）、材料/消息/事实、四视图边界（内部执行载荷 /
+ *  学生公开视图 / MCP 领取视图 / 分享视图）、连接器指纹视图与首次凭证、错误码 */
+export * from "./student-ai.ts";
+/** 学生端 AI 伴学：任务/材料/队列/连接 API 契约（SAI-03 起为权威定义，B00 §4.2 API 表）——
+ *  status/tasks/dispatch/followup/cancel/resume/share/queue-summary/connections/test、
+ *  MCP 工具载荷、公开票据读、批量复盘逐项结果、教师督学记录；学生请求全部 strict，
+ *  分页游标为不透明字符串，明文凭证只在独立的首次凭证 schema 出现一次 */
+export * from "./student-ai-api.ts";
 /** 学生端 AI 伴学：教学配置与预设契约（SAI-02 起为权威定义，依据 B00 技术方案 §2/§4.1/§9）——
  *  三模式与继承、有效裁决输出、教师三模板与默认值、学生/作业覆盖、快捷按钮与附件偏好、
  *  限额常量与错误码；裁决是服务端输出，学生请求携带越权字段一律 strict 拒绝 */
