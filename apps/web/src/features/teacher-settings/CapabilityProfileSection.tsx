@@ -42,14 +42,15 @@ export function CapabilityProfileSection({
     queryClient.setQueryData(draftKey, draft);
   }, [queryClient, draft, draftKey]);
   useEffect(() => {
-    setNavigationDraft?.({
+    setNavigationDraft?.("capability", {
       dirty,
       discard: () => {
         setDraft(null);
         queryClient.removeQueries({ queryKey: draftKey });
       },
     });
-    return () => setNavigationDraft?.({ dirty: false, discard: () => {} });
+    return () =>
+      setNavigationDraft?.("capability", { dirty: false, discard: () => {} });
   }, [dirty, queryClient, setNavigationDraft, draftKey]);
   useEffect(() => {
     if (!dirty) return;

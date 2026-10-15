@@ -14,7 +14,7 @@ it("未保存时普通离开须确认，分类切换不拦截；取消继续编�
       <>
         <button
           type="button"
-          onClick={() => navigation?.setDraft({ dirty: true, discard })}
+          onClick={() => navigation?.setDraft("test", { dirty: true, discard })}
         >
           修改配置
         </button>

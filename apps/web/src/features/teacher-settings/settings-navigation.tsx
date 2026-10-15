@@ -1,4 +1,9 @@
-import { createContext, type ReactNode, useContext, useState } from "react";
+import {
+  createContext,
+  type ReactNode,
+  useContext,
+  useState,
+} from "react";
 import { useNavigate } from "react-router";
 import { Button } from "@/components/ui/button";
 import {
@@ -10,8 +15,16 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
+/**
+ * 设置页未保存草稿注册表。同一分类下可有多个配置区（teaching 分类：
+ * 辅助能力 + AI 伴学），按 id 键控注册：任一区 dirty 即拦截离开，
+ * 确认放弃时全部 discard。
+ */
 const SettingsNavigationContext = createContext<{
-  setDraft: (draft: { dirty: boolean; discard: () => void }) => void;
+  setDraft: (
+    id: string,
+    draft: { dirty: boolean; discard: () => void },
+  ) => void;
   leave: (action: () => void) => void;
 } | null>(null);
 
@@ -22,13 +35,19 @@ export function SettingsNavigationProvider({
   children: ReactNode;
 }) {
   const navigate = useNavigate();
-  const [draft, setDraft] = useState<{ dirty: boolean; discard: () => void }>({
-    dirty: false,
-    discard: () => {},
-  });
+  const [drafts, setDrafts] = useState<
+    Record<string, { dirty: boolean; discard: () => void }>
+  >({});
   const [pending, setPending] = useState<{ action: () => void } | null>(null);
+  function setDraft(
+    id: string,
+    draft: { dirty: boolean; discard: () => void },
+  ) {
+    setDrafts((prev) => ({ ...prev, [id]: draft }));
+  }
+  const dirtyEntries = Object.entries(drafts).filter(([, d]) => d.dirty);
   function leave(action: () => void) {
-    if (draft.dirty) setPending({ action });
+    if (dirtyEntries.length > 0) setPending({ action });
     else action();
   }
   return (
@@ -36,7 +55,7 @@ export function SettingsNavigationProvider({
       <div
         onClickCapture={(event) => {
           if (
-            !draft.dirty ||
+            dirtyEntries.length === 0 ||
             event.button !== 0 ||
             event.ctrlKey ||
             event.metaKey ||
@@ -76,7 +95,7 @@ export function SettingsNavigationProvider({
           <DialogHeader>
             <DialogTitle>放弃未保存的更改？</DialogTitle>
             <DialogDescription>
-              学生作答方式尚未保存。继续编辑，或放弃本次更改后离开。
+              有设置尚未保存。继续编辑，或放弃本次更改后离开。
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -91,8 +110,8 @@ export function SettingsNavigationProvider({
               className="min-h-11"
               onClick={() => {
                 const action = pending?.action;
-                draft.discard();
-                setDraft({ dirty: false, discard: () => {} });
+                for (const [, draft] of dirtyEntries) draft.discard();
+                setDrafts({});
                 setPending(null);
                 action?.();
               }}
