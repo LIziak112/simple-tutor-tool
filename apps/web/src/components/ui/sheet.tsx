@@ -32,10 +32,13 @@ const SheetContent = ({
   className,
   children,
   side = "right",
+  closeLabel = "关闭抽屉",
   ...props
 }: React.ComponentProps<typeof SheetPrimitive.Content> & {
   /** 抽屉滑出方向（当前只用到 right，保留 shadcn 的 side 约定便于扩展） */
   side?: "right" | "left";
+  /** 右上关闭按钮的可访问名称（按用途命名，如「关闭 AI 助教」） */
+  closeLabel?: string;
 }) => (
   <SheetPortal>
     <SheetOverlay />
@@ -55,7 +58,7 @@ const SheetContent = ({
       {children}
       <SheetPrimitive.Close
         data-slot="sheet-close"
-        aria-label="关闭抽屉"
+        aria-label={closeLabel}
         className="absolute top-3 right-3 flex size-8 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
       >
         <X aria-hidden className="size-4" />
