@@ -13,12 +13,14 @@ import { currentAnnotationSession } from "./annotation-sync";
 import { prepareQuestionAnnotationBase } from "./question-annotation-base";
 import { renderQuestionBaseImage } from "./question-base-image";
 
-/** 同份公开底图与矢量快照；不克隆带个人输入/提示的整张题卡。 */
+/** 同份公开底图与矢量快照；不克隆带个人输入/提示的整张题卡。
+ * surface 允许 null（B05 AI 材料采集：材料收起/画布释放时仍从已保存底图
+ * 合成）；只有需要新渲染题面的路径要求活题面，此时给明确可重试错误。 */
 export async function exportQuestionAnnotationImage(
   session: AnnotationSessionRef,
   scope: AnnotationScope,
   question: AttemptQuestionPublic,
-  surface: HTMLElement,
+  surface: HTMLElement | null,
 ): Promise<Blob> {
   const guard = () => {
     if (currentAnnotationSession() !== session)
@@ -37,6 +39,7 @@ export async function exportQuestionAnnotationImage(
     if (view.annotation?.sealedAt != null)
       throw new Error("标画已随交卷固定，请到结果页导出");
     if (!view.base && !view.doc?.strokes.length) {
+      if (!surface) throw new Error("题面尚未就绪，请重试");
       const rendered = await renderQuestionBaseImage(question, surface);
       guard();
       return rendered.blob;

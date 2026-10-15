@@ -18,12 +18,17 @@ import {
   fetchStudentNoteHeadsApi,
 } from "@/lib/api";
 
-type OngoingPaper =
+export type OngoingPaper =
   | { kind: "草稿"; doc: NoteDoc }
   | { kind: "手写作答"; doc: InkDoc };
 export interface OngoingExportPage {
   blob: Blob;
   label: string;
+}
+/** 合成页（B05 AI 材料快照需要确定尺寸；单 Blob 包装场景仍用 OngoingExportPage） */
+export interface OngoingComposedPage extends OngoingExportPage {
+  width: number;
+  height: number;
 }
 
 /** 不依赖纸面是否展开；读取失败不能被当作无稿。 */
@@ -110,7 +115,8 @@ export function planOngoingImagePages(
   });
 }
 
-async function loadImage(blob: Blob): Promise<HTMLImageElement> {
+/** 解码 PNG 取自然尺寸（AI 材料采集与导出共用；失败向前抛）。 */
+export async function loadImage(blob: Blob): Promise<HTMLImageElement> {
   const url = URL.createObjectURL(blob);
   try {
     const image = new Image();
@@ -129,7 +135,7 @@ export async function createOngoingQuestionImages(
   title: string,
   guard: () => void,
   hasAnnotation = true,
-): Promise<OngoingExportPage[]> {
+): Promise<OngoingComposedPage[]> {
   const question = await loadImage(questionBlob);
   guard();
   const paperBlobs = !paper
@@ -138,7 +144,7 @@ export async function createOngoingQuestionImages(
       ? (await renderNoteImages(paper.doc, "analysis")).map((page) => page.blob)
       : [await renderInkSnapshot(paper.doc)];
   guard();
-  const pages: OngoingExportPage[] = [];
+  const pages: OngoingComposedPage[] = [];
   for (const blob of paperBlobs.length > 0 ? paperBlobs : [null]) {
     const image = blob ? await loadImage(blob) : null;
     guard();
@@ -191,6 +197,8 @@ export async function createOngoingQuestionImages(
         pages.push({
           blob: png,
           label: `${hasAnnotation ? "题面与标画" : "题面"}${paper ? `、${paper.kind}` : ""}`,
+          width: canvas.width,
+          height: canvas.height,
         });
       } finally {
         canvas.width = 0;

@@ -34,12 +34,14 @@ export type QuestionAnnotationBaseResult =
   | { kind: "legacy"; base: AnnotationBaseRef }
   | { kind: "sealed" };
 
-/** 只由当前题显式调用；全局最多一个栅格任务，缓存不等待网络。 */
+/** 只由当前题显式调用；全局最多一个栅格任务，缓存不等待网络。
+ * surface 允许 null（B05 AI 材料采集）：已保存底图不需要活题面；只有需要
+ * 新渲染的路径要求题面挂载，缺挂载给明确可重试错误，不当作空稿。 */
 export async function prepareQuestionAnnotationBase(
   session: AnnotationSessionRef,
   scope: AnnotationScope,
   question: AttemptQuestionPublic,
-  surface: HTMLElement,
+  surface: HTMLElement | null,
   signal?: AbortSignal,
 ): Promise<QuestionAnnotationBaseResult> {
   const guard = () => {
@@ -64,12 +66,11 @@ export async function prepareQuestionAnnotationBase(
   if (cached?.base != null && cached.base.layout === undefined)
     return { kind: "legacy", base: cached.base };
   // 云端回填可能清理控件候选；先接管在途或已完成的预备，再核对云端。
-  const candidatePromise = takePrewarmedQuestionBase(
-    session,
-    scope,
-    question,
-    surface,
-  );
+  // surface 为 null（材料收起/未挂载）时跳过预备接管：预备只为加速新渲染。
+  const candidatePromise =
+    surface === null
+      ? Promise.resolve(null)
+      : takePrewarmedQuestionBase(session, scope, question, surface);
   let remoteDoc = cached?.pending?.doc ?? null;
   let base = cached?.base ?? null;
   try {
@@ -122,12 +123,15 @@ export async function prepareQuestionAnnotationBase(
       ),
     );
   } else {
+    // 无 ready 云端底图也无预备：必须从活题面渲染；未挂载明确失败可重试。
+    if (surface === null) throw new Error("题面尚未就绪，请重试");
+    const surfaceElement = surface;
     const possible = await candidatePromise;
     guard();
     // 状态回填之后再次核对，不能使用点击前已经失效的题面快照。
     const candidate =
       possible &&
-      (await questionSurfaceMatchesLayout(question, surface, possible.layout))
+      (await questionSurfaceMatchesLayout(question, surfaceElement, possible.layout))
         ? possible
         : null;
     guard();
@@ -135,7 +139,7 @@ export async function prepareQuestionAnnotationBase(
       candidate ??
       (await questionBaseRenderQueue.run(async () => {
         guard();
-        return renderQuestionBaseImage(question, surface, {
+        return renderQuestionBaseImage(question, surfaceElement, {
           ...(signal ? { signal } : {}),
           shouldAbort: () => currentAnnotationSession() !== session,
         });
