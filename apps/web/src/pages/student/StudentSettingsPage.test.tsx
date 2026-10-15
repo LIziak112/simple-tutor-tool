@@ -51,3 +51,12 @@ it("设置页包含 AI 快捷按钮管理区（SAI-08）", () => {
     screen.getByRole("heading", { name: "AI 快捷按钮" }),
   ).toBeInTheDocument();
 });
+
+// SAI-18:连接 AI 入口指向独立子页(管理组件挂 /s/settings/ai)
+it("设置页包含连接 AI 入口,指向 /s/settings/ai（SAI-18）", () => {
+  renderPage();
+  expect(screen.getByRole("link", { name: /连接 AI/u })).toHaveAttribute(
+    "href",
+    "/s/settings/ai",
+  );
+});

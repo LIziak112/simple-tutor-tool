@@ -359,6 +359,9 @@ const studentRoutes = (() => {
   const StudentSettingsPage = lazy(
     () => import("./pages/student/StudentSettingsPage"),
   );
+  const StudentAiConnectionPage = lazy(
+    () => import("./pages/student/StudentAiConnectionPage"),
+  );
   const StudentAssignmentsPage = lazy(
     () => import("./pages/student/StudentAssignmentsPage"),
   );
@@ -443,6 +446,15 @@ const studentRoutes = (() => {
           element={
             <Suspense fallback={pageFallback}>
               <InkFeelPage embedded />
+            </Suspense>
+          }
+        />
+        {/* SAI-18:连接 AI(学生布局登录守卫之内,同手写手感页) */}
+        <Route
+          path="settings/ai"
+          element={
+            <Suspense fallback={pageFallback}>
+              <StudentAiConnectionPage />
             </Suspense>
           }
         />
