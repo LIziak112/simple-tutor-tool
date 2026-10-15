@@ -1,6 +1,6 @@
 ---
 name: api-endpoint
-description: 在 simple-tutor-tool 中新增或修改后端 API 接口的标准流程。凡涉及 Hono 路由、/api/teacher|/api/student|/api/public 接口、Zod 请求校验、service 层、或前端调用接口（hc 客户端）时使用。核心约束：契约优先、学生端接口永不下发答案（assertNoLeak 泄露测试必写）。
+description: 在 simple-tutor-tool 中新增或修改后端 API 接口的标准流程。凡涉及 Hono 路由、/api/teacher|/api/student|/api/public 接口、Zod 请求校验、service 层、或前端调用接口（hc 客户端）时使用。核心约束：契约优先、学生端接口永不下发答案（assertNoLeak 泄露测试必写；学生端 AI 伴学的受控 AI 出口是唯一例外，见正文）。
 ---
 
 # 新增/修改 API 接口
@@ -47,6 +47,8 @@ assertNoLeak(response); // 递归检查不存在 answers、solution*、hints 内
 ```
 
 没有跑 `assertNoLeak` 的学生端接口不允许交付。提示内容只能通过按需接口（如 `POST .../hints`）逐条获取。
+
+> 例外（2026-10-15 学生端 AI 伴学，唯一）：教学模式允许求助时，AI 出站载荷、上下文链接票据读端点与学生 MCP 领取视图可携带当前题已有答案解析（启发模式也携带）；普通学生接口零放宽。AI 接口泄露测试用**双断言**：允许场景断言答案确实进入外发载荷（fake provider 捕获），禁止场景断言全部学生可读响应无 answers/solutionMd/私注哨兵；不得改 assertNoLeak 全局禁止键来掩盖泄露。边界见 AGENTS.md「学生端 AI 伴学与受控 AI 出口」与 docs/学生端AI伴学/技术实施方案.md §3.6。
 
 ## 第 5 步：前端调用
 
