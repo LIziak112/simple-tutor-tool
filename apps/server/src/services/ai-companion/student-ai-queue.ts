@@ -43,7 +43,10 @@ import { HttpError } from "../../lib/http-error.ts";
 import { resolveNowDate } from "../export-service.ts";
 import { sqliteAiPolicyConfigSource } from "./ai-policy-config-source.ts";
 import { appendAiFact } from "./student-ai-audit.ts";
-import { buildAiContextBundle } from "./student-ai-context.ts";
+import {
+  buildAiContextBundle,
+  outboundPromptSnapshotOf,
+} from "./student-ai-context.ts";
 import {
   aiTaskMaterialsPublicOf,
   loadAiTaskMaterialRows,
@@ -69,6 +72,10 @@ import {
  * - 权限在每次创建/领取/派发前经 SAI-04 统一裁决实时重校验（教师刚改设置
  *   立即生效）；查看态（replyDeliveredAt）与处理状态（status）相互独立，
  *   archived/opened 不作为任务终结状态覆盖 replied。
+ * - SAI-15 生命周期：领取/派发前按**当前**规则重装配（outboundPromptSnapshotOf
+ *   第二阶段装配——提交后按复盘模式、教师改模式对未外发任务生效，快照数据
+ *   与原请求时间不追改）；写回核对运行代际（runtimeEpochOf，恢复数据库后
+ *   旧代迟到结果只落事实）；交卷/判分链路零 AI 调用（AI 失败不阻塞交卷）。
  */
 
 // ---------- 服务层运营常量（契约 §9 限额单源在 @tutor/contract，此处只补运营边界） ----------
@@ -237,6 +244,83 @@ function applyTransition(
     throw conflict("任务状态已被其他操作更新，请刷新后重试");
   }
   return { ...task, status: to, updatedAt: now.iso, ...extra };
+}
+
+// ---------- 运行代际（SAI-15 实施步骤 7：恢复数据库后旧运行代际失效） ----------
+
+const connectionEpochs = new WeakMap<object, string>();
+
+/**
+ * 当前运行代际：按底层连接（db.$client）派生的不透明 token——备份恢复
+ * （restoreFromBackup → DbHandle.restart 换连接）后必然变化，且不落库、
+ * 不随备份回滚。出站/领取时随 generation 一并交给执行方，写回时核对：
+ * 恢复后的迟到结果即使与备份内 generation 一致也按 runtime_epoch_stale
+ * 记迟到事实拒绝——不能依赖备份内旧 generation 自己排除迟到结果（备份
+ * 可能包含同代次的进行中行）。恢复后配置经新连接重取（Proxy 转发到
+ * 当前底层连接，sqliteAiPolicyConfigSource 每次实时读库）。
+ */
+export function runtimeEpochOf(db: Db): string {
+  const connection = db.$client;
+  let epoch = connectionEpochs.get(connection);
+  if (epoch === undefined) {
+    epoch = randomUUID();
+    connectionEpochs.set(connection, epoch);
+  }
+  return epoch;
+}
+
+/**
+ * 外发时点重装配（实施步骤 1/2，B04 双阶段检查点兑现）：真正出站/领取前
+ * 以**当前**裁决重算规则部分（模式 + 提示词快照），与创建时冻结不同才落
+ * 库——提交后的未外发任务按完成后复盘规则装配（需求 §8「发送时采用当前
+ * 完成后的复盘规则并显示阶段变化」），教师改模式对未外发任务同样生效
+ * （§3.3「尚未外发的求助采用当前启发要求；不自动改写已发送的上下文」）。
+ * 只换规则字段：快照数据段（题面/本人答案/capturedAt）与材料、问题、
+ * createdAt/beforeSubmit 原样保留（保留原请求时间，不覆盖为提交后新请求；
+ * 不可悄悄覆盖原快照）。contextVersion 随 promptSnapshotMd 变化，领取方/
+ * 派发方拿到的即重装配后的身份；已出站任务（非 created 态）不进本函数，
+ * 历史任务保留当时有效模式及提示词（§3.3 回溯口径）。
+ */
+function rearmOutboundRules(
+  tx: QueueTx,
+  task: AiTaskRow,
+  configSource: AiPolicyConfigSource,
+): AiTaskRow {
+  const arm = outboundPromptSnapshotOf(
+    asDb(tx),
+    {
+      studentId: task.studentId,
+      attemptId: task.attemptId,
+      questionId: task.questionId,
+    },
+    configSource,
+  );
+  if (
+    task.modeAtSend === arm.modeAtSend &&
+    task.promptHash === arm.promptHash
+  ) {
+    return task;
+  }
+  const { capturedAt, ...snapshot } = parseSnapshotOf(task);
+  const contextSnapshotJson = JSON.stringify({
+    ...snapshot,
+    promptSnapshotMd: arm.promptSnapshotMd,
+    capturedAt,
+  });
+  tx.update(aiTasks)
+    .set({
+      modeAtSend: arm.modeAtSend,
+      promptHash: arm.promptHash,
+      contextSnapshotJson,
+    })
+    .where(eq(aiTasks.id, task.id))
+    .run();
+  return {
+    ...task,
+    modeAtSend: arm.modeAtSend,
+    promptHash: arm.promptHash,
+    contextSnapshotJson,
+  };
 }
 
 // ---------- 任务定位与门禁 ----------
@@ -906,6 +990,8 @@ export interface ClaimMcpResult {
   readonly generation: number;
   /** 领取时任务上下文版本（写回可携带核对，防旧上下文迟到回执） */
   readonly contextVersion: string;
+  /** 本次领取的运行代际（SAI-15：写回核对，恢复数据库后旧代失效） */
+  readonly runtimeEpoch: string;
 }
 
 /** 租约惰性回收：claimed 且过期 → created（可再次领取；无事实类型） */
@@ -988,19 +1074,23 @@ export function claimMcpTask(
         });
         if (candidate === undefined) return null;
       }
+      // 领取即出站（上下文交给连接器）：先按当前规则重装配（SAI-15 步骤 1/2）
+      // ——提交后领取的提交前任务按复盘模式外发，教师刚改的模式立即生效
+      const rearmed = rearmOutboundRules(tx, candidate, configSource);
       const leaseToken = randomUUID();
       const leaseUntil = new Date(
         now.date.getTime() + AI_MCP_LEASE_MINUTES * 60_000,
       ).toISOString();
-      const claimed = applyTransition(tx, candidate, "claimed", now, {
+      const claimed = applyTransition(tx, rearmed, "claimed", now, {
         leaseToken,
         leaseUntil,
-        generation: candidate.generation + 1,
+        generation: rearmed.generation + 1,
       });
       insertFact(tx, claimed, "dispatched", now, {
         via: "mcp_claim",
         leaseUntil,
         generation: claimed.generation,
+        modeAtSend: claimed.modeAtSend,
       });
       return {
         taskId: claimed.id,
@@ -1008,6 +1098,7 @@ export function claimMcpTask(
         leaseUntil,
         generation: claimed.generation,
         contextVersion: aiTaskContextVersionOf(asDb(tx), claimed),
+        runtimeEpoch: runtimeEpochOf(db),
       };
     },
     { behavior: "immediate" },
@@ -1165,6 +1256,8 @@ export interface SubmitMcpReplyInput {
   readonly replyMarkdown: string;
   /** 领取时拿到的上下文版本（可选核对：旧上下文的迟到回执直接拒绝） */
   readonly expectedContextVersion?: string;
+  /** 领取时拿到的运行代际（可选核对：恢复数据库后旧代迟到回执只落事实） */
+  readonly expectedRuntimeEpoch?: string;
 }
 
 /**
@@ -1181,6 +1274,7 @@ export function submitMcpReply(
 ): { duplicate: boolean; truncated: boolean } {
   const now = nowSpecOf(options.now);
   const contentHash = sha256Hex(input.replyMarkdown);
+  const currentEpoch = runtimeEpochOf(db);
   const outcome = db.transaction(
     (tx): SubmitOutcome => {
       const task = requireOwnTask(tx, input.studentId, input.taskId);
@@ -1188,6 +1282,23 @@ export function submitMcpReply(
       const receipt = lastReplyReceipt(tx, task.id);
       if (receipt?.contentHash === contentHash) {
         return { kind: "duplicate" };
+      }
+      // 运行代际核对（SAI-15 步骤 7）：数据库恢复后旧代回执即使与备份内
+      // 租约/代次一致也只记迟到事实——不依赖备份内旧 generation 排除迟到
+      if (
+        input.expectedRuntimeEpoch !== undefined &&
+        input.expectedRuntimeEpoch !== currentEpoch
+      ) {
+        return {
+          kind: "late",
+          task,
+          detail: {
+            reason: "runtime_epoch_stale",
+            contentHash,
+            contentMd: input.replyMarkdown,
+          },
+          message: "数据库已恢复，本次领取的回信已记录为迟到事实",
+        };
       }
       // 上下文版本核对：旧上下文的迟到回执不写正文
       if (
@@ -1256,7 +1367,7 @@ export function beginInappDispatch(
   db: Db,
   input: { studentId: string; taskId: string },
   options: { now?: Date | string; configSource?: AiPolicyConfigSource } = {},
-): { generation: number } {
+): { generation: number; runtimeEpoch: string } {
   const configSource = options.configSource ?? sqliteAiPolicyConfigSource;
   const now = nowSpecOf(options.now);
   const result = db.transaction(
@@ -1275,10 +1386,13 @@ export function beginInappDispatch(
         insertFact(tx, paused, "paused", now, { via: "dispatch_check" });
         return { blocked: true, generation: task.generation };
       }
-      applyTransition(tx, task, "dispatching", now, {
-        generation: task.generation + 1,
+      // 真正出站前按当前规则重装配（SAI-15 步骤 1/2）：提交后发送的提交前
+      // 任务按复盘模式外发；教师刚改的模式对未外发任务立即生效
+      const rearmed = rearmOutboundRules(tx, task, configSource);
+      applyTransition(tx, rearmed, "dispatching", now, {
+        generation: rearmed.generation + 1,
       });
-      return { blocked: false, generation: task.generation + 1 };
+      return { blocked: false, generation: rearmed.generation + 1 };
     },
     { behavior: "immediate" },
   );
@@ -1289,7 +1403,7 @@ export function beginInappDispatch(
       "当前教学模式下本题暂不能发送 AI 求助，任务已暂停（恢复开放后可继续）",
     );
   }
-  return { generation: result.generation };
+  return { generation: result.generation, runtimeEpoch: runtimeEpochOf(db) };
 }
 
 export interface CompleteInappResult {
@@ -1315,17 +1429,38 @@ export function completeInappDispatch(
     taskId: string;
     generation: number;
     replyMd: string;
+    /** begin 时拿到的运行代际（可选核对：恢复数据库后旧代回执只落事实） */
+    expectedRuntimeEpoch?: string;
   },
   options: { now?: Date | string } = {},
 ): CompleteInappResult {
   const now = nowSpecOf(options.now);
   const contentHash = sha256Hex(input.replyMd);
+  const currentEpoch = runtimeEpochOf(db);
   const outcome = db.transaction(
     (tx): CompleteOutcome => {
       const task = requireOwnTask(tx, input.studentId, input.taskId);
       const receipt = lastReplyReceipt(tx, task.id);
       if (receipt?.contentHash === contentHash) {
         return { kind: "duplicate" };
+      }
+      // 运行代际核对（SAI-15 步骤 7）：同 generation 也不放行（代次可能随
+      // 备份一起回滚到出站前），迟到内容只记事实
+      if (
+        input.expectedRuntimeEpoch !== undefined &&
+        input.expectedRuntimeEpoch !== currentEpoch
+      ) {
+        return {
+          kind: "late",
+          task,
+          detail: {
+            reason: "runtime_epoch_stale",
+            contentHash,
+            contentMd: input.replyMd,
+            generation: input.generation,
+          },
+          message: "数据库已恢复，回执已记录为迟到事实",
+        };
       }
       if (task.generation !== input.generation) {
         return {
@@ -1354,6 +1489,7 @@ export function completeInappDispatch(
           insertFact(tx, task, "dispatched", now, {
             via: "inapp",
             generation: input.generation,
+            modeAtSend: task.modeAtSend,
           });
           insertFact(tx, replied, "reply_received", now, {
             via: "inapp",
@@ -1417,13 +1553,22 @@ export function failInappDispatch(
     generation: number;
     errorText: string;
     kind: "retryable" | "policy";
+    /** begin 时拿到的运行代际（可选核对：恢复数据库后旧代失败报告不落状态） */
+    expectedRuntimeEpoch?: string;
   },
   options: { now?: Date | string } = {},
 ): void {
   const now = nowSpecOf(options.now);
+  const currentEpoch = runtimeEpochOf(db);
   db.transaction(
     (tx) => {
       const task = requireOwnTask(tx, input.studentId, input.taskId);
+      if (
+        input.expectedRuntimeEpoch !== undefined &&
+        input.expectedRuntimeEpoch !== currentEpoch
+      ) {
+        throw conflict("失败报告对应的运行代际已失效（数据库已恢复）");
+      }
       if (
         task.generation !== input.generation ||
         task.status !== "dispatching"

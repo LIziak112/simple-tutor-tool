@@ -392,6 +392,62 @@ function contextVersionInput(snapshot: AiContextSnapshot): string {
   ]);
 }
 
+// ---------- 外发时点重装配(SAI-15 生命周期 hook 的第二阶段装配) ----------
+
+/** 外发时点的提示词装配产物(只含规则部分;数据段保持创建时冻结) */
+export interface AiOutboundPromptSnapshot {
+  /** 发送时有效模式(完成后恒 open_study 复盘;§3.3「尚未外发采用当前要求」) */
+  readonly modeAtSend: AiTeachingMode;
+  /** 当时模板档位(open/guided/review) */
+  readonly promptTemplateKey: AiPromptTemplateKey;
+  /** 提示词快照(教师模板正文 + 模式硬约束句) */
+  readonly promptSnapshotMd: string;
+  /** 提示词快照 sha-256(ai_tasks.promptHash 同口径,无密钥需求) */
+  readonly promptHash: string;
+}
+
+/**
+ * 外发时点的规则装配(B04 双阶段检查点,由 SAI-15 队列生命周期 hook 调用):
+ * 创建与真正出站/领取两个时点各自装配——本函数只产「规则部分」(当前裁决
+ * 的模式与提示词),不重捕快照数据段(题面/本人答案/材料保持创建时冻结,
+ * 需求 §8「不可悄悄覆盖原快照」)。教师刚改设置、学生刚提交,下一次出站
+ * 立即采用当前要求(提交后 → review 复盘模板,保留原请求时间)。
+ * 拒绝口径与 buildAiContextBundle 同源:裁决不可用 → 403 AI_POLICY_DISABLED。
+ */
+export function outboundPromptSnapshotOf(
+  db: Db,
+  locate: AiContextLocateInput,
+  configSource: AiPolicyConfigSource = sqliteAiPolicyConfigSource,
+): AiOutboundPromptSnapshot {
+  const { resolution, completed, attempt } = resolveAttemptQuestionAiPolicy(
+    db,
+    locate.studentId,
+    locate.attemptId,
+    locate.questionId,
+    configSource,
+  );
+  if (!resolution.usable || resolution.mode === undefined) {
+    throw new HttpError(
+      403,
+      "AI_POLICY_DISABLED",
+      "当前教学模式下本题暂不能使用 AI 求助",
+    );
+  }
+  const promptTemplateKey = promptTemplateKeyOf(resolution.mode, completed);
+  const promptSnapshotMd = promptSnapshotMdOf(
+    teacherTemplateBodyOf(db, attemptTeacherId(db, attempt), promptTemplateKey),
+    promptTemplateKey,
+  );
+  return {
+    modeAtSend: resolution.mode,
+    promptTemplateKey,
+    promptSnapshotMd,
+    promptHash: createHash("sha256")
+      .update(promptSnapshotMd, "utf8")
+      .digest("hex"),
+  };
+}
+
 // ---------- 数据段与出站消息组装(题面与笔迹提示只是数据,要点 4/5) ----------
 
 /** 出站消息角色(LLM 对话形态;student 历史映射为 user) */
