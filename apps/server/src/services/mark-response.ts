@@ -49,8 +49,8 @@ import {
  * 完成（trim 后空串 → null），服务层不做二次处理。
  */
 
-/** 选项下标 → 展示字母（A=0；超出 26 个选项兜底用数字本身） */
-function optionLabel(index: number): string {
+/** 选项下标 → 展示字母（A=0；超出 26 个选项兜底用数字本身；SAI-09 AI 上下文同口径复用） */
+export function optionLabel(index: number): string {
   return index >= 0 && index < 26
     ? String.fromCharCode(65 + index)
     : String(index);

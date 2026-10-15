@@ -23,7 +23,7 @@ import { type Attempt, aiMessages, responses } from "../../db/schema.ts";
 import { HttpError } from "../../lib/http-error.ts";
 import { answerOf, attemptTeacherId } from "../attempt-service.ts";
 import { resolveNowDate } from "../export-service.ts";
-import { serializeStudentAnswer } from "../mark-response.ts";
+import { optionLabel, serializeStudentAnswer } from "../mark-response.ts";
 import { snapshotOfRow } from "../snapshot.ts";
 import { sqliteAiPolicyConfigSource } from "./ai-policy-config-source.ts";
 import { getTeacherAiSettings } from "./settings-service.ts";
@@ -89,19 +89,12 @@ const INJECTION_GUARD =
 
 // ---------- 本人答案可读文本(B00 §3.1:fill 逐空 / choice 选项文本 / 手写题标注) ----------
 
-/** 选项下标 → 展示字母(A=0,与 serializeStudentAnswer 同口径) */
-function optionLabelOf(index: number): string {
-  return index >= 0 && index < 26
-    ? String.fromCharCode(65 + index)
-    : String(index);
-}
-
 /** 选项文本增强:字母后附选项正文(choice/multi 有选项时),AI 无需回查题面列表 */
 function optionTextOf(snapshot: Question, index: number): string {
   const option = snapshot.options?.[index];
   return option === undefined
-    ? optionLabelOf(index)
-    : `${optionLabelOf(index)}（${option.text}）`;
+    ? optionLabel(index)
+    : `${optionLabel(index)}（${option.text}）`;
 }
 
 /**
