@@ -6,6 +6,7 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -49,7 +50,7 @@ export interface QuestionAnnotationOverlayHandle {
   start(): Promise<void>;
 }
 
-/** 真实题面不替换成图片；原布局不匹配时才开放固定底图工作区。 */
+/** 已标画题面保持逻辑排版，题面与透明笔迹同域等比显示。 */
 export const QuestionAnnotationOverlay = forwardRef<
   QuestionAnnotationOverlayHandle,
   {
@@ -57,10 +58,18 @@ export const QuestionAnnotationOverlay = forwardRef<
     question: AttemptQuestionPublic;
     label: string;
     children: ReactNode;
-    onLegacy(): void;
+    fallbackAnswer?: ReactNode;
     hidden?: boolean;
   }
->(({ attemptId, question, label, children, onLegacy, hidden = false }, ref) => {
+>((props, ref) => {
+  const {
+    attemptId,
+    question,
+    label,
+    children,
+    fallbackAnswer,
+    hidden = false,
+  } = props;
   const editor = useAttemptEditor(question.id);
   const recovery = useDraftSyncRecovery();
   const inputPreference = useSessionInputPreference();
@@ -73,23 +82,41 @@ export const QuestionAnnotationOverlay = forwardRef<
   recordRef.current = record;
   const loadedVersion = useRef<number | null>(null);
   const [compatible, setCompatible] = useState<boolean | null>(null);
-  const [original, setOriginal] = useState(false);
+  const [fitScale, setFitScale] = useState(1);
+  const [expanded, setExpanded] = useState(false);
+  const scale = expanded ? 1 : fitScale;
+  const viewport = useRef<HTMLDivElement>(null);
   const [originalUrl, setOriginalUrl] = useState<string | null>(null);
   const [originalLoaded, setOriginalLoaded] = useState(false);
+  const [imageRetry, setImageRetry] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tool, setTool] = useState<"pen" | "eraser">("pen");
   const [color, setColor] = useState<InkPenColor>("red");
   const [size, setSize] = useState<InkPenSize>("thin");
   const [, setHistory] = useState(0);
-  const layout = record?.localBase?.layout;
+  const layout = record?.localBase?.layout ?? record?.base?.layout;
+  const legacy = !layout && record?.base?.state === "ready";
+  const cssWidth = layout?.cssWidth ?? (legacy ? 720 : undefined);
+  const cssHeight =
+    layout?.cssHeight ??
+    (legacy && record?.base?.pixelHeight && record.base.pixelWidth
+      ? (record.base.pixelHeight / record.base.pixelWidth) * 720
+      : undefined);
+  const baseWidth = layout
+    ? Math.ceil(layout.cssWidth * layout.pixelRatio)
+    : (record?.base?.pixelWidth ?? 0);
+  const baseHeight = layout
+    ? Math.ceil(layout.cssHeight * layout.pixelRatio)
+    : (record?.base?.pixelHeight ?? 0);
+  const original = legacy || (layout !== undefined && compatible === false);
   const localPng = record?.localBase?.png;
   const selected =
     editor?.active?.questionId === question.id &&
     editor.active.kind === "annotation";
   const active =
-    selected && (original ? originalLoaded : compatible === true && !hidden);
-  const visible = original || (compatible === true && !hidden);
+    selected && !hidden && (original ? originalLoaded : compatible === true);
+  const visible = (original || compatible === true) && !hidden;
   const [mountedOnce, setMountedOnce] = useState(false);
   const [previewBlob, setPreviewBlob] = useState<Blob | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -128,6 +155,21 @@ export const QuestionAnnotationOverlay = forwardRef<
         throw new Error(saved.localError ?? "本机标画未保存");
     }
   }, [session, attemptId, question.id]);
+
+  useLayoutEffect(() => {
+    const element = viewport.current;
+    if (!element || !cssWidth) return;
+    const resize = () => {
+      const width = element.getBoundingClientRect().width;
+      if (width <= 0) return;
+      surface.current?.finish();
+      setFitScale(Math.min(1, width / cssWidth));
+    };
+    resize();
+    const observer = new ResizeObserver(resize);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [cssWidth]);
 
   useEffect(() => {
     const element = root.current?.querySelector<HTMLElement>(
@@ -198,8 +240,9 @@ export const QuestionAnnotationOverlay = forwardRef<
             );
             if (signal.aborted) return false;
             if (prepared.kind === "legacy") {
-              onLegacy();
-              return false;
+              if (prepared.base.state !== "ready")
+                throw new Error("历史标画底图尚未就绪，请重试");
+              return true;
             }
             if (prepared.kind === "sealed")
               throw new Error("标画已随交卷固定，请刷新查看");
@@ -212,11 +255,6 @@ export const QuestionAnnotationOverlay = forwardRef<
             );
             if (signal.aborted) return false;
             setCompatible(matches);
-            if (!matches) {
-              setOriginal(true);
-              return false;
-            }
-            setOriginal(false);
             return true;
           },
         );
@@ -230,6 +268,8 @@ export const QuestionAnnotationOverlay = forwardRef<
     },
   }));
 
+  // 缩放由 React 更新变换属性，必须在新比例落入 DOM 后重新核对。
+  // biome-ignore lint/correctness/useExhaustiveDependencies: scale 是布局验证的代际键
   useEffect(() => {
     const element = root.current?.querySelector<HTMLElement>(
       '[data-slot="question-surface"]',
@@ -253,12 +293,13 @@ export const QuestionAnnotationOverlay = forwardRef<
             setCompatible(matches);
             if (matches && selected && !original && !hidden)
               surface.current?.setInputEnabled(true);
-            if (!matches && selected && !original) void editor?.request(null);
+            if (!matches && selected && !original)
+              surface.current?.setInputEnabled(false);
           })
           .catch(() => {
             if (!alive || current !== generation) return;
             setCompatible(false);
-            if (selected && !original) void editor?.request(null);
+            if (selected && !original) surface.current?.setInputEnabled(false);
           });
       });
     };
@@ -282,7 +323,7 @@ export const QuestionAnnotationOverlay = forwardRef<
       mutation.disconnect();
       document.fonts?.removeEventListener("loadingdone", check);
     };
-  }, [layout, question, selected, original, hidden, editor?.request]);
+  }, [layout, question, selected, original, hidden, scale]);
 
   useEffect(() => {
     const element = root.current?.querySelector<HTMLElement>(
@@ -347,13 +388,16 @@ export const QuestionAnnotationOverlay = forwardRef<
       !mountedOnce ||
       !host.current ||
       !session ||
-      !layout ||
+      !cssWidth ||
+      !cssHeight ||
+      !baseWidth ||
+      !baseHeight ||
       !recordRef.current?.doc
     )
       return;
     const current = createAnnotationSurface({
-      baseWidth: Math.ceil(layout.cssWidth * layout.pixelRatio),
-      baseHeight: Math.ceil(layout.cssHeight * layout.pixelRatio),
+      baseWidth,
+      baseHeight,
       inputEnabled: false,
       inputMode: getSessionInputPreference(),
     });
@@ -374,7 +418,16 @@ export const QuestionAnnotationOverlay = forwardRef<
       current.destroy();
       surface.current = null;
     };
-  }, [mountedOnce, session, attemptId, question.id, layout]);
+  }, [
+    mountedOnce,
+    session,
+    attemptId,
+    question.id,
+    cssWidth,
+    cssHeight,
+    baseWidth,
+    baseHeight,
+  ]);
   useEffect(() => {
     if (!mountedOnce) return;
     surface.current?.setInputMode(inputPreference);
@@ -430,61 +483,130 @@ export const QuestionAnnotationOverlay = forwardRef<
     }
   }, [record]);
   useEffect(() => {
-    if (!original || !localPng) return;
-    const url = URL.createObjectURL(localPng);
+    if (!original) return;
+    const url = localPng
+      ? URL.createObjectURL(localPng)
+      : record?.base?.downloadUrl;
+    if (!url) return;
     setOriginalUrl(url);
     setOriginalLoaded(false);
     return () => {
-      URL.revokeObjectURL(url);
+      if (localPng) URL.revokeObjectURL(url);
       setOriginalUrl(null);
     };
-  }, [original, localPng]);
+  }, [original, localPng, record?.base?.downloadUrl]);
 
   return (
     <div
       ref={root}
       className="relative mx-auto w-full min-w-0"
       data-slot="annotated-question"
-      style={layout && !original ? { maxWidth: layout.cssWidth } : undefined}
     >
-      {children}
-      {layout && (
+      <div
+        ref={viewport}
+        data-slot="annotation-viewport"
+        className={`relative mx-auto w-full min-w-0 overflow-x-auto ${active ? "outline outline-2 outline-offset-4 outline-sky-200" : ""}`}
+        style={cssWidth && cssHeight ? { maxWidth: cssWidth } : undefined}
+      >
         <div
-          data-slot="question-annotation-overlay"
-          data-drawing={active}
-          className={
-            original
-              ? `relative mt-3 w-full bg-white ${active ? "outline outline-2 outline-offset-4 outline-sky-200" : ""}`
-              : `pointer-events-none absolute left-0 top-0 z-10 ${active ? "outline outline-2 outline-offset-4 outline-sky-200" : ""}`
-          }
-          hidden={!visible}
+          className="relative overflow-clip"
           style={
-            original
-              ? { aspectRatio: `${layout.cssWidth} / ${layout.cssHeight}` }
-              : { width: layout.cssWidth, height: layout.cssHeight }
+            cssWidth && cssHeight
+              ? { width: cssWidth * scale, height: cssHeight * scale }
+              : undefined
           }
         >
-          {original && originalUrl && (
-            <img
-              src={originalUrl}
-              alt={`${label}原标画底图`}
-              className="absolute inset-0 h-full w-full"
-              onLoad={() => setOriginalLoaded(true)}
-              onError={() => setError("原底图加载失败，请重新打开")}
-            />
-          )}
           <div
-            ref={host}
-            className="absolute inset-0"
-            style={{ pointerEvents: active ? "auto" : "none" }}
-          />
-          {!mountedOnce && previewUrl && (
-            <img
-              src={previewUrl}
-              alt="本题标画笔迹"
-              className="pointer-events-none absolute inset-0 h-full w-full"
-            />
+            data-slot="annotation-logical-frame"
+            data-annotation-scale={cssWidth ? scale : 1}
+            style={
+              cssWidth
+                ? {
+                    width: cssWidth,
+                    transform: `scale(${scale})`,
+                    transformOrigin: "top left",
+                    visibility:
+                      original && originalLoaded ? "hidden" : undefined,
+                  }
+                : undefined
+            }
+            inert={original}
+            aria-hidden={(original && originalLoaded) || undefined}
+          >
+            {children}
+          </div>
+          {cssWidth && cssHeight && (
+            <div
+              data-slot="question-annotation-overlay"
+              data-drawing={active}
+              className="pointer-events-none absolute left-0 top-0 z-10"
+              hidden={!visible && !original}
+              style={{ width: cssWidth * scale, height: cssHeight * scale }}
+            >
+              {original && originalUrl && (
+                <img
+                  key={imageRetry}
+                  src={originalUrl}
+                  alt={`${label}原标画底图`}
+                  className={`absolute inset-0 h-full w-full ${originalLoaded ? "" : "opacity-0"}`}
+                  onLoad={() => setOriginalLoaded(true)}
+                  onError={() => {
+                    setOriginalLoaded(false);
+                    setError("原底图加载失败，请重新加载");
+                  }}
+                />
+              )}
+              <div
+                ref={host}
+                className="absolute inset-0"
+                hidden={hidden || (original && !originalLoaded)}
+                style={{ pointerEvents: active ? "auto" : "none" }}
+              />
+              {!hidden &&
+                (!original || originalLoaded) &&
+                !mountedOnce &&
+                previewUrl && (
+                  <img
+                    src={previewUrl}
+                    alt="本题标画笔迹"
+                    className="pointer-events-none absolute inset-0 h-full w-full"
+                  />
+                )}
+            </div>
           )}
+        </div>
+      </div>
+      {fitScale < 0.85 && (
+        <Button
+          variant="ghost"
+          className="mt-2 h-11"
+          aria-pressed={expanded}
+          onClick={async () => {
+            try {
+              await finish();
+              setExpanded((value) => !value);
+            } catch (cause) {
+              setError(
+                cause instanceof Error
+                  ? cause.message
+                  : "本机标画未保存，请重试",
+              );
+            }
+          }}
+        >
+          {expanded ? "适应宽度" : "放大题面"}
+        </Button>
+      )}
+      {original && (
+        <div
+          className="mt-3"
+          data-slot="annotation-fallback-answer"
+          inert={active}
+        >
+          <p className="mb-2 text-xs text-muted-foreground">
+            已保留原标画题面的排版，可直接圈画；答案在下方填写。
+          </p>
+          {fallbackAnswer}
         </div>
       )}
       {loading && (
@@ -493,43 +615,21 @@ export const QuestionAnnotationOverlay = forwardRef<
         </p>
       )}
       {error && (
-        <p role="alert" className="mt-2 text-sm text-destructive">
+        <div role="alert" className="mt-2 text-sm text-destructive">
           {error}
-        </p>
-      )}
-      {layout && compatible === false && !original && (
-        <Button
-          variant="outline"
-          className="mt-2 h-11"
-          onClick={() => setOriginal(true)}
-        >
-          查看原标画
-        </Button>
-      )}
-      {original && (
-        <div className="mt-2 flex gap-2">
-          <Button
-            variant="outline"
-            className="h-11"
-            onClick={() =>
-              void editor?.request({
-                questionId: question.id,
-                kind: "annotation",
-              })
-            }
-            disabled={!originalLoaded}
-          >
-            编辑原标画
-          </Button>
-          <Button
-            variant="ghost"
-            className="h-11"
-            onClick={async () => {
-              if (await editor?.request(null)) setOriginal(false);
-            }}
-          >
-            收起原标画
-          </Button>
+          {original && originalUrl && (
+            <Button
+              variant="outline"
+              className="ml-2 h-11"
+              onClick={() => {
+                setOriginalLoaded(false);
+                setError(null);
+                setImageRetry((value) => value + 1);
+              }}
+            >
+              重新加载标画
+            </Button>
+          )}
         </div>
       )}
       {active && (

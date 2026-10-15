@@ -410,13 +410,14 @@ export function AttemptQuestionCard({
           question={inlineQuestion}
           label={`第 ${index + 1} 题`}
           hidden={annotationHidden}
-          onLegacy={() => {
-            setAnnotationOpen(true);
-            void editor?.request({
-              questionId: question.id,
-              kind: "annotation",
-            });
-          }}
+          fallbackAnswer={
+            <QuestionSurface
+              question={question}
+              answer={answer}
+              onAnswer={onAnswer}
+              answerOnly
+            />
+          }
         >
           <QuestionSurface
             question={question}

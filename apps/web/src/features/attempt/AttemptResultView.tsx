@@ -474,11 +474,19 @@ function ResultQuestionCard({
       </div>
 
       {/* 题干快照（服务端已 studentStemMd 投影；displayStemMd 兜底剥内嵌选项列表） */}
-      <RichMarkdown
-        source={displayStemMd(question.snapshot)}
-        className="text-base"
-      />
-      <ResultOptions question={question} released={released} />
+      <AnnotationView
+        viewer="student"
+        attemptId={attemptId}
+        questionId={question.questionId}
+        questionNo={index + 1}
+        ariaPrefix={`第 ${index + 1} 题`}
+      >
+        <RichMarkdown
+          source={displayStemMd(question.snapshot)}
+          className="text-base"
+        />
+        <ResultOptions question={question} released={released} />
+      </AnnotationView>
 
       <ResultAnswerComparison question={question} released={released} />
 

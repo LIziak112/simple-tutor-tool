@@ -21,6 +21,34 @@ const question: AttemptQuestionPublic = {
 };
 afterEach(() => vi.restoreAllMocks());
 describe("新题面底图准入", () => {
+  it("固定题面整体缩放后仍以逻辑坐标测量，不能把缩放当成重排", () => {
+    const frame = document.createElement("div");
+    frame.dataset.annotationScale = "0.5";
+    const reference = document.createElement("div");
+    const paragraph = document.createElement("p");
+    frame.append(reference);
+    reference.append(paragraph);
+    vi.spyOn(reference, "getBoundingClientRect").mockReturnValue({
+      left: 20,
+      top: 30,
+      width: 300,
+      height: 100,
+    } as DOMRect);
+    vi.spyOn(paragraph, "getBoundingClientRect").mockReturnValue({
+      left: 30,
+      top: 40,
+      width: 200,
+      height: 40,
+    } as DOMRect);
+    expect(measureQuestionSurface(reference)).toMatchObject({
+      cssWidth: 600,
+      cssHeight: 200,
+      blocks: [
+        { tag: "DIV", x: 0, y: 0, width: 600, height: 200 },
+        { tag: "P", x: 20, y: 20, width: 400, height: 80 },
+      ],
+    });
+  });
   it("编辑覆盖层不参与题面签名，不能改变准入几何", () => {
     const reference = document.createElement("div");
     reference.innerHTML =

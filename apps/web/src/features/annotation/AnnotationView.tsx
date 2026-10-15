@@ -24,7 +24,13 @@ import {
   PenLine,
   TriangleAlert,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { Button } from "@/components/ui/button";
 import { createProgrammaticAtrament } from "@/features/ink/engine/atrament-adapter.ts";
 import {
@@ -107,6 +113,8 @@ function AnnotationStaticCanvas({
 }
 
 export interface AnnotationViewProps {
+  /** 题面原位回看：进入可见区域自动读取，成功后在同一位置呈现原稿。 */
+  children?: ReactNode;
   /** 结果页闭合入口并排，展开材料仍占满可用宽度。 */
   compact?: boolean;
   viewer: "student" | "teacher";
@@ -126,7 +134,11 @@ export function AnnotationView({
   questionNo = 0,
   ariaPrefix = "本题",
   compact = false,
+  children,
 }: AnnotationViewProps) {
+  const inline = children !== undefined;
+  const container = useRef<HTMLDivElement>(null);
+  const loadGeneration = useRef(0);
   const [open, setOpen] = useState(false);
   const [phaseState, setPhaseState] = useState<ViewPhase>("idle");
   const [view, setView] = useState<AnnotationViewData | null>(null);
@@ -144,7 +156,27 @@ export function AnnotationView({
   const baseLoaded = baseId !== null && loadedBaseId === baseId;
   const label = `${ariaPrefix}题干标注`;
 
+  useEffect(() => {
+    if (!inline || !container.current) return;
+    if (typeof IntersectionObserver === "undefined") {
+      setOpen(true);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setOpen(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: "200px" },
+    );
+    observer.observe(container.current);
+    return () => observer.disconnect();
+  }, [inline]);
+
   const load = useCallback(async (): Promise<void> => {
+    const generation = ++loadGeneration.current;
     setLoadedBaseId(null);
     setPhaseState("loading");
     setError(null);
@@ -153,9 +185,11 @@ export function AnnotationView({
         viewer === "teacher"
           ? await fetchTeacherAnnotationViewApi(attemptId, questionId, phase)
           : await fetchAnnotationViewApi(attemptId, questionId, phase);
+      if (generation !== loadGeneration.current) return;
       setView(data);
       setPhaseState("loaded");
     } catch (err) {
+      if (generation !== loadGeneration.current) return;
       setError(err instanceof Error ? err.message : "加载失败");
       setPhaseState("error");
     }
@@ -172,6 +206,9 @@ export function AnnotationView({
     setPhaseState((prev) => (prev === "idle" ? prev : "idle"));
     setView(null);
     setExportResult(null);
+    return () => {
+      loadGeneration.current += 1;
+    };
   }, [load]);
 
   const baseReady =
@@ -204,6 +241,71 @@ export function AnnotationView({
     const ok = await copyPngBlobToClipboard(exportedBlob);
     setCopyState(ok ? "copied" : "unsupported");
   }, [exportedBlob]);
+
+  if (inline) {
+    const unavailable =
+      phaseState === "loaded" &&
+      strokeCount > 0 &&
+      (!baseReady || !view?.base?.downloadUrl);
+    const hasOriginal =
+      phaseState === "loaded" &&
+      baseReady &&
+      strokeCount > 0 &&
+      view?.base?.downloadUrl;
+    return (
+      <div
+        ref={container}
+        data-slot="annotation-question-view"
+        className="min-w-0"
+      >
+        <div className={hasOriginal && baseLoaded ? "sr-only" : "space-y-4"}>
+          {children}
+        </div>
+        {hasOriginal && view.base && view.doc && (
+          <div
+            className="relative mx-auto w-full"
+            style={{ maxWidth: view.base.layout?.cssWidth ?? 720 }}
+          >
+            <img
+              src={view.base.downloadUrl}
+              alt={`${label}底图`}
+              className={
+                baseLoaded
+                  ? "block h-auto w-full"
+                  : "absolute h-0 w-0 opacity-0"
+              }
+              onLoad={() => setLoadedBaseId(view.base?.baseId ?? null)}
+              onError={() => {
+                setLoadedBaseId(null);
+                setError("原标画底图加载失败");
+                setPhaseState("error");
+              }}
+            />
+            <AnnotationStaticCanvas
+              base={view.base}
+              doc={view.doc}
+              baseLoaded={baseLoaded}
+            />
+          </div>
+        )}
+        {(phaseState === "error" || unavailable) && (
+          <div
+            role="alert"
+            className="mt-2 flex items-center gap-2 text-sm text-destructive"
+          >
+            {unavailable ? "标画底图尚未就绪，请重新加载" : error}
+            <Button
+              variant="outline"
+              className="h-11"
+              onClick={() => void load()}
+            >
+              重新加载标画
+            </Button>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div

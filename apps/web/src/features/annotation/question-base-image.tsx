@@ -35,7 +35,13 @@ const FONT_PROPERTIES = [
 /** 几何不含表单值、选中态和焦点；适用于正常题面与脱敏副本。 */
 export function measureQuestionSurface(surface: HTMLElement) {
   const root = surface.getBoundingClientRect();
-  const rounded = (value: number) => Math.round(value * 64) / 64;
+  const declaredScale = Number(
+    surface.closest<HTMLElement>("[data-annotation-scale]")?.dataset
+      .annotationScale ?? 1,
+  );
+  const scale =
+    Number.isFinite(declaredScale) && declaredScale > 0 ? declaredScale : 1;
+  const rounded = (value: number) => Math.round((value / scale) * 64) / 64;
   const nodes = [
     surface,
     ...[...surface.querySelectorAll<HTMLElement>(BLOCK_SELECTOR)].filter(
@@ -43,8 +49,8 @@ export function measureQuestionSurface(surface: HTMLElement) {
     ),
   ];
   return {
-    cssWidth: root.width,
-    cssHeight: root.height,
+    cssWidth: root.width / scale,
+    cssHeight: root.height / scale,
     blocks: nodes.map((node) => {
       const rect = node === surface ? root : node.getBoundingClientRect();
       return {

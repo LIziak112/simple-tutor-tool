@@ -551,6 +551,7 @@ export async function writeLocalAnnotationBase(
   scope: AnnotationScope,
   base: NonNullable<AnnotationLocalRecord["localBase"]>,
   doc: AnnotationDoc,
+  downloaded?: { boundBaseId: string },
 ): Promise<void> {
   const layout = annotationSurfaceLayoutSchema.parse(base.layout);
   annotationDocSchema.parse(doc);
@@ -574,6 +575,24 @@ export async function writeLocalAnnotationBase(
       throw new Error("已有另一布局的本机稿，不能覆盖");
     if (record.base !== null && record.base.layout === undefined)
       throw new Error("旧版底图只能在原布局编辑");
+    if (downloaded) {
+      if (
+        record.base?.state !== "ready" ||
+        record.base.baseId !== downloaded.boundBaseId
+      )
+        throw new Error("下载期间底图已变化，请重新读取");
+      // 缓存远端底图不产生编辑；正文始终取当前记录，不能用下载前的快照覆盖新笔迹。
+      record.localBase = {
+        png: base.png,
+        layout,
+        boundBaseId: downloaded.boundBaseId,
+      };
+      if (record.doc.baseWidth === 0 && record.doc.strokes.length === 0) {
+        record.doc = doc;
+        record.docVersion += 1;
+      }
+      return;
+    }
     record.localBase = { png: base.png, layout };
     record.doc = doc;
     record.docVersion += 1;

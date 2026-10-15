@@ -38,6 +38,12 @@ vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
   return {
     ...actual,
+    fetchTeacherAnnotationViewApi: vi.fn(async () => ({
+      base: null,
+      maxWidthPx: 1440,
+      doc: null,
+      annotation: null,
+    })),
     fetchTeacherAttemptDetailApi: vi.fn(),
     markResponseApi: vi.fn(),
     downloadTeacherExportCsv: vi.fn(),

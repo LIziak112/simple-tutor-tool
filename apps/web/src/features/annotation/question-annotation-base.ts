@@ -118,6 +118,7 @@ export async function prepareQuestionAnnotationBase(
           baseHeight: base.pixelHeight ?? 0,
           strokes: [],
         },
+        { boundBaseId: base.baseId },
       ),
     );
   } else {

@@ -1,6 +1,7 @@
 import type { AnnotationDoc, AnnotationSurfaceLayout } from "@tutor/contract";
 import { beforeEach, expect, it, vi } from "vitest";
 import {
+  applyAnnotationView,
   getAnnotationRecord,
   installAnnotationBackend,
   memoryAnnotationBackend,
@@ -37,6 +38,55 @@ const doc: AnnotationDoc = {
 };
 const png = new Blob([new Uint8Array([137, 80, 78, 71])], {
   type: "image/png",
+});
+
+it("下载已有底图仅缓存，不制造待传编辑，也不覆盖下载期间的新笔迹", async () => {
+  const baseId = "22222222-2222-4222-8222-222222222222";
+  await applyAnnotationView(session, scope, {
+    base: {
+      baseId,
+      state: "ready",
+      stale: false,
+      pixelWidth: 600,
+      pixelHeight: 400,
+      layout,
+    },
+    maxWidthPx: 600,
+    doc: null,
+    annotation: null,
+  });
+  await writeLocalAnnotationBase(session, scope, { png, layout }, doc, {
+    boundBaseId: baseId,
+  });
+  expect((await getAnnotationRecord(session, scope))?.pending).toBeNull();
+  const changed = {
+    ...doc,
+    strokes: [
+      {
+        tool: "pen" as const,
+        color: "#ff0000",
+        weight: 2,
+        points: [{ x: 20, y: 30, p: 0.5, t: 0 }],
+      },
+    ],
+  };
+  writeAnnotationDoc(session, scope, changed);
+  const before = await getAnnotationRecord(session, scope);
+  const pending = before?.pending;
+  const version = before?.docVersion;
+  await writeLocalAnnotationBase(session, scope, { png, layout }, doc, {
+    boundBaseId: baseId,
+  });
+  const after = await getAnnotationRecord(session, scope);
+  expect(after?.doc).toEqual(changed);
+  expect(after?.pending).toEqual(pending);
+  expect(after?.docVersion).toBe(version);
+  expect(after?.localBase?.boundBaseId).toBe(baseId);
+  await expect(
+    writeLocalAnnotationBase(session, scope, { png, layout }, doc, {
+      boundBaseId: "other",
+    }),
+  ).rejects.toThrow("底图");
 });
 
 it("题级等待覆盖连续写入，整卷等待仍等待未完成的题", async () => {

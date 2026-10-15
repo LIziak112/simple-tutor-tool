@@ -14,6 +14,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { AttemptEditorProvider } from "@/features/attempt/AttemptEditorContext";
 import { QuestionSurface } from "@/features/attempt/QuestionSurface";
 import {
+  getAnnotationRecord,
   installAnnotationBackend,
   memoryAnnotationBackend,
   resetAnnotationStoreForTest,
@@ -82,7 +83,7 @@ const layout: AnnotationSurfaceLayout = {
   geometrySignature: "b".repeat(64),
   fontSignature: "c".repeat(64),
 };
-function Harness() {
+function Harness({ hidden = false }: { hidden?: boolean }) {
   const ref = useRef<QuestionAnnotationOverlayHandle>(null);
   return (
     <AttemptEditorProvider>
@@ -95,7 +96,7 @@ function Harness() {
         attemptId={scope.attemptId}
         question={question}
         label="第1题"
-        onLegacy={() => undefined}
+        hidden={hidden}
       >
         <QuestionSurface question={question} />
       </QuestionAnnotationOverlay>
@@ -108,6 +109,8 @@ beforeEach(async () => {
   installAnnotationBackend(memoryAnnotationBackend());
   bindAnnotationSession(session);
   vi.clearAllMocks();
+  vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:annotation-test");
+  vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
   vi.mocked(questionSurfaceMatchesLayout).mockResolvedValue(true);
   vi.mocked(prepareQuestionAnnotationBase).mockResolvedValue({
     kind: "surface",
@@ -180,16 +183,85 @@ it("绘制时锁表单，退出留痕且不重建历史引擎", async () => {
   await waitFor(() => expect(screen.getByRole("toolbar")).toBeVisible());
   expect(engine.mount).toHaveBeenCalledTimes(mounts);
 });
-it("布局不匹配不把圈套到新题面，提供原底图入口", async () => {
+it("历史布局不能复现时自动在原位显示，不需要先开再收才能查看", async () => {
   vi.mocked(questionSurfaceMatchesLayout).mockResolvedValue(false);
   render(<Harness />);
   await waitFor(() =>
-    expect(screen.getByRole("button", { name: "查看原标画" })).toBeVisible(),
+    expect(screen.getByRole("img", { name: "第1题原标画底图" })).toBeVisible(),
   );
+  expect(screen.queryByRole("button", { name: "查看原标画" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "编辑原标画" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "收起原标画" })).toBeNull();
   expect(
     document.querySelector('[data-slot="question-surface"]'),
   ).not.toHaveAttribute("inert");
   expect(engine.setInputEnabled).not.toHaveBeenCalledWith(true);
+  fireEvent.load(screen.getByRole("img", { name: "第1题原标画底图" }));
+  fireEvent.click(screen.getByText("标画"));
+  await waitFor(() => expect(screen.getByRole("toolbar")).toBeVisible());
+  fireEvent.click(screen.getByRole("button", { name: "作答" }));
+  await waitFor(() => expect(screen.queryByRole("toolbar")).toBeNull());
+  expect(screen.getByRole("img", { name: "第1题原标画底图" })).toBeVisible();
+});
+
+it("历史底图加载失败可真正重新加载，失败期间不能落墨", async () => {
+  vi.mocked(questionSurfaceMatchesLayout).mockResolvedValue(false);
+  render(<Harness />);
+  const image = await screen.findByRole("img", { name: "第1题原标画底图" });
+  fireEvent.error(image);
+  expect(
+    document.querySelector('[data-slot="question-surface"]'),
+  ).toBeVisible();
+  expect(engine.setInputEnabled).not.toHaveBeenCalledWith(true);
+  fireEvent.click(screen.getByRole("button", { name: "重新加载标画" }));
+  await waitFor(() =>
+    expect(screen.getByRole("img", { name: "第1题原标画底图" })).not.toBe(
+      image,
+    ),
+  );
+  fireEvent.load(screen.getByRole("img", { name: "第1题原标画底图" }));
+  fireEvent.click(screen.getByText("标画"));
+  await waitFor(() => expect(screen.getByRole("toolbar")).toBeVisible());
+});
+
+it("已有布局固定逻辑宽度，由同一区域整体缩放，隐藏标画不解除排版", async () => {
+  const { container, rerender } = render(<Harness />);
+  const frame = container.querySelector(
+    '[data-slot="annotation-logical-frame"]',
+  );
+  expect(frame).toHaveStyle({ width: "300px", transformOrigin: "top left" });
+  await waitFor(() => expect(engine.mount).toHaveBeenCalled());
+  expect(screen.queryByRole("toolbar")).toBeNull();
+  rerender(<Harness hidden />);
+  expect(frame).toHaveStyle({ width: "300px" });
+  expect(
+    container.querySelector('[data-slot="question-annotation-overlay"]'),
+  ).not.toBeVisible();
+});
+
+it("窄屏可放大同一题面再适应宽度，不重新挂载笔迹或改变保存尺寸", async () => {
+  const rect = vi
+    .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+    .mockReturnValue({ width: 150, height: 100 } as DOMRect);
+  try {
+    const { container } = render(<Harness />);
+    await waitFor(() => expect(engine.mount).toHaveBeenCalled());
+    const frame = container.querySelector(
+      '[data-slot="annotation-logical-frame"]',
+    );
+    expect(frame).toHaveStyle({ transform: "scale(0.5)" });
+    const mounts = engine.mount.mock.calls.length;
+    fireEvent.click(screen.getByRole("button", { name: "放大题面" }));
+    await waitFor(() => expect(frame).toHaveStyle({ transform: "scale(1)" }));
+    fireEvent.click(screen.getByRole("button", { name: "适应宽度" }));
+    await waitFor(() => expect(frame).toHaveStyle({ transform: "scale(0.5)" }));
+    expect(engine.mount).toHaveBeenCalledTimes(mounts);
+    expect((await getAnnotationRecord(session, scope))?.doc.baseWidth).toBe(
+      600,
+    );
+  } finally {
+    rect.mockRestore();
+  }
 });
 it("底图准备失败仍能答题且显示重试原因", async () => {
   vi.mocked(prepareQuestionAnnotationBase).mockRejectedValue(

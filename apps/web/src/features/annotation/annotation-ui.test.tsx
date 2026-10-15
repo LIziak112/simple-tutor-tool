@@ -48,6 +48,41 @@ const DOC: AnnotationDoc = {
   ],
 };
 
+it("原位回看自动读取封存笔迹，底图成功前保留题面，成功后只显示一份", async () => {
+  vi.mocked(fetchTeacherAnnotationViewApi).mockResolvedValue({
+    base: READY_BASE,
+    maxWidthPx: 1440,
+    doc: DOC,
+    annotation: {
+      annotationId: "33333333-3333-4333-8333-333333333333",
+      revision: 1,
+      hash: "a".repeat(64),
+      savedAt: "2026-10-15",
+      sealedAt: "2026-10-15",
+      strokeCount: 1,
+      pointCount: 2,
+    },
+  });
+  render(
+    <AnnotationView viewer="teacher" attemptId="a1" questionId="q1">
+      <p>原位公开题面</p>
+    </AnnotationView>,
+  );
+  await waitFor(() =>
+    expect(
+      screen.getByRole("img", { name: "本题题干标注底图" }),
+    ).toBeInTheDocument(),
+  );
+  expect(screen.getByText("原位公开题面")).toBeVisible();
+  fireEvent.load(screen.getByRole("img", { name: "本题题干标注底图" }));
+  await waitFor(() =>
+    expect(screen.getByText("原位公开题面").parentElement).toHaveClass(
+      "sr-only",
+    ),
+  );
+  expect(screen.queryByRole("button", { name: "查看本题题干标注" })).toBeNull();
+});
+
 // ---------- AnnotationLayer / AnnotationView（API mock） ----------
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -120,6 +155,7 @@ import { createProgrammaticAtrament } from "@/features/ink/engine/atrament-adapt
 import {
   ApiError,
   fetchAnnotationViewApi,
+  fetchTeacherAnnotationViewApi,
   postAnnotationBaseApi,
   postAnnotationBaseImageApi,
   putAnnotationDocApi,

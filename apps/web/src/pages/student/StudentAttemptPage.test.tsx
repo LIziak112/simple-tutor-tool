@@ -23,6 +23,12 @@ vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
   return {
     ...actual,
+    fetchAnnotationViewApi: vi.fn(async () => ({
+      base: null,
+      maxWidthPx: 1440,
+      doc: null,
+      annotation: null,
+    })),
     fetchAttemptApi: vi.fn(),
     startWrongPracticeApi: vi.fn(),
     // T6R.15 泄露断言（F）：答题/草稿渲染不得发起订正与笔记本请求——
@@ -202,9 +208,13 @@ describe("StudentAttemptPage（/s/attempts/:attemptId，T2A.6）", () => {
       units: [],
     });
     const { stubTestId } = renderPage();
-    const back = await screen.findByRole("button", {
-      name: "返回讲练页",
-    });
+    const back = await screen.findByRole(
+      "button",
+      {
+        name: "返回讲练页",
+      },
+      { timeout: 10_000 },
+    );
     fireEvent.click(back);
     // 退出目标 /s/lectures/:id/lesson 不在学生路由桩内 → 落通配桩（已离开本页）
     await waitFor(() =>

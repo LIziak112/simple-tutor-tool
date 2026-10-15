@@ -13,9 +13,10 @@ import {
   uniqueSuffix,
 } from "./helpers";
 
-test("原位标画：不复制题面、退出一击作答、切题唯一输入、重排不拉伸", async ({
+test("原位标画：不复制题面、退出一击作答、切题唯一输入、跨端固定排版整体缩放", async ({
   page,
   request,
+  browser,
 }, testInfo) => {
   test.setTimeout(120_000);
   // 预备验证时只让第一题题面可见，避免测量另一题的后台生成次数。
@@ -267,6 +268,71 @@ test("原位标画：不复制题面、退出一击作答、切题唯一输入�
   await expect(
     first.locator('[data-slot="question-surface"]'),
   ).not.toHaveAttribute("inert", "");
+  // 新浏览器没有本机底图：仅靠云端恢复就必须自动原位显示。
+  const otherDevice = await browser.newContext({
+    baseURL: new URL(page.url()).origin,
+    viewport: { width: 768, height: 1024 },
+  });
+  try {
+    const other = await otherDevice.newPage();
+    let baseDownloads = 0;
+    other.on("request", (request) => {
+      if (
+        request.url().includes("/annotation-base/") &&
+        request.method() === "GET"
+      )
+        baseDownloads++;
+    });
+    await other.goto(`/s/${student.linkToken}`);
+    await other.waitForURL("**/s/home");
+    await other.goto(page.url());
+    const restored = other.locator('article[aria-label="第 1 题"]');
+    await expect(
+      restored.getByRole("button", { name: /圈画题干.*已有 1 笔/ }),
+    ).toBeVisible();
+    await expect(
+      restored.locator('canvas[data-slot="annotation-canvas"]'),
+    ).toBeVisible();
+    await expect(restored.getByRole("img", { name: /原标画底图/ })).toHaveCount(
+      0,
+    );
+    await expect(
+      restored.getByRole("button", {
+        name: /查看原标画|编辑原标画|收起原标画/,
+      }),
+    ).toHaveCount(0);
+    await restored.getByRole("button", { name: /圈画题干/ }).click();
+    await expect(
+      other.getByRole("toolbar", { name: "第 1 题标画工具栏" }),
+    ).toBeVisible();
+    await drawStrokeWithPointerEvents(
+      restored.locator('canvas[data-slot="annotation-canvas"]'),
+    );
+    await expect(
+      restored.getByRole("button", { name: /圈画题干.*已有 2 笔/ }),
+    ).toBeVisible();
+    await other
+      .getByRole("toolbar", { name: "第 1 题标画工具栏" })
+      .getByRole("button", { name: "撤销", exact: true })
+      .click();
+    await expect(
+      restored.getByRole("button", { name: /圈画题干.*已有 1 笔/ }),
+    ).toBeVisible();
+    await restored.getByRole("button", { name: /圈画题干/ }).click();
+    await expect(
+      other.getByRole("toolbar", { name: /标画工具栏/ }),
+    ).toHaveCount(0);
+    await expect(
+      restored.locator('canvas[data-slot="annotation-canvas"]'),
+    ).toBeVisible();
+    await expect(other.getByText("全部已保存", { exact: true })).toBeVisible();
+    expect(baseDownloads).toBeGreaterThan(0);
+    expect(baseDownloads).toBeLessThanOrEqual(2);
+  } finally {
+    await otherDevice.close();
+  }
+  await page.reload();
+  await expect(canvas).toBeVisible();
   await first.getByRole("button", { name: "第 1 题更多" }).click();
   await page.getByRole("menuitem", { name: "隐藏标画" }).click();
   await expect(canvas).toBeHidden();
@@ -283,14 +349,13 @@ test("原位标画：不复制题面、退出一击作答、切题唯一输入�
     first.locator('[data-slot="question-surface"]'),
   ).not.toHaveAttribute("inert", "");
   await page.setViewportSize({ width: 320, height: 800 });
-  await expect(page.getByRole("toolbar", { name: /标画工具栏/ })).toHaveCount(
-    0,
-  );
+  await expect(
+    page.getByRole("toolbar", { name: "第 2 题标画工具栏" }),
+  ).toBeVisible();
   await expect(page.locator('canvas[data-input-enabled="true"]')).toHaveCount(
-    0,
+    1,
   );
   await page.setViewportSize({ width: 810, height: 1080 });
-  await second.getByRole("button", { name: /圈画题干/ }).click();
   await expect(
     page.getByRole("toolbar", { name: "第 2 题标画工具栏" }),
   ).toBeVisible();
@@ -299,8 +364,46 @@ test("原位标画：不复制题面、退出一击作答、切题唯一输入�
     0,
   );
   await page.setViewportSize({ width: 320, height: 800 });
-  await expect(first.getByRole("button", { name: "查看原标画" })).toBeVisible();
-  await expect(canvas).toBeHidden();
+  await expect(first.getByRole("button", { name: "查看原标画" })).toHaveCount(
+    0,
+  );
+  await expect(first.getByRole("img", { name: /原标画底图/ })).toHaveCount(0);
+  await expect(canvas).toBeVisible();
+  const scaled = await first
+    .locator('[data-slot="question-surface"]')
+    .boundingBox();
+  const scaledCanvas = await canvas.boundingBox();
+  expect(scaled).not.toBeNull();
+  expect(scaledCanvas).not.toBeNull();
+  expect(
+    Math.abs((scaled?.width ?? 0) - (scaledCanvas?.width ?? 0)),
+  ).toBeLessThan(1);
+  expect(
+    Math.abs((scaled?.height ?? 0) - (scaledCanvas?.height ?? 0)),
+  ).toBeLessThan(1);
+  expect(
+    Math.abs(
+      (scaled?.width ?? 0) / (scaled?.height ?? 1) -
+        (before?.width ?? 0) / (before?.height ?? 1),
+    ),
+  ).toBeLessThan(0.01);
+  await first.getByRole("button", { name: "放大题面" }).click();
+  await expect
+    .poll(
+      async () =>
+        (await first.locator('[data-slot="question-surface"]').boundingBox())
+          ?.width,
+    )
+    .toBeCloseTo(before?.width ?? 0, 0);
+  expect(
+    await first
+      .locator('[data-slot="annotation-viewport"]')
+      .evaluate((element) => element.scrollWidth > element.clientWidth),
+  ).toBe(true);
+  await first.getByRole("button", { name: "适应宽度" }).click();
+  await expect
+    .poll(async () => (await canvas.boundingBox())?.width)
+    .toBeCloseTo(scaledCanvas?.width ?? 0, 0);
   await second
     .getByRole("radio", { name: "选项 B" })
     .locator("xpath=ancestor::label[1]")
@@ -309,8 +412,7 @@ test("原位标画：不复制题面、退出一击作答、切题唯一输入�
   await page.screenshot({
     path: testInfo.outputPath("inline-layout-fallback.png"),
   });
-  await first.getByRole("button", { name: "查看原标画" }).click();
-  await first.getByRole("button", { name: "编辑原标画" }).click();
+  await first.getByRole("button", { name: /圈画题干/ }).click();
   const toolbar = page.getByRole("toolbar", { name: "第 1 题标画工具栏" });
   await expect(toolbar).toBeVisible();
   for (const button of await toolbar.getByRole("button").all()) {
@@ -343,7 +445,7 @@ test("原位标画：不复制题面、退出一击作答、切题唯一输入�
       } else await route.continue();
     },
   );
-  await first.getByRole("button", { name: "编辑原标画" }).click();
+  await first.getByRole("button", { name: /圈画题干/ }).click();
   await expect(canvas).toHaveAttribute("data-input-enabled", "true");
   await drawStrokeWithPointerEvents(canvas);
   await page.getByRole("button", { name: "作答", exact: true }).click();

@@ -14,6 +14,28 @@ const question: QuestionPublic = {
 };
 
 describe("共享题面", () => {
+  it("历史底图的独立填空控件沿用题面空位顺序与已有答案，不重复题干", () => {
+    const onAnswer = vi.fn();
+    render(
+      <QuestionSurface
+        question={{ ...question, type: "fill", stemMd: "甲 [[]]，乙 [[]]" }}
+        answer={{ kind: "fill", values: ["原答案", ""] }}
+        onAnswer={onAnswer}
+        answerOnly
+      />,
+    );
+    expect(screen.queryByText("甲")).toBeNull();
+    expect(screen.getByRole("textbox", { name: "第 1 空" })).toHaveValue(
+      "原答案",
+    );
+    fireEvent.change(screen.getByRole("textbox", { name: "第 2 空" }), {
+      target: { value: "新答案" },
+    });
+    expect(onAnswer).toHaveBeenCalledWith(
+      { kind: "fill", values: ["原答案", "新答案"] },
+      true,
+    );
+  });
   it("单选控件名称包含字母和实际选项内容", () => {
     render(
       <QuestionSurface
