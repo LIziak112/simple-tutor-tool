@@ -2,6 +2,7 @@ import {
   type AiTaskPublic,
   aiConnectionCreateRequestSchema,
   aiConnectionPatchRequestSchema,
+  aiStatusQuerySchema,
   aiTaskCreateRequestSchema,
   aiTaskListQuerySchema,
   aiTaskUpdatePendingRequestSchema,
@@ -30,6 +31,7 @@ import {
   getStudentQuickButtons,
   putStudentQuickButtons,
 } from "../services/ai-companion/quick-buttons-service.ts";
+import { studentAiStatusOf } from "../services/ai-companion/student-ai-status.ts";
 import {
   aiQueueSummaryOf,
   aiTaskPublicViewOf,
@@ -58,7 +60,7 @@ import {
  *   409 AI_SETTINGS_STALE 保留服务器值。
  *
  * 任务接口（SAI-13，B00 §4.2 API 表的任务子集；材料 multipart / dispatch /
- * followup / share / status / connections 归后续批次 SAI-17/18/24/28）：
+ * followup / share / connections 归后续批次 SAI-17/18/24/28）：
  * - POST /ai/tasks：创建（幂等键重放返回原任务 → 200；新建 201）。请求的
  *   materials 偏好与 quickButtonId 经契约校验后由客户端在材料上传（SAI-11
  *   attach）与统计（SAI-14）消费——服务端不存偏好，快照材料清单以实际落位
@@ -70,6 +72,11 @@ import {
  * - POST /ai/tasks/:id/update-pending|cancel|resume|retry|opened：五个显式
  *   动作，全部薄壳转发 SAI-12 操作（状态 CAS/幂等/退避在服务层）。
  * - GET /ai/queue-summary：顶栏三计数（待领取/处理中/未读，分桶单源）。
+ *
+ * 单题状态（SAI-20，B11）：
+ * - GET /ai/status?attemptId&questionId：有效模式与原因 + 完成态 + 默认通道
+ *   连接态 + 首次知情门槛 + 本题任务摘要（student-ai-status 服务单源，
+ *   实时裁决不缓存——教师刚改设置立即生效；GET 零副作用）。
  *
  * 连接管理（SAI-16，B00 §4.2 API 表 connections 段；业务与安全防线全在
  * connection-service / outbound-target / provider-client）：
@@ -154,6 +161,29 @@ export function createStudentAiRoutes(db: Db, dataDir: string) {
         return c.json({
           ok: true,
           data: aiQueueSummaryOf(db, c.var.student.id),
+        });
+      })
+      // —— 单题状态（SAI-20；伴学栏/发送控制器的服务端裁决入口）——
+      .get("/ai/status", (c) => {
+        // GET 无 JSON body：查询参数手工过契约 schema（与 /ai/tasks 列表同口径）
+        const parsed = aiStatusQuerySchema.safeParse({
+          attemptId: c.req.query("attemptId") ?? undefined,
+          questionId: c.req.query("questionId") ?? undefined,
+        });
+        if (!parsed.success) {
+          throw new HttpError(
+            400,
+            "VALIDATION_ERROR",
+            `查询参数不合法：${firstIssueMessage(parsed.error)}`,
+          );
+        }
+        return c.json({
+          ok: true,
+          data: studentAiStatusOf(db, {
+            studentId: c.var.student.id,
+            attemptId: parsed.data.attemptId,
+            questionId: parsed.data.questionId,
+          }),
         });
       })
       .post("/ai/tasks", async (c) => {
