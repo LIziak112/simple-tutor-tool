@@ -158,6 +158,10 @@ describe("SAI-19 伴学栏视图壳", () => {
     const dockPanel = screen.getByRole("complementary", { name: "AI 助教" });
     expect(rail.contains(dockPanel)).toBe(true);
     expect(rail.children.length).toBe(2);
+    // 宽屏 dock：横向分栏，但主区保持 min-w-0 flex-1 可收缩，不撑出横向溢出
+    expect(rail.className).toContain("flex-row");
+    const mainSection = rail.querySelector("section[aria-label='作答区']");
+    expect(mainSection?.className).toContain("min-w-0");
 
     // 窄屏：面板经浮层（portal）呈现，rail 内只剩主区——主区宽度不再被挤
     setWidth(500);
@@ -165,6 +169,10 @@ describe("SAI-19 伴学栏视图壳", () => {
     expect(rail.contains(overlayPanel)).toBe(false);
     expect(rail.children.length).toBe(1);
     expect(screen.getByTestId("main-content")).toBeInTheDocument();
+    // 无横向溢出的结构性保障：窄屏后 rail 不再横向分栏（flex-col），
+    // 固定宽度的 AI 面板完全退出文档流，主区独占整行宽度
+    expect(rail.className).toContain("flex-col");
+    expect(rail.className).not.toContain("flex-row");
   });
 
   it("入口不假报可连接：未连接时面板如实显示未连接并提供设置入口", async () => {
