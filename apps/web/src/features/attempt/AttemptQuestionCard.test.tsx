@@ -422,7 +422,11 @@ describe("题卡草稿层（T6R.9）", () => {
     );
     await ro.push(1024); // 宽题卡：两列达标
     const beforeOpen = document.querySelector('[data-slot="note-body-row"]');
-    expect(beforeOpen?.getAttribute("data-layout")).toBe("side");
+    expect(beforeOpen?.getAttribute("data-layout")).toBe("below");
+    expect(beforeOpen?.lastElementChild).toHaveAttribute("hidden");
+    expect((beforeOpen?.firstElementChild as HTMLElement)?.style.width).toBe(
+      "",
+    );
     fireEvent.click(screen.getByRole("button", { name: /草稿纸/ }));
     const row = document.querySelector('[data-slot="note-body-row"]');
     expect(row?.getAttribute("data-layout")).toBe("side");

@@ -16,7 +16,7 @@ test.beforeEach(async ({ request, page }, testInfo) => {
   const suffix = uniqueSuffix();
   const courseName = `交互回归课程${suffix}`;
   const unitName = `交互回归练习${suffix}`;
-  const longQuestion = testInfo.title.startsWith("草稿开合保持");
+  const longQuestion = testInfo.title.startsWith("草稿按需分栏");
   const courseId = await createCourseViaApi(request, courseName);
   const markdown = [
     "---",
@@ -67,7 +67,7 @@ test.beforeEach(async ({ request, page }, testInfo) => {
 });
 
 for (const preference of ["auto", "side", "below"] as const) {
-  test(`草稿开合保持${preference}布局题面和圈画的几何、像素与笔数`, async ({
+  test(`草稿按需分栏：${preference}收起不占位，展开等比适配且保留像素与笔数`, async ({
     page,
   }, testInfo) => {
     await page.setViewportSize({ width: 1500, height: 1100 });
@@ -95,7 +95,7 @@ for (const preference of ["auto", "side", "below"] as const) {
       await paperTrigger.click();
       await expect(paper).toBeHidden();
     }
-    // 自动档在展开之前就有足够宽度；不能靠展开草稿才扩大题卡。
+    // 外框保持足够宽，草稿未打开时内部不能提前预留右列。
     await page.getByRole("button", { name: "收起答题卡", exact: true }).click();
     const trigger = card.getByRole("button", { name: /圈画题干/ });
     await trigger.click();
@@ -145,6 +145,21 @@ for (const preference of ["auto", "side", "below"] as const) {
       });
     const original = await snapshot();
     expect(original.painted).toBeGreaterThan(10);
+    const row = card.locator('[data-slot="note-body-row"]');
+    await expect(row).toHaveAttribute("data-layout", "below");
+    await expect
+      .poll(() =>
+        row.evaluate((element) => {
+          const column = element.firstElementChild;
+          return column
+            ? Math.abs(
+                column.getBoundingClientRect().width -
+                  element.getBoundingClientRect().width,
+              )
+            : Infinity;
+        }),
+      )
+      .toBeLessThan(1);
     const cycle = async (active: boolean) => {
       for (const opened of [true, false, true, false]) {
         await paperTrigger.click();
@@ -155,7 +170,37 @@ for (const preference of ["auto", "side", "below"] as const) {
           "data-input-enabled",
           String(active),
         );
-        await expect.poll(snapshot).toEqual(original);
+        if (opened && preference !== "below") {
+          await expect(row).toHaveAttribute("data-layout", "side");
+          await expect
+            .poll(async () => (await snapshot()).question[2] ?? 0)
+            .toBeLessThan(original.question[2] ?? 0);
+          const current = await snapshot();
+          expect(current.width).toBe(original.width);
+          expect(current.height).toBe(original.height);
+          expect(current.hash).toBe(original.hash);
+          expect(current.painted).toBe(original.painted);
+          for (let i = 0; i < 4; i++)
+            expect(
+              Math.abs((current.question[i] ?? 0) - (current.canvas[i] ?? 0)),
+            ).toBeLessThan(1);
+          expect(
+            Math.abs(
+              (current.question[2] ?? 0) / (current.question[3] ?? 1) -
+                (original.question[2] ?? 0) / (original.question[3] ?? 1),
+            ),
+          ).toBeLessThan(0.01);
+        } else {
+          await expect(row).toHaveAttribute("data-layout", "below");
+          await expect.poll(snapshot).toEqual(original);
+        }
+        await expect
+          .poll(() =>
+            card
+              .locator('[data-slot="annotation-viewport"]')
+              .evaluate((element) => element.scrollWidth - element.clientWidth),
+          )
+          .toBeLessThanOrEqual(1);
         await expect(trigger).toHaveAccessibleName(/已有 1 笔/);
         await expect(
           card.getByRole("button", { name: "查看原标画", exact: true }),
@@ -171,7 +216,7 @@ for (const preference of ["auto", "side", "below"] as const) {
   });
 }
 
-test("已有标画在题卡扩宽后保持原题面尺寸、位置与像素", async ({ page }) => {
+test("题卡扩宽后题面居中且保留标画原尺寸与像素", async ({ page }) => {
   await page.setViewportSize({ width: 1300, height: 1000 });
   const card = page.getByRole("article", { name: "第 1 题", exact: true });
   // 模拟升级前较窄的题卡，之后恢复新版外框宽度。
@@ -222,7 +267,24 @@ test("已有标画在题卡扩宽后保持原题面尺寸、位置与像素", as
       card.evaluate((element) => element.getBoundingClientRect().width),
     )
     .toBeGreaterThan(width);
-  await expect.poll(geometry).toEqual(original);
+  await expect
+    .poll(async () => {
+      const current = await geometry();
+      return {
+        question: current.question.slice(2),
+        canvas: current.canvas.slice(2),
+        hash: current.hash,
+      };
+    })
+    .toEqual({
+      question: original.question.slice(2),
+      canvas: original.canvas.slice(2),
+      hash: original.hash,
+    });
+  await expect(card.locator('[data-slot="note-body-row"]')).toHaveAttribute(
+    "data-layout",
+    "below",
+  );
   await expect(canvas).toHaveAttribute("data-input-enabled", "true");
   await expect(
     card.getByRole("button", { name: "查看原标画", exact: true }),

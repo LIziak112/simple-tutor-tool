@@ -263,6 +263,52 @@ it("窄屏可放大同一题面再适应宽度，不重新挂载笔迹或改变�
     rect.mockRestore();
   }
 });
+it("分栏改变可用宽度后重新适配，不能保留放大造成局部横向滚动", async () => {
+  let width = 150;
+  const callbacks: Array<() => void> = [];
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      constructor(callback: () => void) {
+        callbacks.push(callback);
+      }
+      observe() {}
+      disconnect() {}
+    },
+  );
+  const rect = vi
+    .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+    .mockImplementation(() => ({ width, height: 100 }) as DOMRect);
+  try {
+    const { container } = render(<Harness />);
+    await waitFor(() => expect(engine.mount).toHaveBeenCalled());
+    const frame = container.querySelector(
+      '[data-slot="annotation-logical-frame"]',
+    );
+    fireEvent.click(screen.getByRole("button", { name: "放大题面" }));
+    await waitFor(() => expect(frame).toHaveStyle({ transform: "scale(1)" }));
+    // 高度通知不能取消用户放大；只有可用宽度改变才重新适配。
+    act(() => {
+      callbacks.forEach((callback) => {
+        callback();
+      });
+    });
+    expect(frame).toHaveStyle({ transform: "scale(1)" });
+    width = 120;
+    act(() => {
+      callbacks.forEach((callback) => {
+        callback();
+      });
+    });
+    await waitFor(() => expect(frame).toHaveStyle({ transform: "scale(0.4)" }));
+    expect((await getAnnotationRecord(session, scope))?.doc.baseWidth).toBe(
+      600,
+    );
+  } finally {
+    rect.mockRestore();
+  }
+});
+
 it("底图准备失败仍能答题且显示重试原因", async () => {
   vi.mocked(prepareQuestionAnnotationBase).mockRejectedValue(
     new Error("图片加载失败"),

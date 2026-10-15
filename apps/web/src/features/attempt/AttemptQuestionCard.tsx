@@ -359,10 +359,11 @@ export function AttemptQuestionCard({
     inkEnabled &&
     attemptId !== undefined &&
     !HANDWRITTEN_TYPES.has(question.type);
-  // 草稿可见性不改变题面的列位或宽度，避免开合重排已标画内容。
-  const layout = hasScratchLayout
-    ? effectiveNoteLayout(layoutPreference, sideUsable)
-    : "below";
+  // 只有实际展开草稿才分栏；已有标画由固定逻辑画面整体缩放。
+  const layout =
+    hasScratchLayout && noteOpen
+      ? effectiveNoteLayout(layoutPreference, sideUsable)
+      : "below";
   const allowWidePaper = hasScratchLayout && layoutPreference !== "below";
   const hasEditor = editor != null;
   // 保存/上传状态不改变题面；稳定引用避免重复解绑标画输入进行版式校验。
@@ -588,6 +589,7 @@ export function AttemptQuestionCard({
         </div>
         <div
           className="min-w-0"
+          hidden={!noteOpen}
           style={layout === "side" ? NOTE_PAPER_COLUMN_STYLE : undefined}
         >
           {noteLayer}

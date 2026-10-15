@@ -159,10 +159,14 @@ export const QuestionAnnotationOverlay = forwardRef<
   useLayoutEffect(() => {
     const element = viewport.current;
     if (!element || !cssWidth) return;
+    let previousWidth = 0;
     const resize = () => {
       const width = element.getBoundingClientRect().width;
-      if (width <= 0) return;
+      if (width <= 0 || width === previousWidth) return;
       surface.current?.finish();
+      // 分栏或容器宽度变化后重新适配，不能沿用上一列宽下的放大状态。
+      if (previousWidth > 0) setExpanded(false);
+      previousWidth = width;
       setFitScale(Math.min(1, width / cssWidth));
     };
     resize();
