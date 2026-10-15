@@ -433,14 +433,15 @@ export function createAiTask(
           `本题进行中的 AI 任务已达上限（${AI_TASK_ACTIVE_PER_QUESTION} 个），请先处理或取消现有任务`,
         );
       }
-      // ② 学生待处理（created 桶）
+      // ② 学生待处理（技术方案 §限额表：pending+dispatching+claimed+uncertain
+      //   全集 = pending+processing 桶并集；paused/failed 与终态不占额）
       const pendingCount = tx
         .select({ id: aiTasks.id })
         .from(aiTasks)
         .where(
           and(
             eq(aiTasks.studentId, input.studentId),
-            inArray(aiTasks.status, [...AI_TASK_QUEUE_BUCKETS.pending]),
+            inArray(aiTasks.status, [...activeStatuses]),
           ),
         )
         .all().length;

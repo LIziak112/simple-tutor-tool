@@ -576,6 +576,55 @@ describe("SAI-12 创建幂等与配额", () => {
       ).created,
     ).toBe(true);
   });
+
+  it("配额口径（技术方案 §限额表）：claimed/dispatching/uncertain 占学生待处理额，paused/failed 不占", () => {
+    const db = createTestDb();
+    const world = setupWorld(db);
+    // 占满 10 个在途名额：claimed 3 + dispatching 3 + uncertain 3 + created 1，
+    // 分散到 10 个不同题（每题 1 条，避开同题配额 3 的先拦）——pending+processing
+    // 桶全集合 = 技术方案「待处理任务/学生」枚举口径
+    const mix: AiTaskRow["status"][] = [
+      "claimed",
+      "claimed",
+      "claimed",
+      "dispatching",
+      "dispatching",
+      "dispatching",
+      "uncertain",
+      "uncertain",
+      "uncertain",
+      "created",
+    ];
+    mix.forEach((status, i) => {
+      const questionId = `q-mix-${i}`;
+      insertResponse(db, world.attemptId, questionId);
+      insertTaskRow(db, {
+        studentId: world.studentId,
+        attemptId: world.attemptId,
+        questionId,
+        status,
+      });
+    });
+    insertResponse(db, world.attemptId, "q-mix-new");
+    expectHttpError(
+      () => mkMcpTask(db, world, { questionId: "q-mix-new" }),
+      409,
+      "AI_TASK_LIMIT_REACHED",
+    );
+    // paused/failed 不在枚举内：全部暂停/失败时不占学生待处理额（仍受同题
+    // 进行中配额约束，故另开新题验证）
+    const pausedWorld = setupWorld(db);
+    insertResponse(db, pausedWorld.attemptId, "q-paused");
+    for (let i = 0; i < AI_TASK_PENDING_PER_STUDENT; i += 1) {
+      insertTaskRow(db, {
+        studentId: pausedWorld.studentId,
+        attemptId: pausedWorld.attemptId,
+        questionId: "q-paused",
+        status: i % 2 === 0 ? "paused" : "failed",
+      });
+    }
+    expect(mkMcpTask(db, pausedWorld).created).toBe(true);
+  });
 });
 
 // ---------- 列表与查看独立（操作与语义 2；完成条件②） ----------
