@@ -813,7 +813,9 @@ describe("SAI-11 受控读取（执行步骤 5；风险⑤①）", () => {
       materialId: w.materialId,
     });
     expect(new Uint8Array(result.bytes)).toEqual(w.png);
-    expect(result.row.id).toBe(w.materialId);
+    expect(result.material.id).toBe(w.materialId);
+    // 读取产物只含公开投影——内部文件路径结构上不进路由响应
+    expect("pngPath" in result.material).toBe(false);
   });
 
   it("跨题：materialId 属于另一任务 → 404（材料按任务隔离）", () => {

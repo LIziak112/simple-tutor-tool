@@ -447,10 +447,8 @@ function aiTaskMaterialsInternalOf(
 }
 
 /** 行 → 学生可见视图（契约 aiTaskMaterialSchema：内部文件路径不透出） */
-export function aiTaskMaterialsPublicOf(
-  rows: readonly AiTaskMaterialRow[],
-): AiTaskMaterial[] {
-  return rows.map((row) => ({
+function publicOfRow(row: AiTaskMaterialRow): AiTaskMaterial {
+  return {
     id: row.id,
     taskId: row.taskId,
     kind: row.kind,
@@ -461,7 +459,13 @@ export function aiTaskMaterialsPublicOf(
     hash: row.hash,
     state: row.state,
     missingReason: null,
-  }));
+  };
+}
+
+export function aiTaskMaterialsPublicOf(
+  rows: readonly AiTaskMaterialRow[],
+): AiTaskMaterial[] {
+  return rows.map(publicOfRow);
 }
 
 /** 出站材料引用（SAI-09 assembleOutboundMessages 消费：只透类别/页序/字节） */
@@ -476,6 +480,12 @@ export function loadOutboundMaterialRefs(
   }));
 }
 
+/** 附件读取产物：字节 + 公开投影（内部行 pngPath 结构上不进路由响应） */
+export interface AiMaterialReadResult {
+  readonly bytes: ArrayBuffer;
+  readonly material: AiTaskMaterial;
+}
+
 /**
  * 读取单条材料文件字节：路径只来自 DB 行并经 resolveWithinRoot 强边界
  * （越界/后缀不符 = 数据故障 500，绝不去读任意路径）；文件缺失/不可读 =
@@ -484,13 +494,13 @@ export function loadOutboundMaterialRefs(
 function readMaterialBytes(
   dataDir: string,
   row: AiTaskMaterialRow,
-): { bytes: ArrayBuffer; row: AiTaskMaterialRow } {
+): AiMaterialReadResult {
   const abs = resolveWithinRoot(dataDir, AI_MATERIALS_ROOT_REL, row.pngPath, {
     suffix: ".png",
     violationCode: "AI_MATERIAL_BROKEN",
   });
   try {
-    return { bytes: readFileBytes(abs), row };
+    return { bytes: readFileBytes(abs), material: publicOfRow(row) };
   } catch {
     throw new HttpError(
       500,
@@ -532,7 +542,7 @@ export function readStudentAiTaskMaterial(
     readonly materialId: string;
   },
   configSource: AiPolicyConfigSource = sqliteAiPolicyConfigSource,
-): { bytes: ArrayBuffer; row: AiTaskMaterialRow } {
+): AiMaterialReadResult {
   const task = requireTask(db, input.taskId);
   if (task.studentId !== input.studentId) {
     throw new HttpError(404, "NOT_FOUND", TASK_NOT_FOUND_MESSAGE);
@@ -556,7 +566,7 @@ export function readTeacherAiTaskMaterial(
     readonly taskId: string;
     readonly materialId: string;
   },
-): { bytes: ArrayBuffer; row: AiTaskMaterialRow } {
+): AiMaterialReadResult {
   const task = requireTask(db, input.taskId);
   const attempt = db
     .select()
@@ -589,7 +599,7 @@ export function readSharedAiTaskMaterial(
     readonly now?: Date | string;
   },
   configSource: AiPolicyConfigSource = sqliteAiPolicyConfigSource,
-): { bytes: ArrayBuffer; row: AiTaskMaterialRow } {
+): AiMaterialReadResult {
   const ticket = db
     .select()
     .from(aiShareTickets)
