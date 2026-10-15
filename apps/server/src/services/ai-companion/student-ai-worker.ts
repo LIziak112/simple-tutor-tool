@@ -152,6 +152,9 @@ const ASSEMBLY_BROKEN_MESSAGE =
  * 从任务行冻结快照重建出站消息：system = 快照内提示词 + 注入防御（单源），
  * 数据段/历史/诉求经 assembleOutboundMessages 统一组装。快照损坏 → 500
  * AI_CONTEXT_BROKEN（不伪造题面出站）。
+ *
+ * 诉求取首条学生消息：当前任务创建时只落这一条（ai_messages 学生侧唯一
+ * 插入点）；未来若在同一任务上追加追问消息，此处须改取末条学生消息。
  */
 function outboundAssemblyOfTask(db: Db, task: AiTaskRow): OutboundAssembly {
   let parsedJson: unknown;

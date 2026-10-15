@@ -342,6 +342,83 @@ describe("AiConnectionManager(SAI-18 学生连接设置)", () => {
     });
   });
 
+  describe("闸门补测:草稿缓存真实读回与来源地址过滤", () => {
+    it("表单草稿与编辑态切页重挂不丢;登出清 student 键后归零", async () => {
+      const client = new QueryClient({
+        defaultOptions: {
+          queries: { retry: false },
+          mutations: { retry: false },
+        },
+      });
+      const first = renderManager(client);
+      await screen.findByText(/尚未配置 AI 连接/u);
+      fillInappForm({ baseUrl: "https://keep.example.com/v1" });
+      // 切页(卸载)后重挂:草稿从 queryClient 读回,输入不丢
+      first.unmount();
+      renderManager(client);
+      expect(await screen.findByLabelText("接口地址")).toHaveValue(
+        "https://keep.example.com/v1",
+      );
+      expect(screen.getByLabelText("API Key")).toHaveValue("sk-plain-test-key");
+      expect(screen.getByText(/有未保存的更改/u)).toBeInTheDocument();
+      // 登出(移除 student 键)后重挂:草稿随账号缓存隔离归零
+      client.removeQueries({ queryKey: ["student"] });
+      const third = renderManager(client);
+      await screen.findByText(/尚未配置 AI 连接/u);
+      expect(third.container.querySelector("input[type=url]")).toHaveValue("");
+      expect(screen.getByText(/表单无未保存更改/u)).toBeInTheDocument();
+    });
+
+    it("编辑态经缓存恢复:重挂后仍按修改而非新建保存", async () => {
+      mockedFetch.mockResolvedValue(listData([INAPP_UNVERIFIED]));
+      const client = new QueryClient({
+        defaultOptions: {
+          queries: { retry: false },
+          mutations: { retry: false },
+        },
+      });
+      const first = renderManager(client);
+      await screen.findByText(/api\.example\.com/u);
+      fireEvent.click(screen.getByRole("button", { name: "修改配置" }));
+      fireEvent.change(screen.getByLabelText("模型名称"), {
+        target: { value: "glm-5" },
+      });
+      first.unmount();
+      renderManager(client);
+      // 重挂后仍是「修改连接」:保存走 patch 而非 create
+      expect(await screen.findByText(/修改连接/u)).toBeInTheDocument();
+      expect(screen.getByLabelText("模型名称")).toHaveValue("glm-5");
+      await screen.findByText(/api\.example\.com/u);
+      mockedPatch.mockResolvedValue({
+        connection: INAPP_UNVERIFIED,
+        credential: null,
+      });
+      fireEvent.click(screen.getByRole("button", { name: "保存连接" }));
+      await waitFor(() => expect(mockedPatch).toHaveBeenCalledTimes(1));
+      expect(mockedCreate).not.toHaveBeenCalled();
+    });
+
+    it("from 只接受学生域内部路径:外站与协议相对地址过滤后无回跳入口", async () => {
+      for (const bad of ["//evil.example", "https://evil.example/x"]) {
+        const view = renderManager(undefined, { from: bad });
+        fireEvent.click(
+          screen.getByRole("checkbox", { name: "我已了解数据外发说明" }),
+        );
+        fillInappForm();
+        mockedCreate.mockResolvedValue({
+          connection: INAPP_UNVERIFIED,
+          credential: null,
+        });
+        fireEvent.click(screen.getByRole("button", { name: "保存连接" }));
+        await screen.findByText(/连接已保存/u);
+        expect(
+          screen.queryByRole("link", { name: "返回原题" }),
+        ).not.toBeInTheDocument();
+        view.unmount();
+      }
+    });
+  });
+
   describe("先测 5:MCP token 一次性展示与复制反馈", () => {
     it("创建 MCP 连接后一次性展示 token;复制成功显示已复制", async () => {
       renderManager();

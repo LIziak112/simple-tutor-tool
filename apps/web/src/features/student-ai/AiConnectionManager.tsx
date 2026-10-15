@@ -61,6 +61,8 @@ import {
 
 /** 表单草稿(新建/编辑共用;channel 决定可见字段) */
 interface ConnectionDraft {
+  /** 正在修改的连接 id(null = 新建);随草稿缓存,重挂不丢编辑对象 */
+  readonly editingId: string | null;
   readonly channel: AiChannel;
   readonly baseUrl: string;
   readonly model: string;
@@ -74,6 +76,7 @@ interface ConnectionDraft {
 }
 
 const EMPTY_DRAFT: ConnectionDraft = {
+  editingId: null,
   channel: "inapp",
   baseUrl: "",
   model: "",
@@ -126,6 +129,22 @@ function errorTextOf(error: unknown, fallback: string): string {
   return fallback;
 }
 
+/**
+ * 来源题回跳地址(B11 发送控制器跳入携带):只接受本学生域内部路径,
+ * 过滤外站、协议相对地址与跨角色页面(同题卡历史页 returnTo 纪律)。
+ */
+function safeFromOf(source: string | null): string | null {
+  if (
+    source === null ||
+    !source.startsWith("/s/") ||
+    source.startsWith("//") ||
+    source.includes("\\")
+  ) {
+    return null;
+  }
+  return source;
+}
+
 export function AiConnectionManager() {
   const connectionsQuery = useStudentAiConnections();
   const createMutation = useCreateStudentAiConnection();
@@ -135,12 +154,16 @@ export function AiConnectionManager() {
 
   const [searchParams] = useSearchParams();
   /** 来源题路径(B11 发送控制器跳入时携带;保存成功后提供回跳入口) */
-  const from = searchParams.get("from");
+  const from = safeFromOf(searchParams.get("from"));
   const queryClient = useQueryClient();
 
-  const [draft, setDraft] = useState<ConnectionDraft>(EMPTY_DRAFT);
-  /** 编辑态:正在修改的连接 id(null = 新建) */
-  const [editingId, setEditingId] = useState<string | null>(null);
+  // 草稿经 queryClient 缓存读回(gcTime Infinity):切页/卸载重挂不丢,
+  // 登出 removeQueries(["student"]) 随账号缓存隔离归零(同快捷按钮纪律)
+  const [draft, setDraft] = useState<ConnectionDraft>(
+    () =>
+      queryClient.getQueryData<ConnectionDraft>(studentAiConnectionDraftKey) ??
+      EMPTY_DRAFT,
+  );
   /** mcp 创建/重置的一次性 token 展示(明文只出现在本组件内存) */
   const [tokenOnce, setTokenOnce] =
     useState<AiConnectionFirstCredential | null>(null);
@@ -193,7 +216,7 @@ export function AiConnectionManager() {
     draft.channel !== "inapp" ||
     (draft.baseUrl.trim().length > 0 &&
       draft.model.trim().length > 0 &&
-      (editingId !== null || draft.apiKey.length > 0));
+      (draft.editingId !== null || draft.apiKey.length > 0));
   const saving = createMutation.isPending || patchMutation.isPending;
 
   function buildCreateRequest(): AiConnectionCreateRequest {
@@ -245,18 +268,17 @@ export function AiConnectionManager() {
       ...EMPTY_DRAFT,
       consentAcknowledged: prev.consentAcknowledged,
     }));
-    setEditingId(null);
   }
 
   function handleSave(): void {
     setNotice(null);
     const editing =
-      editingId === null
+      draft.editingId === null
         ? null
-        : (connections.find((item) => item.id === editingId) ?? null);
-    if (editingId !== null && editing !== null) {
+        : (connections.find((item) => item.id === draft.editingId) ?? null);
+    if (draft.editingId !== null && editing !== null) {
       patchMutation.mutate(
-        { id: editingId, request: buildPatchRequest(editing) },
+        { id: draft.editingId, request: buildPatchRequest(editing) },
         {
           onSuccess: (data) => {
             resetDraft();
@@ -291,8 +313,8 @@ export function AiConnectionManager() {
   /** 进入编辑态:行值载入草稿(Key 恒空 = 不改;不回显旧明文) */
   function startEdit(connection: AiConnectionPublic): void {
     setNotice(null);
-    setEditingId(connection.id);
     setDraft({
+      editingId: connection.id,
       channel: connection.channel,
       baseUrl: connection.channel === "inapp" ? connection.baseUrl : "",
       model: connection.channel === "inapp" ? connection.model : "",
@@ -644,7 +666,7 @@ export function AiConnectionManager() {
         className="space-y-4 rounded-xl border border-border bg-card p-5"
       >
         <h2 id="ai-connection-form-title" className="font-semibold">
-          {editingId === null ? "新增连接" : "修改连接"}
+          {draft.editingId === null ? "新增连接" : "修改连接"}
         </h2>
         <fieldset className="space-y-2">
           <legend className="text-sm text-muted-foreground">通道</legend>
@@ -703,7 +725,7 @@ export function AiConnectionManager() {
             <label className="flex flex-col gap-1.5 text-sm">
               <span>
                 API Key(只写入不回显;
-                {editingId === null ? "必填" : "留空 = 保持原 Key"})
+                {draft.editingId === null ? "必填" : "留空 = 保持原 Key"})
               </span>
               <input
                 type="password"
@@ -779,7 +801,7 @@ export function AiConnectionManager() {
             )}
             保存连接
           </Button>
-          {editingId !== null && (
+          {draft.editingId !== null && (
             <Button
               type="button"
               variant="outline"
@@ -857,7 +879,7 @@ export function AiConnectionManager() {
                   onSuccess: () => {
                     setConfirmDeleteId(null);
                     setNotice({ tone: "ok", text: "连接已删除。" });
-                    if (editingId === confirmDeleteId) resetDraft();
+                    if (draft.editingId === confirmDeleteId) resetDraft();
                   },
                   onError: (error) =>
                     setNotice({

@@ -514,6 +514,35 @@ describe("SAI-17 worker 主链路（真实 HTTP / 装配 / 队列）", () => {
     }
   });
 
+  it("任务上下文损坏：装配层拒绝重建，零出站不伪造题面，按可重试失败明示", async () => {
+    const db = createTestDb();
+    const dataDir = createTestDir();
+    const world = setupWorld(db);
+    addInappConnection(db, world.studentId);
+    const taskId = mkInappTask(db, world);
+    // 冻结快照损坏（防御路径）：快照解析失败时不得据残骸伪造题面出站
+    db.update(aiTasks)
+      .set({ contextSnapshotJson: "{broken" })
+      .where(eq(aiTasks.id, taskId))
+      .run();
+    const provider = await startFakeProvider(respondJson);
+    try {
+      const summary = await runStudentAiDispatchOnce(db, {
+        dataDir,
+        rootSecret: ROOT_SECRET,
+        transport: provider.transport,
+        now: () => new Date(T0 + 1000),
+      });
+      expect(summary.failed).toBe(1);
+      expect(taskStatus(db, taskId)).toBe("failed");
+      expect(taskErrorText(db, taskId)).toContain("本次未出站");
+      expect(assistantReplies(db, taskId)).toEqual([]);
+      expect(provider.requests.length).toBe(0);
+    } finally {
+      await provider.close();
+    }
+  });
+
   it("未配置页内连接 / Key 需重配：直接 paused 需重配，零出站不重试", async () => {
     const db = createTestDb();
     const dataDir = createTestDir();
