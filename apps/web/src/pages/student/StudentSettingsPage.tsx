@@ -2,6 +2,7 @@ import { ChevronRight, PenLine, UserRound } from "lucide-react";
 import { Link } from "react-router";
 import { useStudentMe } from "@/features/auth/student-auth";
 import { useInkProfileSelection } from "@/features/ink/ink-profile-store";
+import { StudentQuickButtonsSection } from "@/features/student-ai/StudentQuickButtonsSection";
 
 /** 学生个人设置；账号守卫和配置绑定由学生布局负责。 */
 export default function StudentSettingsPage() {
@@ -69,6 +70,16 @@ export default function StudentSettingsPage() {
             className="size-4 shrink-0 text-muted-foreground"
           />
         </Link>
+      </section>
+      {/* SAI-08：AI 求助快捷按钮管理（草稿暂存于 queryClient，离开页面不丢） */}
+      <section aria-labelledby="student-ai-title" className="space-y-3">
+        <h2
+          id="student-ai-title"
+          className="text-sm font-medium text-muted-foreground"
+        >
+          AI 求助
+        </h2>
+        <StudentQuickButtonsSection />
       </section>
     </div>
   );
