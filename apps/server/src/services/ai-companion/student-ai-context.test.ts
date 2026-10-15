@@ -136,7 +136,10 @@ function insertResponse(
       questionId,
       unitId: null,
       questionVersion: 1,
-      questionSnapshotJson: opts?.snapshotJson ?? snapshotJsonOf({ id: questionId }),
+      questionSnapshotJson:
+        opts?.snapshotJson === undefined
+          ? snapshotJsonOf({ id: questionId })
+          : opts.snapshotJson,
       answerJson: opts?.answer === null || opts?.answer === undefined ? null : JSON.stringify(opts.answer),
       submittedAt: opts?.submittedAt ?? null,
       teacherComment: opts?.teacherComment ?? null,
@@ -276,13 +279,13 @@ function expectNoSentinels(value: unknown, sentinels: readonly string[]): void {
   }
 }
 
-/** 基础世界:一名学生 + 一份 draft 作业卷 + q1(choice,答案解析齐全) */
-function setupWorld(db: Db): { studentId: string; attemptId: string; responseId: string } {
+/** 基础世界:一名学生 + 一份 draft 作业卷 + q1(choice,答案解析齐全);返回即装配定位三元组 */
+function setupWorld(db: Db): { studentId: string; attemptId: string; questionId: string; responseId: string } {
   const studentId = makeStudent(db);
   const assignmentId = insertAssignment(db);
   const attemptId = insertAttempt(db, { studentId, assignmentId });
   const responseId = insertResponse(db, attemptId, "q1");
-  return { studentId, attemptId, responseId };
+  return { studentId, attemptId, questionId: "q1", responseId };
 }
 
 // ---------- 表行 1:开放/启发,答案和解析均有 ----------
@@ -928,8 +931,13 @@ describe("SAI-09 边界", () => {
     expect(bundleA.snapshot.promptSnapshotMd).not.toContain(CUSTOM_TEMPLATE);
     expect(bundleB.modeAtSend).toBe("guided_only");
     expect(bundleB.snapshot.promptSnapshotMd).toContain(`${CUSTOM_TEMPLATE}-B`);
-    // 学生不临时成为 teacher:装配始终以学生身份,不产生教师侧读路径
-    expectNoSentinels(bundleB, [studentA, studentB]);
+    // 学生不临时成为 teacher:装配始终以学生身份,出站载荷不含任何内部账号 ID
+    // (bundle.attempt 是服务端内部行,只留在服务端,不进入出站组装)
+    const assemblyB = assembleOutboundMessages({
+      bundle: bundleB,
+      studentQuestion: "这题怎么入手?",
+    });
+    expectNoSentinels(assemblyB, [studentA, studentB, TEST_TEACHER_ID, teacherB]);
     db.$client.close();
   });
 });
