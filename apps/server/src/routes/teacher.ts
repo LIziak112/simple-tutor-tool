@@ -33,6 +33,7 @@ import { createImportRoutes } from "./import";
 import { createTeacherInkProfileRoutes } from "./ink-profiles";
 import { createLibraryRoutes } from "./library";
 import { createSharedRoutes } from "./shared";
+import { createTeacherAiRoutes } from "./teacher-ai";
 import { createTeacherAnalyticsRoutes } from "./teacher-analytics";
 import { createTeacherApiTokenRoutes } from "./teacher-api-token";
 import { createAssignmentTeacherRoutes } from "./teacher-assignments";
@@ -236,5 +237,10 @@ export function createTeacherRoutes(
       // T7.7：教师设置——能力启用集读写（GET/PUT /settings/capability-profile，
       // 学生端 attempt/讲义读取接口读时计算有效启用集下发）
       .route("/", createTeacherSettingsRoutes(db))
+      // SAI-06：AI 教学配置——GET/PUT /ai/settings（默认模式+三模板，
+      // baseUpdatedAt 版本冲突 409 AI_SETTINGS_STALE）、GET/PUT
+      // /students/:id/ai-policy 与 /assignments/:id/ai-policy（覆盖读写，
+      // 响应带 resolveAiPolicy 有效裁决预览；业务在 ai-companion/settings-service）
+      .route("/", createTeacherAiRoutes(db))
   );
 }
