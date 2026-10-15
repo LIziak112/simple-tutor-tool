@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import type { TeacherInfo } from "@tutor/contract";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -9,7 +9,7 @@ import AdminLayout from "./AdminLayout";
 /**
  * /a 管理端布局与路由守卫测试（T2B.6，D19）：
  * 非管理员（me.isAdmin=false）→ 跳 /t；401 → 跳 /t/login；管理员 → 独立布局
- * （概览/教师管理导航 + 返回教师端 + 顶栏登录名）。
+ * （概览/教师管理导航 + 返回教师端 + 侧栏登录名）。
  */
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -29,11 +29,11 @@ const ADMIN: TeacherInfo = {
   createdAt: "2026-01-01T00:00:00.000Z",
 };
 
-function renderLayout(initialEntry: string): void {
+function renderLayout(initialEntry: string) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  render(
+  return render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[initialEntry]}>
         <Routes>
@@ -63,6 +63,52 @@ beforeEach(() => {
 });
 
 describe("AdminLayout 路由守卫（D19：管理入口只对 isAdmin）", () => {
+  it("复用教师主题与品牌，卸载时清理 Portal 主题", async () => {
+    mockedMe.mockResolvedValue(ADMIN);
+    const view = renderLayout("/a");
+    await screen.findByTestId("admin-route-stub");
+    expect(screen.getByText("OwnClass")).toBeInTheDocument();
+    expect(screen.getByText("系统管理工作台")).toBeInTheDocument();
+    expect(document.documentElement).toHaveClass("teacher-theme");
+    expect(screen.getByRole("link", { name: "跳到主要内容" })).toHaveAttribute(
+      "href",
+      "#admin-content",
+    );
+    expect(screen.getByRole("main")).toHaveAttribute("id", "admin-content");
+    view.unmount();
+    expect(document.documentElement).not.toHaveClass("teacher-theme");
+  });
+
+  it("子页只高亮所属导航项，概览不随全部 /a 子路由高亮", async () => {
+    mockedMe.mockResolvedValue(ADMIN);
+    renderLayout("/a/teachers");
+    await screen.findByTestId("admin-route-stub");
+    expect(screen.getByRole("link", { name: "教师管理" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.getByRole("link", { name: "概览" })).not.toHaveAttribute(
+      "aria-current",
+    );
+  });
+
+  it("抽屉包含完整导航，选中页面后关闭", async () => {
+    mockedMe.mockResolvedValue(ADMIN);
+    renderLayout("/a");
+    await screen.findByTestId("admin-route-stub");
+    fireEvent.click(screen.getByRole("button", { name: "打开导航" }));
+    const drawer = screen.getByRole("dialog");
+    expect(
+      within(drawer).getByRole("link", { name: "返回教师端" }),
+    ).toHaveAttribute("href", "/t");
+    fireEvent.click(within(drawer).getByRole("link", { name: "共享文件" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "共享文件" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+  });
+
   it("非管理员直接访问 /a → 跳回教师端 /t", async () => {
     mockedMe.mockResolvedValue({ ...ADMIN, isAdmin: false });
     renderLayout("/a");
@@ -80,7 +126,7 @@ describe("AdminLayout 路由守卫（D19：管理入口只对 isAdmin）", () =>
     expect(await screen.findByTestId("login-page")).toBeInTheDocument();
   });
 
-  it("管理员：独立布局渲染（概览/教师管理导航、返回教师端、顶栏登录名）", async () => {
+  it("管理员：独立布局渲染（概览/教师管理导航、返回教师端、侧栏登录名）", async () => {
     mockedMe.mockResolvedValue(ADMIN);
     renderLayout("/a");
 

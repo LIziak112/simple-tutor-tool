@@ -51,6 +51,14 @@ beforeEach(() => {
 });
 
 describe("设置分类", () => {
+  it("学生作答方式不展示教师手写手感入口", async () => {
+    renderPage("/t/settings?section=teaching");
+    await screen.findByRole("checkbox", { name: "逐步揭晓" });
+    expect(
+      screen.queryByRole("link", { name: "调整我的手写手感" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("账号分类展示管理员专属系统入口与品牌广告词", async () => {
     renderPage("/t/settings?section=account");
     expect(
