@@ -272,10 +272,7 @@ export function createStudentAiRoutes(db: Db, dataDir: string) {
       .post("/ai/connections", async (c) => {
         // 形状错误统一 400 VALIDATION_ERROR（parseJsonBody 缺省口径）；
         // 通道适用性 / SSRF 保存期拒绝等语义级错误由服务层抛 AI_CONNECTION_INVALID
-        const request = await parseJsonBody(
-          c,
-          aiConnectionCreateRequestSchema,
-        );
+        const request = await parseJsonBody(c, aiConnectionCreateRequestSchema);
         const result = createStudentAiConnection(db, {
           studentId: c.var.student.id,
           rootSecret: hmacSecret, // 与快照 HMAC 同源 DATA_DIR/secret.key
@@ -284,10 +281,7 @@ export function createStudentAiRoutes(db: Db, dataDir: string) {
         return c.json({ ok: true, data: result }, 201);
       })
       .patch("/ai/connections/:id", async (c) => {
-        const request = await parseJsonBody(
-          c,
-          aiConnectionPatchRequestSchema,
-        );
+        const request = await parseJsonBody(c, aiConnectionPatchRequestSchema);
         const result = patchStudentAiConnection(db, {
           studentId: c.var.student.id,
           connectionId: c.req.param("id"),

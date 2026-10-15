@@ -60,7 +60,10 @@ function deriveKey(rootSecret: string): Buffer {
 
 /** 凭证指纹（sha256(明文) 前 8 hex：可比较、不可逆、可展示；Key/MCP token 同口径单源） */
 export function credentialFingerprint(plaintext: string): string {
-  return createHash("sha256").update(plaintext, "utf8").digest("hex").slice(0, 8);
+  return createHash("sha256")
+    .update(plaintext, "utf8")
+    .digest("hex")
+    .slice(0, 8);
 }
 
 /** 密封明文 API Key（只在写入路径调用；明文用后即弃，绝不回显） */

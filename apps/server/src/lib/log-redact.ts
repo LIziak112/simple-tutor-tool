@@ -1,7 +1,9 @@
 /**
  * 日志脱敏单源（SAI-16，B00 §7「日志屏蔽 Authorization/Key 与含 share
- * secret 的 path」）：所有会把请求头/路径写进日志的出口（统一错误处理、
- * 出站 provider 客户端）都过这里，凭证明文与票据 secret 不落日志。
+ * secret 的 path」）。当前消费方：出站 provider 客户端（redactHeaderValue，
+ * Authorization 只留 scheme）；redactHeaders/redactPath 供 SAI-28 票据读
+ * 端点等会记录请求头/路径的出口接线（onError 现只记 method/path，本批
+ * 端点路径不含凭证；票据路径进日志前必须过 redactPath）。
  */
 
 /** 敏感查询参数名（含 URL 编码下划线形态；小写比较） */
@@ -12,6 +14,9 @@ const SENSITIVE_QUERY_KEYS =
 const SENSITIVE_HEADER_KEYS =
   /^(authorization|proxy-authorization|cookie|set-cookie|x-api-key|x-auth-token)$/i;
 
+/** 带认证 scheme 的头值形态（Bearer/Basic/…，scheme 清单单源） */
+const SCHEME_PREFIX = /^(bearer|basic|token|digest|apikey)\s+(.+)$/i;
+
 /** 高熵凭证形态（无空格/斜杠、≥24 字符的 key/token 串）按凭证整体脱敏 */
 function looksLikeCredential(value: string): boolean {
   return value.length >= 24 && /^[A-Za-z0-9_+=.:-]+$/.test(value);
@@ -19,11 +24,9 @@ function looksLikeCredential(value: string): boolean {
 
 /** 头值脱敏：Bearer x → Bearer ***；裸长凭证 → ***；普通值原样 */
 export function redactHeaderValue(value: string): string {
-  const schemed = /^(bearer|basic|token|digest|apikey)\s+(.+)$/i.exec(
-    value.trim(),
-  );
-  if (schemed !== null) {
-    return `${schemed[1] ?? ""} ***`;
+  const scheme = SCHEME_PREFIX.exec(value.trim())?.[1];
+  if (scheme !== undefined) {
+    return `${scheme} ***`;
   }
   return looksLikeCredential(value) ? "***" : value;
 }
@@ -39,10 +42,8 @@ export function redactHeaders(
       continue;
     }
     // 敏感头：带 scheme 保留 scheme，其余不论长短整值 ***（不赌值形态）
-    const schemed = /^(bearer|basic|token|digest|apikey)\s+(.+)$/i.exec(
-      value.trim(),
-    );
-    result[key] = schemed !== null ? `${schemed[1] ?? ""} ***` : "***";
+    const scheme = SCHEME_PREFIX.exec(value.trim())?.[1];
+    result[key] = scheme !== undefined ? `${scheme} ***` : "***";
   }
   return result;
 }
