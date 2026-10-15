@@ -1,7 +1,10 @@
 import { z } from "zod";
 import { questionRevisionIdSchema } from "./attempt.ts";
 import {
+  AI_API_KEY_MAX_CHARS,
   AI_BATCH_MAX_QUESTIONS,
+  AI_CONNECTION_BASE_URL_MAX_CHARS,
+  AI_CONNECTION_MODEL_MAX_CHARS,
   AI_QUESTION_MAX_CHARS,
   AI_SHARE_MAX_VALID_HOURS,
   aiChannelSchema,
@@ -278,10 +281,10 @@ export const aiConnectionCreateRequestSchema = z.discriminatedUnion("channel", [
   z
     .object({
       channel: z.literal("inapp"),
-      baseUrl: z.url(),
-      model: z.string().trim().min(1).max(200),
+      baseUrl: z.url().max(AI_CONNECTION_BASE_URL_MAX_CHARS),
+      model: z.string().trim().min(1).max(AI_CONNECTION_MODEL_MAX_CHARS),
       /** 明文 API Key：仅创建/更新请求出现，任何响应只回指纹 */
-      apiKey: z.string().min(1),
+      apiKey: z.string().min(1).max(AI_API_KEY_MAX_CHARS),
       imageCapability: aiImageCapabilitySchema.optional(),
       isDefault: z.boolean().optional(),
     })
@@ -304,9 +307,14 @@ export const aiConnectionPatchRequestSchema = z.discriminatedUnion("channel", [
   z
     .object({
       channel: z.literal("inapp"),
-      baseUrl: z.url().optional(),
-      model: z.string().trim().min(1).max(200).optional(),
-      apiKey: z.string().min(1).optional(),
+      baseUrl: z.url().max(AI_CONNECTION_BASE_URL_MAX_CHARS).optional(),
+      model: z
+        .string()
+        .trim()
+        .min(1)
+        .max(AI_CONNECTION_MODEL_MAX_CHARS)
+        .optional(),
+      apiKey: z.string().min(1).max(AI_API_KEY_MAX_CHARS).optional(),
       imageCapability: aiImageCapabilitySchema.optional(),
       isDefault: z.boolean().optional(),
     })
@@ -359,6 +367,34 @@ export const aiConnectionTestDataSchema = z
   .strict();
 export type AiConnectionTestData = z.infer<typeof aiConnectionTestDataSchema>;
 export const aiConnectionTestOkSchema = apiOkExtend(aiConnectionTestDataSchema);
+
+/**
+ * PATCH /ai/connections/:id 响应 data：与创建同形——公开视图 + 可选一次性
+ * 凭证（仅 mcp 重置 token 时非 null，明文只在本响应出现一次）。
+ */
+export const aiConnectionPatchDataSchema = z
+  .object({
+    connection: aiConnectionPublicSchema,
+    credential: aiConnectionFirstCredentialSchema.nullable(),
+  })
+  .strict();
+export type AiConnectionPatchData = z.infer<typeof aiConnectionPatchDataSchema>;
+export const aiConnectionPatchOkSchema = apiOkExtend(
+  aiConnectionPatchDataSchema,
+);
+
+/** DELETE /ai/connections/:id 响应 data：只回删除的连接 id（无凭证回显） */
+export const aiConnectionDeleteDataSchema = z
+  .object({
+    id: z.uuid(),
+  })
+  .strict();
+export type AiConnectionDeleteData = z.infer<
+  typeof aiConnectionDeleteDataSchema
+>;
+export const aiConnectionDeleteOkSchema = apiOkExtend(
+  aiConnectionDeleteDataSchema,
+);
 
 // ---------- 学生 MCP 工具载荷（/mcp/student，JSON-RPC 参数体） ----------
 

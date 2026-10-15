@@ -364,6 +364,17 @@ export type AiConnectionFirstCredential = z.infer<
   typeof aiConnectionFirstCredentialSchema
 >;
 
+// ---------- 连接管理常量（SAI-16；请求/响应 schema 在 student-ai-api.ts） ----------
+
+/** baseUrl 长度上限（字符；出站目标形状校验在服务端 outbound-target） */
+export const AI_CONNECTION_BASE_URL_MAX_CHARS = 512;
+/** 模型名长度上限（字符） */
+export const AI_CONNECTION_MODEL_MAX_CHARS = 128;
+/** API Key 长度上限（字符；写入即密封，任何读接口只回指纹） */
+export const AI_API_KEY_MAX_CHARS = 512;
+/** MCP/分享凭证熵（字节；base64url 后 43 字符，独立于学生登录链接 Token） */
+export const AI_MCP_TOKEN_BYTES = 32;
+
 // ---------- 学生公开任务视图 ----------
 
 /**

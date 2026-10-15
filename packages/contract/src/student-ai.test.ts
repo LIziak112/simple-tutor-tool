@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 import {
+  AI_API_KEY_MAX_CHARS,
   AI_BATCH_MAX_QUESTIONS,
   AI_CONNECTION_TEST_TIMEOUT_MS,
   AI_MATERIAL_MAX_COUNT,
@@ -30,6 +31,15 @@ import {
   aiTaskPublicSchema,
   aiTaskStatusSchema,
 } from "./student-ai";
+import {
+  aiConnectionCreateDataSchema,
+  aiConnectionCreateRequestSchema,
+  aiConnectionDeleteDataSchema,
+  aiConnectionListDataSchema,
+  aiConnectionPatchDataSchema,
+  aiConnectionPatchRequestSchema,
+  aiConnectionTestDataSchema,
+} from "./student-ai-api";
 
 /**
  * SAI-03 任务、材料与连接领域契约测试（B01 批次断言逐条落地）。
@@ -455,4 +465,164 @@ it("错误码覆盖策略禁用、限额、材料、出站、状态、租约与�
     expect(aiErrorCodeSchema.options).toContain(code);
   }
   expect(aiErrorCodeSchema.safeParse("policy_disabled").success).toBe(false);
+});
+
+// ---------- SAI-16 连接管理请求/响应（B08：Key 仅 POST/PATCH 入参只写不读） ----------
+
+it("连接创建请求：三通道各自形状，明文 Key 只在此入参出现", () => {
+  // inapp：合法形态（isDefault 可选）
+  expect(
+    aiConnectionCreateRequestSchema.parse({
+      channel: "inapp",
+      baseUrl: "https://api.example.com/v1",
+      model: "gpt-4o-mini",
+      apiKey: "sk-test-123",
+    }),
+  ).toEqual({
+    channel: "inapp",
+    baseUrl: "https://api.example.com/v1",
+    model: "gpt-4o-mini",
+    apiKey: "sk-test-123",
+  });
+  // baseUrl 非 URL / Key 超长 → 拒绝（出站目标形状在服务端 outbound-target 复核）
+  expect(
+    aiConnectionCreateRequestSchema.safeParse({
+      channel: "inapp",
+      baseUrl: "not-a-url",
+      model: "m",
+      apiKey: "k",
+    }).success,
+  ).toBe(false);
+  expect(
+    aiConnectionCreateRequestSchema.safeParse({
+      channel: "inapp",
+      baseUrl: "https://api.example.com/v1",
+      model: "m",
+      apiKey: "k".repeat(AI_API_KEY_MAX_CHARS + 1),
+    }).success,
+  ).toBe(false);
+  // mcp：不接受 apiKey/baseUrl（token 由服务端生成）；link：defaultValidHours 1–72
+  expect(
+    aiConnectionCreateRequestSchema.safeParse({
+      channel: "mcp",
+      apiKey: "sk-x",
+    }).success,
+  ).toBe(false);
+  expect(aiConnectionCreateRequestSchema.parse({ channel: "mcp" })).toEqual({
+    channel: "mcp",
+  });
+  expect(
+    aiConnectionCreateRequestSchema.safeParse({
+      channel: "link",
+      defaultValidHours: AI_SHARE_MAX_VALID_HOURS + 1,
+    }).success,
+  ).toBe(false);
+  // 未知键（如教师域字段）→ strict 整体拒绝
+  expect(
+    aiConnectionCreateRequestSchema.safeParse({
+      channel: "mcp",
+      studentId: "s-a",
+    }).success,
+  ).toBe(false);
+});
+
+it("连接更新请求：按通道判别，strict 拒绝未知键与他通道字段", () => {
+  expect(
+    aiConnectionPatchRequestSchema.parse({
+      channel: "inapp",
+      apiKey: "sk-new",
+    }),
+  ).toEqual({ channel: "inapp", apiKey: "sk-new" });
+  // link 行不出现 apiKey/baseUrl/model（通道适用性由判别式拒绝）
+  expect(
+    aiConnectionPatchRequestSchema.safeParse({
+      channel: "link",
+      apiKey: "sk-x",
+    }).success,
+  ).toBe(false);
+  // 全字段可选（SAI-03 定案「缺省 = 不改」）：仅带 channel 的空 PATCH 合法
+  expect(
+    aiConnectionPatchRequestSchema.parse({ channel: "inapp" }).channel,
+  ).toBe("inapp");
+});
+
+it("连接 mutate 响应：一次性凭证只在 data 出现，视图混入明文即拒绝", () => {
+  const mcpView = {
+    id: "4f2c6d90-1c2e-4f6a-9b3d-000000000001",
+    channel: "mcp",
+    tokenFingerprint: "ff99aabb",
+    isDefault: true,
+    verifyStatus: "unverified",
+    verifiedAt: null,
+    createdAt: "2026-10-16T00:00:00.000Z",
+    updatedAt: "2026-10-16T00:00:00.000Z",
+  } as const;
+  const created = aiConnectionCreateDataSchema.parse({
+    connection: mcpView,
+    credential: { token: "once-only" },
+  });
+  expect(created.credential?.token).toBe("once-only");
+  expect(
+    aiConnectionCreateDataSchema.safeParse({
+      connection: { ...mcpView, token: "leak" },
+      credential: null,
+    }).success,
+  ).toBe(false);
+  // PATCH 响应同形（mcp 重置时 credential 一次性返回）
+  expect(
+    aiConnectionPatchDataSchema.parse({
+      connection: mcpView,
+      credential: { token: "reset-once" },
+    }).credential?.token,
+  ).toBe("reset-once");
+});
+
+it("连接测试响应：verifyStatus 四态（含 needs_rekey），无能力字段", () => {
+  expect(
+    aiConnectionTestDataSchema.parse({
+      verifyStatus: "verified",
+      verifiedAt: "2026-10-16T00:00:00.000Z",
+      message: "连接成功",
+    }).verifyStatus,
+  ).toBe("verified");
+  // 解密失败也是可解释状态，不是异常形状；imageCapability 不在本响应（防未验证当支持）
+  expect(
+    aiConnectionTestDataSchema.safeParse({
+      verifyStatus: "needs_rekey",
+      verifiedAt: null,
+      message: "密钥待重填",
+    }).success,
+  ).toBe(true);
+  expect(
+    aiConnectionTestDataSchema.safeParse({
+      verifyStatus: "maybe",
+      verifiedAt: null,
+      message: null,
+    }).success,
+  ).toBe(false);
+  expect(
+    "imageCapability" in
+      aiConnectionTestDataSchema.parse({
+        verifyStatus: "failed",
+        verifiedAt: null,
+        message: "失败",
+      }),
+  ).toBe(false);
+});
+
+it("连接列表 data：connections 数组只含公开视图；删除响应只回 id", () => {
+  const list = aiConnectionListDataSchema.parse({
+    connections: [validConnection],
+  });
+  expect(list.connections).toHaveLength(1);
+  expect(
+    aiConnectionListDataSchema.safeParse({
+      connections: [{ ...validConnection, apiKey: "sk-leak" }],
+    }).success,
+  ).toBe(false);
+  expect(
+    aiConnectionDeleteDataSchema.parse({
+      id: "4f2c6d90-1c2e-4f6a-9b3d-000000000002",
+    }).id,
+  ).toBeDefined();
 });
