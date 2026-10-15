@@ -60,6 +60,10 @@ export * from "./shared-api.ts";
 export * from "./spec.ts";
 /** 学生账号契约（T2.1 起为权威定义）：学生 CRUD、两种登录、自助信息与改密码、错误码 */
 export * from "./student.ts";
+/** 学生端 AI 伴学：教学配置与预设契约（SAI-02 起为权威定义，依据 B00 技术方案 §2/§4.1/§9）——
+ *  三模式与继承、有效裁决输出、教师三模板与默认值、学生/作业覆盖、快捷按钮与附件偏好、
+ *  限额常量与错误码；裁决是服务端输出，学生请求携带越权字段一律 strict 拒绝 */
+export * from "./student-ai-policy.ts";
 /** 学生端课程契约（T2A.5 起为权威定义）：我的课程、课程可见目录（D5）、D22 错误码 */
 export * from "./student-course-api.ts";
 /** 学生端题目笔记本契约（T6R.15 起为权威定义，方案 §5.2/D7）：跨 attempt 聚合的
