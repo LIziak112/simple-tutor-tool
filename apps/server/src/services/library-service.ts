@@ -701,6 +701,20 @@ export function listLibraryUnits(
       .all()
       .map((row) => [row.id, row.title] as const),
   );
+  // 讲练嵌入单元（lectureId → kind='lesson' 讲义）不进资源库列表：同一份题的
+  // 课堂门面是讲练页，单元只是讲练页与作答体系的数据地基（2026-10-15 决策；
+  // 课程添加面板走同一查询故一并隐藏；mixed/practice 的配套单元不受影响，
+  // 回收站视图不过滤——删除恢复路径仍需可见）
+  const lessonLectureIds = new Set(
+    db
+      .select({ id: lectures.id })
+      .from(lectures)
+      .where(
+        and(eq(lectures.teacherId, teacherId), eq(lectures.kind, "lesson")),
+      )
+      .all()
+      .map((row) => row.id),
+  );
   // 使用各单元的未删除作业数（T2A.7 起走 assignment_units 关联；复合主键保证
   // 同一作业对同一单元只贡献 1；只数本教师的作业，D13 域内）
   const assignmentCounts = new Map<string, number>();
@@ -788,6 +802,12 @@ export function listLibraryUnits(
     .filter((row) => folderMatches(row.folderId, filter.folderId))
     .filter((row) =>
       filter.deleted ? row.deletedAt !== null : row.deletedAt === null,
+    )
+    // 讲练嵌入单元只在回收站视图出现（见上方 lessonLectureIds 注释）
+    .filter(
+      (row) =>
+        filter.deleted ||
+        !(row.lectureId !== null && lessonLectureIds.has(row.lectureId)),
     )
     .map((row) => {
       const unitQuestions = questionsByUnit.get(row.id) ?? [];
