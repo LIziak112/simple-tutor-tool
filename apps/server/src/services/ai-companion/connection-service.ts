@@ -211,6 +211,57 @@ export function listStudentAiConnections(
     .map(connectionViewOf);
 }
 
+// ---------- 页内派发连接解析（SAI-17 worker 消费，纯增不改既有语义） ----------
+
+/** 派发用 inapp 连接解析产物（明文 Key 只在服务进程内存中流转，绝不回显） */
+export interface DispatchInappConnection {
+  readonly id: string;
+  readonly baseUrl: string;
+  readonly model: string;
+  readonly imageCapability: "unknown" | "supported" | "unsupported";
+  /** 解密后的明文 API Key；null = needs_rekey（不无限重试撞明文，需重填） */
+  readonly apiKey: string | null;
+}
+
+/**
+ * 学生当前 active 的页内连接（同通道至多一条是创建/删除维护的不变量）。
+ * 每次派发实时解析：连接被删 → null（worker 按需重配暂停任务）；解密失败
+ * → apiKey null（needs_rekey 语义与连接测试一致）。
+ */
+export function findDispatchInappConnection(
+  db: Db,
+  studentId: string,
+  rootSecret: string,
+): DispatchInappConnection | null {
+  const row = db
+    .select()
+    .from(aiConnections)
+    .where(
+      and(
+        eq(aiConnections.studentId, studentId),
+        eq(aiConnections.channel, "inapp"),
+        isNull(aiConnections.archivedAt),
+      ),
+    )
+    .get();
+  if (row === undefined) return null;
+  const config = JSON.parse(row.configJson) as InappConnectionConfig;
+  const opened = openApiKey(rootSecret, {
+    cipherVersion: config.cipherVersion,
+    ciphertext: config.keyCiphertext,
+    iv: config.keyIv,
+    tag: config.keyTag,
+    fingerprint: config.keyFingerprint,
+  });
+  return {
+    id: row.id,
+    baseUrl: config.baseUrl,
+    model: config.model,
+    imageCapability: config.imageCapability,
+    apiKey: opened.ok ? opened.key : null,
+  };
+}
+
 // ---------- 创建 ----------
 
 /** POST /ai/connections：三通道创建（Key 即时密封；mcp token 一次性返回） */

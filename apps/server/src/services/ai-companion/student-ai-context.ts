@@ -396,7 +396,7 @@ function assembleBundleFromRows(args: {
     responseId,
     contextVersion,
     snapshot: parsed.data,
-    systemPromptMd: `${rules.promptSnapshotMd}\n\n【注入防御】${INJECTION_GUARD}`,
+    systemPromptMd: systemPromptOfSnapshotMd(rules.promptSnapshotMd),
   };
 }
 
@@ -471,8 +471,23 @@ export interface OutboundAssembly {
   readonly messages: readonly OutboundChatMessage[];
 }
 
+/**
+ * 出站装配的上下文来源(assembleOutboundMessages 实际消费的结构子集;
+ * AiContextBundle 结构兼容)。SAI-17 worker 从任务行冻结快照重建出站消息
+ * 时复用同一组装单源——不重捕快照、不绕过装配层。
+ */
+export interface OutboundContextSource {
+  readonly systemPromptMd: string;
+  readonly snapshot: AiContextSnapshot;
+}
+
+/** 出站 system 段单源:提示词快照 + 注入防御句(任务行快照重建与装配共用) */
+export function systemPromptOfSnapshotMd(promptSnapshotMd: string): string {
+  return `${promptSnapshotMd}\n\n【注入防御】${INJECTION_GUARD}`;
+}
+
 /** 缺失态 → 数据段参考内容文案(需求 §4.1 原话,不伪造参考内容) */
-function referenceSectionOf(bundle: AiContextBundle): string {
+function referenceSectionOf(bundle: OutboundContextSource): string {
   const { referenceAnswerMd, solutionMd, missingNote } = bundle.snapshot;
   if (missingNote === null) {
     return `**参考答案**:${referenceAnswerMd}\n\n**官方解析**:\n\n${solutionMd}`;
@@ -488,7 +503,7 @@ function referenceSectionOf(bundle: AiContextBundle): string {
 
 /** 组装出站消息:system(模板+硬约束+注入防御)→ 数据段 → 历史 → 本次诉求 */
 export function assembleOutboundMessages(input: {
-  readonly bundle: AiContextBundle;
+  readonly bundle: OutboundContextSource;
   readonly studentQuestion: string;
   /** 快捷按钮提示词(学生自己的配置,作为诉求数据段一部分) */
   readonly presetPrompt?: string | null;

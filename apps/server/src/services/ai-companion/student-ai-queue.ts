@@ -1596,6 +1596,83 @@ export function failInappDispatch(
   );
 }
 
+// ---------- 页内 worker 领取扫描与状态不明写回（SAI-17 消费，纯增不改既有语义） ----------
+
+/** 页内派发候选（worker 扫描产物；领取本身仍走 beginInappDispatch 的 CAS） */
+export interface InappDispatchCandidate {
+  readonly id: string;
+  readonly studentId: string;
+  readonly attemptId: string;
+  readonly questionId: string;
+}
+
+/**
+ * 页内待派发任务扫描（只读，不落任何状态）：channel=inapp 且 status=created，
+ * 按创建时间 FIFO。真正的领取/校验/代次自增在 beginInappDispatch 单事务 CAS
+ * ——两个 worker 扫到同一候选时只有一个 begin 成功，另一个 409 让位。
+ */
+export function listInappDispatchCandidates(
+  db: Db,
+  options: { limit?: number } = {},
+): InappDispatchCandidate[] {
+  const limit = options.limit ?? 20;
+  return db
+    .select({
+      id: aiTasks.id,
+      studentId: aiTasks.studentId,
+      attemptId: aiTasks.attemptId,
+      questionId: aiTasks.questionId,
+    })
+    .from(aiTasks)
+    .where(and(eq(aiTasks.channel, "inapp"), eq(aiTasks.status, "created")))
+    .orderBy(asc(aiTasks.createdAt), asc(aiTasks.id))
+    .limit(limit)
+    .all();
+}
+
+/**
+ * 页内派发「状态不明」写回（SAI-17）：出站超时/响应中断等可能已收费形态，
+ * worker 据实置 uncertain——「发送结果待确认」，学生核对后显式重试，绝不
+ * 自动重发。守卫与 failInappDispatch 同款（运行代际 + 代次 + dispatching
+ * CAS）；errorText 落行供界面展示，事实沿用 recoverAiQueue 口径不另记
+ * （uncertain 无专属事实类型，恢复语义单源）。
+ */
+export function markInappDispatchUncertain(
+  db: Db,
+  input: {
+    studentId: string;
+    taskId: string;
+    generation: number;
+    errorText: string;
+    expectedRuntimeEpoch?: string;
+  },
+  options: { now?: Date | string } = {},
+): void {
+  const now = nowSpecOf(options.now);
+  const currentEpoch = runtimeEpochOf(db);
+  db.transaction(
+    (tx) => {
+      const task = requireOwnTask(tx, input.studentId, input.taskId);
+      if (
+        input.expectedRuntimeEpoch !== undefined &&
+        input.expectedRuntimeEpoch !== currentEpoch
+      ) {
+        throw conflict("状态不明报告对应的运行代际已失效（数据库已恢复）");
+      }
+      if (
+        task.generation !== input.generation ||
+        task.status !== "dispatching"
+      ) {
+        throw conflict("状态不明报告对应的发送代次已过期");
+      }
+      applyTransition(tx, task, "uncertain", now, {
+        errorText: input.errorText,
+      });
+    },
+    { behavior: "immediate" },
+  );
+}
+
 // ---------- 操作与语义 6：重试（有界次数 + nextRunAt 退避） ----------
 
 /** 退避毫秒：失败时 retryCount 越多重试等待越久（封顶 MAX） */
