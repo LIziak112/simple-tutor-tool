@@ -120,10 +120,14 @@ export function SingleImportPreview({
       void queryClient.invalidateQueries({
         queryKey: libraryInvalidations.listsPrefix,
       });
-      // 导入内容归属资源库，成功后跳资源库页（带成功提示 state）
+      // 导入内容归属资源库，成功后跳资源库页（带成功提示 state）；
+      // 讲练页按「一件事」汇报，不单列单元数
       navigate("/t/library", {
         state: {
-          importSuccess: `导入完成：单元 ${report.units.length} 个（新增 ${report.units.filter((u) => u.inserted).length} / 更新 ${report.units.filter((u) => u.updated).length}），讲义 ${report.lectures.length} 篇，题目新增 ${report.questions.inserted} / 更新 ${report.questions.updated}。`,
+          importSuccess:
+            report.kind === "lesson"
+              ? `导入完成：讲练页 ${report.lectures.length} 篇（新增 ${report.lectures.filter((l) => l.inserted).length} / 更新 ${report.lectures.filter((l) => l.updated).length}），随堂练习题新增 ${report.questions.inserted} / 更新 ${report.questions.updated}。`
+              : `导入完成：单元 ${report.units.length} 个（新增 ${report.units.filter((u) => u.inserted).length} / 更新 ${report.units.filter((u) => u.updated).length}），讲义 ${report.lectures.length} 篇，题目新增 ${report.questions.inserted} / 更新 ${report.questions.updated}。`,
         },
       });
     },
@@ -326,8 +330,12 @@ export function StatsBar({
     );
   }
   const summary = preview?.summary;
-  // 「文件 → 存储名」实际名称（方案 §5：计数旁亮出单元/讲义名；无动作不显示）
-  const names = preview === null ? null : describeImportNames(preview.actions);
+  // 讲练页（kind=lesson）：统计条按「讲练页 + 题目」呈现，不单列单元数
+  const docKind = summary?.kind ?? "practice";
+  // 「文件 → 存储名」实际名称（方案 §5：计数旁亮出单元/讲义名；无动作不显示；
+  // lesson 只报讲练页名——嵌入单元不单独显示）
+  const names =
+    preview === null ? null : describeImportNames(preview.actions, docKind);
   const nameParts =
     names === null
       ? []
@@ -338,12 +346,20 @@ export function StatsBar({
     <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-border bg-card px-4 py-3 text-sm">
       {summary !== undefined ? (
         <>
-          <span>
-            单元 <strong>{summary.unitCount}</strong>
-          </span>
-          <span>
-            讲义 <strong>{summary.lectureCount}</strong>
-          </span>
+          {docKind === "lesson" ? (
+            <span>
+              讲练页 <strong>{summary.lectureCount}</strong>
+            </span>
+          ) : (
+            <>
+              <span>
+                单元 <strong>{summary.unitCount}</strong>
+              </span>
+              <span>
+                讲义 <strong>{summary.lectureCount}</strong>
+              </span>
+            </>
+          )}
           <span>
             题目 <strong>{summary.questionCount}</strong>
           </span>
