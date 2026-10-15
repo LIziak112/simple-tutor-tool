@@ -23,6 +23,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { AiPolicyOverrideField } from "@/features/student-ai/AiPolicyOverrideField";
 import { useStudents } from "@/features/students/student-queries";
 import { ApiError } from "@/lib/api";
 import { localInputToUtcIso, utcIsoToLocalInput } from "@/lib/time";
@@ -97,6 +98,8 @@ export function AssignmentEditDialog({
   /** 加入名单弹层：course = 补充课程新成员；any = 从学生列表添加 */
   const [addMode, setAddMode] = useState<"course" | "any" | null>(null);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
+  /** AI 伴学策略区是否有未保存编辑（SAI-07；并入关闭守卫） */
+  const [aiPolicyDirty, setAiPolicyDirty] = useState(false);
 
   const detail = detailQuery.data;
 
@@ -116,7 +119,7 @@ export function AssignmentEditDialog({
 
   function requestClose(): void {
     if (updateMutation.isPending) return;
-    if (metaDirty) {
+    if (metaDirty || aiPolicyDirty) {
       setConfirmDiscard(true);
       return;
     }
@@ -351,6 +354,12 @@ export function AssignmentEditDialog({
                   </p>
                 )}
               </div>
+              {/* SAI-07 作业 AI 策略：与公布时机相邻展示（AI 复盘可能早于普通公布），
+                  独立暂存与保存（PUT /assignments/:id/ai-policy），dirty 并入关闭守卫 */}
+              <AiPolicyOverrideField
+                subject={{ type: "assignment", id: assignment.id }}
+                onDirtyChange={setAiPolicyDirty}
+              />
               <Button
                 type="submit"
                 variant="outline"
@@ -550,10 +559,10 @@ export function AssignmentEditDialog({
           />
         )}
 
-        {/* 标题/截止/公布时机未保存改动时的关闭守卫（§4-5） */}
+        {/* 标题/截止/公布时机与 AI 策略未保存改动时的关闭守卫（§4-5 + SAI-07） */}
         {confirmDiscard && (
           <DiscardConfirmDialog
-            description="关闭后已修改但未保存的标题/截止时间/公布时机会丢失（名单操作即时生效，不受影响）。"
+            description="关闭后已修改但未保存的标题/截止时间/公布时机或 AI 伴学策略会丢失（名单操作即时生效，不受影响）。"
             onCancel={() => setConfirmDiscard(false)}
             onDiscard={onClose}
           />

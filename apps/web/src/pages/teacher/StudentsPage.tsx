@@ -2,6 +2,7 @@ import type { CourseSummary, StudentSummary } from "@tutor/contract";
 import {
   Archive,
   ArchiveRestore,
+  BotMessageSquare,
   CircleCheck,
   Copy,
   GraduationCap,
@@ -29,6 +30,7 @@ import {
   useSyncStudentCourses,
   useTeacherCourses,
 } from "@/features/courses/course-queries";
+import { AiPolicyOverrideField } from "@/features/student-ai/AiPolicyOverrideField";
 import {
   useCreateStudent,
   useResetStudentLink,
@@ -66,6 +68,9 @@ export function StudentsPage() {
   const [manageCoursesOf, setManageCoursesOf] = useState<StudentSummary | null>(
     null,
   );
+  /** 「AI 伴学策略」弹窗的目标学生（SAI-07） */
+  const [manageAiPolicyOf, setManageAiPolicyOf] =
+    useState<StudentSummary | null>(null);
   const studentsQuery = useStudents(includeArchived);
   const activeCoursesQuery = useTeacherCourses(false);
   const archivedCoursesQuery = useTeacherCourses(true);
@@ -155,6 +160,7 @@ export function StudentsPage() {
                 student={student}
                 courses={coursesByStudent.get(student.id) ?? []}
                 onManageCourses={() => setManageCoursesOf(student)}
+                onManageAiPolicy={() => setManageAiPolicyOf(student)}
                 onOneTime={setOneTime}
               />
             ))}
@@ -179,6 +185,39 @@ export function StudentsPage() {
           activeCourses={activeCoursesQuery.data?.courses ?? []}
           onClose={() => setManageCoursesOf(null)}
         />
+      )}
+
+      {/* SAI-07 学生 AI 策略弹层：继承单选 + 有效裁决（草稿在缓存，重开不丢） */}
+      {manageAiPolicyOf !== null && (
+        <Dialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setManageAiPolicyOf(null);
+          }}
+        >
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>
+                「{manageAiPolicyOf.displayName}」的 AI 伴学策略
+              </DialogTitle>
+              <DialogDescription>
+                可继承教师默认，或为该学生单独指定模式；保存后立即生效。
+              </DialogDescription>
+            </DialogHeader>
+            <AiPolicyOverrideField
+              subject={{ type: "student", id: manageAiPolicyOf.id }}
+            />
+            <DialogFooter>
+              <Button
+                variant="outline"
+                className="min-h-11"
+                onClick={() => setManageAiPolicyOf(null)}
+              >
+                关闭
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       )}
     </section>
   );
@@ -228,12 +267,14 @@ function StudentCard({
   student,
   courses,
   onManageCourses,
+  onManageAiPolicy,
   onOneTime,
 }: {
   student: StudentSummary;
   /** 该学生所在的课程（未归档 + 已归档） */
   courses: CourseSummary[];
   onManageCourses: () => void;
+  onManageAiPolicy: () => void;
   onOneTime: (value: OneTimeValue) => void;
 }) {
   const updateMutation = useUpdateStudent();
@@ -396,6 +437,14 @@ function StudentCard({
         >
           <GraduationCap aria-hidden />
           管理课程
+        </Button>
+        <Button
+          variant="outline"
+          className="min-h-11"
+          onClick={onManageAiPolicy}
+        >
+          <BotMessageSquare aria-hidden />
+          AI 伴学策略
         </Button>
         <Button
           variant="outline"

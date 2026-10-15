@@ -9,7 +9,9 @@ import type {
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createStudentApi,
+  fetchAiPolicyOverrideApi,
   fetchStudentsApi,
+  fetchTeacherAiSettingsApi,
   fetchTeacherCourses,
   resetStudentLinkApi,
   resetStudentPasswordApi,
@@ -35,6 +37,8 @@ vi.mock("@/lib/api", async (importOriginal) => {
     resetStudentPasswordApi: vi.fn(),
     resetStudentLinkApi: vi.fn(),
     fetchTeacherCourses: vi.fn(),
+    fetchAiPolicyOverrideApi: vi.fn(),
+    fetchTeacherAiSettingsApi: vi.fn(),
   };
 });
 
@@ -340,5 +344,56 @@ describe("StudentsPage 新增学生", () => {
     expect(
       await screen.findByText(/登录名已被使用，请换一个/),
     ).toBeInTheDocument();
+  });
+});
+
+describe("StudentsPage AI 伴学策略（SAI-07）", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedFetch.mockResolvedValue(LIST);
+    mockedCourses.mockImplementation((archived: boolean) =>
+      Promise.resolve(emptyCourseList(archived)),
+    );
+  });
+
+  it("AI 伴学策略弹层按学生打开，继承单选带教师默认来源", async () => {
+    const mockedFetchOverride = vi.mocked(fetchAiPolicyOverrideApi);
+    const mockedFetchSettings = vi.mocked(fetchTeacherAiSettingsApi);
+    mockedFetchOverride.mockResolvedValue({
+      mode: "inherit",
+      resolution: {
+        usable: true,
+        mode: "open_study",
+        reason: "teacher_default",
+      },
+    });
+    mockedFetchSettings.mockResolvedValue({
+      defaultMode: "open_study",
+      promptsOpen: null,
+      promptsGuided: null,
+      promptsReview: null,
+      updatedAt: "1970-01-01T00:00:00.000Z",
+    });
+
+    renderPage();
+    await screen.findByText("张三");
+    // 李四行也有入口；点张三的（第一个）
+    fireEvent.click(
+      must(
+        screen.getAllByRole("button", { name: "AI 伴学策略" })[0],
+        "AI 伴学策略入口",
+      ),
+    );
+    expect(
+      await screen.findByText("「张三」的 AI 伴学策略"),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByRole("radio", { name: "继承（当前：开放伴学）" }),
+    ).toBeChecked();
+    // 覆盖查询按该学生发起（教师域由服务端会话裁决，不传教师身份）
+    expect(mockedFetchOverride).toHaveBeenCalledWith({
+      type: "student",
+      id: STUDENT_A.id,
+    });
   });
 });

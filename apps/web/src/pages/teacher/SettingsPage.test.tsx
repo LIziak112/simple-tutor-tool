@@ -22,6 +22,10 @@ vi.mock("@/features/teacher-settings/CapabilityProfileSection", () => ({
 vi.mock("@/features/teacher-backup/BackupSection", () => ({
   BackupSection: () => <h2>备份与恢复内容</h2>,
 }));
+// SAI-07：AI 伴学区挂进 teaching 分类（行为由组件测试与路由联调覆盖）
+vi.mock("@/features/student-ai/TeacherAiSettingsSection", () => ({
+  TeacherAiSettingsSection: () => <section aria-label="AI 伴学设置区" />,
+}));
 
 function LocationProbe() {
   return <output data-testid="location">{useLocation().search}</output>;
@@ -78,6 +82,22 @@ describe("设置分类", () => {
     });
     renderPage("/t/settings?section=account");
     await screen.findByRole("button", { name: "退出登录" });
+    expect(screen.queryByRole("link", { name: "系统管理" })).toBeNull();
+  });
+  it("非管理员普通教师同样可管理本人教学配置：AI 伴学区在 teaching 分类渲染", async () => {
+    vi.mocked(fetchTeacherMe).mockResolvedValue({
+      id: "11111111-1111-4111-8111-111111111111",
+      loginName: "teacher",
+      isAdmin: false,
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    renderPage("/t/settings?section=teaching");
+    // teaching 分类含辅助能力与 AI 伴学两区；非管理员不被挡在本人配置外
+    expect(
+      await screen.findByRole("checkbox", { name: "逐步揭晓" }),
+    ).toBeVisible();
+    expect(screen.getByRole("region", { name: "AI 伴学设置区" })).toBeVisible();
+    // UI 不提供越权入口（无系统管理；账号页不展示内部 UUID）
     expect(screen.queryByRole("link", { name: "系统管理" })).toBeNull();
   });
   it("默认展示学生作答方式，账号与备份不占首屏", async () => {

@@ -15,8 +15,11 @@ import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ApiError,
+  fetchAiPolicyOverrideApi,
   fetchAssignmentDetailApi,
   fetchStudentsApi,
+  fetchTeacherAiSettingsApi,
+  putAiPolicyOverrideApi,
   updateAssignmentApi,
 } from "@/lib/api";
 import { localInputToUtcIso } from "@/lib/time";
@@ -39,12 +42,18 @@ vi.mock("@/lib/api", async (importOriginal) => {
     fetchAssignmentDetailApi: vi.fn(),
     fetchStudentsApi: vi.fn(),
     updateAssignmentApi: vi.fn(),
+    fetchAiPolicyOverrideApi: vi.fn(),
+    fetchTeacherAiSettingsApi: vi.fn(),
+    putAiPolicyOverrideApi: vi.fn(),
   };
 });
 
 const mockedDetail = vi.mocked(fetchAssignmentDetailApi);
 const mockedStudents = vi.mocked(fetchStudentsApi);
 const mockedUpdate = vi.mocked(updateAssignmentApi);
+const mockedFetchAiPolicy = vi.mocked(fetchAiPolicyOverrideApi);
+const mockedFetchAiSettings = vi.mocked(fetchTeacherAiSettingsApi);
+const mockedPutAiPolicy = vi.mocked(putAiPolicyOverrideApi);
 
 const ASSIGNMENT_ID = "44444444-4444-4444-8444-444444444444";
 const COURSE_ID = "33333333-3333-4333-8333-333333333333";
@@ -171,6 +180,22 @@ beforeEach(() => {
   mockedDetail.mockResolvedValue(makeDetail());
   mockedStudents.mockResolvedValue(STUDENTS);
   mockedUpdate.mockResolvedValue(makeAssignment());
+  // SAI-07：AI 策略区默认继承 + 教师默认开放
+  mockedFetchAiPolicy.mockResolvedValue({
+    mode: "inherit",
+    resolution: {
+      usable: true,
+      mode: "open_study",
+      reason: "teacher_default",
+    },
+  });
+  mockedFetchAiSettings.mockResolvedValue({
+    defaultMode: "open_study",
+    promptsOpen: null,
+    promptsGuided: null,
+    promptsReview: null,
+    updatedAt: "1970-01-01T00:00:00.000Z",
+  });
 });
 
 describe("AssignmentEditDialog 展示", () => {
@@ -412,5 +437,58 @@ describe("AssignmentEditDialog 答案公布时机（T2A.8）", () => {
       dueAt: localInputToUtcIso("2026-10-02T20:00"),
       answerRelease: "after_due",
     });
+  });
+});
+
+describe("AssignmentEditDialog AI 伴学策略（SAI-07）", () => {
+  it("AI 策略区与答案公布时机同表单可见，含复盘早于公布的关联说明", async () => {
+    renderDialog();
+    expect(await screen.findByText("答案公布时机")).toBeInTheDocument();
+    // AI 策略区挂在公布时机之后（可看见的关联位置），查询按作业发起
+    expect(screen.getByText("AI 伴学策略")).toBeInTheDocument();
+    expect(
+      await screen.findByText(/可能早于普通答案公布/u),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(mockedFetchAiPolicy).toHaveBeenCalledWith({
+        type: "assignment",
+        id: ASSIGNMENT_ID,
+      }),
+    );
+    expect(
+      screen.getByRole("radio", { name: "继承（当前：开放伴学）" }),
+    ).toBeChecked();
+  });
+
+  it("AI 策略独立保存（不动作业 PATCH）；未保存时关闭弹层须确认", async () => {
+    const { onClose } = renderDialog();
+    await screen.findByText("AI 伴学策略");
+    // 改为仅启发：只入 AI 草稿，不触发作业 PATCH
+    fireEvent.click(await screen.findByRole("radio", { name: "仅启发" }));
+    expect(mockedUpdate).not.toHaveBeenCalled();
+    // 未保存的 AI 编辑并入关闭守卫（§4-5 + SAI-07）
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    expect(await screen.findByText("放弃未保存的内容？")).toBeVisible();
+    expect(onClose).not.toHaveBeenCalled();
+    // 回到弹层，独立保存 AI 策略
+    fireEvent.click(screen.getByRole("button", { name: "继续编辑" }));
+    const saved = {
+      mode: "guided_only" as const,
+      resolution: {
+        usable: true,
+        mode: "guided_only" as const,
+        reason: "assignment_override" as const,
+      },
+    };
+    mockedPutAiPolicy.mockResolvedValue(saved);
+    mockedFetchAiPolicy.mockResolvedValue(saved);
+    fireEvent.click(screen.getByRole("button", { name: "保存 AI 策略" }));
+    await waitFor(() =>
+      expect(mockedPutAiPolicy).toHaveBeenCalledWith(
+        { type: "assignment", id: ASSIGNMENT_ID },
+        "guided_only",
+      ),
+    );
+    expect(mockedUpdate).not.toHaveBeenCalled();
   });
 });

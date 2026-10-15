@@ -16,6 +16,7 @@ import {
 import { BackupSection } from "@/features/teacher-backup/BackupSection";
 import { CapabilityProfileSection } from "@/features/teacher-settings/CapabilityProfileSection";
 import { useSettingsNavigation } from "@/features/teacher-settings/settings-navigation";
+import { TeacherAiSettingsSection } from "@/features/student-ai/TeacherAiSettingsSection";
 import { BRAND_NAME, BRAND_TAGLINE } from "@/lib/brand";
 import { formatCnTime } from "@/lib/time";
 import { AuthScreenLoading } from "./SetupPage";
@@ -46,6 +47,9 @@ export function SettingsPage() {
         onSuccess: () => {
           queryClient.removeQueries({
             queryKey: ["teacher", "capability-draft"],
+          });
+          queryClient.removeQueries({
+            queryKey: ["teacher", "ai-settings-draft"],
           });
           void queryClient.invalidateQueries({ queryKey: teacherMeKey });
           navigate("/t/login", { replace: true });
@@ -84,6 +88,7 @@ export function SettingsPage() {
           key={meQuery.data.id}
           teacherId={meQuery.data.id}
         />
+        <TeacherAiSettingsSection />
         <div className="mt-10 flex flex-wrap items-center justify-between gap-4 border-t border-border pt-5">
           <div>
             <h2 className="text-sm font-semibold">让 AI 参与备课</h2>
