@@ -419,6 +419,39 @@ it("风险5：长稿多页与圈画同选时页序/类别不混；每页携带�
   expect(inkSnapshot.pages.map((page) => page.kind)).toEqual(["formal_ink"]);
 });
 
+it("跨类别页序：annotation 与 formal_ink 混选时恒 annotation 在前", async () => {
+  installImageStub();
+  installCanvasStub();
+  vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:fixed");
+  vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+  mocks.png.mockResolvedValue(new Blob(["ink-page"]));
+  mocks.annotation.mockResolvedValue({
+    doc: { strokes: [stroke([[1, 2]])] },
+    local: "saved",
+    conflict: null,
+    denied: null,
+  });
+  const annotationBlob = new Blob(["annotation-png"]);
+  mocks.exportAnnotation.mockResolvedValue(annotationBlob);
+  mocks.draft.mockResolvedValue({
+    inks: { q2: inkDocOf(docOf([stroke([[2, 3]])])) },
+  });
+  mocks.renderInk.mockResolvedValue(new Blob(["ink"]));
+  const snapshot = await captureAiQuestionMaterials(
+    baseInput({
+      question: handwritten,
+      isHandwritten: true,
+      selection: { annotation: true, draft: false, formalInk: true },
+    }),
+  );
+  // 断言的是跨类别顺序（annotation 段整体在纸面段之前），不是类别内 pageIndex
+  expect(snapshot.pages.map((page) => page.kind)).toEqual([
+    "annotation",
+    "formal_ink",
+  ]);
+  expect(snapshot.pages.map((page) => page.pageIndex)).toEqual([0, 0]);
+});
+
 it("风险6：采集中换账号/切题——迟到图片丢弃，不能进入新题", async () => {
   installImageStub();
   // 圈画合成完成时会话已切换：迟到图片不得返回
@@ -537,4 +570,29 @@ it("尚无笔迹不算失败：空页快照可仅发文字（需求 §4.1）", a
   const snapshot = await captureAiQuestionMaterials(baseInput());
   expect(snapshot.pages).toEqual([]);
   expect(mocks.renderNote).not.toHaveBeenCalled();
+});
+
+it("圈画被选中但零笔迹：产出零页且不算失败，仍可仅发文字", async () => {
+  // 圈画记录存在但没有任何笔迹：跳过合成，不报错
+  mocks.annotation.mockResolvedValue({
+    doc: { strokes: [] },
+    local: "saved",
+    conflict: null,
+    denied: null,
+  });
+  const emptyStrokes = await captureAiQuestionMaterials(
+    baseInput({
+      selection: { annotation: true, draft: false, formalInk: false },
+    }),
+  );
+  expect(emptyStrokes.pages).toEqual([]);
+  expect(mocks.exportAnnotation).not.toHaveBeenCalled();
+  // 本机尚无圈画记录（doc 为 null）同样不算失败
+  mocks.annotation.mockResolvedValue(null);
+  const noRecord = await captureAiQuestionMaterials(
+    baseInput({
+      selection: { annotation: true, draft: false, formalInk: false },
+    }),
+  );
+  expect(noRecord.pages).toEqual([]);
 });
