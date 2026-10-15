@@ -9,6 +9,10 @@ import {
   type AdminTeacherResetPasswordRequest,
   type AdminTeacherSummary,
   type AdminTeacherUpdateRequest,
+  type AiPolicyInheritableMode,
+  type AiPolicyOverrideData,
+  type AiTeacherSettingsData,
+  type AiTeacherSettingsPutRequest,
   ANNOTATION_BASE_IMAGE_FORM_FIELDS,
   ANNOTATION_FORM_FIELDS,
   type AnalyticsOverviewData,
@@ -2487,6 +2491,58 @@ export function saveCapabilityProfile(
 ): Promise<CapabilityProfile> {
   return callApi(() =>
     api.api.teacher.settings["capability-profile"].$put({ json: profile }),
+  );
+}
+
+// ---------- 学生端 AI 伴学教学配置（SAI-07；路由 SAI-06，契约 student-ai-policy.ts） ----------
+
+/** 覆盖对象（学生 / 作业二选一；服务端 AiPolicySubject 的 web 侧形状） */
+export interface AiPolicySubjectRef {
+  type: "student" | "assignment";
+  id: string;
+}
+
+/** 读教师全局 AI 设置（默认模式 + 三模板；未设置 → 默认值 + 锚点时刻） */
+export function fetchTeacherAiSettingsApi(): Promise<AiTeacherSettingsData> {
+  return callApi(() => api.api.teacher.ai.settings.$get());
+}
+
+/** 部分更新教师 AI 设置（缺省 = 不改；模板 null = 恢复默认；baseUpdatedAt 过期 → 409 AI_SETTINGS_STALE） */
+export function saveTeacherAiSettingsApi(
+  request: AiTeacherSettingsPutRequest,
+): Promise<AiTeacherSettingsData> {
+  return callApi(() =>
+    api.api.teacher.ai.settings.$put({ json: request }),
+  );
+}
+
+/** 读学生 / 作业的 AI 策略覆盖（含保存后即刻有效裁决预览） */
+export function fetchAiPolicyOverrideApi(
+  subject: AiPolicySubjectRef,
+): Promise<AiPolicyOverrideData> {
+  return callApi(() =>
+    subject.type === "student"
+      ? api.api.teacher.students[":id"]["ai-policy"].$get({
+          param: { id: subject.id },
+        })
+      : api.api.teacher.assignments[":id"]["ai-policy"].$get({
+          param: { id: subject.id },
+        }),
+  );
+}
+
+/** 写学生 / 作业的 AI 策略覆盖（inherit = 删行回继承；域校验在服务端） */
+export function putAiPolicyOverrideApi(
+  subject: AiPolicySubjectRef,
+  mode: AiPolicyInheritableMode,
+): Promise<AiPolicyOverrideData> {
+  // json 以独立变量传入的原因同 updateQuestion（parseJsonBodyWithCode 服务端
+  // 校验分流错误码，hc 类型无 json 槽，运行时仍会序列化 args.json）
+  const args = { param: { id: subject.id }, json: { mode } };
+  return callApi(() =>
+    subject.type === "student"
+      ? api.api.teacher.students[":id"]["ai-policy"].$put(args)
+      : api.api.teacher.assignments[":id"]["ai-policy"].$put(args),
   );
 }
 
