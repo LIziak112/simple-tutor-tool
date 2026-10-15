@@ -1,17 +1,15 @@
 import { randomUUID } from "node:crypto";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   AI_MCP_LEASE_MINUTES,
-  AI_TASK_ACTIVE_PER_QUESTION,
   AI_TASK_DAILY_PER_STUDENT,
   AI_TASK_PENDING_PER_STUDENT,
 } from "@tutor/contract";
 import { and, eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
+import { runBackfills } from "../../db/backfill.ts";
 import type { Db } from "../../db/client.ts";
 import { createDb } from "../../db/client.ts";
-import { runBackfills } from "../../db/backfill.ts";
 import { runMigrations } from "../../db/migrate.ts";
 import {
   type AiTaskRow,
@@ -25,8 +23,8 @@ import {
   teachers,
 } from "../../db/schema.ts";
 import {
-  createTestDir,
   createTestDb,
+  createTestDir,
   TEST_TEACHER_ID,
 } from "../../db/test-utils.ts";
 import { HttpError } from "../../lib/http-error.ts";
@@ -239,7 +237,12 @@ function setupWorld(db: Db): {
 function mkMcpTask(
   db: Db,
   world: { studentId: string; attemptId: string; questionId: string },
-  opts?: { question?: string; at?: number; mutationId?: string; questionId?: string },
+  opts?: {
+    question?: string;
+    at?: number;
+    mutationId?: string;
+    questionId?: string | undefined;
+  },
 ): { task: AiTaskRow; created: boolean } {
   return createAiTask(
     db,
@@ -258,7 +261,7 @@ function mkMcpTask(
 function mkInappTask(
   db: Db,
   world: { studentId: string; attemptId: string; questionId: string },
-  opts?: { at?: number; questionId?: string },
+  opts?: { at?: number; questionId?: string | undefined },
 ): AiTaskRow {
   return createAiTask(
     db,
@@ -275,7 +278,12 @@ function mkInappTask(
 }
 
 /** 批量新开题目（每题一条响应行），返回题号数组（避开同题进行中配额） */
-function openQuestions(db: Db, attemptId: string, prefix: string, count: number): string[] {
+function openQuestions(
+  db: Db,
+  attemptId: string,
+  prefix: string,
+  count: number,
+): string[] {
   const ids: string[] = [];
   for (let i = 0; i < count; i += 1) {
     const qid = `${prefix}-${i}`;
@@ -490,7 +498,11 @@ describe("SAI-12 创建幂等与配额", () => {
     const third = mkMcpTask(db, world, { at: 1000 });
     expect(third.created).toBe(true);
     // 第 4 条：拒绝
-    expectHttpError(() => mkMcpTask(db, world, { at: 2000 }), 409, "AI_TASK_LIMIT_REACHED");
+    expectHttpError(
+      () => mkMcpTask(db, world, { at: 2000 }),
+      409,
+      "AI_TASK_LIMIT_REACHED",
+    );
     // 学生待处理：另开新题，占满 pending 上限
     const otherQuestion = "q2";
     insertResponse(db, world.attemptId, otherQuestion);
@@ -576,7 +588,8 @@ describe("SAI-12 列表：本人范围与稳定游标；查看与处理状态独
     const ids: string[] = [];
     for (let i = 0; i < 5; i += 1) {
       ids.push(
-        mkMcpTask(db, world, { at: (i + 1) * 1000, questionId: questions[i] }).task.id,
+        mkMcpTask(db, world, { at: (i + 1) * 1000, questionId: questions[i] })
+          .task.id,
       );
     }
     // 他学生任务不进本人列表
@@ -590,7 +603,7 @@ describe("SAI-12 列表：本人范围与稳定游标；查看与处理状态独
       const page = listStudentAiTasks(db, {
         studentId: world.studentId,
         limit: 2,
-        cursor,
+        ...(cursor === undefined ? {} : { cursor }),
       });
       pages += 1;
       seen.push(...page.tasks.map((t) => t.id));
@@ -679,11 +692,19 @@ describe("SAI-12 并发领取（真实双连接文件库）", () => {
       // 第二连接此时领取：同任务已非 created → 明确 409，不产生第二个 lease
       expectHttpError(
         () =>
-          claimMcpTask(db2, { studentId: world.studentId, taskId: task.id }, { now: at(1) }),
+          claimMcpTask(
+            db2,
+            { studentId: world.studentId, taskId: task.id },
+            { now: at(1) },
+          ),
         409,
         "AI_STATE_CONFLICT",
       );
-      const row = db2.select().from(aiTasks).where(eq(aiTasks.id, task.id)).get()!;
+      const row = db2
+        .select()
+        .from(aiTasks)
+        .where(eq(aiTasks.id, task.id))
+        .get()!;
       expect(row.status).toBe("claimed");
       expect(row.leaseToken).toBe(claim1!.leaseToken);
       expect(
@@ -714,12 +735,20 @@ describe("SAI-12 并发领取（真实双连接文件库）", () => {
       // 网络重放：另一连接重放同批领取（同 taskId）→ 409
       expectHttpError(
         () =>
-          claimMcpTask(db2, { studentId: world.studentId, taskId: k1.id }, { now: at(2001) }),
+          claimMcpTask(
+            db2,
+            { studentId: world.studentId, taskId: k1.id },
+            { now: at(2001) },
+          ),
         409,
         "AI_STATE_CONFLICT",
       );
       // 重放不得悄悄改抢 k2
-      const k2Row = db1.select().from(aiTasks).where(eq(aiTasks.id, k2.id)).get()!;
+      const k2Row = db1
+        .select()
+        .from(aiTasks)
+        .where(eq(aiTasks.id, k2.id))
+        .get()!;
       expect(k2Row.status).toBe("created");
       expect(k2Row.leaseToken).toBeNull();
     } finally {
@@ -738,8 +767,16 @@ describe("SAI-12 租约超时与写回", () => {
   } {
     const world = setupWorld(db);
     const task = mkMcpTask(db, world).task;
-    const claim = claimMcpTask(db, { studentId: world.studentId }, { now: at(0) })!;
-    return { world, task, leaseX: { leaseToken: claim.leaseToken, generation: claim.generation } };
+    const claim = claimMcpTask(
+      db,
+      { studentId: world.studentId },
+      { now: at(0) },
+    )!;
+    return {
+      world,
+      task,
+      leaseX: { leaseToken: claim.leaseToken, generation: claim.generation },
+    };
   }
 
   it("超时再领后：旧 lease 不能续期/回信，仅记 late_reply；新持有者可写回", () => {
@@ -750,14 +787,22 @@ describe("SAI-12 租约超时与写回", () => {
     expect(recovered.expiredLeases).toBe(1);
     expect(taskRow(db, task.id).status).toBe("created");
     // 客户端 Y 再领
-    const claimY = claimMcpTask(db, { studentId: world.studentId }, { now: at(LEASE_MS + 2000) })!;
+    const claimY = claimMcpTask(
+      db,
+      { studentId: world.studentId },
+      { now: at(LEASE_MS + 2000) },
+    )!;
     expect(claimY.leaseToken).not.toBe(leaseX.leaseToken);
     // 旧持有者 X：续租被拒
     expectHttpError(
       () =>
         renewMcpLease(
           db,
-          { studentId: world.studentId, taskId: task.id, leaseToken: leaseX.leaseToken },
+          {
+            studentId: world.studentId,
+            taskId: task.id,
+            leaseToken: leaseX.leaseToken,
+          },
           { now: at(LEASE_MS + 3000) },
         ),
       409,
@@ -796,7 +841,9 @@ describe("SAI-12 租约超时与写回", () => {
     );
     expect(submit.duplicate).toBe(false);
     expect(taskRow(db, task.id).status).toBe("replied");
-    expect(assistantMessagesOf(db, task.id).map((m) => m.contentMd)).toEqual(["有效回信"]);
+    expect(assistantMessagesOf(db, task.id).map((m) => m.contentMd)).toEqual([
+      "有效回信",
+    ]);
   });
 
   it("同反馈重放成功（duplicate）；不同正文冲突不覆盖首次成功", () => {
@@ -842,7 +889,9 @@ describe("SAI-12 租约超时与写回", () => {
       409,
       "AI_STATE_CONFLICT",
     );
-    expect(assistantMessagesOf(db, task.id).map((m) => m.contentMd)).toEqual(["首次回信"]);
+    expect(assistantMessagesOf(db, task.id).map((m) => m.contentMd)).toEqual([
+      "首次回信",
+    ]);
   });
 
   it("续租：校验持有者/状态/总时长，超总上限拒绝", () => {
@@ -853,7 +902,11 @@ describe("SAI-12 租约超时与写回", () => {
       () =>
         renewMcpLease(
           db,
-          { studentId: world.studentId, taskId: task.id, leaseToken: "not-the-token" },
+          {
+            studentId: world.studentId,
+            taskId: task.id,
+            leaseToken: "not-the-token",
+          },
           { now: at(1000) },
         ),
       409,
@@ -862,7 +915,11 @@ describe("SAI-12 租约超时与写回", () => {
     // 正常续租：延长
     const renewed = renewMcpLease(
       db,
-      { studentId: world.studentId, taskId: task.id, leaseToken: leaseX.leaseToken },
+      {
+        studentId: world.studentId,
+        taskId: task.id,
+        leaseToken: leaseX.leaseToken,
+      },
       { now: at(5 * 60_000) },
     );
     expect(renewed.leaseUntil).toBe(iso(5 * 60_000 + LEASE_MS));
@@ -871,7 +928,11 @@ describe("SAI-12 租约超时与写回", () => {
       () =>
         renewMcpLease(
           db,
-          { studentId: world.studentId, taskId: task.id, leaseToken: leaseX.leaseToken },
+          {
+            studentId: world.studentId,
+            taskId: task.id,
+            leaseToken: leaseX.leaseToken,
+          },
           { now: at(AI_MCP_LEASE_MAX_TOTAL_MS + 60_000) },
         ),
       409,
@@ -888,7 +949,11 @@ describe("SAI-12 状态竞态唯一合法结果", () => {
     const db = createTestDb();
     const world = setupWorld(db);
     const task = mkMcpTask(db, world).task;
-    const claim = claimMcpTask(db, { studentId: world.studentId }, { now: at(0) })!;
+    const claim = claimMcpTask(
+      db,
+      { studentId: world.studentId },
+      { now: at(0) },
+    )!;
     const cancelled = cancelAiTask(
       db,
       { studentId: world.studentId, taskId: task.id },
@@ -897,7 +962,9 @@ describe("SAI-12 状态竞态唯一合法结果", () => {
     expect(cancelled.status).toBe("cancelled");
     expect(cancelled.cancelRequestedAt).toBe(iso(1000));
     // 取消不能撤回出站：dispatched 事实保留
-    expect(factsOf(db, task.id).some((f) => f.type === "dispatched")).toBe(true);
+    expect(factsOf(db, task.id).some((f) => f.type === "dispatched")).toBe(
+      true,
+    );
     expect(factsOf(db, task.id).some((f) => f.type === "cancelled")).toBe(true);
     // 迟到回信：仅记事实
     expectHttpError(
@@ -921,7 +988,11 @@ describe("SAI-12 状态竞态唯一合法结果", () => {
     // 终态重复取消 → 409
     expectHttpError(
       () =>
-        cancelAiTask(db, { studentId: world.studentId, taskId: task.id }, { now: at(3000) }),
+        cancelAiTask(
+          db,
+          { studentId: world.studentId, taskId: task.id },
+          { now: at(3000) },
+        ),
       409,
       "AI_STATE_CONFLICT",
     );
@@ -934,12 +1005,21 @@ describe("SAI-12 状态竞态唯一合法结果", () => {
     );
     completeInappDispatch(
       db,
-      { studentId: world.studentId, taskId: task2.id, generation, replyMd: "回信" },
+      {
+        studentId: world.studentId,
+        taskId: task2.id,
+        generation,
+        replyMd: "回信",
+      },
       { now: at(2000) },
     );
     expectHttpError(
       () =>
-        cancelAiTask(db, { studentId: world.studentId, taskId: task2.id }, { now: at(3000) }),
+        cancelAiTask(
+          db,
+          { studentId: world.studentId, taskId: task2.id },
+          { now: at(3000) },
+        ),
       409,
       "AI_STATE_CONFLICT",
     );
@@ -951,7 +1031,11 @@ describe("SAI-12 状态竞态唯一合法结果", () => {
     const world = setupWorld(db);
     const task = mkMcpTask(db, world).task;
     const v1 = aiTaskContextVersionOf(db, task);
-    const claim = claimMcpTask(db, { studentId: world.studentId }, { now: at(0) })!;
+    const claim = claimMcpTask(
+      db,
+      { studentId: world.studentId },
+      { now: at(0) },
+    )!;
     // 已领取 → 拒绝替换输入
     expectHttpError(
       () =>
@@ -970,6 +1054,9 @@ describe("SAI-12 状态竞态唯一合法结果", () => {
       .from(responses)
       .where(eq(responses.attemptId, world.attemptId))
       .get()!;
+    if (response.questionSnapshotJson === null) {
+      throw new Error("夹具响应行缺少题快照");
+    }
     db.update(responses)
       .set({
         questionSnapshotJson: JSON.stringify({
@@ -987,7 +1074,11 @@ describe("SAI-12 状态竞态唯一合法结果", () => {
     const v2 = aiTaskContextVersionOf(db, refreshed);
     expect(v2).not.toBe(v1);
     // 再领取：拿到新版本
-    const claim2 = claimMcpTask(db, { studentId: world.studentId }, { now: at(LEASE_MS + 3000) })!;
+    const claim2 = claimMcpTask(
+      db,
+      { studentId: world.studentId },
+      { now: at(LEASE_MS + 3000) },
+    )!;
     expect(claim2.contextVersion).toBe(v2);
     // 旧持有者带旧版本写回 → 拒绝
     expectHttpError(
@@ -1032,13 +1123,24 @@ describe("SAI-12 状态竞态唯一合法结果", () => {
     ).generation;
     failInappDispatch(
       db,
-      { studentId: world.studentId, taskId: task.id, generation: g1, errorText: "网络超时", kind: "retryable" },
+      {
+        studentId: world.studentId,
+        taskId: task.id,
+        generation: g1,
+        errorText: "网络超时",
+        kind: "retryable",
+      },
       { now: at(2000) },
     );
     expect(taskRow(db, task.id).status).toBe("failed");
     // 未到退避窗口 → 拒绝（nextRunAt）
     expectHttpError(
-      () => retryAiTask(db, { studentId: world.studentId, taskId: task.id }, { now: at(3000) }),
+      () =>
+        retryAiTask(
+          db,
+          { studentId: world.studentId, taskId: task.id },
+          { now: at(3000) },
+        ),
       409,
       "AI_STATE_CONFLICT",
     );
@@ -1076,7 +1178,13 @@ describe("SAI-12 状态竞态唯一合法结果", () => {
       ).generation;
       failInappDispatch(
         db,
-        { studentId: world.studentId, taskId: task.id, generation: g, errorText: "再次失败", kind: "retryable" },
+        {
+          studentId: world.studentId,
+          taskId: task.id,
+          generation: g,
+          errorText: "再次失败",
+          kind: "retryable",
+        },
         { now: at(21_000 + i * 200_000) },
       );
       last = retryAiTask(
@@ -1092,7 +1200,13 @@ describe("SAI-12 状态竞态唯一合法结果", () => {
     ).generation;
     failInappDispatch(
       db,
-      { studentId: world.studentId, taskId: task.id, generation: gFinal, errorText: "最后一次失败", kind: "retryable" },
+      {
+        studentId: world.studentId,
+        taskId: task.id,
+        generation: gFinal,
+        errorText: "最后一次失败",
+        kind: "retryable",
+      },
       { now: at(901_000) },
     );
     expectHttpError(
@@ -1120,7 +1234,11 @@ describe("SAI-12 重启恢复（真实文件库关闭重开）", () => {
     const ready = mkMcpTask(db1, world, { at: 0 }).task;
     // 过期租约任务：领取后推进时钟
     const expired = mkMcpTask(db1, world, { at: 100 }).task;
-    claimMcpTask(db1, { studentId: world.studentId, taskId: expired.id }, { now: at(200) });
+    claimMcpTask(
+      db1,
+      { studentId: world.studentId, taskId: expired.id },
+      { now: at(200) },
+    );
     // 超时 dispatching 任务（直插：updatedAt 老于出站超时）
     const staleDispatching = insertTaskRow(db1, {
       studentId: world.studentId,
@@ -1137,7 +1255,12 @@ describe("SAI-12 重启恢复（真实文件库关闭重开）", () => {
     ).generation;
     completeInappDispatch(
       db1,
-      { studentId: world.studentId, taskId: done.id, generation: g, replyMd: "已完成回信" },
+      {
+        studentId: world.studentId,
+        taskId: done.id,
+        generation: g,
+        replyMd: "已完成回信",
+      },
       { now: at(400) },
     );
     db1.$client.close();
@@ -1158,7 +1281,12 @@ describe("SAI-12 重启恢复（真实文件库关闭重开）", () => {
       () =>
         completeInappDispatch(
           db2,
-          { studentId: world.studentId, taskId: done.id, generation: g, replyMd: "重开后的重复回执" },
+          {
+            studentId: world.studentId,
+            taskId: done.id,
+            generation: g,
+            replyMd: "重开后的重复回执",
+          },
           { now: at(11 * 60_000 + 1000) },
         ),
       409,
@@ -1184,26 +1312,46 @@ describe("SAI-12 公平性与通道隔离", () => {
     const studentB = makeStudent(db);
     const attemptB = insertAttempt(db, studentB);
     insertResponse(db, attemptB, "q1");
-    const worldB = { studentId: studentB, attemptId: attemptB, questionId: "q1" };
+    const worldB = {
+      studentId: studentB,
+      attemptId: attemptB,
+      questionId: "q1",
+    };
     // A 先堆 5 条，B 只晚 1 条，A 再补 5 条（A 的待处理数到达上限 10）
     const aQuestions = openQuestions(db, worldA.attemptId, "q-a", 10);
     const aIds: string[] = [];
     for (let i = 0; i < 5; i += 1) {
       aIds.push(
-        mkMcpTask(db, worldA, { at: i * 100, questionId: aQuestions[i] }).task.id,
+        mkMcpTask(db, worldA, { at: i * 100, questionId: aQuestions[i] }).task
+          .id,
       );
     }
     const bTask = mkMcpTask(db, worldB, { at: 1000 }).task;
     for (let i = 0; i < 5; i += 1) {
-      mkMcpTask(db, worldA, { at: 2000 + i * 100, questionId: aQuestions[5 + i] });
+      mkMcpTask(db, worldA, {
+        at: 2000 + i * 100,
+        questionId: aQuestions[5 + i],
+      });
     }
     // B 的领取不被 A 的 15 条阻塞：立即拿到自己的任务
-    const claimB = claimMcpTask(db, { studentId: studentB }, { now: at(3000) })!;
+    const claimB = claimMcpTask(
+      db,
+      { studentId: studentB },
+      { now: at(3000) },
+    )!;
     expect(claimB.taskId).toBe(bTask.id);
     // A 域内 FIFO：晚创建的不插队
-    const claimA1 = claimMcpTask(db, { studentId: worldA.studentId }, { now: at(3001) })!;
+    const claimA1 = claimMcpTask(
+      db,
+      { studentId: worldA.studentId },
+      { now: at(3001) },
+    )!;
     expect(claimA1.taskId).toBe(aIds[0]);
-    const claimA2 = claimMcpTask(db, { studentId: worldA.studentId }, { now: at(3002) })!;
+    const claimA2 = claimMcpTask(
+      db,
+      { studentId: worldA.studentId },
+      { now: at(3002) },
+    )!;
     expect(claimA2.taskId).toBe(aIds[1]);
   });
 
@@ -1225,7 +1373,11 @@ describe("SAI-12 公平性与通道隔离", () => {
     );
     expect(taskRow(db, mcpTask.id).status).toBe("created");
     // MCP 领取不拿页内任务
-    const claim = claimMcpTask(db, { studentId: world.studentId }, { now: at(0) });
+    const claim = claimMcpTask(
+      db,
+      { studentId: world.studentId },
+      { now: at(0) },
+    );
     expect(claim?.taskId).toBe(mcpTask.id);
     expect(taskRow(db, inappTask.id).status).toBe("created");
     expect(taskRow(db, inappTask.id).leaseToken).toBeNull();
@@ -1253,7 +1405,9 @@ describe("SAI-12 领取前权限校验与事务健壮性", () => {
       "AI_POLICY_DISABLED",
     );
     // FIFO 扫描领取：跳过不可用任务（返回 null，状态不变）
-    expect(claimMcpTask(db, { studentId: world.studentId }, { now: at(1001) })).toBeNull();
+    expect(
+      claimMcpTask(db, { studentId: world.studentId }, { now: at(1001) }),
+    ).toBeNull();
     expect(taskRow(db, mcpTask.id).status).toBe("created");
     // 页内派发：出站前校验失败 → paused（T2 场景：未出站，无事实漂移）
     expectHttpError(
@@ -1267,7 +1421,9 @@ describe("SAI-12 领取前权限校验与事务健壮性", () => {
       "AI_POLICY_DISABLED",
     );
     expect(taskRow(db, inappTask.id).status).toBe("paused");
-    expect(factsOf(db, inappTask.id).some((f) => f.type === "paused")).toBe(true);
+    expect(factsOf(db, inappTask.id).some((f) => f.type === "paused")).toBe(
+      true,
+    );
     // 教师恢复开放 → 学生显式继续：回 created，不自动发送
     clearStudentOverride(db, world.studentId);
     const resumed = resumeAiTask(
@@ -1277,8 +1433,12 @@ describe("SAI-12 领取前权限校验与事务健壮性", () => {
     );
     expect(resumed.status).toBe("created");
     expect(resumed.generation).toBe(0); // 未自动出站
-    expect(factsOf(db, inappTask.id).some((f) => f.type === "dispatched")).toBe(false);
-    expect(factsOf(db, inappTask.id).some((f) => f.type === "resumed")).toBe(true);
+    expect(factsOf(db, inappTask.id).some((f) => f.type === "dispatched")).toBe(
+      false,
+    );
+    expect(factsOf(db, inappTask.id).some((f) => f.type === "resumed")).toBe(
+      true,
+    );
     // 恢复后可正常领取
     const claim = claimMcpTask(
       db,
@@ -1299,7 +1459,11 @@ describe("SAI-12 领取前权限校验与事务健壮性", () => {
       const started = Date.now();
       let threw = false;
       try {
-        claimMcpTask(db2, { studentId: world.studentId, taskId: task.id }, { now: at(0) });
+        claimMcpTask(
+          db2,
+          { studentId: world.studentId, taskId: task.id },
+          { now: at(0) },
+        );
       } catch {
         threw = true; // SQLITE_BUSY：快速失败而非无限等待
       }
@@ -1327,10 +1491,14 @@ describe("SAI-12 队列摘要计数", () => {
     const db = createTestDb();
     const world = setupWorld(db);
     const questions = openQuestions(db, world.attemptId, "q-sum", 4);
-    const t1 = mkMcpTask(db, world, { at: 0, questionId: questions[0] }).task;
-    const t2 = mkMcpTask(db, world, { at: 100, questionId: questions[1] }).task;
+    mkMcpTask(db, world, { at: 0, questionId: questions[0] });
+    mkMcpTask(db, world, { at: 100, questionId: questions[1] });
     const t3 = mkMcpTask(db, world, { at: 200, questionId: questions[2] }).task;
-    claimMcpTask(db, { studentId: world.studentId, taskId: t3.id }, { now: at(300) });
+    claimMcpTask(
+      db,
+      { studentId: world.studentId, taskId: t3.id },
+      { now: at(300) },
+    );
     const t4 = mkInappTask(db, world, { questionId: questions[3] });
     const g = beginInappDispatch(
       db,
@@ -1339,14 +1507,23 @@ describe("SAI-12 队列摘要计数", () => {
     ).generation;
     completeInappDispatch(
       db,
-      { studentId: world.studentId, taskId: t4.id, generation: g, replyMd: "回信" },
+      {
+        studentId: world.studentId,
+        taskId: t4.id,
+        generation: g,
+        replyMd: "回信",
+      },
       { now: at(500) },
     );
     const summary = aiQueueSummaryOf(db, world.studentId);
     expect(summary.pendingCount).toBe(2); // t1 t2
     expect(summary.processingCount).toBe(1); // t3 claimed
     expect(summary.unreadReplyCount).toBe(1); // t4 replied 未读
-    markReplyDelivered(db, { studentId: world.studentId, taskId: t4.id }, { now: at(600) });
+    markReplyDelivered(
+      db,
+      { studentId: world.studentId, taskId: t4.id },
+      { now: at(600) },
+    );
     expect(aiQueueSummaryOf(db, world.studentId).unreadReplyCount).toBe(0);
   });
 });

@@ -2,7 +2,6 @@ import { createHash, randomUUID } from "node:crypto";
 import type {
   AiChannel,
   AiFactType,
-  AiPolicyConfigSource,
   AiTaskAction,
   AiTaskPublic,
   AiTaskStatus,
@@ -27,14 +26,15 @@ import {
 } from "../../db/schema.ts";
 import { HttpError } from "../../lib/http-error.ts";
 import { sqliteAiPolicyConfigSource } from "./ai-policy-config-source.ts";
-import {
-  buildAiContextBundle,
-} from "./student-ai-context.ts";
+import { buildAiContextBundle } from "./student-ai-context.ts";
 import {
   aiTaskMaterialsPublicOf,
   loadAiTaskMaterialRows,
 } from "./student-ai-materials.ts";
-import { resolveAttemptQuestionAiPolicy } from "./teaching-policy-service.ts";
+import {
+  type AiPolicyConfigSource,
+  resolveAttemptQuestionAiPolicy,
+} from "./teaching-policy-service.ts";
 
 /**
  * SAI-12 可靠任务队列（B06；技术方案 §3.4/§6、需求规格 §8）。
@@ -131,17 +131,18 @@ function invalid(message: string): HttpError {
  * - dispatching→uncertain：出站超时待确认（显式重试，绝不自动重发）；
  * - uncertain→replied：迟到回执按 (taskId, generation) CAS 匹配仍交付。
  */
-const TASK_TRANSITIONS: Readonly<Record<AiTaskStatus, readonly AiTaskStatus[]>> =
-  {
-    created: ["dispatching", "claimed", "paused", "cancelled"],
-    dispatching: ["replied", "failed", "paused", "uncertain"],
-    uncertain: ["created", "replied"],
-    claimed: ["replied", "created", "cancelled"],
-    replied: [],
-    paused: ["created", "cancelled"],
-    failed: ["created"],
-    cancelled: [],
-  };
+const TASK_TRANSITIONS: Readonly<
+  Record<AiTaskStatus, readonly AiTaskStatus[]>
+> = {
+  created: ["dispatching", "claimed", "paused", "cancelled"],
+  dispatching: ["replied", "failed", "paused", "uncertain"],
+  uncertain: ["created", "replied"],
+  claimed: ["replied", "created", "cancelled"],
+  replied: [],
+  paused: ["created", "cancelled"],
+  failed: ["created"],
+  cancelled: [],
+};
 
 /** 事实详情（detailJson 的对象形态；contentMd 仅 late_reply 审计保留用） */
 type FactDetail = Record<string, string | number | boolean | null>;
@@ -201,7 +202,9 @@ function applyTransition(
       ...(patch.cancelRequestedAt === undefined
         ? {}
         : { cancelRequestedAt: patch.cancelRequestedAt }),
-      ...(patch.retryCount === undefined ? {} : { retryCount: patch.retryCount }),
+      ...(patch.retryCount === undefined
+        ? {}
+        : { retryCount: patch.retryCount }),
     })
     .where(and(eq(aiTasks.id, task.id), eq(aiTasks.status, task.status)))
     .run();
@@ -387,9 +390,7 @@ export function createAiTask(
       existing.channel === input.channel &&
       firstQuestionOf(db, existing.id) === input.question;
     if (!sameContent) {
-      throw conflict(
-        "该幂等键已用于不同内容的任务，请刷新页面后重新发送",
-      );
+      throw conflict("该幂等键已用于不同内容的任务，请刷新页面后重新发送");
     }
     return { task: existing, created: false };
   }
@@ -525,7 +526,11 @@ export function createAiTask(
           createdAt: now.iso,
         })
         .run();
-      const row = tx.select().from(aiTasks).where(eq(aiTasks.id, taskId)).get()!;
+      const row = tx
+        .select()
+        .from(aiTasks)
+        .where(eq(aiTasks.id, taskId))
+        .get()!;
       insertFact(tx, row, "task_created", now, {
         channel: input.channel,
         modeAtSend: bundle.modeAtSend,
@@ -638,11 +643,7 @@ export function listStudentAiTasks(
   input: ListAiTasksInput,
   options: { now?: Date | string } = {},
 ): ListAiTasksResult {
-  if (
-    !Number.isInteger(input.limit) ||
-    input.limit < 1 ||
-    input.limit > 50
-  ) {
+  if (!Number.isInteger(input.limit) || input.limit < 1 || input.limit > 50) {
     throw invalid("每页条数必须在 1 到 50 之间");
   }
   const now = nowSpecOf(options.now);
@@ -710,9 +711,7 @@ export function aiQueueSummaryOf(
   const unreadReplyCount = db
     .select({ replyDeliveredAt: aiTasks.replyDeliveredAt })
     .from(aiTasks)
-    .where(
-      and(eq(aiTasks.studentId, studentId), eq(aiTasks.status, "replied")),
-    )
+    .where(and(eq(aiTasks.studentId, studentId), eq(aiTasks.status, "replied")))
     .all()
     .filter((row) => row.replyDeliveredAt === null).length;
   return {
@@ -739,12 +738,7 @@ function expireStaleLeases(tx: QueueTx, now: NowSpec): number {
   const stale = tx
     .select()
     .from(aiTasks)
-    .where(
-      and(
-        eq(aiTasks.status, "claimed"),
-        lte(aiTasks.leaseUntil, now.iso),
-      ),
-    )
+    .where(and(eq(aiTasks.status, "claimed"), lte(aiTasks.leaseUntil, now.iso)))
     .all();
   for (const row of stale) {
     tx.update(aiTasks)
@@ -825,12 +819,7 @@ export function claimMcpTask(
           generation: candidate.generation + 1,
           updatedAt: now.iso,
         })
-        .where(
-          and(
-            eq(aiTasks.id, candidate.id),
-            eq(aiTasks.status, "created"),
-          ),
-        )
+        .where(and(eq(aiTasks.id, candidate.id), eq(aiTasks.status, "created")))
         .run();
       if (changed.changes !== 1) {
         throw conflict("任务已被其他客户端领取");
@@ -929,9 +918,7 @@ function lastReplyReceipt(
   const fact = asDb(db)
     .select()
     .from(aiFacts)
-    .where(
-      and(eq(aiFacts.taskId, taskId), eq(aiFacts.type, "reply_received")),
-    )
+    .where(and(eq(aiFacts.taskId, taskId), eq(aiFacts.type, "reply_received")))
     .orderBy(desc(aiFacts.serverTs))
     .get();
   if (fact === undefined || fact.detailJson === null) return null;
@@ -947,7 +934,8 @@ function lastReplyReceipt(
 
 /** 回信正文超长截断（契约口径：不硬拒，截断并显式声明） */
 function truncateReply(text: string): { content: string; truncated: boolean } {
-  if (text.length <= AI_REPLY_MAX_CHARS) return { content: text, truncated: false };
+  if (text.length <= AI_REPLY_MAX_CHARS)
+    return { content: text, truncated: false };
   return {
     content: text.slice(0, AI_REPLY_MAX_CHARS),
     truncated: true,
@@ -963,7 +951,7 @@ function recordLateReplyCommitted(
   db: Db,
   task: AiTaskRow,
   now: NowSpec,
-  detail: FactDetail & { contentMd: string },
+  detail: FactDetail,
 ): void {
   db.transaction(
     (tx) => {
@@ -978,6 +966,12 @@ type SubmitOutcome =
   | { kind: "duplicate" }
   | { kind: "late"; task: AiTaskRow; detail: FactDetail; message: string }
   | { kind: "ok"; truncated: boolean };
+
+/** 页内写回事务的结果形态（delivered=false = 回信入库为事实但暂不交付） */
+type CompleteOutcome =
+  | { kind: "duplicate" }
+  | { kind: "late"; task: AiTaskRow; detail: FactDetail; message: string }
+  | { kind: "delivered"; delivered: boolean };
 
 // ---------- 操作与语义 5：写回 ----------
 
@@ -1065,7 +1059,8 @@ export function submitMcpReply(
     },
     { behavior: "immediate" },
   );
-  if (outcome.kind === "duplicate") return { duplicate: true, truncated: false };
+  if (outcome.kind === "duplicate")
+    return { duplicate: true, truncated: false };
   if (outcome.kind === "late") {
     recordLateReplyCommitted(db, outcome.task, now, outcome.detail);
     throw conflict(outcome.message);
@@ -1165,7 +1160,7 @@ export function completeInappDispatch(
   const now = nowSpecOf(options.now);
   const contentHash = sha256Hex(input.replyMd);
   const outcome = db.transaction(
-    (tx): SubmitOutcome | { kind: "delivered"; delivered: boolean } => {
+    (tx): CompleteOutcome => {
       const task = requireOwnTask(tx, input.studentId, input.taskId);
       const receipt = lastReplyReceipt(tx, task.id);
       if (receipt?.contentHash === contentHash) {
@@ -1288,7 +1283,10 @@ export function failInappDispatch(
   db.transaction(
     (tx) => {
       const task = requireOwnTask(tx, input.studentId, input.taskId);
-      if (task.generation !== input.generation || task.status !== "dispatching") {
+      if (
+        task.generation !== input.generation ||
+        task.status !== "dispatching"
+      ) {
         throw conflict("失败报告对应的发送代次已过期");
       }
       if (input.kind === "policy") {
@@ -1344,7 +1342,8 @@ export function retryAiTask(
           `重试次数已达上限（${AI_TASK_MAX_RETRY_COUNT} 次），请重新发起求助`,
         );
       }
-      const nextRunAtMs = Date.parse(task.updatedAt) + retryBackoffMs(task.retryCount);
+      const nextRunAtMs =
+        Date.parse(task.updatedAt) + retryBackoffMs(task.retryCount);
       if (now.date.getTime() < nextRunAtMs) {
         throw conflict(
           `失败后请稍候再重试（约 ${Math.ceil((nextRunAtMs - now.date.getTime()) / 1000)} 秒后可重试）`,
@@ -1510,12 +1509,7 @@ export function markReplyDelivered(
       const changed = tx
         .update(aiTasks)
         .set({ replyDeliveredAt: now.iso })
-        .where(
-          and(
-            eq(aiTasks.id, task.id),
-            eq(aiTasks.status, "replied"),
-          ),
-        )
+        .where(and(eq(aiTasks.id, task.id), eq(aiTasks.status, "replied")))
         .run();
       if (changed.changes !== 1) {
         throw conflict("任务状态已被其他操作更新，请刷新后重试");
@@ -1567,9 +1561,7 @@ export function recoverAiQueue(
       for (const row of stale) {
         tx.update(aiTasks)
           .set({ status: "uncertain", updatedAt: now.iso })
-          .where(
-            and(eq(aiTasks.id, row.id), eq(aiTasks.status, "dispatching")),
-          )
+          .where(and(eq(aiTasks.id, row.id), eq(aiTasks.status, "dispatching")))
           .run();
       }
       return { expiredLeases, staleDispatching: stale.length };
