@@ -1,5 +1,7 @@
 import {
   type AiTaskPublic,
+  aiConnectionCreateRequestSchema,
+  aiConnectionPatchRequestSchema,
   aiTaskCreateRequestSchema,
   aiTaskListQuerySchema,
   aiTaskUpdatePendingRequestSchema,
@@ -16,6 +18,13 @@ import {
   HttpError,
   parseJsonBodyWithCode,
 } from "../lib/http-error.ts";
+import {
+  createStudentAiConnection,
+  deleteStudentAiConnection,
+  listStudentAiConnections,
+  patchStudentAiConnection,
+  testStudentAiConnection,
+} from "../services/ai-companion/connection-service.ts";
 import {
   getStudentQuickButtons,
   putStudentQuickButtons,
@@ -61,9 +70,25 @@ import {
  *   动作，全部薄壳转发 SAI-12 操作（状态 CAS/幂等/退避在服务层）。
  * - GET /ai/queue-summary：顶栏三计数（待领取/处理中/未读，分桶单源）。
  *
+ * 连接管理（SAI-16，B00 §4.2 API 表 connections 段；业务与安全防线全在
+ * connection-service / outbound-target / provider-client）：
+ * - GET /ai/connections：本人 active 连接列表（只含指纹视图，无密文列）；
+ * - POST /ai/connections：三通道创建（201；同通道 active 重复 409；
+ *   isDefault 学生维度跨通道唯一先清后设；mcp token 明文仅本响应一次）；
+ * - PATCH /ai/connections/:id：按行通道判别适用字段；inapp 不传 apiKey =
+ *   保持原 Key（传则重封回 unverified）；mcp resetToken 旧哈希立即失效；
+ * - DELETE /ai/connections/:id：软删 + 事务内停发该通道 created 任务；
+ * - POST /ai/connections/:id/test：inapp 一次真实探针（固定文案不带题面；
+ *   成功 verified / 失败 failed / 解密失败 needs_rekey 不再出站）；
+ *   link/mcp 通道 400 AI_CONNECTION_INVALID。Key 密封 rootSecret 与快照
+ *   HMAC 同源（DATA_DIR/secret.key，一次读入复用）。
+ *
  * 错误码口径：按钮名称/提示词/数量/重复与顺序冲突 → 400 AI_BUTTONS_INVALID；
- * 问题/追问文本域校验失败 → 400 AI_TEXT_TOO_LONG（§9 限额表）；其余形状
- * 错误（含 strict 未知键）→ 400 VALIDATION_ERROR；策略/状态/配额错误由服务层
+ * 问题/追问文本域校验失败 → 400 AI_TEXT_TOO_LONG（§9 限额表）；连接请求
+ * 形状错误（含 strict 未知键/超长）→ 400 VALIDATION_ERROR；通道适用性/
+ * SSRF 保存期拒绝/非 inapp 测试 → 400 AI_CONNECTION_INVALID、同通道重复
+ * → 409 AI_STATE_CONFLICT（均由服务层抛）；其余形状错误（含 strict 未知
+ * 键）→ 400 VALIDATION_ERROR；策略/状态/配额错误由服务层
  * 抛 HttpError（403 AI_POLICY_DISABLED、409 AI_STATE_CONFLICT /
  * AI_TASK_LIMIT_REACHED、404 NOT_FOUND 同文案），中文消息即操作指引，
  * 不回显参考/路径/密钥。
@@ -96,6 +121,14 @@ function textLimitCodeOf(firstPath: string, issue?: { code?: string }): string {
   return firstPath === "question" && issue?.code !== "invalid_type"
     ? "AI_TEXT_TOO_LONG"
     : "VALIDATION_ERROR";
+}
+
+/**
+ * 连接请求形状错误统一 400 VALIDATION_ERROR（strict 未知键、超长、缺字段）；
+ * 通道适用性 / SSRF 保存期拒绝等语义级错误由服务层抛 AI_CONNECTION_INVALID。
+ */
+function connectionShapeCode(): string {
+  return "VALIDATION_ERROR";
 }
 
 export function createStudentAiRoutes(db: Db, dataDir: string) {
@@ -235,6 +268,56 @@ export function createStudentAiRoutes(db: Db, dataDir: string) {
           taskId: c.req.param("id"),
         });
         return c.json(taskView(task));
+      })
+      // —— 连接管理（SAI-16；归属恒取会话，明文凭证只在 POST/PATCH 响应一次）——
+      .get("/ai/connections", (c) => {
+        return c.json({
+          ok: true,
+          data: { connections: listStudentAiConnections(db, c.var.student.id) },
+        });
+      })
+      .post("/ai/connections", async (c) => {
+        const request = await parseJsonBodyWithCode(
+          c,
+          aiConnectionCreateRequestSchema,
+          connectionShapeCode,
+        );
+        const result = createStudentAiConnection(db, {
+          studentId: c.var.student.id,
+          rootSecret: hmacSecret, // 与快照 HMAC 同源 DATA_DIR/secret.key
+          request,
+        });
+        return c.json({ ok: true, data: result }, 201);
+      })
+      .patch("/ai/connections/:id", async (c) => {
+        const request = await parseJsonBodyWithCode(
+          c,
+          aiConnectionPatchRequestSchema,
+          connectionShapeCode,
+        );
+        const result = patchStudentAiConnection(db, {
+          studentId: c.var.student.id,
+          connectionId: c.req.param("id"),
+          rootSecret: hmacSecret,
+          request,
+        });
+        return c.json({ ok: true, data: result });
+      })
+      .delete("/ai/connections/:id", (c) => {
+        const result = deleteStudentAiConnection(db, {
+          studentId: c.var.student.id,
+          connectionId: c.req.param("id"),
+        });
+        return c.json({ ok: true, data: result });
+      })
+      .post("/ai/connections/:id/test", async (c) => {
+        // 真实探针出站（transport 不可注入是设计语义：路由只调服务层默认栈）
+        const data = await testStudentAiConnection(db, {
+          studentId: c.var.student.id,
+          connectionId: c.req.param("id"),
+          rootSecret: hmacSecret,
+        });
+        return c.json({ ok: true, data });
       })
   );
 }
