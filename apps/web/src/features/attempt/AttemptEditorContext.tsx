@@ -29,6 +29,14 @@ interface EditorContextValue {
     finish: () => Promise<void>,
     kind?: AttemptEditor["kind"],
   ): () => void;
+  /**
+   * 仅对选定题收笔并等待该题本机落盘（AI 材料采集，B05 SAI-10）：
+   * 不改变 active/paper、不卸载控制器、不清撤销历史；落盘失败向前抛出。
+   */
+  flush(
+    questionId: string,
+    kinds?: readonly AttemptEditor["kind"][],
+  ): Promise<void>;
 }
 interface EditorStore extends Omit<EditorContextValue, "active" | "paper"> {
   subscribe(listener: () => void): () => void;
@@ -77,6 +85,7 @@ export function useAttemptEditor(
             requestPaper: store.requestPaper,
             request: store.request,
             register: store.register,
+            flush: store.flush,
           }
         : null,
     [store, active, paper],
@@ -194,6 +203,15 @@ export function AttemptEditorProvider({ children }: { children: ReactNode }) {
     },
     [],
   );
+  // 固定顺序收笔（标画 → 草稿 → 正式手写）；只碰本题注册的控制器。
+  const flush = useCallback(
+    async (questionId: string, kinds?: readonly AttemptEditor["kind"][]) => {
+      for (const kind of kinds ?? ["annotation", "scratch", "answerInk"]) {
+        await controllers.current.get(`${kind}:${questionId}`)?.();
+      }
+    },
+    [],
+  );
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (
@@ -229,8 +247,9 @@ export function AttemptEditorProvider({ children }: { children: ReactNode }) {
       request,
       requestPaper,
       register,
+      flush,
     }),
-    [request, requestPaper, register],
+    [request, requestPaper, register, flush],
   );
   return (
     <Context.Provider value={value}>

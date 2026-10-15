@@ -316,6 +316,102 @@ it("草稿落盘失败时不能切题或收起，标画退出不隐藏纸面", a
   expect(screen.getByLabelText("展开纸面")).toHaveTextContent("q1");
 });
 
+it("flush 只收笔选定题并等待本机落盘，不改变编辑状态、不销毁控制器", async () => {
+  const finishAnnotation = vi.fn(async () => undefined);
+  const finishScratch = vi.fn(async () => undefined);
+  const finishInk = vi.fn(async () => undefined);
+  const finishOther = vi.fn(async () => undefined);
+  function FlushControls() {
+    const editor = useAttemptEditor();
+    return (
+      <>
+        <output>{editor?.active?.questionId ?? "作答"}</output>
+        <button
+          type="button"
+          onClick={() => {
+            editor?.register("q1", finishAnnotation);
+            void editor?.request({ questionId: "q1", kind: "annotation" });
+          }}
+        >
+          开启
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            editor?.register("q1", finishScratch, "scratch");
+            editor?.register("q1", finishInk, "answerInk");
+            editor?.register("q9", finishOther, "scratch");
+          }}
+        >
+          注册
+        </button>
+        <button type="button" onClick={() => void editor?.flush("q1")}>
+          采集
+        </button>
+      </>
+    );
+  }
+  render(
+    <AttemptEditorProvider>
+      <FlushControls />
+    </AttemptEditorProvider>,
+  );
+  fireEvent.click(screen.getByText("开启"));
+  await waitFor(() =>
+    expect(screen.getByRole("status")).toHaveTextContent("q1"),
+  );
+  fireEvent.click(screen.getByText("注册"));
+  fireEvent.click(screen.getByText("采集"));
+  await waitFor(() => expect(finishInk).toHaveBeenCalledOnce());
+  expect(finishAnnotation).toHaveBeenCalledOnce();
+  expect(finishScratch).toHaveBeenCalledOnce();
+  expect(finishOther).not.toHaveBeenCalled();
+  // 编辑状态不被破坏：active 保持、无错误横幅、控制器仍注册（可再次收笔）
+  expect(screen.getByRole("status")).toHaveTextContent("q1");
+  expect(screen.queryByRole("alert")).toBeNull();
+  fireEvent.click(screen.getByText("采集"));
+  await waitFor(() => expect(finishAnnotation).toHaveBeenCalledTimes(2));
+});
+it("flush 可按 kind 收笔；落盘失败向前抛出，不清稿不吞错", async () => {
+  const finishAnnotation = vi.fn(async () => undefined);
+  const finishInk = vi
+    .fn()
+    .mockResolvedValueOnce(undefined)
+    .mockRejectedValueOnce(new Error("手写本机写入失败"));
+  const editorRef: {
+    current: ReturnType<typeof useAttemptEditor>;
+  } = { current: null };
+  function FlushControls() {
+    const editor = useAttemptEditor();
+    editorRef.current = editor;
+    return (
+      <button
+        type="button"
+        onClick={() => {
+          editor?.register("q1", finishAnnotation);
+          editor?.register("q1", finishInk, "answerInk");
+        }}
+      >
+        注册
+      </button>
+    );
+  }
+  render(
+    <AttemptEditorProvider>
+      <FlushControls />
+    </AttemptEditorProvider>,
+  );
+  fireEvent.click(screen.getByText("注册"));
+  await act(async () => {
+    await editorRef.current?.flush("q1", ["answerInk"]);
+  });
+  expect(finishAnnotation).not.toHaveBeenCalled();
+  expect(finishInk).toHaveBeenCalledOnce();
+  await expect(editorRef.current?.flush("q1")).rejects.toThrow(
+    "手写本机写入失败",
+  );
+});
+
 it("只有纸面展开时Esc收起纸面，同题标画仍可独立收起", async () => {
   function Paper() {
     const editor = useAttemptEditor();
