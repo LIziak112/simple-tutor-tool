@@ -15,6 +15,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { CHANNEL_LABEL } from "./ai-channel-label";
 import type { AiCompanionLayoutController } from "./ai-companion-layout";
 import { useStudentAiConnections } from "./ai-connection-queries";
 
@@ -83,13 +84,11 @@ function AiCompanionChannelStatus({ settingsHref }: { settingsHref: string }) {
     );
   const fallback = connections.find((item) => item.isDefault);
   const label =
-    fallback?.channel === "inapp"
-      ? fallback.model
-      : fallback === undefined
-        ? null
-        : fallback.channel === "mcp"
-          ? "MCP 通道"
-          : "上下文链接";
+    fallback === undefined
+      ? null
+      : fallback.channel === "inapp"
+        ? fallback.model
+        : CHANNEL_LABEL[fallback.channel];
   return (
     <p className="text-xs text-muted-foreground">
       已配置 {connections.length} 个 AI 通道

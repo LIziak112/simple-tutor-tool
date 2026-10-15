@@ -65,10 +65,12 @@ export function useAiCompanionLayout({
   const [open, setOpen] = useState(false);
   const [width, setWidth] = useState<number | null>(null);
   const [userCollapsed, setUserCollapsed] = useState(false);
-  /** dock 空间不足时的答题卡覆盖（true=代为收起） */
+  /**
+   * dock 空间不足时的答题卡覆盖（true=代为收起）。覆盖存在本身即
+   * 「关闭/空间回补时恢复」的承诺（用户另行操作会连覆盖带承诺一起取消），
+   * 不需要单独的 restorePromise 状态。
+   */
   const [navOverride, setNavOverride] = useState(false);
-  /** 覆盖是否仍承诺在关闭/空间回补时恢复（用户另行操作后取消） */
-  const [restorePromise, setRestorePromise] = useState(false);
   /**
    * 互斥让位（§7.2）：用户在 dock 空间不足时主动展开答题卡，AI 面板
    * 让位为独立面板，不把题目和纸面挤到不可用宽度；空间回补或用户重新
@@ -121,13 +123,8 @@ export function useAiCompanionLayout({
   const needsCollapse =
     open && mode === "dock" && !navFitsAlongDock && !userCollapsed;
   useEffect(() => {
-    if (needsCollapse && !navOverride) {
-      setNavOverride(true);
-      setRestorePromise(true);
-    } else if (!needsCollapse && navOverride) {
-      setNavOverride(false);
-      setRestorePromise(false);
-    }
+    if (needsCollapse && !navOverride) setNavOverride(true);
+    else if (!needsCollapse && navOverride) setNavOverride(false);
   }, [needsCollapse, navOverride]);
   // 互斥让位在空间回补后解除（AI 回 dock，答题卡保持用户展开的选择）
   useEffect(() => {
@@ -157,18 +154,16 @@ export function useAiCompanionLayout({
 
   const closePanel = useCallback(() => {
     setOpen(false);
-    // 仅在用户未另行操作时恢复答题卡原状态（toggleNavigator 已取消承诺）
-    if (navOverride && restorePromise) setNavOverride(false);
-    setRestorePromise(false);
+    // 仅在用户未另行操作时恢复答题卡原状态（toggleNavigator 已取消覆盖）
+    if (navOverride) setNavOverride(false);
     setYieldDock(false);
-  }, [navOverride, restorePromise]);
+  }, [navOverride]);
 
   const toggleNavigator = useCallback(() => {
     if (navOverride) {
-      // 覆盖期间的主动操作：尊重用户新选择（展开）并取消恢复承诺；
-      // 窄空间互斥——AI 面板让位为独立面板，不与用户抢控制。
+      // 覆盖期间的主动操作：尊重用户新选择（展开），覆盖连同恢复承诺
+      // 一起取消；窄空间互斥——AI 面板让位为独立面板，不与用户抢控制。
       setNavOverride(false);
-      setRestorePromise(false);
       setUserCollapsed(false);
       setYieldDock(true);
     } else if (userCollapsed) {

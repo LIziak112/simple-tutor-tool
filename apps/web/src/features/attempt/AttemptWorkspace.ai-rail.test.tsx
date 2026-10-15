@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import type { AttemptQuestionPublic } from "@tutor/contract";
-import { forwardRef, type ReactNode, useEffect, useRef } from "react";
+import { forwardRef, type ReactNode, useEffect, useRef, useState } from "react";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -12,6 +12,7 @@ import {
   type AiCompanionLayoutController,
   useAiCompanionLayout,
 } from "@/features/student-ai/ai-companion-layout";
+import { stubElementWidth } from "@/test/stub-element-width";
 import {
   AttemptEditorProvider,
   useAttemptEditor,
@@ -33,7 +34,6 @@ const probe = vi.hoisted(() => ({
   overlayMounts: 0,
   overlayUnmounts: 0,
   questions: [] as AttemptQuestionPublic[],
-  undoStack: ["初始笔画"],
 }));
 
 vi.mock("@/features/annotation/QuestionAnnotationOverlay", () => ({
@@ -74,25 +74,9 @@ const QUESTION: AttemptQuestionPublic = {
   hintCount: 0,
 };
 
-/** 宽度桩（同 student-ai 布局测试） */
-let widthValue = 1400;
-let restoreWidthMocks: () => void;
-function stubWidth() {
-  const offset = vi
-    .spyOn(HTMLElement.prototype, "offsetWidth", "get")
-    .mockImplementation(() => widthValue);
-  const rect = vi
-    .spyOn(HTMLElement.prototype, "getBoundingClientRect")
-    .mockImplementation(() => ({ width: widthValue, height: 100 }) as DOMRect);
-  return () => {
-    offset.mockRestore();
-    rect.mockRestore();
-  };
-}
-function setWidth(next: number) {
-  widthValue = next;
-  fireEvent(window, new Event("resize"));
-}
+/** 宽度桩（@/test/stub-element-width，与 student-ai 布局测试共用） */
+let width: ReturnType<typeof stubElementWidth>;
+const setWidth = (next: number) => width.setWidth(next);
 
 const captured: { controller: AiCompanionLayoutController | null } = {
   controller: null,
@@ -109,8 +93,10 @@ function RegisterFlush({ impl }: { impl: () => Promise<void> }) {
 }
 
 function Harness({ flushImpl }: { flushImpl: () => Promise<void> }) {
+  // 惰性初始化：rerender 换 flushImpl 时不重建 client（缓存与订阅保持）
+  const [queryClient] = useState(() => new QueryClient());
   return (
-    <QueryClientProvider client={new QueryClient()}>
+    <QueryClientProvider client={queryClient}>
       <AttemptEditorProvider>
         <MemoryRouter>
           <HarnessInner flushImpl={flushImpl} />
@@ -171,12 +157,10 @@ const railState = () =>
 
 let scrollSpies: (() => void)[] = [];
 beforeEach(() => {
-  widthValue = 1400;
-  restoreWidthMocks = stubWidth();
+  width = stubElementWidth();
   probe.overlayMounts = 0;
   probe.overlayUnmounts = 0;
   probe.questions = [];
-  probe.undoStack = ["初始笔画"];
   captured.controller = null;
   vi.stubGlobal(
     "matchMedia",
@@ -206,7 +190,7 @@ beforeEach(() => {
   ];
 });
 afterEach(() => {
-  restoreWidthMocks();
+  width.restore();
   vi.unstubAllGlobals();
   for (const restore of scrollSpies) restore();
   scrollSpies = [];
@@ -251,7 +235,6 @@ describe("SAI-19 伴学栏组合层", () => {
     const view = render(<Harness flushImpl={failingFlush} />);
     expect(probe.overlayMounts).toBeGreaterThan(0);
     const mountsBefore = probe.overlayMounts;
-    const undoBefore = [...probe.undoStack];
 
     await openViaTrigger();
     // 布局完全不变：面板未开、无对话框、题面原位
@@ -262,8 +245,9 @@ describe("SAI-19 伴学栏组合层", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(screen.getByRole("alert")).toHaveTextContent("本机稿写入失败");
     // 未命中笔迹不消失、redo/undo 历史保留：控制器未卸载未重挂
+    // （真实撤销栈在真实标画控制器内，mock 层以不重挂为其结构证明；
+    // flush 不清撤销历史另由 SAI-10 AttemptEditorContext 契约测试覆盖）
     expect(probe.overlayMounts).toBe(mountsBefore);
-    expect(probe.undoStack).toEqual(undoBefore);
 
     // 落盘恢复后重开成功，警示清除
     view.rerender(<Harness flushImpl={async () => {}} />);

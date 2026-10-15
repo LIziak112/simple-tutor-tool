@@ -31,6 +31,7 @@ import {
 } from "@/components/ui/dialog";
 import { ApiError } from "@/lib/api";
 import { copyText } from "@/lib/copy";
+import { CHANNEL_LABEL } from "./ai-channel-label";
 import {
   studentAiConnectionDraftKey,
   useCreateStudentAiConnection,
@@ -92,13 +93,6 @@ interface Notice {
   readonly tone: "error" | "ok" | "info";
   readonly text: string;
 }
-
-/** 通道中文名(列表徽章与表单 radio 共用) */
-const CHANNEL_LABEL: Record<AiChannel, string> = {
-  inapp: "页内 AI",
-  mcp: "MCP 工具",
-  link: "上下文链接",
-};
 
 /** verifyStatus 徽章文案:已配置 / 验证成功 / 暂不可用分开显示 */
 function verifyBadgeOf(connection: AiConnectionPublic): {

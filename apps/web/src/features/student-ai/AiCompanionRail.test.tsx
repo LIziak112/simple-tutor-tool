@@ -8,10 +8,11 @@ import {
   within,
 } from "@testing-library/react";
 import type { AiConnectionListData } from "@tutor/contract";
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchStudentAiConnectionsApi } from "@/lib/api";
+import { stubElementWidth } from "@/test/stub-element-width";
 import { AiCompanionRail, AiCompanionTrigger } from "./AiCompanionRail";
 import {
   type AiCompanionLayoutController,
@@ -39,25 +40,9 @@ vi.mock("@/lib/api", async (importOriginal) => {
 });
 const mockedFetch = vi.mocked(fetchStudentAiConnectionsApi);
 
-/** 宽度桩（同布局控制器测试） */
-let widthValue = 1400;
-let restoreWidthMocks: () => void;
-function stubWidth() {
-  const offset = vi
-    .spyOn(HTMLElement.prototype, "offsetWidth", "get")
-    .mockImplementation(() => widthValue);
-  const rect = vi
-    .spyOn(HTMLElement.prototype, "getBoundingClientRect")
-    .mockImplementation(() => ({ width: widthValue, height: 100 }) as DOMRect);
-  return () => {
-    offset.mockRestore();
-    rect.mockRestore();
-  };
-}
-function setWidth(next: number) {
-  widthValue = next;
-  fireEvent(window, new Event("resize"));
-}
+/** 宽度桩（@/test/stub-element-width，与布局控制器测试共用） */
+let width: ReturnType<typeof stubElementWidth>;
+const setWidth = (next: number) => width.setWidth(next);
 
 const SETTINGS_HREF = "/s/settings/ai?from=%2Fs%2Fassignments%2Fa1";
 
@@ -75,6 +60,9 @@ function RailHarness({
   const railRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const editor = useRef({ flush: vi.fn(async () => {}) });
+  // 惰性初始化：控制器状态变化引起重渲染时不重建 client（避免缓存清零
+  // 重发请求与 QueryClient 定时器成倍分配）
+  const [queryClient] = useState(() => new QueryClient());
   const controller = useAiCompanionLayout({
     containerRef: railRef,
     editor: editor.current,
@@ -82,7 +70,7 @@ function RailHarness({
   });
   captured.controller = controller;
   return (
-    <QueryClientProvider client={new QueryClient()}>
+    <QueryClientProvider client={queryClient}>
       <MemoryRouter>
         <AiCompanionTrigger ref={triggerRef} controller={controller} />
         <AiCompanionRail
@@ -107,8 +95,7 @@ const openViaTrigger = async () => {
 };
 
 beforeEach(() => {
-  widthValue = 1400;
-  restoreWidthMocks = stubWidth();
+  width = stubElementWidth();
   captured.controller = null;
   vi.stubGlobal(
     "matchMedia",
@@ -125,7 +112,7 @@ beforeEach(() => {
   );
 });
 afterEach(() => {
-  restoreWidthMocks();
+  width.restore();
   vi.unstubAllGlobals();
 });
 
@@ -140,6 +127,19 @@ function inappConnection() {
     isDefault: true,
     verifyStatus: "verified" as const,
     verifiedAt: "2026-10-16T00:00:00Z",
+    createdAt: "2026-10-15T00:00:00Z",
+    updatedAt: "2026-10-15T00:00:00Z",
+  };
+}
+
+function mcpConnection() {
+  return {
+    id: "22222222-2222-4222-8222-222222222222",
+    channel: "mcp" as const,
+    tokenFingerprint: "ab12cd34",
+    isDefault: true,
+    verifyStatus: "unverified" as const,
+    verifiedAt: null,
     createdAt: "2026-10-15T00:00:00Z",
     updatedAt: "2026-10-15T00:00:00Z",
   };
@@ -207,6 +207,22 @@ describe("SAI-19 伴学栏视图壳", () => {
     expect(within(panel).queryByRole("button", { name: /发送/ })).toBeNull();
   });
 
+  it("mcp/link 默认通道按统一通道名显示，不虚构模型", async () => {
+    mockedFetch.mockResolvedValue({
+      connections: [mcpConnection()],
+    } as AiConnectionListData);
+    render(<RailHarness />);
+    await openViaTrigger();
+    const panel = screen.getByRole("complementary", { name: "AI 助教" });
+    // 标签来自 CHANNEL_LABEL 单源（与连接管理页一致），不显示不存在的 model
+    expect(
+      await within(panel).findByText(/默认：MCP 工具/),
+    ).toBeInTheDocument();
+    expect(
+      within(panel).queryByText(/默认：undefined/),
+    ).not.toBeInTheDocument();
+  });
+
   it("必须先测⑥：reduced-motion 下打开不被动画等待阻塞；dock 面板 Esc 关闭并焦点返回触发按钮", async () => {
     vi.stubGlobal(
       "matchMedia",
@@ -242,7 +258,7 @@ describe("SAI-19 伴学栏视图壳", () => {
   });
 
   it("必须先测⑥：窄屏独立面板 Esc 关闭并焦点返回触发按钮", async () => {
-    widthValue = 500;
+    setWidth(500);
     mockedFetch.mockResolvedValue({ connections: [] } as AiConnectionListData);
     render(<RailHarness />);
     // 模态打开后主区进 aria-hidden，触发按钮先取引用再开面板

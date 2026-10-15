@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { useRef } from "react";
 import {
   afterEach,
@@ -9,6 +9,7 @@ import {
   type Mock,
   vi,
 } from "vitest";
+import { stubElementWidth } from "@/test/stub-element-width";
 import {
   AI_COMPANION_DOCK_MIN_WIDTH,
   AI_COMPANION_NAV_EXPAND_MIN_WIDTH,
@@ -28,25 +29,8 @@ import {
  */
 
 /** 宽度桩：可控的当前宽度值（offsetWidth 与 getBoundingClientRect 同步） */
-let widthValue = 1400;
-let restoreWidthMocks: () => void;
-function stubWidth() {
-  const offset = vi
-    .spyOn(HTMLElement.prototype, "offsetWidth", "get")
-    .mockImplementation(() => widthValue);
-  const rect = vi
-    .spyOn(HTMLElement.prototype, "getBoundingClientRect")
-    .mockImplementation(() => ({ width: widthValue, height: 100 }) as DOMRect);
-  return () => {
-    offset.mockRestore();
-    rect.mockRestore();
-  };
-}
-/** 模拟设备宽度变化（旋转/分屏/缩放） */
-function setWidth(next: number) {
-  widthValue = next;
-  fireEvent(window, new Event("resize"));
-}
+let width: ReturnType<typeof stubElementWidth>;
+const setWidth = (next: number) => width.setWidth(next);
 
 interface FakeEditor extends AiCompanionLayoutEditor {
   flush: Mock<AiCompanionLayoutEditor["flush"]>;
@@ -101,11 +85,10 @@ const toggleNav = () =>
   });
 
 beforeEach(() => {
-  widthValue = 1400;
-  restoreWidthMocks = stubWidth();
+  width = stubElementWidth();
   captured.controller = null;
 });
-afterEach(() => restoreWidthMocks());
+afterEach(() => width.restore());
 
 describe("SAI-19 伴学栏布局控制器", () => {
   it("必须先测①：开/关 AI、开/关左答题卡、再开 AI——恢复状态遵守用户主动选择", async () => {
@@ -165,7 +148,6 @@ describe("SAI-19 伴学栏布局控制器", () => {
   });
 
   it("必须先测②：打开前对当前题收笔等本机落盘；落盘失败布局不变并如实报错", async () => {
-    const undoStack = ["笔画1"];
     const editor: FakeEditor = {
       flush: vi.fn(async () => {
         throw new Error("本机稿写入失败");
@@ -174,10 +156,11 @@ describe("SAI-19 伴学栏布局控制器", () => {
     render(<Harness editor={editor} />);
     expect(await openPanel()).toBe(false);
     expect(editor.flush).toHaveBeenCalledWith("q1");
-    // 布局完全不变：AI 未开、答题卡维持原状
+    // 布局完全不变：AI 未开、答题卡维持原状。undo/笔迹保留不在本层断言
+    // （mock editor 无从观测）：由组合层「不重挂」+ SAI-10 flush 契约测试
+    // （AttemptEditorContext「不改变编辑状态、不销毁控制器」）共同保证。
     expect(stateOf()).toEqual({ ai: "closed", nav: "open" });
     expect(screen.getByRole("alert")).toHaveTextContent("本机稿写入失败");
-    expect(undoStack).toEqual(["笔画1"]);
 
     // 落盘恢复后重开成功，且错误提示清除
     editor.flush.mockImplementation(async () => {});
