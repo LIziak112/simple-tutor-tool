@@ -35,7 +35,8 @@ import { attemptTeacherId, requireUsableAttempt } from "../attempt-service.ts";
 
 /**
  * 三层教学配置的读取接口。SAI-04 只定义协议并以测试夹具注入；
- * SAI-05 建表后提供数据库实现（唯一实现，通道不得旁路）。
+ * SAI-05 起提供唯一数据库实现 sqliteAiPolicyConfigSource
+ * （ai-policy-config-source.ts，通道不得旁路）。
  *
  * 无行语义（与技术方案 §2.1 存储形态一致，由实现方保证）：
  * - teacherDefaultMode：无行 = 未设置 → 返回 DEFAULT_AI_TEACHER_MODE（open_study）；

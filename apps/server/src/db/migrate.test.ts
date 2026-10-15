@@ -4,10 +4,21 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { sqliteAiPolicyConfigSource } from "../services/ai-companion/ai-policy-config-source.ts";
 import { createDb } from "./client.ts";
 import { resolveMigrationsFolder, runMigrations } from "./migrate.ts";
-import { assignments, courses, questions, students } from "./schema";
-import { makeMigrationsFolderUpTo } from "./test-utils.ts";
+import {
+  aiPolicyOverrides,
+  aiTeacherSettings,
+  assignments,
+  attempts,
+  courses,
+  questions,
+  responses,
+  students,
+  teachers,
+} from "./schema";
+import { createTestDb, makeMigrationsFolderUpTo } from "./test-utils.ts";
 
 let dir: string;
 
@@ -384,5 +395,258 @@ describe("T6R.15 迁移：notes 封存与反思列（空库与存量库兼容）
     expect(db.$client.pragma("foreign_key_check")).toHaveLength(0);
     expect(() => runMigrations(db)).not.toThrow();
     db.$client.close();
+  });
+});
+
+describe("SAI-05 迁移：学生端 AI 伴学九表（空库、存量库与临时数据目录往返）", () => {
+  /** SAI-05 前最后一个迁移 tag（0035） */
+  const PRE_SAI05_LAST_TAG = "0035_aspiring_logan";
+
+  /** 九表名（存在性断言与升级检查共用） */
+  const AI_TABLES = [
+    "ai_connections",
+    "ai_facts",
+    "ai_messages",
+    "ai_policy_overrides",
+    "ai_quick_buttons",
+    "ai_share_tickets",
+    "ai_task_materials",
+    "ai_tasks",
+    "ai_teacher_settings",
+  ] as const;
+
+  function expectAiTablesExist(db: ReturnType<typeof createDb>): void {
+    const tables = db.$client
+      .prepare(
+        `SELECT name FROM sqlite_master WHERE type = 'table' AND name IN (${AI_TABLES.map(() => "?").join(",")}) ORDER BY name`,
+      )
+      .all(...AI_TABLES) as Array<{ name: string }>;
+    expect(tables.map((r) => r.name)).toEqual([...AI_TABLES]);
+  }
+
+  /**
+   * 在 0035 边界库上种入存量业务数据（教师→学生→作业→attempt→response）。
+   * 边界即当前库形态（仅缺 ai_* 九表），全部走 drizzle 当前表模型即可——
+   * 不像 T6R.2 边界那样需要原生 SQL（那儿的边界库缺 frozen_at 等后续列）。
+   */
+  function seedPreAiData(db: ReturnType<typeof createDb>): {
+    teacherId: string;
+    studentId: string;
+    assignmentId: string;
+    attemptId: string;
+    responseId: string;
+  } {
+    const now = new Date().toISOString();
+    const teacherId = randomUUID();
+    db.insert(teachers)
+      .values({
+        id: teacherId,
+        loginName: "teacher-ai",
+        isAdmin: false,
+        disabledAt: null,
+        passwordHash: null,
+        apiToken: null,
+        createdAt: now,
+      })
+      .run();
+    const studentId = randomUUID();
+    db.insert(students)
+      .values({
+        id: studentId,
+        teacherId,
+        displayName: "张三",
+        loginName: "张三",
+        passwordHash: null,
+        linkToken: `link-${randomUUID()}`,
+        linkEnabled: true,
+        passwordEnabled: false,
+        note: null,
+        archivedAt: null,
+        createdAt: now,
+      })
+      .run();
+    const assignmentId = randomUUID();
+    db.insert(assignments)
+      .values({
+        id: assignmentId,
+        teacherId,
+        unitId: null,
+        courseId: null,
+        title: "练习四",
+        dueAt: null,
+        answerRelease: "on_submit",
+        deletedAt: null,
+        createdAt: now,
+      })
+      .run();
+    const attemptId = randomUUID();
+    db.insert(attempts)
+      .values({
+        id: attemptId,
+        studentId,
+        sourceType: "assignment",
+        assignmentId,
+        courseId: null,
+        unitId: null,
+        lectureId: null,
+        attemptNo: 1,
+        status: "draft",
+        startedAt: now,
+        submittedAt: null,
+        frozenAt: now,
+        legacyUnverified: false,
+      })
+      .run();
+    const responseId = randomUUID();
+    db.insert(responses)
+      .values({
+        id: responseId,
+        attemptId,
+        questionId: "练习四-1",
+        questionSnapshotJson: '{"id":"练习四-1"}',
+      })
+      .run();
+    return { teacherId, studentId, assignmentId, attemptId, responseId };
+  }
+
+  it("空库（全新文件库）迁移后九表存在且迁移记录与 journal 一致", () => {
+    const db = createDb(join(dir, "fresh-ai.db"));
+    runMigrations(db);
+    expectAiTablesExist(db);
+    const rows = db.$client
+      .prepare("SELECT count(*) AS n FROM __drizzle_migrations")
+      .get() as { n: number };
+    expect(rows.n).toBe(countJournalEntries());
+    db.$client.close();
+  });
+
+  it("内存库同样可迁移到九表形态（createTestDb 走全部迁移 + 回填）", () => {
+    const db = createTestDb();
+    expectAiTablesExist(db);
+    db.$client.close();
+  });
+
+  it("带存量数据的库升级：旧作答仍可读取、教师无 ai_teacher_settings 行（继承语义不写成显式开放）、幂等且外键干净", () => {
+    const db = createDb(join(dir, "legacy-ai.db"));
+    // 截断迁移目录建出 SAI-05 前的旧结构（真实 0000–0035 迁移链）
+    migrate(db, {
+      migrationsFolder: makeMigrationsFolderUpTo(PRE_SAI05_LAST_TAG),
+    });
+    const seeded = seedPreAiData(db);
+    // 锁定边界：旧库确实没有 ai_* 表（升级路径真实存在）
+    const before = db.$client
+      .prepare(
+        "SELECT count(*) AS n FROM sqlite_master WHERE type = 'table' AND name LIKE 'ai_%'",
+      )
+      .get() as { n: number };
+    expect(before.n).toBe(0);
+
+    // 模拟旧库启动：补应用 SAI-05 迁移
+    expect(() => runMigrations(db)).not.toThrow();
+    expectAiTablesExist(db);
+
+    // 旧作答仍可按原样读取（升级不丢不改）
+    const attemptRow = db.$client
+      .prepare("SELECT student_id, status FROM attempts WHERE id = ?")
+      .get(seeded.attemptId) as Record<string, string>;
+    expect(attemptRow.student_id).toBe(seeded.studentId);
+    expect(attemptRow.status).toBe("draft");
+    const responseRow = db.$client
+      .prepare("SELECT question_id FROM responses WHERE id = ?")
+      .get(seeded.responseId) as { question_id: string };
+    expect(responseRow.question_id).toBe("练习四-1");
+
+    // 无配置旧账号：迁移不为存量教师回填 ai_teacher_settings 行（无行 = 继承 =
+    // 默认 open_study；不统一写成显式开放导致继承语义消失）
+    const settingsRows = db.$client
+      .prepare("SELECT count(*) AS n FROM ai_teacher_settings")
+      .get() as { n: number };
+    expect(settingsRows.n).toBe(0);
+    // sqlite 读取层口径与迁移一致：无行 → 默认开放、覆盖无行 → 继承
+    expect(
+      sqliteAiPolicyConfigSource.teacherDefaultMode(db, seeded.teacherId),
+    ).toBe("open_study");
+    expect(
+      sqliteAiPolicyConfigSource.studentOverrideMode(db, seeded.studentId),
+    ).toBe("inherit");
+    expect(
+      sqliteAiPolicyConfigSource.assignmentOverrideMode(
+        db,
+        seeded.assignmentId,
+      ),
+    ).toBe("inherit");
+
+    // 外键完整性干净；再次迁移幂等（重复启动不重复建表/丢数据）
+    expect(db.$client.pragma("foreign_key_check")).toHaveLength(0);
+    expect(() => runMigrations(db)).not.toThrow();
+    db.$client.close();
+  });
+
+  it("临时数据目录完整升级往返：旧库升级→写 AI 配置→关闭重开→新配置与旧作答均仍可读取", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "tutor-sai05-upgrade-"));
+    try {
+      const dbPath = join(dataDir, "tutor.db");
+      // 第一段：0035 旧库 + 存量数据
+      const legacy = createDb(dbPath);
+      migrate(legacy, {
+        migrationsFolder: makeMigrationsFolderUpTo(PRE_SAI05_LAST_TAG),
+      });
+      const seeded = seedPreAiData(legacy);
+      legacy.$client.close();
+
+      // 第二段：升级启动（runMigrations + 写入 AI 配置后正常退出）
+      const upgraded = createDb(dbPath);
+      runMigrations(upgraded);
+      upgraded
+        .insert(aiTeacherSettings)
+        .values({
+          teacherId: seeded.teacherId,
+          defaultMode: "guided_only",
+          promptsOpen: null,
+          promptsGuided: null,
+          promptsReview: null,
+          updatedAt: new Date().toISOString(),
+        })
+        .run();
+      upgraded
+        .insert(aiPolicyOverrides)
+        .values({
+          subjectType: "student",
+          subjectId: seeded.studentId,
+          mode: "post_submit_only",
+          updatedAt: new Date().toISOString(),
+        })
+        .run();
+      upgraded.$client.close();
+
+      // 第三段：再次启动（重复启动幂等）——旧作答与新配置都在
+      const reopened = createDb(dbPath);
+      runMigrations(reopened);
+      expectAiTablesExist(reopened);
+      const rows = reopened.$client
+        .prepare("SELECT count(*) AS n FROM __drizzle_migrations")
+        .get() as { n: number };
+      expect(rows.n).toBe(countJournalEntries());
+      const attemptStill = reopened.$client
+        .prepare("SELECT count(*) AS n FROM attempts WHERE id = ?")
+        .get(seeded.attemptId) as { n: number };
+      expect(attemptStill.n).toBe(1);
+      // 旧配置仍可读取（升级后写入的 AI 配置在重启后原样保留）
+      expect(
+        sqliteAiPolicyConfigSource.teacherDefaultMode(
+          reopened,
+          seeded.teacherId,
+        ),
+      ).toBe("guided_only");
+      expect(
+        sqliteAiPolicyConfigSource.studentOverrideMode(
+          reopened,
+          seeded.studentId,
+        ),
+      ).toBe("post_submit_only");
+      reopened.$client.close();
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
   });
 });

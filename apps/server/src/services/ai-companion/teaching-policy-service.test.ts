@@ -12,6 +12,8 @@ import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import type { Db } from "../../db/client.ts";
 import {
+  aiPolicyOverrides,
+  aiTeacherSettings,
   assignments,
   attempts,
   courseStudents,
@@ -24,6 +26,7 @@ import { createTestDb, TEST_TEACHER_ID } from "../../db/test-utils.ts";
 import { HttpError } from "../../lib/http-error.ts";
 import { makeStudent } from "../../test/note-fixtures.ts";
 import { answersReleased } from "../attempt-service.ts";
+import { sqliteAiPolicyConfigSource } from "./ai-policy-config-source.ts";
 import {
   type AiPolicyConfigSource,
   questionPhaseOf,
@@ -1217,3 +1220,168 @@ function assignmentRow(db: Db, assignmentId: string) {
   }
   return row;
 }
+
+// ---------- SAI-05：AiPolicyConfigSource 的 sqlite 读取层（真表集成） ----------
+
+describe("sqliteAiPolicyConfigSource 真表读取（SAI-05 落表后的唯一实现）", () => {
+  /** 写一行教师默认设置 */
+  function setTeacherDefault(
+    db: Db,
+    teacherId: string,
+    defaultMode: AiTeachingMode,
+  ): void {
+    db.insert(aiTeacherSettings)
+      .values({
+        teacherId,
+        defaultMode,
+        promptsOpen: null,
+        promptsGuided: null,
+        promptsReview: null,
+        updatedAt: NOW,
+      })
+      .run();
+  }
+
+  /** 写一行覆盖（student / assignment 两命名空间） */
+  function setOverride(
+    db: Db,
+    subjectType: "student" | "assignment",
+    subjectId: string,
+    mode: "open_study" | "guided_only" | "post_submit_only",
+  ): void {
+    db.insert(aiPolicyOverrides)
+      .values({ subjectType, subjectId, mode, updatedAt: NOW })
+      .run();
+  }
+
+  it("无行语义：教师无行 → DEFAULT_AI_TEACHER_MODE，学生/作业无行 → inherit（迁移不回填行）", () => {
+    const db = createTestDb();
+    const studentId = makeStudent(db);
+    const assignmentId = insertAssignment(db);
+    expect(
+      sqliteAiPolicyConfigSource.teacherDefaultMode(db, TEST_TEACHER_ID),
+    ).toBe(DEFAULT_AI_TEACHER_MODE);
+    expect(sqliteAiPolicyConfigSource.studentOverrideMode(db, studentId)).toBe(
+      "inherit",
+    );
+    expect(
+      sqliteAiPolicyConfigSource.assignmentOverrideMode(db, assignmentId),
+    ).toBe("inherit");
+    // 统一入口真表链路：全无行 → teacher_default / open_study
+    const attemptId = insertAttempt(db, { studentId, assignmentId });
+    insertResponse(db, attemptId, "q1");
+    const result = resolveAttemptQuestionAiPolicy(
+      db,
+      studentId,
+      attemptId,
+      "q1",
+      sqliteAiPolicyConfigSource,
+    );
+    expect(result.resolution).toEqual({
+      usable: true,
+      mode: "open_study",
+      reason: "teacher_default",
+    });
+    db.$client.close();
+  });
+
+  it("真值行 #3 / #7 真表版：教师默认 post + 学生继承 → 关闭；学生显式 open → 覆盖教师默认", () => {
+    const db = createTestDb();
+    setTeacherDefault(db, TEST_TEACHER_ID, "post_submit_only");
+    const inheritStudent = makeStudent(db);
+    const inheritAttempt = insertAttempt(db, { studentId: inheritStudent });
+    insertResponse(db, inheritAttempt, "q1");
+    expect(
+      resolveAttemptQuestionAiPolicy(
+        db,
+        inheritStudent,
+        inheritAttempt,
+        "q1",
+        sqliteAiPolicyConfigSource,
+      ).resolution,
+    ).toEqual({ usable: false, reason: "teacher_default_closed" });
+
+    setOverride(db, "student", inheritStudent, "open_study");
+    expect(
+      resolveAttemptQuestionAiPolicy(
+        db,
+        inheritStudent,
+        inheritAttempt,
+        "q1",
+        sqliteAiPolicyConfigSource,
+      ).resolution,
+    ).toEqual({
+      usable: true,
+      mode: "open_study",
+      reason: "student_override",
+    });
+    db.$client.close();
+  });
+
+  it("跨教师设置互不影响：教师 B 的默认不改变教师 A 学生的裁决", () => {
+    const db = createTestDb();
+    const teacherB = insertTeacher(db, "teacher-b");
+    setTeacherDefault(db, teacherB, "post_submit_only");
+    // 教师 A（TEST_TEACHER_ID）无行 → 默认开放；教师 A 学生不受 B 的设置影响
+    const studentA = makeStudent(db, TEST_TEACHER_ID);
+    const attemptA = insertAttempt(db, { studentId: studentA });
+    insertResponse(db, attemptA, "q1");
+    expect(
+      resolveAttemptQuestionAiPolicy(
+        db,
+        studentA,
+        attemptA,
+        "q1",
+        sqliteAiPolicyConfigSource,
+      ).resolution,
+    ).toEqual({
+      usable: true,
+      mode: "open_study",
+      reason: "teacher_default",
+    });
+    // 反向：B 的学生按 B 的默认关闭
+    const studentB = makeStudent(db, teacherB);
+    const attemptB = insertAttempt(db, { studentId: studentB });
+    insertResponse(db, attemptB, "q1");
+    expect(
+      resolveAttemptQuestionAiPolicy(
+        db,
+        studentB,
+        attemptB,
+        "q1",
+        sqliteAiPolicyConfigSource,
+      ).resolution,
+    ).toEqual({ usable: false, reason: "teacher_default_closed" });
+    db.$client.close();
+  });
+
+  it("覆盖命名空间分离：student 覆盖行不被 assignment 读取命中；作业覆盖真表生效", () => {
+    const db = createTestDb();
+    const studentId = makeStudent(db);
+    // 学生命名空间恰有与作业同 id 的行——assignment 读取不得命中
+    const sharedId = randomUUID();
+    setOverride(db, "student", sharedId, "post_submit_only");
+    expect(
+      sqliteAiPolicyConfigSource.assignmentOverrideMode(db, sharedId),
+    ).toBe("inherit");
+
+    const assignmentId = insertAssignment(db);
+    setOverride(db, "assignment", assignmentId, "guided_only");
+    const attemptId = insertAttempt(db, { studentId, assignmentId });
+    insertResponse(db, attemptId, "q1");
+    expect(
+      resolveAttemptQuestionAiPolicy(
+        db,
+        studentId,
+        attemptId,
+        "q1",
+        sqliteAiPolicyConfigSource,
+      ).resolution,
+    ).toEqual({
+      usable: true,
+      mode: "guided_only",
+      reason: "assignment_override",
+    });
+    db.$client.close();
+  });
+});
