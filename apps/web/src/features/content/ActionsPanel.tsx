@@ -1,4 +1,8 @@
-import type { ImportAction, ImportPreviewData } from "@tutor/contract";
+import type {
+  DocumentKind,
+  ImportAction,
+  ImportPreviewData,
+} from "@tutor/contract";
 import { CircleAlert, ListChecks } from "lucide-react";
 
 /**
@@ -6,15 +10,22 @@ import { CircleAlert, ListChecks } from "lucide-react";
  * - 动作清单：新增/更新单元（含题目细分：新增 n、更新 n（version+1）、保留 n）、
  *   新增/更新讲义、从回收站恢复标注；
  * - 注意事项：D18/D19 的导入 warning（其他文件夹同名讲义、保留题、未截止作业、
- *   配套讲义悬空 LECTURE_LINK_UNRESOLVED）。
+ *   配套讲义悬空 LECTURE_LINK_UNRESOLVED）；
+ * - 讲练页（kind=lesson，2026-10-15）：按「讲练页一件事」呈现——讲义动作用
+ *   「讲练页」文案，单元动作降为缩进的随堂练习附注（不单独进资源库，与
+ *   资源库隐藏嵌入单元的决策配套）；其余 kind 维持两条目呈现。
  * 单文件预览与批量展开行共用。
  */
 
-/** 动作 → 中文文案（folderName null = 未归类） */
-export function formatImportAction(action: ImportAction): string {
+/** 动作 → 中文文案（folderName null = 未归类；lesson 的讲义动作标「讲练页」） */
+export function formatImportAction(
+  action: ImportAction,
+  docKind: DocumentKind = "practice",
+): string {
   const where =
     action.folderName === null ? "未归类" : `文件夹「${action.folderName}」`;
   const restore = action.restore ? "；将从回收站恢复" : "";
+  const lectureNoun = docKind === "lesson" ? "讲练页" : "讲义";
   switch (action.kind) {
     case "createUnit":
       return `新增单元「${action.title}」（${where}）${restore}`;
@@ -27,26 +38,38 @@ export function formatImportAction(action: ImportAction): string {
       return `更新单元「${action.title}」（位于${where}）${detail}${restore}`;
     }
     case "createLecture":
-      return `新增讲义「${action.title}」（${where}）${restore}`;
+      return `新增${lectureNoun}「${action.title}」（${where}）${restore}`;
     case "updateLecture":
-      return `更新讲义「${action.title}」（位于${where}）${restore}`;
+      return `更新${lectureNoun}「${action.title}」（位于${where}）${restore}`;
   }
+}
+
+/** 讲练页的随堂练习附注（lesson 的单元动作不作为顶层「更新单元」条目） */
+function formatLessonPracticeNote(action: ImportAction): string {
+  const q = action.questions;
+  const detail =
+    q === undefined
+      ? ""
+      : `：新增题 ${q.inserted}、更新题 ${q.updated}（version+1）、保留题 ${q.kept}`;
+  return `└ 随堂练习「${action.title}」${detail}——练习存于讲练页内部，不单独进资源库`;
 }
 
 /** 「文件 → 存储名」实际名称段（方案 §5：批量表格内容列与单文件统计条共用） */
 export interface ImportStorageNames {
   /** 讲义段（如 `讲义「第4讲」`；多篇 → `讲义「第4讲」等 3 篇`）；null = 无讲义动作 */
   readonly lecture: string | null;
-  /** 单元段（如 `单元「练习四」`）；null = 无单元动作 */
+  /** 单元段（如 `单元「练习四」`）；null = 无单元动作（lesson 时恒 null——单元不单独呈现） */
   readonly unit: string | null;
 }
 
 /**
  * 动作清单 → 实际存储名称段（方案 §5：预览把「这个文件导进去会变成什么、叫什么名字」亮出来）。
- * 讲义动作取首篇名（多篇加「等 N 篇」）；单元动作取单元名（一个文件至多产出一个单元）。
+ * 讲义动作取首篇名（多篇加「等 N 篇」）；单元动作取单元名（一个文件至多产出一个单元）；
+ * kind=lesson 时讲义段用「讲练页」措辞、单元段不报（嵌入单元不单独显示）。
  */
 export function describeImportNames(
   actions: readonly ImportAction[],
+  docKind: DocumentKind = "practice",
 ): ImportStorageNames {
   const lectureTitles = actions
     .filter(
@@ -58,14 +81,18 @@ export function describeImportNames(
     (action) => action.kind === "createUnit" || action.kind === "updateUnit",
   );
   const firstLecture = lectureTitles[0];
+  const noun = docKind === "lesson" ? "讲练页" : "讲义";
   return {
     lecture:
       firstLecture === undefined
         ? null
         : lectureTitles.length > 1
-          ? `讲义「${firstLecture}」等 ${lectureTitles.length} 篇`
-          : `讲义「${firstLecture}」`,
-    unit: unitAction === undefined ? null : `单元「${unitAction.title}」`,
+          ? `${noun}「${firstLecture}」等 ${lectureTitles.length} 篇`
+          : `${noun}「${firstLecture}」`,
+    unit:
+      docKind === "lesson" || unitAction === undefined
+        ? null
+        : `单元「${unitAction.title}」`,
   };
 }
 
@@ -73,6 +100,8 @@ export function ActionsPanel({ preview }: { preview: ImportPreviewData }) {
   if (preview.actions.length === 0 && preview.warnings.length === 0) {
     return null;
   }
+  const docKind = preview.summary.kind ?? "practice";
+  const isLesson = docKind === "lesson";
   return (
     <section
       aria-labelledby="import-actions-heading"
@@ -88,14 +117,24 @@ export function ActionsPanel({ preview }: { preview: ImportPreviewData }) {
             将执行的动作
           </h2>
           <ul className="mt-2 space-y-1">
-            {preview.actions.map((action) => (
-              <li
-                key={`${action.kind}-${action.unitId ?? action.title}`}
-                className="text-sm"
-              >
-                {formatImportAction(action)}
-              </li>
-            ))}
+            {preview.actions.map((action) =>
+              isLesson &&
+              (action.kind === "createUnit" || action.kind === "updateUnit") ? (
+                <li
+                  key={`${action.kind}-${action.unitId ?? action.title}`}
+                  className="text-sm text-muted-foreground"
+                >
+                  {formatLessonPracticeNote(action)}
+                </li>
+              ) : (
+                <li
+                  key={`${action.kind}-${action.unitId ?? action.title}`}
+                  className="text-sm"
+                >
+                  {formatImportAction(action, docKind)}
+                </li>
+              ),
+            )}
           </ul>
         </>
       ) : null}

@@ -451,7 +451,8 @@ lecture: 第1讲 言语高频词语辨析（第1~10组）
 命题。[[正确]]
 ::::
 `;
-    // 预览：给 LESSON_LECTURE_TITLE_MISMATCH warning（不阻断提交）
+    // 预览：给 LESSON_LECTURE_TITLE_MISMATCH warning（不阻断提交）；
+    // summary 携带文档 kind（讲练页单件事呈现依据，2026-10-15）
     const preview = await postJson(
       app,
       "/api/teacher/import/preview",
@@ -460,15 +461,20 @@ lecture: 第1讲 言语高频词语辨析（第1~10组）
     );
     expect(preview.status).toBe(200);
     const previewBody = (await preview.json()) as {
-      data: { issues: { code: string }[] };
+      data: {
+        summary: { kind?: string };
+        issues: { code: string }[];
+      };
     };
+    expect(previewBody.data.summary.kind).toBe("lesson");
     expect(
       previewBody.data.issues.some(
         (i) => i.code === "LESSON_LECTURE_TITLE_MISMATCH",
       ),
     ).toBe(true);
 
-    // 提交：单元必须关联本次创建的讲练页，而不是同名的既有普通讲义
+    // 提交：单元必须关联本次创建的讲练页，而不是同名的既有普通讲义；
+    // 报告携带文档 kind
     const res = await postJson(
       app,
       "/api/teacher/import/commit",
@@ -476,6 +482,8 @@ lecture: 第1讲 言语高频词语辨析（第1~10组）
       cookie,
     );
     expect(res.status).toBe(200);
+    const commitBody = (await res.json()) as { data: { kind?: string } };
+    expect(commitBody.data.kind).toBe("lesson");
     const lessonLecture = db
       .select()
       .from(lectures)

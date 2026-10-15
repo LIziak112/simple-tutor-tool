@@ -12,6 +12,7 @@ import {
   importPreviewDataSchema,
   importPreviewOkSchema,
   importPreviewRequestSchema,
+  importSummarySchema,
   lectureDetailSchema,
   studentLectureDetailOkSchema,
   studentLectureDetailQuerySchema,
@@ -799,5 +800,40 @@ describe("T2A.3 preview-batch 与批次回看契约", () => {
         files: [],
       }).success,
     ).toBe(true);
+  });
+});
+
+// ---------- 2026-10-15：summary/commit 增文档 kind（可选，讲练页单件事呈现依据） ----------
+
+describe("importSummary/importCommitData 的 kind 字段（可选增量）", () => {
+  it("summary 携带 kind=lesson 通过；缺省（旧载荷/旧留档）也通过", () => {
+    const base = {
+      unitCount: 1,
+      lectureCount: 1,
+      questionCount: 10,
+      typeDistribution: { choice: 10 },
+    };
+    expect(
+      importSummarySchema.safeParse({ ...base, kind: "lesson" }).success,
+    ).toBe(true);
+    expect(importSummarySchema.safeParse(base).success).toBe(true);
+    expect(
+      importSummarySchema.safeParse({ ...base, kind: "unknown" }).success,
+    ).toBe(false);
+  });
+
+  it("commit data 携带 kind=lesson 通过；缺省（历史留档 JSON）也通过", () => {
+    const base = {
+      importId: "5b0b7ba4-6c07-4a5e-9df7-3b1e0d0b5c67",
+      courseId: null,
+      folderId: null,
+      units: [],
+      lectures: [],
+      questions: { inserted: 0, updated: 10 },
+    };
+    expect(
+      importCommitDataSchema.safeParse({ ...base, kind: "lesson" }).success,
+    ).toBe(true);
+    expect(importCommitDataSchema.safeParse(base).success).toBe(true);
   });
 });

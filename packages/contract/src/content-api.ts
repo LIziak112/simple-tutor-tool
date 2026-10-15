@@ -1,6 +1,10 @@
 import { z } from "zod";
 import { enabledCapabilitiesFieldSchema } from "./capability.ts";
-import { lintIssueSchema, questionTypeSchema } from "./content.ts";
+import {
+  documentKindSchema,
+  lintIssueSchema,
+  questionTypeSchema,
+} from "./content.ts";
 
 /**
  * 内容 API 契约（T1.10 起为权威定义）：教师端导入预览与提交的请求体/响应 data、
@@ -88,6 +92,12 @@ export const importCommitRequestSchema = importPreviewRequestSchema.extend({
 
 /** 预览摘要（commit 响应不含摘要，报告见 importCommitDataSchema） */
 export const importSummarySchema = z.object({
+  /**
+   * 文档形态（2026-10-15 起服务端填充，可选增量：缺省视为 practice）：
+   * kind=lesson 时前端按「讲练页一件事」呈现（讲义动作标「讲练页」、
+   * 单元动作降为随堂练习附注），与资源库隐藏嵌入单元的决策配套
+   */
+  kind: documentKindSchema.optional(),
   /** 练习单元数 */
   unitCount: z.number().int().min(0),
   /** 讲义篇数（H1 切分） */
@@ -197,6 +207,8 @@ export const importQuestionsReportSchema = z.object({
 export const importCommitDataSchema = z.object({
   /** imports 留档行 id（crypto.randomUUID，§0.3） */
   importId: z.uuid(),
+  /** 文档形态（2026-10-15 起填充；可选——历史留档 JSON 无此字段） */
+  kind: documentKindSchema.optional(),
   /** 关联课程 id：兼容路径 = courseId；addToCourse = 目标课程；其余 null */
   courseId: z.uuid().nullable(),
   /** 实际落库的目标文件夹 id；null = 未归类 */
