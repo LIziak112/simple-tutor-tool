@@ -1,0 +1,1579 @@
+import { createHash, randomUUID } from "node:crypto";
+import type {
+  AiChannel,
+  AiFactType,
+  AiPolicyConfigSource,
+  AiTaskAction,
+  AiTaskPublic,
+  AiTaskStatus,
+} from "@tutor/contract";
+import {
+  AI_MCP_LEASE_MINUTES,
+  AI_OUTBOUND_TIMEOUT_MS,
+  AI_REPLY_MAX_CHARS,
+  AI_TASK_ACTIVE_PER_QUESTION,
+  AI_TASK_ALLOWED_ACTIONS,
+  AI_TASK_DAILY_PER_STUDENT,
+  AI_TASK_PENDING_PER_STUDENT,
+  AI_TASK_QUEUE_BUCKETS,
+} from "@tutor/contract";
+import { and, asc, desc, eq, gt, inArray, lt, lte, or } from "drizzle-orm";
+import type { Db } from "../../db/client.ts";
+import {
+  type AiTaskRow,
+  aiFacts,
+  aiMessages,
+  aiTasks,
+} from "../../db/schema.ts";
+import { HttpError } from "../../lib/http-error.ts";
+import { sqliteAiPolicyConfigSource } from "./ai-policy-config-source.ts";
+import {
+  buildAiContextBundle,
+} from "./student-ai-context.ts";
+import {
+  aiTaskMaterialsPublicOf,
+  loadAiTaskMaterialRows,
+} from "./student-ai-materials.ts";
+import { resolveAttemptQuestionAiPolicy } from "./teaching-policy-service.ts";
+
+/**
+ * SAI-12 可靠任务队列（B06；技术方案 §3.4/§6、需求规格 §8）。
+ *
+ * 在 SAI-11 固定快照之上实现供 worker（页内派发）与 MCP 客户端共用的队列：
+ * - 状态机沿用 B00 已确认状态表（aiTaskStatusSchema 八态），本模块不另造状态；
+ * - **状态转换集中实现**：唯一写入口 applyTransition（合法转换表 + 按旧状态
+ *   CAS），路由/worker/MCP 只能调本模块操作函数，无法直接 set status 绕过；
+ * - 所有写操作单事务（BEGIN IMMEDIATE）：better-sqlite3 同步模型下多连接
+ *   并发由写锁串行化，CAS（status/generation/leaseToken 条件更新）保证
+ *   「同时领取只有一个 lease / 迟到回执不覆盖首次成功」的唯一合法结果；
+ * - 网络出站、大图编码都不在本模块事务内（worker 先 begin 落库代次、事务外
+ *   fetch、再按代次 CAS 写回——技术方案 §6）；
+ * - 权限在每次创建/领取/派发前经 SAI-04 统一裁决实时重校验（教师刚改设置
+ *   立即生效）；查看态（replyDeliveredAt）与处理状态（status）相互独立，
+ *   archived/opened 不作为任务终结状态覆盖 replied。
+ */
+
+// ---------- 服务层运营常量（契约 §9 限额单源在 @tutor/contract，此处只补运营边界） ----------
+
+/** MCP 租约累计占用上限（自本次领取起 60 分钟；续租不得无限占用） */
+export const AI_MCP_LEASE_MAX_TOTAL_MS = 60 * 60 * 1000;
+
+/** failed/uncertain 的显式重试次数上限（有界次数，绝不自动重发） */
+export const AI_TASK_MAX_RETRY_COUNT = 3;
+
+/** 重试退避基数：nextRunAt = 失败时刻 + base × 2^retryCount（封顶 MAX） */
+export const AI_TASK_RETRY_BACKOFF_BASE_MS = 30_000;
+
+/** 重试退避封顶（10 分钟） */
+export const AI_TASK_RETRY_BACKOFF_MAX_MS = 10 * 60 * 1000;
+
+/** FIFO 领取单次扫描候选上限（防策略全禁时全表扫描；领取数由调用方批次控制） */
+const CLAIM_SCAN_LIMIT = 50;
+
+/** 北京时间相对 UTC 固定偏移（AI 日限额按北京自然日，作业列表同口径） */
+const BEIJING_OFFSET_MS = 8 * 3_600_000;
+
+const DAY_MS = 86_400_000;
+
+// ---------- 事务句柄统一（tx 与 Db 同一底层连接；结构同源） ----------
+
+/** db.transaction 回调的事务参数类型（与 Db 同源的结构类型） */
+type QueueTx = Parameters<Parameters<Db["transaction"]>[0]>[0];
+
+/**
+ * 事务参数按 Db 传递：两者包装同一底层 better-sqlite3 连接，查询方法签名
+ * 同源；断言只发生在本函数一处（不用 any，不绕过类型检查的其余部分）。
+ */
+function asDb(handle: Db | QueueTx): Db {
+  return handle as Db;
+}
+
+// ---------- 时间与工具 ----------
+
+interface NowSpec {
+  readonly date: Date;
+  readonly iso: string;
+}
+
+function nowSpecOf(now?: Date | string): NowSpec {
+  const date = now === undefined ? new Date() : new Date(now);
+  return { date, iso: date.toISOString() };
+}
+
+/** 北京自然日窗口 [startIso, endIso)（AI_TASK_DAILY_PER_STUDENT 的计数口径） */
+function beijingDayWindowOf(now: Date): { startIso: string; endIso: string } {
+  const dayStartMs =
+    Math.floor((now.getTime() + BEIJING_OFFSET_MS) / DAY_MS) * DAY_MS -
+    BEIJING_OFFSET_MS;
+  return {
+    startIso: new Date(dayStartMs).toISOString(),
+    endIso: new Date(dayStartMs + DAY_MS).toISOString(),
+  };
+}
+
+function sha256Hex(text: string): string {
+  return createHash("sha256").update(text, "utf8").digest("hex");
+}
+
+function conflict(message: string): HttpError {
+  return new HttpError(409, "AI_STATE_CONFLICT", message);
+}
+
+function invalid(message: string): HttpError {
+  return new HttpError(400, "VALIDATION_ERROR", message);
+}
+
+// ---------- 状态转换集中实现（唯一写入口；路由/worker/MCP 不得绕过） ----------
+
+/**
+ * 合法状态转换表（B00 §3.4 状态机 + §6 迟到回执/租约回收语义）：
+ * - claimed→created：租约过期惰性回收（可再次领取，无事实类型）；
+ * - dispatching→uncertain：出站超时待确认（显式重试，绝不自动重发）；
+ * - uncertain→replied：迟到回执按 (taskId, generation) CAS 匹配仍交付。
+ */
+const TASK_TRANSITIONS: Readonly<Record<AiTaskStatus, readonly AiTaskStatus[]>> =
+  {
+    created: ["dispatching", "claimed", "paused", "cancelled"],
+    dispatching: ["replied", "failed", "paused", "uncertain"],
+    uncertain: ["created", "replied"],
+    claimed: ["replied", "created", "cancelled"],
+    replied: [],
+    paused: ["created", "cancelled"],
+    failed: ["created"],
+    cancelled: [],
+  };
+
+/** 事实详情（detailJson 的对象形态；contentMd 仅 late_reply 审计保留用） */
+type FactDetail = Record<string, string | number | boolean | null>;
+
+/** 审计事实写入（append-only；冗余列随任务行同源） */
+function insertFact(
+  tx: QueueTx,
+  task: AiTaskRow,
+  type: AiFactType,
+  now: NowSpec,
+  detail?: FactDetail,
+): void {
+  tx.insert(aiFacts)
+    .values({
+      id: randomUUID(),
+      taskId: task.id,
+      attemptId: task.attemptId,
+      questionId: task.questionId,
+      studentId: task.studentId,
+      type,
+      beforeSubmit: task.beforeSubmit,
+      detailJson: detail === undefined ? null : JSON.stringify(detail),
+      serverTs: now.iso,
+    })
+    .run();
+}
+
+/**
+ * 唯一状态转换入口：合法性查表 + 按旧状态 CAS 条件更新。
+ * CAS 落空（并发下他人已改）→ 409 AI_STATE_CONFLICT；非法转换（调用方漏检）
+ * → 500 INTERNAL（编程错误，不给客户端 4xx 假象）。
+ */
+function applyTransition(
+  tx: QueueTx,
+  task: AiTaskRow,
+  to: AiTaskStatus,
+  now: NowSpec,
+  patch: {
+    errorText?: string | null;
+    cancelRequestedAt?: string | null;
+    retryCount?: number;
+  } = {},
+): AiTaskRow {
+  if (!TASK_TRANSITIONS[task.status].includes(to)) {
+    throw new HttpError(
+      500,
+      "INTERNAL",
+      `任务状态转换非法：${task.status} → ${to}（SAI-12 状态机）`,
+    );
+  }
+  const changed = tx
+    .update(aiTasks)
+    .set({
+      status: to,
+      updatedAt: now.iso,
+      ...(patch.errorText === undefined ? {} : { errorText: patch.errorText }),
+      ...(patch.cancelRequestedAt === undefined
+        ? {}
+        : { cancelRequestedAt: patch.cancelRequestedAt }),
+      ...(patch.retryCount === undefined ? {} : { retryCount: patch.retryCount }),
+    })
+    .where(and(eq(aiTasks.id, task.id), eq(aiTasks.status, task.status)))
+    .run();
+  if (changed.changes !== 1) {
+    throw conflict("任务状态已被其他操作更新，请刷新后重试");
+  }
+  return {
+    ...task,
+    status: to,
+    updatedAt: now.iso,
+    ...(patch.errorText === undefined ? {} : { errorText: patch.errorText }),
+    ...(patch.cancelRequestedAt === undefined
+      ? {}
+      : { cancelRequestedAt: patch.cancelRequestedAt }),
+    ...(patch.retryCount === undefined ? {} : { retryCount: patch.retryCount }),
+  };
+}
+
+// ---------- 任务定位与门禁 ----------
+
+const TASK_NOT_FOUND_MESSAGE = "AI 任务不存在";
+
+/** 任务行查找：不存在与不属于同一文案（防枚举），调用方比对归属 */
+function requireOwnTask(
+  db: Db | QueueTx,
+  studentId: string,
+  taskId: string,
+): AiTaskRow {
+  const row = asDb(db)
+    .select()
+    .from(aiTasks)
+    .where(eq(aiTasks.id, taskId))
+    .get();
+  if (row === undefined || row.studentId !== studentId) {
+    throw new HttpError(404, "NOT_FOUND", TASK_NOT_FOUND_MESSAGE);
+  }
+  return row;
+}
+
+/**
+ * 当前策略可用性探测（非抛错形态，供领取扫描与 allowedActions 叠加）：
+ * 裁决链任何拒绝（作废/失权/禁用/行缺失）都按「当前不可用」处理——教师刚
+ * 改设置立即生效的口径由每次实时调用本探测保证。
+ */
+function policyUsable(
+  db: Db | QueueTx,
+  task: AiTaskRow,
+  configSource: AiPolicyConfigSource,
+): boolean {
+  try {
+    const { resolution } = resolveAttemptQuestionAiPolicy(
+      asDb(db),
+      task.studentId,
+      task.attemptId,
+      task.questionId,
+      configSource,
+    );
+    return resolution.usable && resolution.mode !== undefined;
+  } catch {
+    return false;
+  }
+}
+
+// ---------- 上下文版本（任务行内容的确定性身份戳） ----------
+
+/**
+ * 任务上下文版本：对「实际落库内容」的 sha-256 身份戳——快照实质字段
+ * （capturedAt 除外，同实质跨时刻同标识，与 SAI-09 contextVersionInput 同
+ * 精神）+ 版本锚定 + 材料清单。更新 pending（显式动作）替换快照/材料后
+ * 版本必然变化；无密钥可推导需求（读取侧不依赖 DATA_DIR/secret.key）。
+ */
+export function aiTaskContextVersionOf(db: Db, task: AiTaskRow): string {
+  let snapshot: Record<string, unknown> = {};
+  try {
+    snapshot = JSON.parse(task.contextSnapshotJson) as Record<string, unknown>;
+  } catch {
+    throw new HttpError(
+      500,
+      "AI_CONTEXT_BROKEN",
+      "任务上下文快照损坏，无法计算版本",
+    );
+  }
+  const { capturedAt: _excluded, ...substantive } = snapshot;
+  const materials = loadAiTaskMaterialRows(db, task.id).map((row) => [
+    row.kind,
+    row.pageIndex,
+    row.hash,
+  ]);
+  return `t1-${sha256Hex(
+    JSON.stringify([
+      "ai-task-context",
+      task.questionRevisionId,
+      task.modeAtSend,
+      task.promptHash,
+      substantive,
+      materials,
+    ]),
+  ).slice(0, 24)}`;
+}
+
+/** 首条学生消息（任务问题正文；数据残缺是故障不是空问题） */
+function firstQuestionOf(db: Db | QueueTx, taskId: string): string {
+  const row = asDb(db)
+    .select()
+    .from(aiMessages)
+    .where(and(eq(aiMessages.taskId, taskId), eq(aiMessages.role, "student")))
+    .orderBy(asc(aiMessages.createdAt), asc(aiMessages.id))
+    .get();
+  if (row === undefined) {
+    throw new HttpError(
+      500,
+      "AI_CONTEXT_BROKEN",
+      "任务缺少首条学生消息，数据不完整",
+    );
+  }
+  return row.contentMd;
+}
+
+function hasAssistantReply(db: Db | QueueTx, taskId: string): boolean {
+  return (
+    asDb(db)
+      .select({ id: aiMessages.id })
+      .from(aiMessages)
+      .where(
+        and(eq(aiMessages.taskId, taskId), eq(aiMessages.role, "assistant")),
+      )
+      .get() !== undefined
+  );
+}
+
+// ---------- 操作与语义 1：创建（幂等 + 配额） ----------
+
+export interface CreateAiTaskInput {
+  readonly studentId: string;
+  readonly attemptId: string;
+  readonly questionId: string;
+  /** 学生问题（首条消息正文；AI_QUESTION_MAX_CHARS 由路由层契约校验） */
+  readonly question: string;
+  readonly channel: AiChannel;
+  /** 客户端幂等键（requestId；全局唯一索引承载查重） */
+  readonly mutationId: string;
+}
+
+export interface AiTaskServiceOptions {
+  /** 快照装配 HMAC 密钥（生产为 DATA_DIR/secret.key；必填无默认） */
+  readonly hmacSecret: string;
+  /** 测试注入时刻（默认当前时间） */
+  readonly now?: Date | string;
+  /** 配置来源（缺省 sqliteAiPolicyConfigSource；测试可注入） */
+  readonly configSource?: AiPolicyConfigSource;
+}
+
+export interface AiTaskCreateResult {
+  readonly task: AiTaskRow;
+  /** false = 幂等命中已有任务（同键同内容重放） */
+  readonly created: boolean;
+}
+
+/**
+ * 创建任务（单事务）：幂等键查重（同学生同键同内容 → 返回原任务；同键内容
+ * 不符 / 不同账号题目 → 409，绝不互相去重）→ SAI-09 快照装配（策略实时
+ * 裁决）→ 三项配额 → 插任务行 + 首条消息 + task_created 事实。
+ */
+export function createAiTask(
+  db: Db,
+  input: CreateAiTaskInput,
+  options: AiTaskServiceOptions,
+): AiTaskCreateResult {
+  const configSource = options.configSource ?? sqliteAiPolicyConfigSource;
+  const now = nowSpecOf(options.now);
+
+  // 幂等查重先行（重放不重复装配快照、不受当前配额影响——创建已发生过）
+  const existing = db
+    .select()
+    .from(aiTasks)
+    .where(eq(aiTasks.mutationId, input.mutationId))
+    .get();
+  if (existing !== undefined) {
+    const sameContent =
+      existing.studentId === input.studentId &&
+      existing.attemptId === input.attemptId &&
+      existing.questionId === input.questionId &&
+      existing.channel === input.channel &&
+      firstQuestionOf(db, existing.id) === input.question;
+    if (!sameContent) {
+      throw conflict(
+        "该幂等键已用于不同内容的任务，请刷新页面后重新发送",
+      );
+    }
+    return { task: existing, created: false };
+  }
+
+  // 快照装配（SAI-09 单一入口：实时裁决 + 冻结快照 + contextVersion 材料）
+  const bundle = buildAiContextBundle(
+    db,
+    {
+      studentId: input.studentId,
+      attemptId: input.attemptId,
+      questionId: input.questionId,
+    },
+    { now: now.date, hmacSecret: options.hmacSecret },
+    configSource,
+  );
+
+  return db.transaction(
+    (tx) => {
+      // 配额（事务内计数，与插入串行）：
+      // ① 同题进行中（pending + processing 桶；终态不占额）
+      const activeStatuses: readonly AiTaskStatus[] = [
+        ...AI_TASK_QUEUE_BUCKETS.pending,
+        ...AI_TASK_QUEUE_BUCKETS.processing,
+      ];
+      const activeCount = tx
+        .select({ id: aiTasks.id })
+        .from(aiTasks)
+        .where(
+          and(
+            eq(aiTasks.attemptId, input.attemptId),
+            eq(aiTasks.questionId, input.questionId),
+            inArray(aiTasks.status, [...activeStatuses]),
+          ),
+        )
+        .all().length;
+      if (activeCount >= AI_TASK_ACTIVE_PER_QUESTION) {
+        throw new HttpError(
+          409,
+          "AI_TASK_LIMIT_REACHED",
+          `本题进行中的 AI 任务已达上限（${AI_TASK_ACTIVE_PER_QUESTION} 个），请先处理或取消现有任务`,
+        );
+      }
+      // ② 学生待处理（created 桶）
+      const pendingCount = tx
+        .select({ id: aiTasks.id })
+        .from(aiTasks)
+        .where(
+          and(
+            eq(aiTasks.studentId, input.studentId),
+            inArray(aiTasks.status, [...AI_TASK_QUEUE_BUCKETS.pending]),
+          ),
+        )
+        .all().length;
+      if (pendingCount >= AI_TASK_PENDING_PER_STUDENT) {
+        throw new HttpError(
+          409,
+          "AI_TASK_LIMIT_REACHED",
+          `待处理的 AI 任务已达上限（${AI_TASK_PENDING_PER_STUDENT} 个），请先处理或取消现有任务`,
+        );
+      }
+      // ③ 学生当日（北京自然日；取消/终态同样计入当日使用量）
+      const window = beijingDayWindowOf(now.date);
+      const dailyCount = tx
+        .select({ id: aiTasks.id })
+        .from(aiTasks)
+        .where(
+          and(
+            eq(aiTasks.studentId, input.studentId),
+            gt(aiTasks.createdAt, window.startIso),
+            lt(aiTasks.createdAt, window.endIso),
+          ),
+        )
+        .all().length;
+      if (dailyCount >= AI_TASK_DAILY_PER_STUDENT) {
+        throw new HttpError(
+          409,
+          "AI_TASK_LIMIT_REACHED",
+          `今日 AI 任务数已达上限（${AI_TASK_DAILY_PER_STUDENT} 个），请明天再试`,
+        );
+      }
+
+      const taskId = randomUUID();
+      // 并发同键双写由唯一索引兜底：约束冲突按幂等语义复走查重分支
+      try {
+        tx.insert(aiTasks)
+          .values({
+            id: taskId,
+            studentId: input.studentId,
+            attemptId: input.attemptId,
+            questionId: input.questionId,
+            questionRevisionId: bundle.responseId,
+            channel: input.channel,
+            modeAtSend: bundle.modeAtSend,
+            promptHash: bundle.promptHash,
+            contextSnapshotJson: JSON.stringify(bundle.snapshot),
+            status: "created",
+            beforeSubmit: !bundle.completed,
+            mutationId: input.mutationId,
+            leaseUntil: null,
+            leaseToken: null,
+            replyDeliveredAt: null,
+            cancelRequestedAt: null,
+            errorText: null,
+            retryCount: 0,
+            generation: 0,
+            createdAt: now.iso,
+            updatedAt: now.iso,
+          })
+          .run();
+      } catch {
+        const raced = tx
+          .select()
+          .from(aiTasks)
+          .where(eq(aiTasks.mutationId, input.mutationId))
+          .get();
+        if (
+          raced !== undefined &&
+          raced.studentId === input.studentId &&
+          raced.attemptId === input.attemptId &&
+          raced.questionId === input.questionId &&
+          raced.channel === input.channel
+        ) {
+          return { task: raced, created: false };
+        }
+        throw conflict("任务创建冲突，请重试");
+      }
+      tx.insert(aiMessages)
+        .values({
+          id: randomUUID(),
+          taskId,
+          role: "student",
+          contentMd: input.question,
+          createdAt: now.iso,
+        })
+        .run();
+      const row = tx.select().from(aiTasks).where(eq(aiTasks.id, taskId)).get()!;
+      insertFact(tx, row, "task_created", now, {
+        channel: input.channel,
+        modeAtSend: bundle.modeAtSend,
+      });
+      return { task: row, created: true };
+    },
+    { behavior: "immediate" },
+  );
+}
+
+// ---------- 操作与语义 2：列表（本人 + 范围 + 稳定游标）与公开视图 ----------
+
+/** 游标载荷（base64url JSON；稳定排序键 createdAt+id 的不透明化） */
+interface CursorPayload {
+  readonly c: string;
+  readonly i: string;
+}
+
+function encodeCursor(payload: CursorPayload): string {
+  return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+}
+
+function decodeCursor(cursor: string): CursorPayload {
+  try {
+    const parsed = JSON.parse(
+      Buffer.from(cursor, "base64url").toString("utf8"),
+    ) as Partial<CursorPayload>;
+    if (
+      typeof parsed.c !== "string" ||
+      typeof parsed.i !== "string" ||
+      parsed.c.length === 0 ||
+      parsed.i.length === 0
+    ) {
+      throw new Error("bad shape");
+    }
+    return { c: parsed.c, i: parsed.i };
+  } catch {
+    throw invalid("分页游标格式非法");
+  }
+}
+
+export interface ListAiTasksInput {
+  readonly studentId: string;
+  readonly attemptId?: string;
+  readonly questionId?: string;
+  readonly status?: AiTaskStatus;
+  /** 每页条数（契约 1..50，缺省 20 由路由层补齐；服务侧再钳制） */
+  readonly limit: number;
+  readonly cursor?: string;
+}
+
+export interface ListAiTasksResult {
+  readonly tasks: AiTaskPublic[];
+  readonly nextCursor: string | null;
+}
+
+/** 学生任务公开视图（契约 aiTaskPublicSchema 单源投影；不含内部字段） */
+export function aiTaskPublicViewOf(
+  db: Db,
+  task: AiTaskRow,
+  configSource: AiPolicyConfigSource = sqliteAiPolicyConfigSource,
+): AiTaskPublic {
+  const snapshot = JSON.parse(task.contextSnapshotJson) as {
+    capturedAt?: unknown;
+  };
+  if (typeof snapshot.capturedAt !== "string") {
+    throw new HttpError(
+      500,
+      "AI_CONTEXT_BROKEN",
+      "任务上下文快照损坏，缺少快照时间",
+    );
+  }
+  const usable = policyUsable(db, task, configSource);
+  const allowed: AiTaskAction[] = usable
+    ? [...AI_TASK_ALLOWED_ACTIONS[task.status]]
+    : // 策略当前不可用：保留输入与退出权，其余动作（发送/分享/追问/重试）暂不可用
+      task.status === "cancelled" || task.status === "replied"
+      ? []
+      : ["cancel"];
+  return {
+    id: task.id,
+    attemptId: task.attemptId,
+    questionId: task.questionId,
+    questionRevisionId: task.questionRevisionId,
+    channel: task.channel,
+    status: task.status,
+    modeAtSend: task.modeAtSend,
+    question: firstQuestionOf(db, task.id),
+    beforeSubmit: task.beforeSubmit,
+    contextVersion: aiTaskContextVersionOf(db, task),
+    snapshotAt: snapshot.capturedAt,
+    hasReply: hasAssistantReply(db, task.id),
+    replyDeliveredAt: task.replyDeliveredAt,
+    errorText: task.errorText,
+    retryCount: task.retryCount,
+    allowedActions: allowed,
+    materials: aiTaskMaterialsPublicOf(loadAiTaskMaterialRows(db, task.id)),
+    createdAt: task.createdAt,
+    updatedAt: task.updatedAt,
+  };
+}
+
+/**
+ * 本人任务列表：按题/作答范围过滤 + 创建时间倒序稳定游标分页（createdAt+id
+ * 双键，不重不漏）。读取路径顺带惰性清理（过期租约回 created、超时
+ * dispatching 转 uncertain）——查询与领取共用同一套回收语义。
+ */
+export function listStudentAiTasks(
+  db: Db,
+  input: ListAiTasksInput,
+  options: { now?: Date | string } = {},
+): ListAiTasksResult {
+  if (
+    !Number.isInteger(input.limit) ||
+    input.limit < 1 ||
+    input.limit > 50
+  ) {
+    throw invalid("每页条数必须在 1 到 50 之间");
+  }
+  const now = nowSpecOf(options.now);
+  recoverAiQueue(db, { now: now.date });
+  const conditions = [eq(aiTasks.studentId, input.studentId)];
+  if (input.attemptId !== undefined) {
+    conditions.push(eq(aiTasks.attemptId, input.attemptId));
+  }
+  if (input.questionId !== undefined) {
+    conditions.push(eq(aiTasks.questionId, input.questionId));
+  }
+  if (input.status !== undefined) {
+    conditions.push(eq(aiTasks.status, input.status));
+  }
+  if (input.cursor !== undefined) {
+    const cursor = decodeCursor(input.cursor);
+    conditions.push(
+      or(
+        lt(aiTasks.createdAt, cursor.c),
+        and(eq(aiTasks.createdAt, cursor.c), lt(aiTasks.id, cursor.i)),
+      )!,
+    );
+  }
+  const rows = db
+    .select()
+    .from(aiTasks)
+    .where(and(...conditions))
+    .orderBy(desc(aiTasks.createdAt), desc(aiTasks.id))
+    .limit(input.limit + 1)
+    .all();
+  const page = rows.slice(0, input.limit);
+  const nextCursor =
+    rows.length > input.limit
+      ? encodeCursor({
+          c: page[page.length - 1]!.createdAt,
+          i: page[page.length - 1]!.id,
+        })
+      : null;
+  return {
+    tasks: page.map((row) => aiTaskPublicViewOf(db, row)),
+    nextCursor,
+  };
+}
+
+/** 队列摘要（顶栏三计数；分桶单源 AI_TASK_QUEUE_BUCKETS，未读为交付态推导） */
+export function aiQueueSummaryOf(
+  db: Db,
+  studentId: string,
+): {
+  pendingCount: number;
+  processingCount: number;
+  unreadReplyCount: number;
+} {
+  const countOf = (statuses: readonly AiTaskStatus[]): number =>
+    db
+      .select({ id: aiTasks.id })
+      .from(aiTasks)
+      .where(
+        and(
+          eq(aiTasks.studentId, studentId),
+          inArray(aiTasks.status, [...statuses]),
+        ),
+      )
+      .all().length;
+  const unreadReplyCount = db
+    .select({ replyDeliveredAt: aiTasks.replyDeliveredAt })
+    .from(aiTasks)
+    .where(
+      and(eq(aiTasks.studentId, studentId), eq(aiTasks.status, "replied")),
+    )
+    .all()
+    .filter((row) => row.replyDeliveredAt === null).length;
+  return {
+    pendingCount: countOf(AI_TASK_QUEUE_BUCKETS.pending),
+    processingCount: countOf(AI_TASK_QUEUE_BUCKETS.processing),
+    unreadReplyCount,
+  };
+}
+
+// ---------- 操作与语义 3：MCP 领取（短事务 + lease/代次条件写） ----------
+
+export interface ClaimMcpResult {
+  readonly taskId: string;
+  readonly leaseToken: string;
+  readonly leaseUntil: string;
+  /** 本次领取的出站代次（写回 CAS 凭证之一） */
+  readonly generation: number;
+  /** 领取时任务上下文版本（写回可携带核对，防旧上下文迟到回执） */
+  readonly contextVersion: string;
+}
+
+/** 租约惰性回收：claimed 且过期 → created（可再次领取；无事实类型） */
+function expireStaleLeases(tx: QueueTx, now: NowSpec): number {
+  const stale = tx
+    .select()
+    .from(aiTasks)
+    .where(
+      and(
+        eq(aiTasks.status, "claimed"),
+        lte(aiTasks.leaseUntil, now.iso),
+      ),
+    )
+    .all();
+  for (const row of stale) {
+    tx.update(aiTasks)
+      .set({
+        status: "created",
+        leaseToken: null,
+        leaseUntil: null,
+        updatedAt: now.iso,
+      })
+      .where(and(eq(aiTasks.id, row.id), eq(aiTasks.status, "claimed")))
+      .run();
+  }
+  return stale.length;
+}
+
+/**
+ * MCP 领取（学生域）：短事务内筛选符合时间（租约惰性回收后）/通道（仅
+ * mcp，页内任务不被外部客户端领取）/当前权限（SAI-04 实时裁决）的任务，
+ * 条件写 leaseToken + leaseUntil + 代次 +1。携带 taskId = 领取指定任务
+ * （重放语义明确：已领取 → 409，不悄悄改抢下一批）；省略 = 按创建时间
+ * FIFO 领取下一个可用任务，无可用返回 null。网络与上下文装配都在事务外
+ * （SAI-26 路由用返回的 taskId 再装配领取视图）。
+ */
+export function claimMcpTask(
+  db: Db,
+  input: { studentId: string; taskId?: string },
+  options: { now?: Date | string; configSource?: AiPolicyConfigSource } = {},
+): ClaimMcpResult | null {
+  const configSource = options.configSource ?? sqliteAiPolicyConfigSource;
+  const now = nowSpecOf(options.now);
+  return db.transaction(
+    (tx) => {
+      expireStaleLeases(tx, now);
+      let candidate: AiTaskRow | undefined;
+      if (input.taskId !== undefined) {
+        const task = requireOwnTask(tx, input.studentId, input.taskId);
+        if (task.channel !== "mcp") {
+          throw conflict("页内任务不能由外部 AI 领取");
+        }
+        if (task.status !== "created") {
+          throw conflict("任务当前不可领取（已领取或已处理）");
+        }
+        if (!policyUsable(tx, task, configSource)) {
+          throw new HttpError(
+            403,
+            "AI_POLICY_DISABLED",
+            "当前教学模式下本题暂不能领取 AI 任务",
+          );
+        }
+        candidate = task;
+      } else {
+        const scan = tx
+          .select()
+          .from(aiTasks)
+          .where(
+            and(
+              eq(aiTasks.studentId, input.studentId),
+              eq(aiTasks.channel, "mcp"),
+              eq(aiTasks.status, "created"),
+            ),
+          )
+          .orderBy(asc(aiTasks.createdAt), asc(aiTasks.id))
+          .limit(CLAIM_SCAN_LIMIT)
+          .all();
+        candidate = scan.find((row) => policyUsable(tx, row, configSource));
+        if (candidate === undefined) return null;
+      }
+      const leaseToken = randomUUID();
+      const leaseUntil = new Date(
+        now.date.getTime() + AI_MCP_LEASE_MINUTES * 60_000,
+      ).toISOString();
+      const changed = tx
+        .update(aiTasks)
+        .set({
+          status: "claimed",
+          leaseToken,
+          leaseUntil,
+          generation: candidate.generation + 1,
+          updatedAt: now.iso,
+        })
+        .where(
+          and(
+            eq(aiTasks.id, candidate.id),
+            eq(aiTasks.status, "created"),
+          ),
+        )
+        .run();
+      if (changed.changes !== 1) {
+        throw conflict("任务已被其他客户端领取");
+      }
+      const claimed: AiTaskRow = {
+        ...candidate,
+        status: "claimed",
+        leaseToken,
+        leaseUntil,
+        generation: candidate.generation + 1,
+        updatedAt: now.iso,
+      };
+      insertFact(tx, claimed, "dispatched", now, {
+        via: "mcp_claim",
+        leaseUntil,
+        generation: claimed.generation,
+      });
+      return {
+        taskId: claimed.id,
+        leaseToken,
+        leaseUntil,
+        generation: claimed.generation,
+        contextVersion: aiTaskContextVersionOf(asDb(tx), claimed),
+      };
+    },
+    { behavior: "immediate" },
+  );
+}
+
+// ---------- 操作与语义 4：续租（校验持有者/状态/总时长） ----------
+
+/**
+ * MCP 续租：当前持有者（leaseToken）+ 任务仍 claimed + 未过期的前提下延长
+ * leaseUntil；累计占用不得超过本次领取起 AI_MCP_LEASE_MAX_TOTAL_MS
+ * （领取起点 = 最近一次 dispatched 事实时刻）——不能无限占用。
+ */
+export function renewMcpLease(
+  db: Db,
+  input: { studentId: string; taskId: string; leaseToken: string },
+  options: { now?: Date | string } = {},
+): { leaseUntil: string } {
+  const now = nowSpecOf(options.now);
+  return db.transaction(
+    (tx) => {
+      const task = requireOwnTask(tx, input.studentId, input.taskId);
+      if (task.status !== "claimed" || task.leaseToken !== input.leaseToken) {
+        throw conflict("租约已失效或不是当前持有者，无法续租");
+      }
+      if (task.leaseUntil === null || task.leaseUntil <= now.iso) {
+        throw conflict("租约已过期，请重新领取");
+      }
+      const claimFact = tx
+        .select()
+        .from(aiFacts)
+        .where(and(eq(aiFacts.taskId, task.id), eq(aiFacts.type, "dispatched")))
+        .orderBy(desc(aiFacts.serverTs))
+        .get();
+      const claimStartMs =
+        claimFact === undefined
+          ? Date.parse(task.updatedAt)
+          : Date.parse(claimFact.serverTs);
+      const maxUntilMs = claimStartMs + AI_MCP_LEASE_MAX_TOTAL_MS;
+      const newUntilMs = Math.min(
+        now.date.getTime() + AI_MCP_LEASE_MINUTES * 60_000,
+        maxUntilMs,
+      );
+      if (newUntilMs <= now.date.getTime()) {
+        throw conflict(
+          `租约累计时长已达上限（${AI_MCP_LEASE_MAX_TOTAL_MS / 60_000} 分钟），请写回结果或放弃任务`,
+        );
+      }
+      const leaseUntil = new Date(newUntilMs).toISOString();
+      tx.update(aiTasks)
+        .set({ leaseUntil, updatedAt: now.iso })
+        .where(
+          and(
+            eq(aiTasks.id, task.id),
+            eq(aiTasks.status, "claimed"),
+            eq(aiTasks.leaseToken, input.leaseToken),
+          ),
+        )
+        .run();
+      return { leaseUntil };
+    },
+    { behavior: "immediate" },
+  );
+}
+
+// ---------- 写回共用：回执幂等与迟到事实 ----------
+
+/** 最近一次成功回执（reply_received 事实的 detailJson） */
+function lastReplyReceipt(
+  db: Db | QueueTx,
+  taskId: string,
+): { contentHash: string } | null {
+  const fact = asDb(db)
+    .select()
+    .from(aiFacts)
+    .where(
+      and(eq(aiFacts.taskId, taskId), eq(aiFacts.type, "reply_received")),
+    )
+    .orderBy(desc(aiFacts.serverTs))
+    .get();
+  if (fact === undefined || fact.detailJson === null) return null;
+  try {
+    const parsed = JSON.parse(fact.detailJson) as { contentHash?: unknown };
+    return typeof parsed.contentHash === "string"
+      ? { contentHash: parsed.contentHash }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 回信正文超长截断（契约口径：不硬拒，截断并显式声明） */
+function truncateReply(text: string): { content: string; truncated: boolean } {
+  if (text.length <= AI_REPLY_MAX_CHARS) return { content: text, truncated: false };
+  return {
+    content: text.slice(0, AI_REPLY_MAX_CHARS),
+    truncated: true,
+  };
+}
+
+/**
+ * 迟到回执落账：拒绝写任务正文，但 late_reply 事实（回信内容随 detailJson
+ * 入库为审计事实——取消/过期后回信仍保留，不交付不覆盖）必须**独立提交**——
+ * 主事务因 409 回滚不能连带回滚审计事实。
+ */
+function recordLateReplyCommitted(
+  db: Db,
+  task: AiTaskRow,
+  now: NowSpec,
+  detail: FactDetail & { contentMd: string },
+): void {
+  db.transaction(
+    (tx) => {
+      insertFact(tx, task, "late_reply", now, detail);
+    },
+    { behavior: "immediate" },
+  );
+}
+
+/** 写回事务的结果形态（late 分支在事务外落账后再抛 409） */
+type SubmitOutcome =
+  | { kind: "duplicate" }
+  | { kind: "late"; task: AiTaskRow; detail: FactDetail; message: string }
+  | { kind: "ok"; truncated: boolean };
+
+// ---------- 操作与语义 5：写回 ----------
+
+export interface SubmitMcpReplyInput {
+  readonly studentId: string;
+  readonly taskId: string;
+  readonly leaseToken: string;
+  readonly replyMarkdown: string;
+  /** 领取时拿到的上下文版本（可选核对：旧上下文的迟到回执直接拒绝） */
+  readonly expectedContextVersion?: string;
+}
+
+/**
+ * MCP 写回：核对任务归属、租约（当前持有者 + 未过期 + 仍 claimed）、
+ * contextVersion、回执幂等（内容哈希）。
+ * - 同反馈（同内容）重放 → 幂等成功，不重复入库；
+ * - 首次成功后不被迟到回执覆盖：不同正文 → 仅记 late_reply + 409；
+ * - 租约失效/任务状态已变（被取消/被再领取/已回信）→ 同上。
+ */
+export function submitMcpReply(
+  db: Db,
+  input: SubmitMcpReplyInput,
+  options: { now?: Date | string } = {},
+): { duplicate: boolean; truncated: boolean } {
+  const now = nowSpecOf(options.now);
+  const contentHash = sha256Hex(input.replyMarkdown);
+  const outcome = db.transaction(
+    (tx): SubmitOutcome => {
+      const task = requireOwnTask(tx, input.studentId, input.taskId);
+      // 幂等：同反馈重放成功（网络重试不产生重复回信与重复计费）
+      const receipt = lastReplyReceipt(tx, task.id);
+      if (receipt?.contentHash === contentHash) {
+        return { kind: "duplicate" };
+      }
+      // 上下文版本核对：旧上下文的迟到回执不写正文
+      if (
+        input.expectedContextVersion !== undefined &&
+        input.expectedContextVersion !== aiTaskContextVersionOf(asDb(tx), task)
+      ) {
+        return {
+          kind: "late",
+          task,
+          detail: {
+            reason: "context_stale",
+            contentHash,
+            contentMd: input.replyMarkdown,
+          },
+          message: "任务上下文已更新，回信已记录为迟到事实",
+        };
+      }
+      const leaseValid =
+        task.status === "claimed" &&
+        task.leaseToken === input.leaseToken &&
+        task.leaseUntil !== null &&
+        task.leaseUntil > now.iso;
+      if (!leaseValid) {
+        return {
+          kind: "late",
+          task,
+          detail: {
+            reason: "stale_lease",
+            contentHash,
+            contentMd: input.replyMarkdown,
+          },
+          message: "租约已失效或任务状态已变化，回信已记录为迟到事实",
+        };
+      }
+      const { content, truncated } = truncateReply(input.replyMarkdown);
+      tx.insert(aiMessages)
+        .values({
+          id: randomUUID(),
+          taskId: task.id,
+          role: "assistant",
+          contentMd: content,
+          createdAt: now.iso,
+        })
+        .run();
+      applyTransition(tx, task, "replied", now);
+      insertFact(tx, task, "reply_received", now, {
+        via: "mcp",
+        contentHash,
+        truncated,
+      });
+      return { kind: "ok", truncated };
+    },
+    { behavior: "immediate" },
+  );
+  if (outcome.kind === "duplicate") return { duplicate: true, truncated: false };
+  if (outcome.kind === "late") {
+    recordLateReplyCommitted(db, outcome.task, now, outcome.detail);
+    throw conflict(outcome.message);
+  }
+  return { duplicate: false, truncated: outcome.truncated };
+}
+
+// ---------- 页内派发原语（worker：SAI-13/15 消费；网络在事务外） ----------
+
+/**
+ * 页内派发第一步：出站前实时重校验（教师刚改设置立即生效）→ 置
+ * dispatching 并先落库代次 +1（generation 是回写 CAS 凭证）。
+ * 策略不可用 → 任务转 paused（未出站，无事实漂移）并抛 403；
+ * mcp 通道任务 → 409（领取 MCP 类型不被 API worker 抢走）。
+ * 之后的网络出站、大图编码都在事务外（§6）。
+ */
+export function beginInappDispatch(
+  db: Db,
+  input: { studentId: string; taskId: string },
+  options: { now?: Date | string; configSource?: AiPolicyConfigSource } = {},
+): { generation: number } {
+  const configSource = options.configSource ?? sqliteAiPolicyConfigSource;
+  const now = nowSpecOf(options.now);
+  const blocked = db.transaction(
+    (tx): boolean => {
+      const task = requireOwnTask(tx, input.studentId, input.taskId);
+      if (task.channel !== "inapp") {
+        throw conflict("MCP 任务须由外部 AI 领取，不能页内发送");
+      }
+      if (task.status !== "created") {
+        throw conflict("任务当前不可发送");
+      }
+      if (!policyUsable(tx, task, configSource)) {
+        // T2 场景：出站前校验失败 → paused（未出站，无事实漂移）。
+        // 转换与事实随本事务提交（403 在事务外抛出，不回滚 paused 事实）。
+        const paused = applyTransition(tx, task, "paused", now);
+        insertFact(tx, paused, "paused", now, { via: "dispatch_check" });
+        return true;
+      }
+      const changed = tx
+        .update(aiTasks)
+        .set({
+          status: "dispatching",
+          generation: task.generation + 1,
+          updatedAt: now.iso,
+        })
+        .where(and(eq(aiTasks.id, task.id), eq(aiTasks.status, "created")))
+        .run();
+      if (changed.changes !== 1) {
+        throw conflict("任务状态已被其他操作更新，请刷新后重试");
+      }
+      return false;
+    },
+    { behavior: "immediate" },
+  );
+  if (blocked) {
+    throw new HttpError(
+      403,
+      "AI_POLICY_DISABLED",
+      "当前教学模式下本题暂不能发送 AI 求助，任务已暂停（恢复开放后可继续）",
+    );
+  }
+  const row = db
+    .select()
+    .from(aiTasks)
+    .where(eq(aiTasks.id, input.taskId))
+    .get();
+  return { generation: row === undefined ? 0 : row.generation };
+}
+
+export interface CompleteInappResult {
+  /** true = 同内容回执重放（首次已成功，未重复入库） */
+  readonly duplicate: boolean;
+  /** false = 回信已入库为事实但暂不交付（任务被暂停/取消，完成前学生不可见） */
+  readonly delivered: boolean;
+}
+
+/**
+ * 页内派发成功写回：按 (taskId, generation) CAS——迟到结果不覆盖。
+ * - 代次匹配且仍 dispatching → 写 ai_messages(reply) + replied + dispatched
+ *   + reply_received 事实；
+ * - 代次匹配但已被暂停/取消（出站后策略变化）→ 回信入库为事实、不交付；
+ * - 代次匹配但已 uncertain（超时后结果才到）→ 按 CAS 语义仍交付 replied；
+ * - 代次不匹配（旧代迟到）→ late_reply 事实 + 409；
+ * - 同内容重放 → 幂等成功。
+ */
+export function completeInappDispatch(
+  db: Db,
+  input: {
+    studentId: string;
+    taskId: string;
+    generation: number;
+    replyMd: string;
+  },
+  options: { now?: Date | string } = {},
+): CompleteInappResult {
+  const now = nowSpecOf(options.now);
+  const contentHash = sha256Hex(input.replyMd);
+  const outcome = db.transaction(
+    (tx): SubmitOutcome | { kind: "delivered"; delivered: boolean } => {
+      const task = requireOwnTask(tx, input.studentId, input.taskId);
+      const receipt = lastReplyReceipt(tx, task.id);
+      if (receipt?.contentHash === contentHash) {
+        return { kind: "duplicate" };
+      }
+      if (task.generation !== input.generation) {
+        return {
+          kind: "late",
+          task,
+          detail: {
+            reason: "stale_generation",
+            contentHash,
+            contentMd: input.replyMd,
+            generation: input.generation,
+          },
+          message: "回执对应的发送代次已过期，已记录为迟到事实",
+        };
+      }
+      const { content, truncated } = truncateReply(input.replyMd);
+      if (task.status === "dispatching") {
+        tx.insert(aiMessages)
+          .values({
+            id: randomUUID(),
+            taskId: task.id,
+            role: "assistant",
+            contentMd: content,
+            createdAt: now.iso,
+          })
+          .run();
+        const replied = applyTransition(tx, task, "replied", now);
+        insertFact(tx, task, "dispatched", now, {
+          via: "inapp",
+          generation: input.generation,
+        });
+        insertFact(tx, replied, "reply_received", now, {
+          via: "inapp",
+          contentHash,
+          truncated,
+        });
+        return { kind: "delivered", delivered: true };
+      }
+      if (task.status === "uncertain") {
+        tx.insert(aiMessages)
+          .values({
+            id: randomUUID(),
+            taskId: task.id,
+            role: "assistant",
+            contentMd: content,
+            createdAt: now.iso,
+          })
+          .run();
+        applyTransition(tx, task, "replied", now);
+        insertFact(tx, task, "reply_received", now, {
+          via: "inapp_late",
+          contentHash,
+          truncated,
+        });
+        return { kind: "delivered", delivered: true };
+      }
+      if (task.status === "paused" || task.status === "cancelled") {
+        // 回信入库为事实（审计保留），不交付：replyDeliveredAt 保持 null
+        tx.insert(aiMessages)
+          .values({
+            id: randomUUID(),
+            taskId: task.id,
+            role: "assistant",
+            contentMd: content,
+            createdAt: now.iso,
+          })
+          .run();
+        insertFact(tx, task, "reply_received", now, {
+          via: "inapp",
+          contentHash,
+          truncated,
+          delivered: false,
+        });
+        return { kind: "delivered", delivered: false };
+      }
+      return {
+        kind: "late",
+        task,
+        detail: {
+          reason: "already_replied",
+          contentHash,
+          contentMd: input.replyMd,
+          generation: input.generation,
+        },
+        message: "任务已处理完成，重复回执已记录为迟到事实",
+      };
+    },
+    { behavior: "immediate" },
+  );
+  if (outcome.kind === "duplicate") {
+    return { duplicate: true, delivered: true };
+  }
+  if (outcome.kind === "late") {
+    recordLateReplyCommitted(db, outcome.task, now, outcome.detail);
+    throw conflict(outcome.message);
+  }
+  return { duplicate: false, delivered: outcome.delivered };
+}
+
+/**
+ * 页内派发失败写回：retryable（网络/费用类）→ failed + 错误摘要（可显式
+ * 重试）；policy（鉴权/策略类）→ paused（不盲重试，恢复开放后学生继续）。
+ * 代次不匹配的迟到失败报告 → 409 不改状态。
+ */
+export function failInappDispatch(
+  db: Db,
+  input: {
+    studentId: string;
+    taskId: string;
+    generation: number;
+    errorText: string;
+    kind: "retryable" | "policy";
+  },
+  options: { now?: Date | string } = {},
+): void {
+  const now = nowSpecOf(options.now);
+  db.transaction(
+    (tx) => {
+      const task = requireOwnTask(tx, input.studentId, input.taskId);
+      if (task.generation !== input.generation || task.status !== "dispatching") {
+        throw conflict("失败报告对应的发送代次已过期");
+      }
+      if (input.kind === "policy") {
+        const paused = applyTransition(tx, task, "paused", now);
+        insertFact(tx, paused, "paused", now, {
+          via: "dispatch_failed",
+          errorText: input.errorText,
+        });
+        return;
+      }
+      const failed = applyTransition(tx, task, "failed", now, {
+        errorText: input.errorText,
+      });
+      insertFact(tx, failed, "failed", now, {
+        via: "inapp",
+        errorText: input.errorText,
+        generation: input.generation,
+      });
+    },
+    { behavior: "immediate" },
+  );
+}
+
+// ---------- 操作与语义 6：重试（有界次数 + nextRunAt 退避） ----------
+
+/** 退避毫秒：失败时 retryCount 越多重试等待越久（封顶 MAX） */
+function retryBackoffMs(retryCountAtFailure: number): number {
+  return Math.min(
+    AI_TASK_RETRY_BACKOFF_BASE_MS * 2 ** retryCountAtFailure,
+    AI_TASK_RETRY_BACKOFF_MAX_MS,
+  );
+}
+
+/**
+ * 显式重试（failed/uncertain → created）：学生主动动作，绝不自动重发；
+ * 有界次数（AI_TASK_MAX_RETRY_COUNT）+ nextRunAt 退避（失败时刻起算，
+ * 防止连续快速重试 hammer 出站）。重试不换任务：同幂等键创建仍命中原行。
+ */
+export function retryAiTask(
+  db: Db,
+  input: { studentId: string; taskId: string },
+  options: { now?: Date | string } = {},
+): AiTaskRow {
+  const now = nowSpecOf(options.now);
+  return db.transaction(
+    (tx) => {
+      const task = requireOwnTask(tx, input.studentId, input.taskId);
+      if (task.status !== "failed" && task.status !== "uncertain") {
+        throw conflict("任务当前不可重试");
+      }
+      if (task.retryCount >= AI_TASK_MAX_RETRY_COUNT) {
+        throw conflict(
+          `重试次数已达上限（${AI_TASK_MAX_RETRY_COUNT} 次），请重新发起求助`,
+        );
+      }
+      const nextRunAtMs = Date.parse(task.updatedAt) + retryBackoffMs(task.retryCount);
+      if (now.date.getTime() < nextRunAtMs) {
+        throw conflict(
+          `失败后请稍候再重试（约 ${Math.ceil((nextRunAtMs - now.date.getTime()) / 1000)} 秒后可重试）`,
+        );
+      }
+      return applyTransition(tx, task, "created", now, {
+        errorText: null,
+        retryCount: task.retryCount + 1,
+      });
+    },
+    { behavior: "immediate" },
+  );
+}
+
+// ---------- 操作与语义 7：更新 pending（显式动作 + 新上下文版本） ----------
+
+/**
+ * 更新待处理任务（created 态唯一）：学生显式「更新待处理内容」——重新装配
+ * 当前上下文快照（版本锚定随当前 responses 行、策略实时裁决）并替换任务行
+ * 快照，产生新上下文版本；同题可选替换问题正文。已领取/已处理任务拒绝
+ * 替换输入（409）。材料更新走 SAI-11 attach（同槽位不同内容本就 409，
+ * 换材料 = 新任务——需求 §8「新材料发送 = 新任务」）。
+ */
+export function refreshPendingAiTask(
+  db: Db,
+  input: { studentId: string; taskId: string; question?: string },
+  options: AiTaskServiceOptions,
+): AiTaskRow {
+  const configSource = options.configSource ?? sqliteAiPolicyConfigSource;
+  const now = nowSpecOf(options.now);
+  return db.transaction(
+    (tx) => {
+      const task = requireOwnTask(tx, input.studentId, input.taskId);
+      if (task.status !== "created") {
+        throw conflict("任务已进入处理流程，输入不可替换；新材料请发起新求助");
+      }
+      const bundle = buildAiContextBundle(
+        asDb(tx),
+        {
+          studentId: task.studentId,
+          attemptId: task.attemptId,
+          questionId: task.questionId,
+        },
+        { now: now.date, hmacSecret: options.hmacSecret },
+        configSource,
+      );
+      tx.update(aiTasks)
+        .set({
+          questionRevisionId: bundle.responseId,
+          modeAtSend: bundle.modeAtSend,
+          promptHash: bundle.promptHash,
+          contextSnapshotJson: JSON.stringify(bundle.snapshot),
+          updatedAt: now.iso,
+        })
+        .where(and(eq(aiTasks.id, task.id), eq(aiTasks.status, "created")))
+        .run();
+      if (input.question !== undefined) {
+        const firstMessage = tx
+          .select()
+          .from(aiMessages)
+          .where(
+            and(eq(aiMessages.taskId, task.id), eq(aiMessages.role, "student")),
+          )
+          .orderBy(asc(aiMessages.createdAt), asc(aiMessages.id))
+          .get();
+        if (firstMessage !== undefined) {
+          tx.update(aiMessages)
+            .set({ contentMd: input.question })
+            .where(eq(aiMessages.id, firstMessage.id))
+            .run();
+        }
+      }
+      return tx.select().from(aiTasks).where(eq(aiTasks.id, task.id)).get()!;
+    },
+    { behavior: "immediate" },
+  );
+}
+
+// ---------- 操作与语义 8：取消 / 恢复 ----------
+
+/**
+ * 取消：created/paused → cancelled；claimed → cancelled + cancelRequestedAt
+ * （阻止交付；领取方迟到回信仍入库为事实，见 submitMcpReply）。取消不能
+ * 承诺撤回已出站内容（dispatched 事实保留）；dispatching/uncertain/replied/
+ * failed 不可取消（409）。
+ */
+export function cancelAiTask(
+  db: Db,
+  input: { studentId: string; taskId: string },
+  options: { now?: Date | string } = {},
+): AiTaskRow {
+  const now = nowSpecOf(options.now);
+  return db.transaction(
+    (tx) => {
+      const task = requireOwnTask(tx, input.studentId, input.taskId);
+      const cancellable =
+        task.status === "created" ||
+        task.status === "paused" ||
+        task.status === "claimed";
+      if (!cancellable) {
+        throw conflict("任务当前不可取消");
+      }
+      const wasClaimed = task.status === "claimed";
+      const cancelled = applyTransition(tx, task, "cancelled", now, {
+        cancelRequestedAt: wasClaimed ? now.iso : task.cancelRequestedAt,
+      });
+      insertFact(tx, cancelled, "cancelled", now, {
+        fromStatus: task.status,
+        wasClaimed,
+      });
+      return cancelled;
+    },
+    { behavior: "immediate" },
+  );
+}
+
+/**
+ * 恢复（paused → created）：学生显式「继续」；重新开放不自动发送——
+ * 状态回 created 后仍需显式 dispatch/claim（不产生 dispatched 事实）。
+ */
+export function resumeAiTask(
+  db: Db,
+  input: { studentId: string; taskId: string },
+  options: { now?: Date | string } = {},
+): AiTaskRow {
+  const now = nowSpecOf(options.now);
+  return db.transaction(
+    (tx) => {
+      const task = requireOwnTask(tx, input.studentId, input.taskId);
+      if (task.status !== "paused") {
+        throw conflict("任务当前不可恢复");
+      }
+      const resumed = applyTransition(tx, task, "created", now);
+      insertFact(tx, resumed, "resumed", now, {});
+      return resumed;
+    },
+    { behavior: "immediate" },
+  );
+}
+
+// ---------- 查看（交付态；与处理状态独立） ----------
+
+/**
+ * 学生打开回信：replied 态置 replyDeliveredAt + reply_delivered 事实。
+ * 查看**不是**任务状态转换——status 保持 replied（archived/opened 不作为
+ * 终结状态覆盖 replied）；重复打开幂等（不重复记事实）。
+ */
+export function markReplyDelivered(
+  db: Db,
+  input: { studentId: string; taskId: string },
+  options: { now?: Date | string } = {},
+): AiTaskRow {
+  const now = nowSpecOf(options.now);
+  return db.transaction(
+    (tx) => {
+      const task = requireOwnTask(tx, input.studentId, input.taskId);
+      if (task.status !== "replied") {
+        throw conflict("任务尚未收到回信，无可查看内容");
+      }
+      if (task.replyDeliveredAt !== null) {
+        return task; // 幂等：已打开过
+      }
+      const changed = tx
+        .update(aiTasks)
+        .set({ replyDeliveredAt: now.iso })
+        .where(
+          and(
+            eq(aiTasks.id, task.id),
+            eq(aiTasks.status, "replied"),
+          ),
+        )
+        .run();
+      if (changed.changes !== 1) {
+        throw conflict("任务状态已被其他操作更新，请刷新后重试");
+      }
+      insertFact(tx, task, "reply_delivered", now, {});
+      return { ...task, replyDeliveredAt: now.iso };
+    },
+    { behavior: "immediate" },
+  );
+}
+
+// ---------- 恢复（重启/备份恢复后的惰性清理；§6） ----------
+
+export interface RecoverAiQueueResult {
+  /** 过期租约回收数（claimed → created，可再次领取） */
+  readonly expiredLeases: number;
+  /** 超时 dispatching 转不确定数（→ uncertain，显式重试，绝不自动重发） */
+  readonly staleDispatching: number;
+}
+
+/**
+ * 队列状态恢复：启动（进程关闭重开）与读取路径共用。
+ * - claimed 且租约过期 → created（失联过期可再次领取）；
+ * - dispatching 且超过 AI_OUTBOUND_TIMEOUT_MS 无回执 → uncertain
+ *   （「发送结果待确认」，提供核对与显式重试，绝不自动重发）；
+ * - replied/created 等其余状态原样保留——已完成任务不重复执行。
+ */
+export function recoverAiQueue(
+  db: Db,
+  options: { now?: Date | string } = {},
+): RecoverAiQueueResult {
+  const now = nowSpecOf(options.now);
+  const staleBeforeIso = new Date(
+    now.date.getTime() - AI_OUTBOUND_TIMEOUT_MS,
+  ).toISOString();
+  return db.transaction(
+    (tx) => {
+      const expiredLeases = expireStaleLeases(tx, now);
+      const stale = tx
+        .select()
+        .from(aiTasks)
+        .where(
+          and(
+            eq(aiTasks.status, "dispatching"),
+            lte(aiTasks.updatedAt, staleBeforeIso),
+          ),
+        )
+        .all();
+      for (const row of stale) {
+        tx.update(aiTasks)
+          .set({ status: "uncertain", updatedAt: now.iso })
+          .where(
+            and(eq(aiTasks.id, row.id), eq(aiTasks.status, "dispatching")),
+          )
+          .run();
+      }
+      return { expiredLeases, staleDispatching: stale.length };
+    },
+    { behavior: "immediate" },
+  );
+}
