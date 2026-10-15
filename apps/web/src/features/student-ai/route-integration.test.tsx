@@ -6,6 +6,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AiPolicyOverrideField } from "./AiPolicyOverrideField";
+import { StudentQuickButtonsSection } from "./StudentQuickButtonsSection";
 import { TeacherAiSettingsSection } from "./TeacherAiSettingsSection";
 
 /**
@@ -316,5 +317,65 @@ describe("SAI-07 真实路由联调", () => {
       const rows = env.db.select().from(env.schema.aiPolicyOverrides).all();
       expect(rows).toHaveLength(0);
     });
+  });
+});
+
+describe("SAI-08 真实路由联调（学生快捷按钮）", () => {
+  it("get 默认四项不物化 → 保存真实落库 → 删光空组墓碑不回填", async () => {
+    const { createStudentSession } = await import(
+      "../../../../server/src/auth/session"
+    );
+    const studentCookie = `tutor_student_session=${createStudentSession(env.db, "student-route").token}`;
+    // 覆写 beforeEach 装的教师 Cookie 桩：本组件以学生会话请求
+    installFetchStub(env.app, studentCookie);
+    const client = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
+    });
+    renderWithClient(<StudentQuickButtonsSection />, client);
+    // get：未配置 → 契约默认四项（真实 GET），且不物化任何行
+    expect(await screen.findByLabelText("第 1 项按钮名称")).toHaveValue(
+      "启发下一步",
+    );
+    expect(
+      env.db.select().from(env.schema.aiQuickButtons).all(),
+    ).toHaveLength(0);
+    // 暂存改名 + 禁用第 2 项 → 保存真实 PUT：整组物化落库
+    fireEvent.change(screen.getByLabelText("第 1 项按钮名称"), {
+      target: { value: "联调按钮" },
+    });
+    fireEvent.click(screen.getByLabelText("第 2 项启用"));
+    fireEvent.click(screen.getByRole("button", { name: "保存快捷按钮" }));
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent("更改已保存"),
+    );
+    const rows = env.db
+      .select()
+      .from(env.schema.aiQuickButtons)
+      .all()
+      .sort((a, b) => a.orderIndex - b.orderIndex);
+    expect(rows.map((row) => row.name)).toEqual([
+      "联调按钮",
+      "查当前步骤",
+      "讲核心概念",
+      "完整拆解",
+    ]);
+    expect(rows[1]?.enabled).toBe(false);
+    // 删光四项 → 保存空组：界面空态说明 + 真实 GET 重取仍空（墓碑不回填）
+    for (let index = 4; index >= 1; index -= 1)
+      fireEvent.click(screen.getByLabelText(`第 ${index} 项删除`));
+    fireEvent.click(screen.getByRole("button", { name: "保存快捷按钮" }));
+    expect(
+      await screen.findByText(/没有快捷按钮也可以直接输入问题/u),
+    ).toBeInTheDocument();
+    const refetch = await env.app.request("/api/student/ai/quick-buttons", {
+      headers: { cookie: studentCookie },
+    });
+    expect(
+      ((await refetch.json()) as { data: { buttons: unknown[] } }).data
+        .buttons,
+    ).toEqual([]);
   });
 });
