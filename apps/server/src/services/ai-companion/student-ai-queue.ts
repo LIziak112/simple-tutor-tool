@@ -38,11 +38,13 @@ import {
   aiTasks,
 } from "../../db/schema.ts";
 import { HttpError } from "../../lib/http-error.ts";
+import { resolveNowDate } from "../export-service.ts";
 import { sqliteAiPolicyConfigSource } from "./ai-policy-config-source.ts";
 import { buildAiContextBundle } from "./student-ai-context.ts";
 import {
   aiTaskMaterialsPublicOf,
   loadAiTaskMaterialRows,
+  taskOf,
 } from "./student-ai-materials.ts";
 import {
   type AiPolicyConfigSource,
@@ -109,7 +111,8 @@ interface NowSpec {
 }
 
 function nowSpecOf(now?: Date | string): NowSpec {
-  const date = now === undefined ? new Date() : new Date(now);
+  // 时刻注入解析复用全仓单点（T6R.16 收敛口径，student-ai-context 同款）
+  const date = resolveNowDate(now);
   return { date, iso: date.toISOString() };
 }
 
@@ -236,17 +239,13 @@ function applyTransition(
 
 const TASK_NOT_FOUND_MESSAGE = "AI 任务不存在";
 
-/** 任务行查找：不存在与不属于同一文案（防枚举），调用方比对归属 */
+/** 任务行查找：不存在与不属于同一文案（防枚举），行查询单源 taskOf */
 function requireOwnTask(
   db: Db | QueueTx,
   studentId: string,
   taskId: string,
 ): AiTaskRow {
-  const row = asDb(db)
-    .select()
-    .from(aiTasks)
-    .where(eq(aiTasks.id, taskId))
-    .get();
+  const row = taskOf(asDb(db), taskId);
   if (row === undefined || row.studentId !== studentId) {
     throw new HttpError(404, "NOT_FOUND", TASK_NOT_FOUND_MESSAGE);
   }
@@ -341,14 +340,22 @@ function contextVersionOf(
   ).slice(0, 24)}`;
 }
 
-/** 首条学生消息（任务问题正文；数据残缺是故障不是空问题） */
-function firstQuestionOf(db: Db | QueueTx, taskId: string): string {
-  const row = asDb(db)
+/** 首条学生消息行（创建时插入；视图读取与 refresh 替换正文共用） */
+function firstStudentMessageRow(
+  db: Db | QueueTx,
+  taskId: string,
+): typeof aiMessages.$inferSelect | undefined {
+  return asDb(db)
     .select()
     .from(aiMessages)
     .where(and(eq(aiMessages.taskId, taskId), eq(aiMessages.role, "student")))
     .orderBy(asc(aiMessages.createdAt), asc(aiMessages.id))
     .get();
+}
+
+/** 首条学生消息（任务问题正文；数据残缺是故障不是空问题） */
+function firstQuestionOf(db: Db | QueueTx, taskId: string): string {
+  const row = firstStudentMessageRow(db, taskId);
   if (row === undefined) {
     throw new HttpError(
       500,
@@ -1095,6 +1102,24 @@ function truncateReply(text: string): { content: string; truncated: boolean } {
   };
 }
 
+/** 回信入库（MCP 写回与页内派发写回共用同形） */
+function insertAssistantReply(
+  tx: QueueTx,
+  taskId: string,
+  content: string,
+  now: NowSpec,
+): void {
+  tx.insert(aiMessages)
+    .values({
+      id: randomUUID(),
+      taskId,
+      role: "assistant",
+      contentMd: content,
+      createdAt: now.iso,
+    })
+    .run();
+}
+
 /**
  * 迟到回执落账：拒绝写任务正文，但 late_reply 事实（回信内容随 detailJson
  * 入库为审计事实——取消/过期后回信仍保留，不交付不覆盖）必须**独立提交**——
@@ -1193,15 +1218,7 @@ export function submitMcpReply(
         };
       }
       const { content, truncated } = truncateReply(input.replyMarkdown);
-      tx.insert(aiMessages)
-        .values({
-          id: randomUUID(),
-          taskId: task.id,
-          role: "assistant",
-          contentMd: content,
-          createdAt: now.iso,
-        })
-        .run();
+      insertAssistantReply(tx, task.id, content, now);
       applyTransition(tx, task, "replied", now);
       insertFact(tx, task, "reply_received", now, {
         via: "mcp",
@@ -1319,57 +1336,37 @@ export function completeInappDispatch(
         };
       }
       const { content, truncated } = truncateReply(input.replyMd);
-      if (task.status === "dispatching") {
-        tx.insert(aiMessages)
-          .values({
-            id: randomUUID(),
-            taskId: task.id,
-            role: "assistant",
-            contentMd: content,
-            createdAt: now.iso,
-          })
-          .run();
-        const replied = applyTransition(tx, task, "replied", now);
-        insertFact(tx, task, "dispatched", now, {
-          via: "inapp",
-          generation: input.generation,
-        });
-        insertFact(tx, replied, "reply_received", now, {
-          via: "inapp",
-          contentHash,
-          truncated,
-        });
-        return { kind: "delivered", delivered: true };
-      }
-      if (task.status === "uncertain") {
-        tx.insert(aiMessages)
-          .values({
-            id: randomUUID(),
-            taskId: task.id,
-            role: "assistant",
-            contentMd: content,
-            createdAt: now.iso,
-          })
-          .run();
-        applyTransition(tx, task, "replied", now);
-        insertFact(tx, task, "reply_received", now, {
-          via: "inapp_late",
-          contentHash,
-          truncated,
-        });
-        return { kind: "delivered", delivered: true };
-      }
-      if (task.status === "paused" || task.status === "cancelled") {
-        // 回信入库为事实（审计保留），不交付：replyDeliveredAt 保持 null
-        tx.insert(aiMessages)
-          .values({
-            id: randomUUID(),
-            taskId: task.id,
-            role: "assistant",
-            contentMd: content,
-            createdAt: now.iso,
-          })
-          .run();
+      if (
+        task.status === "dispatching" ||
+        task.status === "uncertain" ||
+        task.status === "paused" ||
+        task.status === "cancelled"
+      ) {
+        // 回信入库一次，再按当前状态转换/记事实（三分支仅事实口径不同）
+        insertAssistantReply(tx, task.id, content, now);
+        if (task.status === "dispatching") {
+          const replied = applyTransition(tx, task, "replied", now);
+          insertFact(tx, task, "dispatched", now, {
+            via: "inapp",
+            generation: input.generation,
+          });
+          insertFact(tx, replied, "reply_received", now, {
+            via: "inapp",
+            contentHash,
+            truncated,
+          });
+          return { kind: "delivered", delivered: true };
+        }
+        if (task.status === "uncertain") {
+          applyTransition(tx, task, "replied", now);
+          insertFact(tx, task, "reply_received", now, {
+            via: "inapp_late",
+            contentHash,
+            truncated,
+          });
+          return { kind: "delivered", delivered: true };
+        }
+        // paused/cancelled：回信入库为事实（审计保留），不交付（replyDeliveredAt 保持 null）
         insertFact(tx, task, "reply_received", now, {
           via: "inapp",
           contentHash,
@@ -1540,14 +1537,7 @@ export function refreshPendingAiTask(
         .where(and(eq(aiTasks.id, task.id), eq(aiTasks.status, "created")))
         .run();
       if (input.question !== undefined) {
-        const firstMessage = tx
-          .select()
-          .from(aiMessages)
-          .where(
-            and(eq(aiMessages.taskId, task.id), eq(aiMessages.role, "student")),
-          )
-          .orderBy(asc(aiMessages.createdAt), asc(aiMessages.id))
-          .get();
+        const firstMessage = firstStudentMessageRow(tx, task.id);
         if (firstMessage !== undefined) {
           tx.update(aiMessages)
             .set({ contentMd: input.question })

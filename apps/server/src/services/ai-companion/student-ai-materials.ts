@@ -31,6 +31,7 @@ import { HttpError } from "../../lib/http-error.ts";
 import { pngIntact } from "../../lib/png.ts";
 import { attemptTeacherId } from "../attempt-service.ts";
 import { collectBackupReferencedPaths } from "../backup-service.ts";
+import { resolveNowDate } from "../export-service.ts";
 import { sqliteAiPolicyConfigSource } from "./ai-policy-config-source.ts";
 import type { AiOutboundMaterialRef } from "./student-ai-context.ts";
 import {
@@ -240,8 +241,8 @@ function validatePages(
 
 // ---------- 任务定位与门禁 ----------
 
-/** 任务行查找：不存在与不属于同一文案（防枚举），调用方自行比对归属 */
-function taskOf(db: Db, taskId: string): AiTaskRow | undefined {
+/** 任务行查找（供同批队列服务复用；不存在与不属于同一文案防枚举由调用方处理） */
+export function taskOf(db: Db, taskId: string): AiTaskRow | undefined {
   return db.select().from(aiTasks).where(eq(aiTasks.id, taskId)).get();
 }
 
@@ -615,9 +616,8 @@ export function readSharedAiTaskMaterial(
       "分享链接已撤销，附件不再可访问",
     );
   }
-  const nowIso = (
-    input.now === undefined ? new Date() : new Date(input.now)
-  ).toISOString();
+  // 时刻注入解析复用全仓单点（T6R.16 收敛口径）
+  const nowIso = resolveNowDate(input.now).toISOString();
   if (ticket.expiresAt <= nowIso) {
     throw new HttpError(
       403,
