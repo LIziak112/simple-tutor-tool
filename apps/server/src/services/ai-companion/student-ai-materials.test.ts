@@ -558,13 +558,18 @@ describe("SAI-11 不可变写入顺序（执行步骤 3；真实临时 DATA_DIR�
     const hash = sha256Of(png);
     // 直接落盘模拟「rename 完成、插行前进程崩溃」的遗留文件
     mkdirSync(join(dataDir, "blobs", "ai-materials"), { recursive: true });
-    writeFileSync(join(dataDir, aiMaterialRelPathOf(hash)), png);
+    const orphanFile = join(dataDir, aiMaterialRelPathOf(hash));
+    writeFileSync(orphanFile, png);
+    // Windows 下 writeFileSync 的 mtime 可能晚于进程内 Date.now() 采样，
+    // safetyWindowMs=0 的边界比较会偶发把刚写的文件视为未过窗口——回拨消除竞争
+    const past = new Date(Date.now() - 1000);
+    utimesSync(orphanFile, past, past);
     // 无行 → 装载/出站均不可见（不假称已附图）
     expect(loadAiTaskMaterialRows(db, taskId)).toHaveLength(0);
     expect(collectAiTaskMaterialBytes(db, dataDir, taskId)).toEqual([]);
     const gc = gcAiMaterials(db, dataDir, { safetyWindowMs: 0 });
     expect(gc.sweptOrphanFiles).toBe(1);
-    expect(existsSync(join(dataDir, aiMaterialRelPathOf(hash)))).toBe(false);
+    expect(existsSync(orphanFile)).toBe(false);
   });
 
   it("文件落位后、插行前失败 → 清理本次新写文件，不留可访问半成品", () => {
@@ -1183,6 +1188,9 @@ describe("SAI-11 孤儿回收（执行步骤 7；风险④）", () => {
     const orphanAbs = join(dataDir, aiMaterialRelPathOf(orphanHash));
     mkdirSync(join(dataDir, "blobs", "ai-materials"), { recursive: true });
     writeFileSync(orphanAbs, new TextEncoder().encode("orphan"));
+    // 同上：回拨 mtime 消除 safetyWindowMs=0 的时钟竞争
+    const past = new Date(Date.now() - 1000);
+    utimesSync(orphanAbs, past, past);
     const inkDir = join(dataDir, "blobs", "ink", "some-question");
     mkdirSync(inkDir, { recursive: true });
     const inkFile = join(
