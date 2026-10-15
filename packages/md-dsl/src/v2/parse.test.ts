@@ -671,6 +671,78 @@ kind: lesson
     expect(result.issues.filter((i) => i.level === "error")).toEqual([]);
   });
 
+  it("frontmatter lecture 与本篇标题不一致：单元改关联本篇自身并记 LESSON_LECTURE_TITLE_MISMATCH（2026-10-15 考公案例：防跨讲义误挂）", () => {
+    const md = `---
+kind: lesson
+unit: 随堂讲练
+lecture: 第1讲 言语高频词语辨析（第1~10组）
+---
+
+# 第1讲 言语高频词语辨析（第1~10组讲练合一）
+
+正文。
+
+::::question{type=judge difficulty=1 id="w1"}
+命题。[[正确]]
+::::
+`;
+    const result = parseDocument(md);
+    expect(result.units[0]?.lectureTitle).toBe(
+      "第1讲 言语高频词语辨析（第1~10组讲练合一）",
+    );
+    const issue = result.issues.find(
+      (i) => i.code === "LESSON_LECTURE_TITLE_MISMATCH",
+    );
+    expect(issue?.level).toBe("warning");
+    expect(issue?.message).toContain("第1讲 言语高频词语辨析（第1~10组）");
+    expect(result.issues.filter((i) => i.level === "error")).toEqual([]);
+    expect(parsedDocumentSchema.safeParse(result).success).toBe(true);
+  });
+
+  it("frontmatter lecture 与本篇标题一致：按声明关联且无告警", () => {
+    const md = `---
+kind: lesson
+unit: 随堂讲练
+lecture: 第1讲 有理数
+---
+
+# 第1讲 有理数
+
+::::question{type=judge id="m1"}
+[[正确]]
+::::
+`;
+    const result = parseDocument(md);
+    expect(result.issues).toEqual([]);
+    expect(result.units[0]?.lectureTitle).toBe("第1讲 有理数");
+  });
+
+  it("多讲义 + lecture 指向外部：按最后一题所在 H1 关联本篇并记告警", () => {
+    const md = `---
+kind: lesson
+unit: 随堂讲练
+lecture: 别的讲义
+---
+
+# 第1讲 有理数
+
+::::question{type=judge id="a1"}
+[[正确]]
+::::
+
+# 第2讲 数轴
+
+::::question{type=judge id="a2"}
+[[错误]]
+::::
+`;
+    const result = parseDocument(md);
+    expect(result.units[0]?.lectureTitle).toBe("第2讲 数轴");
+    expect(
+      result.issues.some((i) => i.code === "LESSON_LECTURE_TITLE_MISMATCH"),
+    ).toBe(true);
+  });
+
   it("全部题目都在第一个 H1 之前：QUESTION_BEFORE_FIRST_HEADING 同款，unit.lectureTitle 缺省，题块并入第一篇", () => {
     const md = `---
 kind: lesson
