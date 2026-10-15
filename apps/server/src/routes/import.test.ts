@@ -416,6 +416,89 @@ describe("讲练一体：kind: lesson 文档导入（讲义含题块入库 + kin
     expect(question?.sourceMd).toContain('id="随堂讲练-1"');
   });
 
+  it("frontmatter lecture 指向既有普通讲义（2026-10-15 考公案例回归）：嵌入单元恒关联本次讲练页自身，不误挂其他讲义；预览给 warning", async () => {
+    const { app, db, cookie } = await makeTeacherApp();
+    // 先导入普通讲义，制造与讲练文档 frontmatter lecture 同名的既有讲义
+    const plain = await postJson(
+      app,
+      "/api/teacher/import/commit",
+      {
+        markdown:
+          "---\nkind: lecture\n---\n\n# 第1讲 言语高频词语辨析（第1~10组）\n\n纯讲义正文。\n",
+        filename: "完整讲义.md",
+      },
+      cookie,
+    );
+    expect(plain.status).toBe(200);
+    const plainLecture = db
+      .select()
+      .from(lectures)
+      .where(eq(lectures.title, "第1讲 言语高频词语辨析（第1~10组）"))
+      .get();
+    expect(plainLecture?.kind).toBe("lecture");
+
+    const mismatchMd = `---
+kind: lesson
+unit: 第1讲 词语辨析随堂讲练
+lecture: 第1讲 言语高频词语辨析（第1~10组）
+---
+
+# 第1讲 言语高频词语辨析（第1~10组讲练合一）
+
+正文。
+
+::::question{type=judge difficulty=1}
+命题。[[正确]]
+::::
+`;
+    // 预览：给 LESSON_LECTURE_TITLE_MISMATCH warning（不阻断提交）
+    const preview = await postJson(
+      app,
+      "/api/teacher/import/preview",
+      { markdown: mismatchMd, filename: "第01讲_讲练.md" },
+      cookie,
+    );
+    expect(preview.status).toBe(200);
+    const previewBody = (await preview.json()) as {
+      data: { issues: { code: string }[] };
+    };
+    expect(
+      previewBody.data.issues.some(
+        (i) => i.code === "LESSON_LECTURE_TITLE_MISMATCH",
+      ),
+    ).toBe(true);
+
+    // 提交：单元必须关联本次创建的讲练页，而不是同名的既有普通讲义
+    const res = await postJson(
+      app,
+      "/api/teacher/import/commit",
+      { markdown: mismatchMd, filename: "第01讲_讲练.md" },
+      cookie,
+    );
+    expect(res.status).toBe(200);
+    const lessonLecture = db
+      .select()
+      .from(lectures)
+      .where(eq(lectures.title, "第1讲 言语高频词语辨析（第1~10组讲练合一）"))
+      .get();
+    expect(lessonLecture?.kind).toBe("lesson");
+    const unit = db
+      .select()
+      .from(units)
+      .where(eq(units.id, "第1讲 词语辨析随堂讲练"))
+      .get();
+    expect(unit?.lectureId).toBe(lessonLecture?.id);
+    expect(unit?.lectureId).not.toBe(plainLecture?.id);
+    // 既有普通讲义不受影响（仍是纯讲义）
+    expect(
+      db
+        .select()
+        .from(lectures)
+        .where(eq(lectures.id, plainLecture?.id ?? ""))
+        .get()?.kind,
+    ).toBe("lecture");
+  });
+
   it("重导覆盖：mixed 导入的讲义 kind='lecture'，同名讲义被 lesson 文档重导后 kind 更新为 'lesson'（导入是权威）", async () => {
     const { app, db, cookie } = await makeTeacherApp();
     const mixed = await postJson(

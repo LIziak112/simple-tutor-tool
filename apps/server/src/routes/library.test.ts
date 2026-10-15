@@ -524,6 +524,54 @@ describe("资源库路由：列表", () => {
   });
 });
 
+// ---------- 讲练一体：资源库隐藏嵌入单元（2026-10-15） ----------
+
+describe("资源库路由：units 列表隐藏讲练嵌入单元", () => {
+  it("讲练导入的嵌入单元不出现在 units 列表（课程添加面板同源查询）；普通练习单元照常显示；数据保留为作答体系地基", async () => {
+    const { app, db, teacherCookie } = await makeApp();
+    const lessonCommit = await request(
+      app,
+      "POST",
+      "/api/teacher/import/commit",
+      teacherCookie,
+      {
+        markdown:
+          '---\nkind: lesson\nunit: 随堂讲练\n---\n\n# 讲练 隐藏单元\n\n::::question{type=judge id="hide-1"}\n命题。[[正确]]\n::::\n',
+        filename: "随堂讲练.md",
+      },
+    );
+    expect(lessonCommit.status).toBe(200);
+    const practiceCommit = await request(
+      app,
+      "POST",
+      "/api/teacher/import/commit",
+      teacherCookie,
+      {
+        markdown:
+          '---\nkind: practice\nunit: 普通练习单元\n---\n\n::::question{type=judge id="norm-1"}\n命题。[[正确]]\n::::\n',
+        filename: "普通练习.md",
+      },
+    );
+    expect(practiceCommit.status).toBe(200);
+
+    const body = (await (
+      await request(app, "GET", "/api/teacher/library/units", teacherCookie)
+    ).json()) as { data: { units: { title: string }[] } };
+    const titles = body.data.units.map((u) => u.title);
+    expect(titles).not.toContain("随堂讲练"); // 讲练嵌入单元隐藏
+    expect(titles).toContain("普通练习单元"); // 普通单元照常显示
+
+    // 数据仍在（讲练页作答体系的地基），只是列表不可见
+    const unitRow = db
+      .select()
+      .from(units)
+      .where(eq(units.id, "随堂讲练"))
+      .get();
+    expect(unitRow).toBeDefined();
+    expect(unitRow?.deletedAt).toBeNull();
+  });
+});
+
 // ---------- 单元 / 讲义元数据编辑 ----------
 
 describe("资源库路由：PATCH 单元与讲义元数据", () => {
