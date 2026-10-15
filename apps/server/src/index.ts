@@ -8,6 +8,7 @@ import { runBackfills } from "./db/backfill";
 import { createDbHandle } from "./db/client";
 import { runMigrations } from "./db/migrate";
 import { handleServerError, installCrashHandlers } from "./lib/startup-errors";
+import { startStudentAiWorker } from "./services/ai-companion/student-ai-worker";
 import { startBackupScheduler } from "./services/backup-service";
 
 /**
@@ -53,6 +54,15 @@ logger.info({ dbPath }, "数据库已就绪（迁移与数据搬迁已执行）"
 // 失败只记日志（磁盘满等不拖垮服务）；句柄 db 让快照始终对着当前连接。
 const stopBackupScheduler = startBackupScheduler(config.dataDir, db, logger);
 
+// 页内 AI 异步执行 worker（SAI-17）：间隔扫描 inapp 任务并按代次 CAS 派发。
+// 只在启动入口调度（app.ts 导入零副作用）；每轮先跑队列惰性恢复，重启后
+// dispatching 超时任务收敛为 uncertain，绝不自动重发。同一 Db 重复启动幂等。
+const stopStudentAiWorker = startStudentAiWorker({
+  db,
+  dataDir: config.dataDir,
+  logger,
+});
+
 const app = createApp({
   isProduction: config.isProduction,
   logger,
@@ -86,6 +96,7 @@ server.on("error", (err: Error) => handleServerError(err, config.port));
 // close 回调可能被 keep-alive 空闲连接拖住，3 秒后强制退出兜底。
 function shutdown(signal: NodeJS.Signals): void {
   logger.info({ signal }, "收到退出信号，正在关闭服务");
+  stopStudentAiWorker.stop();
   stopBackupScheduler();
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 3000).unref();
