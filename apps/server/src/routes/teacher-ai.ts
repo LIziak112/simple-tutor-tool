@@ -8,10 +8,9 @@ import {
 } from "@tutor/contract";
 import type { Context } from "hono";
 import { Hono } from "hono";
-import type { ZodType } from "zod";
 import type { TeacherEnv } from "../auth/require-teacher.ts";
 import type { Db } from "../db/client.ts";
-import { firstIssueMessage, HttpError } from "../lib/http-error.ts";
+import { parseJsonBodyWithCode } from "../lib/http-error.ts";
 import {
   type AiPolicySubject,
   getAiPolicyOverride,
@@ -32,8 +31,8 @@ import {
  *
  * 错误码口径（契约 aiPolicyErrorCodeSchema）：模板正文空/超长 → 400
  * AI_PROMPT_INVALID；覆盖 mode 非法 → 400 AI_POLICY_INVALID；其余校验失败
- * → 400 VALIDATION_ERROR。校验规则本身仍是契约 schema 单源（这里只按
- * issue 路径分流展示码，与 parseJsonBody 的手工过 schema 先例同款）。
+ * → 400 VALIDATION_ERROR。校验规则本身仍是契约 schema 单源（经
+ * parseJsonBodyWithCode 只按 issue 路径分流展示码，不重写规则）。
  */
 
 /** 契约 schema 校验失败时按 issue 首段路径分流的模板字段集合 */
@@ -47,7 +46,7 @@ const PROMPT_TEMPLATE_FIELDS = new Set([
 async function parseSettingsBody(
   c: Context,
 ): Promise<AiTeacherSettingsPutRequest> {
-  return parseBodyWithCodeMap(
+  return parseJsonBodyWithCode(
     c,
     aiTeacherSettingsPutRequestSchema,
     (firstPath) =>
@@ -61,40 +60,12 @@ async function parseSettingsBody(
 async function parseOverrideBody(
   c: Context,
 ): Promise<AiPolicyOverridePutRequest> {
-  return parseBodyWithCodeMap(
+  return parseJsonBodyWithCode(
     c,
     aiPolicyOverridePutRequestSchema,
     (firstPath) =>
       firstPath === "mode" ? "AI_POLICY_INVALID" : "VALIDATION_ERROR",
   );
-}
-
-/**
- * 路由层手工过 schema 变体：校验仍走契约 schema（不重写规则），失败时
- * 按 issue 首段路径改写错误码。不复用 parseJsonBody 再重读 body——
- * Request 流已被消费，二次 c.req.json() 会失败，故这里自己读一次文本。
- */
-async function parseBodyWithCodeMap<T>(
-  c: Context,
-  schema: ZodType<T>,
-  codeOf: (firstIssuePath: string) => string,
-): Promise<T> {
-  let raw: unknown;
-  try {
-    raw = JSON.parse(await c.req.text()) as unknown;
-  } catch {
-    throw new HttpError(400, "VALIDATION_ERROR", "请求体不是合法的 JSON");
-  }
-  const parsed = schema.safeParse(raw);
-  if (!parsed.success) {
-    const firstPath = String(parsed.error.issues[0]?.path[0] ?? "");
-    throw new HttpError(
-      400,
-      codeOf(firstPath),
-      `请求参数不合法：${firstIssueMessage(parsed.error)}`,
-    );
-  }
-  return parsed.data;
 }
 
 export function createTeacherAiRoutes(db: Db) {

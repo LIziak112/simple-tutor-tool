@@ -73,8 +73,26 @@ export async function parseJsonBodyOrEmpty<T>(
   return parseJsonText(text, schema);
 }
 
-/** 两个 parseJsonBody 变体的共享段：文本 → JSON.parse → schema 校验（400 口径一致） */
-function parseJsonText<T>(text: string, schema: ZodType<T>): T {
+/**
+ * parseJsonBody 的错误码分流变体（SAI-06 教师端 AI 配置先例）：校验规则仍是
+ * 契约 schema 单源，仅 schema 校验失败时按第一条 issue 首段路径改写 400 错误码
+ * （如 AI_PROMPT_INVALID / AI_POLICY_INVALID）；非 JSON 恒 VALIDATION_ERROR。
+ * body 只读一次（c.req.text()），与 parseJsonBody 同款，不存在二次读流。
+ */
+export async function parseJsonBodyWithCode<T>(
+  c: Context,
+  schema: ZodType<T>,
+  codeOf: (firstIssuePath: string) => string,
+): Promise<T> {
+  return parseJsonText(await c.req.text(), schema, codeOf);
+}
+
+/** parseJsonBody 变体们的共享段：文本 → JSON.parse → schema 校验（400 口径一致） */
+function parseJsonText<T>(
+  text: string,
+  schema: ZodType<T>,
+  codeOf: (firstIssuePath: string) => string = () => "VALIDATION_ERROR",
+): T {
   let raw: unknown;
   try {
     raw = JSON.parse(text) as unknown;
@@ -83,9 +101,10 @@ function parseJsonText<T>(text: string, schema: ZodType<T>): T {
   }
   const parsed = schema.safeParse(raw);
   if (!parsed.success) {
+    const firstPath = String(parsed.error.issues[0]?.path[0] ?? "");
     throw new HttpError(
       400,
-      "VALIDATION_ERROR",
+      codeOf(firstPath),
       `请求参数不合法：${firstIssueMessage(parsed.error)}`,
     );
   }
