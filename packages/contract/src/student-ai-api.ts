@@ -267,11 +267,20 @@ export const aiMaterialUploadReceiptOkSchema = apiOkExtend(
 
 // ---------- /api/student/ai/connections ----------
 
-/** mcp 成员（创建与更新共用同一形态：token 服务端生成，无凭证入参） */
+/** mcp 成员（创建/更新共用：token 服务端生成，无凭证入参；更新另加 resetToken） */
 const aiConnectionMcpMemberSchema = z
   .object({
     channel: z.literal("mcp"),
-    /** token 由服务端生成，明文只在创建响应显示一次 */
+    /** token 由服务端生成，明文只在创建/重置响应显示一次 */
+    isDefault: z.boolean().optional(),
+  })
+  .strict();
+
+/** link 成员（创建/更新共用同一形态：无凭证入参，仅票据偏好与默认位） */
+const aiConnectionLinkMemberSchema = z
+  .object({
+    channel: z.literal("link"),
+    defaultValidHours: shareValidHoursField().optional(),
     isDefault: z.boolean().optional(),
   })
   .strict();
@@ -290,13 +299,7 @@ export const aiConnectionCreateRequestSchema = z.discriminatedUnion("channel", [
     })
     .strict(),
   aiConnectionMcpMemberSchema,
-  z
-    .object({
-      channel: z.literal("link"),
-      defaultValidHours: shareValidHoursField().optional(),
-      isDefault: z.boolean().optional(),
-    })
-    .strict(),
+  aiConnectionLinkMemberSchema,
 ]);
 export type AiConnectionCreateRequest = z.infer<
   typeof aiConnectionCreateRequestSchema
@@ -319,21 +322,11 @@ export const aiConnectionPatchRequestSchema = z.discriminatedUnion("channel", [
       isDefault: z.boolean().optional(),
     })
     .strict(),
-  z
-    .object({
-      channel: z.literal("mcp"),
-      /** 重置 token：旧 token 立即失效，新明文只在 PATCH 响应出现一次 */
-      resetToken: z.boolean().optional(),
-      isDefault: z.boolean().optional(),
-    })
-    .strict(),
-  z
-    .object({
-      channel: z.literal("link"),
-      defaultValidHours: shareValidHoursField().optional(),
-      isDefault: z.boolean().optional(),
-    })
-    .strict(),
+  aiConnectionMcpMemberSchema.extend({
+    /** 重置 token：旧 token 立即失效，新明文只在 PATCH 响应出现一次 */
+    resetToken: z.boolean().optional(),
+  }),
+  aiConnectionLinkMemberSchema,
 ]);
 export type AiConnectionPatchRequest = z.infer<
   typeof aiConnectionPatchRequestSchema
@@ -379,13 +372,8 @@ export const aiConnectionTestOkSchema = apiOkExtend(aiConnectionTestDataSchema);
  * PATCH /ai/connections/:id 响应 data：与创建同形——公开视图 + 可选一次性
  * 凭证（仅 mcp 重置 token 时非 null，明文只在本响应出现一次）。
  */
-export const aiConnectionPatchDataSchema = z
-  .object({
-    connection: aiConnectionPublicSchema,
-    credential: aiConnectionFirstCredentialSchema.nullable(),
-  })
-  .strict();
-export type AiConnectionPatchData = z.infer<typeof aiConnectionPatchDataSchema>;
+export const aiConnectionPatchDataSchema = aiConnectionCreateDataSchema;
+export type AiConnectionPatchData = AiConnectionCreateData;
 export const aiConnectionPatchOkSchema = apiOkExtend(
   aiConnectionPatchDataSchema,
 );
