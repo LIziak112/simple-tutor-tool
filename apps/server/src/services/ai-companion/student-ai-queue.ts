@@ -174,6 +174,8 @@ function insertFact(
  * 唯一状态转换入口：合法性查表 + 按旧状态 CAS 条件更新。
  * CAS 落空（并发下他人已改）→ 409 AI_STATE_CONFLICT；非法转换（调用方漏检）
  * → 500 INTERNAL（编程错误，不给客户端 4xx 假象）。
+ * 附加列（租约/代次等）经 patch 随转换同写——claim/expire/recover 等含
+ * 多列补丁的转换也走本入口，状态写不绕过转换表。
  */
 function applyTransition(
   tx: QueueTx,
@@ -184,6 +186,9 @@ function applyTransition(
     errorText?: string | null;
     cancelRequestedAt?: string | null;
     retryCount?: number;
+    leaseToken?: string | null;
+    leaseUntil?: string | null;
+    generation?: number;
   } = {},
 ): AiTaskRow {
   if (!TASK_TRANSITIONS[task.status].includes(to)) {
@@ -193,34 +198,29 @@ function applyTransition(
       `任务状态转换非法：${task.status} → ${to}（SAI-12 状态机）`,
     );
   }
-  const changed = tx
-    .update(aiTasks)
-    .set({
-      status: to,
-      updatedAt: now.iso,
-      ...(patch.errorText === undefined ? {} : { errorText: patch.errorText }),
-      ...(patch.cancelRequestedAt === undefined
-        ? {}
-        : { cancelRequestedAt: patch.cancelRequestedAt }),
-      ...(patch.retryCount === undefined
-        ? {}
-        : { retryCount: patch.retryCount }),
-    })
-    .where(and(eq(aiTasks.id, task.id), eq(aiTasks.status, task.status)))
-    .run();
-  if (changed.changes !== 1) {
-    throw conflict("任务状态已被其他操作更新，请刷新后重试");
-  }
-  return {
-    ...task,
-    status: to,
-    updatedAt: now.iso,
+  const extra = {
     ...(patch.errorText === undefined ? {} : { errorText: patch.errorText }),
     ...(patch.cancelRequestedAt === undefined
       ? {}
       : { cancelRequestedAt: patch.cancelRequestedAt }),
     ...(patch.retryCount === undefined ? {} : { retryCount: patch.retryCount }),
+    ...(patch.leaseToken === undefined ? {} : { leaseToken: patch.leaseToken }),
+    ...(patch.leaseUntil === undefined
+      ? {}
+      : { leaseUntil: patch.leaseUntil }),
+    ...(patch.generation === undefined
+      ? {}
+      : { generation: patch.generation }),
   };
+  const changed = tx
+    .update(aiTasks)
+    .set({ status: to, updatedAt: now.iso, ...extra })
+    .where(and(eq(aiTasks.id, task.id), eq(aiTasks.status, task.status)))
+    .run();
+  if (changed.changes !== 1) {
+    throw conflict("任务状态已被其他操作更新，请刷新后重试");
+  }
+  return { ...task, status: to, updatedAt: now.iso, ...extra };
 }
 
 // ---------- 任务定位与门禁 ----------
@@ -364,6 +364,25 @@ export interface AiTaskCreateResult {
 }
 
 /**
+ * 幂等重放谓词：既有行是否就是本请求的重放（同学生/卷/题/通道 + 首条消息
+ * 原文一致）。预检查与唯一索引竞态兜底分支共用同一口径——竞态窗口同键
+ * 异内容同样必须 409，不得静默当作重放返回原任务。
+ */
+function matchesCreateReplay(
+  db: Db | QueueTx,
+  row: AiTaskRow,
+  input: CreateAiTaskInput,
+): boolean {
+  return (
+    row.studentId === input.studentId &&
+    row.attemptId === input.attemptId &&
+    row.questionId === input.questionId &&
+    row.channel === input.channel &&
+    firstQuestionOf(db, row.id) === input.question
+  );
+}
+
+/**
  * 创建任务（单事务）：幂等键查重（同学生同键同内容 → 返回原任务；同键内容
  * 不符 / 不同账号题目 → 409，绝不互相去重）→ SAI-09 快照装配（策略实时
  * 裁决）→ 三项配额 → 插任务行 + 首条消息 + task_created 事实。
@@ -383,13 +402,7 @@ export function createAiTask(
     .where(eq(aiTasks.mutationId, input.mutationId))
     .get();
   if (existing !== undefined) {
-    const sameContent =
-      existing.studentId === input.studentId &&
-      existing.attemptId === input.attemptId &&
-      existing.questionId === input.questionId &&
-      existing.channel === input.channel &&
-      firstQuestionOf(db, existing.id) === input.question;
-    if (!sameContent) {
+    if (!matchesCreateReplay(db, existing, input)) {
       throw conflict("该幂等键已用于不同内容的任务，请刷新页面后重新发送");
     }
     return { task: existing, created: false };
@@ -507,14 +520,11 @@ export function createAiTask(
           .from(aiTasks)
           .where(eq(aiTasks.mutationId, input.mutationId))
           .get();
-        if (
-          raced !== undefined &&
-          raced.studentId === input.studentId &&
-          raced.attemptId === input.attemptId &&
-          raced.questionId === input.questionId &&
-          raced.channel === input.channel
-        ) {
-          return { task: raced, created: false };
+        if (raced !== undefined) {
+          if (matchesCreateReplay(asDb(tx), raced, input)) {
+            return { task: raced, created: false };
+          }
+          throw conflict("该幂等键已用于不同内容的任务，请刷新页面后重新发送");
         }
         throw conflict("任务创建冲突，请重试");
       }
@@ -742,15 +752,10 @@ function expireStaleLeases(tx: QueueTx, now: NowSpec): number {
     .where(and(eq(aiTasks.status, "claimed"), lte(aiTasks.leaseUntil, now.iso)))
     .all();
   for (const row of stale) {
-    tx.update(aiTasks)
-      .set({
-        status: "created",
-        leaseToken: null,
-        leaseUntil: null,
-        updatedAt: now.iso,
-      })
-      .where(and(eq(aiTasks.id, row.id), eq(aiTasks.status, "claimed")))
-      .run();
+    applyTransition(tx, row, "created", now, {
+      leaseToken: null,
+      leaseUntil: null,
+    });
   }
   return stale.length;
 }
@@ -811,28 +816,11 @@ export function claimMcpTask(
       const leaseUntil = new Date(
         now.date.getTime() + AI_MCP_LEASE_MINUTES * 60_000,
       ).toISOString();
-      const changed = tx
-        .update(aiTasks)
-        .set({
-          status: "claimed",
-          leaseToken,
-          leaseUntil,
-          generation: candidate.generation + 1,
-          updatedAt: now.iso,
-        })
-        .where(and(eq(aiTasks.id, candidate.id), eq(aiTasks.status, "created")))
-        .run();
-      if (changed.changes !== 1) {
-        throw conflict("任务已被其他客户端领取");
-      }
-      const claimed: AiTaskRow = {
-        ...candidate,
-        status: "claimed",
+      const claimed = applyTransition(tx, candidate, "claimed", now, {
         leaseToken,
         leaseUntil,
         generation: candidate.generation + 1,
-        updatedAt: now.iso,
-      };
+      });
       insertFact(tx, claimed, "dispatched", now, {
         via: "mcp_claim",
         leaseUntil,
@@ -1085,8 +1073,8 @@ export function beginInappDispatch(
 ): { generation: number } {
   const configSource = options.configSource ?? sqliteAiPolicyConfigSource;
   const now = nowSpecOf(options.now);
-  const blocked = db.transaction(
-    (tx): boolean => {
+  const result = db.transaction(
+    (tx): { blocked: boolean; generation: number } => {
       const task = requireOwnTask(tx, input.studentId, input.taskId);
       if (task.channel !== "inapp") {
         throw conflict("MCP 任务须由外部 AI 领取，不能页内发送");
@@ -1099,37 +1087,23 @@ export function beginInappDispatch(
         // 转换与事实随本事务提交（403 在事务外抛出，不回滚 paused 事实）。
         const paused = applyTransition(tx, task, "paused", now);
         insertFact(tx, paused, "paused", now, { via: "dispatch_check" });
-        return true;
+        return { blocked: true, generation: task.generation };
       }
-      const changed = tx
-        .update(aiTasks)
-        .set({
-          status: "dispatching",
-          generation: task.generation + 1,
-          updatedAt: now.iso,
-        })
-        .where(and(eq(aiTasks.id, task.id), eq(aiTasks.status, "created")))
-        .run();
-      if (changed.changes !== 1) {
-        throw conflict("任务状态已被其他操作更新，请刷新后重试");
-      }
-      return false;
+      applyTransition(tx, task, "dispatching", now, {
+        generation: task.generation + 1,
+      });
+      return { blocked: false, generation: task.generation + 1 };
     },
     { behavior: "immediate" },
   );
-  if (blocked) {
+  if (result.blocked) {
     throw new HttpError(
       403,
       "AI_POLICY_DISABLED",
       "当前教学模式下本题暂不能发送 AI 求助，任务已暂停（恢复开放后可继续）",
     );
   }
-  const row = db
-    .select()
-    .from(aiTasks)
-    .where(eq(aiTasks.id, input.taskId))
-    .get();
-  return { generation: row === undefined ? 0 : row.generation };
+  return { generation: result.generation };
 }
 
 export interface CompleteInappResult {
@@ -1560,10 +1534,7 @@ export function recoverAiQueue(
         )
         .all();
       for (const row of stale) {
-        tx.update(aiTasks)
-          .set({ status: "uncertain", updatedAt: now.iso })
-          .where(and(eq(aiTasks.id, row.id), eq(aiTasks.status, "dispatching")))
-          .run();
+        applyTransition(tx, row, "uncertain", now);
       }
       return { expiredLeases, staleDispatching: stale.length };
     },
