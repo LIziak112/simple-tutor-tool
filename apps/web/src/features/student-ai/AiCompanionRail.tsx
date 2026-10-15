@@ -81,11 +81,19 @@ function AiCompanionChannelStatus({ settingsHref }: { settingsHref: string }) {
         </Link>
       </div>
     );
-  const fallback = connections.find((item) => item.isDefault) ?? connections[0];
+  const fallback = connections.find((item) => item.isDefault);
+  const label =
+    fallback?.channel === "inapp"
+      ? fallback.model
+      : fallback === undefined
+        ? null
+        : fallback.channel === "mcp"
+          ? "MCP 通道"
+          : "上下文链接";
   return (
     <p className="text-xs text-muted-foreground">
-      已配置 {connections.length} 个 AI 通道（默认：{fallback.model}），
-      发送与对话功能建设中
+      已配置 {connections.length} 个 AI 通道
+      {label === null ? "" : `（默认：${label}）`}，发送与对话功能建设中
     </p>
   );
 }
@@ -176,7 +184,7 @@ export function AiCompanionRail({
   containerRef: RefObject<HTMLDivElement | null>;
   controller: AiCompanionLayoutController;
   /** dock 模式 Esc/关闭后焦点返回的触发按钮 */
-  triggerRef?: RefObject<HTMLButtonElement | null>;
+  triggerRef?: RefObject<HTMLButtonElement | null> | undefined;
   questionLabel: string | null;
   /** 连接设置入口（含 ?from= 回跳原题路径） */
   settingsHref: string;
@@ -273,7 +281,7 @@ function DockPanel({
   conversation,
 }: {
   controller: AiCompanionLayoutController;
-  triggerRef?: RefObject<HTMLButtonElement | null>;
+  triggerRef?: RefObject<HTMLButtonElement | null> | undefined;
   questionLabel: string | null;
   settingsHref: string;
   quickButtons?: ReactNode;
@@ -295,7 +303,7 @@ function DockPanel({
         if (
           event.defaultPrevented ||
           event.key !== "Escape" ||
-          event.isComposing ||
+          event.nativeEvent.isComposing ||
           event.keyCode === 229
         )
           return;

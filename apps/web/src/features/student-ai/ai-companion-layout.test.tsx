@@ -1,10 +1,11 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { useRef } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import {
   AI_COMPANION_DOCK_MIN_WIDTH,
   AI_COMPANION_NAV_EXPAND_MIN_WIDTH,
   type AiCompanionLayoutController,
+  type AiCompanionLayoutEditor,
   useAiCompanionLayout,
 } from "./ai-companion-layout";
 
@@ -39,8 +40,8 @@ function setWidth(next: number) {
   fireEvent(window, new Event("resize"));
 }
 
-interface FakeEditor {
-  flush: ReturnType<typeof vi.fn>;
+interface FakeEditor extends AiCompanionLayoutEditor {
+  flush: Mock<AiCompanionLayoutEditor["flush"]>;
 }
 
 const captured: { controller: AiCompanionLayoutController | null } = {
@@ -157,7 +158,7 @@ describe("SAI-19 伴学栏布局控制器", () => {
 
   it("必须先测②：打开前对当前题收笔等本机落盘；落盘失败布局不变并如实报错", async () => {
     const undoStack = ["笔画1"];
-    const editor = {
+    const editor: FakeEditor = {
       flush: vi.fn(async () => {
         throw new Error("本机稿写入失败");
       }),
@@ -204,7 +205,7 @@ describe("SAI-19 伴学栏布局控制器", () => {
     const viewport = new EventTarget();
     Object.assign(viewport, { height: 400, offsetTop: 0, scale: 1 });
     vi.stubGlobal("visualViewport", viewport);
-    fireEvent(viewport, new Event("resize"));
+    viewport.dispatchEvent(new Event("resize"));
     expect(stateOf().ai).toBe("panel");
     vi.unstubAllGlobals();
 

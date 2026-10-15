@@ -14,6 +14,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { useLocation } from "react-router";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -49,6 +50,11 @@ import {
   prepareSubmitEvidence,
   type SubmitEvidencePrep,
 } from "@/features/notes/submit-evidence";
+import {
+  AiCompanionRail,
+  AiCompanionTrigger,
+} from "@/features/student-ai/AiCompanionRail";
+import { useAiCompanionLayout } from "@/features/student-ai/ai-companion-layout";
 import { sealAttemptAnnotationsApi } from "@/lib/api";
 import { formatDueTime } from "@/lib/time";
 import { useOnlineStatus } from "@/lib/use-online-status";
@@ -244,7 +250,21 @@ function AnswerView({
   const total = flatQuestions.length;
   const materialRecovery = useAttemptMaterialRecovery(attemptId, questionIds);
   const [navigatorOpen, setNavigatorOpen] = useState(false);
-  const [navigatorCollapsed, setNavigatorCollapsed] = useState(false);
+  const [currentQuestionId, setCurrentQuestionId] = useState<string | null>(
+    null,
+  );
+  // SAI-19 伴学栏布局控制器：接管答题卡折叠（用户选择 + AI 覆盖）与
+  // AI 面板开/关（打开前收笔等本机落盘）；rail 容器实测可用宽度。
+  const location = useLocation();
+  const aiRailRef = useRef<HTMLDivElement>(null);
+  const aiTriggerRef = useRef<HTMLButtonElement>(null);
+  const aiCompanion = useAiCompanionLayout({
+    containerRef: aiRailRef,
+    editor,
+    currentQuestionId,
+  });
+  const aiSettingsHref = `/s/settings/ai?from=${encodeURIComponent(location.pathname + location.search)}`;
+  const navigatorCollapsed = aiCompanion.navigatorCollapsed;
   const navigationId = useId();
   const navigationAnchor = useRef<{ element: HTMLElement; top: number } | null>(
     null,
@@ -259,9 +279,6 @@ function AnswerView({
     });
     navigationAnchor.current = null;
   }, [navigatorCollapsed]);
-  const [currentQuestionId, setCurrentQuestionId] = useState<string | null>(
-    null,
-  );
   const { flags: flaggedQuestions, toggle: toggleFlag } =
     useWorkspaceFlags(attemptId);
   const [formalInkPresence, setFormalInkPresence] = useState<
@@ -520,6 +537,9 @@ function AnswerView({
         {/* 练习头：来源 + 标题 + 截止 + 草稿保存状态（T2.9 三态 + T2A.6 终态） */}
         <AttemptHeader
           title={data.title}
+          actions={
+            <AiCompanionTrigger ref={aiTriggerRef} controller={aiCompanion} />
+          }
           status={(closeDetails) => (
             <div className="flex min-w-0 items-center gap-2">
               <p
@@ -629,118 +649,133 @@ function AnswerView({
           </div>
         )}
 
-        <div
-          className={`grid min-w-0 grid-cols-1 gap-6 ${navigatorCollapsed ? "lg:grid-cols-[44px_minmax(0,1fr)]" : "lg:grid-cols-[176px_minmax(0,1fr)]"}`}
+        {/* SAI-19：AI 伴学栏与主区共栖（dock 右栏/窄屏独立面板），主区
+            （答题卡 + 题卡列表）作为 rail 子内容保持控制器身份稳定 */}
+        <AiCompanionRail
+          containerRef={aiRailRef}
+          controller={aiCompanion}
+          triggerRef={aiTriggerRef}
+          questionLabel={
+            currentQuestionId !== null &&
+            questionIndexById.has(currentQuestionId)
+              ? `第 ${questionIndexById.get(currentQuestionId)} 题`
+              : null
+          }
+          settingsHref={aiSettingsHref}
         >
-          <aside
-            aria-label="答题定位"
-            className="sticky top-[calc(var(--attempt-header-height,64px)+16px)] hidden max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] self-start overflow-y-auto overscroll-contain lg:block"
+          <div
+            className={`grid min-w-0 grid-cols-1 gap-6 ${navigatorCollapsed ? "lg:grid-cols-[44px_minmax(0,1fr)]" : "lg:grid-cols-[176px_minmax(0,1fr)]"}`}
           >
-            <h2 className="sticky top-0 z-10 mb-3">
-              <Button
-                variant="outline"
-                className={`min-h-11 text-sm font-semibold ${navigatorCollapsed ? "size-11 p-0" : "w-full justify-between px-3"}`}
-                // 学生端全局焦点规则在工具类层之外；内收轮廓避免滚动栏裁切。
-                style={{ outlineOffset: -2 }}
-                aria-label={navigatorCollapsed ? "展开答题卡" : "收起答题卡"}
-                title={navigatorCollapsed ? "展开答题卡" : "收起答题卡"}
-                aria-expanded={!navigatorCollapsed}
-                aria-controls={navigationId}
-                onClick={() => {
-                  const element = currentQuestionId
-                    ? cardElements.current.get(currentQuestionId)
-                    : undefined;
-                  if (element)
-                    navigationAnchor.current = {
-                      element,
-                      top: element.getBoundingClientRect().top,
-                    };
-                  setNavigatorCollapsed((value) => !value);
-                }}
-              >
-                {!navigatorCollapsed && <span>答题卡</span>}
-                {navigatorCollapsed ? (
-                  <PanelLeftOpen aria-hidden className="size-4" />
-                ) : (
-                  <PanelLeftClose aria-hidden className="size-4" />
-                )}
-              </Button>
-            </h2>
-            <div id={navigationId} hidden={navigatorCollapsed}>
-              <QuestionNavigator
-                items={navigationItems}
-                currentId={currentQuestionId}
-                onJump={jumpToQuestion}
-              />
-            </div>
-          </aside>
+            <aside
+              aria-label="答题定位"
+              className="sticky top-[calc(var(--attempt-header-height,64px)+16px)] hidden max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] self-start overflow-y-auto overscroll-contain lg:block"
+            >
+              <h2 className="sticky top-0 z-10 mb-3">
+                <Button
+                  variant="outline"
+                  className={`min-h-11 text-sm font-semibold ${navigatorCollapsed ? "size-11 p-0" : "w-full justify-between px-3"}`}
+                  // 学生端全局焦点规则在工具类层之外；内收轮廓避免滚动栏裁切。
+                  style={{ outlineOffset: -2 }}
+                  aria-label={navigatorCollapsed ? "展开答题卡" : "收起答题卡"}
+                  title={navigatorCollapsed ? "展开答题卡" : "收起答题卡"}
+                  aria-expanded={!navigatorCollapsed}
+                  aria-controls={navigationId}
+                  onClick={() => {
+                    const element = currentQuestionId
+                      ? cardElements.current.get(currentQuestionId)
+                      : undefined;
+                    if (element)
+                      navigationAnchor.current = {
+                        element,
+                        top: element.getBoundingClientRect().top,
+                      };
+                    aiCompanion.toggleNavigator();
+                  }}
+                >
+                  {!navigatorCollapsed && <span>答题卡</span>}
+                  {navigatorCollapsed ? (
+                    <PanelLeftOpen aria-hidden className="size-4" />
+                  ) : (
+                    <PanelLeftClose aria-hidden className="size-4" />
+                  )}
+                </Button>
+              </h2>
+              <div id={navigationId} hidden={navigatorCollapsed}>
+                <QuestionNavigator
+                  items={navigationItems}
+                  currentId={currentQuestionId}
+                  onJump={jumpToQuestion}
+                />
+              </div>
+            </aside>
 
-          {/* 空试卷：单元没有可作答的题目 */}
-          {total === 0 && (
-            <div className="rounded-lg border border-dashed border-border bg-card px-6 py-10 text-center">
-              <p className="text-sm font-medium">这份练习还没有题目</p>
-              <p className="mt-1 text-sm text-muted-foreground">
-                可能老师正在整理内容，请联系老师确认后再来。
-              </p>
-              <Button
-                variant="outline"
-                className="mt-4 min-h-11"
-                onClick={onBackHome}
-              >
-                返回
-              </Button>
-            </div>
-          )}
+            {/* 空试卷：单元没有可作答的题目 */}
+            {total === 0 && (
+              <div className="rounded-lg border border-dashed border-border bg-card px-6 py-10 text-center">
+                <p className="text-sm font-medium">这份练习还没有题目</p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  可能老师正在整理内容，请联系老师确认后再来。
+                </p>
+                <Button
+                  variant="outline"
+                  className="mt-4 min-h-11"
+                  onClick={onBackHome}
+                >
+                  返回
+                </Button>
+              </div>
+            )}
 
-          {/* 题卡列表（ref 注册进视口观察：question_view + 聚焦兜底，T2.10）。
+            {/* 题卡列表（ref 注册进视口观察：question_view + 聚焦兜底，T2.10）。
             T2A.7：多单元作业按单元分节（节标题 = 单元标题），题号全卷连续 */}
-          <ol
-            inert={
-              !attemptMaterialsEditable(materialRecovery) || answers === null
-            }
-            className={total === 0 ? "hidden" : "flex flex-col gap-4"}
-          >
-            {data.units.map((unit) => (
-              <li key={unit.id} className="flex flex-col gap-4">
-                {showUnitHeaders && (
-                  <h2
-                    data-slot="attempt-unit-heading"
-                    className="flex items-center gap-2 pt-2 text-sm font-semibold text-foreground before:h-4 before:w-1 before:rounded-full before:bg-primary"
-                  >
-                    {unit.title}
-                  </h2>
-                )}
-                <ol className="flex flex-col gap-4">
-                  {unit.questions.map((question) => {
-                    const index = flatQuestions.indexOf(question);
-                    return (
-                      <AttemptQuestionRow
-                        key={question.id}
-                        cardElements={cardElements}
-                        events={attemptEvents}
-                        index={index}
-                        question={question}
-                        assignmentTitle={data.title}
-                        answer={answers?.[question.id]}
-                        onAnswer={setAnswer}
-                        attemptId={attemptId}
-                        flagged={flaggedQuestions.has(question.id)}
-                        onToggleFlag={toggleFlag}
-                        formalInkPresence={
-                          formalInkPresence.get(question.id) ?? false
-                        }
-                        onInkPresenceChange={onInkPresenceChange}
-                        registerInkController={registerInkController}
-                        hints={hintsOpened[question.id]}
-                        onHintUnlocked={unlockHint}
-                      />
-                    );
-                  })}
-                </ol>
-              </li>
-            ))}
-          </ol>
-        </div>
+            <ol
+              inert={
+                !attemptMaterialsEditable(materialRecovery) || answers === null
+              }
+              className={total === 0 ? "hidden" : "flex flex-col gap-4"}
+            >
+              {data.units.map((unit) => (
+                <li key={unit.id} className="flex flex-col gap-4">
+                  {showUnitHeaders && (
+                    <h2
+                      data-slot="attempt-unit-heading"
+                      className="flex items-center gap-2 pt-2 text-sm font-semibold text-foreground before:h-4 before:w-1 before:rounded-full before:bg-primary"
+                    >
+                      {unit.title}
+                    </h2>
+                  )}
+                  <ol className="flex flex-col gap-4">
+                    {unit.questions.map((question) => {
+                      const index = flatQuestions.indexOf(question);
+                      return (
+                        <AttemptQuestionRow
+                          key={question.id}
+                          cardElements={cardElements}
+                          events={attemptEvents}
+                          index={index}
+                          question={question}
+                          assignmentTitle={data.title}
+                          answer={answers?.[question.id]}
+                          onAnswer={setAnswer}
+                          attemptId={attemptId}
+                          flagged={flaggedQuestions.has(question.id)}
+                          onToggleFlag={toggleFlag}
+                          formalInkPresence={
+                            formalInkPresence.get(question.id) ?? false
+                          }
+                          onInkPresenceChange={onInkPresenceChange}
+                          registerInkController={registerInkController}
+                          hints={hintsOpened[question.id]}
+                          onHintUnlocked={unlockHint}
+                        />
+                      );
+                    })}
+                  </ol>
+                </li>
+              ))}
+            </ol>
+          </div>
+        </AiCompanionRail>
 
         <Dialog open={navigatorOpen} onOpenChange={setNavigatorOpen}>
           <DialogContent className="flex max-h-[70dvh] w-[calc(100%-24px)] flex-col rounded-lg">

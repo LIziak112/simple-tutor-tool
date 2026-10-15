@@ -19,11 +19,14 @@ export function AttemptHeader({
   title,
   status,
   onBack,
+  actions,
   children,
 }: {
   title: string;
   status: (closeDetails: () => void) => ReactNode;
   onBack: () => void;
+  /** 标题右侧的扩展动作位（SAI-19 AI 助教入口；无动作时不占格） */
+  actions?: ReactNode;
   children: ReactNode;
 }) {
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -32,10 +35,11 @@ export function AttemptHeader({
     navigating.current = detailsOpen;
     setDetailsOpen(false);
   };
+  const hasActions = actions != null;
   return (
     <header
       data-slot="attempt-header"
-      className="sticky top-0 z-20 -mx-3 grid min-h-16 grid-cols-[44px_minmax(0,1fr)_44px] items-center gap-x-2 gap-y-1 border-b border-border bg-background/95 px-3 py-2 backdrop-blur sm:-mx-6 sm:grid-cols-[44px_minmax(0,1fr)_auto_44px] sm:px-6"
+      className={`sticky top-0 z-20 -mx-3 grid min-h-16 items-center gap-x-2 gap-y-1 border-b border-border bg-background/95 px-3 py-2 backdrop-blur sm:-mx-6 sm:px-6 ${hasActions ? "grid-cols-[44px_minmax(0,1fr)_44px_44px] sm:grid-cols-[44px_minmax(0,1fr)_44px_auto_44px]" : "grid-cols-[44px_minmax(0,1fr)_44px] sm:grid-cols-[44px_minmax(0,1fr)_auto_44px]"}`}
     >
       <div className="contents">
         <Button
@@ -51,12 +55,17 @@ export function AttemptHeader({
         <h1 className="col-start-2 row-start-1 line-clamp-2 min-w-0 text-lg leading-[1.45] font-semibold break-words">
           {title}
         </h1>
+        {hasActions && (
+          <div className="col-start-3 row-start-1 flex items-center justify-self-end">
+            {actions}
+          </div>
+        )}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
               type="button"
               variant="ghost"
-              className="col-start-3 row-start-1 size-11 shrink-0 p-0 sm:col-start-4"
+              className={`row-start-1 size-11 shrink-0 p-0 ${hasActions ? "col-start-4 sm:col-start-5" : "col-start-3 sm:col-start-4"}`}
               aria-label="练习更多"
               title="练习信息"
             >
@@ -71,10 +80,14 @@ export function AttemptHeader({
         </DropdownMenu>
       </div>
       <div className="contents">
-        <div className="hidden min-w-0 sm:col-span-3 sm:col-start-2 sm:row-start-2 sm:block">
+        <div
+          className={`hidden min-w-0 sm:col-start-2 sm:row-start-2 sm:block ${hasActions ? "sm:col-span-4" : "sm:col-span-3"}`}
+        >
           {children}
         </div>
-        <div className="hidden min-w-0 sm:col-start-3 sm:row-start-1 sm:block sm:max-w-sm">
+        <div
+          className={`hidden min-w-0 sm:row-start-1 sm:block sm:max-w-sm ${hasActions ? "sm:col-start-4" : "sm:col-start-3"}`}
+        >
           {status(closeDetails)}
         </div>
       </div>

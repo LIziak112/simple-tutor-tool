@@ -197,7 +197,9 @@ beforeEach(() => {
   const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
   scrollSpies = [
     () => {
-      delete Element.prototype.scrollIntoView;
+      // jsdom 无 scrollIntoView：恢复“未定义”用 Reflect 删除，绕开
+      // lib.dom 对必填方法的 delete 检查（效果与 delete 相同）。
+      Reflect.deleteProperty(Element.prototype, "scrollIntoView");
       scrollBy.mockRestore();
       scrollTo.mockRestore();
     },
