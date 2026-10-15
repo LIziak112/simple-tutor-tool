@@ -108,7 +108,11 @@ export function recordShareTicketGenerated(
     {
       task: input.task,
       type: "link_generated",
-      detail: { via: "share_ticket", ticketId: input.ticketId, expiresAt: input.expiresAt },
+      detail: {
+        via: "share_ticket",
+        ticketId: input.ticketId,
+        expiresAt: input.expiresAt,
+      },
     },
     options,
   );
@@ -242,12 +246,7 @@ export function aiHelpQuestionFactsOf(
     .where(eq(aiFacts.attemptId, input.attemptId))
     .all()
     .filter((f) => f.questionId === input.questionId);
-  return summarizeRows(
-    input.attemptId,
-    input.questionId,
-    taskRows,
-    factRows,
-  );
+  return summarizeRows(input.attemptId, input.questionId, taskRows, factRows);
 }
 
 /**
@@ -264,17 +263,32 @@ export function aiHelpFactsSummariesOf(
   const taskRows = db
     .select()
     .from(aiTasks)
-    .where(input.attemptId !== undefined ? eq(aiTasks.attemptId, input.attemptId) : undefined)
+    .where(
+      input.attemptId !== undefined
+        ? eq(aiTasks.attemptId, input.attemptId)
+        : undefined,
+    )
     .all()
-    .filter((t) => input.studentId === undefined || t.studentId === input.studentId);
+    .filter(
+      (t) => input.studentId === undefined || t.studentId === input.studentId,
+    );
   const factRows = db
     .select()
     .from(aiFacts)
-    .where(input.attemptId !== undefined ? eq(aiFacts.attemptId, input.attemptId) : undefined)
+    .where(
+      input.attemptId !== undefined
+        ? eq(aiFacts.attemptId, input.attemptId)
+        : undefined,
+    )
     .all()
-    .filter((f) => input.studentId === undefined || f.studentId === input.studentId);
+    .filter(
+      (f) => input.studentId === undefined || f.studentId === input.studentId,
+    );
 
-  const questions = new Map<string, { attemptId: string; questionId: string }>();
+  const questions = new Map<
+    string,
+    { attemptId: string; questionId: string }
+  >();
   for (const row of taskRows) {
     questions.set(`${row.attemptId}\u0000${row.questionId}`, {
       attemptId: row.attemptId,
@@ -303,7 +317,8 @@ export function aiHelpFactsSummariesOf(
         taskByKey.get(key) ?? [],
         factRows.filter(
           (f) =>
-            f.attemptId === scope.attemptId && f.questionId === scope.questionId,
+            f.attemptId === scope.attemptId &&
+            f.questionId === scope.questionId,
         ),
       ),
     );

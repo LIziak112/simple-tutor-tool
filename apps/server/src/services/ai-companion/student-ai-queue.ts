@@ -42,6 +42,7 @@ import {
 import { HttpError } from "../../lib/http-error.ts";
 import { resolveNowDate } from "../export-service.ts";
 import { sqliteAiPolicyConfigSource } from "./ai-policy-config-source.ts";
+import { appendAiFact } from "./student-ai-audit.ts";
 import { buildAiContextBundle } from "./student-ai-context.ts";
 import {
   aiTaskMaterialsPublicOf,
@@ -165,7 +166,12 @@ const TASK_TRANSITIONS: Readonly<
 /** 事实详情（detailJson 的对象形态；contentMd 仅 late_reply 审计保留用） */
 type FactDetail = Record<string, string | number | boolean | null>;
 
-/** 审计事实写入（append-only；冗余列随任务行同源） */
+/**
+ * 审计事实写入（append-only；冗余列随任务行同源）——委托 SAI-14 统一入口
+ * appendAiFact：beforeSubmit 由服务端在落库瞬间按 questionPhaseOf 判定
+ * （提交前创建、提交后领取/打开各记各的阶段，任务行的创建时判定不受影响），
+ * serverTs 只取注入的服务端时钟。本模块不直接拼事实行。
+ */
 function insertFact(
   tx: QueueTx,
   task: AiTaskRow,
@@ -173,19 +179,15 @@ function insertFact(
   now: NowSpec,
   detail?: FactDetail,
 ): void {
-  tx.insert(aiFacts)
-    .values({
-      id: randomUUID(),
-      taskId: task.id,
-      attemptId: task.attemptId,
-      questionId: task.questionId,
-      studentId: task.studentId,
+  appendAiFact(
+    asDb(tx),
+    {
+      task,
       type,
-      beforeSubmit: task.beforeSubmit,
-      detailJson: detail === undefined ? null : JSON.stringify(detail),
-      serverTs: now.iso,
-    })
-    .run();
+      ...(detail !== undefined && { detail }),
+    },
+    { now: now.date },
+  );
 }
 
 /**
@@ -590,6 +592,7 @@ export function createAiTask(
       insertFact(tx, row, "task_created", now, {
         channel: input.channel,
         modeAtSend: bundle.modeAtSend,
+        promptHash: bundle.promptHash,
       });
       return { task: row, created: true };
     },
