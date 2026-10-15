@@ -9,6 +9,13 @@ import {
   type AdminTeacherResetPasswordRequest,
   type AdminTeacherSummary,
   type AdminTeacherUpdateRequest,
+  type AiConnectionCreateData,
+  type AiConnectionCreateRequest,
+  type AiConnectionDeleteData,
+  type AiConnectionListData,
+  type AiConnectionPatchData,
+  type AiConnectionPatchRequest,
+  type AiConnectionTestData,
   type AiPolicyInheritableMode,
   type AiPolicyOverrideData,
   type AiTeacherSettingsData,
@@ -2563,6 +2570,65 @@ export function saveStudentQuickButtonsApi(
   // json 独立变量：hc 覆盖 PUT 的 json 槽惯例（同 putAiPolicyOverride）
   const args = { json: request };
   return callApi(() => api.api.student.ai["quick-buttons"].$put(args));
+}
+
+// ---------- 学生端 AI 连接管理（SAI-18；路由 student-ai.ts，契约 student-ai-api.ts） ----------
+
+/**
+ * 读本人 active 连接列表（只含指纹视图：无明文 Key/Token、无密文列）。
+ * 未配置 → 空列表；mcp token 明文仅创建/重置响应一次性返回。
+ */
+export function fetchStudentAiConnectionsApi(): Promise<AiConnectionListData> {
+  return callApi(() => api.api.student.ai.connections.$get());
+}
+
+/**
+ * 创建连接（三通道判别联合）。同通道 active 重复 → 409 AI_STATE_CONFLICT；
+ * inapp 明文 Key 仅出现在本请求，此后任何读接口只回指纹。
+ */
+export function createStudentAiConnectionApi(
+  request: AiConnectionCreateRequest,
+): Promise<AiConnectionCreateData> {
+  const args = { json: request };
+  return callApi(() => api.api.student.ai.connections.$post(args));
+}
+
+/**
+ * 更新连接（全部可选 = 缺省不改；inapp 不传 apiKey = 保持原 Key，传则重封
+ * 并回 unverified 需重新测试）。mcp resetToken 旧 token 立即失效。
+ */
+export function patchStudentAiConnectionApi(
+  connectionId: string,
+  request: AiConnectionPatchRequest,
+): Promise<AiConnectionPatchData> {
+  const args = { param: { id: connectionId }, json: request };
+  return callApi(() => api.api.student.ai.connections[":id"].$patch(args));
+}
+
+/** 软删连接（事务内停发该通道 created 任务；历史任务事实不动） */
+export function deleteStudentAiConnectionApi(
+  connectionId: string,
+): Promise<AiConnectionDeleteData> {
+  return callApi(() =>
+    api.api.student.ai.connections[":id"].$delete({
+      param: { id: connectionId },
+    }),
+  );
+}
+
+/**
+ * 测试连接：inapp 一次真实探针（批准的无题面固定文案）。成功 verified /
+ * 失败 failed（200 响应内），出站异常 → 5xx AI_OUTBOUND_*；mcp/link →
+ * 400 AI_CONNECTION_INVALID。
+ */
+export function testStudentAiConnectionApi(
+  connectionId: string,
+): Promise<AiConnectionTestData> {
+  return callApi(() =>
+    api.api.student.ai.connections[":id"].test.$post({
+      param: { id: connectionId },
+    }),
+  );
 }
 
 // ---------- 学情报告（T4.6 接口；T4.7 画像页报告区消费，D24） ----------
