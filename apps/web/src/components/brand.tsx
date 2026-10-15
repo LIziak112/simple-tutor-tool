@@ -1,7 +1,13 @@
 import { GraduationCap } from "lucide-react";
 import { BRAND_NAME, BRAND_TAGLINE } from "@/lib/brand";
 
-export function Brand({ compact = false }: { compact?: boolean }) {
+export function Brand({
+  compact = false,
+  compactLabel = "教师工作台",
+}: {
+  compact?: boolean;
+  compactLabel?: string;
+}) {
   return (
     <div className="flex items-center gap-2.5">
       <span
@@ -17,7 +23,7 @@ export function Brand({ compact = false }: { compact?: boolean }) {
           lang={compact ? "zh-CN" : "en"}
           className="mt-1 text-xs leading-relaxed text-muted-foreground"
         >
-          {compact ? "教师工作台" : BRAND_TAGLINE}
+          {compact ? compactLabel : BRAND_TAGLINE}
         </p>
       </div>
     </div>
