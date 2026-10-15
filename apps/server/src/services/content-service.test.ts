@@ -194,6 +194,8 @@ describe("previewImport（不写库）", () => {
       filename: "练习样例.md",
     });
     expect(data.summary).toEqual({
+      // kind 为 summarizeParsed 按文档形态填充的投影字段（ae34914b 契约增列）
+      kind: "practice",
       unitCount: 1,
       lectureCount: 0,
       questionCount: 8,
@@ -232,6 +234,7 @@ describe("previewImport（不写库）", () => {
       filename: "混合样例.md",
     });
     expect(data.summary).toEqual({
+      kind: "mixed",
       unitCount: 1,
       lectureCount: 2,
       questionCount: 3,
@@ -246,6 +249,7 @@ describe("previewImport（不写库）", () => {
       filename: "讲义样例.md",
     });
     expect(data.summary).toEqual({
+      kind: "lecture",
       unitCount: 0,
       lectureCount: 2,
       questionCount: 0,
