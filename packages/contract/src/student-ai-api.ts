@@ -1,9 +1,8 @@
 import { z } from "zod";
+import { questionRevisionIdSchema } from "./attempt.ts";
 import {
   AI_BATCH_MAX_QUESTIONS,
   AI_QUESTION_MAX_CHARS,
-  AI_REPLY_MAX_CHARS,
-  AI_SHARE_DEFAULT_VALID_HOURS,
   AI_SHARE_MAX_VALID_HOURS,
   aiChannelSchema,
   aiConnectionFirstCredentialSchema,
@@ -136,8 +135,8 @@ export const aiTaskOkSchema = apiOkExtend(aiTaskPublicSchema);
 export const aiTaskFollowupRequestSchema = z
   .object({
     question: questionField("追问"),
-    /** 追问幂等键（可选；网络重试不产生重复追问） */
-    mutationId: z.string().min(1).optional(),
+    /** 追问幂等键：与创建同强度必填（网络重试不产生重复追问与重复计费出站） */
+    mutationId: z.string().min(1),
   })
   .strict();
 export type AiTaskFollowupRequest = z.infer<typeof aiTaskFollowupRequestSchema>;
@@ -154,10 +153,14 @@ export const aiTaskFollowupOkSchema = apiOkExtend(aiTaskFollowupDataSchema);
 
 // ---------- POST /api/student/ai/tasks/:id/share ----------
 
-/** 票据生成请求：有效期默认 24h、上限 72h（§9） */
+/**
+ * 票据生成请求：有效期上限 72h（§9）。validHours 省略时**不在 schema 固化默认**——
+ * 服务端按该学生 link 连接的 defaultValidHours 偏好回退，无偏好才用 §9 默认 24h；
+ * 若在解析期落默认，连接偏好将永远无法生效。
+ */
 export const aiTaskShareRequestSchema = z
   .object({
-    validHours: shareValidHoursField().default(AI_SHARE_DEFAULT_VALID_HOURS),
+    validHours: shareValidHoursField().optional(),
   })
   .strict();
 export type AiTaskShareRequest = z.infer<typeof aiTaskShareRequestSchema>;
@@ -349,7 +352,7 @@ export const aiMcpTaskRefSchema = z
     taskId: z.uuid(),
     attemptId: z.uuid(),
     questionId: z.string().min(1),
-    questionRevisionId: z.uuid(),
+    questionRevisionId: questionRevisionIdSchema,
     status: aiTaskStatusSchema,
     createdAt: z.string().min(1),
   })
@@ -365,16 +368,14 @@ export type AiMcpListMyTasksData = z.infer<typeof aiMcpListMyTasksDataSchema>;
 
 /**
  * submit_ai_reply 写回请求：taskId + leaseToken 必带（租约 CAS——过期或
- * 他人已领取时拒绝写正文，仅记 late_reply 事实）；回信限长 32KiB。
+ * 他人已领取时拒绝写正文，仅记 late_reply 事实）。回信超长不在这里硬拒：
+ * 服务端按 AI_REPLY_MAX_CHARS 截断并显式声明（§9「写回校验」列的既定语义）。
  */
 export const aiMcpSubmitReplyRequestSchema = z
   .object({
     taskId: z.uuid(),
     leaseToken: z.string().min(1),
-    replyMarkdown: z
-      .string()
-      .min(1, "回信不能为空")
-      .max(AI_REPLY_MAX_CHARS, "回信超过单条上限，请分条写回"),
+    replyMarkdown: z.string().min(1, "回信不能为空"),
   })
   .strict();
 export type AiMcpSubmitReplyRequest = z.infer<
@@ -410,8 +411,22 @@ export const aiBatchReviewCreateRequestSchema = z
       ),
     channel: aiChannelSchema,
     question: questionField("复盘诉求"),
+    /** 批量幂等键：与单题创建同强度必填——误触重复提交只产生一批任务（需求 §8） */
+    mutationId: z.string().min(1),
   })
-  .strict();
+  .strict()
+  .superRefine((value, ctx) => {
+    // 条目去重：同一 (attemptId, questionId) 重复出现即拒绝，不静默合并
+    const seen = new Set<string>();
+    for (const item of value.items) {
+      const key = `${item.attemptId}\n${item.questionId}`;
+      if (seen.has(key)) {
+        ctx.addIssue({ code: "custom", message: "批量条目重复" });
+        return;
+      }
+      seen.add(key);
+    }
+  });
 export type AiBatchReviewCreateRequest = z.infer<
   typeof aiBatchReviewCreateRequestSchema
 >;

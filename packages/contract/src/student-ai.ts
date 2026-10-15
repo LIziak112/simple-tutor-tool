@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { questionRevisionIdSchema } from "./attempt.ts";
 import { aiTeachingModeSchema } from "./student-ai-policy.ts";
 
 /**
@@ -122,11 +123,13 @@ export type AiContextMissingNote = z.infer<typeof aiContextMissingNoteSchema>;
 /**
  * 单题文字快照（服务端装配，读 questionSnapshotJson 与 responses 行，不读当前题库）。
  * 教师私注不是 AI 合法内容：strict 拒绝 teacherComment 等任何教师内部字段。
+ * missingNote 与答案/解析的实际有无做强一致交叉校验——矛盾快照（如两者齐全却
+ * 声明缺失）在契约层拒绝，不进任何出站/领取/分享视图。
  */
 export const aiContextSnapshotSchema = z
   .object({
-    /** 版本锚定 = responses 行 id（学生端下发的 questionRevisionId） */
-    questionRevisionId: z.uuid(),
+    /** 版本锚定 = responses 行 id（复用 attempt.ts 的不透明单源口径） */
+    questionRevisionId: questionRevisionIdSchema,
     questionId: z.string().min(1),
     questionType: z.string().min(1),
     /** 题干 Markdown（含选项列表，公式保留） */
@@ -139,14 +142,32 @@ export const aiContextSnapshotSchema = z
     referenceAnswerMd: z.string().nullable(),
     /** 官方解析；null = 暂无官方解析 */
     solutionMd: z.string().nullable(),
-    /** 缺失说明：三态，参考答案与解析齐全时为 null */
+    /** 缺失说明：三态，参考答案与解析齐全时为 null（superRefine 强一致） */
     missingNote: aiContextMissingNoteSchema.nullable(),
     /** 当时有效提示词快照：教师模板正文 + 模式硬约束句（模板删空仅剩硬约束句） */
     promptSnapshotMd: z.string().min(1),
     /** 快照时间（UTC ISO） */
     capturedAt: z.string().min(1),
   })
-  .strict();
+  .strict()
+  .superRefine((value, ctx) => {
+    const hasAnswer = value.referenceAnswerMd !== null;
+    const hasSolution = value.solutionMd !== null;
+    const expected: AiContextMissingNote | null =
+      hasAnswer && hasSolution
+        ? null
+        : hasAnswer
+          ? "no_solution"
+          : hasSolution
+            ? "no_reference_answer"
+            : "neither";
+    if (value.missingNote !== expected) {
+      ctx.addIssue({
+        code: "custom",
+        message: "缺失说明与参考答案/解析的实际状态不一致",
+      });
+    }
+  });
 export type AiContextSnapshot = z.infer<typeof aiContextSnapshotSchema>;
 
 // ---------- 材料行 ----------
@@ -356,8 +377,8 @@ export const aiTaskPublicSchema = z
     id: z.uuid(),
     attemptId: z.uuid(),
     questionId: z.string().min(1),
-    /** 版本锚定（= responses 行 id；历史回信永指原材料） */
-    questionRevisionId: z.uuid(),
+    /** 版本锚定（= responses 行 id，复用 attempt.ts 单源；历史回信永指原材料） */
+    questionRevisionId: questionRevisionIdSchema,
     channel: aiChannelSchema,
     status: aiTaskStatusSchema,
     /** 发送时有效模式（历史任务保留当时模式） */
@@ -374,6 +395,10 @@ export const aiTaskPublicSchema = z
     replyDeliveredAt: z.string().nullable(),
     errorText: z.string().nullable(),
     retryCount: z.number().int().min(0),
+    /**
+     * 当前允许动作：服务端权威输出（AI_TASK_ALLOWED_ACTIONS 状态表叠加当前
+     * 教学策略门禁），客户端不得本地查表推导——策略层变化以本字段为准。
+     */
     allowedActions: z.array(aiTaskActionSchema),
     materials: z.array(aiTaskMaterialSchema),
     createdAt: z.string().min(1),
@@ -412,7 +437,7 @@ export const aiMcpClaimViewSchema = z
     taskId: z.uuid(),
     attemptId: z.uuid(),
     questionId: z.string().min(1),
-    questionRevisionId: z.uuid(),
+    questionRevisionId: questionRevisionIdSchema,
     context: aiContextSnapshotSchema,
     materials: z.array(aiMcpClaimMaterialSchema),
     lease: z

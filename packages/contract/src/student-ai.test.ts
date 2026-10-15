@@ -139,6 +139,28 @@ it("合法单题上下文包含参考答案解析；缺任一者仍合法且有�
       teacherComment: "这题全班都错",
     }).success,
   ).toBe(false);
+  // 缺失说明与答案/解析实际状态强一致：矛盾快照在契约层拒绝
+  expect(
+    aiContextSnapshotSchema.safeParse({
+      ...fullContext,
+      referenceAnswerMd: null,
+      solutionMd: null,
+      missingNote: null,
+    }).success,
+  ).toBe(false);
+  expect(
+    aiContextSnapshotSchema.safeParse({
+      ...fullContext,
+      missingNote: "neither",
+    }).success,
+  ).toBe(false);
+  expect(
+    aiContextSnapshotSchema.safeParse({
+      ...fullContext,
+      solutionMd: null,
+      missingNote: "no_reference_answer",
+    }).success,
+  ).toBe(false);
 });
 
 it("任务八态与允许动作表和B00 §3.4 状态机一致", () => {

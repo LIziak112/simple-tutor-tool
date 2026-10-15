@@ -3,7 +3,6 @@ import {
   AI_BATCH_MAX_QUESTIONS,
   AI_QUESTION_MAX_CHARS,
   AI_REPLY_MAX_CHARS,
-  AI_SHARE_DEFAULT_VALID_HOURS,
 } from "./student-ai";
 import {
   aiBatchReviewCreateRequestSchema,
@@ -93,28 +92,42 @@ it("任务创建：问题必填限长、材料偏好三类、幂等键必填、�
 
 it("同题追问绑定父任务，不能把另一题 ID 合法拼入", () => {
   expect(
-    aiTaskFollowupRequestSchema.parse({ question: "那第三步呢？" }).question,
+    aiTaskFollowupRequestSchema.parse({
+      question: "那第三步呢？",
+      mutationId: "followup-mut-1",
+    }).question,
   ).toBe("那第三步呢？");
+  // 追问幂等键与创建同强度必填（网络重试不产生重复追问）
+  expect(
+    aiTaskFollowupRequestSchema.safeParse({ question: "那第三步呢？" }).success,
+  ).toBe(false);
   expect(
     aiTaskFollowupRequestSchema.safeParse({
       question: "那第三步呢？",
+      mutationId: "followup-mut-1",
       questionId: "unit-a-q2",
     }).success,
   ).toBe(false);
   expect(
     aiTaskFollowupRequestSchema.safeParse({
       question: "那第三步呢？",
+      mutationId: "followup-mut-1",
       attemptId: "00000000-0000-4000-8000-000000000000",
     }).success,
   ).toBe(false);
-  expect(aiTaskFollowupRequestSchema.safeParse({ question: "" }).success).toBe(
-    false,
-  );
+  expect(
+    aiTaskFollowupRequestSchema.safeParse({
+      question: "",
+      mutationId: "followup-mut-1",
+    }).success,
+  ).toBe(false);
 });
 
-it("票据有效期默认 24h、上限 72h，越界拒绝", () => {
-  expect(aiTaskShareRequestSchema.parse({}).validHours).toBe(
-    AI_SHARE_DEFAULT_VALID_HOURS,
+it("票据有效期不在 schema 固化默认（连接偏好回退），上限 72h 越界拒绝", () => {
+  // 省略 = undefined：服务端按 link 连接 defaultValidHours 回退、无偏好才用 24h
+  expect(aiTaskShareRequestSchema.parse({}).validHours).toBeUndefined();
+  expect(aiTaskShareRequestSchema.parse({ validHours: 24 }).validHours).toBe(
+    24,
   );
   expect(aiTaskShareRequestSchema.parse({ validHours: 72 }).validHours).toBe(
     72,
@@ -158,7 +171,7 @@ it("任务列表游标为不透明字符串，不接受任意查询结构", () =
   expect(aiTaskListQuerySchema.safeParse({ limit: 51 }).success).toBe(false);
 });
 
-it("MCP 写回必须带租约令牌，回信限长", () => {
+it("MCP 写回必须带租约令牌；超长回信放行由服务端截断声明（§9）", () => {
   const reply = {
     taskId: "4f5a6b7c-0000-4000-8000-dddddddddddd",
     leaseToken: "lease-token-1",
@@ -175,15 +188,16 @@ it("MCP 写回必须带租约令牌，回信限长", () => {
     aiMcpSubmitReplyRequestSchema.safeParse({ ...reply, replyMarkdown: "" })
       .success,
   ).toBe(false);
+  // 超 32KiB 不在契约硬拒：服务端按 AI_REPLY_MAX_CHARS 截断并显式声明
   expect(
     aiMcpSubmitReplyRequestSchema.safeParse({
       ...reply,
       replyMarkdown: "字".repeat(AI_REPLY_MAX_CHARS + 1),
     }).success,
-  ).toBe(false);
+  ).toBe(true);
 });
 
-it("批量复盘逐题定位：1–30 题之间，条目只收作答与题目定位", () => {
+it("批量复盘逐题定位：1–30 题、幂等键必填、条目去重", () => {
   const item = {
     attemptId: "5a6b7c8d-0000-4000-8000-eeeeeeeeeeee",
     questionId: "unit-a-q1",
@@ -195,10 +209,18 @@ it("批量复盘逐题定位：1–30 题之间，条目只收作答与题目定
     })),
     channel: "mcp",
     question: "请复盘这些错题",
+    mutationId: "batch-mut-1",
   };
   expect(aiBatchReviewCreateRequestSchema.parse(base).items.length).toBe(
     AI_BATCH_MAX_QUESTIONS,
   );
+  // 幂等键必填：误触重复提交只产生一批任务（需求 §8）
+  expect(
+    aiBatchReviewCreateRequestSchema.safeParse({
+      ...base,
+      mutationId: undefined,
+    }).success,
+  ).toBe(false);
   expect(
     aiBatchReviewCreateRequestSchema.safeParse({ ...base, items: [] }).success,
   ).toBe(false);
@@ -209,6 +231,13 @@ it("批量复盘逐题定位：1–30 题之间，条目只收作答与题目定
         ...base.items,
         { attemptId: item.attemptId, questionId: "unit-a-q31" },
       ],
+    }).success,
+  ).toBe(false);
+  // 同一 (attemptId, questionId) 重复出现拒绝，不静默合并
+  expect(
+    aiBatchReviewCreateRequestSchema.safeParse({
+      ...base,
+      items: [item, item],
     }).success,
   ).toBe(false);
   expect(
