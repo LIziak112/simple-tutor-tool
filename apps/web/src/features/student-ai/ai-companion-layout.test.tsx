@@ -1,6 +1,14 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { useRef } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  type Mock,
+  vi,
+} from "vitest";
 import {
   AI_COMPANION_DOCK_MIN_WIDTH,
   AI_COMPANION_NAV_EXPAND_MIN_WIDTH,
