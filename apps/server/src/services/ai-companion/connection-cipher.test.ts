@@ -2,8 +2,8 @@ import { randomBytes } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   AI_CONNECTION_KEY_INFO,
-  type SealedApiKey,
   openApiKey,
+  type SealedApiKey,
   sealApiKey,
 } from "./connection-cipher.ts";
 
@@ -49,7 +49,7 @@ describe("connection-cipher seal/open", () => {
   it("密文被篡改（GCM 认证失败）→ needs_rekey，不抛异常不泄漏", () => {
     const sealed = sealApiKey(ROOT_A, "sk-tamper-me") as SealedApiKey;
     const bytes = Buffer.from(sealed.ciphertext, "base64");
-    bytes[0] ^= 0xff;
+    bytes[0] = (bytes[0] ?? 0) ^ 0xff;
     const tampered: SealedApiKey = {
       ...sealed,
       ciphertext: bytes.toString("base64"),

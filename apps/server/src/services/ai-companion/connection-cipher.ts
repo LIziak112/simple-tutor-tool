@@ -74,9 +74,10 @@ export function sealApiKey(
     ciphertext: ciphertext.toString("base64"),
     iv: iv.toString("base64"),
     tag: cipher.getAuthTag().toString("base64"),
-    fingerprint: createHash("sha256").update(plaintext, "utf8").digest(
-      "hex",
-    ).slice(0, 8),
+    fingerprint: createHash("sha256")
+      .update(plaintext, "utf8")
+      .digest("hex")
+      .slice(0, 8),
   };
 }
 
