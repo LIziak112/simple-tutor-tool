@@ -5,14 +5,11 @@ import type {
 } from "@tutor/contract";
 import { DEFAULT_AI_TEACHER_MODE } from "@tutor/contract";
 import { and, eq } from "drizzle-orm";
-import {
-  attemptTeacherId,
-  requireUsableAttempt,
-} from "../attempt-service.ts";
 import type { Db } from "../../db/client.ts";
-import { responses } from "../../db/schema.ts";
 import type { Attempt, ResponseRow } from "../../db/schema.ts";
+import { responses } from "../../db/schema.ts";
 import { HttpError } from "../../lib/http-error.ts";
+import { attemptTeacherId, requireUsableAttempt } from "../attempt-service.ts";
 
 /**
  * SAI-04 统一教学策略裁决（B02）：唯一 AI 权限口径，创建、领取、回信交付、
@@ -47,10 +44,7 @@ import { HttpError } from "../../lib/http-error.ts";
 export interface AiPolicyConfigSource {
   teacherDefaultMode(db: Db, teacherId: string): AiTeachingMode;
   studentOverrideMode(db: Db, studentId: string): AiPolicyInheritableMode;
-  assignmentOverrideMode(
-    db: Db,
-    assignmentId: string,
-  ): AiPolicyInheritableMode;
+  assignmentOverrideMode(db: Db, assignmentId: string): AiPolicyInheritableMode;
 }
 
 // ---------- 第一层：纯配置裁决（技术方案 §2.2 两步合并算法） ----------
@@ -107,9 +101,17 @@ export function resolveAiPolicy(
     };
   }
   if (input.studentMode !== "inherit") {
-    return { usable: true, mode: input.studentMode, reason: "student_override" };
+    return {
+      usable: true,
+      mode: input.studentMode,
+      reason: "student_override",
+    };
   }
-  return { usable: true, mode: input.teacherDefault, reason: "teacher_default" };
+  return {
+    usable: true,
+    mode: input.teacherDefault,
+    reason: "teacher_default",
+  };
 }
 
 // ---------- 第二层：阶段识别（技术方案 §2.3 "本题完成"） ----------
@@ -132,11 +134,18 @@ function requireAttemptResponse(
     .select()
     .from(responses)
     .where(
-      and(eq(responses.attemptId, attemptId), eq(responses.questionId, questionId)),
+      and(
+        eq(responses.attemptId, attemptId),
+        eq(responses.questionId, questionId),
+      ),
     )
     .get();
   if (row === undefined) {
-    throw new HttpError(404, "QUESTION_NOT_FOUND", "题目不存在或不属于这次练习");
+    throw new HttpError(
+      404,
+      "QUESTION_NOT_FOUND",
+      "题目不存在或不属于这次练习",
+    );
   }
   return row;
 }

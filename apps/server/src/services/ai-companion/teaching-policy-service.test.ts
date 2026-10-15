@@ -10,7 +10,6 @@ import {
 } from "@tutor/contract";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
-import { answersReleased } from "../attempt-service.ts";
 import type { Db } from "../../db/client.ts";
 import {
   assignments,
@@ -24,11 +23,12 @@ import {
 import { createTestDb, TEST_TEACHER_ID } from "../../db/test-utils.ts";
 import { HttpError } from "../../lib/http-error.ts";
 import { makeStudent } from "../../test/note-fixtures.ts";
+import { answersReleased } from "../attempt-service.ts";
 import {
+  type AiPolicyConfigSource,
   questionPhaseOf,
   resolveAiPolicy,
   resolveAttemptQuestionAiPolicy,
-  type AiPolicyConfigSource,
 } from "./teaching-policy-service.ts";
 
 /**
@@ -193,7 +193,11 @@ class FakeConfigSource implements AiPolicyConfigSource {
   }
 }
 
-function expectHttpError(fn: () => unknown, status: number, code: string): void {
+function expectHttpError(
+  fn: () => unknown,
+  status: number,
+  code: string,
+): void {
   try {
     fn();
   } catch (error) {
@@ -469,8 +473,8 @@ describe("resolveAiPolicy 纯函数（两步合并算法，技术方案 §2.2）
           });
           expect(resolution, key).toEqual(expected);
           // 输出结构必须通过 B01 契约（usable=false 不携带 mode、true 必带）
-          expect(() =>
-            aiPolicyResolutionSchema.parse(resolution),
+          expect(
+            () => aiPolicyResolutionSchema.parse(resolution),
             key,
           ).not.toThrow();
         }
@@ -608,7 +612,9 @@ describe("resolveAiPolicy 纯函数（两步合并算法，技术方案 §2.2）
             mode: "open_study",
             reason: "completed",
           });
-          expect(() => aiPolicyResolutionSchema.parse(resolution)).not.toThrow();
+          expect(() =>
+            aiPolicyResolutionSchema.parse(resolution),
+          ).not.toThrow();
         }
       }
     }
@@ -649,15 +655,13 @@ describe("questionPhaseOf 四来源完成判定（技术方案 §2.3）", () => 
     });
     insertResponse(db, draftId, "q1");
     const nowPastDue = "2026-06-01T00:00:00.000Z";
-    expect(questionPhaseOf(db, attemptRow(db, draftId), "q1")).toBe("answering");
+    expect(questionPhaseOf(db, attemptRow(db, draftId), "q1")).toBe(
+      "answering",
+    );
     // 对照：普通答案公布口径此时已公布，但 AI 完成判定不读时钟（状态口径）
-    const row = db
-      .select()
-      .from(assignments)
-      .where(eq(assignments.id, assignmentId))
-      .get();
-    expect(row).toBeDefined();
-    expect(answersReleased(row!, nowPastDue)).toBe(true);
+    expect(answersReleased(assignmentRow(db, assignmentId), nowPastDue)).toBe(
+      true,
+    );
     db.$client.close();
   });
 
@@ -824,7 +828,10 @@ describe("resolveAttemptQuestionAiPolicy 统一入口（多出口共用）", () 
       "q1",
       config,
     );
-    expect(result.resolution).toEqual({ usable: false, reason: "student_closed" });
+    expect(result.resolution).toEqual({
+      usable: false,
+      reason: "student_closed",
+    });
     db.$client.close();
   });
 
@@ -1005,7 +1012,10 @@ describe("resolveAttemptQuestionAiPolicy 统一入口（多出口共用）", () 
     const teacherB = insertTeacher(db, "teacher-b");
     const studentA = makeStudent(db, TEST_TEACHER_ID);
     const studentB = makeStudent(db, teacherB);
-    const attemptA = insertAttempt(db, { studentId: studentA, status: "submitted" });
+    const attemptA = insertAttempt(db, {
+      studentId: studentA,
+      status: "submitted",
+    });
     const attemptB = insertAttempt(db, { studentId: studentB });
     insertResponse(db, attemptA, "shared-q", { submittedAt: NOW });
     insertResponse(db, attemptB, "shared-q");
@@ -1084,13 +1094,7 @@ describe("resolveAttemptQuestionAiPolicy 统一入口（多出口共用）", () 
       reason: "completed",
     });
     // 普通结果页口径：未到公布时间仍未公布——原函数行为未被本改动影响
-    const row = db
-      .select()
-      .from(assignments)
-      .where(eq(assignments.id, assignmentId))
-      .get();
-    expect(row).toBeDefined();
-    expect(answersReleased(row!, NOW)).toBe(false);
+    expect(answersReleased(assignmentRow(db, assignmentId), NOW)).toBe(false);
     db.$client.close();
   });
 
@@ -1197,6 +1201,19 @@ function attemptRow(db: Db, attemptId: string) {
     .get();
   if (row === undefined) {
     throw new Error(`测试夹具 attempt ${attemptId} 不存在`);
+  }
+  return row;
+}
+
+/** 按 id 重读作业行（answersReleased 对照断言用，不存在即夹具错误） */
+function assignmentRow(db: Db, assignmentId: string) {
+  const row = db
+    .select()
+    .from(assignments)
+    .where(eq(assignments.id, assignmentId))
+    .get();
+  if (row === undefined) {
+    throw new Error(`测试夹具 assignment ${assignmentId} 不存在`);
   }
   return row;
 }
