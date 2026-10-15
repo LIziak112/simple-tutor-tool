@@ -17,8 +17,6 @@ import {
   aiMessages,
   aiPolicyOverrides,
   aiTasks,
-  assignments,
-  attempts,
   responses,
   teachers,
 } from "../../db/schema.ts";
@@ -27,7 +25,11 @@ import {
   createTestDir,
   TEST_TEACHER_ID,
 } from "../../db/test-utils.ts";
-import { HttpError } from "../../lib/http-error.ts";
+import {
+  expectHttpError,
+  insertAttempt,
+  insertResponse,
+} from "../../test/ai-companion-fixtures.ts";
 import { makeStudent } from "../../test/note-fixtures.ts";
 import {
   AI_MCP_LEASE_MAX_TOTAL_MS,
@@ -78,73 +80,7 @@ function iso(ms: number): string {
   return at(ms).toISOString();
 }
 
-// ---------- 夹具（直插行，与 student-ai-materials.test.ts 同形态） ----------
-
-function insertAssignment(db: Db): string {
-  const id = randomUUID();
-  db.insert(assignments)
-    .values({
-      id,
-      teacherId: TEST_TEACHER_ID,
-      title: "作业",
-      dueAt: null,
-      answerRelease: "on_submit",
-      createdAt: iso(0),
-    })
-    .run();
-  return id;
-}
-
-function insertAttempt(db: Db, studentId: string): string {
-  const id = randomUUID();
-  db.insert(attempts)
-    .values({
-      id,
-      studentId,
-      sourceType: "assignment",
-      assignmentId: insertAssignment(db),
-      courseId: null,
-      unitId: null,
-      lectureId: null,
-      attemptNo: 1,
-      status: "draft",
-      startedAt: iso(0),
-      frozenAt: iso(0),
-      legacyUnverified: false,
-      abandonedAt: null,
-    })
-    .run();
-  return id;
-}
-
-function insertResponse(db: Db, attemptId: string, questionId: string): string {
-  const id = randomUUID();
-  db.insert(responses)
-    .values({
-      id,
-      attemptId,
-      questionId,
-      unitId: null,
-      questionVersion: 1,
-      questionSnapshotJson: JSON.stringify({
-        type: "choice",
-        difficulty: 3,
-        knowledge: ["考点A"],
-        stemMd: "题干",
-        options: [{ text: "甲" }, { text: "乙" }],
-        answers: { kind: "choice", index: 1 },
-        hints: [],
-        solutionMd: "解析",
-        sourceMd: "::::question{type=choice}\n题干\n:::",
-        id: questionId,
-      }),
-      answerJson: null,
-      submittedAt: null,
-      teacherComment: null,
-    })
-    .run();
-  return id;
-}
+// ---------- 夹具：insertAttempt/insertResponse/expectHttpError 收敛 src/test/ai-companion-fixtures.ts ----------
 
 /** 直插任务行（配额与恢复用例的填充行；服务语义用例走 createAiTask） */
 function insertTaskRow(
@@ -227,7 +163,7 @@ function setupWorld(db: Db): {
   questionId: string;
 } {
   const studentId = makeStudent(db);
-  const attemptId = insertAttempt(db, studentId);
+  const attemptId = insertAttempt(db, { studentId });
   const questionId = "q1";
   insertResponse(db, attemptId, questionId);
   return { studentId, attemptId, questionId };
@@ -291,23 +227,6 @@ function openQuestions(
     ids.push(qid);
   }
   return ids;
-}
-
-function expectHttpError(
-  fn: () => unknown,
-  status: number,
-  code: string,
-): HttpError {
-  try {
-    fn();
-  } catch (error) {
-    expect(error).toBeInstanceOf(HttpError);
-    const httpError = error as HttpError;
-    expect(httpError.status).toBe(status);
-    expect(httpError.code).toBe(code);
-    return httpError;
-  }
-  throw new Error(`期望抛出 HttpError ${status} ${code}，实际未抛出`);
 }
 
 function factsOf(db: Db, taskId: string) {
@@ -453,7 +372,7 @@ describe("SAI-12 创建幂等与配额", () => {
     );
     // 另一学生同键：不返回他人任务
     const otherStudent = makeStudent(db);
-    const otherAttempt = insertAttempt(db, otherStudent);
+    const otherAttempt = insertAttempt(db, { studentId: otherStudent });
     insertResponse(db, otherAttempt, "q1");
     expectHttpError(
       () =>
@@ -532,7 +451,7 @@ describe("SAI-12 创建幂等与配额", () => {
     );
     // 当日上限：填满日额（北京时间自然日）
     const dailyStudent = makeStudent(db);
-    const dailyAttempt = insertAttempt(db, dailyStudent);
+    const dailyAttempt = insertAttempt(db, { studentId: dailyStudent });
     for (let i = 0; i < AI_TASK_DAILY_PER_STUDENT; i += 1) {
       insertTaskRow(db, {
         studentId: dailyStudent,
@@ -1359,7 +1278,7 @@ describe("SAI-12 公平性与通道隔离", () => {
     const db = createTestDb();
     const worldA = setupWorld(db);
     const studentB = makeStudent(db);
-    const attemptB = insertAttempt(db, studentB);
+    const attemptB = insertAttempt(db, { studentId: studentB });
     insertResponse(db, attemptB, "q1");
     const worldB = {
       studentId: studentB,

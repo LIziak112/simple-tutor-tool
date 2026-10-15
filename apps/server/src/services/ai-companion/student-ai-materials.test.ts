@@ -22,16 +22,20 @@ import {
   aiTaskMaterials,
   aiTasks,
   aiTeacherSettings,
-  assignments,
   attempts,
-  responses,
 } from "../../db/schema.ts";
 import {
   createTestDb,
   createTestDir,
   TEST_TEACHER_ID,
 } from "../../db/test-utils.ts";
-import { HttpError } from "../../lib/http-error.ts";
+import type { HttpError } from "../../lib/http-error.ts";
+import {
+  expectHttpError as fixturesExpectHttpError,
+  insertAssignment,
+  insertAttempt,
+  insertResponse,
+} from "../../test/ai-companion-fixtures.ts";
 import { makeNotePng, makeStudent } from "../../test/note-fixtures.ts";
 import { createSnapshot } from "../backup-service.ts";
 import {
@@ -65,76 +69,7 @@ const NOW = "2026-06-01T00:00:00.000Z";
 const PNG_W = 320;
 const PNG_H = 200;
 
-// ---------- 夹具（直插行，与 student-ai-context.test.ts 同形态） ----------
-
-function insertAssignment(db: Db, teacherId = TEST_TEACHER_ID): string {
-  const id = randomUUID();
-  db.insert(assignments)
-    .values({
-      id,
-      teacherId,
-      title: "作业",
-      dueAt: null,
-      answerRelease: "on_submit",
-      createdAt: NOW,
-    })
-    .run();
-  return id;
-}
-
-function insertAttempt(
-  db: Db,
-  row: { studentId: string; assignmentId: string; status?: string },
-): string {
-  const id = randomUUID();
-  db.insert(attempts)
-    .values({
-      id,
-      studentId: row.studentId,
-      sourceType: "assignment",
-      assignmentId: row.assignmentId,
-      courseId: null,
-      unitId: null,
-      lectureId: null,
-      attemptNo: 1,
-      status: (row.status ?? "draft") as "draft",
-      startedAt: NOW,
-      frozenAt: NOW,
-      legacyUnverified: false,
-      abandonedAt: null,
-    })
-    .run();
-  return id;
-}
-
-function insertResponse(db: Db, attemptId: string, questionId: string): string {
-  const id = randomUUID();
-  db.insert(responses)
-    .values({
-      id,
-      attemptId,
-      questionId,
-      unitId: null,
-      questionVersion: 1,
-      questionSnapshotJson: JSON.stringify({
-        type: "choice",
-        difficulty: 3,
-        knowledge: ["考点A"],
-        stemMd: "题干",
-        options: [{ text: "甲" }, { text: "乙" }],
-        answers: { kind: "choice", index: 1 },
-        hints: [],
-        solutionMd: "解析",
-        sourceMd: "::::question{type=choice}\n题干\n:::",
-        id: questionId,
-      }),
-      answerJson: null,
-      submittedAt: null,
-      teacherComment: null,
-    })
-    .run();
-  return id;
-}
+// ---------- 夹具（直插行；公共部分收敛 src/test/ai-companion-fixtures.ts） ----------
 
 function insertTask(
   db: Db,
@@ -224,16 +159,7 @@ function expectHttpError(
   status: number,
   code: string,
 ): HttpError {
-  try {
-    fn();
-  } catch (error) {
-    expect(error).toBeInstanceOf(HttpError);
-    const httpError = error as HttpError;
-    expect(httpError.status).toBe(status);
-    expect(httpError.code).toBe(code);
-    return httpError;
-  }
-  throw new Error(`期望抛出 HttpError ${status} ${code}，实际未抛出`);
+  return fixturesExpectHttpError(fn, status, code);
 }
 
 /** 取唯一行（空/多行即测试失败；替代非空断言的行断言口径，note-service 同款） */
