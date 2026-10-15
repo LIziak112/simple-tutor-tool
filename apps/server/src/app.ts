@@ -146,6 +146,13 @@ const AI_TASK_JSON_GUARD = {
   message: "发送内容过大（超过求助文本上限），请精简后重试",
 } as const;
 
+/**
+ * AI 材料上传的 body 预检上限（SAI-20）：材料合计 ≤8MB（契约
+ * AI_MATERIAL_TOTAL_MAX_BYTES）+ multipart boundary/头部编码开销余量，
+ * 取整 10MB。
+ */
+const AI_MATERIAL_UPLOAD_BODY_LIMIT = 10 * 1024 * 1024;
+
 export function createApp(options: CreateAppOptions) {
   const logger = options.logger ?? pino({ level: "info" });
   const requireAnySession = createRequireAnySession(options.db);
@@ -281,6 +288,18 @@ export function createApp(options: CreateAppOptions) {
     .use(
       "/api/student/ai/tasks/:id/update-pending",
       guardBodyLimit(AI_TASK_JSON_GUARD),
+    )
+    // SAI-20 材料上传 multipart 预检（§9 材料合计 ≤8MB + boundary/manifest
+    // 编码开销余量取整 10MB；超限在 parseBody 整包进内存前拒绝不落盘，
+    // 页级精确限额由服务层 validatePages 校验）
+    .use(
+      "/api/student/ai/tasks/:id/materials",
+      guardBodyLimit({
+        method: "POST",
+        limit: AI_MATERIAL_UPLOAD_BODY_LIMIT,
+        code: "AI_MATERIAL_TOO_LARGE",
+        message: "材料总大小超过上传上限，请减少选择后重试",
+      }),
     )
     .route(
       "/api/teacher",

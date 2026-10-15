@@ -8,6 +8,7 @@ import {
   aiTaskUpdatePendingRequestSchema,
   studentQuickButtonsPutRequestSchema,
 } from "@tutor/contract";
+import { z } from "zod";
 import type { Context } from "hono";
 import { Hono } from "hono";
 import type { StudentEnv } from "../auth/require-student.ts";
@@ -32,6 +33,11 @@ import {
   putStudentQuickButtons,
 } from "../services/ai-companion/quick-buttons-service.ts";
 import { studentAiStatusOf } from "../services/ai-companion/student-ai-status.ts";
+import {
+  attachAiTaskMaterials,
+  type AiMaterialUploadPage,
+  type AiTaskMaterialInternal,
+} from "../services/ai-companion/student-ai-materials.ts";
 import {
   aiQueueSummaryOf,
   aiTaskPublicViewOf,
@@ -59,12 +65,14 @@ import {
  * - PUT /ai/quick-buttons：整组替换（含空组 = 删光）；baseUpdatedAt 过期 →
  *   409 AI_SETTINGS_STALE 保留服务器值。
  *
- * 任务接口（SAI-13，B00 §4.2 API 表的任务子集；材料 multipart / dispatch /
- * followup / share / connections 归后续批次 SAI-17/18/24/28）：
+ * 任务接口（SAI-13，B00 §4.2 API 表的任务子集；dispatch / followup /
+ * share 归后续批次 SAI-24/28）：
  * - POST /ai/tasks：创建（幂等键重放返回原任务 → 200；新建 201）。请求的
  *   materials 偏好与 quickButtonId 经契约校验后由客户端在材料上传（SAI-11
  *   attach）与统计（SAI-14）消费——服务端不存偏好，快照材料清单以实际落位
  *   行为准。仅打开页面不创建（GET 族零副作用）。
+ * - POST /ai/tasks/:id/materials（SAI-20）：multipart 材料登记（manifest +
+ *   page-N；归属/状态/策略/版本锚定与字节/槽位防线在 attachAiTaskMaterials）。
  * - GET /ai/tasks：本人任务列表（游标/筛选白名单 + limit 1..50 缺省 20，
  *   查询参数手工过契约 schema，数值经 Number 解析）。
  * - GET /ai/tasks/:id：详情 = 任务公开视图 + 对话（回信按当前策略门禁交付，
@@ -129,6 +137,88 @@ function textLimitCodeOf(firstPath: string, issue?: { code?: string }): string {
   return firstPath === "question" && issue?.code !== "invalid_type"
     ? "AI_TEXT_TOO_LONG"
     : "VALIDATION_ERROR";
+}
+
+/**
+ * 材料上传 manifest 的传输层形状（multipart 无 JSON 请求 schema，契约约定
+ * 见 student-ai-api.ts 头注）：每页声明类别/页序/像素尺寸，字节与 PNG IHDR
+ * 一致性、数量与合计限额、槽位冲突全在服务层 validatePages。
+ */
+const aiMaterialManifestPageSchema = z
+  .object({
+    kind: z.enum(["annotation", "draft", "formal_ink"]),
+    pageIndex: z.number().int().min(0),
+    pixelWidth: z.number().int().positive(),
+    pixelHeight: z.number().int().positive(),
+  })
+  .strict();
+
+/** 材料回执公开视图（内部行的 pngPath 结构上不进响应） */
+function materialReceiptOf(rows: readonly AiTaskMaterialInternal[]) {
+  const materials = rows.map((row) => ({
+    id: row.id,
+    taskId: row.taskId,
+    kind: row.kind,
+    pageIndex: row.pageIndex,
+    pixelWidth: row.pixelWidth,
+    pixelHeight: row.pixelHeight,
+    byteSize: row.byteSize,
+    hash: row.hash,
+    state: row.state,
+    missingReason: row.missingReason,
+  }));
+  return {
+    materials,
+    totalBytes: rows.reduce((sum, row) => sum + row.byteSize, 0),
+  };
+}
+
+/** 解析材料 multipart：manifest（JSON 数组）+ page-N 文件逐页配对 */
+async function parseMaterialsBody(
+  c: Context,
+): Promise<readonly AiMaterialUploadPage[]> {
+  const form = await c.req.parseBody();
+  const manifestField = form.manifest;
+  if (typeof manifestField !== "string") {
+    throw new HttpError(
+      400,
+      "VALIDATION_ERROR",
+      "请求需为 multipart/form-data，且包含 manifest 字段与逐页 page-N 文件",
+    );
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(manifestField);
+  } catch {
+    throw new HttpError(400, "VALIDATION_ERROR", "材料清单不是合法 JSON");
+  }
+  const manifest = z.array(aiMaterialManifestPageSchema).safeParse(parsed);
+  if (!manifest.success) {
+    throw new HttpError(
+      400,
+      "VALIDATION_ERROR",
+      `材料清单不合法：${firstIssueMessage(manifest.error)}`,
+    );
+  }
+  const pages: AiMaterialUploadPage[] = [];
+  for (const [index, meta] of manifest.data.entries()) {
+    const file = form[`page-${index}`];
+    if (!(file instanceof File)) {
+      throw new HttpError(
+        400,
+        "VALIDATION_ERROR",
+        `材料清单第 ${index + 1} 页缺少对应文件（page-${index}）`,
+      );
+    }
+    pages.push({
+      kind: meta.kind,
+      pageIndex: meta.pageIndex,
+      pixelWidth: meta.pixelWidth,
+      pixelHeight: meta.pixelHeight,
+      png: new Uint8Array(await file.arrayBuffer()),
+    });
+  }
+  return pages;
 }
 
 export function createStudentAiRoutes(db: Db, dataDir: string) {
@@ -246,6 +336,16 @@ export function createStudentAiRoutes(db: Db, dataDir: string) {
             taskId: c.req.param("id"),
           }),
         });
+      })
+      // —— 材料上传（SAI-20；multipart 薄壳，防线在服务层）——
+      .post("/ai/tasks/:id/materials", async (c) => {
+        const pages = await parseMaterialsBody(c);
+        const rows = attachAiTaskMaterials(db, dataDir, {
+          studentId: c.var.student.id,
+          taskId: c.req.param("id"),
+          pages,
+        });
+        return c.json({ ok: true, data: materialReceiptOf(rows) });
       })
       .post("/ai/tasks/:id/update-pending", async (c) => {
         const body = await parseJsonBodyWithCode(
