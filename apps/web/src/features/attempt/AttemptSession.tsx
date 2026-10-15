@@ -520,7 +520,7 @@ function AnswerView({
         {/* 练习头：来源 + 标题 + 截止 + 草稿保存状态（T2.9 三态 + T2A.6 终态） */}
         <AttemptHeader
           title={data.title}
-          status={
+          status={(closeDetails) => (
             <div className="flex min-w-0 items-center gap-2">
               <p
                 data-testid="draft-status"
@@ -533,7 +533,10 @@ function AnswerView({
                 attemptId={attemptId}
                 questionIds={questionIds}
                 controllers={inkControllers}
-                onJump={jumpToQuestion}
+                onJump={async (questionId) => {
+                  closeDetails();
+                  await jumpToQuestion(questionId);
+                }}
                 onRetry={async () => {
                   await recoverAttemptMaterials(attemptId, questionIds);
                   await retryAttemptLocalPersistence(attemptId, questionIds);
@@ -579,7 +582,7 @@ function AnswerView({
                 </span>
               )}
             </div>
-          }
+          )}
           onBack={async () => {
             if (!editor || (await editor.request(null))) onBackHome();
           }}

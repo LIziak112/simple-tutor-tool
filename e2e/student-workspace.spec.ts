@@ -95,6 +95,35 @@ test("学生工作区：部分填写、遗漏定位、答题卡与响应式布�
     [1440, 900],
   ] as const) {
     await page.setViewportSize({ width, height });
+    const header = page.locator('[data-slot="attempt-header"]');
+    if (width < 640) {
+      await expect(header.getByTestId("draft-status")).toBeHidden();
+      await expect(
+        header.getByText(`课程：${courseName}`, { exact: false }),
+      ).toBeHidden();
+      const headerBox = await header.boundingBox();
+      expect(headerBox?.height).toBeLessThanOrEqual(80);
+      await header.getByRole("button", { name: "练习更多" }).click();
+      await page.getByRole("menuitem", { name: "练习信息" }).click();
+      const details = page.getByRole("dialog");
+      await expect(details).toContainText(courseName);
+      await expect(details).toContainText(unitName);
+      await expect(details.getByTestId("draft-status")).toBeVisible();
+      await details
+        .getByRole("button", { name: "保存详情", exact: true })
+        .click();
+      const saves = page.getByRole("dialog").filter({
+        has: page.getByRole("heading", { name: "保存详情", exact: true }),
+      });
+      await saves.getByRole("button", { name: "定位第 1 题" }).click();
+      await expect(page.getByRole("dialog")).toHaveCount(0);
+      await expect(first).toBeFocused();
+    } else {
+      await expect(header.getByTestId("draft-status")).toBeVisible();
+      await expect(
+        header.getByText(`课程：${courseName}`, { exact: false }),
+      ).toBeVisible();
+    }
     if (width >= 1024) {
       await expectNavigationRingSpace(
         page.getByRole("navigation", { name: "答题卡" }),
