@@ -296,8 +296,9 @@ function inferUnitLectureTitle(
   lectures: Lecture[],
   inferred: string | undefined,
   firstQuestion: ContainerDirective | undefined,
+  declared: string | undefined,
 ): string | undefined {
-  let lectureTitle = firstNonEmpty(ctx.frontmatter?.lecture);
+  let lectureTitle = declared;
   if (lectureTitle === undefined && firstNonEmpty(inferred) !== undefined) {
     const single = lectures.length === 1 ? lectures[0] : undefined;
     lectureTitle =
@@ -353,6 +354,7 @@ function parseMixedDocument(ctx: ParseContext): {
       lectures,
       lastQuestionLectureTitle,
       questionNodes[0],
+      firstNonEmpty(ctx.frontmatter?.lecture),
     );
     units.push(buildUnit(ctx, questions, lectureTitle));
   }
@@ -414,11 +416,30 @@ function parseLessonDocument(ctx: ParseContext): {
 
   const units: Unit[] = [];
   if (questions.length > 0) {
+    // 讲练单元恒关联本篇讲练页自身：frontmatter lecture 只允许指向本篇标题。
+    // 与 practice/mixed 的「配套讲义」语义不同——那边按名匹配既有讲义是预期
+    // 行为；讲练页若按名匹配到其他讲义，页内将反查不到自己的题目（学生端
+    // 零题兜底），2026-10-15 考公案例（lecture 与大标题不一致 + 同名既有讲义）。
+    const declared = firstNonEmpty(ctx.frontmatter?.lecture);
+    const ownTitles = new Set(lectures.map((lecture) => lecture.title));
+    const declaredIsOwn = declared !== undefined && ownTitles.has(declared);
+    if (declared !== undefined && !declaredIsOwn) {
+      ctx.issues.push(
+        makeIssue(
+          "warning",
+          1,
+          1,
+          "LESSON_LECTURE_TITLE_MISMATCH",
+          `讲练页（kind: lesson）的 frontmatter lecture「${declared}」与本篇任何讲练页标题都不一致：讲练单元不关联其他讲义（那是 practice/mixed 的配套讲义用法），已按题目位置改关联本篇讲练页；请让 lecture 与讲练页大标题一致`,
+        ),
+      );
+    }
     const lectureTitle = inferUnitLectureTitle(
       ctx,
       lectures,
       lastQuestionLectureTitle,
       questionNodes[0],
+      declaredIsOwn ? declared : undefined,
     );
     units.push(buildUnit(ctx, questions, lectureTitle));
   }

@@ -270,7 +270,7 @@ export function renderSpecMarkdown(input: SpecInput): string {
       "- `lecture`：正文按 `# 第X讲 …`（一级标题）切分为多篇讲义，讲名作标题，H2/H3 进目录；",
       "  第一个 H1 之前不要写正文（若写了会并入第一篇讲义并给出 CONTENT_BEFORE_FIRST_HEADING 警告，内容不丢失）；讲义内不出现 question；",
       "- `mixed`：讲义段落与题目交替出现，导入时拆成讲义 + 练习单元并建立关联；",
-      "- `lesson`（讲练页）：讲义段落与题目原位混排（题块保留在讲义 markdown 原位，解析时把最终题目 id 注入题块开围栏），导入建讲练页 + 练习单元，学生端单题提交即时反馈。",
+      "- `lesson`（讲练页）：讲义段落与题目原位混排（题块保留在讲义 markdown 原位，解析时把最终题目 id 注入题块开围栏），导入建讲练页；题目同时存为随堂练习单元——它是讲练页与作答记录的数据地基，不显示在资源库单元列表、也不单独布置；学生端单题提交即时反馈。frontmatter `lecture` 只能写本篇讲练页自己的标题（与 H1 一致），不得用于关联其他讲义；不一致时按题目位置关联本篇并记 warning（LESSON_LECTURE_TITLE_MISMATCH）。",
       "",
       "### 命名与身份规则",
       "",
