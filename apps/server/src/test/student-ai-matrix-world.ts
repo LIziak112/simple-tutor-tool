@@ -13,15 +13,16 @@ import {
   responses,
   teachers,
 } from "../db/schema.ts";
-import { createTestDb, createTestDir, TEST_TEACHER_ID } from "../db/test-utils.ts";
-import type { GuardedResponse } from "../services/ai-companion/outbound-target.ts";
+import {
+  createTestDb,
+  createTestDir,
+  TEST_TEACHER_ID,
+} from "../db/test-utils.ts";
 import { createStudentAiConnection } from "../services/ai-companion/connection-service.ts";
+import type { GuardedResponse } from "../services/ai-companion/outbound-target.ts";
 import type { ProviderTransport } from "../services/ai-companion/provider-client.ts";
 import { runStudentAiDispatchOnce } from "../services/ai-companion/student-ai-worker.ts";
-import {
-  insertAttempt,
-  insertResponse,
-} from "./ai-companion-fixtures.ts";
+import { insertAttempt, insertResponse } from "./ai-companion-fixtures.ts";
 import { makeStudent } from "./note-fixtures.ts";
 
 /**
@@ -86,10 +87,17 @@ export interface MatrixWorld {
   /** 全部哨兵（扫描用；不含 question/stem——它们是合法公开题面内容） */
   readonly secretSentinels: readonly string[];
   /** 配置工具：教师默认模式（无行 = 继承 → open） */
-  setTeacherDefault(teacherId: string, mode: "open_study" | "guided_only" | "post_submit_only"): void;
+  setTeacherDefault(
+    teacherId: string,
+    mode: "open_study" | "guided_only" | "post_submit_only",
+  ): void;
   clearTeacherDefault(teacherId: string): void;
   /** 配置工具：学生/作业覆盖（无行 = 继承） */
-  setOverride(subjectType: "student" | "assignment", subjectId: string, mode: "open_study" | "guided_only" | "post_submit_only"): void;
+  setOverride(
+    subjectType: "student" | "assignment",
+    subjectId: string,
+    mode: "open_study" | "guided_only" | "post_submit_only",
+  ): void;
   clearOverride(subjectType: "student" | "assignment", subjectId: string): void;
   /** 服务端确认交卷（assignment 源整卷；revisions 用两题冻结 responseId） */
   submitAttempt1(): void;
@@ -210,7 +218,10 @@ export function createMatrixWorld(
   insertLinkConnectionFixture(db, student1);
   insertLinkConnectionFixture(db, student2);
 
-  const setTeacherDefault: MatrixWorld["setTeacherDefault"] = (teacherId, mode) => {
+  const setTeacherDefault: MatrixWorld["setTeacherDefault"] = (
+    teacherId,
+    mode,
+  ) => {
     db.insert(aiTeacherSettings)
       .values({
         teacherId,
@@ -226,10 +237,18 @@ export function createMatrixWorld(
       })
       .run();
   };
-  const clearTeacherDefault: MatrixWorld["clearTeacherDefault"] = (teacherId) => {
-    db.delete(aiTeacherSettings).where(eq(aiTeacherSettings.teacherId, teacherId)).run();
+  const clearTeacherDefault: MatrixWorld["clearTeacherDefault"] = (
+    teacherId,
+  ) => {
+    db.delete(aiTeacherSettings)
+      .where(eq(aiTeacherSettings.teacherId, teacherId))
+      .run();
   };
-  const setOverride: MatrixWorld["setOverride"] = (subjectType, subjectId, mode) => {
+  const setOverride: MatrixWorld["setOverride"] = (
+    subjectType,
+    subjectId,
+    mode,
+  ) => {
     db.insert(aiPolicyOverrides)
       .values({
         subjectType,
@@ -243,7 +262,10 @@ export function createMatrixWorld(
       })
       .run();
   };
-  const clearOverride: MatrixWorld["clearOverride"] = (subjectType, subjectId) => {
+  const clearOverride: MatrixWorld["clearOverride"] = (
+    subjectType,
+    subjectId,
+  ) => {
     db.delete(aiPolicyOverrides)
       .where(
         eq(aiPolicyOverrides.subjectType, subjectType) &&
@@ -298,8 +320,7 @@ export function createMatrixWorld(
       });
     },
     createMcpToken: async (studentId = student1) => {
-      const cookie =
-        studentId === student1 ? cookie1 : cookie2;
+      const cookie = studentId === student1 ? cookie1 : cookie2;
       const created = await app.request("/api/student/ai/connections", {
         method: "POST",
         headers: { cookie, "content-type": "application/json" },
@@ -335,7 +356,11 @@ export function createMatrixWorld(
                 finish_reason: "stop",
               },
             ],
-            usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+            usage: {
+              prompt_tokens: 10,
+              completion_tokens: 5,
+              total_tokens: 15,
+            },
           }),
         };
         return response;
@@ -374,7 +399,10 @@ function seedResponseContent(
   if (row === undefined) {
     throw new Error(`矩阵夹具：response 行缺失 ${responseId}`);
   }
-  const snapshot = JSON.parse(row.questionSnapshotJson) as Record<string, unknown>;
+  const snapshot = JSON.parse(row.questionSnapshotJson) as Record<
+    string,
+    unknown
+  >;
   snapshot.stemMd = content.stemMd;
   // fill 单空形态：formatQuestionAnswers 输出即哨兵原文（参考答案文本面）
   snapshot.answers = { kind: "fill", blanks: [[content.answersText]] };
@@ -417,7 +445,8 @@ export async function shellOf(res: Response): Promise<{
   raw: string;
 }> {
   const raw = await res.text();
-  let parsed: { ok?: boolean; data?: Record<string, unknown>; error?: string } = {};
+  let parsed: { ok?: boolean; data?: Record<string, unknown>; error?: string } =
+    {};
   try {
     parsed = JSON.parse(raw) as typeof parsed;
   } catch {

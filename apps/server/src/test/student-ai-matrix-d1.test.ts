@@ -12,8 +12,8 @@ import {
   createMatrixWorld,
   hitsOf,
   jsonViaApp,
-  shellOf,
   type MatrixWorld,
+  shellOf,
 } from "./student-ai-matrix-world.ts";
 
 /**
@@ -66,16 +66,26 @@ afterEach(() => {
 async function createTask(
   w: MatrixWorld,
   over: Record<string, unknown> = {},
-): Promise<{ status: number; error: string | null; data: Record<string, unknown> | null }> {
-  const res = await jsonViaApp(w.app, w.cookie1, "/api/student/ai/tasks", "POST", {
-    attemptId: w.attempt1,
-    questionId: w.qMain,
-    question: `请讲解：${w.sentinel.question}`,
-    channel: "inapp",
-    materials: { annotation: false, draft: false, formalInk: false },
-    mutationId: randomUUID(),
-    ...over,
-  });
+): Promise<{
+  status: number;
+  error: string | null;
+  data: Record<string, unknown> | null;
+}> {
+  const res = await jsonViaApp(
+    w.app,
+    w.cookie1,
+    "/api/student/ai/tasks",
+    "POST",
+    {
+      attemptId: w.attempt1,
+      questionId: w.qMain,
+      question: `请讲解：${w.sentinel.question}`,
+      channel: "inapp",
+      materials: { annotation: false, draft: false, formalInk: false },
+      mutationId: randomUUID(),
+      ...over,
+    },
+  );
   return shellOf(res);
 }
 
@@ -91,7 +101,9 @@ async function mcpCall(
   args: Record<string, unknown>,
 ): Promise<{ data: Record<string, unknown>; isError: boolean }> {
   const result = await client.callTool({ name, arguments: args });
-  const block = (result.content as TextContent[]).find((c) => c.type === "text");
+  const block = (result.content as TextContent[]).find(
+    (c) => c.type === "text",
+  );
   if (block === undefined) throw new Error(`${name} 结果没有 text content`);
   return {
     data: JSON.parse(block.text) as Record<string, unknown>,
@@ -112,7 +124,13 @@ describe("SAI-32 矩阵维度 1：三通道 × 三模式 × 完成态 × 配置�
     expect(payload).toContain(w.sentinel.refAnswer);
     expect(payload).toContain(w.sentinel.solution);
     // 教师私注与邻题答案不得进入任何出站
-    expect(hitsOf(payload, [w.sentinel.teacherNote, w.sentinel.neighborRef, w.sentinel.peerRef])).toEqual([]);
+    expect(
+      hitsOf(payload, [
+        w.sentinel.teacherNote,
+        w.sentinel.neighborRef,
+        w.sentinel.peerRef,
+      ]),
+    ).toEqual([]);
     expect(payload).toContain("开放伴学");
   });
 
@@ -182,14 +200,25 @@ describe("SAI-32 矩阵维度 1：三通道 × 三模式 × 完成态 × 配置�
     const created = await createTask(w, { channel: "mcp" });
     expect(created.status).toBe(201);
     const token = await w.createMcpToken();
-    const client = await connectMcpClientViaApp(w.app, "/mcp/student", token, "d1-07");
+    const client = await connectMcpClientViaApp(
+      w.app,
+      "/mcp/student",
+      token,
+      "d1-07",
+    );
     const claim = await mcpCall(client, "claim_ai_task", {});
     expect(claim.isError).toBe(false);
     expect(claim.data.claimed).toBe(true);
     const context = JSON.stringify(claim.data);
     expect(context).toContain(w.sentinel.refAnswer);
     expect(context).toContain(w.sentinel.solution);
-    expect(hitsOf(context, [w.sentinel.teacherNote, w.sentinel.neighborRef, w.sentinel.peerRef])).toEqual([]);
+    expect(
+      hitsOf(context, [
+        w.sentinel.teacherNote,
+        w.sentinel.neighborRef,
+        w.sentinel.peerRef,
+      ]),
+    ).toEqual([]);
     await client.close();
   });
 
@@ -202,7 +231,12 @@ describe("SAI-32 矩阵维度 1：三通道 × 三模式 × 完成态 × 配置�
     const taskId = created.data?.id;
     expect(typeof taskId).toBe("string");
     const token = await w.createMcpToken();
-    const client = await connectMcpClientViaApp(w.app, "/mcp/student", token, "d1-08");
+    const client = await connectMcpClientViaApp(
+      w.app,
+      "/mcp/student",
+      token,
+      "d1-08",
+    );
     const fifo = await mcpCall(client, "claim_ai_task", {});
     expect(fifo.isError).toBe(false);
     expect(fifo.data.claimed).toBe(false);
@@ -210,7 +244,11 @@ describe("SAI-32 矩阵维度 1：三通道 × 三模式 × 完成态 × 配置�
     expect(specified.isError).toBe(true);
     expect(specified.data.error).toBe("AI_POLICY_DISABLED");
     // 任务行保持 created（未领取、无 dispatched 事实、无租约）
-    const row = w.db.select().from(aiTasks).where(eq(aiTasks.id, taskId as string)).get();
+    const row = w.db
+      .select()
+      .from(aiTasks)
+      .where(eq(aiTasks.id, taskId as string))
+      .get();
     expect(row?.status).toBe("created");
     expect(row?.leaseToken).toBeNull();
     await client.close();
@@ -223,7 +261,12 @@ describe("SAI-32 矩阵维度 1：三通道 × 三模式 × 完成态 × 配置�
     const created = await createTask(w, { channel: "mcp" });
     expect(created.status).toBe(201);
     const token = await w.createMcpToken();
-    const client = await connectMcpClientViaApp(w.app, "/mcp/student", token, "d1-09");
+    const client = await connectMcpClientViaApp(
+      w.app,
+      "/mcp/student",
+      token,
+      "d1-09",
+    );
     const claim = await mcpCall(client, "claim_ai_task", {});
     expect(claim.isError).toBe(false);
     expect(claim.data.claimed).toBe(true);
@@ -252,7 +295,9 @@ describe("SAI-32 矩阵维度 1：三通道 × 三模式 × 完成态 × 配置�
     expect(body.status).toBe(200);
     expect(body.raw).toContain(w.sentinel.refAnswer);
     expect(body.raw).toContain(w.sentinel.solution);
-    expect(hitsOf(body.raw, [w.sentinel.teacherNote, w.sentinel.neighborRef])).toEqual([]);
+    expect(
+      hitsOf(body.raw, [w.sentinel.teacherNote, w.sentinel.neighborRef]),
+    ).toEqual([]);
   });
 
   it("D1-11 link×post×未完成：票据生成 403；已有票据正文与附件一致拒绝", async () => {
@@ -261,26 +306,44 @@ describe("SAI-32 矩阵维度 1：三通道 × 三模式 × 完成态 × 配置�
     const created = await createTask(w, { channel: "link" });
     expect(created.status).toBe(201);
     const taskId = created.data?.id as string;
-    const pngRes = await w.app.request(`/api/student/ai/tasks/${taskId}/materials`, {
-      method: "POST",
-      headers: { cookie: w.cookie1 },
-      body: newSoleForm(),
-    });
+    const pngRes = await w.app.request(
+      `/api/student/ai/tasks/${taskId}/materials`,
+      {
+        method: "POST",
+        headers: { cookie: w.cookie1 },
+        body: newSoleForm(),
+      },
+    );
     expect(pngRes.status).toBe(200);
-    const share = await jsonViaApp(w.app, w.cookie1, `/api/student/ai/tasks/${taskId}/share`, "POST", {});
+    const share = await jsonViaApp(
+      w.app,
+      w.cookie1,
+      `/api/student/ai/tasks/${taskId}/share`,
+      "POST",
+      {},
+    );
     expect(share.status).toBe(200);
-    const ticketUrl = ((await share.json()) as { data: { ticketUrl: string } }).data.ticketUrl;
+    const ticketUrl = ((await share.json()) as { data: { ticketUrl: string } })
+      .data.ticketUrl;
     const path = new URL(ticketUrl).pathname;
     // 教师中途关闭（学生明确 post_submit_only 且未完成）
     w.setOverride("student", w.student1, "post_submit_only");
     const body = await shellOf(await w.app.request(path));
     expect(body.status).toBe(403);
     expect(body.error).toBe("AI_POLICY_DISABLED");
-    const material = await shellOf(await w.app.request(`${path}/materials/0.png`));
+    const material = await shellOf(
+      await w.app.request(`${path}/materials/0.png`),
+    );
     expect(material.status).toBe(403);
     expect(material.error).toBe("AI_POLICY_DISABLED");
     // 新票据生成同样拒绝
-    const denied = await jsonViaApp(w.app, w.cookie1, `/api/student/ai/tasks/${taskId}/share`, "POST", {});
+    const denied = await jsonViaApp(
+      w.app,
+      w.cookie1,
+      `/api/student/ai/tasks/${taskId}/share`,
+      "POST",
+      {},
+    );
     expect(denied.status).toBe(403);
     expect((await shellOf(denied)).error).toBe("AI_POLICY_DISABLED");
   });
@@ -298,8 +361,11 @@ describe("SAI-32 矩阵维度 1：三通道 × 三模式 × 完成态 × 配置�
       {},
     );
     expect(share.status).toBe(200);
-    const ticketUrl = ((await share.json()) as { data: { ticketUrl: string } }).data.ticketUrl;
-    const body = await shellOf(await w.app.request(new URL(ticketUrl).pathname));
+    const ticketUrl = ((await share.json()) as { data: { ticketUrl: string } })
+      .data.ticketUrl;
+    const body = await shellOf(
+      await w.app.request(new URL(ticketUrl).pathname),
+    );
     expect(body.status).toBe(200);
     expect(body.raw).toContain(w.sentinel.refAnswer);
     expect(body.raw).toContain(w.sentinel.solution);
@@ -318,13 +384,25 @@ describe("SAI-32 矩阵维度 1：三通道 × 三模式 × 完成态 × 配置�
     // （受限形态允许 null 值的 answers/solutionMd 键——与 student-attempts
     // 既有口径一致，allow 列表不改 assertNoLeak 基础设施）
     const detail = await shellOf(
-      await jsonViaApp(w.app, w.cookie1, `/api/student/attempts/${w.attempt1}`, "GET"),
+      await jsonViaApp(
+        w.app,
+        w.cookie1,
+        `/api/student/attempts/${w.attempt1}`,
+        "GET",
+      ),
     );
     expect(detail.status).toBe(200);
-    expect(hitsOf(detail.raw, [w.sentinel.refAnswer, w.sentinel.solution])).toEqual([]);
-    assertNoLeak(JSON.parse(detail.raw), { allow: ["answers", "answer", "solutionMd"] });
+    expect(
+      hitsOf(detail.raw, [w.sentinel.refAnswer, w.sentinel.solution]),
+    ).toEqual([]);
+    assertNoLeak(JSON.parse(detail.raw), {
+      allow: ["answers", "answer", "solutionMd"],
+    });
     const parsedDetail = JSON.parse(detail.raw) as {
-      data?: { answersReleased?: boolean; units?: { questions?: { answers?: unknown; solutionMd?: unknown }[] }[] };
+      data?: {
+        answersReleased?: boolean;
+        units?: { questions?: { answers?: unknown; solutionMd?: unknown }[] }[];
+      };
     };
     expect(parsedDetail.data?.answersReleased).toBe(false);
     for (const unit of parsedDetail.data?.units ?? []) {
@@ -343,7 +421,10 @@ describe("SAI-32 矩阵维度 1：三通道 × 三模式 × 完成态 × 配置�
       ),
     );
     expect(status.status).toBe(200);
-    expect((status.data as { resolution?: { usable?: boolean } })?.resolution?.usable).toBe(true);
+    expect(
+      (status.data as { resolution?: { usable?: boolean } })?.resolution
+        ?.usable,
+    ).toBe(true);
     const created = await createTask(w);
     expect(created.status).toBe(201);
     w.addInappConnection();
@@ -382,8 +463,9 @@ describe("SAI-32 矩阵维度 1：三通道 × 三模式 × 完成态 × 配置�
       ),
     );
     expect(status.status).toBe(200);
-    const resolution = (status.data as { resolution?: { usable: boolean; mode: string } })
-      ?.resolution;
+    const resolution = (
+      status.data as { resolution?: { usable: boolean; mode: string } }
+    )?.resolution;
     expect(resolution?.usable).toBe(true);
     expect(resolution?.mode).toBe("open_study");
   });
