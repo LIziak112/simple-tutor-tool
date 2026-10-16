@@ -52,9 +52,13 @@ const captured: { controller: AiCompanionLayoutController | null } = {
 
 function RailHarness({
   conversation,
+  status,
+  composer,
   questionLabel = "第 3 题",
 }: {
   conversation?: React.ReactNode;
+  status?: React.ReactNode;
+  composer?: React.ReactNode;
   questionLabel?: string | null;
 }) {
   const railRef = useRef<HTMLDivElement>(null);
@@ -79,6 +83,8 @@ function RailHarness({
           triggerRef={triggerRef}
           questionLabel={questionLabel}
           settingsHref={SETTINGS_HREF}
+          status={status}
+          composer={composer}
           conversation={conversation}
         >
           <div data-testid="main-content">主区内容</div>
@@ -310,5 +316,29 @@ describe("SAI-19 伴学栏视图壳", () => {
     render(<RailHarness questionLabel={null} />);
     await openViaTrigger();
     expect(screen.getByText("未绑定题目")).toBeInTheDocument();
+  });
+
+  it("SAI-20 会话注入：status/composer 顶替合成通道状态与新增输入区，未注入时保留合成回退", async () => {
+    mockedFetch.mockResolvedValue({
+      connections: [inappConnection()],
+    } as AiConnectionListData);
+    render(
+      <RailHarness
+        status={<div>真实状态区</div>}
+        composer={<div>真实输入区</div>}
+      />,
+    );
+    await openViaTrigger();
+    const panel = screen.getByRole("complementary", { name: "AI 助教" });
+    // 注入的会话区进入对应分区；合成通道状态不再重复出现
+    expect(await within(panel).findByText("真实状态区")).toBeInTheDocument();
+    expect(within(panel).getByText("真实输入区")).toBeInTheDocument();
+    expect(
+      within(panel).queryByText(/发送与对话功能建设中/),
+    ).not.toBeInTheDocument();
+    const inputSection = within(panel).getByRole("region", {
+      name: "发送输入",
+    });
+    expect(within(inputSection).getByText("真实输入区")).toBeInTheDocument();
   });
 });

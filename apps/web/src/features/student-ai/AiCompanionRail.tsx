@@ -26,8 +26,9 @@ import { useStudentAiConnections } from "./ai-connection-queries";
  *   返回触发按钮），主区不被挤占；
  * - 通道状态如实呈现（未连接/已配置），入口不向用户假报已可连接；
  * - 栏内分区沿用需求规格 §7.1 顺序：题目绑定信息、通道/模式、快捷按钮、
- *   当前材料、本题对话记录；快捷按钮/材料/对话为后续批次的占位区，
- *   合成子内容经 props 注入用于空间测试。
+ *   发送输入、当前材料、本题对话记录；SAI-20 起真实会话内容（状态区/
+ *   快捷按钮/输入区）经 props 注入，未注入的分区保留合成占位或诚实回退
+ *   （合成子内容同样经 props 注入用于空间测试）。
  */
 
 export const AiCompanionTrigger = forwardRef<
@@ -103,8 +104,12 @@ interface PanelBodyProps {
   /** dock 模式的关闭按钮（panel 模式由 Sheet 内建关闭提供） */
   dockCloseRef?: RefObject<HTMLButtonElement | null>;
   onDockClose?: () => void;
+  /** 会话状态区（SAI-20 真实注入；未注入时保留合成的诚实回退） */
+  status?: ReactNode;
   /** 合成子内容（空间测试注入；生产留空显示占位） */
   quickButtons?: ReactNode;
+  /** 发送输入区（SAI-20 真实注入；未注入时不渲染该分区） */
+  composer?: ReactNode;
   materials?: ReactNode;
   conversation?: ReactNode;
 }
@@ -114,7 +119,9 @@ function AiCompanionPanelBody({
   settingsHref,
   dockCloseRef,
   onDockClose,
+  status,
   quickButtons,
+  composer,
   materials,
   conversation,
 }: PanelBodyProps) {
@@ -142,13 +149,21 @@ function AiCompanionPanelBody({
         aria-label="通道与模式"
         className="border-b border-border px-3 py-2"
       >
-        <AiCompanionChannelStatus settingsHref={settingsHref} />
+        {status ?? <AiCompanionChannelStatus settingsHref={settingsHref} />}
       </section>
       <nav aria-label="快捷按钮" className="border-b border-border px-3 py-2">
         {quickButtons ?? (
           <p className="text-xs text-muted-foreground">快捷按钮功能建设中</p>
         )}
       </nav>
+      {composer !== undefined && (
+        <section
+          aria-label="发送输入"
+          className="border-b border-border px-3 py-2"
+        >
+          {composer}
+        </section>
+      )}
       <section
         aria-label="当前材料"
         className="border-b border-border px-3 py-2"
@@ -175,7 +190,9 @@ export function AiCompanionRail({
   triggerRef,
   questionLabel,
   settingsHref,
+  status,
   quickButtons,
+  composer,
   materials,
   conversation,
   children,
@@ -187,7 +204,11 @@ export function AiCompanionRail({
   questionLabel: string | null;
   /** 连接设置入口（含 ?from= 回跳原题路径） */
   settingsHref: string;
+  /** 会话状态区（SAI-20 真实注入；未注入时保留合成的诚实回退） */
+  status?: ReactNode;
   quickButtons?: ReactNode;
+  /** 发送输入区（SAI-20 真实注入；未注入时不渲染该分区） */
+  composer?: ReactNode;
   materials?: ReactNode;
   conversation?: ReactNode;
   children: ReactNode;
@@ -218,7 +239,9 @@ export function AiCompanionRail({
           triggerRef={triggerRef}
           questionLabel={questionLabel}
           settingsHref={settingsHref}
+          status={status}
           quickButtons={quickButtons}
+          composer={composer}
           materials={materials}
           conversation={conversation}
         />
@@ -259,7 +282,9 @@ export function AiCompanionRail({
             <AiCompanionPanelBody
               questionLabel={questionLabel}
               settingsHref={settingsHref}
+              status={status}
               quickButtons={quickButtons}
+              composer={composer}
               materials={materials}
               conversation={conversation}
             />
@@ -275,7 +300,9 @@ function DockPanel({
   triggerRef,
   questionLabel,
   settingsHref,
+  status,
   quickButtons,
+  composer,
   materials,
   conversation,
 }: {
@@ -283,7 +310,9 @@ function DockPanel({
   triggerRef?: RefObject<HTMLButtonElement | null> | undefined;
   questionLabel: string | null;
   settingsHref: string;
+  status?: ReactNode;
   quickButtons?: ReactNode;
+  composer?: ReactNode;
   materials?: ReactNode;
   conversation?: ReactNode;
 }) {
@@ -319,7 +348,9 @@ function DockPanel({
           controller.closePanel();
           triggerRef?.current?.focus();
         }}
+        status={status}
         quickButtons={quickButtons}
+        composer={composer}
         materials={materials}
         conversation={conversation}
       />
