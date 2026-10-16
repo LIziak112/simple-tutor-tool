@@ -798,10 +798,16 @@ function aiTaskPublicViewCore(
   const allowed: AiTaskAction[] = prefetch.usable
     ? [...AI_TASK_ALLOWED_ACTIONS[task.status]]
     : // 策略当前不可用：保留输入与退出权，其余动作（发送/分享/追问/重试）暂不可用；
-      // 归档是队列整理不是出站动作（SAI-23）——终态任务策略失效后仍可整理
+      // 归档是队列整理不是出站动作（SAI-23）——终态任务策略失效后仍可整理。
+      // 取消只对状态机可取消态（created/paused/claimed）如实给出——failed/
+      // dispatching/uncertain 不可取消，给了必 409（cancelAiTask 拒绝）
       task.status === "cancelled" || task.status === "replied"
       ? ["archive"]
-      : ["cancel"];
+      : task.status === "created" ||
+          task.status === "paused" ||
+          task.status === "claimed"
+        ? ["cancel"]
+        : [];
   return {
     id: task.id,
     attemptId: task.attemptId,

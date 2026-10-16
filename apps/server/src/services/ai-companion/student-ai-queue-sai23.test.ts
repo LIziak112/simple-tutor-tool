@@ -413,6 +413,47 @@ describe("SAI-23 全局队列与归档", () => {
     expect(byId.get(failedTask.id)?.allowedActions).not.toContain("archive");
   });
 
+  it("策略不可用回退对齐状态机：不可取消态不再给出必 409 的取消动作", () => {
+    const db = createTestDb();
+    const studentId = makeStudent(db);
+    const attemptId = insertSourcedAttempt(db, {
+      studentId,
+      sourceType: "course",
+      status: "submitted",
+    });
+    insertResponse(db, attemptId, "q1");
+    const world = { studentId, attemptId, questionId: "q1" };
+    const failedTask = mkTask(db, world, { channel: "inapp" });
+    const { generation } = beginInappDispatch(
+      db,
+      { studentId, taskId: failedTask.id },
+      { now: at(1000) },
+    );
+    failInappDispatch(
+      db,
+      {
+        studentId,
+        taskId: failedTask.id,
+        generation,
+        errorText: "超时",
+        kind: "retryable",
+      },
+      { now: at(2000) },
+    );
+    // 删卷行 → 裁决链拒绝按「当前不可用」处理（policyUsable false）
+    db.delete(responses)
+      .where(
+        and(eq(responses.attemptId, attemptId), eq(responses.questionId, "q1")),
+      )
+      .run();
+    const page = listStudentAiTasks(db, { studentId, limit: 20 });
+    const failed = page.tasks.find((t) => t.id === failedTask.id);
+    expect(failed?.status).toBe("failed");
+    // failed 不可取消（cancelAiTask 只收 created/paused/claimed）也不可归档，
+    // 策略又关着重试——如实空动作，不得给点了必 409 的「取消」
+    expect(failed?.allowedActions).toEqual([]);
+  });
+
   it("任务行携带 archivedAt 列（迁移 0037）：直插行可读回", () => {
     const db = createTestDb();
     const studentId = makeStudent(db);
