@@ -479,4 +479,63 @@ describe("AiConnectionManager(SAI-18 学生连接设置)", () => {
       expect(screen.getByText(/tok-once-abc123/u)).toBeInTheDocument();
     });
   });
+
+  describe("SAI-27:MCP 端点展示与客户端兼容说明", () => {
+    /** 已配置的 mcp 连接(掩码口径,无明文) */
+    const MCP_CONNECTION = {
+      id: "44444444-4444-4444-8444-444444444444",
+      channel: "mcp" as const,
+      tokenFingerprint: "mcp12345",
+      isDefault: false,
+      verifyStatus: "unverified" as const,
+      verifiedAt: null,
+      createdAt: "2026-10-16T00:00:00.000Z",
+      updatedAt: "2026-10-16T00:00:00.000Z",
+    };
+
+    it("mcp 连接行显示端点与认证方式,不再标「功能建设中」;复制端点成功有反馈", async () => {
+      mockedFetch.mockResolvedValue(listData([MCP_CONNECTION]));
+      renderManager();
+      expect(
+        await screen.findByText(/Token 指纹 mcp12345/u),
+      ).toBeInTheDocument();
+      // 端点(SAI-25 独立学生端点)与认证方式常驻展示,普通查询只有掩码
+      expect(screen.getByText(/\/mcp\/student/u)).toBeInTheDocument();
+      expect(screen.getByText(/认证方式 Bearer Token/u)).toBeInTheDocument();
+      // SAI-26 后 mcp 通道已闭环,连接行不再标「功能建设中」
+      // (页脚对上下文链接通道的建设中说明是真实状态,不在此断言范围)
+      expect(
+        screen.queryByText(/功能建设中,可先保存偏好/u),
+      ).not.toBeInTheDocument();
+      // 等待状态真实:入队后由外部客户端领取,未写回不虚报
+      expect(screen.getByText(/未写回前保持等待/u)).toBeInTheDocument();
+      mockedCopy.mockResolvedValue(true);
+      fireEvent.click(screen.getByRole("button", { name: "复制端点" }));
+      await waitFor(() =>
+        expect(screen.getByText(/已复制/u)).toBeInTheDocument(),
+      );
+    });
+
+    it("复制端点失败有反馈,不虚报成功", async () => {
+      mockedFetch.mockResolvedValue(listData([MCP_CONNECTION]));
+      renderManager();
+      await screen.findByText(/Token 指纹 mcp12345/u);
+      mockedCopy.mockResolvedValue(false);
+      fireEvent.click(screen.getByRole("button", { name: "复制端点" }));
+      await waitFor(() =>
+        expect(screen.getByText(/复制失败,请手动复制/u)).toBeInTheDocument(),
+      );
+      expect(screen.queryByText(/^已复制$/u)).not.toBeInTheDocument();
+    });
+
+    it("mcp 表单说明客户端要求:不能附 Bearer 或仅支持 OAuth 的客户端当前不兼容", async () => {
+      renderManager();
+      fireEvent.click(screen.getByRole("radio", { name: "MCP 工具" }));
+      expect(
+        screen.getByText(/不能附加 Bearer Token 或仅支持 OAuth/u),
+      ).toBeInTheDocument();
+      // 不改用长效 URL 密钥绕过兼容问题
+      expect(screen.queryByText(/URL 密钥/u)).not.toBeInTheDocument();
+    });
+  });
 });

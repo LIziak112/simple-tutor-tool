@@ -51,7 +51,11 @@ import {
  *   列表只回指纹,编辑留空 = 保持原 Key,永不回显旧明文;
  * - mcp 一次性 token:创建/重置响应的明文只展示一次,复制成功/失败都有
  *   真实反馈,失败可手动复制(HTTP 剪贴板降级见 lib/copy);
- * - mcp/link 通道功能建设中:如实说明进度,不显示「已连接」;
+ * - mcp 通道(SAI-27):连接行常驻展示端点(/mcp/student)与认证方式
+ *   Bearer Token,可一键复制端点;「配置已保存」徽章只表示已配置,
+ *   无可靠在线信号不标在线/已连接;不能附 Bearer 或仅支持 OAuth 的
+ *   客户端如实标注当前不兼容,不用长效密钥链接绕过;
+ * - link 通道功能建设中:如实说明进度,不显示「已连接」;
  * - 表单草稿存 queryClient(gcTime Infinity)切页不丢,后台 refetch 不
  *   覆盖;保存/测试失败保留输入并显示可操作错误(409 不吞改动);
  * - 带来源题(?from=)进入时保存成功提供「返回原题」入口,返回后由学生
@@ -92,6 +96,14 @@ const EMPTY_DRAFT: ConnectionDraft = {
 interface Notice {
   readonly tone: "error" | "ok" | "info";
   readonly text: string;
+}
+
+/**
+ * 学生 MCP 端点(SAI-25 独立端点,同源部署):随当前部署地址推导,
+ * 展示与复制共用一份;认证方式为 Bearer Token(一次性明文 Token)。
+ */
+function studentMcpEndpointUrl(): string {
+  return `${window.location.origin}/mcp/student`;
 }
 
 /** verifyStatus 徽章文案:已配置 / 验证成功 / 暂不可用分开显示 */
@@ -164,6 +176,10 @@ export function AiConnectionManager() {
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">(
     "idle",
   );
+  /** mcp 端点复制反馈(与 token 复制分开,一次只对一个对象给反馈) */
+  const [endpointCopyState, setEndpointCopyState] = useState<
+    "idle" | "copied" | "failed"
+  >("idle");
   const [notice, setNotice] = useState<Notice | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   /** 保存成功且带来源题时的回跳提示 */
@@ -372,6 +388,12 @@ export function AiConnectionManager() {
     setCopyState(ok ? "copied" : "failed");
   }
 
+  /** 复制学生 MCP 端点(SAI-27:端点常驻展示,配置外部客户端时直接复制) */
+  async function handleCopyEndpoint(): Promise<void> {
+    const ok = await copyText(studentMcpEndpointUrl());
+    setEndpointCopyState(ok ? "copied" : "failed");
+  }
+
   const deletingRow =
     confirmDeleteId === null
       ? null
@@ -555,7 +577,7 @@ export function AiConnectionManager() {
                         默认通道
                       </span>
                     )}
-                    {connection.channel !== "inapp" && (
+                    {connection.channel === "link" && (
                       <span className="text-xs text-muted-foreground">
                         功能建设中,可先保存偏好
                       </span>
@@ -565,10 +587,36 @@ export function AiConnectionManager() {
                     {connection.channel === "inapp" &&
                       `${connection.baseUrl} · 模型 ${connection.model} · Key 指纹 ${connection.keyFingerprint}`}
                     {connection.channel === "mcp" &&
-                      `Token 指纹 ${connection.tokenFingerprint} · 由领取工具使用`}
+                      `Token 指纹 ${connection.tokenFingerprint} · 在题目里发起的求助由外部 AI 客户端领取处理,未写回前保持等待`}
                     {connection.channel === "link" &&
                       `新链接默认有效期 ${connection.defaultValidHours} 小时`}
                   </p>
+                  {connection.channel === "mcp" && (
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                      <p className="break-all text-sm text-muted-foreground">
+                        端点 <code>{studentMcpEndpointUrl()}</code> · 认证方式
+                        Bearer Token(即一次性展示的 MCP Token)
+                      </p>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="min-h-11"
+                        onClick={() => void handleCopyEndpoint()}
+                      >
+                        复制端点
+                      </Button>
+                      {endpointCopyState === "copied" && (
+                        <span role="status" className="text-sm text-primary">
+                          已复制
+                        </span>
+                      )}
+                      {endpointCopyState === "failed" && (
+                        <span role="alert" className="text-sm text-destructive">
+                          复制失败,请手动复制上方内容
+                        </span>
+                      )}
+                    </div>
+                  )}
                   <div className="flex flex-wrap items-center gap-3">
                     {connection.channel === "inapp" && (
                       <Button
@@ -686,8 +734,9 @@ export function AiConnectionManager() {
             ))}
           </div>
           <p className="text-xs leading-relaxed text-muted-foreground">
-            页内 AI 在作答页内直接对话;MCP 工具与上下文链接供外部 AI
-            客户端使用(功能建设中,可先保存配置)。
+            页内 AI 在作答页内直接对话;MCP 工具供外部 AI
+            客户端领取处理你的求助(端点与认证方式见 mcp
+            说明);上下文链接功能建设中,可先保存配置。
           </p>
         </fieldset>
 
@@ -736,13 +785,21 @@ export function AiConnectionManager() {
         )}
 
         {draft.channel === "mcp" && (
-          <p className="flex items-start gap-2 text-sm leading-relaxed text-muted-foreground">
-            <CircleAlert
-              aria-hidden
-              className="mt-0.5 size-4 shrink-0 text-primary"
-            />
-            MCP Token 由系统生成,保存后只显示一次;旧 Token 可随时在此重置。
-          </p>
+          <div className="flex flex-col gap-1.5 text-sm leading-relaxed text-muted-foreground">
+            <p className="flex items-start gap-2">
+              <CircleAlert
+                aria-hidden
+                className="mt-0.5 size-4 shrink-0 text-primary"
+              />
+              MCP Token 由系统生成,保存后只显示一次;旧 Token 可随时在此重置。
+            </p>
+            <p>
+              外部客户端须支持 Bearer Token 认证与 Streamable HTTP 传输;不能附加
+              Bearer Token 或仅支持 OAuth
+              发现的客户端当前不兼容(不提供把密钥拼进链接的替代方式)。
+              保存后在「我的连接」里查看并复制端点。
+            </p>
+          </div>
         )}
 
         {draft.channel === "link" && (
