@@ -5,6 +5,9 @@ import {
   AI_REPLY_MAX_CHARS,
 } from "./student-ai";
 import {
+  aiBatchCreateDataSchema,
+  aiBatchCreateItemResultSchema,
+  aiBatchCreateOkSchema,
   aiBatchReviewCreateRequestSchema,
   aiConnectionCreateDataSchema,
   aiConnectionCreateRequestSchema,
@@ -322,6 +325,51 @@ it("批量复盘逐题定位：1–30 题、幂等键必填、条目去重", () 
     aiBatchReviewCreateRequestSchema.safeParse({
       ...base,
       items: [{ ...item, effectiveMode: "open_study" }],
+    }).success,
+  ).toBe(false);
+});
+
+it("批量逐项结果：outcome 四态、strict 拒夹带，失败项不带任务 id", () => {
+  const created = {
+    attemptId: "5a6b7c8d-0000-4000-8000-eeeeeeeeeeee",
+    questionId: "unit-a-q1",
+    outcome: "created",
+    taskId: "1c2d3e4f-0000-4000-8000-aaaaaaaaaaaa",
+    error: null,
+  };
+  const failed = {
+    attemptId: "5a6b7c8d-0000-4000-8000-eeeeeeeeeeee",
+    questionId: "unit-a-q2",
+    outcome: "failed",
+    // 失败不携带任务 id：防把他人/未建行误标成功
+    taskId: null,
+    error: "该题已判对，无需复盘",
+  };
+  const data = {
+    items: [created, failed],
+    summary: { created: 1, alreadyExists: 0, paused: 0, failed: 1 },
+  };
+  expect(aiBatchCreateOkSchema.parse({ ok: true, data })).toEqual({
+    ok: true,
+    data,
+  });
+  // outcome 只认四态：批量创建 ≠ 已回复，「已回复」是回信交付的独立语义
+  for (const outcome of ["replied", "queued", ""]) {
+    expect(
+      aiBatchCreateItemResultSchema.safeParse({ ...created, outcome }).success,
+    ).toBe(false);
+  }
+  // 逐项与汇总都 strict：不夹带题面/答案/教师私注等任何投影外字段
+  expect(
+    aiBatchCreateDataSchema.safeParse({
+      ...data,
+      items: [{ ...created, stemMd: "题面" }],
+    }).success,
+  ).toBe(false);
+  expect(
+    aiBatchCreateDataSchema.safeParse({
+      ...data,
+      summary: { ...data.summary, replied: 0 },
     }).success,
   ).toBe(false);
 });
