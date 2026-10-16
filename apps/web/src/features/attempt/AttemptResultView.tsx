@@ -23,6 +23,7 @@ import { NoteOriginalView } from "@/features/notes/NoteOriginalView";
 import { QuestionHistoryLink } from "@/features/notes/QuestionHistoryLink";
 import { useAiCompanionDock } from "@/features/student-ai/AiCompanionDock";
 import { AiQueueButton } from "@/features/student-ai/AiQueueButton";
+import { AiBatchReviewEntry } from "@/features/student-ai/AiBatchReviewPanel";
 import { studentInkPngUrl } from "@/lib/api";
 import { formatCnTime } from "@/lib/time";
 import {
@@ -651,6 +652,20 @@ export function AttemptResultView({
       actions={
         <>
           {aiCompanion.trigger}
+          {/* SAI-31 批量复盘入口：勾选只进面板，创建走一次确认（B16） */}
+          <AiBatchReviewEntry
+            attemptId={attempt.id}
+            questions={flatQuestions.map((question) => ({
+              questionId: question.questionId,
+              label: indexOfQuestion.has(question.questionId)
+                ? `第 ${indexOfQuestion.get(question.questionId)} 题`
+                : question.questionId,
+              // 未公布时服务端已置 null，这里再按 released 收口（双保险，
+              // 与上方错题重练同款显隐判据）
+              finalCorrect: released ? question.finalCorrect : null,
+            }))}
+            released={released}
+          />
           <AiQueueButton />
         </>
       }

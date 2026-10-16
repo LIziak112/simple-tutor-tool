@@ -13,6 +13,7 @@ import { captureAiQuestionMaterials } from "@/features/export/ai-material-captur
 import { connectedAiStatus } from "@/features/student-ai/student-ai-test-utils";
 import {
   createStudentAiTaskApi,
+  fetchStudentAiConnectionsApi,
   fetchStudentAiStatusApi,
   fetchStudentQuickButtonsApi,
   listStudentAiTasksApi,
@@ -31,6 +32,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
     ...actual,
     fetchStudentAiStatusApi: vi.fn(),
     createStudentAiTaskApi: vi.fn(),
+    fetchStudentAiConnectionsApi: vi.fn(),
     listStudentAiTasksApi: vi.fn(),
     uploadStudentAiTaskMaterialsApi: vi.fn(),
     fetchStudentQuickButtonsApi: vi.fn(),
@@ -65,6 +67,7 @@ const mockedStatus = vi.mocked(fetchStudentAiStatusApi);
 const mockedCreate = vi.mocked(createStudentAiTaskApi);
 const mockedList = vi.mocked(listStudentAiTasksApi);
 const mockedQuickButtons = vi.mocked(fetchStudentQuickButtonsApi);
+const mockedConnections = vi.mocked(fetchStudentAiConnectionsApi);
 const mockedCapture = vi.mocked(captureAiQuestionMaterials);
 
 const DATA: AttemptResultData = {
@@ -173,6 +176,10 @@ beforeEach(() => {
     }),
   );
   mockedList.mockResolvedValue({ tasks: [], nextCursor: null });
+  // 批量复盘面板（B16）的连接查询：默认一条 inapp 连接
+  mockedConnections.mockResolvedValue({
+    connections: [{ id: "c1", channel: "inapp", isDefault: true }],
+  });
   mockedQuickButtons.mockResolvedValue({
     buttons: [],
     updatedAt: "2026-10-16T00:00:00.000Z",
@@ -316,5 +323,18 @@ describe("结果页 AI 复盘（SAI-22）", () => {
       expect(send).toBeDisabled();
     });
     expect(mockedCreate).not.toHaveBeenCalled();
+  });
+});
+
+describe("AttemptResultView 批量复盘入口（B16/SAI-31）", () => {
+  it("头部提供入口；打开面板默认仅勾选判错题，判对题不可选", async () => {
+    renderView();
+    fireEvent.click(screen.getByRole("button", { name: "批量复盘" }));
+    // 本卷一错一对：判错题默认勾选，判对题无勾选框（结构上不可选）
+    await waitFor(() => {
+      expect(screen.getByRole("checkbox", { name: "第 1 题" })).toBeChecked();
+    });
+    expect(screen.queryByRole("checkbox", { name: "第 2 题" })).toBeNull();
+    expect(screen.getByText(/已判对（1 题/)).toBeInTheDocument();
   });
 });
