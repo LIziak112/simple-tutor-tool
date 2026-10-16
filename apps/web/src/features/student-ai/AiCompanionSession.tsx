@@ -1,7 +1,7 @@
 import type { AiChannel } from "@tutor/contract";
 import { Button } from "@/components/ui/button";
-import { CHANNEL_LABEL } from "./ai-channel-label";
 import { AiLinkShareBox } from "./AiLinkShareBox";
+import { CHANNEL_LABEL } from "./ai-channel-label";
 import { useStudentQuickButtons } from "./quick-buttons-queries";
 import {
   type AiMaterialAvailability,

@@ -25,10 +25,11 @@ function formatShareTime(iso: string): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
-/** 降级解析出的材料条目：就绪附件给下载链接；缺失项只给说明 */
+/** 降级解析出的材料条目：就绪附件给下载链接；缺失项只给说明（id 为
+ *  解析时生成的稳定标识——列表只渲染不重排，序号即稳定） */
 type DegradeMaterial =
-  | { readonly href: string; readonly label: string }
-  | { readonly missing: string };
+  | { readonly id: string; readonly href: string; readonly label: string }
+  | { readonly id: string; readonly missing: string };
 
 interface DegradeState {
   readonly phase: "idle" | "loading" | "ok" | "error";
@@ -48,15 +49,19 @@ const DEGRADE_IDLE: DegradeState = {
 /** 从分享正文 HTML 解析材料清单（只认本票据 materials 链接，缺件项无 a） */
 function parseMaterials(html: string): DegradeMaterial[] {
   const doc = new DOMParser().parseFromString(html, "text/html");
-  return [...doc.querySelectorAll("ul.materials li")].map((item) => {
+  return [...doc.querySelectorAll("ul.materials li")].map((item, index) => {
     const anchor = item.querySelector("a[href]");
     if (anchor !== null) {
       return {
+        id: `material-${index}`,
         href: anchor.getAttribute("href") ?? "",
         label: anchor.textContent?.trim() || "材料",
       };
     }
-    return { missing: item.textContent?.trim() || "材料不可用" };
+    return {
+      id: `material-${index}`,
+      missing: item.textContent?.trim() || "材料不可用",
+    };
   });
 }
 
@@ -93,7 +98,8 @@ export function AiLinkShareBox({
       setDegrade({
         ...DEGRADE_IDLE,
         phase: "error",
-        message: "读取分享内容失败（网络问题），请稍后重试；链接本身仍可发给外部 AI",
+        message:
+          "读取分享内容失败（网络问题），请稍后重试；链接本身仍可发给外部 AI",
       });
       return;
     }
@@ -108,7 +114,9 @@ export function AiLinkShareBox({
     }
     const html = await response.text();
     const doc = new DOMParser().parseFromString(html, "text/html");
-    const text = (doc.body?.textContent ?? "").replace(/\n{3,}/g, "\n\n").trim();
+    const text = (doc.body?.textContent ?? "")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
     const materials = parseMaterials(html);
     let copied = false;
     try {
@@ -196,7 +204,9 @@ export function AiLinkShareBox({
           disabled={degrade.phase === "loading"}
           onClick={() => void loadDegrade()}
         >
-          {degrade.phase === "loading" ? "正在读取…" : "外部读不了？复制本题文字"}
+          {degrade.phase === "loading"
+            ? "正在读取…"
+            : "外部读不了？复制本题文字"}
         </Button>
         {degrade.message !== null && (
           <p role="status" className="text-xs text-muted-foreground">
@@ -216,9 +226,9 @@ export function AiLinkShareBox({
         {degrade.materials !== null &&
           (degrade.materials.length > 0 ? (
             <ul className="flex flex-col gap-1">
-              {degrade.materials.map((item, index) =>
+              {degrade.materials.map((item) =>
                 "href" in item ? (
-                  <li key={`${item.href}-${index}`}>
+                  <li key={item.id}>
                     <a
                       href={item.href}
                       download
@@ -228,10 +238,7 @@ export function AiLinkShareBox({
                     </a>
                   </li>
                 ) : (
-                  <li
-                    key={`missing-${index}`}
-                    className="text-xs text-muted-foreground"
-                  >
+                  <li key={item.id} className="text-xs text-muted-foreground">
                     {item.missing}
                   </li>
                 ),

@@ -641,9 +641,7 @@ export function useAiSendController(config: UseAiSendControllerConfig) {
     );
     setSendState({
       phase: "sent",
-      message: copied
-        ? "已复制 AI 链接"
-        : "自动复制仍失败，请手动复制下方链接",
+      message: copied ? "已复制 AI 链接" : "自动复制仍失败，请手动复制下方链接",
       questionId: current.questionId,
     });
   }, [linkShare]);

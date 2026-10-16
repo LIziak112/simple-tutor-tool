@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import type { AiLinkShareState } from "./use-ai-send-controller";
 import { AiLinkShareBox } from "./AiLinkShareBox";
+import type { AiLinkShareState } from "./use-ai-send-controller";
 
 /**
  * SAI-30 链接查看/复制/降级组件测试（B15 必测映射）：
@@ -91,7 +91,9 @@ describe("AiLinkShareBox（SAI-30 链接查看/复制/降级）", () => {
       screen.getByText(/获得链接者可读取本题参考答案、解析与选定材料/),
     ).toBeTruthy();
     // 区块 aria-label 与输入框同名：按 textbox role 精确定位输入框
-    const input = screen.getByRole("textbox", { name: "AI 链接" }) as HTMLInputElement;
+    const input = screen.getByRole("textbox", {
+      name: "AI 链接",
+    }) as HTMLInputElement;
     expect(input.value).toBe(LINK.url);
     expect(input.readOnly).toBe(true);
   });
@@ -152,9 +154,7 @@ describe("AiLinkShareBox（SAI-30 链接查看/复制/降级）", () => {
       ).toBeTruthy(),
     );
     expect(writeText).not.toHaveBeenCalled();
-    expect(
-      screen.queryByRole("link", { name: "题面圈画第 1 页" }),
-    ).toBeNull();
+    expect(screen.queryByRole("link", { name: "题面圈画第 1 页" })).toBeNull();
     vi.unstubAllGlobals();
     stubClipboard(undefined);
   });
