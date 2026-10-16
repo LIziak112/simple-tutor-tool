@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useLocation, useNavigate } from "react-router";
 import { Button } from "@/components/ui/button";
 import {
+  type AiQueueAction,
   aiQueueBadgeOf,
   useStudentAiQueue,
   useStudentAiQueueAction,
@@ -109,10 +110,7 @@ function AiQueueItem({
     task: AiTaskPublic,
     origin: AiTaskOriginSummary | undefined,
   ) => void;
-  onAction: (
-    taskId: string,
-    action: "cancel" | "resume" | "retry" | "archive",
-  ) => void;
+  onAction: (taskId: string, action: AiQueueAction) => void;
   actionPending: boolean;
 }) {
   const metaParts: string[] = [
@@ -125,10 +123,7 @@ function AiQueueItem({
     if (origin.title !== null) metaParts.push(origin.title);
   }
   const target = aiQueueTargetOf(task, origin);
-  const actions: {
-    action: "cancel" | "resume" | "retry" | "archive";
-    label: string;
-  }[] = [];
+  const actions: { action: AiQueueAction; label: string }[] = [];
   if (task.allowedActions.includes("cancel"))
     actions.push({ action: "cancel", label: "取消" });
   if (task.allowedActions.includes("retry"))
@@ -235,10 +230,7 @@ export function AiQueuePanel({ onNavigated }: { onNavigated?: () => void }) {
     );
   };
 
-  const handleAction = (
-    taskId: string,
-    action: "cancel" | "resume" | "retry" | "archive",
-  ) => {
+  const handleAction = (taskId: string, action: AiQueueAction) => {
     actionMutation.mutate({ taskId, action });
   };
 
