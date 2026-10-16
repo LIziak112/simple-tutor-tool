@@ -643,7 +643,10 @@ describe("AiConversationPanel 回信可见性与追问（SAI-21）", () => {
       hasReply: true,
       allowedActions: ["followup"],
     });
-    vi.mocked(mockedList).mockResolvedValue({ tasks: [task], nextCursor: null });
+    vi.mocked(mockedList).mockResolvedValue({
+      tasks: [task],
+      nextCursor: null,
+    });
     vi.mocked(mockedDetail).mockResolvedValue(
       detailOf(task, [
         {

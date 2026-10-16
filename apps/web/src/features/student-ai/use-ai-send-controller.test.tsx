@@ -358,7 +358,7 @@ describe("useAiSendController（SAI-20 先测 6 条）", () => {
     expect(after.presetId).toBe("check-steps");
   });
 
-it("遗留②专项：任务已建但材料上传失败→明示补传与不计费；同幂等键重试只补传不重复建任务", async () => {
+  it("遗留②专项：任务已建但材料上传失败→明示补传与不计费；同幂等键重试只补传不重复建任务", async () => {
     const view = renderController();
     await openOnA(view);
     await act(async () => {

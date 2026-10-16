@@ -156,7 +156,9 @@ describe("AiReplyMarkdown 受限渲染（SAI-21 先测③）", () => {
   it("GFM autolink 走同一清洗：https 裸链成链并带 noopener，危险裸文本不成链", () => {
     const { container } = render(
       <AiReplyMarkdown
-        source={"访问 https://example.com/page 看看\n\njavascript:alert(1) 只是文字"}
+        source={
+          "访问 https://example.com/page 看看\n\njavascript:alert(1) 只是文字"
+        }
       />,
     );
     const links = container.querySelectorAll("a");

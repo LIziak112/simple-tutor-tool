@@ -73,10 +73,7 @@ export function insertAttempt(
  * 知情门只看连接存在性（status firstUseRequired 同口径），测试需要构造
  * 无连接态时自行删除该行。
  */
-export function insertAiConnectionFixture(
-  db: Db,
-  studentId: string,
-): string {
+export function insertAiConnectionFixture(db: Db, studentId: string): string {
   const id = randomUUID();
   db.insert(aiConnections)
     .values({
