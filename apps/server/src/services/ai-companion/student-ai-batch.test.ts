@@ -521,6 +521,12 @@ describe("SAI-31 批量复盘服务：一题一份上下文（先测⑤）", () 
       for (const other of others) {
         expect(snapshotText).not.toContain(other);
       }
+      // 允许侧双断言（受控 AI 出口的合法内容）：判错题复盘快照确实携带
+      // 本题官方解析原文，且不夹带他题解析（与题面哨兵同尺度）
+      expect(snapshotText).toContain(`解析-${row.questionId}`);
+      for (const otherId of ids.filter((id) => id !== row.questionId)) {
+        expect(snapshotText).not.toContain(`解析-${otherId}`);
+      }
     }
 
     // MCP 领取视图（外部 AI 实际收到的输入）同样只含本题

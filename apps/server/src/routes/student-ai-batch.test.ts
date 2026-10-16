@@ -243,6 +243,26 @@ describe("SAI-31 批量复盘路由：鉴权、知情门与契约边界", () => 
     expect(res.status).toBe(400);
     expect(((await res.json()) as ApiErr).error).toBe("AI_TEXT_TOO_LONG");
   });
+
+  it("超大 body 入口预检 413（与 /ai/tasks 小信封同族），不进解析不落库", async () => {
+    const { app, db, cookie, studentId } = world();
+    insertAiConnectionFixture(db, studentId);
+    const attemptId = submittedAttempt(db, studentId);
+    addQuestion(db, attemptId, "q-1", { finalCorrect: false });
+    // 与 /ai/tasks 限额测试同口径：显式伪造 content-length 触发入口预检
+    const res = await app.request(BATCH_PATH, {
+      method: "POST",
+      headers: {
+        cookie,
+        "content-type": "application/json",
+        "content-length": String(64 * 1024 + 1),
+      },
+      body: JSON.stringify(requestBody(attemptId, ["q-1"])),
+    });
+    expect(res.status).toBe(413);
+    expect(((await res.json()) as ApiErr).error).toBe("AI_TEXT_TOO_LONG");
+    expect(db.select().from(aiTasks).all()).toHaveLength(0);
+  });
 });
 
 describe("SAI-31 批量复盘路由：逐项结果与防泄露", () => {

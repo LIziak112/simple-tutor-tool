@@ -311,6 +311,10 @@ export function createApp(options: CreateAppOptions) {
       "/api/student/ai/tasks/:id/update-pending",
       guardBodyLimit(AI_TASK_JSON_GUARD),
     )
+    // SAI-31 批量复盘（B16 闸门补）：30 题 × 定位对 + 2,000 字诉求同属小信封
+    // （合法最大约 10KB），与 /ai/tasks 同族——超限在 parseJsonBody 整包进内存
+    // 前拒绝（413），不给已登录学生无上界缓冲面。
+    .use("/api/student/ai/batch-review", guardBodyLimit(AI_TASK_JSON_GUARD))
     // SAI-20 材料上传 multipart 预检（§9 材料合计 ≤8MB + boundary/manifest
     // 编码开销余量取整 10MB；超限在 parseBody 整包进内存前拒绝不落盘，
     // 页级精确限额由服务层 validatePages 校验）

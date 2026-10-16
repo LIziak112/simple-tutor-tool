@@ -6,7 +6,7 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import type { AiBatchCreateData, AiConnectionPublic } from "@tutor/contract";
+import type { AiBatchCreateData } from "@tutor/contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createStudentAiBatchReviewApi,
@@ -15,6 +15,10 @@ import {
 } from "@/lib/api";
 import type { AiBatchReviewQuestion } from "./AiBatchReviewPanel";
 import { AiBatchReviewPanel } from "./AiBatchReviewPanel";
+import {
+  inappAiConnectionFixture,
+  linkAiConnectionFixture,
+} from "./student-ai-test-utils";
 
 /**
  * SAI-31 批量复盘面板测试（B16「先测」的前端侧）：
@@ -110,41 +114,12 @@ function AiBatchReviewPanelForTest(props: {
 }
 
 const INAPP_CONNECTIONS = {
-  connections: [inappConnection()],
+  connections: [inappAiConnectionFixture()],
 };
 
 const MULTI_CONNECTIONS = {
-  connections: [inappConnection(), linkConnection()],
+  connections: [inappAiConnectionFixture(), linkAiConnectionFixture()],
 };
-
-/** 页内连接公开视图夹具（契约完整形状，channel 决定分支字段） */
-function inappConnection(): AiConnectionPublic {
-  return {
-    id: "c1",
-    channel: "inapp",
-    baseUrl: "https://api.example.com/v1",
-    model: "glm-4.7",
-    keyFingerprint: "ab12cd34",
-    imageCapability: "unknown",
-    isDefault: true,
-    verifyStatus: "unverified",
-    verifiedAt: null,
-    createdAt: "2026-10-16T00:00:00.000Z",
-    updatedAt: "2026-10-16T00:00:00.000Z",
-  };
-}
-
-/** 链接通道连接夹具（link 分支无凭证字段） */
-function linkConnection(): AiConnectionPublic {
-  return {
-    id: "c2",
-    channel: "link",
-    defaultValidHours: 24,
-    isDefault: false,
-    createdAt: "2026-10-16T00:00:00.000Z",
-    updatedAt: "2026-10-16T00:00:00.000Z",
-  };
-}
 
 /** 第 n 次批量请求载荷的强类型取回（noUncheckedIndexedAccess 下断言助手） */
 function payloadOf(call: number) {

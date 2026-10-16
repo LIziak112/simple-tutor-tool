@@ -18,6 +18,7 @@ import {
   createStudentAiShareTicketApi,
 } from "@/lib/api";
 import { randomUuid } from "@/lib/uuid";
+import { CHANNEL_LABEL } from "./ai-channel-label";
 import { useStudentAiConnections } from "./ai-connection-queries";
 import { studentAiQueueSummaryKey } from "./ai-queue-queries";
 import { errorMessageOf } from "./error-text";
@@ -30,9 +31,9 @@ import { writeToClipboard } from "./use-ai-send-controller";
  * 1. 分组与默认勾选：仅已判错默认选；待批独立分组需学生主动勾选（不称
  *    错题）；判对题结构上不可选（无勾选框）。勾选只是 UI 便利——服务端
  *    逐项裁决才是防线（判对/未公布/无权题逐项拒绝，不因批量放宽）。
- * 2. 费用与交付语义先行：展示已选数量/上限、通道、材料摘要与「每题一份
- *    上下文」；页内通道明示 N 次调用，确认后才创建；链接通道明示平台不
- *    会自动收到回复（不假装自动写回）。
+ * 2. 费用与交付语义先行：展示已选数量/上限、通道（SAI-19 单源
+ *    CHANNEL_LABEL）与「每题一份上下文」说明；页内通道明示 N 次调用，
+ *    确认后才创建；链接通道明示平台不会自动收到回复（不假装自动写回）。
  * 3. 逐项结果与只重试失败：成功/已存在/复用进行中/失败逐题可定位，失败
  *    项带服务端原因；重试只发失败项且换新幂等键（成功项不重复创建）。
  *
@@ -76,12 +77,6 @@ const OUTCOME_LABEL = {
   paused: "复用进行中",
   failed: "失败",
 } as const;
-
-const CHANNEL_LABEL: Record<AiChannel, string> = {
-  inapp: "页内 AI",
-  mcp: "远程 MCP（外部客户端领取）",
-  link: "上下文链接",
-};
 
 const DEFAULT_BATCH_QUESTION = "请帮我复盘这些错题，指出错因并给出改进建议";
 
