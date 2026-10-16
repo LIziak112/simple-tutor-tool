@@ -67,6 +67,20 @@ export interface AiSendState {
   readonly questionId: string | null;
 }
 
+/** 材料可选面：来源页面的实际采集能力（SAI-22 讲练题卡无圈画层、结果页
+ * 复盘无作答会话，均按 false 收窄；缺省两者皆可） */
+export interface AiMaterialAvailability {
+  /** 圈画材料（题面标注层截图） */
+  readonly annotation: boolean;
+  /** 纸面材料（草稿或正式手写） */
+  readonly paper: boolean;
+}
+
+export const DEFAULT_AI_MATERIALS: AiMaterialAvailability = {
+  annotation: true,
+  paper: true,
+};
+
 export interface UseAiSendControllerConfig {
   readonly attemptId: string;
   readonly questions: readonly AttemptQuestionPublic[];
@@ -80,6 +94,8 @@ export interface UseAiSendControllerConfig {
   readonly titleOf: (questionId: string) => string;
   /** AI 面板是否打开（关闭时不查状态/历史；重开按绑定题恢复） */
   readonly active: boolean;
+  /** 材料可选面（缺省全开）：不可选种类在发送/采集/任务登记处一律过滤为关 */
+  readonly materials?: AiMaterialAvailability | undefined;
 }
 
 /** 教学模式显示名（状态区句子与会话面板「当时模式」共用单源） */
@@ -263,6 +279,10 @@ export function useAiSendController(config: UseAiSendControllerConfig) {
   );
   const toggleMaterial = useCallback(
     (kind: keyof AiMaterialSelection) => {
+      // 来源页面不可选的种类是无操作（结果页复盘不采集材料；讲练无圈画层）
+      const availability = config.materials ?? DEFAULT_AI_MATERIALS;
+      if (kind === "annotation" && !availability.annotation) return;
+      if (kind !== "annotation" && !availability.paper) return;
       if (boundQuestionId !== null)
         patchDraft(boundQuestionId, (draft) => ({
           ...draft,
@@ -272,7 +292,7 @@ export function useAiSendController(config: UseAiSendControllerConfig) {
           },
         }));
     },
-    [boundQuestionId, patchDraft],
+    [boundQuestionId, config, patchDraft],
   );
   const selectPreset = useCallback(
     (presetId: string | null) => {
@@ -295,7 +315,15 @@ export function useAiSendController(config: UseAiSendControllerConfig) {
       const draft = draftOf(questionId);
       const quick = input.quick;
       const text = quick ? quick.prompt : draft.text.trim();
-      const selection = quick ? quick.attachmentPref : draft.selection;
+      // 材料可选面过滤（SAI-22）：来源页面不可采集的种类一律为关——快捷按钮
+      // 的附件偏好同样被过滤（结果页复盘恒空材料；讲练不采集圈画）
+      const availability = config.materials ?? DEFAULT_AI_MATERIALS;
+      const wanted = quick ? quick.attachmentPref : draft.selection;
+      const selection: AiMaterialSelection = {
+        annotation: wanted.annotation && availability.annotation,
+        draft: wanted.draft && availability.paper,
+        formalInk: wanted.formalInk && availability.paper,
+      };
       const quickButtonId = quick?.id ?? null;
       if (!quick && text === "") {
         setSendState({

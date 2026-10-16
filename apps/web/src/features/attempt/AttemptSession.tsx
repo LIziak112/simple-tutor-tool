@@ -15,7 +15,6 @@ import {
   useRef,
   useState,
 } from "react";
-import { useLocation } from "react-router";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -51,20 +50,7 @@ import {
   prepareSubmitEvidence,
   type SubmitEvidencePrep,
 } from "@/features/notes/submit-evidence";
-import {
-  AiCompanionRail,
-  AiCompanionTrigger,
-} from "@/features/student-ai/AiCompanionRail";
-import {
-  AiCompanionComposer,
-  AiCompanionQuickButtons,
-  AiCompanionStatusPanel,
-  DRAFT_PAPER_LABEL,
-  FORMAL_INK_PAPER_LABEL,
-} from "@/features/student-ai/AiCompanionSession";
-import { AiConversationPanel } from "@/features/student-ai/AiConversationPanel";
-import { useAiCompanionLayout } from "@/features/student-ai/ai-companion-layout";
-import { useAiSendController } from "@/features/student-ai/use-ai-send-controller";
+import { useAiCompanionDock } from "@/features/student-ai/AiCompanionDock";
 import { sealAttemptAnnotationsApi } from "@/lib/api";
 import { formatDueTime } from "@/lib/time";
 import { useOnlineStatus } from "@/lib/use-online-status";
@@ -263,18 +249,33 @@ function AnswerView({
   const [currentQuestionId, setCurrentQuestionId] = useState<string | null>(
     null,
   );
-  // SAI-19 伴学栏布局控制器：接管答题卡折叠（用户选择 + AI 覆盖）与
-  // AI 面板开/关（打开前收笔等本机落盘）；rail 容器实测可用宽度。
-  const location = useLocation();
-  const aiRailRef = useRef<HTMLDivElement>(null);
-  const aiTriggerRef = useRef<HTMLButtonElement>(null);
-  const aiCompanion = useAiCompanionLayout({
-    containerRef: aiRailRef,
-    editor,
+  // SAI-22：AI 伴学装配收进共享 dock（布局 + 发送 + 面板 + 打开绑定），
+  // 本页只传身份（attempt/题集）与阶段（当前题/编辑器/材料面）。
+  const aiCompanion = useAiCompanionDock({
+    attemptId,
+    questions: flatQuestions,
+    isHandwritten: (questionId) =>
+      flatQuestions.some(
+        (question) =>
+          question.id === questionId &&
+          HANDWRITTEN_QUESTION_TYPES.includes(question.type),
+      ),
+    surfaceOf: (questionId) =>
+      cardElements.current
+        .get(questionId)
+        ?.querySelector<HTMLElement>('[data-slot="question-surface"]') ?? null,
+    flush: (questionId) =>
+      editor !== null ? editor.flush(questionId) : Promise.resolve(),
+    titleOf: (questionId) =>
+      `第 ${questionIndexById.get(questionId) ?? "？"} 题 · ${data.title}`,
+    labelOf: (questionId) =>
+      questionIndexById.has(questionId)
+        ? `第 ${questionIndexById.get(questionId)} 题`
+        : null,
     currentQuestionId,
+    editor,
   });
-  const aiSettingsHref = `/s/settings/ai?from=${encodeURIComponent(location.pathname + location.search)}`;
-  const navigatorCollapsed = aiCompanion.navigatorCollapsed;
+  const navigatorCollapsed = aiCompanion.controller.navigatorCollapsed;
   const navigationId = useId();
   const navigationAnchor = useRef<{ element: HTMLElement; top: number } | null>(
     null,
@@ -363,54 +364,6 @@ function AnswerView({
       ),
     [flatQuestions],
   );
-
-  // SAI-20 单题发送控制器：伴学栏打开才查状态/历史（active 跟随布局控制
-  // 器）；绑定是显式动作——只在打开瞬间绑定当时所在题，滚动不自动重绑；
-  // 按题草稿保证切走再回来恢复该题输入（重开绑定新开时所在题）。
-  const aiQuestionIsHandwritten = useCallback(
-    (questionId: string) => {
-      const question = flatQuestions.find((item) => item.id === questionId);
-      return (
-        question !== undefined &&
-        HANDWRITTEN_QUESTION_TYPES.includes(question.type)
-      );
-    },
-    [flatQuestions],
-  );
-  const aiSend = useAiSendController({
-    attemptId,
-    questions: flatQuestions,
-    isHandwritten: aiQuestionIsHandwritten,
-    surfaceOf: (questionId) =>
-      cardElements.current
-        .get(questionId)
-        ?.querySelector<HTMLElement>('[data-slot="question-surface"]') ?? null,
-    flush: (questionId) =>
-      editor !== null ? editor.flush(questionId) : Promise.resolve(),
-    titleOf: (questionId) =>
-      `第 ${questionIndexById.get(questionId) ?? "？"} 题 · ${data.title}`,
-    active: aiCompanion.open,
-  });
-  const aiOpenedRef = useRef(false);
-  useEffect(() => {
-    if (
-      aiCompanion.open &&
-      !aiOpenedRef.current &&
-      currentQuestionId !== null
-    ) {
-      aiSend.bind(currentQuestionId);
-    }
-    aiOpenedRef.current = aiCompanion.open;
-  }, [aiCompanion.open, currentQuestionId, aiSend.bind]);
-  const aiBoundQuestionId = aiSend.boundQuestionId;
-  const aiBoundLabel =
-    aiBoundQuestionId !== null && questionIndexById.has(aiBoundQuestionId)
-      ? `第 ${questionIndexById.get(aiBoundQuestionId)} 题`
-      : null;
-  const aiPaperLabel =
-    aiBoundQuestionId !== null && aiQuestionIsHandwritten(aiBoundQuestionId)
-      ? FORMAL_INK_PAPER_LABEL
-      : DRAFT_PAPER_LABEL;
 
   /**
    * 交卷编排（注入共享确认状态机 use-submit-evidence-confirm；T2.8 口径 +
@@ -595,9 +548,7 @@ function AnswerView({
         {/* 练习头：来源 + 标题 + 截止 + 草稿保存状态（T2.9 三态 + T2A.6 终态） */}
         <AttemptHeader
           title={data.title}
-          actions={
-            <AiCompanionTrigger ref={aiTriggerRef} controller={aiCompanion} />
-          }
+          actions={aiCompanion.trigger}
           status={(closeDetails) => (
             <div className="flex min-w-0 items-center gap-2">
               <p
@@ -709,26 +660,9 @@ function AnswerView({
 
         {/* SAI-19：AI 伴学栏与主区共栖（dock 右栏/窄屏独立面板），主区
             （答题卡 + 题卡列表）作为 rail 子内容保持控制器身份稳定。
-            SAI-20：题号与栏内会话都跟随绑定题（非滚动当前题）。 */}
-        <AiCompanionRail
-          containerRef={aiRailRef}
-          controller={aiCompanion}
-          triggerRef={aiTriggerRef}
-          questionLabel={aiBoundLabel}
-          settingsHref={aiSettingsHref}
-          status={
-            <AiCompanionStatusPanel
-              send={aiSend}
-              settingsHref={aiSettingsHref}
-              questionLabel={aiBoundLabel}
-            />
-          }
-          quickButtons={<AiCompanionQuickButtons send={aiSend} />}
-          composer={
-            <AiCompanionComposer send={aiSend} paperLabel={aiPaperLabel} />
-          }
-          conversation={<AiConversationPanel send={aiSend} />}
-        >
+            SAI-20：题号与栏内会话都跟随绑定题（非滚动当前题）。
+            SAI-22：装配在共享 useAiCompanionDock，本页只传身份与阶段。 */}
+        {aiCompanion.rail(
           <div
             className={`grid min-w-0 grid-cols-1 gap-6 ${navigatorCollapsed ? "lg:grid-cols-[44px_minmax(0,1fr)]" : "lg:grid-cols-[176px_minmax(0,1fr)]"}`}
           >
@@ -755,7 +689,7 @@ function AnswerView({
                         element,
                         top: element.getBoundingClientRect().top,
                       };
-                    aiCompanion.toggleNavigator();
+                    aiCompanion.controller.toggleNavigator();
                   }}
                 >
                   {!navigatorCollapsed && <span>答题卡</span>}
@@ -840,8 +774,8 @@ function AnswerView({
                 </li>
               ))}
             </ol>
-          </div>
-        </AiCompanionRail>
+          </div>,
+        )}
 
         <Dialog open={navigatorOpen} onOpenChange={setNavigatorOpen}>
           <DialogContent className="flex max-h-[70dvh] w-[calc(100%-24px)] flex-col rounded-lg">

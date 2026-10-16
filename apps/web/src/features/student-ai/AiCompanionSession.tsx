@@ -3,7 +3,9 @@ import { Button } from "@/components/ui/button";
 import { CHANNEL_LABEL } from "./ai-channel-label";
 import { useStudentQuickButtons } from "./quick-buttons-queries";
 import {
+  type AiMaterialAvailability,
   type AiSendController,
+  DEFAULT_AI_MATERIALS,
   EMPTY_AI_SELECTION,
   studentModeReasonText,
 } from "./use-ai-send-controller";
@@ -182,14 +184,18 @@ export function AiCompanionQuickButtons({ send }: { send: AiSendController }) {
 /**
  * 按题输入区：正文 + 附件选择（圈画 + 纸面材料）+ 主按钮。纸面材料按题型
  * 呈现——手写题为「正式手写」，其余为「草稿」（paperLabel 由接线方按绑定
- * 题题型给出，两值即本模块导出的两个常量）。
+ * 题题型给出，两值即本模块导出的两个常量）。材料可选面（SAI-22）：讲练
+ * 题卡无圈画层 → 只呈纸面；结果页复盘不采集 → 整组隐藏（纯文字求助）。
  */
 export function AiCompanionComposer({
   send,
   paperLabel,
+  materials = DEFAULT_AI_MATERIALS,
 }: {
   send: AiSendController;
   paperLabel: string;
+  /** 材料可选面（缺省圈画+纸面）；控制器侧同口径过滤为双保险 */
+  materials?: AiMaterialAvailability | undefined;
 }) {
   const boundQuestionId = send.boundQuestionId;
   const bound = boundQuestionId !== null;
@@ -220,31 +226,37 @@ export function AiCompanionComposer({
           onChange={(event) => send.setText(event.target.value)}
         />
       </label>
-      <fieldset
-        aria-label="随信材料"
-        className="flex flex-wrap items-center gap-x-3 gap-y-1"
-      >
-        <label className="flex min-h-9 items-center gap-1.5 text-xs">
-          <input
-            type="checkbox"
-            className="size-4"
-            checked={draft.selection.annotation}
-            disabled={!bound || sending}
-            onChange={() => send.toggleMaterial("annotation")}
-          />
-          圈画
-        </label>
-        <label className="flex min-h-9 items-center gap-1.5 text-xs">
-          <input
-            type="checkbox"
-            className="size-4"
-            checked={draft.selection[paperKind]}
-            disabled={!bound || sending}
-            onChange={() => send.toggleMaterial(paperKind)}
-          />
-          {paperLabel}
-        </label>
-      </fieldset>
+      {(materials.annotation || materials.paper) && (
+        <fieldset
+          aria-label="随信材料"
+          className="flex flex-wrap items-center gap-x-3 gap-y-1"
+        >
+          {materials.annotation && (
+            <label className="flex min-h-9 items-center gap-1.5 text-xs">
+              <input
+                type="checkbox"
+                className="size-4"
+                checked={draft.selection.annotation}
+                disabled={!bound || sending}
+                onChange={() => send.toggleMaterial("annotation")}
+              />
+              圈画
+            </label>
+          )}
+          {materials.paper && (
+            <label className="flex min-h-9 items-center gap-1.5 text-xs">
+              <input
+                type="checkbox"
+                className="size-4"
+                checked={draft.selection[paperKind]}
+                disabled={!bound || sending}
+                onChange={() => send.toggleMaterial(paperKind)}
+              />
+              {paperLabel}
+            </label>
+          )}
+        </fieldset>
+      )}
       <Button
         type="button"
         className="min-h-11 w-full"

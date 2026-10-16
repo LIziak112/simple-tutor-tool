@@ -19,7 +19,10 @@ import {
   uploadStudentAiTaskMaterialsApi,
 } from "@/lib/api";
 import { connectedAiStatus } from "./student-ai-test-utils";
-import { useAiSendController } from "./use-ai-send-controller";
+import {
+  type AiMaterialAvailability,
+  useAiSendController,
+} from "./use-ai-send-controller";
 
 /**
  * SAI-20 单题发送控制器测试（B11「先测」6 条逐条 + 幂等/通道语义）。
@@ -135,6 +138,7 @@ const QUICK: StudentQuickButton = {
 interface Config {
   attemptId?: string;
   active?: boolean;
+  materials?: AiMaterialAvailability;
 }
 
 function renderController(over: Config = {}) {
@@ -149,6 +153,7 @@ function renderController(over: Config = {}) {
     flush: async () => {},
     titleOf: () => "第 1 题 · 练习",
     active: over.active ?? true,
+    ...(over.materials !== undefined ? { materials: over.materials } : {}),
   };
   const view = renderHook(
     (next: Partial<typeof base> = {}) =>
@@ -522,5 +527,78 @@ describe("useAiSendController（幂等与通道语义补充）", () => {
     });
     expect(view.result.current.sendState.phase).toBe("failed");
     expect(mockedCreate).not.toHaveBeenCalled();
+  });
+});
+
+describe("useAiSendController 材料可选面（SAI-22 讲练/结果页收窄）", () => {
+  it("结果页复盘（圈画与纸面均不可选）：快捷按钮附件偏好全开也恒空材料外发，不触发采集", async () => {
+    const view = renderController();
+    await openOnA(view);
+    await act(async () => {
+      view.rerender({
+        materials: { annotation: false, paper: false },
+      });
+    });
+    await act(async () => {
+      await view.result.current.send({ quick: QUICK });
+    });
+    expect(mockedCreate).toHaveBeenCalledTimes(1);
+    // 快捷按钮 attachmentPref 全开，但来源页面无采集能力 → 任务材料恒空
+    expect(mockedCreate.mock.calls[0]?.[0].materials).toEqual({
+      annotation: false,
+      draft: false,
+      formalInk: false,
+    });
+    expect(mockedCapture).not.toHaveBeenCalled();
+    expect(view.result.current.sendState.phase).toBe("sent");
+  });
+
+  it("讲练（无圈画层）：勾选圈画发送时圈画被过滤，任务只带纸面材料", async () => {
+    const view = renderController();
+    await openOnA(view);
+    await act(async () => {
+      view.rerender({
+        materials: { annotation: false, paper: true },
+      });
+    });
+    await act(async () => {
+      view.result.current.setText("帮我看看草稿");
+      view.result.current.toggleMaterial("annotation");
+      view.result.current.toggleMaterial("draft");
+    });
+    await act(async () => {
+      await view.result.current.send();
+    });
+    expect(mockedCreate).toHaveBeenCalledTimes(1);
+    expect(mockedCreate.mock.calls[0]?.[0].materials).toEqual({
+      annotation: false,
+      draft: true,
+      formalInk: false,
+    });
+    // 采集输入的选择同样已过滤（annotation=false 不进采集）
+    expect(mockedCapture.mock.calls[0]?.[0].selection).toEqual({
+      annotation: false,
+      draft: true,
+      formalInk: false,
+    });
+  });
+
+  it("不可选材料不落草稿：toggleMaterial 对关闭的种类是无操作", async () => {
+    const view = renderController();
+    await openOnA(view);
+    await act(async () => {
+      view.rerender({
+        materials: { annotation: false, paper: false },
+      });
+    });
+    await act(async () => {
+      view.result.current.toggleMaterial("annotation");
+      view.result.current.toggleMaterial("draft");
+    });
+    expect(view.result.current.draftOf(QUESTION_A.id).selection).toEqual({
+      annotation: false,
+      draft: false,
+      formalInk: false,
+    });
   });
 });
