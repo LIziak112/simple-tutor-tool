@@ -105,8 +105,9 @@ export interface MatrixWorld {
   addInappConnection(studentId?: string): void;
   /** MCP 通道真实 token（经创建路由一次性返回；缺省学生 1） */
   createMcpToken(studentId?: string): Promise<string>;
-  /** 页内出口：跑一轮 worker，返回捕获的出站请求与派发摘要 */
-  dispatchInapp(): Promise<{ recorded: RecordedOutbound[] }>;
+  /** 页内出口：跑一轮 worker，返回捕获的出站请求与派发摘要；
+   * hold 非 null 时 transport 在返回响应前先等它——构造「出站已在途」真窗口 */
+  dispatchInapp(hold?: Promise<unknown>): Promise<{ recorded: RecordedOutbound[] }>;
 }
 
 /** 矩阵世界选项 */
@@ -114,14 +115,18 @@ export interface MatrixWorldOptions {
   /** 作业答案公布策略（缺省 on_submit；D1-13 用 after_due + 未来截止） */
   readonly answerRelease?: "on_submit" | "after_due";
   readonly dueAt?: string | null;
+  /** 注入外建库（缺省 :memory:；D5-08 备份恢复用文件库句柄的 Proxy db） */
+  readonly db?: Db;
+  /** 注入数据目录（缺省临时目录；与 db 同源注入时必须一起给） */
+  readonly dataDir?: string;
 }
 
 /** 创建矩阵世界（真实 DB + app + 双域夹具） */
 export function createMatrixWorld(
   options: MatrixWorldOptions = {},
 ): MatrixWorld {
-  const db = createTestDb();
-  const dataDir = createTestDir();
+  const db = options.db ?? createTestDb();
+  const dataDir = options.dataDir ?? createTestDir();
   const teacherB = randomUUID();
   db.insert(teachers)
     .values({
@@ -335,9 +340,10 @@ export function createMatrixWorld(
       }
       return token;
     },
-    dispatchInapp: async () => {
+    dispatchInapp: async (hold?: Promise<unknown>) => {
       const recorded: RecordedOutbound[] = [];
       const transport: ProviderTransport = async (request) => {
+        if (hold !== undefined) await hold;
         const headers: Record<string, string> = {
           ...request.headers,
         };
