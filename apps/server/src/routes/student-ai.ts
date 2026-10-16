@@ -41,6 +41,7 @@ import {
 import {
   aiQueueSummaryOf,
   aiTaskPublicViewOf,
+  archiveAiTask,
   cancelAiTask,
   createAiTask,
   followupStudentAiTask,
@@ -327,6 +328,7 @@ export function createStudentAiRoutes(db: Db, dataDir: string) {
           attemptId: c.req.query("attemptId") ?? undefined,
           questionId: c.req.query("questionId") ?? undefined,
           status: c.req.query("status") ?? undefined,
+          archived: c.req.query("archived") ?? undefined,
           limit: rawLimit === undefined ? undefined : Number(rawLimit),
           cursor: c.req.query("cursor") ?? undefined,
         });
@@ -337,7 +339,8 @@ export function createStudentAiRoutes(db: Db, dataDir: string) {
             `查询参数不合法：${firstIssueMessage(parsed.error)}`,
           );
         }
-        const { attemptId, questionId, status, limit, cursor } = parsed.data;
+        const { attemptId, questionId, status, archived, limit, cursor } =
+          parsed.data;
         return c.json({
           ok: true,
           data: listStudentAiTasks(db, {
@@ -346,6 +349,7 @@ export function createStudentAiRoutes(db: Db, dataDir: string) {
             ...(attemptId !== undefined && { attemptId }),
             ...(questionId !== undefined && { questionId }),
             ...(status !== undefined && { status }),
+            ...(archived !== undefined && { archived }),
             ...(cursor !== undefined && { cursor }),
             limit,
           }),
@@ -422,6 +426,15 @@ export function createStudentAiRoutes(db: Db, dataDir: string) {
       })
       .post("/ai/tasks/:id/retry", (c) => {
         const task = retryAiTask(db, {
+          studentId: c.var.student.id,
+          taskId: c.req.param("id"),
+        });
+        return c.json(taskView(task));
+      })
+      // —— 归档（SAI-23）：队列整理动作不是状态转换，防线在服务层（终态
+      // 裁决 + 归档≠已读 + 幂等 + 他人 404 同文案防枚举）——
+      .post("/ai/tasks/:id/archive", (c) => {
+        const task = archiveAiTask(db, {
           studentId: c.var.student.id,
           taskId: c.req.param("id"),
         });
