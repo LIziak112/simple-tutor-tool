@@ -48,6 +48,24 @@ vi.mock("@/lib/api", async (importOriginal) => {
     createLibraryFolderApi: vi.fn(),
     fetchSpecFile: vi.fn(),
     postTeacherMediaApi: vi.fn(),
+    fetchTeacherCourses: vi.fn().mockResolvedValue({
+      courses: [
+        {
+          id: "c-new",
+          name: "刚创建的课程",
+          description: null,
+          archived: false,
+          archivedAt: null,
+          order: 0,
+          memberCount: 0,
+          itemCount: 0,
+          visibleItemCount: 0,
+          memberIds: [],
+          hasAttempts: false,
+          createdAt: "2026-10-16",
+        },
+      ],
+    }),
     fetchContentTree: vi.fn().mockResolvedValue({
       courses: [{ id: "c-1", title: "初一上", lectures: [], units: [] }],
     }),
@@ -1040,5 +1058,18 @@ describe("ImportPage 随行图片（媒体管线第四单：只上传被引用�
     expect(mockedPreview.mock.calls[0]?.[0].markdown).toBe(
       `::image{src="${SERVER_SRC}"}`,
     );
+  });
+});
+
+describe("导入课程选项的数据来源", () => {
+  it("使用课程列表的新课程，不使用内容树中的旧课程", async () => {
+    renderImportPage();
+    fireEvent.click(screen.getByRole("checkbox", { name: /同时加入课程/ }));
+    expect(
+      await screen.findByRole("option", { name: "刚创建的课程" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("option", { name: "初一上" }),
+    ).not.toBeInTheDocument();
   });
 });

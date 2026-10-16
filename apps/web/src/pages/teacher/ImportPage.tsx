@@ -22,7 +22,7 @@ import { Link } from "react-router";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { AiPromptPanel } from "@/features/content/AiPromptPanel";
-import { useContentTree } from "@/features/content/content-queries";
+import { useTeacherCourses } from "@/features/courses/course-queries";
 import { useLibraryFolders } from "@/features/library/library-queries";
 import { extractImageRefs } from "@/features/markdown/image-refs";
 import { ApiError, createLibraryFolderApi } from "@/lib/api";
@@ -270,12 +270,12 @@ export function ImportPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dirInputRef = useRef<HTMLInputElement>(null);
   const folders = useLibraryFolders();
-  const contentTree = useContentTree();
+  const coursesQuery = useTeacherCourses(false);
   const queryClient = useQueryClient();
-  // 课程选项：内容树里的课程列表（「同时加入课程」下拉用；三态由下拉本身兜底）
-  const courseOptions = (contentTree.data?.courses ?? []).map((course) => ({
+  // 与课程管理页共享缓存，创建、改名和归档后同步更新。
+  const courseOptions = (coursesQuery.data?.courses ?? []).map((course) => ({
     id: course.id,
-    title: course.title,
+    title: course.name,
   }));
 
   const options: ImportOptions = {
@@ -490,7 +490,12 @@ export function ImportPage() {
   const canPreview =
     pickedFiles.length > 0 &&
     !hasBlankName &&
-    !(addToCourseOn && courseSelection === "") &&
+    !(
+      addToCourseOn &&
+      (coursesQuery.isPending ||
+        coursesQuery.isError ||
+        !courseOptions.some((course) => course.id === courseSelection))
+    ) &&
     companion.uploadingCount === 0;
 
   // 预览/确认步骤展示的随行图片清单（选择区选过图片才有；无实质内容时卡片不渲染）
@@ -944,17 +949,32 @@ export function ImportPage() {
                   <div className="flex flex-wrap items-center gap-2">
                     <select
                       aria-label="选择课程"
+                      disabled={coursesQuery.isPending || coursesQuery.isError}
                       value={courseSelection}
                       onChange={(e) => setCourseSelection(e.target.value)}
                       className="min-h-11 flex-1 rounded-md border border-input bg-transparent px-3 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
                     >
-                      <option value="">选择课程…</option>
+                      <option value="">
+                        {coursesQuery.isPending ? "正在加载课程…" : "选择课程…"}
+                      </option>
                       {courseOptions.map((course) => (
                         <option key={course.id} value={course.id}>
                           {course.title}
                         </option>
                       ))}
                     </select>
+                    {coursesQuery.isError && (
+                      <p role="alert" className="text-sm text-destructive">
+                        课程加载失败
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => void coursesQuery.refetch()}
+                        >
+                          重试课程加载
+                        </Button>
+                      </p>
+                    )}
                     <label className="flex min-h-11 items-center gap-1.5 text-sm">
                       <input
                         type="checkbox"

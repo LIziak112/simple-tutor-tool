@@ -8,6 +8,7 @@ import type {
   CourseItemUpdateRequest,
   CourseUpdateRequest,
 } from "@tutor/contract";
+import { contentTreeKey } from "@/features/content/content-queries";
 import {
   addCourseItemsApi,
   addCourseMembersApi,
@@ -74,6 +75,7 @@ function useInvalidateCourses(courseId?: string) {
   const queryClient = useQueryClient();
   return () => {
     void queryClient.invalidateQueries({ queryKey: ["teacher", "courses"] });
+    void queryClient.invalidateQueries({ queryKey: contentTreeKey });
     if (courseId !== undefined) {
       void queryClient.invalidateQueries({
         queryKey: courseDetailKey(courseId),
