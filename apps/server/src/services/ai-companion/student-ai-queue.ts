@@ -1069,7 +1069,7 @@ export function listStudentAiTasks(
  * 归末尾兜底组）。wrong 卷行全 null → 纯 rowid 序。返回 questionId → 题号；
  * 卷内无该题（软删/缺失）不在 Map 中，调用方置 null 不伪造题号。
  */
-function questionNoByQuestionOf(
+export function questionNoByQuestionOf(
   rows: readonly { questionId: string; unitId: string | null }[],
 ): Map<string, number> {
   const unitRank = new Map<string, number>();

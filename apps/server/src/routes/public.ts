@@ -34,6 +34,7 @@ import {
   loginStudentByPassword,
 } from "../services/student-service";
 import { readSpecFile } from "../spec-files";
+import { createPublicAiShareRoutes } from "./public-ai-share";
 
 /**
  * 公开路由（无需登录），挂载在 /api/public。
@@ -63,6 +64,7 @@ function getClientIp(c: Context): string {
 export function createPublicRoutes(
   db: Db,
   publicUrl: string,
+  dataDir: string,
   /** spec 目录覆盖（createApp 注入，测试/部署显式指定；缺省按候选顺序解析，见 spec-files.ts） */
   specDir?: string | undefined,
 ) {
@@ -176,5 +178,8 @@ export function createPublicRoutes(
           "Cache-Control": "public, max-age=300",
         });
       })
+      // —— AI 分享票据读端点（SAI-29，B15）：无会话，票据即授权；正文
+      //    HTML 与材料附件，防线在 student-ai-share/materials 服务层
+      .route("/ai/share", createPublicAiShareRoutes(db, dataDir))
   );
 }

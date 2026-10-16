@@ -154,6 +154,18 @@ const AI_TASK_JSON_GUARD = {
  */
 const AI_MATERIAL_UPLOAD_BODY_LIMIT = 10 * 1024 * 1024;
 
+/**
+ * 日志 path 脱敏（SAI-29）：分享票据 token 在 path 里（不在查询参数），
+ * 错误日志不能回显明文——/api/public/ai/share/&lt;token&gt;（含附件子路径）
+ * 的 token 段整体替换为 [token]，其余路径原样。反代侧同样不得记录原始
+ * URI（部署文档：Caddy/Nginx 关闭或脱敏 $uri/request_uri 再落 access log）。
+ */
+const SHARE_TOKEN_PATH_PATTERN = /^\/api\/public\/ai\/share\/[^/?#]+/;
+
+function sanitizePathForLog(path: string): string {
+  return path.replace(SHARE_TOKEN_PATH_PATTERN, "/api/public/ai/share/[token]");
+}
+
 export function createApp(options: CreateAppOptions) {
   const logger = options.logger ?? pino({ level: "info" });
   const requireAnySession = createRequireAnySession(options.db);
@@ -170,7 +182,7 @@ export function createApp(options: CreateAppOptions) {
             code: err.code,
             status: err.status,
             method: c.req.method,
-            path: c.req.path,
+            path: sanitizePathForLog(c.req.path),
           },
           "业务错误",
         );
@@ -185,7 +197,11 @@ export function createApp(options: CreateAppOptions) {
       }
       // 应用内抛出的异常：pino 记录完整异常，对外只返回统一 500 壳，不泄漏堆栈
       logger.error(
-        { err, method: c.req.method, path: c.req.path },
+        {
+          err,
+          method: c.req.method,
+          path: sanitizePathForLog(c.req.path),
+        },
         "未处理的服务器异常",
       );
       const body: ApiErr = {
@@ -216,7 +232,12 @@ export function createApp(options: CreateAppOptions) {
     //    /api/teacher（守卫后的教师接口）、/api/student（守卫后的学生接口，T2.1）——
     .route(
       "/api/public",
-      createPublicRoutes(options.db, options.publicUrl, options.specDir),
+      createPublicRoutes(
+        options.db,
+        options.publicUrl,
+        options.dataDir,
+        options.specDir,
+      ),
     )
     // —— 上传接口的 content-length 入口预检（T6R.4 复审②收敛为 guardBodyLimit
     //    工厂，五处一行注册）：超限在 parseBody（整包进内存）之前就 413，

@@ -74,12 +74,13 @@ const AI_MATERIALS_ROOT_REL = "blobs/ai-materials";
 /** 内容寻址文件名模式（GC 孤儿清扫只认本模式的文件，其余不碰） */
 const AI_MATERIAL_FILE_NAME_PATTERN = /^[0-9a-f]{64}\.png$/;
 
-/** 材料类别中文标签（错误消息可读性；顺序 = 跨类别页序） */
-const AI_MATERIAL_KIND_LABELS: Readonly<Record<AiMaterialKind, string>> = {
-  annotation: "题面圈画",
-  draft: "草稿",
-  formal_ink: "正式手写",
-};
+/** 材料类别中文标签（错误消息可读性；顺序 = 跨类别页序；SAI-29 分享正文共用） */
+export const AI_MATERIAL_KIND_LABELS: Readonly<Record<AiMaterialKind, string>> =
+  {
+    annotation: "题面圈画",
+    draft: "草稿",
+    formal_ink: "正式手写",
+  };
 
 /**
  * missing 态材料的随行缺失原因（契约 aiTaskMaterialSchema：state=missing 必
@@ -504,7 +505,7 @@ export interface AiMaterialReadResult {
  * （越界/后缀不符 = 数据故障 500，绝不去读任意路径）；文件缺失/不可读 =
  * 500 AI_MATERIAL_BROKEN 并保留材料标识——缺件是故障不是「不存在」。
  */
-function readMaterialBytes(
+export function readMaterialBytes(
   dataDir: string,
   row: AiTaskMaterialRow,
 ): AiMaterialReadResult {
@@ -520,6 +521,28 @@ function readMaterialBytes(
       "AI_MATERIAL_BROKEN",
       `材料文件缺失或不可读（${AI_MATERIAL_KIND_LABELS[row.kind]}第 ${row.pageIndex + 1} 页，hash ${row.hash}），请稍后重试或联系教师`,
     );
+  }
+}
+
+/**
+ * 材料文件就绪探测（SAI-29 分享正文装配用）：行 ready 且文件实际存在才给
+ * 链接；路径越界（数据故障）按缺失处理——直连读取仍走 readMaterialBytes 的
+ * 500 AI_MATERIAL_BROKEN，正文不因单页缺件整体失败（缺件明确说明，不假成功）。
+ */
+export function aiMaterialFileReady(
+  dataDir: string,
+  row: AiTaskMaterialRow,
+): boolean {
+  if (row.state !== "ready") return false;
+  try {
+    return existsSync(
+      resolveWithinRoot(dataDir, AI_MATERIALS_ROOT_REL, row.pngPath, {
+        suffix: ".png",
+        violationCode: "AI_MATERIAL_BROKEN",
+      }),
+    );
+  } catch {
+    return false;
   }
 }
 
