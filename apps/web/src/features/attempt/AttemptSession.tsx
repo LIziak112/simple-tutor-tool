@@ -62,6 +62,7 @@ import {
   DRAFT_PAPER_LABEL,
   FORMAL_INK_PAPER_LABEL,
 } from "@/features/student-ai/AiCompanionSession";
+import { AiConversationPanel } from "@/features/student-ai/AiConversationPanel";
 import { useAiCompanionLayout } from "@/features/student-ai/ai-companion-layout";
 import { useAiSendController } from "@/features/student-ai/use-ai-send-controller";
 import { sealAttemptAnnotationsApi } from "@/lib/api";
@@ -726,6 +727,7 @@ function AnswerView({
           composer={
             <AiCompanionComposer send={aiSend} paperLabel={aiPaperLabel} />
           }
+          conversation={<AiConversationPanel send={aiSend} />}
         >
           <div
             className={`grid min-w-0 grid-cols-1 gap-6 ${navigatorCollapsed ? "lg:grid-cols-[44px_minmax(0,1fr)]" : "lg:grid-cols-[176px_minmax(0,1fr)]"}`}

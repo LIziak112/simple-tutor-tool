@@ -21,6 +21,9 @@ import {
   type AiPolicyOverrideData,
   type AiStatusData,
   type AiTaskCreateRequest,
+  type AiTaskDetailData,
+  type AiTaskFollowupData,
+  type AiTaskFollowupRequest,
   type AiTaskListData,
   type AiTaskListQuery,
   type AiTaskPublic,
@@ -2672,6 +2675,48 @@ export function listStudentAiTasksApi(
   return callApi(() =>
     api.api.student.ai.tasks.$get({
       query: { attemptId: query.attemptId, questionId: query.questionId },
+    }),
+  );
+}
+
+/**
+ * 任务详情（GET /ai/tasks/:id）：任务 + 同题对话 + 事实时间线（学生投影）。
+ * 回信正文交付门禁在服务端（禁用期只保留 hasReply 事实，正文不下发）——
+ * 客户端不做本地查表推导。
+ */
+export function fetchStudentAiTaskApi(
+  taskId: string,
+): Promise<AiTaskDetailData> {
+  return callApi(() =>
+    api.api.student.ai.tasks[":id"].$get({ param: { id: taskId } }),
+  );
+}
+
+/**
+ * 打开回信（POST /ai/tasks/:id/opened）：服务端打开前按当前策略与完成态
+ * 重校验并记一次查看事实（reply_delivered，幂等）——SAI-14 opened 口径。
+ */
+export function openStudentAiReplyApi(taskId: string): Promise<AiTaskPublic> {
+  return callApi(() =>
+    api.api.student.ai.tasks[":id"].opened.$post({ param: { id: taskId } }),
+  );
+}
+
+/**
+ * 同题追问（POST /ai/tasks/:id/followup）：只引用本题对话，服务端幂等
+ * （同文追问在途不重复出站）；追问不重采材料——新稿 = 新任务新快照。
+ * 路由用 parseJsonBodyWithCode 手动解析（错误码透传），hc RPC 推断不出
+ * json 入参类型——用同构 fetch（同 uploadStudentAiTaskMaterialsApi 口径）。
+ */
+export function followupStudentAiTaskApi(
+  taskId: string,
+  request: AiTaskFollowupRequest,
+): Promise<AiTaskFollowupData> {
+  return callApi(() =>
+    fetch(`/api/student/ai/tasks/${encodeURIComponent(taskId)}/followup`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
     }),
   );
 }

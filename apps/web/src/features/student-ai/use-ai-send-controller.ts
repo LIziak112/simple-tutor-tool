@@ -3,6 +3,7 @@ import type {
   AiChannel,
   AiStatusData,
   AiTaskPublic,
+  AiTeachingMode,
   AttemptQuestionPublic,
   StudentQuickButton,
 } from "@tutor/contract";
@@ -80,6 +81,13 @@ export interface UseAiSendControllerConfig {
   readonly active: boolean;
 }
 
+/** 教学模式显示名（状态区句子与会话面板「当时模式」共用单源） */
+export const AI_MODE_LABEL: Record<AiTeachingMode, string> = {
+  open_study: "开放伴学",
+  guided_only: "仅启发",
+  post_submit_only: "完成后可用",
+};
+
 /** 学生侧裁决原因文案（教师侧见 ai-policy-text，措辞按学生视角；伴学栏
  *  状态区与失败提示共用单源，不各写一份） */
 export function studentModeReasonText(status: AiStatusData): string {
@@ -95,12 +103,10 @@ export function studentModeReasonText(status: AiStatusData): string {
         return "当前教学模式下本题暂不能使用 AI 求助";
     }
   }
+  // 契约保证 usable=true 时 mode 必填（superRefine），类型上仍需显式回落
+  const mode = status.resolution.mode;
   const label =
-    status.resolution.mode === "guided_only"
-      ? "仅启发"
-      : status.resolution.mode === "post_submit_only"
-        ? "完成后可用"
-        : "开放伴学";
+    mode === undefined ? AI_MODE_LABEL.open_study : AI_MODE_LABEL[mode];
   const source =
     status.resolution.reason === "assignment_override"
       ? "（来自作业设置）"
@@ -499,6 +505,8 @@ export function useAiSendController(config: UseAiSendControllerConfig) {
   );
 
   return {
+    /** 作答定位（会话面板在同 key 上挂轮询观察者时构造缓存键用） */
+    attemptId,
     boundQuestionId,
     bind,
     draftOf,
