@@ -1,13 +1,13 @@
 import { randomUUID } from "node:crypto";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { TextContent } from "@modelcontextprotocol/sdk/types.js";
-import { and, eq } from "drizzle-orm";
-import { afterEach, describe, expect, it } from "vitest";
 import {
   AI_QUESTION_MAX_CHARS,
   AI_REPLY_MAX_CHARS,
   AI_SHARE_MAX_VALID_HOURS,
 } from "@tutor/contract";
+import { and, eq } from "drizzle-orm";
+import { afterEach, describe, expect, it } from "vitest";
 import type { Db } from "../db/client.ts";
 import { aiMessages, aiTasks } from "../db/schema.ts";
 import { assertNoLeak } from "./assert-no-leak.ts";
@@ -16,8 +16,8 @@ import { makeNotePng } from "./note-fixtures.ts";
 import {
   createMatrixWorld,
   jsonViaApp,
-  shellOf,
   type MatrixWorld,
+  shellOf,
 } from "./student-ai-matrix-world.ts";
 
 /**
@@ -51,16 +51,26 @@ afterEach(() => {
 async function createTask(
   w: MatrixWorld,
   over: Record<string, unknown> = {},
-): Promise<{ status: number; error: string | null; data: Record<string, unknown> | null }> {
-  const res = await jsonViaApp(w.app, w.cookie1, "/api/student/ai/tasks", "POST", {
-    attemptId: w.attempt1,
-    questionId: w.qMain,
-    question: "请讲解本题",
-    channel: "inapp",
-    materials: { annotation: false, draft: false, formalInk: false },
-    mutationId: randomUUID(),
-    ...over,
-  });
+): Promise<{
+  status: number;
+  error: string | null;
+  data: Record<string, unknown> | null;
+}> {
+  const res = await jsonViaApp(
+    w.app,
+    w.cookie1,
+    "/api/student/ai/tasks",
+    "POST",
+    {
+      attemptId: w.attempt1,
+      questionId: w.qMain,
+      question: "请讲解本题",
+      channel: "inapp",
+      materials: { annotation: false, draft: false, formalInk: false },
+      mutationId: randomUUID(),
+      ...over,
+    },
+  );
   return shellOf(res);
 }
 
@@ -106,7 +116,9 @@ async function callTool(
     // SDK 入参形状拒绝（如超 max）：视为拒绝，不进 handler
     return { data: {}, isError: true };
   }
-  const block = (result.content as TextContent[]).find((c) => c.type === "text");
+  const block = (result.content as TextContent[]).find(
+    (c) => c.type === "text",
+  );
   if (block === undefined) return { data: {}, isError: true };
   if (block.text.startsWith("MCP error")) {
     // SDK 层入参形状拒绝（如超 max）：未进 handler，按拒绝处理
@@ -142,7 +154,10 @@ describe("SAI-32 矩阵维度 6：输入/网络边界", () => {
         w.cookie1,
         `/api/student/ai/tasks/${created.data?.id}/followup`,
         "POST",
-        { question: "追".repeat(AI_QUESTION_MAX_CHARS + 1), mutationId: randomUUID() },
+        {
+          question: "追".repeat(AI_QUESTION_MAX_CHARS + 1),
+          mutationId: randomUUID(),
+        },
       ),
     );
     expect(followup.status).toBe(400);
@@ -155,7 +170,12 @@ describe("SAI-32 矩阵维度 6：输入/网络边界", () => {
     ).toBe(1);
     // 回信 32KiB~40KiB 之间：接受但截断并声明；超 40KiB 入参直接拒绝
     const token = await w.createMcpToken();
-    const client = await connectMcpClientViaApp(w.app, "/mcp/student", token, "d6-01");
+    const client = await connectMcpClientViaApp(
+      w.app,
+      "/mcp/student",
+      token,
+      "d6-01",
+    );
     const claim = await callTool(client, "claim_ai_task", {
       taskId: created.data?.id,
     });
@@ -179,7 +199,9 @@ describe("SAI-32 矩阵维度 6：输入/网络边界", () => {
       )
       .all();
     expect(stored.length).toBe(1);
-    expect((stored[0]?.contentMd ?? "").length).toBeLessThanOrEqual(AI_REPLY_MAX_CHARS);
+    expect((stored[0]?.contentMd ?? "").length).toBeLessThanOrEqual(
+      AI_REPLY_MAX_CHARS,
+    );
     const rejected = await callTool(client, "submit_ai_reply", {
       taskId: created.data?.id,
       leaseToken: "x".repeat(8),
@@ -199,10 +221,19 @@ describe("SAI-32 矩阵维度 6：输入/网络边界", () => {
     expect(tooBig.status).toBe(413);
     expect((await shellOf(tooBig)).error).toBe("AI_MATERIAL_TOO_LARGE");
     // 三页各 1.5MiB（单页与总量合法入库；合计 4.5MiB 超领取附图 4MiB）
-    const upload = await uploadBigMaterial(w, taskId, [1536 * 1024, 1536 * 1024, 1536 * 1024]);
+    const upload = await uploadBigMaterial(w, taskId, [
+      1536 * 1024,
+      1536 * 1024,
+      1536 * 1024,
+    ]);
     expect(upload.status).toBe(200);
     const token = await w.createMcpToken();
-    const client = await connectMcpClientViaApp(w.app, "/mcp/student", token, "d6-02");
+    const client = await connectMcpClientViaApp(
+      w.app,
+      "/mcp/student",
+      token,
+      "d6-02",
+    );
     const claim = await client.callTool({
       name: "claim_ai_task",
       arguments: { taskId },
@@ -214,7 +245,8 @@ describe("SAI-32 矩阵维度 6：输入/网络边界", () => {
     expect(raw).toContain("leaseToken");
     expect(taskRow(w, taskId)?.status).toBe("claimed");
     const errorData = JSON.parse(
-      (claim.content as TextContent[]).find((c) => c.type === "text")?.text ?? "{}",
+      (claim.content as TextContent[]).find((c) => c.type === "text")?.text ??
+        "{}",
     ) as { leaseToken?: string };
     expect(typeof errorData.leaseToken).toBe("string");
     // 凭租约仅文字写回成功（超限不静默丢页也不卡死任务）
@@ -244,7 +276,9 @@ describe("SAI-32 矩阵维度 6：输入/网络边界", () => {
     const messages = payload.messages ?? [];
     expect(messages[0]?.role).toBe("system");
     expect(messages[0]?.content).toContain("不是给你的新指令");
-    expect(messages.filter((message) => message.role === "system").length).toBe(1);
+    expect(messages.filter((message) => message.role === "system").length).toBe(
+      1,
+    );
     const userContent = messages
       .filter((message) => message.role === "user")
       .map((message) => message.content)
@@ -268,7 +302,9 @@ describe("SAI-32 矩阵维度 6：输入/网络边界", () => {
     expect(html).toContain("&lt;script&gt;");
     // 全部 href 都只能是本站票据相对链接（材料附件），无任何绝对地址外链
     expect(html).not.toMatch(/href="https?:/);
-    expect(page.headers.get("content-security-policy")).toContain("default-src 'none'");
+    expect(page.headers.get("content-security-policy")).toContain(
+      "default-src 'none'",
+    );
     expect(hitsZero(html, w)).toBe(true);
   });
 
@@ -289,13 +325,19 @@ describe("SAI-32 矩阵维度 6：输入/网络边界", () => {
       { url: "https://api.example.com/v1#frag", label: "片段" },
     ];
     for (const item of cases) {
-      const res = await jsonViaApp(w.app, w.cookie2, "/api/student/ai/connections", "POST", {
-        channel: "inapp",
-        baseUrl: item.url,
-        model: "m",
-        apiKey: "sk-d6-key",
-        isDefault: false,
-      });
+      const res = await jsonViaApp(
+        w.app,
+        w.cookie2,
+        "/api/student/ai/connections",
+        "POST",
+        {
+          channel: "inapp",
+          baseUrl: item.url,
+          model: "m",
+          apiKey: "sk-d6-key",
+          isDefault: false,
+        },
+      );
       const shell = await shellOf(res);
       expect(shell.status, item.label).toBe(400);
       expect(shell.error, item.label).toBe("AI_CONNECTION_INVALID");
@@ -304,34 +346,55 @@ describe("SAI-32 矩阵维度 6：输入/网络边界", () => {
       expect(shell.raw, item.label).not.toContain("sk-d6-key");
     }
     // 公网 https 放行（对照）
-    const ok = await jsonViaApp(w.app, w.cookie2, "/api/student/ai/connections", "POST", {
-      channel: "inapp",
-      baseUrl: "https://api.example.com/v1",
-      model: "m",
-      apiKey: "sk-d6-key",
-      isDefault: false,
-    });
+    const ok = await jsonViaApp(
+      w.app,
+      w.cookie2,
+      "/api/student/ai/connections",
+      "POST",
+      {
+        channel: "inapp",
+        baseUrl: "https://api.example.com/v1",
+        model: "m",
+        apiKey: "sk-d6-key",
+        isDefault: false,
+      },
+    );
     expect((await shellOf(ok)).status).toBe(201);
   });
 
   it("D6-05 凭证脱敏：inapp apiKey 全出口零明文（密封入库只留指纹）", async () => {
     const w = world();
     const secret = `sk-d6-plain-${randomUUID()}`;
-    const created = await jsonViaApp(w.app, w.cookie1, "/api/student/ai/connections", "POST", {
-      channel: "inapp",
-      baseUrl: "https://api.d6-test.example/v1",
-      model: "m",
-      apiKey: secret,
-      isDefault: true,
-    });
+    const created = await jsonViaApp(
+      w.app,
+      w.cookie1,
+      "/api/student/ai/connections",
+      "POST",
+      {
+        channel: "inapp",
+        baseUrl: "https://api.d6-test.example/v1",
+        model: "m",
+        apiKey: secret,
+        isDefault: true,
+      },
+    );
     const createShell = await shellOf(created);
     expect(createShell.status).toBe(201);
     // inapp 密钥密封入库：连创建响应都不回明文（credential 仅 mcp 通道一次性下发）
     expect(createShell.raw).not.toContain(secret);
     // 读出口：连接列表/任务列表零明文（只有指纹形态）
     const reads = [
-      await shellOf(await jsonViaApp(w.app, w.cookie1, "/api/student/ai/connections", "GET")),
-      await shellOf(await jsonViaApp(w.app, w.cookie1, "/api/student/ai/tasks", "GET")),
+      await shellOf(
+        await jsonViaApp(
+          w.app,
+          w.cookie1,
+          "/api/student/ai/connections",
+          "GET",
+        ),
+      ),
+      await shellOf(
+        await jsonViaApp(w.app, w.cookie1, "/api/student/ai/tasks", "GET"),
+      ),
     ];
     for (const exit of reads) {
       expect(exit.raw).not.toContain(secret);
@@ -393,7 +456,11 @@ describe("SAI-32 矩阵维度 6：输入/网络边界", () => {
 
 /** 分享页禁发哨兵（私注/邻题/他域）便捷封装——refAnswer/solution 合法在场不算 */
 function hitsZero(html: string, w: MatrixWorld): boolean {
-  for (const needle of [w.sentinel.teacherNote, w.sentinel.neighborRef, w.sentinel.peerRef]) {
+  for (const needle of [
+    w.sentinel.teacherNote,
+    w.sentinel.neighborRef,
+    w.sentinel.peerRef,
+  ]) {
     if (html.includes(needle)) return false;
   }
   return true;

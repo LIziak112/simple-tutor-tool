@@ -12,8 +12,8 @@ import {
   createMatrixWorld,
   hitsOf,
   jsonViaApp,
-  shellOf,
   type MatrixWorld,
+  shellOf,
 } from "./student-ai-matrix-world.ts";
 
 /**
@@ -58,16 +58,26 @@ afterEach(() => {
 async function createTask(
   w: MatrixWorld,
   over: Record<string, unknown> = {},
-): Promise<{ status: number; error: string | null; data: Record<string, unknown> | null }> {
-  const res = await jsonViaApp(w.app, w.cookie1, "/api/student/ai/tasks", "POST", {
-    attemptId: w.attempt1,
-    questionId: w.qMain,
-    question: "请讲解本题",
-    channel: "inapp",
-    materials: { annotation: false, draft: false, formalInk: false },
-    mutationId: randomUUID(),
-    ...over,
-  });
+): Promise<{
+  status: number;
+  error: string | null;
+  data: Record<string, unknown> | null;
+}> {
+  const res = await jsonViaApp(
+    w.app,
+    w.cookie1,
+    "/api/student/ai/tasks",
+    "POST",
+    {
+      attemptId: w.attempt1,
+      questionId: w.qMain,
+      question: "请讲解本题",
+      channel: "inapp",
+      materials: { annotation: false, draft: false, formalInk: false },
+      mutationId: randomUUID(),
+      ...over,
+    },
+  );
   return shellOf(res);
 }
 
@@ -77,7 +87,9 @@ async function mcpCall(
   args: Record<string, unknown>,
 ): Promise<{ data: Record<string, unknown>; isError: boolean; raw: string }> {
   const result = await client.callTool({ name, arguments: args });
-  const block = (result.content as TextContent[]).find((c) => c.type === "text");
+  const block = (result.content as TextContent[]).find(
+    (c) => c.type === "text",
+  );
   if (block === undefined) throw new Error(`${name} 结果没有 text content`);
   return {
     data: JSON.parse(block.text) as Record<string, unknown>,
@@ -87,7 +99,10 @@ async function mcpCall(
 }
 
 /** 上传一页 annotation 材料到任务 */
-async function uploadMaterial(w: MatrixWorld, taskId: string): Promise<Uint8Array> {
+async function uploadMaterial(
+  w: MatrixWorld,
+  taskId: string,
+): Promise<Uint8Array> {
   const png = makeNotePng();
   const form = new FormData();
   form.append(
@@ -135,10 +150,20 @@ describe("SAI-32 矩阵维度 3+4：出口全枚举与哨兵扫描", () => {
     const taskId = created.data?.id as string;
     const exits = [
       await shellOf(
-        await jsonViaApp(w.app, w.cookie1, "/api/student/ai/tasks?limit=20", "GET"),
+        await jsonViaApp(
+          w.app,
+          w.cookie1,
+          "/api/student/ai/tasks?limit=20",
+          "GET",
+        ),
       ),
       await shellOf(
-        await jsonViaApp(w.app, w.cookie1, "/api/student/ai/queue-summary", "GET"),
+        await jsonViaApp(
+          w.app,
+          w.cookie1,
+          "/api/student/ai/queue-summary",
+          "GET",
+        ),
       ),
       await shellOf(
         await jsonViaApp(
@@ -148,7 +173,14 @@ describe("SAI-32 矩阵维度 3+4：出口全枚举与哨兵扫描", () => {
           "GET",
         ),
       ),
-      await shellOf(await jsonViaApp(w.app, w.cookie1, `/api/student/ai/tasks/${taskId}`, "GET")),
+      await shellOf(
+        await jsonViaApp(
+          w.app,
+          w.cookie1,
+          `/api/student/ai/tasks/${taskId}`,
+          "GET",
+        ),
+      ),
     ];
     for (const exit of exits) {
       expect(exit.status).toBe(200);
@@ -167,16 +199,24 @@ describe("SAI-32 矩阵维度 3+4：出口全枚举与哨兵扫描", () => {
     // 教师关闭（未完成）且学生尚未打开 → 详情不交付回信正文
     w.setOverride("student", w.student1, "post_submit_only");
     const detail = await shellOf(
-      await jsonViaApp(w.app, w.cookie1, `/api/student/ai/tasks/${created.data?.id}`, "GET"),
+      await jsonViaApp(
+        w.app,
+        w.cookie1,
+        `/api/student/ai/tasks/${created.data?.id}`,
+        "GET",
+      ),
     );
     expect(detail.status).toBe(200);
-    const messages = (detail.data as { messages?: { role: string; contentMd?: string }[] })
-      ?.messages;
+    const messages = (
+      detail.data as { messages?: { role: string; contentMd?: string }[] }
+    )?.messages;
     expect(messages).toBeDefined();
     expect(messages?.every((message) => message.role === "student")).toBe(true);
     expect(JSON.stringify(detail.raw)).not.toContain("MATRIX-FAKE-REPLY");
     // hasReply 事实仍在（任务视图）
-    expect((detail.data as { task?: { hasReply?: boolean } })?.task?.hasReply).toBe(true);
+    expect(
+      (detail.data as { task?: { hasReply?: boolean } })?.task?.hasReply,
+    ).toBe(true);
   });
 
   it("D3-03 回信交付门禁（opened）：未交付+关闭 403 → 开放交付 → 再关闭不撤回", async () => {
@@ -188,24 +228,44 @@ describe("SAI-32 矩阵维度 3+4：出口全枚举与哨兵扫描", () => {
     const taskId = created.data?.id as string;
     w.setOverride("student", w.student1, "post_submit_only");
     const blocked = await shellOf(
-      await jsonViaApp(w.app, w.cookie1, `/api/student/ai/tasks/${taskId}/opened`, "POST"),
+      await jsonViaApp(
+        w.app,
+        w.cookie1,
+        `/api/student/ai/tasks/${taskId}/opened`,
+        "POST",
+      ),
     );
     expect(blocked.status).toBe(403);
     expect(blocked.error).toBe("AI_POLICY_DISABLED");
     // 教师恢复开放 → 交付成功
     w.clearOverride("student", w.student1);
     const opened = await shellOf(
-      await jsonViaApp(w.app, w.cookie1, `/api/student/ai/tasks/${taskId}/opened`, "POST"),
+      await jsonViaApp(
+        w.app,
+        w.cookie1,
+        `/api/student/ai/tasks/${taskId}/opened`,
+        "POST",
+      ),
     );
     expect(opened.status).toBe(200);
     // 已交付后再次关闭：重复打开幂等放行（已展示内容不假装撤回，§3.3）
     w.setOverride("student", w.student1, "post_submit_only");
     const reopened = await shellOf(
-      await jsonViaApp(w.app, w.cookie1, `/api/student/ai/tasks/${taskId}/opened`, "POST"),
+      await jsonViaApp(
+        w.app,
+        w.cookie1,
+        `/api/student/ai/tasks/${taskId}/opened`,
+        "POST",
+      ),
     );
     expect(reopened.status).toBe(200);
     const detail = await shellOf(
-      await jsonViaApp(w.app, w.cookie1, `/api/student/ai/tasks/${taskId}`, "GET"),
+      await jsonViaApp(
+        w.app,
+        w.cookie1,
+        `/api/student/ai/tasks/${taskId}`,
+        "GET",
+      ),
     );
     expect(detail.raw).toContain("MATRIX-FAKE-REPLY");
   });
@@ -215,8 +275,14 @@ describe("SAI-32 矩阵维度 3+4：出口全枚举与哨兵扫描", () => {
     const created = await createTask(w, { channel: "link" });
     const taskId = created.data?.id as string;
     const actions = [
-      [`/api/student/ai/tasks/${taskId}/update-pending`, { question: "更新后的诉求" }],
-      [`/api/student/ai/tasks/${taskId}/followup`, { question: "追问内容", mutationId: randomUUID() }],
+      [
+        `/api/student/ai/tasks/${taskId}/update-pending`,
+        { question: "更新后的诉求" },
+      ],
+      [
+        `/api/student/ai/tasks/${taskId}/followup`,
+        { question: "追问内容", mutationId: randomUUID() },
+      ],
       [`/api/student/ai/tasks/${taskId}/archive`, undefined],
       [`/api/student/ai/tasks/${taskId}/retry`, undefined],
     ] as const;
@@ -224,7 +290,9 @@ describe("SAI-32 矩阵维度 3+4：出口全枚举与哨兵扫描", () => {
       const res = await jsonViaApp(w.app, w.cookie1, path, "POST", body);
       const shell = await shellOf(res);
       // followup 对 created 态任务合法语义是 409（未回信不可追问）——两种结局都过泄露面
-      expect([200, 409], `${path} → ${shell.status} ${shell.error}`).toContain(shell.status);
+      expect([200, 409], `${path} → ${shell.status} ${shell.error}`).toContain(
+        shell.status,
+      );
       expect(hitsOf(shell.raw, w.secretSentinels)).toEqual([]);
     }
     const cancelled = await jsonViaApp(
@@ -247,9 +315,20 @@ describe("SAI-32 矩阵维度 3+4：出口全枚举与哨兵扫描", () => {
     // 票据 token 明文只随生成响应（这是产品语义——链接就是要交给学生的凭证）；
     // 但 token 不得出现在任何其他读出口
     const others = [
-      await shellOf(await jsonViaApp(w.app, w.cookie1, "/api/student/ai/tasks", "GET")),
-      await shellOf(await jsonViaApp(w.app, w.cookie1, `/api/student/ai/tasks/${taskId}`, "GET")),
-      await shellOf(await jsonViaApp(w.app, w.cookie2, "/api/student/ai/tasks", "GET")),
+      await shellOf(
+        await jsonViaApp(w.app, w.cookie1, "/api/student/ai/tasks", "GET"),
+      ),
+      await shellOf(
+        await jsonViaApp(
+          w.app,
+          w.cookie1,
+          `/api/student/ai/tasks/${taskId}`,
+          "GET",
+        ),
+      ),
+      await shellOf(
+        await jsonViaApp(w.app, w.cookie2, "/api/student/ai/tasks", "GET"),
+      ),
     ];
     for (const exit of others) {
       expect(exit.raw).not.toContain(token);
@@ -282,18 +361,28 @@ describe("SAI-32 矩阵维度 3+4：出口全枚举与哨兵扫描", () => {
     expect(html).toContain(w.sentinel.solution);
     expect(html).toContain("MATRIX_STEM_MAIN");
     // 禁发面：私注/邻题答案/他域内容/学生姓名/任务与票据内部 UUID/附件绝对路径
-    expect(hitsOf(html, [w.sentinel.teacherNote, w.sentinel.neighborRef, w.sentinel.peerRef])).toEqual([]);
+    expect(
+      hitsOf(html, [
+        w.sentinel.teacherNote,
+        w.sentinel.neighborRef,
+        w.sentinel.peerRef,
+      ]),
+    ).toEqual([]);
     expect(html).not.toContain(nameSentinel);
     expect(html).not.toContain(taskId);
     // 票据正文页对本票据附件的自引用链接（持链者语义）允许携带本票据 token；
     // 剥掉该形态后 token 不得以任何其他形态出现
-    expect(html.replaceAll(`/api/public/ai/share/${token}/materials/`, "")).not.toContain(token);
+    expect(
+      html.replaceAll(`/api/public/ai/share/${token}/materials/`, ""),
+    ).not.toContain(token);
     expect(html).not.toContain(w.dataDir.replaceAll("\\", "/"));
     // 响应头：no-store / no-referrer / noindex + CSP
     expect(res.headers.get("cache-control")).toBe("no-store");
     expect(res.headers.get("referrer-policy")).toBe("no-referrer");
     expect(res.headers.get("x-robots-tag")).toBe("noindex, nofollow");
-    expect(res.headers.get("content-security-policy")).toContain("default-src 'none'");
+    expect(res.headers.get("content-security-policy")).toContain(
+      "default-src 'none'",
+    );
   });
 
   it("D3-07 链接附件 PNG：字节逐位相等 + 防缓存头", async () => {
@@ -330,23 +419,35 @@ describe("SAI-32 矩阵维度 3+4：出口全枚举与哨兵扫描", () => {
       res: await w.app.request(`/api/public/ai/share/${token}/materials/9.png`),
       label: "附件越界 404",
     });
-    const noSession = await jsonViaApp(w.app, "", "/api/student/ai/tasks", "POST", {
-      attemptId: w.attempt1,
-      questionId: w.qMain,
-      question: "x",
-      channel: "link",
-      materials: { annotation: false, draft: false, formalInk: false },
-      mutationId: randomUUID(),
-    });
+    const noSession = await jsonViaApp(
+      w.app,
+      "",
+      "/api/student/ai/tasks",
+      "POST",
+      {
+        attemptId: w.attempt1,
+        questionId: w.qMain,
+        question: "x",
+        channel: "link",
+        materials: { annotation: false, draft: false, formalInk: false },
+        mutationId: randomUUID(),
+      },
+    );
     errors.push({ res: noSession, label: "无会话 401" });
-    const badBody = await jsonViaApp(w.app, w.cookie1, "/api/student/ai/tasks", "POST", {
-      attemptId: "not-a-uuid",
-      questionId: w.qMain,
-      question: "x",
-      channel: "link",
-      materials: { annotation: false, draft: false, formalInk: false },
-      mutationId: randomUUID(),
-    });
+    const badBody = await jsonViaApp(
+      w.app,
+      w.cookie1,
+      "/api/student/ai/tasks",
+      "POST",
+      {
+        attemptId: "not-a-uuid",
+        questionId: w.qMain,
+        question: "x",
+        channel: "link",
+        materials: { annotation: false, draft: false, formalInk: false },
+        mutationId: randomUUID(),
+      },
+    );
     errors.push({ res: badBody, label: "形状错误 400" });
     const strangerTask = await jsonViaApp(
       w.app,
@@ -369,8 +470,15 @@ describe("SAI-32 矩阵维度 3+4：出口全枚举与哨兵扫描", () => {
     const created = await createTask(w, { channel: "mcp" });
     expect(created.status).toBe(201);
     const token = await w.createMcpToken();
-    const client = await connectMcpClientViaApp(w.app, "/mcp/student", token, "d3-09");
-    const list = await mcpCall(client, "list_my_ai_tasks", { status: "created" });
+    const client = await connectMcpClientViaApp(
+      w.app,
+      "/mcp/student",
+      token,
+      "d3-09",
+    );
+    const list = await mcpCall(client, "list_my_ai_tasks", {
+      status: "created",
+    });
     expect(list.isError).toBe(false);
     expect(hitsOf(list.raw, w.secretSentinels)).toEqual([]);
     await client.close();
@@ -382,7 +490,12 @@ describe("SAI-32 矩阵维度 3+4：出口全枚举与哨兵扫描", () => {
     const taskId = created.data?.id as string;
     const png = await uploadMaterial(w, taskId);
     const token = await w.createMcpToken();
-    const client = await connectMcpClientViaApp(w.app, "/mcp/student", token, "d3-10");
+    const client = await connectMcpClientViaApp(
+      w.app,
+      "/mcp/student",
+      token,
+      "d3-10",
+    );
     const claim = await client.callTool({
       name: "claim_ai_task",
       arguments: { taskId },
@@ -391,16 +504,28 @@ describe("SAI-32 矩阵维度 3+4：出口全枚举与哨兵扫描", () => {
     expect(claim.isError).not.toBe(true);
     expect(raw).toContain(w.sentinel.refAnswer);
     expect(raw).toContain(w.sentinel.solution);
-    expect(hitsOf(raw, [w.sentinel.teacherNote, w.sentinel.neighborRef, w.sentinel.peerRef])).toEqual([]);
+    expect(
+      hitsOf(raw, [
+        w.sentinel.teacherNote,
+        w.sentinel.neighborRef,
+        w.sentinel.peerRef,
+      ]),
+    ).toEqual([]);
     // 图片 content：base64 字节与上传件同源
     const images = (claim.content as { type: string; data?: string }[]).filter(
       (block) => block.type === "image",
     );
     expect(images.length).toBe(1);
-    expect(Buffer.from(images[0]?.data ?? "", "base64").equals(Buffer.from(png))).toBe(true);
+    expect(
+      Buffer.from(images[0]?.data ?? "", "base64").equals(Buffer.from(png)),
+    ).toBe(true);
     // 租约凭证不进日志（从 claim 数据段取真实 leaseToken 再扫日志面）
-    const claimBlock = (claim.content as TextContent[]).find((c) => c.type === "text");
-    const claimData = JSON.parse(claimBlock?.text ?? "{}") as { leaseToken?: string };
+    const claimBlock = (claim.content as TextContent[]).find(
+      (c) => c.type === "text",
+    );
+    const claimData = JSON.parse(claimBlock?.text ?? "{}") as {
+      leaseToken?: string;
+    };
     expect(typeof claimData.leaseToken).toBe("string");
     expect(claimData.leaseToken).toBeTruthy();
     expect(w.logs.join("\n")).not.toContain(claimData.leaseToken ?? "");
@@ -429,19 +554,26 @@ describe("SAI-32 矩阵维度 3+4：出口全枚举与哨兵扫描", () => {
   it("D3-12 批量复盘：逐题快照隔离（各题任务只含本题哨兵）", async () => {
     const w = world();
     w.submitAttempt1();
-    const batch = await jsonViaApp(w.app, w.cookie1, "/api/student/ai/batch-review", "POST", {
-      items: [
-        { attemptId: w.attempt1, questionId: w.qMain },
-        { attemptId: w.attempt1, questionId: w.qNeighbor },
-      ],
-      channel: "mcp",
-      question: "请帮我复盘错因",
-      mutationId: randomUUID(),
-    });
+    const batch = await jsonViaApp(
+      w.app,
+      w.cookie1,
+      "/api/student/ai/batch-review",
+      "POST",
+      {
+        items: [
+          { attemptId: w.attempt1, questionId: w.qMain },
+          { attemptId: w.attempt1, questionId: w.qNeighbor },
+        ],
+        channel: "mcp",
+        question: "请帮我复盘错因",
+        mutationId: randomUUID(),
+      },
+    );
     const shell = await shellOf(batch);
     expect(shell.status).toBe(200);
-    const items = (shell.data as { items?: { outcome: string; taskId: string | null }[] })
-      ?.items;
+    const items = (
+      shell.data as { items?: { outcome: string; taskId: string | null }[] }
+    )?.items;
     expect(items?.length).toBe(2);
     for (const item of items ?? []) {
       expect(item.outcome).toBe("created");
@@ -449,7 +581,10 @@ describe("SAI-32 矩阵维度 3+4：出口全枚举与哨兵扫描", () => {
     // 逐题快照隔离：qMain 任务只含 refAnswer、qNeighbor 任务只含 neighborRef
     for (const item of items ?? []) {
       const row = w.db
-        .select({ snapshot: aiTasks.contextSnapshotJson, questionId: aiTasks.questionId })
+        .select({
+          snapshot: aiTasks.contextSnapshotJson,
+          questionId: aiTasks.questionId,
+        })
         .from(aiTasks)
         .where(eq(aiTasks.id, item.taskId as string))
         .get();
@@ -464,12 +599,18 @@ describe("SAI-32 矩阵维度 3+4：出口全枚举与哨兵扫描", () => {
       expect(row?.snapshot).not.toContain(w.sentinel.teacherNote);
     }
     // 伪造 correct 字段 → strict 400（契约结构上无该字段）
-    const forged = await jsonViaApp(w.app, w.cookie1, "/api/student/ai/batch-review", "POST", {
-      items: [{ attemptId: w.attempt1, questionId: w.qMain, correct: false }],
-      channel: "mcp",
-      question: "伪造标记",
-      mutationId: randomUUID(),
-    });
+    const forged = await jsonViaApp(
+      w.app,
+      w.cookie1,
+      "/api/student/ai/batch-review",
+      "POST",
+      {
+        items: [{ attemptId: w.attempt1, questionId: w.qMain, correct: false }],
+        channel: "mcp",
+        question: "伪造标记",
+        mutationId: randomUUID(),
+      },
+    );
     expect((await shellOf(forged)).status).toBe(400);
   });
 
@@ -485,7 +626,12 @@ describe("SAI-32 矩阵维度 3+4：出口全枚举与哨兵扫描", () => {
     await w.app.request(path);
     await w.app.request(`/api/public/ai/share/${"C".repeat(43)}`);
     const token = await w.createMcpToken();
-    const client = await connectMcpClientViaApp(w.app, "/mcp/student", token, "d3-13");
+    const client = await connectMcpClientViaApp(
+      w.app,
+      "/mcp/student",
+      token,
+      "d3-13",
+    );
     await mcpCall(client, "list_my_ai_tasks", {});
     await client.close();
     void inappTask;
@@ -494,9 +640,13 @@ describe("SAI-32 矩阵维度 3+4：出口全枚举与哨兵扫描", () => {
     expect(logs).not.toContain(token);
     expect(logs).not.toContain("sk-matrix-key-DO-NOT-LEAK");
     // 分享路径脱敏：日志里的 share 路径不含真 token
-    const shareLines = logs.split("\n").filter((line) => line.includes("/api/public/ai/share/"));
+    const shareLines = logs
+      .split("\n")
+      .filter((line) => line.includes("/api/public/ai/share/"));
     for (const line of shareLines) {
-      expect(line).not.toMatch(new RegExp(`/api/public/ai/share/${path.split("/").pop()}`));
+      expect(line).not.toMatch(
+        new RegExp(`/api/public/ai/share/${path.split("/").pop()}`),
+      );
     }
   });
 

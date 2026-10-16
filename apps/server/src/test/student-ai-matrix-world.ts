@@ -107,7 +107,9 @@ export interface MatrixWorld {
   createMcpToken(studentId?: string): Promise<string>;
   /** 页内出口：跑一轮 worker，返回捕获的出站请求与派发摘要；
    * hold 非 null 时 transport 在返回响应前先等它——构造「出站已在途」真窗口 */
-  dispatchInapp(hold?: Promise<unknown>): Promise<{ recorded: RecordedOutbound[] }>;
+  dispatchInapp(
+    hold?: Promise<unknown>,
+  ): Promise<{ recorded: RecordedOutbound[] }>;
 }
 
 /** 矩阵世界选项 */
@@ -405,7 +407,7 @@ function seedResponseContent(
   if (row === undefined) {
     throw new Error(`矩阵夹具：response 行缺失 ${responseId}`);
   }
-  const snapshot = JSON.parse(row.questionSnapshotJson) as Record<
+  const snapshot = JSON.parse(row.questionSnapshotJson ?? "{}") as Record<
     string,
     unknown
   >;

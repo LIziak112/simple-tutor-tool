@@ -4,8 +4,8 @@ import type { TextContent } from "@modelcontextprotocol/sdk/types.js";
 import { and, eq } from "drizzle-orm";
 import { afterEach, describe, expect, it } from "vitest";
 import { runBackfills } from "../db/backfill.ts";
-import { createDbHandle } from "../db/client.ts";
 import type { Db } from "../db/client.ts";
+import { createDbHandle } from "../db/client.ts";
 import { runMigrations } from "../db/migrate.ts";
 import {
   aiFacts,
@@ -16,14 +16,14 @@ import {
 } from "../db/schema.ts";
 import { createTestDir, TEST_TEACHER_ID } from "../db/test-utils.ts";
 import { submitLessonQuestion } from "../services/attempt-service.ts";
+import { insertResponse } from "./ai-companion-fixtures.ts";
 import { connectMcpClientViaApp } from "./mcp-test-utils.ts";
 import { makeNotePng } from "./note-fixtures.ts";
-import { insertResponse } from "./ai-companion-fixtures.ts";
 import {
   createMatrixWorld,
   jsonViaApp,
-  shellOf,
   type MatrixWorld,
+  shellOf,
 } from "./student-ai-matrix-world.ts";
 
 /**
@@ -48,7 +48,9 @@ import {
 
 const activeDbs: Db[] = [];
 
-function world(options: Parameters<typeof createMatrixWorld>[0] = {}): MatrixWorld {
+function world(
+  options: Parameters<typeof createMatrixWorld>[0] = {},
+): MatrixWorld {
   const w = createMatrixWorld(options);
   activeDbs.push(w.db);
   return w;
@@ -62,15 +64,21 @@ async function createTask(
   w: MatrixWorld,
   over: Record<string, unknown> = {},
 ): Promise<string> {
-  const res = await jsonViaApp(w.app, w.cookie1, "/api/student/ai/tasks", "POST", {
-    attemptId: w.attempt1,
-    questionId: w.qMain,
-    question: "请讲解本题",
-    channel: "inapp",
-    materials: { annotation: false, draft: false, formalInk: false },
-    mutationId: randomUUID(),
-    ...over,
-  });
+  const res = await jsonViaApp(
+    w.app,
+    w.cookie1,
+    "/api/student/ai/tasks",
+    "POST",
+    {
+      attemptId: w.attempt1,
+      questionId: w.qMain,
+      question: "请讲解本题",
+      channel: "inapp",
+      materials: { annotation: false, draft: false, formalInk: false },
+      mutationId: randomUUID(),
+      ...over,
+    },
+  );
   const shell = await shellOf(res);
   expect(shell.status).toBe(201);
   return shell.data?.id as string;
@@ -85,7 +93,9 @@ async function claimTask(
     name: "claim_ai_task",
     arguments: { taskId },
   });
-  const block = (result.content as TextContent[]).find((c) => c.type === "text");
+  const block = (result.content as TextContent[]).find(
+    (c) => c.type === "text",
+  );
   if (block === undefined) throw new Error("claim 结果没有 text content");
   return {
     data: JSON.parse(block.text) as Record<string, unknown>,
@@ -111,12 +121,19 @@ async function submitReply(
       taskId: input.taskId,
       leaseToken: input.leaseToken,
       replyMarkdown: input.replyMarkdown ?? "D5 回信正文",
-      ...(input.contextVersion !== undefined && { contextVersion: input.contextVersion }),
-      ...(input.runtimeEpoch !== undefined && { runtimeEpoch: input.runtimeEpoch }),
+      ...(input.contextVersion !== undefined && {
+        contextVersion: input.contextVersion,
+      }),
+      ...(input.runtimeEpoch !== undefined && {
+        runtimeEpoch: input.runtimeEpoch,
+      }),
     },
   });
-  const block = (result.content as TextContent[]).find((c) => c.type === "text");
-  if (block === undefined) throw new Error("submit_ai_reply 结果没有 text content");
+  const block = (result.content as TextContent[]).find(
+    (c) => c.type === "text",
+  );
+  if (block === undefined)
+    throw new Error("submit_ai_reply 结果没有 text content");
   return {
     data: JSON.parse(block.text) as Record<string, unknown>,
     isError: result.isError === true,
@@ -157,7 +174,12 @@ describe("SAI-32 矩阵维度 5：竞态（真实并发触发）", () => {
     const w = world();
     const taskId = await createTask(w, { channel: "mcp" });
     const token = await w.createMcpToken();
-    const client = await connectMcpClientViaApp(w.app, "/mcp/student", token, "d5-01");
+    const client = await connectMcpClientViaApp(
+      w.app,
+      "/mcp/student",
+      token,
+      "d5-01",
+    );
     // 双写同任务：两条路径都走完整 app/MCP 异步链，SQLite 串行化成某个顺序
     const [updateShell, claim] = await Promise.all([
       shellOf(
@@ -200,14 +222,28 @@ describe("SAI-32 矩阵维度 5：竞态（真实并发触发）", () => {
     const taskId = await createTask(w, { channel: "mcp" });
     const token = await w.createMcpToken();
     // 同一 token 两个 SDK 客户端（每通道一条连接；竞争面是并发请求本身）
-    const clientA = await connectMcpClientViaApp(w.app, "/mcp/student", token, "d5-02a");
-    const clientB = await connectMcpClientViaApp(w.app, "/mcp/student", token, "d5-02b");
-    const [a, b] = await Promise.all([claimTask(clientA, taskId), claimTask(clientB, taskId)]);
+    const clientA = await connectMcpClientViaApp(
+      w.app,
+      "/mcp/student",
+      token,
+      "d5-02a",
+    );
+    const clientB = await connectMcpClientViaApp(
+      w.app,
+      "/mcp/student",
+      token,
+      "d5-02b",
+    );
+    const [a, b] = await Promise.all([
+      claimTask(clientA, taskId),
+      claimTask(clientB, taskId),
+    ]);
     const winners = [a, b].filter((r) => !r.isError);
     const losers = [a, b].filter((r) => r.isError);
     expect(winners.length).toBe(1);
     expect(losers.length).toBe(1);
-    expect((losers[0]?.data as { error?: string }).error).toBe("AI_STATE_CONFLICT");
+    const loser = losers[0] as { data: { error?: string } } | undefined;
+    expect(loser?.data.error).toBe("AI_STATE_CONFLICT");
     // 恰一份租约、generation 恰 +1（创建 0 → 领取 1）、dispatched 事实恰一条
     const row = taskRow(w, taskId);
     expect(row?.status).toBe("claimed");
@@ -222,7 +258,12 @@ describe("SAI-32 矩阵维度 5：竞态（真实并发触发）", () => {
     const w = world();
     const taskId = await createTask(w, { channel: "mcp" });
     const token = await w.createMcpToken();
-    const client = await connectMcpClientViaApp(w.app, "/mcp/student", token, "d5-03");
+    const client = await connectMcpClientViaApp(
+      w.app,
+      "/mcp/student",
+      token,
+      "d5-03",
+    );
     const claim = await claimTask(client, taskId);
     expect(claim.isError).toBe(false);
     const lease = {
@@ -234,7 +275,12 @@ describe("SAI-32 矩阵维度 5：竞态（真实并发触发）", () => {
     // 取消（HTTP）与写回（MCP）并发：两事务串行化，先到者定终态
     const [cancelShell, submit] = await Promise.all([
       shellOf(
-        await jsonViaApp(w.app, w.cookie1, `/api/student/ai/tasks/${taskId}/cancel`, "POST"),
+        await jsonViaApp(
+          w.app,
+          w.cookie1,
+          `/api/student/ai/tasks/${taskId}/cancel`,
+          "POST",
+        ),
       ),
       submitReply(client, lease),
     ]);
@@ -244,7 +290,9 @@ describe("SAI-32 矩阵维度 5：竞态（真实并发触发）", () => {
       // 取消先赢：写回成迟到事实（stale_lease），正文不入 ai_messages
       expect(cancelShell.status).toBe(200);
       expect(submit.isError).toBe(true);
-      expect((submit.data as { error?: string }).error).toBe("AI_STATE_CONFLICT");
+      expect((submit.data as { error?: string }).error).toBe(
+        "AI_STATE_CONFLICT",
+      );
       expect(assistantReplyCount(w, taskId)).toBe(0);
       const lateFacts = w.db
         .select()
@@ -279,17 +327,31 @@ describe("SAI-32 矩阵维度 5：竞态（真实并发触发）", () => {
     await untilTrue(() => taskRow(w, taskId)?.status === "dispatching");
     w.submitAttempt1();
     releaseHold?.();
-    await dispatchRun;
-    // 出站载荷按出发时点装配（作答中启发规则）——合法授权的外发
+    const { recorded } = await dispatchRun;
+    // 出站载荷按出发时点装配：交卷落在出站在途窗口内，载荷仍是作答中
+    // 启发形态（启发提示词在场、复盘提示词不在场）——合法授权的外发
+    expect(recorded.length).toBe(1);
+    expect(recorded[0]?.body).toContain("当前为仅启发");
+    expect(recorded[0]?.body).not.toContain("当前为完成后复盘");
     const row = taskRow(w, taskId);
     expect(row?.status).toBe("replied");
     // 交卷已在途窗口内完成：本题完成 → 交付按当前态开放（open_study 复盘）
     const opened = await shellOf(
-      await jsonViaApp(w.app, w.cookie1, `/api/student/ai/tasks/${taskId}/opened`, "POST"),
+      await jsonViaApp(
+        w.app,
+        w.cookie1,
+        `/api/student/ai/tasks/${taskId}/opened`,
+        "POST",
+      ),
     );
     expect(opened.status).toBe(200);
     const detail = await shellOf(
-      await jsonViaApp(w.app, w.cookie1, `/api/student/ai/tasks/${taskId}`, "GET"),
+      await jsonViaApp(
+        w.app,
+        w.cookie1,
+        `/api/student/ai/tasks/${taskId}`,
+        "GET",
+      ),
     );
     expect(detail.raw).toContain("MATRIX-FAKE-REPLY");
   });
@@ -319,7 +381,12 @@ describe("SAI-32 矩阵维度 5：竞态（真实并发触发）", () => {
     expect(secondRun.recorded.length).toBe(0);
     // A 的回信交付同样被当前禁用拦住（完成态未到，opened 403）
     const opened = await shellOf(
-      await jsonViaApp(w.app, w.cookie1, `/api/student/ai/tasks/${taskA}/opened`, "POST"),
+      await jsonViaApp(
+        w.app,
+        w.cookie1,
+        `/api/student/ai/tasks/${taskA}/opened`,
+        "POST",
+      ),
     );
     expect(opened.status).toBe(403);
     expect(opened.error).toBe("AI_POLICY_DISABLED");
@@ -338,11 +405,14 @@ describe("SAI-32 矩阵维度 5：竞态（真实并发触发）", () => {
       ]),
     );
     form.append("page-0", new Blob([png], { type: "image/png" }));
-    const upload = await w.app.request(`/api/student/ai/tasks/${taskId}/materials`, {
-      method: "POST",
-      headers: { cookie: w.cookie1 },
-      body: form,
-    });
+    const upload = await w.app.request(
+      `/api/student/ai/tasks/${taskId}/materials`,
+      {
+        method: "POST",
+        headers: { cookie: w.cookie1 },
+        body: form,
+      },
+    );
     expect(upload.status).toBe(200);
     const share = await jsonViaApp(
       w.app,
@@ -371,7 +441,9 @@ describe("SAI-32 矩阵维度 5：竞态（真实并发触发）", () => {
     w.clearOverride("student", w.student1);
     const pngRevived = await w.app.request(`${path}/materials/0.png`);
     expect(pngRevived.status).toBe(200);
-    expect(Buffer.from(await pngRevived.arrayBuffer()).equals(Buffer.from(png))).toBe(true);
+    expect(
+      Buffer.from(await pngRevived.arrayBuffer()).equals(Buffer.from(png)),
+    ).toBe(true);
   });
 
   it("D5-07 讲练单题提交 ∥ 领取 + 重开新卷完成态不串卷", async () => {
@@ -405,7 +477,12 @@ describe("SAI-32 矩阵维度 5：竞态（真实并发触发）", () => {
       question: "D5 讲练求助",
     });
     const token = await w.createMcpToken();
-    const client = await connectMcpClientViaApp(w.app, "/mcp/student", token, "d5-07");
+    const client = await connectMcpClientViaApp(
+      w.app,
+      "/mcp/student",
+      token,
+      "d5-07",
+    );
     // 领取飞行中单题提交（真实服务入口）：两事务串行化，任一顺序都合法
     const claimPromise = claimTask(client, taskId);
     submitLessonQuestion(w.db, w.student1, lessonAttempt, w.qMain, {
@@ -476,11 +553,19 @@ describe("SAI-32 矩阵维度 5：竞态（真实并发触发）", () => {
         .onConflictDoNothing()
         .run();
     };
-    const handle = createDbHandle(`${dir}/tutor.db`.replaceAll("\\", "/"), openHook);
+    const handle = createDbHandle(
+      `${dir}/tutor.db`.replaceAll("\\", "/"),
+      openHook,
+    );
     const w = world({ db: handle.db, dataDir: dir });
     const taskId = await createTask(w, { channel: "mcp" });
     const token = await w.createMcpToken();
-    const client = await connectMcpClientViaApp(w.app, "/mcp/student", token, "d5-08");
+    const client = await connectMcpClientViaApp(
+      w.app,
+      "/mcp/student",
+      token,
+      "d5-08",
+    );
     const claim = await claimTask(client, taskId);
     expect(claim.isError).toBe(false);
     // 回执飞行中（SDK 请求已发出、handler 未及执行）恢复数据库：

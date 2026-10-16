@@ -469,6 +469,48 @@ describe("SAI-32 矩阵维度 1：三通道 × 三模式 × 完成态 × 配置�
     expect(resolution?.usable).toBe(true);
     expect(resolution?.mode).toBe("open_study");
   });
+
+  it("D1-17 link×post×已完成：票据生成与公开读取/附件按完成态开放复盘（闸门补测）", async () => {
+    const w = world();
+    w.setOverride("student", w.student1, "post_submit_only");
+    w.submitAttempt1();
+    // 完成后创建 link 任务不再被 post_submit_only 拦截（复盘尺度）
+    const created = await createTask(w, { channel: "link" });
+    expect(created.status).toBe(201);
+    const taskId = created.data?.id as string;
+    const pngRes = await w.app.request(
+      `/api/student/ai/tasks/${taskId}/materials`,
+      {
+        method: "POST",
+        headers: { cookie: w.cookie1 },
+        body: newSoleForm(),
+      },
+    );
+    expect(pngRes.status).toBe(200);
+    const share = await jsonViaApp(
+      w.app,
+      w.cookie1,
+      `/api/student/ai/tasks/${taskId}/share`,
+      "POST",
+      {},
+    );
+    expect(share.status).toBe(200);
+    const ticketUrl = ((await share.json()) as { data: { ticketUrl: string } })
+      .data.ticketUrl;
+    const path = new URL(ticketUrl).pathname;
+    // 公开读取（无会话）按当前完成态实时裁决：开放复盘，参考+解析在场
+    const body = await shellOf(await w.app.request(path));
+    expect(body.status).toBe(200);
+    expect(body.raw).toContain(w.sentinel.refAnswer);
+    expect(body.raw).toContain(w.sentinel.solution);
+    expect(
+      hitsOf(body.raw, [w.sentinel.teacherNote, w.sentinel.neighborRef]),
+    ).toEqual([]);
+    // 附件同一裁决链路（requireShareTicketByToken 单源）
+    const material = await w.app.request(`${path}/materials/0.png`);
+    expect(material.status).toBe(200);
+    expect(material.headers.get("content-type")).toBe("image/png");
+  });
 });
 
 /** 材料上传 multipart（一页 annotation PNG；矩阵世界不依赖真实笔迹） */

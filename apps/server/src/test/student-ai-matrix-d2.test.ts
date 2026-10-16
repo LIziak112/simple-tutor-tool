@@ -95,7 +95,7 @@ function seedAnswer(
     .where(eq(responses.id, responseId))
     .get();
   if (row === undefined) throw new Error("矩阵 D2：response 行缺失");
-  const snapshot = JSON.parse(row.questionSnapshotJson) as Record<
+  const snapshot = JSON.parse(row.questionSnapshotJson ?? "{}") as Record<
     string,
     unknown
   >;
@@ -149,6 +149,7 @@ async function createTask(
   status: number;
   error: string | null;
   data: Record<string, unknown> | null;
+  raw: string;
 }> {
   const res = await jsonViaApp(
     w.app,
