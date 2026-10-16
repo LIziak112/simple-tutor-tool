@@ -476,14 +476,12 @@ test.describe("SAI-27 学生 MCP 闭环（协议客户端）", () => {
         }
       ).data.id;
       const questionId = (
-        (
-          (await (
-            await studentApi.get(`/api/student/attempts/${attemptId}`)
-          ).json()) as {
-            data: { units: { questions: { id: string }[] }[] };
-          }
-        ).data.units.flatMap((unit) => unit.questions)[0] ?? {}
-      ).id;
+        (await (
+          await studentApi.get(`/api/student/attempts/${attemptId}`)
+        ).json()) as {
+          data: { units: { questions: { id: string }[] }[] };
+        }
+      ).data.units.flatMap((unit) => unit.questions)[0]?.id;
       expect(typeof questionId).toBe("string");
 
       const connRes = await studentApi.post("/api/student/ai/connections", {
