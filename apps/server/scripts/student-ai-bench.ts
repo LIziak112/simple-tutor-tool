@@ -9,7 +9,7 @@
  * ② 长稿编码与内存：assembleOutboundMessages 对 120KB 题面 + 120KB 解析 +
  *    10 条历史 + 2 份材料引用装配 50 次的单次耗时与堆增量（仅 AI 侧存在的
  *    路径，无「无 AI」对照，对照维度是①）；
- * ③ 积压处理：3 学生 × 20 任务 = 60 积压，瞬时回信 transport 下
+ * ③ 积压处理：6 学生 × 10 任务 = 60 积压，瞬时回信 transport 下
  *    runStudentAiDispatchOnce 逐轮排空的总耗时与吞吐（全局 20 / 每学生 3
  *    并发的负载整形口径，幂次与上限是设计值非缺陷）。
  *
@@ -17,7 +17,7 @@
  * 参考；机器与数据规模随输出打印。业务语义断言（保存成功、任务 replied）
  * 内联为防呆检查，失败即抛——不给出无意义数字。
  */
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import process from "node:process";
@@ -306,6 +306,8 @@ async function main(): Promise<void> {
   benchLongDocAssembly();
   await benchBacklog();
   console.log("采样完成（单次运行，量级参考；波动见脚本头注）");
+  // 采样世界的落盘（材料/票据）全在临时目录：结束即清，不留残留
+  rmSync(DATA_DIR, { recursive: true, force: true });
 }
 
 await main();
