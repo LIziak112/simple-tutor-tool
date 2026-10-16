@@ -364,6 +364,40 @@ $0$ 既不是正数也不是负数；最小的正整数是 $1$。
 `;
 
 describe("讲练一体：kind: lesson 文档导入（讲义含题块入库 + kind 落库 + 单元关联）", () => {
+  it("讲练导入 addToCourse：只追加讲练页讲义条目，嵌入单元不进课程目录（2026-10-16 修复）", async () => {
+    const { app, db, cookie } = await makeTeacherApp();
+    const courseId = crypto.randomUUID();
+    db.insert(courses)
+      .values({
+        id: courseId,
+        teacherId: TEST_TEACHER_ID,
+        title: "目标课程",
+        order: 0,
+        createdAt: new Date().toISOString(),
+      })
+      .run();
+    const res = await postJson(
+      app,
+      "/api/teacher/import/commit",
+      {
+        markdown: LESSON_MD,
+        filename: "随堂讲练.md",
+        addToCourse: { courseId, visible: true },
+      },
+      cookie,
+    );
+    expect(res.status).toBe(200);
+    // 嵌入单元（随堂练）不单独布置：课程目录只有讲练页讲义一个条目
+    const items = db
+      .select()
+      .from(courseItems)
+      .where(eq(courseItems.courseId, courseId))
+      .all();
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ kind: "lecture", visible: true });
+    expect(items[0]?.refId).not.toBe("随堂讲练");
+  });
+
   it("commit 200：讲义 kind='lesson'、markdown 原位保留注入 id 的题块；单元/题目照常落库且 lectureId 关联", async () => {
     const { app, db, cookie } = await makeTeacherApp();
     const res = await postJson(

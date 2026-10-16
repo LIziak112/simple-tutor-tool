@@ -383,6 +383,71 @@ describe("listStudentCourses（我的课程）", () => {
 });
 
 describe("getStudentCourseDetail（课程可见目录，D22 矩阵）", () => {
+  it("lesson 嵌入单元条目不显示（讲练页一件事）；配套练习（普通讲义关联）照常显示（2026-10-16 修复）", () => {
+    const db = createTestDb();
+    const ctx = seed(db);
+    const lessonId = crypto.randomUUID();
+    db.insert(lectures)
+      .values({
+        id: lessonId,
+        teacherId: TEST_TEACHER_ID,
+        courseId: null,
+        folderId: null,
+        kind: "lesson",
+        title: "讲练 数轴热身",
+        markdown: "# 讲练 数轴热身",
+        order: 8,
+        updatedAt: T0,
+        deletedAt: null,
+      })
+      .run();
+    db.insert(units)
+      .values({
+        id: "u-lesson-embedded",
+        teacherId: TEST_TEACHER_ID,
+        courseId: null,
+        folderId: null,
+        lectureId: lessonId,
+        title: "讲练随堂练习",
+        topic: "数轴",
+        order: 2,
+        updatedAt: T0,
+        deletedAt: null,
+      })
+      .run();
+    insertItem(db, ctx.courseAId, {
+      kind: "unit",
+      refId: "u-lesson-embedded",
+      order: 9,
+      visible: true,
+    });
+    // 嵌入单元带存活题（排除「零题单元隐藏」规则的干扰，隔离验证嵌入过滤）
+    db.insert(questions)
+      .values({
+        id: "sc-q-embedded",
+        teacherId: TEST_TEACHER_ID,
+        unitId: "u-lesson-embedded",
+        order: 0,
+        type: "judge",
+        difficulty: 1,
+        stemMd: "题干",
+        hintsJson: "[]",
+        sourceMd: "原文",
+        version: 1,
+        updatedAt: T0,
+        deletedAt: null,
+      })
+      .run();
+
+    const detail = getStudentCourseDetail(db, ctx.memberId, ctx.courseAId);
+    // 嵌入单元不出现在课程目录（题目已在讲练页内，防重复入口）
+    expect(detail.items.some((item) => item.title === "讲练随堂练习")).toBe(
+      false,
+    );
+    // 配套练习（lectureId 指向普通讲义 L1）不受影响
+    expect(detail.items.some((item) => item.title === "有理数小练")).toBe(true);
+  });
+
   it("成员：只含可见条目（隐藏/未到发布零信息），单元带未删题数", () => {
     const db = createTestDb();
     const ctx = seed(db);
