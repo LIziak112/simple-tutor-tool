@@ -80,8 +80,9 @@ export interface UseAiSendControllerConfig {
   readonly active: boolean;
 }
 
-/** 学生侧裁决原因文案（教师侧见 ai-policy-text，措辞按学生视角） */
-function studentModeReasonText(status: AiStatusData): string {
+/** 学生侧裁决原因文案（教师侧见 ai-policy-text，措辞按学生视角；伴学栏
+ *  状态区与失败提示共用单源，不各写一份） */
+export function studentModeReasonText(status: AiStatusData): string {
   if (!status.resolution.usable) {
     switch (status.resolution.reason) {
       case "student_closed":
@@ -377,18 +378,21 @@ export function useAiSendController(config: UseAiSendControllerConfig) {
         let snapshot: AiCaptureSnapshot | null = null;
         if (selection.annotation || selection.draft || selection.formalInk) {
           try {
-            snapshot = await captureAiQuestionMaterials({
-              attemptId,
-              question,
-              isHandwritten: config.isHandwritten(questionId),
-              selection,
-              title: config.titleOf(questionId),
-              surface: config.surfaceOf(questionId),
-              flush: config.flush,
-              ...(pending.snapshot !== null
-                ? { previous: pending.snapshot }
-                : {}),
-            });
+            // ?? null：真实入口恒返回快照；被测试替身留空（undefined）时按
+            // 「无材料页」处理，不把非快照值带进后续上传分支
+            snapshot =
+              (await captureAiQuestionMaterials({
+                attemptId,
+                question,
+                isHandwritten: config.isHandwritten(questionId),
+                selection,
+                title: config.titleOf(questionId),
+                surface: config.surfaceOf(questionId),
+                flush: config.flush,
+                ...(pending.snapshot !== null
+                  ? { previous: pending.snapshot }
+                  : {}),
+              })) ?? null;
           } catch (cause) {
             if (!alive()) return;
             pending.snapshot = null;
