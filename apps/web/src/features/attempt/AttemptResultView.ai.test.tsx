@@ -1,7 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { AttemptResultData } from "@tutor/contract";
-import type { ReactNode } from "react";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { captureAiQuestionMaterials } from "@/features/export/ai-material-capture";
@@ -168,7 +167,10 @@ beforeEach(() => {
     }),
   );
   mockedList.mockResolvedValue({ tasks: [], nextCursor: null });
-  mockedQuickButtons.mockResolvedValue({ buttons: [] });
+  mockedQuickButtons.mockResolvedValue({
+    buttons: [],
+    updatedAt: "2026-10-16T00:00:00.000Z",
+  });
   mockedCreate.mockResolvedValue({
     id: "task-1",
     attemptId: "attempt-result-1",
@@ -246,8 +248,10 @@ describe("结果页 AI 复盘（SAI-22）", () => {
     );
     expect(originalsBefore.length).toBeGreaterThan(0);
     expect(correctionsBefore.length).toBeGreaterThan(0);
-    const firstOriginal = originalsBefore[0];
-    const firstCorrection = correctionsBefore[0];
+    const [firstOriginal] = originalsBefore;
+    const [firstCorrection] = correctionsBefore;
+    if (firstOriginal === undefined || firstCorrection === undefined)
+      throw new Error("测试前置失败：原稿/订正桩未渲染");
     fireEvent.click(screen.getByRole("button", { name: "AI 复盘" }));
     await screen.findByRole("dialog");
     await waitFor(() =>
