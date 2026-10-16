@@ -411,14 +411,6 @@ export function AttemptQuestionCard({
           question={inlineQuestion}
           label={`第 ${index + 1} 题`}
           hidden={annotationHidden}
-          fallbackAnswer={
-            <QuestionSurface
-              question={question}
-              answer={answer}
-              onAnswer={onAnswer}
-              answerOnly
-            />
-          }
         >
           <QuestionSurface
             question={question}

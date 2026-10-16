@@ -115,6 +115,8 @@ test("原位标画：不复制题面、退出一击作答、切题唯一输入�
   expect(after?.x).toBeCloseTo(before?.x ?? 0, 0);
   expect(after?.y).toBeCloseTo(before?.y ?? 0, 0);
   const canvas = first.locator('canvas[data-slot="annotation-canvas"]');
+  // 尺寸变化后等待几何与字体核对完成，再模拟落笔。
+  await expect(canvas).toHaveAttribute("data-input-enabled", "true");
   await drawStrokeWithPointerEvents(canvas);
   await expect
     .poll(() =>
@@ -305,6 +307,9 @@ test("原位标画：不复制题面、退出一击作答、切题唯一输入�
     await expect(
       other.getByRole("toolbar", { name: "第 1 题标画工具栏" }),
     ).toBeVisible();
+    await expect(
+      restored.locator('canvas[data-slot="annotation-canvas"]'),
+    ).toHaveAttribute("data-input-enabled", "true");
     await drawStrokeWithPointerEvents(
       restored.locator('canvas[data-slot="annotation-canvas"]'),
     );

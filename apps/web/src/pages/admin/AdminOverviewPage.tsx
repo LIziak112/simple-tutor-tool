@@ -28,9 +28,9 @@ export function AdminOverviewPage() {
       <section
         role="status"
         aria-label="正在加载概览"
-        className="mx-auto flex w-full max-w-4xl flex-col gap-4 px-4 py-6 md:px-6 md:py-8"
+        className="teacher-page flex flex-col gap-6"
       >
-        <h1 className="text-xl font-semibold">概览</h1>
+        <h1 className="teacher-page-title">概览</h1>
         <div className="h-40 animate-pulse rounded-xl border border-border bg-muted/50" />
         <p className="text-sm text-muted-foreground">正在加载概览…</p>
       </section>
@@ -38,7 +38,7 @@ export function AdminOverviewPage() {
   }
   if (overviewQuery.isError) {
     return (
-      <section className="mx-auto w-full max-w-4xl px-4 py-6 md:px-6 md:py-8">
+      <section className="teacher-page">
         <div
           role="alert"
           className="flex flex-col items-start gap-3 rounded-xl border border-border bg-card p-5"
@@ -93,9 +93,9 @@ export function AdminOverviewPage() {
   ] as const;
 
   return (
-    <section className="mx-auto flex w-full max-w-4xl flex-col gap-4 px-4 py-6 md:px-6 md:py-8">
+    <section className="teacher-page flex flex-col gap-6">
       <header>
-        <h1 className="text-xl font-semibold">概览</h1>
+        <h1 className="teacher-page-title">概览</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           系统规模一览（{formatCnTime(new Date().toISOString())}，北京时间）。
           管理端只管账号与注册开关，不涉及任何老师的题库、课程与学生数据。

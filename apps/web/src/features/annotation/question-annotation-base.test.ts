@@ -210,7 +210,7 @@ it("失败的本机记录不能被缓存快路径冒称ready", async () => {
     prepareQuestionAnnotationBase(session, scope, question, surface),
   ).rejects.toThrow("本机存储不可用");
 });
-it("旧版底图不重新生成，拒绝访问不离线兜底", async () => {
+it("旧版底图拒绝继续编辑，拒绝访问不离线兜底", async () => {
   const base = {
     baseId: "22222222-2222-4222-8222-222222222222",
     state: "ready" as const,
@@ -224,10 +224,9 @@ it("旧版底图不重新生成，拒绝访问不离线兜底", async () => {
     doc: null,
     annotation: null,
   });
-  expect(
-    (await prepareQuestionAnnotationBase(session, scope, question, surface))
-      .kind,
-  ).toBe("legacy");
+  await expect(
+    prepareQuestionAnnotationBase(session, scope, question, surface),
+  ).rejects.toThrow("旧标画布局不再支持");
   expect(renderQuestionBaseImage).not.toHaveBeenCalled();
   vi.mocked(fetchAnnotationViewApi).mockRejectedValue(
     new ApiError("FORBIDDEN", "无权访问", 403),

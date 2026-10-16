@@ -125,6 +125,12 @@ export const LINT_RULES: readonly LintRuleDoc[] = [
       "讲练页切段遇到没有 id 的题目容器（splitLessonBlocks 服务端安全投影的兜底提示，不出现在文档 lint）：正常导入的讲练页题目 id 已注入开围栏，出现本提示多为存储正文被手工改动，已按「单元-序号」兜底对位",
   },
   {
+    code: "LESSON_LECTURE_TITLE_MISMATCH",
+    level: "warning",
+    description:
+      "讲练页（kind: lesson）的 frontmatter lecture 与本篇任何讲练页标题都不一致：讲练单元不关联其他讲义（那是 practice/mixed 的配套讲义语义），已按题目位置改关联本篇；请让 lecture 与讲练页大标题一致",
+  },
+  {
     code: "UNIT_FROM_FALLBACK",
     level: "warning",
     description:

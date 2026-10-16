@@ -145,6 +145,8 @@ export interface AnnotationDeniedInfo {
 
 /** 一份标注的本地记录（IDB 值形态） */
 export interface AnnotationLocalRecord {
+  /** 维护重置代次；缺省 0。 */
+  resetVersion?: number;
   /** PNG与布局同正文原子落盘；base为空时不伪造服务器身份。 */
   localBase: {
     png: Blob;
@@ -213,6 +215,7 @@ function reviveRecord(raw: unknown): AnnotationLocalRecord | null {
   return {
     ...freshRecord(),
     localBase: r.localBase ?? null,
+    resetVersion: typeof r.resetVersion === "number" ? r.resetVersion : 0,
     doc,
     pending:
       r.pending && typeof r.pending.mutationId === "string" && r.pending.doc
@@ -416,6 +419,7 @@ export function deriveAnnotationServerState(
 
 /** 钩子消费的只读视图（快照缓存口径同 note-store） */
 export interface AnnotationRecordView {
+  resetVersion?: number;
   localBase: AnnotationLocalRecord["localBase"];
   doc: AnnotationDoc | null;
   local: "saving" | "saved" | "failed";
@@ -484,6 +488,7 @@ export function getAnnotationView(
   }
   const uploading = uploadingKeys.has(key);
   const view: AnnotationRecordView = {
+    resetVersion: record.resetVersion ?? 0,
     doc: record.doc,
     local: record.local,
     localError: record.localError,
@@ -661,7 +666,42 @@ export async function applyAnnotationView(
   view: AnnotationViewData,
   choice?: { expectedMutationId: string | null },
 ): Promise<void> {
+  const incomingVersion = view.resetVersion ?? 0;
+  const existing = await getAnnotationRecord(session, scope, {
+    strictRead: true,
+  });
+  if (incomingVersion < (existing?.resetVersion ?? 0))
+    throw new Error("收到重置前的旧标画视图，请重新读取");
+  let archivedVersion: number | null = null;
+  if (incomingVersion > (existing?.resetVersion ?? 0) && existing) {
+    archivedVersion = existing.docVersion;
+    await backend().set(
+      JSON.stringify([
+        "annotation-reset-archive",
+        session.origin,
+        session.studentId,
+        scope.attemptId,
+        scope.questionId,
+        scope.phase,
+        incomingVersion,
+        archivedVersion,
+      ]),
+      persistedCopy(existing),
+    );
+  }
   await mutateLoaded(session, scope, freshRecord, (record) => {
+    if (incomingVersion < (record.resetVersion ?? 0))
+      throw new Error("收到重置前的旧标画视图");
+    if (incomingVersion > (record.resetVersion ?? 0)) {
+      if (archivedVersion !== null && record.docVersion !== archivedVersion)
+        throw new Error("归档期间标画已修改，请重新恢复");
+      const nextVersion = record.docVersion + 1;
+      Object.assign(record, freshRecord(), {
+        resetVersion: incomingVersion,
+        docVersion: nextVersion,
+      });
+    }
+
     const meta = view.annotation;
     if (!choice && (meta?.revision ?? 0) < record.baseRevision) {
       record.conflict = {
@@ -726,8 +766,14 @@ export async function applyAnnotationReceipt(
   scope: AnnotationScope,
   mutationId: string,
   receipt: AnnotationReceipt,
+  resetVersion?: number,
 ): Promise<void> {
   await mutateLoaded(session, scope, null, (record) => {
+    if (
+      resetVersion !== undefined &&
+      resetVersion !== (record.resetVersion ?? 0)
+    )
+      return;
     if (
       record.annotationId !== null &&
       record.annotationId !== receipt.annotationId

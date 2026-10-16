@@ -1,9 +1,6 @@
 import type { AttemptQuestionPublic } from "@tutor/contract";
 import { fetchAnnotationViewApi } from "@/lib/api";
-import {
-  exportAnnotationComposite,
-  exportAnnotationCompositeSource,
-} from "./annotation-composite";
+import { exportAnnotationCompositeSource } from "./annotation-composite";
 import {
   type AnnotationScope,
   type AnnotationSessionRef,
@@ -53,26 +50,6 @@ export async function exportQuestionAnnotationImage(
     throw new Error("标画已随交卷固定，请到结果页导出");
   const record = await getAnnotationRecord(session, scope);
   guard();
-  if (prepared.kind === "legacy") {
-    const view = await fetchAnnotationViewApi(
-      scope.attemptId,
-      scope.questionId,
-      scope.phase,
-    );
-    guard();
-    const base = view.base ?? prepared.base;
-    const doc = record?.doc ??
-      view.doc ?? {
-        version: 1 as const,
-        baseWidth: base.pixelWidth ?? 0,
-        baseHeight: base.pixelHeight ?? 0,
-        strokes: [],
-      };
-    const result = await exportAnnotationComposite(base, doc);
-    guard();
-    if (!result.ok) throw new Error(result.error.message);
-    return result.blob;
-  }
   if (!record?.localBase || record.local !== "saved")
     throw new Error("本机标画未保存，请重试保存后导出");
   const { png, layout } = record.localBase;

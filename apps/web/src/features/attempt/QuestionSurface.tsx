@@ -6,7 +6,6 @@ import { useId } from "react";
 import { BlankAnswersProvider } from "@/features/markdown/BlankAnswersContext";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { letterOf, withBlankValue } from "./answer-format";
-import { getQuestionCompletion } from "./question-completion";
 
 /** 判断题题干尾部的空标记（studentStemMd 投影把 [[正确]] 脱敏成 [[]]） */
 function judgeStemOf(stemMd: string): string {
@@ -177,14 +176,11 @@ export function QuestionSurface({
   answer: suppliedAnswer,
   onAnswer: suppliedOnAnswer,
   mode = "answer",
-  answerOnly = false,
 }: {
   question: QuestionPublic;
   answer?: StudentAnswer | undefined;
   onAnswer?: ((answer: StudentAnswer, defer?: boolean) => void) | undefined;
   mode?: "answer" | "export";
-  /** 历史题面已在固定画面展示时，只提供可填写的答案控件。 */
-  answerOnly?: boolean;
 }) {
   const answer = mode === "export" ? undefined : suppliedAnswer;
   const onAnswer = (next: StudentAnswer, defer?: boolean) => {
@@ -193,48 +189,12 @@ export function QuestionSurface({
   const plainAnswer = (next: StudentAnswer) => onAnswer(next);
   return (
     <div
-      data-slot={answerOnly ? "question-answer-controls" : "question-surface"}
+      data-slot="question-surface"
       inert={mode === "export"}
       className="mx-auto flex w-full min-w-0 max-w-[720px] flex-col gap-4 text-base leading-[1.75]"
     >
       {/* 题干：判断题剥掉尾部空标记；填空题空位内联输入 */}
-      {answerOnly ? (
-        question.type === "fill" && (
-          <div className="flex flex-wrap gap-3">
-            {Array.from(
-              { length: getQuestionCompletion(question, answer).expectedSlots },
-              (_, index) => (
-                // biome-ignore lint/suspicious/noArrayIndexKey: 空位编号固定且不重排
-                <label key={index} className="flex items-center gap-2 text-sm">
-                  第 {index + 1} 空
-                  <input
-                    aria-label={`第 ${index + 1} 空`}
-                    className="min-h-11 w-32 rounded-md border border-input bg-background px-3 text-base"
-                    value={
-                      answer?.kind === "fill"
-                        ? (answer.values[index] ?? "")
-                        : ""
-                    }
-                    onChange={(event) =>
-                      onAnswer(
-                        {
-                          kind: "fill",
-                          values: withBlankValue(
-                            answer?.kind === "fill" ? answer.values : [],
-                            index,
-                            event.target.value,
-                          ),
-                        },
-                        true,
-                      )
-                    }
-                  />
-                </label>
-              ),
-            )}
-          </div>
-        )
-      ) : question.type === "judge" ? (
+      {question.type === "judge" ? (
         <RichMarkdown
           source={judgeStemOf(question.stemMd)}
           className="text-base leading-[1.75]"

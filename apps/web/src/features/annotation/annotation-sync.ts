@@ -205,6 +205,8 @@ function classifyPutError(err: unknown): PutVerdict {
     }
     return { kind: "retry" };
   }
+  if (status === 409 && code === "ANNOTATION_RESET_REQUIRED")
+    return { kind: "refetch-view", reason: "标画已重置，请重新读取" };
   if (status === 409 && code === "ANNOTATION_BASE_LAYOUT_CONFLICT") {
     return { kind: "conflict", current: null, reason: message };
   }
@@ -255,7 +257,11 @@ async function runUpload(
   scope: AnnotationScope,
   epoch: number,
 ): Promise<void> {
-  const stale = () => epoch !== sessionEpoch || !sameSessionSafe(session);
+  const resetVersion = peekAnnotationRecord(session, scope)?.resetVersion ?? 0;
+  const stale = () =>
+    epoch !== sessionEpoch ||
+    !sameSessionSafe(session) ||
+    (peekAnnotationRecord(session, scope)?.resetVersion ?? 0) !== resetVersion;
   if (stale()) return;
   if (!uploadable(peekAnnotationRecord(session, scope))) return;
   const controller = new AbortController();
@@ -282,6 +288,7 @@ async function runUpload(
           scope.phase,
           local.layout,
           put.signal,
+          ...(record.resetVersion ? ([record.resetVersion] as const) : []),
         );
         if (stale()) return;
         if (
@@ -302,6 +309,9 @@ async function runUpload(
               questionRevisionId: local.layout.questionRevisionId,
               baseRenderVersion: local.layout.renderVersion,
               phase: scope.phase,
+              ...(record.resetVersion
+                ? { resetVersion: record.resetVersion }
+                : {}),
             },
             put.signal,
           );
@@ -364,6 +374,7 @@ async function runUpload(
         {
           baseRevision,
           mutationId,
+          ...(record.resetVersion ? { resetVersion: record.resetVersion } : {}),
           ...(scope.phase !== "scratch" ? { phase: scope.phase } : {}),
         },
         put.signal,
@@ -418,7 +429,13 @@ async function runUpload(
       return;
     }
     if (stale()) return;
-    await applyAnnotationReceipt(session, scope, mutationId, receipt);
+    await applyAnnotationReceipt(
+      session,
+      scope,
+      mutationId,
+      receipt,
+      resetVersion,
+    );
   } finally {
     put.finish();
     controllers.delete(key);

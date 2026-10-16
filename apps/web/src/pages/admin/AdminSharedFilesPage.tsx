@@ -68,18 +68,18 @@ export function AdminSharedFilesPage() {
   }, [files, query]);
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-6">
+    <div className="teacher-page">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="flex items-center gap-2 text-xl font-semibold">
-            <FolderOpen aria-hidden className="size-5 text-primary" />
+          <h1 className="flex items-center gap-2 teacher-page-title">
+            <FolderOpen aria-hidden className="size-6 text-primary" />
             共享文件
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
             共享目录（DATA_DIR/shared/）内的全部文件；管理员可删除任意文件，含老师直接放进服务器的本地文件。
           </p>
         </div>
-        <div className="relative">
+        <div className="relative w-full sm:w-auto">
           <Search
             aria-hidden
             className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
@@ -90,7 +90,7 @@ export function AdminSharedFilesPage() {
             onChange={(e) => setQuery(e.target.value)}
             placeholder="搜索文件名 / 标题 / 发布者"
             aria-label="搜索共享文件"
-            className="min-h-11 w-64 pl-9"
+            className="min-h-11 w-full pl-9 sm:w-64"
           />
         </div>
       </header>

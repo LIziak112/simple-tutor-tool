@@ -7,6 +7,7 @@ import {
   annotationReceiptSchema,
   annotationSealDataSchema,
   annotationViewDataSchema,
+  apiResponseSchema,
   attemptDraftOkSchema,
 } from "@tutor/contract";
 import { stemMdLeaksAnswers } from "@tutor/md-dsl";
@@ -763,4 +764,73 @@ describe("教师查看标注", () => {
       ).status,
     ).toBe(401);
   });
+});
+
+it("重置代次只对本人可读，旧代次创建和 multipart 上传被拒绝", async () => {
+  const { resetDraftAttemptAnnotations } = await import(
+    "../services/annotation-reset"
+  );
+  const attemptId = await freshAttempt();
+  const { resetVersion } = resetDraftAttemptAnnotations(db, attemptId, {
+    expectedBases: 0,
+    expectedStrokes: 0,
+  });
+  const path = `/api/student/attempts/${attemptId}/questions/${Q}/annotation`;
+  const own = await app.request(path, { headers: { cookie: aCookie } });
+  expect(own.status).toBe(200);
+  const ownBody = apiResponseSchema.parse(await own.json());
+  assertNoLeak(ownBody);
+  if (!ownBody.ok) throw new Error("本人标画读取失败");
+  expect(annotationViewDataSchema.parse(ownBody.data).resetVersion).toBe(
+    resetVersion,
+  );
+  const foreign = await app.request(path, { headers: { cookie: bCookie } });
+  expect(foreign.status).toBe(403);
+  assertNoLeak(await foreign.json());
+  const stale = await app.request(`${path}/base`, {
+    method: "POST",
+    headers: { cookie: aCookie },
+  });
+  expect(stale.status).toBe(409);
+  const fresh = await app.request(`${path}/base`, {
+    method: "POST",
+    headers: { cookie: aCookie, "content-type": "application/json" },
+    body: JSON.stringify({ resetVersion }),
+  });
+  expect(fresh.status).toBe(200);
+  assertNoLeak(await fresh.json());
+  const form = new FormData();
+  form.set(
+    "body",
+    new Blob([
+      JSON.stringify({
+        version: 1,
+        baseWidth: 1440,
+        baseHeight: 900,
+        strokes: [],
+      }),
+    ]),
+    "body.json",
+  );
+  form.set("baseRevision", "0");
+  form.set("mutationId", crypto.randomUUID());
+  const oldBody = await app.request(path, {
+    method: "PUT",
+    headers: { cookie: aCookie },
+    body: form,
+  });
+  expect(oldBody.status).toBe(409);
+  const oldResult = apiResponseSchema.parse(await oldBody.json());
+  if (oldResult.ok) throw new Error("旧代次不应写入成功");
+  expect(oldResult.error).toBe("ANNOTATION_RESET_REQUIRED");
+  form.set("resetVersion", "invalid");
+  expect(
+    (
+      await app.request(path, {
+        method: "PUT",
+        headers: { cookie: aCookie },
+        body: form,
+      })
+    ).status,
+  ).toBe(400);
 });

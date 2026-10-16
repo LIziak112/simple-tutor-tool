@@ -209,7 +209,15 @@ export type AnnotationSurfaceLayout = z.infer<
   typeof annotationSurfaceLayoutSchema
 >;
 
+/** 运维重置的作答标画代次；缺省 0，其他作答与历史只读数据不受影响。 */
+export const annotationResetVersionSchema = z
+  .number()
+  .int()
+  .nonnegative()
+  .max(Number.MAX_SAFE_INTEGER);
+
 export const annotationBaseCreateRequestSchema = z.strictObject({
+  resetVersion: annotationResetVersionSchema.optional(),
   layout: annotationSurfaceLayoutSchema.optional(),
 });
 export type AnnotationBaseCreateRequest = z.infer<
@@ -229,6 +237,7 @@ export type AnnotationBaseCreateRequest = z.infer<
  *   作答上（服务层门槛）。
  */
 export const annotationUploadMetaSchema = z.object({
+  resetVersion: annotationResetVersionSchema.optional(),
   baseRevision: z.number().int().min(0).max(1_000_000),
   mutationId: z.uuid(),
   phase: annotationPhaseSchema.default("scratch"),
@@ -438,6 +447,7 @@ export const annotationMetaSchema = z.object({
  */
 export const annotationViewDataSchema = z
   .object({
+    resetVersion: annotationResetVersionSchema.optional(),
     base: annotationBaseRefSchema.nullable(),
     maxWidthPx: z.number().int().min(1).max(ANNOTATION_MAX_PIXEL_DIM),
     /** 当前标注正文（服务端解压后的 AnnotationDoc）；无标注为 null */
@@ -502,6 +512,7 @@ export const annotationSealDataSchema = z.object({
  *   ALREADY_SUBMITTED 覆盖「交卷后写 scratch 标注」。
  */
 export const annotationErrorCodeSchema = z.enum([
+  "ANNOTATION_RESET_REQUIRED",
   "ANNOTATION_NOT_FOUND",
   "ANNOTATION_VALIDATION_FAILED",
   "ANNOTATION_LIMIT_EXCEEDED",
@@ -528,6 +539,7 @@ export const annotationErrorCodeSchema = z.enum([
  * 一致（服务端与底图行比对，防陈旧标签页）；phase 缺省 scratch。
  */
 export const annotationBaseImageMetaSchema = z.object({
+  resetVersion: annotationResetVersionSchema.optional(),
   questionRevisionId: questionRevisionIdSchema,
   baseRenderVersion: z.number().int().min(1),
   phase: annotationPhaseSchema,
@@ -543,6 +555,7 @@ export type AnnotationBaseImageMeta = z.infer<
  * 客户端共用这一张表。body 为文件字段，其余三项为字符串字段。
  */
 export const ANNOTATION_FORM_FIELDS = {
+  resetVersion: "resetVersion",
   body: "body",
   baseRevision: "baseRevision",
   mutationId: "mutationId",
@@ -555,6 +568,7 @@ export const ANNOTATION_FORM_FIELDS = {
  * （服务端与底图行比对，防陈旧标签页）；phase 缺省 scratch。
  */
 export const ANNOTATION_BASE_IMAGE_FORM_FIELDS = {
+  resetVersion: "resetVersion",
   image: "image",
   questionRevisionId: "questionRevisionId",
   baseRenderVersion: "baseRenderVersion",
