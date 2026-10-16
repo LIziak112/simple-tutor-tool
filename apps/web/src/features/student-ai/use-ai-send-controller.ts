@@ -523,6 +523,17 @@ export function useAiSendController(config: UseAiSendControllerConfig) {
           return;
         }
         if (!alive()) return;
+        // 任务已落库即失效状态/历史/队列摘要（B14 遗留角标）：后续材料上传
+        // 或票据生成失败的 early-return 不得跳过——角标须即时反映已建任务
+        void queryClient.invalidateQueries({
+          queryKey: ["student", "ai-status", attemptId],
+        });
+        void queryClient.invalidateQueries({
+          queryKey: ["student", "ai-tasks", attemptId],
+        });
+        void queryClient.invalidateQueries({
+          queryKey: studentAiQueueSummaryKey,
+        });
 
         // 材料登记（回执不虚报；失败时任务已建——重试同幂等键回到上传）
         if (snapshot !== null && snapshot.pages.length > 0) {
@@ -598,16 +609,6 @@ export function useAiSendController(config: UseAiSendControllerConfig) {
             questionId,
           });
         }
-        void queryClient.invalidateQueries({
-          queryKey: ["student", "ai-status", attemptId],
-        });
-        void queryClient.invalidateQueries({
-          queryKey: ["student", "ai-tasks", attemptId],
-        });
-        // B14 遗留：任务进入队列后摘要角标即时失效重取（页内/MCP/link 同口径）
-        void queryClient.invalidateQueries({
-          queryKey: studentAiQueueSummaryKey,
-        });
       } finally {
         sendingRef.current = false;
       }

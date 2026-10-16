@@ -13,6 +13,7 @@ import type {
 import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  createStudentAiShareTicketApi,
   createStudentAiTaskApi,
   fetchStudentAiStatusApi,
   fetchStudentQuickButtonsApi,
@@ -45,6 +46,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
     ...actual,
     fetchStudentAiStatusApi: vi.fn(),
     createStudentAiTaskApi: vi.fn(),
+    createStudentAiShareTicketApi: vi.fn(),
     listStudentAiTasksApi: vi.fn(),
     uploadStudentAiTaskMaterialsApi: vi.fn(),
     fetchStudentQuickButtonsApi: vi.fn(),
@@ -60,6 +62,7 @@ vi.mock("@/features/export/ai-material-capture", async (importOriginal) => {
 
 const mockedStatus = vi.mocked(fetchStudentAiStatusApi);
 const mockedCreate = vi.mocked(createStudentAiTaskApi);
+const mockedShareTicket = vi.mocked(createStudentAiShareTicketApi);
 const mockedList = vi.mocked(listStudentAiTasksApi);
 const mockedQuickButtons = vi.mocked(fetchStudentQuickButtonsApi);
 
@@ -264,5 +267,50 @@ describe("AiCompanionSession 接线组件（SAI-20）", () => {
     expect(vi.mocked(mockedCreate).mock.calls[0]?.[0].question).toBe(
       "帮我讲解思路",
     );
+  });
+
+  it("link 成功后主按钮「复制 AI 链接」再点击是真复制：不空正文报错、不新建任务", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+    mockedShareTicket.mockResolvedValue({
+      ticketUrl: "https://tutor.example.com/api/public/ai/share/Tk123",
+      snapshotAt: "2026-10-16T00:00:00.000Z",
+      expiresAt: "2026-10-17T00:00:00.000Z",
+    });
+    render(<SessionHarness />);
+    await openBound();
+    await act(async () => {
+      captured.send?.setChannelOverride("link");
+    });
+    await act(async () => {
+      fireEvent.change(screen.getByLabelText("补充问题"), {
+        target: { value: "链接求助这题" },
+      });
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "复制 AI 链接" }));
+    });
+    await waitFor(() =>
+      expect(screen.getByText(/已生成 AI 链接并复制/)).toBeInTheDocument(),
+    );
+    // 正文已清空：再点「复制 AI 链接」应当是重试复制，而不是空正文拦截
+    // 把成功提示覆盖成失败告警
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "复制 AI 链接" }));
+    });
+    expect(screen.queryByText("先写一下你的问题，再点发送")).toBeNull();
+    expect(mockedCreate).toHaveBeenCalledTimes(1);
+    expect(mockedShareTicket).toHaveBeenCalledTimes(1);
+    expect(writeText).toHaveBeenCalledTimes(2);
+    expect(writeText).toHaveBeenLastCalledWith(
+      "https://tutor.example.com/api/public/ai/share/Tk123",
+    );
+    Object.defineProperty(navigator, "clipboard", {
+      value: undefined,
+      configurable: true,
+    });
   });
 });

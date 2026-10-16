@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import type { AiLinkShareState } from "./use-ai-send-controller";
 
@@ -83,9 +83,20 @@ export function AiLinkShareBox({
   onRetryCopy: () => void;
 }) {
   const [degrade, setDegrade] = useState<DegradeState>(DEGRADE_IDLE);
+  // 降级在途守卫（ref 而非 state）：同一渲染帧内连击闭包读到的 state 相同，
+  // 只有 ref 同步可见——双击不产生第二次请求（不双记留痕/双写剪贴板）
+  const degradeLoadingRef = useRef(false);
+
+  // 链接 URL 变化（重新生成）即复位降级区：旧票据解析出的文字与材料清单
+  // 不得残留展示在新链接下方（旧票据内容与新快照不对应）
+  useEffect(() => {
+    degradeLoadingRef.current = false;
+    setDegrade(DEGRADE_IDLE);
+  }, [link.url]);
 
   const loadDegrade = async (): Promise<void> => {
-    if (degrade.phase === "loading") return;
+    if (degradeLoadingRef.current) return;
+    degradeLoadingRef.current = true;
     setDegrade({
       ...DEGRADE_IDLE,
       phase: "loading",
@@ -95,6 +106,7 @@ export function AiLinkShareBox({
     try {
       response = await fetch(link.url);
     } catch {
+      degradeLoadingRef.current = false;
       setDegrade({
         ...DEGRADE_IDLE,
         phase: "error",
@@ -103,12 +115,17 @@ export function AiLinkShareBox({
       });
       return;
     }
+    degradeLoadingRef.current = false;
     if (!response.ok) {
-      // 403/404：票据失效或当前模式禁用——服务端逐次实时核对后的拒绝
+      // 403/404：票据失效或当前模式禁用——服务端逐次实时核对后的拒绝；
+      // 其余状态码（500 等）是服务端瞬时故障，不归因失效也不误导重新生成
       setDegrade({
         ...DEGRADE_IDLE,
         phase: "error",
-        message: "链接已失效或当前无权限，复制与下载被拒绝；可重新生成链接",
+        message:
+          response.status === 403 || response.status === 404
+            ? "链接已失效或当前无权限，复制与下载被拒绝；可重新生成链接"
+            : "分享内容读取失败（服务暂时不可用），请稍后重试；链接本身仍可发给外部 AI",
       });
       return;
     }

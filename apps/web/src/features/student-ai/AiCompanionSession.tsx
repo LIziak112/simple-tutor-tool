@@ -265,7 +265,21 @@ export function AiCompanionComposer({
         type="button"
         className="min-h-11 w-full"
         disabled={!bound || sending || send.needsSetup}
-        onClick={() => void send.send()}
+        onClick={() => {
+          // link 通道且当前题已有链接、正文为空：主按钮「复制 AI 链接」做它
+          // 说的事（重试复制），不落进空正文拦截把成功提示覆盖成失败告警；
+          // 写了新正文则照常新发送（新任务新快照）
+          if (
+            send.effectiveChannel === "link" &&
+            boundQuestionId !== null &&
+            send.linkShare?.questionId === boundQuestionId &&
+            draft.text.trim() === ""
+          ) {
+            void send.retryCopyLink();
+            return;
+          }
+          void send.send();
+        }}
       >
         {sending ? "发送中…" : mainActionLabel(send.effectiveChannel)}
       </Button>

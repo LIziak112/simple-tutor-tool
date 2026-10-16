@@ -63,11 +63,11 @@ const SHARE_HTML_RESPONSE_HEADERS: Readonly<Record<string, string>> = {
   "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'",
 };
 
-/** 教学模式中文标签（与前端 ai-policy-text.ts 同文案；服务端渲染单源） */
+/** 教学模式中文标签（需求规格 §2.3 标准名，与前端 ai-policy-text.ts 同文案） */
 const AI_TEACHING_MODE_LABELS: Readonly<Record<AiTeachingMode, string>> = {
   open_study: "开放伴学",
   guided_only: "仅启发",
-  post_submit_only: "完成后复盘",
+  post_submit_only: "完成后可用",
 };
 
 /** 附件页号形态：仅十进制数字 + .png（穿越/大写/错后缀/负数一律不匹配） */

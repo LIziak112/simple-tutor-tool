@@ -735,6 +735,12 @@ describe("useAiSendController（SAI-30 链接通道闭环）", () => {
     mockedShareTicket.mockRejectedValueOnce(new Error("server 500"));
     const view = renderController();
     await openOnA(view);
+    // 预挂队列摘要：任务已落库，即使票据生成失败角标/历史也必须即时失效
+    view.client.setQueryData(studentAiQueueSummaryKey, {
+      pendingCount: 0,
+      processingCount: 0,
+      unreadReplyCount: 0,
+    });
     await act(async () => {
       view.result.current.setChannelOverride("link");
     });
@@ -747,6 +753,10 @@ describe("useAiSendController（SAI-30 链接通道闭环）", () => {
     // 任务已建（重试同幂等键不重复建）；材料已传不丢
     expect(mockedCreate).toHaveBeenCalledTimes(1);
     expect(mockedUpload).toHaveBeenCalledTimes(1);
+    // 任务创建成功即失效队列摘要/任务历史——失败 early-return 不得跳过
+    expect(
+      view.client.getQueryState(studentAiQueueSummaryKey)?.isInvalidated,
+    ).toBe(true);
   });
 
   it("仅完成后未完成：link 入口同拒（零任务零票据零复制）", async () => {

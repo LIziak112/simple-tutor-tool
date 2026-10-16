@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { AiLinkShareBox } from "./AiLinkShareBox";
 import type { AiLinkShareState } from "./use-ai-send-controller";
@@ -170,5 +170,84 @@ describe("AiLinkShareBox（SAI-30 链接查看/复制/降级）", () => {
       expect(screen.getByText(/读取分享内容失败/)).toBeTruthy(),
     );
     vi.unstubAllGlobals();
+  });
+
+  it("降级服务端故障（500）：与票据失效区分（提示稍后重试，不误导重新生成）", async () => {
+    const fetchSpy = vi
+      .fn()
+      .mockResolvedValue(htmlResponse("内部错误", 500));
+    vi.stubGlobal("fetch", fetchSpy);
+    renderBox();
+    fireEvent.click(
+      screen.getByRole("button", { name: "外部读不了？复制本题文字" }),
+    );
+    await waitFor(() =>
+      expect(screen.getByText(/分享内容读取失败/)).toBeTruthy(),
+    );
+    // 不得归因为「链接已失效或当前无权限」——500 重生成链接解决不了
+    expect(screen.queryByText(/链接已失效/)).toBeNull();
+    vi.unstubAllGlobals();
+  });
+
+  it("链接 URL 变化（重新生成）：降级解析的旧内容清空，不残留旧票据材料", async () => {
+    const fetchSpy = vi.fn().mockResolvedValue(htmlResponse(SHARE_HTML));
+    vi.stubGlobal("fetch", fetchSpy);
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    stubClipboard(writeText);
+    const { rerender } = renderBox();
+    fireEvent.click(
+      screen.getByRole("button", { name: "外部读不了？复制本题文字" }),
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("link", { name: /题面圈画第 1 页/ })).toBeTruthy(),
+    );
+    // 重新生成链接：同组件换 URL——旧票据的解析文字/材料清单必须复位
+    rerender(
+      <AiLinkShareBox
+        questionLabel="第 3 题"
+        link={{
+          ...LINK,
+          url: "https://tutor.example.com/api/public/ai/share/NewToken999",
+        }}
+        sending={false}
+        onRegenerate={vi.fn()}
+        onRevoke={vi.fn()}
+        onRetryCopy={vi.fn().mockResolvedValue(undefined)}
+      />,
+    );
+    expect(screen.queryByRole("link", { name: /题面圈画第 1 页/ })).toBeNull();
+    expect(screen.queryByRole("status")).toBeNull();
+    vi.unstubAllGlobals();
+    stubClipboard(undefined);
+  });
+
+  it("降级按钮连击只发一次请求（ref 守卫，不留痕翻倍/双写剪贴板）", async () => {
+    let resolveFetch: ((value: Response) => void) | undefined;
+    const fetchSpy = vi.fn(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolveFetch = resolve;
+        }),
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    stubClipboard(writeText);
+    renderBox();
+    const button = screen.getByRole("button", {
+      name: "外部读不了？复制本题文字",
+    });
+    // 同一渲染帧内双击：closure 里的 phase 还是 idle，只有 ref 能挡住第二次
+    fireEvent.click(button);
+    fireEvent.click(button);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      resolveFetch?.(htmlResponse(SHARE_HTML));
+    });
+    await waitFor(() =>
+      expect(screen.getByText(/已复制本题文字/)).toBeTruthy(),
+    );
+    expect(writeText).toHaveBeenCalledTimes(1);
+    vi.unstubAllGlobals();
+    stubClipboard(undefined);
   });
 });
