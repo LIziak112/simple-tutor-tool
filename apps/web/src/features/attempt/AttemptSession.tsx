@@ -51,6 +51,7 @@ import {
   type SubmitEvidencePrep,
 } from "@/features/notes/submit-evidence";
 import { useAiCompanionDock } from "@/features/student-ai/AiCompanionDock";
+import { AiQueueButton } from "@/features/student-ai/AiQueueButton";
 import { sealAttemptAnnotationsApi } from "@/lib/api";
 import { formatDueTime } from "@/lib/time";
 import { useOnlineStatus } from "@/lib/use-online-status";
@@ -549,7 +550,12 @@ function AnswerView({
         {/* 练习头：来源 + 标题 + 截止 + 草稿保存状态（T2.9 三态 + T2A.6 终态） */}
         <AttemptHeader
           title={data.title}
-          actions={aiCompanion.trigger}
+          actions={
+            <>
+              {aiCompanion.trigger}
+              <AiQueueButton />
+            </>
+          }
           status={(closeDetails) => (
             <div className="flex min-w-0 items-center gap-2">
               <p

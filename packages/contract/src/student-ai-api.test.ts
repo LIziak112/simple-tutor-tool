@@ -14,8 +14,8 @@ import {
   aiStatusQuerySchema,
   aiTaskCreateRequestSchema,
   aiTaskFollowupRequestSchema,
-  aiTaskListQuerySchema,
   aiTaskListDataSchema,
+  aiTaskListQuerySchema,
   aiTaskShareRequestSchema,
   aiTaskUpdatePendingRequestSchema,
 } from "./student-ai-api";
@@ -204,7 +204,9 @@ it("SAI-23 全局队列：archived 过滤白名单与 origins 摘要挂载", () 
     },
   };
   expect(aiTaskListDataSchema.parse(page).origins).toBeDefined();
-  expect(aiTaskListDataSchema.parse({ tasks: [], nextCursor: null }).origins).toBeUndefined();
+  expect(
+    aiTaskListDataSchema.parse({ tasks: [], nextCursor: null }).origins,
+  ).toBeUndefined();
   // 摘要形状不对整体拒绝（strict 传递）
   expect(
     aiTaskListDataSchema.safeParse({

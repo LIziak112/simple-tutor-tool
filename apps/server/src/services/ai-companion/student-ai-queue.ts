@@ -1021,7 +1021,9 @@ function questionNoByQuestionOf(
     }
   }
   const rankOf = (unitId: string | null): number =>
-    unitId === null ? Number.MAX_SAFE_INTEGER : (unitRank.get(unitId) ?? Number.MAX_SAFE_INTEGER);
+    unitId === null
+      ? Number.MAX_SAFE_INTEGER
+      : (unitRank.get(unitId) ?? Number.MAX_SAFE_INTEGER);
   // sort 稳定：组内保持 rowid 序（查询已按 rowid 排序）
   const sorted = [...rows].sort((a, b) => rankOf(a.unitId) - rankOf(b.unitId));
   const numbers = new Map<string, number>();
@@ -1048,7 +1050,10 @@ function aiTaskOriginSummariesOf(
       .all()
       .map((row) => [row.id, row] as const),
   );
-  const rowsByAttempt = new Map<string, { questionId: string; unitId: string | null }[]>();
+  const rowsByAttempt = new Map<
+    string,
+    { questionId: string; unitId: string | null }[]
+  >();
   for (const row of db
     .select({
       attemptId: responses.attemptId,
@@ -1064,10 +1069,9 @@ function aiTaskOriginSummariesOf(
     else list.push(row);
   }
   const questionNoByAttempt = new Map(
-    [...rowsByAttempt].map(([attemptId, rows]) => [
-      attemptId,
-      questionNoByQuestionOf(rows),
-    ] as const),
+    [...rowsByAttempt].map(
+      ([attemptId, rows]) => [attemptId, questionNoByQuestionOf(rows)] as const,
+    ),
   );
   const ids = <T extends string>(values: readonly (T | null)[]): T[] =>
     values.filter((value): value is T => value !== null);
@@ -1113,22 +1117,23 @@ function aiTaskOriginSummariesOf(
     // 三个标题 Map 的键均为卷 id（值即标题字符串），wrong 无卷标题恒 null
     const title =
       attempt.sourceType === "assignment"
-        ? (attempt.assignmentId !== null
-            ? (assignmentTitles.get(attempt.assignmentId) ?? null)
-            : null)
+        ? attempt.assignmentId !== null
+          ? (assignmentTitles.get(attempt.assignmentId) ?? null)
+          : null
         : attempt.sourceType === "course"
-          ? (attempt.courseId !== null
-              ? (courseTitles.get(attempt.courseId) ?? null)
-              : null)
+          ? attempt.courseId !== null
+            ? (courseTitles.get(attempt.courseId) ?? null)
+            : null
           : attempt.sourceType === "lesson"
-            ? (attempt.lectureId !== null
-                ? (lectureTitles.get(attempt.lectureId) ?? null)
-                : null)
+            ? attempt.lectureId !== null
+              ? (lectureTitles.get(attempt.lectureId) ?? null)
+              : null
             : null; // wrong 无卷标题
     origins[row.id] = {
       sourceType: attempt.sourceType,
       attemptNo: attempt.attemptNo,
-      questionNo: questionNoByAttempt.get(row.attemptId)?.get(row.questionId) ?? null,
+      questionNo:
+        questionNoByAttempt.get(row.attemptId)?.get(row.questionId) ?? null,
       title,
       assignmentId: attempt.assignmentId,
       courseId: attempt.courseId,

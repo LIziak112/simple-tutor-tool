@@ -2,7 +2,10 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 import { AttemptSession } from "@/features/attempt/AttemptSession";
 import { useAttemptDetail } from "@/features/attempt/attempt-queries";
 import { lessonHref } from "@/features/student/lesson-navigation";
-import { recordsReturnTarget } from "@/features/student/record-review-navigation";
+import {
+  aiQueueReturnTarget,
+  recordsReturnTarget,
+} from "@/features/student/record-review-navigation";
 import {
   StudentErrorPanel,
   StudentListSkeleton,
@@ -21,6 +24,9 @@ export default function StudentAttemptPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const recordsTarget = recordsReturnTarget(searchParams.get("returnTo"));
+  // SAI-23 队列跳转来源（aiFrom 白名单独立于回看 returnTo）：优先级在其后——
+  // 队列入口只在无回看上下文时改写返回目标
+  const queueTarget = aiQueueReturnTarget(searchParams.get("aiFrom"));
   const detailQuery = useAttemptDetail(attemptId || undefined);
 
   if (detailQuery.isPending) {
@@ -81,8 +87,10 @@ export default function StudentAttemptPage() {
   return (
     <AttemptSession
       data={data}
-      exitLabel={recordsTarget ? "返回我的记录" : undefined}
-      onExit={() => void navigate(recordsTarget ?? exitTarget)}
+      exitLabel={
+        recordsTarget ? "返回我的记录" : queueTarget ? "返回原页面" : undefined
+      }
+      onExit={() => void navigate(recordsTarget ?? queueTarget ?? exitTarget)}
     />
   );
 }

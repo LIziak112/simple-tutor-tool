@@ -38,7 +38,6 @@ import {
 } from "@/features/attempt/AttemptEditorContext";
 import { retryAttemptLocalPersistence } from "@/features/attempt/use-attempt-save-status";
 import { DraftSyncProvider } from "@/features/attempt/use-draft-sync";
-import { useAiCompanionDock } from "@/features/student-ai/AiCompanionDock";
 import {
   EnabledCapabilitiesProvider,
   toEnabledCapabilities,
@@ -65,6 +64,8 @@ import {
   StudentListSkeleton,
 } from "@/features/student/student-ui";
 import { useStudentWorkspace } from "@/features/student/student-workspace-layout";
+import { useAiCompanionDock } from "@/features/student-ai/AiCompanionDock";
+import { AiQueueButton } from "@/features/student-ai/AiQueueButton";
 import { useDesktopViewport } from "@/lib/use-desktop-viewport";
 
 /**
@@ -538,7 +539,9 @@ function LessonAnswerInner({
   );
   const indexById = useMemo(
     () =>
-      new Map(order.ordered.map((slot, i) => [slot.question.id, i + 1] as const)),
+      new Map(
+        order.ordered.map((slot, i) => [slot.question.id, i + 1] as const),
+      ),
     [order],
   );
   const aiCompanion = useAiCompanionDock({
@@ -602,7 +605,12 @@ function LessonAnswerInner({
               <span aria-live="polite">{session.saveStatus}</span>
             </>
           }
-          actions={aiCompanion.trigger}
+          actions={
+            <>
+              {aiCompanion.trigger}
+              <AiQueueButton />
+            </>
+          }
         />
 
         {/* 零题讲练页：纯阅读提示（开卷合法但不构成练习） */}

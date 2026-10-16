@@ -159,7 +159,9 @@ export interface LessonQuestionCardProps {
    * 题卡元素注册（SAI-22 讲练 AI 伴学）：作答态/结果态的卡片元素同步给
    * 页面（伴学材料采集 surfaceOf 与当前题定位）；不传时零行为。
    */
-  onCardElement?: ((questionId: string, el: HTMLElement | null) => void) | undefined;
+  onCardElement?:
+    | ((questionId: string, el: HTMLElement | null) => void)
+    | undefined;
 }
 
 /** 讲练页题卡本体 */

@@ -243,7 +243,9 @@ describe("SAI-23 全局队列与归档", () => {
     insertResponse(db, attemptId, "q1");
     const task = mkTask(db, { studentId, attemptId, questionId: "q1" });
     db.delete(responses)
-      .where(and(eq(responses.attemptId, attemptId), eq(responses.questionId, "q1")))
+      .where(
+        and(eq(responses.attemptId, attemptId), eq(responses.questionId, "q1")),
+      )
       .run();
     const page = listStudentAiTasks(db, { studentId, limit: 20 });
     expect(page.origins?.[task.id]?.questionNo).toBeNull();
@@ -303,13 +305,20 @@ describe("SAI-23 全局队列与归档", () => {
   it("归档过滤：exclude 隐藏已归档、only 只看已归档、缺省全部（单题历史不受影响）", () => {
     const db = createTestDb();
     const studentId = makeStudent(db);
-    const attemptId = insertSourcedAttempt(db, { studentId, sourceType: "wrong" });
+    const attemptId = insertSourcedAttempt(db, {
+      studentId,
+      sourceType: "wrong",
+    });
     insertResponse(db, attemptId, "q1");
     insertResponse(db, attemptId, "q2");
     const world = { studentId, attemptId, questionId: "q1" };
     const t1 = mkTask(db, world, { at: 1000 });
     // t2（q2）走到 replied 再归档
-    const t2 = mkTask(db, { ...world, questionId: "q2" }, { at: 2000, channel: "inapp" });
+    const t2 = mkTask(
+      db,
+      { ...world, questionId: "q2" },
+      { at: 2000, channel: "inapp" },
+    );
     const { generation } = beginInappDispatch(
       db,
       { studentId, taskId: t2.id },
@@ -409,7 +418,10 @@ describe("SAI-23 全局队列与归档", () => {
     const studentId = makeStudent(db);
     // draft 课程卷要走 requireVisibleCourseUnit 的成员/目录校验（本测试意图
     // 只是列往返，与课程可见性无关）——用无卷来源直接建任务
-    const attemptId = insertSourcedAttempt(db, { studentId, sourceType: "wrong" });
+    const attemptId = insertSourcedAttempt(db, {
+      studentId,
+      sourceType: "wrong",
+    });
     insertResponse(db, attemptId, "q1");
     const task = mkTask(db, { studentId, attemptId, questionId: "q1" });
     db.update(aiTasks)

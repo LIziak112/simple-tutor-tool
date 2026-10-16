@@ -1,5 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import type {
   AttemptQuestionPublic,
   AttemptResultQuestion,
@@ -113,14 +119,12 @@ function attemptOf(
   };
 }
 
-function lessonStart(
-  overrides?: {
-    attemptId?: string;
-    released?: Record<string, AttemptResultQuestion>;
-    status?: "draft" | "submitted" | "graded";
-    attemptNo?: number;
-  },
-): LessonStartData {
+function lessonStart(overrides?: {
+  attemptId?: string;
+  released?: Record<string, AttemptResultQuestion>;
+  status?: "draft" | "submitted" | "graded";
+  attemptNo?: number;
+}): LessonStartData {
   return {
     lecture: {
       id: LECTURE_ID,
@@ -152,9 +156,7 @@ function lessonStart(
   };
 }
 
-function releasedOf(
-  question: AttemptQuestionPublic,
-): AttemptResultQuestion {
+function releasedOf(question: AttemptQuestionPublic): AttemptResultQuestion {
   return {
     questionId: question.id,
     snapshot: {
@@ -256,6 +258,7 @@ beforeEach(async () => {
     materials: [],
     createdAt: "2026-10-16T00:00:00.000Z",
     updatedAt: "2026-10-16T00:00:00.000Z",
+    archivedAt: null,
   });
   vi.stubGlobal(
     "matchMedia",
@@ -280,15 +283,15 @@ describe("讲练页 AI 伴学（SAI-22 四来源接入）", () => {
     await waitFor(() =>
       expect(mockedStatus).toHaveBeenCalledWith(ATTEMPT_ID, "lesson-q1"),
     );
-    expect(await screen.findByText("第 1 题", { selector: "p" })).toBeInTheDocument();
+    expect(
+      await screen.findByText("第 1 题", { selector: "p" }),
+    ).toBeInTheDocument();
     // 讲练题卡无圈画层：随信材料组只呈纸面勾选，无「圈画」选项
     const materialGroup = screen.getByRole("group", { name: "随信材料" });
     expect(
       materialGroup.querySelector('input[type="checkbox"]'),
     ).not.toBeNull();
-    expect(
-      within(materialGroup).queryByText("圈画"),
-    ).toBeNull();
+    expect(within(materialGroup).queryByText("圈画")).toBeNull();
   });
 
   it("作答交互跟随最近作答题：在第 2 题作答后打开绑定第 2 题", async () => {
@@ -319,7 +322,8 @@ describe("讲练页 AI 伴学（SAI-22 四来源接入）", () => {
     await screen.findByText("第 1 题");
     // 第 1 题显示答案（单题提交，当题释放；同页多张题卡取第一张的按钮）
     const [submitButton] = screen.getAllByRole("button", { name: "显示答案" });
-    if (submitButton === undefined) throw new Error("测试前置失败：无显示答案按钮");
+    if (submitButton === undefined)
+      throw new Error("测试前置失败：无显示答案按钮");
     fireEvent.click(submitButton);
     expect(await screen.findByText("答对")).toBeInTheDocument();
     // 打开伴学：绑定保持当题（第 1 题——提交动作不移动当前作答题）
@@ -360,9 +364,9 @@ describe("讲练页 AI 伴学（SAI-22 四来源接入）", () => {
     fireEvent.click(screen.getByRole("button", { name: "发送" }));
     // 状态区与发送失败提示共用单源文案（studentModeReasonText）——至少呈现
     await waitFor(() =>
-      expect(screen.getAllByText(/当前模式为完成后可用/).length).toBeGreaterThan(
-        0,
-      ),
+      expect(
+        screen.getAllByText(/当前模式为完成后可用/).length,
+      ).toBeGreaterThan(0),
     );
     expect(mockedCreate).not.toHaveBeenCalled();
   });
@@ -372,7 +376,9 @@ describe("讲练页 AI 伴学（SAI-22 四来源接入）", () => {
     // restart 失效缓存后的重取返回同一份新卷投影
     mockedStart
       .mockResolvedValueOnce(lessonStart({ status: "submitted", attemptNo: 1 }))
-      .mockResolvedValue(lessonStart({ attemptId: ATTEMPT_ID_2, attemptNo: 2 }));
+      .mockResolvedValue(
+        lessonStart({ attemptId: ATTEMPT_ID_2, attemptNo: 2 }),
+      );
     mockedRestart.mockResolvedValue(
       lessonStart({ attemptId: ATTEMPT_ID_2, attemptNo: 2 }),
     );

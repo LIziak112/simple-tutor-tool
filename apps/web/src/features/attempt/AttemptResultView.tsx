@@ -21,6 +21,8 @@ import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { CorrectionSection } from "@/features/notes/CorrectionSection";
 import { NoteOriginalView } from "@/features/notes/NoteOriginalView";
 import { QuestionHistoryLink } from "@/features/notes/QuestionHistoryLink";
+import { useAiCompanionDock } from "@/features/student-ai/AiCompanionDock";
+import { AiQueueButton } from "@/features/student-ai/AiQueueButton";
 import { studentInkPngUrl } from "@/lib/api";
 import { formatCnTime } from "@/lib/time";
 import {
@@ -36,7 +38,6 @@ import { ResultQuestionTools } from "./ResultQuestionTools";
 import { ResultWorkspace } from "./ResultWorkspace";
 import { reviewCounts, reviewQuestionState } from "./result-review-model";
 import { useResultReviewLocation } from "./use-result-review-location";
-import { useAiCompanionDock } from "@/features/student-ai/AiCompanionDock";
 
 /**
  * 交卷后的结果视图（T2.6）：顶部得分汇总（scoreAuto/对错待批数/提交时间）+
@@ -647,7 +648,12 @@ export function AttemptResultView({
               ? "返回讲练页"
               : "返回首页")
       }
-      actions={aiCompanion.trigger}
+      actions={
+        <>
+          {aiCompanion.trigger}
+          <AiQueueButton />
+        </>
+      }
       rootRef={rootRef}
       reviewLocation={reviewLocation}
     >

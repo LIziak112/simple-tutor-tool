@@ -19,6 +19,7 @@ import {
   type AiMaterialUploadReceiptData,
   type AiPolicyInheritableMode,
   type AiPolicyOverrideData,
+  type AiQueueSummaryData,
   type AiStatusData,
   type AiTaskCreateRequest,
   type AiTaskDetailData,
@@ -2755,6 +2756,50 @@ export function uploadStudentAiTaskMaterialsApi(
     fetch(`/api/student/ai/tasks/${encodeURIComponent(taskId)}/materials`, {
       method: "POST",
       body: form,
+    }),
+  );
+}
+
+/**
+ * 全局队列摘要（GET /ai/queue-summary，SAI-23）：待领取/处理中/未读回信
+ * 三计数（语义分开，顶栏双角标派生规则见 ai-queue-queries 的 aiQueueBadgeOf）。
+ */
+export function fetchStudentAiQueueSummaryApi(): Promise<AiQueueSummaryData> {
+  return callApi(() => api.api.student.ai["queue-summary"].$get());
+}
+
+/**
+ * 全局任务队列列表（SAI-23）：账号范围全任务 + 归档三态过滤 + 游标分页，
+ * 附来源摘要 origins（来源/题号/标题/导航定位键）。正文材料只在授权详情
+ * （fetchStudentAiTaskApi）读取——本列表载荷即列表本身可见的全部内容。
+ */
+export function listStudentAiQueueApi(
+  query: Pick<AiTaskListQuery, "archived" | "limit" | "cursor">,
+): Promise<AiTaskListData> {
+  return callApi(() =>
+    api.api.student.ai.tasks.$get({
+      query: {
+        ...(query.archived !== undefined ? { archived: query.archived } : {}),
+        ...(query.limit !== undefined ? { limit: query.limit } : {}),
+        ...(query.cursor !== undefined ? { cursor: query.cursor } : {}),
+      },
+    }),
+  );
+}
+
+/**
+ * 队列动作（SAI-23）：cancel / resume / retry / archive 四动作薄壳，响应均
+ * 为任务公开视图。服务端按状态机与 allowedActions 裁决（409 AI_STATE_CONFLICT
+ * 等错误码透传），客户端不本地查表推导。hc 对无参 POST 端点逐个生成方法，
+ * 这里用同构 fetch 统一四动作（同 followup 口径）。
+ */
+export function studentAiTaskActionApi(
+  taskId: string,
+  action: "cancel" | "resume" | "retry" | "archive",
+): Promise<AiTaskPublic> {
+  return callApi(() =>
+    fetch(`/api/student/ai/tasks/${encodeURIComponent(taskId)}/${action}`, {
+      method: "POST",
     }),
   );
 }

@@ -16,6 +16,7 @@ import { useBindInkProfiles } from "@/features/ink/use-ink-profiles";
 import { useBindNoteSession } from "@/features/notes/use-note-session";
 import { StudentWorkspaceContext } from "@/features/student/student-workspace-layout";
 import { useStudentTheme } from "@/features/student/use-student-theme";
+import { AiQueueButton } from "@/features/student-ai/AiQueueButton";
 import { ApiError } from "@/lib/api";
 import { ScreenError, ScreenLoading } from "./StudentScreen";
 
@@ -135,7 +136,10 @@ export function StudentLayout() {
             <div className="mx-auto flex w-full max-w-3xl flex-col gap-2 px-4 py-2 lg:max-w-5xl lg:flex-row lg:items-center lg:gap-3">
               <div className="flex w-full items-center justify-between gap-3 lg:hidden">
                 {identity}
-                {logout}
+                <div className="flex shrink-0 items-center gap-1">
+                  <AiQueueButton />
+                  {logout}
+                </div>
               </div>
               <div className="hidden shrink-0 lg:block">{identity}</div>
               <nav aria-label="学生端导航" className="w-full min-w-0 lg:flex-1">
@@ -173,7 +177,10 @@ export function StudentLayout() {
                   ))}
                 </div>
               </nav>
-              <div className="hidden shrink-0 lg:block">{logout}</div>
+              <div className="hidden shrink-0 items-center gap-1 lg:flex">
+                <AiQueueButton />
+                {logout}
+              </div>
             </div>
           </header>
         )}

@@ -4,6 +4,7 @@ import type { AttemptResultData } from "@tutor/contract";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { captureAiQuestionMaterials } from "@/features/export/ai-material-capture";
+import { connectedAiStatus } from "@/features/student-ai/student-ai-test-utils";
 import {
   createStudentAiTaskApi,
   fetchStudentAiStatusApi,
@@ -11,7 +12,6 @@ import {
   listStudentAiTasksApi,
 } from "@/lib/api";
 import { AttemptResultView } from "./AttemptResultView";
-import { connectedAiStatus } from "@/features/student-ai/student-ai-test-utils";
 
 /**
  * SAI-22 结果页 AI 复盘接入（B12 执行步骤 2/5 + 参数化验收「完成」列）：
@@ -191,6 +191,7 @@ beforeEach(() => {
     materials: [],
     createdAt: "2026-10-16T00:00:00.000Z",
     updatedAt: "2026-10-16T00:00:00.000Z",
+    archivedAt: null,
   });
 });
 

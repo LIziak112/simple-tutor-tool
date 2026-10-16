@@ -148,7 +148,12 @@ it("四态：无会话/教师 Cookie 对列表与归档 401；他学生归档 40
     "UNAUTHORIZED",
   );
   await expectErr(
-    await req(w.app, "POST", `/api/student/ai/tasks/${taskId}/archive`, undefined),
+    await req(
+      w.app,
+      "POST",
+      `/api/student/ai/tasks/${taskId}/archive`,
+      undefined,
+    ),
     401,
     "UNAUTHORIZED",
   );
@@ -196,7 +201,9 @@ it("归档≠已读：replied 归档后 status/replyDeliveredAt 不动、unread 
     replyMd: "讲解内容",
   });
   const before = aiQueueSummaryOkSchema.parse(
-    await (await req(w.app, "GET", "/api/student/ai/queue-summary", w.a)).json(),
+    await (
+      await req(w.app, "GET", "/api/student/ai/queue-summary", w.a)
+    ).json(),
   );
   expect(before.data.unreadReplyCount).toBe(1);
 
@@ -215,7 +222,9 @@ it("归档≠已读：replied 归档后 status/replyDeliveredAt 不动、unread 
 
   // 未读计数不因归档减少（只有 opened 才交付）
   const after = aiQueueSummaryOkSchema.parse(
-    await (await req(w.app, "GET", "/api/student/ai/queue-summary", w.a)).json(),
+    await (
+      await req(w.app, "GET", "/api/student/ai/queue-summary", w.a)
+    ).json(),
   );
   expect(after.data.unreadReplyCount).toBe(1);
 
@@ -341,7 +350,9 @@ it("queue-summary 双计数：待领取与未读回信分开（不是一个角�
     replyMd: "讲解",
   });
   const summary = aiQueueSummaryOkSchema.parse(
-    await (await req(w.app, "GET", "/api/student/ai/queue-summary", w.a)).json(),
+    await (
+      await req(w.app, "GET", "/api/student/ai/queue-summary", w.a)
+    ).json(),
   );
   expect(summary.data.pendingCount).toBe(1); // t2 created
   expect(summary.data.unreadReplyCount).toBe(1); // t1 replied 未打开

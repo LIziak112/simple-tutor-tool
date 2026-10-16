@@ -6,6 +6,7 @@ import {
   useStartAttempt,
 } from "@/features/attempt/attempt-queries";
 import { assignmentsReturnTarget } from "@/features/student/assignment-list-filters";
+import { aiQueueReturnTarget } from "@/features/student/record-review-navigation";
 import {
   StudentErrorPanel,
   StudentListSkeleton,
@@ -25,6 +26,9 @@ export default function StudentAssignmentAttemptPage() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const returnTo = assignmentsReturnTarget(params.get("returnTo"));
+  // SAI-23 队列跳转来源（aiFrom 白名单独立于作业列表 returnTo）：无列表
+  // 上下文时改写返回目标，保留打开队列时的来源位置
+  const queueTarget = aiQueueReturnTarget(params.get("aiFrom"));
 
   // 第 1 步：幂等创建/取回 attempt（进入页面触发一次；重试走错误态按钮）
   const startAttempt = useStartAttempt(assignmentId);
@@ -82,8 +86,10 @@ export default function StudentAssignmentAttemptPage() {
   return (
     <AttemptSession
       data={detailQuery.data}
-      onExit={() => void navigate(returnTo ?? "/s/home")}
-      exitLabel={returnTo ? "返回我的作业" : undefined}
+      onExit={() => void navigate(returnTo ?? queueTarget ?? "/s/home")}
+      exitLabel={
+        returnTo ? "返回我的作业" : queueTarget ? "返回原页面" : undefined
+      }
     />
   );
 }

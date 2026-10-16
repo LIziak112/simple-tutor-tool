@@ -14,6 +14,7 @@ import {
   useRestartLesson,
 } from "@/features/lesson/lesson-queries";
 import { lessonRunHref } from "@/features/student/lesson-navigation";
+import { aiQueueReturnTarget } from "@/features/student/record-review-navigation";
 import {
   StudentErrorPanel,
   StudentListSkeleton,
@@ -105,6 +106,9 @@ export default function StudentLessonLandingPage() {
   const { id = "" } = useParams<{ id: string }>();
   const [searchParams] = useSearchParams();
   const courseId = searchParams.get("courseId") ?? undefined;
+  // SAI-23 队列跳转来源（aiFrom 白名单）：从助教队列进入落地页时，头部
+  // 返回键回到打开队列时的来源位置（缺省仍回课程目录/讲义列表）
+  const queueTarget = aiQueueReturnTarget(searchParams.get("aiFrom"));
   const navigate = useNavigate();
   const landingQuery = useLessonLanding(
     id.length > 0 ? id : undefined,
@@ -183,8 +187,17 @@ export default function StudentLessonLandingPage() {
     <section aria-label="讲练落地" className="flex flex-col gap-4">
       <header className="flex items-center gap-2">
         <Link
-          to={courseId !== undefined ? `/s/courses/${courseId}` : "/s/lectures"}
-          aria-label={courseId !== undefined ? "返回课程目录" : "返回讲义列表"}
+          to={
+            queueTarget ??
+            (courseId !== undefined ? `/s/courses/${courseId}` : "/s/lectures")
+          }
+          aria-label={
+            queueTarget !== null
+              ? "返回原页面"
+              : courseId !== undefined
+                ? "返回课程目录"
+                : "返回讲义列表"
+          }
           className="flex size-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
         >
           <ArrowLeft aria-hidden className="size-5" />

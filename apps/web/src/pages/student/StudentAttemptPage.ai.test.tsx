@@ -1,6 +1,6 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { AttemptDraftData } from "@tutor/contract";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -21,7 +21,6 @@ import {
 } from "@/features/notes/note-store";
 import { bindNoteSession, resetNoteSession } from "@/features/notes/note-sync";
 import { connectedAiStatus } from "@/features/student-ai/student-ai-test-utils";
-import { installEventStore, memoryEventStore } from "@/lib/event-queue";
 import {
   createStudentAiTaskApi,
   fetchAttemptApi,
@@ -29,6 +28,7 @@ import {
   fetchStudentQuickButtonsApi,
   listStudentAiTasksApi,
 } from "@/lib/api";
+import { installEventStore, memoryEventStore } from "@/lib/event-queue";
 import StudentAttemptPage from "./StudentAttemptPage";
 
 /**
@@ -250,6 +250,7 @@ beforeEach(() => {
     materials: [],
     createdAt: "2026-10-16T00:00:00.000Z",
     updatedAt: "2026-10-16T00:00:00.000Z",
+    archivedAt: null,
   });
 });
 afterEach(() => {
@@ -360,11 +361,13 @@ describe("四来源 AI 伴学参数化矩阵（SAI-22 完成条件①）", () =>
     // 未完成作答态呈现（新卷从 blank 开始——服务端按新 attempt 裁决）
     expect(await screen.findByText("当前：开放伴学")).toBeInTheDocument();
     // 任何查询都不携带旧卷 attemptId（回信与完成态不跨卷）
+    expect(mockedStatus.mock.calls.some(([id]) => id === OLD_ATTEMPT_ID)).toBe(
+      false,
+    );
     expect(
-      mockedStatus.mock.calls.some(([id]) => id === OLD_ATTEMPT_ID),
-    ).toBe(false);
-    expect(
-      mockedList.mock.calls.some((call) => call[0].attemptId === OLD_ATTEMPT_ID),
+      mockedList.mock.calls.some(
+        (call) => call[0].attemptId === OLD_ATTEMPT_ID,
+      ),
     ).toBe(false);
   });
 });

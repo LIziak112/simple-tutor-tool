@@ -26,8 +26,8 @@ import {
   aiMcpClaimViewSchema,
   aiMessageSchema,
   aiShareViewSchema,
-  aiTaskMaterialInternalSchema,
   aiTaskActionSchema,
+  aiTaskMaterialInternalSchema,
   aiTaskMaterialSchema,
   aiTaskOriginSummarySchema,
   aiTaskPublicSchema,
@@ -242,8 +242,7 @@ it("SAI-23 任务来源摘要：来源/次数/题号/标题与导航定位键（
   expect(aiTaskOriginSummarySchema.parse(origin)).toEqual(origin);
   // 题不在本卷（软删/缺失）如实可表达，不伪造题号
   expect(
-    aiTaskOriginSummarySchema.parse({ ...origin, questionNo: null })
-      .questionNo,
+    aiTaskOriginSummarySchema.parse({ ...origin, questionNo: null }).questionNo,
   ).toBeNull();
   // strict：未知字段与非法来源拒绝
   expect(
