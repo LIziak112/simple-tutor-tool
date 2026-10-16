@@ -1,7 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { expect } from "vitest";
 import type { Db } from "../db/client.ts";
-import { assignments, attempts, responses } from "../db/schema.ts";
+import {
+  aiConnections,
+  assignments,
+  attempts,
+  responses,
+} from "../db/schema.ts";
 import { TEST_TEACHER_ID } from "../db/test-utils.ts";
 import { HttpError } from "../lib/http-error.ts";
 
@@ -58,6 +63,36 @@ export function insertAttempt(
       frozenAt: AI_TEST_AT,
       legacyUnverified: false,
       abandonedAt: null,
+    })
+    .run();
+  return id;
+}
+
+/**
+ * 给学生插一条 active 连接（mcp 形态最简——无密文装配）：create 路由的
+ * 知情门只看连接存在性（status firstUseRequired 同口径），测试需要构造
+ * 无连接态时自行删除该行。
+ */
+export function insertAiConnectionFixture(
+  db: Db,
+  studentId: string,
+): string {
+  const id = randomUUID();
+  db.insert(aiConnections)
+    .values({
+      id,
+      studentId,
+      channel: "mcp",
+      isDefault: true,
+      configJson: JSON.stringify({
+        tokenHash: `test-hash-${studentId}`,
+        tokenFingerprint: `test-fp-${studentId}`,
+      }),
+      verifyStatus: "unverified",
+      verifiedAt: null,
+      createdAt: AI_TEST_AT,
+      updatedAt: AI_TEST_AT,
+      archivedAt: null,
     })
     .run();
   return id;

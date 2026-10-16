@@ -25,6 +25,7 @@ import {
   completeInappDispatch,
 } from "../services/ai-companion/student-ai-queue.ts";
 import {
+  insertAiConnectionFixture,
   insertAttempt,
   insertResponse,
 } from "../test/ai-companion-fixtures.ts";
@@ -62,6 +63,8 @@ function world() {
   const attemptId = insertAttempt(db, { studentId: "s-a" });
   const questionId = "q-alpha";
   insertResponse(db, attemptId, questionId);
+  // s-a 持一条 active 连接（create 知情门只看存在性）
+  insertAiConnectionFixture(db, "s-a");
   // 同卷邻题哨兵：followup 响应不得混入其他题内容
   db.insert(responses)
     .values({

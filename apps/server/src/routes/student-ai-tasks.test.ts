@@ -14,6 +14,7 @@ import { afterEach, expect, it } from "vitest";
 import { createApp } from "../app.ts";
 import { createStudentSession, createTeacherSession } from "../auth/session.ts";
 import {
+  aiConnections,
   aiFacts,
   aiPolicyOverrides,
   aiTasks,
@@ -34,6 +35,7 @@ import {
   failInappDispatch,
 } from "../services/ai-companion/student-ai-queue.ts";
 import {
+  insertAiConnectionFixture,
   insertAttempt,
   insertResponse,
 } from "../test/ai-companion-fixtures.ts";
@@ -80,6 +82,10 @@ function world() {
   const attemptId = insertAttempt(db, { studentId: "s-a" });
   const questionId = "q-alpha";
   insertResponse(db, attemptId, questionId);
+  // s-a/s-b 各持一条 active 连接：create 知情门只看存在性（服务端强制
+  // 用例按需删除 s-a 连接构造无连接态）
+  for (const studentId of ["s-a", "s-b"])
+    insertAiConnectionFixture(db, studentId);
   // 同卷邻题：携带跨题哨兵（题干/解析）与教师私注哨兵，供泄露扫描
   db.insert(responses)
     .values({
@@ -380,6 +386,36 @@ it("create 幂等：同 mutationId 重放返回原任务（200），不新增行
   const secondData = aiTaskOkSchema.parse(await second.json()).data;
   expect(secondData.id).toBe(firstData.id);
   expect(w.db.select().from(aiTasks).all()).toHaveLength(1);
+});
+
+it("知情门服务端强制（SAI-18 遗留①兑现）：无任何 active 连接直调 create 403，不落任务行不占配额", async () => {
+  const w = world();
+  // 构造无连接态（= 未跨过首次知情，status firstUseRequired 同口径）
+  w.db.delete(aiConnections).where(eq(aiConnections.studentId, "s-a")).run();
+  const res = await req(
+    w.app,
+    "POST",
+    "/api/student/ai/tasks",
+    w.a,
+    createBody(w.attemptId),
+  );
+  const err = await expectErr(res, 403, "AI_SETUP_REQUIRED");
+  expect(err.message).toContain("设置"); // 中文指引去完成连接设置
+  expect(w.db.select().from(aiTasks).all()).toHaveLength(0); // 不占同题/当日配额
+});
+
+it("link 通道未开放：直调 create 409 拒绝（服务端与客户端同口径，不产无人领取的僵尸任务）", async () => {
+  const w = world();
+  const res = await req(
+    w.app,
+    "POST",
+    "/api/student/ai/tasks",
+    w.a,
+    createBody(w.attemptId, { channel: "link" }),
+  );
+  const err = await expectErr(res, 409, "AI_CHANNEL_UNSUPPORTED");
+  expect(err.message).toContain("链接通道");
+  expect(w.db.select().from(aiTasks).all()).toHaveLength(0);
 });
 
 it("未完成禁用：post_submit_only 下 create 403 且无任务/文件副作用，错误为中文指引", async () => {

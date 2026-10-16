@@ -16,6 +16,7 @@ import {
   TEST_TEACHER_ID,
 } from "../db/test-utils.ts";
 import {
+  insertAiConnectionFixture,
   insertAttempt,
   insertResponse,
 } from "../test/ai-companion-fixtures.ts";
@@ -54,6 +55,8 @@ function world() {
       .run();
   const attemptId = insertAttempt(db, { studentId: "s-a" });
   insertResponse(db, attemptId, "q-alpha");
+  // s-a 持一条 active 连接（create 知情门只看存在性）
+  insertAiConnectionFixture(db, "s-a");
   const dataDir = createTestDir();
   const app = createApp({
     db,

@@ -279,11 +279,32 @@ export function createStudentAiRoutes(db: Db, dataDir: string) {
         });
       })
       .post("/ai/tasks", async (c) => {
+        // 知情门服务端强制（SAI-18 遗留①，B11 闸门兑现）：客户端 needsSetup
+        // 引导之外直调路由同样不能绕过——无任何 active 连接 = 未跨过首次
+        // 知情（status firstUseRequired 同口径单源），403 且不落任务行
+        // （不占同题/当日配额，也不产必然发送失败的僵尸任务）。
+        if (listStudentAiConnections(db, c.var.student.id).length === 0) {
+          throw new HttpError(
+            403,
+            "AI_SETUP_REQUIRED",
+            "还没有可用的 AI 连接，请先在设置中完成连接与首次知情确认",
+          );
+        }
         const body = await parseJsonBodyWithCode(
           c,
           aiTaskCreateRequestSchema,
           textLimitCodeOf,
         );
+        // link 票据流归 SAI-28（B15）未落地：worker 只领 inapp、MCP 客户端
+        // 只领 mcp，link 任务无人领取会占同题 active 配额——与客户端同口径
+        // 如实拒绝，不建僵尸任务。
+        if (body.channel === "link") {
+          throw new HttpError(
+            409,
+            "AI_CHANNEL_UNSUPPORTED",
+            "链接通道建设中，请选择页内 AI 或 MCP 通道",
+          );
+        }
         const { task, created } = createAiTask(
           db,
           {
