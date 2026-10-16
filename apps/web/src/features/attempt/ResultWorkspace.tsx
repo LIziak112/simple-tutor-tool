@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import {
   type ReactNode,
+  type RefObject,
   useId,
   useLayoutEffect,
   useMemo,
@@ -42,6 +43,9 @@ export function ResultWorkspace({
   onBack,
   backLabel,
   children,
+  actions,
+  rootRef,
+  reviewLocation,
 }: {
   title: string;
   attemptId: string;
@@ -51,13 +55,22 @@ export function ResultWorkspace({
   onBack(): void;
   backLabel: string;
   children: ReactNode;
+  /** 标题右侧扩展动作位（SAI-22 AI 复盘入口；不传不占位） */
+  actions?: ReactNode;
+  /** 主区根 ref（调用方持有回看定位时一并传入；缺省内部自建） */
+  rootRef?: RefObject<HTMLDivElement | null>;
+  /** 调用方持有的回看定位（AI 面板绑定回看当前题需要 currentId；
+   *  缺省内部自建——两实例对同一 URL/存储写同值，幂等无冲突） */
+  reviewLocation?: ReturnType<typeof useResultReviewLocation>;
 }) {
-  const root = useRef<HTMLDivElement>(null);
+  const ownRoot = useRef<HTMLDivElement>(null);
+  const root = rootRef ?? ownRoot;
   const ids = useMemo(
     () => questions.map((question) => question.questionId),
     [questions],
   );
-  const location = useResultReviewLocation(attemptId, ids, released, root);
+  const ownLocation = useResultReviewLocation(attemptId, ids, released, root);
+  const location = reviewLocation ?? ownLocation;
   const [open, setOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const navigationId = useId();
@@ -151,6 +164,9 @@ export function ResultWorkspace({
                 : "已交卷 · 待批改"}
           </p>
         </div>
+        {actions != null && (
+          <div className="flex shrink-0 items-center">{actions}</div>
+        )}
       </header>
       <div
         className={`grid min-w-0 gap-6 ${collapsed ? "lg:grid-cols-[44px_minmax(0,1fr)]" : "lg:grid-cols-[240px_minmax(0,1fr)]"}`}

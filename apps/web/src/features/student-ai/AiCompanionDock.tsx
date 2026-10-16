@@ -45,8 +45,11 @@ export type { AiMaterialAvailability };
 
 export interface UseAiCompanionDockHost {
   readonly attemptId: string;
-  /** 本卷题集（发送校验 + 材料采集输入；结果页传 { id } 最小引用即可） */
-  readonly questions: readonly AttemptQuestionPublic[];
+  /** 本卷题集（发送校验 + 材料采集输入；复盘态传 { id } 最小引用即可） */
+  readonly questions: readonly (
+    | AttemptQuestionPublic
+    | { readonly id: string }
+  )[];
   /** 手写题（solve/apply/find-error）采集正式手写，其余采集草稿 */
   readonly isHandwritten: (questionId: string) => boolean;
   /** 绑定题的题面元素（材料收起/未挂载时为 null） */
@@ -63,6 +66,8 @@ export interface UseAiCompanionDockHost {
   readonly editor: Parameters<typeof useAiCompanionLayout>[0]["editor"];
   /** 材料可选面（缺省圈画+纸面；讲练/结果页按实际能力收窄） */
   readonly materials?: AiMaterialAvailability | undefined;
+  /** 入口名（作答态「AI 助教」缺省；结果页完成后按 §7.5 传「AI 复盘」） */
+  readonly triggerLabel?: string | undefined;
 }
 
 export function useAiCompanionDock(host: UseAiCompanionDockHost) {
@@ -109,7 +114,11 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
 
   const materials = host.materials ?? DEFAULT_AI_MATERIALS;
   const trigger = (
-    <AiCompanionTrigger ref={triggerRef} controller={controller} />
+    <AiCompanionTrigger
+      ref={triggerRef}
+      controller={controller}
+      label={host.triggerLabel}
+    />
   );
   const rail = (children: ReactNode) => (
     <AiCompanionRail

@@ -33,16 +33,20 @@ import { useStudentAiConnections } from "./ai-connection-queries";
 
 export const AiCompanionTrigger = forwardRef<
   HTMLButtonElement,
-  { controller: AiCompanionLayoutController }
->(function AiCompanionTrigger({ controller }, ref) {
+  {
+    controller: AiCompanionLayoutController;
+    /** 入口名（作答态「AI 助教」；结果页完成后按 §7.5 显示「AI 复盘」） */
+    label?: string;
+  }
+>(function AiCompanionTrigger({ controller, label = "AI 助教" }, ref) {
   return (
     <Button
       ref={ref}
       type="button"
       variant="ghost"
       className="size-11 shrink-0 p-0"
-      aria-label="AI 助教"
-      title="AI 助教"
+      aria-label={label}
+      title={label}
       aria-expanded={controller.open}
       aria-controls={controller.panelId}
       onClick={() => {

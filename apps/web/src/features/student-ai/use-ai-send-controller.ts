@@ -81,9 +81,18 @@ export const DEFAULT_AI_MATERIALS: AiMaterialAvailability = {
   paper: true,
 };
 
+/** 复盘态最小题引用：结果页视图不携带完整题面对象（AttemptResultQuestion
+ *  无 questionRevisionId，且复盘 materials 全关不进材料采集），发送校验
+ *  只需要卷内题 id */
+export interface AiReviewQuestionRef {
+  readonly id: string;
+}
+
 export interface UseAiSendControllerConfig {
   readonly attemptId: string;
-  readonly questions: readonly AttemptQuestionPublic[];
+  /** 本卷可求助题集：发送校验按 id；材料采集需要完整题面对象（带
+   *  questionRevisionId），复盘态（materials 全关）可传最小引用 */
+  readonly questions: readonly (AttemptQuestionPublic | AiReviewQuestionRef)[];
   /** 手写题（solve/apply/find-error）采集正式手写，其余题型采集草稿 */
   readonly isHandwritten: (questionId: string) => boolean;
   /** 绑定题的题面元素（材料收起/未挂载时为 null，由采集入口按需判定） */
@@ -412,6 +421,16 @@ export function useAiSendController(config: UseAiSendControllerConfig) {
         // 材料采集（SAI-10 固定入口；仅文字时零页也合法）
         let snapshot: AiCaptureSnapshot | null = null;
         if (selection.annotation || selection.draft || selection.formalInk) {
+          // 采集需要完整题面对象；复盘态（materials 全关）选择恒空不可达
+          // 此分支——防御性拦截，不给半成品快照
+          if (!("questionRevisionId" in question)) {
+            setSendState({
+              phase: "failed",
+              message: "当前页面不支持附加材料，请直接发送文字问题",
+              questionId,
+            });
+            return;
+          }
           try {
             // ?? null：真实入口恒返回快照；被测试替身留空（undefined）时按
             // 「无材料页」处理，不把非快照值带进后续上传分支

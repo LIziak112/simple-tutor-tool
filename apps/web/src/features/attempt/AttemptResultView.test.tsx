@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   fireEvent,
   render as renderReact,
@@ -13,8 +14,18 @@ import { correctionStubDatasets } from "@/features/notes/correction-test-stub";
 import { noteOriginalStubDatasets } from "@/features/notes/note-original-test-stub";
 import { AttemptResultView } from "./AttemptResultView";
 
+// SAI-22 起结果视图接 AI 复盘装配（查询客户端必需）；每次渲染独立 client，
+// wrapper 形态保证 rerender 保有 Provider 与缓存
 function render(ui: ReactNode) {
-  return renderReact(<MemoryRouter>{ui}</MemoryRouter>);
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const Wrapper = ({ children }: { children: ReactNode }) => (
+    <QueryClientProvider client={client}>
+      <MemoryRouter>{children}</MemoryRouter>
+    </QueryClientProvider>
+  );
+  return renderReact(ui, { wrapper: Wrapper });
 }
 
 /**
@@ -183,14 +194,12 @@ function renderView(onBackHome = vi.fn()) {
 describe("得分汇总卡", () => {
   it("答案由待公布变为公布时，材料控制器保持挂载", () => {
     const ui = (released: boolean) => (
-      <MemoryRouter>
-        <AttemptResultView
-          data={{ ...DATA, answersReleased: released }}
-          onBackHome={() => {}}
-        />
-      </MemoryRouter>
+      <AttemptResultView
+        data={{ ...DATA, answersReleased: released }}
+        onBackHome={() => {}}
+      />
     );
-    const { rerender } = renderReact(ui(false));
+    const { rerender } = render(ui(false));
     const card = screen.getByRole("article", { name: "第 1 题" });
     const original = within(card).getByTestId("note-original-stub");
     rerender(ui(true));
