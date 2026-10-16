@@ -16,8 +16,14 @@ import {
   type AiConnectionPatchData,
   type AiConnectionPatchRequest,
   type AiConnectionTestData,
+  type AiMaterialUploadReceiptData,
   type AiPolicyInheritableMode,
   type AiPolicyOverrideData,
+  type AiStatusData,
+  type AiTaskCreateRequest,
+  type AiTaskListData,
+  type AiTaskListQuery,
+  type AiTaskPublic,
   type AiTeacherSettingsData,
   type AiTeacherSettingsPutRequest,
   ANNOTATION_BASE_IMAGE_FORM_FIELDS,
@@ -2627,6 +2633,83 @@ export function testStudentAiConnectionApi(
   return callApi(() =>
     api.api.student.ai.connections[":id"].test.$post({
       param: { id: connectionId },
+    }),
+  );
+}
+
+// ---------- 学生端 AI 任务（SAI-20 发送控制器消费；路由 SAI-13/20） ----------
+
+/**
+ * 单题状态（GET /ai/status）：有效模式与原因、完成态、默认通道连接态、
+ * 首次知情门槛、本题任务摘要。伴学栏/发送控制器的服务端裁决单源——
+ * 教师刚改设置立即生效 = 重新查询本接口。
+ */
+export function fetchStudentAiStatusApi(
+  attemptId: string,
+  questionId: string,
+): Promise<AiStatusData> {
+  return callApi(() =>
+    api.api.student.ai.status.$get({ query: { attemptId, questionId } }),
+  );
+}
+
+/**
+ * 创建任务（POST /ai/tasks）：201=新建、200=同 mutationId 幂等重放（前端
+ * 不必区分，data 均为任务公开视图）。materials 为本次任务选择，quickButtonId
+ * 可选回显来源；服务端实时裁决策略与配额。
+ */
+export function createStudentAiTaskApi(
+  request: AiTaskCreateRequest,
+): Promise<AiTaskPublic> {
+  const args = { json: request };
+  return callApi(() => api.api.student.ai.tasks.$post(args));
+}
+
+/** 本人任务列表（可按 attempt+question 过滤，本题历史/对话数据源） */
+export function listStudentAiTasksApi(
+  query: Pick<AiTaskListQuery, "attemptId" | "questionId">,
+): Promise<AiTaskListData> {
+  return callApi(() =>
+    api.api.student.ai.tasks.$get({
+      query: { attemptId: query.attemptId, questionId: query.questionId },
+    }),
+  );
+}
+
+/**
+ * 上传任务材料（multipart：manifest JSON + 逐页 page-N PNG）。hc RPC 推断
+ * 不出 form 入参类型，用同构 fetch（同 putAttemptInkApi 口径），响应仍走
+ * callApi 统一壳校验。同槽位同内容重传幂等（服务层内容寻址）。
+ */
+export function uploadStudentAiTaskMaterialsApi(
+  taskId: string,
+  pages: readonly {
+    kind: "annotation" | "draft" | "formal_ink";
+    pageIndex: number;
+    pixelWidth: number;
+    pixelHeight: number;
+    png: Blob;
+  }[],
+): Promise<AiMaterialUploadReceiptData> {
+  const form = new FormData();
+  form.append(
+    "manifest",
+    JSON.stringify(
+      pages.map((page) => ({
+        kind: page.kind,
+        pageIndex: page.pageIndex,
+        pixelWidth: page.pixelWidth,
+        pixelHeight: page.pixelHeight,
+      })),
+    ),
+  );
+  pages.forEach((page, index) => {
+    form.append(`page-${index}`, page.png, `page-${index}.png`);
+  });
+  return callApi(() =>
+    fetch(`/api/student/ai/tasks/${encodeURIComponent(taskId)}/materials`, {
+      method: "POST",
+      body: form,
     }),
   );
 }
