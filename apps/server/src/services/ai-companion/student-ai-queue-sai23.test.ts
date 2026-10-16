@@ -88,16 +88,16 @@ function insertSourcedAttempt(
       })
       .run();
   } else if (row.sourceType === "lesson") {
-    lectureId = randomUUID();
+    const lessonLectureId = randomUUID();
+    lectureId = lessonLectureId;
     db.insert(lectures)
       .values({
-        id: lectureId,
+        id: lessonLectureId,
         teacherId: TEST_TEACHER_ID,
         title: row.title ?? "二次函数讲练页",
         markdown: "# 讲练页",
         kind: "lesson",
         order: 1,
-        createdAt: iso(0),
         updatedAt: iso(0),
       })
       .run();
@@ -371,7 +371,13 @@ describe("SAI-23 全局队列与归档", () => {
     );
     failInappDispatch(
       db,
-      { studentId, taskId: failedTask.id, generation, errorText: "超时" },
+      {
+        studentId,
+        taskId: failedTask.id,
+        generation,
+        errorText: "超时",
+        kind: "retryable",
+      },
       { now: at(3000) },
     );
     expectHttpError(

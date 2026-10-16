@@ -263,6 +263,7 @@ it("在途/可重试不可归档：created 与 failed 409 AI_STATE_CONFLICT", as
     taskId: failedId,
     generation,
     errorText: "超时",
+    kind: "retryable",
   });
   await expectErr(
     await req(w.app, "POST", `/api/student/ai/tasks/${failedId}/archive`, w.a),
@@ -282,11 +283,12 @@ it("在途/可重试不可归档：created 与 failed 409 AI_STATE_CONFLICT", as
 
 it("游标分页：createdAt+id 双键翻页不重不漏；全局列表附 origins 摘要", async () => {
   const w = world();
-  const ids = [
+  const [idA, idB, idC] = [
     await createTaskViaRoute(w),
     await createTaskViaRoute(w, { questionId: "q-beta" }),
     await createTaskViaRoute(w),
   ];
+  const ids = [idA, idB, idC] as const;
   // 第一页 2 条（创建倒序）+ nextCursor
   const page1 = aiTaskListOkSchema.parse(
     await (
