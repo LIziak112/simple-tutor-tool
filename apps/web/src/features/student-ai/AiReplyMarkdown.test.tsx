@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { AiReplyMarkdown } from "./AiReplyMarkdown";
 import {
   AI_REPLY_MAX_FORMULA_CHARS,
+  AI_REPLY_MAX_FORMULAS,
   AI_REPLY_RENDER_MAX_BYTES,
   AI_REPLY_RENDER_MAX_NODES,
 } from "./ai-reply-security";
@@ -82,6 +83,19 @@ describe("AiReplyMarkdown 受限渲染（SAI-21 先测③）", () => {
     expect(container.querySelector("[srcset]")).toBeNull();
     expect(container.querySelector("[style*='url(']")).toBeNull();
     expect(container.textContent).toContain("图片不显示");
+    expect(container.textContent).toContain("正文继续");
+  });
+
+  it("引用式图片同样零请求：![alt][ref] 不匹配源文本替换，靠清洗层剥 img", () => {
+    const { container } = render(
+      <AiReplyMarkdown
+        source={"![追踪][p]\n\n正文继续\n\n[p]: https://tracker.example/p.png"}
+      />,
+    );
+    // 源文本预替换只覆盖内联 ![…](…) 形态；引用式经清洗层第二道防线：
+    // img 不在白名单 → 无 img 节点，引用定义的 URL 也不落 DOM 任何位置
+    expect(container.querySelector("img")).toBeNull();
+    expect(container.innerHTML).not.toContain("tracker.example");
     expect(container.textContent).toContain("正文继续");
   });
 
@@ -192,5 +206,17 @@ describe("AiReplyMarkdown 受限渲染（SAI-21 先测③）", () => {
     const { container } = render(<AiReplyMarkdown source={many} />);
     expect(screen.getByRole("alert").textContent).toContain("过多");
     expect(container.querySelectorAll("li").length).toBe(0);
+  });
+
+  it("公式数量超限给可解释失败：分片拼接（大量小公式）不绕过总量上限", () => {
+    // 每条公式都远小于长度上限，但数量超过 AI_REPLY_MAX_FORMULAS——
+    // 入检按整段 source 统一计数，逐条合法不代表总量合法
+    const many = Array.from(
+      { length: AI_REPLY_MAX_FORMULAS + 1 },
+      () => "$x$",
+    ).join(" ");
+    const { container } = render(<AiReplyMarkdown source={many} />);
+    expect(screen.getByRole("alert").textContent).toContain("公式过多");
+    expect(container.querySelectorAll(".katex").length).toBe(0);
   });
 });

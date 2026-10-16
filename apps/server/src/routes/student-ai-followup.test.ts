@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 import type { ApiErr } from "@tutor/contract";
-import { AI_TURNS_MAX, aiTaskFollowupOkSchema } from "@tutor/contract";
+import {
+  AI_QUESTION_MAX_CHARS,
+  AI_TURNS_MAX,
+  aiTaskFollowupOkSchema,
+} from "@tutor/contract";
 import { and, eq } from "drizzle-orm";
 import pino from "pino";
 import { afterEach, expect, it } from "vitest";
@@ -264,6 +268,27 @@ it("非 replied 态拒绝追问（created 未回信）与跨账号 404", async (
   );
   expect(foreign.status).toBe(404);
   expect(((await foreign.json()) as ApiErr).error).toBe("NOT_FOUND");
+});
+
+it("追问超长（>AI_QUESTION_MAX_CHARS）→ 400 AI_TEXT_TOO_LONG，消息零落库", async () => {
+  const w = world();
+  const taskId = await createTaskViaRoute(w);
+  await replyTask(w, taskId);
+  const res = await req(
+    w.app,
+    "POST",
+    `/api/student/ai/tasks/${taskId}/followup`,
+    w.a,
+    followupBody("长".repeat(AI_QUESTION_MAX_CHARS + 1)),
+  );
+  expect(res.status).toBe(400);
+  expect(((await res.json()) as ApiErr).error).toBe("AI_TEXT_TOO_LONG");
+  const count = w.db
+    .select({ id: aiMessages.id })
+    .from(aiMessages)
+    .where(eq(aiMessages.taskId, taskId))
+    .all().length;
+  expect(count).toBe(2); // 首问 + 回信，超长追问未落库
 });
 
 it("同题对话轮次上限：学生消息数达 AI_TURNS_MAX 后追问被拒（AI_TURNS_LIMIT）", async () => {
