@@ -1541,7 +1541,10 @@ describe("SAI-15 重装配快照形状回归（B14 发现）", () => {
     const assembly = outboundAssemblyOfTask(db, row);
     expect(assembly.systemPromptMd.length).toBeGreaterThan(0);
     expect(assembly.contextDataMd.length).toBeGreaterThan(0);
-    const after = JSON.parse(row.contextSnapshotJson) as Record<string, unknown>;
+    const after = JSON.parse(row.contextSnapshotJson) as Record<
+      string,
+      unknown
+    >;
     // 只换规则字段：数据段（题面/本人答案/参考答案/解析）与 capturedAt 原样保留
     expect(after.stemMd).toBe(before.stemMd);
     expect(after.studentAnswerText).toBe(before.studentAnswerText);
