@@ -668,11 +668,7 @@ export function createAiTask(
           createdAt: now.iso,
         })
         .run();
-      const row = tx
-        .select()
-        .from(aiTasks)
-        .where(eq(aiTasks.id, taskId))
-        .get();
+      const row = tx.select().from(aiTasks).where(eq(aiTasks.id, taskId)).get();
       // 同一事务内刚插入，必然可读回；读不回即数据异常，向前抛出回滚
       if (row === undefined) throw new Error("任务行未落库");
       insertFact(tx, row, "task_created", now, {

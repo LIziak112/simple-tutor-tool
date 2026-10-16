@@ -711,11 +711,7 @@ it("cancel：claimed 可取消（状态 cancelled + 事实保留）——不能�
   );
   await expectErr(cross, 404, "NOT_FOUND");
   expect(
-    w.db
-      .select()
-      .from(aiTasks)
-      .where(eq(aiTasks.id, taskId))
-      .all()[0]?.status,
+    w.db.select().from(aiTasks).where(eq(aiTasks.id, taskId)).all()[0]?.status,
   ).toBe("claimed");
 
   const res = await req(

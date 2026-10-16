@@ -46,10 +46,10 @@ describe("timingStats", () => {
   it("单调关系：min ≤ p50 ≤ p95 ≤ max（乱序输入同样成立）", () => {
     const samples = [3, 1, 4, 1, 5, 9, 2, 6, 5, 3];
     const s = timingStats(samples);
-    expect(s).not.toBeNull();
-    expect(s?.min).toBeLessThanOrEqual(s?.p50);
-    expect(s?.p50).toBeLessThanOrEqual(s?.p95);
-    expect(s?.p95).toBeLessThanOrEqual(s?.max);
+    if (s === null) throw new Error("应有统计结果");
+    expect(s.min).toBeLessThanOrEqual(s.p50);
+    expect(s.p50).toBeLessThanOrEqual(s.p95);
+    expect(s.p95).toBeLessThanOrEqual(s.max);
   });
 
   it("负值/零时长样本也可统计（不抛错）", () => {

@@ -52,16 +52,16 @@ import {
   type SubmitEvidencePrep,
 } from "@/features/notes/submit-evidence";
 import {
+  AiCompanionRail,
+  AiCompanionTrigger,
+} from "@/features/student-ai/AiCompanionRail";
+import {
   AiCompanionComposer,
   AiCompanionQuickButtons,
   AiCompanionStatusPanel,
   DRAFT_PAPER_LABEL,
   FORMAL_INK_PAPER_LABEL,
 } from "@/features/student-ai/AiCompanionSession";
-import {
-  AiCompanionRail,
-  AiCompanionTrigger,
-} from "@/features/student-ai/AiCompanionRail";
 import { useAiCompanionLayout } from "@/features/student-ai/ai-companion-layout";
 import { useAiSendController } from "@/features/student-ai/use-ai-send-controller";
 import { sealAttemptAnnotationsApi } from "@/lib/api";
@@ -392,7 +392,11 @@ function AnswerView({
   });
   const aiOpenedRef = useRef(false);
   useEffect(() => {
-    if (aiCompanion.open && !aiOpenedRef.current && currentQuestionId !== null) {
+    if (
+      aiCompanion.open &&
+      !aiOpenedRef.current &&
+      currentQuestionId !== null
+    ) {
       aiSend.bind(currentQuestionId);
     }
     aiOpenedRef.current = aiCompanion.open;

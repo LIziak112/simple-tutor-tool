@@ -3,9 +3,9 @@ import { Button } from "@/components/ui/button";
 import { CHANNEL_LABEL } from "./ai-channel-label";
 import { useStudentQuickButtons } from "./quick-buttons-queries";
 import {
+  type AiSendController,
   EMPTY_AI_SELECTION,
   studentModeReasonText,
-  type AiSendController,
 } from "./use-ai-send-controller";
 
 /**
@@ -101,11 +101,7 @@ export function AiCompanionStatusPanel({
             </a>
           ) : (
             // 通道为本地会话选择：换通道零出站，在途任务保持创建时通道
-            <div
-              role="group"
-              aria-label="选择通道"
-              className="flex flex-wrap gap-1"
-            >
+            <fieldset aria-label="选择通道" className="flex flex-wrap gap-1">
               {SWITCHABLE_CHANNELS.map((channel) => (
                 <Button
                   key={channel}
@@ -119,7 +115,7 @@ export function AiCompanionStatusPanel({
                   {CHANNEL_LABEL[channel]}
                 </Button>
               ))}
-            </div>
+            </fieldset>
           )}
           {status.taskSummary.total > 0 && (
             <p className="text-xs text-muted-foreground">
@@ -142,11 +138,7 @@ export function AiCompanionStatusPanel({
  * 快捷按钮区：仅渲染启用项（停用项不出现），点击即发——用按钮自己的
  * prompt 与附件偏好，不回写本题的草稿选择（单次语义）。
  */
-export function AiCompanionQuickButtons({
-  send,
-}: {
-  send: AiSendController;
-}) {
+export function AiCompanionQuickButtons({ send }: { send: AiSendController }) {
   const query = useStudentQuickButtons();
   if (query.isPending)
     return (
@@ -228,8 +220,7 @@ export function AiCompanionComposer({
           onChange={(event) => send.setText(event.target.value)}
         />
       </label>
-      <div
-        role="group"
+      <fieldset
         aria-label="随信材料"
         className="flex flex-wrap items-center gap-x-3 gap-y-1"
       >
@@ -253,7 +244,7 @@ export function AiCompanionComposer({
           />
           {paperLabel}
         </label>
-      </div>
+      </fieldset>
       <Button
         type="button"
         className="min-h-11 w-full"

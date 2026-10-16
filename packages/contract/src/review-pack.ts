@@ -484,7 +484,7 @@ export function renderReviewPackPrompt(input: ReviewPackPromptInput): string {
   for (const note of input.interactionNotes) {
     dataLines.push(`- 交互内容说明：${note}。`);
   }
-  sections.push(dataLines.join("\n") + "\n");
+  sections.push(`${dataLines.join("\n")}\n`);
 
   // 红线
   sections.push(

@@ -737,7 +737,11 @@ describe("SAI-12 租约超时与写回", () => {
   } {
     const world = setupWorld(db);
     const task = mkMcpTask(db, world).task;
-    const claim = claimMcpTask(db, { studentId: world.studentId }, { now: at(0) });
+    const claim = claimMcpTask(
+      db,
+      { studentId: world.studentId },
+      { now: at(0) },
+    );
     if (claim === null) throw new Error("MCP 领取应成功");
     return {
       world,
@@ -754,9 +758,13 @@ describe("SAI-12 租约超时与写回", () => {
     expect(recovered.expiredLeases).toBe(1);
     expect(taskRow(db, task.id).status).toBe("created");
     // 客户端 Y 再领
-    const claimY = claimMcpTask(db, { studentId: world.studentId }, {
-      now: at(LEASE_MS + 2000),
-    });
+    const claimY = claimMcpTask(
+      db,
+      { studentId: world.studentId },
+      {
+        now: at(LEASE_MS + 2000),
+      },
+    );
     if (claimY === null) throw new Error("Y 再领应成功");
     expect(claimY.leaseToken).not.toBe(leaseX.leaseToken);
     // 旧持有者 X：续租被拒
@@ -915,7 +923,11 @@ describe("SAI-12 状态竞态唯一合法结果", () => {
     const db = createTestDb();
     const world = setupWorld(db);
     const task = mkMcpTask(db, world).task;
-    const claim = claimMcpTask(db, { studentId: world.studentId }, { now: at(0) });
+    const claim = claimMcpTask(
+      db,
+      { studentId: world.studentId },
+      { now: at(0) },
+    );
     if (claim === null) throw new Error("MCP 领取应成功");
     const cancelled = cancelAiTask(
       db,
@@ -994,7 +1006,11 @@ describe("SAI-12 状态竞态唯一合法结果", () => {
     const world = setupWorld(db);
     const task = mkMcpTask(db, world).task;
     const v1 = aiTaskContextVersionOf(db, task);
-    const claim = claimMcpTask(db, { studentId: world.studentId }, { now: at(0) });
+    const claim = claimMcpTask(
+      db,
+      { studentId: world.studentId },
+      { now: at(0) },
+    );
     if (claim === null) throw new Error("MCP 领取应成功");
     // 已领取 → 拒绝替换输入
     expectHttpError(

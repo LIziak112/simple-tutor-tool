@@ -1,9 +1,4 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type {
-  AiStatusData,
-  AttemptQuestionPublic,
-  StudentQuickButtonsData,
-} from "@tutor/contract";
 import {
   act,
   fireEvent,
@@ -11,6 +6,11 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
+import type {
+  AiStatusData,
+  AttemptQuestionPublic,
+  StudentQuickButtonsData,
+} from "@tutor/contract";
 import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -25,8 +25,8 @@ import {
   AiCompanionStatusPanel,
 } from "./AiCompanionSession";
 import {
-  useAiSendController,
   type AiSendController,
+  useAiSendController,
 } from "./use-ai-send-controller";
 
 /**
@@ -52,7 +52,9 @@ vi.mock("@/lib/api", async (importOriginal) => {
 });
 vi.mock("@/features/export/ai-material-capture", async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import("@/features/export/ai-material-capture")>();
+    await importOriginal<
+      typeof import("@/features/export/ai-material-capture")
+    >();
   return { ...actual, captureAiQuestionMaterials: vi.fn() };
 });
 
@@ -119,8 +121,7 @@ const captured: { send: AiSendController | null } = { send: null };
 function SessionHarness({ paperLabel = "草稿" }: { paperLabel?: string }) {
   // 惰性初始化：状态变化重渲染不重建 client
   const [client] = useState(
-    () =>
-      new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+    () => new QueryClient({ defaultOptions: { queries: { retry: false } } }),
   );
   return (
     <QueryClientProvider client={client}>

@@ -105,8 +105,13 @@ describe("buildSyntheticAtramentDoc", () => {
     let hasBacktrack = false;
     for (const s of hl) {
       for (let i = 2; i < s.points.length; i++) {
-        const dx1 = s.points[i - 1]!.x - s.points[i - 2]!.x;
-        const dx2 = s.points[i]!.x - s.points[i - 1]!.x;
+        const prev = s.points[i - 1];
+        const prev2 = s.points[i - 2];
+        const curr = s.points[i];
+        if (prev === undefined || prev2 === undefined || curr === undefined)
+          continue;
+        const dx1 = prev.x - prev2.x;
+        const dx2 = curr.x - prev.x;
         if (dx1 * dx2 < 0) hasBacktrack = true;
       }
     }
@@ -119,10 +124,15 @@ describe("buildSyntheticAtramentDoc", () => {
       if (s.tool !== "pen" || s.points.length < 4) return false;
       let turns = 0;
       for (let i = 2; i < s.points.length; i++) {
-        const dx1 = s.points[i - 1]!.x - s.points[i - 2]!.x;
-        const dx2 = s.points[i]!.x - s.points[i - 1]!.x;
-        const dy1 = s.points[i - 1]!.y - s.points[i - 2]!.y;
-        const dy2 = s.points[i]!.y - s.points[i - 1]!.y;
+        const prev = s.points[i - 1];
+        const prev2 = s.points[i - 2];
+        const curr = s.points[i];
+        if (prev === undefined || prev2 === undefined || curr === undefined)
+          continue;
+        const dx1 = prev.x - prev2.x;
+        const dx2 = curr.x - prev.x;
+        const dy1 = prev.y - prev2.y;
+        const dy2 = curr.y - prev.y;
         // x 或 y 方向发生明确折返（阈值过滤抖动）
         if (dx1 * dx2 < -4 || dy1 * dy2 < -4) turns++;
       }
