@@ -206,4 +206,24 @@ describe("TeacherAiSettingsSection（SAI-07 AI 伴学设置区）", () => {
       expect(screen.getByRole("radio", { name: "开放伴学" })).toBeChecked(),
     );
   });
+
+  it("B17 ④模式文案纪律：启发是提示词约束不承诺绝不解题，严格项指向完成后", async () => {
+    renderSection();
+    await screen.findByRole("radio", { name: "仅启发" });
+    // 仅启发描述 = 提示词输出约束口径（不是保密承诺）
+    expect(screen.getByText(/不直接给最终答案/u)).toBeInTheDocument();
+    // 常驻警示：允许求助即携带答案解析；仅启发不能保证保密（严格需求选完成后）
+    expect(
+      screen.getByText(/已有答案和解析会一起提供给 AI/u),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/仅启发通过提示词要求控制输出，不能保证原始答案保密/u),
+    ).toBeInTheDocument();
+    // 完成后才可求助的严格项如实描述拒绝行为
+    expect(screen.getByText(/都会被拒绝/u)).toBeInTheDocument();
+    // 全文不出现「绝不/保证不」类解题承诺（「不能保证……保密」是警示句，不算承诺）
+    const allText = document.body.textContent ?? "";
+    expect(allText).not.toMatch(/绝不(?:给|解|提|泄露)/u);
+    expect(allText).not.toMatch(/保证不(?:给|解|泄露)/u);
+  });
 });
