@@ -4,6 +4,7 @@ import {
   AI_MCP_LEASE_MINUTES,
   AI_TASK_DAILY_PER_STUDENT,
   AI_TASK_PENDING_PER_STUDENT,
+  aiContextSnapshotSchema,
 } from "@tutor/contract";
 import { and, eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
@@ -17,6 +18,7 @@ import {
   aiMessages,
   aiPolicyOverrides,
   aiTasks,
+  attempts,
   responses,
   teachers,
 } from "../../db/schema.ts";
@@ -52,6 +54,7 @@ import {
   retryAiTask,
   submitMcpReply,
 } from "./student-ai-queue.ts";
+import { outboundAssemblyOfTask } from "./student-ai-worker.ts";
 
 /**
  * SAI-12 可靠任务队列测试（B06；技术方案 §3.4/§6、需求规格 §8）。
@@ -1502,5 +1505,51 @@ describe("SAI-12 队列摘要计数", () => {
       { now: at(600) },
     );
     expect(aiQueueSummaryOf(db, world.studentId).unreadReplyCount).toBe(0);
+  });
+});
+
+// ---------- SAI-15 外发重装配快照形状（B14/SAI-26 发现的存量缺陷回归） ----------
+
+describe("SAI-15 重装配快照形状回归（B14 发现）", () => {
+  it("提交后领取触发重装配：快照仍严格满足契约，数据段与 capturedAt 冻结、仅提示词替换", () => {
+    const db = createTestDb();
+    const world = setupWorld(db);
+    const created = mkMcpTask(db, world).task;
+    const before = JSON.parse(created.contextSnapshotJson) as Record<
+      string,
+      unknown
+    >;
+    // 学生交卷：完成后领取 → 复盘模板，promptHash 变化触发 rearmOutboundRules
+    // 重写快照的规则字段（教师改设置后重新领取走同一条重装配路径）
+    db.update(attempts)
+      .set({ status: "submitted", submittedAt: iso(500) })
+      .where(eq(attempts.id, world.attemptId))
+      .run();
+    db.update(responses)
+      .set({ submittedAt: iso(500) })
+      .where(eq(responses.attemptId, world.attemptId))
+      .run();
+    const claim = claimMcpTask(
+      db,
+      { studentId: world.studentId },
+      { now: at(1000) },
+    );
+    expect(claim?.taskId).toBe(created.id);
+    const row = taskRow(db, created.id);
+    // 缺陷形态（substantive 被再包一层存回）会让 worker/MCP 共用的出站组装
+    // 入口严格解析失败 → 500 AI_CONTEXT_BROKEN（SAI-12/15 起即存在，B14 修复）
+    const assembly = outboundAssemblyOfTask(db, row);
+    expect(assembly.systemPromptMd.length).toBeGreaterThan(0);
+    expect(assembly.contextDataMd.length).toBeGreaterThan(0);
+    const after = JSON.parse(row.contextSnapshotJson) as Record<string, unknown>;
+    // 只换规则字段：数据段（题面/本人答案/参考答案/解析）与 capturedAt 原样保留
+    expect(after.stemMd).toBe(before.stemMd);
+    expect(after.studentAnswerText).toBe(before.studentAnswerText);
+    expect(after.referenceAnswerMd).toBe(before.referenceAnswerMd);
+    expect(after.solutionMd).toBe(before.solutionMd);
+    expect(after.capturedAt).toBe(before.capturedAt);
+    expect(after.promptSnapshotMd).not.toBe(before.promptSnapshotMd);
+    // 契约层直接把关：strict 快照（含 superRefine 交叉校验）必须整体通过
+    expect(aiContextSnapshotSchema.safeParse(after).success).toBe(true);
   });
 });

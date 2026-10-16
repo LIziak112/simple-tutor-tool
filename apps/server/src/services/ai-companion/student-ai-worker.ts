@@ -157,7 +157,10 @@ const ASSEMBLY_BROKEN_MESSAGE =
  * 追问后末条是追问本身，此前的问答（含首问与各条回信）整体作为 history
  * ——对话只引用本题（loadTaskHistory 按 taskId 取数），不混入其他题。
  */
-function outboundAssemblyOfTask(db: Db, task: AiTaskRow): OutboundAssembly {
+export function outboundAssemblyOfTask(
+  db: Db,
+  task: AiTaskRow,
+): OutboundAssembly {
   let parsedJson: unknown;
   try {
     parsedJson = JSON.parse(task.contextSnapshotJson);

@@ -315,9 +315,14 @@ function rearmOutboundRules(
   ) {
     return task;
   }
-  const { capturedAt, ...snapshot } = parseSnapshotOf(task);
+  // 快照重写缺陷修复（SAI-26 发现）：parseSnapshotOf 返回 { capturedAt,
+  // substantive } 包一层——此前按 `{ capturedAt, ...snapshot }` 解构把整包
+  // substantive 再裹一层存回，重装配后的快照不再满足 aiContextSnapshotSchema
+  // （strict），页内派发/MCP 领取装配一律 AI_CONTEXT_BROKEN。正确语义 =
+  // 原地替换 promptSnapshotMd（substantive 展平 + 快照时间原样保留）。
+  const { capturedAt, substantive } = parseSnapshotOf(task);
   const contextSnapshotJson = JSON.stringify({
-    ...snapshot,
+    ...substantive,
     promptSnapshotMd: arm.promptSnapshotMd,
     capturedAt,
   });
