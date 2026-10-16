@@ -17,6 +17,7 @@ import {
   AI_TASK_DAILY_PER_STUDENT,
   AI_TASK_PENDING_PER_STUDENT,
   AI_TASK_QUEUE_BUCKETS,
+  AI_TURNS_MAX,
 } from "@tutor/contract";
 import {
   and,
@@ -164,7 +165,9 @@ const TASK_TRANSITIONS: Readonly<
   dispatching: ["replied", "failed", "paused", "uncertain"],
   uncertain: ["created", "replied"],
   claimed: ["replied", "created", "cancelled"],
-  replied: [],
+  // replied → created 仅由追问触发（SAI-21 followupStudentAiTask）：追问把
+  // 任务重新排队待发（快照/材料不动，对话继续本题）；其余 replied 出口不变
+  replied: ["created"],
   paused: ["created", "cancelled"],
   failed: ["created"],
   cancelled: [],
@@ -464,6 +467,40 @@ function hasAssistantReply(db: Db | QueueTx, taskId: string): boolean {
       )
       .get() !== undefined
   );
+}
+
+/** 本题对话消息（createdAt+id 稳定序；学生/教师投影共用投影形状） */
+function messageRowsOf(db: Db | QueueTx, taskId: string): AiMessage[] {
+  return asDb(db)
+    .select()
+    .from(aiMessages)
+    .where(eq(aiMessages.taskId, taskId))
+    .orderBy(asc(aiMessages.createdAt), asc(aiMessages.id))
+    .all()
+    .map((row) => ({
+      id: row.id,
+      taskId: row.taskId,
+      role: row.role,
+      contentMd: row.contentMd,
+      createdAt: row.createdAt,
+    }));
+}
+
+/** 末条学生消息（追问在途判定与 worker 出站诉求单源；无学生消息为故障形态） */
+function lastStudentMessageOf(
+  db: Db | QueueTx,
+  taskId: string,
+): AiMessage | undefined {
+  const rows = messageRowsOf(db, taskId).filter(
+    (message) => message.role === "student",
+  );
+  return rows.length > 0 ? rows[rows.length - 1] : undefined;
+}
+
+/** 本题学生消息数（一轮 = 一条学生提问；AI_TURNS_MAX 上限口径） */
+function studentTurnCountOf(db: Db | QueueTx, taskId: string): number {
+  return messageRowsOf(db, taskId).filter((message) => message.role === "student")
+    .length;
 }
 
 // ---------- 操作与语义 1：创建（幂等 + 配额） ----------
@@ -1162,7 +1199,13 @@ export function renewMcpLease(
 
 // ---------- 写回共用：回执幂等与迟到事实 ----------
 
-/** 最近一次成功回执（reply_received 事实的 detailJson） */
+/**
+ * 最近一次成功回执（reply_received 事实的 detailJson）。
+ * dedup 只在回执仍「应答末条学生消息」时成立（SAI-21 追问缺陷修复）：
+ * 追问把任务重新排队后，新回信即使与上一轮逐字相同也是新应答——若只比
+ * 内容哈希会把第二轮误判为重放，任务永远停在 dispatching。判定用回执
+ * serverTs 与末条学生消息时刻比较（同为服务端时钟）。
+ */
 function lastReplyReceipt(
   db: Db | QueueTx,
   taskId: string,
@@ -1174,14 +1217,22 @@ function lastReplyReceipt(
     .orderBy(desc(aiFacts.serverTs))
     .get();
   if (fact === undefined || fact.detailJson === null) return null;
+  let contentHash: unknown;
   try {
-    const parsed = JSON.parse(fact.detailJson) as { contentHash?: unknown };
-    return typeof parsed.contentHash === "string"
-      ? { contentHash: parsed.contentHash }
-      : null;
+    contentHash = (JSON.parse(fact.detailJson) as { contentHash?: unknown })
+      .contentHash;
   } catch {
     return null;
   }
+  if (typeof contentHash !== "string") return null;
+  const lastStudent = lastStudentMessageOf(db, taskId);
+  if (
+    lastStudent !== undefined &&
+    fact.serverTs < lastStudent.createdAt
+  ) {
+    return null; // 追问已发生：旧回执不再代表当前对话状态，不做重放判定
+  }
+  return { contentHash };
 }
 
 /** 回信正文超长截断（契约口径：不硬拒，截断并显式声明） */
@@ -1781,6 +1832,101 @@ export function refreshPendingAiTask(
   );
 }
 
+// ---------- 操作与语义 7b：追问（同题对话续轮，SAI-21） ----------
+
+export interface FollowupAiTaskResult {
+  /** 追问后的任务行（replied → created 重新排队待发） */
+  readonly task: AiTaskRow;
+  /** 本题完整对话（含追问；不含其他题——消息按 taskId 隔离） */
+  readonly messages: readonly AiMessage[];
+  /** false = 同文追问在途重放（未追加消息，网络重试幂等） */
+  readonly appended: boolean;
+}
+
+/**
+ * 同题追问（需求 §7.4/§8、技术方案 §3.3）：把一条学生消息追加进本题对话
+ * 并把任务重新排队（replied → created，worker/外部按通道再领取）。
+ * - 只引用本题当前对话：消息按 taskId 隔离，不注入其他题或其他学生数据；
+ * - 不重新采集材料：快照/材料/版本锚定原样不动（「回复基于之前发送的
+ *   材料」——新材料 = 新任务新快照，同任务追问不悄悄附新笔迹）；
+ * - 幂等：网络重试同文追问且上一条仍在途（created/dispatching/uncertain/
+ *   claimed）→ 返回现状不重复追加（一次追问只出站一次，不重复计费）；
+ * - 上限：本题学生消息数达 AI_TURNS_MAX（一轮 = 一条学生提问）→ 409
+ *   AI_TURNS_LIMIT；
+ * - 门禁：出站语义入口，按当前策略与完成态实时校验（教师刚改设置立即
+ *   生效），不可用 → 403，消息零落库；重排队后的真正出站前仍由
+ *   beginInappDispatch/claim 再次实时重校验（SAI-15 双阶段口径）。
+ */
+export function followupStudentAiTask(
+  db: Db,
+  input: { studentId: string; taskId: string; question: string },
+  options: { now?: Date | string; configSource?: AiPolicyConfigSource } = {},
+): FollowupAiTaskResult {
+  const configSource = options.configSource ?? sqliteAiPolicyConfigSource;
+  const now = nowSpecOf(options.now);
+  const task = requireOwnTask(db, input.studentId, input.taskId);
+  // 幂等重放：末条学生消息同文且任务仍在处理（未回到 replied）→ 现状返回
+  const last = lastStudentMessageOf(db, task.id);
+  if (
+    last !== undefined &&
+    last.contentMd === input.question &&
+    task.status !== "replied"
+  ) {
+    return { task, messages: messageRowsOf(db, task.id), appended: false };
+  }
+  if (task.status !== "replied") {
+    throw conflict(
+      task.status === "created" || task.status === "dispatching"
+        ? "上一条追问还在处理中，收到回复后可继续追问"
+        : "只有已收到回信的任务可以追问",
+    );
+  }
+  if (!policyUsable(db, task, configSource)) {
+    throw new HttpError(
+      403,
+      "AI_POLICY_DISABLED",
+      "当前教学模式下暂不能追问，本题完成后可继续提问",
+    );
+  }
+  if (studentTurnCountOf(db, task.id) >= AI_TURNS_MAX) {
+    throw new HttpError(
+      409,
+      "AI_TURNS_LIMIT",
+      `本题对话已达上限（${AI_TURNS_MAX} 轮），可发起新求助继续`,
+    );
+  }
+  return db.transaction(
+    (tx) => {
+      // 追问时刻取「当前时刻」与「末条消息 +1ms」的较大者：排序键
+      // (createdAt, id) 下追问必须落在对话末尾（时钟回拨/同毫秒也不例外）
+      const existing = messageRowsOf(asDb(tx), task.id);
+      const lastAt =
+        existing.length > 0
+          ? existing[existing.length - 1]?.createdAt ?? ""
+          : "";
+      const followupAt =
+        now.iso > lastAt ? now.iso : new Date(Date.parse(lastAt) + 1).toISOString();
+      tx.insert(aiMessages)
+        .values({
+          id: randomUUID(),
+          taskId: task.id,
+          role: "student",
+          contentMd: input.question,
+          createdAt: followupAt,
+        })
+        .run();
+      // replied → created：重新排队待发（转换表唯一合法出口见 TASK_TRANSITIONS）
+      const requed = applyTransition(tx, task, "created", now);
+      return {
+        task: requed,
+        messages: messageRowsOf(asDb(tx), task.id),
+        appended: true,
+      };
+    },
+    { behavior: "immediate" },
+  );
+}
+
 // ---------- 操作与语义 8：取消 / 恢复 ----------
 
 /**
@@ -1915,23 +2061,10 @@ export function getStudentAiTaskDetail(
     hasReply: hasAssistantReply(db, task.id),
     usable,
   });
-  const messages = db
-    .select()
-    .from(aiMessages)
-    .where(eq(aiMessages.taskId, task.id))
-    .orderBy(asc(aiMessages.createdAt), asc(aiMessages.id))
-    .all()
-    .map((row) => ({
-      id: row.id,
-      taskId: row.taskId,
-      role: row.role,
-      contentMd: row.contentMd,
-      createdAt: row.createdAt,
-    }))
-    .filter(
-      (message) =>
-        message.role === "student" || usable || task.replyDeliveredAt !== null,
-    );
+  const messages = messageRowsOf(db, task.id).filter(
+    (message) =>
+      message.role === "student" || usable || task.replyDeliveredAt !== null,
+  );
   const facts = db
     .select()
     .from(aiFacts)

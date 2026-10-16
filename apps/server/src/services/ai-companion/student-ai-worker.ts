@@ -153,8 +153,9 @@ const ASSEMBLY_BROKEN_MESSAGE =
  * 数据段/历史/诉求经 assembleOutboundMessages 统一组装。快照损坏 → 500
  * AI_CONTEXT_BROKEN（不伪造题面出站）。
  *
- * 诉求取首条学生消息：当前任务创建时只落这一条（ai_messages 学生侧唯一
- * 插入点）；未来若在同一任务上追加追问消息，此处须改取末条学生消息。
+ * 诉求取末条学生消息（SAI-21 追问落地）：首轮任务末条即首条，行为不变；
+ * 追问后末条是追问本身，此前的问答（含首问与各条回信）整体作为 history
+ * ——对话只引用本题（loadTaskHistory 按 taskId 取数），不混入其他题。
  */
 function outboundAssemblyOfTask(db: Db, task: AiTaskRow): OutboundAssembly {
   let parsedJson: unknown;
@@ -168,8 +169,9 @@ function outboundAssemblyOfTask(db: Db, task: AiTaskRow): OutboundAssembly {
     throw new HttpError(500, "AI_CONTEXT_BROKEN", ASSEMBLY_BROKEN_MESSAGE);
   }
   const history = loadTaskHistory(db, task.id);
-  const first = history.find((message) => message.role === "student");
-  if (first === undefined) {
+  const students = history.filter((message) => message.role === "student");
+  const last = students[students.length - 1];
+  if (last === undefined) {
     throw new HttpError(500, "AI_CONTEXT_BROKEN", ASSEMBLY_BROKEN_MESSAGE);
   }
   return assembleOutboundMessages({
@@ -177,8 +179,8 @@ function outboundAssemblyOfTask(db: Db, task: AiTaskRow): OutboundAssembly {
       snapshot: parsed.data,
       systemPromptMd: systemPromptOfSnapshotMd(parsed.data.promptSnapshotMd),
     },
-    studentQuestion: first.contentMd,
-    history: history.filter((message) => message.id !== first.id),
+    studentQuestion: last.contentMd,
+    history: history.filter((message) => message.id !== last.id),
     materials: loadOutboundMaterialRefs(db, task.id),
   });
 }

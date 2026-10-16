@@ -36,6 +36,7 @@ import { attachAiTaskMaterials } from "./student-ai-materials.ts";
 import {
   cancelAiTask,
   createAiTask,
+  followupStudentAiTask,
   recoverAiQueue,
   resumeAiTask,
   retryAiTask,
@@ -1149,4 +1150,85 @@ describe("SAI-17 worker 调度与阻塞", () => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+});
+
+// ---------- SAI-21 追问出站（末条学生消息为诉求；历史完整；快照不重采） ----------
+
+describe("SAI-21 worker 追问出站", () => {
+  it("追问后再次派发：诉求取末条学生消息，首问与回信整体入历史，冻结快照照常外发", async () => {
+    const db = createTestDb();
+    const dataDir = createTestDir();
+    const world = setupWorld(db);
+    addInappConnection(db, world.studentId);
+    const taskId = mkInappTask(db, world);
+    const snapshotBefore = db
+      .select()
+      .from(aiTasks)
+      .where(eq(aiTasks.id, taskId))
+      .get()?.contextSnapshotJson;
+    const provider = await startFakeProvider(respondJson);
+    try {
+      // 首轮：出站并写回（真实 HTTP fake provider 链）
+      await runStudentAiDispatchOnce(db, {
+        dataDir,
+        rootSecret: ROOT_SECRET,
+        transport: provider.transport,
+        now: () => new Date(T0 + 1000),
+      });
+      expect(taskStatus(db, taskId)).toBe("replied");
+
+      // 追问（同题对话续轮；快照不动）
+      const followup = followupStudentAiTask(
+        db,
+        { studentId: world.studentId, taskId, question: "第二步为什么要移项？" },
+        { now: new Date(T0 + 2000) },
+      );
+      expect(followup.appended).toBe(true);
+      expect(followup.messages.map((message) => message.role)).toEqual([
+        "student",
+        "assistant",
+        "student",
+      ]);
+      const snapshotAfterFollowup = db
+        .select()
+        .from(aiTasks)
+        .where(eq(aiTasks.id, taskId))
+        .get()?.contextSnapshotJson;
+      expect(snapshotAfterFollowup).toBe(snapshotBefore);
+
+      // 再派发：出站诉求 = 追问（末条学生消息），历史含首问与回信
+      const requestsBefore = provider.requests.length;
+      await runStudentAiDispatchOnce(db, {
+        dataDir,
+        rootSecret: ROOT_SECRET,
+        transport: provider.transport,
+        now: () => new Date(T0 + 3000),
+      });
+      expect(provider.requests.length).toBe(requestsBefore + 1);
+      expect(taskStatus(db, taskId)).toBe("replied");
+      expect(assistantReplies(db, taskId)).toEqual([
+        "FAKE-REPLY",
+        "FAKE-REPLY",
+      ]);
+      const body = provider.requests[requestsBefore]?.body ?? "";
+      const parsed = JSON.parse(body) as {
+        messages?: Array<{ role: string; content: unknown }>;
+      };
+      const messages = parsed.messages ?? [];
+      // 诉求在末位且是追问本身；首问/回信作为历史在中段（system→数据段→历史→诉求）
+      const appeal = messages[messages.length - 1];
+      expect(appeal?.role).toBe("user");
+      expect(String(appeal?.content)).toContain("第二步为什么要移项？");
+      const historyText = JSON.stringify(
+        messages.slice(0, messages.length - 1),
+      );
+      expect(historyText).toContain("请帮我讲解本题");
+      expect(historyText).toContain("FAKE-REPLY");
+      // 冻结快照（题面/解析）照常随数据段外发——追问不换快照不重采材料
+      expect(body).toContain("题干");
+      expect(body).toContain("解析");
+    } finally {
+      await provider.close();
+    }
+  });
 });

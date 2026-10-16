@@ -5,6 +5,7 @@ import {
   aiConnectionPatchRequestSchema,
   aiStatusQuerySchema,
   aiTaskCreateRequestSchema,
+  aiTaskFollowupRequestSchema,
   aiTaskListQuerySchema,
   aiTaskUpdatePendingRequestSchema,
   studentQuickButtonsPutRequestSchema,
@@ -42,6 +43,7 @@ import {
   aiTaskPublicViewOf,
   cancelAiTask,
   createAiTask,
+  followupStudentAiTask,
   getStudentAiTaskDetail,
   listStudentAiTasks,
   openStudentAiReply,
@@ -363,6 +365,25 @@ export function createStudentAiRoutes(db: Db, dataDir: string) {
           { hmacSecret },
         );
         return c.json(taskView(task));
+      })
+      .post("/ai/tasks/:id/followup", async (c) => {
+        const body = await parseJsonBodyWithCode(
+          c,
+          aiTaskFollowupRequestSchema,
+          textLimitCodeOf,
+        );
+        const result = followupStudentAiTask(db, {
+          studentId: c.var.student.id,
+          taskId: c.req.param("id"),
+          question: body.question,
+        });
+        return c.json({
+          ok: true,
+          data: {
+            task: taskView(result.task).data,
+            messages: result.messages,
+          },
+        });
       })
       .post("/ai/tasks/:id/cancel", (c) => {
         const task = cancelAiTask(db, {
