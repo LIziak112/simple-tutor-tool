@@ -12,7 +12,6 @@ import { runBackupRestoreDrill } from "../../scripts/b20-verify/backup-restore-d
 import { runDegradationDrill } from "../../scripts/b20-verify/degradation-drill.ts";
 import {
   type DrillReport,
-  hasDrillFail,
   renderDrillReport,
 } from "../../scripts/b20-verify/drill-common.ts";
 
@@ -119,17 +118,14 @@ it("CLI 子进程：两个演练退出码 0，--out 操作日志落盘且含断�
       expect(stdout).toContain("演练");
       return readFileSync(out, "utf8");
     };
-    const backupLog = await runCli(
-      "backup-restore-drill.ts",
-      join(outDir, "backup-restore.log.md"),
-    );
+    // 两个子进程演练互不共享状态（各自临时 DATA_DIR 与 --out），并行省一半
+    // tsx 启动 + 服务端模块图加载的墙钟时间
+    const [backupLog, degradationLog] = await Promise.all([
+      runCli("backup-restore-drill.ts", join(outDir, "backup-restore.log.md")),
+      runCli("degradation-drill.ts", join(outDir, "degradation.log.md")),
+    ]);
     expect(backupLog).toContain("备份恢复演练");
     expect(backupLog).toContain("[PASS]");
-    expect(hasDrillFail).toBeTypeOf("function");
-    const degradationLog = await runCli(
-      "degradation-drill.ts",
-      join(outDir, "degradation.log.md"),
-    );
     expect(degradationLog).toContain("降级演练");
     expect(degradationLog).toContain("[PASS]");
   } finally {

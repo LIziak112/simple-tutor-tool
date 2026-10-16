@@ -1,5 +1,5 @@
 /**
- * B20 降级真实演练（SAI-35 步骤 5；手动工具，不进 CI）。
+ * B20 降级真实演练（SAI-35 步骤 5）。
  *
  * 在临时 DATA_DIR 上用真实服务演练四类降级，断言「AI 坏了不拖垮普通作答、
  * 证据不误删、缺件不假成功」：
@@ -15,22 +15,19 @@
  * 用法（apps/server 目录下）：
  *   node node_modules/tsx/dist/cli.mjs scripts/b20-verify/degradation-drill.ts \
  *     [--out <操作日志落盘路径>]
- * 退出码：全部断言通过 0，存在 FAIL 1。绝不触碰用户 DATA_DIR（自建临时目录）。
+ * 退出码：全部断言通过 0，存在 FAIL 1。绝不触碰用户 DATA_DIR（自建临时目录）；
+ * 自证测试见 src/test/b20-verify-scripts.test.ts（随 pnpm test 进 CI）。
  */
 import {
   existsSync,
   mkdirSync,
   mkdtempSync,
-  rmSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { and, eq } from "drizzle-orm";
-import { runBackfills } from "../../src/db/backfill.ts";
-import { createDbHandle, type Db, type DbHandle } from "../../src/db/client.ts";
-import { runMigrations } from "../../src/db/migrate.ts";
 import {
   aiFacts,
   aiTaskMaterials,
@@ -39,8 +36,6 @@ import {
   responses,
 } from "../../src/db/schema.ts";
 import { TEST_TEACHER_ID } from "../../src/db/test-utils.ts";
-import { HttpError } from "../../src/lib/http-error.ts";
-import { createStudentAiConnection } from "../../src/services/ai-companion/connection-service.ts";
 import { putAiPolicyOverride } from "../../src/services/ai-companion/settings-service.ts";
 import {
   attachAiTaskMaterials,
@@ -48,21 +43,19 @@ import {
   loadAiTaskMaterialRows,
   readMaterialBytes,
 } from "../../src/services/ai-companion/student-ai-materials.ts";
-import { createAiTask } from "../../src/services/ai-companion/student-ai-queue.ts";
 import { runStudentAiDispatchOnce } from "../../src/services/ai-companion/student-ai-worker.ts";
 import { submitAttempt } from "../../src/services/attempt-service.ts";
 import { createSnapshot } from "../../src/services/backup-service.ts";
+import { makeNotePng } from "../../src/test/note-fixtures.ts";
 import {
-  insertAttempt,
-  insertResponse,
-} from "../../src/test/ai-companion-fixtures.ts";
-import { insertBackupTeacher } from "../../src/test/backup-fixtures.ts";
-import { makeNotePng, makeStudent } from "../../src/test/note-fixtures.ts";
-import {
+  captureHttpError,
+  createDrillTask,
   DrillRecorder,
   type DrillReport,
   finishDrill,
   outPathOf,
+  setupDrillWorld,
+  teardownDrillWorld,
 } from "./drill-common.ts";
 
 const ROOT_SECRET = "21".repeat(32);
@@ -86,75 +79,31 @@ export interface DegradationDrillOptions {
   readonly skipPolicyDisable?: boolean;
 }
 
-interface World {
-  readonly handle: DbHandle;
-  readonly dataDir: string;
-  readonly studentId: string;
-  readonly attemptId: string;
-}
-
-async function setupWorld(
-  recorder: DrillRecorder,
-  dataDir: string,
-): Promise<World> {
-  writeFileSync(join(dataDir, "secret.key"), ROOT_SECRET, "utf8");
-  const handle = createDbHandle(join(dataDir, "tutor.db"), (fresh) => {
-    runMigrations(fresh);
-    runBackfills(fresh);
-  });
-  const { db } = handle;
-  await insertBackupTeacher(db);
-  const studentId = makeStudent(db, TEST_TEACHER_ID);
-  const attemptId = insertAttempt(db, { studentId });
-  for (const questionId of ["q-deg-1", "q-deg-2", "q-deg-3", "q-deg-4"]) {
-    insertResponse(db, attemptId, questionId);
-  }
-  createStudentAiConnection(db, {
-    studentId,
-    rootSecret: ROOT_SECRET,
-    request: {
-      channel: "inapp",
-      baseUrl: "http://api.b20-deg.test/v1",
-      model: "b20-deg-model",
-      apiKey: "sk-b20-deg-key",
-      isDefault: true,
-      imageCapability: "unknown",
-    },
-  });
-  recorder.info(
-    "世界",
-    `临时 DATA_DIR=${dataDir}；教师/学生/作答/四题/inapp 连接就绪`,
-  );
-  return { handle, dataDir, studentId, attemptId };
-}
-
-function mkTask(db: Db, world: World, questionId: string, mutationId: string) {
-  return createAiTask(
-    db,
-    {
-      studentId: world.studentId,
-      attemptId: world.attemptId,
-      questionId,
-      question: `演练：${mutationId}`,
-      channel: "inapp",
-      mutationId,
-    },
-    { hmacSecret: HMAC_SECRET, now: new Date() },
-  ).task;
-}
-
 /** 降级演练主体。健全世界应零 FAIL；skip* 为检出力负控。 */
 export async function runDegradationDrill(
   options: DegradationDrillOptions = {},
 ): Promise<DrillReport> {
   const dataDir = mkdtempSync(join(tmpdir(), "tutor-b20-degrade-"));
   const recorder = new DrillRecorder("降级演练", dataDir);
-  const world = await setupWorld(recorder, dataDir);
-  const { handle, studentId, attemptId } = world;
-  const { db } = handle;
+  const world = await setupDrillWorld(recorder, {
+    dataDir,
+    rootSecret: ROOT_SECRET,
+    questions: ["q-deg-1", "q-deg-2", "q-deg-3", "q-deg-4"],
+    inapp: {
+      baseUrl: "http://api.b20-deg.test/v1",
+      model: "b20-deg-model",
+      apiKey: "sk-b20-deg-key",
+    },
+  });
+  const { db, studentId, attemptId } = world;
   try {
     // ---------- 场景 A：缺解密材料（secret.key 丢失语义） ----------
-    const tA = mkTask(db, world, "q-deg-1", "b20-deg-rekey");
+    const tA = createDrillTask(db, world, HMAC_SECRET, {
+      questionId: "q-deg-1",
+      channel: "inapp",
+      mutationId: "b20-deg-rekey",
+      question: "演练：b20-deg-rekey",
+    });
     let outboundCalls = 0;
     await runStudentAiDispatchOnce(db, {
       dataDir,
@@ -187,7 +136,12 @@ export async function runDegradationDrill(
     );
 
     // ---------- 场景 B：引用文件缺失 ----------
-    const tB = mkTask(db, world, "q-deg-2", "b20-deg-missing-file");
+    const tB = createDrillTask(db, world, HMAC_SECRET, {
+      questionId: "q-deg-2",
+      channel: "inapp",
+      mutationId: "b20-deg-missing-file",
+      question: "演练：b20-deg-missing-file",
+    });
     attachAiTaskMaterials(db, dataDir, {
       studentId,
       taskId: tB.id,
@@ -221,13 +175,9 @@ export async function runDegradationDrill(
     if (options.skipFileDeletion !== true) {
       unlinkSync(join(dataDir, tBMaterials[0]?.pngPath ?? ""));
     }
-    let broken: HttpError | undefined;
-    try {
-      readMaterialBytes(dataDir, tBMaterials[0]!);
-    } catch (error) {
-      if (error instanceof HttpError) broken = error;
-      else throw error;
-    }
+    const broken = captureHttpError(() =>
+      readMaterialBytes(dataDir, tBMaterials[0]!),
+    );
     recorder.assert(
       "B 引用文件缺失",
       broken !== undefined &&
@@ -238,7 +188,14 @@ export async function runDegradationDrill(
     );
 
     // ---------- 场景 C：GC 清理 ----------
-    const tC = mkTask(db, world, "q-deg-3", "b20-deg-gc");
+    const tC = createDrillTask(db, world, HMAC_SECRET, {
+      questionId: "q-deg-3",
+      channel: "inapp",
+      mutationId: "b20-deg-gc",
+      question: "演练：b20-deg-gc",
+    });
+    // 两页材料：删掉第 0 行后，第 1 行仍被行引用、第 0 行只剩备份引用——
+    // 两种保留路径都要真实覆盖（单页时「行引用保留」是空转断言）
     attachAiTaskMaterials(db, dataDir, {
       studentId,
       taskId: tC.id,
@@ -249,6 +206,13 @@ export async function runDegradationDrill(
           pixelWidth: 320,
           pixelHeight: 200,
           png: makeNotePng(320, 200, 430),
+        },
+        {
+          kind: "annotation",
+          pageIndex: 1,
+          pixelWidth: 320,
+          pixelHeight: 200,
+          png: makeNotePng(320, 200, 431),
         },
       ],
     });
@@ -275,7 +239,7 @@ export async function runDegradationDrill(
     // 备份引用保留：先拍快照（引用当前全部材料），再模拟行丢失
     createSnapshot(dataDir, db);
     const tCPath = tCMaterials[0]?.pngPath ?? "";
-    // 直接删行模拟「行丢失但备份仍引用」的保留场景（演练世界一次性）
+    // 直接删第 0 行模拟「行丢失但备份仍引用」的保留场景（演练世界一次性）
     db.delete(aiTaskMaterials)
       .where(eq(aiTaskMaterials.id, tCMaterials[0]!.id))
       .run();
@@ -299,8 +263,8 @@ export async function runDegradationDrill(
         .slice(1)
         .every((row) => existsSync(join(dataDir, row.pngPath))) &&
         existsSync(join(dataDir, tCPath)),
-      `删除行后文件因备份快照引用保留（keptByReference=${gc.keptByReference}）——备份引用是第二道防线`,
-      `备份引用保留失效（keptByReference=${gc.keptByReference}，行引用文件或备份引用文件被误删）`,
+      `删行后：仍有行引用的第 1 页保留、被删行的第 0 页因备份快照引用保留（keptByReference=${gc.keptByReference}）——备份引用是第二道防线`,
+      `保留失效（keptByReference=${gc.keptByReference}，行引用文件或备份引用文件被误删）`,
     );
     recorder.assert(
       "C 命名空间边界",
@@ -320,13 +284,14 @@ export async function runDegradationDrill(
         "post_submit_only",
       );
     }
-    let disabled: HttpError | undefined;
-    try {
-      mkTask(db, world, "q-deg-4", "b20-deg-disabled");
-    } catch (error) {
-      if (error instanceof HttpError) disabled = error;
-      else throw error;
-    }
+    const disabled = captureHttpError(() => {
+      createDrillTask(db, world, HMAC_SECRET, {
+        questionId: "q-deg-4",
+        channel: "inapp",
+        mutationId: "b20-deg-disabled",
+        question: "演练：b20-deg-disabled",
+      });
+    });
     const disabledTaskRows = db
       .select({ id: aiTasks.id })
       .from(aiTasks)
@@ -369,16 +334,7 @@ export async function runDegradationDrill(
     recorder.info("收尾", "演练世界即将清理（临时 DATA_DIR）");
     return recorder.finish();
   } finally {
-    try {
-      handle.close();
-    } catch {
-      /* 句柄已关情形 */
-    }
-    try {
-      rmSync(dataDir, { recursive: true, force: true });
-    } catch {
-      /* EBUSY 容忍 */
-    }
+    teardownDrillWorld(world);
   }
 }
 

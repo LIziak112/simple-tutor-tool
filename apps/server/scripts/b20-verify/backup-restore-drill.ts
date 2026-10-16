@@ -1,5 +1,5 @@
 /**
- * B20 备份恢复真实演练（SAI-35 步骤 4；手动工具，不进 CI）。
+ * B20 备份恢复真实演练（SAI-35 步骤 4）。
  *
  * 在临时 DATA_DIR 上用真实服务走完整链路：
  *   建世界（连接/任务/材料/票据）→ 下载完整备份（buildBackupZip）→
@@ -17,15 +17,13 @@
  * 用法（apps/server 目录下）：
  *   node node_modules/tsx/dist/cli.mjs scripts/b20-verify/backup-restore-drill.ts \
  *     [--out <操作日志落盘路径>]
- * 退出码：全部断言通过 0，存在 FAIL 1。绝不触碰用户 DATA_DIR（自建临时目录）。
+ * 退出码：全部断言通过 0，存在 FAIL 1。绝不触碰用户 DATA_DIR（自建临时目录）；
+ * 自证测试见 src/test/b20-verify-scripts.test.ts（随 pnpm test 进 CI）。
  */
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { and, eq } from "drizzle-orm";
-import { runBackfills } from "../../src/db/backfill.ts";
-import { createDbHandle, type DbHandle } from "../../src/db/client.ts";
-import { runMigrations } from "../../src/db/migrate.ts";
 import {
   aiFacts,
   aiMessages,
@@ -38,7 +36,6 @@ import {
 import { TEST_TEACHER_ID } from "../../src/db/test-utils.ts";
 import { HttpError } from "../../src/lib/http-error.ts";
 import {
-  createStudentAiConnection,
   findActiveMcpConnectionByToken,
   patchStudentAiConnection,
 } from "../../src/services/ai-companion/connection-service.ts";
@@ -50,7 +47,6 @@ import {
   beginInappDispatch,
   claimMcpTask,
   completeInappDispatch,
-  createAiTask,
   markReplyDelivered,
   submitMcpReply,
 } from "../../src/services/ai-companion/student-ai-queue.ts";
@@ -65,86 +61,35 @@ import {
   restoreFromBackup,
 } from "../../src/services/backup-service.ts";
 import {
-  insertAttempt,
-  insertResponse,
-} from "../../src/test/ai-companion-fixtures.ts";
-import {
   BACKUP_TEST_PASSWORD,
-  insertBackupTeacher,
   zipToBackupBuffer,
 } from "../../src/test/backup-fixtures.ts";
-import { makeNotePng, makeStudent } from "../../src/test/note-fixtures.ts";
+import { makeNotePng } from "../../src/test/note-fixtures.ts";
 import {
+  captureHttpError,
+  createDrillTask,
   DrillRecorder,
   type DrillReport,
   finishDrill,
   outPathOf,
+  setupDrillWorld,
+  teardownDrillWorld,
 } from "./drill-common.ts";
 
 const ROOT_SECRET = "20".repeat(32);
 const HMAC_SECRET = "b20-drill-secret";
+/** 五题题号（模块常量单源：建世界逐题插行与各阶段任务创建共用） */
+const QUESTION_IDS = {
+  inappOld: "q-b20-1",
+  linkOld: "q-b20-2",
+  mcpOld: "q-b20-3",
+  inappNew: "q-b20-4",
+  linkNew: "q-b20-5",
+} as const;
 
 /** 演练选项：skipRestore = 检出力负控（不执行恢复，断言应 FAIL） */
 export interface BackupRestoreDrillOptions {
   readonly skipRestore?: boolean;
-}
-
-interface World {
-  readonly handle: DbHandle;
-  readonly dataDir: string;
-  readonly studentId: string;
-  readonly attemptId: string;
-  readonly questionIds: Record<string, string>;
-  readonly mcpTokenOld: string;
-}
-
-/** 建基础世界：教师（带密码）/学生/作答/五题应答行/inapp+mcp 连接 */
-async function setupWorld(
-  recorder: DrillRecorder,
-  dataDir: string,
-): Promise<World> {
-  writeFileSync(join(dataDir, "secret.key"), ROOT_SECRET, "utf8");
-  const handle = createDbHandle(join(dataDir, "tutor.db"), (fresh) => {
-    runMigrations(fresh);
-    runBackfills(fresh);
-  });
-  const { db } = handle;
-  await insertBackupTeacher(db);
-  const studentId = makeStudent(db, TEST_TEACHER_ID);
-  const attemptId = insertAttempt(db, { studentId });
-  const questionIds = {
-    inappOld: "q-b20-1",
-    linkOld: "q-b20-2",
-    mcpOld: "q-b20-3",
-    inappNew: "q-b20-4",
-    linkNew: "q-b20-5",
-  };
-  for (const questionId of Object.values(questionIds)) {
-    insertResponse(db, attemptId, questionId);
-  }
-  createStudentAiConnection(db, {
-    studentId,
-    rootSecret: ROOT_SECRET,
-    request: {
-      channel: "inapp",
-      baseUrl: "http://api.b20-drill.test/v1",
-      model: "b20-drill-model",
-      apiKey: "sk-b20-drill-key",
-      isDefault: true,
-      imageCapability: "unknown",
-    },
-  });
-  const mcp = createStudentAiConnection(db, {
-    studentId,
-    rootSecret: ROOT_SECRET,
-    request: { channel: "mcp" },
-  });
-  const mcpTokenOld = mcp.credential?.token ?? "";
-  recorder.info(
-    "世界",
-    `临时 DATA_DIR=${dataDir}；教师/学生/作答/五题/inapp+mcp 双连接就绪（mcp 旧 Token 已一次性下发 ${mcpTokenOld.slice(0, 6)}…）`,
-  );
-  return { handle, dataDir, studentId, attemptId, questionIds, mcpTokenOld };
 }
 
 /** 断言 fn 抛出指定 status/code 的 HttpError（演练内联版，返回实际形态） */
@@ -153,18 +98,14 @@ function expectHttp(
   status: number,
   code: string,
 ): { ok: boolean; actual: string } {
-  try {
-    fn();
+  const error = captureHttpError(fn);
+  if (error === undefined) {
     return { ok: false, actual: "未抛出错误" };
-  } catch (error) {
-    if (error instanceof HttpError) {
-      return {
-        ok: error.status === status && error.code === code,
-        actual: `${error.status} ${error.code}`,
-      };
-    }
-    return { ok: false, actual: `非 HttpError：${String(error)}` };
   }
+  return {
+    ok: error.status === status && error.code === code,
+    actual: `${error.status} ${error.code}`,
+  };
 }
 
 /**
@@ -175,24 +116,26 @@ export async function runBackupRestoreDrill(
 ): Promise<DrillReport> {
   const dataDir = mkdtempSync(join(tmpdir(), "tutor-b20-backup-"));
   const recorder = new DrillRecorder("备份恢复演练", dataDir);
-  const world = await setupWorld(recorder, dataDir);
-  const { handle, studentId, attemptId, mcpTokenOld } = world;
-  const q = world.questionIds;
-  const { db } = handle;
+  const world = await setupDrillWorld(recorder, {
+    dataDir,
+    rootSecret: ROOT_SECRET,
+    questions: Object.values(QUESTION_IDS),
+    inapp: {
+      baseUrl: "http://api.b20-drill.test/v1",
+      model: "b20-drill-model",
+      apiKey: "sk-b20-drill-key",
+    },
+    withMcp: true,
+  });
+  const { db, studentId, attemptId, mcpTokenOld } = world;
   try {
     // ---- 阶段一：备份时点的旧世界 ----
-    const tOld = createAiTask(
-      db,
-      {
-        studentId,
-        attemptId,
-        questionId: q.inappOld ?? "q-b20-1",
-        question: "演练：页内求助（备份时点）",
-        channel: "inapp",
-        mutationId: "b20-mut-inapp-old",
-      },
-      { hmacSecret: HMAC_SECRET, now: new Date() },
-    ).task;
+    const tOld = createDrillTask(db, world, HMAC_SECRET, {
+      questionId: QUESTION_IDS.inappOld,
+      question: "演练：页内求助（备份时点）",
+      channel: "inapp",
+      mutationId: "b20-mut-inapp-old",
+    });
     attachAiTaskMaterials(db, dataDir, {
       studentId,
       taskId: tOld.id,
@@ -206,30 +149,18 @@ export async function runBackupRestoreDrill(
         },
       ],
     });
-    const tMcp = createAiTask(
-      db,
-      {
-        studentId,
-        attemptId,
-        questionId: q.mcpOld ?? "q-b20-3",
-        question: "演练：MCP 求助（备份时点）",
-        channel: "mcp",
-        mutationId: "b20-mut-mcp-old",
-      },
-      { hmacSecret: HMAC_SECRET, now: new Date() },
-    ).task;
-    const tLink = createAiTask(
-      db,
-      {
-        studentId,
-        attemptId,
-        questionId: q.linkOld ?? "q-b20-2",
-        question: "演练：链接求助（备份时点）",
-        channel: "link",
-        mutationId: "b20-mut-link-old",
-      },
-      { hmacSecret: HMAC_SECRET, now: new Date() },
-    ).task;
+    const tMcp = createDrillTask(db, world, HMAC_SECRET, {
+      questionId: QUESTION_IDS.mcpOld,
+      question: "演练：MCP 求助（备份时点）",
+      channel: "mcp",
+      mutationId: "b20-mut-mcp-old",
+    });
+    const tLink = createDrillTask(db, world, HMAC_SECRET, {
+      questionId: QUESTION_IDS.linkOld,
+      question: "演练：链接求助（备份时点）",
+      channel: "link",
+      mutationId: "b20-mut-link-old",
+    });
     const ticketOld = createAiShareTicket(
       db,
       { studentId, taskId: tLink.id },
@@ -278,18 +209,12 @@ export async function runBackupRestoreDrill(
       `旧 MCP 任务被领取（lease ${mcpClaim?.leaseToken.slice(0, 8)}…）`,
       "MCP 领取失败（世界不完整）",
     );
-    const tNew = createAiTask(
-      db,
-      {
-        studentId,
-        attemptId,
-        questionId: q.inappNew ?? "q-b20-4",
-        question: "演练：备份后新建任务",
-        channel: "inapp",
-        mutationId: "b20-mut-inapp-new",
-      },
-      { hmacSecret: HMAC_SECRET, now: new Date() },
-    ).task;
+    const tNew = createDrillTask(db, world, HMAC_SECRET, {
+      questionId: QUESTION_IDS.inappNew,
+      question: "演练：备份后新建任务",
+      channel: "inapp",
+      mutationId: "b20-mut-inapp-new",
+    });
     attachAiTaskMaterials(db, dataDir, {
       studentId,
       taskId: tNew.id,
@@ -304,18 +229,12 @@ export async function runBackupRestoreDrill(
       ],
     });
     const tNewMaterials = loadAiTaskMaterialRows(db, tNew.id);
-    const tLinkNew = createAiTask(
-      db,
-      {
-        studentId,
-        attemptId,
-        questionId: q.linkNew ?? "q-b20-5",
-        question: "演练：备份后链接任务",
-        channel: "link",
-        mutationId: "b20-mut-link-new",
-      },
-      { hmacSecret: HMAC_SECRET, now: new Date() },
-    ).task;
+    const tLinkNew = createDrillTask(db, world, HMAC_SECRET, {
+      questionId: QUESTION_IDS.linkNew,
+      question: "演练：备份后链接任务",
+      channel: "link",
+      mutationId: "b20-mut-link-new",
+    });
     const ticketNew = createAiShareTicket(
       db,
       { studentId, taskId: tLinkNew.id },
@@ -338,7 +257,7 @@ export async function runBackupRestoreDrill(
     if (options.skipRestore !== true) {
       const result = await restoreFromBackup(
         dataDir,
-        handle,
+        world.handle,
         TEST_TEACHER_ID,
         BACKUP_TEST_PASSWORD,
         zip,
@@ -457,13 +376,9 @@ export async function runBackupRestoreDrill(
     );
 
     // ④ 票据：备份内仍可读 / 备份后新票据失效
-    let oldTicketOk = false;
-    try {
-      requireShareTicketByToken(db, ticketOld.token);
-      oldTicketOk = true;
-    } catch {
-      oldTicketOk = false;
-    }
+    const oldTicketOk =
+      captureHttpError(() => requireShareTicketByToken(db, ticketOld.token)) ===
+      undefined;
     recorder.assert(
       "备份内票据恢复后仍可读",
       oldTicketOk,
@@ -573,35 +488,23 @@ export async function runBackupRestoreDrill(
       `恢复后学生 ${studentCount} 名、本卷应答 ${responseCount} 行（普通作答数据不受 AI 恢复影响）`,
       `普通数据异常（学生 ${studentCount}、应答 ${responseCount} 行）`,
     );
-    if (options.skipRestore !== true) {
-      const materialRows = db
-        .select({ id: aiTaskMaterials.id })
-        .from(aiTaskMaterials)
-        .all().length;
-      recorder.assert(
-        "材料行回到时点",
-        materialRows === tOldMaterials.length,
-        `材料行回到备份时点（${materialRows} 行）`,
-        `材料行数 ${materialRows} ≠ 备份时点 ${tOldMaterials.length}`,
-      );
-    }
+    const materialRows = db
+      .select({ id: aiTaskMaterials.id })
+      .from(aiTaskMaterials)
+      .all().length;
+    recorder.assert(
+      "材料行回到时点",
+      materialRows === tOldMaterials.length,
+      `材料行回到备份时点（${materialRows} 行）`,
+      `材料行数 ${materialRows} ≠ 备份时点 ${tOldMaterials.length}`,
+    );
     recorder.info(
       "收尾",
       `作答行存在性=${db.select({ id: attempts.id }).from(attempts).all().length >= 1}；演练世界即将清理`,
     );
     return recorder.finish();
   } finally {
-    // Windows 句柄容忍：先关连接再删目录，失败留给系统临时目录清理
-    try {
-      handle.close();
-    } catch {
-      /* restore 失败路径可能已关连接 */
-    }
-    try {
-      rmSync(dataDir, { recursive: true, force: true });
-    } catch {
-      /* EBUSY 容忍 */
-    }
+    teardownDrillWorld(world);
   }
 }
 
