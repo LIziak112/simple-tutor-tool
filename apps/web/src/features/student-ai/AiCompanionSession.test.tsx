@@ -7,7 +7,6 @@ import {
   waitFor,
 } from "@testing-library/react";
 import type {
-  AiStatusData,
   AttemptQuestionPublic,
   StudentQuickButtonsData,
 } from "@tutor/contract";
@@ -24,6 +23,7 @@ import {
   AiCompanionQuickButtons,
   AiCompanionStatusPanel,
 } from "./AiCompanionSession";
+import { connectedAiStatus } from "./student-ai-test-utils";
 import {
   type AiSendController,
   useAiSendController,
@@ -72,18 +72,6 @@ const QUESTION: AttemptQuestionPublic = {
   difficulty: 1,
   hintCount: 0,
 };
-
-function connectedStatus(over: Partial<AiStatusData> = {}): AiStatusData {
-  return {
-    resolution: { usable: true, mode: "open_study", reason: "teacher_default" },
-    completed: false,
-    channelDefault: "inapp",
-    connectionReady: true,
-    firstUseRequired: false,
-    taskSummary: { total: 0, active: 0, unreadReplies: 0 },
-    ...over,
-  };
-}
 
 const QUICK_BUTTONS: StudentQuickButtonsData = {
   updatedAt: "2026-10-16T00:00:00.000Z",
@@ -161,7 +149,7 @@ async function openBound() {
 beforeEach(() => {
   vi.clearAllMocks();
   captured.send = null;
-  vi.mocked(mockedStatus).mockResolvedValue(connectedStatus());
+  vi.mocked(mockedStatus).mockResolvedValue(connectedAiStatus());
   vi.mocked(mockedList).mockResolvedValue({ tasks: [], nextCursor: null });
   vi.mocked(mockedCreate).mockResolvedValue({
     id: "task-1",
@@ -199,7 +187,7 @@ describe("AiCompanionSession 接线组件（SAI-20）", () => {
 
   it("需要设置（无连接）时给设置入口；主动作如实禁用", async () => {
     vi.mocked(mockedStatus).mockResolvedValue(
-      connectedStatus({
+      connectedAiStatus({
         channelDefault: null,
         connectionReady: false,
         firstUseRequired: true,

@@ -20,6 +20,7 @@ import {
   uploadStudentAiTaskMaterialsApi,
 } from "@/lib/api";
 import { randomUuid } from "@/lib/uuid";
+import { errorMessageOf } from "./error-text";
 
 /**
  * SAI-20 单题发送控制器（B11）：伴学栏的会话输入与幂等发送编排。
@@ -404,10 +405,7 @@ export function useAiSendController(config: UseAiSendControllerConfig) {
             pending.snapshot = null;
             setSendState({
               phase: "failed",
-              message:
-                cause instanceof Error && cause.message.length > 0
-                  ? cause.message
-                  : "材料读取失败，请重试",
+              message: errorMessageOf(cause, "材料读取失败，请重试"),
               questionId,
             });
             return;
@@ -432,10 +430,7 @@ export function useAiSendController(config: UseAiSendControllerConfig) {
           if (!alive()) return;
           setSendState({
             phase: "failed",
-            message:
-              cause instanceof Error && cause.message.length > 0
-                ? cause.message
-                : "发送失败，请检查网络后重试",
+            message: errorMessageOf(cause, "发送失败，请检查网络后重试"),
             questionId,
           });
           return;
@@ -459,11 +454,10 @@ export function useAiSendController(config: UseAiSendControllerConfig) {
             if (!alive()) return;
             setSendState({
               phase: "failed",
-              message: `任务已创建，但材料上传失败：${
-                cause instanceof Error && cause.message.length > 0
-                  ? cause.message
-                  : "请重试发送以补传材料"
-              }（不会重复计费）`,
+              message: `任务已创建，但材料上传失败：${errorMessageOf(
+                cause,
+                "请重试发送以补传材料",
+              )}（不会重复计费）`,
               questionId,
             });
             return;

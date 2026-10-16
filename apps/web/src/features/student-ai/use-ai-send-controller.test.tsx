@@ -1,7 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import type {
-  AiStatusData,
   AiTaskPublic,
   AttemptQuestionPublic,
   StudentQuickButton,
@@ -19,6 +18,7 @@ import {
   listStudentAiTasksApi,
   uploadStudentAiTaskMaterialsApi,
 } from "@/lib/api";
+import { connectedAiStatus } from "./student-ai-test-utils";
 import { useAiSendController } from "./use-ai-send-controller";
 
 /**
@@ -73,19 +73,6 @@ const QUESTION_B: AttemptQuestionPublic = {
   id: "q-b",
   questionRevisionId: "22222222-2222-4222-8222-222222222222",
 };
-
-/** 已连接可用状态（inapp 默认、开放伴学、未完成） */
-function connectedStatus(over: Partial<AiStatusData> = {}): AiStatusData {
-  return {
-    resolution: { usable: true, mode: "open_study", reason: "teacher_default" },
-    completed: false,
-    channelDefault: "inapp",
-    connectionReady: true,
-    firstUseRequired: false,
-    taskSummary: { total: 0, active: 0, unreadReplies: 0 },
-    ...over,
-  };
-}
 
 function snapshotOf(
   question: AttemptQuestionPublic,
@@ -185,7 +172,7 @@ async function openOnA(view: ReturnType<typeof renderController>) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockedStatus.mockResolvedValue(connectedStatus());
+  mockedStatus.mockResolvedValue(connectedAiStatus());
   mockedList.mockResolvedValue({ tasks: [], nextCursor: null });
   mockedCreate.mockResolvedValue(taskOf("task-1"));
   mockedUpload.mockResolvedValue({
@@ -251,7 +238,7 @@ describe("useAiSendController（SAI-20 先测 6 条）", () => {
 
   it("先测③：连接未设→完成设置→返回：输入在、调用数仍为 0（回题不自动出站）", async () => {
     mockedStatus.mockResolvedValue(
-      connectedStatus({
+      connectedAiStatus({
         channelDefault: null,
         connectionReady: false,
         firstUseRequired: true,
@@ -270,7 +257,7 @@ describe("useAiSendController（SAI-20 先测 6 条）", () => {
     expect(mockedCreate).not.toHaveBeenCalled();
     expect(mockedCapture).not.toHaveBeenCalled();
     // 在设置页完成连接：状态查询返回已连接（模拟 invalidate 后重取）
-    mockedStatus.mockResolvedValue(connectedStatus());
+    mockedStatus.mockResolvedValue(connectedAiStatus());
     await act(async () => {
       view.result.current.refreshStatus();
     });
@@ -374,7 +361,7 @@ describe("useAiSendController（SAI-20 先测 6 条）", () => {
   it("先测⑥：模式被老师关闭给原因并刷新；换账号途中迟到结果不进入新题", async () => {
     // 模式关闭：发送被拦，给原因，并刷新状态（教师刚改设置立即生效）
     mockedStatus.mockResolvedValue(
-      connectedStatus({
+      connectedAiStatus({
         resolution: { usable: false, reason: "student_closed" },
       }),
     );
@@ -397,7 +384,7 @@ describe("useAiSendController（SAI-20 先测 6 条）", () => {
     view.unmount();
 
     // 换账号（换 attempt）：在途结果迟到不得写进新题
-    mockedStatus.mockResolvedValue(connectedStatus());
+    mockedStatus.mockResolvedValue(connectedAiStatus());
     const view2 = renderController();
     await openOnA(view2);
     await act(async () => {

@@ -10,6 +10,7 @@ import {
 } from "@/lib/api";
 import { randomUuid } from "@/lib/uuid";
 import { AiReplyMarkdown } from "./AiReplyMarkdown";
+import { errorMessageOf } from "./error-text";
 import { AI_MODE_LABEL, type AiSendController } from "./use-ai-send-controller";
 
 /**
@@ -368,10 +369,7 @@ export function AiConversationPanel({ send }: { send: AiSendController }) {
     } catch (cause) {
       setFollowupError({
         taskId: task.id,
-        message:
-          cause instanceof Error && cause.message.length > 0
-            ? cause.message
-            : "追问失败，请检查网络后重试",
+        message: errorMessageOf(cause, "追问失败，请检查网络后重试"),
       });
     } finally {
       followupSendingRef.current = false;

@@ -69,9 +69,7 @@ export const AiReplyMarkdown = memo(function AiReplyMarkdown({
     );
   }
   return (
-    <div
-      className={cn("rich-markdown text-sm", "ai-reply-markdown", className)}
-    >
+    <div className={cn("rich-markdown text-sm ai-reply-markdown", className)}>
       <ReactMarkdown
         remarkPlugins={[remarkMath, remarkGfm]}
         rehypePlugins={[

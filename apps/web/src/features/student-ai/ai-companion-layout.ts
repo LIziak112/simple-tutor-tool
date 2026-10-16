@@ -6,6 +6,7 @@ import {
   useLayoutEffect,
   useState,
 } from "react";
+import { errorMessageOf } from "./error-text";
 
 /**
  * SAI-19 伴学栏布局控制器（B10）：
@@ -139,11 +140,7 @@ export function useAiCompanionLayout({
       try {
         await editor.flush(currentQuestionId);
       } catch (cause) {
-        setError(
-          cause instanceof Error && cause.message.length > 0
-            ? cause.message
-            : "本机稿未保存，AI 助教未打开",
-        );
+        setError(errorMessageOf(cause, "本机稿未保存，AI 助教未打开"));
         return false;
       }
     }

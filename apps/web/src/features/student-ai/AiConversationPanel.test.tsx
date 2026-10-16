@@ -6,7 +6,6 @@ import {
 } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import type {
-  AiStatusData,
   AiTaskDetailData,
   AiTaskPublic,
   AttemptQuestionPublic,
@@ -24,6 +23,7 @@ import {
   openStudentAiReplyApi,
 } from "@/lib/api";
 import { AiConversationPanel } from "./AiConversationPanel";
+import { connectedAiStatus } from "./student-ai-test-utils";
 import {
   type AiSendController,
   useAiSendController,
@@ -83,18 +83,6 @@ const QUESTION: AttemptQuestionPublic = {
   difficulty: 1,
   hintCount: 0,
 };
-
-function connectedStatus(over: Partial<AiStatusData> = {}): AiStatusData {
-  return {
-    resolution: { usable: true, mode: "open_study", reason: "teacher_default" },
-    completed: false,
-    channelDefault: "inapp",
-    connectionReady: true,
-    firstUseRequired: false,
-    taskSummary: { total: 0, active: 0, unreadReplies: 0 },
-    ...over,
-  };
-}
 
 let taskSeq = 0;
 function makeTask(over: Partial<AiTaskPublic> = {}): AiTaskPublic {
@@ -196,7 +184,7 @@ beforeEach(() => {
   captured.send = null;
   taskSeq = 0;
   focusManager.setFocused(true);
-  vi.mocked(mockedStatus).mockResolvedValue(connectedStatus());
+  vi.mocked(mockedStatus).mockResolvedValue(connectedAiStatus());
   vi.mocked(mockedList).mockResolvedValue({ tasks: [], nextCursor: null });
   vi.mocked(mockedCreate).mockResolvedValue(makeTask());
   vi.mocked(mockedQuickButtons).mockResolvedValue(QUICK_BUTTONS);
