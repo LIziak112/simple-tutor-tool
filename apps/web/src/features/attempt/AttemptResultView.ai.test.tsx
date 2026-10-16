@@ -176,9 +176,23 @@ beforeEach(() => {
     }),
   );
   mockedList.mockResolvedValue({ tasks: [], nextCursor: null });
-  // 批量复盘面板（B16）的连接查询：默认一条 inapp 连接
+  // 批量复盘面板（B16）的连接查询：默认一条 inapp 连接（契约完整形状）
   mockedConnections.mockResolvedValue({
-    connections: [{ id: "c1", channel: "inapp", isDefault: true }],
+    connections: [
+      {
+        id: "c1",
+        channel: "inapp",
+        baseUrl: "https://api.example.com/v1",
+        model: "glm-4.7",
+        keyFingerprint: "ab12cd34",
+        imageCapability: "unknown",
+        isDefault: true,
+        verifyStatus: "unverified",
+        verifiedAt: null,
+        createdAt: "2026-10-16T00:00:00.000Z",
+        updatedAt: "2026-10-16T00:00:00.000Z",
+      },
+    ],
   });
   mockedQuickButtons.mockResolvedValue({
     buttons: [],

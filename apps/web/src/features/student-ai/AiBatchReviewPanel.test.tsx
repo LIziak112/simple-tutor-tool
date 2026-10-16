@@ -1,14 +1,20 @@
-import type { AiBatchCreateData } from "@tutor/contract";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
+import type { AiBatchCreateData, AiConnectionPublic } from "@tutor/contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { AiBatchReviewPanel } from "./AiBatchReviewPanel";
-import type { AiBatchReviewQuestion } from "./AiBatchReviewPanel";
 import {
   createStudentAiBatchReviewApi,
   createStudentAiShareTicketApi,
   fetchStudentAiConnectionsApi,
 } from "@/lib/api";
+import type { AiBatchReviewQuestion } from "./AiBatchReviewPanel";
+import { AiBatchReviewPanel } from "./AiBatchReviewPanel";
 
 /**
  * SAI-31 批量复盘面板测试（B16「先测」的前端侧）：
@@ -104,15 +110,50 @@ function AiBatchReviewPanelForTest(props: {
 }
 
 const INAPP_CONNECTIONS = {
-  connections: [{ id: "c1", channel: "inapp", isDefault: true }],
+  connections: [inappConnection()],
 };
 
 const MULTI_CONNECTIONS = {
-  connections: [
-    { id: "c1", channel: "inapp", isDefault: true },
-    { id: "c2", channel: "link", isDefault: false },
-  ],
+  connections: [inappConnection(), linkConnection()],
 };
+
+/** 页内连接公开视图夹具（契约完整形状，channel 决定分支字段） */
+function inappConnection(): AiConnectionPublic {
+  return {
+    id: "c1",
+    channel: "inapp",
+    baseUrl: "https://api.example.com/v1",
+    model: "glm-4.7",
+    keyFingerprint: "ab12cd34",
+    imageCapability: "unknown",
+    isDefault: true,
+    verifyStatus: "unverified",
+    verifiedAt: null,
+    createdAt: "2026-10-16T00:00:00.000Z",
+    updatedAt: "2026-10-16T00:00:00.000Z",
+  };
+}
+
+/** 链接通道连接夹具（link 分支无凭证字段） */
+function linkConnection(): AiConnectionPublic {
+  return {
+    id: "c2",
+    channel: "link",
+    defaultValidHours: 24,
+    isDefault: false,
+    createdAt: "2026-10-16T00:00:00.000Z",
+    updatedAt: "2026-10-16T00:00:00.000Z",
+  };
+}
+
+/** 第 n 次批量请求载荷的强类型取回（noUncheckedIndexedAccess 下断言助手） */
+function payloadOf(call: number) {
+  const entry = batchApi.mock.calls[call];
+  if (entry === undefined) {
+    throw new Error(`测试前提失败：第 ${call} 次批量请求不存在`);
+  }
+  return entry[0];
+}
 
 beforeEach(() => {
   batchApi.mockReset();
@@ -150,20 +191,23 @@ describe("SAI-31 批量面板：分组与默认勾选（先测②）", () => {
     expect(screen.getByRole("checkbox", { name: "第 2 题" })).toBeChecked();
     expect(screen.getByRole("checkbox", { name: "第 3 题" })).not.toBeChecked();
     // 判对题不提供勾选框（结构上不可选，不只靠默认值）
-    expect(
-      screen.queryByRole("checkbox", { name: "第 4 题" }),
-    ).toBeNull();
+    expect(screen.queryByRole("checkbox", { name: "第 4 题" })).toBeNull();
     expect(screen.getByText(/已判对/)).toBeInTheDocument();
     // 待批分组不称错题
     expect(screen.getByText(/待批改/)).toBeInTheDocument();
     expect(screen.getByText(/不算错题/)).toBeInTheDocument();
 
     // 一次确认才创建：载荷只含默认勾选的判错题
-    batchApi.mockResolvedValue(batchData(itemOf("q1", "created"), itemOf("q2", "created")));
+    batchApi.mockResolvedValue(
+      batchData(itemOf("q1", "created"), itemOf("q2", "created")),
+    );
     await submit();
     expect(batchApi).toHaveBeenCalledTimes(1);
-    const payload = batchApi.mock.calls[0][0];
-    expect(payload.items.map((item) => item.questionId).sort()).toEqual(["q1", "q2"]);
+    const payload = payloadOf(0);
+    expect(payload.items.map((item) => item.questionId).sort()).toEqual([
+      "q1",
+      "q2",
+    ]);
     expect(payload.channel).toBe("inapp");
     expect(payload.mutationId).toMatch(/.+/);
     expect(payload.question.length).toBeGreaterThan(0);
@@ -178,15 +222,23 @@ describe("SAI-31 批量面板：分组与默认勾选（先测②）", () => {
       question("q4", true),
     ]);
     await waitFor(() => {
-      expect(screen.getByRole("checkbox", { name: "第 3 题" })).not.toBeChecked();
+      expect(
+        screen.getByRole("checkbox", { name: "第 3 题" }),
+      ).not.toBeChecked();
     });
     fireEvent.click(screen.getByRole("checkbox", { name: "第 3 题" }));
     batchApi.mockResolvedValue(
-      batchData(itemOf("q1", "created"), itemOf("q2", "created"), itemOf("q3", "created")),
+      batchData(
+        itemOf("q1", "created"),
+        itemOf("q2", "created"),
+        itemOf("q3", "created"),
+      ),
     );
     await submit();
     expect(
-      batchApi.mock.calls[0][0].items.map((item) => item.questionId).sort(),
+      payloadOf(0)
+        .items.map((item) => item.questionId)
+        .sort(),
     ).toEqual(["q1", "q2", "q3"]);
   });
 });
@@ -209,7 +261,9 @@ describe("SAI-31 批量面板：上限与前置拦截（先测①）", () => {
     for (let i = 31; i <= 35; i++) {
       fireEvent.click(screen.getByRole("checkbox", { name: `第 ${i} 题` }));
     }
-    const submitButton = screen.getByRole("button", { name: /加入 AI 复盘队列/ });
+    const submitButton = screen.getByRole("button", {
+      name: /加入 AI 复盘队列/,
+    });
     expect(submitButton).toBeEnabled();
     batchApi.mockResolvedValue(
       batchData(
@@ -217,7 +271,7 @@ describe("SAI-31 批量面板：上限与前置拦截（先测①）", () => {
       ),
     );
     await submit();
-    expect(batchApi.mock.calls[0][0].items).toHaveLength(30);
+    expect(payloadOf(0).items).toHaveLength(30);
   });
 
   it("答案未公布：横幅提示并禁用提交，零请求", async () => {
@@ -250,9 +304,7 @@ describe("SAI-31 批量面板：费用语义与部分成功重试（先测③ �
     await waitFor(() => {
       expect(screen.getByText(/共 2 次 AI 调用/)).toBeInTheDocument();
     });
-    expect(
-      screen.getByText(/每题一份上下文/),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/每题一份上下文/)).toBeInTheDocument();
     cleanup();
 
     connectionsApi.mockResolvedValue(MULTI_CONNECTIONS);
@@ -263,7 +315,11 @@ describe("SAI-31 批量面板：费用语义与部分成功重试（先测③ �
   });
 
   it("三题一失败：另两题成功；仅重试失败项，成功项不重发", async () => {
-    renderPanel([question("q1", false), question("q2", false), question("q3", false)]);
+    renderPanel([
+      question("q1", false),
+      question("q2", false),
+      question("q3", false),
+    ]);
     batchApi
       .mockResolvedValueOnce(
         batchData(
@@ -280,15 +336,17 @@ describe("SAI-31 批量面板：费用语义与部分成功重试（先测③ �
     expect(screen.getByText(/快照缺件/)).toBeInTheDocument();
     expect(screen.getByText(/失败 1/)).toBeInTheDocument();
 
-    const firstMutationId = batchApi.mock.calls[0][0].mutationId;
-    fireEvent.click(screen.getByRole("button", { name: /仅重试失败项（1 题）/ }));
+    const firstMutationId = payloadOf(0).mutationId;
+    fireEvent.click(
+      screen.getByRole("button", { name: /仅重试失败项（1 题）/ }),
+    );
     await waitFor(() => {
       expect(screen.getByText(/成功 3/)).toBeInTheDocument();
     });
 
     // 重试载荷只含失败题 + 新幂等键；成功项没有第二次请求
     expect(batchApi).toHaveBeenCalledTimes(2);
-    const retryPayload = batchApi.mock.calls[1][0];
+    const retryPayload = payloadOf(1);
     expect(retryPayload.items.map((item) => item.questionId)).toEqual(["q2"]);
     expect(retryPayload.mutationId).not.toBe(firstMutationId);
     expect(screen.queryByRole("button", { name: /仅重试失败项/ })).toBeNull();
@@ -316,18 +374,27 @@ describe("SAI-31 批量面板：link 通道交付面（先测⑥）", () => {
       snapshotAt: "2026-10-16T00:00:00.000Z",
       expiresAt: "2026-10-17T00:00:00.000Z",
     });
-    fireEvent.click(screen.getAllByRole("button", { name: /复制链接/ })[0]);
+    const copyButtons = screen.getAllByRole("button", { name: /复制链接/ });
+    const firstCopy = copyButtons[0];
+    if (firstCopy === undefined)
+      throw new Error("测试前提失败：应有复制链接按钮");
+    fireEvent.click(firstCopy);
     await waitFor(() => {
       expect(shareApi).toHaveBeenCalledWith("task-q1");
     });
     // 链接 URL 就地展示（自动复制失败时的手动复制兜底）
-    expect(screen.getByText(/http:\/\/localhost\/share\/tok-q1/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/http:\/\/localhost\/share\/tok-q1/),
+    ).toBeInTheDocument();
   });
 });
 
 describe("SAI-31 批量面板：重开重建（先测⑦ 前端）", () => {
   it("面板重开按最新数据重建勾选，不凭旧筛选", async () => {
-    const { unmount } = renderPanel([question("q1", false), question("q2", false)]);
+    const { unmount } = renderPanel([
+      question("q1", false),
+      question("q2", false),
+    ]);
     await waitFor(() => {
       expect(screen.getByRole("checkbox", { name: "第 2 题" })).toBeChecked();
     });

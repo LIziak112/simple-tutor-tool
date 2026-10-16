@@ -21,9 +21,9 @@ import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { CorrectionSection } from "@/features/notes/CorrectionSection";
 import { NoteOriginalView } from "@/features/notes/NoteOriginalView";
 import { QuestionHistoryLink } from "@/features/notes/QuestionHistoryLink";
+import { AiBatchReviewEntry } from "@/features/student-ai/AiBatchReviewPanel";
 import { useAiCompanionDock } from "@/features/student-ai/AiCompanionDock";
 import { AiQueueButton } from "@/features/student-ai/AiQueueButton";
-import { AiBatchReviewEntry } from "@/features/student-ai/AiBatchReviewPanel";
 import { studentInkPngUrl } from "@/lib/api";
 import { formatCnTime } from "@/lib/time";
 import {

@@ -308,7 +308,7 @@ describe("SAI-31 批量复盘服务：可选题来源与逐项裁决（先测①
     addResultQuestion(db, attemptId, "q-1", { finalCorrect: false });
     const result = batchOf(db, studentId, itemsOf(attemptId, ["q-1"]));
     expect(result.summary.failed).toBe(1);
-    expect(result.items[0].error).toContain("交卷");
+    expect(soleItem(result).error).toContain("交卷");
   });
 });
 
@@ -422,7 +422,7 @@ describe("SAI-31 批量复盘服务：幂等与不重复收费（先测④）", 
       paused: 1,
       failed: 0,
     });
-    const pausedItem = result.items[0];
+    const pausedItem = soleItem(result);
     expect(pausedItem.taskId).toBe(existing.task.id);
     expect(tasksOf(db, studentId)).toHaveLength(1);
   });
@@ -453,8 +453,9 @@ describe("SAI-31 批量复盘服务：幂等与不重复收费（先测④）", 
       "batch-mut-x",
     );
     expect(result.summary.failed).toBe(1);
-    expect(result.items[0].taskId).toBeNull();
-    expect(result.items[0].error).toContain("幂等键");
+    const collisionItem = soleItem(result);
+    expect(collisionItem.taskId).toBeNull();
+    expect(collisionItem.error).toContain("幂等键");
   });
 
   it("待处理配额满：逐项失败并带配额原因，不创建半批僵尸", () => {
@@ -480,7 +481,7 @@ describe("SAI-31 批量复盘服务：幂等与不重复收费（先测④）", 
     addResultQuestion(db, attemptId, "q-new", { finalCorrect: false });
     const result = batchOf(db, studentId, itemsOf(attemptId, ["q-new"]));
     expect(result.summary.failed).toBe(1);
-    expect(result.items[0].error).toContain("上限");
+    expect(soleItem(result).error).toContain("上限");
     expect(
       tasksOf(db, studentId).filter((task) => task.questionId === "q-new"),
     ).toHaveLength(0);

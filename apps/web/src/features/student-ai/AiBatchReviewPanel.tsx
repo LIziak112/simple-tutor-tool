@@ -1,9 +1,9 @@
+import { useQueryClient } from "@tanstack/react-query";
 import {
   AI_BATCH_MAX_QUESTIONS,
   type AiBatchCreateItemResult,
   type AiChannel,
 } from "@tutor/contract";
-import { useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -121,7 +121,9 @@ export function AiBatchReviewPanel(props: {
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(
     () => new Set(groups.wrong.map((item) => item.questionId)),
   );
-  const [channelOverride, setChannelOverride] = useState<AiChannel | null>(null);
+  const [channelOverride, setChannelOverride] = useState<AiChannel | null>(
+    null,
+  );
   const [questionText, setQuestionText] = useState(DEFAULT_BATCH_QUESTION);
   const [submitting, setSubmitting] = useState(false);
   const [itemResults, setItemResults] = useState<
@@ -176,7 +178,10 @@ export function AiBatchReviewPanel(props: {
     setSubmitError(null);
     try {
       const data = await createStudentAiBatchReviewApi({
-        items: items.map((item) => ({ attemptId, questionId: item.questionId })),
+        items: items.map((item) => ({
+          attemptId,
+          questionId: item.questionId,
+        })),
         channel: effectiveChannel,
         question:
           questionText.trim() === ""
@@ -335,9 +340,14 @@ export function AiBatchReviewPanel(props: {
         </fieldset>
 
         <div className="flex flex-col gap-1 text-sm text-muted-foreground">
-          <p>每题一份上下文：题面、你的作答与按当前模式可用的答案解析，不携带其他题内容。</p>
+          <p>
+            每题一份上下文：题面、你的作答与按当前模式可用的答案解析，不携带其他题内容。
+          </p>
           {effectiveChannel === "inapp" && selectedCount > 0 && (
-            <p>不自动触发全部付费请求：确认后页内 AI 将逐题发送求助，共 {selectedCount} 次 AI 调用。</p>
+            <p>
+              不自动触发全部付费请求：确认后页内 AI 将逐题发送求助，共{" "}
+              {selectedCount} 次 AI 调用。
+            </p>
           )}
           {effectiveChannel === "mcp" && (
             <p>任务创建后等待你的外部 AI 客户端领取，逐题独立处理。</p>
@@ -347,19 +357,26 @@ export function AiBatchReviewPanel(props: {
           )}
         </div>
 
-        <label className="flex flex-col gap-1">
-          <span className="text-sm font-medium">复盘诉求（每题共用这一句）</span>
+        <div className="flex flex-col gap-1">
+          <label
+            htmlFor="batch-review-question"
+            className="text-sm font-medium"
+          >
+            复盘诉求（每题共用这一句）
+          </label>
           <Input
+            id="batch-review-question"
             value={questionText}
             onChange={(event) => setQuestionText(event.target.value)}
             maxLength={2000}
           />
-        </label>
+        </div>
 
-        <Button disabled={!canSubmit} onClick={() => void submitBatch(selectedQuestions)}>
-          {submitting
-            ? "正在创建…"
-            : `加入 AI 复盘队列（${selectedCount} 题）`}
+        <Button
+          disabled={!canSubmit}
+          onClick={() => void submitBatch(selectedQuestions)}
+        >
+          {submitting ? "正在创建…" : `加入 AI 复盘队列（${selectedCount} 题）`}
         </Button>
         {submitError !== null && (
           <p role="alert" className="text-sm text-destructive">
@@ -370,8 +387,8 @@ export function AiBatchReviewPanel(props: {
         {itemResults !== null && (
           <section className="flex flex-col gap-2" aria-label="批量结果">
             <p className="text-sm">
-              成功 {summary.created} · 已存在 {summary.alreadyExists} · 复用进行中{" "}
-              {summary.paused} · 失败 {summary.failed}
+              成功 {summary.created} · 已存在 {summary.alreadyExists} ·
+              复用进行中 {summary.paused} · 失败 {summary.failed}
             </p>
             {effectiveChannel === "link" && (
               <p className="text-sm text-muted-foreground">
@@ -401,17 +418,23 @@ export function AiBatchReviewPanel(props: {
                           <Button
                             variant="outline"
                             size="xs"
-                            onClick={() => void copyLink(taskId, row.questionId)}
+                            onClick={() =>
+                              void copyLink(taskId, row.questionId)
+                            }
                           >
                             复制链接
                           </Button>
                           {link !== undefined && link.error !== null && (
-                            <span className="text-destructive">{link.error}</span>
+                            <span className="text-destructive">
+                              {link.error}
+                            </span>
                           )}
                           {link !== undefined && link.url !== "" && (
                             <span className="text-muted-foreground break-all">
                               {link.url}
-                              {link.copied ? "（已复制）" : "（自动复制失败，请手动复制）"}
+                              {link.copied
+                                ? "（已复制）"
+                                : "（自动复制失败，请手动复制）"}
                             </span>
                           )}
                         </>
