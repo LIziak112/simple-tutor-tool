@@ -1688,6 +1688,12 @@ export const aiTasks = sqliteTable(
     errorText: text("error_text"),
     /** 显式重试次数（失败后学生显式重试 +1，绝不自动重发） */
     retryCount: integer("retry_count").notNull().default(0),
+    /**
+     * 学生归档时刻（SAI-23 队列整理；UTC ISO）：null = 未归档。归档不是状态
+     * 转换（status 不变、教学事实不动，§9.1）——只把任务移出默认队列视图
+     * （archived=exclude）；本题对话历史不受影响（列表缺省不过滤）。
+     */
+    archivedAt: text("archived_at"),
     /** 出站代际（0 = 未出站；每次 dispatch 尝试 +1 先落库，回写 CAS 比对） */
     generation: integer("generation").notNull().default(0),
     /** 创建时间：UTC ISO 字符串 */
@@ -1831,7 +1837,7 @@ export const aiFacts = sqliteTable(
     questionId: text("question_id").notNull(),
     /** 学生（students.id；冗余列） */
     studentId: text("student_id").notNull(),
-    /** 事实类型（契约 aiFactTypeSchema 11 种） */
+    /** 事实类型（契约 aiFactTypeSchema 12 种） */
     type: text("type").$type<AiFactType>().notNull(),
     /** 服务端判定的提交前/提交后（客户端迟到上报不改写） */
     beforeSubmit: integer("before_submit", { mode: "boolean" }).notNull(),
@@ -1851,7 +1857,7 @@ export const aiFacts = sqliteTable(
     ),
     check(
       "ai_facts_type_check",
-      sql`${table.type} in ('task_created', 'link_generated', 'dispatched', 'link_viewed', 'reply_received', 'reply_delivered', 'paused', 'resumed', 'cancelled', 'failed', 'late_reply')`,
+      sql`${table.type} in ('task_created', 'link_generated', 'dispatched', 'link_viewed', 'reply_received', 'reply_delivered', 'paused', 'resumed', 'cancelled', 'failed', 'late_reply', 'archived')`,
     ),
   ],
 );

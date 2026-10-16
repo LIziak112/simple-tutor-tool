@@ -5,6 +5,7 @@ import type {
   AiFactType,
   AiMessage,
   AiTaskAction,
+  AiTaskOriginSummary,
   AiTaskPublic,
   AiTaskStatus,
 } from "@tutor/contract";
@@ -26,10 +27,12 @@ import {
   eq,
   gt,
   inArray,
+  isNotNull,
   isNull,
   lt,
   lte,
   or,
+  sql,
 } from "drizzle-orm";
 import type { Db } from "../../db/client.ts";
 import {
@@ -39,6 +42,11 @@ import {
   aiMessages,
   aiTaskMaterials,
   aiTasks,
+  assignments,
+  attempts,
+  courses,
+  lectures,
+  responses,
 } from "../../db/schema.ts";
 import { HttpError } from "../../lib/http-error.ts";
 import { resolveNowDate } from "../export-service.ts";
@@ -756,6 +764,11 @@ export interface ListAiTasksInput {
   readonly attemptId?: string;
   readonly questionId?: string;
   readonly status?: AiTaskStatus;
+  /**
+   * 归档过滤（SAI-23）：exclude = 默认队列视图（隐藏已归档）、only = 已归档
+   * 分组；缺省 = 全部（单题对话历史调用方不受归档影响）。
+   */
+  readonly archived?: "exclude" | "only";
   /** 每页条数（契约 1..50，缺省 20 由路由层补齐；服务侧再钳制） */
   readonly limit: number;
   readonly cursor?: string;
@@ -764,6 +777,8 @@ export interface ListAiTasksInput {
 export interface ListAiTasksResult {
   readonly tasks: AiTaskPublic[];
   readonly nextCursor: string | null;
+  /** 来源摘要按任务 id 索引（仅全局队列范围——无 attemptId 过滤时计算） */
+  readonly origins?: Record<string, AiTaskOriginSummary>;
 }
 
 /** 视图预取数据（批量路径一次装载整页；单任务路径逐项查询） */
@@ -782,9 +797,10 @@ function aiTaskPublicViewCore(
   const { capturedAt } = parseSnapshotOf(task);
   const allowed: AiTaskAction[] = prefetch.usable
     ? [...AI_TASK_ALLOWED_ACTIONS[task.status]]
-    : // 策略当前不可用：保留输入与退出权，其余动作（发送/分享/追问/重试）暂不可用
+    : // 策略当前不可用：保留输入与退出权，其余动作（发送/分享/追问/重试）暂不可用；
+      // 归档是队列整理不是出站动作（SAI-23）——终态任务策略失效后仍可整理
       task.status === "cancelled" || task.status === "replied"
-      ? []
+      ? ["archive"]
       : ["cancel"];
   return {
     id: task.id,
@@ -886,6 +902,11 @@ export function listStudentAiTasks(
   if (input.status !== undefined) {
     conditions.push(eq(aiTasks.status, input.status));
   }
+  if (input.archived === "exclude") {
+    conditions.push(isNull(aiTasks.archivedAt));
+  } else if (input.archived === "only") {
+    conditions.push(isNotNull(aiTasks.archivedAt));
+  }
   if (input.cursor !== undefined) {
     const cursor = decodeCursor(input.cursor);
     // 双参 or 恒有值；条件式写法只是给类型一个非空证明
@@ -973,7 +994,149 @@ export function listStudentAiTasks(
       usable,
     });
   });
+  // 来源摘要只在全局队列范围（无 attemptId 过滤）计算——单题历史/对话调用方
+  // 不消费，不付标题 join 与卷行扫描的成本（契约 origins 可省略）
+  if (input.attemptId === undefined) {
+    return { tasks, nextCursor, origins: aiTaskOriginSummariesOf(db, page) };
+  }
   return { tasks, nextCursor };
+}
+
+// ---------- 来源摘要（SAI-23 全局队列展示与导航定位） ----------
+
+/**
+ * 全卷题号（1 起连续）：建卷冻结序——unitId 首现序分组 + rowid 组内序
+ * （attempt-service.frozenRowsInDisplayOrder 冻结路径同规则；null unitId 行
+ * 归末尾兜底组）。wrong 卷行全 null → 纯 rowid 序。返回 questionId → 题号；
+ * 卷内无该题（软删/缺失）不在 Map 中，调用方置 null 不伪造题号。
+ */
+function questionNoByQuestionOf(
+  rows: readonly { questionId: string; unitId: string | null }[],
+): Map<string, number> {
+  const unitRank = new Map<string, number>();
+  for (const row of rows) {
+    if (row.unitId !== null && !unitRank.has(row.unitId)) {
+      unitRank.set(row.unitId, unitRank.size);
+    }
+  }
+  const rankOf = (unitId: string | null): number =>
+    unitId === null ? Number.MAX_SAFE_INTEGER : (unitRank.get(unitId) ?? Number.MAX_SAFE_INTEGER);
+  // sort 稳定：组内保持 rowid 序（查询已按 rowid 排序）
+  const sorted = [...rows].sort((a, b) => rankOf(a.unitId) - rankOf(b.unitId));
+  const numbers = new Map<string, number>();
+  sorted.forEach((row, index) => {
+    if (!numbers.has(row.questionId)) numbers.set(row.questionId, index + 1);
+  });
+  return numbers;
+}
+
+/**
+ * 整页来源摘要（批量预取，不逐行 N+1）：attempts 一批、卷行一批、三类标题
+ * 各一批。只放展示与导航定位字段——题号按冻结序，题不在卷行中如实 null。
+ */
+function aiTaskOriginSummariesOf(
+  db: Db,
+  page: readonly AiTaskRow[],
+): Record<string, AiTaskOriginSummary> {
+  const attemptIds = [...new Set(page.map((row) => row.attemptId))];
+  const attemptsById = new Map(
+    db
+      .select()
+      .from(attempts)
+      .where(inArray(attempts.id, attemptIds))
+      .all()
+      .map((row) => [row.id, row] as const),
+  );
+  const rowsByAttempt = new Map<string, { questionId: string; unitId: string | null }[]>();
+  for (const row of db
+    .select({
+      attemptId: responses.attemptId,
+      questionId: responses.questionId,
+      unitId: responses.unitId,
+    })
+    .from(responses)
+    .where(inArray(responses.attemptId, attemptIds))
+    .orderBy(asc(responses.attemptId), sql`rowid`)
+    .all()) {
+    const list = rowsByAttempt.get(row.attemptId);
+    if (list === undefined) rowsByAttempt.set(row.attemptId, [row]);
+    else list.push(row);
+  }
+  const questionNoByAttempt = new Map(
+    [...rowsByAttempt].map(([attemptId, rows]) => [
+      attemptId,
+      questionNoByQuestionOf(rows),
+    ] as const),
+  );
+  const ids = <T extends string>(values: readonly (T | null)[]): T[] =>
+    values.filter((value): value is T => value !== null);
+  const attemptRows = [...attemptsById.values()];
+  // 空 id 集不进 inArray（既省查询也免去空数组 SQL 形态的版本差异）
+  const assignmentIds = ids(attemptRows.map((row) => row.assignmentId));
+  const courseIds = ids(attemptRows.map((row) => row.courseId));
+  const lectureIds = ids(attemptRows.map((row) => row.lectureId));
+  const assignmentTitles = new Map(
+    assignmentIds.length === 0
+      ? []
+      : db
+          .select({ id: assignments.id, title: assignments.title })
+          .from(assignments)
+          .where(inArray(assignments.id, assignmentIds))
+          .all()
+          .map((row) => [row.id, row.title] as const),
+  );
+  const courseTitles = new Map(
+    courseIds.length === 0
+      ? []
+      : db
+          .select({ id: courses.id, title: courses.title })
+          .from(courses)
+          .where(inArray(courses.id, courseIds))
+          .all()
+          .map((row) => [row.id, row.title] as const),
+  );
+  const lectureTitles = new Map(
+    lectureIds.length === 0
+      ? []
+      : db
+          .select({ id: lectures.id, title: lectures.title })
+          .from(lectures)
+          .where(inArray(lectures.id, lectureIds))
+          .all()
+          .map((row) => [row.id, row.title] as const),
+  );
+  const origins: Record<string, AiTaskOriginSummary> = {};
+  for (const row of page) {
+    const attempt = attemptsById.get(row.attemptId);
+    if (attempt === undefined) continue; // 行已不在（理论不可达，FK 保证）
+    // 三个标题 Map 的键均为卷 id（值即标题字符串），wrong 无卷标题恒 null
+    const title =
+      attempt.sourceType === "assignment"
+        ? (attempt.assignmentId !== null
+            ? (assignmentTitles.get(attempt.assignmentId) ?? null)
+            : null)
+        : attempt.sourceType === "course"
+          ? (attempt.courseId !== null
+              ? (courseTitles.get(attempt.courseId) ?? null)
+              : null)
+          : attempt.sourceType === "lesson"
+            ? (attempt.lectureId !== null
+                ? (lectureTitles.get(attempt.lectureId) ?? null)
+                : null)
+            : null; // wrong 无卷标题
+    origins[row.id] = {
+      sourceType: attempt.sourceType,
+      attemptNo: attempt.attemptNo,
+      questionNo: questionNoByAttempt.get(row.attemptId)?.get(row.questionId) ?? null,
+      title,
+      assignmentId: attempt.assignmentId,
+      courseId: attempt.courseId,
+      unitId: attempt.unitId,
+      lectureId: attempt.lectureId,
+      attemptStatus: attempt.status,
+    };
+  }
+  return origins;
 }
 
 /** 队列摘要（顶栏三计数；分桶单源 AI_TASK_QUEUE_BUCKETS，未读为交付态推导） */
@@ -1989,8 +2152,54 @@ export function resumeAiTask(
   );
 }
 
-// ---------- 查看（交付态；与处理状态独立） ----------
+// ---------- 归档（SAI-23 队列整理；不是状态转换） ----------
 
+/** 可归档状态：终态 replied/cancelled——在途/可重试任务归档会丢重试与继续入口 */
+const ARCHIVABLE_STATUSES: readonly AiTaskStatus[] = ["replied", "cancelled"];
+
+/**
+ * 学生归档任务：把任务移出默认队列视图（archived=exclude），status 与查看态
+ * （replyDeliveredAt）都不动——归档≠已读、也≠取消（§9.1 归档不消除教学事实，
+ * append-only 记 archived 事实）。重复归档幂等（不重复记事实）；在途/可重试
+ * 状态 409 AI_STATE_CONFLICT；本题对话历史（列表缺省不过滤）不受影响。
+ */
+export function archiveAiTask(
+  db: Db,
+  input: { studentId: string; taskId: string },
+  options: { now?: Date | string } = {},
+): AiTaskRow {
+  const now = nowSpecOf(options.now);
+  return db.transaction(
+    (tx) => {
+      const task = requireOwnTask(tx, input.studentId, input.taskId);
+      if (task.archivedAt !== null) {
+        return task; // 幂等：已归档原样返回（不重复记事实）
+      }
+      if (!ARCHIVABLE_STATUSES.includes(task.status)) {
+        throw conflict("任务当前不可归档（仅在已回信或已取消后可整理）");
+      }
+      const changed = tx
+        .update(aiTasks)
+        .set({ archivedAt: now.iso })
+        .where(
+          and(
+            eq(aiTasks.id, task.id),
+            isNull(aiTasks.archivedAt),
+            inArray(aiTasks.status, [...ARCHIVABLE_STATUSES]),
+          ),
+        )
+        .run();
+      if (changed.changes !== 1) {
+        throw conflict("任务状态已被其他操作更新，请刷新后重试");
+      }
+      insertFact(tx, task, "archived", now, {});
+      return { ...task, archivedAt: now.iso };
+    },
+    { behavior: "immediate" },
+  );
+}
+
+// ---------- 查看（交付态；与处理状态独立） ----------
 /**
  * 学生打开回信：replied 态置 replyDeliveredAt + reply_delivered 事实。
  * 查看**不是**任务状态转换——status 保持 replied（archived/opened 不作为
