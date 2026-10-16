@@ -17,6 +17,8 @@ import {
   type AiConnectionPatchRequest,
   type AiConnectionTestData,
   type AiMaterialUploadReceiptData,
+  type AiBatchCreateData,
+  type AiBatchReviewCreateRequest,
   type AiPolicyInheritableMode,
   type AiPolicyOverrideData,
   type AiQueueSummaryData,
@@ -2710,6 +2712,24 @@ export function createStudentAiTaskApi(
 ): Promise<AiTaskPublic> {
   const args = { json: request };
   return callApi(() => api.api.student.ai.tasks.$post(args));
+}
+
+/**
+ * 批量错题复盘（POST /ai/batch-review，SAI-31/B16）：一次确认建一批，逐项
+ * 裁决逐项返回（created/already_exists/paused/failed）；重试只发失败项并换
+ * 新幂等键。路由用 parseJsonBodyWithCode 手动解析（同 share 口径），hc 推断
+ * 不出 json 入参——走同构 fetch。
+ */
+export function createStudentAiBatchReviewApi(
+  request: AiBatchReviewCreateRequest,
+): Promise<AiBatchCreateData> {
+  return callApi(() =>
+    fetch("/api/student/ai/batch-review", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    }),
+  );
 }
 
 /** 本人任务列表（可按 attempt+question 过滤，本题历史/对话数据源） */
