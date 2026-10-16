@@ -1060,7 +1060,8 @@ describe("CLI 入口（tsx 子进程对合成文件库真实运行）", () => {
       .split("\n")
       .find((line) => line.trim().startsWith("DATA_DIR="));
     expect(dataDirLine).toBeDefined();
-    const seededDir = dataDirLine?.trim().slice("DATA_DIR=".length).trim() ?? "";
+    const seededDir =
+      dataDirLine?.trim().slice("DATA_DIR=".length).trim() ?? "";
     // 只认脚本自己打印的 %TEMP%/tutor-b19-demo- 前缀目录，删前再核对一遍
     expect(seededDir).toMatch(/[\\/]tutor-b19-demo-/);
     try {
