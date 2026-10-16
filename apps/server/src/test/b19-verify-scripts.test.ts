@@ -87,13 +87,8 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-/** 建学生 + 两题作答 + inapp 连接（与 student-ai-bench 同骨架；库为内存库） */
-function makeWorld(): World {
-  const db = createTestDb();
-  const studentId = makeStudent(db, TEST_TEACHER_ID);
-  const attemptId = insertAttempt(db, { studentId });
-  insertResponse(db, attemptId, "q1");
-  insertResponse(db, attemptId, "q2");
+/** 建一条 inapp 合成连接（两套世界共用；apiKey 为合成值不出网） */
+function connectInapp(db: Db, studentId: string): void {
   createStudentAiConnection(db, {
     studentId,
     rootSecret: ROOT_SECRET,
@@ -106,13 +101,23 @@ function makeWorld(): World {
       imageCapability: "unknown",
     },
   });
+}
+
+/** 建学生 + 两题作答 + inapp 连接（与 student-ai-bench 同骨架；库为内存库） */
+function makeWorld(): World {
+  const db = createTestDb();
+  const studentId = makeStudent(db, TEST_TEACHER_ID);
+  const attemptId = insertAttempt(db, { studentId });
+  insertResponse(db, attemptId, "q1");
+  insertResponse(db, attemptId, "q2");
+  connectInapp(db, studentId);
   return { db, dataDir: dir, studentId, attemptId };
 }
 
 /**
  * 文件库世界（CLI 子进程自证用）：真实 tutor.db 落在临时 DATA_DIR——与
- * createTestDb 同构（迁移 + 回填 + 测试教师行），建完即关连接释放 WAL，
- * 让脚本以只读方式打开。
+ * createTestDb 同构（迁移 + 回填 + 测试教师行 + inapp 连接），建完即关连接
+ * 释放 WAL，让脚本以只读方式打开。
  */
 function makeFileWorld(): World {
   const db = createDb(join(dir, "tutor.db"));
@@ -133,6 +138,7 @@ function makeFileWorld(): World {
   const attemptId = insertAttempt(db, { studentId });
   insertResponse(db, attemptId, "q1");
   insertResponse(db, attemptId, "q2");
+  connectInapp(db, studentId);
   return { db, dataDir: dir, studentId, attemptId };
 }
 
@@ -952,18 +958,6 @@ describe("CLI 入口（tsx 子进程对合成文件库真实运行）", () => {
 
   it("trace-audit：合成世界时间线含事实序列且退出码 0；篡改后退出码 1", async () => {
     const world = makeFileWorld();
-    createStudentAiConnection(world.db, {
-      studentId: world.studentId,
-      rootSecret: ROOT_SECRET,
-      request: {
-        channel: "inapp",
-        baseUrl: "http://api.b19-verify.test/v1",
-        model: "b19-model",
-        apiKey: "sk-b19-key",
-        isDefault: true,
-        imageCapability: "unknown",
-      },
-    });
     const taskId = mkTask(world, 0, "q1");
     await runStudentAiDispatchOnce(world.db, {
       dataDir: world.dataDir,
@@ -1056,6 +1050,35 @@ describe("CLI 入口（tsx 子进程对合成文件库真实运行）", () => {
       expect(run.stdout).toContain("link-check：全部核对项通过");
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it("seed-demo-world：生成合成世界（绝不触碰测试自身 DATA_DIR），产物可被两脚本核对，用完可整目录删除", async () => {
+    const seeded = await runScriptCli("seed-demo-world.ts", []);
+    expect(seeded.code).toBe(0);
+    const dataDirLine = seeded.stdout
+      .split("\n")
+      .find((line) => line.trim().startsWith("DATA_DIR="));
+    expect(dataDirLine).toBeDefined();
+    const seededDir = dataDirLine?.trim().slice("DATA_DIR=".length).trim() ?? "";
+    // 只认脚本自己打印的 %TEMP%/tutor-b19-demo- 前缀目录，删前再核对一遍
+    expect(seededDir).toMatch(/[\\/]tutor-b19-demo-/);
+    try {
+      const materials = await runScriptCli("materials-check.ts", [
+        "--data-dir",
+        seededDir,
+      ]);
+      expect(materials.code).toBe(0);
+      expect(materials.stdout).toContain("题面圈画 1 页");
+      const trace = await runScriptCli("trace-audit.ts", [
+        "--data-dir",
+        seededDir,
+      ]);
+      expect(trace.code).toBe(0);
+      expect(trace.stdout).toContain("trace-audit：全部核对项通过");
+    } finally {
+      // 关库后目录可整删（Windows 句柄释放的隐式验证）
+      rmSync(seededDir, { recursive: true, force: true });
     }
   });
 });
