@@ -1,6 +1,3 @@
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { eq } from "drizzle-orm";
 import type { Logger } from "pino";
 import pino from "pino";
@@ -14,6 +11,7 @@ import {
   createTestDir,
   TEST_TEACHER_ID,
 } from "../db/test-utils.ts";
+import { connectMcpClientViaApp } from "../test/mcp-test-utils.ts";
 
 /**
  * SAI-25 学生 MCP 鉴权测试（B14 先测 5 组；SDK Streamable HTTP 全链路真实、
@@ -107,34 +105,9 @@ async function makeEnv(): Promise<StudentMcpEnv> {
   };
 }
 
-/** fetch 桥接：SDK 客户端 HTTP 请求直达 app.request（协议链路真实） */
-function fetchViaApp(app: ReturnType<typeof createApp>): FetchLike {
-  return (url, init) => {
-    const target = new URL(String(url));
-    return Promise.resolve(app.request(target.pathname + target.search, init));
-  };
-}
-
-/** 建立学生 MCP 的 SDK 客户端连接（Streamable HTTP + Bearer token） */
-async function connectStudentClient(
-  env: StudentMcpEnv,
-  token: string,
-): Promise<Client> {
-  const client = new Client({ name: "sai25-mcp-test", version: "1.0.0" });
-  const transport = new StreamableHTTPClientTransport(
-    new URL("http://localhost/mcp/student"),
-    {
-      requestInit: { headers: { authorization: `Bearer ${token}` } },
-      fetch: fetchViaApp(env.app),
-    },
-  );
-  // SDK 可选回调属性在 exactOptionalPropertyTypes 下与 Transport 接口形态有
-  // 出入（教师 mcp.test.ts 同款单层收窄；运行时无误）
-  await client.connect(
-    transport as unknown as Parameters<Client["connect"]>[0],
-  );
-  return client;
-}
+/** 建立学生 MCP 的 SDK 客户端连接（Streamable HTTP + Bearer token；样板见 test/mcp-test-utils.ts） */
+const connectStudentClient = (env: StudentMcpEnv, token: string) =>
+  connectMcpClientViaApp(env.app, "/mcp/student", token, "sai25-mcp-test");
 
 /** 裸 JSON-RPC POST（鉴权 / Origin / 协议格式断言用） */
 function postStudentRpc(

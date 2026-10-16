@@ -1,7 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
+import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { TextContent } from "@modelcontextprotocol/sdk/types.js";
 import { eq } from "drizzle-orm";
 import type { Logger } from "pino";
@@ -24,6 +22,7 @@ import {
   insertAttempt,
   insertResponse,
 } from "../test/ai-companion-fixtures.ts";
+import { connectMcpClientViaApp } from "../test/mcp-test-utils.ts";
 import { makeNotePng, makeStudent } from "../test/note-fixtures.ts";
 
 /**
@@ -89,30 +88,9 @@ async function makeEnv(): Promise<ToolsEnv> {
   };
 }
 
-function fetchViaApp(app: ReturnType<typeof createApp>): FetchLike {
-  return (url, init) => {
-    const target = new URL(String(url));
-    return Promise.resolve(app.request(target.pathname + target.search, init));
-  };
-}
-
-async function connectClient(
-  env: ToolsEnv,
-  token = env.token,
-): Promise<Client> {
-  const client = new Client({ name: "sai26-tools-test", version: "1.0.0" });
-  const transport = new StreamableHTTPClientTransport(
-    new URL("http://localhost/mcp/student"),
-    {
-      requestInit: { headers: { authorization: `Bearer ${token}` } },
-      fetch: fetchViaApp(env.app),
-    },
-  );
-  await client.connect(
-    transport as unknown as Parameters<Client["connect"]>[0],
-  );
-  return client;
-}
+/** 建立 SDK 客户端连接（Streamable HTTP + Bearer token；样板见 test/mcp-test-utils.ts） */
+const connectClient = (env: ToolsEnv, token = env.token) =>
+  connectMcpClientViaApp(env.app, "/mcp/student", token, "sai26-tools-test");
 
 /** callTool + 取第一段 text 解析 JSON；isError 时返回解析后的错误对象 */
 async function callJson(
