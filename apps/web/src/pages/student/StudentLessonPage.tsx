@@ -3,6 +3,7 @@ import type {
   HintOpenedEntry,
   LessonStartData,
 } from "@tutor/contract";
+import { HANDWRITTEN_QUESTION_TYPES } from "@tutor/contract";
 import {
   ArrowLeft,
   CheckCircle2,
@@ -15,6 +16,7 @@ import {
   memo,
   type ReactNode,
   type RefObject,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -30,9 +32,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { AttemptEditorProvider } from "@/features/attempt/AttemptEditorContext";
+import {
+  AttemptEditorProvider,
+  useAttemptEditor,
+} from "@/features/attempt/AttemptEditorContext";
 import { retryAttemptLocalPersistence } from "@/features/attempt/use-attempt-save-status";
 import { DraftSyncProvider } from "@/features/attempt/use-draft-sync";
+import { useAiCompanionDock } from "@/features/student-ai/AiCompanionDock";
 import {
   EnabledCapabilitiesProvider,
   toEnabledCapabilities,
@@ -42,7 +48,10 @@ import {
   useLessonStart,
   useRestartLesson,
 } from "@/features/lesson/lesson-queries";
-import { useLessonAttempt } from "@/features/lesson/use-lesson-attempt";
+import {
+  type LessonQuestionHandlers,
+  useLessonAttempt,
+} from "@/features/lesson/use-lesson-attempt";
 import { LectureOutline } from "@/features/markdown/LectureOutline";
 import { extractOutline } from "@/features/markdown/outline";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
@@ -423,7 +432,7 @@ function LessonBody({
   );
 }
 
-/** 进行中卷（draft）：作答视图 */
+/** 进行中卷（draft）：作答视图（伴学装配需要编辑器上下文，内容拆 Inner） */
 function LessonAnswerView({
   data,
   courseId,
@@ -436,21 +445,6 @@ function LessonAnswerView({
   refetch: () => Promise<unknown>;
 }) {
   const session = useLessonAttempt(data, { refetch });
-  const attemptId = session.attemptId;
-  const capabilities = useMemo(
-    () => toEnabledCapabilities(data.enabledCapabilities),
-    [data.enabledCapabilities],
-  );
-  const [retryingSave, setRetryingSave] = useState(false);
-
-  const questionIds = useMemo(
-    () => data.questions.map((question) => question.id),
-    [data.questions],
-  );
-  const order = useMemo(() => lessonQuestionOrder(data), [data]);
-
-  // 教师演示口径（2026-10）：不设「完成练习」与进度——讲练是老师讲解材料，
-  // 收尾只发生在最后一题「显示答案」的事务内自动收尾（服务端语义不变）。
 
   // 最后一题单题提交的事务内自动收尾：会话覆盖层先切完成视图（refetch 落地
   // 后由页面级分支接管并卸载作答会话），避免「提交完成但页面仍作答态」的窗口
@@ -468,7 +462,109 @@ function LessonAnswerView({
       />
     );
   }
+  return (
+    <AttemptEditorProvider>
+      <DraftSyncProvider value={session.draftSyncContext}>
+        <LessonAnswerInner
+          data={data}
+          courseId={courseId}
+          lectureId={lectureId}
+          session={session}
+        />
+      </DraftSyncProvider>
+    </AttemptEditorProvider>
+  );
+}
+
+/**
+ * 作答视图内容（编辑器/草稿上下文内）：SAI-22 讲练 AI 伴学装配——
+ * 身份（attempt + 题集）与阶段（当前作答题/编辑器/材料面）传共享 dock。
+ * 当前作答题：初始为首个未提交题，作答交互跟随最近题（「显示答案」的
+ * 提交动作不移动它——当题提交后原地即复盘，题级完成裁决在服务端 status）。
+ * 材料面收窄：讲练题卡无圈画层 → 只呈纸面（草稿/正式手写）。
+ */
+function LessonAnswerInner({
+  data,
+  courseId,
+  lectureId,
+  session,
+}: {
+  data: LessonStartData;
+  courseId: string | undefined;
+  lectureId: string;
+  session: ReturnType<typeof useLessonAttempt>;
+}) {
+  const attemptId = session.attemptId;
+  const capabilities = useMemo(
+    () => toEnabledCapabilities(data.enabledCapabilities),
+    [data.enabledCapabilities],
+  );
+  const [retryingSave, setRetryingSave] = useState(false);
+  const order = useMemo(() => lessonQuestionOrder(data), [data]);
+  const questionIds = useMemo(
+    () => data.questions.map((question) => question.id),
+    [data.questions],
+  );
   const total = data.questions.length;
+
+  // ---- SAI-22 讲练 AI 伴学 ----
+  const editor = useAttemptEditor(null);
+  const cardElements = useRef(new Map<string, HTMLElement>());
+  const onCardElement = useCallback(
+    (questionId: string, el: HTMLElement | null) => {
+      if (el === null) cardElements.current.delete(questionId);
+      else cardElements.current.set(questionId, el);
+    },
+    [],
+  );
+  const [currentQuestionId, setCurrentQuestionId] = useState<string | null>(
+    () =>
+      order.ordered.find(
+        (slot) => session.released[slot.question.id] === undefined,
+      )?.question.id ?? null,
+  );
+  /** 作答交互跟随最近题（包装 handlers.onAnswer；引用随 session.handlers 稳定） */
+  const handlers = useMemo<LessonQuestionHandlers>(
+    () => ({
+      ...session.handlers,
+      onAnswer: (questionId, answer, defer) => {
+        setCurrentQuestionId((previous) =>
+          previous === questionId ? previous : questionId,
+        );
+        session.handlers.onAnswer(questionId, answer, defer);
+      },
+    }),
+    [session.handlers],
+  );
+  const indexById = useMemo(
+    () =>
+      new Map(order.ordered.map((slot, i) => [slot.question.id, i + 1] as const)),
+    [order],
+  );
+  const aiCompanion = useAiCompanionDock({
+    attemptId,
+    questions: data.questions,
+    isHandwritten: (questionId) => {
+      const question = data.questions.find((item) => item.id === questionId);
+      return (
+        question !== undefined &&
+        HANDWRITTEN_QUESTION_TYPES.includes(question.type)
+      );
+    },
+    surfaceOf: (questionId) =>
+      cardElements.current
+        .get(questionId)
+        ?.querySelector<HTMLElement>('[data-slot="question-surface"]') ?? null,
+    flush: (questionId) =>
+      editor !== null ? editor.flush(questionId) : Promise.resolve(),
+    titleOf: (questionId) =>
+      `第 ${indexById.get(questionId) ?? "？"} 题 · ${data.lecture.title}`,
+    labelOf: (questionId) =>
+      indexById.has(questionId) ? `第 ${indexById.get(questionId)} 题` : null,
+    currentQuestionId,
+    editor,
+    materials: { annotation: false, paper: true },
+  });
 
   const renderCard = (
     question: AttemptQuestionPublic,
@@ -483,74 +579,70 @@ function LessonAnswerView({
       answer={session.answers?.[question.id]}
       hints={session.hintsOpened[question.id] ?? EMPTY_HINTS}
       released={session.released[question.id]}
-      handlers={session.handlers}
+      handlers={handlers}
+      onCardElement={onCardElement}
     />
   );
 
   return (
-    <AttemptEditorProvider>
-      <DraftSyncProvider value={session.draftSyncContext}>
-        <EnabledCapabilitiesProvider value={capabilities}>
-          <article aria-label="讲练作答" className="flex flex-col gap-4 pb-8">
-            <HeaderBar
-              title={data.lecture.title}
-              backTo={lessonHref(lectureId, courseId)}
-              backLabel="返回讲练"
-              context={
-                <>
-                  <span>
-                    {data.lecture.courseName !== null
-                      ? `课程：${data.lecture.courseName} · `
-                      : ""}
-                    讲练 · 第 {data.attempt.attemptNo} 次
-                  </span>
-                  <span aria-live="polite">{session.saveStatus}</span>
-                </>
-              }
-              actions={null}
-            />
+    <EnabledCapabilitiesProvider value={capabilities}>
+      <article aria-label="讲练作答" className="flex flex-col gap-4 pb-8">
+        <HeaderBar
+          title={data.lecture.title}
+          backTo={lessonHref(lectureId, courseId)}
+          backLabel="返回讲练"
+          context={
+            <>
+              <span>
+                {data.lecture.courseName !== null
+                  ? `课程：${data.lecture.courseName} · `
+                  : ""}
+                讲练 · 第 {data.attempt.attemptNo} 次
+              </span>
+              <span aria-live="polite">{session.saveStatus}</span>
+            </>
+          }
+          actions={aiCompanion.trigger}
+        />
 
-            {/* 零题讲练页：纯阅读提示（开卷合法但不构成练习） */}
-            {total === 0 && (
-              <p className="rounded-2xl border border-dashed border-border bg-card px-4 py-3 text-sm text-muted-foreground">
-                这份讲练页暂时没有题目，可以先阅读讲义内容。
-              </p>
-            )}
+        {/* 零题讲练页：纯阅读提示（开卷合法但不构成练习） */}
+        {total === 0 && (
+          <p className="rounded-2xl border border-dashed border-border bg-card px-4 py-3 text-sm text-muted-foreground">
+            这份讲练页暂时没有题目，可以先阅读讲义内容。
+          </p>
+        )}
 
-            {/* 本机保存失败时的手动重试（其余失败态由同步循环自动重试） */}
-            {session.saveStatus.startsWith("本机保存失败") && (
-              <p className="flex flex-wrap items-center gap-2 text-sm text-destructive">
-                本机草稿保存失败
-                <Button
-                  variant="outline"
-                  className="min-h-11"
-                  disabled={retryingSave}
-                  onClick={async () => {
-                    setRetryingSave(true);
-                    try {
-                      await retryAttemptLocalPersistence(
-                        attemptId,
-                        questionIds,
-                      );
-                      await session.draftSyncContext.syncNow();
-                    } catch {
-                      // 重试失败保持提示（下一次点击再试）
-                    } finally {
-                      setRetryingSave(false);
-                    }
-                  }}
-                >
-                  <RotateCw aria-hidden className="size-4" />
-                  重试保存
-                </Button>
-              </p>
-            )}
+        {/* 本机保存失败时的手动重试（其余失败态由同步循环自动重试） */}
+        {session.saveStatus.startsWith("本机保存失败") && (
+          <p className="flex flex-wrap items-center gap-2 text-sm text-destructive">
+            本机草稿保存失败
+            <Button
+              variant="outline"
+              className="min-h-11"
+              disabled={retryingSave}
+              onClick={async () => {
+                setRetryingSave(true);
+                try {
+                  await retryAttemptLocalPersistence(attemptId, questionIds);
+                  await session.draftSyncContext.syncNow();
+                } catch {
+                  // 重试失败保持提示（下一次点击再试）
+                } finally {
+                  setRetryingSave(false);
+                }
+              }}
+            >
+              <RotateCw aria-hidden className="size-4" />
+              重试保存
+            </Button>
+          </p>
+        )}
 
-            <LessonBody data={data} order={order} renderCard={renderCard} />
-          </article>
-        </EnabledCapabilitiesProvider>
-      </DraftSyncProvider>
-    </AttemptEditorProvider>
+        {aiCompanion.rail(
+          <LessonBody data={data} order={order} renderCard={renderCard} />,
+        )}
+      </article>
+    </EnabledCapabilitiesProvider>
   );
 }
 

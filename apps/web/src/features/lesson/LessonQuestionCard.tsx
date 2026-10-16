@@ -155,6 +155,11 @@ export interface LessonQuestionCardProps {
   released: AttemptResultQuestion | undefined;
   /** 作答回调（undefined = 只读：完成视图或防御态） */
   handlers: LessonQuestionHandlers | undefined;
+  /**
+   * 题卡元素注册（SAI-22 讲练 AI 伴学）：作答态/结果态的卡片元素同步给
+   * 页面（伴学材料采集 surfaceOf 与当前题定位）；不传时零行为。
+   */
+  onCardElement?: ((questionId: string, el: HTMLElement | null) => void) | undefined;
 }
 
 /** 讲练页题卡本体 */
@@ -166,6 +171,7 @@ export const LessonQuestionCard = memo(function LessonQuestionCard({
   hints,
   released,
   handlers,
+  onCardElement,
 }: LessonQuestionCardProps) {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [phase, setPhase] = useState<RevealPhase>({ kind: "idle" });
@@ -175,6 +181,7 @@ export const LessonQuestionCard = memo(function LessonQuestionCard({
       element?.querySelector<HTMLElement>("article[data-question-id]") ??
       element;
     handlers?.registerCard(question.id, card);
+    onCardElement?.(question.id, card);
   };
 
   /** 显示答案（allowMissing=true = 用户已在缺稿弹层明确选择继续） */
