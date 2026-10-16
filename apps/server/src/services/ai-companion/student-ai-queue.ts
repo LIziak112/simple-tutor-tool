@@ -672,7 +672,9 @@ export function createAiTask(
         .select()
         .from(aiTasks)
         .where(eq(aiTasks.id, taskId))
-        .get()!;
+        .get();
+      // 同一事务内刚插入，必然可读回；读不回即数据异常，向前抛出回滚
+      if (row === undefined) throw new Error("任务行未落库");
       insertFact(tx, row, "task_created", now, {
         channel: input.channel,
         modeAtSend: bundle.modeAtSend,
@@ -852,12 +854,12 @@ export function listStudentAiTasks(
   }
   if (input.cursor !== undefined) {
     const cursor = decodeCursor(input.cursor);
-    conditions.push(
-      or(
-        lt(aiTasks.createdAt, cursor.c),
-        and(eq(aiTasks.createdAt, cursor.c), lt(aiTasks.id, cursor.i)),
-      )!,
+    // 双参 or 恒有值；条件式写法只是给类型一个非空证明
+    const cursorCondition = or(
+      lt(aiTasks.createdAt, cursor.c),
+      and(eq(aiTasks.createdAt, cursor.c), lt(aiTasks.id, cursor.i)),
     );
+    if (cursorCondition !== undefined) conditions.push(cursorCondition);
   }
   const rows = db
     .select()
@@ -867,12 +869,10 @@ export function listStudentAiTasks(
     .limit(input.limit + 1)
     .all();
   const page = rows.slice(0, input.limit);
+  const lastOfPage = page[page.length - 1];
   const nextCursor =
-    rows.length > input.limit
-      ? encodeCursor({
-          c: page[page.length - 1]!.createdAt,
-          i: page[page.length - 1]!.id,
-        })
+    rows.length > input.limit && lastOfPage !== undefined
+      ? encodeCursor({ c: lastOfPage.createdAt, i: lastOfPage.id })
       : null;
   if (page.length === 0) return { tasks: [], nextCursor: null };
 
@@ -1772,7 +1772,14 @@ export function refreshPendingAiTask(
             .run();
         }
       }
-      return tx.select().from(aiTasks).where(eq(aiTasks.id, task.id)).get()!;
+      const row = tx
+        .select()
+        .from(aiTasks)
+        .where(eq(aiTasks.id, task.id))
+        .get();
+      // 同一事务内刚更新，必然可读回；读不回即数据异常，向前抛出回滚
+      if (row === undefined) throw new Error("任务行未落库");
+      return row;
     },
     { behavior: "immediate" },
   );

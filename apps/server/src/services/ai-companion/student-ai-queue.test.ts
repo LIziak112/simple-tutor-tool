@@ -587,11 +587,11 @@ describe("SAI-12 列表：本人范围与稳定游标；查看与处理状态独
     // 按题过滤（每题一个任务）
     const filtered = listStudentAiTasks(db, {
       studentId: world.studentId,
-      questionId: questions[2]!,
+      questionId: questions[2] ?? "",
       limit: 20,
     });
     expect(filtered.tasks).toHaveLength(1);
-    expect(filtered.tasks[0]!.id).toBe(ids[2]);
+    expect(filtered.tasks[0]?.id).toBe(ids[2]);
     // 坏游标 → 400
     expectHttpError(
       () =>
@@ -672,9 +672,10 @@ describe("SAI-12 并发领取（真实双连接文件库）", () => {
         .select()
         .from(aiTasks)
         .where(eq(aiTasks.id, task.id))
-        .get()!;
+        .get();
+      if (row === undefined) throw new Error("任务行未落库");
       expect(row.status).toBe("claimed");
-      expect(row.leaseToken).toBe(claim1!.leaseToken);
+      expect(row.leaseToken).toBe(claim1?.leaseToken);
       expect(
         db1
           .select()
@@ -716,7 +717,8 @@ describe("SAI-12 并发领取（真实双连接文件库）", () => {
         .select()
         .from(aiTasks)
         .where(eq(aiTasks.id, k2.id))
-        .get()!;
+        .get();
+      if (k2Row === undefined) throw new Error("k2 任务行未落库");
       expect(k2Row.status).toBe("created");
       expect(k2Row.leaseToken).toBeNull();
     } finally {
@@ -735,11 +737,8 @@ describe("SAI-12 租约超时与写回", () => {
   } {
     const world = setupWorld(db);
     const task = mkMcpTask(db, world).task;
-    const claim = claimMcpTask(
-      db,
-      { studentId: world.studentId },
-      { now: at(0) },
-    )!;
+    const claim = claimMcpTask(db, { studentId: world.studentId }, { now: at(0) });
+    if (claim === null) throw new Error("MCP 领取应成功");
     return {
       world,
       task,
@@ -755,11 +754,10 @@ describe("SAI-12 租约超时与写回", () => {
     expect(recovered.expiredLeases).toBe(1);
     expect(taskRow(db, task.id).status).toBe("created");
     // 客户端 Y 再领
-    const claimY = claimMcpTask(
-      db,
-      { studentId: world.studentId },
-      { now: at(LEASE_MS + 2000) },
-    )!;
+    const claimY = claimMcpTask(db, { studentId: world.studentId }, {
+      now: at(LEASE_MS + 2000),
+    });
+    if (claimY === null) throw new Error("Y 再领应成功");
     expect(claimY.leaseToken).not.toBe(leaseX.leaseToken);
     // 旧持有者 X：续租被拒
     expectHttpError(
@@ -917,11 +915,8 @@ describe("SAI-12 状态竞态唯一合法结果", () => {
     const db = createTestDb();
     const world = setupWorld(db);
     const task = mkMcpTask(db, world).task;
-    const claim = claimMcpTask(
-      db,
-      { studentId: world.studentId },
-      { now: at(0) },
-    )!;
+    const claim = claimMcpTask(db, { studentId: world.studentId }, { now: at(0) });
+    if (claim === null) throw new Error("MCP 领取应成功");
     const cancelled = cancelAiTask(
       db,
       { studentId: world.studentId, taskId: task.id },
@@ -999,11 +994,8 @@ describe("SAI-12 状态竞态唯一合法结果", () => {
     const world = setupWorld(db);
     const task = mkMcpTask(db, world).task;
     const v1 = aiTaskContextVersionOf(db, task);
-    const claim = claimMcpTask(
-      db,
-      { studentId: world.studentId },
-      { now: at(0) },
-    )!;
+    const claim = claimMcpTask(db, { studentId: world.studentId }, { now: at(0) });
+    if (claim === null) throw new Error("MCP 领取应成功");
     // 已领取 → 拒绝替换输入
     expectHttpError(
       () =>
@@ -1021,7 +1013,8 @@ describe("SAI-12 状态竞态唯一合法结果", () => {
       .select()
       .from(responses)
       .where(eq(responses.attemptId, world.attemptId))
-      .get()!;
+      .get();
+    if (response === undefined) throw new Error("夹具响应行未落库");
     if (response.questionSnapshotJson === null) {
       throw new Error("夹具响应行缺少题快照");
     }
@@ -1046,7 +1039,8 @@ describe("SAI-12 状态竞态唯一合法结果", () => {
       db,
       { studentId: world.studentId },
       { now: at(LEASE_MS + 3000) },
-    )!;
+    );
+    if (claim2 === null) throw new Error("再领应成功");
     expect(claim2.contextVersion).toBe(v2);
     // 旧持有者带旧版本写回 → 拒绝
     expectHttpError(
@@ -1302,24 +1296,23 @@ describe("SAI-12 公平性与通道隔离", () => {
       });
     }
     // B 的领取不被 A 的 15 条阻塞：立即拿到自己的任务
-    const claimB = claimMcpTask(
-      db,
-      { studentId: studentB },
-      { now: at(3000) },
-    )!;
+    const claimB = claimMcpTask(db, { studentId: studentB }, { now: at(3000) });
+    if (claimB === null) throw new Error("B 领取应成功");
     expect(claimB.taskId).toBe(bTask.id);
     // A 域内 FIFO：晚创建的不插队
     const claimA1 = claimMcpTask(
       db,
       { studentId: worldA.studentId },
       { now: at(3001) },
-    )!;
+    );
+    if (claimA1 === null) throw new Error("A 第一领应成功");
     expect(claimA1.taskId).toBe(aIds[0]);
     const claimA2 = claimMcpTask(
       db,
       { studentId: worldA.studentId },
       { now: at(3002) },
-    )!;
+    );
+    if (claimA2 === null) throw new Error("A 第二领应成功");
     expect(claimA2.taskId).toBe(aIds[1]);
   });
 

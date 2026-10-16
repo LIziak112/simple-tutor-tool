@@ -263,7 +263,7 @@ describe("SAI-15 ① enqueue→submit→claim（双阶段装配 + 保留原请�
       { studentId: world.studentId, taskId: task.id },
       { now: at(70_000) },
     );
-    expect(claim).not.toBeNull();
+    if (claim === null) throw new Error("MCP 领取应成功");
 
     // 外发时点重装配：完成后规则 = open_study + review 模板（对照 = 当前时点
     // 全新装配，双阶段各自调用同一装配单源）
@@ -277,19 +277,21 @@ describe("SAI-15 ① enqueue→submit→claim（双阶段装配 + 保留原请�
       fresh.snapshot.promptSnapshotMd,
     );
     // 快照身份随之变化（领取方拿到的是重装配后的 contextVersion）
-    expect(claim!.contextVersion).not.toBe(versionAtCreate);
-    expect(claim!.contextVersion).toBe(aiTaskContextVersionOf(db, claimedRow));
+    expect(claim.contextVersion).not.toBe(versionAtCreate);
+    expect(claim.contextVersion).toBe(aiTaskContextVersionOf(db, claimedRow));
 
     // 保留原请求时间：不覆盖为提交后新请求（时间/创建事实/首条问题原样）
     expect(claimedRow.createdAt).toBe(createdRow.createdAt);
     expect(claimedRow.beforeSubmit).toBe(true);
     const createdFact = factsOf(db, task.id).find(
       (f) => f.type === "task_created",
-    )!;
+    );
+    if (createdFact === undefined) throw new Error("创建事实未落库");
     expect(createdFact.beforeSubmit).toBe(true);
     const dispatchedFact = factsOf(db, task.id).find(
       (f) => f.type === "dispatched",
-    )!;
+    );
+    if (dispatchedFact === undefined) throw new Error("外发事实未落库");
     expect(dispatchedFact.beforeSubmit).toBe(false); // 外发为提交后
   });
 
@@ -350,7 +352,7 @@ describe("SAI-15 ② 教师关闭：在途回信收存但不向未完成题交�
       { studentId: world.studentId, taskId: task.id },
       { now: at(1000) },
     );
-    expect(claim).not.toBeNull();
+    if (claim === null) throw new Error("MCP 领取应成功");
 
     // 教师动态变更：开放 → 完成后可用（本题仍在作答中）
     setStudentPostSubmitOnly(db, world.studentId);
@@ -361,14 +363,15 @@ describe("SAI-15 ② 教师关闭：在途回信收存但不向未完成题交�
       {
         studentId: world.studentId,
         taskId: task.id,
-        leaseToken: claim!.leaseToken,
+        leaseToken: claim.leaseToken,
         replyMarkdown: "AI 回信正文",
       },
       { now: at(2000) },
     );
     const replyFact = factsOf(db, task.id).find(
       (f) => f.type === "reply_received",
-    )!;
+    );
+    if (replyFact === undefined) throw new Error("回信事实未落库");
     expect(replyFact.beforeSubmit).toBe(true); // 旧事实保留提交前阶段
 
     // 未完成题不新增交付：详情不含回信正文；打开被拒（已展示的内容才保留可见）
@@ -443,8 +446,8 @@ describe("SAI-15 ③ 教师重新开放：任务可继续但未自动外发", ()
       },
       { now: at(2500) },
     );
-    expect(view.tasks[0]!.status).toBe("paused");
-    expect(view.tasks[0]!.allowedActions).toEqual(["resume", "cancel"]);
+    expect(view.tasks[0]?.status).toBe("paused");
+    expect(view.tasks[0]?.allowedActions).toEqual(["resume", "cancel"]);
     expect(factsOf(db, task.id).some((f) => f.type === "dispatched")).toBe(
       false,
     ); // 无外发事实 = 没有自动发送
@@ -485,8 +488,8 @@ describe("SAI-15 ④ 提交失败不解锁", () => {
       "QUESTION_REVISION_STALE",
     );
     expect(
-      db.select().from(attempts).where(eq(attempts.id, world.attemptId)).get()!
-        .status,
+      db.select().from(attempts).where(eq(attempts.id, world.attemptId)).get()
+        ?.status,
     ).toBe("draft");
 
     // 仍按未完成限制：显式领取 403、FIFO 无可领取
@@ -530,7 +533,8 @@ describe("SAI-15 ⑤ 讲练题级完成与重开新卷", () => {
           eq(responses.questionId, world.questionId),
         ),
       )
-      .get()!.id;
+      .get()?.id;
+    if (revisionId === undefined) throw new Error("responses 行未落库");
 
     // 提交前创建 Q1 任务（教师默认开放 → open 作答中模板）
     const t1 = createTask(db, world, {
@@ -720,7 +724,7 @@ describe("SAI-15 ⑥ 运行代际与账号隔离", () => {
       { studentId: world.studentId, taskId: task.id },
       { now: at(1000) },
     );
-    expect(claim).not.toBeNull();
+    if (claim === null) throw new Error("MCP 领取应成功");
 
     // 换账号后：他人身份对原任务写回/打开/列表都不可达
     expectHttpError(
@@ -730,7 +734,7 @@ describe("SAI-15 ⑥ 运行代际与账号隔离", () => {
           {
             studentId: otherStudentId,
             taskId: task.id,
-            leaseToken: claim!.leaseToken,
+            leaseToken: claim.leaseToken,
             replyMarkdown: "串号回信",
           },
           { now: at(2000) },
@@ -764,7 +768,7 @@ describe("SAI-15 ⑥ 运行代际与账号隔离", () => {
       {
         studentId: world.studentId,
         taskId: task.id,
-        leaseToken: claim!.leaseToken,
+        leaseToken: claim.leaseToken,
         replyMarkdown: "原任务回信",
       },
       { now: at(4000) },
@@ -824,7 +828,7 @@ describe("SAI-15 ⑦ AI 失败不阻塞交卷、不回滚提交与原稿", () =>
       studentId: world.studentId,
       taskId: t2.id,
     });
-    expect(claim2).not.toBeNull();
+    if (claim2 === null) throw new Error("MCP 领取应成功");
 
     // 真实交卷：判分/状态/答案原稿均不受 AI 任务影响
     const result = submitAttempt(
@@ -846,7 +850,7 @@ describe("SAI-15 ⑦ AI 失败不阻塞交卷、不回滚提交与原稿", () =>
     submitMcpReply(db, {
       studentId: world.studentId,
       taskId: t2.id,
-      leaseToken: claim2!.leaseToken,
+      leaseToken: claim2.leaseToken,
       replyMarkdown: "提交后写回的在途回信",
     });
 
@@ -869,8 +873,8 @@ describe("SAI-15 ⑦ AI 失败不阻塞交卷、不回滚提交与原稿", () =>
       { now: at(82_000) },
     );
     expect(
-      db.select().from(attempts).where(eq(attempts.id, world.attemptId)).get()!
-        .status,
+      db.select().from(attempts).where(eq(attempts.id, world.attemptId)).get()
+        ?.status,
     ).toBe("graded");
   });
 });

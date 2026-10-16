@@ -295,7 +295,7 @@ describe("SAI-14 派生事实摘要", () => {
       { studentId: world.studentId, taskId: task.id },
       { now: at(1000) },
     );
-    expect(claim).not.toBeNull();
+    if (claim === null) throw new Error("MCP 领取应成功");
     let summary = aiHelpQuestionFactsOf(db, {
       attemptId: world.attemptId,
       questionId: world.questionId,
@@ -310,7 +310,7 @@ describe("SAI-14 派生事实摘要", () => {
       {
         studentId: world.studentId,
         taskId: task.id,
-        leaseToken: claim!.leaseToken,
+        leaseToken: claim.leaseToken,
         replyMarkdown: "AI 回信正文",
       },
       { now: at(2000) },
@@ -379,13 +379,13 @@ describe("SAI-14 派生事实摘要", () => {
       studentId: worldA.studentId,
     });
     expect(byStudent).toHaveLength(1);
-    expect(byStudent[0]!.attemptId).toBe(worldA.attemptId);
+    expect(byStudent[0]?.attemptId).toBe(worldA.attemptId);
 
     const byAttempt = aiHelpFactsSummariesOf(db, {
       attemptId: worldA.attemptId,
     });
     expect(byAttempt).toHaveLength(1);
-    expect(byAttempt[0]!.questionId).toBe(worldA.questionId);
+    expect(byAttempt[0]?.questionId).toBe(worldA.questionId);
   });
 
   it("出站状态未知（dispatching/uncertain）不算仅入队，也不算已外发", () => {
@@ -452,7 +452,7 @@ describe("SAI-14 链接通道预留 hook", () => {
 
     const viewed = factsOf(db, task.id).filter((f) => f.type === "link_viewed");
     expect(viewed).toHaveLength(1);
-    const detail = JSON.parse(viewed[0]!.detailJson ?? "{}") as Record<
+    const detail = JSON.parse(viewed[0]?.detailJson ?? "{}") as Record<
       string,
       unknown
     >;
@@ -577,8 +577,8 @@ describe("SAI-14 创建事实原子一致（入队成功才有事实；失败不
     const task = createTask(db, world);
     const facts = factsOf(db, task.id);
     expect(facts).toHaveLength(1);
-    expect(facts[0]!.type).toBe("task_created");
-    const detail = JSON.parse(facts[0]!.detailJson ?? "{}") as Record<
+    expect(facts[0]?.type).toBe("task_created");
+    const detail = JSON.parse(facts[0]?.detailJson ?? "{}") as Record<
       string,
       unknown
     >;
@@ -714,7 +714,7 @@ describe("SAI-14 提交前后按各自实际时点", () => {
     const world = setupWorld(db);
     const task = createTask(db, world, { at: 0 }); // draft 期创建
     expect(
-      factsOf(db, task.id).find((f) => f.type === "task_created")!.beforeSubmit,
+      factsOf(db, task.id).find((f) => f.type === "task_created")?.beforeSubmit,
     ).toBe(true);
 
     submitAttempt(db, world.attemptId); // 整卷交卷（服务端口径）
@@ -724,13 +724,13 @@ describe("SAI-14 提交前后按各自实际时点", () => {
       { studentId: world.studentId, taskId: task.id },
       { now: at(70_000) },
     );
-    expect(claim).not.toBeNull();
+    if (claim === null) throw new Error("MCP 领取应成功");
     submitMcpReply(
       db,
       {
         studentId: world.studentId,
         taskId: task.id,
-        leaseToken: claim!.leaseToken,
+        leaseToken: claim.leaseToken,
         replyMarkdown: "复盘回信",
       },
       { now: at(80_000) },
@@ -769,10 +769,10 @@ describe("SAI-14 提交前后按各自实际时点", () => {
     }); // lq1 未交
     const t2 = createTask(db, world, { questionId: world.questionId2 }); // lq2 已交
     expect(
-      factsOf(db, t1.id).find((f) => f.type === "task_created")!.beforeSubmit,
+      factsOf(db, t1.id).find((f) => f.type === "task_created")?.beforeSubmit,
     ).toBe(true);
     expect(
-      factsOf(db, t2.id).find((f) => f.type === "task_created")!.beforeSubmit,
+      factsOf(db, t2.id).find((f) => f.type === "task_created")?.beforeSubmit,
     ).toBe(false);
 
     // lq1 提交后再页内发送：创建是提交前、外发是提交后，各自保留
@@ -814,11 +814,12 @@ describe("SAI-14 提交前后按各自实际时点", () => {
     );
     const delivered = factsOf(db, task.id).find(
       (f) => f.type === "reply_delivered",
-    )!;
+    );
+    if (delivered === undefined) throw new Error("回信交付事实未落库");
     expect(delivered.beforeSubmit).toBe(false);
     expect(taskRow(db, task.id).beforeSubmit).toBe(true); // 任务行口径不变
     expect(
-      factsOf(db, task.id).find((f) => f.type === "task_created")!.beforeSubmit,
+      factsOf(db, task.id).find((f) => f.type === "task_created")?.beforeSubmit,
     ).toBe(true);
   });
 });

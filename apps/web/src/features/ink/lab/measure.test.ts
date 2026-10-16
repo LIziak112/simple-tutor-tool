@@ -47,9 +47,9 @@ describe("timingStats", () => {
     const samples = [3, 1, 4, 1, 5, 9, 2, 6, 5, 3];
     const s = timingStats(samples);
     expect(s).not.toBeNull();
-    expect(s!.min).toBeLessThanOrEqual(s!.p50);
-    expect(s!.p50).toBeLessThanOrEqual(s!.p95);
-    expect(s!.p95).toBeLessThanOrEqual(s!.max);
+    expect(s?.min).toBeLessThanOrEqual(s?.p50);
+    expect(s?.p50).toBeLessThanOrEqual(s?.p95);
+    expect(s?.p95).toBeLessThanOrEqual(s?.max);
   });
 
   it("负值/零时长样本也可统计（不抛错）", () => {

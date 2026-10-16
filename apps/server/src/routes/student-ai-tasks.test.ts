@@ -346,7 +346,8 @@ it("正常 schema：create 201 + 契约解析 + 泄露断言；库内快照确�
 
   // 双断言另一半（AGENTS.md AI 例外）：允许场景下答案解析确实进入外发载荷
   // ——快照存库即创建时的固定外发内容（dispatch worker 归 SAI-17）
-  const row = w.db.select().from(aiTasks).all()[0]!;
+  const row = w.db.select().from(aiTasks).all().at(0);
+  if (row === undefined) throw new Error("任务行未落库");
   const snapshot = JSON.parse(row.contextSnapshotJson) as Record<
     string,
     unknown
@@ -710,7 +711,11 @@ it("cancel：claimed 可取消（状态 cancelled + 事实保留）——不能�
   );
   await expectErr(cross, 404, "NOT_FOUND");
   expect(
-    w.db.select().from(aiTasks).where(eq(aiTasks.id, taskId)).all()[0]!.status,
+    w.db
+      .select()
+      .from(aiTasks)
+      .where(eq(aiTasks.id, taskId))
+      .all()[0]?.status,
   ).toBe("claimed");
 
   const res = await req(
@@ -727,7 +732,9 @@ it("cancel：claimed 可取消（状态 cancelled + 事实保留）——不能�
     .select()
     .from(aiTasks)
     .where(eq(aiTasks.id, taskId))
-    .all()[0]!;
+    .all()
+    .at(0);
+  if (row === undefined) throw new Error("任务行未落库");
   expect(row.cancelRequestedAt).not.toBeNull(); // claimed 取消 = 阻止交付标记
   // 事实与处理状态分开：cancelled 事实落库（append-only），含 wasClaimed
   const factRows = w.db
@@ -736,7 +743,7 @@ it("cancel：claimed 可取消（状态 cancelled + 事实保留）——不能�
     .where(and(eq(aiFacts.taskId, taskId), eq(aiFacts.type, "cancelled")))
     .all();
   expect(factRows).toHaveLength(1);
-  expect(JSON.parse(factRows[0]!.detailJson ?? "{}").wasClaimed).toBe(true);
+  expect(JSON.parse(factRows[0]?.detailJson ?? "{}").wasClaimed).toBe(true);
 
   // 已取消再取消 → 409（幂等的是重放语义，不是重复动作）
   const again = await req(
@@ -832,8 +839,8 @@ it("附件元数据无内部路径；detail/summary 响应无跨题/私注/路�
   const body = aiTaskDetailOkSchema.parse(raw);
   assertNoLeak(body);
   expect(body.data.task.materials).toHaveLength(1);
-  expect(body.data.task.materials[0]!.kind).toBe("annotation");
-  expect(body.data.task.materials[0]!.state).toBe("ready");
+  expect(body.data.task.materials[0]?.kind).toBe("annotation");
+  expect(body.data.task.materials[0]?.state).toBe("ready");
   // 事实为学生投影：无 detailJson 内容
   expect(body.data.facts.every((f) => Object.keys(f).length === 5)).toBe(true);
   expect(body.data.facts.map((f) => f.type)).toContain("task_created");
