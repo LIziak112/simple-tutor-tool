@@ -16,6 +16,7 @@ import {
 import { ReviewPackPanel } from "@/features/export/review-pack-panel";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { NoteOriginalView } from "@/features/notes/NoteOriginalView";
+import { AiHelpQuestionSection } from "./AiHelpRecords";
 import { AttemptQuestionMarkEditor } from "./AttemptQuestionMarkEditor";
 import { InkLightbox, type InkViewTab, InkViewTabs } from "./InkLightbox";
 import { InkReplayPane } from "./InkReplayPane";
@@ -375,6 +376,14 @@ export function AttemptDetailQuestionCard({
         </span>
         <span>改答 {question.changeCount} 次</span>
       </p>
+
+      {/* SAI-24 教师督学标签（B13）：旁置呈现 AI 求助事实——只消费服务端
+          事实记录，不改写对错/待批/分数/评语原值；记录抽屉按题过滤本卷任务 */}
+      <AiHelpQuestionSection
+        attemptId={attemptId}
+        questionId={question.questionId}
+        questionNo={question.no}
+      />
 
       <VerdictSection question={question} isDraft={isDraft} />
 

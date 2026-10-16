@@ -28,8 +28,10 @@ import {
   type AiTaskListData,
   type AiTaskListQuery,
   type AiTaskPublic,
+  type AiTeacherAttemptRecordsData,
   type AiTeacherSettingsData,
   type AiTeacherSettingsPutRequest,
+  type AiTeacherTaskDetailData,
   ANNOTATION_BASE_IMAGE_FORM_FIELDS,
   ANNOTATION_FORM_FIELDS,
   type AnalyticsOverviewData,
@@ -2563,7 +2565,47 @@ export function putAiPolicyOverrideApi(
   );
 }
 
-// ---------- 学生端快捷按钮（SAI-08；路由 student-ai.ts，契约 student-ai-policy.ts） ----------
+// ---------- 教师督学记录（SAI-24 / B13；路由 teacher-ai.ts，契约 student-ai-api.ts） ----------
+
+/**
+ * 按卷求助记录（GET /attempts/:id/ai-records）：每题事实摘要（distinct 题数
+ * 口径）+ 本卷任务行轻量形态（回信正文与材料图不随列表下发——按任务经
+ * fetchTeacherAiTaskDetailApi / teacherAiTaskMaterialPngUrl 按需加载）。
+ * 他域/不存在统一 404（服务端防枚举）。
+ */
+export function fetchTeacherAttemptAiRecordsApi(
+  attemptId: string,
+): Promise<AiTeacherAttemptRecordsData> {
+  return callApi(() =>
+    api.api.teacher.attempts[":id"]["ai-records"].$get({
+      param: { id: attemptId },
+    }),
+  );
+}
+
+/**
+ * 教师域任务详情（GET /ai/tasks/:id）：快照（含当时模板 promptSnapshotMd 与
+ * 材料行）+ 对话全量 + 事实时间线。教师督学消费平台留痕，无学生侧交付门禁。
+ */
+export function fetchTeacherAiTaskDetailApi(
+  taskId: string,
+): Promise<AiTeacherTaskDetailData> {
+  return callApi(() =>
+    api.api.teacher.ai.tasks[":id"].$get({ param: { id: taskId } }),
+  );
+}
+
+/**
+ * 任务材料 PNG 的 URL（抽屉 <img src> 直出；同源请求自动带会话 Cookie，
+ * 404 由 onerror 兜底呈现缺失态——missingReason 之外的加载失败路径）。
+ * 域校验在服务端（教师不以学生 URL 绕过）。
+ */
+export function teacherAiTaskMaterialPngUrl(
+  taskId: string,
+  materialId: string,
+): string {
+  return `/api/teacher/ai/tasks/${encodeURIComponent(taskId)}/materials/${encodeURIComponent(materialId)}/image.png`;
+}
 
 /** 读本人快捷按钮整组（无配置 → 契约默认四项 + 未设置锚点；删光 → 空组不回填） */
 export function fetchStudentQuickButtonsApi(): Promise<StudentQuickButtonsData> {
