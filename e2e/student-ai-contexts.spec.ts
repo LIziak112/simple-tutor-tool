@@ -165,7 +165,7 @@ async function connectInapp(
   expect(res.status()).toBe(201);
 }
 
-test.describe("SAI-33 四题型与结果页共存", () => {
+test.describe("SAI-33 四来源与结果页共存", () => {
   // 串行：共享同一假供应商控制端（捕获/剧本是全局 FIFO）
   test.describe.configure({ mode: "serial" });
 
