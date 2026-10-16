@@ -1,4 +1,11 @@
-import { createContext, type ReactNode, useContext, useState } from "react";
+import {
+  createContext,
+  type ReactNode,
+  useCallback,
+  useContext,
+  useMemo,
+  useState,
+} from "react";
 import { useNavigate } from "react-router";
 import { Button } from "@/components/ui/button";
 import {
@@ -34,19 +41,25 @@ export function SettingsNavigationProvider({
     Record<string, { dirty: boolean; discard: () => void }>
   >({});
   const [pending, setPending] = useState<{ action: () => void } | null>(null);
-  function setDraft(
-    id: string,
-    draft: { dirty: boolean; discard: () => void },
-  ) {
-    setDrafts((prev) => ({ ...prev, [id]: draft }));
-  }
+  // setDraft/leave 引用稳定：消费方在 effect 依赖 setDraft 注册草稿，
+  // 引用每渲染变化会让 effect 无限重跑（Maximum update depth）
+  const setDraft = useCallback(
+    (id: string, draft: { dirty: boolean; discard: () => void }) => {
+      setDrafts((prev) => ({ ...prev, [id]: draft }));
+    },
+    [],
+  );
   const dirtyEntries = Object.entries(drafts).filter(([, d]) => d.dirty);
-  function leave(action: () => void) {
-    if (dirtyEntries.length > 0) setPending({ action });
-    else action();
-  }
+  const leave = useCallback(
+    (action: () => void) => {
+      if (Object.values(drafts).some((d) => d.dirty)) setPending({ action });
+      else action();
+    },
+    [drafts],
+  );
+  const contextValue = useMemo(() => ({ setDraft, leave }), [setDraft, leave]);
   return (
-    <SettingsNavigationContext value={{ setDraft, leave }}>
+    <SettingsNavigationContext value={contextValue}>
       <div
         onClickCapture={(event) => {
           if (

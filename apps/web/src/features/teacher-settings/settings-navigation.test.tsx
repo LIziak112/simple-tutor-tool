@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
+import { useEffect } from "react";
 import { Link, MemoryRouter, useLocation } from "react-router";
 import { expect, it, vi } from "vitest";
 import {
@@ -42,4 +43,28 @@ it("未保存时普通离开须确认，分类切换不拦截；取消继续编�
   fireEvent.click(screen.getByRole("button", { name: "放弃更改并离开" }));
   expect(discard).toHaveBeenCalledOnce();
   expect(screen.getByRole("status")).toHaveTextContent("/t/library");
+});
+
+it("setDraft 引用稳定：消费方在 effect 依赖它注册草稿不触发无限重渲染", () => {
+  let effectRuns = 0;
+  function Consumer() {
+    const navigation = useSettingsNavigation();
+    const setDraft = navigation?.setDraft;
+    useEffect(() => {
+      setDraft?.("stable", { dirty: true, discard: () => {} });
+      effectRuns += 1;
+      return () => setDraft?.("stable", { dirty: false, discard: () => {} });
+    }, [setDraft]);
+    return null;
+  }
+  render(
+    <MemoryRouter initialEntries={["/t/settings"]}>
+      <SettingsNavigationProvider>
+        <Consumer />
+      </SettingsNavigationProvider>
+    </MemoryRouter>,
+  );
+  // 首挂载注册一次；Provider 因 drafts 更新重渲染，但 setDraft 引用不变，
+  // effect 不应重跑（修复前每轮重渲染都重跑，React 抛 Maximum update depth）
+  expect(effectRuns).toBe(1);
 });
