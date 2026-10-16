@@ -19,7 +19,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runBackfills } from "../../src/db/backfill.ts";
-import { createDb } from "../../src/db/client.ts";
+import { createDb, type Db } from "../../src/db/client.ts";
 import { runMigrations } from "../../src/db/migrate.ts";
 import { teachers } from "../../src/db/schema.ts";
 import { TEST_TEACHER_ID } from "../../src/db/test-utils.ts";
@@ -57,6 +57,16 @@ const OK_BODY = JSON.stringify({
 async function main(): Promise<void> {
   const dataDir = mkdtempSync(join(tmpdir(), "tutor-b19-demo-"));
   const db = createDb(join(dataDir, "tutor.db"));
+  try {
+    await seedWorld(db, dataDir);
+  } finally {
+    // 成功与失败路径都关库：Windows 上句柄未释放会导致临时目录无法立即删除
+    db.$client.close();
+  }
+}
+
+/** 建合成世界并打印试跑指引（由 main 调用；vitest 导入本文件不执行） */
+async function seedWorld(db: Db, dataDir: string): Promise<void> {
   runMigrations(db);
   runBackfills(db);
   db.insert(teachers)
@@ -157,7 +167,6 @@ async function main(): Promise<void> {
   recordShareTicketViewed(db, resolved, { now: new Date() });
   recordShareTicketViewed(db, resolved, { now: new Date() });
 
-  db.$client.close();
   console.log(`种子世界已生成（合成/匿名数据）：
   DATA_DIR=${dataDir}
   inapp 任务=${inappTaskId}
@@ -168,4 +177,7 @@ async function main(): Promise<void> {
 用完手动删除整个目录即可。`);
 }
 
-await main();
+// 仅作为脚本直接运行时执行 CLI（vitest 导入时不执行——与其余四脚本同款守卫）
+if (process.env.VITEST === undefined) {
+  await main();
+}

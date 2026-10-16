@@ -39,7 +39,9 @@ import { createTestDb, TEST_TEACHER_ID } from "../db/test-utils.ts";
 import { createStudentAiConnection } from "../services/ai-companion/connection-service.ts";
 import { attachAiTaskMaterials } from "../services/ai-companion/student-ai-materials.ts";
 import {
+  beginInappDispatch,
   createAiTask,
+  failInappDispatch,
   markReplyDelivered,
 } from "../services/ai-companion/student-ai-queue.ts";
 import {
@@ -138,7 +140,7 @@ function mkTask(
   world: World,
   at: number,
   questionId: string,
-  channel: "inapp" | "link" = "inapp",
+  channel: "inapp" | "link" | "mcp" = "inapp",
 ): string {
   return createAiTask(
     world.db,
@@ -380,16 +382,32 @@ describe("trace-audit（平台留痕核对；真实服务产生的世界自证�
     );
   });
 
-  it("link 任务缺 link_generated 事实 → FAIL", () => {
+  it("link 任务未生成票据（两步设计合法态）→ 零 FAIL", () => {
     const world = makeWorld();
     mkTask(world, 0, "q2", "link");
     const report = auditTrace(readTraceInput(world));
+    expect(report.findings.filter((f) => f.level === "fail")).toEqual([]);
+  });
+
+  it("票据行与 link_generated 事实不成对（删事实）→ FAIL", () => {
+    const world = makeWorld();
+    const taskId = mkTask(world, 0, "q2", "link");
+    createAiShareTicket(world.db, {
+      studentId: world.studentId,
+      taskId,
+    });
+    world.db.$client
+      .prepare(
+        "DELETE FROM ai_facts WHERE task_id = ? AND type = 'link_generated'",
+      )
+      .run(taskId);
+    const report = auditTrace(readTraceInput(world));
     expect(failTexts(report.findings)).toContain(
-      "link 通道任务缺少 link_generated 事实（票据留痕被破坏）",
+      "票据行 1 与 link_generated 事实数 0 不成对（票据留痕被破坏）",
     );
   });
 
-  it("票据 viewCount 与 link_viewed 事实计数不符 → FAIL", () => {
+  it("票据 viewCount 合计与 link_viewed 事实计数不符 → FAIL", () => {
     const world = makeWorld();
     const taskId = mkTask(world, 0, "q2", "link");
     const { token } = createAiShareTicket(
@@ -404,7 +422,78 @@ describe("trace-audit（平台留痕核对；真实服务产生的世界自证�
       .run(taskId);
     const report = auditTrace(readTraceInput(world));
     expect(failTexts(report.findings)).toContain(
-      "票据读取计数 5 与 link_viewed 事实数 1 不符（读取留痕被破坏）",
+      "票据读取计数合计 5 与 link_viewed 事实数 1 不符（读取留痕被破坏）",
+    );
+  });
+
+  it("重新生成票据后各票计数合计仍与事实总数成对（合法态零 FAIL）", () => {
+    const world = makeWorld();
+    const taskId = mkTask(world, 0, "q2", "link");
+    const first = createAiShareTicket(world.db, {
+      studentId: world.studentId,
+      taskId,
+    });
+    const resolved = requireShareTicketByToken(world.db, first.token);
+    recordShareTicketViewed(world.db, resolved, { now: new Date() });
+    recordShareTicketViewed(world.db, resolved, { now: new Date() });
+    // 旧票未撤销也可再生成新票（重新生成链接语义）：合计 2 = 事实 2
+    createAiShareTicket(world.db, { studentId: world.studentId, taskId });
+    const report = auditTrace(readTraceInput(world));
+    expect(report.findings.filter((f) => f.level === "fail")).toEqual([]);
+  });
+
+  it("inapp 真实失败路径（failed 不写 dispatched，SAI-14 口径）→ 零 FAIL", () => {
+    const world = makeWorld();
+    const taskId = mkTask(world, 0, "q1");
+    beginInappDispatch(
+      world.db,
+      { studentId: world.studentId, taskId },
+      { now: new Date(T0 + 500) },
+    );
+    failInappDispatch(
+      world.db,
+      {
+        studentId: world.studentId,
+        taskId,
+        generation: 1,
+        errorText: "上游 401：Key 无效",
+        kind: "retryable",
+      },
+      { now: new Date(T0 + 600) },
+    );
+    const report = auditTrace(readTraceInput(world));
+    expect(report.findings.filter((f) => f.level === "fail")).toEqual([]);
+    const text = report.lines.join("\n");
+    expect(text).toContain("failed"); // 时间线如实呈现失败态
+    expect(text).not.toContain("dispatched"); // 且不伪造已外发事实
+  });
+
+  it("dispatched 事实残留但 generation 被清零 → FAIL（代际对账）", async () => {
+    const world = makeWorld();
+    const taskId = mkTask(world, 0, "q1");
+    await dispatchOnce(world);
+    world.db.$client
+      .prepare(
+        "UPDATE ai_tasks SET status = 'created', generation = 0 WHERE id = ?",
+      )
+      .run(taskId);
+    const report = auditTrace(readTraceInput(world));
+    expect(failTexts(report.findings)).toContain(
+      `任务 ${taskId.slice(0, 8)} 有 dispatched 事实但 generation=0（代际与出站留痕不对账）`,
+    );
+  });
+
+  it("mcp 任务伪造 claimed 但无 dispatched 事实 → FAIL（领取留痕）", () => {
+    const world = makeWorld();
+    const taskId = mkTask(world, 0, "q1", "mcp");
+    world.db.$client
+      .prepare(
+        "UPDATE ai_tasks SET status = 'claimed', generation = 1 WHERE id = ?",
+      )
+      .run(taskId);
+    const report = auditTrace(readTraceInput(world));
+    expect(failTexts(report.findings)).toContain(
+      `任务 ${taskId.slice(0, 8)} MCP 任务 claimed/replied 但无 dispatched 事实（领取留痕被破坏）`,
     );
   });
 
@@ -431,7 +520,7 @@ describe("trace-audit（平台留痕核对；真实服务产生的世界自证�
       .run(taskId);
     const report = auditTrace(readTraceInput(world));
     expect(failTexts(report.findings)).toContain(
-      "inapp 任务已回信/失败但从未出站（generation=0）",
+      "任务已开始出站（回信/失败/待确认/已领取）但 generation=0",
     );
   });
 });
@@ -540,14 +629,21 @@ describe("mcp-smoke（MCP 配对冒烟；node:http 假端点自证）", () => {
 
 // ---------- link-check（假端点；票据快照核对） ----------
 
-/** 造假分享正文（含全部区块标记 + 材料 anchor；variant 控制缺区块/夹带哨兵） */
+/** 造假分享正文（含全部区块标记 + 材料 anchor；variant 控制缺区块/夹带哨兵/页序缺口） */
 function fakeShareHtml(
-  variant: "full" | "no-answer" | "leak" | "uuid",
+  variant: "full" | "no-answer" | "leak" | "uuid" | "gap",
 ): string {
   const answer = variant === "no-answer" ? "" : "<h2>参考答案</h2>";
   const leak = variant === "leak" ? "<p>教师私注：这个学生需要关注</p>" : "";
   const uuid =
     variant === "uuid" ? "<!-- 0a1b2c3d-4e5f-6071-8293-a4b5c6d7e8f9 -->" : "";
+  // gap：材料行第 1 页缺失（缺失行不产 anchor），正文只有第 0/2 页锚点
+  const anchors =
+    variant === "gap"
+      ? `<li><a href="/api/public/ai/share/tok/materials/0.png">题面圈画第 1 页（PNG 图片）</a></li>
+<li><a href="/api/public/ai/share/tok/materials/2.png">草稿第 2 页（PNG 图片）</a></li>`
+      : `<li><a href="/api/public/ai/share/tok/materials/0.png">题面圈画第 1 页（PNG 图片）</a></li>
+<li><a href="/api/public/ai/share/tok/materials/1.png">草稿第 1 页（PNG 图片）</a></li>`;
   return `<!doctype html><html lang="zh-CN"><body>
 <h1>AI 伴学分享（单题快照）</h1>
 <p class="meta">题号：第 3 题</p>
@@ -557,25 +653,33 @@ ${answer}<pre class="md">B</pre>
 <h2>官方解析</h2><pre class="md">解析正文</pre>
 <h2>学生的问题</h2><pre class="md">为什么选 B</pre>
 <h2>材料（仅本题选定附件）</h2>
-<ul class="materials"><li><a href="/api/public/ai/share/tok/materials/0.png">题面圈画第 1 页（PNG 图片）</a></li>
-<li><a href="/api/public/ai/share/tok/materials/1.png">草稿第 1 页（PNG 图片）</a></li></ul>
+<ul class="materials">${anchors}</ul>
 ${leak}${uuid}</body></html>`;
 }
 
 describe("link-check（票据快照核对；node:http 假端点自证）", () => {
   let server: Server;
   let baseUrl: string;
-  let variant: "full" | "no-answer" | "leak" | "uuid";
+  let variant: "full" | "no-answer" | "leak" | "uuid" | "gap";
   let status: number;
   let body: string;
+  let brokenPages: Set<number>;
 
   beforeEach(async () => {
     variant = "full";
     status = 200;
     body = "";
+    brokenPages = new Set();
     server = createServer((req, res) => {
       const url = req.url ?? "";
-      if (url.endsWith(".png")) {
+      const pageMatch = /\/materials\/(\d+)\.png$/.exec(url);
+      if (pageMatch !== null) {
+        // 模拟服务端对缺失行页号的 500（AI_MATERIAL_BROKEN 同链路）
+        if (brokenPages.has(Number(pageMatch[1]))) {
+          res.writeHead(500, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: { code: "AI_MATERIAL_BROKEN" } }));
+          return;
+        }
         const png = makeNotePng(64, 32, 100);
         res.writeHead(200, {
           "content-type": "image/png",
@@ -609,7 +713,7 @@ describe("link-check（票据快照核对；node:http 假端点自证）", () =>
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
 
-  it("期望 ok：六区块 + no-store + 材料 anchor 计数 + 附图拉取全过", async () => {
+  it("期望 ok：七处区块标记 + no-store + 材料 anchor 计数 + 附图拉取全过", async () => {
     const report = await runLinkCheck({
       url: baseUrl,
       expectation: "ok",
@@ -620,6 +724,25 @@ describe("link-check（票据快照核对；node:http 假端点自证）", () =>
     });
     expect(report.steps.every((s) => s.ok)).toBe(true);
     expect(report.materialCount).toBe(2);
+  });
+
+  it("材料页序缺口：按 anchor 真实页号拉取，不把缺失页当异常", async () => {
+    variant = "gap";
+    brokenPages.add(1); // 第 1 页是缺失行（500）——真实页号 0/2 应全部通过
+    const report = await runLinkCheck({
+      url: baseUrl,
+      expectation: "ok",
+      mustContain: [],
+      mustNotContain: [],
+      method: "GET",
+      fetchMaterials: true,
+    });
+    expect(report.steps.every((s) => s.ok)).toBe(true);
+    expect(report.materialCount).toBe(2);
+    const materials = report.steps.find((s) => s.name === "材料附件可拉取");
+    expect(materials?.detail).toContain("第 1 张 200");
+    expect(materials?.detail).toContain("第 3 张 200");
+    expect(materials?.detail).not.toContain("第 2 张");
   });
 
   it("正文缺「参考答案」区块 → FAIL", async () => {
@@ -725,6 +848,37 @@ describe("link-check（票据快照核对；node:http 假端点自证）", () =>
     });
     expect(missing.steps.every((s) => s.ok)).toBe(true);
   });
+
+  it("期望 stale：快照变更后的第三种 403（分享内容已更新）核对通过", async () => {
+    status = 403;
+    body = JSON.stringify({
+      error: {
+        code: "AI_SHARE_EXPIRED",
+        message: "分享内容已更新，此链接已失效，请让学生重新生成链接",
+      },
+    });
+    const good = await runLinkCheck({
+      url: baseUrl,
+      expectation: "stale",
+      mustContain: [],
+      mustNotContain: [],
+      method: "GET",
+      fetchMaterials: false,
+    });
+    expect(good.steps.every((s) => s.ok)).toBe(true);
+
+    // 同一形态用 --expect expired 核对必须 FAIL（过期与快照变更文案不同，
+    // 脚本不得把「分享内容已更新」误报成已过期通过）
+    const wrong = await runLinkCheck({
+      url: baseUrl,
+      expectation: "expired",
+      mustContain: [],
+      mustNotContain: [],
+      method: "GET",
+      fetchMaterials: false,
+    });
+    expect(wrong.steps.every((s) => s.ok)).toBe(false);
+  });
 });
 
 // ---------- CLI 入口（子进程；只读打开真实文件库自证） ----------
@@ -733,13 +887,14 @@ describe("link-check（票据快照核对；node:http 假端点自证）", () =>
 const SERVER_ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const execFileAsync = promisify(execFile);
 
-/** 以 tsx 子进程运行一个核对脚本，返回 stdout 与退出码 */
+/** 以 tsx 子进程运行一个核对脚本，返回 stdout 与退出码（可注入额外环境变量） */
 async function runScriptCli(
   script: string,
   args: string[],
+  extraEnv: Record<string, string> = {},
 ): Promise<{ stdout: string; code: number }> {
   // 子进程必须摘掉 VITEST 环境变量——脚本以它区分「直接运行」与「测试导入」
-  const env = { ...process.env };
+  const env = { ...process.env, ...extraEnv };
   delete env.VITEST;
   try {
     const { stdout } = await execFileAsync(
@@ -843,8 +998,65 @@ describe("CLI 入口（tsx 子进程对合成文件库真实运行）", () => {
     ]);
     expect(bad.code).toBe(1);
     expect(bad.stdout).toContain(
-      "inapp 任务已回信/失败但从未出站（generation=0）",
+      "任务已开始出站（回信/失败/待确认/已领取）但 generation=0",
     );
+  });
+
+  it("materials-check：--task 指定的零材料任务显式输出无行，不静默吞掉", async () => {
+    const world = makeFileWorld();
+    const withMaterials = mkTask(world, 0, "q1");
+    attachMaterials(world, withMaterials);
+    const textOnly = mkTask(world, 100, "q2");
+    world.db.$client.close();
+
+    const run = await runScriptCli("materials-check.ts", [
+      "--data-dir",
+      dir,
+      "--task",
+      withMaterials,
+      "--task",
+      textOnly,
+    ]);
+    expect(run.code).toBe(0);
+    expect(run.stdout).toContain(`任务 ${textOnly}：无材料行`);
+    expect(run.stdout).toContain("materials-check：全部核对项通过");
+  });
+
+  it("link-check：票据 URL 从 B19_LINK_URL 环境变量读取（token 不进命令行）", async () => {
+    // 本地假端点扮演票据读端点（七区块正文 + no-store + 附件）
+    const server = createServer((req, res) => {
+      const url = req.url ?? "";
+      if (url.endsWith(".png")) {
+        const png = makeNotePng(64, 32, 100);
+        res.writeHead(200, {
+          "content-type": "image/png",
+          "content-length": String(png.byteLength),
+        });
+        res.end(Buffer.from(png));
+        return;
+      }
+      res.writeHead(200, {
+        "content-type": "text/html; charset=utf-8",
+        "cache-control": "no-store",
+      });
+      res.end(fakeShareHtml("full"));
+    });
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
+    const address = server.address();
+    if (address === null || typeof address === "string") {
+      throw new Error("监听失败");
+    }
+    try {
+      const run = await runScriptCli("link-check.ts", ["--expect", "ok"], {
+        B19_LINK_URL: `http://127.0.0.1:${address.port}/api/public/ai/share/tok`,
+      });
+      expect(run.code).toBe(0);
+      expect(run.stdout).toContain("link-check：全部核对项通过");
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 });
 

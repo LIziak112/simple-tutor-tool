@@ -20,6 +20,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { pngIntact } from "../../src/lib/png.ts";
+import { AI_MATERIAL_KIND_LABELS } from "../../src/services/ai-companion/student-ai-materials.ts";
 import {
   argList,
   argOf,
@@ -29,15 +30,9 @@ import {
   parseScriptArgs,
 } from "./common.ts";
 
-/** 材料类别中文标签（与服务端 AI_MATERIAL_KIND_LABELS 同文案，仅展示用） */
-const KIND_LABELS: Readonly<Record<string, string>> = {
-  annotation: "题面圈画",
-  draft: "草稿",
-  formal_ink: "正式手写",
-};
-
+/** 材料类别中文标签（单源复用服务端 AI_MATERIAL_KIND_LABELS，仅展示用） */
 function kindLabel(kind: string): string {
-  return KIND_LABELS[kind] ?? kind;
+  return (AI_MATERIAL_KIND_LABELS as Record<string, string>)[kind] ?? kind;
 }
 
 /** 单行材料登记（ai_task_materials 行的脚本侧形态） */
@@ -251,6 +246,14 @@ async function main(): Promise<void> {
     console.log(`\n任务 ${taskId}（材料 ${taskRows.length} 页）`);
     for (const line of report.summary) console.log(`  ${line}`);
     allFindings.push(...report.findings);
+  }
+  // --task 显式指定但查无材料行的任务也要如实呈现，不能静默吞掉：
+  // 任务不存在与「仅文字发送/上传失败未落行」在此不可区分，都按无行输出
+  //（断网失败核对中「无材料行」正是预期形态，见 B19 清单 §3 步骤 1）
+  for (const taskId of taskIds) {
+    if (!byTask.has(taskId)) {
+      console.log(`\n任务 ${taskId}：无材料行（任务不存在或仅文字发送）`);
+    }
   }
   console.log("");
   finishReport("materials-check", allFindings);

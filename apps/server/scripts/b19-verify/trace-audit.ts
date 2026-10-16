@@ -11,15 +11,21 @@
  *     --data-dir <部署 DATA_DIR> [--task <id>…|--student <id>|--attempt <id>|--latest N]
  *   缺省 --latest 10。
  *
- * 核对项（每条对应一个「列 ⟷ 事实」成对写入点）：
+ * 核对项（每条对应服务端一个真实的同事务成对写入点）：
  * - 每任务有 task_created 事实（创建事务）；
  * - replied ⟹ 有 reply_received（回信写回事务）；
  * - reply_delivered_at 列 ⟺ reply_delivered 事实（markReplyDelivered 同事务）；
- * - inapp 任务已出站终态 ⟹ generation ≥ 1，且 generation ≥ 1 ⟹ 有 dispatched
- *   事实（beginInappDispatch 单事务 CAS 同时写两者）——mcp/link 的回信不经
- *   平台派发，不适用本条；
- * - link 通道任务 ⟹ 有 link_generated 事实（票据生成同事务）；
- * - 票据 viewCount = 该任务 link_viewed 事实数（recordShareTicketViewed 同事务）；
+ * - 已开始出站 ⟹ generation ≥ 1：inapp 的 replied/failed/uncertain（begin
+ *   CAS 自增）、mcp 的 claimed/replied（claim 事务自增）；
+ * - dispatched 事实 ⟹ generation ≥ 1，且 mcp 任务 claimed/replied ⟹ 有
+ *   dispatched（claim 单事务同写两者，回信必经领取）。注意 inapp 失败/超时
+ *   收敛 failed/uncertain 时**不写** dispatched——beginInappDispatch 只做 CAS
+ *   不落事实，出站结果未知不能断言已外发（SAI-14 审计口径）；
+ * - 票据行数 = link_generated 事实数（createAiShareTicket 同事务成对）。
+ *   任务创建与票据生成是两步——link 任务停在 created 等学生生成链接、或
+ *   生成请求失败后未重试，都是合法态，不按通道强判；
+ * - 票据 viewCount 合计 = link_viewed 事实数（recordShareTicketViewed 同事务
+ *   逐次成对；重新生成新票据后各票计数合计仍与事实总数一致）；
  * - failed ⟹ errorText 非空。
  */
 import {
@@ -180,37 +186,52 @@ export function auditTrace(input: TraceAuditInput): TraceAuditReport {
         message: `任务 ${shortId} reply_delivered_at 非空但无 reply_delivered 事实（列与事实不对账）`,
       });
     }
-    const outboundTerminal =
-      task.channel === "inapp" &&
-      (task.status === "replied" ||
-        task.status === "failed" ||
-        task.status === "uncertain");
-    if (outboundTerminal && task.generation === 0) {
+    const outboundStarted =
+      (task.channel === "inapp" &&
+        (task.status === "replied" ||
+          task.status === "failed" ||
+          task.status === "uncertain")) ||
+      (task.channel === "mcp" &&
+        (task.status === "claimed" || task.status === "replied"));
+    if (outboundStarted && task.generation === 0) {
       findings.push({
         level: "fail",
-        message: "inapp 任务已回信/失败但从未出站（generation=0）",
+        message: "任务已开始出站（回信/失败/待确认/已领取）但 generation=0",
       });
     }
-    if (task.generation >= 1 && !factCounts.has("dispatched")) {
+    if (factCounts.has("dispatched") && task.generation < 1) {
       findings.push({
         level: "fail",
-        message: `任务 ${shortId} generation=${task.generation} 但无 dispatched 事实（出站留痕被破坏）`,
+        message: `任务 ${shortId} 有 dispatched 事实但 generation=0（代际与出站留痕不对账）`,
       });
     }
-    if (task.channel === "link" && !factCounts.has("link_generated")) {
+    if (
+      task.channel === "mcp" &&
+      (task.status === "claimed" || task.status === "replied") &&
+      !factCounts.has("dispatched")
+    ) {
       findings.push({
         level: "fail",
-        message: "link 通道任务缺少 link_generated 事实（票据留痕被破坏）",
+        message: `任务 ${shortId} MCP 任务 claimed/replied 但无 dispatched 事实（领取留痕被破坏）`,
       });
     }
-    const viewed = factCounts.get("link_viewed") ?? 0;
-    for (const ticket of tickets) {
-      if (ticket.viewCount !== viewed) {
-        findings.push({
-          level: "fail",
-          message: `票据读取计数 ${ticket.viewCount} 与 link_viewed 事实数 ${viewed} 不符（读取留痕被破坏）`,
-        });
-      }
+    const linkGenerated = factCounts.get("link_generated") ?? 0;
+    if (linkGenerated !== tickets.length) {
+      findings.push({
+        level: "fail",
+        message: `票据行 ${tickets.length} 与 link_generated 事实数 ${linkGenerated} 不成对（票据留痕被破坏）`,
+      });
+    }
+    const viewedFacts = factCounts.get("link_viewed") ?? 0;
+    const viewedSum = tickets.reduce(
+      (sum, ticket) => sum + ticket.viewCount,
+      0,
+    );
+    if (viewedSum !== viewedFacts) {
+      findings.push({
+        level: "fail",
+        message: `票据读取计数合计 ${viewedSum} 与 link_viewed 事实数 ${viewedFacts} 不符（读取留痕被破坏）`,
+      });
     }
     if (
       task.status === "failed" &&

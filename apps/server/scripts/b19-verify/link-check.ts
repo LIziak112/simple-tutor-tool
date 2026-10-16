@@ -2,14 +2,18 @@
  * B19 上下文链接票据核对（SAI-34；手动工具，不进 CI）。
  *
  * 用途：link 通道任务生成票据 URL 后，用本脚本从「平台之外的视角」拉取
- * 快照正文，核对授权投影完整（六区块）且无内部标识/私注/他题哨兵；核对
- * 过期/撤销/不存在的拒绝形态。默认 GET（会真实记一次 link_viewed——与
- * 外部 AI 抓取同链路，对账时计入读取计数）；--head 用 HEAD 预检不记已读。
+ * 快照正文，核对授权投影完整（七处区块标记：标题 + 六区块）且无内部标识/
+ * 私注/他题哨兵；核对过期/撤销/快照变更/不存在的拒绝形态。默认 GET（会
+ * 真实记一次 link_viewed——与外部 AI 抓取同链路，对账时计入读取计数）；
+ * --head 用 HEAD 预检不记已读。
  *
  * 用法（任意目录，Node 18+ 内置 fetch）：
- *   node node_modules/tsx/dist/cli.mjs scripts/b19-verify/link-check.ts --url <票据URL> \
- *     --expect ok|expired|revoked|missing \
+ *   B19_LINK_URL=<票据URL> node node_modules/tsx/dist/cli.mjs scripts/b19-verify/link-check.ts \
+ *     --expect ok|expired|revoked|stale|missing \
  *     [--must-contain <哨兵>…] [--must-not-contain <哨兵>…] [--head] [--fetch-materials]
+ *   票据 URL 里的明文 token 是读取授权，优先用 B19_LINK_URL 环境变量传入
+ *   （与 mcp-smoke 的密钥纪律一致，不进 shell 历史与进程列表）；--url 参数
+ *   仍可用（本地试跑等一次性场景）。
  *
  * 哨兵建议（来自你的合成/匿名世界，勿用真实学生数据）：
  *   --must-contain 题面里的一句独特文字 / 参考答案关键词
@@ -26,8 +30,13 @@ import {
 } from "./common.ts";
 import type { SmokeStep } from "./mcp-smoke.ts";
 
-/** 期望形态：ok=正文可读 | expired/revoked=403 拒绝 | missing=404 防探测 */
-export type LinkExpectation = "ok" | "expired" | "revoked" | "missing";
+/** 期望形态：ok=正文可读 | expired/revoked/stale=403 拒绝 | missing=404 防探测 */
+export type LinkExpectation =
+  | "ok"
+  | "expired"
+  | "revoked"
+  | "stale"
+  | "missing";
 
 export interface LinkCheckInput {
   readonly url: string;
@@ -69,12 +78,26 @@ const DENIAL_SPEC: Readonly<
 > = {
   expired: { status: 403, keyword: "过期", label: "已过期拒绝" },
   revoked: { status: 403, keyword: "撤销", label: "已撤销拒绝" },
+  stale: {
+    status: 403,
+    keyword: "分享内容已更新",
+    label: "快照变更后旧票据拒绝",
+  },
   missing: { status: 404, keyword: "不存在或已失效", label: "不存在防探测" },
 };
 
-/** 从正文提取材料附件 anchor 数量（/materials/<n>.png 链接） */
-function countMaterialLinks(html: string): number {
-  return (html.match(/\/materials\/\d+\.png/g) ?? []).length;
+/**
+ * 从正文提取材料附件 anchor 的页序（/materials/<n>.png 的 n 去重升序）。
+ * 服务端 href 的索引是材料行页号——缺失行不产 anchor，不能按 anchor 数量
+ * 顺序拉 0..N-1（会把缺口后面的真实页漏掉、把已知缺失页当异常）。
+ */
+function materialPageIndexList(html: string): number[] {
+  const indexes = new Set<number>();
+  for (const match of html.matchAll(/\/materials\/(\d+)\.png/g)) {
+    const parsed = Number.parseInt(match[1] ?? "", 10);
+    if (Number.isInteger(parsed)) indexes.add(parsed);
+  }
+  return [...indexes].sort((a, b) => a - b);
 }
 
 /**
@@ -176,20 +199,23 @@ export async function runLinkCheck(
               : "全部禁止哨兵不在正文"
             : `检出禁止哨兵：${present.join("、")}`,
       });
-      const materialCount = countMaterialLinks(body);
+      const pageIndexes = materialPageIndexList(body);
+      const materialCount = pageIndexes.length;
       if (input.fetchMaterials && materialCount > 0 && input.method === "GET") {
-        // 逐张拉取附件（与外部抓取同链路；缺件/越权在此暴露）
+        // 逐张拉取附件（按 anchor 真实页序；缺件/越权在此暴露）
         const base = `${url.origin}${url.pathname}`;
         let materialsOk = true;
         const details: string[] = [];
-        for (let i = 0; i < materialCount; i++) {
-          const materialRes = await fetchImpl(`${base}/materials/${i}.png`);
+        for (const pageIndex of pageIndexes) {
+          const materialRes = await fetchImpl(
+            `${base}/materials/${pageIndex}.png`,
+          );
           const contentType = materialRes.headers.get("content-type") ?? "";
           const good =
             materialRes.status === 200 && contentType.includes("image/png");
           materialsOk = materialsOk && good;
           details.push(
-            `第 ${i + 1} 张 ${materialRes.status}/${contentType || "无类型"}${good ? "" : "（异常）"}`,
+            `第 ${pageIndex + 1} 张 ${materialRes.status}/${contentType || "无类型"}${good ? "" : "（异常）"}`,
           );
         }
         steps.push({
@@ -229,17 +255,17 @@ export async function runLinkCheck(
   return { steps, findings, materialCount: 0 };
 }
 
-/** CLI 入口：解析参数 → 核对 → 打印与退出码 */
+/** CLI 入口：解析参数（票据 URL 优先取 B19_LINK_URL 环境变量）→ 核对 → 打印与退出码 */
 async function main(): Promise<void> {
   const args = parseScriptArgs(process.argv.slice(2));
-  const url = argOf(args, "url");
+  const url = argOf(args, "url") ?? process.env.B19_LINK_URL;
   const expect = argOf(args, "expect") ?? "ok";
   if (
     url === undefined ||
-    !["ok", "expired", "revoked", "missing"].includes(expect)
+    !["ok", "expired", "revoked", "stale", "missing"].includes(expect)
   ) {
     console.error(
-      "用法：--url <票据URL> 必填；--expect ok|expired|revoked|missing（默认 ok）；--must-contain / --must-not-contain 哨兵（可重复）；--head 不记已读；--fetch-materials 逐张拉取附件",
+      "用法：设 B19_LINK_URL=<票据URL>（推荐，明文 token 不进命令行）或 --url <票据URL>；--expect ok|expired|revoked|stale|missing（默认 ok）；--must-contain / --must-not-contain 哨兵（可重复）；--head 不记已读；--fetch-materials 逐张拉取附件",
     );
     process.exitCode = 2;
     return;
