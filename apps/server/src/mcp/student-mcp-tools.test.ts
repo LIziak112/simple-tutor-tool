@@ -618,4 +618,49 @@ describe("SAI-26 伪造任务与页面闭环", () => {
     ).toBe(true);
     await client.close();
   });
+
+  it("工具入参自报 studentId 无效（身份只从 token 派生，域不转移）", async () => {
+    const env = await makeEnv();
+    // 他学生先建一个更早的待领取任务：若自报身份生效，FIFO 会领到它
+    const otherStudent = makeStudent(env.db);
+    const otherAttempt = insertAttempt(env.db, { studentId: otherStudent });
+    insertResponse(env.db, otherAttempt, "spoof-q");
+    const otherTask = createAiTask(
+      env.db,
+      {
+        studentId: otherStudent,
+        attemptId: otherAttempt,
+        questionId: "spoof-q",
+        question: "他学生更早的求助",
+        channel: "mcp",
+        mutationId: randomUUID(),
+      },
+      { hmacSecret: SECRET, now: new Date(Date.parse(NOW) - 1000) },
+    ).task.id;
+    const mine = mkTask(env);
+
+    const client = await connectClient(env);
+    // claim / list 入参全部塞他学生 id：zod 剥离未知字段，域仍是 token 绑定学生
+    const claim = await callJson(client, "claim_ai_task", {
+      studentId: otherStudent,
+    });
+    expect(claim.isError).toBe(false);
+    expect(claim.data.taskId).toBe(mine); // FIFO 领到的是本人任务，不是更早的他学生任务
+    const listed = await callJson(client, "list_my_ai_tasks", {
+      studentId: otherStudent,
+    });
+    const listedIds = ((listed.data.tasks as { id: string }[]) ?? []).map(
+      (task) => task.id,
+    );
+    expect(listedIds).toContain(mine);
+    expect(listedIds).not.toContain(otherTask);
+    // 他学生任务未被冒领：仍 created
+    const otherStatus = env.db
+      .select({ status: aiTasks.status })
+      .from(aiTasks)
+      .where(eq(aiTasks.id, otherTask))
+      .get();
+    expect(otherStatus?.status).toBe("created");
+    await client.close();
+  });
 });
