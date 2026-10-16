@@ -1,8 +1,12 @@
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
 import { AI_CONNECTION_TEST_TIMEOUT_MS } from "@tutor/contract";
 import type { Logger } from "pino";
 import { redactHeaderValue } from "../../lib/log-redact.ts";
 import {
   type GuardedResponse,
+  normalizeSocketError,
+  OUTBOUND_RESPONSE_MAX_BYTES,
   OutboundTargetError,
   requestWithTargetGuard,
 } from "./outbound-target.ts";
@@ -56,14 +60,109 @@ export type ProviderTransport = (
   request: ProviderTransportRequest,
 ) => Promise<GuardedResponse>;
 
-/** 缺省传输：带连接级防护的真实出站（SSRF 策略在 outbound-target） */
-export const defaultProviderTransport: ProviderTransport = (request) =>
-  requestWithTargetGuard(request.url, {
-    method: request.method,
-    headers: request.headers,
-    body: request.body,
-    timeoutMs: request.timeoutMs,
+/**
+ * E2E 假供应商分流地址（B18 SAI-33「fake provider 走实际接口」）：仅 e2e 的
+ * playwright.config.ts 会显式设置；仓库外部署不设置 → 分支永不进入，生产
+ * 行为零变化。
+ */
+const E2E_FAKE_AI_BASE_URL = process.env.E2E_FAKE_AI_BASE_URL;
+
+/**
+ * E2E 分流的裸转发（无目标守卫）：请求原样 POST 到重写后的 URL，响应与
+ * 错误形态与 requestWithTargetGuard 完全一致（GuardedResponse +
+ * OutboundTargetError），上层归一逻辑无需感知分流存在。
+ */
+function forwardWithoutGuard(
+  url: string,
+  request: ProviderTransportRequest,
+): Promise<GuardedResponse> {
+  return new Promise<GuardedResponse>((resolve, reject) => {
+    const doRequest =
+      new URL(url).protocol === "https:" ? httpsRequest : httpRequest;
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      outgoing.destroy(
+        new OutboundTargetError("TIMEOUT", "出站请求超时") as never,
+      );
+      reject(new OutboundTargetError("TIMEOUT", "出站请求超时"));
+    }, request.timeoutMs);
+    const finish = (settle: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      settle();
+    };
+    const outgoing = doRequest(
+      url,
+      { method: request.method, headers: request.headers },
+      (response) => {
+        const chunks: Buffer[] = [];
+        let received = 0;
+        response.on("data", (chunk: Buffer) => {
+          if (settled) return;
+          received += chunk.length;
+          if (received > OUTBOUND_RESPONSE_MAX_BYTES) {
+            response.destroy();
+            finish(() =>
+              reject(
+                new OutboundTargetError(
+                  "BODY_TOO_LARGE",
+                  "出站响应超出大小上限",
+                ),
+              ),
+            );
+            return;
+          }
+          chunks.push(chunk);
+        });
+        response.on("end", () => {
+          const headers: Record<string, string> = {};
+          for (const [key, value] of Object.entries(response.headers)) {
+            headers[key] = Array.isArray(value)
+              ? value.join(", ")
+              : (value ?? "");
+          }
+          finish(() =>
+            resolve({
+              status: response.statusCode ?? 0,
+              headers,
+              bodyText: Buffer.concat(chunks).toString("utf8"),
+            }),
+          );
+        });
+        response.on("error", (err) => {
+          finish(() => reject(normalizeSocketError(err)));
+        });
+      },
+    );
+    outgoing.on("error", (err) => {
+      finish(() => reject(normalizeSocketError(err)));
+    });
+    outgoing.write(request.body);
+    outgoing.end();
   });
+}
+
+/**
+ * 缺省传输：带连接级防护的真实出站（SSRF 策略在 outbound-target）。
+ * E2E_FAKE_AI_BASE_URL 设置时（仅 e2e）分流到假供应商：请求原样 POST 到
+ * 该地址的 /chat/completions（请求 URL 被重写——学生连接仍填假主机名，
+ * 保存期静态策略放行域名形态）。分流不过出站目标守卫：守卫的语义就是管
+ * 真实外发，生产路径的保存期静态策略与连接级 IP 策略原样生效不受影响；
+ * E2E 假供应商是受控替代目标（显式环境变量 + 127.0.0.1），在 transport
+ * 入口分流不缩小守卫对生产路径的覆盖。
+ */
+export const defaultProviderTransport: ProviderTransport = (request) =>
+  E2E_FAKE_AI_BASE_URL === undefined
+    ? requestWithTargetGuard(request.url, {
+        method: request.method,
+        headers: request.headers,
+        body: request.body,
+        timeoutMs: request.timeoutMs,
+      })
+    : forwardWithoutGuard(chatCompletionsUrl(E2E_FAKE_AI_BASE_URL), request);
 
 /** 调用输入 */
 export interface ChatCompletionsInput {

@@ -1,5 +1,7 @@
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import type { Logger } from "pino";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   type GuardedResponse,
   OutboundTargetError,
@@ -324,5 +326,95 @@ describe("testProviderConnection", () => {
 
   it("探针文案是固定常量（无任何可变学生输入）", () => {
     expect(CONNECTION_TEST_PROBE).toBe("连接测试：请只回复 ok。");
+  });
+});
+
+describe("E2E_FAKE_AI_BASE_URL 分流（B18 SAI-33 应用层注入点）", () => {
+  /** 环境变量在模块加载时读取：每个用例 resetModules 后动态 import 取新实例 */
+  async function loadTransport(): Promise<
+    (request: ProviderTransportRequest) => Promise<GuardedResponse>
+  > {
+    vi.resetModules();
+    const module = await import("./provider-client.ts");
+    return module.defaultProviderTransport;
+  }
+
+  it("设置时：请求原样 POST 到该地址 /chat/completions（URL 重写、头与正文原样、响应归一为 GuardedResponse）", async () => {
+    const received: {
+      method: string | undefined;
+      url: string;
+      authorization: string | undefined;
+      contentType: string | undefined;
+      body: string;
+    }[] = [];
+    const server = createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on("data", (chunk: Buffer) => chunks.push(chunk));
+      req.on("end", () => {
+        received.push({
+          method: req.method,
+          url: req.url ?? "",
+          authorization: req.headers.authorization,
+          contentType: req.headers["content-type"],
+          body: Buffer.concat(chunks).toString("utf8"),
+        });
+        res.writeHead(200, {
+          "content-type": "application/json",
+          "retry-after": "2",
+        });
+        res.end(okBody("分流回信"));
+      });
+    });
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
+    const port = (server.address() as AddressInfo).port;
+    process.env.E2E_FAKE_AI_BASE_URL = `http://127.0.0.1:${port}/v1`;
+    try {
+      const transport = await loadTransport();
+      const response = await transport({
+        // 学生连接仍填假主机名：分流按环境变量重写目标，原 URL 不参与连接
+        url: "http://ai-fake.invalid/v1/chat/completions",
+        method: "POST",
+        headers: {
+          authorization: "Bearer e2e-key",
+          "content-type": "application/json",
+        },
+        body: "e2e-payload",
+        timeoutMs: 5_000,
+      });
+      expect(received).toHaveLength(1);
+      expect(received[0]?.method).toBe("POST");
+      expect(received[0]?.url).toBe("/v1/chat/completions");
+      expect(received[0]?.authorization).toBe("Bearer e2e-key");
+      expect(received[0]?.contentType).toBe("application/json");
+      expect(received[0]?.body).toBe("e2e-payload");
+      expect(response.status).toBe(200);
+      expect(response.headers["content-type"]).toBe("application/json");
+      expect(response.headers["retry-after"]).toBe("2");
+      expect(response.bodyText).toContain("分流回信");
+    } finally {
+      delete process.env.E2E_FAKE_AI_BASE_URL;
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it("未设置时：零分流——环回目标仍被出站目标守卫拒绝（生产行为不变）", async () => {
+    const previous = process.env.E2E_FAKE_AI_BASE_URL;
+    delete process.env.E2E_FAKE_AI_BASE_URL;
+    try {
+      const transport = await loadTransport();
+      await expect(
+        transport({
+          url: "http://127.0.0.1:9/v1/chat/completions",
+          method: "POST",
+          headers: {},
+          body: "",
+          timeoutMs: 1_000,
+        }),
+      ).rejects.toMatchObject({ code: "TARGET_BLOCKED" });
+    } finally {
+      if (previous !== undefined) process.env.E2E_FAKE_AI_BASE_URL = previous;
+    }
   });
 });

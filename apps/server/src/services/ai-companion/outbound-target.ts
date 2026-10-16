@@ -391,8 +391,11 @@ export function requestWithTargetGuard(
   });
 }
 
-/** socket 级错误归一（ECONNREFUSED 等 → NETWORK；策略错误原样透传） */
-function normalizeSocketError(err: Error): OutboundTargetError {
+/**
+ * socket 级错误归一（ECONNREFUSED 等 → NETWORK；策略错误原样透传）。
+ * 导出供 provider-client 的 E2E 分流传输复用（同形态归一，无语义分支）。
+ */
+export function normalizeSocketError(err: Error): OutboundTargetError {
   if (err instanceof OutboundTargetError) return err;
   const maybeCode: unknown = (err as { code?: unknown }).code;
   const code = typeof maybeCode === "string" ? maybeCode : "";

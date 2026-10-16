@@ -51,6 +51,11 @@ const iPadPortrait = {
 
 export default defineConfig({
   testDir: "./e2e",
+  // SAI-33（B18）假 AI 供应商：globalSetup 在 Playwright 主进程启动
+  // 127.0.0.1:8898（OpenAI 兼容端点 + 控制端），被测 server 经下方 env 的
+  // E2E_FAKE_AI_BASE_URL 显式分流出站到该服务——业务链路全真，只有最后一跳
+  // 指向受控假端点，见 e2e/fake-ai-provider.ts 头注。
+  globalSetup: "./e2e/global-setup.ts",
   outputDir: "./e2e/.artifacts",
   // 单用例超时：本机主流程 ~15s，CI 2 核 runner + vite 冷编译约 40-60s，120s 已足余量。
   // 收紧（原 180s）：失败时更快暴露（4 用例 × 重试 1 次吃满 180s 会把 job 拖到 12 分钟+）。
@@ -99,11 +104,15 @@ export default defineConfig({
       reuseExistingServer: false,
       // 180s：CI 2 核 runner 冷启动（tsx 加载依赖→迁移）留足余量；本机秒级
       timeout: 180_000,
-      // env 与 process.env 合并（Playwright spawn 语义），CI/本机行为一致
+      // env 与 process.env 合并（Playwright spawn 语义），CI/本机行为一致；
+      // E2E_FAKE_AI_BASE_URL 显式激活假 AI 供应商分流（SAI-33，见
+      // provider-client.ts 的 defaultProviderTransport 注释——仓库外部署
+      // 不设置该变量，生产行为零变化）
       env: {
         PORT: String(E2E_SERVER_PORT),
         DATA_DIR: dataDir,
         PUBLIC_URL: `http://127.0.0.1:${E2E_WEB_PORT}`,
+        E2E_FAKE_AI_BASE_URL: "http://127.0.0.1:8898/v1",
       },
       // CI 打印被测进程输出（[WebServer] 前缀）：启动失败/卡住时日志能定位；
       // 本机忽略 stdout 减噪（stderr 始终透出）
