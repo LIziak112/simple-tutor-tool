@@ -95,14 +95,20 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
   });
 
   // 打开瞬间绑定当时所在题（SAI-20：显式动作才切题，滚动不重绑；
-  // 重开面板恢复绑定题）。打开时无当前题则保持未绑定，由页面显式 bind。
-  const openedRef = useRef(false);
+  // 重开面板重新绑定当时当前题——未变则同题幂等恢复）。打开时页面尚未
+  // 定位当前题（如进入即点开、未滚动）的窗口内，首次定位到当前题即补绑
+  // 定——绑定由打开动作启动，打开后滚动到别题不换绑。
+  const boundInOpenRef = useRef(false);
   const bind = send.bind;
   useEffect(() => {
-    if (controller.open && !openedRef.current && currentQuestionId !== null) {
-      bind(currentQuestionId);
+    if (!controller.open) {
+      boundInOpenRef.current = false;
+      return;
     }
-    openedRef.current = controller.open;
+    if (!boundInOpenRef.current && currentQuestionId !== null) {
+      bind(currentQuestionId);
+      boundInOpenRef.current = true;
+    }
   }, [controller.open, currentQuestionId, bind]);
 
   const boundQuestionId = send.boundQuestionId;

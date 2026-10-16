@@ -249,6 +249,15 @@ function AnswerView({
   const [currentQuestionId, setCurrentQuestionId] = useState<string | null>(
     null,
   );
+  /** 题号映射（1 起序号——明确选择分支按「第 n 题」呈现问题）；dock 装配
+   *  在渲染期即调用 labelOf（绑定后 boundLabel 派生），必须先于装配声明 */
+  const questionIndexById = useMemo(
+    () =>
+      new Map(
+        flatQuestions.map((question, i) => [question.id, i + 1] as const),
+      ),
+    [flatQuestions],
+  );
   // SAI-22：AI 伴学装配收进共享 dock（布局 + 发送 + 面板 + 打开绑定），
   // 本页只传身份（attempt/题集）与阶段（当前题/编辑器/材料面）。
   const aiCompanion = useAiCompanionDock({
@@ -354,14 +363,6 @@ function AnswerView({
         questionId: question.id,
         questionRevisionId: question.questionRevisionId,
       })),
-    [flatQuestions],
-  );
-  /** 题号映射（1 起序号——明确选择分支按「第 n 题」呈现问题） */
-  const questionIndexById = useMemo(
-    () =>
-      new Map(
-        flatQuestions.map((question, i) => [question.id, i + 1] as const),
-      ),
     [flatQuestions],
   );
 
