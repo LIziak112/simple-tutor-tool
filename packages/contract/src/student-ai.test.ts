@@ -27,7 +27,9 @@ import {
   aiMessageSchema,
   aiShareViewSchema,
   aiTaskMaterialInternalSchema,
+  aiTaskActionSchema,
   aiTaskMaterialSchema,
+  aiTaskOriginSummarySchema,
   aiTaskPublicSchema,
   aiTaskStatusSchema,
 } from "./student-ai";
@@ -196,10 +198,63 @@ it("任务八态与允许动作表和B00 §3.4 状态机一致", () => {
   expect(AI_TASK_ALLOWED_ACTIONS.dispatching).toEqual([]);
   expect(AI_TASK_ALLOWED_ACTIONS.uncertain).toEqual(["retry"]);
   expect(AI_TASK_ALLOWED_ACTIONS.claimed).toEqual(["cancel"]);
-  expect(AI_TASK_ALLOWED_ACTIONS.replied).toEqual(["followup", "share"]);
+  expect(AI_TASK_ALLOWED_ACTIONS.replied).toEqual([
+    "followup",
+    "share",
+    "archive",
+  ]);
   expect(AI_TASK_ALLOWED_ACTIONS.paused).toEqual(["resume", "cancel"]);
   expect(AI_TASK_ALLOWED_ACTIONS.failed).toEqual(["retry"]);
-  expect(AI_TASK_ALLOWED_ACTIONS.cancelled).toEqual([]);
+  expect(AI_TASK_ALLOWED_ACTIONS.cancelled).toEqual(["archive"]);
+});
+
+it("SAI-23 归档是队列管理动作：只加在终态（replied/cancelled），不进在途状态", () => {
+  // 归档不是状态机转换（status 不变），只在终态可整理；在途/可重试状态
+  // （created/dispatching/uncertain/claimed/paused/failed）不提供归档——
+  // 归档会把这些任务藏出队列、丢失重试/继续入口。
+  for (const status of [
+    "created",
+    "dispatching",
+    "uncertain",
+    "claimed",
+    "paused",
+    "failed",
+  ] as const) {
+    expect(AI_TASK_ALLOWED_ACTIONS[status]).not.toContain("archive");
+  }
+  expect(aiTaskActionSchema.parse("archive")).toBe("archive");
+  expect(aiTaskActionSchema.safeParse("unarchive").success).toBe(false);
+});
+
+it("SAI-23 任务来源摘要：来源/次数/题号/标题与导航定位键（列表附加视图）", () => {
+  const origin = {
+    sourceType: "lesson",
+    attemptNo: 2,
+    questionNo: 3,
+    title: "二次函数讲练页",
+    assignmentId: null,
+    courseId: "6b7c8d9e-0000-4000-8000-ffffffffffff",
+    unitId: "unit-b",
+    lectureId: "7c8d9e0f-0000-4000-8000-aaaaaaaaaaaa",
+    attemptStatus: "submitted",
+  };
+  expect(aiTaskOriginSummarySchema.parse(origin)).toEqual(origin);
+  // 题不在本卷（软删/缺失）如实可表达，不伪造题号
+  expect(
+    aiTaskOriginSummarySchema.parse({ ...origin, questionNo: null })
+      .questionNo,
+  ).toBeNull();
+  // strict：未知字段与非法来源拒绝
+  expect(
+    aiTaskOriginSummarySchema.safeParse({ ...origin, extra: 1 }).success,
+  ).toBe(false);
+  expect(
+    aiTaskOriginSummarySchema.safeParse({ ...origin, sourceType: "exam" })
+      .success,
+  ).toBe(false);
+  expect(
+    aiTaskOriginSummarySchema.safeParse({ ...origin, attemptNo: 0 }).success,
+  ).toBe(false);
 });
 
 it("处理状态与查看状态分开：无反馈、未查看均可表达", () => {

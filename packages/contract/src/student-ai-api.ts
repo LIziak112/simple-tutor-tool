@@ -16,6 +16,7 @@ import {
   aiMessageSchema,
   aiShareViewSchema,
   aiTaskMaterialSchema,
+  aiTaskOriginSummarySchema,
   aiTaskPublicSchema,
   aiTaskStatusSchema,
   aiTaskTeacherSchema,
@@ -207,6 +208,12 @@ export const aiTaskListQuerySchema = z
     attemptId: z.uuid().optional(),
     questionId: z.string().min(1).optional(),
     status: aiTaskStatusSchema.optional(),
+    /**
+     * 归档过滤（SAI-23）：exclude = 默认队列视图（隐藏已归档）、only = 已归档
+     * 分组；缺省 = 全部——既有单题历史调用方不受归档影响（对话记录不因整理
+     * 队列而从本题历史消失）。
+     */
+    archived: z.enum(["exclude", "only"]).optional(),
     limit: z.number().int().min(1).max(50).default(20),
     cursor: aiTaskListCursorSchema.optional(),
   })
@@ -217,6 +224,8 @@ export const aiTaskListDataSchema = z
   .object({
     tasks: z.array(aiTaskPublicSchema),
     nextCursor: z.string().nullable(),
+    /** 来源摘要按任务 id 索引（SAI-23 全局队列展示/导航用；单题历史可省略） */
+    origins: z.record(z.string(), aiTaskOriginSummarySchema).optional(),
   })
   .strict();
 export type AiTaskListData = z.infer<typeof aiTaskListDataSchema>;

@@ -15,6 +15,7 @@ import {
   aiTaskCreateRequestSchema,
   aiTaskFollowupRequestSchema,
   aiTaskListQuerySchema,
+  aiTaskListDataSchema,
   aiTaskShareRequestSchema,
   aiTaskUpdatePendingRequestSchema,
 } from "./student-ai-api";
@@ -167,6 +168,51 @@ it("票据有效期不在 schema 固化默认（连接偏好回退），上限 7
   expect(aiTaskShareRequestSchema.safeParse({ validHours: 0 }).success).toBe(
     false,
   );
+});
+
+it("SAI-23 全局队列：archived 过滤白名单与 origins 摘要挂载", () => {
+  // archived 过滤：exclude=默认队列视图（隐藏已归档）/ only=已归档分组；
+  // 缺省 undefined = 全部（既有单题历史调用方行为不变——归档不把对话记录
+  // 从本题历史里抹掉）
+  expect(aiTaskListQuerySchema.parse({ archived: "exclude" }).archived).toBe(
+    "exclude",
+  );
+  expect(aiTaskListQuerySchema.parse({ archived: "only" }).archived).toBe(
+    "only",
+  );
+  expect(aiTaskListQuerySchema.parse({}).archived).toBeUndefined();
+  expect(aiTaskListQuerySchema.safeParse({ archived: "all" }).success).toBe(
+    false,
+  );
+  // 列表 data 携带 origins：按任务 id 索引的来源摘要（缺省可省略——单题
+  // 历史调用方不消费；全局队列消费方按需读取）
+  const page = {
+    tasks: [],
+    nextCursor: null,
+    origins: {
+      "4f5a6b7c-0000-4000-8000-dddddddddddd": {
+        sourceType: "wrong",
+        attemptNo: 3,
+        questionNo: 1,
+        title: null,
+        assignmentId: null,
+        courseId: null,
+        unitId: null,
+        lectureId: null,
+        attemptStatus: "graded",
+      },
+    },
+  };
+  expect(aiTaskListDataSchema.parse(page).origins).toBeDefined();
+  expect(aiTaskListDataSchema.parse({ tasks: [], nextCursor: null }).origins).toBeUndefined();
+  // 摘要形状不对整体拒绝（strict 传递）
+  expect(
+    aiTaskListDataSchema.safeParse({
+      tasks: [],
+      nextCursor: null,
+      origins: { "t-1": { sourceType: "exam" } },
+    }).success,
+  ).toBe(false);
 });
 
 it("任务列表游标为不透明字符串，不接受任意查询结构", () => {
