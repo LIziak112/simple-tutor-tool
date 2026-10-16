@@ -12,6 +12,7 @@ import {
   aiConnectionPublicSchema,
   aiConnectionVerifyStatusSchema,
   aiFactSchema,
+  aiHelpQuestionFactsSchema,
   aiImageCapabilitySchema,
   aiMessageSchema,
   aiShareViewSchema,
@@ -519,26 +520,56 @@ export const aiBatchCreateOkSchema = apiOkExtend(aiBatchCreateDataSchema);
 
 // ---------- 教师端督学记录（B00 §4.2 教师表；B13 实现接口） ----------
 
-/** GET /api/teacher/attempts/:id/ai-records 响应 data：按卷求助记录抽屉 */
+/** 按卷求助记录的任务行（抽屉时间线的轻量形态：无回信正文、无材料图） */
+export const aiTeacherTaskRecordSchema = z
+  .object({
+    taskId: z.uuid(),
+    questionId: z.string().min(1),
+    status: aiTaskStatusSchema,
+    channel: aiChannelSchema,
+    modeAtSend: aiTeachingModeSchema,
+    /** 创建时服务端判定的提交前/提交后（事实行另有各自时点判定） */
+    beforeSubmit: z.boolean(),
+    /** 学生诉求（首条学生消息正文） */
+    question: z.string().min(1),
+    hasReply: z.boolean(),
+    /** 学生打开回信时刻；null = 未查看（含已收信未读与未回信） */
+    replyDeliveredAt: z.string().nullable(),
+    /** 最近失败摘要（failed 态）；无失败为 null */
+    errorText: z.string().nullable(),
+    /** 显式重试次数 */
+    retryCount: z.number().int().min(0),
+    /** 学生归档时刻（SAI-23：归档不抹事实，仅移出学生默认队列视图）；null = 未归档 */
+    archivedAt: z.string().nullable(),
+    /** 取消请求时刻（claimed 后取消：阻止交付，回信仍入库为事实）；null = 未请求 */
+    cancelRequestedAt: z.string().nullable(),
+    createdAt: z.string().min(1),
+    /** 事实时间线（教师域视图：detail 含通道/当时模式/错误摘要） */
+    facts: z.array(aiTeacherFactSchema),
+  })
+  .strict();
+export type AiTeacherTaskRecord = z.infer<typeof aiTeacherTaskRecordSchema>;
+
+/**
+ * GET /api/teacher/attempts/:id/ai-records 响应 data：按卷求助记录抽屉。
+ * - questions：每题事实摘要（distinct 题数而非请求次数——SAI-14 派生口径，
+ *   服务端由 aiHelpFactsSummariesOf 计算；无记录的题不在数组，由调用方按
+ *   零态呈现「无平台作答中求助记录」）；
+ * - records：本卷全部任务行（轻量：回信正文与材料图不在此——教师按任务
+ *   按需经 GET /ai/tasks/:id 与材料 PNG 端点加载，B13 实施步骤 6）。
+ */
 export const aiTeacherAttemptRecordsDataSchema = z
   .object({
     attemptId: z.uuid(),
-    records: z.array(
+    questions: z.array(
       z
         .object({
-          taskId: z.uuid(),
           questionId: z.string().min(1),
-          status: aiTaskStatusSchema,
-          channel: aiChannelSchema,
-          modeAtSend: aiTeachingModeSchema,
-          beforeSubmit: z.boolean(),
-          question: z.string().min(1),
-          hasReply: z.boolean(),
-          createdAt: z.string().min(1),
-          facts: z.array(aiTeacherFactSchema),
+          facts: aiHelpQuestionFactsSchema,
         })
         .strict(),
     ),
+    records: z.array(aiTeacherTaskRecordSchema),
   })
   .strict();
 export type AiTeacherAttemptRecordsData = z.infer<

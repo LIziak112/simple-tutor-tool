@@ -82,6 +82,18 @@ const AI_MATERIAL_KIND_LABELS: Readonly<Record<AiMaterialKind, string>> = {
 };
 
 /**
+ * missing 态材料的随行缺失原因（契约 aiTaskMaterialSchema：state=missing 必
+ * 携非空中文原因；库表不存原因列，由服务层单源给固定描述——行标记缺失即
+ * 历史材料不再可用，绝不以当前新稿冒充，需求 §12.3）。
+ */
+const AI_MATERIAL_MISSING_REASON = "历史材料缺失或未成功上传，无法查看当时快照";
+
+/** missing 态行的随行原因（其余状态恒 null——契约与既有测试口径） */
+function missingReasonOf(row: AiTaskMaterialRow): string | null {
+  return row.state === "missing" ? AI_MATERIAL_MISSING_REASON : null;
+}
+
+/**
  * 内容寻址相对路径（统一正斜杠存库；ai_task_materials.pngPath 单源）。
  * 任何写入/读取都以本函数生成/DB 行的值为准——不接受客户端路径。
  */
@@ -436,7 +448,7 @@ function internalOfRow(row: AiTaskMaterialRow): AiTaskMaterialInternal {
     byteSize: row.byteSize,
     hash: row.hash,
     state: row.state,
-    missingReason: null,
+    missingReason: missingReasonOf(row),
     pngPath: row.pngPath,
   };
 }
@@ -459,7 +471,7 @@ function publicOfRow(row: AiTaskMaterialRow): AiTaskMaterial {
     byteSize: row.byteSize,
     hash: row.hash,
     state: row.state,
-    missingReason: null,
+    missingReason: missingReasonOf(row),
   };
 }
 

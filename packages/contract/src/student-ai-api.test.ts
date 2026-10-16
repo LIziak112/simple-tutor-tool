@@ -18,6 +18,7 @@ import {
   aiTaskListQuerySchema,
   aiTaskShareRequestSchema,
   aiTaskUpdatePendingRequestSchema,
+  aiTeacherAttemptRecordsDataSchema,
 } from "./student-ai-api";
 
 /**
@@ -420,6 +421,79 @@ it("连接写请求：inapp 明文 Key 只进写请求，mcp/link 无凭证入�
     aiConnectionPatchRequestSchema.safeParse({
       channel: "mcp",
       token: "plaintext",
+    }).success,
+  ).toBe(false);
+});
+
+it("SAI-24 教师督学记录：每题摘要 + 任务行 strict，不内嵌结论标签", () => {
+  // 每题事实摘要：14 个事实分桶字段全量给出可解析；结论性字段（独立/盲区/
+  // 已获帮助）出现在载荷里即整体拒绝（SAI-14 完成条件②的契约面锁定）
+  const facts = {
+    attemptId: "1c2d3e4f-0000-4000-8000-000000000001",
+    questionId: "q-alpha",
+    taskCount: 2,
+    requested: true,
+    requestedBeforeSubmit: true,
+    queuedOnly: false,
+    dispatched: true,
+    dispatchedBeforeSubmit: true,
+    replyReceived: true,
+    repliedBeforeSubmit: true,
+    platformOpened: true,
+    platformOpenedBeforeSubmit: true,
+    externalViewedUnknown: false,
+    outboundStatusUnknown: false,
+  };
+  const data = aiTeacherAttemptRecordsDataSchema.parse({
+    attemptId: facts.attemptId,
+    questions: [{ questionId: "q-alpha", facts }],
+    records: [
+      {
+        taskId: "2b3c4d5e-0000-4000-8000-000000000002",
+        questionId: "q-alpha",
+        status: "replied",
+        channel: "inapp",
+        modeAtSend: "guided_only",
+        beforeSubmit: true,
+        question: "这道题的思路是什么？",
+        hasReply: true,
+        replyDeliveredAt: "2026-10-15T09:00:00.000Z",
+        errorText: null,
+        retryCount: 0,
+        archivedAt: null,
+        cancelRequestedAt: null,
+        createdAt: "2026-10-15T08:00:00.000Z",
+        facts: [
+          {
+            id: "3c4d5e6f-0000-4000-8000-000000000003",
+            taskId: "2b3c4d5e-0000-4000-8000-000000000002",
+            type: "task_created",
+            beforeSubmit: true,
+            serverTs: "2026-10-15T08:00:00.000Z",
+            detail: { via: "inapp" },
+          },
+        ],
+      },
+    ],
+  });
+  expect(data.questions[0]?.facts.taskCount).toBe(2);
+  expect(data.records[0]?.replyDeliveredAt).toBe("2026-10-15T09:00:00.000Z");
+  // 摘要缺一个事实分桶字段（strict）整体拒绝；结论标签字段同样拒绝
+  const { taskCount: _dropped, ...partial } = facts;
+  expect(
+    aiTeacherAttemptRecordsDataSchema.safeParse({
+      attemptId: facts.attemptId,
+      questions: [{ questionId: "q-alpha", facts: partial }],
+      records: [],
+    }).success,
+  ).toBe(false);
+  expect(
+    aiTeacherAttemptRecordsDataSchema.safeParse({
+      attemptId: facts.attemptId,
+      questions: [
+        { questionId: "q-alpha", facts: { ...facts, gotHelp: true } },
+      ],
+      records: [],
     }).success,
   ).toBe(false);
 });

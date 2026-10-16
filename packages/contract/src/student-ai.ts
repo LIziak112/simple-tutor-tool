@@ -281,6 +281,48 @@ export const aiTeacherFactSchema = aiFactSchema
   .strict();
 export type AiTeacherFact = z.infer<typeof aiTeacherFactSchema>;
 
+/**
+ * 单题求助事实摘要（SAI-14 服务层 AiHelpQuestionFacts 的契约镜像，SAI-24
+ * 教师督学记录消费）：distinct (attemptId, questionId) 每题一行——统计按题
+ * 不按任务（重试/再求助只累计 taskCount 不增题数）。只回答「平台上发生过
+ * 什么」：字段全部是事实分桶（§9.1 每行事实的布尔/计数），**不内嵌**「独立
+ * 正确 / 重度盲区 / 已获帮助」等心理结论标签——教学标签（如「作答中求助·
+ * 未处理」= requestedBeforeSubmit && queuedOnly）由教师 UI 组合呈现。
+ */
+export const aiHelpQuestionFactsSchema = z
+  .object({
+    attemptId: z.uuid(),
+    questionId: z.string().min(1),
+    /** 本题求助任务数（幂等重放不增；重试/再求助只累计任务不增题数） */
+    taskCount: z.number().int().min(0),
+    /** 发起过求助（任务创建成功；取消也保留） */
+    requested: z.boolean(),
+    /** 提交前发起过（task_created 落库时服务端判定） */
+    requestedBeforeSubmit: z.boolean(),
+    /** 仅入队从未外发：无外发/回信/外部读取事实，且无出站状态未知的任务 */
+    queuedOnly: z.boolean(),
+    /** 已外发（页内发送成功或 MCP 领取实际发生；不证明学生看过回复） */
+    dispatched: z.boolean(),
+    /** 提交前已外发 */
+    dispatchedBeforeSubmit: z.boolean(),
+    /** 平台已收到回信（不证明学生已读） */
+    replyReceived: z.boolean(),
+    /** 提交前已收到回信 */
+    repliedBeforeSubmit: z.boolean(),
+    /** 平台有查看记录（学生打开过回信；不证明阅读理解） */
+    platformOpened: z.boolean(),
+    /** 提交前打开过 */
+    platformOpenedBeforeSubmit: z.boolean(),
+    /** 外部链接正文被读取过（谁读、是否辅导未知） */
+    externalViewedUnknown: z.boolean(),
+    /** 存在出站状态未确认的任务（dispatching/uncertain：不能说仅入队也不能说已外发） */
+    outboundStatusUnknown: z.boolean(),
+  })
+  .strict();
+export type AiHelpQuestionFactsContract = z.infer<
+  typeof aiHelpQuestionFactsSchema
+>;
+
 // ---------- 通道与连接器 ----------
 
 /** 三通道（页内 / 远程 MCP / 上下文链接） */

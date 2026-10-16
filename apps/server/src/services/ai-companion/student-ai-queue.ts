@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type {
   AiChannel,
+  AiContextSnapshot,
   AiFact,
   AiFactType,
   AiMessage,
@@ -8,6 +9,7 @@ import type {
   AiTaskOriginSummary,
   AiTaskPublic,
   AiTaskStatus,
+  AiTaskTeacher,
 } from "@tutor/contract";
 import {
   AI_MCP_LEASE_MINUTES,
@@ -19,6 +21,7 @@ import {
   AI_TASK_PENDING_PER_STUDENT,
   AI_TASK_QUEUE_BUCKETS,
   AI_TURNS_MAX,
+  aiContextSnapshotSchema,
 } from "@tutor/contract";
 import {
   and,
@@ -453,7 +456,7 @@ function firstStudentMessageRow(
 }
 
 /** 首条学生消息（任务问题正文；数据残缺是故障不是空问题） */
-function firstQuestionOf(db: Db | QueueTx, taskId: string): string {
+export function firstQuestionOf(db: Db | QueueTx, taskId: string): string {
   const row = firstStudentMessageRow(db, taskId);
   if (row === undefined) {
     throw new HttpError(
@@ -465,7 +468,7 @@ function firstQuestionOf(db: Db | QueueTx, taskId: string): string {
   return row.contentMd;
 }
 
-function hasAssistantReply(db: Db | QueueTx, taskId: string): boolean {
+export function hasAssistantReply(db: Db | QueueTx, taskId: string): boolean {
   return (
     asDb(db)
       .select({ id: aiMessages.id })
@@ -478,7 +481,7 @@ function hasAssistantReply(db: Db | QueueTx, taskId: string): boolean {
 }
 
 /** 本题对话消息（createdAt+id 稳定序；学生/教师投影共用投影形状） */
-function messageRowsOf(db: Db | QueueTx, taskId: string): AiMessage[] {
+export function messageRowsOf(db: Db | QueueTx, taskId: string): AiMessage[] {
   return asDb(db)
     .select()
     .from(aiMessages)
@@ -844,6 +847,50 @@ export function aiTaskPublicViewOf(
     hasReply: hasAssistantReply(db, task.id),
     usable: policyUsable(db, task, configSource),
   });
+}
+
+/** 教师域快照解析（损坏守卫同 parseSnapshotOf，输出契约形态） */
+function parseContextSnapshotOf(task: AiTaskRow): AiContextSnapshot {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(task.contextSnapshotJson);
+  } catch {
+    throw new HttpError(
+      500,
+      "AI_CONTEXT_BROKEN",
+      "任务上下文快照损坏，无法生成教师视图",
+    );
+  }
+  const result = aiContextSnapshotSchema.safeParse(parsed);
+  if (!result.success) {
+    throw new HttpError(
+      500,
+      "AI_CONTEXT_BROKEN",
+      "任务上下文快照不完整，无法生成教师视图",
+    );
+  }
+  return result.data;
+}
+
+/**
+ * 教师域任务视图（SAI-24 督学抽屉；契约 aiTaskTeacherSchema 单源投影）：
+ * 公开视图 + promptHash + 完整快照（教师本可见本人学生的全部作答材料——
+ * 快照内的参考答案/解析属教师域合法内容，教师私注结构上不在快照 schema）。
+ * allowedActions 只按状态机基础表输出：教师不是任务操作者，学生策略门禁
+ * （学生视图的服务端权威语义）不参与教师视图，教师侧 UI 也不消费本字段。
+ */
+export function aiTaskTeacherViewOf(db: Db, task: AiTaskRow): AiTaskTeacher {
+  const view = aiTaskPublicViewCore(task, {
+    materials: loadAiTaskMaterialRows(db, task.id),
+    firstQuestion: firstQuestionOf(db, task.id),
+    hasReply: hasAssistantReply(db, task.id),
+    usable: true,
+  });
+  return {
+    ...view,
+    promptHash: task.promptHash,
+    contextSnapshot: parseContextSnapshotOf(task),
+  };
 }
 
 /**

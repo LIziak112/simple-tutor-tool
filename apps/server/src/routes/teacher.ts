@@ -240,7 +240,10 @@ export function createTeacherRoutes(
       // SAI-06：AI 教学配置——GET/PUT /ai/settings（默认模式+三模板，
       // baseUpdatedAt 版本冲突 409 AI_SETTINGS_STALE）、GET/PUT
       // /students/:id/ai-policy 与 /assignments/:id/ai-policy（覆盖读写，
-      // 响应带 resolveAiPolicy 有效裁决预览；业务在 ai-companion/settings-service）
-      .route("/", createTeacherAiRoutes(db))
+      // 响应带 resolveAiPolicy 有效裁决预览；业务在 ai-companion/settings-service）。
+      // SAI-24：督学记录——GET /attempts/:id/ai-records（按卷摘要+任务行）、
+      // GET /ai/tasks/:id（详情）与材料 PNG 直出（业务在 teacher-ai-records /
+      // student-ai-materials；dataDir 供材料文件读取）
+      .route("/", createTeacherAiRoutes(db, dataDir))
   );
 }
