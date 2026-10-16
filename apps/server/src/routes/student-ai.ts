@@ -1,6 +1,7 @@
 import {
   type AiTaskMaterialInternal,
   type AiTaskPublic,
+  aiBatchReviewCreateRequestSchema,
   aiConnectionCreateRequestSchema,
   aiConnectionPatchRequestSchema,
   aiStatusQuerySchema,
@@ -35,6 +36,7 @@ import {
   getStudentQuickButtons,
   putStudentQuickButtons,
 } from "../services/ai-companion/quick-buttons-service.ts";
+import { createAiBatchReviewTasks } from "../services/ai-companion/student-ai-batch.ts";
 import {
   type AiMaterialUploadPage,
   attachAiTaskMaterials,
@@ -145,6 +147,21 @@ function textLimitCodeOf(firstPath: string, issue?: { code?: string }): string {
   return firstPath === "question" && issue?.code !== "invalid_type"
     ? "AI_TEXT_TOO_LONG"
     : "VALIDATION_ERROR";
+}
+
+/**
+ * 批量复盘请求的错误码分流：items 超上限（too_big）→ 400 AI_BATCH_LIMIT
+ * （§9 限额表）；问题文本域沿用 AI_TEXT_TOO_LONG；其余（空 items、重复条目、
+ * strict 未知键——含伪造的 correct 标记）→ VALIDATION_ERROR。
+ */
+function batchLimitCodeOf(
+  firstPath: string,
+  issue?: { code?: string },
+): string {
+  if (firstPath === "items" && issue?.code === "too_big") {
+    return "AI_BATCH_LIMIT";
+  }
+  return textLimitCodeOf(firstPath, issue);
 }
 
 /**
@@ -265,6 +282,35 @@ export function createStudentAiRoutes(
           ok: true,
           data: aiQueueSummaryOf(db, c.var.student.id),
         });
+      })
+      // —— 批量错题复盘（SAI-31，B16）：一次确认建一批，逐项裁决逐项返回
+      //    （规则/幂等派生/不重复计费在 student-ai-batch 服务层单源；本路由
+      //    只做知情门 + 契约解析——与 POST /ai/tasks 同口径不落任何任务行）。
+      .post("/ai/batch-review", async (c) => {
+        if (listStudentAiConnections(db, c.var.student.id).length === 0) {
+          throw new HttpError(
+            403,
+            "AI_SETUP_REQUIRED",
+            "还没有可用的 AI 连接，请先在设置中完成连接与首次知情确认",
+          );
+        }
+        const body = await parseJsonBodyWithCode(
+          c,
+          aiBatchReviewCreateRequestSchema,
+          batchLimitCodeOf,
+        );
+        const data = createAiBatchReviewTasks(
+          db,
+          {
+            studentId: c.var.student.id,
+            items: body.items,
+            channel: body.channel,
+            question: body.question,
+            mutationId: body.mutationId,
+          },
+          { hmacSecret },
+        );
+        return c.json({ ok: true, data });
       })
       // —— 单题状态（SAI-20；伴学栏/发送控制器的服务端裁决入口）——
       .get("/ai/status", (c) => {

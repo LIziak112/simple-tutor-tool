@@ -7,13 +7,14 @@ import {
 } from "@tutor/contract";
 import { and, eq, inArray } from "drizzle-orm";
 import type { Db } from "../../db/client.ts";
-import { aiTasks, assignments, responses } from "../../db/schema.ts";
-import { HttpError } from "../../lib/http-error.ts";
 import {
   type Attempt,
-  answersReleased,
-  requireUsableAttempt,
-} from "../attempt-service.ts";
+  aiTasks,
+  assignments,
+  responses,
+} from "../../db/schema.ts";
+import { HttpError } from "../../lib/http-error.ts";
+import { answersReleased, requireUsableAttempt } from "../attempt-service.ts";
 import { createAiTask } from "./student-ai-queue.ts";
 
 /**

@@ -167,6 +167,14 @@ function itemsOf(attemptId: string, questionIds: string[]) {
   return questionIds.map((questionId) => ({ attemptId, questionId }));
 }
 
+/** 单条目结果的强类型取回（noUncheckedIndexedAccess 下的测试断言助手） */
+function soleItem(result: AiBatchCreateData) {
+  expect(result.items).toHaveLength(1);
+  const [item] = result.items;
+  if (item === undefined) throw new Error("测试前提失败：应有且仅有一项结果");
+  return item;
+}
+
 function tasksOf(db: Db, studentId: string) {
   return db
     .select()
