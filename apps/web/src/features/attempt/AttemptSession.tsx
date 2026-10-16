@@ -4,6 +4,7 @@ import type {
   AttemptResultData,
   HintOpenedEntry,
 } from "@tutor/contract";
+import { HANDWRITTEN_QUESTION_TYPES } from "@tutor/contract";
 import { Grid2X2, PanelLeftClose, PanelLeftOpen, RotateCw } from "lucide-react";
 import {
   useCallback,
@@ -51,10 +52,18 @@ import {
   type SubmitEvidencePrep,
 } from "@/features/notes/submit-evidence";
 import {
+  AiCompanionComposer,
+  AiCompanionQuickButtons,
+  AiCompanionStatusPanel,
+  DRAFT_PAPER_LABEL,
+  FORMAL_INK_PAPER_LABEL,
+} from "@/features/student-ai/AiCompanionSession";
+import {
   AiCompanionRail,
   AiCompanionTrigger,
 } from "@/features/student-ai/AiCompanionRail";
 import { useAiCompanionLayout } from "@/features/student-ai/ai-companion-layout";
+import { useAiSendController } from "@/features/student-ai/use-ai-send-controller";
 import { sealAttemptAnnotationsApi } from "@/lib/api";
 import { formatDueTime } from "@/lib/time";
 import { useOnlineStatus } from "@/lib/use-online-status";
@@ -354,6 +363,50 @@ function AnswerView({
     [flatQuestions],
   );
 
+  // SAI-20 单题发送控制器：伴学栏打开才查状态/历史（active 跟随布局控制
+  // 器）；绑定是显式动作——只在打开瞬间绑定当时所在题，滚动不自动重绑；
+  // 按题草稿保证切走再回来恢复该题输入（重开绑定新开时所在题）。
+  const aiQuestionIsHandwritten = useCallback(
+    (questionId: string) => {
+      const question = flatQuestions.find((item) => item.id === questionId);
+      return (
+        question !== undefined &&
+        HANDWRITTEN_QUESTION_TYPES.includes(question.type)
+      );
+    },
+    [flatQuestions],
+  );
+  const aiSend = useAiSendController({
+    attemptId,
+    questions: flatQuestions,
+    isHandwritten: aiQuestionIsHandwritten,
+    surfaceOf: (questionId) =>
+      cardElements.current
+        .get(questionId)
+        ?.querySelector<HTMLElement>('[data-slot="question-surface"]') ?? null,
+    flush: (questionId) =>
+      editor !== null ? editor.flush(questionId) : Promise.resolve(),
+    titleOf: (questionId) =>
+      `第 ${questionIndexById.get(questionId) ?? "？"} 题 · ${data.title}`,
+    active: aiCompanion.open,
+  });
+  const aiOpenedRef = useRef(false);
+  useEffect(() => {
+    if (aiCompanion.open && !aiOpenedRef.current && currentQuestionId !== null) {
+      aiSend.bind(currentQuestionId);
+    }
+    aiOpenedRef.current = aiCompanion.open;
+  }, [aiCompanion.open, currentQuestionId, aiSend.bind]);
+  const aiBoundQuestionId = aiSend.boundQuestionId;
+  const aiBoundLabel =
+    aiBoundQuestionId !== null && questionIndexById.has(aiBoundQuestionId)
+      ? `第 ${questionIndexById.get(aiBoundQuestionId)} 题`
+      : null;
+  const aiPaperLabel =
+    aiBoundQuestionId !== null && aiQuestionIsHandwritten(aiBoundQuestionId)
+      ? FORMAL_INK_PAPER_LABEL
+      : DRAFT_PAPER_LABEL;
+
   /**
    * 交卷编排（注入共享确认状态机 use-submit-evidence-confirm；T2.8 口径 +
    * T6R.10 证据固定，方案 §6.4 六步）：
@@ -650,18 +703,25 @@ function AnswerView({
         )}
 
         {/* SAI-19：AI 伴学栏与主区共栖（dock 右栏/窄屏独立面板），主区
-            （答题卡 + 题卡列表）作为 rail 子内容保持控制器身份稳定 */}
+            （答题卡 + 题卡列表）作为 rail 子内容保持控制器身份稳定。
+            SAI-20：题号与栏内会话都跟随绑定题（非滚动当前题）。 */}
         <AiCompanionRail
           containerRef={aiRailRef}
           controller={aiCompanion}
           triggerRef={aiTriggerRef}
-          questionLabel={
-            currentQuestionId !== null &&
-            questionIndexById.has(currentQuestionId)
-              ? `第 ${questionIndexById.get(currentQuestionId)} 题`
-              : null
-          }
+          questionLabel={aiBoundLabel}
           settingsHref={aiSettingsHref}
+          status={
+            <AiCompanionStatusPanel
+              send={aiSend}
+              settingsHref={aiSettingsHref}
+              questionLabel={aiBoundLabel}
+            />
+          }
+          quickButtons={<AiCompanionQuickButtons send={aiSend} />}
+          composer={
+            <AiCompanionComposer send={aiSend} paperLabel={aiPaperLabel} />
+          }
         >
           <div
             className={`grid min-w-0 grid-cols-1 gap-6 ${navigatorCollapsed ? "lg:grid-cols-[44px_minmax(0,1fr)]" : "lg:grid-cols-[176px_minmax(0,1fr)]"}`}

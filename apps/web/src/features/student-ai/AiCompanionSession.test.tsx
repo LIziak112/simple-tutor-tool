@@ -56,17 +56,10 @@ vi.mock("@/features/export/ai-material-capture", async (importOriginal) => {
   return { ...actual, captureAiQuestionMaterials: vi.fn() };
 });
 
-const {
-  fetchStudentAiStatusApi: mockedStatus,
-  createStudentAiTaskApi: mockedCreate,
-  listStudentAiTasksApi: mockedList,
-  fetchStudentQuickButtonsApi: mockedQuickButtons,
-} = vi.mocked(
-  await import("@/lib/api"),
-) as unknown as Record<
-  string,
-  ReturnType<typeof vi.fn>
-> & Record<string, never>;
+const mockedStatus = vi.mocked(fetchStudentAiStatusApi);
+const mockedCreate = vi.mocked(createStudentAiTaskApi);
+const mockedList = vi.mocked(listStudentAiTasksApi);
+const mockedQuickButtons = vi.mocked(fetchStudentQuickButtonsApi);
 
 const QUESTION: AttemptQuestionPublic = {
   id: "q-a",
@@ -91,6 +84,7 @@ function connectedStatus(over: Partial<AiStatusData> = {}): AiStatusData {
 }
 
 const QUICK_BUTTONS: StudentQuickButtonsData = {
+  updatedAt: "2026-10-16T00:00:00.000Z",
   buttons: [
     {
       id: "check-steps",
