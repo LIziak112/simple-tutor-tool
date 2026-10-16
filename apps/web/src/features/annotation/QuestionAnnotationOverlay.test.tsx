@@ -48,6 +48,7 @@ vi.mock("./annotation-surface", () => ({
   createAnnotationSurface: () => engine,
 }));
 vi.mock("./question-base-image", () => ({
+  awaitQuestionSurfaceReady: vi.fn(async () => ({})),
   questionSurfaceMatchesLayout: vi.fn(async () => true),
 }));
 vi.mock("./question-annotation-base", () => ({
@@ -183,45 +184,22 @@ it("绘制时锁表单，退出留痕且不重建历史引擎", async () => {
   await waitFor(() => expect(screen.getByRole("toolbar")).toBeVisible());
   expect(engine.mount).toHaveBeenCalledTimes(mounts);
 });
-it("历史布局不能复现时自动在原位显示，不需要先开再收才能查看", async () => {
+it("布局不匹配保留可作答的原生题面，不显示图片或独立答案兜底", async () => {
   vi.mocked(questionSurfaceMatchesLayout).mockResolvedValue(false);
   render(<Harness />);
-  await waitFor(() =>
-    expect(screen.getByRole("img", { name: "第1题原标画底图" })).toBeVisible(),
-  );
-  expect(screen.queryByRole("button", { name: "查看原标画" })).toBeNull();
-  expect(screen.queryByRole("button", { name: "编辑原标画" })).toBeNull();
-  expect(screen.queryByRole("button", { name: "收起原标画" })).toBeNull();
-  expect(
-    document.querySelector('[data-slot="question-surface"]'),
-  ).not.toHaveAttribute("inert");
-  expect(engine.setInputEnabled).not.toHaveBeenCalledWith(true);
-  fireEvent.load(screen.getByRole("img", { name: "第1题原标画底图" }));
-  fireEvent.click(screen.getByText("标画"));
-  await waitFor(() => expect(screen.getByRole("toolbar")).toBeVisible());
-  fireEvent.click(screen.getByRole("button", { name: "作答" }));
-  await waitFor(() => expect(screen.queryByRole("toolbar")).toBeNull());
-  expect(screen.getByRole("img", { name: "第1题原标画底图" })).toBeVisible();
-});
-
-it("历史底图加载失败可真正重新加载，失败期间不能落墨", async () => {
-  vi.mocked(questionSurfaceMatchesLayout).mockResolvedValue(false);
-  render(<Harness />);
-  const image = await screen.findByRole("img", { name: "第1题原标画底图" });
-  fireEvent.error(image);
+  await waitFor(() => expect(questionSurfaceMatchesLayout).toHaveBeenCalled());
+  expect(screen.queryByRole("img", { name: /原标画底图/ })).toBeNull();
+  expect(screen.queryByText(/答案在下方填写/)).toBeNull();
   expect(
     document.querySelector('[data-slot="question-surface"]'),
   ).toBeVisible();
-  expect(engine.setInputEnabled).not.toHaveBeenCalledWith(true);
-  fireEvent.click(screen.getByRole("button", { name: "重新加载标画" }));
-  await waitFor(() =>
-    expect(screen.getByRole("img", { name: "第1题原标画底图" })).not.toBe(
-      image,
-    ),
-  );
-  fireEvent.load(screen.getByRole("img", { name: "第1题原标画底图" }));
+  expect(
+    document.querySelector('[data-slot="question-surface"]'),
+  ).not.toHaveAttribute("inert");
   fireEvent.click(screen.getByText("标画"));
-  await waitFor(() => expect(screen.getByRole("toolbar")).toBeVisible());
+  expect(await screen.findByRole("alert")).toHaveTextContent("题面布局已变化");
+  expect(engine.setInputEnabled).not.toHaveBeenCalledWith(true);
+  expect(screen.queryByRole("toolbar")).toBeNull();
 });
 
 it("已有布局固定逻辑宽度，由同一区域整体缩放，隐藏标画不解除排版", async () => {
@@ -315,7 +293,7 @@ it("底图准备失败仍能答题且显示重试原因", async () => {
   );
   render(<Harness />);
   await act(async () => fireEvent.click(screen.getByText("标画")));
-  expect(screen.getByRole("alert")).toHaveTextContent("图片加载失败");
+  expect(await screen.findByRole("alert")).toHaveTextContent("图片加载失败");
   expect(
     document.querySelector('[data-slot="question-surface"]'),
   ).not.toHaveAttribute("inert");

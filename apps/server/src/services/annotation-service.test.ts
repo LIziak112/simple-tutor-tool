@@ -1529,3 +1529,104 @@ describe("removeAnnotationBodyIfUnreferenced（审查修复 9）", () => {
     expect(existsSync(absA)).toBe(false);
   });
 });
+
+it("维护重置仅清理指定草稿标画，拒绝旧客户端重建并保留其他材料", async () => {
+  const { resetDraftAttemptAnnotations } = await import("./annotation-reset");
+  const expectResetError = (
+    action: () => unknown,
+    status: number,
+    code: string,
+  ) => {
+    let caught: unknown;
+    try {
+      action();
+    } catch (cause) {
+      caught = cause;
+    }
+    expectHttpError(caught, status, code);
+  };
+  const w = makeWorld();
+  const { attemptId, revisionId } = makePaper(w);
+  readyBase(w, attemptId, revisionId);
+  const other = makePaper(w);
+  readyBase(w, other.attemptId, other.revisionId);
+  expect(() =>
+    resetDraftAttemptAnnotations(w.db, attemptId, {
+      expectedBases: 99,
+      expectedStrokes: 0,
+    }),
+  ).toThrow("范围已变化");
+  const rowsBefore = w.db.select().from(responsesTable).all();
+  const result = resetDraftAttemptAnnotations(w.db, attemptId, {
+    expectedBases: 1,
+    expectedStrokes: 0,
+  });
+  expect(result.baseCount).toBe(1);
+  const view = getAnnotationView(
+    w.db,
+    w.dataDir,
+    { kind: "student", id: w.studentId },
+    attemptId,
+    Q,
+  );
+  assertNoLeak(view);
+  expect(view.resetVersion).toBeGreaterThan(0);
+  expect(view.base).toBeNull();
+  const otherView = getAnnotationView(
+    w.db,
+    w.dataDir,
+    { kind: "student", id: w.studentId },
+    other.attemptId,
+    Q,
+  );
+  expect(otherView.base?.state).toBe("ready");
+  expect(otherView.resetVersion).toBeUndefined();
+  expect(w.db.select().from(responsesTable).all()).toEqual(rowsBefore);
+  expectResetError(
+    () => assembleAnnotationBase(w.db, w.studentId, attemptId, Q),
+    409,
+    "ANNOTATION_RESET_REQUIRED",
+  );
+  expectResetError(
+    () =>
+      registerBaseImage(w.db, w.dataDir, w.studentId, attemptId, Q, basePng(), {
+        questionRevisionId: revisionId,
+        baseRenderVersion: 1,
+        phase: "scratch",
+      }),
+    409,
+    "ANNOTATION_RESET_REQUIRED",
+  );
+  expectResetError(
+    () =>
+      putAnnotationDoc(
+        w.db,
+        w.dataDir,
+        w.studentId,
+        attemptId,
+        Q,
+        gzipJson(annotationDoc()),
+        { baseRevision: 0, mutationId: randomUUID() },
+      ),
+    409,
+    "ANNOTATION_RESET_REQUIRED",
+  );
+  expect(
+    assembleAnnotationBase(
+      w.db,
+      w.studentId,
+      attemptId,
+      Q,
+      "scratch",
+      undefined,
+      result.resetVersion,
+    ).base.state,
+  ).toBe("pending");
+  submitAttemptStatus(w.db, attemptId);
+  expect(() =>
+    resetDraftAttemptAnnotations(w.db, attemptId, {
+      expectedBases: 1,
+      expectedStrokes: 0,
+    }),
+  ).toThrow();
+});

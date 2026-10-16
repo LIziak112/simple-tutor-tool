@@ -372,3 +372,93 @@ describe("attempt 作用域待传清单（交卷 flush 用）", () => {
     expect(pending).not.toContainEqual({ ...SCOPE, attemptId: "a-other" });
   });
 });
+
+it("服务端重置后先归档该题本机稿，再清理旧底图与待传；迟到旧视图不恢复", async () => {
+  const storage = memoryAnnotationBackend();
+  installAnnotationBackend(storage);
+  const original = docOf([strokeAt(10, 10)]);
+  writeAnnotationDoc(SESSION, SCOPE, original);
+  await settleAnnotationPersistence();
+  await applyAnnotationView(SESSION, SCOPE, {
+    base: null,
+    doc: null,
+    annotation: null,
+    maxWidthPx: 1440,
+    resetVersion: 5,
+  });
+  const saved = await getAnnotationRecord(SESSION, SCOPE);
+  expect(saved?.doc.strokes).toHaveLength(0);
+  expect(saved?.pending).toBeNull();
+  expect(saved?.localBase).toBeNull();
+  expect(
+    (await storage.getAll("")).some((entry) =>
+      entry[0].startsWith('["annotation-reset-archive"'),
+    ),
+  ).toBe(true);
+  await expect(
+    applyAnnotationView(SESSION, SCOPE, {
+      ...viewOf({ doc: original }),
+      resetVersion: 0,
+    }),
+  ).rejects.toThrow("重置");
+  expect((await getAnnotationRecord(SESSION, SCOPE))?.doc.strokes).toHaveLength(
+    0,
+  );
+});
+
+it("重置归档失败不清除本机待传稿，其他作答不受重置影响", async () => {
+  const storage = memoryAnnotationBackend();
+  const original = docOf([strokeAt(10, 10)]);
+  const other = { ...SCOPE, attemptId: "other-attempt" };
+  installAnnotationBackend(storage);
+  writeAnnotationDoc(SESSION, SCOPE, original);
+  writeAnnotationDoc(SESSION, other, original);
+  await settleAnnotationPersistence();
+  installAnnotationBackend({
+    ...storage,
+    set: async (key, value) => {
+      if (key.startsWith('["annotation-reset-archive"'))
+        throw new Error("归档失败");
+      await storage.set(key, value);
+    },
+  });
+  await expect(
+    applyAnnotationView(SESSION, SCOPE, {
+      base: null,
+      doc: null,
+      annotation: null,
+      maxWidthPx: 1440,
+      resetVersion: 5,
+    }),
+  ).rejects.toThrow("归档失败");
+  expect((await getAnnotationRecord(SESSION, SCOPE))?.doc).toEqual(original);
+  expect((await getAnnotationRecord(SESSION, other))?.doc).toEqual(original);
+});
+
+it("重置前迟到回执不能拉回旧标画行或旧版本基线", async () => {
+  writeAnnotationDoc(SESSION, SCOPE, docOf([strokeAt(10, 10)]));
+  await settleAnnotationPersistence();
+  const old = await getAnnotationRecord(SESSION, SCOPE);
+  await applyAnnotationView(SESSION, SCOPE, {
+    base: null,
+    doc: null,
+    annotation: null,
+    maxWidthPx: 1440,
+    resetVersion: 6,
+  });
+  await applyAnnotationReceipt(
+    SESSION,
+    SCOPE,
+    old?.pending?.mutationId ?? "old",
+    {
+      annotationId: "old-row",
+      revision: 99,
+      hash: "a".repeat(64),
+      savedAt: "2026-10-16",
+    },
+    0,
+  );
+  expect((await getAnnotationRecord(SESSION, SCOPE))?.baseRevision).toBe(0);
+  expect((await getAnnotationRecord(SESSION, SCOPE))?.annotationId).toBeNull();
+  expect(getAnnotationView(SESSION, SCOPE)?.resetVersion).toBe(6);
+});

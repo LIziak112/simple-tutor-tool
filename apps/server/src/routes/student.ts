@@ -681,6 +681,7 @@ export function createStudentRoutes(
                 c.req.param("questionId"),
                 phase,
                 parsed.data.layout,
+                parsed.data.resetVersion,
               ),
             },
             200,

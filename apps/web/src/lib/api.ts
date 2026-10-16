@@ -14,6 +14,7 @@ import {
   type AnalyticsOverviewData,
   type AnalyticsQuestionsData,
   type AnalyticsStudentData,
+  type AnnotationBaseImageMeta,
   type AnnotationBaseImageReceipt,
   type AnnotationBasePreviewData,
   type AnnotationPhase,
@@ -1492,15 +1493,19 @@ export function postAnnotationBaseApi(
   phase?: AnnotationPhase,
   layout?: AnnotationSurfaceLayout,
   signal?: AbortSignal,
+  resetVersion?: number,
 ): Promise<AnnotationBasePreviewData> {
-  if (layout !== undefined) {
+  if (layout !== undefined || resetVersion !== undefined) {
     return callApi(() =>
       fetch(
         `/api/student/attempts/${encodeURIComponent(attemptId)}/questions/${encodeURIComponent(questionId)}/annotation/base${phase === undefined ? "" : `?phase=${encodeURIComponent(phase)}`}`,
         {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ layout }),
+          body: JSON.stringify({
+            layout,
+            ...(resetVersion !== undefined ? { resetVersion } : {}),
+          }),
           ...(signal !== undefined ? { signal } : {}),
         },
       ),
@@ -1526,11 +1531,7 @@ export function postAnnotationBaseImageApi(
   attemptId: string,
   questionId: string,
   png: Blob,
-  meta: {
-    questionRevisionId: string;
-    baseRenderVersion: number;
-    phase?: AnnotationPhase;
-  },
+  meta: Omit<AnnotationBaseImageMeta, "phase"> & { phase?: AnnotationPhase },
   signal?: AbortSignal,
 ): Promise<AnnotationBaseImageReceipt> {
   const form = new FormData();
@@ -1538,6 +1539,8 @@ export function postAnnotationBaseImageApi(
   form.append(F.image, png, `annotation-base-${attemptId}-${questionId}.png`);
   form.append(F.questionRevisionId, meta.questionRevisionId);
   form.append(F.baseRenderVersion, String(meta.baseRenderVersion));
+  if (meta.resetVersion !== undefined)
+    form.append(F.resetVersion, String(meta.resetVersion));
   if (meta.phase !== undefined) form.append(F.phase, meta.phase);
   return callApi(() =>
     fetch(
@@ -1566,6 +1569,8 @@ export function putAnnotationDocApi(
   const form = new FormData();
   const F = ANNOTATION_FORM_FIELDS;
   form.append(F.body, body, "annotation.json.gz");
+  if (meta.resetVersion !== undefined)
+    form.append(F.resetVersion, String(meta.resetVersion));
   form.append(F.baseRevision, String(meta.baseRevision));
   form.append(F.mutationId, meta.mutationId);
   if (meta.phase !== undefined) form.append(F.phase, meta.phase);

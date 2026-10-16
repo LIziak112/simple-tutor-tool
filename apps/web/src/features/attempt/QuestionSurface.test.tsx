@@ -14,21 +14,22 @@ const question: QuestionPublic = {
 };
 
 describe("共享题面", () => {
-  it("历史底图的独立填空控件沿用题面空位顺序与已有答案，不重复题干", () => {
+  it("内联填空沿用空位顺序与已有答案", () => {
     const onAnswer = vi.fn();
     render(
       <QuestionSurface
         question={{ ...question, type: "fill", stemMd: "甲 [[]]，乙 [[]]" }}
         answer={{ kind: "fill", values: ["原答案", ""] }}
         onAnswer={onAnswer}
-        answerOnly
       />,
     );
-    expect(screen.queryByText("甲")).toBeNull();
-    expect(screen.getByRole("textbox", { name: "第 1 空" })).toHaveValue(
+    expect(
+      document.querySelector('[data-slot="question-surface"]'),
+    ).toBeVisible();
+    expect(screen.getByRole("textbox", { name: "第1空" })).toHaveValue(
       "原答案",
     );
-    fireEvent.change(screen.getByRole("textbox", { name: "第 2 空" }), {
+    fireEvent.change(screen.getByRole("textbox", { name: "第2空" }), {
       target: { value: "新答案" },
     });
     expect(onAnswer).toHaveBeenCalledWith(

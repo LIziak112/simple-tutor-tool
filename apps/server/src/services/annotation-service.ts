@@ -51,6 +51,10 @@ import {
 } from "../lib/blob-io";
 import { HttpError } from "../lib/http-error";
 import { pngIntact } from "../lib/png";
+import {
+  annotationResetVersionOf,
+  requireAnnotationResetVersion,
+} from "./annotation-reset";
 import { knowledgeNamesByQuestion } from "./assignment-service";
 import {
   attemptTeacherId,
@@ -386,9 +390,11 @@ export function assembleAnnotationBase(
   questionId: string,
   phase: AnnotationPhase = "scratch",
   layout?: AnnotationSurfaceLayout,
+  resetVersion = 0,
 ): AnnotationBasePreviewData {
   const attempt = requireUsableAttempt(db, studentId, attemptId);
   requirePhaseWritable(attempt, phase);
+  requireAnnotationResetVersion(db, attempt.id, phase, resetVersion);
   const { row, no } = locateFrozenRow(db, attempt, questionId);
   const snapshot = snapshotOfRow(row);
   if (layout !== undefined && layout.questionRevisionId !== row.id) {
@@ -501,6 +507,7 @@ export function registerBaseImage(
 ): AnnotationBaseImageReceipt {
   const attempt = requireUsableAttempt(db, studentId, attemptId);
   requirePhaseWritable(attempt, meta.phase);
+  requireAnnotationResetVersion(db, attempt.id, meta.phase, meta.resetVersion);
   const { row } = locateFrozenRow(db, attempt, questionId);
   const base = annotationBaseRowOf(db, attempt.id, questionId, meta.phase);
   if (base === undefined) {
@@ -747,6 +754,7 @@ export function putAnnotationDoc(
 ): AnnotationReceipt {
   const attempt = requireUsableAttempt(db, studentId, attemptId);
   const phase = meta.phase ?? "scratch";
+  requireAnnotationResetVersion(db, attempt.id, phase, meta.resetVersion);
   requireAttemptQuestion(db, attempt, questionId);
 
   const doc = parseAnnotationBodyBytes(bodyBytes);
@@ -1020,7 +1028,9 @@ export function getAnnotationView(
   const annotation = annotationRowOf(db, attempt.id, questionId, phase);
   const hasDoc = annotation !== undefined && annotation.revision > 0;
 
+  const resetVersion = annotationResetVersionOf(db, attempt.id, phase);
   return {
+    ...(resetVersion > 0 ? { resetVersion } : {}),
     base:
       base === undefined
         ? null
