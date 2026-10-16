@@ -1,5 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import type { AttemptResultData } from "@tutor/contract";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -278,5 +284,37 @@ describe("结果页 AI 复盘（SAI-22）", () => {
     await waitFor(() =>
       expect(mockedStatus).toHaveBeenCalledWith("attempt-result-1", "练习四-2"),
     );
+  });
+
+  it("SAI-23 未配置连接（needsSetup）：完成后不可发时如实呈现设置入口并禁用发送", async () => {
+    // 完成但未配置 AI：复盘模式可用性归设置门——不伪装可发送
+    mockedStatus.mockResolvedValue(
+      connectedAiStatus({
+        resolution: {
+          usable: true,
+          mode: "open_study",
+          reason: "completed",
+        },
+        completed: true,
+        channelDefault: null,
+        connectionReady: false,
+        firstUseRequired: true,
+      }),
+    );
+    renderView();
+    fireEvent.click(screen.getByRole("button", { name: "AI 复盘" }));
+    const panel = await screen.findByRole("dialog");
+    // 如实呈现：通道「未配置」+ 去设置连接入口 + 发送主动作禁用
+    await waitFor(() =>
+      expect(mockedStatus).toHaveBeenCalledWith("attempt-result-1", "练习四-1"),
+    );
+    expect(
+      await screen.findByRole("link", { name: "去设置连接" }),
+    ).toBeInTheDocument();
+    await waitFor(() => {
+      const send = within(panel).getByRole("button", { name: "发送" });
+      expect(send).toBeDisabled();
+    });
+    expect(mockedCreate).not.toHaveBeenCalled();
   });
 });
