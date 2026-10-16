@@ -70,20 +70,20 @@ export interface McpServerDeps {
   readonly now?: Date | string | undefined;
 }
 
-// ---------- 统一返回与错误结构 ----------
+// ---------- 统一返回与错误结构（SAI-26 起学生 server.ts 复用，导出单源） ----------
 
 /** JSON 数据 → text content（2 空格缩进） */
-function jsonContent(data: unknown): CallToolResult {
+export function jsonContent(data: unknown): CallToolResult {
   return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
 }
 
 /** 纯文本 / 已是 JSON 文本的原文 → text content */
-function textContent(text: string): CallToolResult {
+export function textContent(text: string): CallToolResult {
   return { content: [{ type: "text", text }] };
 }
 
 /** 业务错误 → 结构化错误文本（不抛裸异常给协议层；lint 错误清单原样透传） */
-function errorContent(err: unknown): CallToolResult {
+export function errorContent(err: unknown): CallToolResult {
   if (err instanceof HttpError) {
     return {
       content: [
@@ -115,7 +115,7 @@ function errorContent(err: unknown): CallToolResult {
 }
 
 /** 包装工具回调：异常统一转结构化错误文本（args 原样透传，保住 SDK 的类型推断） */
-function guard<Args>(
+export function guard<Args>(
   run: (args: Args) => CallToolResult | Promise<CallToolResult>,
 ): (args: Args) => Promise<CallToolResult> {
   return async (args: Args): Promise<CallToolResult> => {

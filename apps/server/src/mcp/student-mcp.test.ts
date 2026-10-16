@@ -365,15 +365,23 @@ describe("SAI-25 学生工具实例独立构建（教师工具不可见 / 不可
     "describe_capabilities",
   ];
 
-  it("tools/list 不出现任何教师工具（学生实例独立构建，非注册后隐藏）", async () => {
+  it("tools/list 精确等于学生四工具（学生实例独立构建，非注册后隐藏）", async () => {
     const env = await makeEnv();
     const client = await connectStudentClient(env, env.token);
-    // SAI-25 首发学生实例为零工具：SDK 行为是 tools 处理器随首个工具注册
-    // （零工具时 tools/list 为协议级 -32601，SDK 客户端 callTool 抛 McpError）；
-    // 无论空清单还是零工具形态，教师 14 工具一个都不在。SAI-26 注册四类
-    // 工具后本断言收紧为精确清单。
+    // SAI-25 首发学生实例为零工具（tools 处理器随首个工具注册）；SAI-26
+    // 注册四类任务工具后收紧为精确清单——教师 14 工具一个都不在。
     const list = await client.listTools().catch(() => null);
-    const names = list === null ? [] : list.tools.map((tool) => tool.name);
+    const names = (
+      list === null ? [] : list.tools.map((tool) => tool.name)
+    ).sort();
+    expect(names).toEqual(
+      [
+        "claim_ai_task",
+        "list_my_ai_tasks",
+        "renew_ai_lease",
+        "submit_ai_reply",
+      ].sort(),
+    );
     for (const name of TEACHER_TOOL_NAMES) {
       expect(names).not.toContain(name);
     }
@@ -383,18 +391,30 @@ describe("SAI-25 学生工具实例独立构建（教师工具不可见 / 不可
   it("伪造教师 tools/call 在协议层被拒（未注册即不可调用）", async () => {
     const env = await makeEnv();
     const client = await connectStudentClient(env, env.token);
-    await expect(
-      client.callTool({
-        name: "list_students",
-        arguments: {},
-      }),
-    ).rejects.toThrow();
-    await expect(
-      client.callTool({
-        name: "import_markdown",
-        arguments: { markdown: "#" },
-      }),
-    ).rejects.toThrow();
+    // SAI-26 注册工具后：未注册工具名 → 协议层 -32602（Invalid params，
+    // "Tool ... not found"），SDK 客户端以 isError 结果交付——零工具时代
+    // （SAI-25 首发形态）是 -32601 reject；两种形态都是不可调用，这里按
+    // 当前四工具形态断言 isError + 协议错误文本，不成功执行任何教师动作。
+    const rejected = await client.callTool({
+      name: "list_students",
+      arguments: {},
+    });
+    expect(rejected.isError).toBe(true);
+    expect(
+      (rejected.content as { type: string; text?: string }[]).find(
+        (c) => c.type === "text",
+      )?.text,
+    ).toContain("not found");
+    const rejectedImport = await client.callTool({
+      name: "import_markdown",
+      arguments: { markdown: "#" },
+    });
+    expect(rejectedImport.isError).toBe(true);
+    expect(
+      (rejectedImport.content as { type: string; text?: string }[]).find(
+        (c) => c.type === "text",
+      )?.text,
+    ).toContain("not found");
     await client.close();
   });
 });
