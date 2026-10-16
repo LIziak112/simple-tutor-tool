@@ -7,6 +7,7 @@ import {
   aiTaskCreateRequestSchema,
   aiTaskFollowupRequestSchema,
   aiTaskListQuerySchema,
+  aiTaskShareRequestSchema,
   aiTaskUpdatePendingRequestSchema,
   studentQuickButtonsPutRequestSchema,
 } from "@tutor/contract";
@@ -52,6 +53,10 @@ import {
   resumeAiTask,
   retryAiTask,
 } from "../services/ai-companion/student-ai-queue.ts";
+import {
+  createAiShareTicket,
+  revokeAiShareTickets,
+} from "../services/ai-companion/student-ai-share.ts";
 import { studentAiStatusOf } from "../services/ai-companion/student-ai-status.ts";
 
 /**
@@ -68,8 +73,8 @@ import { studentAiStatusOf } from "../services/ai-companion/student-ai-status.ts
  * - PUT /ai/quick-buttons：整组替换（含空组 = 删光）；baseUpdatedAt 过期 →
  *   409 AI_SETTINGS_STALE 保留服务器值。
  *
- * 任务接口（SAI-13，B00 §4.2 API 表的任务子集；dispatch / followup /
- * share 归后续批次 SAI-24/28）：
+ * 任务接口（SAI-13，B00 §4.2 API 表的任务子集；followup SAI-21、
+ * share 票据生成/撤销 SAI-28）：
  * - POST /ai/tasks：创建（幂等键重放返回原任务 → 200；新建 201）。请求的
  *   materials 偏好与 quickButtonId 经契约校验后由客户端在材料上传（SAI-11
  *   attach）与统计（SAI-14）消费——服务端不存偏好，快照材料清单以实际落位
@@ -224,7 +229,12 @@ async function parseMaterialsBody(
   return pages;
 }
 
-export function createStudentAiRoutes(db: Db, dataDir: string) {
+export function createStudentAiRoutes(
+  db: Db,
+  dataDir: string,
+  /** 对外基础 URL（票据 URL 拼接；与 Cookie Secure 同源的部署配置） */
+  publicUrl: string,
+) {
   // 快照装配 HMAC 密钥（SAI-09/12）：DATA_DIR/secret.key 一次性读入复用
   const hmacSecret = loadOrCreateSecretKey(dataDir);
 
@@ -296,16 +306,9 @@ export function createStudentAiRoutes(db: Db, dataDir: string) {
           aiTaskCreateRequestSchema,
           textLimitCodeOf,
         );
-        // link 票据流归 SAI-28（B15）未落地：worker 只领 inapp、MCP 客户端
-        // 只领 mcp，link 任务无人领取会占同题 active 配额——与客户端同口径
-        // 如实拒绝，不建僵尸任务。
-        if (body.channel === "link") {
-          throw new HttpError(
-            409,
-            "AI_CHANNEL_UNSUPPORTED",
-            "链接通道建设中，请选择页内 AI 或 MCP 通道",
-          );
-        }
+        // link 通道（SAI-28 起开放）：任务创建 + 显式生成票据两步走——worker
+        // 只领 inapp、MCP 客户端只领 mcp，link 任务停在 created 等学生生成
+        // 链接交给外部 AI；读取不推进任务状态（公开读端点零队列副作用）。
         const { task, created } = createAiTask(
           db,
           {
@@ -446,6 +449,34 @@ export function createStudentAiRoutes(db: Db, dataDir: string) {
           taskId: c.req.param("id"),
         });
         return c.json(taskView(task));
+      })
+      // —— 分享票据（SAI-28，B15）：生成/撤销都是学生显式动作；token 明文
+      //    只随生成响应返回一次，撤销按任务整批（学生心智=这道题给出去的链接）——
+      //    生命周期防线（本人/当前模式/状态门禁/有效期/实时重校验）在服务层。
+      .post("/ai/tasks/:id/share", async (c) => {
+        const body = await parseJsonBody(c, aiTaskShareRequestSchema);
+        const result = createAiShareTicket(db, {
+          studentId: c.var.student.id,
+          taskId: c.req.param("id"),
+          ...(body.validHours !== undefined
+            ? { validHours: body.validHours }
+            : {}),
+        });
+        return c.json({
+          ok: true,
+          data: {
+            ticketUrl: `${publicUrl.replace(/\/+$/, "")}/api/public/ai/share/${result.token}`,
+            snapshotAt: result.snapshotAt,
+            expiresAt: result.expiresAt,
+          },
+        });
+      })
+      .delete("/ai/tasks/:id/share", (c) => {
+        const result = revokeAiShareTickets(db, {
+          studentId: c.var.student.id,
+          taskId: c.req.param("id"),
+        });
+        return c.json({ ok: true, data: result });
       })
       // —— 连接管理（SAI-16；归属恒取会话，明文凭证只在 POST/PATCH 响应一次）——
       .get("/ai/connections", (c) => {

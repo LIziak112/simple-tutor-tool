@@ -41,6 +41,8 @@ import {
   aiConnectionPatchDataSchema,
   aiConnectionPatchRequestSchema,
   aiConnectionTestDataSchema,
+  aiTaskShareRequestSchema,
+  aiTaskShareRevokeDataSchema,
 } from "./student-ai-api";
 
 /**
@@ -438,6 +440,27 @@ it("分享视图仅对应一个快照，不能含个人全量任务列表", () =
   expect(Object.keys(aiShareViewSchema.shape)).not.toContain("tasks");
   expect(
     aiShareViewSchema.safeParse({ ...share, tasks: [validTask] }).success,
+  ).toBe(false);
+});
+
+it("SAI-28 票据生成/撤销契约：请求不带明文 token，撤销响应只含 revokedCount（strict）", () => {
+  expect(aiTaskShareRequestSchema.parse({})).toEqual({});
+  expect(aiTaskShareRequestSchema.parse({ validHours: 2 })).toEqual({
+    validHours: 2,
+  });
+  // 请求侧不固化默认有效期（服务端按连接偏好回退）；未知字段拒绝
+  expect(
+    aiTaskShareRequestSchema.safeParse({ validHours: 2, token: "x" }).success,
+  ).toBe(false);
+  expect(aiTaskShareRevokeDataSchema.parse({ revokedCount: 2 })).toEqual({
+    revokedCount: 2,
+  });
+  expect(
+    aiTaskShareRevokeDataSchema.safeParse({ revokedCount: 2, token: "x" })
+      .success,
+  ).toBe(false);
+  expect(
+    aiTaskShareRevokeDataSchema.safeParse({ revokedCount: -1 }).success,
   ).toBe(false);
 });
 

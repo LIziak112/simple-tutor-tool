@@ -197,6 +197,22 @@ export const aiTaskShareDataSchema = z
 export type AiTaskShareData = z.infer<typeof aiTaskShareDataSchema>;
 export const aiTaskShareOkSchema = apiOkExtend(aiTaskShareDataSchema);
 
+/**
+ * 票据撤销（DELETE /api/student/ai/tasks/:id/share，SAI-28）：撤销该任务全部
+ * 仍有效的票据（未撤销且未过期）——学生心智模型是「这道题当前给出去的链接」，
+ * 不按票据逐个挑。已过期/已撤销的不重复计数；幂等（无有效票据时 0）。
+ */
+export const aiTaskShareRevokeDataSchema = z
+  .object({
+    /** 本次实际撤销的票据数（只计撤销前仍有效的行） */
+    revokedCount: z.number().int().min(0),
+  })
+  .strict();
+export type AiTaskShareRevokeData = z.infer<typeof aiTaskShareRevokeDataSchema>;
+export const aiTaskShareRevokeOkSchema = apiOkExtend(
+  aiTaskShareRevokeDataSchema,
+);
+
 // ---------- GET /api/student/ai/tasks（分页） ----------
 
 /** 分页游标：不透明字符串 token（服务端签发/校验），不接受任意查询结构 */

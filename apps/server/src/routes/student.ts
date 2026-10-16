@@ -254,7 +254,7 @@ export function createStudentRoutes(
     new Hono<StudentEnv>()
       .use("*", requireStudent)
       .route("/", createStudentInkProfileRoutes(db))
-      .route("/", createStudentAiRoutes(db, dataDir))
+      .route("/", createStudentAiRoutes(db, dataDir, publicUrl))
       .get("/me", (c) => {
         return c.json({ ok: true, data: c.var.student });
       })

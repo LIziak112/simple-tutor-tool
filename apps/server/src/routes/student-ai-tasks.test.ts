@@ -33,6 +33,7 @@ import {
   claimMcpTask,
   completeInappDispatch,
   failInappDispatch,
+  listInappDispatchCandidates,
 } from "../services/ai-companion/student-ai-queue.ts";
 import {
   insertAiConnectionFixture,
@@ -404,7 +405,7 @@ it("知情门服务端强制（SAI-18 遗留①兑现）：无任何 active 连�
   expect(w.db.select().from(aiTasks).all()).toHaveLength(0); // 不占同题/当日配额
 });
 
-it("link 通道未开放：直调 create 409 拒绝（服务端与客户端同口径，不产无人领取的僵尸任务）", async () => {
+it("link 通道开放（SAI-28）：create 成功且任务停在 created——worker 只领 inapp、MCP 只领 mcp，不产僵尸派发", async () => {
   const w = world();
   const res = await req(
     w.app,
@@ -413,9 +414,13 @@ it("link 通道未开放：直调 create 409 拒绝（服务端与客户端同�
     w.a,
     createBody(w.attemptId, { channel: "link" }),
   );
-  const err = await expectErr(res, 409, "AI_CHANNEL_UNSUPPORTED");
-  expect(err.message).toContain("链接通道");
-  expect(w.db.select().from(aiTasks).all()).toHaveLength(0);
+  expect(res.status).toBe(201);
+  const body = aiTaskOkSchema.parse(await res.json());
+  expect(body.data.channel).toBe("link");
+  expect(body.data.status).toBe("created");
+  // 领取域互斥：inapp 派发扫描与 MCP FIFO 都不消费 link 任务
+  expect(listInappDispatchCandidates(w.db)).toHaveLength(0);
+  expect(claimMcpTask(w.db, { studentId: "s-a" })).toBeNull();
 });
 
 it("未完成禁用：post_submit_only 下 create 403 且无任务/文件副作用，错误为中文指引", async () => {
