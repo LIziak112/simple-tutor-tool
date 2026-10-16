@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { ApiErr } from "@tutor/contract";
-import { aiMaterialUploadReceiptOkSchema, aiTaskOkSchema } from "@tutor/contract";
+import {
+  aiMaterialUploadReceiptOkSchema,
+  aiTaskOkSchema,
+} from "@tutor/contract";
 import { eq } from "drizzle-orm";
 import pino from "pino";
 import { afterEach, expect, it } from "vitest";
@@ -95,7 +98,13 @@ async function createTaskViaRoute(
 
 /** 组装 multipart：manifest + page-N 文件（缺省一页 320×200 圈画） */
 function materialsForm(
-  pages: { kind: string; pageIndex: number; width: number; height: number; png: Uint8Array }[],
+  pages: {
+    kind: string;
+    pageIndex: number;
+    width: number;
+    height: number;
+    png: Uint8Array;
+  }[],
 ): FormData {
   const form = new FormData();
   form.append(
@@ -112,7 +121,7 @@ function materialsForm(
   pages.forEach((page, index) => {
     form.append(
       `page-${index}`,
-      new Blob([page.png as unknown as BlobPart], { type: "image/png" }),
+      new Blob([page.png], { type: "image/png" }),
       `page-${index}.png`,
     );
   });
@@ -154,7 +163,13 @@ async function expectErr(
   expect(body.error).toBe(code);
 }
 
-function onePage(): { kind: string; pageIndex: number; width: number; height: number; png: Uint8Array }[] {
+function onePage(): {
+  kind: string;
+  pageIndex: number;
+  width: number;
+  height: number;
+  png: Uint8Array;
+}[] {
   return [
     {
       kind: "annotation",
@@ -188,14 +203,14 @@ it("形状错误：缺 manifest / 文件数不符 / 声明尺寸与 PNG 不一�
   const taskId = await createTaskViaRoute(w);
   // 缺 manifest
   const noManifest = new FormData();
-  noManifest.append(
-    "page-0",
-    new Blob([makeNotePng() as unknown as BlobPart], { type: "image/png" }),
-  );
+  noManifest.append("page-0", new Blob([makeNotePng()], { type: "image/png" }));
   await expectErr(await upload(w, taskId, noManifest), 400, "VALIDATION_ERROR");
   // manifest 与文件数不符
   const mismatched = new FormData();
-  mismatched.append("manifest", JSON.stringify(onePage().map(({ png: _, ...meta }) => meta)));
+  mismatched.append(
+    "manifest",
+    JSON.stringify(onePage().map(({ png: _, ...meta }) => meta)),
+  );
   await expectErr(await upload(w, taskId, mismatched), 400, "VALIDATION_ERROR");
   // 声明尺寸与 PNG IHDR 不一致（服务层一致性校验经路由贯通）
   await expectErr(

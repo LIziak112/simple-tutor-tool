@@ -1,16 +1,17 @@
 import {
   AI_TASK_QUEUE_BUCKETS,
   type AiStatusData,
+  type AiTaskStatus,
 } from "@tutor/contract";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import type { Db } from "../../db/client.ts";
 import { aiTasks } from "../../db/schema.ts";
+import { sqliteAiPolicyConfigSource } from "./ai-policy-config-source.ts";
 import { listStudentAiConnections } from "./connection-service.ts";
 import {
-  resolveAttemptQuestionAiPolicy,
   type AiPolicyConfigSource,
+  resolveAttemptQuestionAiPolicy,
 } from "./teaching-policy-service.ts";
-import { sqliteAiPolicyConfigSource } from "./ai-policy-config-source.ts";
 
 /**
  * SAI-20 学生单题状态服务（B11；GET /api/student/ai/status 的数据源）。
@@ -51,18 +52,24 @@ export function studentAiStatusOf(
     eq(aiTasks.attemptId, input.attemptId),
     eq(aiTasks.questionId, input.questionId),
   );
-  const countBy = (statuses: readonly string[] | null): number =>
+  const countBy = (statuses: readonly AiTaskStatus[] | null): number =>
     db
       .select({ id: aiTasks.id })
       .from(aiTasks)
-      .where(statuses === null ? scope : and(scope, inArray(aiTasks.status, [...statuses])))
+      .where(
+        statuses === null
+          ? scope
+          : and(scope, inArray(aiTasks.status, [...statuses])),
+      )
       .all().length;
   return {
     resolution,
     completed,
     channelDefault: fallback?.channel ?? null,
+    // link 连接无验证态（票据通道，B15）；inapp/mcp 以 needs_rekey 判失联
     connectionReady:
-      fallback !== null && fallback.verifyStatus !== "needs_rekey",
+      fallback !== null &&
+      (fallback.channel === "link" || fallback.verifyStatus !== "needs_rekey"),
     firstUseRequired: connections.length === 0,
     taskSummary: {
       total: countBy(null),

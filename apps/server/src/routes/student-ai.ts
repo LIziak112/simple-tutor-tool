@@ -1,4 +1,5 @@
 import {
+  type AiTaskMaterialInternal,
   type AiTaskPublic,
   aiConnectionCreateRequestSchema,
   aiConnectionPatchRequestSchema,
@@ -8,9 +9,9 @@ import {
   aiTaskUpdatePendingRequestSchema,
   studentQuickButtonsPutRequestSchema,
 } from "@tutor/contract";
-import { z } from "zod";
 import type { Context } from "hono";
 import { Hono } from "hono";
+import { z } from "zod";
 import type { StudentEnv } from "../auth/require-student.ts";
 import { loadOrCreateSecretKey } from "../config.ts";
 import type { Db } from "../db/client.ts";
@@ -32,11 +33,9 @@ import {
   getStudentQuickButtons,
   putStudentQuickButtons,
 } from "../services/ai-companion/quick-buttons-service.ts";
-import { studentAiStatusOf } from "../services/ai-companion/student-ai-status.ts";
 import {
-  attachAiTaskMaterials,
   type AiMaterialUploadPage,
-  type AiTaskMaterialInternal,
+  attachAiTaskMaterials,
 } from "../services/ai-companion/student-ai-materials.ts";
 import {
   aiQueueSummaryOf,
@@ -50,6 +49,7 @@ import {
   resumeAiTask,
   retryAiTask,
 } from "../services/ai-companion/student-ai-queue.ts";
+import { studentAiStatusOf } from "../services/ai-companion/student-ai-status.ts";
 
 /**
  * 学生端 AI 伴学路由（SAI-08 快捷按钮、SAI-13 任务接口），由 student.ts 挂在

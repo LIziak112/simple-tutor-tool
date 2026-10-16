@@ -168,12 +168,20 @@ async function expectErr(
 
 it("无会话：状态路由 401 UNAUTHORIZED", async () => {
   const { app, attemptId } = world();
-  await expectErr(await get(app, statusPath(attemptId), undefined), 401, "UNAUTHORIZED");
+  await expectErr(
+    await get(app, statusPath(attemptId), undefined),
+    401,
+    "UNAUTHORIZED",
+  );
 });
 
 it("教师 Cookie：访问学生状态路由同样 401（对称隔离）", async () => {
   const { app, attemptId, teacher } = world();
-  await expectErr(await get(app, statusPath(attemptId), teacher), 401, "UNAUTHORIZED");
+  await expectErr(
+    await get(app, statusPath(attemptId), teacher),
+    401,
+    "UNAUTHORIZED",
+  );
 });
 
 it("参数错误：缺 questionId / attemptId 非法 400 VALIDATION_ERROR", async () => {
@@ -184,7 +192,11 @@ it("参数错误：缺 questionId / attemptId 非法 400 VALIDATION_ERROR", asyn
     "VALIDATION_ERROR",
   );
   await expectErr(
-    await get(app, "/api/student/ai/status?attemptId=not-a-uuid&questionId=q", a),
+    await get(
+      app,
+      "/api/student/ai/status?attemptId=not-a-uuid&questionId=q",
+      a,
+    ),
     400,
     "VALIDATION_ERROR",
   );
@@ -237,7 +249,8 @@ it("post_submit_only 覆盖：作答中 usable=false 带原因；交卷后 compl
   expect(answering.data.resolution.reason).toBe("student_closed");
   expect(answering.data.resolution.mode).toBeUndefined();
   // 交卷（assignment 来源按整卷状态判完成）
-  w.db.update(attempts)
+  w.db
+    .update(attempts)
     .set({ status: "submitted" })
     .where(eq(attempts.id, w.attemptId))
     .run();
@@ -269,7 +282,8 @@ it("默认连接 needs_rekey：connectionReady=false 但仍属已知情（firstU
   const w = world();
   await createInappConnection(w);
   // 密钥不可解：直接改 verifyStatus 模拟密封密钥轮换后的 needs_rekey 态
-  w.db.update(aiConnections)
+  w.db
+    .update(aiConnections)
     .set({ verifyStatus: "needs_rekey" })
     .where(eq(aiConnections.studentId, "s-a"))
     .run();
