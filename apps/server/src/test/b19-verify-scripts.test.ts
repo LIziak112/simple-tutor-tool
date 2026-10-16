@@ -954,7 +954,9 @@ describe("CLI 入口（tsx 子进程对合成文件库真实运行）", () => {
     ]);
     expect(bad.code).toBe(1);
     expect(bad.stdout).toContain("[FAIL] 题面圈画第 1 页材料文件缺失");
-  });
+    // CLI 子进程耗时随全量并行负载波动（tsx 启动 + 模块图加载），显式超时
+    // 防 vitest 默认 5s 在满载机器上误杀（与 b20-verify-scripts.test.ts 同款）
+  }, 60_000);
 
   it("trace-audit：合成世界时间线含事实序列且退出码 0；篡改后退出码 1", async () => {
     const world = makeFileWorld();
@@ -994,7 +996,7 @@ describe("CLI 入口（tsx 子进程对合成文件库真实运行）", () => {
     expect(bad.stdout).toContain(
       "任务已开始出站（回信/失败/待确认/已领取）但 generation=0",
     );
-  });
+  }, 60_000);
 
   it("materials-check：--task 指定的零材料任务显式输出无行，不静默吞掉", async () => {
     const world = makeFileWorld();
@@ -1014,7 +1016,7 @@ describe("CLI 入口（tsx 子进程对合成文件库真实运行）", () => {
     expect(run.code).toBe(0);
     expect(run.stdout).toContain(`任务 ${textOnly}：无材料行`);
     expect(run.stdout).toContain("materials-check：全部核对项通过");
-  });
+  }, 60_000);
 
   it("link-check：票据 URL 从 B19_LINK_URL 环境变量读取（token 不进命令行）", async () => {
     // 本地假端点扮演票据读端点（七区块正文 + no-store + 附件）
@@ -1051,7 +1053,7 @@ describe("CLI 入口（tsx 子进程对合成文件库真实运行）", () => {
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
-  });
+  }, 60_000);
 
   it("seed-demo-world：生成合成世界（绝不触碰测试自身 DATA_DIR），产物可被两脚本核对，用完可整目录删除", async () => {
     const seeded = await runScriptCli("seed-demo-world.ts", []);
@@ -1081,7 +1083,7 @@ describe("CLI 入口（tsx 子进程对合成文件库真实运行）", () => {
       // 关库后目录可整删（Windows 句柄释放的隐式验证）
       rmSync(seededDir, { recursive: true, force: true });
     }
-  });
+  }, 240_000);
 });
 
 // ---------- 测试内工具 ----------
