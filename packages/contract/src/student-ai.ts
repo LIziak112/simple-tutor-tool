@@ -412,6 +412,12 @@ export const aiTaskPublicSchema = z
     errorText: z.string().nullable(),
     retryCount: z.number().int().min(0),
     /**
+     * 学生归档时刻（SAI-23 队列整理）；null = 未归档。归档不是状态转换
+     * （status/已读态不动），只影响默认队列视图过滤——已归档分组按本字段
+     * 呈现归档时间。
+     */
+    archivedAt: z.string().nullable(),
+    /**
      * 当前允许动作：服务端权威输出（AI_TASK_ALLOWED_ACTIONS 状态表叠加当前
      * 教学策略门禁），客户端不得本地查表推导——策略层变化以本字段为准。
      */

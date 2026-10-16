@@ -109,6 +109,7 @@ const validTask = {
   replyDeliveredAt: null,
   errorText: null,
   retryCount: 0,
+  archivedAt: null,
   allowedActions: ["followup", "share"],
   materials: [validMaterial],
   createdAt: "2026-10-15T10:01:00.000Z",
@@ -276,6 +277,13 @@ it("处理状态与查看状态分开：无反馈、未查看均可表达", () =
       replyDeliveredAt: "2026-10-15T10:05:00.000Z",
     }).replyDeliveredAt,
   ).toBe("2026-10-15T10:05:00.000Z");
+  // 归档时刻可表达（SAI-23）：归档≠已读——archivedAt 有值时查看态仍可为空
+  const archived = aiTaskPublicSchema.parse({
+    ...validTask,
+    archivedAt: "2026-10-16T09:00:00.000Z",
+  });
+  expect(archived.archivedAt).toBe("2026-10-16T09:00:00.000Z");
+  expect(archived.replyDeliveredAt).toBeNull();
 });
 
 it("公开任务视图不含快照原文、密钥、租约或文件路径", () => {

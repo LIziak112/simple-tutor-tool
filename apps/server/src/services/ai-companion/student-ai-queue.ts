@@ -818,6 +818,7 @@ function aiTaskPublicViewCore(
     replyDeliveredAt: task.replyDeliveredAt,
     errorText: task.errorText,
     retryCount: task.retryCount,
+    archivedAt: task.archivedAt,
     allowedActions: allowed,
     materials: aiTaskMaterialsPublicOf(prefetch.materials),
     createdAt: task.createdAt,
