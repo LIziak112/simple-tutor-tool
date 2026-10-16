@@ -1,6 +1,7 @@
 import type { AiChannel } from "@tutor/contract";
 import { Button } from "@/components/ui/button";
 import { CHANNEL_LABEL } from "./ai-channel-label";
+import { AiLinkShareBox } from "./AiLinkShareBox";
 import { useStudentQuickButtons } from "./quick-buttons-queries";
 import {
   type AiMaterialAvailability,
@@ -29,13 +30,13 @@ export const FORMAL_INK_PAPER_LABEL = "正式手写";
 /** 非手写题的纸面材料名（草稿纸面） */
 export const DRAFT_PAPER_LABEL = "草稿";
 
-/** 本地会话可切换的通道（link 的票据流归 SAI-28/B15，先不提供切换项） */
-const SWITCHABLE_CHANNELS: readonly AiChannel[] = ["inapp", "mcp"];
+/** 本地会话可切换的通道（SAI-30 起含 link：票据流见 use-ai-send-controller） */
+const SWITCHABLE_CHANNELS: readonly AiChannel[] = ["inapp", "mcp", "link"];
 
 /** 主按钮按通道换文案（单主动作，不出现两个同义按钮） */
 function mainActionLabel(channel: AiChannel | null): string {
   if (channel === "mcp") return "加入求助队列";
-  if (channel === "link") return "复制链接";
+  if (channel === "link") return "复制 AI 链接";
   return "发送";
 }
 
@@ -190,10 +191,13 @@ export function AiCompanionQuickButtons({ send }: { send: AiSendController }) {
 export function AiCompanionComposer({
   send,
   paperLabel,
+  questionLabel = null,
   materials = DEFAULT_AI_MATERIALS,
 }: {
   send: AiSendController;
   paperLabel: string;
+  /** 绑定题显示名（链接结果区呈现题号，帮助识别缓存旧内容） */
+  questionLabel?: string | null;
   /** 材料可选面（缺省圈画+纸面）；控制器侧同口径过滤为双保险 */
   materials?: AiMaterialAvailability | undefined;
 }) {
@@ -272,6 +276,17 @@ export function AiCompanionComposer({
         >
           {message}
         </p>
+      )}
+      {/* 链接通道结果区（SAI-30）：题级匹配才呈现（换题不携带上一题链接） */}
+      {bound && send.linkShare?.questionId === boundQuestionId && (
+        <AiLinkShareBox
+          questionLabel={questionLabel}
+          link={send.linkShare}
+          sending={sending}
+          onRegenerate={() => void send.regenerateLink()}
+          onRevoke={() => void send.revokeLink()}
+          onRetryCopy={() => void send.retryCopyLink()}
+        />
       )}
     </div>
   );

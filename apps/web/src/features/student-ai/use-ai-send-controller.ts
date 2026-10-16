@@ -3,6 +3,7 @@ import type {
   AiChannel,
   AiStatusData,
   AiTaskPublic,
+  AiTaskShareData,
   AiTeachingMode,
   AttemptQuestionPublic,
   StudentQuickButton,
@@ -14,12 +15,15 @@ import {
   captureAiQuestionMaterials,
 } from "@/features/export/ai-material-capture";
 import {
+  createStudentAiShareTicketApi,
   createStudentAiTaskApi,
   fetchStudentAiStatusApi,
   listStudentAiTasksApi,
+  revokeStudentAiShareTicketsApi,
   uploadStudentAiTaskMaterialsApi,
 } from "@/lib/api";
 import { randomUuid } from "@/lib/uuid";
+import { studentAiQueueSummaryKey } from "./ai-queue-queries";
 import { errorMessageOf } from "./error-text";
 
 /**
@@ -44,6 +48,13 @@ import { errorMessageOf } from "./error-text";
  *
  * 成功清理策略：任务进入待处理后清空该题未发送正文（已随任务发出），
  * 附件选择与选中 preset 保留（下次发送沿用）；任何失败三者全保留。
+ *
+ * SAI-30 链接通道（B15）：同一主流程上分流——任务/材料/幂等键与页内
+ * 通道完全一致，材料就绪后才生成票据（缺件不静默成链接）；复制失败不
+ * 掩盖生成成功（链接保留 + 手动复制 + 重试复制零 API 调用）；重新生成
+ * 走旧任务上新票据（仍按当前权限由服务端实时裁决）；链接状态题级隔离
+ * （换题/换账号清空，旧票据不自动切换）。任务成功后队列摘要一并失效
+ * （顶栏角标即时反映，B14 遗留修复）。
  */
 
 /** 空草稿（选择全关——首次发送仅文字，学生再按需勾选） */
@@ -155,6 +166,35 @@ interface PendingAction {
   snapshot: AiCaptureSnapshot | null;
 }
 
+/**
+ * 链接通道当前链接（SAI-30）：题级状态——换题/换账号即清空（旧票据不
+ * 自动切换到新题）；copyFailed 独立于生成成败（HTTP 非安全上下文/权限
+ * 拒绝都只影响复制，链接已生成的事实不被掩盖）。
+ */
+export interface AiLinkShareState {
+  readonly questionId: string;
+  readonly taskId: string;
+  readonly url: string;
+  readonly snapshotAt: string;
+  readonly expiresAt: string;
+  readonly copyFailed: boolean;
+}
+
+/**
+ * 剪贴板写入（模块级纯函数便于替身）：HTTP 非安全上下文（clipboard API
+ * 不存在）与权限拒绝/写入失败统一归 false——调用方据实呈现手动复制，
+ * 不与「生成失败」混淆。
+ */
+async function writeToClipboard(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard === undefined) return false;
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const IDLE_STATE: AiSendState = {
   phase: "idle",
   message: null,
@@ -172,6 +212,8 @@ export function useAiSendController(config: UseAiSendControllerConfig) {
     null,
   );
   const [sendState, setSendState] = useState<AiSendState>(IDLE_STATE);
+  /** 链接通道当前题的链接（题级隔离；换题/换账号清空） */
+  const [linkShare, setLinkShare] = useState<AiLinkShareState | null>(null);
   /** 一次动作（在途或失败待重试）；成功即清空 */
   const pendingRef = useRef<PendingAction | null>(null);
   /**
@@ -195,6 +237,8 @@ export function useAiSendController(config: UseAiSendControllerConfig) {
     setDrafts(new Map());
     setChannelOverride(null);
     setSendState(IDLE_STATE);
+    // 链接不跨账号会话：旧账号票据/任务 id 一并作废
+    setLinkShare(null);
   }, [attemptId]);
   // 卸载同样令在途回调失效（迟到结果不得写进任何新会话）
   useEffect(
@@ -249,6 +293,10 @@ export function useAiSendController(config: UseAiSendControllerConfig) {
     // 显式动作才切题；同题重复 bind 幂等（重开面板恢复绑定）
     setBoundQuestionId((previous) =>
       previous === questionId ? previous : questionId,
+    );
+    // 换题不携带上一题链接（旧票据不自动切换内容；重新生成是显式动作）
+    setLinkShare((previous) =>
+      previous?.questionId === questionId ? previous : null,
     );
   }, []);
 
@@ -379,15 +427,7 @@ export function useAiSendController(config: UseAiSendControllerConfig) {
         });
         return;
       }
-      if (channel === "link") {
-        // 链接通道票据归 SAI-28（B15）：如实拦截，不出站不虚报
-        setSendState({
-          phase: "failed",
-          message: "链接通道建设中，可先在设置中选择页内 AI 或 MCP 通道",
-          questionId,
-        });
-        return;
-      }
+      // link 通道走同一任务/材料/幂等主流程；票据与复制在成功段分流（SAI-30）
 
       // 幂等键生命周期：同动作（同题/同文/同选择/同通道）复用，变化即新动作
       const reuse =
@@ -512,19 +552,61 @@ export function useAiSendController(config: UseAiSendControllerConfig) {
           if (!alive()) return;
         }
 
-        // 成功：清空正文（已随任务发出），附件选择与 preset 保留
-        patchDraft(questionId, (draft) => ({ ...draft, text: "" }));
-        pendingRef.current = null;
-        setSendState({
-          phase: "sent",
-          message: channel === "mcp" ? "已加入求助队列" : "已发送",
-          questionId,
-        });
+        // —— 链接通道分流（SAI-30）：材料就绪后才生成票据（缺件不静默成
+        //    链接）；生成失败保留草稿与幂等键——重试回到同任务补票，不重复建任务 ——
+        if (channel === "link") {
+          let ticket: AiTaskShareData;
+          try {
+            ticket = await createStudentAiShareTicketApi(task.id);
+          } catch (cause) {
+            if (!alive()) return;
+            setSendState({
+              phase: "failed",
+              message: `链接生成失败：${errorMessageOf(cause, "请稍后重试")}（求助已保留，不会重复计费）`,
+              questionId,
+            });
+            return;
+          }
+          if (!alive()) return;
+          // 复制失败不掩盖生成成功：链接保留，手动复制/重试复制不再新建票据
+          const copied = await writeToClipboard(ticket.ticketUrl);
+          if (!alive()) return;
+          patchDraft(questionId, (draft) => ({ ...draft, text: "" }));
+          pendingRef.current = null;
+          setLinkShare({
+            questionId,
+            taskId: task.id,
+            url: ticket.ticketUrl,
+            snapshotAt: ticket.snapshotAt,
+            expiresAt: ticket.expiresAt,
+            copyFailed: !copied,
+          });
+          setSendState({
+            phase: "sent",
+            message: copied
+              ? "已生成 AI 链接并复制，发给外部 AI 即可读取本题内容"
+              : "链接已生成，但自动复制失败：请在下方手动复制后发给外部 AI",
+            questionId,
+          });
+        } else {
+          // 成功：清空正文（已随任务发出），附件选择与 preset 保留
+          patchDraft(questionId, (draft) => ({ ...draft, text: "" }));
+          pendingRef.current = null;
+          setSendState({
+            phase: "sent",
+            message: channel === "mcp" ? "已加入求助队列" : "已发送",
+            questionId,
+          });
+        }
         void queryClient.invalidateQueries({
           queryKey: ["student", "ai-status", attemptId],
         });
         void queryClient.invalidateQueries({
           queryKey: ["student", "ai-tasks", attemptId],
+        });
+        // B14 遗留：任务进入队列后摘要角标即时失效重取（页内/MCP/link 同口径）
+        void queryClient.invalidateQueries({
+          queryKey: studentAiQueueSummaryKey,
         });
       } finally {
         sendingRef.current = false;
@@ -544,6 +626,108 @@ export function useAiSendController(config: UseAiSendControllerConfig) {
       statusQuery.isError,
     ],
   );
+
+  // ---------- 链接通道动作（SAI-30：重试复制/重新生成/撤销都不新建任务） ----------
+
+  /** 重试复制当前链接：只碰剪贴板，零 API 调用（不再新建票据/事实） */
+  const retryCopyLink = useCallback(async () => {
+    const current = linkShare;
+    if (current === null) return;
+    const copied = await writeToClipboard(current.url);
+    setLinkShare((previous) =>
+      previous !== null && previous.url === current.url
+        ? { ...previous, copyFailed: !copied }
+        : previous,
+    );
+    setSendState({
+      phase: "sent",
+      message: copied
+        ? "已复制 AI 链接"
+        : "自动复制仍失败，请手动复制下方链接",
+      questionId: current.questionId,
+    });
+  }, [linkShare]);
+
+  /** 重新生成：旧任务上新票据（服务端按当前权限与状态实时裁决） */
+  const regenerateLink = useCallback(async () => {
+    const current = linkShare;
+    if (current === null || current.questionId !== boundQuestionId) return;
+    if (sendingRef.current) return;
+    sendingRef.current = true;
+    const token = epochRef.current;
+    const alive = () => epochRef.current === token;
+    setSendState({
+      phase: "sending",
+      message: null,
+      questionId: current.questionId,
+    });
+    try {
+      const ticket = await createStudentAiShareTicketApi(current.taskId);
+      if (!alive()) return;
+      const copied = await writeToClipboard(ticket.ticketUrl);
+      if (!alive()) return;
+      setLinkShare({
+        questionId: current.questionId,
+        taskId: current.taskId,
+        url: ticket.ticketUrl,
+        snapshotAt: ticket.snapshotAt,
+        expiresAt: ticket.expiresAt,
+        copyFailed: !copied,
+      });
+      setSendState({
+        phase: "sent",
+        message: copied
+          ? "已重新生成 AI 链接并复制（旧链接随到期自然失效）"
+          : "已重新生成链接，但自动复制失败：请在下方手动复制",
+        questionId: current.questionId,
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ["student", "ai-tasks", attemptId],
+      });
+    } catch (cause) {
+      if (!alive()) return;
+      // 服务端拒绝（权限/状态/网络）：如实呈现；旧链接状态保留不误删
+      setSendState({
+        phase: "failed",
+        message: errorMessageOf(cause, "重新生成链接失败，请稍后重试"),
+        questionId: current.questionId,
+      });
+    } finally {
+      sendingRef.current = false;
+    }
+  }, [linkShare, boundQuestionId, attemptId, queryClient]);
+
+  /** 撤销当前链接（服务端整批撤销该任务仍有效票据，幂等） */
+  const revokeLink = useCallback(async () => {
+    const current = linkShare;
+    if (current === null) return;
+    if (sendingRef.current) return;
+    sendingRef.current = true;
+    const token = epochRef.current;
+    const alive = () => epochRef.current === token;
+    try {
+      await revokeStudentAiShareTicketsApi(current.taskId);
+      if (!alive()) return;
+      setLinkShare(null);
+      setSendState({
+        phase: "sent",
+        message: "链接已撤销；此前已复制出去的内容无法收回",
+        questionId: current.questionId,
+      });
+      void queryClient.invalidateQueries({
+        queryKey: ["student", "ai-tasks", attemptId],
+      });
+    } catch (cause) {
+      if (!alive()) return;
+      setSendState({
+        phase: "failed",
+        message: errorMessageOf(cause, "撤销失败，请稍后重试"),
+        questionId: current.questionId,
+      });
+    } finally {
+      sendingRef.current = false;
+    }
+  }, [linkShare, attemptId, queryClient]);
 
   return {
     /** 作答定位（会话面板在同 key 上挂轮询观察者时构造缓存键用） */
@@ -567,6 +751,11 @@ export function useAiSendController(config: UseAiSendControllerConfig) {
     historyLoading: historyQuery.isPending,
     historyError: historyQuery.isError,
     refreshStatus,
+    /** 链接通道当前题的链接（无则 null；题级隔离，换题/换账号清空） */
+    linkShare,
+    retryCopyLink,
+    regenerateLink,
+    revokeLink,
   };
 }
 

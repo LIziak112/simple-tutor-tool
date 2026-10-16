@@ -145,6 +145,7 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
         <AiCompanionComposer
           send={send}
           paperLabel={paperLabel}
+          questionLabel={boundLabel}
           materials={materials}
         />
       }

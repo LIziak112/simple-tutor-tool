@@ -13,11 +13,14 @@ import {
   captureAiQuestionMaterials,
 } from "@/features/export/ai-material-capture";
 import {
+  createStudentAiShareTicketApi,
   createStudentAiTaskApi,
   fetchStudentAiStatusApi,
   listStudentAiTasksApi,
+  revokeStudentAiShareTicketsApi,
   uploadStudentAiTaskMaterialsApi,
 } from "@/lib/api";
+import { studentAiQueueSummaryKey } from "./ai-queue-queries";
 import { connectedAiStatus } from "./student-ai-test-utils";
 import {
   type AiMaterialAvailability,
@@ -45,6 +48,8 @@ vi.mock("@/lib/api", async (importOriginal) => {
     createStudentAiTaskApi: vi.fn(),
     listStudentAiTasksApi: vi.fn(),
     uploadStudentAiTaskMaterialsApi: vi.fn(),
+    createStudentAiShareTicketApi: vi.fn(),
+    revokeStudentAiShareTicketsApi: vi.fn(),
   };
 });
 
@@ -61,6 +66,8 @@ const mockedCreate = vi.mocked(createStudentAiTaskApi);
 const mockedList = vi.mocked(listStudentAiTasksApi);
 const mockedUpload = vi.mocked(uploadStudentAiTaskMaterialsApi);
 const mockedCapture = vi.mocked(captureAiQuestionMaterials);
+const mockedShareTicket = vi.mocked(createStudentAiShareTicketApi);
+const mockedRevokeShare = vi.mocked(revokeStudentAiShareTicketsApi);
 
 const QUESTION_A: AttemptQuestionPublic = {
   id: "q-a",
@@ -186,6 +193,31 @@ beforeEach(() => {
     totalBytes: 0,
   });
   mockedCapture.mockResolvedValue(snapshotOf(QUESTION_A));
+  mockedShareTicket.mockResolvedValue(SHARE_TICKET);
+  mockedRevokeShare.mockResolvedValue({ revokedCount: 1 });
+});
+
+// ---------- SAI-30：剪贴板替身（jsdom 无 clipboard API） ----------
+
+/** 分享票据固定回执（url 哨兵便于断言复制内容） */
+const SHARE_TICKET = {
+  ticketUrl: "https://tutor.example.com/api/public/ai/share/AbCdEf123456",
+  snapshotAt: "2026-10-16T08:00:00.000Z",
+  expiresAt: "2026-10-17T08:00:00.000Z",
+};
+
+/** 换装 navigator.clipboard：undefined = HTTP 非安全上下文；函数 = writeText 替身 */
+function stubClipboard(
+  writeText: ((text: string) => Promise<void>) | undefined,
+): void {
+  Object.defineProperty(navigator, "clipboard", {
+    value: writeText === undefined ? undefined : { writeText },
+    configurable: true,
+  });
+}
+
+afterEach(() => {
+  stubClipboard(undefined);
 });
 
 describe("useAiSendController（SAI-20 先测 6 条）", () => {
@@ -498,7 +530,7 @@ describe("useAiSendController（幂等与通道语义补充）", () => {
     ).toBe(false);
   });
 
-  it("通道选择影响本次发送通道；link 通道如实拦截（建设中，零出站）", async () => {
+  it("通道选择影响本次发送通道；link 通道走票据闭环（SAI-30 起出真实链接）", async () => {
     const view = renderController();
     await openOnA(view);
     // 真实 UI 里选通道与点发送是两次独立交互（之间必有渲染提交）；
@@ -513,11 +545,13 @@ describe("useAiSendController（幂等与通道语义补充）", () => {
     await act(async () => {
       view.result.current.setChannelOverride("link");
     });
+    stubClipboard(vi.fn().mockResolvedValue(undefined));
     await act(async () => {
       await view.result.current.send({ quick: QUICK });
     });
-    expect(view.result.current.sendState.phase).toBe("failed");
-    expect(mockedCreate).toHaveBeenCalledTimes(1); // link 未新增任何调用
+    expect(mockedCreate.mock.calls[1]?.[0].channel).toBe("link");
+    expect(mockedShareTicket).toHaveBeenCalledTimes(1);
+    expect(view.result.current.sendState.phase).toBe("sent");
   });
 
   it("正文为空发送被拦（主按钮），不发请求", async () => {
@@ -601,5 +635,253 @@ describe("useAiSendController 材料可选面（SAI-22 讲练/结果页收窄）
       draft: false,
       formalInk: false,
     });
+  });
+});
+
+describe("useAiSendController（SAI-30 链接通道闭环）", () => {
+  it("主流程：建任务→传材料→生成票据→复制；无效化含队列摘要（B14 遗留角标）", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    stubClipboard(writeText);
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    const view = renderController();
+    // 预挂队列摘要数据：成功回调必须把它标失效（顶栏角标即时反映）
+    view.client.setQueryData(studentAiQueueSummaryKey, {
+      pendingCount: 0,
+      processingCount: 0,
+      unreadReplyCount: 0,
+    });
+    await openOnA(view);
+    await act(async () => {
+      view.result.current.setText("链接求助这题");
+      // 勾选圈画才走「采集→上传」段（主按钮发送不默认带材料）
+      view.result.current.toggleMaterial("annotation");
+    });
+    await act(async () => {
+      view.result.current.setChannelOverride("link");
+    });
+    await act(async () => {
+      await view.result.current.send();
+    });
+    expect(mockedCreate).toHaveBeenCalledTimes(1);
+    expect(mockedCreate.mock.calls[0]?.[0].channel).toBe("link");
+    expect(mockedUpload).toHaveBeenCalledTimes(1);
+    expect(mockedShareTicket).toHaveBeenCalledTimes(1);
+    expect(mockedShareTicket).toHaveBeenCalledWith("task-1");
+    expect(writeText).toHaveBeenCalledWith(SHARE_TICKET.ticketUrl);
+    // 复制成功即结束：不预取分享正文（无抓取冒充外部已读）
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(view.result.current.sendState.phase).toBe("sent");
+    expect(view.result.current.sendState.message).toContain(
+      "已生成 AI 链接并复制",
+    );
+    const link = view.result.current.linkShare;
+    expect(link).not.toBeNull();
+    expect(link?.questionId).toBe(QUESTION_A.id);
+    expect(link?.taskId).toBe("task-1");
+    expect(link?.url).toBe(SHARE_TICKET.ticketUrl);
+    expect(link?.copyFailed).toBe(false);
+    // 正文已随任务发出；队列摘要失效（页内入队角标即时反映）
+    expect(view.result.current.draftOf(QUESTION_A.id).text).toBe("");
+    expect(
+      view.client.getQueryState(studentAiQueueSummaryKey)?.isInvalidated,
+    ).toBe(true);
+    vi.unstubAllGlobals();
+  });
+
+  it("剪贴板不可用（HTTP）：链接保留+手动复制提示，重试复制不再新建票据", async () => {
+    stubClipboard(undefined);
+    const view = renderController();
+    await openOnA(view);
+    await act(async () => {
+      view.result.current.setChannelOverride("link");
+    });
+    await act(async () => {
+      await view.result.current.send({ quick: QUICK });
+    });
+    // 生成成功、复制失败是两个可区分的事实：phase 是 sent 不是 failed
+    expect(view.result.current.sendState.phase).toBe("sent");
+    expect(view.result.current.sendState.message).toContain("自动复制失败");
+    expect(view.result.current.linkShare?.copyFailed).toBe(true);
+    expect(view.result.current.linkShare?.url).toBe(SHARE_TICKET.ticketUrl);
+    // 重试复制只碰剪贴板，不新建任务/票据/事实
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    stubClipboard(writeText);
+    await act(async () => {
+      await view.result.current.retryCopyLink();
+    });
+    expect(writeText).toHaveBeenCalledWith(SHARE_TICKET.ticketUrl);
+    expect(mockedCreate).toHaveBeenCalledTimes(1);
+    expect(mockedShareTicket).toHaveBeenCalledTimes(1);
+    expect(view.result.current.linkShare?.copyFailed).toBe(false);
+  });
+
+  it("剪贴板权限拒绝：与 HTTP 不支持同形态（链接保留，可手动复制）", async () => {
+    stubClipboard(vi.fn().mockRejectedValue(new Error("denied")));
+    const view = renderController();
+    await openOnA(view);
+    await act(async () => {
+      view.result.current.setChannelOverride("link");
+    });
+    await act(async () => {
+      await view.result.current.send({ quick: QUICK });
+    });
+    expect(view.result.current.sendState.phase).toBe("sent");
+    expect(view.result.current.linkShare?.copyFailed).toBe(true);
+  });
+
+  it("票据生成失败：与复制失败可区分（failed、无链接、任务保留）", async () => {
+    stubClipboard(vi.fn().mockResolvedValue(undefined));
+    mockedShareTicket.mockRejectedValueOnce(new Error("server 500"));
+    const view = renderController();
+    await openOnA(view);
+    await act(async () => {
+      view.result.current.setChannelOverride("link");
+    });
+    await act(async () => {
+      await view.result.current.send({ quick: QUICK });
+    });
+    expect(view.result.current.sendState.phase).toBe("failed");
+    expect(view.result.current.sendState.message).toContain("链接生成失败");
+    expect(view.result.current.linkShare).toBeNull();
+    // 任务已建（重试同幂等键不重复建）；材料已传不丢
+    expect(mockedCreate).toHaveBeenCalledTimes(1);
+    expect(mockedUpload).toHaveBeenCalledTimes(1);
+  });
+
+  it("仅完成后未完成：link 入口同拒（零任务零票据零复制）", async () => {
+    stubClipboard(vi.fn().mockResolvedValue(undefined));
+    mockedStatus.mockResolvedValue(
+      connectedAiStatus({
+        resolution: {
+          usable: false,
+          mode: undefined,
+          reason: "student_closed",
+        },
+      }),
+    );
+    const view = renderController();
+    await openOnA(view);
+    await act(async () => {
+      view.result.current.setChannelOverride("link");
+    });
+    await act(async () => {
+      await view.result.current.send({ quick: QUICK });
+    });
+    expect(view.result.current.sendState.phase).toBe("failed");
+    expect(view.result.current.sendState.message).toContain("完成后可用");
+    expect(mockedCreate).not.toHaveBeenCalled();
+    expect(mockedShareTicket).not.toHaveBeenCalled();
+  });
+
+  it("换题不复制上一题链接；换账号链接不跨会话；旧票据不自动切换", async () => {
+    stubClipboard(vi.fn().mockResolvedValue(undefined));
+    const view = renderController();
+    await openOnA(view);
+    await act(async () => {
+      view.result.current.setChannelOverride("link");
+    });
+    await act(async () => {
+      await view.result.current.send({ quick: QUICK });
+    });
+    expect(view.result.current.linkShare?.questionId).toBe(QUESTION_A.id);
+    // 换题：上一题的链接不再出现，也不被拿去复制
+    await act(async () => {
+      view.result.current.bind(QUESTION_B.id);
+    });
+    expect(view.result.current.linkShare).toBeNull();
+    // 换题后状态查询重新载入：等就绪再发送（否则被「正在确认 AI 状态」拦下）
+    await waitFor(() => expect(view.result.current.status).toBeDefined());
+    // B 题新建自己的任务与票据（不复制上一题链接）
+    mockedCreate.mockResolvedValueOnce(taskOf("task-b"));
+    await act(async () => {
+      await view.result.current.send({ quick: QUICK });
+    });
+    expect(mockedCreate.mock.calls[1]?.[0].questionId).toBe(QUESTION_B.id);
+    expect(view.result.current.linkShare?.taskId).toBe("task-b");
+    // 换账号（换 attempt）：在途回调失效，链接状态清空
+    await act(async () => {
+      view.rerender({ attemptId: "attempt-2" });
+    });
+    await waitFor(() => expect(view.result.current.linkShare).toBeNull());
+  });
+
+  it("材料上传失败不生成票据（缺件不静默成链接）；同幂等键重试补传后才成票", async () => {
+    stubClipboard(vi.fn().mockResolvedValue(undefined));
+    mockedUpload.mockRejectedValueOnce(new Error("upload failed"));
+    const view = renderController();
+    await openOnA(view);
+    await act(async () => {
+      view.result.current.setChannelOverride("link");
+    });
+    await act(async () => {
+      await view.result.current.send({ quick: QUICK });
+    });
+    expect(view.result.current.sendState.phase).toBe("failed");
+    expect(view.result.current.sendState.message).toContain("材料上传失败");
+    expect(mockedShareTicket).not.toHaveBeenCalled();
+    expect(view.result.current.linkShare).toBeNull();
+    // 重试：同幂等键回到任务，补传成功后生成票据
+    await act(async () => {
+      await view.result.current.send({ quick: QUICK });
+    });
+    const firstKey = mockedCreate.mock.calls[0]?.[0].mutationId;
+    const secondKey = mockedCreate.mock.calls[1]?.[0].mutationId;
+    expect(secondKey).toBe(firstKey);
+    expect(mockedShareTicket).toHaveBeenCalledTimes(1);
+    expect(view.result.current.linkShare?.url).toBe(SHARE_TICKET.ticketUrl);
+  });
+
+  it("重新生成走旧任务（仍按当前权限由服务端裁决）；撤销清空链接状态", async () => {
+    stubClipboard(vi.fn().mockResolvedValue(undefined));
+    const view = renderController();
+    await openOnA(view);
+    await act(async () => {
+      view.result.current.setChannelOverride("link");
+    });
+    await act(async () => {
+      await view.result.current.send({ quick: QUICK });
+    });
+    const secondTicket = {
+      ...SHARE_TICKET,
+      ticketUrl: "https://tutor.example.com/api/public/ai/share/NewToken987",
+    };
+    mockedShareTicket.mockResolvedValueOnce(secondTicket);
+    await act(async () => {
+      await view.result.current.regenerateLink();
+    });
+    // 重新生成 = 旧任务上新票据（不建新任务），换的是新链接
+    expect(mockedCreate).toHaveBeenCalledTimes(1);
+    expect(mockedShareTicket).toHaveBeenCalledWith("task-1");
+    expect(view.result.current.linkShare?.url).toBe(secondTicket.ticketUrl);
+    // 权限被关后重新生成：服务端拒绝如实呈现，旧链接状态保留不误删
+    mockedShareTicket.mockRejectedValueOnce(new Error("403"));
+    await act(async () => {
+      await view.result.current.regenerateLink();
+    });
+    expect(view.result.current.sendState.phase).toBe("failed");
+    expect(view.result.current.linkShare?.url).toBe(secondTicket.ticketUrl);
+    // 撤销：调服务端 + 清空本地链接
+    await act(async () => {
+      await view.result.current.revokeLink();
+    });
+    expect(mockedRevokeShare).toHaveBeenCalledWith("task-1");
+    expect(view.result.current.linkShare).toBeNull();
+  });
+
+  it("链接任务不冒充已回信：成功消息只讲链接，不出现收到回信口径", async () => {
+    stubClipboard(vi.fn().mockResolvedValue(undefined));
+    const view = renderController();
+    await openOnA(view);
+    await act(async () => {
+      view.result.current.setChannelOverride("link");
+    });
+    await act(async () => {
+      await view.result.current.send({ quick: QUICK });
+    });
+    const message = view.result.current.sendState.message ?? "";
+    expect(message).not.toContain("回信");
+    expect(message).not.toContain("已收到");
+    expect(message).toContain("外部 AI");
   });
 });

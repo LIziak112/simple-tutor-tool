@@ -28,6 +28,7 @@ import {
   type AiTaskListData,
   type AiTaskListQuery,
   type AiTaskPublic,
+  type AiTaskShareData,
   type AiTeacherAttemptRecordsData,
   type AiTeacherSettingsData,
   type AiTeacherSettingsPutRequest,
@@ -2742,6 +2743,39 @@ export function fetchStudentAiTaskApi(
 export function openStudentAiReplyApi(taskId: string): Promise<AiTaskPublic> {
   return callApi(() =>
     api.api.student.ai.tasks[":id"].opened.$post({ param: { id: taskId } }),
+  );
+}
+
+/**
+ * 生成分享票据（POST /ai/tasks/:id/share，SAI-28/30）：服务端实时裁决
+ * 当前模式与任务状态（created/replied），返回一次性明文 URL + 快照时间 +
+ * 过期时刻。路由用 parseJsonBody 手动解析，hc 推断不出 json 入参——用
+ * 同构 fetch（同 followup 口径）。重复调用 = 显式重建（新票据新 token）。
+ */
+export function createStudentAiShareTicketApi(
+  taskId: string,
+  request: { validHours?: number } = {},
+): Promise<AiTaskShareData> {
+  return callApi(() =>
+    fetch(`/api/student/ai/tasks/${encodeURIComponent(taskId)}/share`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    }),
+  );
+}
+
+/**
+ * 撤销该任务全部仍有效票据（DELETE /ai/tasks/:id/share，幂等）：此后
+ * 公开读端点对正文与附件一律 403；已出站/已复制内容无法收回。
+ */
+export function revokeStudentAiShareTicketsApi(
+  taskId: string,
+): Promise<{ revokedCount: number }> {
+  return callApi(() =>
+    fetch(`/api/student/ai/tasks/${encodeURIComponent(taskId)}/share`, {
+      method: "DELETE",
+    }),
   );
 }
 
