@@ -1,4 +1,10 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { AiLinkShareBox } from "./AiLinkShareBox";
 import type { AiLinkShareState } from "./use-ai-send-controller";
@@ -173,9 +179,7 @@ describe("AiLinkShareBox（SAI-30 链接查看/复制/降级）", () => {
   });
 
   it("降级服务端故障（500）：与票据失效区分（提示稍后重试，不误导重新生成）", async () => {
-    const fetchSpy = vi
-      .fn()
-      .mockResolvedValue(htmlResponse("内部错误", 500));
+    const fetchSpy = vi.fn().mockResolvedValue(htmlResponse("内部错误", 500));
     vi.stubGlobal("fetch", fetchSpy);
     renderBox();
     fireEvent.click(
@@ -194,25 +198,34 @@ describe("AiLinkShareBox（SAI-30 链接查看/复制/降级）", () => {
     vi.stubGlobal("fetch", fetchSpy);
     const writeText = vi.fn().mockResolvedValue(undefined);
     stubClipboard(writeText);
-    const { rerender } = renderBox();
-    fireEvent.click(
-      screen.getByRole("button", { name: "外部读不了？复制本题文字" }),
-    );
-    await waitFor(() =>
-      expect(screen.getByRole("link", { name: /题面圈画第 1 页/ })).toBeTruthy(),
-    );
-    // 重新生成链接：同组件换 URL——旧票据的解析文字/材料清单必须复位
-    rerender(
+    // 生产父级（Composer）以 key=link.url 挂载：URL 变化即重挂复位降级区
+    const KeyedBox = ({ link }: { link: AiLinkShareState }) => (
       <AiLinkShareBox
+        key={link.url}
         questionLabel="第 3 题"
-        link={{
-          ...LINK,
-          url: "https://tutor.example.com/api/public/ai/share/NewToken999",
-        }}
+        link={link}
         sending={false}
         onRegenerate={vi.fn()}
         onRevoke={vi.fn()}
         onRetryCopy={vi.fn().mockResolvedValue(undefined)}
+      />
+    );
+    const { rerender } = render(<KeyedBox link={LINK} />);
+    fireEvent.click(
+      screen.getByRole("button", { name: "外部读不了？复制本题文字" }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("link", { name: /题面圈画第 1 页/ }),
+      ).toBeTruthy(),
+    );
+    // 重新生成链接：换 URL 重挂——旧票据的解析文字/材料清单必须复位
+    rerender(
+      <KeyedBox
+        link={{
+          ...LINK,
+          url: "https://tutor.example.com/api/public/ai/share/NewToken999",
+        }}
       />,
     );
     expect(screen.queryByRole("link", { name: /题面圈画第 1 页/ })).toBeNull();

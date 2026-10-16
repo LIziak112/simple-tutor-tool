@@ -70,8 +70,9 @@ function taskFactText(task: AiTaskPublic): string | null {
   }
 }
 
-/** 快照时间本地呈现（YYYY-MM-DD HH:mm；各任务快照各自保留，不互相覆盖） */
-function formatSnapshotTime(iso: string): string {
+/** 快照时间本地呈现（YYYY-MM-DD HH:mm；各任务快照各自保留，不互相覆盖；
+ * AiLinkShareBox 的生成时刻/有效期同格式共用） */
+export function formatSnapshotTime(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return iso;
   const pad = (value: number) => String(value).padStart(2, "0");

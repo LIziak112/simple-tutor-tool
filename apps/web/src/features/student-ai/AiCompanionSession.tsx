@@ -291,9 +291,11 @@ export function AiCompanionComposer({
           {message}
         </p>
       )}
-      {/* 链接通道结果区（SAI-30）：题级匹配才呈现（换题不携带上一题链接） */}
+      {/* 链接通道结果区（SAI-30）：题级匹配才呈现（换题不携带上一题链接）；
+          key=URL——重新生成即重挂，降级区不残留旧票据解析内容 */}
       {bound && send.linkShare?.questionId === boundQuestionId && (
         <AiLinkShareBox
+          key={send.linkShare.url}
           questionLabel={questionLabel}
           link={send.linkShare}
           sending={sending}

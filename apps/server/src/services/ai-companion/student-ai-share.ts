@@ -409,36 +409,3 @@ export function recordShareTicketViewed(
     { behavior: "immediate" },
   );
 }
-
-// ---------- 学生侧票据状态（SAI-30 链接查看/撤销组件的服务端数据面） ----------
-
-/** 任务当前仍有效的票据摘要（未撤销且未过期；生成时刻与过期时刻） */
-export interface ActiveShareTicketSummary {
-  readonly ticketId: string;
-  readonly createdAt: string;
-  readonly expiresAt: string;
-  readonly viewCount: number;
-}
-
-/** 列出本人任务仍有效的票据（按创建时间倒序；不含 token——明文不可再取） */
-export function listActiveShareTickets(
-  db: Db,
-  input: { readonly studentId: string; readonly taskId: string },
-  options: { now?: Date | string } = {},
-): ActiveShareTicketSummary[] {
-  const nowIso = resolveNowDate(options.now).toISOString();
-  const task = requireOwnTask(db, input.studentId, input.taskId);
-  return db
-    .select()
-    .from(aiShareTickets)
-    .where(eq(aiShareTickets.taskId, task.id))
-    .all()
-    .filter((row) => row.revokedAt === null && row.expiresAt > nowIso)
-    .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
-    .map((row) => ({
-      ticketId: row.id,
-      createdAt: row.createdAt,
-      expiresAt: row.expiresAt,
-      viewCount: row.viewCount,
-    }));
-}

@@ -183,9 +183,9 @@ export interface AiLinkShareState {
 /**
  * 剪贴板写入（模块级纯函数便于替身）：HTTP 非安全上下文（clipboard API
  * 不存在）与权限拒绝/写入失败统一归 false——调用方据实呈现手动复制，
- * 不与「生成失败」混淆。
+ * 不与「生成失败」混淆。AiLinkShareBox 降级复制同款共用。
  */
-async function writeToClipboard(text: string): Promise<boolean> {
+export async function writeToClipboard(text: string): Promise<boolean> {
   try {
     if (navigator.clipboard === undefined) return false;
     await navigator.clipboard.writeText(text);

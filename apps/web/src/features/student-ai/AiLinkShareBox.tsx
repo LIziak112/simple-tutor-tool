@@ -1,6 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import type { AiLinkShareState } from "./use-ai-send-controller";
+import { formatSnapshotTime } from "./AiConversationPanel";
+import {
+  type AiLinkShareState,
+  writeToClipboard,
+} from "./use-ai-send-controller";
 
 /**
  * SAI-30 链接查看/复制/降级组件（B15）：伴学栏链接通道的结果区。
@@ -15,15 +19,9 @@ import type { AiLinkShareState } from "./use-ai-send-controller";
  *   提取文字入剪贴板、解析材料清单渲染下载项；缺件如实说明不伪装下载。
  *   不替换原有普通导出行为（导出本题入口不受影响）。
  * - 本组件不产生「已回信/已收到」口径：外部未写回平台不冒充完成。
+ * - 重新生成（URL 变化）由父级以 key=link.url 挂载复位降级区：旧票据
+ *   解析的文字与材料清单不得残留展示在新链接下方。
  */
-
-/** 时间呈现（YYYY-MM-DD HH:mm；与 AiConversationPanel 同款格式） */
-function formatShareTime(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return iso;
-  const pad = (value: number) => String(value).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
 
 /** 降级解析出的材料条目：就绪附件给下载链接；缺失项只给说明（id 为
  *  解析时生成的稳定标识——列表只渲染不重排，序号即稳定） */
@@ -87,13 +85,6 @@ export function AiLinkShareBox({
   // 只有 ref 同步可见——双击不产生第二次请求（不双记留痕/双写剪贴板）
   const degradeLoadingRef = useRef(false);
 
-  // 链接 URL 变化（重新生成）即复位降级区：旧票据解析出的文字与材料清单
-  // 不得残留展示在新链接下方（旧票据内容与新快照不对应）
-  useEffect(() => {
-    degradeLoadingRef.current = false;
-    setDegrade(DEGRADE_IDLE);
-  }, [link.url]);
-
   const loadDegrade = async (): Promise<void> => {
     if (degradeLoadingRef.current) return;
     degradeLoadingRef.current = true;
@@ -135,15 +126,8 @@ export function AiLinkShareBox({
       .replace(/\n{3,}/g, "\n\n")
       .trim();
     const materials = parseMaterials(html);
-    let copied = false;
-    try {
-      if (navigator.clipboard !== undefined) {
-        await navigator.clipboard.writeText(text);
-        copied = true;
-      }
-    } catch {
-      copied = false;
-    }
+    // 剪贴板写入复用控制器同款（undefined/权限拒绝/异常统一 false——手动复制兜底）
+    const copied = await writeToClipboard(text);
     setDegrade({
       phase: "ok",
       message: copied
@@ -161,8 +145,8 @@ export function AiLinkShareBox({
     >
       <p className="text-xs font-medium">{questionLabel ?? "本题"}的 AI 链接</p>
       <p className="text-xs text-muted-foreground">
-        生成时刻：{formatShareTime(link.snapshotAt)}｜有效期至：
-        {formatShareTime(link.expiresAt)}
+        生成时刻：{formatSnapshotTime(link.snapshotAt)}｜有效期至：
+        {formatSnapshotTime(link.expiresAt)}
       </p>
       <p className="text-xs text-muted-foreground">
         获得链接者可读取本题参考答案、解析与选定材料；链接有有效期且可撤销。
