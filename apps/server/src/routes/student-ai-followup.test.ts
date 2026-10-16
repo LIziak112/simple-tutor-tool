@@ -139,9 +139,9 @@ async function createTaskViaRoute(
     mutationId: randomUUID(),
   });
   expect(res.status).toBe(201);
-  const json = z.object({ data: z.object({ id: z.string() }) }).parse(
-    await res.json(),
-  );
+  const json = z
+    .object({ data: z.object({ id: z.string() }) })
+    .parse(await res.json());
   return json.data.id;
 }
 
@@ -200,11 +200,7 @@ it("replied 任务追问成功：追加本题学生消息、任务回 created �
   expect(texts).not.toContain("哨兵BETA");
 
   // 快照不覆盖：追问不重新装配材料（新稿 = 新任务），快照原文与版本锚定不变
-  const after = w.db
-    .select()
-    .from(aiTasks)
-    .where(eq(aiTasks.id, taskId))
-    .get();
+  const after = w.db.select().from(aiTasks).where(eq(aiTasks.id, taskId)).get();
   if (after === undefined) throw new Error("任务行缺失");
   expect(after.contextSnapshotJson).toBe(before.contextSnapshotJson);
   expect(after.questionRevisionId).toBe(before.questionRevisionId);

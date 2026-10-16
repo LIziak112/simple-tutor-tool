@@ -19,7 +19,9 @@ describe("AiReplyMarkdown 受限渲染（SAI-21 先测③）", () => {
   it("正常 Markdown（列表/粗体/行内与块级公式）照常渲染，公式走 KaTeX", () => {
     const { container } = render(
       <AiReplyMarkdown
-        source={"- 第一步：移项\n- 第二步：代入\n\n设 $x+1=2$，则 $x=1$。\n\n$$\\frac{1}{2}$$"}
+        source={
+          "- 第一步：移项\n- 第二步：代入\n\n设 $x+1=2$，则 $x=1$。\n\n$$\\frac{1}{2}$$"
+        }
       />,
     );
     expect(container.querySelectorAll("li").length).toBe(2);
@@ -49,7 +51,9 @@ describe("AiReplyMarkdown 受限渲染（SAI-21 先测③）", () => {
   it("危险协议链接不可点击：javascript:/data: 降级为普通文字（无 a[href]）", () => {
     const { container } = render(
       <AiReplyMarkdown
-        source={"[点我](javascript:alert(1)) 以及 [数据](data:text/html,<script>)"}
+        source={
+          "[点我](javascript:alert(1)) 以及 [数据](data:text/html,<script>)"
+        }
       />,
     );
     // 清洗层丢弃协议 → 无任何可点击链接，文字保留可读

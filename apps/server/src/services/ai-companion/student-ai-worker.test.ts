@@ -1180,7 +1180,11 @@ describe("SAI-21 worker 追问出站", () => {
       // 追问（同题对话续轮；快照不动）
       const followup = followupStudentAiTask(
         db,
-        { studentId: world.studentId, taskId, question: "第二步为什么要移项？" },
+        {
+          studentId: world.studentId,
+          taskId,
+          question: "第二步为什么要移项？",
+        },
         { now: new Date(T0 + 2000) },
       );
       expect(followup.appended).toBe(true);

@@ -45,10 +45,7 @@ function extractFormulas(source: string): string[] {
 }
 
 /** 节点规模估算（解释性上限：GFM 列表/链接/公式展开后的 DOM 量级） */
-function estimateNodes(
-  source: string,
-  formulas: readonly string[],
-): number {
+function estimateNodes(source: string, formulas: readonly string[]): number {
   const lines = source.split("\n").filter((line) => line.trim() !== "").length;
   const links = (source.match(/\]\(/g) ?? []).length;
   const images = (source.match(/!\[/g) ?? []).length;
@@ -72,9 +69,7 @@ export function inspectAiReplySafety(source: string): AiReplySafety {
       message: "这条回复公式过多，已停止显示以保证页面流畅",
     };
   }
-  if (
-    formulas.some((formula) => formula.length > AI_REPLY_MAX_FORMULA_CHARS)
-  ) {
+  if (formulas.some((formula) => formula.length > AI_REPLY_MAX_FORMULA_CHARS)) {
     return {
       ok: false,
       reason: "formula_size",

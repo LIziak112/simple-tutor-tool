@@ -499,8 +499,9 @@ function lastStudentMessageOf(
 
 /** 本题学生消息数（一轮 = 一条学生提问；AI_TURNS_MAX 上限口径） */
 function studentTurnCountOf(db: Db | QueueTx, taskId: string): number {
-  return messageRowsOf(db, taskId).filter((message) => message.role === "student")
-    .length;
+  return messageRowsOf(db, taskId).filter(
+    (message) => message.role === "student",
+  ).length;
 }
 
 // ---------- 操作与语义 1：创建（幂等 + 配额） ----------
@@ -1226,10 +1227,7 @@ function lastReplyReceipt(
   }
   if (typeof contentHash !== "string") return null;
   const lastStudent = lastStudentMessageOf(db, taskId);
-  if (
-    lastStudent !== undefined &&
-    fact.serverTs < lastStudent.createdAt
-  ) {
+  if (lastStudent !== undefined && fact.serverTs < lastStudent.createdAt) {
     return null; // 追问已发生：旧回执不再代表当前对话状态，不做重放判定
   }
   return { contentHash };
@@ -1902,10 +1900,12 @@ export function followupStudentAiTask(
       const existing = messageRowsOf(asDb(tx), task.id);
       const lastAt =
         existing.length > 0
-          ? existing[existing.length - 1]?.createdAt ?? ""
+          ? (existing[existing.length - 1]?.createdAt ?? "")
           : "";
       const followupAt =
-        now.iso > lastAt ? now.iso : new Date(Date.parse(lastAt) + 1).toISOString();
+        now.iso > lastAt
+          ? now.iso
+          : new Date(Date.parse(lastAt) + 1).toISOString();
       tx.insert(aiMessages)
         .values({
           id: randomUUID(),
