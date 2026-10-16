@@ -38,7 +38,11 @@ export interface McpMountOptions {
  */
 export function createMcpRoutes(options: McpMountOptions) {
   const requireToken = createRequireMcpToken(options.db);
-  return new Hono<McpEnv>().use("*", requireToken).all("/", async (c) => {
+  // 鉴权中间件挂在 "/"（本子应用唯一处理路径）而非 "*"：route("/mcp", …)
+  // 挂载后 "*" 会把 /mcp/* 全部子路径（含 SAI-25 的 /mcp/student）也拦进
+  // 教师鉴权——学生端点会被教师中间件 401。限定 "/" 后教师端点行为不变
+  // （mcp.test.ts 全量回归），子路径路由交还给 app 层。
+  return new Hono<McpEnv>().use("/", requireToken).all("/", async (c) => {
     // 鉴权通过：token 绑定的教师（c.var.mcpTeacher）成为本请求全部工具的域
     const server = createMcpServer({
       db: options.db,

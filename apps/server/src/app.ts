@@ -14,6 +14,7 @@ import { createRequireAnySession } from "./auth/require-any-session";
 import type { Db, DbHandle } from "./db/client";
 import { HttpError } from "./lib/http-error";
 import { createMcpRoutes } from "./mcp/mount";
+import { createStudentMcpRoutes } from "./mcp/student-mount";
 import { createAdminRoutes } from "./routes/admin";
 import { createPublicRoutes } from "./routes/public";
 import { createStudentRoutes } from "./routes/student";
@@ -331,6 +332,20 @@ export function createApp(options: CreateAppOptions) {
         db: options.db,
         dataDir: options.dataDir,
         specDir: options.specDir,
+      }),
+    )
+    // —— 学生 MCP Server（SAI-25，B14）：/mcp/student 挂 SDK Streamable HTTP
+    //    （stateless + JSON），Bearer 学生 mcp token 鉴权（ai_connections 的
+    //    tokenHash 域，与教师 /mcp 凭证物理隔离），Origin 门 + 逐请求实时
+    //    核对（重置/删除/归档/教师域禁用立即失效）；学生工具实例独立构建
+    //    （src/mcp/student-server.ts，教师工具结构上不存在）——挂在教师
+    //    /mcp 之后、静态托管之前（不参与 SPA 回退）。
+    .route(
+      "/mcp/student",
+      createStudentMcpRoutes({
+        db: options.db,
+        dataDir: options.dataDir,
+        publicUrl: options.publicUrl,
       }),
     )
     // —— 媒体图片伺服（媒体管线第二单）：GET/HEAD /blobs/media/<hash>.<ext> ——
