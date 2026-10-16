@@ -358,6 +358,49 @@ describe("useAiSendController（SAI-20 先测 6 条）", () => {
     expect(after.presetId).toBe("check-steps");
   });
 
+it("遗留②专项：任务已建但材料上传失败→明示补传与不计费；同幂等键重试只补传不重复建任务", async () => {
+    const view = renderController();
+    await openOnA(view);
+    await act(async () => {
+      view.result.current.setText("带圈画的问题");
+      view.result.current.toggleMaterial("annotation");
+    });
+    // 上传失败（如 413 预检拒绝）：任务已创建——如实明示而非静默
+    mockedUpload.mockRejectedValueOnce(new Error("413 材料过大"));
+    await act(async () => {
+      await view.result.current.send();
+    });
+    expect(view.result.current.sendState.phase).toBe("failed");
+    expect(view.result.current.sendState.message).toContain("任务已创建");
+    expect(view.result.current.sendState.message).toContain("413 材料过大");
+    expect(view.result.current.sendState.message).toContain("不会重复计费");
+    // 失败保留全部输入（正文与附件选择——与采集失败同口径）
+    const draft = view.result.current.draftOf(QUESTION_A.id);
+    expect(draft.text).toBe("带圈画的问题");
+    expect(draft.selection.annotation).toBe(true);
+    expect(mockedCreate).toHaveBeenCalledTimes(1);
+    // 重试（同正文同选择）：复用同一 mutationId → 服务端幂等重放原任务，
+    // 流程回到上传补传——create 调用数不再增加即「不重复计费动作」
+    await act(async () => {
+      await view.result.current.send();
+    });
+    expect(view.result.current.sendState.phase).toBe("sent");
+    expect(mockedCreate).toHaveBeenCalledTimes(2);
+    const mutationIds = mockedCreate.mock.calls.map(
+      (call) => call[0].mutationId,
+    );
+    expect(mutationIds[1]).toBe(mutationIds[0]);
+    // 补传仍指向同一任务的材料
+    expect(mockedUpload).toHaveBeenCalledTimes(2);
+    expect(mockedUpload.mock.calls[1]?.[0]).toBe(
+      mockedUpload.mock.calls[0]?.[0],
+    );
+    // 成功后正文清空（已随任务发出），选择保留
+    const after = view.result.current.draftOf(QUESTION_A.id);
+    expect(after.text).toBe("");
+    expect(after.selection.annotation).toBe(true);
+  });
+
   it("先测⑥：模式被老师关闭给原因并刷新；换账号途中迟到结果不进入新题", async () => {
     // 模式关闭：发送被拦，给原因，并刷新状态（教师刚改设置立即生效）
     mockedStatus.mockResolvedValue(

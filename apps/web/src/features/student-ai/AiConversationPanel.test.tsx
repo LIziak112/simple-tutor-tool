@@ -635,4 +635,77 @@ describe("AiConversationPanel 回信可见性与追问（SAI-21）", () => {
     expect(screen.getByTestId("ai-task-card-task-loop")).toBeInTheDocument();
     expect(screen.getByText(/这道题怎么入手？/)).toBeInTheDocument();
   });
+
+  it("opened 失败回滚本地标记：不虚报已读，收起再展开重试", async () => {
+    const task = makeTask({
+      id: "task-1",
+      status: "replied",
+      hasReply: true,
+      allowedActions: ["followup"],
+    });
+    vi.mocked(mockedList).mockResolvedValue({ tasks: [task], nextCursor: null });
+    vi.mocked(mockedDetail).mockResolvedValue(
+      detailOf(task, [
+        {
+          id: "m-1",
+          taskId: "task-1",
+          role: "student",
+          contentMd: "这道题怎么入手？",
+          createdAt: "2026-10-16T02:00:00.000Z",
+        },
+        {
+          id: "m-2",
+          taskId: "task-1",
+          role: "assistant",
+          contentMd: "先从定义出发。",
+          createdAt: "2026-10-16T02:01:00.000Z",
+        },
+      ]),
+    );
+    vi.mocked(mockedOpened).mockRejectedValueOnce(new Error("网络中断"));
+    await openBound();
+    fireEvent.click(screen.getByRole("button", { name: "查看回信" }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    // 打开失败不虚报已读：本地已读标记回滚，仍按未读呈现
+    expect(screen.getByText("收到新回复（未读）")).toBeInTheDocument();
+
+    // 收起再展开：重试 opened（这次成功 → 已读）
+    fireEvent.click(screen.getByRole("button", { name: "收起对话" }));
+    vi.mocked(mockedOpened).mockResolvedValue(
+      makeTask({ ...task, replyDeliveredAt: "2026-10-16T06:00:00.000Z" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "查看回信" }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(mockedOpened).toHaveBeenCalledTimes(2);
+    expect(screen.getByText("已查看回复")).toBeInTheDocument();
+  });
+
+  it("轮询错误退避：失败后按 30s（3 倍）间隔重试，退避窗口内不风暴", async () => {
+    vi.mocked(mockedList).mockResolvedValue({ tasks: [], nextCursor: null });
+    await openBound();
+    // t=10s：首次增量查询失败（此后进入 30s 退避）
+    vi.mocked(mockedList).mockRejectedValueOnce(new Error("网络错误"));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+    const afterFail = mockedList.mock.calls.length;
+    // t=20s / t=30s：退避窗口内零新增（若仍按 10s 间隔此处会多发两次）
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+    expect(mockedList.mock.calls.length).toBe(afterFail);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+    expect(mockedList.mock.calls.length).toBe(afterFail);
+    // t=40s：退避期满按 30s 间隔重试（Once 用尽回落成功，不再连续退避）
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+    expect(mockedList.mock.calls.length).toBe(afterFail + 1);
+  });
 });
