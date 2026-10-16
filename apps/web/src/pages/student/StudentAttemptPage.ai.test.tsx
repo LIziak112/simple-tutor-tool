@@ -281,6 +281,37 @@ describe("四来源 AI 伴学参数化矩阵（SAI-22 完成条件①）", () =>
     },
   );
 
+  it("打开时页面尚未定位当前题：未绑定不发状态查询，首次定位即补绑定（打开窗口语义）", async () => {
+    mockedFetch.mockResolvedValue(draftOf(SOURCES[0]));
+    renderPage();
+    await screen.findByRole("button", { name: "交卷" });
+    // 不先滚动：currentQuestionId 为 null → 面板打开呈未绑定，不查本题状态
+    fireEvent.click(screen.getByRole("button", { name: "AI 助教" }));
+    await screen.findByRole("dialog");
+    expect(mockedStatus).not.toHaveBeenCalled();
+    // 打开窗口内首次滚动定位 → 补绑定当前题（绑定由打开动作启动）
+    rectSpy = vi
+      .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+      .mockReturnValue({
+        top: 100,
+        bottom: 300,
+        left: 0,
+        right: 400,
+        width: 400,
+        height: 200,
+        x: 0,
+        y: 100,
+        toJSON: () => ({}),
+      } as DOMRect);
+    fireEvent.scroll(window);
+    await waitFor(() =>
+      expect(mockedStatus).toHaveBeenCalledWith(ATTEMPT_ID, "练习四-1"),
+    );
+    expect(
+      await screen.findByText("第 1 题", { selector: "p" }),
+    ).toBeInTheDocument();
+  });
+
   it.each([
     ["open_study", "开放伴学"],
     ["guided_only", "仅启发"],
