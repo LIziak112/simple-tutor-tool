@@ -2,7 +2,9 @@ import { expect, test } from "@playwright/test";
 import {
   createStudentViaApi,
   getStudentViaApi,
+  TEACHER_PASSWORD,
   teacherApiLogin,
+  teacherLoginViaApi,
   uniqueSuffix,
 } from "./helpers";
 
@@ -66,14 +68,39 @@ async function postRpc(
   };
 }
 
+/**
+ * 建本用例专属教师并切换会话（B18 竞态修复）：POST /api/teacher/api-token
+ * 是覆盖式重置——旧 token 立即失效。此前两用例与全量 e2e 其他 spec 共用默认
+ * 教师（teacherApiLogin），跨 worker 并行时后生成者会踢掉先生成者的 token，
+ * 导致 /mcp 401 偶发（既有 spec 的共享账号设计，非 B18 引入）。最小侵入方案：
+ * 默认教师（首启 setup 即管理员）经 POST /api/admin/teachers 建号，每测登录
+ * 自己的专属教师域再生成 token，重置互不影响；list_students 也只见到本域学生，
+ * 断言更紧。
+ */
+async function setupDedicatedTeacher(
+  request: import("@playwright/test").APIRequestContext,
+): Promise<void> {
+  await teacherApiLogin(request);
+  const loginName = `e2e-mcp-t-${uniqueSuffix()}`;
+  const created = await request.post("/api/admin/teachers", {
+    data: { loginName, password: TEACHER_PASSWORD },
+  });
+  if (!created.ok()) {
+    throw new Error(
+      `管理员建号失败：HTTP ${created.status()} ${await created.text()}`,
+    );
+  }
+  await teacherLoginViaApi(request, loginName, TEACHER_PASSWORD);
+}
+
 test.describe("MCP 工具冒烟（T4.7：initialize / tools/list / list_students）", () => {
   test("教师 token 经 /mcp 完成 initialize → 13 工具清单 → list_students 见本域学生", async ({
     request,
   }) => {
     test.setTimeout(60_000);
 
-    // 教师生成 token + 造一名学生（list_students 的断言对象）
-    await teacherApiLogin(request);
+    // 专属教师域（token 域隔离，见 setupDedicatedTeacher 注释）
+    await setupDedicatedTeacher(request);
     const suffix = uniqueSuffix();
     const studentName = `e2e-mcp生${suffix}`;
     await createStudentViaApi(request, studentName, `e2e-mcp-${suffix}`);
@@ -139,8 +166,9 @@ test.describe("MCP 工具冒烟（T4.7：initialize / tools/list / list_students
 
     // 教师生成 token + 造一名学生（本用例只验链路与结构键，不造作答数据——
     // MCP↔UI 产出等价与多阶段装配细节由服务端 mcp.test.ts/export-service.test.ts
-    // 锁定，这里断言真实 HTTP 链路上 v2 参数可用且返回 pack.json 骨架）
-    await teacherApiLogin(request);
+    // 锁定，这里断言真实 HTTP 链路上 v2 参数可用且返回 pack.json 骨架；
+    // 专属教师域隔离 token，见 setupDedicatedTeacher 注释）
+    await setupDedicatedTeacher(request);
     const suffix = uniqueSuffix();
     const loginName = `e2e-mcpv2-${suffix}`;
     await createStudentViaApi(request, `e2e-mcpv2生${suffix}`, loginName);
