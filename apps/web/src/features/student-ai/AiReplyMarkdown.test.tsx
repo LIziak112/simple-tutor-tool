@@ -78,8 +78,77 @@ describe("AiReplyMarkdown 受限渲染（SAI-21 先测③）", () => {
       />,
     );
     expect(container.querySelector("img")).toBeNull();
+    // 零加载面补强：无 srcset、无内联 style 的 url() 背景加载通道
+    expect(container.querySelector("[srcset]")).toBeNull();
+    expect(container.querySelector("[style*='url(']")).toBeNull();
     expect(container.textContent).toContain("图片不显示");
     expect(container.textContent).toContain("正文继续");
+  });
+
+  it("协议变体不绕过：大小写/制表符/HTML 实体编码的 javascript 均降级为普通文字", () => {
+    const { container } = render(
+      <AiReplyMarkdown
+        source={
+          "[大小写](JaVaScRiPt:alert(1)) 与 [制表符](java\tscript:alert(1)) 与 [实体](&#9;javascript:alert(1))"
+        }
+      />,
+    );
+    // 清洗层按「首个冒号前的完整片段」提协议比对（空白不剥离）——三种
+    // 变体提取到的协议串都不在 http/https/mailto 白名单，href 全部丢弃
+    expect(container.querySelectorAll("a[href]")).toHaveLength(0);
+    expect(container.textContent).toContain("大小写");
+    expect(container.textContent).toContain("制表符");
+    expect(container.textContent).toContain("实体");
+  });
+
+  it("KaTeX 危险命令不执行：\\href/\\includegraphics 不产链接与图片加载（trust 未开）", () => {
+    const { container } = render(
+      <AiReplyMarkdown
+        source={
+          "$\\href{https://evil.example}{点我}$ 与 $\\includegraphics[width=1em]{https://evil.example/x.png}$"
+        }
+      />,
+    );
+    // KaTeX 默认 trust=false：\href/\includegraphics 按未知/禁用命令渲染
+    // 为错误文本，不产出任何 anchor / img / 外链属性
+    expect(container.querySelector("a")).toBeNull();
+    expect(container.querySelector("img")).toBeNull();
+    expect(container.querySelector("[src]")).toBeNull();
+    // xlink:href 属性名含冒号，非法 CSS 属性选择器——按属性名扫描断言更全
+    const xlink = Array.from(container.querySelectorAll("*")).filter((el) =>
+      Array.from(el.attributes).some((attr) => attr.name.includes("xlink")),
+    );
+    expect(xlink).toHaveLength(0);
+  });
+
+  it("原始 HTML 注入面全丢弃：svg onload/form/iframe/details ontoggle 不进 DOM", () => {
+    const { container } = render(
+      <AiReplyMarkdown
+        source={
+          '<svg onload="alert(1)"><path d="M0,0"/></svg>\n\n<form action="https://evil.example"><input type="text"></form>\n\n<iframe src="https://evil.example"></iframe>\n\n<details open ontoggle="alert(1)">内容</details>'
+        }
+      />,
+    );
+    // 白名单里的 svg 仅服务 KaTeX 公式输出；raw HTML 在 remark-rehype 阶段
+    // 即被丢弃（未开 allowDangerousHtml），sanitize 是第二层纵深防御
+    expect(container.querySelector("svg")).toBeNull();
+    expect(container.querySelector("form")).toBeNull();
+    expect(container.querySelector("iframe")).toBeNull();
+    expect(container.querySelector("[ontoggle]")).toBeNull();
+    expect(container.querySelector("[onload]")).toBeNull();
+    expect(container.querySelectorAll("input").length).toBe(0);
+  });
+
+  it("GFM autolink 走同一清洗：https 裸链成链并带 noopener，危险裸文本不成链", () => {
+    const { container } = render(
+      <AiReplyMarkdown
+        source={"访问 https://example.com/page 看看\n\njavascript:alert(1) 只是文字"}
+      />,
+    );
+    const links = container.querySelectorAll("a");
+    expect(links).toHaveLength(1); // javascript: 裸文本不被 autolink（GFM 只识别 http(s)/www/mailto）
+    expect(links[0]?.getAttribute("href")).toBe("https://example.com/page");
+    expect(links[0]?.getAttribute("rel")).toContain("noopener");
   });
 
   it("交互 directive 不执行：渲染为普通文本，无指令宿主/交互组件", () => {
