@@ -258,7 +258,7 @@ it("surface=null：本机已保存底图直接复用，不依赖活题面", asyn
   expect(renderQuestionBaseImage).not.toHaveBeenCalled();
 });
 
-it("surface=null：旧版底图仍返回 legacy，不因缺题面重新渲染", async () => {
+it("surface=null：旧版底图拒绝继续编辑，不因缺题面重新渲染", async () => {
   vi.mocked(fetchAnnotationViewApi).mockResolvedValue({
     base: {
       baseId: "22222222-2222-4222-8222-222222222222",
@@ -271,9 +271,9 @@ it("surface=null：旧版底图仍返回 legacy，不因缺题面重新渲染", 
     doc: null,
     annotation: null,
   });
-  expect(
-    (await prepareQuestionAnnotationBase(session, scope, question, null)).kind,
-  ).toBe("legacy");
+  await expect(
+    prepareQuestionAnnotationBase(session, scope, question, null),
+  ).rejects.toThrow("旧标画布局不再支持");
   expect(renderQuestionBaseImage).not.toHaveBeenCalled();
 });
 
