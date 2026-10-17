@@ -14,6 +14,15 @@ const question: QuestionPublic = {
 };
 
 describe("共享题面", () => {
+  it("题面宽度由所在列决定，不另设固定最大宽度", () => {
+    const { container } = render(<QuestionSurface question={question} />);
+    const surface = container.querySelector<HTMLElement>(
+      '[data-slot="question-surface"]',
+    );
+    expect(surface).toHaveClass("w-full", "min-w-0");
+    expect(surface?.style.maxWidth).toBe("");
+  });
+
   it("内联填空沿用空位顺序与已有答案", () => {
     const onAnswer = vi.fn();
     render(

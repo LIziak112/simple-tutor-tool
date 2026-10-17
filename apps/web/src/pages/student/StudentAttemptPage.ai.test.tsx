@@ -281,15 +281,18 @@ describe("四来源 AI 伴学参数化矩阵（SAI-22 完成条件①）", () =>
     },
   );
 
-  it("打开时页面尚未定位当前题：未绑定不发状态查询，首次定位即补绑定（打开窗口语义）", async () => {
+  it("尚未滚动定位时，题卡 AI 入口直接绑定本题并查询状态", async () => {
     mockedFetch.mockResolvedValue(draftOf(SOURCES[0]));
     renderPage();
     await screen.findByRole("button", { name: "交卷" });
-    // 不先滚动：currentQuestionId 为 null → 面板打开呈未绑定，不查本题状态
+    // 未打开时不查状态；题卡入口已经知道题目，无需等待滚动定位。
+    expect(mockedStatus).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "AI 助教" }));
     await screen.findByRole("dialog");
-    expect(mockedStatus).not.toHaveBeenCalled();
-    // 打开窗口内首次滚动定位 → 补绑定当前题（绑定由打开动作启动）
+    await waitFor(() =>
+      expect(mockedStatus).toHaveBeenCalledWith(ATTEMPT_ID, "练习四-1"),
+    );
+    // 后续滚动继续保持点击时绑定的题目。
     rectSpy = vi
       .spyOn(HTMLElement.prototype, "getBoundingClientRect")
       .mockReturnValue({

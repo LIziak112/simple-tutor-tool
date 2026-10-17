@@ -18,7 +18,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useAttemptEditor } from "@/features/attempt/AttemptEditorContext";
-import { QUESTION_SURFACE_MAX_WIDTH } from "@/features/attempt/QuestionSurface";
 import { attemptMaterialsEditable } from "@/features/attempt/attempt-material-recovery";
 import { useDraftSyncRecovery } from "@/features/attempt/use-draft-sync";
 import { canvasToPngBlob } from "@/features/ink/engine/canvas-png";
@@ -502,13 +501,13 @@ export const QuestionAnnotationOverlay = forwardRef<
       ref={root}
       className="relative mx-auto w-full min-w-0"
       data-slot="annotated-question"
-      style={{ maxWidth: cssWidth ?? QUESTION_SURFACE_MAX_WIDTH }}
+      style={cssWidth ? { maxWidth: cssWidth } : undefined}
     >
       <div
         ref={viewport}
         data-slot="annotation-viewport"
         className={`relative mx-auto w-full min-w-0 overflow-x-auto ${active ? "outline outline-2 outline-offset-4 outline-sky-200" : ""}`}
-        style={{ maxWidth: cssWidth ?? QUESTION_SURFACE_MAX_WIDTH }}
+        style={cssWidth ? { maxWidth: cssWidth } : undefined}
       >
         <div
           className="relative overflow-clip"
