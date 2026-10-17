@@ -37,25 +37,33 @@ export const AiCompanionTrigger = forwardRef<
     controller: AiCompanionLayoutController;
     /** 入口名（作答态「AI 助教」；结果页完成后按 §7.5 显示「AI 复盘」） */
     label?: string | undefined;
+    /** 题卡入口的局部选中态；未传时跟随共享面板状态 */
+    expanded?: boolean | undefined;
     onPress?: (() => void) | undefined;
   }
->(function AiCompanionTrigger({ controller, label = "AI 助教", onPress }, ref) {
+>(function AiCompanionTrigger(
+  { controller, label = "AI 助教", expanded, onPress },
+  ref,
+) {
+  const isExpanded = expanded ?? controller.open;
   return (
     <Button
       ref={ref}
       type="button"
       variant="ghost"
-      className="size-11 shrink-0 p-0"
+      className={`size-11 shrink-0 p-0 ${isExpanded ? "bg-primary/10 text-primary" : ""}`}
       aria-label={label}
       title={label}
-      aria-expanded={controller.open}
+      aria-expanded={isExpanded}
+      aria-pressed={isExpanded}
+      data-ai-selected={isExpanded ? "true" : "false"}
       aria-controls={controller.panelId}
       onClick={() => {
         if (onPress !== undefined) {
           onPress();
           return;
         }
-        if (controller.open) controller.closePanel();
+        if (isExpanded) controller.closePanel();
         else void controller.openPanel();
       }}
     >
@@ -183,11 +191,20 @@ function AiCompanionPanelBody({
       </section>
       <section
         aria-label="本题对话记录"
-        className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-2"
+        data-slot="ai-reply-workspace"
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-muted/20 px-3 py-3"
       >
-        {conversation ?? (
-          <p className="text-xs text-muted-foreground">暂无对话记录</p>
-        )}
+        <div className="flex min-h-40 flex-col overflow-hidden rounded-lg border bg-card shadow-sm">
+          <div className="flex items-center justify-between border-b px-3 py-2">
+            <h3 className="text-sm font-semibold">AI 回复与进展</h3>
+            <span className="text-xs text-muted-foreground">本题</span>
+          </div>
+          <div className="min-h-0 flex-1 px-3 py-3">
+            {conversation ?? (
+              <p className="text-xs text-muted-foreground">暂无对话记录</p>
+            )}
+          </div>
+        </div>
       </section>
     </div>
   );

@@ -136,7 +136,12 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
       ref={triggerRef}
       controller={controller}
       label="AI 助教"
+      expanded={controller.open && send.boundQuestionId === questionId}
       onPress={() => {
+        if (controller.open && send.boundQuestionId === questionId) {
+          controller.closePanel();
+          return;
+        }
         void openForQuestion(questionId);
       }}
     />

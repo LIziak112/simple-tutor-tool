@@ -94,6 +94,32 @@ function RailHarness({
   );
 }
 
+function TriggerPairHarness() {
+  const railRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const editor = useRef({ flush: vi.fn(async () => {}) });
+  const controller = useAiCompanionLayout({
+    containerRef: railRef,
+    editor: editor.current,
+    currentQuestionId: "q1",
+  });
+  return (
+    <div ref={railRef}>
+      <AiCompanionTrigger
+        ref={triggerRef}
+        controller={controller}
+        label="第 1 题 AI 助教"
+        expanded={controller.open}
+      />
+      <AiCompanionTrigger
+        controller={controller}
+        label="第 2 题 AI 助教"
+        expanded={false}
+      />
+    </div>
+  );
+}
+
 const openViaTrigger = async () => {
   await act(async () => {
     fireEvent.click(screen.getByRole("button", { name: "AI 助教" }));
@@ -298,6 +324,8 @@ describe("SAI-19 伴学栏视图壳", () => {
     const conversation = screen.getByRole("region", {
       name: "本题对话记录",
     });
+    expect(conversation).toHaveAttribute("data-slot", "ai-reply-workspace");
+    expect(within(conversation).getByText("AI 回复与进展")).toBeInTheDocument();
     // 合成子内容完整呈现（空间测试），不截断丢失
     expect(within(conversation).getAllByRole("listitem").length).toBe(30);
     expect(
@@ -309,6 +337,26 @@ describe("SAI-19 伴学栏视图壳", () => {
     expect(
       screen.getByRole("region", { name: "通道与模式" }),
     ).toBeInTheDocument();
+  });
+
+  it("题卡入口选中态按题目局部计算，重复点击当前题可取消", async () => {
+    render(<TriggerPairHarness />);
+    const first = screen.getByRole("button", { name: "第 1 题 AI 助教" });
+    const second = screen.getByRole("button", { name: "第 2 题 AI 助教" });
+    expect(first).toHaveAttribute("aria-pressed", "false");
+    expect(second).toHaveAttribute("aria-pressed", "false");
+
+    await act(async () => {
+      fireEvent.click(first);
+    });
+    expect(first).toHaveAttribute("aria-pressed", "true");
+    expect(second).toHaveAttribute("aria-pressed", "false");
+
+    await act(async () => {
+      fireEvent.click(first);
+    });
+    expect(first).toHaveAttribute("aria-pressed", "false");
+    expect(second).toHaveAttribute("aria-pressed", "false");
   });
 
   it("未绑定题目时面板如实显示未绑定，不虚构题号", async () => {
