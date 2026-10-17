@@ -166,7 +166,7 @@ describe("SAI-16 连接管理服务", () => {
     expect(JSON.stringify(list[0])).not.toContain("ciphertext");
   });
 
-  it("mcp 创建：token 高熵一次性返回，库内只存分用途哈希", () => {
+  it("mcp 创建：Token 可重复读取，库内保留密文与分用途哈希", () => {
     const { db, studentId } = world();
     const created = createStudentAiConnection(db, {
       studentId,
@@ -186,6 +186,15 @@ describe("SAI-16 连接管理服务", () => {
     );
     // 认证：正确 token 命中，错 token / 学生登录 linkToken 均查不到（分用途）
     const token = created.credential?.token ?? "";
+    expect(created.connection).toMatchObject({ token });
+    expect(listStudentAiConnections(db, studentId, SECRET)[0]).toMatchObject({
+      token,
+    });
+    expect(
+      listStudentAiConnections(db, studentId, "33".repeat(32))[0],
+    ).toMatchObject({
+      token: null,
+    });
     expect(findActiveMcpConnectionByToken(db, token)).toEqual({
       id: created.connection.id,
       studentId,
@@ -197,6 +206,43 @@ describe("SAI-16 连接管理服务", () => {
       .where(eq(students.id, studentId))
       .get()?.linkToken;
     expect(findActiveMcpConnectionByToken(db, linkToken ?? "")).toBeNull();
+    // 历史记录只有哈希：保持原认证可用，不自动更换凭证。
+    const config = JSON.parse(row?.configJson ?? "{}");
+    db.update(aiConnections)
+      .set({
+        configJson: JSON.stringify({
+          tokenHash: config.tokenHash,
+          tokenFingerprint: config.tokenFingerprint,
+        }),
+      })
+      .where(eq(aiConnections.id, created.connection.id))
+      .run();
+    expect(listStudentAiConnections(db, studentId, SECRET)[0]).toMatchObject({
+      token: null,
+    });
+    expect(findActiveMcpConnectionByToken(db, token)?.studentId).toBe(
+      studentId,
+    );
+    const reset = patchStudentAiConnection(db, {
+      studentId,
+      connectionId: created.connection.id,
+      rootSecret: SECRET,
+      request: { channel: "mcp", resetToken: true },
+    });
+    expect(listStudentAiConnections(db, studentId, SECRET)[0]).toMatchObject({
+      token: reset.credential?.token,
+    });
+    expect(findActiveMcpConnectionByToken(db, token)).toBeNull();
+    patchStudentAiConnection(db, {
+      studentId,
+      connectionId: created.connection.id,
+      rootSecret: SECRET,
+      request: { channel: "mcp", isDefault: true },
+    });
+    expect(listStudentAiConnections(db, studentId, SECRET)[0]).toMatchObject({
+      token: reset.credential?.token,
+      isDefault: true,
+    });
   });
 
   it("link 创建：defaultValidHours 缺省取契约默认；重复通道 409；默认互斥跨通道唯一", () => {

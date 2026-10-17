@@ -312,7 +312,7 @@ it("公开任务视图不含快照原文、密钥、租约或文件路径", () =
   ).toBe(false);
 });
 
-it("公开连接器只有指纹；明文凭证只在独立的首次凭证 schema", () => {
+it("本人连接设置可读取 MCP Token，API Key 仍不允许回显", () => {
   const parsedConnection = aiConnectionPublicSchema.parse(validConnection);
   expect(
     parsedConnection.channel === "inapp" && parsedConnection.keyFingerprint,
@@ -321,7 +321,7 @@ it("公开连接器只有指纹；明文凭证只在独立的首次凭证 schema
     aiConnectionPublicSchema.safeParse({ ...validConnection, apiKey: "sk-x" })
       .success,
   ).toBe(false);
-  // mcp 通道只读回显 token 指纹，明文 token 混入即拒绝
+  // 本人 MCP 连接设置允许完整 Token。
   expect(
     aiConnectionPublicSchema.safeParse({
       id: validConnection.id,
@@ -334,7 +334,7 @@ it("公开连接器只有指纹；明文凭证只在独立的首次凭证 schema
       updatedAt: "2026-10-15T08:00:00.000Z",
       token: "plaintext",
     }).success,
-  ).toBe(false);
+  ).toBe(true);
   // link 通道合法
   expect(
     aiConnectionPublicSchema.safeParse({
@@ -631,7 +631,7 @@ it("连接更新请求：按通道判别，strict 拒绝未知键与他通道字
   ).toBe("inapp");
 });
 
-it("连接 mutate 响应：一次性凭证只在 data 出现，视图混入明文即拒绝", () => {
+it("连接 mutate 响应：本人 MCP 设置允许完整 Token，其他通道仍拒绝凭证", () => {
   const mcpView = {
     id: "4f2c6d90-1c2e-4f6a-9b3d-000000000001",
     channel: "mcp",
@@ -652,7 +652,7 @@ it("连接 mutate 响应：一次性凭证只在 data 出现，视图混入明�
       connection: { ...mcpView, token: "leak" },
       credential: null,
     }).success,
-  ).toBe(false);
+  ).toBe(true);
   // PATCH 响应同形（mcp 重置时 credential 一次性返回）
   expect(
     aiConnectionPatchDataSchema.parse({

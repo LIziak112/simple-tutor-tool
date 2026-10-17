@@ -4,7 +4,15 @@ import { join, resolve } from "node:path";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import { AiConnectionManager } from "./AiConnectionManager";
 
 /**
@@ -150,25 +158,36 @@ function renderManager(client: QueryClient, search = "") {
 }
 
 let env: Awaited<ReturnType<typeof makeEnv>>;
+const clients: QueryClient[] = [];
+
+// 真实服务器首次加载包含所有路由；独立预热，不占用单条交互测试的时间预算。
+beforeAll(async () => {
+  await import("../../../../server/src/app");
+}, 60_000);
 
 beforeEach(async () => {
   env = await makeEnv();
 });
 
 afterEach(() => {
+  for (const client of clients.splice(0)) client.clear();
+  env?.db.$client.close();
   vi.unstubAllGlobals();
 });
 
 function newClient(): QueryClient {
-  return new QueryClient({
+  const client = new QueryClient({
     defaultOptions: {
       queries: { retry: false },
       mutations: { retry: false },
     },
   });
+  clients.push(client);
+  return client;
 }
 
-describe("SAI-18 真实路由联调(学生连接设置)", () => {
+// 真实连接探针本身有 10 秒出站上限，测试预算覆盖探针与界面回执。
+describe("SAI-18 真实路由联调(学生连接设置)", { timeout: 30_000 }, () => {
   it("get 空列表 → 创建 inapp 落库无明文 → 指纹回显 → 删除软删", async () => {
     const cookie = await studentCookieOf(env, "student-sai18-a");
     installFetchStub(env.app, cookie);

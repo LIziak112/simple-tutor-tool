@@ -3,6 +3,7 @@ import {
   chatCompletionJson,
   FAKE_AI_BASE_URL,
   FAKE_AI_MODEL,
+  fakeAiApiKey,
   fakeAiControl,
 } from "./fake-ai-provider";
 import {
@@ -86,8 +87,7 @@ async function makeWorld(
 }
 
 test.describe("SAI-33 性能采样（布局开合 / 轮询重复渲染 / 保存延迟）", () => {
-  // 两浏览器并行各自独立世界；假供应商剧本按本题文本过滤（共享控制端的
-  // FIFO 剧本可能被对方 worker 消费，谓词全部带本 run 后缀）
+  // 两浏览器独立世界与供应商会话；同题内容谓词继续验证出站对应关系。
   test.describe.configure({ mode: "serial" });
 
   test("同一合成场景：无 AI 相与任务在途相的布局/轮询/保存采样", async ({
@@ -236,7 +236,7 @@ test.describe("SAI-33 性能采样（布局开合 / 轮询重复渲染 / 保存�
           channel: "inapp",
           baseUrl: FAKE_AI_BASE_URL,
           model: FAKE_AI_MODEL,
-          apiKey: "e2e-fake-key",
+          apiKey: fakeAiApiKey(),
           isDefault: true,
         },
       });

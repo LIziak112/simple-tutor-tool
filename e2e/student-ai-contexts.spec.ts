@@ -3,6 +3,7 @@ import {
   chatCompletionJson,
   FAKE_AI_BASE_URL,
   FAKE_AI_MODEL,
+  fakeAiApiKey,
   fakeAiControl,
 } from "./fake-ai-provider";
 import {
@@ -158,7 +159,7 @@ async function connectInapp(
       channel: "inapp",
       baseUrl: FAKE_AI_BASE_URL,
       model: FAKE_AI_MODEL,
-      apiKey: "e2e-fake-key",
+      apiKey: fakeAiApiKey(),
       isDefault: true,
     },
   });
@@ -166,7 +167,7 @@ async function connectInapp(
 }
 
 test.describe("SAI-33 四来源与结果页共存", () => {
-  // 串行：共享同一假供应商控制端（捕获/剧本是全局 FIFO）
+  // 组内顺序运行；供应商状态按用例凭据隔离，跨文件可并行。
   test.describe.configure({ mode: "serial" });
 
   test("课程练习与错题重练：作答中求助出站含答案，完成后复盘可用", async ({

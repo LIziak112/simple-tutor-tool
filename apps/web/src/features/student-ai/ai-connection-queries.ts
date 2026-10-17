@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   AiConnectionCreateData,
   AiConnectionCreateRequest,
+  AiConnectionListData,
   AiConnectionPatchRequest,
 } from "@tutor/contract";
 import {
@@ -43,21 +44,19 @@ export function useStudentAiConnections() {
 function useInvalidateConnections() {
   const queryClient = useQueryClient();
   return (data: AiConnectionCreateData) => {
-    queryClient.setQueryData(studentAiConnectionsKey, (prev: unknown) => {
-      // 列表缓存未命中(如首进页面直接保存)时不强行拼装,留给失效重取
-      if (prev === undefined) return undefined;
-      const list = prev as { connections: unknown[] };
-      const others = list.connections.filter(
-        (item) =>
-          (item as { id?: string }).id !== data.connection.id &&
-          // isDefault 学生维度跨通道唯一:新默认行落下后其余行失默认位
-          !(
-            data.connection.isDefault &&
-            (item as { isDefault?: boolean }).isDefault
-          ),
-      );
-      return { connections: [...others, data.connection] };
-    });
+    queryClient.setQueryData<AiConnectionListData>(
+      studentAiConnectionsKey,
+      (prev) => {
+        // 列表缓存未命中(如首进页面直接保存)时不强行拼装,留给失效重取
+        if (prev === undefined) return undefined;
+        const others = prev.connections
+          .filter((item) => item.id !== data.connection.id)
+          .map((item) =>
+            data.connection.isDefault ? { ...item, isDefault: false } : item,
+          );
+        return { connections: [...others, data.connection] };
+      },
+    );
     void queryClient.invalidateQueries({ queryKey: studentAiConnectionsKey });
   };
 }

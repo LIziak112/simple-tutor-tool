@@ -413,12 +413,22 @@ describe("SAI-32 矩阵维度 6：输入/网络边界", () => {
     const { data } = (await share.json()) as { data: { ticketUrl: string } };
     const page = await w.app.request(new URL(data.ticketUrl).pathname);
     expect(await page.text()).not.toContain(secret);
-    // 对照：mcp 通道 token 随创建响应一次性下发（产品语义），读出口不回
+    // 本人连接设置是凭据查看入口；任务、日志、分享等出口仍不带 Token。
     const token = await w.createMcpToken();
     const list = await shellOf(
       await jsonViaApp(w.app, w.cookie1, "/api/student/ai/connections", "GET"),
     );
-    expect(list.raw).not.toContain(token);
+    expect(list.raw).toContain(token);
+    const taskList = await jsonViaApp(
+      w.app,
+      w.cookie1,
+      "/api/student/ai/tasks",
+      "GET",
+    );
+    expect(await taskList.text()).not.toContain(token);
+    expect(w.logs.join("\n")).not.toContain(token);
+    const sharedAgain = await w.app.request(new URL(data.ticketUrl).pathname);
+    expect(await sharedAgain.text()).not.toContain(token);
   });
 
   it("D6-06 票据有效期输入边界：负数/超上限/非整数拒绝，合法值生成到期时间", async () => {

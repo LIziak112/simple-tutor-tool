@@ -1,5 +1,5 @@
 import { createServer, type Server } from "node:http";
-import type { APIRequestContext } from "@playwright/test";
+import { type APIRequestContext, test } from "@playwright/test";
 
 /**
  * SAI-33（B18）假 AI 供应商：OpenAI 兼容端点 + 控制端，同一监听
@@ -75,14 +75,21 @@ export interface FakeAiControl {
   ) => Promise<FakeAiCapturedRequest>;
 }
 
+/** 每个用例（含浏览器、worker 与重试）使用独立凭据作为假供应商会话。 */
+export function fakeAiApiKey(): string {
+  const info = test.info();
+  return `e2e-fake-${info.testId}-${info.workerIndex}-${info.retry}`;
+}
+
 /** 拿控制端句柄（同一 request 上下文复用连接） */
 export function fakeAiControl(request: APIRequestContext): FakeAiControl {
+  const scope = encodeURIComponent(fakeAiApiKey());
   /** 拉一次捕获列表（不缓存——断言必须反映控制端当下的真实状态） */
   const fetchRequests = async (
     since?: number,
   ): Promise<readonly FakeAiCapturedRequest[]> => {
     const res = await request.get(
-      `${CONTROL_URL}/requests${since !== undefined ? `?since=${since}` : ""}`,
+      `${CONTROL_URL}/requests?scope=${scope}${since !== undefined ? `&since=${since}` : ""}`,
     );
     if (!res.ok()) {
       throw new Error(`读取捕获出站失败：HTTP ${res.status()}`);
@@ -108,13 +115,15 @@ export function fakeAiControl(request: APIRequestContext): FakeAiControl {
       return list.filter((item) => since === undefined || item.seq > since);
     },
     async script(entry) {
-      const res = await request.post(`${CONTROL_URL}/script`, { data: entry });
+      const res = await request.post(`${CONTROL_URL}/script?scope=${scope}`, {
+        data: entry,
+      });
       if (!res.ok()) {
         throw new Error(`剧本投递失败：HTTP ${res.status()}`);
       }
     },
     async reset() {
-      const res = await request.post(`${CONTROL_URL}/reset`);
+      const res = await request.post(`${CONTROL_URL}/reset?scope=${scope}`);
       if (!res.ok()) {
         throw new Error(`假供应商复位失败：HTTP ${res.status()}`);
       }
@@ -155,10 +164,12 @@ export function chatCompletionJson(content: string): string {
 /** 启动假 AI 供应商（OpenAI 兼容端点 + 控制端同一监听），返回关闭句柄 */
 export async function startFakeAiProvider(
   port: number = CONTROL_PORT,
-): Promise<() => Promise<void>> {
+): Promise<(() => Promise<void>) & { url: string }> {
   let seq = 0;
-  const captured: FakeAiCapturedRequest[] = [];
-  const scripted: FakeAiScript[] = [];
+  const sessions = new Map<
+    string,
+    { captured: FakeAiCapturedRequest[]; scripted: FakeAiScript[] }
+  >();
 
   const server: Server = createServer((req, res) => {
     const chunks: Buffer[] = [];
@@ -166,6 +177,16 @@ export async function startFakeAiProvider(
     req.on("end", () => {
       const url = new URL(req.url ?? "/", `http://127.0.0.1:${port}`);
       const bodyText = Buffer.concat(chunks).toString("utf8");
+      const scope =
+        url.searchParams.get("scope") ??
+        req.headers.authorization?.replace(/^Bearer /, "") ??
+        "unscoped";
+      let session = sessions.get(scope);
+      if (session === undefined) {
+        session = { captured: [], scripted: [] };
+        sessions.set(scope, session);
+      }
+      const { captured, scripted } = session;
 
       // —— 控制 API（spec 侧断言/编程入口）——
       if (req.method === "GET" && url.pathname === "/health") {
@@ -257,8 +278,14 @@ export async function startFakeAiProvider(
       resolve();
     });
   });
-  return () =>
-    new Promise<void>((resolve) => {
-      server.close(() => resolve());
-    });
+  const address = server.address();
+  if (address === null || typeof address === "string")
+    throw new Error("假供应商未获得监听端口");
+  return Object.assign(
+    () =>
+      new Promise<void>((resolve) => {
+        server.close(() => resolve());
+      }),
+    { url: `http://127.0.0.1:${address.port}` },
+  );
 }

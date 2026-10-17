@@ -3,6 +3,7 @@ import {
   chatCompletionJson,
   FAKE_AI_BASE_URL,
   FAKE_AI_MODEL,
+  fakeAiApiKey,
   fakeAiControl,
 } from "./fake-ai-provider";
 import {
@@ -142,9 +143,7 @@ async function ensureAttemptId(
 }
 
 test.describe("SAI-33 学生端 AI 全链（页内通道）", () => {
-  // 串行执行：4 个用例共享同一个假供应商控制端（127.0.0.1:8898），
-  // 并行会互相清空捕获/抢消费剧本；AI 任务链路含 worker 轮询与回信窗口，
-  // 串行也避免同屏多浏览器的机器抖动
+  // 组内顺序运行；跨文件和浏览器的剧本、捕获、重置按用例凭据隔离。
   test.describe.configure({ mode: "serial" });
 
   test("教师设置→学生连接→作答求助→回信追问→交卷复盘→教师记录", async ({
@@ -223,7 +222,7 @@ test.describe("SAI-33 学生端 AI 全链（页内通道）", () => {
       await page.getByRole("radio", { name: "页内 AI" }).check();
       await page.getByLabel("接口地址").fill(FAKE_AI_BASE_URL);
       await page.getByLabel("模型名称").fill(FAKE_AI_MODEL);
-      await page.getByLabel("API Key").fill("e2e-fake-key");
+      await page.getByLabel("API Key").fill(fakeAiApiKey());
       await page.getByLabel("设为默认连接").check();
       await page.getByRole("button", { name: "保存连接" }).click();
       await expect(page.getByText("连接已保存").first()).toBeVisible();
@@ -263,7 +262,7 @@ test.describe("SAI-33 学生端 AI 全链（页内通道）", () => {
       // 鉴权头按连接密钥携带（不进消息体）
       const authHeader =
         outbound1.headers.authorization ?? outbound1.headers.Authorization;
-      expect(authHeader).toBe("Bearer e2e-fake-key");
+      expect(authHeader).toBe(`Bearer ${fakeAiApiKey()}`);
 
       // 回信到达会话面板（轮询 ≤10s + worker 2s 一轮）：未读回信折叠为
       // 「查看回信」按钮，点开后正文进入对话记录（受限渲染）
@@ -378,7 +377,7 @@ test.describe("SAI-33 学生端 AI 全链（页内通道）", () => {
           channel: "inapp",
           baseUrl: FAKE_AI_BASE_URL,
           model: FAKE_AI_MODEL,
-          apiKey: "e2e-fake-key",
+          apiKey: fakeAiApiKey(),
           isDefault: true,
         },
       });
@@ -589,7 +588,7 @@ test.describe("SAI-33 学生端 AI 全链（页内通道）", () => {
           channel: "inapp",
           baseUrl: FAKE_AI_BASE_URL,
           model: FAKE_AI_MODEL,
-          apiKey: "e2e-fake-key",
+          apiKey: fakeAiApiKey(),
           isDefault: true,
         },
       });

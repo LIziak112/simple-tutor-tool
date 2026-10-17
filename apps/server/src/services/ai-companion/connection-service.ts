@@ -18,6 +18,7 @@ import { HttpError } from "../../lib/http-error.ts";
 import {
   credentialFingerprint,
   openApiKey,
+  type SealedApiKey,
   sealApiKey,
 } from "./connection-cipher.ts";
 import { parseOutboundBaseUrl } from "./outbound-target.ts";
@@ -31,8 +32,8 @@ import { appendAiFact } from "./student-ai-audit.ts";
  * 学生 AI 连接管理服务（SAI-16，B00 §5.1 表 3 + §7「Key 保存」）。
  *
  * 安全口径（B08 攻击用例表逐行落地的服务层部分）：
- * - secret：明文 Key 只进 sealApiKey 一次；明文 MCP token 只在创建/重置
- *   响应出现一次；库内 configJson 只存密文/哈希/指纹，读接口只回指纹；
+ * - secret：API Key 只写不读；MCP Token 加密保存在 configJson，
+ *   本人连接设置可持续读取，认证沿用独立哈希；其他出口不返回凭据；
  * - key：解密失败统一置 needs_rekey（可解释、可重填恢复），测试连接对
  *   needs_rekey 行直接返回不出站（不无限重试撞明文）；
  * - SSRF 入口：创建/更新 inapp 的 baseUrl 先过 parseOutboundBaseUrl 静态
@@ -63,6 +64,8 @@ interface InappConnectionConfig {
 interface McpConnectionConfig {
   readonly tokenHash: string;
   readonly tokenFingerprint: string;
+  /** 可选以兼容只保存哈希的历史连接；不影响现有认证。 */
+  readonly tokenSealed?: SealedApiKey;
 }
 
 interface LinkConnectionConfig {
@@ -110,8 +113,11 @@ function guardBaseUrl(baseUrl: string): string {
   }
 }
 
-/** 连接行 → 公开视图（只回指纹；configJson 不出服务层） */
-function connectionViewOf(row: AiConnectionRow): AiConnectionPublic {
+/** 连接行 → 本人设置视图；API Key 与内部密文不返回。 */
+function connectionViewOf(
+  row: AiConnectionRow,
+  rootSecret?: string,
+): AiConnectionPublic {
   const base = {
     id: row.id,
     isDefault: row.isDefault,
@@ -133,10 +139,18 @@ function connectionViewOf(row: AiConnectionRow): AiConnectionPublic {
   }
   if (row.channel === "mcp") {
     const config = JSON.parse(row.configJson) as McpConnectionConfig;
+    const opened =
+      rootSecret !== undefined && config.tokenSealed !== undefined
+        ? openApiKey(rootSecret, config.tokenSealed)
+        : null;
     return {
       ...base,
       channel: "mcp",
       tokenFingerprint: config.tokenFingerprint,
+      token:
+        opened?.ok === true && hashMcpToken(opened.key) === config.tokenHash
+          ? opened.key
+          : null,
     };
   }
   const config = JSON.parse(row.configJson) as LinkConnectionConfig;
@@ -197,6 +211,7 @@ function assignDefault(db: Db, studentId: string, connectionId: string): void {
 export function listStudentAiConnections(
   db: Db,
   studentId: string,
+  rootSecret?: string,
 ): AiConnectionPublic[] {
   return db
     .select()
@@ -208,7 +223,7 @@ export function listStudentAiConnections(
       ),
     )
     .all()
-    .map(connectionViewOf);
+    .map((row) => connectionViewOf(row, rootSecret));
 }
 
 // ---------- 页内派发连接解析（SAI-17 worker 消费，纯增不改既有语义） ----------
@@ -264,7 +279,7 @@ export function findDispatchInappConnection(
 
 // ---------- 创建 ----------
 
-/** POST /ai/connections：三通道创建（Key 即时密封；mcp token 一次性返回） */
+/** POST /ai/connections：三通道创建，MCP Token 同时保留密文与认证哈希。 */
 export function createStudentAiConnection(
   db: Db,
   input: {
@@ -316,6 +331,7 @@ export function createStudentAiConnection(
     const config: McpConnectionConfig = {
       tokenHash: hashMcpToken(token),
       tokenFingerprint: credentialFingerprint(token),
+      tokenSealed: sealApiKey(rootSecret, token),
     };
     configJson = JSON.stringify(config);
     credential = { token };
@@ -344,7 +360,7 @@ export function createStudentAiConnection(
     assignDefault(db, studentId, id);
   }
   const row = loadActiveConnection(db, studentId, id);
-  return { connection: connectionViewOf(row), credential };
+  return { connection: connectionViewOf(row, rootSecret), credential };
 }
 
 // ---------- 更新 ----------
@@ -406,13 +422,15 @@ export function patchStudentAiConnection(
     const config = JSON.parse(row.configJson) as McpConnectionConfig;
     let tokenHash = config.tokenHash;
     let tokenFingerprint = config.tokenFingerprint;
+    let tokenSealed = config.tokenSealed;
     if (request.resetToken === true) {
       const token = generateMcpToken();
       tokenHash = hashMcpToken(token);
       tokenFingerprint = credentialFingerprint(token);
+      tokenSealed = sealApiKey(rootSecret, token);
       credential = { token };
     }
-    configJson = JSON.stringify({ tokenHash, tokenFingerprint });
+    configJson = JSON.stringify({ tokenHash, tokenFingerprint, tokenSealed });
   } else {
     const config = JSON.parse(row.configJson) as LinkConnectionConfig;
     configJson = JSON.stringify({
@@ -437,7 +455,7 @@ export function patchStudentAiConnection(
       .run();
   }
   const updated = loadActiveConnection(db, studentId, connectionId);
-  return { connection: connectionViewOf(updated), credential };
+  return { connection: connectionViewOf(updated, rootSecret), credential };
 }
 
 // ---------- 删除 ----------

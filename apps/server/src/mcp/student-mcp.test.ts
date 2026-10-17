@@ -133,7 +133,7 @@ const INIT_REQUEST = { jsonrpc: "2.0", id: 1, method: "initialize" } as const;
 // ---------- 先测①：鉴权防探测四态 + 撤销 / 归档 / 教师域实时失效 ----------
 
 describe("SAI-25 学生 MCP 鉴权（防探测 + 实时失效）", () => {
-  it("无 / 错 token → 401 同一文案 + WWW-Authenticate；明文 token 一次性不可再取", async () => {
+  it("无 / 错 token → 401 同一文案；本人连接设置可再次查看 Token", async () => {
     const env = await makeEnv();
     const none = await postStudentRpc(env, {
       ...INIT_REQUEST,
@@ -154,12 +154,12 @@ describe("SAI-25 学生 MCP 鉴权（防探测 + 实时失效）", () => {
     const text = JSON.stringify(noneBody);
     expect(text).not.toContain(env.token);
     expect(text).not.toContain(env.token.slice(0, 12));
-    // 明文凭证不能通过普通查询再取得：列表只有指纹
+    // 本人连接设置是经授权的 Token 查看入口，不改变 MCP 鉴权边界。
     const list = await env.app.request("/api/student/ai/connections", {
       headers: { cookie: env.studentCookie },
     });
     const listText = await list.text();
-    expect(listText).not.toContain(env.token);
+    expect(listText).toContain(env.token);
     expect(listText).toContain("tokenFingerprint");
     // 有效 token 经真实 SDK 客户端可完成 initialize
     const client = await connectStudentClient(env, env.token);

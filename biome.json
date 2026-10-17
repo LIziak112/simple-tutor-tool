@@ -8,6 +8,9 @@
   "files": {
     "includes": [
       "**",
+      "!!.codex",
+      "!!.agents",
+      "!!.workbuddy-ai",
       "!apps/server/src/db/migrations",
       "!docs/dsl/schema",
       "!dsl-kit/schema",

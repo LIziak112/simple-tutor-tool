@@ -1579,7 +1579,7 @@ export const aiPolicyOverrides = sqliteTable(
 /**
  * 学生 AI 连接器（§5.1 表 3）：页内直连 / 远程 MCP / 上下文链接三通道配置。
  * - configJson 按通道存不同形态（inapp: baseUrl/model/keyCiphertext/keyIv/
- *   keyTag/keyFingerprint；mcp: tokenHash/tokenFingerprint；link: 偏好如
+ *   keyTag/keyFingerprint；mcp: tokenHash/tokenFingerprint/可选 tokenSealed；link: 偏好如
  *   defaultValidHours）——明文凭证只写不读，读取层只回指纹（契约
  *   aiConnectionPublicSchema）；
  * - archivedAt：归档（软删语义，历史任务引用不受影响）；

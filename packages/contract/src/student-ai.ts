@@ -13,7 +13,7 @@ import { aiTeachingModeSchema } from "./student-ai-policy.ts";
  *   教师私注（teacherComment）不属于任何快照或载荷 schema（strict 拒绝）。
  * - aiTaskPublicSchema / aiConnectionPublicSchema 是学生 Cookie 会话公开视图：
  *   不含快照原文、教师模板正文、密钥、租约秘密、内部文件路径。
- * - 明文凭证只出现在 aiConnectionFirstCredentialSchema（创建/重置响应一次）。
+ * - MCP Token 仅在本人连接设置视图及创建/重置凭证响应出现。
  */
 
 // ---------- 限额常量（B00 §9 限额表契约单源，D7 已定案） ----------
@@ -349,9 +349,8 @@ export const aiImageCapabilitySchema = z.enum([
 export type AiImageCapability = z.infer<typeof aiImageCapabilitySchema>;
 
 /**
- * 连接器公开视图（学生 Cookie 会话）：只含指纹，绝无明文 Key/Token、
- * 密文列、租约或内部路径。inapp 的明文 Key 只写不读；mcp 的明文 token
- * 仅创建/重置响应返回一次（aiConnectionFirstCredentialSchema）。
+ * 本人连接设置视图（学生 Cookie 会话）：MCP Token 可持续查看与复制；
+ * API Key 仍只写不读。密文列、租约和内部路径不进入响应。
  */
 export const aiConnectionPublicSchema = z.discriminatedUnion("channel", [
   z
@@ -376,6 +375,8 @@ export const aiConnectionPublicSchema = z.discriminatedUnion("channel", [
       channel: z.literal("mcp"),
       /** 学生受限 token 指纹（只读回显） */
       tokenFingerprint: z.string().min(1),
+      /** 本人可复制的完整 Token；旧哈希或无法解密时为 null，旧响应可缺省。 */
+      token: z.string().min(1).nullable().optional(),
       isDefault: z.boolean(),
       verifyStatus: aiConnectionVerifyStatusSchema,
       verifiedAt: z.string().nullable(),
@@ -398,12 +399,11 @@ export const aiConnectionPublicSchema = z.discriminatedUnion("channel", [
 export type AiConnectionPublic = z.infer<typeof aiConnectionPublicSchema>;
 
 /**
- * 首次创建/重置凭证响应（单独 schema）：明文凭证只在必要的创建响应出现一次，
- * 之后任何读接口、日志、链接不再出现。
+ * 创建/重置凭证响应，保留既有调用协议；本人连接设置也可再次读取 MCP Token。
  */
 export const aiConnectionFirstCredentialSchema = z
   .object({
-    /** 学生受限 MCP token 明文（一次性展示） */
+    /** 学生受限 MCP token 明文（本人连接设置可再次读取） */
     token: z.string().min(1),
   })
   .strict();

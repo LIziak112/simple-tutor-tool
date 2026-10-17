@@ -28,7 +28,7 @@ import { assertNoLeak } from "../test/assert-no-leak.ts";
  *   同文案防枚举（B 操作 A 的连接与访问随机 UUID 的 message 全等）；
  * - secret 行：inapp 明文 Key 只进请求，任何响应（list/create/patch/delete/
  *   错误壳）无明文 Key、无 configJson/keyCiphertext/tokenHash 列形态；
- *   mcp token 仅创建/重置响应一次性返回，list 永不回显，重置与删除后
+ *   mcp token 在本人连接设置持续回显，其他账号不可读；重置与删除后
  *   旧 token 认证立即 null（findActiveMcpConnectionByToken 复核）；
  * - 错误壳恒 { ok, error, message } 三键，message 无堆栈特征、不透传
  *   供应商响应头/原文；
@@ -123,7 +123,7 @@ async function listAs(
   expect(text).not.toContain(PLAIN_KEY); // 明文 Key 不出现在任何读响应
   const body = aiConnectionListOkSchema.parse(JSON.parse(text));
   assertNoLeak(body, {
-    // 连接视图额外禁键：密文列形态与任何明文凭证（mcp token 只在一次性响应出现）
+    // 连接视图额外禁键：密文列形态与 API Key（本人 MCP Token 按授权可读）
     forbid: [
       "configJson",
       "keyCiphertext",
@@ -131,7 +131,7 @@ async function listAs(
       "keyTag",
       "tokenHash",
       "apiKey",
-      "token",
+      "tokenSealed",
     ],
   });
   return text;
@@ -301,9 +301,9 @@ it("inapp 全链：创建 201 → 列表只回指纹 → 更新不动 Key 不降
   expect(JSON.parse(await listAs(app, a)).data.connections).toHaveLength(0);
 });
 
-it("mcp：token 一次性返回，list 永不回显，重置/删除后旧 token 认证立即 null", async () => {
-  const { app, db, a } = world();
-  // 创建：credential.token 只在本响应出现一次
+it("mcp：本人重复读取完整 Token，他人不可读，重置/删除立即失效", async () => {
+  const { app, db, a, b } = world();
+  // 创建后即可从本人连接设置再次读取。
   const createRes = await req(
     app,
     "POST",
@@ -330,9 +330,19 @@ it("mcp：token 一次性返回，list 永不回显，重置/删除后旧 token 
     });
   }
 
-  // list：无 token/tokenHash 键形态（forbid 哨兵在 listAs），无明文 token
+  // 本人列表返回 Token，其他学生及未授权响应不返回。
   const listText = await listAs(app, a);
-  expect(listText).not.toContain(firstToken);
+  expect(listText).toContain(firstToken);
+  expect(await listAs(app, b)).not.toContain(firstToken);
+  const denied = await req(
+    app,
+    "PATCH",
+    `${BASE}/${createBody.data.connection.id}`,
+    { cookie: b },
+    { channel: "mcp", resetToken: true },
+  );
+  expect(denied.status).toBe(404);
+  expect(await denied.text()).not.toContain(firstToken);
 
   // PATCH resetToken：新 token ≠ 旧 token；旧 token 认证 null、新 token 命中
   const patchRes = await req(
@@ -353,7 +363,8 @@ it("mcp：token 一次性返回，list 永不回显，重置/删除后旧 token 
     createBody.data.connection.id,
   );
   const listAfter = await listAs(app, a);
-  expect(listAfter).not.toContain(secondToken);
+  expect(listAfter).toContain(secondToken);
+  expect(listAfter).not.toContain(firstToken);
 
   // DELETE：mcp token 随连接失效（restore/revoke 行）
   const delRes = await req(

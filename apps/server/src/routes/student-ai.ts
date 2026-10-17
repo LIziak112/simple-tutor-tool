@@ -524,14 +524,22 @@ export function createStudentAiRoutes(
         });
         return c.json({ ok: true, data: result });
       })
-      // —— 连接管理（SAI-16；归属恒取会话，明文凭证只在 POST/PATCH 响应一次）——
+      // —— 本人连接管理：MCP Token 允许持续查看，响应不进入共享缓存。——
       .get("/ai/connections", (c) => {
+        c.header("Cache-Control", "no-store");
         return c.json({
           ok: true,
-          data: { connections: listStudentAiConnections(db, c.var.student.id) },
+          data: {
+            connections: listStudentAiConnections(
+              db,
+              c.var.student.id,
+              hmacSecret,
+            ),
+          },
         });
       })
       .post("/ai/connections", async (c) => {
+        c.header("Cache-Control", "no-store");
         // 形状错误统一 400 VALIDATION_ERROR（parseJsonBody 缺省口径）；
         // 通道适用性 / SSRF 保存期拒绝等语义级错误由服务层抛 AI_CONNECTION_INVALID
         const request = await parseJsonBody(c, aiConnectionCreateRequestSchema);
@@ -543,6 +551,7 @@ export function createStudentAiRoutes(
         return c.json({ ok: true, data: result }, 201);
       })
       .patch("/ai/connections/:id", async (c) => {
+        c.header("Cache-Control", "no-store");
         const request = await parseJsonBody(c, aiConnectionPatchRequestSchema);
         const result = patchStudentAiConnection(db, {
           studentId: c.var.student.id,
