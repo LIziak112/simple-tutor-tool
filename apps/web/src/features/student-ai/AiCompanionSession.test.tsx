@@ -313,8 +313,11 @@ describe("AiCompanionSession 接线组件（SAI-20）", () => {
     expect(mockedShareTicket).toHaveBeenCalledTimes(1);
     expect(writeText).toHaveBeenCalledTimes(2);
     expect(writeText).toHaveBeenLastCalledWith(
-      "https://tutor.example.com/api/public/ai/share/Tk123",
+      expect.stringContaining(
+        "https://tutor.example.com/api/public/ai/share/Tk123?read=",
+      ),
     );
+    expect(writeText.mock.calls[0]?.[0]).not.toBe(writeText.mock.calls[1]?.[0]);
     Object.defineProperty(navigator, "clipboard", {
       value: undefined,
       configurable: true,

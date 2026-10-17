@@ -213,7 +213,7 @@ describe("SAI-18 真实路由联调(学生连接设置)", { timeout: 30_000 }, (
     );
     // 列表回显:baseUrl + 指纹,永不回显明文 Key
     expect(await screen.findByText(/api\.example\.com/u)).toBeInTheDocument();
-    expect(screen.getByText(/Key 指纹/u)).toBeInTheDocument();
+    expect(screen.getByText(/已保存 · 指纹/u)).toBeInTheDocument();
     expect(
       screen.queryByText(/sk-route-secret-plain/u),
     ).not.toBeInTheDocument();

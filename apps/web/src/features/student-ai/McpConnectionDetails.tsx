@@ -6,6 +6,7 @@ export function McpConnectionDetails({ token }: { token: string | null }) {
   const endpoint = `${window.location.origin}/mcp/student`;
   return (
     <div className="min-w-0 space-y-3">
+      <CopyBlock label="MCP 接口地址" text={endpoint} ariaLabel="复制端点" />
       {token !== null ? (
         <>
           <CopyBlock label="MCP Token" text={token} ariaLabel="复制 Token" />
@@ -36,7 +37,6 @@ export function McpConnectionDetails({ token }: { token: string | null }) {
           <p className="text-sm text-muted-foreground">
             认证方式 Bearer Token · Streamable HTTP
           </p>
-          <CopyBlock label="MCP 端点" text={endpoint} ariaLabel="复制端点" />
         </div>
       </details>
     </div>

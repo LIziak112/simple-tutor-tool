@@ -1,6 +1,9 @@
-import { useRef, useState } from "react";
+import type { AiShareAccessStatusData } from "@tutor/contract";
+import { useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { ApiError, fetchStudentAiShareAccessStatusApi } from "@/lib/api";
 import { formatSnapshotTime } from "./AiConversationPanel";
+import { buildAiLinkPrompt } from "./ai-link-prompt";
 import {
   type AiLinkShareState,
   writeToClipboard,
@@ -81,6 +84,26 @@ export function AiLinkShareBox({
   onRetryCopy: () => void;
 }) {
   const [degrade, setDegrade] = useState<DegradeState>(DEGRADE_IDLE);
+  const prompt = useMemo(() => buildAiLinkPrompt(link.url), [link.url]);
+  const [accessStatus, setAccessStatus] =
+    useState<AiShareAccessStatusData | null>(null);
+  const [accessLoading, setAccessLoading] = useState(false);
+  const [accessError, setAccessError] = useState<string | null>(null);
+  async function loadAccessStatus() {
+    setAccessLoading(true);
+    setAccessError(null);
+    try {
+      setAccessStatus(await fetchStudentAiShareAccessStatusApi(link.taskId));
+    } catch (error) {
+      setAccessError(
+        error instanceof ApiError
+          ? error.message
+          : "访问记录读取失败，请重试。",
+      );
+    } finally {
+      setAccessLoading(false);
+    }
+  }
   // 降级在途守卫（ref 而非 state）：同一渲染帧内连击闭包读到的 state 相同，
   // 只有 ref 同步可见——双击不产生第二次请求（不双记留痕/双写剪贴板）
   const degradeLoadingRef = useRef(false);
@@ -93,49 +116,45 @@ export function AiLinkShareBox({
       phase: "loading",
       message: "正在读取分享内容…",
     });
-    let response: Response;
     try {
-      response = await fetch(link.url);
+      const response = await fetch(link.url, { cache: "no-store" });
+      if (!response.ok) {
+        setDegrade({
+          ...DEGRADE_IDLE,
+          phase: "error",
+          message:
+            response.status === 403 || response.status === 404
+              ? "链接已失效或当前无权限，复制与下载被拒绝；可重新生成链接"
+              : "分享内容读取失败（服务暂时不可用），请稍后重试；链接本身仍可发给外部 AI",
+        });
+        return;
+      }
+      const html = await response.text();
+      const doc = new DOMParser().parseFromString(html, "text/html");
+      const text = (doc.body?.textContent ?? "")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
+      const materials = parseMaterials(html);
+      const copied = await writeToClipboard(text);
+      setDegrade({
+        phase: "ok",
+        message: copied
+          ? "已复制本题文字（含答案解析），可直接粘贴给外部 AI"
+          : "自动复制失败：请手动选择下方文字复制",
+        text: copied ? null : text,
+        materials,
+      });
     } catch {
-      degradeLoadingRef.current = false;
       setDegrade({
         ...DEGRADE_IDLE,
         phase: "error",
         message:
           "读取分享内容失败（网络问题），请稍后重试；链接本身仍可发给外部 AI",
       });
-      return;
+    } finally {
+      // 读完正文和复制后才释放；响应中断同样可恢复重试。
+      degradeLoadingRef.current = false;
     }
-    degradeLoadingRef.current = false;
-    if (!response.ok) {
-      // 403/404：票据失效或当前模式禁用——服务端逐次实时核对后的拒绝；
-      // 其余状态码（500 等）是服务端瞬时故障，不归因失效也不误导重新生成
-      setDegrade({
-        ...DEGRADE_IDLE,
-        phase: "error",
-        message:
-          response.status === 403 || response.status === 404
-            ? "链接已失效或当前无权限，复制与下载被拒绝；可重新生成链接"
-            : "分享内容读取失败（服务暂时不可用），请稍后重试；链接本身仍可发给外部 AI",
-      });
-      return;
-    }
-    const html = await response.text();
-    const doc = new DOMParser().parseFromString(html, "text/html");
-    const text = (doc.body?.textContent ?? "")
-      .replace(/\n{3,}/g, "\n\n")
-      .trim();
-    const materials = parseMaterials(html);
-    // 剪贴板写入复用控制器同款（undefined/权限拒绝/异常统一 false——手动复制兜底）
-    const copied = await writeToClipboard(text);
-    setDegrade({
-      phase: "ok",
-      message: copied
-        ? "已复制本题文字（含答案解析），可直接粘贴给外部 AI"
-        : "自动复制失败：请手动选择下方文字复制",
-      text: copied ? null : text,
-      materials,
-    });
   };
 
   return (
@@ -160,6 +179,24 @@ export function AiLinkShareBox({
           value={link.url}
           onFocus={(event) => event.currentTarget.select()}
           className="min-h-9 w-full rounded-lg border border-input bg-background px-2 py-1.5 text-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+        />
+      </label>
+      <p className="text-xs leading-relaxed text-muted-foreground">
+        一条链接只含一道题。可发送多条独立链接，请让 AI
+        每次逐条重新打开并核对题号；复制成功不代表 AI
+        已读取。内容是生成时的快照，修改作答后需更新求助内容再重新生成。
+      </p>
+      <label className="flex flex-col gap-1">
+        <span className="text-xs font-medium">
+          发给 AI 的内容（含重新读取说明）
+        </span>
+        <textarea
+          aria-label="发给 AI 的内容"
+          readOnly
+          value={prompt}
+          rows={5}
+          onFocus={(event) => event.currentTarget.select()}
+          className="w-full resize-y rounded-lg border border-input bg-background p-2 text-sm leading-relaxed focus-visible:outline-2 focus-visible:outline-ring"
         />
       </label>
       <div className="flex flex-wrap gap-1">
@@ -192,6 +229,38 @@ export function AiLinkShareBox({
         >
           撤销链接
         </Button>
+      </div>
+      <div className="space-y-2 border-t border-border pt-2">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="min-h-9"
+          disabled={accessLoading}
+          onClick={() => void loadAccessStatus()}
+        >
+          {accessLoading
+            ? "正在查询访问记录…"
+            : accessStatus
+              ? "刷新访问记录"
+              : "查看访问记录"}
+        </Button>
+        {accessError && (
+          <p role="alert" className="text-xs text-destructive">
+            {accessError}
+          </p>
+        )}
+        {accessStatus && (
+          <p role="status" className="text-xs text-muted-foreground">
+            {accessStatus.viewCount === 0
+              ? "尚未收到本题链接的访问请求，请让 AI 重新打开链接。"
+              : `本题所有链接累计被访问 ${accessStatus.viewCount} 次（含旧链接），最近访问：${formatSnapshotTime(accessStatus.lastViewedAt ?? "")}。`}
+          </p>
+        )}
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          访问可能来自你、网页预览或 AI，不能证明 AI 已阅读或理解。请让 AI
+          先复述题号与题干进行核对。
+        </p>
       </div>
       <p className="text-xs text-muted-foreground">
         重新生成与撤销仍按当前教学模式实时校验；已复制出去的内容无法收回。

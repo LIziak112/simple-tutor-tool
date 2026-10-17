@@ -24,7 +24,10 @@ export type HttpErrorStatus =
   | 415
   | 422
   | 429
-  | 500;
+  | 500
+  /** AI 供应商返回不可用响应或超时；不透传原始报文。 */
+  | 502
+  | 504;
 
 export class HttpError extends Error {
   constructor(

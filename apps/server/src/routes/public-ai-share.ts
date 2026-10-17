@@ -237,6 +237,7 @@ footer { border-top: 1px solid rgba(128,128,128,.35); margin-top: 2rem; padding-
 <p class="meta">发送时有效模式：${escapeHtml(AI_TEACHING_MODE_LABELS[task.modeAtSend])}</p>
 <p class="meta">链接到期时间：${escapeHtml(ticket.expiresAt)}（UTC）</p>
 <p class="notice">获得本链接者可读取本题参考答案、官方解析与选定材料；链接有有效期且可被学生撤销，内容为发送时刻的快照。</p>
+<p class="notice">AI 读取要求：每次回答前重新请求本次提供的所有链接，不复用历史读取结果或缓存；多个链接须逐条读取并核对题号，无法读取时明确指出，不得用其他题目代替。本链接仅对应上方题号与快照。</p>
 </header>
 <section>
 <h2>题面</h2>
@@ -322,6 +323,12 @@ export function createPublicAiShareRoutes(db: Db, dataDir: string) {
     });
   };
   return new Hono()
+    .use("*", async (c, next) => {
+      // 失败响应也禁止缓存，避免恢复权限后仍复用之前的拒绝响应。
+      for (const [name, value] of Object.entries(SHARE_RESPONSE_HEADERS))
+        c.header(name, value);
+      await next();
+    })
     .get("/:token", serveBody)
     .on("HEAD", "/:token", serveBody)
     .get("/:token/materials/:page", serveMaterial)

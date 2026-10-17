@@ -8,13 +8,13 @@ import { AiConnectionManager } from "@/features/student-ai/AiConnectionManager";
  */
 export default function StudentAiConnectionPage() {
   return (
-    <div className="mx-auto w-full min-w-0 max-w-6xl space-y-6 pb-8 sm:space-y-8">
+    <div className="mx-auto w-full min-w-0 max-w-5xl space-y-6 pb-8 sm:space-y-8">
       <header className="space-y-3 border-b border-border pb-6">
         <p className="text-sm font-medium text-primary">个人 AI 助教</p>
         <h1 className="text-3xl font-semibold tracking-tight">连接 AI</h1>
         <p className="text-sm text-muted-foreground">
-          选用你习惯的
-          AI，在题目旁获得帮助。配置保存在你的账号中，换设备也能继续使用。
+          连接你常用的
+          AI，让它带着本题资料帮你学习。选择使用方式，按步骤配置即可。
         </p>
       </header>
       <AiConnectionManager />

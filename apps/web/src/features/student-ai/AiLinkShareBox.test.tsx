@@ -6,8 +6,33 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { fetchStudentAiShareAccessStatusApi } from "@/lib/api";
 import { AiLinkShareBox } from "./AiLinkShareBox";
 import type { AiLinkShareState } from "./use-ai-send-controller";
+
+vi.mock("@/lib/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/api")>()),
+  fetchStudentAiShareAccessStatusApi: vi.fn(),
+}));
+
+it("主动查询真实访问次数，不把访问或复制当成 AI 已阅读", async () => {
+  const api = vi.mocked(fetchStudentAiShareAccessStatusApi);
+  api.mockResolvedValueOnce({ viewCount: 0, lastViewedAt: null });
+  renderBox();
+  fireEvent.click(screen.getByRole("button", { name: "查看访问记录" }));
+  expect(
+    await screen.findByText(/尚未收到本题链接的访问请求/),
+  ).toBeInTheDocument();
+  api.mockResolvedValueOnce({
+    viewCount: 2,
+    lastViewedAt: "2026-10-17T00:00:00.000Z",
+  });
+  fireEvent.click(screen.getByRole("button", { name: "刷新访问记录" }));
+  expect(
+    await screen.findByText(/本题所有链接累计被访问 2 次/),
+  ).toBeInTheDocument();
+  expect(screen.getByText(/不能证明 AI 已阅读或理解/)).toBeInTheDocument();
+});
 
 /**
  * SAI-30 链接查看/复制/降级组件测试（B15 必测映射）：
@@ -122,7 +147,9 @@ describe("AiLinkShareBox（SAI-30 链接查看/复制/降级）", () => {
       screen.getByRole("button", { name: "外部读不了？复制本题文字" }),
     );
     // 拉的是票据自身 URL（授权与留痕都走这条真实链路）
-    await waitFor(() => expect(fetchSpy).toHaveBeenCalledWith(LINK.url));
+    await waitFor(() =>
+      expect(fetchSpy).toHaveBeenCalledWith(LINK.url, { cache: "no-store" }),
+    );
     await waitFor(() =>
       expect(screen.getByText(/已复制本题文字/)).toBeTruthy(),
     );
@@ -176,6 +203,44 @@ describe("AiLinkShareBox（SAI-30 链接查看/复制/降级）", () => {
       expect(screen.getByText(/读取分享内容失败/)).toBeTruthy(),
     );
     vi.unstubAllGlobals();
+  });
+
+  it("响应正文读取中不重复请求，正文中断后允许重试", async () => {
+    let rejectBody: ((reason: Error) => void) | undefined;
+    const interrupted = htmlResponse(SHARE_HTML);
+    vi.spyOn(interrupted, "text").mockImplementation(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectBody = reject;
+        }),
+    );
+    const fetchSpy = vi
+      .fn()
+      .mockResolvedValueOnce(interrupted)
+      .mockResolvedValue(htmlResponse(SHARE_HTML));
+    vi.stubGlobal("fetch", fetchSpy);
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    stubClipboard(writeText);
+    renderBox();
+    const button = screen.getByRole("button", {
+      name: "外部读不了？复制本题文字",
+    });
+    fireEvent.click(button);
+    await waitFor(() => expect(interrupted.text).toHaveBeenCalled());
+    fireEvent.click(button);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      rejectBody?.(new Error("stream interrupted"));
+    });
+    await screen.findByText(/读取分享内容失败/);
+    expect(writeText).not.toHaveBeenCalled();
+    fireEvent.click(
+      screen.getByRole("button", { name: "外部读不了？复制本题文字" }),
+    );
+    await screen.findByText(/已复制本题文字/);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    vi.unstubAllGlobals();
+    stubClipboard(undefined);
   });
 
   it("降级服务端故障（500）：与票据失效区分（提示稍后重试，不误导重新生成）", async () => {

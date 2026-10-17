@@ -21,6 +21,7 @@ import { attachAiTaskMaterials } from "../services/ai-companion/student-ai-mater
 import { createAiTask } from "../services/ai-companion/student-ai-queue.ts";
 import {
   createAiShareTicket,
+  hashShareToken,
   revokeAiShareTickets,
 } from "../services/ai-companion/student-ai-share.ts";
 import {
@@ -50,6 +51,54 @@ const SECRET = "share-route-test-secret-0001";
 const NAME_SENTINEL = "学生甲真名SENTINEL";
 /** 教师私注哨兵：任何分享输出不得出现 */
 const PRIVATE_NOTE_SENTINEL = "SENTINEL_PRIVATE_NOTE_不可外发";
+
+it("不同题链接独立读取；本次重新读取不使用条件缓存，撤销后仍拒绝并禁缓存", async () => {
+  const w = await prepareLinkTask(false);
+  insertResponse(w.db, w.attemptId, "q-beta");
+  const { task } = createAiTask(
+    w.db,
+    {
+      studentId: w.studentId,
+      attemptId: w.attemptId,
+      questionId: "q-beta",
+      question: "第二道题的独立问题 SENTINEL_BETA",
+      channel: "link",
+      mutationId: randomUUID(),
+    },
+    { hmacSecret: SECRET },
+  );
+  const second = createAiShareTicket(w.db, {
+    studentId: w.studentId,
+    taskId: task.id,
+  });
+  const firstPath = `/api/public/ai/share/${w.token}`;
+  const secondPath = `/api/public/ai/share/${second.token}`;
+  const first = await w.app.request(`${firstPath}?read=one`, {
+    headers: { "if-none-match": "cached" },
+  });
+  expect(first.status).toBe(200);
+  const firstText = await first.text();
+  expect(firstText).toContain("SENTINEL_QUESTION");
+  expect(firstText).not.toContain("SENTINEL_BETA");
+  expect(firstText).toContain("每次回答前");
+  const other = await w.app.request(`${secondPath}?read=two`);
+  expect(await other.text()).toContain("SENTINEL_BETA");
+  await w.app.request(`${firstPath}?read=three`);
+  expect(
+    w.db
+      .select()
+      .from(aiShareTickets)
+      .where(eq(aiShareTickets.tokenHash, hashShareToken(w.token)))
+      .get()?.viewCount,
+  ).toBe(2);
+  revokeAiShareTickets(w.db, { studentId: w.studentId, taskId: w.taskId });
+  const rejected = await w.app.request(`${firstPath}?read=four`, {
+    headers: { "if-none-match": "cached" },
+  });
+  expect(rejected.status).toBe(403);
+  expect(rejected.headers.get("cache-control")).toBe("no-store");
+  expect((await w.app.request(secondPath)).status).toBe(200);
+});
 
 const active: ReturnType<typeof createTestDb>[] = [];
 const activeDirs: string[] = [];
