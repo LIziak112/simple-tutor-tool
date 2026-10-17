@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router";
+import { CopyBlock } from "@/components/CopyBlock";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -31,6 +32,7 @@ import {
 } from "@/components/ui/dialog";
 import { ApiError } from "@/lib/api";
 import { copyText } from "@/lib/copy";
+import { buildMcpServersConfig } from "@/lib/mcp-config";
 import { CHANNEL_LABEL } from "./ai-channel-label";
 import {
   studentAiConnectionDraftKey,
@@ -50,9 +52,12 @@ import {
  *   探针)、修改、删除、默认通道;Key 只显示安全状态——输入 password、
  *   列表只回指纹,编辑留空 = 保持原 Key,永不回显旧明文;
  * - mcp 一次性 token:创建/重置响应的明文只展示一次,复制成功/失败都有
- *   真实反馈,失败可手动复制(HTTP 剪贴板降级见 lib/copy);
+ *   真实反馈,失败可手动复制(HTTP 剪贴板降级见 lib/copy);同区域给出已
+ *   代入本次 Token 的完整 mcpServers 配置(教师 /t/connect 同款结构,
+ *   lib/mcp-config 共用生成),可整段复制;
  * - mcp 通道(SAI-27):连接行常驻展示端点(/mcp/student)与认证方式
- *   Bearer Token,可一键复制端点;「配置已保存」徽章只表示已配置,
+ *   Bearer Token,可一键复制端点,并常驻完整配置示例(Token 为占位符、
+ *   按钮明示「复制示例」,替换指引与重置入口就近给出);「配置已保存」徽章只表示已配置,
  *   无可靠在线信号不标在线/已连接;不能附 Bearer 或仅支持 OAuth 的
  *   客户端如实标注当前不兼容,不用长效密钥链接绕过;
  * - link 通道功能建设中:如实说明进度,不显示「已连接」;
@@ -104,6 +109,21 @@ interface Notice {
  */
 function studentMcpEndpointUrl(): string {
   return `${window.location.origin}/mcp/student`;
+}
+
+/** 行内配置示例的 Token 占位符(明文只出现一次,行内不虚构可用凭据) */
+const STUDENT_MCP_TOKEN_PLACEHOLDER = "<你的MCP_TOKEN>";
+
+/**
+ * 学生侧完整 mcpServers 配置(教师 /t/connect 同款结构,一键复制到客户端):
+ * 键名用 tutor-student,与教师端 tutor 区分,同一客户端同时配置两端不覆盖。
+ */
+function studentMcpServersConfig(token: string): string {
+  return buildMcpServersConfig({
+    serverKey: "tutor-student",
+    serverUrl: studentMcpEndpointUrl(),
+    token,
+  });
 }
 
 /** verifyStatus 徽章文案:已配置 / 验证成功 / 暂不可用分开显示 */
@@ -509,6 +529,15 @@ export function AiConnectionManager() {
               </span>
             )}
           </div>
+          <p className="text-sm leading-relaxed text-muted-foreground">
+            把下方配置整段复制到你的 AI 客户端即可,已代入本次
+            Token,无需再手动替换。
+          </p>
+          <CopyBlock
+            label="完整 MCP 配置(已代入本次 Token)"
+            text={studentMcpServersConfig(tokenOnce.token)}
+            ariaLabel="复制完整 MCP 配置 JSON"
+          />
         </section>
       )}
 
@@ -592,29 +621,49 @@ export function AiConnectionManager() {
                       `新链接默认有效期 ${connection.defaultValidHours} 小时`}
                   </p>
                   {connection.channel === "mcp" && (
-                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-                      <p className="break-all text-sm text-muted-foreground">
-                        端点 <code>{studentMcpEndpointUrl()}</code> · 认证方式
-                        Bearer Token(即一次性展示的 MCP Token)
+                    <div className="space-y-2">
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                        <p className="break-all text-sm text-muted-foreground">
+                          端点 <code>{studentMcpEndpointUrl()}</code> · 认证方式
+                          Bearer Token(即一次性展示的 MCP Token)
+                        </p>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="min-h-11"
+                          onClick={() => void handleCopyEndpoint()}
+                        >
+                          复制端点
+                        </Button>
+                        {endpointCopyState === "copied" && (
+                          <span
+                            role="status"
+                            className="text-sm text-primary"
+                          >
+                            已复制
+                          </span>
+                        )}
+                        {endpointCopyState === "failed" && (
+                          <span
+                            role="alert"
+                            className="text-sm text-destructive"
+                          >
+                            复制失败,请手动复制上方内容
+                          </span>
+                        )}
+                      </div>
+                      <CopyBlock
+                        label="完整 MCP 配置(Token 为占位符)"
+                        text={studentMcpServersConfig(
+                          STUDENT_MCP_TOKEN_PLACEHOLDER,
+                        )}
+                        example
+                        ariaLabel="复制完整 MCP 配置示例 JSON"
+                      />
+                      <p className="text-xs leading-relaxed text-muted-foreground">
+                        把配置中的占位符替换为你保存的
+                        Token;Token 只在生成或重置时展示一次,遗失请先重置再复制。
                       </p>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className="min-h-11"
-                        onClick={() => void handleCopyEndpoint()}
-                      >
-                        复制端点
-                      </Button>
-                      {endpointCopyState === "copied" && (
-                        <span role="status" className="text-sm text-primary">
-                          已复制
-                        </span>
-                      )}
-                      {endpointCopyState === "failed" && (
-                        <span role="alert" className="text-sm text-destructive">
-                          复制失败,请手动复制上方内容
-                        </span>
-                      )}
                     </div>
                   )}
                   <div className="flex flex-wrap items-center gap-3">
@@ -797,7 +846,7 @@ export function AiConnectionManager() {
               外部客户端须支持 Bearer Token 认证与 Streamable HTTP 传输;不能附加
               Bearer Token 或仅支持 OAuth
               发现的客户端当前不兼容(不提供把密钥拼进链接的替代方式)。
-              保存后在「我的连接」里查看并复制端点。
+              保存后会一次性展示已代入 Token 的完整配置,可直接整段复制到客户端。
             </p>
           </div>
         )}
