@@ -268,6 +268,15 @@ test("130题多单元回看：保活、定位、响应式、记录往返与按�
   test.setTimeout(180_000);
   const { attemptId, title } = await prepareResult(request, page, true);
   const materialRequests: string[] = [];
+  // 2026-10-15 起题卡进入可见区自动读取原标画（AGENTS.md「结果回看 UI 约定」）：
+  // 题干标注视图按可见性懒加载属于设计内行为，不计入「折叠材料不得预取」的
+  // 断言范围；evidence/ink/notes/review-pack 等材料请求仍必须为零。数量
+  // 上限见用例尾部的 stemAnnotationReads 上限断言（防退化成挂载即全量预取）。
+  const stemAnnotationRead = /\/questions\/[^/]+\/annotation\?phase=scratch$/;
+  const eagerMaterialRequests = () =>
+    materialRequests.filter((url) => !stemAnnotationRead.test(url));
+  const stemAnnotationReads = () =>
+    materialRequests.filter((url) => stemAnnotationRead.test(url));
   page.on("request", (request) => {
     if (
       /\/api\/.*\/(evidence|annotations?|annotation-bases|notes?|note-heads|ink|review-pack)(\/|\?|$)/.test(
@@ -285,7 +294,7 @@ test("130题多单元回看：保活、定位、响应式、记录往返与按�
   ).toBeVisible();
   await expect(page.locator("[data-review-question]")).toHaveCount(130);
   await expect(page.locator("canvas")).toHaveCount(0);
-  expect(materialRequests).toEqual([]);
+  expect(eagerMaterialRequests()).toEqual([]);
   const firstRenderMs = Date.now() - startedAt;
   const nodeCount = await page.locator("*").count();
   const measurements: {
@@ -418,7 +427,7 @@ test("130题多单元回看：保活、定位、响应式、记录往返与按�
   await expect(page.locator("[data-review-question]")).toHaveCount(130);
   await page.reload();
   await expect(last).toBeInViewport();
-  expect(materialRequests).toEqual([]);
+  expect(eagerMaterialRequests()).toEqual([]);
   await page.getByRole("button", { name: "返回我的记录" }).click();
   await expect(page).toHaveURL(/\/s\/records\?status=graded$/);
   await expect(
@@ -469,7 +478,12 @@ test("130题多单元回看：保活、定位、响应式、记录往返与按�
   expect(originalBox.width).toBeGreaterThan(cardBox.width - 60);
   const lastQuestionId = await last.getAttribute("data-review-question");
   if (!lastQuestionId) throw new Error("末题缺少题目ID");
-  for (const url of materialRequests)
+  // 可见性题干读必须有界：只有进入过视口（含 200px 预载边距）的题卡才读；
+  // 若退化为挂载即全量预取（130 题），上限立即击穿。
+  expect(stemAnnotationReads().length).toBeLessThanOrEqual(20);
+  // 排除可见性驱动的题干标注读（见 eagerMaterialRequests 说明）后，
+  // 展开材料触发的请求必须都属于当前展开的末题。
+  for (const url of eagerMaterialRequests())
     expect(decodeURIComponent(url)).toContain(lastQuestionId);
 });
 

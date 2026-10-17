@@ -1113,3 +1113,67 @@ describe("StudentAssignmentAttemptPage：离线交卷保护（T2.12）", () => {
     ).not.toBeInTheDocument();
   });
 });
+
+/**
+ * 弹层跳题聚焦契约（webkit E2E「130题长作业」reload 后 toBeFocused 稳定失败的根因）：
+ * reload 后材料核对未完成时题卡列表带 inert（作答保护，AGENTS.md「材料核对
+ * 成功前不解除作答保护」），jumpToQuestion 的 rAF 聚焦静默失败且无人重试，
+ * 焦点永不落到题卡。jsdom 未实现 inert 的聚焦拦截，用 inert 属性 + 一次性
+ * focus mock 模拟「保护未解除时聚焦被吞」，断言跳题聚焦必须重试落焦。
+ * 注意：模态弹层打开时 Radix hideOthers 会把页面其余部分 aria-hidden，
+ * 题卡引用必须在开弹层之前取得；卸载归焦是 preventDefault +
+ * triggerRef?.focus()，这两个弹层没有 DialogTrigger，归焦本身是 no-op。
+ */
+describe("StudentAssignmentAttemptPage：弹层跳题聚焦", () => {
+  /**
+   * 模拟作答保护：题卡列表 inert（守卫据此放行重试）+ 目标首次 focus 被吞。
+   * jsdom 不执行 inert 的聚焦拦截，重试帧的第二次调用真实落焦即证明
+   * 「失败后重试」；不再用定时器解除 inert——它与首帧 rAF 竞速会把链
+   * 提前终止成不重试。
+   */
+  const blockFocusBehindInert = (target: HTMLElement) => {
+    const list = target.closest("ol");
+    if (!list) throw new Error("题卡列表缺失");
+    list.setAttribute("inert", "");
+    vi.spyOn(target, "focus").mockImplementationOnce(() => {});
+  };
+
+  it("答题卡弹层跳题：首次聚焦被作答保护吞掉时重试落焦到题卡", async () => {
+    mockedStart.mockResolvedValue(START_DRAFT);
+    mockedFetch.mockResolvedValue(DRAFT_DATA);
+    renderPage();
+    await screen.findByText("第 1 题");
+    const article = screen.getByRole("article", { name: "第 2 题" });
+    const trigger = screen
+      .getAllByRole("button", { name: /答题卡/ })
+      .find(
+        (button) => button.closest('[data-slot="attempt-bottom-bar"]') !== null,
+      );
+    if (!trigger) throw new Error("未找到答题卡入口");
+    fireEvent.click(trigger);
+    const dialog = await screen.findByRole("dialog");
+    const jump = within(dialog).getByRole("button", {
+      name: /第 2 题，未填写/,
+    });
+    blockFocusBehindInert(article);
+    fireEvent.click(jump);
+    await waitFor(() => expect(document.activeElement).toBe(article));
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("交卷弹层「去补全」：首次聚焦被作答保护吞掉时重试落焦到作答控件", async () => {
+    mockedStart.mockResolvedValue(START_DRAFT);
+    mockedFetch.mockResolvedValue(DRAFT_DATA);
+    renderPage();
+    await screen.findByText("第 1 题");
+    const firstRadio = screen.getByRole("radio", { name: "对" });
+    fireEvent.click(screen.getByRole("button", { name: "交卷" }));
+    const goto = await screen.findByRole("button", {
+      name: /去补全第 1 题/,
+    });
+    blockFocusBehindInert(firstRadio);
+    fireEvent.click(goto);
+    await waitFor(() => expect(document.activeElement).toBe(firstRadio));
+    expect(screen.queryByText("确认交卷吗？")).not.toBeInTheDocument();
+  });
+});

@@ -7,6 +7,8 @@ import {
   drawStrokeWithPointerEvents,
   getStudentViaApi,
   openChoicePractice,
+  openPracticeInfoDialog,
+  openSaveDetailsViaInfoDialog,
   setCourseItemVisible,
   teacherApiLogin,
   uniqueSuffix,
@@ -103,17 +105,16 @@ test("学生工作区：部分填写、遗漏定位、答题卡与响应式布�
       ).toBeHidden();
       const headerBox = await header.boundingBox();
       expect(headerBox?.height).toBeLessThanOrEqual(80);
-      await header.getByRole("button", { name: "练习更多" }).click();
-      await page.getByRole("menuitem", { name: "练习信息" }).click();
-      const details = page.getByRole("dialog");
+      const details = await openPracticeInfoDialog(page);
       await expect(details).toContainText(courseName);
       await expect(details).toContainText(unitName);
       await expect(details.getByTestId("draft-status")).toBeVisible();
       await details
         .getByRole("button", { name: "保存详情", exact: true })
         .click();
-      const saves = page.getByRole("dialog").filter({
-        has: page.getByRole("heading", { name: "保存详情", exact: true }),
+      const saves = page.getByRole("dialog", {
+        name: "保存详情",
+        exact: true,
       });
       await saves.getByRole("button", { name: "定位第 1 题" }).click();
       await expect(page.getByRole("dialog")).toHaveCount(0);
@@ -566,15 +567,15 @@ test("130题长作业：答题卡独立滚动、跳到末题、待检查刷新�
   });
   console.log("工作区实测", JSON.stringify(metrics));
   expect(Math.max(...warmMs)).toBeLessThanOrEqual(150);
-  await page.getByRole("button", { name: "保存详情" }).click();
-  await expect(page.getByRole("dialog", { name: "保存详情" })).toContainText(
-    "标画：",
-  );
+  // 手机端顶栏精简（2026-10-15 决策）：保存详情入口在「更多 → 练习信息」
+  // 弹层里，与首个用例同款路径；当前视口 390px。
+  const saves = await openSaveDetailsViaInfoDialog(page);
+  await expect(saves).toContainText("标画：");
   await page.screenshot({
     path: testInfo.outputPath("save-details-390.png"),
     animations: "disabled",
   });
-  await page.getByRole("button", { name: "定位第 130 题" }).click();
+  await saves.getByRole("button", { name: "定位第 130 题" }).click();
   await expect(last).toBeFocused();
   expect(leak.violations()).toEqual([]);
 });
