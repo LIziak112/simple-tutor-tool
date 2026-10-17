@@ -150,6 +150,8 @@ export default defineConfig({
       // 图片伺服（媒体管线第二单）：/blobs/* 由 server 从 DATA_DIR/blobs/media
       // 内容寻址直出（生产同源托管，无代理）；dev 下与 /api 同目标同逻辑转发。
       "/blobs": process.env.DEV_API_PROXY_TARGET ?? "http://127.0.0.1:8787",
+      // MCP 服务：/mcp/* 转发给本地 server
+      "/mcp": process.env.DEV_API_PROXY_TARGET ?? "http://127.0.0.1:8787",
     },
   },
   // build.outDir 保持默认 dist：生产模式由 apps/server 托管 apps/web/dist

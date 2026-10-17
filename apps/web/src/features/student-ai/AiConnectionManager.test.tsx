@@ -440,7 +440,10 @@ describe("AiConnectionManager(SAI-18 学生连接设置)", () => {
         credential: { token: "tok-once-abc123" },
       });
       fireEvent.click(screen.getByRole("button", { name: "保存连接" }));
-      expect(await screen.findByText(/tok-once-abc123/u)).toBeInTheDocument();
+      // 明文出现两处:Token 原文块 + 完整配置 JSON(已代入)
+      expect(
+        await screen.findAllByText(/tok-once-abc123/u),
+      ).toHaveLength(2);
       mockedCopy.mockResolvedValue(true);
       fireEvent.click(screen.getByRole("button", { name: "复制 Token" }));
       await waitFor(() =>
@@ -468,7 +471,10 @@ describe("AiConnectionManager(SAI-18 学生连接设置)", () => {
         credential: { token: "tok-once-abc123" },
       });
       fireEvent.click(screen.getByRole("button", { name: "保存连接" }));
-      expect(await screen.findByText(/tok-once-abc123/u)).toBeInTheDocument();
+      // 明文出现两处:Token 原文块 + 完整配置 JSON(已代入)
+      expect(
+        await screen.findAllByText(/tok-once-abc123/u),
+      ).toHaveLength(2);
       mockedCopy.mockResolvedValue(false);
       fireEvent.click(screen.getByRole("button", { name: "复制 Token" }));
       await waitFor(() =>
@@ -476,7 +482,9 @@ describe("AiConnectionManager(SAI-18 学生连接设置)", () => {
       );
       // 明文仍在页面,可手动选择复制;没有虚报「已复制」
       expect(screen.queryByText(/已复制/u)).not.toBeInTheDocument();
-      expect(screen.getByText(/tok-once-abc123/u)).toBeInTheDocument();
+      expect(screen.getAllByText(/tok-once-abc123/u).length).toBeGreaterThan(
+        0,
+      );
     });
   });
 
@@ -499,8 +507,9 @@ describe("AiConnectionManager(SAI-18 学生连接设置)", () => {
       expect(
         await screen.findByText(/Token 指纹 mcp12345/u),
       ).toBeInTheDocument();
-      // 端点(SAI-25 独立学生端点)与认证方式常驻展示,普通查询只有掩码
-      expect(screen.getByText(/\/mcp\/student/u)).toBeInTheDocument();
+      // 端点(SAI-25 独立学生端点)与认证方式常驻展示,普通查询只有掩码;
+      // 端点 URL 出现两处:端点行 + 完整配置示例 JSON
+      expect(screen.getAllByText(/\/mcp\/student/u)).toHaveLength(2);
       expect(screen.getByText(/认证方式 Bearer Token/u)).toBeInTheDocument();
       // SAI-26 后 mcp 通道已闭环,连接行不再标「功能建设中」
       // (页脚对上下文链接通道的建设中说明是真实状态,不在此断言范围)
@@ -536,6 +545,161 @@ describe("AiConnectionManager(SAI-18 学生连接设置)", () => {
       ).toBeInTheDocument();
       // 不改用长效 URL 密钥绕过兼容问题
       expect(screen.queryByText(/URL 密钥/u)).not.toBeInTheDocument();
+    });
+  });
+
+  describe("完整 MCP 配置一键复制(对齐教师 /t/connect 的配置样式)", () => {
+    /** 页面同款生成口径:jsdom origin + /mcp/student,tutor-student 键 */
+    function expectedConfig(token: string): string {
+      return JSON.stringify(
+        {
+          mcpServers: {
+            "tutor-student": {
+              type: "http",
+              url: `${window.location.origin}/mcp/student`,
+              headers: { Authorization: `Bearer ${token}` },
+            },
+          },
+        },
+        null,
+        2,
+      );
+    }
+
+    /** 精确匹配整段 JSON 渲染块(whitespace-pre-wrap,textContent 即原文) */
+    function findConfigBlocks(text: string): HTMLElement[] {
+      return screen.getAllByText(
+        (_, element) => element?.textContent === text,
+      );
+    }
+
+    it("创建 MCP 连接后:一次性区域展示已代入真实 Token 的完整配置,可整段复制", async () => {
+      renderManager();
+      fireEvent.click(
+        screen.getByRole("checkbox", { name: "我已了解数据外发说明" }),
+      );
+      fireEvent.click(screen.getByRole("radio", { name: "MCP 工具" }));
+      mockedCreate.mockResolvedValue({
+        connection: {
+          id: "44444444-4444-4444-8444-444444444444",
+          channel: "mcp",
+          tokenFingerprint: "mcp12345",
+          isDefault: false,
+          verifyStatus: "unverified",
+          verifiedAt: null,
+          createdAt: "2026-10-16T00:00:00.000Z",
+          updatedAt: "2026-10-16T00:00:00.000Z",
+        },
+        credential: { token: "tok-once-abc123" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "保存连接" }));
+      await screen.findAllByText(/tok-once-abc123/u);
+      // 一次性区域常驻完整配置:真实 Token 已代入,无需手动替换
+      const expected = expectedConfig("tok-once-abc123");
+      expect(findConfigBlocks(expected).length).toBe(1);
+      fireEvent.click(
+        screen.getByRole("button", { name: "复制完整 MCP 配置 JSON" }),
+      );
+      await waitFor(() =>
+        expect(mockedCopy).toHaveBeenCalledWith(expected),
+      );
+    });
+
+    it("mcp 连接行常驻完整配置示例:Token 为占位符,按钮明示复制示例", async () => {
+      mockedFetch.mockResolvedValue(
+        listData([
+          {
+            id: "44444444-4444-4444-8444-444444444444",
+            channel: "mcp" as const,
+            tokenFingerprint: "mcp12345",
+            isDefault: false,
+            verifyStatus: "unverified" as const,
+            verifiedAt: null,
+            createdAt: "2026-10-16T00:00:00.000Z",
+            updatedAt: "2026-10-16T00:00:00.000Z",
+          },
+        ]),
+      );
+      renderManager();
+      await screen.findByText(/Token 指纹 mcp12345/u);
+      // Token 明文只出现一次,行内配置用占位符并如实标注示例
+      const expected = expectedConfig("<你的MCP_TOKEN>");
+      expect(findConfigBlocks(expected).length).toBe(1);
+      const copy = screen.getByRole("button", {
+        name: "复制完整 MCP 配置示例 JSON",
+      });
+      expect(copy).toHaveTextContent("复制示例");
+      // 占位符替换指引:遗失 Token 先重置,不在行内虚构成可用配置
+      expect(screen.getByText(/替换为你保存的 Token/u)).toBeInTheDocument();
+      expect(screen.getByText(/遗失请先重置/u)).toBeInTheDocument();
+      fireEvent.click(copy);
+      await waitFor(() =>
+        expect(mockedCopy).toHaveBeenCalledWith(expected),
+      );
+    });
+
+    it("重置 Token 后:一次性区域完整配置随新 Token 更新,旧 Token 不残留", async () => {
+      mockedFetch.mockResolvedValue(
+        listData([
+          {
+            id: "44444444-4444-4444-8444-444444444444",
+            channel: "mcp" as const,
+            tokenFingerprint: "mcp12345",
+            isDefault: false,
+            verifyStatus: "unverified" as const,
+            verifiedAt: null,
+            createdAt: "2026-10-16T00:00:00.000Z",
+            updatedAt: "2026-10-16T00:00:00.000Z",
+          },
+        ]),
+      );
+      renderManager();
+      await screen.findByText(/Token 指纹 mcp12345/u);
+      const mcpRow = () => ({
+        id: "44444444-4444-4444-8444-444444444444",
+        channel: "mcp" as const,
+        tokenFingerprint: "mcp12345",
+        isDefault: false,
+        verifyStatus: "unverified" as const,
+        verifiedAt: null,
+        createdAt: "2026-10-16T00:00:00.000Z",
+        updatedAt: "2026-10-16T00:00:00.000Z",
+      });
+      // 第一次重置:得到旧 Token 的配置块
+      mockedPatch.mockResolvedValueOnce({
+        connection: mcpRow(),
+        credential: { token: "tok-old-abc123" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "重置 Token" }));
+      await screen.findAllByText(/tok-old-abc123/u);
+      expect(findConfigBlocks(expectedConfig("tok-old-abc123")).length).toBe(
+        1,
+      );
+      // 第二次重置:配置块更新为新 Token,旧 Token 与旧配置块都不残留
+      mockedPatch.mockResolvedValueOnce({
+        connection: mcpRow(),
+        credential: { token: "tok-new-999xyz" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "重置 Token" }));
+      await screen.findAllByText(/tok-new-999xyz/u);
+      expect(findConfigBlocks(expectedConfig("tok-new-999xyz")).length).toBe(
+        1,
+      );
+      expect(
+        screen.queryAllByText(
+          (_, element) =>
+            element?.textContent === expectedConfig("tok-old-abc123"),
+        ),
+      ).toHaveLength(0);
+      expect(screen.queryByText(/tok-old-abc123/u)).not.toBeInTheDocument();
+    });
+
+    it("mcp 表单说明:保存后一次性展示已代入 Token 的完整配置", async () => {
+      renderManager();
+      fireEvent.click(screen.getByRole("radio", { name: "MCP 工具" }));
+      expect(
+        screen.getByText(/保存后会一次性展示已代入 Token 的完整配置/u),
+      ).toBeInTheDocument();
     });
   });
 });

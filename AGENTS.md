@@ -109,6 +109,7 @@ pnpm dev / pnpm test / pnpm e2e（真实Playwright：Chromium/WebKit，隔离临
 - 任务新建、MCP 领取、票据/附件读取、回信交付必须在出站或返回内容前按**当前**模式与完成态重校验（教师刚改设置立即生效）；教师私注（teacherComment）、其他学生数据、整讲义原文、内部账号 ID 与任何凭证永不在授权范围内。
 - 学生端 AI 接口的泄露测试采用双断言：允许场景断言答案解析确实进入外发载荷（fake provider 捕获）；禁止场景与全部普通学生可读响应断言无 answers/solutionMd/教师私注哨兵。不得通过修改 assertNoLeak 的全局禁止键规则来掩盖泄露。
 - 教师督学只消费服务端事实记录：无 AI 求助记录不能证明独立完成；仅入队未外发是「作答中求助·未处理」，不等于已获得帮助。
+- 学生端 MCP 配置体验与教师 `/t/connect` 对齐：`/s/settings/ai` 提供完整 `mcpServers` 配置一键复制，两端共用 `apps/web/src/lib/mcp-config.ts` 生成（键名教师 `tutor`、学生 `tutor-student`，同一客户端并存不覆盖）；一次性 Token 区代入真实 Token，连接行常驻占位符示例并明示「复制示例」。
 - 权威文档：docs/学生端AI伴学/需求规格.md 与 docs/学生端AI伴学/技术实施方案.md（B00 已验收，D1–D10 已定案，后续批次不得另起一套）。
 
 ## 课程选项缓存
