@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import type { AiTaskStatus } from "@tutor/contract";
+import type { AiShareAccessStatusData, AiTaskStatus } from "@tutor/contract";
 import {
   AI_MCP_TOKEN_BYTES,
   AI_SHARE_DEFAULT_VALID_HOURS,
@@ -313,6 +313,27 @@ export function revokeAiShareTickets(
 }
 
 // ---------- 读取授权（正文/附件共用；每次实时核对——步骤 5） ----------
+
+/** 不返回票据或题目内容；包含该任务旧链接访问，不能据此证明外部 AI 已读。 */
+export function studentAiShareAccessStatus(
+  db: Db,
+  input: { readonly studentId: string; readonly taskId: string },
+): AiShareAccessStatusData {
+  const task = requireOwnTask(db, input.studentId, input.taskId);
+  requirePolicyUsable(db, task, sqliteAiPolicyConfigSource);
+  const result = db
+    .select({
+      viewCount: sql<number>`coalesce(sum(${aiShareTickets.viewCount}), 0)`,
+      lastViewedAt: sql<string | null>`max(${aiShareTickets.lastViewedAt})`,
+    })
+    .from(aiShareTickets)
+    .where(eq(aiShareTickets.taskId, task.id))
+    .get();
+  return {
+    viewCount: result?.viewCount ?? 0,
+    lastViewedAt: result?.lastViewedAt ?? null,
+  };
+}
 
 /** token 定位产物：票据行 + 宿主任务行（读端点不再自查归属/作废/策略） */
 export interface ResolvedShareTicket {

@@ -19,9 +19,11 @@ import {
 import {
   createStudentAiConnection,
   deleteStudentAiConnection,
+  fetchStudentAiConnectionModels,
   findActiveMcpConnectionByToken,
   listStudentAiConnections,
   patchStudentAiConnection,
+  probeStudentAiConnection,
   testStudentAiConnection,
 } from "./connection-service.ts";
 import type { ProviderTransportRequest } from "./provider-client.ts";
@@ -40,6 +42,246 @@ import type { ProviderTransportRequest } from "./provider-client.ts";
  */
 
 const SECRET = "ab".repeat(32); // 64 hex 字符（connection-cipher 以 hex 解析根密钥）
+
+describe("未保存连接诊断", () => {
+  it("保存修改模型后清除旧验证状态；换地址须重填密钥；迟到的探针不覆盖新配置", async () => {
+    const { db, studentId } = world();
+    try {
+      const created = createStudentAiConnection(db, {
+        studentId,
+        rootSecret: SECRET,
+        request: {
+          channel: "inapp",
+          baseUrl: "https://ai.example.com/v1",
+          apiKey: "sk-original",
+          model: "old",
+        },
+      });
+      const input = {
+        studentId,
+        rootSecret: SECRET,
+        connectionId: created.connection.id,
+      };
+      await testStudentAiConnection(db, input, { transport: okTransport([]) });
+      const changed = patchStudentAiConnection(db, {
+        ...input,
+        request: { channel: "inapp", model: "new" },
+      });
+      expect(changed.connection).toMatchObject({
+        verifyStatus: "unverified",
+        verifiedAt: null,
+      });
+      expect(() =>
+        patchStudentAiConnection(db, {
+          ...input,
+          request: { channel: "inapp", baseUrl: "https://new.example.com/v1" },
+        }),
+      ).toThrow(/重新填写/);
+      await testStudentAiConnection(db, input, {
+        transport: async () => {
+          patchStudentAiConnection(db, {
+            ...input,
+            request: { channel: "inapp", model: "newer" },
+          });
+          return {
+            status: 200,
+            headers: {},
+            bodyText: '{"choices":[{"message":{"content":"ok"}}]}',
+          };
+        },
+      });
+      expect(listStudentAiConnections(db, studentId, SECRET)[0]).toMatchObject({
+        model: "newer",
+        verifyStatus: "unverified",
+      });
+    } finally {
+      db.$client.close();
+    }
+  });
+  it("获取模型和测试当前草稿都不创建连接，探针只带固定文字", async () => {
+    const { db, studentId } = world();
+    try {
+      const captured: ProviderTransportRequest[] = [];
+      const request = {
+        baseUrl: "https://ai.example.com/v1",
+        apiKey: "sk-draft",
+      };
+      const models = await fetchStudentAiConnectionModels(
+        db,
+        { studentId, rootSecret: SECRET, request },
+        {
+          transport: async (input) => {
+            captured.push(input);
+            return {
+              status: 200,
+              headers: {},
+              bodyText: '{"data":[{"id":"chat-a"}]}',
+            };
+          },
+        },
+      );
+      expect(models.models).toEqual(["chat-a"]);
+      const result = await probeStudentAiConnection(
+        db,
+        {
+          studentId,
+          rootSecret: SECRET,
+          request: { ...request, model: "chat-a" },
+        },
+        { transport: okTransport(captured) },
+      );
+      expect(result.verifyStatus).toBe("verified");
+      expect(result.durationMs).toBeGreaterThanOrEqual(0);
+      expect(JSON.parse(captured[1]?.body ?? "{}").messages).toEqual([
+        { role: "user", content: "连接测试：请只回复 ok。" },
+      ]);
+      expect(listStudentAiConnections(db, studentId, SECRET)).toHaveLength(0);
+      expect(JSON.stringify(result)).not.toContain(request.apiKey);
+    } finally {
+      db.$client.close();
+    }
+  });
+  it("编辑同一地址可使用原密钥，诊断不改变已保存模型或验证状态", async () => {
+    const { db, studentId } = world();
+    try {
+      const created = createStudentAiConnection(db, {
+        studentId,
+        rootSecret: SECRET,
+        request: {
+          channel: "inapp",
+          baseUrl: "https://ai.example.com/v1",
+          apiKey: "sk-original",
+          model: "old",
+        },
+      });
+      const captured: ProviderTransportRequest[] = [];
+      await probeStudentAiConnection(
+        db,
+        {
+          studentId,
+          rootSecret: SECRET,
+          request: {
+            connectionId: created.connection.id,
+            baseUrl: "https://ai.example.com/v1/",
+            model: "new",
+          },
+        },
+        { transport: okTransport(captured) },
+      );
+      expect(captured[0]?.headers.authorization).toBe("Bearer sk-original");
+      expect(listStudentAiConnections(db, studentId, SECRET)[0]).toMatchObject({
+        model: "old",
+        verifyStatus: "unverified",
+      });
+    } finally {
+      db.$client.close();
+    }
+  });
+  it("不允许将旧密钥发送到新地址，显式填入新密钥才可诊断", async () => {
+    const { db, studentId } = world();
+    try {
+      const created = createStudentAiConnection(db, {
+        studentId,
+        rootSecret: SECRET,
+        request: {
+          channel: "inapp",
+          baseUrl: "https://ai.example.com/v1",
+          apiKey: "sk-original",
+          model: "old",
+        },
+      });
+      const captured: ProviderTransportRequest[] = [];
+      const input = {
+        studentId,
+        rootSecret: SECRET,
+        request: {
+          connectionId: created.connection.id,
+          baseUrl: "https://different.example.com/v1",
+          model: "new",
+        },
+      };
+      await expect(
+        probeStudentAiConnection(db, input, {
+          transport: okTransport(captured),
+        }),
+      ).rejects.toMatchObject({ code: "AI_CONNECTION_INVALID" });
+      expect(captured).toHaveLength(0);
+      await probeStudentAiConnection(
+        db,
+        { ...input, request: { ...input.request, apiKey: "sk-new" } },
+        { transport: okTransport(captured) },
+      );
+      expect(captured[0]?.headers.authorization).toBe("Bearer sk-new");
+    } finally {
+      db.$client.close();
+    }
+  });
+  it("他人和已删除连接均不可复用；坏密钥不出站；内网草稿被阻止", async () => {
+    const { db, studentId } = world();
+    try {
+      const created = createStudentAiConnection(db, {
+        studentId,
+        rootSecret: SECRET,
+        request: {
+          channel: "inapp",
+          baseUrl: "https://ai.example.com/v1",
+          apiKey: "sk-original",
+          model: "old",
+        },
+      });
+      const captured: ProviderTransportRequest[] = [];
+      const input = {
+        studentId,
+        rootSecret: SECRET,
+        request: {
+          connectionId: created.connection.id,
+          baseUrl: "https://ai.example.com/v1",
+          model: "new",
+        },
+      };
+      await expect(
+        probeStudentAiConnection(
+          db,
+          { ...input, studentId: "other" },
+          { transport: okTransport(captured) },
+        ),
+      ).rejects.toMatchObject({ status: 404 });
+      await expect(
+        probeStudentAiConnection(
+          db,
+          { ...input, rootSecret: "ff".repeat(32) },
+          { transport: okTransport(captured) },
+        ),
+      ).rejects.toMatchObject({ code: "AI_CONNECTION_INVALID" });
+      await expect(
+        probeStudentAiConnection(
+          db,
+          {
+            ...input,
+            request: {
+              ...input.request,
+              baseUrl: "http://127.0.0.1",
+              apiKey: "test",
+            },
+          },
+          { transport: okTransport(captured) },
+        ),
+      ).rejects.toMatchObject({ code: "AI_CONNECTION_INVALID" });
+      deleteStudentAiConnection(db, {
+        studentId,
+        connectionId: created.connection.id,
+      });
+      await expect(
+        probeStudentAiConnection(db, input, {
+          transport: okTransport(captured),
+        }),
+      ).rejects.toMatchObject({ status: 404 });
+      expect(captured).toHaveLength(0);
+    } finally {
+      db.$client.close();
+    }
+  });
+});
 
 /** 直插任务行（删除停发用例；不复用 queue 的完整创建链） */
 function insertTaskRow(

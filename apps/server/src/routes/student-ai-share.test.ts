@@ -1,4 +1,8 @@
 import { randomUUID } from "node:crypto";
+import {
+  aiShareAccessStatusOkSchema,
+  aiTaskShareOkSchema,
+} from "@tutor/contract";
 import { eq } from "drizzle-orm";
 import pino from "pino";
 import { afterEach, describe, expect, it } from "vitest";
@@ -113,6 +117,36 @@ async function createLinkTask(w: ReturnType<typeof world>): Promise<string> {
 }
 
 describe("SAI-28 分享票据路由", () => {
+  it("本人可核验本题全部链接的访问次数；未登录和他人不可读，不返回题目或凭据", async () => {
+    const w = world();
+    const taskId = await createLinkTask(w);
+    const path = `/api/student/ai/tasks/${taskId}/share/status`;
+    expect((await req(w.app, "GET", path, undefined)).status).toBe(401);
+    expect((await req(w.app, "GET", path, w.b)).status).toBe(404);
+    const initial = await req(w.app, "GET", path, w.a);
+    expect(initial.status).toBe(200);
+    expect(
+      aiShareAccessStatusOkSchema.parse(await initial.json()).data,
+    ).toEqual({ viewCount: 0, lastViewedAt: null });
+    const generated = await req(
+      w.app,
+      "POST",
+      `/api/student/ai/tasks/${taskId}/share`,
+      w.a,
+      {},
+    );
+    const { data } = aiTaskShareOkSchema.parse(await generated.json());
+    const publicPath = new URL(data.ticketUrl).pathname;
+    await w.app.request(`${publicPath}?read=first`);
+    await w.app.request(`${publicPath}?read=second`);
+    const status = await req(w.app, "GET", path, w.a);
+    expect(status.headers.get("cache-control")).toBe("no-store");
+    const body = aiShareAccessStatusOkSchema.parse(await status.json());
+    expect(body.data.viewCount).toBe(2);
+    expect(body.data.lastViewedAt).not.toBeNull();
+    assertNoLeak(body);
+    expect(JSON.stringify(body)).not.toContain(data.ticketUrl);
+  });
   it("四态鉴权：无会话 401 / 教师 Cookie 401 / 跨学生 404 同文案 / 本人 200", async () => {
     const w = world();
     const taskId = await createLinkTask(w);

@@ -1,6 +1,15 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { AiConnectionListData } from "@tutor/contract";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import {
+  type AiConnectionListData,
+  aiConnectionPatchRequestSchema,
+} from "@tutor/contract";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -149,7 +158,7 @@ describe("AiConnectionManager(SAI-18 学生连接设置)", () => {
       expect(screen.getByText(/发送到你配置的 AI 服务/u)).toBeInTheDocument();
       expect(screen.getByText(/答案解析/u)).toBeInTheDocument();
       expect(screen.getByText(/姓名/u)).toBeInTheDocument();
-      expect(screen.getByText(/费用/u)).toBeInTheDocument();
+      expect(screen.getAllByText(/费用/u)[0]).toBeInTheDocument();
       const consent = screen.getByRole("checkbox", {
         name: "我已了解数据外发说明",
       });
@@ -163,7 +172,9 @@ describe("AiConnectionManager(SAI-18 学生连接设置)", () => {
     it("已有连接即视为已知情:不再要求重复勾选即可直接编辑保存", async () => {
       mockedFetch.mockResolvedValue(listData([INAPP_UNVERIFIED]));
       renderManager();
-      await screen.findByText(/api\.example\.com/u);
+      await within(screen.getByRole("region", { name: "我的连接" })).findByText(
+        /api\.example\.com/u,
+      );
       fillInappForm({ baseUrl: "https://api2.example.com/v1" });
       expect(screen.getByRole("button", { name: "保存连接" })).toBeEnabled();
     });
@@ -217,7 +228,11 @@ describe("AiConnectionManager(SAI-18 学生连接设置)", () => {
       fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
       const alert = await screen.findByRole("alert");
       expect(alert).toHaveTextContent(/无法连接到 AI 服务/u);
-      expect(await screen.findByText(/api\.example\.com/u)).toBeInTheDocument();
+      expect(
+        await within(
+          screen.getByRole("region", { name: "我的连接" }),
+        ).findByText(/api\.example\.com/u),
+      ).toBeInTheDocument();
     });
 
     it("已配置 / 验证成功 / 暂不可用分开显示;mcp 与 link 不显示已连接", async () => {
@@ -306,7 +321,11 @@ describe("AiConnectionManager(SAI-18 学生连接设置)", () => {
     it("换账号缓存立即隔离:登出清 student 键后不再显示旧账号连接", async () => {
       mockedFetch.mockResolvedValue(listData([INAPP_UNVERIFIED]));
       const { client } = renderManager();
-      expect(await screen.findByText(/api\.example\.com/u)).toBeInTheDocument();
+      expect(
+        await within(
+          screen.getByRole("region", { name: "我的连接" }),
+        ).findByText(/api\.example\.com/u),
+      ).toBeInTheDocument();
       // 登出行为(useLogoutStudent 同款):removeQueries(["student"])
       client.removeQueries({ queryKey: ["student"] });
       expect(
@@ -404,7 +423,9 @@ describe("AiConnectionManager(SAI-18 学生连接设置)", () => {
         },
       });
       const first = renderManager(client);
-      await screen.findByText(/api\.example\.com/u);
+      await within(screen.getByRole("region", { name: "我的连接" })).findByText(
+        /api\.example\.com/u,
+      );
       fireEvent.click(screen.getByRole("button", { name: "修改配置" }));
       fireEvent.change(screen.getByLabelText("模型名称"), {
         target: { value: "glm-5" },
@@ -414,7 +435,9 @@ describe("AiConnectionManager(SAI-18 学生连接设置)", () => {
       // 重挂后仍是「修改连接」:保存走 patch 而非 create
       expect(await screen.findByText(/修改连接/u)).toBeInTheDocument();
       expect(screen.getByLabelText("模型名称")).toHaveValue("glm-5");
-      await screen.findByText(/api\.example\.com/u);
+      await within(screen.getByRole("region", { name: "我的连接" })).findByText(
+        /api\.example\.com/u,
+      );
       mockedPatch.mockResolvedValue({
         connection: INAPP_UNVERIFIED,
         credential: null,
@@ -449,7 +472,9 @@ describe("AiConnectionManager(SAI-18 学生连接设置)", () => {
     it("编辑连接时不能切换为其他通道，取消后恢复选择", async () => {
       mockedFetch.mockResolvedValue(listData([INAPP_UNVERIFIED]));
       renderManager();
-      await screen.findByText(/api\.example\.com/u);
+      await within(screen.getByRole("region", { name: "我的连接" })).findByText(
+        /api\.example\.com/u,
+      );
       fireEvent.click(screen.getByRole("button", { name: "修改配置" }));
       expect(screen.getByRole("radio", { name: "MCP 工具" })).toBeDisabled();
       fireEvent.click(screen.getByRole("button", { name: "取消修改" }));
@@ -465,6 +490,26 @@ describe("AiConnectionManager(SAI-18 学生连接设置)", () => {
       verifiedAt: null,
       createdAt: "2026-10-16T00:00:00.000Z",
       updatedAt: "2026-10-16T00:00:00.000Z",
+    });
+
+    it("修改 MCP 默认配置只发送该通道允许的字段", async () => {
+      const connection = mcp();
+      mockedFetch.mockResolvedValue(listData([connection]));
+      mockedPatch.mockResolvedValue({ connection, credential: null });
+      renderManager();
+      await screen.findAllByText(/mcp-token-current/u);
+      fireEvent.click(screen.getByRole("button", { name: "修改配置" }));
+      fireEvent.click(screen.getByRole("checkbox", { name: "设为默认连接" }));
+      fireEvent.click(screen.getByRole("button", { name: "保存连接" }));
+      await waitFor(() => expect(mockedPatch).toHaveBeenCalled());
+      expect(
+        aiConnectionPatchRequestSchema.safeParse(mockedPatch.mock.calls[0]?.[1])
+          .success,
+      ).toBe(true);
+      expect(mockedPatch.mock.calls[0]?.[1]).toEqual({
+        channel: "mcp",
+        isDefault: true,
+      });
     });
 
     it("创建后直接在我的连接展示 Token 和完整配置，不保留一次性区域", async () => {
@@ -527,6 +572,11 @@ describe("AiConnectionManager(SAI-18 学生连接设置)", () => {
       });
       mockedFetch.mockResolvedValue(listData([mcp("new-token")]));
       fireEvent.click(screen.getByRole("button", { name: "重置 Token" }));
+      expect(mockedPatch).not.toHaveBeenCalled();
+      expect(screen.getByRole("dialog")).toHaveTextContent(
+        /旧 Token 将立即失效/u,
+      );
+      fireEvent.click(screen.getByRole("button", { name: "重新生成 Token" }));
       expect(await screen.findAllByText(/new-token/u)).toHaveLength(2);
       expect(screen.queryAllByText(/old-token/u)).toHaveLength(0);
       fireEvent.click(
@@ -551,7 +601,11 @@ describe("AiConnectionManager(SAI-18 学生连接设置)", () => {
       mockedFetch.mockImplementation(() => new Promise(() => {}));
       fireEvent.click(screen.getByRole("button", { name: "设为默认" }));
       await waitFor(() => expect(mockedPatch).toHaveBeenCalled());
-      expect(screen.getByText(/api\.example\.com/u)).toBeInTheDocument();
+      expect(
+        within(screen.getByRole("region", { name: "我的连接" })).getByText(
+          /api\.example\.com/u,
+        ),
+      ).toBeInTheDocument();
       expect(screen.getByRole("textbox", { name: "模型名称" })).toHaveValue(
         "未保存模型",
       );

@@ -174,7 +174,10 @@ test.describe("SAI-33 错误链（页内与出站）", () => {
         }
         await route.continue();
       });
-      await page.getByRole("button", { name: "AI 助教" }).click();
+      await page
+        .getByRole("article", { name: "第 1 题", exact: true })
+        .getByRole("button", { name: "AI 助教", exact: true })
+        .click();
       const composer = page.getByPlaceholder("写下你想问的问题");
       await composer.waitFor({ state: "visible" });
       await composer.fill("提交失败场景求助");
@@ -535,7 +538,10 @@ test.describe("SAI-33 错误链（页内与出站）", () => {
           res.request().method() === "POST" &&
           /\/api\/student\/ai\/tasks$/.test(res.url()),
       );
-      await page.getByRole("button", { name: "AI 助教" }).click();
+      await page
+        .getByRole("article", { name: "第 1 题", exact: true })
+        .getByRole("button", { name: "AI 助教", exact: true })
+        .click();
       await page.getByPlaceholder("写下你想问的问题").fill("作废前场景求助");
       await page.getByRole("button", { name: "发送", exact: true }).click();
       const createdRes = await taskCreated;
@@ -580,7 +586,10 @@ test.describe("SAI-33 错误链（页内与出站）", () => {
       );
 
       // 新卷：AI 面板可用（新 attempt 任务列表从空开始）
-      await page.getByRole("button", { name: "AI 助教" }).click();
+      await page
+        .getByRole("article", { name: "第 1 题", exact: true })
+        .getByRole("button", { name: "AI 助教", exact: true })
+        .click();
       await expect(page.getByText("当前：开放伴学")).toBeVisible();
       await expect(
         page.getByRole("button", { name: "发送", exact: true }),

@@ -15,13 +15,18 @@ import {
   type AiConnectionCreateRequest,
   type AiConnectionDeleteData,
   type AiConnectionListData,
+  type AiConnectionModelsData,
+  type AiConnectionModelsRequest,
   type AiConnectionPatchData,
   type AiConnectionPatchRequest,
+  type AiConnectionProbeData,
+  type AiConnectionProbeRequest,
   type AiConnectionTestData,
   type AiMaterialUploadReceiptData,
   type AiPolicyInheritableMode,
   type AiPolicyOverrideData,
   type AiQueueSummaryData,
+  type AiShareAccessStatusData,
   type AiStatusData,
   type AiTaskCreateRequest,
   type AiTaskDetailData,
@@ -2692,6 +2697,35 @@ export function testStudentAiConnectionApi(
 }
 
 // ---------- 学生端 AI 任务（SAI-20 发送控制器消费；路由 SAI-13/20） ----------
+
+/** 以当前填写的地址和密钥获取模型；不创建或更新连接。 */
+export function fetchStudentAiConnectionModelsApi(
+  request: AiConnectionModelsRequest,
+): Promise<AiConnectionModelsData> {
+  return callApi(() =>
+    api.api.student.ai.connections.models.$post({ json: request }),
+  );
+}
+
+/** 本题分享链接的累计访问事实；不能证明访问者身份或 AI 已理解内容。 */
+export function fetchStudentAiShareAccessStatusApi(
+  taskId: string,
+): Promise<AiShareAccessStatusData> {
+  return callApi(() =>
+    api.api.student.ai.tasks[":id"].share.status.$get({
+      param: { id: taskId },
+    }),
+  );
+}
+
+/** 未保存配置的真实探针；使用固定短句，不带题目或书写材料。 */
+export function probeStudentAiConnectionApi(
+  request: AiConnectionProbeRequest,
+): Promise<AiConnectionProbeData> {
+  return callApi(() =>
+    api.api.student.ai.connections.probe.$post({ json: request }),
+  );
+}
 
 /**
  * 单题状态（GET /ai/status）：有效模式与原因、完成态、默认通道连接态、

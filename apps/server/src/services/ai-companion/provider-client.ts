@@ -1,6 +1,10 @@
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
-import { AI_CONNECTION_TEST_TIMEOUT_MS } from "@tutor/contract";
+import {
+  AI_CONNECTION_TEST_TIMEOUT_MS,
+  type AiConnectionModelsData,
+  aiConnectionModelsDataSchema,
+} from "@tutor/contract";
 import type { Logger } from "pino";
 import { redactHeaderValue } from "../../lib/log-redact.ts";
 import {
@@ -49,7 +53,7 @@ export type ProviderContentPart =
 /** 传输请求（假 transport 捕获点 = 连接层桩） */
 export interface ProviderTransportRequest {
   readonly url: string;
-  readonly method: "POST";
+  readonly method: "POST" | "GET";
   readonly headers: Record<string, string>;
   readonly body: string;
   readonly timeoutMs: number;
@@ -162,7 +166,12 @@ export const defaultProviderTransport: ProviderTransport = (request) =>
         body: request.body,
         timeoutMs: request.timeoutMs,
       })
-    : forwardWithoutGuard(chatCompletionsUrl(E2E_FAKE_AI_BASE_URL), request);
+    : forwardWithoutGuard(
+        request.method === "GET"
+          ? `${E2E_FAKE_AI_BASE_URL.replace(/\/+$/, "")}/models`
+          : chatCompletionsUrl(E2E_FAKE_AI_BASE_URL),
+        request,
+      );
 
 /** 调用输入 */
 export interface ChatCompletionsInput {
@@ -236,8 +245,84 @@ const USER_AGENT_PREFIX = "OwnClass-AICompanion/2.0";
 
 /** 拼接 chat/completions 完整 URL（baseUrl 带不带尾斜杠均可） */
 export function chatCompletionsUrl(baseUrl: string): string {
-  const trimmed = baseUrl.endsWith("/") ? baseUrl.slice(0, -1) : baseUrl;
+  const trimmed = baseUrl.replace(/\/+$/, "");
   return `${trimmed}/chat/completions`;
+}
+
+/** 获取可选模型；使用同一目标守卫、时限和响应上限，绝不发送题目数据。 */
+export async function fetchProviderModels(input: {
+  readonly baseUrl: string;
+  readonly apiKey: string;
+  readonly transport?: ProviderTransport;
+}): Promise<
+  | { readonly ok: true; readonly models: AiConnectionModelsData["models"] }
+  | {
+      readonly ok: false;
+      readonly code: "AI_OUTBOUND_FAILED" | "AI_OUTBOUND_TIMEOUT";
+      readonly message: string;
+    }
+> {
+  let response: GuardedResponse;
+  try {
+    response = await (input.transport ?? defaultProviderTransport)({
+      url: `${input.baseUrl.replace(/\/+$/, "")}/models`,
+      method: "GET",
+      headers: {
+        authorization: `Bearer ${input.apiKey}`,
+        accept: "application/json",
+        "user-agent": `${USER_AGENT_PREFIX} (ref:connection-models)`,
+      },
+      body: "",
+      timeoutMs: AI_CONNECTION_TEST_TIMEOUT_MS,
+    });
+  } catch (error) {
+    const failure = failureOfTransportError(error);
+    return {
+      ok: false,
+      code: failure.code,
+      message: `${failure.message}。请检查接口地址后重试，也可手动填写模型名称。`,
+    };
+  }
+  if (response.status < 200 || response.status >= 300) {
+    return {
+      ok: false,
+      code: "AI_OUTBOUND_FAILED",
+      message:
+        response.status === 404 || response.status === 405
+          ? "此地址不提供模型列表，请检查接口地址，或手动填写供应商提供的模型名称。"
+          : `${failureMessageOf(response.status)}。请检查服务配置后重试，也可手动填写模型名称。`,
+    };
+  }
+  const invalid = {
+    ok: false,
+    code: "AI_OUTBOUND_FAILED",
+    message: "供应商未返回可用的模型列表，请检查接口地址，或手动填写模型名称。",
+  } as const;
+  try {
+    const raw: unknown = JSON.parse(response.bodyText);
+    if (
+      typeof raw !== "object" ||
+      raw === null ||
+      !("data" in raw) ||
+      !Array.isArray(raw.data)
+    )
+      return invalid;
+    const modelIdSchema = aiConnectionModelsDataSchema.shape.models.element;
+    const ids: string[] = [];
+    for (const entry of raw.data) {
+      if (typeof entry !== "object" || entry === null || !("id" in entry))
+        continue;
+      const id = modelIdSchema.safeParse(entry.id);
+      if (id.success && id.data.trim().length > 0) ids.push(id.data);
+    }
+    const models = [...new Set(ids)].sort();
+    if (raw.data.length > 0 && models.length === 0) return invalid;
+    const validated =
+      aiConnectionModelsDataSchema.shape.models.safeParse(models);
+    return validated.success ? { ok: true, models: validated.data } : invalid;
+  } catch {
+    return invalid;
+  }
 }
 
 /** 连接测试探针（固定文案：无题目、无学生数据；capability 行要求） */
@@ -481,7 +566,7 @@ export async function testProviderConnection(input: {
   readonly transport?: ProviderTransport;
   readonly logger?: Logger;
 }): Promise<ChatCompletionsResult> {
-  return callChatCompletions({
+  const result = await callChatCompletions({
     baseUrl: input.baseUrl,
     apiKey: input.apiKey,
     model: input.model,
@@ -492,4 +577,13 @@ export async function testProviderConnection(input: {
     ...(input.transport !== undefined && { transport: input.transport }),
     ...(input.logger !== undefined && { logger: input.logger }),
   });
+  if (result.ok && result.content.trim().length === 0) {
+    return {
+      ok: false,
+      code: "AI_OUTBOUND_FAILED",
+      message:
+        "模型未返回测试文字，请检查模型是否支持此对话接口，或更换模型后重试",
+    };
+  }
+  return result;
 }

@@ -203,7 +203,10 @@ test.describe("SAI-33 四来源与结果页共存", () => {
       // —— 作答中求助：出站载荷含题面 + 答案 + 解析（允许场景双断言）——
       const reply = "课程回信：1 大于 0，是正数。";
       await control.script({ body: chatCompletionJson(reply) });
-      await page.getByRole("button", { name: "AI 助教" }).click();
+      await page
+        .getByRole("article", { name: "第 1 题", exact: true })
+        .getByRole("button", { name: "AI 助教", exact: true })
+        .click();
       await expect(page.getByText("当前：开放伴学")).toBeVisible();
       await page.getByPlaceholder("写下你想问的问题").fill("课程练习求助");
       await page.getByRole("button", { name: "发送", exact: true }).click();
@@ -260,7 +263,10 @@ test.describe("SAI-33 四来源与结果页共存", () => {
       // —— 重练卷作答中求助：同一冻结投影（题面/答案/解析仍进出站）——
       const reReply = "重练回信：注意符号判断。";
       await control.script({ body: chatCompletionJson(reReply) });
-      await page.getByRole("button", { name: "AI 助教" }).click();
+      await page
+        .getByRole("article", { name: "第 1 题", exact: true })
+        .getByRole("button", { name: "AI 助教", exact: true })
+        .click();
       await expect(page.getByText("当前：开放伴学")).toBeVisible();
       await page.getByPlaceholder("写下你想问的问题").fill("错题重练求助");
       await page.getByRole("button", { name: "发送", exact: true }).click();
@@ -339,7 +345,10 @@ test.describe("SAI-33 四来源与结果页共存", () => {
       // —— 讲练作答中求助（open_study 默认）：出站含题面与答案解析 ——
       const reply = "讲练回信：相反数只差一个符号。";
       await control.script({ body: chatCompletionJson(reply) });
-      await page.getByRole("button", { name: "AI 助教" }).click();
+      await page
+        .getByRole("article", { name: "第 1 题", exact: true })
+        .getByRole("button", { name: "AI 助教", exact: true })
+        .click();
       await expect(page.getByText("当前：开放伴学")).toBeVisible();
       await page.getByPlaceholder("写下你想问的问题").fill("讲练页求助");
       await page.getByRole("button", { name: "发送", exact: true }).click();
@@ -367,7 +376,7 @@ test.describe("SAI-33 四来源与结果页共存", () => {
       expect(bodyText.includes("讲练乙详解"), "未提交题不得出现详解").toBe(
         false,
       );
-      await page.getByRole("button", { name: "AI 助教" }).click();
+      await q2.getByRole("button", { name: "AI 助教", exact: true }).click();
       await expect(
         page.getByRole("button", { name: "发送", exact: true }),
       ).toBeEnabled();
@@ -445,7 +454,10 @@ test.describe("SAI-33 四来源与结果页共存", () => {
       await q1.waitFor({ state: "visible" });
 
       // —— AI 开栏在场：先开伴学栏（面板挂载、发送可用），再落笔圈画与草稿 ——
-      await page.getByRole("button", { name: "AI 助教" }).click();
+      await page
+        .getByRole("article", { name: "第 1 题", exact: true })
+        .getByRole("button", { name: "AI 助教", exact: true })
+        .click();
       await expect(page.getByText("当前：开放伴学")).toBeVisible();
       await expect(
         page.getByRole("button", { name: "发送", exact: true }),

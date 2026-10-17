@@ -3,13 +3,17 @@ import type {
   AiConnectionCreateData,
   AiConnectionCreateRequest,
   AiConnectionListData,
+  AiConnectionModelsRequest,
   AiConnectionPatchRequest,
+  AiConnectionProbeRequest,
 } from "@tutor/contract";
 import {
   createStudentAiConnectionApi,
   deleteStudentAiConnectionApi,
+  fetchStudentAiConnectionModelsApi,
   fetchStudentAiConnectionsApi,
   patchStudentAiConnectionApi,
+  probeStudentAiConnectionApi,
   testStudentAiConnectionApi,
 } from "@/lib/api";
 
@@ -98,8 +102,29 @@ export function useDeleteStudentAiConnection() {
  * verifyStatus 徽章——不在 mutation 里改写缓存,避免探针失败时本地覆盖)。
  */
 export function useTestStudentAiConnection() {
+  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (connectionId: string) =>
       testStudentAiConnectionApi(connectionId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: studentAiConnectionsKey });
+    },
+  });
+}
+
+/** 诊断变量含短期凭据，组件卸载后立即回收，不保留诊断缓存。 */
+export function useStudentAiConnectionModels() {
+  return useMutation({
+    mutationFn: (request: AiConnectionModelsRequest) =>
+      fetchStudentAiConnectionModelsApi(request),
+    gcTime: 0,
+  });
+}
+
+export function useProbeStudentAiConnection() {
+  return useMutation({
+    mutationFn: (request: AiConnectionProbeRequest) =>
+      probeStudentAiConnectionApi(request),
+    gcTime: 0,
   });
 }

@@ -175,7 +175,10 @@ test.describe("SAI-33 性能采样（布局开合 / 轮询重复渲染 / 保存�
 
       // ============ 相 A：无 AI（未配置连接） ============
       let t0 = Date.now();
-      await page.getByRole("button", { name: "AI 助教" }).click();
+      await page
+        .getByRole("article", { name: "第 1 题", exact: true })
+        .getByRole("button", { name: "AI 助教", exact: true })
+        .click();
       await expect(page.getByText("去设置连接")).toBeVisible();
       const openMsA = Date.now() - t0;
       t0 = Date.now();
@@ -183,7 +186,10 @@ test.describe("SAI-33 性能采样（布局开合 / 轮询重复渲染 / 保存�
       await expect(page.getByText("去设置连接")).toBeHidden();
       const closeMsA = Date.now() - t0;
       // 重开面板保持 12s 观察窗（轮询/渲染/保存都在面板开启态采样）
-      await page.getByRole("button", { name: "AI 助教" }).click();
+      await page
+        .getByRole("article", { name: "第 1 题", exact: true })
+        .getByRole("button", { name: "AI 助教", exact: true })
+        .click();
       await expect(page.getByText("去设置连接")).toBeVisible();
       const savesA = await page.evaluate(
         async ({ attemptId, questionId, rounds }) => {
@@ -245,7 +251,10 @@ test.describe("SAI-33 性能采样（布局开合 / 轮询重复渲染 / 保存�
       // 收起重开让面板重取 status，发送主动作解禁
       await page.keyboard.press("Escape");
       await expect(page.getByText("去设置连接")).toBeHidden();
-      await page.getByRole("button", { name: "AI 助教" }).click();
+      await page
+        .getByRole("article", { name: "第 1 题", exact: true })
+        .getByRole("button", { name: "AI 助教", exact: true })
+        .click();
       const sendButton = page.getByRole("button", {
         name: "发送",
         exact: true,
@@ -269,14 +278,20 @@ test.describe("SAI-33 性能采样（布局开合 / 轮询重复渲染 / 保存�
       await expect(sentText).toBeHidden();
       const closeMsB0 = Date.now() - t0;
       t0 = Date.now();
-      await page.getByRole("button", { name: "AI 助教" }).click();
+      await page
+        .getByRole("article", { name: "第 1 题", exact: true })
+        .getByRole("button", { name: "AI 助教", exact: true })
+        .click();
       await expect(sentText).toBeVisible();
       const openMsB = Date.now() - t0;
       t0 = Date.now();
       await page.keyboard.press("Escape");
       await expect(sentText).toBeHidden();
       const closeMsB = Date.now() - t0;
-      await page.getByRole("button", { name: "AI 助教" }).click();
+      await page
+        .getByRole("article", { name: "第 1 题", exact: true })
+        .getByRole("button", { name: "AI 助教", exact: true })
+        .click();
       await expect(sentText).toBeVisible();
 
       const savesB = await page.evaluate(

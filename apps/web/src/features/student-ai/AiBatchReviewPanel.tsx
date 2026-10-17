@@ -20,6 +20,7 @@ import {
 import { randomUuid } from "@/lib/uuid";
 import { CHANNEL_LABEL } from "./ai-channel-label";
 import { useStudentAiConnections } from "./ai-connection-queries";
+import { buildAiLinkPrompt } from "./ai-link-prompt";
 import { studentAiQueueSummaryKey } from "./ai-queue-queries";
 import { errorMessageOf } from "./error-text";
 import { writeToClipboard } from "./use-ai-send-controller";
@@ -212,7 +213,9 @@ export function AiBatchReviewPanel(props: {
   const copyLink = async (taskId: string, questionId: string) => {
     try {
       const ticket = await createStudentAiShareTicketApi(taskId);
-      const copied = await writeToClipboard(ticket.ticketUrl);
+      const copied = await writeToClipboard(
+        buildAiLinkPrompt(ticket.ticketUrl),
+      );
       setLinks((previous) =>
         new Map(previous).set(questionId, {
           url: ticket.ticketUrl,
@@ -348,7 +351,10 @@ export function AiBatchReviewPanel(props: {
             <p>任务创建后等待你的外部 AI 客户端领取，逐题独立处理。</p>
           )}
           {effectiveChannel === "link" && (
-            <p>每题生成一条链接，由你复制给外部 AI——平台不会自动收到回复。</p>
+            <p>
+              每题生成一条独立链接，复制时附带重新读取说明。可发送多条，但需要
+              AI 逐条打开并核对题号；平台不会自动收到回复。
+            </p>
           )}
         </div>
 

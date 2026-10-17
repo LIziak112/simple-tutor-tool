@@ -668,7 +668,9 @@ describe("useAiSendController（SAI-30 链接通道闭环）", () => {
     expect(mockedUpload).toHaveBeenCalledTimes(1);
     expect(mockedShareTicket).toHaveBeenCalledTimes(1);
     expect(mockedShareTicket).toHaveBeenCalledWith("task-1");
-    expect(writeText).toHaveBeenCalledWith(SHARE_TICKET.ticketUrl);
+    expect(writeText).toHaveBeenCalledWith(
+      expect.stringContaining(`${SHARE_TICKET.ticketUrl}?read=`),
+    );
     // 复制成功即结束：不预取分享正文（无抓取冒充外部已读）
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(view.result.current.sendState.phase).toBe("sent");
@@ -710,7 +712,9 @@ describe("useAiSendController（SAI-30 链接通道闭环）", () => {
     await act(async () => {
       await view.result.current.retryCopyLink();
     });
-    expect(writeText).toHaveBeenCalledWith(SHARE_TICKET.ticketUrl);
+    expect(writeText).toHaveBeenCalledWith(
+      expect.stringContaining(`${SHARE_TICKET.ticketUrl}?read=`),
+    );
     expect(mockedCreate).toHaveBeenCalledTimes(1);
     expect(mockedShareTicket).toHaveBeenCalledTimes(1);
     expect(view.result.current.linkShare?.copyFailed).toBe(false);

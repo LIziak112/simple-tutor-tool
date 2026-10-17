@@ -226,7 +226,10 @@ export async function startFakeAiProvider(
       }
 
       // —— OpenAI 兼容端点（被测 server 分流出站的落点）——
-      if (req.method === "POST" && url.pathname.endsWith("/chat/completions")) {
+      if (
+        (req.method === "POST" && url.pathname.endsWith("/chat/completions")) ||
+        (req.method === "GET" && url.pathname.endsWith("/models"))
+      ) {
         seq += 1;
         const headers: Record<string, string> = {};
         for (const [key, value] of Object.entries(req.headers)) {
@@ -237,7 +240,7 @@ export async function startFakeAiProvider(
         captured.push({
           seq,
           at: new Date().toISOString(),
-          target: `POST ${url.pathname}`,
+          target: `${req.method} ${url.pathname}`,
           headers,
           body: bodyText,
         });
@@ -248,9 +251,13 @@ export async function startFakeAiProvider(
           const status = script?.status ?? 200;
           const resBody =
             script?.body ??
-            chatCompletionJson(
-              `E2E 假回复 #${seq}：收到你的问题，这一段是供应商回信正文。`,
-            );
+            (req.method === "GET"
+              ? JSON.stringify({
+                  data: [{ id: FAKE_AI_MODEL }, { id: "e2e-another-model" }],
+                })
+              : chatCompletionJson(
+                  `E2E 假回复 #${seq}：收到你的问题，这一段是供应商回信正文。`,
+                ));
           res.writeHead(status, {
             "content-type": "application/json",
             ...(script?.headers ?? {}),

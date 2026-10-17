@@ -3,7 +3,11 @@ import {
   AI_MCP_TOKEN_BYTES,
   AI_SHARE_DEFAULT_VALID_HOURS,
   type AiConnectionCreateRequest,
+  type AiConnectionModelsData,
+  type AiConnectionModelsRequest,
   type AiConnectionPatchRequest,
+  type AiConnectionProbeData,
+  type AiConnectionProbeRequest,
   type AiConnectionPublic,
   type AiConnectionTestData,
 } from "@tutor/contract";
@@ -23,6 +27,7 @@ import {
 } from "./connection-cipher.ts";
 import { parseOutboundBaseUrl } from "./outbound-target.ts";
 import {
+  fetchProviderModels,
   type ProviderTransport,
   testProviderConnection,
 } from "./provider-client.ts";
@@ -391,6 +396,17 @@ export function patchStudentAiConnection(
   if (request.channel === "inapp") {
     if (request.baseUrl !== undefined) guardBaseUrl(request.baseUrl);
     const config = JSON.parse(row.configJson) as InappConnectionConfig;
+    const addressChanged =
+      request.baseUrl !== undefined &&
+      new URL(request.baseUrl).href.replace(/\/+$/, "") !==
+        new URL(config.baseUrl).href.replace(/\/+$/, "");
+    if (addressChanged && request.apiKey === undefined) {
+      throw new HttpError(
+        400,
+        "AI_CONNECTION_INVALID",
+        "接口地址已更改，请重新填写 API Key 后保存",
+      );
+    }
     // 未提交的字段保持库内原值（SAI-03 定案「缺省 = 不改」）；
     // Key 轮换时五元密文组整体替换
     const keySealed =
@@ -413,8 +429,12 @@ export function patchStudentAiConnection(
       }),
     };
     configJson = JSON.stringify(merged);
-    if (request.apiKey !== undefined) {
-      // Key 轮换：验证状态回 unverified（不凭新 Key 存在宣称在线）
+    if (
+      request.apiKey !== undefined ||
+      addressChanged ||
+      (request.model !== undefined && request.model !== config.model)
+    ) {
+      // 地址、模型或密钥改变后，旧探针结论不再适用。
       verifyStatus = "unverified";
       verifiedAt = null;
     }
@@ -510,6 +530,104 @@ export function deleteStudentAiConnection(
 
 // ---------- 测试连接 ----------
 
+/** 草稿诊断不落库；原密钥只能用于原地址，防止编辑地址后泄露凭据。 */
+function diagnosticCredentials(
+  db: Db,
+  input: {
+    readonly studentId: string;
+    readonly rootSecret: string;
+    readonly request: AiConnectionModelsRequest;
+  },
+): { baseUrl: string; apiKey: string } {
+  const { request } = input;
+  const baseUrl = guardBaseUrl(request.baseUrl).replace(/\/+$/, "");
+  const row =
+    request.connectionId === undefined
+      ? undefined
+      : loadActiveConnection(db, input.studentId, request.connectionId);
+  if (row !== undefined && row.channel !== "inapp") {
+    throw new HttpError(
+      400,
+      "AI_CONNECTION_INVALID",
+      "请选择页内 AI 连接，再获取模型或测试连接",
+    );
+  }
+  if (request.apiKey !== undefined) return { baseUrl, apiKey: request.apiKey };
+  if (row === undefined)
+    throw new HttpError(400, "AI_CONNECTION_INVALID", "请先填写 API Key");
+  const config = JSON.parse(row.configJson) as InappConnectionConfig;
+  if (
+    new URL(config.baseUrl).href.replace(/\/+$/, "") !==
+    new URL(baseUrl).href.replace(/\/+$/, "")
+  ) {
+    throw new HttpError(
+      400,
+      "AI_CONNECTION_INVALID",
+      "接口地址已更改，请重新填写 API Key 后再获取模型或测试连接",
+    );
+  }
+  const opened = openApiKey(input.rootSecret, {
+    cipherVersion: config.cipherVersion,
+    ciphertext: config.keyCiphertext,
+    iv: config.keyIv,
+    tag: config.keyTag,
+    fingerprint: config.keyFingerprint,
+  });
+  if (!opened.ok)
+    throw new HttpError(
+      400,
+      "AI_CONNECTION_INVALID",
+      "已保存的密钥无法读取，请重新填写 API Key 后重试",
+    );
+  return { baseUrl, apiKey: opened.key };
+}
+
+export async function fetchStudentAiConnectionModels(
+  db: Db,
+  input: {
+    readonly studentId: string;
+    readonly rootSecret: string;
+    readonly request: AiConnectionModelsRequest;
+  },
+  deps: { readonly transport?: ProviderTransport } = {},
+): Promise<AiConnectionModelsData> {
+  const credentials = diagnosticCredentials(db, input);
+  const result = await fetchProviderModels({ ...credentials, ...deps });
+  if (!result.ok)
+    throw new HttpError(
+      result.code === "AI_OUTBOUND_TIMEOUT" ? 504 : 502,
+      result.code,
+      result.message,
+    );
+  return { models: result.models, fetchedAt: new Date().toISOString() };
+}
+
+export async function probeStudentAiConnection(
+  db: Db,
+  input: {
+    readonly studentId: string;
+    readonly rootSecret: string;
+    readonly request: AiConnectionProbeRequest;
+  },
+  deps: { readonly transport?: ProviderTransport } = {},
+): Promise<AiConnectionProbeData> {
+  const credentials = diagnosticCredentials(db, input);
+  const startedAt = Date.now();
+  const result = await testProviderConnection({
+    ...credentials,
+    model: input.request.model,
+    ...deps,
+  });
+  return {
+    verifyStatus: result.ok ? "verified" : "failed",
+    verifiedAt: result.ok ? new Date().toISOString() : null,
+    durationMs: Math.max(0, Date.now() - startedAt),
+    message: result.ok
+      ? "已收到所选模型的回复。当前填写的配置尚未保存。"
+      : `${result.message}。请检查接口地址、API Key 和模型名称后重试。`,
+  };
+}
+
 /**
  * POST /ai/connections/:id/test：一次真实测试调用（固定探针、小 max_tokens、
  * 测试时限）。成功 → verified；供应商拒绝/网络失败 → failed；解密失败 →
@@ -566,6 +684,14 @@ export async function testStudentAiConnection(
     model: config.model,
     ...(deps.transport !== undefined && { transport: deps.transport }),
   });
+  const current = loadActiveConnection(db, studentId, connectionId);
+  if (current.configJson !== row.configJson) {
+    return {
+      verifyStatus: current.verifyStatus,
+      verifiedAt: current.verifiedAt,
+      message: "测试期间配置已更改，请重新测试当前连接",
+    };
+  }
   const now = new Date().toISOString();
   if (result.ok) {
     db.update(aiConnections)

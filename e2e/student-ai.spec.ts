@@ -202,7 +202,10 @@ test.describe("SAI-33 学生端 AI 全链（页内通道）", () => {
         }
       });
 
-      await page.getByRole("button", { name: "AI 助教" }).click();
+      await page
+        .getByRole("article", { name: "第 1 题", exact: true })
+        .getByRole("button", { name: "AI 助教", exact: true })
+        .click();
       // 无连接：状态区给设置入口，不出现通道选择（发送主动作被禁用）
       await expect(page.getByText("去设置连接")).toBeVisible();
       await expect(
@@ -238,7 +241,10 @@ test.describe("SAI-33 学生端 AI 全链（页内通道）", () => {
         if (el === null) throw new Error("第 1 题卡不存在");
         (el as HTMLElement & { __sai33Marker?: boolean }).__sai33Marker = true;
       });
-      await page.getByRole("button", { name: "AI 助教" }).click();
+      await page
+        .getByRole("article", { name: "第 1 题", exact: true })
+        .getByRole("button", { name: "AI 助教", exact: true })
+        .click();
       await expect(page.getByText("当前：开放伴学")).toBeVisible();
       await expect(
         page.getByRole("button", { name: "发送", exact: true }),
@@ -489,7 +495,10 @@ test.describe("SAI-33 学生端 AI 全链（页内通道）", () => {
       await page.route("**/api/student/ai/tasks", async (route) => {
         await route.abort("failed");
       });
-      await page.getByRole("button", { name: "AI 助教" }).click();
+      await page
+        .getByRole("article", { name: "第 1 题", exact: true })
+        .getByRole("button", { name: "AI 助教", exact: true })
+        .click();
       const composer = page.getByPlaceholder("写下你想问的问题");
       await composer.waitFor({ state: "visible" });
       await composer.fill("断网场景求助");
@@ -529,7 +538,10 @@ test.describe("SAI-33 学生端 AI 全链（页内通道）", () => {
       const assignmentTitle = `SAI全链作业${suffix}`;
       await openAssignmentAttempt(page, assignmentTitle);
 
-      await page.getByRole("button", { name: "AI 助教" }).click();
+      await page
+        .getByRole("article", { name: "第 1 题", exact: true })
+        .getByRole("button", { name: "AI 助教", exact: true })
+        .click();
       await page.getByRole("button", { name: "上下文链接" }).click();
       await page.getByPlaceholder("写下你想问的问题").fill("链接通道求助");
       await page.getByRole("button", { name: "复制 AI 链接" }).click();
@@ -658,7 +670,10 @@ test.describe("SAI-33 学生端 AI 全链（页内通道）", () => {
       expect(statusRes.data.resolution.reason).toBe("student_closed");
       // 页面侧刷新后呈现不可用文案（教师刚改设置立即生效）
       await page.reload();
-      await page.getByRole("button", { name: "AI 助教" }).click();
+      await page
+        .getByRole("article", { name: "第 1 题", exact: true })
+        .getByRole("button", { name: "AI 助教", exact: true })
+        .click();
       await expect(
         page.getByText(/完成后可用|本题暂不能/u).first(),
       ).toBeVisible({ timeout: 15_000 });

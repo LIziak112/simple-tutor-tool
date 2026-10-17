@@ -23,6 +23,7 @@ import {
   uploadStudentAiTaskMaterialsApi,
 } from "@/lib/api";
 import { randomUuid } from "@/lib/uuid";
+import { buildAiLinkPrompt } from "./ai-link-prompt";
 import { studentAiQueueSummaryKey } from "./ai-queue-queries";
 import { errorMessageOf } from "./error-text";
 
@@ -580,7 +581,9 @@ export function useAiSendController(config: UseAiSendControllerConfig) {
           }
           if (!alive()) return;
           // 复制失败不掩盖生成成功：链接保留，手动复制/重试复制不再新建票据
-          const copied = await writeToClipboard(ticket.ticketUrl);
+          const copied = await writeToClipboard(
+            buildAiLinkPrompt(ticket.ticketUrl),
+          );
           if (!alive()) return;
           patchDraft(questionId, (draft) => ({ ...draft, text: "" }));
           pendingRef.current = null;
@@ -595,7 +598,7 @@ export function useAiSendController(config: UseAiSendControllerConfig) {
           setSendState({
             phase: "sent",
             message: copied
-              ? "已生成 AI 链接并复制，发给外部 AI 即可读取本题内容"
+              ? "已生成 AI 链接并复制（含重新读取说明），请发给能联网的外部 AI；复制成功不代表 AI 已读取"
               : "链接已生成，但自动复制失败：请在下方手动复制后发给外部 AI",
             questionId,
           });
@@ -634,7 +637,7 @@ export function useAiSendController(config: UseAiSendControllerConfig) {
   const retryCopyLink = useCallback(async () => {
     const current = linkShare;
     if (current === null) return;
-    const copied = await writeToClipboard(current.url);
+    const copied = await writeToClipboard(buildAiLinkPrompt(current.url));
     setLinkShare((previous) =>
       previous !== null && previous.url === current.url
         ? { ...previous, copyFailed: !copied }
@@ -642,7 +645,9 @@ export function useAiSendController(config: UseAiSendControllerConfig) {
     );
     setSendState({
       phase: "sent",
-      message: copied ? "已复制 AI 链接" : "自动复制仍失败，请手动复制下方链接",
+      message: copied
+        ? "已复制 AI 链接与本次重新读取说明"
+        : "自动复制仍失败，请手动复制下方内容",
       questionId: current.questionId,
     });
   }, [linkShare]);
@@ -663,7 +668,9 @@ export function useAiSendController(config: UseAiSendControllerConfig) {
     try {
       const ticket = await createStudentAiShareTicketApi(current.taskId);
       if (!alive()) return;
-      const copied = await writeToClipboard(ticket.ticketUrl);
+      const copied = await writeToClipboard(
+        buildAiLinkPrompt(ticket.ticketUrl),
+      );
       if (!alive()) return;
       setLinkShare({
         questionId: current.questionId,

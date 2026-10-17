@@ -3,7 +3,9 @@ import {
   type AiTaskPublic,
   aiBatchReviewCreateRequestSchema,
   aiConnectionCreateRequestSchema,
+  aiConnectionModelsRequestSchema,
   aiConnectionPatchRequestSchema,
+  aiConnectionProbeRequestSchema,
   aiStatusQuerySchema,
   aiTaskCreateRequestSchema,
   aiTaskFollowupRequestSchema,
@@ -28,8 +30,10 @@ import {
 import {
   createStudentAiConnection,
   deleteStudentAiConnection,
+  fetchStudentAiConnectionModels,
   listStudentAiConnections,
   patchStudentAiConnection,
+  probeStudentAiConnection,
   testStudentAiConnection,
 } from "../services/ai-companion/connection-service.ts";
 import {
@@ -58,6 +62,7 @@ import {
 import {
   createAiShareTicket,
   revokeAiShareTickets,
+  studentAiShareAccessStatus,
 } from "../services/ai-companion/student-ai-share.ts";
 import { studentAiStatusOf } from "../services/ai-companion/student-ai-status.ts";
 
@@ -517,6 +522,14 @@ export function createStudentAiRoutes(
           },
         });
       })
+      .get("/ai/tasks/:id/share/status", (c) => {
+        c.header("Cache-Control", "no-store");
+        const data = studentAiShareAccessStatus(db, {
+          studentId: c.var.student.id,
+          taskId: c.req.param("id"),
+        });
+        return c.json({ ok: true, data });
+      })
       .delete("/ai/tasks/:id/share", (c) => {
         const result = revokeAiShareTickets(db, {
           studentId: c.var.student.id,
@@ -549,6 +562,26 @@ export function createStudentAiRoutes(
           request,
         });
         return c.json({ ok: true, data: result }, 201);
+      })
+      .post("/ai/connections/models", async (c) => {
+        c.header("Cache-Control", "no-store");
+        const request = await parseJsonBody(c, aiConnectionModelsRequestSchema);
+        const data = await fetchStudentAiConnectionModels(db, {
+          studentId: c.var.student.id,
+          rootSecret: hmacSecret,
+          request,
+        });
+        return c.json({ ok: true, data });
+      })
+      .post("/ai/connections/probe", async (c) => {
+        c.header("Cache-Control", "no-store");
+        const request = await parseJsonBody(c, aiConnectionProbeRequestSchema);
+        const data = await probeStudentAiConnection(db, {
+          studentId: c.var.student.id,
+          rootSecret: hmacSecret,
+          request,
+        });
+        return c.json({ ok: true, data });
       })
       .patch("/ai/connections/:id", async (c) => {
         c.header("Cache-Control", "no-store");

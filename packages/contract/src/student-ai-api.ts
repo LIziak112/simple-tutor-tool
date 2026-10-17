@@ -394,6 +394,80 @@ export const aiConnectionTestDataSchema = z
 export type AiConnectionTestData = z.infer<typeof aiConnectionTestDataSchema>;
 export const aiConnectionTestOkSchema = apiOkExtend(aiConnectionTestDataSchema);
 
+/** 保存前诊断：可显式传入新密钥，或引用本人连接的原密钥。 */
+const aiConnectionDiagnosticInputSchema = z
+  .object({
+    connectionId: z.uuid().optional(),
+    baseUrl: z.url().max(AI_CONNECTION_BASE_URL_MAX_CHARS),
+    apiKey: z.string().min(1).max(AI_API_KEY_MAX_CHARS).optional(),
+  })
+  .strict();
+
+function hasDiagnosticCredential(
+  input: z.infer<typeof aiConnectionDiagnosticInputSchema>,
+): boolean {
+  return input.apiKey !== undefined || input.connectionId !== undefined;
+}
+
+export const aiConnectionModelsRequestSchema =
+  aiConnectionDiagnosticInputSchema.refine(hasDiagnosticCredential, {
+    message: "请填写 API Key，或选择已保存的连接",
+  });
+export type AiConnectionModelsRequest = z.infer<
+  typeof aiConnectionModelsRequestSchema
+>;
+
+export const aiConnectionProbeRequestSchema = aiConnectionDiagnosticInputSchema
+  .extend({
+    model: z.string().trim().min(1).max(AI_CONNECTION_MODEL_MAX_CHARS),
+  })
+  .refine(hasDiagnosticCredential, {
+    message: "请填写 API Key，或选择已保存的连接",
+  });
+export type AiConnectionProbeRequest = z.infer<
+  typeof aiConnectionProbeRequestSchema
+>;
+
+/** 只暴露模型标识，不透传供应商元数据或凭据。 */
+export const AI_PROVIDER_MODELS_MAX_COUNT = 2000;
+export const aiConnectionModelsDataSchema = z
+  .object({
+    models: z
+      .array(z.string().min(1).max(AI_CONNECTION_MODEL_MAX_CHARS))
+      .max(AI_PROVIDER_MODELS_MAX_COUNT),
+    fetchedAt: z.iso.datetime(),
+  })
+  .strict();
+export type AiConnectionModelsData = z.infer<
+  typeof aiConnectionModelsDataSchema
+>;
+export const aiConnectionModelsOkSchema = apiOkExtend(
+  aiConnectionModelsDataSchema,
+);
+
+/** 草稿测试不修改保存状态；耗时仅表示本次探针的往返时间。 */
+export const aiConnectionProbeDataSchema = aiConnectionTestDataSchema.extend({
+  durationMs: z.number().int().min(0),
+});
+export type AiConnectionProbeData = z.infer<typeof aiConnectionProbeDataSchema>;
+export const aiConnectionProbeOkSchema = apiOkExtend(
+  aiConnectionProbeDataSchema,
+);
+
+/** 本人查看本题所有分享链接的累计访问事实，不推断访问者身份或阅读理解。 */
+export const aiShareAccessStatusDataSchema = z
+  .object({
+    viewCount: z.number().int().min(0),
+    lastViewedAt: z.iso.datetime().nullable(),
+  })
+  .strict();
+export type AiShareAccessStatusData = z.infer<
+  typeof aiShareAccessStatusDataSchema
+>;
+export const aiShareAccessStatusOkSchema = apiOkExtend(
+  aiShareAccessStatusDataSchema,
+);
+
 /**
  * PATCH /ai/connections/:id 响应 data：与创建同形——公开视图 + 可选一次性
  * 凭证（仅 mcp 重置 token 时非 null，明文只在本响应出现一次）。
