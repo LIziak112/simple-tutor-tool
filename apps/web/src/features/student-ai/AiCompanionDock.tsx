@@ -146,11 +146,15 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
       }}
     />
   );
+  // setVisible 本身是稳定引用（布局控制器内 useCallback([])）；若依赖整个
+  // controller（每次渲染都是新对象），消费方的「绑定题可见性」效应会每次
+  // 重跑并立即测量，而面板开合又会重排题卡 → 面板反复卸载/挂载闪动。
+  const setVisible = controller.setVisible;
   const setQuestionVisible = useCallback(
     (questionId: string, visible: boolean) => {
-      if (send.boundQuestionId === questionId) controller.setVisible(visible);
+      if (send.boundQuestionId === questionId) setVisible(visible);
     },
-    [controller, send.boundQuestionId],
+    [setVisible, send.boundQuestionId],
   );
   const rail = (children: ReactNode) => (
     <AiCompanionRail

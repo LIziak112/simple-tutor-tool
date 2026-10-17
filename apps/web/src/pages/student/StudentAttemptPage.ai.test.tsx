@@ -416,4 +416,48 @@ describe("四来源 AI 伴学参数化矩阵（SAI-22 完成条件①）", () =>
       ),
     ).toBe(false);
   });
+
+  it("绑定题可见性只按用户滚动裁决：布局引发的 scroll 不隐藏面板", async () => {
+    mockedFetch.mockResolvedValue(draftOf(SOURCES[0]));
+    renderPage();
+    await readyAndScroll();
+    fireEvent.click(screen.getByRole("button", { name: "AI 助教" }));
+    await screen.findByRole("dialog");
+    // 面板开合/滚动锚定会让题卡离开视口并触发 scroll；没有滚轮或触摸
+    // 意图时不得据此隐藏面板（否则面板与布局互相触发，无限闪动）。
+    rectSpy?.mockReturnValue({
+      top: 5000,
+      bottom: 5200,
+      left: 0,
+      right: 400,
+      width: 400,
+      height: 200,
+      x: 0,
+      y: 5000,
+      toJSON: () => ({}),
+    } as DOMRect);
+    fireEvent.scroll(window);
+    await new Promise((resolve) => setTimeout(resolve, 320));
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    // 用户真正滚动：裁决后题卡已离开视口 → 面板收起
+    fireEvent.wheel(window, { deltaY: 600 });
+    fireEvent.scroll(window);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    // 滚回题卡（重新可见）→ 面板恢复（等过裁决后的抑制窗口）
+    await new Promise((resolve) => setTimeout(resolve, 450));
+    rectSpy?.mockReturnValue({
+      top: 100,
+      bottom: 300,
+      left: 0,
+      right: 400,
+      width: 400,
+      height: 200,
+      x: 0,
+      y: 100,
+      toJSON: () => ({}),
+    } as DOMRect);
+    fireEvent.wheel(window, { deltaY: -600 });
+    fireEvent.scroll(window);
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument());
+  });
 });

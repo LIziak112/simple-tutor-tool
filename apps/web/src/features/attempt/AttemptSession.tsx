@@ -287,22 +287,63 @@ function AnswerView({
     editor,
   });
   const navigatorCollapsed = aiCompanion.controller.navigatorCollapsed;
+  const setQuestionVisible = aiCompanion.setQuestionVisible;
   useEffect(() => {
     const questionId = aiCompanion.send.boundQuestionId;
     if (questionId === null) return;
     const element = cardElements.current.get(questionId);
-    if (!element || typeof IntersectionObserver === "undefined") return;
-    const observer = new IntersectionObserver(
-      ([entry]) =>
-        aiCompanion.setQuestionVisible(
-          questionId,
-          entry?.isIntersecting ?? false,
-        ),
-      { root: null, threshold: 0.01 },
-    );
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [aiCompanion.send.boundQuestionId, aiCompanion.setQuestionVisible]);
+    if (!element) return;
+    let frame = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let applied: boolean | null = null;
+    let suppressUntil = 0;
+    let lastUserScrollAt = 0;
+    const measure = () => {
+      frame = 0;
+      const rect = element.getBoundingClientRect();
+      const visible = rect.bottom > 0 && rect.top < window.innerHeight;
+      if (visible === applied) return;
+      applied = visible;
+      // 面板开合会立刻重排并可能触发浏览器的滚动锚定事件；抑制短窗口内
+      // 由自身布局变化引发的滚动，避免「收起→题卡回到视口→展开→题卡又
+      // 被挤出」的自激振荡（表现为面板不停闪动）。
+      suppressUntil = performance.now() + 400;
+      setQuestionVisible(questionId, visible);
+    };
+    // 只按用户滚动意图裁决：打开面板、滚动锚定、程序化滚动都会触发
+    // scroll 事件，但它们不是「用户离开了这道题」，不据此隐藏面板。
+    const scheduleMeasure = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        cancelAnimationFrame(frame);
+        frame = requestAnimationFrame(measure);
+      }, 200);
+    };
+    const schedule = () => {
+      if (performance.now() - lastUserScrollAt > 1000) return;
+      if (performance.now() < suppressUntil) return;
+      scheduleMeasure();
+    };
+    const markUserScroll = () => {
+      lastUserScrollAt = performance.now();
+    };
+    const INPUT_EVENTS = ["wheel", "touchmove"] as const;
+    window.addEventListener("scroll", schedule, { passive: true });
+    // 视口尺寸变化（旋转/分屏/缩放）必须重新裁决，不受用户滚动闸门限制
+    window.addEventListener("resize", scheduleMeasure);
+    for (const type of INPUT_EVENTS)
+      window.addEventListener(type, markUserScroll, { passive: true });
+    window.addEventListener("keydown", markUserScroll);
+    return () => {
+      clearTimeout(timer);
+      cancelAnimationFrame(frame);
+      window.removeEventListener("scroll", schedule);
+      window.removeEventListener("resize", schedule);
+      for (const type of INPUT_EVENTS)
+        window.removeEventListener(type, markUserScroll);
+      window.removeEventListener("keydown", markUserScroll);
+    };
+  }, [aiCompanion.send.boundQuestionId, setQuestionVisible]);
   const navigationId = useId();
   const navigationAnchor = useRef<{ element: HTMLElement; top: number } | null>(
     null,
