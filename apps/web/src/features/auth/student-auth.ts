@@ -18,6 +18,7 @@ import {
   loginStudentByLinkApi,
   logoutStudentApi,
 } from "@/lib/api";
+import { clearAccountQueries } from "./account-query-cache";
 
 /**
  * 学生登录状态（T2.3 学生端外壳）：与 teacher-auth 同构的模式——
@@ -44,7 +45,8 @@ export function useStudentMe() {
 /** 登录成功后写入 me 缓存并预取我的作业/课程/讲义（首页立即可用，T2A.5 加课程） */
 function useApplyStudentAuthed() {
   const queryClient = useQueryClient();
-  return (student: StudentMeData) => {
+  return async (student: StudentMeData) => {
+    await clearAccountQueries(queryClient, "student");
     bindDraftSession({ origin: window.location.origin, studentId: student.id });
     // T6R.9 复审①：登录身份与当前草稿绑定不同 → 立即停旧会话。否则换账号后
     // 旧待传继续跑，会用**新会话 Cookie** 上传——attempt 归属由服务端从会话
@@ -102,11 +104,12 @@ export function useLogoutStudent() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: logoutStudentApi,
-    onSuccess: () => {
+    onSuccess: async () => {
       bindDraftSession(null);
-      queryClient.removeQueries({ queryKey: ["student"] });
       resetNoteSession();
       resetAnnotationSession();
+      await clearAccountQueries(queryClient, "student");
+      await queryClient.resetQueries({ queryKey: studentMeKey, exact: true });
     },
   });
 }

@@ -1,0 +1,40 @@
+# 移除旧标画兜底界面并部署稳定线
+
+用户已确认移除兼容界面、从 codex/stable-fixes 开分支、验收后合回稳定线并部署云服务器，禁止合入 v2。另明确授权备份后重置作答 fb1dc111-1039-4d6f-8f55-7d4c21c2c732 的旧标画，保留答案、草稿和正式手写。
+
+## 文件与步骤
+
+1. 分支 codex/remove-annotation-fallback；先携带线上 a626eb72 已验收且与 B 系列无关的九个提交，避免部署回退管理 UI、手机顶栏、讲练导入等已上线功能。不合并 v2。
+2. 先补失败测试：不兼容布局不再展示底图和独立答案；原生内联填空仍可编辑；不允许向不兼容题面落墨。删除 QuestionAnnotationOverlay 的旧图加载/兜底分支、AttemptQuestionCard 的 fallbackAnswer、QuestionSurface 的 answerOnly。正常固定逻辑排版、等比缩放、收笔和本机落盘保留。
+3. 受控重置使用现有 app_settings 存按作答/阶段隔离的 resetVersion，无表结构修改。契约先增加可选版本元数据，服务端读视图返回版本、写入入口校验版本，旧客户端和迟到上传不能重建旧底图。本机在收到新版本后先归档旧记录，再清理该作答标画；其他账号、作答、答案、草稿与正式手写不动。文件涉及 contract/annotation、annotation-service、student 路由与 multipart、web api/annotation-sync/annotation-store。
+4. 新增离线维护 CLI：默认盘点，显式执行才在事务内重置目标 scratch；仅允许未交卷、未封存且未逐题提交的材料。运行前停服、完整备份，再精确重置；不删除原 PNG/笔迹文件以保留备份引用。服务器当前只读盘点：17 份底图、85 笔；执行时重新核对。
+5. 定向 TDD、简化和 code-review（仓库 .zcode 技能）及安全审查；pnpm gen:spec、全量单测、typecheck、lint、build；Chromium/WebKit 验证原生作答、新标画、导出及历史不匹配行为。
+6. 合回 codex/stable-fixes。部署前保存旧代码和数据备份，部署已验收稳定线、保留现有服务器依赖/数据目录，重启验证健康、版本标识、普通作答、重置范围和无关材料数量不变。失败回滚旧代码及必要数据备份，不涉及 v2/main。
+
+## 风险与测试点
+
+- 不兼容不能靠放宽签名或拉伸旧笔迹通过；读失败不算空稿。
+- 重置标记只在鉴权后的本人材料响应返回，不返回其他作答/学生范围；普通接口继续 assertNoLeak。
+- resetVersion 旧值写入在正文/底图创建/图片三入口均拒绝，未重置作答缺省 0 保持行为。
+- 本机归档失败、归档期间又写入或恢复会话变化时不得静默丢稿。
+- 正在进行的讲练题级提交也要保护，维护 CLI 禁止已提交行。
+- 所有执行结果及部署回滚路径在完成后回填。
+
+## 验收记录
+
+- TDD 先红后绿：原生填空回退、受控重置、旧回执保护；重置归档失败不清稿，其他作答不受影响。
+- 全量 `pnpm test --maxWorkers=4 --reporter=verbose`：369 个文件、4373 项通过（551.30 秒）。最终快照版本补齐后，store/sync/overlay 再验 41 项通过。
+- `pnpm typecheck`、`pnpm lint`、`pnpm build` 通过；lint 保留现有 18 个 warning、1 个 info、无 error。`pnpm gen:spec` 后产物已同步，再生成无差异。
+- Chromium/WebKit：原位标画（含刷新、跨设备、缩放、导出）和不兼容布局原生作答，共 4 项通过；使用独立 8898/5198 端口、临时数据库、单 worker，未占用 B 系列测试服务。
+- 简化与代码审查：删掉图片兜底及独立答案路径，复用既有题面就绪与超时工具；修复旧回执、旧画布回调和快照版本传递问题。安全审查确认鉴权先于版本读取、三写入口均校验、坏版本拒绝，学生响应无答案泄露；无新增依赖、无数据库表结构变更。
+- 手动验证：刷新目标作答，第 12 题直接在原生填空输入；打开圈画，在原题面书写；草稿与答案不变；刷新后仍可恢复新版标画。不兼容旧布局不显示第二套答案控件、不允许错位落笔。
+- 上线按用户补充要求先停止原服务，备份与重置成功后部署，再启动。部署结果另记。
+
+## 部署记录（2026-10-16 22:50 CST）
+
+- 背景：首次部署尝试前夜，服务器（1.6G 内存实例）在执行暂存目录内 `pnpm -r run build` 后整体挂死（TCP 可连、sshd/node 无响应，22:35 上个启动周期结束），22:43 重启恢复。此后部署改用本地构建的发布包 `stable-annotation-release.tar.gz`（41,873,778 字节，SHA-256 `4af76cc1…6cf029`），不再占用服务器资源构建。
+- 第一次执行（22:48）失败并按设计回滚：健康检查误用 `127.0.0.1:8787`，而 systemd 单元实际 `Environment=PORT=80`（服务直接监听 80，无反代）。日志显示新版当时已正常启动（数据库就绪、自动快照、服务已启动 port:80），属验证地址错误而非版本问题。回滚完整恢复：`.deployed-commit` 回到 `a626eb72`，数据库回到重置前（17 底图/85 笔、无重置标记残留）。
+- 第二次执行（22:50）成功：修正健康检查端口后重跑。`DEPLOYED 7cd80b4c`，备份目录 `/opt/simple-tutor-backups/stable-annotation-20261016-225022`（首次失败尝试另留 `-224826`，均含 code.tar.gz、data.tar.gz、tutor.db、SHA256SUMS、before/after.json、reset.json）。
+- 受控重置结果：目标作答 `fb1dc111-1039-4d6f-8f55-7d4c21c2c732` scratch 标画 17 底图/85 笔清零，写入 `annotation-reset:scratch:<attempt>` 标记（resetVersion 1792162232853）；作答保持 `draft`。答案、草稿、正式手写与其他数据经 verify-reset 全表 SHA-256 前后对比字节级不变；其他作答 11 份底图完好。原 PNG/笔迹文件未删除，保留在备份引用中。
+- 部署后验证：`systemctl is-active` active；公网 `/api/public/health` 返回 `{"ok":true}`、首页 HTTP 200；journal 无错误。回滚路径：停服 → 恢复 `code.tar.gz` → 从备份 `tutor.db` 还原 → 重启。
+- 本分支未合入 v2/main；稳定线仍为 `codex/stable-fixes`，线上版本以服务器 `.deployed-commit` 为准（`7cd80b4c`）。

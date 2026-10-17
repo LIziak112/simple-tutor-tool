@@ -28,6 +28,7 @@ import {
   useSessionInputPreference,
 } from "@/features/ink/input-preference";
 import { PAPER_KEEPALIVE_MS } from "@/features/ink/use-retained-paper";
+import { withTimeout } from "@/features/notes/rasterize-utils";
 import { measureStage } from "@/lib/performance-stages";
 import {
   getAnnotationRecord,
@@ -39,7 +40,10 @@ import {
   createAnnotationSurface,
 } from "./annotation-surface";
 import { prepareQuestionAnnotationBase } from "./question-annotation-base";
-import { questionSurfaceMatchesLayout } from "./question-base-image";
+import {
+  awaitQuestionSurfaceReady,
+  questionSurfaceMatchesLayout,
+} from "./question-base-image";
 import { scheduleQuestionBasePrewarm } from "./schedule-question-base-prewarm";
 import {
   useAnnotationRecord,
@@ -58,18 +62,10 @@ export const QuestionAnnotationOverlay = forwardRef<
     question: AttemptQuestionPublic;
     label: string;
     children: ReactNode;
-    fallbackAnswer?: ReactNode;
     hidden?: boolean;
   }
 >((props, ref) => {
-  const {
-    attemptId,
-    question,
-    label,
-    children,
-    fallbackAnswer,
-    hidden = false,
-  } = props;
+  const { attemptId, question, label, children, hidden = false } = props;
   const editor = useAttemptEditor(question.id);
   const recovery = useDraftSyncRecovery();
   const inputPreference = useSessionInputPreference();
@@ -86,9 +82,6 @@ export const QuestionAnnotationOverlay = forwardRef<
   const [expanded, setExpanded] = useState(false);
   const scale = expanded ? 1 : fitScale;
   const viewport = useRef<HTMLDivElement>(null);
-  const [originalUrl, setOriginalUrl] = useState<string | null>(null);
-  const [originalLoaded, setOriginalLoaded] = useState(false);
-  const [imageRetry, setImageRetry] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tool, setTool] = useState<"pen" | "eraser">("pen");
@@ -96,27 +89,21 @@ export const QuestionAnnotationOverlay = forwardRef<
   const [size, setSize] = useState<InkPenSize>("thin");
   const [, setHistory] = useState(0);
   const layout = record?.localBase?.layout ?? record?.base?.layout;
-  const legacy = !layout && record?.base?.state === "ready";
-  const cssWidth = layout?.cssWidth ?? (legacy ? 720 : undefined);
-  const cssHeight =
-    layout?.cssHeight ??
-    (legacy && record?.base?.pixelHeight && record.base.pixelWidth
-      ? (record.base.pixelHeight / record.base.pixelWidth) * 720
-      : undefined);
-  const baseWidth = layout
-    ? Math.ceil(layout.cssWidth * layout.pixelRatio)
-    : (record?.base?.pixelWidth ?? 0);
-  const baseHeight = layout
-    ? Math.ceil(layout.cssHeight * layout.pixelRatio)
-    : (record?.base?.pixelHeight ?? 0);
-  const original = legacy || (layout !== undefined && compatible === false);
-  const localPng = record?.localBase?.png;
+  const rejectedLayout = compatible === false;
+  const displayLayout = rejectedLayout ? undefined : layout;
+  const cssWidth = displayLayout?.cssWidth;
+  const cssHeight = displayLayout?.cssHeight;
+  const baseWidth = displayLayout
+    ? Math.ceil(displayLayout.cssWidth * displayLayout.pixelRatio)
+    : 0;
+  const baseHeight = displayLayout
+    ? Math.ceil(displayLayout.cssHeight * displayLayout.pixelRatio)
+    : 0;
   const selected =
     editor?.active?.questionId === question.id &&
     editor.active.kind === "annotation";
-  const active =
-    selected && !hidden && (original ? originalLoaded : compatible === true);
-  const visible = (original || compatible === true) && !hidden;
+  const active = selected && !hidden && compatible === true;
+  const visible = compatible === true && !hidden;
   const [mountedOnce, setMountedOnce] = useState(false);
   const [previewBlob, setPreviewBlob] = useState<Blob | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -225,12 +212,19 @@ export const QuestionAnnotationOverlay = forwardRef<
         return;
       }
       if (!editor || !session || loading) return;
+      if (rejectedLayout) setCompatible(null);
       setLoading(true);
       setError(null);
       try {
         await editor.request(
           { questionId: question.id, kind: "annotation" },
           async (signal) => {
+            if (rejectedLayout) {
+              await new Promise<void>((resolve) =>
+                requestAnimationFrame(() => resolve()),
+              );
+            }
+            if (signal.aborted) return false;
             const element = root.current?.querySelector<HTMLElement>(
               '[data-slot="question-surface"]',
             );
@@ -243,13 +237,17 @@ export const QuestionAnnotationOverlay = forwardRef<
               signal,
             );
             if (signal.aborted) return false;
-            if (prepared.kind === "legacy") {
-              if (prepared.base.state !== "ready")
-                throw new Error("历史标画底图尚未就绪，请重试");
-              return true;
-            }
             if (prepared.kind === "sealed")
               throw new Error("标画已随交卷固定，请刷新查看");
+            await withTimeout(
+              awaitQuestionSurfaceReady(element, () => {
+                if (signal.aborted)
+                  throw new DOMException("标画已取消", "AbortError");
+              }),
+              15_000,
+              "题面资源加载超时，请重试",
+            );
+            if (signal.aborted) return false;
             const matches = await measureStage("annotation:layout-match", () =>
               questionSurfaceMatchesLayout(
                 question,
@@ -259,6 +257,10 @@ export const QuestionAnnotationOverlay = forwardRef<
             );
             if (signal.aborted) return false;
             setCompatible(matches);
+            if (!matches)
+              throw new Error(
+                "题面布局已变化，不能在不同排版上继续标画，请重新开始练习",
+              );
             return true;
           },
         );
@@ -278,32 +280,39 @@ export const QuestionAnnotationOverlay = forwardRef<
     const element = root.current?.querySelector<HTMLElement>(
       '[data-slot="question-surface"]',
     );
-    if (!layout || !element) return;
+    if (!layout || !element || rejectedLayout) return;
     let generation = 0;
     let alive = true;
     let frame = 0;
     const check = () => {
       // 布局尚在核对时先结束当前笔，不能向已重排的题面继续写入。
-      if (selected && !original) {
+      if (selected) {
         surface.current?.finish();
         surface.current?.setInputEnabled(false);
       }
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
         const current = ++generation;
-        void questionSurfaceMatchesLayout(question, element, layout)
+        void withTimeout(
+          awaitQuestionSurfaceReady(element, () => {
+            if (!alive || current !== generation)
+              throw new DOMException("布局核对已取消", "AbortError");
+          }),
+          15_000,
+          "题面资源加载超时，请重试",
+        )
+          .then(() => questionSurfaceMatchesLayout(question, element, layout))
           .then((matches) => {
             if (!alive || current !== generation) return;
             setCompatible(matches);
-            if (matches && selected && !original && !hidden)
+            if (matches && selected && !hidden)
               surface.current?.setInputEnabled(true);
-            if (!matches && selected && !original)
-              surface.current?.setInputEnabled(false);
+            if (!matches && selected) surface.current?.setInputEnabled(false);
           })
           .catch(() => {
             if (!alive || current !== generation) return;
             setCompatible(false);
-            if (selected && !original) surface.current?.setInputEnabled(false);
+            if (selected) surface.current?.setInputEnabled(false);
           });
       });
     };
@@ -327,7 +336,7 @@ export const QuestionAnnotationOverlay = forwardRef<
       mutation.disconnect();
       document.fonts?.removeEventListener("loadingdone", check);
     };
-  }, [layout, question, selected, original, hidden, scale]);
+  }, [layout, question, selected, rejectedLayout, hidden, scale]);
 
   useEffect(() => {
     const element = root.current?.querySelector<HTMLElement>(
@@ -335,21 +344,16 @@ export const QuestionAnnotationOverlay = forwardRef<
     );
     if (!element) return;
     const previous = element.hasAttribute("inert");
-    element.toggleAttribute("inert", active && !original);
+    element.toggleAttribute("inert", active);
     return () => {
       element.toggleAttribute("inert", previous);
     };
-  }, [active, original]);
+  }, [active]);
 
   useEffect(() => {
-    if (
-      visible &&
-      record?.doc &&
-      (!original || originalLoaded) &&
-      (active || previewBlob === null)
-    )
+    if (visible && record?.doc && (active || previewBlob === null))
       setMountedOnce(true);
-  }, [visible, record?.doc, original, originalLoaded, active, previewBlob]);
+  }, [visible, record?.doc, active, previewBlob]);
   useEffect(() => {
     if (active || !mountedOnce || !session) return;
     let cancelled = false;
@@ -406,10 +410,15 @@ export const QuestionAnnotationOverlay = forwardRef<
       inputMode: getSessionInputPreference(),
     });
     surface.current = current;
+    const resetVersion = recordRef.current?.resetVersion ?? 0;
     current.mount(host.current, recordRef.current.doc);
     loadedVersion.current = recordRef.current.docVersion;
     current.onChange((doc, reason) => {
-      if (reason === "load") return;
+      if (
+        reason === "load" ||
+        (recordRef.current?.resetVersion ?? 0) !== resetVersion
+      )
+        return;
       loadedVersion.current = writeAnnotationDoc(
         session,
         { attemptId, questionId: question.id, phase: "scratch" },
@@ -486,19 +495,6 @@ export const QuestionAnnotationOverlay = forwardRef<
       loadedVersion.current = record.docVersion;
     }
   }, [record]);
-  useEffect(() => {
-    if (!original) return;
-    const url = localPng
-      ? URL.createObjectURL(localPng)
-      : record?.base?.downloadUrl;
-    if (!url) return;
-    setOriginalUrl(url);
-    setOriginalLoaded(false);
-    return () => {
-      if (localPng) URL.revokeObjectURL(url);
-      setOriginalUrl(null);
-    };
-  }, [original, localPng, record?.base?.downloadUrl]);
 
   return (
     <div
@@ -529,13 +525,9 @@ export const QuestionAnnotationOverlay = forwardRef<
                     width: cssWidth,
                     transform: `scale(${scale})`,
                     transformOrigin: "top left",
-                    visibility:
-                      original && originalLoaded ? "hidden" : undefined,
                   }
                 : undefined
             }
-            inert={original}
-            aria-hidden={(original && originalLoaded) || undefined}
           >
             {children}
           </div>
@@ -544,38 +536,22 @@ export const QuestionAnnotationOverlay = forwardRef<
               data-slot="question-annotation-overlay"
               data-drawing={active}
               className="pointer-events-none absolute left-0 top-0 z-10"
-              hidden={!visible && !original}
+              hidden={!visible}
               style={{ width: cssWidth * scale, height: cssHeight * scale }}
             >
-              {original && originalUrl && (
-                <img
-                  key={imageRetry}
-                  src={originalUrl}
-                  alt={`${label}原标画底图`}
-                  className={`absolute inset-0 h-full w-full ${originalLoaded ? "" : "opacity-0"}`}
-                  onLoad={() => setOriginalLoaded(true)}
-                  onError={() => {
-                    setOriginalLoaded(false);
-                    setError("原底图加载失败，请重新加载");
-                  }}
-                />
-              )}
               <div
                 ref={host}
                 className="absolute inset-0"
-                hidden={hidden || (original && !originalLoaded)}
+                hidden={hidden}
                 style={{ pointerEvents: active ? "auto" : "none" }}
               />
-              {!hidden &&
-                (!original || originalLoaded) &&
-                !mountedOnce &&
-                previewUrl && (
-                  <img
-                    src={previewUrl}
-                    alt="本题标画笔迹"
-                    className="pointer-events-none absolute inset-0 h-full w-full"
-                  />
-                )}
+              {!hidden && !mountedOnce && previewUrl && (
+                <img
+                  src={previewUrl}
+                  alt="本题标画笔迹"
+                  className="pointer-events-none absolute inset-0 h-full w-full"
+                />
+              )}
             </div>
           )}
         </div>
@@ -601,18 +577,6 @@ export const QuestionAnnotationOverlay = forwardRef<
           {expanded ? "适应宽度" : "放大题面"}
         </Button>
       )}
-      {original && (
-        <div
-          className="mt-3"
-          data-slot="annotation-fallback-answer"
-          inert={active}
-        >
-          <p className="mb-2 text-xs text-muted-foreground">
-            已保留原标画题面的排版，可直接圈画；答案在下方填写。
-          </p>
-          {fallbackAnswer}
-        </div>
-      )}
       {loading && (
         <p role="status" className="mt-2 text-xs text-muted-foreground">
           正在准备标画，仍可作答…
@@ -621,19 +585,6 @@ export const QuestionAnnotationOverlay = forwardRef<
       {error && (
         <div role="alert" className="mt-2 text-sm text-destructive">
           {error}
-          {original && originalUrl && (
-            <Button
-              variant="outline"
-              className="ml-2 h-11"
-              onClick={() => {
-                setOriginalLoaded(false);
-                setError(null);
-                setImageRetry((value) => value + 1);
-              }}
-            >
-              重新加载标画
-            </Button>
-          )}
         </div>
       )}
       {active && (

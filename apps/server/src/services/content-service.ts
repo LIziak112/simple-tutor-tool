@@ -805,6 +805,10 @@ export function commitImport(
           visible: lectureVisible,
         });
       }
+      // 讲练页（kind: lesson）的单元是嵌入单元：不单独布置、不追加课程条目
+      //（2026-10-16 修复——题目已在讲练页内单题作答，追加条目会让学生端
+      // 出现「讲练页 + 随堂练习」重复入口）
+      if (parsed.frontmatter?.kind === "lesson") return;
       for (const report of unitReports) {
         appendByKey.set(`${courseId}:unit:${report.id}`, {
           courseId,

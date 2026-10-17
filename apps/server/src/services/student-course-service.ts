@@ -233,6 +233,37 @@ export function courseUnitAttemptSummaries(
  * 至少交卷 1 次的可见单元数（T2A.6 起接入课程练习作答；作业作答不计入）。
  * 归档课程与非成员课程完全不出现在列表（零信息）。
  */
+/**
+ * lesson 讲练页的嵌入单元 id 集（units.lectureId 指向 kind='lesson' 且未删的
+ * 讲义）。讲练页的题目在页内单题作答，嵌入单元不再作为课程目录/单元计数单列
+ * （2026-10-16 修复，防「讲练页 + 随堂练习」重复入口）；普通讲义的配套练习
+ * （lectureId 指向 kind='lecture'）不受影响。
+ */
+function lessonEmbeddedUnitIds(
+  db: Db,
+  teacherId: string,
+  unitIds: readonly string[],
+): Set<string> {
+  if (unitIds.length === 0) return new Set();
+  return new Set(
+    db
+      .select({ id: units.id })
+      .from(units)
+      .innerJoin(lectures, eq(lectures.id, units.lectureId))
+      .where(
+        and(
+          eq(units.teacherId, teacherId),
+          inArray(units.id, unitIds),
+          isNull(units.deletedAt),
+          isNull(lectures.deletedAt),
+          eq(lectures.kind, "lesson"),
+        ),
+      )
+      .all()
+      .map((row) => row.id),
+  );
+}
+
 export function listStudentCourses(
   db: Db,
   studentId: string,
@@ -242,7 +273,17 @@ export function listStudentCourses(
   const courseSummaries: StudentCourseSummary[] = visibleCourses.map(
     (course) => {
       const items = listVisibleItems(db, studentId, course.id, now);
-      const unitItems = items.filter((item) => item.kind === "unit");
+      const unitItemsAll = items.filter((item) => item.kind === "unit");
+      // 讲练页嵌入单元不计入课程单元数（讲练页一件事——2026-10-16）
+      const embeddedUnitIds = lessonEmbeddedUnitIds(
+        db,
+        course.teacherId ?? "",
+        unitItemsAll.map((item) => item.refId ?? ""),
+      );
+      const unitItems = unitItemsAll.filter(
+        (item) =>
+          item.refId === null || !embeddedUnitIds.has(item.refId as string),
+      );
       const summaries = courseUnitAttemptSummaries(db, studentId, course.id);
       return {
         id: course.id,
@@ -324,6 +365,16 @@ export function getStudentCourseDetail(
   const unitIds = items
     .filter((item) => item.kind === "unit")
     .map((item) => item.refId as string);
+  // 讲练页嵌入单元不进学生目录（讲练页一件事，防重复入口——2026-10-16）
+  const embeddedUnitIds = lessonEmbeddedUnitIds(db, course.teacherId, unitIds);
+  const shownItems = items.filter(
+    (item) =>
+      !(
+        item.kind === "unit" &&
+        item.refId !== null &&
+        embeddedUnitIds.has(item.refId)
+      ),
+  );
   const counts = liveQuestionCounts(db, course.teacherId, unitIds);
   const attemptSummaries = courseUnitAttemptSummaries(db, studentId, courseId);
   // 讲义条目的文档形态（2026-10 讲练一体）：lesson 行前端显「讲练」徽标并直达
@@ -345,7 +396,7 @@ export function getStudentCourseDetail(
     id: course.id,
     name: course.title,
     description: course.description,
-    items: items.map((item) => ({
+    items: shownItems.map((item) => ({
       id: item.id,
       kind: item.kind,
       docKind:

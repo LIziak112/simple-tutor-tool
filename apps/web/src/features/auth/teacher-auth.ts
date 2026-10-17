@@ -8,6 +8,7 @@ import {
   registerTeacher,
   setupTeacher,
 } from "@/lib/api";
+import { clearAccountQueries } from "./account-query-cache";
 
 /**
  * 教师登录状态（T1.9）：TanStack Query 管服务端状态的既有模式——
@@ -46,7 +47,8 @@ export function useTeacherMe() {
 /** 登录/设置成功后写入 me 缓存并刷新 status（首启 → 已设置） */
 function useApplyAuthed() {
   const queryClient = useQueryClient();
-  return (teacher: TeacherInfo) => {
+  return async (teacher: TeacherInfo) => {
+    await clearAccountQueries(queryClient, "teacher");
     queryClient.setQueryData(teacherMeKey, teacher);
     void queryClient.invalidateQueries({ queryKey: teacherStatusKey });
   };
@@ -79,13 +81,14 @@ export function useRegisterTeacher() {
   });
 }
 
-/** 退出登录：成功后清空 me 缓存（守卫随即将 /t/* 导回登录页） */
+/** 退出登录：清理教师及管理数据并重置身份，学生会话继续保留。 */
 export function useLogoutTeacher() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: logoutTeacher,
-    onSuccess: () => {
-      queryClient.removeQueries({ queryKey: teacherMeKey });
+    onSuccess: async () => {
+      await clearAccountQueries(queryClient, "teacher");
+      await queryClient.resetQueries({ queryKey: teacherMeKey, exact: true });
     },
   });
 }

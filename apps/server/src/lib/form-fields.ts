@@ -7,6 +7,7 @@ import {
   ANNOTATION_BASE_IMAGE_FORM_FIELDS,
   ANNOTATION_FORM_FIELDS,
   annotationPhaseSchema,
+  annotationResetVersionSchema,
   annotationUploadMetaSchema,
   NOTE_IMAGE_FORM_FIELDS,
   noteImageUploadMetaSchema,
@@ -36,6 +37,17 @@ export function strictFormInt(
   const raw = form[key];
   if (typeof raw !== "string") return undefined;
   return /^\d+$/.test(raw) ? Number(raw) : undefined;
+}
+
+/** 可选代次出现时必须是合法整数，不能将坏值当作缺省。 */
+function resetVersionOf(form: LooseFormBody, key: string): number | undefined {
+  if (!(key in form)) return undefined;
+  const parsed = annotationResetVersionSchema.safeParse(
+    strictFormInt(form, key),
+  );
+  if (!parsed.success)
+    throw new HttpError(400, "VALIDATION_ERROR", "标画重置代次不合法");
+  return parsed.data;
 }
 
 /** multipart 字符串字段原样读取（非字符串字段返回 undefined） */
@@ -156,6 +168,7 @@ export async function parseAnnotationBaseImageForm(
       ANNOTATION_BASE_IMAGE_FORM_HINT,
     );
   }
+  const resetVersion = resetVersionOf(form, F.resetVersion);
   const pngBytes = new Uint8Array(await image.arrayBuffer());
   return {
     pngBytes,
@@ -163,6 +176,7 @@ export async function parseAnnotationBaseImageForm(
       questionRevisionId,
       baseRenderVersion,
       phase: parsedPhase.data,
+      ...(resetVersion !== undefined ? { resetVersion } : {}),
     },
   };
 }
@@ -191,6 +205,7 @@ export async function parseAnnotationUploadForm(
   const parsed = annotationUploadMetaSchema.safeParse({
     baseRevision: strictFormInt(form, F.baseRevision),
     mutationId: formString(form, F.mutationId),
+    resetVersion: resetVersionOf(form, F.resetVersion),
     phase: formString(form, F.phase),
   });
   if (!parsed.success) {

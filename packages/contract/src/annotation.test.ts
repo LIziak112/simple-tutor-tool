@@ -517,12 +517,14 @@ describe("错误码与 multipart 字段名单一来源", () => {
 
   it("两套 multipart 字段名常量", () => {
     expect(ANNOTATION_FORM_FIELDS).toEqual({
+      resetVersion: "resetVersion",
       body: "body",
       baseRevision: "baseRevision",
       mutationId: "mutationId",
       phase: "phase",
     });
     expect(ANNOTATION_BASE_IMAGE_FORM_FIELDS).toEqual({
+      resetVersion: "resetVersion",
       image: "image",
       questionRevisionId: "questionRevisionId",
       baseRenderVersion: "baseRenderVersion",
