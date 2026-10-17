@@ -14,6 +14,10 @@ import type {
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { EnabledCapabilitiesProvider } from "@/features/capability/enabled-capabilities";
+import {
+  resetNoteLayoutForTest,
+  setNoteLayoutPreference,
+} from "@/features/notes/note-layout";
 import { makeResizeObserverStub } from "@/features/notes/note-test-utils";
 import { openAttemptHintApi } from "@/lib/api";
 import { AttemptQuestionCard } from "./AttemptQuestionCard";
@@ -375,6 +379,33 @@ describe("分步提示面板（T2.11）", () => {
 });
 
 describe("题卡草稿层（T6R.9）", () => {
+  it("所有题型外框跟随列表宽度，草稿偏好只改变内部布局", () => {
+    try {
+      for (const type of [
+        "fill",
+        "choice",
+        "solve",
+        "apply",
+        "find-error",
+      ] as const) {
+        const { container, unmount } = renderStatefulCard(
+          baseQuestion({ type }),
+          { attemptId: "att-1" },
+        );
+        const article = container.querySelector("article");
+        expect(article).toHaveClass("w-full");
+        expect(article?.className).not.toMatch(/max-w-/);
+        for (const preference of ["below", "side", "auto"] as const) {
+          act(() => setNoteLayoutPreference(preference));
+          expect(article?.className).not.toMatch(/max-w-/);
+        }
+        unmount();
+      }
+    } finally {
+      act(() => resetNoteLayoutForTest());
+    }
+  });
+
   /** 桩 ResizeObserver：按需推送题卡宽度（共享桩，分栏判定驱动源） */
   function stubCardWidth() {
     const stub = makeResizeObserverStub();

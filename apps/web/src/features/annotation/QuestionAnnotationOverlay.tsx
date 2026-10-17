@@ -501,12 +501,13 @@ export const QuestionAnnotationOverlay = forwardRef<
       ref={root}
       className="relative mx-auto w-full min-w-0"
       data-slot="annotated-question"
+      style={cssWidth ? { maxWidth: cssWidth } : undefined}
     >
       <div
         ref={viewport}
         data-slot="annotation-viewport"
         className={`relative mx-auto w-full min-w-0 overflow-x-auto ${active ? "outline outline-2 outline-offset-4 outline-sky-200" : ""}`}
-        style={cssWidth && cssHeight ? { maxWidth: cssWidth } : undefined}
+        style={cssWidth ? { maxWidth: cssWidth } : undefined}
       >
         <div
           className="relative overflow-clip"

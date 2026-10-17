@@ -369,7 +369,6 @@ export function AttemptQuestionCard({
     hasScratchLayout && noteOpen
       ? effectiveNoteLayout(layoutPreference, sideUsable)
       : "below";
-  const allowWidePaper = hasScratchLayout && layoutPreference !== "below";
   const hasEditor = editor != null;
   // 保存/上传状态不改变题面；稳定引用避免重复解绑标画输入进行版式校验。
   const inlineQuestion = useMemo<AttemptQuestionPublic | null>(
@@ -497,7 +496,7 @@ export function AttemptQuestionCard({
       ref={articleRef}
       data-question-id={question.id}
       tabIndex={-1}
-      className={`mx-auto flex w-full ${allowWidePaper ? "max-w-[1120px]" : "max-w-[768px]"} scroll-mt-[calc(var(--attempt-header-height,64px)+12px)] flex-col gap-3 rounded-[8px] border border-border bg-card p-4 text-card-foreground outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring sm:p-5`}
+      className="flex w-full min-w-0 scroll-mt-[calc(var(--attempt-header-height,64px)+12px)] flex-col gap-3 rounded-[8px] border border-border bg-card p-4 text-card-foreground outline-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring sm:p-5"
       aria-label={`第 ${index + 1} 题`}
       onPointerDownCapture={(event) => {
         if (

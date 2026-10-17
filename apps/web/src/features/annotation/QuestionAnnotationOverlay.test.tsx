@@ -202,8 +202,38 @@ it("布局不匹配保留可作答的原生题面，不显示图片或独立答�
   expect(screen.queryByRole("toolbar")).toBeNull();
 });
 
+it("无保存布局时题面和标画容器共同跟随父列宽度", async () => {
+  resetAnnotationStoreForTest();
+  installAnnotationBackend(memoryAnnotationBackend());
+  const { container } = render(<Harness />);
+  await act(async () => {
+    await getAnnotationRecord(session, scope);
+  });
+  for (const slot of [
+    "annotated-question",
+    "annotation-viewport",
+    "question-surface",
+  ]) {
+    const element = container.querySelector<HTMLElement>(
+      `[data-slot="${slot}"]`,
+    );
+    expect(element).toHaveClass("w-full", "min-w-0");
+    expect(element?.style.maxWidth).toBe("");
+  }
+});
+
 it("已有布局固定逻辑宽度，由同一区域整体缩放，隐藏标画不解除排版", async () => {
   const { container, rerender } = render(<Harness />);
+  expect(
+    container.querySelector('[data-slot="annotated-question"]'),
+  ).toHaveStyle({
+    maxWidth: "300px",
+  });
+  expect(
+    container.querySelector('[data-slot="annotation-viewport"]'),
+  ).toHaveStyle({
+    maxWidth: "300px",
+  });
   const frame = container.querySelector(
     '[data-slot="annotation-logical-frame"]',
   );
