@@ -245,10 +245,13 @@ test.describe("SAI-33 学生端 AI 全链（页内通道）", () => {
         .getByRole("article", { name: "第 1 题", exact: true })
         .getByRole("button", { name: "AI 助教", exact: true })
         .click();
+      // 状态与通道收在「AI 设置」抽屉：展开后断言，随后收起保持对话区高度
+      await page.getByRole("button", { name: "AI 设置" }).click();
       await expect(page.getByText("当前：开放伴学")).toBeVisible();
       await expect(
         page.getByRole("button", { name: "发送", exact: true }),
       ).toBeEnabled();
+      await page.getByRole("button", { name: "AI 设置" }).click();
 
       // —— ⑤ 作答中求助：脚本化回信，断言出站载荷含题面/答案解析/学生问题 ——
       // （回信文本避开 $ 公式定界符：KaTeX 渲染会拆散文本节点，文本匹配只认平文） */
@@ -542,6 +545,8 @@ test.describe("SAI-33 学生端 AI 全链（页内通道）", () => {
         .getByRole("article", { name: "第 1 题", exact: true })
         .getByRole("button", { name: "AI 助教", exact: true })
         .click();
+      // 通道选择在「AI 设置」抽屉里
+      await page.getByRole("button", { name: "AI 设置" }).click();
       await page.getByRole("button", { name: "上下文链接" }).click();
       await page.getByPlaceholder("写下你想问的问题").fill("链接通道求助");
       await page.getByRole("button", { name: "复制 AI 链接" }).click();

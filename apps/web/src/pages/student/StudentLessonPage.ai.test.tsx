@@ -289,7 +289,7 @@ describe("讲练页 AI 伴学（SAI-22 四来源接入）", () => {
       expect(mockedStatus).toHaveBeenCalledWith(ATTEMPT_ID, "lesson-q1"),
     );
     expect(
-      await screen.findByText("第 1 题", { selector: "p" }),
+      await within(await screen.findByRole("dialog")).findByText("第 1 题"),
     ).toBeInTheDocument();
     // 讲练题卡无圈画层：随信材料组只呈纸面勾选，无「圈画」选项
     const materialGroup = screen.getByRole("group", { name: "随信材料" });

@@ -250,6 +250,8 @@ test.describe("SAI-33 错误链（页内与出站）", () => {
       // 面板开着时还存在「关闭 AI 助教」，子串匹配会撞严格模式
       const annotationToggle = page.getByRole("checkbox", { name: "圈画" });
       await annotationToggle.check();
+      // 通道选择收在「AI 设置」抽屉：先展开再切通道
+      await page.getByRole("button", { name: "AI 设置" }).click();
       await page.getByRole("button", { name: "上下文链接" }).click();
       await expect(
         page.getByRole("button", { name: "复制 AI 链接" }),

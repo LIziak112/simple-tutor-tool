@@ -126,6 +126,11 @@ const openViaTrigger = async () => {
   });
 };
 
+/** 打开头部「AI 设置」抽屉（通道/模式移入抽屉后，状态断言前必须展开） */
+const openSettings = () => {
+  fireEvent.click(screen.getByRole("button", { name: "AI 设置" }));
+};
+
 beforeEach(() => {
   width = stubElementWidth();
   captured.controller = null;
@@ -211,6 +216,7 @@ describe("SAI-19 伴学栏视图壳", () => {
     mockedFetch.mockResolvedValue({ connections: [] } as AiConnectionListData);
     render(<RailHarness />);
     await openViaTrigger();
+    openSettings();
     const panel = screen.getByRole("complementary", { name: "AI 助教" });
     expect(
       await within(panel).findByText("未连接 AI 服务"),
@@ -230,6 +236,7 @@ describe("SAI-19 伴学栏视图壳", () => {
     } as AiConnectionListData);
     render(<RailHarness />);
     await openViaTrigger();
+    openSettings();
     const panel = screen.getByRole("complementary", { name: "AI 助教" });
     expect(
       await within(panel).findByText(/已配置 1 个 AI 通道/),
@@ -245,6 +252,7 @@ describe("SAI-19 伴学栏视图壳", () => {
     } as AiConnectionListData);
     render(<RailHarness />);
     await openViaTrigger();
+    openSettings();
     const panel = screen.getByRole("complementary", { name: "AI 助教" });
     // 标签来自 CHANNEL_LABEL 单源（与连接管理页一致），不显示不存在的 model
     expect(
@@ -325,15 +333,17 @@ describe("SAI-19 伴学栏视图壳", () => {
       name: "本题对话记录",
     });
     expect(conversation).toHaveAttribute("data-slot", "ai-reply-workspace");
-    expect(within(conversation).getByText("AI 回复与进展")).toBeInTheDocument();
+    // 对话区是唯一滚动容器并占满剩余高度（不再套内层卡片与二次滚动）
+    expect(conversation.className).toContain("flex-1");
+    expect(conversation.className).toContain("overflow-y-auto");
     // 合成子内容完整呈现（空间测试），不截断丢失
     expect(within(conversation).getAllByRole("listitem").length).toBe(30);
     expect(
       screen.getByRole("navigation", { name: "快捷按钮" }),
     ).toBeInTheDocument();
-    expect(
-      screen.getByRole("region", { name: "当前材料" }),
-    ).toBeInTheDocument();
+    // 设置抽屉默认收起；展开后才有通道与模式
+    expect(screen.queryByRole("region", { name: "通道与模式" })).toBeNull();
+    openSettings();
     expect(
       screen.getByRole("region", { name: "通道与模式" }),
     ).toBeInTheDocument();
@@ -377,6 +387,7 @@ describe("SAI-19 伴学栏视图壳", () => {
       />,
     );
     await openViaTrigger();
+    openSettings();
     const panel = screen.getByRole("complementary", { name: "AI 助教" });
     // 注入的会话区进入对应分区；合成通道状态不再重复出现
     expect(await within(panel).findByText("真实状态区")).toBeInTheDocument();

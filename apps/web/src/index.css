@@ -250,6 +250,38 @@
   @apply my-3 overflow-x-auto py-1;
 }
 
+/* ---- AI 回复排版（伴学栏窄列）----
+   栏宽 352px 起步，正文按 15px/1.75 排；标题与列表收紧一档，
+   行内公式限制到正文比例，避免 \dfrac 把整行撑成两行高。 */
+.ai-reply-markdown {
+  @apply text-[0.9375rem] leading-[1.75];
+}
+.ai-reply-markdown :is(h1, h2, h3, h4) {
+  @apply mt-4 mb-1.5 text-base font-semibold;
+}
+.ai-reply-markdown p {
+  @apply my-2;
+}
+.ai-reply-markdown :is(ul, ol) {
+  @apply my-2 pl-5;
+}
+.ai-reply-markdown li {
+  @apply my-1;
+}
+.ai-reply-markdown li > p {
+  @apply my-0.5;
+}
+.ai-reply-markdown blockquote {
+  @apply my-3 pl-3;
+}
+.ai-reply-markdown .katex {
+  font-size: 1.02em;
+  line-height: 1.35;
+}
+.ai-reply-markdown .katex-display {
+  @apply my-2;
+}
+
 /* 教师工作台语义色独立作用于页面与显式标记的弹层，不改学生主题。 */
 .teacher-theme {
   --background: oklch(0.972949 0.00287 264.542);

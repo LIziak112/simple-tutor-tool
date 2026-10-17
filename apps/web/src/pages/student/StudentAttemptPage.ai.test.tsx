@@ -1,5 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import type { AttemptDraftData } from "@tutor/contract";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -260,6 +266,11 @@ afterEach(() => {
   resetAnnotationSession();
 });
 
+/** 通道/模式收在「AI 设置」抽屉后，状态文案断言前先展开 */
+const openAiSettings = () => {
+  fireEvent.click(screen.getByRole("button", { name: "AI 设置" }));
+};
+
 describe("四来源 AI 伴学参数化矩阵（SAI-22 完成条件①）", () => {
   it.each(SOURCES.map((s) => [s.key, s] as const))(
     "来源 %s：作答页「AI 助教」入口打开绑定当前题，状态查询按当前卷定位",
@@ -268,28 +279,30 @@ describe("四来源 AI 伴学参数化矩阵（SAI-22 完成条件①）", () =>
       renderPage();
       await readyAndScroll();
       fireEvent.click(screen.getByRole("button", { name: "AI 助教" }));
-      await screen.findByRole("dialog");
+      const panel = await screen.findByRole("dialog");
       // 绑定当前题（滚动定位首题）——status 按 attempt+question 定位
       await waitFor(() =>
         expect(mockedStatus).toHaveBeenCalledWith(ATTEMPT_ID, "练习四-1"),
       );
-      // 默认开放伴学：状态区呈现当前模式与绑定题号
+      // 题号在面板头；模式在「AI 设置」抽屉里
+      expect(await within(panel).findByText("第 1 题")).toBeInTheDocument();
+      openAiSettings();
       expect(await screen.findByText("当前：开放伴学")).toBeInTheDocument();
-      expect(
-        await screen.findByText("第 1 题", { selector: "p" }),
-      ).toBeInTheDocument();
     },
   );
 
-  it("打开时页面尚未定位当前题：未绑定不发状态查询，首次定位即补绑定（打开窗口语义）", async () => {
+  it("尚未滚动定位时，题卡 AI 入口直接绑定本题并查询状态", async () => {
     mockedFetch.mockResolvedValue(draftOf(SOURCES[0]));
     renderPage();
     await screen.findByRole("button", { name: "交卷" });
-    // 不先滚动：currentQuestionId 为 null → 面板打开呈未绑定，不查本题状态
+    // 未打开时不查状态；题卡入口已经知道题目，无需等待滚动定位。
+    expect(mockedStatus).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "AI 助教" }));
     await screen.findByRole("dialog");
-    expect(mockedStatus).not.toHaveBeenCalled();
-    // 打开窗口内首次滚动定位 → 补绑定当前题（绑定由打开动作启动）
+    await waitFor(() =>
+      expect(mockedStatus).toHaveBeenCalledWith(ATTEMPT_ID, "练习四-1"),
+    );
+    // 后续滚动继续保持点击时绑定的题目。
     rectSpy = vi
       .spyOn(HTMLElement.prototype, "getBoundingClientRect")
       .mockReturnValue({
@@ -308,7 +321,7 @@ describe("四来源 AI 伴学参数化矩阵（SAI-22 完成条件①）", () =>
       expect(mockedStatus).toHaveBeenCalledWith(ATTEMPT_ID, "练习四-1"),
     );
     expect(
-      await screen.findByText("第 1 题", { selector: "p" }),
+      await within(await screen.findByRole("dialog")).findByText("第 1 题"),
     ).toBeInTheDocument();
   });
 
@@ -331,6 +344,7 @@ describe("四来源 AI 伴学参数化矩阵（SAI-22 完成条件①）", () =>
       await waitFor(() =>
         expect(mockedStatus).toHaveBeenCalledWith(ATTEMPT_ID, "练习四-1"),
       );
+      openAiSettings();
       expect(await screen.findByText(`当前：${label}`)).toBeInTheDocument();
       // 发送（无材料勾选）→ 任务按 attempt+question 创建
       const textarea = await screen.findByPlaceholderText("写下你想问的问题");
@@ -390,6 +404,7 @@ describe("四来源 AI 伴学参数化矩阵（SAI-22 完成条件①）", () =>
       }),
     );
     // 未完成作答态呈现（新卷从 blank 开始——服务端按新 attempt 裁决）
+    openAiSettings();
     expect(await screen.findByText("当前：开放伴学")).toBeInTheDocument();
     // 任何查询都不携带旧卷 attemptId（回信与完成态不跨卷）
     expect(mockedStatus.mock.calls.some(([id]) => id === OLD_ATTEMPT_ID)).toBe(

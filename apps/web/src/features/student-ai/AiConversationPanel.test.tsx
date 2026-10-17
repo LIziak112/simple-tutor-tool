@@ -392,11 +392,12 @@ describe("AiConversationPanel 回信可见性与追问（SAI-21）", () => {
     const oldCard2 = screen.getByTestId("ai-task-card-task-old");
     const newCard = screen.getByTestId("ai-task-card-task-new");
     const timeOf = (card: HTMLElement): string =>
-      (card.textContent ?? "").match(/材料时间：(.+?)(?:｜|$)/)?.[1] ?? "";
+      (card.textContent ?? "").match(/(\d{4}-\d{2}-\d{2} \d{2}:\d{2})/)?.[1] ??
+      "";
     expect(timeOf(oldCard2)).not.toBe("");
     expect(timeOf(newCard)).not.toBe("");
     expect(timeOf(oldCard2)).not.toBe(timeOf(newCard));
-    expect(oldCard2.textContent ?? "").toContain("当时模式：仅启发");
+    expect(oldCard2.textContent ?? "").toContain("仅启发");
   });
 
   it("先测④：新回复到达不打断输入——焦点、光标与主区 identity 保持", async () => {

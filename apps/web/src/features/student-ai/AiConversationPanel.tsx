@@ -126,17 +126,26 @@ function ConversationMessages({
   const messages = query.data?.messages ?? [];
   const hasAssistant = messages.some((message) => message.role === "assistant");
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex flex-col gap-3">
       {messages.map((message) =>
         message.role === "student" ? (
-          <div key={message.id} className="rounded-lg bg-muted/40 px-2 py-1.5">
-            <p className="text-xs font-medium">你</p>
-            <p className="text-sm whitespace-pre-wrap">{message.contentMd}</p>
+          <div key={message.id} className="flex justify-end">
+            <p className="max-w-[85%] rounded-2xl rounded-br-sm bg-primary/10 px-3 py-2 text-sm leading-relaxed whitespace-pre-wrap break-words">
+              <span className="sr-only">你：</span>
+              {message.contentMd}
+            </p>
           </div>
         ) : (
-          <div key={message.id} className="min-w-0">
-            <p className="text-xs font-medium">AI</p>
-            <AiReplyMarkdown source={message.contentMd} />
+          <div key={message.id} className="flex min-w-0 gap-2">
+            <span
+              aria-hidden
+              className="mt-0.5 grid size-6 shrink-0 place-items-center rounded-full bg-primary/10 text-[0.625rem] font-semibold text-primary"
+            >
+              AI
+            </span>
+            <div className="min-w-0 flex-1">
+              <AiReplyMarkdown source={message.contentMd} />
+            </div>
           </div>
         ),
       )}
@@ -147,6 +156,46 @@ function ConversationMessages({
         </p>
       )}
     </div>
+  );
+}
+
+/** 任务进度三段（失败/取消不显示进度，只给事实文案） */
+const TASK_STEPS = ["已发送", "处理中", "已回复"] as const;
+const TASK_STEP_INDEX: Partial<Record<AiTaskPublic["status"], number>> = {
+  created: 0,
+  dispatching: 0,
+  uncertain: 0,
+  paused: 0,
+  claimed: 1,
+  replied: 2,
+};
+
+function TaskProgress({
+  status,
+  channel,
+}: {
+  status: AiTaskPublic["status"];
+  channel: AiTaskPublic["channel"];
+}) {
+  // 外部链接通道没有平台回信事实，不画平台进度（避免读成「已回复」）
+  if (channel === "link") return null;
+  const active = TASK_STEP_INDEX[status];
+  if (active === undefined) return null;
+  return (
+    <ol className="flex items-center gap-1 text-[0.6875rem]">
+      {TASK_STEPS.map((label, index) => (
+        <li
+          key={label}
+          className={
+            index === active
+              ? "rounded-full bg-primary/10 px-1.5 py-0.5 font-medium text-primary"
+              : "px-1.5 py-0.5 text-muted-foreground"
+          }
+        >
+          {label}
+        </li>
+      ))}
+    </ol>
   );
 }
 
@@ -182,44 +231,53 @@ function AiTaskCard({
   return (
     <article
       data-testid={`ai-task-card-${task.id}`}
-      className="flex flex-col gap-1 rounded-lg border border-border bg-card px-2 py-2"
+      className="flex flex-col gap-2 rounded-xl border border-border bg-card px-3 py-2.5 shadow-sm"
     >
-      <p className="text-sm">{task.question}</p>
-      <p className="text-xs text-muted-foreground">
-        材料时间：{formatSnapshotTime(task.snapshotAt)}｜当时模式：
-        {AI_MODE_LABEL[task.modeAtSend]}
-      </p>
+      <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
+        <TaskProgress status={task.status} channel={task.channel} />
+        <span className="text-xs text-muted-foreground">
+          {formatSnapshotTime(task.snapshotAt)} ·{" "}
+          {AI_MODE_LABEL[task.modeAtSend]}
+        </span>
+      </div>
+      {!expanded && <p className="line-clamp-2 text-sm">{task.question}</p>}
       {externalUnknown ? (
-        <>
+        <div className="flex flex-col gap-1">
           <p className="text-xs text-muted-foreground">
             回复在外部，平台未收到回信
           </p>
           <p className="text-xs text-muted-foreground">查看情况未知</p>
-        </>
-      ) : (
-        <>
-          {unread ? (
-            <p role="status" className="text-xs font-medium text-primary">
-              收到新回复（未读）
-            </p>
-          ) : task.hasReply ? (
-            <p className="text-xs text-muted-foreground">已查看回复</p>
-          ) : fact !== null ? (
-            <p className="text-xs text-muted-foreground">{fact}</p>
-          ) : null}
-          {task.hasReply && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="min-h-9 self-start px-2"
-              onClick={onToggle}
-            >
-              {expanded ? "收起对话" : read ? "查看对话" : "查看回信"}
-            </Button>
-          )}
-        </>
-      )}
+        </div>
+      ) : unread ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            size="sm"
+            className="min-h-10 px-3"
+            onClick={onToggle}
+          >
+            {expanded ? "收起对话" : "查看回信"}
+          </Button>
+          <p role="status" className="text-xs font-medium text-primary">
+            收到新回复（未读）
+          </p>
+        </div>
+      ) : task.hasReply ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            variant={expanded ? "ghost" : "outline"}
+            size="sm"
+            className="min-h-9 self-start px-2"
+            onClick={onToggle}
+          >
+            {expanded ? "收起对话" : "查看对话"}
+          </Button>
+          <span className="text-xs text-muted-foreground">已查看回复</span>
+        </div>
+      ) : fact !== null ? (
+        <p className="text-xs text-muted-foreground">{fact}</p>
+      ) : null}
       {expanded && !externalUnknown && (
         <div className="mt-1 flex flex-col gap-2 border-t border-border pt-2">
           <ConversationMessages taskId={task.id} updatedAt={task.updatedAt} />
@@ -262,6 +320,22 @@ export function AiConversationPanel({ send }: { send: AiSendController }) {
   const attemptId = send.attemptId;
   const boundQuestionId = send.boundQuestionId;
 
+  // 任务状态变化（回信到达/被领取/失败）→ 刷新状态摘要，避免面板头一直显示
+  // 旧的「处理中 N」。签名相同则不请求；首次渲染由控制器自己的查询负责。
+  const refreshStatusRef = useRef(send.refreshStatus);
+  refreshStatusRef.current = send.refreshStatus;
+  const tasksSignature = (send.history?.tasks ?? [])
+    .map((task) => `${task.id}:${task.status}:${task.replyDeliveredAt ?? ""}`)
+    .join("|");
+  const statusSignatureRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (tasksSignature === "" || statusSignatureRef.current === tasksSignature)
+      return;
+    const firstObservation = statusSignatureRef.current === null;
+    statusSignatureRef.current = tasksSignature;
+    if (!firstObservation) refreshStatusRef.current();
+  }, [tasksSignature]);
+
   // 同 key 轮询观察者：控制器已按账号/attempt/绑定题建查询，这里只带来
   // refetchInterval（共享缓存，一轮一次请求）；隐藏页暂停、错误退避。
   useQuery({
@@ -283,6 +357,25 @@ export function AiConversationPanel({ send }: { send: AiSendController }) {
   });
 
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  /** 用户是否亲手操作过展开（亲手收起后不再自动展开） */
+  const expandedTouchedRef = useRef(false);
+  // 换绑定题：重置展开与「亲手操作」标记，新题按自己的最新任务重新判定
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 仅按绑定题重置
+  useEffect(() => {
+    expandedTouchedRef.current = false;
+    setExpandedId(null);
+  }, [boundQuestionId]);
+  // 已看过的回信直接展开（再打开面板不必多点一次）；未读保持折叠，
+  // 符合需求规格 §7.2「新回信不自动展开长回复」。
+  const latestTask = send.history?.tasks[0];
+  const latestReadId =
+    latestTask?.hasReply === true && latestTask.replyDeliveredAt !== null
+      ? latestTask.id
+      : null;
+  useEffect(() => {
+    if (expandedTouchedRef.current || latestReadId === null) return;
+    setExpandedId(latestReadId);
+  }, [latestReadId]);
   /** 本会话已打开过回信的任务（与服务端 replyDeliveredAt 合判已读） */
   const [openedIds, setOpenedIds] = useState<ReadonlySet<string>>(
     () => new Set(),
@@ -307,6 +400,7 @@ export function AiConversationPanel({ send }: { send: AiSendController }) {
   } | null>(null);
 
   const toggle = (task: AiTaskPublic) => {
+    expandedTouchedRef.current = true;
     const next = expandedId === task.id ? null : task.id;
     setExpandedId(next);
     if (

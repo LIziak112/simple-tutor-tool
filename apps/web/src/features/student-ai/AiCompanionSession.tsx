@@ -163,14 +163,14 @@ export function AiCompanionQuickButtons({ send }: { send: AiSendController }) {
   const disabled =
     send.boundQuestionId === null || send.sendState.phase === "sending";
   return (
-    <div className="flex flex-wrap gap-1">
+    <div className="flex flex-wrap gap-2">
       {buttons.map((button) => (
         <Button
           key={button.id}
           type="button"
           variant="outline"
           size="sm"
-          className="min-h-9 px-2"
+          className="min-h-11 px-3"
           title={button.prompt}
           disabled={disabled}
           onClick={() => {
@@ -222,24 +222,48 @@ export function AiCompanionComposer({
       : null;
   return (
     <div className="flex flex-col gap-2">
-      <label className="flex flex-col gap-1">
-        <span className="text-xs font-medium">补充问题</span>
-        <textarea
-          rows={2}
-          className="min-h-11 w-full resize-y rounded-lg border border-input bg-background px-2 py-1.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
-          placeholder="写下你想问的问题"
-          value={draft.text}
-          disabled={!bound || sending}
-          onChange={(event) => send.setText(event.target.value)}
-        />
-      </label>
+      <div className="flex items-end gap-2">
+        <label className="min-w-0 flex-1">
+          <span className="sr-only">补充问题</span>
+          <textarea
+            rows={2}
+            className="max-h-40 min-h-11 w-full resize-none rounded-xl border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+            placeholder="写下你想问的问题"
+            value={draft.text}
+            disabled={!bound || sending}
+            onChange={(event) => send.setText(event.target.value)}
+          />
+        </label>
+        <Button
+          type="button"
+          className="min-h-11 shrink-0 px-4"
+          disabled={!bound || sending || send.needsSetup}
+          onClick={() => {
+            // link 通道且当前题已有链接、正文为空：主按钮「复制 AI 链接」做它
+            // 说的事（重试复制），不落进空正文拦截把成功提示覆盖成失败告警；
+            // 写了新正文则照常新发送（新任务新快照）
+            if (
+              send.effectiveChannel === "link" &&
+              boundQuestionId !== null &&
+              send.linkShare?.questionId === boundQuestionId &&
+              draft.text.trim() === ""
+            ) {
+              void send.retryCopyLink();
+              return;
+            }
+            void send.send();
+          }}
+        >
+          {sending ? "发送中…" : mainActionLabel(send.effectiveChannel)}
+        </Button>
+      </div>
       {(materials.annotation || materials.paper) && (
         <fieldset
           aria-label="随信材料"
-          className="flex flex-wrap items-center gap-x-3 gap-y-1"
+          className="flex flex-wrap items-center gap-x-4 gap-y-1"
         >
           {materials.annotation && (
-            <label className="flex min-h-9 items-center gap-1.5 text-xs">
+            <label className="flex min-h-11 items-center gap-1.5 text-xs">
               <input
                 type="checkbox"
                 className="size-4"
@@ -251,7 +275,7 @@ export function AiCompanionComposer({
             </label>
           )}
           {materials.paper && (
-            <label className="flex min-h-9 items-center gap-1.5 text-xs">
+            <label className="flex min-h-11 items-center gap-1.5 text-xs">
               <input
                 type="checkbox"
                 className="size-4"
@@ -264,28 +288,6 @@ export function AiCompanionComposer({
           )}
         </fieldset>
       )}
-      <Button
-        type="button"
-        className="min-h-11 w-full"
-        disabled={!bound || sending || send.needsSetup}
-        onClick={() => {
-          // link 通道且当前题已有链接、正文为空：主按钮「复制 AI 链接」做它
-          // 说的事（重试复制），不落进空正文拦截把成功提示覆盖成失败告警；
-          // 写了新正文则照常新发送（新任务新快照）
-          if (
-            send.effectiveChannel === "link" &&
-            boundQuestionId !== null &&
-            send.linkShare?.questionId === boundQuestionId &&
-            draft.text.trim() === ""
-          ) {
-            void send.retryCopyLink();
-            return;
-          }
-          void send.send();
-        }}
-      >
-        {sending ? "发送中…" : mainActionLabel(send.effectiveChannel)}
-      </Button>
       {message !== null && (
         <p
           role={send.sendState.phase === "failed" ? "alert" : "status"}

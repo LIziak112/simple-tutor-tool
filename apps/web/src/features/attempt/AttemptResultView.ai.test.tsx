@@ -224,10 +224,9 @@ describe("结果页 AI 复盘（SAI-22）", () => {
     await waitFor(() =>
       expect(mockedStatus).toHaveBeenCalledWith("attempt-result-1", "练习四-1"),
     );
-    // 完成态复盘：状态区呈现复盘口径（开放伴学复盘）与绑定题号
-    expect(
-      await screen.findByText("第 1 题", { selector: "p" }),
-    ).toBeInTheDocument();
+    // 题号在面板头；通道/模式收在「AI 设置」抽屉里
+    expect(await within(panel).findByText("第 1 题")).toBeInTheDocument();
+    fireEvent.click(within(panel).getByRole("button", { name: "AI 设置" }));
     expect(await screen.findByText("当前：开放伴学")).toBeInTheDocument();
     expect(trigger).toHaveAttribute("aria-expanded", "true");
   });

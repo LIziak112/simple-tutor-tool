@@ -1,10 +1,12 @@
-import { Sparkles, X } from "lucide-react";
+import { Settings2, Sparkles, X } from "lucide-react";
 import {
   forwardRef,
   type ReactNode,
   type RefObject,
   useEffect,
+  useId,
   useRef,
+  useState,
 } from "react";
 import { Link } from "react-router";
 import { Button } from "@/components/ui/button";
@@ -12,7 +14,6 @@ import {
   Sheet,
   SheetContent,
   SheetDescription,
-  SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
 import { CHANNEL_LABEL } from "./ai-channel-label";
@@ -123,11 +124,12 @@ interface PanelBodyProps {
   onDockClose?: () => void;
   /** 会话状态区（SAI-20 真实注入；未注入时保留合成的诚实回退） */
   status?: ReactNode;
+  /** 需要立刻让用户看见的设置问题（未连接/状态读取失败）——抽屉自动展开 */
+  settingsAttention?: boolean | undefined;
   /** 合成子内容（空间测试注入；生产留空显示占位） */
   quickButtons?: ReactNode;
   /** 发送输入区（SAI-20 真实注入；未注入时不渲染该分区） */
   composer?: ReactNode;
-  materials?: ReactNode;
   conversation?: ReactNode;
 }
 
@@ -137,24 +139,48 @@ function AiCompanionPanelBody({
   dockCloseRef,
   onDockClose,
   status,
+  settingsAttention = false,
   quickButtons,
   composer,
-  materials,
   conversation,
 }: PanelBodyProps) {
+  const [settingsOpen, setSettingsOpen] = useState(settingsAttention);
+  const settingsId = useId();
+  // 未连接/状态读取失败时把设置展开一次，不让问题藏在抽屉里
+  useEffect(() => {
+    if (settingsAttention) setSettingsOpen(true);
+  }, [settingsAttention]);
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex items-center gap-1 border-b border-border px-3 py-2">
-        <h2 className="min-w-0 flex-1 text-sm font-semibold">AI 助教</h2>
+      <div
+        className={`flex shrink-0 items-center gap-1 border-b border-border py-1 pl-3 ${
+          // Sheet 模式右上角有内建关闭按钮（absolute），头部让出位置避免重叠
+          onDockClose ? "pr-2" : "pr-11"
+        }`}
+      >
+        <h2 className="min-w-0 flex-1 truncate text-sm font-semibold">
+          AI 助教
+        </h2>
         <span className="shrink-0 text-xs text-muted-foreground">
           {questionLabel ?? "未绑定题目"}
         </span>
+        <Button
+          type="button"
+          variant="ghost"
+          className="size-11 shrink-0 p-0"
+          aria-label="AI 设置"
+          aria-expanded={settingsOpen}
+          aria-controls={settingsId}
+          onClick={() => setSettingsOpen((previous) => !previous)}
+        >
+          <Settings2 aria-hidden className="size-4" />
+        </Button>
         {onDockClose && (
           <Button
             ref={dockCloseRef}
             type="button"
             variant="ghost"
-            className="size-8 shrink-0 p-0"
+            className="size-11 shrink-0 p-0"
             aria-label="关闭 AI 助教"
             onClick={onDockClose}
           >
@@ -162,13 +188,31 @@ function AiCompanionPanelBody({
           </Button>
         )}
       </div>
+      {settingsOpen && (
+        <div
+          id={settingsId}
+          className="shrink-0 border-b border-border bg-muted/30 px-3 py-2"
+        >
+          <section aria-label="通道与模式" className="flex flex-col gap-1">
+            {status ?? <AiCompanionChannelStatus settingsHref={settingsHref} />}
+          </section>
+        </div>
+      )}
       <section
-        aria-label="通道与模式"
-        className="border-b border-border px-3 py-2"
+        aria-label="本题对话记录"
+        data-slot="ai-reply-workspace"
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-muted/20 px-3 py-3"
       >
-        {status ?? <AiCompanionChannelStatus settingsHref={settingsHref} />}
+        {conversation ?? (
+          <p className="text-sm text-muted-foreground">
+            还没有对话记录。发送一次求助后，回复会显示在这里。
+          </p>
+        )}
       </section>
-      <nav aria-label="快捷按钮" className="border-b border-border px-3 py-2">
+      <nav
+        aria-label="快捷按钮"
+        className="shrink-0 border-t border-border px-3 py-2"
+      >
         {quickButtons ?? (
           <p className="text-xs text-muted-foreground">快捷按钮功能建设中</p>
         )}
@@ -176,36 +220,11 @@ function AiCompanionPanelBody({
       {composer !== undefined && (
         <section
           aria-label="发送输入"
-          className="border-b border-border px-3 py-2"
+          className="shrink-0 border-t border-border px-3 py-2"
         >
           {composer}
         </section>
       )}
-      <section
-        aria-label="当前材料"
-        className="border-b border-border px-3 py-2"
-      >
-        {materials ?? (
-          <p className="text-xs text-muted-foreground">材料汇总功能建设中</p>
-        )}
-      </section>
-      <section
-        aria-label="本题对话记录"
-        data-slot="ai-reply-workspace"
-        className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-muted/20 px-3 py-3"
-      >
-        <div className="flex min-h-40 flex-col overflow-hidden rounded-lg border bg-card shadow-sm">
-          <div className="flex items-center justify-between border-b px-3 py-2">
-            <h3 className="text-sm font-semibold">AI 回复与进展</h3>
-            <span className="text-xs text-muted-foreground">本题</span>
-          </div>
-          <div className="min-h-0 flex-1 px-3 py-3">
-            {conversation ?? (
-              <p className="text-xs text-muted-foreground">暂无对话记录</p>
-            )}
-          </div>
-        </div>
-      </section>
     </div>
   );
 }
@@ -217,9 +236,9 @@ export function AiCompanionRail({
   questionLabel,
   settingsHref,
   status,
+  settingsAttention,
   quickButtons,
   composer,
-  materials,
   conversation,
   children,
 }: {
@@ -232,10 +251,11 @@ export function AiCompanionRail({
   settingsHref: string;
   /** 会话状态区（SAI-20 真实注入；未注入时保留合成的诚实回退） */
   status?: ReactNode;
+  /** 未连接/状态读取失败时自动展开设置抽屉 */
+  settingsAttention?: boolean | undefined;
   quickButtons?: ReactNode;
   /** 发送输入区（SAI-20 真实注入；未注入时不渲染该分区） */
   composer?: ReactNode;
-  materials?: ReactNode;
   conversation?: ReactNode;
   children: ReactNode;
 }) {
@@ -283,9 +303,9 @@ export function AiCompanionRail({
           questionLabel={questionLabel}
           settingsHref={settingsHref}
           status={status}
+          settingsAttention={settingsAttention}
           quickButtons={quickButtons}
           composer={composer}
-          materials={materials}
           conversation={conversation}
         />
       )}
@@ -310,26 +330,25 @@ export function AiCompanionRail({
           forceMount
           id={controller.panelId}
           closeLabel="关闭 AI 助教"
-          className="flex w-full flex-col gap-0 p-0 sm:max-w-[min(100vw,24rem)]"
+          className="flex w-full flex-col gap-0 p-0 sm:max-w-[min(100vw,26rem)]"
           onCloseAutoFocus={(event) => {
             event.preventDefault();
             triggerRef?.current?.focus();
           }}
         >
-          <SheetHeader className="border-b border-border">
-            <SheetTitle>AI 助教</SheetTitle>
-            <SheetDescription>
-              {questionLabel ?? "未绑定题目"}的 AI 伴学栏
-            </SheetDescription>
-          </SheetHeader>
+          {/* 可见标题由面板头承担；这里只保留 Radix 需要的无障碍标题 */}
+          <SheetTitle className="sr-only">AI 助教</SheetTitle>
+          <SheetDescription className="sr-only">
+            {questionLabel ?? "未绑定题目"}的 AI 伴学栏
+          </SheetDescription>
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
             <AiCompanionPanelBody
               questionLabel={questionLabel}
               settingsHref={settingsHref}
               status={status}
+              settingsAttention={settingsAttention}
               quickButtons={quickButtons}
               composer={composer}
-              materials={materials}
               conversation={conversation}
             />
           </div>
@@ -345,9 +364,9 @@ function DockPanel({
   questionLabel,
   settingsHref,
   status,
+  settingsAttention,
   quickButtons,
   composer,
-  materials,
   conversation,
 }: {
   controller: AiCompanionLayoutController;
@@ -355,9 +374,9 @@ function DockPanel({
   questionLabel: string | null;
   settingsHref: string;
   status?: ReactNode;
+  settingsAttention?: boolean | undefined;
   quickButtons?: ReactNode;
   composer?: ReactNode;
-  materials?: ReactNode;
   conversation?: ReactNode;
 }) {
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -370,7 +389,7 @@ function DockPanel({
       id={controller.panelId}
       aria-label="AI 助教"
       data-slot="ai-companion-panel"
-      className="sticky top-[calc(var(--attempt-header-height,64px)+16px)] max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] flex w-80 shrink-0 flex-col self-start overflow-hidden rounded-lg border bg-card"
+      className="sticky top-[calc(var(--attempt-header-height,64px)+16px)] h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] flex w-[22rem] shrink-0 flex-col self-start overflow-hidden rounded-lg border bg-card"
       onKeyDown={(event) => {
         if (
           event.defaultPrevented ||
@@ -393,9 +412,9 @@ function DockPanel({
           triggerRef?.current?.focus();
         }}
         status={status}
+        settingsAttention={settingsAttention}
         quickButtons={quickButtons}
         composer={composer}
-        materials={materials}
         conversation={conversation}
       />
     </aside>

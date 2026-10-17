@@ -160,12 +160,10 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
       questionLabel={boundLabel}
       settingsHref={settingsHref}
       status={
-        <AiCompanionStatusPanel
-          send={send}
-          settingsHref={settingsHref}
-          questionLabel={boundLabel}
-        />
+        // 题号已在面板头呈现一次，状态区不再重复
+        <AiCompanionStatusPanel send={send} settingsHref={settingsHref} />
       }
+      settingsAttention={send.needsSetup || send.statusError}
       quickButtons={<AiCompanionQuickButtons send={send} />}
       composer={
         <AiCompanionComposer
