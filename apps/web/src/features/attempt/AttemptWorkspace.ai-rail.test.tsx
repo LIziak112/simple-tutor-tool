@@ -291,6 +291,18 @@ describe("SAI-19 伴学栏组合层", () => {
     // 关闭可回原题：题卡仍在文档中（同一实例，未重挂）
     expect(screen.getByText("公开题面：判断对错")).toBeInTheDocument();
   });
+
+  it("关闭 AI 后主区保持整行宽度，不残留纵向 flex 的对齐约束", async () => {
+    const okFlush = async () => {};
+    render(<Harness flushImpl={okFlush} />);
+    const rail = () =>
+      document.querySelector<HTMLElement>('[data-slot="ai-companion-rail"]');
+    await openViaTrigger();
+    expect(rail()?.className).toContain("flex-row");
+    closeViaTrigger();
+    expect(rail()?.className).toContain("block");
+    expect(rail()?.className).not.toContain("flex-col");
+  });
 });
 
 function collectScrollMocks() {

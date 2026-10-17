@@ -254,7 +254,13 @@ export function AiCompanionRail({
             ? controller.mode
             : "closed"
       }
-      className={`flex min-w-0 gap-4 ${dockActive ? "flex-row" : "flex-col"}`}
+      className={
+        dockActive
+          ? "flex w-full min-w-0 items-start gap-4 flex-row"
+          : controller.open
+            ? "flex w-full min-w-0 flex-col gap-4"
+            : "block w-full min-w-0"
+      }
     >
       {controller.error && (
         <p
@@ -264,7 +270,10 @@ export function AiCompanionRail({
           {controller.error}
         </p>
       )}
-      <section aria-label="作答区" className="min-w-0 flex-1">
+      <section
+        aria-label="作答区"
+        className={dockActive ? "min-w-0 flex-1" : "w-full"}
+      >
         {children}
       </section>
       {dockActive && (
@@ -298,6 +307,7 @@ export function AiCompanionRail({
         }}
       >
         <SheetContent
+          forceMount
           id={controller.panelId}
           closeLabel="关闭 AI 助教"
           className="flex w-full flex-col gap-0 p-0 sm:max-w-[min(100vw,24rem)]"

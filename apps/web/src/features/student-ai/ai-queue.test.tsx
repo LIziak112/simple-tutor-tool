@@ -394,7 +394,7 @@ describe("SAI-23 队列导航", () => {
     expect(
       aiQueueTargetOf(task, originOf({ sourceType: "wrong", title: null })),
     ).toBe(`/s/attempts/${OLD_ATTEMPT_ID}`);
-    // assignment 进入口页（单卷幂等）、lesson 跳落地页（create-or-return）
+    // 队列回题统一按任务自身 attempt 直达，避免重新开卷或落到错误题目
     expect(
       aiQueueTargetOf(
         task,
@@ -403,7 +403,7 @@ describe("SAI-23 队列导航", () => {
           assignmentId: "33333333-3333-4333-8333-333333333333",
         }),
       ),
-    ).toBe("/s/assignments/33333333-3333-4333-8333-333333333333");
+    ).toBe(`/s/attempts/${OLD_ATTEMPT_ID}`);
     expect(
       aiQueueTargetOf(
         task,
@@ -412,11 +412,11 @@ describe("SAI-23 队列导航", () => {
           lectureId: "22222222-2222-4222-8222-222222222222",
         }),
       ),
-    ).toBe("/s/lectures/22222222-2222-4222-8222-222222222222/lesson");
+    ).toBe(`/s/attempts/${OLD_ATTEMPT_ID}`);
     // 缺导航键 → null（呈现不可访问说明而非坏链接）
     expect(
       aiQueueTargetOf(
-        task,
+        { ...task, attemptId: "" },
         originOf({ sourceType: "assignment", assignmentId: null }),
       ),
     ).toBeNull();
@@ -444,6 +444,31 @@ describe("SAI-23 队列导航", () => {
       `/s/attempts/${ATTEMPT_ID}?aiFrom=${encodeURIComponent(
         "/s/records?status=pending&page=2",
       )}`,
+    );
+  });
+
+  it("已回复卡片同时提供回到本题，且不会依赖先展开回复", async () => {
+    mockedList.mockResolvedValue({
+      tasks: [queueTask()],
+      nextCursor: null,
+      origins: {
+        "9f0f6d5e-1111-4111-8111-9f0f6d5e0001": originOf({
+          sourceType: "wrong",
+          title: null,
+        }),
+      },
+    });
+    renderPanel(makeClient(), "/s/records");
+    await screen.findByRole("listitem");
+    expect(
+      screen.getByRole("button", { name: "查看回复" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "回到本题" }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "回到本题" }));
+    expect(await screen.findByTestId("location")).toHaveTextContent(
+      `/s/attempts/${ATTEMPT_ID}?aiFrom=${encodeURIComponent("/s/records")}`,
     );
   });
 

@@ -78,15 +78,15 @@ export function aiQueueTargetOf(
   if (origin === undefined) return null;
   switch (origin.sourceType) {
     case "assignment":
-      return origin.assignmentId !== null
-        ? `/s/assignments/${encodeURIComponent(origin.assignmentId)}`
+      return task.attemptId !== ""
+        ? `/s/attempts/${encodeURIComponent(task.attemptId)}`
         : null;
     case "course":
     case "wrong":
       return `/s/attempts/${encodeURIComponent(task.attemptId)}`;
     case "lesson":
-      return origin.lectureId !== null
-        ? `/s/lectures/${encodeURIComponent(origin.lectureId)}/lesson`
+      return task.attemptId !== ""
+        ? `/s/attempts/${encodeURIComponent(task.attemptId)}`
         : null;
   }
 }
@@ -182,22 +182,26 @@ function AiQueueItem({
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-2">
         {target !== null ? (
-          <Button
-            type="button"
-            variant="secondary"
-            className="min-h-9 px-3 text-xs"
-            onClick={() =>
-              task.status === "replied"
-                ? onToggleReply(task)
-                : onNavigate(task, origin)
-            }
-          >
-            {task.status === "replied"
-              ? expanded
-                ? "收起回复"
-                : "查看回复"
-              : "回到本题"}
-          </Button>
+          <>
+            <Button
+              type="button"
+              variant="secondary"
+              className="min-h-9 px-3 text-xs"
+              onClick={() => onNavigate(task, origin)}
+            >
+              回到本题
+            </Button>
+            {task.status === "replied" && (
+              <Button
+                type="button"
+                variant="ghost"
+                className="min-h-9 px-3 text-xs"
+                onClick={() => onToggleReply(task)}
+              >
+                {expanded ? "收起回复" : "查看回复"}
+              </Button>
+            )}
+          </>
         ) : (
           <span className="text-xs text-muted-foreground">
             原练习已不可访问（可能已被移出或删除）
@@ -216,25 +220,12 @@ function AiQueueItem({
           </Button>
         ))}
       </div>
-      {expanded && task.status === "replied" && (
-        <AiQueueReply task={task} origin={origin} onNavigate={onNavigate} />
-      )}
+      {expanded && task.status === "replied" && <AiQueueReply task={task} />}
     </li>
   );
 }
 
-function AiQueueReply({
-  task,
-  origin,
-  onNavigate,
-}: {
-  task: AiTaskPublic;
-  origin: AiTaskOriginSummary | undefined;
-  onNavigate: (
-    task: AiTaskPublic,
-    origin: AiTaskOriginSummary | undefined,
-  ) => void;
-}) {
+function AiQueueReply({ task }: { task: AiTaskPublic }) {
   const query = useQuery({
     queryKey: ["student", "ai-task-detail", task.id],
     queryFn: () => fetchStudentAiTaskApi(task.id),
@@ -270,16 +261,6 @@ function AiQueueReply({
         <p className="text-xs text-muted-foreground">
           已收到回信，当前暂不能查看正文
         </p>
-      )}
-      {origin !== undefined && (
-        <Button
-          type="button"
-          variant="secondary"
-          className="min-h-9 self-start px-3 text-xs"
-          onClick={() => onNavigate(task, origin)}
-        >
-          回到本题
-        </Button>
       )}
     </div>
   );
