@@ -1,3 +1,4 @@
+import { useQuery } from "@tanstack/react-query";
 import type { AiTaskOriginSummary, AiTaskPublic } from "@tutor/contract";
 import { Loader2, MessageSquareReply, RefreshCw } from "lucide-react";
 import { useState } from "react";
@@ -11,6 +12,8 @@ import {
   useStudentAiQueueSummary,
 } from "@/features/student-ai/ai-queue-queries";
 import { errorMessageOf } from "@/features/student-ai/error-text";
+import { fetchStudentAiTaskApi, openStudentAiReplyApi } from "@/lib/api";
+import { AiReplyMarkdown } from "./AiReplyMarkdown";
 
 /**
  * SAI-23 助教队列面板（B12；需求 §7.1/§8）。列表载荷只含展示与导航定位
@@ -103,6 +106,8 @@ function AiQueueItem({
   onNavigate,
   onAction,
   actionPending,
+  expanded,
+  onToggleReply,
 }: {
   task: AiTaskPublic;
   origin: AiTaskOriginSummary | undefined;
@@ -112,6 +117,8 @@ function AiQueueItem({
   ) => void;
   onAction: (taskId: string, action: AiQueueAction) => void;
   actionPending: boolean;
+  expanded: boolean;
+  onToggleReply: (task: AiTaskPublic) => void;
 }) {
   const metaParts: string[] = [
     origin?.questionNo !== null && origin?.questionNo !== undefined
@@ -138,7 +145,11 @@ function AiQueueItem({
         <button
           type="button"
           className="flex min-h-11 min-w-0 flex-1 flex-col items-start gap-0.5 rounded-lg px-1 text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
-          onClick={() => onNavigate(task, origin)}
+          onClick={() =>
+            task.status === "replied"
+              ? onToggleReply(task)
+              : onNavigate(task, origin)
+          }
         >
           <span className="flex w-full flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
             <span
@@ -175,9 +186,17 @@ function AiQueueItem({
             type="button"
             variant="secondary"
             className="min-h-9 px-3 text-xs"
-            onClick={() => onNavigate(task, origin)}
+            onClick={() =>
+              task.status === "replied"
+                ? onToggleReply(task)
+                : onNavigate(task, origin)
+            }
           >
-            {task.status === "replied" ? "查看回复" : "回到本题"}
+            {task.status === "replied"
+              ? expanded
+                ? "收起回复"
+                : "查看回复"
+              : "回到本题"}
           </Button>
         ) : (
           <span className="text-xs text-muted-foreground">
@@ -197,13 +216,79 @@ function AiQueueItem({
           </Button>
         ))}
       </div>
+      {expanded && task.status === "replied" && (
+        <AiQueueReply task={task} origin={origin} onNavigate={onNavigate} />
+      )}
     </li>
+  );
+}
+
+function AiQueueReply({
+  task,
+  origin,
+  onNavigate,
+}: {
+  task: AiTaskPublic;
+  origin: AiTaskOriginSummary | undefined;
+  onNavigate: (
+    task: AiTaskPublic,
+    origin: AiTaskOriginSummary | undefined,
+  ) => void;
+}) {
+  const query = useQuery({
+    queryKey: ["student", "ai-task-detail", task.id],
+    queryFn: () => fetchStudentAiTaskApi(task.id),
+  });
+  if (query.isPending)
+    return (
+      <p className="mt-2 border-t border-border pt-2 text-xs text-muted-foreground">
+        正在载入回信…
+      </p>
+    );
+  if (query.isError)
+    return (
+      <div className="mt-2 flex flex-col gap-2 border-t border-border pt-2">
+        <p className="text-xs text-destructive">回信读取失败</p>
+        <Button
+          type="button"
+          variant="ghost"
+          className="min-h-9 self-start px-2 text-xs"
+          onClick={() => void query.refetch()}
+        >
+          重试读取
+        </Button>
+      </div>
+    );
+  const reply = query.data?.messages.find(
+    (message) => message.role === "assistant",
+  );
+  return (
+    <div className="mt-2 flex flex-col gap-2 border-t border-border pt-2">
+      {reply ? (
+        <AiReplyMarkdown source={reply.contentMd} />
+      ) : (
+        <p className="text-xs text-muted-foreground">
+          已收到回信，当前暂不能查看正文
+        </p>
+      )}
+      {origin !== undefined && (
+        <Button
+          type="button"
+          variant="secondary"
+          className="min-h-9 self-start px-3 text-xs"
+          onClick={() => onNavigate(task, origin)}
+        >
+          回到本题
+        </Button>
+      )}
+    </div>
   );
 }
 
 /** 队列面板主体（放抽屉/独立视图共用；分组 = 归档三态的 exclude/only 两面） */
 export function AiQueuePanel({ onNavigated }: { onNavigated?: () => void }) {
   const [group, setGroup] = useState<"active" | "archived">("active");
+  const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
   const archived = group === "active" ? "exclude" : "only";
   const summaryQuery = useStudentAiQueueSummary();
   const listQuery = useStudentAiQueue(archived);
@@ -223,7 +308,12 @@ export function AiQueuePanel({ onNavigated }: { onNavigated?: () => void }) {
     const target = aiQueueTargetOf(task, origin);
     if (target === null) return;
     // 返回来源位置：携带当前完整位置（含筛选 query），目标页返回时回这里
-    const from = location.pathname + location.search;
+    const source = new URL(
+      location.pathname + location.search,
+      "https://student.invalid",
+    );
+    source.searchParams.delete("aiFrom");
+    const from = source.pathname + source.search;
     onNavigated?.();
     void navigate(
       `${target}${target.includes("?") ? "&" : "?"}aiFrom=${encodeURIComponent(from)}`,
@@ -339,6 +429,14 @@ export function AiQueuePanel({ onNavigated }: { onNavigated?: () => void }) {
                 onNavigate={handleNavigate}
                 onAction={handleAction}
                 actionPending={actionMutation.isPending}
+                expanded={expandedTaskId === task.id}
+                onToggleReply={(next) => {
+                  setExpandedTaskId((previous) =>
+                    previous === next.id ? null : next.id,
+                  );
+                  if (next.replyDeliveredAt === null)
+                    void openStudentAiReplyApi(next.id);
+                }}
               />
             ))}
           </ul>

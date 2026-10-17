@@ -53,6 +53,7 @@ export const AttemptQuestionRow = memo(function AttemptQuestionRow({
     <li ref={register}>
       <AttemptQuestionCard
         {...props}
+        aiTrigger={props.aiTrigger}
         question={question}
         hints={props.hints ?? emptyHints}
         onAnswer={(answer, defer) =>

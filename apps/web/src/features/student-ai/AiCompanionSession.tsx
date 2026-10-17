@@ -16,8 +16,8 @@ import {
  * - AiCompanionStatusPanel：顶部题号/模式原因/通道/当前快照。通道为本地
  *   会话选择（换通道零出站、不重发）；需要设置（未连接/需首次知情）时给
  *   设置入口且如实禁用发送（引导去设置，回题不自动出站）。
- * - AiCompanionQuickButtons：仅渲染启用项，点击即发（用其 prompt 与附件
- *   偏好，单次语义——不回写草稿选择，也不产生第二个同义「发送」按钮）。
+ * - AiCompanionQuickButtons：仅渲染启用项，点击只填入当前题提问框；实际
+ *   出站统一由主按钮执行，避免快捷按钮绕过用户确认。
  * - AiCompanionComposer：按题输入区（正文/附件选择）。主按钮按通道显示
  *   发送/加入求助队列/复制链接，全栏只有一个主动作；模式被教师关闭时
  *   按钮保持可点——点击即给出原因并刷新状态（见控制器第 7 条）。
@@ -173,7 +173,10 @@ export function AiCompanionQuickButtons({ send }: { send: AiSendController }) {
           className="min-h-9 px-2"
           title={button.prompt}
           disabled={disabled}
-          onClick={() => void send.send({ quick: button })}
+          onClick={() => {
+            send.selectPreset(button.id);
+            send.setText(button.prompt);
+          }}
         >
           {button.name}
         </Button>

@@ -6,7 +6,7 @@ import type {
 } from "@tutor/contract";
 import { displayStemMd } from "@tutor/md-dsl";
 import { cn } from "cn";
-import { memo, useState } from "react";
+import { memo, type ReactNode, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -162,6 +162,7 @@ export interface LessonQuestionCardProps {
   onCardElement?:
     | ((questionId: string, el: HTMLElement | null) => void)
     | undefined;
+  aiTrigger?: ReactNode;
 }
 
 /** 讲练页题卡本体 */
@@ -174,6 +175,7 @@ export const LessonQuestionCard = memo(function LessonQuestionCard({
   released,
   handlers,
   onCardElement,
+  aiTrigger,
 }: LessonQuestionCardProps) {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [phase, setPhase] = useState<RevealPhase>({ kind: "idle" });
@@ -298,6 +300,7 @@ export const LessonQuestionCard = memo(function LessonQuestionCard({
         hints={hints}
         onHintUnlocked={(entry) => handlers.onHintUnlocked(question.id, entry)}
         assignmentTitle="讲练"
+        aiTrigger={aiTrigger}
         footer={
           <Button
             type="button"

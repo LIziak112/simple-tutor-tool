@@ -37,8 +37,9 @@ export const AiCompanionTrigger = forwardRef<
     controller: AiCompanionLayoutController;
     /** 入口名（作答态「AI 助教」；结果页完成后按 §7.5 显示「AI 复盘」） */
     label?: string | undefined;
+    onPress?: (() => void) | undefined;
   }
->(function AiCompanionTrigger({ controller, label = "AI 助教" }, ref) {
+>(function AiCompanionTrigger({ controller, label = "AI 助教", onPress }, ref) {
   return (
     <Button
       ref={ref}
@@ -50,6 +51,10 @@ export const AiCompanionTrigger = forwardRef<
       aria-expanded={controller.open}
       aria-controls={controller.panelId}
       onClick={() => {
+        if (onPress !== undefined) {
+          onPress();
+          return;
+        }
         if (controller.open) controller.closePanel();
         else void controller.openPanel();
       }}

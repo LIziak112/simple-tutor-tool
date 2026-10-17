@@ -46,7 +46,7 @@ export interface AiCompanionLayoutController {
   /** 面板元素 id（触发按钮 aria-controls 指向） */
   panelId: string;
   /** 打开 AI 栏：先收笔等本机落盘，失败返回 false 且布局不变 */
-  openPanel(): Promise<boolean>;
+  openPanel(questionId?: string): Promise<boolean>;
   /** 关闭 AI 栏；按恢复承诺还原答题卡 */
   closePanel(): void;
   /** 用户手动切换答题卡折叠（覆盖期间操作＝另行操作，取消恢复承诺） */
@@ -132,22 +132,26 @@ export function useAiCompanionLayout({
     if (yieldDock && navFitsAlongDock) setYieldDock(false);
   }, [yieldDock, navFitsAlongDock]);
 
-  const openPanel = useCallback(async () => {
-    if (open) return true;
-    // 先收笔并等本机落盘（SAI-10 flush：不改 active/paper、不卸载控制器、
-    // 不清撤销历史）；失败向前抛出——布局保持原状，不重排。
-    if (editor !== null && currentQuestionId !== null) {
-      try {
-        await editor.flush(currentQuestionId);
-      } catch (cause) {
-        setError(errorMessageOf(cause, "本机稿未保存，AI 助教未打开"));
-        return false;
+  const openPanel = useCallback(
+    async (questionId?: string) => {
+      if (open) return true;
+      // 先收笔并等本机落盘（SAI-10 flush：不改 active/paper、不卸载控制器、
+      // 不清撤销历史）；失败向前抛出——布局保持原状，不重排。
+      const flushQuestionId = questionId ?? currentQuestionId;
+      if (editor !== null && flushQuestionId !== null) {
+        try {
+          await editor.flush(flushQuestionId);
+        } catch (cause) {
+          setError(errorMessageOf(cause, "本机稿未保存，AI 助教未打开"));
+          return false;
+        }
       }
-    }
-    setError(null);
-    setOpen(true);
-    return true;
-  }, [open, editor, currentQuestionId]);
+      setError(null);
+      setOpen(true);
+      return true;
+    },
+    [open, editor, currentQuestionId],
+  );
 
   const closePanel = useCallback(() => {
     setOpen(false);

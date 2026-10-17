@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type {
   AiQueueSummaryData,
+  AiTaskDetailData,
   AiTaskListData,
   AiTaskOriginSummary,
   AiTaskPublic,
@@ -20,7 +21,9 @@ import {
 } from "@/features/student-ai/ai-queue-queries";
 import {
   fetchStudentAiQueueSummaryApi,
+  fetchStudentAiTaskApi,
   listStudentAiQueueApi,
+  openStudentAiReplyApi,
   studentAiTaskActionApi,
 } from "@/lib/api";
 
@@ -40,13 +43,17 @@ vi.mock("@/lib/api", async (importOriginal) => {
   return {
     ...actual,
     fetchStudentAiQueueSummaryApi: vi.fn(),
+    fetchStudentAiTaskApi: vi.fn(),
     listStudentAiQueueApi: vi.fn(),
+    openStudentAiReplyApi: vi.fn(),
     studentAiTaskActionApi: vi.fn(),
   };
 });
 
 const mockedSummary = vi.mocked(fetchStudentAiQueueSummaryApi);
 const mockedList = vi.mocked(listStudentAiQueueApi);
+const mockedDetail = vi.mocked(fetchStudentAiTaskApi);
+const mockedOpened = vi.mocked(openStudentAiReplyApi);
 const mockedAction = vi.mocked(studentAiTaskActionApi);
 
 const ATTEMPT_ID = "55555555-5555-4555-8555-555555555555";
@@ -142,6 +149,22 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockedSummary.mockResolvedValue(summaryOf());
   mockedList.mockResolvedValue({ tasks: [], nextCursor: null });
+  mockedDetail.mockResolvedValue({
+    task: queueTask(),
+    messages: [
+      {
+        id: "message-1",
+        taskId: queueTask().id,
+        role: "assistant",
+        contentMd: "这是回信正文",
+        createdAt: "2026-10-16T02:01:00.000Z",
+      },
+    ],
+    facts: [],
+  } satisfies AiTaskDetailData);
+  mockedOpened.mockResolvedValue(
+    queueTask({ replyDeliveredAt: "2026-10-16T02:02:00.000Z" }),
+  );
 });
 
 // ---------- 组1：列表形态 ----------
@@ -413,6 +436,9 @@ describe("SAI-23 队列导航", () => {
     });
     renderPanel(makeClient(), "/s/records?status=pending&page=2");
     fireEvent.click(await screen.findByRole("button", { name: "查看回复" }));
+    expect(await screen.findByText("这是回信正文")).toBeInTheDocument();
+    expect(mockedOpened).toHaveBeenCalledWith(expect.any(String));
+    fireEvent.click(await screen.findByRole("button", { name: "回到本题" }));
     const probe = await screen.findByTestId("location");
     expect(probe.textContent).toBe(
       `/s/attempts/${ATTEMPT_ID}?aiFrom=${encodeURIComponent(

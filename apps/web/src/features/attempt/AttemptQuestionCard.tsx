@@ -98,6 +98,7 @@ function QuestionMeta({
   onToggleFlag: (() => void) | undefined;
   formalInkPresence: boolean;
   tools: {
+    aiTrigger?: ReactNode;
     annotationOpen: boolean;
     paperOpen: boolean;
     paperEnabled: boolean;
@@ -216,6 +217,7 @@ function QuestionMeta({
             )}
           </Button>
         )}
+        {tools?.aiTrigger}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
@@ -290,6 +292,7 @@ export function AttemptQuestionCard({
   onInkPresenceChange,
   assignmentTitle = "练习",
   footer,
+  aiTrigger,
 }: {
   /** 题号（0 起，展示 +1） */
   index: number;
@@ -319,6 +322,8 @@ export function AttemptQuestionCard({
   assignmentTitle?: string;
   /** 作答流程可追加题级提交入口，共享题面与编辑器。 */
   footer?: ReactNode;
+  /** 本题 AI 助教入口；由作答会话按题绑定。 */
+  aiTrigger?: ReactNode;
 }) {
   // T7.7：教师关闭手写辅助（ink）时草稿纸入口一并隐藏——草稿纸是 ink 辅助
   // 入口（已有草稿数据保留服务端，恢复开关后回来看）。
@@ -521,6 +526,7 @@ export function AttemptQuestionCard({
           attemptId === undefined
             ? null
             : {
+                aiTrigger,
                 annotationOpen: annotationOpen || drawing,
                 paperOpen: noteOpen,
                 paperEnabled: inkEnabled,

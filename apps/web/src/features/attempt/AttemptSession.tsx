@@ -553,12 +553,7 @@ function AnswerView({
         {/* 练习头：来源 + 标题 + 截止 + 草稿保存状态（T2.9 三态 + T2A.6 终态） */}
         <AttemptHeader
           title={data.title}
-          actions={
-            <>
-              {aiCompanion.trigger}
-              <AiQueueButton />
-            </>
-          }
+          actions={<AiQueueButton />}
           status={(closeDetails) => (
             <div className="flex min-w-0 items-center gap-2">
               <p
@@ -777,6 +772,9 @@ function AnswerView({
                           registerInkController={registerInkController}
                           hints={hintsOpened[question.id]}
                           onHintUnlocked={unlockHint}
+                          aiTrigger={aiCompanion.triggerForQuestion(
+                            question.id,
+                          )}
                         />
                       );
                     })}

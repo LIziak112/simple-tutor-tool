@@ -100,6 +100,11 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
   // 定——绑定由打开动作启动，打开后滚动到别题不换绑。
   const boundInOpenRef = useRef(false);
   const bind = send.bind;
+  const openForQuestion = async (questionId: string) => {
+    const opened = await controller.openPanel(questionId);
+    if (opened) bind(questionId);
+    return opened;
+  };
   useEffect(() => {
     if (!controller.open) {
       boundInOpenRef.current = false;
@@ -124,6 +129,16 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
       ref={triggerRef}
       controller={controller}
       label={host.triggerLabel}
+    />
+  );
+  const triggerForQuestion = (questionId: string) => (
+    <AiCompanionTrigger
+      ref={triggerRef}
+      controller={controller}
+      label="AI 助教"
+      onPress={() => {
+        void openForQuestion(questionId);
+      }}
     />
   );
   const rail = (children: ReactNode) => (
@@ -162,6 +177,7 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
     send,
     /** 头部动作位的 AI 助教按钮 */
     trigger,
+    triggerForQuestion,
     /** 主区包裹（传入页面主内容） */
     rail,
     /** 绑定题显示名（null = 未绑定） */

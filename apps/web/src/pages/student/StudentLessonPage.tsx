@@ -584,6 +584,7 @@ function LessonAnswerInner({
       released={session.released[question.id]}
       handlers={handlers}
       onCardElement={onCardElement}
+      aiTrigger={aiCompanion.triggerForQuestion(question.id)}
     />
   );
 
@@ -605,12 +606,7 @@ function LessonAnswerInner({
               <span aria-live="polite">{session.saveStatus}</span>
             </>
           }
-          actions={
-            <>
-              {aiCompanion.trigger}
-              <AiQueueButton />
-            </>
-          }
+          actions={<AiQueueButton />}
         />
 
         {/* 零题讲练页：纯阅读提示（开卷合法但不构成练习） */}

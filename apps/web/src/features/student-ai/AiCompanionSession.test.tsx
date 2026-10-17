@@ -205,7 +205,7 @@ describe("AiCompanionSession 接线组件（SAI-20）", () => {
     expect(screen.getByRole("button", { name: "发送" })).toBeDisabled();
   });
 
-  it("快捷按钮渲染启用项（停用不出现），点击即发携带其 prompt 与附件偏好", async () => {
+  it("快捷按钮只填入提问框，发送仍由主按钮触发", async () => {
     render(<SessionHarness />);
     await openBound();
     expect(
@@ -217,13 +217,20 @@ describe("AiCompanionSession 接线组件（SAI-20）", () => {
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "查当前步骤" }));
     });
+    expect(screen.getByLabelText("补充问题")).toHaveValue(
+      "请检查我当前书写的步骤",
+    );
+    expect(mockedCreate).not.toHaveBeenCalled();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    });
     await waitFor(() => expect(mockedCreate).toHaveBeenCalledTimes(1));
     expect(vi.mocked(mockedCreate).mock.calls[0]?.[0].question).toBe(
       "请检查我当前书写的步骤",
     );
-    expect(vi.mocked(mockedCreate).mock.calls[0]?.[0].quickButtonId).toBe(
-      "check-steps",
-    );
+    expect(
+      vi.mocked(mockedCreate).mock.calls[0]?.[0].quickButtonId,
+    ).toBeUndefined();
   });
 
   it("输入区：附件选择按题型呈现（草稿/正式手写），主按钮按通道换文案", async () => {
