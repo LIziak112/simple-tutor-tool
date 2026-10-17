@@ -1,90 +1,14 @@
 import { useQuery } from "@tanstack/react-query";
-import { Check, Copy, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { useState } from "react";
+import { CopyBlock } from "@/components/CopyBlock";
 import { Button } from "@/components/ui/button";
 import { ApiTokenSection } from "@/features/teacher-settings/ApiTokenSection";
 import { useApiToken } from "@/features/teacher-settings/api-token-queries";
 import { fetchPublicConfig } from "@/lib/api";
-import { copyText } from "@/lib/copy";
+import { buildMcpServersConfig } from "@/lib/mcp-config";
 
 const TOKEN_PLACEHOLDER = "<你的API_TOKEN>";
-
-function buildMcpServersConfig(serverUrl: string, token: string): string {
-  return JSON.stringify(
-    {
-      mcpServers: {
-        tutor: {
-          type: "http",
-          url: serverUrl,
-          headers: { Authorization: `Bearer ${token}` },
-        },
-      },
-    },
-    null,
-    2,
-  );
-}
-
-/** 复制反馈关联被复制内容，凭据更新后不会沿用旧配置的成功状态。 */
-function CopyBlock({
-  label,
-  text,
-  ariaLabel,
-  example = false,
-}: {
-  label: string;
-  text: string;
-  ariaLabel: string;
-  example?: boolean;
-}) {
-  const [result, setResult] = useState<{ text: string; ok: boolean } | null>(
-    null,
-  );
-  const copied = result?.text === text && result.ok;
-  const failed = result?.text === text && !result.ok;
-
-  async function handleCopy() {
-    setResult({ text, ok: await copyText(text) });
-  }
-
-  return (
-    <div className="min-w-0 overflow-hidden rounded-xl border border-border bg-card">
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-muted/30 px-5 py-3">
-        <p className="text-sm font-medium">{label}</p>
-        <Button
-          type="button"
-          variant="outline"
-          className="min-h-11 px-4"
-          aria-label={ariaLabel}
-          onClick={() => void handleCopy()}
-        >
-          {copied ? (
-            <>
-              <Check aria-hidden />
-              已复制
-            </>
-          ) : (
-            <>
-              <Copy aria-hidden />
-              {example ? "复制示例" : "复制"}
-            </>
-          )}
-        </Button>
-      </div>
-      <pre className="overflow-x-auto p-5 font-mono text-[0.8125rem] leading-relaxed break-all whitespace-pre-wrap">
-        {text}
-      </pre>
-      <p role="status" className="sr-only">
-        {copied ? "已复制" : ""}
-      </p>
-      {failed && (
-        <p role="alert" className="px-5 pb-4 text-sm text-destructive">
-          复制失败，请选中内容手动复制。
-        </p>
-      )}
-    </div>
-  );
-}
 
 /** 凭据、地址、客户端配置三个步骤；两类客户端共用一份配置。 */
 export function ConnectPage() {
@@ -211,10 +135,11 @@ export function ConnectPage() {
                   ? "Claude Desktop 配置（claude_desktop_config.json）"
                   : "通用 MCP 配置"
               }
-              text={buildMcpServersConfig(
+              text={buildMcpServersConfig({
+                serverKey: "tutor",
                 serverUrl,
-                token ?? TOKEN_PLACEHOLDER,
-              )}
+                token: token ?? TOKEN_PLACEHOLDER,
+              })}
               example={token === null}
               ariaLabel={
                 client === "claude"
