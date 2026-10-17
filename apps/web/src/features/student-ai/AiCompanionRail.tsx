@@ -222,13 +222,21 @@ export function AiCompanionRail({
   conversation?: ReactNode;
   children: ReactNode;
 }) {
-  const dockActive = controller.open && controller.mode === "dock";
-  const panelActive = controller.open && controller.mode === "panel";
+  const dockActive =
+    controller.open && !controller.suspended && controller.mode === "dock";
+  const panelActive =
+    controller.open && !controller.suspended && controller.mode === "panel";
   return (
     <div
       ref={containerRef}
       data-slot="ai-companion-rail"
-      data-ai-state={controller.open ? controller.mode : "closed"}
+      data-ai-state={
+        controller.suspended
+          ? "suspended"
+          : controller.open
+            ? controller.mode
+            : "closed"
+      }
       className={`flex min-w-0 gap-4 ${dockActive ? "flex-row" : "flex-col"}`}
     >
       {controller.error && (

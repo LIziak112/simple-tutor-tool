@@ -1,5 +1,5 @@
 import type { AttemptQuestionPublic } from "@tutor/contract";
-import { type ReactNode, useEffect, useRef } from "react";
+import { type ReactNode, useCallback, useEffect, useRef } from "react";
 import { useLocation } from "react-router";
 import {
   AiCompanionRail,
@@ -141,6 +141,12 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
       }}
     />
   );
+  const setQuestionVisible = useCallback(
+    (questionId: string, visible: boolean) => {
+      if (send.boundQuestionId === questionId) controller.setVisible(visible);
+    },
+    [controller, send.boundQuestionId],
+  );
   const rail = (children: ReactNode) => (
     <AiCompanionRail
       containerRef={railRef}
@@ -178,6 +184,7 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
     /** 头部动作位的 AI 助教按钮 */
     trigger,
     triggerForQuestion,
+    setQuestionVisible,
     /** 主区包裹（传入页面主内容） */
     rail,
     /** 绑定题显示名（null = 未绑定） */

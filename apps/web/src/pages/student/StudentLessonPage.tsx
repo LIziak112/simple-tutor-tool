@@ -568,6 +568,22 @@ function LessonAnswerInner({
     editor,
     materials: { annotation: false, paper: true },
   });
+  useEffect(() => {
+    const questionId = aiCompanion.send.boundQuestionId;
+    if (questionId === null) return;
+    const element = cardElements.current.get(questionId);
+    if (!element || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(
+      ([entry]) =>
+        aiCompanion.setQuestionVisible(
+          questionId,
+          entry?.isIntersecting ?? false,
+        ),
+      { root: null, threshold: 0.01 },
+    );
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [aiCompanion.send.boundQuestionId, aiCompanion.setQuestionVisible]);
 
   const renderCard = (
     question: AttemptQuestionPublic,
