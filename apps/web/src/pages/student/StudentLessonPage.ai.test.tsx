@@ -213,7 +213,12 @@ function renderPage(
 
 /** 打开 AI 助教并等待面板出现 */
 async function openCompanion() {
-  fireEvent.click(screen.getByRole("button", { name: "AI 助教" }));
+  const buttons = screen.getAllByRole("button", { name: "AI 助教" });
+  const button = buttons[0];
+  if (!button) {
+    throw new Error("未找到 AI 助教按钮");
+  }
+  fireEvent.click(button);
   await screen.findByRole("dialog");
 }
 
@@ -389,11 +394,14 @@ describe("讲练页 AI 伴学（SAI-22 四来源接入）", () => {
     fireEvent.click(screen.getByRole("button", { name: "再做一次" }));
     fireEvent.click(screen.getByRole("button", { name: "开始新一轮" }));
     // 新卷作答页就绪后打开伴学：入口只在作答视图（等它出现即新卷已渲染）
-    const trigger = await screen.findByRole(
-      "button",
-      { name: "AI 助教" },
-      { timeout: 3000 },
-    );
+    const trigger = (
+      await screen.findAllByRole(
+        "button",
+        { name: "AI 助教" },
+        { timeout: 3000 },
+      )
+    )[0];
+    if (trigger === undefined) throw new Error("测试前置失败：无 AI 助教入口");
     fireEvent.click(trigger);
     await screen.findByRole("dialog");
     await waitFor(() =>
