@@ -7,6 +7,9 @@ import { BlankAnswersProvider } from "@/features/markdown/BlankAnswersContext";
 import { RichMarkdown } from "@/features/markdown/RichMarkdown";
 import { letterOf, withBlankValue } from "./answer-format";
 
+/** 题面与圈画坐标域共用的最大内容宽度。 */
+export const QUESTION_SURFACE_MAX_WIDTH = 720;
+
 /** 判断题题干尾部的空标记（studentStemMd 投影把 [[正确]] 脱敏成 [[]]） */
 function judgeStemOf(stemMd: string): string {
   return stemMd.replace(/\s*\[\[\]\]\s*$/, "（　）");
@@ -191,7 +194,8 @@ export function QuestionSurface({
     <div
       data-slot="question-surface"
       inert={mode === "export"}
-      className="mx-auto flex w-full min-w-0 max-w-[720px] flex-col gap-4 text-base leading-[1.75]"
+      className="mx-auto flex w-full min-w-0 flex-col gap-4 text-base leading-[1.75]"
+      style={{ maxWidth: QUESTION_SURFACE_MAX_WIDTH }}
     >
       {/* 题干：判断题剥掉尾部空标记；填空题空位内联输入 */}
       {question.type === "judge" ? (

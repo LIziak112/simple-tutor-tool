@@ -204,6 +204,12 @@ it("布局不匹配保留可作答的原生题面，不显示图片或独立答�
 
 it("已有布局固定逻辑宽度，由同一区域整体缩放，隐藏标画不解除排版", async () => {
   const { container, rerender } = render(<Harness />);
+  expect(container.querySelector('[data-slot="annotated-question"]')).toHaveStyle({
+    maxWidth: "300px",
+  });
+  expect(container.querySelector('[data-slot="annotation-viewport"]')).toHaveStyle({
+    maxWidth: "300px",
+  });
   const frame = container.querySelector(
     '[data-slot="annotation-logical-frame"]',
   );
