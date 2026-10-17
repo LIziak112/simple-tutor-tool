@@ -65,6 +65,7 @@ import { AttemptSyncConflicts } from "./AttemptSyncConflicts";
 import { AttemptWorkspace } from "./AttemptWorkspace";
 import { attemptSourceLabel } from "./answer-format";
 import { useSubmitAttempt } from "./attempt-queries";
+import { focusWhenReachable } from "./focus-when-reachable";
 import { QuestionNavigator } from "./QuestionNavigator";
 import { completionLabel, getQuestionCompletion } from "./question-completion";
 import {
@@ -351,9 +352,11 @@ function AnswerView({
       const answerControl = card?.querySelector<HTMLElement>(
         'math-field, [data-slot="question-surface"] input[type="radio"], [data-slot="question-surface"] input[type="checkbox"], [data-slot="question-surface"] button',
       );
-      (target ?? (focusAnswer ? answerControl : null) ?? article)?.focus({
-        preventScroll: true,
-      });
+      // 作答保护（inert——reload 后材料核对未完成）下 focus 静默失败，
+      // focusWhenReachable 按帧重试，保护解除后落焦（webkit E2E 回归）。
+      focusWhenReachable(
+        target ?? (focusAnswer ? answerControl : null) ?? article,
+      );
     });
   };
   // T6R.3：交卷回传的题目版本集合（建卷冻结时下发的 questionRevisionId 原样
