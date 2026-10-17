@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { DEFAULT_QUICK_BUTTONS } from "@tutor/contract";
 import { MemoryRouter } from "react-router";
 import { expect, it, vi } from "vitest";
 import StudentSettingsPage from "./StudentSettingsPage";
@@ -10,13 +11,15 @@ vi.mock("@/features/auth/student-auth", () => ({
   }),
 }));
 
-// 页面挂载快捷按钮查询层（SAI-08）：mock 掉网络请求（永久 pending），
-// 只断言区块存在；与组件测试同款部分 mock，其余导出保持真实实现
+// 快捷按钮沿用真实控制器，以固定接口响应验证展开、收起与草稿保留。
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
   return {
     ...actual,
-    fetchStudentQuickButtonsApi: () => new Promise(() => {}),
+    fetchStudentQuickButtonsApi: async () => ({
+      buttons: DEFAULT_QUICK_BUTTONS,
+      updatedAt: "1970-01-01T00:00:00.000Z",
+    }),
   };
 });
 
@@ -48,6 +51,10 @@ it("设置页显示账号与手写入口，不展示内部身份编号", () => {
 it("设置页包含 AI 快捷按钮管理区（SAI-08）", () => {
   renderPage();
   expect(
+    screen.getByText("自定义求助快捷按钮").closest("details"),
+  ).not.toHaveAttribute("open");
+  fireEvent.click(screen.getByText("自定义求助快捷按钮"));
+  expect(
     screen.getByRole("heading", { name: "AI 快捷按钮" }),
   ).toBeInTheDocument();
 });
@@ -59,4 +66,18 @@ it("设置页包含连接 AI 入口,指向 /s/settings/ai（SAI-18）", () => {
     "href",
     "/s/settings/ai",
   );
+});
+
+it("收起快捷按钮仍提示未保存，重新展开保留输入", async () => {
+  renderPage();
+  const summary = screen.getByText("自定义求助快捷按钮").closest("summary");
+  if (!summary) throw new Error("缺少展开入口");
+  fireEvent.click(summary);
+  fireEvent.change(await screen.findByLabelText("第 1 项按钮名称"), {
+    target: { value: "我的下一步" },
+  });
+  fireEvent.click(summary);
+  expect(summary).toHaveTextContent("有未保存更改");
+  fireEvent.click(summary);
+  expect(screen.getByLabelText("第 1 项按钮名称")).toHaveValue("我的下一步");
 });
