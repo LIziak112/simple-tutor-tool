@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { AiTaskPublic } from "@tutor/contract";
-import { useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   fetchStudentAiTaskApi,
@@ -83,9 +83,11 @@ export function formatSnapshotTime(iso: string): string {
 function ConversationMessages({
   taskId,
   updatedAt,
+  onVisible,
 }: {
   taskId: string;
   updatedAt: string;
+  onVisible: () => void;
 }) {
   const queryClient = useQueryClient();
   const query = useQuery({
@@ -101,6 +103,17 @@ function ConversationMessages({
       queryKey: ["student", "ai-task-detail", taskId],
     });
   }, [updatedAt, taskId, queryClient]);
+  // 正文成功取得并挂入可见工作区后才记交付；失败不清未读。
+  const hasVisibleReply =
+    !query.isFetching &&
+    query.data?.messages.some((message) => message.role === "assistant") ===
+      true;
+  const onVisibleRef = useRef(onVisible);
+  onVisibleRef.current = onVisible;
+  const deliveryVersion = hasVisibleReply ? query.dataUpdatedAt : null;
+  useEffect(() => {
+    if (deliveryVersion !== null) onVisibleRef.current();
+  }, [deliveryVersion]);
 
   if (query.isPending)
     return (
@@ -137,12 +150,6 @@ function ConversationMessages({
           </div>
         ) : (
           <div key={message.id} className="flex min-w-0 gap-2">
-            <span
-              aria-hidden
-              className="mt-0.5 grid size-6 shrink-0 place-items-center rounded-full bg-primary/10 text-[0.625rem] font-semibold text-primary"
-            >
-              AI
-            </span>
             <div className="min-w-0 flex-1">
               <AiReplyMarkdown source={message.contentMd} />
             </div>
@@ -186,6 +193,7 @@ function TaskProgress({
       {TASK_STEPS.map((label, index) => (
         <li
           key={label}
+          aria-current={index === active ? "step" : undefined}
           className={
             index === active
               ? "rounded-full bg-primary/10 px-1.5 py-0.5 font-medium text-primary"
@@ -200,6 +208,7 @@ function TaskProgress({
 }
 
 interface AiTaskCardProps {
+  viewedVersion: string;
   task: AiTaskPublic;
   read: boolean;
   expanded: boolean;
@@ -210,9 +219,12 @@ interface AiTaskCardProps {
   onToggle: () => void;
   onFollowupText: (text: string) => void;
   onFollowup: () => void;
+  onNewRequest: () => void;
+  onVisible: () => void;
 }
 
 function AiTaskCard({
+  viewedVersion,
   task,
   read,
   expanded,
@@ -223,8 +235,15 @@ function AiTaskCard({
   onToggle,
   onFollowupText,
   onFollowup,
+  onNewRequest,
+  onVisible,
 }: AiTaskCardProps) {
   const unread = task.hasReply && !read;
+  const hasNewVersion =
+    expanded &&
+    task.hasReply &&
+    task.status === "replied" &&
+    viewedVersion !== task.updatedAt;
   // 链接通道回信在外部：平台没有回信就如实说外部未知，不伪造完成
   const externalUnknown = task.channel === "link" && !task.hasReply;
   const fact = taskFactText(task);
@@ -236,7 +255,7 @@ function AiTaskCard({
       <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
         <TaskProgress status={task.status} channel={task.channel} />
         <span className="text-xs text-muted-foreground">
-          {formatSnapshotTime(task.snapshotAt)} ·{" "}
+          材料 {formatSnapshotTime(task.snapshotAt)} ·{" "}
           {AI_MODE_LABEL[task.modeAtSend]}
         </span>
       </div>
@@ -248,6 +267,15 @@ function AiTaskCard({
           </p>
           <p className="text-xs text-muted-foreground">查看情况未知</p>
         </div>
+      ) : hasNewVersion ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <Button type="button" className="min-h-11" onClick={onToggle}>
+            查看新回复
+          </Button>
+          <p role="status" className="text-xs text-muted-foreground">
+            收到新回复
+          </p>
+        </div>
       ) : unread ? (
         <div className="flex flex-wrap items-center gap-2">
           <Button
@@ -256,7 +284,11 @@ function AiTaskCard({
             className="min-h-10 px-3"
             onClick={onToggle}
           >
-            {expanded ? "收起对话" : "查看回信"}
+            {expanded
+              ? viewedVersion === task.updatedAt
+                ? "收起对话"
+                : "查看新回复"
+              : "查看回信"}
           </Button>
           <p role="status" className="text-xs font-medium text-primary">
             收到新回复（未读）
@@ -280,10 +312,27 @@ function AiTaskCard({
       ) : null}
       {expanded && !externalUnknown && (
         <div className="mt-1 flex flex-col gap-2 border-t border-border pt-2">
-          <ConversationMessages taskId={task.id} updatedAt={task.updatedAt} />
-          {followupAllowed && (
+          <ConversationMessages
+            taskId={task.id}
+            updatedAt={viewedVersion}
+            onVisible={onVisible}
+          />
+          {task.hasReply && (
             <div className="flex flex-col gap-1">
               <p className="text-xs text-muted-foreground">{FOLLOWUP_HINT}</p>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-xs text-muted-foreground">
+                  继续问这份稿 · 材料 {formatSnapshotTime(task.snapshotAt)}
+                </span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="min-h-11"
+                  onClick={onNewRequest}
+                >
+                  带新稿另问
+                </Button>
+              </div>
               <textarea
                 data-testid="followup-input"
                 aria-label="继续追问本题"
@@ -291,18 +340,23 @@ function AiTaskCard({
                 className="min-h-11 w-full resize-y rounded-lg border border-input bg-background px-2 py-1.5 text-base outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
                 placeholder="继续追问本题"
                 value={followupDraft}
-                disabled={followupSending}
+                disabled={followupSending || !followupAllowed}
                 onChange={(event) => onFollowupText(event.target.value)}
               />
               <Button
                 type="button"
                 size="sm"
                 className="min-h-9 self-start px-3"
-                disabled={followupSending}
+                disabled={followupSending || !followupAllowed}
                 onClick={onFollowup}
               >
                 {followupSending ? "追问中…" : "追问"}
               </Button>
+              {!followupAllowed && (
+                <p role="status" className="text-xs text-muted-foreground">
+                  {fact ?? "当前不可追问，请查看 AI 设置"}
+                </p>
+              )}
               {followupError !== null && (
                 <p role="alert" className="text-xs text-muted-foreground">
                   {followupError}
@@ -316,7 +370,11 @@ function AiTaskCard({
   );
 }
 
-export function AiConversationPanel({ send }: { send: AiSendController }) {
+/** 会话状态归页面共享控制器所有，切换题下/对照容器不丢草稿。 */
+export function useAiConversationController(
+  send: AiSendController,
+  active = true,
+) {
   const queryClient = useQueryClient();
   const attemptId = send.attemptId;
   const boundQuestionId = send.boundQuestionId;
@@ -349,7 +407,7 @@ export function AiConversationPanel({ send }: { send: AiSendController }) {
         attemptId,
         questionId: boundQuestionId ?? "",
       }),
-    enabled: boundQuestionId !== null,
+    enabled: active && boundQuestionId !== null,
     refetchInterval: (query) =>
       query.state.error === null
         ? AI_TASKS_POLL_INTERVAL_MS
@@ -357,15 +415,24 @@ export function AiConversationPanel({ send }: { send: AiSendController }) {
     refetchOnWindowFocus: false,
   });
 
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [expandedByQuestion, setExpandedByQuestion] = useState<
+    ReadonlyMap<string, string | null>
+  >(() => new Map());
+  const [viewedVersions, setViewedVersions] = useState<
+    ReadonlyMap<string, string>
+  >(() => new Map());
+  const expandedId =
+    boundQuestionId === null
+      ? null
+      : (expandedByQuestion.get(boundQuestionId) ?? null);
+  const setExpandedId = (id: string | null) => {
+    if (boundQuestionId !== null)
+      setExpandedByQuestion((previous) =>
+        new Map(previous).set(boundQuestionId, id),
+      );
+  };
   /** 用户是否亲手操作过展开（亲手收起后不再自动展开） */
-  const expandedTouchedRef = useRef(false);
-  // 换绑定题：重置展开与「亲手操作」标记，新题按自己的最新任务重新判定
-  // biome-ignore lint/correctness/useExhaustiveDependencies: 仅按绑定题重置
-  useEffect(() => {
-    expandedTouchedRef.current = false;
-    setExpandedId(null);
-  }, [boundQuestionId]);
+  const expandedTouchedRef = useRef(new Set<string>());
   // 已看过的回信直接展开（再打开面板不必多点一次）；未读保持折叠，
   // 符合需求规格 §7.2「新回信不自动展开长回复」。
   const latestTask = send.history?.tasks[0];
@@ -374,9 +441,23 @@ export function AiConversationPanel({ send }: { send: AiSendController }) {
       ? latestTask.id
       : null;
   useEffect(() => {
-    if (expandedTouchedRef.current || latestReadId === null) return;
-    setExpandedId(latestReadId);
-  }, [latestReadId]);
+    if (
+      boundQuestionId === null ||
+      expandedTouchedRef.current.has(boundQuestionId) ||
+      latestReadId === null
+    )
+      return;
+    setExpandedByQuestion((previous) =>
+      previous.has(boundQuestionId)
+        ? previous
+        : new Map(previous).set(boundQuestionId, latestReadId),
+    );
+    setViewedVersions((previous) =>
+      previous.has(latestReadId) || latestTask === undefined
+        ? previous
+        : new Map(previous).set(latestReadId, latestTask.updatedAt),
+    );
+  }, [latestReadId, boundQuestionId, latestTask]);
   /** 本会话已打开过回信的任务（与服务端 replyDeliveredAt 合判已读） */
   const [openedIds, setOpenedIds] = useState<ReadonlySet<string>>(
     () => new Set(),
@@ -401,32 +482,44 @@ export function AiConversationPanel({ send }: { send: AiSendController }) {
   } | null>(null);
 
   const toggle = (task: AiTaskPublic) => {
-    expandedTouchedRef.current = true;
-    const next = expandedId === task.id ? null : task.id;
+    if (boundQuestionId !== null)
+      expandedTouchedRef.current.add(boundQuestionId);
+    const changedReply =
+      viewedVersions.get(task.id) !== task.updatedAt &&
+      task.hasReply &&
+      task.status === "replied";
+    const next = expandedId === task.id && !changedReply ? null : task.id;
+    if (next !== null)
+      setViewedVersions((previous) =>
+        new Map(previous).set(task.id, task.updatedAt),
+      );
     setExpandedId(next);
+  };
+  const markOpened = (task: AiTaskPublic) => {
+    if (viewedVersions.get(task.id) !== task.updatedAt) return;
+    const deliveryKey = `${task.id}:${task.updatedAt}`;
     if (
-      next === null ||
       !task.hasReply ||
       task.replyDeliveredAt !== null ||
-      openedRef.current.has(task.id)
+      openedRef.current.has(deliveryKey)
     )
       return;
     // 学生查看回信：记一次 opened（服务端按当前策略与完成态重校验落
     // reply_delivered 事实；失败撤销本地标记，下次展开重试，不虚报已读）
-    openedRef.current.add(task.id);
+    openedRef.current.add(deliveryKey);
     void openStudentAiReplyApi(task.id)
       .then(() => {
         setOpenedIds((previous) => {
           const nextSet = new Set(previous);
-          nextSet.add(task.id);
+          nextSet.add(deliveryKey);
           return nextSet;
         });
       })
       .catch(() => {
-        openedRef.current.delete(task.id);
+        openedRef.current.delete(deliveryKey);
         setOpenedIds((previous) => {
           const nextSet = new Set(previous);
-          nextSet.delete(task.id);
+          nextSet.delete(deliveryKey);
           return nextSet;
         });
       });
@@ -473,6 +566,68 @@ export function AiConversationPanel({ send }: { send: AiSendController }) {
     }
   };
 
+  const startNew = () => {
+    if (boundQuestionId !== null)
+      expandedTouchedRef.current.add(boundQuestionId);
+    setExpandedId(null);
+  };
+  return {
+    expandedId,
+    viewedVersions,
+    openedIds,
+    followupDrafts,
+    followupSending,
+    followupError,
+    toggle,
+    markOpened,
+    submitFollowup,
+    startNew,
+    setFollowupText: (taskId: string, text: string) =>
+      setFollowupDrafts((previous) => new Map(previous).set(taskId, text)),
+    retryHistory: () =>
+      void queryClient.invalidateQueries({
+        queryKey: ["student", "ai-tasks", attemptId],
+      }),
+  };
+}
+
+type ConversationController = ReturnType<typeof useAiConversationController>;
+interface ConversationProps {
+  send: AiSendController;
+  controller?: ConversationController;
+  composer?: ReactNode;
+  quickButtons?: ReactNode;
+}
+
+export function AiConversationPanel(props: ConversationProps) {
+  return props.controller ? (
+    <AiConversationView {...props} controller={props.controller} />
+  ) : (
+    <StandaloneConversation {...props} />
+  );
+}
+function StandaloneConversation(props: ConversationProps) {
+  const controller = useAiConversationController(props.send);
+  return <AiConversationView {...props} controller={controller} />;
+}
+function AiConversationView({
+  send,
+  controller,
+  composer,
+  quickButtons,
+}: ConversationProps & { controller: ConversationController }) {
+  const {
+    expandedId,
+    viewedVersions,
+    openedIds,
+    followupDrafts,
+    followupSending,
+    followupError,
+    toggle,
+    markOpened,
+    submitFollowup,
+  } = controller;
+  const boundQuestionId = send.boundQuestionId;
   if (boundQuestionId === null)
     return (
       <p className="text-xs text-muted-foreground">
@@ -488,32 +643,43 @@ export function AiConversationPanel({ send }: { send: AiSendController }) {
   if (send.historyError && send.history === undefined)
     return (
       <div className="flex flex-col gap-1">
-        <p className="text-xs text-muted-foreground">求助记录读取失败</p>
+        <p className="text-xs text-muted-foreground">
+          求助记录读取失败，可以重试或继续输入新的问题。
+        </p>
         <Button
           type="button"
           variant="ghost"
           size="sm"
           className="min-h-9 self-start px-2"
           onClick={() => {
-            void queryClient.invalidateQueries({
-              queryKey: ["student", "ai-tasks", attemptId],
-            });
+            controller.retryHistory();
           }}
         >
           重试读取
         </Button>
+        {quickButtons}
+        {composer}
       </div>
     );
   const tasks = send.history?.tasks ?? [];
-  if (tasks.length === 0)
-    return <p className="text-xs text-muted-foreground">本题还没有求助记录</p>;
+  const selectedTask = tasks.find((task) => task.id === expandedId);
+  const showComposer = selectedTask === undefined;
   return (
     <div className="flex flex-col gap-3">
+      {tasks.length === 0 && (
+        <p className="text-xs text-muted-foreground">
+          本题还没有求助记录，可以写下问题或选择一种问法。
+        </p>
+      )}
       {tasks.map((task) => (
         <AiTaskCard
           key={task.id}
           task={task}
-          read={task.replyDeliveredAt !== null || openedIds.has(task.id)}
+          viewedVersion={viewedVersions.get(task.id) ?? task.updatedAt}
+          read={
+            task.replyDeliveredAt !== null ||
+            openedIds.has(`${task.id}:${task.updatedAt}`)
+          }
           expanded={expandedId === task.id}
           followupDraft={followupDrafts.get(task.id) ?? ""}
           followupAllowed={task.allowedActions.includes("followup")}
@@ -524,14 +690,18 @@ export function AiConversationPanel({ send }: { send: AiSendController }) {
               : null
           }
           onToggle={() => toggle(task)}
-          onFollowupText={(text) =>
-            setFollowupDrafts((previous) =>
-              new Map(previous).set(task.id, text),
-            )
-          }
+          onFollowupText={(text) => controller.setFollowupText(task.id, text)}
           onFollowup={() => void submitFollowup(task)}
+          onNewRequest={controller.startNew}
+          onVisible={() => markOpened(task)}
         />
       ))}
+      {showComposer && (
+        <>
+          {quickButtons}
+          {composer}
+        </>
+      )}
     </div>
   );
 }

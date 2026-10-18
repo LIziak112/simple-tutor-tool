@@ -1,4 +1,4 @@
-import type { AiChannel } from "@tutor/contract";
+import type { AiChannel, StudentQuickButton } from "@tutor/contract";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { AiLinkShareBox } from "./AiLinkShareBox";
@@ -179,34 +179,49 @@ export function AiCompanionQuickButtons({ send }: { send: AiSendController }) {
     );
   const disabled =
     send.boundQuestionId === null || send.sendState.phase === "sending";
+  const renderButton = (button: StudentQuickButton) => (
+    <Button
+      key={button.id}
+      type="button"
+      variant="outline"
+      size="sm"
+      className="min-h-11 px-3"
+      title={button.prompt}
+      disabled={disabled}
+      aria-pressed={
+        send.boundQuestionId !== null &&
+        send.draftOf(send.boundQuestionId).text === button.prompt
+      }
+      onClick={() => {
+        const questionId = send.boundQuestionId;
+        if (questionId !== null) {
+          const text = send.draftOf(questionId).text;
+          setPreviousTexts((previous) =>
+            previous.has(questionId)
+              ? previous
+              : new Map(previous).set(questionId, text),
+          );
+        }
+        send.selectPreset(button.id);
+        send.setText(button.prompt);
+      }}
+    >
+      {button.name}
+    </Button>
+  );
   return (
     <div className="flex flex-wrap gap-2">
-      {buttons.map((button) => (
-        <Button
-          key={button.id}
-          type="button"
-          variant="outline"
-          size="sm"
-          className="min-h-11 px-3"
-          title={button.prompt}
-          disabled={disabled}
-          onClick={() => {
-            const questionId = send.boundQuestionId;
-            if (questionId !== null) {
-              const text = send.draftOf(questionId).text;
-              setPreviousTexts((previous) =>
-                previous.has(questionId)
-                  ? previous
-                  : new Map(previous).set(questionId, text),
-              );
-            }
-            send.selectPreset(button.id);
-            send.setText(button.prompt);
-          }}
-        >
-          {button.name}
-        </Button>
-      ))}
+      {buttons.slice(0, 2).map(renderButton)}
+      {buttons.length > 2 && (
+        <details className="min-w-0">
+          <summary className="flex min-h-11 cursor-pointer items-center rounded-lg border border-border px-3 text-sm focus-visible:outline-2 focus-visible:outline-ring">
+            更多问法
+          </summary>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {buttons.slice(2).map(renderButton)}
+          </div>
+        </details>
+      )}
       {send.boundQuestionId !== null &&
         previousTexts.has(send.boundQuestionId) && (
           <Button
@@ -226,6 +241,15 @@ export function AiCompanionQuickButtons({ send }: { send: AiSendController }) {
           >
             还原原问题
           </Button>
+        )}
+      {send.boundQuestionId !== null &&
+        buttons.some(
+          (button) =>
+            send.draftOf(send.boundQuestionId ?? "").text === button.prompt,
+        ) && (
+          <p role="status" className="basis-full text-xs text-muted-foreground">
+            已填入问法，可修改后发送
+          </p>
         )}
     </div>
   );

@@ -279,7 +279,7 @@ describe("四来源 AI 伴学参数化矩阵（SAI-22 完成条件①）", () =>
       renderPage();
       await readyAndScroll();
       fireEvent.click(screen.getByRole("button", { name: "AI 助教" }));
-      const panel = await screen.findByRole("dialog");
+      const panel = await screen.findByRole("region", { name: /的 AI 助教/ });
       // 绑定当前题（滚动定位首题）——status 按 attempt+question 定位
       await waitFor(() =>
         expect(mockedStatus).toHaveBeenCalledWith(ATTEMPT_ID, "练习四-1"),
@@ -303,7 +303,7 @@ describe("四来源 AI 伴学参数化矩阵（SAI-22 完成条件①）", () =>
       screen.getByRole("article", { name: "第 1 题" }),
     ).getByRole("button", { name: "AI 助教" });
     fireEvent.click(firstTrigger);
-    const close = await screen.findByRole("button", { name: "关闭 AI 助教" });
+    const close = await screen.findByRole("button", { name: "收起 AI 助教" });
     fireEvent.click(close);
     await waitFor(() => expect(firstTrigger).toHaveFocus());
   });
@@ -315,7 +315,7 @@ describe("四来源 AI 伴学参数化矩阵（SAI-22 完成条件①）", () =>
     // 未打开时不查状态；题卡入口已经知道题目，无需等待滚动定位。
     expect(mockedStatus).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "AI 助教" }));
-    await screen.findByRole("dialog");
+    await screen.findByRole("region", { name: /的 AI 助教/ });
     await waitFor(() =>
       expect(mockedStatus).toHaveBeenCalledWith(ATTEMPT_ID, "练习四-1"),
     );
@@ -338,7 +338,9 @@ describe("四来源 AI 伴学参数化矩阵（SAI-22 完成条件①）", () =>
       expect(mockedStatus).toHaveBeenCalledWith(ATTEMPT_ID, "练习四-1"),
     );
     expect(
-      await within(await screen.findByRole("dialog")).findByText("第 1 题"),
+      await within(
+        await screen.findByRole("region", { name: /的 AI 助教/ }),
+      ).findByText("第 1 题"),
     ).toBeInTheDocument();
   });
 
@@ -357,7 +359,7 @@ describe("四来源 AI 伴学参数化矩阵（SAI-22 完成条件①）", () =>
       renderPage();
       await readyAndScroll();
       fireEvent.click(screen.getByRole("button", { name: "AI 助教" }));
-      await screen.findByRole("dialog");
+      await screen.findByRole("region", { name: /的 AI 助教/ });
       await waitFor(() =>
         expect(mockedStatus).toHaveBeenCalledWith(ATTEMPT_ID, "练习四-1"),
       );
@@ -386,7 +388,7 @@ describe("四来源 AI 伴学参数化矩阵（SAI-22 完成条件①）", () =>
     renderPage();
     await readyAndScroll();
     fireEvent.click(screen.getByRole("button", { name: "AI 助教" }));
-    await screen.findByRole("dialog");
+    await screen.findByRole("region", { name: /的 AI 助教/ });
     await waitFor(() =>
       expect(mockedStatus).toHaveBeenCalledWith(ATTEMPT_ID, "练习四-1"),
     );
@@ -410,7 +412,7 @@ describe("四来源 AI 伴学参数化矩阵（SAI-22 完成条件①）", () =>
     renderPage();
     await readyAndScroll();
     fireEvent.click(screen.getByRole("button", { name: "AI 助教" }));
-    await screen.findByRole("dialog");
+    await screen.findByRole("region", { name: /的 AI 助教/ });
     await waitFor(() =>
       expect(mockedStatus).toHaveBeenCalledWith(ATTEMPT_ID, "练习四-1"),
     );
@@ -434,12 +436,12 @@ describe("四来源 AI 伴学参数化矩阵（SAI-22 完成条件①）", () =>
     ).toBe(false);
   });
 
-  it("绑定题可见性只按用户滚动裁决：布局引发的 scroll 不隐藏面板", async () => {
+  it("题下助教随页面滚动，不因题面离屏卸载阅读与输入区", async () => {
     mockedFetch.mockResolvedValue(draftOf(SOURCES[0]));
     renderPage();
     await readyAndScroll();
     fireEvent.click(screen.getByRole("button", { name: "AI 助教" }));
-    await screen.findByRole("dialog");
+    await screen.findByRole("region", { name: /的 AI 助教/ });
     // 面板开合/滚动锚定会让题卡离开视口并触发 scroll；没有滚轮或触摸
     // 意图时不得据此隐藏面板（否则面板与布局互相触发，无限闪动）。
     rectSpy?.mockReturnValue({
@@ -455,11 +457,15 @@ describe("四来源 AI 伴学参数化矩阵（SAI-22 完成条件①）", () =>
     } as DOMRect);
     fireEvent.scroll(window);
     await new Promise((resolve) => setTimeout(resolve, 320));
-    expect(screen.getByRole("dialog")).toBeInTheDocument();
-    // 用户真正滚动：裁决后题卡已离开视口 → 面板收起
+    expect(
+      screen.getByRole("region", { name: /的 AI 助教/ }),
+    ).toBeInTheDocument();
+    // 题下正文可能比题面更长，题面离屏也不能把正在读的正文卸载。
     fireEvent.wheel(window, { deltaY: 600 });
     fireEvent.scroll(window);
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(
+      screen.getByRole("region", { name: /的 AI 助教/ }),
+    ).toBeInTheDocument();
     // 滚回题卡（重新可见）→ 面板恢复（等过裁决后的抑制窗口）
     await new Promise((resolve) => setTimeout(resolve, 450));
     rectSpy?.mockReturnValue({
@@ -475,6 +481,10 @@ describe("四来源 AI 伴学参数化矩阵（SAI-22 完成条件①）", () =>
     } as DOMRect);
     fireEvent.wheel(window, { deltaY: -600 });
     fireEvent.scroll(window);
-    await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument());
+    await waitFor(() =>
+      expect(
+        screen.getByRole("region", { name: /的 AI 助教/ }),
+      ).toBeInTheDocument(),
+    );
   });
 });

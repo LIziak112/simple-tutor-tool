@@ -832,6 +832,7 @@ function AnswerView({
                           aiTrigger={aiCompanion.triggerForQuestion(
                             question.id,
                           )}
+                          aiContent={aiCompanion.inlineForQuestion(question.id)}
                         />
                       );
                     })}

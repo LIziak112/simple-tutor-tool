@@ -242,6 +242,7 @@ export const LessonQuestionCard = memo(function LessonQuestionCard({
           >
             {QUESTION_TYPE_LABELS[released.snapshot.type]}
           </span>
+          <div className="ml-auto">{aiTrigger}</div>
         </div>
         <RichMarkdown
           source={displayStemMd(released.snapshot)}

@@ -146,6 +146,99 @@ test.describe("SAI-33 学生端 AI 全链（页内通道）", () => {
   // 组内顺序运行；跨文件和浏览器的剧本、捕获、重置按用例凭据隔离。
   test.describe.configure({ mode: "serial" });
 
+  test("题下助教跨视口阅读、单输入、草稿恢复与原题返回", async ({
+    browser,
+    request,
+  }) => {
+    test.setTimeout(FULL_CHAIN_TIMEOUT);
+    const suffix = uniqueSuffix();
+    const world = await makeWorld(request, suffix);
+    const student = await getStudentViaApi(request, world.loginName);
+    const seed = await loginStudent(browser, student.linkToken);
+    const page = seed.page;
+    const control = fakeAiControl(request);
+    try {
+      expect(
+        (
+          await seed.context.request.post("/api/student/ai/connections", {
+            data: {
+              channel: "inapp",
+              baseUrl: FAKE_AI_BASE_URL,
+              model: FAKE_AI_MODEL,
+              apiKey: fakeAiApiKey(),
+              isDefault: true,
+            },
+          })
+        ).ok(),
+      ).toBe(true);
+      await page.setViewportSize({ width: 1024, height: 768 });
+      await openAssignmentAttempt(page, `SAI全链作业${suffix}`);
+      const q1 = page.getByRole("article", { name: "第 1 题", exact: true });
+      const trigger = q1.getByRole("button", { name: "AI 助教", exact: true });
+      await q1.evaluate((element) =>
+        element.setAttribute("data-learning-marker", "original"),
+      );
+      await trigger.click();
+      const workspace = page.getByRole("region", { name: "第 1 题的 AI 助教" });
+      await expect(workspace).toBeVisible();
+      await expect(page.getByRole("dialog")).toHaveCount(0);
+      await expect(page.getByRole("textbox")).toHaveCount(1);
+      const draft = page.getByRole("textbox", { name: "补充问题" });
+      await draft.fill("保留这份提问草稿");
+      for (const viewport of [
+        { width: 768, height: 1024 },
+        { width: 320, height: 740 },
+        { width: 1440, height: 1000 },
+      ]) {
+        await page.setViewportSize(viewport);
+        await expect(draft).toHaveValue("保留这份提问草稿");
+        expect(
+          await page.evaluate(
+            () => document.documentElement.scrollWidth <= innerWidth + 1,
+          ),
+        ).toBe(true);
+      }
+      await page.getByRole("button", { name: "固定对照" }).click();
+      await expect(
+        page.getByRole("complementary", { name: "AI 对照" }),
+      ).toBeVisible();
+      await expect(draft).toHaveValue("保留这份提问草稿");
+      await page.getByRole("button", { name: "回到题下" }).click();
+      await expect(q1).toHaveAttribute("data-learning-marker", "original");
+      await page.getByRole("button", { name: "收起 AI 助教" }).click();
+      await expect(trigger).toBeFocused();
+      await trigger.click();
+      await expect(draft).toHaveValue("保留这份提问草稿");
+      await control.script({
+        body: chatCompletionJson(
+          "先观察题目的条件，再判断符号。\n\n".repeat(30),
+        ),
+      });
+      await page.getByRole("button", { name: "发送", exact: true }).click();
+      await page
+        .getByRole("button", { name: "查看回信" })
+        .click({ timeout: 30_000 });
+      await expect(page.getByRole("textbox")).toHaveCount(1);
+      const followup = page.getByRole("textbox", { name: "继续追问本题" });
+      await followup.fill("为什么这样判断？");
+      await page.keyboard.press("Escape");
+      await expect(trigger).toBeFocused();
+      await expect(q1).toBeInViewport();
+      await trigger.click();
+      await expect(followup).toHaveValue("为什么这样判断？");
+      await page.getByRole("button", { name: "带新稿另问" }).click();
+      await expect(page.getByRole("textbox")).toHaveCount(1);
+      await expect(
+        page.getByRole("textbox", { name: "补充问题" }),
+      ).toBeVisible();
+      await page.screenshot({
+        path: `e2e/.artifacts/ai-learning-flow-${test.info().project.name}.png`,
+      });
+    } finally {
+      await seed.context.close();
+    }
+  });
+
   test("教师设置→学生连接→作答求助→回信追问→交卷复盘→教师记录", async ({
     browser,
     request,
@@ -302,7 +395,10 @@ test.describe("SAI-33 学生端 AI 全链（页内通道）", () => {
         r.body.includes("能再具体一点吗？"),
       );
       expect(outbound2.body, "追问沿用原对话上下文").toContain(question1);
-      // 对话面板已展开（⑤点开过）：追问回信直接追加进对话记录
+      // 新回信只作提示，学生主动查看后才刷新正文。
+      await page
+        .getByRole("button", { name: "查看新回复" })
+        .click({ timeout: 30_000 });
       await expect(
         page.getByRole("region", { name: "本题对话记录" }).getByText(reply2),
       ).toBeVisible({ timeout: 30_000 });

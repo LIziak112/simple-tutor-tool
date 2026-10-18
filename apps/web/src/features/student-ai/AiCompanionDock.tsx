@@ -1,8 +1,14 @@
 import type { AttemptQuestionPublic } from "@tutor/contract";
-import { type ReactNode, useCallback, useEffect, useRef } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { useLocation } from "react-router";
 import {
-  AiCompanionRail,
+  AiCompanionPanelBody,
   AiCompanionTrigger,
 } from "@/features/student-ai/AiCompanionRail";
 import {
@@ -12,7 +18,10 @@ import {
   DRAFT_PAPER_LABEL,
   FORMAL_INK_PAPER_LABEL,
 } from "@/features/student-ai/AiCompanionSession";
-import { AiConversationPanel } from "@/features/student-ai/AiConversationPanel";
+import {
+  AiConversationPanel,
+  useAiConversationController,
+} from "@/features/student-ai/AiConversationPanel";
 import type { AiCompanionLayoutController } from "@/features/student-ai/ai-companion-layout";
 import { useAiCompanionLayout } from "@/features/student-ai/ai-companion-layout";
 import {
@@ -29,10 +38,10 @@ import {
  * materials）。SAI-19/20/21 的语义（打开前收笔、显式绑定不随滚动重绑、
  * 按题草稿隔离、幂等发送、回信门禁）全部保留在本装配与下游单源内。
  *
- * 页面接线三件套：
+ * 页面接线：
  * - trigger：放页面头部动作位（如 AttemptHeader actions / 讲练 HeaderBar）；
- * - rail(children)：包住主内容（题卡列表/回看列表）——控制器身份稳定由
- *   Rail 的 dock/panel 结构保证；
+ * - inlineForQuestion：将当前工作区放到所属完整题卡之后；
+ * - rail(children)：稳定包住主内容，宽屏主动固定时呈现同一工作区；
  * - controller：布局状态（navigatorCollapsed 等）供页面折叠答题卡。
  *
  * 打开绑定：仅在打开瞬间绑定当时 currentQuestionId（SAI-20 显式动作语义；
@@ -75,10 +84,20 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
   const location = useLocation();
   const railRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const returnAnchorRef = useRef<{
+    element: HTMLButtonElement;
+    top: number;
+  } | null>(null);
+  const [fixed, setFixed] = useState(false);
+  const [presentationError, setPresentationError] = useState<string | null>(
+    null,
+  );
+  const transitionRef = useRef(false);
   const controller = useAiCompanionLayout({
     containerRef: railRef,
     editor,
     currentQuestionId,
+    dockEnabled: fixed,
   });
   const settingsHref = `/s/settings/ai?from=${encodeURIComponent(
     location.pathname + location.search,
@@ -94,27 +113,46 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
     ...(host.materials !== undefined ? { materials: host.materials } : {}),
   });
 
-  // 打开瞬间绑定当时所在题（SAI-20：显式动作才切题，滚动不重绑；
-  // 重开面板重新绑定当时当前题——未变则同题幂等恢复）。打开时页面尚未
-  // 定位当前题（如进入即点开、未滚动）的窗口内，首次定位到当前题即补绑
-  // 定——绑定由打开动作启动，打开后滚动到别题不换绑。
-  const boundInOpenRef = useRef(false);
+  // 只在显式打开成功后绑定；不再用阅读位置效应覆盖刚选中的题目。
   const bind = send.bind;
-  const openForQuestion = async (questionId: string) => {
-    const opened = await controller.openPanel(questionId);
-    if (opened) bind(questionId);
-    return opened;
+  const openForQuestion = async (
+    questionId: string,
+    trigger?: HTMLButtonElement,
+  ) => {
+    if (transitionRef.current) return false;
+    transitionRef.current = true;
+    try {
+      // 已开栏切到另一题时也先保存原题；不能绕过 openPanel 的首次保护。
+      if (
+        controller.open &&
+        send.boundQuestionId !== null &&
+        send.boundQuestionId !== questionId
+      ) {
+        try {
+          await host.flush(send.boundQuestionId);
+          await host.flush(questionId);
+        } catch {
+          setPresentationError("当前稿件未保存，请重试保存后再切换题目");
+          return false;
+        }
+      }
+      const opened = await controller.openPanel(questionId);
+      if (opened) {
+        if (trigger) {
+          triggerRef.current = trigger;
+          returnAnchorRef.current = {
+            element: trigger,
+            top: trigger.getBoundingClientRect().top,
+          };
+        }
+        bind(questionId);
+        setPresentationError(null);
+      }
+      return opened;
+    } finally {
+      transitionRef.current = false;
+    }
   };
-  useEffect(() => {
-    if (!controller.open) {
-      boundInOpenRef.current = false;
-      return;
-    }
-    if (!boundInOpenRef.current && currentQuestionId !== null) {
-      bind(currentQuestionId);
-      boundInOpenRef.current = true;
-    }
-  }, [controller.open, currentQuestionId, bind]);
 
   const boundQuestionId = send.boundQuestionId;
   const boundLabel = boundQuestionId !== null ? labelOf(boundQuestionId) : null;
@@ -124,11 +162,73 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
       : DRAFT_PAPER_LABEL;
 
   const materials = host.materials ?? DEFAULT_AI_MATERIALS;
+  const conversation = useAiConversationController(send, controller.open);
+  const fixedActive = fixed && controller.canDock;
+  const close = async () => {
+    if (transitionRef.current) return;
+    transitionRef.current = true;
+    try {
+      if (boundQuestionId !== null) await host.flush(boundQuestionId);
+      controller.closePanel();
+      setPresentationError(null);
+      triggerRef.current?.focus({ preventScroll: true });
+      const anchor = returnAnchorRef.current;
+      if (anchor)
+        requestAnimationFrame(() => {
+          if (returnAnchorRef.current !== anchor || !anchor.element.isConnected)
+            return;
+          const difference =
+            anchor.element.getBoundingClientRect().top - anchor.top;
+          if (Math.abs(difference) > 1)
+            window.scrollBy({ top: difference, behavior: "instant" });
+        });
+    } catch {
+      setPresentationError("当前稿件未保存，请重试保存后再收起助教");
+    } finally {
+      transitionRef.current = false;
+    }
+  };
+  const changePresentation = async () => {
+    if (transitionRef.current || boundQuestionId === null) return;
+    transitionRef.current = true;
+    try {
+      await host.flush(boundQuestionId);
+      setFixed((previous) => !previous);
+      setPresentationError(null);
+    } catch {
+      setPresentationError("当前稿件未保存，请重试保存后再调整助教布局");
+    } finally {
+      transitionRef.current = false;
+    }
+  };
+  const closeRef = useRef(close);
+  closeRef.current = close;
+  useEffect(() => {
+    if (!controller.open) return;
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented || event.isComposing)
+        return;
+      // 题下展开不抢焦点；入口仍持有焦点时，Esc也能原路收起。
+      if (document.activeElement === triggerRef.current) {
+        event.preventDefault();
+        void closeRef.current();
+      }
+    };
+    window.addEventListener("keydown", onEscape);
+    return () => window.removeEventListener("keydown", onEscape);
+  }, [controller.open]);
   const trigger = (
     <AiCompanionTrigger
       ref={triggerRef}
       controller={controller}
       label={host.triggerLabel}
+      onPress={(trigger) => {
+        if (controller.open) {
+          triggerRef.current = trigger;
+          void close();
+        } else if (currentQuestionId !== null)
+          void openForQuestion(currentQuestionId, trigger);
+      }}
     />
   );
   const triggerForQuestion = (questionId: string) => (
@@ -137,12 +237,12 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
       label="AI 助教"
       expanded={controller.open && send.boundQuestionId === questionId}
       onPress={(trigger) => {
-        triggerRef.current = trigger;
         if (controller.open && send.boundQuestionId === questionId) {
-          controller.closePanel();
+          triggerRef.current = trigger;
+          void close();
           return;
         }
-        void openForQuestion(questionId);
+        void openForQuestion(questionId, trigger);
       }}
     />
   );
@@ -152,35 +252,104 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
   const setVisible = controller.setVisible;
   const setQuestionVisible = useCallback(
     (questionId: string, visible: boolean) => {
-      if (send.boundQuestionId === questionId) setVisible(visible);
+      if (fixedActive && send.boundQuestionId === questionId)
+        setVisible(visible);
     },
-    [setVisible, send.boundQuestionId],
+    [setVisible, send.boundQuestionId, fixedActive],
+  );
+  const workspace = (
+    <section
+      id={controller.panelId}
+      aria-label={`${boundLabel ?? "本题"}的 AI 助教`}
+      data-slot="ai-companion-panel"
+      className="flex min-w-0 flex-col rounded-lg border border-border bg-card text-card-foreground"
+      onKeyDown={(event) => {
+        if (
+          event.key === "Escape" &&
+          !event.defaultPrevented &&
+          !event.nativeEvent.isComposing
+        ) {
+          event.preventDefault();
+          void close();
+        }
+      }}
+    >
+      <AiCompanionPanelBody
+        flow
+        questionLabel={boundLabel}
+        settingsHref={settingsHref}
+        onDockClose={() => void close()}
+        closeLabel="收起 AI 助教"
+        onFix={controller.canDock ? () => void changePresentation() : undefined}
+        fixed={fixedActive}
+        status={
+          <AiCompanionStatusPanel send={send} settingsHref={settingsHref} />
+        }
+        settingsAttention={send.needsSetup || send.statusError}
+        quickButtons={null}
+        conversation={
+          <AiConversationPanel
+            send={send}
+            controller={conversation}
+            quickButtons={<AiCompanionQuickButtons send={send} />}
+            composer={
+              <AiCompanionComposer
+                send={send}
+                paperLabel={paperLabel}
+                questionLabel={boundLabel}
+                materials={materials}
+              />
+            }
+          />
+        }
+      />
+    </section>
+  );
+  const inlineForQuestion = (questionId: string) => (
+    <div data-ai-question={questionId} className="min-w-0 [&:not(:empty)]:mt-3">
+      {send.boundQuestionId === questionId && controller.open && !fixedActive
+        ? workspace
+        : null}
+    </div>
   );
   const rail = (children: ReactNode) => (
-    <AiCompanionRail
-      containerRef={railRef}
-      controller={controller}
-      triggerRef={triggerRef}
-      questionLabel={boundLabel}
-      settingsHref={settingsHref}
-      status={
-        // 题号已在面板头呈现一次，状态区不再重复
-        <AiCompanionStatusPanel send={send} settingsHref={settingsHref} />
+    <div
+      ref={railRef}
+      data-slot="ai-companion-rail"
+      data-ai-state={
+        controller.open ? (fixedActive ? "dock" : "inline") : "closed"
       }
-      settingsAttention={send.needsSetup || send.statusError}
-      quickButtons={<AiCompanionQuickButtons send={send} />}
-      composer={
-        <AiCompanionComposer
-          send={send}
-          paperLabel={paperLabel}
-          questionLabel={boundLabel}
-          materials={materials}
-        />
-      }
-      conversation={<AiConversationPanel send={send} />}
+      className="w-full min-w-0"
     >
-      {children}
-    </AiCompanionRail>
+      {(controller.error || presentationError) && (
+        <p
+          role="alert"
+          className="mb-3 rounded-lg border border-destructive p-3 text-sm text-destructive"
+        >
+          {presentationError ?? controller.error}
+        </p>
+      )}
+      <div
+        className={
+          fixedActive && controller.open
+            ? "flex min-w-0 items-start gap-4"
+            : "min-w-0"
+        }
+      >
+        <section aria-label="作答区" className="min-w-0 flex-1">
+          {children}
+        </section>
+        {fixedActive && controller.open && (
+          <aside
+            aria-label="AI 对照"
+            style={controller.suspended ? { visibility: "hidden" } : undefined}
+            className="sticky top-[calc(var(--attempt-header-height,64px)+16px)] max-h-[calc(var(--attempt-viewport-height,100dvh)-var(--attempt-header-height,64px)-var(--attempt-footer-height,64px)-32px)] w-[26rem] shrink-0 overflow-y-auto overscroll-contain"
+          >
+            {workspace}
+          </aside>
+        )}
+      </div>
+    </div>
   );
 
   return {
@@ -191,6 +360,7 @@ export function useAiCompanionDock(host: UseAiCompanionDockHost) {
     /** 头部动作位的 AI 助教按钮 */
     trigger,
     triggerForQuestion,
+    inlineForQuestion,
     setQuestionVisible,
     /** 主区包裹（传入页面主内容） */
     rail,

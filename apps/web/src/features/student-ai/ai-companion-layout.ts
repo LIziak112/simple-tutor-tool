@@ -25,6 +25,8 @@ import { errorMessageOf } from "./error-text";
 export const AI_COMPANION_DOCK_MIN_WIDTH = 960;
 /** dock 模式下保持答题卡展开所需的最小容器宽度（低于则自动收起让位） */
 export const AI_COMPANION_NAV_EXPAND_MIN_WIDTH = 1280;
+/** 416px 对照栏 + 16px间距 + 44px折叠导航 + 24px间距 + 560px题列。 */
+export const AI_COMPANION_COMPARE_MIN_WIDTH = 1060;
 
 /** 布局控制器对编辑器上下文的最小结构性依赖（AttemptEditorContext 满足） */
 export interface AiCompanionLayoutEditor {
@@ -47,6 +49,8 @@ export interface AiCompanionLayoutController {
   error: string | null;
   /** 面板元素 id（触发按钮 aria-controls 指向） */
   panelId: string;
+  /** 保证题面可用时才允许学生主动固定对照。 */
+  canDock: boolean;
   /** 打开 AI 栏：先收笔等本机落盘，失败返回 false 且布局不变 */
   openPanel(questionId?: string): Promise<boolean>;
   /** 关闭 AI 栏；按恢复承诺还原答题卡 */
@@ -61,11 +65,13 @@ export function useAiCompanionLayout({
   containerRef,
   editor,
   currentQuestionId,
+  dockEnabled = true,
 }: {
   /** 主区 + AI 面板共同所在的容器（实测可用宽度的测量对象） */
   containerRef: RefObject<HTMLElement | null>;
   editor: AiCompanionLayoutEditor | null;
   currentQuestionId: string | null;
+  dockEnabled?: boolean;
 }): AiCompanionLayoutController {
   const [open, setOpen] = useState(false);
   const [visible, setVisibleState] = useState(true);
@@ -128,7 +134,11 @@ export function useAiCompanionLayout({
   // dock 下空间不足以同时容纳题面、答题卡与 AI 面板时收起答题卡让位；
   // 空间回补（分屏拖宽、旋转回横屏等）时在用户未另行操作的前提下恢复。
   const needsCollapse =
-    open && mode === "dock" && !navFitsAlongDock && !userCollapsed;
+    open &&
+    dockEnabled &&
+    mode === "dock" &&
+    !navFitsAlongDock &&
+    !userCollapsed;
   useEffect(() => {
     if (needsCollapse && !navOverride) setNavOverride(true);
     else if (!needsCollapse && navOverride) setNavOverride(false);
@@ -197,6 +207,7 @@ export function useAiCompanionLayout({
     navigatorCollapsed: userCollapsed || navOverride,
     error,
     panelId,
+    canDock: width !== null && width >= AI_COMPANION_COMPARE_MIN_WIDTH,
     openPanel,
     closePanel,
     toggleNavigator,

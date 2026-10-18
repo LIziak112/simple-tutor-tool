@@ -212,14 +212,14 @@ function renderPage(
 }
 
 /** 打开 AI 助教并等待面板出现 */
-async function openCompanion() {
+async function openCompanion(index = 0) {
   const buttons = screen.getAllByRole("button", { name: "AI 助教" });
-  const button = buttons[0];
+  const button = buttons[index];
   if (!button) {
     throw new Error("未找到 AI 助教按钮");
   }
   fireEvent.click(button);
-  await screen.findByRole("dialog");
+  await screen.findByRole("region", { name: /的 AI 助教/ });
 }
 
 beforeEach(async () => {
@@ -289,7 +289,9 @@ describe("讲练页 AI 伴学（SAI-22 四来源接入）", () => {
       expect(mockedStatus).toHaveBeenCalledWith(ATTEMPT_ID, "lesson-q1"),
     );
     expect(
-      await within(await screen.findByRole("dialog")).findByText("第 1 题"),
+      await within(
+        await screen.findByRole("region", { name: /的 AI 助教/ }),
+      ).findByText("第 1 题"),
     ).toBeInTheDocument();
     // 讲练题卡无圈画层：随信材料组只呈纸面勾选，无「圈画」选项
     const materialGroup = screen.getByRole("group", { name: "随信材料" });
@@ -310,7 +312,7 @@ describe("讲练页 AI 伴学（SAI-22 四来源接入）", () => {
     const target = radios[radios.length - 1];
     if (target === undefined) throw new Error("测试前置失败：无单选控件");
     fireEvent.click(target);
-    await openCompanion();
+    await openCompanion(1);
     await waitFor(() =>
       expect(mockedStatus).toHaveBeenCalledWith(ATTEMPT_ID, "lesson-q2"),
     );
@@ -403,7 +405,7 @@ describe("讲练页 AI 伴学（SAI-22 四来源接入）", () => {
     )[0];
     if (trigger === undefined) throw new Error("测试前置失败：无 AI 助教入口");
     fireEvent.click(trigger);
-    await screen.findByRole("dialog");
+    await screen.findByRole("region", { name: /的 AI 助教/ });
     await waitFor(() =>
       expect(mockedStatus).toHaveBeenCalledWith(ATTEMPT_ID_2, "lesson-q1"),
     );

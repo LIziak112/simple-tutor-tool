@@ -1,5 +1,11 @@
 import type { HintOpenedEntry } from "@tutor/contract";
-import { type ComponentProps, memo, type RefObject, useCallback } from "react";
+import {
+  type ComponentProps,
+  memo,
+  type ReactNode,
+  type RefObject,
+  useCallback,
+} from "react";
 import { AttemptQuestionCard } from "./AttemptQuestionCard";
 import type { AttemptAnswersState } from "./use-attempt-answers";
 import type { useAttemptEvents } from "./use-attempt-events";
@@ -16,6 +22,7 @@ type RowProps = Omit<
   | "hints"
 > & {
   hints?: CardProps["hints"];
+  aiContent?: ReactNode;
   onAnswer: AttemptAnswersState["setAnswer"];
   onToggleFlag(id: string): void;
   onHintUnlocked(id: string, entry: HintOpenedEntry): void;
@@ -39,6 +46,7 @@ export const AttemptQuestionRow = memo(function AttemptQuestionRow({
   onHintUnlocked,
   cardElements,
   events,
+  aiContent,
   ...props
 }: RowProps) {
   const register = useCallback(
@@ -74,6 +82,7 @@ export const AttemptQuestionRow = memo(function AttemptQuestionRow({
           events.trackInkFullscreen(question.id, on);
         }}
       />
+      {aiContent}
     </li>
   );
 });

@@ -218,7 +218,7 @@ describe("结果页 AI 复盘（SAI-22）", () => {
     expect(trigger).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(trigger);
     // 窄屏（jsdom）→ 独立面板（Sheet portal）
-    const panel = await screen.findByRole("dialog");
+    const panel = await screen.findByRole("region", { name: /的 AI 助教/ });
     expect(panel).toBeInTheDocument();
     // 绑定回看当前题（首题）——状态查询以 attempt+question 定位
     await waitFor(() =>
@@ -234,7 +234,7 @@ describe("结果页 AI 复盘（SAI-22）", () => {
   it("复盘不采集材料：输入区无随信材料勾选，发送创建空材料任务", async () => {
     renderView();
     fireEvent.click(screen.getByRole("button", { name: "AI 复盘" }));
-    await screen.findByRole("dialog");
+    await screen.findByRole("region", { name: /的 AI 助教/ });
     await waitFor(() =>
       expect(mockedStatus).toHaveBeenCalledWith("attempt-result-1", "练习四-1"),
     );
@@ -269,7 +269,7 @@ describe("结果页 AI 复盘（SAI-22）", () => {
     if (firstOriginal === undefined || firstCorrection === undefined)
       throw new Error("测试前置失败：原稿/订正桩未渲染");
     fireEvent.click(screen.getByRole("button", { name: "AI 复盘" }));
-    await screen.findByRole("dialog");
+    await screen.findByRole("region", { name: /的 AI 助教/ });
     await waitFor(() =>
       expect(mockedStatus).toHaveBeenCalledWith("attempt-result-1", "练习四-1"),
     );
@@ -289,7 +289,7 @@ describe("结果页 AI 复盘（SAI-22）", () => {
     // 回看导航跳到第 2 题（底部操作条「下一题」）
     fireEvent.click(screen.getByRole("button", { name: "下一题" }));
     fireEvent.click(screen.getByRole("button", { name: "AI 复盘" }));
-    await screen.findByRole("dialog");
+    await screen.findByRole("region", { name: /的 AI 助教/ });
     await waitFor(() =>
       expect(mockedStatus).toHaveBeenCalledWith("attempt-result-1", "练习四-2"),
     );
@@ -312,7 +312,7 @@ describe("结果页 AI 复盘（SAI-22）", () => {
     );
     renderView();
     fireEvent.click(screen.getByRole("button", { name: "AI 复盘" }));
-    const panel = await screen.findByRole("dialog");
+    const panel = await screen.findByRole("region", { name: /的 AI 助教/ });
     // 如实呈现：通道「未配置」+ 去设置连接入口 + 发送主动作禁用
     await waitFor(() =>
       expect(mockedStatus).toHaveBeenCalledWith("attempt-result-1", "练习四-1"),

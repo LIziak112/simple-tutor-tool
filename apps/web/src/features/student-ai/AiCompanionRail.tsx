@@ -117,6 +117,10 @@ function AiCompanionChannelStatus({ settingsHref }: { settingsHref: string }) {
 }
 
 interface PanelBodyProps {
+  flow?: boolean;
+  onFix?: (() => void) | undefined;
+  fixed?: boolean;
+  closeLabel?: string;
   questionLabel: string | null;
   settingsHref: string;
   /** dock 模式的关闭按钮（panel 模式由 Sheet 内建关闭提供） */
@@ -133,7 +137,11 @@ interface PanelBodyProps {
   conversation?: ReactNode;
 }
 
-function AiCompanionPanelBody({
+export function AiCompanionPanelBody({
+  flow = false,
+  onFix,
+  fixed = false,
+  closeLabel = "关闭 AI 助教",
   questionLabel,
   settingsHref,
   dockCloseRef,
@@ -151,7 +159,9 @@ function AiCompanionPanelBody({
     if (settingsAttention) setSettingsOpen(true);
   }, [settingsAttention]);
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div
+      className={`flex min-h-0 flex-1 flex-col ${flow ? "ai-companion-inline" : ""}`}
+    >
       <div
         className={`flex shrink-0 items-center gap-1 border-b border-border py-1 pl-3 ${
           // Sheet 模式右上角有内建关闭按钮（absolute），头部让出位置避免重叠
@@ -164,6 +174,16 @@ function AiCompanionPanelBody({
         <span className="shrink-0 text-xs text-muted-foreground">
           {questionLabel ?? "未绑定题目"}
         </span>
+        {onFix && (
+          <Button
+            type="button"
+            variant="ghost"
+            className="min-h-11 shrink-0 px-2"
+            onClick={onFix}
+          >
+            {fixed ? "回到题下" : "固定对照"}
+          </Button>
+        )}
         <Button
           type="button"
           variant="ghost"
@@ -181,7 +201,7 @@ function AiCompanionPanelBody({
             type="button"
             variant="ghost"
             className="size-11 shrink-0 p-0"
-            aria-label="关闭 AI 助教"
+            aria-label={closeLabel}
             onClick={onDockClose}
           >
             <X aria-hidden className="size-4" />
@@ -201,7 +221,11 @@ function AiCompanionPanelBody({
       <section
         aria-label="本题对话记录"
         data-slot="ai-reply-workspace"
-        className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-muted/20 px-3 py-3"
+        className={
+          flow
+            ? "min-w-0 px-3 py-3 sm:px-5"
+            : "min-h-0 flex-1 overflow-y-auto overscroll-contain bg-muted/20 px-3 py-3"
+        }
       >
         {conversation ?? (
           <p className="text-sm text-muted-foreground">
@@ -209,14 +233,16 @@ function AiCompanionPanelBody({
           </p>
         )}
       </section>
-      <nav
-        aria-label="快捷按钮"
-        className="shrink-0 border-t border-border px-3 py-2"
-      >
-        {quickButtons ?? (
-          <p className="text-xs text-muted-foreground">快捷按钮功能建设中</p>
-        )}
-      </nav>
+      {quickButtons !== null && (
+        <nav
+          aria-label="快捷按钮"
+          className="shrink-0 border-t border-border px-3 py-2"
+        >
+          {quickButtons ?? (
+            <p className="text-xs text-muted-foreground">快捷按钮功能建设中</p>
+          )}
+        </nav>
+      )}
       {composer !== undefined && (
         <section
           aria-label="发送输入"

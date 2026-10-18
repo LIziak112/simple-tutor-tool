@@ -592,6 +592,7 @@ test.describe("SAI-33 错误链（页内与出站）", () => {
         .getByRole("article", { name: "第 1 题", exact: true })
         .getByRole("button", { name: "AI 助教", exact: true })
         .click();
+      await page.getByRole("button", { name: "AI 设置" }).click();
       await expect(page.getByText("当前：开放伴学")).toBeVisible();
       await expect(
         page.getByRole("button", { name: "发送", exact: true }),

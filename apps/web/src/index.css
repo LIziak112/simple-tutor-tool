@@ -282,6 +282,11 @@
   @apply my-2;
 }
 
+/* 题下正文使用阅读字号，限宽仅作用于回复，不改变题卡外框。 */
+.ai-companion-inline .ai-reply-markdown {
+  @apply max-w-[70ch] text-base leading-[1.75];
+}
+
 /* 教师工作台语义色独立作用于页面与显式标记的弹层，不改学生主题。 */
 .teacher-theme {
   --background: oklch(0.972949 0.00287 264.542);

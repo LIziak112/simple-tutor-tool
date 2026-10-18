@@ -590,18 +590,20 @@ function LessonAnswerInner({
     index: number,
     _orphan: boolean,
   ) => (
-    <LessonQuestionCard
-      key={question.id}
-      index={index}
-      question={question}
-      attemptId={attemptId}
-      answer={session.answers?.[question.id]}
-      hints={session.hintsOpened[question.id] ?? EMPTY_HINTS}
-      released={session.released[question.id]}
-      handlers={handlers}
-      onCardElement={onCardElement}
-      aiTrigger={aiCompanion.triggerForQuestion(question.id)}
-    />
+    <div key={question.id} className="min-w-0">
+      <LessonQuestionCard
+        index={index}
+        question={question}
+        attemptId={attemptId}
+        answer={session.answers?.[question.id]}
+        hints={session.hintsOpened[question.id] ?? EMPTY_HINTS}
+        released={session.released[question.id]}
+        handlers={handlers}
+        onCardElement={onCardElement}
+        aiTrigger={aiCompanion.triggerForQuestion(question.id)}
+      />
+      {aiCompanion.inlineForQuestion(question.id)}
+    </div>
   );
 
   return (
@@ -685,6 +687,22 @@ function LessonCompletedView({
     () => toEnabledCapabilities(data.enabledCapabilities),
     [data.enabledCapabilities],
   );
+  const aiCompanion = useAiCompanionDock({
+    attemptId,
+    questions: data.questions,
+    currentQuestionId: data.questions[0]?.id ?? null,
+    isHandwritten: () => false,
+    surfaceOf: () => null,
+    flush: async () => {},
+    editor: null,
+    titleOf: (id) => `${data.lecture.title} · ${id}`,
+    labelOf: (id) => {
+      const index = data.questions.findIndex((question) => question.id === id);
+      return index < 0 ? null : `第 ${index + 1} 题`;
+    },
+    materials: { annotation: false, paper: false },
+    triggerLabel: "AI 复盘",
+  });
   const restartErrorText = restart.isError
     ? restart.error instanceof Error
       ? restart.error.message
@@ -696,16 +714,19 @@ function LessonCompletedView({
     index: number,
     _orphan: boolean,
   ) => (
-    <LessonQuestionCard
-      key={question.id}
-      index={index}
-      question={question}
-      attemptId={attemptId}
-      answer={data.drafts[question.id]}
-      hints={EMPTY_HINTS}
-      released={data.released[question.id]}
-      handlers={undefined}
-    />
+    <div key={question.id} className="min-w-0">
+      <LessonQuestionCard
+        index={index}
+        question={question}
+        attemptId={attemptId}
+        answer={data.drafts[question.id]}
+        hints={EMPTY_HINTS}
+        released={data.released[question.id]}
+        handlers={undefined}
+        aiTrigger={aiCompanion.triggerForQuestion(question.id)}
+      />
+      {aiCompanion.inlineForQuestion(question.id)}
+    </div>
   );
 
   return (
@@ -740,6 +761,7 @@ function LessonCompletedView({
           }
           actions={
             <>
+              <AiQueueButton />
               <Button asChild variant="outline" className="min-h-11">
                 <Link to={`/s/attempts/${attemptId}`}>查看结果</Link>
               </Button>
@@ -759,7 +781,9 @@ function LessonCompletedView({
           }
         />
 
-        <LessonBody data={data} order={order} renderCard={renderCard} />
+        {aiCompanion.rail(
+          <LessonBody data={data} order={order} renderCard={renderCard} />,
+        )}
 
         {/* 再做一次确认：显式动作（新卷从空白开始，之前作答保留可回看） */}
         <Dialog open={restartOpen} onOpenChange={setRestartOpen}>

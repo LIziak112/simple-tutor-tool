@@ -207,6 +207,7 @@ test.describe("SAI-33 四来源与结果页共存", () => {
         .getByRole("article", { name: "第 1 题", exact: true })
         .getByRole("button", { name: "AI 助教", exact: true })
         .click();
+      await page.getByRole("button", { name: "AI 设置" }).click();
       await expect(page.getByText("当前：开放伴学")).toBeVisible();
       await page.getByPlaceholder("写下你想问的问题").fill("课程练习求助");
       await page.getByRole("button", { name: "发送", exact: true }).click();
@@ -267,6 +268,7 @@ test.describe("SAI-33 四来源与结果页共存", () => {
         .getByRole("article", { name: "第 1 题", exact: true })
         .getByRole("button", { name: "AI 助教", exact: true })
         .click();
+      await page.getByRole("button", { name: "AI 设置" }).click();
       await expect(page.getByText("当前：开放伴学")).toBeVisible();
       await page.getByPlaceholder("写下你想问的问题").fill("错题重练求助");
       await page.getByRole("button", { name: "发送", exact: true }).click();
@@ -349,6 +351,7 @@ test.describe("SAI-33 四来源与结果页共存", () => {
         .getByRole("article", { name: "第 1 题", exact: true })
         .getByRole("button", { name: "AI 助教", exact: true })
         .click();
+      await page.getByRole("button", { name: "AI 设置" }).click();
       await expect(page.getByText("当前：开放伴学")).toBeVisible();
       await page.getByPlaceholder("写下你想问的问题").fill("讲练页求助");
       await page.getByRole("button", { name: "发送", exact: true }).click();
@@ -458,11 +461,12 @@ test.describe("SAI-33 四来源与结果页共存", () => {
         .getByRole("article", { name: "第 1 题", exact: true })
         .getByRole("button", { name: "AI 助教", exact: true })
         .click();
+      await page.getByRole("button", { name: "AI 设置" }).click();
       await expect(page.getByText("当前：开放伴学")).toBeVisible();
       await expect(
         page.getByRole("button", { name: "发送", exact: true }),
       ).toBeEnabled();
-      await page.getByRole("button", { name: "关闭 AI 助教" }).click();
+      await page.getByRole("button", { name: "收起 AI 助教" }).click();
 
       // 圈画：题干标注挂画布、可落笔、收起后笔迹保留（已有 1 笔）
       const annotationTrigger = q1.getByRole("button", { name: /圈画题干/ });
@@ -512,7 +516,7 @@ test.describe("SAI-33 四来源与结果页共存", () => {
       await expect(
         page.getByRole("button", { name: "发送", exact: true }),
       ).toBeEnabled();
-      await page.getByRole("button", { name: "关闭 AI 助教" }).click();
+      await page.getByRole("button", { name: "收起 AI 助教" }).click();
 
       const resultCard = page.getByRole("article", {
         name: "第 1 题",

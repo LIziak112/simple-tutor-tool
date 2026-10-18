@@ -329,6 +329,7 @@ function InkThumbnail({
 
 /** 单题结果卡；released=false（T2A.8 截止后公布且未到截止）时只渲染本人作答内容 */
 function ResultQuestionCard({
+  aiTrigger,
   index,
   question,
   attemptId,
@@ -336,6 +337,7 @@ function ResultQuestionCard({
   roundLabel,
   onSolutionToggle,
 }: {
+  aiTrigger?: ReactNode;
   index: number;
   question: AttemptResultQuestion;
   attemptId: string;
@@ -475,6 +477,7 @@ function ResultQuestionCard({
             {name}
           </span>
         ))}
+        <div className="ml-auto">{aiTrigger}</div>
       </div>
 
       {/* 题干快照（服务端已 studentStemMd 投影；displayStemMd 兜底剥内嵌选项列表） */}
@@ -857,6 +860,9 @@ export function AttemptResultView({
                   {unit.questions.map((question) => (
                     <li key={question.questionId}>
                       <ResultQuestionCard
+                        aiTrigger={aiCompanion.triggerForQuestion(
+                          question.questionId,
+                        )}
                         index={flatQuestions.indexOf(question)}
                         question={question}
                         attemptId={attempt.id}
@@ -864,6 +870,7 @@ export function AttemptResultView({
                         roundLabel={roundLabel}
                         onSolutionToggle={onSolutionToggle}
                       />
+                      {aiCompanion.inlineForQuestion(question.questionId)}
                     </li>
                   ))}
                 </ol>
