@@ -56,7 +56,11 @@ function cloneDefaultButtons(): StudentQuickButton[] {
   }));
 }
 
-export function StudentQuickButtonsSection() {
+export function StudentQuickButtonsSection({
+  onDirtyChange,
+}: {
+  onDirtyChange?: (dirty: boolean) => void;
+} = {}) {
   const quickButtonsQuery = useStudentQuickButtons();
   const saveMutation = useSaveStudentQuickButtons();
   const queryClient = useQueryClient();
@@ -74,6 +78,9 @@ export function StudentQuickButtonsSection() {
   const checked = draft ?? baseline;
   const dirty =
     draft !== null && baseline !== null && !quickButtonsEqual(draft, baseline);
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
   /** 本地前置契约校验：空白名称/提示词阻止保存（服务端会 400 拒绝） */
   const emptyName = checked?.some((b) => b.name.trim().length === 0) ?? false;
   const emptyPrompt =
@@ -275,7 +282,7 @@ export function StudentQuickButtonsSection() {
                         <input
                           type="text"
                           aria-label={`第 ${number} 项按钮名称`}
-                          className="w-full min-w-0 rounded-lg border border-input bg-transparent px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+                          className="w-full min-w-0 rounded-lg border border-input bg-transparent px-3 py-2 text-base sm:text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
                           maxLength={AI_QUICK_BUTTON_NAME_MAX_CHARS}
                           value={button.name}
                           onChange={(event) =>
@@ -287,7 +294,7 @@ export function StudentQuickButtonsSection() {
                         <span>按钮提示词</span>
                         <textarea
                           aria-label={`第 ${number} 项按钮提示词`}
-                          className="w-full min-w-0 resize-y rounded-lg border border-input bg-transparent px-3 py-2 text-sm leading-relaxed outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+                          className="w-full min-w-0 resize-y rounded-lg border border-input bg-transparent px-3 py-2 text-base sm:text-sm leading-relaxed outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
                           maxLength={AI_QUICK_BUTTON_PROMPT_MAX_CHARS}
                           rows={2}
                           value={button.prompt}

@@ -314,6 +314,7 @@ test.describe("SAI-33 学生端 AI 全链（页内通道）", () => {
       // —— ③ 学生连接 AI：首次知情 + inapp 连接（指向假供应商）——
       await page.getByRole("link", { name: "去设置连接" }).click();
       await page.waitForURL("**/s/settings/ai**");
+      await page.getByRole("button", { name: "新增连接", exact: true }).click();
       await page.getByLabel("我已了解数据外发说明").check();
       await page.getByRole("radio", { name: "页内 AI" }).check();
       await page.getByLabel("接口地址").fill(FAKE_AI_BASE_URL);
